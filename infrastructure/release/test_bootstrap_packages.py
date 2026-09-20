@@ -20,6 +20,13 @@ def package(**changes):
 
 
 class BootstrapTests(unittest.TestCase):
+    def setUp(self):
+        # Mocked local setup must not inherit the runner's GitHub Actions flag.
+        # The CI rejection test below explicitly enables it again.
+        environment = patch.dict(os.environ, {"GITHUB_ACTIONS": "false"})
+        environment.start()
+        self.addCleanup(environment.stop)
+
     def test_only_minimal_package_pat_and_exact_personal_fork(self):
         repository = {"full_name": FORK.repository, "fork": True,
                       "owner": {"login": "alice", "type": "User"},
@@ -159,10 +166,15 @@ class BootstrapTests(unittest.TestCase):
         self.assertEqual(command.call_args.args, ("logout", "ghcr.io"))
 
     def test_github_actions_is_not_a_bootstrap_environment(self):
-        with patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}), patch.object(bootstrap, "check_identity") as identity, \
-                self.assertRaises(ValueError):
-            bootstrap.prepare(FORK, TOKEN, create=True)
-        identity.assert_not_called()
+        for create in (False, True):
+            with self.subTest(create=create), patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}), \
+                    patch.object(bootstrap, "check_identity") as identity, \
+                    patch.object(bootstrap, "metadata") as metadata, patch.object(bootstrap, "docker") as docker, \
+                    self.assertRaisesRegex(ValueError, "Run one-time setup locally, never in GitHub Actions"):
+                bootstrap.prepare(FORK, TOKEN, create=create)
+            identity.assert_not_called()
+            metadata.assert_not_called()
+            docker.assert_not_called()
 
     def test_docker_failure_redacts_process_input_output_and_environment(self):
         with patch.object(bootstrap.subprocess, "run", side_effect=subprocess.CalledProcessError(1, "docker", output=TOKEN)), \
