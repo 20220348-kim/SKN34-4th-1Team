@@ -2,14 +2,27 @@
 
 주요 서비스 연결을 기술 로고와 함께 정리한 문서용 이미지입니다.
 **로컬 구성 기록(2026-09-12)**, **초기 배포 예정안(2026-09-13)**,
-**Vercel + AWS 배포 구성(2026-09-16 정리)**, **현재 Mac Kubernetes 구성(2026-09-20)**을 별도 파일로 관리합니다.
+**Vercel + AWS 배포 구성(2026-09-16 정리)**, **통합 전 Mac Kubernetes(2026-09-20)**,
+**현재 개인 포크 로컬 Kubernetes(2026-09-21)**를 별도 파일로 관리합니다.
 이미지 제작은 앱 실행 코드나 배포 설정을 변경하지 않습니다.
 
-## 현재 Mac Kubernetes · 비공개 GHCR · Argo CD
+## 현재 개인 포크 · 로컬 Kubernetes · 개발 모드 / GitOps
+
+![GovBiz 개인 포크 기반 로컬 시스템 아키텍처](govbiz-local-architecture.png)
+
+- [현재 구성 PNG](govbiz-local-architecture.png) · [SVG 원본](govbiz-local-architecture.svg)
+- [서비스·데이터·개발·배포 경로와 확인 범위](README-local.md)
+- [생성 스크립트](build-local.mjs) · [Kubernetes 로고 출처·해시](kubernetes-logo-sources.json) · [RabbitMQ 로고 출처·해시](logo-sources.json)
+
+교육기관 원본 병합 → 개인 포크 main Sync → 네 CI → 비공개 GHCR → 같은 포크의 digest 갱신 → 로컬 Argo CD를 표시합니다.
+PC의 Vite·port-forward·네 서비스와 독립 DB를 보여주고, 코드 저장을 로컬 재빌드로 반영하는 개발 모드를 별도로 구분합니다.
+공개 GHCR 전환은 준비 단계이며, 그림은 기존 비공개 실행 구성을 기준으로 합니다.
+
+## 통합 전 Mac Kubernetes · 비공개 GHCR · Argo CD 기록
 
 ![GovBiz 현재 로컬 Kubernetes 구성](govbiz-kubernetes-architecture.png)
 
-- [현재 구성 PNG](govbiz-kubernetes-architecture.png) · [SVG 원본](govbiz-kubernetes-architecture.svg)
+- [과거 구성 PNG](govbiz-kubernetes-architecture.png) · [SVG 원본](govbiz-kubernetes-architecture.svg)
 - [요청·배포 경로와 검증 범위](README-kubernetes.md)
 - [생성 스크립트](build-kubernetes.mjs) · [로고 출처·해시](kubernetes-logo-sources.json)
 

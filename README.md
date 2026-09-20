@@ -83,18 +83,22 @@ Compose가 생성하는 이름은 `<프로젝트명>-core-service-1`, `<프로�
 전환 호환성을 위해 기존 Core 수집 구현도 남아 있으나, 분리 모드에서는 실행되지 않습니다.
 [분리 범위·검증·운영 전환 조건](docs/catalog-service-extraction.md)을 참고하세요.
 
-## 아키텍처와 기존 검증 기록
+## 로컬 시스템 아키텍처
 
-![통합 전 Mac 로컬 Kubernetes 아키텍처 검증 기록](docs/assets/architecture/govbiz-kubernetes-architecture.png)
+![개인 포크 기반 로컬 Kubernetes 시스템 아키텍처](docs/assets/architecture/govbiz-local-architecture.png)
 
-[PNG·SVG와 구성도 해설](docs/assets/architecture/README-kubernetes.md) ·
-[Mac 실행·GitOps 안내](infrastructure/gitops/docs/portfolio-gitops.md) ·
-[무료 데모](docs/portfolio-demo.md)
+[PNG·SVG와 구성도 해설](docs/assets/architecture/README-local.md) ·
+[개인 포크 개발·GitOps 안내](docs/local-fork-development.md) ·
+[실제 비공개 GHCR·GitOps 검증 기록](docs/fork-gitops-validation-20260921.md)
 
-그림은 **2026-09-20 통합 전 GovBiz-Team 두 저장소에서 검증한** 비공개 GHCR·Mac Kubernetes·Argo CD 경로입니다.
-교육기관 저장소·개인 포크의 배포 완료를 뜻하지 않으며, 통합 후 소스 위치는 위 디렉터리 구조를 따릅니다.
-주황 점선은 배포 제어 경로이며 **promotion schedule 실제 발동은 미확인**입니다.
-웹은 Mac 개발 서버이고, 외부 수집·유료 AI·SMTP/OAuth는 이번 시연에서 비활성입니다.
+그림은 **2026-09-21 개인 포크 `ilil1/SKN34-4th-1Team`의 Intel Mac 구성**입니다.
+소스와 Helm 배포 설정은 같은 저장소에 있으며, 네 서비스와 전용 DB·데이터 저장소를 로컬 kind에서 실행합니다.
+주황 점선은 비공개 GHCR·Argo CD 배포, 초록색은 개발 모드에서 코드 저장 후 자기 PC에만 재빌드·반영하는 경로입니다.
+웹은 클러스터 밖의 Vite 개발 서버입니다. [개인 연동 프로필](infrastructure/gitops/docs/local-integrations.md)에서
+RabbitMQ·OpenAI·SMTP를 연결했으며, 자동 유료 작업은 비용 한도 확인 전까지 대기합니다. 공용 기본 프로필은 무료 시연 설정을 유지합니다.
+Windows 실기기·전체 업무 기능·클라우드 운영까지 검증됐다는 의미는 아닙니다.
+기존 [통합 전 Kubernetes 그림](docs/assets/architecture/README-kubernetes.md)과
+[Compose·AWS 그림](docs/assets/architecture/README.md)은 과거 기록으로 보존합니다.
 
 ## 문서 안내
 

@@ -49,11 +49,13 @@
 
 기존 AWS EC2 Compose 배포와 로컬 Kubernetes 검증은 별도 경로입니다.
 기존 Mac 유지형 portfolio의 비공개 GHCR·Argo CD 검증 기록을 보존합니다.
-교육기관 통합본에서는 자동 이미지 발행·promotion을 잠갔으며 개인 포크 연결·Windows 검증은 후속 작업입니다.
+교육기관 원본의 GHCR 발행은 차단하며, 선행 설정을 완료한 개인 포크에서만 발행·promotion을 명시적으로 활성화합니다.
+Intel Mac의 개인 포크 비공개 발행·pull·GitOps는 [실제 검증 기록](fork-gitops-validation-20260921.md)을 참고하며 Windows 실기기 검증은 별도입니다.
 
 | 문서 | 확인할 내용 |
 |---|---|
-| [현재 Kubernetes 아키텍처](assets/architecture/README-kubernetes.md) | Mac 웹·Core/Catalog/AI/Ops·독립 DB·비공개 GHCR·GitOps 경로와 미검증 구간 |
+| [현재 로컬 시스템 아키텍처](assets/architecture/README-local.md) | 개인 포크·같은 저장소의 Helm·비공개 GHCR·로컬 kind·개발 모드/GitOps 구분 |
+| [통합 전 Kubernetes 아키텍처](assets/architecture/README-kubernetes.md) | 2026-09-20 GovBiz-Team 두 저장소와 Mac portfolio 실행 기록 |
 | [기존 AWS 배포 구성](assets/architecture/README-aws-deployed.md) · [CodeBuild](deployment-codebuild.md) | Vercel·CloudFront·EC2 Compose·RDS와 기존 자동 배포 경로 |
 | [서비스·데이터 경계](../infrastructure/gitops/docs/service-boundaries.md) | Core·AI·Ops 데이터 소유권, 관리자 판정 위임과 서비스 추출 전 제약 |
 | [로컬 Kubernetes 재현](../infrastructure/gitops/docs/kubernetes-local.md) | Ops·MySQL kind 배포, 도구·이미지 준비와 검증용 리소스 정리 |

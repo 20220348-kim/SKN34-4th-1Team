@@ -1,5 +1,8 @@
 # 개인 포크의 Kubernetes에서 개발하기
 
+무료 시연이 아닌 RabbitMQ·AI·메일·수집 연결은
+[개인 Kubernetes 외부 연동](../infrastructure/gitops/docs/local-integrations.md)을 따릅니다.
+
 교육기관 원본은 제출·병합 대상입니다. 각자의 `origin` 포크가 이미지 발행과 GitOps의 기준이며,
 코드에 `ilil1`이나 다른 팀원 계정을 직접 넣지 않습니다. 최초 설정은 각 포크·PC별로 필요합니다.
 토큰·런타임 비밀값·로컬 상태는 Git에 커밋하지 않습니다.

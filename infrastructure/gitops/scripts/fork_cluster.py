@@ -256,7 +256,7 @@ def load_image(args, settings, image, state=None):
         write_json(path, ledger)
 
 
-def render_services(helm, images=None, root=ROOT):
+def render_services(helm, images=None, root=ROOT, overlay=None):
     """Preflight every free-runtime contract and exact Helm command before writes."""
     rendered = {}
     for service in SERVICES:
@@ -269,7 +269,10 @@ def render_services(helm, images=None, root=ROOT):
             repository, tag = images[service].split(":")
             extra = ["--set", "localMode=true", "--set-json", "imagePullSecrets=[]", "--set-string", "image.repository=" + repository,
                      "--set-string", "image.tag=" + tag, "--set-string", "image.digest=", "--set-string", "image.pullPolicy=Never"]
-        output = run([helm, "template", service, root / "charts/govbiz-service", "-n", NAMESPACE, "-f", values, *extra], capture=True)
+        override = (overlay or {}).get(service)
+        output = run([helm, "template", service, root / "charts/govbiz-service", "-n", NAMESPACE, "-f", values, *extra,
+                      *(["-f", "-"] if override else [])],
+                     **({"data": yaml.safe_dump(override)} if override else {}), capture=True)
         problems = policy_errors(service, list(yaml.safe_load_all(output)))
         if problems:
             raise ValueError("\n".join(problems))
@@ -332,7 +335,8 @@ def _up(args, state, settings):
     doctor(args, settings)
     images = local_images(args.local_images) if args.local_images else None
     record = None if images else checked_release(settings, args.helm)
-    rendered_services = render_services(args.helm, images)
+    from connected_runtime import load_profile, overrides
+    rendered_services = render_services(args.helm, images, overlay=overrides(load_profile(state, settings)))
     print("PASS: four service Helm manifests and free-runtime policy preflight", flush=True)
     kube, nk, _ = commands(state, settings)
     clusters = run([args.kind, "get", "clusters"], capture=True).splitlines()
@@ -387,7 +391,7 @@ def _up(args, state, settings):
         print("LOCAL IMAGE VALIDATION ONLY: private GHCR authentication/pull was not tested.")
 
 
-def argo_resources(settings):
+def argo_resources(settings, profile=None):
     fork = Fork(settings["repository"], settings["branch"])
     destination = {"server": "https://kubernetes.default.svc", "namespace": NAMESPACE}
     project = {"apiVersion": "argoproj.io/v1alpha1", "kind": "AppProject", "metadata": {"name": "govbiz-fork", "namespace": "argocd"},
@@ -399,6 +403,13 @@ def argo_resources(settings):
                       "destination": destination, "syncPolicy": {"automated": {"enabled": True, "prune": False, "selfHeal": True},
                       "syncOptions": ["FailOnSharedResource=true"], "retry": {"limit": 5, "backoff": {"duration": "10s", "factor": 2, "maxDuration": "3m"}}}}}
             for service in SERVICES]
+    if profile:
+        from connected_runtime import overrides
+        for app in apps:
+            service = app["metadata"]["name"].removeprefix("govbiz-fork-")
+            value = overrides(profile).get(service)
+            if value:
+                app["spec"]["source"]["helm"]["valuesObject"] = value
     return [project, *apps]
 
 
@@ -437,7 +448,8 @@ def _gitops(args, state, settings):
     workloads = json.loads(run(ak + ["get", "deployments,statefulsets", "-o", "json"], capture=True))["items"]
     for item in workloads:
         run(ak + ["rollout", "status", item["kind"].lower() + "/" + item["metadata"]["name"], "--timeout=450s"])
-    apply(ak, argo_resources(settings))
+    from connected_runtime import load_profile
+    apply(ak, argo_resources(settings, load_profile(state, settings)))
     settings["mode"] = "gitops"
     write_json(state / "settings.json", settings)
     print("GitOps enabled for this fork only. Inspect status until all four Applications are Synced/Healthy.")

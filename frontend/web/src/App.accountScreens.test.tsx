@@ -44,7 +44,7 @@ afterEach(() => {
 })
 
 describe('계정 화면', () => {
-  it.each([['portfolio', false], ['development', true]] as const)(
+  it.each([['portfolio', false], ['connected', false], ['development', true]] as const)(
     '%s 모드에서 개발 로그인 버튼 노출을 구분한다', (mode, visible) => {
       vi.stubEnv('MODE', mode)
       renderApp('/', null)
