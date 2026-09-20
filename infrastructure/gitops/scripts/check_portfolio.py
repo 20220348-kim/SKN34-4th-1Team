@@ -90,7 +90,7 @@ def fork_errors(fork, root=ROOT, helm="helm"):
     directory = root / "environments/fork"
     record_path = directory / "release.json"
     if not record_path.is_file():
-        return ["No verified personal release exists. Enable private image CI in your fork, wait for promotion, then pull the resulting commit."]
+        return ["No verified personal release exists. Enable image CI in your fork, wait for promotion, then pull the resulting commit."]
     problems = []
     try:
         record = json.loads(record_path.read_text())
@@ -103,6 +103,7 @@ def fork_errors(fork, root=ROOT, helm="helm"):
             reference = record["images"][service]
             repository, digest = reference.split("@")
             expected["image"] = {"repository": repository, "digest": digest, "tag": "", "pullPolicy": "IfNotPresent"}
+            expected["imagePullSecrets"] = [] if record.get("visibility", "private") == "public" else [{"name": "ghcr-pull"}]
             if values != expected:
                 problems.append(service + ": personal values differ from the safe local-runtime contract or verified digest")
                 continue

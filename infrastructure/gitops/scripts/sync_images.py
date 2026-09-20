@@ -1,4 +1,4 @@
-"""Promote verified private images within the same personal fork, never across repos."""
+"""Promote verified images and their pull policy within the same personal fork."""
 
 import argparse
 import hashlib
@@ -104,6 +104,10 @@ def prepare(root, receipts, fork):
     """Preflight all four files before creating the fork environment for the first time."""
     if len(receipts) != 4 or {r["service"] for r in receipts} != set(SERVICES):
         raise ValueError("All four verified receipts are required")
+    for receipt in receipts:
+        validate_receipt(receipt, fork)
+    if len({r.get("visibility", "private") for r in receipts}) != 1:
+        raise ValueError("All four receipts must agree on package visibility")
     root = root.resolve()
     destination = root / "environments/fork"
     if destination.resolve() != destination.absolute():
@@ -144,7 +148,9 @@ def prepare(root, receipts, fork):
 
 
 def validate_record(record, fork):
-    if (set(record) != {"repository", "branch", "verifiedRevision", "runId", "runUrl", "images"}
+    keys = {"repository", "branch", "verifiedRevision", "runId", "runUrl", "images"}
+    if (set(record) not in (keys, keys | {"visibility"})
+            or record.get("visibility", "private") not in ("private", "public")
             or record["repository"] != fork.repository or record["branch"] != fork.branch
             or not valid_sha(record["verifiedRevision"])
             or type(record["runId"]) is not int or record["runId"] <= 0
@@ -170,7 +176,8 @@ def verify_record(root, fork, get=api):
         raise ValueError("Recorded publisher is not a successful release")
     receipts = checked_receipts(sha, release, fork, get)
     expected = {r["service"]: r["repository"] + "@" + r["digest"] for r in receipts}
-    if record["images"] != expected or prepare(root, receipts, fork):
+    if (record["images"] != expected or prepare(root, receipts, fork)
+            or any(r.get("visibility", "private") != record.get("visibility", "private") for r in receipts)):
         raise ValueError("Record/values differ from verified receipts")
     return record
 
@@ -192,6 +199,7 @@ def synchronize(fork, root=ROOT, write=False, get=api, run_id=None):
     if marker.resolve() != marker.absolute():
         raise ValueError("Release record must not be a symlink")
     record = {"repository": fork.repository, "branch": fork.branch, "verifiedRevision": sha,
+              "visibility": receipts[0].get("visibility", "private"),
               "runId": run["id"], "runUrl": f"https://github.com/{fork.repository}/actions/runs/{run['id']}",
               "images": {r["service"]: r["repository"] + "@" + r["digest"] for r in receipts}}
     validate_record(record, fork)

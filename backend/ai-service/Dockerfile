@@ -11,6 +11,10 @@ COPY document-tools/kordoc-pdf ./pdf-runtime
 RUN npm ci --prefix pdf-runtime --omit=dev --ignore-scripts && \
     ln -s ../pdf-runtime/node_modules/pdfjs-dist node_modules/pdfjs-dist && \
     node --input-type=module -e "await import('pdfjs-dist/legacy/build/pdf.mjs')"
+# Remove upstream development metadata before this directory enters any runtime layer.
+RUN rm -rf -- /opt/kordoc/.git /opt/kordoc/.github /opt/kordoc/tests && \
+    test ! -e /opt/kordoc/.git && test ! -e /opt/kordoc/tests && \
+    test -f /opt/kordoc/dist/mcp.js
 
 FROM python:3.12-slim-bookworm AS builder
 

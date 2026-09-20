@@ -1,9 +1,12 @@
-# 개인 포크의 비공개 이미지 발행
+# 개인 포크의 이미지 발행 — 기본 비공개
 
 코드와 GitOps 배포 설정은 하나의 저장소에서 관리하지만 교육기관의 GHCR은 사용하지 않습니다.
 이제 발행 코드는 특정 개인이나 `GovBiz-Team`에 고정되지 않습니다. GitHub가 제공하는 현재
 저장소와 기본 브랜치를 읽고, 각 개인 포크에서 명시적으로 활성화한 경우에만 작동합니다.
-단, 발행 대상은 **이미 존재하며 비공개·본인 소유·정확한 포크 연결이 확인된 패키지**로 제한합니다.
+단, 발행 대상은 **이미 존재하며 본인 소유·정확한 포크 연결이 확인된 패키지**로 제한합니다.
+`MSA_PACKAGE_VISIBILITY`의 기본값은 `private`입니다. 공개를 명시적으로 선택하는 경우의 준비·전환 순서는
+[공개 GHCR 전환 안내](public-ghcr-transition.md)를 따릅니다. 변수는 기대 공개 범위를 검사할 뿐,
+패키지를 생성하거나 GitHub의 공개 범위를 바꾸지 않습니다.
 
 [비공개 패키지 최초 준비](private-ghcr-setup.md)는 일회용 최소 권한 PAT로 **앱 코드 없는 빈 패키지**를
 만들고, Private·소유자·포크 연결과 Actions Write 권한을 확인하는 절차입니다.
@@ -83,7 +86,8 @@ git push origin main
 
 나머지도 `core-service`, `catalog-service`, `ops-service` 접미사를 사용합니다. 대문자는 소문자로 바꿉니다.
 플랫폼은 현재 `linux/amd64`입니다. Intel Mac과 Windows x64/WSL2 대상이며 ARM 지원으로 표현하지 않습니다.
-패키지는 **Private**이어야 합니다. 기존 패키지의 소유자·연결 저장소·Private 여부를 빌드 전에
+패키지는 **선택한 공개 범위와 일치**해야 합니다. `private`가 기본이며 `public`은 명시적으로 선택해야 합니다.
+기존 패키지의 소유자·연결 저장소·선택한 공개 범위를 빌드 전에
 확인하고, 새 태그를 업로드할 때는 push 직전과 직후에도 재검사합니다. 패키지가 없거나 접근할 수 없으면
 새로 만들지 않고 중단합니다. 검사 실패 시 배포 후보 receipt를 발급하지 않습니다.
 
@@ -95,7 +99,9 @@ receipt 검증 → 같은 포크의 digest 커밋 → 각 PC의 Argo CD가 Git �
 
 **PC에서 코드를 저장할 때마다 GHCR에 올리는 방식이 아닙니다.** 저장 즉시 반영하는 개발 모드와
 검증된 이미지를 실행하는 GitOps 모드는 별개입니다. 로컬 개발 방법은 [공통 개발 안내](local-fork-development.md)를 확인합니다.
-상시 pull 인증은 개인의 `read:packages` 토큰을 로컬 Kubernetes Secret `ghcr-pull`로 전달합니다.
+비공개 이미지의 상시 pull 인증은 개인의 `read:packages` 토큰을 로컬 Kubernetes Secret `ghcr-pull`로 전달합니다.
+공개 이미지의 검증된 v2 receipt는 `visibility: public`을 기록하고, 승격 시 `imagePullSecrets: []`를 생성합니다.
+로컬 도구는 이 배포 기록에 따라 PAT 없이 네 digest의 익명 pull을 검사합니다. 서비스의 DB·내부 인증 Secret은 유지합니다.
 단기 `GITHUB_TOKEN`을 클러스터에 복사하거나 실제 토큰·`.env`를 Git에 커밋하지 않습니다.
 
 ## 검증·재실행 경계
@@ -109,6 +115,8 @@ receipt 검증 → 같은 포크의 digest 커밋 → 각 PC의 Argo CD가 Git �
 - 인증·네트워크 오류를 이미지 없음으로 취급하지 않습니다. 부분 실패 시 일부 이미지는 남을 수 있지만 자동 배포하지 않습니다.
 - 패키지 404도 자동 생성 허용이 아닙니다. 비공개 패키지가 미리 준비됐음을 확인하지 못하면 해당 서비스의 업로드 전에 중단합니다.
 - receipt ZIP checksum·정확한 네 artifact·같은 저장소/실행/SHA·실제 Git tree를 모두 검사합니다. receipt 자체가 서명된 provenance는 아닙니다.
+- 새 receipt는 schemaVersion 2와 `visibility`를 필수로 포함하며, 네 서비스의 공개 범위가 다르면 승격하지 않습니다.
+  기존 v1 receipt 및 공개 범위가 없는 과거 배포 기록은 비공개로만 해석합니다.
 - 배포 파일은 `environments/fork`의 네 YAML과 `release.json`만 갱신합니다. 과거 `environments/portfolio`는 수정하지 않습니다.
 - bot의 digest-only 후속 커밋은 검증된 소스 SHA를 무효화하지 않습니다. 다른 소스 변경이 섞이면 차단합니다.
 - `GITHUB_TOKEN`의 digest push는 새 push workflow를 만들지 않아 발행 반복을 막습니다. Argo CD의 Git 감지는 별개입니다.

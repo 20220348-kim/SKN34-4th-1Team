@@ -114,6 +114,51 @@ class ForkBootstrapTests(unittest.TestCase):
         self.assertEqual(sum(r.get_method() == "HEAD" for r in requests), 4)
         self.assertTrue(all("private-token" not in r.full_url for r in requests))
 
+    def test_public_pull_uses_no_personal_credential_and_checks_every_digest(self):
+        digest = "sha256:" + "a" * 64
+        record = {"visibility": "public", "images": {s: self.fork.image(s) + "@" + digest for s in cluster.SERVICES}}
+        requests = []
+        def respond(request, timeout):
+            requests.append(request)
+            return Response({"token": "anonymous-scoped-token"}) if "/token?" in request.full_url else Response({}, {"Docker-Content-Digest": digest})
+        with patch("fork_cluster.urlopen", side_effect=respond):
+            cluster.verify_pull_rights(None, None, record)
+        self.assertEqual(len(requests), 8)
+        self.assertTrue(all("Authorization" not in r.headers for r in requests if "/token?" in r.full_url))
+        self.assertTrue(all(r.headers["Authorization"] == "Bearer anonymous-scoped-token" for r in requests if "/manifests/" in r.full_url))
+        with patch("fork_cluster.urlopen", side_effect=[Response({"token": "anonymous"}), Response({}, {"Docker-Content-Digest": "wrong"})]), \
+                self.assertRaisesRegex(ValueError, "different digest"):
+            cluster.verify_pull_rights(None, None, record)
+
+    def test_public_credentials_command_never_reads_applies_or_deletes_a_secret(self):
+        record = {"visibility": "public", "images": {}}
+        with tempfile.TemporaryDirectory() as directory, patch("fork_cluster.verify_context"), \
+                patch("fork_cluster.checked_release", return_value=record), patch("fork_cluster.verify_pull_rights") as verify, \
+                patch("fork_cluster.authenticate") as authenticate, patch("fork_cluster.apply") as apply:
+            cluster.credentials(SimpleNamespace(helm="helm"), Path(directory), self.settings)
+        verify.assert_called_once_with(None, None, record)
+        authenticate.assert_not_called()
+        apply.assert_not_called()
+        with patch("fork_cluster.read_token") as read, patch("fork_cluster.getpass.getpass") as prompt, \
+                self.assertRaisesRegex(ValueError, "do not require a PAT"):
+            cluster.authenticate(SimpleNamespace(token_file="unused"), self.settings, record)
+        read.assert_not_called()
+        prompt.assert_not_called()
+
+    def test_failed_anonymous_pull_stops_bootstrap_before_cluster_or_secret_writes(self):
+        args = SimpleNamespace(local_images=None, helm="helm", kind="kind", token_file=None)
+        with tempfile.TemporaryDirectory() as directory, patch("fork_cluster.doctor"), \
+                patch("fork_cluster.checked_release", return_value={"visibility": "public", "images": {}}), \
+                patch("fork_cluster.render_services", return_value={}), patch("fork_cluster.run", return_value="") as execute, \
+                patch("fork_cluster.verify_pull_rights", side_effect=ValueError("anonymous denied")), \
+                patch("fork_cluster.authenticate") as authenticate, patch("fork_cluster.apply") as apply:
+            with self.assertRaisesRegex(ValueError, "anonymous denied"):
+                cluster.up(args, Path(directory), self.settings)
+        self.assertEqual(execute.call_count, 1)
+        self.assertEqual(execute.call_args.args[0], ["kind", "get", "clusters"])
+        authenticate.assert_not_called()
+        apply.assert_not_called()
+
     def test_development_cannot_race_self_heal(self):
         with self.assertRaisesRegex(ValueError, "GitOps owns"):
             cluster.require_dev(Path("/tmp/state"), self.settings | {"mode": "gitops"})
