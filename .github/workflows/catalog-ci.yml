@@ -3,7 +3,7 @@ name: Catalog separation CI
 on:
   push:
     # Validate every submitted branch, including commits that only change release
-    # policy or documentation. Image publication remains migration-locked.
+    # policy or documentation. Publication separately checks upstream merge and fork opt-in.
   pull_request:
     paths:
       - "backend/catalog-service/**"

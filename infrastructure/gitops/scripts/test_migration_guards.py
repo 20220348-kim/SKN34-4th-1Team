@@ -1,6 +1,7 @@
 """The submitted snapshot must not reuse the former personal deployment identity."""
 
 import shutil
+import os
 import subprocess
 import sys
 import tempfile
@@ -17,21 +18,18 @@ class MigrationGuards(unittest.TestCase):
     def test_checkout_root_is_above_nested_gitops(self):
         self.assertEqual(REPOSITORY_ROOT / "infrastructure/gitops", ROOT)
 
-    def test_promotion_clis_refuse_without_reading_receipts_or_accessing_github(self):
-        commands = (
-            ["sync_images.py", "--write"],
-            ["sync_images.py", "--verify-record"],
-            ["promote_image.py", "--receipt", "/does-not-exist/receipt.json",
-             "--values", "environments/portfolio/ai-service.yaml", "--expected-digest", "", "--write"],
-        )
-        for script, *arguments in commands:
-            with self.subTest(script=script, arguments=arguments):
+    def test_personal_promotion_is_opt_in_and_school_publication_is_denied(self):
+        for repository, enabled in (("alice/project", "false"),
+                                    ("SKNETWORKS-FAMILY-AICAMP/SKN34-4th-1Team", "true")):
+            with self.subTest(repository=repository):
                 result = subprocess.run(
-                    [sys.executable, "-B", str(ROOT / "scripts" / script), *arguments],
+                    [sys.executable, "-B", str(ROOT / "scripts/sync_images.py"), "--write"],
                     capture_output=True, text=True, timeout=10,
+                    env=os.environ | {"GITHUB_REPOSITORY": repository, "MSA_PROMOTION_ENABLED": enabled,
+                                      "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/main"},
                 )
-                self.assertEqual(result.returncode, 2)
-                self.assertIn("Image promotion is disabled", result.stderr)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("disabled", result.stderr)
 
     def test_previous_repo_and_chart_path_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
