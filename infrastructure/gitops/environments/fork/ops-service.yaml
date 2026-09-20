@@ -2,7 +2,7 @@ serviceName: ops-service
 localMode: false
 image:
   repository: ghcr.io/ilil1/skn34-4th-1team-ops-service
-  digest: sha256:17a14ce0564a6477e9d5581d3aca07119e4823f8d544946b103b3d7085b1dabd
+  digest: sha256:68e1ef274721bb74189c55ab3c0544dded20ccc94230e6e8a13f58e20dc46803
   tag: ''
   pullPolicy: IfNotPresent
 imagePullSecrets:

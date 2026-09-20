@@ -2,7 +2,7 @@ serviceName: core-service
 localMode: false
 image:
   repository: ghcr.io/ilil1/skn34-4th-1team-core-service
-  digest: sha256:5eef68fd491ee3b00f93d40720be7aab2d286a31b914c7fb7204ff22a8b99aac
+  digest: sha256:a6bdaa013b7e6211e2cc5e104b7e0b3ac03b24c821ca47e573fe055172f9f596
   tag: ''
   pullPolicy: IfNotPresent
 imagePullSecrets:

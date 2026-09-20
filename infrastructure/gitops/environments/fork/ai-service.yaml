@@ -2,7 +2,7 @@ serviceName: ai-service
 localMode: false
 image:
   repository: ghcr.io/ilil1/skn34-4th-1team-ai-service
-  digest: sha256:ff0ea22e5049a4a46a9c89ca512f3c10096d06c01d4f202c988e2e0e8167ff3b
+  digest: sha256:0df80b47a7957d476acbf9f64efb12998f8e5027b6bdd9ae6f2c7d8ebb822118
   tag: ''
   pullPolicy: IfNotPresent
 imagePullSecrets:
