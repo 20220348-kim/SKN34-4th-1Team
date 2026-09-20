@@ -143,12 +143,14 @@
 ### 데이터베이스 검증
 
 - Flyway migration, MyBatis Mapper XML 또는 Repository 변경 시(실행에 영향 없는 문서·주석 제외)
-  실제 MySQL 8.4 Testcontainers 통합 테스트를 실행한다. MySQL 전용 JSON, UPSERT, 날짜,
-  문자 정렬 동작을 H2로 대체하지 않는다. 이미 적용될 수 있는 migration의 수정 금지는 그대로 적용한다.
+  관련 통합 테스트를 추가·갱신하고, 실제 MySQL 8.4 Testcontainers 검증은 CI에서 수행한다.
+  로컬에서는 SQL·매핑과 관련된 빠른 검증을 우선하며, DB 동작 재현이나 CI 실패 분석이 필요할 때
+  해당 통합 테스트만 선택해 실행한다. MySQL 전용 JSON, UPSERT, 날짜, 문자 정렬 동작을 H2로
+  대체하지 않는다. 이미 적용될 수 있는 migration의 수정 금지는 그대로 적용한다.
 - Repository 통합 테스트는 변경 범위에 맞춰 한글·특수문자, JSON 배열, nullable 날짜, 복합 식별자,
   UPSERT와 transaction rollback을 검증한다.
 - 동기화 기능을 변경하면 동일 데이터 재수집, 누락 공고 비활성화, 중간 실패 시 기존 데이터 보존을
-  실제 MySQL 통합 테스트로 확인한다.
+  실제 MySQL 통합 테스트로 확인한다. 실행 장소와 완료 판단은 아래 `변경 범위별 검증`을 따른다.
 - Testcontainers 공통 설정은 테스트 전용 `_common/test`에 두고 production 코드나 설정에 포함하지 않는다.
 
 ### 의존 방향과 변경 원칙
@@ -174,30 +176,78 @@
 
 ## 변경 범위별 검증
 
-- 개발 중에는 관련 테스트로 빠르게 확인하고, 마무리 전에 변경된 최신 코드에 대해 아래 필수 검증을
-  완료한다. 통과 이후 관련 코드·설정·테스트가 다시 바뀌거나 실패·미해결 우려가 생기지 않았다면
-  같은 전체 테스트를 반복하지 않는다. 커밋 메시지나 작업 요약 작성만으로 다시 실행하지 않는다.
+### 기본 원칙
+
+- 로컬은 변경한 기능의 빠른 확인, GitHub Actions는 전체 테스트·클린 빌드·실제 DB 및 컨테이너
+  통합 검증을 담당한다. 모든 변경마다 로컬에서 전체 테스트를 중복 실행하지 않는다.
+- 변경한 동작에 필요한 테스트는 계속 추가·갱신한다. 실행 장소를 CI로 옮긴다는 이유로 테스트를
+  삭제·무력화하거나 실패를 정상 결과로 처리하지 않는다.
+- 같은 코드에 대한 검증이 통과했고 관련 코드·설정·테스트나 실행 환경이 바뀌지 않았다면 반복하지
+  않는다. 커밋 메시지나 작업 요약 작성만으로 테스트를 다시 실행하지 않는다.
+
+### 로컬에서 수행할 검증
+
 - 문서·주석만 바뀌고 실행 동작에 영향이 없다면 경로·링크·설명과 `git diff --check`를 확인한다.
   전체 애플리케이션 테스트는 필요 없다. 실행 설정·의존성·프롬프트 변경은 문서 변경으로 취급하지 않는다.
-- Core API 코드·실행 설정·의존성·테스트 변경: JDK 21 환경에서 `backend/core-service`를 작업 디렉터리로
-  `./gradlew test --no-daemon`을 실행한다. 파일 이동·삭제, 빌드·리소스 처리 변경 또는 오래된 산출물
-  의심이 있으면 `./gradlew clean test --no-daemon`을 사용한다. 위 MySQL 통합 테스트 요구는 유지한다.
-- AI Service 코드·실행 설정·의존성·프롬프트·테스트 변경: `backend/ai-service`에서
-  `uv run --locked --extra dev python -m pytest`로 AI Service 전체 테스트를 실행한다.
-- Frontend 코드·설정·의존성·테스트 변경: `frontend/web/package.json`의 Node.js·pnpm 버전에 맞춰
-  `frontend/web`에서 `pnpm test`, `pnpm lint`, `pnpm build`를 실행한다.
-- Node 의존성은 저장소 루트에서 `pnpm install --frozen-lockfile`로 설치하며 루트 잠금 파일만 관리한다.
-- Mobile 코드·설정·의존성·테스트 변경: `frontend/mobile`에서 `pnpm test`, `pnpm typecheck`, `pnpm lint`,
-  `pnpm export`를 실행한다. export는 iOS·Android JS 번들 검증이며 실제 기기 실행이나 스토어 빌드로 보고하지 않는다.
-- 공통 `frontend/packages/shared` 변경: 해당 패키지의 `pnpm typecheck`, `pnpm test`, `pnpm lint`와 웹·앱 검증을
-  함께 실행한다. 공통 업무 계약·DTO 구현은 shared에서 수정하고 frontend의 재수출 파일에 복제하지 않는다.
-- 평가 도구 변경: 해당 평가 디렉터리의 README와 `.github/workflows/ci.yml`에 있는 관련 검증을
-  실행한다. 검색 평가와 근거 답변 평가는 각각의 실행 환경에서 별도 프로세스로 실행한다.
-- 서비스 사이의 공개 계약을 바꾸면 응답 생산자와 소비자 양쪽을 검증한다. 의존성·Docker·Compose·CI
-  변경은 위 테스트에 더해 `.github/workflows/ci.yml`의 해당 잠금 파일·빌드·통합 검증을 확인해 실행한다.
-  CI의 clean build 요구를 로컬의 증분 테스트로 대체하지 않는다.
-- 최종 변경에 `git diff --check`를 실행한다. 테스트를 실행하지 못했거나 통합 테스트가 건너뛰어진
-  경우에는 이유와 미검증 범위를 명시한다. 실패를 숨기거나 관련 없는 기존 변경을 되돌리지 않는다.
+- Core·Catalog 변경: JDK 21 환경에서 변경 대상인 `backend/core-service` 또는 `backend/catalog-service`에서
+  `./gradlew test --tests '<대상 테스트 클래스 또는 패턴>' --no-daemon`으로 관련 테스트를 선택한다.
+  단위 테스트를 우선하고 무거운 Testcontainers 검증은 CI에 맡긴다. 파일 이동·빌드·리소스 변경이나
+  오래된 산출물이 의심될 때만 필요한 범위의 clean 검증을 추가한다.
+- AI Service 변경: `backend/ai-service`에서
+  `uv run --locked --extra dev python -m pytest <대상 테스트 경로>`로 관련 테스트를 실행한다.
+  필요하면 `-k`로 범위를 좁히고, 유료 API 호출 없는 단위·스텁 검증을 우선한다.
+- Ops 변경: Python 3.13 환경의 `backend/ops-service`에서 `uv run --locked ruff check <변경 파일>`과
+  `uv run --locked ruff format --check <변경 파일>` 등 정적 검사를 수행한다. DB 없이 실행 가능한
+  관련 테스트를 우선하고, DB 재현이 필요하면 격리된 테스트 DB에서
+  `uv run --locked python manage.py test <대상 테스트 라벨> --noinput`으로 범위를 좁힌다.
+- Node.js·pnpm은 루트 `package.json`의 버전에 맞춘다. 의존성은 저장소 루트에서
+  `pnpm install --frozen-lockfile`로 설치하며 루트 잠금 파일만 관리한다.
+- Web 변경: `frontend/web`에서 `pnpm test <대상 테스트 파일>`과
+  `pnpm exec oxlint <변경 파일>` 등 관련 테스트·정적 검사를 수행한다.
+- Mobile 변경: `frontend/mobile`에서 `pnpm test --runTestsByPath <대상 테스트 파일>`과
+  `pnpm exec oxlint <변경 파일>` 등 관련 검증을 수행한다. 타입 변경은 `pnpm typecheck`로 확인하고,
+  번들·설정 문제의 재현이 필요할 때만 `pnpm export`를 추가한다.
+- Shared 변경: `frontend/packages/shared`의 관련 테스트·정적 검사와 영향을 받는 웹·앱의 관련
+  테스트를 선택한다. 공통 업무 계약·DTO 구현은 shared에서 수정하고 재수출 파일에 복제하지 않는다.
+- 평가·인프라 변경: 해당 README와 `.github/workflows`를 참고해 변경한 도구의 무료 테스트와
+  잠금 파일·설정 구문·참조 경로 검사를 선택한다. 검색 평가와 근거 답변 평가는 별도 프로세스로 실행한다.
+  Kubernetes·Helm 변경은 오프라인 렌더링·정책 검증을 우선하고 전체 클러스터 검증을 매번 반복하지 않는다.
+- 공개 계약 변경은 응답 생산자와 소비자 양쪽의 관련 테스트를 확인한다. 대응하는 테스트가 없으면
+  추가하거나 대체 검증 방법과 미검증 범위를 명시한다.
+- 실패 재현, 여러 기능에 걸친 변경, CI에서 확인할 수 없는 문제가 있으면 필요한 범위로 빌드·테스트를
+  확대할 수 있다. 무거운 검증을 위해 기존 개발 환경을 임의로 중지하거나 데이터·볼륨을 삭제하지 않는다.
+- 최종 변경에는 항상 `git diff --check`를 실행한다.
+
+### GitHub Actions에서 수행할 전체 검증
+
+- 실제 실행 기준은 `.github/workflows/ci.yml`, `catalog-ci.yml`, `ops-ci.yml`, `infra-ci.yml` 등
+  해당 워크플로다. 변경한 영역의 검증이 이벤트·브랜치·경로 조건에 포함되는지 확인한다. 누락된 검증은
+  CI에 추가하거나 별도 검증 계획을 명시하고, 실행될 것이라는 예상만으로 통과했다고 판단하지 않는다.
+- Core·Catalog: 각 서비스 디렉터리에서 JDK 21의 `./gradlew clean build --no-daemon`으로 전체
+  테스트와 빌드를 수행한다. 실제 MySQL 8.4 통합 테스트와 Catalog→Core 연동·장애 보존 검증을 유지한다.
+- AI Service: 잠금 파일·의존성 정합성, 전체 `pytest`, 패키지 빌드, Qdrant 통합 테스트를 수행한다.
+  CI에 정의된 무료 평가 도구·배포 가드·이미지 발행 가드 검증도 유지한다.
+- Ops: Ruff 검사·포맷 확인, Django 설정·migration 검사, 실제 MySQL 8.4 전체 테스트 및 컨테이너
+  검증을 수행한다. 로컬 단위 테스트로 DB 통합 검증을 대체하지 않는다.
+- Web·Shared: Web의 `test`, `lint`, `build`와 Shared의 `typecheck`, `test`, `lint`를 모두 수행한다.
+- Mobile: `test`, `typecheck`, `lint`, `export`를 모두 수행한다. export는 iOS·Android JS 번들
+  검증이며 실제 기기 실행이나 스토어 빌드로 보고하지 않는다.
+- Container·Infra: 워크플로에 정의된 Compose 빌드·실행·프록시 검증, 저장소 경계 검사,
+  Kubernetes 매니페스트 렌더링·정책 검사, Helm·GitOps 검증을 수행한다. 오프라인 검증 통과를
+  실제 클러스터 배포·Argo CD 동기화 완료로 표현하지 않는다.
+- 로컬의 선택 테스트나 증분 빌드로 CI의 전체 검증·클린 빌드를 대체하지 않는다.
+
+### 검증 결과와 완료 기준
+
+- 로컬에서 실행한 명령·결과와 CI에 맡긴 범위를 구분해 보고한다. 테스트를 실행하지 못했거나
+  통합 테스트가 건너뛰어진 경우에는 이유와 미검증 범위를 명시한다.
+- 커밋·푸시 요청이 있으면 로컬의 빠른 검증 후 푸시해 CI를 실행할 수 있다. 코드·실행 설정 변경의
+  전체 검증 완료는 최신 커밋 SHA에 대한 필수 CI 작업이 실제 실행되어 모두 통과했을 때만 선언한다.
+  실행 중·실패·취소·필수 테스트 건너뛰기는 통과가 아니다. 결과를 확인할 수 없으면 검증 대기로 알린다.
+- CI 실패가 확인되면 원인을 확인하고 관련 범위부터 수정·재검증한다. 실패를 숨기거나 관련 없는
+  기존 변경을 되돌리지 않는다. 변경되지 않은 코드에 이미 존재하던 실패는 이번 변경의 결과와 구분한다.
+- CI·배포 흐름을 변경할 때는 최신 배포 대상 커밋의 필수 검증이 통과해야 이미지 발행·배포가
+  진행되도록 연결한다. 문서의 지침만으로 원격 브랜치 보호나 실제 배포 차단이 설정됐다고 간주하지 않는다.
 - 자동 테스트·스텁 검증 통과를 실제 검색·RAG 품질 측정 완료로 표현하지 않는다. 유료 API 평가는
   사용자가 승인한 전송 데이터와 호출 예산 안에서만 실행하고, 추가 승인이 필요하면 무료 검증을 먼저
   마친다. AI 판정 결과를 사람이 검토한 정답으로 표시하지 않는다.
