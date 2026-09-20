@@ -1,86 +1,100 @@
-# MSA 이미지 발행과 GitOps 연결 경계
+# 개인 포크의 비공개 이미지 발행
 
-## 통합 저장소의 현재 상태
+코드와 GitOps 배포 설정은 하나의 저장소에서 관리하지만 교육기관의 GHCR은 사용하지 않습니다.
+이제 발행 코드는 특정 개인이나 `GovBiz-Team`에 고정되지 않습니다. GitHub가 제공하는 현재
+저장소와 기본 브랜치를 읽고, 각 개인 포크에서 명시적으로 활성화한 경우에만 작동합니다.
 
-애플리케이션과 배포 설정은 `SKNETWORKS-FAMILY-AICAMP/SKN34-4th-1Team`의 `main`에서 함께 관리합니다.
-이전에 별도였던 GitOps 파일은 `infrastructure/gitops/`에 있고, 모든 GitHub Actions는 루트
-`.github/workflows/`에서 실행합니다.
+## 팀원 최초 설정
 
-| 작업 | 이 통합 저장소의 동작 |
+1. 교육기관 원본을 **본인 계정으로 포크**하고 Actions를 활성화합니다.
+2. 포크의 Settings → Secrets and variables → Actions → Variables에 다음을 설정합니다.
+   - `MSA_RELEASE_ENABLED=true`: 네 서비스 이미지 발행 허용
+   - `MSA_PROMOTION_ENABLED=true`: 검증된 이미지 선택을 같은 포크에 커밋 허용
+3. 기능은 개인 작업 브랜치에서 개발하고 교육기관 원본에 PR을 제출합니다. **원본 PR이 병합된 뒤**
+   본인 포크의 기본 브랜치를 최신 upstream과 동기화합니다. 로컬 `git pull`만으로는 원격 Actions가 실행되지 않습니다.
+   GitHub의 Sync fork 또는 동기화한 로컬 기본 브랜치를 origin에 push해야 합니다.
+   포크 생성만으로 기존 커밋의 CI가 재실행되지는 않습니다.
+4. `GovBiz CI`, `Catalog separation CI`, `GovBiz Ops CI`, `Infra CI`가 **동일 SHA**에서 모두 성공하면
+   `MSA image candidates`가 실행됩니다. 단, 개인 포크의 내용이 최신 upstream 병합본과 일치해야 합니다.
+   원본에 아직 병합되지 않은 코드·CI·발행 정책 변경은 본인 포크에서 테스트가 성공해도 발행하지 않습니다.
+   필요하면 같은 검증된 SHA의 기본 브랜치에서 해당 workflow를 수동 실행합니다.
+5. `Fork image promotion`이 완료되면 `infrastructure/gitops/environments/fork/`에 실제 digest와
+   `release.json`이 생깁니다. 첫 발행 전에는 예시 digest로 이 폴더를 만들지 않습니다.
+
+### 새 포크가 이미 최신인데 CI 실행 기록이 없는 경우
+
+포크 생성과 `Sync fork: up to date`는 새로운 push 이벤트를 만들지 않을 수 있습니다. 이 경우
+기본 브랜치를 최신 upstream과 동기화하고, Actions·위 변수를 켠 뒤 **최초 한 번만 빈 커밋**을
+push해 네 push CI를 시작합니다. 파일 변경이 없는 빈 커밋은 upstream 내용과 같으므로 발행
+검증에서 허용하지만, 미병합 코드가 섞인 커밋은 계속 차단합니다.
+
+아래는 기본 브랜치가 `main`인 경우의 Mac·Windows/WSL2 명령입니다. `origin`이 **본인 포크**인지
+먼저 `git remote -v`로 확인하세요. 다른 브랜치에서 실행하거나 추적·미추적 변경이 있으면
+첫 두 검사가 중단하므로 커밋하지 않습니다. 다른 기본 브랜치를 쓰면 두 `main`을 해당 이름으로 맞춥니다.
+
+```bash
+test "$(git branch --show-current)" = "main" &&
+test -z "$(git status --porcelain)" &&
+git commit --allow-empty -m "설정: 개인 포크 CI 최초 실행" &&
+git push origin main
+```
+
+이는 파일이나 권한을 바꾸는 커밋이 아닙니다. 이미 같은 소스 SHA의 네 CI 실행 기록이 있다면
+반복할 필요가 없습니다. 이미지 workflow만 수동 실행하는 것으로 누락된 push CI 검증을 대체할 수 없습니다.
+
+발행에는 Actions의 단기 `GITHUB_TOKEN`을 사용합니다. 별도 `write:packages` PAT나 다른 저장소에
+쓰기 가능한 토큰을 등록하지 않습니다. 조직 정책·브랜치 보호가 쓰기를 막으면 정책을 존중하여
+실패하며, 자동으로 권한을 넓히거나 강제 push하지 않습니다. 교육기관 소유 저장소는 변수를 켜도 차단합니다.
+
+## 각자 달라지는 값
+
+`alice/Project`와 `bob/Project`가 같은 코드를 쓰더라도 다음처럼 서로 다른 이미지를 사용합니다.
+
+| 개인 포크 | AI 서비스 이미지 경로 |
 | --- | --- |
-| Web·Mobile·Core·AI·Catalog·Ops 테스트 | push 및 해당 PR에서 실행 |
-| Helm·Kustomize·Argo 설정과 안전장치 테스트 | 루트 `infra-ci.yml`에서 실행 |
-| GHCR 이미지 발행 | **이관 잠금으로 실행하지 않음** |
-| 이미지 digest 자동 커밋 | **이관 잠금으로 실행하지 않음** |
-| 실제 클러스터 연결·배포 | 저장소 통합 작업에서는 실행하지 않음 |
+| `alice/Project` | `ghcr.io/alice/project-ai-service` |
+| `bob/Project` | `ghcr.io/bob/project-ai-service` |
 
-교육기관의 GHCR은 사용하지 않습니다. `msa-images.yml`과 `msa-promotion.yml`은 기존 구현을
-보존하되 자동 트리거를 제거했고, job에 `if: false` 기반 잠금을 두었습니다. 수동 실행이나
-`MSA_RELEASE_ENABLED`·`MSA_PROMOTION_ENABLED` 변수 설정만으로도 발행·쓰기는 시작되지 않습니다.
-`infrastructure/release/test_release.py`는 이 잠금과 GitOps CI의 위치를 검사합니다.
+나머지도 `core-service`, `catalog-service`, `ops-service` 접미사를 사용합니다. 대문자는 소문자로 바꿉니다.
+플랫폼은 현재 `linux/amd64`입니다. Intel Mac과 Windows x64/WSL2 대상이며 ARM 지원으로 표현하지 않습니다.
+패키지는 **Private**으로 유지합니다. 기존 패키지는 소유자·연결 저장소·Private 여부를 확인하고,
+새 패키지도 push 후 같은 검사를 통과해야 배포 후보 receipt를 발급합니다.
 
-**이 상태는 새로 통합한 교육기관 저장소에만 해당합니다.** 원본 `GovBiz-Team/GovBiz`와
-`GovBiz-Team/GovBiz-infra`의 Actions 설정·패키지 공개 범위·실행 중인 Mac Kubernetes는 변경하지 않았습니다.
+## 발행과 로컬 개발의 차이
 
-## 개인 fork의 비공개 GHCR을 연결하기 전에
+원본 PR 병합 → 개인 포크 기본 브랜치 Sync → 네 CI 성공 → 서비스별 추적 소스 빌드/기존 이미지 재사용 → 개인 GHCR →
+receipt 검증 → 같은 포크의 digest 커밋 → 각 PC의 Argo CD가 Git 변경 감지 순서입니다.
 
-보존된 발행 도구는 아직 `GovBiz-Team/GovBiz`·`develop`·`ghcr.io/govbiz-team/`을 엄격하게 검증합니다.
-이전 receipt도 그 저장소의 소스 SHA와 CI 이력에 연결되어 있습니다. 새 fork에 파일이 복사되었다고
-개인 계정의 이미지 발행과 pull 인증이 자동 설정되는 것은 아닙니다.
+**PC에서 코드를 저장할 때마다 GHCR에 올리는 방식이 아닙니다.** 저장 즉시 반영하는 개발 모드와
+검증된 이미지를 실행하는 GitOps 모드는 별개입니다. 로컬 개발 방법은 [공통 개발 안내](local-fork-development.md)를 확인합니다.
+상시 pull 인증은 개인의 `read:packages` 토큰을 로컬 Kubernetes Secret `ghcr-pull`로 전달합니다.
+단기 `GITHUB_TOKEN`을 클러스터에 복사하거나 실제 토큰·`.env`를 Git에 커밋하지 않습니다.
 
-다음 항목을 개인 fork 기준으로 함께 변경·검증한 뒤에만 이관 잠금을 해제해야 합니다.
+## 검증·재실행 경계
 
-1. 발행 gate의 저장소·대상 브랜치·동일 SHA의 필수 CI 조건과 GHCR 패키지 소유자를 일치시킵니다.
-2. 동일 저장소 안의 `infrastructure/gitops/environments/portfolio/`로 digest를 반영하도록
-   receipt 검증과 Git 커밋 범위를 연결합니다. 앱 코드 변경과 digest-only 변경의 재실행도 확인합니다.
-3. 개인 GHCR 패키지를 Private으로 유지하고, 로컬 Kubernetes에 읽기 전용 pull 인증을 설정합니다.
-4. 해당 fork의 URL·브랜치·chart 경로를 바라보는 Argo CD를 별도 로컬 클러스터에서 검증합니다.
+- PR, 다른 저장소/브랜치, 최신 실패·대기 중 CI는 발행 자격이 없습니다. privileged workflow는 기본 브랜치 정책을 실행합니다.
+- 최신 upstream 기본 브랜치가 후보의 조상이어야 하고 다섯 개인 이미지 선택 파일 외에는 모든 추적 파일이 같아야 합니다.
+  이 기준은 bot digest와 upstream 동기화로 생긴 개인 merge SHA는 허용하지만 미병합 변경·동기화되지 않은 upstream은 차단합니다.
+  upstream API 오류나 불완전한 비교 결과를 성공으로 취급하지 않습니다.
+- 서비스 tree·발행 도구 tree·플랫폼으로 입력 키를 계산합니다. 같은 키라도 이미지 source label과 플랫폼을 재검사합니다.
+- `git archive`로 추적 소스만 빌드합니다. 미추적 비밀값·캐시는 제외하지만 이미 커밋한 비밀값을 정화하는 기능은 아닙니다.
+- 인증·네트워크 오류를 이미지 없음으로 취급하지 않습니다. 부분 실패 시 일부 이미지는 남을 수 있지만 자동 배포하지 않습니다.
+- receipt ZIP checksum·정확한 네 artifact·같은 저장소/실행/SHA·실제 Git tree를 모두 검사합니다. receipt 자체가 서명된 provenance는 아닙니다.
+- 배포 파일은 `environments/fork`의 네 YAML과 `release.json`만 갱신합니다. 과거 `environments/portfolio`는 수정하지 않습니다.
+- bot의 digest-only 후속 커밋은 검증된 소스 SHA를 무효화하지 않습니다. 다른 소스 변경이 섞이면 차단합니다.
+- `GITHUB_TOKEN`의 digest push는 새 push workflow를 만들지 않아 발행 반복을 막습니다. Argo CD의 Git 감지는 별개입니다.
+- 다른 사람의 `environments/fork`가 포크에 포함되어도 그 이미지를 실행하지 않습니다. 본인의 첫 CI·발행이 성공하면
+  검증된 본인 이미지 네 개로 다섯 파일을 한 커밋에 교체합니다. 계정명 수동 변경이나 파일 삭제는 필요 없습니다.
 
-이번 통합은 Windows 로컬 Kubernetes, 개발 코드 hot reload, 개인 fork별 GHCR 생성까지 완료했다는 뜻이 아닙니다.
-특히 이미지를 내려받아 실행하는 것만으로 PC에서 수정한 소스가 실행 중인 컨테이너에 반영되지는 않습니다.
-
-## 보존된 발행 구현
-
-이전 검증 흐름은 `develop push → 같은 SHA의 세 CI 성공 → 서비스별 Git archive → 비공개 GHCR → digest receipt`입니다.
-이후 별도 infra 저장소가 검증된 receipt를 확인해 values를 커밋하고 Argo CD가 반영했습니다.
-이전 환경에 관한 상세 기록은 [GitOps 안내](../infrastructure/gitops/docs/portfolio-gitops.md)를 참고합니다.
-
-| 서비스 | 이전 이미지 저장소 — 새 교육기관 이미지가 아님 |
-| --- | --- |
-| Core | `ghcr.io/govbiz-team/govbiz-core-service` |
-| Catalog | `ghcr.io/govbiz-team/govbiz-catalog-service` |
-| AI | `ghcr.io/govbiz-team/govbiz-ai-service` |
-| Ops | `ghcr.io/govbiz-team/govbiz-ops-service` |
-
-2026-09-20의 [최초 발행 run](https://github.com/GovBiz-Team/GovBiz/actions/runs/35457860821)과
-[비공개 발행 run](https://github.com/GovBiz-Team/GovBiz/actions/runs/35495417542)은 **이전 저장소의 검증 기록**입니다.
-통합 저장소의 발행 성공 증거로 사용하지 않습니다. 소스 코드의 공개 범위와 이미지 패키지의 공개 범위는 별개입니다.
-
-보존한 안전장치는 다음과 같습니다.
-
-- PR·다른 저장소·다른 브랜치·실패하거나 누락된 CI는 후보에서 제외합니다. 같은 SHA의 최신 실행을 검사합니다.
-- 서비스 tree·발행 도구 tree·플랫폼으로 입력 키를 만들고 기존 이미지의 source·입력 키 label·플랫폼을 확인합니다.
-- 추적된 소스만 `git archive`로 빌드해 미추적 `.env`·캐시를 제외합니다. 이미 추적된 비밀값까지 정화하지는 않습니다.
-- 인증 토큰은 stdin과 임시 Docker 설정만 사용합니다. 사용자의 기존 Docker 로그인을 덮어쓰지 않습니다.
-- 서비스별 일부 실패 시 이미지를 자동 삭제하거나 배포하지 않습니다. 인증·네트워크 오류를 이미지 없음으로 숨기지 않습니다.
-- 배포 버전은 mutable tag가 아닌 `repository@sha256:...` digest로 고정합니다.
-- receipt는 서명된 provenance가 아닙니다. 정확한 저장소·성공한 전체 workflow run·소스 SHA인지 확인합니다.
-
-이미지에는 실행 코드와 의존성이 포함되지만 운영 비밀값은 런타임 Secret으로만 주입합니다.
-GitHub Actions의 단기 `GITHUB_TOKEN`을 상시 클러스터의 pull 인증으로 복사하지 않습니다.
-GHCR 권한이 없는 조직의 제한을 우회하기 위해 광범위 PAT를 추가하지 않습니다.
-
-## 무료 오프라인 검증
-
-저장소 루트에서 실행합니다.
+오프라인 검사(Python 3.13, GitOps requirements 필요):
 
 ```bash
 python3 -B -m unittest discover -s infrastructure/release -p 'test_*.py'
 python3 -B -m unittest discover -s infrastructure/gitops/scripts -p 'test_*.py'
 ```
 
-CI 경계·기존 이미지 검증·오류 거절·Git archive의 미추적 파일 제외·실패 후 정리 등을 테스트합니다.
-오프라인 테스트는 실제 GHCR 업로드·인증된 pull·Kubernetes 배포 성공을 대신하지 않습니다.
+단위 테스트 통과와 실제 GHCR push/pull·클러스터 배포 성공은 다릅니다. 현재 검증 범위는 작업별 결과를 확인하세요.
+기존 `GovBiz-Team` 이미지와 이전 Mac 배포 기록은 새 포크의 배포 성공 증거가 아닙니다.
 
-공식 참고: [workflow_run 보안과 트리거](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_run),
-[GHCR 인증·공개 범위·digest pull](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry).
+공식 근거: [GHCR 인증·기본 비공개 범위](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry),
+[GITHUB_TOKEN push의 재실행 방지](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow).

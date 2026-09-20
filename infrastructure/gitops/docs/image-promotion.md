@@ -1,30 +1,63 @@
-# 이미지 digest 승격: 통합 후 잠금 상태
+# 개인 포크의 이미지 digest 승격
 
-이미지 빌드는 CI, 보관은 GHCR, 버전 선택은 Git 배포 설정, 실제 리소스 반영은 Argo CD의 책임입니다.
-같은 저장소에서 모두 관리해도 이 책임은 구분합니다.
+이미지 빌드는 CI, 보관은 비공개 GHCR, 버전 선택은 Git, 실제 리소스 반영은 Argo CD의 책임입니다.
+학교 조직의 GHCR 대신 본인 포크의 패키지를 사용하며 계정명은 공통 코드에서 수정하지 않습니다.
 
-## 통합 저장소의 현재 상태
+## 자동 승격
 
-- 루트 `.github/workflows/msa-images.yml`·`msa-promotion.yml`은 명시적으로 잠겼습니다.
-- `scripts/promote_image.py`·`scripts/sync_images.py` CLI도 실행 전에 거절합니다.
-  GitHub 조회·receipt 파일 읽기·values 쓰기를 하지 않습니다.
-- 원본 GovBiz-Team 발행자의 receipt 검증·최신 CI 확인·digest-only 갱신 함수와 단위 테스트는 유지합니다.
-- `environments/portfolio/release.json`과 네 values의 digest는 원본 환경에서 검증한 이력입니다.
-  통합본의 새 발행이나 팀원 pull 권한을 의미하지 않습니다.
-- 잠금은 **제출본 코드에만** 적용합니다. 원본 저장소 발행/승격·기존 Mac 자동 배포는 변경하지 않습니다.
+루트 `.github/workflows/msa-promotion.yml`의 `Fork image promotion`은 성공한
+`MSA image candidates` 완료 이벤트 또는 기본 브랜치의 수동 실행만 받습니다.
+개인 포크에서 `MSA_PROMOTION_ENABLED=true`를 명시해야 합니다. 학교 소유 저장소는 계속 차단합니다.
 
-## 재개 전에 필요한 변경
+검증 대상은 네 CI의 같은 SHA 성공, 최신 소스 또는 digest-only 후속 커밋, 정확한 발행 workflow,
+네 서비스 receipt의 artifact 출처·checksum·플랫폼·실제 Git tree·개인 이미지 경로입니다.
+다른 사람의 패키지나 예전 `GovBiz-Team` receipt를 받아주는 fallback은 없습니다.
 
-개인 fork 저장소·브랜치·GHCR namespace를 발행자와 승격 검증자가 동일하게 사용해야 합니다.
-교육기관 push가 교육기관 GHCR 발행으로 연결되지 않도록 합니다. 개인 Actions의 단기
-`GITHUB_TOKEN`으로 본인 패키지를 발행하고, Kubernetes에는 별도 읽기 전용 인증을 주입합니다.
-토큰과 실제 `.env`는 Git·values에 저장하지 않습니다.
+발행의 기준은 **교육기관 원본 PR 병합 → 개인 포크 기본 브랜치 동기화**입니다. 최신 upstream
+기본 브랜치가 후보 커밋의 조상이며, 다섯 개인 배포 선택 파일을 제외한 내용이 동일해야 합니다.
+개인 코드만 push하거나 원본에 병합되지 않은 변경은 CI가 통과해도 발행·승격하지 않습니다.
+동기화 뒤 생긴 개인 merge SHA 자체가 upstream에 없어도 위 조건을 만족하면 허용합니다.
+로컬 pull만으로 원격 CI가 시작되지는 않습니다. 원격 포크의 Sync 또는 동기화 결과 push가 필요합니다.
 
-workflow 이름·경로와 `infrastructure/gitops/environments/<환경>/` 쓰기 범위를 검증하고,
-이미지 발행→digest 커밋→자기 PC Argo 동기화를 실제 통과한 뒤 잠금을 해제합니다.
-`MSA_RELEASE_ENABLED`/`MSA_PROMOTION_ENABLED` 변수 변경만으로 재개하지 않습니다.
+처음에는 `environments/fork`가 없습니다. 검증된 네 receipt를 받은 뒤에만 안전한 portfolio 런타임
+기본값에서 **이전 이미지·digest를 제거**하고 본인 이미지의 실제 digest를 넣어 생성합니다.
+기존 본인 설정이 있으면 registry·서비스 일치를 확인하고 digest만 바꿉니다. 다른 사람의 release를
+포크로 물려받았다면 본인의 검증된 네 receipt를 받은 뒤 안전한 기본값으로 다섯 파일을 재생성하여
+동일한 Git 커밋으로 교체합니다. 물려받은 이미지나 receipt를 배포 근거로 재사용하지 않습니다. 모든 사전 검사를 마치기
+전에는 파일을 쓰지 않습니다. 예전 `environments/portfolio`는 보존합니다.
 
-## 유지한 오프라인 검사
+갱신 범위는 다음 다섯 파일로 제한합니다.
+
+```text
+infrastructure/gitops/environments/fork/
+  core-service.yaml
+  catalog-service.yaml
+  ai-service.yaml
+  ops-service.yaml
+  release.json
+```
+
+`release.json`은 `repository`, `branch`, `verifiedRevision`, `runId`, `runUrl`,
+네 서비스별 `images`(repository@sha256)를 기록합니다. 실행 토큰이나 비밀값은 기록하지 않습니다.
+실제 Helm render 검증과 push 직전 원격/receipt 재검사 후 한국어 bot 커밋을 일반 push합니다.
+동시에 사용자가 push하여 충돌하면 강제 덮어쓰기하지 않고 실패합니다.
+
+digest 커밋은 단기 `GITHUB_TOKEN`으로 push하므로 새 push CI를 재귀적으로 만들지 않습니다.
+GitOps 클러스터는 그 Git 변경을 직접 감지합니다. 새 애플리케이션 소스가 push되면 새 CI를 거칩니다.
+
+## 수동 검토와 안전장치
+
+`scripts/promote_image.py`는 검토한 receipt로 **기존 `environments/fork/<service>.yaml`**의
+diff를 미리 보거나 적용합니다. 자동 Git push·클러스터 접근은 하지 않습니다. 수동 작업자는
+먼저 발행 run의 성공과 receipt 출처를 확인해야 하며, 자동 승격에는 더 엄격한 `sync_images.py`를 사용합니다.
+
+`validate_record(record, fork)`는 로컬에서 레코드의 정확한 계정·브랜치·서비스/digest 형식을 검사합니다.
+`verify_record(root, fork)`는 GitHub의 CI·발행 run·artifact·Git tree와 현재 values를 추가 검증합니다.
+형식 검사만으로 실제 pull 권한이나 컨테이너 정상 실행이 증명되지는 않습니다.
+
+다른 사람의 release가 포함된 checkout에서는 본인의 첫 발행·승격 완료 전까지 클러스터를 시작하지 않습니다.
+자동 승격이 본인 이미지 선택을 다시 생성하므로 계정명 편집이나 파일 수동 삭제는 필요 없습니다.
+이미지 rollback과 DB migration/data 복구는 별도입니다.
 
 ```bash
 cd infrastructure/gitops
@@ -32,8 +65,7 @@ python -B -m unittest discover -s scripts -p 'test_promote_image.py'
 python -B -m unittest discover -s scripts -p 'test_sync_images.py'
 ```
 
-다른 서비스/registry, mutable tag, stale digest, 로컬 fixture, 경로 이탈, symlink, 중복 YAML 키,
-잘못된 artifact 출처를 거절하는 검사를 유지합니다. 테스트 통과는 실제 인증·pull·배포 증거가 아닙니다.
-이전 digest로 되돌리는 것과 DB migration/data 복구도 별개입니다.
+Python 3.13과 `scripts/requirements.txt`가 필요합니다. 다른 계정·mutable tag·stale digest·symlink·
+경로 이탈·중복 YAML·잘못된 artifact·중간 검증 실패 시 무변경을 검사합니다.
 
-[개인 fork 전환 안내](portfolio-gitops.md) · [과거 검증 기록](portfolio-validation-20260920.md)
+[발행 최초 설정](../../../docs/msa-image-release.md) · [이전 환경 기록](portfolio-validation-20260920.md)

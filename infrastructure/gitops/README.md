@@ -6,7 +6,8 @@
 
 앱 코드·Dockerfile·로컬 Compose는 [통합 저장소 루트](../../README.md)에 있으며,
 이 디렉터리는 Kubernetes의 원하는 상태와 격리된 로컬 검증을 담당합니다.
-원본 저장소 두 개와 이미 실행 중인 Mac 클러스터는 이번 파일 통합으로 변경하지 않습니다.
+기존 개인 Mac 클러스터와 새 포크의 개발 클러스터는 분리합니다. 공통 실행 도구는 로컬 `origin`에서
+계정·저장소를 읽고, CI는 GitHub가 제공한 저장소 정보를 사용하므로 팀원이 계정명을 소스에서 바꾸지 않습니다.
 
 ## 현재 상태
 
@@ -14,29 +15,53 @@
 | --- | --- |
 | 서비스 | `core-service`·`catalog-service`·`ai-service`·`ops-service`별 Helm Deployment·Service |
 | 데이터 | Core·Catalog·Ops 전용 MySQL, 로컬 검증용 Redis·Elasticsearch·Qdrant |
-| Argo CD | 통합 저장소 `main`의 `infrastructure/gitops/charts/govbiz-service`를 읽는 Application 4개와 제한된 AppProject |
+| Argo CD | 포크·기본 브랜치·중첩 Chart 경로를 반영한 Application 4개를 공통 도구가 생성. 전용 클러스터만 허용 |
 | 로컬 이미지 검증 | 로컬 빌드·kind 적재 smoke 유지. GHCR 계정 불필요 |
-| 개인 GHCR 상시 배포 | **미연결**. 기존 GovBiz-Team digest/receipt는 과거 검증 자료이며 팀원 pull 권한을 의미하지 않음 |
-| 자동 발행·승격 | 제출본에서는 잠금. 교육기관 GHCR 권한을 가정하지 않으며 변수만 켜서 재개할 수 없음 |
-| 상시 Mac bootstrap | 기존 개인 계정용 CLI 잠금. 토큰을 읽거나 기존 클러스터를 변경하지 않음 |
-| Windows 개발 | 개인 GHCR·상시 GitOps·백엔드 코드 자동 반영의 팀원별 일괄 설치는 아직 미구현 |
+| 개인 GHCR | 개인 포크가 자기 `ghcr.io/<계정>/<저장소>-<서비스>`에만 비공개 발행. 최초 계정별 인증/활성화 필요 |
+| 자동 발행·승격 | upstream 병합 소스를 본인 포크 기본 브랜치로 동기화하고 네 CI 통과 후 발행. digest는 같은 포크 `environments/fork`에 기록 |
+| 공통 bootstrap | `fork_cluster.py init/doctor/up/status/credentials/dev/gitops/web`. 무작위 로컬 비밀값·전용 kind·소유권 검사 |
+| 로컬 코드 반영 | 개발 모드에서 `dev.py --watch`가 변경 서비스만 로컬 빌드·kind 적재·재시작. GHCR 업로드 없음 |
+| Windows 개발 | Windows x64의 WSL2 Ubuntu + Docker Desktop Linux 경로. 네이티브 Windows Python·ARM은 지원하지 않으며 Windows 실제 실행 검증은 별도 |
 
-`argocd/local` 최초 sync는 수동입니다. 제출본 `argocd/portfolio`도 자동 sync·self-heal·prune를
-끈 검토용 템플릿입니다. **원본 저장소나 실행 중인 클러스터의 자동 배포를 껐다는 뜻은 아닙니다.**
+`argocd/local`은 격리 검증용, `argocd/portfolio`와 `environments/portfolio`는 과거 기록과 안전한 로컬 환경값
+템플릿입니다. 이전 GovBiz-Team digest를 팀원의 이미지로 재사용하지 않습니다. 실제 포크의 release가 없으면
+일반 `up`은 멈춥니다. 개발 모드에서는 Argo Application을 두지 않고, 명시적 `gitops` 전환 때만 자동 sync와
+self-heal을 켭니다(prune는 끔). 기존 `govbiz-portfolio`를 변경하거나 인수하지 않습니다.
+
+## 팀원 시작 경로
+
+[공통 로컬 개발 안내](../../docs/local-fork-development.md)에 따라 **개인 포크 → 클론 → 도구 설치 → 개인 Actions 활성화 →
+upstream 병합 코드의 원격 포크 동기화 → 첫 이미지 발행/승격 → `git pull` → 초기화**를 진행합니다.
+개인 작업 브랜치 push나 로컬 pull만으로 이미지가 발행되지는 않습니다. 누구의 개인 계정으로 포크하든 같은 명령을 씁니다.
+개인 비공개 패키지를 읽는 `read:packages` 전용 PAT만 각자 준비하고 Git·채팅·공용 `.env`로 공유하지 않습니다.
+
+```bash
+# 아래는 infrastructure/gitops 디렉터리, 준비한 Python 3.13 가상환경에서 실행
+python -B scripts/fork_cluster.py init
+python -B scripts/fork_cluster.py doctor
+python -B scripts/fork_cluster.py up
+python -B scripts/dev.py --watch
+```
+
+`up`은 필요할 때 토큰을 숨김 입력받고, 선택된 네 이미지 manifest에 실제 pull 권한이 있는지 확인합니다.
+기존 일곱 런타임 Secret 중 일부만 있으면 DB 비밀번호를 덮어쓰지 않고 멈춥니다. 데이터는 본인 kind의
+로컬 볼륨에 저장하며 클러스터 삭제 시 잃을 수 있습니다. `up`·모드 전환은 클러스터를 자동 삭제하지 않습니다.
 
 ## 구조
 
 ```text
 infrastructure/gitops/
-├─ argocd/                  local·portfolio Application / AppProject
+├─ argocd/                  과거/격리 검증 Application / AppProject
 ├─ charts/                  서비스 Helm Chart·로컬 데이터 Chart
 ├─ environments/
 │  ├─ local-msa/            로컬 적재 이미지용 네 서비스 values
 │  ├─ portfolio/            이전 비공개 GHCR digest·receipt 보존
+│  ├─ fork/                 본인 CI가 검증/생성한 values·release.json (첫 발행 전 없음)
 │  ├─ services/ops-service/base/
 │  └─ local/               Ops 단독 Kustomize 검증
 ├─ kind/local.yaml          loopback 전용 단일 노드 검증 구성
-├─ scripts/                 오프라인 검사·격리 smoke·이전 bootstrap/승격 로직
+├─ scripts/                 포크 bootstrap·watch·검사·격리 smoke·이미지 승격
+├─ .local/fork/             Git 제외: 개인 state·kubeconfig·개발 이미지 기록
 └─ docs/                    실행 안내·경계 설계·과거 검증 기록
 ```
 
@@ -60,9 +85,9 @@ python3 -m venv .tools/venv
 git diff --check
 ```
 
-Windows에서는 Docker Desktop Linux 컨테이너와 WSL2를 사용할 수 있지만,
+Windows에서는 Docker Desktop Linux 컨테이너와 WSL2를 사용합니다.
 **팀원 Windows에서 전체 절차가 검증되었다는 뜻은 아닙니다.** 위 POSIX 명령은 WSL용이며
-네이티브 PowerShell 자동 설치 도구는 없습니다.
+네이티브 PowerShell 자동 설치 도구는 없습니다. Intel Mac과 Linux amd64 이미지가 기준입니다.
 
 ## 실제 격리 클러스터 검증
 
@@ -71,7 +96,9 @@ Windows에서는 Docker Desktop Linux 컨테이너와 WSL2를 사용할 수 있�
 성공·실패 후 자신이 만든 클러스터와 테스트 데이터를 삭제합니다. 기존 Compose 볼륨·RDS·실제
 환경 파일·유료 AI는 사용하지 않습니다. 기존 개발 컨테이너를 임의 중지하지 않습니다.
 
-이 도구는 단순 코드 저장을 감지하는 백엔드 hot reload나 팀원별 상시 Argo CD 설치와 다릅니다.
+이 smoke 도구는 임시 클러스터용입니다. 상시 로컬 실행은 `fork_cluster.py`, 저장 감지·로컬 재빌드는
+`dev.py`를 사용합니다. `up --local-images <JSON>`은 명시적인 로컬 이미지 검증 모드로, private GHCR pull 성공을
+의미하지 않습니다. 유료 AI·외부 데이터 수집·메일 발송은 기본으로 꺼져 있습니다.
 
 ## 서비스명과 배포 식별자
 
@@ -93,10 +120,10 @@ Windows에서는 Docker Desktop Linux 컨테이너와 WSL2를 사용할 수 있�
 
 - [네 서비스 실행·GitOps 기록](docs/msa-validation-20260920.md)
 - [기존 Mac portfolio 기록](docs/portfolio-validation-20260920.md)
-- [개인 fork 상시 GitOps 전환 조건](docs/portfolio-gitops.md)
-- [이미지 승격 잠금과 남은 작업](docs/image-promotion.md)
+- [개인 fork 초기 설정·GitOps 모드 전환](docs/portfolio-gitops.md)
+- [개인 이미지 발행·승격 정책](docs/image-promotion.md)
 - [서비스·데이터 경계](docs/service-boundaries.md)
 - [기존 저장소 전환 기록](docs/repository-transition.md)
 
-다음 단계는 개인 fork의 소스/브랜치·개인 GHCR 발행·읽기 전용 pull 인증·자기 PC 배포 경로를
-매개변수화하고 Windows에서 검증하는 것입니다. 토큰·비밀번호·kubeconfig는 Git에 넣지 않습니다.
+공통화된 코드가 있어도 각 팀원의 Actions 권한, PAT 만료, Docker 자원, Windows 실제 실행은 별도로 확인해야
+합니다. 토큰·비밀번호·kubeconfig는 Git에 넣지 않습니다. 원본 교육기관의 GHCR 권한은 필요하지 않습니다.

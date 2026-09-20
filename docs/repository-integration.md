@@ -42,15 +42,16 @@ Argo CD의 repository URL·`main` revision·chart 경로는 통합 저장소에 
 이미 포크한 사람도 기존 작업을 보존한 다음 원본의 새 `main`과 포크 이력을 맞춰야 하며,
 로컬 변경을 확인하지 않고 reset·force-push하지 않는다.
 
-## GHCR와 로컬 개발은 어디까지 준비됐나
+## 개인 포크의 GHCR와 로컬 개발
 
-교육기관의 GHCR은 사용하지 않는다. 이 통합본의 이미지 발행·digest promotion 워크플로는
-이전 저장소 전용 인증·증빙을 그대로 재사용하지 않도록 잠갔다. **기존 GovBiz-Team 저장소의 자동 발행을 중지한 것이 아니다.**
+교육기관의 GHCR은 사용하지 않는다. 초기 통합 때 적용한 일괄 잠금 대신, 개인 포크가 명시적으로
+동의한 경우에만 동작하는 저장소·소스·브랜치 검증을 사용한다. 기존 GovBiz-Team 저장소는 변경하지 않는다.
 
-개인 포크의 GHCR을 사용하는 계획은 가능하지만, 다음 연결까지 자동으로 완료된 것은 아니다.
+팀원은 [개인 포크 로컬 개발 안내](local-fork-development.md)를 따른다. 도구는 계정명을
+하드코딩하지 않지만, 개인 인증·발행 동의까지 다른 사용자를 대신해 자동 승인하지는 않는다.
 
-1. 각 포크의 Actions 활성화·발행 권한과 개인 GHCR 이미지 경로 설정.
-2. CI 출처·브랜치·동일 커밋 검증 및 digest 갱신을 그 포크 기준으로 연결.
+1. 각 포크의 Actions 활성화·발행 동의. 개인 GHCR 경로는 자동 계산한다.
+2. 교육기관 원본 PR 병합 → 개인 포크 원격 기본 브랜치 동기화 → 같은 소스의 네 CI 통과 → 발행·digest 갱신.
 3. 각 PC의 Kubernetes에 자기 계정의 `read:packages` 인증을 안전하게 등록.
 4. Argo CD가 자기 포크의 chart·values를 읽도록 설정하고 실제 동기화 검증.
 
@@ -58,12 +59,13 @@ Argo CD의 repository URL·`main` revision·chart 경로는 통합 저장소에 
 포크 팀원의 인증·배포 완료 증거로 취급하지 않는다. 관련 제한은
 [이미지 발행 안내](msa-image-release.md)와 [GitOps 안내](../infrastructure/gitops/README.md)를 따른다.
 
-**이미지를 내려받아 실행하는 것만으로 PC에서 수정한 코드가 컨테이너에 자동 반영되지는 않는다.**
-로컬 코드 개발의 기본 진입점은 [통합 Compose 안내](ops-monorepo-migration.md)다.
-Kubernetes에서 팀원별 소스 동기화·hot reload까지 제공하는 흐름과 Windows/WSL2에서의
-종단 간 실행은 후속 작업이다. 현재 Mac 검증 기록을 Windows 검증 완료로 표시하지 않는다.
+**이미지를 내려받는 것과 로컬 수정 반영은 별개다.** `dev.py --watch`를 실행하면 저장한 서비스만
+PC에서 재빌드해 자기 kind 클러스터에 반영한다. GHCR에 업로드하거나 다른 팀원의 환경을 바꾸지 않는다.
+Argo CD의 self-heal과 충돌하지 않도록 개발·GitOps 모드를 명시적으로 전환한다.
+Compose를 사용하려면 기존 [통합 Compose 안내](ops-monorepo-migration.md)를 따른다.
+Windows는 x64 WSL2를 대상으로 안내하며, Mac 검증 기록을 Windows 종단 간 검증 완료로 표시하지 않는다.
 
-## 확인 범위
+## 초기 통합 당시 확인 범위
 
 이동한 인프라의 단위 테스트, 저장소 경계·문서 링크, Helm/Kustomize·Argo 설정과
 통합 CI 경로를 검증한다. 서비스 업무 소스와 DB migration은 이 통합을 위해 수정하지 않는다.

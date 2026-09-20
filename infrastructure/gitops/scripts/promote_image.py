@@ -10,8 +10,12 @@ import difflib
 import json
 from pathlib import Path
 import re
+import sys
 
 import yaml
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "release"))
+from repository import from_origin  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 SERVICES = ("core-service", "catalog-service", "ai-service", "ops-service")
@@ -34,7 +38,7 @@ def unique_mapping(loader, node):
 UniqueLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, unique_mapping)
 
 
-def validate_receipt(receipt):
+def validate_receipt(receipt, fork):
     keys = {"schemaVersion", "service", "repository", "digest", "tag", "platform",
             "verifiedRevision", "sourceTree", "inputKey"}
     if set(receipt) != keys or type(receipt["schemaVersion"]) is not int or receipt["schemaVersion"] != 1:
@@ -43,7 +47,7 @@ def validate_receipt(receipt):
     if service not in SERVICES or receipt["platform"] != "linux/amd64":
         raise ValueError("Unexpected service or platform")
     patterns = {
-        "repository": r"ghcr\.io/govbiz-team/govbiz-" + service,
+        "repository": re.escape(fork.image(service)),
         "digest": r"sha256:[0-9a-f]{64}", "verifiedRevision": r"[0-9a-f]{40}",
         "sourceTree": r"[0-9a-f]{40}", "inputKey": r"[0-9a-f]{64}",
     }
@@ -54,8 +58,8 @@ def validate_receipt(receipt):
         raise ValueError("Receipt tag differs from build input identity")
 
 
-def updated_values(values, receipt, expected_digest):
-    validate_receipt(receipt)
+def updated_values(values, receipt, expected_digest, fork):
+    validate_receipt(receipt, fork)
     if values.get("localMode") is not False or values.get("serviceName") != receipt["service"]:
         raise ValueError("Promotion requires the same service and explicit localMode: false")
     current = values.get("image", {})
@@ -72,19 +76,18 @@ def updated_values(values, receipt, expected_digest):
     return updated
 
 
-def promote(root, values_path, receipt, expected_digest, write=False):
+def promote(root, values_path, receipt, expected_digest, fork, write=False):
     root = root.resolve()
     # No creation of environments, no local fixture changes, no symlink escapes.
     path = root / values_path
     parts = Path(values_path).parts
-    if (len(parts) != 3 or parts[0] != "environments" or parts[1].startswith("local")
-            or parts[1] in (".", "..", "services") or not re.fullmatch(r"[a-z][a-z0-9-]*", parts[1])
+    if (len(parts) != 3 or parts[:2] != ("environments", "fork")
             or parts[2] != receipt.get("service", "") + ".yaml"
             or path.resolve() != path.absolute() or not path.is_file()):
-        raise ValueError("Select an existing environments/<non-local-env>/<service>.yaml without symlinks")
+        raise ValueError("Select an existing environments/fork/<service>.yaml without symlinks")
     original = path.read_text()
     values = yaml.load(original, Loader=UniqueLoader)
-    updated = updated_values(values, receipt, expected_digest)
+    updated = updated_values(values, receipt, expected_digest, fork)
     if updated == values:
         return ""
     result = yaml.safe_dump(updated, sort_keys=False, allow_unicode=True)
@@ -105,13 +108,9 @@ def main():
     parser.add_argument("--expected-digest", required=True, help="Current digest; empty string only for initial setup")
     parser.add_argument("--write", action="store_true", help="Without this flag print a diff only")
     args = parser.parse_args()
-    parser.error(
-        "Image promotion is disabled after repository integration. Historical GovBiz-Team "
-        "receipt validation is retained for tests, not for a new fork release. "
-        "See docs/image-promotion.md; no receipt was read or values changed."
-    )
+    fork = from_origin(ROOT.parents[1]).require_personal_publish()
     receipt = json.loads(args.receipt.read_text())
-    print(promote(ROOT, args.values, receipt, args.expected_digest, args.write) or "No image change")
+    print(promote(ROOT, args.values, receipt, args.expected_digest, fork, args.write) or "No image change")
     print("Configuration only; no Git push or Kubernetes deployment performed.")
 
 

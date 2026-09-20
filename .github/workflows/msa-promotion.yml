@@ -1,7 +1,14 @@
-name: Portfolio image promotion (migration paused)
+name: Fork image promotion
 
 on:
+  workflow_run:
+    workflows: [MSA image candidates]
+    types: [completed]
   workflow_dispatch:
+
+env:
+  GOVBIZ_RELEASE_BRANCH: ${{ github.event.repository.default_branch }}
+  MSA_PROMOTION_ENABLED: ${{ vars.MSA_PROMOTION_ENABLED }}
 
 permissions:
   contents: read
@@ -12,15 +19,12 @@ defaults:
     working-directory: infrastructure/gitops
 
 concurrency:
-  group: portfolio-image-promotion
+  group: fork-image-promotion
   cancel-in-progress: false
 
 jobs:
   promote:
-    # Migration lock: receipts still identify the previous GovBiz-Team registry.
-    # Do not unlock until per-fork identity, private pull access and single-repo
-    # promotion are tested. A repository variable alone cannot enable writes.
-    if: ${{ false && vars.MSA_PROMOTION_ENABLED == 'true' }}
+    if: ${{ github.repository_owner != 'SKNETWORKS-FAMILY-AICAMP' && github.event.repository.owner.type == 'User' && github.event.repository.fork && vars.MSA_PROMOTION_ENABLED == 'true' && (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 12
     permissions:
@@ -31,7 +35,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: main
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
@@ -64,12 +68,26 @@ jobs:
           python -B scripts/check_kubernetes.py
           python -B scripts/check_msa.py
           python -B scripts/check_portfolio.py
+          if test -f environments/fork/release.json; then
+            python -B -c 'import sys; sys.path.insert(0,"scripts"); from check_portfolio import fork_errors; from sync_images import from_ci; problems=fork_errors(from_ci()); sys.exit("\n".join(problems)) if problems else None'
+          fi
+          for service in core-service catalog-service ai-service ops-service; do
+            if test -f "environments/fork/$service.yaml"; then
+              helm lint charts/govbiz-service -f "environments/fork/$service.yaml" --strict
+              helm template "$service" charts/govbiz-service -f "environments/fork/$service.yaml" > /dev/null
+            fi
+          done
           git diff --check
-      - name: Commit only portfolio image selection without force-push
+      - name: Commit only this fork's image selection without force-push
         shell: bash
         run: |
           set -euo pipefail
-          git add environments/portfolio/*.yaml environments/portfolio/release.json
+          if ! test -f environments/fork/release.json; then
+            echo 'No complete release to promote'
+            exit 0
+          fi
+          git add environments/fork/core-service.yaml environments/fork/catalog-service.yaml environments/fork/ai-service.yaml environments/fork/ops-service.yaml environments/fork/release.json
+          python -B -c 'import subprocess,sys; sys.path.insert(0,"../release"); from gate import PROMOTION_PATHS; changed=set(subprocess.check_output(["git", "diff", "--cached", "--name-only"],text=True).splitlines()); sys.exit("Unexpected staged files") if changed - PROMOTION_PATHS else None'
           if git diff --cached --quiet; then
             echo 'No new image selection'
             exit 0
@@ -79,4 +97,6 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git commit -m '배포: 검증된 서비스 이미지 digest 자동 갱신'
           gh auth setup-git
-          git push origin HEAD:main
+          # A GITHUB_TOKEN push does not trigger new push workflows. This avoids
+          # an image→digest→image loop; Argo still observes the Git commit.
+          git push origin "HEAD:refs/heads/$GOVBIZ_RELEASE_BRANCH"

@@ -1,7 +1,14 @@
-name: MSA image candidates (migration paused)
+name: MSA image candidates
 
 on:
+  workflow_run:
+    workflows: [GovBiz CI, Catalog separation CI, GovBiz Ops CI, Infra CI]
+    types: [completed]
   workflow_dispatch:
+
+env:
+  GOVBIZ_RELEASE_BRANCH: ${{ github.event.repository.default_branch }}
+  MSA_RELEASE_ENABLED: ${{ vars.MSA_RELEASE_ENABLED }}
 
 permissions:
   contents: read
@@ -13,21 +20,18 @@ concurrency:
 
 jobs:
   gate:
-    # Migration lock: gate.py/publish.py intentionally retain the previous
-    # GovBiz-Team/develop identity. The education organization does not provide
-    # GHCR publishing. Per-fork identity and receipt validation must be migrated
-    # and tested before removing this lock; a variable alone cannot unlock it.
-    if: ${{ false && vars.MSA_RELEASE_ENABLED == 'true' }}
+    # Never publish to the school organization. Each user explicitly opts in.
+    if: ${{ github.repository_owner != 'SKNETWORKS-FAMILY-AICAMP' && github.event.repository.owner.type == 'User' && github.event.repository.fork && vars.MSA_RELEASE_ENABLED == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       ready: ${{ steps.gate.outputs.ready }}
       sha: ${{ steps.gate.outputs.sha }}
     steps:
-      # Preserved release steps are inactive, including manually dispatched runs.
+      # Always execute trusted default-branch policy, never PR-provided scripts.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: main
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
       - id: gate
         env:

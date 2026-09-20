@@ -45,11 +45,12 @@ Compose가 생성하는 이름은 `<프로젝트명>-core-service-1`, `<프로�
 | Ops 로컬 개발 | 별도 Django 프로세스·MySQL, 상태 확인 API, 독립 테스트·컨테이너 검증 구현 |
 | Core 공고 기능 분리 | 별도 Catalog 프로세스·MySQL과 인증된 HTTP 복제 경로 구현. 루트 Compose의 기본 경로이며 기존 데이터 이전·운영 배포는 별도 |
 | Kubernetes | kind에서 Core·Catalog·AI·Ops와 독립 DB 실행, HTTP 복제·교차 DB 접근 거절·AI 단독 설정 롤아웃·Catalog 장애·테스트 데이터 복구 검증 완료 |
-| 로컬 GitOps | 기존 GovBiz-Team 두 저장소 기준 Mac 검증 기록을 보존. 이 통합 저장소의 Argo 경로는 `infrastructure/gitops/`이며 새 환경 연결은 별도 |
-| 이미지 릴리스 | 교육기관 GHCR을 사용하지 않음. 통합본의 발행·promotion은 잠금 상태이며, 개인 포크의 GHCR·읽기 인증·Argo 연결은 아직 미설정 |
-| 다음 단계 | 팀원별 포크·비공개 GHCR·Windows 로컬 Kubernetes 연결, 로컬 코드 변경 반영 방식, Ops 관리자 인증·LLMOps 업무 구현 |
+| 로컬 GitOps | `origin`에서 개인 포크를 인식하는 초기화·읽기 인증·Argo 연결 도구 제공. 개발 모드와 GitOps 모드를 명시적으로 전환 |
+| 이미지 릴리스 | 교육기관 원본에 병합되고 개인 포크에 동기화된 소스만 CI 검증 후 **개인 비공개 GHCR**에 발행. 포크별 최초 동의 필요, 교육기관 GHCR은 사용하지 않음 |
+| 로컬 코드 반영 | 감시 도구가 변경한 서비스만 로컬 이미지로 재빌드·kind 반영. 저장할 때 Git push·GHCR 업로드하지 않음 |
+| 미완료 범위 | 팀원별 최초 인증·실제 Windows/WSL2 실행 검증, Ops 관리자 인증·LLMOps 업무 구현 |
 
-**전체 MSA나 팀원별 Kubernetes 환경 구성이 완료된 상태는 아닙니다.** 통합 작업은 기존 Mac 클러스터·데이터·
+**도구 제공과 모든 팀원의 환경 검증 완료는 다릅니다.** 통합 작업은 기존 Mac 클러스터·데이터·
 원본 GovBiz-Team 저장소의 자동 배포 설정을 변경하지 않습니다. 이 저장소를 clone하는 것만으로 이미지 발행이나 배포가 시작되지 않습니다.
 [기존 실제 검증 기록](infrastructure/gitops/docs/msa-validation-20260920.md)에서
 완료 범위와 미검증 항목을 확인할 수 있습니다.
@@ -59,6 +60,18 @@ Compose가 생성하는 이름은 `<프로젝트명>-core-service-1`, `<프로�
 업로드 성공만으로 실제 배포가 완료됐다고 판단하지 않습니다.
 [로컬 MSA·Helm·GitOps 실행 방법](infrastructure/gitops/docs/msa-local.md)을 따르며,
 실제 `.env`·기존 DB·유료 AI를 사용하지 않는 임시 환경에서 검증합니다.
+
+### 팀원이 자기 포크에서 개발하는 방법
+
+[개인 포크 로컬 개발 안내](docs/local-fork-development.md)를 따릅니다. 계정명·저장소명을 코드에
+직접 바꾸지 않습니다. Windows는 **x64 WSL2 Ubuntu + Docker Desktop Linux 통합**, Mac은 현재
+검증 대상인 **Intel + Linux amd64 이미지**를 사용합니다. ARM·Windows 네이티브 실행은 미지원입니다.
+
+- **공동 배포 기준:** 개발 브랜치 → 교육기관 원본 PR·병합 → 내 포크 `main` 동기화 → CI → 비공개 GHCR → 내 PC GitOps.
+- **내 PC 개발:** 이미지를 받아 초기화 → 개발 모드에서 코드 저장 → 바뀐 서비스만 로컬 재빌드·반영.
+- `git pull`만으로 GitHub CI가 시작되지는 않습니다. 내 포크의 **원격** 기본 브랜치도 동기화해야 합니다.
+- 포크마다 Actions 발행 동의와 `read:packages` 인증은 한 번 필요합니다. 토큰은 Git에 넣지 않습니다.
+- [이미지 발행 최초 설정](infrastructure/release/README.md) · [개발·GitOps 모드 실행 명령](docs/local-fork-development.md)
 
 공고 분리 모드에서는 `Catalog → Catalog MySQL`이 원본 수집·색인을 소유하고,
 `Core → 내부 HTTP API → 검증 → Core MySQL 조회용 복제본`으로 기존 관심 공고·파트너 모집 참조를 보존합니다.
