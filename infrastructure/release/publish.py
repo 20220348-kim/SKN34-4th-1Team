@@ -53,8 +53,8 @@ def package_exists(service, token, fork):
             package = json.load(response)
     except HTTPError as error:
         if error.code == 404:
-            # A brand-new package has no pull token/manifest yet. Only the fixed
-            # own package path is eligible for creation; push still enforces ACLs.
+            # Missing and inaccessible packages are never permission to create one.
+            # GITHUB_TOKEN can make a new package inherit a public repository's visibility.
             return False
         raise RuntimeError("Cannot verify GitHub package ownership/access") from None
     if (package.get("repository", {}).get("full_name", "").lower() != fork.repository.lower()
@@ -101,6 +101,9 @@ def publish(service, sha, output, actor, token, fork):
         raise ValueError("Receipt must be a new file in an existing directory")
     if git("rev-parse", "HEAD") != sha or not eligible(sha, fork):
         raise ValueError("Checkout must be the successfully tested default-branch source")
+    if not package_exists(service, token, fork):
+        raise ValueError("A pre-created private package linked to this exact fork is required; "
+                         "automatic package creation is disabled and no image was uploaded")
     tree = git("rev-parse", f"{sha}:backend/{service}")
     key = input_key(tree, git("rev-parse", f"{sha}:infrastructure/release"))
     tag = "src-" + key
@@ -111,7 +114,7 @@ def publish(service, sha, output, actor, token, fork):
         try:
             run("docker", "login", "--username", actor, "--password-stdin", "ghcr.io",
                 input=token, capture_output=True, env=docker_env)
-            digest = lookup(uri, tag, key, docker_env, fork) if package_exists(service, token, fork) else None
+            digest = lookup(uri, tag, key, docker_env, fork)
             if digest is None:
                 archive = temporary / "source.tar"
                 run("git", "archive", "--format=tar", "--output", str(archive), sha,
@@ -126,9 +129,11 @@ def publish(service, sha, output, actor, token, fork):
                     str(temporary / "source/backend" / service), env=docker_env)
                 if not eligible(sha, fork):
                     raise ValueError("Source superseded or checks changed during build; refusing upload")
+                if not package_exists(service, token, fork):
+                    raise ValueError("Private package disappeared or became inaccessible during build; "
+                                     "refusing upload instead of creating a new package")
                 run("docker", "push", reference, env=docker_env)
-                # New GHCR packages start private. Fail closed if that invariant
-                # is not verified, including an unexpected public existing package.
+                # Recheck after upload as well; an unverified image gets no receipt.
                 if not package_exists(service, token, fork):
                     raise RuntimeError("Published package privacy/ownership could not be verified")
                 digest = lookup(uri, tag, key, docker_env, fork)
