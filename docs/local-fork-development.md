@@ -9,6 +9,8 @@
 최초 등록용 일회성 쓰기 인증과 PC에서 상시 사용할 읽기 인증은 별개입니다.
 네 패키지가 비공개·본인 소유·정확한 자기 포크 연결 상태로 먼저 준비되고 검증돼야 합니다.
 다른 사람 계정의 토큰을 받거나 여러 YAML의 계정명을 수동 치환하는 방식은 사용하지 않습니다.
+이 설명의 기본값은 비공개입니다. 의도적으로 공개하는 경우에는 [공개 전환 절차](public-ghcr-transition.md)를
+먼저 완료해야 합니다. 공개 receipt로 승격된 뒤에는 PC의 pull PAT가 필요하지 않습니다.
 
 아래의 `init`·`doctor`와 명시적 로컬 이미지 경로는 GHCR 준비와 별개입니다.
 GHCR 기반 `up`·`gitops` 명령은 비공개 초기 준비와 검증된 발행이 완료된 뒤에만 사용합니다.
@@ -18,7 +20,7 @@ GHCR 기반 `up`·`gitops` 명령은 비공개 초기 준비와 검증된 발행
 | 모드 | 반영하는 코드 | 이미지 경로 | 서비스 변경 주체 |
 |---|---|---|---|
 | `dev` | 자기 PC에 저장한 코드, 아직 커밋하지 않은 새 소스도 포함 | 로컬 Docker 빌드 → 자기 kind에 적재 | `dev.py` |
-| `gitops` | 교육기관 원본에 병합된 뒤 자기 포크의 기본 브랜치에 동기화하고 CI 검증·발행을 통과한 코드 | 비공개 GHCR → 자기 Kubernetes가 pull | Argo CD |
+| `gitops` | 교육기관 원본에 병합된 뒤 자기 포크의 기본 브랜치에 동기화하고 CI 검증·발행을 통과한 코드 | 개인 GHCR(기본 비공개, 공개 선택 가능) → 자기 Kubernetes가 pull | Argo CD |
 
 개발 모드는 Argo CD의 Application을 제거하되 서비스·DB·볼륨을 삭제하지 않습니다.
 동일 Deployment를 Argo CD와 개발 도구가 동시에 수정하지 않게 하는 구분입니다.
@@ -73,6 +75,9 @@ GHCR 경로의 선행 조건은 [이미지 발행 안내](msa-image-release.md)�
 이 읽기 토큰은 패키지 생성·업로드 인증이 아닙니다. 토큰을 채팅·`.env`·Git 파일에 적지 않습니다.
 **검증된 이미지가 준비된 후** 아래 명령은 대화형 숨김 입력을 사용하며,
 클러스터의 이미지 pull Secret에만 전달합니다.
+공개 전환을 완료하고 `release.json`에 `visibility: public`이 기록된 경우에는 같은 명령으로
+익명 다운로드를 검사하며 PAT를 묻지 않습니다. 이때 `--token-file`은 전달하지 않습니다.
+기존 읽기 Secret이나 GitHub PAT는 자동 삭제·폐기하지 않습니다.
 
 ```bash
 python -B infrastructure/gitops/scripts/fork_cluster.py up

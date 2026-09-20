@@ -122,12 +122,17 @@ def verify_token(token, fork):
 
 
 def verify_pull_rights(login, token, record):
-    """HEAD each immutable manifest using repository-scoped GHCR pull credentials."""
+    """HEAD each immutable manifest; public mode requests an anonymous scoped bearer."""
+    if (login is None) != (token is None):
+        raise ValueError("Both private credentials or neither must be supplied")
     for image in record["images"].values():
         repository, digest = image.removeprefix("ghcr.io/").split("@")
-        authorization = base64.b64encode((login + ":" + token).encode()).decode()
+        headers = {}
+        if token is not None:
+            authorization = base64.b64encode((login + ":" + token).encode()).decode()
+            headers["Authorization"] = "Basic " + authorization
         request = Request("https://ghcr.io/token?" + urlencode({"service": "ghcr.io", "scope": "repository:" + repository + ":pull"}),
-                          headers={"Authorization": "Basic " + authorization})
+                          headers=headers)
         with urlopen(request, timeout=30) as response:
             bearer = json.load(response)["token"]
         request = Request("https://ghcr.io/v2/" + repository + "/manifests/" + digest, method="HEAD",
@@ -148,6 +153,8 @@ def checked_release(settings, helm="helm"):
 
 
 def authenticate(args, settings, record):
+    if record.get("visibility", "private") == "public":
+        raise ValueError("Public images do not require a PAT; use the anonymous pull check")
     if not args.token_file and not sys.stdin.isatty():
         raise ValueError("Use --token-file with your 0600 file, or run interactively for a hidden prompt")
     token = read_token(args.token_file) if args.token_file else getpass.getpass("GHCR read:packages token (hidden): ").strip()
@@ -337,9 +344,14 @@ def _up(args, state, settings):
         raise ValueError("Stale kubeconfig: inspect it manually before creating a replacement cluster")
     credential = None
     if not images:
-        secret_exists = settings["cluster"] in clusters and bool(run(nk + ["get", "secret", "ghcr-pull", "--ignore-not-found", "-o", "name"], capture=True).strip())
-        if args.token_file or not secret_exists:
-            credential = authenticate(args, settings, record)
+        if record.get("visibility", "private") == "public":
+            if args.token_file:
+                raise ValueError("Public images do not require --token-file")
+            verify_pull_rights(None, None, record)
+        else:
+            secret_exists = settings["cluster"] in clusters and bool(run(nk + ["get", "secret", "ghcr-pull", "--ignore-not-found", "-o", "name"], capture=True).strip())
+            if args.token_file or not secret_exists:
+                credential = authenticate(args, settings, record)
     if settings["cluster"] not in clusters:
         run([args.kind, "create", "cluster", "--name", settings["cluster"], "--config", ROOT / "kind/local.yaml",
              "--kubeconfig", state / "kubeconfig", "--wait", "180s"], timeout=300)
@@ -398,7 +410,7 @@ def gitops(args, state, settings):
 def _gitops(args, state, settings):
     if (state / "dev-images.json").exists():
         raise ValueError("Local development images exist; restore them explicitly with dev.py --restore first")
-    checked_release(settings, args.helm)
+    record = checked_release(settings, args.helm)
     fork = Fork(settings["repository"], settings["branch"])
     head = run(["git", "-C", REPOSITORY_ROOT, "rev-parse", "HEAD"], capture=True).strip()
     remote = run(["git", "-C", REPOSITORY_ROOT, "ls-remote", fork.url, "refs/heads/" + fork.branch], capture=True).split()
@@ -406,7 +418,9 @@ def _gitops(args, state, settings):
         raise ValueError("GitOps requires a clean checkout pushed to this fork branch; commit/push is never automatic")
     kube, nk, ak = commands(state, settings)
     verify_context(kube, settings)
-    if not run(nk + ["get", "secret", "ghcr-pull", "--ignore-not-found", "-o", "name"], capture=True).strip():
+    if record.get("visibility", "private") == "public":
+        verify_pull_rights(None, None, record)
+    elif not run(nk + ["get", "secret", "ghcr-pull", "--ignore-not-found", "-o", "name"], capture=True).strip():
         raise ValueError("Private GHCR read credentials are missing; run credentials first")
     existing = applications(kube, ak)
     if any(a["metadata"]["name"] not in {"govbiz-fork-" + s for s in SERVICES} for a in existing):
@@ -470,7 +484,12 @@ def credentials(args, state, settings):
     with locked(state):
         kube, _, _ = commands(state, settings)
         verify_context(kube, settings)
-        credential = authenticate(args, settings, checked_release(settings, args.helm))
+        record = checked_release(settings, args.helm)
+        if record.get("visibility", "private") == "public":
+            verify_pull_rights(None, None, record)
+            print("Anonymous GHCR pull verified; no credential was read, stored or deleted.")
+            return
+        credential = authenticate(args, settings, record)
         apply(kube, [credential])
         print("Read-only authentication installed; token value was not saved to a file or printed.")
 

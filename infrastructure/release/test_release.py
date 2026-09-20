@@ -189,6 +189,37 @@ class PublicationTests(unittest.TestCase):
         with patch.object(publish, "urlopen", return_value=stream), self.assertRaises(ValueError):
             publish.package_exists("ai-service", "fixture-token", FORK)
 
+    def test_public_requires_explicit_policy_and_matching_owner_repository(self):
+        public = {"repository": {"full_name": FORK.repository},
+                  "owner": {"login": FORK.owner}, "visibility": "public"}
+        with patch.object(publish, "urlopen", return_value=io.BytesIO(json.dumps(public).encode())):
+            self.assertTrue(publish.package_exists("ai-service", "fixture-token", FORK, "public"))
+        for change in ({"visibility": "private"}, {"owner": {"login": "bob"}},
+                       {"repository": {"full_name": "alice/Other"}}):
+            with patch.object(publish, "urlopen", return_value=io.BytesIO(json.dumps(public | change).encode())), \
+                    self.assertRaises(ValueError):
+                publish.package_exists("ai-service", "fixture-token", FORK, "public")
+        for visibility in ("", "internal", "PUBLIC", None):
+            with patch.object(publish, "urlopen") as fetch, self.assertRaises(ValueError):
+                publish.package_exists("ai-service", "fixture-token", FORK, visibility)
+            fetch.assert_not_called()
+
+    def test_public_reuse_produces_explicit_v2_visibility_and_rechecks_metadata(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(publish, "git", side_effect=[SHA, TREE, POLICY]), \
+                patch.object(publish, "eligible", return_value=True), \
+                patch.object(publish, "package_exists", return_value=True) as metadata, \
+                patch.object(publish, "lookup", return_value=DIGEST), \
+                patch.object(publish, "run") as command, patch.object(publish.subprocess, "run"):
+            output = Path(directory) / "receipt.json"
+            publish.publish("ai-service", SHA, output, "actor", "fixture-token", FORK, "public")
+            result = json.loads(output.read_text())
+            self.assertEqual(result["schemaVersion"], 2)
+            self.assertEqual(result["visibility"], "public")
+            self.assertEqual(metadata.call_count, 2)
+            self.assertTrue(all(call.args[-1] == "public" for call in metadata.call_args_list))
+            self.assertEqual([call.args[:2] for call in command.call_args_list], [("docker", "login")])
+
     def test_missing_package_preflight_never_logs_in_archives_builds_or_uploads(self):
         with tempfile.TemporaryDirectory() as directory, \
                 patch.object(publish, "git", return_value=SHA), \

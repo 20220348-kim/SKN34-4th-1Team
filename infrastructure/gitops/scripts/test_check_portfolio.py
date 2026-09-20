@@ -73,6 +73,25 @@ class ForkPolicies(unittest.TestCase):
             problems = fork_errors(Fork("alice/project"), Path(directory))
             self.assertIn("No verified personal release", problems[0])
 
+    def test_public_release_requires_empty_pull_auth_for_all_four_services(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fork = Fork("alice/project")
+            destination = self.prepare(root, fork)
+            record_path = destination / "release.json"
+            record = json.loads(record_path.read_text())
+            record["visibility"] = "public"
+            record_path.write_text(json.dumps(record))
+            for service in ("core-service", "catalog-service", "ai-service", "ops-service"):
+                path = destination / (service + ".yaml")
+                values = yaml.safe_load(path.read_text())
+                values["imagePullSecrets"] = []
+                path.write_text(yaml.safe_dump(values))
+            self.assertEqual(fork_errors(fork, root), [])
+            record.pop("visibility")  # legacy records must still require private pull authentication
+            record_path.write_text(json.dumps(record))
+            self.assertTrue(fork_errors(fork, root))
+
     def test_release_of_another_owner_and_paid_api_environment_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

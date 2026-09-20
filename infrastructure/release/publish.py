@@ -42,7 +42,9 @@ def input_key(tree, publisher_tree):
     return hashlib.sha256(f"v1\n{PLATFORM}\n{tree}\n{publisher_tree}\n".encode()).hexdigest()
 
 
-def package_exists(service, token, fork):
+def package_exists(service, token, fork, visibility="private"):
+    if visibility not in ("private", "public"):
+        raise ValueError("Package visibility must be private or public")
     repository(service, fork)
     request = Request(f"https://api.github.com/users/{fork.owner}/packages/container/{fork.name.lower()}-{service}",
                       headers={"Authorization": "Bearer " + token,
@@ -59,8 +61,8 @@ def package_exists(service, token, fork):
         raise RuntimeError("Cannot verify GitHub package ownership/access") from None
     if (package.get("repository", {}).get("full_name", "").lower() != fork.repository.lower()
             or package.get("owner", {}).get("login", "").lower() != fork.owner.lower()
-            or package.get("visibility") != "private"):
-        raise ValueError("Package must be private, owned by this user and linked to this exact fork")
+            or package.get("visibility") != visibility):
+        raise ValueError(f"Package must be {visibility}, owned by this user and linked to this exact fork")
     return True
 
 
@@ -92,7 +94,7 @@ def lookup(uri, tag, key, docker_env, fork):
     return digest
 
 
-def publish(service, sha, output, actor, token, fork):
+def publish(service, sha, output, actor, token, fork, visibility="private"):
     fork.require_personal_publish()
     uri = repository(service, fork)
     if not valid_sha(sha) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9\[\]-]*", actor) or not token:
@@ -101,8 +103,8 @@ def publish(service, sha, output, actor, token, fork):
         raise ValueError("Receipt must be a new file in an existing directory")
     if git("rev-parse", "HEAD") != sha or not eligible(sha, fork):
         raise ValueError("Checkout must be the successfully tested default-branch source")
-    if not package_exists(service, token, fork):
-        raise ValueError("A pre-created private package linked to this exact fork is required; "
+    if not package_exists(service, token, fork, visibility):
+        raise ValueError(f"A pre-created {visibility} package linked to this exact fork is required; "
                          "automatic package creation is disabled and no image was uploaded")
     tree = git("rev-parse", f"{sha}:backend/{service}")
     key = input_key(tree, git("rev-parse", f"{sha}:infrastructure/release"))
@@ -129,21 +131,23 @@ def publish(service, sha, output, actor, token, fork):
                     str(temporary / "source/backend" / service), env=docker_env)
                 if not eligible(sha, fork):
                     raise ValueError("Source superseded or checks changed during build; refusing upload")
-                if not package_exists(service, token, fork):
-                    raise ValueError("Private package disappeared or became inaccessible during build; "
+                if not package_exists(service, token, fork, visibility):
+                    raise ValueError("Package disappeared or became inaccessible during build; "
                                      "refusing upload instead of creating a new package")
                 run("docker", "push", reference, env=docker_env)
                 # Recheck after upload as well; an unverified image gets no receipt.
-                if not package_exists(service, token, fork):
-                    raise RuntimeError("Published package privacy/ownership could not be verified")
+                if not package_exists(service, token, fork, visibility):
+                    raise RuntimeError("Published package visibility/ownership could not be verified")
                 digest = lookup(uri, tag, key, docker_env, fork)
                 if digest is None:
                     raise RuntimeError("Pushed image was not found in GHCR")
+            elif not package_exists(service, token, fork, visibility):
+                raise ValueError("Reused package visibility/ownership could not be verified")
         finally:
             subprocess.run(["docker", "logout", "ghcr.io"], capture_output=True, env=docker_env)
     if not eligible(sha, fork):
         raise ValueError("Source superseded before receipt; uploaded images are not deployment approval")
-    receipt = {"schemaVersion": 1, "service": service, "repository": uri, "digest": digest,
+    receipt = {"schemaVersion": 2, "visibility": visibility, "service": service, "repository": uri, "digest": digest,
                "tag": tag, "platform": PLATFORM, "verifiedRevision": sha, "sourceTree": tree,
                "inputKey": key}
     with output.open("x") as file:
@@ -162,7 +166,8 @@ def main():
         raise SystemExit("Image publication is disabled")
     fork = from_ci()
     fork.require_personal_publish()
-    publish(args.service, args.sha, args.output, os.environ["GITHUB_ACTOR"], os.environ["GH_TOKEN"], fork)
+    publish(args.service, args.sha, args.output, os.environ["GITHUB_ACTOR"], os.environ["GH_TOKEN"], fork,
+            os.environ.get("MSA_PACKAGE_VISIBILITY", "private"))
 
 
 if __name__ == "__main__":

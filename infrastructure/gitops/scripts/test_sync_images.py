@@ -40,6 +40,33 @@ def zipped(data, filename="ai-service.json"):
 
 
 class SyncTests(unittest.TestCase):
+    def test_public_batch_removes_pull_secret_but_retains_runtime_secrets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            shutil.copytree(sync.ROOT / "environments/portfolio", root / "environments/portfolio")
+            receipts = [{**receipt(), "schemaVersion": 2, "visibility": "public",
+                         "service": service, "repository": FORK.image(service)} for service in sync.SERVICES]
+            with patch.object(sync, "select_release", return_value=(run(), [])), \
+                    patch.object(sync, "eligible", return_value=True), \
+                    patch.object(sync, "checked_receipts", return_value=receipts):
+                sync.synchronize(FORK, root=root, write=True)
+            marker = json.loads((root / "environments/fork/release.json").read_text())
+            self.assertEqual(marker["visibility"], "public")
+            sync.validate_record(marker, FORK)
+            for service in sync.SERVICES:
+                new = yaml.safe_load((root / f"environments/fork/{service}.yaml").read_text())
+                old = yaml.safe_load((root / f"environments/portfolio/{service}.yaml").read_text())
+                self.assertEqual(new["imagePullSecrets"], [])
+                self.assertEqual(new["secretName"], old["secretName"])
+                self.assertEqual(new["secretKeys"], old["secretKeys"])
+            self.assertEqual(sync.prepare(root, receipts, FORK), {})
+            receipts[-1]["visibility"] = "private"
+            with self.assertRaisesRegex(ValueError, "agree on package visibility"):
+                sync.prepare(root, receipts, FORK)
+            for invalid in ("", "internal", None):
+                with self.assertRaises(ValueError):
+                    sync.validate_record(marker | {"visibility": invalid}, FORK)
+
     def test_exact_receipt_and_archive_checksum(self):
         payload, metadata = zipped(receipt())
         self.assertEqual(sync.decode_receipt(payload, metadata, SHA, FORK), receipt())

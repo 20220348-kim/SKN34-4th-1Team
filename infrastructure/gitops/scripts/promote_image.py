@@ -41,8 +41,11 @@ UniqueLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, uni
 def validate_receipt(receipt, fork):
     keys = {"schemaVersion", "service", "repository", "digest", "tag", "platform",
             "verifiedRevision", "sourceTree", "inputKey"}
-    if set(receipt) != keys or type(receipt["schemaVersion"]) is not int or receipt["schemaVersion"] != 1:
+    version = receipt.get("schemaVersion")
+    if type(version) is not int or version not in (1, 2) or set(receipt) != (keys | {"visibility"} if version == 2 else keys):
         raise ValueError("Unsupported or unexpected image receipt fields")
+    if receipt.get("visibility", "private") not in ("private", "public"):
+        raise ValueError("Invalid receipt visibility")
     service = receipt["service"]
     if service not in SERVICES or receipt["platform"] != "linux/amd64":
         raise ValueError("Unexpected service or platform")
@@ -73,6 +76,7 @@ def updated_values(values, receipt, expected_digest, fork):
         raise ValueError("Non-local values must use digest, no tag, and a registry pull policy")
     updated = copy.deepcopy(values)
     updated["image"]["digest"] = receipt["digest"]
+    updated["imagePullSecrets"] = [] if receipt.get("visibility", "private") == "public" else [{"name": "ghcr-pull"}]
     return updated
 
 

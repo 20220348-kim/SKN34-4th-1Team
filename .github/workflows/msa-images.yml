@@ -9,6 +9,8 @@ on:
 env:
   GOVBIZ_RELEASE_BRANCH: ${{ github.event.repository.default_branch }}
   MSA_RELEASE_ENABLED: ${{ vars.MSA_RELEASE_ENABLED }}
+  # Default stays private; this validates visibility, never changes it on GitHub.
+  MSA_PACKAGE_VISIBILITY: ${{ vars.MSA_PACKAGE_VISIBILITY || 'private' }}
 
 permissions:
   contents: read
