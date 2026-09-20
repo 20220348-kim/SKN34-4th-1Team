@@ -189,6 +189,109 @@ class PublicationTests(unittest.TestCase):
         with patch.object(publish, "urlopen", return_value=stream), self.assertRaises(ValueError):
             publish.package_exists("ai-service", "fixture-token", FORK)
 
+    def test_missing_package_preflight_never_logs_in_archives_builds_or_uploads(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(publish, "git", return_value=SHA), \
+                patch.object(publish, "eligible", return_value=True), \
+                patch.object(publish, "urlopen", side_effect=HTTPError("https://api.github.com", 404, "fixture", {}, None)), \
+                patch.object(publish, "lookup") as lookup, \
+                patch.object(publish, "run") as command, \
+                patch.object(publish.subprocess, "run") as process:
+            output = Path(directory) / "receipt.json"
+            with self.assertRaisesRegex(ValueError, "pre-created private package.*automatic package creation is disabled"):
+                publish.publish("ai-service", SHA, output, "actor", "fixture-token", FORK)
+            command.assert_not_called()
+            process.assert_not_called()
+            lookup.assert_not_called()
+            self.assertFalse(output.exists())
+
+    def test_untrusted_package_preflight_never_logs_in_archives_builds_or_uploads(self):
+        for changes in ({"visibility": "public"}, {"owner": {"login": "bob"}},
+                        {"repository": {"full_name": "alice/Another"}}):
+            package = {"repository": {"full_name": FORK.repository},
+                       "owner": {"login": FORK.owner}, "visibility": "private", **changes}
+            with self.subTest(changes=changes), tempfile.TemporaryDirectory() as directory, \
+                    patch.object(publish, "git", return_value=SHA), \
+                    patch.object(publish, "eligible", return_value=True), \
+                    patch.object(publish, "urlopen", return_value=io.BytesIO(json.dumps(package).encode())), \
+                    patch.object(publish, "lookup") as lookup, \
+                    patch.object(publish, "run") as command, \
+                    patch.object(publish.subprocess, "run") as process:
+                output = Path(directory) / "receipt.json"
+                with self.assertRaisesRegex(ValueError, "private, owned by this user and linked to this exact fork"):
+                    publish.publish("ai-service", SHA, output, "actor", "fixture-token", FORK)
+                command.assert_not_called()
+                process.assert_not_called()
+                lookup.assert_not_called()
+                self.assertFalse(output.exists())
+
+    def test_package_revalidated_after_build_before_any_upload(self):
+        private = {"repository": {"full_name": FORK.repository},
+                   "owner": {"login": FORK.owner}, "visibility": "private"}
+        for changed in ({**private, "visibility": "public"},
+                        {**private, "owner": {"login": "bob"}},
+                        {**private, "repository": {"full_name": "alice/Another"}}, None):
+            after_build = (io.BytesIO(json.dumps(changed).encode()) if changed else
+                           HTTPError("https://api.github.com", 404, "fixture", {}, None))
+            with self.subTest(changed=changed), tempfile.TemporaryDirectory() as directory, \
+                    patch.object(publish, "git", side_effect=[SHA, TREE, POLICY]), \
+                    patch.object(publish, "eligible", return_value=True), \
+                    patch.object(publish, "urlopen", side_effect=[io.BytesIO(json.dumps(private).encode()), after_build]) as metadata, \
+                    patch.object(publish, "lookup", return_value=None), \
+                    patch.object(publish.tarfile, "open"), \
+                    patch.object(publish, "run") as command, \
+                    patch.object(publish.subprocess, "run") as logout:
+                output = Path(directory) / "receipt.json"
+                with self.assertRaises(ValueError):
+                    publish.publish("ai-service", SHA, output, "actor", "fixture-token", FORK)
+                self.assertEqual(metadata.call_count, 2)
+                self.assertEqual([call.args[:2] for call in command.call_args_list],
+                                 [("docker", "login"), ("git", "archive"), ("docker", "build")])
+                logout.assert_called_once()
+                self.assertFalse(output.exists())
+
+    def test_existing_private_package_accepts_new_tag_after_three_metadata_checks(self):
+        private = {"repository": {"full_name": FORK.repository},
+                   "owner": {"login": FORK.owner}, "visibility": "private"}
+        steps = []
+        def metadata(*args, **kwargs):
+            steps.append("metadata")
+            return io.BytesIO(json.dumps(private).encode())
+        def command(*args, **kwargs):
+            steps.append(" ".join(args[:2]))
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(publish, "git", side_effect=[SHA, TREE, POLICY]), \
+                patch.object(publish, "eligible", return_value=True), \
+                patch.object(publish, "urlopen", side_effect=metadata), \
+                patch.object(publish, "lookup", side_effect=[None, DIGEST]), \
+                patch.object(publish.tarfile, "open"), \
+                patch.object(publish, "run", side_effect=command), \
+                patch.object(publish.subprocess, "run") as logout:
+            output = Path(directory) / "receipt.json"
+            publish.publish("ai-service", SHA, output, "actor", "fixture-token", FORK)
+            self.assertEqual(steps, ["metadata", "docker login", "git archive", "docker build",
+                                     "metadata", "docker push", "metadata"])
+            receipt = json.loads(output.read_text())
+            self.assertEqual(receipt["repository"], URI)
+            self.assertEqual(receipt["digest"], DIGEST)
+            logout.assert_called_once()
+
+    def test_package_changed_after_push_gets_no_receipt(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(publish, "git", side_effect=[SHA, TREE, POLICY]), \
+                patch.object(publish, "eligible", return_value=True), \
+                patch.object(publish, "package_exists", side_effect=[True, True, ValueError("privacy changed")]), \
+                patch.object(publish, "lookup", return_value=None), \
+                patch.object(publish.tarfile, "open"), \
+                patch.object(publish, "run") as command, \
+                patch.object(publish.subprocess, "run") as logout:
+            output = Path(directory) / "receipt.json"
+            with self.assertRaisesRegex(ValueError, "privacy changed"):
+                publish.publish("ai-service", SHA, output, "actor", "fixture-token", FORK)
+            self.assertEqual(command.call_args.args[:2], ("docker", "push"))
+            logout.assert_called_once()
+            self.assertFalse(output.exists())
+
     def test_different_people_get_different_namespaces(self):
         self.assertEqual(publish.repository("ai-service", Fork("bob/MyProject")),
                          "ghcr.io/bob/myproject-ai-service")
