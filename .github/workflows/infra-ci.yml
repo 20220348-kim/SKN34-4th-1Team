@@ -115,6 +115,7 @@ jobs:
           python -B -m unittest discover -s scripts -p 'test_check_msa.py'
           python -B -m unittest discover -s scripts -p 'test_check_portfolio.py'
           python -B -m unittest discover -s scripts -p 'test_fork_cluster.py'
+          python -B -m unittest discover -s scripts -p 'test_connected_runtime.py'
           python -B -m unittest discover -s scripts -p 'test_migration_guards.py'
       - name: Validate independent releases and Argo project scope
         run: |
@@ -127,3 +128,4 @@ jobs:
             helm lint charts/govbiz-service -f "environments/local-msa/$service.yaml" --strict
           done
           helm lint charts/govbiz-local-data --set allowDisposableData=true --strict
+          helm lint charts/govbiz-local-data --set allowDisposableData=true --set rabbitmq.enabled=true --strict

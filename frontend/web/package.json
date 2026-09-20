@@ -11,6 +11,7 @@
   "scripts": {
     "dev": "vite",
     "dev:k8s": "vite --mode portfolio",
+    "dev:k8s:connected": "vite --mode connected",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "test": "vitest run",

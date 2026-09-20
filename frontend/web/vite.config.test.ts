@@ -13,6 +13,19 @@ afterEach(() => {
 })
 
 describe('Kubernetes portfolio mode', () => {
+  it('enables the AI UI only in explicit connected mode without exposing env files', () => {
+    vi.stubEnv('VITE_PRIVATE_KEY', 'must-never-appear')
+    vi.stubEnv('OPENAI_API_KEY', 'must-never-appear')
+    const result = config({ mode: 'connected', command: 'serve' })
+    expect(loadEnv).not.toHaveBeenCalled()
+    expect(result.envDir).toBe(false)
+    expect(result.envPrefix).toEqual([])
+    expect(result.define['import.meta.env.VITE_ASSISTANT_AI_ENABLED']).toBe('"true"')
+    expect(JSON.stringify(result)).not.toContain('must-never-appear')
+    expect(result.server.host).toBe('127.0.0.1')
+    expect(result.server.proxy['/api'].target).toBe('http://127.0.0.1:18080')
+  })
+
   it('ignores env files and inherited VITE values, uses only the loopback API', () => {
     vi.stubEnv('VITE_DEV_PROXY_TARGET', 'https://must-not-be-used.invalid')
     vi.stubEnv('VITE_CORE_API_BASE_URL', 'https://must-not-be-used.invalid')

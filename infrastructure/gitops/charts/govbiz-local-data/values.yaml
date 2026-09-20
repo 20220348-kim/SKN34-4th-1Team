@@ -1,4 +1,8 @@
 allowDisposableData: false
+rabbitmq:
+  enabled: false
+  image: rabbitmq:4.3.5-management-alpine
+  secretName: rabbitmq-runtime
 mysqlImage: mysql:8.4
 databases:
   core: {database: govbiz_core, user: govbiz_core}
