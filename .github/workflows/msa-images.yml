@@ -1,0 +1,77 @@
+name: MSA image candidates (migration paused)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: msa-image-candidates
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    # Migration lock: gate.py/publish.py intentionally retain the previous
+    # GovBiz-Team/develop identity. The education organization does not provide
+    # GHCR publishing. Per-fork identity and receipt validation must be migrated
+    # and tested before removing this lock; a variable alone cannot unlock it.
+    if: ${{ false && vars.MSA_RELEASE_ENABLED == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      ready: ${{ steps.gate.outputs.ready }}
+      sha: ${{ steps.gate.outputs.sha }}
+    steps:
+      # Preserved release steps are inactive, including manually dispatched runs.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B infrastructure/release/gate.py
+
+  publish:
+    needs: gate
+    if: needs.gate.outputs.ready == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: msa-release
+    permissions:
+      contents: read
+      actions: read
+      packages: write
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        service: [core-service, catalog-service, ai-service, ops-service]
+    env:
+      GH_TOKEN: ${{ github.token }}
+      MSA_RELEASE_ENABLED: ${{ vars.MSA_RELEASE_ENABLED }}
+      SOURCE_SHA: ${{ needs.gate.outputs.sha }}
+      SERVICE: ${{ matrix.service }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - name: Recheck CI and Buildx before authenticating to GHCR
+        run: |
+          python3 -B infrastructure/release/gate.py --check-sha "$SOURCE_SHA"
+          docker buildx version
+      - name: Build tracked service source or reuse its verified GHCR image
+        run: python3 -B infrastructure/release/publish.py --service "$SERVICE" --sha "$SOURCE_SHA" --output "${RUNNER_TEMP}/${SERVICE}.json"
+      - name: Save only the public image receipt, never environment files
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: msa-image-${{ matrix.service }}
+          path: ${{ runner.temp }}/${{ matrix.service }}.json
+          if-no-files-found: error
+          retention-days: 30

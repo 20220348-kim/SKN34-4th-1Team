@@ -1,0 +1,18 @@
+serviceName: ops-service
+localMode: true
+image: {repository: govbiz-ops-service, tag: local-k8s, pullPolicy: Never}
+port: 8000
+healthPath: /api/v1/health
+readyPath: /api/v1/health/ready
+resources:
+  requests: {cpu: 100m, memory: 128Mi}
+  limits: {cpu: "1", memory: 384Mi}
+env:
+  DJANGO_DEBUG: "false"
+  DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,ops-service
+  DB_NAME: govbiz_ops
+  DB_USER: govbiz_ops
+  DB_HOST: ops-mysql
+  DB_PORT: "3306"
+secretName: ops-runtime
+secretKeys: [DJANGO_SECRET_KEY, DB_PASSWORD]

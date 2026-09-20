@@ -1,0 +1,54 @@
+name: Catalog separation CI
+
+on:
+  push:
+    # Validate every submitted branch, including commits that only change release
+    # policy or documentation. Image publication remains migration-locked.
+  pull_request:
+    paths:
+      - "backend/catalog-service/**"
+      - "backend/core-service/**"
+      - "backend/ai-service/**"
+      - "infrastructure/**"
+      - "compose*.yaml"
+      - ".github/workflows/**"
+
+permissions:
+  contents: read
+
+jobs:
+  catalog-service:
+    name: Catalog clean build and boundaries
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Java
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+          cache-dependency-path: |
+            backend/catalog-service/*.gradle
+            backend/catalog-service/gradle/wrapper/gradle-wrapper.properties
+      - name: Clean build and test against real MySQL
+        working-directory: backend/catalog-service
+        run: ./gradlew clean build --no-daemon
+      - name: Check isolated configuration and source boundaries
+        run: python3 -B infrastructure/scripts/verify-catalog-separation.py --config-only
+
+  catalog-integration:
+    name: Catalog to Core HTTP projection with offline fixtures
+    needs: catalog-service
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify isolated catalog collection, projection, search and outage preservation
+        run: python3 -B infrastructure/scripts/verify-catalog-separation.py

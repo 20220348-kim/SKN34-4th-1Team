@@ -1,0 +1,5 @@
+# Linux/WSL entrypoints must remain executable after a Windows checkout.
+*.sh text eol=lf
+**/gradlew text eol=lf
+# Preserve the reviewed seed bytes used by the backfill SHA-256 check.
+infrastructure/seed/application-form-openai-analysis-20260915-v2.json -text

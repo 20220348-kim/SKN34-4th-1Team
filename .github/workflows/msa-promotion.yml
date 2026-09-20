@@ -1,0 +1,82 @@
+name: Portfolio image promotion (migration paused)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+defaults:
+  run:
+    working-directory: infrastructure/gitops
+
+concurrency:
+  group: portfolio-image-promotion
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    # Migration lock: receipts still identify the previous GovBiz-Team registry.
+    # Do not unlock until per-fork identity, private pull access and single-repo
+    # promotion are tested. A repository variable alone cannot enable writes.
+    if: ${{ false && vars.MSA_PROMOTION_ENABLED == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+      - run: python -m pip install --requirement scripts/requirements.txt
+      - name: Install pinned Helm and kubectl
+        shell: bash
+        run: |
+          set -euo pipefail
+          tool_dir="$(mktemp -d)"
+          cd "$tool_dir"
+          curl -fsSLO https://get.helm.sh/helm-v4.3.0-linux-amd64.tar.gz
+          curl -fsSLO https://get.helm.sh/helm-v4.3.0-linux-amd64.tar.gz.sha256sum
+          sha256sum --check helm-v4.3.0-linux-amd64.tar.gz.sha256sum
+          tar -xzf helm-v4.3.0-linux-amd64.tar.gz
+          curl -fsSLo kubectl https://dl.k8s.io/release/v1.36.4/bin/linux/amd64/kubectl
+          curl -fsSLo kubectl.sha256 https://dl.k8s.io/release/v1.36.4/bin/linux/amd64/kubectl.sha256
+          echo "$(< kubectl.sha256)  kubectl" | sha256sum --check
+          chmod +x kubectl
+          echo "$tool_dir" >> "$GITHUB_PATH"
+          echo "$tool_dir/linux-amd64" >> "$GITHUB_PATH"
+      - name: Test policy and promotion tools
+        run: python -B -m unittest discover -s scripts -p 'test_*.py'
+      - name: Fetch verified receipts and select digests
+        run: python -B scripts/sync_images.py --write
+      - name: Validate proposed deployment before any push
+        run: |
+          set -euo pipefail
+          python -B scripts/check_repository.py
+          python -B scripts/check_kubernetes.py
+          python -B scripts/check_msa.py
+          python -B scripts/check_portfolio.py
+          git diff --check
+      - name: Commit only portfolio image selection without force-push
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add environments/portfolio/*.yaml environments/portfolio/release.json
+          if git diff --cached --quiet; then
+            echo 'No new image selection'
+            exit 0
+          fi
+          python -B scripts/sync_images.py --verify-record
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m '배포: 검증된 서비스 이미지 digest 자동 갱신'
+          gh auth setup-git
+          git push origin HEAD:main

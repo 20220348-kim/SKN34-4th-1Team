@@ -1,0 +1,5 @@
+apiVersion: v2
+name: govbiz-service
+description: One independently released GovBiz HTTP service, without database ownership.
+type: application
+version: 0.1.0

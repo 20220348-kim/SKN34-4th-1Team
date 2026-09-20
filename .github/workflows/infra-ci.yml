@@ -1,0 +1,108 @@
+name: Infra CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+# GitOps code lives inside the application repository; Actions are discovered
+# only in the repository-root .github/workflows directory.
+defaults:
+  run:
+    working-directory: infrastructure/gitops
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  repository:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out deployment configuration
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - name: Check whitespace
+        run: git show --format= --check HEAD
+      - name: Test repository boundary checks
+        run: python -B -m unittest discover -s scripts -p 'test_check_repository.py'
+      - name: Validate repository boundary and documentation links
+        run: python -B scripts/check_repository.py
+
+  kubernetes-manifests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out deployment configuration
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: infrastructure/gitops/scripts/requirements.txt
+      - name: Install manifest parser
+        run: python -m pip install --requirement scripts/requirements.txt
+      - name: Install kubectl for offline Kustomize rendering
+        env:
+          KUBECTL_VERSION: v1.36.4
+        run: |
+          set -euo pipefail
+          tool_dir="$(mktemp -d)"
+          curl --fail --silent --show-error --location "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" --output "$tool_dir/kubectl"
+          curl --fail --silent --show-error --location "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl.sha256" --output "$tool_dir/kubectl.sha256"
+          (cd "$tool_dir" && echo "$(< kubectl.sha256)  kubectl" | sha256sum --check)
+          chmod +x "$tool_dir/kubectl"
+          echo "$tool_dir" >> "$GITHUB_PATH"
+      - name: Test repository, manifest policies and smoke-test safety guards
+        run: python -B -m unittest discover -s scripts -p 'test_*.py'
+      - name: Render local overlays and validate policies without a cluster
+        run: python -B scripts/check_kubernetes.py
+
+  helm-gitops:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - run: python -m pip install --requirement scripts/requirements.txt
+      - name: Install pinned Helm with checksum verification
+        run: |
+          set -euo pipefail
+          tool_dir="$(mktemp -d)"
+          cd "$tool_dir"
+          curl -fsSLO https://get.helm.sh/helm-v4.3.0-linux-amd64.tar.gz
+          curl -fsSLO https://get.helm.sh/helm-v4.3.0-linux-amd64.tar.gz.sha256sum
+          sha256sum --check helm-v4.3.0-linux-amd64.tar.gz.sha256sum
+          tar -xzf helm-v4.3.0-linux-amd64.tar.gz
+          echo "$tool_dir/linux-amd64" >> "$GITHUB_PATH"
+      - name: Test chart boundaries and rejected settings
+        run: |
+          python -B -m unittest discover -s scripts -p 'test_check_msa.py'
+          python -B -m unittest discover -s scripts -p 'test_check_portfolio.py'
+          python -B -m unittest discover -s scripts -p 'test_migration_guards.py'
+      - name: Validate independent releases and Argo project scope
+        run: |
+          python -B scripts/check_msa.py
+          python -B scripts/check_portfolio.py
+      - name: Lint each service and disposable local storage
+        run: |
+          set -euo pipefail
+          for service in core-service catalog-service ai-service ops-service; do
+            helm lint charts/govbiz-service -f "environments/local-msa/$service.yaml" --strict
+          done
+          helm lint charts/govbiz-local-data --set allowDisposableData=true --strict

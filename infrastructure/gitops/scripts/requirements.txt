@@ -1,0 +1,2 @@
+# Local/CI manifest validation only; not an application runtime dependency.
+PyYAML==6.0.3

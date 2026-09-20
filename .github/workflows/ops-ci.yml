@@ -1,0 +1,101 @@
+name: GovBiz Ops CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Ops checks and MySQL tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend/ops-service
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_DATABASE: govbiz4
+          MYSQL_ROOT_PASSWORD: ci-only-password
+          MYSQL_ROOT_HOST: "%"
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 --silent"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=30
+    env:
+      DJANGO_SECRET_KEY: ci-only-django-secret-key-not-used-in-any-deployment-2026
+      DJANGO_DEBUG: "false"
+      DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,testserver
+      DB_NAME: govbiz4
+      DB_USER: root
+      DB_PASSWORD: ci-only-password
+      DB_HOST: 127.0.0.1
+      DB_PORT: "3306"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.5"
+          python-version: "3.13"
+          working-directory: backend/ops-service
+          enable-cache: true
+          cache-dependency-glob: backend/ops-service/uv.lock
+      - name: Install MySQL build dependencies
+        run: sudo apt-get update && sudo apt-get install -y default-libmysqlclient-dev build-essential pkg-config
+      - name: Check lock file
+        run: uv lock --check
+      - name: Sync dependencies
+        run: uv sync --locked
+      - name: Check installed dependencies
+        run: uv pip check --python .venv/bin/python
+      - name: Lint
+        run: uv run --locked ruff check .
+      - name: Check formatting
+        run: uv run --locked ruff format --check .
+      - name: Check Django configuration
+        run: uv run --locked python manage.py check
+      - name: Check migrations
+        run: uv run --locked python manage.py makemigrations --check --dry-run
+      - name: Test against MySQL 8.4
+        run: uv run --locked python manage.py test --noinput
+
+  docker:
+    name: Ops container integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    needs: checks
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The script creates isolated fixture files, ports and volumes, runs only
+      # Django/MySQL, and cleans up its own containers even after a failure.
+      - name: Validate standalone Ops Compose
+        working-directory: backend/ops-service
+        run: |
+          cp .env.example .env
+          docker compose --env-file .env --file compose.yaml config --quiet
+      - name: Validate Compose and smoke-test Ops without external API calls
+        run: python3 -B infrastructure/scripts/check-compose.py --smoke
+      - name: Verify default Gunicorn image with a read-only filesystem
+        run: python3 -B backend/ops-service/scripts/check-image.py

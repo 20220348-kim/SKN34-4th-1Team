@@ -1,0 +1,92 @@
+plugins {
+    id 'java'
+    id 'idea'
+    id 'org.jetbrains.kotlin.jvm' version '2.4.10'
+    id 'org.jetbrains.kotlin.plugin.spring' version '2.4.10'
+    id 'org.springframework.boot' version '4.1.0'
+    id 'io.spring.dependency-management' version '1.1.7'
+}
+
+idea {
+    module {
+        downloadSources = true
+        downloadJavadoc = false
+    }
+}
+
+group = 'ai.govbiz'
+version = '0.0.1-SNAPSHOT'
+description = 'GovBiz Core API'
+
+springBoot { mainClass = 'ai.govbiz.core.CoreApiApplicationKt' }
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+kotlin {
+    jvmToolchain(21)
+    compilerOptions {
+        freeCompilerArgs.addAll(
+            '-Xjsr305=strict',
+            '-Xjspecify-annotations=strict'
+        )
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'org.jetbrains.kotlin:kotlin-reflect'
+    implementation 'org.springframework.boot:spring-boot-starter-webmvc'
+    implementation 'org.springframework.boot:spring-boot-starter-restclient'
+    implementation 'org.springframework.boot:spring-boot-starter-mail'
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
+    implementation 'org.springframework.boot:spring-boot-starter-flyway'
+    implementation 'org.springframework.boot:spring-boot-starter-data-redis'
+    implementation 'org.springframework.boot:spring-boot-starter-amqp'
+    implementation 'org.mybatis.spring.boot:mybatis-spring-boot-starter:4.0.0'
+    implementation 'tools.jackson.module:jackson-module-kotlin'
+    implementation 'org.jsoup:jsoup:1.23.2'
+    implementation 'org.apache.pdfbox:pdfbox:3.0.8'
+    implementation 'kr.dogfoot:hwplib:1.1.11'
+    implementation 'org.apache.tika:tika-core:4.0.0'
+    implementation 'org.apache.tika:tika-parser-miscoffice-module:4.0.0'
+    // 회원 비밀번호 BCrypt 해시 전용. Security filter chain·자동 설정은 사용하지 않는다.
+    implementation 'org.springframework.security:spring-security-crypto'
+
+    runtimeOnly 'com.mysql:mysql-connector-j'
+    runtimeOnly 'org.flywaydb:flyway-mysql'
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
+    testImplementation 'org.springframework.boot:spring-boot-starter-restclient-test'
+    testImplementation 'org.springframework.boot:spring-boot-testcontainers'
+    testImplementation 'org.testcontainers:testcontainers-junit-jupiter'
+    testImplementation 'org.testcontainers:testcontainers-mysql'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('test') {
+    useJUnitPlatform {
+        if (!project.hasProperty('includeLiveSources')) {
+            excludeTags 'live-source'
+        }
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+// Dry-run reads an external file without starting Spring or a database.
+tasks.register('applicationFormBackfillDryRun', JavaExec) {
+    group = 'verification'
+    dependsOn tasks.named('classes')
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'ai.govbiz.core.applicationpreparation.service.backfill.ApplicationFormBackfillInput'
+    doFirst { args = [project.property('inputFile'), project.property('inputSha256')] }
+}

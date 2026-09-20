@@ -1,0 +1,13 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata: {name: govbiz-portfolio, namespace: argocd}
+spec:
+  description: Mac portfolio services only; no secrets, PVCs or cluster administration.
+  sourceRepos: [https://github.com/SKNETWORKS-FAMILY-AICAMP/SKN34-4th-1Team.git]
+  destinations:
+    - {server: https://kubernetes.default.svc, namespace: govbiz-msa}
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    - {group: apps, kind: Deployment}
+    - {group: "", kind: Service}
+  orphanedResources: {warn: true}

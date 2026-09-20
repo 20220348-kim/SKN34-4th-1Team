@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="ai.govbiz.core.combinationreview.repository.mapper.CombinationReviewMapper">
+    <resultMap id="reviewRow" type="ai.govbiz.core.combinationreview.repository.mapper.CombinationReviewDbRow">
+        <id column="id" property="id" />
+        <result column="owner_account_id" property="ownerAccountId" />
+        <result column="title" property="title" />
+        <result column="input_revision" property="inputRevision" />
+        <result column="created_at" property="createdAt" />
+        <result column="updated_at" property="updatedAt" />
+    </resultMap>
+    <resultMap id="programRow" type="ai.govbiz.core.combinationreview.repository.mapper.CombinationReviewProgramDbRow">
+        <id column="review_id" property="reviewId" />
+        <id column="position" property="position" />
+        <result column="source_code" property="sourceCode" />
+        <result column="source_program_id" property="sourceProgramId" />
+        <result column="sub_program_id" property="subProgramId" />
+        <result column="application_submitted" property="applicationSubmitted" />
+        <result column="selected" property="selected" />
+        <result column="commitment_submitted" property="commitmentSubmitted" />
+        <result column="agreement_signed" property="agreementSigned" />
+        <result column="execution_status" property="executionStatus" />
+        <result column="funding_received" property="fundingReceived" />
+    </resultMap>
+    <insert id="insertReview" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO combination_review (owner_account_id, title, input_revision, created_at, updated_at)
+        VALUES (#{ownerAccountId}, #{title}, #{inputRevision}, #{createdAt}, #{updatedAt})
+    </insert>
+    <insert id="insertProgram">
+        INSERT INTO combination_review_program (
+            review_id, position, source_code, source_program_id, sub_program_id,
+            application_submitted, selected, commitment_submitted, agreement_signed, execution_status, funding_received
+        ) VALUES (
+            #{reviewId}, #{position}, #{sourceCode}, #{sourceProgramId}, #{subProgramId},
+            #{applicationSubmitted}, #{selected}, #{commitmentSubmitted}, #{agreementSigned}, #{executionStatus}, #{fundingReceived}
+        )
+    </insert>
+    <select id="findReview" resultMap="reviewRow">
+        SELECT id, owner_account_id, title, input_revision, created_at, updated_at
+        FROM combination_review
+        WHERE id = #{reviewId} AND owner_account_id = #{ownerAccountId}
+    </select>
+    <select id="listReviews" resultMap="reviewRow">
+        SELECT id, owner_account_id, title, input_revision, created_at, updated_at
+        FROM combination_review
+        WHERE owner_account_id = #{ownerAccountId}
+        <if test="beforeId != null">
+            AND id &lt; #{beforeId}
+        </if>
+        ORDER BY id DESC
+        LIMIT #{limit}
+    </select>
+    <select id="findPrograms" resultMap="programRow">
+        SELECT p.review_id, p.position, p.source_code, p.source_program_id, p.sub_program_id,
+               p.application_submitted, p.selected, p.commitment_submitted, p.agreement_signed, p.execution_status, p.funding_received
+        FROM combination_review_program p
+        INNER JOIN combination_review r ON r.id = p.review_id
+        WHERE r.id = #{reviewId} AND r.owner_account_id = #{ownerAccountId}
+        ORDER BY p.position
+    </select>
+    <update id="updateReviewIfRevisionMatches">
+        UPDATE combination_review
+        SET title = #{title}, input_revision = input_revision + 1, updated_at = #{updatedAt}
+        WHERE id = #{reviewId} AND owner_account_id = #{ownerAccountId} AND input_revision = #{expectedRevision}
+    </update>
+    <delete id="deletePrograms">
+        DELETE p FROM combination_review_program p
+        INNER JOIN combination_review r ON r.id = p.review_id
+        WHERE r.id = #{reviewId} AND r.owner_account_id = #{ownerAccountId}
+    </delete>
+    <delete id="deleteReview">
+        DELETE FROM combination_review
+        WHERE id = #{reviewId} AND owner_account_id = #{ownerAccountId}
+    </delete>
+</mapper>

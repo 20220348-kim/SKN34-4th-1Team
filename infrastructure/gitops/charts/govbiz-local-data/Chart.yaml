@@ -1,0 +1,5 @@
+apiVersion: v2
+name: govbiz-local-data
+description: Disposable local MSA storage only; not a production database chart.
+type: application
+version: 0.1.0
