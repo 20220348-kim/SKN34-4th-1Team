@@ -1,0 +1,13 @@
+{
+  "repository": "ilil1/SKN34-4th-1Team",
+  "branch": "main",
+  "verifiedRevision": "82c1d24a35ffb6ed7f85d5ba86e90e2254bfa712",
+  "runId": 35517317583,
+  "runUrl": "https://github.com/ilil1/SKN34-4th-1Team/actions/runs/35517317583",
+  "images": {
+    "core-service": "ghcr.io/ilil1/skn34-4th-1team-core-service@sha256:5eef68fd491ee3b00f93d40720be7aab2d286a31b914c7fb7204ff22a8b99aac",
+    "ai-service": "ghcr.io/ilil1/skn34-4th-1team-ai-service@sha256:ff0ea22e5049a4a46a9c89ca512f3c10096d06c01d4f202c988e2e0e8167ff3b",
+    "catalog-service": "ghcr.io/ilil1/skn34-4th-1team-catalog-service@sha256:264c56e4865eee50adea4cf3199e036100eaebd0d2cb4ba65579fce14cd94a3f",
+    "ops-service": "ghcr.io/ilil1/skn34-4th-1team-ops-service@sha256:17a14ce0564a6477e9d5581d3aca07119e4823f8d544946b103b3d7085b1dabd"
+  }
+}

@@ -4,9 +4,9 @@
 않으며, `ilil1` 등 개인 계정명을 코드에서 수정할 필요가 없습니다. CI는 실행 저장소 정보,
 로컬 도구는 Git `origin`을 사용합니다. 기존 EC2/SSM 배포나 GovBiz-Team 저장소는 변경하지 않습니다.
 
-현재 새 비공개 패키지 초기 생성은 제공·검증되지 않았습니다. 준비 완료 전에는
-`MSA_RELEASE_ENABLED=false`, `MSA_PROMOTION_ENABLED=false`를 유지합니다.
-Actions 변수와 읽기 토큰만으로 새 포크의 비공개 발행이 완성되는 상태가 아닙니다.
+[최초 준비 도구와 설정 안내](../../docs/private-ghcr-setup.md)를 제공합니다. 일회용 쓰기 PAT로 빈
+비공개 패키지만 만들고, 권한 검증 후에 자동 발행을 켭니다. 준비 전에는 두 발행 변수를 `false`로
+유지합니다. Actions 변수와 읽기 토큰만으로 최초 준비가 완성되지는 않습니다.
 
 ## 각 포크의 선행 조건
 
@@ -16,7 +16,8 @@ Actions 변수와 읽기 토큰만으로 새 포크의 비공개 발행이 완�
    - `MSA_RELEASE_ENABLED=false`: 비공개 패키지 준비 전 이미지 발행 중지
    - `MSA_PROMOTION_ENABLED=false`: 검증된 발행 전 digest 승격 중지
 3. 네 서비스 패키지가 **Private·본인 소유·정확한 자기 포크 연결** 상태로 먼저 존재해야 합니다.
-   초기 생성에는 별도 준비·검증이 필요하며, 현재 저장소는 그 생성 절차를 제공하지 않습니다.
+   `bootstrap_packages.py create`로 앱 코드 없는 초기화 패키지를 만들고, GitHub UI에서 포크를
+   연결하되 권한 상속은 끈 채 정확한 포크의 Actions에만 Write를 부여합니다. `verify`로 다시 검사합니다.
    준비가 확인되지 않으면 다음 발행 활성화 단계로 넘어가지 않습니다.
 4. 준비된 패키지에 해당 포크 Actions가 새 버전을 쓸 권한까지 확인한 후, 사용자가 명시적으로
    발행을 허용할 때에만 두 변수를 `true`로 변경합니다.
@@ -34,8 +35,8 @@ Actions 변수와 읽기 토큰만으로 새 포크의 비공개 발행이 완�
 [GitHub 공식 설명](https://docs.github.com/en/packages/managing-github-packages-using-github-actions-workflows/publishing-and-installing-a-package-with-github-actions#default-permissions-and-access-settings-for-packages-modified-through-workflows)
 
 PC의 읽기 인증과 CI의 임시 `GITHUB_TOKEN`은 별개입니다. **기존 비공개 패키지의 반복 발행**에는
-별도 발행용 PAT나 다른 저장소 쓰기 토큰을 등록하지 않습니다. 아직 제공하지 않는 초기 생성 절차의
-권한이 이것으로 충족됐다는 뜻은 아니며, `read:packages` 토큰으로 패키지를 생성할 수도 없습니다.
+별도 발행용 PAT나 다른 저장소 쓰기 토큰을 등록하지 않습니다. 최초 빈 패키지를 만드는 일회용
+`write:packages` PAT는 초기 준비 후 폐기합니다. `read:packages` 토큰으로는 패키지를 생성할 수 없습니다.
 
 ## 발행되는 시점
 
@@ -46,7 +47,8 @@ PC의 읽기 인증과 CI의 임시 `GITHUB_TOKEN`은 별개입니다. **기존 
 2. 자기 포크의 원격 기본 브랜치에 원본의 최신 병합본을 동기화합니다.
 3. 같은 소스의 앱·Catalog·Ops·Infra CI가 모두 통과하면 이미지 발행이 진행됩니다.
 4. 네 이미지의 검증된 digest가 `infrastructure/gitops/environments/fork/`에 자동 기록됩니다.
-5. PC에서 그 변경을 pull하고, GitOps 모드라면 Argo CD가 자기 포크의 변경을 배포합니다.
+5. GitOps 모드의 실행 중인 Argo CD가 자기 포크의 원격 Git 변경을 읽어 배포합니다.
+   로컬 체크아웃의 `git pull`은 소스·수동 도구를 최신화하기 위한 것이며 Argo 자동 감지의 조건이 아닙니다.
 
 `git pull`은 내 PC만 바꿉니다. GitHub의 **Sync fork**로 원격 포크를 먼저 동기화하거나,
 로컬에서 원본 변경을 반영한 뒤 자기 포크에도 push해야 CI가 시작됩니다. 충돌이 있으면 기존 작업을

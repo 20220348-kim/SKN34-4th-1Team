@@ -45,14 +45,16 @@ Compose가 생성하는 이름은 `<프로젝트명>-core-service-1`, `<프로�
 | Ops 로컬 개발 | 별도 Django 프로세스·MySQL, 상태 확인 API, 독립 테스트·컨테이너 검증 구현 |
 | Core 공고 기능 분리 | 별도 Catalog 프로세스·MySQL과 인증된 HTTP 복제 경로 구현. 루트 Compose의 기본 경로이며 기존 데이터 이전·운영 배포는 별도 |
 | Kubernetes | kind에서 Core·Catalog·AI·Ops와 독립 DB 실행, HTTP 복제·교차 DB 접근 거절·AI 단독 설정 롤아웃·Catalog 장애·테스트 데이터 복구 검증 완료 |
-| 로컬 GitOps | `origin`에서 개인 포크를 인식하는 초기화·읽기 인증·Argo 연결 도구 제공. 개발 모드와 GitOps 모드를 명시적으로 전환 |
-| 이미지 릴리스 | **이미 존재하는 개인 비공개 패키지**에 한해 소유자·연결 포크·CI를 검증하고 새 버전을 발행하는 경로 구현. 새 비공개 패키지 초기 생성은 미제공·미검증이며, 현재 발행·승격 변수는 `false`로 유지 |
+| 로컬 GitOps | 개인 포크의 비공개 GHCR → Intel Mac kind → 네 Argo 앱 Synced/Healthy·self-heal 실검증 완료. 개발 모드와 GitOps 모드를 명시적으로 전환 |
+| 이미지 릴리스 | 일회용 PAT로 빈 비공개 패키지를 초기화하고 권한 검증 후 자동 발행 활성화. 반복 발행은 Actions `GITHUB_TOKEN`으로 소유자·Private·연결 포크·CI를 검사 |
 | 로컬 코드 반영 | 감시 도구가 변경한 서비스만 로컬 이미지로 재빌드·kind 반영. 저장할 때 Git push·GHCR 업로드하지 않음 |
-| 미완료 범위 | 개인 포크별 비공개 패키지 초기 준비와 실제 GHCR→GitOps 연결 검증, 팀원별 최초 인증·실제 Windows/WSL2 실행 검증, Ops 관리자 인증·LLMOps 업무 구현 |
+| 미완료 범위 | 다른 팀원 계정별 최초 준비·인증과 실제 Windows/WSL2 실행 검증, Ops 관리자 인증·LLMOps 업무 구현, 클라우드 고가용성 운영 |
 
-**도구 제공과 모든 팀원의 환경 검증 완료는 다릅니다.** 통합 작업은 기존 Mac 클러스터·데이터·
-원본 GovBiz-Team 저장소의 자동 배포 설정을 변경하지 않습니다. 이 저장소를 clone하는 것만으로 이미지 발행이나 배포가 시작되지 않습니다.
-[기존 실제 검증 기록](infrastructure/gitops/docs/msa-validation-20260920.md)에서
+**도구 제공과 모든 팀원의 환경 검증 완료는 다릅니다.** 도구는 기존 클러스터의 데이터를 옮기거나
+삭제하지 않습니다. 이번 Mac 전환은 기존 클러스터를 승인하에 중지하고 새 개인 포크 클러스터를 유지합니다.
+원본 GovBiz-Team 저장소의 자동 배포 설정은 변경하지 않았습니다. clone만으로 발행·배포가 시작되지는 않습니다.
+[개인 포크 비공개 발행·실제 pull·GitOps 검증 기록](docs/fork-gitops-validation-20260921.md)과
+[기존 MSA 기능 검증 기록](infrastructure/gitops/docs/msa-validation-20260920.md)에서
 완료 범위와 미검증 항목을 확인할 수 있습니다.
 
 검증 이미지는 `infrastructure/scripts/build-msa-images.py`로 순차 빌드합니다.
@@ -72,8 +74,8 @@ Compose가 생성하는 이름은 `<프로젝트명>-core-service-1`, `<프로�
 - `git pull`만으로 GitHub CI가 시작되지는 않습니다. 내 포크의 **원격** 기본 브랜치도 동기화해야 합니다.
 - Actions 변수와 `read:packages` 인증만으로 최초 준비가 완료되는 것은 아닙니다. 네 비공개 패키지가
   본인 소유이며 정확히 자기 포크에 연결됐는지 먼저 검증해야 합니다. 없거나 확인할 수 없으면 업로드 전에 중단합니다.
-- 비공개 초기 생성 절차를 마련·검증하기 전에는 `MSA_RELEASE_ENABLED=false`,
-  `MSA_PROMOTION_ENABLED=false`를 유지합니다. 읽기 토큰은 패키지를 생성할 수 없으며 Git에 넣지 않습니다.
+- [비공개 최초 준비](docs/private-ghcr-setup.md)를 완료하기 전에는 두 발행 변수를 `false`로 유지하고,
+  완료·검증한 자기 포크에서만 `true`로 바꿉니다. 읽기 토큰은 패키지를 생성할 수 없으며 Git에 넣지 않습니다.
 - [이미지 발행 최초 설정](infrastructure/release/README.md) · [개발·GitOps 모드 실행 명령](docs/local-fork-development.md)
 
 공고 분리 모드에서는 `Catalog → Catalog MySQL`이 원본 수집·색인을 소유하고,

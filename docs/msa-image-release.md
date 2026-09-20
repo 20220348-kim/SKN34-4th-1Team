@@ -5,9 +5,10 @@
 저장소와 기본 브랜치를 읽고, 각 개인 포크에서 명시적으로 활성화한 경우에만 작동합니다.
 단, 발행 대상은 **이미 존재하며 비공개·본인 소유·정확한 포크 연결이 확인된 패키지**로 제한합니다.
 
-현재 새 비공개 패키지를 안전하게 초기 생성하는 절차는 제공·검증되지 않았습니다.
-그 준비가 완료되기 전에는 `MSA_RELEASE_ENABLED=false`, `MSA_PROMOTION_ENABLED=false`를 유지합니다.
-Actions 변수 두 개와 읽기 토큰만으로 최초 발행까지 완료된다고 안내하지 않습니다.
+[비공개 패키지 최초 준비](private-ghcr-setup.md)는 일회용 최소 권한 PAT로 **앱 코드 없는 빈 패키지**를
+만들고, Private·소유자·포크 연결과 Actions Write 권한을 확인하는 절차입니다.
+준비 전에는 `MSA_RELEASE_ENABLED=false`, `MSA_PROMOTION_ENABLED=false`를 유지하고,
+준비·검증한 자기 포크에서만 두 변수를 `true`로 바꿉니다. 다른 팀원의 설정은 자동으로 복사되지 않습니다.
 
 ### 새 패키지를 자동 생성하지 않는 이유
 
@@ -17,8 +18,8 @@ GitHub는 워크플로가 `GITHUB_TOKEN`으로 만든 패키지가 기본적으�
 [GitHub의 워크플로 패키지 기본 공개 범위 설명](https://docs.github.com/en/packages/managing-github-packages-using-github-actions-workflows/publishing-and-installing-a-package-with-github-actions#default-permissions-and-access-settings-for-packages-modified-through-workflows)
 
 따라서 발행기는 패키지가 없거나 접근 여부를 확인할 수 없으면 업로드 전에 중단합니다.
-비공개 초기 생성에는 별도 준비와 권한·연결·공개 범위 검증이 필요하며, 이 문서는 미검증 생성 명령이나
-일단 공개로 올린 뒤 전환하는 절차를 제공하지 않습니다.
+비공개 초기 생성은 CI가 아닌 로컬의 별도 도구가 담당합니다. 빈 이미지로 최초 생성한 뒤 권한을
+확인하며, 일단 앱 코드를 공개로 올린 뒤 전환하는 절차는 사용하지 않습니다.
 
 ## 팀원 최초 설정
 
@@ -26,7 +27,7 @@ GitHub는 워크플로가 `GITHUB_TOKEN`으로 만든 패키지가 기본적으�
 2. 포크의 Settings → Secrets and variables → Actions → Variables에서 두 변수를 **`false`로 유지**합니다.
    - `MSA_RELEASE_ENABLED=false`: 비공개 초기 준비 전 이미지 발행 중지
    - `MSA_PROMOTION_ENABLED=false`: 검증된 발행 전 digest 승격 중지
-3. 네 서비스 패키지를 별도 비공개 초기 준비 절차로 마련해야 합니다. **이 절차는 현재 미제공·미검증입니다.**
+3. [네 서비스 패키지 최초 준비](private-ghcr-setup.md)를 수행합니다.
    각 패키지의 Private 상태, 본인 소유, 정확한 자기 포크 연결, 해당 포크 Actions의 쓰기 권한을
    확인해야 합니다. `read:packages` 토큰은 기존 이미지를 받기 위한 것이며 패키지를 만들 수 없습니다.
 4. 위 준비를 별도로 완료·검증하고 발행을 명시적으로 허용할 때에만 두 변수를 `true`로 변경합니다.
@@ -67,7 +68,7 @@ git push origin main
 
 기존 비공개 패키지에 새 버전을 발행할 때는 Actions의 단기 `GITHUB_TOKEN`을 사용합니다.
 이 반복 발행 경로에는 별도 `write:packages` PAT나 다른 저장소에 쓰기 가능한 토큰을 등록하지 않습니다.
-이는 아직 제공하지 않는 초기 생성 절차의 권한까지 해결했다는 뜻은 아닙니다.
+최초 빈 패키지 등록용 `write:packages` PAT는 초기 준비 후 폐기하며 CI에 저장하지 않습니다.
 조직 정책·브랜치 보호가 쓰기를 막으면 정책을 존중하여
 실패하며, 자동으로 권한을 넓히거나 강제 push하지 않습니다. 교육기관 소유 저장소는 변수를 켜도 차단합니다.
 
@@ -121,9 +122,10 @@ python3 -B -m unittest discover -s infrastructure/release -p 'test_*.py'
 python3 -B -m unittest discover -s infrastructure/gitops/scripts -p 'test_*.py'
 ```
 
-단위 테스트 통과와 실제 GHCR push/pull·클러스터 배포 성공은 다릅니다. 현재 새 비공개 패키지 초기 생성과
-개인 포크의 비공개 GHCR→Kubernetes→Argo CD 전체 연결은 검증 완료가 아니며, 두 발행 변수는 `false`로 유지합니다.
+단위 테스트 통과와 실제 GHCR push/pull·클러스터 배포 성공은 다릅니다. 최초 준비 도구는
+Private·소유자·포크 연결까지만 검사하므로 Actions Write·실제 발행·실제 pull·Argo 상태를 각각 확인합니다.
 기존 `GovBiz-Team` 이미지와 이전 Mac 배포 기록은 새 포크의 배포 성공 증거가 아닙니다.
+[이번 개인 포크의 실제 발행·pull·Argo 검증 기록](fork-gitops-validation-20260921.md)을 별도로 남깁니다.
 
 공식 근거: [GHCR 인증](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry),
 [GITHUB_TOKEN으로 생성한 패키지의 기본 공개 범위](https://docs.github.com/en/packages/managing-github-packages-using-github-actions-workflows/publishing-and-installing-a-package-with-github-actions#default-permissions-and-access-settings-for-packages-modified-through-workflows),
