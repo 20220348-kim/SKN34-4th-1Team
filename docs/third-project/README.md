@@ -1,11 +1,5 @@
 # GovBiz — 3차 프로젝트 README
 
-[메인 README](../../README.md) · [전체 문서 목록](../README.md)
-
-3차 프로젝트의 팀 소개·기능·아키텍처·평가 결과·회고를 별도로 관리하는 문서입니다.
-기존 메인 README의 `1. 팀 소개`부터 `14. 한 줄 회고`까지를 옮겼으며, 분리 시점에 반영되어 있던
-Ops·Catalog·Kubernetes 확장 설명도 함께 보존했습니다. 최신 개발·배포 상태는 [메인 README](../../README.md)를 기준으로 확인하세요.
-
 <!-- 팀 소개와 프로젝트 구성은 https://github.com/lsm15111/GovBiz-docs 의 README를 바탕으로 작성했습니다. -->
 
 ## 1. 팀 소개
@@ -107,16 +101,6 @@ GovBiz는 여러 정부기관과 공공 플랫폼에 분산된 지원사업 공�
 ![Agents SDK](https://img.shields.io/badge/Agents_SDK-412991?style=for-the-badge)
 ![tiktoken](https://img.shields.io/badge/tiktoken-412991?style=for-the-badge)
 
-### Backend · Ops
-
-![Python 3.13](https://img.shields.io/badge/Python_3.13-3776AB?style=for-the-badge&logo=python&logoColor=white)
-![Django 5.2](https://img.shields.io/badge/Django_5.2-092E20?style=for-the-badge&logo=django&logoColor=white)
-![Django REST Framework](https://img.shields.io/badge/Django_REST_Framework-A30000?style=for-the-badge)
-![Gunicorn 26.2](https://img.shields.io/badge/Gunicorn_26.2-499848?style=for-the-badge&logo=gunicorn&logoColor=white)
-
-현재 구현 범위는 상태 확인·DB readiness와 실행·검증 기반입니다. 관리자 화면·인증·평가 관리가
-완성된 서비스라는 뜻은 아닙니다. [Ops 실행·검증 안내](../../backend/ops-service/README.md)를 참고하세요.
-
 ### Database · Search
 
 ![MySQL 8.4](https://img.shields.io/badge/MySQL_8.4-4479A1?style=for-the-badge&logo=mysql&logoColor=white)
@@ -139,15 +123,6 @@ GovBiz는 여러 정부기관과 공공 플랫폼에 분산된 지원사업 공�
 ![Amazon ECR](https://img.shields.io/badge/Amazon_ECR-FF9900?style=for-the-badge)
 ![AWS Systems Manager](https://img.shields.io/badge/AWS_Systems_Manager-FF4F8B?style=for-the-badge)
 ![Nginx](https://img.shields.io/badge/Nginx-009639?style=for-the-badge&logo=nginx&logoColor=white)
-
-### Kubernetes · 로컬 검증
-
-![Kubernetes](https://img.shields.io/badge/Kubernetes-326CE5?style=for-the-badge&logo=kubernetes&logoColor=white)
-![kind](https://img.shields.io/badge/kind-326CE5?style=for-the-badge)
-![Kustomize](https://img.shields.io/badge/Kustomize-326CE5?style=for-the-badge)
-
-Ops Deployment·Service와 검증용 MySQL StatefulSet·PVC를 실제 kind 클러스터에서 검증했습니다.
-Argo CD는 후속 도입 대상이며, EKS나 전체 서비스의 Kubernetes 운영을 완료했다고 표시하지 않습니다.
 
 ### CI/CD
 
@@ -230,40 +205,6 @@ GovBiz는 공고 탐색부터 신청 준비와 진행 관리까지 하나의 흐
 
 자세한 구성과 배포 조건은 [AWS 배포 구성도](../../docs/assets/architecture/README-aws-deployed.md)와
 [CodeBuild 배포 안내](../../docs/deployment-codebuild.md)를 참고하세요.
-
-### 📌 서비스·데이터 경계
-
-서비스 소스 폴더는 `backend/{core-service,catalog-service,ai-service,ops-service}`입니다.
-기존 배포 호환성을 위해 Compose의 `core-api`·`django-api`, ECR의 `govbiz/core-api`,
-Ops Kubernetes의 `operations-api`와 DB·볼륨 이름은 유지합니다.
-
-| 서비스 | 현재 책임 | 분리 원칙 |
-|---|---|---|
-| Core API | 사용자 인증·기업·관심 공고·파트너·신청 업무와 공개 검색 | 사용자 업무 데이터를 소유. Catalog 분리 모드에서는 공고 원본 대신 조회용 복제본 유지 |
-| Catalog Service | 선택형 분리 모드의 공고 수집·정규화·게시·검색 색인 | 독립 DB를 소유하고 Core에는 인증된 HTTP로 읽기 복제본만 제공. 기존 AWS 미전환 |
-| AI Service | LLM·임베딩·RAG·문서 처리 | Core의 계정·업무 DB를 직접 소유하지 않음 |
-| Ops | 현재 health/readiness·전용 DB 연결 | 향후 운영·평가·감사 기록 담당. 관리자 판정은 Core에 위임하는 방향이며 아직 미구현 |
-
-저장소를 하나로 관리하는 것과 서비스·DB 책임을 합치는 것은 다릅니다. Ops에 Core의 계정 테이블이나
-JWT 서명 키를 복제하지 않습니다. 업무 서비스 추출과 복제 수 확대 전의 제약은
-[서비스 경계 문서](https://github.com/GovBiz-Team/GovBiz-infra/blob/develop/docs/service-boundaries.md)에 정리했습니다.
-
-### 📌 Kubernetes 검증과 GitOps 전환
-
-2026-09-19에 격리된 kind 클러스터에서 Ops와 검증용 MySQL을 배포해 다음을 확인했습니다.
-
-- Service DNS와 DB 연결, DB 장애 시 readiness 503 / liveness 200 분리
-- DB Pod 교체 후 PVC 데이터 유지, Ops Pod 삭제 후 자동 재생성
-- 잘못된 이미지 배포 시 기존 정상 Pod 유지와 이전 이미지로 복구
-
-앱 이미지·테스트는 이 저장소, 배포 manifest·검증 도구는 GovBiz-infra가 담당합니다.
-[로컬 재현 안내](https://github.com/GovBiz-Team/GovBiz-infra/blob/develop/docs/kubernetes-local.md)와
-[실행 결과·한계](https://github.com/GovBiz-Team/GovBiz-infra/blob/develop/docs/kubernetes-validation-20260919.md)를 제공합니다.
-단일 노드 kind 검증은 운영 HA·DB 백업·NetworkPolicy 집행·전체 업무 연동 검증이 아닙니다.
-
-목표 배포 순서는 `앱 CI → ECR 이미지 → Infra 이미지 버전 변경 PR → Argo CD → Kubernetes`입니다.
-자동 PR·Argo CD 동기화는 아직 연결하지 않았으며, 같은 운영 대상을 SSM과 Argo CD가 동시에
-변경하지 않도록 단계적으로 전환합니다.
 
 ## 6. ERD
 
