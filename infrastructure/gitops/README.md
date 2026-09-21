@@ -21,7 +21,7 @@
 | 자동 발행·승격 | upstream 병합 소스를 본인 포크 기본 브랜치로 동기화하고 네 CI 통과 후 발행. digest는 같은 포크 `environments/fork`에 기록 |
 | 공통 bootstrap | `fork_cluster.py init/doctor/up/status/credentials/dev/gitops/web`. 무작위 로컬 비밀값·전용 kind·소유권 검사 |
 | 로컬 코드 반영 | 개발 모드에서 `dev.py --watch`가 변경 서비스만 로컬 빌드·kind 적재·재시작. GHCR 업로드 없음 |
-| Windows 개발 | Windows x64의 WSL2 Ubuntu + Docker Desktop Linux 경로. 네이티브 Windows Python·ARM은 지원하지 않으며 Windows 실제 실행 검증은 별도 |
+| Windows 개발 | WSL2·kind의 로컬 소스 이미지 기동과 Windows 웹 연결 확인. 네이티브 Windows Python·ARM은 미지원이며 GHCR·GitOps·개발 감시는 별도 검증 |
 
 `argocd/local`은 격리 검증용, `argocd/portfolio`와 `environments/portfolio`는 과거 기록과 안전한 로컬 환경값
 템플릿입니다. 이전 GovBiz-Team digest를 팀원의 이미지로 재사용하지 않습니다. 실제 포크의 release가 없으면
@@ -29,6 +29,10 @@
 self-heal을 켭니다(prune는 끔). 기존 `govbiz-portfolio`를 변경하거나 인수하지 않습니다.
 
 ## 팀원 시작 경로
+
+**이미지가 없거나 GHCR 없이 시작하려면 [Windows 수동 설치 안내](../../docs/windows-kubernetes-setup.md)를 따릅니다.**
+소스 빌드 → `up --local-images` → 웹 연결 순서이며, 이 경로는 개인 Actions나 PAT가 필요하지 않습니다.
+아래는 GHCR 이미지 발행·다운로드와 GitOps를 사용할 때의 준비 순서입니다.
 
 [공통 로컬 개발 안내](../../docs/local-fork-development.md)에 따라 **개인 포크 → 클론 → 도구 설치 → 개인 Actions 활성화 →
 upstream 병합 코드의 원격 포크 동기화 → 첫 이미지 발행/승격 → `git pull` → 초기화**를 진행합니다.

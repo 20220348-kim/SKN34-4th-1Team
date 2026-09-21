@@ -1,5 +1,9 @@
 # 개인 포크의 Kubernetes에서 개발하기
 
+Windows에서 도구 설치부터 시작하거나 GHCR 이미지 없이 실행하려면
+[WSL2·kind 수동 설치 안내](windows-kubernetes-setup.md)를 먼저 따릅니다.
+로컬 소스 빌드 경로에는 아래 GHCR 패키지 준비와 PAT가 필요하지 않습니다.
+
 무료 시연이 아닌 RabbitMQ·AI·메일·수집 연결은
 [개인 Kubernetes 외부 연동](../infrastructure/gitops/docs/local-integrations.md)을 따릅니다.
 
@@ -7,7 +11,7 @@
 코드에 `ilil1`이나 다른 팀원 계정을 직접 넣지 않습니다. 최초 설정은 각 포크·PC별로 필요합니다.
 토큰·런타임 비밀값·로컬 상태는 Git에 커밋하지 않습니다.
 
-[비공개 GHCR 최초 준비](private-ghcr-setup.md)를 먼저 진행합니다. 완료 전에는
+GHCR 이미지를 사용하는 경우 [비공개 GHCR 최초 준비](private-ghcr-setup.md)를 먼저 진행합니다. 완료 전에는
 `MSA_RELEASE_ENABLED=false`, `MSA_PROMOTION_ENABLED=false`를 유지합니다.
 최초 등록용 일회성 쓰기 인증과 PC에서 상시 사용할 읽기 인증은 별개입니다.
 네 패키지가 비공개·본인 소유·정확한 자기 포크 연결 상태로 먼저 준비되고 검증돼야 합니다.
@@ -191,4 +195,6 @@ rollout 실패·복원, Argo 관리 충돌 거부는 자동 테스트로 검사�
 실제 Windows에서 실행이 검증된 것은 다릅니다. 팀원 Windows에서 `doctor`·최초 실행·저장 반영을 별도로
 확인해야 합니다. 로컬 이미지로 실행한 Kubernetes 검증이나 통합 전 `GovBiz-Team`의 비공개 배포
 기록을 개인 포크의 비공개 발행·pull 성공 증거로 대신하지 않습니다.
+[Windows 한 대의 소스 빌드·기동·웹 연결 확인 범위](windows-kubernetes-setup.md#실제-확인한-범위)를
+기록했습니다. 다른 팀원 PC와 개발 감시·GitOps까지 검증한 것은 아닙니다.
 [Intel Mac 개인 포크의 실제 검증 기록](fork-gitops-validation-20260921.md)은 따로 확인할 수 있습니다.

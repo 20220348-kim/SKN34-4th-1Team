@@ -2,7 +2,7 @@ serviceName: catalog-service
 localMode: false
 image:
   repository: ghcr.io/ilil1/skn34-4th-1team-catalog-service
-  digest: sha256:264c56e4865eee50adea4cf3199e036100eaebd0d2cb4ba65579fce14cd94a3f
+  digest: sha256:1031d43d37e7a68e0ffc523c96d50aa3450e9b60618be34f39a9451a3a8e968e
   tag: ''
   pullPolicy: IfNotPresent
 imagePullSecrets:

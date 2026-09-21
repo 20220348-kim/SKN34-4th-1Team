@@ -14,11 +14,13 @@ Ops 소스는 [`backend/ops-service`](backend/ops-service)에 있으며, 상태 
 사용자 클라이언트는 [`frontend/`](frontend/README.md) 아래의 웹(`frontend/web/`)과 React Native 앱(`frontend/mobile/`)으로 나눠 관리합니다.
 [모바일 실행·기능 안내](frontend/mobile/README.md) · [공통 코드·workspace 관리](docs/mobile-monorepo.md)
 
-전체 로컬 실행은 루트 `compose.yaml`을 사용합니다. Core·Catalog·AI·Ops를 포함하며,
+Compose로 로컬 실행할 때는 루트 `compose.yaml`을 사용합니다. Core·Catalog·AI·Ops를 포함하며,
 Core는 Catalog의 내부 HTTP snapshot을 읽습니다. `.env`에 32자 이상의 `CATALOG_INTERNAL_TOKEN`을
 설정해야 합니다. 기존 embedded 수집 경로는 전환 호환용 `infrastructure/compose.yaml`에 남겨 둡니다.
 [통합 개발·이전 안내](docs/ops-monorepo-migration.md)를 먼저 확인하세요.
 Kubernetes·Helm·Argo CD 설정은 같은 저장소의 [`infrastructure/gitops/`](infrastructure/gitops/README.md)에서 관리합니다.
+**Windows에서 이미지를 직접 빌드해 Kubernetes로 실행하려면
+[WSL2·kind 수동 설치 안내](docs/windows-kubernetes-setup.md)를 따르세요.** GHCR 이미지나 PAT 없이 시작할 수 있습니다.
 
 ```text
 SKN34-4th-1Team/
@@ -48,7 +50,8 @@ Compose가 생성하는 이름은 `<프로젝트명>-core-service-1`, `<프로�
 | 로컬 GitOps | 개인 포크의 비공개 GHCR → Intel Mac kind → 네 Argo 앱 Synced/Healthy·self-heal 실검증 완료. 개발 모드와 GitOps 모드를 명시적으로 전환 |
 | 이미지 릴리스 | 일회용 PAT로 빈 비공개 패키지를 초기화하고 권한 검증 후 자동 발행 활성화. 반복 발행은 Actions `GITHUB_TOKEN`으로 소유자·Private·연결 포크·CI를 검사 |
 | 로컬 코드 반영 | 감시 도구가 변경한 서비스만 로컬 이미지로 재빌드·kind 반영. 저장할 때 Git push·GHCR 업로드하지 않음 |
-| 미완료 범위 | 다른 팀원 계정별 최초 준비·인증과 실제 Windows/WSL2 실행 검증, Ops 관리자 인증·LLMOps 업무 구현, 클라우드 고가용성 운영 |
+| Windows 로컬 실행 | WSL2·kind에서 소스 빌드 이미지로 백엔드 4개·저장소 6개 Ready 및 Windows 웹 → Core HTTP 200 확인. [수동 설치·검증 범위](docs/windows-kubernetes-setup.md) |
+| 미완료 범위 | 다른 팀원 계정별 최초 준비·인증, Windows의 GHCR·GitOps·개발 감시 검증, Ops 관리자 인증·LLMOps 업무 구현, 클라우드 고가용성 운영 |
 
 **도구 제공과 모든 팀원의 환경 검증 완료는 다릅니다.** 도구는 기존 클러스터의 데이터를 옮기거나
 삭제하지 않습니다. 이번 Mac 전환은 기존 클러스터를 승인하에 중지하고 새 개인 포크 클러스터를 유지합니다.
@@ -65,12 +68,16 @@ Compose가 생성하는 이름은 `<프로젝트명>-core-service-1`, `<프로�
 
 ### 팀원이 자기 포크에서 개발하는 방법
 
+[이미지 없이 Windows Kubernetes를 수동 구성하는 방법](docs/windows-kubernetes-setup.md)은
+Docker Desktop의 Ubuntu 연동, 도구 설치, 소스 빌드, 클러스터 생성, 웹 접속과 재시작 순서를 제공합니다.
+이 경로는 로컬 개발 모드이며, 아래의 GHCR 발행·Argo CD 자동 배포 준비와 별개입니다.
+
 [개인 포크 로컬 개발 안내](docs/local-fork-development.md)를 따릅니다. 계정명·저장소명을 코드에
 직접 바꾸지 않습니다. Windows는 **x64 WSL2 Ubuntu + Docker Desktop Linux 통합**, Mac은 현재
 검증 대상인 **Intel + Linux amd64 이미지**를 사용합니다. ARM·Windows 네이티브 실행은 미지원입니다.
 
 - **준비 완료 후 공동 배포 기준:** 개발 브랜치 → 교육기관 원본 PR·병합 → 내 포크 `main` 동기화 → CI → 기존 비공개 GHCR 패키지에 발행 → 내 PC GitOps.
-- **내 PC 개발:** 이미지를 받아 초기화 → 개발 모드에서 코드 저장 → 바뀐 서비스만 로컬 재빌드·반영.
+- **내 PC 개발:** 이미지를 받거나 소스에서 직접 빌드해 초기화 → 개발 모드에서 코드 저장 → 바뀐 서비스만 로컬 재빌드·반영.
 - `git pull`만으로 GitHub CI가 시작되지는 않습니다. 내 포크의 **원격** 기본 브랜치도 동기화해야 합니다.
 - Actions 변수와 `read:packages` 인증만으로 최초 준비가 완료되는 것은 아닙니다. 네 비공개 패키지가
   본인 소유이며 정확히 자기 포크에 연결됐는지 먼저 검증해야 합니다. 없거나 확인할 수 없으면 업로드 전에 중단합니다.
