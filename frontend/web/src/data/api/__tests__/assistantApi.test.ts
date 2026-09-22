@@ -93,3 +93,23 @@ function jsonResponse(body: unknown, status = 200) {
 function problemResponse(status: number, code: string | null, extra: Record<string, unknown> = {}) {
   return new Response(JSON.stringify({ status, code, ...extra }), { status, headers: { 'Content-Type': 'application/problem+json' } })
 }
+
+
+describe('도우미 공고 카드 식별자 계약', () => {
+  const card = { kind: 'PROGRAM', id: 'BIZINFO:PBLN_1', title: '지원사업 공고', subtitle: null, reason: '저장한 공고입니다.', quote: null,
+    to: '/app/support-programs/detail?sourceCode=BIZINFO&sourceProgramId=PBLN_1' }
+
+  it.each(['공고:2026~추가 모집', '가'.repeat(255), '😀'.repeat(255)])('공고 목록에서 허용하는 원본 ID %s를 카드에서도 허용한다', async (sourceProgramId) => {
+    const sourceCode = 'A'.repeat(64)
+    const id = `${sourceCode}:${sourceProgramId}`
+    const to = `/app/support-programs/detail?sourceCode=${sourceCode}&sourceProgramId=${encodeURIComponent(sourceProgramId)}`
+    const payload = { ...answer, intent: 'SAVED_PROGRAMS_QUESTION', cards: [{ ...card, id, to }] }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(payload)))
+    await expect(askAssistantApi(question)).resolves.toEqual(payload)
+  })
+
+  it.each(['bizinfo:ID', 'BIZINFO:', 'BIZINFO: ID', 'BIZINFO:ID ', `BIZINFO:${'가'.repeat(256)}`, 'BIZINFO:bad\u200bID'])('잘못된 복합 식별자 %s는 계속 거부한다', async (id) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ ...answer, cards: [{ ...card, id }] })))
+    await expect(askAssistantApi(question)).rejects.toThrow()
+  })
+})

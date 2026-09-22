@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.assistant_agent.errors import ToolCallError
 from app.assistant_agent.models import AssistantPrincipal
+from app.support_program_identity import MAX_CANONICAL_SOURCE_PROGRAM_ID_LENGTH
 
 
 SECRET_HEADER = "X-Internal-Token"
@@ -144,7 +145,7 @@ def sanitize(value: Any, depth: int = 0) -> Any:
         return [sanitize(item, depth + 1) for item in value[:MAX_LIST_ITEMS]]
     if isinstance(value, dict):
         return {
-            str(key)[:64]: (item[:200] if key in IDENTIFIER_KEYS and isinstance(item, str) else sanitize(item, depth + 1))
+            str(key)[:64]: (item[:MAX_CANONICAL_SOURCE_PROGRAM_ID_LENGTH] if key in IDENTIFIER_KEYS and isinstance(item, str) else sanitize(item, depth + 1))
             for key, item in list(value.items())[:40]
         }
     return None

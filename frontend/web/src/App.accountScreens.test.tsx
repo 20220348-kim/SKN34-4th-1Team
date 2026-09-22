@@ -96,7 +96,7 @@ describe('계정 화면', () => {
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe(signupMessages.emailTaken))
     fireEvent.click(within(form).getByRole('button', { name: '인증번호 받기' }))
     await waitFor(() => expect(screen.getByRole('status').textContent).toBe(signupMessages.codeSent))
-    expect(send).toHaveBeenLastCalledWith('Member@Govbiz.local')
+    expect(send).toHaveBeenLastCalledWith('Member@Govbiz.local', expect.any(AbortSignal))
     expect(within(form).getByRole('button', { name: '다시 받기' })).toBeTruthy()
 
     fireEvent.change(within(form).getByLabelText('인증번호'), { target: { value: '12ab34' } })
@@ -109,7 +109,7 @@ describe('계정 화면', () => {
     fireEvent.change(within(form).getByLabelText('인증번호'), { target: { value: '482137' } })
     fireEvent.click(within(form).getByRole('button', { name: '확인' }))
     await waitFor(() => expect(screen.getByRole('status').textContent).toBe(signupMessages.codeVerified))
-    expect(verify).toHaveBeenLastCalledWith('Member@Govbiz.local', '482137')
+    expect(verify).toHaveBeenLastCalledWith('Member@Govbiz.local', '482137', expect.any(AbortSignal))
     expect(within(form).getByText('인증됨')).toBeTruthy()
     expect(within(form).queryByLabelText('인증번호')).toBeNull()
     expect((within(form).getByLabelText('이메일') as HTMLInputElement).readOnly).toBe(true)
@@ -1534,7 +1534,7 @@ describe('파트너 모집 화면', () => {
     await waitFor(() => expect(save).toHaveBeenCalledWith({
       sourceCode: partnerRecruitmentDetail.program.sourceCode,
       sourceProgramId: partnerRecruitmentDetail.program.sourceProgramId,
-    }))
+    }, expect.any(AbortSignal)))
     expect(await screen.findByText('관심 공고함에 담았습니다.')).toBeTruthy()
     const removeButton = await screen.findByRole('button', { name: '관심 공고에서 빼기' })
     expect(removeButton.getAttribute('aria-pressed')).toBe('true')
@@ -1543,7 +1543,7 @@ describe('파트너 모집 화면', () => {
     await waitFor(() => expect(remove).toHaveBeenCalledWith({
       sourceCode: partnerRecruitmentDetail.program.sourceCode,
       sourceProgramId: partnerRecruitmentDetail.program.sourceProgramId,
-    }))
+    }, expect.any(AbortSignal)))
     expect(await screen.findByText('관심 공고함에서 뺐습니다.')).toBeTruthy()
     expect(await screen.findByRole('button', { name: '관심 공고에 추가' })).toBeTruthy()
   })
@@ -1735,3 +1735,17 @@ function defaultAccountFor(initialEntry: string): Account | null {
   // 파트너 모집 화면은 기업을 등록한 회원 기준으로 확인하고, 미등록 회원은 각 테스트가 따로 넘깁니다.
   return initialEntry.startsWith('/app/partners') || initialEntry.startsWith('/app/proposals') ? companyAccount : memberAccount
 }
+
+
+it('회원가입은 한글 비밀번호가 UTF-8 72바이트를 넘으면 가입 요청 전에 안내한다', async () => {
+  const signUp = vi.spyOn(appContainer.resolve('signUpUseCase'), 'execute')
+  renderApp('/signup')
+  const form = screen.getByRole('form', { name: '회원가입' })
+  await verifySignupEmail(form, 'user@example.com')
+  const password = '가'.repeat(25)
+  fireEvent.change(within(form).getByLabelText('비밀번호'), { target: { value: password } })
+  fireEvent.change(within(form).getByLabelText('비밀번호 확인'), { target: { value: password } })
+  fireEvent.submit(form)
+  expect(screen.getByRole('alert').textContent).toBe(signupMessages.passwordLength)
+  expect(signUp).not.toHaveBeenCalled()
+})

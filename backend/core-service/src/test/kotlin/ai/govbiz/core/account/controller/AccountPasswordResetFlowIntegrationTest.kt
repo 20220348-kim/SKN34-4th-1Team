@@ -5,22 +5,33 @@ import ai.govbiz.core.account.client.mail.AccountPasswordResetMailClient
 import ai.govbiz.core.account.helper.OneTimeTokenHelper
 import ai.govbiz.core.account.helper.SessionCookieHelper
 import ai.govbiz.core.account.helper.SignupTestHelper
+import ai.govbiz.core.account.service.AccountPasswordResetService
+import ai.govbiz.core.account.service.exception.PasswordResetTokenInvalidException
 import jakarta.servlet.http.Cookie
+import java.util.concurrent.Callable
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertInstanceOf
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.ArgumentCaptor
+import org.mockito.Mockito.doAnswer
 import org.mockito.Mockito.doReturn
 import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
 import org.springframework.beans.factory.annotation.Autowired
-import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc
 import org.springframework.context.annotation.Import
 import org.springframework.http.MediaType
 import org.springframework.jdbc.core.JdbcTemplate
+import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.test.context.bean.override.mockito.MockitoBean
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
@@ -57,6 +68,12 @@ class AccountPasswordResetFlowIntegrationTest {
 
     @MockitoBean
     private lateinit var mailClient: AccountPasswordResetMailClient
+
+    @Autowired
+    private lateinit var resetService: AccountPasswordResetService
+
+    @MockitoSpyBean
+    private lateinit var passwordEncoder: PasswordEncoder
 
     @BeforeEach
     fun resetRows() {
@@ -111,6 +128,51 @@ class AccountPasswordResetFlowIntegrationTest {
         mockMvc.perform(get("/api/v1/auth/me").cookie(oldSession)).andExpect(status().isUnauthorized())
         logIn("manager@company.co.kr", "password1").andExpect(status().isUnauthorized())
         logIn("manager@company.co.kr", "new-password-2").andExpect(status().isOk())
+    }
+
+    @Test
+    fun concurrentRequestsCannotReuseTheSamePasswordResetToken() {
+        signUp("manager@company.co.kr", "password1")
+        requestCode("manager@company.co.kr").andExpect(status().isNoContent())
+        val code = ArgumentCaptor.forClass(String::class.java)
+        verify(mailClient).sendPasswordResetCode(eqValue("manager@company.co.kr"), code.capture() ?: "")
+        val body = verifyCode("manager@company.co.kr", code.value).andExpect(status().isOk()).andReturn().response.contentAsString
+        val passToken = requireNotNull(Regex("\"passToken\":\"([A-Za-z0-9_-]{43})\"").find(body)).groupValues[1]
+        val firstHasToken = CountDownLatch(1)
+        val releaseFirst = CountDownLatch(1)
+        val secondStarted = CountDownLatch(1)
+        doAnswer { invocation ->
+            firstHasToken.countDown()
+            check(releaseFirst.await(30, TimeUnit.SECONDS))
+            invocation.callRealMethod()
+        }.`when`(passwordEncoder).encode("first-new-password")
+
+        Executors.newFixedThreadPool(2).use { executor ->
+            val first = executor.submit(Callable { resetService.reset(passToken, "first-new-password") })
+            try {
+                assertTrue(firstHasToken.await(30, TimeUnit.SECONDS))
+                val second = executor.submit(Callable {
+                    secondStarted.countDown()
+                    runCatching { resetService.reset(passToken, "second-new-password") }
+                })
+                assertTrue(secondStarted.await(30, TimeUnit.SECONDS))
+                // The first request holds the token while the second attempts to reuse it.
+                try {
+                    second.get(1, TimeUnit.SECONDS)
+                } catch (_: TimeoutException) {
+                    // A locking read correctly waits for the first transaction to finish.
+                } finally {
+                    releaseFirst.countDown()
+                }
+                first.get(30, TimeUnit.SECONDS)
+                assertInstanceOf(PasswordResetTokenInvalidException::class.java,
+                    second.get(30, TimeUnit.SECONDS).exceptionOrNull())
+            } finally {
+                releaseFirst.countDown()
+            }
+        }
+        logIn("manager@company.co.kr", "first-new-password").andExpect(status().isOk())
+        logIn("manager@company.co.kr", "second-new-password").andExpect(status().isUnauthorized())
     }
 
     @Test

@@ -24,7 +24,7 @@ export const signupMessages = {
   codeExpired: '인증번호가 만료됐거나 입력 횟수를 넘겼습니다. 인증번호를 다시 받아 주세요.',
   codeVerified: '이메일 인증을 마쳤습니다.',
   mailUnavailable: '지금은 인증 메일을 보낼 수 없습니다. 잠시 후 다시 시도해 주세요.',
-  passwordLength: `비밀번호는 ${signUpPasswordLength.min}자 이상 ${signUpPasswordLength.max}자 이하로 입력해 주세요.`,
+  passwordLength: `비밀번호는 ${signUpPasswordLength.min}자 이상 ${signUpPasswordLength.max}자 이하, UTF-8 ${signUpPasswordLength.maxBytes}바이트 이하로 입력해 주세요.`,
   passwordMismatch: '비밀번호 확인이 일치하지 않습니다.',
   emailTaken: '이미 가입된 이메일입니다. 로그인하거나 다른 이메일을 사용해 주세요.',
   rateLimited: (retryAfterSeconds: number | null) =>
@@ -63,6 +63,7 @@ export function useSignupViewModel(
   const [isVerifyingCode, setIsVerifyingCode] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const isMounted = useRef(true)
+  const emailRequest = useRef<AbortController | null>(null)
   // 가입 화면에는 로그인 상태 유지 선택이 없어 이메일 가입과 같은 브라우저 세션으로 시작합니다.
   const oauthOptions = useOAuthSignInOptions({ returnPath: readReturnPath(location.search, ''), rememberMe: false })
 
@@ -70,20 +71,23 @@ export function useSignupViewModel(
     isMounted.current = true
     return () => {
       isMounted.current = false
+      emailRequest.current?.abort()
     }
   }, [])
 
   // 이메일 형식이 맞을 때만 "인증번호 받기"를 켭니다. 형식 오류는 버튼이 잠긴 것으로 알리고 문구는 띄우지 않습니다.
-  const canSendCode = isEmailAddress(email) && !isSendingCode
+  const canSendCode = isEmailAddress(email) && !isSendingCode && !isVerifyingCode
 
   async function sendCode() {
-    if (!canSendCode) return
+    if (emailRequest.current || !canSendCode) return
+    const controller = new AbortController()
+    emailRequest.current = controller
     setIsSendingCode(true)
     setError(null)
     setCodeNotice(null)
     try {
-      const result = await sendCodeUseCase.execute(email)
-      if (!isMounted.current) return
+      const result = await sendCodeUseCase.execute(email, controller.signal)
+      if (!isMounted.current || controller.signal.aborted) return
       if (result.outcome === 'email-taken') {
         setError({ field: 'email', message: signupMessages.emailTaken })
         return
@@ -100,24 +104,29 @@ export function useSignupViewModel(
       setCode('')
       setCodeNotice(signupMessages.codeSent)
     } catch {
-      if (!isMounted.current) return
+      if (!isMounted.current || controller.signal.aborted) return
       setError({ field: 'email', message: signupMessages.requestFailed })
     } finally {
-      if (isMounted.current) setIsSendingCode(false)
+      if (emailRequest.current === controller) {
+        emailRequest.current = null
+        if (isMounted.current) setIsSendingCode(false)
+      }
     }
   }
 
   async function verifyCode() {
-    if (isVerifyingCode) return
+    if (emailRequest.current || emailStep !== 'sent') return
     if (!isValidSignupEmailCode(code.trim())) {
       setError({ field: 'code', message: signupMessages.codeRequired })
       return
     }
+    const controller = new AbortController()
+    emailRequest.current = controller
     setIsVerifyingCode(true)
     setError(null)
     try {
-      const result = await verifyCodeUseCase.execute(email, code)
-      if (!isMounted.current) return
+      const result = await verifyCodeUseCase.execute(email, code, controller.signal)
+      if (!isMounted.current || controller.signal.aborted) return
       if (result.outcome === 'code-invalid') {
         setError({ field: 'code', message: signupMessages.codeInvalid })
         return
@@ -134,10 +143,13 @@ export function useSignupViewModel(
       setEmailStep('verified')
       setCodeNotice(signupMessages.codeVerified)
     } catch {
-      if (!isMounted.current) return
+      if (!isMounted.current || controller.signal.aborted) return
       setError({ field: 'code', message: signupMessages.requestFailed })
     } finally {
-      if (isMounted.current) setIsVerifyingCode(false)
+      if (emailRequest.current === controller) {
+        emailRequest.current = null
+        if (isMounted.current) setIsVerifyingCode(false)
+      }
     }
   }
 
@@ -208,14 +220,16 @@ export function useSignupViewModel(
     isSubmitting,
     /** 이메일을 고치면 인증이 풀립니다. 인증한 주소와 다른 주소로 가입하지 않게 하기 위해서입니다. */
     updateEmail: (value: string) => {
+      emailRequest.current?.abort()
+      emailRequest.current = null
+      setIsSendingCode(false)
+      setIsVerifyingCode(false)
       setEmail(value)
       setError(null)
-      if (emailStep !== 'idle') {
-        setEmailStep('idle')
-        setEmailPassToken(null)
-        setCode('')
-        setCodeNotice(null)
-      }
+      setEmailStep('idle')
+      setEmailPassToken(null)
+      setCode('')
+      setCodeNotice(null)
     },
     updateCode: (value: string) => { setCode(value.replace(/[^0-9]/g, '').slice(0, 6)); setError(null) },
     updatePassword: (value: string) => { setPassword(value); setError(null) },

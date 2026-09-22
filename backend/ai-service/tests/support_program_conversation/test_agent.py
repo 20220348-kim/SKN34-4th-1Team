@@ -81,7 +81,7 @@ async def test_scripted_refinement_transition_and_reset_preserve_distinct_intent
             {"field": "SUPPORT_PURPOSE", "operation": "SET", "value": purpose, "evidence": evidence},
         ]
     scripted = {"status": status, "updates": updates,
-                "clarificationQuestion": "어떤 지원사업을 찾으시나요?" if query is None else None}
+                "answerKind": None, "clarificationKind": "QUERY" if query is None else None}
     model = ResponsesChatStub([[response_message(json.dumps(scripted, ensure_ascii=False))]])
     service = SupportProgramConversationService(SupportProgramConversationAgent(
         model=model.model, model_timeout_seconds=1, run_timeout_seconds=2,
@@ -105,7 +105,7 @@ async def test_scripted_region_change_also_removes_old_region_from_query(request
     scripted = {"status": "READY", "updates": [
         {"field": "REGION", "operation": "SET", "value": "부산", "evidence": "부산"},
         {"field": "QUERY", "operation": "SET", "value": "사업화 지원", "evidence": "부산으로 변경"},
-    ], "clarificationQuestion": None}
+    ], "answerKind": None, "clarificationKind": None}
     model = ResponsesChatStub([[response_message(json.dumps(scripted, ensure_ascii=False))]])
     service = SupportProgramConversationService(SupportProgramConversationAgent(model=model.model, model_timeout_seconds=1, run_timeout_seconds=2))
     result = await service.interpret(SupportProgramConversationRequest.model_validate(request_data))
@@ -116,7 +116,7 @@ async def test_scripted_region_change_also_removes_old_region_from_query(request
 @pytest.mark.anyio
 async def test_scripted_relative_age_asks_and_does_not_create_date(request_data):
     request_data["message"] = "설립 2년"
-    scripted = {"status": "CLARIFICATION_REQUIRED", "updates": [], "clarificationQuestion": "정확한 설립일을 알려주세요."}
+    scripted = {"status": "CLARIFICATION_REQUIRED", "updates": [], "answerKind": None, "clarificationKind": "ESTABLISHMENT"}
     model = ResponsesChatStub([[response_message(json.dumps(scripted, ensure_ascii=False))]])
     service = SupportProgramConversationService(SupportProgramConversationAgent(model=model.model, model_timeout_seconds=1, run_timeout_seconds=2))
     result = await service.interpret(SupportProgramConversationRequest.model_validate(request_data))
@@ -214,16 +214,19 @@ async def test_actual_openai_sdk_strict_schema_and_no_persisted_conversation(req
     text_format = wire["text"]["format"]
     assert text_format["strict"] is True and text_format["type"] == "json_schema"
     schema = text_format["schema"]
-    assert schema["required"] == ["status", "updates", "clarificationQuestion", "answer"]
+    assert schema["required"] == ["status", "updates", "answerKind", "clarificationKind"]
     assert schema["additionalProperties"] is False
     update_schema = schema["$defs"]["ConversationUpdate"]
     assert update_schema["additionalProperties"] is False
     assert update_schema["required"] == ["field", "operation", "value", "evidence"]
     assert schema["properties"]["updates"]["maxItems"] == 7
     assert schema["properties"]["status"]["enum"] == ["READY", "CLARIFICATION_REQUIRED", "ANSWERED"]
-    answer_schema = schema["properties"]["answer"]["anyOf"]
+    assert set(schema["properties"]) == {"status", "updates", "answerKind", "clarificationKind"}
+    answer_schema = schema["properties"]["answerKind"]["anyOf"]
     assert {item["type"] for item in answer_schema} == {"string", "null"}
-    assert next(item for item in answer_schema if item["type"] == "string")["maxLength"] == 1000
+    assert next(item for item in answer_schema if item["type"] == "string")["enum"] == [
+        "RESULT_SUMMARY", "SEARCH_HELP", "OUT_OF_SCOPE", "CANCEL_GUIDANCE",
+    ]
     assert {item["type"] for item in update_schema["properties"]["value"]["anyOf"]} == {"string", "null"}
 
 
@@ -289,7 +292,7 @@ def test_prompt_distinguishes_followups_assent_and_grounded_search_explanations(
 async def test_scripted_trade_region_explanation_and_assent_flow_carries_small_context(request_data):
     # 아래 응답은 고정한 모델 스텁이다. 전송·병합·상태 계약만 검증하며 의미 해석 품질 평가는 아니다.
     def ready(*updates):
-        return {"status": "READY", "updates": list(updates), "clarificationQuestion": None, "answer": None}
+        return {"status": "READY", "updates": list(updates), "answerKind": None, "clarificationKind": None}
 
     def change(field, value, evidence):
         return {"field": field, "operation": "SET", "value": value, "evidence": evidence}
@@ -299,9 +302,7 @@ async def test_scripted_trade_region_explanation_and_assent_flow_carries_small_c
         ready(change("QUERY", "무역 지원", "무역 관련")),
         ready(),
         ready(change("REGION", "대구", "대구")),
-        {"status": "ANSWERED", "updates": [], "clarificationQuestion": None,
-         "answer": "직전 대구 소재지 조건의 무역 지원 검색에서 반환된 결과는 0건입니다. "
-                   "정확한 원인은 요약만으로 단정할 수 없어요. 원하시면 지역 조건을 넓혀 보세요."},
+        {"status": "ANSWERED", "updates": [], "answerKind": "RESULT_SUMMARY", "clarificationKind": None},
         ready(),
         ready(),
     ]

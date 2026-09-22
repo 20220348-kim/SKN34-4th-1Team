@@ -1,5 +1,7 @@
 package ai.govbiz.core.account.controller.dto
 
+import ai.govbiz.core.account.controller.validation.PasswordByteLimit
+
 import ai.govbiz.core.account.domain.AccountRole
 import jakarta.validation.constraints.Email
 import jakarta.validation.constraints.NotBlank
@@ -22,7 +24,7 @@ class LoginRequest(
 }
 
 /**
- * 회원가입 요청입니다. 비밀번호는 길이(8~72자)만 검사하고, 약관 동의 시각은 서버가 요청 시각으로 기록합니다.
+ * 회원가입 요청입니다. 비밀번호는 8~72자 및 UTF-8 72바이트 이하인지 검사하고, 약관 동의 시각은 서버가 요청 시각으로 기록합니다.
  * `emailPassToken`은 인증번호 확인이 돌려준 43자 통행 토큰이며 같은 이메일로 인증한 것이어야 합니다.
  */
 class SignupRequest(
@@ -32,6 +34,7 @@ class SignupRequest(
     val email: String,
     @field:NotBlank
     @field:Size(min = 8, max = 72)
+    @field:PasswordByteLimit
     val password: String,
     @field:NotBlank
     @field:Pattern(regexp = "[A-Za-z0-9_-]{43}")

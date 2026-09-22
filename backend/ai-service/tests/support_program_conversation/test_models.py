@@ -122,18 +122,22 @@ def test_evidence_is_nonblank_utf16_bounded_and_without_controls(evidence):
 
 
 @pytest.mark.parametrize("mutation", [
-    {"status": "UNKNOWN"}, {"clarificationQuestion": "어디인가요?"},
+    {"status": "UNKNOWN"}, {"clarificationKind": "REGION"},
     {"status": "CLARIFICATION_REQUIRED"},
-    {"status": "CLARIFICATION_REQUIRED", "clarificationQuestion": " \t"},
-    {"status": "CLARIFICATION_REQUIRED", "clarificationQuestion": "😀" * 81},
+    {"status": "CLARIFICATION_REQUIRED", "clarificationKind": "어디인가요?"},
+    {"status": "CLARIFICATION_REQUIRED", "clarificationKind": "QUERY", "answerKind": "OUT_OF_SCOPE"},
+    {"answerKind": "SEARCH_HELP"},
+    {"status": "ANSWERED", "updates": []},
+    {"status": "ANSWERED", "updates": [], "answerKind": "OUT_OF_SCOPE", "clarificationKind": "QUERY"},
+    {"status": "ANSWERED", "answerKind": "OUT_OF_SCOPE"},
 ])
-def test_output_status_and_question_must_agree(output_data, mutation):
+def test_output_status_and_kinds_must_agree(output_data, mutation):
     output_data.update(mutation)
     with pytest.raises(ValidationError):
         SupportProgramConversationOutput.model_validate(output_data)
 
 
-@pytest.mark.parametrize("field", ["status", "updates", "clarificationQuestion"])
+@pytest.mark.parametrize("field", ["status", "updates", "answerKind", "clarificationKind"])
 def test_output_missing_fields_are_not_defaulted(output_data, field):
     del output_data[field]
     with pytest.raises(ValidationError):
@@ -209,7 +213,7 @@ def test_last_search_requires_only_complete_context_and_count(request_data, muta
         SupportProgramConversationRequest.model_validate(request_data)
 
 
-@pytest.mark.parametrize("model", [SupportProgramConversationOutput, SupportProgramConversationResponse])
+@pytest.mark.parametrize("model", [SupportProgramConversationResponse])
 @pytest.mark.parametrize("answer", ["조회된 결과는 0건입니다.\n조건을 변경할 수 있어요.\r\t", "😀" * 500])
 def test_answered_accepts_bounded_text_and_layout_without_updates(model, answer):
     values = {"status": "ANSWERED", "updates": [], "clarificationQuestion": None, "answer": answer}
@@ -219,7 +223,7 @@ def test_answered_accepts_bounded_text_and_layout_without_updates(model, answer)
     assert parsed.answer == answer
 
 
-@pytest.mark.parametrize("model", [SupportProgramConversationOutput, SupportProgramConversationResponse])
+@pytest.mark.parametrize("model", [SupportProgramConversationResponse])
 @pytest.mark.parametrize("mutation", [
     {"answer": None}, {"answer": ""}, {"answer": " \t\r\n"}, {"answer": "😀" * 500 + "a"},
     {"answer": "답\x00"}, {"answer": "답\u200b"}, {"answer": "답\ud800"}, {"answer": "답\ue000"},
@@ -236,12 +240,11 @@ def test_answer_contract_rejects_missing_invalid_or_condition_changing_answers(m
         model.model_validate(values)
 
 
-@pytest.mark.parametrize("model", [SupportProgramConversationOutput, SupportProgramConversationResponse])
+@pytest.mark.parametrize("model", [SupportProgramConversationResponse])
 def test_legacy_ready_response_defaults_answer_to_null(model, output_data):
-    del output_data["answer"]
-    if model is SupportProgramConversationResponse:
-        output_data["schemaVersion"] = SCHEMA_VERSION
-    assert model.model_validate(output_data).answer is None
+    values = {"schemaVersion": SCHEMA_VERSION, "status": "READY",
+              "updates": output_data["updates"], "clarificationQuestion": None}
+    assert model.model_validate(values).answer is None
 
 
 @pytest.mark.parametrize("year", [1899, 2027, True, "2021", 2021.5])
@@ -255,3 +258,12 @@ def test_rejects_contradictory_foundation_precision(request_data):
     request_data["context"]["companyConditions"]["foundedYear"] = 2021
     with pytest.raises(ValidationError):
         SupportProgramConversationRequest.model_validate(request_data)
+
+
+@pytest.mark.parametrize("question", [None, "", " \t", "😀" * 81, "질문\x00", "질문\u200b"])
+def test_public_clarification_contract_keeps_short_nonblank_text_validation(question):
+    with pytest.raises(ValidationError):
+        SupportProgramConversationResponse.model_validate({
+            "schemaVersion": SCHEMA_VERSION, "status": "CLARIFICATION_REQUIRED", "updates": [],
+            "answer": None, "clarificationQuestion": question,
+        })

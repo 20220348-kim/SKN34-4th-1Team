@@ -144,9 +144,15 @@ foundedYear는 이전 클라이언트와 호환되는 선택 정수입니다. �
 updates의 최대 개수는 7개이고 연도 SET도 현재 메시지의 정확한 연도 인용과 범위를 검증합니다.
 응답은 `schemaVersion`, `status`, `updates`, `clarificationQuestion`, `answer`이며 전체 상태를 재작성하지 않습니다.
 ANSWERED는 비어 있지 않은 answer와 빈 updates, null 질문을 반환합니다. 다른 상태에서는 answer가 null입니다.
+모델 내부 출력은 자유 문장 대신 `answerKind`·`clarificationKind` 코드만 사용합니다. Service가 허용된 존댓말 안내와
+확인 질문을 작성하며, 검색 건수는 요청의 엄격하게 검증된 정수만 반영합니다. 사용자 입력·모델 문장·미확정 조건을
+안내 문구에 삽입하지 않습니다. 범위 밖 요청은 지원사업 탐색 안내만 반환하며, 잘못된 코드·추가 자유문자 필드·모델 장애는
+기존 오류로 처리합니다. OpenAI 호출이 실패했을 때 안내로 대신하는 fallback은 없습니다.
+이는 C02 안내·확인 질문의 자유문장 노출을 제한하는 조치입니다. 조건 값의 의미 정확도나 별도 추천·근거 답변의
+정확성을 보장하지 않으므로 기존 제안 확인과 근거 검증은 계속 필요합니다.
 정확한 공개/내부 예시는 [C02 계약](../../docs/conversation-condition-update.md)을 참고하세요.
 
-`HTTP API → SupportProgramConversationService → SupportProgramConversationAgent → OpenAI → Response`로
+`HTTP API → SupportProgramConversationService → SupportProgramConversationAgent → OpenAI → 코드·조건 패치 검증 → 서버 안내문 → Response`로
 한 번의 typed structured 호출만 실행합니다. 기존 client/model, store=false, tracing 비활성을 공유하며
 이 역할의 모델·HTTP 25초/전체 실행 30초 제한과 최대 출력 2,000 tokens를 유지합니다.
 
@@ -185,6 +191,11 @@ C02와 같은 모델·HTTP 25초/전체 실행 30초 제한, 최대 출력 1,200
 `savedProgramDocuments[]`(최대 10건 × 청크 `{id, contentHash}` 50개, 청크가 비면 원문 미수집)·`resumeIntent`를 더한 것이고, 응답은 위 표의 필드에
 `cards[]`(최대 5장, `kind` RECRUITMENT/PROGRAM, `id`, `title`, `subtitle`, `reason`, `quote`, `to`), `navigation`(`label`, `to`),
 `toolCalls[]`(`name`, `ms`, `ok`), `needsDocuments`를 더한 것입니다. 이 경로만 LangGraph를 쓰며 대화 검색·공고 추천·상세 질의응답·중복 지원 검토·신청 문서는 LangChain, 도우미 자유 질문 분류는 Agents SDK를 사용합니다.
+
+관심 공고와 PROGRAM 카드의 식별자는 일반 공고 API와 같은 `sourceCode:sourceProgramId` 계약을 사용합니다.
+제공처 코드는 최대 64자, 원본 ID는 최대 255개 Unicode 코드 포인트이며 한글·콜론·내부 공백을 보존합니다.
+원본 ID의 앞뒤 공백과 Unicode Other 문자는 허용하지 않습니다. 카드의 상세 경로에는 원본 ID를 URL 인코딩하며,
+도구 결과를 정제할 때도 유효한 식별자를 중간에서 자르지 않습니다. RECRUITMENT 카드 ID는 양의 정수 문자열입니다.
 
 ```
 classify(nano, 구조화) ─┬─ PRODUCT_HELP·SEARCH·PROGRAM_QUESTION·OUT_OF_SCOPE·UNCLEAR·(제안함) ─► finalize

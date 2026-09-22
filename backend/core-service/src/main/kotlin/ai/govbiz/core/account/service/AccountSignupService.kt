@@ -1,5 +1,7 @@
 package ai.govbiz.core.account.service
 
+import ai.govbiz.core.account.helper.PasswordValidationHelper
+
 import ai.govbiz.core.account.domain.NewAccount
 import ai.govbiz.core.account.helper.normalizeEmail
 import ai.govbiz.core.account.repository.AccountRepository
@@ -29,7 +31,7 @@ class AccountSignupService(
 ) {
 
     fun signUp(email: String, password: String, emailPassToken: String, clientAddress: String): AccountSessionResult {
-        require(password.length in PASSWORD_LENGTH) { "password must be $PASSWORD_LENGTH characters" }
+        PasswordValidationHelper.requireNewPassword(password)
         val normalizedEmail = normalizeEmail(email)
         // 가입도 로그인과 같은 접속 주소 한도를 씁니다. 계정 잠금은 가입에 해당하지 않습니다.
         attemptGuard.checkAddressAllowed(clientAddress)
@@ -59,7 +61,7 @@ class AccountSignupService(
     }
 
     companion object {
-        /** 비밀번호 규칙은 길이만 봅니다. 72자는 BCrypt가 실제로 반영하는 최대 길이입니다. */
-        val PASSWORD_LENGTH: IntRange = 8..72
+        /** 문자 길이와 별도로 BCrypt의 UTF-8 72바이트 상한을 검사합니다. */
+        val PASSWORD_LENGTH: IntRange = PasswordValidationHelper.CHARACTER_LENGTH
     }
 }

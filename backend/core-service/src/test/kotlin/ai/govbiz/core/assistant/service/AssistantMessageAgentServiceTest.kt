@@ -210,6 +210,47 @@ class AssistantMessageAgentServiceTest {
     }
 
     @Test
+    fun programCardsPreserveCanonicalUnicodeAndLongIdentities() {
+        val encodedIds = listOf(
+            "PBLN:100" to "PBLN%3A100",
+            "공고-01" to "%EA%B3%B5%EA%B3%A0-01",
+            "P".repeat(255) to "P".repeat(255),
+            "한".repeat(255) to "%ED%95%9C".repeat(255),
+            "😀".repeat(255) to "%F0%9F%98%80".repeat(255),
+            "PBLN~*+& one" to "PBLN~%2A%2B%26+one",
+        )
+        for ((programId, encodedId) in encodedIds) {
+            val route = "/app/support-programs/detail?sourceCode=BIZINFO&sourceProgramId=$encodedId"
+            val card = programCard(programId = programId).copy(to = route)
+            respondWith(payload("SAVED_PROGRAMS_QUESTION", answer = "공고 안내", cards = listOf(card)))
+            val verified = service.answer(member, question()).cards.single()
+            assertEquals("BIZINFO:$programId", verified.id)
+            assertEquals(route, verified.to)
+        }
+        val sourceCode = "A".repeat(64)
+        respondWith(payload("SAVED_PROGRAMS_QUESTION", answer = "공고 안내", cards = listOf(programCard(sourceCode))))
+        assertEquals("$sourceCode:PBLN_000000000000001", service.answer(member, question()).cards.single().id)
+    }
+
+    @Test
+    fun programCardsStillRejectInvalidCanonicalIdentitiesAndMismatchedRoutes() {
+        for (card in listOf(
+            programCard(programId = "P".repeat(256)),
+            programCard(programId = "한".repeat(256)),
+            programCard(programId = " leading"),
+            programCard(programId = "trailing "),
+            programCard(programId = "P\u200B1"),
+            programCard(programId = "P\u00001"),
+            programCard(sourceCode = "A".repeat(65)),
+            programCard(programId = "PBLN:100").copy(to = "/app/support-programs/detail?sourceCode=BIZINFO&sourceProgramId=PBLN%3A101"),
+        )) {
+            respondWith(payload("SAVED_PROGRAMS_QUESTION", answer = "공고 안내", cards = listOf(card)))
+            assertEquals(AiServiceFailure.INVALID_RESPONSE,
+                assertThrows(AiServiceCallException::class.java) { service.answer(member, question()) }.failure)
+        }
+    }
+
+    @Test
     fun rejectsCardsAndNavigationOutsideTheContract() {
         val partners = AiAssistantNavigationPayload("파트너 모집 열기", "/app/partners")
         listOf(

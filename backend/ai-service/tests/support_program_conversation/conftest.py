@@ -29,6 +29,6 @@ def output_data():
     return {
         "status": "READY",
         "updates": [{"field": "REGION", "operation": "SET", "value": "부산", "evidence": "부산"}],
-        "clarificationQuestion": None,
-        "answer": None,
+        "answerKind": None,
+        "clarificationKind": None,
     }

@@ -27,6 +27,7 @@ import ai.govbiz.core.assistant.domain.AssistantQuestion
 import ai.govbiz.core.partner.domain.PartnerProposalBox
 import ai.govbiz.core.partner.domain.PartnerProposalStatus
 import ai.govbiz.core.partner.service.PartnerProposalService
+import ai.govbiz.core.supportprogram.domain.SupportProgram
 import ai.govbiz.core.supportprogram.domain.SavedSupportProgram
 import ai.govbiz.core.supportprogram.service.saved.SavedSupportProgramService
 import java.net.URLEncoder
@@ -166,7 +167,7 @@ class AssistantMessageService(
         if (cards.size > MAX_CARDS || cards.any { it == null }) invalidResponse()
         val verified = cards.map { card ->
             val kind = AssistantCardKind.entries.firstOrNull { it.name == card!!.kind } ?: invalidResponse()
-            val id = card!!.id?.takeIf { CARD_ID.matches(it) } ?: invalidResponse()
+            val id = card!!.id ?: invalidResponse()
             val title = card.title?.takeIf { validText(it, SHORT_MAX) } ?: invalidResponse()
             val subtitle = card.subtitle?.also { if (!validText(it, SHORT_MAX)) invalidResponse() }
             val reason = card.reason?.takeIf { validText(it, REASON_MAX) } ?: invalidResponse()
@@ -186,11 +187,14 @@ class AssistantMessageService(
             "${InternalRoutes.PARTNER_DETAIL}?recruitmentId=$id"
         }
         AssistantCardKind.PROGRAM -> {
+            try {
+                SupportProgram.requireCanonicalSourceQualifiedId(id)
+            } catch (_: IllegalArgumentException) {
+                invalidResponse()
+            }
             val separator = id.indexOf(':')
-            if (separator <= 0 || separator == id.lastIndex) invalidResponse()
             val sourceCode = id.substring(0, separator)
             val sourceProgramId = id.substring(separator + 1)
-            if (!SOURCE_CODE.matches(sourceCode)) invalidResponse()
             "${InternalRoutes.PROGRAM_DETAIL}?sourceCode=${encode(sourceCode)}&sourceProgramId=${encode(sourceProgramId)}"
         }
     }
@@ -300,7 +304,9 @@ class AssistantMessageService(
     private fun validText(value: String, maximum: Int, multiline: Boolean = false): Boolean =
         value.isNotBlank() && value.length <= maximum && !(if (multiline) UNSUPPORTED_LAYOUT_TEXT else UNSUPPORTED_TEXT).containsMatchIn(value)
 
+    // AI Service의 urllib.parse.urlencode와 같은 쿼리 인코딩을 사용합니다.
     private fun encode(value: String): String = URLEncoder.encode(value, StandardCharsets.UTF_8)
+        .replace("*", "%2A").replace("%7E", "~")
 
     private fun invalidResponse(): Nothing =
         throw AiServiceCallException.invalidResponse("AI assistant response violated the internal contract", null)
@@ -367,8 +373,6 @@ class AssistantMessageService(
         )
         private val UNSUPPORTED_TEXT = Regex("\\p{C}")
         private val UNSUPPORTED_LAYOUT_TEXT = Regex("[\\p{C}&&[^\\n\\r\\t]]")
-        private val CARD_ID = Regex("[A-Za-z0-9_:.-]{1,80}")
         private val RECRUITMENT_ID = Regex("[1-9][0-9]{0,18}")
-        private val SOURCE_CODE = Regex("[A-Z][A-Z0-9_]{0,39}")
     }
 }

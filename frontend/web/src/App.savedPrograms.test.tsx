@@ -145,13 +145,13 @@ describe('관심 공고함', () => {
     expect(toggle.querySelector('svg')?.getAttribute('fill')).toBe('currentColor')
     expect(screen.queryByRole('link', { name: '관심 공고함 보기' })).toBeNull()
     fireEvent.click(toggle)
-    await waitFor(() => expect(remove).toHaveBeenCalledWith({ sourceCode: program.sourceCode, sourceProgramId: program.id }))
+    await waitFor(() => expect(remove).toHaveBeenCalledWith({ sourceCode: program.sourceCode, sourceProgramId: program.id }, expect.any(AbortSignal)))
     expect(await screen.findByText(supportProgramSaveMessages.removed)).toBeTruthy()
 
     const unsaved = screen.getByRole('button', { name: '관심 공고 저장' })
     expect(unsaved.querySelector('svg')?.getAttribute('fill')).toBe('none')
     fireEvent.click(unsaved)
-    await waitFor(() => expect(save).toHaveBeenCalledWith({ sourceCode: program.sourceCode, sourceProgramId: program.id }))
+    await waitFor(() => expect(save).toHaveBeenCalledWith({ sourceCode: program.sourceCode, sourceProgramId: program.id }, expect.any(AbortSignal)))
     expect(await screen.findByText(supportProgramSaveMessages.saved)).toBeTruthy()
     expect(screen.getByRole('button', { name: '관심 공고 저장됨' }).getAttribute('aria-pressed')).toBe('true')
     // 로그인 상태에서는 신청 문서 작성으로 바로 갑니다.

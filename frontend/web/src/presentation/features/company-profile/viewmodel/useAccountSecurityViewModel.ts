@@ -14,8 +14,8 @@ import { selectCurrentAccount, signedOut } from '../../../shared/auth/state/auth
 import { publicPaths } from '../../../shared/routes/appPaths'
 
 export const accountSecurityMessages = {
-  newPasswordLength: `${signUpPasswordLength.min}자 이상 ${signUpPasswordLength.max}자 이하`,
-  newPasswordInvalid: `새 비밀번호는 ${signUpPasswordLength.min}자 이상 ${signUpPasswordLength.max}자 이하여야 합니다.`,
+  newPasswordLength: `${signUpPasswordLength.min}자 이상 ${signUpPasswordLength.max}자 이하 · UTF-8 ${signUpPasswordLength.maxBytes}바이트 이하`,
+  newPasswordInvalid: `새 비밀번호는 ${signUpPasswordLength.min}자 이상 ${signUpPasswordLength.max}자 이하, UTF-8 ${signUpPasswordLength.maxBytes}바이트 이하여야 합니다.`,
   confirmationMismatch: '새 비밀번호와 다릅니다.',
   confirmationMatch: '새 비밀번호와 일치합니다.',
   currentPasswordMismatch: '현재 비밀번호가 맞지 않습니다.',

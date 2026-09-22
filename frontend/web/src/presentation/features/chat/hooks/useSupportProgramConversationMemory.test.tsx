@@ -61,18 +61,26 @@ describe('후속 발화의 미확정 조건과 검색 결과 맥락', () => {
       lastSearch: { context: daegu, resultCount: 0 } })
   })
 
-  it.each(['proposal', 'clarification'] as const)('설명 답변은 확정 조건과 보관 중인 %s를 변경하지 않는다', async (kind) => {
+  it.each([
+    ['proposal', '그게 무슨 뜻이야?', explanation.answer],
+    ['clarification', '그게 무슨 뜻이야?', explanation.answer],
+    ['proposal', 'duckduckgo에 관해 자세히 말해줘', '이 대화에서는 지원사업 검색과 검색 조건 안내만 도와드릴 수 있습니다. 찾으시는 지원사업이나 필요한 지원 내용을 알려 주세요.'],
+    ['clarification', 'duckduckgo에 관해 자세히 말해줘', '이 대화에서는 지원사업 검색과 검색 조건 안내만 도와드릴 수 있습니다. 찾으시는 지원사업이나 필요한 지원 내용을 알려 주세요.'],
+  ] as const)('ANSWERED는 확정 조건과 %s를 보존한다: %s', async (kind, message, answer) => {
     const pending = kind === 'proposal' ? readyConversationProposal(daegu) : question
     const interpret = vi.fn<InterpretSupportProgramConversationUseCase['execute']>()
       .mockResolvedValueOnce(readyConversationProposal(trade)).mockResolvedValueOnce(pending)
-      .mockResolvedValueOnce(explanation).mockResolvedValueOnce(readyConversationProposal(daegu))
+      .mockResolvedValueOnce({ ...explanation, answer }).mockResolvedValueOnce(readyConversationProposal(daegu))
     const chat = renderConversation(interpret)
     await chat.submit('서울 무역 지원')
     await act(async () => chat.result.current.confirmInterpretation())
     await chat.submit('대구로 바꿔줘')
     const before = chat.store.getState().chat
-    await chat.submit('그게 무슨 뜻이야?')
+    await chat.submit(message)
     const after = chat.store.getState().chat
+    expect(after.messages.at(-1)).toMatchObject({ role: 'assistant', text: answer })
+    expect(after.interpretation.status).toBe('idle')
+    expect(chat.result.current.confirmedContext).toEqual(trade)
     expect(after.pendingProposal).toEqual(before.pendingProposal)
     expect(after.pendingClarification).toEqual(before.pendingClarification)
     expect(after.lastSearch).toEqual(before.lastSearch)

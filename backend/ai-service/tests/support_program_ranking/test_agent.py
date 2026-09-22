@@ -653,7 +653,7 @@ async def test_ranking_http_override_does_not_change_shared_client_for_other_age
     from app.support_program_evidence.agent import SupportProgramEvidenceAnswerAgent
     from app.support_program_evidence.models import SupportProgramEvidenceAnswerRequest
     captured_timeouts = []
-    outputs = [llm_output_json(), json.dumps({"status": "READY", "updates": [], "clarificationQuestion": None}),
+    outputs = [llm_output_json(), json.dumps({"status": "READY", "updates": [], "answerKind": None, "clarificationKind": None}),
                json.dumps({"answer": "제공된 공고 근거입니다.", "answerStatus": "ANSWERED", "citationChunkIndexes": [0]})]
     def handler(request):
         captured_timeouts.append(request.extensions["timeout"])

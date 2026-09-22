@@ -1,5 +1,7 @@
 package ai.govbiz.core.account.service
 
+import ai.govbiz.core.account.helper.PasswordValidationHelper
+
 import ai.govbiz.core.account.domain.Account
 import ai.govbiz.core.account.helper.SessionTokenHelper
 import ai.govbiz.core.account.repository.AccountRepository
@@ -40,9 +42,7 @@ class AccountProfileService(
 
     /** 새 비밀번호를 저장하고 지금 쓰는 세션만 남긴 채 다른 기기의 세션을 끝냅니다. 본인 확인은 세션이 맡고 현재 비밀번호는 다시 묻지 않습니다. */
     fun changePassword(account: Account, newPassword: String, sessionToken: String?) {
-        require(newPassword.length in AccountSignupService.PASSWORD_LENGTH) {
-            "password must be ${AccountSignupService.PASSWORD_LENGTH} characters"
-        }
+        PasswordValidationHelper.requireNewPassword(newPassword)
         val token = sessionToken?.trim()?.takeIf(String::isNotEmpty) ?: throw AuthenticationRequiredException()
 
         accountRepository.updatePasswordHash(account.id, requireNotNull(passwordEncoder.encode(newPassword)))
