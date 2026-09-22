@@ -1,7 +1,7 @@
 import { completeSearchResult } from '../../fixtures/supportProgramSearchResult'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { conditionMatchedProgram, relocationReviewRequiredProgram, supportPrograms } from '../../fixtures/supportPrograms'
+import { conditionMatchedProgram, relocationReviewRequiredProgram, supportProgramDetails, supportPrograms } from '../../fixtures/supportPrograms'
 import { SupportProgramRepositoryImpl } from '../../repositories/SupportProgramRepositoryImpl'
 import {
   supportProgramSearchReadinessDtoSchema,
@@ -294,7 +294,7 @@ describe('getSupportProgramSearchReadinessApi', () => {
 describe('getSupportProgramDetailApi', () => {
   it('uses the complete source identity and maps the detail response', async () => {
     const controller = new AbortController()
-    const detail = { ...supportPrograms[0], matchedReasons: [], recommendationScore: null }
+    const detail = supportProgramDetails[0]
     const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(jsonResponse(detail)))
     vi.stubGlobal('fetch', fetchMock)
 
@@ -328,7 +328,7 @@ describe('getSupportProgramDetailApi', () => {
 
   it('rejects a successful response whose source identity differs from the request', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({
-      ...supportPrograms[0],
+      ...supportProgramDetails[0],
       id: 'different-program-id',
     })))
 

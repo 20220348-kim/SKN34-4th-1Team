@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { supportPrograms } from '../../data/fixtures/supportPrograms'
+import { supportProgramDetails as supportPrograms } from '../../data/fixtures/supportPrograms'
 import { GetSupportProgramDetailUseCase } from './GetSupportProgramDetailUseCase'
 
 describe('GetSupportProgramDetailUseCase', () => {

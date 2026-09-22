@@ -1,4 +1,4 @@
-import type { SupportProgram } from '../entities/SupportProgram'
+import type { SupportProgramDetail } from '../entities/SupportProgram'
 import type {
   SupportProgramIdentity,
   SupportProgramRepository,
@@ -17,7 +17,7 @@ export class GetSupportProgramDetailUseCase {
   execute(
     identity: SupportProgramIdentity,
     signal?: AbortSignal,
-  ): Promise<SupportProgram | null> {
+  ): Promise<SupportProgramDetail | null> {
     return this.repository.getDetail(identity, signal)
   }
 }

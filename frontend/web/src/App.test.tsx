@@ -9,7 +9,7 @@ import App from './App'
 import { completeSearchResult } from './data/fixtures/supportProgramSearchResult'
 import { appContainer } from './app/appContainer'
 import { createAppStore } from './app/store'
-import { conditionMatchedProgram, relocationReviewRequiredProgram, supportPrograms } from './data/fixtures/supportPrograms'
+import { conditionMatchedProgram, relocationReviewRequiredProgram, supportProgramDetails, supportPrograms, toSupportProgramDetailFixture } from './data/fixtures/supportPrograms'
 import { emptyConversationContext, readyConversationProposal } from './data/fixtures/supportProgramConversation'
 import type { SupportProgramSearchReadiness } from './domain/entities/SupportProgramSearchReadiness'
 import { supportProgramEvidenceQuestionTimeoutMilliseconds } from './presentation/features/support-program-detail/viewmodel/useSupportProgramEvidenceQuestionViewModel'
@@ -82,7 +82,7 @@ describe('App navigation', () => {
     const programs = [relocationReviewRequiredProgram, conditionMatchedProgram]
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse(completeSearchResult({ query: '서울 AI', programs })))
-      .mockImplementation(async () => jsonResponse(programs[0]))
+      .mockImplementation(async () => jsonResponse(toSupportProgramDetailFixture(programs[0])))
     vi.stubGlobal('fetch', fetchMock)
     const store = createAppStore()
     renderApp(store, path)
@@ -218,7 +218,7 @@ describe('App navigation', () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse(completeSearchResult({ query: '사업화', programs })))
       .mockResolvedValueOnce(jsonResponse(completeSearchResult({ query: '사업화', programs: [] })))
-      .mockResolvedValueOnce(jsonResponse({ ...conditionMatchedProgram, eligibilityReview: null, recommendationScore: null, matchedReasons: [] }))
+      .mockResolvedValueOnce(jsonResponse(toSupportProgramDetailFixture(conditionMatchedProgram)))
     vi.stubGlobal('fetch', fetchMock)
     const seoulContext = { ...emptyConversationContext, query: '사업화', companyConditions: {
       region: '서울', industry: '소프트웨어 개발업', establishedOn: '2024-02-29', supportPurpose: null,
@@ -501,7 +501,7 @@ describe('App navigation', () => {
   })
 
   it('검색 결과의 상세 조건 보기는 URL 기반 API 조회 화면으로 연결한다', async () => {
-    const detail = { ...supportPrograms[0], matchedReasons: [], recommendationScore: null }
+    const detail = supportProgramDetails[0]
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse(completeSearchResult({
         query: '서울 AI',
@@ -539,7 +539,7 @@ describe('App navigation', () => {
   })
 
   it('상세에서 별도 질문 페이지로 이동하고 질문 제출 후에만 원문 근거 답변과 링크를 표시한다', async () => {
-    const detail = { ...supportPrograms[0], matchedReasons: [], recommendationScore: null }
+    const detail = supportProgramDetails[0]
     const evidenceAnswer = {
       answer: '서울 소재 창업 7년 이내 중소기업이 신청 대상입니다.',
       answerStatus: 'ANSWERED',
@@ -607,9 +607,9 @@ describe('App navigation', () => {
 
   it('K-Startup 상세에서는 원문 링크를 유지하고 질문 입력이나 근거 답변 HTTP 요청을 만들지 않는다', async () => {
     const detail = {
-      ...supportPrograms[0], sourceCode: 'KSTARTUP', sourceName: 'K-Startup',
+      ...supportProgramDetails[0], sourceCode: 'KSTARTUP', sourceName: 'K-Startup',
       sourceUrl: 'https://www.k-startup.go.kr/web/contents/bizpbanc-ongoing.do',
-      matchedReasons: [], recommendationScore: null,
+      evidenceQuestionSupported: false,
     }
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(detail))
     vi.stubGlobal('fetch', fetchMock)
@@ -628,10 +628,8 @@ describe('App navigation', () => {
 
   it('질문 URL로 직접 진입하면 자동 조회 없이 특수문자 식별자로 질문하고 같은 공고 상세로 돌아간다', async () => {
     const detail = {
-      ...supportPrograms[0],
+      ...supportProgramDetails[0],
       id: 'fixture%20/공고?종류=AI&사업=창업+수출',
-      matchedReasons: [],
-      recommendationScore: null,
     }
     const answer = {
       answer: '지원 대상은 중소기업입니다.',
@@ -722,7 +720,7 @@ describe('App navigation', () => {
   })
 
   it('질문 요청 중 상세로 돌아가면 요청을 취소하고 재진입한 질문에 늦은 답변을 표시하지 않는다', async () => {
-    const detail = { ...supportPrograms[0], matchedReasons: [], recommendationScore: null }
+    const detail = supportProgramDetails[0]
     let resolveAnswer!: (response: Response) => void
     const fetchMock = vi.fn()
       .mockReturnValueOnce(new Promise<Response>((resolve) => { resolveAnswer = resolve }))
@@ -766,7 +764,7 @@ describe('App navigation', () => {
 
   it('원문 질문이 응답하지 않으면 시간 초과를 알리고 같은 질문의 재전송을 허용한다', async () => {
     vi.useFakeTimers()
-    const detail = supportPrograms[0]
+    const detail = supportProgramDetails[0]
     const fetchMock = vi.fn().mockReturnValue(new Promise<Response>(() => {}))
     vi.stubGlobal('fetch', fetchMock)
     renderApp(
@@ -801,7 +799,7 @@ describe('App navigation', () => {
     [requestRejectedResponse(429), '짧은 시간에 요청이 많아 잠시 제한되었습니다. 약 12초 후 직접 다시 시도해 주세요.'],
     [requestRejectedResponse(503), '현재 다른 요청을 처리하고 있어 새 요청을 시작할 수 없습니다. 약 12초 후 직접 다시 시도해 주세요.'],
   ])('원문 답변의 응답 상태에 안전한 안내를 표시한다', async (answerResponse, expectedMessage) => {
-    const detail = { ...supportPrograms[0], matchedReasons: [], recommendationScore: null }
+    const detail = supportProgramDetails[0]
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(answerResponse instanceof Response ? answerResponse : jsonResponse(answerResponse))
     vi.stubGlobal('fetch', fetchMock)
@@ -873,16 +871,8 @@ describe('App navigation', () => {
     const repository = appContainer.resolve('supportProgramRepository')
     vi.spyOn(repository, 'search').mockResolvedValue(completeSearchResult({ query: '동일 ID', programs: [bizInfoProgram, otherProgram] }))
     const getDetail = vi.spyOn(repository, 'getDetail')
-      .mockResolvedValueOnce({
-        ...bizInfoProgram,
-        matchedReasons: [],
-        recommendationScore: null,
-      })
-      .mockResolvedValueOnce({
-        ...otherProgram,
-        matchedReasons: [],
-        recommendationScore: null,
-      })
+      .mockResolvedValueOnce(toSupportProgramDetailFixture(bizInfoProgram))
+      .mockResolvedValueOnce(toSupportProgramDetailFixture(otherProgram))
 
     renderApp(createAppStore())
 
@@ -1296,7 +1286,7 @@ describe('App navigation', () => {
   })
 
   it('새로고침 또는 공유 URL의 직접 진입도 Core API에서 상세 정보를 다시 조회한다', async () => {
-    const detail = { ...supportPrograms[0], matchedReasons: [], recommendationScore: null }
+    const detail = supportProgramDetails[0]
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(detail))
     vi.stubGlobal('fetch', fetchMock)
 
@@ -1352,10 +1342,8 @@ describe('App navigation', () => {
 
   it('퍼센트와 슬래시가 포함된 원본 공고 ID도 URL 인코딩 후 상세 조회한다', async () => {
     const program = {
-      ...supportPrograms[0],
+      ...supportProgramDetails[0],
       id: 'fixture%20/program?',
-      matchedReasons: [],
-      recommendationScore: null,
     }
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(program))
     vi.stubGlobal('fetch', fetchMock)

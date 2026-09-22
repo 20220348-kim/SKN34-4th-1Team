@@ -34,3 +34,11 @@ export type SupportProgram = {
   recommendationScore: number | null
   eligibilityReview: SupportProgramEligibilityReview | null
 }
+
+/**
+ * 상세 조회로 받는 공고입니다. 검색 결과와 달리 관련도·추천 이유·자격 판정이 없고, 상세 화면이 제공처를
+ * 직접 비교하지 않도록 원문 근거 질문 지원 여부를 서버가 정해 줍니다.
+ */
+export type SupportProgramDetail = Omit<SupportProgram, 'matchedReasons' | 'recommendationScore' | 'eligibilityReview'> & {
+  evidenceQuestionSupported: boolean
+}

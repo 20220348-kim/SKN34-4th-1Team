@@ -2,12 +2,16 @@ package ai.govbiz.core.account.repository.mapper
 
 import java.time.LocalDateTime
 
-/** MyBatis가 비밀번호 재설정 토큰 한 행을 읽고 쓰기 위한 DB 행 값입니다. 토큰 원문은 없고 해시만 있습니다. */
+/** account_password_reset 한 행입니다. 인증번호·통행 토큰은 해시만 있습니다. */
 data class AccountPasswordResetDbRow(
     var id: Long = 0,
     var accountId: Long = 0,
-    var tokenHash: String = "",
+    var codeHash: String = "",
     var expiresAt: LocalDateTime? = null,
+    var attemptCount: Int = 0,
+    var verifiedAt: LocalDateTime? = null,
+    var passTokenHash: String? = null,
+    var passExpiresAt: LocalDateTime? = null,
     var usedAt: LocalDateTime? = null,
     var createdAt: LocalDateTime? = null,
 )

@@ -1,3 +1,4 @@
+import { isEmailAddress } from '../../../../domain/entities/EmailAddress'
 import { type FormEvent, useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router'
 
@@ -72,16 +73,11 @@ export function useSignupViewModel(
     }
   }, [])
 
-  function isEmailShapeValid(): boolean {
-    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
-  }
+  // 이메일 형식이 맞을 때만 "인증번호 받기"를 켭니다. 형식 오류는 버튼이 잠긴 것으로 알리고 문구는 띄우지 않습니다.
+  const canSendCode = isEmailAddress(email) && !isSendingCode
 
   async function sendCode() {
-    if (isSendingCode) return
-    if (!isEmailShapeValid()) {
-      setError({ field: 'email', message: signupMessages.emailRequired })
-      return
-    }
+    if (!canSendCode) return
     setIsSendingCode(true)
     setError(null)
     setCodeNotice(null)
@@ -207,6 +203,7 @@ export function useSignupViewModel(
     passwordConfirmation,
     error,
     isSendingCode,
+    canSendCode,
     isVerifyingCode,
     isSubmitting,
     /** 이메일을 고치면 인증이 풀립니다. 인증한 주소와 다른 주소로 가입하지 않게 하기 위해서입니다. */

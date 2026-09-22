@@ -6,7 +6,7 @@ import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { appContainer } from '../../../../app/appContainer'
 import { createAppStore } from '../../../../app/store'
-import { supportPrograms } from '../../../../data/fixtures/supportPrograms'
+import { supportProgramDetails, supportPrograms } from '../../../../data/fixtures/supportPrograms'
 import type { ApplicationForm, ApplicationPreparation, ApplicationPreparationPage } from '../../../../domain/entities/ApplicationPreparation'
 import { ApplicationPreparationError } from '../../../../domain/errors/ApplicationPreparationError'
 import { ApplicationPreparationUseCase } from '../../../../domain/usecases/ApplicationPreparationUseCase'
@@ -357,9 +357,10 @@ beforeEach(() => {
   })
   browseSavedPrograms.mockResolvedValue([])
   getProgramDetail.mockImplementation(async (identity: { sourceCode: string; sourceProgramId: string }) => ({
-    ...structuredClone(supportPrograms[0]),
+    ...structuredClone(supportProgramDetails[0]),
     sourceCode: identity.sourceCode,
     id: identity.sourceProgramId,
+    evidenceQuestionSupported: identity.sourceCode === 'BIZINFO',
   }))
   appContainer.register({
     applicationPreparationUseCase: asValue(new ApplicationPreparationUseCase(repository)),

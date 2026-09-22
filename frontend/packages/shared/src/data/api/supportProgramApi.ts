@@ -9,10 +9,10 @@ import type {
 } from '../../domain/repositories/SupportProgramRepository'
 import type { SupportProgramHttpContext } from './supportProgramClient'
 import {
-  supportProgramDtoSchema,
+  supportProgramDetailDtoSchema,
   supportProgramSearchResponseDtoSchema,
   restoredSupportProgramSearchResponseDtoSchema,
-  type SupportProgramDto,
+  type SupportProgramDetailDto,
   type SupportProgramSearchResponseDto,
 } from '../models/SupportProgramDto'
 import {
@@ -234,7 +234,7 @@ export async function getSupportProgramSearchReadinessApi(context: SupportProgra
 export async function getSupportProgramDetailApi(context: SupportProgramHttpContext,
   identity: SupportProgramIdentity,
   signal?: AbortSignal,
-): Promise<SupportProgramDto | null> {
+): Promise<SupportProgramDetailDto | null> {
   const searchParams = new URLSearchParams({
     sourceCode: identity.sourceCode,
     sourceProgramId: identity.sourceProgramId,
@@ -257,7 +257,7 @@ export async function getSupportProgramDetailApi(context: SupportProgramHttpCont
     )
   }
 
-  const detail = supportProgramDtoSchema.parse(await response.json())
+  const detail = supportProgramDetailDtoSchema.parse(await response.json())
   if (
     detail.sourceCode !== identity.sourceCode
     || detail.id !== identity.sourceProgramId

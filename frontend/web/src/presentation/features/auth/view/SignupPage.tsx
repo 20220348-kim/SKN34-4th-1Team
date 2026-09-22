@@ -23,6 +23,7 @@ export function SignupPage() {
     passwordConfirmation,
     error,
     isSendingCode,
+    canSendCode,
     isVerifyingCode,
     isSubmitting,
     updateEmail,
@@ -67,7 +68,7 @@ export function SignupPage() {
                 {isVerified ? (
                   <span className={authPageStyles.verifiedTag}>인증됨</span>
                 ) : (
-                  <button className={authPageStyles.inlineButton} type="button" disabled={isSendingCode} onClick={() => void sendCode()}>
+                  <button className={authPageStyles.inlineButton} type="button" disabled={!canSendCode} onClick={() => void sendCode()}>
                     {isSendingCode ? '보내는 중…' : emailStep === 'sent' ? '다시 받기' : '인증번호 받기'}
                   </button>
                 )}

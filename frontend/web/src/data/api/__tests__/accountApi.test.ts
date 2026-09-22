@@ -15,6 +15,7 @@ import {
   resetPasswordApi,
   sendSignupEmailCodeApi,
   signUpApi,
+  verifyPasswordResetCodeApi,
   verifySignupEmailCodeApi,
 } from '../accountApi'
 
@@ -309,31 +310,54 @@ function problemResponse(status: number, code: string | null, extra: Record<stri
 }
 
 describe('password reset apis', () => {
-  it('posts the reset request and the confirmation without a session and accepts empty 204 responses', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
+  it('posts the code request, the verification and the confirmation without a session', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(jsonResponse({ passToken: 'a'.repeat(43), expiresAt: '2026-09-13T18:00:00+09:00' }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
     vi.stubGlobal('fetch', fetchMock)
 
     await expect(requestPasswordResetApi('manager@company.co.kr')).resolves.toBeUndefined()
+    await expect(verifyPasswordResetCodeApi('manager@company.co.kr', '482137')).resolves.toEqual({ passToken: 'a'.repeat(43), expiresAt: '2026-09-13T18:00:00+09:00' })
     await expect(resetPasswordApi('a'.repeat(43), 'new-password-2')).resolves.toBeUndefined()
 
     const calls = fetchMock.mock.calls as [string, RequestInit][]
     expect(new URL(calls[0]![0]).pathname).toBe('/api/v1/auth/password-reset')
     expect(calls[0]![1].method).toBe('POST')
+    expect(calls[0]![1].credentials).toBeUndefined()
     expect(JSON.parse(String(calls[0]![1].body))).toEqual({ email: 'manager@company.co.kr' })
-    expect(new URL(calls[1]![0]).pathname).toBe('/api/v1/auth/password-reset/confirm')
-    expect(JSON.parse(String(calls[1]![1].body))).toEqual({ token: 'a'.repeat(43), newPassword: 'new-password-2' })
+    expect(new URL(calls[1]![0]).pathname).toBe('/api/v1/auth/password-reset/verify')
+    expect(JSON.parse(String(calls[1]![1].body))).toEqual({ email: 'manager@company.co.kr', code: '482137' })
+    expect(new URL(calls[2]![0]).pathname).toBe('/api/v1/auth/password-reset/confirm')
+    expect(JSON.parse(String(calls[2]![1].body))).toEqual({ token: 'a'.repeat(43), newPassword: 'new-password-2' })
   })
 
-  it('maps the unavailable mail server and the rejected token to results in the repository', async () => {
+  it('maps unregistered and social-only accounts, unavailable mail, wrong or expired codes and a stale pass to results', async () => {
     vi.stubGlobal('fetch', vi.fn()
       .mockResolvedValueOnce(problemResponse(503, 'PASSWORD_RESET_MAIL_UNAVAILABLE'))
+      .mockResolvedValueOnce(problemResponse(404, 'PASSWORD_RESET_ACCOUNT_NOT_FOUND'))
+      .mockResolvedValueOnce(problemResponse(409, 'PASSWORD_RESET_SOCIAL_ACCOUNT'))
+      .mockResolvedValueOnce(problemResponse(429, 'EMAIL_CODE_RATE_LIMITED', { retryAfterSeconds: 40 }))
       .mockResolvedValueOnce(new Response(null, { status: 204 }))
-      .mockResolvedValueOnce(problemResponse(422, 'PASSWORD_RESET_TOKEN_INVALID')))
+      .mockResolvedValueOnce(problemResponse(422, 'EMAIL_CODE_INVALID'))
+      .mockResolvedValueOnce(problemResponse(422, 'EMAIL_CODE_EXPIRED'))
+      .mockResolvedValueOnce(problemResponse(409, 'PASSWORD_RESET_SOCIAL_ACCOUNT'))
+      .mockResolvedValueOnce(jsonResponse({ passToken: 'a'.repeat(43), expiresAt: '2026-09-13T18:00:00+09:00' }))
+      .mockResolvedValueOnce(problemResponse(422, 'PASSWORD_RESET_TOKEN_INVALID'))
+      .mockResolvedValueOnce(problemResponse(409, 'PASSWORD_RESET_SOCIAL_ACCOUNT')))
     const repository = new AccountRepositoryImpl({ sessionHintStorage: createMemorySessionHintStorage() })
 
     await expect(repository.requestPasswordReset('manager@company.co.kr')).resolves.toEqual({ outcome: 'mail-unavailable' })
+    await expect(repository.requestPasswordReset('nobody@company.co.kr')).resolves.toEqual({ outcome: 'not-registered' })
+    await expect(repository.requestPasswordReset('social@company.co.kr')).resolves.toEqual({ outcome: 'social-account' })
+    await expect(repository.requestPasswordReset('manager@company.co.kr')).resolves.toEqual({ outcome: 'rate-limited', retryAfterSeconds: 40 })
     await expect(repository.requestPasswordReset('manager@company.co.kr')).resolves.toEqual({ outcome: 'requested' })
+    await expect(repository.verifyPasswordResetCode('manager@company.co.kr', '000000')).resolves.toEqual({ outcome: 'code-invalid' })
+    await expect(repository.verifyPasswordResetCode('manager@company.co.kr', '000000')).resolves.toEqual({ outcome: 'code-expired' })
+    await expect(repository.verifyPasswordResetCode('social@company.co.kr', '482137')).resolves.toEqual({ outcome: 'social-account' })
+    await expect(repository.verifyPasswordResetCode('manager@company.co.kr', '482137')).resolves.toEqual({ outcome: 'verified', passToken: 'a'.repeat(43) })
     await expect(repository.resetPassword('a'.repeat(43), 'new-password-2')).resolves.toEqual({ outcome: 'token-invalid' })
+    await expect(repository.resetPassword('a'.repeat(43), 'new-password-2')).resolves.toEqual({ outcome: 'social-account' })
   })
 })
 

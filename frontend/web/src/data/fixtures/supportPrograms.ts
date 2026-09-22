@@ -1,4 +1,4 @@
-import type { SupportProgram } from '../../domain/entities/SupportProgram'
+import type { SupportProgram, SupportProgramDetail } from '../../domain/entities/SupportProgram'
 
 /** 외부 API에 의존하지 않고 Domain·상태 흐름을 검증하기 위한 테스트 전용 공고입니다. */
 export const supportPrograms: SupportProgram[] = [
@@ -161,3 +161,27 @@ export const relocationReviewRequiredProgram: SupportProgram = {
     },
   },
 }
+
+/** 검색 결과 픽스처를 상세 조회 응답 모양으로 바꿉니다. 원문 근거 질문은 기업마당 공고만 지원합니다. */
+export function toSupportProgramDetailFixture(program: SupportProgram): SupportProgramDetail {
+  return {
+    sourceCode: program.sourceCode,
+    id: program.id,
+    title: program.title,
+    organization: program.organization,
+    summary: program.summary,
+    categories: [...program.categories],
+    regions: [...program.regions],
+    targetDescription: program.targetDescription,
+    applicationPeriod: program.applicationPeriod,
+    applicationStartDate: program.applicationStartDate,
+    applicationEndDate: program.applicationEndDate,
+    status: program.status,
+    sourceName: program.sourceName,
+    sourceUrl: program.sourceUrl,
+    evidenceQuestionSupported: program.sourceCode === 'BIZINFO',
+  }
+}
+
+/** `supportPrograms`와 같은 순서의 상세 조회 응답입니다. */
+export const supportProgramDetails: SupportProgramDetail[] = supportPrograms.map(toSupportProgramDetailFixture)

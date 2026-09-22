@@ -4,12 +4,12 @@ import { isValidSignUpPassword, signUpPasswordLength } from './SignUpUseCase'
 type ResetPasswordRepository = Pick<AccountRepository, 'resetPassword'>
 
 export type PasswordResetCommand = {
-  /** 메일 링크의 일회용 토큰입니다. 43자 URL-safe Base64입니다. */
+  /** 인증번호 확인이 돌려준 일회용 통행 토큰입니다. 43자 URL-safe Base64입니다. */
   token: string
   newPassword: string
 }
 
-/** 메일 링크의 토큰으로 새 비밀번호를 저장합니다. 비밀번호 길이 규칙은 가입과 같습니다. */
+/** 인증번호를 맞힌 뒤 받은 통행 토큰으로 새 비밀번호를 저장합니다. 비밀번호 길이 규칙은 가입과 같습니다. */
 export class ResetPasswordUseCase {
   private readonly repository: ResetPasswordRepository
 

@@ -11,7 +11,7 @@ import {
   SupportProgramRequestApiError,
   SupportProgramSearchTimeoutApiError,
 } from '../api/supportProgramApi'
-import { toSupportProgram } from '../models/SupportProgramDto'
+import { toSupportProgram, toSupportProgramDetail } from '../models/SupportProgramDto'
 import { browseSupportProgramsApi } from '../api/supportProgramCatalogApi'
 import type { SupportProgramCatalogFilters } from '../../domain/entities/SupportProgramCatalog'
 import { toSupportProgramEvidenceAnswer } from '../models/SupportProgramEvidenceAnswerDto'
@@ -20,7 +20,7 @@ import { toSupportProgramInterpretation } from '../models/SupportProgramConversa
 import type { SupportProgramInterpretRequest } from '../../domain/entities/SupportProgramConversation'
 import type { SupportProgramSearchResult } from '../../domain/entities/SupportProgramSearchResult'
 import { SupportProgramSearchRestoreError } from '../../domain/errors/SupportProgramSearchRestoreError'
-import type { SupportProgram } from '../../domain/entities/SupportProgram'
+import type { SupportProgramDetail } from '../../domain/entities/SupportProgram'
 import { SupportProgramRequestError } from '../../domain/errors/SupportProgramRequestError'
 import { SupportProgramInterpretationError } from '../../domain/errors/SupportProgramInterpretationError'
 import { SupportProgramSearchTimeoutError } from '../../domain/errors/SupportProgramSearchTimeoutError'
@@ -83,9 +83,9 @@ export class SupportProgramRepositoryImpl implements SupportProgramRepository {
   async getDetail(
     identity: SupportProgramIdentity,
     signal?: AbortSignal,
-  ): Promise<SupportProgram | null> {
+  ): Promise<SupportProgramDetail | null> {
     const dto = await getSupportProgramDetailApi(identity, signal)
-    return dto ? toSupportProgram(dto) : null
+    return dto ? toSupportProgramDetail(dto) : null
   }
 
   async answerEvidenceQuestion(

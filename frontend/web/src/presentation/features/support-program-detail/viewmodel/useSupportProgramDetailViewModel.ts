@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 
 import { appContainer } from '../../../../app/appContainer'
-import type { SupportProgram } from '../../../../domain/entities/SupportProgram'
+import type { SupportProgramDetail } from '../../../../domain/entities/SupportProgram'
 import type { SupportProgramIdentity } from '../../../../domain/repositories/SupportProgramRepository'
 import type { GetSupportProgramDetailUseCase } from '../../../../domain/usecases/GetSupportProgramDetailUseCase'
 
@@ -12,7 +12,7 @@ export const supportProgramDetailTimeoutMilliseconds = 10_000
 
 export type SupportProgramDetailLoadState =
   | { status: 'loading'; program: null }
-  | { status: 'ready'; program: SupportProgram }
+  | { status: 'ready'; program: SupportProgramDetail }
   | { status: 'not-found'; program: null }
   | { status: 'failed'; program: null }
 

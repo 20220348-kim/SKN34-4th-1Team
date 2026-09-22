@@ -115,10 +115,11 @@ class SupportProgramEvidenceService(
     private fun isFresh(document: SupportProgramSourceDocument): Boolean =
         !document.fetchedAt.isBefore(LocalDateTime.now(clock).minus(REFRESH_AFTER))
 
-    private companion object {
-        val logger = LoggerFactory.getLogger(SupportProgramEvidenceService::class.java)
-        const val MAX_CACHED_DOCUMENTS = 32
+    companion object {
+        private val logger = LoggerFactory.getLogger(SupportProgramEvidenceService::class.java)
+        private const val MAX_CACHED_DOCUMENTS = 32
+        /** 공식 원문 근거 답변을 지원하는 유일한 제공처입니다. 상세 응답의 지원 여부도 이 값으로 정합니다. */
         const val BIZINFO_SOURCE_CODE = "BIZINFO"
-        val REFRESH_AFTER: Duration = Duration.ofHours(6)
+        private val REFRESH_AFTER: Duration = Duration.ofHours(6)
     }
 }

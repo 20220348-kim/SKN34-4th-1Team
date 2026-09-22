@@ -195,12 +195,6 @@ describe('관리자 계정 관리', () => {
     renderApp('/app/admin/accounts/detail?accountId=99')
     expect(await screen.findByText(/계정을 찾을 수 없습니다/)).toBeTruthy()
   })
-
-  it('예전 데모 화면 주소는 계정 관리로 보낸다', async () => {
-    renderApp('/app/admin/members')
-
-    expect(await screen.findByRole('heading', { name: '계정 관리' })).toBeTruthy()
-  })
 })
 
 function renderApp(initialEntry: string, account: Account = adminAccount) {

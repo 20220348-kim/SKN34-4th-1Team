@@ -5,7 +5,7 @@ import { loginPathFor } from '../../../shared/auth/returnPath'
 import { appPaths, isAppPath, supportProgramQuestionPath } from '../../../shared/routes/appPaths'
 import { workspacePageStyles } from '../../../shared/workspace/WorkspacePage.styles'
 
-import type { SupportProgram, SupportProgramStatus } from '../../../../domain/entities/SupportProgram'
+import type { SupportProgramDetail, SupportProgramStatus } from '../../../../domain/entities/SupportProgram'
 import type { SupportProgramIdentity } from '../../../../domain/repositories/SupportProgramRepository'
 import { useSupportProgramDetailViewModel } from '../viewmodel/useSupportProgramDetailViewModel'
 import { useSupportProgramSaveViewModel } from '../../../shared/support-program/useSupportProgramSaveViewModel'
@@ -14,8 +14,10 @@ import { getSupportProgramFromPipeline, getSupportProgramSearchReturnTo, support
 
 /** URL의 제공처·원본 공고 ID로 최신 상세 정보를 조회하는 화면입니다. */
 export function SupportProgramDetailPage() {
-  const locationState = useLocation().state
-  const searchReturnTo = getSupportProgramSearchReturnTo(locationState)
+  const location = useLocation()
+  const locationState = location.state
+  // 새로고침·공유 URL로 들어와 이동 상태가 없으면 비로그인 링크가 실어 둔 `back`으로 검색 화면을 복원합니다.
+  const searchReturnTo = getSupportProgramSearchReturnTo(locationState, location.search)
   const fromPipeline = getSupportProgramFromPipeline(locationState)
   const [searchParams] = useSearchParams()
   const identity = getSupportProgramIdentity(
@@ -109,7 +111,7 @@ function DetailShell({ children, live = false, searchReturnTo }: {
 }
 
 function SupportProgramDetail({ program, searchReturnTo, fromPipeline }: {
-  program: SupportProgram
+  program: SupportProgramDetail
   searchReturnTo: SupportProgramSearchReturnTo
   fromPipeline: boolean
 }) {
@@ -124,7 +126,7 @@ function SupportProgramDetail({ program, searchReturnTo, fromPipeline }: {
     sourceCode: program.sourceCode,
     sourceProgramId: program.id,
   })}`
-  const questionPath = supportProgramQuestionPath({ sourceCode: program.sourceCode, sourceProgramId: program.id }, inApp)
+  const questionPath = supportProgramQuestionPath({ sourceCode: program.sourceCode, sourceProgramId: program.id }, inApp, searchReturnTo)
   // 관심 공고 저장은 책갈피 아이콘 하나입니다. 로그인한 회원은 담기·빼기를 오가고, 비로그인은 로그인 뒤 이 공고로 돌아옵니다.
   const saveLabel = save.isSaved ? '관심 공고 저장됨' : '관심 공고 저장'
   const saveControl = save.isAuthenticated ? (
@@ -230,27 +232,11 @@ function SupportProgramDetail({ program, searchReturnTo, fromPipeline }: {
         </DetailItem>
       </section>
 
-      {program.matchedReasons.length > 0 ? (
-        <section className={supportProgramDetailStyles.reasonSection} aria-labelledby="recommendation-reasons">
-          <p className={supportProgramDetailStyles.sectionEyebrow}>검색 결과</p>
-          <h2 id="recommendation-reasons" className={supportProgramDetailStyles.sectionTitle}>
-            관련 검색 정보 (자격 근거 아님)
-          </h2>
-          <ul className={supportProgramDetailStyles.reasonList}>
-            {program.matchedReasons.map((reason) => (
-              <li key={reason} className={supportProgramDetailStyles.reason}>
-                {reason}
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
-
       <section className={supportProgramDetailStyles.questionSection} aria-labelledby="evidence-question-title">
         <h2 id="evidence-question-title" className={supportProgramDetailStyles.sectionTitle}>
           공고 원문 기반 질문
         </h2>
-        {program.sourceCode === 'BIZINFO' ? (
+        {program.evidenceQuestionSupported ? (
           <p className={supportProgramDetailStyles.questionDescription}>
             궁금한 신청 조건을 질문하고 공고 원문에서 답변 근거를 확인하세요.
           </p>
@@ -260,7 +246,7 @@ function SupportProgramDetail({ program, searchReturnTo, fromPipeline }: {
           </p>
         )}
         <div className={supportProgramDetailStyles.questionActions}>
-          {program.sourceCode === 'BIZINFO' ? (
+          {program.evidenceQuestionSupported ? (
             save.isAuthenticated ? (
               <Link className={supportProgramDetailStyles.questionLink} state={{ searchReturnTo }} to={questionPath}>
                 이 공고에 질문하기

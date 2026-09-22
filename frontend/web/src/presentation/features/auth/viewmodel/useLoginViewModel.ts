@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router'
 
 import { appContainer } from '../../../../app/appContainer'
 import { useAppDispatch } from '../../../../app/hooks'
+import { isEmailAddress } from '../../../../domain/entities/EmailAddress'
 import { isOAuthErrorCode, type OAuthErrorCode } from '../../../../domain/entities/OAuthProvider'
 import type { LogInUseCase } from '../../../../domain/usecases/LogInUseCase'
 import { readReturnPath, signupPathFor } from '../../../shared/auth/returnPath'
@@ -68,7 +69,7 @@ export function useLoginViewModel(
     if (isSubmitting) return
 
     const emailInput = event.currentTarget.elements.namedItem('email') as HTMLInputElement
-    if (!email.trim() || emailInput.validity.typeMismatch) {
+    if (!isEmailAddress(email)) {
       setError({ field: 'email', message: loginMessages.emailRequired })
       emailInput.focus()
       return

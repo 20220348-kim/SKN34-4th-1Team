@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import App from './App'
 import { createAppStore } from './app/store'
-import { supportPrograms } from './data/fixtures/supportPrograms'
+import { supportPrograms, toSupportProgramDetailFixture } from './data/fixtures/supportPrograms'
 import { sessionRestored } from './presentation/shared/auth/state/authSlice'
 
 vi.mock('./presentation/shared/core-api-status/CoreApiConnectionStatus', () => ({
@@ -28,7 +28,7 @@ function start(path: string) {
   vi.stubGlobal('fetch', vi.fn().mockImplementation(async (url: string) => {
     const request = new URL(url)
     if (request.pathname.endsWith('/catalog')) return Response.json(catalog)
-    if (request.pathname.endsWith('/detail')) return Response.json(program)
+    if (request.pathname.endsWith('/detail')) return Response.json(toSupportProgramDetailFixture(program))
     return new Promise<Response>(() => {})
   }))
   const store = createAppStore()

@@ -106,10 +106,10 @@ function App() {
       <Route path={publicPaths.oauthComplete} element={<OAuthCompletePage />} />
 
       <Route element={<GuestOnly />}>
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/signup" element={<SignupPage />} />
-        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
-        <Route path="/reset-password" element={<ResetPasswordPage />} />
+        <Route path={publicPaths.login} element={<LoginPage />} />
+        <Route path={publicPaths.signup} element={<SignupPage />} />
+        <Route path={publicPaths.forgotPassword} element={<ForgotPasswordPage />} />
+        <Route path={publicPaths.resetPassword} element={<ResetPasswordPage />} />
       </Route>
 
       <Route element={<RequireAuth />}>
@@ -142,8 +142,6 @@ function App() {
         <Route element={<WorkspaceLayout />}>
           <Route path={appPaths.adminAccounts} element={<AdminAccountsPage />} />
           <Route path={appPaths.adminAccountDetail} element={<AdminAccountDetailPage />} />
-          {/* 예전 데모 화면 주소는 계정 관리로 보냅니다. */}
-          <Route path={`${appPaths.admin}/members`} element={<Navigate replace to={appPaths.adminAccounts} />} />
         </Route>
       </Route>
 

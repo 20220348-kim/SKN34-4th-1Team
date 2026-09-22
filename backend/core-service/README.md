@@ -339,7 +339,7 @@ Controller의 `SupportProgramRequestAdmissionService.execute`가 공개 요청 �
 | `GET /api/v1/auth/mobile/oauth/{provider}/authorize`, `POST …/exchange` | 앱 Google·Kakao 시스템 브라우저 로그인 시작과 PKCE 일회용 코드 교환. 아래 모바일 인증 계약 참고 |
 | `GET /api/v1/auth/me` | 세션 쿠키 또는 Bearer로 현재 계정·권한 단계 조회 |
 | `PUT /api/v1/me/password` | 로그인 세션으로 본인을 확인해 새 비밀번호만 받아 변경. 요청한 세션만 남기고 다른 기기 세션 종료 |
-| `POST /api/v1/auth/password-reset`, `POST …/confirm` | 로그인 없이 가입 이메일로 30분 일회용 재설정 링크 요청(가입 여부와 무관하게 204), 토큰으로 새 비밀번호 저장(모든 세션 종료) |
+| `POST /api/v1/auth/password-reset`, `POST …/verify`, `POST …/confirm` | 로그인 없이 가입 이메일로 10분짜리 6자리 인증번호 요청(이메일 가입 계정은 204, 미가입 이메일은 404, 소셜 전용 계정은 409), 인증번호 확인으로 30분 통행 토큰 발급, 통행 토큰으로 새 비밀번호 저장(모든 세션 종료) |
 | `GET /api/v1/me/deletion-preview`, `DELETE /api/v1/me` | 삭제 시 닫히는 모집글·제안 수 미리 보기와 계정 삭제(제안 철회·모집글 마감·기업 삭제·세션 삭제·`deleted_at`) |
 | `GET /api/v1/auth/oauth/providers` | 키가 설정된 소셜 로그인 공급자(카카오·Google)와 시작 주소. 설정 확인용이며 화면은 이 목록을 기다리지 않고 두 버튼을 바로 그림 |
 | `GET /api/v1/auth/oauth/{provider}/authorize`, `GET …/callback` | 소셜 로그인 시작(서명한 state 쿠키와 함께 공급자로 302)과 콜백(코드 교환·ID 토큰 확인 뒤 `sub`로 로그인 또는 가입, 세션 쿠키와 함께 프런트로 302). 같은 이메일의 기존 계정에는 자동 연결하지 않음 |
@@ -644,11 +644,13 @@ Compose는 일부 주소·CORS 값을 내부 네트워크에 맞게 덮어씁니
 | `ACCOUNT_DEV_LOGIN_EMAIL` | `admin@govbiz.local` | 개발용 관리자 시드 계정 이메일. 없으면 ADMIN 역할·이메일 인증 완료로 생성 |
 | `ACCOUNT_DEV_LOGIN_MEMBER_EMAIL` | `member@govbiz.local` | `{"role":"USER"}`로 부를 때 쓰는 회원 시드 계정 이메일 |
 | `ACCOUNT_DEV_LOGIN_PASSWORD` | `govbiz-admin1` | 시드 계정 생성 시 저장하는 비밀번호 |
-| `ACCOUNT_PASSWORD_RESET_MAIL_ENABLED` | `false` | 비밀번호 재설정 메일 SMTP 전송. 꺼져 있으면 `ACCOUNT_DEV_LOGIN_ENABLED`가 켜진 환경에서만 링크를 WARN 로그로 남기고, 아니면 503 |
+| `ACCOUNT_PASSWORD_RESET_MAIL_ENABLED` | `false` | 비밀번호 재설정 인증번호 메일 SMTP 전송. 꺼져 있으면 `ACCOUNT_DEV_LOGIN_ENABLED`가 켜진 환경에서만 인증번호를 WARN 로그로 남기고, 아니면 503 |
 | `ACCOUNT_PASSWORD_RESET_FROM` | 빈 값 | 재설정 메일 발신 주소. 메일을 켜면 필수 |
-| `ACCOUNT_PASSWORD_RESET_FRONTEND_BASE_URL` | `http://127.0.0.1:5173` | 메일 링크(`/reset-password#token=`)의 프런트 origin |
-| `ACCOUNT_PASSWORD_RESET_TOKEN_TTL` | `PT30M` | 재설정 토큰 유효 시간 |
+| `ACCOUNT_PASSWORD_RESET_CODE_TTL` | `PT10M` | 6자리 인증번호 유효 시간(최대 1시간) |
+| `ACCOUNT_PASSWORD_RESET_TOKEN_TTL` | `PT30M` | 인증번호를 맞힌 뒤 새 비밀번호를 저장해야 하는 시간(통행 토큰 유효 시간) |
+| `ACCOUNT_PASSWORD_RESET_RESEND_COOLDOWN` | `PT1M` | 같은 계정으로 인증번호를 다시 보낼 수 있기까지의 대기 |
 | `ACCOUNT_PASSWORD_RESET_MAX_REQUESTS_PER_HOUR` | `3` | 계정당 시간당 요청 한도 |
+| `ACCOUNT_PASSWORD_RESET_MAX_ATTEMPTS` | `5` | 인증번호 하나에 허용하는 입력 시도 수 |
 | `ACCOUNT_EMAIL_VERIFICATION_MAIL_ENABLED` | 재설정 메일 값 | 회원가입 인증번호 메일 SMTP 전송. 따로 주지 않으면 `ACCOUNT_PASSWORD_RESET_MAIL_ENABLED`를 물려받고, 꺼져 있으면 개발용 로그인 환경에서만 인증번호를 WARN 로그로 남김 |
 | `ACCOUNT_EMAIL_VERIFICATION_FROM` | 재설정 메일 값 | 인증번호 메일 발신 주소. 따로 주지 않으면 `ACCOUNT_PASSWORD_RESET_FROM` |
 | `ACCOUNT_EMAIL_VERIFICATION_CODE_TTL` | `PT10M` | 6자리 인증번호 유효 시간(최대 1시간) |
@@ -831,7 +833,7 @@ SQL은 [`SupportProgramMapper.xml`](src/main/resources/mybatis/supportprogram/re
   [V11](src/main/resources/db/migration/V11__create_combination_review_run.sql)은 실행 스냅샷과 원본 파일 테이블,
   [V12](src/main/resources/db/migration/V12__create_daily_report.sql)는 일일 리포트 구독·발송 테이블,
   [V13](src/main/resources/db/migration/V13__create_company_partner_profile.sql)은 기업당 하나인 협업·파트너 설정 테이블,
-  [V14](src/main/resources/db/migration/V14__create_account_password_reset.sql)는 비밀번호 재설정 토큰 해시 테이블,
+  [V14](src/main/resources/db/migration/V14__create_account_password_reset.sql)는 비밀번호 재설정 토큰 해시 테이블([V42](src/main/resources/db/migration/V42__password_reset_email_code.sql)가 6자리 인증번호·시도 횟수·통행 토큰 열로 바꿈),
   [V17](src/main/resources/db/migration/V17__create_account_oauth_identity.sql)은 소셜 로그인 연결 테이블(`(provider, subject)`
   UNIQUE)을 만들고 소셜로만 가입한 계정을 위해 `account.password_hash`를 nullable로 바꿉니다.
   적용된 migration은 수정하지 않고 새 버전을 추가합니다.

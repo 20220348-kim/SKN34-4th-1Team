@@ -376,8 +376,9 @@ Origin: http://127.0.0.1:5173
 
 ## 비밀번호 재설정
 
-비밀번호를 잊은 회원이 로그인 없이 쓰는 흐름입니다. 가입 이메일로 30분짜리 일회용 링크를 보내고, 그 토큰으로 새
-비밀번호를 저장합니다. 두 요청 모두 세션 쿠키가 없으므로 Origin 검사 대상이 아닙니다.
+비밀번호를 잊은 회원이 로그인 없이 쓰는 흐름입니다. 가입 이메일로 10분짜리 6자리 인증번호를 보내고, 인증번호를 맞히면
+30분짜리 통행 토큰을 받아 그 토큰으로 새 비밀번호를 저장합니다. 세 요청 모두 세션 쿠키가 없으므로 Origin 검사 대상이
+아닙니다. 인증번호·통행 토큰은 SHA-256 해시만 `account_password_reset`에 저장합니다.
 
 ```http
 POST /api/v1/auth/password-reset
@@ -385,13 +386,29 @@ POST /api/v1/auth/password-reset
 { "email": "manager@company.co.kr" }
 ```
 
-가입 여부와 관계없이 **항상 204**라 응답으로 계정 존재가 드러나지 않습니다. 계정이 있으면 토큰을 만들어 SHA-256 해시만
-`account_password_reset`에 저장하고 원문은 메일 링크 `<frontend-base-url>/reset-password#token=<43자>`에만 싣습니다.
-토큰은 fragment라 HTTP 요청·접속 로그·Referer로 나가지 않습니다. 정지된 계정, 시간당 한도(기본 3회)를 넘긴 계정은 조용히
-건너뜁니다. 접속 주소 한도(분당 20회)는 로그인과 같이 쓰며 넘기면 429 `LOGIN_RATE_LIMITED`입니다.
+이메일로 가입한 계정이 있으면 204이며 메일 제목과 본문에 6자리 인증번호를 보냅니다. 가입하지 않은 이메일은 404
+`PASSWORD_RESET_ACCOUNT_NOT_FOUND`이고(회원가입 인증번호 요청이 이미 409로 가입 여부를 알려 주므로 여기서만 숨기지 않고,
+사용자가 주소를 고치거나 회원가입으로 가도록 안내), 소셜 로그인으로만 가입해 비밀번호가 없는 계정은 409
+`PASSWORD_RESET_SOCIAL_ACCOUNT`입니다(소셜 로그인으로 들어오도록 안내). 정지된 계정은 조용히 204입니다. 같은 계정
+재전송 대기(60초)나 시간당 한도(3회)를 넘기면 429 `EMAIL_CODE_RATE_LIMITED`와 `retryAfterSeconds`·`Retry-After`입니다.
+접속 주소 한도(분당 20회)는 로그인과 같이 쓰며 넘기면 429 `LOGIN_RATE_LIMITED`입니다.
 
-SMTP(`ACCOUNT_PASSWORD_RESET_MAIL_ENABLED=true`와 `SMTP_*`)가 없으면 개발용 로그인이 켜진 환경(Compose)에서만 토큰을
-저장하고 링크를 Core API 로그(WARN)로 남깁니다. 둘 다 없으면 503 `PASSWORD_RESET_MAIL_UNAVAILABLE`입니다.
+SMTP(`ACCOUNT_PASSWORD_RESET_MAIL_ENABLED=true`와 `SMTP_*`)가 없으면 개발용 로그인이 켜진 환경(Compose)에서만 인증번호를
+저장하고 Core API 로그(WARN)로 남깁니다. 둘 다 없으면 503 `PASSWORD_RESET_MAIL_UNAVAILABLE`입니다.
+
+```http
+POST /api/v1/auth/password-reset/verify
+
+{ "email": "manager@company.co.kr", "code": "482137" }
+```
+
+```json
+{ "passToken": "<43자 URL-safe Base64>", "expiresAt": "2026-09-13T18:00:00+09:00" }
+```
+
+가장 최근에 보낸 인증번호와 비교합니다. 틀리면 422 `EMAIL_CODE_INVALID`이고 시도 횟수가 올라갑니다. 보낸 인증번호가 없거나
+만료됐거나 시도(5번)를 다 썼으면 422 `EMAIL_CODE_EXPIRED`이며 새로 받아야 합니다. 미가입 이메일·소셜 전용 계정은 요청 때와
+같은 404·409입니다. 맞으면 30분짜리 통행 토큰을 돌려주고, 새 비밀번호 저장 요청의 `token`에 그대로 실어 보냅니다.
 
 ```http
 POST /api/v1/auth/password-reset/confirm
@@ -401,13 +418,14 @@ POST /api/v1/auth/password-reset/confirm
 
 | 필드 | 규칙 |
 |---|---|
-| `token` | 메일 링크의 43자 토큰. 형식이 다르면 400 |
+| `token` | 인증번호 확인이 돌려준 43자 통행 토큰. 형식이 다르면 400 |
 | `newPassword` | 8~72자(가입과 같음) |
 
-성공은 204입니다. 새 해시를 저장하고 **같은 계정의 남은 재설정 토큰과 모든 세션을 지워** 새 비밀번호로 다시 로그인해야
-합니다. 토큰이 없거나 만료됐거나 이미 쓴 토큰이면 422 `PASSWORD_RESET_TOKEN_INVALID`이며 셋을 구분하지 않습니다. 정지된
-계정은 403 `ACCOUNT_SUSPENDED`입니다. 프런트의 `/forgot-password`는 이메일 하나를 받고, 메일 링크가 여는 `/reset-password`는
-주소의 토큰과 새 비밀번호를 보냅니다.
+성공은 204입니다. 새 해시를 저장하고 **같은 계정의 남은 인증번호·통행 토큰과 모든 세션을 지워** 새 비밀번호로 다시
+로그인해야 합니다. 통행 토큰이 없거나 만료됐거나 이미 쓴 토큰이면 422 `PASSWORD_RESET_TOKEN_INVALID`이며 셋을 구분하지
+않습니다. 정지된 계정은 403 `ACCOUNT_SUSPENDED`, 소셜 전용 계정은 409 `PASSWORD_RESET_SOCIAL_ACCOUNT`입니다.
+프런트의 `/forgot-password`는 이메일 형식이 맞을 때만 "인증번호 받기"를 켜고, 인증번호 6자리를 맞히면 `/reset-password#token=`으로
+넘어가 새 비밀번호를 보냅니다. 통행 토큰은 fragment라 HTTP 요청·접속 로그·Referer로 나가지 않습니다.
 
 ## 회원가입 이메일 인증
 

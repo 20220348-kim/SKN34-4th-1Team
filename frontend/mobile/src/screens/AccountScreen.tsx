@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { ActivityIndicator, Text, View } from 'react-native'
 import { z } from 'zod'
-import { normalizeEmail } from '@govbiz/shared/domain/usecases/LogInUseCase'
+import { isEmailAddress, normalizeEmail } from '@govbiz/shared/domain/entities/EmailAddress'
 import { isValidSignUpPassword } from '@govbiz/shared/domain/usecases/SignUpUseCase'
 import { apiRequest } from '../api/client'
 import { useAuth } from '../auth/session'
@@ -47,7 +47,7 @@ export function AccountScreen({ onCompany }: { onCompany(): void }) {
   }
   function validEmail(): string {
     const normalized = normalizeEmail(email)
-    if (!z.string().email().max(320).safeParse(normalized).success) throw new Error('올바른 이메일 주소를 입력해 주세요.')
+    if (!isEmailAddress(normalized)) throw new Error('올바른 이메일 주소를 입력해 주세요. 예: name@example.com')
     return normalized
   }
   const sendCode = () => run(async (signal) => {

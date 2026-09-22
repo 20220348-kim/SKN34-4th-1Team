@@ -353,8 +353,12 @@ Accept: application/json
 | `sourceCode` | 예 | 제공처 코드. `[A-Z][A-Z0-9_]{0,63}` 형식이며 최대 64자입니다. |
 | `sourceProgramId` | 예 | 제공처가 부여한 원본 공고 ID. 공백일 수 없고 최대 255자입니다. 검색 응답의 `id`를 전달합니다. |
 
-성공하면 검색 결과 한 건과 같은 `SupportProgramResponse` 객체를 반환합니다. 상세 조회에는 검색 질의가
-없으므로 `matchedReasons`는 빈 배열, `recommendationScore`는 `null`입니다. `is_source_present = FALSE`인
+성공하면 `SupportProgramDetailResponse` 객체를 반환합니다. 검색 결과 한 건과 같은 공고 필드(`id`, `sourceCode`,
+`title`, `organization`, `summary`, `categories`, `regions`, `targetDescription`, `applicationPeriod`,
+`applicationStartDate`, `applicationEndDate`, `status`, `sourceName`, `sourceUrl`)에 `evidenceQuestionSupported`를
+더한 형태입니다. 상세 조회에는 검색 질의가 없으므로 검색 전용 `matchedReasons`·`recommendationScore`·`eligibilityReview`는
+포함하지 않습니다. `evidenceQuestionSupported`는 공식 원문 근거 질문을 지원하는 제공처(현재 `BIZINFO`)인지 서버가 정한 값이며,
+화면은 제공처 코드를 직접 비교하지 않고 이 값으로 질문 입력을 보여 줍니다. `is_source_present = FALSE`인
 과거 공고와 존재하지 않는 복합 식별자는 모두 다음의 안정적인 404 오류로 처리합니다.
 
 ```json

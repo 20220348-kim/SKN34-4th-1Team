@@ -14,6 +14,7 @@ import type {
   ResetPasswordResult,
   SendSignupEmailCodeResult,
   SignUpResult,
+  VerifyPasswordResetCodeResult,
   VerifySignupEmailCodeResult,
 } from '../../domain/repositories/AccountRepository'
 import {
@@ -28,6 +29,7 @@ import {
   requestPasswordResetApi,
   resetPasswordApi,
   sendSignupEmailCodeApi,
+  verifyPasswordResetCodeApi,
   verifySignupEmailCodeApi,
   oauthStartUrl,
   signUpApi,
@@ -138,13 +140,15 @@ export class AccountRepositoryImpl implements AccountRepository {
     }
   }
 
-  /** 503(메일 불가)·429는 화면이 안내하는 업무 결과이고, 그 외 실패는 예외로 둡니다. 가입 여부는 응답에 없습니다. */
+  /** 404(미가입)·409(소셜 전용)·503(메일 불가)·429는 화면이 안내하는 업무 결과이고, 그 외 실패는 예외로 둡니다. */
   async requestPasswordReset(email: string, signal?: AbortSignal): Promise<RequestPasswordResetResult> {
     try {
       await requestPasswordResetApi(email, signal)
       return { outcome: 'requested' }
     } catch (error) {
       if (error instanceof AccountApiError) {
+        if (error.status === 404) return { outcome: 'not-registered' }
+        if (error.status === 409) return { outcome: 'social-account' }
         if (error.status === 503) return { outcome: 'mail-unavailable' }
         if (error.status === 429) return { outcome: 'rate-limited', retryAfterSeconds: error.retryAfterSeconds }
       }
@@ -152,7 +156,24 @@ export class AccountRepositoryImpl implements AccountRepository {
     }
   }
 
-  /** 422(토큰 없음·만료·사용됨)·429는 화면이 안내하는 업무 결과입니다. 성공해도 세션은 생기지 않습니다. */
+  /** 422는 코드로 불일치와 만료를 구분하고, 404·409는 요청 때와 같이 미가입·소셜 전용 계정입니다. */
+  async verifyPasswordResetCode(email: string, code: string, signal?: AbortSignal): Promise<VerifyPasswordResetCodeResult> {
+    try {
+      const pass = await verifyPasswordResetCodeApi(email, code, signal)
+      return { outcome: 'verified', passToken: pass.passToken }
+    } catch (error) {
+      if (error instanceof AccountApiError) {
+        if (error.status === 422 && error.code === 'EMAIL_CODE_INVALID') return { outcome: 'code-invalid' }
+        if (error.status === 422) return { outcome: 'code-expired' }
+        if (error.status === 404) return { outcome: 'not-registered' }
+        if (error.status === 409) return { outcome: 'social-account' }
+        if (error.status === 429) return { outcome: 'rate-limited', retryAfterSeconds: error.retryAfterSeconds }
+      }
+      throw error
+    }
+  }
+
+  /** 422(통행 토큰 없음·만료·사용됨)·409(소셜 전용)·429는 화면이 안내하는 업무 결과입니다. 성공해도 세션은 생기지 않습니다. */
   async resetPassword(token: string, newPassword: string, signal?: AbortSignal): Promise<ResetPasswordResult> {
     try {
       await resetPasswordApi(token, newPassword, signal)
@@ -160,6 +181,7 @@ export class AccountRepositoryImpl implements AccountRepository {
     } catch (error) {
       if (error instanceof AccountApiError) {
         if (error.status === 422) return { outcome: 'token-invalid' }
+        if (error.status === 409) return { outcome: 'social-account' }
         if (error.status === 429) return { outcome: 'rate-limited', retryAfterSeconds: error.retryAfterSeconds }
       }
       throw error
