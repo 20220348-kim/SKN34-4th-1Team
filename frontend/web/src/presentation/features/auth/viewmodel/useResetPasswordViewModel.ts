@@ -8,10 +8,11 @@ import { isValidSignUpPassword, signUpPasswordLength } from '../../../../domain/
 type PasswordResetUseCase = Pick<ResetPasswordUseCase, 'execute'>
 
 export const resetPasswordMessages = {
-  missingToken: '재설정 링크가 올바르지 않습니다. 메일의 링크를 그대로 열거나 다시 요청해 주세요.',
+  missingToken: '인증을 마친 뒤에 새 비밀번호를 정할 수 있습니다. 비밀번호 찾기에서 인증번호를 받아 주세요.',
   passwordLength: `비밀번호는 ${signUpPasswordLength.min}자 이상 ${signUpPasswordLength.max}자 이하로 입력해 주세요.`,
   passwordMismatch: '비밀번호 확인이 일치하지 않습니다.',
-  tokenInvalid: '재설정 링크가 만료됐거나 이미 사용됐습니다. 비밀번호 찾기에서 다시 요청해 주세요.',
+  tokenInvalid: '인증이 만료됐거나 이미 사용됐습니다. 비밀번호 찾기에서 인증번호를 다시 받아 주세요.',
+  socialAccount: '카카오·Google로 가입한 계정이라 비밀번호가 없습니다. 로그인 화면에서 소셜 로그인으로 들어와 주세요.',
   done: '비밀번호를 변경했습니다. 새 비밀번호로 다시 로그인해 주세요.',
   rateLimited: (retryAfterSeconds: number | null) =>
     retryAfterSeconds === null
@@ -22,15 +23,15 @@ export const resetPasswordMessages = {
 
 type ResetPasswordError = { field: 'password' | 'passwordConfirmation' | null; message: string }
 
-/** 메일 링크는 토큰을 `#token=` fragment에 싣습니다. fragment는 서버 요청·접속 로그·Referer로 나가지 않습니다. */
+/** 인증번호 확인이 돌려준 통행 토큰을 `#token=` fragment에 싣습니다. fragment는 서버 요청·접속 로그·Referer로 나가지 않습니다. */
 export function readResetToken(hash: string): string | null {
   const token = new URLSearchParams(hash.replace(/^#/, '')).get('token')?.trim() ?? ''
   return /^[A-Za-z0-9_-]{43}$/.test(token) ? token : null
 }
 
 /**
- * 비밀번호 재설정 화면의 대표 ViewModel입니다. 주소의 토큰과 새 비밀번호로 변경을 요청하고, 성공하면 로그인으로
- * 안내합니다. 토큰이 없거나 만료된 링크는 다시 요청하도록 안내합니다.
+ * 비밀번호 재설정 화면의 대표 ViewModel입니다. 인증번호 확인이 돌려준 통행 토큰과 새 비밀번호로 변경을 요청하고, 성공하면
+ * 로그인으로 안내합니다. 토큰이 없거나 만료됐으면 비밀번호 찾기에서 인증번호를 다시 받도록 안내합니다.
  */
 export function useResetPasswordViewModel(
   resetUseCase: PasswordResetUseCase = appContainer.resolve('resetPasswordUseCase'),
@@ -74,6 +75,10 @@ export function useResetPasswordViewModel(
       if (!isMounted.current) return
       if (result.outcome === 'token-invalid') {
         setIsTokenRejected(true)
+        return
+      }
+      if (result.outcome === 'social-account') {
+        setError({ field: null, message: resetPasswordMessages.socialAccount })
         return
       }
       if (result.outcome === 'rate-limited') {

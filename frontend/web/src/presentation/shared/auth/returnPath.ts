@@ -1,13 +1,13 @@
-import { appPaths } from '../routes/appPaths'
+import { appPaths, publicPaths } from '../routes/appPaths'
 
 /** 로그인 뒤 돌아갈 경로를 `?next=`에 담습니다. 외부 주소로 새지 않도록 앱 안의 절대 경로만 허용합니다. */
 export function loginPathFor(returnTo: string): string {
-  return returnTo && returnTo !== '/' ? `/login?next=${encodeURIComponent(returnTo)}` : '/login'
+  return returnTo && returnTo !== publicPaths.landing ? `${publicPaths.login}?next=${encodeURIComponent(returnTo)}` : publicPaths.login
 }
 
 /** 회원가입과 로그인 사이에서도 선택한 검색 결과의 복귀 경로를 유지합니다. */
 export function signupPathFor(returnTo: string): string {
-  return returnTo && returnTo !== '/' ? `/signup?next=${encodeURIComponent(returnTo)}` : '/signup'
+  return returnTo && returnTo !== publicPaths.landing ? `${publicPaths.signup}?next=${encodeURIComponent(returnTo)}` : publicPaths.signup
 }
 
 export function readReturnPath(search: string, fallback: string = appPaths.chat): string {

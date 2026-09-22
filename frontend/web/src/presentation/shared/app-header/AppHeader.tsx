@@ -115,10 +115,10 @@ function AccountMenu({ isMarketingPage }: { isMarketingPage: boolean }) {
 
   return (
     <div className={isMarketingPage ? appHeaderStyles.landingAccountLinks : appHeaderStyles.account}>
-      <Link className={isMarketingPage ? appHeaderStyles.landingAccountButton : appHeaderStyles.navLink} to="/signup">
+      <Link className={isMarketingPage ? appHeaderStyles.landingAccountButton : appHeaderStyles.navLink} to={publicPaths.signup}>
         회원가입
       </Link>
-      <Link className={isMarketingPage ? appHeaderStyles.landingAccountButton : appHeaderStyles.loginButton} to="/login">
+      <Link className={isMarketingPage ? appHeaderStyles.landingAccountButton : appHeaderStyles.loginButton} to={publicPaths.login}>
         로그인
       </Link>
       {import.meta.env.DEV && !['portfolio', 'connected'].includes(import.meta.env.MODE) ? (

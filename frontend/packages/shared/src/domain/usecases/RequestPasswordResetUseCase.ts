@@ -3,7 +3,7 @@ import { normalizeEmail } from './LogInUseCase'
 
 type RequestPasswordResetRepository = Pick<AccountRepository, 'requestPasswordReset'>
 
-/** 가입 이메일로 비밀번호 재설정 링크를 요청합니다. 가입 여부와 관계없이 같은 결과라 계정 존재가 드러나지 않습니다. */
+/** 가입 이메일로 비밀번호 재설정 6자리 인증번호를 요청합니다. 미가입·소셜 전용 계정은 결과로 구분해 화면이 안내합니다. */
 export class RequestPasswordResetUseCase {
   private readonly repository: RequestPasswordResetRepository
 

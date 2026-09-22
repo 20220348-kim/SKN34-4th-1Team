@@ -156,7 +156,7 @@ function CatalogExtraSelect({ label, options, selected, onSelect }: {
   </label>
 }
 function CatalogRow({ program, returnTo, inApp }: { program: SupportProgram; returnTo: string; inApp: boolean }) {
-  const detailPath = supportProgramDetailPath({ sourceCode: program.sourceCode, sourceProgramId: program.id }, inApp)
+  const detailPath = supportProgramDetailPath({ sourceCode: program.sourceCode, sourceProgramId: program.id }, inApp, returnTo)
   return <article className="grid min-w-0 grid-cols-[minmax(0,1fr)_10rem_10rem] gap-5 border-t border-sample-border px-5 py-5 first:border-t-0 hover:bg-[#fafcfb] max-chat:grid-cols-1 max-chat:gap-2 max-chat:px-4">
     <div className="min-w-0">
       <p className="mt-0 mb-2 truncate text-xs font-semibold text-brand-primary">{program.categories.join(' · ') || '분야 미분류'} <span className="font-normal text-sample-muted">{program.regions.length ? ` / ${program.regions.join(' · ')}` : ''}</span></p>

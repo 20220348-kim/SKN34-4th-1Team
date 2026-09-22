@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { conversationContextDtoSchema } from './SupportProgramConversationDto'
 
-import type { SupportProgram } from '../../domain/entities/SupportProgram'
+import type { SupportProgram, SupportProgramDetail } from '../../domain/entities/SupportProgram'
 
 const isoLocalDateSchema = z.iso.date()
 const sourceCodeSchema = z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/)
@@ -57,7 +57,8 @@ const eligibilityReviewDtoSchema = z.object({
   }
 })
 
-export const supportProgramDtoSchema = z.object({
+/** 검색 결과와 상세 조회가 함께 쓰는 공고 기본 필드입니다. */
+const supportProgramBaseShape = {
   sourceCode: sourceCodeSchema,
   id: z.string().min(1),
   title: z.string().min(1),
@@ -72,10 +73,9 @@ export const supportProgramDtoSchema = z.object({
   status: z.enum(['OPEN', 'UPCOMING', 'CLOSED', 'UNKNOWN']),
   sourceName: z.string().min(1),
   sourceUrl: z.string().url(),
-  matchedReasons: z.array(z.string()),
-  recommendationScore: z.number().int().min(0).max(100).nullable(),
-  eligibilityReview: eligibilityReviewDtoSchema.nullable().default(null),
-}).superRefine((program, context) => {
+}
+
+function requireOfficialSourceUrl(program: { sourceCode: string; sourceUrl: string }, context: z.RefinementCtx): void {
   if (!isOfficialSupportProgramSourceUrl(program.sourceCode, program.sourceUrl)) {
     context.addIssue({
       code: 'custom',
@@ -83,6 +83,15 @@ export const supportProgramDtoSchema = z.object({
       message: `${program.sourceCode} 제공처의 공식 http(s) URL이어야 합니다.`,
     })
   }
+}
+
+export const supportProgramDtoSchema = z.object({
+  ...supportProgramBaseShape,
+  matchedReasons: z.array(z.string()),
+  recommendationScore: z.number().int().min(0).max(100).nullable(),
+  eligibilityReview: eligibilityReviewDtoSchema.nullable().default(null),
+}).superRefine((program, context) => {
+  requireOfficialSourceUrl(program, context)
   if (!program.eligibilityReview) return
   for (const axisName of ['target', 'region'] as const) {
     program.eligibilityReview[axisName].evidence.forEach((evidence, index) => {
@@ -132,7 +141,14 @@ export const restoredSupportProgramSearchResponseDtoSchema = supportProgramSearc
 
 export type RestoredSupportProgramSearchResponseDto = z.infer<typeof restoredSupportProgramSearchResponseDtoSchema>
 
+/** 상세 조회 응답입니다. 검색 전용 필드가 없고 원문 근거 질문 지원 여부를 서버가 정합니다. */
+export const supportProgramDetailDtoSchema = z.object({
+  ...supportProgramBaseShape,
+  evidenceQuestionSupported: z.boolean(),
+}).superRefine(requireOfficialSourceUrl)
+
 export type SupportProgramDto = z.infer<typeof supportProgramDtoSchema>
+export type SupportProgramDetailDto = z.infer<typeof supportProgramDetailDtoSchema>
 export type SupportProgramSearchResponseDto = z.infer<
   typeof supportProgramSearchResponseDtoSchema
 >
@@ -168,5 +184,25 @@ export function toSupportProgram(dto: SupportProgramDto): SupportProgram {
         evidence: dto.eligibilityReview.region.evidence.map((evidence) => ({ ...evidence })),
       },
     } : null,
+  }
+}
+
+export function toSupportProgramDetail(dto: SupportProgramDetailDto): SupportProgramDetail {
+  return {
+    sourceCode: dto.sourceCode,
+    id: dto.id,
+    title: dto.title,
+    organization: dto.organization,
+    summary: dto.summary,
+    categories: [...dto.categories],
+    regions: [...dto.regions],
+    targetDescription: dto.targetDescription,
+    applicationPeriod: dto.applicationPeriod,
+    applicationStartDate: dto.applicationStartDate,
+    applicationEndDate: dto.applicationEndDate,
+    status: dto.status,
+    sourceName: dto.sourceName,
+    sourceUrl: dto.sourceUrl,
+    evidenceQuestionSupported: dto.evidenceQuestionSupported,
   }
 }

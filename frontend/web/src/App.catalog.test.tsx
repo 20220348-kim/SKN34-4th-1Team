@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import App from './App'
 import { createAppStore } from './app/store'
-import { supportPrograms } from './data/fixtures/supportPrograms'
+import { supportPrograms, toSupportProgramDetailFixture } from './data/fixtures/supportPrograms'
 import { getSupportProgramSearchReturnTo } from './presentation/features/support-program-detail/view/supportProgramNavigation'
 import {
   defaultCatalogApplicantTypes, defaultCatalogCategories, defaultCatalogFounderAges,
@@ -31,7 +31,7 @@ const undatedPrograms = [
   { sourceCode: 'MSIT', sourceName: '과학기술정보통신부', sourceUrl: 'https://www.msit.go.kr/bbs/view.do' },
   { sourceCode: 'CNTRADE_NOTICE', sourceName: '충청남도 온라인수출지원시스템', sourceUrl: 'https://cntrade.chungnam.go.kr/home/kor/M102638244/board.do' },
 ].map((source) => ({ ...program, ...source, id: source.sourceCode + '-1', title: source.sourceName + ' 공고',
-  organization: source.sourceName, status: 'UNKNOWN', applicationStartDate: null, applicationEndDate: null, applicationPeriod: '공고 원문 확인' }))
+  organization: source.sourceName, status: 'UNKNOWN' as const, applicationStartDate: null, applicationEndDate: null, applicationPeriod: '공고 원문 확인' }))
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.useRealTimers() })
 function Location() {
   const location = useLocation()
@@ -49,7 +49,7 @@ describe('지원사업 직접 필터 검색', () => {
   it.each(undatedPrograms)('$sourceName의 기간 안내는 접수 상태를 자동 변경하지 않고 UNKNOWN 검색·상세 복귀를 보존한다', async (undated) => {
     const fetchMock = vi.fn().mockImplementation(async (url: string) => {
       const request = new URL(url)
-      if (!request.pathname.endsWith('/catalog')) return Response.json(undated)
+      if (!request.pathname.endsWith('/catalog')) return Response.json(toSupportProgramDetailFixture(undated))
       if (request.searchParams.get('sourceCode') !== undated.sourceCode) return Response.json(catalog)
       return Response.json(request.searchParams.get('status') === 'OPEN'
         ? { ...catalog, programs: [], total: 0, totalPages: 0 }
@@ -285,7 +285,7 @@ describe('지원사업 직접 필터 검색', () => {
   })
 
   it.each(['/', '/app/chat'])('%s의 K-Startup 상세 복귀에 추가 조건을 보존하고 미지원 질문을 열지 않는다', async (path) => {
-    const fetchMock = vi.fn().mockImplementation(async (url: string) => Response.json(url.includes('/catalog?') ? startupCatalog : startupProgram))
+    const fetchMock = vi.fn().mockImplementation(async (url: string) => Response.json(url.includes('/catalog?') ? startupCatalog : toSupportProgramDetailFixture(startupProgram)))
     vi.stubGlobal('fetch', fetchMock)
     start(path + '?mode=filter&' + new URLSearchParams(startupParams))
     fireEvent.click(await screen.findByRole('link', { name: startupProgram.title }))
@@ -462,7 +462,7 @@ describe('지원사업 직접 필터 검색', () => {
   })
 
   it.each(['/', '/app/chat'])('%s에서 공고 상세·질문 왕복 시 필터 탭과 조건을 복원한다', async (path) => {
-    vi.stubGlobal('fetch', vi.fn().mockImplementation(async (url: string) => Response.json(url.includes('/catalog?') ? catalog : program)))
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async (url: string) => Response.json(url.includes('/catalog?') ? catalog : toSupportProgramDetailFixture(program))))
     start(`${path}?mode=filter&region=%EC%84%9C%EC%9A%B8&category=%EC%88%98%EC%B6%9C`)
     const detailPath = path.startsWith('/app') ? '/app/support-programs/detail' : '/support-programs/detail'
     expect((await screen.findByRole('link', { name: program.title })).getAttribute('href')).toContain(`${detailPath}?`)

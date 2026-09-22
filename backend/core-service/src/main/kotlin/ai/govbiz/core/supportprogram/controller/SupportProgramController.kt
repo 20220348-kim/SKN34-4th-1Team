@@ -3,6 +3,7 @@ package ai.govbiz.core.supportprogram.controller
 import ai.govbiz.core.account.domain.Account
 import ai.govbiz.core.supportprogram.controller.dto.SupportProgramEvidenceAnswerResponse
 import ai.govbiz.core.supportprogram.controller.dto.SupportProgramEvidenceQuestionRequest
+import ai.govbiz.core.supportprogram.controller.dto.SupportProgramDetailResponse
 import ai.govbiz.core.supportprogram.controller.dto.SupportProgramResponse
 import ai.govbiz.core.supportprogram.controller.dto.SupportProgramSearchReadinessResponse
 import ai.govbiz.core.supportprogram.controller.dto.SupportProgramSearchRequest
@@ -91,8 +92,8 @@ class SupportProgramController(
         @CodePointMax(max = 255)
         @Pattern(regexp = "(?Us)^(?!\\s)(?!.*\\s$)(?!.*\\p{C}).+$")
         sourceProgramId: String,
-    ): SupportProgramResponse =
-        SupportProgramResponse.from(detailService.get(sourceCode, sourceProgramId))
+    ): SupportProgramDetailResponse =
+        SupportProgramDetailResponse.from(detailService.get(sourceCode, sourceProgramId))
 
     @PostMapping("/detail/answers")
     fun answerFromOfficialSource(

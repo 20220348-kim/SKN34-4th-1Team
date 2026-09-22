@@ -1,5 +1,6 @@
 import { Link } from 'react-router'
 
+import { publicPaths } from '../../../shared/routes/appPaths'
 import { useLoginViewModel } from '../viewmodel/useLoginViewModel'
 import { AuthLogo } from './AuthLogo'
 import { authPageStyles } from './AuthPage.styles'
@@ -92,7 +93,7 @@ export function LoginPage() {
           <p className={authPageStyles.linksRow}>
             <Link className={authPageStyles.footerLink} to={signupPath}>회원가입</Link>
             <span className={authPageStyles.linkSeparator} aria-hidden="true" />
-            <Link className={authPageStyles.footerLink} to="/forgot-password">비밀번호 찾기</Link>
+            <Link className={authPageStyles.footerLink} to={publicPaths.forgotPassword}>비밀번호 찾기</Link>
           </p>
         </form>
       </section>

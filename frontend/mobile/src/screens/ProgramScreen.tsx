@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ActivityIndicator, Linking, Text } from 'react-native'
-import type { SupportProgram } from '@govbiz/shared/domain/entities/SupportProgram'
+import type { SupportProgramDetail } from '@govbiz/shared/domain/entities/SupportProgram'
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
 import type { SupportProgramEvidenceAnswer } from '@govbiz/shared/domain/entities/SupportProgramEvidenceAnswer'
 import { savedSupportProgramDtoSchema, savedSupportProgramStatusDtoSchema } from '@govbiz/shared/data/models/SavedSupportProgramDto'
@@ -13,7 +13,7 @@ export function ProgramScreen({ identity, onLogin }: { identity: SupportProgramI
   const { session, status, invalidateSession } = useAuth()
   const token = status === 'signedIn' ? session?.accessToken : undefined
   const client = useMemo(() => programClient(token), [token])
-  const [program, setProgram] = useState<SupportProgram | null>(null)
+  const [program, setProgram] = useState<SupportProgramDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [retry, setRetry] = useState(0)
@@ -112,6 +112,8 @@ export function ProgramScreen({ identity, onLogin }: { identity: SupportProgramI
         busy={saving} disabled={Boolean(token) && saved === null} onPress={() => void toggleSave()} />
       {saveError && <><Notice error>{saveError}</Notice><Button variant="ghost" label="저장 상태 다시 확인" onPress={() => setRetry((value) => value + 1)} /></>}
       <Card><Text style={styles.heading}>공고 원문에 질문하기</Text>
+        {!program.evidenceQuestionSupported ? <Notice>이 제공처 공고는 아직 원문 근거 답변을 지원하지 않습니다. 공식 공고 원문에서 확인해 주세요.</Notice>
+        : <>
         <Subtitle>AI가 이 공고의 원문에서 근거를 찾아 답합니다.</Subtitle>
         {token ? <>
           <Field label="공고에 대해 궁금한 점" value={question} onChangeText={setQuestion} multiline maxLength={500}
@@ -126,6 +128,7 @@ export function ProgramScreen({ identity, onLogin }: { identity: SupportProgramI
             <Text selectable style={styles.body}>“{citation.excerpt}”</Text>
             <Button variant="ghost" label={`근거 ${index + 1} 원문 열기`} onPress={() => void openSource(citation.sourceUrl)} />
           </Card>)}
+        </>}
         </>}
       </Card>
     </>}

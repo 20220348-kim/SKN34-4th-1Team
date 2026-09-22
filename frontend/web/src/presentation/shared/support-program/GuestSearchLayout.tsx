@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link } from 'react-router'
 
 import { AppHeader } from '../app-header/AppHeader'
+import { publicPaths } from '../routes/appPaths'
 
 /**
  * 비로그인 검색 흐름(검색·공고 상세·원문 질문)이 함께 쓰는 껍데기입니다. 스크롤은 PublicLayout의 안쪽 칸이 맡습니다.
@@ -51,7 +52,7 @@ export function GuestSearchLayout({ children, searchTabs, onNewChat, showConvers
             </svg>
             <span className="max-chat:sr-only">새 AI 대화 검색</span>
           </button>
-          <Link to="/login" aria-label="활동을 저장하려면 로그인을 해주세요" title="활동을 저장하려면 로그인을 해주세요"
+          <Link to={publicPaths.login} aria-label="활동을 저장하려면 로그인을 해주세요" title="활동을 저장하려면 로그인을 해주세요"
             className="flex min-h-11 items-start gap-2 rounded-xl px-1 py-1 text-xs leading-6 text-sample-muted no-underline hover:text-brand-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary max-chat:items-center max-chat:justify-center max-chat:px-0">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"
               strokeLinecap="round" className="mt-0.5 shrink-0 max-chat:mt-0" aria-hidden="true">

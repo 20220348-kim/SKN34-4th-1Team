@@ -48,6 +48,7 @@ object AccountTestHelper {
         emailVerifiedAt: LocalDateTime? = null,
         suspendedAt: LocalDateTime? = null,
         company: CompanySummary? = null,
+        hasPassword: Boolean = true,
     ): Account =
         Account(
             id = id,
@@ -57,6 +58,7 @@ object AccountTestHelper {
             suspendedAt = suspendedAt,
             createdAt = NOW,
             company = company,
+            hasPassword = hasPassword,
         )
 
     /** Kotlin의 non-null 인자에 Mockito matcher를 넘길 수 있게 null을 T로 다룹니다. */

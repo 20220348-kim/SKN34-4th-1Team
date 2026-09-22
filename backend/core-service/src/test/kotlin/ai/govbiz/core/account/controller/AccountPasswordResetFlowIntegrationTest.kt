@@ -28,8 +28,8 @@ import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPat
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 
 /**
- * 가입 → 재설정 링크 요청 → 토큰으로 비밀번호 변경 → 옛 세션 종료·새 비밀번호 로그인을 실제 MySQL 8.4에서 확인합니다.
- * SMTP는 외부 호출이라 메일 Client만 대역으로 바꿔 토큰 원문을 받습니다.
+ * 가입 → 인증번호 요청 → 인증번호 확인 → 통행 토큰으로 비밀번호 변경 → 옛 세션 종료·새 비밀번호 로그인을 실제 MySQL 8.4에서 확인합니다.
+ * SMTP는 외부 호출이라 메일 Client만 대역으로 바꿔 인증번호 원문을 받습니다.
  */
 @SpringBootTest(
     properties = [
@@ -41,6 +41,8 @@ import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
         "app.support-program-index.enabled=false",
         "app.account.cookie-secure=false",
         "app.account.password-reset.max-requests-per-hour=2",
+        "app.account.password-reset.resend-cooldown=PT0S",
+        "app.account.password-reset.max-attempts=2",
     ],
 )
 @AutoConfigureMockMvc
@@ -65,27 +67,44 @@ class AccountPasswordResetFlowIntegrationTest {
     }
 
     @Test
-    fun resetsThePasswordWithTheMailedTokenOnceAndEndsTheOldSessions() {
+    fun resetsThePasswordWithTheMailedCodeOnceAndEndsTheOldSessions() {
         val oldSession = signUp("manager@company.co.kr", "password1")
 
-        requestReset("Manager@Company.co.kr")
-        requestReset("nobody@company.co.kr")
+        requestCode("Manager@Company.co.kr").andExpect(status().isNoContent())
+        // 가입하지 않은 이메일은 인증번호 없이 404로 알린다.
+        requestCode("nobody@company.co.kr")
+            .andExpect(status().isNotFound())
+            .andExpect(jsonPath("$.code").value("PASSWORD_RESET_ACCOUNT_NOT_FOUND"))
 
-        val token = ArgumentCaptor.forClass(String::class.java)
-        verify(mailClient, times(1)).sendPasswordReset(eqValue("manager@company.co.kr"), token.capture() ?: "")
-        assertTrue(OneTimeTokenHelper.PATTERN.matches(token.value))
+        val code = ArgumentCaptor.forClass(String::class.java)
+        verify(mailClient, times(1)).sendPasswordResetCode(eqValue("manager@company.co.kr"), code.capture() ?: "")
+        assertTrue(AccountPasswordResetMailClient.CODE_PATTERN.matches(code.value))
         assertEquals(1, count("SELECT COUNT(*) FROM account_password_reset"))
-        assertEquals(1, count("SELECT COUNT(*) FROM account_password_reset WHERE token_hash = '${OneTimeTokenHelper.hash(token.value)}'"))
+        assertEquals(1, count("SELECT COUNT(*) FROM account_password_reset WHERE code_hash = '${OneTimeTokenHelper.hash("manager@company.co.kr:${code.value}")}'"))
 
-        confirm("not-a-token", "new-password-2").andExpect(status().isBadRequest())
+        // 틀린 인증번호는 422로 알리고 시도 횟수를 올린다. 통행 토큰이 없으니 비밀번호는 바꿀 수 없다.
+        verifyCode("manager@company.co.kr", "12345").andExpect(status().isBadRequest())
+        verifyCode("manager@company.co.kr", wrongCode(code.value))
+            .andExpect(status().isUnprocessableContent())
+            .andExpect(jsonPath("$.code").value("EMAIL_CODE_INVALID"))
+        assertEquals(1, count("SELECT COUNT(*) FROM account_password_reset WHERE attempt_count = 1"))
         confirm(OneTimeTokenHelper.newToken(), "new-password-2")
             .andExpect(status().isUnprocessableContent())
             .andExpect(jsonPath("$.code").value("PASSWORD_RESET_TOKEN_INVALID"))
-        confirm(token.value, "short").andExpect(status().isBadRequest())
 
-        confirm(token.value, "new-password-2").andExpect(status().isNoContent())
+        val body = verifyCode("Manager@Company.co.kr", code.value).andExpect(status().isOk()).andReturn().response.contentAsString
+        val passToken = requireNotNull(Regex("\"passToken\":\"([A-Za-z0-9_-]{43})\"").find(body)).groupValues[1]
+        assertTrue(OneTimeTokenHelper.PATTERN.matches(passToken))
+        // 같은 인증번호는 두 번 쓸 수 없다.
+        verifyCode("manager@company.co.kr", code.value)
+            .andExpect(status().isUnprocessableContent())
+            .andExpect(jsonPath("$.code").value("EMAIL_CODE_EXPIRED"))
 
-        confirm(token.value, "new-password-3")
+        confirm("not-a-token", "new-password-2").andExpect(status().isBadRequest())
+        confirm(passToken, "short").andExpect(status().isBadRequest())
+        confirm(passToken, "new-password-2").andExpect(status().isNoContent())
+
+        confirm(passToken, "new-password-3")
             .andExpect(status().isUnprocessableContent())
             .andExpect(jsonPath("$.code").value("PASSWORD_RESET_TOKEN_INVALID"))
         assertEquals(0, count("SELECT COUNT(*) FROM account_password_reset"))
@@ -95,20 +114,39 @@ class AccountPasswordResetFlowIntegrationTest {
     }
 
     @Test
-    fun limitsResetRequestsPerAccountAndRejectsExpiredTokens() {
+    fun limitsRequestsPerAccountExpiresExhaustedCodesAndRefusesSocialOnlyAccounts() {
         signUp("manager@company.co.kr", "password1")
 
-        repeat(3) { requestReset("manager@company.co.kr") }
+        requestCode("manager@company.co.kr").andExpect(status().isNoContent())
+        requestCode("manager@company.co.kr").andExpect(status().isNoContent())
+        requestCode("manager@company.co.kr")
+            .andExpect(status().isTooManyRequests())
+            .andExpect(jsonPath("$.code").value("EMAIL_CODE_RATE_LIMITED"))
 
-        val token = ArgumentCaptor.forClass(String::class.java)
-        verify(mailClient, times(2)).sendPasswordReset(eqValue("manager@company.co.kr"), token.capture() ?: "")
+        val code = ArgumentCaptor.forClass(String::class.java)
+        verify(mailClient, times(2)).sendPasswordResetCode(eqValue("manager@company.co.kr"), code.capture() ?: "")
         assertEquals(2, count("SELECT COUNT(*) FROM account_password_reset"))
 
-        jdbcTemplate.update("UPDATE account_password_reset SET expires_at = expires_at - INTERVAL 1 DAY")
-        confirm(token.value, "new-password-2")
+        // 시도 한도(2)를 다 쓰면 맞는 번호도 만료로 답한다. 가장 최근 인증번호만 유효하다.
+        val latest = code.allValues.last()
+        repeat(2) {
+            verifyCode("manager@company.co.kr", wrongCode(latest))
+                .andExpect(status().isUnprocessableContent())
+                .andExpect(jsonPath("$.code").value("EMAIL_CODE_INVALID"))
+        }
+        verifyCode("manager@company.co.kr", latest)
             .andExpect(status().isUnprocessableContent())
-            .andExpect(jsonPath("$.code").value("PASSWORD_RESET_TOKEN_INVALID"))
+            .andExpect(jsonPath("$.code").value("EMAIL_CODE_EXPIRED"))
         logIn("manager@company.co.kr", "password1").andExpect(status().isOk())
+
+        // 소셜로만 가입해 비밀번호가 없는 계정은 요청·확인 모두 409다.
+        jdbcTemplate.update("UPDATE account SET password_hash = NULL WHERE email = 'manager@company.co.kr'")
+        requestCode("manager@company.co.kr")
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("PASSWORD_RESET_SOCIAL_ACCOUNT"))
+        verifyCode("manager@company.co.kr", latest)
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("PASSWORD_RESET_SOCIAL_ACCOUNT"))
     }
 
     private fun signUp(email: String, password: String): Cookie =
@@ -122,13 +160,19 @@ class AccountPasswordResetFlowIntegrationTest {
                 .andReturn().response.getCookie(SessionCookieHelper.COOKIE_NAME),
         )
 
-    private fun requestReset(email: String) {
+    private fun requestCode(email: String) =
         mockMvc.perform(
             post("/api/v1/auth/password-reset")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""{"email":"$email"}"""),
-        ).andExpect(status().isNoContent())
-    }
+        )
+
+    private fun verifyCode(email: String, code: String) =
+        mockMvc.perform(
+            post("/api/v1/auth/password-reset/verify")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"email":"$email","code":"$code"}"""),
+        )
 
     private fun confirm(token: String, newPassword: String) =
         mockMvc.perform(
@@ -145,6 +189,9 @@ class AccountPasswordResetFlowIntegrationTest {
         )
 
     private fun count(sql: String): Int = requireNotNull(jdbcTemplate.queryForObject(sql, Int::class.java))
+
+    /** 받은 인증번호와 다른 6자리 번호입니다. */
+    private fun wrongCode(code: String): String = if (code == "000000") "000001" else "000000"
 
     /** Kotlin의 non-null 인자에 eq matcher를 넘길 수 있게 null 대신 값을 돌려줍니다. */
     private fun <T : Any> eqValue(value: T): T = org.mockito.Mockito.eq(value) ?: value

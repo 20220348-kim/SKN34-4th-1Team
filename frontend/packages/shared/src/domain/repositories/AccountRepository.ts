@@ -44,16 +44,31 @@ export type DeleteAccountResult =
   /** 활성 관리자가 이 계정 하나뿐이라 삭제할 수 없습니다. */
   | { outcome: 'last-admin' }
 
-/** 재설정 링크 요청은 가입 여부와 관계없이 `requested`입니다. 메일을 보낼 수 없는 서버 상태만 따로 안내합니다. */
+/**
+ * 재설정 인증번호 요청 결과입니다. 가입하지 않은 이메일, 소셜로만 가입해 비밀번호가 없는 계정, 메일을 보낼 수 없는 서버 상태,
+ * 재전송 대기·한도 초과를 화면이 구분해 안내합니다.
+ */
 export type RequestPasswordResetResult =
   | { outcome: 'requested' }
+  | { outcome: 'not-registered' }
+  | { outcome: 'social-account' }
   | { outcome: 'mail-unavailable' }
   | { outcome: 'rate-limited'; retryAfterSeconds: number | null }
 
-/** 없거나 만료·사용된 토큰은 화면이 다시 요청하도록 안내하는 업무 결과입니다. */
+/** 재설정 인증번호 확인 결과입니다. 맞으면 새 비밀번호 저장에 쓸 통행 토큰을 받습니다. */
+export type VerifyPasswordResetCodeResult =
+  | { outcome: 'verified'; passToken: string }
+  | { outcome: 'code-invalid' }
+  | { outcome: 'code-expired' }
+  | { outcome: 'not-registered' }
+  | { outcome: 'social-account' }
+  | { outcome: 'rate-limited'; retryAfterSeconds: number | null }
+
+/** 없거나 만료·사용된 통행 토큰은 화면이 인증번호를 다시 받도록 안내하는 업무 결과입니다. */
 export type ResetPasswordResult =
   | { outcome: 'reset' }
   | { outcome: 'token-invalid' }
+  | { outcome: 'social-account' }
   | { outcome: 'rate-limited'; retryAfterSeconds: number | null }
 
 /** 인증번호 발송 결과입니다. 이미 가입된 이메일, 메일 불가, 재전송 대기·발송 한도는 화면이 다르게 안내합니다. */
@@ -86,9 +101,11 @@ export interface AccountRepository {
   /** 현재 비밀번호를 확인하고 계정을 삭제합니다. 성공하면 세션 힌트를 지웁니다. */
   /** 비밀번호가 없는 소셜 가입 계정은 `null`로 부르며 세션만으로 삭제합니다. */
   deleteAccount(password: string | null, signal?: AbortSignal): Promise<DeleteAccountResult>
-  /** 가입 이메일로 비밀번호 재설정 링크를 요청합니다. 로그인 없이 부릅니다. */
+  /** 가입 이메일로 비밀번호 재설정 6자리 인증번호를 요청합니다. 로그인 없이 부릅니다. */
   requestPasswordReset(email: string, signal?: AbortSignal): Promise<RequestPasswordResetResult>
-  /** 메일 링크의 토큰으로 새 비밀번호를 저장합니다. 성공하면 서버가 모든 세션을 끝냅니다. */
+  /** 재설정 인증번호를 확인하고 새 비밀번호 저장에 쓸 통행 토큰을 받습니다. */
+  verifyPasswordResetCode(email: string, code: string, signal?: AbortSignal): Promise<VerifyPasswordResetCodeResult>
+  /** 인증번호 확인이 돌려준 통행 토큰으로 새 비밀번호를 저장합니다. 성공하면 서버가 모든 세션을 끝냅니다. */
   resetPassword(token: string, newPassword: string, signal?: AbortSignal): Promise<ResetPasswordResult>
   /** 가입할 이메일로 6자리 인증번호를 요청합니다. 로그인 없이 부릅니다. */
   sendSignupEmailCode(email: string, signal?: AbortSignal): Promise<SendSignupEmailCodeResult>

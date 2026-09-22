@@ -18,6 +18,7 @@ const OAUTH_PATH = '/api/v1/auth/oauth'
 const LOGIN_PATH = '/api/v1/auth/login'
 const DEV_LOGIN_PATH = '/api/v1/auth/dev-login'
 const PASSWORD_RESET_PATH = '/api/v1/auth/password-reset'
+const PASSWORD_RESET_VERIFY_PATH = '/api/v1/auth/password-reset/verify'
 const PASSWORD_RESET_CONFIRM_PATH = '/api/v1/auth/password-reset/confirm'
 const SIGNUP_EMAIL_CODE_PATH = '/api/v1/auth/signup/email-code'
 const SIGNUP_EMAIL_CODE_VERIFY_PATH = '/api/v1/auth/signup/email-code/verify'
@@ -152,7 +153,7 @@ export async function deleteAccountApi(password: string | null, signal?: AbortSi
   await rejectFailedResponse(response)
 }
 
-/** 재설정 링크 요청입니다. 가입 여부와 관계없이 204라 응답으로 계정 존재를 알 수 없습니다. */
+/** 가입 이메일로 재설정 인증번호를 요청합니다. 성공은 204, 미가입 이메일은 404, 소셜 전용 계정은 409, 메일 불가는 503, 재전송 대기·한도는 429입니다. */
 export async function requestPasswordResetApi(email: string, signal?: AbortSignal): Promise<void> {
   const response = await fetch(`${getCoreApiBaseUrl()}${PASSWORD_RESET_PATH}`, {
     method: 'POST',
@@ -163,7 +164,20 @@ export async function requestPasswordResetApi(email: string, signal?: AbortSigna
   await rejectFailedResponse(response)
 }
 
-/** 메일 링크의 토큰으로 새 비밀번호를 저장합니다. 성공은 204이고 토큰이 없거나 만료·사용됐으면 422입니다. */
+/** 재설정 인증번호를 확인하고 새 비밀번호 저장에 쓸 통행 토큰을 받습니다. 틀리면 422 `EMAIL_CODE_INVALID`, 만료·시도 초과면 422 `EMAIL_CODE_EXPIRED`입니다. */
+export async function verifyPasswordResetCodeApi(email: string, code: string, signal?: AbortSignal): Promise<SignupEmailPassDto> {
+  const response = await fetch(`${getCoreApiBaseUrl()}${PASSWORD_RESET_VERIFY_PATH}`, {
+    method: 'POST',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, code }),
+    signal,
+  })
+  if (response.ok) return signupEmailPassDtoSchema.parse(await response.json())
+  const problem = await readProblem(response)
+  throw new AccountApiError(response.status, problem.code, problem.retryAfterSeconds)
+}
+
+/** 통행 토큰으로 새 비밀번호를 저장합니다. 성공은 204이고 토큰이 없거나 만료·사용됐으면 422, 소셜 전용 계정은 409입니다. */
 export async function resetPasswordApi(token: string, newPassword: string, signal?: AbortSignal): Promise<void> {
   const response = await fetch(`${getCoreApiBaseUrl()}${PASSWORD_RESET_CONFIRM_PATH}`, {
     method: 'POST',

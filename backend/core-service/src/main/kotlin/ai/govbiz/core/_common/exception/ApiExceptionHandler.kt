@@ -30,6 +30,8 @@ import ai.govbiz.core.account.service.exception.PasswordResetTokenInvalidExcepti
 import ai.govbiz.core.account.service.exception.EmailAlreadyRegisteredException
 import ai.govbiz.core.account.service.exception.InvalidCredentialsException
 import ai.govbiz.core.account.service.exception.LoginRateLimitedException
+import ai.govbiz.core.account.service.exception.PasswordResetAccountNotFoundException
+import ai.govbiz.core.account.service.exception.PasswordResetSocialAccountException
 import ai.govbiz.core.account.service.exception.SessionOriginRejectedException
 import ai.govbiz.core.applicationpreparation.controller.exception.InvalidApplicationPreparationInputException
 import ai.govbiz.core.applicationpreparation.domain.exception.ApplicationPreparationNotFoundException
@@ -856,6 +858,32 @@ class ApiExceptionHandler {
                 "Password Reset Mail Unavailable",
                 "The password reset email cannot be sent right now.",
                 "PASSWORD_RESET_MAIL_UNAVAILABLE",
+            ),
+            request,
+        )
+
+    @ExceptionHandler(PasswordResetAccountNotFoundException::class)
+    fun handlePasswordResetAccountNotFoundException(request: HttpServletRequest): ResponseEntity<ProblemDetail> =
+        problemResponse(
+            ProblemDefinition(
+                HttpStatus.NOT_FOUND,
+                URI.create("urn:govbiz:problem:password-reset-account-not-found"),
+                "Password Reset Account Not Found",
+                "No account is registered with this email.",
+                "PASSWORD_RESET_ACCOUNT_NOT_FOUND",
+            ),
+            request,
+        )
+
+    @ExceptionHandler(PasswordResetSocialAccountException::class)
+    fun handlePasswordResetSocialAccountException(request: HttpServletRequest): ResponseEntity<ProblemDetail> =
+        problemResponse(
+            ProblemDefinition(
+                HttpStatus.CONFLICT,
+                URI.create("urn:govbiz:problem:password-reset-social-account"),
+                "Password Reset Social Account",
+                "This account signs in with a social provider and has no password to reset.",
+                "PASSWORD_RESET_SOCIAL_ACCOUNT",
             ),
             request,
         )

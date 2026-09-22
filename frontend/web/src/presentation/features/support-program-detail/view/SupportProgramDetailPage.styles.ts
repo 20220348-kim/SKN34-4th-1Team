@@ -45,12 +45,7 @@ export const supportProgramDetailStyles = {
   tagList: 'm-0 flex list-none flex-wrap gap-2 p-0',
   tag: 'rounded-full bg-brand-accent px-3 py-1 text-[0.78rem] font-bold text-[#066538]',
   emptyValue: 'text-sample-muted',
-  reasonSection: 'mt-6 rounded-[1.4rem] border border-sample-border bg-white p-[clamp(1.4rem,4vw,2.1rem)]',
-  sectionEyebrow:
-    'mt-0 mb-2 text-[0.72rem] font-extrabold tracking-[0.12em] text-sample-muted uppercase',
   sectionTitle: 'm-0 text-[1.25rem] font-bold tracking-[-0.03em] text-app-ink',
-  reasonList: 'mt-5 mb-0 grid list-none gap-2 p-0',
-  reason: 'rounded-[1rem] bg-[#f6f7f8] px-4 py-3 text-[0.88rem] text-app-ink',
   questionSection: 'mt-6 rounded-[1.4rem] border border-sample-border bg-white p-[clamp(1.4rem,4vw,2.1rem)]',
   questionDescription: 'mt-3 mb-0 leading-[1.6] text-sample-muted',
   /** 질문하기·신청 문서 작성하기 버튼을 가운데 정렬하고 사이를 띄웁니다. 좁은 화면에서는 줄을 바꿉니다. */

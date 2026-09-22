@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 import { appContainer } from './app/appContainer'
 import { createAppStore } from './app/store'
-import { supportPrograms } from './data/fixtures/supportPrograms'
+import { supportProgramDetails, supportPrograms } from './data/fixtures/supportPrograms'
 import type { Account } from './domain/entities/Account'
 import type { SavedSupportProgram } from './domain/entities/SavedSupportProgram'
 import { savedSupportProgramMessages } from './presentation/features/saved-support-program/viewmodel/useSavedSupportProgramsViewModel'
@@ -47,7 +47,7 @@ describe('관심 공고함', () => {
     let stored = false
     const browse = vi.spyOn(appContainer.resolve('browseSavedSupportProgramsUseCase'), 'execute')
       .mockImplementation(async () => stored ? [saved[0]!] : [])
-    vi.spyOn(appContainer.resolve('getSupportProgramDetailUseCase'), 'execute').mockResolvedValue(program)
+    vi.spyOn(appContainer.resolve('getSupportProgramDetailUseCase'), 'execute').mockResolvedValue(supportProgramDetails[0]!)
     vi.spyOn(appContainer.resolve('checkSavedSupportProgramUseCase'), 'execute').mockImplementation(async () => stored)
     const save = vi.spyOn(appContainer.resolve('saveSupportProgramUseCase'), 'execute').mockImplementation(async () => {
       stored = true
@@ -126,7 +126,7 @@ describe('관심 공고함', () => {
 
   it('관심 공고함에서 연 상세는 관심 공고함으로 돌아가고, 저장 버튼으로 담기·빼기를 오간다', async () => {
     vi.spyOn(appContainer.resolve('browseSavedSupportProgramsUseCase'), 'execute').mockResolvedValue(saved)
-    vi.spyOn(appContainer.resolve('getSupportProgramDetailUseCase'), 'execute').mockResolvedValue(program)
+    vi.spyOn(appContainer.resolve('getSupportProgramDetailUseCase'), 'execute').mockResolvedValue(supportProgramDetails[0]!)
     vi.spyOn(appContainer.resolve('checkSavedSupportProgramUseCase'), 'execute').mockResolvedValue(true)
     const remove = vi.spyOn(appContainer.resolve('removeSavedSupportProgramUseCase'), 'execute').mockResolvedValue(undefined)
     const save = vi.spyOn(appContainer.resolve('saveSupportProgramUseCase'), 'execute').mockResolvedValue({ outcome: 'saved', saved: saved[0]! })
@@ -161,7 +161,7 @@ describe('관심 공고함', () => {
   })
 
   it('작업 채팅에서 연 상세는 지원사업 찾기로 돌아간다', async () => {
-    vi.spyOn(appContainer.resolve('getSupportProgramDetailUseCase'), 'execute').mockResolvedValue(program)
+    vi.spyOn(appContainer.resolve('getSupportProgramDetailUseCase'), 'execute').mockResolvedValue(supportProgramDetails[0]!)
     vi.spyOn(appContainer.resolve('checkSavedSupportProgramUseCase'), 'execute').mockResolvedValue(false)
     renderApp(detailPath, memberAccount, { searchReturnTo: '/app/chat' })
 

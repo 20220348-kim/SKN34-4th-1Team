@@ -67,6 +67,7 @@ import type { ResetPasswordUseCase } from '../../domain/usecases/ResetPasswordUs
 import type { SendSignupEmailCodeUseCase } from '../../domain/usecases/SendSignupEmailCodeUseCase'
 import type { AskAssistantUseCase } from '../../domain/usecases/AskAssistantUseCase'
 import type { AssistantRepository } from '../../domain/repositories/AssistantRepository'
+import type { VerifyPasswordResetCodeUseCase } from '../../domain/usecases/VerifyPasswordResetCodeUseCase'
 import type { VerifySignupEmailCodeUseCase } from '../../domain/usecases/VerifySignupEmailCodeUseCase'
 import type { SignUpUseCase } from '../../domain/usecases/SignUpUseCase'
 import type { PrepareSampleItemUseCase } from '../../domain/usecases/PrepareSampleItemUseCase'
@@ -138,6 +139,7 @@ export type AppCradle = {
   sessionHintStorage: SessionHintStorage
   signUpUseCase: SignUpUseCase
   requestPasswordResetUseCase: RequestPasswordResetUseCase
+  verifyPasswordResetCodeUseCase: VerifyPasswordResetCodeUseCase
   resetPasswordUseCase: ResetPasswordUseCase
   sendSignupEmailCodeUseCase: SendSignupEmailCodeUseCase
   verifySignupEmailCodeUseCase: VerifySignupEmailCodeUseCase

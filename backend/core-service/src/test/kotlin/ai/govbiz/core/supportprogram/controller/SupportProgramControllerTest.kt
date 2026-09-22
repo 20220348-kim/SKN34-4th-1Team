@@ -236,8 +236,28 @@ class SupportProgramControllerTest {
             .andExpect(jsonPath("$.id").value("PBLN_TEST"))
             .andExpect(jsonPath("$.sourceCode").value("BIZINFO"))
             .andExpect(jsonPath("$.title").value("서울 AI 지원사업"))
-            .andExpect(jsonPath("$.matchedReasons").isEmpty())
-            .andExpect(jsonPath("$.recommendationScore").value(nullValue()))
+            .andExpect(jsonPath("$.evidenceQuestionSupported").value(true))
+            // 상세는 검색 결과가 아니므로 관련도·추천 이유·자격 판정 필드를 내지 않는다.
+            .andExpect(jsonPath("$.matchedReasons").doesNotExist())
+            .andExpect(jsonPath("$.recommendationScore").doesNotExist())
+            .andExpect(jsonPath("$.eligibilityReview").doesNotExist())
+    }
+
+    @Test
+    fun marksEvidenceQuestionsUnsupportedForOtherSources() {
+        val program = catalogProgram()
+        Mockito.doReturn(program.copy(program = program.program.copy(sourceCode = "KSTARTUP", sourceName = "K-Startup",
+            sourceUrl = "https://www.k-startup.go.kr/web/contents/bizpbanc-ongoing.do?pbancSn=177911")))
+            .`when`(supportProgramRepository).findPresentBySourceAndProgramId("KSTARTUP", "PBLN_TEST")
+
+        mockMvc.perform(
+            get(DETAIL_PATH)
+                .queryParam("sourceCode", "KSTARTUP")
+                .queryParam("sourceProgramId", "PBLN_TEST"),
+        )
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.sourceCode").value("KSTARTUP"))
+            .andExpect(jsonPath("$.evidenceQuestionSupported").value(false))
     }
 
     @Test
@@ -603,9 +623,10 @@ class SupportProgramControllerTest {
         mockMvc.perform(get(PATH).queryParam("query", ""))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.programs[0].eligibilityReview").value(nullValue()))
+        // 상세 응답은 자격 판정 필드 자체를 내지 않는다.
         mockMvc.perform(get(DETAIL_PATH).queryParam("sourceCode", "BIZINFO").queryParam("sourceProgramId", "PBLN_TEST"))
             .andExpect(status().isOk())
-            .andExpect(jsonPath("$.eligibilityReview").value(nullValue()))
+            .andExpect(jsonPath("$.eligibilityReview").doesNotExist())
     }
 
     private fun catalogProgram() = CatalogSupportProgram(

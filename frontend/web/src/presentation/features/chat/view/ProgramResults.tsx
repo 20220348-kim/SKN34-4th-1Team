@@ -147,7 +147,7 @@ function ProgramCard({ program, interests }: { program: SupportProgram; interest
       <div className={chatPageStyles.programActions}>
         <Link
           className={chatPageStyles.programDetailsButton}
-          to={supportProgramDetailPath({ sourceCode: program.sourceCode, sourceProgramId: program.id }, inApp)}
+          to={supportProgramDetailPath({ sourceCode: program.sourceCode, sourceProgramId: program.id }, inApp, searchReturnTo)}
           state={{ searchReturnTo }}
         >
           상세 조건 보기

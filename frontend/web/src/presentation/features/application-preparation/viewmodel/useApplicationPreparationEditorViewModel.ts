@@ -9,6 +9,9 @@ import type {
   ApplicationServiceField,
 } from '../../../../domain/entities/ApplicationPreparation'
 import type { SupportProgram } from '../../../../domain/entities/SupportProgram'
+
+/** 신청 준비가 공고 선택에 쓰는 필드입니다. 검색 결과·관심 공고·상세 조회 어느 쪽에서 골라도 같습니다. */
+export type SelectableSupportProgram = Omit<SupportProgram, 'matchedReasons' | 'recommendationScore' | 'eligibilityReview'>
 import type { SupportProgramCatalog, SupportProgramCatalogFilters } from '../../../../domain/entities/SupportProgramCatalog'
 import { appPaths } from '../../../shared/routes/appPaths'
 import { useSavedSupportProgramChoices } from '../../../shared/support-program/useSavedSupportProgramChoices'
@@ -66,7 +69,7 @@ export function useApplicationPreparationEditorViewModel(id: number | null, init
   const [appliedCatalogFilters, setAppliedCatalogFilters] = useState(defaultProgramSelectionFilters)
   const [catalogLoading, setCatalogLoading] = useState(false)
   const [catalogError, setCatalogError] = useState<Error | null>(null)
-  const [selectedProgram, setSelectedProgram] = useState<SupportProgram | null>(null)
+  const [selectedProgram, setSelectedProgram] = useState<SelectableSupportProgram | null>(null)
   const [discoverySourceCode, setDiscoverySourceCode] = useState(initialSourceCode)
   const [creationStep, setCreationStep] = useState<'PROGRAM' | 'FORM'>('PROGRAM')
   const [loading, setLoading] = useState(false)
@@ -153,7 +156,7 @@ export function useApplicationPreparationEditorViewModel(id: number | null, init
     }
   }, [catalogFilters, catalogUseCase])
 
-  const applyProgramSelection = useCallback((program: SupportProgram) => {
+  const applyProgramSelection = useCallback((program: SelectableSupportProgram) => {
     setSelectedProgram(program)
     setDiscoverySourceCode(program.sourceCode)
     setDiscoveryInput(program.id)
@@ -165,7 +168,7 @@ export function useApplicationPreparationEditorViewModel(id: number | null, init
     setError(null)
   }, [])
 
-  const selectProgram = useCallback((program: SupportProgram) => {
+  const selectProgram = useCallback((program: SelectableSupportProgram) => {
     if (discoveryController.current) return
     applyProgramSelection(program)
   }, [applyProgramSelection])

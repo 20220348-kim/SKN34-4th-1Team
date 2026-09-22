@@ -12,7 +12,7 @@ import { appContainer } from './app/appContainer'
 import { createAppStore, type AppStore } from './app/store'
 import { partnerRecruitmentPage } from './data/fixtures/partnerRecruitments'
 import { emptyConversationContext, readyConversationProposal, seoulConversationContext } from './data/fixtures/supportProgramConversation'
-import { supportPrograms } from './data/fixtures/supportPrograms'
+import { supportProgramDetails, supportPrograms } from './data/fixtures/supportPrograms'
 import {
   draftChanged,
   interpretationStarted,
@@ -46,7 +46,7 @@ beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})))
   vi.spyOn(appContainer.resolve('browsePartnerRecruitmentsUseCase'), 'execute')
     .mockResolvedValue(partnerRecruitmentPage)
-  vi.spyOn(appContainer.resolve('getSupportProgramDetailUseCase'), 'execute').mockResolvedValue(program)
+  vi.spyOn(appContainer.resolve('getSupportProgramDetailUseCase'), 'execute').mockResolvedValue(supportProgramDetails[0]!)
 })
 
 afterEach(() => {

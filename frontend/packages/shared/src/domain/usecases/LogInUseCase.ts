@@ -1,3 +1,4 @@
+import { normalizeEmail } from '../entities/EmailAddress'
 import type {
   AccountLogIn,
   AccountRepository,
@@ -23,7 +24,5 @@ export class LogInUseCase {
   }
 }
 
-/** 서버와 같은 규칙(앞뒤 공백 제거·소문자)으로 이메일을 정규화합니다. */
-export function normalizeEmail(email: string): string {
-  return email.trim().toLowerCase()
-}
+// 이메일 정규화·형식 검사는 EmailAddress 엔티티에 있습니다. 기존 import 경로를 위해 다시 내보냅니다.
+export { normalizeEmail }

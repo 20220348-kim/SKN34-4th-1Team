@@ -82,11 +82,16 @@ describe('계정 화면', () => {
     renderApp('/signup')
     const form = screen.getByRole('form', { name: '회원가입' })
 
+    // 이메일 형식이 맞기 전에는 "인증번호 받기"가 잠겨 있고, 누를 수 없으니 오류 문구도 없다.
+    expect((within(form).getByRole('button', { name: '인증번호 받기' }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.change(within(form).getByLabelText('이메일'), { target: { value: 'member@govbiz' } })
+    expect((within(form).getByRole('button', { name: '인증번호 받기' }) as HTMLButtonElement).disabled).toBe(true)
     fireEvent.click(within(form).getByRole('button', { name: '인증번호 받기' }))
-    expect(screen.getByRole('alert').textContent).toBe(signupMessages.emailRequired)
+    expect(screen.queryByRole('alert')).toBeNull()
     expect(send).not.toHaveBeenCalled()
 
     fireEvent.change(within(form).getByLabelText('이메일'), { target: { value: 'Member@Govbiz.local' } })
+    expect((within(form).getByRole('button', { name: '인증번호 받기' }) as HTMLButtonElement).disabled).toBe(false)
     fireEvent.click(within(form).getByRole('button', { name: '인증번호 받기' }))
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe(signupMessages.emailTaken))
     fireEvent.click(within(form).getByRole('button', { name: '인증번호 받기' }))
@@ -159,27 +164,58 @@ describe('계정 화면', () => {
     expect(screen.getByRole('form', { name: '로그인' })).toBeTruthy()
   })
 
-  it('비밀번호 찾기는 이메일 형식을 먼저 확인하고 요청 뒤에는 가입 여부와 무관한 안내만 보여 준다', async () => {
-    const execute = vi.spyOn(appContainer.resolve('requestPasswordResetUseCase'), 'execute')
+  it('비밀번호 찾기는 이메일 형식이 맞을 때만 인증번호를 보내고, 6자리를 맞히면 새 비밀번호 화면으로 넘어간다', async () => {
+    const request = vi.spyOn(appContainer.resolve('requestPasswordResetUseCase'), 'execute')
       .mockResolvedValue({ outcome: 'requested' })
+    const verify = vi.spyOn(appContainer.resolve('verifyPasswordResetCodeUseCase'), 'execute')
+      .mockResolvedValue({ outcome: 'verified', passToken: 'b'.repeat(43) })
     renderApp('/forgot-password')
 
     const form = screen.getByRole('form', { name: '비밀번호 찾기' })
-    fireEvent.change(within(form).getByLabelText('이메일'), { target: { value: 'manager' } })
-    fireEvent.submit(form)
-    expect(screen.getByRole('alert').textContent).toBe(forgotPasswordMessages.emailRequired)
-    expect(execute).not.toHaveBeenCalled()
+    const sendButton = () => within(form).getByRole('button', { name: '인증번호 받기' }) as HTMLButtonElement
+    expect(sendButton().disabled).toBe(true)
+    // 브라우저 type=email이 통과시키는 도메인 없는 주소도 버튼을 켜지 않는다. 제출해도 보내지 않는다.
+    for (const value of ['manager', 'manager@company', 'manager@localhost']) {
+      fireEvent.change(within(form).getByLabelText('이메일'), { target: { value } })
+      expect(sendButton().disabled).toBe(true)
+      fireEvent.submit(form)
+    }
+    expect(request).not.toHaveBeenCalled()
+
+    // 입력 칸을 벗어나면 형식을 미리 알리고, 고쳐 쓰기 시작하면 안내를 지운다.
+    fireEvent.blur(within(form).getByLabelText('이메일'))
+    expect(screen.getByRole('alert').textContent).toBe(forgotPasswordMessages.emailInvalid)
+    fireEvent.change(within(form).getByLabelText('이메일'), { target: { value: 'manager@company.' } })
+    expect(screen.queryByRole('alert')).toBeNull()
 
     fireEvent.change(within(form).getByLabelText('이메일'), { target: { value: 'Manager@Company.co.kr' } })
+    expect(sendButton().disabled).toBe(false)
     fireEvent.submit(form)
-    await waitFor(() => expect(screen.getByRole('status').textContent).toBe(forgotPasswordMessages.sent))
-    expect(execute).toHaveBeenCalledWith('Manager@Company.co.kr')
-    expect(within(form).queryByLabelText('이메일')).toBeNull()
-    expect(within(form).queryByRole('button', { name: '재설정 링크 보내기' })).toBeNull()
+    await waitFor(() => expect(screen.getByRole('status').textContent).toBe(forgotPasswordMessages.codeSent))
+    expect(request).toHaveBeenCalledWith('Manager@Company.co.kr')
+    // 인증번호 단계: 보낸 이메일은 읽기 전용으로 남고, 6자리가 채워질 때까지 확인이 잠긴다.
+    expect((within(form).getByLabelText('인증번호를 보낸 이메일') as HTMLInputElement).value).toBe('Manager@Company.co.kr')
+    expect(within(form).queryByRole('button', { name: '인증번호 받기' })).toBeNull()
+    const confirmButton = () => within(form).getByRole('button', { name: '확인' }) as HTMLButtonElement
+    expect(confirmButton().disabled).toBe(true)
+    fireEvent.change(within(form).getByLabelText('인증번호'), { target: { value: '12ab34' } })
+    expect((within(form).getByLabelText('인증번호') as HTMLInputElement).value).toBe('1234')
+    expect(confirmButton().disabled).toBe(true)
+    fireEvent.change(within(form).getByLabelText('인증번호'), { target: { value: '482137' } })
+    expect(confirmButton().disabled).toBe(false)
+    fireEvent.submit(form)
+    await waitFor(() => expect(verify).toHaveBeenCalledWith('Manager@Company.co.kr', '482137'))
+
+    // 맞히면 통행 토큰을 fragment에 싣고 새 비밀번호 화면으로 간다.
+    const resetForm = await screen.findByRole('form', { name: '비밀번호 재설정' })
+    expect(within(resetForm).getByLabelText('새 비밀번호')).toBeTruthy()
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 
-  it('비밀번호 찾기는 메일 불가·시도 제한을 구분해 안내한다', async () => {
+  it('비밀번호 찾기는 미가입 이메일·소셜 전용 계정·메일 불가·시도 제한을 구분해 안내한다', async () => {
     vi.spyOn(appContainer.resolve('requestPasswordResetUseCase'), 'execute')
+      .mockResolvedValueOnce({ outcome: 'not-registered' })
+      .mockResolvedValueOnce({ outcome: 'social-account' })
       .mockResolvedValueOnce({ outcome: 'mail-unavailable' })
       .mockResolvedValueOnce({ outcome: 'rate-limited', retryAfterSeconds: 40 })
     renderApp('/forgot-password')
@@ -187,9 +223,51 @@ describe('계정 화면', () => {
     const form = screen.getByRole('form', { name: '비밀번호 찾기' })
     fireEvent.change(within(form).getByLabelText('이메일'), { target: { value: 'manager@company.co.kr' } })
     fireEvent.submit(form)
+    // 가입되지 않은 이메일은 입력 칸 오류로 알리고 회원가입 링크를 그대로 둔다.
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe(forgotPasswordMessages.emailNotRegistered))
+    expect(within(form).getByLabelText('이메일').getAttribute('aria-invalid')).toBe('true')
+    expect(within(form).getByRole('link', { name: '회원가입' })).toBeTruthy()
+    // 소셜로만 가입한 계정은 비밀번호가 없으니 소셜 로그인으로 안내한다.
+    fireEvent.submit(form)
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe(forgotPasswordMessages.socialAccount))
+    fireEvent.submit(form)
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe(forgotPasswordMessages.mailUnavailable))
     fireEvent.submit(form)
     await waitFor(() => expect(screen.getByRole('alert').textContent).toBe(forgotPasswordMessages.rateLimited(40)))
+    expect(within(form).queryByLabelText('인증번호')).toBeNull()
+  })
+
+  it('비밀번호 찾기의 인증번호 단계는 틀림·만료를 구분하고 다시 받기와 이메일 바꾸기를 둔다', async () => {
+    const request = vi.spyOn(appContainer.resolve('requestPasswordResetUseCase'), 'execute')
+      .mockResolvedValue({ outcome: 'requested' })
+    vi.spyOn(appContainer.resolve('verifyPasswordResetCodeUseCase'), 'execute')
+      .mockResolvedValueOnce({ outcome: 'code-invalid' })
+      .mockResolvedValueOnce({ outcome: 'code-expired' })
+    renderApp('/forgot-password')
+
+    const form = screen.getByRole('form', { name: '비밀번호 찾기' })
+    fireEvent.change(within(form).getByLabelText('이메일'), { target: { value: 'manager@company.co.kr' } })
+    fireEvent.submit(form)
+    await screen.findByLabelText('인증번호')
+
+    fireEvent.change(within(form).getByLabelText('인증번호'), { target: { value: '000000' } })
+    fireEvent.submit(form)
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe(forgotPasswordMessages.codeInvalid))
+    expect(within(form).getByLabelText('인증번호').getAttribute('aria-invalid')).toBe('true')
+    fireEvent.submit(form)
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe(forgotPasswordMessages.codeExpired))
+
+    // 다시 받기는 같은 이메일로 다시 요청하고 입력한 번호를 비운다.
+    fireEvent.click(within(form).getByRole('button', { name: '인증번호 다시 받기' }))
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(screen.getByRole('status').textContent).toBe(forgotPasswordMessages.codeSent))
+    expect((within(form).getByLabelText('인증번호') as HTMLInputElement).value).toBe('')
+
+    // 이메일 바꾸기는 첫 단계로 돌아가고 입력했던 주소는 남는다.
+    fireEvent.click(within(form).getByRole('button', { name: '이메일 바꾸기' }))
+    expect(within(form).queryByLabelText('인증번호')).toBeNull()
+    expect((within(form).getByLabelText('이메일') as HTMLInputElement).value).toBe('manager@company.co.kr')
+    expect((within(form).getByRole('button', { name: '인증번호 받기' }) as HTMLButtonElement).disabled).toBe(false)
   })
 
   it('비밀번호 재설정은 주소의 토큰으로 새 비밀번호를 저장하고 로그인으로 안내한다', async () => {
@@ -221,7 +299,7 @@ describe('계정 화면', () => {
     renderApp('/reset-password')
     expect(screen.getByRole('alert').textContent).toBe(resetPasswordMessages.missingToken)
     expect(screen.queryByLabelText('새 비밀번호')).toBeNull()
-    expect(screen.getByRole('link', { name: '재설정 링크 다시 요청' }).getAttribute('href')).toBe('/forgot-password')
+    expect(screen.getByRole('link', { name: '인증번호 다시 받기' }).getAttribute('href')).toBe('/forgot-password')
     cleanup()
 
     renderApp(`/reset-password#token=${'c'.repeat(43)}`)
