@@ -40,7 +40,7 @@ class AccountPasswordResetRepository(
         check(mapper.markVerified(id, passTokenHash, verifiedAt, passExpiresAt) == 1) { "account_password_reset row was not verified" }
     }
 
-    /** 인증을 마쳤고 아직 쓰지 않았으며 만료되지 않은 통행 토큰이면 그 행, 아니면 null입니다. */
+    /** 재설정 Service transaction에서 유효한 통행 토큰 행을 잠가 동시 재사용을 막습니다. */
     fun findVerifiedPass(passTokenHash: String, now: LocalDateTime): PasswordReset? =
         mapper.findVerifiedPass(passTokenHash, now)?.toDomain()
 

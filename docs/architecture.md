@@ -235,6 +235,9 @@ Core 내부 전용 소비자가 기존 검색·근거 답변을 재사용하며 
 입력을 시작해도 미확정 제안을 보관해 다음 발화에 전달합니다. 새 검색을 시작하면 이전 결과 요약을 비워
 실패·취소를 과거의 0건 성공 결과와 혼동하지 않습니다. 설명은 전달된 사실에 한정하고 원인을 추측하지 않습니다.
 서버 대화 세션·영구 프로필·무제한 이력·Agent graph는 추가하지 않습니다.
+검색 대화의 모델은 조건 변경안과 답변·질문 종류 코드만 반환합니다. AI Service가 허용된 존댓말 문구와 검증된
+검색 건수로 `answer`·`clarificationQuestion`을 작성하므로 범위 밖 설명·말투 변경을 자유 문장으로 출력할 수 없습니다.
+모델 오류는 그대로 오류로 반환합니다. 이 제한은 C02 안내문에 적용되며 추천·근거 답변의 의미 정확도를 보증하지 않습니다.
 [C02 계약·검증 기록](conversation-condition-update.md)에 상태·문자·날짜·실패 경계를 명시합니다.
 
 ### 도우미 자유 질문
@@ -255,6 +258,9 @@ Core 설정 `app.assistant.agent-enabled=true`(루트 `ASSISTANT_AGENT_ENABLED`,
 응답 카드 id·경로·인용은 Core가 도구 결과·허용 목록·청크 원문과 다시 대조합니다. 관심 공고 묶음 질문은 첫 응답이 `needsDocuments`면 Core가 관심 공고
 최대 10건의 원문을 확보·청킹·색인(6초 예산, 부분 성공 허용)해 같은 의도로 한 번 더 부르고, 관심 공고를 담을 때 원문을 미리 수집·색인하는
 outbox 큐(`ASSISTANT_PREFETCH_QUEUE_ENABLED`, RabbitMQ)가 첫 질문 지연을 줄입니다. 비로그인은 도구 경로가 막혀 로그인 안내로 끝납니다.
+
+공고 카드 식별자는 일반 공고와 같은 `sourceCode:sourceProgramId` 계약을 따릅니다. 제공처 코드는 최대 64자,
+원본 ID는 최대 255 Unicode code point이며, Core가 원본 ID로 재구성한 상세 URL과 응답 카드의 경로가 일치해야 합니다.
 
 ### 확인된 조건의 검색
 
@@ -792,6 +798,8 @@ C02 해석은 별도 `40s` 제한이며 사용자 확인을 사이에 두므로 
 계정 흐름은 `AccountAuthController → AccountSignupService · AccountLoginService · AccountSessionService → AccountRepository → MySQL`입니다.
 회원가입은 이메일·비밀번호만 받아 BCrypt 해시와 약관 동의 시각을 저장하고 같은 요청에서 세션을 발급합니다. 이메일 중복은 DB unique
 제약의 `DuplicateKeyException`을 Service가 409로 바꿉니다.
+가입·변경·재설정의 새 비밀번호는 8~72자이면서 UTF-8 72바이트 이하여야 합니다. 로그인·탈퇴는 기존 BCrypt 해시의
+비밀번호 검증 호환성을 유지합니다. 재설정 토큰은 비밀번호 변경 transaction 안에서 잠가 같은 토큰의 동시 재사용을 막습니다.
 사업자등록번호 확인은 `BusinessLookupController → BusinessLookupService → BiznoClient`로 외부 HTTP를 한 번 부르고,
 `BiznoClient`가 응답 검증과 오류를 `BiznoClientException`으로 바꿔 API 키가 담긴 URL이 로그·응답에 남지 않게 합니다.
 기업 등록은 `CompanyController → CompanyService → BiznoClient(사업자등록번호 조회) · CompanyRepository → MySQL`입니다. 서버가 등록 시점에

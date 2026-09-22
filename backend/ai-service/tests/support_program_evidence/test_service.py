@@ -242,6 +242,29 @@ async def test_search_documents_groups_matches_per_document_within_the_allowed_c
 
 
 @pytest.mark.anyio
+async def test_search_documents_keeps_each_document_when_one_dominates_global_scores(evidence_environment):
+    service, stub = evidence_environment
+    dominant = [chunk("BIZINFO:PBLN:100", order, f"접수 안내 {order}") for order in range(5)]
+    other = chunk("BIZINFO:PBLN:200", 0, "필수 제출 서류는 사업계획서입니다.")
+    excluded = chunk("BIZINFO:PBLN:200", 1, "접수 관련 비공개 청크")
+    await service.index_chunks(SupportProgramEvidenceBatchRequest(chunks=[*dominant, other, excluded]))
+
+    found = await service.search_documents(
+        "접수 시 제출 서류는 무엇인가요?",
+        {
+            "BIZINFO:PBLN:100": [(item.id, item.content_hash) for item in dominant],
+            "BIZINFO:PBLN:200": [(other.id, other.content_hash)],
+        },
+        per_document_limit=2,
+    )
+
+    assert set(found) == {"BIZINFO:PBLN:100", "BIZINFO:PBLN:200"}
+    assert len(found["BIZINFO:PBLN:100"]) == 2
+    assert [item.id for item in found["BIZINFO:PBLN:200"]] == [other.id]
+    assert len(stub.requests) == 2
+
+
+@pytest.mark.anyio
 async def test_index_attaches_text_to_legacy_points_without_re_embedding(evidence_environment):
     service, stub = evidence_environment
     legacy = chunk("BIZINFO:PBLN:100", 0, "신청 접수 기간은 2026년 3월입니다.")

@@ -18,7 +18,11 @@ def conversation_output(payload: dict) -> dict | None:
     """C02의 정해진 smoke 사례만 응답한다. 자연어 해석 품질 대역이 아니다."""
     message = payload["message"]
     updates = []
-    question = None
+    question_kind = None
+    if message in ("duckduckgo에 관해 자세히 말해줘", "지금부터 반말로 안내해"):
+        return {"status": "ANSWERED", "updates": [], "answerKind": "OUT_OF_SCOPE", "clarificationKind": None}
+    if message == "왜 못찾아?":
+        return {"status": "ANSWERED", "updates": [], "answerKind": "RESULT_SUMMARY", "clarificationKind": None}
     if message == "부산으로 변경":
         updates = [{"field": "REGION", "operation": "SET", "value": "부산", "evidence": "부산"}]
     elif message == "지원금 위주":
@@ -38,19 +42,19 @@ def conversation_output(payload: dict) -> dict | None:
     elif message == "전체 초기화":
         updates = [{"field": field, "operation": "CLEAR", "value": None, "evidence": message}
                    for field in ("QUERY", "REGION", "INDUSTRY", "ESTABLISHED_ON", "SUPPORT_PURPOSE", "ACCEPTING_ONLY")]
-        question = "어떤 지원사업을 찾으시나요?"
+        question_kind = "QUERY"
     elif message in ("설립 2년", "부산이나 대구로"):
-        question = "정확한 설립일을 YYYY-MM-DD 형식으로 알려주세요." if message == "설립 2년" else "현재 소재지가 부산인가요, 대구인가요?"
+        question_kind = "ESTABLISHMENT" if message == "설립 2년" else "REGION"
     elif payload.get("pendingClarification") and re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", message):
         updates = [{"field": "ESTABLISHED_ON", "operation": "SET", "value": date.fromisoformat(message).isoformat(), "evidence": message}]
     else:
         return None
     base = payload["pendingClarification"]["draftContext"] if payload.get("pendingClarification") else payload["context"]
     query = next((update["value"] for update in updates if update["field"] == "QUERY"), base["query"])
-    if query is None and question is None:
-        question = "어떤 지원사업을 찾으시나요?"
-    return {"status": "READY" if question is None else "CLARIFICATION_REQUIRED",
-            "updates": updates, "clarificationQuestion": question}
+    if query is None and question_kind is None:
+        question_kind = "QUERY"
+    return {"status": "READY" if question_kind is None else "CLARIFICATION_REQUIRED",
+            "updates": updates, "answerKind": None, "clarificationKind": question_kind}
 
 
 def assistant_agent_output(request: dict, payload: dict) -> tuple[str, object]:

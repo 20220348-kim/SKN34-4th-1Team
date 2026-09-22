@@ -1,4 +1,11 @@
+import json
+from pathlib import Path
+import tempfile
 import unittest
+from unittest.mock import patch
+
+import yaml
+import catalog_once
 from catalog_once import job
 
 
@@ -23,6 +30,59 @@ class CatalogOnceTests(unittest.TestCase):
         pod = job(self.deployment(), "first", ["MSIT"], "1", False)["spec"]["template"]["spec"]
         self.assertIn("--app.catalog-sync-once.apply=false", pod["containers"][0]["args"])
         self.assertIn("emptyDir", pod["volumes"][-1])
+
+    def test_plan_collects_selected_source_without_ai_or_unrelated_keys(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source_key = Path(directory) / "keys.env"
+            source_key.write_text("KSTARTUP_API_KEY=source-fixture\n")
+            source_key.chmod(0o600)
+            commands = []
+            def run(command, **kwargs):
+                commands.append((command, kwargs))
+                if "deployment" in command:
+                    return json.dumps(self.deployment())
+                if "jobs" in command:
+                    return '{"items": []}'
+                return ""
+            with patch("sys.argv", ["catalog_once.py", "--state-dir", directory,
+                       "--run-id", "plan-only", "--sources", "KSTARTUP", "--max-usd", "1",
+                       "--env-file", str(source_key)]), \
+                    patch("catalog_once.load_settings", return_value={"repository": "alice/project"}), \
+                    patch("catalog_once.commands", return_value=(["kubectl"], ["kubectl", "-n", "govbiz-msa"], [])), \
+                    patch("catalog_once.verify_context"), patch("catalog_once.run", side_effect=run), \
+                    patch("catalog_once.patch_secret") as secret:
+                catalog_once.main()
+            secret.assert_called_once_with(["kubectl", "-n", "govbiz-msa"], "catalog-runtime",
+                                           {"KSTARTUP_API_KEY": "source-fixture"})
+            self.assertFalse(any("exec" in command for command, _ in commands))
+            self.assertFalse(any("apply" in command for command, _ in commands))
+            submitted = [yaml.safe_load(kwargs["data"]) for command, kwargs in commands if "create" in command]
+            self.assertEqual(len(submitted), 1)
+            args = submitted[0]["spec"]["template"]["spec"]["containers"][0]["args"]
+            self.assertIn("--app.catalog-sync-once.sources=KSTARTUP", args)
+            self.assertIn("--app.catalog-sync-once.apply=false", args)
+
+    def test_apply_requires_deployed_embedding_policy_before_secrets_or_job(self):
+        import subprocess
+        with tempfile.TemporaryDirectory() as directory:
+            commands = []
+            def run(command, **kwargs):
+                commands.append(command)
+                if "deployment" in command:
+                    return json.dumps(self.deployment())
+                if "exec" in command:
+                    raise subprocess.CalledProcessError(1, command)
+                return ""
+            with patch("sys.argv", ["catalog_once.py", "--state-dir", directory,
+                       "--run-id", "apply", "--sources", "KSTARTUP", "--max-usd", "1", "--apply"]), \
+                    patch("catalog_once.load_settings", return_value={"repository": "alice/project"}), \
+                    patch("catalog_once.commands", return_value=(["kubectl"], ["kubectl", "-n", "govbiz-msa"], [])), \
+                    patch("catalog_once.verify_context"), patch("catalog_once.run", side_effect=run), \
+                    patch("catalog_once.patch_secret") as secret, self.assertRaises(SystemExit):
+                catalog_once.main()
+            secret.assert_not_called()
+            self.assertTrue(any("exec" in command for command in commands))
+            self.assertFalse(any("create" in command or "apply" in command for command in commands))
 
     def test_bad_budget_source_mutable_image_or_running_writer_rejected(self):
         for amount in ("0", "-1", "1.01", "NaN", "Infinity", "not-a-number"):

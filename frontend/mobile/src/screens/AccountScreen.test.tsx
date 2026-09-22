@@ -47,3 +47,14 @@ test('changing the email discards its verification pass and blocks signup', asyn
   expect(view.queryByText('이메일 인증을 완료했습니다.')).toBeNull()
   expect(view.getByText('인증번호 받기')).toBeTruthy()
 })
+
+
+test('signup rejects a multibyte password over the server BCrypt limit before sending it', async () => {
+  const view = await verifyEmail()
+  const password = '가'.repeat(25)
+  fireEvent.changeText(view.getByLabelText('비밀번호'), password)
+  fireEvent.changeText(view.getByLabelText('비밀번호 확인'), password)
+  fireEvent.press(view.getByText('회원가입'))
+  await waitFor(() => expect(view.getByText('비밀번호는 8~72자, UTF-8 72바이트 이하로 입력해 주세요.')).toBeTruthy())
+  expect(signUp).not.toHaveBeenCalled()
+})

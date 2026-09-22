@@ -16,7 +16,10 @@ spec.loader.exec_module(checker)
 class ProductionConfigTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.env = {key: value for key, value in os.environ.items() if key in {"PATH", "HOME", "DOCKER_CONFIG"}}
+        # Docker Desktop locates CLI plugins through the Windows user profile.
+        # Retain OS paths without inheriting any application credentials.
+        system_paths = {"PATH", "HOME", "DOCKER_CONFIG", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "SYSTEMROOT", "TEMP", "TMP"}
+        cls.env = {key: value for key, value in os.environ.items() if key.upper() in system_paths}
         cls.env.update({
             "CORE_API_IMAGE": "example/core:test-release", "AI_SERVICE_IMAGE": "example/ai:test-release",
             "ELASTICSEARCH_IMAGE": "example/nori:test-release", "NGINX_IMAGE": "nginx:test-release",
@@ -28,7 +31,7 @@ class ProductionConfigTest(unittest.TestCase):
             "OPENAI_API_KEY": "test-never-sent",
         })
         result = subprocess.run(["docker", "compose", "--env-file", os.devnull, "-f", str(checker.COMPOSE),
-                                 "config", "--format", "json"], env=cls.env, capture_output=True, text=True)
+                                 "config", "--format", "json"], env=cls.env, capture_output=True, text=True, encoding="utf-8")
         if result.returncode:
             raise AssertionError("더미 값으로 운영 Compose를 해석하지 못했습니다: " + result.stderr)
         cls.config = json.loads(result.stdout)
@@ -40,7 +43,7 @@ class ProductionConfigTest(unittest.TestCase):
         token = "document-test-only-" * 3
         result = subprocess.run(["docker", "compose", "--env-file", os.devnull, "-f", str(checker.COMPOSE),
                                  "config", "--format", "json"], env={**self.env, "DOCUMENT_INTERNAL_TOKEN": token},
-                                capture_output=True, text=True)
+                                capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(result.returncode, 0)
         services = json.loads(result.stdout)["services"]
         for name, service in services.items():
@@ -62,7 +65,7 @@ class ProductionConfigTest(unittest.TestCase):
         result = subprocess.run(["docker", "compose", "--env-file", os.devnull, "-f", str(checker.COMPOSE),
                                  "config", "--format", "json"],
                                 env={**self.env, "ASSISTANT_AGENT_ENABLED": "true", "ASSISTANT_TOOLS_TOKEN": token},
-                                capture_output=True, text=True)
+                                capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(result.returncode, 0)
         config = json.loads(result.stdout)
         self.assertEqual(checker.validate(config), [])
@@ -99,7 +102,7 @@ class ProductionConfigTest(unittest.TestCase):
         result = subprocess.run(["docker", "compose", "--env-file", os.devnull, "-f", str(checker.COMPOSE),
                                  "config", "--format", "json"],
                                 env={**self.env, "DOCUMENT_INTERNAL_TOKEN": token},
-                                capture_output=True, text=True)
+                                capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(result.returncode, 0)
         config = json.loads(result.stdout)
         self.assertEqual(checker.validate(config), [])
@@ -130,7 +133,7 @@ class ProductionConfigTest(unittest.TestCase):
                        "SMTP_USERNAME": "sender@example.com", "SMTP_PASSWORD": "dummy-$# password",
                        "SMTP_AUTH": "true", "SMTP_STARTTLS_ENABLED": "true", "SMTP_SSL_ENABLED": "false"}
         result = subprocess.run(["docker", "compose", "--env-file", os.devnull, "-f", str(checker.COMPOSE),
-                                 "config", "--format", "json"], env=environment, capture_output=True, text=True)
+                                 "config", "--format", "json"], env=environment, capture_output=True, text=True, encoding="utf-8")
         self.assertEqual(result.returncode, 0)
         config = json.loads(result.stdout)
         core = config["services"]["core-service"]["environment"]

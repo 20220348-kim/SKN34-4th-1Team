@@ -167,13 +167,13 @@ def validate_boundaries(model, project):
     for network in model["networks"].values():
         require(not network.get("external") and network["name"].startswith(project + "_"),
                 "A verification network is not isolated")
-    build = (ROOT / "backend/catalog-service/build.gradle").read_text()
+    build = (ROOT / "backend/catalog-service/build.gradle").read_text(encoding="utf-8")
     require(not any(name in build for name in ("core-api", "core-service")),
             "Catalog Gradle build depends on the Core source tree")
     forbidden = re.compile(r"\bimport\s+ai\.govbiz\.(?:core\.|catalog\.(?:account|chathistory|"
                            r"applicationpreparation|combinationreview|dailyreport|partner|admin)\.)")
     for path in (ROOT / "backend/catalog-service/src/main").rglob("*.kt"):
-        require(not forbidden.search(path.read_text()), "User-domain dependency in Catalog: " + str(path))
+        require(not forbidden.search(path.read_text(encoding="utf-8")), "User-domain dependency in Catalog: " + str(path))
 
 
 def main():
@@ -194,14 +194,14 @@ def main():
     files = [INFRA / "compose.yaml", INFRA / "compose.catalog.yaml"]
     variables = set(values)
     for path in files:
-        variables.update(re.findall(r"\$\{([A-Za-z_][A-Za-z0-9_]*)", path.read_text()))
+        variables.update(re.findall(r"\$\{([A-Za-z_][A-Za-z0-9_]*)", path.read_text(encoding="utf-8")))
     environment = {key: value for key, value in os.environ.items()
                    if key not in variables and not key.startswith(("COMPOSE_", "GOVBIZ_"))}
     environment["COMPOSE_DISABLE_ENV_FILE"] = "true"
     with tempfile.TemporaryDirectory(prefix=project + "-") as directory:
         temp = Path(directory)
         fixture = temp / "fixture.env"
-        fixture.write_text("".join(f"{key}={value}\n" for key, value in values.items()))
+        fixture.write_text("".join(f"{key}={value}\n" for key, value in values.items()), encoding="utf-8")
         port_overlay = temp / "ports.json"
         # Cold MySQL/Elasticsearch initialization can exceed the development
         # Compose health budget on a constrained laptop. Keep the original
@@ -209,7 +209,7 @@ def main():
         fixture_services = {name: {"healthcheck": {"start_period": "60s", "retries": max(12, args.timeout // 5)}}
                             for name in ("mysql", "catalog-mysql", "elasticsearch", "rabbitmq", "core-service", "catalog-service")}
         fixture_services["catalog-service"]["ports"] = [f"127.0.0.1:{values['CATALOG_HOST_PORT']}:8081"]
-        port_overlay.write_text(json.dumps({"services": fixture_services}))
+        port_overlay.write_text(json.dumps({"services": fixture_services}), encoding="utf-8")
         # Limit Compose operations too; image builds below use separate invocations
         # because Bake can otherwise parallelize builds despite --parallel 1.
         compose = ["docker", "compose", "--parallel", "1", "--project-name", project, "--env-file", str(fixture),
@@ -217,7 +217,7 @@ def main():
                    "--file", str(port_overlay)]
 
         def run(arguments, capture=False, check=True, **kwargs):
-            return subprocess.run(arguments, env=environment, check=check, text=True,
+            return subprocess.run(arguments, env=environment, check=check, text=True, encoding="utf-8",
                                   capture_output=capture, **kwargs)
 
         def sql(service, statement):
@@ -234,7 +234,7 @@ def main():
         writer_flags = {source + "_SYNC_ENABLED" for source in SOURCES} | {"SUPPORT_PROGRAM_INDEX_ENABLED"}
         defaults_fixture = temp / "defaults.env"
         defaults_fixture.write_text("".join(f"{key}={value}\n" for key, value in values.items()
-                                           if key not in writer_flags))
+                                           if key not in writer_flags), encoding="utf-8")
         defaults_compose = list(compose)
         defaults_compose[defaults_compose.index(str(fixture))] = str(defaults_fixture)
         defaults_model = json.loads(run(defaults_compose + ["config", "--format", "json"], capture=True).stdout)

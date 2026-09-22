@@ -17,13 +17,23 @@ export const assistantNavigationDtoSchema = z.object({
 /** 도구 에이전트가 고른 항목(모집글·공고)입니다. 경로는 `/app` 아래 내부 경로에 질의만 허용합니다. */
 export const assistantCardDtoSchema = z.object({
   kind: assistantCardKindSchema,
-  id: z.string().regex(/^[A-Za-z0-9_:.-]{1,80}$/),
+  id: z.string().min(1),
   title: z.string().trim().min(1).max(160),
   subtitle: z.string().trim().min(1).max(160).nullable(),
   reason: z.string().trim().min(1).max(200),
   /** 관심 공고 묶음 질문에서만: 공고 원문에서 그대로 옮긴 근거 구절입니다. */
   quote: z.string().trim().min(1).max(300).nullable(),
-  to: z.string().regex(/^\/app\/[A-Za-z0-9/_-]+(\?[A-Za-z0-9_=&%.:+-]*)?$/),
+  to: z.string().regex(/^\/app\/[A-Za-z0-9/_-]+(\?[A-Za-z0-9_=&%.:~+-]*)?$/),
+}).superRefine((card, context) => {
+  const separator = card.id.indexOf(':')
+  const sourceCode = card.id.slice(0, separator)
+  const sourceProgramId = card.id.slice(separator + 1)
+  const validId = card.kind === 'RECRUITMENT'
+    ? /^[1-9][0-9]{0,18}$/.test(card.id)
+    : separator > 0 && /^[A-Z][A-Z0-9_]{0,63}$/.test(sourceCode)
+      && sourceProgramId.length > 0 && Array.from(sourceProgramId).length <= 255
+      && sourceProgramId === sourceProgramId.trim() && !/\p{C}/u.test(sourceProgramId)
+  if (!validId) context.addIssue({ code: 'custom', path: ['id'], message: '카드 종류에 맞는 모집글 또는 공고 식별자여야 합니다.' })
 })
 
 export const assistantAnswerDtoSchema = z.object({

@@ -19,7 +19,8 @@ async def test_region_patch_preserves_every_unmentioned_field_and_input(request_
     agent.interpret.return_value = output
     service = SupportProgramConversationService(agent)
     response = await service.interpret(request)
-    assert response.model_dump(by_alias=True) == {"schemaVersion": SCHEMA_VERSION, **output_data}
+    assert response.model_dump(by_alias=True) == {"schemaVersion": SCHEMA_VERSION, "status": "READY",
+        "updates": output_data["updates"], "answer": None, "clarificationQuestion": None}
     merged = service._merge_context(request, output)
     expected = deepcopy(request_data["context"])
     expected["companyConditions"]["region"] = "부산"
@@ -37,7 +38,7 @@ async def test_followup_date_merges_from_pending_draft_not_applied_context(reque
     request = SupportProgramConversationRequest.model_validate(request_data)
     output = SupportProgramConversationOutput(status="READY", updates=[{
         "field": "ESTABLISHED_ON", "operation": "SET", "value": "2024-02-29", "evidence": request.message,
-    }], clarificationQuestion=None)
+    }], answerKind=None, clarificationKind=None)
     agent = AsyncMock()
     agent.interpret.return_value = output
     service = SupportProgramConversationService(agent)
@@ -72,7 +73,7 @@ async def test_rejects_out_of_range_date_after_patch_merge(request_data, date_va
     agent = AsyncMock()
     agent.interpret.return_value = SupportProgramConversationOutput(status="READY", updates=[{
         "field": "ESTABLISHED_ON", "operation": "SET", "value": date_value, "evidence": date_value,
-    }], clarificationQuestion=None)
+    }], answerKind=None, clarificationKind=None)
     with pytest.raises(SupportProgramConversationError):
         await SupportProgramConversationService(agent).interpret(SupportProgramConversationRequest.model_validate(request_data))
 
@@ -85,7 +86,7 @@ async def test_ready_requires_a_merged_query(request_data, clear_query):
     if not clear_query:
         request_data["context"]["query"] = None
     agent = AsyncMock()
-    agent.interpret.return_value = SupportProgramConversationOutput(status="READY", updates=updates, clarificationQuestion=None)
+    agent.interpret.return_value = SupportProgramConversationOutput(status="READY", updates=updates, answerKind=None, clarificationKind=None)
     with pytest.raises(SupportProgramConversationError):
         await SupportProgramConversationService(agent).interpret(SupportProgramConversationRequest.model_validate(request_data))
 
@@ -97,7 +98,7 @@ async def test_explicit_reset_clears_all_strings_restores_boolean_and_asks_for_q
     output = SupportProgramConversationOutput(status="CLARIFICATION_REQUIRED", updates=[
         {"field": field, "operation": "CLEAR", "value": None, "evidence": "전체 초기화"}
         for field in ("QUERY", "REGION", "INDUSTRY", "ESTABLISHED_ON", "SUPPORT_PURPOSE", "ACCEPTING_ONLY")
-    ], clarificationQuestion="어떤 지원사업을 찾으시나요?")
+    ], answerKind=None, clarificationKind="QUERY")
     agent = AsyncMock()
     agent.interpret.return_value = output
     request = SupportProgramConversationRequest.model_validate(request_data)
@@ -114,7 +115,7 @@ async def test_ambiguous_region_can_keep_clear_purpose_change_only(request_data)
     request_data["message"] = "부산이나 대구로, 지원금 위주"
     output = SupportProgramConversationOutput(status="CLARIFICATION_REQUIRED", updates=[
         {"field": "SUPPORT_PURPOSE", "operation": "SET", "value": "지원금", "evidence": "지원금"}
-    ], clarificationQuestion="부산과 대구 중 현재 소재지를 알려주세요.")
+    ], answerKind=None, clarificationKind="REGION")
     agent = AsyncMock()
     agent.interpret.return_value = output
     request = SupportProgramConversationRequest.model_validate(request_data)
@@ -136,7 +137,7 @@ async def test_untyped_output_is_an_error_not_clarification(request_data, bad_ou
 async def test_revalidates_model_instances_instead_of_trusting_constructed_output(request_data, output_data):
     agent = AsyncMock()
     agent.interpret.return_value = SupportProgramConversationOutput.model_construct(**{
-        "status": "READY", "updates": [], "clarification_question": "invalid ready question",
+        "status": "READY", "updates": [], "answer_kind": None, "clarification_kind": "REGION",
     })
     with pytest.raises(SupportProgramConversationError):
         await SupportProgramConversationService(agent).interpret(SupportProgramConversationRequest.model_validate(request_data))
@@ -148,7 +149,7 @@ async def test_accepting_only_set_uses_strict_string_values(request_data, value)
     request_data["message"] = "접수 필터 변경"
     output = SupportProgramConversationOutput(status="READY", updates=[
         {"field": "ACCEPTING_ONLY", "operation": "SET", "value": value, "evidence": "접수 필터 변경"}
-    ], clarificationQuestion=None)
+    ], answerKind=None, clarificationKind=None)
     agent = AsyncMock()
     agent.interpret.return_value = output
     service = SupportProgramConversationService(agent)
@@ -167,7 +168,7 @@ async def test_region_followup_keeps_pending_trade_intent_and_other_conditions(r
     request_data["pendingProposal"] = proposal
     output = SupportProgramConversationOutput(status="READY", updates=[
         {"field": "REGION", "operation": "SET", "value": "대구", "evidence": "대구"},
-    ], clarificationQuestion=None)
+    ], answerKind=None, clarificationKind=None)
     agent = AsyncMock()
     agent.interpret.return_value = output
     service = SupportProgramConversationService(agent)
@@ -199,7 +200,7 @@ async def test_explicit_assent_uses_pending_target_without_reasking(request_data
             "question": "대구를 현재 소재지로 설정할까요?", "draftContext": draft,
         }
         updates = [{"field": "REGION", "operation": "SET", "value": "대구", "evidence": "설정해"}]
-    output = SupportProgramConversationOutput(status="READY", updates=updates, clarificationQuestion=None)
+    output = SupportProgramConversationOutput(status="READY", updates=updates, answerKind=None, clarificationKind=None)
     agent = AsyncMock()
     agent.interpret.return_value = output
     service = SupportProgramConversationService(agent)
@@ -214,21 +215,21 @@ async def test_explicit_assent_uses_pending_target_without_reasking(request_data
 @pytest.mark.anyio
 @pytest.mark.parametrize("has_query", [False, True])
 @pytest.mark.parametrize("result_count", [None, 0, 3])
-async def test_answered_passes_explanation_without_requiring_or_changing_query(request_data, has_query, result_count):
+async def test_answered_renders_summary_without_requiring_or_changing_query(request_data, has_query, result_count):
     request_data["message"] = "왜 못 찾아?"
     if not has_query:
         request_data["context"]["query"] = None
     if result_count is not None:
         request_data["lastSearch"] = {"context": deepcopy(request_data["context"]), "resultCount": result_count}
     before = deepcopy(request_data)
-    output = SupportProgramConversationOutput(status="ANSWERED", updates=[], clarificationQuestion=None,
-        answer="현재 전달된 검색 요약만으로 정확한 원인을 단정할 수 없어요.")
+    output = SupportProgramConversationOutput(status="ANSWERED", updates=[], answerKind="RESULT_SUMMARY", clarificationKind=None)
     agent = AsyncMock()
     agent.interpret.return_value = output
     service = SupportProgramConversationService(agent)
     request = SupportProgramConversationRequest.model_validate(request_data)
     response = await service.interpret(request)
-    assert response.answer == output.answer
+    assert ("아직 완료된 검색 결과가 없어" in response.answer if result_count is None
+            else f"반환된 공고는 {result_count}건입니다." in response.answer)
     assert response.status == "ANSWERED" and response.updates == []
     assert service._merge_context(request, output) == request.context
     assert request.model_dump(by_alias=True) == before
@@ -240,8 +241,7 @@ async def test_answered_does_not_apply_last_search_context_to_pending_proposal(r
     request_data["lastSearch"] = {"context": deepcopy(request_data["context"]), "resultCount": 2}
     request_data["pendingProposal"] = deepcopy(request_data["context"])
     request_data["pendingProposal"]["companyConditions"]["region"] = "대구"
-    output = SupportProgramConversationOutput(status="ANSWERED", updates=[], clarificationQuestion=None,
-        answer="직전 서울 조건의 검색에서 반환된 결과는 2건입니다.")
+    output = SupportProgramConversationOutput(status="ANSWERED", updates=[], answerKind="RESULT_SUMMARY", clarificationKind=None)
     agent = AsyncMock()
     agent.interpret.return_value = output
     service = SupportProgramConversationService(agent)
@@ -253,15 +253,16 @@ async def test_answered_does_not_apply_last_search_context_to_pending_proposal(r
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("answer,updates", [
+@pytest.mark.parametrize("answer_kind,updates", [
     (None, []),
-    ("조회한 결과는 0건입니다.", [{"field": "REGION", "operation": "SET", "value": "부산", "evidence": "부산"}]),
+    ("injected free answer", []),
+    ("RESULT_SUMMARY", [{"field": "REGION", "operation": "SET", "value": "부산", "evidence": "부산"}]),
 ])
-async def test_forged_answered_output_is_revalidated(request_data, answer, updates):
+async def test_forged_answered_output_is_revalidated(request_data, answer_kind, updates):
     agent = AsyncMock()
     agent.interpret.return_value = SupportProgramConversationOutput.model_construct(
         status="ANSWERED", updates=[ConversationUpdate.model_validate(update) for update in updates],
-        clarification_question=None, answer=answer,
+        clarification_kind=None, answer_kind=answer_kind,
     )
     with pytest.raises(SupportProgramConversationError):
         await SupportProgramConversationService(agent).interpret(SupportProgramConversationRequest.model_validate(request_data))
@@ -293,7 +294,7 @@ async def test_foundation_precision_can_be_replaced_and_cleared(request_data, fi
     request_data["message"] = evidence
     output = SupportProgramConversationOutput(status="READY", updates=[{
         "field": field, "operation": "CLEAR" if value is None else "SET", "value": value, "evidence": evidence,
-    }], clarificationQuestion=None)
+    }], answerKind=None, clarificationKind=None)
     agent = AsyncMock()
     agent.interpret.return_value = output
     service = SupportProgramConversationService(agent)

@@ -10,7 +10,7 @@ import type {
   SaveSupportProgramUseCase,
 } from '../../../domain/usecases/SavedSupportProgramUseCases'
 import { loginPathFor } from '../auth/returnPath'
-import { selectIsAuthenticated } from '../auth/state/authSlice'
+import { selectCurrentAccount, selectIsAuthenticated } from '../auth/state/authSlice'
 import { appPaths } from '../routes/appPaths'
 
 type SaveUseCases = {
@@ -45,6 +45,8 @@ export function useSupportProgramSaveViewModel(identity: SupportProgramIdentity,
     remove: useCases?.remove ?? appContainer.resolve('removeSavedSupportProgramUseCase'),
   }
   const isAuthenticated = useAppSelector(selectIsAuthenticated)
+  const accountEmail = useAppSelector(selectCurrentAccount)?.email
+  const mutation = useRef<AbortController | null>(null)
   const { pathname, search } = useLocation()
   const { sourceCode, sourceProgramId } = identity
   const [isSaved, setIsSaved] = useState<boolean | null>(null)
@@ -63,31 +65,38 @@ export function useSupportProgramSaveViewModel(identity: SupportProgramIdentity,
   }, [notice])
 
   useEffect(() => {
-    if (!isAuthenticated) return
-    const controller = new AbortController()
+    mutation.current?.abort()
+    mutation.current = null
+    setIsBusy(false)
     setIsSaved(null)
     setNotice(null)
+    if (!isAuthenticated) return
+    const controller = new AbortController()
     resolved.check.execute({ sourceCode, sourceProgramId }, controller.signal)
       .then((saved) => { if (!controller.signal.aborted) setIsSaved(saved) })
       // 확인에 실패해도 버튼은 두고, 누르면 담기를 시도합니다.
       .catch(() => { if (!controller.signal.aborted) setIsSaved(false) })
-    return () => controller.abort()
-    // UseCase는 앱 수명 동안 같으므로 공고가 바뀔 때만 다시 확인합니다.
+    return () => { controller.abort(); mutation.current?.abort() }
+    // UseCase는 앱 수명 동안 같으므로 공고나 계정이 바뀔 때 다시 확인합니다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAuthenticated, sourceCode, sourceProgramId])
+  }, [isAuthenticated, accountEmail, sourceCode, sourceProgramId])
 
   async function toggle() {
-    if (isBusy || !isAuthenticated) return
+    if (mutation.current || !isAuthenticated || isSaved === null) return
+    const controller = new AbortController()
+    mutation.current = controller
     setIsBusy(true)
     setNotice(null)
     try {
       if (isSaved) {
-        await resolved.remove.execute({ sourceCode, sourceProgramId })
+        await resolved.remove.execute({ sourceCode, sourceProgramId }, controller.signal)
+        if (controller.signal.aborted) return
         setIsSaved(false)
         setNotice(supportProgramSaveMessages.removed)
         return
       }
-      const result = await resolved.save.execute({ sourceCode, sourceProgramId })
+      const result = await resolved.save.execute({ sourceCode, sourceProgramId }, controller.signal)
+      if (controller.signal.aborted) return
       if (result.outcome === 'not-found') {
         setNotice(supportProgramSaveMessages.notFound)
         return
@@ -95,9 +104,12 @@ export function useSupportProgramSaveViewModel(identity: SupportProgramIdentity,
       setIsSaved(true)
       setNotice(supportProgramSaveMessages.saved)
     } catch {
-      setNotice(supportProgramSaveMessages.failed)
+      if (!controller.signal.aborted) setNotice(supportProgramSaveMessages.failed)
     } finally {
-      setIsBusy(false)
+      if (mutation.current === controller) {
+        mutation.current = null
+        if (!controller.signal.aborted) setIsBusy(false)
+      }
     }
   }
 
@@ -105,7 +117,7 @@ export function useSupportProgramSaveViewModel(identity: SupportProgramIdentity,
     isAuthenticated,
     /** null이면 아직 확인 전입니다. */
     isSaved,
-    isBusy,
+    isBusy: isBusy || (isAuthenticated && isSaved === null),
     /** 담기·빼기 결과입니다. [supportProgramSaveNoticeDurationMs] 뒤 스스로 사라집니다. */
     notice,
     dismissNotice: () => setNotice(null),

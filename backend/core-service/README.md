@@ -365,6 +365,11 @@ Controller의 `SupportProgramRequestAdmissionService.execute`가 공개 요청 �
 관리자 정지·세션 폐기·비밀번호 변경 정책을 그대로 적용합니다. refresh token은 발급하지 않으며 만료되면 다시 로그인합니다.
 가입 전 인증번호 발송/확인은 기존 `/api/v1/auth/signup/email-code`, `/verify`를 사용합니다.
 
+새 비밀번호(회원가입·변경·재설정)는 8~72자이면서 UTF-8 72바이트 이하여야 합니다.
+예를 들어 한글 24자는 가능하고 25자는 400 `REQUEST_VALIDATION_FAILED`로 거부합니다.
+로그인·탈퇴에서 기존 비밀번호를 확인할 때는 과거 BCrypt 해시 호환성을 유지합니다.
+재설정 토큰은 비밀번호 변경 transaction에서 잠가 같은 토큰의 동시 요청도 한 번만 성공합니다.
+
 웹 `/auth/login`, `/auth/signup`의 응답에는 토큰이 들어가지 않고 HttpOnly 쿠키 계약을 유지합니다.
 쿠키와 Bearer가 함께 오면 계정 resolver는 쿠키를 우선하며 쿠키 쓰기 요청의 Origin 검사를 생략하지 않습니다.
 앱은 쿠키를 보내지 않습니다(`credentials: omit`). 잘못되거나 중복된 Authorization은 비로그인 상태로 숨기지 않고 401입니다.
@@ -441,6 +446,9 @@ Core가 형식·경로·중복을 다시 검증하고, 관심 공고 묶음 질�
 하루가 지나면 다시 갱신합니다.
 대화 전문은 저장하지 않습니다.
 
+도우미의 공고 카드도 공통 식별자 계약을 사용합니다. 제공처 코드 최대 64자·원본 ID 최대 255 Unicode
+code point를 보존하며, 카드 상세 경로는 식별자를 쿼리 인코딩한 값과 정확히 일치해야 합니다.
+
 ### 후속 대화 조건 해석
 
 `SupportProgramConversationController → SupportProgramConversationService → AiSupportProgramConversationClient`
@@ -464,6 +472,8 @@ CLARIFICATION_REQUIRED와 새 질문·초안을 반환합니다. 결과 설명�
 다른 상태의 answer는 null이어야 하며 기존 응답의 생략은 null로 처리합니다. 설명은 검색·조건 적용을 실행하지 않습니다.
 추가 필드·ANSWERED를 사용하려면 세 서비스를 함께 반영합니다. 잘못된 AI 응답은 명시적 502 오류이며 질문이나
 단문 검색으로 우회하지 않습니다. 해석과 확인 검색은 공유 요청 제한에서 각각 한 건입니다.
+AI Service는 모델의 답변·질문 종류 코드를 허용된 존댓말 문구로 바꿔 전달합니다. Core가 받는
+`answer`·`clarificationQuestion`과 공개 API 계약은 유지하며, ANSWERED로 조건 변경이나 검색을 실행하지 않습니다.
 상세 계약과 상태 흐름은 [C02 안내](../../docs/conversation-condition-update.md)를 참고하세요.
 
 ### 검색·상세·근거 질문

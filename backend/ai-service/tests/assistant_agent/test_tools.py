@@ -104,3 +104,29 @@ def test_sanitize_masks_pii_strips_urls_truncates_and_keeps_identifiers():
     assert len(result["capabilities"]) == 30
     assert result["nested"]["a"]["b"]["c"]["d"] is None
     assert result["flag"] is True and result["none"] is None
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("source_program_id", ["PBLN_" + "1" * 250, "지원 사업~*:" + "😀" * 200])
+async def test_saved_program_tool_keeps_full_source_ids_in_the_detail_link(monkeypatch, source_program_id):
+    from urllib.parse import parse_qs, urlsplit
+    from app.assistant_agent.models import AssistantCard
+    from app.assistant_agent.nodes.verify import card_catalog
+
+    source_code = "A" * 64
+    identifier = f"{source_code}:{source_program_id}"
+    monkeypatch.setattr("tests.assistant_agent.fakes.SAVED_PROGRAMS", [{
+        "sourceCode": source_code, "sourceProgramId": source_program_id,
+        "title": "지원사업", "organization": "기관", "applicationEndDate": None,
+    }])
+    client = client_for(FakeCoreTools())
+    try:
+        tool = next(tool for tool in build_tools(client, PRINCIPAL) if tool.name == "list_saved_programs")
+        message = await tool.ainvoke({"name": tool.name, "args": {}, "id": "call_saved", "type": "tool_call"})
+    finally:
+        await client.aclose()
+
+    assert message.artifact[0]["sourceProgramId"] == source_program_id
+    catalog = card_catalog([{"name": "list_saved_programs", "ok": True, "data": message.artifact, "ms": 0}])
+    card = AssistantCard(**catalog[("PROGRAM", identifier)], reason="관심 공고", quote=None)
+    assert parse_qs(urlsplit(card.to).query) == {"sourceCode": [source_code], "sourceProgramId": [source_program_id]}

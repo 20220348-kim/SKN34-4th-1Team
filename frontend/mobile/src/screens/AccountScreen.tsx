@@ -72,7 +72,7 @@ export function AccountScreen({ onCompany }: { onCompany(): void }) {
       setEmailPass(null)
       throw new Error('이메일 인증을 완료한 뒤 가입해 주세요. 만료됐다면 인증번호를 다시 받아 주세요.')
     }
-    if (!isValidSignUpPassword(password)) throw new Error('비밀번호는 8자 이상 72자 이하로 입력해 주세요.')
+    if (!isValidSignUpPassword(password)) throw new Error('비밀번호는 8~72자, UTF-8 72바이트 이하로 입력해 주세요.')
     if (password !== confirmation) throw new Error('비밀번호 확인이 일치하지 않습니다.')
     await auth.signUp({ email: normalized, password, emailPassToken: emailPass.passToken })
   })
@@ -100,7 +100,7 @@ export function AccountScreen({ onCompany }: { onCompany(): void }) {
       {codeSent && !emailPass && <><Field label="인증번호" value={code} onChangeText={(value) => setCode(value.replace(/\D/g, '').slice(0, 6))} keyboardType="number-pad" autoComplete="one-time-code" maxLength={6} editable={!busy} /><Button label="인증번호 확인" onPress={() => void verifyCode()} disabled={busy} /></>}
     </>}
     <Field label="비밀번호" value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" autoCorrect={false} autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} maxLength={72} editable={!busy} />
-    {mode === 'signup' && <><Field label="비밀번호 확인" value={confirmation} onChangeText={setConfirmation} secureTextEntry autoCapitalize="none" autoCorrect={false} autoComplete="new-password" maxLength={72} editable={!busy} /><Text style={{ color: colors.muted }}>비밀번호는 8~72자로 입력하세요. 가입하면 이용약관과 개인정보 처리방침에 동의한 것으로 봅니다.</Text></>}
+    {mode === 'signup' && <><Field label="비밀번호 확인" value={confirmation} onChangeText={setConfirmation} secureTextEntry autoCapitalize="none" autoCorrect={false} autoComplete="new-password" maxLength={72} editable={!busy} /><Text style={{ color: colors.muted }}>비밀번호는 8~72자, UTF-8 72바이트 이하로 입력하세요. 한글은 보통 한 글자에 3바이트입니다. 가입하면 이용약관과 개인정보 처리방침에 동의한 것으로 봅니다.</Text></>}
     {notice && <Notice>{notice}</Notice>}
     {error && <Notice error>{error}</Notice>}
     {auth.restoreError && <Notice error>{auth.restoreError}</Notice>}

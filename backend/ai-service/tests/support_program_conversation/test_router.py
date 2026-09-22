@@ -24,7 +24,8 @@ def test_http_to_service_to_agent_to_response(request_data, output_data):
     with TestClient(create_app(settings=SETTINGS, support_program_conversation_agent=agent)) as client:
         response = client.post(PATH, json=request_data)
     assert response.status_code == 200
-    assert response.json() == {"schemaVersion": SCHEMA_VERSION, **output_data}
+    assert response.json() == {"schemaVersion": SCHEMA_VERSION, "status": "READY",
+        "updates": output_data["updates"], "answer": None, "clarificationQuestion": None}
     assert "proposedContext" not in response.json()
     assert len(model.calls) == 1
 
@@ -99,15 +100,18 @@ def test_http_answered_keeps_completed_search_distinct_from_pending_proposal(req
         "companyConditions": {**request_data["context"]["companyConditions"], "region": "대구"},
     }, "resultCount": 0}
     output = {
-        "status": "ANSWERED", "updates": [], "clarificationQuestion": None,
-        "answer": "직전 대구 조건으로 반환된 결과는 0건입니다. 정확한 원인은 요약만으로 알 수 없어요.",
+        "status": "ANSWERED", "updates": [], "answerKind": "RESULT_SUMMARY", "clarificationKind": None,
     }
     model = ResponsesChatStub([[response_message(json.dumps(output, ensure_ascii=False))]])
     agent = SupportProgramConversationAgent(model=model.model, model_timeout_seconds=1, run_timeout_seconds=2)
     with TestClient(create_app(settings=SETTINGS, support_program_conversation_agent=agent)) as client:
         response = client.post(PATH, json=request_data)
     assert response.status_code == 200
-    assert response.json() == {"schemaVersion": SCHEMA_VERSION, **output}
+    assert response.json() == {"schemaVersion": SCHEMA_VERSION, "status": "ANSWERED",
+        "updates": [], "clarificationQuestion": None,
+        "answer": "직전에 완료된 검색에서 반환된 공고는 0건입니다. "
+                  "현재 정보만으로 결과가 없는 원인을 단정할 수 없습니다. "
+                  "원하시면 검색어, 지역 또는 접수 상태 조건을 조정해 주세요."}
     assert json.loads(model.first_call.input[0]["content"]) == request_data
     assert len(model.calls) == 1
 

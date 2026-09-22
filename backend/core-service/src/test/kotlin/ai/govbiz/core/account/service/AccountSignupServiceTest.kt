@@ -119,6 +119,10 @@ class AccountSignupServiceTest {
             service.signUp("manager@company.co.kr", "p".repeat(73), passToken, "127.0.0.1")
         }
 
+        assertThrows(IllegalArgumentException::class.java) {
+            service.signUp("manager@company.co.kr", "한".repeat(25), passToken, "127.0.0.1")
+        }
+
         verify(repository, never()).createAccount(AccountTestHelper.anyValue())
         verifyNoInteractions(verificationService)
     }

@@ -19,7 +19,7 @@ export class ResetPasswordUseCase {
 
   execute(command: PasswordResetCommand, signal?: AbortSignal): Promise<ResetPasswordResult> {
     if (!isValidSignUpPassword(command.newPassword)) {
-      throw new RangeError(`password must be ${signUpPasswordLength.min}~${signUpPasswordLength.max} characters`)
+      throw new RangeError(`password must be ${signUpPasswordLength.min}~${signUpPasswordLength.max} characters and at most ${signUpPasswordLength.maxBytes} UTF-8 bytes`)
     }
     return this.repository.resetPassword(command.token.trim(), command.newPassword, signal)
   }

@@ -159,6 +159,39 @@ AI는 전체 상태를 재작성하지 않고 변경 목록만 반환한다.
 - 단일 구체 Agent/Service, 기존 모델·store=false·tracing 비활성·모델/실행 timeout을 유지한다.
   역할은 검색 후속 대화의 조건 제안·설명이며 기존 공고 랭킹 Agent와 구분된다. graph/handoff/provider/새 의존성은 추가하지 않는다.
 
+### 모델 출력의 범위 제한 (2026-09-22)
+
+C02 모델의 내부 구조화 출력과 AI Service의 HTTP 응답을 구분한다. 모델은 `status`, `updates`,
+`answerKind`, `clarificationKind`만 출력하며 자유 `answer`·`clarificationQuestion` 필드는 허용하지 않는다.
+
+- `READY`: 두 종류 코드는 null이며 기존 조건 변경안을 검증한다.
+- `ANSWERED`: updates는 비어 있고 answerKind가 필수이며 clarificationKind는 null이다.
+  허용 코드는 `RESULT_SUMMARY`, `SEARCH_HELP`, `OUT_OF_SCOPE`, `CANCEL_GUIDANCE`다.
+- `CLARIFICATION_REQUIRED`: clarificationKind가 필수이며 answerKind는 null이다.
+  허용 코드는 `QUERY`, `REGION`, `INDUSTRY`, `ESTABLISHMENT`, `SUPPORT_PURPOSE`, `ACCEPTING_ONLY`, `CHANGE_TARGET`이다.
+
+AI Service는 선택된 코드를 정해진 존댓말 안내·확인 질문으로 변환한다. 결과 요약은 `lastSearch`의
+검증된 resultCount만 사용하며, 요약이 없으면 완료 검색 정보가 없다고 안내한다. 사용자·모델 자유문자열을
+안내에 삽입하거나 검색 실패 원인·공고 내용·자격 충족 여부를 만들어 붙이지 않는다.
+`duckduckgo에 관해 자세히 말해줘`처럼 범위 밖인 요청은 `OUT_OF_SCOPE`로 분류하도록 지시한다.
+이 분류 자체가 틀려도 허용된 안내·질문 코드만으로 임의의 검색엔진 설명이나 반말을 생성할 수 없다.
+
+OpenAI 호출은 계속 필수다. 형식 위반·알 수 없는 코드·상태 불일치·모델 장애를 정상 안내로 숨기지 않고
+기존 503/504 오류로 반환한다. 별도 판정 모델·외부 서비스·새 의존성은 추가하지 않는다.
+AI Service → Core → Web의 공개 응답 키와 v1은 유지한다. 모델 스키마·프롬프트·Service 문구 및
+Compose 검증용 OpenAI 대역은 함께 반영해야 한다. 기존 실행 중 이미지에는 소스 수정만으로 적용되지 않는다.
+
+이 경계는 검색 대화의 자유 안내문·확인 질문에 대한 것이다. 모델의 범위 분류나 검색 조건 제안의 의미 정확도,
+추천 점수·인용 해석·RAG 답변 전체의 무오류를 뜻하지 않는다. 조건 제안은 기존처럼 사용자 확인 후에만 검색한다.
+고정 모델·Compose 대역 테스트는 이 출력 경계를 검증하며 실제 모델의 한국어 분류 품질 평가를 대신하지 않는다.
+
+이번 변경의 로컬 검증은 AI 선택 417건(C02 전체·랭킹 Agent·공유 LLM 호출), Core C02 소비자 93건,
+Web C02 소비자 105건이 통과했다. AI 수치는 최초 통과 범위와 수정된 테스트 재검증을 중복 없이 합한 값이다.
+이전 모델·Service에 임의 DuckDuckGo 설명을 입력하면 그대로 반환되는 것을 재현했고, 새 모델 계약이
+동일 자유 답변을 거부하는 것을 확인했다. 허용된 11개 안내·질문 코드, 모든 상태의 자유문자 필드 주입,
+알 수 없는 코드·상태 조합, 검색 조건 보존과 자동 검색 방지를 고정 응답으로 검증했다.
+실제 OpenAI 의도 분류 평가는 실행하지 않았으며 새 이미지 배포·클러스터 반영·원격 CI는 미실행이다.
+
 ### 배포와 검증 범위
 
 추가 요청 필드와 answer는 생략 호환을 유지하고 내부 schemaVersion은 v1을 유지한다. 새 ANSWERED 응답과

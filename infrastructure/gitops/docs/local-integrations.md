@@ -85,6 +85,8 @@ python -B scripts/catalog_once.py --run-id initial-001 --max-usd 0.99 \
 ```
 
 기본은 외부 공고만 수집해 예상 임베딩 비용 상한을 계산하고 종료하는 Kubernetes Job입니다.
+이 사전 검사는 OpenAI 키·AI 서버 연결 없이 실행할 수 있습니다. `--sources KSTARTUP`처럼 제공처를
+선택하면 해당 제공처의 키만 필요하며, 선택하지 않은 제공처의 Secret 값은 변경하지 않습니다.
 실제 DB 공개·임베딩은 같은 명령에 `--apply`를 명시해야 합니다. 기존 Catalog의 `catalog-sync-once` 구현을
 재사용하며 예약 수집/색인이 켜진 상태에서는 거부합니다. Job 재시도는 0회, 재시작은 `Never`입니다.
 실행 전 로컬 예약 기록을 만들고 적용 기록은 전용 `catalog-sync-receipts` PVC에 남깁니다.

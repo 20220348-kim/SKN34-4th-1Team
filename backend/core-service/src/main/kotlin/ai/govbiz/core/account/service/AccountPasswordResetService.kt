@@ -1,5 +1,7 @@
 package ai.govbiz.core.account.service
 
+import ai.govbiz.core.account.helper.PasswordValidationHelper
+
 import ai.govbiz.core.account.client.mail.AccountPasswordResetMailClient
 import ai.govbiz.core.account.config.AccountDevLoginProperties
 import ai.govbiz.core.account.config.AccountPasswordResetProperties
@@ -108,9 +110,7 @@ class AccountPasswordResetService(
     /** 통행 토큰으로 새 비밀번호를 저장하고 남은 인증번호와 모든 세션을 없앱니다. 토큰이 없거나 만료·사용됐으면 422입니다. */
     @Transactional
     fun reset(token: String, newPassword: String) {
-        require(newPassword.length in AccountSignupService.PASSWORD_LENGTH) {
-            "password must be ${AccountSignupService.PASSWORD_LENGTH} characters"
-        }
+        PasswordValidationHelper.requireNewPassword(newPassword)
         if (!OneTimeTokenHelper.PATTERN.matches(token)) throw PasswordResetTokenInvalidException()
 
         val now = LocalDateTime.now(clock)

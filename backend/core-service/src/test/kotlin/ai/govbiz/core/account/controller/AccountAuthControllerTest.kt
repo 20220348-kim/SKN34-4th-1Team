@@ -157,6 +157,20 @@ class AccountAuthControllerTest {
     }
 
     @Test
+    fun signUpRejectsPasswordsOverTheBcryptUtf8ByteLimitBeforeReachingTheService() {
+        for (password in listOf("한".repeat(25), "😀".repeat(19))) {
+            mockMvc.perform(
+                post(SIGNUP_PATH)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("""{"email":"manager@company.co.kr","password":"$password","emailPassToken":"${"a".repeat(43)}"}"""),
+            )
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("REQUEST_VALIDATION_FAILED"))
+        }
+        verifyNoInteractions(signupService)
+    }
+
+    @Test
     fun logInDefaultsToABrowserSessionCookieWithoutMaxAge() {
         doReturn(sessionResult(rememberMe = false)).`when`(loginService)
             .logIn("manager@company.co.kr", "password1", "127.0.0.1", false)

@@ -1,5 +1,6 @@
 package ai.govbiz.core.account.config
 
+import ai.govbiz.core.account.helper.PasswordValidationHelper
 import org.springframework.boot.context.properties.ConfigurationProperties
 
 /** 개발용 자동 로그인 설정입니다. 기본값은 꺼짐이며 운영 환경에서는 켜지 않습니다. */
@@ -23,9 +24,7 @@ class AccountDevLoginProperties(
     val password: String = password?.takeIf(String::isNotEmpty) ?: DEFAULT_PASSWORD
 
     init {
-        require(this.password.length in MIN_PASSWORD_LENGTH..MAX_PASSWORD_LENGTH) {
-            "app.account.dev-login.password must be $MIN_PASSWORD_LENGTH to $MAX_PASSWORD_LENGTH characters"
-        }
+        PasswordValidationHelper.requireNewPassword(this.password)
         require(this.email.lowercase() != this.memberEmail.lowercase()) {
             "app.account.dev-login.email and member-email must be different accounts"
         }

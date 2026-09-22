@@ -14,11 +14,17 @@ import subprocess
 
 import yaml
 
-from connected_runtime import KEYS, read_inputs, patch_secret
+from connected_runtime import read_inputs, patch_secret
 from fork_cluster import STATE, commands, load_settings, locked, verify_context, run, write_json
 from check_msa import NAMESPACE
 
-SOURCES = {"BIZINFO", "KSTARTUP", "MSIT", "CNTRADE_NOTICE"}
+SOURCE_KEYS = {
+    "BIZINFO": "DATA_GO_KR_SERVICE_KEY",
+    "KSTARTUP": "KSTARTUP_API_KEY",
+    "MSIT": "MSIT_API_KEY",
+    "CNTRADE_NOTICE": "CNTRADE_NOTICE_API_KEY",
+}
+SOURCES = set(SOURCE_KEYS)
 
 
 def job(deployment, run_id, sources, max_usd, apply):
@@ -71,11 +77,13 @@ def main():
             kube, nk, _ = commands(args.state_dir, settings)
             verify_context(kube, settings)
             deployment = json.loads(run(nk + ["get", "deployment", "catalog-service", "-o", "json"], capture=True))
-            resource = job(deployment, args.run_id, args.sources.split(","), args.max_usd, args.apply)
-            # Build the deployed object graph without issuing an API request.
-            # Check its real embedding client, not a separately constructed SDK client.
+            sources = args.sources.split(",")
+            resource = job(deployment, args.run_id, sources, args.max_usd, args.apply)
+            # A plan only collects public notices and never reaches the AI service.
+            # Applying must verify the actual deployed embedding client before writes.
             check = "import asyncio; from app.config import Settings; from app.bootstrap import build_application_container; s=Settings.from_environment(); assert s.openai_embedding_model == 'text-embedding-3-small'; c=build_application_container(s); assert c.openai_client.max_retries == 0; assert str(c.openai_client.base_url)=='https://api.openai.com/v1/'; asyncio.run(c.close()); print('Deployed embedding model/endpoint/retry policy verified without an API request')"
-            run(nk + ["exec", "deployment/ai-service", "--", "python", "-c", check])
+            if args.apply:
+                run(nk + ["exec", "deployment/ai-service", "--", "python", "-c", check])
             name = resource["metadata"]["name"]
             ledger = args.state_dir / (name + ".json")
             if ledger.exists() or run(nk + ["get", "job", name, "--ignore-not-found", "-o", "name"], capture=True).strip():
@@ -84,10 +92,11 @@ def main():
             if any(item.get("status", {}).get("active", 0) for item in running):
                 raise ValueError("Another Catalog one-shot job is active")
             inputs = read_inputs(args.env_file)
-            missing = [key for key in KEYS["collection"] if not inputs.get(key)]
+            required_keys = [SOURCE_KEYS[source] for source in sources]
+            missing = [key for key in required_keys if not inputs.get(key)]
             if missing:
                 raise ValueError("Missing provider key names: " + ", ".join(missing))
-            patch_secret(nk, "catalog-runtime", {key: inputs[key] for key in KEYS["collection"]})
+            patch_secret(nk, "catalog-runtime", {key: inputs[key] for key in required_keys})
             if args.apply:
                 pvc = {"apiVersion": "v1", "kind": "PersistentVolumeClaim", "metadata": {"name": "catalog-sync-receipts", "namespace": NAMESPACE},
                        "spec": {"accessModes": ["ReadWriteOnce"], "resources": {"requests": {"storage": "1Gi"}}}}

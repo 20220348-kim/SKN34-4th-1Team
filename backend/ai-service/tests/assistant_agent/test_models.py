@@ -98,3 +98,34 @@ def test_response_tool_intents_allow_an_optional_answer_with_cards():
 def test_response_rejects_fields_outside_the_intent_contract(overrides):
     with pytest.raises(ValidationError):
         _response(**overrides)
+
+
+@pytest.mark.parametrize("source_program_id", ["PBLN:100", "지원 사업~1*", "공" * 255, "😀" * 255])
+def test_saved_program_identity_and_cards_preserve_the_full_canonical_id(source_program_id):
+    from urllib.parse import urlencode
+    from app.assistant_agent.models import AssistantCard, AssistantCardChoice, SavedProgramDocument, SavedProgramsCardChoice
+
+    source_code = "A" * 64
+    identifier = f"{source_code}:{source_program_id}"
+    document = SavedProgramDocument.model_validate({
+        "sourceCode": source_code, "sourceProgramId": source_program_id, "documentId": identifier,
+        "title": "지원사업", "applicationEndDate": None, "chunks": [],
+    })
+    assert document.document_id == identifier
+    choice = AssistantCardChoice(kind="PROGRAM", id=identifier, reason="관심 공고")
+    assert choice.id == identifier
+    assert SavedProgramsCardChoice(documentId=identifier, reason="관심 공고").document_id == identifier
+    route = "/app/support-programs/detail?" + urlencode({"sourceCode": source_code, "sourceProgramId": source_program_id})
+    card = AssistantCard(kind="PROGRAM", id=identifier, title="지원사업", subtitle=None, reason="관심 공고", quote=None, to=route)
+    assert card.to == route
+
+
+@pytest.mark.parametrize("source_program_id", [" x", "x ", "x\n", "x\u200b", "x" * 256])
+def test_saved_program_documents_reject_noncanonical_source_ids(source_program_id):
+    from app.assistant_agent.models import SavedProgramDocument
+
+    with pytest.raises(ValidationError):
+        SavedProgramDocument.model_validate({
+            "sourceCode": "BIZINFO", "sourceProgramId": source_program_id, "documentId": f"BIZINFO:{source_program_id}",
+            "title": "지원사업", "applicationEndDate": None, "chunks": [],
+        })

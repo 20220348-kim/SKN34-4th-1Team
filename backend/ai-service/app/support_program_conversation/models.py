@@ -155,31 +155,38 @@ class ConversationUpdate(BaseModel):
         return self
 
 
+AnswerKind = Literal["RESULT_SUMMARY", "SEARCH_HELP", "OUT_OF_SCOPE", "CANCEL_GUIDANCE"]
+ClarificationKind = Literal[
+    "QUERY", "REGION", "INDUSTRY", "ESTABLISHMENT", "SUPPORT_PURPOSE", "ACCEPTING_ONLY", "CHANGE_TARGET",
+]
+
+
 class SupportProgramConversationOutput(BaseModel):
-    """모델은 명확한 조건 변경을 제안하거나 제공된 검색 요약을 설명한다."""
+    """모델은 조건 변경과 안내 종류만 선택한다. 사용자에게 보낼 문장은 생성하지 않는다."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
 
     status: Literal["READY", "CLARIFICATION_REQUIRED", "ANSWERED"]
     updates: list[ConversationUpdate] = Field(max_length=7)
-    clarification_question: ShortText | None = Field(alias="clarificationQuestion")
-    answer: AnswerText | None = None
+    answer_kind: AnswerKind | None = Field(alias="answerKind")
+    clarification_kind: ClarificationKind | None = Field(alias="clarificationKind")
 
     @model_validator(mode="after")
     def validate_status_and_unique_fields(self) -> Self:
         if len({update.field for update in self.updates}) != len(self.updates):
             raise ValueError("each field can be updated only once")
-        if (self.status == "CLARIFICATION_REQUIRED") != (self.clarification_question is not None):
-            raise ValueError("only CLARIFICATION_REQUIRED requires a question")
-        if self.status == "ANSWERED":
-            if self.answer is None or self.updates:
-                raise ValueError("ANSWERED requires an answer and no updates")
-        elif self.answer is not None:
-            raise ValueError("only ANSWERED permits an answer")
+        if (self.status == "CLARIFICATION_REQUIRED") != (self.clarification_kind is not None):
+            raise ValueError("only CLARIFICATION_REQUIRED requires clarificationKind")
+        if (self.status == "ANSWERED") != (self.answer_kind is not None):
+            raise ValueError("only ANSWERED requires answerKind")
+        if self.status == "ANSWERED" and self.updates:
+            raise ValueError("ANSWERED must not change conditions")
         return self
 
 
 class SupportProgramConversationResponse(BaseModel):
+    """기존 Core 응답 계약. 안내문은 Service가 허용된 문구와 검색 건수로 작성한다."""
+
     model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
 
     schema_version: Literal[SCHEMA_VERSION] = Field(alias="schemaVersion")
@@ -190,7 +197,13 @@ class SupportProgramConversationResponse(BaseModel):
 
     @model_validator(mode="after")
     def validate_response_contract(self) -> Self:
-        SupportProgramConversationOutput.model_validate(
-            self.model_dump(by_alias=True, exclude={"schema_version"})
-        )
+        if len({update.field for update in self.updates}) != len(self.updates):
+            raise ValueError("each field can be updated only once")
+        if (self.status == "CLARIFICATION_REQUIRED") != (self.clarification_question is not None):
+            raise ValueError("only CLARIFICATION_REQUIRED requires a question")
+        if self.status == "ANSWERED":
+            if self.answer is None or self.updates:
+                raise ValueError("ANSWERED requires an answer and no updates")
+        elif self.answer is not None:
+            raise ValueError("only ANSWERED permits an answer")
         return self

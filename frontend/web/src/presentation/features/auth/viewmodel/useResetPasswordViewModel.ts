@@ -9,7 +9,7 @@ type PasswordResetUseCase = Pick<ResetPasswordUseCase, 'execute'>
 
 export const resetPasswordMessages = {
   missingToken: '인증을 마친 뒤에 새 비밀번호를 정할 수 있습니다. 비밀번호 찾기에서 인증번호를 받아 주세요.',
-  passwordLength: `비밀번호는 ${signUpPasswordLength.min}자 이상 ${signUpPasswordLength.max}자 이하로 입력해 주세요.`,
+  passwordLength: `비밀번호는 ${signUpPasswordLength.min}자 이상 ${signUpPasswordLength.max}자 이하, UTF-8 ${signUpPasswordLength.maxBytes}바이트 이하로 입력해 주세요.`,
   passwordMismatch: '비밀번호 확인이 일치하지 않습니다.',
   tokenInvalid: '인증이 만료됐거나 이미 사용됐습니다. 비밀번호 찾기에서 인증번호를 다시 받아 주세요.',
   socialAccount: '카카오·Google로 가입한 계정이라 비밀번호가 없습니다. 로그인 화면에서 소셜 로그인으로 들어와 주세요.',

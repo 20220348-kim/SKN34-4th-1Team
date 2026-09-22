@@ -10,6 +10,10 @@ from app.assistant.models import (
     AssistantHelpEntry, AssistantHistoryMessage, AssistantSession, HelpEntryId, MessageText, ShortText,
 )
 from app.support_program_conversation.models import validate_text
+from app.support_program_identity import (
+    MAX_CANONICAL_SOURCE_PROGRAM_ID_LENGTH, MAX_SOURCE_CODE_LENGTH, MAX_SOURCE_PROGRAM_ID_LENGTH,
+    SOURCE_CODE_PATTERN, require_canonical_source_program_id,
+)
 
 
 SCHEMA_VERSION = "govbiz-assistant-agent-v1"
@@ -48,16 +52,29 @@ QuoteText = Annotated[str, Field(min_length=1, max_length=MAX_QUOTE_LENGTH), Aft
 )]
 Sha256Hex = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 CalendarDate = Annotated[str, Field(pattern=r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")]
-CardId = Annotated[str, Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_:.-]+$")]
+CardId = Annotated[str, Field(min_length=1, max_length=MAX_CANONICAL_SOURCE_PROGRAM_ID_LENGTH)]
+CanonicalDocumentId = Annotated[
+    str, Field(min_length=3, max_length=MAX_CANONICAL_SOURCE_PROGRAM_ID_LENGTH),
+    AfterValidator(require_canonical_source_program_id),
+]
+# 원본 ID 한 글자는 UTF-8 최대 4 bytes, URL에서는 byte당 %HH 세 글자가 된다.
+MAX_CARD_ROUTE_LENGTH = len(PROGRAM_DETAIL_ROUTE + "?sourceCode=&sourceProgramId=") + MAX_SOURCE_CODE_LENGTH + MAX_SOURCE_PROGRAM_ID_LENGTH * 12
+
+
+def _validate_card_identity(kind: CardKind, identifier: str) -> None:
+    if kind == "PROGRAM":
+        require_canonical_source_program_id(identifier)
+    elif re.fullmatch(r"[1-9][0-9]{0,18}", identifier) is None:
+        raise ValueError("recruitment card id must be a positive numeric id")
 
 
 def validate_card_route(value: str) -> str:
-    if re.fullmatch(r"/app/[A-Za-z0-9/_-]+(\?[A-Za-z0-9_=&%.:+-]*)?", value) is None:
+    if re.fullmatch(r"/app/[A-Za-z0-9/_-]+(\?[A-Za-z0-9_=&%.:+~-]*)?", value) is None:
         raise ValueError("route must be an internal /app path with an optional query")
     return value
 
 
-CardRouteText = Annotated[str, Field(min_length=1, max_length=300), AfterValidator(validate_card_route)]
+CardRouteText = Annotated[str, Field(min_length=1, max_length=MAX_CARD_ROUTE_LENGTH), AfterValidator(validate_card_route)]
 
 
 class AssistantPrincipal(BaseModel):
@@ -84,11 +101,11 @@ class SavedProgramDocument(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
 
-    source_code: str = Field(alias="sourceCode", pattern=r"^[A-Z][A-Z0-9_]{0,39}$")
-    source_program_id: str = Field(alias="sourceProgramId", min_length=1, max_length=200, pattern=r"^[A-Za-z0-9_.-]+$")
+    source_code: str = Field(alias="sourceCode", pattern=SOURCE_CODE_PATTERN.pattern)
+    source_program_id: str = Field(alias="sourceProgramId", min_length=1, max_length=MAX_SOURCE_PROGRAM_ID_LENGTH)
     title: ShortText
     application_end_date: CalendarDate | None = Field(alias="applicationEndDate")
-    document_id: str = Field(alias="documentId", min_length=3, max_length=250)
+    document_id: CanonicalDocumentId = Field(alias="documentId")
     chunks: list[SavedProgramChunkRef] = Field(max_length=MAX_DOCUMENT_CHUNKS)
 
     @model_validator(mode="after")
@@ -203,6 +220,11 @@ class AssistantCardChoice(BaseModel):
     id: CardId
     reason: ReasonText
 
+    @model_validator(mode="after")
+    def validate_identity(self) -> Self:
+        _validate_card_identity(self.kind, self.id)
+        return self
+
 
 class AssistantAgentAnswer(BaseModel):
     """답 모델의 구조화 출력."""
@@ -232,6 +254,11 @@ class AssistantCard(BaseModel):
     quote: QuoteText | None
     to: CardRouteText
 
+    @model_validator(mode="after")
+    def validate_identity(self) -> Self:
+        _validate_card_identity(self.kind, self.id)
+        return self
+
 
 class ProgramFinding(BaseModel):
     """관심 공고 하나에 대한 map 단계(싼 모델)의 판단. 청크 밖의 내용은 UNKNOWN이다."""
@@ -253,7 +280,7 @@ class ProgramFinding(BaseModel):
 class SavedProgramsCardChoice(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, populate_by_name=True)
 
-    document_id: str = Field(alias="documentId", min_length=3, max_length=250)
+    document_id: CanonicalDocumentId = Field(alias="documentId")
     reason: ReasonText
 
 

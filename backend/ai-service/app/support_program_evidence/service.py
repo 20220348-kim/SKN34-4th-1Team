@@ -279,26 +279,31 @@ class SupportProgramEvidenceService:
                 if not present:
                     return {}
                 vector, cache_state = await self._embed_query(question)
-                response = await self.qdrant_client.query_points(
+                # 전체 상위 N개를 자르면 한 문서의 높은 점수가 다른 문서의 근거를 밀어낸다.
+                # 허용된 청크 안에서 문서별 상위 청크를 선택하고 질문 임베딩은 한 번만 사용한다.
+                response = await self.qdrant_client.query_points_groups(
                     collection_name=self.collection_name,
                     query=vector,
                     query_filter=models.Filter(must=[models.HasIdCondition(has_id=list(present))]),
-                    limit=min(per_document_limit * len(documents), len(present)),
+                    group_by="documentId",
+                    group_size=per_document_limit,
+                    limit=len(documents),
                     with_payload=True,
                     with_vectors=False,
                 )
                 grouped: dict[str, list[SupportProgramEvidenceDocumentChunk]] = {}
-                for point in response.points:
-                    payload = present.get(str(point.id))
-                    if payload is None:
-                        continue
-                    bucket = grouped.setdefault(payload["documentId"], [])
-                    if len(bucket) >= per_document_limit:
-                        continue
-                    bucket.append(SupportProgramEvidenceDocumentChunk(
-                        id=payload["id"], contentHash=payload["contentHash"], documentId=payload["documentId"],
-                        order=int(payload.get("order", 0)), text=payload["text"], score=float(point.score),
-                    ))
+                for group in response.groups:
+                    for point in group.hits:
+                        payload = present.get(str(point.id))
+                        if payload is None:
+                            continue
+                        bucket = grouped.setdefault(payload["documentId"], [])
+                        if len(bucket) >= per_document_limit:
+                            continue
+                        bucket.append(SupportProgramEvidenceDocumentChunk(
+                            id=payload["id"], contentHash=payload["contentHash"], documentId=payload["documentId"],
+                            order=int(payload.get("order", 0)), text=payload["text"], score=float(point.score),
+                        ))
                 logger.info(
                     "support_program_evidence_document_search_completed document_count=%d chunk_count=%d matched_documents=%d "
                     "elapsed_ms=%d cache_state=%s",
