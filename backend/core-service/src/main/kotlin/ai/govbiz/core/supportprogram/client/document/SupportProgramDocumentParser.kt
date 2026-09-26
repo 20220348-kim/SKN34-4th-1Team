@@ -30,7 +30,7 @@ import org.xml.sax.helpers.DefaultHandler
 
 data class SupportProgramDocumentBlock(val locator: String, val text: String)
 
-/** 공식 PDF/HWP/HWPX 원문의 순서와 위치를 보존하며 안전 한도 안에서 텍스트 블록으로 변환합니다. */
+/** 공식 PDF/HWP/HWPX/DOCX 원문의 순서와 위치를 보존하며 안전 한도 안에서 텍스트 블록으로 변환합니다. */
 @Component
 class SupportProgramDocumentParser {
     fun parse(bytes: ByteArray, format: String): List<SupportProgramDocumentBlock> = try {
@@ -39,6 +39,7 @@ class SupportProgramDocumentParser {
             "PDF" -> pdf(bytes)
             "HWP" -> hwp(bytes)
             "HWPX" -> hwpx(bytes)
+            "DOCX" -> docx(bytes)
             else -> fail(Reason.UNSUPPORTED)
         }
         if (blocks.sumOf { it.text.length } < 50) fail(Reason.UNSUPPORTED)
@@ -234,6 +235,74 @@ class SupportProgramDocumentParser {
                 }
                 flush(nodes.length)
             }
+        }
+    }
+
+    private fun docx(bytes: ByteArray): List<SupportProgramDocumentBlock> {
+        var documentXml: ByteArray? = null
+        var contentTypes: ByteArray? = null
+        var expanded = 0
+        var entries = 0
+        val names = mutableSetOf<String>()
+        ZipInputStream(ByteArrayInputStream(bytes)).use { zip ->
+            while (true) {
+                val entry = zip.nextEntry ?: break
+                if (++entries > 512 || !names.add(entry.name) || entry.name.startsWith("/") ||
+                    entry.name.split('/').contains("..")) fail(Reason.INVALID)
+                val output = ByteArrayOutputStream()
+                val buffer = ByteArray(8192)
+                while (true) {
+                    val count = zip.read(buffer)
+                    if (count < 0) break
+                    expanded += count
+                    if (expanded > 24 * 1024 * 1024) fail(Reason.TOO_LARGE)
+                    if (entry.name == "word/document.xml" || entry.name == "[Content_Types].xml") output.write(buffer, 0, count)
+                }
+                when (entry.name) {
+                    "word/document.xml" -> documentXml = output.toByteArray()
+                    "[Content_Types].xml" -> contentTypes = output.toByteArray()
+                }
+            }
+        }
+        if (contentTypes?.toString(Charsets.UTF_8)?.contains(
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml") != true) fail(Reason.INVALID)
+        val xml = documentXml ?: fail(Reason.INVALID)
+        val factory = DocumentBuilderFactory.newInstance().apply {
+            isNamespaceAware = true
+            setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
+            setFeature("http://xml.org/sax/features/external-general-entities", false)
+            setFeature("http://xml.org/sax/features/external-parameter-entities", false)
+            setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "")
+            setAttribute(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "")
+            isXIncludeAware = false
+            isExpandEntityReferences = false
+        }
+        val paragraphs = factory.newDocumentBuilder().parse(ByteArrayInputStream(xml))
+            .getElementsByTagNameNS("http://schemas.openxmlformats.org/wordprocessingml/2006/main", "p")
+        return buildList {
+            var buffer = StringBuilder()
+            var first = 1
+            fun flush(last: Int) {
+                if (buffer.isNotEmpty()) add(SupportProgramDocumentBlock("DOCX paragraphs $first-$last", buffer.toString()))
+                buffer = StringBuilder()
+            }
+            for (index in 0 until paragraphs.length) {
+                val paragraph = paragraphs.item(index) as Element
+                val texts = paragraph.getElementsByTagNameNS("http://schemas.openxmlformats.org/wordprocessingml/2006/main", "t")
+                val value = buildString { for (part in 0 until texts.length) append(texts.item(part).textContent) }.trim()
+                if (value.isBlank()) continue
+                if (value.length > 3000) {
+                    flush(index)
+                    splitText(value).forEachIndexed { part, text ->
+                        add(SupportProgramDocumentBlock("DOCX paragraph ${index + 1} part ${part + 1}", text))
+                    }
+                    continue
+                }
+                if (buffer.length + value.length + 1 > 3000) flush(index)
+                if (buffer.isEmpty()) first = index + 1 else buffer.append('\n')
+                buffer.append(value)
+            }
+            flush(paragraphs.length)
         }
     }
 

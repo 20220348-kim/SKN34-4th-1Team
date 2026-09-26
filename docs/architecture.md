@@ -125,7 +125,7 @@ AI Service의 명시적 근거 검증 실패(`422 / APPLICATION_FORM_AI_INVALID_
    → RabbitMQ → CombinationReviewRunConsumer → CombinationReviewRunService`가 DB에서 실행을 한 번 선점합니다.
 2. 소비자는 선택한 제공처에 따라 `BizInfoAttachmentClient`, `MsitAttachmentClient`, `KStartupAttachmentClient`,
    `CnTradeNoticeAttachmentClient`를 통해 검증된 공식 상세의 직접 연결 첨부를 수집. 충남은 API 제목·본문과 게시판 상세를 교차 검증.
-3. `SupportProgramDocumentParser`: PDFBox, Apache Tika HWP5 또는 HWPX ZIP/XML로 텍스트·위치를 추출. 신청 문서 발견과 중복 지원 검토가 같은 안전 경계를 사용.
+3. `SupportProgramDocumentParser`: PDFBox, Apache Tika HWP5 또는 HWPX/DOCX ZIP/XML로 텍스트·위치를 추출. 신청 문서 발견과 중복 지원 검토가 같은 안전 경계를 사용.
    공고별로 읽을 수 있는 문서가 있으면 크기 제한 초과·텍스트 추출 불가 첨부는 경고와 함께 제외하고, 모두 제외되면 실행을 실패 처리.
 4. `CombinationReviewRunRepository`: 원문 바이트·해시·메타데이터·텍스트를 짧은 transaction에서 보존. 검증한 공식 공고 상세 주소와
    첨부 다운로드 주소를 서로 다른 필드로 저장해 화면의 공고 페이지 이동과 보관 원본 다운로드를 구분.
@@ -910,6 +910,9 @@ HWP 체크박스의 FORM_OBJECT Caption은 주변 문항과 함께 별도 근거
 Discovery 전용 timeout은 model 210초 < AI run 240초 < Core read 270초 < Worker lease 1,800초입니다. 다른 신청 준비 기능의 전역 timeout은 변경하지 않습니다. [상태·재시도·백필 실행 방법](application-form-availability.md)을 참고하세요.
 
 ## 신청 문서 MCP 파이프라인
+
+DOCX 경로는 `Core 공식 첨부 Client → ZIP/XML 문항 추출 → AI Service DocumentMap → 기존 Mapping·WritePlan → OOXML native edit → 재열기 검증 → Core 저장·다운로드`입니다. 문단·표 셀·명시적 내용 컨트롤 중 안전한 주소만 쓰고, 세로 병합·불명확한 다중 문단 셀·혼합 스타일 영역은 미지원으로 표시합니다. 단순 가로 gridSpan은 원본 셀 구조를 유지한 채 단일 주소로 편집합니다.
+기존 세 포맷의 `mapVersion`·공통 `pipelineVersion`은 DOCX 추가만으로 변경하지 않습니다. DOCX는 설정 응답의 형식별 `engineVersion`으로 저장 지도와 생성 fingerprint를 구분합니다. Core는 DOCX 엔진 버전이나 원본 hash가 달라지면 재매핑하고, binding 또는 scope가 바뀌면 기존 migration 확인 흐름을 사용합니다.
 
 HWPX 질문 추출은 Core가 hash와 함께 보낸 원본을 AI 내부에서 먼저 구조 분석한 뒤 OpenAI에 셀 정보를 전달한다. PDF의 평면 입력칸은 로컬 FFDetr 탐지 결과와 원문 글자·표 경계를 대조하고, 기존 PDFBox가 값을 기입한다. FFDetr 가중치는 이미지 빌드 시 고정 revision과 SHA-256으로 검증하며 실행 중 다운로드나 외부 PDF 서비스 호출을 하지 않는다. AI worker당 PDF 검사는 한 번에 하나씩 실행한다.
 

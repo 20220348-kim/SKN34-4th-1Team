@@ -80,6 +80,19 @@ class MsitAttachmentClientTest {
         server.verify()
     }
 
+    @Test
+    fun collectsDocxUsingItsOfficialDownloadCall() {
+        server.expect(requestTo(pageUrl)).andRespond(withSuccess(page(fileName = "신청양식.docx", extension = "docx"), MediaType.TEXT_HTML))
+        server.expect(requestTo(downloadUrl)).andExpect(method(HttpMethod.POST))
+            .andRespond(withSuccess(byteArrayOf(0x50, 0x4b, 0x03, 0x04), MediaType.APPLICATION_OCTET_STREAM))
+
+        val file = client.collect("MSIT", sourceProgramId, pageUrl).files.single()
+
+        assertEquals("DOCX", file.format)
+        assertEquals("신청양식.docx", file.fileName)
+        server.verify()
+    }
+
     private fun page(extraDownload: String = "", fileName: String = "신청양식.hwpx", extension: String = "hwpx") = """
         <div class="board_view">
           <div class="view_head"><h2>과기정통부 지원사업</h2></div>

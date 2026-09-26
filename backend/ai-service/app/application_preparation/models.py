@@ -121,7 +121,7 @@ class DiscoveryBlock(Contract):
 class DiscoveryDocument(Contract):
     documentIndex: int = Field(ge=0, le=7)
     fileName: str = Field(min_length=1, max_length=300)
-    format: Literal["PDF", "HWP", "HWPX"]
+    format: Literal["PDF", "HWP", "HWPX", "DOCX"]
     blocks: list[DiscoveryBlock] = Field(min_length=1, max_length=256)
     sourceBase64: str | None = Field(default=None, min_length=1, max_length=44_739_244)
     sourceSha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")

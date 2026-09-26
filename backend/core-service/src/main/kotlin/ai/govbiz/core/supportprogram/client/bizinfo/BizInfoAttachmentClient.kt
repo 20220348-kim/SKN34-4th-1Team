@@ -15,7 +15,7 @@ import org.springframework.http.MediaType
 import org.springframework.stereotype.Component
 import org.springframework.web.client.RestClient
 
-/** 기업마당 공고 ID로 공식 페이지를 찾고 그 페이지가 직접 연결한 PDF/HWP/HWPX 첨부만 수집합니다. */
+/** 기업마당 공고 ID로 공식 페이지를 찾고 그 페이지가 직접 연결한 PDF/HWP/HWPX/DOCX 첨부만 수집합니다. */
 @Component
 class BizInfoAttachmentClient(
     private val htmlClient: BizInfoSourceDocumentClient,
@@ -30,7 +30,7 @@ class BizInfoAttachmentClient(
             val title = detail.selectFirst(".title_area .title")?.text()?.trim().orEmpty()
             if (title.isBlank()) fail(Reason.NOT_FOUND)
             val links = linkedMapOf<String, Pair<String, String>>()
-            val warnings = mutableListOf("공식 페이지가 직접 연결한 PDF/HWP/HWPX만 수집했습니다. 추출 문항은 사용자가 원문과 대조해야 합니다.")
+            val warnings = mutableListOf("공식 페이지가 직접 연결한 PDF/HWP/HWPX/DOCX만 수집했습니다. 추출 문항은 사용자가 원문과 대조해야 합니다.")
             detail.select(".file_name").forEach { name ->
                 val anchor = name.parent()?.selectFirst("a[href*='/cmm/fms/fileDown.do']")
                 if (anchor != null) addLink(links, warnings, anchor.absUrl("href"), name.text())
@@ -90,13 +90,14 @@ class BizInfoAttachmentClient(
 
     private fun addLink(links: MutableMap<String, Pair<String, String>>, warnings: MutableList<String>, url: String, name: String) {
         val format = when {
+            Regex("(?i)\\.docx(?:\\s|$)").containsMatchIn(name) -> "DOCX"
             Regex("(?i)\\.hwpx(?:\\s|$)").containsMatchIn(name) -> "HWPX"
             Regex("(?i)\\.hwp(?:\\s|$)").containsMatchIn(name) -> "HWP"
             Regex("(?i)\\.pdf(?:\\s|$)").containsMatchIn(name) -> "PDF"
             else -> null
         }
         if (format == null) {
-            warnings.add("미수집 첨부(지원 형식 PDF/HWP/HWPX 이외): ${name.take(250)}")
+            warnings.add("미수집 첨부(지원 형식 PDF/HWP/HWPX/DOCX 이외): ${name.take(250)}")
             return
         }
         val uri = URI(url)
@@ -104,7 +105,7 @@ class BizInfoAttachmentClient(
         links[uri.toString()] = name to format
     }
 
-    private fun normalizedTitle(name: String): String = name.replace(Regex("(?i)\\.(hwpx|hwp|pdf).*"), "")
+    private fun normalizedTitle(name: String): String = name.replace(Regex("(?i)\\.(hwpx|hwp|pdf|docx).*"), "")
         .replace(Regex("[^\\p{L}\\p{N}]"), "").lowercase()
 
     private fun download(uri: URI, limit: Int): ByteArray {
@@ -130,7 +131,7 @@ class BizInfoAttachmentClient(
             "www.mss.go.kr", "mss.go.kr" -> isMssPage(uri) || (uri.path == "/common/board/Download.do" &&
                 query.toSet() == setOf("bcIdx", "cbIdx", "streFileNm") && parameter(uri, "cbIdx") == "310" &&
                 Regex("[0-9]+").matches(parameter(uri, "bcIdx")) &&
-                Regex("[A-Za-z0-9-]+\\.(hwpx|hwp|pdf)", RegexOption.IGNORE_CASE).matches(parameter(uri, "streFileNm")))
+                Regex("[A-Za-z0-9-]+\\.(hwpx|hwp|pdf|docx)", RegexOption.IGNORE_CASE).matches(parameter(uri, "streFileNm")))
             else -> false
         }
         if (!valid) fail(Reason.INVALID)

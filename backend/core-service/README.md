@@ -202,7 +202,7 @@ V16은 문항별 확인 사실과 AI 해석 실행의 요청 키·입력/출력 
 [기능 범위와 후속 경계](../../docs/application-preparation-design.md)를 참고하세요.
 
 신청 문서 자동 수집은 BIZINFO의 숫자형 `PBLN_...` 공고와 KSTARTUP·MSIT·CNTRADE_NOTICE의 숫자형 공고를 지원합니다.
-각 제공처의 공식 상세에 직접 연결된 PDF/HWP/HWPX만 읽고 제공처와 원문 호스트·공고 ID가 일치하는지 다시 검증합니다.
+각 제공처의 공식 상세에 직접 연결된 PDF/HWP/HWPX/DOCX만 읽고 제공처와 원문 호스트·공고 ID가 일치하는지 다시 검증합니다.
 K-Startup은 API의 `detl_pg_url`과 같은 공고 ID의 모집중·마감 상세만, 충남은 API 제목·본문과 단 하나로 일치하는 공식 게시판
 상세만 사용합니다. 사용자 임의 URL·스캔 PDF/OCR·ZIP 내부 탐색·암호화 문서는 지원하지 않습니다.
 같은 공고에 읽을 수 있는 공식 문서가 있으면 크기 제한을 넘거나 텍스트를 추출할 수 없는 첨부는 제외 사유와 파일명을
@@ -932,6 +932,9 @@ HWP 체크박스의 FORM_OBJECT Caption은 주변 문항과 함께 별도 근거
 Discovery 전용 timeout은 model 210초 < AI run 240초 < Core read 270초 < Worker lease 1,800초입니다. 다른 신청 준비 기능의 전역 timeout은 변경하지 않습니다. [상태·재시도·백필 실행 방법](../../docs/application-form-availability.md)을 참고하세요.
 
 ## 신청 문서 MCP 파이프라인
+
+DOCX는 공식 첨부를 Core에서 ZIP/XML로 추출하고, AI Service가 OOXML의 실제 문단·표·셀·내용 컨트롤 주소를 검사합니다. 확인된 단순 입력칸만 원본과 분리해 편집한 뒤 다시 열어 값과 표 구조·스타일을 검증합니다. 세로 병합, 불명확한 다중 문단 셀과 혼합 스타일 등은 자동 작성하지 않습니다. 단순 가로 gridSpan은 하나의 실제 셀 주소로 유지합니다.
+DOCX의 `engineVersion`은 AI 설정 응답에서 확인하며 저장 지도와 생성 fingerprint에 반영합니다. DOCX 엔진이 바뀌면 해당 DOCX만 다시 매핑하고, 기존 HWP/HWPX/PDF의 공통 `pipelineVersion`과 생성 fingerprint는 유지합니다. Core는 DOCX 결과의 engineVersion·재열기·XML·스타일 검증 상태를 확인한 뒤 저장합니다.
 
 질문·입력칸 대응에서 선택 문항의 미지원 위치는 `documentMap.unmappedFieldIds`로 받으며, 공개 양식 필드의 `documentWritable=false`로 UI에 전달한다. 필수 미매핑 항목은 여전히 양식 검증에서 거절한다. 생성 시 저장된 답변은 binding 유무로 분리하고, binding이 있는 답변만 AI 문서 계획과 편집기로 전달한다. 미기입 답변의 식별자·표시명·당시 값·사유와 기입/미기입 답변 수는 생성 파일의 `placements_json.answerSummary`에 저장하므로 이후 답변 수정과 무관하게 목록 재조회에서 같은 값을 반환한다. 과거 파일에 이 정보가 없으면 현재 답변으로 추정하지 않는다. 자동 기입 가능한 답변이 하나도 없으면 `APPLICATION_DOCUMENT_NO_WRITABLE_INPUT`으로 원본 반환 없이 중단한다. 여러 표 열을 한 질문으로 묶은 이전 양식은 `APPLICATION_DOCUMENT_FORM_REANALYSIS_REQUIRED`를 유지한다. Core의 원문·소유권·revision·빈칸·값·결과 검증은 유지한다.
 

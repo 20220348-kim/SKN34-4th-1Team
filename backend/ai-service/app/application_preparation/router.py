@@ -20,8 +20,8 @@ def get_service(request: Request) -> ApplicationPreparationService:
 
 @router.get("/document/configuration")
 async def document_configuration():
-    from app.application_preparation.document_contract import CONTRACT, PIPELINE_VERSION
-    return {"contractVersion": CONTRACT, "pipelineVersion": PIPELINE_VERSION}
+    from app.application_preparation.document_contract import CONTRACT, ENGINES, PIPELINE_VERSION
+    return {"contractVersion": CONTRACT, "pipelineVersion": PIPELINE_VERSION, "engineVersions": ENGINES}
 
 
 @router.post("/document/generate")

@@ -15,7 +15,7 @@ import org.springframework.http.MediaType
 import org.springframework.stereotype.Component
 import org.springframework.web.client.RestClient
 
-/** 과기정통부 사업공고 상세가 직접 연결한 PDF/HWP/HWPX 첨부만 수집합니다. */
+/** 과기정통부 사업공고 상세가 직접 연결한 PDF/HWP/HWPX/DOCX 첨부만 수집합니다. */
 @Component
 class MsitAttachmentClient(
     @param:Qualifier("msitSourceDocumentRestClient") private val restClient: RestClient,
@@ -36,19 +36,20 @@ class MsitAttachmentClient(
             val board = page.selectFirst(".board_view") ?: fail(Reason.NOT_FOUND)
             val title = board.selectFirst(".view_head h2")?.text()?.trim().orEmpty()
             if (title.isBlank()) fail(Reason.NOT_FOUND)
-            val warnings = mutableListOf("과기정통부 공식 페이지가 직접 연결한 PDF/HWP/HWPX만 수집했습니다. 추출 문항은 사용자가 원문과 대조해야 합니다.")
+            val warnings = mutableListOf("과기정통부 공식 페이지가 직접 연결한 PDF/HWP/HWPX/DOCX만 수집했습니다. 추출 문항은 사용자가 원문과 대조해야 합니다.")
             val candidates = linkedMapOf<String, Candidate>()
             board.select(".view_file ul.down_file > li").forEach { item ->
                 val fileName = item.selectFirst("a[title*='파일 다운로드']")?.text()?.trim()
                     ?: item.selectFirst("a")?.text()?.trim().orEmpty()
                 val format = when {
+                    Regex("(?i)\\.docx(?:\\s|$)").containsMatchIn(fileName) -> "DOCX"
                     Regex("(?i)\\.hwpx(?:\\s|$)").containsMatchIn(fileName) -> "HWPX"
                     Regex("(?i)\\.hwp(?:\\s|$)").containsMatchIn(fileName) -> "HWP"
                     Regex("(?i)\\.pdf(?:\\s|$)").containsMatchIn(fileName) -> "PDF"
                     else -> null
                 }
                 if (format == null) {
-                    if (fileName.isNotBlank()) warnings.add("미수집 첨부(지원 형식 PDF/HWP/HWPX 이외): ${fileName.take(250)}")
+                    if (fileName.isNotBlank()) warnings.add("미수집 첨부(지원 형식 PDF/HWP/HWPX/DOCX 이외): ${fileName.take(250)}")
                     return@forEach
                 }
                 val download = item.select("a[onclick]").mapNotNull { anchor ->
@@ -127,6 +128,6 @@ class MsitAttachmentClient(
         const val MAX_PAGE_BYTES = 1_000_000
         const val DOWNLOAD_URI = "https://www.msit.go.kr/ssm/file/fileDown.do"
         val PROGRAM_ID = Regex("[1-9][0-9]{0,254}")
-        val DOWNLOAD_CALL = Regex("fn_download\\('([1-9][0-9]{0,20})',\\s*'([1-9][0-9]{0,5})',\\s*'(hwpx|hwp|pdf)'\\);", RegexOption.IGNORE_CASE)
+        val DOWNLOAD_CALL = Regex("fn_download\\('([1-9][0-9]{0,20})',\\s*'([1-9][0-9]{0,5})',\\s*'(hwpx|hwp|pdf|docx)'\\);", RegexOption.IGNORE_CASE)
     }
 }

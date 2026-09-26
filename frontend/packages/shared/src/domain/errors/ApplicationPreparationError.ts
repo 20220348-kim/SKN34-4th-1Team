@@ -31,7 +31,7 @@ function messageFor(code: string, status: number): string {
   if (code === 'APPLICATION_PREPARATION_NOT_FOUND') return '신청 준비 건을 찾을 수 없습니다.'
   if (code === 'APPLICATION_FORM_NOT_SUPPORTED') return '현재 지원하지 않는 공고·양식·지원 분야입니다.'
   if (code === 'APPLICATION_FORM_NO_FORM') return '현재 지원하지 않는 신청 문서 형식입니다. 공식 공고 원문에서 신청 방법을 확인해 주세요.'
-  if (code === 'APPLICATION_FORM_SOURCE_UNSUPPORTED') return '공식 PDF/HWP/HWPX 첨부를 확보하고 읽을 수 있는 공고만 분석할 수 있습니다.'
+  if (code === 'APPLICATION_FORM_SOURCE_UNSUPPORTED') return '공식 PDF/HWP/HWPX/DOCX 첨부를 확보하고 읽을 수 있는 공고만 분석할 수 있습니다.'
   if (code === 'APPLICATION_FORM_SOURCE_NOT_FOUND') return '공식 공고나 첨부를 찾지 못했습니다. 공고 ID를 확인해 주세요.'
   if (code === 'APPLICATION_FORM_SOURCE_TOO_LARGE') return '공식 첨부가 자동 분석 가능한 크기나 페이지 수를 초과했습니다.'
   if (code === 'APPLICATION_FORM_SOURCE_INVALID') return '공식 첨부의 형식이나 출처를 안전하게 확인하지 못했습니다.'

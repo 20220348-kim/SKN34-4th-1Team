@@ -4,7 +4,8 @@ import ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentFact
 import ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentPlacement
 import ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentTarget
 
-data class AiDocumentConfigurationPayload(val contractVersion: String, val pipelineVersion: String)
+data class AiDocumentConfigurationPayload(val contractVersion: String, val pipelineVersion: String,
+    val engineVersions: Map<String, String> = emptyMap())
 data class AiDocumentGenerationRequest(
     val contractVersion: String = "application-document-mcp-v1",
     val sourceBase64: String,
