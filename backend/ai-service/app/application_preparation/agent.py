@@ -170,7 +170,10 @@ class ApplicationPreparationAgent:
         # A cell and its paragraphs describe the same text. Offer the leaf
         # addresses only, while retaining read-only labels as visual context.
         parents = {t.nativeLocator.get("parent") for t in document.targets}
-        targets = [t for t in document.targets if t.targetId not in parents]
+        # DOCX can contain hundreds of read-only table and layout targets. Their
+        # labels are already attached to each editable leaf's nativeLocator.
+        targets = [t for t in document.targets if t.targetId not in parents
+                   and (request.format != "docx" or t.editable)]
         ids = [t.targetId for t in targets if t.editable and t.kind not in {"PDF_TEXT", "PDF_PAGE"} and t.nativeLocator.get("bindingEligible", True)]
         if not ids:
             raise DocumentError("MAPPING_FAILED", reason="NO_EDITABLE_TARGETS")

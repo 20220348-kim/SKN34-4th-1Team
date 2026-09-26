@@ -40,7 +40,7 @@ function availabilityReason(code: string): string {
   if (code.includes('TIMEOUT')) return '정해진 시간 안에 분석을 마치지 못했습니다.'
   if (code.includes('TOO_LARGE')) return '첨부 파일의 크기나 문서 분량이 분석 제한을 초과했습니다.'
   if (code.includes('NOT_FOUND') || code.includes('MISSING')) return '공식 공고 또는 첨부가 없어졌거나 변경되었습니다.'
-  if (code.includes('UNSUPPORTED')) return '분석 가능한 PDF·HWP·HWPX 양식을 확보하지 못했습니다.'
+  if (code.includes('UNSUPPORTED')) return '분석 가능한 PDF·HWP·HWPX·DOCX 양식을 확보하지 못했습니다.'
   if (code.includes('UNAVAILABLE')) return '공식 사이트 또는 분석 서비스가 일시적으로 응답하지 않습니다.'
   if (code.includes('CHANGED')) return '공고나 공식 첨부가 변경되어 다시 확인해야 합니다.'
   if (code.includes('INVALID') || code.includes('FAILED')) return '첨부 형식 또는 추출한 문항의 근거를 검증하지 못했습니다.'

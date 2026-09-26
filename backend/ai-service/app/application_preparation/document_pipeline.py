@@ -4,6 +4,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from app.application_preparation.document_adapters import HwpxDocumentAdapter, PdfDocumentAdapter, HwpDocumentAdapter, assist_with_kordoc
+from app.application_preparation.docx_adapter import DocxDocumentAdapter
 from app.application_preparation.document_contract import (
     CONTRACT, DocumentAnalysisStage, DocumentError, DocumentMap, EditOperation, GenerateDocumentRequest, MapDocumentRequest, PIPELINE_VERSION, PlanSelection, digest, validate_plan, validate_mapping, mapping_label_key, mapping_label_matches,
 )
@@ -30,6 +31,9 @@ For CHECKBOX use set_check only when the confirmed value exactly matches the opt
 that native choice group in scopeTargetIds; Core changes the selected choice and clears only that group.
 Keep label prefixes/suffixes around HWP blanks and sample answers. Never use set_field on HWP paragraph targets.
 For HWPX cells/paragraphs use input or replace_range; don't edit a parent cell and its child paragraph together.
+For DOCX use only editable native paragraph or DOCX_CONTROL targets. Use input/replace_range for a paragraph
+and set_field for a text content control. Use set_check only for a native CHECKBOX with its exact caption.
+Never edit a merged cell, style-sensitive run, or read-only cell parent.
 Do not use unsupported controls, append to nonempty prose, or add paragraphs unrelated to an input field.
 For PDF use existing PDF_FIELD targets if any are supplied. For a flat PDF use the supplied PDF_INPUT target.
 PDF_INPUT is an actually measured blank region: use set_field, expectedText="",start=0,end=0,box=null.
@@ -66,6 +70,7 @@ If an optional field has no supported native input (for example a printed consen
 never invent a location to make every field appear supported. A required unmapped field fails the form.
 Binding targets and scope IDs must be copied from the supplied editable leaf targets exactly.
 HWPX formFields come from analyze_form, and labelCells/rowSpan/colSpan from get_table_map.
+DOCX fieldLabels and table position come from inspected OOXML. Use only editable paragraph or content control leaves.
 fieldCandidates lists targets consistent with each question's labels. Where nonempty, choose within those candidates
 and use tableHeadings plus row/column evidence to disambiguate. A numeric year column must also match its named row.
 labelSearch comes from find_cell_by_label: ambiguous_label requires checking the table and section context.
@@ -89,6 +94,8 @@ async def inspect_document(path: Path, request: GenerateDocumentRequest) -> Docu
         document = HwpDocumentAdapter().inspect(request)
     elif request.format == "hwpx":
         document = await HwpxDocumentAdapter().inspect(path, getattr(request, "fields", ()))
+    elif request.format == "docx":
+        document = await DocxDocumentAdapter().inspect(path)
     else:
         document = await PdfDocumentAdapter().inspect(path, request)
     context_size = sum(len(t.currentText) + len(t.context) for t in document.targets)
@@ -150,7 +157,7 @@ async def inspect_document(path: Path, request: GenerateDocumentRequest) -> Docu
         targetCount=len(classified), resultCount=len(classified) - review, reviewCount=review,
         note="Classification only; table and target identities unchanged",
     )
-    if request.format != "hwp":
+    if request.format in {"hwpx", "pdf"}:
         await assist_with_kordoc(path, document)
     return document
 
@@ -260,6 +267,8 @@ async def generate_document(request: GenerateDocumentRequest, agent) -> dict:
             output, verification = HwpDocumentAdapter().stage(source, plan)
         elif request.format == "hwpx":
             output, verification = await HwpxDocumentAdapter().apply(path, document, plan, facts)
+        elif request.format == "docx":
+            output, verification = await DocxDocumentAdapter().apply(path, document, plan, facts)
         else:
             output, verification = await PdfDocumentAdapter().apply(path, document, plan, facts)
         pending_external = str(verification.get("stage", "")).endswith("_REQUIRED")

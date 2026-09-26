@@ -1,5 +1,9 @@
 # 신청 문서 Semantic Analysis 검증
 
+DOCX 공식 신청서 1차 평가와 1회 OpenAI Mapping 결과는 [docx-kotra-20260926-v1](runs/docx-kotra-20260926-v1/README.md)에 기록했다. 원본 DOCX는 저장소에 포함하지 않았다.
+추가 공식 신청서 2건, Word 렌더 및 서비스·버전 검증은 [DOCX 안정화 기록](runs/docx-stabilization-20260926-v1/README.md)에 기록했다.
+페이지 증가 원인·의정부 재평가·실제 Core↔AI HTTP와 최종 회귀는 [DOCX 후속 안정화](runs/docx-stabilization-r2-20260926-v1/README.md)에 기록한다.
+
 검증일: 2026-09-23
 실행 ID: `semantic-validation-20260923-v1`
 

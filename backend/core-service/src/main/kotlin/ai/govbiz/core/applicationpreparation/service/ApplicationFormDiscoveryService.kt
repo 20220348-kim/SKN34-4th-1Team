@@ -209,7 +209,7 @@ class ApplicationFormDiscoveryService(
                         sourceCode = sourceCode,
                         sourceProgramId = sourceProgramId,
                         programTitle = input.programTitle,
-                        formTitle = document.fileName.replace(Regex("(?i)\\.(pdf|hwp|hwpx).*"), "").trim().take(300),
+                        formTitle = document.fileName.replace(Regex("(?i)\\.(pdf|hwp|hwpx|docx).*"), "").trim().take(300),
                         sourceUrl = input.programSourceUrl,
                         attachmentFileName = document.fileName,
                         attachmentBytes = document.bytes,

@@ -75,7 +75,7 @@ export async function downloadApplicationDocument(id: number, fileId: number, si
       throw new ApplicationPreparationError(response.status, problem.success ? problem.data.code : 'REQUEST_FAILED')
     }
     const type = response.headers.get('content-type')?.split(';')[0]
-    if (!type || !['application/pdf', 'application/x-hwp', 'application/hwp+zip'].includes(type)) throw new ApplicationPreparationError(502, 'INVALID_RESPONSE')
+    if (!type || !['application/pdf', 'application/x-hwp', 'application/hwp+zip', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'].includes(type)) throw new ApplicationPreparationError(502, 'INVALID_RESPONSE')
     const blob = await response.blob()
     if (blob.size === 0 || blob.size > 32 * 1024 * 1024) throw new ApplicationPreparationError(502, 'INVALID_RESPONSE')
     return blob

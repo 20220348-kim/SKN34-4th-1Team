@@ -40,6 +40,30 @@ class SupportProgramDocumentParserTest {
     }
 
     @Test
+    fun readsDocxParagraphsAndRejectsExternalEntities() {
+        val contentTypes = """<Types><Override ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"""
+        val paragraph = "신청기업의 상호와 대표자명, 사업자등록번호, 주소, 연락처를 작성해 주세요. ".repeat(2).trim()
+        val xml = """<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>$paragraph</w:t></w:r></w:p></w:body></w:document>"""
+        fun archive(document: String) = ByteArrayOutputStream().also { output ->
+            ZipOutputStream(output).use { zip ->
+                zip.putNextEntry(ZipEntry("[Content_Types].xml"))
+                zip.write(contentTypes.toByteArray())
+                zip.closeEntry()
+                zip.putNextEntry(ZipEntry("word/document.xml"))
+                zip.write(document.toByteArray())
+                zip.closeEntry()
+            }
+        }.toByteArray()
+        val blocks = mapper.parse(archive(xml), "DOCX")
+        assertEquals(paragraph, blocks.single().text)
+        assertEquals("DOCX paragraphs 1-1", blocks.single().locator)
+        val malicious = """<!DOCTYPE a [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>$xml"""
+        assertEquals(Reason.INVALID, assertThrows(SupportProgramDocumentException::class.java) {
+            mapper.parse(archive(malicious), "DOCX")
+        }.reason)
+    }
+
+    @Test
     fun refusesScannedOrBlankPdfInsteadOfSilentlyLosingAPage() {
         val bytes = PDDocument().use { pdf ->
             pdf.addPage(PDPage())

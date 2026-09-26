@@ -23,8 +23,8 @@ import {
 const cursor = (beforeId?: number) => `?size=20${beforeId === undefined ? '' : `&beforeId=${beforeId}`}`
 const documentsSchema = z.array(z.object({
   id: z.number().int().positive(), inputRevision: z.number().int().positive(),
-  fileName: z.string().min(1).max(500).regex(/^[^\\/]+\.(hwp|hwpx|pdf)$/i).refine((name) => [...name].every((character) => character.charCodeAt(0) >= 32)),
-  mediaType: z.enum(['application/pdf', 'application/x-hwp', 'application/hwp+zip']),
+  fileName: z.string().min(1).max(500).regex(/^[^\\/]+\.(hwp|hwpx|pdf|docx)$/i).refine((name) => [...name].every((character) => character.charCodeAt(0) >= 32)),
+  mediaType: z.enum(['application/pdf', 'application/x-hwp', 'application/hwp+zip', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document']),
   size: z.number().int().positive().max(32 * 1024 * 1024),
   filledAnswerCount: z.number().int().nonnegative().max(200).nullable(),
   unfilledAnswerCount: z.number().int().nonnegative().max(200).nullable(),

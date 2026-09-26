@@ -569,6 +569,85 @@ class ApplicationPreparationApiIntegrationTest {
             .andExpect(status().isConflict())
     }
 
+    @Test
+    fun storesAndDownloadsAValidatedDocxWithoutChangingItsOfficialSource() {
+        fun docx(value: String): ByteArray = java.io.ByteArrayOutputStream().also { out ->
+            java.util.zip.ZipOutputStream(out).use { zip ->
+                mapOf(
+                    "[Content_Types].xml" to """<Types><Override ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>""",
+                    "word/document.xml" to """<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:tbl><w:tr><w:tc><w:p><w:r><w:t>사업 개요</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>$value</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>""",
+                ).forEach { (name, xml) ->
+                    zip.putNextEntry(java.util.zip.ZipEntry(name))
+                    zip.write(xml.toByteArray(Charsets.UTF_8))
+                    zip.closeEntry()
+                }
+            }
+        }.toByteArray()
+        val officialSource = System.getenv("DOCX_E2E_SOURCE_PATH")?.let { java.nio.file.Path.of(it) }
+        val officialOutput = System.getenv("DOCX_E2E_OUTPUT_PATH")?.let { java.nio.file.Path.of(it) }
+        require((officialSource == null) == (officialOutput == null))
+        val original = officialSource?.let(java.nio.file.Files::readAllBytes) ?: docx("")
+        val completed = officialOutput?.let(java.nio.file.Files::readAllBytes) ?: docx("가상 연구소")
+        val targetId = if (officialSource != null) "docx:t:1:r:4:c:3:p:1" else "docx:t:1:r:1:c:2:p:1"
+        if (officialSource != null) org.junit.jupiter.api.Assertions.assertTrue(SupportProgramDocumentParser().parse(original, "DOCX").isNotEmpty())
+        `when`(bizInfoAttachments.collect("BIZINFO", DISCOVERY_PROGRAM_ID)).thenReturn(SupportProgramAttachments("동적 지원사업", listOf(
+            SupportProgramAttachment("https://www.bizinfo.go.kr/cmm/fms/fileDown.do?atchFileId=FILE_1&fileSn=1", "신청양식.docx", "DOCX", original),
+        ), emptyList()))
+        `when`(documentParser.parse(original, "DOCX")).thenReturn(listOf(SupportProgramDocumentBlock(DISCOVERY_LOCATOR, DISCOVERY_BLOCK_TEXT)))
+        stubDocumentMapping(documentMcp, targetId)
+        val fallback = AiDocumentGenerationRequest(sourceBase64 = "", sourceSha256 = "", format = "docx",
+            answerRevision = 1, facts = emptyList(), scope = "test")
+        `when`(documentMcp.generate(any(AiDocumentGenerationRequest::class.java) ?: fallback)).thenAnswer { invocation ->
+            val request = invocation.getArgument<AiDocumentGenerationRequest>(0)
+            assertEquals("docx", request.format)
+            org.junit.jupiter.api.Assertions.assertArrayEquals(original, java.util.Base64.getDecoder().decode(request.sourceBase64))
+            val hash = java.security.MessageDigest.getInstance("SHA-256").digest(completed).joinToString("") { "%02x".format(it) }
+            AiDocumentGenerationPayload("application-document-mcp-v1", "b".repeat(64), request.sourceSha256,
+                request.answerRevision, java.util.Base64.getEncoder().encodeToString(completed), hash, "c".repeat(64),
+                "native-map-v2", "contract-stub", mapOf("reopened" to true, "xml" to "PASSED", "styleStructure" to "PASSED", "verified" to 1),
+                listOf(ApplicationDocumentPlacement("business-plan:business-overview", targetId)), emptyMap(), emptyMap())
+        }
+        val discovery = mvc.perform(post("$BASE/forms/discover").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN)
+            .contentType(MediaType.APPLICATION_JSON).content("""{"sourceCode":"BIZINFO","sourceProgramId":"$DISCOVERY_PROGRAM_ID"}"""))
+            .andExpect(status().isOk()).andReturn().response
+        val version = json.readTree(discovery.contentAsString).path("items").path(0).path("formVersionId").asString()
+        activateStored(version)
+        val created = mvc.perform(post(BASE).cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN).contentType(MediaType.APPLICATION_JSON)
+            .content("""{"sourceCode":"BIZINFO","sourceProgramId":"$DISCOVERY_PROGRAM_ID","formVersionId":"$version","serviceField":"GENERAL"}"""))
+            .andExpect(status().isCreated()).andReturn().response
+        val id = json.readTree(created.contentAsString).path("id").asLong()
+        mvc.perform(put("$BASE/$id/sections/business-plan/inputs").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN)
+            .contentType(MediaType.APPLICATION_JSON).content("""{"expectedRevision":1,"facts":[{"fieldKey":"business-overview","status":"PROVIDED","value":"가상 연구소","sourceText":"가상 연구소"}]}"""))
+            .andExpect(status().isOk())
+        val generated = mvc.perform(post("$BASE/$id/documents").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN)
+            .contentType(MediaType.APPLICATION_JSON).content("""{"expectedRevision":2}"""))
+            .andExpect(status().isOk()).andExpect(jsonPath("$[0].fileName").value("신청양식_초안_v2.docx"))
+            .andExpect(jsonPath("$[0].mediaType").value("application/vnd.openxmlformats-officedocument.wordprocessingml.document"))
+            .andReturn().response
+        val fileId = json.readTree(generated.contentAsString).path(0).path("id").asLong()
+        val downloaded = mvc.perform(get("$BASE/$id/documents/$fileId/download").cookie(owner))
+            .andExpect(status().isOk())
+            .andExpect(content().contentType("application/vnd.openxmlformats-officedocument.wordprocessingml.document"))
+            .andExpect(header().string(HttpHeaders.CACHE_CONTROL, "no-store"))
+            .andReturn().response.contentAsByteArray
+        org.junit.jupiter.api.Assertions.assertArrayEquals(completed, downloaded)
+        org.junit.jupiter.api.Assertions.assertArrayEquals(original, bizInfoAttachments.collect("BIZINFO", DISCOVERY_PROGRAM_ID).files.single().bytes)
+        mvc.perform(get("$BASE/$id/documents/$fileId/download").cookie(other)).andExpect(status().isNotFound())
+        verify(documentMcp, times(1)).map(any(AiDocumentMappingRequest::class.java) ?:
+            AiDocumentMappingRequest(sourceBase64 = "", sourceSha256 = "", format = "docx", scope = "", fields = emptyList()))
+        `when`(documentMcp.configuration()).thenReturn(AiDocumentConfigurationPayload("application-document-mcp-v1",
+            "b".repeat(64), mapOf("docx" to "next-docx-engine")))
+        mvc.perform(post("$BASE/$id/documents").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN)
+            .contentType(MediaType.APPLICATION_JSON).content("""{"expectedRevision":2}"""))
+            .andExpect(status().isUnprocessableContent())
+            .andExpect(jsonPath("$.code").value("APPLICATION_DOCUMENT_MAPPING_FAILED"))
+        verify(documentMcp, times(2)).map(any(AiDocumentMappingRequest::class.java) ?:
+            AiDocumentMappingRequest(sourceBase64 = "", sourceSha256 = "", format = "docx", scope = "", fields = emptyList()))
+        org.junit.jupiter.api.Assertions.assertArrayEquals(completed,
+            mvc.perform(get("$BASE/$id/documents/$fileId/download").cookie(owner)).andExpect(status().isOk())
+                .andReturn().response.contentAsByteArray)
+    }
+
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(booleans = [false, true])
     fun generatesHwpInsideCoreAndRejectsAnEditedSourceFromAi(tamperSource: Boolean) {

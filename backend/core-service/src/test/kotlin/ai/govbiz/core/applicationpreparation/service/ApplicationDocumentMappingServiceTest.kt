@@ -45,6 +45,48 @@ class ApplicationDocumentMappingServiceTest {
         verifyNoInteractions(editor)
     }
 
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = ["hwp", "hwpx", "pdf"])
+    fun existingThreeFormatMapsRemainCachedWhenPipelineAndSourceAreUnchanged(format: String) {
+        val saved = ApplicationDocumentMapSnapshot("application-document-mcp-v1", "b".repeat(64), hash,
+            "native-map-v15-pdf-field-scope-options", "existing-$format-engine",
+            listOf(ApplicationDocumentPlacement("company:name", "existing-target")), listOf("existing-target"),
+            mapOf("targets" to listOf(mapOf("targetId" to "existing-target"))))
+        val form = form(false).copy(documentMapSnapshot = saved)
+        `when`(snapshots.findByVersion(form.formVersionId)).thenReturn(form)
+        `when`(client.configuration()).thenReturn(AiDocumentConfigurationPayload("application-document-mcp-v1", "b".repeat(64)))
+
+        assertSame(saved, service.ensure(form, bytes, format))
+        verify(client, never()).map(any(AiDocumentMappingRequest::class.java) ?:
+            AiDocumentMappingRequest(sourceBase64 = "", sourceSha256 = "", format = format, scope = "", fields = emptyList()))
+        verifyNoInteractions(editor)
+    }
+
+    @Test fun changedDocxEngineRemapsWithoutInvalidatingTheThreeFormatPipeline() {
+        val previous = ApplicationDocumentMapSnapshot("application-document-mcp-v1", "b".repeat(64), hash,
+            "native-map-v15-pdf-field-scope-options", "govbiz/ooxml-native@1",
+            listOf(ApplicationDocumentPlacement("company:name", "docx:t:1:r:1:c:2:p:1")),
+            listOf("docx:t:1:r:1:c:2:p:1"), mapOf("targets" to listOf(mapOf("targetId" to "docx:t:1:r:1:c:2:p:1")),
+                "unmappedFieldIds" to listOf("company:consent")))
+        val form = form(false).copy(documentMapSnapshot = previous)
+        `when`(snapshots.findByVersion(form.formVersionId)).thenReturn(form)
+        `when`(client.configuration()).thenReturn(AiDocumentConfigurationPayload("application-document-mcp-v1", "b".repeat(64),
+            mapOf("docx" to "govbiz/ooxml-native@2")))
+        val fallback = AiDocumentMappingRequest(sourceBase64 = "", sourceSha256 = "", format = "docx", scope = "", fields = emptyList())
+        `when`(client.map(any(AiDocumentMappingRequest::class.java) ?: fallback)).thenReturn(AiDocumentMappingPayload(
+            "application-document-mcp-v1", "b".repeat(64), hash, previous.mapVersion, "govbiz/ooxml-native@2",
+            previous.bindings, previous.scopeTargetIds, previous.documentMap))
+        `when`(snapshots.attachDocumentMap(eq(form.formVersionId) ?: form.formVersionId,
+            any(ApplicationDocumentMapSnapshot::class.java) ?: previous)).thenAnswer { it.getArgument(1) }
+
+        val mapped = service.ensure(form, bytes, "docx")
+
+        assertEquals("govbiz/ooxml-native@2", mapped.engineVersion)
+        verify(client).map(any(AiDocumentMappingRequest::class.java) ?: fallback)
+        verify(snapshots).attachDocumentMap(eq(form.formVersionId) ?: form.formVersionId,
+            any(ApplicationDocumentMapSnapshot::class.java) ?: previous)
+    }
+
     @Test fun requiredUnmappedFieldCannotBePublished() {
         stub()
         val error=assertThrows(ApplicationDocumentException::class.java) { service.ensure(form(true),bytes,"hwpx") }

@@ -38,7 +38,7 @@ class CnTradeNoticeAttachmentClient(
                 .filter { (_, page) -> matchesOfficialRecord(page, expectedTitle, expectedBody) }
             if (matching.size != 1) fail(if (matching.isEmpty()) Reason.NOT_FOUND else Reason.INVALID)
             val (candidate, detail) = matching.single()
-            val warnings = mutableListOf("충남 공식 게시판에서 제목·본문을 교차 검증한 PDF/HWP/HWPX만 수집했습니다. 추출 결과는 사용자가 원문과 대조해야 합니다.")
+            val warnings = mutableListOf("충남 공식 게시판에서 제목·본문을 교차 검증한 PDF/HWP/HWPX/DOCX만 수집했습니다. 추출 결과는 사용자가 원문과 대조해야 합니다.")
             val files = collectFiles(detail, candidate.detailUri, warnings)
             SupportProgramAttachments(expectedTitle, files, warnings.distinct(), candidate.detailUri.toString())
         } catch (error: SupportProgramDocumentException) {
@@ -88,7 +88,7 @@ class CnTradeNoticeAttachmentClient(
             val fileName = anchor.text().trim()
             val format = format(fileName)
             if (format == null) {
-                if (fileName.isNotBlank()) warnings.add("미수집 첨부(지원 형식 PDF/HWP/HWPX 이외): ${fileName.take(250)}")
+                if (fileName.isNotBlank()) warnings.add("미수집 첨부(지원 형식 PDF/HWP/HWPX/DOCX 이외): ${fileName.take(250)}")
                 return@forEach
             }
             val key = DOWNLOAD_CALL.matchEntire(anchor.attr("onclick").trim())?.groupValues?.get(1) ?: fail(Reason.INVALID)
@@ -152,6 +152,7 @@ class CnTradeNoticeAttachmentClient(
 
     private fun normalize(text: String): String = text.replace(Regex("\\s+"), "").trim()
     private fun format(fileName: String): String? = when {
+        Regex("(?i)\\.docx(?:\\s|$)").containsMatchIn(fileName) -> "DOCX"
         Regex("(?i)\\.hwpx(?:\\s|$)").containsMatchIn(fileName) -> "HWPX"
         Regex("(?i)\\.hwp(?:\\s|$)").containsMatchIn(fileName) -> "HWP"
         Regex("(?i)\\.pdf(?:\\s|$)").containsMatchIn(fileName) -> "PDF"

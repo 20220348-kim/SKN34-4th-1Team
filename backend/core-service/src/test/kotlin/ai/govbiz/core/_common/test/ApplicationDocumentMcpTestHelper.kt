@@ -8,7 +8,8 @@ import org.mockito.Mockito.`when`
 
 /** Contract stub only; never used as evidence of native editing quality. */
 fun stubDocumentMapping(client: ApplicationDocumentMcpClient, singleTarget: String? = null) {
-    `when`(client.configuration()).thenReturn(AiDocumentConfigurationPayload("application-document-mcp-v1", "b".repeat(64)))
+    `when`(client.configuration()).thenReturn(AiDocumentConfigurationPayload("application-document-mcp-v1", "b".repeat(64),
+        mapOf("docx" to "contract-stub")))
     val fallback = AiDocumentMappingRequest(sourceBase64 = "", sourceSha256 = "", format = "hwpx", scope = "stub", fields = emptyList())
     `when`(client.map(any(AiDocumentMappingRequest::class.java) ?: fallback)).thenAnswer { invocation ->
         val request = invocation.getArgument<AiDocumentMappingRequest>(0)

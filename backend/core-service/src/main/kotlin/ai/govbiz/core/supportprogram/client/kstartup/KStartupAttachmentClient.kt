@@ -37,14 +37,14 @@ class KStartupAttachmentClient(
             val page = Jsoup.parse(html, detailUri.toString())
             val title = page.selectFirst("#scrTitle h3")?.text()?.trim().orEmpty()
             if (title.isBlank()) fail(Reason.NOT_FOUND)
-            val warnings = mutableListOf("K-Startup 공식 페이지가 직접 연결한 PDF/HWP/HWPX만 수집했습니다. 추출 결과는 사용자가 원문과 대조해야 합니다.")
+            val warnings = mutableListOf("K-Startup 공식 페이지가 직접 연결한 PDF/HWP/HWPX/DOCX만 수집했습니다. 추출 결과는 사용자가 원문과 대조해야 합니다.")
             val candidates = linkedMapOf<String, Candidate>()
             page.select(".board_file li").forEach { item ->
                 val fileName = item.selectFirst("a.file_bg")?.text()?.trim().orEmpty()
                 if (fileName.isBlank()) return@forEach
                 val format = format(fileName)
                 if (format == null) {
-                    warnings.add("미수집 첨부(지원 형식 PDF/HWP/HWPX 이외): ${fileName.take(250)}")
+                    warnings.add("미수집 첨부(지원 형식 PDF/HWP/HWPX/DOCX 이외): ${fileName.take(250)}")
                     return@forEach
                 }
                 val links = item.select("a.btn_down[name=downloadBtn][href]")
@@ -137,6 +137,7 @@ class KStartupAttachmentClient(
         )
 
     private fun format(fileName: String): String? = when {
+        Regex("(?i)\\.docx(?:\\s|$)").containsMatchIn(fileName) -> "DOCX"
         Regex("(?i)\\.hwpx(?:\\s|$)").containsMatchIn(fileName) -> "HWPX"
         Regex("(?i)\\.hwp(?:\\s|$)").containsMatchIn(fileName) -> "HWP"
         Regex("(?i)\\.pdf(?:\\s|$)").containsMatchIn(fileName) -> "PDF"

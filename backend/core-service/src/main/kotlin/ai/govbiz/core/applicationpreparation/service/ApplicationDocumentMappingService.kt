@@ -24,10 +24,14 @@ class ApplicationDocumentMappingService(
                captureChange: Boolean = false): ApplicationDocumentMapSnapshot {
         val sourceHash = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
         if (sourceHash != form.attachmentSha256) throw ApplicationDocumentException("APPLICATION_DOCUMENT_SOURCE_CHANGED", "공식 원본이 변경되었습니다.")
-        val pipeline = mcp.configuration().pipelineVersion
+        val configuration = mcp.configuration()
+        val pipeline = configuration.pipelineVersion
+        val docxEngine = if (format.equals("docx", true)) configuration.engineVersions["docx"]
+            ?: throw ApplicationDocumentException("APPLICATION_DOCUMENT_MCP_NOT_READY", "DOCX 편집기 버전을 확인하지 못했습니다.") else null
         val stored = snapshots.findByVersion(form.formVersionId)
         val previous = stored?.documentMapSnapshot ?: form.documentMapSnapshot
-        previous?.takeIf { it.pipelineVersion == pipeline && it.sourceSha256 == sourceHash }?.let { return it }
+        previous?.takeIf { it.pipelineVersion == pipeline && it.sourceSha256 == sourceHash &&
+            (docxEngine == null || it.engineVersion == docxEngine) }?.let { return it }
         val inspection = if (format.lowercase() in setOf("pdf", "hwp")) editor.inspect(bytes, format) else null
         val fields = form.sections.flatMap { section -> section.fields.map { field ->
             AiDocumentFieldReference("${section.key}:${field.key}", "${section.title} / ${field.label}", field.guidance, field.required, field.options)
@@ -45,6 +49,7 @@ class ApplicationDocumentMappingService(
         if (format.equals("hwp", true) && result.bindings.any { binding -> inspection?.targets?.none { it.id == binding.targetId && it.editable } != false })
             throw ApplicationDocumentException("APPLICATION_DOCUMENT_MAPPING_FAILED", "HWP 원본에 없는 입력 위치입니다.")
         if (result.contractVersion != "application-document-mcp-v1" || result.pipelineVersion != pipeline || result.sourceSha256 != sourceHash ||
+            (docxEngine != null && result.engineVersion != docxEngine) ||
             unmapped.size != unmapped.toSet().size || unmapped.any { it in boundFields || fields.any { f -> f.id == it && f.required } } ||
             boundFields + unmapped.toSet() != fields.map { it.id }.toSet() ||
             result.bindings.any { it.targetId !in targetIds || it.targetId !in result.scopeTargetIds } || result.scopeTargetIds.any { it !in targetIds }) {
