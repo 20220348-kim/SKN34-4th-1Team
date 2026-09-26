@@ -4,6 +4,8 @@ from time import perf_counter
 
 from langchain_openai import ChatOpenAI
 from openai import OpenAIError
+from app.config import LangfuseSettings
+from app.support_program_evidence.tracing import EvidenceTracing
 
 from app.support_program_llm import (
     get_support_program_usage_details,
@@ -34,9 +36,12 @@ class SupportProgramEvidenceAnswerAgent:
         model: ChatOpenAI,
         model_timeout_seconds: float,
         run_timeout_seconds: float,
+        tracing: EvidenceTracing | None = None,
     ) -> None:
         self._run_timeout_seconds = run_timeout_seconds
         self._model_timeout_seconds = model_timeout_seconds
+        self._tracing = tracing or EvidenceTracing(LangfuseSettings())
+        self._model_name = model.model_name
         self._model = model.bind(
             max_tokens=2_000, store=False,
             reasoning={"effort": "none"},
@@ -60,10 +65,20 @@ class SupportProgramEvidenceAnswerAgent:
         }
         try:
             async with asyncio.timeout(self._run_timeout_seconds):
-                result = await invoke_support_program_model(
-                    self._model, instructions=SUPPORT_PROGRAM_EVIDENCE_ANSWER_INSTRUCTIONS, payload=payload,
-                    output_type=SupportProgramEvidenceAnswerSelection, timeout_seconds=self._model_timeout_seconds,
-                )
+                with self._tracing.observation(
+                    "evidence.model", as_type="generation", model=self._model_name,
+                    model_parameters={"max_tokens": 2_000, "reasoning_effort": "none", "max_retries": 0},
+                ) as generation:
+                    result = await invoke_support_program_model(
+                        self._model, instructions=SUPPORT_PROGRAM_EVIDENCE_ANSWER_INSTRUCTIONS, payload=payload,
+                        output_type=SupportProgramEvidenceAnswerSelection, timeout_seconds=self._model_timeout_seconds,
+                    )
+                    self._tracing.update(generation, usage_details={
+                        key: value for key, value in (
+                            ("input", (result.usage_metadata or {}).get("input_tokens")),
+                            ("output", (result.usage_metadata or {}).get("output_tokens")),
+                        ) if value is not None
+                    }, metadata={"usage_reported": result.usage_metadata is not None})
             model_finished_at = perf_counter()
             usage = result.usage_metadata
             selection = validate_support_program_output(result, SupportProgramEvidenceAnswerSelection)

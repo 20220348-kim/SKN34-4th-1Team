@@ -1,0 +1,52 @@
+name: LLMOps CI
+
+on:
+  push:
+    paths:
+      - 'backend/ai-service/**'
+      - 'evaluation/support-program-evidence/**'
+      - 'infrastructure/llmops/**'
+      - '.github/workflows/llmops-ci.yml'
+  pull_request:
+    paths:
+      - 'backend/ai-service/**'
+      - 'evaluation/support-program-evidence/**'
+      - 'infrastructure/llmops/**'
+      - '.github/workflows/llmops-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    name: Saved capture pipeline with local servers
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+        with:
+          version: '0.12.5'
+          python-version: '3.12'
+          working-directory: backend/ai-service
+      - name: Install locked evaluation dependencies
+        working-directory: backend/ai-service
+        run: uv sync --locked --extra dev --group evaluation
+      - name: Generate isolated development credentials
+        run: backend/ai-service/.venv/bin/python infrastructure/llmops/init_env.py
+      - name: Start local Langfuse and Prefect
+        run: |
+          docker compose --env-file infrastructure/llmops/.env -f infrastructure/llmops/compose.yaml --profile evaluation config --quiet
+          docker compose --env-file infrastructure/llmops/.env -f infrastructure/llmops/compose.yaml --profile evaluation up -d --quiet-pull
+      - name: Verify tracing, score persistence, replay and flow failures without model calls
+        shell: bash
+        run: |
+          set -a
+          source infrastructure/llmops/.env
+          set +a
+          backend/ai-service/.venv/bin/python infrastructure/llmops/smoke.py --output-dir work/llmops-ci
+      - name: Stop this job's development containers
+        if: always()
+        run: docker compose --env-file infrastructure/llmops/.env -f infrastructure/llmops/compose.yaml --profile evaluation down

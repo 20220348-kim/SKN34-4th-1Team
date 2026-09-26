@@ -2,11 +2,21 @@
 
 [문서 목록](README.md) · [AI Service](../backend/ai-service/README.md) · [기존 근거 답변 평가](../evaluation/support-program-evidence/README.md)
 
-2026-09-26 코드 검토를 기준으로 작성한 **구현 전 계획**이다. 아래 도구의 설치·연동·배포 및 실제 품질 평가는 아직 수행하지 않았다.
+2026-09-26 코드 검토를 기준으로 한 도입 전략과 구현 범위다. 개발 실행 방법은 [LLMOps 실행 안내](../infrastructure/llmops/README.md)에 둔다. 실제 모델 품질 재평가와 운영 배포는 별도 작업이다.
 
 목표 구성은 **`Langfuse + Prefect + Pandera + Evidently + pandas`**다. 원래 구성에서 MLflow의 LLM 추적·평가 이력·프롬프트 관리 역할을 Langfuse로 교체하며, 나머지 네 도구도 모두 도입 범위에 포함한다. 단계별 연결 순서는 구현 순서이며, 일부 도구의 도입을 선택 사항으로 만드는 기준이 아니다.
 
 첫 목표는 **고정 근거 답변 한 건을 실행하고, 호출 상태·모델·토큰·지연·프롬프트 식별자를 Langfuse에서 확인하는 것**이다. 이후 평가 데이터 검증·결과 비교·정기 실행을 연결한다. 전체 스택의 첫 완료 목표는 **Prefect가 평가를 실행하고, pandas로 구성한 데이터를 Pandera가 검증하며, 결과가 Langfuse와 Evidently에 같은 실행 ID로 연결되는 것**이다.
+
+## 현재 반영 범위
+
+- 근거 답변 HTTP 경로와 평가 실행기의 직접 Service 호출에 본문 없는 Langfuse 추적을 추가했다.
+- pandas·Pandera 입력/결과 표, 기존 지표 재계산, Evidently 비교 보고서, Prefect 수동 flow를 구현했다.
+- 별도 Langfuse·Prefect 개발 Compose와 실제 저장·조회·재실행·실패 전파를 확인하는 무료 smoke 도구를 추가했다.
+- AI Service의 로컬·CI·Docker와 평가 실행기·Prefect 서버를 Python 3.12로 통일하고, 새 CI 워크플로에 서버 통합 검증을 연결했다. 원격 CI 통과는 아직 확인 전이다.
+- 자동 스케줄, 새 유료 모델 평가, 여러 호스트의 전역 동시성, Core부터 이어지는 전체 RAG 추적, Ops 화면은 후속 범위다. 현재 flow에는 모델 실행 단계가 없으며 모델 호출 예산은 0이다.
+
+아래 PR 번호는 도입 단계를 나타낸다. 이번 구현은 PR 1~4의 **저장 캡처 기반 수동 파이프라인** 범위이며, 유료 실행·정기 운영까지 완료했다는 뜻은 아니다.
 
 ## 다섯 도구의 역할과 연결
 
@@ -77,12 +87,12 @@ Langfuse와 Evidently는 동일한 검증 결과 표와 평가기 버전을 사�
 
 | 현재 구성 | 도입에 활용할 지점 |
 |---|---|
-| AI Service의 Python 3.11, FastAPI, LangChain·LangGraph | 기존 호출에 Langfuse SDK와 콜백 연결 |
+| AI Service의 로컬·CI·Docker·평가 Python 3.12, FastAPI, LangChain·LangGraph | 단일 실행 버전에서 검증하고 Service·Agent에 명시적인 Langfuse span 연결 |
 | [근거 답변 API](../backend/ai-service/app/support_program_evidence/router.py)의 `POST /internal/v1/support-program-evidence/answers` | 첫 추적 대상 |
 | [답변 Service](../backend/ai-service/app/support_program_evidence/answer_service.py)와 [Agent](../backend/ai-service/app/support_program_evidence/agent.py) | 모델 호출 후 출력·인용 검증까지 포함한 실행 상태 기록 |
-| [공통 LLM 호출](../backend/ai-service/app/support_program_llm.py) | 선택한 호출에만 Langfuse 콜백을 전달할 연결점 |
+| [공통 LLM 호출](../backend/ai-service/app/support_program_llm.py) | 기존 호출 계약 유지. 근거 답변 Agent에서 호출 전후를 추적하므로 이 파일은 변경하지 않음 |
 | [Core 근거 답변 Facade](../backend/core-service/src/main/kotlin/ai/govbiz/core/supportprogram/facade/AiSupportProgramEvidenceFacade.kt) | 색인·검색·답변의 세 HTTP 호출을 연결할 후속 지점 |
-| [기존 평가 실행기](../evaluation/support-program-evidence/evaluate.py) | 저장 캡처 재계산, 상태 일치율·인용 재현율 재사용 |
+| [기존 평가 실행기](../evaluation/support-program-evidence/evaluate.py) | 저장 캡처 재계산, 상태 일치율·인용 재현율 재사용. Service·Agent를 직접 생성하므로 HTTP 서버와 별도로 추적 초기화·종료 연결 필요 |
 | [Django Ops](../backend/ops-service/README.md) | 후속 평가 실행 요청·이력 조회 화면 후보. 현재는 기본 서비스 골격 |
 
 현재 LangSmith 추적과 OpenAI Agents 추적은 일부 경로에서 명시적으로 비활성화되어 있다. 이 설정은 각 도구의 추적 설정이며 Langfuse 전체를 금지하는 스위치가 아니다. Langfuse 연결을 별도로 추가하고, 기존 수집 정책을 유지하는지 검증한다.
@@ -107,7 +117,9 @@ Langfuse와 Evidently는 동일한 검증 결과 표와 평가기 버전을 사�
 
 Langfuse 자체 호스팅에는 Web·Worker, PostgreSQL, ClickHouse, Redis/Valkey, S3 호환 저장소가 필요하다. 개발 검증 환경은 기존 업무 DB·Redis·볼륨과 분리하고, SDK·서버·이미지 버전을 고정한다. 개발 Compose 기동을 운영 배포 완료로 보고하지 않는다.
 
-신규 의존성과 외부 실행 구성은 구현 착수 시 변경 범위로 알린다. AI Service의 요청 처리에는 `langfuse`를 추가하고, 평가 실행 환경에는 `prefect`, `pandas`, `pandera[pandas]`, `evidently`를 평가 전용 의존성 그룹으로 관리한다. 실제 그룹 구성과 버전은 기존 평가 코드·`uv.lock` 및 Python 3.11 호환성을 확인한 뒤 고정한다. 평가 배치는 별도 프로세스에서 실행하며 AI API 이미지에 평가 도구 전체를 설치하지 않는다. 이 계획 자체는 의존성을 변경하지 않는다.
+AI Service의 요청 처리에는 `langfuse`를 추가하고, 평가 실행 환경에는 `prefect`, `pandas`, `pandera[pandas]`, `evidently`를 `evaluation` 의존성 그룹으로 관리한다. 버전은 `pyproject.toml`과 `uv.lock`에 고정했다. 평가 배치는 별도 프로세스에서 실행하며 AI API 이미지에 평가 도구 전체를 설치하지 않는다.
+
+AI Service의 `.python-version`, CI, Docker의 builder·runtime과 평가 실행기·Prefect 서버를 Python 3.12로 통일한다. 프로젝트의 `requires-python`은 `>=3.12,<3.13`으로 제한하고 잠금 파일도 같은 범위에서 해석한다. Langfuse와 기존 LangChain·OpenAI 의존성 및 다섯 평가 도구의 설치·import·무료 실행 검증을 3.12에서 수행한다. 요청 처리와 평가의 의존성 그룹은 분리하되 Python 버전을 나누지 않는다.
 
 PR 4에서는 Prefect 서버와 평가 작업 실행 프로세스도 구성한다. 서버의 개발 DB와 실행 상태 저장소를 준비하고, Langfuse·업무 DB와 데이터 소유권을 분리한다. 기존 Django Ops의 Python 3.13 환경에 AI 평가 의존성을 모두 합치는 방식으로 시작하지 않는다.
 
@@ -123,7 +135,7 @@ PR 4에서는 Prefect 서버와 평가 작업 실행 프로세스도 구성한�
 | 본문 | 일반 요청의 질문·답변·청크 원문·기업 정보는 기본 수집 제외. 내용을 검토한 합성·공개 평가 자료만 별도 평가 프로젝트에 기록 |
 | 예외 | 안정적인 오류 코드·종류를 기록. 예외 메시지·스택에 포함된 원문과 인증정보도 수집 정책 적용 |
 
-콜백이 자동 수집하는 입력·출력에도 같은 정책을 적용한다. Langfuse로 전송되기 전 내보낼 데이터에서 정책을 검증하며, UI에서만 가리는 것으로 대체하지 않는다. 보존 기간은 개발 검증용 7일을 제안하며, 선택한 배포에서 실제 삭제 방법까지 확인한다.
+이번 구현은 자동 콜백 대신 명시적인 `evidence.answer`·`evidence.model` span을 사용하고 다른 span은 내보내지 않는다. 전송 직전 본문 속성도 제거하며 예외 원문·스택의 자동 기록을 막는다. 보존 기간은 개발 검증용 7일을 제안하지만 현재 자동 삭제는 설정하지 않았으며 운영 전에 실제 삭제 방법을 검증해야 한다.
 
 ## PR 1: 근거 답변 추적
 
@@ -142,7 +154,8 @@ AI HTTP /answers → AnswerService → AnswerAgent → LangChain → OpenAI
 - `backend/ai-service/pyproject.toml`, `uv.lock`: SDK 의존성 고정
 - `app/config.py`, `app/bootstrap.py`, `app/main.py`: 명시적 활성화, 설정 검증, 초기화와 종료 시 유한 시간의 전송 마무리
 - `app/support_program_evidence/answer_service.py`, `agent.py`: 실행·검증 결과와 모델 호출 연결
-- `app/support_program_llm.py`: 필요한 호출만 콜백을 넘길 수 있도록 최소 변경
+- `app/support_program_evidence/tracing.py`: 명시적 span, 전송 필터, 본문 제거, 유한 종료 대기. 공통 LLM 호출부는 변경하지 않음
+- `evaluation/support-program-evidence/evaluate.py`: Service·Agent 직접 생성 경로의 명시적 추적 초기화·종료 연결. 저장 캡처 재계산에는 새 모델 호출 trace를 만들지 않음
 - `tests/support_program_evidence/` 및 설정·초기화 관련 테스트: 추적과 기존 응답 동작 확인
 - AI Service README와 개발 Compose 안내: 실행 방법·수집 범위·제한 사항
 
@@ -152,7 +165,7 @@ LLM·출력 검증 실패는 기존 API 오류로 유지하고 trace에도 실�
 
 확인할 사례는 정상 답변, 근거 부족, 잘못된 인용, 모델 오류, 시간 초과, 취소, 동시 요청, Langfuse 연결 실패, 프로세스 종료다. 본문·키가 전송되지 않는지도 실제 내보내기 데이터로 확인한다.
 
-공통 LLM 호출부는 추천·대화 기능도 사용하므로 변경 시 이 소비자들의 관련 테스트도 선택 실행한다. 첫 PR의 활성화 대상은 근거 답변으로 한정한다.
+공통 LLM 호출부는 추천·대화 기능도 사용하므로 변경 시 이 소비자들의 관련 테스트도 선택 실행한다. 이번에는 공통 호출부를 유지하고 활성화 대상을 근거 답변으로 한정한다.
 
 ## PR 2: pandas·Pandera로 평가 데이터 검증과 결과 연결
 
@@ -229,14 +242,14 @@ Ops의 장시간 평가는 HTTP 요청 밖에서 실행한다. Langfuse의 trace
 ```bash
 # backend/ai-service에서 실행
 uv run --locked --extra dev python -m pytest tests/support_program_evidence
-uv run --locked --extra dev python -m pytest ../../evaluation/support-program-evidence
+uv run --locked --extra dev --group evaluation python -m pytest ../../evaluation/support-program-evidence
 ```
 
 공통 호출·설정·초기화 변경 시 관련 소비자 테스트를 추가한다. SDK·서버 호환성은 합성 요청 및 HTTP 스텁으로 검증하고, 실제 Langfuse에서 trace 조회까지 별도로 확인한다. 콜백 호출만 확인한 단위 테스트를 서버 저장 성공으로 간주하지 않는다.
 
 pandas 변환은 원본 사례·누락값 보존, Pandera는 잘못된 표 거부, Evidently는 기준·후보 비교와 보고서 생성, Prefect는 실행 순서·실패 전파·재시도 중복 방지를 검증한다. 평가 전용 의존성 그룹을 설치하는 CI 작업을 추가하고, 라이브러리가 설치되었다는 이유만으로 해당 기능의 검증이 완료됐다고 보지 않는다.
 
-[GovBiz CI](../.github/workflows/ci.yml)는 현재 push·pull request에서 AI 잠금 파일·설치 정합성, 전체 pytest, 패키지 빌드, Qdrant 통합, 평가 도구 무료 검증을 수행한다. 새 무료 테스트는 여기에 포함한다. 현재 CI에 Langfuse 서버 저장·조회 검증은 없으므로, 서버 구성을 추가하는 PR에서 유료 모델·외부 Cloud 키 없는 통합 검증 작업을 명시적으로 연결해야 한다.
+[GovBiz CI](../.github/workflows/ci.yml)는 push·pull request에서 Python 3.12로 AI 잠금 파일·설치 정합성, 전체 pytest, 패키지 빌드, Qdrant 통합, 평가 도구 무료 검증을 수행한다. 평가 테스트에 `evaluation` 그룹을 추가했다. [LLMOps CI](../.github/workflows/llmops-ci.yml)도 Python 3.12에서 유료 모델·외부 Cloud 키 없는 Langfuse·Prefect 서버 저장·조회 검증을 수행한다. 별도의 다중 버전 호환성 작업은 두지 않으며 워크플로 정의와 원격 실행 통과 여부는 구별한다.
 
 개발 Compose는 구문·환경변수·포트·볼륨 격리 및 기동·저장·조회까지 확인한다. Prefect 추가 시 서버·평가 실행 프로세스와 보고서 저장소의 무료 통합 검증도 CI에 연결한다. PR 5의 Core 변경은 JDK 21 관련 선택 테스트와 양쪽 내부 헤더 계약을 확인한다. Kubernetes 전환은 별도 단계로 두며, 매니페스트 렌더링과 실제 배포 완료를 구별한다.
 
@@ -246,7 +259,21 @@ pandas 변환은 원본 사례·누락값 보존, Pandera는 잘못된 표 거�
 
 첫 구현 작업은 **“개발 Langfuse에 근거 답변의 추적을 연결하고, 무료 스텁으로 실패·수집 정책을 검증한다”**로 잡는다.
 
-산출물은 SDK·서버 버전과 실행 방법, 근거 답변 한 경로의 추적 코드, 무료 회귀 테스트, 정상·실패 trace 조회 기록이다. 이 결과가 확인되면 pandas·Pandera 평가 표와 Langfuse 결과 연결, Evidently 보고서, Prefect 자동화를 차례로 구현한다. 첫 작업의 범위와 다섯 도구 전체의 완료 범위를 구별해 보고한다.
+준비와 PR 1의 구현·검증 순서는 다음과 같다. 현재 반영 범위와 후속 범위는 문서 상단을 기준으로 한다.
+
+| 순서 | 바로 수행할 작업 | 남길 결과와 통과 기준 |
+|---|---|---|
+| 1 | 기존 가상 평가 자료와 저장 캡처를 검증용 기준으로 선정 | 자료·캡처 해시, 선택 사례 목록, 기존 보고서의 점수와 미측정 항목 기록. API 호출 없이 재계산한 결과가 기존 보고서와 일치 |
+| 2 | 다섯 도구의 버전 조합과 의존성 그룹 확정 | Python 3.12로 통일한 실행 환경과 잠금 파일, AI·평가 의존성 그룹의 설치·import·무료 검증 결과 |
+| 3 | 자원·포트 확인 후 별도 개발 Langfuse 기동 | 합성 이벤트를 보내고 서버에서 같은 trace ID로 조회. SDK 전송만 성공한 상태와 서버 저장 성공을 구별 |
+| 4 | 근거 답변 Service와 모델 호출 연결 | HTTP 요청과 평가 실행기의 직접 호출 모두에서 실행·모델 호출·출력 검증이 하나의 trace로 연결. 모델 응답은 HTTP 스텁 사용 |
+| 5 | 실패·동시 요청·수집 정책 및 CI 검증 | 정상·근거 부족·잘못된 인용·시간 초과를 구별하고, 전송 실패로 모델이 재호출되지 않으며, 본문·키가 내보내기 데이터에 없음. 최신 커밋의 해당 CI와 서버 조회 확인 |
+
+1번의 첫 자료는 [대상 조건 fixture](../evaluation/support-program-evidence/target-coverage-fixture.json)와 [6개 사례의 저장 캡처](../evaluation/support-program-evidence/runs/target-coverage-20260907-v1/capture.json), [기존 보고서](../evaluation/support-program-evidence/runs/target-coverage-20260907-v1/report.json)를 사용한다. 이 자료는 AI 작성 가상 사례이며 과거 구현의 결과다. 새 구현의 품질 기준선으로 간주하지 않고, 재계산·표 변환·결과 등록의 정합성을 검증하는 입력으로 사용한다. 이후 기존 부분 실행·실패 캡처를 추가해 누락과 오류 처리도 확인한다.
+
+PR 1의 최종 산출물은 SDK·서버 버전과 실행 방법, 두 진입 경로의 추적 코드, 무료 회귀 테스트, 정상·실패 trace 조회 기록이다. 다음 구현은 PR 2의 pandas·Pandera 결과 표와 Langfuse 점수 연결, PR 3의 Evidently 보고서, PR 4의 Prefect 자동화 순서로 진행한다. 각 도구의 구체적인 책임과 완료 조건은 위 PR별 절을 따른다.
+
+다섯 도구 전체의 첫 완료 시연은 **저장 캡처 하나로 Prefect flow를 수동 실행해 입력·결과 검증을 통과하고, 같은 평가 실행 ID로 Langfuse 점수와 Evidently 보고서를 조회하는 것**이다. 같은 입력의 재등록 중복 방지와 필수 단계 실패 전파까지 확인한다. 정기 실행·새 유료 평가·전체 RAG 추적·Ops 화면은 각각 앞서 정의한 검증 조건을 충족한 뒤 확장한다.
 
 ## 공식 문서
 

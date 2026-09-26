@@ -652,6 +652,17 @@ SDK의 JSON 출력 검증 실패는 `MODEL_OUTPUT_INVALID_JSON`, 스키마·서�
 구분합니다. 이 로그만으로 이전 `ModelBehaviorError`의 세부 원인을 소급 확정할 수는 없습니다.
 이 진단 코드는 HTTP 응답에 노출하지 않으며, 검증 기준이나 부적합 후보 처리 방식을 바꾸지 않습니다.
 
+## 근거 답변 LLMOps
+
+`LANGFUSE_ENABLED=true`일 때 근거 답변 Service의 검증까지 `evidence.answer`로,
+LangChain 모델 호출을 하위 `evidence.model`로 기록합니다. HTTP 경로와 평가 실행기 모두 같은 추적 객체를 사용합니다.
+질문·답변·청크 본문·예외 원문은 수집하지 않으며 전송 실패로 모델을 재실행하지 않습니다.
+기본값은 비활성화이고 URL·키가 없는 활성화 설정은 시작 오류입니다.
+
+`langfuse`는 런타임 의존성입니다. pandas·Pandera·Evidently·Prefect는 `evaluation` 의존성 그룹으로 분리하고
+AI API 이미지에 설치하지 않습니다. 저장 캡처로 다섯 도구를 연결하는 무료 배치와 실제 개발 서버 검증은
+[LLMOps 실행 안내](../../infrastructure/llmops/README.md)를 따릅니다.
+
 ## 설정
 
 ```dotenv
@@ -743,8 +754,10 @@ Docker 이미지는 빌드 시 토크나이저 파일을 받아 런타임에 별
 
 ## 설치와 실행
 
-Python 지원 범위는 `>=3.11,<3.15`이며 Docker와 CI는 3.11을 사용합니다. 아래 명령은
+Python은 로컬·CI·Docker·평가 환경 모두 3.12를 사용하며 지원 범위는 `>=3.12,<3.13`입니다. 아래 명령은
 `backend/ai-service`에서 실행합니다. 색인·의미 검색에는 `QDRANT_URL`에 Qdrant가 실행 중이어야 합니다.
+`.python-version`을 기준으로 `uv sync`가 Python 3.12 가상환경을 구성합니다. 기존 3.11 가상환경도
+다음 동기화 때 3.12로 다시 생성되므로 전역 Python을 변경할 필요는 없습니다.
 
 Docker의 마지막 설치 단계는 `--reinstall-package govbiz-ai-service`로 현재 애플리케이션을
 다시 빌드·설치합니다. [uv의 로컬 패키지 캐시](https://docs.astral.sh/uv/concepts/cache/#dynamic-metadata)가
