@@ -144,11 +144,15 @@ class ApplicationPreparationAgent:
             operations=(list[operation_type], Field(max_length=600)),
             scopeTargetIds=(list[native_id], Field(max_length=3000)),
             unresolvedTargets=(list[fact_id], Field(max_length=200, description="Only IDs of supplied facts that cannot be placed. Never include unprovided consent, signature, date or optional questions, or free-text explanations.")))
-        content = [{"type": "text", "text": json.dumps({
+        planning_text = json.dumps({
             "scope": request.scope, "facts": [f.model_dump() for f in request.facts],
             "bindings": bindings, "scopeTargetIds": request.scopeTargetIds,
             "documentMap": planning_document,
-        }, ensure_ascii=False)}]
+        }, ensure_ascii=False)
+        if (request.format == "hwpx" and sum(len(t.currentText) + len(t.context) for t in document.targets) > 400000
+                and len(planning_text) > 400000):
+            raise DocumentError("LIMIT_EXCEEDED", reason="HWPX_PLAN_CONTEXT_BUDGET")
+        content = [{"type": "text", "text": planning_text}]
         content.extend({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{page}", "detail": "high"}} for page in request.pageImages)
         result = await self._invoke(selection_type, PLAN_INSTRUCTIONS, content, 16000, "Document plan timed out", document=True)
         selection = PlanSelection.model_validate(result.model_dump())
@@ -176,6 +180,16 @@ class ApplicationPreparationAgent:
         field_candidates = {field.id: [target.targetId for target in targets
             if target.targetId in ids and target.nativeLocator.get("fieldLabels") and mapping_label_matches(field.label, target, field.guidance)]
             for field in request.fields}
+        large_hwpx = request.format == "hwpx" and sum(len(t.currentText) + len(t.context) for t in document.targets) > 400000
+        if large_hwpx:
+            if any(not candidate_ids for candidate_ids in field_candidates.values()):
+                raise DocumentError("LIMIT_EXCEEDED", reason="HWPX_MAPPING_CANDIDATE_MISSING")
+            allowed = {target_id for candidate_ids in field_candidates.values() for target_id in candidate_ids}
+            targets = [target for target in targets if target.targetId in allowed]
+            ids = [target.targetId for target in targets if target.editable and target.nativeLocator.get("bindingEligible", True)]
+            scope_ids = ids
+            native_id = Annotated[str, Field(pattern="^(?:" + "|".join(re.escape(key) for key in ids) + ")$")]
+            scope_id = native_id
         field_ids = [field.id for field in request.fields]
         field_id = Annotated[str, Field(pattern="^(?:" + "|".join(re.escape(key) for key in field_ids) + ")$")]
         binding_type = create_model("NativeMappingBinding", __base__=DocumentPlacement,
@@ -209,9 +223,12 @@ class ApplicationPreparationAgent:
             if locator.get("geometryVerified") is False:
                 # Upstream paragraph estimates are not suitable for locating blank inputs.
                 target["nativeLocator"] = {"page": locator["page"], "geometryVerified": False}
-        content = [{"type": "text", "text": json.dumps({"scope": request.scope,
+        mapping_text = json.dumps({"scope": request.scope,
             "fields": [f.model_dump() for f in request.fields], "fieldCandidates": field_candidates,
-            "documentMap": mapping_document}, ensure_ascii=False)}]
+            "documentMap": mapping_document}, ensure_ascii=False)
+        if large_hwpx and len(mapping_text) > 400000:
+            raise DocumentError("LIMIT_EXCEEDED", reason="HWPX_MAPPING_CONTEXT_BUDGET")
+        content = [{"type": "text", "text": mapping_text}]
         if rejected_output is not None:
             by_id = {t.targetId: t for t in document.targets}
             overlaps = [{"fieldId": b.factId, "targetId": b.targetId, "printedWords": [
@@ -243,6 +260,11 @@ class ApplicationPreparationAgent:
                 scopeTargetIds=[target_id for target_id, included in result.model_dump(by_alias=True)["scope"].items() if included])
         else:
             selection = MappingSelection.model_validate(result.model_dump())
+            if request.format == "pdf" and request.pdfFields and all(
+                    binding.targetId.startswith("pdf-field:") for binding in selection.bindings):
+                # A native AcroForm binding is itself the smallest writable scope.
+                # The model chooses fields; it does not need to repeat them in a second scope list.
+                selection.scopeTargetIds = [binding.targetId for binding in selection.bindings]
         # Scope has set semantics; repeated identical IDs do not expand it.
         selection.scopeTargetIds = list(dict.fromkeys(selection.scopeTargetIds))
         selection.unmappedFieldIds = list(dict.fromkeys(selection.unmappedFieldIds))

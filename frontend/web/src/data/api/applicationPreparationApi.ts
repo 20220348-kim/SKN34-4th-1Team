@@ -22,7 +22,7 @@ export async function applicationPreparationRequest<T>(
   const timer = setTimeout(() => {
     timedOut = true
     abort()
-  }, path.endsWith('/documents') && method === 'POST' ? 660_000 : path.endsWith('/messages') || path.endsWith('/drafts') ? 45_000 : 15_000)
+  }, path.endsWith('/documents') && method === 'POST' ? 660_000 : path.endsWith('/mapping-migration/confirm') ? 90_000 : path.endsWith('/messages') || path.endsWith('/drafts') ? 45_000 : 15_000)
   try {
     const response = await fetch(`${getCoreApiBaseUrl()}/api/v1/application-preparations${path}`, {
       method,
@@ -46,7 +46,8 @@ export async function applicationPreparationRequest<T>(
       } else if (response.status === 404) {
         code = 'APPLICATION_PREPARATION_API_UNAVAILABLE'
       }
-      throw new ApplicationPreparationError(response.status, code)
+      throw new ApplicationPreparationError(response.status, code,
+        problem.success ? problem.data.mappingMigration ?? null : null)
     }
     const payload = response.status === 204 ? undefined : await response.json().catch(() => null)
     const parsed = schema.safeParse(payload)

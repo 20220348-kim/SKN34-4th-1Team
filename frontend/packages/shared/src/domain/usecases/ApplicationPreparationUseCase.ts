@@ -18,6 +18,11 @@ export class ApplicationPreparationUseCase {
   forms(signal?: AbortSignal) { return this.repository.forms(signal) }
   documents(id: number, signal?: AbortSignal) { return this.repository.documents(id, signal) }
   generateDocuments(id: number, revision: number, signal?: AbortSignal) { return this.repository.generateDocuments(id, revision, signal) }
+  confirmDocumentMappingMigration(id: number, revision: number, token: string, signal?: AbortSignal) {
+    if (!Number.isSafeInteger(id) || id <= 0 || !Number.isSafeInteger(revision) || revision <= 0 ||
+      !/^[0-9a-f-]{36}$/.test(token)) throw new Error('입력 위치 확인 요청이 올바르지 않습니다.')
+    return this.repository.confirmDocumentMappingMigration(id, revision, token, signal)
+  }
   downloadDocument(id: number, fileId: number, signal?: AbortSignal) { return this.repository.downloadDocument(id, fileId, signal) }
   generateDraft(id: number, sectionKey: string, input: GenerateApplicationDraft, signal?: AbortSignal) {
     return this.repository.generateDraft(id, sectionKey, input, signal)

@@ -40,6 +40,20 @@
         WHERE id = #{preparationId} AND owner_account_id = #{ownerAccountId}
     </select>
 
+    <select id="findOwnedForUpdate" resultMap="preparationRow">
+        SELECT <include refid="columns" />
+        FROM application_preparation
+        WHERE id = #{preparationId} AND owner_account_id = #{ownerAccountId}
+        FOR UPDATE
+    </select>
+
+    <update id="updateFormVersionOwned">
+        UPDATE application_preparation
+        SET form_version_id = #{newFormVersionId}, updated_at = NOW(6)
+        WHERE id = #{preparationId} AND owner_account_id = #{ownerAccountId}
+          AND form_version_id = #{oldFormVersionId} AND input_revision = #{expectedRevision}
+    </update>
+
     <select id="listOwned" resultMap="preparationRow">
         SELECT <include refid="columns" />
         FROM application_preparation

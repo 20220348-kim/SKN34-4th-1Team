@@ -85,6 +85,10 @@ class ApplicationDocumentEditor {
                 val fieldTargets = fields.filterIsInstance<org.apache.pdfbox.pdmodel.interactive.form.PDTerminalField>().map { field ->
                     val choices = when (field) {
                         is org.apache.pdfbox.pdmodel.interactive.form.PDChoice -> field.optionsExportValues
+                        is org.apache.pdfbox.pdmodel.interactive.form.PDRadioButton ->
+                            if (field.exportValues.size != field.exportValues.distinct().size)
+                                field.exportValues.indices.map(Int::toString)
+                            else (field.onValues + "Off").toList()
                         is org.apache.pdfbox.pdmodel.interactive.form.PDButton -> (field.onValues + "Off").toList()
                         else -> emptyList()
                     }
@@ -102,8 +106,12 @@ class ApplicationDocumentEditor {
                     val supported = field is PDTextField || field is org.apache.pdfbox.pdmodel.interactive.form.PDChoice || field is org.apache.pdfbox.pdmodel.interactive.form.PDCheckBox || field is org.apache.pdfbox.pdmodel.interactive.form.PDRadioButton
                     fieldMetadata += mapOf("targetId" to id, "fieldType" to field.javaClass.simpleName,
                         "editable" to (!field.isReadOnly && supported && widgets.any { it["page"] != null && it["visible"] == true && (it["width"] as? Float ?: 0f) > 0 && (it["height"] as? Float ?: 0f) > 0 }),
-                        "options" to choices, "widgets" to widgets)
-                    val currentValue = field.valueAsString
+                        "options" to choices, "optionMappings" to pdfOptionMappings(field).map { (label, native) ->
+                            mapOf("displayLabel" to label, "nativeValue" to native) }, "widgets" to widgets)
+                    val currentValue = if (field is org.apache.pdfbox.pdmodel.interactive.form.PDRadioButton &&
+                        field.exportValues.size != field.exportValues.distinct().size)
+                        field.cosObject.getNameAsString(org.apache.pdfbox.cos.COSName.V).orEmpty()
+                    else field.valueAsString
                     require(currentValue.length <= 6000)
                     ApplicationDocumentTarget(id, currentValue, "${field.alternateFieldName.orEmpty()} | type=${field.fieldType}".take(1000))
                 }
@@ -658,19 +666,35 @@ class ApplicationDocumentEditor {
                 require(name !in expected)
                 val field = requireNotNull(form.getField(name))
                 require(!field.isReadOnly && field !is org.apache.pdfbox.pdmodel.interactive.form.PDSignatureField)
-                val value = byId.getValue(placement.factId).value
+                val fact = byId.getValue(placement.factId)
+                val value = if (field is org.apache.pdfbox.pdmodel.interactive.form.PDButton ||
+                    field is org.apache.pdfbox.pdmodel.interactive.form.PDChoice)
+                    pdfNativeOption(field, fact.value, fact.label)
+                else fact.value
                 when (field) {
                     is PDTextField -> {
                         if (field.maxLen > 0 && value.length > field.maxLen) throw ApplicationDocumentException("APPLICATION_DOCUMENT_OVERFLOW", "입력란의 글자 수 제한을 초과했습니다. 답변을 확인해 주세요.")
                         val appearance = field.defaultAppearance ?: form.defaultAppearance.orEmpty()
                         val fontCommand = Regex("/[^\\s]+\\s+([0-9]+(?:\\.[0-9]+)?)\\s+Tf")
-                        val size = fontCommand.find(appearance)?.groupValues?.get(1)?.toFloatOrNull()?.takeIf { it > 0 } ?: 10f
+                        val requestedSize = fontCommand.find(appearance)?.groupValues?.get(1)?.toFloatOrNull()?.takeIf { it > 0 } ?: 10f
+                        require(field.widgets.isNotEmpty())
+                        val size = minOf(requestedSize, field.widgets.minOf { (it.rectangle.height - 1f) / 1.15f } - .1f)
+                        if (size < 8f) throw ApplicationDocumentException("APPLICATION_DOCUMENT_OVERFLOW", "입력란에 답변 전체가 들어가지 않습니다. 답변을 확인해 주세요.")
                         field.defaultAppearance = if (fontCommand.containsMatchIn(appearance)) fontCommand.replace(appearance, "/GovBizKorean $size Tf") else "/GovBizKorean $size Tf 0 g"
-                        field.widgets.forEach { widget -> ensurePdfFits(font, value, widget.rectangle.width - 4, widget.rectangle.height - 4, size) }
+                        field.widgets.forEach { widget -> ensurePdfFits(font, value, widget.rectangle.width - 4, widget.rectangle.height - 1, size, 1.15f) }
                         field.value = value
                     }
-                    is org.apache.pdfbox.pdmodel.interactive.form.PDChoice -> { require(value in field.optionsExportValues); field.setValue(value) }
-                    is org.apache.pdfbox.pdmodel.interactive.form.PDButton -> { require(value in field.onValues || value == "Off"); field.value = value }
+                    is org.apache.pdfbox.pdmodel.interactive.form.PDChoice -> { field.setValue(value) }
+                    is org.apache.pdfbox.pdmodel.interactive.form.PDRadioButton -> {
+                        if (field.exportValues.size != field.exportValues.distinct().size) {
+                            val index = value.toIntOrNull()
+                            require(index != null && index in field.exportValues.indices)
+                            field.setValue(index)
+                        } else {
+                            field.value = value
+                        }
+                    }
+                    is org.apache.pdfbox.pdmodel.interactive.form.PDButton -> { field.value = value }
                     else -> fail("지원하지 않는 PDF 입력란입니다.")
                 }
                 expected[name] = value
@@ -722,7 +746,13 @@ class ApplicationDocumentEditor {
             val savedForm = requireNotNull(reopened.documentCatalog.acroForm)
             expected.forEach { (name, value) ->
                 val field = requireNotNull(savedForm.getField(name))
-                require(field.valueAsString == value)
+                val savedValue = if (field is org.apache.pdfbox.pdmodel.interactive.form.PDRadioButton &&
+                    field.exportValues.size != field.exportValues.distinct().size)
+                    field.cosObject.getNameAsString(org.apache.pdfbox.cos.COSName.V).orEmpty()
+                else if (field is org.apache.pdfbox.pdmodel.interactive.form.PDChoice)
+                    field.cosObject.getString(org.apache.pdfbox.cos.COSName.V).orEmpty()
+                else field.valueAsString
+                require(savedValue == value)
                 field.widgets.forEach { require(it.appearance?.normalAppearance != null) }
             }
             val renderer = PDFRenderer(reopened)
@@ -731,9 +761,55 @@ class ApplicationDocumentEditor {
         output
     }
 
-    private fun ensurePdfFits(font: PDType0Font, value: String, width: Float, height: Float, size: Float = 8f) {
+    private fun pdfOptionMappings(field: org.apache.pdfbox.pdmodel.interactive.form.PDField): List<Pair<String, String>> = when (field) {
+        is org.apache.pdfbox.pdmodel.interactive.form.PDChoice ->
+            field.optionsDisplayValues.zip(field.optionsExportValues)
+                .filter { (label, native) -> label.isNotBlank() && native.isNotBlank() }
+        is org.apache.pdfbox.pdmodel.interactive.form.PDRadioButton -> {
+            val exports = field.exportValues
+            val native = if (exports.size == field.widgets.size && exports.size != exports.distinct().size)
+                exports.indices.map(Int::toString)
+            else if (exports.size == field.widgets.size) exports
+            else field.widgets.map { widget -> widget.appearance?.normalAppearance?.subDictionary?.keys
+                ?.singleOrNull { it != org.apache.pdfbox.cos.COSName.Off }?.name.orEmpty() }
+            field.widgets.map { it.cosObject.getString(org.apache.pdfbox.cos.COSName.TU).orEmpty().trim() }
+                .zip(native).filter { (label, value) -> label.isNotBlank() && value.isNotBlank() }
+        }
+        is org.apache.pdfbox.pdmodel.interactive.form.PDCheckBox -> {
+            val caption = field.widgets.singleOrNull()?.cosObject?.getString(org.apache.pdfbox.cos.COSName.TU).orEmpty().trim()
+            if (caption.isNotBlank() && field.onValues.size == 1) listOf(caption to field.onValues.single()) else emptyList()
+        }
+        else -> emptyList()
+    }
+
+    private fun pdfNativeOption(field: org.apache.pdfbox.pdmodel.interactive.form.PDField,
+                                userValue: String, factLabel: String): String {
+        val options = when (field) {
+            is org.apache.pdfbox.pdmodel.interactive.form.PDChoice -> field.optionsExportValues
+            is org.apache.pdfbox.pdmodel.interactive.form.PDRadioButton ->
+                if (field.exportValues.size != field.exportValues.distinct().size)
+                    field.exportValues.indices.map(Int::toString)
+                else field.onValues.toList() + "Off"
+            is org.apache.pdfbox.pdmodel.interactive.form.PDCheckBox -> field.onValues.toList() + "Off"
+            else -> emptyList()
+        }
+        if (options.count { it == userValue } == 1) return userValue
+        fun key(value: String) = java.text.Normalizer.normalize(value.trim(), java.text.Normalizer.Form.NFKC).lowercase(java.util.Locale.ROOT)
+        val matching = pdfOptionMappings(field).filter { (label, _) -> key(label) == key(userValue) }
+        if (matching.size == 1 && options.count { it == matching.single().second } == 1) return matching.single().second
+        if (field is org.apache.pdfbox.pdmodel.interactive.form.PDCheckBox && field.onValues.size == 1 &&
+            pdfOptionMappings(field).size == 1 &&
+            listOf(field.fullyQualifiedName, field.alternateFieldName.orEmpty()).any { key(it) == key(factLabel) }) {
+            if (key(userValue) == "true") return field.onValues.single()
+            if (key(userValue) == "false") return "Off"
+        }
+        throw ApplicationDocumentException("APPLICATION_DOCUMENT_UNRESOLVED_OPTION", "선택값과 원본 PDF 입력란의 선택지를 확인할 수 없습니다.")
+    }
+
+    private fun ensurePdfFits(font: PDType0Font, value: String, width: Float, height: Float,
+                              size: Float = 8f, lineHeight: Float = 1.25f) {
         val lines = value.lines().sumOf { line -> maxOf(1, kotlin.math.ceil(font.getStringWidth(line) / 1000 * size / width).toInt()) }
-        if (width <= size || height < lines * size * 1.25f) throw ApplicationDocumentException("APPLICATION_DOCUMENT_OVERFLOW", "입력란에 답변 전체가 들어가지 않습니다. 문안을 확인해 주세요.")
+        if (width <= size || height < lines * size * lineHeight) throw ApplicationDocumentException("APPLICATION_DOCUMENT_OVERFLOW", "입력란에 답변 전체가 들어가지 않습니다. 문안을 확인해 주세요.")
     }
 
     private fun fail(message: String): Nothing = throw ApplicationDocumentException("APPLICATION_DOCUMENT_UNSUPPORTED", message)

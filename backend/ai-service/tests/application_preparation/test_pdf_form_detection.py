@@ -47,6 +47,16 @@ def test_nearby_original_label_is_kept_and_ambiguous_overlapping_inputs_fail():
         checked_regions([detection, detection], words, [])
 
 
+def test_unlabeled_overlap_is_discarded_without_changing_labeled_input():
+    labeled = {"kind": 0, "confidence": .8, "box": box(.5, .2, .3, .02)}
+    unlabeled = {"kind": 0, "confidence": .7, "box": box(.5, .219, .3, .02)}
+    words = [{"text": "기업명", "box": box(.3, .2, .15, .02)}]
+    result = checked_regions([labeled, unlabeled], words, [])
+    assert len(result) == 1
+    assert result[0]["box"] == pytest.approx(labeled["box"])
+    assert result[0]["labels"] == ["기업명"]
+
+
 @pytest.mark.parametrize("invalid", [box(-.1, .2, .3, .1), box(.9, .2, .3, .1), box(float('nan'), .2, .3, .1)])
 def test_invalid_detector_geometry_is_an_error(invalid):
     with pytest.raises(ValueError, match="PDF_DETECTION_BOX"):

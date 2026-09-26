@@ -5,8 +5,10 @@ import ai.govbiz.core.applicationpreparation.client.ai.dto.AiDocumentFieldRefere
 import ai.govbiz.core.applicationpreparation.client.ai.dto.AiDocumentMappingRequest
 import ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentMapSnapshot
 import ai.govbiz.core.applicationpreparation.domain.ApplicationFormManifest
+import ai.govbiz.core.applicationpreparation.domain.mappingChanges
 import ai.govbiz.core.applicationpreparation.repository.ApplicationFormSnapshotRepository
 import ai.govbiz.core.applicationpreparation.service.exception.ApplicationDocumentException
+import ai.govbiz.core.applicationpreparation.service.exception.ApplicationDocumentMappingChangedException
 import org.springframework.stereotype.Service
 import java.security.MessageDigest
 import java.util.Base64
@@ -18,12 +20,14 @@ class ApplicationDocumentMappingService(
     private val editor: ApplicationDocumentEditor,
     private val snapshots: ApplicationFormSnapshotRepository,
 ) {
-    fun ensure(form: ApplicationFormManifest, bytes: ByteArray, format: String): ApplicationDocumentMapSnapshot {
+    fun ensure(form: ApplicationFormManifest, bytes: ByteArray, format: String,
+               captureChange: Boolean = false): ApplicationDocumentMapSnapshot {
         val sourceHash = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
         if (sourceHash != form.attachmentSha256) throw ApplicationDocumentException("APPLICATION_DOCUMENT_SOURCE_CHANGED", "공식 원본이 변경되었습니다.")
         val pipeline = mcp.configuration().pipelineVersion
         val stored = snapshots.findByVersion(form.formVersionId)
-        (stored?.documentMapSnapshot ?: form.documentMapSnapshot)?.takeIf { it.pipelineVersion == pipeline && it.sourceSha256 == sourceHash }?.let { return it }
+        val previous = stored?.documentMapSnapshot ?: form.documentMapSnapshot
+        previous?.takeIf { it.pipelineVersion == pipeline && it.sourceSha256 == sourceHash }?.let { return it }
         val inspection = if (format.lowercase() in setOf("pdf", "hwp")) editor.inspect(bytes, format) else null
         val fields = form.sections.flatMap { section -> section.fields.map { field ->
             AiDocumentFieldReference("${section.key}:${field.key}", "${section.title} / ${field.label}", field.guidance, field.required, field.options)
@@ -48,6 +52,14 @@ class ApplicationDocumentMappingService(
         }
         val snapshot = ApplicationDocumentMapSnapshot(result.contractVersion, result.pipelineVersion, result.sourceSha256,
             result.mapVersion, result.engineVersion, result.bindings, result.scopeTargetIds, result.documentMap)
+        if (previous != null) {
+            val changes = mappingChanges(previous, snapshot)
+            if (changes.isNotEmpty()) {
+                if (captureChange) throw ApplicationDocumentMappingChangedException(previous, snapshot, changes)
+                throw ApplicationDocumentException("APPLICATION_DOCUMENT_FORM_REANALYSIS_REQUIRED",
+                    "기존 입력 위치 또는 편집 범위가 새 분석과 달라 자동 작성을 중단했습니다. 저장된 답변은 유지됩니다.")
+            }
+        }
         return if (stored == null) snapshot else snapshots.attachDocumentMap(form.formVersionId, snapshot)
     }
 }

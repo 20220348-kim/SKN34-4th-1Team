@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router'
 import { appContainer } from '../../../../app/appContainer'
 import { useAppSelector } from '../../../../app/hooks'
-import type { ApplicationDocument, ApplicationPreparation } from '../../../../domain/entities/ApplicationPreparation'
+import type { ApplicationDocument, ApplicationDocumentMigrationNotice, ApplicationPreparation } from '../../../../domain/entities/ApplicationPreparation'
 import { ApplicationPreparationError } from '../../../../domain/errors/ApplicationPreparationError'
 import { selectCurrentAccount } from '../../../shared/auth/state/authSlice'
 import { appPaths } from '../../../shared/routes/appPaths'
@@ -29,12 +29,21 @@ function DocumentResults({ id }: { id: number }) {
   const [error, setError] = useState<string | null>(null)
   const [attempt, setAttempt] = useState(0)
   const [downloading, setDownloading] = useState<number | null>(null)
+  const [migration, setMigration] = useState<ApplicationDocumentMigrationNotice | null>(null)
+  const [migrationBusy, setMigrationBusy] = useState(false)
+  const [regenerationRevision, setRegenerationRevision] = useState<number | null>(null)
+  const [migrationMessage, setMigrationMessage] = useState<string | null>(null)
   const downloadController = useRef<AbortController | null>(null)
+  const migrationController = useRef<AbortController | null>(null)
   const back = `${appPaths.applicationPreparations}/${id}`
   const unanswered = preparation?.form.sections.flatMap((section) => section.fields
     .filter((field) => !section.facts.some((fact) => fact.fieldKey === field.key && fact.status === 'PROVIDED'))
     .map((field) => `${section.title} · ${field.label}`)) ?? []
   const reasonLabel = (reason: ApplicationDocument['unfilledAnswers'][number]['reason']) => reason === 'AUTO_FILL_UNSUPPORTED' ? '자동 기입 미지원' : '입력 위치 확인 불가'
+  const changeTypeLabel: Record<ApplicationDocumentMigrationNotice['changes'][number]['changeType'], string> = {
+    TARGET_ADDED: '새 입력칸', TARGET_REMOVED: '입력칸 사라짐', TARGET_CHANGED: '입력칸 변경',
+    BOX_CHANGED: '입력 영역 변경', KIND_CHANGED: '입력 방식 변경', SCOPE_CHANGED: '편집 범위 변경',
+  }
 
   useEffect(() => {
     const controller = new AbortController()
@@ -58,7 +67,7 @@ function DocumentResults({ id }: { id: number }) {
       throw new Error('기존 문서 생성 결과를 아직 확인하지 못했습니다. 잠시 후 다시 시도해 주세요. 답변은 저장되어 있습니다.')
     }
     async function load() {
-      setBusy(true); setError(null)
+      setBusy(true); setError(null); setMigration(null)
       try {
         const detail = await useCase.get(id, controller.signal)
         if (controller.signal.aborted) return
@@ -78,6 +87,8 @@ function DocumentResults({ id }: { id: number }) {
                 documents = await waitForExistingDocuments(revision)
               } else if (caught instanceof ApplicationPreparationError && ['REQUEST_TIMEOUT', 'REQUEST_FAILED'].includes(caught.code)) {
                 throw new Error('문서 생성 요청의 결과를 확인하지 못했습니다. 답변은 저장되어 있습니다. 잠시 후 다시 시도하면 저장된 결과부터 확인합니다.')
+              } else if (caught instanceof ApplicationPreparationError && caught.mappingMigration) {
+                setMigration(caught.mappingMigration)
               } else throw caught
             }
           }
@@ -90,8 +101,30 @@ function DocumentResults({ id }: { id: number }) {
       } finally { if (!controller.signal.aborted) setBusy(false) }
     }
     void load()
-    return () => { controller.abort(); downloadController.current?.abort() }
+    return () => { controller.abort(); downloadController.current?.abort(); migrationController.current?.abort() }
   }, [id, useCase, attempt])
+
+  async function confirmMigration() {
+    if (!migration || migrationController.current) return
+    const controller = new AbortController()
+    migrationController.current = controller
+    setMigrationBusy(true); setError(null)
+    try {
+      const confirmed = await useCase.confirmDocumentMappingMigration(id, migration.expectedRevision,
+        migration.approvalToken, controller.signal)
+      if (controller.signal.aborted) return
+      setPreparation(await useCase.get(id, controller.signal))
+      if (controller.signal.aborted) return
+      setMigration(null)
+      setRegenerationRevision(confirmed.inputRevision)
+      setMigrationMessage('새 입력 위치가 이 작성본에만 적용됐습니다. 기존 답변과 파일은 유지됩니다. 새 초안을 별도로 생성해 주세요.')
+    } catch (caught) {
+      if (!controller.signal.aborted) setError(caught instanceof Error ? caught.message : '입력 위치를 적용하지 못했습니다.')
+    } finally {
+      if (migrationController.current === controller) migrationController.current = null
+      if (!controller.signal.aborted) setMigrationBusy(false)
+    }
+  }
 
   async function download(file: ApplicationDocument) {
     if (downloadController.current) return
@@ -123,6 +156,28 @@ function DocumentResults({ id }: { id: number }) {
       {busy && <p className={s.notice} role="status">공식 양식을 확인하고 저장된 답변으로 문서를 준비하고 있습니다…</p>}
       {error && <div className={s.warning} role="alert"><p>{error}</p>{!busy && <button type="button" className={s.button} onClick={() => setAttempt((n) => n + 1)}>다시 시도</button>}</div>}
       {error && preparation && <Link className={s.button} to={`${appPaths.applicationPreparationNew}?${new URLSearchParams({ sourceCode: preparation.form.sourceCode, sourceProgramId: preparation.form.sourceProgramId })}`}>기존 답변을 보관하고 입력칸별 양식 확인</Link>}
+      {migration && <section className={s.card} aria-label="신청서 입력 위치 변경 확인">
+        <h2 className={s.cardTitle}>입력 위치가 변경됐습니다</h2>
+        <p className={s.notice}>승인 전에는 새 위치를 저장하거나 기존 답변·파일을 수정하지 않습니다. 아래 변경을 확인해 주세요.</p>
+        <ul className={s.fieldList}>{migration.changes.map((change, index) => <li key={`${change.fieldLabel}-${index}`}>
+          <strong>{change.fieldLabel}</strong> · {changeTypeLabel[change.changeType]}
+          <p>기존: {change.oldLocation ?? '입력 위치 없음'}</p>
+          <p>새 위치: {change.newLocation ?? '입력 위치 없음'}</p>
+        </li>)}</ul>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className={s.primary} disabled={migrationBusy} onClick={() => { void confirmMigration() }}>
+            {migrationBusy ? '적용 중…' : '새 입력 위치 적용'}
+          </button>
+          <button type="button" className={s.button} disabled={migrationBusy} onClick={() => {
+            setMigration(null); setMigrationMessage('변경 적용을 취소했습니다. 기존 답변과 파일은 그대로 유지됩니다.')
+          }}>취소하고 기존 작성 유지</button>
+        </div>
+      </section>}
+      {migrationMessage && <div className={s.notice} role="status"><p>{migrationMessage}</p>
+        {regenerationRevision !== null && <button type="button" className={s.button} onClick={() => {
+          requestedRevision.current = String(regenerationRevision); setRegenerationRevision(null); setMigrationMessage(null); setAttempt((n) => n + 1)
+        }}>새 초안 생성</button>}
+      </div>}
       {!busy && !error && files.length === 0 && <p className={s.notice}>현재 답변으로 생성된 문서가 없습니다. 답변 입력에서 초안 생성하기를 눌러 주세요.</p>}
       {!busy && files.map((file, index) => <section className={s.card} key={file.id} aria-label={`신청문서 ${index + 1}`}>
         <h2 className={s.cardTitle}>{file.unfilledAnswerCount && file.unfilledAnswerCount > 0 ? '일부 항목 미기입 초안' : `신청문서 ${index + 1}`}</h2>

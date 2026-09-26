@@ -40,6 +40,12 @@ const documentsSchema = z.array(z.object({
     context.addIssue({ code: 'custom', message: '문서 답변 집계가 일치하지 않습니다.' })
   }
 })).max(20)
+const migrationConfirmationSchema = z.object({
+  status: z.literal('REGENERATION_REQUIRED'),
+  preparationId: z.number().int().positive(),
+  inputRevision: z.number().int().positive(),
+  formVersionId: z.string().regex(/^[a-z0-9][a-z0-9-]{0,159}$/),
+})
 
 export class ApplicationPreparationRepositoryImpl implements ApplicationPreparationRepository {
   async availability(sourceCode: string, sourceProgramId: string, signal?: AbortSignal) {
@@ -62,6 +68,12 @@ export class ApplicationPreparationRepositoryImpl implements ApplicationPreparat
     const files = await request(`/${id}/documents`, documentsSchema, 'POST', { expectedRevision }, signal, 'preparation')
     if (files.length === 0 || files.some((file) => file.inputRevision !== expectedRevision)) throw new ApplicationPreparationError(502, 'INVALID_RESPONSE')
     return files
+  }
+  async confirmDocumentMappingMigration(id: number, expectedRevision: number, approvalToken: string, signal?: AbortSignal) {
+    const result = await request(`/${id}/documents/mapping-migration/confirm`, migrationConfirmationSchema,
+      'POST', { expectedRevision, approvalToken }, signal, 'preparation')
+    if (result.preparationId !== id || result.inputRevision !== expectedRevision) throw new ApplicationPreparationError(502, 'INVALID_RESPONSE')
+    return result
   }
   downloadDocument(id: number, fileId: number, signal?: AbortSignal) { return downloadApplicationDocument(id, fileId, signal) }
   async generateDraft(id: number, sectionKey: string, input: GenerateApplicationDraft, signal?: AbortSignal) {

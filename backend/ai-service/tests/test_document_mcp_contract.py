@@ -605,6 +605,116 @@ def test_pdf_blank_regions_require_closed_edges_and_never_cover_printed_labels()
     assert pdf_blank_regions([s for s in segments if s[0] != .9],words,1000,1000) == []
 
 
+def test_acroform_native_field_names_constrain_mapping(monkeypatch, tmp_path):
+    from contextlib import asynccontextmanager
+    from app.application_preparation import document_adapters
+    from app.application_preparation.document_contract import MapDocumentRequest, MappingSelection, mapping_label_matches, validate_mapping
+    source = b"%PDF-test"
+    fields = [{"id": f"pdf-field:{name}", "text": "", "context": f"{name} | type=Tx"}
+              for name in ("First Name", "Last Name")]
+    req = MapDocumentRequest(sourceBase64=base64.b64encode(source).decode(), sourceSha256=digest(source),
+        format="pdf", scope="Authorized Representative", fields=[
+            {"id": "representative:first", "label": "First Name", "guidance": "", "required": False}],
+        pdfTargets=fields, pageImages=[base64.b64encode(b"\x89PNG\r\n\x1a\n").decode()],
+        pdfFields=[{"targetId": item["id"], "fieldType": "PDTextField", "editable": True,
+                    "widgets": [{"page": 0}], "options": []} for item in fields])
+    replies = {"pdf_get_text": {"page_count": 1, "text": "First Name Last Name"},
+        "govbiz_pdf_text_regions": {"page_count": 1, "pages": [{"page": 0, "regions": [], "blankRegions": []}]},
+        "pdf_get_text_layout": {"blocks": [{}]}, "pdf_detect_paragraphs": {"paragraphs": []}}
+    @asynccontextmanager
+    async def session(_kind, _directory):
+        yield SimpleNamespace(call=lambda name, _args: asyncio.sleep(0, result=replies[name]))
+    monkeypatch.setattr(document_adapters, "document_session", session)
+    path = tmp_path / "source.pdf"
+    path.write_bytes(source)
+    doc = asyncio.run(document_adapters.PdfDocumentAdapter().inspect(path, req))
+    by_id = {target.targetId: target for target in doc.targets}
+    assert by_id["pdf-field:First Name"].nativeLocator["fieldLabels"] == ["First Name"]
+    assert mapping_label_matches("First Name", by_id["pdf-field:First Name"])
+    assert not mapping_label_matches("First Name", by_id["pdf-field:Last Name"])
+    with pytest.raises(DocumentError) as error:
+        validate_mapping(req, doc, MappingSelection(bindings=[
+            {"factId": "representative:first", "targetId": "pdf-field:Last Name", "box": None}],
+            scopeTargetIds=["pdf-field:Last Name"], unmappedFieldIds=[]))
+    assert error.value.reason == "FIELD_LABEL_MISMATCH"
+
+
+def test_acroform_mapping_scope_is_derived_from_selected_native_fields(monkeypatch):
+    from app.application_preparation.agent import ApplicationPreparationAgent
+    from app.application_preparation.document_contract import MapDocumentRequest, validate_mapping
+
+    req = MapDocumentRequest(**{**request(format="pdf").model_dump(exclude={"facts"}),
+        "fields": [{"id": "company:name", "label": "Company Name", "guidance": "", "required": False}],
+        "pdfFields": [{"targetId": "pdf-field:Company Name", "fieldType": "PDTextField",
+                       "editable": True, "options": [], "widgets": [{"page": 0}]}]})
+    doc = DocumentMap(sourceSha256=req.sourceSha256, format="pdf", engineVersion="test", targets=[
+        NativeTarget(targetId="pdf-field:Company Name", kind="PDF_FIELD", currentText="",
+                     nativeLocator={"fieldLabels": ["Company Name"]})])
+
+    async def invoke(selection_type, *_args, **_kwargs):
+        return selection_type.model_validate({"bindings": [{"factId": "company:name",
+            "targetId": "pdf-field:Company Name", "box": None}],
+            "scopeTargetIds": [], "unmappedFieldIds": []})
+
+    agent = ApplicationPreparationAgent(model=None, run_timeout_seconds=1)
+    monkeypatch.setattr(agent, "_invoke", invoke)
+    selection = asyncio.run(agent.map_document(req, doc))
+    assert selection.scopeTargetIds == ["pdf-field:Company Name"]
+    validate_mapping(req, doc, selection)
+
+
+def test_native_pdf_field_write_contract_uses_saved_binding_and_exact_current_text(monkeypatch):
+    from unittest.mock import AsyncMock
+    from app.application_preparation import document_pipeline
+    from app.application_preparation.document_adapters import PdfDocumentAdapter
+
+    binding = {"factId": "company:name", "targetId": "pdf-field:Company Name", "box": None}
+    req = request(format="pdf", bindings=[binding], scopeTargetIds=[binding["targetId"]])
+    doc = DocumentMap(sourceSha256=req.sourceSha256, format="pdf", engineVersion="test", targets=[
+        NativeTarget(targetId=binding["targetId"], kind="PDF_FIELD", currentText="old", nativeLocator={})])
+    monkeypatch.setattr(document_pipeline, "inspect_document", AsyncMock(return_value=doc))
+    monkeypatch.setattr(PdfDocumentAdapter, "apply", AsyncMock(return_value=(base64.b64decode(req.sourceBase64),
+        {"stage": "PDFBOX_REQUIRED", "placements": [binding]})))
+    agent = SimpleNamespace(plan_document=AsyncMock(side_effect=AssertionError("native field plan is deterministic")))
+    result = asyncio.run(document_pipeline.generate_document(req, agent))
+    agent.plan_document.assert_not_awaited()
+    op = result["writePlan"]["operations"][0]
+    assert (op["operation"], op["expectedText"], op["start"], op["end"], op["box"]) == (
+        "set_field", "old", 0, 3, None)
+    changed = PlanSelection(operations=[EditOperation.model_validate({**op, "end": 4})],
+                            unresolvedTargets=[], scopeTargetIds=[binding["targetId"]])
+    with pytest.raises(DocumentError) as error:
+        validate_plan(req, doc, changed)
+    assert error.value.reason == "INVALID_TEXT_RANGE"
+    other = NativeTarget(targetId="pdf-field:Other", kind="PDF_FIELD", currentText="", nativeLocator={})
+    with pytest.raises(DocumentError) as error:
+        validate_plan(req.model_copy(update={"scopeTargetIds": [binding["targetId"], other.targetId]}),
+            doc.model_copy(update={"targets": [*doc.targets, other]}),
+            PlanSelection(operations=[EditOperation(targetId=other.targetId, operation="set_field",
+                expectedText="", start=0, end=0, valueRef="company:name", box=None, reason="test")],
+                unresolvedTargets=[], scopeTargetIds=[other.targetId]))
+    assert error.value.reason == "SAVED_BINDING_CHANGED"
+
+
+def test_pdf_field_and_page_box_contracts_remain_distinct():
+    from app.application_preparation.document import DocumentBox
+    req = request(format="pdf")
+    field = NativeTarget(targetId="pdf-field:Name", kind="PDF_FIELD", currentText="", nativeLocator={})
+    page = NativeTarget(targetId="page-0", kind="PDF_PAGE", currentText="", nativeLocator={})
+    slot = NativeTarget(targetId="pdf-blank:0:ffdetr-0", kind="PDF_INPUT", currentText="", nativeLocator={})
+    doc = DocumentMap(sourceSha256=req.sourceSha256, format="pdf", engineVersion="test", targets=[field, page, slot])
+    box = DocumentBox(x=.1, y=.1, width=.2, height=.1)
+    for target_id, wrong_box in ((field.targetId, box), (page.targetId, None)):
+        with pytest.raises(DocumentError) as error:
+            validate_plan(req, doc, PlanSelection(operations=[EditOperation(targetId=target_id,
+                operation="set_field", expectedText="", start=0, end=0, valueRef="company:name",
+                box=wrong_box, reason="test")], unresolvedTargets=[], scopeTargetIds=[target_id]))
+        assert error.value.code == "APPLICATION_DOCUMENT_MAPPING_FAILED"
+    validate_plan(req, doc, PlanSelection(operations=[EditOperation(targetId=slot.targetId,
+        operation="set_field", expectedText="", start=0, end=0, valueRef="company:name",
+        box=None, reason="measured input slot")], unresolvedTargets=[], scopeTargetIds=[slot.targetId]))
+
+
 @pytest.mark.parametrize('required',[False,True])
 def test_unmapped_optional_field_is_explicit_and_required_field_still_fails(required):
     from app.application_preparation.document_contract import MapDocumentRequest,MappingSelection,validate_mapping
@@ -694,6 +804,88 @@ def test_nearby_unit_text_is_not_mistaken_for_a_read_only_question_heading(monke
     assert result["bindings"][0]["targetId"] == "employees"
 
 
+def test_split_printed_label_paragraphs_cannot_become_mapping_targets(monkeypatch):
+    from unittest.mock import AsyncMock
+    from app.application_preparation import document_pipeline
+    from app.application_preparation.document_contract import MapDocumentRequest, MappingSelection
+    req = MapDocumentRequest(**request().model_dump(exclude={"facts"}), fields=[
+        {"id": "company:representative", "label": "대표자성명", "guidance": "", "required": False},
+        {"id": "company:registration", "label": "사업자등록번호", "guidance": "", "required": False}])
+    doc = DocumentMap(sourceSha256=req.sourceSha256, format="hwpx", engineVersion="test", targets=[
+        NativeTarget(targetId="label-cell", kind="cell", currentText="사업자등록번호", nativeLocator={}),
+        NativeTarget(targetId="label-p1", kind="paragraph", currentText="사업자",
+                     nativeLocator={"parent": "label-cell", "fieldLabels": ["대표자성명"]}),
+        NativeTarget(targetId="label-p2", kind="paragraph", currentText="등록번호",
+                     nativeLocator={"parent": "label-cell", "fieldLabels": ["대표자성명"]}),
+        NativeTarget(targetId="representative", kind="paragraph", currentText="",
+                     nativeLocator={"fieldLabels": ["대표자성명"]}),
+        NativeTarget(targetId="registration", kind="paragraph", currentText="",
+                     nativeLocator={"fieldLabels": ["사업자등록번호"]})])
+    selection = MappingSelection(bindings=[
+        {"factId": "company:representative", "targetId": "representative", "box": None},
+        {"factId": "company:registration", "targetId": "registration", "box": None}],
+        scopeTargetIds=["representative", "registration"], unmappedFieldIds=[])
+    async def choose(_request, document, **_repair):
+        by_id = {target.targetId: target for target in document.targets}
+        assert not by_id["label-p1"].editable and not by_id["label-p2"].editable
+        assert by_id["representative"].editable and by_id["registration"].editable
+        return selection
+    monkeypatch.setattr(document_pipeline, "inspect_document", AsyncMock(return_value=doc))
+    result = asyncio.run(document_pipeline.map_document(req, SimpleNamespace(map_document=choose)))
+    assert {binding["targetId"] for binding in result["bindings"]} == {"representative", "registration"}
+
+
+def test_large_hwpx_mapping_sends_only_all_native_label_candidates(monkeypatch):
+    import json
+    from unittest.mock import AsyncMock
+    from app.application_preparation import document_pipeline
+    from app.application_preparation.agent import ApplicationPreparationAgent
+    from app.application_preparation.document_contract import MapDocumentRequest
+    req = MapDocumentRequest(**request().model_dump(exclude={"facts"}), fields=[
+        {"id": "company:name", "label": "기업명", "guidance": "", "required": False}])
+    candidates = [NativeTarget(targetId=name, kind="paragraph", currentText="",
+        nativeLocator={"fieldLabels": ["기업명"], "bindingEligible": True})
+        for name in ("t1.r1.c1.p1", "t2.r1.c1.p1")]
+    filler = [NativeTarget(targetId=f"b{i}", kind="body_para", currentText="x" * 5200,
+                           nativeLocator={}) for i in range(80)]
+    doc = DocumentMap(sourceSha256=req.sourceSha256, format="hwpx", engineVersion="test",
+                      targets=[*candidates, *filler])
+    monkeypatch.setattr(document_pipeline.HwpxDocumentAdapter, "inspect", AsyncMock(return_value=doc))
+    monkeypatch.setattr(document_pipeline, "assist_with_kordoc", AsyncMock())
+    inspected = asyncio.run(document_pipeline.inspect_document(Path("unused.hwpx"), req))
+    agent = ApplicationPreparationAgent(model=None, run_timeout_seconds=1)
+
+    async def invoke(selection_type, _instructions, content, *_args, **_kwargs):
+        payload = json.loads(content[0]["text"])
+        assert {item["targetId"] for item in payload["documentMap"]["targets"]} == {
+            candidate.targetId for candidate in candidates}
+        assert set(payload["fieldCandidates"]["company:name"]) == {
+            candidate.targetId for candidate in candidates}
+        assert len(content[0]["text"]) < 400000
+        return selection_type.model_validate({"assignments": {"company:name": {"targetId": candidates[0].targetId}},
+                                              "scope": {candidate.targetId: True for candidate in candidates}})
+
+    monkeypatch.setattr(agent, "_invoke", invoke)
+    selection = asyncio.run(agent.map_document(req, inspected))
+    assert selection.bindings[0].targetId == candidates[0].targetId
+    assert set(selection.scopeTargetIds) == {candidate.targetId for candidate in candidates}
+
+
+def test_large_hwpx_without_a_labeled_candidate_fails_before_model(monkeypatch):
+    from unittest.mock import AsyncMock
+    from app.application_preparation import document_pipeline
+    from app.application_preparation.document_contract import MapDocumentRequest
+    req = MapDocumentRequest(**request().model_dump(exclude={"facts"}), fields=[
+        {"id": "company:name", "label": "기업명", "guidance": "", "required": False}])
+    doc = DocumentMap(sourceSha256=req.sourceSha256, format="hwpx", engineVersion="test",
+        targets=[NativeTarget(targetId=f"b{i}", kind="body_para", currentText="x" * 5200,
+                              nativeLocator={}) for i in range(80)])
+    monkeypatch.setattr(document_pipeline.HwpxDocumentAdapter, "inspect", AsyncMock(return_value=doc))
+    with pytest.raises(DocumentError) as error:
+        asyncio.run(document_pipeline.inspect_document(Path("unused.hwpx"), req))
+    assert error.value.reason == "HWPX_MAPPING_CANDIDATE_MISSING"
+
+
 def test_compound_table_question_requires_reanalysis_before_calling_model(monkeypatch):
     from unittest.mock import AsyncMock
     from app.application_preparation import document_pipeline
@@ -722,7 +914,278 @@ def test_hwpx_context_uses_mcp_table_spans_and_column_evidence():
     assert contexts["t1.r2.c0"]["fieldLabels"] == ["직위"]
     assert contexts["t1.r2.c1"]["fieldLabels"] == ["성명"]
     assert contexts["t1.r2.c1"]["labelCells"] == [{"targetId": "t1.r0.c1", "text": "성명"}]
+    assert contexts["t1.r2.c0"]["tableClassification"] == "FORM_TABLE"
+    assert contexts["t1.r2.c0"]["bindingEligible"] is True
     assert "b1" not in contexts
+
+
+def test_hwpx_only_printed_blank_slot_excludes_empty_sibling_from_mapping(monkeypatch, tmp_path):
+    from contextlib import asynccontextmanager
+    from unittest.mock import AsyncMock
+    from app.application_preparation import document_adapters
+    from app.application_preparation.agent import ApplicationPreparationAgent
+    from app.application_preparation.document_contract import MapDocumentRequest, MappingSelection, validate_mapping
+
+    source = b"synthetic hwpx source"
+    path = tmp_path / "source.hwpx"
+    path.write_bytes(source)
+    cell_id = "t3.r2.c2"
+    blank_id, slot_id = cell_id + ".p1", cell_id + ".p2"
+    region = {"target": cell_id, "kind": "cell", "section": "Contents/section0.xml", "table": 3,
+              "row": 2, "col": 2, "paragraph_count": 2, "text": "(     )", "editable": True,
+              "paragraphs": [{"target": blank_id, "text": "", "marker": ""},
+                             {"target": slot_id, "text": "(     )", "marker": ""}]}
+    context = {"sourceCellText": "(     )", "rowLabels": ["담당자"], "fieldLabels": ["담당자"],
+               "formFields": [], "bindingEligible": True}
+
+    @asynccontextmanager
+    async def session(_kind, _directory):
+        yield SimpleNamespace(call=AsyncMock(return_value={"source_sha256": digest(source),
+                                               "regions": [region], "unsupported_controls": []}))
+
+    monkeypatch.setattr(document_adapters, "validate_hwpx", lambda _path: None)
+    monkeypatch.setattr(document_adapters, "document_session", session)
+    monkeypatch.setattr(document_adapters, "analyze_cells", AsyncMock(return_value={cell_id: context}))
+    document = asyncio.run(document_adapters.HwpxDocumentAdapter().inspect(path))
+    by_id = {item.targetId: item for item in document.targets}
+    assert [item.targetId for item in document.targets] == [cell_id, blank_id, slot_id]
+    assert by_id[blank_id].nativeLocator["parent"] == by_id[slot_id].nativeLocator["parent"] == cell_id
+    assert by_id[blank_id].nativeLocator["target"] == blank_id
+    assert by_id[slot_id].nativeLocator["target"] == slot_id
+    assert by_id[blank_id].nativeLocator["bindingEligible"] is False
+    assert by_id[slot_id].nativeLocator["bindingEligible"] is True
+    assert by_id[blank_id].editable and by_id[slot_id].editable
+
+    mapping = MapDocumentRequest(sourceBase64=base64.b64encode(source).decode(), sourceSha256=digest(source),
+        format="hwpx", scope="신청서", fields=[{"id": "staff:name", "label": "담당자", "guidance": "", "required": True}])
+    invalid = MappingSelection(bindings=[{"factId": "staff:name", "targetId": blank_id, "box": None}],
+                               scopeTargetIds=[blank_id, slot_id], unmappedFieldIds=[])
+    with pytest.raises(DocumentError, match="APPLICATION_DOCUMENT_MAPPING_FAILED"):
+        validate_mapping(mapping, document, invalid)
+    valid = MappingSelection(bindings=[{"factId": "staff:name", "targetId": slot_id, "box": None}],
+                             scopeTargetIds=[blank_id, slot_id], unmappedFieldIds=[])
+    validate_mapping(mapping, document, valid)
+
+    agent = ApplicationPreparationAgent(model=None, run_timeout_seconds=1)
+    async def invoke(selection_type, _instructions, content, *_args, **_kwargs):
+        payload = __import__("json").loads(content[0]["text"])
+        assert payload["fieldCandidates"] == {"staff:name": [slot_id]}
+        return selection_type.model_validate({"assignments": {"staff:name": {"targetId": slot_id}},
+                                              "scope": {blank_id: True, slot_id: True}})
+    monkeypatch.setattr(agent, "_invoke", invoke)
+    assert asyncio.run(agent.map_document(mapping, document)).bindings[0].targetId == slot_id
+
+    write = request(sourceBase64=base64.b64encode(source).decode(), sourceSha256=digest(source),
+                    bindings=[{"factId": "company:name", "targetId": slot_id, "box": None}])
+    plan = validate_plan(write, document, PlanSelection(operations=[operation(slot_id,
+        operation="replace_range", expectedText="(     )", start=1, end=6)],
+        scopeTargetIds=[blank_id, slot_id], unresolvedTargets=[]))
+    assert plan.operations[0].targetId == slot_id
+    old_binding = request(sourceBase64=base64.b64encode(source).decode(), sourceSha256=digest(source),
+                          bindings=[{"factId": "company:name", "targetId": blank_id, "box": None}])
+    with pytest.raises(DocumentError) as stale:
+        validate_plan(old_binding, document, PlanSelection(operations=[operation(blank_id)],
+            scopeTargetIds=[blank_id, slot_id], unresolvedTargets=[]))
+    assert stale.value.reason == "SAVED_BINDING_CHANGED"
+    with pytest.raises(DocumentError):
+        validate_plan(write, document, PlanSelection(operations=[operation("logical:" + cell_id)],
+            scopeTargetIds=[blank_id, slot_id], unresolvedTargets=[]))
+
+
+def test_hwpx_paragraph_eligibility_preserves_ambiguous_cells():
+    from app.application_preparation.document_adapters import _explicit_hwpx_input_paragraph
+
+    base = {"kind": "cell", "editable": True, "paragraph_count": 2, "text": "",
+            "paragraphs": [{"target": "cell.p1", "text": "", "marker": ""},
+                           {"target": "cell.p2", "text": "", "marker": ""}]}
+    context = {"rowLabels": ["항목"], "formFields": []}
+    assert _explicit_hwpx_input_paragraph(base, context) is None
+    base["paragraphs"][1]["text"] = "예시 설명"
+    base["text"] = "예시 설명"
+    assert _explicit_hwpx_input_paragraph(base, context) is None
+    base["paragraphs"][1]["text"] = "(    )"
+    base["text"] = "(    )"
+    assert _explicit_hwpx_input_paragraph(base, {**context, "formFields": [{"field_id": "cell"}]}) is None
+    assert _explicit_hwpx_input_paragraph(base, {**context, "rowLabels": []}) is None
+    base["paragraphs"] = [{"target": "cell.p1", "text": "(    )", "marker": ""},
+                          {"target": "cell.p2", "text": "", "marker": ""}]
+    assert _explicit_hwpx_input_paragraph(base, context) == "cell.p1"
+    base["paragraphs"][1]["text"] = "(   )"
+    base["text"] = "(    )(   )"
+    assert _explicit_hwpx_input_paragraph(base, context) is None
+
+
+def test_table_gate_excludes_only_confident_layout_and_preserves_ambiguous_cells():
+    from app.application_preparation.hwpx_form_analysis import table_contexts
+
+    layout = [{"index": 1, "cells": [
+        {"field_id": "t1.r0.c0", "row": 0, "col": 0, "text": "신청", "row_span": 1, "col_span": 1, "is_empty": False},
+        {"field_id": "t1.r0.c1", "row": 0, "col": 1, "text": "→ 평가 → 선정", "row_span": 1, "col_span": 1, "is_empty": False},
+    ]}]
+    layout_contexts = table_contexts(layout, [])
+    assert set(layout_contexts) == {"t1.r0.c0", "t1.r0.c1"}
+    assert {item["tableClassification"] for item in layout_contexts.values()} == {"LAYOUT_TABLE"}
+    assert all(item["bindingEligible"] is False for item in layout_contexts.values())
+
+    ambiguous = [{"index": 2, "cells": [
+        {"field_id": "t2.r0.c0", "row": 0, "col": 0, "text": "기업명", "row_span": 1, "col_span": 1, "is_empty": False},
+        {"field_id": "t2.r0.c1", "row": 0, "col": 1, "text": "", "row_span": 1, "col_span": 1, "is_empty": True},
+    ]}]
+    ambiguous_contexts = table_contexts(ambiguous, [])
+    assert set(ambiguous_contexts) == {"t2.r0.c0", "t2.r0.c1"}
+    assert {item["tableClassification"] for item in ambiguous_contexts.values()} == {"AMBIGUOUS"}
+    assert all(item["bindingEligible"] is True for item in ambiguous_contexts.values())
+    assert all(item["tableClassificationReviewRequired"] is True for item in ambiguous_contexts.values())
+
+
+def test_numbered_section_banner_spacers_are_not_treated_as_form_inputs():
+    from app.application_preparation.hwpx_form_analysis import table_contexts
+
+    cells = [
+        {"field_id": "t1.r0.c0", "row": 0, "col": 0, "text": "1", "row_span": 1, "col_span": 1, "is_empty": False},
+        {"field_id": "t1.r0.c1", "row": 0, "col": 1, "text": "", "row_span": 1, "col_span": 1, "is_empty": True},
+        {"field_id": "t1.r0.c2", "row": 0, "col": 2, "text": "사업개요", "row_span": 1, "col_span": 1, "is_empty": False},
+        {"field_id": "t1.r0.c3", "row": 0, "col": 3, "text": "", "row_span": 2, "col_span": 1, "is_empty": True},
+        {"field_id": "t1.r1.c3", "row": 1, "col": 3, "text": "", "row_span": 1, "col_span": 1, "is_empty": True},
+    ]
+    fields = [
+        {"field_id": "t1.r0.c1", "label": "1", "kind": "empty_cell", "capacity_hint": 0},
+        {"field_id": "t1.r0.c3", "label": "사업개요", "kind": "empty_cell", "capacity_hint": 1},
+    ]
+    contexts = table_contexts([{"index": 1, "cells": cells}], fields)
+    assert {item["tableClassification"] for item in contexts.values()} == {"LAYOUT_TABLE"}
+    assert {item["tableClassificationConfidence"] for item in contexts.values()} == {0.98}
+    assert all(item["bindingEligible"] is False for item in contexts.values())
+    assert {tuple(item["tableClassificationEvidence"]) for item in contexts.values()} == {
+        ("numbered_section_banner", "empty_spacer_fields"),
+    }
+
+
+def test_reading_order_metadata_never_changes_hwp_native_targets(tmp_path):
+    from app.application_preparation.document import DocumentTarget
+    from app.application_preparation.document_pipeline import inspect_document
+
+    req = hwp_request()
+    req.hwpTargets = [
+        DocumentTarget(id="s0-p9", text="첫 문단", context="신청서"),
+        DocumentTarget(id="s2-t1-r0-c1-p3", text="둘째 문단", context="기업 현황"),
+    ]
+    document = asyncio.run(inspect_document(tmp_path / "unused.hwp", req))
+    assert [target.targetId for target in document.targets] == ["s0-p9", "s2-t1-r0-c1-p3"]
+    assert [target.nativeLocator["paragraph"] for target in document.targets] == ["s0-p9", "s2-t1-r0-c1-p3"]
+    assert [target.analysis.nativeOrderIndex for target in document.targets] == [0, 1]
+    assert [target.analysis.semanticOrderIndex for target in document.targets] == [0, 1]
+    assert [target.analysis.readingOrderIndex for target in document.targets] == [0, 1]
+    assert all(target.analysis.readingOrderStatus == "PRESERVED" for target in document.targets)
+    assert document.documentAnalysis.readingOrder.nativeTargetsChanged is False
+    assert document.documentAnalysis.readingOrder.metrics == {
+        "totalTargets": 2, "reorderedTargets": 0, "reviewRequiredTargets": 0, "preservedTargets": 2,
+    }
+
+
+def test_hwpx_semantic_order_corrects_only_simple_local_label_input_pair():
+    from copy import deepcopy
+    from app.application_preparation.hwpx_form_analysis import annotate_semantic_reading_order
+
+    input_locator = {"table": 1, "row": 0, "col": 1, "rowSpan": 1, "colSpan": 1,
+                     "fieldLabels": ["기업명"], "formFields": [{"field_id": "t1.r0.c1"}],
+                     "labelCells": [{"targetId": "t1.r0.c0", "text": "기업명"}]}
+    label_locator = {"table": 1, "row": 0, "col": 0, "rowSpan": 1, "colSpan": 1,
+                     "fieldLabels": [], "formFields": [], "labelCells": []}
+    targets = [
+        NativeTarget(targetId="t1.r0.c1", nativeLocator=input_locator, kind="cell", currentText="",
+                     analysis={"tableClassification": "FORM_TABLE"}),
+        NativeTarget(targetId="t1.r0.c0", nativeLocator=label_locator, kind="cell", currentText="기업명",
+                     analysis={"tableClassification": "FORM_TABLE"}),
+    ]
+    original_ids = [target.targetId for target in targets]
+    original_locators = deepcopy([target.nativeLocator for target in targets])
+    annotate_semantic_reading_order(targets)
+    assert [target.targetId for target in targets] == original_ids
+    assert [target.nativeLocator for target in targets] == original_locators
+    assert [target.analysis.nativeOrderIndex for target in targets] == [0, 1]
+    assert [target.analysis.semanticOrderIndex for target in targets] == [1, 0]
+    assert all(target.analysis.readingOrderStatus == "LOCAL_REORDERED" for target in targets)
+
+
+def test_hwpx_semantic_order_preserves_merged_or_repeated_form_structure():
+    from app.application_preparation.hwpx_form_analysis import annotate_semantic_reading_order
+
+    targets = [
+        NativeTarget(targetId="t1.r0.c1", nativeLocator={"table": 1, "row": 0, "col": 1,
+            "rowSpan": 1, "colSpan": 2, "fieldLabels": ["기업명"],
+            "formFields": [{"field_id": "t1.r0.c1"}],
+            "labelCells": [{"targetId": "t1.r0.c0", "text": "기업명"}]},
+            kind="cell", currentText="", analysis={"tableClassification": "FORM_TABLE"}),
+        NativeTarget(targetId="t1.r0.c0", nativeLocator={"table": 1, "row": 0, "col": 0,
+            "rowSpan": 1, "colSpan": 1, "fieldLabels": [], "formFields": [], "labelCells": []},
+            kind="cell", currentText="기업명", analysis={"tableClassification": "FORM_TABLE"}),
+    ]
+    annotate_semantic_reading_order(targets)
+    assert [target.analysis.semanticOrderIndex for target in targets] == [0, 1]
+    assert all(target.analysis.readingOrderStatus == "REVIEW_REQUIRED" for target in targets)
+    assert {tuple(target.analysis.readingOrderReason) for target in targets} == {
+        ("merged_or_duplicate_cell_structure",),
+    }
+
+
+def test_heading_metadata_is_scope_only_and_keeps_target_identity(monkeypatch):
+    from app.application_preparation.hwpx_form_analysis import analyze_cells
+    from unittest.mock import AsyncMock
+
+    monkeypatch.setattr("app.application_preparation.hwpx_form_analysis.source_table_headings", lambda _path: {1: ["1. 기업 현황"]})
+    cells = [
+        {"field_id": "t1.r0.c0", "row": 0, "col": 0, "text": "기업명", "row_span": 1, "col_span": 1, "is_empty": False},
+        {"field_id": "t1.r0.c1", "row": 0, "col": 1, "text": "", "row_span": 1, "col_span": 1, "is_empty": True},
+    ]
+    session = SimpleNamespace(call=AsyncMock(side_effect=[
+        {"tables": [{"index": 1, "cells": cells}]},
+        {"fields": [{"field_id": "t1.r0.c1", "label": "기업명", "kind": "empty_cell"}]},
+    ]))
+    result = asyncio.run(analyze_cells(session, Path("form.hwpx"), []))
+    assert set(result) == {"t1.r0.c0", "t1.r0.c1"}
+    assert result["t1.r0.c1"]["semanticSection"] == "1. 기업 현황"
+    assert result["t1.r0.c1"]["headingConfidence"] == 0.95
+    assert result["t1.r0.c1"]["headingStatus"] == "ACCEPTED"
+    assert result["t1.r0.c1"]["sectionPath"] == ["1. 기업 현황"]
+    assert "followed_by_form_table" in result["t1.r0.c1"]["headingReason"]
+
+
+def test_heading_detector_uses_form_density_without_promoting_ordinary_short_text():
+    from app.application_preparation.document_contract import mapping_label_key
+    from app.application_preparation.hwpx_form_analysis import semantic_heading
+
+    heading = "기업 현황"
+    accepted = semantic_heading([heading], table_classification="FORM_TABLE", form_field_count=3,
+                                occurrences={mapping_label_key(heading): 1})
+    assert accepted[0] == heading
+    assert accepted[3] == "ACCEPTED"
+    assert "multiple_following_form_fields" in accepted[2]
+
+    ordinary = "제출 서류는 다음과 같습니다."
+    preserved = semantic_heading([ordinary], table_classification="FORM_TABLE", form_field_count=3,
+                                 occurrences={mapping_label_key(ordinary): 1})
+    assert preserved == (None, None, ["sentence_ending"], "PRESERVED")
+
+    for non_heading in ("중소벤처기업부 장관", "* 별첨 3 참고", "◦ 기타 제출서류 각 1부"):
+        rejected = semantic_heading([non_heading], table_classification="FORM_TABLE", form_field_count=3,
+                                    occurrences={mapping_label_key(non_heading): 1})
+        assert rejected == (None, None, ["note_bullet_or_signature"], "PRESERVED")
+
+    preferred = semantic_heading(["Ⅰ. 기업 일반현황", "(단위:원)"], table_classification="FORM_TABLE",
+                                 form_field_count=3, occurrences={mapping_label_key("Ⅰ. 기업 일반현황"): 1})
+    assert preferred[0] == "Ⅰ. 기업 일반현황"
+    assert preferred[3] == "ACCEPTED"
+    for non_heading in ("(단위:백만원)", "서 초 구 청 장  귀 하"):
+        rejected = semantic_heading([non_heading], table_classification="FORM_TABLE", form_field_count=3,
+                                    occurrences={mapping_label_key(non_heading): 1})
+        assert rejected == (None, None, ["note_bullet_or_signature"], "PRESERVED")
+
+    ambiguous = "참고"
+    weak = semantic_heading([ambiguous], table_classification="AMBIGUOUS", form_field_count=0,
+                            occurrences={mapping_label_key(ambiguous): 1})
+    assert weak[0] is None
+    assert weak[3] == "PRESERVED"
 
 
 def test_hwpx_label_search_preserves_ambiguity_instead_of_picking_first_cell(monkeypatch):

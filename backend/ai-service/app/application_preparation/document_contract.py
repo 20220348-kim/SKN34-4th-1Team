@@ -12,8 +12,8 @@ from app.application_preparation.models import Contract
 from app.application_preparation.document import DocumentBox, DocumentFact, DocumentTarget, DocumentPlacement
 
 CONTRACT = "application-document-mcp-v1"
-MAP_VERSION = "native-map-v6-hangeul-ffdetr"
-PLAN_VERSION = "confirmed-facts-bound-v5-native-pdf"
+MAP_VERSION = "native-map-v15-pdf-field-scope-options"
+PLAN_VERSION = "confirmed-facts-bound-v6-native-pdf-field-plan"
 ENGINES = {
     "hwp": "kr.dogfoot/hwplib@1.1.11+govbiz-ranges-v1",
     "hwpx": "pblsketch/Hangeul-mcp@b6fef153714e0cc9ce566df0da4082fc57c4fda4+govbiz-ranges-v4-body-positions",
@@ -39,6 +39,45 @@ class DocumentError(RuntimeError):
         super().__init__(self.code)
 
 
+class NativeTargetAnalysis(Contract):
+    """Read-only semantic hints. None of these values is a native edit address."""
+
+    nativeOrderIndex: int | None = Field(default=None, ge=0)
+    semanticOrderIndex: int | None = Field(default=None, ge=0)
+    # Compatibility alias for semanticOrderIndex.
+    readingOrderIndex: int | None = Field(default=None, ge=0)
+    readingOrderConfidence: float | None = Field(default=None, ge=0, le=1)
+    readingOrderStatus: Literal["PRESERVED", "LOCAL_REORDERED", "REVIEW_REQUIRED", "UNRESOLVED"] = "UNRESOLVED"
+    readingOrderReason: list[str] = Field(default_factory=list, max_length=20)
+    semanticSection: str | None = Field(default=None, max_length=1000)
+    headingConfidence: float | None = Field(default=None, ge=0, le=1)
+    headingStatus: Literal["ACCEPTED", "REVIEW_REQUIRED", "PRESERVED"] = "PRESERVED"
+    headingReason: list[str] = Field(default_factory=list, max_length=20)
+    sectionPath: list[str] = Field(default_factory=list, max_length=20)
+    tableClassification: Literal["FORM_TABLE", "DATA_TABLE", "LAYOUT_TABLE", "DECORATIVE_TABLE", "AMBIGUOUS"] | None = None
+    tableClassificationConfidence: float | None = Field(default=None, ge=0, le=1)
+    tableClassificationEvidence: list[str] = Field(default_factory=list, max_length=20)
+    reviewRequired: bool = False
+
+
+class DocumentAnalysisStage(Contract):
+    status: Literal["APPLIED", "SKIPPED", "REVIEW_REQUIRED", "PASSED", "PENDING_EXTERNAL"] = "SKIPPED"
+    targetCount: int = Field(default=0, ge=0)
+    resultCount: int = Field(default=0, ge=0)
+    reviewCount: int = Field(default=0, ge=0)
+    nativeTargetsChanged: Literal[False] = False
+    note: str = Field(default="", max_length=200)
+    metrics: dict[str, int] = Field(default_factory=dict)
+
+
+class DocumentAnalysisMetadata(Contract):
+    readingOrder: DocumentAnalysisStage = Field(default_factory=DocumentAnalysisStage)
+    heading: DocumentAnalysisStage = Field(default_factory=DocumentAnalysisStage)
+    tableClassification: DocumentAnalysisStage = Field(default_factory=DocumentAnalysisStage)
+    mapping: DocumentAnalysisStage = Field(default_factory=DocumentAnalysisStage)
+    verification: DocumentAnalysisStage = Field(default_factory=DocumentAnalysisStage)
+
+
 class NativeTarget(Contract):
     targetId: str = Field(min_length=1, max_length=500)
     nativeLocator: dict
@@ -48,6 +87,7 @@ class NativeTarget(Contract):
     context: str = Field(default="", max_length=1000)
     editable: bool = True
     unsupportedReason: str | None = None
+    analysis: NativeTargetAnalysis = Field(default_factory=NativeTargetAnalysis)
 
 
 class DocumentMap(Contract):
@@ -60,6 +100,7 @@ class DocumentMap(Contract):
     auxiliaryStatus: str = "SKIPPED_PRIMARY_SUFFICIENT"
     auxiliaryText: str = Field(default="", max_length=40000)
     unmappedFieldIds: list[str] = Field(default_factory=list, max_length=200)
+    documentAnalysis: DocumentAnalysisMetadata = Field(default_factory=DocumentAnalysisMetadata)
 
 
 class EditOperation(Contract):
@@ -92,6 +133,7 @@ class PdfFieldInfo(Contract):
     fieldType: str
     editable: bool
     options: list[str] = Field(default_factory=list, max_length=3000)
+    optionMappings: list[dict[str, str]] = Field(default_factory=list, max_length=3000)
     widgets: list[dict] = Field(default_factory=list, max_length=3000)
 
 
@@ -245,6 +287,9 @@ def validate_plan(request: GenerateDocumentRequest, document: DocumentMap, selec
         target = targets.get(op.targetId)
         if target is None or op.targetId not in scope or not target.editable:
             raise DocumentError("MAPPING_FAILED", reason="TARGET_NOT_EDITABLE_OR_OUT_OF_SCOPE")
+        if (request.format == "hwpx" and op.valueRef is not None
+                and not target.nativeLocator.get("bindingEligible", True)):
+            raise DocumentError("MAPPING_FAILED", reason="SAVED_BINDING_CHANGED" if request.bindings else "TARGET_NOT_EDITABLE_OR_OUT_OF_SCOPE")
         if op.expectedText != target.currentText:
             raise DocumentError("SOURCE_CHANGED")
         if not 0 <= op.start <= op.end <= len(target.currentText):

@@ -14,6 +14,7 @@ class ApplicationDocumentExceptionHandler {
     fun handle(error: ApplicationDocumentException): ResponseEntity<ProblemDetail> {
         val problem = ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_CONTENT, error.message ?: "문서를 생성하지 못했습니다.")
         problem.setProperty("code", error.code)
+        error.mappingMigration?.let { problem.setProperty("mappingMigration", it) }
         return ResponseEntity.unprocessableContent().cacheControl(CacheControl.noStore()).body(problem)
     }
 }

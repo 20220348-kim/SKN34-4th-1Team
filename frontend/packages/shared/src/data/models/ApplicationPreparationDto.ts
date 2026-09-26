@@ -143,7 +143,22 @@ export const applicationPreparationSchema = z.object({
     context.addIssue({ code: 'custom', message: '지원 분야와 양식 계약이 일치하지 않습니다.' })
   }
 })
-export const applicationPreparationProblemSchema = z.object({ code: z.string() })
+export const applicationDocumentMigrationNoticeSchema = z.object({
+  status: z.literal('MAPPING_CHANGED'),
+  approvalToken: z.string().regex(/^[0-9a-f-]{36}$/),
+  expectedRevision: id,
+  expiresInSeconds: z.number().int().positive().max(900),
+  changes: z.array(z.object({
+    fieldLabel: z.string().min(1).max(210),
+    changeType: z.enum(['TARGET_ADDED', 'TARGET_REMOVED', 'TARGET_CHANGED', 'BOX_CHANGED', 'KIND_CHANGED', 'SCOPE_CHANGED']),
+    oldLocation: z.string().max(600).nullable(),
+    newLocation: z.string().max(600).nullable(),
+  })).min(1).max(201),
+})
+
+export const applicationPreparationProblemSchema = z.object({
+  code: z.string(), mappingMigration: applicationDocumentMigrationNoticeSchema.optional(),
+})
 
 export const applicationInterpretationSchema = z.object({
   runId: id,

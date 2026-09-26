@@ -46,6 +46,25 @@ it('rejects generation results from another revision or without files', async ()
   await expect(repository.generateDocuments(1, 3)).rejects.toThrow('응답 형식')
 })
 
+it('keeps the owner-scoped migration diff and confirms it with the same revision', async () => {
+  const notice = { status: 'MAPPING_CHANGED', approvalToken: '12345678-1234-1234-1234-123456789abc',
+    expectedRevision: 3, expiresInSeconds: 900, changes: [{ fieldLabel: '기업 개요 · 업체명',
+      changeType: 'TARGET_CHANGED', oldLocation: '표 1 · 기업명', newLocation: '표 2 · 기업명' }] }
+  const confirmed = { status: 'REGENERATION_REQUIRED', preparationId: 1, inputRevision: 3,
+    formVersionId: 'approved-form-v2' }
+  const fetcher = vi.fn().mockResolvedValueOnce(Response.json({
+    code: 'APPLICATION_DOCUMENT_FORM_REANALYSIS_REQUIRED', mappingMigration: notice,
+  }, { status: 422 })).mockResolvedValueOnce(Response.json(confirmed))
+  vi.stubGlobal('fetch', fetcher)
+  const repository = new ApplicationPreparationRepositoryImpl()
+  await expect(repository.generateDocuments(1, 3)).rejects.toMatchObject({
+    code: 'APPLICATION_DOCUMENT_FORM_REANALYSIS_REQUIRED', mappingMigration: notice,
+  })
+  expect(await repository.confirmDocumentMappingMigration(1, 3, notice.approvalToken)).toEqual(confirmed)
+  expect(fetcher.mock.calls[1][0]).toContain('/1/documents/mapping-migration/confirm')
+  expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({ expectedRevision: 3, approvalToken: notice.approvalToken })
+})
+
 const form = {
   formVersionId: 'verified-form-v1',
   sourceCode: 'BIZINFO',

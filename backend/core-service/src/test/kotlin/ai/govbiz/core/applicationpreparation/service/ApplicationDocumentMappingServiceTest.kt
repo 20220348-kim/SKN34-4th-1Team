@@ -6,6 +6,7 @@ import ai.govbiz.core.applicationpreparation.controller.dto.ApplicationFormRespo
 import ai.govbiz.core.applicationpreparation.domain.*
 import ai.govbiz.core.applicationpreparation.repository.ApplicationFormSnapshotRepository
 import ai.govbiz.core.applicationpreparation.service.exception.ApplicationDocumentException
+import ai.govbiz.core.applicationpreparation.service.exception.ApplicationDocumentMappingChangedException
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import org.mockito.ArgumentMatchers.any
@@ -48,5 +49,81 @@ class ApplicationDocumentMappingServiceTest {
         stub()
         val error=assertThrows(ApplicationDocumentException::class.java) { service.ensure(form(true),bytes,"hwpx") }
         assertEquals("APPLICATION_DOCUMENT_MAPPING_FAILED",error.code)
+    }
+
+    @Test fun changedPipelineRemapsAndReplacesSavedBindingsForTheSameSource() {
+        stub()
+        val stale = ApplicationDocumentMapSnapshot("application-document-mcp-v1", "a".repeat(64), hash,
+            "old-map", "test-engine", listOf(ApplicationDocumentPlacement("company:name", "name-cell")),
+            listOf("name-cell"), mapOf("targets" to listOf(mapOf("targetId" to "name-cell"))))
+        val form = form(false).copy(documentMapSnapshot = stale)
+        `when`(snapshots.findByVersion(form.formVersionId)).thenReturn(form)
+        `when`(snapshots.attachDocumentMap(eq(form.formVersionId) ?: form.formVersionId,
+            any(ApplicationDocumentMapSnapshot::class.java) ?: stale))
+            .thenAnswer { it.getArgument(1) }
+
+        val mapped = service.ensure(form, bytes, "hwpx")
+
+        assertEquals("b".repeat(64), mapped.pipelineVersion)
+        assertEquals(listOf("name-cell"), mapped.bindings.map { it.targetId })
+        verify(client).map(any(AiDocumentMappingRequest::class.java) ?:
+            AiDocumentMappingRequest(sourceBase64="", sourceSha256="", format="hwpx", scope="", fields=emptyList()))
+        verify(snapshots).attachDocumentMap(eq(form.formVersionId) ?: form.formVersionId,
+            any(ApplicationDocumentMapSnapshot::class.java) ?: stale)
+    }
+
+    @Test fun changedBindingIsRejectedWithoutReplacingTheSavedMap() {
+        stub()
+        val stale = ApplicationDocumentMapSnapshot("application-document-mcp-v1", "a".repeat(64), hash,
+            "old-map", "test-engine", listOf(ApplicationDocumentPlacement("company:name", "old-cell")),
+            listOf("old-cell"), mapOf("targets" to listOf(mapOf("targetId" to "old-cell"))))
+        val form = form(false).copy(documentMapSnapshot = stale)
+        `when`(snapshots.findByVersion(form.formVersionId)).thenReturn(form)
+
+        val error = assertThrows(ApplicationDocumentException::class.java) {
+            service.ensure(form, bytes, "hwpx")
+        }
+
+        assertEquals("APPLICATION_DOCUMENT_FORM_REANALYSIS_REQUIRED", error.code)
+        verify(client).map(any(AiDocumentMappingRequest::class.java) ?:
+            AiDocumentMappingRequest(sourceBase64="", sourceSha256="", format="hwpx", scope="", fields=emptyList()))
+        verify(snapshots, never()).attachDocumentMap(eq(form.formVersionId) ?: form.formVersionId,
+            any(ApplicationDocumentMapSnapshot::class.java) ?: stale)
+    }
+
+    @Test fun changedScopeIsRejectedEvenWhenTheBindingIsUnchanged() {
+        stub()
+        val stale = ApplicationDocumentMapSnapshot("application-document-mcp-v1", "a".repeat(64), hash,
+            "old-map", "test-engine", listOf(ApplicationDocumentPlacement("company:name", "name-cell")),
+            listOf("name-cell", "old-extra-cell"), mapOf("targets" to listOf(mapOf("targetId" to "name-cell"))))
+        val form = form(false).copy(documentMapSnapshot = stale)
+        `when`(snapshots.findByVersion(form.formVersionId)).thenReturn(form)
+
+        val error = assertThrows(ApplicationDocumentException::class.java) {
+            service.ensure(form, bytes, "hwpx")
+        }
+
+        assertEquals("APPLICATION_DOCUMENT_FORM_REANALYSIS_REQUIRED", error.code)
+        verify(snapshots, never()).attachDocumentMap(eq(form.formVersionId) ?: form.formVersionId,
+            any(ApplicationDocumentMapSnapshot::class.java) ?: stale)
+    }
+
+    @Test fun ownerScopedGenerationReceivesTheValidatedProposalWithoutPersistingIt() {
+        stub()
+        val stale = ApplicationDocumentMapSnapshot("application-document-mcp-v1", "a".repeat(64), hash,
+            "old-map", "test-engine", listOf(ApplicationDocumentPlacement("company:name", "old-cell")),
+            listOf("old-cell"), mapOf("targets" to listOf(mapOf("targetId" to "old-cell", "kind" to "paragraph"))))
+        val form = form(false).copy(documentMapSnapshot = stale)
+        `when`(snapshots.findByVersion(form.formVersionId)).thenReturn(form)
+
+        val changed = assertThrows(ApplicationDocumentMappingChangedException::class.java) {
+            service.ensure(form, bytes, "hwpx", captureChange = true)
+        }
+
+        assertEquals("old-cell", changed.previous.bindings.single().targetId)
+        assertEquals("name-cell", changed.proposed.bindings.single().targetId)
+        assertEquals("TARGET_CHANGED", changed.changes.first().type)
+        verify(snapshots, never()).attachDocumentMap(eq(form.formVersionId) ?: form.formVersionId,
+            any(ApplicationDocumentMapSnapshot::class.java) ?: stale)
     }
 }

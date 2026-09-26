@@ -2,6 +2,8 @@
 
 [문서 목록](README.md) · [아키텍처 README](architecture/README.md)
 
+신청 문서의 새 `pipelineVersion`에서 기존 저장 지도와 binding 주소·편집 scope가 달라지면 Core는 자동 작성을 `APPLICATION_DOCUMENT_FORM_REANALYSIS_REQUIRED`로 중단하고 비교·승인 토큰을 해당 작성본 소유자에게 전달한다. 승인하면 그 작성본만 새 양식 스냅샷을 참조하며 기존 답변·revision·파일과 다른 사용자의 지도는 유지한다. 같은 binding과 scope이면 새 지도만 갱신한다.
+
 신청 문서의 입력칸별 질문 흐름은 공식 첨부 → OpenAI 질문 추출 → native 입력 영역 매핑 → Core 양식 스냅샷 → 질문 UI로 이어진다. 선택 문항의 미지원 위치는 공개 `fields[].documentWritable=false`로 표시한다. 문서 생성에서는 binding이 있는 저장 답변만 형식별 편집 경로로 전달하고, 미기입 답변은 생성 파일과 revision에 연결된 불변 스냅샷으로 목록·다운로드 화면에 표시한다. 포괄적인 이전 질문의 재분석은 기존 discovery-jobs API를 명시적인 클릭으로 호출하며 기존 작성본·답변을 유지한다. 세부 경계는 [신청 문서 MCP 구조](application-document-mcp-architecture.md)를 참고한다.
 
 현재 production 코드의 서비스 경계와 실행 흐름을 설명합니다. 계층·DI·디자인 패턴은
@@ -910,5 +912,7 @@ Discovery 전용 timeout은 model 210초 < AI run 240초 < Core read 270초 < Wo
 ## 신청 문서 MCP 파이프라인
 
 HWPX 질문 추출은 Core가 hash와 함께 보낸 원본을 AI 내부에서 먼저 구조 분석한 뒤 OpenAI에 셀 정보를 전달한다. PDF의 평면 입력칸은 로컬 FFDetr 탐지 결과와 원문 글자·표 경계를 대조하고, 기존 PDFBox가 값을 기입한다. FFDetr 가중치는 이미지 빌드 시 고정 revision과 SHA-256으로 검증하며 실행 중 다운로드나 외부 PDF 서비스 호출을 하지 않는다. AI worker당 PDF 검사는 한 번에 하나씩 실행한다.
+
+AI 문서 지도는 native index와 semantic index를 분리한다. HWPX의 병합되지 않은 단순 FORM_TABLE에서 같은 행의 라벨→입력 셀이 확인될 때만 semantic index를 국소 보정하고, 병합·반복·복합 표는 native 순서를 유지한 채 검토 상태로 남긴다. 표 앞 heading은 번호·길이·후속 입력 필드 밀도·반복 여부를 조합해 section metadata로만 기록한다. HWP/PDF는 구조 근거를 추측하지 않는다. native target ID·주소·배열·원본 표는 바꾸지 않으며 분석·매핑·검증 단계 상태와 집계는 선택적 `documentAnalysis` 감사 정보로 저장한다.
 
 생성 경로는 Core의 공식 첨부·소유권·revision 관리와 AI Service의 형식별 MCP 실행을 연결한다. HWP는 Core hwplib의 구조 검사·범위 편집·재열기, HWPX는 Hangeul 파일 모드, PDF는 MCP 정리 후 PDFBox AcroForm 처리이다. AI는 HWP의 hwpTargets를 받아 지도와 계획만 반환하며 Core가 원본·plan hash·revision·bindings/scope를 독립 검증한다. HWP에 Windows·한컴 한글·브리지 설정이 필요하지 않다. 과거 직접 HWPX 편집 경로는 현재 생성에서 사용하지 않는다. 새 fingerprint로 과거 생성 결과와 구분하고 다운로드 이력을 보존한다. 구현 범위와 미지원 구조·검증 상태는 [MCP 구조](application-document-mcp-architecture.md), [설치](application-document-mcp-setup.md), [검증 기록](application-document-mcp-validation.md)를 확인한다.

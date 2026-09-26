@@ -1,3 +1,10 @@
 package ai.govbiz.core.applicationpreparation.service.exception
 
-class ApplicationDocumentException(val code: String, message: String, cause: Throwable? = null) : RuntimeException(message, cause)
+import ai.govbiz.core.applicationpreparation.controller.dto.ApplicationDocumentMigrationNoticeResponse
+
+class ApplicationDocumentException(
+    val code: String,
+    message: String,
+    cause: Throwable? = null,
+    val mappingMigration: ApplicationDocumentMigrationNoticeResponse? = null,
+) : RuntimeException(message, cause)

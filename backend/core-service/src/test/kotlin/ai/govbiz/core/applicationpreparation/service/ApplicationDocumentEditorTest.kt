@@ -6,9 +6,20 @@ import kr.dogfoot.hwplib.tool.blankfilemaker.BlankFileMaker
 import kr.dogfoot.hwplib.reader.HWPReader
 import kr.dogfoot.hwplib.writer.HWPWriter
 import org.apache.pdfbox.Loader
+import org.apache.pdfbox.cos.COSDictionary
+import org.apache.pdfbox.cos.COSName
 import org.apache.pdfbox.pdmodel.PDDocument
 import org.apache.pdfbox.pdmodel.PDPage
+import org.apache.pdfbox.pdmodel.common.PDRectangle
+import org.apache.pdfbox.pdmodel.interactive.form.PDAcroForm
 import org.apache.pdfbox.pdmodel.interactive.form.PDTextField
+import org.apache.pdfbox.pdmodel.interactive.form.PDRadioButton
+import org.apache.pdfbox.pdmodel.interactive.form.PDCheckBox
+import org.apache.pdfbox.pdmodel.interactive.form.PDComboBox
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAnnotationWidget
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAppearanceDictionary
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAppearanceEntry
+import org.apache.pdfbox.pdmodel.interactive.annotation.PDAppearanceStream
 import org.apache.pdfbox.rendering.PDFRenderer
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
@@ -46,6 +57,176 @@ class ApplicationDocumentEditorTest {
                 assertNotNull(PDFRenderer(reopened).renderImage(0))
             }
         }
+    }
+
+    @Test
+    fun fillsShortOfficialStyleAcroFormWidgetAtReadableSizeAndRejectsTooShortOnes() {
+        fun source(height: Float): ByteArray = PDDocument().use { doc ->
+            val page = PDPage()
+            doc.addPage(page)
+            val form = PDAcroForm(doc)
+            doc.documentCatalog.acroForm = form
+            val field = PDTextField(form)
+            field.partialName = "First Name"
+            field.defaultAppearance = "/Helv 10 Tf 0 g"
+            field.widgets.single().apply {
+                rectangle = PDRectangle(120f, 560f, 170f, height)
+                this.page = page
+                isPrinted = true
+            }
+            form.fields.add(field)
+            page.annotations.add(field.widgets.single())
+            ByteArrayOutputStream().also { doc.save(it) }.toByteArray()
+        }
+        val value = listOf(ApplicationDocumentFact("representative:first", "First Name", "TEST"))
+        val placement = listOf(ApplicationDocumentPlacement("representative:first", "pdf-field:First Name"))
+        val original = source(10.9f)
+        val output = editor.fill(original, "PDF", value, placement)
+        Loader.loadPDF(output).use { doc ->
+            val field = doc.documentCatalog.acroForm.getField("First Name") as PDTextField
+            assertEquals("TEST", field.value)
+            assertNotNull(field.widgets.single().appearance.normalAppearance)
+            assertNotNull(PDFRenderer(doc).renderImage(0))
+        }
+        assertThrows(ApplicationDocumentException::class.java) { editor.fill(source(9f), "PDF", value, placement) }
+    }
+
+    @Test
+    fun selectsOneIndexedRadioWidgetWhenExportLabelsAreDuplicated() {
+        val original = PDDocument().use { doc ->
+            val page = PDPage()
+            doc.addPage(page)
+            val form = PDAcroForm(doc)
+            doc.documentCatalog.acroForm = form
+            val radio = PDRadioButton(form)
+            radio.partialName = "Seller or Trader?"
+            radio.exportValues = listOf("Evet", "Evet")
+            val widgets = listOf("0", "1").mapIndexed { index, name ->
+                PDAnnotationWidget().apply {
+                    setParent(radio)
+                    rectangle = PDRectangle(100f + index * 30f, 600f, 14f, 14f)
+                    this.page = page
+                    isPrinted = true
+                    cosObject.setString(COSName.TU, if (index == 0) "YES" else "NO")
+                    val states = COSDictionary()
+                    for (state in listOf(name, "Off")) {
+                        states.setItem(COSName.getPDFName(state), PDAppearanceStream(doc).apply {
+                            bBox = PDRectangle(14f, 14f)
+                        })
+                    }
+                    appearance = PDAppearanceDictionary().apply {
+                        normalAppearance = PDAppearanceEntry(states)
+                    }
+                }
+            }
+            radio.widgets = widgets
+            form.fields.add(radio)
+            page.annotations.addAll(widgets)
+            radio.setValue(0)
+            ByteArrayOutputStream().also { doc.save(it) }.toByteArray()
+        }
+        val inspected = editor.inspect(original, "PDF")
+        assertEquals(listOf("0", "1"), inspected.pdfFields.single()["options"])
+        assertEquals(listOf(mapOf("displayLabel" to "YES", "nativeValue" to "0"),
+            mapOf("displayLabel" to "NO", "nativeValue" to "1")), inspected.pdfFields.single()["optionMappings"])
+        assertEquals("0", inspected.targets.single().text)
+        val result = editor.fill(original, "PDF", listOf(ApplicationDocumentFact("seller:present", "Seller or Trader?", "NO")),
+            listOf(ApplicationDocumentPlacement("seller:present", "pdf-field:Seller or Trader?")))
+        Loader.loadPDF(result).use { doc ->
+            val field = doc.documentCatalog.acroForm.getField("Seller or Trader?") as PDRadioButton
+            assertEquals("1", field.cosObject.getNameAsString(COSName.V))
+            assertEquals("Off", field.widgets[0].appearanceState.name)
+            assertEquals("1", field.widgets[1].appearanceState.name)
+        }
+        val ambiguous = Loader.loadPDF(original).use { doc ->
+            (doc.documentCatalog.acroForm.getField("Seller or Trader?") as PDRadioButton).widgets.forEach {
+                it.cosObject.removeItem(COSName.TU)
+            }
+            ByteArrayOutputStream().also { doc.save(it) }.toByteArray()
+        }
+        val error = assertThrows(ApplicationDocumentException::class.java) {
+            editor.fill(ambiguous, "PDF", listOf(ApplicationDocumentFact("seller:present", "Seller or Trader?", "NO")),
+                listOf(ApplicationDocumentPlacement("seller:present", "pdf-field:Seller or Trader?")))
+        }
+        assertEquals("APPLICATION_DOCUMENT_UNRESOLVED_OPTION", error.code)
+    }
+
+    @Test
+    fun checkboxCaptionSelectsOnlyItsOwnFieldAndUnknownCaptionIsRejected() {
+        val original = PDDocument().use { doc ->
+            val page = PDPage()
+            doc.addPage(page)
+            val form = PDAcroForm(doc)
+            doc.documentCatalog.acroForm = form
+            for ((index, name) in listOf("Consent", "Other").withIndex()) {
+                val field = PDCheckBox(form)
+                field.partialName = name
+                field.widgets.single().apply {
+                    rectangle = PDRectangle(100f + index * 30f, 600f, 14f, 14f)
+                    this.page = page
+                    isPrinted = true
+                    cosObject.setString(COSName.TU, if (index == 0) "Agree" else "Other")
+                    val states = COSDictionary()
+                    for (state in listOf("Yes", "Off")) {
+                        states.setItem(COSName.getPDFName(state), PDAppearanceStream(doc).apply { bBox = PDRectangle(14f, 14f) })
+                    }
+                    appearance = PDAppearanceDictionary().apply { normalAppearance = PDAppearanceEntry(states) }
+                }
+                form.fields.add(field)
+                page.annotations.add(field.widgets.single())
+                field.value = "Off"
+            }
+            ByteArrayOutputStream().also { doc.save(it) }.toByteArray()
+        }
+        val fact = listOf(ApplicationDocumentFact("consent", "Consent", "Agree"))
+        val placement = listOf(ApplicationDocumentPlacement("consent", "pdf-field:Consent"))
+        val output = editor.fill(original, "PDF", fact, placement)
+        Loader.loadPDF(output).use { doc ->
+            assertTrue((doc.documentCatalog.acroForm.getField("Consent") as PDCheckBox).isChecked)
+            assertFalse((doc.documentCatalog.acroForm.getField("Other") as PDCheckBox).isChecked)
+        }
+        val unchecked = editor.fill(output, "PDF", listOf(ApplicationDocumentFact("consent", "Consent", "false")), placement)
+        Loader.loadPDF(unchecked).use { doc ->
+            assertFalse((doc.documentCatalog.acroForm.getField("Consent") as PDCheckBox).isChecked)
+            assertFalse((doc.documentCatalog.acroForm.getField("Other") as PDCheckBox).isChecked)
+        }
+        val error = assertThrows(ApplicationDocumentException::class.java) {
+            editor.fill(original, "PDF", listOf(ApplicationDocumentFact("consent", "Consent", "Unknown")), placement)
+        }
+        assertEquals("APPLICATION_DOCUMENT_UNRESOLVED_OPTION", error.code)
+    }
+
+    @Test
+    fun choiceDisplayLabelUsesOnlyAnExistingExportOption() {
+        val original = PDDocument().use { doc ->
+            val page = PDPage()
+            doc.addPage(page)
+            val form = PDAcroForm(doc)
+            doc.documentCatalog.acroForm = form
+            val field = PDComboBox(form)
+            field.partialName = "Category"
+            field.defaultAppearance = "/Helv 10 Tf 0 g"
+            field.setOptions(listOf("A", "B"), listOf("Alpha", "Beta"))
+            field.widgets.single().apply {
+                rectangle = PDRectangle(100f, 600f, 150f, 18f)
+                this.page = page
+                isPrinted = true
+            }
+            form.fields.add(field)
+            page.annotations.add(field.widgets.single())
+            ByteArrayOutputStream().also { doc.save(it) }.toByteArray()
+        }
+        val placement = listOf(ApplicationDocumentPlacement("category", "pdf-field:Category"))
+        val output = editor.fill(original, "PDF", listOf(ApplicationDocumentFact("category", "Category", "Beta")), placement)
+        Loader.loadPDF(output).use { doc ->
+            val saved = doc.documentCatalog.acroForm.getField("Category") as PDComboBox
+            assertEquals("B", saved.cosObject.getString(COSName.V))
+            assertEquals(listOf("A", "B"), saved.optionsExportValues)
+        }
+        val error = assertThrows(ApplicationDocumentException::class.java) {
+            editor.fill(original, "PDF", listOf(ApplicationDocumentFact("category", "Category", "Gamma")), placement)
+        }
+        assertEquals("APPLICATION_DOCUMENT_UNRESOLVED_OPTION", error.code)
     }
 
     @Test
