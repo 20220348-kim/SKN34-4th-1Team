@@ -66,7 +66,7 @@ const detail = {
   updatedAt: '2026-09-11T01:00:00+09:00',
   form: structuredClone(firstForm),
 }
-const repository = { documents: vi.fn(), generateDocuments: vi.fn(), downloadDocument: vi.fn(), generateDraft: vi.fn(), saveContent: vi.fn(), confirmContent: vi.fn(), discoveryJobs: vi.fn(), discoveryJob: vi.fn(), availability: vi.fn(), forms: vi.fn(), discover: vi.fn(), list: vi.fn(), delete: vi.fn(), get: vi.fn(), create: vi.fn(), interpret: vi.fn(), replaceInputs: vi.fn(), updateProgress: vi.fn() }
+const repository = { documents: vi.fn(), generateDocuments: vi.fn(), confirmDocumentMappingMigration: vi.fn(), downloadDocument: vi.fn(), generateDraft: vi.fn(), saveContent: vi.fn(), confirmContent: vi.fn(), discoveryJobs: vi.fn(), discoveryJob: vi.fn(), availability: vi.fn(), forms: vi.fn(), discover: vi.fn(), list: vi.fn(), delete: vi.fn(), get: vi.fn(), create: vi.fn(), interpret: vi.fn(), replaceInputs: vi.fn(), updateProgress: vi.fn() }
 
 function completedDiscovery(result: { items: ApplicationForm[]; warnings: string[]; cached: boolean }) {
   return { id: 77, sourceCode: result.items[0].sourceCode, sourceProgramId: result.items[0].sourceProgramId,
@@ -232,6 +232,50 @@ it('does not expose a download for a failed generation and retries the same revi
   fireEvent.click(screen.getByRole('button', { name: '다시 시도' }))
   await screen.findByRole('button', { name: '신청문서 1 다운로드' })
   expect(repository.generateDocuments.mock.calls.map((call) => call[1])).toEqual([3, 3])
+})
+
+const migrationNotice = {
+  status: 'MAPPING_CHANGED' as const, approvalToken: '12345678-1234-1234-1234-123456789abc',
+  expectedRevision: 3, expiresInSeconds: 900,
+  changes: [{ fieldLabel: '기업 개요 · 업체명', changeType: 'TARGET_CHANGED' as const,
+    oldLocation: '표 1 · 2행 · 기업명', newLocation: '표 2 · 3행 · 기업명' }],
+}
+
+it('shows the mapping diff and keeps the old file when approval is cancelled', async () => {
+  repository.get.mockResolvedValue(readyPreparation())
+  repository.documents.mockResolvedValue([{ ...documentFile, inputRevision: 2 }])
+  repository.generateDocuments.mockRejectedValueOnce(new ApplicationPreparationError(422,
+    'APPLICATION_DOCUMENT_FORM_REANALYSIS_REQUIRED', migrationNotice))
+  mount('/app/application-preparations/12/documents?generate=3')
+  const review = await screen.findByLabelText('신청서 입력 위치 변경 확인')
+  expect(within(review).getByText(/표 1 · 2행/)).toBeTruthy()
+  expect(within(review).getByText(/표 2 · 3행/)).toBeTruthy()
+  expect(review.textContent).not.toContain('t1.r1')
+  expect(screen.getByRole('button', { name: '신청문서 1 다운로드' })).toBeTruthy()
+  fireEvent.click(within(review).getByRole('button', { name: '취소하고 기존 작성 유지' }))
+  expect(repository.confirmDocumentMappingMigration).not.toHaveBeenCalled()
+  expect(await screen.findByText(/기존 답변과 파일은 그대로 유지됩니다/)).toBeTruthy()
+  expect(repository.generateDocuments).toHaveBeenCalledTimes(1)
+})
+
+it('applies the reviewed map only on approval and starts regeneration on a separate click', async () => {
+  repository.get.mockResolvedValue(readyPreparation())
+  repository.documents.mockResolvedValue([{ ...documentFile, inputRevision: 2 }])
+  repository.generateDocuments.mockRejectedValueOnce(new ApplicationPreparationError(422,
+    'APPLICATION_DOCUMENT_FORM_REANALYSIS_REQUIRED', migrationNotice))
+    .mockResolvedValueOnce([{ ...documentFile, id: 82, inputRevision: 3, fileName: '신청서_초안_v3_new.hwpx' }])
+  repository.confirmDocumentMappingMigration.mockResolvedValue({ status: 'REGENERATION_REQUIRED',
+    preparationId: 12, inputRevision: 3, formVersionId: 'approved-form-v2' })
+  mount('/app/application-preparations/12/documents?generate=3')
+  const review = await screen.findByLabelText('신청서 입력 위치 변경 확인')
+  fireEvent.click(within(review).getByRole('button', { name: '새 입력 위치 적용' }))
+  expect(await screen.findByText(/새 입력 위치가 이 작성본에만 적용됐습니다/)).toBeTruthy()
+  expect(repository.confirmDocumentMappingMigration).toHaveBeenCalledWith(12, 3,
+    migrationNotice.approvalToken, expect.any(AbortSignal))
+  expect(repository.generateDocuments).toHaveBeenCalledTimes(1)
+  fireEvent.click(screen.getByRole('button', { name: '새 초안 생성' }))
+  expect(await screen.findByText('신청서_초안_v3_new.hwpx')).toBeTruthy()
+  expect(repository.generateDocuments).toHaveBeenCalledTimes(2)
 })
 
 it('prevents generating with a stale revision and aborts requests after leaving', async () => {

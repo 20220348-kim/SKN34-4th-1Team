@@ -12,6 +12,15 @@ interface ApplicationPreparationMapper {
         @Param("preparationId") preparationId: Long,
     ): ApplicationPreparationDbRow?
 
+    fun findOwnedForUpdate(@Param("ownerAccountId") ownerAccountId: Long,
+        @Param("preparationId") preparationId: Long): ApplicationPreparationDbRow?
+
+    fun updateFormVersionOwned(@Param("ownerAccountId") ownerAccountId: Long,
+        @Param("preparationId") preparationId: Long,
+        @Param("oldFormVersionId") oldFormVersionId: String,
+        @Param("newFormVersionId") newFormVersionId: String,
+        @Param("expectedRevision") expectedRevision: Long): Int
+
     fun listOwned(
         @Param("ownerAccountId") ownerAccountId: Long,
         @Param("beforeId") beforeId: Long?,

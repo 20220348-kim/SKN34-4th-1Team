@@ -36,6 +36,24 @@
         WHERE form_version_id = #{formVersionId}
     </select>
 
+    <select id="findByVersionForUpdate" resultMap="snapshotRow">
+        SELECT <include refid="columns" />
+        FROM application_form_snapshot
+        WHERE form_version_id = #{formVersionId}
+        FOR UPDATE
+    </select>
+
+    <insert id="insertApprovedSnapshot">
+        INSERT INTO application_form_snapshot (
+            form_version_id, source_code, source_program_id, source_fingerprint, attachment_sha256,
+            manifest_json, parser_version, extraction_model, extraction_prompt_version, created_at
+        )
+        SELECT #{row.formVersionId}, source_code, source_program_id, #{row.sourceFingerprint}, attachment_sha256,
+               CAST(#{row.manifestJson} AS JSON), parser_version, extraction_model, extraction_prompt_version, NOW(6)
+        FROM application_form_snapshot
+        WHERE form_version_id = #{sourceVersionId}
+    </insert>
+
     <select id="findByProgram" resultMap="snapshotRow">
         SELECT <include refid="columns" />
         FROM application_form_snapshot

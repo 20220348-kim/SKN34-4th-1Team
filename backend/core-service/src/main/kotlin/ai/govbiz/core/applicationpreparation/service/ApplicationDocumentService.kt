@@ -4,15 +4,20 @@ import ai.govbiz.core.account.domain.Account
 import ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentFact
 import ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentFile
 import ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentUnfilledAnswer
+import ai.govbiz.core.applicationpreparation.domain.ApplicationFormManifest
+import ai.govbiz.core.applicationpreparation.controller.dto.ApplicationDocumentMigrationConfirmedResponse
 import ai.govbiz.core.applicationpreparation.domain.exception.ApplicationPreparationNotFoundException
 import ai.govbiz.core.applicationpreparation.domain.exception.ApplicationPreparationRevisionConflictException
 import ai.govbiz.core.applicationpreparation.domain.exception.ApplicationPreparationRunConflictException
 import ai.govbiz.core.applicationpreparation.repository.ApplicationDocumentRepository
+import ai.govbiz.core.applicationpreparation.repository.ApplicationDocumentMigrationRepository
 import ai.govbiz.core.applicationpreparation.service.exception.ApplicationDocumentException
+import ai.govbiz.core.applicationpreparation.service.exception.ApplicationDocumentMappingChangedException
 import ai.govbiz.core.supportprogram.client.bizinfo.BizInfoAttachmentClient
 import ai.govbiz.core.supportprogram.client.cntradenotice.CnTradeNoticeAttachmentClient
 import ai.govbiz.core.supportprogram.client.kstartup.KStartupAttachmentClient
 import ai.govbiz.core.supportprogram.client.msit.MsitAttachmentClient
+import ai.govbiz.core.supportprogram.client.document.SupportProgramAttachment
 import ai.govbiz.core.supportprogram.service.detail.SupportProgramDetailService
 import ai.govbiz.core.supportprogram.service.admission.SupportProgramRequestAdmissionService
 import org.springframework.stereotype.Service
@@ -25,6 +30,8 @@ class ApplicationDocumentService(
     private val files: ApplicationDocumentRepository,
     private val editor: ApplicationDocumentEditor,
     private val documentMapping: ApplicationDocumentMappingService,
+    private val migrationProposals: ApplicationDocumentMigrationProposalStore,
+    private val migrations: ApplicationDocumentMigrationRepository,
     private val mcp: ai.govbiz.core.applicationpreparation.client.ai.ApplicationDocumentMcpClient,
     private val bizInfo: BizInfoAttachmentClient,
     private val msit: MsitAttachmentClient,
@@ -45,6 +52,51 @@ class ApplicationDocumentService(
 
     fun download(account: Account, id: Long, fileId: Long): ApplicationDocumentFile =
         files.findOwned(account.id, id, fileId) ?: throw ApplicationPreparationNotFoundException()
+
+    fun confirmMigration(account: Account, id: Long, expectedRevision: Long,
+                         approvalToken: String): ApplicationDocumentMigrationConfirmedResponse {
+        fun stale(): Nothing = throw ApplicationDocumentException("APPLICATION_DOCUMENT_MAPPING_MIGRATION_STALE",
+            "답변·원본 또는 문서 분석 버전이 변경됐습니다. 변경 내용을 다시 확인해 주세요.")
+        val detail = preparations.findOwned(account, id)
+        val proposal = migrationProposals.read(account.id, id, approvalToken)
+        if (expectedRevision != proposal.expectedRevision || detail.preparation.inputRevision != expectedRevision ||
+            detail.preparation.draft.formVersionId != proposal.oldFormVersionId ||
+            detail.form.attachmentSha256 != proposal.sourceSha256 ||
+            mcp.configuration().pipelineVersion != proposal.proposed.pipelineVersion) stale()
+        val currentSource = try { loadOriginal(detail.form).bytes } catch (error: ApplicationDocumentException) {
+            if (error.code == "APPLICATION_DOCUMENT_SOURCE_CHANGED") stale()
+            throw error
+        }
+        if (sha256(currentSource) != proposal.sourceSha256) stale()
+        val newVersion = migrations.approve(proposal)
+        return ApplicationDocumentMigrationConfirmedResponse(preparationId = id,
+            inputRevision = expectedRevision, formVersionId = newVersion)
+    }
+
+    fun loadOriginal(manifest: ApplicationFormManifest): SupportProgramAttachment {
+        val collected = try { when (manifest.sourceCode) {
+            "BIZINFO" -> bizInfo.collect(manifest.sourceCode, manifest.sourceProgramId)
+            "MSIT" -> msit.collect(manifest.sourceCode, manifest.sourceProgramId, manifest.sourceUrl)
+            "KSTARTUP" -> kStartup.collect(manifest.sourceCode, manifest.sourceProgramId, manifest.sourceUrl)
+            "CNTRADE_NOTICE" -> {
+                val program = details.get(manifest.sourceCode, manifest.sourceProgramId)
+                cnTrade.collect(manifest.sourceCode, manifest.sourceProgramId, program.title, program.targetDescription)
+            }
+            else -> throw ApplicationDocumentException("APPLICATION_DOCUMENT_UNSUPPORTED", "원본 첨부를 확보할 수 없는 제공처입니다.")
+        }
+        } catch (error: ai.govbiz.core.supportprogram.service.detail.exception.SupportProgramNotFoundException) {
+            availability.stale(manifest.sourceCode, manifest.sourceProgramId, "SOURCE_NOT_FOUND")
+            throw error
+        } catch (error: ai.govbiz.core.supportprogram.client.document.SupportProgramDocumentException) {
+            availability.stale(manifest.sourceCode, manifest.sourceProgramId, "DOCUMENT_${error.reason.name}")
+            throw error
+        }
+        return collected.files.find { sha256(it.bytes) == manifest.attachmentSha256 }
+            ?: run {
+                availability.stale(manifest.sourceCode, manifest.sourceProgramId, "ATTACHMENT_HASH_CHANGED_OR_MISSING")
+                throw ApplicationDocumentException("APPLICATION_DOCUMENT_SOURCE_CHANGED", "공식 첨부가 변경되었거나 없어졌습니다. 재분석 완료 후 새 작성을 시작해 주세요.")
+            }
+    }
 
     fun generate(account: Account, id: Long, expectedRevision: Long): List<ApplicationDocumentFile> = admission.execute("application-document:${account.id}:$id") {
         val detail = preparations.findOwned(account, id)
@@ -70,29 +122,15 @@ class ApplicationDocumentService(
             else ApplicationDocumentFact("${section.key}:${field.key}", "${section.title} / ${field.label}", requireNotNull(fact.value))
         } }
         if (facts.isEmpty() || facts.size > 200) throw ApplicationDocumentException("APPLICATION_DOCUMENT_INPUT_REQUIRED", "문서에 기입할 답변을 확인해 주세요.")
-        val collected = try { when (manifest.sourceCode) {
-            "BIZINFO" -> bizInfo.collect(manifest.sourceCode, manifest.sourceProgramId)
-            "MSIT" -> msit.collect(manifest.sourceCode, manifest.sourceProgramId, manifest.sourceUrl)
-            "KSTARTUP" -> kStartup.collect(manifest.sourceCode, manifest.sourceProgramId, manifest.sourceUrl)
-            "CNTRADE_NOTICE" -> {
-                val program = details.get(manifest.sourceCode, manifest.sourceProgramId)
-                cnTrade.collect(manifest.sourceCode, manifest.sourceProgramId, program.title, program.targetDescription)
-            }
-            else -> throw ApplicationDocumentException("APPLICATION_DOCUMENT_UNSUPPORTED", "원본 첨부를 확보할 수 없는 제공처입니다.")
+        val original = loadOriginal(manifest)
+        val binding = try {
+            documentMapping.ensure(manifest, original.bytes, original.format, captureChange = true)
+        } catch (changed: ApplicationDocumentMappingChangedException) {
+            val notice = migrationProposals.create(account.id, id, expectedRevision, manifest, changed)
+            throw ApplicationDocumentException("APPLICATION_DOCUMENT_FORM_REANALYSIS_REQUIRED",
+                "입력 위치가 변경됐습니다. 변경 내용을 확인한 뒤 적용할 수 있습니다. 저장된 답변과 파일은 유지됩니다.",
+                mappingMigration = notice)
         }
-        } catch (error: ai.govbiz.core.supportprogram.service.detail.exception.SupportProgramNotFoundException) {
-            availability.stale(manifest.sourceCode, manifest.sourceProgramId, "SOURCE_NOT_FOUND")
-            throw error
-        } catch (error: ai.govbiz.core.supportprogram.client.document.SupportProgramDocumentException) {
-            availability.stale(manifest.sourceCode, manifest.sourceProgramId, "DOCUMENT_${error.reason.name}")
-            throw error
-        }
-        val original = collected.files.find { MessageDigest.getInstance("SHA-256").digest(it.bytes).joinToString("") { b -> "%02x".format(b) } == manifest.attachmentSha256 }
-            ?: run {
-                availability.stale(manifest.sourceCode, manifest.sourceProgramId, "ATTACHMENT_HASH_CHANGED_OR_MISSING")
-                throw ApplicationDocumentException("APPLICATION_DOCUMENT_SOURCE_CHANGED", "공식 첨부가 변경되었거나 없어졌습니다. 재분석 완료 후 새 작성을 시작해 주세요.")
-        }
-        val binding = documentMapping.ensure(manifest, original.bytes, original.format)
         val mappedFactIds = binding.bindings.map { it.factId }.toSet()
         val writableFacts = facts.filter { it.id in mappedFactIds }
         val unfilledAnswers = facts.filterNot { it.id in mappedFactIds }.map {

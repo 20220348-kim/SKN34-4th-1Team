@@ -31,6 +31,7 @@ import java.time.LocalDateTime
 import java.util.UUID
 import org.hamcrest.Matchers.endsWith
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
@@ -40,6 +41,7 @@ import org.springframework.context.annotation.Import
 import org.springframework.http.HttpHeaders
 import org.springframework.http.MediaType
 import org.springframework.jdbc.core.JdbcTemplate
+import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete
@@ -67,6 +69,11 @@ import ai.govbiz.core.applicationpreparation.service.exception.ApplicationDocume
 import ai.govbiz.core.applicationpreparation.domain.ApplicationFormManifest
 import ai.govbiz.core.applicationpreparation.domain.ApplicationFormDiscoveryConfiguration
 import ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentPlacement
+import ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentMapSnapshot
+import ai.govbiz.core.applicationpreparation.service.ApplicationDocumentMappingService
+import ai.govbiz.core.applicationpreparation.repository.ApplicationDocumentRepository
+import ai.govbiz.core.applicationpreparation.repository.ApplicationDocumentMigrationRepository
+import ai.govbiz.core.applicationpreparation.service.ApplicationDocumentMigrationProposalStore
 import ai.govbiz.core.applicationpreparation.service.ApplicationDocumentEditor
 
 /** 실제 세션부터 manifest·MyBatis·MySQL까지 신청 준비 기본 흐름을 연결합니다. */
@@ -81,6 +88,11 @@ import ai.govbiz.core.applicationpreparation.service.ApplicationDocumentEditor
 @Import(MySqlTestContainerConfig::class, ai.govbiz.core._common.test.RedisTestContainerConfig::class)
 class ApplicationPreparationApiIntegrationTest {
     @Autowired private lateinit var snapshotRepository: ai.govbiz.core.applicationpreparation.repository.ApplicationFormSnapshotRepository
+    @Autowired private lateinit var documentMapping: ApplicationDocumentMappingService
+    @Autowired private lateinit var documentFiles: ApplicationDocumentRepository
+    @Autowired private lateinit var migrationRepository: ApplicationDocumentMigrationRepository
+    @Autowired private lateinit var migrationProposals: ApplicationDocumentMigrationProposalStore
+    @Autowired private lateinit var redis: StringRedisTemplate
     @Autowired private lateinit var documentEditor: ApplicationDocumentEditor
     @Autowired private lateinit var mvc: MockMvc
     @Autowired private lateinit var accounts: AccountRepository
@@ -705,6 +717,277 @@ class ApplicationPreparationApiIntegrationTest {
         org.junit.jupiter.api.Assertions.assertNotEquals(fileId, revised)
         val revisedBytes = mvc.perform(get("$BASE/$id/documents/$revised/download").cookie(owner)).andExpect(status().isOk()).andReturn().response.contentAsByteArray
         assertEquals("수정한 사업", documentEditor.inspect(revisedBytes, "HWPX").targets.single { it.id == target.id }.text)
+    }
+
+    @Test
+    fun changedMapVersionRemapsSameBindingButRejectsDriftWithoutChangingSavedAnswers() {
+        val discovered = mvc.perform(post("$BASE/forms/discover").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("""{"sourceCode":"BIZINFO","sourceProgramId":"$DISCOVERY_PROGRAM_ID"}"""))
+            .andExpect(status().isOk()).andReturn().response
+        val version = json.readTree(discovered.contentAsString).path("items").path(0).path("formVersionId").asString()
+        activateStored(version)
+        val created = mvc.perform(post(BASE).cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("""{"sourceCode":"BIZINFO","sourceProgramId":"$DISCOVERY_PROGRAM_ID","formVersionId":"$version","serviceField":"GENERAL"}"""))
+            .andExpect(status().isCreated()).andReturn().response
+        val id = json.readTree(created.contentAsString).path("id").asLong()
+        mvc.perform(put("$BASE/$id/sections/business-plan/inputs").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("""{"expectedRevision":1,"facts":[{"fieldKey":"business-overview","status":"PROVIDED","value":"TEST-COMPANY","sourceText":"TEST-COMPANY"}]}"""))
+            .andExpect(status().isOk())
+        val source = "official-form".toByteArray()
+        val initial = requireNotNull(snapshotRepository.findByVersion(version))
+        val initialMap = requireNotNull(initial.documentMapSnapshot)
+        val sections = initial.sections
+        val old = initialMap.copy(pipelineVersion = "a".repeat(64), mapVersion = "old-map")
+        snapshotRepository.attachDocumentMap(version, old)
+        fun fingerprint(pipeline: String) = java.security.MessageDigest.getInstance("SHA-256")
+            .digest("${initial.attachmentSha256}:2:$pipeline:partial-draft-v1".toByteArray())
+            .joinToString("") { "%02x".format(it) }
+        val oldBytes = "OLD-DOCUMENT".toByteArray()
+        val oldFile = documentFiles.save(ownerId, id, 2, "old.hwpx", "application/hwp+zip",
+            oldBytes, initial.attachmentSha256, emptyList(), fingerprint = fingerprint(old.pipelineVersion))
+        assertEquals(oldFile.id, documentFiles.findFingerprint(ownerId, id, 2, fingerprint(old.pipelineVersion))?.id)
+        assertNull(documentFiles.findFingerprint(ownerId, id, 2, fingerprint("b".repeat(64))))
+
+        val updated = documentMapping.ensure(requireNotNull(snapshotRepository.findByVersion(version)), source, "HWPX")
+        assertEquals("b".repeat(64), updated.pipelineVersion)
+        assertEquals(initialMap.bindings, updated.bindings)
+        assertEquals(updated, snapshotRepository.findByVersion(version)?.documentMapSnapshot)
+        assertEquals(sections, snapshotRepository.findByVersion(version)?.sections)
+
+        val drifted = ApplicationDocumentMapSnapshot(initialMap.contractVersion, "c".repeat(64),
+            initialMap.sourceSha256, "old-map", initialMap.engineVersion,
+            listOf(ApplicationDocumentPlacement("business-plan:business-overview", "old-cell")),
+            listOf("old-cell"), mapOf("targets" to listOf(mapOf("targetId" to "old-cell",
+                "editable" to true, "nativeLocator" to mapOf("bindingEligible" to true)))))
+        snapshotRepository.attachDocumentMap(version, drifted)
+        val error = org.junit.jupiter.api.Assertions.assertThrows(ApplicationDocumentException::class.java) {
+            documentMapping.ensure(requireNotNull(snapshotRepository.findByVersion(version)), source, "HWPX")
+        }
+        assertEquals("APPLICATION_DOCUMENT_FORM_REANALYSIS_REQUIRED", error.code)
+        assertEquals(drifted, snapshotRepository.findByVersion(version)?.documentMapSnapshot)
+        assertEquals("TEST-COMPANY", jdbc.queryForObject(
+            "SELECT value_text FROM application_preparation_fact WHERE preparation_id=? AND section_key='business-plan' AND field_key='business-overview'",
+            String::class.java, id))
+        assertEquals(2L, jdbc.queryForObject("SELECT input_revision FROM application_preparation WHERE id=?",
+            Long::class.java, id))
+        org.junit.jupiter.api.Assertions.assertArrayEquals(oldBytes,
+            documentFiles.findOwned(ownerId, id, oldFile.id)?.bytes)
+        assertEquals(sections, snapshotRepository.findByVersion(version)?.sections)
+    }
+
+    private data class MigrationFixture(val version: String, val preparationId: Long, val token: String,
+        val original: ByteArray, val targetId: String, val oldFileId: Long)
+
+    private fun changedMappingFixture(): MigrationFixture {
+        val original = requireNotNull(javaClass.getResourceAsStream("/combinationreview/general.hwpx")).readBytes()
+        val target = documentEditor.inspect(original, "HWPX").targets.first { it.text.isBlank() }
+        `when`(bizInfoAttachments.collect("BIZINFO", DISCOVERY_PROGRAM_ID)).thenReturn(SupportProgramAttachments("동적 지원사업", listOf(
+            SupportProgramAttachment("https://www.bizinfo.go.kr/file", "신청양식.hwpx", "HWPX", original),
+        ), emptyList()))
+        `when`(documentParser.parse(original, "HWPX")).thenReturn(listOf(SupportProgramDocumentBlock(DISCOVERY_LOCATOR, DISCOVERY_BLOCK_TEXT)))
+        stubDocumentMapping(documentMcp, target.id)
+        val discovered = mvc.perform(post("$BASE/forms/discover").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("""{"sourceCode":"BIZINFO","sourceProgramId":"$DISCOVERY_PROGRAM_ID"}"""))
+            .andExpect(status().isOk()).andReturn().response
+        val version = json.readTree(discovered.contentAsString).path("items").path(0).path("formVersionId").asString()
+        activateStored(version)
+        val created = mvc.perform(post(BASE).cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("""{"sourceCode":"BIZINFO","sourceProgramId":"$DISCOVERY_PROGRAM_ID","formVersionId":"$version","serviceField":"GENERAL"}"""))
+            .andExpect(status().isCreated()).andReturn().response
+        val id = json.readTree(created.contentAsString).path("id").asLong()
+        mvc.perform(put("$BASE/$id/sections/business-plan/inputs").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("""{"expectedRevision":1,"facts":[{"fieldKey":"business-overview","status":"PROVIDED","value":"TEST-COMPANY","sourceText":"TEST-COMPANY"}]}"""))
+            .andExpect(status().isOk())
+        val initial = requireNotNull(snapshotRepository.findByVersion(version))
+        val initialMap = requireNotNull(initial.documentMapSnapshot)
+        val old = initialMap.copy(pipelineVersion = "a".repeat(64), mapVersion = "old-map",
+            bindings = listOf(ApplicationDocumentPlacement("business-plan:business-overview", "old-cell")),
+            scopeTargetIds = listOf("old-cell"),
+            documentMap = mapOf("targets" to listOf(mapOf("targetId" to "old-cell", "kind" to "paragraph",
+                "nativeLocator" to mapOf("table" to 1, "row" to 2, "col" to 3, "fieldLabels" to listOf("사업 개요"))))))
+        snapshotRepository.attachDocumentMap(version, old)
+        val oldFingerprint = java.security.MessageDigest.getInstance("SHA-256")
+            .digest("${initial.attachmentSha256}:2:${old.pipelineVersion}:partial-draft-v1".toByteArray())
+            .joinToString("") { "%02x".format(it) }
+        val oldFile = documentFiles.save(ownerId, id, 2, "old.hwpx", "application/hwp+zip",
+            "OLD-DOCUMENT".toByteArray(), initial.attachmentSha256, emptyList(), fingerprint = oldFingerprint)
+        val blocked = mvc.perform(post("$BASE/$id/documents").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN)
+            .contentType(MediaType.APPLICATION_JSON).content("""{"expectedRevision":2}"""))
+            .andExpect(status().isUnprocessableContent()).andReturn().response
+        val problem = json.readTree(blocked.contentAsString)
+        assertEquals("APPLICATION_DOCUMENT_FORM_REANALYSIS_REQUIRED", problem.path("code").asString())
+        val notice = problem.path("mappingMigration")
+        assertEquals("MAPPING_CHANGED", notice.path("status").asString())
+        assertEquals(2L, notice.path("expectedRevision").asLong())
+        assertEquals("TARGET_CHANGED", notice.path("changes").path(0).path("changeType").asString())
+        org.junit.jupiter.api.Assertions.assertFalse(blocked.contentAsString.contains("old-cell"))
+        assertEquals(old, snapshotRepository.findByVersion(version)?.documentMapSnapshot)
+        assertEquals("TEST-COMPANY", jdbc.queryForObject(
+            "SELECT value_text FROM application_preparation_fact WHERE preparation_id=?", String::class.java, id))
+        assertEquals(2L, jdbc.queryForObject("SELECT input_revision FROM application_preparation WHERE id=?", Long::class.java, id))
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM application_document_file WHERE preparation_id=?", Int::class.java, id))
+        return MigrationFixture(version, id, notice.path("approvalToken").asString(), original, target.id, oldFile.id)
+    }
+
+    @Test
+    fun approvedMappingIsOwnerScopedAndPreservesFactsFilesAndRevision() {
+        val fixture = changedMappingFixture()
+        val id = fixture.preparationId
+        val otherCreated = mvc.perform(post(BASE).cookie(other).header(HttpHeaders.ORIGIN, ORIGIN)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("""{"sourceCode":"BIZINFO","sourceProgramId":"$DISCOVERY_PROGRAM_ID","formVersionId":"${fixture.version}","serviceField":"GENERAL"}"""))
+            .andExpect(status().isCreated()).andReturn().response
+        val otherId = json.readTree(otherCreated.contentAsString).path("id").asLong()
+        mvc.perform(post("$BASE/$id/documents/mapping-migration/confirm").cookie(other)
+            .header(HttpHeaders.ORIGIN, ORIGIN).contentType(MediaType.APPLICATION_JSON)
+            .content("""{"expectedRevision":2,"approvalToken":"${fixture.token}"}"""))
+            .andExpect(status().isNotFound())
+        val approved = mvc.perform(post("$BASE/$id/documents/mapping-migration/confirm").cookie(owner)
+            .header(HttpHeaders.ORIGIN, ORIGIN).contentType(MediaType.APPLICATION_JSON)
+            .content("""{"expectedRevision":2,"approvalToken":"${fixture.token}"}"""))
+            .andExpect(status().isOk()).andReturn().response
+        val approval = json.readTree(approved.contentAsString)
+        assertEquals("REGENERATION_REQUIRED", approval.path("status").asString())
+        assertEquals(2L, approval.path("inputRevision").asLong())
+        val newVersion = approval.path("formVersionId").asString()
+        org.junit.jupiter.api.Assertions.assertNotEquals(fixture.version, newVersion)
+        assertEquals(fixture.version, snapshotRepository.findByVersion(fixture.version)?.formVersionId)
+        assertEquals("old-cell", snapshotRepository.findByVersion(fixture.version)?.documentMapSnapshot?.bindings?.single()?.targetId)
+        assertEquals(fixture.targetId, snapshotRepository.findByVersion(newVersion)?.documentMapSnapshot?.bindings?.single()?.targetId)
+        assertEquals(newVersion, jdbc.queryForObject("SELECT form_version_id FROM application_preparation WHERE id=?", String::class.java, id))
+        assertEquals(fixture.version, jdbc.queryForObject("SELECT form_version_id FROM application_preparation WHERE id=?",
+            String::class.java, otherId))
+        assertEquals(2L, jdbc.queryForObject("SELECT input_revision FROM application_preparation WHERE id=?", Long::class.java, id))
+        assertEquals("TEST-COMPANY", jdbc.queryForObject(
+            "SELECT value_text FROM application_preparation_fact WHERE preparation_id=?", String::class.java, id))
+        org.junit.jupiter.api.Assertions.assertArrayEquals("OLD-DOCUMENT".toByteArray(),
+            documentFiles.findOwned(ownerId, id, fixture.oldFileId)?.bytes)
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM application_document_file WHERE preparation_id=?", Int::class.java, id))
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM application_form_snapshot WHERE source_fingerprint=" +
+            "(SELECT source_fingerprint FROM application_form_snapshot WHERE form_version_id=?)", Int::class.java, fixture.version))
+        mvc.perform(post("$BASE/$id/documents/mapping-migration/confirm").cookie(owner)
+            .header(HttpHeaders.ORIGIN, ORIGIN).contentType(MediaType.APPLICATION_JSON)
+            .content("""{"expectedRevision":2,"approvalToken":"${fixture.token}"}"""))
+            .andExpect(status().isUnprocessableContent())
+            .andExpect(jsonPath("$.code").value("APPLICATION_DOCUMENT_MAPPING_MIGRATION_STALE"))
+
+        val target = fixture.targetId
+        val placements = listOf(ApplicationDocumentPlacement("business-plan:business-overview", target))
+        val fallback = AiDocumentGenerationRequest(sourceBase64 = "", sourceSha256 = "", format = "hwpx", answerRevision = 1,
+            facts = emptyList(), scope = "test")
+        `when`(documentMcp.generate(any(AiDocumentGenerationRequest::class.java) ?: fallback)).thenAnswer { invocation ->
+            val request = invocation.getArgument<AiDocumentGenerationRequest>(0)
+            assertEquals(target, request.bindings.single().targetId)
+            val bytes = documentEditor.fill(fixture.original, "HWPX", request.facts, placements)
+            val hash = java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
+                .joinToString("") { "%02x".format(it) }
+            AiDocumentGenerationPayload("application-document-mcp-v1", "b".repeat(64), request.sourceSha256,
+                request.answerRevision, java.util.Base64.getEncoder().encodeToString(bytes), hash,
+                "c".repeat(64), "native-map-v2", "test-stub", mapOf("verified" to 1), placements,
+                emptyMap(), mapOf("answerRevision" to request.answerRevision))
+        }
+        val generated = mvc.perform(post("$BASE/$id/documents").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN)
+            .contentType(MediaType.APPLICATION_JSON).content("""{"expectedRevision":2}"""))
+            .andExpect(status().isOk()).andReturn().response
+        val newFileId = json.readTree(generated.contentAsString).path(0).path("id").asLong()
+        org.junit.jupiter.api.Assertions.assertNotEquals(fixture.oldFileId, newFileId)
+        assertEquals(2, jdbc.queryForObject("SELECT COUNT(*) FROM application_document_file WHERE preparation_id=?", Int::class.java, id))
+        org.junit.jupiter.api.Assertions.assertArrayEquals("OLD-DOCUMENT".toByteArray(),
+            documentFiles.findOwned(ownerId, id, fixture.oldFileId)?.bytes)
+    }
+
+    @Test
+    fun staleAnswerRevisionRejectsApprovalWithoutPartialSnapshot() {
+        val fixture = changedMappingFixture()
+        val id = fixture.preparationId
+        val proposal = migrationProposals.read(ownerId, id, fixture.token)
+        val before = jdbc.queryForObject("SELECT COUNT(*) FROM application_form_snapshot", Int::class.java)
+        org.junit.jupiter.api.Assertions.assertThrows(ApplicationDocumentException::class.java) {
+            migrationRepository.approve(proposal.copy(expectedRevision = 99))
+        }
+        assertEquals(before, jdbc.queryForObject("SELECT COUNT(*) FROM application_form_snapshot", Int::class.java))
+        assertEquals(fixture.version, jdbc.queryForObject("SELECT form_version_id FROM application_preparation WHERE id=?", String::class.java, id))
+        mvc.perform(put("$BASE/$id/sections/business-plan/inputs").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("""{"expectedRevision":2,"facts":[{"fieldKey":"business-overview","status":"PROVIDED","value":"NEW-ANSWER","sourceText":"NEW-ANSWER"}]}"""))
+            .andExpect(status().isOk())
+        mvc.perform(post("$BASE/$id/documents/mapping-migration/confirm").cookie(owner)
+            .header(HttpHeaders.ORIGIN, ORIGIN).contentType(MediaType.APPLICATION_JSON)
+            .content("""{"expectedRevision":2,"approvalToken":"${fixture.token}"}"""))
+            .andExpect(status().isUnprocessableContent())
+            .andExpect(jsonPath("$.code").value("APPLICATION_DOCUMENT_MAPPING_MIGRATION_STALE"))
+        assertEquals("NEW-ANSWER", jdbc.queryForObject(
+            "SELECT value_text FROM application_preparation_fact WHERE preparation_id=?", String::class.java, id))
+        assertEquals(fixture.version, jdbc.queryForObject("SELECT form_version_id FROM application_preparation WHERE id=?", String::class.java, id))
+        assertEquals(before, jdbc.queryForObject("SELECT COUNT(*) FROM application_form_snapshot", Int::class.java))
+    }
+
+    @Test
+    fun approvalTokenHasFifteenMinuteTtlAndCannotBeUsedForAnotherPreparationOrAfterExpiry() {
+        val fixture = changedMappingFixture()
+        val key = "application-document-migration:$ownerId:${fixture.preparationId}:${fixture.token}"
+        val ttl = redis.getExpire(key, java.util.concurrent.TimeUnit.SECONDS)
+        org.junit.jupiter.api.Assertions.assertTrue(ttl in 1L..900L)
+        org.junit.jupiter.api.Assertions.assertThrows(ApplicationDocumentException::class.java) {
+            migrationProposals.read(ownerId, fixture.preparationId + 1, fixture.token)
+        }
+        redis.expire(key, java.time.Duration.ZERO)
+        mvc.perform(post("$BASE/${fixture.preparationId}/documents/mapping-migration/confirm").cookie(owner)
+            .header(HttpHeaders.ORIGIN, ORIGIN).contentType(MediaType.APPLICATION_JSON)
+            .content("""{"expectedRevision":2,"approvalToken":"${fixture.token}"}"""))
+            .andExpect(status().isUnprocessableContent())
+            .andExpect(jsonPath("$.code").value("APPLICATION_DOCUMENT_MAPPING_MIGRATION_STALE"))
+        assertEquals(fixture.version, jdbc.queryForObject("SELECT form_version_id FROM application_preparation WHERE id=?",
+            String::class.java, fixture.preparationId))
+    }
+
+    @Test
+    fun changedSavedMapVersionRejectsPendingApprovalWithoutSnapshotClone() {
+        val fixture = changedMappingFixture()
+        val proposal = migrationProposals.read(ownerId, fixture.preparationId, fixture.token)
+        val before = jdbc.queryForObject("SELECT COUNT(*) FROM application_form_snapshot", Int::class.java)
+        jdbc.update("UPDATE application_form_snapshot SET manifest_json = JSON_SET(manifest_json, " +
+            "'$.documentMapSnapshot.mapVersion', 'new-map') WHERE form_version_id = ?", fixture.version)
+        org.junit.jupiter.api.Assertions.assertThrows(ApplicationDocumentException::class.java) {
+            migrationRepository.approve(proposal)
+        }
+        assertEquals(before, jdbc.queryForObject("SELECT COUNT(*) FROM application_form_snapshot", Int::class.java))
+        assertEquals(fixture.version, jdbc.queryForObject("SELECT form_version_id FROM application_preparation WHERE id=?",
+            String::class.java, fixture.preparationId))
+    }
+
+    @Test
+    fun changedPipelineOrOfficialSourceRejectsPendingApproval() {
+        val fixture = changedMappingFixture()
+        val before = jdbc.queryForObject("SELECT COUNT(*) FROM application_form_snapshot", Int::class.java)
+        `when`(documentMcp.configuration()).thenReturn(AiDocumentConfigurationPayload(
+            "application-document-mcp-v1", "c".repeat(64)))
+        mvc.perform(post("$BASE/${fixture.preparationId}/documents/mapping-migration/confirm").cookie(owner)
+            .header(HttpHeaders.ORIGIN, ORIGIN).contentType(MediaType.APPLICATION_JSON)
+            .content("""{"expectedRevision":2,"approvalToken":"${fixture.token}"}"""))
+            .andExpect(status().isUnprocessableContent())
+            .andExpect(jsonPath("$.code").value("APPLICATION_DOCUMENT_MAPPING_MIGRATION_STALE"))
+        `when`(documentMcp.configuration()).thenReturn(AiDocumentConfigurationPayload(
+            "application-document-mcp-v1", "b".repeat(64)))
+        `when`(bizInfoAttachments.collect("BIZINFO", DISCOVERY_PROGRAM_ID)).thenReturn(SupportProgramAttachments(
+            "동적 지원사업", listOf(SupportProgramAttachment("https://www.bizinfo.go.kr/file", "신청양식.hwpx", "HWPX",
+                "changed-official-source".toByteArray())), emptyList()))
+        mvc.perform(post("$BASE/${fixture.preparationId}/documents/mapping-migration/confirm").cookie(owner)
+            .header(HttpHeaders.ORIGIN, ORIGIN).contentType(MediaType.APPLICATION_JSON)
+            .content("""{"expectedRevision":2,"approvalToken":"${fixture.token}"}"""))
+            .andExpect(status().isUnprocessableContent())
+            .andExpect(jsonPath("$.code").value("APPLICATION_DOCUMENT_MAPPING_MIGRATION_STALE"))
+        assertEquals(before, jdbc.queryForObject("SELECT COUNT(*) FROM application_form_snapshot", Int::class.java))
+        assertEquals(fixture.version, jdbc.queryForObject("SELECT form_version_id FROM application_preparation WHERE id=?",
+            String::class.java, fixture.preparationId))
+        assertEquals("TEST-COMPANY", jdbc.queryForObject(
+            "SELECT value_text FROM application_preparation_fact WHERE preparation_id=?", String::class.java, fixture.preparationId))
     }
 
     @Test

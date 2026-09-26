@@ -11,6 +11,7 @@ import type {
   SaveApplicationContent,
   ConfirmApplicationContent,
   ApplicationDocument,
+  ApplicationDocumentMigrationConfirmation,
   UpdateApplicationProgress,
 } from '../entities/ApplicationPreparation'
 
@@ -18,6 +19,8 @@ export interface ApplicationPreparationRepository {
   availability(sourceCode: string, sourceProgramId: string, signal?: AbortSignal): Promise<import('../entities/ApplicationPreparation').ApplicationFormAvailability>
   documents(id: number, signal?: AbortSignal): Promise<ApplicationDocument[]>
   generateDocuments(id: number, expectedRevision: number, signal?: AbortSignal): Promise<ApplicationDocument[]>
+  confirmDocumentMappingMigration(id: number, expectedRevision: number, approvalToken: string,
+    signal?: AbortSignal): Promise<ApplicationDocumentMigrationConfirmation>
   downloadDocument(id: number, fileId: number, signal?: AbortSignal): Promise<Blob>
   generateDraft(id: number, sectionKey: string, input: GenerateApplicationDraft, signal?: AbortSignal): Promise<ApplicationPreparation>
   saveContent(id: number, sectionKey: string, input: SaveApplicationContent, signal?: AbortSignal): Promise<ApplicationPreparation>

@@ -5,8 +5,9 @@ from tempfile import TemporaryDirectory
 
 from app.application_preparation.document_adapters import HwpxDocumentAdapter, PdfDocumentAdapter, HwpDocumentAdapter, assist_with_kordoc
 from app.application_preparation.document_contract import (
-    CONTRACT, DocumentError, DocumentMap, GenerateDocumentRequest, MapDocumentRequest, PIPELINE_VERSION, digest, validate_plan, validate_mapping, mapping_label_key,
+    CONTRACT, DocumentAnalysisStage, DocumentError, DocumentMap, EditOperation, GenerateDocumentRequest, MapDocumentRequest, PIPELINE_VERSION, PlanSelection, digest, validate_plan, validate_mapping, mapping_label_key, mapping_label_matches,
 )
+from app.application_preparation.hwpx_form_analysis import annotate_semantic_reading_order
 
 logger = logging.getLogger(__name__)
 
@@ -90,8 +91,65 @@ async def inspect_document(path: Path, request: GenerateDocumentRequest) -> Docu
         document = await HwpxDocumentAdapter().inspect(path, getattr(request, "fields", ()))
     else:
         document = await PdfDocumentAdapter().inspect(path, request)
-    if not document.targets or sum(len(t.currentText) + len(t.context) for t in document.targets) > 400000:
+    context_size = sum(len(t.currentText) + len(t.context) for t in document.targets)
+    if not document.targets:
         raise DocumentError("LIMIT_EXCEEDED")
+    if context_size > 400000:
+        if request.format != "hwpx":
+            raise DocumentError("LIMIT_EXCEEDED")
+        if isinstance(request, MapDocumentRequest):
+            parents = {target.nativeLocator.get("parent") for target in document.targets}
+            leaves = [target for target in document.targets if target.targetId not in parents
+                      and target.editable and target.nativeLocator.get("bindingEligible", True)]
+            candidates = [{target.targetId for target in leaves if target.nativeLocator.get("fieldLabels")
+                           and mapping_label_matches(field.label, target, field.guidance)}
+                          for field in request.fields]
+            if any(not ids for ids in candidates):
+                raise DocumentError("LIMIT_EXCEEDED", reason="HWPX_MAPPING_CANDIDATE_MISSING")
+            selected = set().union(*candidates)
+        else:
+            selected = set(request.scopeTargetIds)
+            if not selected or not selected <= {target.targetId for target in document.targets}:
+                raise DocumentError("LIMIT_EXCEEDED", reason="HWPX_SAVED_SCOPE_REQUIRED")
+        if sum(len(target.currentText) + len(target.context) for target in document.targets
+               if target.targetId in selected) > 400000:
+            raise DocumentError("LIMIT_EXCEEDED", reason="HWPX_CONTEXT_BUDGET")
+    if request.format == "hwpx":
+        annotate_semantic_reading_order(document.targets)
+    else:
+        for index, target in enumerate(document.targets):
+            target.analysis.nativeOrderIndex = index
+            target.analysis.semanticOrderIndex = index
+            target.analysis.readingOrderIndex = index
+            target.analysis.readingOrderConfidence = 1.0
+            target.analysis.readingOrderStatus = "PRESERVED"
+            target.analysis.readingOrderReason = ["format_structure_insufficient_for_correction"]
+    reordered = sum(target.analysis.readingOrderStatus == "LOCAL_REORDERED" for target in document.targets)
+    order_review = sum(target.analysis.readingOrderStatus == "REVIEW_REQUIRED" for target in document.targets)
+    preserved = len(document.targets) - reordered - order_review
+    heading_tables = {(target.nativeLocator.get("table"), target.analysis.headingStatus)
+                      for target in document.targets if target.analysis.headingStatus != "PRESERVED"}
+    headings = sum(status == "ACCEPTED" for _, status in heading_tables)
+    heading_review = sum(status == "REVIEW_REQUIRED" for _, status in heading_tables)
+    classified = [target for target in document.targets if target.analysis.tableClassification is not None]
+    review = sum(target.analysis.reviewRequired for target in classified)
+    document.documentAnalysis.readingOrder = DocumentAnalysisStage(
+        status="REVIEW_REQUIRED" if order_review else "APPLIED", targetCount=len(document.targets), resultCount=reordered,
+        reviewCount=order_review, note="Semantic indices only; target array and native addresses unchanged",
+        metrics={"totalTargets": len(document.targets), "reorderedTargets": reordered,
+                 "reviewRequiredTargets": order_review, "preservedTargets": preserved},
+    )
+    document.documentAnalysis.heading = DocumentAnalysisStage(
+        status="REVIEW_REQUIRED" if heading_review else "APPLIED" if headings else "SKIPPED",
+        targetCount=len(heading_tables), resultCount=headings, reviewCount=heading_review,
+        note="Structure-derived scope hints only; element types unchanged",
+        metrics={"candidateCount": len(heading_tables), "acceptedCount": headings, "reviewCount": heading_review},
+    )
+    document.documentAnalysis.tableClassification = DocumentAnalysisStage(
+        status="REVIEW_REQUIRED" if review else "APPLIED" if classified else "SKIPPED",
+        targetCount=len(classified), resultCount=len(classified) - review, reviewCount=review,
+        note="Classification only; table and target identities unchanged",
+    )
     if request.format != "hwp":
         await assist_with_kordoc(path, document)
     return document
@@ -119,8 +177,12 @@ async def map_document(request: MapDocumentRequest, agent) -> dict:
         labels.update(key for target in document.targets for label in target.nativeLocator.get("fieldLabels", [])
                       if (key := mapping_label_key(label)) and
                       (key in field_labels or len(key) >= 2 and any(key in field for field in field_labels)))
+        printed_label_cells = {target.targetId for target in document.targets
+                               if target.kind == "cell" and mapping_label_key(target.currentText) in labels}
         for target in document.targets:
-            if target.kind in {"cell", "paragraph", "body_para", "PDF_TEXT"} and mapping_label_key(target.currentText) in labels:
+            if target.kind in {"cell", "paragraph", "body_para", "PDF_TEXT"} and (
+                    mapping_label_key(target.currentText) in labels or
+                    target.kind == "paragraph" and target.nativeLocator.get("parent") in printed_label_cells):
                 if not ((target.kind == "body_para" or request.format == "hwp") and target.currentText.rstrip().endswith((":", "："))):
                     target.editable = False
                     target.unsupportedReason = "PRESERVED_FIELD_LABEL_OR_TITLE"
@@ -147,6 +209,11 @@ async def map_document(request: MapDocumentRequest, agent) -> dict:
         if path.read_bytes() != source:
             raise DocumentError("SOURCE_CHANGED")
         document.unmappedFieldIds = selection.unmappedFieldIds
+        document.documentAnalysis.mapping = DocumentAnalysisStage(
+            status="REVIEW_REQUIRED" if selection.unmappedFieldIds else "PASSED",
+            targetCount=len(selection.scopeTargetIds), resultCount=len(selection.bindings),
+            reviewCount=len(selection.unmappedFieldIds), note="Validated native bindings",
+        )
         return {"contractVersion": CONTRACT, "pipelineVersion": PIPELINE_VERSION, "sourceSha256": request.sourceSha256,
                 "mapVersion": document.mapVersion, "engineVersion": document.engineVersion,
                 "bindings": [b.model_dump() for b in selection.bindings], "scopeTargetIds": [key for key in selection.scopeTargetIds if next(t for t in document.targets if t.targetId == key).editable],
@@ -161,16 +228,33 @@ async def generate_document(request: GenerateDocumentRequest, agent) -> dict:
         path = Path(directory).resolve() / ("source." + request.format)
         path.write_bytes(source)
         document = await inspect_document(path, request)
-        try:
-            selection = await agent.plan_document(request, document)
-        except DocumentError:
-            raise
-        except TimeoutError:
-            raise DocumentError("PLAN_TIMEOUT") from None
-        except Exception as error:
-            logger.warning("document_plan_failed mode=write type=%s", type(error).__name__)
-            raise DocumentError("PLAN_FAILED") from None
+        if request.format == "pdf" and request.bindings and all(
+                binding.targetId.startswith("pdf-field:") for binding in request.bindings):
+            by_target = {target.targetId: target for target in document.targets}
+            if any(binding.targetId not in by_target for binding in request.bindings):
+                raise DocumentError("SOURCE_CHANGED")
+            selection = PlanSelection(operations=[EditOperation(
+                targetId=binding.targetId, operation="set_field",
+                expectedText=by_target[binding.targetId].currentText,
+                start=0, end=len(by_target[binding.targetId].currentText),
+                valueRef=binding.factId, box=None, reason="Saved native AcroForm field binding")
+                for binding in request.bindings], unresolvedTargets=[],
+                scopeTargetIds=list(dict.fromkeys(binding.targetId for binding in request.bindings)))
+        else:
+            try:
+                selection = await agent.plan_document(request, document)
+            except DocumentError:
+                raise
+            except TimeoutError:
+                raise DocumentError("PLAN_TIMEOUT") from None
+            except Exception as error:
+                logger.warning("document_plan_failed mode=write type=%s", type(error).__name__)
+                raise DocumentError("PLAN_FAILED") from None
         plan = validate_plan(request, document, selection)
+        document.documentAnalysis.mapping = DocumentAnalysisStage(
+            status="PASSED", targetCount=len(plan.scopeTargetIds), resultCount=len(plan.operations),
+            note="WritePlan validated against native targets and saved bindings",
+        )
         facts = {f.id: f.value for f in request.facts}
         if request.format == "hwp":
             output, verification = HwpDocumentAdapter().stage(source, plan)
@@ -178,6 +262,15 @@ async def generate_document(request: GenerateDocumentRequest, agent) -> dict:
             output, verification = await HwpxDocumentAdapter().apply(path, document, plan, facts)
         else:
             output, verification = await PdfDocumentAdapter().apply(path, document, plan, facts)
+        pending_external = str(verification.get("stage", "")).endswith("_REQUIRED")
+        verification_count = (verification.get("deletionsVerified", 0) if pending_external else
+                              verification.get("verified", verification.get("applied", len(verification.get("placements", [])))))
+        document.documentAnalysis.verification = DocumentAnalysisStage(
+            status="PENDING_EXTERNAL" if pending_external else "PASSED",
+            targetCount=len(plan.operations), resultCount=verification_count,
+            note=("Remaining verification delegated to the authoritative Core editor" if pending_external else
+                  "Native editor verification completed"),
+        )
         if path.read_bytes() != source:
             raise DocumentError("SOURCE_CHANGED")
         return {"contractVersion": CONTRACT, "pipelineVersion": PIPELINE_VERSION, "sourceSha256": request.sourceSha256,

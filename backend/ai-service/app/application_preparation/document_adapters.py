@@ -3,6 +3,7 @@ import asyncio
 import base64
 from collections import defaultdict
 from pathlib import Path
+import re
 import shutil
 from tempfile import TemporaryDirectory
 import zipfile
@@ -11,7 +12,7 @@ from xml.etree import ElementTree
 
 from app.application_preparation.document_contract import (
     DocumentError, DocumentMap, ENGINES, GenerateDocumentRequest, MAX_BYTES,
-    NativeTarget, WritePlan, digest, edited_text,
+    NativeTarget, NativeTargetAnalysis, WritePlan, digest, edited_text,
 )
 from app.application_preparation.document_mcp import document_session
 from app.application_preparation.hwpx_form_analysis import analyze_cells
@@ -19,6 +20,23 @@ from app.application_preparation.pdf_form_detection import checked_regions, MODE
 
 # One short-lived detector per AI worker; do not retain model memory between jobs.
 _pdf_inspection_lock = asyncio.Semaphore(1)
+_PARENTHESIZED_BLANK = re.compile(r"(?:\([ \u3000]{2,}\)|（[ \u3000]{2,}）)")
+
+
+def _explicit_hwpx_input_paragraph(item: dict, source_context: dict | None) -> str | None:
+    """Identify one printed blank slot among otherwise empty paragraphs of a labeled cell."""
+    paragraphs = item.get("paragraphs", [])
+    if (item.get("kind") != "cell" or not item.get("editable") or not source_context
+            or not source_context.get("rowLabels") or source_context.get("formFields")
+            or len(paragraphs) < 2 or item.get("paragraph_count") != len(paragraphs)):
+        return None
+    visible = [paragraph for paragraph in paragraphs if paragraph.get("text")]
+    if (len(visible) != 1 or not _PARENTHESIZED_BLANK.fullmatch(visible[0]["text"])
+            or item.get("text") != visible[0]["text"]
+            or any(paragraph.get("marker") for paragraph in paragraphs)
+            or len({paragraph.get("target") for paragraph in paragraphs}) != len(paragraphs)):
+        return None
+    return visible[0]["target"]
 
 
 def read_output(path: Path, root: Path) -> bytes:
@@ -55,19 +73,40 @@ class HwpxDocumentAdapter:
         targets = []
         for item in [*result["regions"], *result["unsupported_controls"]]:
             locator = {key: item.get(key) for key in ("target", "kind", "section", "table", "row", "col", "paragraph_count")}
+            source_context = None
             if item["kind"] == "cell" and analyze:
                 source_context = contexts.get(item["target"])
                 if source_context is None or "".join(source_context["sourceCellText"].split()) != "".join(item["text"].split()):
                     raise DocumentError("SOURCE_CHANGED", reason="HWPX_TABLE_LAYOUT_MISMATCH")
-                locator.update({key: value for key, value in source_context.items() if key != "sourceCellText"})
+                analysis_keys = {"sourceCellText", "tableClassification", "tableClassificationConfidence",
+                                 "tableClassificationEvidence", "tableClassificationReviewRequired",
+                                 "semanticSection", "headingConfidence", "headingReason", "headingStatus", "sectionPath"}
+                locator.update({key: value for key, value in source_context.items() if key not in analysis_keys})
             context = str({k: v for k, v in locator.items() if v is not None})
+            analysis = NativeTargetAnalysis(
+                semanticSection=source_context.get("semanticSection") if source_context else None,
+                headingConfidence=source_context.get("headingConfidence") if source_context else None,
+                headingStatus=source_context.get("headingStatus", "PRESERVED") if source_context else "PRESERVED",
+                headingReason=source_context.get("headingReason", []) if source_context else [],
+                sectionPath=source_context.get("sectionPath", []) if source_context else [],
+                tableClassification=source_context.get("tableClassification") if source_context else None,
+                tableClassificationConfidence=source_context.get("tableClassificationConfidence") if source_context else None,
+                tableClassificationEvidence=source_context.get("tableClassificationEvidence", []) if source_context else [],
+                reviewRequired=source_context.get("tableClassificationReviewRequired", False) if source_context else False,
+            )
             targets.append(NativeTarget(targetId=item["target"], nativeLocator=locator, kind=item["kind"],
                                         currentText=item["text"], context=context[:1000], editable=item["editable"],
-                                        unsupportedReason=item.get("reason")))
+                                        unsupportedReason=item.get("reason"), analysis=analysis))
+            input_paragraph = _explicit_hwpx_input_paragraph(item, source_context)
             for paragraph in item.get("paragraphs", []):
-                targets.append(NativeTarget(targetId=paragraph["target"], nativeLocator={**locator, "target": paragraph["target"], "kind": "paragraph", "parent": item["target"]},
+                paragraph_locator = {**locator, "target": paragraph["target"], "kind": "paragraph", "parent": item["target"]}
+                if input_paragraph and paragraph["target"] != input_paragraph:
+                    # The only printed input slot is a sibling. Keep the native edit address,
+                    # but do not offer this empty layout paragraph as a Mapping binding.
+                    paragraph_locator["bindingEligible"] = False
+                targets.append(NativeTarget(targetId=paragraph["target"], nativeLocator=paragraph_locator,
                                             kind="paragraph", currentText=paragraph["text"], context=item["text"][:1000],
-                                            editable=item["editable"], unsupportedReason=item.get("reason")))
+                                            editable=item["editable"], unsupportedReason=item.get("reason"), analysis=analysis.model_copy(deep=True)))
         for i, target in enumerate(targets):
             target.context = (target.context + " | " + " | ".join(t.currentText for t in targets[max(0, i-2):i+3]))[:1000]
         return DocumentMap(sourceSha256=result["source_sha256"], format="hwpx", engineVersion=ENGINES["hwpx"], targets=targets)
@@ -138,7 +177,11 @@ class PdfDocumentAdapter:
         for target in request.pdfTargets:
             field = fields.get(target.id)
             is_field = target.id.startswith("pdf-field:")
-            targets.append(NativeTarget(targetId=target.id, nativeLocator=field.model_dump() if field else {"target": target.id, "pageText": target.text},
+            field_locator = field.model_dump() if field else {"target": target.id, "pageText": target.text}
+            if field:
+                field_locator["fieldLabels"] = [target.context.partition(" | type=")[0].strip()
+                                                or target.id.removeprefix("pdf-field:")]
+            targets.append(NativeTarget(targetId=target.id, nativeLocator=field_locator,
                 kind="PDF_FIELD" if is_field else "PDF_PAGE", label=target.context, currentText=target.text if is_field else "", context=target.context,
                 editable=(field.editable if field else not is_field), unsupportedReason=None if (field and field.editable) or not is_field else "FIELD_NOT_EDITABLE_OR_METADATA_MISSING"))
         async with document_session("pdf", path.parent) as session:

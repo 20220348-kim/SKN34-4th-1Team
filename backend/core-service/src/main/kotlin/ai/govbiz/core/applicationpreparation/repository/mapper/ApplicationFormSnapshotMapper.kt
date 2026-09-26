@@ -9,6 +9,9 @@ interface ApplicationFormSnapshotMapper {
     fun attachDocumentMap(@Param("formVersionId") formVersionId: String, @Param("sourceSha256") sourceSha256: String, @Param("pipelineVersion") pipelineVersion: String, @Param("documentMapJson") documentMapJson: String): Int
 
     fun findByVersion(@Param("formVersionId") formVersionId: String): ApplicationFormSnapshotDbRow?
+    fun findByVersionForUpdate(@Param("formVersionId") formVersionId: String): ApplicationFormSnapshotDbRow?
+    fun insertApprovedSnapshot(@Param("sourceVersionId") sourceVersionId: String,
+        @Param("row") row: ApplicationFormSnapshotDbRow): Int
 
     fun findByProgram(
         @Param("sourceCode") sourceCode: String,

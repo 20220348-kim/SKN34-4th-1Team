@@ -131,6 +131,25 @@ export type ApplicationDocument = {
   unfilledAnswerCount: number | null
   unfilledAnswers: ApplicationDocumentUnfilledAnswer[]
 }
+export type ApplicationDocumentMappingChange = {
+  fieldLabel: string
+  changeType: 'TARGET_ADDED' | 'TARGET_REMOVED' | 'TARGET_CHANGED' | 'BOX_CHANGED' | 'KIND_CHANGED' | 'SCOPE_CHANGED'
+  oldLocation: string | null
+  newLocation: string | null
+}
+export type ApplicationDocumentMigrationNotice = {
+  status: 'MAPPING_CHANGED'
+  approvalToken: string
+  expectedRevision: number
+  expiresInSeconds: number
+  changes: ApplicationDocumentMappingChange[]
+}
+export type ApplicationDocumentMigrationConfirmation = {
+  status: 'REGENERATION_REQUIRED'
+  preparationId: number
+  inputRevision: number
+  formVersionId: string
+}
 export type GenerateApplicationDraft = { expectedRevision: number; expectedVersionId: number | null; requestKey: string }
 export type ConfirmApplicationContent = { expectedRevision: number; expectedVersionId: number }
 export type SaveApplicationContent = ConfirmApplicationContent & { content: string }

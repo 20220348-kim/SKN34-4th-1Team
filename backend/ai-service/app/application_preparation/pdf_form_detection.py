@@ -82,6 +82,11 @@ def checked_regions(detections: list[dict], words: list[dict], ruled_regions: li
             if not area(region) or any(area(intersection(region, bounds(word["box"]))) > 0 for word in words):
                 continue
             if any(area(intersection(region, bounds(previous["box"]))) > 0 for previous in result):
+                # Dense grids can yield an unlabeled second detection across the
+                # edge of a labeled input. Discard that unusable proposal; never
+                # publish overlapping targets or discard a labeled conflict.
+                if not labels:
+                    continue
                 raise ValueError("PDF_DETECTION_OVERLAP")
             result.append({"id": f"ffdetr-{len(result)}", "labels": labels, "confidence": detection["confidence"],
                            "box": {"x": region[0], "y": region[1], "width": region[2]-region[0], "height": region[3]-region[1]}})
