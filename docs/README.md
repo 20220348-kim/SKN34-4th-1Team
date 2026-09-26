@@ -73,6 +73,7 @@ C01 문서의 수동 조건 입력 UI와 개발 전략의 최초 UI 계획은 �
 | 문서 | 확인할 내용 |
 |---|---|
 | [기획 정합성·국내 경쟁 전략·개발 백로그](development-strategy-20260907.md) | 기획서 요구별 현재 차이, 국내 경쟁군 근거, P0/P1 작업·선행 조건·완료 기준·출시 게이트 |
+| [Langfuse 기반 LLMOps 도입 전략](langfuse-adoption-strategy.md) | 구현 전 계획: Langfuse·Prefect·Pandera·Evidently·pandas 전체 도입 순서와 완료 조건 |
 | [신청 문서 작성 도우미 설계](application-preparation-design.md) | skn-89 최초 검수 기준과 skn-96 기업마당 공고 기반 공식 첨부·문항 발견, 작성 보조 계약 |
 | [중복 지원·수혜 검토 설계](duplicate-support-review-design.md) | skn-59 입력·실행 API, 공식 첨부 수집·파싱·단일 Agent·원문/결과 보존과 검증·한계 |
 | [중복 검토 공식 근거·사례](../evaluation/combination-review/README.md) | 4-1 창업도약패키지 원문·인용·AI 작성 사례·사람 검수표와 무료 무결성 검사 |
