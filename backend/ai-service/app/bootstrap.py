@@ -18,6 +18,7 @@ from app.assistant_agent.tools import CoreToolClient
 from app.support_program_evidence.agent import SupportProgramEvidenceAnswerAgent
 from app.support_program_evidence.answer_service import SupportProgramEvidenceAnswerService
 from app.support_program_evidence.service import SupportProgramEvidenceService
+from app.support_program_evidence.tracing import EvidenceTracing
 from app.support_program_ranking.agent import SupportProgramRecommendationAgent
 from app.support_program_ranking.service import SupportProgramRankingService
 from app.config import Settings
@@ -42,6 +43,7 @@ class ApplicationContainer:
     assistant_service: AssistantService | None = None
     assistant_agent_service: AssistantAgentService | None = None
     assistant_tool_client: CoreToolClient | None = None
+    evidence_tracing: EvidenceTracing | None = None
 
     async def close(self) -> None:
         try:
@@ -52,8 +54,12 @@ class ApplicationContainer:
                 if self.qdrant_client is not None:
                     await self.qdrant_client.close()
             finally:
-                if self.openai_client is not None:
-                    await self.openai_client.close()
+                try:
+                    if self.openai_client is not None:
+                        await self.openai_client.close()
+                finally:
+                    if self.evidence_tracing is not None:
+                        await self.evidence_tracing.close()
 
 
 def build_application_container(
@@ -68,6 +74,7 @@ def build_application_container(
 ) -> ApplicationContainer:
     """환경설정과 선택적 테스트 대역을 실제 애플리케이션 객체로 조립한다."""
 
+    evidence_tracing = EvidenceTracing(settings.langfuse)
     openai_client = AsyncOpenAI(
         api_key=settings.openai_api_key,
         timeout=settings.llm_model_timeout_seconds,
@@ -100,6 +107,7 @@ def build_application_container(
     if evidence_answer_agent is None:
         assert general_model is not None
         evidence_answer_agent = SupportProgramEvidenceAnswerAgent(
+            tracing=evidence_tracing,
             model=general_model,
             model_timeout_seconds=settings.llm_model_timeout_seconds,
             run_timeout_seconds=settings.llm_run_timeout_seconds,
@@ -184,6 +192,7 @@ def build_application_container(
             timeout_seconds=settings.assistant_agent_timeout_seconds,
         )
     return ApplicationContainer(
+        evidence_tracing=evidence_tracing,
         combination_review_service=CombinationReviewService(combination_agent, settings.openai_model),
         application_preparation_service=ApplicationPreparationService(application_preparation_agent, settings.openai_model),
         support_program_ranking_service=SupportProgramRankingService(ranking_agent),
@@ -202,7 +211,7 @@ def build_application_container(
         ),
         support_program_evidence_service=evidence_service,
         support_program_evidence_answer_service=SupportProgramEvidenceAnswerService(
-            evidence_answer_agent,
+            evidence_answer_agent, evidence_tracing,
         ),
     )
 

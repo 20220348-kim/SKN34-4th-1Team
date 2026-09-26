@@ -126,13 +126,13 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Set up uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "0.12.5"
-          python-version: "3.11"
+          python-version: "3.12"
           working-directory: backend/ai-service
           enable-cache: true
           cache-dependency-glob: backend/ai-service/uv.lock
@@ -153,7 +153,7 @@ jobs:
         run: uv build
 
       - name: Test evidence evaluation tools without model calls
-        run: uv run --locked --extra dev python -m pytest ../../evaluation/support-program-evidence
+        run: uv run --locked --extra dev --group evaluation python -m pytest ../../evaluation/support-program-evidence
 
       - name: Test Compose cleanup guards without Docker mutations
         run: python -B -m unittest discover -s ../../infrastructure/scripts -p 'test_*.py'

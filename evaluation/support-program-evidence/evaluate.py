@@ -112,6 +112,10 @@ def select_cases(prepared: list, case_ids: list) -> list:
     return selected
 
 
+def reference_citation_recall(cited_orders: list, expected_orders: list) -> float | None:
+    return len(set(cited_orders) & set(expected_orders)) / len(expected_orders) if expected_orders else None
+
+
 def report(fixture: dict, prepared: list, fixture_hash: str, capture: dict | None = None) -> dict:
     if capture is not None:
         require(isinstance(capture, dict), "capture must be an object")
@@ -166,7 +170,7 @@ def report(fixture: dict, prepared: list, fixture_hash: str, capture: dict | Non
         status_matches = answer.answer_status.value == case["expectedStatus"]
         matches += int(status_matches)
         if case["expectedCitationOrders"]:
-            citation_recalls.append(len(set(cited_orders) & set(case["expectedCitationOrders"])) / len(case["expectedCitationOrders"]))
+            citation_recalls.append(reference_citation_recall(cited_orders, case["expectedCitationOrders"]))
         result["cases"].append({
             "id": case["id"], "question": case["question"], "outcome": "success",
             "expectedStatus": case["expectedStatus"], "actualStatus": answer.answer_status.value,
@@ -245,9 +249,13 @@ async def execute(prepared: list, fixture_hash: str, output_dir: Path) -> dict:
     from openai import AsyncOpenAI
     from app.support_program_evidence.agent import SupportProgramEvidenceAnswerAgent
     from app.support_program_evidence.answer_service import SupportProgramEvidenceAnswerService
+    from app.config import LangfuseSettings
+    from app.support_program_evidence.tracing import EvidenceTracing
+    from uuid import uuid4
 
     key = os.environ.get("OPENAI_API_KEY", "").strip()
     require(bool(key), "OPENAI_API_KEY must be explicitly supplied; .env is not read")
+    tracing_settings = LangfuseSettings.from_environment()
     output_dir.mkdir(parents=True, exist_ok=False)
     capture = {
         "schemaVersion": "support-program-evidence-capture-v1", "fixtureSha256": fixture_hash,
@@ -277,21 +285,27 @@ async def execute(prepared: list, fixture_hash: str, output_dir: Path) -> dict:
         api_key=key, base_url="https://api.openai.com/v1", max_retries=0,
         http_client=httpx2.AsyncClient(event_hooks={"response": [record_usage]}),
     )
+    tracing = EvidenceTracing(tracing_settings)
     service = SupportProgramEvidenceAnswerService(SupportProgramEvidenceAnswerAgent(
+        tracing=tracing,
         model=ChatOpenAI(
             model=DEFAULT_OPENAI_MODEL, api_key=key, use_responses_api=True, max_retries=0,
             root_async_client=client, async_client=client.chat.completions,
         ),
         model_timeout_seconds=DEFAULT_LLM_MODEL_TIMEOUT_SECONDS,
         run_timeout_seconds=DEFAULT_LLM_RUN_TIMEOUT_SECONDS,
-    ))
+    ), tracing)
     try:
         for case, request in prepared:
             record = {"caseId": case["id"], "requestSha256": request_digest(request)}
             response_offset = len(capture["apiResponses"])
             started = perf_counter()
             try:
-                answer = await service.answer(request)
+                if tracing.client is not None:
+                    record["traceId"] = uuid4().hex
+                    answer = await service.answer(request, trace_id=record["traceId"])
+                else:
+                    answer = await service.answer(request)
                 record.update(outcome="success", response=answer.model_dump(by_alias=True, mode="json"))
             except Exception as error:
                 # Never persist SDK exception text, authentication headers or raw error bodies.
@@ -302,6 +316,7 @@ async def execute(prepared: list, fixture_hash: str, output_dir: Path) -> dict:
                 record["diagnosticCategory"] = diagnose_response(observed[0], request) \
                     if len(observed) == 1 else "unknown"
             record["elapsedMs"] = round((perf_counter() - started) * 1000, 3)
+            record["apiResponseIndexes"] = list(range(response_offset, len(capture["apiResponses"])))
             capture["cases"].append(record)
             save_capture()
             if record["outcome"] == "error":
@@ -314,7 +329,10 @@ async def execute(prepared: list, fixture_hash: str, output_dir: Path) -> dict:
             capture["finishedAt"] = datetime.now(timezone.utc).isoformat()
             save_capture()
         finally:
-            await client.close()
+            try:
+                await client.close()
+            finally:
+                await tracing.close()
     return capture
 
 

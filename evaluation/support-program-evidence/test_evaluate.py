@@ -5,6 +5,7 @@ from copy import deepcopy
 import importlib.util
 import json
 from pathlib import Path
+from uuid import uuid4
 
 import httpx2
 import pytest
@@ -159,13 +160,28 @@ def test_saved_capture_cli_reads_utf8_with_a_legacy_locale(loaded, tmp_path, mon
     assert json.loads(capsys.readouterr().out)["completed"]
 
 
+@pytest.mark.parametrize("tracing_enabled", [False, True])
 @pytest.mark.parametrize("status,category", [
     (200, None), (429, "unknown"), ("invalid-citation", "unknown_citation"),
     ("invalid-json", "invalid_json"), ("invalid-contract", "invalid_answer_contract"),
     ("incomplete", "incomplete_response"), ("refusal", "model_refusal"),
     ("invalid-json-unknown-metadata", "invalid_json"),
 ])
-def test_execute_uses_production_agent_with_mock_http_only(loaded, tmp_path, monkeypatch, status, category):
+def test_execute_uses_production_agent_with_mock_http_only(
+    loaded, tmp_path, monkeypatch, status, category, tracing_enabled,
+):
+    monkeypatch.setenv("LANGFUSE_ENABLED", str(tracing_enabled).lower())
+    if tracing_enabled:
+        from langfuse import Langfuse
+        from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+        from app.support_program_evidence import tracing as tracing_module
+
+        exporter = InMemorySpanExporter()
+        monkeypatch.setattr(tracing_module, "Langfuse", lambda **kwargs: Langfuse(**kwargs, span_exporter=exporter))
+        monkeypatch.setenv("LANGFUSE_BASE_URL", "http://localhost:13000")
+        monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-lf-" + uuid4().hex)
+        monkeypatch.setenv("LANGFUSE_SECRET_KEY", "private-trace-test-key")
+    clients = []
     requests = []
     fake_capture = capture_for(loaded)
     fake_capture["cases"][0]["response"]["answer"] = "지원 대상 확인 🔎"
@@ -217,11 +233,13 @@ def test_execute_uses_production_agent_with_mock_http_only(loaded, tmp_path, mon
     class MockClient(real_client):
         def __init__(self, **kwargs):
             super().__init__(transport=httpx2.MockTransport(handler), **kwargs)
+            clients.append(self)
 
     monkeypatch.setattr(httpx2, "AsyncClient", MockClient)
     monkeypatch.setenv("OPENAI_API_KEY", "fake-key-never-sent")
     output = tmp_path / "new-run"
     capture = asyncio.run(evaluate.execute(loaded[1], loaded[2], output))
+    assert clients and all(client.is_closed for client in clients)
     assert len(requests) == (12 if status == 200 else 1)
     assert capture["completed"] == (status == 200)
     assert len(capture["apiResponses"]) == len(requests)
@@ -249,6 +267,27 @@ def test_execute_uses_production_agent_with_mock_http_only(loaded, tmp_path, mon
     if status == 200:
         assert "지원 대상 확인 🔎" in saved
     assert evaluate.report(*loaded, capture)["completed"] == (status == 200)
+    for index, record in enumerate(capture["cases"]):
+        assert record["apiResponseIndexes"] == [index]
+        assert ("traceId" in record) is tracing_enabled
+    if tracing_enabled:
+        spans = exporter.get_finished_spans()
+        assert len(spans) == 2 * len(capture["cases"])
+        roots = {format(span.context.trace_id, "032x"): span for span in spans if span.name == "evidence.answer"}
+        models = {format(span.context.trace_id, "032x"): span for span in spans if span.name == "evidence.model"}
+        assert len(roots) == len(capture["cases"])
+        for record in capture["cases"]:
+            root = roots[record["traceId"]]
+            assert models[record["traceId"]].parent.span_id == root.context.span_id
+            assert root.attributes["langfuse.observation.metadata.outcome"] == (
+                "completed" if record["outcome"] == "success" else "failed"
+            )
+        exported = json.dumps([span.to_json() for span in spans], ensure_ascii=False)
+        private_values = ["private-trace-test-key", "fake-key-never-sent", "SECRET-MUST-NOT-PERSIST", "지원 대상 확인 🔎"]
+        for _, request in loaded[1]:
+            private_values.extend([request.question, *(chunk.text for chunk in request.chunks)])
+        assert all(private not in exported for private in private_values)
+        assert all(not span.events for span in spans)
 
 
 def test_diagnosis_does_not_invent_unknown_or_historical_causes(loaded):
@@ -287,7 +326,7 @@ def test_capture_write_failure_preserves_previous_record_and_closes_client(loade
             self.closed = True
 
     class FakeService:
-        def __init__(self, agent):
+        def __init__(self, agent, tracing=None):
             pass
 
         async def answer(self, request):

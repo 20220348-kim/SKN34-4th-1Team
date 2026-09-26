@@ -1,7 +1,9 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from math import isfinite
 from os import environ
 from typing import Literal, cast
+from urllib.parse import urlsplit
+import re
 
 
 DEFAULT_OPENAI_MODEL = "gpt-5.6-luna"
@@ -23,6 +25,45 @@ DEFAULT_LLM_COMBINATION_REVIEW_MODEL_TIMEOUT_SECONDS = 60.0
 DEFAULT_LLM_COMBINATION_REVIEW_RUN_TIMEOUT_SECONDS = 70.0
 MAX_LLM_RANKING_TIMEOUT_SECONDS = 60.0
 MAX_LLM_COMBINATION_REVIEW_TIMEOUT_SECONDS = 120.0
+
+
+@dataclass(frozen=True, slots=True)
+class LangfuseSettings:
+    enabled: bool = False
+    base_url: str | None = None
+    public_key: str | None = field(default=None, repr=False)
+    secret_key: str | None = field(default=None, repr=False)
+    environment: str = "development"
+    release: str | None = None
+
+    def __post_init__(self) -> None:
+        if type(self.enabled) is not bool:
+            raise SettingsConfigurationError("LANGFUSE_ENABLED must be true or false")
+        if not self.enabled:
+            return
+        url = urlsplit(self.base_url or "")
+        if (url.scheme not in {"http", "https"} or not url.hostname or url.username or url.password
+                or url.query or url.fragment or url.path not in {"", "/"}):
+            raise SettingsConfigurationError("LANGFUSE_BASE_URL must be an explicit http(s) origin")
+        if not self.public_key or not self.secret_key:
+            raise SettingsConfigurationError("Enabled Langfuse requires public and secret keys")
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,39}", self.environment):
+            raise SettingsConfigurationError("LANGFUSE_ENVIRONMENT is invalid")
+        if self.release is not None and not re.fullmatch(r"[0-9a-f]{7,40}", self.release):
+            raise SettingsConfigurationError("GIT_SHA must be a hexadecimal commit identifier")
+
+    @classmethod
+    def from_environment(cls) -> "LangfuseSettings":
+        enabled = environ.get("LANGFUSE_ENABLED", "false").strip().lower()
+        if enabled not in {"true", "false"}:
+            raise SettingsConfigurationError("LANGFUSE_ENABLED must be true or false")
+        return cls(
+            enabled=enabled == "true", base_url=_optional_value(environ.get("LANGFUSE_BASE_URL")),
+            public_key=_optional_value(environ.get("LANGFUSE_PUBLIC_KEY")),
+            secret_key=_optional_value(environ.get("LANGFUSE_SECRET_KEY")),
+            environment=environ.get("LANGFUSE_ENVIRONMENT", "development"),
+            release=_optional_value(environ.get("GIT_SHA")),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +98,7 @@ class Settings:
     assistant_agent_max_tool_calls: int = DEFAULT_ASSISTANT_AGENT_MAX_TOOL_CALLS
     assistant_agent_timeout_seconds: float = DEFAULT_ASSISTANT_AGENT_TIMEOUT_SECONDS
     assistant_tool_timeout_seconds: float = DEFAULT_ASSISTANT_TOOL_TIMEOUT_SECONDS
+    langfuse: LangfuseSettings = field(default_factory=LangfuseSettings)
 
     def __post_init__(self) -> None:
         model = self.application_form_discovery_model_timeout_seconds
@@ -107,6 +149,7 @@ class Settings:
             raise SettingsConfigurationError("OPENAI_API_KEY is required")
 
         return cls(
+            langfuse=LangfuseSettings.from_environment(),
             openai_api_key=openai_api_key,
             openai_model=(
                 environ.get("OPENAI_MODEL", DEFAULT_OPENAI_MODEL).strip()

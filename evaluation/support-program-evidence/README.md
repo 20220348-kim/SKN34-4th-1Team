@@ -118,6 +118,20 @@ Windows 체크아웃에서도 같은 원본을 재검증하기 위한 규칙이�
 
 ## 실행 방법
 
+### Langfuse·Prefect·Pandera·Evidently·pandas 평가 배치
+
+[llmops.py](llmops.py)는 기존 캡처의 점수를 재계산하고 검증된 결과를 Langfuse와 Evidently에 연결합니다.
+새 모델 호출 없이 Prefect로 실행하며, 원본 캡처를 덮어쓰지 않습니다.
+AI Service와 같은 Python 3.12를 사용하며, 평가 의존성은
+`uv sync --locked --extra dev --group evaluation`으로 설치합니다.
+이 디렉터리의 전체 테스트에도 `--group evaluation`을 포함해야 합니다.
+[개발 서버·무료 검증·실행 명령](../../infrastructure/llmops/README.md)에 구성과 제한 사항을 정리했습니다.
+
+기존 `--execute`는 Langfuse를 명시적으로 활성화한 경우 실제 사례의 `traceId`와
+`apiResponseIndexes`를 새 캡처에 남깁니다. 과거 캡처의 원본·해시·보고서는 변경하지 않습니다.
+
+### 기존 평가 실행기
+
 저장소 루트에서 실행합니다. AI Service 의존성을 먼저 설치해야 합니다
 ([설치 안내](../../backend/ai-service/README.md)). 서버·MySQL·Qdrant·Excel은 필요 없습니다.
 

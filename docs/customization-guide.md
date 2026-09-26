@@ -89,7 +89,7 @@ worker는 현재 구현되어 있지 않습니다.
 ## 5. 검증 순서
 
 기능을 확장한 뒤에는 변경한 계약에서 시작해 전체 서비스 흐름으로 넓혀 갑니다.
-아래 명령은 저장소 루트에서 시작합니다. Node.js 24·pnpm 11.22, JDK 21, Python 3.11·uv와
+아래 명령은 저장소 루트에서 시작합니다. Node.js 24·pnpm 11.22, JDK 21, Python 3.12·uv와
 실행 중인 Docker가 필요합니다. Core API 통합 테스트는 실제 MySQL 8.4 Testcontainers를 사용합니다.
 
 ```bash
