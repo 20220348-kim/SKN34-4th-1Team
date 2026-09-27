@@ -16,7 +16,8 @@ Kubernetes 검증 이미지 접두사는 `govbiz-ops-service`입니다.
 이 디렉터리는 서브모듈이 아닙니다. 실제 `.env`, 로컬 가상환경·Git 메타데이터는
 가져오지 않았습니다.
 
-현재 범위는 상태 확인 API, 기존 Core 관리자 인증 연동, 저장 응답 재평가·승인 기반 새 모델 평가 실행·이력·결과 API와
+현재 범위는 상태 확인 API, 기존 Core 관리자 인증 연동, 저장 응답 재평가·승인 기반 새 모델 평가 실행·이력·결과,
+관리자 응답 검토·비교 기준 지정 API와
 Gunicorn 이미지입니다. 공고·회원·신청 관리 업무와 기존 Spring Boot/FastAPI의
 운영 데이터는 이전하지 않았습니다. 운영 배포는 별도입니다.
 
@@ -51,7 +52,7 @@ Django 사용자 행은 `core:{회원 ID}`와 이메일로 실행 요청자를 �
 - Django: Core 관리자 확인, CSRF 토큰, 평가 요청·조회, 인증된 HTML 보고서 API
 - Core: 기존 로그인·로그아웃과 관리자 세션 검증. 일반 회원은 Ops 접근 불가
 - 가상 6건 재현과 과거 프롬프트 실행의 공통 E01 비교를 선택 가능; 임의 경로·코드를 요청으로 받지 않음; 모델은 서버가 제시한 승인 설정과 일치해야 함
-- 기준·후보는 서버의 `apps/evaluations/capture_catalog.json`에 등록된 같은 자료의 캡처만 허용
+- 후보는 서버의 `apps/evaluations/capture_catalog.json` 등록 캡처 또는 승인된 새 응답 생성만 허용. 기준은 같은 자료의 등록 캡처 또는 관리자가 검토 후 지정한 완료 실행을 허용
 - `EvaluationRun`: 요청 UUID, 요청자·자료·기준/후보·상태·시간, Prefect 실행 ID, 콘텐츠 평가 ID, 요약·비교 저장
 - 요청 UUID를 DB 기본 키와 Prefect idempotency key로 사용; 같은 요청 재전송은 같은 실행을 반환
 - Prefect 접수 응답 유실 시 `REQUESTED`와 오류 코드를 유지; 같은 요청으로 접수 재확인 가능
@@ -73,7 +74,7 @@ Django HTTP 요청 안에서는 평가하지 않으며 Django에 평가 SDK 전�
 `live_config`(모델, fixture SHA-256, 최대 호출 수, 호출당 최대 출력 토큰)를 반환합니다.
 POST는 기존 요청에 `execution_mode: "live"`, `candidate_capture_id: "new-model-response"`,
 `live_config: <사용자가 확인한 session의 명세>`, `confirm_paid_run: true`를 함께 전송해야 합니다.
-기준 캡처는 같은 자료의 등록된 캡처만 가능합니다. 명세 불일치·미확인·비활성화는 DB 생성 전에 400입니다.
+기준 캡처는 같은 자료의 등록 캡처 또는 현재 검토 기준 실행만 가능합니다. 명세 불일치·미확인·비활성화는 DB 생성 전에 400입니다.
 기존 요청 키로 실행 방식·승인 명세를 바꾸면 409이며 접수 재확인은 같은 명세를 유지합니다.
 
 Migration `0003_evaluationrun_live`는 실행 방식·승인 명세·실제 호출 시도 수를 추가합니다.
@@ -83,6 +84,32 @@ Migration `0003_evaluationrun_live`는 실행 방식·승인 명세·실제 호�
 Ops 응답의 `model_api_calls`는 새 응답 생성 단계의 `capture.modelApiCalls`를 확인한 값입니다.
 완료 판정에는 기존 보고서 검증 외에 새 캡처 해시·모델·자료·사례·예산 확인이 필요합니다.
 `trace_links`는 사례별 Langfuse 추적/점수 링크이며 과거 캡처는 기존 점수 목록 링크를 사용합니다.
+
+## 응답 검토와 비교 기준
+
+완료 상세의 **응답 검토와 기준 지정**에서 선택된 모든 사례의 질문·제공 근거·후보 답변·기존 기준 답변을
+확인합니다. 검토 의견과 승인/수정 필요를 저장한 뒤 승인된 최신 검토를 비교 기준으로 지정합니다.
+기준은 데이터셋별 하나이며 새 검토를 저장하면 그 실행의 기준 지정은 해제됩니다. 검토 이력은 보존됩니다.
+AI 작성 참조 자료의 출처와 미측정 의미 충실도는 검토 승인으로 바뀌지 않습니다.
+
+- `GET /api/v1/ops/evaluations/{id}/review`: 해시 검증을 거친 사례·근거와 검토 이력, 현재 기준 여부
+- `POST .../{id}/review`: `decision` (`APPROVED` / `CHANGES_REQUESTED`), `comment` (1~3000자), `capture_sha256`
+- `POST .../{id}/baseline`: `review_id`; 완료 파일과 최신 승인 기록이 일치해야 지정 가능
+- session의 데이터셋별 `baseline`은 현재 기준 선택지 또는 null. 새 평가의 `reference_capture_id`에
+  `run:<요청 UUID>`를 사용하며 임의 UUID·다른 자료·미승인 실행은 거절
+- 접수 시 `reference_config`에 기준 UUID·캡처/fixture SHA-256을 서버가 고정. 실행기는 이를 재검증하고
+  `reference-capture.json`을 실행 폴더에 보존. 나중의 기준 교체·철회는 이미 접수한 실행을 변경하지 않음
+- 원본 파일을 확인할 수 없거나 해시가 바뀌면 검토·지정·새 접수를 거절. 자동으로 다른 기준을 사용하지 않음
+- 검토·기준 지정은 Core 관리자 인증과 CSRF 적용. 검토·기준 지정 자체에는 모델 API 호출 없음
+
+Migration `0004_evaluation_review_baseline`은 검토 이력·데이터셋별 기준 테이블과 기준 명세를 추가합니다.
+기존 결과는 미검토 상태로 유지합니다. 비교 상세가 없는 초기 결과는 무료 저장 응답 재평가 후 검토합니다.
+`LLMOPS_EVIDENCE_DIR`에는 버전이 고정된 `evaluation/support-program-evidence`를 읽기 전용으로 연결합니다.
+로컬 Python은 저장소 경로가 기본이며 LLMOps Compose는 `/evaluation-data`에 마운트합니다.
+다른 배포 방식에서는 결과 볼륨과 이 자료 경로를 함께 제공해야 합니다. Django에는 평가 SDK를 추가하지 않습니다.
+
+호출 흐름: `React 검토 화면 → Django 파일 무결성 확인 → MySQL 검토 이력/기준 저장`.
+다음 평가는 `Django 기준 명세 고정 → Prefect → 기준 응답 복사·검증 → 기존 평가 파이프라인`을 거칩니다.
 
 ## 빠른 시작 — Docker
 

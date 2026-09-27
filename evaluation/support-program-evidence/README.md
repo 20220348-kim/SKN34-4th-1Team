@@ -204,8 +204,16 @@ backend/ai-service/.venv/bin/python evaluation/support-program-evidence/evaluate
 생성된 파일은 `/results/<요청 UUID>/capture/capture.json`에 보존하고 같은 질문의 저장 기준과 비교합니다.
 각 사례에 응답 사용량 인덱스와 trace ID를 연결하므로 새 응답의 토큰·지연과 Langfuse 점수를 확인할 수 있습니다.
 평가 단계의 manifest는 모델 호출 0회이고 전체 요청의 실제 호출 시도 수는 새 캡처에서 읽습니다.
-기존 캡처를 덮어쓰거나 모델명을 고치지 않습니다. 새 결과를 다른 요청의 기준으로 선택하는 기능은 후속 범위입니다.
+기존 캡처를 덮어쓰거나 모델명을 고치지 않습니다. 완료한 새 결과는 관리자가 검토 후 같은 자료의
+비교 기준으로 지정할 수 있습니다. 다음 요청은 기준 UUID·캡처/fixture 해시를 고정하고 실행기는
+이를 검증한 뒤 `reference-capture.json`을 실행 폴더에 복사합니다. 기준 교체·철회는 이미 접수한
+평가에 소급 적용하지 않습니다. API 계약은 [Ops 검토 안내](../../backend/ops-service/README.md#응답-검토와-비교-기준)에 있습니다.
 무료 테스트의 HTTP 스텁 응답은 실제 모델 품질 측정에 포함하지 않습니다.
+
+2026-09-27 승인된 `gpt-6-luna` 실제 API 테스트는 E01 가상 질문 한 건·1회로 수행했습니다.
+토큰·Langfuse trace/점수·보고서 확인 결과와 한계는 [실제 호출 기록](../../infrastructure/llmops/README.md#gpt-6-luna-실제-api-1회-검증)에 보존합니다.
+`comparison.json`에는 집계 지표와 실행 식별자를 보관하며, 검토 화면의 답변 원문은 해시가 검증된
+후보·기준 캡처에서 읽습니다. 검토 승인은 별도 관리자 기록이며 AI 작성 참조의 출처나 미측정 의미 충실도 값을 바꾸지 않습니다.
 
 ## 공식 HTML 전체 경로 재실행
 

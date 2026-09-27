@@ -20,6 +20,7 @@ class EvaluationRun(models.Model):
     dataset_id = models.CharField(max_length=100)
     candidate_capture_id = models.CharField(max_length=100, default="target-coverage-20260907-v1")
     reference_capture_id = models.CharField(max_length=100, default="target-coverage-20260907-v1")
+    reference_config = models.JSONField(default=dict)
     comparison = models.JSONField(default=dict)
     execution_mode = models.CharField(max_length=10, default="replay")
     live_config = models.JSONField(default=dict)
@@ -38,3 +39,27 @@ class EvaluationRun(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+
+
+class EvaluationReview(models.Model):
+    class Decision(models.TextChoices):
+        APPROVED = "APPROVED", "검토 승인"
+        CHANGES_REQUESTED = "CHANGES_REQUESTED", "수정 필요"
+
+    run = models.ForeignKey(EvaluationRun, on_delete=models.PROTECT, related_name="reviews")
+    decision = models.CharField(max_length=20, choices=Decision.choices)
+    comment = models.TextField()
+    capture_sha256 = models.CharField(max_length=64)
+    reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-id"]
+
+
+class EvaluationBaseline(models.Model):
+    # 데이터셋별 기준은 하나이며 승인 기록 자체를 보존한다.
+    dataset_id = models.CharField(max_length=100, primary_key=True)
+    review = models.ForeignKey(EvaluationReview, on_delete=models.PROTECT)
+    selected_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    selected_at = models.DateTimeField(auto_now=True)

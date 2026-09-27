@@ -45,6 +45,7 @@ def create_run(run):
                     "dataset_id": run.dataset_id,
                     "candidate_capture_id": run.candidate_capture_id,
                     "reference_capture_id": run.reference_capture_id,
+                    "reference_config": run.reference_config,
                     "execution_mode": run.execution_mode,
                     "live_config": run.live_config,
                 },

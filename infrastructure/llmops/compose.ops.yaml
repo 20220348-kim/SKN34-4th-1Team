@@ -33,11 +33,13 @@ services:
       PREFECT_API_URL: http://prefect:4200/api
       PREFECT_UI_URL: http://localhost:14200
       LLMOPS_RESULTS_DIR: /results
+      LLMOPS_EVIDENCE_DIR: /evaluation-data
       LLMOPS_LIVE_ENABLED: ${LLMOPS_LIVE_ENABLED:-false}
       LLMOPS_LIVE_MODEL: ${LLMOPS_LIVE_MODEL:-gpt-6-luna}
       LANGFUSE_PROJECT_URL: http://localhost:13000/project/govbiz-evidence-development
     volumes:
       - ops-results:/results:ro
+      - ../../evaluation/support-program-evidence:/evaluation-data:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

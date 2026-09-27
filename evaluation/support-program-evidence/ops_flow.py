@@ -1,6 +1,8 @@
 """Ops 평가 요청. 명시적으로 승인한 live 실행만 새 응답을 생성한다."""
 
 import asyncio
+from hashlib import sha256
+import json
 import os
 from pathlib import Path
 import sys
@@ -15,9 +17,35 @@ import evaluate
 from llmops import evaluate_capture, load_results, write_json
 
 sys.path.insert(0, str(ROOT / "backend/ops-service/apps/evaluations"))
-from catalog import LEGACY_DATASET_ID, validate_execution
+from catalog import LEGACY_DATASET_ID, selection, validate_execution, validate_reference_config
 
 DATASET_ID = LEGACY_DATASET_ID
+
+
+def reviewed_reference(dataset_id, config, here, output_root):
+    """요청 접수 때 고정한 기준 응답만 읽는다. 파일 경로는 서버에서 구성한다."""
+    folder = output_root / str(UUID(config["run_id"]))
+    def read(name):
+        path = (folder / name).resolve()
+        evaluate.require(path.is_relative_to(folder), "Reference path escapes run directory")
+        return path.read_bytes()
+    marker = json.loads(read("request.json"))
+    manifest = json.loads(read("evaluation/manifest.json"))
+    evaluate.require(marker["request_id"] == config["run_id"] and marker["dataset_id"] == dataset_id,
+                     "Reference dataset differs")
+    evaluate.require(manifest["status"] == "completed" and
+                     manifest["capture_sha256"] == config["capture_sha256"] and
+                     manifest["fixture_sha256"] == config["fixture_sha256"], "Reference result differs")
+    if marker.get("execution_mode", "replay") == "live":
+        raw = read("capture/capture.json")
+    else:
+        _, candidate, _ = selection(dataset_id, marker.get("candidate_capture_id", DATASET_ID),
+                                     marker.get("reference_capture_id", DATASET_ID))
+        path = (here / candidate["path"]).resolve()
+        evaluate.require(path.is_relative_to(here), "Reference path escapes catalog")
+        raw = path.read_bytes()
+    evaluate.require(sha256(raw).hexdigest() == config["capture_sha256"], "Reference capture changed")
+    return raw
 
 
 @flow(name="govbiz-ops-evidence-evaluation", retries=0, persist_result=False)
@@ -25,6 +53,7 @@ def evaluate_saved_capture(
     request_id: str, dataset_id: str,
     candidate_capture_id: str = DATASET_ID, reference_capture_id: str = DATASET_ID,
     execution_mode: str = "replay", live_config: dict | None = None,
+    reference_config: dict | None = None,
 ) -> dict:
     # 요청에서 파일 경로나 실행 코드를 받지 않는다.
     request_id = str(UUID(request_id))
@@ -33,6 +62,11 @@ def evaluate_saved_capture(
         dataset_id, candidate_capture_id, reference_capture_id, execution_mode, config,
     )
     here = Path(__file__).resolve().parent
+    reference_config = reference_config or {}
+    validate_reference_config(dataset_id, reference_capture_id, reference_config)
+    output_root = Path(os.environ.get("LLMOPS_RESULTS_DIR", ROOT / "work/llmops-ops")).resolve()
+    reference_raw = reviewed_reference(dataset_id, reference_config, here, output_root) if reference_config else None
+    reference_path = here / reference["path"] if reference_raw is None else None
     if execution_mode == "live":
         evaluate.require(os.environ.get("LLMOPS_LIVE_ENABLED", "false").lower() == "true",
                          "Live evaluations are disabled")
@@ -41,9 +75,9 @@ def evaluate_saved_capture(
         evaluate.require(fixture_hash == config["fixture_sha256"], "Approved fixture has changed")
         prepared = evaluate.select_cases(prepared, dataset["case_ids"])
         # 유료 호출 전에 비교 기준 전체와 선택 범위를 검증한다.
-        baseline = load_results(here / dataset["fixture"], here / reference["path"], dataset["case_ids"])
-        evaluate.require(baseline["summary"]["completed"], "Reference must be complete")
-    output_root = Path(os.environ.get("LLMOPS_RESULTS_DIR", ROOT / "work/llmops-ops")).resolve()
+        if reference_path is not None:
+            baseline = load_results(here / dataset["fixture"], reference_path, dataset["case_ids"])
+            evaluate.require(baseline["summary"]["completed"], "Reference must be complete")
     output = output_root / request_id
     output.mkdir(parents=True, exist_ok=False)
     write_json(output / "request.json", {
@@ -51,7 +85,13 @@ def evaluate_saved_capture(
         "prefect_flow_run_id": str(flow_run.id),
         "candidate_capture_id": candidate_capture_id, "reference_capture_id": reference_capture_id,
         "execution_mode": execution_mode, "live_config": config,
+        "reference_config": reference_config,
     })
+    if reference_raw is not None:
+        reference_path = output / "reference-capture.json"
+        reference_path.write_bytes(reference_raw)
+        baseline = load_results(here / dataset["fixture"], reference_path, dataset["case_ids"])
+        evaluate.require(baseline["summary"]["completed"], "Reference must be complete")
     if execution_mode == "live":
         # UUID 디렉터리의 배타 생성이 Prefect 수동 재실행에서도 중복 과금을 차단한다.
         capture = asyncio.run(evaluate.execute(
@@ -63,7 +103,7 @@ def evaluate_saved_capture(
     else:
         candidate_path = here / candidate["path"]
     return evaluate_capture(
-        str(here / dataset["fixture"]), str(candidate_path), str(here / reference["path"]),
+        str(here / dataset["fixture"]), str(candidate_path), str(reference_path),
         str(output / "evaluation"), case_ids=dataset["case_ids"],
     )
 
