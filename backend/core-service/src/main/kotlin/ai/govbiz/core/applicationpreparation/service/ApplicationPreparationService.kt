@@ -1,5 +1,6 @@
 package ai.govbiz.core.applicationpreparation.service
 
+import ai.govbiz.core.applicationpreparation.service.dto.ApplicationOnlineInputGuideResult
 import ai.govbiz.core.applicationpreparation.domain.ApplicationOnlineFormSourceReference
 import ai.govbiz.core.applicationpreparation.service.dto.ApplicationOnlineFormSourceCapabilityResult
 import ai.govbiz.core.applicationpreparation.service.dto.ApplicationOnlineFormSourceCapabilityStatus
@@ -67,6 +68,16 @@ class ApplicationPreparationService(
         return ApplicationOnlineFormSourceCapabilityResult(
             if (googleReference) ApplicationOnlineFormSourceCapabilityStatus.REQUIRES_AUTH
             else ApplicationOnlineFormSourceCapabilityStatus.UNSUPPORTED_PROVIDER,
+        )
+    }
+
+    /** 소유권을 먼저 확인한다. 저장된 사용자 Fact만 읽고 외부 I/O나 쓰기를 수행하지 않는다. */
+    @org.springframework.transaction.annotation.Transactional(readOnly = true, isolation = org.springframework.transaction.annotation.Isolation.REPEATABLE_READ)
+    fun onlineInputGuide(account: Account, preparationId: Long): ApplicationOnlineInputGuideResult {
+        val preparation = repository.findOwned(account.id, preparationId) ?: throw ApplicationPreparationNotFoundException()
+        return ApplicationOnlineInputGuideResult.from(
+            preparationId, preparation.inputRevision, forms.requireVersion(preparation.draft.formVersionId),
+            inputs.listOwnedFacts(account.id, preparationId),
         )
     }
 

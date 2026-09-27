@@ -78,6 +78,13 @@ class ApplicationPreparationController(
         ResponseEntity.ok().cacheControl(CacheControl.noStore())
             .body(ApplicationPreparationPageResponse.from(service.listOwned(account, beforeId, size)))
 
+    @GetMapping("/{id}/online-input-guide")
+    fun onlineInputGuide(account: Account, @PathVariable @Min(1) id: Long):
+        ResponseEntity<ai.govbiz.core.applicationpreparation.controller.dto.ApplicationOnlineInputGuideResponse> =
+        ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(
+            ai.govbiz.core.applicationpreparation.controller.dto.ApplicationOnlineInputGuideResponse.from(service.onlineInputGuide(account, id)),
+        )
+
     @GetMapping("/{id}")
     fun detail(
         account: Account,

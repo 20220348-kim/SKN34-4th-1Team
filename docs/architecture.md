@@ -1097,3 +1097,24 @@ NOT_RUN / UNKNOWN_NOT_VERIFIED이며, 공식 API 조사만으로 READ_SUPPORTED/
 선언하지 않는다. Phase 5 종료 조건은 미충족이다. 자동 제출·비공식 parsing·entry ID 조립은 없다.
 설계·보안 gate·permission matrix·실제 검증 범위는
 [Phase 5-5 평가 기록](../evaluation/application-map/runs/phase5-google-forms-prefill-20260928-v1/README.md)을 참고한다.
+
+
+## Phase 6-1: 저장 답변 입력 안내와 TXT 내보내기
+
+`GET /api/v1/application-preparations/{id}/online-input-guide`는 세션 계정의 소유권을 확인한 뒤
+고정 Manifest와 `listOwnedFacts()`의 현재 Fact만 읽는다. 호출은 Controller → ApplicationPreparationService
+→ Preparation/Form/Input Repository이며 AI·MCP·외부 HTTP·DB 쓰기를 수행하지 않는다.
+공개 DTO는 controller/dto, 내부 projection은 service/dto에 둔다.
+
+기존 답변 입력 화면에 입력 안내와 개별·전체 저장 답변 복사, UTF-8 TXT 다운로드를 제공한다.
+현재 ONLINE_FORM Source/Map은 저장되지 않고 Manifest에는 외부 입력 타입이 없다.
+FILE binding을 온라인 binding으로 취급하지 않으며 `inputMode=UNKNOWN`, `externalMappingVerified=false`다.
+유효한 PROVIDED 답변은 READY/copyable=true, 값 없음/UNKNOWN은 MISSING, 공식 선택지 불일치는 NEEDS_REVIEW다.
+READY는 복사 가능한 확정 답변 수이며 외부 control mapping 완료를 뜻하지 않는다.
+DIRECT_INPUT은 신뢰할 타입 정보로 복사만으로 처리할 수 없음이 확인된 경우에만 사용하며 현재 projection에서는 생성하지 않는다.
+
+사용자가 요청한 TXT 내보내기와 저장 답변 복사는 별도의 `savedAnswers`를 사용한다.
+Manifest 순서의 PROVIDED Fact 중 공식 선택지와 일치하는 값만 포함하고 UNKNOWN·미응답·선택지 불일치는 제외한다.
+이 텍스트를 외부 신청 화면에 그대로 제출해도 된다는 의미는 아니다. 직접 입력·선택·업로드와 최종 확인이 필요하다.
+`sourceUrl`은 공고 원문이므로 신청처 URL로 대신 사용하지 않는다. 현재 officialApplicationUrl은 null이다.
+웹 계약은 반환된 링크에 http/https만 허용한다. 기존 FILE 5포맷과 ONLINE_FORM 계약, DB schema는 유지한다.

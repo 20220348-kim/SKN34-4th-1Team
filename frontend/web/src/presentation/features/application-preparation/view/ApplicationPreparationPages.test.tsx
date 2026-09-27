@@ -66,7 +66,7 @@ const detail = {
   updatedAt: '2026-09-11T01:00:00+09:00',
   form: structuredClone(firstForm),
 }
-const repository = { documents: vi.fn(), generateDocuments: vi.fn(), confirmDocumentMappingMigration: vi.fn(), downloadDocument: vi.fn(), generateDraft: vi.fn(), saveContent: vi.fn(), confirmContent: vi.fn(), discoveryJobs: vi.fn(), discoveryJob: vi.fn(), availability: vi.fn(), forms: vi.fn(), discover: vi.fn(), list: vi.fn(), delete: vi.fn(), get: vi.fn(), create: vi.fn(), interpret: vi.fn(), replaceInputs: vi.fn(), updateProgress: vi.fn() }
+const repository = { onlineInputGuide: vi.fn(), documents: vi.fn(), generateDocuments: vi.fn(), confirmDocumentMappingMigration: vi.fn(), downloadDocument: vi.fn(), generateDraft: vi.fn(), saveContent: vi.fn(), confirmContent: vi.fn(), discoveryJobs: vi.fn(), discoveryJob: vi.fn(), availability: vi.fn(), forms: vi.fn(), discover: vi.fn(), list: vi.fn(), delete: vi.fn(), get: vi.fn(), create: vi.fn(), interpret: vi.fn(), replaceInputs: vi.fn(), updateProgress: vi.fn() }
 
 function completedDiscovery(result: { items: ApplicationForm[]; warnings: string[]; cached: boolean }) {
   return { id: 77, sourceCode: result.items[0].sourceCode, sourceProgramId: result.items[0].sourceProgramId,
@@ -364,6 +364,9 @@ it('marks a manual-only field without accepting an auto-fill answer', async () =
 
 beforeEach(() => {
   vi.resetAllMocks()
+  repository.onlineInputGuide.mockResolvedValue({ preparationId: 12, inputRevision: 3, totalCount: 0,
+    readyCount: 0, needsReviewCount: 0, missingCount: 0, directInputCount: 0,
+    externalMappingVerified: false, officialApplicationUrl: null, items: [], savedAnswers: [] })
   repository.documents.mockResolvedValue([])
   repository.generateDocuments.mockResolvedValue([documentFile])
   repository.discoveryJobs.mockResolvedValue([])

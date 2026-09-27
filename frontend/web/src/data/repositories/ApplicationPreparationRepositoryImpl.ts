@@ -20,6 +20,8 @@ import {
   applicationFormDiscoveryJobSchema,
 } from '../models/ApplicationPreparationDto'
 
+import { applicationOnlineInputGuideSchema } from '@govbiz/shared/data/models/ApplicationOnlineInputGuideDto'
+
 const cursor = (beforeId?: number) => `?size=20${beforeId === undefined ? '' : `&beforeId=${beforeId}`}`
 const documentsSchema = z.array(z.object({
   id: z.number().int().positive(), inputRevision: z.number().int().positive(),
@@ -48,6 +50,12 @@ const migrationConfirmationSchema = z.object({
 })
 
 export class ApplicationPreparationRepositoryImpl implements ApplicationPreparationRepository {
+  async onlineInputGuide(id: number, signal?: AbortSignal) {
+    const guide = await request(`/${id}/online-input-guide`, applicationOnlineInputGuideSchema, 'GET', undefined, signal, 'preparation')
+    if (guide.preparationId !== id) throw new ApplicationPreparationError(502, 'INVALID_RESPONSE')
+    return guide
+  }
+
   async availability(sourceCode: string, sourceProgramId: string, signal?: AbortSignal) {
     const schema = z.object({
       state: z.object({ sourceCode: z.string(), sourceProgramId: z.string(),
