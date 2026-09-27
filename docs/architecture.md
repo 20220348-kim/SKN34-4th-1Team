@@ -1054,3 +1054,46 @@ DB write·revision/Fact/snapshot 변경·schema/Flyway 변경은 없다.
 기존 FILE DocumentMap/NativeTarget/WritePlan 및 5-format 실행 경로, AI/MCP 계약은 유지한다.
 
 검증 범위와 결과는 [Phase 5-3 평가 보고서](../evaluation/application-map/runs/phase5-online-form-source-review-20260927-v1/README.md)를 참고한다.
+
+## Phase 5-4: ONLINE_FORM 외부 소스 접근 능력
+
+현재 판정은 PHASE5_EXTERNAL_SOURCE_PARTIAL이며 실제 지원 provider/collector는 없다.
+ApplicationOnlineFormSourceReference는 sourceUrl과 provider 문자열만 가진다.
+HTTPS·host·길이·provider 형식을 검증하고 userinfo·명시적 port·fragment를 거절한다.
+URL과 query는 toString 및 validation 오류에서 숨긴다. 이 검증은 SSRF 안전 판정이 아니다.
+
+ApplicationPreparationService.checkOnlineFormSourceCapability는
+findOwned → 고정 Manifest 조회 → provider/URL 계약 확인 → Capability Result로 이어진다.
+GOOGLE_FORMS와 정확한 docs.google.com의 form edit/viewform 경로 또는 forms.gle 참조는
+REQUIRES_AUTH다. short URL은 resolve하지 않으며 responder ID를 API formId로 추측하지 않는다.
+그 외 provider/URL 조합은 UNSUPPORTED_PROVIDER다. provider 문자열은 지원 목록이 아니다.
+SUPPORTED·SOURCE_UNAVAILABLE 등 실제 확인하지 않은 결과나 가짜 Source/Review는 만들지 않는다.
+
+Google forms.get은 OAuth scope와 접근 가능한 formId가 필요하다.
+현재 Google 로그인은 openid email이며 Forms body scope, token 보관·갱신·소유권 연결이 없다.
+응답자 URL만으로 공식 API 읽기 권한을 가정하지 않는다. 일반 HTML은 표준 form 계약이 있으나
+이 프로젝트의 concrete target이 없어 generic scraper를 구현하지 않는다.
+외부 HTTP/DNS/redirect 요청 자체가 없으므로 SSRF fetch 방어·timeout·body 제한·content-type는 N/A다.
+실제 collector 도입 시 URL/IP/redirect 검증과 I/O 제한은 별도로 구현해야 한다.
+
+기존 reviewOnlineFormMapping(account, preparationId, source)는 그대로 유지한다.
+외부 참조에서 Source로 이어지는 성공 경로는 아직 없다. DB write·Fact/revision/snapshot 변경,
+public HTTP API·Frontend·자동 입력·제출·응답 조회·FILE/AI/MCP/DB schema 변경은 없다.
+
+[Phase 5-4 평가 기록](../evaluation/application-map/runs/phase5-online-form-source-acquisition-20260928-v1/README.md)을 참고한다.
+
+## Phase 5-5: Google Forms 공식 실행 조건
+
+일반 Google 로그인 scope `openid email`과 Phase 5-4 capability는 유지한다.
+공식 REST read에는 `forms.body.readonly`, standalone Apps Script의 `FormApp.openById` 기반
+prefill에는 별도 `forms` scope와 같은 standard Cloud 프로젝트의 API executable 배포가 필요하다.
+현재 배포·delegated 실행·실제 Form 접근 권한과 안전한 단기 token lifecycle이 확인되지 않아
+incremental auth/GoogleFormsClient/prefill bridge를 추가하지 않았다.
+기존 서명 OAuth 쿠키는 암호화 저장소가 아니고 Redis는 AOF 영속화를 사용하므로
+access token 보관에 그대로 재사용하지 않는다. 새로운 credential 저장 체계도 추가하지 않는다.
+
+판정은 PHASE5_GOOGLE_FORMS_PREFILL_BLOCKED다. Owned/Shared/Public responder-only 모두
+NOT_RUN / UNKNOWN_NOT_VERIFIED이며, 공식 API 조사만으로 READ_SUPPORTED/PREFILL_SUPPORTED를
+선언하지 않는다. Phase 5 종료 조건은 미충족이다. 자동 제출·비공식 parsing·entry ID 조립은 없다.
+설계·보안 gate·permission matrix·실제 검증 범위는
+[Phase 5-5 평가 기록](../evaluation/application-map/runs/phase5-google-forms-prefill-20260928-v1/README.md)을 참고한다.

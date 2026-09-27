@@ -660,3 +660,13 @@ ISO 로컬 시각(`2026-09-11T17:49:09.591286`, 초 아래 자리는 있을 때�
 | `ACCOUNT_OAUTH_CONNECT_TIMEOUT` / `ACCOUNT_OAUTH_READ_TIMEOUT` | `2s` / `10s` | 공급자 호출 연결·응답 제한시간 |
 | `BIZNO_API_KEY` | 빈 값 | 사업자등록번호 조회용 Bizno(bizno.net) API 키. 비어 있으면 기업 조회·등록이 503 |
 | `BIZNO_URL` | `https://bizno.net/api/fapi` | Bizno 조회 endpoint. 경로는 `/api/fapi` 고정 |
+
+## Google Forms 추가 권한과 기존 로그인 경계
+
+Phase 5-5 공식 실행 조건 조사에서도 일반 Google 로그인 scope는 `openid email`로 유지한다.
+로그인 성공은 Forms API 또는 FormApp 접근 권한을 의미하지 않는다.
+Forms 연결은 기능을 선택한 사용자에게만 별도 incremental authorization으로 제공해야 하지만,
+현재 배포·delegated 실행·안전한 단기 token lifecycle gate가 미충족이므로 해당 endpoint는 없다.
+로그인 callback/transaction에 Forms scope나 access/refresh token 저장을 추가하지 않았다.
+[Phase 5-5 평가 기록](../evaluation/application-map/runs/phase5-google-forms-prefill-20260928-v1/README.md)에
+공식 scope와 실행 조건, NOT_RUN permission matrix 및 재개 조건을 구분해 기록했다.
