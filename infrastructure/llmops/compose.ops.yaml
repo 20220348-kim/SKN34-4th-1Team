@@ -1,0 +1,63 @@
+# compose.yaml과 함께 사용한다. 기존 업무 Ops DB와 분리된 로컬 평가 전용 구성.
+services:
+  ops-mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: govbiz_ops_llmops
+      MYSQL_USER: govbiz
+      MYSQL_PASSWORD: ${OPS_DB_PASSWORD:?Run init_ops_env.py}
+      MYSQL_ROOT_PASSWORD: ${OPS_DB_ROOT_PASSWORD:?Run init_ops_env.py}
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_0900_ai_ci"]
+    volumes: ["ops-mysql-data:/var/lib/mysql"]
+    healthcheck:
+      test: ["CMD-SHELL", "MYSQL_PWD=\"$$MYSQL_PASSWORD\" mysql -h 127.0.0.1 -u govbiz -D govbiz_ops_llmops -e 'SELECT 1' >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+
+  ops-service:
+    build: ../../backend/ops-service
+    init: true
+    ports: ["127.0.0.1:18001:8000"]
+    environment:
+      DJANGO_SECRET_KEY: ${OPS_DJANGO_SECRET_KEY:?Run init_ops_env.py}
+      DJANGO_DEBUG: "false"
+      DJANGO_COOKIE_SECURE: "false" # loopback HTTP 개발 전용
+      DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,ops-service
+      DB_NAME: govbiz_ops_llmops
+      DB_USER: govbiz
+      DB_PASSWORD: ${OPS_DB_PASSWORD:?Run init_ops_env.py}
+      DB_HOST: ops-mysql
+      DB_PORT: "3306"
+      PREFECT_API_URL: http://prefect:4200/api
+      PREFECT_UI_URL: http://localhost:14200
+      LLMOPS_RESULTS_DIR: /results
+      LANGFUSE_PROJECT_URL: http://localhost:13000/project/govbiz-evidence-development
+    volumes:
+      - ops-results:/results:ro
+    depends_on:
+      ops-mysql: {condition: service_healthy}
+
+  evaluation-runner:
+    build:
+      context: ../..
+      dockerfile: infrastructure/llmops/Dockerfile.runner
+    init: true
+    environment:
+      PREFECT_API_URL: http://prefect:4200/api
+      PREFECT_SERVER_ANALYTICS_ENABLED: "false"
+      LANGFUSE_ENABLED: "true"
+      LANGFUSE_BASE_URL: http://langfuse-web:3000
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
+      LANGFUSE_ENVIRONMENT: development
+      LLMOPS_RESULTS_DIR: /results
+    volumes: ["ops-results:/results"]
+    depends_on:
+      prefect: {condition: service_started}
+      langfuse-web: {condition: service_started}
+    restart: unless-stopped
+
+volumes:
+  ops-mysql-data:
+  ops-results:

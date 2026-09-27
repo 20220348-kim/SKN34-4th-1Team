@@ -1,0 +1,4 @@
+{% extends 'evaluations/base.html' %}
+{% block title %}운영자 로그인{% endblock %}
+{% block content %}<section class="card login"><span class="eyebrow">GOVBIZ / OPERATIONS</span><h1>운영자 로그인</h1><p class="muted">평가를 실행하고 결과를 확인하세요.</p>
+<form method="post">{% csrf_token %}{{ form.as_p }}{% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}<button>로그인</button></form></section>{% endblock %}

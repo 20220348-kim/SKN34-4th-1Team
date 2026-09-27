@@ -35,7 +35,10 @@ health 응답은 각각 `govbiz-core-service`·`govbiz-ops-service`이며 현재
 아래의 Core API는 `core-service`가 제공하는 HTTP API를 뜻합니다.
 
 저장소는 React·Core API·Catalog Service·AI Service·Django Ops를 함께 관리하는 모노레포입니다.
-`backend/ops-service`는 전용 MySQL을 쓰는 별도 프로세스이며 현재 상태 확인 API만 제공합니다.
+`backend/ops-service`는 Python 3.12의 Django와 전용 MySQL로 운영자 로그인·저장 캡처 평가 실행·이력·결과 화면을 제공합니다.
+`운영자 → Django 인증·평가 Service → Prefect API → 상시 평가 실행기 → Langfuse / Evidently`로 연결하며,
+평가는 HTTP 요청 밖에서 실행합니다. Django는 요청 UUID·실행 상태·요약을 저장하고 상세 조회 때 Prefect 상태를 반영합니다.
+평가 실행기와 Django는 결과 볼륨을 공유하며 Django에는 읽기 권한만 부여합니다.
 Ops와 Core의 계정·관리 업무 연동은 아직 구현하지 않았고, 아래 AWS 운영 경로에 Ops를 추가하지 않았습니다.
 [소스 통합과 로컬 실행](ops-monorepo-migration.md)을 참고하세요.
 

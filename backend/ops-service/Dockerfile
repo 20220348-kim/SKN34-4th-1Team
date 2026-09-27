@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM python:3.13-slim-bookworm AS builder
+FROM python:3.12-slim-bookworm AS builder
 
 COPY --from=ghcr.io/astral-sh/uv:0.12.5 /uv /bin/uv
 ENV UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY pyproject.toml uv.lock ./
 RUN uv sync --locked --no-dev --no-install-project
 
-FROM python:3.13-slim-bookworm AS runtime
+FROM python:3.12-slim-bookworm AS runtime
 
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -19,7 +19,8 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends libmariadb3 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 govbiz \
-    && useradd --uid 10001 --gid govbiz --no-create-home --shell /usr/sbin/nologin govbiz
+    && useradd --uid 10001 --gid govbiz --no-create-home --shell /usr/sbin/nologin govbiz \
+    && mkdir /results && chown govbiz:govbiz /results
 COPY --from=builder /app/.venv /app/.venv
 COPY --chown=govbiz:govbiz manage.py ./
 COPY --chown=govbiz:govbiz config ./config

@@ -1,4 +1,4 @@
-"""환경변수 기반 API 설정. 업무 모델과 인증 방식은 경계를 확정한 뒤 추가합니다."""
+"""Ops 전용 계정과 평가 실행 이력을 관리하는 Django 설정."""
 
 from pathlib import Path
 
@@ -13,18 +13,62 @@ DEBUG = env.bool("DJANGO_DEBUG", default=False)
 ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=["localhost", "127.0.0.1"])
 
 INSTALLED_APPS = [
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.sessions",
     "rest_framework",
     "apps.health.apps.HealthConfig",
+    "apps.evaluations",
 ]
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 ROOT_URLCONF = "config.urls"
 WSGI_APPLICATION = "config.wsgi.application"
 ASGI_APPLICATION = "config.asgi.application"
+TEMPLATES = [
+    {
+        "BACKEND": "django.template.backends.django.DjangoTemplates",
+        "APP_DIRS": True,
+        "OPTIONS": {
+            "context_processors": [
+                "django.template.context_processors.request",
+                "django.contrib.auth.context_processors.auth",
+            ],
+        },
+    },
+]
+LOGIN_URL = "/ops/login"
+LOGIN_REDIRECT_URL = "/ops/evaluations"
+LOGOUT_REDIRECT_URL = LOGIN_URL
+SESSION_COOKIE_NAME = "govbiz_ops_session"
+CSRF_COOKIE_NAME = "govbiz_ops_csrf"
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = "Lax"
+SESSION_COOKIE_SECURE = env.bool("DJANGO_COOKIE_SECURE", default=not DEBUG)
+CSRF_COOKIE_SECURE = SESSION_COOKIE_SECURE
+AUTH_PASSWORD_VALIDATORS = [
+    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
+    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
+    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
+    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
+]
+
+PREFECT_API_URL = env("PREFECT_API_URL", default="http://127.0.0.1:14200/api").rstrip("/")
+PREFECT_UI_URL = env("PREFECT_UI_URL", default="http://localhost:14200").rstrip("/")
+PREFECT_DEPLOYMENT_NAME = "govbiz-ops-evidence-evaluation/saved-capture"
+LLMOPS_RESULTS_DIR = Path(
+    env("LLMOPS_RESULTS_DIR", default=str(BASE_DIR.parent.parent / "work/llmops-ops"))
+).resolve()
+LANGFUSE_PROJECT_URL = env(
+    "LANGFUSE_PROJECT_URL",
+    default="http://localhost:13000/project/govbiz-evidence-development",
+).rstrip("/")
 
 DATABASES = {
     "default": {
@@ -56,9 +100,6 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
     "DEFAULT_PARSER_CLASSES": ["rest_framework.parsers.JSONParser"],
-    # 인증 연동을 결정하기 전에는 업무 API를 기본 공개하지 않습니다.
-    # 현재 상태 확인 API만 명시적으로 AllowAny를 지정합니다.
-    "DEFAULT_AUTHENTICATION_CLASSES": [],
+    "DEFAULT_AUTHENTICATION_CLASSES": ["rest_framework.authentication.SessionAuthentication"],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
-    "UNAUTHENTICATED_USER": None,
 }
