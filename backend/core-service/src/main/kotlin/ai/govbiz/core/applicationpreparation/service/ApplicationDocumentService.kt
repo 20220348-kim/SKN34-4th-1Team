@@ -5,12 +5,13 @@ import ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentFact
 import ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentFile
 import ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentUnfilledAnswer
 import ai.govbiz.core.applicationpreparation.domain.ApplicationFormManifest
-import ai.govbiz.core.applicationpreparation.controller.dto.ApplicationDocumentMigrationConfirmedResponse
+import ai.govbiz.core.applicationpreparation.service.dto.ApplicationDocumentMigrationConfirmedResult
 import ai.govbiz.core.applicationpreparation.domain.exception.ApplicationPreparationNotFoundException
 import ai.govbiz.core.applicationpreparation.domain.exception.ApplicationPreparationRevisionConflictException
 import ai.govbiz.core.applicationpreparation.domain.exception.ApplicationPreparationRunConflictException
 import ai.govbiz.core.applicationpreparation.repository.ApplicationDocumentRepository
 import ai.govbiz.core.applicationpreparation.repository.ApplicationDocumentMigrationRepository
+import ai.govbiz.core.applicationpreparation.client.ai.exception.ApplicationDocumentMcpException
 import ai.govbiz.core.applicationpreparation.service.exception.ApplicationDocumentException
 import ai.govbiz.core.applicationpreparation.service.exception.ApplicationDocumentMappingChangedException
 import ai.govbiz.core.supportprogram.client.bizinfo.BizInfoAttachmentClient
@@ -55,12 +56,12 @@ class ApplicationDocumentService(
         files.findOwned(account.id, id, fileId) ?: throw ApplicationPreparationNotFoundException()
 
     fun confirmMigration(account: Account, id: Long, expectedRevision: Long,
-                         approvalToken: String): ApplicationDocumentMigrationConfirmedResponse {
+                         approvalToken: String): ApplicationDocumentMigrationConfirmedResult {
         fun stale(): Nothing = throw ApplicationDocumentException("APPLICATION_DOCUMENT_MAPPING_MIGRATION_STALE",
             "답변·원본 또는 문서 분석 버전이 변경됐습니다. 변경 내용을 다시 확인해 주세요.")
         val detail = preparations.findOwned(account, id)
         val proposal = migrationProposals.read(account.id, id, approvalToken)
-        val configuration = mcp.configuration()
+        val configuration = callMcp { mcp.configuration() }
         if (expectedRevision != proposal.expectedRevision || detail.preparation.inputRevision != expectedRevision ||
             detail.preparation.draft.formVersionId != proposal.oldFormVersionId ||
             detail.form.attachmentSha256 != proposal.sourceSha256 ||
@@ -73,7 +74,9 @@ class ApplicationDocumentService(
         }
         if (sha256(currentSource) != proposal.sourceSha256) stale()
         val newVersion = migrations.approve(proposal)
-        return ApplicationDocumentMigrationConfirmedResponse(preparationId = id,
+            ?: throw ApplicationDocumentException("APPLICATION_DOCUMENT_MAPPING_MIGRATION_STALE",
+                "확인 중 답변 또는 양식이 변경됐습니다. 변경 내용을 다시 확인해 주세요.")
+        return ApplicationDocumentMigrationConfirmedResult(preparationId = id,
             inputRevision = expectedRevision, formVersionId = newVersion)
     }
 
@@ -105,7 +108,7 @@ class ApplicationDocumentService(
     fun generate(account: Account, id: Long, expectedRevision: Long): List<ApplicationDocumentFile> = admission.execute("application-document:${account.id}:$id") {
         val detail = preparations.findOwned(account, id)
         if (detail.preparation.inputRevision != expectedRevision) throw ApplicationPreparationRevisionConflictException()
-        val configuration = mcp.configuration()
+        val configuration = callMcp { mcp.configuration() }
         val pipelineVersion = configuration.pipelineVersion
         val nativeFormat = detail.form.attachmentFileName.substringAfterLast('.').lowercase().takeIf { it in setOf("docx", "xlsx") }
         val docxEngine = nativeFormat?.let { configuration.engineVersions[it]
@@ -149,7 +152,7 @@ class ApplicationDocumentService(
         val writableFactIds = writableFacts.map(ApplicationDocumentFact::id).toSet()
         val writableBindings = binding.bindings.filter { it.factId in writableFactIds }
         val inspection = if (original.format.lowercase() in setOf("pdf", "hwp")) editor.inspect(original.bytes, original.format) else null
-        val result = mcp.generate(ai.govbiz.core.applicationpreparation.client.ai.dto.AiDocumentGenerationRequest(
+        val result = callMcp { mcp.generate(ai.govbiz.core.applicationpreparation.client.ai.dto.AiDocumentGenerationRequest(
             sourceBase64 = java.util.Base64.getEncoder().encodeToString(original.bytes),
             sourceSha256 = manifest.attachmentSha256, format = original.format.lowercase(),
             answerRevision = expectedRevision, facts = writableFacts,
@@ -158,7 +161,7 @@ class ApplicationDocumentService(
             hwpTargets = if (original.format.equals("hwp", true)) inspection?.targets.orEmpty() else emptyList(),
             pageImages = inspection?.pageImages.orEmpty(),
             bindings = writableBindings, scopeTargetIds = binding.scopeTargetIds, pdfFields = inspection?.pdfFields.orEmpty(),
-        ))
+        )) }
         val output = try { java.util.Base64.getDecoder().decode(result.outputBase64) } catch (_: IllegalArgumentException) {
             throw ApplicationDocumentException("APPLICATION_DOCUMENT_VALIDATION_FAILED", "문서 결과의 형식을 확인하지 못했습니다.")
         }
@@ -219,5 +222,9 @@ class ApplicationDocumentService(
             }
             running.remove(id)
         }
+    }
+    private fun <T> callMcp(block: () -> T): T = try { block() }
+    catch (error: ApplicationDocumentMcpException) {
+        throw ApplicationDocumentException(error.code, requireNotNull(error.message), error.cause)
     }
 }

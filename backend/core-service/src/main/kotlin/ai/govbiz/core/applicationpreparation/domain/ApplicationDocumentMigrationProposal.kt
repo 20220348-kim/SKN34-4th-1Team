@@ -1,7 +1,5 @@
-package ai.govbiz.core.applicationpreparation.service.dto
+package ai.govbiz.core.applicationpreparation.domain
 
-import ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentMapSnapshot
-import ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentPlacement
 
 /** Short-lived approval candidate; never the active form map. */
 data class ApplicationDocumentMigrationProposal(

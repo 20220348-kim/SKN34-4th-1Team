@@ -65,6 +65,7 @@ import ai.govbiz.core.applicationpreparation.client.ai.dto.AiDocumentGenerationP
 import ai.govbiz.core.applicationpreparation.client.ai.dto.AiDocumentConfigurationPayload
 import ai.govbiz.core.applicationpreparation.client.ai.dto.AiDocumentMappingPayload
 import ai.govbiz.core.applicationpreparation.client.ai.dto.AiDocumentMappingRequest
+import ai.govbiz.core.applicationpreparation.client.ai.exception.ApplicationDocumentMcpException
 import ai.govbiz.core.applicationpreparation.service.exception.ApplicationDocumentException
 import ai.govbiz.core.applicationpreparation.domain.ApplicationFormManifest
 import ai.govbiz.core.applicationpreparation.domain.ApplicationFormDiscoveryConfiguration
@@ -1072,9 +1073,7 @@ class ApplicationPreparationApiIntegrationTest {
         val id = fixture.preparationId
         val proposal = migrationProposals.read(ownerId, id, fixture.token)
         val before = jdbc.queryForObject("SELECT COUNT(*) FROM application_form_snapshot", Int::class.java)
-        org.junit.jupiter.api.Assertions.assertThrows(ApplicationDocumentException::class.java) {
-            migrationRepository.approve(proposal.copy(expectedRevision = 99))
-        }
+        org.junit.jupiter.api.Assertions.assertNull(migrationRepository.approve(proposal.copy(expectedRevision = 99)))
         assertEquals(before, jdbc.queryForObject("SELECT COUNT(*) FROM application_form_snapshot", Int::class.java))
         assertEquals(fixture.version, jdbc.queryForObject("SELECT form_version_id FROM application_preparation WHERE id=?", String::class.java, id))
         mvc.perform(put("$BASE/$id/sections/business-plan/inputs").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN)
@@ -1118,9 +1117,7 @@ class ApplicationPreparationApiIntegrationTest {
         val before = jdbc.queryForObject("SELECT COUNT(*) FROM application_form_snapshot", Int::class.java)
         jdbc.update("UPDATE application_form_snapshot SET manifest_json = JSON_SET(manifest_json, " +
             "'$.documentMapSnapshot.mapVersion', 'new-map') WHERE form_version_id = ?", fixture.version)
-        org.junit.jupiter.api.Assertions.assertThrows(ApplicationDocumentException::class.java) {
-            migrationRepository.approve(proposal)
-        }
+        org.junit.jupiter.api.Assertions.assertNull(migrationRepository.approve(proposal))
         assertEquals(before, jdbc.queryForObject("SELECT COUNT(*) FROM application_form_snapshot", Int::class.java))
         assertEquals(fixture.version, jdbc.queryForObject("SELECT form_version_id FROM application_preparation WHERE id=?",
             String::class.java, fixture.preparationId))
@@ -1326,5 +1323,44 @@ class ApplicationPreparationApiIntegrationTest {
         const val CNTRADE_PROGRAM_ID = "3862"
         const val CNTRADE_SOURCE_URL = "https://cntrade.chungnam.go.kr/home/kor/M102638244/board.do"
         const val CNTRADE_BODY = "공식 본문"
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = ["APPLICATION_DOCUMENT_MCP_NOT_READY", "APPLICATION_DOCUMENT_MCP_FAILED", "APPLICATION_DOCUMENT_OUTCOME_UNKNOWN"])
+    fun migrationConfigurationFailureRetainsPublicErrorAndDoesNotWrite(code: String) {
+        val fixture = changedMappingFixture()
+        val before = jdbc.queryForObject("SELECT COUNT(*) FROM application_form_snapshot", Int::class.java)
+        `when`(documentMcp.configuration()).thenThrow(
+            ApplicationDocumentMcpException(code, "safe detail"))
+        mvc.perform(post("$BASE/${fixture.preparationId}/documents/mapping-migration/confirm").cookie(owner)
+            .header(HttpHeaders.ORIGIN, ORIGIN).contentType(MediaType.APPLICATION_JSON)
+            .content("""{"expectedRevision":2,"approvalToken":"${fixture.token}"}"""))
+            .andExpect(status().isUnprocessableContent())
+            .andExpect(jsonPath("$.code").value(code))
+            .andExpect(jsonPath("$.detail").value("safe detail"))
+            .andExpect(jsonPath("$.mappingMigration").doesNotExist())
+        assertEquals(before, jdbc.queryForObject("SELECT COUNT(*) FROM application_form_snapshot", Int::class.java))
+        assertEquals(fixture.version, jdbc.queryForObject("SELECT form_version_id FROM application_preparation WHERE id=?",
+            String::class.java, fixture.preparationId))
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = ["docx", "xlsx"])
+    fun migrationApprovalRejectsChangedNativeEngineWithoutWriting(format: String) {
+        val fixture = changedMappingFixture()
+        val before = jdbc.queryForObject("SELECT COUNT(*) FROM application_form_snapshot", Int::class.java)
+        jdbc.update("UPDATE application_form_snapshot SET manifest_json=JSON_SET(manifest_json, " +
+            "'$.attachmentFileName', ?) WHERE form_version_id=?", "form.$format", fixture.version)
+        `when`(documentMcp.configuration()).thenReturn(AiDocumentConfigurationPayload(
+            "application-document-mcp-v1", "b".repeat(64), mapOf(format to "changed-native-engine")))
+        mvc.perform(post("$BASE/${fixture.preparationId}/documents/mapping-migration/confirm").cookie(owner)
+            .header(HttpHeaders.ORIGIN, ORIGIN).contentType(MediaType.APPLICATION_JSON)
+            .content("""{"expectedRevision":2,"approvalToken":"${fixture.token}"}"""))
+            .andExpect(status().isUnprocessableContent())
+            .andExpect(jsonPath("$.code").value("APPLICATION_DOCUMENT_MAPPING_MIGRATION_STALE"))
+        assertEquals(before, jdbc.queryForObject("SELECT COUNT(*) FROM application_form_snapshot", Int::class.java))
+        assertEquals(fixture.version, jdbc.queryForObject("SELECT form_version_id FROM application_preparation WHERE id=?",
+            String::class.java, fixture.preparationId))
+        org.junit.jupiter.api.Assertions.assertNotNull(documentFiles.findOwned(ownerId, fixture.preparationId, fixture.oldFileId))
     }
 }

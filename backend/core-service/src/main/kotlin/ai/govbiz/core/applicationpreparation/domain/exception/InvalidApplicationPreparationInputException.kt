@@ -1,3 +1,3 @@
-package ai.govbiz.core.applicationpreparation.controller.exception
+package ai.govbiz.core.applicationpreparation.domain.exception
 
 class InvalidApplicationPreparationInputException : RuntimeException()

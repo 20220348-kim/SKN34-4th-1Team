@@ -3,11 +3,13 @@ package ai.govbiz.core.applicationpreparation.service
 import ai.govbiz.core._common.test.stubDocumentMapping
 import ai.govbiz.core._common.test.MySqlTestContainerConfig
 import ai.govbiz.core.applicationpreparation.domain.*
+import ai.govbiz.core.applicationpreparation.repository.RequestedAnalysisClaimResult
 import ai.govbiz.core.applicationpreparation.repository.ApplicationFormAvailabilityRepository
 import ai.govbiz.core.applicationpreparation.repository.ApplicationFormSnapshotRepository
 import ai.govbiz.core.applicationpreparation.client.ai.AiApplicationPreparationClient
 import ai.govbiz.core.applicationpreparation.client.ai.dto.*
 import ai.govbiz.core.applicationpreparation.client.ai.exception.ApplicationFormTimeoutException
+import ai.govbiz.core.applicationpreparation.service.exception.ApplicationFormNotSupportedException
 import ai.govbiz.core.applicationpreparation.service.exception.ApplicationFormDiscoveryException
 import ai.govbiz.core.applicationpreparation.service.backfill.ApplicationFormBackfillInput
 import ai.govbiz.core.applicationpreparation.service.backfill.ApplicationFormBackfillService
@@ -99,21 +101,26 @@ class ApplicationFormAvailabilityIntegrationTest {
         availability.register("BIZINFO", id, "a".repeat(64))
         val first = discovery.discoverQueued("BIZINFO", id) {}
         val oldVersion = first.forms.first().formVersionId
-        assertEquals(oldVersion, availability.requireActive("BIZINFO", id, oldVersion).formVersionId)
+        assertEquals(oldVersion, requireNotNull(availability.findActive("BIZINFO", id, oldVersion)).formVersionId)
         val revisedPrompt = "sha256:" + "b".repeat(64)
         `when`(ai.discoveryConfiguration()).thenReturn(AiApplicationPreparationConfigurationPayload("application-form-discovery-v1", "test-model", revisedPrompt, 210.0, 240.0))
         `when`(ai.discover(any(AiApplicationFormDiscoveryRequest::class.java) ?: AiApplicationFormDiscoveryRequest("application-form-discovery-v1", "BIZINFO", id, program.title, emptyList()))).thenReturn(payload().copy(promptVersion=revisedPrompt))
         val second = discovery.discoverQueued("BIZINFO", id) {}
         val newVersion = second.forms.first().formVersionId
         assertNotEquals(oldVersion, newVersion)
-        assertEquals(newVersion, availability.requireActive("BIZINFO", id, newVersion).formVersionId)
+        assertEquals(newVersion, requireNotNull(availability.findActive("BIZINFO", id, newVersion)).formVersionId)
         assertNotNull(snapshots.findByVersion(oldVersion))
     }
 
     @Test fun requestedReanalysisDoesNotStealAnActiveWorkerLease() {
         availability.register("BIZINFO", id, "a".repeat(64))
-        assertNotNull(availability.claim())
-        assertThrows(ApplicationFormDiscoveryException::class.java) { discovery.discoverQueued("BIZINFO", id) {} }
+        val lease = requireNotNull(availability.claim())
+        val before = jdbc.queryForMap("SELECT * FROM application_form_availability WHERE source_code='BIZINFO' AND source_program_id=?", id)
+        assertEquals(RequestedAnalysisClaimResult.Conflict, availability.claimRequested("BIZINFO", id))
+        val error = assertThrows(ApplicationFormDiscoveryException::class.java) { discovery.discoverQueued("BIZINFO", id) {} }
+        assertEquals(ApplicationFormDiscoveryException.Reason.JOB_CONFLICT, error.reason)
+        assertEquals(before, jdbc.queryForMap("SELECT * FROM application_form_availability WHERE source_code='BIZINFO' AND source_program_id=?", id))
+        availability.beforeAi(lease)
         verify(ai, never()).discover(any(AiApplicationFormDiscoveryRequest::class.java) ?: AiApplicationFormDiscoveryRequest("application-form-discovery-v1", "BIZINFO", id, program.title, emptyList()))
     }
 
@@ -229,5 +236,28 @@ class ApplicationFormAvailabilityIntegrationTest {
             verify(ai, never()).discoveryConfiguration()
             verify(ai, never()).discover(any(AiApplicationFormDiscoveryRequest::class.java) ?: AiApplicationFormDiscoveryRequest("application-form-discovery-v1", "BIZINFO", id, program.title, emptyList()))
         } finally { Files.deleteIfExists(path) }
+    }
+
+    @Test fun missingAvailabilityReturnsNotFoundAndDiscoveryStillWorksWithoutPublishing() {
+        assertEquals(RequestedAnalysisClaimResult.NotFound, availability.claimRequested("BIZINFO", id))
+        val result = discovery.discoverQueued("BIZINFO", id) {}
+        assertTrue(result.forms.isNotEmpty())
+        assertNull(availability.find("BIZINFO", id))
+    }
+
+    @Test fun unavailableAndMissingVersionReturnNullAndServiceKeepsNotSupportedError() {
+        assertNull(availability.findActive("BIZINFO", id, "missing-version"))
+        availability.register("BIZINFO", id, "a".repeat(64))
+        assertNull(availability.findActive("BIZINFO", id, "missing-version"))
+        val formService = ApplicationFormService(json, snapshots, availability)
+        assertThrows(ApplicationFormNotSupportedException::class.java) {
+            formService.requireSupported("BIZINFO", id, "missing-version", ApplicationServiceField.GENERAL)
+        }
+        val form = discovery.discoverQueued("BIZINFO", id) {}.forms.first()
+        assertNotNull(availability.findActive("BIZINFO", id, form.formVersionId))
+        assertNull(availability.findActive("BIZINFO", id, "missing-version"))
+        assertThrows(ApplicationFormNotSupportedException::class.java) {
+            formService.requireSupported("BIZINFO", id, "missing-version", ApplicationServiceField.GENERAL)
+        }
     }
 }

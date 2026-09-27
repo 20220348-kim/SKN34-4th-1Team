@@ -14,6 +14,7 @@ import ai.govbiz.core.applicationpreparation.domain.ApplicationFormManifest
 import ai.govbiz.core.applicationpreparation.domain.ApplicationFormSectionDefinition
 import ai.govbiz.core.applicationpreparation.domain.ApplicationServiceField
 import ai.govbiz.core.applicationpreparation.facade.AiApplicationPreparationFacade
+import ai.govbiz.core.applicationpreparation.repository.RequestedAnalysisClaimResult
 import ai.govbiz.core.applicationpreparation.repository.ApplicationFormSnapshotRepository
 import ai.govbiz.core.applicationpreparation.service.exception.ApplicationFormDiscoveryException
 import ai.govbiz.core.applicationpreparation.service.exception.ApplicationFormDiscoveryException.Reason
@@ -74,7 +75,11 @@ class ApplicationFormDiscoveryService(
             throw ApplicationFormDiscoveryException(Reason.SOURCE_NOT_FOUND, error)
         }
         val configuration = ai.discoveryConfiguration()
-        val lease = availability.claimRequested(sourceCode, sourceProgramId)
+        val lease = when (val claim = availability.claimRequested(sourceCode, sourceProgramId)) {
+            is RequestedAnalysisClaimResult.Claimed -> claim.lease
+            RequestedAnalysisClaimResult.NotFound -> null
+            RequestedAnalysisClaimResult.Conflict -> throw ApplicationFormDiscoveryException(Reason.JOB_CONFLICT)
+        }
         try {
             return discoverFresh(
                 program.sourceCode,

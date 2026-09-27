@@ -1,11 +1,11 @@
 package ai.govbiz.core.applicationpreparation.service
 
-import ai.govbiz.core.applicationpreparation.controller.dto.ApplicationDocumentMappingChangeResponse
-import ai.govbiz.core.applicationpreparation.controller.dto.ApplicationDocumentMigrationNoticeResponse
+import ai.govbiz.core.applicationpreparation.service.dto.ApplicationDocumentMappingChangeResult
+import ai.govbiz.core.applicationpreparation.service.dto.ApplicationDocumentMigrationNoticeResult
 import ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentMapSnapshot
 import ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentMappingChange
 import ai.govbiz.core.applicationpreparation.domain.ApplicationFormManifest
-import ai.govbiz.core.applicationpreparation.service.dto.ApplicationDocumentMigrationProposal
+import ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentMigrationProposal
 import ai.govbiz.core.applicationpreparation.service.exception.ApplicationDocumentException
 import ai.govbiz.core.applicationpreparation.service.exception.ApplicationDocumentMappingChangedException
 import java.time.Duration
@@ -21,7 +21,7 @@ class ApplicationDocumentMigrationProposalStore(
     private val json: ObjectMapper,
 ) {
     fun create(ownerId: Long, preparationId: Long, expectedRevision: Long, form: ApplicationFormManifest,
-               change: ApplicationDocumentMappingChangedException): ApplicationDocumentMigrationNoticeResponse {
+               change: ApplicationDocumentMappingChangedException): ApplicationDocumentMigrationNoticeResult {
         require(change.previous.sourceSha256 == form.attachmentSha256 && change.proposed.sourceSha256 == form.attachmentSha256)
         val token = UUID.randomUUID().toString()
         val proposal = ApplicationDocumentMigrationProposal(ownerId, preparationId, form.formVersionId,
@@ -33,8 +33,8 @@ class ApplicationDocumentMigrationProposalStore(
         val names = form.sections.flatMap { section -> section.fields.map { field ->
             "${section.key}:${field.key}" to "${section.title} · ${field.label}"
         } }.toMap()
-        val changes = change.changes.map { item -> item.toResponse(names, change.previous, change.proposed) }
-        return ApplicationDocumentMigrationNoticeResponse(approvalToken = token,
+        val changes = change.changes.map { item -> item.toResult(names, change.previous, change.proposed) }
+        return ApplicationDocumentMigrationNoticeResult(approvalToken = token,
             expectedRevision = expectedRevision, changes = changes)
     }
 
@@ -54,9 +54,9 @@ class ApplicationDocumentMigrationProposalStore(
     private fun key(ownerId: Long, preparationId: Long, token: String) =
         "application-document-migration:$ownerId:$preparationId:$token"
 
-    private fun ApplicationDocumentMappingChange.toResponse(names: Map<String, String>,
+    private fun ApplicationDocumentMappingChange.toResult(names: Map<String, String>,
             old: ApplicationDocumentMapSnapshot, next: ApplicationDocumentMapSnapshot) =
-        ApplicationDocumentMappingChangeResponse(
+        ApplicationDocumentMappingChangeResult(
             fieldLabel = factId?.let { names[it] ?: "확인할 문항" } ?: "문서 편집 범위",
             changeType = type,
             oldLocation = if (type == "SCOPE_CHANGED") "기존 ${oldTargetIds.size}개 입력 위치" else location(old, oldTargetIds),

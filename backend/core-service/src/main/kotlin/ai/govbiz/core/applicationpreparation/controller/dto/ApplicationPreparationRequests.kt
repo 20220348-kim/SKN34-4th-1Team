@@ -1,6 +1,6 @@
 package ai.govbiz.core.applicationpreparation.controller.dto
 
-import ai.govbiz.core.applicationpreparation.controller.exception.InvalidApplicationPreparationInputException
+import ai.govbiz.core.applicationpreparation.domain.exception.InvalidApplicationPreparationInputException
 import ai.govbiz.core.applicationpreparation.domain.ApplicationServiceField
 import ai.govbiz.core.applicationpreparation.domain.ApplicationProgressStage
 import ai.govbiz.core.applicationpreparation.domain.NewApplicationPreparation

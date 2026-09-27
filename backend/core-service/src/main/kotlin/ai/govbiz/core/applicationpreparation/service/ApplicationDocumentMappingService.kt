@@ -7,6 +7,7 @@ import ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentMapSnapsh
 import ai.govbiz.core.applicationpreparation.domain.ApplicationFormManifest
 import ai.govbiz.core.applicationpreparation.domain.mappingChanges
 import ai.govbiz.core.applicationpreparation.repository.ApplicationFormSnapshotRepository
+import ai.govbiz.core.applicationpreparation.client.ai.exception.ApplicationDocumentMcpException
 import ai.govbiz.core.applicationpreparation.service.exception.ApplicationDocumentException
 import ai.govbiz.core.applicationpreparation.service.exception.ApplicationDocumentMappingChangedException
 import org.springframework.stereotype.Service
@@ -24,7 +25,7 @@ class ApplicationDocumentMappingService(
                captureChange: Boolean = false): ApplicationDocumentMapSnapshot {
         val sourceHash = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
         if (sourceHash != form.attachmentSha256) throw ApplicationDocumentException("APPLICATION_DOCUMENT_SOURCE_CHANGED", "공식 원본이 변경되었습니다.")
-        val configuration = mcp.configuration()
+        val configuration = callMcp { mcp.configuration() }
         val pipeline = configuration.pipelineVersion
         val nativeFormat = format.lowercase().takeIf { it in setOf("docx", "xlsx") }
         val docxEngine = nativeFormat?.let { configuration.engineVersions[it]
@@ -38,11 +39,11 @@ class ApplicationDocumentMappingService(
             AiDocumentFieldReference("${section.key}:${field.key}", "${section.title} / ${field.label}", field.guidance, field.required, field.options)
         } }
         if (fields.size !in 1..200) throw ApplicationDocumentException("APPLICATION_DOCUMENT_LIMIT_EXCEEDED", "양식 문항 수가 분석 제한을 초과했습니다.")
-        val result = mcp.map(AiDocumentMappingRequest(sourceBase64 = Base64.getEncoder().encodeToString(bytes), sourceSha256 = sourceHash,
+        val result = callMcp { mcp.map(AiDocumentMappingRequest(sourceBase64 = Base64.getEncoder().encodeToString(bytes), sourceSha256 = sourceHash,
             format = format.lowercase(), scope = (form.formTitle + "\n" + form.sections.joinToString("\n") { "${it.title} | ${it.locator} | ${it.description}" }).take(30000),
             fields = fields, pdfTargets = if (format.equals("pdf", true)) inspection?.targets.orEmpty() else emptyList(),
             hwpTargets = if (format.equals("hwp", true)) inspection?.targets.orEmpty() else emptyList(),
-            pageImages = inspection?.pageImages.orEmpty(), pdfFields = inspection?.pdfFields.orEmpty()))
+            pageImages = inspection?.pageImages.orEmpty(), pdfFields = inspection?.pdfFields.orEmpty())) }
         val targetIds = (result.documentMap["targets"] as? List<*>)?.mapNotNull { (it as? Map<*, *>)?.get("targetId") as? String }?.toSet().orEmpty()
         val unmapped = (result.documentMap["unmappedFieldIds"] as? List<*>)?.map { it as? String
             ?: throw ApplicationDocumentException("APPLICATION_DOCUMENT_MAPPING_FAILED", "입력칸 분석 결과를 확인하지 못했습니다.") }.orEmpty()
@@ -67,5 +68,9 @@ class ApplicationDocumentMappingService(
             }
         }
         return if (stored == null) snapshot else snapshots.attachDocumentMap(form.formVersionId, snapshot)
+    }
+    private fun <T> callMcp(block: () -> T): T = try { block() }
+    catch (error: ApplicationDocumentMcpException) {
+        throw ApplicationDocumentException(error.code, requireNotNull(error.message), error.cause)
     }
 }

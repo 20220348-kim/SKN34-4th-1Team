@@ -24,7 +24,8 @@ class ApplicationFormService(objectMapper: ObjectMapper, private val snapshots: 
         formVersionId: String,
         serviceField: ApplicationServiceField,
     ): ApplicationFormManifest {
-        val selected = availability.requireActive(sourceCode, sourceProgramId, formVersionId)
+        val selected = availability.findActive(sourceCode, sourceProgramId, formVersionId)
+            ?: throw ApplicationFormNotSupportedException()
         if (selected.sourceCode != sourceCode || selected.sourceProgramId != sourceProgramId || !selected.supports(serviceField)) {
             throw ApplicationFormNotSupportedException()
         }
