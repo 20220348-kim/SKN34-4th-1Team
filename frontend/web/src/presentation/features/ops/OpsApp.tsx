@@ -108,13 +108,24 @@ function EvaluationList({ datasets, liveEnabled, onExpired }: { datasets: OpsSes
   const expiry = useRef(onExpired); expiry.current = onExpired
   useEffect(() => {
     const controller = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | undefined
     setError(''); setData(null)
-    listEvaluations(page, controller.signal).then(setData).catch((reason) => {
-      if (controller.signal.aborted) return
-      if (reason instanceof OpsApiError && (reason.status === 401 || reason.status === 403)) expiry.current()
-      else setError(message(reason))
-    })
-    return () => controller.abort()
+    const read = async () => {
+      let keepPolling = true
+      try {
+        const value = await listEvaluations(page, controller.signal)
+        if (!controller.signal.aborted) { setData(value); setError('') }
+      } catch (reason) {
+        if (controller.signal.aborted) return
+        if (reason instanceof OpsApiError && [401, 403].includes(reason.status)) {
+          keepPolling = false; expiry.current()
+        } else setError(message(reason))
+      } finally {
+        if (!controller.signal.aborted && keepPolling) timer = setTimeout(() => void read(), 5_000)
+      }
+    }
+    void read()
+    return () => { controller.abort(); clearTimeout(timer) }
   }, [page, refresh])
   const submit = async () => {
     if (submitting.current || (mode === 'live' && (!approved || !liveEnabled || !selected))) return
@@ -152,10 +163,11 @@ function EvaluationList({ datasets, liveEnabled, onExpired }: { datasets: OpsSes
       </section>
       <section className={styles.card} aria-label="평가 실행 이력">
         <h2 className={styles.cardTitle}>실행 이력{data ? ` · ${data.count}건` : ''}</h2>
-        <p className={styles.cardDescription}>목록은 마지막으로 확인한 상태입니다. 실행을 열면 최신 상태를 확인합니다.</p>
-        {error ? <p role="alert" className="text-sm text-red-700">{error}</p> : !data ? <p role="status">실행 이력을 불러오고 있습니다.</p> : !data.results.length ? <p className="py-8 text-center text-sm text-sample-muted">아직 실행한 평가가 없습니다.</p> : <div className="overflow-x-auto">
+        <p className={styles.cardDescription}>서버가 실행 상태를 확인하고 목록은 5초마다 갱신합니다. 마지막 확인 시각과 연결 오류를 함께 확인하세요.</p>
+        {error && <p role="alert" className="text-sm text-red-700">{error} 기존 결과가 있으면 마지막으로 받은 상태를 유지합니다.</p>}
+        {!data ? (!error && <p role="status">실행 이력을 불러오고 있습니다.</p>) : !data.results.length ? <p className="py-8 text-center text-sm text-sample-muted">아직 실행한 평가가 없습니다.</p> : <div className="overflow-x-auto">
           <table className="w-full text-left text-sm"><thead className="border-b border-sample-border text-xs text-sample-muted"><tr>{['평가 자료 / 요청', '상태', '요청자', '요청 시각'].map((label) => <th key={label} className="px-3 py-3 whitespace-nowrap">{label}</th>)}</tr></thead>
-            <tbody>{data.results.map((run) => <tr key={run.id} className="border-b border-sample-border last:border-0"><td className="min-w-64 px-3 py-4"><Link className="font-semibold text-brand-primary hover:underline" to={`${listPath}/${run.id}`}>{run.dataset_label}<span className="mt-1 block font-mono text-xs font-normal text-sample-muted">{run.id}</span></Link><span className="text-xs text-sample-muted">{modeLabel(run)}</span></td><td className="px-3 py-4"><Status run={run} />{run.error_message && <p className="mt-2 max-w-56 text-xs text-red-700">{run.error_message}</p>}</td><td className="px-3 py-4">{run.requested_by}</td><td className="px-3 py-4 whitespace-nowrap">{date(run.created_at)}</td></tr>)}</tbody>
+            <tbody>{data.results.map((run) => <tr key={run.id} className="border-b border-sample-border last:border-0"><td className="min-w-64 px-3 py-4"><Link className="font-semibold text-brand-primary hover:underline" to={`${listPath}/${run.id}`}>{run.dataset_label}<span className="mt-1 block font-mono text-xs font-normal text-sample-muted">{run.id}</span></Link><span className="text-xs text-sample-muted">{modeLabel(run)}</span></td><td className="px-3 py-4"><Status run={run} /><p className="mt-2 whitespace-nowrap text-xs text-sample-muted">마지막 확인: {run.synced_at ? date(run.synced_at) : '아직 확인되지 않음'}</p>{run.status_stale && <p className="mt-1 text-xs text-amber-800">상태 확인 지연 · 현재 상태를 확정할 수 없습니다.</p>}{run.error_message && <p className="mt-2 max-w-56 text-xs text-red-700">{run.error_message}</p>}</td><td className="px-3 py-4">{run.requested_by}</td><td className="px-3 py-4 whitespace-nowrap">{date(run.created_at)}</td></tr>)}</tbody>
           </table></div>}
         {data && <nav aria-label="평가 이력 페이지" className="mt-3 flex items-center justify-end gap-3 text-sm"><button className={styles.secondaryButton} disabled={!data.previous} onClick={() => setSearch({ page: String(page - 1) })}>이전</button><span>{page} / {Math.max(1, Math.ceil(data.count / 25))}</span><button className={styles.secondaryButton} disabled={!data.next} onClick={() => setSearch({ page: String(page + 1) })}>다음</button></nav>}
       </section>

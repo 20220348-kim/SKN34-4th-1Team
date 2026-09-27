@@ -37,6 +37,7 @@ class EvaluationRun(models.Model):
     started_at = models.DateTimeField(null=True)
     finished_at = models.DateTimeField(null=True)
     synced_at = models.DateTimeField(null=True)
+    sync_attempted_at = models.DateTimeField(null=True)
     # 안정적인 코드만 저장한다. 외부 예외 본문·키·파일 경로는 노출하지 않는다.
     error_code = models.CharField(max_length=64, blank=True)
     summary = models.JSONField(default=dict)

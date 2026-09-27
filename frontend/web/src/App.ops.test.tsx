@@ -56,6 +56,51 @@ function open(path = '/ops/evaluations') {
 }
 
 describe('React LLMOps 운영 화면', () => {
+  it('상세를 열지 않아도 목록을 갱신하고 상태 확인 지연과 복구를 표시한다', async () => {
+    const original = fetchMock.getMockImplementation()!
+    let reads = 0
+    fetchMock.mockImplementation(async (path, options) => {
+      if (path.startsWith('/api/v1/ops/evaluations?page=')) return json({ count: 1, next: null, previous: null, results: [++reads === 1
+        ? { ...completed, status: 'RUNNING', status_label: '실행 중', status_stale: true,
+            error_message: '실행 서버에 연결할 수 없습니다.', report_url: null }
+        : { ...completed, synced_at: '2026-09-27T00:01:00Z', status_stale: false }] })
+      return original(path, options)
+    })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const view = open()
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+    expect(screen.getByText('실행 중')).toBeTruthy()
+    expect(screen.getByText(/상태 확인 지연/)).toBeTruthy()
+    expect(screen.getByText(/마지막 확인: 아직 확인되지 않음/)).toBeTruthy()
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+    expect(screen.getByText('완료')).toBeTruthy()
+    expect(screen.queryByText(/상태 확인 지연/)).toBeNull()
+    expect(fetchMock.mock.calls.some(([path]) => path === `/api/v1/ops/evaluations/${id}`)).toBe(false)
+    view.unmount()
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
+    expect(reads).toBe(2)
+  })
+
+  it('목록 자동 갱신 실패 때 기존 결과를 유지하고 다음 조회로 복구한다', async () => {
+    const original = fetchMock.getMockImplementation()!
+    let reads = 0
+    fetchMock.mockImplementation(async (path, options) => {
+      if (path.startsWith('/api/v1/ops/evaluations?page=')) {
+        if (++reads === 2) return json({}, 503)
+        return json({ count: 1, next: null, previous: null, results: [completed] })
+      }
+      return original(path, options)
+    })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    open()
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+    expect(screen.getByRole('alert')).toBeTruthy()
+    expect(screen.getByText('완료')).toBeTruthy()
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
   it('실패 후처리를 새 이력으로 복구하고 원본 연결과 추가 호출 0회를 표시한다', async () => {
     const original = fetchMock.getMockImplementation()!
     const child = '30000000-0000-4000-8000-000000000003'

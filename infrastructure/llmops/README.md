@@ -19,7 +19,7 @@ AI 프로젝트는 `>=3.12,<3.13`으로 제한하며 `.python-version`과 `uv.lo
 | 평가 파이프라인 | Prefect → pandas/Pandera 검증 → 지표 재계산 → Evidently 보고서·Langfuse 점수 등록 및 재조회 |
 | 과거 응답 비교 | 저장된 가상 6건 재현, 과거 두 실행의 공통 E01 비교, 모델·프롬프트·지표 차이와 미측정 값 표시 |
 | 운영 화면·인증 | React `/ops/evaluations`, Django API, 기존 Core 관리자 로그인·공유 로그아웃, CSRF·일반 회원 접근 차단 |
-| 실행·결과 관리 | 요청 UUID 중복 방지, 실행 이력·상태 조회·오류 표시, 파일 해시 검증, 인증된 보고서·외부 기록 링크 |
+| 실행·결과 관리 | 요청 UUID 중복 방지, 백그라운드 상태 확인, 목록 자동 갱신·확인 지연 표시, 파일 해시 검증, 인증된 보고서·외부 기록 링크 |
 | 새 모델 평가 | 자료·모델·호출 수·출력 토큰 예산 확인 후 새 응답 생성, 중복 유료 실행 차단, 실패 시 부분 캡처·호출 시도 수 보존 |
 | GPT-6 Luna 실제 호출 | 환경변수 반영 후 E01 한 건을 실제 1회 호출. 토큰·trace·점수·보고서 확인. 전체 품질 평가로 해석하지 않음 |
 | 관리자 검토·비교 기준 | 질문·근거·후보/기준 답변 조회, 승인·수정 필요 의견과 검토자·이력 저장, 데이터셋별 기준 지정, 접수 시 기준 해시 고정·실행별 원본 복사 |
@@ -29,7 +29,7 @@ AI 프로젝트는 `>=3.12,<3.13`으로 제한하며 `.python-version`과 `uv.lo
 화면 사용법은 [Web README](../../frontend/web/README.md#llmops-운영-화면--react--django),
 평가 입력·출력은 [평가 README](../../evaluation/support-program-evidence/README.md#ops에서-새-응답-생성)에 둔다.
 전체 도입 순서와 후속 범위는 [전략 문서](../../docs/langfuse-adoption-strategy.md)에서 관리한다.
-현재 작업 우선순위와 진입·완료 조건은 [skn-23 이후 개발 전략](../../docs/langfuse-adoption-strategy.md#후속-개발-전략--skn-23-기준)을 따른다.
+현재 작업 우선순위와 진입·완료 조건은 [skn-25 이후 개발 전략](../../docs/langfuse-adoption-strategy.md#후속-개발-전략--skn-25-기준)을 따른다.
 
 남은 범위는 사례별 검토·평가 자료 확장·품질 합격 기준, 취소·정기 실행·알림,
 Core부터 이어지는 전체 RAG 추적과 Ops 평가 연동, 운영 배포다. 별도 도구의 과거 전체 RAG 검증 기록과
@@ -37,7 +37,13 @@ Core부터 이어지는 전체 RAG 추적과 Ops 평가 연동, 운영 배포다
 단독·루트 Compose의 평가 자료 마운트 누락으로 컨테이너 검토 테스트 7개가 실패했다.
 해당 마운트와 경로 검증을 수정해 로컬 격리 MySQL 컨테이너의 35개 테스트·HTTP·서비스 DNS 검증을 통과했다.
 같은 커밋의 GovBiz CI에서 실패한 AI 기본 모델 테스트의 이전 모델 기대값도 수정해 관련 선택 테스트를 통과했다.
-수정본은 아직 커밋·푸시하지 않았으며 원격 CI 통과는 별도로 확인해야 한다. 운영 배포는 미수행이다.
+`skn-25`의 `0b7eebf`에 두 수정과 후처리 복구를 커밋·푸시했으며 필수 CI 5개가 모두 통과했다.
+[GovBiz CI](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36314606993),
+[Ops CI](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36314607015),
+[LLMOps CI](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36314606996),
+[Infra CI](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36314606978),
+[Catalog CI](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36314606992)에서 확인한다.
+그 이후 추가한 상태 동기화·복구 smoke 변경의 원격 CI는 별도 검증 대상이며 운영 배포는 미수행이다.
 
 ## 개발 서버
 
@@ -87,9 +93,9 @@ dc() {
     -f infrastructure/llmops/compose.ops.yaml --profile evaluation "$@"
 }
 dc up -d ops-mysql
-dc build ops-service evaluation-runner
+dc build ops-service ops-sync evaluation-runner
 dc run --rm ops-service python manage.py migrate --noinput
-dc up -d ops-service evaluation-runner
+dc up -d ops-service ops-sync evaluation-runner
 
 ```
 
@@ -142,12 +148,15 @@ flowchart LR
     E --> V[Evidently 보고서]
     V --> F[공유 결과 볼륨]
     F -->|읽기 전용 · 요청 연결과 해시 검증| OPS
-    OPS -->|상태 조회| P
+    SYNC[ops-sync · Django 상태 확인] -->|기존 실행 조회| P
+    SYNC -->|상태·확인 시각 저장| DB[(Ops MySQL)]
+    DB --> OPS
 ```
 
 `ops-results` 볼륨의 `{요청 UUID}/request.json`이 Django 요청·기준/후보와 Prefect 실행을 연결하며,
-`evaluation/` 아래에 기존 manifest·비교 요약·보고서를 보존한다. Django의 상태는 마지막 조회
-시점의 Prefect 상태다. 상세 페이지를 열면 5초마다 갱신하며, 목록은 저장된 마지막 상태를 보여준다.
+`evaluation/` 아래에 기존 manifest·비교 요약·보고서를 보존한다. Django의 상태는 마지막으로 확인한
+Prefect 상태다. `ops-sync`가 브라우저와 독립적으로 이를 확인하고 목록은 5초마다 DB 결과를 다시 읽는다.
+상세 페이지의 진행 상태 조회도 유지한다. 확인 시각·연결 오류·60초 이상 미확인 상태를 구분해 표시한다.
 실행기가 꺼지면 새 요청은 대기 상태로 남고, Prefect 연결 실패·결과 파일 누락을 완료로 표시하지 않는다.
 보고서 URL은 운영자만 접근할 수 있고 HTML에는 동일 출처 접근을 허용하지 않는 CSP sandbox를 적용한다.
 비교 JSON과 보고서의 해시를 확인한 뒤 결과를 제공한다. `0002` migration을 먼저 적용하고 Ops·실행기를
@@ -169,10 +178,50 @@ python3 infrastructure/llmops/ops_smoke.py --base-url http://localhost:5173 \
 동일 Prefect 실행 ID, 보고서 HTTP 200을 확인한다. 결과는 JSON에 보존하고 비밀번호는 출력하지 않는다.
 실패·취소·접수 응답 유실·보고서 훼손·권한 오류는 Ops 단위/DB 통합 테스트에서도 검증한다.
 `--compare-captures`는 E01의 지연 변화 `+117.477ms`, 미측정 토큰, 원본 4건 중 E01 비교,
-같은 요청 UUID의 기준 변경 거절을 추가로 확인한다. 두 경로 모두 LLMOps CI에 연결되어 있다.
+같은 요청 UUID의 기준 변경 거절을 추가로 확인한다. 두 경로 모두 상세 API를 호출하지 않고 목록에서 완료 상태를 기다려 `ops-sync`를 검증한다. LLMOps CI에 연결되어 있다.
 
 종료는 `dc down`으로 한다. 기존 Langfuse·Prefect와 이번 Ops 컨테이너를 정리하지만 모든 named volume은 유지한다.
 운영 공개·여러 호스트의 결과 저장소·실제 모델 평가·정기 실행은 이 개발 구성에 포함하지 않는다.
+
+## 백그라운드 상태 동기화
+
+Migration `0006_evaluationrun_sync_attempted_at`을 적용한 뒤 `ops-service`와 `ops-sync`를 함께 갱신한다.
+`ops-sync`는 같은 Django 코드·이미지 구성으로 `python manage.py sync_evaluations --watch`를 실행한다.
+새 라이브러리·메시지 큐를 추가하지 않으며 Prefect SDK도 Django에 설치하지 않는다.
+
+- 기본 10초 대기 간격으로 최대 25건을 순차 확인한다. 조회 시간·대기 건수에 따라 반영 시간이 늘어날 수 있다.
+- `REQUESTED / QUEUED / RUNNING / RESULT_ERROR` 및 상태 서버 연결 오류를 재확인한다.
+  확인 시도가 오래된 실행부터 처리해 오류 한 건이 뒤의 실행을 계속 밀어내지 않게 한다.
+- `synced_at`은 마지막 성공 확인 시각, `sync_attempted_at`은 마지막 시도 시각이다.
+  연결 실패는 기존 상태·성공 확인 시각을 유지하고 오류를 표시한다.
+- 접수 응답 유실은 UUID 기반 Prefect idempotency key와 저장된 인자로 기존 실행만 조회한다.
+  찾지 못하면 `REQUESTED`·접수 미확인으로 남긴다. 자동 생성·재시작·모델 호출은 하지 않는다.
+- 미완료 실행을 60초 이상 확인하지 못하면 API의 `status_stale`과 목록의 **상태 확인 지연**으로 표시한다.
+  목록 API는 Prefect에 직접 연결하지 않아 서버 장애가 목록 요청을 길게 막지 않는다.
+- 여러 조회가 겹치면 DB의 기존 상태·확인 시각·flow ID가 일치할 때만 반영한다.
+  이미 확인한 완료를 늦게 도착한 실행 중 응답이나 연결 오류로 덮어쓰지 않는다.
+- DB 장애 시 프로세스는 오류로 종료하고 Compose가 재시작한다. migration은 자동 적용하지 않는다.
+  완료 실행 파일의 사후 훼손 검사는 기존 상세·보고서 조회에서 수행한다.
+
+한 번만 확인할 때는 `dc run --rm --no-deps ops-sync python manage.py sync_evaluations`를 쓴다.
+단독 Django 실행은 `uv run --locked python manage.py sync_evaluations --watch`를 별도 프로세스로 실행하고
+같은 DB·Prefect URL·읽기 전용 결과/평가 자료 경로를 제공한다.
+이는 상태 확인 주기이며 유료 평가의 정기 실행 스케줄이 아니다.
+
+## CI의 무료 후처리 복구 검증
+
+`.github/workflows/llmops-ci.yml`은 `ops-sync`를 migration 이후 시작한 뒤 다음 경로를 검증한다.
+
+1. `recovery_smoke_fixture.py prepare`를 일회성 실행기에 읽기 전용 마운트한다.
+   API 키를 비우고 live를 끈 상태에서 모델 실행 함수를 차단하며, 가상 TC01~TC06의 publish 단계만 실패시킨다.
+2. `register`로 기존 smoke 관리자를 소유자로 하는 새 대기 이력을 만든다. 다른 실행·사용자는 변경하지 않는다.
+3. `ops_smoke.py --recover-source <UUID>`가 목록의 실패 반영을 확인한 뒤 관리자 인증·CSRF를 거쳐 복구 요청을 보낸다.
+   같은 요청 UUID 재전송이 같은 Prefect 실행을 반환하는지 확인하고, 상세 조회 없이 목록에서 복구 완료를 기다린다.
+4. `verify --source-id <UUID> --recovery-id <UUID>`가 원본 파일 해시 보존, Prefect 실패/완료 상태,
+   복구 보고서, 추가 모델 호출 0회, Langfuse 점수 22개의 실제 값·이름을 조회해 확인한다.
+
+실패 주입 코드는 운영 이미지와 API에 포함하지 않는다. 원본/복구 자료는 각각 새 UUID 폴더에만 생성한다.
+이 검증은 모델 품질 평가나 사람 검토 완료를 뜻하지 않는다.
 
 ## 무료 전체 검증
 
@@ -209,7 +258,7 @@ backend/ai-service/.venv/bin/python infrastructure/llmops/smoke.py \
 2. 전송할 자료와 예산을 승인한 후 Git에서 제외된 `.env.ops`에 `LLMOPS_LIVE_ENABLED=true`,
    `LLMOPS_LIVE_MODEL=gpt-6-luna`, `OPENAI_API_KEY=<승인된 프로젝트의 키>`를 설정한다.
    키를 커밋하거나 브라우저·Prefect 인자로 전송하지 않는다. 키는 evaluation-runner에만 주입된다.
-3. `dc up -d ops-service evaluation-runner`로 두 서비스 설정을 반영한다.
+3. `dc up -d ops-service ops-sync evaluation-runner`로 API·동기화·평가 실행기 설정을 반영한다.
 4. Ops에서 **새 응답 생성**을 고르고 자료·기준·전송 내용·최대 호출 예산을 확인한 뒤 실행한다.
 
 | 자료 | OpenAI로 전송하는 범위 | 호출 예산 |
@@ -452,4 +501,34 @@ Langfuse 점수 22개 등록·재조회와 Evidently 보고서의 후보/기준 
 
 원본/복구 이력과 질문·근거·응답 검토 화면을 확인했으며 관리자 승인·기준 지정은 하지 않았다.
 과거 응답의 재처리 검증이므로 현재 GPT-6 Luna 품질 측정으로 해석하지 않는다.
-최신 수정본은 아직 커밋·푸시하지 않았으며 필수 원격 CI 검증은 대기 상태다.
+이 후처리 복구 변경은 이후 `skn-25 / 0b7eebf`로 푸시했으며 필수 CI 5개가 모두 통과했다.
+이 기록 이후의 상태 동기화·복구 smoke 추가 변경은 별도 검증 대상이다.
+
+
+### 상태 동기화·복구 CI 보강의 로컬 검증 — 2026-09-27
+
+- 실제 MySQL 8.4의 격리 테스트 DB에서 Ops 관련 49개 테스트를 확인했다.
+  접수·복구·상태 동기화 42개와 검토 7개이며, 후속 재확인의 중복 테스트는 합계에 다시 넣지 않았다.
+- React Ops 테스트 23개, 서버 없이 실행하는 smoke 판정 테스트 10개를 통과했다. 합계 **82개**다.
+- Python 3.12 Ruff 검사·포맷 확인, TypeScript 검사·Oxlint, Python/YAML 구문,
+  Compose의 읽기 전용 자료·같은 DB·모델 키/노출 포트 없음, migration 정합성을 확인했다.
+- Ops·동기화 이미지를 로컬에 빌드하고 migration 0006을 적용했다. 기존 DB·볼륨·실행 이력은 보존했다.
+- 실제 Prefect에서 기존 실행의 idempotency key·인자 조회가 원래 flow ID와 일치함을 확인했다.
+- `recovery_smoke_fixture.py prepare/register`로 새 가상 TC01~TC06 실패 실행을 만들었다.
+  API 키 제거·live 비활성화·모델 함수 차단 상태에서 publish 실패를 주입했으며 추가 모델 호출은 0회다.
+- 상세 방문 없이 React 목록에 원본 실패가 반영됐고, 관리자 화면에서 복구 요청 후 목록으로 돌아왔다.
+  상태 동기화 프로세스를 중지·재시작해도 기존 복구 실행을 이어 확인하고 목록에 완료를 반영했다.
+- `verify`로 원본 파일 해시 보존, 실제 Prefect 원본 FAILED/복구 COMPLETED, 보고서 해시,
+  Langfuse 점수 22개 값·이름, 복구 추가 모델 호출 0회를 확인했다.
+
+| 기록 | 식별자 |
+|---|---|
+| 원본 실패 요청 | `3c365959-5252-403b-b971-2eb1c4a60905` |
+| 원본 Prefect 실행 | `62dc6128-c89b-43d9-9d6b-1d787f7fe4b1` |
+| 복구 요청 | `fbec4f91-50f4-4baa-b38b-7d883155ff5f` |
+| 복구 Prefect 실행 | `8ecdd692-b439-4ed7-9225-cd4eb0ad6829` |
+
+이 검증은 무료 저장 응답의 복구·상태 반영 검증이며 현재 모델 품질이나 사람 검토 결과가 아니다.
+로컬 HTTP 동작은 기존 관리자 브라우저에서 확인했다. CI의 격리 Core 로그인부터 로그아웃까지의
+새 `ops_smoke.py --recover-source` 전체 실행과 전체 저장소 검증은 최신 변경의 원격 CI 확인 대상이다.
+`0b7eebf`의 기존 CI 5개 통과와 이 후속 변경의 검증을 구분한다. 후속 변경은 아직 커밋·푸시하지 않았다.

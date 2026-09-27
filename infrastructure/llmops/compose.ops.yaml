@@ -15,7 +15,7 @@ services:
       timeout: 5s
       retries: 40
 
-  ops-service:
+  ops-service: &ops-service
     build: ../../backend/ops-service
     init: true
     ports: ["127.0.0.1:18001:8000"]
@@ -44,6 +44,15 @@ services:
       - "host.docker.internal:host-gateway"
     depends_on:
       ops-mysql: {condition: service_healthy}
+
+  ops-sync:
+    <<: *ops-service
+    ports: []
+    command: ["python", "manage.py", "sync_evaluations", "--watch"]
+    restart: unless-stopped
+    depends_on:
+      ops-mysql: {condition: service_healthy}
+      prefect: {condition: service_started}
 
   evaluation-runner:
     build:

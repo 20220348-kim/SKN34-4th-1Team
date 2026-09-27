@@ -1,8 +1,10 @@
 import json
 import re
+from datetime import timedelta
 from hashlib import sha256
 
 from django.conf import settings
+from django.db.models import F, Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
@@ -20,6 +22,7 @@ from .models import EvaluationBaseline, EvaluationRun
 DATASET_ID = LEGACY_DATASET_ID
 DATASET_LABEL = DATASETS[DATASET_ID]["label"]
 TERMINAL = {"COMPLETED", "FAILED", "CANCELLED", "CRASHED"}
+PENDING_SYNC = {"REQUESTED", "QUEUED", "RUNNING", "RESULT_ERROR"}
 
 
 class RequestConflict(Exception):
@@ -291,41 +294,59 @@ def sync_run(run):
             )
             run.refresh_from_db()
         return run
-    if run.prefect_flow_run_id is None or (run.status in TERMINAL and not run.error_code):
+    if run.status in TERMINAL and not run.error_code:
         return run
+    observed = {
+        "pk": run.pk,
+        "status": run.status,
+        "synced_at": run.synced_at,
+        "sync_attempted_at": run.sync_attempted_at,
+        "prefect_flow_run_id": run.prefect_flow_run_id,
+    }
+    values = {"sync_attempted_at": timezone.now()}
     try:
-        remote = prefect_client.read_run(run.prefect_flow_run_id)
-        state = remote["state_type"]
-        status = {
-            "SCHEDULED": "QUEUED",
-            "PENDING": "QUEUED",
-            "RUNNING": "RUNNING",
-            "COMPLETED": "COMPLETED",
-            "FAILED": "FAILED",
-            "CANCELLED": "CANCELLED",
-            "CRASHED": "CRASHED",
-            "CANCELLING": "RUNNING",
-            "PAUSED": "QUEUED",
-        }.get(state)
-        if status is None:
-            raise prefect_client.PrefectUnavailable
-        values = {"status": status, "synced_at": timezone.now(), "error_code": ""}
-        for source, target in [("start_time", "started_at"), ("end_time", "finished_at")]:
-            value = remote.get(source)
-            values[target] = parse_datetime(value) if isinstance(value, str) else None
-        if status == "COMPLETED":
-            try:
-                evaluation_id, summary, _, comparison = read_result(run)
-                values.update(
-                    evaluation_run_id=evaluation_id, summary=summary, comparison=comparison
-                )
-            except ResultsUnavailable:
-                # Prefect만 완료되고 보고서를 읽지 못하면 Ops 완료로 표시하지 않는다.
-                values.update(status="RESULT_ERROR", error_code="RESULTS_UNAVAILABLE")
-        elif status in TERMINAL:
-            values["error_code"] = f"EVALUATION_{status}"
-    except (prefect_client.PrefectUnavailable, ValueError, TypeError):
-        values = {"error_code": "PREFECT_STATUS_UNAVAILABLE"}
+        flow_id = run.prefect_flow_run_id or prefect_client.find_run(run)
+        if flow_id is None:
+            values["error_code"] = "PREFECT_DISPATCH_UNCONFIRMED"
+        else:
+            run.prefect_flow_run_id = flow_id
+            values["prefect_flow_run_id"] = flow_id
+            remote = prefect_client.read_run(run.prefect_flow_run_id)
+            state = remote["state_type"]
+            status = {
+                "SCHEDULED": "QUEUED",
+                "PENDING": "QUEUED",
+                "RUNNING": "RUNNING",
+                "COMPLETED": "COMPLETED",
+                "FAILED": "FAILED",
+                "CANCELLED": "CANCELLED",
+                "CRASHED": "CRASHED",
+                "CANCELLING": "RUNNING",
+                "PAUSED": "QUEUED",
+            }.get(state)
+            if status is None:
+                raise prefect_client.PrefectUnavailable
+            values.update(status=status, synced_at=timezone.now(), error_code="")
+            for source, target in [("start_time", "started_at"), ("end_time", "finished_at")]:
+                value = remote.get(source)
+                values[target] = parse_datetime(value) if isinstance(value, str) else None
+            if status == "COMPLETED":
+                try:
+                    evaluation_id, summary, _, comparison = read_result(run)
+                    values.update(
+                        evaluation_run_id=evaluation_id, summary=summary, comparison=comparison
+                    )
+                except ResultsUnavailable:
+                    # Prefect만 완료되고 보고서를 읽지 못하면 Ops 완료로 표시하지 않는다.
+                    values.update(status="RESULT_ERROR", error_code="RESULTS_UNAVAILABLE")
+            elif status in TERMINAL:
+                values["error_code"] = f"EVALUATION_{status}"
+    except (prefect_client.PrefectUnavailable, ValueError, TypeError, KeyError):
+        values = {
+            "sync_attempted_at": values["sync_attempted_at"],
+            "error_code": "PREFECT_STATUS_UNAVAILABLE",
+            "prefect_flow_run_id": run.prefect_flow_run_id,
+        }
     if run.execution_mode == "live":
         try:
             capture, _ = read_live_capture(run)
@@ -334,8 +355,20 @@ def sync_run(run):
             # 파일이 없거나 확인할 수 없는 호출 수를 0으로 표시하지 않는다.
             pass
     # 동시에 조회한 오래된 RUNNING 응답이 이미 완료된 상태를 되돌리지 않도록 한다.
-    EvaluationRun.objects.filter(pk=run.pk, status=run.status, synced_at=run.synced_at).update(
-        **values
-    )
+    EvaluationRun.objects.filter(**observed).update(**values)
     run.refresh_from_db()
     return run
+
+
+def sync_pending_runs(*, batch_size=25, interval_seconds=10):
+    """오래 확인하지 않은 미완료 실행을 제한된 수만 조회한다. 새 실행은 만들지 않는다."""
+    cutoff = timezone.now() - timedelta(seconds=interval_seconds)
+    runs = list(
+        EvaluationRun.objects.filter(
+            Q(status__in=PENDING_SYNC) | Q(error_code="PREFECT_STATUS_UNAVAILABLE"),
+            Q(sync_attempted_at__isnull=True) | Q(sync_attempted_at__lte=cutoff),
+        ).order_by(F("sync_attempted_at").asc(nulls_first=True), "created_at", "id")[:batch_size]
+    )
+    for run in runs:
+        sync_run(run)
+    return len(runs)

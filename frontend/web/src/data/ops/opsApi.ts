@@ -44,6 +44,7 @@ const runSchema = z.object({
   status: z.enum(['REQUESTED', 'QUEUED', 'RUNNING', 'COMPLETED', 'FAILED', 'CANCELLED', 'CRASHED', 'RESULT_ERROR']),
   status_label: z.string(), created_at: z.string(), started_at: z.string().nullable(),
   finished_at: z.string().nullable(), synced_at: z.string().nullable(),
+  sync_attempted_at: z.string().nullable().default(null), status_stale: z.boolean().default(false),
   error_code: z.string(), error_message: z.string(),
   summary: z.object({
     caseCount: z.number().optional(), observedCaseCount: z.number().optional(),

@@ -9,14 +9,33 @@ import time
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPCookieProcessor, Request, build_opener
-from uuid import uuid4
+from uuid import UUID, uuid4
+
+
+def wait_for_list_state(request, run_id, expected="COMPLETED"):
+    # 상세 API 호출로 상태 갱신을 유발하지 않는다. ops-sync의 DB 반영을 검증한다.
+    deadline = time.monotonic() + 360
+    while True:
+        status, body, _ = request("/api/v1/ops/evaluations?page=1")
+        assert status == 200, f"Ops list returned HTTP {status}"
+        run = next((item for item in json.loads(body)["results"] if item["id"] == run_id), None)
+        if run and run["status"] == expected:
+            assert run["synced_at"] and run["sync_attempted_at"] and not run["status_stale"]
+            return run
+        if run and run["status"] in {"FAILED", "CRASHED", "CANCELLED", "RESULT_ERROR", "COMPLETED"}:
+            raise RuntimeError(f'Unexpected evaluation state: {run["status"]} / {run["error_code"]}')
+        if time.monotonic() >= deadline:
+            raise RuntimeError("Background evaluation synchronization timed out")
+        time.sleep(3)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", default="http://localhost:5173")
     parser.add_argument("--seed-dev-accounts", action="store_true", help="격리 CI Core에서만 개발용 계정 생성")
-    parser.add_argument("--compare-captures", action="store_true", help="기존 프롬프트 실행의 공통 E01 비교")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--compare-captures", action="store_true", help="기존 프롬프트 실행의 공통 E01 비교")
+    mode.add_argument("--recover-source", type=UUID, help="무료 fixture가 만든 실패 실행을 복구")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     base = args.base_url.rstrip("/")
@@ -65,17 +84,27 @@ def main():
     assert status == 200 and json.loads(body)["account"]["role"] == "ADMIN"
     status, body, _ = request("/api/v1/ops/session")
     assert status == 200 and json.loads(body)["user"]["username"] == os.environ["CORE_ADMIN_EMAIL"]
+    submit_path = "/api/v1/ops/evaluations"
     payload = {"request_id": str(uuid4()), "dataset_id": "target-coverage-20260907-v1"}
+    if args.recover_source:
+        source_id = str(args.recover_source)
+        source = wait_for_list_state(request, source_id, "FAILED")
+        status, body, _ = request(f"/api/v1/ops/evaluations/{source_id}")
+        assert status == 200 and json.loads(body)["postprocessing"]["can_recover"]
+        assert source["execution_mode"] == "replay" and source["model_api_calls"] == 0
+        submit_path = f"/api/v1/ops/evaluations/{source_id}/recover"
+        payload = {"request_id": payload["request_id"]}
     if args.compare_captures:
         payload.update(dataset_id="fixed-context-e01-v1",
                        candidate_capture_id="fixed-context-20260907-index-v1",
                        reference_capture_id="fixed-context-20260906-diagnostic-v1")
-    assert request("/api/v1/ops/evaluations", payload, csrf=False)[0] == 403
-    assert request("/api/v1/ops/evaluations", {**payload, "dataset_id": "../../invalid"})[0] == 400
+    assert request(submit_path, payload, csrf=False)[0] == 403
+    if not args.recover_source:
+        assert request(submit_path, {**payload, "dataset_id": "../../invalid"})[0] == 400
     # deployment 등록 직후의 접수 지연도 같은 요청 ID로 복구한다.
     deadline = time.monotonic() + 300
     while True:
-        status, body, _ = request("/api/v1/ops/evaluations", payload)
+        status, body, _ = request(submit_path, payload)
         first = json.loads(body)
         if status in (200, 202) and first["prefect_flow_run_id"]:
             break
@@ -83,21 +112,15 @@ def main():
         if time.monotonic() >= deadline:
             raise RuntimeError("Deployment dispatch timed out")
         time.sleep(3)
-    status, body, _ = request("/api/v1/ops/evaluations", payload)
+    status, body, _ = request(submit_path, payload)
     replay = json.loads(body)
     assert status == 200 and replay["prefect_flow_run_id"] == first["prefect_flow_run_id"]
-    deadline = time.monotonic() + 360
-    while True:
-        status, body, _ = request(f'/api/v1/ops/evaluations/{payload["request_id"]}')
-        run = json.loads(body)
-        assert status == 200, f"Ops detail returned HTTP {status}"
-        if run["status"] == "COMPLETED":
-            break
-        if run["status"] in {"FAILED", "CRASHED", "CANCELLED", "RESULT_ERROR"}:
-            raise RuntimeError(f'Ops evaluation failed: {run["status"]} / {run["error_code"]}')
-        if time.monotonic() >= deadline:
-            raise RuntimeError("Ops evaluation completion timed out")
-        time.sleep(3)
+    run = wait_for_list_state(request, payload["request_id"])
+    if args.recover_source:
+        assert run["execution_mode"] == "recovery" and run["source_run_id"] == source_id
+        assert run["model_api_calls"] == 0
+        assert run["prefect_flow_run_id"] != source["prefect_flow_run_id"]
+        assert wait_for_list_state(request, source_id, "FAILED")["prefect_flow_run_id"] == source["prefect_flow_run_id"]
     expected_count = 1 if args.compare_captures else 6
     assert run["summary"]["caseCount"] == expected_count
     comparison = run["comparison"]
@@ -126,6 +149,7 @@ def main():
         "case_count": expected_count, "comparison": comparison["comparison"],
         "metrics": comparison["metrics"], "duplicate_request_same_flow": True, "csrf_enforced": True,
         "core_admin_login": True, "core_logout_revokes_ops": True,
+        "background_sync_without_detail": True, "source_run_id": run.get("source_run_id"),
         "report_http_status": status, "model_api_calls": 0,
         "detail_url": base + run["detail_url"],
     }
