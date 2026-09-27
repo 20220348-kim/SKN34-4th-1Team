@@ -16,6 +16,7 @@ import type {
 } from '../entities/ApplicationPreparation'
 
 export interface ApplicationPreparationRepository {
+  onlineInputGuide(id: number, signal?: AbortSignal): Promise<import('../entities/ApplicationOnlineInputGuide').ApplicationOnlineInputGuide>
   availability(sourceCode: string, sourceProgramId: string, signal?: AbortSignal): Promise<import('../entities/ApplicationPreparation').ApplicationFormAvailability>
   documents(id: number, signal?: AbortSignal): Promise<ApplicationDocument[]>
   generateDocuments(id: number, expectedRevision: number, signal?: AbortSignal): Promise<ApplicationDocument[]>

@@ -1307,6 +1307,43 @@ class ApplicationPreparationApiIntegrationTest {
             sourceBase64 = "", sourceSha256 = "", format = "hwpx", answerRevision = 1, facts = emptyList(), scope = "test"))
     }
 
+    @Test
+    fun readsOnlineGuideThroughAuthenticatedOwnerWithoutChangingPreparation() {
+        val id = create(owner)
+        val endpoint = "$BASE/$id/online-input-guide"
+        val before = preparationService.findOwned(accounts.findById(ownerId)!!, id)
+        mvc.perform(get(endpoint).cookie(owner))
+            .andExpect(status().isOk())
+            .andExpect(header().string(HttpHeaders.CACHE_CONTROL, "no-store"))
+            .andExpect(jsonPath("$.preparationId").value(id))
+            .andExpect(jsonPath("$.inputRevision").value(before.preparation.inputRevision))
+            .andExpect(jsonPath("$.readyCount").value(0))
+            .andExpect(jsonPath("$.missingCount").value(before.form.sections.sumOf { it.fields.size }))
+            .andExpect(jsonPath("$.items[0].inputMode").value("UNKNOWN"))
+            .andExpect(jsonPath("$.items[0].copyable").value(false))
+            .andExpect(jsonPath("$.savedAnswers.length()").value(0))
+            .andExpect(jsonPath("$.officialApplicationUrl").isEmpty())
+        mvc.perform(put("$BASE/$id/sections/company-overview/inputs").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("""{"expectedRevision":1,"facts":[{"fieldKey":"company-name","status":"PROVIDED","value":"합성테크","sourceText":"사용자 확정"}]}"""))
+            .andExpect(status().isOk())
+        val afterInput = preparationService.findOwned(accounts.findById(ownerId)!!, id)
+        mvc.perform(get(endpoint).cookie(owner))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.readyCount").value(1))
+            .andExpect(jsonPath("$.directInputCount").value(0))
+            .andExpect(jsonPath("$.externalMappingVerified").value(false))
+            .andExpect(jsonPath("$.items[0].status").value("READY"))
+            .andExpect(jsonPath("$.items[0].inputMode").value("UNKNOWN"))
+            .andExpect(jsonPath("$.items[0].copyable").value(true))
+            .andExpect(jsonPath("$.savedAnswers.length()").value(1))
+        mvc.perform(get(endpoint)).andExpect(status().isUnauthorized())
+        mvc.perform(get(endpoint).cookie(other)).andExpect(status().isNotFound())
+        mvc.perform(get("$BASE/9223372036854775807/online-input-guide").cookie(owner)).andExpect(status().isNotFound())
+        assertEquals(afterInput, preparationService.findOwned(accounts.findById(ownerId)!!, id))
+        verify(ai, org.mockito.Mockito.never()).interpret(any(AiApplicationPreparationInterpretRequest::class.java) ?: fallbackAiRequest())
+    }
+
     private fun create(session: Cookie, field: String = "TECHNICAL_SUPPORT"): Long {
         val response = mvc.perform(post(BASE).cookie(session).header(HttpHeaders.ORIGIN, ORIGIN)
             .contentType(MediaType.APPLICATION_JSON).content(payload(field)))

@@ -387,3 +387,15 @@ it('rejects inconsistent availability states, duplicate snapshots, and snapshots
   const repository = new ApplicationPreparationRepositoryImpl()
   for (let index = 0; index < 4; index++) await expect(repository.availability('BIZINFO', 'PBLN_1')).rejects.toMatchObject({ code: 'INVALID_RESPONSE' })
 })
+
+ it('reads the authenticated guide and rejects another preparation identity', async () => {
+  const body = { preparationId: 30, inputRevision: 1, totalCount: 0, readyCount: 0, needsReviewCount: 0, missingCount: 0,
+    directInputCount: 0, externalMappingVerified: false, officialApplicationUrl: null, items: [], savedAnswers: [] }
+  const fetcher = vi.fn().mockResolvedValueOnce(Response.json(body)).mockResolvedValueOnce(Response.json({ ...body, preparationId: 31 }))
+  vi.stubGlobal('fetch', fetcher)
+  const repository = new ApplicationPreparationRepositoryImpl()
+  expect(await repository.onlineInputGuide(30)).toEqual(body)
+  expect(fetcher.mock.calls[0][0]).toContain('/30/online-input-guide')
+  expect(fetcher.mock.calls[0][1]).toMatchObject({ method: 'GET', credentials: 'include', cache: 'no-store' })
+  await expect(repository.onlineInputGuide(30)).rejects.toMatchObject({ code: 'INVALID_RESPONSE' })
+})

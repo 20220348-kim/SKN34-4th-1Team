@@ -20,6 +20,8 @@ import { useApplicationPreparationListViewModel } from '../viewmodel/useApplicat
 import { applicationPreparationStyles as s } from './ApplicationPreparation.styles'
 
 
+import { ApplicationOnlineInputGuide } from './ApplicationOnlineInputGuide'
+
 const listTitle = '신청 문서 작성 도우미'
 function savedSectionStatus(section: ApplicationFormSection) {
   const fields = section.fields.filter((field) => field.documentWritable !== false)
@@ -491,6 +493,7 @@ function ApplicationPreparationEditor({ id, initialSourceCode, initialSourceProg
       {detail && <>
         <OfficialFormSummary form={detail.form} />
         <SectionWritingWorkspace key={detail.id} vm={vm} />
+        <ApplicationOnlineInputGuide preparationId={detail.id} inputRevision={detail.inputRevision} />
       </>}
     </main>
   </>
