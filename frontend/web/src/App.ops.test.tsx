@@ -12,9 +12,11 @@ import { getEvaluation } from './data/ops/opsApi'
 const id = '10000000-0000-4000-8000-000000000001'
 const flowId = '20000000-0000-4000-8000-000000000002'
 const capture = { id: 'target-coverage-20260907-v1', label: '저장 캡처' }
-const dataset = { id: capture.id, label: '지원 대상 근거 답변 · 저장된 가상 평가 6건', case_ids: ['TC01', 'TC02', 'TC03', 'TC04', 'TC05', 'TC06'], captures: [capture] }
-const comparisonDataset = { id: 'fixed-context-e01-v1', label: '공통 E01 비교', case_ids: ['E01'], captures: [{ id: 'reference', label: '기준 프롬프트' }, { id: 'candidate', label: '후보 프롬프트' }] }
+const liveConfig = { model: 'gpt-6-luna', fixture_sha256: 'c'.repeat(64), max_model_calls: 6, max_output_tokens: 2000 }
+const dataset = { fixture: 'target-coverage-fixture.json', live_config: liveConfig, id: capture.id, label: '지원 대상 근거 답변 · 저장된 가상 평가 6건', case_ids: ['TC01', 'TC02', 'TC03', 'TC04', 'TC05', 'TC06'], captures: [capture] }
+const comparisonDataset = { fixture: 'fixture.json', live_config: { ...liveConfig, max_model_calls: 1 }, id: 'fixed-context-e01-v1', label: '공통 E01 비교', case_ids: ['E01'], captures: [{ id: 'reference', label: '기준 프롬프트' }, { id: 'candidate', label: '후보 프롬프트' }] }
 const completed = {
+  execution_mode: 'replay', live_config: null, trace_links: [],
   candidate_capture_id: capture.id, reference_capture_id: capture.id, candidate_label: capture.label, reference_label: capture.label, comparison: null,
   id, dataset_id: dataset.id, dataset_label: dataset.label, requested_by: 'operator@example.com', can_retry: false,
   status: 'COMPLETED', status_label: '완료', created_at: '2026-09-27T00:00:00Z',
@@ -27,7 +29,7 @@ const completed = {
 }
 let authenticated = true
 let fetchMock: Mock<(path: string, options?: RequestInit) => Promise<Response>>
-const session = () => ({ user: authenticated ? { username: 'operator@example.com' } : null, csrf_token: authenticated ? 'rotated-token' : 'anonymous-token', datasets: authenticated ? [dataset, comparisonDataset] : [] })
+const session = () => ({ live_enabled: true, user: authenticated ? { username: 'operator@example.com' } : null, csrf_token: authenticated ? 'rotated-token' : 'anonymous-token', datasets: authenticated ? [dataset, comparisonDataset] : [] })
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 
 beforeEach(() => {
@@ -85,7 +87,7 @@ describe('React LLMOps 운영 화면', () => {
     expect(await screen.findByRole('link', { name: 'Evidently 보고서' })).toHaveProperty('pathname', completed.report_url)
     expect(screen.getByRole('link', { name: 'Langfuse 평가 점수' }).getAttribute('href')).toBe(completed.langfuse_url)
     expect(screen.getByText('6 / 6')).toBeTruthy()
-    expect(screen.getByText('0회')).toBeTruthy()
+    expect(screen.getAllByText('0회')).toHaveLength(2)
     expect(screen.getByText(/의미 충실도는 미측정/)).toBeTruthy()
   })
 
@@ -161,7 +163,7 @@ describe('React LLMOps 운영 화면', () => {
     let submitted = false
     fetchMock.mockImplementation(async (path, options) => {
       if (path === '/api/v1/ops/evaluations') {
-        expect(JSON.parse(String(options?.body))).toEqual({ request_id: id, dataset_id: dataset.id, candidate_capture_id: capture.id, reference_capture_id: capture.id })
+        expect(JSON.parse(String(options?.body))).toEqual({ request_id: id, dataset_id: dataset.id, candidate_capture_id: capture.id, reference_capture_id: capture.id, execution_mode: 'replay', live_config: {}, confirm_paid_run: false })
         submitted = true
         return json({ ...completed, status: 'QUEUED', status_label: '실행 대기', report_url: null })
       }
@@ -228,4 +230,47 @@ describe('React LLMOps 운영 화면', () => {
     expect(screen.getByText('원본 사례: E01, E07, E10, E12')).toBeTruthy()
   })
 
+})
+
+it('새 모델 평가는 전송 자료와 호출 예산 확인 후 한 번만 접수한다', async () => {
+  open()
+  fireEvent.change(await screen.findByLabelText('실행 방식'), { target: { value: 'live' } })
+  const button = screen.getByRole('button', { name: '새 응답 생성 및 평가' })
+  expect(button).toHaveProperty('disabled', true)
+  expect(screen.getByText('gpt-6-luna')).toBeTruthy()
+  expect(screen.queryByLabelText('후보 실행')).toBeNull()
+  fireEvent.click(screen.getByRole('checkbox'))
+  expect(button).toHaveProperty('disabled', false)
+  fireEvent.click(button)
+  await screen.findByRole('heading', { name: '평가 실행 상세' })
+  const posts = fetchMock.mock.calls.filter(([path, options]) => path === '/api/v1/ops/evaluations' && options?.method === 'POST')
+  expect(posts).toHaveLength(1)
+  expect(JSON.parse(posts[0][1]!.body as string)).toMatchObject({ execution_mode: 'live', candidate_capture_id: 'new-model-response', live_config: liveConfig, confirm_paid_run: true })
+})
+
+it('평가 자료를 바꾸면 기존 예산 확인을 해제한다', async () => {
+  open()
+  fireEvent.change(await screen.findByLabelText('실행 방식'), { target: { value: 'live' } })
+  fireEvent.click(screen.getByRole('checkbox'))
+  fireEvent.change(screen.getByLabelText('평가 자료'), { target: { value: comparisonDataset.id } })
+  expect(screen.getByRole('checkbox')).toHaveProperty('checked', false)
+  expect(screen.getByRole('button', { name: '새 응답 생성 및 평가' })).toHaveProperty('disabled', true)
+  expect(screen.getByText(/최대 1회/)).toBeTruthy()
+})
+
+it('서버에서 비활성화한 새 모델 평가를 접수하지 않는다', async () => {
+  const fallback = fetchMock.getMockImplementation()!
+  fetchMock.mockImplementation((path, options) => path === '/api/v1/ops/session' ? Promise.resolve(json({ ...session(), live_enabled: false })) : fallback(path, options))
+  open()
+  fireEvent.change(await screen.findByLabelText('실행 방식'), { target: { value: 'live' } })
+  expect(screen.getByRole('checkbox')).toHaveProperty('disabled', true)
+  expect(screen.getByRole('button', { name: '새 응답 생성 및 평가' })).toHaveProperty('disabled', true)
+})
+
+it('새 평가의 호출 수와 사례별 추적 링크를 표시하고 과거 재현 문구를 쓰지 않는다', async () => {
+  fetchMock.mockResolvedValueOnce(json(session())).mockResolvedValueOnce(json({ ...completed, execution_mode: 'live', live_config: liveConfig, model_api_calls: 6, langfuse_url: null, trace_links: [{ case_id: 'TC01', url: 'http://localhost:13000/project/test/traces/abc' }] }))
+  open(`/ops/evaluations/${id}`)
+  expect(await screen.findByRole('link', { name: 'Langfuse TC01 추적·점수' })).toHaveProperty('href', 'http://localhost:13000/project/test/traces/abc')
+  expect(screen.queryByText(/새 모델 호출은 없으며/)).toBeNull()
+  expect(screen.getAllByText('6회').length).toBeGreaterThan(0)
 })

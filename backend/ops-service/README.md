@@ -16,7 +16,7 @@ Kubernetes 검증 이미지 접두사는 `govbiz-ops-service`입니다.
 이 디렉터리는 서브모듈이 아닙니다. 실제 `.env`, 로컬 가상환경·Git 메타데이터는
 가져오지 않았습니다.
 
-현재 범위는 상태 확인 API, 기존 Core 관리자 인증 연동, 저장 캡처 평가 실행·이력·결과 API와
+현재 범위는 상태 확인 API, 기존 Core 관리자 인증 연동, 저장 응답 재평가·승인 기반 새 모델 평가 실행·이력·결과 API와
 Gunicorn 이미지입니다. 공고·회원·신청 관리 업무와 기존 Spring Boot/FastAPI의
 운영 데이터는 이전하지 않았습니다. 운영 배포는 별도입니다.
 
@@ -50,7 +50,7 @@ Django 사용자 행은 `core:{회원 ID}`와 이메일로 실행 요청자를 �
 - React: 기존 `/login`으로 로그인 후 Ops 복귀, 평가 요청·목록, 실행 상세·결과 요약, 보고서 링크
 - Django: Core 관리자 확인, CSRF 토큰, 평가 요청·조회, 인증된 HTML 보고서 API
 - Core: 기존 로그인·로그아웃과 관리자 세션 검증. 일반 회원은 Ops 접근 불가
-- 가상 6건 재현과 과거 프롬프트 실행의 공통 E01 비교를 선택 가능; 경로·모델·코드를 요청으로 받지 않음
+- 가상 6건 재현과 과거 프롬프트 실행의 공통 E01 비교를 선택 가능; 임의 경로·코드를 요청으로 받지 않음; 모델은 서버가 제시한 승인 설정과 일치해야 함
 - 기준·후보는 서버의 `apps/evaluations/capture_catalog.json`에 등록된 같은 자료의 캡처만 허용
 - `EvaluationRun`: 요청 UUID, 요청자·자료·기준/후보·상태·시간, Prefect 실행 ID, 콘텐츠 평가 ID, 요약·비교 저장
 - 요청 UUID를 DB 기본 키와 Prefect idempotency key로 사용; 같은 요청 재전송은 같은 실행을 반환
@@ -64,7 +64,25 @@ Django 사용자 행은 `core:{회원 ID}`와 이메일로 실행 요청자를 �
 호출 흐름은 `React 운영 화면 → 같은 origin 프록시 → Django 인증·API → 평가 Service → Prefect HTTP API → 상시 평가 실행기`
 입니다. 인증 경로는 `Django → Core 관리자 API → AdminPrincipalArgumentResolver → AccountSessionService`입니다. 실행기는 기존 `pandas → Pandera → 지표 재계산 → Evidently / Langfuse` 흐름을 사용합니다.
 Django HTTP 요청 안에서는 평가하지 않으며 Django에 평가 SDK 전체를 설치하지 않습니다.
-별도 Celery·Airflow·LLM provider는 추가하지 않았습니다. 모델 API 호출 예산은 0입니다.
+별도 Celery·Airflow·LLM provider는 추가하지 않았습니다. 저장 응답 재평가는 모델 호출 0회이며, 새 응답 생성은 아래 승인 계약을 따릅니다.
+
+## 새 응답 생성 API
+
+설정은 [LLMOps 실행 문서](../../infrastructure/llmops/README.md#ops에서-새-모델-평가)를 따릅니다.
+`LLMOPS_LIVE_ENABLED=false`가 기본입니다. `GET /api/v1/ops/session`은 `live_enabled`와 자료별
+`live_config`(모델, fixture SHA-256, 최대 호출 수, 호출당 최대 출력 토큰)를 반환합니다.
+POST는 기존 요청에 `execution_mode: "live"`, `candidate_capture_id: "new-model-response"`,
+`live_config: <사용자가 확인한 session의 명세>`, `confirm_paid_run: true`를 함께 전송해야 합니다.
+기준 캡처는 같은 자료의 등록된 캡처만 가능합니다. 명세 불일치·미확인·비활성화는 DB 생성 전에 400입니다.
+기존 요청 키로 실행 방식·승인 명세를 바꾸면 409이며 접수 재확인은 같은 명세를 유지합니다.
+
+Migration `0003_evaluationrun_live`는 실행 방식·승인 명세·실제 호출 시도 수를 추가합니다.
+기존 실행은 replay/0회로 유지합니다. 새 실행의 아직 확인되지 않은 호출 수는 null입니다.
+실패한 실행도 부분 캡처가 있으면 시도 횟수를 표시하며 미확인 값을 0으로 만들지 않습니다.
+비교 단계 manifest의 `model_api_calls: 0`은 **저장된 새 캡처를 채점하는 단계만** 뜻합니다.
+Ops 응답의 `model_api_calls`는 새 응답 생성 단계의 `capture.modelApiCalls`를 확인한 값입니다.
+완료 판정에는 기존 보고서 검증 외에 새 캡처 해시·모델·자료·사례·예산 확인이 필요합니다.
+`trace_links`는 사례별 Langfuse 추적/점수 링크이며 과거 캡처는 기존 점수 목록 링크를 사용합니다.
 
 ## 빠른 시작 — Docker
 

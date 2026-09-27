@@ -186,7 +186,10 @@ def create_report(current: dict, reference: dict, output: Path) -> dict:
         def observation(row):
             return {name: None if pd.isna(row[name]) else row[name]
                     for name in ["outcome", "status_match", "citation_recall"]}
-        cases.append({"case_id": after["case_id"], "reference": observation(before), "candidate": observation(after)})
+        candidate_observation = observation(after)
+        record = next(item for item in current["capture"]["cases"] if item["caseId"] == after["case_id"]) if after["outcome"] != "missing" else {}
+        candidate_observation["trace_id"] = record.get("traceId")
+        cases.append({"case_id": after["case_id"], "reference": observation(before), "candidate": candidate_observation})
     return {**metadata, "candidate_execution": execution(current), "reference_execution": execution(reference),
             "metrics": metrics, "cases": cases, "artifact_sha256": artifacts, "reported_columns": columns,
             "current": {key: current["summary"][key] for key in [
@@ -201,7 +204,7 @@ def score_payloads(result: dict, settings: LangfuseSettings) -> list[dict]:
                 "evaluation_run_id": result["run_id"], "capture_sha256": result["capture_sha256"],
                 "fixture_sha256": result["fixture_sha256"], "evaluator_version": EVALUATOR_VERSION,
                 "prompt_sha256": result["capture"]["promptSha256"], "model": result["capture"]["model"],
-                "source_started_at": result["capture"].get("startedAt"), "record_kind": "saved-capture-recalculation",
+                "source_started_at": result["capture"].get("startedAt"), "record_kind": "captured-model-evaluation" if "modelApiCalls" in result["capture"] else "saved-capture-recalculation",
                 "source_completed": result["summary"]["completed"],
                 "reference_source": "ai-authored", "scope": "fixed-answer-context-only"}
     payloads = []

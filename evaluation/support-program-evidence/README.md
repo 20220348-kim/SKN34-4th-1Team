@@ -192,6 +192,21 @@ backend/ai-service/.venv/bin/python evaluation/support-program-evidence/evaluate
 의미 충실도도 미측정입니다. 보고서와 비교 JSON의 해시는 manifest에서 확인합니다.
 이 경로는 새 모델을 호출하지 않으며 과거 한 사례의 차이를 현재 모델의 전반적 품질로 해석하지 않습니다.
 
+## Ops에서 새 응답 생성
+
+[실행 설정](../../infrastructure/llmops/README.md#ops에서-새-모델-평가) 후 Ops에서 새 응답 생성을 선택합니다.
+`ops_flow.py`는 승인한 fixture 해시와 비교 기준을 먼저 검증하고 선택 사례만 `evaluate.execute()`에 전달합니다.
+실제 생성은 기존 `Service → Agent → OpenAI Responses` 경로를 사용하며 HTTP 서버 초기화에 의존하지 않습니다.
+모델은 승인 명세에서 고정하고, 전송 직전 endpoint·모델·출력 제한·호출 예산을 다시 검사합니다.
+자동 재시도는 없고 첫 실패에서 중단합니다. `capture.modelApiCalls`는 응답 유실을 포함한 전송 시도 횟수이며
+확인된 과금 횟수나 금액이 아닙니다. API 응답이 없으면 토큰을 추정하지 않습니다.
+
+생성된 파일은 `/results/<요청 UUID>/capture/capture.json`에 보존하고 같은 질문의 저장 기준과 비교합니다.
+각 사례에 응답 사용량 인덱스와 trace ID를 연결하므로 새 응답의 토큰·지연과 Langfuse 점수를 확인할 수 있습니다.
+평가 단계의 manifest는 모델 호출 0회이고 전체 요청의 실제 호출 시도 수는 새 캡처에서 읽습니다.
+기존 캡처를 덮어쓰거나 모델명을 고치지 않습니다. 새 결과를 다른 요청의 기준으로 선택하는 기능은 후속 범위입니다.
+무료 테스트의 HTTP 스텁 응답은 실제 모델 품질 측정에 포함하지 않습니다.
+
 ## 공식 HTML 전체 경로 재실행
 
 [Core 통합 테스트](../../backend/core-service/src/test/kotlin/ai/govbiz/core/supportprogram/service/evidence/SupportProgramEvidenceIntegrationTest.kt)는
