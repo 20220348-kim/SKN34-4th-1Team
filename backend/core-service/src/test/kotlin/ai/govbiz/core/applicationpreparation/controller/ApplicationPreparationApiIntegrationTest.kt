@@ -67,6 +67,9 @@ import ai.govbiz.core.applicationpreparation.client.ai.dto.AiDocumentMappingPayl
 import ai.govbiz.core.applicationpreparation.client.ai.dto.AiDocumentMappingRequest
 import ai.govbiz.core.applicationpreparation.client.ai.exception.ApplicationDocumentMcpException
 import ai.govbiz.core.applicationpreparation.service.exception.ApplicationDocumentException
+import ai.govbiz.core.applicationpreparation.domain.ApplicationOnlineFormSource
+import ai.govbiz.core.applicationpreparation.domain.ApplicationOnlineFormSourceControl
+import ai.govbiz.core.applicationpreparation.domain.exception.ApplicationPreparationNotFoundException
 import ai.govbiz.core.applicationpreparation.domain.ApplicationFormManifest
 import ai.govbiz.core.applicationpreparation.domain.ApplicationFormDiscoveryConfiguration
 import ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentPlacement
@@ -88,6 +91,7 @@ import ai.govbiz.core.applicationpreparation.service.ApplicationDocumentEditor
 @AutoConfigureMockMvc
 @Import(MySqlTestContainerConfig::class, ai.govbiz.core._common.test.RedisTestContainerConfig::class)
 class ApplicationPreparationApiIntegrationTest {
+    @Autowired private lateinit var preparationService: ai.govbiz.core.applicationpreparation.service.ApplicationPreparationService
     @Autowired private lateinit var snapshotRepository: ai.govbiz.core.applicationpreparation.repository.ApplicationFormSnapshotRepository
     @Autowired private lateinit var documentMapping: ApplicationDocumentMappingService
     @Autowired private lateinit var documentFiles: ApplicationDocumentRepository
@@ -292,6 +296,38 @@ class ApplicationPreparationApiIntegrationTest {
         verify(ai, times(1)).discover(any(AiApplicationFormDiscoveryRequest::class.java) ?: fallbackDiscoveryRequest())
     }
 
+    @Test
+    fun onlineFormReviewUsesOwnedPreparationAndDoesNotMutateStoredState() {
+        val id = create(owner)
+        val account = accounts.findById(ownerId)!!
+        val before = preparationService.findOwned(account, id)
+        val fields = before.form.sections.flatMap { it.fields }
+        val source = ApplicationOnlineFormSource(1, "synthetic-owned", "합성 신청서",
+            fields.mapIndexed { index, field -> ApplicationOnlineFormSourceControl("control-$index", field.label, field.required) })
+        val snapshotBefore = jdbc.queryForList("SELECT * FROM application_form_snapshot ORDER BY form_version_id")
+        val result = preparationService.reviewOnlineFormMapping(account, id, source)
+        assertEquals(source.formId, result.formId)
+        assertEquals(source.formTitle, result.formTitle)
+        assertEquals(fields.size, result.mappedCount)
+        assertEquals(0, result.unmappedCount)
+        assertEquals(0, result.reviewRequiredCount)
+        assertEquals(0, result.requiredMissingCount)
+        result.fieldMappings.forEach {
+            org.junit.jupiter.api.Assertions.assertTrue(it.mapped)
+            org.junit.jupiter.api.Assertions.assertFalse(it.autoFillSupported)
+            org.junit.jupiter.api.Assertions.assertFalse(it.writable)
+        }
+        assertEquals(result, preparationService.reviewOnlineFormMapping(account, id, source))
+        assertEquals(before, preparationService.findOwned(account, id))
+        assertEquals(snapshotBefore, jdbc.queryForList("SELECT * FROM application_form_snapshot ORDER BY form_version_id"))
+        val otherAccount = accounts.findById(newSession().first)!!
+        org.junit.jupiter.api.Assertions.assertThrows(ApplicationPreparationNotFoundException::class.java) {
+            preparationService.reviewOnlineFormMapping(otherAccount, id, source)
+        }
+        org.junit.jupiter.api.Assertions.assertThrows(ApplicationPreparationNotFoundException::class.java) {
+            preparationService.reviewOnlineFormMapping(account, Long.MAX_VALUE, source)
+        }
+    }
     @Test
     fun createsAndReadsAnOwnedPreparationWithoutCallingAi() {
         val response = mvc.perform(post(BASE).cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN)

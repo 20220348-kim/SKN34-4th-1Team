@@ -133,6 +133,61 @@ status/writable과 targetId/box 참조만 읽으며 전체 DocumentMap/NativeTar
 FILE write authority와 sourceSha256/mapVersion/pipelineVersion/engineVersion/WritePlan/planHash/verification은 유지한다.
 기존 migration diff와 승인 계약, 다섯 format의 JSON shape, 저장 스키마는 변경하지 않는다.
 
-ONLINE_FORM은 후속 Phase에서 별도 FormMap을 가지며 DocumentMap/NativeTarget/WritePlan/native editor를 공유하지 않는다.
-현재 provider/format/enum, 외부 Form API, OAuth, 브라우저 파싱·자동화와 제출 구현은 없다.
+ONLINE_FORM은 Phase 5-2에서 별도 FormMap 계약을 가지며 DocumentMap/NativeTarget/WritePlan/native editor를 공유하지 않는다.
+현재 외부 provider/format, Form API, OAuth, 브라우저 파싱·자동화와 제출 구현은 없다.
 [상위 projection의 호출 흐름과 확장 위치](architecture.md#phase-5-1-신청-문항-상위-매핑-경계)를 참고한다.
+
+## Phase 5-2: ONLINE_FORM 매핑 계약과 작성 능력
+
+FILE의 DocumentMap과 ONLINE_FORM의 ApplicationOnlineFormMap은 서로 다른 계약이다.
+공유하는 ApplicationFieldMapping은 공식 문항 identity, label, required, mapping 상태와 binding 참조를 투영한다.
+mapped는 MAPPED 상태와 binding 존재, autoFillSupported는 현재 FILE 실행 경로의 지원 여부,
+writable은 mapped && autoFillSupported다. MAPPED와 WRITABLE은 동일하지 않다.
+FILE은 기존 targetId/box와 복수 binding을 유지하고 DocumentMap → bindings/scope → WritePlan →
+native editor → verification의 권한 경계를 변경하지 않는다.
+
+ApplicationOnlineFormMap(schemaVersion=1, formId, controls)은 확인된 fieldId/controlId/label/required만 담는다.
+Phase 5-2의 Manifest + FormMap → ApplicationFieldMapping domain projection은 Phase 5-3에서 읽기 전용 Service에 연결했다. HTTP에는 노출하지 않는다.
+공식 문항 순서·표시명·required는 Manifest를 따른다. 알 수 없는 fieldId, required 충돌, 빈 controlId,
+중복 controlId 및 한 문항의 복수 control은 명시적으로 거절한다. 복수 control의 분할·선택·반복 의미는
+확인되지 않았으므로 검토 후 후속 단계에서 결정한다. 누락된 필수 문항은 REQUIRED_MAPPING_MISSING,
+선택 문항은 UNMAPPED다. ONLINE_FORM binding은 sourceType=ONLINE_FORM, referenceId=controlId, box=null이며
+기존 FILE 호출 호환을 위해 저장 property 이름 targetId를 유지한다.
+
+ONLINE_FORM은 source 기반 매핑 검토까지 구현됐으며 mapped=true여도 autoFillSupported=false, writable=false다.
+실제 자동 작성·제출, 외부 Form API/OAuth, DOM/브라우저 자동화, persistence, DB migration,
+public endpoint 및 document MCP format 확장은 없다. 사용자 Fact 값이나 사용자 검토 완료를 mapping 성공으로
+추정하지 않는다. ApplicationDocumentService는 기존 FILE projection만 사용한다.
+평가 fixture와 검증 범위는 [Phase 5-2 평가 보고서](../evaluation/application-map/runs/phase5-online-form-map-20260927-v1/README.md)를 참고한다.
+
+## Phase 5-3: ONLINE_FORM Source와 읽기 전용 검토
+
+`ApplicationPreparationService.reviewOnlineFormMapping(account, preparationId, source)`는
+`repository.findOwned(account.id, preparationId)`로 소유권을 확인하고 preparation의 고정
+formVersionId에 해당하는 Manifest를 조회한다. 없는 preparation과 다른 계정의 preparation은
+기존 ApplicationPreparationNotFoundException으로 처리하며 Manifest 조회도 수행하지 않는다.
+
+흐름은 `ApplicationOnlineFormSource → Manifest.reviewOnlineForm → ApplicationOnlineFormMap
+→ manifest.fieldMappings(formMap) → ApplicationOnlineFormMappingReviewResult`다.
+Source는 schemaVersion=1, formId, formTitle, controls[{controlId, label, required}]만 소유한다.
+중복 controlId, 빈 identity/label과 미지원 schema는 거절한다. DOM·locator·인증 정보는 없다.
+
+매칭은 앞뒤 공백 제거 및 연속 whitespace(줄바꿈·탭 포함)를 한 칸으로 치환한 label의 정확한
+일치만 사용한다. case·숫자·괄호·단어를 제거하거나 fuzzy/LLM 매칭하지 않는다.
+Manifest와 source 양쪽에서 label이 유일하고 required가 동일해야 confirmed control이 된다.
+동일 label의 복수 source 또는 Manifest 문항은 AMBIGUOUS_CONTROL, 필수 여부 충돌은
+REQUIRED_FLAG_MISMATCH로 검토하며 FormMap에 넣지 않는다.
+필수 문항의 후보가 없으면 REQUIRED_CONTROL_NOT_FOUND와 REQUIRED_MAPPING_MISSING,
+선택 문항의 후보가 없으면 issue 없이 UNMAPPED다. Manifest label과 무관한 source control은
+UNMATCHED_SOURCE_CONTROL로 표시하며 다른 정상 매핑은 유지한다.
+
+Service Result는 source formId/formTitle, 기존 fieldMappings, 최소 issue context만 반환한다.
+mappedCount는 매핑 문항 수, unmappedCount는 필수 누락을 포함한 미매핑 문항 수,
+requiredMissingCount는 REQUIRED_MAPPING_MISSING 문항 수, reviewRequiredCount는 issue 수다.
+충돌 후보는 해당 issue로 표시하고 unmatched로 중복 집계하지 않는다.
+confirmed ONLINE_FORM도 mapped=true, autoFillSupported=false, writable=false다.
+DB write·revision/Fact/snapshot 변경·schema/Flyway 변경은 없다.
+외부 source collector, public HTTP, persistence, browser automation, auto fill, submit은 아직 없다.
+기존 FILE DocumentMap/NativeTarget/WritePlan 및 5-format 실행 경로, AI/MCP 계약은 유지한다.
+
+검증 범위와 결과는 [Phase 5-3 평가 보고서](../evaluation/application-map/runs/phase5-online-form-source-review-20260927-v1/README.md)를 참고한다.
