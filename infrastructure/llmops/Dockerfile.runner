@@ -10,6 +10,7 @@ RUN uv sync --locked --no-dev --group evaluation --no-install-project
 COPY backend/ai-service/app ./app
 COPY evaluation/support-program-evidence /app/evaluation/support-program-evidence
 COPY backend/ops-service/apps/evaluations/catalog.py backend/ops-service/apps/evaluations/capture_catalog.json /app/backend/ops-service/apps/evaluations/
+COPY backend/ops-service/apps/evaluations/recovery_inputs.py /app/backend/ops-service/apps/evaluations/
 RUN groupadd --gid 10001 govbiz \
     && useradd --uid 10001 --gid govbiz --no-create-home govbiz \
     && mkdir -p /results /app/work/llmops \

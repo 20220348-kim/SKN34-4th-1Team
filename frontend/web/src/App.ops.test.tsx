@@ -56,6 +56,76 @@ function open(path = '/ops/evaluations') {
 }
 
 describe('React LLMOps 운영 화면', () => {
+  it('실패 후처리를 새 이력으로 복구하고 원본 연결과 추가 호출 0회를 표시한다', async () => {
+    const original = fetchMock.getMockImplementation()!
+    const child = '30000000-0000-4000-8000-000000000003'
+    const recovered = { ...completed, id: child, execution_mode: 'recovery', source_run_id: id, report_url: `/api/v1/ops/evaluations/${child}/report` }
+    fetchMock.mockImplementation(async (path, options) => {
+      if (path === `/api/v1/ops/evaluations/${id}`) return json({ ...completed, status: 'FAILED', report_url: null, postprocessing: {
+        inputs_ready: true, stage: 'publish', can_recover: true, blocked_reason: '', attempts: [],
+      } })
+      if (path === `/api/v1/ops/evaluations/${id}/recover`) return json(recovered, 202)
+      if (path === `/api/v1/ops/evaluations/${child}`) return json(recovered)
+      if (path === `/api/v1/ops/evaluations/${child}/review`) return json({ is_baseline: false, reviews: [], material: null, material_error: '' })
+      return original(path, options)
+    })
+    open(`/ops/evaluations/${id}`)
+    fireEvent.click(await screen.findByRole('button', { name: '후처리 다시 실행' }))
+    const link = await screen.findByRole('link', { name: '원본 실행과 실패 기록 보기' })
+    expect(link.getAttribute('href')).toBe(`/ops/evaluations/${id}`)
+    expect(screen.getByText(/추가 모델 호출은 0회/)).toBeTruthy()
+    const options = fetchMock.mock.calls.find(([path]) => path.endsWith('/recover'))![1]!
+    expect(Object.keys(JSON.parse(String(options.body)))).toEqual(['request_id'])
+    expect(options.credentials).toBe('same-origin')
+    expect(options.headers).toMatchObject({ 'X-CSRFToken': 'rotated-token' })
+    expect(fetchMock.mock.calls.some(([path]) => path === '/api/v1/ops/evaluations')).toBe(false)
+  })
+
+  it('복구 접수 응답 유실과 재확인 모두 같은 UUID와 복구 API를 사용한다', async () => {
+    const original = fetchMock.getMockImplementation()!
+    const requests: string[] = []
+    let child = ''
+    const pending = () => ({ ...completed, id: child, execution_mode: 'recovery', source_run_id: id,
+      status: 'REQUESTED', can_retry: true, prefect_flow_run_id: null, report_url: null })
+    fetchMock.mockImplementation(async (path, options) => {
+      if (path === `/api/v1/ops/evaluations/${id}`) return json({ ...completed, status: 'FAILED', postprocessing: {
+        inputs_ready: true, stage: 'report', can_recover: true, blocked_reason: '', attempts: [],
+      } })
+      if (path === `/api/v1/ops/evaluations/${id}/recover`) {
+        child = JSON.parse(String(options?.body)).request_id
+        requests.push(child)
+        if (requests.length === 1) throw new TypeError('response lost')
+        return json(pending(), 503)
+      }
+      if (child && path === `/api/v1/ops/evaluations/${child}`) return json(pending())
+      return original(path, options)
+    })
+    open(`/ops/evaluations/${id}`)
+    fireEvent.click(await screen.findByRole('button', { name: '후처리 다시 실행' }))
+    expect(await screen.findByRole('alert')).toHaveProperty('textContent', expect.stringContaining('연결할 수 없습니다'))
+    fireEvent.click(screen.getByRole('button', { name: '후처리 다시 실행' }))
+    const retry = await screen.findByRole('button', { name: '같은 요청으로 접수 재확인' })
+    await waitFor(() => expect(retry).toHaveProperty('disabled', false))
+    fireEvent.click(retry)
+    await waitFor(() => expect(requests).toHaveLength(3))
+    expect(new Set(requests).size).toBe(1)
+    expect(fetchMock.mock.calls.some(([path]) => path === '/api/v1/ops/evaluations')).toBe(false)
+  })
+
+  it('불완전한 입력은 복구 버튼을 숨기고 이전 복구 이력을 보여 준다', async () => {
+    const original = fetchMock.getMockImplementation()!
+    const child = '30000000-0000-4000-8000-000000000003'
+    fetchMock.mockImplementation(async (path, options) => path === `/api/v1/ops/evaluations/${id}`
+      ? json({ ...completed, status: 'FAILED', postprocessing: {
+        inputs_ready: false, stage: 'unverified', can_recover: false, blocked_reason: '완료된 응답을 확인할 수 없습니다.',
+        attempts: [{ id: child, status: 'CRASHED', status_label: '실행 중단' }],
+      } }) : original(path, options))
+    open(`/ops/evaluations/${id}`)
+    expect(await screen.findByText('완료된 응답을 확인할 수 없습니다.')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '후처리 다시 실행' })).toBeNull()
+    expect(screen.getByRole('link', { name: '복구 실행 30000000 · 실행 중단' }).getAttribute('href')).toBe(`/ops/evaluations/${child}`)
+  })
+
   it('기존 로그인 화면으로 갔다가 같은 Ops 상세로 돌아오고 Core 로그아웃을 실행한다', async () => {
     authenticated = false
     open(`/ops/evaluations/${id}`)

@@ -17,7 +17,7 @@ Kubernetes 검증 이미지 접두사는 `govbiz-ops-service`입니다.
 가져오지 않았습니다.
 
 현재 범위는 상태 확인 API, 기존 Core 관리자 인증 연동, 저장 응답 재평가·승인 기반 새 모델 평가 실행·이력·결과,
-관리자 응답 검토·비교 기준 지정 API와
+관리자 응답 검토·비교 기준 지정·실패 후처리 복구 API와
 Gunicorn 이미지입니다. 공고·회원·신청 관리 업무와 기존 Spring Boot/FastAPI의
 운영 데이터는 이전하지 않았습니다. 운영 배포는 별도입니다.
 
@@ -105,11 +105,39 @@ AI 작성 참조 자료의 출처와 미측정 의미 충실도는 검토 승인
 Migration `0004_evaluation_review_baseline`은 검토 이력·데이터셋별 기준 테이블과 기준 명세를 추가합니다.
 기존 결과는 미검토 상태로 유지합니다. 비교 상세가 없는 초기 결과는 무료 저장 응답 재평가 후 검토합니다.
 `LLMOPS_EVIDENCE_DIR`에는 버전이 고정된 `evaluation/support-program-evidence`를 읽기 전용으로 연결합니다.
-로컬 Python은 저장소 경로가 기본이며 LLMOps Compose는 `/evaluation-data`에 마운트합니다.
+로컬 Python은 저장소 경로가 기본이며 단독·루트 통합·LLMOps Compose는 모두 `/evaluation-data`에 마운트합니다.
+루트 Compose 검증은 자료 경로와 읽기 전용 마운트를 확인하며, 컨테이너 테스트도 같은 자료를 사용합니다.
 다른 배포 방식에서는 결과 볼륨과 이 자료 경로를 함께 제공해야 합니다. Django에는 평가 SDK를 추가하지 않습니다.
 
 호출 흐름: `React 검토 화면 → Django 파일 무결성 확인 → MySQL 검토 이력/기준 저장`.
 다음 평가는 `Django 기준 명세 고정 → Prefect → 기준 응답 복사·검증 → 기존 평가 파이프라인`을 거칩니다.
+
+## 실패한 후처리 복구
+
+`POST /api/v1/ops/evaluations/{원본 UUID}/recover`에 새로운 `request_id` UUID만 보냅니다.
+완료된 응답과 fixture·비교 기준의 해시가 검증된 `FAILED / CRASHED / CANCELLED / RESULT_ERROR`
+실행을 복구합니다. Core 관리자 인증·CSRF가 필요하며 접수 불확실 시 같은 UUID로 재확인합니다.
+진행 중이거나 정상 완료한 실행, 불완전한 응답, 누락·변조된 입력은 거절합니다.
+
+- 새 `EvaluationRun`의 `execution_mode`는 `recovery`, `source_run`은 원본입니다. 원본 상태와 파일을
+  덮어쓰지 않으며 복구 시도마다 별도 UUID와 Prefect 실행·결과 폴더를 사용합니다.
+- 접수 시 `recovery_config`에 원본 요청·후보 응답·비교 기준·fixture의 SHA-256을 고정합니다.
+  실행기는 다시 검증한 바이트를 자기 폴더에 복사한 뒤 기존 평가 함수를 호출합니다.
+- 복구는 응답 생성 함수로 진입하지 않으며 `model_api_calls=0`은 **이 복구의 추가 호출 수**입니다.
+  원본 유료 실행의 호출 횟수는 원본 이력·캡처에 보존합니다. 유료 실행을 꺼도 복구할 수 있습니다.
+- 원본 행의 DB 잠금으로 같은 원본에 진행 중인 복구를 하나만 허용합니다. 전송은 transaction 밖에서
+  수행하며 요청 UUID와 Prefect idempotency key를 재사용합니다. 다른 관리자가 같은 UUID를 재사용할 수 없습니다.
+- 상세 응답의 `source_run_id`는 원본 링크입니다. 상세 전용 `postprocessing`에는 입력 검증 여부,
+  마지막 보고서/등록 단계, 복구 가능 여부·사유, 기존 복구 이력을 반환합니다.
+- 보고서가 나중에 누락·훼손되면 상세 조회에서 `RESULT_ERROR`로 전환합니다. 입력은 온전해야 복구할 수 있습니다.
+- 입력 검증 완료 전 중단되어 manifest에 입력 해시가 없는 실행은 복구할 수 없습니다. 부분 응답을
+  이어 생성하는 기능, 자동 복구 스케줄, 모델 재호출은 포함하지 않습니다.
+
+Migration `0005_evaluationrun_recovery`는 원본 FK와 복구 명세를 추가합니다. 기존 행은 null/빈 명세로
+유지합니다. Ops와 평가 실행기를 함께 갱신해 Prefect deployment에 `recovery_config` 인자를 반영해야 합니다.
+Django는 공통 입력 검증 코드만 사용하고 pandas·Pandera·Evidently SDK는 실행기에만 유지합니다.
+
+호출 흐름: `React 복구 요청 → Django 입력/접수 검증 → Prefect → 입력 스냅샷 → pandas/Pandera → Evidently·Langfuse`.
 
 ## 빠른 시작 — Docker
 

@@ -191,6 +191,16 @@ def validate(model, project):
         == (DJANGO / "config").resolve(),
         "Django source mount points outside backend/ops-service.",
     )
+    evidence_mount = django_mounts.get("/evaluation-data", {})
+    require(
+        services["ops-service"]["environment"].get("LLMOPS_EVIDENCE_DIR")
+        == "/evaluation-data"
+        and evidence_mount.get("type") == "bind"
+        and evidence_mount.get("read_only") is True
+        and Path(evidence_mount.get("source", "")).resolve()
+        == (ROOT / "evaluation/support-program-evidence").resolve(),
+        "Django review fixtures must be mounted read-only at LLMOPS_EVIDENCE_DIR.",
+    )
     for name, volume in (
         ("mysql", "mysql-data"),
         ("ops-mysql", "ops-mysql-data"),

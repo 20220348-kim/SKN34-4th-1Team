@@ -121,7 +121,7 @@ def test_agent_settings_defaults(monkeypatch):
                  "ASSISTANT_TOOLS_TOKEN", "ASSISTANT_AGENT_MAX_TOOL_CALLS", "ASSISTANT_AGENT_TIMEOUT_SECONDS", "ASSISTANT_TOOL_TIMEOUT_SECONDS"):
         monkeypatch.delenv(name, raising=False)
     settings = Settings.from_environment()
-    assert settings.openai_assistant_agent_model == "gpt-5.6-luna"
+    assert settings.openai_assistant_agent_model == "gpt-6-luna"
     assert settings.openai_assistant_agent_reasoning_effort == "none"
     assert settings.assistant_tools_base_url == "http://127.0.0.1:8080"
     assert settings.assistant_tools_token is None

@@ -48,6 +48,7 @@ def create_run(run):
                     "reference_config": run.reference_config,
                     "execution_mode": run.execution_mode,
                     "live_config": run.live_config,
+                    **({"recovery_config": run.recovery_config} if run.recovery_config else {}),
                 },
                 "idempotency_key": f"ops-{run.id}",
                 "state": {"type": "SCHEDULED"},

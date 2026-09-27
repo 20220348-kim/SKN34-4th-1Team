@@ -31,7 +31,7 @@ def review_material(run):
         )
         reference_path = (
             artifact_path(run, "reference-capture.json")
-            if run.reference_config
+            if run.reference_config or run.execution_mode == "recovery"
             else evidence_path(reference["path"])
         )
         reference_raw = reference_path.read_bytes()

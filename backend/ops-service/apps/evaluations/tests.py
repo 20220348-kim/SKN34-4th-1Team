@@ -20,6 +20,21 @@ from .views import run_data
 
 class PrefectClientTests(SimpleTestCase):
     @patch("apps.evaluations.prefect_client.request_json")
+    def test_recovery_dispatch_uses_pinned_source_and_no_live_configuration(self, request):
+        flow_id = uuid4()
+        request.side_effect = [{"id": str(uuid4())}, {"id": str(flow_id)}]
+        config = {"source_run_id": str(uuid4()), "capture_sha256": "a" * 64}
+        run = EvaluationRun(
+            dataset_id=DATASET_ID, execution_mode="recovery", recovery_config=config
+        )
+        self.assertEqual(prefect_client.create_run(run), flow_id)
+        payload = request.call_args.args[1]
+        self.assertEqual(payload["idempotency_key"], f"ops-{run.id}")
+        self.assertEqual(payload["parameters"]["execution_mode"], "recovery")
+        self.assertEqual(payload["parameters"]["recovery_config"], config)
+        self.assertEqual(payload["parameters"]["live_config"], {})
+
+    @patch("apps.evaluations.prefect_client.request_json")
     def test_dispatch_uses_same_idempotency_key_without_paths_or_secrets(self, request):
         run = EvaluationRun(id=uuid4(), dataset_id=DATASET_ID)
         flow_id = uuid4()

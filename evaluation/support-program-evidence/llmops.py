@@ -287,15 +287,21 @@ def evaluate_capture(fixture: str, capture: str, reference: str, output_dir: str
             manifest.update(evaluation_run_id=current["run_id"], reference_run_id=baseline["run_id"],
                             capture_sha256=current["capture_sha256"], reference_capture_sha256=baseline["capture_sha256"],
                             fixture_sha256=current["fixture_sha256"], evaluator_version=EVALUATOR_VERSION)
+            # 프로세스가 강제 종료되어도 검증된 입력과 실패 단계를 복구할 수 있게 먼저 기록한다.
+            manifest["stage"] = "report"
+            write_json(output / "manifest.json", manifest)
             current["frame"].to_json(output / "results.json", orient="records", force_ascii=False, indent=2)
             report = render(current, baseline, str(output))
             write_json(output / "comparison.json", report)
             report["artifact_sha256"]["comparison.json"] = sha256((output / "comparison.json").read_bytes()).hexdigest()
+            manifest["stage"] = "publish"
+            write_json(output / "manifest.json", manifest)
             score_ids = publish(current)
             manifest.update(status="completed", score_ids=score_ids, report="report.html",
                             artifact_sha256=report["artifact_sha256"])
             if not current["summary"]["completed"] or not baseline["summary"]["completed"]:
                 raise RuntimeError("Source evaluation is incomplete; partial results were preserved")
+            manifest["stage"] = "completed"
         except BaseException:
             manifest["status"] = "failed"
             raise

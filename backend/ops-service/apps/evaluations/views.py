@@ -17,6 +17,7 @@ from rest_framework.response import Response
 
 from .catalog import DATASETS, public_datasets, selection, validate_execution
 from .models import EvaluationRun
+from .recovery import recovery_state, submit_recovery
 from .reviews import baseline_choices, promote_baseline, review_material, review_state, save_review
 from .services import (
     DATASET_ID,
@@ -122,6 +123,7 @@ def run_data(run, viewer_id=None):
         )[2]["label"],
         "comparison": run.comparison or None,
         "execution_mode": run.execution_mode,
+        "source_run_id": str(run.source_run_id) if run.source_run_id else None,
         "live_config": run.live_config or None,
         "requested_by": run.requested_by.email or run.requested_by.get_username(),
         "can_retry": run.prefect_flow_run_id is None and run.requested_by_id == viewer_id,
@@ -152,7 +154,17 @@ def run_data(run, viewer_id=None):
         ),
         "langfuse_url": (
             f"{settings.LANGFUSE_PROJECT_URL}/scores?{score_query}"
-            if run.evaluation_run_id and run.execution_mode == "replay"
+            if run.evaluation_run_id
+            and (
+                run.execution_mode == "replay"
+                or (
+                    run.execution_mode == "recovery"
+                    and not any(
+                        case["candidate"].get("trace_id")
+                        for case in run.comparison.get("cases", [])
+                    )
+                )
+            )
             else None
         ),
         "report_url": (
@@ -193,7 +205,31 @@ def api_runs(request):
 @permission_classes([IsAuthenticated])
 def api_run_detail(request, run_id):
     run = get_object_or_404(EvaluationRun.objects.select_related("requested_by"), pk=run_id)
-    return Response(run_data(sync_run(run), request.user.pk))
+    sync_run(run)
+    return Response({**run_data(run, request.user.pk), "postprocessing": recovery_state(run)})
+
+
+class RecoveryRequestSerializer(serializers.Serializer):
+    request_id = serializers.UUIDField()
+
+
+@never_cache
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def api_recover(request, run_id):
+    source = get_object_or_404(EvaluationRun, pk=run_id)
+    serializer = RecoveryRequestSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    try:
+        run, created = submit_recovery(
+            request.user, source, serializer.validated_data["request_id"]
+        )
+    except RequestConflict:
+        return Response({"code": "RECOVERY_CONFLICT"}, status=409)
+    except ResultsUnavailable:
+        return Response({"code": "RECOVERY_INPUTS_UNAVAILABLE"}, status=409)
+    status = 503 if run.prefect_flow_run_id is None else (202 if created else 200)
+    return Response(run_data(run, request.user.pk), status=status)
 
 
 class ReviewRequestSerializer(serializers.Serializer):

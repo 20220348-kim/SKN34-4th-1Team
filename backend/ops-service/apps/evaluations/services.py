@@ -87,6 +87,10 @@ def submit_run(
     ):
         raise RequestConflict
     validate_reference_config(dataset_id, reference_capture_id, run.reference_config)
+    return dispatch_run(run), created
+
+
+def dispatch_run(run):
     if run.prefect_flow_run_id is None:
         # DB transaction 밖에서 전송한다. 응답 유실 후에도 같은 요청 키로 복구한다.
         try:
@@ -100,7 +104,7 @@ def submit_run(
                 prefect_flow_run_id=flow_id, status="QUEUED", error_code=""
             )
         run.refresh_from_db()
-    return run, created
+    return run
 
 
 def artifact_path(run, name):
@@ -120,6 +124,7 @@ def read_request(run):
         or request.get("execution_mode", "replay") != run.execution_mode
         or request.get("live_config", {}) != run.live_config
         or request.get("reference_config", {}) != run.reference_config
+        or request.get("recovery_config", {}) != run.recovery_config
     ):
         raise ResultsUnavailable
     for name in ("candidate_capture_id", "reference_capture_id"):
@@ -176,6 +181,25 @@ def read_result(run):
                 or comparison["candidate_execution"]["capture_sha256"] != capture_hash
                 or comparison["candidate_execution"]["model"] != run.live_config["model"]
                 or manifest["fixture_sha256"] != run.live_config["fixture_sha256"]
+            ):
+                raise ResultsUnavailable
+        if run.execution_mode == "recovery":
+            config = run.recovery_config
+            if (
+                str(run.source_run_id) != config["source_run_id"]
+                or manifest["capture_sha256"] != config["capture_sha256"]
+                or manifest["reference_capture_sha256"] != config["reference_capture_sha256"]
+                or manifest["fixture_sha256"] != config["fixture_sha256"]
+                or comparison.get("schema_version") != 2
+                or comparison["candidate_execution"]["capture_sha256"] != config["capture_sha256"]
+                or comparison["reference_execution"]["capture_sha256"]
+                != config["reference_capture_sha256"]
+                or sha256(artifact_path(run, "capture/capture.json").read_bytes()).hexdigest()
+                != config["capture_sha256"]
+                or sha256(artifact_path(run, "reference-capture.json").read_bytes()).hexdigest()
+                != config["reference_capture_sha256"]
+                or sha256(artifact_path(run, "recovery-fixture.json").read_bytes()).hexdigest()
+                != config["fixture_sha256"]
             ):
                 raise ResultsUnavailable
         verified_comparison = {}
@@ -239,7 +263,7 @@ def read_candidate(run):
         )
         path = (
             artifact_path(run, "capture/capture.json")
-            if run.execution_mode == "live"
+            if run.execution_mode in {"live", "recovery"}
             else evidence_path(candidate["path"])
         )
         raw = path.read_bytes()
@@ -258,6 +282,15 @@ def read_candidate(run):
 
 
 def sync_run(run):
+    if run.status == "COMPLETED" and not run.error_code:
+        try:
+            read_result(run)
+        except ResultsUnavailable:
+            EvaluationRun.objects.filter(pk=run.pk, status="COMPLETED").update(
+                status="RESULT_ERROR", error_code="RESULTS_UNAVAILABLE"
+            )
+            run.refresh_from_db()
+        return run
     if run.prefect_flow_run_id is None or (run.status in TERMINAL and not run.error_code):
         return run
     try:

@@ -13,6 +13,11 @@ urlpatterns = [
         "api/v1/ops/evaluations/<uuid:run_id>", views.api_run_detail, name="api-evaluation-detail"
     ),
     path(
+        "api/v1/ops/evaluations/<uuid:run_id>/recover",
+        views.api_recover,
+        name="evaluation-recover",
+    ),
+    path(
         "api/v1/ops/evaluations/<uuid:run_id>/review",
         views.api_review,
         name="evaluation-review",

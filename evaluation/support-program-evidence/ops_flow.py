@@ -19,6 +19,9 @@ from llmops import evaluate_capture, load_results, write_json
 sys.path.insert(0, str(ROOT / "backend/ops-service/apps/evaluations"))
 from catalog import LEGACY_DATASET_ID, selection, validate_execution, validate_reference_config
 
+sys.path.insert(0, str(ROOT / "backend/ops-service"))
+from apps.evaluations.recovery_inputs import read_recovery_inputs
+
 DATASET_ID = LEGACY_DATASET_ID
 
 
@@ -36,7 +39,7 @@ def reviewed_reference(dataset_id, config, here, output_root):
     evaluate.require(manifest["status"] == "completed" and
                      manifest["capture_sha256"] == config["capture_sha256"] and
                      manifest["fixture_sha256"] == config["fixture_sha256"], "Reference result differs")
-    if marker.get("execution_mode", "replay") == "live":
+    if marker.get("execution_mode", "replay") in {"live", "recovery"}:
         raw = read("capture/capture.json")
     else:
         _, candidate, _ = selection(dataset_id, marker.get("candidate_capture_id", DATASET_ID),
@@ -48,16 +51,55 @@ def reviewed_reference(dataset_id, config, here, output_root):
     return raw
 
 
+def recover_saved_capture(request_id, dataset_id, candidate_id, reference_id, reference_config, config):
+    """허용된 원본의 완료 응답만 복사한다. 모델 실행 경로를 호출하지 않는다."""
+    here = Path(__file__).resolve().parent
+    output_root = Path(os.environ.get("LLMOPS_RESULTS_DIR", ROOT / "work/llmops-ops")).resolve()
+    marker, expected, inputs = read_recovery_inputs(output_root, here, config["source_run_id"])
+    evaluate.require(config == expected, "Recovery inputs changed after dispatch")
+    evaluate.require(
+        marker["dataset_id"] == dataset_id and marker["candidate_capture_id"] == candidate_id
+        and marker["reference_capture_id"] == reference_id
+        and marker.get("reference_config", {}) == reference_config,
+        "Recovery selection differs from source",
+    )
+    dataset, _, _ = selection(dataset_id, candidate_id, reference_id)
+    output = output_root / request_id
+    output.mkdir(parents=True, exist_ok=False)
+    write_json(output / "request.json", {
+        "request_id": request_id, "dataset_id": dataset_id,
+        "prefect_flow_run_id": str(flow_run.id),
+        "candidate_capture_id": candidate_id, "reference_capture_id": reference_id,
+        "execution_mode": "recovery", "live_config": {}, "reference_config": reference_config,
+        "recovery_config": config,
+    })
+    (output / "capture").mkdir()
+    fixture = output / "recovery-fixture.json"
+    capture = output / "capture/capture.json"
+    reference = output / "reference-capture.json"
+    for path, name in [(fixture, "fixture"), (capture, "capture"), (reference, "reference_capture")]:
+        path.write_bytes(inputs[name])
+    # SDK 입력 검증은 기존 파이프라인에서 다시 수행한다. 원본 모델 설정이 바뀌어도 재생성하지 않는다.
+    return evaluate_capture(str(fixture), str(capture), str(reference), str(output / "evaluation"),
+                            case_ids=dataset["case_ids"])
+
+
 @flow(name="govbiz-ops-evidence-evaluation", retries=0, persist_result=False)
 def evaluate_saved_capture(
     request_id: str, dataset_id: str,
     candidate_capture_id: str = DATASET_ID, reference_capture_id: str = DATASET_ID,
     execution_mode: str = "replay", live_config: dict | None = None,
     reference_config: dict | None = None,
+    recovery_config: dict | None = None,
 ) -> dict:
     # 요청에서 파일 경로나 실행 코드를 받지 않는다.
     request_id = str(UUID(request_id))
     config = live_config or {}
+    if execution_mode == "recovery":
+        evaluate.require(not config and bool(recovery_config), "Recovery must not generate responses")
+        return recover_saved_capture(request_id, dataset_id, candidate_capture_id,
+                                     reference_capture_id, reference_config or {}, recovery_config)
+    evaluate.require(not recovery_config, "Unexpected recovery configuration")
     dataset, candidate, reference = validate_execution(
         dataset_id, candidate_capture_id, reference_capture_id, execution_mode, config,
     )

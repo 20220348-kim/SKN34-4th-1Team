@@ -24,6 +24,10 @@ class EvaluationRun(models.Model):
     comparison = models.JSONField(default=dict)
     execution_mode = models.CharField(max_length=10, default="replay")
     live_config = models.JSONField(default=dict)
+    source_run = models.ForeignKey(
+        "self", null=True, on_delete=models.PROTECT, related_name="recoveries"
+    )
+    recovery_config = models.JSONField(default=dict)
     model_api_calls = models.PositiveSmallIntegerField(default=0, null=True)
     requested_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.REQUESTED)
