@@ -124,6 +124,8 @@ class ApplicationPreparationAgent:
         fact_ids = {fact.id for fact in request.facts}
         bindings = [binding.model_dump() for binding in request.bindings if binding.factId in fact_ids]
         planning_document = document.model_dump(exclude={"auxiliaryText"})
+        if request.format != "xlsx":
+            planning_document.pop("workbookMetadata", None)
         if request.scopeTargetIds:
             allowed = set(request.scopeTargetIds)
             if not allowed <= {target.targetId for target in document.targets}:
@@ -154,7 +156,7 @@ class ApplicationPreparationAgent:
             raise DocumentError("LIMIT_EXCEEDED", reason="HWPX_PLAN_CONTEXT_BUDGET")
         content = [{"type": "text", "text": planning_text}]
         content.extend({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{page}", "detail": "high"}} for page in request.pageImages)
-        result = await self._invoke(selection_type, PLAN_INSTRUCTIONS, content, 16000, "Document plan timed out", document=True)
+        result = await self._invoke(selection_type, (PLAN_INSTRUCTIONS + ("\nFor XLSX use input or set_field on editable XLSX_CELL only. Fill only blank cells. Preserve formulas, merged children, hidden/protected cells, styles and structure. Use allowedValues exactly; never invent an option or formula." if request.format == "xlsx" else "")), content, 16000, "Document plan timed out", document=True)
         selection = PlanSelection.model_validate(result.model_dump())
         selection.scopeTargetIds = list(dict.fromkeys(selection.scopeTargetIds))
         return selection
@@ -173,7 +175,7 @@ class ApplicationPreparationAgent:
         # DOCX can contain hundreds of read-only table and layout targets. Their
         # labels are already attached to each editable leaf's nativeLocator.
         targets = [t for t in document.targets if t.targetId not in parents
-                   and (request.format != "docx" or t.editable)]
+                   and (request.format not in {"docx", "xlsx"} or t.editable)]
         ids = [t.targetId for t in targets if t.editable and t.kind not in {"PDF_TEXT", "PDF_PAGE"} and t.nativeLocator.get("bindingEligible", True)]
         if not ids:
             raise DocumentError("MAPPING_FAILED", reason="NO_EDITABLE_TARGETS")
@@ -218,6 +220,8 @@ class ApplicationPreparationAgent:
             selection_type = create_model("HwpxMappingSelection", __base__=Contract,
                 assignments=(assignments_type, ...), scope=(scope_type, ...))
         mapping_document = document.model_dump(exclude={"targets", "auxiliaryText"})
+        if request.format != "xlsx":
+            mapping_document.pop("workbookMetadata", None)
         # Core's HWP context contains table/field evidence not repeated in its locator.
         excluded = set() if request.format == "hwp" else {"context"}
         mapping_document["targets"] = [t.model_dump(exclude=excluded, exclude_none=True) for t in targets]
@@ -231,6 +235,8 @@ class ApplicationPreparationAgent:
             "documentMap": mapping_document}, ensure_ascii=False)
         if large_hwpx and len(mapping_text) > 400000:
             raise DocumentError("LIMIT_EXCEEDED", reason="HWPX_MAPPING_CONTEXT_BUDGET")
+        if request.format == "xlsx" and len(mapping_text) > 400000:
+            raise DocumentError("LIMIT_EXCEEDED", reason="XLSX_MAPPING_CONTEXT_BUDGET")
         content = [{"type": "text", "text": mapping_text}]
         if rejected_output is not None:
             by_id = {t.targetId: t for t in document.targets}
@@ -254,7 +260,7 @@ class ApplicationPreparationAgent:
         content.extend({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{page}", "detail": "high"}} for page in request.pageImages)
         output_instructions = ("\nReturn assignments keyed by every supplied question ID. Each property's targetId is ONE native input ID; use null only when unbound. Each question addresses one input slot; never copy its value into several repeated rows. Never assign a physical target to two different questions. In scope, mark each supplied target ID true only if it belongs to the selected form, including its examples; otherwise false. This keyed object replaces scopeTargetIds and cannot repeat a target. The rejectedSelection, if present, is diagnostic data in normalized server format; return the assignments and scope schema instead."
                                if request.format == "hwpx" else "\nReturn bindings with factId equal to the supplied question ID, and list only unbound question IDs in unmappedFieldIds.")
-        result = await self._invoke(selection_type, MAPPING_INSTRUCTIONS + output_instructions, content, 16000, "Document mapping timed out", document=True)
+        result = await self._invoke(selection_type, MAPPING_INSTRUCTIONS + output_instructions + ("\nFor XLSX choose only supplied editable XLSX_CELL addresses. fieldLabels, rowLabels, columnLabels, sectionPath and sheetName are inspected context. Never bind hidden/protected/formula/merged-child cells. Ambiguous blank cells are not inputs." if request.format == "xlsx" else ""), content, 16000, "Document mapping timed out", document=True)
         if request.format == "hwpx":
             assignments = result.model_dump(by_alias=True)["assignments"]
             selection = MappingSelection(bindings=[DocumentPlacement(factId=field_id, targetId=target_id, box=None)
@@ -286,7 +292,8 @@ class ApplicationPreparationAgent:
             if native_layouts and document["documentIndex"] in native_layouts:
                 document["nativeLayout"] = native_layouts[document["documentIndex"]]
         return await self._invoke(
-            FormDiscoverySelection, HWP_DISCOVERY_INSTRUCTIONS if hwp_only else DISCOVERY_INSTRUCTIONS,
+            FormDiscoverySelection, (HWP_DISCOVERY_INSTRUCTIONS if hwp_only else DISCOVERY_INSTRUCTIONS) +
+            ("\nXLSX documents are official spreadsheet forms. Use sheet/row/cell evidence and individual field headings. Empty styled cells alone do not prove an input. Never ask for formula, hidden, protected, consent or signature cells. One question per actual field; repeated tables use the first writable row." if any(d.format == "XLSX" for d in request.documents) else ""),
             json.dumps(content, ensure_ascii=False),
             5000 if hwp_only else 16000, "Application form discovery agent timed out", discovery=True,
         )

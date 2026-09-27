@@ -202,7 +202,7 @@ V16은 문항별 확인 사실과 AI 해석 실행의 요청 키·입력/출력 
 [기능 범위와 후속 경계](../../docs/application-preparation-design.md)를 참고하세요.
 
 신청 문서 자동 수집은 BIZINFO의 숫자형 `PBLN_...` 공고와 KSTARTUP·MSIT·CNTRADE_NOTICE의 숫자형 공고를 지원합니다.
-각 제공처의 공식 상세에 직접 연결된 PDF/HWP/HWPX/DOCX만 읽고 제공처와 원문 호스트·공고 ID가 일치하는지 다시 검증합니다.
+각 제공처의 공식 상세에 직접 연결된 PDF/HWP/HWPX/DOCX/XLSX만 읽고 제공처와 원문 호스트·공고 ID가 일치하는지 다시 검증합니다.
 K-Startup은 API의 `detl_pg_url`과 같은 공고 ID의 모집중·마감 상세만, 충남은 API 제목·본문과 단 하나로 일치하는 공식 게시판
 상세만 사용합니다. 사용자 임의 URL·스캔 PDF/OCR·ZIP 내부 탐색·암호화 문서는 지원하지 않습니다.
 같은 공고에 읽을 수 있는 공식 문서가 있으면 크기 제한을 넘거나 텍스트를 추출할 수 없는 첨부는 제외 사유와 파일명을
@@ -944,3 +944,18 @@ DOCX의 `engineVersion`은 AI 설정 응답에서 확인하며 저장 지도와 
 변경 비교는 field ID·target ID·box, 기존 필드의 kind·page·widget/box 위치와 편집 scope를 기준으로 한다. heading 등 semantic metadata만 달라지면 승인 절차가 필요 없다. 승인안은 활성 MySQL 지도와 분리된 기존 Redis에 15분간 보관하며, 확인 요청은 소유자·원본 SHA-256·AI pipelineVersion·답변 revision·이전 지도 상태를 다시 검사한다. 승인 transaction은 해당 작성본만 참조하는 `approved-...` 양식 스냅샷을 기존 테이블에 복제하고 작성본의 formVersionId만 바꾼다. 승인 전·취소·stale 오류에서는 MySQL 기록을 바꾸지 않는다. 승인 후에는 `REGENERATION_REQUIRED`를 반환하고 기존 파일을 덮어쓰지 않는다. 이 전용 스냅샷은 다른 사용자에게 보이는 활성 양식·discovery cache에 포함하지 않는다.
 
 생성 경로는 Core의 공식 첨부·소유권·revision 관리와 AI Service의 형식별 MCP 실행을 연결한다. HWP는 Core hwplib의 구조 검사·범위 편집·재열기, HWPX는 Hangeul 파일 모드, PDF는 MCP 정리 후 PDFBox AcroForm 처리이며, 기존 필드의 짧은 위젯은 최소 8pt 가독성을 유지하는 범위에서 크기를 맞추고 불가능하면 `OVERFLOW`로 거절한다. AcroForm은 모델이 선택한 field binding을 최소 편집 scope로 사용하고 저장 binding의 `set_field` 계획을 코드가 생성한다. Core는 원본의 유일한 display/export 대응 또는 위젯 caption으로 사용자 선택값을 native 값에 연결한다. 라디오 export label이 중복되면 원본 위젯 순서의 인덱스를 native 값으로 쓰며, 화면 문구와 인덱스의 대응 근거가 없으면 `APPLICATION_DOCUMENT_UNRESOLVED_OPTION`으로 중단한다. AI는 HWP의 hwpTargets를 받아 지도와 계획만 반환하며 Core가 원본·plan hash·revision·bindings/scope를 독립 검증한다. HWP에 Windows·한컴 한글·브리지 설정이 필요하지 않다. 과거 직접 HWPX 편집 경로는 현재 생성에서 사용하지 않는다. 부분 초안 정책 식별자를 포함한 새 fingerprint로 과거 생성 결과와 구분하고 다운로드 이력을 보존한다. 구현 범위와 미지원 구조·검증 상태는 [MCP 구조](../../docs/application-document-mcp-architecture.md), [설치](../../docs/application-document-mcp-setup.md), [검증 기록](../../docs/application-document-mcp-validation.md)를 확인한다.
+
+
+### XLSX 신청 문서
+
+XLSX 경로는 `공식 첨부 Client → Core ZIP/XML 문항 추출 → AI XlsxDocumentAdapter inspect → DocumentMap → OpenAI Mapping → WritePlan → native 셀 값 작성 → 재열기·보존 검증 → Core 저장·다운로드`입니다.
+`.xlsx`만 지원하고 XLS/XLSM/ODS/CSV는 포함하지 않습니다. 공개 문항·Fact·binding·WritePlan DTO는 기존 계약을 재사용합니다. 별도 사용자 파일 업로드 API는 추가하지 않으며 공식 첨부 수집 경로의 확장자와 문서 실제 OOXML content type을 검사합니다.
+
+AI의 `openpyxl==3.1.5`는 셀 타입·수식·병합·검증 규칙을 읽고 새 값을 직렬화합니다. 작성 대상 셀의 직렬화된 값만 원본 worksheet XML에 반영하며 다른 ZIP 파트는 바이트 그대로 보존합니다. 원본을 덮어쓰거나 행·열·시트 구조를 바꾸지 않습니다.
+표시값은 Excel 렌더 결과가 아닌 raw 문자열이고 `numberFormat`을 함께 보존합니다. General 셀과 사업자번호·연락처·우편번호는 문자열로 작성합니다. 명시적인 숫자 형식은 유효한 15자리 이내 숫자, 날짜 형식은 ISO 날짜/시각, 비율 형식은 % 값만 받으며 불명확한 단위 변환을 하지 않습니다.
+
+공통 `pipelineVersion`·`mapVersion`과 기존 4포맷 엔진은 유지합니다. `xlsx=govbiz/xlsx-native@2+openpyxl-3.1.5`만 지도와 생성 fingerprint에 반영합니다. 엔진 변경 시 XLSX만 재매핑하고 binding/scope 변경은 기존 migration 확인 경로를 사용합니다.
+Core는 재열기·XML·스타일·수식·data validation·원본 파트 보존 증명이 통과한 XLSX만 저장하고 `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet` 및 `_초안_v{revision}.xlsx`로 다운로드합니다.
+
+Frontend - Web: XLSX 목록 응답의 확장자·MIME 검증 및 인증된 native 다운로드를 지원합니다.
+Frontend - Mobile: 변경 없음.

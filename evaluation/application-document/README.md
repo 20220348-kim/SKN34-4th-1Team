@@ -134,3 +134,20 @@ Ground Truth 재현 명령:
 python evaluation/application-document/validate_mapping.py \
   --source <SHA-256을 확인한 공식 seocho HWPX 경로>
 ```
+
+
+## XLSX 공식 표본 평가
+
+`expected/xlsx-*-v1.json`에는 공식 출처·SHA-256·sheet 구조와 8개 필드 정답 주소를 저장하고 `blind-xlsx-*-v1.json`에는 모델에 전달할 질문만 둡니다. 정답 주소는 모델 입력에 넣지 않습니다. 원본과 작성본 XLSX는 저장소 밖 임시 경로에만 둡니다.
+
+`run_xlsx_mapping.py --source <official.xlsx> --expected <expected.json> --blind <blind.json> --output <runs/xlsx-...> --preflight`로 무료 coverage를 먼저 확인합니다. coverage가 100%이면 같은 명령에서 `--preflight`를 제거해 문서당 1회, 이 작업 전체 최대 2회만 Mapping할 수 있습니다. 자동 재호출은 없고 attempt 파일이 있으면 동일 문서를 다시 호출하지 않습니다. 실제 평가 환경 파일은 `XLSX_EVALUATION_ENV`로 지정하되 키를 출력·기록하지 않습니다.
+`run_xlsx_write.py --source <official.xlsx> --expected <expected.json> --output <separate.xlsx>`는 검토한 3~5개 dummy 값만 작성하고 재열기·보존 증명을 반환합니다.
+
+실제 TCP Core→AI→DB→download 검증은 `XlsxRealHttpIntegrationTest`를 사용합니다. `XLSX_HTTP_E2E=true`, `XLSX_E2E_SOURCE_PATH`, `XLSX_E2E_EXPECTED_PATH`, `XLSX_E2E_OUTPUT_PATH`, `XLSX_E2E_AI_URL`, `DOCUMENT_INTERNAL_TOKEN`을 설정합니다. `serve_xlsx_fixture.py`는 saved Mapping 결과 경로(`XLSX_E2E_MAPPING_PATH`), 저장소 밖 로그(`XLSX_E2E_AI_LOG`)와 포트(`XLSX_E2E_AI_PORT`, 기본 18082)를 받고 production AI router/agent/pipeline을 실행합니다. 모델 경계만 fixture이며 유료 호출은 0회입니다. MySQL 8.4·Redis Testcontainers와 실제 AI HTTP 서버가 필요합니다.
+MockRest/ASGI 검증, 실제 OpenAI Mapping, 실제 DB·TCP HTTP, Excel 실제 열기는 서로 다른 검증 수준으로 기록합니다. Ground Truth는 agent의 공식 셀 검토 결과이며 사용자의 독립 검토 완료로 표기하지 않습니다.
+
+### XLSX 안정화 r2
+
+[최종 안정화 기록](runs/xlsx-stabilization-r2-20260927-v1/README.md)은 Microsoft Excel 실제 열기·저장·재열기, 공식 수식/보호 표본과 실제 latest main 대비 전체 회귀를 구분합니다. 기존 두 표본의 유료 Mapping을 반복하지 않았습니다.
+`run_xlsx_stabilization.py`는 추가 공식 표본 한 개의 GT 5~10개와 blind 입력을 사용합니다. 이번 추가 평가에서만 `--mapping` 1회를 허용하고 attempt가 있거나 기존 두 호출 이후가 아니면 중단합니다. `--write`는 무료 native dummy 작성입니다. 이 작업의 추가 유료 호출 한도는 이미 사용했으며 재호출하지 않습니다.
+단일 안내문 validation(type 생략, formula 없음) 보존 수정으로 XLSX engine은 `govbiz/xlsx-native@2+openpyxl-3.1.5`입니다. 공통 버전과 기존 네 형식 엔진은 유지됩니다.

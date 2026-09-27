@@ -47,6 +47,17 @@ it('accepts a DOCX draft and its native download media type', async () => {
   expect((await repository.downloadDocument(1, 9)).size).toBe(4)
 })
 
+it('accepts a XLSX draft and its native download media type', async () => {
+  const file = { id: 9, inputRevision: 3, fileName: '신청서.xlsx',
+    mediaType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', size: 4,
+    filledAnswerCount: 1, unfilledAnswerCount: 0, unfilledAnswers: [] }
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(Response.json([file]))
+    .mockResolvedValueOnce(new Response(new Uint8Array([80, 75, 3, 4]), { headers: { 'Content-Type': file.mediaType } })))
+  const repository = new ApplicationPreparationRepositoryImpl()
+  expect(await repository.generateDocuments(1, 3)).toEqual([file])
+  expect((await repository.downloadDocument(1, 9)).size).toBe(4)
+})
+
 it('rejects generation results from another revision or without files', async () => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(Response.json([])).mockResolvedValueOnce(Response.json([
     { id: 8, inputRevision: 2, fileName: '신청서.pdf', mediaType: 'application/pdf', size: 4,

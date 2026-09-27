@@ -49,6 +49,20 @@ class BizInfoAttachmentClientTest {
     }
 
     @Test
+    fun collectsNativeXlsxFromTheOfficialDetail() {
+        stubPage(page().replace("공고문.pdf", "신청서.xlsx"))
+        server.expect(requestTo(download)).andRespond(withSuccess(byteArrayOf(1,2,3), MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")))
+        val result = client.collect("BIZINFO", sourceProgramId)
+        assertEquals("검증 공고", result.programTitle)
+        assertEquals(pageUrl, result.sourcePageUrl)
+        assertEquals(1, result.files.size)
+        assertEquals("XLSX", result.files.single().format)
+        assertArrayEquals(byteArrayOf(1,2,3), result.files.single().bytes)
+        assertTrue(result.warnings.isNotEmpty())
+        server.verify()
+    }
+
+    @Test
     fun prefersPublisherHwpxOverTheSameTitlePdfAndRecordsThatChoice() {
         val mss = "https://www.mss.go.kr/site/smba/ex/bbs/View.do?bcIdx=123&cbIdx=310&parentSeq=123"
         val file = "https://www.mss.go.kr/common/board/Download.do?bcIdx=123&cbIdx=310&streFileNm=abc.hwpx"

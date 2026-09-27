@@ -88,9 +88,9 @@ HWP는 Core의 hwplib 구조를 단일 기준으로 사용해 kordoc을 호출�
 
 ## 지원 범위와 후속 확장 위치
 
-현재 편집 지원 형식은 HWP, HWPX, PDF뿐이다. DOCX, XLSX, XLS, PPTX, Google Forms, 일반 Web Form, Docling 편집, Upstage API, pyhwpx worker는 이번 구현에 포함하지 않는다. 현재 `DocumentMap → native binding → WritePlan → 형식별 native editor → verification` 경계도 `ApplicationMap`으로 이름을 바꾸지 않는다.
+현재 편집 지원 형식은 HWP, HWPX, PDF, DOCX, XLSX이다. XLS, XLSM, ODS, CSV, PPTX, Google Forms, 일반 Web Form, Docling 편집, Upstage API, pyhwpx worker는 포함하지 않는다. 현재 `DocumentMap → native binding → WritePlan → 형식별 native editor → verification` 경계도 `ApplicationMap`으로 이름을 바꾸지 않는다.
 
-DOCX와 XLSX를 추가할 때는 `document_adapters.py`의 기존 구체 adapter와 같은 수준에 각각의 native inspector/editor를 두고, `document_contract.py`의 format 및 target kind를 실제 지원 시점에 명시적으로 확장한다. DOCX는 paragraph/table/content control 주소, XLSX는 workbook/sheet/cell/named range 주소를 사용하며 기존 HWPX/PDF 주소로 변환하지 않는다. 구현 전에는 계약에 빈 형식이나 범용 provider 추상화를 미리 추가하지 않는다.
+DOCX와 XLSX의 구체 adapter는 `docx_adapter.py`와 `xlsx_adapter.py`에 있고 기존 adapter와 같은 경계를 사용한다. `document_contract.py`의 format은 실제 지원하는 다섯 형식만 포함한다. DOCX는 paragraph/table/content control 주소, XLSX는 sheet/cell 주소를 사용하고 named range는 validation의 읽기 근거로만 사용하며 기존 HWPX/PDF 주소로 변환하지 않는다. 구현 전에는 계약에 빈 형식이나 범용 provider 추상화를 미리 추가하지 않는다.
 
 Google Forms와 일반 Web Form은 파일이 아니므로 현재 MCP의 네 번째 파일 adapter로 넣지 않는다. 후속 구현에서는 신청 준비 Service가 FILE 경로의 DocumentMap과 ONLINE_FORM 경로의 별도 form map을 선택하고, 확인된 Fact mapping과 사용자 검토 단계만 공유하는 방식이 자연스럽다. 외부 Form의 최종 제출 자동화는 별도 권한·동의·사이트 계약 검토 없이는 포함하지 않는다.
 
@@ -105,3 +105,21 @@ Google Forms와 일반 Web Form은 파일이 아니므로 현재 MCP의 네 번�
 ### PDF 위치 보정 경고 처리
 
 일부 한글 PDF의 기울어진 text matrix에서는 삭제 후 상대 위치 보정을 건너뛰었다는 경고가 발생한다. 이 경고를 무조건 통과시키지 않는다. 고정 읽기 검증 도구 `govbiz_verify_pdf_deletion`로 원본과 수정본의 모든 텍스트 이외 연산자가 동일하고, 변경된 텍스트가 전부 빈 문자열이며, 해당 BT/ET 텍스트 객체에 남는 문자가 없음을 확인한 경우에만 경고 사유와 검증 결과를 결과 메타데이터에 보존한다. 다른 degradation, 글꼴 대체, glyph 누락, overflow는 계속 실패 처리한다. 독립 렌더링 확인은 별도 검증 수준이다.
+
+
+### XLSX native 셀과 보존 경계
+
+`xlsx:s:{URL-encoded sheetName}:c:{A1-address}`를 사용한다. sheetName·cellAddress·row·column·raw value·displayValue·dataType·cellType·numberFormat·formula·mergedMaster/Range·hidden·protected·locked·editable·fieldLabels·rowLabels·columnLabels·tableHeadings·sectionPath·dataValidation을 nativeLocator에 저장한다.
+`DocumentMap.workbookMetadata`에는 sheet name/state, used range, merged ranges, freeze pane, named tables, data validations, formula count와 보호 상태가 있다. 빈 지도 메타데이터는 기존 형식 모델 입력에서 제외한다.
+
+Mapping은 label 근거와 실제 XML 셀을 가진 editable 후보만 전달한다. 병합 master는 독립적인 label 근거가 있을 때만 후보이고 child는 미지원이다. header가 확인된 반복 표는 첫 빈 슬롯만 선택하고 Excel named table은 DATA_TABLE로 읽기 전용이다. FORM_REGION/DATA_TABLE/SUMMARY_REGION/AMBIGUOUS는 필터와 문맥일 뿐 구조 변경 권한이 아니다.
+
+수식은 `FORMULA_CELL`, hidden sheet/row/column은 `HIDDEN_CELL`, 보호된 workbook 또는 보호 sheet의 locked 셀은 `PROTECTED_CELL`로 거절한다. 보호 sheet의 명시적 unlocked 셀은 다른 후보 조건도 만족해야 작성한다. default locked라도 sheet protection이 꺼져 있으면 보호 셀로 보지 않는다.
+List validation은 inline 문자열, 단일 명시 범위와 해석 가능한 named range만 처리한다. 숨긴 option source의 값은 읽을 수 있지만 그 sheet는 입력 후보가 아니다. type이 생략되고 formula1/formula2가 없는 단일 안내문 규칙은 입력 제약이 없는 `promptOnly`로 보존한다. 날짜·숫자 형식 검증은 유지한다. 수식/동적 범위/빈 option/중복 규칙·실제 non-list validation은 `UNRESOLVED_OPTION`로 중단한다. 옵션의 의미를 추정하거나 새 값을 추가하지 않는다.
+
+native write는 기존 `input` 또는 `set_field`를 재사용하며 빈 셀에만 적용한다. delete/replace/구조 편집은 허용하지 않는다. apply가 sourceSha256·mapVersion·engineVersion·실제 재검사한 셀의 editable 상태를 다시 확인한다. 날짜 및 숫자는 명시 형식만 변환하고 식별자와 =로 시작하는 사용자 문자열은 literal text로 유지한다.
+작성 후 workbook을 다시 열어 값·sheet metadata를 확인하고, 승인 셀의 값 payload만 제외한 전체 worksheet XML과 다른 ZIP 파트를 비교한다. 수식 및 cached value, 스타일, merged range, validation, conditional formatting, workbook properties, row/column dimension과 hidden state의 보존이 검증돼야 한다.
+
+ZIP entry 512개, 압축 해제 합계 32 MiB, 전체 used grid 100,000칸, sheet 30개, native target 3,000개 제한을 적용한다. XML DTD/ENTITY, 암호 ZIP, 중복/경로 탈출 entry, macro/signature, external calculation link, embedded/ActiveX/form control, drawing/chart는 미지원으로 중단한다. 원본 binary와 작성본은 평가 자료에 저장하지 않는다.
+
+XLSX label 근거에는 visible sheet/row/column의 텍스트만 사용합니다. 숨긴 label 옆의 visible blank도 입력 근거가 없으면 제외합니다. validation의 `sourceRange`는 적용 범위(sqref)이고 실제 option source는 `formula1`에 원문 그대로 기록합니다.

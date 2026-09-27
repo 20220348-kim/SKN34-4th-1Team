@@ -65,8 +65,8 @@ class ApplicationDocumentService(
             detail.preparation.draft.formVersionId != proposal.oldFormVersionId ||
             detail.form.attachmentSha256 != proposal.sourceSha256 ||
             configuration.pipelineVersion != proposal.proposed.pipelineVersion ||
-            (detail.form.attachmentFileName.endsWith(".docx", true) &&
-                configuration.engineVersions["docx"] != proposal.proposed.engineVersion)) stale()
+            (detail.form.attachmentFileName.substringAfterLast('.').lowercase() in setOf("docx", "xlsx") &&
+                configuration.engineVersions[detail.form.attachmentFileName.substringAfterLast('.').lowercase()] != proposal.proposed.engineVersion)) stale()
         val currentSource = try { loadOriginal(detail.form).bytes } catch (error: ApplicationDocumentException) {
             if (error.code == "APPLICATION_DOCUMENT_SOURCE_CHANGED") stale()
             throw error
@@ -107,8 +107,9 @@ class ApplicationDocumentService(
         if (detail.preparation.inputRevision != expectedRevision) throw ApplicationPreparationRevisionConflictException()
         val configuration = mcp.configuration()
         val pipelineVersion = configuration.pipelineVersion
-        val docxEngine = if (detail.form.attachmentFileName.endsWith(".docx", true)) configuration.engineVersions["docx"]
-            ?: throw ApplicationDocumentException("APPLICATION_DOCUMENT_MCP_NOT_READY", "DOCX 편집기 버전을 확인하지 못했습니다.") else null
+        val nativeFormat = detail.form.attachmentFileName.substringAfterLast('.').lowercase().takeIf { it in setOf("docx", "xlsx") }
+        val docxEngine = nativeFormat?.let { configuration.engineVersions[it]
+            ?: throw ApplicationDocumentException("APPLICATION_DOCUMENT_MCP_NOT_READY", "${it.uppercase()} 편집기 버전을 확인하지 못했습니다.") }
         val fingerprint = fingerprint(detail.form.attachmentSha256, expectedRevision, pipelineVersion, docxEngine)
         files.findFingerprint(account.id, id, expectedRevision, fingerprint)?.let { return@execute listOf(it) }
         if (!running.add(id)) throw ApplicationPreparationRunConflictException()
@@ -167,10 +168,13 @@ class ApplicationDocumentService(
             !Regex("[a-f0-9]{64}").matches(result.planHash)) {
             throw ApplicationDocumentException("APPLICATION_DOCUMENT_VALIDATION_FAILED", "원본·입력 버전과 문서 결과가 일치하지 않습니다.")
         }
-        if (original.format.equals("docx", true) && (result.mapVersion != binding.mapVersion ||
+        if (original.format.lowercase() in setOf("docx", "xlsx") && (result.mapVersion != binding.mapVersion ||
                 result.engineVersion != binding.engineVersion || result.verification["reopened"] != true ||
                 result.verification["xml"] != "PASSED" || result.verification["styleStructure"] != "PASSED"))
-            throw ApplicationDocumentException("APPLICATION_DOCUMENT_VALIDATION_FAILED", "DOCX 원본 주소와 재열기 검증 결과가 일치하지 않습니다.")
+            throw ApplicationDocumentException("APPLICATION_DOCUMENT_VALIDATION_FAILED", "${original.format.uppercase()} 원본 주소와 재열기 검증 결과가 일치하지 않습니다.")
+        if (original.format.equals("xlsx", true) && (result.verification["formulas"] != "PASSED" ||
+                result.verification["dataValidation"] != "PASSED" || result.verification["unchangedParts"] != "PASSED"))
+            throw ApplicationDocumentException("APPLICATION_DOCUMENT_VALIDATION_FAILED", "XLSX 수식·검증 규칙 보존 결과를 확인하지 못했습니다.")
         val bytes = if (original.format.equals("hwp", true)) {
             if (result.verification["stage"] != "HWPLIB_REQUIRED" || !output.contentEquals(original.bytes))
                 throw ApplicationDocumentException("APPLICATION_DOCUMENT_VALIDATION_FAILED", "HWP 원본과 편집 처리 순서가 일치하지 않습니다.")
@@ -192,9 +196,10 @@ class ApplicationDocumentService(
             editor.fill(output, "pdf", writableFacts, result.placements)
         } else output
         val format = original.format.lowercase()
-        val fileName = manifest.attachmentFileName.replace(Regex("(?i)\\.(hwp|hwpx|pdf|docx).*$"), "").replace(Regex("[\\\\/:*?\"<>|]"), "_").take(430) + "_초안_v$expectedRevision.$format"
+        val fileName = manifest.attachmentFileName.replace(Regex("(?i)\\.(hwp|hwpx|pdf|docx|xlsx).*$"), "").replace(Regex("[\\\\/:*?\"<>|]"), "_").take(430) + "_초안_v$expectedRevision.$format"
         val mediaType = when (format) { "pdf" -> "application/pdf"; "hwpx" -> "application/hwp+zip";
-            "docx" -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document"; else -> "application/x-hwp" }
+            "docx" -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+            "xlsx" -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"; else -> "application/x-hwp" }
         val verification = if (format == "hwp") result.verification + mapOf("stage" to "HWPLIB_VERIFIED", "reopened" to true, "outputSha256" to sha256(bytes), "render" to "NOT_RUN") else result.verification
         listOf(files.save(account.id, id, expectedRevision, fileName, mediaType, bytes, manifest.attachmentSha256, result.placements,
             fingerprint = fingerprint,

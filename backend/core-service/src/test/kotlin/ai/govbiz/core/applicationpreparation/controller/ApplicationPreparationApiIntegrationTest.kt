@@ -650,6 +650,91 @@ class ApplicationPreparationApiIntegrationTest {
 
     @org.junit.jupiter.params.ParameterizedTest
     @org.junit.jupiter.params.provider.ValueSource(booleans = [false, true])
+    fun storesAndDownloadsAValidatedXlsxWithoutChangingItsOfficialSource(tamperFormulaProof: Boolean) {
+        fun xlsx(value: String): ByteArray = java.io.ByteArrayOutputStream().also { out ->
+            java.util.zip.ZipOutputStream(out).use { zip ->
+                mapOf(
+                    "[Content_Types].xml" to """<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/></Types>""",
+                    "xl/workbook.xml" to """<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>""",
+                    "xl/_rels/workbook.xml.rels" to """<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>""",
+                    "xl/worksheets/sheet1.xml" to """<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="2"><c r="A2" t="inlineStr"><is><t>사업 개요</t></is></c><c r="B2" t="inlineStr"><is><t>$value</t></is></c></row></sheetData></worksheet>""",
+                ).forEach { (name, xml) ->
+                    zip.putNextEntry(java.util.zip.ZipEntry(name))
+                    zip.write(xml.toByteArray(Charsets.UTF_8))
+                    zip.closeEntry()
+                }
+            }
+        }.toByteArray()
+        val original = xlsx("")
+        val completed = xlsx("가상 연구소")
+        val targetId = "xlsx:s:Sheet1:c:B2"
+        `when`(bizInfoAttachments.collect("BIZINFO", DISCOVERY_PROGRAM_ID)).thenReturn(SupportProgramAttachments("동적 지원사업", listOf(
+            SupportProgramAttachment("https://www.bizinfo.go.kr/cmm/fms/fileDown.do?atchFileId=FILE_1&fileSn=1", "신청양식.xlsx", "XLSX", original),
+        ), emptyList()))
+        `when`(documentParser.parse(original, "XLSX")).thenReturn(listOf(SupportProgramDocumentBlock(DISCOVERY_LOCATOR, DISCOVERY_BLOCK_TEXT)))
+        stubDocumentMapping(documentMcp, targetId)
+        val fallback = AiDocumentGenerationRequest(sourceBase64 = "", sourceSha256 = "", format = "xlsx",
+            answerRevision = 1, facts = emptyList(), scope = "test")
+        `when`(documentMcp.generate(any(AiDocumentGenerationRequest::class.java) ?: fallback)).thenAnswer { invocation ->
+            val request = invocation.getArgument<AiDocumentGenerationRequest>(0)
+            assertEquals("xlsx", request.format)
+            org.junit.jupiter.api.Assertions.assertArrayEquals(original, java.util.Base64.getDecoder().decode(request.sourceBase64))
+            val hash = java.security.MessageDigest.getInstance("SHA-256").digest(completed).joinToString("") { "%02x".format(it) }
+            AiDocumentGenerationPayload("application-document-mcp-v1", "b".repeat(64), request.sourceSha256,
+                request.answerRevision, java.util.Base64.getEncoder().encodeToString(completed), hash, "c".repeat(64),
+                "native-map-v2", "contract-stub", mapOf("reopened" to true, "xml" to "PASSED", "styleStructure" to "PASSED", "formulas" to if (tamperFormulaProof) "FAILED" else "PASSED", "dataValidation" to "PASSED", "unchangedParts" to "PASSED", "verified" to 1),
+                listOf(ApplicationDocumentPlacement("business-plan:business-overview", targetId)), emptyMap(), emptyMap())
+        }
+        val discovery = mvc.perform(post("$BASE/forms/discover").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN)
+            .contentType(MediaType.APPLICATION_JSON).content("""{"sourceCode":"BIZINFO","sourceProgramId":"$DISCOVERY_PROGRAM_ID"}"""))
+            .andExpect(status().isOk()).andReturn().response
+        val version = json.readTree(discovery.contentAsString).path("items").path(0).path("formVersionId").asString()
+        activateStored(version)
+        val created = mvc.perform(post(BASE).cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN).contentType(MediaType.APPLICATION_JSON)
+            .content("""{"sourceCode":"BIZINFO","sourceProgramId":"$DISCOVERY_PROGRAM_ID","formVersionId":"$version","serviceField":"GENERAL"}"""))
+            .andExpect(status().isCreated()).andReturn().response
+        val id = json.readTree(created.contentAsString).path("id").asLong()
+        mvc.perform(put("$BASE/$id/sections/business-plan/inputs").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN)
+            .contentType(MediaType.APPLICATION_JSON).content("""{"expectedRevision":1,"facts":[{"fieldKey":"business-overview","status":"PROVIDED","value":"가상 연구소","sourceText":"가상 연구소"}]}"""))
+            .andExpect(status().isOk())
+        if (tamperFormulaProof) {
+            mvc.perform(post("$BASE/$id/documents").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN)
+                .contentType(MediaType.APPLICATION_JSON).content("""{"expectedRevision":2}"""))
+                .andExpect(status().isUnprocessableContent())
+                .andExpect(jsonPath("$.code").value("APPLICATION_DOCUMENT_VALIDATION_FAILED"))
+            return
+        }
+        val generated = mvc.perform(post("$BASE/$id/documents").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN)
+            .contentType(MediaType.APPLICATION_JSON).content("""{"expectedRevision":2}"""))
+            .andExpect(status().isOk()).andExpect(jsonPath("$[0].fileName").value("신청양식_초안_v2.xlsx"))
+            .andExpect(jsonPath("$[0].mediaType").value("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+            .andReturn().response
+        val fileId = json.readTree(generated.contentAsString).path(0).path("id").asLong()
+        val downloaded = mvc.perform(get("$BASE/$id/documents/$fileId/download").cookie(owner))
+            .andExpect(status().isOk())
+            .andExpect(content().contentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+            .andExpect(header().string(HttpHeaders.CACHE_CONTROL, "no-store"))
+            .andReturn().response.contentAsByteArray
+        org.junit.jupiter.api.Assertions.assertArrayEquals(completed, downloaded)
+        org.junit.jupiter.api.Assertions.assertArrayEquals(original, bizInfoAttachments.collect("BIZINFO", DISCOVERY_PROGRAM_ID).files.single().bytes)
+        mvc.perform(get("$BASE/$id/documents/$fileId/download").cookie(other)).andExpect(status().isNotFound())
+        verify(documentMcp, times(1)).map(any(AiDocumentMappingRequest::class.java) ?:
+            AiDocumentMappingRequest(sourceBase64 = "", sourceSha256 = "", format = "xlsx", scope = "", fields = emptyList()))
+        `when`(documentMcp.configuration()).thenReturn(AiDocumentConfigurationPayload("application-document-mcp-v1",
+            "b".repeat(64), mapOf("xlsx" to "next-xlsx-engine")))
+        mvc.perform(post("$BASE/$id/documents").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN)
+            .contentType(MediaType.APPLICATION_JSON).content("""{"expectedRevision":2}"""))
+            .andExpect(status().isUnprocessableContent())
+            .andExpect(jsonPath("$.code").value("APPLICATION_DOCUMENT_MAPPING_FAILED"))
+        verify(documentMcp, times(2)).map(any(AiDocumentMappingRequest::class.java) ?:
+            AiDocumentMappingRequest(sourceBase64 = "", sourceSha256 = "", format = "xlsx", scope = "", fields = emptyList()))
+        org.junit.jupiter.api.Assertions.assertArrayEquals(completed,
+            mvc.perform(get("$BASE/$id/documents/$fileId/download").cookie(owner)).andExpect(status().isOk())
+                .andReturn().response.contentAsByteArray)
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = [false, true])
     fun generatesHwpInsideCoreAndRejectsAnEditedSourceFromAi(tamperSource: Boolean) {
         val native = kr.dogfoot.hwplib.tool.blankfilemaker.BlankFileMaker.make()
         native.bodyText.sectionList[0].addNewParagraph().apply {

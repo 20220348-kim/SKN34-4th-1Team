@@ -68,3 +68,9 @@ PDF는 기존 입력 필드 또는 FFDetr 탐지 결과를 원문 글자·표 �
 ## LICENSE / NOTICE
 
 hwplib과 고정 Hangeul-mcp, pdf-edit-mcp, kordoc의 LICENSE 및 전이 의존성 고지를 배포 시 유지한다. kordoc의 NOTICE·THIRD_PARTY와 저장소 NanumGothic 라이선스도 유지한다. 고객 원본·상용 글꼴·비밀값은 저장소에 추가하지 않는다.
+
+
+### XLSX 실행 의존성
+
+AI Service의 잠금 파일에 `openpyxl==3.1.5`와 `et-xmlfile`이 포함됩니다. Python 3.12와 기존 `uv sync --locked`·컨테이너 설치 경로를 사용하고 별도 MCP 서버·Office·LibreOffice 실행 계층은 production에 추가하지 않습니다.
+공식 XLSX 신청서의 object/보호/범위 조건은 [보존 경계](application-document-mcp-architecture.md#xlsx-native-셀과-보존-경계)를 참고하세요. Excel 실제 열기는 선택적 평가이며 서비스 작성에는 Excel 설치가 필요하지 않습니다.

@@ -26,8 +26,9 @@ class ApplicationDocumentMappingService(
         if (sourceHash != form.attachmentSha256) throw ApplicationDocumentException("APPLICATION_DOCUMENT_SOURCE_CHANGED", "공식 원본이 변경되었습니다.")
         val configuration = mcp.configuration()
         val pipeline = configuration.pipelineVersion
-        val docxEngine = if (format.equals("docx", true)) configuration.engineVersions["docx"]
-            ?: throw ApplicationDocumentException("APPLICATION_DOCUMENT_MCP_NOT_READY", "DOCX 편집기 버전을 확인하지 못했습니다.") else null
+        val nativeFormat = format.lowercase().takeIf { it in setOf("docx", "xlsx") }
+        val docxEngine = nativeFormat?.let { configuration.engineVersions[it]
+            ?: throw ApplicationDocumentException("APPLICATION_DOCUMENT_MCP_NOT_READY", "${it.uppercase()} 편집기 버전을 확인하지 못했습니다.") }
         val stored = snapshots.findByVersion(form.formVersionId)
         val previous = stored?.documentMapSnapshot ?: form.documentMapSnapshot
         previous?.takeIf { it.pipelineVersion == pipeline && it.sourceSha256 == sourceHash &&
