@@ -67,6 +67,12 @@ LLMOPS_LIVE_ENABLED = env.bool("LLMOPS_LIVE_ENABLED", default=False)
 LLMOPS_RESULTS_DIR = Path(
     env("LLMOPS_RESULTS_DIR", default=str(BASE_DIR.parent.parent / "work/llmops-ops"))
 ).resolve()
+LLMOPS_EVIDENCE_DIR = Path(
+    env(
+        "LLMOPS_EVIDENCE_DIR",
+        default=str(BASE_DIR.parent.parent / "evaluation/support-program-evidence"),
+    )
+).resolve()
 LANGFUSE_PROJECT_URL = env(
     "LANGFUSE_PROJECT_URL",
     default="http://localhost:13000/project/govbiz-evidence-development",

@@ -17,6 +17,7 @@ from rest_framework.response import Response
 
 from .catalog import DATASETS, public_datasets, selection, validate_execution
 from .models import EvaluationRun
+from .reviews import baseline_choices, promote_baseline, review_material, review_state, save_review
 from .services import (
     DATASET_ID,
     RequestConflict,
@@ -47,13 +48,18 @@ ERROR_MESSAGES = {
 @permission_classes([AllowAny])
 def api_session(request):
     operator = request.user.is_authenticated
+    baselines = baseline_choices() if operator else {}
     return Response(
         {
             "user": {"username": request.user.email or request.user.get_username()}
             if operator
             else None,
             "csrf_token": get_token(request),
-            "datasets": public_datasets() if operator else [],
+            "datasets": [
+                {**item, "baseline": baselines.get(item["id"])} for item in public_datasets()
+            ]
+            if operator
+            else [],
             "live_enabled": settings.LLMOPS_LIVE_ENABLED if operator else False,
         }
     )
@@ -173,6 +179,10 @@ def api_runs(request):
         run, created = submit_run(request.user, **serializer.validated_data)
     except RequestConflict:
         return Response({"code": "REQUEST_CONFLICT"}, status=409)
+    except ValueError:
+        return Response({"code": "INVALID_REFERENCE"}, status=400)
+    except ResultsUnavailable:
+        return Response({"code": "RESULTS_UNAVAILABLE"}, status=503)
     # 응답 유실 가능성이 있으므로 접수 불확실을 실패/완료로 숨기지 않는다.
     status = 503 if run.prefect_flow_run_id is None else (202 if created else 200)
     return Response(run_data(run, request.user.pk), status=status)
@@ -184,6 +194,61 @@ def api_runs(request):
 def api_run_detail(request, run_id):
     run = get_object_or_404(EvaluationRun.objects.select_related("requested_by"), pk=run_id)
     return Response(run_data(sync_run(run), request.user.pk))
+
+
+class ReviewRequestSerializer(serializers.Serializer):
+    decision = serializers.ChoiceField(choices=["APPROVED", "CHANGES_REQUESTED"])
+    comment = serializers.CharField(max_length=3000, allow_blank=False)
+    capture_sha256 = serializers.RegexField(r"^[a-f0-9]{64}$")
+
+
+@never_cache
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
+def api_review(request, run_id):
+    run = get_object_or_404(EvaluationRun, pk=run_id)
+    if request.method == "POST":
+        serializer = ReviewRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            save_review(run, request.user, **serializer.validated_data)
+        except RequestConflict:
+            return Response({"code": "REVIEW_CONFLICT"}, status=409)
+        except ResultsUnavailable:
+            return Response({"code": "RESULTS_UNAVAILABLE"}, status=503)
+    try:
+        material = review_material(run)
+    except ResultsUnavailable:
+        material = None
+    return Response(
+        {
+            **review_state(run),
+            "material": material,
+            "material_error": "검토 자료를 확인할 수 없습니다. 완료 상태와 저장소를 확인하세요."
+            if material is None
+            else "",
+        }
+    )
+
+
+class BaselineRequestSerializer(serializers.Serializer):
+    review_id = serializers.IntegerField(min_value=1)
+
+
+@never_cache
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def api_baseline(request, run_id):
+    run = get_object_or_404(EvaluationRun, pk=run_id)
+    serializer = BaselineRequestSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    try:
+        promote_baseline(run, request.user, serializer.validated_data["review_id"])
+    except RequestConflict:
+        return Response({"code": "REVIEW_CONFLICT"}, status=409)
+    except ResultsUnavailable:
+        return Response({"code": "RESULTS_UNAVAILABLE"}, status=503)
+    return Response({**review_state(run), "material": review_material(run), "material_error": ""})
 
 
 @never_cache

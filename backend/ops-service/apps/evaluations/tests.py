@@ -34,6 +34,7 @@ class PrefectClientTests(SimpleTestCase):
                 "dataset_id": DATASET_ID,
                 "candidate_capture_id": DATASET_ID,
                 "reference_capture_id": DATASET_ID,
+                "reference_config": {},
                 "execution_mode": "replay",
                 "live_config": {},
             },
@@ -483,6 +484,7 @@ class EvaluationTests(TestCase):
                 "prefect_flow_run_id": str(run.prefect_flow_run_id),
                 "candidate_capture_id": LIVE_CAPTURE_ID,
                 "reference_capture_id": DATASET_ID,
+                "reference_config": {},
                 "execution_mode": "live",
                 "live_config": run.live_config,
             }

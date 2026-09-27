@@ -11,6 +11,7 @@ const sessionSchema = z.object({
   datasets: z.array(z.object({
     id: z.string(), label: z.string(), case_ids: z.array(z.string()).min(1),
     captures: z.array(z.object({ id: z.string(), label: z.string() })).min(1),
+    baseline: z.object({ id: z.string(), label: z.string() }).nullable(),
     fixture: z.string(), live_config: liveConfigSchema,
   })),
 })
@@ -49,10 +50,28 @@ const runSchema = z.object({
   report_url: z.string().regex(/^\/api\/v1\/ops\/evaluations\/[a-f0-9-]+\/report$/).nullable(),
 })
 const pageSchema = z.object({ count: z.number(), next: z.string().nullable(), previous: z.string().nullable(), results: z.array(runSchema) })
+const reviewSchema = z.object({
+  is_baseline: z.boolean(), material_error: z.string(),
+  reviews: z.array(z.object({
+    id: z.number().int(), decision: z.enum(['APPROVED', 'CHANGES_REQUESTED']), comment: z.string(),
+    capture_sha256: z.string(), reviewed_by: z.string(), created_at: z.string(),
+  })),
+  material: z.object({
+    capture_sha256: z.string(), fixture_sha256: z.string(),
+    cases: z.array(z.object({
+      case_id: z.string(), question: z.string(), document_title: z.string(),
+      evidence: z.array(z.object({ order: z.number().int(), text: z.string() })),
+      answer: z.string(), answer_status: z.string(), cited_orders: z.array(z.number().int()),
+      reference_answer: z.string(), expected_status: z.string(), expected_citation_orders: z.array(z.number().int()),
+      reference_facts: z.array(z.string()), forbidden_claims: z.array(z.string()),
+    })),
+  }).nullable(),
+})
 
 export type OpsSession = z.infer<typeof sessionSchema>
 export type EvaluationRun = z.infer<typeof runSchema>
 export type EvaluationPage = z.infer<typeof pageSchema>
+export type EvaluationReview = z.infer<typeof reviewSchema>
 
 export class OpsApiError extends Error {
   readonly status: number
@@ -76,7 +95,7 @@ async function request<T>(path: string, schema: z.ZodType<T>, options: RequestIn
       : response.status === 403 ? '관리자 계정만 운영 화면을 이용할 수 있습니다.'
       : response.status === 503 ? '관리자 인증 또는 운영 서버에 연결할 수 없습니다.'
       : response.status === 404 ? '평가 실행을 찾을 수 없습니다.'
-      : response.status === 409 ? '기존 요청과 평가 조건이 다릅니다. 실행 이력을 확인하세요.'
+      : response.status === 409 ? '평가 조건이나 검토 기록이 변경되었습니다. 새로고침 후 확인하세요.'
       : response.status === 400 ? '평가 조건 또는 실행 설정이 변경되었습니다. 새로고침 후 자료와 예산을 확인하세요.'
       : '요청을 처리하지 못했습니다. 다시 시도해 주세요.'
     throw new OpsApiError(message, response.status)
@@ -99,6 +118,9 @@ async function post<T>(path: string, data: unknown, schema: z.ZodType<T>, dispat
 
 export const listEvaluations = (page: number, signal?: AbortSignal) => request(`/evaluations?page=${page}`, pageSchema, { signal })
 export const getEvaluation = (id: string, signal?: AbortSignal) => request(`/evaluations/${encodeURIComponent(id)}`, runSchema, { signal })
+export const getEvaluationReview = (id: string, signal?: AbortSignal) => request(`/evaluations/${encodeURIComponent(id)}/review`, reviewSchema, { signal })
+export const saveEvaluationReview = (id: string, decision: 'APPROVED' | 'CHANGES_REQUESTED', comment: string, captureSha256: string) => post(`/evaluations/${encodeURIComponent(id)}/review`, { decision, comment, capture_sha256: captureSha256 }, reviewSchema)
+export const promoteEvaluationBaseline = (id: string, reviewId: number) => post(`/evaluations/${encodeURIComponent(id)}/baseline`, { review_id: reviewId }, reviewSchema)
 export const submitEvaluation = (requestId: string, datasetId: string, candidateCaptureId: string, referenceCaptureId: string, liveConfig: z.infer<typeof liveConfigSchema> | null = null) => post('/evaluations', {
   request_id: requestId, dataset_id: datasetId, candidate_capture_id: candidateCaptureId, reference_capture_id: referenceCaptureId,
   execution_mode: liveConfig ? 'live' : 'replay', live_config: liveConfig ?? {}, confirm_paid_run: liveConfig !== null,

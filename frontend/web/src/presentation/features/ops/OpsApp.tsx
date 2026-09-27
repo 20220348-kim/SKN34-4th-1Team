@@ -7,6 +7,7 @@ import { signedOut } from '../../shared/auth/state/authSlice'
 import { loginPathFor } from '../../shared/auth/returnPath'
 import type { EvaluationPage, EvaluationRun, OpsSession } from '../../../data/ops/opsApi'
 import { workspacePageStyles as styles, workspaceTagClassName } from '../../shared/workspace/WorkspacePage.styles'
+import { EvaluationReviewPanel } from './EvaluationReviewPanel'
 import { WorkspacePageHeader } from '../../shared/workspace/WorkspacePageHeader'
 
 const listPath = '/ops/evaluations'
@@ -73,7 +74,7 @@ export function OpsApp() {
         : !session.user ? <Navigate replace to={loginPathFor(location.pathname === '/ops/login' ? listPath : location.pathname + location.search)} />
           : <Routes>
             <Route path="/ops/evaluations" element={<EvaluationList key={session.user.username} datasets={session.datasets} liveEnabled={session.live_enabled} onExpired={expired} />} />
-            <Route path="/ops/evaluations/:runId" element={<EvaluationDetail key={`${session.user.username}:${location.pathname}`} onExpired={expired} />} />
+            <Route path="/ops/evaluations/:runId" element={<EvaluationDetail key={`${session.user.username}:${location.pathname}`} onExpired={expired} onReviewChanged={() => setReload((value) => value + 1)} />} />
             <Route path="*" element={<Navigate replace to={listPath} />} />
           </Routes>}
     </main>
@@ -93,11 +94,11 @@ function EvaluationList({ datasets, liveEnabled, onExpired }: { datasets: OpsSes
   const [approved, setApproved] = useState(false)
   const [dataset, setDataset] = useState(datasets[0]?.id ?? '')
   const selected = datasets.find((item) => item.id === dataset)
-  const [reference, setReference] = useState(datasets[0]?.captures[0]?.id ?? '')
+  const [reference, setReference] = useState(datasets[0]?.baseline?.id ?? datasets[0]?.captures[0]?.id ?? '')
   const [candidate, setCandidate] = useState(datasets[0]?.captures.at(-1)?.id ?? '')
   const changeDataset = (id: string) => {
     const value = datasets.find((item) => item.id === id)
-    setApproved(false); setDataset(id); setReference(value?.captures[0]?.id ?? ''); setCandidate(value?.captures.at(-1)?.id ?? '')
+    setApproved(false); setDataset(id); setReference(value?.baseline?.id ?? value?.captures[0]?.id ?? ''); setCandidate(value?.captures.at(-1)?.id ?? '')
   }
   const requestId = useRef<string | null>(null)
   const submitting = useRef(false)
@@ -134,7 +135,7 @@ function EvaluationList({ datasets, liveEnabled, onExpired }: { datasets: OpsSes
         <form className="flex flex-wrap items-end gap-3" onSubmit={(event) => { event.preventDefault(); void submit() }}>
           <label className="grid w-full gap-2 text-sm font-semibold">실행 방식<select className={field} value={mode} disabled={busy || requestId.current !== null} onChange={(event) => { setMode(event.target.value as 'replay' | 'live'); setApproved(false) }}><option value="replay">저장 응답 재평가 · API 호출 없음</option><option value="live">새 응답 생성 · 유료 모델 호출</option></select></label>
           <label className="grid min-w-0 flex-1 gap-2 text-sm font-semibold">평가 자료<select className={field} value={dataset} disabled={busy || requestId.current !== null} onChange={(event) => changeDataset(event.target.value)}>{datasets.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
-          <label className="grid min-w-56 flex-1 gap-2 text-sm font-semibold">기준 실행<select className={field} value={reference} disabled={busy || requestId.current !== null} onChange={(event) => setReference(event.target.value)}>{selected?.captures.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
+          <label className="grid min-w-56 flex-1 gap-2 text-sm font-semibold">기준 실행<select className={field} value={reference} disabled={busy || requestId.current !== null} onChange={(event) => setReference(event.target.value)}>{selected?.baseline && <option value={selected.baseline.id}>{selected.baseline.label}</option>}{selected?.captures.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
           {mode === 'replay' && <label className="grid min-w-56 flex-1 gap-2 text-sm font-semibold">후보 실행<select className={field} value={candidate} disabled={busy || requestId.current !== null} onChange={(event) => setCandidate(event.target.value)}>{selected?.captures.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>}
           <button className={styles.primaryButton} disabled={busy || !dataset || !reference || !candidate || (mode === 'live' && (!approved || !liveEnabled))}>{busy ? '접수 중…' : submitError ? '같은 요청으로 재시도' : mode === 'live' ? '새 응답 생성 및 평가' : '평가 실행'}</button>
           {mode === 'live' && selected && <div className="w-full rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6">
@@ -160,7 +161,7 @@ function EvaluationList({ datasets, liveEnabled, onExpired }: { datasets: OpsSes
   </>
 }
 
-function EvaluationDetail({ onExpired }: { onExpired: () => void }) {
+function EvaluationDetail({ onExpired, onReviewChanged }: { onExpired: () => void; onReviewChanged: () => void }) {
   const { runId = '' } = useParams()
   const [run, setRun] = useState<EvaluationRun | null>(null)
   const [error, setError] = useState('')
@@ -216,6 +217,7 @@ function EvaluationDetail({ onExpired }: { onExpired: () => void }) {
           ['인용 재현율', run.summary.referenceCitationRecall?.toFixed(2) ?? '미측정'], ['모델 API 호출', run.model_api_calls === null ? '미확인' : `${run.model_api_calls}회`],
         ].map(([label, value]) => <div className="rounded-xl bg-[#f3f7f5] p-4" key={label}><p className="text-xs text-sample-muted">{label}</p><strong className="mt-3 block text-2xl">{value}</strong></div>)}</div><p className="text-xs leading-5 text-sample-muted">점수 범위는 0–1입니다. AI 작성 참조 자료에 대한 평가이며 의미 충실도는 미측정입니다. 완료 상태는 품질 합격을 뜻하지 않습니다.</p></section>}
         {run.status === 'COMPLETED' && (run.comparison ? <ComparisonResult comparison={run.comparison} /> : <p className="text-sm text-sample-muted">이전 실행에는 비교 상세가 없습니다. 새 평가를 실행하면 기준·후보 차이를 확인할 수 있습니다.</p>)}
+        {run.status === 'COMPLETED' && <EvaluationReviewPanel runId={run.id} onExpired={onExpired} onChanged={onReviewChanged} />}
         <section className={styles.card}><h2 className={styles.cardTitle}>상세 기록과 보고서</h2><div className="flex flex-wrap gap-3">
           {run.report_url && <a className={styles.primaryButton} href={run.report_url} target="_blank" rel="noopener noreferrer">Evidently 보고서</a>}
           {run.trace_links.map((trace) => <a key={trace.case_id} className={styles.secondaryButton} href={trace.url} target="_blank" rel="noopener noreferrer">Langfuse {trace.case_id} 추적·점수</a>)}

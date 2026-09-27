@@ -13,8 +13,8 @@ const id = '10000000-0000-4000-8000-000000000001'
 const flowId = '20000000-0000-4000-8000-000000000002'
 const capture = { id: 'target-coverage-20260907-v1', label: '저장 캡처' }
 const liveConfig = { model: 'gpt-6-luna', fixture_sha256: 'c'.repeat(64), max_model_calls: 6, max_output_tokens: 2000 }
-const dataset = { fixture: 'target-coverage-fixture.json', live_config: liveConfig, id: capture.id, label: '지원 대상 근거 답변 · 저장된 가상 평가 6건', case_ids: ['TC01', 'TC02', 'TC03', 'TC04', 'TC05', 'TC06'], captures: [capture] }
-const comparisonDataset = { fixture: 'fixture.json', live_config: { ...liveConfig, max_model_calls: 1 }, id: 'fixed-context-e01-v1', label: '공통 E01 비교', case_ids: ['E01'], captures: [{ id: 'reference', label: '기준 프롬프트' }, { id: 'candidate', label: '후보 프롬프트' }] }
+const dataset = { baseline: null, fixture: 'target-coverage-fixture.json', live_config: liveConfig, id: capture.id, label: '지원 대상 근거 답변 · 저장된 가상 평가 6건', case_ids: ['TC01', 'TC02', 'TC03', 'TC04', 'TC05', 'TC06'], captures: [capture] }
+const comparisonDataset = { baseline: null, fixture: 'fixture.json', live_config: { ...liveConfig, max_model_calls: 1 }, id: 'fixed-context-e01-v1', label: '공통 E01 비교', case_ids: ['E01'], captures: [{ id: 'reference', label: '기준 프롬프트' }, { id: 'candidate', label: '후보 프롬프트' }] }
 const completed = {
   execution_mode: 'replay', live_config: null, trace_links: [],
   candidate_capture_id: capture.id, reference_capture_id: capture.id, candidate_label: capture.label, reference_label: capture.label, comparison: null,
@@ -38,6 +38,7 @@ beforeEach(() => {
     if (path === '/api/v1/ops/session') return json(session())
     if (String(path).endsWith('/api/v1/auth/logout')) { authenticated = false; return new Response(null, { status: 204 }) }
     if (path.startsWith('/api/v1/ops/evaluations?page=')) return json({ count: 1, next: null, previous: null, results: [completed] })
+    if (path === `/api/v1/ops/evaluations/${id}/review`) return json({ is_baseline: false, reviews: [], material: null, material_error: '' })
     if (path === `/api/v1/ops/evaluations/${id}`) return json(completed)
     if (path === '/api/v1/ops/evaluations') return json(completed, 202)
     throw new Error(`예상하지 않은 호출: ${path}`)
@@ -273,4 +274,76 @@ it('새 평가의 호출 수와 사례별 추적 링크를 표시하고 과거 �
   expect(await screen.findByRole('link', { name: 'Langfuse TC01 추적·점수' })).toHaveProperty('href', 'http://localhost:13000/project/test/traces/abc')
   expect(screen.queryByText(/새 모델 호출은 없으며/)).toBeNull()
   expect(screen.getAllByText('6회').length).toBeGreaterThan(0)
+})
+
+const reviewMaterial = {
+  capture_sha256: 'd'.repeat(64), fixture_sha256: 'c'.repeat(64),
+  cases: [{ case_id: 'E01', question: '지원 대상은 누구인가요?', document_title: '가상 공고',
+    evidence: [{ order: 0, text: '서울 소재 법인만 가능합니다.' }],
+    answer: '<script>후보 답변은 텍스트로 표시</script>', answer_status: 'ANSWERED', cited_orders: [0],
+    reference_answer: '과거 기준 답변', expected_status: 'ANSWERED', expected_citation_orders: [0],
+    reference_facts: ['서울 소재 법인'], forbidden_claims: ['개인도 신청 가능'],
+  }],
+}
+
+it('근거·응답을 검토한 후 의견과 승인 기록을 저장하고 기준을 지정한다', async () => {
+  const original = fetchMock.getMockImplementation()!
+  let state = { material: reviewMaterial, material_error: '', is_baseline: false, reviews: [] as Array<{ id: number; decision: string; comment: string; capture_sha256: string; reviewed_by: string; created_at: string }> }
+  fetchMock.mockImplementation(async (path, options) => {
+    if (path === `/api/v1/ops/evaluations/${id}/review`) {
+      if (options?.method === 'POST') {
+        expect(options.headers).toMatchObject({ 'X-CSRFToken': 'rotated-token' })
+        const input = JSON.parse(String(options.body))
+        state = { ...state, reviews: [{ ...input, id: 1, reviewed_by: 'operator@example.com', created_at: completed.created_at }] }
+      }
+      return json(state)
+    }
+    if (path === `/api/v1/ops/evaluations/${id}/baseline`) {
+      expect(JSON.parse(String(options?.body))).toEqual({ review_id: 1 })
+      state = { ...state, is_baseline: true }
+      return json(state)
+    }
+    return original(path, options)
+  })
+  open(`/ops/evaluations/${id}`)
+  expect(await screen.findByText('서울 소재 법인만 가능합니다.')).toBeTruthy()
+  expect(screen.getByText('<script>후보 답변은 텍스트로 표시</script>')).toBeTruthy()
+  expect(document.querySelector('script')).toBeNull()
+  const approve = screen.getByRole('button', { name: '검토 승인 저장' })
+  const promote = screen.getByRole('button', { name: '비교 기준으로 지정' })
+  expect(approve).toHaveProperty('disabled', true)
+  expect(promote).toHaveProperty('disabled', true)
+  fireEvent.change(screen.getByLabelText('검토 의견'), { target: { value: '지역과 법인 조건을 확인했습니다.' } })
+  fireEvent.click(screen.getByLabelText('위 모든 사례의 질문·근거·후보 답변을 검토했습니다.'))
+  fireEvent.click(approve)
+  expect(await screen.findByText('검토 기록을 저장했습니다.')).toBeTruthy()
+  await waitFor(() => expect(promote).toHaveProperty('disabled', false))
+  fireEvent.click(promote)
+  expect(await screen.findByText('현재 데이터셋의 비교 기준')).toBeTruthy()
+  expect(fetchMock.mock.calls.some(([path, options]) => path === '/api/v1/ops/evaluations' && options?.method === 'POST')).toBe(false)
+})
+
+it('검토 기준을 다음 평가의 기준 선택에 표시하고 후보 목록과 구별한다', async () => {
+  const original = fetchMock.getMockImplementation()!
+  fetchMock.mockImplementation((path, options) => path === '/api/v1/ops/session'
+    ? Promise.resolve(json({ ...session(), datasets: [{ ...dataset, baseline: { id: `run:${id}`, label: '검토 기준 · 10000000' } }] }))
+    : original(path, options))
+  open()
+  expect(await screen.findByLabelText('기준 실행')).toHaveProperty('value', `run:${id}`)
+  expect(screen.getByLabelText('후보 실행')).toHaveProperty('value', capture.id)
+  fireEvent.click(screen.getByRole('button', { name: '평가 실행' }))
+  await screen.findByRole('heading', { name: '평가 실행 상세' })
+  const payload = fetchMock.mock.calls.find(([path, options]) => path === '/api/v1/ops/evaluations' && options?.method === 'POST')?.[1]?.body
+  expect(JSON.parse(String(payload))).toMatchObject({ reference_capture_id: `run:${id}`, execution_mode: 'replay' })
+})
+
+it('확인할 수 없는 자료를 승인하거나 기준으로 지정하지 않는다', async () => {
+  const original = fetchMock.getMockImplementation()!
+  fetchMock.mockImplementation((path, options) => path.endsWith('/review')
+    ? Promise.resolve(json({ material: null, material_error: '검토 자료를 확인할 수 없습니다.', reviews: [], is_baseline: false }))
+    : original(path, options))
+  open(`/ops/evaluations/${id}`)
+  expect(await screen.findByText('검토 자료를 확인할 수 없습니다.')).toBeTruthy()
+  expect(screen.queryByRole('button', { name: '검토 승인 저장' })).toBeNull()
+  expect(screen.queryByRole('button', { name: '비교 기준으로 지정' })).toBeNull()
 })

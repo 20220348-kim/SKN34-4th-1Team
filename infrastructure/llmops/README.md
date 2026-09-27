@@ -2,11 +2,36 @@
 
 [전략 문서](../../docs/langfuse-adoption-strategy.md) · [근거 답변 평가](../../evaluation/support-program-evidence/README.md)
 
-구현 범위는 근거 답변 추적과 **저장 응답 재평가와 승인 기반 새 응답 생성 파이프라인**이다.
+구현 범위는 근거 답변 추적, **저장 응답 재평가·승인 기반 새 응답 생성 파이프라인**, React·Django 운영 화면과 관리자 응답 검토·비교 기준 지정이다.
 Langfuse 4.15.6, Prefect 3.8.6, pandas 3.0.6, Pandera 0.33.1, Evidently 0.7.23을
 AI Service의 `uv.lock`으로 고정한다. 요청 처리에는 Langfuse만 설치하고 나머지는 `evaluation` 그룹으로 설치한다.
 AI Service·Django Ops의 로컬·CI·Docker와 평가 실행기·Prefect 서버는 모두 Python 3.12를 사용한다.
 AI 프로젝트는 `>=3.12,<3.13`으로 제한하며 `.python-version`과 `uv.lock`에 맞춰 설치한다.
+
+## 개발 반영 현황 — 2026-09-27
+
+지금까지 개발한 기능과 로컬 검증 범위다. 아래 상세 절에는 실행 방법과 당시 검증 기록을 보존한다.
+
+| 영역 | 반영 내용 |
+|---|---|
+| 실행 환경 | AI·Ops·평가 실행기·Prefect의 Python 3.12 통일, 의존성 잠금 파일, 별도 개발 Compose |
+| Langfuse 추적 | 근거 답변 HTTP 경로와 평가 실행기의 직접 Service 호출에서 모델·토큰·지연·오류·trace 연결. 일반 요청 본문은 기본 수집 제외 |
+| 평가 파이프라인 | Prefect → pandas/Pandera 검증 → 지표 재계산 → Evidently 보고서·Langfuse 점수 등록 및 재조회 |
+| 과거 응답 비교 | 저장된 가상 6건 재현, 과거 두 실행의 공통 E01 비교, 모델·프롬프트·지표 차이와 미측정 값 표시 |
+| 운영 화면·인증 | React `/ops/evaluations`, Django API, 기존 Core 관리자 로그인·공유 로그아웃, CSRF·일반 회원 접근 차단 |
+| 실행·결과 관리 | 요청 UUID 중복 방지, 실행 이력·상태 조회·오류 표시, 파일 해시 검증, 인증된 보고서·외부 기록 링크 |
+| 새 모델 평가 | 자료·모델·호출 수·출력 토큰 예산 확인 후 새 응답 생성, 중복 유료 실행 차단, 실패 시 부분 캡처·호출 시도 수 보존 |
+| GPT-6 Luna 실제 호출 | 환경변수 반영 후 E01 한 건을 실제 1회 호출. 토큰·trace·점수·보고서 확인. 전체 품질 평가로 해석하지 않음 |
+| 관리자 검토·비교 기준 | 질문·근거·후보/기준 답변 조회, 승인·수정 필요 의견과 검토자·이력 저장, 데이터셋별 기준 지정, 접수 시 기준 해시 고정·실행별 원본 복사 |
+
+상세 계약은 [Ops README](../../backend/ops-service/README.md#응답-검토와-비교-기준),
+화면 사용법은 [Web README](../../frontend/web/README.md#llmops-운영-화면--react--django),
+평가 입력·출력은 [평가 README](../../evaluation/support-program-evidence/README.md#ops에서-새-응답-생성)에 둔다.
+전체 도입 순서와 후속 범위는 [전략 문서](../../docs/langfuse-adoption-strategy.md)에서 관리한다.
+
+남은 범위는 평가 자료 확장·품질 합격 기준, 후처리만 재실행하는 운영 기능, 취소·정기 실행·알림,
+Core부터 이어지는 전체 RAG 추적과 Ops 평가 연동, 운영 배포다. 별도 도구의 과거 전체 RAG 검증 기록과
+현재 Ops의 고정 근거 평가는 구별한다. 최신 검토·기준 지정 변경의 원격 CI와 운영 배포는 아직 수행하지 않았다.
 
 ## 개발 서버
 
@@ -335,6 +360,49 @@ migration 정합성, Compose 구문과 두 서비스 이미지 빌드도 확인�
 실제 Core 관리자 로그인→Django→Prefect→보고서/점수 경로는 저장 E01 비교로 완료했다
 (`work/llmops-live-feature-replay-verification.json`, 요청 `7068d286-e16d-4594-9a48-b6d86d4dadf8`).
 브라우저에서 새 응답 생성 선택·자료별 1회/6회 예산·비활성화 상태를 확인했다.
-OpenAI 키와 별도 실행 승인이 없어 이번 변경의 실제 유료 호출은 0회이며, 모델 품질은 미검증이다.
+구현 당시에는 OpenAI 키와 별도 실행 승인이 없어 유료 호출 없이 검증했다. 이후 승인된 실제 호출 결과는 다음 절에 기록한다.
 변경된 평가 테스트는 기존 GovBiz CI의 `evaluation/support-program-evidence` 전체 테스트에 포함된다.
 이 기록은 로컬 검증 결과이며, 원격 CI 통과나 운영 배포 완료를 의미하지 않는다.
+
+
+### GPT-6 Luna 실제 API 1회 검증
+
+2026-09-27 사용자의 실제 API 테스트 요청에 따라 E01 가상 질문 한 건을 최대 1회 호출했다.
+루트 `.env`의 `OPENAI_MODEL`, `OPENAI_RANKING_MODEL`, `OPENAI_ASSISTANT_AGENT_MODEL`을
+`gpt-6-luna`로 설정하고, Git 제외 파일 `.env.ops`의 `LLMOPS_LIVE_MODEL`과
+`LLMOPS_LIVE_ENABLED=true`를 실행기에 반영했다. API 키 값은 코드·문서에 기록하지 않는다.
+
+- 요청: `e2d30b0f-eb78-4adb-a616-d179f9712dc7`
+- Prefect: `a0df1fc2-874e-4236-800e-a38d6e2dcb24`, 상태 `COMPLETED`
+- OpenAI: 실제 1회, HTTP 200, 입력 1,067 / 출력 87 / 합계 1,154토큰
+- 답변 처리 시간: 8,271.214ms. Prefect 대기·보고서 생성 시간은 제외
+- E01 기대 상태·인용 일치: 각각 1.0. 의미 충실도 자동 지표는 여전히 null
+- Langfuse trace: `540514392ebc4b08a694a344f41dd0b3`; 관측 2개와 같은 trace에 연결된 점수 4개 재조회 확인
+- 인증된 Evidently 보고서 HTTP 200 및 React 완료 화면 확인
+- 로컬 검증 기록: `work/llmops-live-gpt6-luna-verification.json`, `work/llmops-live-gpt6-luna-capture.json`
+
+[실제 평가 결과](http://localhost:5173/ops/evaluations/e2d30b0f-eb78-4adb-a616-d179f9712dc7)에서 확인한다.
+서울 본점·소프트웨어 개발업·등록 후 3년 이내·법인이라는 조건을 답변했으며 개인사업자 제외도 포함했다.
+이는 가상 사례 한 건의 기능 확인이다. 기준과 후보의 프롬프트도 달라 모델 변경만의 효과나 일반 품질 개선을 주장하지 않는다.
+
+### 응답 검토·비교 기준 지정
+
+Ops와 실행기를 재빌드한 뒤 `python manage.py migrate --noinput`으로 `0004`를 적용합니다.
+완료 상세에서 질문·근거·답변을 확인하고 검토 의견을 저장한 뒤 **비교 기준으로 지정**합니다.
+다음 평가의 기준 선택에 해당 실행이 나타납니다. 검토 승인이나 기준 지정은 모델을 호출하지 않습니다.
+기존 결과를 개발 확인만으로 자동 승인하지 않으며 관리자의 실제 검토 기록을 기다립니다.
+
+Compose의 Ops는 `/results`와 `/evaluation-data`를 읽기 전용으로 사용합니다. 실행기는 기준 UUID와
+캡처·자료 해시를 확인한 뒤 실행 폴더에 기준 응답을 복사하므로, 추후 기준을 변경해도 이미 접수한
+평가의 비교 입력은 바뀌지 않습니다. API 계약과 제한은 [Ops 검토 안내](../../backend/ops-service/README.md#응답-검토와-비교-기준)를 참고하세요.
+
+2026-09-27 로컬 검증에서는 Ops 기존 평가·인증 테스트 23개와 검토·기준 지정 테스트 7개,
+평가 실행기 테스트 21개, React Ops 테스트 18개가 통과했다. 변경한 검토·스냅샷 경로는 수정 후
+선택 재검증했으며, 전체 저장소 테스트를 다시 실행한 결과는 아니다. Ruff·포맷·TypeScript·Oxlint,
+migration 정합성·이미지 빌드·`git diff --check`를 확인하고 로컬 DB에 `0004`를 적용했다.
+
+실제 저장 형식에 맞춰 답변은 `capture.json`, 고정 근거는 fixture에서 읽고 양쪽 캡처·자료의 해시를
+확인한다. 무료 테스트에서 검토·기준 지정·철회·중복 재시도·잘못된 자료 차단과 기준 스냅샷을 사용한
+Evidently 보고서 생성을 검증했다. 브라우저에서는 기존 GPT-6 Luna E01 결과의 질문·후보/기준 답변,
+근거 3개·인용 청크 0번·검토 입력 화면을 확인했다. 이 개발 검증에서는 추가 유료 호출이나 실제
+관리자 승인 기록을 생성하지 않았으며, 기존 결과는 미검토 상태로 유지했다.

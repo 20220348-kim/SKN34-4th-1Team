@@ -1,4 +1,5 @@
 import json
+from hashlib import sha256
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -8,6 +9,89 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ops_flow
+
+
+def reviewed_source(tmp_path):
+    from catalog import DATASETS
+    source_id = str(uuid4())
+    folder = tmp_path / source_id
+    (folder / "evaluation").mkdir(parents=True)
+    dataset = DATASETS["fixed-context-e01-v1"]
+    candidate = dataset["captures"][1]
+    raw = (Path(ops_flow.__file__).parent / candidate["path"]).read_bytes()
+    config = {"run_id": source_id, "capture_sha256": sha256(raw).hexdigest(),
+              "fixture_sha256": dataset["fixture_sha256"]}
+    (folder / "request.json").write_text(json.dumps({
+        "request_id": source_id, "dataset_id": dataset["id"],
+        "candidate_capture_id": candidate["id"], "reference_capture_id": candidate["id"],
+        "execution_mode": "replay",
+    }))
+    (folder / "evaluation/manifest.json").write_text(json.dumps({
+        "status": "completed", "capture_sha256": config["capture_sha256"],
+        "fixture_sha256": dataset["fixture_sha256"],
+    }))
+    return config, candidate["id"], raw
+
+
+@pytest.mark.parametrize("source_mode", ["replay", "live"])
+def test_reviewed_baseline_is_snapshotted_for_free_replay(monkeypatch, tmp_path, source_mode):
+    import llmops
+    config, candidate, raw = reviewed_source(tmp_path)
+    if source_mode == "live":
+        folder = tmp_path / config["run_id"]
+        (folder / "capture").mkdir()
+        (folder / "capture/capture.json").write_bytes(raw)
+        marker_path = folder / "request.json"
+        marker = json.loads(marker_path.read_text())
+        marker.update(execution_mode="live", candidate_capture_id="new-model-response")
+        marker_path.write_text(json.dumps(marker))
+    request_id = str(uuid4())
+    monkeypatch.setenv("LLMOPS_RESULTS_DIR", str(tmp_path))
+    monkeypatch.setattr(ops_flow, "flow_run", SimpleNamespace(id=str(uuid4())))
+    monkeypatch.setattr(ops_flow.evaluate, "execute", lambda *a, **k: pytest.fail("no paid calls"))
+    monkeypatch.setattr(ops_flow, "evaluate_capture", llmops.evaluate_capture.fn)
+    monkeypatch.setattr(llmops, "prepare", llmops.prepare.fn)
+    monkeypatch.setattr(llmops, "render", llmops.render.fn)
+    monkeypatch.setattr(llmops, "publish", lambda current: [])
+    result = ops_flow.evaluate_saved_capture.fn(request_id, "fixed-context-e01-v1", candidate,
+        f"run:{config['run_id']}", reference_config=config)
+    assert (tmp_path / request_id / "reference-capture.json").read_bytes() == raw
+    assert result["status"] == "completed" and result["model_api_calls"] == 0
+    assert result["reference_capture_sha256"] == config["capture_sha256"]
+    assert (tmp_path / request_id / "evaluation/report.html").is_file()
+    marker = json.loads((tmp_path / request_id / "request.json").read_text())
+    assert marker["reference_config"] == config
+
+
+@pytest.mark.parametrize("failure", ["hash", "dataset", "incomplete", "path", "missing-config"])
+def test_invalid_reviewed_baseline_never_spends(monkeypatch, tmp_path, failure):
+    from catalog import LIVE_CAPTURE_ID, live_config
+    config, _, _ = reviewed_source(tmp_path)
+    reference_id = f"run:{config['run_id']}"
+    folder = tmp_path / config["run_id"]
+    if failure == "hash":
+        config["capture_sha256"] = "0" * 64
+    elif failure in {"dataset", "path"}:
+        marker_path = folder / "request.json"
+        marker = json.loads(marker_path.read_text())
+        marker["dataset_id" if failure == "dataset" else "candidate_capture_id"] = "../../private"
+        marker_path.write_text(json.dumps(marker))
+    elif failure == "incomplete":
+        path = folder / "evaluation/manifest.json"
+        manifest = json.loads(path.read_text())
+        manifest["status"] = "failed"
+        path.write_text(json.dumps(manifest))
+    else:
+        config = None
+    monkeypatch.setenv("LLMOPS_RESULTS_DIR", str(tmp_path))
+    monkeypatch.setenv("LLMOPS_LIVE_ENABLED", "true")
+    monkeypatch.setenv("OPENAI_API_KEY", "fake-key")
+    monkeypatch.setattr(ops_flow.evaluate, "execute", lambda *a, **k: pytest.fail("no paid calls"))
+    request_id = str(uuid4())
+    with pytest.raises(ValueError):
+        ops_flow.evaluate_saved_capture.fn(request_id, "fixed-context-e01-v1", LIVE_CAPTURE_ID,
+            reference_id, "live", live_config("fixed-context-e01-v1"), config)
+    assert not (tmp_path / request_id).exists()
 
 
 def test_registered_entrypoint_uses_saved_inputs_and_correlates_request(monkeypatch, tmp_path):

@@ -2,7 +2,9 @@
 
 import json
 import os
+import re
 from pathlib import Path
+from uuid import UUID
 
 DATASETS = {
     item["id"]: item
@@ -46,9 +48,40 @@ def selection(dataset_id, candidate_capture_id, reference_capture_id):
             if candidate_capture_id == LIVE_CAPTURE_ID
             else captures[candidate_capture_id]
         )
-        return dataset, candidate, captures[reference_capture_id]
+        reference = (
+            {
+                "id": reference_capture_id,
+                "label": f"검토 기준 · {reference_run_id(reference_capture_id)[:8]}",
+            }
+            if reference_capture_id.startswith("run:")
+            else captures[reference_capture_id]
+        )
+        return dataset, candidate, reference
     except KeyError:
         raise ValueError("평가 자료에 등록된 기준·후보 실행을 선택하세요.") from None
+
+
+def reference_run_id(capture_id):
+    value = capture_id.removeprefix("run:")
+    if not capture_id.startswith("run:") or str(UUID(value)) != value:
+        raise ValueError("올바른 기준 실행 ID가 필요합니다.")
+    return value
+
+
+def validate_reference_config(dataset_id, capture_id, config):
+    if not capture_id.startswith("run:"):
+        if config:
+            raise ValueError("저장 기준에는 실행 명세를 지정할 수 없습니다.")
+        return
+    if (
+        not isinstance(config, dict)
+        or set(config) != {"run_id", "capture_sha256", "fixture_sha256"}
+        or config["run_id"] != reference_run_id(capture_id)
+        or config["fixture_sha256"] != DATASETS[dataset_id]["fixture_sha256"]
+        or not isinstance(config["capture_sha256"], str)
+        or not re.fullmatch(r"[a-f0-9]{64}", config["capture_sha256"])
+    ):
+        raise ValueError("기준 실행의 자료·응답 명세가 일치하지 않습니다.")
 
 
 def public_datasets():
