@@ -192,6 +192,15 @@ backend/ai-service/.venv/bin/python evaluation/support-program-evidence/evaluate
 의미 충실도도 미측정입니다. 보고서와 비교 JSON의 해시는 manifest에서 확인합니다.
 이 경로는 새 모델을 호출하지 않으며 과거 한 사례의 차이를 현재 모델의 전반적 품질로 해석하지 않습니다.
 
+## Ops에서 실패한 후처리 복구
+
+`ops_flow.py`의 `recovery` 모드는 원본 요청·완료 캡처·fixture·비교 기준의 해시를 확인하고,
+새 요청 폴더에 바이트를 복사한 뒤 기존 `evaluate_capture`만 호출합니다. `evaluate.execute`는
+호출하지 않습니다. 원본의 유료 호출 수는 보존하며 복구의 추가 호출 수는 0입니다.
+`llmops.py`는 입력 검증 뒤 해시와 마지막 보고서/등록 단계를 즉시 manifest에 저장하므로
+후처리 도중 프로세스가 중단되어도 입력을 확인할 수 있습니다. 입력 검증 이전의 중단은 복구하지 않습니다.
+실행 방법과 제한은 [후처리 복구 안내](../../infrastructure/llmops/README.md#후처리-복구)를 참고하세요.
+
 ## Ops에서 새 응답 생성
 
 [실행 설정](../../infrastructure/llmops/README.md#ops에서-새-모델-평가) 후 Ops에서 새 응답 생성을 선택합니다.

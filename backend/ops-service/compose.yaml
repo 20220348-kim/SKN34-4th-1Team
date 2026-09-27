@@ -13,6 +13,7 @@ services:
       DB_USER: govbiz4
       DB_HOST: ops-mysql
       DB_PORT: "3306"
+      LLMOPS_EVIDENCE_DIR: /evaluation-data
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
@@ -21,6 +22,7 @@ services:
       - ./config:/app/config:ro
       - ./apps:/app/apps:ro
       - ./manage.py:/app/manage.py:ro
+      - ../../evaluation/support-program-evidence:/evaluation-data:ro
     depends_on:
       ops-mysql:
         condition: service_healthy

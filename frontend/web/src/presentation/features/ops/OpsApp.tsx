@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
-import { getEvaluation, getOpsSession, listEvaluations, OpsApiError, submitEvaluation } from '../../../data/ops/opsApi'
+import { getEvaluation, getOpsSession, listEvaluations, OpsApiError, recoverEvaluation, submitEvaluation } from '../../../data/ops/opsApi'
 import { appContainer } from '../../../app/appContainer'
 import { useAppDispatch } from '../../../app/hooks'
 import { signedOut } from '../../shared/auth/state/authSlice'
@@ -13,6 +13,8 @@ import { WorkspacePageHeader } from '../../shared/workspace/WorkspacePageHeader'
 const listPath = '/ops/evaluations'
 const notice = '저장된 과거 평가 결과를 비교합니다. 새 모델 호출은 없으며 현재 모델의 품질 측정이 아닙니다.'
 const liveNotice = '선택한 가상 공고의 질문·고정 근거 청크와 답변 지침을 OpenAI에 전송해 새 응답을 생성합니다. 검색·임베딩은 실행하지 않으며 API 비용이 발생합니다.'
+const recoveryNotice = '이미 생성된 응답으로 보고서와 평가 점수 등록만 다시 처리합니다. 추가 모델 호출은 0회이며 원본 실행 기록은 보존됩니다.'
+const modeLabel = (run: EvaluationRun) => run.execution_mode === 'recovery' ? '후처리 복구' : run.execution_mode === 'live' ? '새 모델 응답 생성' : '저장 응답 재평가'
 const field = 'min-h-11 w-full rounded-xl border border-sample-border bg-white px-3 text-sm focus:outline-2 focus:outline-brand-primary'
 const date = (value: string | null) => value ? new Date(value).toLocaleString('ko-KR') : '—'
 const message = (error: unknown) => error instanceof Error ? error.message : '요청을 처리하지 못했습니다.'
@@ -153,7 +155,7 @@ function EvaluationList({ datasets, liveEnabled, onExpired }: { datasets: OpsSes
         <p className={styles.cardDescription}>목록은 마지막으로 확인한 상태입니다. 실행을 열면 최신 상태를 확인합니다.</p>
         {error ? <p role="alert" className="text-sm text-red-700">{error}</p> : !data ? <p role="status">실행 이력을 불러오고 있습니다.</p> : !data.results.length ? <p className="py-8 text-center text-sm text-sample-muted">아직 실행한 평가가 없습니다.</p> : <div className="overflow-x-auto">
           <table className="w-full text-left text-sm"><thead className="border-b border-sample-border text-xs text-sample-muted"><tr>{['평가 자료 / 요청', '상태', '요청자', '요청 시각'].map((label) => <th key={label} className="px-3 py-3 whitespace-nowrap">{label}</th>)}</tr></thead>
-            <tbody>{data.results.map((run) => <tr key={run.id} className="border-b border-sample-border last:border-0"><td className="min-w-64 px-3 py-4"><Link className="font-semibold text-brand-primary hover:underline" to={`${listPath}/${run.id}`}>{run.dataset_label}<span className="mt-1 block font-mono text-xs font-normal text-sample-muted">{run.id}</span></Link><span className="text-xs text-sample-muted">{run.execution_mode === 'live' ? '새 모델 응답 평가' : '저장 응답 재평가'}</span></td><td className="px-3 py-4"><Status run={run} />{run.error_message && <p className="mt-2 max-w-56 text-xs text-red-700">{run.error_message}</p>}</td><td className="px-3 py-4">{run.requested_by}</td><td className="px-3 py-4 whitespace-nowrap">{date(run.created_at)}</td></tr>)}</tbody>
+            <tbody>{data.results.map((run) => <tr key={run.id} className="border-b border-sample-border last:border-0"><td className="min-w-64 px-3 py-4"><Link className="font-semibold text-brand-primary hover:underline" to={`${listPath}/${run.id}`}>{run.dataset_label}<span className="mt-1 block font-mono text-xs font-normal text-sample-muted">{run.id}</span></Link><span className="text-xs text-sample-muted">{modeLabel(run)}</span></td><td className="px-3 py-4"><Status run={run} />{run.error_message && <p className="mt-2 max-w-56 text-xs text-red-700">{run.error_message}</p>}</td><td className="px-3 py-4">{run.requested_by}</td><td className="px-3 py-4 whitespace-nowrap">{date(run.created_at)}</td></tr>)}</tbody>
           </table></div>}
         {data && <nav aria-label="평가 이력 페이지" className="mt-3 flex items-center justify-end gap-3 text-sm"><button className={styles.secondaryButton} disabled={!data.previous} onClick={() => setSearch({ page: String(page - 1) })}>이전</button><span>{page} / {Math.max(1, Math.ceil(data.count / 25))}</span><button className={styles.secondaryButton} disabled={!data.next} onClick={() => setSearch({ page: String(page + 1) })}>다음</button></nav>}
       </section>
@@ -163,6 +165,8 @@ function EvaluationList({ datasets, liveEnabled, onExpired }: { datasets: OpsSes
 
 function EvaluationDetail({ onExpired, onReviewChanged }: { onExpired: () => void; onReviewChanged: () => void }) {
   const { runId = '' } = useParams()
+  const navigate = useNavigate()
+  const recoveryRequest = useRef<{ source: string; id: string } | null>(null)
   const [run, setRun] = useState<EvaluationRun | null>(null)
   const [error, setError] = useState('')
   const [refresh, setRefresh] = useState(0)
@@ -190,8 +194,25 @@ function EvaluationDetail({ onExpired, onReviewChanged }: { onExpired: () => voi
   const retry = async () => {
     if (!run || busy) return
     setBusy(true)
-    try { setRun(await submitEvaluation(run.id, run.dataset_id, run.candidate_capture_id, run.reference_capture_id, run.live_config)); setRefresh((value) => value + 1) }
+    try {
+      setRun(run.execution_mode === 'recovery' && run.source_run_id
+        ? await recoverEvaluation(run.source_run_id, run.id)
+        : await submitEvaluation(run.id, run.dataset_id, run.candidate_capture_id, run.reference_capture_id, run.live_config))
+      setRefresh((value) => value + 1)
+    }
     catch (reason) {
+      if (reason instanceof OpsApiError && (reason.status === 401 || reason.status === 403)) expiry.current()
+      else setError(message(reason))
+    } finally { setBusy(false) }
+  }
+  const recover = async () => {
+    if (!run || busy) return
+    if (recoveryRequest.current?.source !== run.id) recoveryRequest.current = { source: run.id, id: crypto.randomUUID() }
+    setBusy(true)
+    try {
+      const result = await recoverEvaluation(run.id, recoveryRequest.current.id)
+      setError(''); navigate(`${listPath}/${result.id}`)
+    } catch (reason) {
       if (reason instanceof OpsApiError && (reason.status === 401 || reason.status === 403)) expiry.current()
       else setError(message(reason))
     } finally { setBusy(false) }
@@ -204,14 +225,24 @@ function EvaluationDetail({ onExpired, onReviewChanged }: { onExpired: () => voi
       {!run ? !error && <p role="status">실행 정보를 불러오고 있습니다.</p> : <>
         {run.error_message && <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm">{run.error_message}</p>}
         {run.can_retry && <button className={`${styles.primaryButton} self-start`} disabled={busy} onClick={() => void retry()}>{busy ? '접수 확인 중…' : '같은 요청으로 접수 재확인'}</button>}
-        <section className={styles.card}><h2 className={styles.cardTitle}>{run.dataset_label}</h2><p className="text-sm leading-6 text-sample-muted">{run.execution_mode === 'live' ? liveNotice : notice}</p>
+        <section className={styles.card}><h2 className={styles.cardTitle}>{run.dataset_label}</h2><p className="text-sm leading-6 text-sample-muted">{run.execution_mode === 'recovery' ? recoveryNotice : run.execution_mode === 'live' ? liveNotice : notice}</p>
           <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-5 gap-y-3 text-sm">{[
-            ['실행 방식', run.execution_mode === 'live' ? '새 모델 응답 생성' : '저장 응답 재평가'], ['요청 ID', run.id],
+            ['실행 방식', modeLabel(run)], ['요청 ID', run.id],
             ['모델 호출 시도', run.model_api_calls === null ? '아직 확인되지 않음' : `${run.model_api_calls}회`],
             ...(run.live_config ? [['승인 예산', `${run.live_config.model} · 최대 ${run.live_config.max_model_calls}회 · 출력 최대 ${run.live_config.max_output_tokens}토큰/호출`]] : []), ['기준 실행', run.reference_label], ['후보 실행', run.candidate_label], ['요청자', run.requested_by], ['요청 시각', date(run.created_at)],
             ['시작 / 종료', `${date(run.started_at)} / ${date(run.finished_at)}`], ['마지막 상태 확인', date(run.synced_at)], ['평가 결과 ID', run.evaluation_run_id ?? '결과 대기'],
           ].map(([label, value]) => <div key={label} className="contents"><dt className="text-sample-muted">{label}</dt><dd className="break-all">{value}</dd></div>)}</dl>
         </section>
+        {run.source_run_id && <Link className="text-sm font-semibold text-brand-primary underline" to={`${listPath}/${run.source_run_id}`}>원본 실행과 실패 기록 보기</Link>}
+        {run.postprocessing && <section className={styles.card} aria-label="후처리 복구">
+          <h2 className={styles.cardTitle}>후처리 복구</h2>
+          <p className="text-sm">저장 응답·비교 입력: {run.postprocessing.inputs_ready ? '완료 및 무결성 확인' : '미확인 또는 불완전'}</p>
+          <p className="text-sm">마지막 후처리 단계: {{ unverified: '미확인', report: '보고서 생성', publish: 'Langfuse 등록·재조회', completed: '완료' }[run.postprocessing.stage]}</p>
+          <p className="text-xs leading-5 text-sample-muted">{recoveryNotice}</p>
+          {run.postprocessing.can_recover ? <button className={`${styles.primaryButton} self-start`} disabled={busy} onClick={() => void recover()}>{busy ? '복구 접수 중…' : '후처리 다시 실행'}</button>
+            : run.status !== 'COMPLETED' && <p className="text-sm text-sample-muted">{run.postprocessing.blocked_reason}</p>}
+          {run.postprocessing.attempts.length > 0 && <ul className="space-y-2 text-sm">{run.postprocessing.attempts.map((attempt) => <li key={attempt.id}><Link className="text-brand-primary underline" to={`${listPath}/${attempt.id}`}>복구 실행 {attempt.id.slice(0, 8)} · {attempt.status_label}</Link></li>)}</ul>}
+        </section>}
         {run.status === 'COMPLETED' && <section className={styles.card} aria-label="평가 결과"><h2 className={styles.cardTitle}>평가 결과</h2><div className="grid grid-cols-2 gap-3 md:grid-cols-4">{[
           ['처리 사례', `${run.summary.observedCaseCount ?? '—'} / ${run.summary.caseCount ?? '—'}`], ['상태 일치율', run.summary.statusAccuracy?.toFixed(2) ?? '미측정'],
           ['인용 재현율', run.summary.referenceCitationRecall?.toFixed(2) ?? '미측정'], ['모델 API 호출', run.model_api_calls === null ? '미확인' : `${run.model_api_calls}회`],

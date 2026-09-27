@@ -33,17 +33,17 @@ def reviewed_source(tmp_path):
     return config, candidate["id"], raw
 
 
-@pytest.mark.parametrize("source_mode", ["replay", "live"])
+@pytest.mark.parametrize("source_mode", ["replay", "live", "recovery"])
 def test_reviewed_baseline_is_snapshotted_for_free_replay(monkeypatch, tmp_path, source_mode):
     import llmops
     config, candidate, raw = reviewed_source(tmp_path)
-    if source_mode == "live":
+    if source_mode in {"live", "recovery"}:
         folder = tmp_path / config["run_id"]
         (folder / "capture").mkdir()
         (folder / "capture/capture.json").write_bytes(raw)
         marker_path = folder / "request.json"
         marker = json.loads(marker_path.read_text())
-        marker.update(execution_mode="live", candidate_capture_id="new-model-response")
+        marker.update(execution_mode=source_mode, candidate_capture_id="new-model-response")
         marker_path.write_text(json.dumps(marker))
     request_id = str(uuid4())
     monkeypatch.setenv("LLMOPS_RESULTS_DIR", str(tmp_path))

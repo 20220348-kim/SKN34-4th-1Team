@@ -34,7 +34,13 @@ const runSchema = z.object({
   id: z.uuid(), dataset_id: z.string(), dataset_label: z.string(), requested_by: z.string(), can_retry: z.boolean(),
   candidate_capture_id: z.string(), reference_capture_id: z.string(), candidate_label: z.string(), reference_label: z.string(),
   comparison: comparisonSchema.nullable(),
-  execution_mode: z.enum(['replay', 'live']), live_config: liveConfigSchema.nullable(),
+  execution_mode: z.enum(['replay', 'live', 'recovery']), live_config: liveConfigSchema.nullable(),
+  source_run_id: z.uuid().nullable().default(null),
+  postprocessing: z.object({
+    inputs_ready: z.boolean(), stage: z.enum(['unverified', 'report', 'publish', 'completed']),
+    can_recover: z.boolean(), blocked_reason: z.string(),
+    attempts: z.array(z.object({ id: z.uuid(), status: z.string(), status_label: z.string() })),
+  }).nullable().default(null),
   status: z.enum(['REQUESTED', 'QUEUED', 'RUNNING', 'COMPLETED', 'FAILED', 'CANCELLED', 'CRASHED', 'RESULT_ERROR']),
   status_label: z.string(), created_at: z.string(), started_at: z.string().nullable(),
   finished_at: z.string().nullable(), synced_at: z.string().nullable(),
@@ -121,6 +127,7 @@ export const getEvaluation = (id: string, signal?: AbortSignal) => request(`/eva
 export const getEvaluationReview = (id: string, signal?: AbortSignal) => request(`/evaluations/${encodeURIComponent(id)}/review`, reviewSchema, { signal })
 export const saveEvaluationReview = (id: string, decision: 'APPROVED' | 'CHANGES_REQUESTED', comment: string, captureSha256: string) => post(`/evaluations/${encodeURIComponent(id)}/review`, { decision, comment, capture_sha256: captureSha256 }, reviewSchema)
 export const promoteEvaluationBaseline = (id: string, reviewId: number) => post(`/evaluations/${encodeURIComponent(id)}/baseline`, { review_id: reviewId }, reviewSchema)
+export const recoverEvaluation = (id: string, requestId: string) => post(`/evaluations/${encodeURIComponent(id)}/recover`, { request_id: requestId }, runSchema, true)
 export const submitEvaluation = (requestId: string, datasetId: string, candidateCaptureId: string, referenceCaptureId: string, liveConfig: z.infer<typeof liveConfigSchema> | null = null) => post('/evaluations', {
   request_id: requestId, dataset_id: datasetId, candidate_capture_id: candidateCaptureId, reference_capture_id: referenceCaptureId,
   execution_mode: liveConfig ? 'live' : 'replay', live_config: liveConfig ?? {}, confirm_paid_run: liveConfig !== null,
