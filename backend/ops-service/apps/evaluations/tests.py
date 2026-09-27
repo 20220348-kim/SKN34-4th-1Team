@@ -3,13 +3,16 @@ from hashlib import sha256
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
+from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
 from django.contrib.auth import get_user_model
 from django.test import Client, SimpleTestCase, TestCase, override_settings
+from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
 
 from . import prefect_client
+from .authentication import CoreUnavailable, NoAuthRedirect, read_core_admin
 from .models import EvaluationRun
 from .services import DATASET_ID, ResultsUnavailable, artifact_path, sync_run
 from .views import run_data
@@ -53,17 +56,26 @@ class EvaluationTests(TestCase):
     @classmethod
     def setUpTestData(cls):
         cls.operator = get_user_model().objects.create_user(
-            "운영자", password="test-password", is_staff=True
+            "core:1", email="operator@example.com", password="test-password", is_staff=True
         )
         cls.viewer = get_user_model().objects.create_user("일반사용자", password="test-password")
 
     def setUp(self):
-        self.client.force_login(self.operator)
+        self.auth = patch(
+            "apps.evaluations.authentication.read_core_admin",
+            return_value={
+                "accountId": 1,
+                "email": "operator@example.com",
+                "role": "ADMIN",
+            },
+        ).start()
+        self.addCleanup(patch.stopall)
+        self.client.cookies["govbiz_session"] = "core-session"
         self.payload = {"request_id": str(uuid4()), "dataset_id": DATASET_ID}
 
     def post(self, payload=None):
         return self.client.post(
-            "/api/v1/evaluations", payload or self.payload, content_type="application/json"
+            "/api/v1/ops/evaluations", payload or self.payload, content_type="application/json"
         )
 
     def queued_run(self):
@@ -115,36 +127,99 @@ class EvaluationTests(TestCase):
         )
         return report
 
-    def test_anonymous_and_non_staff_cannot_run_or_read(self):
+    def test_anonymous_and_legacy_django_staff_session_cannot_read(self):
         run = self.queued_run()
-        for user in [None, self.viewer]:
-            self.client.logout()
-            if user:
-                self.client.force_login(user)
-            self.assertEqual(self.post().status_code, 403)
-            self.assertEqual(self.client.get("/api/v1/evaluations").status_code, 403)
-            self.assertEqual(self.client.get(f"/api/v1/evaluations/{run.id}").status_code, 403)
-            self.assertEqual(self.client.get(f"/ops/evaluations/{run.id}/report").status_code, 302)
-
-    def test_operator_login_and_post_only_logout(self):
-        self.client.logout()
-        response = self.client.post(
-            "/ops/login", {"username": "일반사용자", "password": "test-password"}
-        )
-        self.assertContains(response, "운영자 계정")
-        response = self.client.post(
-            "/ops/login", {"username": "운영자", "password": "test-password"}
-        )
-        self.assertRedirects(response, "/ops/evaluations")
-        self.assertEqual(self.client.get("/ops/logout").status_code, 405)
-        self.assertRedirects(self.client.post("/ops/logout"), "/ops/login")
-
-    def test_csrf_is_required_for_api_and_forms(self):
-        client = Client(enforce_csrf_checks=True)
+        client = Client()
         client.force_login(self.operator)
-        self.assertEqual(client.post("/api/v1/evaluations", self.payload).status_code, 403)
-        self.assertEqual(client.post("/ops/evaluations", self.payload).status_code, 403)
-        self.assertEqual(client.post("/ops/login", {}).status_code, 403)
+        for path in [
+            "/api/v1/ops/evaluations",
+            f"/api/v1/ops/evaluations/{run.id}",
+            f"/api/v1/ops/evaluations/{run.id}/report",
+        ]:
+            self.assertEqual(client.get(path).status_code, 401)
+        self.assertIsNone(client.get("/api/v1/ops/session").json()["user"])
+        self.assertEqual(client.post("/api/v1/ops/login", {}).status_code, 404)
+        self.auth.assert_not_called()
+
+    def test_non_admin_expired_and_unavailable_core_fail_closed_on_every_request(self):
+        run = self.queued_run()
+        self.assertEqual(
+            self.client.get("/api/v1/ops/session").json()["user"],
+            {"username": "operator@example.com"},
+        )
+        for failure, status in [
+            (PermissionDenied(), 403),
+            (AuthenticationFailed(), 401),
+            (CoreUnavailable(), 503),
+        ]:
+            self.auth.side_effect = failure
+            for path in [
+                "/api/v1/ops/session",
+                "/api/v1/ops/evaluations",
+                f"/api/v1/ops/evaluations/{run.id}",
+                f"/api/v1/ops/evaluations/{run.id}/report",
+            ]:
+                self.assertEqual(self.client.get(path).status_code, status)
+            self.assertEqual(self.post().status_code, status)
+        self.assertEqual(EvaluationRun.objects.count(), 1)
+
+    def test_csrf_and_browser_origin_are_required_for_core_cookie_writes(self):
+        client = Client(enforce_csrf_checks=True)
+        client.cookies["govbiz_session"] = "core-session"
+        token = client.get("/api/v1/ops/session").json()["csrf_token"]
+        self.assertEqual(
+            client.post(
+                "/api/v1/ops/evaluations", self.payload, content_type="application/json"
+            ).status_code,
+            403,
+        )
+        self.assertEqual(
+            client.post(
+                "/api/v1/ops/evaluations",
+                self.payload,
+                content_type="application/json",
+                HTTP_X_CSRFTOKEN=token,
+                HTTP_ORIGIN="https://untrusted.invalid",
+            ).status_code,
+            403,
+        )
+        with patch("apps.evaluations.prefect_client.create_run", return_value=uuid4()):
+            response = client.post(
+                "/api/v1/ops/evaluations",
+                self.payload,
+                content_type="application/json",
+                HTTP_X_CSRFTOKEN=token,
+                HTTP_ORIGIN="http://localhost:5173",
+                HTTP_HOST="localhost:5173",
+            )
+        self.assertEqual(response.status_code, 202)
+
+    def test_core_account_id_preserves_ownership_when_email_changes(self):
+        self.auth.return_value = {"accountId": 2, "email": "second@example.com", "role": "ADMIN"}
+        session = self.client.get("/api/v1/ops/session")
+        user = get_user_model().objects.get(username="core:2")
+        self.assertFalse(user.has_usable_password())
+        self.assertEqual(session.json()["user"]["username"], "second@example.com")
+        self.auth.return_value["email"] = "renamed@example.com"
+        self.client.get("/api/v1/ops/session")
+        user.refresh_from_db()
+        self.assertEqual(user.email, "renamed@example.com")
+        self.assertEqual(get_user_model().objects.filter(username="core:2").count(), 1)
+
+    @override_settings(OPS_WEB_URL="http://localhost:5173")
+    def test_old_page_bookmarks_redirect_to_react(self):
+        run = self.queued_run()
+        for path in ["/", "/ops/login", "/ops/evaluations"]:
+            self.assertRedirects(
+                self.client.get(path),
+                "http://localhost:5173/ops/evaluations",
+                fetch_redirect_response=False,
+            )
+        self.assertRedirects(
+            self.client.get(f"/ops/evaluations/{run.id}?next=https://untrusted.invalid"),
+            f"http://localhost:5173/ops/evaluations/{run.id}",
+            fetch_redirect_response=False,
+        )
 
     @patch("apps.evaluations.prefect_client.create_run")
     def test_duplicate_request_creates_one_run(self, create):
@@ -192,11 +267,10 @@ class EvaluationTests(TestCase):
             with self.subTest(state=state):
                 run = self.queued_run()
                 read.return_value = {"state_type": state, "start_time": "2026-09-27T00:00:00Z"}
-                response = self.client.get(f"/api/v1/evaluations/{run.id}")
+                response = self.client.get(f"/api/v1/ops/evaluations/{run.id}")
                 self.assertEqual(response.json()["status"], expected)
                 self.assertIsNone(response.json()["report_url"])
-                page = self.client.get(f"/ops/evaluations/{run.id}")
-                self.assertContains(page, "Prefect 실행 로그")
+                self.assertIn(str(run.prefect_flow_run_id), response.json()["prefect_url"])
 
     @patch(
         "apps.evaluations.prefect_client.read_run", side_effect=prefect_client.PrefectUnavailable
@@ -226,16 +300,18 @@ class EvaluationTests(TestCase):
                 parse_qs(link.query)["filter"], ["sessionId;string;;contains;" + "a" * 32]
             )
             self.assertTrue(parse_qs(link.query)["dateRange"][0].startswith("0-"))
-            response = self.client.get(f"/ops/evaluations/{run.id}/report")
+            response = self.client.get(f"/api/v1/ops/evaluations/{run.id}/report")
             self.assertEqual(response.status_code, 200)
             self.assertIn("sandbox allow-scripts;", response["Content-Security-Policy"])
             self.assertNotIn("allow-same-origin", response["Content-Security-Policy"])
             self.assertIn("평가 결과".encode(), b"".join(response.streaming_content))
-            page = self.client.get(f"/ops/evaluations/{run.id}")
-            self.assertContains(page, "Evidently 보고서")
-            self.assertContains(page, "Langfuse 평가 점수")
+            data = self.client.get(f"/api/v1/ops/evaluations/{run.id}").json()
+            self.assertEqual(data["report_url"], f"/api/v1/ops/evaluations/{run.id}/report")
+            self.assertIn("/scores?", data["langfuse_url"])
             report.write_text("tampered")
-            self.assertEqual(self.client.get(f"/ops/evaluations/{run.id}/report").status_code, 404)
+            self.assertEqual(
+                self.client.get(f"/api/v1/ops/evaluations/{run.id}/report").status_code, 404
+            )
 
     @patch("apps.evaluations.prefect_client.read_run", return_value={"state_type": "COMPLETED"})
     def test_another_runs_artifacts_are_not_accepted(self, read):
@@ -255,7 +331,55 @@ class EvaluationTests(TestCase):
         EvaluationRun.objects.bulk_create(
             [EvaluationRun(requested_by=self.operator, dataset_id=DATASET_ID) for _ in range(26)]
         )
-        response = self.client.get("/api/v1/evaluations")
+        response = self.client.get("/api/v1/ops/evaluations")
         self.assertEqual(response.json()["count"], 26)
         self.assertEqual(len(response.json()["results"]), 25)
-        self.assertContains(self.client.get("/ops/evaluations"), "26건")
+        self.assertIn("no-store", response["Cache-Control"])
+        self.assertEqual(
+            len(self.client.get("/api/v1/ops/evaluations?page=2").json()["results"]), 1
+        )
+
+
+class CoreAuthClientTests(SimpleTestCase):
+    @patch("apps.evaluations.authentication.build_opener")
+    @override_settings(CORE_API_URL="http://core-service:8080")
+    def test_only_core_cookie_is_sent_and_response_is_validated(self, opener):
+        response = opener.return_value.open.return_value.__enter__.return_value
+        response.status = 200
+        response.read.return_value = b'{"accountId":12,"email":"admin@example.com","role":"ADMIN"}'
+        self.assertEqual(read_core_admin("signed-session")["accountId"], 12)
+        request = opener.return_value.open.call_args.args[0]
+        self.assertEqual(request.full_url, "http://core-service:8080/api/v1/admin/session")
+        self.assertEqual(request.get_header("Cookie"), "govbiz_session=signed-session")
+        self.assertEqual(opener.return_value.open.call_args.kwargs["timeout"], 3)
+        self.assertIsInstance(opener.call_args.args[0], NoAuthRedirect)
+        self.assertIsNone(
+            NoAuthRedirect().redirect_request(None, None, 302, "", {}, "https://outside.invalid")
+        )
+        for data in [
+            b"{}",
+            b'{"accountId":true,"email":"x","role":"ADMIN"}',
+            b'{"accountId":1,"email":"x","role":"USER"}',
+            b"not-json",
+        ]:
+            response.read.return_value = data
+            with self.assertRaises(CoreUnavailable):
+                read_core_admin("signed-session")
+        with self.assertRaises(AuthenticationFailed):
+            read_core_admin("invalid\r\nCookie: value")
+
+    @patch("apps.evaluations.authentication.build_opener")
+    def test_core_http_failure_is_not_a_local_auth_fallback(self, opener):
+        for code, failure in [
+            (401, AuthenticationFailed),
+            (403, PermissionDenied),
+            (302, CoreUnavailable),
+            (500, CoreUnavailable),
+        ]:
+            opener.return_value.open.side_effect = HTTPError("private", code, "private", {}, None)
+            with self.assertRaises(failure):
+                read_core_admin("signed-session")
+        opener.return_value.open.side_effect = URLError("private-host")
+        with self.assertRaises(CoreUnavailable) as error:
+            read_core_admin("signed-session")
+        self.assertNotIn("private-host", str(error.exception))

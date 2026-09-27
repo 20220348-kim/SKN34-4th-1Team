@@ -43,9 +43,10 @@ TEMPLATES = [
         },
     },
 ]
-LOGIN_URL = "/ops/login"
-LOGIN_REDIRECT_URL = "/ops/evaluations"
-LOGOUT_REDIRECT_URL = LOGIN_URL
+OPS_WEB_URL = env("OPS_WEB_URL", default="http://localhost:5173").rstrip("/")
+CORE_API_URL = env("CORE_API_URL", default="http://127.0.0.1:8080").rstrip("/")
+# 같은 origin 프록시가 Host를 보존하면 추가 설정 없이 Origin을 검증한다.
+CSRF_TRUSTED_ORIGINS = env.list("DJANGO_CSRF_TRUSTED_ORIGINS", default=[])
 SESSION_COOKIE_NAME = "govbiz_ops_session"
 CSRF_COOKIE_NAME = "govbiz_ops_csrf"
 SESSION_COOKIE_HTTPONLY = True
@@ -100,6 +101,6 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
     "DEFAULT_PARSER_CLASSES": ["rest_framework.parsers.JSONParser"],
-    "DEFAULT_AUTHENTICATION_CLASSES": ["rest_framework.authentication.SessionAuthentication"],
+    "DEFAULT_AUTHENTICATION_CLASSES": ["apps.evaluations.authentication.CoreSessionAuthentication"],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
 }

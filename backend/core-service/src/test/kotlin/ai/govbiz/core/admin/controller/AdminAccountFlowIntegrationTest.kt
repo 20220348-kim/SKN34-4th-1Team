@@ -64,17 +64,22 @@ class AdminAccountFlowIntegrationTest {
     @Test
     fun onlyAdminsOpenTheApiAndADemotedAdminIsBlockedOnTheNextRequest() {
         mockMvc.perform(get(ACCOUNTS)).andExpect(status().isUnauthorized())
+        mockMvc.perform(get("/api/v1/admin/session")).andExpect(status().isUnauthorized())
         val member = signUp("member@company.co.kr")
         mockMvc.perform(get(ACCOUNTS).cookie(member))
             .andExpect(status().isForbidden())
             .andExpect(jsonPath("$.code").value("ADMIN_ACCESS_DENIED"))
         mockMvc.perform(get("$ACCOUNTS/summary").cookie(member)).andExpect(status().isForbidden())
+        mockMvc.perform(get("/api/v1/admin/session").cookie(member)).andExpect(status().isForbidden())
 
         val admin = signUpAdmin("admin@govbiz.local")
         mockMvc.perform(get(ACCOUNTS).cookie(admin)).andExpect(status().isOk())
+        mockMvc.perform(get("/api/v1/admin/session").cookie(admin)).andExpect(status().isOk())
+            .andExpect(jsonPath("$.email").value("admin@govbiz.local"))
         // 역할은 요청마다 DB에서 다시 읽으므로 권한을 내리면 같은 세션으로도 막힙니다.
         jdbcTemplate.update("UPDATE account SET role = 'USER' WHERE email = 'admin@govbiz.local'")
         mockMvc.perform(get(ACCOUNTS).cookie(admin)).andExpect(status().isForbidden())
+        mockMvc.perform(get("/api/v1/admin/session").cookie(admin)).andExpect(status().isForbidden())
     }
 
     @Test

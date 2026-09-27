@@ -8,10 +8,13 @@ services:
     command: ["python", "manage.py", "runserver", "0.0.0.0:8000"]
     env_file: .env
     environment:
+      CORE_API_URL: ${OPS_CORE_API_URL:-http://host.docker.internal:8080}
       DB_NAME: govbiz4
       DB_USER: govbiz4
       DB_HOST: ops-mysql
       DB_PORT: "3306"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "127.0.0.1:${API_PORT:-8001}:8000"
     volumes:

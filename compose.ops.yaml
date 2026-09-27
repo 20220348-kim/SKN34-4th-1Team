@@ -8,6 +8,7 @@ services:
       - ${GOVBIZ_DJANGO_ENV_FILE:-./backend/ops-service/.env}
     environment:
       DB_HOST: ops-mysql
+      CORE_API_URL: http://core-service:8080
       DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1},ops-service
     depends_on: !override
       ops-mysql:

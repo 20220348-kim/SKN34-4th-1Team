@@ -16,9 +16,9 @@ Kubernetes 검증 이미지 접두사는 `govbiz-ops-service`입니다.
 이 디렉터리는 서브모듈이 아닙니다. 실제 `.env`, 로컬 가상환경·Git 메타데이터는
 가져오지 않았습니다.
 
-현재 범위는 상태 확인 API, Ops 전용 운영자 로그인, 저장 캡처 평가 실행·이력·결과 화면과
+현재 범위는 상태 확인 API, 기존 Core 관리자 인증 연동, 저장 캡처 평가 실행·이력·결과 API와
 Gunicorn 이미지입니다. 공고·회원·신청 관리 업무와 기존 Spring Boot/FastAPI의
-운영 데이터는 이전하지 않았습니다. 운영 배포와 Core 계정 연동은 별도입니다.
+운영 데이터는 이전하지 않았습니다. 운영 배포는 별도입니다.
 
 ## 기술 구성
 
@@ -30,17 +30,26 @@ Gunicorn 이미지입니다. 공고·회원·신청 관리 업무와 기존 Spri
 - Ruff, Django 테스트 러너
 - Docker Compose, GitHub Actions CI
 
-Django 기본 사용자·세션 테이블로 Ops 전용 계정을 관리합니다. 평가 화면·API는 활성 운영자
-(`is_staff`)만 접근하고, 쓰기 요청에는 CSRF 검증을 적용합니다. 상태 확인 API만 공개합니다.
-계정은 `createsuperuser`로 생성하며 Core·Langfuse 계정과 공유하지 않습니다.
+기존 웹의 관리자 계정으로 로그인합니다. Django는 요청마다 `govbiz_session` 쿠키만 Core의
+`GET /api/v1/admin/session`에 전달해 현재 세션과 `ADMIN` 권한을 확인합니다. 로그아웃·만료·정지·
+권한 변경이 다음 Ops 요청에 반영됩니다. Core 연결 실패는 `503`으로 거절합니다.
+Django 사용자 행은 `core:{회원 ID}`와 이메일로 실행 요청자를 연결하며 로그인 가능한 비밀번호를
+저장하지 않습니다. 이전 Django 운영자 세션이나 `is_staff` 값으로는 API에 접근할 수 없습니다.
+회원 DB·JWT 서명 키는 Core만 소유하고 쓰기 요청에는 Django CSRF 검증도 적용합니다.
 
 ## LLMOps 운영 화면
 
 첫 전체 실행은 [LLMOps 개발 환경](../../infrastructure/llmops/README.md#django-운영-화면)을 따르세요.
-기존 업무 DB와 분리한 Compose에서는 [localhost:18001/ops/evaluations](http://localhost:18001/ops/evaluations)를
-사용합니다. 아래 단독 Ops 구성은 8001 포트이며 평가 실행기 연결은 별도로 필요합니다.
+화면은 `frontend/web`의 React가 [localhost:5173/ops/evaluations](http://localhost:5173/ops/evaluations)에서
+제공하고 Django는 18001 포트의 `/api/v1/ops` API를 담당합니다. 기존 Django 화면 주소는
+`OPS_WEB_URL`(기본 `http://localhost:5173`)로 이동합니다. 아래 단독 Ops 구성은 8001 포트이므로
+웹의 `OPS_DEV_PROXY_TARGET=http://127.0.0.1:8001` 설정과 평가 실행기 연결이 별도로 필요합니다.
+루트 통합 Compose는 Django에서 `http://core-service:8080`으로 관리자 세션을 확인합니다.
+전용 LLMOps Compose는 호스트 Core를 사용하며 회원 DB를 공유하지 않습니다.
 
-- Django 템플릿: 운영자 로그인, 평가 요청·목록, 실행 상세·결과 요약, 보고서 조회
+- React: 기존 `/login`으로 로그인 후 Ops 복귀, 평가 요청·목록, 실행 상세·결과 요약, 보고서 링크
+- Django: Core 관리자 확인, CSRF 토큰, 평가 요청·조회, 인증된 HTML 보고서 API
+- Core: 기존 로그인·로그아웃과 관리자 세션 검증. 일반 회원은 Ops 접근 불가
 - 고정된 `target-coverage-20260907-v1` 가상 6건만 선택 가능; 경로·모델·코드를 요청으로 받지 않음
 - `EvaluationRun`: 요청 UUID, 요청자·자료·상태·시간, Prefect 실행 ID, 콘텐츠 평가 ID, 요약 저장
 - 요청 UUID를 DB 기본 키와 Prefect idempotency key로 사용; 같은 요청 재전송은 같은 실행을 반환
@@ -51,8 +60,8 @@ Django 기본 사용자·세션 테이블로 Ops 전용 계정을 관리합니�
 - 평가 프로세스는 결과 볼륨에 쓰고 Django는 읽기 전용으로 접근. 보고서는 운영자 인증과 CSP sandbox 적용
 - 과거 캡처에는 trace가 없으므로 Langfuse 세션 상세 대신 평가 ID로 필터링한 점수 목록에 연결
 
-호출 흐름은 `운영 화면 → Django 인증·View → 평가 Service → Prefect HTTP API → 상시 평가 실행기`
-입니다. 실행기는 기존 `pandas → Pandera → 지표 재계산 → Evidently / Langfuse` 흐름을 사용합니다.
+호출 흐름은 `React 운영 화면 → 같은 origin 프록시 → Django 인증·API → 평가 Service → Prefect HTTP API → 상시 평가 실행기`
+입니다. 인증 경로는 `Django → Core 관리자 API → AdminPrincipalArgumentResolver → AccountSessionService`입니다. 실행기는 기존 `pandas → Pandera → 지표 재계산 → Evidently / Langfuse` 흐름을 사용합니다.
 Django HTTP 요청 안에서는 평가하지 않으며 Django에 평가 SDK 전체를 설치하지 않습니다.
 별도 Celery·Airflow·LLM provider는 추가하지 않았습니다. 모델 API 호출 예산은 0입니다.
 
@@ -102,7 +111,6 @@ uv sync --locked
 docker compose up --detach ops-mysql --wait
 uv run --locked python manage.py check
 uv run --locked python manage.py migrate
-uv run --locked python manage.py createsuperuser
 uv run --locked python manage.py runserver 127.0.0.1:8001
 ```
 
@@ -114,9 +122,19 @@ uv run --locked python manage.py runserver 127.0.0.1:8001
 | --- | --- | --- |
 | `GET /api/v1/health` | `200`, `status: UP` | DB를 호출하지 않음 |
 | `GET /api/v1/health/ready` | `200`, `database: UP` | MySQL 연결/질의 실패 시 `503`, 내부 연결 정보는 응답에 노출하지 않음 |
-| `POST /api/v1/evaluations` | 최초 `202`, 재전송 `200`; 실행 메타데이터 | 자료/UUID 오류 `400`, 권한·CSRF `403`, 요청 충돌 `409`, 접수 미확인 `503` |
-| `GET /api/v1/evaluations` | `200`, 25건 페이지 (`count`, `next`, `previous`, `results`) | 비운영자 `403` |
-| `GET /api/v1/evaluations/{UUID}` | `200`, 최신 상태와 요약·상세 링크 | 비운영자 `403`, 없는 실행 `404`; Prefect 장애는 `error_code`로 구별 |
+| `GET /api/v1/ops/session` | `200`, `user`(쿠키가 없으면 null), `csrf_token`, 허용 자료 목록 | 만료 `401`, 비관리자 `403`, Core 장애 `503` |
+| `GET /api/v1/ops/evaluations/{UUID}/report` | `200`, CSP sandbox가 적용된 HTML | 미인증 `401`, 비관리자 `403`, Core 장애 `503`, 없거나 훼손된 보고서 `404` |
+| `POST /api/v1/ops/evaluations` | 최초 `202`, 재전송 `200`; 실행 메타데이터 | 자료/UUID 오류 `400`, 미인증 `401`, 권한·CSRF `403`, 요청 충돌 `409`, 인증 서버 장애·접수 미확인 `503` |
+| `GET /api/v1/ops/evaluations` | `200`, 25건 페이지 (`count`, `next`, `previous`, `results`) | 미인증 `401`, 비관리자 `403`, Core 장애 `503` |
+| `GET /api/v1/ops/evaluations/{UUID}` | `200`, 최신 상태와 요약·상세 링크 | 미인증 `401`, 비관리자 `403`, Core 장애 `503`, 없는 실행 `404`; Prefect 장애는 `error_code`로 구별 |
+
+로그인·로그아웃은 기존 Core `/api/v1/auth/login`, `/api/v1/auth/logout`을 사용합니다.
+별도 `/api/v1/ops/login`, `/logout`은 제공하지 않습니다. 먼저 Ops session API에서
+CSRF 쿠키와 `csrf_token`을 받고 평가 POST의 `X-CSRFToken`에 넣습니다.
+React는 쓰기 전 세션을 조회해 최신 토큰을 사용합니다. 세션·평가 응답은 캐시하지 않습니다.
+Vite는 `/api/v1/ops`를 Core보다 먼저 라우팅하고 Host와 Origin을 보존합니다. Host를 바꾸는
+별도 프록시에서는 실제 웹 Origin을 `DJANGO_CSRF_TRUSTED_ORIGINS`에 명시해야 합니다.
+기존 `/api/v1/evaluations`는 `/api/v1/ops/evaluations`로 이동했습니다.
 
 평가 요청 JSON은 `{"request_id":"<새 UUID>","dataset_id":"target-coverage-20260907-v1"}`입니다.
 통신 재시도에는 UUID를 유지하고, 사용자가 의도적으로 새 평가를 시작할 때만 새 UUID를 발급합니다.
@@ -164,7 +182,7 @@ GitHub Actions는 모노레포 루트의
 ```text
 config/                  Django 설정·URL·WSGI·ASGI
 apps/health/             실행/DB 연결 상태 API 및 테스트
-apps/evaluations/        운영자 화면·평가 API·모델·migration·Prefect HTTP 연동·테스트
+apps/evaluations/        Core 관리자 인증·평가 API·모델·migration·Prefect HTTP 연동·테스트
 infrastructure/mysql/    개발용 테스트 DB 초기화
 manage.py                관리 명령 진입점
 pyproject.toml           Python 의존성과 개발 도구 설정
@@ -185,14 +203,19 @@ scripts/check-image.py   배포 이미지 기본 명령·격리·상태 확인 �
 - `DB_HOST`, `DB_PORT`: 호스트 실행 기본값 `127.0.0.1:3308`
 - `API_PORT`, `MYSQL_PORT`: Compose가 호스트에 공개하는 포트
 - `MYSQL_ROOT_PASSWORD`: 개발용 MySQL 초기화 비밀번호
+- `CORE_API_URL`: Django에서 접근하는 Core 주소; 호스트 기본 `http://127.0.0.1:8080`
+- `OPS_CORE_API_URL`: Compose에서 위 주소를 지정; 기본 `http://host.docker.internal:8080`
+- `OPS_WEB_URL`: 이전 Django 화면 주소의 React 이동 대상; 기본 `http://localhost:5173`
 - `PREFECT_API_URL`: Django에서 접근하는 Prefect API; 기본 `http://127.0.0.1:14200/api`
 - `PREFECT_UI_URL`, `LANGFUSE_PROJECT_URL`: 운영자 브라우저에서 여는 상세 링크
 - `LLMOPS_RESULTS_DIR`: 실행기 결과를 읽는 디렉터리; 기본 저장소 `work/llmops-ops`
 - `DJANGO_COOKIE_SECURE`: 기본값은 `not DJANGO_DEBUG`. 로컬 HTTP 개발에서만 `false`
 
 컨테이너 간 연결 주소와 브라우저 링크 주소는 다릅니다. 전용 Compose는 API에 `prefect:4200`,
-브라우저 링크에 `localhost:14200`을 사용합니다. 세션·CSRF 쿠키 이름은 `govbiz_ops_session`·
-`govbiz_ops_csrf`이며 같은 localhost의 다른 서비스 쿠키와 구별합니다.
+브라우저 링크에 `localhost:14200`을 사용합니다. Core 세션 쿠키 `govbiz_session`은 동일 웹 origin의
+Core·Ops API에서 공유하고, Ops CSRF 쿠키는 `govbiz_ops_csrf`로 구별합니다. `localhost`와
+`127.0.0.1`을 브라우저 주소에서 혼용하지 않습니다. `govbiz_ops_session`은 인증 근거로 사용하지 않습니다.
+Langfuse 자체 UI는 별도 로그인입니다.
 
 Compose의 DB 이름/사용자는 `govbiz4`로 고정하여 테스트 초기화 SQL과 일치시킵니다. 포트를 변경하면 호스트 실행의 `DB_PORT`도 맞춰야 합니다.
 
@@ -200,7 +223,8 @@ Compose의 DB 이름/사용자는 `govbiz4`로 고정하여 테스트 초기화 
 
 ## 운영 배포 경계
 
-기존 Core API의 관리자 로그인과 회원 테이블, 운영 데이터는 이전하지 않았습니다.
+회원·세션 테이블은 Core에 유지하고 관리자 확인 HTTP API로만 연동합니다.
+운영 배포에는 같은 origin의 Core·Ops 프록시와 내부 `CORE_API_URL`, HTTPS 쿠키 설정이 필요합니다.
 Kubernetes 매니페스트와 배포 이미지 버전은 같은 저장소의 `infrastructure/gitops/`에서 관리합니다.
 이 이미지에는 클러스터 생성·Argo CD 설치·운영 데이터 변경 기능이 없습니다.
 

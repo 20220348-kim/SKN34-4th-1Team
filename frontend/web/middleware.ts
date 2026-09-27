@@ -12,6 +12,11 @@ const noCache = {
 
 // Vercel 서버에서만 실행한다. 브라우저 번들에 이 파일이나 비밀값을 import하지 않는다.
 export default function middleware(request: Request) {
+  const incoming = new URL(request.url)
+  // Ops는 현재 로컬 개발 연결이다. 배포 프록시가 준비되기 전 Core로 잘못 전달하지 않는다.
+  if (incoming.pathname === '/api/v1/ops' || incoming.pathname.startsWith('/api/v1/ops/')) {
+    return new Response('운영 API 배포 연결이 준비되지 않았습니다.', { status: 503, headers: noCache })
+  }
   const backend = process.env.GOVBIZ_API_ORIGIN ?? ''
   const frontend = process.env.GOVBIZ_FRONTEND_ORIGIN ?? ''
   const secret = process.env.GOVBIZ_PROXY_SECRET ?? ''
@@ -21,7 +26,6 @@ export default function middleware(request: Request) {
     return new Response('API 배포 설정이 준비되지 않았습니다.', { status: 503, headers: noCache })
   }
 
-  const incoming = new URL(request.url)
   // Preview/임의 배포 별칭에서 운영 DB와 세션을 공유하지 않는다.
   if (process.env.VERCEL_ENV !== 'production' || incoming.origin !== frontend) {
     return new Response('운영 주소에서 이용해 주세요.', { status: 403, headers: noCache })
