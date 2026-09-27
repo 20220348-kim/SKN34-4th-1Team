@@ -33,6 +33,7 @@ class FakeChatOpenAI:
 
     def __init__(self, **kwargs) -> None:
         self.kwargs = kwargs
+        self.model_name = kwargs["model"]
         FakeChatOpenAI.instances.append(self)
 
     def bind(self, **kwargs):

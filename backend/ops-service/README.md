@@ -16,13 +16,13 @@ Kubernetes 검증 이미지 접두사는 `govbiz-ops-service`입니다.
 이 디렉터리는 서브모듈이 아닙니다. 실제 `.env`, 로컬 가상환경·Git 메타데이터는
 가져오지 않았습니다.
 
-현재 범위는 Django 기본 골격, 로컬 개발 환경과 Kubernetes에서 실행할 수 있는
+현재 범위는 상태 확인 API, Ops 전용 운영자 로그인, 저장 캡처 평가 실행·이력·결과 화면과
 Gunicorn 이미지입니다. 공고·회원·신청 관리 업무와 기존 Spring Boot/FastAPI의
-운영 데이터는 이전하지 않았습니다. 이미지 준비가 AWS 운영 배포 완료를 뜻하지는 않습니다.
+운영 데이터는 이전하지 않았습니다. 운영 배포와 Core 계정 연동은 별도입니다.
 
 ## 기술 구성
 
-- Python 3.13
+- Python 3.12
 - Django 5.2 LTS, Django REST Framework
 - Gunicorn 26.2 WSGI 실행 서버(배포 이미지 기본값)
 - MySQL 8.4, `utf8mb4`
@@ -30,7 +30,31 @@ Gunicorn 이미지입니다. 공고·회원·신청 관리 업무와 기존 Spri
 - Ruff, Django 테스트 러너
 - Docker Compose, GitHub Actions CI
 
-Django 기본 사용자 테이블과 관리자 화면은 아직 추가하지 않았습니다. 인증 방식과 기존 GovBiz 계정의 연동 범위를 정한 뒤 도입합니다. 업무 API의 기본 권한은 `IsAuthenticated`이며, 현재 상태 확인 API만 공개합니다.
+Django 기본 사용자·세션 테이블로 Ops 전용 계정을 관리합니다. 평가 화면·API는 활성 운영자
+(`is_staff`)만 접근하고, 쓰기 요청에는 CSRF 검증을 적용합니다. 상태 확인 API만 공개합니다.
+계정은 `createsuperuser`로 생성하며 Core·Langfuse 계정과 공유하지 않습니다.
+
+## LLMOps 운영 화면
+
+첫 전체 실행은 [LLMOps 개발 환경](../../infrastructure/llmops/README.md#django-운영-화면)을 따르세요.
+기존 업무 DB와 분리한 Compose에서는 [localhost:18001/ops/evaluations](http://localhost:18001/ops/evaluations)를
+사용합니다. 아래 단독 Ops 구성은 8001 포트이며 평가 실행기 연결은 별도로 필요합니다.
+
+- Django 템플릿: 운영자 로그인, 평가 요청·목록, 실행 상세·결과 요약, 보고서 조회
+- 고정된 `target-coverage-20260907-v1` 가상 6건만 선택 가능; 경로·모델·코드를 요청으로 받지 않음
+- `EvaluationRun`: 요청 UUID, 요청자·자료·상태·시간, Prefect 실행 ID, 콘텐츠 평가 ID, 요약 저장
+- 요청 UUID를 DB 기본 키와 Prefect idempotency key로 사용; 같은 요청 재전송은 같은 실행을 반환
+- Prefect 접수 응답 유실 시 `REQUESTED`와 오류 코드를 유지; 같은 요청으로 접수 재확인 가능
+- 상태 원본은 Prefect. 상세/API 조회가 DB의 마지막 상태를 갱신하고 상세 화면은 진행 중 5초 간격으로 조회
+- 연결 장애는 마지막 상태와 오류를 함께 표시. 실패·취소·프로세스 중단·결과 확인 실패를 구별
+- Prefect 완료와 결과 파일의 요청 연결·보고서 해시를 모두 확인해야 Ops에서 완료 처리
+- 평가 프로세스는 결과 볼륨에 쓰고 Django는 읽기 전용으로 접근. 보고서는 운영자 인증과 CSP sandbox 적용
+- 과거 캡처에는 trace가 없으므로 Langfuse 세션 상세 대신 평가 ID로 필터링한 점수 목록에 연결
+
+호출 흐름은 `운영 화면 → Django 인증·View → 평가 Service → Prefect HTTP API → 상시 평가 실행기`
+입니다. 실행기는 기존 `pandas → Pandera → 지표 재계산 → Evidently / Langfuse` 흐름을 사용합니다.
+Django HTTP 요청 안에서는 평가하지 않으며 Django에 평가 SDK 전체를 설치하지 않습니다.
+별도 Celery·Airflow·LLM provider는 추가하지 않았습니다. 모델 API 호출 예산은 0입니다.
 
 ## 빠른 시작 — Docker
 
@@ -70,7 +94,7 @@ docker compose down
 
 이 절의 명령도 `backend/ops-service`에서 실행합니다.
 
-[uv 공식 설치 안내](https://docs.astral.sh/uv/getting-started/installation/)에 따라 uv 0.12.5와 Python 3.13을 준비합니다. 기존 uv는 요구 버전에 맞춥니다.
+[uv 공식 설치 안내](https://docs.astral.sh/uv/getting-started/installation/)에 따라 uv 0.12.5와 Python 3.12를 준비합니다. 기존 uv는 요구 버전에 맞춥니다.
 
 ```powershell
 Copy-Item .env.example .env
@@ -78,6 +102,7 @@ uv sync --locked
 docker compose up --detach ops-mysql --wait
 uv run --locked python manage.py check
 uv run --locked python manage.py migrate
+uv run --locked python manage.py createsuperuser
 uv run --locked python manage.py runserver 127.0.0.1:8001
 ```
 
@@ -89,10 +114,18 @@ uv run --locked python manage.py runserver 127.0.0.1:8001
 | --- | --- | --- |
 | `GET /api/v1/health` | `200`, `status: UP` | DB를 호출하지 않음 |
 | `GET /api/v1/health/ready` | `200`, `database: UP` | MySQL 연결/질의 실패 시 `503`, 내부 연결 정보는 응답에 노출하지 않음 |
+| `POST /api/v1/evaluations` | 최초 `202`, 재전송 `200`; 실행 메타데이터 | 자료/UUID 오류 `400`, 권한·CSRF `403`, 요청 충돌 `409`, 접수 미확인 `503` |
+| `GET /api/v1/evaluations` | `200`, 25건 페이지 (`count`, `next`, `previous`, `results`) | 비운영자 `403` |
+| `GET /api/v1/evaluations/{UUID}` | `200`, 최신 상태와 요약·상세 링크 | 비운영자 `403`, 없는 실행 `404`; Prefect 장애는 `error_code`로 구별 |
+
+평가 요청 JSON은 `{"request_id":"<새 UUID>","dataset_id":"target-coverage-20260907-v1"}`입니다.
+통신 재시도에는 UUID를 유지하고, 사용자가 의도적으로 새 평가를 시작할 때만 새 UUID를 발급합니다.
+미확정 접수를 복구할 때도 같은 POST를 사용합니다. 요청이 이미 접수됐을 수 있으므로 새 UUID로 바꾸지 않습니다.
 
 URL 끝에 슬래시를 붙이지 않습니다. 상태 확인 경로는 쓰기 요청을 받지 않습니다.
 
-호출 흐름은 `HTTP → Django URL → DRF View → JSON`이며, readiness만 MySQL에서 `SELECT 1`을 실행합니다. 현재 외부 AI API 호출은 없습니다.
+상태 확인 흐름은 `HTTP → Django URL → DRF View → JSON`이며, readiness는 MySQL에서
+`SELECT 1`을 실행합니다. Ops에서 외부 모델 API를 호출하지 않습니다.
 
 ## 검증
 
@@ -131,6 +164,7 @@ GitHub Actions는 모노레포 루트의
 ```text
 config/                  Django 설정·URL·WSGI·ASGI
 apps/health/             실행/DB 연결 상태 API 및 테스트
+apps/evaluations/        운영자 화면·평가 API·모델·migration·Prefect HTTP 연동·테스트
 infrastructure/mysql/    개발용 테스트 DB 초기화
 manage.py                관리 명령 진입점
 pyproject.toml           Python 의존성과 개발 도구 설정
@@ -151,6 +185,14 @@ scripts/check-image.py   배포 이미지 기본 명령·격리·상태 확인 �
 - `DB_HOST`, `DB_PORT`: 호스트 실행 기본값 `127.0.0.1:3308`
 - `API_PORT`, `MYSQL_PORT`: Compose가 호스트에 공개하는 포트
 - `MYSQL_ROOT_PASSWORD`: 개발용 MySQL 초기화 비밀번호
+- `PREFECT_API_URL`: Django에서 접근하는 Prefect API; 기본 `http://127.0.0.1:14200/api`
+- `PREFECT_UI_URL`, `LANGFUSE_PROJECT_URL`: 운영자 브라우저에서 여는 상세 링크
+- `LLMOPS_RESULTS_DIR`: 실행기 결과를 읽는 디렉터리; 기본 저장소 `work/llmops-ops`
+- `DJANGO_COOKIE_SECURE`: 기본값은 `not DJANGO_DEBUG`. 로컬 HTTP 개발에서만 `false`
+
+컨테이너 간 연결 주소와 브라우저 링크 주소는 다릅니다. 전용 Compose는 API에 `prefect:4200`,
+브라우저 링크에 `localhost:14200`을 사용합니다. 세션·CSRF 쿠키 이름은 `govbiz_ops_session`·
+`govbiz_ops_csrf`이며 같은 localhost의 다른 서비스 쿠키와 구별합니다.
 
 Compose의 DB 이름/사용자는 `govbiz4`로 고정하여 테스트 초기화 SQL과 일치시킵니다. 포트를 변경하면 호스트 실행의 `DB_PORT`도 맞춰야 합니다.
 
@@ -179,8 +221,8 @@ Argo CD가 이 서비스의 Deployment를 동기화했습니다. 교육기관 �
   `/api/v1/health`와 `/api/v1/health/ready`를 사용하며 허용된 `Host` 헤더가 필요합니다.
   liveness/startup은 DB를 보지 않고 readiness만 DB를 확인합니다.
 - `python manage.py migrate --noinput`은 별도 배포 작업으로 한 번 실행합니다.
-  Pod마다 동시에 migration을 실행하는 시작 명령은 넣지 않습니다. 아직 업무 모델과
-  자체 migration은 없으며 사용자·인증 테이블도 만들지 않았습니다.
+  Pod마다 동시에 migration을 실행하는 시작 명령은 넣지 않습니다. Django auth·session과
+  `evaluations/0001_initial.py`를 함께 적용해야 운영자 화면을 사용할 수 있습니다.
 - 공개 운영 전에는 TLS/신뢰 프록시, 인증·권한, DB TLS/백업을 별도 구성하고 실제 배포
   환경에서 `python manage.py check --deploy`를 점검해야 합니다. 이 작업은 개발용
   `runserver`를 대체했을 뿐, 해당 보안·업무 구성을 모두 완료한 것은 아닙니다.

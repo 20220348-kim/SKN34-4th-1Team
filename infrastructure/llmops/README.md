@@ -5,7 +5,7 @@
 구현 범위는 근거 답변 추적과 **저장 캡처를 사용하는 수동 평가 파이프라인**이다.
 Langfuse 4.15.6, Prefect 3.8.6, pandas 3.0.6, Pandera 0.33.1, Evidently 0.7.23을
 AI Service의 `uv.lock`으로 고정한다. 요청 처리에는 Langfuse만 설치하고 나머지는 `evaluation` 그룹으로 설치한다.
-AI Service의 로컬·CI·Docker와 평가 실행기·Prefect 서버는 모두 Python 3.12를 사용한다.
+AI Service·Django Ops의 로컬·CI·Docker와 평가 실행기·Prefect 서버는 모두 Python 3.12를 사용한다.
 AI 프로젝트는 `>=3.12,<3.13`으로 제한하며 `.python-version`과 `uv.lock`에 맞춰 설치한다.
 
 ## 개발 서버
@@ -34,6 +34,85 @@ Langfuse 이메일은 `llmops@localhost.test`, 비밀번호는 생성한 파일�
 docker compose --env-file infrastructure/llmops/.env \
   -f infrastructure/llmops/compose.yaml --profile evaluation down
 ```
+
+## Django 운영 화면
+
+운영자가 브라우저에서 저장 자료 평가를 요청하고 실행 이력·결과를 확인하는 개발 구성이다.
+[Ops 기능과 API](../../backend/ops-service/README.md#llmops-운영-화면)를 함께 참고한다.
+Django는 별도 전용 MySQL을 사용한다. 기존 업무 Ops DB·계정·Langfuse 키를 변경하지 않는다.
+
+기본 `.env`가 없는 경우 위 `init_env.py`를 먼저 실행한다. 다음 명령은 저장소 루트에서 실행하며,
+`.env.ops`가 이미 있다면 생성 명령은 생략한다. 기존 파일은 덮어쓰지 않는다.
+
+```bash
+python3 infrastructure/llmops/init_ops_env.py
+
+dc() {
+  docker compose --env-file infrastructure/llmops/.env \
+    --env-file infrastructure/llmops/.env.ops \
+    -f infrastructure/llmops/compose.yaml \
+    -f infrastructure/llmops/compose.ops.yaml --profile evaluation "$@"
+}
+dc up -d --build ops-service evaluation-runner
+dc exec -T ops-service python manage.py migrate --noinput
+
+# 최초 한 번만 생성. 이미 생성한 계정의 비밀번호는 변경하지 않는다.
+set -a
+source infrastructure/llmops/.env.ops
+set +a
+export DJANGO_SUPERUSER_PASSWORD="$OPS_ADMIN_PASSWORD"
+dc exec -T -e DJANGO_SUPERUSER_PASSWORD ops-service python manage.py createsuperuser \
+  --noinput --username "$OPS_ADMIN_USERNAME" --email ops@localhost.test
+unset DJANGO_SUPERUSER_PASSWORD
+```
+
+[운영 화면](http://localhost:18001/ops/evaluations)에서 `operator`로 로그인한다.
+비밀번호는 Git에서 제외된 `infrastructure/llmops/.env.ops`의 `OPS_ADMIN_PASSWORD`다.
+`평가 실행 → 상세 화면 → 결과 요약 → Evidently 보고서 / Langfuse 점수 / Prefect 로그` 순서로 확인한다.
+Langfuse는 자체 로그인이 필요하며 Ops 로그인과 자동 공유하지 않는다.
+과거 캡처는 모델 trace를 새로 만들지 않으므로 Langfuse 세션 상세가 존재하지 않을 수 있다.
+Ops의 점수 링크는 해당 평가 ID의 `Session ID` 필터와 고정 조회 기간을 사용해 점수 22개를 보여준다.
+
+실행기는 `ops_flow.py`의 `govbiz-ops-evidence-evaluation/saved-capture` deployment를 등록하고
+`serve(limit=1)`로 요청을 받는다. 스케줄은 등록하지 않는다. Django는 Prefect HTTP API만 호출하며
+평가 의존성을 설치하지 않는다. UI에 제공하는 자료는 저장된 가상 평가 6건이고 모델 호출은 0회다.
+사용자의 새 실행 요청마다 UUID를 발급하지만 같은 자료의 평가 ID·Langfuse 점수 ID는 동일하므로
+재계산이 중복 점수를 만들지 않는다. 요청 전송 재시도는 원래 UUID를 유지한다.
+
+```mermaid
+flowchart LR
+    UI[운영자 · Django 화면] --> OPS[Django · 인증 / 실행 이력]
+    OPS -->|실행 요청 UUID| P[Prefect API]
+    P --> R[상시 평가 실행기]
+    R --> E[pandas / Pandera / 기존 지표 계산]
+    E --> L[Langfuse 점수]
+    E --> V[Evidently 보고서]
+    V --> F[공유 결과 볼륨]
+    F -->|읽기 전용 · 요청 연결과 해시 검증| OPS
+    OPS -->|상태 조회| P
+```
+
+`ops-results` 볼륨의 `{요청 UUID}/request.json`이 Django 요청과 Prefect 실행을 연결하며,
+`evaluation/` 아래에 기존 manifest·비교 요약·보고서를 보존한다. Django의 상태는 마지막 조회
+시점의 Prefect 상태다. 상세 페이지를 열면 5초마다 갱신하며, 목록은 저장된 마지막 상태를 보여준다.
+실행기가 꺼지면 새 요청은 대기 상태로 남고, Prefect 연결 실패·결과 파일 누락을 완료로 표시하지 않는다.
+보고서 URL은 운영자만 접근할 수 있고 HTML에는 동일 출처 접근을 허용하지 않는 CSP sandbox를 적용한다.
+
+실제 HTTP 로그인·CSRF·중복 요청·상태·보고서 조회 검증:
+
+```bash
+set -a
+source infrastructure/llmops/.env.ops
+set +a
+python3 infrastructure/llmops/ops_smoke.py --output work/llmops-ops-verification.json
+```
+
+이 검증은 새 평가 요청 1건을 생성하고 같은 요청을 재전송한다. `COMPLETED`, 가상 사례 6건의 요약,
+동일 Prefect 실행 ID, 보고서 HTTP 200을 확인한다. 결과는 JSON에 보존하고 비밀번호는 출력하지 않는다.
+실패·취소·접수 응답 유실·보고서 훼손·권한 오류는 Ops 단위/DB 통합 테스트에서도 검증한다.
+
+종료는 `dc down`으로 한다. 기존 Langfuse·Prefect와 이번 Ops 컨테이너를 정리하지만 모든 named volume은 유지한다.
+운영 공개·Core 계정 연동·여러 호스트의 결과 저장소·실제 모델 평가·정기 실행은 이 개발 구성에 포함하지 않는다.
 
 ## 무료 전체 검증
 
@@ -135,3 +214,10 @@ Prefect 개발 컨테이너도 Python 3.12.14 이미지로 갱신했고, 통일 
 `work/llmops-python312/verification.json`에 있다. 이 기록에는 평가 실행기의 Python 버전도 남긴다.
 정상·실패 trace 2건, 평가 점수 22개의 등록·조회와 동일 ID 재등록, Prefect 정상 두 번·입력 오류 한 번의 상태를 확인했다.
 모델 API 호출은 0회다. 원격 CI 전체 검증, AI Docker 이미지 재빌드와 운영 배포는 아직 실행하지 않았다.
+
+2026-09-27 Django 연결은 실제 Python 3.12 컨테이너·격리 MySQL 8.4에서 Ops 테스트 19개,
+AI/평가 관련 선택 테스트 31개가 통과했다. 점수 링크를 수정한 뒤 관련 완료·보고서 테스트도 재검증했다.
+Ruff 검사·포맷, 잠금 파일, migration 정합성, Compose 설정을 확인했다.
+`work/llmops-ops-verification.json`은 실제 HTTP 로그인·CSRF·중복 접수·6건 평가·보고서 200 검증 기록이다.
+브라우저에서도 로그인과 평가 버튼, 완료 요약, Evidently 차트, Langfuse 점수 22개를 확인했다.
+새 Ops·평가 실행기 이미지는 로컬에서 빌드·실행했다. 이 변경의 원격 CI·운영 배포는 아직 수행하지 않았다.

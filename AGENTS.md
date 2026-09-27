@@ -196,7 +196,7 @@
 - AI Service 변경: `backend/ai-service`에서
   `uv run --locked --extra dev python -m pytest <대상 테스트 경로>`로 관련 테스트를 실행한다.
   필요하면 `-k`로 범위를 좁히고, 유료 API 호출 없는 단위·스텁 검증을 우선한다.
-- Ops 변경: Python 3.13 환경의 `backend/ops-service`에서 `uv run --locked ruff check <변경 파일>`과
+- Ops 변경: Python 3.12 환경의 `backend/ops-service`에서 `uv run --locked ruff check <변경 파일>`과
   `uv run --locked ruff format --check <변경 파일>` 등 정적 검사를 수행한다. DB 없이 실행 가능한
   관련 테스트를 우선하고, DB 재현이 필요하면 격리된 테스트 DB에서
   `uv run --locked python manage.py test <대상 테스트 라벨> --noinput`으로 범위를 좁힌다.
