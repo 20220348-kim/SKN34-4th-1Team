@@ -1,5 +1,9 @@
 package ai.govbiz.core.applicationpreparation.service
 
+import ai.govbiz.core.applicationpreparation.domain.ApplicationOnlineFormSource
+import ai.govbiz.core.applicationpreparation.domain.reviewOnlineForm
+import ai.govbiz.core.applicationpreparation.domain.fieldMappings
+import ai.govbiz.core.applicationpreparation.service.dto.ApplicationOnlineFormMappingReviewResult
 import ai.govbiz.core.account.domain.Account
 import ai.govbiz.core.applicationpreparation.domain.NewApplicationPreparation
 import ai.govbiz.core.applicationpreparation.domain.ApplicationProgressStage
@@ -34,6 +38,14 @@ class ApplicationPreparationService(
     private val contents: ApplicationPreparationContentRepository,
     private val savedSupportPrograms: SavedSupportProgramRepository,
 ) {
+    /** 소유권 확인 후 고정 Manifest를 계산에만 사용한다. Fact·revision·snapshot은 변경하지 않는다. */
+    fun reviewOnlineFormMapping(account: Account, preparationId: Long, source: ApplicationOnlineFormSource): ApplicationOnlineFormMappingReviewResult {
+        val preparation = repository.findOwned(account.id, preparationId) ?: throw ApplicationPreparationNotFoundException()
+        val manifest = forms.requireVersion(preparation.draft.formVersionId)
+        val review = manifest.reviewOnlineForm(source)
+        return ApplicationOnlineFormMappingReviewResult(source.formId, source.formTitle, manifest.fieldMappings(review.formMap), review.issues)
+    }
+
     fun supportedForms(account: Account) = forms.listSupported().also { require(account.id > 0) }
 
     @org.springframework.transaction.annotation.Transactional
