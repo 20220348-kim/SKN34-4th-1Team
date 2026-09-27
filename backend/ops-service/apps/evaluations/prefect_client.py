@@ -13,7 +13,7 @@ class PrefectUnavailable(Exception):
     pass
 
 
-def request_json(path, payload=None):
+def request_json(path, payload=None, *, expected_type=dict):
     request = Request(
         settings.PREFECT_API_URL + path,
         data=None if payload is None else json.dumps(payload).encode(),
@@ -23,11 +23,24 @@ def request_json(path, payload=None):
     try:
         with urlopen(request, timeout=3) as response:
             data = json.load(response)
-        if not isinstance(data, dict):
-            raise ValueError("Expected an object")
+        if not isinstance(data, expected_type):
+            raise ValueError("Unexpected response type")
         return data
     except (URLError, OSError, ValueError) as exc:
         raise PrefectUnavailable from exc
+
+
+def run_parameters(run):
+    return {
+        "request_id": str(run.id),
+        "dataset_id": run.dataset_id,
+        "candidate_capture_id": run.candidate_capture_id,
+        "reference_capture_id": run.reference_capture_id,
+        "reference_config": run.reference_config,
+        "execution_mode": run.execution_mode,
+        "live_config": run.live_config,
+        **({"recovery_config": run.recovery_config} if run.recovery_config else {}),
+    }
 
 
 def create_run(run):
@@ -40,21 +53,36 @@ def create_run(run):
             f"/deployments/{deployment_id}/create_flow_run",
             {
                 "name": f"ops-{run.id}",
-                "parameters": {
-                    "request_id": str(run.id),
-                    "dataset_id": run.dataset_id,
-                    "candidate_capture_id": run.candidate_capture_id,
-                    "reference_capture_id": run.reference_capture_id,
-                    "reference_config": run.reference_config,
-                    "execution_mode": run.execution_mode,
-                    "live_config": run.live_config,
-                    **({"recovery_config": run.recovery_config} if run.recovery_config else {}),
-                },
+                "parameters": run_parameters(run),
                 "idempotency_key": f"ops-{run.id}",
                 "state": {"type": "SCHEDULED"},
             },
         )
         return UUID(str(result["id"]))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise PrefectUnavailable from exc
+
+
+def find_run(run):
+    """접수 응답 유실 시 기존 실행만 찾는다. 실행 생성·재시작 요청은 보내지 않는다."""
+    key = f"ops-{run.id}"
+    rows = request_json(
+        "/flow_runs/filter",
+        {"flow_runs": {"idempotency_key": {"any_": [key]}}, "limit": 2},
+        expected_type=list,
+    )
+    if not rows:
+        return None
+    try:
+        if len(rows) != 1 or rows[0]["idempotency_key"] != key:
+            raise ValueError("Ambiguous dispatch")
+        parameters = dict(rows[0]["parameters"])
+        # Prefect는 deployment 기본값인 빈 recovery_config를 응답에 포함할 수 있다.
+        if parameters.get("recovery_config") in (None, {}):
+            parameters.pop("recovery_config", None)
+        if parameters != run_parameters(run):
+            raise ValueError("Dispatch parameters differ")
+        return UUID(str(rows[0]["id"]))
     except (KeyError, TypeError, ValueError) as exc:
         raise PrefectUnavailable from exc
 

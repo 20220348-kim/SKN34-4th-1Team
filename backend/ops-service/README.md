@@ -112,6 +112,27 @@ Migration `0004_evaluation_review_baseline`은 검토 이력·데이터셋별 �
 호출 흐름: `React 검토 화면 → Django 파일 무결성 확인 → MySQL 검토 이력/기준 저장`.
 다음 평가는 `Django 기준 명세 고정 → Prefect → 기준 응답 복사·검증 → 기존 평가 파이프라인`을 거칩니다.
 
+## 실행 상태의 백그라운드 확인
+
+`python manage.py sync_evaluations --watch`는 화면 방문과 독립적으로 미완료 실행을 확인합니다.
+기본 대기 간격은 10초, 배치 크기는 25건이며 `--interval`(2~300초), `--batch-size`(1~100)로 조절합니다.
+옵션 없이 실행하면 한 배치만 처리합니다. LLMOps Compose의 `ops-sync`가 같은 Django 이미지 구성으로 실행합니다.
+단독 Ops/루트 Compose에는 Prefect가 없으므로 자동 실행하지 않습니다. 별도 실행 시 DB·Prefect·결과 경로를 동일하게 지정합니다.
+
+- Migration `0006_evaluationrun_sync_attempted_at`을 먼저 적용합니다. 기존 행·결과 파일은 유지합니다.
+- 목록·상세 응답의 `synced_at`은 마지막 성공 확인, `sync_attempted_at`은 마지막 시도입니다.
+  미완료 상태의 성공 확인이 60초 이상 지연되면 `status_stale=true`입니다.
+- Prefect 장애는 마지막 상태를 유지하고 `PREFECT_STATUS_UNAVAILABLE`을 표시합니다.
+  확인 시도를 기록해 반복 실패가 다른 실행을 밀어내지 않게 합니다.
+- flow ID 없는 접수는 UUID idempotency key로 조회하고 저장된 인자까지 대조합니다.
+  조회 결과가 없거나 불일치하면 자동 실행을 생성하지 않습니다. 기존 관리자의 명시적인 접수 재확인은 유지합니다.
+- 조건부 DB 갱신으로 늦은 상태 응답이 최신 완료 결과를 되돌리지 못하게 합니다.
+- 목록 API는 DB만 읽으며 React가 5초마다 갱신합니다. 결과 오류는 재확인하지만 이미 완료된 모든 파일을
+  주기적으로 전수 검사하지는 않습니다. 파일 훼손은 상세·보고서 조회에서도 확인합니다.
+
+호출 흐름: `ops-sync → Prefect 기존 실행 조회 → 결과 파일 검증 → Ops MySQL → React 목록`.
+새 모델 실행·자동 후처리 복구·평가 스케줄 기능은 이 명령에 포함하지 않습니다.
+
 ## 실패한 후처리 복구
 
 `POST /api/v1/ops/evaluations/{원본 UUID}/recover`에 새로운 `request_id` UUID만 보냅니다.

@@ -21,6 +21,7 @@ from .recovery import recovery_state, submit_recovery
 from .reviews import baseline_choices, promote_baseline, review_material, review_state, save_review
 from .services import (
     DATASET_ID,
+    PENDING_SYNC,
     RequestConflict,
     ResultsUnavailable,
     read_result,
@@ -133,6 +134,9 @@ def run_data(run, viewer_id=None):
         "started_at": run.started_at,
         "finished_at": run.finished_at,
         "synced_at": run.synced_at,
+        "sync_attempted_at": run.sync_attempted_at,
+        "status_stale": run.status in PENDING_SYNC
+        and (timezone.now() - (run.synced_at or run.created_at)).total_seconds() > 60,
         "error_code": run.error_code,
         "error_message": ERROR_MESSAGES.get(run.error_code, ""),
         "summary": run.summary,

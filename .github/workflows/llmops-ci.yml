@@ -56,6 +56,9 @@ jobs:
       - name: Install locked evaluation dependencies
         working-directory: backend/ai-service
         run: uv sync --locked --extra dev --group evaluation
+      - name: Test background synchronization smoke assertions without servers
+        working-directory: backend/ai-service
+        run: uv run --locked --extra dev python -m pytest ../../infrastructure/llmops/test_ops_smoke.py -q
       - name: Generate isolated development credentials
         run: |
           backend/ai-service/.venv/bin/python infrastructure/llmops/init_env.py
@@ -77,6 +80,8 @@ jobs:
           docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml -f infrastructure/llmops/compose.auth-test.yaml --profile evaluation up -d --build auth-core ops-service evaluation-runner
       - name: Apply isolated Ops migrations
         run: docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml -f infrastructure/llmops/compose.auth-test.yaml --profile evaluation exec -T ops-service python manage.py migrate --noinput
+      - name: Start background Ops status synchronization after migrations
+        run: docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml -f infrastructure/llmops/compose.auth-test.yaml --profile evaluation up -d --build ops-sync
       - name: Set up pnpm and Node.js
         uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
         with:
@@ -100,6 +105,24 @@ jobs:
           export CORE_ADMIN_PASSWORD="$OPS_ADMIN_PASSWORD"
           python infrastructure/llmops/ops_smoke.py --seed-dev-accounts --base-url http://localhost:5173 --output work/llmops-ci/ops-verification.json
           python infrastructure/llmops/ops_smoke.py --compare-captures --base-url http://localhost:5173 --output work/llmops-ci/ops-comparison-verification.json
+      - name: Verify failed publication recovery through Ops and Prefect without model calls
+        shell: bash
+        run: |
+          set -a
+          source infrastructure/llmops/.env.ops
+          set +a
+          export CORE_ADMIN_EMAIL=admin@govbiz.local
+          export CORE_ADMIN_PASSWORD="$OPS_ADMIN_PASSWORD"
+          dc() {
+            docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml -f infrastructure/llmops/compose.auth-test.yaml --profile evaluation "$@"
+          }
+          source_id=$(python -c 'from uuid import uuid4; print(uuid4())')
+          fixture="$PWD/infrastructure/llmops/recovery_smoke_fixture.py:/tmp/recovery_smoke_fixture.py:ro"
+          dc run --rm --no-deps -v "$fixture" -e OPENAI_API_KEY= -e LLMOPS_LIVE_ENABLED=false evaluation-runner .venv/bin/python /tmp/recovery_smoke_fixture.py prepare --source-id "$source_id"
+          dc run --rm --no-deps -v "$fixture" ops-service python /tmp/recovery_smoke_fixture.py register --source-id "$source_id" --operator-email "$CORE_ADMIN_EMAIL"
+          python infrastructure/llmops/ops_smoke.py --recover-source "$source_id" --base-url http://localhost:5173 --output work/llmops-ci/ops-recovery-verification.json
+          recovery_id=$(python -c 'import json; print(json.load(open("work/llmops-ci/ops-recovery-verification.json"))["request_id"])')
+          dc run --rm --no-deps -v "$fixture" -e OPENAI_API_KEY= -e LLMOPS_LIVE_ENABLED=false evaluation-runner .venv/bin/python /tmp/recovery_smoke_fixture.py verify --source-id "$source_id" --recovery-id "$recovery_id"
       - name: Stop this job's development containers
         if: always()
         run: docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml -f infrastructure/llmops/compose.auth-test.yaml --profile evaluation down
