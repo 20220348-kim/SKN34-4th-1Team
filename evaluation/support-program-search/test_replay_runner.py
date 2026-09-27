@@ -232,7 +232,8 @@ class ReplayRunnerTest(unittest.TestCase):
         args = SimpleNamespace(**self.paths, output_dir=self.output)
         prompts = {"before": "before test prompt", "after": SUPPORT_PROGRAM_RANKING_INSTRUCTIONS}
         self.execution_state = (attempts, received_requests, closed)
-        environment = {"OPENAI_API_KEY": SECRET_MARKER}
+        # 이 재현 도구의 과거 모델 조건을 production 기본값과 독립적으로 고정한다.
+        environment = {"OPENAI_API_KEY": SECRET_MARKER, "OPENAI_MODEL": "gpt-5.6-luna"}
         if ranking_timeouts is not None:
             environment.update(LLM_RANKING_MODEL_TIMEOUT_SECONDS=str(ranking_timeouts[0]),
                                LLM_RANKING_RUN_TIMEOUT_SECONDS=str(ranking_timeouts[1]))

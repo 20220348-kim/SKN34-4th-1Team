@@ -11,8 +11,11 @@ import { getEvaluation } from './data/ops/opsApi'
 
 const id = '10000000-0000-4000-8000-000000000001'
 const flowId = '20000000-0000-4000-8000-000000000002'
-const dataset = { id: 'target-coverage-20260907-v1', label: '지원 대상 근거 답변 · 저장된 가상 평가 6건' }
+const capture = { id: 'target-coverage-20260907-v1', label: '저장 캡처' }
+const dataset = { id: capture.id, label: '지원 대상 근거 답변 · 저장된 가상 평가 6건', case_ids: ['TC01', 'TC02', 'TC03', 'TC04', 'TC05', 'TC06'], captures: [capture] }
+const comparisonDataset = { id: 'fixed-context-e01-v1', label: '공통 E01 비교', case_ids: ['E01'], captures: [{ id: 'reference', label: '기준 프롬프트' }, { id: 'candidate', label: '후보 프롬프트' }] }
 const completed = {
+  candidate_capture_id: capture.id, reference_capture_id: capture.id, candidate_label: capture.label, reference_label: capture.label, comparison: null,
   id, dataset_id: dataset.id, dataset_label: dataset.label, requested_by: 'operator@example.com', can_retry: false,
   status: 'COMPLETED', status_label: '완료', created_at: '2026-09-27T00:00:00Z',
   started_at: null, finished_at: null, synced_at: null, error_code: '', error_message: '',
@@ -24,7 +27,7 @@ const completed = {
 }
 let authenticated = true
 let fetchMock: Mock<(path: string, options?: RequestInit) => Promise<Response>>
-const session = () => ({ user: authenticated ? { username: 'operator@example.com' } : null, csrf_token: authenticated ? 'rotated-token' : 'anonymous-token', datasets: authenticated ? [dataset] : [] })
+const session = () => ({ user: authenticated ? { username: 'operator@example.com' } : null, csrf_token: authenticated ? 'rotated-token' : 'anonymous-token', datasets: authenticated ? [dataset, comparisonDataset] : [] })
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 
 beforeEach(() => {
@@ -158,7 +161,7 @@ describe('React LLMOps 운영 화면', () => {
     let submitted = false
     fetchMock.mockImplementation(async (path, options) => {
       if (path === '/api/v1/ops/evaluations') {
-        expect(JSON.parse(String(options?.body))).toEqual({ request_id: id, dataset_id: dataset.id })
+        expect(JSON.parse(String(options?.body))).toEqual({ request_id: id, dataset_id: dataset.id, candidate_capture_id: capture.id, reference_capture_id: capture.id })
         submitted = true
         return json({ ...completed, status: 'QUEUED', status_label: '실행 대기', report_url: null })
       }
@@ -179,4 +182,50 @@ describe('React LLMOps 운영 화면', () => {
     fetchMock.mockResolvedValue(json({ ...completed, langfuse_url: 'javascript:alert(1)' }))
     await expect(getEvaluation(id)).rejects.toThrow('운영 서버 응답을 확인할 수 없습니다.')
   })
+  it('자료에 맞는 기준·후보를 선택하고 접수 재시도에서도 두 선택을 유지한다', async () => {
+    const original = fetchMock.getMockImplementation()!
+    const bodies: unknown[] = []
+    fetchMock.mockImplementation(async (path, options) => {
+      if (path === '/api/v1/ops/evaluations') {
+        bodies.push(JSON.parse(String(options?.body)))
+        throw new TypeError('connection lost')
+      }
+      return original(path, options)
+    })
+    open()
+    const select = await screen.findByLabelText('평가 자료')
+    fireEvent.change(select, { target: { value: comparisonDataset.id } })
+    expect((screen.getByLabelText('기준 실행') as HTMLSelectElement).value).toBe('reference')
+    expect((screen.getByLabelText('후보 실행') as HTMLSelectElement).value).toBe('candidate')
+    expect(screen.getByText(/비교 범위: E01/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '평가 실행' }))
+    await screen.findByRole('button', { name: '같은 요청으로 재시도' })
+    expect((screen.getByLabelText('후보 실행') as HTMLSelectElement).disabled).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: '같은 요청으로 재시도' }))
+    await waitFor(() => expect(bodies).toHaveLength(2))
+    expect(bodies[0]).toEqual(bodies[1])
+    expect(bodies[0]).toMatchObject({ dataset_id: comparisonDataset.id, reference_capture_id: 'reference', candidate_capture_id: 'candidate' })
+  })
+
+  it('지표 차이와 원본 범위를 표시하고 미측정을 0으로 바꾸지 않는다', async () => {
+    const execution = { run_id: 'a'.repeat(32), model: 'test-model', prompt_sha256: 'p'.repeat(64), runner_sha256: 'r'.repeat(64), capture_sha256: 'c'.repeat(64), started_at: null, source_case_ids: ['E01'] }
+    const comparison = { schema_version: 2, comparison: 'candidate-reference', case_ids: ['E01'],
+      reference_execution: execution, candidate_execution: { ...execution, source_case_ids: ['E01', 'E07', 'E10', 'E12'] },
+      metrics: [
+        { key: 'meanOutputTokens', reference: 128, candidate: 91, delta: -37 },
+        { key: 'statusAccuracy', reference: 0, candidate: 1, delta: 1 },
+        { key: 'semanticFaithfulness', reference: null, candidate: null, delta: null },
+      ], cases: [],
+    }
+    const original = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (path, options) => path === `/api/v1/ops/evaluations/${id}` ? json({ ...completed, comparison }) : original(path, options))
+    open(`/ops/evaluations/${id}`)
+    expect(await screen.findByRole('region', { name: '기준·후보 비교' })).toBeTruthy()
+    expect(screen.getByText('-37.00')).toBeTruthy()
+    expect(screen.getByText('+1.00')).toBeTruthy()
+    expect(screen.getByText('비교 불가')).toBeTruthy()
+    expect(screen.getAllByText('미측정')).toHaveLength(2)
+    expect(screen.getByText('원본 사례: E01, E07, E10, E12')).toBeTruthy()
+  })
+
 })

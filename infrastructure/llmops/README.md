@@ -55,8 +55,10 @@ dc() {
     -f infrastructure/llmops/compose.yaml \
     -f infrastructure/llmops/compose.ops.yaml --profile evaluation "$@"
 }
-dc up -d --build ops-service evaluation-runner
-dc exec -T ops-service python manage.py migrate --noinput
+dc up -d ops-mysql
+dc build ops-service evaluation-runner
+dc run --rm ops-service python manage.py migrate --noinput
+dc up -d ops-service evaluation-runner
 
 ```
 
@@ -84,11 +86,16 @@ Docker Desktop의 호스트 연결 지원 여부도 확인한다.
 `평가 실행 → 상세 화면 → 결과 요약 → Evidently 보고서 / Langfuse 점수 / Prefect 로그` 순서로 확인한다.
 Langfuse는 자체 로그인이 필요하며 Ops 로그인과 자동 공유하지 않는다.
 과거 캡처는 모델 trace를 새로 만들지 않으므로 Langfuse 세션 상세가 존재하지 않을 수 있다.
-Ops의 점수 링크는 해당 평가 ID의 `Session ID` 필터와 고정 조회 기간을 사용해 점수 22개를 보여준다.
+Ops의 점수 링크는 해당 평가 ID의 `Session ID` 필터와 고정 조회 기간을 사용한다.
+가상 6건 재현은 점수 22개, E01 비교의 후보 실행은 점수 4개다.
 
 실행기는 `ops_flow.py`의 `govbiz-ops-evidence-evaluation/saved-capture` deployment를 등록하고
 `serve(limit=1)`로 요청을 받는다. 스케줄은 등록하지 않는다. Django는 Prefect HTTP API만 호출하며
-평가 의존성을 설치하지 않는다. UI에 제공하는 자료는 저장된 가상 평가 6건이고 모델 호출은 0회다.
+평가 의존성을 설치하지 않는다. UI는 저장된 가상 평가 6건 재현과 과거 프롬프트 실행의 공통 E01 비교를 제공한다.
+자료를 선택하면 허용된 기준·후보 실행과 비교 사례가 표시된다. 상세 화면에서는 지표 차이, 사례별 상태·인용,
+양쪽의 모델·프롬프트·실행기·캡처 식별자를 확인한다. 새 모델 호출은 0회다.
+두 프롬프트 캡처의 원본 사례는 각각 1건·4건이며, 비교 범위는 명시적으로 E01 한 건이다.
+토큰 연결 정보가 없는 과거 실행과 의미 충실도는 미측정으로 표시한다. 이 비교는 현재 모델의 품질 측정이 아니다.
 사용자의 새 실행 요청마다 UUID를 발급하지만 같은 자료의 평가 ID·Langfuse 점수 ID는 동일하므로
 재계산이 중복 점수를 만들지 않는다. 요청 전송 재시도는 원래 UUID를 유지한다.
 
@@ -107,11 +114,13 @@ flowchart LR
     OPS -->|상태 조회| P
 ```
 
-`ops-results` 볼륨의 `{요청 UUID}/request.json`이 Django 요청과 Prefect 실행을 연결하며,
+`ops-results` 볼륨의 `{요청 UUID}/request.json`이 Django 요청·기준/후보와 Prefect 실행을 연결하며,
 `evaluation/` 아래에 기존 manifest·비교 요약·보고서를 보존한다. Django의 상태는 마지막 조회
 시점의 Prefect 상태다. 상세 페이지를 열면 5초마다 갱신하며, 목록은 저장된 마지막 상태를 보여준다.
 실행기가 꺼지면 새 요청은 대기 상태로 남고, Prefect 연결 실패·결과 파일 누락을 완료로 표시하지 않는다.
 보고서 URL은 운영자만 접근할 수 있고 HTML에는 동일 출처 접근을 허용하지 않는 CSP sandbox를 적용한다.
+비교 JSON과 보고서의 해시를 확인한 뒤 결과를 제공한다. `0002` migration을 먼저 적용하고 Ops·실행기를
+갱신한다. 기존 이력·보고서는 유지되며, 이전 실행은 비교 상세가 없는 것으로 표시한다.
 
 React 개발 서버 프록시를 경유한 기존 Core 관리자 로그인·CSRF·중복 요청·상태·보고서·공유 로그아웃 검증:
 
@@ -119,11 +128,17 @@ React 개발 서버 프록시를 경유한 기존 Core 관리자 로그인·CSRF
 # 기존 Core 관리자 이메일·비밀번호를 환경변수 CORE_ADMIN_EMAIL / CORE_ADMIN_PASSWORD에 설정한다.
 python3 infrastructure/llmops/ops_smoke.py --base-url http://localhost:5173 \
   --output work/llmops-core-admin-verification.json
+
+# 같은 관리자 인증으로 기준·후보 비교 경로를 별도 검증한다.
+python3 infrastructure/llmops/ops_smoke.py --base-url http://localhost:5173 \
+  --compare-captures --output work/llmops-comparison-verification.json
 ```
 
 이 검증은 새 평가 요청 1건을 생성하고 같은 요청을 재전송한다. `COMPLETED`, 가상 사례 6건의 요약,
 동일 Prefect 실행 ID, 보고서 HTTP 200을 확인한다. 결과는 JSON에 보존하고 비밀번호는 출력하지 않는다.
 실패·취소·접수 응답 유실·보고서 훼손·권한 오류는 Ops 단위/DB 통합 테스트에서도 검증한다.
+`--compare-captures`는 E01의 지연 변화 `+117.477ms`, 미측정 토큰, 원본 4건 중 E01 비교,
+같은 요청 UUID의 기준 변경 거절을 추가로 확인한다. 두 경로 모두 LLMOps CI에 연결되어 있다.
 
 종료는 `dc down`으로 한다. 기존 Langfuse·Prefect와 이번 Ops 컨테이너를 정리하지만 모든 named volume은 유지한다.
 운영 공개·여러 호스트의 결과 저장소·실제 모델 평가·정기 실행은 이 개발 구성에 포함하지 않는다.
@@ -259,3 +274,14 @@ Core·Ops DB와 기존 평가 이력은 유지했다. 최초 병렬 검증 중 �
 발생했으며, 부하가 줄어든 상태의 전체 HTTP 재검증은 통과했다. 오류를 정상 응답으로 대체하지 않는다.
 전체 테스트·Core MySQL 통합 테스트·격리 CI 인증 fixture의 컨테이너 실행은 원격 CI 확인 대상이다.
 이 변경의 원격 CI와 운영 배포는 아직 수행하지 않았다.
+
+2026-09-27 기준·후보 비교 추가 후 Python 3.12 평가/flow 테스트 25건, 격리 MySQL 8.4의
+Django 평가·인증 테스트 20건, React Ops 테스트 11건이 통과했다. Ruff·Oxlint·타입·웹 빌드,
+Django 설정·migration 정합성, 캡처 목록 경로·워크플로 구문을 확인했다. 로컬 Ops와 실행기를
+다시 빌드하고 기존 이력을 보존하는 `0002` migration을 적용했다.
+`work/llmops-comparison-verification.json`은 기존 관리자 로그인부터 E01 비교 완료·보고서 200·로그아웃까지,
+`work/llmops-replay-comparison-verification.json`은 기존 6건 재현 경로의 같은 HTTP 검증 기록이다.
+브라우저에서도 자료 선택·실행·완료와 지표 차이·사례별 결과·미측정 표시를 확인했다.
+최초 6건 검증에서는 인증 API 503과 Langfuse 점수 저장의 읽기 시간 초과가 발생해 실행이 실패했다.
+서버 응답 확인 후 단독 재실행은 통과했으며, 실패 이력과 엄격한 오류 처리는 유지했다.
+새 모델 호출은 0회다. 이 비교 변경의 전체 원격 CI와 운영 배포는 아직 수행하지 않았다.

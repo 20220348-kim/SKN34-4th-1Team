@@ -28,7 +28,13 @@ class PrefectClientTests(SimpleTestCase):
         payload = request.call_args.args[1]
         self.assertEqual(payload["idempotency_key"], f"ops-{run.id}")
         self.assertEqual(
-            payload["parameters"], {"request_id": str(run.id), "dataset_id": DATASET_ID}
+            payload["parameters"],
+            {
+                "request_id": str(run.id),
+                "dataset_id": DATASET_ID,
+                "candidate_capture_id": DATASET_ID,
+                "reference_capture_id": DATASET_ID,
+            },
         )
 
     @patch("apps.evaluations.prefect_client.request_json", return_value={"id": 123})
@@ -338,6 +344,87 @@ class EvaluationTests(TestCase):
         self.assertEqual(
             len(self.client.get("/api/v1/ops/evaluations?page=2").json()["results"]), 1
         )
+
+    @patch("apps.evaluations.prefect_client.create_run", return_value=uuid4())
+    def test_comparison_choices_are_validated_and_part_of_idempotency(self, create):
+        reference, candidate = (
+            "fixed-context-20260906-diagnostic-v1",
+            "fixed-context-20260907-index-v1",
+        )
+        payload = {
+            **self.payload,
+            "dataset_id": "fixed-context-e01-v1",
+            "reference_capture_id": reference,
+            "candidate_capture_id": candidate,
+        }
+        data = self.client.get("/api/v1/ops/session").json()
+        self.assertNotIn('"path"', json.dumps(data))
+        self.assertEqual(data["datasets"][1]["case_ids"], ["E01"])
+        self.assertEqual(
+            self.post({**payload, "candidate_capture_id": "../../private"}).status_code, 400
+        )
+        self.assertEqual(
+            self.post({**payload, "candidate_capture_id": DATASET_ID}).status_code, 400
+        )
+        self.assertEqual(EvaluationRun.objects.count(), 0)
+        response = self.post(payload)
+        self.assertEqual(response.status_code, 202)
+        self.assertEqual(response.json()["candidate_capture_id"], candidate)
+        self.assertEqual(self.post(payload).status_code, 200)
+        self.assertEqual(self.post({**payload, "reference_capture_id": candidate}).status_code, 409)
+        create.assert_called_once()
+
+    @patch("apps.evaluations.prefect_client.read_run", return_value={"state_type": "COMPLETED"})
+    def test_comparison_hash_and_selected_sources_are_verified(self, read):
+        with (
+            TemporaryDirectory() as directory,
+            override_settings(LLMOPS_RESULTS_DIR=Path(directory)),
+        ):
+            run = self.queued_run()
+            self.result_files(Path(directory), run)
+            folder = Path(directory) / str(run.id)
+            path = folder / "evaluation/comparison.json"
+            comparison = json.loads(path.read_text())
+            comparison.update(
+                schema_version=2,
+                reference_run_id="b" * 32,
+                fixture_sha256="c" * 64,
+                case_ids=[f"TC0{i}" for i in range(1, 7)],
+                reference={"completed": True},
+                candidate_execution={"run_id": "a" * 32},
+                reference_execution={"run_id": "b" * 32},
+            )
+            path.write_text(json.dumps(comparison))
+            manifest_path = folder / "evaluation/manifest.json"
+            manifest = json.loads(manifest_path.read_text())
+            manifest.update(reference_run_id="b" * 32, fixture_sha256="c" * 64)
+            manifest["artifact_sha256"]["comparison.json"] = sha256(path.read_bytes()).hexdigest()
+            manifest_path.write_text(json.dumps(manifest))
+            result = sync_run(run)
+            self.assertEqual(result.status, "COMPLETED")
+            self.assertEqual(result.comparison["reference_run_id"], "b" * 32)
+            path.write_text(path.read_text() + " ")
+            self.assertEqual(
+                self.client.get(f"/api/v1/ops/evaluations/{run.id}/report").status_code, 404
+            )
+            for schema_version in (None, 3):
+                altered = dict(comparison)
+                if schema_version is None:
+                    del altered["schema_version"]
+                else:
+                    altered["schema_version"] = schema_version
+                path.write_text(json.dumps(altered))
+                self.assertEqual(
+                    self.client.get(f"/api/v1/ops/evaluations/{run.id}/report").status_code, 404
+                )
+            path.write_text(json.dumps(comparison))
+            marker = folder / "request.json"
+            data = json.loads(marker.read_text())
+            data["reference_capture_id"] = "another-run"
+            marker.write_text(json.dumps(data))
+            self.assertEqual(
+                self.client.get(f"/api/v1/ops/evaluations/{run.id}/report").status_code, 404
+            )
 
 
 class CoreAuthClientTests(SimpleTestCase):

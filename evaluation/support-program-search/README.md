@@ -306,11 +306,12 @@ python3 evaluation/support-program-search/evaluate.py \
 구버전 요청을 현재 v5 모델 계약으로 실제 재실행하지 않습니다. 과거 호출 재현에는 해당 실행의 코드 버전이 필요하며,
 v5 평가는 새 요청·캡처를 만들어 별도 실행 폴더에 기록해야 합니다. replay 실행 기록의 출력 토큰 상한도
 하드코딩한 과거 값이 아니라 실행한 Agent 설정에서 읽습니다.
-`replay-ranking.py`는 실제 적용되는 랭킹 모델·추론 수준을 확인해 Luna/none 이외에는 유료 호출 전에
-중단합니다. production에 Sol/low를 설정했다면 재현 프로세스에서만
+`replay-ranking.py`는 실제 적용되는 랭킹 모델·추론 수준을 확인해 과거 `gpt-5.6-luna`/none 이외에는 유료 호출 전에
+중단합니다. production 기본값은 `gpt-6-luna`이므로 과거 재현 프로세스에서만
 `OPENAI_RANKING_MODEL=gpt-5.6-luna`, `OPENAI_RANKING_REASONING_EFFORT=none`을 명시해야 합니다.
 기존 25/30초 제한과 코드 버전 조건도 그대로 지켜야 합니다. `run-region-eligibility.py`는
-비교 조건 보존을 위해 Luna/none을 직접 고정하며 production의 랭킹 전용 설정을 따르지 않습니다.
+비교 조건 보존을 위해 `OPENAI_MODEL=gpt-5.6-luna`를 명시해야 하며, 추론 none을 사용하고
+production의 랭킹 전용 설정을 따르지 않습니다. 과거 재현 설정으로 현재 서비스의 모델을 되돌리지 않습니다.
 
 `searchWithTrace` 서비스 진입점은 선택적 `companyConditions`를 받아 실제 조건 검색과 같은 경로를 검증할 수 있습니다.
 그러나 현재 `evaluation-capture` CLI의 query-set/capture-v2 파일은 여전히 단문 질의만 다룹니다.

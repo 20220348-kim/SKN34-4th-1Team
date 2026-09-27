@@ -15,11 +15,12 @@ def test_registered_entrypoint_uses_saved_inputs_and_correlates_request(monkeypa
     calls = []
     monkeypatch.setenv("LLMOPS_RESULTS_DIR", str(tmp_path))
     monkeypatch.setattr(ops_flow, "flow_run", SimpleNamespace(id=flow_id))
-    monkeypatch.setattr(ops_flow, "evaluate_capture", lambda *args: calls.append(args) or {"status": "completed"})
+    monkeypatch.setattr(ops_flow, "evaluate_capture", lambda *args, **kwargs: calls.append((args, kwargs)) or {"status": "completed"})
     assert ops_flow.evaluate_saved_capture.fn(request_id, ops_flow.DATASET_ID)["status"] == "completed"
     marker = json.loads((tmp_path / request_id / "request.json").read_text())
     assert marker["prefect_flow_run_id"] == flow_id
-    fixture, capture, reference, output = calls[0]
+    (fixture, capture, reference, output), options = calls[0]
+    assert options["case_ids"] == [f"TC0{i}" for i in range(1, 7)]
     assert Path(fixture).is_file() and Path(capture).is_file()
     assert capture == reference
     assert output == str(tmp_path / request_id / "evaluation")
@@ -40,9 +41,30 @@ def test_pipeline_failure_propagates_and_keeps_request_marker(monkeypatch, tmp_p
     request_id = str(uuid4())
     monkeypatch.setenv("LLMOPS_RESULTS_DIR", str(tmp_path))
     monkeypatch.setattr(ops_flow, "flow_run", SimpleNamespace(id=str(uuid4())))
-    def fail(*args):
+    def fail(*args, **kwargs):
         raise ValueError("Invalid capture")
     monkeypatch.setattr(ops_flow, "evaluate_capture", fail)
     with pytest.raises(ValueError, match="Invalid capture"):
         ops_flow.evaluate_saved_capture.fn(request_id, ops_flow.DATASET_ID)
     assert (tmp_path / request_id / "request.json").is_file()
+
+
+def test_different_captures_share_explicit_cases_and_reject_cross_dataset(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setenv("LLMOPS_RESULTS_DIR", str(tmp_path))
+    monkeypatch.setattr(ops_flow, "flow_run", SimpleNamespace(id=str(uuid4())))
+    monkeypatch.setattr(ops_flow, "evaluate_capture", lambda *args, **kwargs: calls.append((args, kwargs)))
+    reference = "fixed-context-20260906-diagnostic-v1"
+    candidate = "fixed-context-20260907-index-v1"
+    request_id = str(uuid4())
+    ops_flow.evaluate_saved_capture.fn(request_id, "fixed-context-e01-v1", candidate, reference)
+    args, options = calls[0]
+    assert candidate in args[1] and reference in args[2]
+    assert options == {"case_ids": ["E01"]}
+    marker = json.loads((tmp_path / request_id / "request.json").read_text())
+    assert marker["candidate_capture_id"] == candidate and marker["reference_capture_id"] == reference
+    for invalid in ["../../private", ops_flow.DATASET_ID]:
+        rejected_id = str(uuid4())
+        with pytest.raises(ValueError):
+            ops_flow.evaluate_saved_capture.fn(rejected_id, "fixed-context-e01-v1", invalid, reference)
+        assert not (tmp_path / rejected_id).exists()

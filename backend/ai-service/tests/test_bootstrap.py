@@ -106,7 +106,7 @@ async def test_builds_and_wires_agent_in_the_composition_root(monkeypatch):
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("ranking_model,reasoning", [(None, "none"), ("gpt-5.6-sol", "low"), ("gpt-5.6-luna", "low")])
+@pytest.mark.parametrize("ranking_model,reasoning", [(None, "none"), ("gpt-5.6-sol", "low"), ("gpt-6-luna", "low")])
 @pytest.mark.parametrize("tier", ["default", "priority"])
 async def test_ranking_model_and_reasoning_do_not_change_conversation_or_evidence(
     monkeypatch, ranking_model, reasoning, tier,

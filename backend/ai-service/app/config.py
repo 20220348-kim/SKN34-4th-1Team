@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 import re
 
 
-DEFAULT_OPENAI_MODEL = "gpt-5.6-luna"
+DEFAULT_OPENAI_MODEL = "gpt-6-luna"
 # 도우미 자유 질문은 짧은 분류 작업이라 가장 싼 모델을 기본으로 쓴다. 다른 기능의 모델은 바꾸지 않는다.
 # nano는 추론 minimal에서 분류가 흔들려(50문항 중 28개) low를 기본으로 둔다. 평가 기록은 evaluation/assistant/runs 참고.
 DEFAULT_OPENAI_ASSISTANT_MODEL = "gpt-5-nano"

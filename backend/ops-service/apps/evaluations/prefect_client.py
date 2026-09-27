@@ -40,7 +40,12 @@ def create_run(run):
             f"/deployments/{deployment_id}/create_flow_run",
             {
                 "name": f"ops-{run.id}",
-                "parameters": {"request_id": str(run.id), "dataset_id": run.dataset_id},
+                "parameters": {
+                    "request_id": str(run.id),
+                    "dataset_id": run.dataset_id,
+                    "candidate_capture_id": run.candidate_capture_id,
+                    "reference_capture_id": run.reference_capture_id,
+                },
                 "idempotency_key": f"ops-{run.id}",
                 "state": {"type": "SCHEDULED"},
             },
