@@ -87,6 +87,31 @@ class ApplicationDocumentMappingServiceTest {
             any(ApplicationDocumentMapSnapshot::class.java) ?: previous)
     }
 
+    @Test fun changedXlsxEngineRemapsWithoutInvalidatingTheThreeFormatPipeline() {
+        val previous = ApplicationDocumentMapSnapshot("application-document-mcp-v1", "b".repeat(64), hash,
+            "native-map-v15-pdf-field-scope-options", "govbiz/xlsx-native@0",
+            listOf(ApplicationDocumentPlacement("company:name", "xlsx:s:Sheet1:c:B4")),
+            listOf("xlsx:s:Sheet1:c:B4"), mapOf("targets" to listOf(mapOf("targetId" to "xlsx:s:Sheet1:c:B4")),
+                "unmappedFieldIds" to listOf("company:consent")))
+        val form = form(false).copy(documentMapSnapshot = previous)
+        `when`(snapshots.findByVersion(form.formVersionId)).thenReturn(form)
+        `when`(client.configuration()).thenReturn(AiDocumentConfigurationPayload("application-document-mcp-v1", "b".repeat(64),
+            mapOf("xlsx" to "govbiz/xlsx-native@2+openpyxl-3.1.5")))
+        val fallback = AiDocumentMappingRequest(sourceBase64 = "", sourceSha256 = "", format = "xlsx", scope = "", fields = emptyList())
+        `when`(client.map(any(AiDocumentMappingRequest::class.java) ?: fallback)).thenReturn(AiDocumentMappingPayload(
+            "application-document-mcp-v1", "b".repeat(64), hash, previous.mapVersion, "govbiz/xlsx-native@2+openpyxl-3.1.5",
+            previous.bindings, previous.scopeTargetIds, previous.documentMap))
+        `when`(snapshots.attachDocumentMap(eq(form.formVersionId) ?: form.formVersionId,
+            any(ApplicationDocumentMapSnapshot::class.java) ?: previous)).thenAnswer { it.getArgument(1) }
+
+        val mapped = service.ensure(form, bytes, "xlsx")
+
+        assertEquals("govbiz/xlsx-native@2+openpyxl-3.1.5", mapped.engineVersion)
+        verify(client).map(any(AiDocumentMappingRequest::class.java) ?: fallback)
+        verify(snapshots).attachDocumentMap(eq(form.formVersionId) ?: form.formVersionId,
+            any(ApplicationDocumentMapSnapshot::class.java) ?: previous)
+    }
+
     @Test fun requiredUnmappedFieldCannotBePublished() {
         stub()
         val error=assertThrows(ApplicationDocumentException::class.java) { service.ensure(form(true),bytes,"hwpx") }

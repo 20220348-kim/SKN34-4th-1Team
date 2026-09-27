@@ -15,7 +15,7 @@ spec.loader.exec_module(evaluation)
 
 def test_context_groups_observed_evidence_without_ground_truth():
     target = SimpleNamespace(
-        targetId="t1.r1.c2.p2", editable=True,
+        targetId="t1.r1.c2.p2", kind="paragraph", editable=True,
         nativeLocator={"parent": "t1.r1.c2", "table": 1, "bindingEligible": True,
                        "fieldLabels": ["대표자성명"], "rowLabels": ["대표자성명"],
                        "columnLabels": ["신청서"], "tableHeadings": ["융자신청서"]},

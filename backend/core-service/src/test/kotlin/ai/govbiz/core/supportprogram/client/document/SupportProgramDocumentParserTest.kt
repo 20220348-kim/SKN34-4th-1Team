@@ -18,6 +18,36 @@ class SupportProgramDocumentParserTest {
     private val mapper = SupportProgramDocumentParser()
     private fun resource(name: String) = requireNotNull(javaClass.getResourceAsStream("/combinationreview/$name")).use { it.readBytes() }
 
+
+    @Test
+    fun readsXlsxVisibleCellsSharedStringsAndInlineLabelsWithoutHiddenData() {
+        fun workbook(unsafe: Boolean = false): ByteArray = ByteArrayOutputStream().also { output ->
+            ZipOutputStream(output).use { zip ->
+                val ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+                mapOf(
+                    "[Content_Types].xml" to """<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/></Types>""",
+                    "xl/workbook.xml" to """<workbook xmlns="$ns" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="지원 신청서" sheetId="1" r:id="rId1"/><sheet name="내부 계산" sheetId="2" state="veryHidden" r:id="rId2"/></sheets></workbook>""",
+                    "xl/_rels/workbook.xml.rels" to """<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Target="worksheets/sheet2.xml"/></Relationships>""",
+                    "xl/sharedStrings.xml" to """<sst xmlns="$ns"><si><t>기업명과 대표자명, 사업자등록번호, 신청금액, 담당자 연락처 및 이메일을 정확히 작성해 주세요.</t></si></sst>""",
+                    "xl/worksheets/sheet1.xml" to ((if (unsafe) """<!DOCTYPE a [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>""" else "") +
+                        """<worksheet xmlns="$ns"><cols><col min="3" max="3" hidden="1"/></cols><sheetData><row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" s="1"/><c r="C1" t="inlineStr"><is><t>숨긴 비밀</t></is></c></row><row r="2" hidden="1"><c r="A2" t="inlineStr"><is><t>숨긴 행</t></is></c></row><row r="3"><c r="A3"><f>SUM(B1:B2)</f><v>100</v></c></row></sheetData></worksheet>"""),
+                    "xl/worksheets/sheet2.xml" to """<worksheet xmlns="$ns"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>내부 비밀</t></is></c></row></sheetData></worksheet>""",
+                ).forEach { (name, value) ->
+                    zip.putNextEntry(ZipEntry(name)); zip.write(value.toByteArray(Charsets.UTF_8)); zip.closeEntry()
+                }
+            }
+        }.toByteArray()
+        val blocks = mapper.parse(workbook(), "XLSX")
+        assertTrue(blocks.first().locator.startsWith("XLSX sheet 지원 신청서 row 1"))
+        assertTrue(blocks.first().text.contains("A1: 기업명"))
+        assertTrue(blocks.first().text.contains("B1: [빈 셀"))
+        assertFalse(blocks.joinToString { it.text }.contains("비밀"))
+        assertFalse(blocks.joinToString { it.text }.contains("숨긴 행"))
+        assertTrue(blocks.last().text.contains("수식 셀: 자동 입력 불가"))
+        assertEquals(Reason.INVALID, assertThrows(SupportProgramDocumentException::class.java) {
+            mapper.parse(workbook(true), "XLSX")
+        }.reason)
+    }
     @Test
     fun readsBothOfficialHwpxDocumentsIncludingFootnotesAndAppendices() {
         for (name in listOf("general.hwpx", "deeptech.hwpx")) {

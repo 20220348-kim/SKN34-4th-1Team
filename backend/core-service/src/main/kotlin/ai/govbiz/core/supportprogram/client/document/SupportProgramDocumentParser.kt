@@ -30,7 +30,7 @@ import org.xml.sax.helpers.DefaultHandler
 
 data class SupportProgramDocumentBlock(val locator: String, val text: String)
 
-/** 공식 PDF/HWP/HWPX/DOCX 원문의 순서와 위치를 보존하며 안전 한도 안에서 텍스트 블록으로 변환합니다. */
+/** 공식 PDF/HWP/HWPX/DOCX/XLSX 원문의 순서와 위치를 보존하며 안전 한도 안에서 텍스트 블록으로 변환합니다. */
 @Component
 class SupportProgramDocumentParser {
     fun parse(bytes: ByteArray, format: String): List<SupportProgramDocumentBlock> = try {
@@ -40,6 +40,7 @@ class SupportProgramDocumentParser {
             "HWP" -> hwp(bytes)
             "HWPX" -> hwpx(bytes)
             "DOCX" -> docx(bytes)
+            "XLSX" -> xlsx(bytes)
             else -> fail(Reason.UNSUPPORTED)
         }
         if (blocks.sumOf { it.text.length } < 50) fail(Reason.UNSUPPORTED)
@@ -303,6 +304,120 @@ class SupportProgramDocumentParser {
                 buffer.append(value)
             }
             flush(paragraphs.length)
+        }
+    }
+
+
+    /** XLSX discovery is read-only: sheet and cell locators are evidence, never write addresses. */
+    private fun xlsx(bytes: ByteArray): List<SupportProgramDocumentBlock> {
+        val parts = mutableMapOf<String, ByteArray>()
+        var expanded = 0
+        ZipInputStream(ByteArrayInputStream(bytes)).use { zip ->
+            while (true) {
+                val entry = zip.nextEntry ?: break
+                if (parts.size >= 512 || parts.containsKey(entry.name) || entry.name.startsWith("/") ||
+                    entry.name.contains('\\') || entry.name.split('/').contains("..")) fail(Reason.INVALID)
+                val output = ByteArrayOutputStream()
+                val buffer = ByteArray(8192)
+                while (true) {
+                    val count = zip.read(buffer)
+                    if (count < 0) break
+                    expanded += count
+                    if (expanded > 24 * 1024 * 1024) fail(Reason.TOO_LARGE)
+                    output.write(buffer, 0, count)
+                }
+                parts[entry.name] = output.toByteArray()
+            }
+        }
+        if (parts.keys.any { it.contains("vba", true) || it.startsWith("xl/externalLinks/") ||
+                it.startsWith("_xmlsignatures/") || it.startsWith("xl/embeddings/") ||
+                it.startsWith("xl/activeX/") || it.startsWith("xl/ctrlProps/") }) fail(Reason.UNSUPPORTED)
+        val factory = DocumentBuilderFactory.newInstance().apply {
+            isNamespaceAware = true
+            setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
+            setFeature("http://xml.org/sax/features/external-general-entities", false)
+            setFeature("http://xml.org/sax/features/external-parameter-entities", false)
+            setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "")
+            setAttribute(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "")
+            isXIncludeAware = false
+            isExpandEntityReferences = false
+        }
+        val xml = parts.filterKeys { it.endsWith(".xml") || it.endsWith(".rels") }
+            .mapValues { factory.newDocumentBuilder().parse(ByteArrayInputStream(it.value)) }
+        val ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+        val types = xml["[Content_Types].xml"]?.getElementsByTagNameNS(
+            "http://schemas.openxmlformats.org/package/2006/content-types", "Override") ?: fail(Reason.INVALID)
+        if ((0 until types.length).none {
+                val node = types.item(it) as Element
+                node.getAttribute("PartName") == "/xl/workbook.xml" &&
+                    node.getAttribute("ContentType") == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"
+            }) fail(Reason.UNSUPPORTED)
+        val strings = xml["xl/sharedStrings.xml"]?.getElementsByTagNameNS(ns, "si")?.let { items ->
+            (0 until items.length).map { index ->
+                val texts = (items.item(index) as Element).getElementsByTagNameNS(ns, "t")
+                buildString { for (i in 0 until texts.length) append(texts.item(i).textContent) }
+            }
+        }.orEmpty()
+        val relationships = xml["xl/_rels/workbook.xml.rels"]?.getElementsByTagNameNS(
+            "http://schemas.openxmlformats.org/package/2006/relationships", "Relationship") ?: fail(Reason.INVALID)
+        val paths = (0 until relationships.length).associate {
+            val node = relationships.item(it) as Element
+            node.getAttribute("Id") to node.getAttribute("Target")
+        }
+        val sheets = xml["xl/workbook.xml"]?.getElementsByTagNameNS(ns, "sheet") ?: fail(Reason.INVALID)
+        if (sheets.length !in 1..30) fail(Reason.TOO_LARGE)
+        return buildList {
+            var cellCount = 0
+            for (index in 0 until sheets.length) {
+                val sheet = sheets.item(index) as Element
+                if (sheet.getAttribute("state") in setOf("hidden", "veryHidden")) continue
+                val target = paths[sheet.getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships", "id")]
+                    ?: fail(Reason.INVALID)
+                val path = if (target.startsWith("/")) target.removePrefix("/") else "xl/$target"
+                if (!path.startsWith("xl/worksheets/") || path.split('/').contains("..")) fail(Reason.INVALID)
+                val worksheet = xml[path] ?: fail(Reason.INVALID)
+                val columns = worksheet.getElementsByTagNameNS(ns, "col")
+                val hidden = (0 until columns.length).map { columns.item(it) as Element }
+                    .filter { it.getAttribute("hidden") in setOf("1", "true") }
+                    .map { it.getAttribute("min").toInt()..it.getAttribute("max").toInt() }
+                val rows = worksheet.getElementsByTagNameNS(ns, "row")
+                for (rowIndex in 0 until rows.length) {
+                    val row = rows.item(rowIndex) as Element
+                    if (row.getAttribute("hidden") in setOf("1", "true")) continue
+                    val cells = row.getElementsByTagNameNS(ns, "c")
+                    cellCount += cells.length
+                    if (cellCount > 100000) fail(Reason.TOO_LARGE)
+                    val line = buildString {
+                        for (cellIndex in 0 until cells.length) {
+                            val cell = cells.item(cellIndex) as Element
+                            val address = cell.getAttribute("r")
+                            if (!Regex("[A-Z]{1,3}[1-9][0-9]{0,6}").matches(address)) fail(Reason.INVALID)
+                            val column = address.takeWhile(Char::isLetter).fold(0) { n, c -> n * 26 + c.code - 'A'.code + 1 }
+                            if (hidden.any { column in it }) continue
+                            val formula = cell.getElementsByTagNameNS(ns, "f")
+                            val value = cell.getElementsByTagNameNS(ns, "v").item(0)?.textContent.orEmpty()
+                            val text = when {
+                                formula.length > 0 -> "[수식 셀: 자동 입력 불가]"
+                                cell.getAttribute("t") == "s" -> strings.getOrNull(value.toIntOrNull() ?: -1) ?: fail(Reason.INVALID)
+                                cell.getAttribute("t") == "inlineStr" -> {
+                                    val texts = cell.getElementsByTagNameNS(ns, "t")
+                                    buildString { for (i in 0 until texts.length) append(texts.item(i).textContent) }
+                                }
+                                value.isNotBlank() -> value
+                                cell.hasAttribute("s") -> "[빈 셀: 입력 가능 여부는 native inspect로 확인]"
+                                else -> ""
+                            }
+                            if (text.isNotBlank()) {
+                                if (isNotEmpty()) append(" | ")
+                                append(address).append(": ").append(text)
+                            }
+                        }
+                    }
+                    splitText(line).filter(String::isNotBlank).forEachIndexed { part, value ->
+                        add(SupportProgramDocumentBlock("XLSX sheet ${sheet.getAttribute("name")} row ${row.getAttribute("r")} part ${part + 1}", value))
+                    }
+                }
+            }
         }
     }
 

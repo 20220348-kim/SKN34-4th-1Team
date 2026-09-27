@@ -19,10 +19,11 @@ ENGINES = {
     "hwpx": "pblsketch/Hangeul-mcp@b6fef153714e0cc9ce566df0da4082fc57c4fda4+govbiz-ranges-v4-body-positions",
     "pdf": "AryanBV/pdf-edit-mcp@d4527e62b59433ad02f31a0511db218a2eeec1d3+govbiz-deletion-proof-v4+FFDetr@56f4e4235e28dcb2953513dc020bb191a2f54cfe+pdfbox-v6",
     "docx": "govbiz/ooxml-native@2",
+    "xlsx": "govbiz/xlsx-native@2+openpyxl-3.1.5",
 }
 KORDOC_VERSION = "chrisryugj/kordoc@f715573df1712d415604ac949603a00e387cd3d7+pdfjs-dist@4.10.38"
 PIPELINE_VERSION = hashlib.sha256(json.dumps([CONTRACT, MAP_VERSION, PLAN_VERSION,
-    {key: value for key, value in ENGINES.items() if key != "docx"}, KORDOC_VERSION], sort_keys=True).encode()).hexdigest()
+    {key: value for key, value in ENGINES.items() if key not in {"docx", "xlsx"}}, KORDOC_VERSION], sort_keys=True).encode()).hexdigest()
 MAX_BYTES = 32 * 1024 * 1024
 
 
@@ -95,10 +96,11 @@ class NativeTarget(Contract):
 class DocumentMap(Contract):
     contractVersion: Literal["application-document-mcp-v1"] = CONTRACT
     sourceSha256: str
-    format: Literal["hwp", "hwpx", "pdf", "docx"]
+    format: Literal["hwp", "hwpx", "pdf", "docx", "xlsx"]
     engineVersion: str
     mapVersion: str = MAP_VERSION
     targets: list[NativeTarget] = Field(max_length=3000)
+    workbookMetadata: dict = Field(default_factory=dict)
     auxiliaryStatus: str = "SKIPPED_PRIMARY_SUFFICIENT"
     auxiliaryText: str = Field(default="", max_length=40000)
     unmappedFieldIds: list[str] = Field(default_factory=list, max_length=200)
@@ -143,7 +145,7 @@ class GenerateDocumentRequest(Contract):
     contractVersion: Literal["application-document-mcp-v1"] = CONTRACT
     sourceBase64: str = Field(min_length=1, max_length=44_739_244)
     sourceSha256: str = Field(pattern="^[a-f0-9]{64}$")
-    format: Literal["hwp", "hwpx", "pdf", "docx"]
+    format: Literal["hwp", "hwpx", "pdf", "docx", "xlsx"]
     answerRevision: int = Field(ge=0)
     facts: list[DocumentFact] = Field(min_length=1, max_length=200)
     scope: str = Field(min_length=1, max_length=30000)
@@ -203,6 +205,9 @@ def mapping_label_key(text: str) -> str:
 def mapping_label_matches(label: str, target: NativeTarget, guidance: str = "") -> bool:
     field = mapping_label_key(label.partition(" / ")[2] or label)
     labels = [mapping_label_key(value) for value in target.nativeLocator.get("fieldLabels", [])]
+    if target.kind == "XLSX_CELL":
+        # A shortened label such as 성명 must not bind a 대표자 question to a team-member row.
+        return field in labels
     if not labels:
         return True
     years = set(re.findall(r"(?:19|20)\d{2}", field))
@@ -292,6 +297,15 @@ def validate_plan(request: GenerateDocumentRequest, document: DocumentMap, selec
         if (request.format == "hwpx" and op.valueRef is not None
                 and not target.nativeLocator.get("bindingEligible", True)):
             raise DocumentError("MAPPING_FAILED", reason="SAVED_BINDING_CHANGED" if request.bindings else "TARGET_NOT_EDITABLE_OR_OUT_OF_SCOPE")
+        if request.format == "xlsx":
+            if (target.kind != "XLSX_CELL" or op.operation not in {"input", "set_field"}
+                    or op.start != 0 or op.end != 0 or target.currentText
+                    or not target.nativeLocator.get("bindingEligible", False)):
+                raise DocumentError("UNSUPPORTED", reason="XLSX_ONLY_BLANK_CELL_WRITE")
+            from app.application_preparation.xlsx_adapter import cell_value
+            if op.valueRef not in facts:
+                raise DocumentError("INPUT_REQUIRED")
+            cell_value(target, facts[op.valueRef])
         if op.expectedText != target.currentText:
             raise DocumentError("SOURCE_CHANGED")
         if not 0 <= op.start <= op.end <= len(target.currentText):
@@ -312,7 +326,7 @@ def validate_plan(request: GenerateDocumentRequest, document: DocumentMap, selec
         if target.kind == "CHECKBOX" and (op.operation != "set_check" or op.start != 0 or op.end != len(target.currentText)
                                            or facts.get(op.valueRef, "").strip() != target.currentText.strip()):
             raise DocumentError("MAPPING_FAILED", reason="CHECK_VALUE_MISMATCH")
-        if op.operation == "set_field" and target.kind not in {"HWP_FIELD", "PDF_FIELD", "PDF_PAGE", "PDF_INPUT", "DOCX_CONTROL"}:
+        if op.operation == "set_field" and target.kind not in {"HWP_FIELD", "PDF_FIELD", "PDF_PAGE", "PDF_INPUT", "DOCX_CONTROL", "XLSX_CELL"}:
             raise DocumentError("UNSUPPORTED")
         if (op.box is not None) != (target.kind == "PDF_PAGE" and op.operation == "set_field"):
             raise DocumentError("MAPPING_FAILED")

@@ -5,6 +5,7 @@ from tempfile import TemporaryDirectory
 
 from app.application_preparation.document_adapters import HwpxDocumentAdapter, PdfDocumentAdapter, HwpDocumentAdapter, assist_with_kordoc
 from app.application_preparation.docx_adapter import DocxDocumentAdapter
+from app.application_preparation.xlsx_adapter import XlsxDocumentAdapter
 from app.application_preparation.document_contract import (
     CONTRACT, DocumentAnalysisStage, DocumentError, DocumentMap, EditOperation, GenerateDocumentRequest, MapDocumentRequest, PIPELINE_VERSION, PlanSelection, digest, validate_plan, validate_mapping, mapping_label_key, mapping_label_matches,
 )
@@ -94,6 +95,8 @@ async def inspect_document(path: Path, request: GenerateDocumentRequest) -> Docu
         document = HwpDocumentAdapter().inspect(request)
     elif request.format == "hwpx":
         document = await HwpxDocumentAdapter().inspect(path, getattr(request, "fields", ()))
+    elif request.format == "xlsx":
+        document = await XlsxDocumentAdapter().inspect(path)
     elif request.format == "docx":
         document = await DocxDocumentAdapter().inspect(path)
     else:
@@ -267,6 +270,8 @@ async def generate_document(request: GenerateDocumentRequest, agent) -> dict:
             output, verification = HwpDocumentAdapter().stage(source, plan)
         elif request.format == "hwpx":
             output, verification = await HwpxDocumentAdapter().apply(path, document, plan, facts)
+        elif request.format == "xlsx":
+            output, verification = await XlsxDocumentAdapter().apply(path, document, plan, facts)
         elif request.format == "docx":
             output, verification = await DocxDocumentAdapter().apply(path, document, plan, facts)
         else:
