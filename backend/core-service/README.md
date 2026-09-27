@@ -970,3 +970,15 @@ Controller와 ExceptionHandler가 기존 공개 응답·ProblemDetail로 변환�
 기존 미지원 예외로 변환한다. 명시적 재분석의 `claimRequested`는 획득·행 없음·충돌 결과를
 반환하며, `ApplicationFormDiscoveryService`가 충돌을 기존 JOB_CONFLICT로 변환한다.
 Repository의 행 잠금·실행권 갱신 transaction과 공개 오류 계약은 유지한다.
+
+### 신청 문항 상위 매핑
+
+`ApplicationFormManifest.fieldMappings(snapshot)`은 공식 `sectionKey:fieldKey` 문항과 FILE binding에서
+`ApplicationFieldMapping`을 계산한다. `ApplicationDocumentService`는 이 업무 projection의 writable로
+기입/미기입 답변을 분리하며 필수 binding 누락은 기존 `APPLICATION_DOCUMENT_MAPPING_FAILED`로 중단한다.
+label/required/status와 targetId/box 참조만 전달하며 raw native 지도·버전·scope는 복제하거나 저장하지 않는다.
+`DocumentMap`은 FILE native map이고 상위 업무 mapping과 동일한 계약이 아니다. FILE write authority는 기존
+DocumentMap/bindings/scope/WritePlan에 있으며 이관 비교·승인 흐름과 DB 스키마는 유지한다.
+ONLINE_FORM은 후속 Phase의 별도 FormMap 경로이며 현재 production 구현·외부 API·자동 제출은 없다.
+[상위/파일 경계](../../docs/architecture.md#phase-5-1-신청-문항-상위-매핑-경계)와
+[Phase 5 평가 기록](../../evaluation/application-map/runs/phase5-application-mapping-20260927-v1/README.md)을 참고한다.

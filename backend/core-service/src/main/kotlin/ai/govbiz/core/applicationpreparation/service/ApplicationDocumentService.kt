@@ -5,6 +5,8 @@ import ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentFact
 import ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentFile
 import ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentUnfilledAnswer
 import ai.govbiz.core.applicationpreparation.domain.ApplicationFormManifest
+import ai.govbiz.core.applicationpreparation.domain.ApplicationFieldMappingStatus
+import ai.govbiz.core.applicationpreparation.domain.fieldMappings
 import ai.govbiz.core.applicationpreparation.service.dto.ApplicationDocumentMigrationConfirmedResult
 import ai.govbiz.core.applicationpreparation.domain.exception.ApplicationPreparationNotFoundException
 import ai.govbiz.core.applicationpreparation.domain.exception.ApplicationPreparationRevisionConflictException
@@ -142,7 +144,10 @@ class ApplicationDocumentService(
                 "입력 위치가 변경됐습니다. 변경 내용을 확인한 뒤 적용할 수 있습니다. 저장된 답변과 파일은 유지됩니다.",
                 mappingMigration = notice)
         }
-        val mappedFactIds = binding.bindings.map { it.factId }.toSet()
+        val fieldMappings = manifest.fieldMappings(binding)
+        if (fieldMappings.any { it.status == ApplicationFieldMappingStatus.REQUIRED_MAPPING_MISSING })
+            throw ApplicationDocumentException("APPLICATION_DOCUMENT_MAPPING_FAILED", "질문 항목의 실제 입력 위치를 확인하지 못했습니다.")
+        val mappedFactIds = fieldMappings.filter { it.writable }.map { it.fieldId }.toSet()
         val writableFacts = facts.filter { it.id in mappedFactIds }
         val unfilledAnswers = facts.filterNot { it.id in mappedFactIds }.map {
             ApplicationDocumentUnfilledAnswer(it.id, it.label, it.value, "INPUT_LOCATION_NOT_FOUND")

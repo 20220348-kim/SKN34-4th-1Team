@@ -961,3 +961,38 @@ Controller와 ExceptionHandler가 기존 공개 응답·ProblemDetail로 변환�
 기존 미지원 예외로 변환한다. 명시적 재분석의 `claimRequested`는 획득·행 없음·충돌 결과를
 반환하며, `ApplicationFormDiscoveryService`가 충돌을 기존 JOB_CONFLICT로 변환한다.
 Repository의 행 잠금·실행권 갱신 transaction과 공개 오류 계약은 유지한다.
+
+### Phase 5-1: 신청 문항 상위 매핑 경계
+
+`DocumentMap`은 HWP/HWPX/PDF/DOCX/XLSX의 FILE native map이다. `ApplicationFieldMapping`은
+공식 문항과 확인된 입력 위치 관계를 업무 관점에서 읽는 projection이며 두 계약은 동일하지 않다.
+`ApplicationFormManifest.fieldMappings(snapshot)`은 `sectionKey:fieldKey`, 문항 label, required,
+status, writable과 연결된 targetId/box 참조만 계산한다. 한 문항의 여러 binding도 유지한다.
+raw DocumentMap, NativeTarget/nativeLocator, pageImages, workbookMetadata, 버전과 scope는 복제하지 않는다.
+
+```text
+application_form_snapshot.manifest_json
+  ├─ sections → ApplicationFormFieldDefinition (sectionKey:fieldKey)
+  └─ documentMapSnapshot → ApplicationDocumentPlacement (factId ↔ targetId/box)
+             │
+             ├─ bindings + 공식 문항 → ApplicationFieldMapping (읽기 전용)
+             │                          ↓
+             │                    ApplicationDocumentService
+             │                    기입/미기입 답변 분리
+             └─ raw DocumentMap + bindings + scopeTargetIds
+                                        ↓
+                                     WritePlan → native editor → verification
+```
+
+문서 생성 Service는 검증된 FILE snapshot의 projection으로 작성 가능한 답변을 선택한다.
+필수 binding 누락은 `REQUIRED_MAPPING_MISSING`/writable=false이며 생성은 기존
+`APPLICATION_DOCUMENT_MAPPING_FAILED`로 중단한다. 선택 문항은 `UNMAPPED`/writable=false이고
+기존 미기입 답변 기록을 유지한다. `MAPPED`는 위치 연결 결과이며 사용자 답변 확인이나 제출 완료를 뜻하지 않는다.
+FILE write authority는 계속 기존 `ApplicationDocumentMapSnapshot → DocumentMap → bindings/scope → WritePlan`에 있다.
+sourceSha256, mapVersion, pipelineVersion, engineVersion, planHash와 이관 비교/승인 규칙은 변경하지 않는다.
+projection은 저장하지 않으므로 DB migration과 공개 HTTP/MCP JSON 변경도 없다.
+
+후속 ONLINE_FORM 경로는 `ApplicationPreparationService → 별도 FormMap → 신청 문항 상위 매핑 → 사용자 검토`
+위치에 추가할 수 있다. 공유할 의미는 기존 field identity, 확인된 사실 연결, writable/unmapped 상태와 사용자 검토다.
+DocumentMap/NativeTarget/WritePlan/native editor는 공유하지 않는다. 현재 ONLINE_FORM은 구현하지 않으며
+provider, enum, registry, Google Forms API/OAuth, 브라우저 파싱과 자동 제출도 추가하지 않는다.

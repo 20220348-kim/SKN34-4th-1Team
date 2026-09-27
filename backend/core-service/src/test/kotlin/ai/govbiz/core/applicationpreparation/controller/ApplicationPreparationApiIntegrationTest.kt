@@ -1224,8 +1224,9 @@ class ApplicationPreparationApiIntegrationTest {
         mvc.perform(get("$BASE/$id/documents").cookie(other)).andExpect(status().isNotFound())
     }
 
-    @Test
-    fun doesNotReturnTheOriginalWhenNoSavedAnswerHasAWritableLocation() {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = [false, true])
+    fun doesNotReturnTheOriginalWhenNoSavedAnswerHasAWritableLocation(requiredBindingMissing: Boolean) {
         val original = requireNotNull(javaClass.getResourceAsStream("/combinationreview/general.hwpx")).readBytes()
         `when`(bizInfoAttachments.collect("BIZINFO", DISCOVERY_PROGRAM_ID)).thenReturn(SupportProgramAttachments("동적 지원사업", listOf(
             SupportProgramAttachment("https://www.bizinfo.go.kr/file", "신청양식.hwpx", "HWPX", original),
@@ -1256,9 +1257,15 @@ class ApplicationPreparationApiIntegrationTest {
         mvc.perform(put("$BASE/$id/sections/business-plan/inputs").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN).contentType(MediaType.APPLICATION_JSON)
             .content("""{"expectedRevision":1,"facts":[{"fieldKey":"business-overview","status":"PROVIDED","value":"가상 답변","sourceText":"가상 답변"}]}"""))
             .andExpect(status().isOk())
+        // Simulate a persisted required field whose cached FILE map has no binding.
+        // The same pipeline cache is reused, so generation must reject it independently.
+        if (requiredBindingMissing) jdbc.update(
+            "UPDATE application_form_snapshot SET manifest_json = JSON_SET(manifest_json, '$.sections[0].fields[0].required', CAST('true' AS JSON)) WHERE form_version_id = ?",
+            version,
+        )
         mvc.perform(post("$BASE/$id/documents").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN).contentType(MediaType.APPLICATION_JSON)
             .content("""{"expectedRevision":2}""")).andExpect(status().isUnprocessableContent())
-            .andExpect(jsonPath("$.code").value("APPLICATION_DOCUMENT_NO_WRITABLE_INPUT"))
+            .andExpect(jsonPath("$.code").value(if (requiredBindingMissing) "APPLICATION_DOCUMENT_MAPPING_FAILED" else "APPLICATION_DOCUMENT_NO_WRITABLE_INPUT"))
         assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM application_document_file WHERE preparation_id = ?", Int::class.java, id))
         verify(documentMcp, org.mockito.Mockito.never()).generate(any(AiDocumentGenerationRequest::class.java) ?: AiDocumentGenerationRequest(
             sourceBase64 = "", sourceSha256 = "", format = "hwpx", answerRevision = 1, facts = emptyList(), scope = "test"))

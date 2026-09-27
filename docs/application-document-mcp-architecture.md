@@ -123,3 +123,16 @@ native write는 기존 `input` 또는 `set_field`를 재사용하며 빈 셀에�
 ZIP entry 512개, 압축 해제 합계 32 MiB, 전체 used grid 100,000칸, sheet 30개, native target 3,000개 제한을 적용한다. XML DTD/ENTITY, 암호 ZIP, 중복/경로 탈출 entry, macro/signature, external calculation link, embedded/ActiveX/form control, drawing/chart는 미지원으로 중단한다. 원본 binary와 작성본은 평가 자료에 저장하지 않는다.
 
 XLSX label 근거에는 visible sheet/row/column의 텍스트만 사용합니다. 숨긴 label 옆의 visible blank도 입력 근거가 없으면 제외합니다. validation의 `sourceRange`는 적용 범위(sqref)이고 실제 option source는 `formula1`에 원문 그대로 기록합니다.
+
+### 상위 업무 mapping과 MCP 경계
+
+Phase 5-1의 `ApplicationFieldMapping`은 Core의 공식 문항 + 검증된 FILE binding에서 계산하는 업무 projection이다.
+`DocumentMap`은 계속 FILE native map이고 두 계약은 동일하지 않다. 상위 mapping은 문항 ID/label/required,
+status/writable과 targetId/box 참조만 읽으며 전체 DocumentMap/NativeTarget/nativeLocator와 편집 scope는 소유하지 않는다.
+문서 생성 Service의 답변 분리에는 projection을 사용하고, 실제 MCP 생성에는 기존 snapshot bindings/scope를 전달한다.
+FILE write authority와 sourceSha256/mapVersion/pipelineVersion/engineVersion/WritePlan/planHash/verification은 유지한다.
+기존 migration diff와 승인 계약, 다섯 format의 JSON shape, 저장 스키마는 변경하지 않는다.
+
+ONLINE_FORM은 후속 Phase에서 별도 FormMap을 가지며 DocumentMap/NativeTarget/WritePlan/native editor를 공유하지 않는다.
+현재 provider/format/enum, 외부 Form API, OAuth, 브라우저 파싱·자동화와 제출 구현은 없다.
+[상위 projection의 호출 흐름과 확장 위치](architecture.md#phase-5-1-신청-문항-상위-매핑-경계)를 참고한다.
