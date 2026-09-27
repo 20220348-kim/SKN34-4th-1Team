@@ -1,12 +1,17 @@
 import { z } from 'zod'
 
 const base = '/api/v1/ops'
+const liveConfigSchema = z.object({
+  model: z.string(), fixture_sha256: z.string(), max_model_calls: z.number().int().positive(), max_output_tokens: z.number().int().positive(),
+})
 const sessionSchema = z.object({
   user: z.object({ username: z.string() }).nullable(),
   csrf_token: z.string(),
+  live_enabled: z.boolean(),
   datasets: z.array(z.object({
     id: z.string(), label: z.string(), case_ids: z.array(z.string()).min(1),
     captures: z.array(z.object({ id: z.string(), label: z.string() })).min(1),
+    fixture: z.string(), live_config: liveConfigSchema,
   })),
 })
 const externalUrl = z.url().refine((value) => /^https?:\/\//.test(value)).nullable()
@@ -28,6 +33,7 @@ const runSchema = z.object({
   id: z.uuid(), dataset_id: z.string(), dataset_label: z.string(), requested_by: z.string(), can_retry: z.boolean(),
   candidate_capture_id: z.string(), reference_capture_id: z.string(), candidate_label: z.string(), reference_label: z.string(),
   comparison: comparisonSchema.nullable(),
+  execution_mode: z.enum(['replay', 'live']), live_config: liveConfigSchema.nullable(),
   status: z.enum(['REQUESTED', 'QUEUED', 'RUNNING', 'COMPLETED', 'FAILED', 'CANCELLED', 'CRASHED', 'RESULT_ERROR']),
   status_label: z.string(), created_at: z.string(), started_at: z.string().nullable(),
   finished_at: z.string().nullable(), synced_at: z.string().nullable(),
@@ -37,7 +43,8 @@ const runSchema = z.object({
     statusAccuracy: z.number().nullable().optional(), referenceCitationRecall: z.number().nullable().optional(),
     semanticFaithfulness: z.number().nullable().optional(),
   }),
-  model_api_calls: z.number(), evaluation_run_id: z.string().nullable(),
+  model_api_calls: z.number().nullable(), evaluation_run_id: z.string().nullable(),
+  trace_links: z.array(z.object({ case_id: z.string(), url: z.url().refine((value) => /^https?:\/\//.test(value)) })),
   prefect_flow_run_id: z.uuid().nullable(), prefect_url: externalUrl, langfuse_url: externalUrl,
   report_url: z.string().regex(/^\/api\/v1\/ops\/evaluations\/[a-f0-9-]+\/report$/).nullable(),
 })
@@ -69,7 +76,8 @@ async function request<T>(path: string, schema: z.ZodType<T>, options: RequestIn
       : response.status === 403 ? '관리자 계정만 운영 화면을 이용할 수 있습니다.'
       : response.status === 503 ? '관리자 인증 또는 운영 서버에 연결할 수 없습니다.'
       : response.status === 404 ? '평가 실행을 찾을 수 없습니다.'
-      : response.status === 409 ? '다른 운영자의 요청은 다시 접수할 수 없습니다.'
+      : response.status === 409 ? '기존 요청과 평가 조건이 다릅니다. 실행 이력을 확인하세요.'
+      : response.status === 400 ? '평가 조건 또는 실행 설정이 변경되었습니다. 새로고침 후 자료와 예산을 확인하세요.'
       : '요청을 처리하지 못했습니다. 다시 시도해 주세요.'
     throw new OpsApiError(message, response.status)
   }
@@ -91,4 +99,7 @@ async function post<T>(path: string, data: unknown, schema: z.ZodType<T>, dispat
 
 export const listEvaluations = (page: number, signal?: AbortSignal) => request(`/evaluations?page=${page}`, pageSchema, { signal })
 export const getEvaluation = (id: string, signal?: AbortSignal) => request(`/evaluations/${encodeURIComponent(id)}`, runSchema, { signal })
-export const submitEvaluation = (requestId: string, datasetId: string, candidateCaptureId: string, referenceCaptureId: string) => post('/evaluations', { request_id: requestId, dataset_id: datasetId, candidate_capture_id: candidateCaptureId, reference_capture_id: referenceCaptureId }, runSchema, true)
+export const submitEvaluation = (requestId: string, datasetId: string, candidateCaptureId: string, referenceCaptureId: string, liveConfig: z.infer<typeof liveConfigSchema> | null = null) => post('/evaluations', {
+  request_id: requestId, dataset_id: datasetId, candidate_capture_id: candidateCaptureId, reference_capture_id: referenceCaptureId,
+  execution_mode: liveConfig ? 'live' : 'replay', live_config: liveConfig ?? {}, confirm_paid_run: liveConfig !== null,
+}, runSchema, true)

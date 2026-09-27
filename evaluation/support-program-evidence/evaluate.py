@@ -243,7 +243,8 @@ def response_record(status_code: int, body: object) -> dict:
     }
 
 
-async def execute(prepared: list, fixture_hash: str, output_dir: Path) -> dict:
+async def execute(prepared: list, fixture_hash: str, output_dir: Path, *,
+                  model: str = DEFAULT_OPENAI_MODEL, max_model_calls: int | None = None) -> dict:
     from langchain_openai import ChatOpenAI
     import httpx2
     from openai import AsyncOpenAI
@@ -255,12 +256,15 @@ async def execute(prepared: list, fixture_hash: str, output_dir: Path) -> dict:
 
     key = os.environ.get("OPENAI_API_KEY", "").strip()
     require(bool(key), "OPENAI_API_KEY must be explicitly supplied; .env is not read")
+    limit = len(prepared) if max_model_calls is None else max_model_calls
+    require(type(limit) is int and 0 < len(prepared) <= limit <= 12, "invalid model call budget")
     tracing_settings = LangfuseSettings.from_environment()
     output_dir.mkdir(parents=True, exist_ok=False)
     capture = {
         "schemaVersion": "support-program-evidence-capture-v1", "fixtureSha256": fixture_hash,
         "promptSha256": digest(SUPPORT_PROGRAM_EVIDENCE_ANSWER_INSTRUCTIONS.encode()),
-        "runnerSha256": digest(Path(__file__).read_bytes()), "model": DEFAULT_OPENAI_MODEL,
+        "runnerSha256": digest(Path(__file__).read_bytes()), "model": model,
+        "modelApiCalls": 0, "maxModelCalls": limit, "maxOutputTokens": 2000,
         "modelTimeoutSeconds": DEFAULT_LLM_MODEL_TIMEOUT_SECONDS,
         "runTimeoutSeconds": DEFAULT_LLM_RUN_TIMEOUT_SECONDS,
         "startedAt": datetime.now(timezone.utc).isoformat(), "completed": False,
@@ -273,6 +277,16 @@ async def execute(prepared: list, fixture_hash: str, output_dir: Path) -> dict:
         temporary.write_text(json.dumps(capture, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
         temporary.replace(output_dir / "capture.json")
 
+    async def record_attempt(request: httpx2.Request) -> None:
+        # 전송 직전에 예산을 확인하고 기록한다. 응답 유실·timeout도 시도 횟수에 포함한다.
+        body = json.loads(request.content)
+        require(str(request.url) == "https://api.openai.com/v1/responses"
+                and body.get("model") == model and body.get("max_output_tokens") == 2000
+                and body.get("store") is False and not body.get("tools"), "unexpected model request")
+        require(capture["modelApiCalls"] < limit, "model call budget exhausted")
+        capture["modelApiCalls"] += 1
+        save_capture()
+
     async def record_usage(response: httpx2.Response) -> None:
         await response.aread()
         try:
@@ -283,13 +297,13 @@ async def execute(prepared: list, fixture_hash: str, output_dir: Path) -> dict:
 
     client = AsyncOpenAI(
         api_key=key, base_url="https://api.openai.com/v1", max_retries=0,
-        http_client=httpx2.AsyncClient(event_hooks={"response": [record_usage]}),
+        http_client=httpx2.AsyncClient(event_hooks={"request": [record_attempt], "response": [record_usage]}),
     )
     tracing = EvidenceTracing(tracing_settings)
     service = SupportProgramEvidenceAnswerService(SupportProgramEvidenceAnswerAgent(
         tracing=tracing,
         model=ChatOpenAI(
-            model=DEFAULT_OPENAI_MODEL, api_key=key, use_responses_api=True, max_retries=0,
+            model=model, api_key=key, use_responses_api=True, max_retries=0,
             root_async_client=client, async_client=client.chat.completions,
         ),
         model_timeout_seconds=DEFAULT_LLM_MODEL_TIMEOUT_SECONDS,

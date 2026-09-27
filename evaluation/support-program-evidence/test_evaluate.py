@@ -243,6 +243,8 @@ def test_execute_uses_production_agent_with_mock_http_only(
     assert len(requests) == (12 if status == 200 else 1)
     assert capture["completed"] == (status == 200)
     assert len(capture["apiResponses"]) == len(requests)
+    assert capture["modelApiCalls"] == len(requests)
+    assert capture["maxModelCalls"] == len(loaded[1])
     assert capture["apiResponses"][0]["usage"] == (
         {"input_tokens": 100, "output_tokens": 50, "total_tokens": 150} if status != 429 else None
     )
@@ -380,3 +382,32 @@ def test_shared_run_reports_recalculate_without_api(capture_path):
     actual = evaluate.report(*matching[0], capture)
     expected = json.loads((capture_path.parent / "report.json").read_text(encoding="utf-8"))
     assert actual == expected
+
+
+def test_live_timeout_counts_attempt_without_inventing_usage(loaded, tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "fake-key-never-sent")
+    monkeypatch.setenv("LANGFUSE_ENABLED", "false")
+    real_client = httpx2.AsyncClient
+    attempts = []
+    def handler(request):
+        attempts.append(request)
+        assert json.loads(request.content)["model"] == "gpt-6-luna"
+        raise httpx2.ReadTimeout("private-error", request=request)
+    class MockClient(real_client):
+        def __init__(self, **kwargs):
+            super().__init__(transport=httpx2.MockTransport(handler), **kwargs)
+    monkeypatch.setattr(httpx2, "AsyncClient", MockClient)
+    capture = asyncio.run(evaluate.execute(loaded[1][:1], loaded[2], tmp_path / "new",
+        model="gpt-6-luna", max_model_calls=1))
+    assert len(attempts) == 1
+    assert capture["modelApiCalls"] == 1 and capture["completed"] is False
+    assert capture["apiResponses"] == []
+    assert "private-error" not in json.dumps(capture)
+    assert capture["cases"][0]["apiResponseIndexes"] == []
+
+
+def test_live_rejects_too_small_call_budget_before_client_creation(loaded, tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "fake-key-never-sent")
+    with pytest.raises(ValueError, match="budget"):
+        asyncio.run(evaluate.execute(loaded[1], loaded[2], tmp_path / "new", max_model_calls=1))
+    assert not (tmp_path / "new").exists()

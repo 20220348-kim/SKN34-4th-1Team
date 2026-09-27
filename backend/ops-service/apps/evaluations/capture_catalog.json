@@ -3,19 +3,42 @@
     "id": "target-coverage-20260907-v1",
     "label": "지원 대상 근거 답변 · 저장된 가상 평가 6건",
     "fixture": "target-coverage-fixture.json",
-    "case_ids": ["TC01", "TC02", "TC03", "TC04", "TC05", "TC06"],
+    "case_ids": [
+      "TC01",
+      "TC02",
+      "TC03",
+      "TC04",
+      "TC05",
+      "TC06"
+    ],
     "captures": [
-      {"id": "target-coverage-20260907-v1", "label": "지원 대상 평가 · 2026-09-07", "path": "runs/target-coverage-20260907-v1/capture.json"}
-    ]
+      {
+        "id": "target-coverage-20260907-v1",
+        "label": "지원 대상 평가 · 2026-09-07",
+        "path": "runs/target-coverage-20260907-v1/capture.json"
+      }
+    ],
+    "fixture_sha256": "7cc1224e143f772e80713f267ed9b3b6d0262cabe75383b64f3e6b77ad496f8b"
   },
   {
     "id": "fixed-context-e01-v1",
     "label": "프롬프트 변경 비교 · 공통 E01 1건",
     "fixture": "fixture.json",
-    "case_ids": ["E01"],
+    "case_ids": [
+      "E01"
+    ],
     "captures": [
-      {"id": "fixed-context-20260906-diagnostic-v1", "label": "청크 ID 프롬프트 · 2026-09-06 · E01", "path": "runs/fixed-context-20260906-diagnostic-v1/capture.json"},
-      {"id": "fixed-context-20260907-index-v1", "label": "청크 순번 프롬프트 · 2026-09-07 · 4건 중 E01", "path": "runs/fixed-context-20260907-index-v1/capture.json"}
-    ]
+      {
+        "id": "fixed-context-20260906-diagnostic-v1",
+        "label": "청크 ID 프롬프트 · 2026-09-06 · E01",
+        "path": "runs/fixed-context-20260906-diagnostic-v1/capture.json"
+      },
+      {
+        "id": "fixed-context-20260907-index-v1",
+        "label": "청크 순번 프롬프트 · 2026-09-07 · 4건 중 E01",
+        "path": "runs/fixed-context-20260907-index-v1/capture.json"
+      }
+    ],
+    "fixture_sha256": "b61b3cb702d20e33cd797aa3d1b413210646b5f2fec87d42c87c77cd9aaf8621"
   }
 ]

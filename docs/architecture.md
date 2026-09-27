@@ -43,6 +43,10 @@ health 응답은 각각 `govbiz-core-service`·`govbiz-ops-service`이며 현재
 평가는 HTTP 요청 밖에서 실행합니다. Django는 요청 UUID·기준/후보 캡처·실행 상태·요약·비교를 저장하고 상세 조회 때 Prefect 상태를 반영합니다.
 Ops와 실행기가 공유하는 캡처 목록으로 가상 6건 재현 또는 과거 두 실행의 공통 E01 비교를 선택합니다.
 원본 캡처를 먼저 검증한 뒤 지정된 같은 사례만 비교하고, 모델 호출 없이 지표 차이와 실행 정보를 React에 표시합니다.
+새 응답 생성 모드는 `React 자료·예산 확인 → Django 관리자·CSRF·승인 조건 검증 → Prefect → 기존 평가 실행기 → Service → Agent → OpenAI`를 거칩니다.
+생성한 캡처를 위 비교 파이프라인에 전달하고 모델 호출 시도 수·토큰·지연·사례별 Langfuse 추적 링크를 표시합니다.
+두 서버의 `LLMOPS_LIVE_ENABLED`가 기본 false이며 키는 실행기에만 주입합니다. 질문당 최대 1회·출력 2,000토큰으로 제한하고 자동 모델 재호출은 없습니다.
+요청 UUID의 결과 디렉터리를 배타 생성하므로 Prefect 수동 재실행도 기존 유료 실행을 반복하지 않습니다. 모델 호출 실패 시 부분 기록을 보존합니다.
 평가 실행기와 Django는 결과 볼륨을 공유하며 Django에는 읽기 권한만 부여합니다.
 Django는 매 요청 `govbiz_session` 쿠키를 Core `GET /api/v1/admin/session`에 전달합니다.
 Core의 `AdminPrincipalArgumentResolver → AccountSessionService`가 세션·현재 `ADMIN` 권한을 확인하며

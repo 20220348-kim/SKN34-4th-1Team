@@ -7,7 +7,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
 from . import prefect_client
-from .catalog import DATASETS, LEGACY_DATASET_ID, selection
+from .catalog import DATASETS, LEGACY_DATASET_ID, selection, validate_execution
 from .models import EvaluationRun
 
 DATASET_ID = LEGACY_DATASET_ID
@@ -24,9 +24,21 @@ class ResultsUnavailable(Exception):
 
 
 def submit_run(
-    user, request_id, dataset_id, candidate_capture_id=DATASET_ID, reference_capture_id=DATASET_ID
+    user,
+    request_id,
+    dataset_id,
+    candidate_capture_id=DATASET_ID,
+    reference_capture_id=DATASET_ID,
+    execution_mode="replay",
+    live_config=None,
+    confirm_paid_run=False,
 ):
-    selection(dataset_id, candidate_capture_id, reference_capture_id)
+    config = live_config or {}
+    validate_execution(
+        dataset_id, candidate_capture_id, reference_capture_id, execution_mode, config
+    )
+    if execution_mode == "live" and (not settings.LLMOPS_LIVE_ENABLED or not confirm_paid_run):
+        raise ValueError("새 모델 평가는 활성화와 전송 자료·호출 예산 확인이 필요합니다.")
     run, created = EvaluationRun.objects.get_or_create(
         id=request_id,
         defaults={
@@ -34,6 +46,9 @@ def submit_run(
             "dataset_id": dataset_id,
             "candidate_capture_id": candidate_capture_id,
             "reference_capture_id": reference_capture_id,
+            "execution_mode": execution_mode,
+            "live_config": config,
+            "model_api_calls": None if execution_mode == "live" else 0,
         },
     )
     if (
@@ -41,6 +56,8 @@ def submit_run(
         or run.dataset_id != dataset_id
         or run.candidate_capture_id != candidate_capture_id
         or run.reference_capture_id != reference_capture_id
+        or run.execution_mode != execution_mode
+        or run.live_config != config
     ):
         raise RequestConflict
     if run.prefect_flow_run_id is None:
@@ -67,21 +84,47 @@ def artifact_path(run, name):
     return path
 
 
+def read_request(run):
+    request = json.loads(artifact_path(run, "request.json").read_text())
+    if (
+        request["request_id"] != str(run.id)
+        or request["dataset_id"] != run.dataset_id
+        or request["prefect_flow_run_id"] != str(run.prefect_flow_run_id)
+        or request.get("execution_mode", "replay") != run.execution_mode
+        or request.get("live_config", {}) != run.live_config
+    ):
+        raise ResultsUnavailable
+    for name in ("candidate_capture_id", "reference_capture_id"):
+        if request.get(name, LEGACY_DATASET_ID) != getattr(run, name):
+            raise ResultsUnavailable
+    return request
+
+
+def read_live_capture(run):
+    read_request(run)
+    path = artifact_path(run, "capture/capture.json")
+    capture = json.loads(path.read_text())
+    config = run.live_config
+    calls = capture["modelApiCalls"]
+    if (
+        capture["model"] != config["model"]
+        or capture["fixtureSha256"] != config["fixture_sha256"]
+        or capture["caseIds"] != DATASETS[run.dataset_id]["case_ids"]
+        or capture["maxModelCalls"] != config["max_model_calls"]
+        or capture["maxOutputTokens"] != config["max_output_tokens"]
+        or type(calls) is not int
+        or not 0 <= calls <= config["max_model_calls"]
+    ):
+        raise ResultsUnavailable
+    return capture, sha256(path.read_bytes()).hexdigest()
+
+
 def read_result(run):
     try:
-        request = json.loads(artifact_path(run, "request.json").read_text())
-        if (
-            request["request_id"] != str(run.id)
-            or request["dataset_id"] != run.dataset_id
-            or request["prefect_flow_run_id"] != str(run.prefect_flow_run_id)
-        ):
-            raise ResultsUnavailable
+        request = read_request(run)
         dataset, _, _ = selection(
             run.dataset_id, run.candidate_capture_id, run.reference_capture_id
         )
-        for name in ("candidate_capture_id", "reference_capture_id"):
-            if request.get(name, LEGACY_DATASET_ID) != getattr(run, name):
-                raise ResultsUnavailable
         manifest = json.loads(artifact_path(run, "evaluation/manifest.json").read_text())
         comparison = json.loads(artifact_path(run, "evaluation/comparison.json").read_text())
         if (
@@ -95,6 +138,18 @@ def read_result(run):
         report = artifact_path(run, "evaluation/report.html")
         if sha256(report.read_bytes()).hexdigest() != manifest["artifact_sha256"]["report.html"]:
             raise ResultsUnavailable
+        if run.execution_mode == "live":
+            capture, capture_hash = read_live_capture(run)
+            if (
+                capture["completed"] is not True
+                or capture["modelApiCalls"] != run.live_config["max_model_calls"]
+                or capture_hash != manifest["capture_sha256"]
+                or comparison.get("schema_version") != 2
+                or comparison["candidate_execution"]["capture_sha256"] != capture_hash
+                or comparison["candidate_execution"]["model"] != run.live_config["model"]
+                or manifest["fixture_sha256"] != run.live_config["fixture_sha256"]
+            ):
+                raise ResultsUnavailable
         verified_comparison = {}
         if comparison.get("schema_version") == 2:
             comparison_path = artifact_path(run, "evaluation/comparison.json")
@@ -160,6 +215,13 @@ def sync_run(run):
             values["error_code"] = f"EVALUATION_{status}"
     except (prefect_client.PrefectUnavailable, ValueError, TypeError):
         values = {"error_code": "PREFECT_STATUS_UNAVAILABLE"}
+    if run.execution_mode == "live":
+        try:
+            capture, _ = read_live_capture(run)
+            values["model_api_calls"] = capture["modelApiCalls"]
+        except (ResultsUnavailable, OSError, ValueError, KeyError, TypeError):
+            # 파일이 없거나 확인할 수 없는 호출 수를 0으로 표시하지 않는다.
+            pass
     # 동시에 조회한 오래된 RUNNING 응답이 이미 완료된 상태를 되돌리지 않도록 한다.
     EvaluationRun.objects.filter(pk=run.pk, status=run.status, synced_at=run.synced_at).update(
         **values

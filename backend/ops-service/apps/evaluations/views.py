@@ -1,3 +1,4 @@
+import re
 from urllib.parse import urlencode
 
 from django.conf import settings
@@ -14,7 +15,7 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
-from .catalog import DATASETS, public_datasets, selection
+from .catalog import DATASETS, public_datasets, selection, validate_execution
 from .models import EvaluationRun
 from .services import (
     DATASET_ID,
@@ -53,6 +54,7 @@ def api_session(request):
             else None,
             "csrf_token": get_token(request),
             "datasets": public_datasets() if operator else [],
+            "live_enabled": settings.LLMOPS_LIVE_ENABLED if operator else False,
         }
     )
 
@@ -69,12 +71,23 @@ class RunRequestSerializer(serializers.Serializer):
     dataset_id = serializers.ChoiceField(choices=list(DATASETS))
     candidate_capture_id = serializers.CharField(max_length=100, default=DATASET_ID)
     reference_capture_id = serializers.CharField(max_length=100, default=DATASET_ID)
+    execution_mode = serializers.ChoiceField(choices=["replay", "live"], default="replay")
+    live_config = serializers.JSONField(default=dict)
+    confirm_paid_run = serializers.BooleanField(default=False)
 
     def validate(self, attrs):
         try:
-            selection(
-                attrs["dataset_id"], attrs["candidate_capture_id"], attrs["reference_capture_id"]
+            validate_execution(
+                attrs["dataset_id"],
+                attrs["candidate_capture_id"],
+                attrs["reference_capture_id"],
+                attrs["execution_mode"],
+                attrs["live_config"],
             )
+            if attrs["execution_mode"] == "live" and (
+                not settings.LLMOPS_LIVE_ENABLED or not attrs["confirm_paid_run"]
+            ):
+                raise ValueError("새 모델 평가는 활성화와 전송 자료·호출 예산 확인이 필요합니다.")
         except ValueError as exc:
             raise serializers.ValidationError(str(exc)) from None
         return attrs
@@ -102,6 +115,8 @@ def run_data(run, viewer_id=None):
             run.dataset_id, run.candidate_capture_id, run.reference_capture_id
         )[2]["label"],
         "comparison": run.comparison or None,
+        "execution_mode": run.execution_mode,
+        "live_config": run.live_config or None,
         "requested_by": run.requested_by.email or run.requested_by.get_username(),
         "can_retry": run.prefect_flow_run_id is None and run.requested_by_id == viewer_id,
         "status": run.status,
@@ -113,7 +128,15 @@ def run_data(run, viewer_id=None):
         "error_code": run.error_code,
         "error_message": ERROR_MESSAGES.get(run.error_code, ""),
         "summary": run.summary,
-        "model_api_calls": 0,
+        "model_api_calls": run.model_api_calls,
+        "trace_links": [
+            {
+                "case_id": case["case_id"],
+                "url": f"{settings.LANGFUSE_PROJECT_URL}/traces/{case['candidate']['trace_id']}",
+            }
+            for case in run.comparison.get("cases", [])
+            if re.fullmatch(r"[a-f0-9]{32}", case["candidate"].get("trace_id") or "")
+        ],
         "evaluation_run_id": run.evaluation_run_id or None,
         "prefect_flow_run_id": str(run.prefect_flow_run_id) if run.prefect_flow_run_id else None,
         "prefect_url": (
@@ -123,7 +146,7 @@ def run_data(run, viewer_id=None):
         ),
         "langfuse_url": (
             f"{settings.LANGFUSE_PROJECT_URL}/scores?{score_query}"
-            if run.evaluation_run_id
+            if run.evaluation_run_id and run.execution_mode == "replay"
             else None
         ),
         "report_url": (

@@ -34,6 +34,8 @@ class PrefectClientTests(SimpleTestCase):
                 "dataset_id": DATASET_ID,
                 "candidate_capture_id": DATASET_ID,
                 "reference_capture_id": DATASET_ID,
+                "execution_mode": "replay",
+                "live_config": {},
             },
         )
 
@@ -422,6 +424,156 @@ class EvaluationTests(TestCase):
             data = json.loads(marker.read_text())
             data["reference_capture_id"] = "another-run"
             marker.write_text(json.dumps(data))
+            self.assertEqual(
+                self.client.get(f"/api/v1/ops/evaluations/{run.id}/report").status_code, 404
+            )
+
+    @override_settings(LLMOPS_LIVE_ENABLED=True)
+    @patch("apps.evaluations.prefect_client.create_run", return_value=uuid4())
+    def test_live_requires_exact_consent_and_is_idempotent(self, create):
+        from .catalog import LIVE_CAPTURE_ID, live_config
+
+        payload = {
+            **self.payload,
+            "execution_mode": "live",
+            "candidate_capture_id": LIVE_CAPTURE_ID,
+            "live_config": live_config(DATASET_ID),
+            "confirm_paid_run": True,
+        }
+        for changes in [
+            {"confirm_paid_run": False},
+            {"live_config": {}},
+            {"live_config": {**payload["live_config"], "max_model_calls": 7}},
+            {"live_config": {**payload["live_config"], "fixture_sha256": "0" * 64}},
+            {"live_config": {**payload["live_config"], "model": "unapproved"}},
+            {"execution_mode": "replay"},
+        ]:
+            self.assertEqual(self.post({**payload, **changes}).status_code, 400)
+        with override_settings(LLMOPS_LIVE_ENABLED=False):
+            self.assertEqual(self.post(payload).status_code, 400)
+        self.assertEqual(EvaluationRun.objects.count(), 0)
+        first = self.post(payload)
+        self.assertEqual(first.status_code, 202)
+        self.assertIsNone(first.json()["model_api_calls"])
+        self.assertEqual(first.json()["live_config"], payload["live_config"])
+        self.assertEqual(self.post(payload).status_code, 200)
+        self.assertEqual(self.post().status_code, 409)
+        create.assert_called_once()
+
+    @patch("apps.evaluations.prefect_client.read_run", return_value={"state_type": "FAILED"})
+    def test_live_failed_attempts_are_visible_and_not_reported_as_zero(self, read):
+        from .catalog import LIVE_CAPTURE_ID, live_config
+
+        with (
+            TemporaryDirectory() as directory,
+            override_settings(LLMOPS_RESULTS_DIR=Path(directory)),
+        ):
+            run = self.queued_run()
+            run.execution_mode = "live"
+            run.candidate_capture_id = LIVE_CAPTURE_ID
+            run.live_config = live_config(DATASET_ID)
+            run.model_api_calls = None
+            run.save()
+            self.assertIsNone(sync_run(run).model_api_calls)
+            folder = Path(directory) / str(run.id)
+            (folder / "capture").mkdir(parents=True)
+            marker = {
+                "request_id": str(run.id),
+                "dataset_id": run.dataset_id,
+                "prefect_flow_run_id": str(run.prefect_flow_run_id),
+                "candidate_capture_id": LIVE_CAPTURE_ID,
+                "reference_capture_id": DATASET_ID,
+                "execution_mode": "live",
+                "live_config": run.live_config,
+            }
+            (folder / "request.json").write_text(json.dumps(marker))
+            capture = {
+                "model": run.live_config["model"],
+                "fixtureSha256": run.live_config["fixture_sha256"],
+                "caseIds": [f"TC0{i}" for i in range(1, 7)],
+                "maxModelCalls": 6,
+                "maxOutputTokens": 2000,
+                "modelApiCalls": 1,
+                "completed": False,
+            }
+            (folder / "capture/capture.json").write_text(json.dumps(capture))
+            self.assertEqual(sync_run(run).model_api_calls, 1)
+            self.assertEqual(run.status, "FAILED")
+            self.assertIsNone(run_data(run)["report_url"])
+            self.assertEqual(run_data(run)["trace_links"], [])
+
+    @patch("apps.evaluations.prefect_client.read_run", return_value={"state_type": "COMPLETED"})
+    def test_live_completion_requires_capture_hash_and_approved_model(self, read):
+        from .catalog import LIVE_CAPTURE_ID, live_config
+
+        with (
+            TemporaryDirectory() as directory,
+            override_settings(LLMOPS_RESULTS_DIR=Path(directory)),
+        ):
+            run = self.queued_run()
+            run.execution_mode = "live"
+            run.candidate_capture_id = LIVE_CAPTURE_ID
+            run.live_config = live_config(DATASET_ID)
+            run.model_api_calls = None
+            run.save()
+            self.result_files(Path(directory), run)
+            folder = Path(directory) / str(run.id)
+            marker_path = folder / "request.json"
+            marker = json.loads(marker_path.read_text())
+            marker.update(
+                execution_mode="live",
+                live_config=run.live_config,
+                candidate_capture_id=LIVE_CAPTURE_ID,
+                reference_capture_id=DATASET_ID,
+            )
+            marker_path.write_text(json.dumps(marker))
+            (folder / "capture").mkdir()
+            capture_path = folder / "capture/capture.json"
+            capture = {
+                "model": run.live_config["model"],
+                "fixtureSha256": run.live_config["fixture_sha256"],
+                "caseIds": [f"TC0{i}" for i in range(1, 7)],
+                "maxModelCalls": 6,
+                "maxOutputTokens": 2000,
+                "modelApiCalls": 6,
+                "completed": True,
+            }
+            capture_path.write_text(json.dumps(capture))
+            capture_hash = sha256(capture_path.read_bytes()).hexdigest()
+            comparison_path = folder / "evaluation/comparison.json"
+            comparison = json.loads(comparison_path.read_text())
+            comparison.update(
+                schema_version=2,
+                reference_run_id="b" * 32,
+                fixture_sha256=run.live_config["fixture_sha256"],
+                case_ids=capture["caseIds"],
+                reference={"completed": True},
+                candidate_execution={
+                    "run_id": "a" * 32,
+                    "capture_sha256": capture_hash,
+                    "model": run.live_config["model"],
+                },
+                reference_execution={"run_id": "b" * 32},
+                cases=[{"case_id": "TC01", "candidate": {"trace_id": "d" * 32}}],
+            )
+            comparison_path.write_text(json.dumps(comparison))
+            manifest_path = folder / "evaluation/manifest.json"
+            manifest = json.loads(manifest_path.read_text())
+            manifest.update(
+                reference_run_id="b" * 32,
+                fixture_sha256=run.live_config["fixture_sha256"],
+                capture_sha256=capture_hash,
+            )
+            manifest["artifact_sha256"]["comparison.json"] = sha256(
+                comparison_path.read_bytes()
+            ).hexdigest()
+            manifest_path.write_text(json.dumps(manifest))
+            self.assertEqual(sync_run(run).status, "COMPLETED")
+            self.assertEqual(run.model_api_calls, 6)
+            self.assertTrue(run_data(run)["trace_links"][0]["url"].endswith("/traces/" + "d" * 32))
+            self.assertIsNone(run_data(run)["langfuse_url"])
+            capture["model"] = "wrong-model"
+            capture_path.write_text(json.dumps(capture))
             self.assertEqual(
                 self.client.get(f"/api/v1/ops/evaluations/{run.id}/report").status_code, 404
             )

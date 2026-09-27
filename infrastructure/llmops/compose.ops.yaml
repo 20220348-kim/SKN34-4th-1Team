@@ -33,6 +33,8 @@ services:
       PREFECT_API_URL: http://prefect:4200/api
       PREFECT_UI_URL: http://localhost:14200
       LLMOPS_RESULTS_DIR: /results
+      LLMOPS_LIVE_ENABLED: ${LLMOPS_LIVE_ENABLED:-false}
+      LLMOPS_LIVE_MODEL: ${LLMOPS_LIVE_MODEL:-gpt-6-luna}
       LANGFUSE_PROJECT_URL: http://localhost:13000/project/govbiz-evidence-development
     volumes:
       - ops-results:/results:ro
@@ -55,6 +57,9 @@ services:
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY}
       LANGFUSE_ENVIRONMENT: development
       LLMOPS_RESULTS_DIR: /results
+      LLMOPS_LIVE_ENABLED: ${LLMOPS_LIVE_ENABLED:-false}
+      LLMOPS_LIVE_MODEL: ${LLMOPS_LIVE_MODEL:-gpt-6-luna}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     volumes: ["ops-results:/results"]
     depends_on:
       prefect: {condition: service_started}
