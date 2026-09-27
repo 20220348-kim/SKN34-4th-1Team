@@ -959,3 +959,14 @@ Core는 재열기·XML·스타일·수식·data validation·원본 파트 보존
 
 Frontend - Web: XLSX 목록 응답의 확장자·MIME 검증 및 인증된 native 다운로드를 지원합니다.
 Frontend - Mobile: 변경 없음.
+
+신청 문서 경계에서 MCP Client는 `ApplicationDocumentMcpException`만 던지고 실제 호출 Service가
+`ApplicationDocumentException`으로 변환한다. 승인안은 Domain 업무 모델이며, 승인 Repository는
+새 formVersionId 또는 stale을 뜻하는 null을 반환한다. 스냅샷 저장 뒤 stale이 발생하면 같은
+transaction의 쓰기를 rollback한다. Service의 승인 결과·변경 안내는 `service/dto`로 전달하고
+Controller와 ExceptionHandler가 기존 공개 응답·ProblemDetail로 변환한다.
+
+공고별 양식 가용성의 `findActive`는 nullable 업무 모델을 반환하고, `ApplicationFormService`가
+기존 미지원 예외로 변환한다. 명시적 재분석의 `claimRequested`는 획득·행 없음·충돌 결과를
+반환하며, `ApplicationFormDiscoveryService`가 충돌을 기존 JOB_CONFLICT로 변환한다.
+Repository의 행 잠금·실행권 갱신 transaction과 공개 오류 계약은 유지한다.

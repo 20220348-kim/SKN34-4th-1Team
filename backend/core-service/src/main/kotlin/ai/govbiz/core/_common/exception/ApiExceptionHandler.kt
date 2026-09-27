@@ -33,7 +33,7 @@ import ai.govbiz.core.account.service.exception.LoginRateLimitedException
 import ai.govbiz.core.account.service.exception.PasswordResetAccountNotFoundException
 import ai.govbiz.core.account.service.exception.PasswordResetSocialAccountException
 import ai.govbiz.core.account.service.exception.SessionOriginRejectedException
-import ai.govbiz.core.applicationpreparation.controller.exception.InvalidApplicationPreparationInputException
+import ai.govbiz.core.applicationpreparation.domain.exception.InvalidApplicationPreparationInputException
 import ai.govbiz.core.applicationpreparation.domain.exception.ApplicationPreparationNotFoundException
 import ai.govbiz.core.applicationpreparation.domain.exception.ApplicationPreparationRevisionConflictException
 import ai.govbiz.core.applicationpreparation.domain.exception.ApplicationPreparationRunConflictException

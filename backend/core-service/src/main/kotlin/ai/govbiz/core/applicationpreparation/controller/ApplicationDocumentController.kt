@@ -7,6 +7,7 @@ import ai.govbiz.core.applicationpreparation.controller.dto.ApplicationDocumentR
 import ai.govbiz.core.applicationpreparation.controller.dto.ApplicationDocumentUnfilledAnswerResponse
 import ai.govbiz.core.applicationpreparation.controller.dto.GenerateApplicationDocumentsRequest
 import ai.govbiz.core.applicationpreparation.controller.dto.ConfirmApplicationDocumentMigrationRequest
+import ai.govbiz.core.applicationpreparation.controller.dto.ApplicationDocumentMigrationConfirmedResponse
 import jakarta.validation.Valid
 import jakarta.validation.constraints.Min
 import org.springframework.http.CacheControl
@@ -31,7 +32,10 @@ class ApplicationDocumentController(private val service: ApplicationDocumentServ
     fun confirmMigration(account: Account, @PathVariable @Min(1) id: Long,
                          @RequestBody @Valid request: ConfirmApplicationDocumentMigrationRequest) =
         ResponseEntity.ok().cacheControl(CacheControl.noStore())
-            .body(service.confirmMigration(account, id, request.expectedRevision, request.approvalToken))
+            .body(service.confirmMigration(account, id, request.expectedRevision, request.approvalToken).let {
+                ApplicationDocumentMigrationConfirmedResponse(preparationId = it.preparationId,
+                    inputRevision = it.inputRevision, formVersionId = it.formVersionId)
+            })
 
     @GetMapping("/{fileId}/download")
     fun download(account: Account, @PathVariable @Min(1) id: Long, @PathVariable @Min(1) fileId: Long): ResponseEntity<ByteArray> {

@@ -2,7 +2,7 @@ package ai.govbiz.core.applicationpreparation.client.ai
 
 import ai.govbiz.core.applicationpreparation.client.ai.dto.AiDocumentGenerationRequest
 import ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentFact
-import ai.govbiz.core.applicationpreparation.service.exception.ApplicationDocumentException
+import ai.govbiz.core.applicationpreparation.client.ai.exception.ApplicationDocumentMcpException
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
@@ -44,15 +44,53 @@ class ApplicationDocumentMcpClientTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = ["APPLICATION_DOCUMENT_OVERFLOW", "APPLICATION_DOCUMENT_FORM_REANALYSIS_REQUIRED", "APPLICATION_DOCUMENT_UNMAPPED_INPUT"])
+    @ValueSource(strings = ["APPLICATION_DOCUMENT_OVERFLOW", "APPLICATION_DOCUMENT_FORM_REANALYSIS_REQUIRED", "APPLICATION_DOCUMENT_UNMAPPED_INPUT", "APPLICATION_DOCUMENT_MCP_NOT_READY", "APPLICATION_DOCUMENT_MCP_FAILED", "APPLICATION_DOCUMENT_OUTCOME_UNKNOWN"])
     fun preservesTypedToolFailuresWithoutDocumentText(code: String) {
         server.expect(requestTo("http://ai.test/internal/v1/application-preparations/document/generate"))
             .andRespond(withStatus(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE)
                 .contentType(MediaType.APPLICATION_JSON).body("""{"detail":{"code":"$code","documentText":"never expose"}}"""))
         val request = AiDocumentGenerationRequest(sourceBase64 = "", sourceSha256 = "", format = "pdf", answerRevision = 1, facts = emptyList(), scope = "test")
-        val error = assertThrows(ApplicationDocumentException::class.java) { client.generate(request) }
+        val error = assertThrows(ApplicationDocumentMcpException::class.java) { client.generate(request) }
         assertEquals(code, error.code)
         assertFalse(error.message!!.contains("never expose"))
+        server.verify()
+    }
+
+    private fun request() = AiDocumentGenerationRequest(sourceBase64 = "", sourceSha256 = "", format = "pdf",
+        answerRevision = 1, facts = emptyList(), scope = "test")
+
+    @Test fun shortTokenRemainsNotReady() {
+        val unconfigured = ApplicationDocumentMcpClient(builder.build(), "short", json)
+        val error = assertThrows(ApplicationDocumentMcpException::class.java) { unconfigured.generate(request()) }
+        assertEquals("APPLICATION_DOCUMENT_MCP_NOT_READY", error.code)
+        server.verify()
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["{bad-json", "{\"detail\":{\"code\":\"PRIVATE_CODE\"}}"])
+    fun invalidOrUnrecognizedRemoteErrorRemainsMcpFailed(body: String) {
+        server.expect(requestTo("http://ai.test/internal/v1/application-preparations/document/generate"))
+            .andRespond(withServerError().contentType(MediaType.APPLICATION_JSON).body(body))
+        val error = assertThrows(ApplicationDocumentMcpException::class.java) { client.generate(request()) }
+        assertEquals("APPLICATION_DOCUMENT_MCP_FAILED", error.code)
+        server.verify()
+    }
+
+    @Test fun malformedSuccessRemainsUnknownOutcome() {
+        server.expect(requestTo("http://ai.test/internal/v1/application-preparations/document/generate"))
+            .andRespond(withSuccess("{bad-json", MediaType.APPLICATION_JSON))
+        val error = assertThrows(ApplicationDocumentMcpException::class.java) { client.generate(request()) }
+        assertEquals("APPLICATION_DOCUMENT_OUTCOME_UNKNOWN", error.code)
+        assertNotNull(error.cause)
+        server.verify()
+    }
+
+    @Test fun transportTimeoutRemainsUnknownOutcome() {
+        server.expect(requestTo("http://ai.test/internal/v1/application-preparations/document/generate"))
+            .andRespond { throw java.net.SocketTimeoutException("private upstream address") }
+        val error = assertThrows(ApplicationDocumentMcpException::class.java) { client.generate(request()) }
+        assertEquals("APPLICATION_DOCUMENT_OUTCOME_UNKNOWN", error.code)
+        assertFalse(error.message!!.contains("private upstream"))
         server.verify()
     }
 }

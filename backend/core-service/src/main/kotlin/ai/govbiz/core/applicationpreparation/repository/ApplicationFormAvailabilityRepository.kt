@@ -69,18 +69,18 @@ class ApplicationFormAvailabilityRepository(
 
     /** 명시적인 재분석은 같은 공고의 진행 중 실행권을 빼앗지 않는다. */
     @Transactional
-    fun claimRequested(sourceCode: String, sourceProgramId: String): ApplicationFormAnalysisLease? {
-        val row = mapper.lock(sourceCode, sourceProgramId) ?: return null
+    fun claimRequested(sourceCode: String, sourceProgramId: String): RequestedAnalysisClaimResult {
+        val row = mapper.lock(sourceCode, sourceProgramId) ?: return RequestedAnalysisClaimResult.NotFound
         if (row.leaseToken != null && (row.aiStarted || row.leaseUntil?.isAfter(now()) == true))
-            throw ai.govbiz.core.applicationpreparation.service.exception.ApplicationFormDiscoveryException(
-                ai.govbiz.core.applicationpreparation.service.exception.ApplicationFormDiscoveryException.Reason.JOB_CONFLICT)
+            return RequestedAnalysisClaimResult.Conflict
         row.generation++
         row.leaseToken = UUID.randomUUID().toString()
         row.leaseUntil = now().plus(timeouts.applicationFormWorkerLease)
         row.attemptCount = 1
         row.aiStarted = false
         mapper.update(row)
-        return ApplicationFormAnalysisLease(sourceCode, sourceProgramId, row.generation, requireNotNull(row.leaseToken), row.attemptCount)
+        return RequestedAnalysisClaimResult.Claimed(
+            ApplicationFormAnalysisLease(sourceCode, sourceProgramId, row.generation, requireNotNull(row.leaseToken), row.attemptCount))
     }
 
     /** 동일 첨부와 버전에서 완료된 결과는 NO_FORM을 포함하여 재사용한다. */
@@ -159,11 +159,10 @@ class ApplicationFormAvailabilityRepository(
     }
 
     @Transactional
-    fun requireActive(sourceCode: String, sourceProgramId: String, version: String): ApplicationFormManifest {
+    fun findActive(sourceCode: String, sourceProgramId: String, version: String): ApplicationFormManifest? {
         val row = mapper.lock(sourceCode, sourceProgramId)
-        if (row?.status != "AVAILABLE") throw ai.govbiz.core.applicationpreparation.service.exception.ApplicationFormNotSupportedException()
+        if (row?.status != "AVAILABLE") return null
         return activeForms(sourceCode, sourceProgramId).find { it.formVersionId == version }
-            ?: throw ai.govbiz.core.applicationpreparation.service.exception.ApplicationFormNotSupportedException()
     }
 
     @Transactional(readOnly = true)
@@ -196,4 +195,11 @@ class ApplicationFormAvailabilityRepository(
     private fun ApplicationFormAvailabilityDbRow.toDomain() = ApplicationFormAvailability(sourceCode, sourceProgramId,
         ApplicationFormAvailabilityStatus.valueOf(status), reasonCode, sourceFingerprint, parserVersion, extractionModel,
         extractionPromptVersion, activeFormVersionId, verifiedAt, nextRetryAt, attemptCount, durationMs, timeoutStage)
+}
+
+/** Result of reserving a manual analysis; business errors belong to the calling Service. */
+sealed interface RequestedAnalysisClaimResult {
+    data class Claimed(val lease: ApplicationFormAnalysisLease) : RequestedAnalysisClaimResult
+    data object NotFound : RequestedAnalysisClaimResult
+    data object Conflict : RequestedAnalysisClaimResult
 }

@@ -193,4 +193,28 @@ class ApplicationDocumentMappingServiceTest {
         verify(snapshots, never()).attachDocumentMap(eq(form.formVersionId) ?: form.formVersionId,
             any(ApplicationDocumentMapSnapshot::class.java) ?: stale)
     }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings = ["APPLICATION_DOCUMENT_MCP_NOT_READY", "APPLICATION_DOCUMENT_MCP_FAILED", "APPLICATION_DOCUMENT_OUTCOME_UNKNOWN"])
+    fun configurationFailureIsTranslatedAtServiceBoundary(code: String) {
+        val cause = java.net.SocketTimeoutException("internal")
+        `when`(client.configuration()).thenThrow(
+            ai.govbiz.core.applicationpreparation.client.ai.exception.ApplicationDocumentMcpException(code, "safe detail", cause))
+        val error = assertThrows(ApplicationDocumentException::class.java) { service.ensure(form(false), bytes, "hwpx") }
+        assertEquals(code, error.code)
+        assertEquals("safe detail", error.message)
+        assertSame(cause, error.cause)
+        verifyNoInteractions(snapshots, editor)
+    }
+
+    @Test fun mappingFailureIsTranslatedBeforeSnapshotWrite() {
+        stub()
+        val request = AiDocumentMappingRequest(sourceBase64="",sourceSha256="",format="hwpx",scope="",fields=emptyList())
+        `when`(client.map(any(AiDocumentMappingRequest::class.java) ?: request)).thenThrow(
+            ai.govbiz.core.applicationpreparation.client.ai.exception.ApplicationDocumentMcpException("APPLICATION_DOCUMENT_MAPPING_FAILED", "safe detail"))
+        val error = assertThrows(ApplicationDocumentException::class.java) { service.ensure(form(false), bytes, "hwpx") }
+        assertEquals("APPLICATION_DOCUMENT_MAPPING_FAILED", error.code)
+        verify(snapshots).findByVersion(form(false).formVersionId)
+        verifyNoMoreInteractions(snapshots)
+    }
 }
