@@ -1,5 +1,9 @@
 package ai.govbiz.core.applicationpreparation.service
 
+import ai.govbiz.core.applicationpreparation.domain.ApplicationOnlineFormSourceReference
+import ai.govbiz.core.applicationpreparation.service.dto.ApplicationOnlineFormSourceCapabilityResult
+import ai.govbiz.core.applicationpreparation.service.dto.ApplicationOnlineFormSourceCapabilityStatus
+import java.net.URI
 import ai.govbiz.core.applicationpreparation.domain.ApplicationOnlineFormSource
 import ai.govbiz.core.applicationpreparation.domain.reviewOnlineForm
 import ai.govbiz.core.applicationpreparation.domain.fieldMappings
@@ -44,6 +48,26 @@ class ApplicationPreparationService(
         val manifest = forms.requireVersion(preparation.draft.formVersionId)
         val review = manifest.reviewOnlineForm(source)
         return ApplicationOnlineFormMappingReviewResult(source.formId, source.formTitle, manifest.fieldMappings(review.formMap), review.issues)
+    }
+
+    /** 외부 I/O 없이 현재 서비스의 접근 능력을 판정한다. Google 로그인은 Forms 권한이 아니다. */
+    fun checkOnlineFormSourceCapability(
+        account: Account,
+        preparationId: Long,
+        reference: ApplicationOnlineFormSourceReference,
+    ): ApplicationOnlineFormSourceCapabilityResult {
+        val preparation = repository.findOwned(account.id, preparationId) ?: throw ApplicationPreparationNotFoundException()
+        forms.requireVersion(preparation.draft.formVersionId)
+        val uri = URI(reference.sourceUrl)
+        val googleReference = reference.provider == "GOOGLE_FORMS" && when (uri.host.lowercase()) {
+            "docs.google.com" -> Regex("/forms/(?:u/[0-9]+/)?d/(?:e/)?[A-Za-z0-9_-]+/(?:edit|viewform)/?").matches(uri.rawPath)
+            "forms.gle" -> Regex("/[A-Za-z0-9_-]+/?").matches(uri.rawPath)
+            else -> false
+        }
+        return ApplicationOnlineFormSourceCapabilityResult(
+            if (googleReference) ApplicationOnlineFormSourceCapabilityStatus.REQUIRES_AUTH
+            else ApplicationOnlineFormSourceCapabilityStatus.UNSUPPORTED_PROVIDER,
+        )
     }
 
     fun supportedForms(account: Account) = forms.listSupported().also { require(account.id > 0) }
