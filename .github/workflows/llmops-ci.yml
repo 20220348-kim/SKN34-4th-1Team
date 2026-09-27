@@ -99,6 +99,7 @@ jobs:
           export CORE_ADMIN_EMAIL=admin@govbiz.local
           export CORE_ADMIN_PASSWORD="$OPS_ADMIN_PASSWORD"
           python infrastructure/llmops/ops_smoke.py --seed-dev-accounts --base-url http://localhost:5173 --output work/llmops-ci/ops-verification.json
+          python infrastructure/llmops/ops_smoke.py --compare-captures --base-url http://localhost:5173 --output work/llmops-ci/ops-comparison-verification.json
       - name: Stop this job's development containers
         if: always()
         run: docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml -f infrastructure/llmops/compose.auth-test.yaml --profile evaluation down

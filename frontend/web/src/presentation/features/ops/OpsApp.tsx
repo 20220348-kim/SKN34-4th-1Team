@@ -10,7 +10,7 @@ import { workspacePageStyles as styles, workspaceTagClassName } from '../../shar
 import { WorkspacePageHeader } from '../../shared/workspace/WorkspacePageHeader'
 
 const listPath = '/ops/evaluations'
-const notice = '저장된 가상 평가 6건을 재실행합니다. 새 모델 호출은 없으며 현재 모델의 품질 측정이 아닙니다.'
+const notice = '저장된 과거 평가 결과를 비교합니다. 새 모델 호출은 없으며 현재 모델의 품질 측정이 아닙니다.'
 const field = 'min-h-11 w-full rounded-xl border border-sample-border bg-white px-3 text-sm focus:outline-2 focus:outline-brand-primary'
 const date = (value: string | null) => value ? new Date(value).toLocaleString('ko-KR') : '—'
 const message = (error: unknown) => error instanceof Error ? error.message : '요청을 처리하지 못했습니다.'
@@ -89,6 +89,13 @@ function EvaluationList({ datasets, onExpired }: { datasets: OpsSession['dataset
   const [refresh, setRefresh] = useState(0)
   const [busy, setBusy] = useState(false)
   const [dataset, setDataset] = useState(datasets[0]?.id ?? '')
+  const selected = datasets.find((item) => item.id === dataset)
+  const [reference, setReference] = useState(datasets[0]?.captures[0]?.id ?? '')
+  const [candidate, setCandidate] = useState(datasets[0]?.captures.at(-1)?.id ?? '')
+  const changeDataset = (id: string) => {
+    const value = datasets.find((item) => item.id === id)
+    setDataset(id); setReference(value?.captures[0]?.id ?? ''); setCandidate(value?.captures.at(-1)?.id ?? '')
+  }
   const requestId = useRef<string | null>(null)
   const submitting = useRef(false)
   const navigate = useNavigate()
@@ -108,7 +115,7 @@ function EvaluationList({ datasets, onExpired }: { datasets: OpsSession['dataset
     submitting.current = true; setBusy(true); setSubmitError('')
     requestId.current ??= crypto.randomUUID()
     try {
-      const run = await submitEvaluation(requestId.current, dataset)
+      const run = await submitEvaluation(requestId.current, dataset, candidate, reference)
       navigate(`${listPath}/${run.id}`)
     } catch (reason) {
       if (reason instanceof OpsApiError && (reason.status === 401 || reason.status === 403)) expiry.current()
@@ -122,9 +129,12 @@ function EvaluationList({ datasets, onExpired }: { datasets: OpsSession['dataset
         <p className={styles.sectionEyebrow}>저장 평가 재현</p><h2 className={styles.cardTitle}>지원 대상 근거 답변 평가</h2>
         <p className="text-sm leading-6 text-sample-muted">{notice}</p>
         <form className="flex flex-wrap items-end gap-3" onSubmit={(event) => { event.preventDefault(); void submit() }}>
-          <label className="grid min-w-0 flex-1 gap-2 text-sm font-semibold">평가 자료<select className={field} value={dataset} disabled={busy || requestId.current !== null} onChange={(event) => setDataset(event.target.value)}>{datasets.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
-          <button className={styles.primaryButton} disabled={busy || !dataset}>{busy ? '접수 중…' : submitError ? '같은 요청으로 재시도' : '평가 실행'}</button>
+          <label className="grid min-w-0 flex-1 gap-2 text-sm font-semibold">평가 자료<select className={field} value={dataset} disabled={busy || requestId.current !== null} onChange={(event) => changeDataset(event.target.value)}>{datasets.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
+          <label className="grid min-w-56 flex-1 gap-2 text-sm font-semibold">기준 실행<select className={field} value={reference} disabled={busy || requestId.current !== null} onChange={(event) => setReference(event.target.value)}>{selected?.captures.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
+          <label className="grid min-w-56 flex-1 gap-2 text-sm font-semibold">후보 실행<select className={field} value={candidate} disabled={busy || requestId.current !== null} onChange={(event) => setCandidate(event.target.value)}>{selected?.captures.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
+          <button className={styles.primaryButton} disabled={busy || !dataset || !reference || !candidate}>{busy ? '접수 중…' : submitError ? '같은 요청으로 재시도' : '평가 실행'}</button>
         </form>
+        {selected && <p className="text-xs leading-5 text-sample-muted">비교 범위: {selected.case_ids.join(', ')} · {selected.case_ids.length}건. {reference === candidate ? '같은 저장 결과의 재현 검증입니다.' : '두 실행의 위 사례만 비교합니다. 원본의 다른 사례는 평가 범위에 포함하지 않습니다.'}</p>}
         {submitError && <p role="alert" className="text-sm text-red-700">{submitError}</p>}
       </section>
       <section className={styles.card} aria-label="평가 실행 이력">
@@ -169,7 +179,7 @@ function EvaluationDetail({ onExpired }: { onExpired: () => void }) {
   const retry = async () => {
     if (!run || busy) return
     setBusy(true)
-    try { setRun(await submitEvaluation(run.id, run.dataset_id)); setRefresh((value) => value + 1) }
+    try { setRun(await submitEvaluation(run.id, run.dataset_id, run.candidate_capture_id, run.reference_capture_id)); setRefresh((value) => value + 1) }
     catch (reason) {
       if (reason instanceof OpsApiError && (reason.status === 401 || reason.status === 403)) expiry.current()
       else setError(message(reason))
@@ -185,7 +195,7 @@ function EvaluationDetail({ onExpired }: { onExpired: () => void }) {
         {run.can_retry && <button className={`${styles.primaryButton} self-start`} disabled={busy} onClick={() => void retry()}>{busy ? '접수 확인 중…' : '같은 요청으로 접수 재확인'}</button>}
         <section className={styles.card}><h2 className={styles.cardTitle}>{run.dataset_label}</h2><p className="text-sm leading-6 text-sample-muted">{notice}</p>
           <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-5 gap-y-3 text-sm">{[
-            ['요청 ID', run.id], ['요청자', run.requested_by], ['요청 시각', date(run.created_at)],
+            ['요청 ID', run.id], ['기준 실행', run.reference_label], ['후보 실행', run.candidate_label], ['요청자', run.requested_by], ['요청 시각', date(run.created_at)],
             ['시작 / 종료', `${date(run.started_at)} / ${date(run.finished_at)}`], ['마지막 상태 확인', date(run.synced_at)], ['평가 결과 ID', run.evaluation_run_id ?? '결과 대기'],
           ].map(([label, value]) => <div key={label} className="contents"><dt className="text-sample-muted">{label}</dt><dd className="break-all">{value}</dd></div>)}</dl>
         </section>
@@ -193,6 +203,7 @@ function EvaluationDetail({ onExpired }: { onExpired: () => void }) {
           ['처리 사례', `${run.summary.observedCaseCount ?? '—'} / ${run.summary.caseCount ?? '—'}`], ['상태 일치율', run.summary.statusAccuracy?.toFixed(2) ?? '미측정'],
           ['인용 재현율', run.summary.referenceCitationRecall?.toFixed(2) ?? '미측정'], ['모델 API 호출', `${run.model_api_calls}회`],
         ].map(([label, value]) => <div className="rounded-xl bg-[#f3f7f5] p-4" key={label}><p className="text-xs text-sample-muted">{label}</p><strong className="mt-3 block text-2xl">{value}</strong></div>)}</div><p className="text-xs leading-5 text-sample-muted">점수 범위는 0–1입니다. AI 작성 참조 자료의 과거 결과이며 의미 충실도는 미측정입니다.</p></section>}
+        {run.status === 'COMPLETED' && (run.comparison ? <ComparisonResult comparison={run.comparison} /> : <p className="text-sm text-sample-muted">이전 실행에는 비교 상세가 없습니다. 새 평가를 실행하면 기준·후보 차이를 확인할 수 있습니다.</p>)}
         <section className={styles.card}><h2 className={styles.cardTitle}>상세 기록과 보고서</h2><div className="flex flex-wrap gap-3">
           {run.report_url && <a className={styles.primaryButton} href={run.report_url} target="_blank" rel="noopener noreferrer">Evidently 보고서</a>}
           {run.langfuse_url && <a className={styles.secondaryButton} href={run.langfuse_url} target="_blank" rel="noopener noreferrer">Langfuse 평가 점수</a>}
@@ -202,4 +213,24 @@ function EvaluationDetail({ onExpired }: { onExpired: () => void }) {
       </>}
     </div>
   </>
+}
+
+const metricLabels = {
+  statusAccuracy: '상태 일치율', referenceCitationRecall: '인용 재현율', failureRate: '실패율', missingRate: '누락률',
+  meanLatencyMs: '평균 지연 (ms)', meanInputTokens: '평균 입력 토큰', meanOutputTokens: '평균 출력 토큰', semanticFaithfulness: '의미 충실도',
+}
+const measurement = (value: number | null) => value === null ? '미측정' : value.toLocaleString('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+function ComparisonResult({ comparison }: { comparison: NonNullable<EvaluationRun['comparison']> }) {
+  return <section className={styles.card} aria-label="기준·후보 비교">
+    <h2 className={styles.cardTitle}>기준·후보 비교</h2>
+    <p className={styles.cardDescription}>{comparison.comparison === 'self-replay' ? '같은 저장 결과를 다시 계산한 재현 검증입니다.' : '서로 다른 저장 실행을 비교합니다.'} 비교 사례: {comparison.case_ids.join(', ')} ({comparison.case_ids.length}건).</p>
+    <p className="text-xs leading-5 text-sample-muted">변화량은 후보 − 기준입니다. 비율은 0–1이며 미측정 값은 0으로 계산하지 않습니다. 이 표만으로 전체 모델의 품질 향상이나 변경 원인의 효과를 판단하지 않습니다.</p>
+    <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="border-b border-sample-border"><tr>{['지표', '기준', '후보', '변화량 (후보 − 기준)'].map((label) => <th className="px-3 py-3 whitespace-nowrap" key={label}>{label}</th>)}</tr></thead><tbody>
+      {comparison.metrics.map((metric) => <tr key={metric.key} className="border-b border-sample-border"><th scope="row" className="px-3 py-3 font-medium">{metricLabels[metric.key]}</th><td className="px-3 py-3">{measurement(metric.reference)}</td><td className="px-3 py-3">{measurement(metric.candidate)}</td><td className="px-3 py-3 font-mono">{metric.delta === null ? '비교 불가' : `${metric.delta > 0 ? '+' : ''}${measurement(metric.delta)}`}</td></tr>)}
+    </tbody></table></div>
+    <div className="grid gap-4 md:grid-cols-2">{([['기준', comparison.reference_execution], ['후보', comparison.candidate_execution]] as const).map(([label, execution]) => <div className="rounded-xl bg-[#f3f7f5] p-4 text-xs leading-6 break-all" key={label}>
+      <h3 className="text-sm font-bold">{label} 실행 정보</h3><p>모델: {execution.model}</p><p>원 실행 시각: {date(execution.started_at)}</p><p>원본 사례: {execution.source_case_ids.join(', ')}</p><p>프롬프트: {execution.prompt_sha256}</p><p>실행기: {execution.runner_sha256}</p><p>캡처: {execution.capture_sha256}</p>
+    </div>)}</div>
+    <details className="text-sm"><summary className="cursor-pointer font-semibold">사례별 상태·인용 비교</summary><div className="overflow-x-auto"><table className="mt-3 w-full text-left text-xs"><thead><tr>{['사례', '기준 결과', '후보 결과', '상태 일치 (기준 → 후보)', '인용 재현 (기준 → 후보)'].map((label) => <th className="px-2 py-2" key={label}>{label}</th>)}</tr></thead><tbody>{comparison.cases.map((item) => <tr key={item.case_id}><th className="px-2 py-2">{item.case_id}</th><td>{item.reference.outcome}</td><td>{item.candidate.outcome}</td><td>{measurement(item.reference.status_match)} → {measurement(item.candidate.status_match)}</td><td>{measurement(item.reference.citation_recall)} → {measurement(item.candidate.citation_recall)}</td></tr>)}</tbody></table></div></details>
+  </section>
 }

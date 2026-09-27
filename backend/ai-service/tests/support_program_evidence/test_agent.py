@@ -201,7 +201,8 @@ def responses_body(output_json: str) -> dict[str, object]:
 
 
 @pytest.mark.anyio
-async def test_openai_request_uses_non_stored_strict_structured_output() -> None:
+@pytest.mark.parametrize("model_name", ["gpt-5.6-luna", "gpt-6-luna"])
+async def test_openai_request_uses_non_stored_strict_structured_output(model_name) -> None:
     captured_requests: list[dict[str, object]] = []
 
     def handler(request: httpx2.Request) -> httpx2.Response:
@@ -220,7 +221,7 @@ async def test_openai_request_uses_non_stored_strict_structured_output() -> None
     )
     agent = SupportProgramEvidenceAnswerAgent(
         model=chat_model(
-            model="gpt-5.6-luna",
+            model=model_name,
             openai_client=openai_client,
         ),
         model_timeout_seconds=4.0,
@@ -233,6 +234,7 @@ async def test_openai_request_uses_non_stored_strict_structured_output() -> None
         await openai_client.close()
 
     request_body = captured_requests[0]
+    assert request_body["model"] == model_name
     assert request_body["store"] is False
     assert request_body["max_output_tokens"] == 2_000
     assert request_body["reasoning"] == {"effort": "none"}

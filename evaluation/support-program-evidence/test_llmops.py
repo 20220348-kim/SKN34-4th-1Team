@@ -84,6 +84,12 @@ def test_report_detects_known_change_and_preserves_run_ids(tmp_path):
     assert report["current"]["statusAccuracy"] == pytest.approx(5 / 6)
     assert report["reference"]["statusAccuracy"] == 1
     assert report["evaluation_run_id"] != report["reference_run_id"]
+    metric = next(item for item in report["metrics"] if item["key"] == "statusAccuracy")
+    assert metric["delta"] == pytest.approx(-1 / 6)
+    assert report["cases"][0]["candidate"]["status_match"] == 0
+    assert report["cases"][0]["reference"]["status_match"] == 1
+    unmeasured = next(item for item in report["metrics"] if item["key"] == "semanticFaithfulness")
+    assert unmeasured["delta"] is unmeasured["candidate"] is unmeasured["reference"] is None
     assert (tmp_path / "report.html").stat().st_size > 1000
     snapshot = json.loads((tmp_path / "evidently.json").read_text())
     assert "0.8333333333333334" in json.dumps(snapshot)
@@ -149,3 +155,60 @@ def test_invalid_recorded_duration_is_rejected(tmp_path, value):
     path.write_text(json.dumps(data))
     with pytest.raises(ValueError, match="duration"):
         llmops.load_results(FIXTURE, path)
+
+
+def test_existing_prompt_versions_compare_same_case_without_editing_source(tmp_path):
+    from hashlib import sha256
+    fixture = HERE / "fixture.json"
+    old_path = HERE / "runs/fixed-context-20260906-diagnostic-v1/capture.json"
+    new_path = HERE / "runs/fixed-context-20260907-index-v1/capture.json"
+    before = new_path.read_bytes()
+    old = llmops.load_results(fixture, old_path, ["E01"])
+    new = llmops.load_results(fixture, new_path, ["E01"])
+    report = llmops.create_report(new, old, tmp_path)
+    assert report["comparison"] == "candidate-reference"
+    assert report["case_ids"] == ["E01"]
+    assert report["current"]["caseCount"] == report["reference"]["caseCount"] == 1
+    assert report["candidate_execution"]["source_case_ids"] == ["E01", "E07", "E10", "E12"]
+    assert report["candidate_execution"]["prompt_sha256"] != report["reference_execution"]["prompt_sha256"]
+    tokens = next(item for item in report["metrics"] if item["key"] == "meanOutputTokens")
+    # 과거 캡처에는 사례→API 응답 연결이 없어 토큰을 순서로 추정하지 않는다.
+    assert tokens == {"key": "meanOutputTokens", "reference": None, "candidate": None, "delta": None}
+    latency = next(item for item in report["metrics"] if item["key"] == "meanLatencyMs")
+    assert latency["reference"] == 4007.205 and latency["candidate"] == 4124.682
+    assert latency["delta"] == pytest.approx(117.477)
+    assert new["capture_sha256"] == sha256(before).hexdigest()
+    assert new_path.read_bytes() == before
+    full = llmops.load_results(fixture, new_path)
+    assert full["run_id"] != new["run_id"]
+    with pytest.raises(ValueError, match="cases differ"):
+        llmops.create_report(full, old, tmp_path)
+    with pytest.raises(ValueError, match="absent"):
+        llmops.load_results(fixture, old_path, ["E02"])
+
+
+def test_projection_cannot_hide_failed_or_tampered_source(tmp_path):
+    with pytest.raises(ValueError, match="incomplete"):
+        llmops.load_results(FIXTURE, partial_capture(tmp_path), ["TC01"])
+    capture = json.loads(CAPTURE.read_text())
+    capture["cases"][-1]["requestSha256"] = "0" * 64
+    path = tmp_path / "tampered.json"
+    path.write_text(json.dumps(capture))
+    with pytest.raises(ValueError, match="hash"):
+        llmops.load_results(FIXTURE, path, ["TC01"])
+
+
+def test_unknown_usage_is_not_zero_or_a_partial_average(tmp_path):
+    data = json.loads(CAPTURE.read_text())
+    for index, record in enumerate(data["cases"]):
+        record["apiResponseIndexes"] = [index]
+    baseline = tmp_path / "mapped-usage.json"
+    baseline.write_text(json.dumps(data))
+    data["apiResponses"][0]["usage"] = None
+    path = tmp_path / "missing-usage.json"
+    path.write_text(json.dumps(data))
+    result = llmops.load_results(FIXTURE, path)
+    report = llmops.create_report(result, llmops.load_results(FIXTURE, baseline), tmp_path)
+    metric = next(item for item in report["metrics"] if item["key"] == "meanInputTokens")
+    assert metric["reference"] > 0 and metric["candidate"] is None and metric["delta"] is None
+    assert "input_tokens" not in report["reported_columns"]

@@ -58,11 +58,20 @@ RESULT_SCHEMA = pa.DataFrameSchema({
 ])
 
 
-def load_results(fixture_path: Path, capture_path: Path) -> dict:
+def load_results(fixture_path: Path, capture_path: Path, case_ids: list[str] | None = None) -> dict:
     fixture, prepared, fixture_hash = evaluate.load_fixture(fixture_path)
     raw = capture_path.read_bytes()
     capture = json.loads(raw)
     evaluate.require(isinstance(capture, dict), "capture must be an object")
+    # 전체 원본을 먼저 검증한다. 비교 대상 선택으로 손상·실패한 원본을 정상처럼 만들지 않는다.
+    source_summary = evaluate.report(fixture, prepared, fixture_hash, capture)
+    source_case_ids = source_summary["selectedCaseIds"]
+    if case_ids is not None and case_ids != source_case_ids:
+        evaluate.select_cases(prepared, case_ids)
+        evaluate.require(set(case_ids) <= set(source_case_ids), "comparison cases are absent from source")
+        evaluate.require(source_summary["completed"], "cannot project an incomplete source")
+        capture = {**capture, "caseIds": case_ids,
+                   "cases": [record for record in capture["cases"] if record["caseId"] in case_ids]}
     selected = evaluate.select_cases(prepared, capture.get("caseIds", [case["id"] for case, _ in prepared]))
     inputs = pd.DataFrame([{
         "case_id": case["id"], "expected_status": case["expectedStatus"], "chunk_count": len(request.chunks),
@@ -110,9 +119,9 @@ def load_results(fixture_path: Path, capture_path: Path) -> dict:
         evaluate.require((pd.isna(recall) and summary["referenceCitationRecall"] is None)
                          or float(recall) == summary["referenceCitationRecall"], "citation aggregate differs")
     capture_hash = sha256(raw).hexdigest()
-    run_id = sha256(f"{fixture_hash}:{capture_hash}:{EVALUATOR_VERSION}".encode()).hexdigest()[:32]
+    run_id = sha256(f"{fixture_hash}:{capture_hash}:{EVALUATOR_VERSION}:{summary['selectedCaseIds']}".encode()).hexdigest()[:32]
     return {"run_id": run_id, "frame": frame, "summary": summary, "capture": capture,
-            "capture_sha256": capture_hash, "fixture_sha256": fixture_hash}
+            "capture_sha256": capture_hash, "fixture_sha256": fixture_hash, "source_case_ids": source_case_ids}
 
 
 def write_json(path: Path, value) -> None:
@@ -130,8 +139,9 @@ def create_report(current: dict, reference: dict, output: Path) -> dict:
         columns += [name for name in ["status_match", "citation_recall"]
                     if current["frame"][name].notna().any() and reference["frame"][name].notna().any()]
     columns += [name for name in ["elapsed_ms", "input_tokens", "output_tokens"]
-                if current["frame"][name].notna().any() and reference["frame"][name].notna().any()]
-    metadata = {"evaluation_run_id": current["run_id"], "reference_run_id": reference["run_id"],
+                if current["frame"][name].notna().all() and reference["frame"][name].notna().all()]
+    metadata = {"schema_version": 2, "fixture_sha256": current["fixture_sha256"],
+                "case_ids": current["frame"].case_id.tolist(), "evaluation_run_id": current["run_id"], "reference_run_id": reference["run_id"],
                 "evaluator_version": EVALUATOR_VERSION, "scope": "fixed-answer-context-only",
                 "reference_source": "ai-authored", "semantic_faithfulness": "unmeasured",
                 "comparison": "self-replay" if current["run_id"] == reference["run_id"] else "candidate-reference"}
@@ -145,7 +155,40 @@ def create_report(current: dict, reference: dict, output: Path) -> dict:
     snapshot.save_json(str(output / "evidently.json.partial"))
     (output / "evidently.json.partial").replace(output / "evidently.json")
     artifacts = {name: sha256((output / name).read_bytes()).hexdigest() for name in ["report.html", "evidently.json"]}
-    return {**metadata, "artifact_sha256": artifacts, "reported_columns": columns,
+    def execution(result):
+        return {"run_id": result["run_id"], "model": result["capture"]["model"],
+                "prompt_sha256": result["capture"]["promptSha256"],
+                "runner_sha256": result["capture"]["runnerSha256"],
+                "capture_sha256": result["capture_sha256"],
+                "started_at": result["capture"].get("startedAt"),
+                "source_case_ids": result["source_case_ids"]}
+
+    metrics = []
+    for key, column, summary_key in [
+        ("statusAccuracy", None, "statusAccuracy"),
+        ("referenceCitationRecall", None, "referenceCitationRecall"),
+        ("failureRate", "failed", None), ("missingRate", "missing", None),
+        ("meanLatencyMs", "elapsed_ms", None), ("meanInputTokens", "input_tokens", None),
+        ("meanOutputTokens", "output_tokens", None),
+        ("semanticFaithfulness", None, "semanticFaithfulness"),
+    ]:
+        def value(result):
+            if summary_key:
+                return result["summary"][summary_key]
+            # 일부 사례의 관측값만으로 전체 평균처럼 표시하지 않는다.
+            series = result["frame"][column]
+            return float(series.mean()) if series.notna().all() else None
+        before, after = value(reference), value(current)
+        metrics.append({"key": key, "reference": before, "candidate": after,
+                        "delta": None if before is None or after is None else after - before})
+    cases = []
+    for before, after in zip(reference["frame"].to_dict(orient="records"), current["frame"].to_dict(orient="records"), strict=True):
+        def observation(row):
+            return {name: None if pd.isna(row[name]) else row[name]
+                    for name in ["outcome", "status_match", "citation_recall"]}
+        cases.append({"case_id": after["case_id"], "reference": observation(before), "candidate": observation(after)})
+    return {**metadata, "candidate_execution": execution(current), "reference_execution": execution(reference),
+            "metrics": metrics, "cases": cases, "artifact_sha256": artifacts, "reported_columns": columns,
             "current": {key: current["summary"][key] for key in [
                 "caseCount", "observedCaseCount", "completed", "statusAccuracy", "referenceCitationRecall", "semanticFaithfulness",
             ]}, "reference": {key: reference["summary"][key] for key in [
@@ -154,7 +197,8 @@ def create_report(current: dict, reference: dict, output: Path) -> dict:
 
 
 def score_payloads(result: dict, settings: LangfuseSettings) -> list[dict]:
-    metadata = {"evaluation_run_id": result["run_id"], "capture_sha256": result["capture_sha256"],
+    metadata = {"case_ids": result["frame"].case_id.tolist(),
+                "evaluation_run_id": result["run_id"], "capture_sha256": result["capture_sha256"],
                 "fixture_sha256": result["fixture_sha256"], "evaluator_version": EVALUATOR_VERSION,
                 "prompt_sha256": result["capture"]["promptSha256"], "model": result["capture"]["model"],
                 "source_started_at": result["capture"].get("startedAt"), "record_kind": "saved-capture-recalculation",
@@ -208,8 +252,8 @@ def publish_scores(result: dict, settings: LangfuseSettings) -> list[str]:
 
 
 @task(name="validate-capture-and-results", retries=0, cache_policy=NO_CACHE, persist_result=False)
-def prepare(fixture: str, capture: str) -> dict:
-    return load_results(Path(fixture), Path(capture))
+def prepare(fixture: str, capture: str, case_ids: list[str] | None = None) -> dict:
+    return load_results(Path(fixture), Path(capture), case_ids)
 
 
 @task(name="evidently-comparison", retries=1, retry_delay_seconds=1, cache_policy=NO_CACHE, persist_result=False)
@@ -224,7 +268,7 @@ def publish(current: dict) -> list[str]:
 
 
 @flow(name="govbiz-evidence-capture-evaluation", retries=0, timeout_seconds=300, persist_result=False)
-def evaluate_capture(fixture: str, capture: str, reference: str, output_dir: str) -> dict:
+def evaluate_capture(fixture: str, capture: str, reference: str, output_dir: str, case_ids: list[str] | None = None) -> dict:
     lock_dir = ROOT / "work/llmops"
     lock_dir.mkdir(parents=True, exist_ok=True)
     # 수동 실행 프로세스도 같은 checkout에서 겹치지 않는다. 배포 시에도 serve(limit=1)을 적용한다.
@@ -235,18 +279,19 @@ def evaluate_capture(fixture: str, capture: str, reference: str, output_dir: str
                     "started_at": datetime.now(timezone.utc).isoformat(), "model_api_calls": 0}
         write_json(output / "manifest.json", manifest)
         try:
-            current = prepare(fixture, capture)
-            baseline = prepare(fixture, reference)
+            current = prepare(fixture, capture, case_ids)
+            baseline = prepare(fixture, reference, case_ids)
             manifest.update(evaluation_run_id=current["run_id"], reference_run_id=baseline["run_id"],
                             capture_sha256=current["capture_sha256"], reference_capture_sha256=baseline["capture_sha256"],
                             fixture_sha256=current["fixture_sha256"], evaluator_version=EVALUATOR_VERSION)
             current["frame"].to_json(output / "results.json", orient="records", force_ascii=False, indent=2)
             report = render(current, baseline, str(output))
             write_json(output / "comparison.json", report)
+            report["artifact_sha256"]["comparison.json"] = sha256((output / "comparison.json").read_bytes()).hexdigest()
             score_ids = publish(current)
             manifest.update(status="completed", score_ids=score_ids, report="report.html",
                             artifact_sha256=report["artifact_sha256"])
-            if not current["summary"]["completed"]:
+            if not current["summary"]["completed"] or not baseline["summary"]["completed"]:
                 raise RuntimeError("Source evaluation is incomplete; partial results were preserved")
         except BaseException:
             manifest["status"] = "failed"

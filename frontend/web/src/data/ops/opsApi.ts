@@ -4,11 +4,30 @@ const base = '/api/v1/ops'
 const sessionSchema = z.object({
   user: z.object({ username: z.string() }).nullable(),
   csrf_token: z.string(),
-  datasets: z.array(z.object({ id: z.string(), label: z.string() })),
+  datasets: z.array(z.object({
+    id: z.string(), label: z.string(), case_ids: z.array(z.string()).min(1),
+    captures: z.array(z.object({ id: z.string(), label: z.string() })).min(1),
+  })),
 })
 const externalUrl = z.url().refine((value) => /^https?:\/\//.test(value)).nullable()
+const executionSchema = z.object({
+  run_id: z.string(), model: z.string(), prompt_sha256: z.string(), runner_sha256: z.string(),
+  capture_sha256: z.string(), started_at: z.string().nullable(), source_case_ids: z.array(z.string()),
+})
+const observationSchema = z.object({ outcome: z.enum(['success', 'error', 'missing']), status_match: z.number().nullable(), citation_recall: z.number().nullable() })
+const comparisonSchema = z.object({
+  schema_version: z.literal(2), comparison: z.enum(['self-replay', 'candidate-reference']), case_ids: z.array(z.string()),
+  candidate_execution: executionSchema, reference_execution: executionSchema,
+  metrics: z.array(z.object({
+    key: z.enum(['statusAccuracy', 'referenceCitationRecall', 'failureRate', 'missingRate', 'meanLatencyMs', 'meanInputTokens', 'meanOutputTokens', 'semanticFaithfulness']),
+    reference: z.number().nullable(), candidate: z.number().nullable(), delta: z.number().nullable(),
+  })),
+  cases: z.array(z.object({ case_id: z.string(), reference: observationSchema, candidate: observationSchema })),
+})
 const runSchema = z.object({
   id: z.uuid(), dataset_id: z.string(), dataset_label: z.string(), requested_by: z.string(), can_retry: z.boolean(),
+  candidate_capture_id: z.string(), reference_capture_id: z.string(), candidate_label: z.string(), reference_label: z.string(),
+  comparison: comparisonSchema.nullable(),
   status: z.enum(['REQUESTED', 'QUEUED', 'RUNNING', 'COMPLETED', 'FAILED', 'CANCELLED', 'CRASHED', 'RESULT_ERROR']),
   status_label: z.string(), created_at: z.string(), started_at: z.string().nullable(),
   finished_at: z.string().nullable(), synced_at: z.string().nullable(),
@@ -72,4 +91,4 @@ async function post<T>(path: string, data: unknown, schema: z.ZodType<T>, dispat
 
 export const listEvaluations = (page: number, signal?: AbortSignal) => request(`/evaluations?page=${page}`, pageSchema, { signal })
 export const getEvaluation = (id: string, signal?: AbortSignal) => request(`/evaluations/${encodeURIComponent(id)}`, runSchema, { signal })
-export const submitEvaluation = (requestId: string, datasetId: string) => post('/evaluations', { request_id: requestId, dataset_id: datasetId }, runSchema, true)
+export const submitEvaluation = (requestId: string, datasetId: string, candidateCaptureId: string, referenceCaptureId: string) => post('/evaluations', { request_id: requestId, dataset_id: datasetId, candidate_capture_id: candidateCaptureId, reference_capture_id: referenceCaptureId }, runSchema, true)

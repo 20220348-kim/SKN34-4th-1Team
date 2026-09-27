@@ -103,7 +103,8 @@ class RegionRunnerTest(unittest.TestCase):
         transport = TrackedTransport(handler)
         self.transports.append(transport)
         args = SimpleNamespace(execute=True, output_dir=self.output)
-        environment = {"OPENAI_API_KEY": SECRET, **(settings or {})}
+        # 과거 지역 범위 비교는 production 모델을 바꿔도 같은 모델로 재현한다.
+        environment = {"OPENAI_API_KEY": SECRET, "OPENAI_MODEL": "gpt-5.6-luna", **(settings or {})}
         if "SYSTEMROOT" in os.environ:
             environment["SYSTEMROOT"] = os.environ["SYSTEMROOT"]
         real_client = openai.AsyncOpenAI

@@ -38,7 +38,9 @@ health 응답은 각각 `govbiz-core-service`·`govbiz-ops-service`이며 현재
 `frontend/web`의 React가 `/ops` 운영 화면을 제공하며 기존 Core 관리자 로그인과 세션 쿠키를 공유합니다.
 `backend/ops-service`는 Python 3.12의 Django와 전용 MySQL로 인증·평가 실행·이력·보고서 API를 제공합니다.
 `운영자 → React → /api/v1/ops 프록시 → Django 인증·평가 Service → Prefect API → 상시 평가 실행기 → Langfuse / Evidently`로 연결하며,
-평가는 HTTP 요청 밖에서 실행합니다. Django는 요청 UUID·실행 상태·요약을 저장하고 상세 조회 때 Prefect 상태를 반영합니다.
+평가는 HTTP 요청 밖에서 실행합니다. Django는 요청 UUID·기준/후보 캡처·실행 상태·요약·비교를 저장하고 상세 조회 때 Prefect 상태를 반영합니다.
+Ops와 실행기가 공유하는 캡처 목록으로 가상 6건 재현 또는 과거 두 실행의 공통 E01 비교를 선택합니다.
+원본 캡처를 먼저 검증한 뒤 지정된 같은 사례만 비교하고, 모델 호출 없이 지표 차이와 실행 정보를 React에 표시합니다.
 평가 실행기와 Django는 결과 볼륨을 공유하며 Django에는 읽기 권한만 부여합니다.
 Django는 매 요청 `govbiz_session` 쿠키를 Core `GET /api/v1/admin/session`에 전달합니다.
 Core의 `AdminPrincipalArgumentResolver → AccountSessionService`가 세션·현재 `ADMIN` 권한을 확인하며
@@ -772,9 +774,10 @@ Qdrant 검색 후 Core가 ID·내용 해시·문서 ID를 검증하고 복원한
 세 Agent의 공유 실행 함수는 `support_program_llm.py`에 있으며 완료 상태·거부·JSON 전체를 엄격히 검증하고,
 LangSmith 추적·응답 저장·자동 재시도를 사용하지 않습니다.
 
+공통 `OPENAI_MODEL`과 도우미 계획·답 모델의 기본값은 `gpt-6-luna`입니다.
 랭킹 모델은 `OPENAI_RANKING_MODEL`로 지정하고 미설정이면 공통 `OPENAI_MODEL`을 상속합니다.
 `OPENAI_RANKING_REASONING_EFFORT`는 `none`/`low`만 허용합니다. 제공 설정 예제는 비용 절감을 위해 랭킹도
-Luna/low를 사용하며 대화·원문 답변 모델은 바꾸지 않습니다. 모델 객체는 분리하되 동일한 OpenAI
+GPT-6 Luna/low를 사용합니다. 기존 추론 수준·프롬프트·출력 계약은 유지합니다. 모델 객체는 분리하되 동일한 OpenAI
 클라이언트·인증·재시도 정책을 공유하며 새 provider는 없습니다. orchestration 계층은 위 도우미 도구 에이전트의 LangGraph 하나뿐입니다.
 도우미 자유 질문 분류는 `OPENAI_ASSISTANT_MODEL`(기본 `gpt-5-nano`, 추론 `low`)로 가장 싼 모델을 따로 씁니다.
 출력 축약은 미채택이며 기존 후보 ID·필드명·출력 계약을 유지합니다. 축약 구현은 평가 경로에만 남깁니다.

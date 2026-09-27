@@ -203,8 +203,8 @@ OPENAI_API_KEY=발급받은_OpenAI_API_키
 | `BIZNO_API_KEY` | 빈 값 | 기업 등록 시 사업자등록번호를 확인하는 Bizno API 키. 비어 있으면 프로필의 기업 조회·등록이 503 |
 | `BIZNO_URL` | `https://bizno.net/api/fapi` | Bizno 조회 endpoint |
 | `OPENAI_API_KEY` | 없음(필수) | AI Service만 사용하는 OpenAI 인증키 |
-| `OPENAI_MODEL` | `gpt-5.6-luna` | 대화·원문 답변의 모델, 랭킹 전용 모델 미설정 시 상속 |
-| `OPENAI_RANKING_MODEL` | 미설정 | 랭킹 전용 모델. `.env.example`은 비용 절감을 위해 `gpt-5.6-luna` 설정 |
+| `OPENAI_MODEL` | `gpt-6-luna` | 대화·원문 답변의 모델, 랭킹 전용 모델 미설정 시 상속 |
+| `OPENAI_RANKING_MODEL` | 미설정 | 랭킹 전용 모델. `.env.example`은 비용 절감을 위해 `gpt-6-luna` 설정 |
 | `OPENAI_RANKING_REASONING_EFFORT` | `none` | 랭킹 추론 수준(`none` 또는 `low`). `.env.example`은 `low`; 비용·지연 증가 가능 |
 | `ASSISTANT_AI_ENABLED` | `false` | 도우미 자유 질문의 AI 호출 스위치. Web의 `VITE_ASSISTANT_AI_ENABLED`로 전달되며 꺼져 있으면 자유 입력은 주제 알약 안내로만 답해 모델 비용이 없음 |
 | `OPENAI_ASSISTANT_MODEL` | `gpt-5-nano` | 도우미 자유 질문 의도 분류 전용 모델. 가장 싼 모델이 기본이며 다른 기능에는 영향 없음 |

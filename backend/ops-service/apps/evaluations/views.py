@@ -14,10 +14,10 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
+from .catalog import DATASETS, public_datasets, selection
 from .models import EvaluationRun
 from .services import (
     DATASET_ID,
-    DATASET_LABEL,
     RequestConflict,
     ResultsUnavailable,
     read_result,
@@ -52,7 +52,7 @@ def api_session(request):
             if operator
             else None,
             "csrf_token": get_token(request),
-            "datasets": [{"id": DATASET_ID, "label": DATASET_LABEL}] if operator else [],
+            "datasets": public_datasets() if operator else [],
         }
     )
 
@@ -66,7 +66,18 @@ def web_redirect(request, run_id=None):
 
 class RunRequestSerializer(serializers.Serializer):
     request_id = serializers.UUIDField()
-    dataset_id = serializers.ChoiceField(choices=[DATASET_ID])
+    dataset_id = serializers.ChoiceField(choices=list(DATASETS))
+    candidate_capture_id = serializers.CharField(max_length=100, default=DATASET_ID)
+    reference_capture_id = serializers.CharField(max_length=100, default=DATASET_ID)
+
+    def validate(self, attrs):
+        try:
+            selection(
+                attrs["dataset_id"], attrs["candidate_capture_id"], attrs["reference_capture_id"]
+            )
+        except ValueError as exc:
+            raise serializers.ValidationError(str(exc)) from None
+        return attrs
 
 
 def run_data(run, viewer_id=None):
@@ -81,7 +92,16 @@ def run_data(run, viewer_id=None):
     return {
         "id": str(run.id),
         "dataset_id": run.dataset_id,
-        "dataset_label": DATASET_LABEL,
+        "dataset_label": DATASETS[run.dataset_id]["label"],
+        "candidate_capture_id": run.candidate_capture_id,
+        "reference_capture_id": run.reference_capture_id,
+        "candidate_label": selection(
+            run.dataset_id, run.candidate_capture_id, run.reference_capture_id
+        )[1]["label"],
+        "reference_label": selection(
+            run.dataset_id, run.candidate_capture_id, run.reference_capture_id
+        )[2]["label"],
+        "comparison": run.comparison or None,
         "requested_by": run.requested_by.email or run.requested_by.get_username(),
         "can_retry": run.prefect_flow_run_id is None and run.requested_by_id == viewer_id,
         "status": run.status,
@@ -149,7 +169,7 @@ def api_run_detail(request, run_id):
 def evaluation_report(request, run_id):
     run = get_object_or_404(EvaluationRun, pk=run_id, status="COMPLETED")
     try:
-        _, _, report = read_result(run)
+        _, _, report, _ = read_result(run)
         response = FileResponse(report.open("rb"), content_type="text/html; charset=utf-8")
     except (ResultsUnavailable, OSError) as exc:
         raise Http404("보고서를 확인할 수 없습니다.") from exc

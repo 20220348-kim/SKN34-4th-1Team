@@ -7,10 +7,11 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
 from . import prefect_client
+from .catalog import DATASETS, LEGACY_DATASET_ID, selection
 from .models import EvaluationRun
 
-DATASET_ID = "target-coverage-20260907-v1"
-DATASET_LABEL = "지원 대상 근거 답변 · 저장된 가상 평가 6건"
+DATASET_ID = LEGACY_DATASET_ID
+DATASET_LABEL = DATASETS[DATASET_ID]["label"]
 TERMINAL = {"COMPLETED", "FAILED", "CANCELLED", "CRASHED"}
 
 
@@ -22,11 +23,25 @@ class ResultsUnavailable(Exception):
     pass
 
 
-def submit_run(user, request_id, dataset_id):
+def submit_run(
+    user, request_id, dataset_id, candidate_capture_id=DATASET_ID, reference_capture_id=DATASET_ID
+):
+    selection(dataset_id, candidate_capture_id, reference_capture_id)
     run, created = EvaluationRun.objects.get_or_create(
-        id=request_id, defaults={"requested_by": user, "dataset_id": dataset_id}
+        id=request_id,
+        defaults={
+            "requested_by": user,
+            "dataset_id": dataset_id,
+            "candidate_capture_id": candidate_capture_id,
+            "reference_capture_id": reference_capture_id,
+        },
     )
-    if run.requested_by_id != user.pk or run.dataset_id != dataset_id:
+    if (
+        run.requested_by_id != user.pk
+        or run.dataset_id != dataset_id
+        or run.candidate_capture_id != candidate_capture_id
+        or run.reference_capture_id != reference_capture_id
+    ):
         raise RequestConflict
     if run.prefect_flow_run_id is None:
         # DB transaction 밖에서 전송한다. 응답 유실 후에도 같은 요청 키로 복구한다.
@@ -61,6 +76,12 @@ def read_result(run):
             or request["prefect_flow_run_id"] != str(run.prefect_flow_run_id)
         ):
             raise ResultsUnavailable
+        dataset, _, _ = selection(
+            run.dataset_id, run.candidate_capture_id, run.reference_capture_id
+        )
+        for name in ("candidate_capture_id", "reference_capture_id"):
+            if request.get(name, LEGACY_DATASET_ID) != getattr(run, name):
+                raise ResultsUnavailable
         manifest = json.loads(artifact_path(run, "evaluation/manifest.json").read_text())
         comparison = json.loads(artifact_path(run, "evaluation/comparison.json").read_text())
         if (
@@ -74,7 +95,31 @@ def read_result(run):
         report = artifact_path(run, "evaluation/report.html")
         if sha256(report.read_bytes()).hexdigest() != manifest["artifact_sha256"]["report.html"]:
             raise ResultsUnavailable
-        return manifest["evaluation_run_id"], comparison["current"], report
+        verified_comparison = {}
+        if comparison.get("schema_version") == 2:
+            comparison_path = artifact_path(run, "evaluation/comparison.json")
+            if (
+                sha256(comparison_path.read_bytes()).hexdigest()
+                != manifest["artifact_sha256"]["comparison.json"]
+                or comparison["reference_run_id"] != manifest["reference_run_id"]
+                or comparison["fixture_sha256"] != manifest["fixture_sha256"]
+                or comparison["case_ids"] != dataset["case_ids"]
+                or comparison["reference"]["completed"] is not True
+                or comparison["candidate_execution"]["run_id"] != comparison["evaluation_run_id"]
+                or comparison["reference_execution"]["run_id"] != comparison["reference_run_id"]
+            ):
+                raise ResultsUnavailable
+            verified_comparison = comparison
+        elif (
+            "schema_version" in comparison
+            or "candidate_capture_id" in request
+            or "reference_capture_id" in request
+            or "comparison.json" in manifest["artifact_sha256"]
+            or (run.dataset_id, run.candidate_capture_id, run.reference_capture_id)
+            != (LEGACY_DATASET_ID,) * 3
+        ):
+            raise ResultsUnavailable
+        return manifest["evaluation_run_id"], comparison["current"], report, verified_comparison
     except (OSError, ValueError, KeyError, TypeError) as exc:
         raise ResultsUnavailable from exc
 
@@ -104,8 +149,10 @@ def sync_run(run):
             values[target] = parse_datetime(value) if isinstance(value, str) else None
         if status == "COMPLETED":
             try:
-                evaluation_id, summary, _ = read_result(run)
-                values.update(evaluation_run_id=evaluation_id, summary=summary)
+                evaluation_id, summary, _, comparison = read_result(run)
+                values.update(
+                    evaluation_run_id=evaluation_id, summary=summary, comparison=comparison
+                )
             except ResultsUnavailable:
                 # Prefect만 완료되고 보고서를 읽지 못하면 Ops 완료로 표시하지 않는다.
                 values.update(status="RESULT_ERROR", error_code="RESULTS_UNAVAILABLE")

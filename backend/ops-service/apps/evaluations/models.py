@@ -18,6 +18,9 @@ class EvaluationRun(models.Model):
     # 요청 ID는 재전송을 식별한다. 콘텐츠 해시 기반 평가 ID와 구별한다.
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     dataset_id = models.CharField(max_length=100)
+    candidate_capture_id = models.CharField(max_length=100, default="target-coverage-20260907-v1")
+    reference_capture_id = models.CharField(max_length=100, default="target-coverage-20260907-v1")
+    comparison = models.JSONField(default=dict)
     requested_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.REQUESTED)
     prefect_flow_run_id = models.UUIDField(null=True, unique=True)

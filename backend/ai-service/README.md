@@ -667,14 +667,14 @@ AI API 이미지에 설치하지 않습니다. 저장 캡처로 다섯 도구를
 
 ```dotenv
 OPENAI_API_KEY=필수
-OPENAI_MODEL=gpt-5.6-luna
+OPENAI_MODEL=gpt-6-luna
 # 랭킹도 Luna로 비용을 낮추되 기존 추론 low와 Fast 옵션은 유지합니다.
-OPENAI_RANKING_MODEL=gpt-5.6-luna
+OPENAI_RANKING_MODEL=gpt-6-luna
 OPENAI_RANKING_REASONING_EFFORT=low
 OPENAI_RANKING_SERVICE_TIER=priority
 OPENAI_ASSISTANT_MODEL=gpt-5-nano
 OPENAI_ASSISTANT_REASONING_EFFORT=low
-OPENAI_ASSISTANT_AGENT_MODEL=gpt-5.6-luna
+OPENAI_ASSISTANT_AGENT_MODEL=gpt-6-luna
 OPENAI_ASSISTANT_AGENT_REASONING_EFFORT=none
 ASSISTANT_TOOLS_BASE_URL=http://127.0.0.1:8080
 ASSISTANT_TOOLS_TOKEN=
@@ -698,11 +698,11 @@ EMBEDDING_TIMEOUT_SECONDS=15
 `OPENAI_MODEL`은 조건 해석·RAG 근거 답변의 모델입니다. 랭킹만 `OPENAI_RANKING_MODEL`로
 별도 지정하며, 미입력·빈 값이면 기존 `OPENAI_MODEL`을 상속합니다. 랭킹 추론 수준은
 `OPENAI_RANKING_REASONING_EFFORT`로 `none` 또는 `low`를 지정합니다. 미입력 기본값은 `none`이며
-지원하지 않는 값은 기동 오류로 거부합니다. 위 예제와 루트 `.env.example`은 비용 절감을 위해
-랭킹 모델을 `gpt-5.6-luna`로 통일하고 기존 추론 `low`는 유지합니다. 미설정 실행의 모델·추론 기본값은
-바꾸지 않습니다. 모델 변경은 토큰 단가를 낮추기 위한 것으로, 토큰 수·응답시간 감소나 검색 정확도 유지를
-보장하지 않습니다. 대화·RAG·임베딩 모델과 후보 수·프롬프트·호출 횟수·재시도 정책은 변경하지 않습니다.
-Luna의 Responses·구조화 출력·`low` 지원은 [OpenAI 공식 모델 문서](https://developers.openai.com/api/docs/models/gpt-5.6-luna)를
+지원하지 않는 값은 기동 오류로 거부합니다. 공통 모델과 도우미 계획·답 모델 기본값은 `gpt-6-luna`이며,
+위 예제와 루트 `.env.example`의 랭킹 모델도 같은 모델을 사용합니다. 기존 랭킹 추론은 예제에서 `low`,
+미설정 실행에서 `none`을 유지합니다. 공식 API ID는 `gpt-6-luna`이며 `gpt-6.0-luna`를 사용하지 않습니다.
+모델 변경만으로 토큰 수·응답시간 감소나 검색 정확도 유지를 보장하지 않습니다.
+GPT-6 Luna의 Responses·구조화 출력·`none`/`low` 지원은 [OpenAI 공식 모델 문서](https://developers.openai.com/api/docs/models/gpt-6-luna)를
 기준으로 확인했습니다. 무료 스텁 테스트는 요청·출력 계약 검증이며 실제 검색 품질 측정이 아닙니다.
 직접 생성하는 `SupportProgramRecommendationAgent`의 추론 기본값도 `none`으로 유지합니다.
 
@@ -711,7 +711,7 @@ Luna의 Responses·구조화 출력·`low` 지원은 [OpenAI 공식 모델 문�
 50문항에서 nano/low는 48개(luna/none 50개, nano/minimal 28개)를 맞혀 비용이 절반인 nano/low를 기본으로 두었습니다.
 조건 해석·근거 답변·랭킹 모델은 바뀌지 않습니다.
 도우미 도구 에이전트(`app/assistant_agent`)는 분류에 같은 nano/low를 쓰고, 계획·답에는 `OPENAI_ASSISTANT_AGENT_MODEL`
-(기본 `gpt-5.6-luna`)과 `OPENAI_ASSISTANT_AGENT_REASONING_EFFORT`(기본 `none`, `low` 허용)를 씁니다. Core 내부 도구 API 주소는
+(기본 `gpt-6-luna`)과 `OPENAI_ASSISTANT_AGENT_REASONING_EFFORT`(기본 `none`, `low` 허용)를 씁니다. Core 내부 도구 API 주소는
 `ASSISTANT_TOOLS_BASE_URL`(Compose는 `http://core-service:8080`), 공유 비밀은 Core와 같은 `ASSISTANT_TOOLS_TOKEN`(32자 이상)입니다.
 비밀이 비어 있으면 도구 호출이 전부 실패로 기록되고 답이 강등되므로, 에이전트를 켤 때는 Core와 AI Service에 같은 값을 넣습니다.
 이는 시작 시 선택하는 명시적 설정이며, 장애 시 다른 모델로 재시도하는 fallback이 아닙니다.
@@ -724,8 +724,10 @@ Fast는 일반 처리보다 추가 요금이 있으며, 모델별 지원 범위�
 추론·후보 수·배점·출력/시간 상한·HTTP 계약도 유지합니다. 일반 처리로 돌아가려면
 `default`를 명시하고 AI Service를 재시작하거나 Compose 컨테이너를 재생성합니다.
 이전 Sol 프로필의 배포·실측은 [지역 충돌·Fast 기록](../../docs/region-conflict-fast-20260908.md)에 보존하며,
-그 결과를 현재 Luna 프로필의 품질·속도 측정값으로 사용하지 않습니다. 기존 `.env`는 예제 변경으로 갱신되지 않으므로
-`OPENAI_RANKING_MODEL=gpt-5.6-luna`를 직접 반영하고 AI Service 컨테이너를 재생성해야 합니다.
+그 결과를 현재 GPT-6 Luna 프로필의 품질·속도 측정값으로 사용하지 않습니다. 기존 `.env`는 예제 변경으로 갱신되지 않으므로
+`OPENAI_MODEL`, `OPENAI_RANKING_MODEL`, `OPENAI_ASSISTANT_AGENT_MODEL`을 `gpt-6-luna`로 반영하고
+AI Service 이미지를 다시 빌드·실행해야 합니다. 과거 캡처·보고서·Langfuse 점수는 당시 모델 정보를 유지합니다.
+Ops의 저장 캡처 재계산도 원래 모델명을 표시하며 새 모델의 품질 평가를 실행하지 않습니다.
 
 순위화만 모델·HTTP `45s` < 전체 Agent `50s` < Core 순위화 읽기 `55s`의 별도 기본 제한을 사용합니다.
 두 `LLM_RANKING_*` 값은 유한한 0초 초과·60초 이하이며 모델 제한이 전체 제한보다 작아야 합니다.

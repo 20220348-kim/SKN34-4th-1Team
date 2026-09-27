@@ -50,13 +50,14 @@ Django 사용자 행은 `core:{회원 ID}`와 이메일로 실행 요청자를 �
 - React: 기존 `/login`으로 로그인 후 Ops 복귀, 평가 요청·목록, 실행 상세·결과 요약, 보고서 링크
 - Django: Core 관리자 확인, CSRF 토큰, 평가 요청·조회, 인증된 HTML 보고서 API
 - Core: 기존 로그인·로그아웃과 관리자 세션 검증. 일반 회원은 Ops 접근 불가
-- 고정된 `target-coverage-20260907-v1` 가상 6건만 선택 가능; 경로·모델·코드를 요청으로 받지 않음
-- `EvaluationRun`: 요청 UUID, 요청자·자료·상태·시간, Prefect 실행 ID, 콘텐츠 평가 ID, 요약 저장
+- 가상 6건 재현과 과거 프롬프트 실행의 공통 E01 비교를 선택 가능; 경로·모델·코드를 요청으로 받지 않음
+- 기준·후보는 서버의 `apps/evaluations/capture_catalog.json`에 등록된 같은 자료의 캡처만 허용
+- `EvaluationRun`: 요청 UUID, 요청자·자료·기준/후보·상태·시간, Prefect 실행 ID, 콘텐츠 평가 ID, 요약·비교 저장
 - 요청 UUID를 DB 기본 키와 Prefect idempotency key로 사용; 같은 요청 재전송은 같은 실행을 반환
 - Prefect 접수 응답 유실 시 `REQUESTED`와 오류 코드를 유지; 같은 요청으로 접수 재확인 가능
 - 상태 원본은 Prefect. 상세/API 조회가 DB의 마지막 상태를 갱신하고 상세 화면은 진행 중 5초 간격으로 조회
 - 연결 장애는 마지막 상태와 오류를 함께 표시. 실패·취소·프로세스 중단·결과 확인 실패를 구별
-- Prefect 완료와 결과 파일의 요청 연결·보고서 해시를 모두 확인해야 Ops에서 완료 처리
+- Prefect 완료와 결과 파일의 요청·선택 캡처 연결, 비교 JSON·보고서 해시를 모두 확인해야 Ops에서 완료 처리
 - 평가 프로세스는 결과 볼륨에 쓰고 Django는 읽기 전용으로 접근. 보고서는 운영자 인증과 CSP sandbox 적용
 - 과거 캡처에는 trace가 없으므로 Langfuse 세션 상세 대신 평가 ID로 필터링한 점수 목록에 연결
 
@@ -136,8 +137,24 @@ Vite는 `/api/v1/ops`를 Core보다 먼저 라우팅하고 Host와 Origin을 보
 별도 프록시에서는 실제 웹 Origin을 `DJANGO_CSRF_TRUSTED_ORIGINS`에 명시해야 합니다.
 기존 `/api/v1/evaluations`는 `/api/v1/ops/evaluations`로 이동했습니다.
 
-평가 요청 JSON은 `{"request_id":"<새 UUID>","dataset_id":"target-coverage-20260907-v1"}`입니다.
-통신 재시도에는 UUID를 유지하고, 사용자가 의도적으로 새 평가를 시작할 때만 새 UUID를 발급합니다.
+가상 6건 재현은 `{"request_id":"<새 UUID>","dataset_id":"target-coverage-20260907-v1"}`을 사용합니다.
+프롬프트 변경 비교 요청은 다음과 같습니다. 선택 가능한 자료·사례·캡처 목록은 session 응답의 `datasets`에 있습니다.
+
+```json
+{
+  "request_id": "<새 UUID>",
+  "dataset_id": "fixed-context-e01-v1",
+  "reference_capture_id": "fixed-context-20260906-diagnostic-v1",
+  "candidate_capture_id": "fixed-context-20260907-index-v1"
+}
+```
+
+비교 응답에는 지표별 기준·후보·차이, 사례별 상태·인용, 모델·프롬프트·실행기·캡처 해시가 있습니다.
+두 캡처의 원본 사례는 각각 1건·4건이며 명시한 공통 E01 한 건만 비교합니다. 다른 자료의 조합은 `400`,
+같은 UUID의 기준·후보 변경은 `409`입니다. 토큰 연결 정보가 없는 과거 기록과 의미 충실도는 미측정입니다.
+`0002_evaluationrun_comparison` migration은 기존 행을 가상 6건 재현으로 유지하며 이전 결과의
+`comparison`은 `null`입니다. 기존 보고서는 계속 열 수 있고, 새 실행부터 비교 상세가 저장됩니다.
+통신 재시도에는 UUID와 선택 대상을 유지하고, 사용자가 의도적으로 새 평가를 시작할 때만 새 UUID를 발급합니다.
 미확정 접수를 복구할 때도 같은 POST를 사용합니다. 요청이 이미 접수됐을 수 있으므로 새 UUID로 바꾸지 않습니다.
 
 URL 끝에 슬래시를 붙이지 않습니다. 상태 확인 경로는 쓰기 요청을 받지 않습니다.

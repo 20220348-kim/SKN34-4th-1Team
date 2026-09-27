@@ -147,11 +147,12 @@ C02의 조건 변경 해석은 공고 검색에 앞서는 별도 구체 Agent입
 이 값과 추천 점수는 신청 자격이나 선정 확률을 확정하지 않습니다.
 상세한 필드와 오류 응답은 [검색 계약](support-program-search-contract.md)에 정리되어 있습니다.
 
-공통 모델 기본값은 `OPENAI_MODEL=gpt-5.6-luna`이며 대화·원문 답변에 사용합니다.
+공통 모델 기본값은 `OPENAI_MODEL=gpt-6-luna`이며 대화·원문 답변에 사용합니다.
 랭킹은 `OPENAI_RANKING_MODEL`을 별도로 지정할 수 있고 미지정이면 공통 모델을 상속합니다.
-`.env.example`의 정확도 우선 설정은 랭킹만 `gpt-5.6-sol`과
-`OPENAI_RANKING_REASONING_EFFORT=low`를 사용합니다. 비용·지연이 늘어나는 설정이며
-[고정 후보 비교 기록](../evaluation/support-program-search/runs/search-precision-v5-20260907-v1/README.md)을 근거로 선택했습니다.
+`.env.example`의 랭킹은 `gpt-6-luna`와 `OPENAI_RANKING_REASONING_EFFORT=low`를 사용합니다.
+도우미 계획·답 모델도 `gpt-6-luna`이며 의도 분류 전용 `gpt-5-nano`는 별도 설정입니다.
+[고정 후보 비교 기록](../evaluation/support-program-search/runs/search-precision-v5-20260907-v1/README.md)은
+이전 모델의 평가이며 GPT-6 Luna의 품질·지연 측정값으로 사용하지 않습니다.
 임베딩은 기존 `text-embedding-3-small`·1,536차원입니다.
 설정은 [AI Service config](../backend/ai-service/app/config.py)와 [.env.example](../.env.example)을 기준으로 합니다.
 키 누락은 AI Service 시작 오류이며, 검색 중 모델·벡터 장애는 오류 응답으로 반환합니다.

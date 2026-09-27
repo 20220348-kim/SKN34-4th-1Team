@@ -172,6 +172,26 @@ backend/ai-service/.venv/bin/python evaluation/support-program-evidence/evaluate
 - `work/`는 기존 임시 출력 제외 경로입니다. 도구·질문·참조·문서는 모두 Git 공유 대상입니다.
   실제 실행 기록을 팀에 공유할 때는 민감정보를 확인한 뒤 별도 버전 폴더에 보존해야 합니다.
 
+## Ops에서 저장 캡처 비교
+
+[React 운영 화면](../../infrastructure/llmops/README.md#django-운영-화면)에서 자료·기준·후보를 선택하면
+`Django → Prefect → 원본 검증 → pandas/Pandera → 지표 재계산 → Evidently/Langfuse`로 진행합니다.
+허용 자료는 Ops의 `capture_catalog.json` 한 곳에서 관리하며 임의 경로나 코드를 API로 받지 않습니다.
+
+- `target-coverage-20260907-v1`: 가상 6건의 동일 캡처 재현
+- `fixed-context-e01-v1`: 9월 6일 청크 ID 프롬프트와 9월 7일 청크 순번 프롬프트의 공통 E01 비교
+
+후자의 원본은 각각 E01 한 건과 E01·E07·E10·E12 네 건입니다. 원본 전체의 fixture·요청·완료 여부를
+먼저 검증한 뒤 카탈로그에 명시한 E01만 메모리에서 선택합니다. 원본 파일은 바꾸지 않으며, 실패한
+원본에서 성공 사례만 골라 정상 비교로 만들지 않습니다. 같은 fixture와 같은 사례 순서만 비교합니다.
+평가 ID는 원본 캡처·fixture·평가기 버전·선택 사례를 포함하므로 전체 실행과 부분 비교가 구별됩니다.
+
+`comparison.json` 버전 2는 양쪽 실행 정보, 원본/비교 사례, 기준·후보·차이와 사례별 결과를 담습니다.
+지연·토큰은 모든 비교 사례의 기록이 있을 때만 평균을 내며, 미측정은 `null`로 유지합니다.
+과거 캡처에는 API 응답별 토큰은 있어도 사례별 응답 연결 정보가 없어 순서로 추정하지 않습니다.
+의미 충실도도 미측정입니다. 보고서와 비교 JSON의 해시는 manifest에서 확인합니다.
+이 경로는 새 모델을 호출하지 않으며 과거 한 사례의 차이를 현재 모델의 전반적 품질로 해석하지 않습니다.
+
 ## 공식 HTML 전체 경로 재실행
 
 [Core 통합 테스트](../../backend/core-service/src/test/kotlin/ai/govbiz/core/supportprogram/service/evidence/SupportProgramEvidenceIntegrationTest.kt)는

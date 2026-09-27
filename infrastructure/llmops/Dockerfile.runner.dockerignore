@@ -14,6 +14,16 @@
 !evaluation/support-program-evidence/runs/
 !evaluation/support-program-evidence/runs/target-coverage-20260907-v1/
 !evaluation/support-program-evidence/runs/target-coverage-20260907-v1/capture.json
+!backend/ops-service/
+!backend/ops-service/apps/
+!backend/ops-service/apps/evaluations/
+!backend/ops-service/apps/evaluations/catalog.py
+!backend/ops-service/apps/evaluations/capture_catalog.json
+!evaluation/support-program-evidence/fixture.json
+!evaluation/support-program-evidence/runs/fixed-context-20260906-diagnostic-v1/
+!evaluation/support-program-evidence/runs/fixed-context-20260906-diagnostic-v1/capture.json
+!evaluation/support-program-evidence/runs/fixed-context-20260907-index-v1/
+!evaluation/support-program-evidence/runs/fixed-context-20260907-index-v1/capture.json
 **/__pycache__
 **/*.pyc
 **/.env*

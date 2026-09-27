@@ -16,6 +16,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", default="http://localhost:5173")
     parser.add_argument("--seed-dev-accounts", action="store_true", help="격리 CI Core에서만 개발용 계정 생성")
+    parser.add_argument("--compare-captures", action="store_true", help="기존 프롬프트 실행의 공통 E01 비교")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     base = args.base_url.rstrip("/")
@@ -65,6 +66,10 @@ def main():
     status, body, _ = request("/api/v1/ops/session")
     assert status == 200 and json.loads(body)["user"]["username"] == os.environ["CORE_ADMIN_EMAIL"]
     payload = {"request_id": str(uuid4()), "dataset_id": "target-coverage-20260907-v1"}
+    if args.compare_captures:
+        payload.update(dataset_id="fixed-context-e01-v1",
+                       candidate_capture_id="fixed-context-20260907-index-v1",
+                       reference_capture_id="fixed-context-20260906-diagnostic-v1")
     assert request("/api/v1/ops/evaluations", payload, csrf=False)[0] == 403
     assert request("/api/v1/ops/evaluations", {**payload, "dataset_id": "../../invalid"})[0] == 400
     # deployment 등록 직후의 접수 지연도 같은 요청 ID로 복구한다.
@@ -93,7 +98,18 @@ def main():
         if time.monotonic() >= deadline:
             raise RuntimeError("Ops evaluation completion timed out")
         time.sleep(3)
-    assert run["summary"]["caseCount"] == 6
+    expected_count = 1 if args.compare_captures else 6
+    assert run["summary"]["caseCount"] == expected_count
+    comparison = run["comparison"]
+    assert comparison["comparison"] == ("candidate-reference" if args.compare_captures else "self-replay")
+    if args.compare_captures:
+        assert comparison["case_ids"] == ["E01"]
+        assert comparison["candidate_execution"]["source_case_ids"] == ["E01", "E07", "E10", "E12"]
+        latency = next(item for item in comparison["metrics"] if item["key"] == "meanLatencyMs")
+        assert abs(latency["delta"] - 117.477) < 0.001
+        tokens = next(item for item in comparison["metrics"] if item["key"] == "meanOutputTokens")
+        assert tokens["candidate"] is None and tokens["delta"] is None
+        assert request("/api/v1/ops/evaluations", {**payload, "reference_capture_id": payload["candidate_capture_id"]})[0] == 409
     assert run["summary"]["statusAccuracy"] == 1
     assert run["summary"]["referenceCitationRecall"] == 1
     assert run["summary"]["semanticFaithfulness"] is None
@@ -107,7 +123,8 @@ def main():
     summary = {
         "request_id": run["id"], "prefect_flow_run_id": run["prefect_flow_run_id"],
         "evaluation_run_id": run["evaluation_run_id"], "status": run["status"],
-        "case_count": 6, "duplicate_request_same_flow": True, "csrf_enforced": True,
+        "case_count": expected_count, "comparison": comparison["comparison"],
+        "metrics": comparison["metrics"], "duplicate_request_same_flow": True, "csrf_enforced": True,
         "core_admin_login": True, "core_logout_revokes_ops": True,
         "report_http_status": status, "model_api_calls": 0,
         "detail_url": base + run["detail_url"],
