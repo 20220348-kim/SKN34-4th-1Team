@@ -307,6 +307,7 @@ services:
       CI: "true"
       VITE_CORE_API_BASE_URL: /
       VITE_DEV_PROXY_TARGET: http://core-service:8080
+      OPS_DEV_PROXY_TARGET: ${OPS_DEV_PROXY_TARGET:-http://ops-service:8000}
       VITE_KAKAO_CHANNEL_ID: ${KAKAO_CHANNEL_ID:-}
       VITE_ASSISTANT_AI_ENABLED: ${ASSISTANT_AI_ENABLED:-false}
     ports:

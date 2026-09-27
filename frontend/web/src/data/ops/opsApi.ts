@@ -1,0 +1,75 @@
+import { z } from 'zod'
+
+const base = '/api/v1/ops'
+const sessionSchema = z.object({
+  user: z.object({ username: z.string() }).nullable(),
+  csrf_token: z.string(),
+  datasets: z.array(z.object({ id: z.string(), label: z.string() })),
+})
+const externalUrl = z.url().refine((value) => /^https?:\/\//.test(value)).nullable()
+const runSchema = z.object({
+  id: z.uuid(), dataset_id: z.string(), dataset_label: z.string(), requested_by: z.string(), can_retry: z.boolean(),
+  status: z.enum(['REQUESTED', 'QUEUED', 'RUNNING', 'COMPLETED', 'FAILED', 'CANCELLED', 'CRASHED', 'RESULT_ERROR']),
+  status_label: z.string(), created_at: z.string(), started_at: z.string().nullable(),
+  finished_at: z.string().nullable(), synced_at: z.string().nullable(),
+  error_code: z.string(), error_message: z.string(),
+  summary: z.object({
+    caseCount: z.number().optional(), observedCaseCount: z.number().optional(),
+    statusAccuracy: z.number().nullable().optional(), referenceCitationRecall: z.number().nullable().optional(),
+    semanticFaithfulness: z.number().nullable().optional(),
+  }),
+  model_api_calls: z.number(), evaluation_run_id: z.string().nullable(),
+  prefect_flow_run_id: z.uuid().nullable(), prefect_url: externalUrl, langfuse_url: externalUrl,
+  report_url: z.string().regex(/^\/api\/v1\/ops\/evaluations\/[a-f0-9-]+\/report$/).nullable(),
+})
+const pageSchema = z.object({ count: z.number(), next: z.string().nullable(), previous: z.string().nullable(), results: z.array(runSchema) })
+
+export type OpsSession = z.infer<typeof sessionSchema>
+export type EvaluationRun = z.infer<typeof runSchema>
+export type EvaluationPage = z.infer<typeof pageSchema>
+
+export class OpsApiError extends Error {
+  readonly status: number
+  constructor(message: string, status: number) { super(message); this.status = status }
+}
+
+async function request<T>(path: string, schema: z.ZodType<T>, options: RequestInit = {}, dispatch = false): Promise<T> {
+  let response: Response
+  try {
+    response = await fetch(base + path, {
+      ...options, credentials: 'same-origin', cache: 'no-store',
+      signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000),
+    })
+  } catch (error) {
+    if (options.signal?.aborted) throw error
+    throw new OpsApiError('운영 서버에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.', 0)
+  }
+  // 접수가 불확실한 503에는 저장된 요청이 담긴다. 요청 ID를 보존해 재확인한다.
+  if (!response.ok && !(dispatch && response.status === 503)) {
+    const message = response.status === 401 ? '로그인이 만료되었습니다.'
+      : response.status === 403 ? '관리자 계정만 운영 화면을 이용할 수 있습니다.'
+      : response.status === 503 ? '관리자 인증 또는 운영 서버에 연결할 수 없습니다.'
+      : response.status === 404 ? '평가 실행을 찾을 수 없습니다.'
+      : response.status === 409 ? '다른 운영자의 요청은 다시 접수할 수 없습니다.'
+      : '요청을 처리하지 못했습니다. 다시 시도해 주세요.'
+    throw new OpsApiError(message, response.status)
+  }
+  const parsed = schema.safeParse(await response.json().catch(() => null))
+  if (!parsed.success) throw new OpsApiError('운영 서버 응답을 확인할 수 없습니다.', response.status)
+  return parsed.data
+}
+
+export const getOpsSession = (signal?: AbortSignal) => request('/session', sessionSchema, { signal })
+
+async function post<T>(path: string, data: unknown, schema: z.ZodType<T>, dispatch = false) {
+  // 쓰기 전 Core 관리자 세션과 최신 CSRF 토큰을 확인한다. 토큰·비밀번호는 저장하지 않는다.
+  const session = await getOpsSession()
+  return request(path, schema, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': session.csrf_token },
+    body: JSON.stringify(data),
+  }, dispatch)
+}
+
+export const listEvaluations = (page: number, signal?: AbortSignal) => request(`/evaluations?page=${page}`, pageSchema, { signal })
+export const getEvaluation = (id: string, signal?: AbortSignal) => request(`/evaluations/${encodeURIComponent(id)}`, runSchema, { signal })
+export const submitEvaluation = (requestId: string, datasetId: string) => post('/evaluations', { request_id: requestId, dataset_id: datasetId }, runSchema, true)

@@ -5,6 +5,16 @@ on:
     paths:
       - 'backend/ai-service/**'
       - 'backend/ops-service/**'
+      - 'backend/core-service/**'
+      - 'frontend/web/src/**/ops/**'
+      - 'frontend/web/src/App*'
+      - 'frontend/web/src/data/api/accountApi.ts'
+      - 'frontend/web/src/data/repositories/AccountRepositoryImpl.ts'
+      - 'frontend/web/src/presentation/**/auth/**'
+      - 'frontend/web/vite.config*'
+      - 'frontend/web/package.json'
+      - 'pnpm-lock.yaml'
+      - 'package.json'
       - 'evaluation/support-program-evidence/**'
       - 'infrastructure/llmops/**'
       - '.github/workflows/llmops-ci.yml'
@@ -12,6 +22,16 @@ on:
     paths:
       - 'backend/ai-service/**'
       - 'backend/ops-service/**'
+      - 'backend/core-service/**'
+      - 'frontend/web/src/**/ops/**'
+      - 'frontend/web/src/App*'
+      - 'frontend/web/src/data/api/accountApi.ts'
+      - 'frontend/web/src/data/repositories/AccountRepositoryImpl.ts'
+      - 'frontend/web/src/presentation/**/auth/**'
+      - 'frontend/web/vite.config*'
+      - 'frontend/web/package.json'
+      - 'pnpm-lock.yaml'
+      - 'package.json'
       - 'evaluation/support-program-evidence/**'
       - 'infrastructure/llmops/**'
       - '.github/workflows/llmops-ci.yml'
@@ -51,26 +71,34 @@ jobs:
           source infrastructure/llmops/.env
           set +a
           backend/ai-service/.venv/bin/python infrastructure/llmops/smoke.py --output-dir work/llmops-ci
-      - name: Build and start Django Ops and evaluation runner
+      - name: Build and start Core auth fixture, Django Ops and evaluation runner
         run: |
-          docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml --profile evaluation config --quiet
-          docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml --profile evaluation up -d --build ops-service evaluation-runner
-      - name: Apply isolated Ops migrations and create smoke operator
+          docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml -f infrastructure/llmops/compose.auth-test.yaml --profile evaluation config --quiet
+          docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml -f infrastructure/llmops/compose.auth-test.yaml --profile evaluation up -d --build auth-core ops-service evaluation-runner
+      - name: Apply isolated Ops migrations
+        run: docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml -f infrastructure/llmops/compose.auth-test.yaml --profile evaluation exec -T ops-service python manage.py migrate --noinput
+      - name: Set up pnpm and Node.js
+        uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
+        with:
+          version: 11.22.0
+          runtime: node@24
+          install: false
+          cache: true
+          cache-dependency-path: pnpm-lock.yaml
+          package-json-file: package.json
+      - name: Start React development proxy
+        run: |
+          pnpm install --frozen-lockfile
+          VITE_DEV_PROXY_TARGET=http://127.0.0.1:18082 VITE_CORE_API_BASE_URL=/ pnpm --filter govbiz-web dev --host 127.0.0.1 > /tmp/govbiz-ops-web.log 2>&1 &
+      - name: Verify Core admin login, Ops CSRF, duplicate requests, reports and shared logout
         shell: bash
         run: |
           set -a
           source infrastructure/llmops/.env.ops
           set +a
-          export DJANGO_SUPERUSER_PASSWORD="$OPS_ADMIN_PASSWORD"
-          docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml --profile evaluation exec -T ops-service python manage.py migrate --noinput
-          docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml --profile evaluation exec -T -e DJANGO_SUPERUSER_PASSWORD ops-service python manage.py createsuperuser --noinput --username "$OPS_ADMIN_USERNAME" --email ops@localhost.test
-      - name: Verify Django login, CSRF, duplicate requests and report HTTP response
-        shell: bash
-        run: |
-          set -a
-          source infrastructure/llmops/.env.ops
-          set +a
-          python infrastructure/llmops/ops_smoke.py --output work/llmops-ci/ops-verification.json
+          export CORE_ADMIN_EMAIL=admin@govbiz.local
+          export CORE_ADMIN_PASSWORD="$OPS_ADMIN_PASSWORD"
+          python infrastructure/llmops/ops_smoke.py --seed-dev-accounts --base-url http://localhost:5173 --output work/llmops-ci/ops-verification.json
       - name: Stop this job's development containers
         if: always()
-        run: docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml --profile evaluation down
+        run: docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml -f infrastructure/llmops/compose.auth-test.yaml --profile evaluation down

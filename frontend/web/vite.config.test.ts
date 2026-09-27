@@ -24,6 +24,7 @@ describe('Kubernetes portfolio mode', () => {
     expect(JSON.stringify(result)).not.toContain('must-never-appear')
     expect(result.server.host).toBe('127.0.0.1')
     expect(result.server.proxy['/api'].target).toBe('http://127.0.0.1:18080')
+    expect(result.server.proxy['/api/v1/ops'].target).toBe('http://127.0.0.1:18001')
   })
 
   it('ignores env files and inherited VITE values, uses only the loopback API', () => {
@@ -49,6 +50,7 @@ describe('Kubernetes portfolio mode', () => {
   it('preserves normal development and Compose configuration', () => {
     vi.mocked(loadEnv).mockReturnValueOnce({
       VITE_DEV_PROXY_TARGET: 'http://core-service:8080',
+      OPS_DEV_PROXY_TARGET: 'http://ops-service:8000',
       CHOKIDAR_USEPOLLING: 'true',
     })
     const result = config({ mode: 'development', command: 'serve' })
@@ -58,6 +60,8 @@ describe('Kubernetes portfolio mode', () => {
     expect(result.define).toBeUndefined()
     expect(result.server.host).toBe('0.0.0.0')
     expect(result.server.proxy['/api'].target).toBe('http://core-service:8080')
+    expect(Object.keys(result.server.proxy)).toEqual(['/api/v1/ops', '/api'])
+    expect(result.server.proxy['/api/v1/ops']).toEqual({ target: 'http://ops-service:8000', changeOrigin: false })
     expect(result.server.watch?.usePolling).toBe(true)
   })
 })

@@ -38,6 +38,29 @@ docker compose --env-file .env --file infrastructure/compose.yaml up --build
 브라우저에서 `http://127.0.0.1:5173`에 접속합니다. React는 `/api` 상대 주소로 요청하고,
 Vite 개발 서버가 `http://core-service:8080`으로 중계합니다.
 
+### LLMOps 운영 화면 — React + Django
+
+`/ops/evaluations`는 React 운영 화면이며 Django 템플릿을 사용하지 않습니다.
+[LLMOps 개발 환경](../../infrastructure/llmops/README.md#django-운영-화면)의 Django·Prefect·평가 실행기를
+Core API와 함께 켠 뒤 저장소 루트에서 Node 24.x/pnpm 11.22.x로 `pnpm dev:web`을 실행합니다.
+[운영 화면](http://localhost:5173/ops/evaluations)은 **기존 프로젝트의 관리자 계정**으로 로그인합니다.
+비로그인 상태면 기존 `/login?next=/ops/evaluations`로 이동하고 로그인 후 원래 Ops 화면으로 복귀합니다.
+기존 웹의 관리자 계정 관리 화면에도 **LLMOps 운영** 링크가 있습니다.
+
+- 화면: 운영자 로그인·로그아웃, 평가 자료 선택, 실행 이력/페이지 이동, 자동 상태 조회, 결과 요약·보고서 링크
+- API: 상대 주소 `/api/v1/ops/*` → Vite → Django. 기본 대상은 `http://127.0.0.1:18001`
+- 서버 전용 `OPS_DEV_PROXY_TARGET`으로 단독 Ops(`http://127.0.0.1:8001`)나 Compose 내부 주소를 지정
+- 루트 통합 Compose는 웹 → `ops-service:8000`, Django → `core-service:8080`으로 연결
+- Host·Origin을 유지하고 Core HttpOnly 세션 쿠키 및 Django CSRF 토큰을 사용
+- Django가 매 요청 Core 관리자 세션을 재검증. Core 로그아웃 시 Ops도 종료, 일반 회원은 접근 거절
+- `/ops`에서는 Django의 세션 확인을 사용하며 대화 복원·AI 위젯은 실행하지 않음
+- 저장된 가상 평가 6건만 실행하며 모델 API 호출은 0회. 통신 실패 후 재시도는 요청 UUID를 유지
+- 보고서는 같은 origin의 인증 API에서 새 탭으로 제공. Langfuse·Prefect의 자체 UI는 해당 링크로 이동
+
+개발 프록시는 정적 배포에 포함되지 않습니다. 운영 환경에는 `/ops/*` SPA 라우팅과
+`/api/v1/ops/*` → Django 프록시를 별도로 연결해야 합니다. 현재 Vercel 미들웨어는 미연결 Ops 요청을
+503으로 반환하며 Core API에 잘못 전달하지 않습니다. 이번 범위는 로컬 실행과 Core 관리자 계정 통합이며 운영 배포는 별도입니다.
+
 ### Mac Kubernetes 백엔드에 연결
 
 준비된 portfolio 클러스터가 있을 때, 통합 저장소 루트의 터미널에서 먼저 실행합니다.

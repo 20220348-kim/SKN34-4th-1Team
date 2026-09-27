@@ -70,4 +70,9 @@ describe('Vercel 운영 API 라우팅', () => {
     vi.stubEnv('GOVBIZ_PROXY_SECRET', '')
     expect(middleware(request()).status).toBe(503)
   })
+  it('아직 배포하지 않은 Ops API를 Core로 전달하지 않는다', () => {
+    const response = middleware(request('203.0.113.12', 'https://govbiz-test.vercel.app/api/v1/ops/session'))
+    expect(response.status).toBe(503)
+    expect(response.headers.get('x-middleware-rewrite')).toBeNull()
+  })
 })

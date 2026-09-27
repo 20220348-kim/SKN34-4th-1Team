@@ -18,7 +18,7 @@ export function AdminAccountsPage() {
 
   return (
     <>
-      <WorkspacePageHeader title="계정 관리" />
+      <WorkspacePageHeader title="계정 관리" actions={<Link className={workspacePageStyles.secondaryButton} to="/ops/evaluations">LLMOps 운영</Link>} />
 
       <div className={workspacePageStyles.content}>
         {vm.stats ? (

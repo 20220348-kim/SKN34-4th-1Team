@@ -37,6 +37,8 @@ docker compose --env-file infrastructure/llmops/.env \
 
 ## Django 운영 화면
 
+화면은 기존 `frontend/web`의 React로 제공하고 Django는 인증·평가 API를 담당한다.
+
 운영자가 브라우저에서 저장 자료 평가를 요청하고 실행 이력·결과를 확인하는 개발 구성이다.
 [Ops 기능과 API](../../backend/ops-service/README.md#llmops-운영-화면)를 함께 참고한다.
 Django는 별도 전용 MySQL을 사용한다. 기존 업무 Ops DB·계정·Langfuse 키를 변경하지 않는다.
@@ -56,18 +58,29 @@ dc() {
 dc up -d --build ops-service evaluation-runner
 dc exec -T ops-service python manage.py migrate --noinput
 
-# 최초 한 번만 생성. 이미 생성한 계정의 비밀번호는 변경하지 않는다.
-set -a
-source infrastructure/llmops/.env.ops
-set +a
-export DJANGO_SUPERUSER_PASSWORD="$OPS_ADMIN_PASSWORD"
-dc exec -T -e DJANGO_SUPERUSER_PASSWORD ops-service python manage.py createsuperuser \
-  --noinput --username "$OPS_ADMIN_USERNAME" --email ops@localhost.test
-unset DJANGO_SUPERUSER_PASSWORD
 ```
 
-[운영 화면](http://localhost:18001/ops/evaluations)에서 `operator`로 로그인한다.
-비밀번호는 Git에서 제외된 `infrastructure/llmops/.env.ops`의 `OPS_ADMIN_PASSWORD`다.
+React 웹은 별도 터미널에서 저장소 루트 기준으로 실행한다(Node 24.x/pnpm 11.22.x).
+
+```bash
+pnpm install --frozen-lockfile
+pnpm dev:web
+```
+
+[Core API](../../backend/core-service/README.md)를 먼저 실행하고
+[운영 화면](http://localhost:5173/ops/evaluations)에서 **기존 프로젝트의 관리자 계정**으로 로그인한다.
+로그인 화면은 기존 `/login`이며, 이미 관리자 로그인이 되어 있으면 바로 Ops를 볼 수 있다.
+React의 `/api/v1/ops` 요청은 Vite가 Django `127.0.0.1:18001`로 전달한다.
+Django는 `govbiz_session` 쿠키를 Core `/api/v1/admin/session`에 전달해 매 요청의 관리자 권한을 확인한다.
+Core가 꺼지면 인증된 Ops 요청도 503으로 거절한다. Core 로그아웃 시 Ops도 접근할 수 없다.
+브라우저는 동일한 `localhost:5173` 주소를 사용한다. 이전 `18001/ops/evaluations` 북마크는 React로 이동한다.
+Django 계정 생성은 필요하지 않으며 이전 운영자 계정·이력·비밀번호를 변경하지 않는다.
+`.env.ops`의 `OPS_ADMIN_PASSWORD`는 격리 CI fixture용이며 실제 관리자 로그인에 쓰지 않는다.
+
+기본 Core 주소는 Vite에서 `127.0.0.1:8080`, Django 컨테이너에서 `host.docker.internal:8080`이다.
+다른 Core를 사용할 때는 Vite의 `VITE_DEV_PROXY_TARGET`과 Compose의 `OPS_CORE_API_URL`을
+같은 Core 서버로 맞춘다. Core가 `127.0.0.1`에만 바인딩된 호스트 환경에서는
+Docker Desktop의 호스트 연결 지원 여부도 확인한다.
 `평가 실행 → 상세 화면 → 결과 요약 → Evidently 보고서 / Langfuse 점수 / Prefect 로그` 순서로 확인한다.
 Langfuse는 자체 로그인이 필요하며 Ops 로그인과 자동 공유하지 않는다.
 과거 캡처는 모델 trace를 새로 만들지 않으므로 Langfuse 세션 상세가 존재하지 않을 수 있다.
@@ -81,7 +94,9 @@ Ops의 점수 링크는 해당 평가 ID의 `Session ID` 필터와 고정 조회
 
 ```mermaid
 flowchart LR
-    UI[운영자 · Django 화면] --> OPS[Django · 인증 / 실행 이력]
+    UI[운영자 · React 화면] -->|기존 로그인 / 로그아웃| C[Core · 관리자 계정 / 세션]
+    UI -->|/api/v1/ops · 세션 / CSRF| OPS[Django · 인증 / 실행 이력 API]
+    OPS -->|매 요청 관리자 세션 검증| C
     OPS -->|실행 요청 UUID| P[Prefect API]
     P --> R[상시 평가 실행기]
     R --> E[pandas / Pandera / 기존 지표 계산]
@@ -98,13 +113,12 @@ flowchart LR
 실행기가 꺼지면 새 요청은 대기 상태로 남고, Prefect 연결 실패·결과 파일 누락을 완료로 표시하지 않는다.
 보고서 URL은 운영자만 접근할 수 있고 HTML에는 동일 출처 접근을 허용하지 않는 CSP sandbox를 적용한다.
 
-실제 HTTP 로그인·CSRF·중복 요청·상태·보고서 조회 검증:
+React 개발 서버 프록시를 경유한 기존 Core 관리자 로그인·CSRF·중복 요청·상태·보고서·공유 로그아웃 검증:
 
 ```bash
-set -a
-source infrastructure/llmops/.env.ops
-set +a
-python3 infrastructure/llmops/ops_smoke.py --output work/llmops-ops-verification.json
+# 기존 Core 관리자 이메일·비밀번호를 환경변수 CORE_ADMIN_EMAIL / CORE_ADMIN_PASSWORD에 설정한다.
+python3 infrastructure/llmops/ops_smoke.py --base-url http://localhost:5173 \
+  --output work/llmops-core-admin-verification.json
 ```
 
 이 검증은 새 평가 요청 1건을 생성하고 같은 요청을 재전송한다. `COMPLETED`, 가상 사례 6건의 요약,
@@ -112,7 +126,7 @@ python3 infrastructure/llmops/ops_smoke.py --output work/llmops-ops-verification
 실패·취소·접수 응답 유실·보고서 훼손·권한 오류는 Ops 단위/DB 통합 테스트에서도 검증한다.
 
 종료는 `dc down`으로 한다. 기존 Langfuse·Prefect와 이번 Ops 컨테이너를 정리하지만 모든 named volume은 유지한다.
-운영 공개·Core 계정 연동·여러 호스트의 결과 저장소·실제 모델 평가·정기 실행은 이 개발 구성에 포함하지 않는다.
+운영 공개·여러 호스트의 결과 저장소·실제 모델 평가·정기 실행은 이 개발 구성에 포함하지 않는다.
 
 ## 무료 전체 검증
 
@@ -200,6 +214,12 @@ uv run --locked --extra dev --group evaluation python -m pytest \
 
 [GovBiz CI](../../.github/workflows/ci.yml)는 기존 전체 AI 검증과 평가 도구 무료 테스트를 유지한다.
 [LLMOps CI](../../.github/workflows/llmops-ci.yml)는 Python 3.12에서 실제 로컬 Langfuse·Prefect 저장·조회 검증을 수행한다.
+React 운영 연결과 Core 변경도 LLMOps CI 대상이며 Node 24의 Vite 프록시를 통해 Ops smoke를 실행한다.
+CI는 `compose.auth-test.yaml`로 실제 Core와 별도 빈 MySQL을 추가하고 `--seed-dev-accounts`로
+fixture 계정만 생성한다. 일반 회원 접근 거절, 기존 로그인 API로 관리자 로그인, 평가·보고서,
+Core 로그아웃 후 Ops 접근 거절을 검증한다. 이 fixture는 일반 개발 실행에 포함하지 않으며
+기존 개발 회원 DB·볼륨을 공유하지 않는다. 개발 서버에서는 seed 플래그를 사용하지 않는다.
+React 화면/라우팅 테스트·타입·빌드는 GovBiz CI, Django 전체 MySQL 테스트·컨테이너는 Ops CI가 담당한다.
 AI·평가 도구 테스트는 동일한 Python 3.12의 GovBiz CI에서 수행하며 별도의 다중 버전 작업은 두지 않는다.
 워크플로 추가는 원격 CI 통과나 브랜치 보호 설정 완료를 뜻하지 않는다.
 
@@ -220,4 +240,22 @@ AI/평가 관련 선택 테스트 31개가 통과했다. 점수 링크를 수정
 Ruff 검사·포맷, 잠금 파일, migration 정합성, Compose 설정을 확인했다.
 `work/llmops-ops-verification.json`은 실제 HTTP 로그인·CSRF·중복 접수·6건 평가·보고서 200 검증 기록이다.
 브라우저에서도 로그인과 평가 버튼, 완료 요약, Evidently 차트, Langfuse 점수 22개를 확인했다.
-새 Ops·평가 실행기 이미지는 로컬에서 빌드·실행했다. 이 변경의 원격 CI·운영 배포는 아직 수행하지 않았다.
+새 Ops·평가 실행기 이미지는 로컬에서 빌드·실행했다. 이전 Django 템플릿 구현 커밋 `4f28a05`의 원격 CI 5개는 통과했으며 운영 배포는 수행하지 않았다.
+
+2026-09-27 React 전환은 Node 24.19.0/pnpm 11.22.0에서 React 운영·기존 라우팅·계정·프록시 관련
+선택 테스트 186건과 타입·빌드를 확인했다. Django 평가·JSON 인증·CSRF 테스트 16건은 격리 MySQL 8.4에서
+통과했다. Ruff, Oxlint, 워크플로 YAML 구문을 확인했다. `work/llmops-react-proxy-verification.json`은
+Vite 프록시를 거친 실제 로그인·중복 접수·6건 평가·보고서·로그아웃 검증 기록이다.
+브라우저에서 기존 Django 북마크의 React 이동, 기존 이력 유지, 새 평가 완료와 Evidently 차트를 확인했다.
+React 전환 변경의 원격 CI와 운영 배포는 아직 수행하지 않았다.
+
+2026-09-27 Core 관리자 연동 후 JDK 21의 Core 인증 선택 테스트 21건, 실제 MySQL 8.4의
+Django 평가·인증 테스트 18건, React Ops 9건과 기존 계정·라우팅·프록시 관련 149건이 통과했다.
+React 타입·Oxlint·빌드, Django Ruff, Compose 설정과 워크플로 구문도 확인했다.
+`work/llmops-core-admin-verification.json`은 기존 Core 관리자 로그인, 저장 사례 6건의 평가 완료,
+중복 접수 방지, CSRF, 보고서 HTTP 200, Core 로그아웃 후 Ops API·보고서 401을 확인한 기록이다.
+브라우저에서도 기존 `/login`에서 로그인 후 Ops 상세 복귀와 공유 로그아웃을 확인했다.
+Core·Ops DB와 기존 평가 이력은 유지했다. 최초 병렬 검증 중 인증 확인 timeout으로 503이 한 번
+발생했으며, 부하가 줄어든 상태의 전체 HTTP 재검증은 통과했다. 오류를 정상 응답으로 대체하지 않는다.
+전체 테스트·Core MySQL 통합 테스트·격리 CI 인증 fixture의 컨테이너 실행은 원격 CI 확인 대상이다.
+이 변경의 원격 CI와 운영 배포는 아직 수행하지 않았다.

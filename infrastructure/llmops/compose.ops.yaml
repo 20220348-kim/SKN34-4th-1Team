@@ -24,6 +24,7 @@ services:
       DJANGO_DEBUG: "false"
       DJANGO_COOKIE_SECURE: "false" # loopback HTTP 개발 전용
       DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,ops-service
+      CORE_API_URL: ${OPS_CORE_API_URL:-http://host.docker.internal:8080}
       DB_NAME: govbiz_ops_llmops
       DB_USER: govbiz
       DB_PASSWORD: ${OPS_DB_PASSWORD:?Run init_ops_env.py}
@@ -35,6 +36,8 @@ services:
       LANGFUSE_PROJECT_URL: http://localhost:13000/project/govbiz-evidence-development
     volumes:
       - ops-results:/results:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       ops-mysql: {condition: service_healthy}
 

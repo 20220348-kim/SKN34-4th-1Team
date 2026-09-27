@@ -80,11 +80,9 @@ export class AccountRepositoryImpl implements AccountRepository {
     return this.rememberSession(await devLogInApi(role, signal))
   }
 
-  /** 서버 삭제가 실패하더라도 힌트는 지워 다음 시작에 복원을 시도하지 않게 합니다. 이미 없는 세션(401)은 성공으로 봅니다. */
+  /** Ops는 저장소 힌트 없이도 서버에서 세션을 확인하므로 로그아웃은 항상 Core에 보냅니다. 서버 삭제가 실패하더라도 힌트는 지워 다음 시작에 복원을 시도하지 않게 합니다. 이미 없는 세션(401)은 성공으로 봅니다. */
   async logOut(signal?: AbortSignal): Promise<void> {
-    const hadSession = this.sessionHintStorage.hasSession()
     this.sessionHintStorage.clear()
-    if (!hadSession) return
 
     try {
       await logOutApi(signal)

@@ -250,14 +250,16 @@ describe('AccountRepositoryImpl', () => {
     expect(storage.hasSession()).toBe(false)
   })
 
-  it('does not call the API without a session hint', async () => {
-    const fetchMock = vi.fn()
+  it('skips restoration without a hint but still revokes the real Core session on logout', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
     vi.stubGlobal('fetch', fetchMock)
     const repository = new AccountRepositoryImpl({ sessionHintStorage: createMemorySessionHintStorage() })
 
     await expect(repository.getCurrentAccount()).resolves.toBeNull()
-    await expect(repository.logOut()).resolves.toBeUndefined()
     expect(fetchMock).not.toHaveBeenCalled()
+    await expect(repository.logOut()).resolves.toBeUndefined()
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(new URL(fetchMock.mock.calls[0][0]).pathname).toBe('/api/v1/auth/logout')
   })
 
   it('clears the hint on logout even if the server session is already gone', async () => {

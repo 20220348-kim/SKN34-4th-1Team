@@ -1,4 +1,5 @@
 import { useRef } from 'react'
+import { OpsApp } from './presentation/features/ops/OpsApp'
 
 import { useChatRequestLifecycle } from './presentation/features/chat/hooks/useChatRequestLifecycle'
 import { useRestoreSupportProgramSearch } from './presentation/features/chat/hooks/useRestoreSupportProgramSearch'
@@ -72,7 +73,7 @@ function PublicLayout() {
  * 로그인한 사용자가 공개 URL로 오면 같은 내용의 내부 화면으로 보내고, 비로그인으로 `/app`에 오면 로그인으로 보냅니다.
  * 로그인·회원가입은 둘 다 쓰지 않는 단독 화면이며 로그인 상태에서는 작업 화면으로 돌려보냅니다.
  */
-function App() {
+function CoreApp() {
   useRestoreAuthSession()
   useRestoreSupportProgramSearch()
   useChatRequestLifecycle()
@@ -152,6 +153,12 @@ function App() {
     <AssistantWidget />
     </>
   )
+}
+
+// Ops는 Django가 Core 관리자 세션을 확인한다. 대화 복원과 AI 위젯은 업무 화면에서만 실행한다.
+function App() {
+  const { pathname } = useLocation()
+  return pathname === '/ops' || pathname.startsWith('/ops/') ? <OpsApp /> : <CoreApp />
 }
 
 export default App

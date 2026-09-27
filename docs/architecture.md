@@ -37,11 +37,17 @@ health 응답은 각각 `govbiz-core-service`·`govbiz-ops-service`이며 현재
 아래의 Core API는 `core-service`가 제공하는 HTTP API를 뜻합니다.
 
 저장소는 React·Core API·Catalog Service·AI Service·Django Ops를 함께 관리하는 모노레포입니다.
-`backend/ops-service`는 Python 3.12의 Django와 전용 MySQL로 운영자 로그인·저장 캡처 평가 실행·이력·결과 화면을 제공합니다.
-`운영자 → Django 인증·평가 Service → Prefect API → 상시 평가 실행기 → Langfuse / Evidently`로 연결하며,
+`frontend/web`의 React가 `/ops` 운영 화면을 제공하며 기존 Core 관리자 로그인과 세션 쿠키를 공유합니다.
+`backend/ops-service`는 Python 3.12의 Django와 전용 MySQL로 인증·평가 실행·이력·보고서 API를 제공합니다.
+`운영자 → React → /api/v1/ops 프록시 → Django 인증·평가 Service → Prefect API → 상시 평가 실행기 → Langfuse / Evidently`로 연결하며,
 평가는 HTTP 요청 밖에서 실행합니다. Django는 요청 UUID·실행 상태·요약을 저장하고 상세 조회 때 Prefect 상태를 반영합니다.
 평가 실행기와 Django는 결과 볼륨을 공유하며 Django에는 읽기 권한만 부여합니다.
-Ops와 Core의 계정·관리 업무 연동은 아직 구현하지 않았고, 아래 AWS 운영 경로에 Ops를 추가하지 않았습니다.
+Django는 매 요청 `govbiz_session` 쿠키를 Core `GET /api/v1/admin/session`에 전달합니다.
+Core의 `AdminPrincipalArgumentResolver → AccountSessionService`가 세션·현재 `ADMIN` 권한을 확인하며
+익명·만료는 401, 비관리자·정지는 403, Core 장애는 503으로 접근을 거절합니다.
+회원 DB·JWT 서명 키는 Core만 소유하고 Django에는 실행 요청자 연결용 `core:{회원 ID}`를 저장합니다.
+기존 `/login`에서 로그인 후 Ops로 복귀하고 Core 로그아웃도 공유합니다. Langfuse 자체 UI의 로그인은 별도입니다.
+아래 AWS 운영 경로에는 Ops를 추가하지 않았습니다.
 [소스 통합과 로컬 실행](ops-monorepo-migration.md)을 참고하세요.
 
 루트 `compose.yaml`은 `infrastructure/compose.catalog.yaml`을 포함해 공고 카탈로그 분리를 기본 적용합니다.

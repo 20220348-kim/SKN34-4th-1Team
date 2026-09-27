@@ -98,6 +98,11 @@ def validate(model, project):
         == "http://core-service:8080",
         "The existing frontend proxy changed.",
     )
+    require(
+        services["web"]["environment"]["OPS_DEV_PROXY_TARGET"] == "http://ops-service:8000"
+        and services["ops-service"]["environment"]["CORE_API_URL"] == "http://core-service:8080",
+        "The web and Ops must use the same Core authentication server.",
+    )
     # Distinct fixture values catch accidental environment leakage between includes.
     for service, expected in (
         ("mysql", "app-root-fixture"),

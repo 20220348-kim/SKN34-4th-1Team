@@ -36,6 +36,11 @@ export default defineConfig(({ mode }) => {
         ? { usePolling: true, interval: pollingInterval, ignored: ['**/node_modules/**', '**/.pnpm-store/**', '**/dist/**', '**/coverage/**', '**/.git/**'] }
         : undefined,
       proxy: {
+        '/api/v1/ops': {
+          target: kubernetes ? 'http://127.0.0.1:18001' : env.OPS_DEV_PROXY_TARGET || 'http://127.0.0.1:18001',
+          // 브라우저의 Host와 Origin을 함께 보존하여 Django가 CSRF를 검증한다.
+          changeOrigin: false,
+        },
         '/api': {
           target: kubernetes ? 'http://127.0.0.1:18080' : env.VITE_DEV_PROXY_TARGET || 'http://localhost:8080',
           changeOrigin: true,

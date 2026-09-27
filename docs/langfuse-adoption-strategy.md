@@ -13,8 +13,8 @@
 - 근거 답변 HTTP 경로와 평가 실행기의 직접 Service 호출에 본문 없는 Langfuse 추적을 추가했다.
 - pandas·Pandera 입력/결과 표, 기존 지표 재계산, Evidently 비교 보고서, Prefect 수동 flow를 구현했다.
 - 별도 Langfuse·Prefect 개발 Compose와 실제 저장·조회·재실행·실패 전파를 확인하는 무료 smoke 도구를 추가했다.
-- AI Service의 로컬·CI·Docker와 평가 실행기·Prefect 서버를 Python 3.12로 통일하고, 새 CI 워크플로에 서버 통합 검증을 연결했다. 원격 CI 통과는 아직 확인 전이다.
-- Django Ops의 운영자 로그인·평가 요청/이력/상세 화면, Prefect 상시 실행기, 읽기 전용 결과 공유와 보고서 조회를 추가했다. Ops도 Python 3.12로 통일했다.
+- AI Service의 로컬·CI·Docker와 평가 실행기·Prefect 서버를 Python 3.12로 통일하고, 새 CI 워크플로에 서버 통합 검증을 연결했다. 기존 `4f28a05` 커밋의 CI 5개는 통과했다.
+- React 웹의 기존 Core 관리자 로그인 연동·평가 요청/이력/상세 화면과 Django Ops API, Prefect 상시 실행기, 읽기 전용 결과 공유와 보고서 조회를 추가했다. Ops도 Python 3.12로 통일했다.
 - 자동 스케줄, 새 유료 모델 평가, 여러 호스트의 전역 동시성, Core부터 이어지는 전체 RAG 추적은 후속 범위다. 현재 flow에는 모델 실행 단계가 없으며 모델 호출 예산은 0이다.
 
 아래 PR 번호는 도입 단계를 나타낸다. 이번 구현은 PR 1~4의 **저장 캡처 기반 수동 파이프라인** 범위이며, 유료 실행·정기 운영까지 완료했다는 뜻은 아니다.
@@ -94,7 +94,7 @@ Langfuse와 Evidently는 동일한 검증 결과 표와 평가기 버전을 사�
 | [공통 LLM 호출](../backend/ai-service/app/support_program_llm.py) | 기존 호출 계약 유지. 근거 답변 Agent에서 호출 전후를 추적하므로 이 파일은 변경하지 않음 |
 | [Core 근거 답변 Facade](../backend/core-service/src/main/kotlin/ai/govbiz/core/supportprogram/facade/AiSupportProgramEvidenceFacade.kt) | 색인·검색·답변의 세 HTTP 호출을 연결할 후속 지점 |
 | [기존 평가 실행기](../evaluation/support-program-evidence/evaluate.py) | 저장 캡처 재계산, 상태 일치율·인용 재현율 재사용. Service·Agent를 직접 생성하므로 HTTP 서버와 별도로 추적 초기화·종료 연결 필요 |
-| [Django Ops](../backend/ops-service/README.md) | 운영자 인증·평가 실행 요청·이력·결과 조회. Core 계정 연동은 별도 |
+| [Django Ops](../backend/ops-service/README.md) | Core 관리자 세션 확인·평가 실행 요청·이력·결과 조회 |
 
 현재 LangSmith 추적과 OpenAI Agents 추적은 일부 경로에서 명시적으로 비활성화되어 있다. 이 설정은 각 도구의 추적 설정이며 Langfuse 전체를 금지하는 스위치가 아니다. Langfuse 연결을 별도로 추가하고, 기존 수집 정책을 유지하는지 검증한다.
 
@@ -232,7 +232,11 @@ Core: 근거 답변 요청
 | AI Service | PR 1 | Langfuse로 요청 처리 추적 |
 | 평가 전용 실행 환경 | PR 2·3 | pandas·Pandera·Evidently로 데이터 검증·평가·보고서 생성, Langfuse 결과 등록 |
 | Prefect 서버·평가 실행 프로세스 | PR 4 | 평가 스케줄, 실행 상태, 재실행·동시성·호출 예산 관리 |
-| Django Ops | 저장 캡처 운영 화면 구현 | 운영자 로그인·실행 요청·진행 상태·결과 요약, Langfuse·Prefect·Evidently 결과 링크 |
+| React 웹 + Django Ops | React 운영 화면 및 Django API 구현 | React `/ops` 화면 → Django `/api/v1/ops` 인증·평가 API, Langfuse·Prefect·Evidently 결과 링크 |
+
+기존 Core 관리자 계정으로 로그인하며 Django는 API 요청마다 Core 관리자 세션을 확인한다.
+별도 Django 운영자 계정은 필요하지 않으며 Core 로그아웃·세션 만료·권한 변경도 반영한다.
+Langfuse 자체 UI 로그인과 운영 배포는 별도다.
 
 Ops의 장시간 평가는 HTTP 요청 밖에서 상시 `serve(limit=1)` 실행기가 처리한다. 요청 UUID와 Prefect idempotency key로 전송 중복을 막고, Django는 Prefect 완료와 결과 파일의 요청 연결·해시를 확인한 뒤 완료로 표시한다. 실행 방법은 [LLMOps 개발 환경](../infrastructure/llmops/README.md#django-운영-화면)에 둔다. Langfuse의 trace 원본·UI를 Ops MySQL에 복제하기보다 실행 ID·상태·결과 링크를 소유한다. 기존 RabbitMQ 업무와 겹치는 스케줄러를 추가하지 않고, Prefect의 초기 책임은 LLM 평가 배치로 제한한다.
 
