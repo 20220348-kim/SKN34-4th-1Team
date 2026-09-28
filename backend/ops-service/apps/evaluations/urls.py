@@ -23,6 +23,11 @@ urlpatterns = [
         name="evaluation-review",
     ),
     path(
+        "api/v1/ops/evaluations/<uuid:run_id>/case-review",
+        views.api_case_review,
+        name="evaluation-case-review",
+    ),
+    path(
         "api/v1/ops/evaluations/<uuid:run_id>/baseline",
         views.api_baseline,
         name="evaluation-baseline",

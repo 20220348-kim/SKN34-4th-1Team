@@ -60,6 +60,14 @@ const runSchema = z.object({
 const pageSchema = z.object({ count: z.number(), next: z.string().nullable(), previous: z.string().nullable(), results: z.array(runSchema) })
 const reviewSchema = z.object({
   is_baseline: z.boolean(), material_error: z.string(), baseline_version: z.number().int().nonnegative(),
+  review_version: z.number().int().nonnegative(), can_approve: z.boolean(), approval_current: z.boolean(), baseline_requires_review: z.boolean(),
+  rubric: z.object({ version: z.string(), criteria: z.array(z.string()) }),
+  case_reviews: z.array(z.object({
+    id: z.number().int(), case_id: z.string(), version: z.number().int().positive(),
+    decision: z.enum(['SUITABLE', 'UNSUITABLE', 'DEFERRED']), comment: z.string(),
+    capture_sha256: z.string(), fixture_sha256: z.string(), rubric_version: z.string(),
+    reviewed_by: z.string(), created_at: z.string(),
+  })),
   baseline_history: z.array(z.object({
     version: z.number().int().positive(), previous_run_id: z.uuid().nullable(), run_id: z.uuid().nullable(),
     capture_sha256: z.string().nullable(), fixture_sha256: z.string().nullable(), changed_by: z.string(), reason: z.string(), created_at: z.string(),
@@ -67,6 +75,7 @@ const reviewSchema = z.object({
   reviews: z.array(z.object({
     id: z.number().int(), decision: z.enum(['APPROVED', 'CHANGES_REQUESTED']), comment: z.string(),
     capture_sha256: z.string(), reviewed_by: z.string(), created_at: z.string(),
+    fixture_sha256: z.string(), rubric_version: z.string(), version: z.number().int().nullable(), case_review_ids: z.array(z.number().int()),
   })),
   material: z.object({
     capture_sha256: z.string(), fixture_sha256: z.string(),
@@ -84,6 +93,8 @@ export type OpsSession = z.infer<typeof sessionSchema>
 export type EvaluationRun = z.infer<typeof runSchema>
 export type EvaluationPage = z.infer<typeof pageSchema>
 export type EvaluationReview = z.infer<typeof reviewSchema>
+export type CaseReviewDecision = EvaluationReview['case_reviews'][number]['decision']
+export type ReviewStamp = { capture_sha256: string; fixture_sha256: string; rubric_version: string; review_version: number }
 
 export class OpsApiError extends Error {
   readonly status: number
@@ -133,7 +144,8 @@ async function post<T>(path: string, data: unknown, schema: z.ZodType<T>, dispat
 export const listEvaluations = (page: number, signal?: AbortSignal) => request(`/evaluations?page=${page}`, pageSchema, { signal })
 export const getEvaluation = (id: string, signal?: AbortSignal) => request(`/evaluations/${encodeURIComponent(id)}`, runSchema, { signal })
 export const getEvaluationReview = (id: string, signal?: AbortSignal) => request(`/evaluations/${encodeURIComponent(id)}/review`, reviewSchema, { signal })
-export const saveEvaluationReview = (id: string, decision: 'APPROVED' | 'CHANGES_REQUESTED', comment: string, captureSha256: string) => post(`/evaluations/${encodeURIComponent(id)}/review`, { decision, comment, capture_sha256: captureSha256 }, reviewSchema)
+export const saveEvaluationReview = (id: string, decision: 'APPROVED' | 'CHANGES_REQUESTED', comment: string, stamp: ReviewStamp) => post(`/evaluations/${encodeURIComponent(id)}/review`, { decision, comment, ...stamp }, reviewSchema)
+export const saveEvaluationCaseReview = (id: string, caseId: string, decision: CaseReviewDecision, comment: string, stamp: ReviewStamp) => post(`/evaluations/${encodeURIComponent(id)}/case-review`, { case_id: caseId, decision, comment, ...stamp }, reviewSchema)
 export const promoteEvaluationBaseline = (id: string, reviewId: number, version: number) => post(`/evaluations/${encodeURIComponent(id)}/baseline`, { review_id: reviewId, baseline_version: version }, reviewSchema)
 export const clearEvaluationBaseline = (id: string, version: number, reason: string) => post(`/evaluations/${encodeURIComponent(id)}/baseline`, { baseline_version: version, reason }, reviewSchema, false, undefined, 'DELETE')
 export const recoverEvaluation = (id: string, requestId: string) => post(`/evaluations/${encodeURIComponent(id)}/recover`, { request_id: requestId }, runSchema, true)

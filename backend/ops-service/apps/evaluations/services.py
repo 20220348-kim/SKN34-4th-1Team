@@ -20,6 +20,7 @@ from .catalog import (
     validate_reference_config,
 )
 from .models import EvaluationBaseline, EvaluationRun
+from .review_eligibility import current_approval
 
 DATASET_ID = LEGACY_DATASET_ID
 DATASET_LABEL = DATASETS[DATASET_ID]["label"]
@@ -107,6 +108,8 @@ def submit_run(
                 )
                 if source.status != "COMPLETED":
                     raise ResultsUnavailable
+                if not current_approval(prepared_baseline.review, source):
+                    raise ValueError("기준의 사례별 검토가 필요합니다. 다시 선택하세요.")
                 reference_config = {
                     "run_id": str(prepared_baseline.review.run_id),
                     "capture_sha256": capture_hash,

@@ -7,7 +7,13 @@ from django.db import transaction
 
 from .baselines import change_baseline, lock_baseline
 from .catalog import DATASETS, selection
-from .models import EvaluationBaseline, EvaluationReview, EvaluationRun
+from .models import EvaluationBaseline, EvaluationCaseReview, EvaluationReview, EvaluationRun
+from .review_eligibility import (
+    RUBRIC_CRITERIA,
+    RUBRIC_VERSION,
+    current_approval,
+    suitable_case_reviews,
+)
 from .services import (
     RequestConflict,
     ResultsUnavailable,
@@ -87,17 +93,54 @@ def review_data(review):
         "decision": review.decision,
         "comment": review.comment,
         "capture_sha256": review.capture_sha256,
+        "fixture_sha256": review.fixture_sha256,
+        "rubric_version": review.rubric_version,
+        "version": review.version,
+        "case_review_ids": list(review.case_reviews.values_list("pk", flat=True)),
         "reviewed_by": review.reviewed_by.email or review.reviewed_by.get_username(),
         "created_at": review.created_at,
     }
 
 
-def review_state(run):
+def review_state(run, material=None):
+    run.refresh_from_db(fields=["review_version", "status"])
     reviews = list(run.reviews.select_related("reviewed_by"))
     baseline = EvaluationBaseline.objects.filter(dataset_id=run.dataset_id).first()
+    is_baseline = bool(baseline and any(item.id == baseline.review_id for item in reviews))
+    approved = bool(
+        material
+        and run.status == "COMPLETED"
+        and reviews
+        and reviews[0].capture_sha256 == material["capture_sha256"]
+        and current_approval(reviews[0], run)
+    )
     return {
         "reviews": [review_data(item) for item in reviews],
-        "is_baseline": bool(baseline and any(item.id == baseline.review_id for item in reviews)),
+        "review_version": run.review_version,
+        "rubric": {"version": RUBRIC_VERSION, "criteria": RUBRIC_CRITERIA},
+        "case_reviews": [
+            {
+                "id": item.pk,
+                "case_id": item.case_id,
+                "version": item.version,
+                "decision": item.decision,
+                "comment": item.comment,
+                "capture_sha256": item.capture_sha256,
+                "fixture_sha256": item.fixture_sha256,
+                "rubric_version": item.rubric_version,
+                "reviewed_by": item.reviewed_by.email or item.reviewed_by.get_username(),
+                "created_at": item.created_at,
+            }
+            for item in run.case_reviews.select_related("reviewed_by")
+        ],
+        "can_approve": bool(
+            material
+            and run.status == "COMPLETED"
+            and suitable_case_reviews(run, material["capture_sha256"]) is not None
+        ),
+        "approval_current": approved,
+        "is_baseline": is_baseline,
+        "baseline_requires_review": is_baseline and not approved,
         "baseline_version": baseline.version if baseline else 0,
         "baseline_history": [
             {
@@ -126,10 +169,16 @@ def review_state(run):
     }
 
 
-def save_review(run, user, decision, comment, capture_sha256):
+def save_review(
+    run, user, decision, comment, capture_sha256, fixture_sha256, rubric_version, review_version
+):
     # 외부 통신 없이 완료 파일을 확인한 뒤 짧은 DB transaction으로 이력을 추가한다.
     material = review_material(run)
-    if material["capture_sha256"] != capture_sha256:
+    if (
+        material["capture_sha256"] != capture_sha256
+        or material["fixture_sha256"] != fixture_sha256
+        or rubric_version != RUBRIC_VERSION
+    ):
         raise RequestConflict
     with transaction.atomic():
         baseline = lock_baseline(run.dataset_id)
@@ -138,22 +187,98 @@ def save_review(run, user, decision, comment, capture_sha256):
             raise ResultsUnavailable
         latest = run.reviews.first()
         if latest and (
-            latest.reviewed_by_id == user.pk
+            locked.review_version == review_version + 1
+            and latest.version == locked.review_version
+            and latest.fixture_sha256 == fixture_sha256
+            and latest.rubric_version == rubric_version
+            and latest.reviewed_by_id == user.pk
             and latest.decision == decision
             and latest.comment == comment
             and latest.capture_sha256 == capture_sha256
         ):
             return latest  # 응답 유실 재전송은 같은 검토 기록을 반환한다.
+        if locked.review_version != review_version:
+            raise RequestConflict
+        cases = suitable_case_reviews(locked, capture_sha256)
+        if decision == EvaluationReview.Decision.APPROVED and cases is None:
+            raise RequestConflict
+        locked.review_version += 1
+        locked.save(update_fields=["review_version"])
         review = EvaluationReview.objects.create(
             run=run,
             reviewed_by=user,
             decision=decision,
             comment=comment,
             capture_sha256=capture_sha256,
+            fixture_sha256=fixture_sha256,
+            rubric_version=rubric_version,
+            version=locked.review_version,
         )
+        if cases is not None:
+            review.case_reviews.set(cases.values())
         # 새 검토 뒤에는 재지정해야 한다. 기존 평가가 고정한 기준은 변경하지 않는다.
         if baseline.review_id and baseline.review.run_id == run.pk:
             change_baseline(baseline, None, user, f"새 검토로 기준 해제: {comment}")
+        return review
+
+
+def save_case_review(
+    run,
+    user,
+    case_id,
+    decision,
+    comment,
+    capture_sha256,
+    fixture_sha256,
+    rubric_version,
+    review_version,
+):
+    material = review_material(run)
+    if case_id not in {item["case_id"] for item in material["cases"]}:
+        raise ValueError("평가에 포함된 사례만 검토할 수 있습니다.")
+    if (
+        capture_sha256 != material["capture_sha256"]
+        or fixture_sha256 != material["fixture_sha256"]
+        or rubric_version != RUBRIC_VERSION
+    ):
+        raise RequestConflict
+    with transaction.atomic():
+        baseline = lock_baseline(run.dataset_id)
+        locked = EvaluationRun.objects.select_for_update().get(pk=run.pk)
+        if locked.status != "COMPLETED":
+            raise ResultsUnavailable
+        latest = locked.case_reviews.first()
+        if latest and (
+            locked.review_version == review_version + 1
+            and latest.version == locked.review_version
+            and latest.reviewed_by_id == user.pk
+            and latest.case_id == case_id
+            and latest.decision == decision
+            and latest.comment == comment
+            and latest.capture_sha256 == capture_sha256
+            and latest.fixture_sha256 == fixture_sha256
+            and latest.rubric_version == rubric_version
+        ):
+            return latest
+        if locked.review_version != review_version:
+            raise RequestConflict
+        locked.review_version += 1
+        locked.save(update_fields=["review_version"])
+        review = EvaluationCaseReview.objects.create(
+            run=locked,
+            case_id=case_id,
+            decision=decision,
+            comment=comment,
+            capture_sha256=capture_sha256,
+            fixture_sha256=fixture_sha256,
+            rubric_version=rubric_version,
+            version=locked.review_version,
+            reviewed_by=user,
+        )
+        if baseline.review_id and baseline.review.run_id == run.pk:
+            change_baseline(
+                baseline, None, user, f"사례별 검토 변경으로 기준 해제: {case_id} · {comment}"
+            )
         return review
 
 
@@ -170,6 +295,7 @@ def promote_baseline(run, user, review_id, baseline_version):
             or latest.id != review_id
             or latest.decision != EvaluationReview.Decision.APPROVED
             or latest.capture_sha256 != material["capture_sha256"]
+            or not current_approval(latest, locked)
         ):
             raise RequestConflict
         if (
@@ -212,5 +338,8 @@ def baseline_choices():
             "label": f"검토 기준 · {str(item.review.run_id)[:8]}",
             "version": item.version,
         }
-        for item in EvaluationBaseline.objects.select_related("review").filter(review__isnull=False)
+        for item in EvaluationBaseline.objects.select_related("review__run").filter(
+            review__isnull=False
+        )
+        if current_approval(item.review, item.review.run)
     }

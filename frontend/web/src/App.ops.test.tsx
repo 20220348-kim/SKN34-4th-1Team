@@ -8,7 +8,7 @@ import { appContainer } from './app/appContainer'
 import { sessionRestored } from './presentation/shared/auth/state/authSlice'
 import { createAppStore } from './app/store'
 import { readPendingEvaluation, storePendingEvaluation } from './data/ops/pendingEvaluation'
-import { getEvaluation } from './data/ops/opsApi'
+import { getEvaluation, type EvaluationReview } from './data/ops/opsApi'
 
 const id = '10000000-0000-4000-8000-000000000001'
 const flowId = '20000000-0000-4000-8000-000000000002'
@@ -28,6 +28,10 @@ const completed = {
   langfuse_url: 'http://localhost:13000/project/development/scores?filter=test',
   report_url: `/api/v1/ops/evaluations/${id}/report`,
 }
+const reviewDefaults = {
+  review_version: 0, can_approve: false, approval_current: false, baseline_requires_review: false,
+  rubric: { version: 'evidence-review-v1', criteria: ['조건·근거·인용을 확인합니다.'] }, case_reviews: [],
+}
 let authenticated = true
 let fetchMock: Mock<(path: string, options?: RequestInit) => Promise<Response>>
 const session = () => ({ live_enabled: true, user: authenticated ? { id: 'core:99', username: 'operator@example.com' } : null, csrf_token: authenticated ? 'rotated-token' : 'anonymous-token', datasets: authenticated ? [dataset, comparisonDataset] : [] })
@@ -41,7 +45,7 @@ beforeEach(() => {
     if (path === '/api/v1/ops/session') return json(session())
     if (String(path).endsWith('/api/v1/auth/logout')) { authenticated = false; return new Response(null, { status: 204 }) }
     if (path.startsWith('/api/v1/ops/evaluations?page=')) return json({ count: 1, next: null, previous: null, results: [completed] })
-    if (path === `/api/v1/ops/evaluations/${id}/review`) return json({ is_baseline: false, baseline_version: 0, baseline_history: [], reviews: [], material: null, material_error: '' })
+    if (path === `/api/v1/ops/evaluations/${id}/review`) return json({ ...reviewDefaults, is_baseline: false, baseline_version: 0, baseline_history: [], reviews: [], material: null, material_error: '' })
     if (path === `/api/v1/ops/evaluations/${id}`) return json(completed)
     if (path === '/api/v1/ops/evaluations') return json(completed, 202)
     if (/^\/api\/v1\/ops\/evaluations\/[a-f0-9-]+$/.test(path)) return json({}, 404)
@@ -115,7 +119,7 @@ describe('React LLMOps 운영 화면', () => {
       } })
       if (path === `/api/v1/ops/evaluations/${id}/recover`) return json(recovered, 202)
       if (path === `/api/v1/ops/evaluations/${child}`) return json(recovered)
-      if (path === `/api/v1/ops/evaluations/${child}/review`) return json({ is_baseline: false, baseline_version: 0, baseline_history: [], reviews: [], material: null, material_error: '' })
+      if (path === `/api/v1/ops/evaluations/${child}/review`) return json({ ...reviewDefaults, is_baseline: false, baseline_version: 0, baseline_history: [], reviews: [], material: null, material_error: '' })
       return original(path, options)
     })
     open(`/ops/evaluations/${id}`)
@@ -413,14 +417,20 @@ const reviewMaterial = {
 
 it('근거·응답을 검토한 후 의견과 승인 기록을 저장하고 기준을 지정한다', async () => {
   const original = fetchMock.getMockImplementation()!
-  let state = { material: reviewMaterial, material_error: '', is_baseline: false, baseline_version: 0, baseline_history: [], reviews: [] as Array<{ id: number; decision: string; comment: string; capture_sha256: string; reviewed_by: string; created_at: string }> }
+  let state: EvaluationReview = { ...reviewDefaults, material: reviewMaterial, material_error: '', is_baseline: false, baseline_version: 0, baseline_history: [], reviews: [] }
   fetchMock.mockImplementation(async (path, options) => {
     if (path === `/api/v1/ops/evaluations/${id}/review`) {
       if (options?.method === 'POST') {
         expect(options.headers).toMatchObject({ 'X-CSRFToken': 'rotated-token' })
         const input = JSON.parse(String(options.body))
-        state = { ...state, reviews: [{ ...input, id: 1, reviewed_by: 'operator@example.com', created_at: completed.created_at }] }
+        state = { ...state, review_version: 2, approval_current: true, reviews: [{ ...input, id: 1, version: 2, case_review_ids: [1], reviewed_by: 'operator@example.com', created_at: completed.created_at }] }
       }
+      return json(state)
+    }
+    if (path === `/api/v1/ops/evaluations/${id}/case-review`) {
+      const input = JSON.parse(String(options?.body))
+      expect(input).toMatchObject({ case_id: 'E01', decision: 'SUITABLE', review_version: 0, rubric_version: reviewDefaults.rubric.version, fixture_sha256: reviewMaterial.fixture_sha256 })
+      state = { ...state, review_version: 1, can_approve: true, case_reviews: [{ ...input, id: 1, version: 1, reviewed_by: 'operator@example.com', created_at: completed.created_at }] }
       return json(state)
     }
     if (path === `/api/v1/ops/evaluations/${id}/baseline`) {
@@ -438,6 +448,11 @@ it('근거·응답을 검토한 후 의견과 승인 기록을 저장하고 기�
   const promote = screen.getByRole('button', { name: '비교 기준으로 지정' })
   expect(approve).toHaveProperty('disabled', true)
   expect(promote).toHaveProperty('disabled', true)
+  fireEvent.change(screen.getByLabelText('E01 판단'), { target: { value: 'SUITABLE' } })
+  fireEvent.change(screen.getByLabelText('E01 판단 사유'), { target: { value: '서울 법인 조건과 인용을 확인했습니다.' } })
+  expect(approve).toHaveProperty('disabled', true)
+  fireEvent.click(screen.getByRole('button', { name: 'E01 검토 저장' }))
+  expect(await screen.findByText('E01 사례 검토를 저장했습니다.')).toBeTruthy()
   fireEvent.change(screen.getByLabelText('검토 의견'), { target: { value: '지역과 법인 조건을 확인했습니다.' } })
   fireEvent.click(screen.getByLabelText('위 모든 사례의 질문·근거·후보 답변을 검토했습니다.'))
   fireEvent.click(approve)
@@ -465,7 +480,7 @@ it('검토 기준을 다음 평가의 기준 선택에 표시하고 후보 목�
 it('확인할 수 없는 자료를 승인하거나 기준으로 지정하지 않는다', async () => {
   const original = fetchMock.getMockImplementation()!
   fetchMock.mockImplementation((path, options) => path.endsWith('/review')
-    ? Promise.resolve(json({ material: null, material_error: '검토 자료를 확인할 수 없습니다.', reviews: [], is_baseline: false, baseline_version: 0, baseline_history: [] }))
+    ? Promise.resolve(json({ ...reviewDefaults, material: null, material_error: '검토 자료를 확인할 수 없습니다.', reviews: [], is_baseline: false, baseline_version: 0, baseline_history: [] }))
     : original(path, options))
   open(`/ops/evaluations/${id}`)
   expect(await screen.findByText('검토 자료를 확인할 수 없습니다.')).toBeTruthy()
@@ -593,7 +608,7 @@ it('접수 전 관리자 계정이 바뀌면 보관 요청을 다른 계정으�
 
 it.each([true, false])('자료 확인 가능 여부(%s)와 무관하게 기준 해제는 버전과 사유를 보내고 이력을 표시한다', async (available) => {
   const original = fetchMock.getMockImplementation()!
-  const state = { material: available ? reviewMaterial : null, material_error: available ? '' : '저장 자료 손상', reviews: [], is_baseline: true, baseline_version: 1, baseline_history: [] }
+  const state = { ...reviewDefaults, material: available ? reviewMaterial : null, material_error: available ? '' : '저장 자료 손상', reviews: [], is_baseline: true, baseline_version: 1, baseline_history: [] }
   fetchMock.mockImplementation(async (path, options) => {
     if (path.endsWith('/review')) return json(state)
     if (path.endsWith('/baseline')) {
@@ -609,4 +624,82 @@ it.each([true, false])('자료 확인 가능 여부(%s)와 무관하게 기준 �
   fireEvent.click(screen.getByRole('button', { name: '의견을 사유로 기준 해제' }))
   await screen.findByText('비교 기준을 해제했습니다.')
   expect(screen.getByText(/버전 2 · 해제/)).toBeTruthy()
+})
+
+it.each(['UNSUITABLE', 'DEFERRED'] as const)('사례 판단이 %s이면 전체 승인과 기준 지정을 차단한다', async (decision) => {
+  const original = fetchMock.getMockImplementation()!
+  const state: EvaluationReview = { ...reviewDefaults, material: reviewMaterial, material_error: '', is_baseline: false, baseline_version: 0, baseline_history: [], reviews: [],
+    review_version: 1, case_reviews: [{ id: 1, version: 1, case_id: 'E01', decision, comment: '조건을 다시 확인해야 합니다.',
+      capture_sha256: reviewMaterial.capture_sha256, fixture_sha256: reviewMaterial.fixture_sha256, rubric_version: reviewDefaults.rubric.version, reviewed_by: 'reviewer@example.com', created_at: completed.created_at }] }
+  fetchMock.mockImplementation((path, options) => path.endsWith('/review') ? Promise.resolve(json(state)) : original(path, options))
+  open(`/ops/evaluations/${id}`)
+  expect(await screen.findByText(`저장된 판단: ${decision === 'UNSUITABLE' ? '부적합' : '판단 보류'}`)).toBeTruthy()
+  fireEvent.change(screen.getByLabelText('검토 의견'), { target: { value: '전체 의견' } })
+  fireEvent.click(screen.getByLabelText('위 모든 사례의 질문·근거·후보 답변을 검토했습니다.'))
+  expect(screen.getByRole('button', { name: '검토 승인 저장' })).toHaveProperty('disabled', true)
+  expect(screen.getByRole('button', { name: '비교 기준으로 지정' })).toHaveProperty('disabled', true)
+  expect(screen.getByText(/reviewer@example.com/)).toBeTruthy()
+})
+
+it('사례 저장 응답이 유실되면 같은 검토 버전으로 재전송하고 재진입은 조회만 한다', async () => {
+  const original = fetchMock.getMockImplementation()!
+  let state: EvaluationReview = { ...reviewDefaults, material: reviewMaterial, material_error: '', is_baseline: false, baseline_version: 0, baseline_history: [], reviews: [] }
+  const writes: unknown[] = []
+  fetchMock.mockImplementation(async (path, options) => {
+    if (path.endsWith('/review')) return json(state)
+    if (path.endsWith('/case-review')) {
+      const input = JSON.parse(String(options?.body))
+      writes.push(input)
+      state = { ...state, review_version: 1, can_approve: true, case_reviews: [{ ...input, id: 1, version: 1, reviewed_by: 'operator@example.com', created_at: completed.created_at }] }
+      if (writes.length === 1) throw new TypeError('response lost')
+      return json(state)
+    }
+    return original(path, options)
+  })
+  const view = open(`/ops/evaluations/${id}`)
+  fireEvent.change(await screen.findByLabelText('E01 판단'), { target: { value: 'SUITABLE' } })
+  fireEvent.change(screen.getByLabelText('E01 판단 사유'), { target: { value: '근거와 일치' } })
+  fireEvent.click(screen.getByRole('button', { name: 'E01 검토 저장' }))
+  await screen.findByText(/운영 서버에 연결할 수 없습니다/)
+  const retry = screen.getByRole('button', { name: 'E01 검토 저장' })
+  await waitFor(() => expect(retry).toHaveProperty('disabled', false))
+  fireEvent.click(retry)
+  await screen.findByText('E01 사례 검토를 저장했습니다.')
+  expect(writes).toHaveLength(2)
+  expect(writes[1]).toEqual(writes[0])
+  view.unmount()
+  open(`/ops/evaluations/${id}`)
+  await screen.findByText('저장된 판단: 적합')
+  expect(writes).toHaveLength(2)
+})
+
+it('다른 관리자가 먼저 검토하면 충돌을 표시하고 입력을 보존하며 자동 재전송하지 않는다', async () => {
+  const original = fetchMock.getMockImplementation()!
+  let version = 0
+  fetchMock.mockImplementation(async (path, options) => {
+    if (path.endsWith('/review')) return json({ ...reviewDefaults, review_version: version, material: reviewMaterial, material_error: '', is_baseline: false, baseline_version: 0, baseline_history: [], reviews: [] })
+    if (path.endsWith('/case-review')) { version = 1; return json({}, 409) }
+    return original(path, options)
+  })
+  open(`/ops/evaluations/${id}`)
+  fireEvent.change(await screen.findByLabelText('E01 판단'), { target: { value: 'DEFERRED' } })
+  fireEvent.change(screen.getByLabelText('E01 판단 사유'), { target: { value: '조건 확인 대기' } })
+  fireEvent.click(screen.getByRole('button', { name: 'E01 검토 저장' }))
+  await screen.findByText(/검토 기록이 변경되었습니다/)
+  expect(screen.getByLabelText('E01 판단 사유')).toHaveProperty('value', '조건 확인 대기')
+  expect(fetchMock.mock.calls.filter(([path]) => path.endsWith('/case-review'))).toHaveLength(1)
+})
+
+it('과거 전체 승인을 사례별 승인으로 표시하지 않고 기존 기준의 재검토 필요를 알린다', async () => {
+  const original = fetchMock.getMockImplementation()!
+  fetchMock.mockImplementation((path, options) => path.endsWith('/review') ? Promise.resolve(json({ ...reviewDefaults,
+    material: reviewMaterial, material_error: '', is_baseline: true, baseline_requires_review: true, baseline_version: 1, baseline_history: [],
+    reviews: [{ id: 1, decision: 'APPROVED', comment: '이전 전체 승인', capture_sha256: reviewMaterial.capture_sha256,
+      fixture_sha256: '', rubric_version: '', version: null, case_review_ids: [], reviewed_by: 'old-reviewer@example.com', created_at: completed.created_at }],
+  })) : original(path, options))
+  open(`/ops/evaluations/${id}`)
+  await screen.findByText('이전 승인 · 사례별 재검토 필요')
+  expect(screen.getByText(/검토와 전체 승인을 완료하기 전에는/)).toBeTruthy()
+  expect(screen.getByText('저장된 판단: 미검토')).toBeTruthy()
+  expect(screen.getByRole('button', { name: '검토 승인 저장' })).toHaveProperty('disabled', true)
 })

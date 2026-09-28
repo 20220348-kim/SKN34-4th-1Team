@@ -13,6 +13,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
+import java.util.concurrent.atomic.AtomicInteger
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertInstanceOf
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -59,6 +60,13 @@ import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 @AutoConfigureMockMvc
 @Import(MySqlTestContainerConfig::class)
 class AccountPasswordResetFlowIntegrationTest {
+
+    // Spring의 주소별 제한기는 DB 초기화와 별개다. 테스트마다 독립된 클라이언트를 사용한다.
+    private val clientAddress = "192.0.2.${nextClient.incrementAndGet()}"
+
+    private companion object {
+        val nextClient = AtomicInteger()
+    }
 
     @Autowired
     private lateinit var mockMvc: MockMvc
@@ -215,6 +223,7 @@ class AccountPasswordResetFlowIntegrationTest {
         requireNotNull(
             mockMvc.perform(
                 post("/api/v1/auth/signup")
+                    .with { it.remoteAddr = clientAddress; it }
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(SignupTestHelper.signupJson(jdbcTemplate, email, password)),
             )
@@ -225,6 +234,7 @@ class AccountPasswordResetFlowIntegrationTest {
     private fun requestCode(email: String) =
         mockMvc.perform(
             post("/api/v1/auth/password-reset")
+                .with { it.remoteAddr = clientAddress; it }
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""{"email":"$email"}"""),
         )
@@ -232,6 +242,7 @@ class AccountPasswordResetFlowIntegrationTest {
     private fun verifyCode(email: String, code: String) =
         mockMvc.perform(
             post("/api/v1/auth/password-reset/verify")
+                .with { it.remoteAddr = clientAddress; it }
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""{"email":"$email","code":"$code"}"""),
         )
@@ -239,6 +250,7 @@ class AccountPasswordResetFlowIntegrationTest {
     private fun confirm(token: String, newPassword: String) =
         mockMvc.perform(
             post("/api/v1/auth/password-reset/confirm")
+                .with { it.remoteAddr = clientAddress; it }
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""{"token":"$token","newPassword":"$newPassword"}"""),
         )
@@ -246,6 +258,7 @@ class AccountPasswordResetFlowIntegrationTest {
     private fun logIn(email: String, password: String) =
         mockMvc.perform(
             post("/api/v1/auth/login")
+                .with { it.remoteAddr = clientAddress; it }
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""{"email":"$email","password":"$password","rememberMe":false}"""),
         )

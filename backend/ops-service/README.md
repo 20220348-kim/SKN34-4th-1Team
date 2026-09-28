@@ -88,12 +88,18 @@ Ops 응답의 `model_api_calls`는 새 응답 생성 단계의 `capture.modelApi
 ## 응답 검토와 비교 기준
 
 완료 상세의 **응답 검토와 기준 지정**에서 선택된 모든 사례의 질문·제공 근거·후보 답변·기존 기준 답변을
-확인합니다. 검토 의견과 승인/수정 필요를 저장한 뒤 승인된 최신 검토를 비교 기준으로 지정합니다.
-기준은 데이터셋별 하나이며 새 검토를 저장하면 그 실행의 기준 지정은 해제됩니다. 검토 이력은 보존됩니다.
+확인합니다. 각 사례를 **적합 / 부적합 / 판단 보류**로 판단하고 사유를 저장합니다. 필수 사례 전체에
+현재 자료·응답 해시와 검토 기준 버전이 일치하는 적합 기록이 있어야 전체 승인할 수 있습니다.
+전체 승인과 비교 기준 지정은 별도 동작입니다. 기준은 데이터셋별 하나이며 사례별 검토 또는 전체
+검토가 바뀌면 그 실행의 승인 자격과 기준 지정은 해제됩니다. 이전 판단과 승인 이력은 보존됩니다.
 AI 작성 참조 자료의 출처와 미측정 의미 충실도는 검토 승인으로 바뀌지 않습니다.
 
-- `GET /api/v1/ops/evaluations/{id}/review`: 해시 검증을 거친 사례·근거와 검토 이력, 현재 기준 여부
-- `POST .../{id}/review`: `decision` (`APPROVED` / `CHANGES_REQUESTED`), `comment` (1~3000자), `capture_sha256`
+- `GET /api/v1/ops/evaluations/{id}/review`: 해시 검증을 거친 사례·근거, 전체/사례 검토 이력, `review_version`,
+  `rubric`, `can_approve`, `approval_current`, `baseline_requires_review`, 현재 기준 여부
+- `POST .../{id}/case-review`: `case_id`, `decision` (`SUITABLE` / `UNSUITABLE` / `DEFERRED`),
+  `comment` (1~3000자), `capture_sha256`, `fixture_sha256`, `rubric_version`, `review_version`
+- `POST .../{id}/review`: `decision` (`APPROVED` / `CHANGES_REQUESTED`), `comment` (1~3000자),
+  `capture_sha256`, `fixture_sha256`, `rubric_version`, `review_version`
 - `POST .../{id}/baseline`: `review_id`, `baseline_version`(검토 GET에서 확인한 현재 버전); 완료 파일·최신 승인 기록·버전이 일치해야 지정 가능
 - `DELETE .../{id}/baseline`: `baseline_version`, `reason`(1~3000자); 해당 실행이 현재 기준일 때 해제. 오래된 버전은 409
 - session의 데이터셋별 `baseline`은 현재 기준 선택지 또는 null. 새 평가의 `reference_capture_id`에
@@ -105,12 +111,24 @@ AI 작성 참조 자료의 출처와 미측정 의미 충실도는 검토 승인
 
 Migration `0004_evaluation_review_baseline`은 검토 이력·데이터셋별 기준 테이블과 기준 명세를 추가합니다.
 기존 결과는 미검토 상태로 유지합니다. 비교 상세가 없는 초기 결과는 무료 저장 응답 재평가 후 검토합니다.
+
+Migration `0008_case_reviews`는 사례별 이력과 실행의 검토 버전, 전체 승인이 참조하는 사례 검토
+기록을 추가합니다. 기존 전체 승인은 버전·사례 판단을 추정해 채우지 않습니다. 기존 기준 행과 과거
+실행을 보존하되, 사례별 재검토와 새 전체 승인을 거치기 전에는 새 평가 기준으로 사용할 수 없습니다.
+이미 접수된 같은 UUID 재전송은 당시 기준 명세를 유지합니다.
+
+검토 기준 `evidence-review-v1`은 신청 조건·예외·제외 사유의 누락/추가, 답변의 근거 일치와 근거 부족
+판단, 인용 적절성을 다룹니다. 검토자·시각·해시·기준 버전을 기록하며 수정은 새 행으로 추가합니다.
+사례 저장과 전체 승인은 실행의 `review_version`을 공유합니다. 같은 관리자·내용·직전 버전의 응답
+유실 재전송은 기존 기록을 반환하고, 다른 변경이 끼어든 오래된 요청은 409로 거절합니다.
+알 수 없는 사례, 잘못된 해시/기준, 미검토·부적합·보류는 승인 자격을 얻지 못합니다.
+데이터셋 기준 행 → 실행 행 순서로 잠가 검토 변경·전체 승인·기준 지정·다음 접수의 경계를 유지합니다.
 `LLMOPS_EVIDENCE_DIR`에는 버전이 고정된 `evaluation/support-program-evidence`를 읽기 전용으로 연결합니다.
 로컬 Python은 저장소 경로가 기본이며 단독·루트 통합·LLMOps Compose는 모두 `/evaluation-data`에 마운트합니다.
 루트 Compose 검증은 자료 경로와 읽기 전용 마운트를 확인하며, 컨테이너 테스트도 같은 자료를 사용합니다.
 다른 배포 방식에서는 결과 볼륨과 이 자료 경로를 함께 제공해야 합니다. Django에는 평가 SDK를 추가하지 않습니다.
 
-호출 흐름: `React 검토 화면 → Django 파일 무결성 확인 → MySQL 검토 이력/기준 저장`.
+호출 흐름: `React 사례 판단 → Django 관리자·CSRF·자료 해시/버전 확인 → MySQL 사례 이력 저장 → 전체 승인 → 기준 지정`.
 다음 평가는 `Django 기준 명세 고정 → Prefect → 기준 응답 복사·검증 → 기존 평가 파이프라인`을 거칩니다.
 
 ## 접수 복원과 기준 버전
@@ -139,7 +157,7 @@ Migration `0007_baseline_versions`는 해제해도 남는 데이터셋 기준 �
 - 기존 기준은 버전 1과 기존 지정 시각·검토자 그대로 이관합니다. 이전 교체 이력·당시 자료 해시는
   추정해 채우지 않으며, 과거 평가의 승인 버전도 소급 생성하지 않습니다.
 
-배포 순서는 `Ops 이미지 빌드 → migration 0007 → Ops API·ops-sync 갱신 → React 갱신`입니다.
+현재 배포 순서는 `Ops 이미지 빌드 → migration 0008까지 적용 → Ops API·ops-sync 갱신 → React 갱신`입니다.
 루트 README 대신 이 문서와 [LLMOps 운영 문서](../../infrastructure/llmops/README.md)에 계약을 기록합니다.
 
 ## 실행 상태의 백그라운드 확인
