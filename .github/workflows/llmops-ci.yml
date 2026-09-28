@@ -34,7 +34,7 @@ jobs:
   integration:
     name: Saved capture pipeline with local servers
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -49,9 +49,9 @@ jobs:
         run: uv sync --locked --extra dev --group evaluation
       - name: Verify execution release
         run: backend/ai-service/.venv/bin/python backend/ops-service/apps/evaluations/execution_spec.py
-      - name: Test background synchronization smoke assertions without servers
+      - name: Test synchronization and cancellation smoke assertions without servers
         working-directory: backend/ai-service
-        run: uv run --locked --extra dev python -m pytest ../../infrastructure/llmops/test_ops_smoke.py -q
+        run: uv run --locked --extra dev --group evaluation python -m pytest ../../infrastructure/llmops/test_ops_smoke.py ../../infrastructure/llmops/test_cancellation_smoke.py -q
       - name: Generate isolated development credentials
         run: |
           backend/ai-service/.venv/bin/python infrastructure/llmops/init_env.py
@@ -121,3 +121,14 @@ jobs:
       - name: Stop this job's development containers
         if: always()
         run: docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml -f infrastructure/llmops/compose.auth-test.yaml --profile evaluation down
+      - name: Verify real cancellation, process exit and budget accounting with offline model HTTP
+        timeout-minutes: 15
+        run: python3 infrastructure/llmops/cancellation_smoke.py --output work/llmops-ci/cancellation.json
+      - name: Preserve cancellation evidence including failed scenarios
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: llmops-cancellation-${{ github.sha }}
+          path: work/llmops-ci/cancellation.json
+          if-no-files-found: warn
+          retention-days: 7
