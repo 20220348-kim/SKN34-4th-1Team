@@ -1,6 +1,6 @@
 # Langfuse 기반 LLMOps 도입 전략
 
-**현재 우선순위와 완료 기준은 [skn-40 이후 개발 전략](llmops-next-development-plan.md)을 따른다.**
+**현재 우선순위와 완료 기준은 [LLMOps 후속 개발 전략](llmops-next-development-plan.md)을 따른다.**
 이 문서는 최초 설계와 커밋별 구현·검증 이력을 보존한다. 아래 과거 계획을 현재 미구현 목록으로 해석하지 않는다.
 
 [문서 목록](README.md) · [AI Service](../backend/ai-service/README.md) · [기존 근거 답변 평가](../evaluation/support-program-evidence/README.md)
