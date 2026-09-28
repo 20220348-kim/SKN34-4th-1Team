@@ -9,6 +9,7 @@ def main():
     target = Path(__file__).with_name(".env.ops")
     values = {name: secrets.token_hex(32) for name in (
         "OPS_DB_PASSWORD", "OPS_DB_ROOT_PASSWORD", "OPS_DJANGO_SECRET_KEY", "OPS_ADMIN_PASSWORD",
+        "LLMOPS_BUDGET_TOKEN",
     )}
     descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(descriptor, "w") as output:

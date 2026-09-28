@@ -140,7 +140,10 @@ async function request<T>(path: string, schema: z.ZodType<T>, options: RequestIn
   }
   // 접수가 불확실한 503에는 저장된 요청이 담긴다. 요청 ID를 보존해 재확인한다.
   if (!response.ok && !(dispatch && response.status === 503)) {
-    const message = response.status === 401 ? '로그인이 만료되었습니다.'
+    const error = await response.json().catch(() => null)
+    const message = response.status === 400 && error?.code === 'LIVE_BUDGET_UNAVAILABLE'
+      ? '누적 평가 한도가 부족하거나 설정되지 않아 접수하지 않았습니다. 운영자에게 예약·미확인 사용량과 한도를 확인해 주세요.'
+      : response.status === 401 ? '로그인이 만료되었습니다.'
       : response.status === 403 ? '관리자 계정만 운영 화면을 이용할 수 있습니다.'
       : response.status === 503 ? '관리자 인증 또는 운영 서버에 연결할 수 없습니다.'
       : response.status === 404 ? '평가 실행을 찾을 수 없습니다.'

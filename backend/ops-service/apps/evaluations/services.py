@@ -11,6 +11,7 @@ from django.utils.dateparse import parse_datetime
 
 from . import prefect_client
 from .baselines import lock_baseline
+from .budget import BudgetUnavailable, reserve
 from .catalog import (
     DATASETS,
     LEGACY_DATASET_ID,
@@ -156,6 +157,7 @@ def submit_run(
                 },
             )
             check_request(run)
+            reserve(run)
     # 외부 전송은 기준 검증과 접수를 커밋한 다음 수행한다.
     return dispatch_run(run), created
 
@@ -168,6 +170,8 @@ def dispatch_run(run):
         )
         run.refresh_from_db()
         return run
+    if run.execution_mode == "live" and not hasattr(run, "budget_reservation"):
+        raise BudgetUnavailable
     if run.prefect_flow_run_id is None:
         # DB transaction 밖에서 전송한다. 응답 유실 후에도 같은 요청 키로 복구한다.
         try:

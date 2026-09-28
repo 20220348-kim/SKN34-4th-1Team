@@ -33,6 +33,7 @@ GENERATION_FILES = (
 )
 PIPELINE_FILES = (
     EVIDENCE + "ops_flow.py",
+    EVIDENCE + "budget_client.py",
     OPS + "catalog.py",
     OPS + "recovery_inputs.py",
     OPS + "execution_spec.py",

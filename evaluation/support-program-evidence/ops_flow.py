@@ -14,6 +14,7 @@ sys.path.insert(0, str(ROOT / "backend/ai-service"))
 from prefect import flow
 from prefect.runtime import flow_run
 import evaluate
+from budget_client import BudgetClient
 from llmops import evaluate_capture, load_results, write_json
 
 sys.path.insert(0, str(ROOT / "backend/ops-service/apps/evaluations"))
@@ -163,10 +164,16 @@ def evaluate_saved_capture(
         })
         raise ExecutionSpecMismatch(code) from error
     if execution_mode == "live":
-        capture = asyncio.run(evaluate.execute(
-            prepared, fixture_hash, output / "capture", model=config["model"],
-            max_model_calls=config["max_model_calls"],
-        ))
+        budget = BudgetClient(request_id, str(flow_run.id), execution_spec_sha256)
+        budget.claim()
+        try:
+            capture = asyncio.run(evaluate.execute(
+                prepared, fixture_hash, output / "capture", model=config["model"],
+                max_model_calls=config["max_model_calls"], budget=budget,
+            ))
+        finally:
+            # 모델 전송이 끝난 뒤에만 미전송 몫을 반환한다. 미확인 전송은 예약을 유지한다.
+            budget.close()
         evaluate.require(capture["completed"], "Live capture incomplete; partial capture preserved")
     return evaluate_capture(str(fixture_path), str(capture_path), str(reference_path),
                             str(output / "evaluation"), case_ids=dataset["case_ids"],

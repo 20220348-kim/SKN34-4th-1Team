@@ -411,3 +411,49 @@ def test_live_rejects_too_small_call_budget_before_client_creation(loaded, tmp_p
     with pytest.raises(ValueError, match="budget"):
         asyncio.run(evaluate.execute(loaded[1], loaded[2], tmp_path / "new", max_model_calls=1))
     assert not (tmp_path / "new").exists()
+
+
+@pytest.mark.parametrize("failure", ["authorize", "settle", "unknown", "timeout", "none"])
+def test_ops_budget_precedes_http_and_uncertain_usage_blocks_next_case(loaded, tmp_path, monkeypatch, failure):
+    from budget_client import BudgetClient, BudgetUnavailable
+    monkeypatch.setenv("OPENAI_API_KEY", "offline-no-real-call")
+    monkeypatch.setenv("LANGFUSE_ENABLED", "false")
+    monkeypatch.setenv("LLMOPS_BUDGET_TOKEN", "offline-test-budget-token-32-characters")
+    monkeypatch.setenv("LLMOPS_OPS_API_URL", "http://127.0.0.1:18001")
+    budget = BudgetClient(str(uuid4()), str(uuid4()), "a" * 64)
+    events = []
+    def budget_request(action, **fields):
+        events.append(action)
+        if action == failure:
+            raise BudgetUnavailable("simulated budget failure")
+    monkeypatch.setattr(budget, "request", budget_request)
+    attempts = []
+    real_client = httpx2.AsyncClient
+    def handler(request):
+        assert events[-1] == "authorize"
+        events.append("http")
+        index = len(attempts)
+        attempts.append(request)
+        if failure == "timeout":
+            raise httpx2.ReadTimeout("offline", request=request)
+        answer = {"answer": "검증용 응답", "answerStatus": "ANSWERED",
+                  "citationChunkIndexes": loaded[1][index][0]["expectedCitationOrders"]}
+        return httpx2.Response(200, json={
+            "id": "resp_test", "created_at": 0, "object": "response",
+            "model": evaluate.DEFAULT_OPENAI_MODEL, "status": "completed",
+            "output": [{"id": "msg", "type": "message", "role": "assistant", "status": "completed",
+                        "content": [{"type": "output_text", "annotations": [], "text": json.dumps(answer)}]}],
+            "usage": None if failure == "unknown" else {"input_tokens": 100, "output_tokens": 50, "total_tokens": 150},
+        })
+    class MockClient(real_client):
+        def __init__(self, **kwargs):
+            super().__init__(transport=httpx2.MockTransport(handler), **kwargs)
+    monkeypatch.setattr(httpx2, "AsyncClient", MockClient)
+    capture = asyncio.run(evaluate.execute(loaded[1][:2], loaded[2], tmp_path / "budget", budget=budget))
+    assert len(attempts) == (0 if failure == "authorize" else 2 if failure == "none" else 1)
+    assert capture["completed"] is (failure == "none")
+    assert events[0] == "authorize"
+    if failure == "none":
+        assert events == ["authorize", "http", "settle"] * 2
+    if failure == "settle":
+        assert capture["apiResponses"][0]["usage"]["output_tokens"] == 50

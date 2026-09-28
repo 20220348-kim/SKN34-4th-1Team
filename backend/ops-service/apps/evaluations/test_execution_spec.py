@@ -75,10 +75,15 @@ class ExecutionSpecTests(TestCase):
         self.assertIsNone(run.model_api_calls)
         create.assert_not_called()
 
-    @override_settings(LLMOPS_LIVE_ENABLED=True)
+    @override_settings(
+        LLMOPS_LIVE_ENABLED=True, LLMOPS_BUDGET_TOKEN="offline-test-budget-token-32-characters"
+    )
     @patch("apps.evaluations.prefect_client.read_run", return_value={"state_type": "FAILED"})
     @patch("apps.evaluations.prefect_client.create_run", return_value=uuid4())
     def test_only_correlated_preflight_rejection_confirms_zero_calls(self, create, read):
+        from .models import EvaluationBudget
+
+        EvaluationBudget.objects.create(call_limit=12, output_token_limit=24000)
         payload = {
             **self.payload,
             "execution_mode": "live",

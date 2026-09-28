@@ -255,10 +255,18 @@ backend/ai-service/.venv/bin/python infrastructure/llmops/smoke.py \
 
 ## Ops에서 새 모델 평가
 
+새로운 선행 조건으로 **DB 누적 한도와 실행기 전용 인증**이 필요하다.
+`init_ops_env.py`는 신규 환경에 `LLMOPS_BUDGET_TOKEN`을 생성한다. 기존 `.env.ops`는 덮어쓰지 않으므로
+기존 환경에는 별도로 생성한 32자 이상의 무작위 비밀값을 보안 환경변수로 추가한다.
+Compose가 Ops와 실행기에 같은 값을 전달하고, 실행기는 `http://ops-service:8000`으로 예약을 확인한다.
+한도 설정은 [Ops 누적 한도 안내](../../backend/ops-service/README.md#누적-호출출력-토큰-한도)의 관리 명령을
+`dc run --rm ops-service python manage.py set_evaluation_budget`으로 실행한다. `--calls`, `--output-tokens`에는
+별도로 승인된 누적 한도를 전달한다. 이 문서 변경이나 테스트가 실제 한도 설정·유료 실행 승인을 뜻하지 않는다.
+
 새 응답 생성은 기존 `govbiz-ops-evidence-evaluation/saved-capture` deployment의 명시적 live 모드다.
 기존 요청·북마크 호환을 위해 deployment 이름을 유지한다. 기본 실행 방식은 replay, live 활성화는 false다.
 
-1. 위 `dc build` → `dc run --rm ops-service python manage.py migrate --noinput`로 최신 코드와 migration 0003을 반영한다.
+1. 위 `dc build` → `dc run --rm ops-service python manage.py migrate --noinput`로 최신 코드와 migration `0011_cumulative_budget`까지 반영한다.
 2. 전송할 자료와 예산을 승인한 후 Git에서 제외된 `.env.ops`에 `LLMOPS_LIVE_ENABLED=true`,
    `LLMOPS_LIVE_MODEL=gpt-6-luna`, `OPENAI_API_KEY=<승인된 프로젝트의 키>`를 설정한다.
    키를 커밋하거나 브라우저·Prefect 인자로 전송하지 않는다. 키는 evaluation-runner에만 주입된다.

@@ -15,6 +15,7 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
+from .budget import BudgetUnavailable
 from .catalog import DATASETS, public_datasets, selection
 from .models import EvaluationRun
 from .quality import assess, save_fixture_review
@@ -205,6 +206,8 @@ def api_runs(request):
     serializer.is_valid(raise_exception=True)
     try:
         run, created = submit_run(request.user, **serializer.validated_data)
+    except BudgetUnavailable:
+        return Response({"code": "LIVE_BUDGET_UNAVAILABLE"}, status=400)
     except RequestConflict:
         return Response({"code": "REQUEST_CONFLICT"}, status=409)
     except ValueError:

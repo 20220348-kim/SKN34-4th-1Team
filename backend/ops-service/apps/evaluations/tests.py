@@ -498,9 +498,14 @@ class EvaluationTests(TestCase):
                 self.client.get(f"/api/v1/ops/evaluations/{run.id}/report").status_code, 404
             )
 
-    @override_settings(LLMOPS_LIVE_ENABLED=True)
+    @override_settings(
+        LLMOPS_LIVE_ENABLED=True, LLMOPS_BUDGET_TOKEN="offline-test-budget-token-32-characters"
+    )
     @patch("apps.evaluations.prefect_client.create_run", return_value=uuid4())
     def test_live_requires_exact_consent_and_is_idempotent(self, create):
+        from .models import EvaluationBudget
+
+        EvaluationBudget.objects.create(call_limit=12, output_token_limit=24000)
         from .catalog import LIVE_CAPTURE_ID, live_config
 
         payload = {

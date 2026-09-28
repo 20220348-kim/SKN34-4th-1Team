@@ -177,3 +177,71 @@ class QualityAssessment(models.Model):
                 fields=["run", "input_sha256"], name="unique_quality_assessment"
             )
         ]
+
+
+class EvaluationBudget(models.Model):
+    # Ops DB 전체 누적 한도. 자동 기간 초기화나 미확인 사용량 환급은 하지 않는다.
+    id = models.PositiveSmallIntegerField(primary_key=True, default=1, editable=False)
+    call_limit = models.PositiveBigIntegerField(default=0)
+    output_token_limit = models.PositiveBigIntegerField(default=0)
+    allocated_calls = models.PositiveBigIntegerField(default=0)
+    allocated_output_tokens = models.PositiveBigIntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(condition=models.Q(id=1), name="single_evaluation_budget"),
+            models.CheckConstraint(
+                condition=models.Q(allocated_calls__lte=models.F("call_limit")),
+                name="evaluation_call_budget_limit",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(allocated_output_tokens__lte=models.F("output_token_limit")),
+                name="evaluation_output_budget_limit",
+            ),
+        ]
+
+
+class EvaluationBudgetReservation(models.Model):
+    run = models.OneToOneField(
+        EvaluationRun, primary_key=True, on_delete=models.PROTECT, related_name="budget_reservation"
+    )
+    budget = models.ForeignKey(EvaluationBudget, on_delete=models.PROTECT)
+    max_calls = models.PositiveSmallIntegerField()
+    max_output_tokens = models.PositiveIntegerField()
+    worker_id = models.UUIDField(null=True)
+    closed_at = models.DateTimeField(null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
+class EvaluationBudgetCall(models.Model):
+    reservation = models.ForeignKey(
+        EvaluationBudgetReservation, on_delete=models.PROTECT, related_name="calls"
+    )
+    sequence = models.PositiveSmallIntegerField()
+    input_tokens = models.PositiveBigIntegerField(null=True)
+    output_tokens = models.PositiveBigIntegerField(null=True)
+    authorized_at = models.DateTimeField(auto_now_add=True)
+    settled_at = models.DateTimeField(null=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["reservation", "sequence"], name="unique_evaluation_budget_call"
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        input_tokens__isnull=True,
+                        output_tokens__isnull=True,
+                        settled_at__isnull=True,
+                    )
+                    | models.Q(
+                        input_tokens__isnull=False,
+                        output_tokens__isnull=False,
+                        settled_at__isnull=False,
+                    )
+                ),
+                name="complete_evaluation_call_usage",
+            ),
+        ]

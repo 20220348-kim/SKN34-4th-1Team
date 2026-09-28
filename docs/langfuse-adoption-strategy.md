@@ -50,8 +50,8 @@ workflow가 성공이지만 `publish` job은 건너뛰었다. 이미지 발행 �
 
 | 우선순위 | 코드에서 확인한 남은 공백 | 조치 |
 |---|---|---|
-| P0 · 배포 전 | 감사 기준 SHA에는 [발행 gate](../infrastructure/release/gate.py)와 [trigger](../.github/workflows/msa-images.yml)에 LLMOps CI가 없었다 | 후속 작업 브랜치에서 다섯 CI·필수 job·발행/승격 재검증을 연결했다. 로컬 검증과 아래 구현 기록을 참조하며, 변경 SHA의 원격 CI 검증은 대기 중이다. |
-| P0 · 로컬 실행 전 | [명세 검사](../backend/ops-service/apps/evaluations/execution_spec.py)가 기존 Windows checkout에서 실패 | AI 파일 5개의 CRLF가 원인이다. Git blob 및 LF 변환 바이트는 manifest와 일치한다. 확인한 파일만 LF로 복구하고 재검증한다. manifest 재생성으로 차이를 승인하지 않는다. |
+| P0 · 배포 전 | 감사 기준 SHA에는 [발행 gate](../infrastructure/release/gate.py)와 [trigger](../.github/workflows/msa-images.yml)에 LLMOps CI가 없었다 | 후속 작업 브랜치에서 다섯 CI·필수 job·발행/승격 재검증을 연결했다. 로컬 검증과 아래 구현 기록을 참조하며, `de7b0f0`의 필수 CI 5개는 통과했다. 실제 이미지 발행·승격 성공과는 구분한다. |
+| P0 · 로컬 실행 전 | [명세 검사](../backend/ops-service/apps/evaluations/execution_spec.py)가 기존 Windows checkout에서 실패 | AI 파일 5개의 CRLF가 원인이다. Git blob 및 LF 변환 바이트는 manifest와 일치한다. 후속 예산 작업에서 Git blob과 동일함을 확인한 뒤 LF로 복구하고 명세 검사를 통과했다. 명세 대상 Python 파일의 LF를 `.gitattributes`로 고정했다. |
 | P1 · 품질 | [품질 정책](../backend/ops-service/apps/evaluations/quality_policy.py)과 [판정 이력](../backend/ops-service/apps/evaluations/quality.py)은 구현됐지만 실제 사람 검토·현재 모델 기준은 미확보 | 개발 테스트의 `PASS`와 사람이 승인한 평가 기준을 구별한다. 자료 검토 → 승인 범위의 새 응답 → 사례 검토 → 품질 판정 → 별도 기준 지정 순서로 진행한다. |
 | P1 · 반복 실행 전 | [호출 설정](../backend/ops-service/apps/evaluations/catalog.py), [실행기](../evaluation/support-program-evidence/ops_flow.py), [API](../backend/ops-service/apps/evaluations/urls.py) | 실행별 호출 수·출력 토큰은 있지만 누적 예산 장부·취소 API가 없다. `CANCELLED` 상태 수신과 취소 기능은 다르다. `serve(limit=1)`·로컬 FileLock은 다중 실행기의 전역 제한이 아니다. |
 | P2 · 자료 확대 전 | [평가기](../evaluation/support-program-evidence/evaluate.py)의 `load_fixture`·`report` | `synthetic`·`ai-authored`, 문서 최대 3개·사례 최대 12개로 제한된다. 자동 의미 충실도는 미측정이며 인용 recall은 불필요한 인용을 벌점 처리하지 않는다. 실제 공고·사람 참조·범위 확장은 자료 계약과 검토 기준부터 확장한다. |
@@ -124,7 +124,7 @@ AI Service에서는 `uv run --locked --extra dev python -m pytest tests/assistan
 
 | 순서 | 작업·담당 | 진입 조건 | 완료 증거 |
 |---|---|---|---|
-| 0 | CI/Infra: LLMOps CI의 발행·승격 차단 연결 | 로컬 구현, 원격 검증 대기 | 동일 SHA의 필수 CI 5개 및 실제 필수 job 성공. LLMOps 실패/누락/취소/실행 중/다른 SHA/최신 재실행 실패에서 발행·승격 차단 |
+| 0 | CI/Infra: LLMOps CI의 발행·승격 차단 연결 | skn-37 원격 CI 통과 | 동일 SHA의 필수 CI 5개 및 실제 필수 job 성공. LLMOps 실패/누락/취소/실행 중/다른 SHA/최신 재실행 실패에서 발행·승격 차단 |
 | 1 | 제품·검토자: 기존 가상 6건의 평가 기준 검토 | 기존 검토 화면·고정 자료 | 기대 상태·필수 인용·필수 사실·금지 주장 전 사례 검토. 검토자·사유·자료 해시 기록. 잘못된 자료는 새 버전으로 수정 |
 | 2 | 평가·검토자: 현재 모델의 제한된 첫 기준 | 1 완료, 실행 환경 정합성, 자료·모델·예산 승인 | 승인된 최대 6회 생성, 사용량·trace·점수·보고서 대조, 전 사례 사람 검토와 현행 품질 판정 후 명시적 기준 지정 |
 | 3A | Ops·실행기: 누적 예산 예약·정산 | 무료 구현은 1~2와 독립 진행 가능 | 같은 UUID 중복 예약 방지, 다른 UUID의 전역 한도, 중단/사용량 미확인의 예약 보존을 실제 MySQL 경합으로 확인 |
@@ -138,7 +138,7 @@ AI Service에서는 `uv run --locked --extra dev python -m pytest tests/assistan
 고정 근거 기능만 배포하면 전체 RAG 구현을 필수로 묶지 않되 검증 범위를 정확히 표시한다.
 이번 전략은 새 유료 호출·스케줄·외부 알림·배포의 승인이 아니다.
 
-### 발행 차단 연결 — 로컬 구현, 원격 검증 대기
+### 발행 차단 연결 — skn-37 원격 CI 통과
 
 `54e2a19`에서 분기한 `skn-37`에서 구현했다. 대상은
 `infrastructure/release/gate.py`, `test_release.py`, `.github/workflows/msa-images.yml`,
@@ -162,7 +162,12 @@ Python 3.13에서 다음 선택 검증을 통과했다. GitOps 검증 환경은 
 
 전체 release 테스트는 GovBiz CI의 AI Service job에서, 승격·워크플로 계약 테스트는 Infra CI의
 `kubernetes-manifests` job에서 실행하도록 기존 discovery 경로에 포함되어 있다.
-수정 SHA의 원격 CI와 실제 원격 차단 결과는 아직 확인 전이다. 기반 SHA의 기존 CI 성공을 이번 변경의 증거로 쓰지 않는다.
+`skn-37 / de7b0f0`의 [GovBiz CI](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36418147882),
+[Ops CI](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36418147866),
+[LLMOps CI](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36418147919),
+[Infra CI](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36418147898),
+[Catalog CI](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36418147824)는 모두 완료·통과했다.
+실제 이미지 발행·승격 및 후속 예산 변경의 검증 완료를 뜻하지 않는다.
 
 로컬 명세 오류는 별도 환경 복구다. 확인된 대상은 AI의
 `support_program_evidence/{models,prompt,errors}.py`, `support_program_identity.py`, `support_program_llm.py`다.
@@ -186,6 +191,36 @@ Python 3.13에서 다음 선택 검증을 통과했다. GitOps 검증 환경은 
 표시해 검증을 우회하지 않는다. 문서/사례/호출 상한을 바꾸면 실행 명세·UI 예산도 함께 검증한다.
 대규모 실행 전에 `llmops.py:publish_scores`의 100개 단일 조회를 배치/페이지 처리로 보완하고
 100개 초과 점수 누락·재등록 검증을 추가한다. 현재 12건 상한에서 이미 발생한 장애라는 뜻은 아니다.
+
+### 누적 호출·출력 토큰 예약 — 후속 구현
+
+`de7b0f0` 기반 `skn-39`에서 Ops 접수·실행기 전송·정산을 연결한다.
+DB 전체의 누적 호출 수·출력 토큰을 예약하고 단일 실행기 소유권과 호출 번호로 중복 전송을 차단한다.
+입력 사용량은 기록하며 응답/사용량 미확인은 최대 출력 예약을 유지한다. 예산 미설정은 차단 상태다.
+운영 계약·제한과 설정은 [Ops README](../backend/ops-service/README.md#누적-호출출력-토큰-한도)를 따른다.
+
+이는 아래 3A의 첫 단계다. **금액 상한·입력 토큰 상한·기간별 예산·단가 버전·미확인 예약 복구·취소 API는 후속 과제**로 남는다.
+정기 실행은 활성화하지 않는다. DB migration은 새 `0011`만 추가하며 실제 DB에는 아직 적용하지 않았다.
+Windows checkout의 기존 5개 파일은 Git blob과 LF 변환 바이트가 같음을 확인한 뒤 줄바꿈만 복원했다.
+명세에 포함한 Python 파일을 `.gitattributes`에서 LF로 고정하고, 의도한 실행기 변경만 새 manifest에 반영한다.
+
+로컬 검증은 프로젝트 잠금 파일 기준 Python 3.12에서 실행했다.
+
+| 검증 | 결과 |
+|---|---|
+| `test_budget_client.py`, `test_ops_flow.py`, `test_execution_spec.py` | 54개 통과 |
+| `test_evaluate.py` | 64개 통과. 마지막 1개는 Windows 파일 교체 오류 후 새 임시 경로에서 재확인 |
+| `apps.evaluations.test_budget.BudgetContractTests` | DB 없는 계약 검사 3개 통과 |
+| `App.ops.test.tsx` | 45개 통과. 로컬 worker 시작 제한 때문에 `--pool=threads --maxWorkers=1` 사용 |
+| Ruff·Oxlint·Django check·migration 모델 정합성·실행 manifest·문서 링크·diff 검사 | 통과 |
+| `BudgetTests` 15개, `BudgetConcurrencyTests` 2개 및 기존 live 접수 회귀 | 실제 MySQL 8.4 실행 대기 |
+
+기본 pytest 임시 폴더에 접근할 수 없어 `--basetemp work/llmops-budget-pytest-*`로 격리했다.
+중복 실행을 제외한 선택 테스트 통과 수는 **166개**다. migration 생성본과 모델의 차이는 없지만,
+DB에 연결한 migration 이력·제약·rollback·동시성 검증은 수행하지 못했다. 로컬 Docker 엔진이 꺼져 있어
+기존 실행 환경을 기동·중지하지 않았고, MySQL 테스트는 Ops CI의 전체 `manage.py test`에 포함했다.
+평가 테스트는 GovBiz CI의 evidence 디렉터리 pytest, 웹 테스트는 Web job의 기존 수집 경로에 포함된다.
+`skn-39`의 원격 전체 CI·컨테이너 검증은 해당 커밋의 실행 결과로 별도 확인한다. 실제 한도 설정·유료 호출·배포는 수행하지 않았다.
 
 ### 누적 예산·취소·자동화의 계약
 
