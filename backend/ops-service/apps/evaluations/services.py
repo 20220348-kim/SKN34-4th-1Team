@@ -11,7 +11,7 @@ from django.utils.dateparse import parse_datetime
 
 from . import prefect_client
 from .baselines import lock_baseline
-from .budget import BudgetUnavailable, reserve
+from .budget import BudgetUnavailable, close_after_cancellation, reserve
 from .catalog import (
     DATASETS,
     LEGACY_DATASET_ID,
@@ -21,13 +21,13 @@ from .catalog import (
     validate_reference_config,
 )
 from .execution_spec import digest, make_spec, read_release
-from .models import EvaluationBaseline, EvaluationRun
+from .models import EvaluationBaseline, EvaluationBudget, EvaluationRun
 from .review_eligibility import current_approval
 
 DATASET_ID = LEGACY_DATASET_ID
 DATASET_LABEL = DATASETS[DATASET_ID]["label"]
 TERMINAL = {"COMPLETED", "FAILED", "CANCELLED", "CRASHED"}
-PENDING_SYNC = {"REQUESTED", "QUEUED", "RUNNING", "RESULT_ERROR"}
+PENDING_SYNC = {"REQUESTED", "QUEUED", "RUNNING", "CANCELLING", "RESULT_ERROR"}
 
 
 class RequestConflict(Exception):
@@ -162,7 +162,37 @@ def submit_run(
     return dispatch_run(run), created
 
 
+def cancel_run(run, user):
+    with transaction.atomic():
+        locked = EvaluationRun.objects.select_for_update().get(pk=run.pk)
+        if locked.requested_by_id != user.pk:
+            raise PermissionError
+        if locked.cancel_requested_at is not None:
+            return locked
+        if locked.status not in {"REQUESTED", "QUEUED", "RUNNING", "CANCELLING"}:
+            raise RequestConflict
+        # run → budget 순서. worker는 run 행을 잠그지 않으며, 이 커밋 뒤 승인을 거절한다.
+        if locked.execution_mode == "live":
+            EvaluationBudget.objects.select_for_update().filter(pk=1).first()
+        locked.cancel_requested_at = timezone.now()
+        locked.cancel_requested_by = user
+        locked.status = "CANCELLING"
+        locked.error_code = ""
+        locked.save(
+            update_fields=[
+                "cancel_requested_at",
+                "cancel_requested_by",
+                "status",
+                "error_code",
+            ]
+        )
+    return locked
+
+
 def dispatch_run(run):
+    run.refresh_from_db()
+    if run.cancel_requested_at is not None or run.status not in {"REQUESTED", "QUEUED", "RUNNING"}:
+        return run
     if not run.execution_spec and run.prefect_flow_run_id is None:
         # 기존 접수의 응답 유실 여부를 확인할 수 있으므로 호출 수는 추정하지 않는다.
         EvaluationRun.objects.filter(pk=run.pk, prefect_flow_run_id=None).update(
@@ -177,13 +207,22 @@ def dispatch_run(run):
         try:
             flow_id = prefect_client.create_run(run)
         except prefect_client.PrefectUnavailable:
-            EvaluationRun.objects.filter(pk=run.pk, prefect_flow_run_id=None).update(
-                error_code="PREFECT_DISPATCH_UNCONFIRMED"
-            )
+            EvaluationRun.objects.filter(
+                pk=run.pk,
+                prefect_flow_run_id=None,
+                cancel_requested_at=None,
+                status="REQUESTED",
+            ).update(error_code="PREFECT_DISPATCH_UNCONFIRMED")
         else:
+            # 전송 중 취소됐더라도 실행 ID는 연결하되 취소 의사를 덮어쓰지 않는다.
             EvaluationRun.objects.filter(pk=run.pk, prefect_flow_run_id=None).update(
-                prefect_flow_run_id=flow_id, status="QUEUED", error_code=""
+                prefect_flow_run_id=flow_id
             )
+            EvaluationRun.objects.filter(
+                pk=run.pk,
+                status="REQUESTED",
+                cancel_requested_at=None,
+            ).update(status="QUEUED", error_code="")
         run.refresh_from_db()
     return run
 
@@ -406,20 +445,31 @@ def sync_run(run):
         "status": run.status,
         "synced_at": run.synced_at,
         "sync_attempted_at": run.sync_attempted_at,
+        "cancel_requested_at": run.cancel_requested_at,
         "prefect_flow_run_id": run.prefect_flow_run_id,
     }
     values = {"sync_attempted_at": timezone.now()}
+    cancellation_ended = False
     try:
         flow_id = run.prefect_flow_run_id or prefect_client.find_run(run)
         if flow_id is None:
             values["error_code"] = (
-                "PREFECT_DISPATCH_UNCONFIRMED" if run.execution_spec else "EXECUTION_SPEC_REQUIRED"
+                "PREFECT_CANCEL_UNCONFIRMED"
+                if run.cancel_requested_at
+                else "PREFECT_DISPATCH_UNCONFIRMED"
+                if run.execution_spec
+                else "EXECUTION_SPEC_REQUIRED"
             )
         else:
             run.prefect_flow_run_id = flow_id
             values["prefect_flow_run_id"] = flow_id
             remote = prefect_client.read_run(run.prefect_flow_run_id)
             state = remote["state_type"]
+            if run.cancel_requested_at and state not in TERMINAL | {"CANCELLING"}:
+                prefect_client.cancel_run(flow_id)
+                remote = prefect_client.read_run(flow_id)
+                state = remote["state_type"]
+            cancellation_ended = bool(run.cancel_requested_at and state in TERMINAL)
             status = {
                 "SCHEDULED": "QUEUED",
                 "PENDING": "QUEUED",
@@ -428,12 +478,16 @@ def sync_run(run):
                 "FAILED": "FAILED",
                 "CANCELLED": "CANCELLED",
                 "CRASHED": "CRASHED",
-                "CANCELLING": "RUNNING",
+                "CANCELLING": "CANCELLING",
                 "PAUSED": "QUEUED",
             }.get(state)
             if status is None:
                 raise prefect_client.PrefectUnavailable
+            if run.cancel_requested_at and state not in TERMINAL:
+                status = "CANCELLING"
             values.update(status=status, synced_at=timezone.now(), error_code="")
+            if run.cancel_requested_at and state not in TERMINAL | {"CANCELLING"}:
+                values["error_code"] = "PREFECT_CANCEL_UNCONFIRMED"
             for source, target in [("start_time", "started_at"), ("end_time", "finished_at")]:
                 value = remote.get(source)
                 values[target] = parse_datetime(value) if isinstance(value, str) else None
@@ -451,7 +505,9 @@ def sync_run(run):
     except (prefect_client.PrefectUnavailable, ValueError, TypeError, KeyError):
         values = {
             "sync_attempted_at": values["sync_attempted_at"],
-            "error_code": "PREFECT_STATUS_UNAVAILABLE",
+            "error_code": "PREFECT_CANCEL_UNCONFIRMED"
+            if run.cancel_requested_at
+            else "PREFECT_STATUS_UNAVAILABLE",
             "prefect_flow_run_id": run.prefect_flow_run_id,
         }
     if run.execution_mode == "live":
@@ -477,7 +533,10 @@ def sync_run(run):
         except (ResultsUnavailable, OSError, ValueError, KeyError, TypeError):
             pass
     # 동시에 조회한 오래된 RUNNING 응답이 이미 완료된 상태를 되돌리지 않도록 한다.
-    EvaluationRun.objects.filter(**observed).update(**values)
+    with transaction.atomic():
+        updated = EvaluationRun.objects.filter(**observed).update(**values)
+        if updated and cancellation_ended:
+            close_after_cancellation(run)
     run.refresh_from_db()
     return run
 

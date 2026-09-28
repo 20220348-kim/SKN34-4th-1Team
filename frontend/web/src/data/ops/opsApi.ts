@@ -32,6 +32,9 @@ const comparisonSchema = z.object({
   cases: z.array(z.object({ case_id: z.string(), reference: observationSchema, candidate: observationSchema })),
 })
 const runSchema = z.object({
+  can_cancel: z.boolean().default(false),
+  cancel_requested_at: z.string().nullable().default(null),
+  cancel_requested_by: z.string().nullable().default(null),
   execution_profile: z.string().nullable().default(null),
   execution_spec_sha256: z.string().nullable().default(null),
   execution_spec: z.object({
@@ -50,7 +53,7 @@ const runSchema = z.object({
     can_recover: z.boolean(), blocked_reason: z.string(),
     attempts: z.array(z.object({ id: z.uuid(), status: z.string(), status_label: z.string() })),
   }).nullable().default(null),
-  status: z.enum(['REQUESTED', 'QUEUED', 'RUNNING', 'COMPLETED', 'FAILED', 'CANCELLED', 'CRASHED', 'RESULT_ERROR']),
+  status: z.enum(['REQUESTED', 'QUEUED', 'RUNNING', 'CANCELLING', 'COMPLETED', 'FAILED', 'CANCELLED', 'CRASHED', 'RESULT_ERROR']),
   status_label: z.string(), created_at: z.string(), started_at: z.string().nullable(),
   finished_at: z.string().nullable(), synced_at: z.string().nullable(),
   sync_attempted_at: z.string().nullable().default(null), status_stale: z.boolean().default(false),
@@ -143,6 +146,8 @@ async function request<T>(path: string, schema: z.ZodType<T>, options: RequestIn
     const error = await response.json().catch(() => null)
     const message = response.status === 400 && error?.code === 'LIVE_BUDGET_UNAVAILABLE'
       ? '누적 평가 한도가 부족하거나 설정되지 않아 접수하지 않았습니다. 운영자에게 예약·미확인 사용량과 한도를 확인해 주세요.'
+      : error?.code === 'CANCEL_FORBIDDEN' ? '평가를 요청한 계정만 취소할 수 있습니다.'
+      : error?.code === 'CANCEL_CONFLICT' ? '이미 종료된 평가입니다. 상태를 다시 확인하세요.'
       : response.status === 401 ? '로그인이 만료되었습니다.'
       : response.status === 403 ? '관리자 계정만 운영 화면을 이용할 수 있습니다.'
       : response.status === 503 ? '관리자 인증 또는 운영 서버에 연결할 수 없습니다.'
@@ -179,6 +184,7 @@ export const saveEvaluationReview = (id: string, decision: 'APPROVED' | 'CHANGES
 export const saveEvaluationCaseReview = (id: string, caseId: string, decision: CaseReviewDecision, comment: string, stamp: ReviewStamp) => post(`/evaluations/${encodeURIComponent(id)}/case-review`, { case_id: caseId, decision, comment, ...stamp }, reviewSchema)
 export const promoteEvaluationBaseline = (id: string, reviewId: number, version: number) => post(`/evaluations/${encodeURIComponent(id)}/baseline`, { review_id: reviewId, baseline_version: version }, reviewSchema)
 export const clearEvaluationBaseline = (id: string, version: number, reason: string) => post(`/evaluations/${encodeURIComponent(id)}/baseline`, { baseline_version: version, reason }, reviewSchema, false, undefined, 'DELETE')
+export const cancelEvaluation = (id: string, owner: string) => post(`/evaluations/${encodeURIComponent(id)}/cancel`, {}, runSchema, false, owner)
 export const recoverEvaluation = (id: string, requestId: string) => post(`/evaluations/${encodeURIComponent(id)}/recover`, { request_id: requestId }, runSchema, true)
 export const submitEvaluation = (requestId: string, datasetId: string, candidateCaptureId: string, referenceCaptureId: string, liveConfig: z.infer<typeof liveConfigSchema> | null = null, baselineVersion: number | null = null, owner?: string, executionProfile: string | null = null) => post('/evaluations', {
   request_id: requestId, dataset_id: datasetId, candidate_capture_id: candidateCaptureId, reference_capture_id: referenceCaptureId,

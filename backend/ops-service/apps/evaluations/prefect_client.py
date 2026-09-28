@@ -104,3 +104,18 @@ def read_run(flow_run_id):
     except (KeyError, TypeError, ValueError) as exc:
         raise PrefectUnavailable from exc
     return data
+
+
+def cancel_run(flow_run_id):
+    """강제 완료 없이 취소를 제안한다. 실제 종료는 별도 read_run으로 확인한다."""
+    result = request_json(
+        f"/flow_runs/{flow_run_id}/set_state",
+        {"state": {"type": "CANCELLING"}, "force": False},
+    )
+    state = result.get("state")
+    if (
+        result.get("status") not in ("ACCEPT", "REJECT")
+        or not isinstance(state, dict)
+        or state.get("type") not in ("CANCELLING", "CANCELLED", "COMPLETED", "FAILED", "CRASHED")
+    ):
+        raise PrefectUnavailable

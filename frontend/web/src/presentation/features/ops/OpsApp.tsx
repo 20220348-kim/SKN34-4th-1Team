@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
-import { getEvaluation, getOpsSession, listEvaluations, OpsApiError, recoverEvaluation, submitEvaluation } from '../../../data/ops/opsApi'
+import { cancelEvaluation, getEvaluation, getOpsSession, listEvaluations, OpsApiError, recoverEvaluation, submitEvaluation } from '../../../data/ops/opsApi'
 import { appContainer } from '../../../app/appContainer'
 import { useAppDispatch } from '../../../app/hooks'
 import { signedOut } from '../../shared/auth/state/authSlice'
@@ -235,6 +235,9 @@ function EvaluationList({ owner, datasets, liveEnabled, onExpired }: { owner: st
 function EvaluationDetail({ onExpired, onReviewChanged }: { onExpired: () => void; onReviewChanged: () => void }) {
   const { runId = '' } = useParams()
   const navigate = useNavigate()
+  const cancelInFlight = useRef(false)
+  const readVersion = useRef(0)
+  const [cancelError, setCancelError] = useState('')
   const recoveryRequest = useRef<{ source: string; id: string } | null>(null)
   const [run, setRun] = useState<EvaluationRun | null>(null)
   const [error, setError] = useState('')
@@ -247,10 +250,11 @@ function EvaluationDetail({ onExpired, onReviewChanged }: { onExpired: () => voi
     let timer: ReturnType<typeof setTimeout> | undefined
     const read = async () => {
       try {
+        const version = readVersion.current
         const value = await getEvaluation(runId, controller.signal)
-        if (controller.signal.aborted) return
+        if (controller.signal.aborted || version !== readVersion.current) return
         setRun(value); setError('')
-        if (value.prefect_flow_run_id && !['COMPLETED', 'FAILED', 'CANCELLED', 'CRASHED'].includes(value.status)) timer = setTimeout(() => void read(), 5_000)
+        if ((value.prefect_flow_run_id || value.status === 'CANCELLING') && !['COMPLETED', 'FAILED', 'CANCELLED', 'CRASHED'].includes(value.status)) timer = setTimeout(() => void read(), 5_000)
       } catch (reason) {
         if (controller.signal.aborted) return
         if (reason instanceof OpsApiError && (reason.status === 401 || reason.status === 403)) expiry.current()
@@ -274,6 +278,19 @@ function EvaluationDetail({ onExpired, onReviewChanged }: { onExpired: () => voi
       else setError(message(reason))
     } finally { setBusy(false) }
   }
+  const cancel = async () => {
+    if (!run || busy || cancelInFlight.current) return
+    cancelInFlight.current = true
+    readVersion.current += 1
+    setBusy(true); setCancelError('')
+    try { setRun(await cancelEvaluation(run.id, run.requested_by_id)) }
+    catch (reason) {
+      if (reason instanceof OpsApiError && reason.status === 401) expiry.current()
+      else setCancelError(`${message(reason)} 취소 접수 여부는 상태를 다시 확인하세요.`)
+    } finally {
+      cancelInFlight.current = false; setBusy(false); setRefresh((value) => value + 1)
+    }
+  }
   const recover = async () => {
     if (!run || busy) return
     if (recoveryRequest.current?.source !== run.id) recoveryRequest.current = { source: run.id, id: crypto.randomUUID() }
@@ -290,10 +307,16 @@ function EvaluationDetail({ onExpired, onReviewChanged }: { onExpired: () => voi
     <WorkspacePageHeader title="평가 실행 상세" parent={{ to: listPath, label: '실행 이력' }} actions={run && <Status run={run} />} />
     <div className={styles.content}>
       {error && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</p>}
-      <div className="flex flex-wrap items-center gap-3"><button className={styles.secondaryButton} onClick={() => setRefresh((value) => value + 1)}>상태 다시 확인</button>{run?.prefect_flow_run_id && !terminal && !error && <p className="text-xs text-sample-muted">5초마다 상태를 확인합니다.</p>}</div>
+      <div className="flex flex-wrap items-center gap-3"><button className={styles.secondaryButton} onClick={() => setRefresh((value) => value + 1)}>상태 다시 확인</button>{(run?.prefect_flow_run_id || run?.status === 'CANCELLING') && !terminal && !error && <p className="text-xs text-sample-muted">5초마다 상태를 확인합니다.</p>}</div>
       {!run ? !error && <p role="status">실행 정보를 불러오고 있습니다.</p> : <>
         {run.error_message && <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm">{run.error_message}</p>}
         {run.status !== 'COMPLETED' && <p className="text-sm text-sample-muted">품질 판정: 미판정 · 완료된 평가 결과가 필요합니다. 실행 오류를 모델 품질 불합격으로 처리하지 않습니다.</p>}
+        {cancelError && <p role="alert" className="text-sm text-red-700">{cancelError}</p>}
+        {run.can_cancel && <section className={styles.card} aria-label="평가 취소">
+          <p className="text-sm text-sample-muted">취소하면 다음 모델 호출을 차단합니다. 이미 승인된 호출은 비용이 발생할 수 있으며, 사용량을 확인하지 못한 예산은 유지합니다.</p>
+          <button className={`${styles.secondaryButton} self-start`} disabled={busy} onClick={() => void cancel()}>평가 취소 요청</button>
+        </section>}
+        {run.cancel_requested_at && <p role="status" className="text-sm text-sample-muted">취소 요청: {run.cancel_requested_by} · {date(run.cancel_requested_at)}{run.status === 'CANCELLING' ? ' · 실행 종료를 확인하고 있습니다.' : ''}</p>}
         {run.can_retry && <button className={`${styles.primaryButton} self-start`} disabled={busy} onClick={() => void retry()}>{busy ? '접수 확인 중…' : '같은 요청으로 접수 재확인'}</button>}
         <section className={styles.card}><h2 className={styles.cardTitle}>{run.dataset_label}</h2><p className="text-sm leading-6 text-sample-muted">{run.execution_mode === 'recovery' ? recoveryNotice : run.execution_mode === 'live' ? liveNotice : notice}</p>
           <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-5 gap-y-3 text-sm">{[

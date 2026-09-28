@@ -253,6 +253,15 @@ backend/ai-service/.venv/bin/python infrastructure/llmops/smoke.py \
 `report.html`, `evidently.json`이 남는다. 실패한 실행은 이미 만든 부분 산출물을 보존하고 manifest에 실패를 기록한다.
 보고서에는 실행 ID와 기준 실행 ID가 있고, Langfuse 점수 metadata에는 동일한 평가 실행 ID가 있다.
 
+## Ops 평가 취소
+
+평가 요청자는 상세 화면에서 취소를 접수할 수 있다. Ops의 `0012_evaluation_cancellation`
+migration을 적용한 버전으로 기동하며, 별도 환경변수나 의존성은 추가하지 않는다.
+취소 의사가 DB에 저장되면 다음 유료 호출 승인부터 차단하고, `ops-sync`가 Prefect의 실제 종료를
+확인해 미사용 예산을 정리한다. `취소 요청 중`은 중단 완료가 아니며, 이미 승인된 호출과 사용량
+미확인 예약은 무료나 0으로 처리하지 않는다. 실행 ID를 확인할 수 없는 요청은 예약을 유지한다.
+API·권한·장애 계약은 [Ops 평가 취소](../../backend/ops-service/README.md#평가-취소)를 따른다.
+
 ## Ops에서 새 모델 평가
 
 새로운 선행 조건으로 **DB 누적 한도와 실행기 전용 인증**이 필요하다.

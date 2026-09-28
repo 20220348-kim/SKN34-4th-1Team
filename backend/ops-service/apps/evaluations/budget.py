@@ -78,6 +78,7 @@ def worker_action(
     if action == "claim":
         if (
             not settings.LLMOPS_LIVE_ENABLED
+            or run.cancel_requested_at is not None
             or run.status not in {"REQUESTED", "QUEUED", "RUNNING"}
             or reservation.closed_at
             or reservation.worker_id not in (None, worker_id)
@@ -95,6 +96,7 @@ def worker_action(
     if action == "authorize":
         if (
             not settings.LLMOPS_LIVE_ENABLED
+            or run.cancel_requested_at is not None
             or run.status not in {"REQUESTED", "QUEUED", "RUNNING"}
             or type(sequence) is not int
             or sequence != reservation.calls.count()
@@ -125,18 +127,31 @@ def worker_action(
         )
         call.save(update_fields=["input_tokens", "output_tokens", "settled_at"])
     elif action == "close":
-        calls = list(reservation.calls.all())
-        # 종료 후 신규 승인은 금지한다. 미전송 몫과 확인된 출력 차액만 반환한다.
-        charged_output = sum(
-            call.output_tokens if call.settled_at else reservation.max_output_tokens
-            for call in calls
-        )
-        budget.allocated_calls -= reservation.max_calls - len(calls)
-        budget.allocated_output_tokens -= (
-            reservation.max_calls * reservation.max_output_tokens - charged_output
-        )
-        budget.save(update_fields=["allocated_calls", "allocated_output_tokens", "updated_at"])
-        reservation.closed_at = timezone.now()
-        reservation.save(update_fields=["closed_at"])
+        _close_reservation(budget, reservation)
     else:
         raise BudgetUnavailable
+
+
+def close_after_cancellation(run):
+    """종료를 확인한 취소 요청만 정리한다. 호출자는 run 행 잠금을 먼저 소유한다."""
+    if run.execution_mode != "live" or run.cancel_requested_at is None:
+        return
+    budget = EvaluationBudget.objects.select_for_update().filter(pk=1).first()
+    reservation = EvaluationBudgetReservation.objects.select_for_update().filter(run=run).first()
+    if budget is not None and reservation is not None and reservation.closed_at is None:
+        _close_reservation(budget, reservation)
+
+
+def _close_reservation(budget, reservation):
+    calls = list(reservation.calls.all())
+    # 종료 후 신규 승인은 금지한다. 미전송 몫과 확인된 출력 차액만 반환한다.
+    charged_output = sum(
+        call.output_tokens if call.settled_at else reservation.max_output_tokens for call in calls
+    )
+    budget.allocated_calls -= reservation.max_calls - len(calls)
+    budget.allocated_output_tokens -= (
+        reservation.max_calls * reservation.max_output_tokens - charged_output
+    )
+    budget.save(update_fields=["allocated_calls", "allocated_output_tokens", "updated_at"])
+    reservation.closed_at = timezone.now()
+    reservation.save(update_fields=["closed_at"])
