@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { getEvaluationReview, OpsApiError, promoteEvaluationBaseline, saveEvaluationReview } from '../../../data/ops/opsApi'
+import { clearEvaluationBaseline, getEvaluationReview, OpsApiError, promoteEvaluationBaseline, saveEvaluationReview } from '../../../data/ops/opsApi'
 import type { EvaluationReview } from '../../../data/ops/opsApi'
 import { workspacePageStyles as styles, workspaceTagClassName } from '../../shared/workspace/WorkspacePage.styles'
 
@@ -25,15 +25,17 @@ export function EvaluationReviewPanel({ runId, onExpired, onChanged }: { runId: 
     return () => controller.abort()
   }, [runId, refresh])
   const latest = data?.reviews[0]
-  const mutate = async (decision?: 'APPROVED' | 'CHANGES_REQUESTED') => {
-    if (inFlight.current || !data?.material || (!decision && !latest)) return
+  const mutate = async (decision?: 'APPROVED' | 'CHANGES_REQUESTED' | 'CLEAR') => {
+    if (inFlight.current || !data || (decision !== 'CLEAR' && !data.material) || (!decision && !latest)) return
     inFlight.current = true; setBusy(true); setError(''); setNotice('')
     try {
-      const value = decision
-        ? await saveEvaluationReview(runId, decision, comment.trim(), data.material.capture_sha256)
-        : await promoteEvaluationBaseline(runId, latest!.id)
+      const value = decision === 'CLEAR'
+        ? await clearEvaluationBaseline(runId, data.baseline_version, comment.trim())
+        : decision
+        ? await saveEvaluationReview(runId, decision, comment.trim(), data.material!.capture_sha256)
+        : await promoteEvaluationBaseline(runId, latest!.id, data.baseline_version)
       setData(value); setConfirmed(false); setComment(''); onChanged()
-      setNotice(decision ? '검토 기록을 저장했습니다.' : '이 데이터셋의 비교 기준으로 지정했습니다.')
+      setNotice(decision === 'CLEAR' ? '비교 기준을 해제했습니다.' : decision ? '검토 기록을 저장했습니다.' : '이 데이터셋의 비교 기준으로 지정했습니다.')
     } catch (reason) {
       if (reason instanceof OpsApiError && [401, 403].includes(reason.status)) expiry.current()
       else setError(reason instanceof Error ? reason.message : '검토를 저장하지 못했습니다.')
@@ -54,12 +56,13 @@ export function EvaluationReviewPanel({ runId, onExpired, onChanged }: { runId: 
         <details open><summary className="cursor-pointer text-sm font-semibold">제공한 근거 청크</summary><div className="mt-3 grid gap-3">{item.evidence.map((chunk) => <div key={chunk.order} className="border-l-2 border-brand-primary pl-3 text-sm leading-6"><strong>청크 {chunk.order}{item.cited_orders.includes(chunk.order) ? ' · 후보가 인용함' : ''}</strong><p className="whitespace-pre-wrap">{chunk.text}</p></div>)}</div></details>
         <details><summary className="cursor-pointer text-sm font-semibold">AI 작성 참조 조건</summary><div className="mt-3 grid gap-2 text-sm leading-6"><p>예상 상태: {item.expected_status} · 예상 인용 청크: {item.expected_citation_orders.join(', ') || '없음'}</p><p>포함할 사실: {item.reference_facts.join(' / ')}</p><p>포함하면 안 되는 주장: {item.forbidden_claims.join(' / ')}</p></div></details>
       </article>)}
-      {data.material && <div className="grid gap-3">
+      {(data.material || data.is_baseline) && <div className="grid gap-3">
         <label className="grid gap-2 text-sm font-semibold">검토 의견<textarea rows={3} maxLength={3000} className="w-full rounded-xl border border-sample-border p-3 font-normal" value={comment} disabled={busy} onChange={(event) => setComment(event.target.value)} placeholder="근거와 답변을 대조한 판단과 남은 문제를 기록하세요." /></label>
-        <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmed} disabled={busy} onChange={(event) => setConfirmed(event.target.checked)} />위 모든 사례의 질문·근거·후보 답변을 검토했습니다.</label>
-        <div className="flex flex-wrap gap-3"><button className={styles.primaryButton} disabled={busy || !confirmed || !comment.trim()} onClick={() => void mutate('APPROVED')}>검토 승인 저장</button><button className={styles.secondaryButton} disabled={busy || !confirmed || !comment.trim()} onClick={() => void mutate('CHANGES_REQUESTED')}>수정 필요 저장</button><button className={styles.secondaryButton} disabled={busy || data.is_baseline || latest?.decision !== 'APPROVED' || latest.capture_sha256 !== data.material.capture_sha256} onClick={() => void mutate()}>비교 기준으로 지정</button></div>
+        {data.material && <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmed} disabled={busy} onChange={(event) => setConfirmed(event.target.checked)} />위 모든 사례의 질문·근거·후보 답변을 검토했습니다.</label>}
+        <div className="flex flex-wrap gap-3"><button className={styles.primaryButton} disabled={busy || !data.material || !confirmed || !comment.trim()} onClick={() => void mutate('APPROVED')}>검토 승인 저장</button><button className={styles.secondaryButton} disabled={busy || !data.material || !confirmed || !comment.trim()} onClick={() => void mutate('CHANGES_REQUESTED')}>수정 필요 저장</button><button className={styles.secondaryButton} disabled={busy || !data.material || data.is_baseline || latest?.decision !== 'APPROVED' || latest.capture_sha256 !== data.material?.capture_sha256} onClick={() => void mutate()}>비교 기준으로 지정</button>{data.is_baseline && <button className={styles.secondaryButton} disabled={busy || !comment.trim()} onClick={() => void mutate('CLEAR')}>의견을 사유로 기준 해제</button>}</div>
         <p className="text-xs leading-5 text-sample-muted">기준 지정은 같은 자료의 다음 평가에 적용됩니다. 기존 기준이 있으면 교체되며, 이미 접수한 평가의 기준은 유지됩니다. 새 검토를 저장하면 이 실행의 기준 지정이 해제됩니다.</p>
       </div>}
+      {!!data.baseline_history.length && <details><summary className="cursor-pointer text-sm font-semibold">데이터셋 기준 변경 이력 · {data.baseline_history.length}건</summary><ol className="mt-3 grid gap-3">{data.baseline_history.map((item) => <li key={item.version} className="rounded-xl bg-slate-50 p-3 text-sm"><p className="font-semibold">버전 {item.version} · {item.run_id ? item.previous_run_id ? '교체' : '지정' : '해제'} · {item.changed_by} · {new Date(item.created_at).toLocaleString('ko-KR')}</p><p className="break-all">{item.previous_run_id ?? '기준 없음'} → {item.run_id ?? '기준 없음'}</p><p className="mt-2 whitespace-pre-wrap">{item.reason}</p></li>)}</ol></details>}
       {!!data.reviews.length && <details open><summary className="cursor-pointer text-sm font-semibold">검토 이력 · {data.reviews.length}건</summary><ol className="mt-3 grid gap-3">{data.reviews.map((review) => <li key={review.id} className="rounded-xl bg-slate-50 p-3 text-sm"><p className="font-semibold">{review.decision === 'APPROVED' ? '검토 승인' : '수정 필요'} · {review.reviewed_by} · {new Date(review.created_at).toLocaleString('ko-KR')}</p><p className="mt-2 whitespace-pre-wrap">{review.comment}</p></li>)}</ol></details>}
     </>}
   </section>

@@ -5,6 +5,7 @@ from hashlib import sha256
 
 from django.db import transaction
 
+from .baselines import change_baseline, lock_baseline
 from .catalog import DATASETS, selection
 from .models import EvaluationBaseline, EvaluationReview, EvaluationRun
 from .services import (
@@ -97,6 +98,31 @@ def review_state(run):
     return {
         "reviews": [review_data(item) for item in reviews],
         "is_baseline": bool(baseline and any(item.id == baseline.review_id for item in reviews)),
+        "baseline_version": baseline.version if baseline else 0,
+        "baseline_history": [
+            {
+                "version": item.version,
+                "previous_review_id": item.previous_review_id,
+                "review_id": item.review_id,
+                "previous_capture_sha256": item.previous_review.capture_sha256
+                if item.previous_review
+                else None,
+                "previous_run_id": str(item.previous_review.run_id)
+                if item.previous_review
+                else None,
+                "run_id": str(item.review.run_id) if item.review else None,
+                "capture_sha256": item.review.capture_sha256 if item.review else None,
+                "fixture_sha256": item.fixture_sha256 or None,
+                "changed_by": item.changed_by.email or item.changed_by.get_username(),
+                "reason": item.reason,
+                "created_at": item.created_at,
+            }
+            for item in (
+                baseline.changes.select_related("previous_review", "review", "changed_by")
+                if baseline
+                else []
+            )
+        ],
     }
 
 
@@ -106,7 +132,10 @@ def save_review(run, user, decision, comment, capture_sha256):
     if material["capture_sha256"] != capture_sha256:
         raise RequestConflict
     with transaction.atomic():
-        EvaluationRun.objects.select_for_update().get(pk=run.pk)
+        baseline = lock_baseline(run.dataset_id)
+        locked = EvaluationRun.objects.select_for_update().get(pk=run.pk)
+        if locked.status != "COMPLETED":
+            raise ResultsUnavailable
         latest = run.reviews.first()
         if latest and (
             latest.reviewed_by_id == user.pk
@@ -123,14 +152,18 @@ def save_review(run, user, decision, comment, capture_sha256):
             capture_sha256=capture_sha256,
         )
         # 새 검토 뒤에는 재지정해야 한다. 기존 평가가 고정한 기준은 변경하지 않는다.
-        EvaluationBaseline.objects.filter(dataset_id=run.dataset_id, review__run=run).delete()
+        if baseline.review_id and baseline.review.run_id == run.pk:
+            change_baseline(baseline, None, user, f"새 검토로 기준 해제: {comment}")
         return review
 
 
-def promote_baseline(run, user, review_id):
+def promote_baseline(run, user, review_id, baseline_version):
     material = review_material(run)
     with transaction.atomic():
-        EvaluationRun.objects.select_for_update().get(pk=run.pk)
+        baseline = lock_baseline(run.dataset_id)
+        locked = EvaluationRun.objects.select_for_update().get(pk=run.pk)
+        if locked.status != "COMPLETED":
+            raise ResultsUnavailable
         latest = run.reviews.first()
         if (
             latest is None
@@ -139,9 +172,37 @@ def promote_baseline(run, user, review_id):
             or latest.capture_sha256 != material["capture_sha256"]
         ):
             raise RequestConflict
-        EvaluationBaseline.objects.update_or_create(
-            dataset_id=run.dataset_id, defaults={"review": latest, "selected_by": user}
-        )
+        if (
+            baseline.review_id == latest.id
+            and baseline.version == baseline_version + 1
+            and baseline.selected_by_id == user.pk
+        ):
+            return  # 같은 지정의 응답 유실 재전송. 변경 이력을 추가하지 않는다.
+        if baseline.version != baseline_version:
+            raise RequestConflict
+        if baseline.review_id != latest.id:
+            change_baseline(baseline, latest, user, latest.comment)
+
+
+def clear_baseline(run, user, baseline_version, reason):
+    with transaction.atomic():
+        baseline = lock_baseline(run.dataset_id)
+        if baseline.version != baseline_version:
+            latest = baseline.changes.first()
+            if (
+                baseline.version == baseline_version + 1
+                and baseline.review_id is None
+                and latest
+                and latest.previous_review_id
+                and latest.previous_review.run_id == run.pk
+                and latest.changed_by_id == user.pk
+                and latest.reason == reason
+            ):
+                return
+            raise RequestConflict
+        if not baseline.review_id or baseline.review.run_id != run.pk:
+            raise RequestConflict
+        change_baseline(baseline, None, user, reason)
 
 
 def baseline_choices():
@@ -149,6 +210,7 @@ def baseline_choices():
         item.dataset_id: {
             "id": f"run:{item.review.run_id}",
             "label": f"검토 기준 · {str(item.review.run_id)[:8]}",
+            "version": item.version,
         }
-        for item in EvaluationBaseline.objects.select_related("review")
+        for item in EvaluationBaseline.objects.select_related("review").filter(review__isnull=False)
     }

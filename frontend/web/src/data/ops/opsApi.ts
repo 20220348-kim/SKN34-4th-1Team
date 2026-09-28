@@ -5,13 +5,13 @@ const liveConfigSchema = z.object({
   model: z.string(), fixture_sha256: z.string(), max_model_calls: z.number().int().positive(), max_output_tokens: z.number().int().positive(),
 })
 const sessionSchema = z.object({
-  user: z.object({ username: z.string() }).nullable(),
+  user: z.object({ id: z.string(), username: z.string() }).nullable(),
   csrf_token: z.string(),
   live_enabled: z.boolean(),
   datasets: z.array(z.object({
     id: z.string(), label: z.string(), case_ids: z.array(z.string()).min(1),
     captures: z.array(z.object({ id: z.string(), label: z.string() })).min(1),
-    baseline: z.object({ id: z.string(), label: z.string() }).nullable(),
+    baseline: z.object({ id: z.string(), label: z.string(), version: z.number().int().nonnegative() }).nullable(),
     fixture: z.string(), live_config: liveConfigSchema,
   })),
 })
@@ -31,7 +31,8 @@ const comparisonSchema = z.object({
   cases: z.array(z.object({ case_id: z.string(), reference: observationSchema, candidate: observationSchema })),
 })
 const runSchema = z.object({
-  id: z.uuid(), dataset_id: z.string(), dataset_label: z.string(), requested_by: z.string(), can_retry: z.boolean(),
+  id: z.uuid(), dataset_id: z.string(), dataset_label: z.string(), requested_by: z.string(), requested_by_id: z.string(), can_retry: z.boolean(),
+  baseline_version: z.number().int().positive().nullable().default(null),
   candidate_capture_id: z.string(), reference_capture_id: z.string(), candidate_label: z.string(), reference_label: z.string(),
   comparison: comparisonSchema.nullable(),
   execution_mode: z.enum(['replay', 'live', 'recovery']), live_config: liveConfigSchema.nullable(),
@@ -58,7 +59,11 @@ const runSchema = z.object({
 })
 const pageSchema = z.object({ count: z.number(), next: z.string().nullable(), previous: z.string().nullable(), results: z.array(runSchema) })
 const reviewSchema = z.object({
-  is_baseline: z.boolean(), material_error: z.string(),
+  is_baseline: z.boolean(), material_error: z.string(), baseline_version: z.number().int().nonnegative(),
+  baseline_history: z.array(z.object({
+    version: z.number().int().positive(), previous_run_id: z.uuid().nullable(), run_id: z.uuid().nullable(),
+    capture_sha256: z.string().nullable(), fixture_sha256: z.string().nullable(), changed_by: z.string(), reason: z.string(), created_at: z.string(),
+  })),
   reviews: z.array(z.object({
     id: z.number().int(), decision: z.enum(['APPROVED', 'CHANGES_REQUESTED']), comment: z.string(),
     capture_sha256: z.string(), reviewed_by: z.string(), created_at: z.string(),
@@ -114,11 +119,13 @@ async function request<T>(path: string, schema: z.ZodType<T>, options: RequestIn
 
 export const getOpsSession = (signal?: AbortSignal) => request('/session', sessionSchema, { signal })
 
-async function post<T>(path: string, data: unknown, schema: z.ZodType<T>, dispatch = false) {
+async function post<T>(path: string, data: unknown, schema: z.ZodType<T>, dispatch = false, owner?: string, method = 'POST') {
   // 쓰기 전 Core 관리자 세션과 최신 CSRF 토큰을 확인한다. 토큰·비밀번호는 저장하지 않는다.
   const session = await getOpsSession()
+  if (!session.user) throw new OpsApiError('로그인이 만료되었습니다.', 401)
+  if (owner && session.user.id !== owner) throw new OpsApiError('로그인 계정이 변경되었습니다. 요청 계정을 다시 확인하세요.', 403)
   return request(path, schema, {
-    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRFToken': session.csrf_token },
+    method, headers: { 'Content-Type': 'application/json', 'X-CSRFToken': session.csrf_token },
     body: JSON.stringify(data),
   }, dispatch)
 }
@@ -127,9 +134,18 @@ export const listEvaluations = (page: number, signal?: AbortSignal) => request(`
 export const getEvaluation = (id: string, signal?: AbortSignal) => request(`/evaluations/${encodeURIComponent(id)}`, runSchema, { signal })
 export const getEvaluationReview = (id: string, signal?: AbortSignal) => request(`/evaluations/${encodeURIComponent(id)}/review`, reviewSchema, { signal })
 export const saveEvaluationReview = (id: string, decision: 'APPROVED' | 'CHANGES_REQUESTED', comment: string, captureSha256: string) => post(`/evaluations/${encodeURIComponent(id)}/review`, { decision, comment, capture_sha256: captureSha256 }, reviewSchema)
-export const promoteEvaluationBaseline = (id: string, reviewId: number) => post(`/evaluations/${encodeURIComponent(id)}/baseline`, { review_id: reviewId }, reviewSchema)
+export const promoteEvaluationBaseline = (id: string, reviewId: number, version: number) => post(`/evaluations/${encodeURIComponent(id)}/baseline`, { review_id: reviewId, baseline_version: version }, reviewSchema)
+export const clearEvaluationBaseline = (id: string, version: number, reason: string) => post(`/evaluations/${encodeURIComponent(id)}/baseline`, { baseline_version: version, reason }, reviewSchema, false, undefined, 'DELETE')
 export const recoverEvaluation = (id: string, requestId: string) => post(`/evaluations/${encodeURIComponent(id)}/recover`, { request_id: requestId }, runSchema, true)
-export const submitEvaluation = (requestId: string, datasetId: string, candidateCaptureId: string, referenceCaptureId: string, liveConfig: z.infer<typeof liveConfigSchema> | null = null) => post('/evaluations', {
+export const submitEvaluation = (requestId: string, datasetId: string, candidateCaptureId: string, referenceCaptureId: string, liveConfig: z.infer<typeof liveConfigSchema> | null = null, baselineVersion: number | null = null, owner?: string) => post('/evaluations', {
   request_id: requestId, dataset_id: datasetId, candidate_capture_id: candidateCaptureId, reference_capture_id: referenceCaptureId,
-  execution_mode: liveConfig ? 'live' : 'replay', live_config: liveConfig ?? {}, confirm_paid_run: liveConfig !== null,
-}, runSchema, true)
+  execution_mode: liveConfig ? 'live' : 'replay', live_config: liveConfig ?? {}, confirm_paid_run: liveConfig !== null, baseline_version: baselineVersion,
+}, runSchema, true, owner)
+
+
+export const evaluationSubmissionSchema = z.object({
+  request_id: z.uuid(), dataset_id: z.string().min(1).max(100),
+  candidate_capture_id: z.string().min(1).max(100), reference_capture_id: z.string().min(1).max(100),
+  live_config: liveConfigSchema.nullable(), baseline_version: z.number().int().positive().nullable(),
+}).strict()
+export type EvaluationSubmission = z.infer<typeof evaluationSubmissionSchema>

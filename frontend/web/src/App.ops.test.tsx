@@ -7,6 +7,7 @@ import App from './App'
 import { appContainer } from './app/appContainer'
 import { sessionRestored } from './presentation/shared/auth/state/authSlice'
 import { createAppStore } from './app/store'
+import { readPendingEvaluation, storePendingEvaluation } from './data/ops/pendingEvaluation'
 import { getEvaluation } from './data/ops/opsApi'
 
 const id = '10000000-0000-4000-8000-000000000001'
@@ -18,7 +19,7 @@ const comparisonDataset = { baseline: null, fixture: 'fixture.json', live_config
 const completed = {
   execution_mode: 'replay', live_config: null, trace_links: [],
   candidate_capture_id: capture.id, reference_capture_id: capture.id, candidate_label: capture.label, reference_label: capture.label, comparison: null,
-  id, dataset_id: dataset.id, dataset_label: dataset.label, requested_by: 'operator@example.com', can_retry: false,
+  id, dataset_id: dataset.id, dataset_label: dataset.label, requested_by: 'operator@example.com', requested_by_id: 'core:99', can_retry: false,
   status: 'COMPLETED', status_label: '완료', created_at: '2026-09-27T00:00:00Z',
   started_at: null, finished_at: null, synced_at: null, error_code: '', error_message: '',
   summary: { caseCount: 6, observedCaseCount: 6, statusAccuracy: 1, referenceCitationRecall: 1, semanticFaithfulness: null },
@@ -29,18 +30,21 @@ const completed = {
 }
 let authenticated = true
 let fetchMock: Mock<(path: string, options?: RequestInit) => Promise<Response>>
-const session = () => ({ live_enabled: true, user: authenticated ? { username: 'operator@example.com' } : null, csrf_token: authenticated ? 'rotated-token' : 'anonymous-token', datasets: authenticated ? [dataset, comparisonDataset] : [] })
+const session = () => ({ live_enabled: true, user: authenticated ? { id: 'core:99', username: 'operator@example.com' } : null, csrf_token: authenticated ? 'rotated-token' : 'anonymous-token', datasets: authenticated ? [dataset, comparisonDataset] : [] })
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 
 beforeEach(() => {
   authenticated = true
+  sessionStorage.clear()
+  vi.spyOn(crypto, 'randomUUID').mockReturnValue(id)
   fetchMock = vi.fn(async (path: string, _options?: RequestInit) => {
     if (path === '/api/v1/ops/session') return json(session())
     if (String(path).endsWith('/api/v1/auth/logout')) { authenticated = false; return new Response(null, { status: 204 }) }
     if (path.startsWith('/api/v1/ops/evaluations?page=')) return json({ count: 1, next: null, previous: null, results: [completed] })
-    if (path === `/api/v1/ops/evaluations/${id}/review`) return json({ is_baseline: false, reviews: [], material: null, material_error: '' })
+    if (path === `/api/v1/ops/evaluations/${id}/review`) return json({ is_baseline: false, baseline_version: 0, baseline_history: [], reviews: [], material: null, material_error: '' })
     if (path === `/api/v1/ops/evaluations/${id}`) return json(completed)
     if (path === '/api/v1/ops/evaluations') return json(completed, 202)
+    if (/^\/api\/v1\/ops\/evaluations\/[a-f0-9-]+$/.test(path)) return json({}, 404)
     throw new Error(`예상하지 않은 호출: ${path}`)
   })
   vi.spyOn(appContainer.resolve('logInUseCase'), 'execute').mockImplementation(async () => {
@@ -111,7 +115,7 @@ describe('React LLMOps 운영 화면', () => {
       } })
       if (path === `/api/v1/ops/evaluations/${id}/recover`) return json(recovered, 202)
       if (path === `/api/v1/ops/evaluations/${child}`) return json(recovered)
-      if (path === `/api/v1/ops/evaluations/${child}/review`) return json({ is_baseline: false, reviews: [], material: null, material_error: '' })
+      if (path === `/api/v1/ops/evaluations/${child}/review`) return json({ is_baseline: false, baseline_version: 0, baseline_history: [], reviews: [], material: null, material_error: '' })
       return original(path, options)
     })
     open(`/ops/evaluations/${id}`)
@@ -127,6 +131,7 @@ describe('React LLMOps 운영 화면', () => {
   })
 
   it('복구 접수 응답 유실과 재확인 모두 같은 UUID와 복구 API를 사용한다', async () => {
+    vi.mocked(crypto.randomUUID).mockReturnValue('30000000-0000-4000-8000-000000000003')
     const original = fetchMock.getMockImplementation()!
     const requests: string[] = []
     let child = ''
@@ -148,7 +153,10 @@ describe('React LLMOps 운영 화면', () => {
     open(`/ops/evaluations/${id}`)
     fireEvent.click(await screen.findByRole('button', { name: '후처리 다시 실행' }))
     expect(await screen.findByRole('alert')).toHaveProperty('textContent', expect.stringContaining('연결할 수 없습니다'))
-    fireEvent.click(screen.getByRole('button', { name: '후처리 다시 실행' }))
+    const recoverAgain = screen.getByRole('button', { name: '후처리 다시 실행' })
+    await waitFor(() => expect(recoverAgain).toHaveProperty('disabled', false))
+    fireEvent.click(recoverAgain)
+    await waitFor(() => expect(requests).toHaveLength(2))
     const retry = await screen.findByRole('button', { name: '같은 요청으로 접수 재확인' })
     await waitFor(() => expect(retry).toHaveProperty('disabled', false))
     fireEvent.click(retry)
@@ -211,6 +219,7 @@ describe('React LLMOps 운영 화면', () => {
     const original = fetchMock.getMockImplementation()!
     const requests: string[] = []
     fetchMock.mockImplementation(async (path, options) => {
+      if (path === `/api/v1/ops/evaluations/${id}` && requests.length < 2) return json({}, 404)
       if (path === '/api/v1/ops/evaluations') {
         requests.push(JSON.parse(String(options?.body)).request_id)
         if (requests.length === 1) throw new TypeError('connection lost')
@@ -279,7 +288,7 @@ describe('React LLMOps 운영 화면', () => {
     let submitted = false
     fetchMock.mockImplementation(async (path, options) => {
       if (path === '/api/v1/ops/evaluations') {
-        expect(JSON.parse(String(options?.body))).toEqual({ request_id: id, dataset_id: dataset.id, candidate_capture_id: capture.id, reference_capture_id: capture.id, execution_mode: 'replay', live_config: {}, confirm_paid_run: false })
+        expect(JSON.parse(String(options?.body))).toEqual({ request_id: id, dataset_id: dataset.id, candidate_capture_id: capture.id, reference_capture_id: capture.id, execution_mode: 'replay', live_config: {}, confirm_paid_run: false, baseline_version: null })
         submitted = true
         return json({ ...completed, status: 'QUEUED', status_label: '실행 대기', report_url: null })
       }
@@ -304,6 +313,7 @@ describe('React LLMOps 운영 화면', () => {
     const original = fetchMock.getMockImplementation()!
     const bodies: unknown[] = []
     fetchMock.mockImplementation(async (path, options) => {
+      if (path === `/api/v1/ops/evaluations/${id}`) return json({}, 404)
       if (path === '/api/v1/ops/evaluations') {
         bodies.push(JSON.parse(String(options?.body)))
         throw new TypeError('connection lost')
@@ -403,7 +413,7 @@ const reviewMaterial = {
 
 it('근거·응답을 검토한 후 의견과 승인 기록을 저장하고 기준을 지정한다', async () => {
   const original = fetchMock.getMockImplementation()!
-  let state = { material: reviewMaterial, material_error: '', is_baseline: false, reviews: [] as Array<{ id: number; decision: string; comment: string; capture_sha256: string; reviewed_by: string; created_at: string }> }
+  let state = { material: reviewMaterial, material_error: '', is_baseline: false, baseline_version: 0, baseline_history: [], reviews: [] as Array<{ id: number; decision: string; comment: string; capture_sha256: string; reviewed_by: string; created_at: string }> }
   fetchMock.mockImplementation(async (path, options) => {
     if (path === `/api/v1/ops/evaluations/${id}/review`) {
       if (options?.method === 'POST') {
@@ -414,7 +424,7 @@ it('근거·응답을 검토한 후 의견과 승인 기록을 저장하고 기�
       return json(state)
     }
     if (path === `/api/v1/ops/evaluations/${id}/baseline`) {
-      expect(JSON.parse(String(options?.body))).toEqual({ review_id: 1 })
+      expect(JSON.parse(String(options?.body))).toEqual({ review_id: 1, baseline_version: 0 })
       state = { ...state, is_baseline: true }
       return json(state)
     }
@@ -441,7 +451,7 @@ it('근거·응답을 검토한 후 의견과 승인 기록을 저장하고 기�
 it('검토 기준을 다음 평가의 기준 선택에 표시하고 후보 목록과 구별한다', async () => {
   const original = fetchMock.getMockImplementation()!
   fetchMock.mockImplementation((path, options) => path === '/api/v1/ops/session'
-    ? Promise.resolve(json({ ...session(), datasets: [{ ...dataset, baseline: { id: `run:${id}`, label: '검토 기준 · 10000000' } }] }))
+    ? Promise.resolve(json({ ...session(), datasets: [{ ...dataset, baseline: { version: 1, id: `run:${id}`, label: '검토 기준 · 10000000' } }] }))
     : original(path, options))
   open()
   expect(await screen.findByLabelText('기준 실행')).toHaveProperty('value', `run:${id}`)
@@ -455,10 +465,148 @@ it('검토 기준을 다음 평가의 기준 선택에 표시하고 후보 목�
 it('확인할 수 없는 자료를 승인하거나 기준으로 지정하지 않는다', async () => {
   const original = fetchMock.getMockImplementation()!
   fetchMock.mockImplementation((path, options) => path.endsWith('/review')
-    ? Promise.resolve(json({ material: null, material_error: '검토 자료를 확인할 수 없습니다.', reviews: [], is_baseline: false }))
+    ? Promise.resolve(json({ material: null, material_error: '검토 자료를 확인할 수 없습니다.', reviews: [], is_baseline: false, baseline_version: 0, baseline_history: [] }))
     : original(path, options))
   open(`/ops/evaluations/${id}`)
   expect(await screen.findByText('검토 자료를 확인할 수 없습니다.')).toBeTruthy()
   expect(screen.queryByRole('button', { name: '검토 승인 저장' })).toBeNull()
   expect(screen.queryByRole('button', { name: '비교 기준으로 지정' })).toBeNull()
+})
+
+const pendingRequest = () => ({ request_id: id, dataset_id: dataset.id, candidate_capture_id: 'new-model-response', reference_capture_id: capture.id, live_config: liveConfig, baseline_version: null })
+
+it('유료 접수 응답 유실 후 새로고침·재로그인하면 기존 요청만 조회한다', async () => {
+  const original = fetchMock.getMockImplementation()!
+  let modelCalls = 0
+  fetchMock.mockImplementation(async (path, options) => {
+    if (path === '/api/v1/ops/evaluations') { modelCalls++; throw new TypeError('accepted but response lost') }
+    return original(path, options)
+  })
+  const view = open()
+  fireEvent.change(await screen.findByLabelText('실행 방식'), { target: { value: 'live' } })
+  fireEvent.click(screen.getByRole('checkbox'))
+  fireEvent.click(screen.getByRole('button', { name: '새 응답 생성 및 평가' }))
+  await screen.findByRole('button', { name: '같은 요청으로 재시도' })
+  expect(readPendingEvaluation('core:99')).toEqual(pendingRequest())
+  view.unmount()
+  authenticated = false
+  open()
+  await screen.findByRole('heading', { name: '로그인' })
+  fireEvent.change(screen.getByLabelText('이메일'), { target: { value: 'operator@example.com' } })
+  fireEvent.change(screen.getByLabelText('비밀번호'), { target: { value: 'valid-password' } })
+  fireEvent.click(screen.getByRole('button', { name: '이메일로 로그인' }))
+  await screen.findByRole('heading', { name: '평가 실행 상세' })
+  expect(modelCalls).toBe(1)
+  expect(readPendingEvaluation('core:99')).toBeNull()
+})
+
+it('서버에 없는 보관 요청은 자동 전송하지 않고 확인 후 같은 UUID와 조건으로 접수한다', async () => {
+  storePendingEvaluation('core:99', pendingRequest())
+  const original = fetchMock.getMockImplementation()!
+  let accepted = false
+  fetchMock.mockImplementation(async (path, options) => {
+    if (path === `/api/v1/ops/evaluations/${id}` && !accepted) return json({}, 404)
+    if (path === '/api/v1/ops/evaluations') {
+      expect(JSON.parse(String(options?.body))).toMatchObject({ ...pendingRequest(), execution_mode: 'live', confirm_paid_run: true })
+      accepted = true
+    }
+    return original(path, options)
+  })
+  open()
+  await screen.findByText(/아직 접수된 요청을 찾지 못했습니다/)
+  expect(accepted).toBe(false)
+  fireEvent.click(screen.getByRole('button', { name: '같은 요청으로 재시도' }))
+  await screen.findByRole('heading', { name: '평가 실행 상세' })
+  expect(accepted).toBe(true)
+  expect(readPendingEvaluation('core:99')).toBeNull()
+})
+
+it('다른 관리자의 보관 요청은 복원하거나 제거하지 않는다', async () => {
+  storePendingEvaluation('core:other', pendingRequest())
+  open()
+  await screen.findByRole('button', { name: '평가 실행' })
+  expect(screen.queryByText(/보관한 요청:/)).toBeNull()
+  expect(fetchMock.mock.calls.some(([path]) => path === `/api/v1/ops/evaluations/${id}`)).toBe(false)
+  expect(readPendingEvaluation('core:other')).toEqual(pendingRequest())
+})
+
+it('손상된 보관 요청은 지우고 새 유료 요청을 만드는 대신 접수를 차단한다', async () => {
+  sessionStorage.setItem('govbiz.ops.pending.v1.core%3A99', '{broken')
+  open()
+  await screen.findByText(/보관한 요청을 읽을 수 없습니다/)
+  expect(screen.getByRole('button', { name: '평가 실행' })).toHaveProperty('disabled', true)
+  expect(fetchMock.mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false)
+})
+
+it('요청 보관에 실패하면 네트워크 접수를 시작하지 않는다', async () => {
+  vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('quota') })
+  open()
+  fireEvent.click(await screen.findByRole('button', { name: '평가 실행' }))
+  await screen.findByText(/요청을 보관할 수 없어 전송하지 않았습니다/)
+  expect(fetchMock.mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false)
+})
+
+it('복원 조회 장애는 새 UUID 생성이나 자동 재접수로 처리하지 않는다', async () => {
+  storePendingEvaluation('core:99', pendingRequest())
+  const original = fetchMock.getMockImplementation()!
+  fetchMock.mockImplementation(async (path, options) => path === `/api/v1/ops/evaluations/${id}` ? json({}, 503) : original(path, options))
+  open()
+  await screen.findByText(/관리자 인증 또는 운영 서버에 연결할 수 없습니다/)
+  expect(readPendingEvaluation('core:99')).toEqual(pendingRequest())
+  expect(crypto.randomUUID).not.toHaveBeenCalled()
+  expect(fetchMock.mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false)
+})
+
+it('서버가 접수를 거절한 조건은 명시적으로 다시 선택하고 기존 유료 확인을 해제한다', async () => {
+  storePendingEvaluation('core:99', pendingRequest())
+  const original = fetchMock.getMockImplementation()!
+  fetchMock.mockImplementation(async (path, options) => {
+    if (path === `/api/v1/ops/evaluations/${id}`) return json({}, 404)
+    if (path === '/api/v1/ops/evaluations') return json({ code: 'INVALID_REFERENCE' }, 400)
+    return original(path, options)
+  })
+  open()
+  await screen.findByText(/아직 접수된 요청을 찾지 못했습니다/)
+  expect(screen.getByLabelText('실행 방식')).toHaveProperty('value', 'live')
+  fireEvent.click(screen.getByRole('button', { name: '같은 요청으로 재시도' }))
+  fireEvent.click(await screen.findByRole('button', { name: '접수되지 않은 조건 다시 선택' }))
+  await screen.findByRole('button', { name: '평가 실행' })
+  expect(readPendingEvaluation('core:99')).toBeNull()
+  fireEvent.change(screen.getByLabelText('실행 방식'), { target: { value: 'live' } })
+  expect(screen.getByRole('checkbox')).toHaveProperty('checked', false)
+  expect(fetchMock.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(1)
+})
+
+it('접수 전 관리자 계정이 바뀌면 보관 요청을 다른 계정으로 전송하지 않는다', async () => {
+  const original = fetchMock.getMockImplementation()!
+  let sessions = 0
+  fetchMock.mockImplementation(async (path, options) => {
+    if (path === '/api/v1/ops/session' && ++sessions > 1) return json({ ...session(), user: { id: 'core:other', username: 'other@example.com' } })
+    return original(path, options)
+  })
+  open()
+  fireEvent.click(await screen.findByRole('button', { name: '평가 실행' }))
+  await screen.findByText('other@example.com')
+  expect(fetchMock.mock.calls.some(([path, options]) => path === '/api/v1/ops/evaluations' && options?.method === 'POST')).toBe(false)
+  expect(readPendingEvaluation('core:99')?.request_id).toBe(id)
+})
+
+it.each([true, false])('자료 확인 가능 여부(%s)와 무관하게 기준 해제는 버전과 사유를 보내고 이력을 표시한다', async (available) => {
+  const original = fetchMock.getMockImplementation()!
+  const state = { material: available ? reviewMaterial : null, material_error: available ? '' : '저장 자료 손상', reviews: [], is_baseline: true, baseline_version: 1, baseline_history: [] }
+  fetchMock.mockImplementation(async (path, options) => {
+    if (path.endsWith('/review')) return json(state)
+    if (path.endsWith('/baseline')) {
+      expect(options?.method).toBe('DELETE')
+      expect(JSON.parse(String(options?.body))).toEqual({ baseline_version: 1, reason: '조건 오류 재검토' })
+      return json({ ...state, is_baseline: false, baseline_version: 2, baseline_history: [{ version: 2, previous_run_id: id, run_id: null, capture_sha256: null, fixture_sha256: 'c'.repeat(64), changed_by: 'operator@example.com', reason: '조건 오류 재검토', created_at: completed.created_at }] })
+    }
+    return original(path, options)
+  })
+  open(`/ops/evaluations/${id}`)
+  await screen.findByText('현재 데이터셋의 비교 기준')
+  fireEvent.change(screen.getByLabelText('검토 의견'), { target: { value: '조건 오류 재검토' } })
+  fireEvent.click(screen.getByRole('button', { name: '의견을 사유로 기준 해제' }))
+  await screen.findByText('비교 기준을 해제했습니다.')
+  expect(screen.getByText(/버전 2 · 해제/)).toBeTruthy()
 })

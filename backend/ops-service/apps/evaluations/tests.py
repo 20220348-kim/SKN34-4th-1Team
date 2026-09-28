@@ -169,7 +169,7 @@ class EvaluationTests(TestCase):
         run = self.queued_run()
         self.assertEqual(
             self.client.get("/api/v1/ops/session").json()["user"],
-            {"username": "operator@example.com"},
+            {"id": "core:1", "username": "operator@example.com"},
         )
         for failure, status in [
             (PermissionDenied(), 403),

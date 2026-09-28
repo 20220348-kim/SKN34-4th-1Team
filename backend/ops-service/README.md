@@ -94,9 +94,10 @@ AI 작성 참조 자료의 출처와 미측정 의미 충실도는 검토 승인
 
 - `GET /api/v1/ops/evaluations/{id}/review`: 해시 검증을 거친 사례·근거와 검토 이력, 현재 기준 여부
 - `POST .../{id}/review`: `decision` (`APPROVED` / `CHANGES_REQUESTED`), `comment` (1~3000자), `capture_sha256`
-- `POST .../{id}/baseline`: `review_id`; 완료 파일과 최신 승인 기록이 일치해야 지정 가능
+- `POST .../{id}/baseline`: `review_id`, `baseline_version`(검토 GET에서 확인한 현재 버전); 완료 파일·최신 승인 기록·버전이 일치해야 지정 가능
+- `DELETE .../{id}/baseline`: `baseline_version`, `reason`(1~3000자); 해당 실행이 현재 기준일 때 해제. 오래된 버전은 409
 - session의 데이터셋별 `baseline`은 현재 기준 선택지 또는 null. 새 평가의 `reference_capture_id`에
-  `run:<요청 UUID>`를 사용하며 임의 UUID·다른 자료·미승인 실행은 거절
+  `run:<요청 UUID>`와 선택지의 `version`을 `baseline_version`으로 함께 전송하며 임의 UUID·다른 자료·미승인 실행은 거절
 - 접수 시 `reference_config`에 기준 UUID·캡처/fixture SHA-256을 서버가 고정. 실행기는 이를 재검증하고
   `reference-capture.json`을 실행 폴더에 보존. 나중의 기준 교체·철회는 이미 접수한 실행을 변경하지 않음
 - 원본 파일을 확인할 수 없거나 해시가 바뀌면 검토·지정·새 접수를 거절. 자동으로 다른 기준을 사용하지 않음
@@ -111,6 +112,35 @@ Migration `0004_evaluation_review_baseline`은 검토 이력·데이터셋별 �
 
 호출 흐름: `React 검토 화면 → Django 파일 무결성 확인 → MySQL 검토 이력/기준 저장`.
 다음 평가는 `Django 기준 명세 고정 → Prefect → 기준 응답 복사·검증 → 기존 평가 파이프라인`을 거칩니다.
+
+## 접수 복원과 기준 버전
+
+React는 전송 전에 요청 UUID·자료/캡처 ID·기준 버전·확인한 모델/호출 설정만 관리자별
+`sessionStorage`에 보관합니다. `GET /api/v1/ops/session`의 `user.id`와 실행 응답의
+`requested_by_id`는 이메일 변경과 무관한 Ops 연결 식별자(`core:{회원 ID}`)입니다.
+같은 탭에서 새로고침·재로그인하면 먼저 기존 UUID를 GET으로 확인합니다. 조회만으로 모델을
+호출하지 않으며 404여도 자동 POST하지 않습니다. 운영자가 재확인하면 같은 UUID·명세로 전송합니다.
+다른 관리자 기록은 재사용하지 않고, 전송 직전 세션 계정도 대조합니다. 저장소 오류·손상은 접수를
+차단하며 인증정보·질문·답변 원문은 저장하지 않습니다. 탭 종료·저장소 삭제 이후 복원은 보장하지 않습니다.
+서버가 400으로 접수를 거절한 조건은 명시적으로 다시 선택하고 유료 전송 확인을 새로 받습니다.
+
+Migration `0007_baseline_versions`는 해제해도 남는 데이터셋 기준 행과 단조 증가 버전,
+`EvaluationBaselineChange` 이력을 추가합니다. 검토 저장·기준 지정/교체/해제·새 평가 접수는
+같은 데이터셋 기준 행을 먼저 잠급니다. 파일 검증은 잠금 밖에서 수행하고 DB 안에서 버전·검토·원본
+완료 상태를 다시 확인합니다. 접수를 커밋한 뒤 Prefect에 전송하므로 외부 HTTP를 DB 잠금 안에서 실행하지 않습니다.
+
+- 실행에 `baseline_version`·`baseline_review_id`를 고정하고, 기존 `reference_config`의 UUID·캡처/자료
+  해시와 실행기 스냅샷 계약은 유지합니다. 이미 접수된 요청의 재전송은 당시 명세를 유지합니다.
+- 철회가 먼저 커밋되면 옛 버전으로 새 접수를 거절하고, 접수가 먼저 커밋되면 이후 철회에도 해당 실행의
+  기준이 유지됩니다. 최초 기준 지정 경합도 데이터셋 PK와 잠금으로 직렬화합니다.
+- 검토 GET은 현재 `baseline_version`과 `baseline_history`를 반환합니다. 이력에는 이전/새 검토와 실행,
+  캡처/자료 해시, 버전, 수행자, 시각, 사유가 있습니다. 지정 사유는 승인된 검토 의견이며 새 검토에 따른
+  자동 해제도 이력으로 남습니다. 중복 지정/해제 재전송은 같은 변경으로 처리합니다.
+- 기존 기준은 버전 1과 기존 지정 시각·검토자 그대로 이관합니다. 이전 교체 이력·당시 자료 해시는
+  추정해 채우지 않으며, 과거 평가의 승인 버전도 소급 생성하지 않습니다.
+
+배포 순서는 `Ops 이미지 빌드 → migration 0007 → Ops API·ops-sync 갱신 → React 갱신`입니다.
+루트 README 대신 이 문서와 [LLMOps 운영 문서](../../infrastructure/llmops/README.md)에 계약을 기록합니다.
 
 ## 실행 상태의 백그라운드 확인
 

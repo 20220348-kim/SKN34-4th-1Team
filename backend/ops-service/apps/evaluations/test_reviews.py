@@ -16,7 +16,7 @@ from .reviews import review_material
 from .services import ResultsUnavailable, read_result
 
 
-class ReviewTests(TestCase):
+class ReviewFixture:
     def setUp(self):
         self.user = get_user_model().objects.create_user("reviewer", email="reviewer@example.com")
         self.client = APIClient()
@@ -128,11 +128,20 @@ class ReviewTests(TestCase):
     def promote(self):
         review = self.review().json()["reviews"][0]
         response = self.client.post(
-            self.url + "/baseline", {"review_id": review["id"]}, format="json"
+            self.url + "/baseline",
+            {
+                "review_id": review["id"],
+                "baseline_version": self.client.get(self.url + "/review").json()[
+                    "baseline_version"
+                ],
+            },
+            format="json",
         )
         self.assertEqual(response.status_code, 200)
         return review
 
+
+class ReviewTests(ReviewFixture, TestCase):
     def test_material_review_history_and_baseline_are_separate(self):
         data = self.client.get(self.url + "/review").json()
         self.assertEqual([item["case_id"] for item in data["material"]["cases"]], ["E01"])
@@ -140,11 +149,13 @@ class ReviewTests(TestCase):
         self.assertEqual(data["material"]["cases"][0]["cited_orders"], [0])
         self.assertEqual(data["reviews"], [])
         self.assertEqual(
-            self.client.post(self.url + "/baseline", {"review_id": 1}, format="json").status_code,
+            self.client.post(
+                self.url + "/baseline", {"review_id": 1, "baseline_version": 0}, format="json"
+            ).status_code,
             409,
         )
         first = self.review().json()["reviews"][0]
-        self.assertFalse(EvaluationBaseline.objects.exists())
+        self.assertFalse(EvaluationBaseline.objects.filter(review__isnull=False).exists())
         self.assertEqual(self.review().json()["reviews"][0]["id"], first["id"])
         self.promote()
         session = self.client.get("/api/v1/ops/session").json()
@@ -155,7 +166,9 @@ class ReviewTests(TestCase):
         self.assertEqual(len(response.json()["reviews"]), 2)
         self.assertEqual(
             self.client.post(
-                self.url + "/baseline", {"review_id": first["id"]}, format="json"
+                self.url + "/baseline",
+                {"review_id": first["id"], "baseline_version": 0},
+                format="json",
             ).status_code,
             409,
         )
@@ -170,6 +183,7 @@ class ReviewTests(TestCase):
             "dataset_id": self.dataset,
             "candidate_capture_id": self.capture_id,
             "reference_capture_id": f"run:{self.run.id}",
+            "baseline_version": 1,
         }
         response = self.client.post("/api/v1/ops/evaluations", payload, format="json")
         self.assertEqual(response.status_code, 202)
@@ -220,7 +234,14 @@ class ReviewTests(TestCase):
         self.assertIsNone(self.client.get(self.url + "/review").json()["material"])
         self.assertEqual(
             self.client.post(
-                self.url + "/baseline", {"review_id": review["id"]}, format="json"
+                self.url + "/baseline",
+                {
+                    "review_id": review["id"],
+                    "baseline_version": self.client.get(self.url + "/review").json()[
+                        "baseline_version"
+                    ],
+                },
+                format="json",
             ).status_code,
             503,
         )
@@ -236,6 +257,7 @@ class ReviewTests(TestCase):
             "dataset_id": self.dataset,
             "candidate_capture_id": self.capture_id,
             "reference_capture_id": f"run:{self.run.id}",
+            "baseline_version": 1,
         }
         self.assertEqual(
             self.client.post("/api/v1/ops/evaluations", payload, format="json").status_code, 400

@@ -15,10 +15,17 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
-from .catalog import DATASETS, public_datasets, selection, validate_execution
+from .catalog import DATASETS, public_datasets, selection
 from .models import EvaluationRun
 from .recovery import recovery_state, submit_recovery
-from .reviews import baseline_choices, promote_baseline, review_material, review_state, save_review
+from .reviews import (
+    baseline_choices,
+    clear_baseline,
+    promote_baseline,
+    review_material,
+    review_state,
+    save_review,
+)
 from .services import (
     DATASET_ID,
     PENDING_SYNC,
@@ -53,7 +60,10 @@ def api_session(request):
     baselines = baseline_choices() if operator else {}
     return Response(
         {
-            "user": {"username": request.user.email or request.user.get_username()}
+            "user": {
+                "id": request.user.get_username(),
+                "username": request.user.email or request.user.get_username(),
+            }
             if operator
             else None,
             "csrf_token": get_token(request),
@@ -83,22 +93,7 @@ class RunRequestSerializer(serializers.Serializer):
     live_config = serializers.JSONField(default=dict)
     confirm_paid_run = serializers.BooleanField(default=False)
 
-    def validate(self, attrs):
-        try:
-            validate_execution(
-                attrs["dataset_id"],
-                attrs["candidate_capture_id"],
-                attrs["reference_capture_id"],
-                attrs["execution_mode"],
-                attrs["live_config"],
-            )
-            if attrs["execution_mode"] == "live" and (
-                not settings.LLMOPS_LIVE_ENABLED or not attrs["confirm_paid_run"]
-            ):
-                raise ValueError("새 모델 평가는 활성화와 전송 자료·호출 예산 확인이 필요합니다.")
-        except ValueError as exc:
-            raise serializers.ValidationError(str(exc)) from None
-        return attrs
+    baseline_version = serializers.IntegerField(min_value=1, allow_null=True, default=None)
 
 
 def run_data(run, viewer_id=None):
@@ -116,6 +111,8 @@ def run_data(run, viewer_id=None):
         "dataset_label": DATASETS[run.dataset_id]["label"],
         "candidate_capture_id": run.candidate_capture_id,
         "reference_capture_id": run.reference_capture_id,
+        "baseline_version": run.baseline_version,
+        "baseline_review_id": run.baseline_review_id,
         "candidate_label": selection(
             run.dataset_id, run.candidate_capture_id, run.reference_capture_id
         )[1]["label"],
@@ -127,6 +124,7 @@ def run_data(run, viewer_id=None):
         "source_run_id": str(run.source_run_id) if run.source_run_id else None,
         "live_config": run.live_config or None,
         "requested_by": run.requested_by.email or run.requested_by.get_username(),
+        "requested_by_id": run.requested_by.get_username(),
         "can_retry": run.prefect_flow_run_id is None and run.requested_by_id == viewer_id,
         "status": run.status,
         "status_label": run.get_status_display(),
@@ -273,22 +271,46 @@ def api_review(request, run_id):
 
 class BaselineRequestSerializer(serializers.Serializer):
     review_id = serializers.IntegerField(min_value=1)
+    baseline_version = serializers.IntegerField(min_value=0)
+
+
+class BaselineClearSerializer(serializers.Serializer):
+    baseline_version = serializers.IntegerField(min_value=0)
+    reason = serializers.CharField(max_length=3000, allow_blank=False)
 
 
 @never_cache
-@api_view(["POST"])
+@api_view(["POST", "DELETE"])
 @permission_classes([IsAuthenticated])
 def api_baseline(request, run_id):
     run = get_object_or_404(EvaluationRun, pk=run_id)
-    serializer = BaselineRequestSerializer(data=request.data)
+    serializer_class = (
+        BaselineClearSerializer if request.method == "DELETE" else BaselineRequestSerializer
+    )
+    serializer = serializer_class(data=request.data)
     serializer.is_valid(raise_exception=True)
     try:
-        promote_baseline(run, request.user, serializer.validated_data["review_id"])
+        if request.method == "DELETE":
+            clear_baseline(run, request.user, **serializer.validated_data)
+        else:
+            promote_baseline(run, request.user, **serializer.validated_data)
     except RequestConflict:
         return Response({"code": "REVIEW_CONFLICT"}, status=409)
     except ResultsUnavailable:
         return Response({"code": "RESULTS_UNAVAILABLE"}, status=503)
-    return Response({**review_state(run), "material": review_material(run), "material_error": ""})
+    try:
+        material = review_material(run)
+    except ResultsUnavailable:
+        material = None
+    return Response(
+        {
+            **review_state(run),
+            "material": material,
+            "material_error": "검토 자료를 확인할 수 없습니다. 완료 상태와 저장소를 확인하세요."
+            if material is None
+            else "",
+        }
+    )
 
 
 @never_cache

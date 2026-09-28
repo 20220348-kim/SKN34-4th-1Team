@@ -21,6 +21,8 @@ class EvaluationRun(models.Model):
     candidate_capture_id = models.CharField(max_length=100, default="target-coverage-20260907-v1")
     reference_capture_id = models.CharField(max_length=100, default="target-coverage-20260907-v1")
     reference_config = models.JSONField(default=dict)
+    baseline_version = models.PositiveIntegerField(null=True)
+    baseline_review = models.ForeignKey("EvaluationReview", null=True, on_delete=models.PROTECT)
     comparison = models.JSONField(default=dict)
     execution_mode = models.CharField(max_length=10, default="replay")
     live_config = models.JSONField(default=dict)
@@ -63,8 +65,32 @@ class EvaluationReview(models.Model):
 
 
 class EvaluationBaseline(models.Model):
-    # 데이터셋별 기준은 하나이며 승인 기록 자체를 보존한다.
+    # 해제 뒤에도 행과 버전을 유지해 최초 지정·교체·접수의 잠금 대상으로 사용한다.
     dataset_id = models.CharField(max_length=100, primary_key=True)
-    review = models.ForeignKey(EvaluationReview, on_delete=models.PROTECT)
-    selected_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    version = models.PositiveIntegerField(default=0)
+    review = models.ForeignKey(EvaluationReview, null=True, on_delete=models.PROTECT)
+    selected_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.PROTECT)
     selected_at = models.DateTimeField(auto_now=True)
+
+
+class EvaluationBaselineChange(models.Model):
+    baseline = models.ForeignKey(
+        EvaluationBaseline, on_delete=models.PROTECT, related_name="changes"
+    )
+    version = models.PositiveIntegerField()
+    previous_review = models.ForeignKey(
+        EvaluationReview, null=True, on_delete=models.PROTECT, related_name="baseline_replacements"
+    )
+    review = models.ForeignKey(
+        EvaluationReview, null=True, on_delete=models.PROTECT, related_name="baseline_selections"
+    )
+    changed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    reason = models.TextField()
+    fixture_sha256 = models.CharField(max_length=64, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-version"]
+        constraints = [
+            models.UniqueConstraint(fields=["baseline", "version"], name="unique_baseline_version")
+        ]
