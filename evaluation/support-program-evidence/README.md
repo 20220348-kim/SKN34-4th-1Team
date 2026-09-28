@@ -235,6 +235,11 @@ backend/ai-service/.venv/bin/python evaluation/support-program-evidence/evaluate
 평가에 소급 적용하지 않습니다. API 계약은 [Ops 검토 안내](../../backend/ops-service/README.md#응답-검토와-비교-기준)에 있습니다.
 무료 테스트의 HTTP 스텁 응답은 실제 모델 품질 측정에 포함하지 않습니다.
 
+새 Ops 접수는 품질 정책 내용·코드 해시도 명세에 포함하며 실행 직전 동일 여부를 검사합니다.
+완료 응답의 정책 판정은 Django에서 수행합니다. 평가 기준 자료 검토와 후보 답변 검토를 분리하고
+현재 근거의 명시적 재판정 이력을 저장합니다. 새 모델 호출이나 기존 Langfuse 점수·Evidently 보고서의
+수정은 없으며 계약은 [Ops 품질 판정](../../backend/ops-service/README.md#평가-기준-검토와-품질-판정)을 따릅니다.
+
 2026-09-27 승인된 `gpt-6-luna` 실제 API 테스트는 E01 가상 질문 한 건·1회로 수행했습니다.
 토큰·Langfuse trace/점수·보고서 확인 결과와 한계는 [실제 호출 기록](../../infrastructure/llmops/README.md#gpt-6-luna-실제-api-1회-검증)에 보존합니다.
 `comparison.json`에는 집계 지표와 실행 식별자를 보관하며, 검토 화면의 답변 원문은 해시가 검증된

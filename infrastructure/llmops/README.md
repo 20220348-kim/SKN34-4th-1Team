@@ -8,7 +8,7 @@ AI Service의 `uv.lock`으로 고정한다. 요청 처리에는 Langfuse만 설�
 AI Service·Django Ops의 로컬·CI·Docker와 평가 실행기·Prefect 서버는 모두 Python 3.12를 사용한다.
 AI 프로젝트는 `>=3.12,<3.13`으로 제한하며 `.python-version`과 `uv.lock`에 맞춰 설치한다.
 
-## 개발 반영 현황 — 2026-09-27
+## 개발 반영 현황 — 2026-09-28
 
 지금까지 개발한 기능과 로컬 검증 범위다. 아래 상세 절에는 실행 방법과 당시 검증 기록을 보존한다.
 
@@ -23,15 +23,19 @@ AI 프로젝트는 `>=3.12,<3.13`으로 제한하며 `.python-version`과 `uv.lo
 | 새 모델 평가 | 자료·모델·호출 수·출력 토큰 예산 확인 후 새 응답 생성, 중복 유료 실행 차단, 실패 시 부분 캡처·호출 시도 수 보존 |
 | GPT-6 Luna 실제 호출 | 환경변수 반영 후 E01 한 건을 실제 1회 호출. 토큰·trace·점수·보고서 확인. 전체 품질 평가로 해석하지 않음 |
 | 관리자 검토·비교 기준 | 질문·근거·후보/기준 답변 조회, 승인·수정 필요 의견과 검토자·이력 저장, 데이터셋별 기준 지정, 접수 시 기준 해시 고정·실행별 원본 복사 |
+| 품질 판정 | 기준 자료 검토와 응답 검토 분리, 정책·입력·검토 이력 고정, 실행 상태와 품질 상태 분리, 최신 품질 합격·전체 승인이 있는 실행만 기준 지정 |
 | 후처리 복구 | 완료된 응답을 재사용해 보고서·점수 등록만 새 실행에서 처리. 입력 해시 고정·복사, 원본 이력 보존, 동시 접수 차단·응답 유실 재확인. 추가 모델 호출 0회 |
 
 상세 계약은 [Ops README](../../backend/ops-service/README.md#응답-검토와-비교-기준),
 화면 사용법은 [Web README](../../frontend/web/README.md#llmops-운영-화면--react--django),
 평가 입력·출력은 [평가 README](../../evaluation/support-program-evidence/README.md#ops에서-새-응답-생성)에 둔다.
 전체 도입 순서와 후속 범위는 [전략 문서](../../docs/langfuse-adoption-strategy.md)에서 관리한다.
-현재 작업 우선순위와 진입·완료 조건은 [skn-25 이후 개발 전략](../../docs/langfuse-adoption-strategy.md#후속-개발-전략--skn-25-기준)을 따른다.
+현재 작업 우선순위와 진입·완료 조건은 [skn-35 이후 개발 전략](../../docs/langfuse-adoption-strategy.md#후속-개발-전략--skn-35-이후)을 따른다.
 
-남은 범위는 사례별 검토·평가 자료 확장·품질 합격 기준, 취소·정기 실행·알림,
+사례별 검토와 실행 명세 고정은 구현했다. `skn-35 / 5626586`의 Ops CI에서 새 접수 프로필이 빠진
+기존 검토 테스트 1개가 실패했고 `b32efa1`에서 수정해 필수 CI 5개가 모두 통과했다.
+후속 품질 판정 기능은 로컬 구현·검증을 마쳤으며 `skn-36`의 원격 CI 결과는 별도로 확인한다.
+남은 범위는 실제 사람의 평가 자료 검토·확장과 현재 모델 기준 확보, 취소·정기 실행·알림,
 Core부터 이어지는 전체 RAG 추적과 Ops 평가 연동, 운영 배포다. 별도 도구의 과거 전체 RAG 검증 기록과
 현재 Ops의 고정 근거 평가는 구별한다. `skn-23`의 `fba8aeb`에서 원격 Ops CI가 실행됐으며,
 단독·루트 Compose의 평가 자료 마운트 누락으로 컨테이너 검토 테스트 7개가 실패했다.
@@ -287,7 +291,8 @@ flowchart LR
 수동 Prefect 재실행도 기존 요청의 모델 호출을 반복하지 않는다. 모델 실패·timeout은 부분 캡처를 남기고
 작업 실패로 표시한다. 호출 시도 수는 요청 전송 직전에 저장하며 과금 확정 횟수는 아니다.
 보고서/점수 등록 실패 뒤에는 저장된 완료 응답을 사용하는 [후처리 복구](#후처리-복구)를 실행할 수 있다.
-새 캡처의 자동 기준 승격·품질 합격 판정·정기 평가도 이번 범위에 포함하지 않는다.
+새 캡처의 자동 기준 승격·자동 품질 합격·정기 평가는 포함하지 않는다. 품질 판정은 자료와 응답을
+검토한 후 명시적으로 저장하며 [품질 판정 계약](../../backend/ops-service/README.md#평가-기준-검토와-품질-판정)을 따른다.
 
 무료 테스트는 전송 명세·실패·중복·비교·UI 동작을 검증한다. 실제 OpenAI 품질 검증은 별도 승인/실행 전까지 미검증이다.
 기존 캡처의 이름이나 모델 메타데이터를 현재 모델로 변경하지 않는다.
@@ -709,6 +714,65 @@ Ops 테스트는 Python 3.12 이미지의 `uv run --locked python manage.py test
 현재 모델의 품질 검증은 아니다. 로컬 검증 증거는 git 제외 경로인
 `work/llmops-spec-mismatch.json`, `work/llmops-execution-spec-verification.json`에 저장했다.
 
-기준 `main / ab7add7`의 필수 CI 5개는 통과했지만, 이번 변경은 아직 커밋·푸시하지 않았다.
-변경 SHA의 전체 Ops/MySQL·컨테이너, AI/Web/Shared/Mobile/Core, 실제 서버 LLMOps CI는 별도 확인 대상이다.
+로컬 검증 당시에는 커밋·푸시 전이었고, 이후 `skn-35 / 5626586`로 푸시했다.
+이전 `main / ab7add7`의 필수 CI 5개 통과를 이번 변경에 적용하지 않는다.
+2026-09-28 16:49 KST 확인에서 Ops CI의 전체 80개 테스트 중 기존 검토 테스트 1개가 실패했다.
+이후 해당 테스트의 새 접수 요청에 `execution_profile`을 반영하고 원래의 기준 철회·재전송 보장을
+재검증했다. 수정 SHA `b32efa1`의 필수 CI 5개는 컨테이너 검증까지 모두 통과했다. 실행 링크는
+[현재 후속 전략](../../docs/langfuse-adoption-strategy.md#후속-개발-전략--skn-35-이후)에서 추적한다.
 LLMOps CI에는 실제 Ops 이미지 A와 프롬프트 파일이 다른 일회용 실행기 B의 무료 차단 검증을 추가했다.
+
+### 품질 판정과 평가 기준 검토 — 2026-09-28
+
+`FixtureReview`는 평가 기준 자료의 검토를, `QualityAssessment`는 적용 정책·입력 해시·자료/사례
+검토 ID·담당자·시각·판정과 사유를 보존한다. `fixed-evidence-quality-v1`은 고정 근거의 선택
+사례만 판단하며, 기대 상태·인용 조건과 실제 사람 검토가 모두 충족돼야 합격한다. 이전 판정은
+변경하지 않고 정책·검토 변경 후 새 판정을 저장한다. 자동 의미 충실도는 계속 미측정이다.
+
+React는 `미판정 / 검토 필요 / 불합격 / 합격`과 이유·이력을 실행 상태와 별도로 표시한다.
+새 기준 지정과 해당 기준으로 새 평가를 접수할 때 Django가 현재 품질 합격과 최신 전체 승인을
+검사한다. 이미 접수된 요청의 기준 스냅샷은 유지한다. API 계약은
+[Ops README](../../backend/ops-service/README.md#평가-기준-검토와-품질-판정)에 정리했다.
+
+호출 흐름은 `React → Django 관리자·CSRF·자료/검토 버전 확인 → 고정 정책 판정 → MySQL 이력 저장`이다.
+새 모델·Prefect 실행이나 Langfuse 점수 재등록은 발생하지 않는다.
+
+로컬 선택 검증은 다음 **147개**이며 재실행한 테스트는 중복 합산하지 않았다.
+
+| 범위 | 결과 | 확인 내용 |
+|---|---|---|
+| Ops 관련 테스트 | 50개 통과 | 판정·기준 자료 검토, 기준 지정 제한, 명세 보존, MySQL 경합·rollback·migration, 인증·CSRF |
+| 실행기 관련 pytest | 53개 통과 | 정책 코드/정의 해시를 포함한 명세 검증, 기존 실행·후처리 복구 보존 |
+| Web `App.ops.test.tsx` | 44개 통과 | 명시적 판정 저장, 자료 검토 확인·사유, 오래된 합격의 기준 지정 차단, 기존 운영 화면 회귀 |
+
+Ops는 Python 3.12의 검사 컨테이너와 격리 MySQL 8.4를 사용했다. 선택 명령은 다음과 같다.
+인증·CSRF는 `apps.evaluations.tests.EvaluationTests`의 관련 3개 메서드를 별도로 실행했다.
+
+```bash
+# backend/ops-service: 격리 MySQL 8.4에 연결한 환경
+uv run --locked python manage.py test apps.evaluations.test_quality apps.evaluations.test_reviews apps.evaluations.test_case_reviews apps.evaluations.test_baselines apps.evaluations.test_execution_spec --noinput
+
+# backend/ai-service: 고정된 평가 의존성을 설치한 환경
+uv run --locked --extra dev --group evaluation python -m pytest ../../evaluation/support-program-evidence/test_execution_spec.py ../../evaluation/support-program-evidence/test_ops_flow.py ../../evaluation/support-program-evidence/test_recovery.py -q
+
+# frontend/web
+pnpm test src/App.ops.test.tsx
+```
+
+실행기 검증은 로컬의 기존 AI 가상환경 Python으로 같은 pytest 대상 53개를 실행했다.
+Ruff 검사·포맷, TypeScript·Oxlint, Django migration 차이 없음, 실행 명세 생성본 일치와
+`git diff --check`도 확인했다. Ops·동기화 서비스·실행기 이미지를 빌드하고 로컬 개발 서비스를
+갱신했으며 migration `0010_quality_assessments`를 적용했다. 기존 개발 DB·볼륨은 보존했다.
+
+사용자의 구체적 승인 후 기존 실행
+[`f5f5fe26-76cb-4979-a58b-b0735406be04`](http://localhost:5173/ops/evaluations/f5f5fe26-76cb-4979-a58b-b0735406be04)에
+품질 판정 1건을 실제 UI로 저장했다. 기준 자료와 TC01~TC06 답변의 사람 검토가 없어
+`NEEDS_REVIEW`이며 같은 입력을 다시 저장해도 이력은 1건이었다. 비교 기준 지정은 비활성 상태다.
+DB 읽기 검증에서도 판정 1건·자료 검토 0건·기존 실행 19건을 확인했다. 해당 실행의 접수 명세,
+Prefect 실행 ID·콘텐츠 평가 ID와 모델 호출 0회가 유지됐다. 증거는 git 제외 경로인
+`work/llmops-quality-verification.json`에 기록했다.
+
+사람의 기준 자료/답변 승인이나 실제 모델 품질 측정은 수행하지 않았다. P0 수정 커밋 `b32efa1`은
+필수 CI가 통과했지만 이 P1 기능은 별도 검증 대상이며 사용자 요청에 따라 `skn-36`으로 관리한다.
+해당 변경의 Ops 전체 MySQL·컨테이너, LLMOps 실제 서버, GovBiz 전체 검증은 이 브랜치의 최신 커밋에
+대한 CI 결과로 확인한다.

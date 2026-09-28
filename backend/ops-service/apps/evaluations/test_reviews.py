@@ -138,6 +138,30 @@ class ReviewFixture:
                 )
                 self.assertEqual(response.status_code, 200)
                 data = response.json()
+        if decision == "APPROVED":
+            quality = data["quality"]
+            if not quality["fixture_reviews"]:
+                response = self.client.post(
+                    target + "/fixture-review",
+                    {
+                        "decision": "APPROVED",
+                        "comment": "테스트 전용 참조 검토",
+                        "fixture_sha256": data["material"]["fixture_sha256"],
+                        "case_ids": [case["case_id"] for case in data["material"]["cases"]],
+                        "rubric_version": quality["fixture_rubric_version"],
+                        "fixture_version": quality["fixture_version"],
+                    },
+                    format="json",
+                )
+                self.assertEqual(response.status_code, 200)
+                data = response.json()
+            response = self.client.post(
+                target + "/quality",
+                {"input_sha256": data["quality"]["input_sha256"]},
+                format="json",
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["quality"]["status"], "PASS")
         comment = "근거·지역·법인 조건 확인 <script>실행 금지</script>"
         previous = data["reviews"][0] if data["reviews"] else None
         retry = previous and previous["decision"] == decision and previous["comment"] == comment

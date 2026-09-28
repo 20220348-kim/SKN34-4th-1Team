@@ -21,6 +21,7 @@
 !backend/ops-service/apps/evaluations/capture_catalog.json
 !backend/ops-service/apps/evaluations/recovery_inputs.py
 !backend/ops-service/apps/evaluations/execution_spec.py
+!backend/ops-service/apps/evaluations/quality_policy.py
 !backend/ops-service/apps/evaluations/execution_release.json
 !evaluation/support-program-evidence/fixture.json
 !evaluation/support-program-evidence/runs/fixed-context-20260906-diagnostic-v1/

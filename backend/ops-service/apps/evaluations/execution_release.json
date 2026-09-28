@@ -1,5 +1,17 @@
 {
   "schema_version": 1,
+  "quality_policy": {
+    "definition": {
+      "version": "fixed-evidence-quality-v1",
+      "scope": "fixed-answer-context-only",
+      "require_fixture_review": true,
+      "require_all_cases_suitable": true,
+      "require_expected_status": true,
+      "require_expected_citations": true,
+      "semantic_measurement": "human-case-review"
+    },
+    "code_sha256": "b2715707819f120f677aba684790f3f68d6c27c17c1613db455d162d89823b84"
+  },
   "evaluation": {
     "sha256": "a6c84c4328591db81aa2f433660573dd1456ed8abdaa4705de6e52872b7fba53",
     "files": {
@@ -42,12 +54,13 @@
     }
   },
   "pipeline": {
-    "sha256": "37c122ba15b1e78ac642f28e97c0c87ea0c659ae5232b473665564a0ffd3df89",
+    "sha256": "462be5394926e7a8393122f7bb10af47538c5b330b2261972bd936ed180fe5da",
     "files": {
       "evaluation/support-program-evidence/ops_flow.py": "5f13928f3f65171b0837499b804b760d4e23fe8b8957b64ebf4c631d79d64c43",
       "backend/ops-service/apps/evaluations/catalog.py": "444ff19d7eadf89bb819f1fd5df30ff30f0d931f9dc39a8fa23f6e9a554bd874",
       "backend/ops-service/apps/evaluations/recovery_inputs.py": "d0cb457918b0886dd011b436a8969d3545afd32b923c085cabe365b414645a87",
-      "backend/ops-service/apps/evaluations/execution_spec.py": "2e77a49a1c1b06fb9c62ad2b98208358050b761a3c398633b557f84f639adcca"
+      "backend/ops-service/apps/evaluations/execution_spec.py": "20288a5354d0968bb4a29c5e7eadfd7d834b2dbadbef7e1879af0a4e497c7949",
+      "backend/ops-service/apps/evaluations/quality_policy.py": "b2715707819f120f677aba684790f3f68d6c27c17c1613db455d162d89823b84"
     }
   },
   "datasets": {

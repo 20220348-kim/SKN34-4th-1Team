@@ -129,3 +129,51 @@ class EvaluationBaselineChange(models.Model):
         constraints = [
             models.UniqueConstraint(fields=["baseline", "version"], name="unique_baseline_version")
         ]
+
+
+class FixtureReview(models.Model):
+    dataset_id = models.CharField(max_length=100)
+    version = models.PositiveIntegerField()
+    fixture_sha256 = models.CharField(max_length=64)
+    case_ids = models.JSONField()
+    rubric_version = models.CharField(max_length=40)
+    decision = models.CharField(
+        max_length=20,
+        choices=[
+            ("APPROVED", "검토 승인"),
+            ("CHANGES_REQUESTED", "수정 필요"),
+            ("DEFERRED", "보류"),
+        ],
+    )
+    comment = models.TextField()
+    reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-version"]
+        constraints = [
+            models.UniqueConstraint(fields=["dataset_id", "version"], name="unique_fixture_review")
+        ]
+
+
+class QualityAssessment(models.Model):
+    run = models.ForeignKey(EvaluationRun, on_delete=models.PROTECT, related_name="assessments")
+    policy = models.JSONField()
+    policy_sha256 = models.CharField(max_length=64)
+    inputs = models.JSONField()
+    input_sha256 = models.CharField(max_length=64)
+    status = models.CharField(
+        max_length=20,
+        choices=[("PASS", "합격"), ("FAIL", "불합격"), ("NEEDS_REVIEW", "검토 필요")],
+    )
+    reasons = models.JSONField(default=list)
+    assessed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["run", "input_sha256"], name="unique_quality_assessment"
+            )
+        ]
