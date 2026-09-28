@@ -793,3 +793,54 @@ Prefect 실행 ID·콘텐츠 평가 ID와 모델 호출 0회가 유지됐다. �
 필수 CI가 통과했지만 이 P1 기능은 별도 검증 대상이며 사용자 요청에 따라 `skn-36`으로 관리한다.
 해당 변경의 Ops 전체 MySQL·컨테이너, LLMOps 실제 서버, GovBiz 전체 검증은 이 브랜치의 최신 커밋에
 대한 CI 결과로 확인한다.
+
+
+### 실제 취소·예산 통합 검증
+
+[cancellation_smoke.py](cancellation_smoke.py)는 일회용 `govbiz-cancel-test-<UUID>` 프로젝트에서
+실제 MySQL 8.4, Django Ops, Prefect 서버/실행기, Langfuse를 실행한다.
+접수·취소는 관리자/CSRF HTTP API를, claim·authorize·settle·close는 실제 내부 HTTP API를 거친다.
+Core의 관리자 응답은 테스트 대역으로 제공하며, 실제 Core 인증 연동은 앞선 기존 CI 단계에서 검증한다.
+모델 응답은 격리된 HTTP 대역으로 제공한다. 이 결과는 모델·검색·RAG 품질 측정이 아니다.
+
+production 코드·호출 재시도·실행 명세는 바꾸지 않는다. 읽기 전용으로 마운트한
+[cancellation_runner.py](cancellation_runner.py)가 실제 `ops_flow.evaluate_saved_capture.fn`을
+Prefect flow 안에서 호출하고, 명세 검증과 예산 승인을 통과한 모델 요청만 대역으로 전달한다.
+[cancellation_probe.py](cancellation_probe.py)는 실제 Ops/Prefect HTTP 처리 전 실패 또는 처리 후
+응답 유실을 주입한다. 기존 개발용 `.env`는 읽지 않고 비밀값을 매번 생성하며, 모든 테스트 서비스는
+Docker `internal: true` 네트워크만 사용한다. 모델 대역도 지정 URL 이외의 전송을 거절한다.
+
+| 시나리오 | 확인 내용 |
+|---|---|
+| 대기 중 / 첫 승인 전 취소 | 실제 종료, 모델 전송 0회, 미사용 예약 반환 |
+| 첫 정산 후 취소 | 다음 승인·전송 없음, 출력 사용량 50 보존 |
+| 실행기가 살아 있는 동안 취소 ACK | 부모의 취소 감시를 잠시 멈춰 CANCELLING·자식 생존을 확인한 뒤 실제 종료 검증 |
+| 모델 응답 유실 | 자동 재전송 없음, 미확인 출력 상한 2000 유지 |
+| 실제 완료와 뒤늦은 취소 요청 경합 | 실제 COMPLETED 보존, worker close와 취소 정리의 중복 환급 없음 |
+| 접수/취소 응답 유실 및 Ops 재기동 | 같은 flow 조회, 실행·모델 전송 증가 없음 |
+| 승인 응답 유실 | 승인 기록 1건·모델 대역 전송 0회, 불확실한 몫 보수적 유지 |
+| settle / close HTTP 실패 | FAILED 표시, 미확인 사용량/열린 예약 유지 |
+| 별도 프로세스의 중복 claim / 동일 sequence 재승인 | 각각 거절, 기존 소유자만 모델 전송 |
+
+경합은 명시적 barrier로 제어한다. 실행 프로세스는 `/proc`의 PID와 시작 시각을 함께 비교해
+PID 재사용을 구분한다. 취소 상태를 강제로 CANCELLED로 덮어쓰지 않고, 제한 시간 초과는 실패다.
+close HTTP 실패 후 예약을 유지하는 현재 동작을 검증하며, 미확인 예약 복구 기능을 추가하지 않는다.
+
+```bash
+# 저장소 루트: Linux 컨테이너가 가능한 Docker Engine + Compose 필요
+python infrastructure/llmops/cancellation_smoke.py --output work/llmops-ci/cancellation.json
+
+# backend/ai-service: 서버/유료 API 없이 도구 계약과 SDK→HTTP 대역 확인
+uv run --locked --extra dev --group evaluation python -m pytest ../../infrastructure/llmops/test_cancellation_smoke.py ../../infrastructure/llmops/test_ops_smoke.py -q
+```
+
+실행 흐름은 `테스트 클라이언트 → Ops → MySQL 예약·Prefect 접수 → 실제 평가 실행기 →
+Ops 승인 → HTTP 모델 대역 → Ops 정산`이다. 완료 시 실제 보고서 생성과 Langfuse 저장도 거친다.
+도구가 만든 프로젝트와 볼륨만 마지막에 정리하며 기존 개발 프로젝트는 변경하지 않는다.
+
+[LLMOps CI](../../.github/workflows/llmops-ci.yml)의 기존 필수 job 안에서 11개 시나리오를 실행한다.
+JSON에는 실행/flow ID, 단계 상태, 승인·전송·정산 횟수, 예산 전후 값, 프로세스 종료 증거를 남긴다.
+실패하면 진행 중이던 실행의 관찰 기록도 보관한다. 인증값과 질문·답변 원문은 이 파일에 저장하지 않는다.
+CI는 파일을 7일간 artifact로 보존하며, 이 단계가 실패하면 기존 이미지 발행·승격 gate도 통과하지 못한다.
+로컬 Docker 엔진이 실행되지 않은 환경에서는 무료 테스트와 Compose 렌더링만 확인할 수 있다.
+최신 SHA의 실제 CI가 통과하기 전에는 통합 검증 완료로 판단하지 않는다.

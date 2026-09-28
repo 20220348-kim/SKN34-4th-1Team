@@ -1,5 +1,8 @@
 # Langfuse 기반 LLMOps 도입 전략
 
+**현재 우선순위와 완료 기준은 [skn-40 이후 개발 전략](llmops-next-development-plan.md)을 따른다.**
+이 문서는 최초 설계와 커밋별 구현·검증 이력을 보존한다. 아래 과거 계획을 현재 미구현 목록으로 해석하지 않는다.
+
 [문서 목록](README.md) · [AI Service](../backend/ai-service/README.md) · [기존 근거 답변 평가](../evaluation/support-program-evidence/README.md)
 
 2026-09-28 코드 검토를 기준으로 한 도입 전략과 구현 범위다. 개발 실행 방법은 [LLMOps 실행 안내](../infrastructure/llmops/README.md)에 둔다. 실제 모델 품질 재평가와 운영 배포는 별도 작업이다.
@@ -31,7 +34,7 @@
 
 ## 후속 개발 전략 — skn-35 이후
 
-### 최신 코드 감사 — 54e2a19 기준
+### 54e2a19 당시 코드 감사 기록
 
 검토일은 2026-09-28, 최종 기준은 `main / 54e2a19aca0304c68dfc562e3d3eb0c9ee36887a`다.
 검토 중 `aa86601`에서 이 커밋으로 작업 트리가 갱신되어 변경된 코드와 CI를 다시 확인했다.
@@ -71,7 +74,7 @@ workflow가 성공이지만 `publish` job은 건너뛰었다. 이미지 발행 �
 | [LLMOps CI](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36393149486) | 실행 중 | 실제 서버 검증 완료 대기 |
 | [Catalog CI](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36393149485) | 실행 중 | 최종 결과 대기 |
 
-아래 순서가 **현재 작업 우선순위**이며, 뒤의 PR 1~5는 최초 도입 설계로 보존한다.
+아래 순서는 **당시 작업 우선순위**이며, 뒤의 PR 1~5는 최초 도입 설계로 보존한다.
 기능 구현, 자동 테스트 통과, 실제 모델 품질 검증, 운영 배포를 각각 별도로 판단한다.
 
 ### P0: CI 회귀 수정 완료
@@ -117,7 +120,7 @@ AI Service에서는 `uv run --locked --extra dev python -m pytest tests/assistan
 두 수정은 외부 모델 호출 없이 검증한 뒤 `skn-25 / 0b7eebf`로 푸시했다. 해당 커밋의 필수 CI는
 건너뛰었던 Container integration을 포함해 모두 통과했다. **후속 변경도 그 변경 커밋의 필수 CI를 별도로 확인한다.**
 
-### 우선순위와 진입·완료 조건
+### 54e2a19 당시 우선순위와 진입·완료 조건
 
 이 표는 **54e2a19 이후의 실행 계획**이다. 완료된 테스트 수정·품질 판정 구현을 다시 과제로 잡지 않는다.
 담당은 역할 기준이며 이름·일정은 배정 전이다. 각 PR은 한 책임으로 나누고 다음 단계의 진입 조건을 지킨다.
@@ -287,7 +290,7 @@ Web 첫 실행은 테스트 시작 전 worker timeout이었고 같은 명령의 
 첫 품질 gate는 기존 사람 승인·버전이 고정된 판정으로 운영한다. 자동 기준 승격, 모든 push의 유료 평가,
 새 LLM 제공자·Airflow·Celery·범용 정책 엔진은 이 계획에 포함하지 않는다.
 
-### 이번 코드 감사의 검증 경계
+### 54e2a19 당시 코드 감사의 검증 경계
 
 - 최신 커밋의 5개 CI 결과와 Ops MySQL·컨테이너 성공을 조회했다. 앞서 발견한 aa86601의 Ops 실패는 최신 커밋에서 해결됐다.
 - `infrastructure/release`에서 `python -X utf8 -B -m unittest test_release.ReleaseGateTests -q`: 10개 통과. 이 코드는 검토 중 갱신되지 않았다. 기존 4개 CI 정책의 검사이며 LLMOps 차단 구현 완료를 뜻하지 않는다.
