@@ -8,6 +8,7 @@ from math import isfinite
 import os
 from pathlib import Path
 import time
+import sys
 
 # 평가 라이브러리의 사용량 telemetry도 외부로 보내지 않는다.
 os.environ["DO_NOT_TRACK"] = "1"
@@ -31,8 +32,11 @@ from app.config import LangfuseSettings
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
-# 지표 계산 코드가 달라지면 같은 캡처도 다른 평가 실행으로 식별한다.
-EVALUATOR_VERSION = sha256((HERE / "evaluate.py").read_bytes() + Path(__file__).read_bytes()).hexdigest()
+sys.path.insert(0, str(ROOT / "backend/ops-service"))
+from apps.evaluations.execution_spec import evaluation_version
+
+# 평가 코드·입력 모델·잠금 의존성이 달라지면 점수 ID도 달라진다.
+EVALUATOR_VERSION = evaluation_version(ROOT)
 
 INPUT_SCHEMA = pa.DataFrameSchema({
     "case_id": pa.Column(str, unique=True),
@@ -271,7 +275,8 @@ def publish(current: dict) -> list[str]:
 
 
 @flow(name="govbiz-evidence-capture-evaluation", retries=0, timeout_seconds=300, persist_result=False)
-def evaluate_capture(fixture: str, capture: str, reference: str, output_dir: str, case_ids: list[str] | None = None) -> dict:
+def evaluate_capture(fixture: str, capture: str, reference: str, output_dir: str, case_ids: list[str] | None = None,
+                     execution_spec_sha256: str | None = None) -> dict:
     lock_dir = ROOT / "work/llmops"
     lock_dir.mkdir(parents=True, exist_ok=True)
     # 수동 실행 프로세스도 같은 checkout에서 겹치지 않는다. 배포 시에도 serve(limit=1)을 적용한다.
@@ -280,6 +285,8 @@ def evaluate_capture(fixture: str, capture: str, reference: str, output_dir: str
         output.mkdir(parents=True, exist_ok=False)
         manifest = {"status": "running", "prefect_flow_run_id": str(flow_run.id),
                     "started_at": datetime.now(timezone.utc).isoformat(), "model_api_calls": 0}
+        if execution_spec_sha256:
+            manifest["execution_spec_sha256"] = execution_spec_sha256
         write_json(output / "manifest.json", manifest)
         try:
             current = prepare(fixture, capture, case_ids)

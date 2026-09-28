@@ -141,7 +141,7 @@ class EvaluationSyncTests(TransactionTestCase):
         sync_pending_runs()
         run.refresh_from_db()
         self.assertEqual(run.status, "REQUESTED")
-        self.assertEqual(run.error_code, "PREFECT_DISPATCH_UNCONFIRMED")
+        self.assertEqual(run.error_code, "EXECUTION_SPEC_REQUIRED")
         self.assertIsNone(run.synced_at)
         self.assertIsNotNone(run.sync_attempted_at)
         self.assertEqual(sync_pending_runs(), 0)

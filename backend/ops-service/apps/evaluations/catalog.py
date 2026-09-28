@@ -85,6 +85,9 @@ def validate_reference_config(dataset_id, capture_id, config):
 
 
 def public_datasets():
+    from .execution_spec import digest, profile, read_release
+
+    release = read_release()
     return [
         {
             "id": item["id"],
@@ -92,6 +95,10 @@ def public_datasets():
             "case_ids": item["case_ids"],
             "fixture": item["fixture"],
             "live_config": live_config(item["id"]),
+            "execution_profiles": {
+                mode: digest(profile(release, item["id"], mode, live_config(item["id"])))
+                for mode in ("replay", "live")
+            },
             "captures": [
                 {"id": capture["id"], "label": capture["label"]} for capture in item["captures"]
             ],

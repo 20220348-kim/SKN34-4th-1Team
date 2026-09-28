@@ -27,7 +27,7 @@ def source(monkeypatch, tmp_path):
     }
     (folder / "request.json").write_text(json.dumps(marker))
     capture_hash = sha256((here / candidate["path"]).read_bytes()).hexdigest()
-    manifest = {"status": "failed", "model_api_calls": 0, "stage": "publish",
+    manifest = {"evaluator_version": llmops.EVALUATOR_VERSION, "status": "failed", "model_api_calls": 0, "stage": "publish",
                 "capture_sha256": capture_hash, "reference_capture_sha256": capture_hash,
                 "fixture_sha256": dataset["fixture_sha256"]}
     (folder / "evaluation/manifest.json").write_text(json.dumps(manifest))
@@ -88,12 +88,13 @@ def test_recovery_after_failure_preserves_source_and_never_calls_model(source, m
 
 
 @pytest.mark.parametrize("key", ["capture_sha256", "reference_capture_sha256", "fixture_sha256", "source_request_sha256"])
-def test_changed_dispatch_hashes_are_rejected_before_creating_attempt(source, tmp_path, key):
+def test_changed_dispatch_hashes_preserve_rejection_without_evaluation(source, tmp_path, key):
     _, config = source
     request_id = str(uuid4())
-    with pytest.raises(ValueError, match="changed"):
+    with pytest.raises(ValueError, match="EXECUTION_SPEC_MISMATCH"):
         recover({**config, key: "0" * 64}, request_id)
-    assert not (tmp_path / request_id).exists()
+    assert (tmp_path / request_id / "preflight.json").is_file()
+    assert not (tmp_path / request_id / "evaluation").exists()
 
 
 def test_missing_baseline_does_not_fall_back_or_generate(source, tmp_path):
@@ -106,7 +107,7 @@ def test_missing_baseline_does_not_fall_back_or_generate(source, tmp_path):
         "fixture_sha256": config["fixture_sha256"],
     })
     marker_path.write_text(json.dumps(marker))
-    with pytest.raises(ValueError, match="path"):
+    with pytest.raises(ValueError, match="EXECUTION_SPEC_MISMATCH"):
         recover(config)
 
 
@@ -116,13 +117,13 @@ def test_source_request_symlink_outside_directory_is_rejected(source, tmp_path):
     outside = tmp_path / "request-copy.json"
     path.rename(outside)
     path.symlink_to(outside)
-    with pytest.raises(ValueError, match="path"):
+    with pytest.raises(ValueError, match="EXECUTION_SPEC_MISMATCH"):
         recover(config)
 
 
 def test_recovery_cannot_accept_live_parameters(source):
     _, config = source
-    with pytest.raises(ValueError, match="must not generate"):
+    with pytest.raises(ValueError, match="EXECUTION_SPEC_MISMATCH"):
         ops_flow.evaluate_saved_capture.fn(str(uuid4()), ops_flow.DATASET_ID, execution_mode="recovery",
                                            live_config={"model": "anything"}, recovery_config=config)
 
@@ -178,3 +179,14 @@ def test_reviewed_baseline_uses_source_snapshot_even_after_baseline_changes(sour
     assert result["status"] == "completed"
     assert result["reference_capture_sha256"] == reference_config["capture_sha256"]
     assert not (tmp_path / baseline_id).exists()
+
+
+@pytest.mark.parametrize('version', [None, '0' * 64])
+def test_unknown_or_different_evaluator_blocks_recovery(source, tmp_path, version):
+    source_id, config = source
+    path = tmp_path / source_id / 'evaluation/manifest.json'
+    manifest = json.loads(path.read_text())
+    manifest['evaluator_version'] = version
+    path.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match='EXECUTION_SPEC_MISMATCH'):
+        recover(config)

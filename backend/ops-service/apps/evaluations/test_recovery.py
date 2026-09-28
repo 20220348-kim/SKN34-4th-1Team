@@ -15,6 +15,7 @@ from rest_framework.test import APIClient
 
 from . import prefect_client
 from .catalog import DATASETS, LEGACY_DATASET_ID, live_config
+from .execution_spec import read_release
 from .models import EvaluationRun
 from .recovery import submit_recovery
 from .services import RequestConflict
@@ -55,6 +56,7 @@ class RecoveryFixture:
         self.manifest = {
             "status": "failed",
             "stage": "publish",
+            "evaluator_version": read_release()["evaluation"]["version"],
             "model_api_calls": 0,
             "fixture_sha256": dataset["fixture_sha256"],
             "capture_sha256": sha256(raw).hexdigest(),
@@ -106,6 +108,8 @@ class RecoveryTests(RecoveryFixture, TestCase):
                     "execution_mode": "recovery",
                     "prefect_flow_run_id": str(child.prefect_flow_run_id),
                     "recovery_config": child.recovery_config,
+                    "execution_spec": child.execution_spec,
+                    "execution_spec_sha256": child.execution_spec_sha256,
                 }
             )
         )
@@ -137,6 +141,7 @@ class RecoveryTests(RecoveryFixture, TestCase):
                     **self.manifest,
                     "status": "completed",
                     "stage": "completed",
+                    "execution_spec_sha256": child.execution_spec_sha256,
                     "evaluation_run_id": "a" * 32,
                     "reference_run_id": "b" * 32,
                     "artifact_sha256": {

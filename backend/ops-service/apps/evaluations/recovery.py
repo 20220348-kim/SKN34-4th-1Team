@@ -5,6 +5,7 @@ import json
 from django.conf import settings
 from django.db import transaction
 
+from .execution_spec import digest, make_spec, read_release
 from .models import EvaluationRun
 from .recovery_inputs import read_recovery_inputs
 from .services import (
@@ -65,7 +66,7 @@ def recovery_state(run):
         else (
             "진행 중인 복구 실행을 먼저 확인하세요."
             if active
-            else "완료된 응답·평가 자료·비교 기준의 무결성을 확인할 수 없습니다."
+            else "완료 응답·입력 무결성 또는 원본 평가기 버전의 호환성을 확인할 수 없습니다."
             if not ready
             else "실행 종료 상태를 확인한 뒤 실패한 후처리만 복구할 수 있습니다."
         ),
@@ -87,6 +88,16 @@ def submit_recovery(user, source, request_id):
     if source.status not in RECOVERABLE or source.error_code == "PREFECT_STATUS_UNAVAILABLE":
         raise RequestConflict
     config = recovery_config(source)
+    spec = make_spec(
+        read_release(),
+        source.dataset_id,
+        "recovery",
+        {},
+        source.candidate_capture_id,
+        source.reference_capture_id,
+        source.reference_config,
+        recovery_config=config,
+    )
     # 종료된 복구 상태를 갱신하는 외부 HTTP 호출은 DB transaction 밖에서 한다.
     recovery_state(source)
     with transaction.atomic():
@@ -113,6 +124,8 @@ def submit_recovery(user, source, request_id):
                     "reference_config": locked.reference_config,
                     "execution_mode": "recovery",
                     "recovery_config": config,
+                    "execution_spec": spec,
+                    "execution_spec_sha256": digest(spec),
                     "model_api_calls": 0,
                 },
             )

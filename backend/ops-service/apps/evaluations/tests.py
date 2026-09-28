@@ -13,6 +13,7 @@ from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
 
 from . import prefect_client
 from .authentication import CoreUnavailable, NoAuthRedirect, read_core_admin
+from .catalog import public_datasets
 from .models import EvaluationRun
 from .services import DATASET_ID, ResultsUnavailable, artifact_path, sync_run
 from .views import run_data
@@ -95,7 +96,11 @@ class EvaluationTests(TestCase):
         ).start()
         self.addCleanup(patch.stopall)
         self.client.cookies["govbiz_session"] = "core-session"
-        self.payload = {"request_id": str(uuid4()), "dataset_id": DATASET_ID}
+        self.payload = {
+            "request_id": str(uuid4()),
+            "dataset_id": DATASET_ID,
+            "execution_profile": public_datasets()[0]["execution_profiles"]["replay"],
+        }
 
     def post(self, payload=None):
         return self.client.post(
@@ -396,6 +401,7 @@ class EvaluationTests(TestCase):
         payload = {
             **self.payload,
             "dataset_id": "fixed-context-e01-v1",
+            "execution_profile": public_datasets()[1]["execution_profiles"]["replay"],
             "reference_capture_id": reference,
             "candidate_capture_id": candidate,
         }
@@ -478,6 +484,7 @@ class EvaluationTests(TestCase):
             "execution_mode": "live",
             "candidate_capture_id": LIVE_CAPTURE_ID,
             "live_config": live_config(DATASET_ID),
+            "execution_profile": public_datasets()[0]["execution_profiles"]["live"],
             "confirm_paid_run": True,
         }
         for changes in [

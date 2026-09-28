@@ -1,4 +1,5 @@
 import json
+import inspect
 from hashlib import sha256
 from pathlib import Path
 import sys
@@ -9,6 +10,21 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ops_flow
+
+
+def run_live(*args, **kwargs):
+    from apps.evaluations.execution_spec import digest, make_spec, read_release
+    bound = inspect.signature(ops_flow.evaluate_saved_capture.fn).bind(*args, **kwargs)
+    bound.apply_defaults()
+    params = bound.arguments
+    reference = params["reference_config"]
+    if params["reference_capture_id"].startswith("run:") and not reference:
+        reference = {"run_id": params["reference_capture_id"][4:], "capture_sha256": "a" * 64,
+                     "fixture_sha256": params["live_config"]["fixture_sha256"]}
+    spec = make_spec(read_release(), params["dataset_id"], "live", params["live_config"],
+                     params["candidate_capture_id"], params["reference_capture_id"], reference)
+    return ops_flow.evaluate_saved_capture.fn(*args, **kwargs, execution_spec=spec,
+                                              execution_spec_sha256=digest(spec))
 
 
 def reviewed_source(tmp_path):
@@ -89,9 +105,9 @@ def test_invalid_reviewed_baseline_never_spends(monkeypatch, tmp_path, failure):
     monkeypatch.setattr(ops_flow.evaluate, "execute", lambda *a, **k: pytest.fail("no paid calls"))
     request_id = str(uuid4())
     with pytest.raises(ValueError):
-        ops_flow.evaluate_saved_capture.fn(request_id, "fixed-context-e01-v1", LIVE_CAPTURE_ID,
+        run_live(request_id, "fixed-context-e01-v1", LIVE_CAPTURE_ID,
             reference_id, "live", live_config("fixed-context-e01-v1"), config)
-    assert not (tmp_path / request_id).exists()
+    assert (tmp_path / request_id / "preflight.json").is_file()
 
 
 def test_registered_entrypoint_uses_saved_inputs_and_correlates_request(monkeypatch, tmp_path):
@@ -118,7 +134,10 @@ def test_untrusted_paths_are_rejected_before_execution(monkeypatch, tmp_path, re
     monkeypatch.setenv("LLMOPS_RESULTS_DIR", str(tmp_path))
     with pytest.raises(ValueError):
         ops_flow.evaluate_saved_capture.fn(request_id, dataset)
-    assert list(tmp_path.iterdir()) == []
+    if dataset == "unknown":
+        assert (tmp_path / request_id / "preflight.json").is_file()
+    else:
+        assert list(tmp_path.iterdir()) == []
 
 
 def test_pipeline_failure_propagates_and_keeps_request_marker(monkeypatch, tmp_path):
@@ -151,7 +170,7 @@ def test_different_captures_share_explicit_cases_and_reject_cross_dataset(monkey
         rejected_id = str(uuid4())
         with pytest.raises(ValueError):
             ops_flow.evaluate_saved_capture.fn(rejected_id, "fixed-context-e01-v1", invalid, reference)
-        assert not (tmp_path / rejected_id).exists()
+        assert (tmp_path / rejected_id / "preflight.json").is_file()
 
 
 def test_live_generates_selected_cases_once_and_checks_baseline_before_spending(monkeypatch, tmp_path):
@@ -183,9 +202,9 @@ def test_live_generates_selected_cases_once_and_checks_baseline_before_spending(
     monkeypatch.setattr(ops_flow, "evaluate_capture", compare)
     args = (request_id, "fixed-context-e01-v1", LIVE_CAPTURE_ID,
             "fixed-context-20260906-diagnostic-v1", "live", config)
-    assert ops_flow.evaluate_saved_capture.fn(*args)["status"] == "completed"
+    assert run_live(*args)["status"] == "completed"
     with pytest.raises(FileExistsError):
-        ops_flow.evaluate_saved_capture.fn(*args)
+        run_live(*args)
     assert calls == ["model", "compare"]
     marker = json.loads((tmp_path / request_id / "request.json").read_text())
     assert marker["live_config"] == config and marker["execution_mode"] == "live"
@@ -210,9 +229,9 @@ def test_live_preflight_rejects_unapproved_or_invalid_inputs_without_calls(monke
         monkeypatch.setattr(ops_flow, "load_results", lambda *args: {"summary": {"completed": False}})
     monkeypatch.setattr(ops_flow.evaluate, "execute", lambda *args, **kwargs: pytest.fail("must not spend"))
     with pytest.raises(ValueError):
-        ops_flow.evaluate_saved_capture.fn(str(uuid4()), dataset, LIVE_CAPTURE_ID,
+        run_live(str(uuid4()), dataset, LIVE_CAPTURE_ID,
             "fixed-context-20260906-diagnostic-v1", "live", config)
-    assert list(tmp_path.iterdir()) == []
+    assert len(list(tmp_path.glob("*/preflight.json"))) == 1
 
 
 def test_live_failure_preserves_capture_and_never_reexecutes(monkeypatch, tmp_path):
@@ -233,9 +252,9 @@ def test_live_failure_preserves_capture_and_never_reexecutes(monkeypatch, tmp_pa
     args = (request_id, ops_flow.DATASET_ID, LIVE_CAPTURE_ID, ops_flow.DATASET_ID,
             "live", live_config(ops_flow.DATASET_ID))
     with pytest.raises(ValueError, match="partial capture preserved"):
-        ops_flow.evaluate_saved_capture.fn(*args)
+        run_live(*args)
     with pytest.raises(FileExistsError):
-        ops_flow.evaluate_saved_capture.fn(*args)
+        run_live(*args)
     assert calls == [1]
     assert json.loads((tmp_path / request_id / "capture/capture.json").read_text())["modelApiCalls"] == 1
 
@@ -277,7 +296,7 @@ def test_live_response_to_report_pipeline_uses_only_stub_transport(monkeypatch, 
     monkeypatch.setattr(llmops, "render", llmops.render.fn)
     monkeypatch.setattr(llmops, "publish", lambda current: [])
     request_id = str(uuid4())
-    result = ops_flow.evaluate_saved_capture.fn(request_id, "fixed-context-e01-v1", LIVE_CAPTURE_ID,
+    result = run_live(request_id, "fixed-context-e01-v1", LIVE_CAPTURE_ID,
         "fixed-context-20260906-diagnostic-v1", "live", live_config("fixed-context-e01-v1"))
     assert len(requests) == 1 and result["status"] == "completed"
     capture = json.loads((tmp_path / request_id / "capture/capture.json").read_text())

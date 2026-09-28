@@ -63,6 +63,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y default-libmysqlclient-dev build-essential pkg-config
       - name: Check lock file
         run: uv lock --check
+      - name: Verify execution release against repository sources and inputs
+        run: python apps/evaluations/execution_spec.py
       - name: Sync dependencies
         run: uv sync --locked
       - name: Check installed dependencies

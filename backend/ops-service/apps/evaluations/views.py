@@ -38,6 +38,12 @@ from .services import (
 )
 
 ERROR_MESSAGES = {
+    "EXECUTION_SPEC_REQUIRED": (
+        "과거 요청에는 실행 명세가 없습니다. 접수 이력을 확인한 뒤 새 요청으로 실행하세요."
+    ),
+    "EXECUTION_SPEC_MISMATCH": (
+        "접수 당시 명세와 실행 환경이 달라 모델 호출 전에 차단했습니다. 실행기 버전을 확인하세요."
+    ),
     "PREFECT_DISPATCH_UNCONFIRMED": (
         "실행 접수를 확인하지 못했습니다. 같은 요청으로 접수를 다시 확인하세요."
     ),
@@ -95,6 +101,7 @@ class RunRequestSerializer(serializers.Serializer):
     confirm_paid_run = serializers.BooleanField(default=False)
 
     baseline_version = serializers.IntegerField(min_value=1, allow_null=True, default=None)
+    execution_profile = serializers.RegexField(r"^[a-f0-9]{64}$", allow_null=True, default=None)
 
 
 def run_data(run, viewer_id=None):
@@ -124,9 +131,14 @@ def run_data(run, viewer_id=None):
         "execution_mode": run.execution_mode,
         "source_run_id": str(run.source_run_id) if run.source_run_id else None,
         "live_config": run.live_config or None,
+        "execution_profile": run.execution_spec.get("profile_sha256"),
+        "execution_spec_sha256": run.execution_spec_sha256 or None,
+        "execution_spec": run.execution_spec or None,
         "requested_by": run.requested_by.email or run.requested_by.get_username(),
         "requested_by_id": run.requested_by.get_username(),
-        "can_retry": run.prefect_flow_run_id is None and run.requested_by_id == viewer_id,
+        "can_retry": bool(run.execution_spec)
+        and run.prefect_flow_run_id is None
+        and run.requested_by_id == viewer_id,
         "status": run.status,
         "status_label": run.get_status_display(),
         "created_at": run.created_at,

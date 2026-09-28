@@ -40,6 +40,14 @@ def run_parameters(run):
         "execution_mode": run.execution_mode,
         "live_config": run.live_config,
         **({"recovery_config": run.recovery_config} if run.recovery_config else {}),
+        **(
+            {
+                "execution_spec": run.execution_spec,
+                "execution_spec_sha256": run.execution_spec_sha256,
+            }
+            if run.execution_spec
+            else {}
+        ),
     }
 
 
@@ -78,8 +86,9 @@ def find_run(run):
             raise ValueError("Ambiguous dispatch")
         parameters = dict(rows[0]["parameters"])
         # Prefect는 deployment 기본값인 빈 recovery_config를 응답에 포함할 수 있다.
-        if parameters.get("recovery_config") in (None, {}):
-            parameters.pop("recovery_config", None)
+        for name in ("recovery_config", "execution_spec", "execution_spec_sha256"):
+            if parameters.get(name) in (None, {}, ""):
+                parameters.pop(name, None)
         if parameters != run_parameters(run):
             raise ValueError("Dispatch parameters differ")
         return UUID(str(rows[0]["id"]))

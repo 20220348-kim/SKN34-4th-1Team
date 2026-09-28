@@ -5,6 +5,7 @@ from hashlib import sha256
 from uuid import UUID
 
 from .catalog import selection, validate_reference_config
+from .execution_spec import digest, read_release
 
 
 def read_recovery_inputs(results_root, evidence_root, source_id):
@@ -22,6 +23,17 @@ def read_recovery_inputs(results_root, evidence_root, source_id):
         request_raw = read(folder, "request.json")
         marker = json.loads(request_raw)
         manifest = json.loads(read(folder, "evaluation/manifest.json"))
+        evaluator = read_release()["evaluation"]
+        spec = marker.get("execution_spec")
+        if manifest.get("evaluator_version") != evaluator["version"] or (
+            spec
+            and (
+                spec["evaluation"] != evaluator
+                or digest(spec) != marker.get("execution_spec_sha256")
+                or manifest.get("execution_spec_sha256") != marker.get("execution_spec_sha256")
+            )
+        ):
+            raise ValueError("Recovery evaluator is incompatible or unverified")
         dataset, candidate, reference = selection(
             marker["dataset_id"], marker["candidate_capture_id"], marker["reference_capture_id"]
         )
@@ -52,12 +64,14 @@ def read_recovery_inputs(results_root, evidence_root, source_id):
         config = {
             "source_run_id": source_id,
             "source_request_sha256": sha256(request_raw).hexdigest(),
+            "evaluator_sha256": evaluator["sha256"],
+            "evaluator_version": evaluator["version"],
         }
         for name, raw in inputs.items():
-            digest = sha256(raw).hexdigest()
-            if digest != manifest[f"{name}_sha256"]:
+            actual_hash = sha256(raw).hexdigest()
+            if actual_hash != manifest[f"{name}_sha256"]:
                 raise ValueError("Recovery input changed")
-            config[f"{name}_sha256"] = digest
+            config[f"{name}_sha256"] = actual_hash
             if name == "fixture":
                 continue
             capture = json.loads(raw)

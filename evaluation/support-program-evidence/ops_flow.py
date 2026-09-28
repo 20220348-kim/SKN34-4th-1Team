@@ -21,6 +21,9 @@ from catalog import LEGACY_DATASET_ID, selection, validate_execution, validate_r
 
 sys.path.insert(0, str(ROOT / "backend/ops-service"))
 from apps.evaluations.recovery_inputs import read_recovery_inputs
+from apps.evaluations.execution_spec import (
+    ExecutionSpecMismatch, build_release, file_digest, verify_spec,
+)
 
 DATASET_ID = LEGACY_DATASET_ID
 
@@ -51,11 +54,10 @@ def reviewed_reference(dataset_id, config, here, output_root):
     return raw
 
 
-def recover_saved_capture(request_id, dataset_id, candidate_id, reference_id, reference_config, config):
-    """허용된 원본의 완료 응답만 복사한다. 모델 실행 경로를 호출하지 않는다."""
+def prepare_recovery(output, dataset_id, candidate_id, reference_id, reference_config, config):
+    """완료 응답의 고정 바이트만 복사한다. 모델 실행 경로를 호출하지 않는다."""
     here = Path(__file__).resolve().parent
-    output_root = Path(os.environ.get("LLMOPS_RESULTS_DIR", ROOT / "work/llmops-ops")).resolve()
-    marker, expected, inputs = read_recovery_inputs(output_root, here, config["source_run_id"])
+    marker, expected, inputs = read_recovery_inputs(output.parent, here, config["source_run_id"])
     evaluate.require(config == expected, "Recovery inputs changed after dispatch")
     evaluate.require(
         marker["dataset_id"] == dataset_id and marker["candidate_capture_id"] == candidate_id
@@ -63,25 +65,12 @@ def recover_saved_capture(request_id, dataset_id, candidate_id, reference_id, re
         and marker.get("reference_config", {}) == reference_config,
         "Recovery selection differs from source",
     )
-    dataset, _, _ = selection(dataset_id, candidate_id, reference_id)
-    output = output_root / request_id
-    output.mkdir(parents=True, exist_ok=False)
-    write_json(output / "request.json", {
-        "request_id": request_id, "dataset_id": dataset_id,
-        "prefect_flow_run_id": str(flow_run.id),
-        "candidate_capture_id": candidate_id, "reference_capture_id": reference_id,
-        "execution_mode": "recovery", "live_config": {}, "reference_config": reference_config,
-        "recovery_config": config,
-    })
     (output / "capture").mkdir()
-    fixture = output / "recovery-fixture.json"
-    capture = output / "capture/capture.json"
-    reference = output / "reference-capture.json"
-    for path, name in [(fixture, "fixture"), (capture, "capture"), (reference, "reference_capture")]:
+    paths = (output / "recovery-fixture.json", output / "capture/capture.json",
+             output / "reference-capture.json")
+    for path, name in zip(paths, ("fixture", "capture", "reference_capture")):
         path.write_bytes(inputs[name])
-    # SDK 입력 검증은 기존 파이프라인에서 다시 수행한다. 원본 모델 설정이 바뀌어도 재생성하지 않는다.
-    return evaluate_capture(str(fixture), str(capture), str(reference), str(output / "evaluation"),
-                            case_ids=dataset["case_ids"])
+    return paths
 
 
 @flow(name="govbiz-ops-evidence-evaluation", retries=0, persist_result=False)
@@ -91,66 +80,98 @@ def evaluate_saved_capture(
     execution_mode: str = "replay", live_config: dict | None = None,
     reference_config: dict | None = None,
     recovery_config: dict | None = None,
+    execution_spec: dict | None = None, execution_spec_sha256: str | None = None,
 ) -> dict:
-    # 요청에서 파일 경로나 실행 코드를 받지 않는다.
     request_id = str(UUID(request_id))
     config = live_config or {}
-    if execution_mode == "recovery":
-        evaluate.require(not config and bool(recovery_config), "Recovery must not generate responses")
-        return recover_saved_capture(request_id, dataset_id, candidate_capture_id,
-                                     reference_capture_id, reference_config or {}, recovery_config)
-    evaluate.require(not recovery_config, "Unexpected recovery configuration")
-    dataset, candidate, reference = validate_execution(
-        dataset_id, candidate_capture_id, reference_capture_id, execution_mode, config,
-    )
-    here = Path(__file__).resolve().parent
     reference_config = reference_config or {}
-    validate_reference_config(dataset_id, reference_capture_id, reference_config)
+    here = Path(__file__).resolve().parent
     output_root = Path(os.environ.get("LLMOPS_RESULTS_DIR", ROOT / "work/llmops-ops")).resolve()
-    reference_raw = reviewed_reference(dataset_id, reference_config, here, output_root) if reference_config else None
-    reference_path = here / reference["path"] if reference_raw is None else None
-    if execution_mode == "live":
-        evaluate.require(os.environ.get("LLMOPS_LIVE_ENABLED", "false").lower() == "true",
-                         "Live evaluations are disabled")
-        evaluate.require(bool(os.environ.get("OPENAI_API_KEY", "").strip()), "OpenAI key is required")
-        _, prepared, fixture_hash = evaluate.load_fixture(here / dataset["fixture"])
-        evaluate.require(fixture_hash == config["fixture_sha256"], "Approved fixture has changed")
-        prepared = evaluate.select_cases(prepared, dataset["case_ids"])
-        # 유료 호출 전에 비교 기준 전체와 선택 범위를 검증한다.
-        if reference_path is not None:
-            baseline = load_results(here / dataset["fixture"], reference_path, dataset["case_ids"])
-            evaluate.require(baseline["summary"]["completed"], "Reference must be complete")
     output = output_root / request_id
+    # UUID 디렉터리의 배타 생성은 실패 기록도 보존하며 수동 재실행의 중복 호출을 차단한다.
     output.mkdir(parents=True, exist_ok=False)
-    write_json(output / "request.json", {
+    marker = {
         "request_id": request_id, "dataset_id": dataset_id,
         "prefect_flow_run_id": str(flow_run.id),
         "candidate_capture_id": candidate_capture_id, "reference_capture_id": reference_capture_id,
         "execution_mode": execution_mode, "live_config": config,
         "reference_config": reference_config,
-    })
-    if reference_raw is not None:
-        reference_path = output / "reference-capture.json"
-        reference_path.write_bytes(reference_raw)
-        baseline = load_results(here / dataset["fixture"], reference_path, dataset["case_ids"])
-        evaluate.require(baseline["summary"]["completed"], "Reference must be complete")
+    }
+    if recovery_config:
+        marker["recovery_config"] = recovery_config
+    if execution_spec:
+        marker.update(execution_spec=execution_spec, execution_spec_sha256=execution_spec_sha256)
+    write_json(output / "request.json", marker)
+    try:
+        if execution_spec:
+            # 전달받은 식별자를 신뢰하지 않고 실행 중인 이미지의 실제 소스·입력을 다시 읽는다.
+            verify_spec(execution_spec, execution_spec_sha256, build_release(ROOT),
+                        dataset_id=dataset_id, mode=execution_mode, config=config,
+                        candidate_id=candidate_capture_id, reference_id=reference_capture_id,
+                        reference_config=reference_config, recovery_config=recovery_config)
+        elif execution_mode == "live" or execution_spec_sha256:
+            raise ExecutionSpecMismatch("Live execution requires a pinned specification")
+        if execution_mode == "recovery":
+            evaluate.require(not config and bool(recovery_config), "Recovery must not generate responses")
+            dataset, _, _ = selection(dataset_id, candidate_capture_id, reference_capture_id)
+            fixture_path, capture_path, reference_path = prepare_recovery(
+                output, dataset_id, candidate_capture_id, reference_capture_id,
+                reference_config, recovery_config,
+            )
+        else:
+            evaluate.require(not recovery_config, "Unexpected recovery configuration")
+            dataset, candidate, reference = validate_execution(
+                dataset_id, candidate_capture_id, reference_capture_id, execution_mode, config,
+            )
+            validate_reference_config(dataset_id, reference_capture_id, reference_config)
+            fixture_path = here / dataset["fixture"]
+            capture_path = output / "capture/capture.json" if execution_mode == "live" else here / candidate["path"]
+            if reference_config:
+                reference_path = output / "reference-capture.json"
+                reference_path.write_bytes(reviewed_reference(dataset_id, reference_config, here, output_root))
+            else:
+                reference_path = here / reference["path"]
+        if execution_spec:
+            for path, expected in (
+                (fixture_path, execution_spec["dataset"]["fixture_sha256"]),
+                (reference_path, execution_spec["reference_sha256"]),
+                *(([(capture_path, execution_spec["candidate_sha256"])]) if execution_mode != "live" else []),
+            ):
+                evaluate.require(file_digest(path) == expected, "Pinned input has changed")
+        if execution_mode == "live":
+            evaluate.require(os.environ.get("LLMOPS_LIVE_ENABLED", "false").lower() == "true",
+                             "Live evaluations are disabled")
+            evaluate.require(bool(os.environ.get("OPENAI_API_KEY", "").strip()), "OpenAI key is required")
+            _, prepared, fixture_hash = evaluate.load_fixture(fixture_path)
+            evaluate.require(fixture_hash == config["fixture_sha256"], "Approved fixture has changed")
+            prepared = evaluate.select_cases(prepared, dataset["case_ids"])
+            baseline = load_results(fixture_path, reference_path, dataset["case_ids"])
+            evaluate.require(baseline["summary"]["completed"], "Reference must be complete")
+            settings = execution_spec["generation"]["settings"]
+            evaluate.require(settings["max_output_tokens"] == config["max_output_tokens"]
+                             and settings["model_timeout_seconds"] == evaluate.DEFAULT_LLM_MODEL_TIMEOUT_SECONDS
+                             and settings["run_timeout_seconds"] == evaluate.DEFAULT_LLM_RUN_TIMEOUT_SECONDS
+                             and settings["max_retries"] == 0, "Generation settings differ")
+            evaluate.require(evaluate.digest(evaluate.SUPPORT_PROGRAM_EVIDENCE_ANSWER_INSTRUCTIONS.encode())
+                             == execution_spec["generation"]["prompt_sha256"], "Loaded prompt differs")
+    except (ValueError, OSError, KeyError, TypeError) as error:
+        code = "EXECUTION_SPEC_REQUIRED" if execution_mode == "live" and not execution_spec else "EXECUTION_SPEC_MISMATCH"
+        # 이 기록은 execute() 이전에만 쓴다. 전송 후 실패나 응답 유실을 0회로 추정하지 않는다.
+        write_json(output / "preflight.json", {
+            "error_code": code, "phase": "before_model_call", "model_api_calls": 0,
+            "execution_spec_sha256": execution_spec_sha256 or "",
+        })
+        raise ExecutionSpecMismatch(code) from error
     if execution_mode == "live":
-        # UUID 디렉터리의 배타 생성이 Prefect 수동 재실행에서도 중복 과금을 차단한다.
         capture = asyncio.run(evaluate.execute(
             prepared, fixture_hash, output / "capture", model=config["model"],
             max_model_calls=config["max_model_calls"],
         ))
-        candidate_path = output / "capture/capture.json"
-        evaluate.require(capture["completed"], "New model evaluation failed; partial capture preserved")
-    else:
-        candidate_path = here / candidate["path"]
-    return evaluate_capture(
-        str(here / dataset["fixture"]), str(candidate_path), str(reference_path),
-        str(output / "evaluation"), case_ids=dataset["case_ids"],
-    )
+        evaluate.require(capture["completed"], "Live capture incomplete; partial capture preserved")
+    return evaluate_capture(str(fixture_path), str(capture_path), str(reference_path),
+                            str(output / "evaluation"), case_ids=dataset["case_ids"],
+                            **({"execution_spec_sha256": execution_spec_sha256} if execution_spec else {}))
 
 
 if __name__ == "__main__":
-    if not os.environ.get("PREFECT_API_URL"):
-        raise SystemExit("PREFECT_API_URL is required")
     evaluate_saved_capture.serve(name="saved-capture", limit=1)

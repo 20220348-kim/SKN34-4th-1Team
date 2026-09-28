@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "evaluation": {
+    "sha256": "a6c84c4328591db81aa2f433660573dd1456ed8abdaa4705de6e52872b7fba53",
+    "files": {
+      "evaluation/support-program-evidence/evaluate.py": "6b876d8ce1f34f8dd61e1077cb6b0b39b1d2d2e09751fb19cdbabab25cc2d479",
+      "evaluation/support-program-evidence/llmops.py": "b2fa3531f0a8a489d0cb956bdbf1d6c51ed9aa61b7177ecbe7e2e94395d96457",
+      "backend/ai-service/app/support_program_evidence/models.py": "01e8da480d9ede6a976220a1a3bb6607ec8329783455d6c25c84a245a64b29b6",
+      "backend/ai-service/app/support_program_identity.py": "aa706697f294fd4846263e73cd281c4a9d660a7939feb7e2e4e3d60fd5393fb1",
+      "backend/ai-service/pyproject.toml": "50ef0fc8c53c9af3e1bb31fafed5200732725ea43691be538d90840d2168037c",
+      "backend/ai-service/uv.lock": "349ecdd9152eb2f5479a3db41d39e9d1bf7a8f5a16103426c2cd78207add1fe3"
+    },
+    "version": "a6c84c4328591db81aa2f433660573dd1456ed8abdaa4705de6e52872b7fba53"
+  },
+  "generation": {
+    "sha256": "8c4bc39a9733bdc6cc8da29339a5ac36b2edf92daf032e2e68d0a1ea9b3266cd",
+    "files": {
+      "evaluation/support-program-evidence/evaluate.py": "6b876d8ce1f34f8dd61e1077cb6b0b39b1d2d2e09751fb19cdbabab25cc2d479",
+      "backend/ai-service/app/config.py": "95e5b8a759e9cd2396e58f0f94636b48695f7d10e6c49d74fce60f21b860fe02",
+      "backend/ai-service/app/support_program_evidence/prompt.py": "9619d00ab76b511cad15465ba5b97fe95e790dfe62b81333901c4ebda5ad5eb3",
+      "backend/ai-service/app/support_program_evidence/agent.py": "71b46aa0c2a9a8edefc604e1727caf2d74a2dae19975f94c1e6dc21de6e63224",
+      "backend/ai-service/app/support_program_evidence/answer_service.py": "bd84c3141594bdec29cd9f2e982290dc92a91b630c64645982bd931ad517de24",
+      "backend/ai-service/app/support_program_evidence/models.py": "01e8da480d9ede6a976220a1a3bb6607ec8329783455d6c25c84a245a64b29b6",
+      "backend/ai-service/app/support_program_evidence/errors.py": "1297c9c6e5b964bad22c7badff4697a0703bc7f45b5490b158f0dd0294054b67",
+      "backend/ai-service/app/support_program_evidence/tracing.py": "09316b8211f74f1b6876fcaea380b4d626ba94b2686db8e82b5ad4f7eeb35605",
+      "backend/ai-service/app/support_program_llm.py": "4cb756fba7473a7d13b91c620dc3652b355fa41300c7260e8e55e71d6329d79d",
+      "backend/ai-service/app/support_program_identity.py": "aa706697f294fd4846263e73cd281c4a9d660a7939feb7e2e4e3d60fd5393fb1",
+      "backend/ai-service/pyproject.toml": "50ef0fc8c53c9af3e1bb31fafed5200732725ea43691be538d90840d2168037c",
+      "backend/ai-service/uv.lock": "349ecdd9152eb2f5479a3db41d39e9d1bf7a8f5a16103426c2cd78207add1fe3"
+    },
+    "prompt_sha256": "560ad134d3ce657561e6dfa67793078c7526c5b5f1ebb691e6e972b27924655c",
+    "settings": {
+      "max_output_tokens": 2000,
+      "store": false,
+      "reasoning": {
+        "effort": "none"
+      },
+      "model_timeout_seconds": 25.0,
+      "run_timeout_seconds": 30.0,
+      "max_retries": 0,
+      "response_format": "strict_json_schema"
+    }
+  },
+  "pipeline": {
+    "sha256": "37c122ba15b1e78ac642f28e97c0c87ea0c659ae5232b473665564a0ffd3df89",
+    "files": {
+      "evaluation/support-program-evidence/ops_flow.py": "5f13928f3f65171b0837499b804b760d4e23fe8b8957b64ebf4c631d79d64c43",
+      "backend/ops-service/apps/evaluations/catalog.py": "444ff19d7eadf89bb819f1fd5df30ff30f0d931f9dc39a8fa23f6e9a554bd874",
+      "backend/ops-service/apps/evaluations/recovery_inputs.py": "d0cb457918b0886dd011b436a8969d3545afd32b923c085cabe365b414645a87",
+      "backend/ops-service/apps/evaluations/execution_spec.py": "2e77a49a1c1b06fb9c62ad2b98208358050b761a3c398633b557f84f639adcca"
+    }
+  },
+  "datasets": {
+    "target-coverage-20260907-v1": {
+      "fixture_sha256": "7cc1224e143f772e80713f267ed9b3b6d0262cabe75383b64f3e6b77ad496f8b",
+      "case_ids": [
+        "TC01",
+        "TC02",
+        "TC03",
+        "TC04",
+        "TC05",
+        "TC06"
+      ],
+      "captures": {
+        "target-coverage-20260907-v1": "d81e58429bbb0daf8e6989d247372af195120b33bc11750e5fcc5f70852d323e"
+      }
+    },
+    "fixed-context-e01-v1": {
+      "fixture_sha256": "b61b3cb702d20e33cd797aa3d1b413210646b5f2fec87d42c87c77cd9aaf8621",
+      "case_ids": [
+        "E01"
+      ],
+      "captures": {
+        "fixed-context-20260906-diagnostic-v1": "a65531c20a71591a773e03900717dafd1c996ca889457138977712a1942039fc",
+        "fixed-context-20260907-index-v1": "957e21e98c7509a154448b18f73f36db3a130a7a14b5e37ff7def0a351f393f4"
+      }
+    }
+  }
+}

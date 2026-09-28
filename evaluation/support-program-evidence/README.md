@@ -130,6 +130,22 @@ AI Service와 같은 Python 3.12를 사용하며, 평가 의존성은
 기존 `--execute`는 Langfuse를 명시적으로 활성화한 경우 실제 사례의 `traceId`와
 `apiResponseIndexes`를 새 캡처에 남깁니다. 과거 캡처의 원본·해시·보고서는 변경하지 않습니다.
 
+### Ops 실행 명세 검증
+
+`ops_flow.py`는 Django가 접수한 명세와 실행기의 실제 소스·잠금 파일·입력 바이트를 대조합니다.
+명세 생성기는 [execution_spec.py](../../backend/ops-service/apps/evaluations/execution_spec.py)이며
+명시적인 파일 목록으로 생성·평가 경로를 구분합니다. `execution_release.json`은 빌드 입력이고
+실행 중 실제 파일 재검증을 대신하지 않습니다.
+
+새 유료 응답은 명세 없이는 시작할 수 없습니다. 호출 전 실패는 `preflight.json`에 남기고
+`execute()` 이후 오류는 이 기록으로 0회 처리하지 않습니다. 기존 CLI `evaluate.py --execute`는
+별도의 수동 실행 경로이며 Ops 접수 명세를 대신하지 않습니다.
+
+`EVALUATOR_VERSION`은 평가 코드·입력 모델·식별자 규칙·AI 잠금 의존성의 해시입니다.
+의존성 변경도 새로운 점수 ID로 구분합니다. 저장 응답의 과거 프롬프트는 현재 생성 프롬프트와
+다를 수 있으며 그대로 보존합니다. 후처리 복구는 원본 평가기와 일치할 때만 허용하고,
+다른 평가기로의 재계산을 복구로 표시하지 않습니다.
+
 ### 기존 평가 실행기
 
 저장소 루트에서 실행합니다. AI Service 의존성을 먼저 설치해야 합니다

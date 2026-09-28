@@ -19,6 +19,7 @@ from .catalog import (
     validate_execution,
     validate_reference_config,
 )
+from .execution_spec import digest, make_spec, read_release
 from .models import EvaluationBaseline, EvaluationRun
 from .review_eligibility import current_approval
 
@@ -46,6 +47,7 @@ def submit_run(
     live_config=None,
     confirm_paid_run=False,
     baseline_version=None,
+    execution_profile=None,
 ):
     config = live_config or {}
 
@@ -58,6 +60,7 @@ def submit_run(
             or run.execution_mode != execution_mode
             or run.live_config != config
             or run.baseline_version != baseline_version
+            or run.execution_spec.get("profile_sha256") != execution_profile
         ):
             raise RequestConflict
 
@@ -118,6 +121,19 @@ def submit_run(
             elif baseline_version is not None:
                 raise ValueError("저장 캡처에는 검토 기준 버전을 지정할 수 없습니다.")
             validate_reference_config(dataset_id, reference_capture_id, reference_config)
+            spec = make_spec(
+                read_release(),
+                dataset_id,
+                execution_mode,
+                config,
+                candidate_capture_id,
+                reference_capture_id,
+                reference_config,
+                baseline_version,
+                baseline.review_id if reference_config else None,
+            )
+            if execution_profile != spec["profile_sha256"]:
+                raise ValueError("실행 명세가 변경되었습니다. 새로고침 후 다시 확인하세요.")
             run, created = EvaluationRun.objects.get_or_create(
                 id=request_id,
                 defaults={
@@ -130,6 +146,8 @@ def submit_run(
                     "baseline_review_id": baseline.review_id if reference_config else None,
                     "execution_mode": execution_mode,
                     "live_config": config,
+                    "execution_spec": spec,
+                    "execution_spec_sha256": digest(spec),
                     "model_api_calls": None if execution_mode == "live" else 0,
                 },
             )
@@ -139,6 +157,13 @@ def submit_run(
 
 
 def dispatch_run(run):
+    if not run.execution_spec and run.prefect_flow_run_id is None:
+        # 기존 접수의 응답 유실 여부를 확인할 수 있으므로 호출 수는 추정하지 않는다.
+        EvaluationRun.objects.filter(pk=run.pk, prefect_flow_run_id=None).update(
+            error_code="EXECUTION_SPEC_REQUIRED"
+        )
+        run.refresh_from_db()
+        return run
     if run.prefect_flow_run_id is None:
         # DB transaction 밖에서 전송한다. 응답 유실 후에도 같은 요청 키로 복구한다.
         try:
@@ -173,6 +198,9 @@ def read_request(run):
         or request.get("live_config", {}) != run.live_config
         or request.get("reference_config", {}) != run.reference_config
         or request.get("recovery_config", {}) != run.recovery_config
+        or request.get("execution_spec", {}) != run.execution_spec
+        or request.get("execution_spec_sha256", "") != run.execution_spec_sha256
+        or (bool(run.execution_spec) and digest(run.execution_spec) != run.execution_spec_sha256)
     ):
         raise ResultsUnavailable
     for name in ("candidate_capture_id", "reference_capture_id"):
@@ -190,13 +218,24 @@ def read_live_capture(run):
     if (
         capture["model"] != config["model"]
         or capture["fixtureSha256"] != config["fixture_sha256"]
-        or capture["caseIds"] != DATASETS[run.dataset_id]["case_ids"]
+        or capture["caseIds"]
+        != run.execution_spec.get("dataset", DATASETS[run.dataset_id])["case_ids"]
         or capture["maxModelCalls"] != config["max_model_calls"]
         or capture["maxOutputTokens"] != config["max_output_tokens"]
         or type(calls) is not int
         or not 0 <= calls <= config["max_model_calls"]
     ):
         raise ResultsUnavailable
+    if run.execution_spec:
+        generation = run.execution_spec["generation"]
+        if (
+            capture["promptSha256"] != generation["prompt_sha256"]
+            or capture["runnerSha256"]
+            != generation["files"]["evaluation/support-program-evidence/evaluate.py"]
+            or capture["modelTimeoutSeconds"] != generation["settings"]["model_timeout_seconds"]
+            or capture["runTimeoutSeconds"] != generation["settings"]["run_timeout_seconds"]
+        ):
+            raise ResultsUnavailable
     return capture, sha256(path.read_bytes()).hexdigest()
 
 
@@ -206,8 +245,21 @@ def read_result(run):
         dataset, _, _ = selection(
             run.dataset_id, run.candidate_capture_id, run.reference_capture_id
         )
+        dataset = run.execution_spec.get("dataset", dataset)
         manifest = json.loads(artifact_path(run, "evaluation/manifest.json").read_text())
         comparison = json.loads(artifact_path(run, "evaluation/comparison.json").read_text())
+        if run.execution_spec and (
+            manifest.get("execution_spec_sha256") != run.execution_spec_sha256
+            or manifest.get("evaluator_version") != run.execution_spec["evaluation"]["version"]
+            or manifest.get("fixture_sha256") != run.execution_spec["dataset"]["fixture_sha256"]
+            or (
+                run.execution_mode != "live"
+                and manifest.get("capture_sha256") != run.execution_spec["candidate_sha256"]
+            )
+            or manifest.get("reference_capture_sha256") != run.execution_spec["reference_sha256"]
+            or comparison.get("case_ids") != run.execution_spec["dataset"]["case_ids"]
+        ):
+            raise ResultsUnavailable
         if (
             manifest["status"] != "completed"
             or not re.fullmatch(r"[a-f0-9]{32}", manifest["evaluation_run_id"])
@@ -352,7 +404,9 @@ def sync_run(run):
     try:
         flow_id = run.prefect_flow_run_id or prefect_client.find_run(run)
         if flow_id is None:
-            values["error_code"] = "PREFECT_DISPATCH_UNCONFIRMED"
+            values["error_code"] = (
+                "PREFECT_DISPATCH_UNCONFIRMED" if run.execution_spec else "EXECUTION_SPEC_REQUIRED"
+            )
         else:
             run.prefect_flow_run_id = flow_id
             values["prefect_flow_run_id"] = flow_id
@@ -398,6 +452,21 @@ def sync_run(run):
             values["model_api_calls"] = capture["modelApiCalls"]
         except (ResultsUnavailable, OSError, ValueError, KeyError, TypeError):
             # 파일이 없거나 확인할 수 없는 호출 수를 0으로 표시하지 않는다.
+            pass
+    if values.get("status") in TERMINAL and values.get("status") != "COMPLETED":
+        try:
+            read_request(run)
+            preflight = json.loads(artifact_path(run, "preflight.json").read_text())
+            if (
+                preflight["phase"] == "before_model_call"
+                and type(preflight["model_api_calls"]) is int
+                and preflight["model_api_calls"] == 0
+                and preflight["execution_spec_sha256"] == run.execution_spec_sha256
+                and preflight["error_code"]
+                in {"EXECUTION_SPEC_MISMATCH", "EXECUTION_SPEC_REQUIRED"}
+            ):
+                values.update(error_code=preflight["error_code"], model_api_calls=0)
+        except (ResultsUnavailable, OSError, ValueError, KeyError, TypeError):
             pass
     # 동시에 조회한 오래된 RUNNING 응답이 이미 완료된 상태를 되돌리지 않도록 한다.
     EvaluationRun.objects.filter(**observed).update(**values)
