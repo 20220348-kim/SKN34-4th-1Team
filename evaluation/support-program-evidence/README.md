@@ -219,6 +219,12 @@ backend/ai-service/.venv/bin/python evaluation/support-program-evidence/evaluate
 
 ## Ops에서 새 응답 생성
 
+Ops 실행기는 접수 시 DB에 예약한 누적 호출·출력 토큰 한도를 사용합니다. 모델 HTTP 전송 전에
+전용 인증으로 소유권과 호출 번호를 승인받고, 응답의 입력·출력 토큰을 정산합니다. 승인·정산 실패나
+사용량 누락이면 다음 호출을 차단하며, 응답 유실을 0회/0토큰으로 환급하지 않습니다.
+`budget_client.py`도 실행 명세에 포함합니다. 예약은 금액 상한이 아니며 전체 RAG 및 직접 실행 CLI의
+호출을 합산하지 않습니다. [Ops 누적 한도와 설정](../../backend/ops-service/README.md#누적-호출출력-토큰-한도)을 따릅니다.
+
 [실행 설정](../../infrastructure/llmops/README.md#ops에서-새-모델-평가) 후 Ops에서 새 응답 생성을 선택합니다.
 `ops_flow.py`는 승인한 fixture 해시와 비교 기준을 먼저 검증하고 선택 사례만 `evaluate.execute()`에 전달합니다.
 실제 생성은 기존 `Service → Agent → OpenAI Responses` 경로를 사용하며 HTTP 서버 초기화에 의존하지 않습니다.

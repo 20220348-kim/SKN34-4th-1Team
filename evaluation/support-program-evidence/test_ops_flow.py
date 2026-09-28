@@ -7,6 +7,14 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from unittest.mock import AsyncMock, Mock
+
+
+@pytest.fixture
+def stub_budget(monkeypatch):
+    client = Mock(authorize=AsyncMock(), settle=AsyncMock())
+    monkeypatch.setattr(ops_flow, "BudgetClient", lambda *args: client)
+    return client
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ops_flow
@@ -173,7 +181,7 @@ def test_different_captures_share_explicit_cases_and_reject_cross_dataset(monkey
         assert (tmp_path / rejected_id / "preflight.json").is_file()
 
 
-def test_live_generates_selected_cases_once_and_checks_baseline_before_spending(monkeypatch, tmp_path):
+def test_live_generates_selected_cases_once_and_checks_baseline_before_spending(monkeypatch, tmp_path, stub_budget):
     from catalog import LIVE_CAPTURE_ID, live_config
     request_id = str(uuid4())
     config = live_config("fixed-context-e01-v1")
@@ -186,7 +194,7 @@ def test_live_generates_selected_cases_once_and_checks_baseline_before_spending(
     async def execute(prepared, fixture_hash, output, **options):
         assert [case["id"] for case, _ in prepared] == ["E01"]
         assert fixture_hash == config["fixture_sha256"]
-        assert options == {"model": config["model"], "max_model_calls": 1}
+        assert options == {"model": config["model"], "max_model_calls": 1, "budget": stub_budget}
         calls.append("model")
         output.mkdir()
         (output / "capture.json").write_text('{}')
@@ -206,6 +214,8 @@ def test_live_generates_selected_cases_once_and_checks_baseline_before_spending(
     with pytest.raises(FileExistsError):
         run_live(*args)
     assert calls == ["model", "compare"]
+    stub_budget.claim.assert_called_once()
+    stub_budget.close.assert_called_once()
     marker = json.loads((tmp_path / request_id / "request.json").read_text())
     assert marker["live_config"] == config and marker["execution_mode"] == "live"
 
@@ -234,7 +244,7 @@ def test_live_preflight_rejects_unapproved_or_invalid_inputs_without_calls(monke
     assert len(list(tmp_path.glob("*/preflight.json"))) == 1
 
 
-def test_live_failure_preserves_capture_and_never_reexecutes(monkeypatch, tmp_path):
+def test_live_failure_preserves_capture_and_never_reexecutes(monkeypatch, tmp_path, stub_budget):
     from catalog import LIVE_CAPTURE_ID, live_config
     monkeypatch.setenv("LLMOPS_RESULTS_DIR", str(tmp_path))
     monkeypatch.setenv("LLMOPS_LIVE_ENABLED", "true")
@@ -259,7 +269,7 @@ def test_live_failure_preserves_capture_and_never_reexecutes(monkeypatch, tmp_pa
     assert json.loads((tmp_path / request_id / "capture/capture.json").read_text())["modelApiCalls"] == 1
 
 
-def test_live_response_to_report_pipeline_uses_only_stub_transport(monkeypatch, tmp_path):
+def test_live_response_to_report_pipeline_uses_only_stub_transport(monkeypatch, tmp_path, stub_budget):
     import httpx2
     import llmops
     from catalog import LIVE_CAPTURE_ID, live_config
@@ -308,3 +318,18 @@ def test_live_response_to_report_pipeline_uses_only_stub_transport(monkeypatch, 
     tokens = next(metric for metric in comparison["metrics"] if metric["key"] == "meanInputTokens")
     assert tokens == {"key": "meanInputTokens", "reference": None, "candidate": 120.0, "delta": None}
     assert (tmp_path / request_id / "evaluation/report.html").is_file()
+
+
+def test_budget_claim_failure_blocks_model_and_does_not_close_other_owner(monkeypatch, tmp_path, stub_budget):
+    from budget_client import BudgetUnavailable
+    from catalog import LIVE_CAPTURE_ID, live_config
+    monkeypatch.setenv("LLMOPS_RESULTS_DIR", str(tmp_path))
+    monkeypatch.setenv("LLMOPS_LIVE_ENABLED", "true")
+    monkeypatch.setenv("OPENAI_API_KEY", "offline-no-model-calls")
+    monkeypatch.setattr(ops_flow, "flow_run", SimpleNamespace(id=str(uuid4())))
+    monkeypatch.setattr(ops_flow.evaluate, "execute", lambda *a, **k: pytest.fail("must not spend"))
+    stub_budget.claim.side_effect = BudgetUnavailable("owner conflict")
+    with pytest.raises(BudgetUnavailable):
+        run_live(str(uuid4()), "fixed-context-e01-v1", LIVE_CAPTURE_ID,
+                 "fixed-context-20260906-diagnostic-v1", "live", live_config("fixed-context-e01-v1"))
+    stub_budget.close.assert_not_called()

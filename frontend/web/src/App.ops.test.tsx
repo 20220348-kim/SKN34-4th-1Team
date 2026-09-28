@@ -644,18 +644,19 @@ it('복원 조회 장애는 새 UUID 생성이나 자동 재접수로 처리하�
   expect(fetchMock.mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false)
 })
 
-it('서버가 접수를 거절한 조건은 명시적으로 다시 선택하고 기존 유료 확인을 해제한다', async () => {
+it.each(['INVALID_REFERENCE', 'LIVE_BUDGET_UNAVAILABLE'])('서버가 접수를 거절한 조건(%s)은 명시적으로 다시 선택하고 기존 유료 확인을 해제한다', async (code) => {
   storePendingEvaluation('core:99', pendingRequest())
   const original = fetchMock.getMockImplementation()!
   fetchMock.mockImplementation(async (path, options) => {
     if (path === `/api/v1/ops/evaluations/${id}`) return json({}, 404)
-    if (path === '/api/v1/ops/evaluations') return json({ code: 'INVALID_REFERENCE' }, 400)
+    if (path === '/api/v1/ops/evaluations') return json({ code }, 400)
     return original(path, options)
   })
   open()
   await screen.findByText(/아직 접수된 요청을 찾지 못했습니다/)
   expect(screen.getByLabelText('실행 방식')).toHaveProperty('value', 'live')
   fireEvent.click(screen.getByRole('button', { name: '같은 요청으로 재시도' }))
+  if (code === 'LIVE_BUDGET_UNAVAILABLE') await screen.findByText(/누적 평가 한도가 부족하거나 설정되지 않아 접수하지 않았습니다/)
   fireEvent.click(await screen.findByRole('button', { name: '접수되지 않은 조건 다시 선택' }))
   await screen.findByRole('button', { name: '평가 실행' })
   expect(readPendingEvaluation('core:99')).toBeNull()

@@ -1,8 +1,9 @@
 from django.urls import path
 
-from . import views
+from . import budget_views, views
 
 urlpatterns = [
+    path("internal/llmops/evaluations/<uuid:run_id>/budget/<str:action>", budget_views.api_budget),
     path("api/v1/ops/evaluations/<uuid:run_id>/fixture-review", views.api_fixture_review),
     path("api/v1/ops/evaluations/<uuid:run_id>/quality", views.api_quality),
     path("", views.web_redirect),

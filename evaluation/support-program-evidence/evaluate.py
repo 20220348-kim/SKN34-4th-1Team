@@ -244,7 +244,8 @@ def response_record(status_code: int, body: object) -> dict:
 
 
 async def execute(prepared: list, fixture_hash: str, output_dir: Path, *,
-                  model: str = DEFAULT_OPENAI_MODEL, max_model_calls: int | None = None) -> dict:
+                  model: str = DEFAULT_OPENAI_MODEL, max_model_calls: int | None = None,
+                  budget=None) -> dict:
     from langchain_openai import ChatOpenAI
     import httpx2
     from openai import AsyncOpenAI
@@ -288,6 +289,8 @@ async def execute(prepared: list, fixture_hash: str, output_dir: Path, *,
                 and body.get("text", {}).get("format", {}).get("strict") is True,
                 "unexpected model request")
         require(capture["modelApiCalls"] < limit, "model call budget exhausted")
+        if budget is not None:
+            await budget.authorize(capture["modelApiCalls"], model, 2000)
         capture["modelApiCalls"] += 1
         save_capture()
 
@@ -297,7 +300,11 @@ async def execute(prepared: list, fixture_hash: str, output_dir: Path, *,
             body = response.json()
         except ValueError:
             body = {}
-        capture["apiResponses"].append(response_record(response.status_code, body))
+        observation = response_record(response.status_code, body)
+        capture["apiResponses"].append(observation)
+        if budget is not None:
+            save_capture()
+            await budget.settle(capture["modelApiCalls"] - 1, observation["usage"])
 
     client = AsyncOpenAI(
         api_key=key, base_url="https://api.openai.com/v1", max_retries=0,

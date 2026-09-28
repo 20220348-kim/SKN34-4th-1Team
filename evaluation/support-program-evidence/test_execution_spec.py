@@ -62,6 +62,7 @@ def test_checked_in_release_matches_repository():
     AI + "app/support_program_identity.py",
     AI + "uv.lock",
     EVIDENCE + "llmops.py",
+    EVIDENCE + "budget_client.py",
     OPS + "quality_policy.py",
     EVIDENCE + "target-coverage-fixture.json",
     EVIDENCE + "runs/target-coverage-20260907-v1/capture.json",
@@ -121,6 +122,9 @@ def test_missing_or_altered_spec_never_uses_latest_defaults(runner, change):
 
 
 def test_paid_failure_never_writes_zero_call_preflight_receipt(runner, monkeypatch):
+    from unittest.mock import Mock
+    budget = Mock()
+    monkeypatch.setattr(ops_flow, "BudgetClient", lambda *args: budget)
     _, results = runner
     params = parameters()
 
@@ -131,3 +135,5 @@ def test_paid_failure_never_writes_zero_call_preflight_receipt(runner, monkeypat
     with pytest.raises(TimeoutError):
         ops_flow.evaluate_saved_capture.fn(**params)
     assert not (results / params["request_id"] / "preflight.json").exists()
+    budget.claim.assert_called_once()
+    budget.close.assert_called_once()
