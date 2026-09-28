@@ -3,6 +3,15 @@ import { describe, expect, it } from 'vitest'
 
 import { conditionMatchedProgram, relocationReviewRequiredProgram, supportPrograms } from '../fixtures/supportPrograms'
 import { isOfficialSupportProgramSourceUrl, supportProgramDtoSchema, supportProgramSearchResponseDtoSchema, toSupportProgram } from './SupportProgramDto'
+import { supportProgramDetailDtoSchema, toSupportProgramDetail } from './SupportProgramDto'
+
+it('preserves official application route on detail without restricting it to the notice host', () => {
+  const detail = { ...supportPrograms[0], evidenceQuestionSupported: true,
+    applicationRoute: { method: '온라인 신청', url: 'https://docs.google.com/forms/d/e/id/viewform', type: 'GOOGLE_FORMS' } }
+  const parsed = supportProgramDetailDtoSchema.parse(detail)
+  expect(toSupportProgramDetail(parsed).applicationRoute).toEqual(detail.applicationRoute)
+  expect(supportProgramDetailDtoSchema.safeParse({ ...detail, applicationRoute: { ...detail.applicationRoute, url: 'javascript:alert(1)' } }).success).toBe(false)
+})
 
 describe('새 제공처 공식 원문 URL', () => {
   const sources = [{ sourceCode: 'MSIT', host: 'msit.go.kr' }, { sourceCode: 'CNTRADE_NOTICE', host: 'cntrade.chungnam.go.kr' }]

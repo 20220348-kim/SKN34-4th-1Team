@@ -14,7 +14,13 @@ data class ApplicationOnlineFormSource(
     }
 }
 
-data class ApplicationOnlineFormSourceControl(val controlId: String, val label: String, val required: Boolean) {
+enum class ApplicationOnlineFormSourceKind { SHORT_TEXT, LONG_TEXT, SINGLE_CHOICE, MULTI_CHOICE, DROPDOWN }
+
+data class ApplicationOnlineFormSourceControl(
+    val controlId: String, val label: String, val required: Boolean,
+    val kind: ApplicationOnlineFormSourceKind = ApplicationOnlineFormSourceKind.SHORT_TEXT,
+    val options: List<String> = emptyList(),
+) {
     init {
         require(controlId.isNotBlank()) { "blank online form source control ID" }
         require(label.isNotBlank()) { "blank online form source label" }

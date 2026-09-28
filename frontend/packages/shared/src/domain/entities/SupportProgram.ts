@@ -41,4 +41,5 @@ export type SupportProgram = {
  */
 export type SupportProgramDetail = Omit<SupportProgram, 'matchedReasons' | 'recommendationScore' | 'eligibilityReview'> & {
   evidenceQuestionSupported: boolean
+  applicationRoute: { method: string | null; url: string | null; type: 'GOOGLE_FORMS' | 'OTHER_ONLINE_FORM' | 'FILE' | 'UNKNOWN' }
 }

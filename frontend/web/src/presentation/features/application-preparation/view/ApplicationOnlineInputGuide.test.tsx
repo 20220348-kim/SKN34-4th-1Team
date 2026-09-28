@@ -64,9 +64,9 @@ it('downloads BOM UTF-8 TXT with the same payload and a safe generated filename'
 it('renders a validated official link in a protected new tab', async () => {
   load.mockResolvedValueOnce({ ...guide, officialApplicationUrl: 'https://example.test/apply' })
   render(<ApplicationOnlineInputGuide preparationId={30} inputRevision={1} />)
-  const link = await screen.findByRole('link', { name: '공식 신청처 열기' })
+  const link = await screen.findByRole('link', { name: 'Google Form에서 신청하기' })
   expect(link.getAttribute('href')).toBe('https://example.test/apply')
-  expect(link.getAttribute('rel')).toBe('noopener noreferrer')
+  expect(link.getAttribute('rel')).toBe('noreferrer')
   expect(link.getAttribute('target')).toBe('_blank')
 })
 it('rejects a stale input revision and offers retry instead of exporting', async () => {
@@ -88,4 +88,25 @@ it('shows direct processing only for an explicit noncopyable item', async () => 
   fireEvent.click(screen.getByRole('button', { name: '저장된 확정 답변 전체 복사' }))
   await waitFor(() => expect(copy).toHaveBeenCalled())
   expect(copy.mock.calls[0][0]).not.toContain('주식회사 합성테크')
+})
+
+it('shows real Google question order, choices and a safe direct-input state', async () => {
+  load.mockResolvedValueOnce({ ...guide, totalCount: 2, readyCount: 1, needsReviewCount: 0, missingCount: 0,
+    directInputCount: 1, externalMappingVerified: false,
+    officialApplicationUrl: 'https://docs.google.com/forms/d/e/id/viewform',
+    items: [
+      { fieldId: 'company:name', sourceControlId: 'q-1', label: '실제 기업명 질문', required: true,
+        status: 'READY', answer: '합성테크', inputMode: 'SHORT_TEXT', options: [], copyable: true },
+      { fieldId: null, sourceControlId: 'q-2', label: '실제 복수 선택 질문', required: true,
+        status: 'DIRECT_INPUT', answer: null, inputMode: 'MULTI_CHOICE', options: ['A', 'B'], copyable: false },
+    ], savedAnswers: [{ fieldId: 'company:name', label: '실제 기업명 질문', answer: '합성테크' }] })
+  render(<ApplicationOnlineInputGuide preparationId={30} inputRevision={1} />)
+  expect(await screen.findByText('실제 기업명 질문')).toBeTruthy()
+  expect(screen.getByText('실제 복수 선택 질문')).toBeTruthy()
+  expect(screen.getByText('선택지: A, B')).toBeTruthy()
+  expect(screen.queryByRole('button', { name: '실제 복수 선택 질문 저장 답변 복사' })).toBeNull()
+  const link = screen.getByRole('link', { name: 'Google Form에서 신청하기' })
+  expect(link.getAttribute('target')).toBe('_blank')
+  fireEvent.click(screen.getByRole('button', { name: '저장된 확정 답변 전체 복사' }))
+  await waitFor(() => expect(copy).toHaveBeenCalledWith('Q. 실제 기업명 질문\nA. 합성테크'))
 })

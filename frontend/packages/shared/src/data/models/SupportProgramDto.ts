@@ -145,6 +145,14 @@ export type RestoredSupportProgramSearchResponseDto = z.infer<typeof restoredSup
 export const supportProgramDetailDtoSchema = z.object({
   ...supportProgramBaseShape,
   evidenceQuestionSupported: z.boolean(),
+  applicationRoute: z.object({
+    method: z.string().nullable(),
+    url: z.string().url().refine((value) => {
+      const url = new URL(value)
+      return ['http:', 'https:'].includes(url.protocol) && Boolean(url.hostname) && !url.username && !url.password
+    }).nullable(),
+    type: z.enum(['GOOGLE_FORMS', 'OTHER_ONLINE_FORM', 'FILE', 'UNKNOWN']),
+  }),
 }).superRefine(requireOfficialSourceUrl)
 
 export type SupportProgramDto = z.infer<typeof supportProgramDtoSchema>
@@ -204,5 +212,6 @@ export function toSupportProgramDetail(dto: SupportProgramDetailDto): SupportPro
     sourceName: dto.sourceName,
     sourceUrl: dto.sourceUrl,
     evidenceQuestionSupported: dto.evidenceQuestionSupported,
+    applicationRoute: { ...dto.applicationRoute },
   }
 }

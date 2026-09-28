@@ -9,6 +9,12 @@ import ai.govbiz.core.applicationpreparation.facade.AiApplicationPreparationFaca
 import ai.govbiz.core.applicationpreparation.repository.*
 import ai.govbiz.core.applicationpreparation.service.dto.*
 import ai.govbiz.core.supportprogram.repository.SavedSupportProgramRepository
+import ai.govbiz.core.supportprogram.repository.SupportProgramRepository
+import ai.govbiz.core.supportprogram.domain.CatalogSupportProgram
+import ai.govbiz.core.supportprogram.domain.SupportProgram
+import ai.govbiz.core.supportprogram.domain.SupportProgramApplicationRoute
+import ai.govbiz.core.supportprogram.domain.SupportProgramApplicationRouteType
+import ai.govbiz.core.supportprogram.domain.SupportProgramStatus
 import java.time.LocalDateTime
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
@@ -56,6 +62,58 @@ class ApplicationOnlineInputGuideTest {
         assertTrue(result.savedAnswers.isEmpty())
     }
 
+    @Test fun googleQuestionsKeepSourceOrderAndSafeAnswerStatuses() {
+        val source = ApplicationOnlineFormSource(1, "form", "신청서", listOf(
+            ApplicationOnlineFormSourceControl("choice", "업종", true, ApplicationOnlineFormSourceKind.SINGLE_CHOICE, listOf("제조업", "정보통신업")),
+            ApplicationOnlineFormSourceControl("name", "기업명", true),
+            ApplicationOnlineFormSourceControl("other", "외부 추가 질문", true),
+            ApplicationOnlineFormSourceControl("multi", "사업계획", true, ApplicationOnlineFormSourceKind.MULTI_CHOICE, listOf("A", "B")),
+        ))
+        val url = "https://docs.google.com/forms/d/e/public-id/viewform"
+        val result = ApplicationOnlineInputGuideResult.fromSource(10, 3, manifest,
+            listOf(fact("industry", "정보통신업"), fact("name", "합성테크"), fact("plan", "A")), source, url)
+        assertEquals(listOf("choice", "name", "other", "multi"), result.items.map { it.sourceControlId })
+        assertEquals(listOf(ApplicationOnlineInputGuideStatus.READY, ApplicationOnlineInputGuideStatus.READY,
+            ApplicationOnlineInputGuideStatus.DIRECT_INPUT, ApplicationOnlineInputGuideStatus.DIRECT_INPUT),
+            result.items.map { it.status })
+        assertEquals(listOf("업종", "기업명"), result.savedAnswers.map { it.label })
+        assertNull(result.items[2].fieldId)
+        assertEquals(url, result.officialApplicationUrl)
+        assertFalse(result.externalMappingVerified)
+        assertEquals(4, result.totalCount)
+        assertEquals(2, result.readyCount)
+    }
+
+    @Test fun choiceOutsideOptionsRequiresReviewAndMissingFactStaysMissing() {
+        val source = ApplicationOnlineFormSource(1, "form", "신청서", listOf(
+            ApplicationOnlineFormSourceControl("choice", "업종", true, ApplicationOnlineFormSourceKind.DROPDOWN, listOf("제조업")),
+            ApplicationOnlineFormSourceControl("name", "기업명", true),
+        ))
+        val result = ApplicationOnlineInputGuideResult.fromSource(10, 3, manifest,
+            listOf(fact("industry", "정보통신업")), source, "https://docs.google.com/forms/d/e/id/viewform")
+        assertEquals(listOf(ApplicationOnlineInputGuideStatus.NEEDS_REVIEW, ApplicationOnlineInputGuideStatus.MISSING),
+            result.items.map { it.status })
+        assertTrue(result.savedAnswers.isEmpty())
+    }
+
+    @Test fun completeExactReviewIsVerifiedButRequiredMismatchNeedsReview() {
+        val controls = listOf(
+            ApplicationOnlineFormSourceControl("name", "기업명", true),
+            ApplicationOnlineFormSourceControl("industry", "업종", true, ApplicationOnlineFormSourceKind.SINGLE_CHOICE, listOf("제조업")),
+            ApplicationOnlineFormSourceControl("plan", "사업계획", true),
+        )
+        val url = "https://docs.google.com/forms/d/e/id/viewform"
+        val exact = ApplicationOnlineInputGuideResult.fromSource(10, 3, manifest, emptyList(),
+            ApplicationOnlineFormSource(1, "form", "신청서", controls), url)
+        assertTrue(exact.externalMappingVerified)
+        assertEquals(3, exact.missingCount)
+        val mismatch = ApplicationOnlineInputGuideResult.fromSource(10, 3, manifest, emptyList(),
+            ApplicationOnlineFormSource(1, "form", "신청서",
+                controls.map { if (it.controlId == "name") it.copy(required = false) else it }), url)
+        assertFalse(mismatch.externalMappingVerified)
+        assertEquals(ApplicationOnlineInputGuideStatus.NEEDS_REVIEW, mismatch.items.first().status)
+    }
+
     @Test fun syntheticFixtureCountsAndControllerContractMatchReadyAnswers() {
         val json = jacksonObjectMapper()
         val fixture = json.readTree(java.io.File("../../evaluation/application-map/fixtures/synthetic-online-input-guide-v1.json"))
@@ -86,7 +144,8 @@ class ApplicationOnlineInputGuideTest {
         val ai = mock(AiApplicationPreparationFacade::class.java)
         val contents = mock(ApplicationPreparationContentRepository::class.java)
         val saved = mock(SavedSupportProgramRepository::class.java)
-        val service = ApplicationPreparationService(repository, forms, inputs, ai, contents, saved, mock(ApplicationOnlineFormMcpClient::class.java))
+        val supportPrograms = mock(SupportProgramRepository::class.java)
+        val service = ApplicationPreparationService(repository, forms, inputs, ai, contents, saved, mock(ApplicationOnlineFormMcpClient::class.java), supportPrograms)
         val owner = Account(1, "synthetic@example.test", AccountRole.USER, null, null, now)
         val preparation = StoredApplicationPreparation(10, 1, 3, ApplicationProgressStage.PREPARING, 1, now,
             NewApplicationPreparation(manifest.sourceCode, manifest.sourceProgramId, manifest.formVersionId, manifest.supportedServiceFields.first()), now, now)
@@ -101,8 +160,42 @@ class ApplicationOnlineInputGuideTest {
         verify(repository).findOwned(1, 999)
         verify(forms).requireVersion(manifest.formVersionId)
         verify(inputs).listOwnedFacts(1, 10)
-        verifyNoMoreInteractions(repository, forms, inputs)
+        verify(supportPrograms).findPresentBySourceAndProgramId(manifest.sourceCode, manifest.sourceProgramId)
+        verifyNoMoreInteractions(repository, forms, inputs, supportPrograms)
         verifyNoInteractions(ai, contents, saved)
         assertEquals(3, preparation.inputRevision)
+    }
+
+    @Test fun officialGoogleRouteRunsMcpAndBuildsGuideFromActualQuestions() {
+        val repository = mock(ApplicationPreparationRepository::class.java)
+        val forms = mock(ApplicationFormService::class.java)
+        val inputs = mock(ApplicationPreparationInputRepository::class.java)
+        val ai = mock(AiApplicationPreparationFacade::class.java)
+        val contents = mock(ApplicationPreparationContentRepository::class.java)
+        val saved = mock(SavedSupportProgramRepository::class.java)
+        val supportPrograms = mock(SupportProgramRepository::class.java)
+        val mcp = mock(ApplicationOnlineFormMcpClient::class.java)
+        val service = ApplicationPreparationService(repository, forms, inputs, ai, contents, saved, mcp, supportPrograms)
+        val owner = Account(1, "synthetic@example.test", AccountRole.USER, null, null, now)
+        val preparation = StoredApplicationPreparation(10, 1, 3, ApplicationProgressStage.PREPARING, 1, now,
+            NewApplicationPreparation(manifest.sourceCode, manifest.sourceProgramId, manifest.formVersionId, manifest.supportedServiceFields.first()), now, now)
+        val url = "https://docs.google.com/forms/d/e/public-id/viewform"
+        val program = SupportProgram(manifest.sourceProgramId, manifest.sourceCode, "공고", "기관", "요약",
+            emptyList(), emptyList(), "대상", "기간", null, null, SupportProgramStatus.UNKNOWN,
+            "기업마당", "https://www.bizinfo.go.kr/notice", emptyList(),
+            applicationRoute = SupportProgramApplicationRoute("온라인", url, SupportProgramApplicationRouteType.GOOGLE_FORMS))
+        `when`(repository.findOwned(1, 10)).thenReturn(preparation)
+        `when`(forms.requireVersion(manifest.formVersionId)).thenReturn(manifest)
+        `when`(supportPrograms.findPresentBySourceAndProgramId(manifest.sourceCode, manifest.sourceProgramId))
+            .thenReturn(CatalogSupportProgram(program, ""))
+        `when`(inputs.listOwnedFacts(1, 10)).thenReturn(listOf(fact("name", "합성테크")))
+        `when`(mcp.inspect(url)).thenReturn(ApplicationOnlineFormSource(1, "form", "신청서",
+            listOf(ApplicationOnlineFormSourceControl("name", "기업명", true))))
+        val guide = service.onlineInputGuide(owner, 10)
+        assertEquals(url, guide.officialApplicationUrl)
+        assertEquals(1, guide.totalCount)
+        assertEquals("합성테크", guide.savedAnswers.single().answer)
+        assertFalse(guide.externalMappingVerified) // 나머지 필수 Manifest 문항은 발견되지 않음
+        verify(mcp).inspect(url)
     }
 }

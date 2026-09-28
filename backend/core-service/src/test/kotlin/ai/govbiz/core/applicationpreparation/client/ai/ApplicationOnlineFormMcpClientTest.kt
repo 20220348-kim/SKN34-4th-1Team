@@ -1,6 +1,7 @@
 package ai.govbiz.core.applicationpreparation.client.ai
 
 import ai.govbiz.core.applicationpreparation.client.ai.exception.ApplicationOnlineFormMcpException
+import ai.govbiz.core.applicationpreparation.client.ai.mapper.ApplicationOnlineFormMcpMapper
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import org.springframework.http.HttpStatus
@@ -18,7 +19,7 @@ class ApplicationOnlineFormMcpClientTest {
     private val builder = RestClient.builder().baseUrl("http://ai.test")
         .messageConverters { it.clear(); it.add(JacksonJsonHttpMessageConverter(json)) }
     private val server = MockRestServiceServer.bindTo(builder).build()
-    private val client = ApplicationOnlineFormMcpClient(builder.build(), "t".repeat(32), json)
+    private val client = ApplicationOnlineFormMcpClient(builder.build(), "t".repeat(32), json, ApplicationOnlineFormMcpMapper())
     private val path = "http://ai.test/internal/v1/application-preparations/online-form/inspect"
     private val url = "https://docs.google.com/forms/d/e/public-id/viewform"
 
