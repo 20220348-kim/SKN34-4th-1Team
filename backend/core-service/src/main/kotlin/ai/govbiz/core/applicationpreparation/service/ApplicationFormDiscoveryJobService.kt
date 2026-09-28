@@ -1,5 +1,7 @@
 package ai.govbiz.core.applicationpreparation.service
 
+import ai.govbiz.core._common.exception.AiServiceCallException
+import ai.govbiz.core._common.exception.AiServiceFailure
 import ai.govbiz.core.account.domain.Account
 import ai.govbiz.core.applicationpreparation.repository.ApplicationFormDiscoveryJobRepository
 import ai.govbiz.core.applicationpreparation.service.exception.ApplicationFormDiscoveryException
@@ -9,6 +11,7 @@ import ai.govbiz.core.supportprogram.service.admission.exception.SupportProgramR
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.dao.DuplicateKeyException
 import org.springframework.stereotype.Service
+import org.slf4j.LoggerFactory
 
 @Service
 class ApplicationFormDiscoveryJobService(
@@ -17,6 +20,7 @@ class ApplicationFormDiscoveryJobService(
     private val admission: SupportProgramRequestAdmissionService,
     @param:Value("\${app.application-form-discovery.queue.enabled:false}") private val enabled: Boolean,
 ) {
+    private val logger = LoggerFactory.getLogger(javaClass)
     fun submit(account: Account, requestKey: String, sourceCode: String, programId: String) = run {
         if (!enabled) throw ApplicationFormDiscoveryException(Reason.QUEUE_UNAVAILABLE)
         discovery.validateIdentity(sourceCode, programId)
@@ -44,12 +48,17 @@ class ApplicationFormDiscoveryJobService(
                         aiStarted = true
                     }
                 } catch (error: Exception) {
+                    val root = generateSequence(error as Throwable) { it.cause }.last()
+                    logger.error("application_form_discovery_failed sourceCode={} sourceProgramId={} jobId={} aiStarted={} rootException={} rootMessage={}",
+                        job.sourceCode, job.sourceProgramId, id, aiStarted, root.javaClass.name, root.message?.take(500), error)
                     val documentError = error as? ai.govbiz.core.applicationpreparation.service.exception.ApplicationDocumentException
                     val code = documentError?.code ?: if (error is ApplicationFormDiscoveryException) "APPLICATION_FORM_${error.reason.name}"
+                        else if (error is AiServiceCallException && error.failure == AiServiceFailure.INVALID_RESPONSE) "APPLICATION_FORM_AI_INVALID_RESPONSE"
                         else if (aiStarted) "RUN_OUTCOME_UNKNOWN" else "DISCOVERY_FAILED"
                     // A definite mapping failure must not become a missing business fact or an unknown model outcome.
                     val unknown = if (documentError != null) documentError.code == "APPLICATION_DOCUMENT_OUTCOME_UNKNOWN"
-                        else aiStarted && error !is ApplicationFormDiscoveryException
+                        else aiStarted && error !is ApplicationFormDiscoveryException &&
+                            !(error is AiServiceCallException && error.failure == AiServiceFailure.INVALID_RESPONSE)
                     repository.fail(id, code, unknown = unknown)
                     return@executeBackground
                 }

@@ -404,7 +404,8 @@ class SupportProgramDocumentParser {
                                     buildString { for (i in 0 until texts.length) append(texts.item(i).textContent) }
                                 }
                                 value.isNotBlank() -> value
-                                cell.hasAttribute("s") -> "[빈 셀: 입력 가능 여부는 native inspect로 확인]"
+                                // Formatting alone is not question evidence; writable cells are found by native inspect.
+                                cell.hasAttribute("s") -> ""
                                 else -> ""
                             }
                             if (text.isNotBlank()) {

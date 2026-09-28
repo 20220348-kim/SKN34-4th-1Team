@@ -277,6 +277,41 @@ def _source_spans(source: str, proposed: str, *, allow_layout_variants: bool = T
     return list(dict.fromkeys(spans))
 
 
+def _ordered_gapped_source_spans(
+    source: str, proposed: str, *, minimum_terms: int = 4, maximum_span: int = 300,
+) -> list[tuple[int, int]]:
+    """Recover an exact source span when a quote omits intervening form instructions."""
+    def key(text: str) -> str:
+        return "".join(normalized for character in text
+                       for normalized in unicodedata.normalize("NFKC", character).casefold() if normalized.isalnum())
+
+    terms = [term for part in re.split(r"\s+", proposed.strip()) if (term := key(part))]
+    if len(terms) < minimum_terms:
+        return []
+    source_key, indexes = [], []
+    for index, character in enumerate(source):
+        for normalized in unicodedata.normalize("NFKC", character).casefold():
+            if normalized.isalnum():
+                source_key.append(normalized)
+                indexes.append(index)
+    joined = "".join(source_key)
+    spans = []
+    offset = 0
+    while (start := joined.find(terms[0], offset)) >= 0:
+        cursor = start + len(terms[0])
+        for term in terms[1:]:
+            found = joined.find(term, cursor)
+            if found < 0:
+                break
+            cursor = found + len(term)
+            if indexes[cursor - 1] + 1 - indexes[start] > maximum_span:
+                break
+        else:
+            spans.append((indexes[start], indexes[cursor - 1] + 1))
+        offset = start + 1
+    return spans
+
+
 def _canonical_source_quote(
     source: str,
     proposed: str,
@@ -317,7 +352,16 @@ def _canonical_source_quote(
             start, end = min(candidates, key=lambda span: (span[1] - span[0], span[0]))
             return source[start:end]
 
+        # Labels composed from a row and a year/column have intervening unit or header text.
+        # Require both anchors in order within one short source span.
+        if not option_values:
+            label_spans = _ordered_gapped_source_spans(source, label, minimum_terms=2, maximum_span=120)
+            if label_spans:
+                start, end = min(label_spans, key=lambda span: (span[1] - span[0], span[0]))
+                return source[start:end]
+
     relaxed_spans = [span for span in _source_spans(source, proposed) if span[1] - span[0] <= 300]
+    relaxed_spans += _ordered_gapped_source_spans(source, proposed)
     if not relaxed_spans:
         return None
     start, end = min(relaxed_spans, key=lambda span: (span[1] - span[0], span[0]))
@@ -379,6 +423,12 @@ def validate_discovery(request: DiscoverFormsRequest, output: FormDiscoverySelec
                     options=field.options,
                 )
                 if canonical_quote is None:
+                    import logging
+                    logging.getLogger(__name__).warning(
+                        "application_form_evidence_mismatch path=%s block_id=%s label=%r quote=%r options=%r source_length=%d",
+                        f"{field_path}.evidenceQuote", field.evidenceBlockId, field.label[:100],
+                        field.evidenceQuote[:300], [option[:100] for option in field.options[:10]], len(block.text),
+                    )
                     raise FormDiscoveryValidationError(
                         "EVIDENCE_QUOTE_MISMATCH",
                         path=f"{field_path}.evidenceQuote",

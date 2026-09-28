@@ -40,13 +40,39 @@ class SupportProgramDocumentParserTest {
         val blocks = mapper.parse(workbook(), "XLSX")
         assertTrue(blocks.first().locator.startsWith("XLSX sheet 지원 신청서 row 1"))
         assertTrue(blocks.first().text.contains("A1: 기업명"))
-        assertTrue(blocks.first().text.contains("B1: [빈 셀"))
+        assertFalse(blocks.first().text.contains("B1: [빈 셀"))
         assertFalse(blocks.joinToString { it.text }.contains("비밀"))
         assertFalse(blocks.joinToString { it.text }.contains("숨긴 행"))
         assertTrue(blocks.last().text.contains("수식 셀: 자동 입력 불가"))
         assertEquals(Reason.INVALID, assertThrows(SupportProgramDocumentException::class.java) {
             mapper.parse(workbook(true), "XLSX")
         }.reason)
+    }
+    @Test
+    fun ignoresLargeFormattedBlankRangeWhileKeepingMeaningfulXlsxCells() {
+        val ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+        val sheetData = buildString {
+            append("<row r=\"1\"><c r=\"A1\" t=\"inlineStr\"><is><t>신청 기업명과 담당자 연락처, 지원 필요성 및 사업 계획을 정확히 작성해 주세요. 신청기관의 주소와 대표자 정보도 함께 작성해 주세요.</t></is></c></row>")
+            for (row in 2..500) {
+                append("<row r=\"$row\">")
+                for (column in 'A'..'K') append("<c r=\"$column$row\" s=\"1\"/>")
+                append("</row>")
+            }
+        }
+        val workbook = ByteArrayOutputStream().also { output ->
+            ZipOutputStream(output).use { zip ->
+                mapOf(
+                    "[Content_Types].xml" to """<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/></Types>""",
+                    "xl/workbook.xml" to """<workbook xmlns="$ns" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="신청서" sheetId="1" r:id="rId1"/></sheets></workbook>""",
+                    "xl/_rels/workbook.xml.rels" to """<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>""",
+                    "xl/worksheets/sheet1.xml" to """<worksheet xmlns="$ns"><dimension ref="A1:K500"/><sheetData>$sheetData</sheetData></worksheet>""",
+                ).forEach { (name, value) -> zip.putNextEntry(ZipEntry(name)); zip.write(value.toByteArray()); zip.closeEntry() }
+            }
+        }.toByteArray()
+        val blocks = mapper.parse(workbook, "XLSX")
+        assertEquals(1, blocks.size)
+        assertTrue(blocks.single().text.contains("신청 기업명"))
+        assertFalse(blocks.single().text.contains("빈 셀"))
     }
     @Test
     fun readsBothOfficialHwpxDocumentsIncludingFootnotesAndAppendices() {

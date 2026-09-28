@@ -370,12 +370,12 @@ function ApplicationPreparationEditor({ id, initialSourceCode, initialSourceProg
               <p className={s.muted}>{vm.selectedProgram.applicationPeriod}</p>
             </div>
             <button className={s.primary} disabled={vm.discovering || vm.submitting} type="button" onClick={() => { void vm.discoverForms() }}>
-              {vm.discovering ? '양식 상태 조회 중…' : '저장된 신청 양식 확인'}
+              {vm.discovering ? '신청 양식 확인 중…' : '신청 양식 확인'}
             </button>
           </div>
-          {vm.discovering && <p className={s.status} role="status" aria-live="polite">저장된 분석 상태와 활성 신청 양식을 확인하고 있습니다.</p>}
+          {vm.discovering && <p className={s.status} role="status" aria-live="polite">저장된 결과를 확인하고, 필요한 경우 공식 첨부를 분석하고 있습니다.</p>}
           <div className="flex flex-wrap items-end justify-between gap-3">
-            <p className={`${s.muted} min-w-0 flex-1`}>공고별 사전분석 상태를 확인하고 사용 가능한 양식으로 작성을 시작합니다.</p>
+            <p className={`${s.muted} min-w-0 flex-1`}>저장된 양식이 없거나 변경됐다면 공식 첨부를 분석합니다. 처음에는 시간이 걸릴 수 있습니다.</p>
             <button className={`${s.button} ml-auto shrink-0`} disabled={vm.discovering || vm.submitting} type="button" onClick={vm.clearProgramSelection}>선택 취소</button>
           </div>
         </section>}

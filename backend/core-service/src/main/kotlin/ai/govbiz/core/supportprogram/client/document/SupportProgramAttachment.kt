@@ -6,6 +6,7 @@ data class SupportProgramAttachment(
     val fileName: String,
     val format: String,
     val bytes: ByteArray,
+    val mimeType: String? = null,
 )
 
 data class SupportProgramAttachments(

@@ -9,6 +9,7 @@ import ai.govbiz.core.applicationpreparation.repository.ApplicationFormSnapshotR
 import ai.govbiz.core.applicationpreparation.client.ai.AiApplicationPreparationClient
 import ai.govbiz.core.applicationpreparation.client.ai.dto.*
 import ai.govbiz.core.applicationpreparation.client.ai.exception.ApplicationFormTimeoutException
+import ai.govbiz.core.applicationpreparation.client.ai.exception.ApplicationDocumentMcpException
 import ai.govbiz.core.applicationpreparation.service.exception.ApplicationFormNotSupportedException
 import ai.govbiz.core.applicationpreparation.service.exception.ApplicationFormDiscoveryException
 import ai.govbiz.core.applicationpreparation.service.backfill.ApplicationFormBackfillInput
@@ -67,6 +68,12 @@ class ApplicationFormAvailabilityIntegrationTest {
         (if (two) listOf(0,1) else listOf(0)).map { index -> AiDiscoveredApplicationFormPayload(index,
             listOf(AiDiscoveredApplicationFormSectionPayload("company", "기업 정보", "신청 기업 정보를 작성합니다.",
                 listOf(AiDiscoveredApplicationFormFieldPayload("name", "업체명", "업체명을 입력합니다.", true, "D$index-B0", "업체명"))))) })
+    private fun discoverEachDocument(response: AiApplicationFormDiscoveryPayload = payload(true)) {
+        `when`(ai.discover(any(AiApplicationFormDiscoveryRequest::class.java) ?: AiApplicationFormDiscoveryRequest("application-form-discovery-v1", "BIZINFO", id, program.title, emptyList()))).thenAnswer { invocation ->
+            val request = invocation.getArgument<AiApplicationFormDiscoveryRequest>(0)
+            response.copy(forms = response.forms.filter { form -> request.documents.any { it.documentIndex == form.documentIndex } })
+        }
+    }
     private fun hash(value: ByteArray) = MessageDigest.getInstance("SHA-256").digest(value).joinToString("") { "%02x".format(it) }
     private fun state() = requireNotNull(availability.find("BIZINFO", id))
     private fun due() { jdbc.update("UPDATE application_form_availability SET next_retry_at=NOW()-INTERVAL 1 DAY") }
@@ -126,7 +133,7 @@ class ApplicationFormAvailabilityIntegrationTest {
 
     @Test fun cachedFormsWithLargeDocumentMapsRemainReadableAtDefaultSortBuffer() {
         configureFiles(two=true)
-        `when`(ai.discover(any(AiApplicationFormDiscoveryRequest::class.java) ?: AiApplicationFormDiscoveryRequest("application-form-discovery-v1", "BIZINFO", id, program.title, emptyList()))).thenReturn(payload(true))
+        discoverEachDocument()
         availability.register("BIZINFO", id, "a".repeat(64))
         val first = discovery.discoverQueued("BIZINFO", id) {}
         val largeMap = mapOf("targets" to (0 until 300).map { index ->
@@ -153,14 +160,99 @@ class ApplicationFormAvailabilityIntegrationTest {
     }
     @Test fun multipleSnapshotsBecomeAvailableAndUnchangedInputsDoNotCallAiAgain() {
         configureFiles(two=true)
-        `when`(ai.discover(any(AiApplicationFormDiscoveryRequest::class.java) ?: AiApplicationFormDiscoveryRequest("application-form-discovery-v1", "BIZINFO", id, program.title, emptyList()))).thenReturn(payload(true))
+        discoverEachDocument()
         availability.register("BIZINFO", id, "a".repeat(64))
         assertTrue(worker.runNext())
         assertEquals(ApplicationFormAvailabilityStatus.AVAILABLE, state().status)
         assertEquals(2, availability.activeForms("BIZINFO", id).size)
         assertNotNull(state().durationMs)
         due(); worker.runNext()
-        verify(ai, times(1)).discover(any(AiApplicationFormDiscoveryRequest::class.java) ?: AiApplicationFormDiscoveryRequest("application-form-discovery-v1", "BIZINFO", id, program.title, emptyList()))
+        verify(ai, times(2)).discover(any(AiApplicationFormDiscoveryRequest::class.java) ?: AiApplicationFormDiscoveryRequest("application-form-discovery-v1", "BIZINFO", id, program.title, emptyList()))
+    }
+    private fun rejectMappingFor(vararg contents: ByteArray) {
+        val rejected = contents.map(::hash).toSet()
+        val fallback = AiDocumentMappingRequest(sourceBase64 = "", sourceSha256 = "", format = "hwpx", scope = "test", fields = emptyList())
+        `when`(documentMcp.map(any(AiDocumentMappingRequest::class.java) ?: fallback)).thenAnswer { invocation ->
+            val request = invocation.getArgument<AiDocumentMappingRequest>(0)
+            if (request.sourceSha256 in rejected) throw ApplicationDocumentMcpException(
+                "APPLICATION_DOCUMENT_MAPPING_FAILED", "candidate mapping rejected")
+            val bindings = request.fields.mapIndexed { index, field -> ApplicationDocumentPlacement(field.id, "mock-target-$index") }
+            AiDocumentMappingPayload("application-document-mcp-v1", "b".repeat(64), request.sourceSha256, "native-map-v2", "contract-stub",
+                bindings, bindings.map { it.targetId }, mapOf("sourceSha256" to request.sourceSha256,
+                    "targets" to bindings.map { mapOf("targetId" to it.targetId, "editable" to true, "currentText" to "") }))
+        }
+    }
+    @Test fun firstCandidateMappingFailureDoesNotHideSecondSuccess() {
+        configureFiles(two=true)
+        discoverEachDocument()
+        rejectMappingFor(bytes)
+        availability.register("BIZINFO", id, "a".repeat(64))
+        assertTrue(worker.runNext())
+        assertEquals(ApplicationFormAvailabilityStatus.AVAILABLE, state().status)
+        assertEquals("계획서.hwpx", availability.activeForms("BIZINFO", id).single().attachmentFileName)
+    }
+    @Test fun secondCandidateMappingFailurePreservesFirstSuccess() {
+        configureFiles(two=true)
+        discoverEachDocument()
+        rejectMappingFor("second".toByteArray())
+        availability.register("BIZINFO", id, "a".repeat(64))
+        assertTrue(worker.runNext())
+        assertEquals(ApplicationFormAvailabilityStatus.AVAILABLE, state().status)
+        assertEquals("신청서.hwpx", availability.activeForms("BIZINFO", id).single().attachmentFileName)
+    }
+    @Test fun invalidChoicesInOneCandidateDoNotHideAnotherForm() {
+        configureFiles(two=true)
+        `when`(parser.parse(any(ByteArray::class.java) ?: bytes, anyString())).thenReturn(
+            listOf(SupportProgramDocumentBlock("문단 1", "업체명 예\u200B 아니오")))
+        val invalid = payload(true).forms.first().let { form -> form.copy(sections = form.sections.map { section ->
+            section.copy(fields = section.fields.map { field -> field.copy(evidenceQuote = "업체명 예\u200B 아니오", options = listOf("예\u200B", "아니오")) })
+        }) }
+        discoverEachDocument(payload(true).copy(forms = listOf(invalid, payload(true).forms.last())))
+        availability.register("BIZINFO", id, "a".repeat(64))
+        assertTrue(worker.runNext())
+        assertEquals(ApplicationFormAvailabilityStatus.AVAILABLE, state().status)
+        assertEquals("계획서.hwpx", availability.activeForms("BIZINFO", id).single().attachmentFileName)
+    }
+    @Test fun allCandidateMappingFailuresRemainReviewRequired() {
+        configureFiles(two=true)
+        discoverEachDocument()
+        rejectMappingFor(bytes, "second".toByteArray())
+        availability.register("BIZINFO", id, "a".repeat(64))
+        assertTrue(worker.runNext())
+        assertEquals(ApplicationFormAvailabilityStatus.REVIEW_REQUIRED, state().status)
+        assertEquals("APPLICATION_DOCUMENT_MAPPING_FAILED", state().reasonCode)
+    }
+    @Test fun twoIndividuallyAllowedSourcesDoNotFailAtTheirCombinedLength() {
+        configureFiles(two=true)
+        `when`(parser.parse(any(ByteArray::class.java) ?: bytes, anyString())).thenReturn(
+            listOf(SupportProgramDocumentBlock("문단 1", "업체명" + "가".repeat(69995))))
+        `when`(ai.discover(any(AiApplicationFormDiscoveryRequest::class.java) ?: AiApplicationFormDiscoveryRequest("application-form-discovery-v1", "BIZINFO", id, program.title, emptyList()))).thenAnswer { invocation ->
+            val request = invocation.getArgument<AiApplicationFormDiscoveryRequest>(0)
+            payload(true).copy(forms = payload(true).forms.filter { form -> request.documents.any { it.documentIndex == form.documentIndex } })
+        }
+        availability.register("BIZINFO", id, "a".repeat(64))
+        assertTrue(worker.runNext())
+        assertEquals(ApplicationFormAvailabilityStatus.AVAILABLE, state().status)
+        assertEquals(2, availability.activeForms("BIZINFO", id).size)
+        verify(ai, times(2)).discover(any(AiApplicationFormDiscoveryRequest::class.java) ?: AiApplicationFormDiscoveryRequest("application-form-discovery-v1", "BIZINFO", id, program.title, emptyList()))
+    }
+    @Test fun oversizedCandidateDoesNotBlockAnotherForm() {
+        configureFiles(two=true)
+        `when`(parser.parse(any(ByteArray::class.java) ?: bytes, anyString())).thenAnswer { invocation ->
+            val source = invocation.getArgument<ByteArray>(0)
+            listOf(SupportProgramDocumentBlock("문단 1", if (source.contentEquals(bytes)) "업체명" + "가".repeat(120000) else "업체명"))
+        }
+        `when`(ai.discover(any(AiApplicationFormDiscoveryRequest::class.java) ?: AiApplicationFormDiscoveryRequest("application-form-discovery-v1", "BIZINFO", id, program.title, emptyList()))).thenReturn(payload(true).copy(forms = payload(true).forms.filter { it.documentIndex == 1 }))
+        availability.register("BIZINFO", id, "a".repeat(64))
+        assertTrue(worker.runNext())
+        assertEquals(ApplicationFormAvailabilityStatus.AVAILABLE, state().status)
+        assertEquals("계획서.hwpx", availability.activeForms("BIZINFO", id).single().attachmentFileName)
+    }
+    @Test fun manualReanalysisPreservesSourceTooLargeReason() {
+        availability.register("BIZINFO", id, "a".repeat(64))
+        `when`(parser.parse(any(ByteArray::class.java) ?: bytes, anyString())).thenThrow(SupportProgramDocumentException(SupportProgramDocumentException.Reason.TOO_LARGE))
+        assertThrows(ApplicationFormDiscoveryException::class.java) { discovery.discoverQueued("BIZINFO", id) {} }
+        assertEquals("APPLICATION_FORM_SOURCE_TOO_LARGE", state().reasonCode)
     }
     @Test fun noFormIsCachedIncludingCatalogOnlyChange() {
         `when`(ai.discover(any(AiApplicationFormDiscoveryRequest::class.java) ?: AiApplicationFormDiscoveryRequest("application-form-discovery-v1", "BIZINFO", id, program.title, emptyList()))).thenReturn(payload().copy(forms=emptyList()))

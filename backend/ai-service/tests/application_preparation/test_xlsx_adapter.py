@@ -14,10 +14,11 @@ import pytest
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Border, Side, Font, PatternFill, Alignment, Protection
 from openpyxl.worksheet.datavalidation import DataValidation
+from openpyxl.comments import Comment
 from openpyxl.worksheet.table import Table
 from openpyxl.formatting.rule import CellIsRule
 
-from app.application_preparation.xlsx_adapter import XlsxDocumentAdapter
+from app.application_preparation.xlsx_adapter import XlsxDocumentAdapter, cell_value
 from app.application_preparation.document_contract import (
     DocumentError, EditOperation, GenerateDocumentRequest, MapDocumentRequest,
     MappingSelection, PlanSelection, ENGINES, PIPELINE_VERSION, MAP_VERSION,
@@ -430,6 +431,61 @@ def test_unknown_macro_part_name_is_rejected_by_content_type(tmp_path):
     with pytest.raises(DocumentError) as error:
         inspect(source(tmp_path, data))
     assert error.value.reason == 'XLSX_UNSUPPORTED_OBJECT_OR_EXTERNAL_LINK'
+
+
+def test_comment_vml_and_extended_list_validation_are_preserved_without_losing_allowed_values(tmp_path):
+    def note(workbook):
+        workbook.active['B2'].comment = Comment('원문 주석', '작성자')
+    data = fixture(extra=note)
+    extension = ('<extLst><ext uri="{CCE6A557-97BC-4b89-ADB6-D9C93CAAB3DF}">'
+        '<x14:dataValidations xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" '
+        'xmlns:xm="http://schemas.microsoft.com/office/excel/2006/main" count="1">'
+        '<x14:dataValidation type="list"><x14:formula1><xm:f>\'목록\'!$A$1:$A$2</xm:f></x14:formula1>'
+        '<xm:sqref>B2</xm:sqref></x14:dataValidation></x14:dataValidations></ext></extLst>').encode()
+    with ZipFile(BytesIO(data)) as archive:
+        xml = archive.read('xl/worksheets/sheet1.xml').replace(b'</worksheet>', extension + b'</worksheet>')
+    path = source(tmp_path, mutated(data, 'xl/worksheets/sheet1.xml', xml))
+    document = inspect(path)
+    assert target(document, 'B2').nativeLocator['dataValidation']['allowedValues'] == ['서울', '부산']
+    with pytest.raises(DocumentError):
+        cell_value(target(document, 'B2'), '대전')
+    output, _ = asyncio.run(XlsxDocumentAdapter().apply(path, document,
+        plan(path, document, value='서울'), {'company:name': '서울'}))
+    with ZipFile(BytesIO(path.read_bytes())) as before, ZipFile(BytesIO(output)) as after:
+        for name in before.namelist():
+            if name != 'xl/worksheets/sheet1.xml':
+                assert before.read(name) == after.read(name)
+        assert extension in after.read('xl/worksheets/sheet1.xml')
+
+
+def test_vml_with_non_comment_control_remains_unsupported(tmp_path):
+    data = fixture(extra=lambda workbook: setattr(workbook.active['B2'], 'comment', Comment('참고', '작성자')))
+    with ZipFile(BytesIO(data)) as archive:
+        vml_name = next(name for name in archive.namelist() if name.endswith('.vml'))
+        vml = archive.read(vml_name).replace(b'ObjectType="Note"', b'ObjectType="Button"')
+    with pytest.raises(DocumentError) as error:
+        inspect(source(tmp_path, mutated(data, vml_name, vml)))
+    assert error.value.reason == 'XLSX_UNSUPPORTED_OBJECT_OR_EXTERNAL_LINK'
+
+
+def test_unknown_xlsx_extension_is_not_silently_discarded(tmp_path):
+    data = fixture()
+    with ZipFile(BytesIO(data)) as archive:
+        xml = archive.read('xl/worksheets/sheet1.xml').replace(b'</worksheet>',
+            b'<extLst><ext uri="unknown"><unknown/></ext></extLst></worksheet>')
+    with pytest.raises(DocumentError) as error:
+        inspect(source(tmp_path, mutated(data, 'xl/worksheets/sheet1.xml', xml)))
+    assert error.value.reason == 'XLSX_EXTENDED_VALIDATION_UNSUPPORTED'
+
+
+def test_large_styled_blank_grid_keeps_labeled_inputs_without_target_overflow(tmp_path):
+    def formatted(workbook):
+        for row in range(21, 501):
+            for column in range(1, 12):
+                workbook.active.cell(row, column).border = Border(bottom=Side(style='thin'))
+    document = inspect(source(tmp_path, fixture(extra=formatted)))
+    assert len(document.targets) < 3000
+    assert target(document, 'B2').editable
 
 
 def test_duplicate_zip_entries_and_cell_budget_are_rejected(tmp_path):

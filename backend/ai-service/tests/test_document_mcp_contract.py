@@ -835,6 +835,25 @@ def test_split_printed_label_paragraphs_cannot_become_mapping_targets(monkeypatc
     assert {binding["targetId"] for binding in result["bindings"]} == {"representative", "registration"}
 
 
+def test_hwp_mapping_repairs_omitted_scope_only_for_the_same_writable_target(monkeypatch):
+    from unittest.mock import AsyncMock
+    from app.application_preparation import document_pipeline
+    from app.application_preparation.document_contract import MapDocumentRequest, MappingSelection
+    req = MapDocumentRequest(**request(format="hwp").model_dump(exclude={"facts"}), fields=[
+        {"id": "company:name", "label": "회사명", "guidance": "", "required": True}])
+    doc = DocumentMap(sourceSha256=req.sourceSha256, format="hwp", engineVersion="test", targets=[
+        NativeTarget(targetId="name-slot", nativeLocator={"fieldLabels": ["회사명"]}, kind="paragraph", currentText="")])
+    missing_scope = MappingSelection(bindings=[{"factId": "company:name", "targetId": "name-slot", "box": None}],
+                                     scopeTargetIds=[], unmappedFieldIds=[])
+    repaired = missing_scope.model_copy(update={"scopeTargetIds": ["name-slot"]})
+    agent = SimpleNamespace(map_document=AsyncMock(side_effect=[missing_scope, repaired]))
+    monkeypatch.setattr(document_pipeline, "inspect_document", AsyncMock(return_value=doc))
+    result = asyncio.run(document_pipeline.map_document(req, agent))
+    assert result["bindings"][0]["targetId"] == "name-slot"
+    assert result["scopeTargetIds"] == ["name-slot"]
+    assert agent.map_document.await_count == 2
+
+
 def test_large_hwpx_mapping_sends_only_all_native_label_candidates(monkeypatch):
     import json
     from unittest.mock import AsyncMock
@@ -898,6 +917,29 @@ def test_compound_table_question_requires_reanalysis_before_calling_model(monkey
     with pytest.raises(DocumentError) as error:asyncio.run(document_pipeline.map_document(req,agent))
     assert error.value.code=='APPLICATION_DOCUMENT_FORM_REANALYSIS_REQUIRED'
     agent.map_document.assert_not_awaited()
+
+
+def test_hwpx_row_question_named_like_table_heading_can_map_to_its_labeled_cell(monkeypatch):
+    from unittest.mock import AsyncMock
+    from app.application_preparation import document_pipeline
+    from app.application_preparation.document_contract import MapDocumentRequest, MappingSelection
+    req = MapDocumentRequest(**request().model_dump(exclude={"facts"}), fields=[
+        {"id": "industry:status", "label": "① 산업 현황 / 산업현황", "guidance": "", "required": True}])
+    doc = DocumentMap(sourceSha256=req.sourceSha256, format="hwpx", engineVersion="test", targets=[
+        NativeTarget(targetId="nearby-table", kind="cell", currentText="다른 표", nativeLocator={
+            "table": 10, "tableHeadings": ["① 산업 현황"], "columnLabels": ["구분", "세부내용"]}),
+        NativeTarget(targetId="heading", kind="cell", currentText="산업현황", nativeLocator={
+            "table": 9, "tableHeadings": ["① 산업 현황"], "columnLabels": ["구분", "세부내용"]}),
+        NativeTarget(targetId="answer", kind="paragraph", currentText="", nativeLocator={
+            "table": 9, "tableHeadings": ["① 산업 현황"], "columnLabels": ["구분", "세부내용"],
+            "rowLabels": ["산업현황"], "fieldLabels": ["산업현황"]})])
+    selection = MappingSelection(bindings=[{"factId": "industry:status", "targetId": "answer", "box": None}],
+                                 scopeTargetIds=["answer"], unmappedFieldIds=[])
+    agent = SimpleNamespace(map_document=AsyncMock(return_value=selection))
+    monkeypatch.setattr(document_pipeline, "inspect_document", AsyncMock(return_value=doc))
+    result = asyncio.run(document_pipeline.map_document(req, agent))
+    assert result["bindings"][0]["targetId"] == "answer"
+    agent.map_document.assert_awaited_once()
 
 
 def test_hwpx_context_uses_mcp_table_spans_and_column_evidence():
