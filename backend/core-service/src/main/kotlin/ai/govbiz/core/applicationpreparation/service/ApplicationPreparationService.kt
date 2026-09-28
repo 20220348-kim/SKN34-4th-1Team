@@ -1,6 +1,7 @@
 package ai.govbiz.core.applicationpreparation.service
 
 import ai.govbiz.core.applicationpreparation.service.dto.ApplicationOnlineInputGuideResult
+import ai.govbiz.core.applicationpreparation.client.ai.ApplicationOnlineFormMcpClient
 import ai.govbiz.core.applicationpreparation.domain.ApplicationOnlineFormSourceReference
 import ai.govbiz.core.applicationpreparation.service.dto.ApplicationOnlineFormSourceCapabilityResult
 import ai.govbiz.core.applicationpreparation.service.dto.ApplicationOnlineFormSourceCapabilityStatus
@@ -42,6 +43,7 @@ class ApplicationPreparationService(
     private val ai: AiApplicationPreparationFacade,
     private val contents: ApplicationPreparationContentRepository,
     private val savedSupportPrograms: SavedSupportProgramRepository,
+    private val onlineFormMcp: ApplicationOnlineFormMcpClient,
 ) {
     /** 소유권 확인 후 고정 Manifest를 계산에만 사용한다. Fact·revision·snapshot은 변경하지 않는다. */
     fun reviewOnlineFormMapping(account: Account, preparationId: Long, source: ApplicationOnlineFormSource): ApplicationOnlineFormMappingReviewResult {
@@ -51,7 +53,22 @@ class ApplicationPreparationService(
         return ApplicationOnlineFormMappingReviewResult(source.formId, source.formTitle, manifest.fieldMappings(review.formMap), review.issues)
     }
 
-    /** 외부 I/O 없이 현재 서비스의 접근 능력을 판정한다. Google 로그인은 Forms 권한이 아니다. */
+    /** 소유권과 고정 Manifest를 확인한 뒤 공개 Form을 읽고 기존 결정적 매핑만 수행한다. */
+    fun inspectPublicOnlineForm(
+        account: Account,
+        preparationId: Long,
+        reference: ApplicationOnlineFormSourceReference,
+    ): ApplicationOnlineFormMappingReviewResult {
+        val preparation = repository.findOwned(account.id, preparationId) ?: throw ApplicationPreparationNotFoundException()
+        val manifest = forms.requireVersion(preparation.draft.formVersionId)
+        require(reference.provider == "GOOGLE_FORMS") { "unsupported online form provider" }
+        val source = onlineFormMcp.inspect(reference.sourceUrl)
+        val review = manifest.reviewOnlineForm(source)
+        return ApplicationOnlineFormMappingReviewResult(source.formId, source.formTitle,
+            manifest.fieldMappings(review.formMap), review.issues)
+    }
+
+    /** 외부 I/O 없이 공개 reader 시도 대상인지 분류한다. 실제 접근 성공 여부는 inspection이 확인한다. */
     fun checkOnlineFormSourceCapability(
         account: Account,
         preparationId: Long,
@@ -60,15 +77,22 @@ class ApplicationPreparationService(
         val preparation = repository.findOwned(account.id, preparationId) ?: throw ApplicationPreparationNotFoundException()
         forms.requireVersion(preparation.draft.formVersionId)
         val uri = URI(reference.sourceUrl)
-        val googleReference = reference.provider == "GOOGLE_FORMS" && when (uri.host.lowercase()) {
-            "docs.google.com" -> Regex("/forms/(?:u/[0-9]+/)?d/(?:e/)?[A-Za-z0-9_-]+/(?:edit|viewform)/?").matches(uri.rawPath)
-            "forms.gle" -> Regex("/[A-Za-z0-9_-]+/?").matches(uri.rawPath)
-            else -> false
+        val status = if (reference.provider != "GOOGLE_FORMS") {
+            ApplicationOnlineFormSourceCapabilityStatus.UNSUPPORTED_PROVIDER
+        } else when (uri.host.lowercase()) {
+            "docs.google.com" -> when {
+                Regex("/forms/(?:u/[0-9]+/)?d/(?:e/)?[A-Za-z0-9_-]+/viewform/?").matches(uri.rawPath) ->
+                    ApplicationOnlineFormSourceCapabilityStatus.PUBLIC_READ_SUPPORTED
+                Regex("/forms/(?:u/[0-9]+/)?d/(?:e/)?[A-Za-z0-9_-]+/edit/?").matches(uri.rawPath) ->
+                    ApplicationOnlineFormSourceCapabilityStatus.REQUIRES_AUTH
+                else -> ApplicationOnlineFormSourceCapabilityStatus.UNSUPPORTED_PROVIDER
+            }
+            "forms.gle" -> if (Regex("/[A-Za-z0-9_-]+/?").matches(uri.rawPath))
+                ApplicationOnlineFormSourceCapabilityStatus.PUBLIC_READ_SUPPORTED
+            else ApplicationOnlineFormSourceCapabilityStatus.UNSUPPORTED_PROVIDER
+            else -> ApplicationOnlineFormSourceCapabilityStatus.UNSUPPORTED_PROVIDER
         }
-        return ApplicationOnlineFormSourceCapabilityResult(
-            if (googleReference) ApplicationOnlineFormSourceCapabilityStatus.REQUIRES_AUTH
-            else ApplicationOnlineFormSourceCapabilityStatus.UNSUPPORTED_PROVIDER,
-        )
+        return ApplicationOnlineFormSourceCapabilityResult(status)
     }
 
     /** 소유권을 먼저 확인한다. 저장된 사용자 Fact만 읽고 외부 I/O나 쓰기를 수행하지 않는다. */

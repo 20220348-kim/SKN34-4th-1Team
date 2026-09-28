@@ -1057,28 +1057,28 @@ DB write·revision/Fact/snapshot 변경·schema/Flyway 변경은 없다.
 
 ## Phase 5-4: ONLINE_FORM 외부 소스 접근 능력
 
-현재 판정은 PHASE5_EXTERNAL_SOURCE_PARTIAL이며 실제 지원 provider/collector는 없다.
+도입 이전 판정은 PHASE5_EXTERNAL_SOURCE_PARTIAL이었으며 당시 지원 provider/collector는 없었다.
 ApplicationOnlineFormSourceReference는 sourceUrl과 provider 문자열만 가진다.
 HTTPS·host·길이·provider 형식을 검증하고 userinfo·명시적 port·fragment를 거절한다.
 URL과 query는 toString 및 validation 오류에서 숨긴다. 이 검증은 SSRF 안전 판정이 아니다.
 
 ApplicationPreparationService.checkOnlineFormSourceCapability는
 findOwned → 고정 Manifest 조회 → provider/URL 계약 확인 → Capability Result로 이어진다.
-GOOGLE_FORMS와 정확한 docs.google.com의 form edit/viewform 경로 또는 forms.gle 참조는
-REQUIRES_AUTH다. short URL은 resolve하지 않으며 responder ID를 API formId로 추측하지 않는다.
-그 외 provider/URL 조합은 UNSUPPORTED_PROVIDER다. provider 문자열은 지원 목록이 아니다.
-SUPPORTED·SOURCE_UNAVAILABLE 등 실제 확인하지 않은 결과나 가짜 Source/Review는 만들지 않는다.
+이전에는 GOOGLE_FORMS의 edit/viewform 및 forms.gle 참조를 모두 REQUIRES_AUTH로 판정했다.
+현재는 공개 responder viewform과 forms.gle short URL을 PUBLIC_READ_SUPPORTED 후보로,
+edit URL을 REQUIRES_AUTH로, 나머지를 UNSUPPORTED_PROVIDER로 분류한다.
+이 판정에는 외부 I/O가 없으므로 실제 공개 여부와 redirect destination은 inspection에서 확인한다.
+responder ID를 공식 API formId로 추측하지 않는다.
 
 Google forms.get은 OAuth scope와 접근 가능한 formId가 필요하다.
 현재 Google 로그인은 openid email이며 Forms body scope, token 보관·갱신·소유권 연결이 없다.
 응답자 URL만으로 공식 API 읽기 권한을 가정하지 않는다. 일반 HTML은 표준 form 계약이 있으나
 이 프로젝트의 concrete target이 없어 generic scraper를 구현하지 않는다.
-외부 HTTP/DNS/redirect 요청 자체가 없으므로 SSRF fetch 방어·timeout·body 제한·content-type는 N/A다.
-실제 collector 도입 시 URL/IP/redirect 검증과 I/O 제한은 별도로 구현해야 한다.
+Capability check에는 외부 HTTP/DNS/redirect 요청이 없다. 별도 public reader의 SSRF·redirect·timeout·응답 크기 제한은 아래 읽기 경로에 적용한다.
 
 기존 reviewOnlineFormMapping(account, preparationId, source)는 그대로 유지한다.
-외부 참조에서 Source로 이어지는 성공 경로는 아직 없다. DB write·Fact/revision/snapshot 변경,
-public HTTP API·Frontend·자동 입력·제출·응답 조회·FILE/AI/MCP/DB schema 변경은 없다.
+당시에는 외부 참조에서 Source로 이어지는 성공 경로가 없었다. DB write·Fact/revision/snapshot 변경,
+public HTTP API·Frontend·자동 입력·제출·응답 조회·FILE/DB schema 변경은 없다.
 
 [Phase 5-4 평가 기록](../evaluation/application-map/runs/phase5-online-form-source-acquisition-20260928-v1/README.md)을 참고한다.
 
@@ -1118,3 +1118,14 @@ Manifest 순서의 PROVIDED Fact 중 공식 선택지와 일치하는 값만 포
 이 텍스트를 외부 신청 화면에 그대로 제출해도 된다는 의미는 아니다. 직접 입력·선택·업로드와 최종 확인이 필요하다.
 `sourceUrl`은 공고 원문이므로 신청처 URL로 대신 사용하지 않는다. 현재 officialApplicationUrl은 null이다.
 웹 계약은 반환된 링크에 http/https만 허용한다. 기존 FILE 5포맷과 ONLINE_FORM 계약, DB schema는 유지한다.
+
+
+## 공개 Google Form 질문 조회 (`skn-31`)
+
+이미 확보된 공개 Google Forms responder URL의 읽기 전용 검사 경로는 `ApplicationPreparationService.inspectPublicOnlineForm → ApplicationOnlineFormMcpClient → AI Service /internal/v1/application-preparations/online-form/inspect → 별도 단기 stdio Google Public Form Reader MCP → 익명 GET → ApplicationOnlineFormSource → 기존 reviewOnlineForm`이다. 공개 Controller는 추가하지 않는다. Document MCP와 FILE 형식은 그대로다. `DOCUMENT_INTERNAL_TOKEN`으로 기존 Core ↔ AI 내부 인증을 재사용한다. Form 검사 과정에서 OpenAI를 호출하거나 DB에 snapshot을 쓰지 않는다.
+
+Reader는 `docs.google.com/forms/.../viewform`과 `forms.gle`만 허용하고 각 redirect와 DNS 결과를 검사한다. TLS 검증을 유지한 채 확인한 공인 IP로 연결하며 GET만 보낸다. Cookie, OAuth, 사용자 브라우저 세션은 전달하지 않는다. HTML 응답은 4 MiB, redirect는 최대 3회다. 질문은 공개 HTML의 `role=listitem`, `role=heading`, 입력 요소, `aria-required`, radio/checkbox/listbox의 접근성 표시에서만 읽는다. 복수 페이지는 현재 화면에 없는 질문을 완전한 양식으로 오인하지 않도록 거절한다.
+
+Capability의 `PUBLIC_READ_SUPPORTED`는 URL/provider가 공개 reader 시도 대상이라는 뜻이며 실제 조회 성공을 보장하지 않는다. `/edit`는 `REQUIRES_AUTH`, Google 외 URL은 `UNSUPPORTED_PROVIDER`다. `forms.gle` redirect의 최종 목적지는 MCP inspection에서 검증한다.
+
+`controlId`는 질문 순서와 정규화한 label/type/options의 hash로 만든 snapshot 내부 식별자다. Google 발급 questionId나 제출용 entry ID가 아니다. `semanticFingerprint`는 제목과 질문 순서·label·required·type·options를 정규화한 값이며 HTML nonce와 무관하다. 지원 근거가 없는 질문은 `UNKNOWN`으로 반환하고 Core 매핑 경로는 실패시켜 부분 매핑을 막는다. 이 HTML은 공식 Forms API 계약이 아니므로 Google의 DOM 변경 시 명시적 오류가 발생할 수 있다. 로그인 필요, 조건부 분기, 자동입력·제출은 지원하지 않는다.

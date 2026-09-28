@@ -2,6 +2,7 @@ package ai.govbiz.core.applicationpreparation.service
 
 import ai.govbiz.core.account.domain.Account
 import ai.govbiz.core.account.domain.AccountRole
+import ai.govbiz.core.applicationpreparation.client.ai.ApplicationOnlineFormMcpClient
 import ai.govbiz.core.applicationpreparation.domain.*
 import ai.govbiz.core.applicationpreparation.domain.exception.ApplicationPreparationNotFoundException
 import ai.govbiz.core.applicationpreparation.facade.AiApplicationPreparationFacade
@@ -85,7 +86,7 @@ class ApplicationOnlineInputGuideTest {
         val ai = mock(AiApplicationPreparationFacade::class.java)
         val contents = mock(ApplicationPreparationContentRepository::class.java)
         val saved = mock(SavedSupportProgramRepository::class.java)
-        val service = ApplicationPreparationService(repository, forms, inputs, ai, contents, saved)
+        val service = ApplicationPreparationService(repository, forms, inputs, ai, contents, saved, mock(ApplicationOnlineFormMcpClient::class.java))
         val owner = Account(1, "synthetic@example.test", AccountRole.USER, null, null, now)
         val preparation = StoredApplicationPreparation(10, 1, 3, ApplicationProgressStage.PREPARING, 1, now,
             NewApplicationPreparation(manifest.sourceCode, manifest.sourceProgramId, manifest.formVersionId, manifest.supportedServiceFields.first()), now, now)

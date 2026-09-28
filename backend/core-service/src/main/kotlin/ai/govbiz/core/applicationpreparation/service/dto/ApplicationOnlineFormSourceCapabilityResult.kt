@@ -1,11 +1,12 @@
 package ai.govbiz.core.applicationpreparation.service.dto
 
-/** 실제 확인된 미지원 사유만 반환한다. source나 성공 review를 만들어 내지 않는다. */
+/** URL/provider의 읽기 경로 후보만 판정한다. 실제 공개 여부는 inspection 결과로 확인한다. */
 data class ApplicationOnlineFormSourceCapabilityResult(
     val status: ApplicationOnlineFormSourceCapabilityStatus,
 )
 
 enum class ApplicationOnlineFormSourceCapabilityStatus {
+    PUBLIC_READ_SUPPORTED,
     REQUIRES_AUTH,
     UNSUPPORTED_PROVIDER,
 }
