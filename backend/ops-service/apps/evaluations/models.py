@@ -27,6 +27,9 @@ class EvaluationRun(models.Model):
     comparison = models.JSONField(default=dict)
     execution_mode = models.CharField(max_length=10, default="replay")
     live_config = models.JSONField(default=dict)
+    # 과거 기록은 빈 값으로 남긴다. 새 요청만 접수 시의 명세를 보존한다.
+    execution_spec = models.JSONField(default=dict)
+    execution_spec_sha256 = models.CharField(max_length=64, blank=True)
     source_run = models.ForeignKey(
         "self", null=True, on_delete=models.PROTECT, related_name="recoveries"
     )

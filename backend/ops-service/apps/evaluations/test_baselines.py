@@ -9,6 +9,7 @@ from django.db.migrations.executor import MigrationExecutor
 from django.test import TransactionTestCase
 
 from . import services
+from .catalog import public_datasets
 from .models import EvaluationBaseline, EvaluationBaselineChange, EvaluationRun
 from .reviews import clear_baseline, promote_baseline
 from .services import RequestConflict, ResultsUnavailable, submit_run
@@ -31,6 +32,9 @@ class BaselineTests(ReviewFixture, TransactionTestCase):
             self.capture_id,
             f"run:{self.run.id}",
             baseline_version=1,
+            execution_profile=next(
+                item for item in public_datasets() if item["id"] == self.dataset
+            )["execution_profiles"]["replay"],
         )
 
     def test_history_clear_retry_and_stale_replacement(self):

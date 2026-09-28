@@ -13,6 +13,7 @@ const sessionSchema = z.object({
     captures: z.array(z.object({ id: z.string(), label: z.string() })).min(1),
     baseline: z.object({ id: z.string(), label: z.string(), version: z.number().int().nonnegative() }).nullable(),
     fixture: z.string(), live_config: liveConfigSchema,
+    execution_profiles: z.object({ replay: z.string().regex(/^[a-f0-9]{64}$/), live: z.string().regex(/^[a-f0-9]{64}$/) }),
   })),
 })
 const externalUrl = z.url().refine((value) => /^https?:\/\//.test(value)).nullable()
@@ -31,6 +32,13 @@ const comparisonSchema = z.object({
   cases: z.array(z.object({ case_id: z.string(), reference: observationSchema, candidate: observationSchema })),
 })
 const runSchema = z.object({
+  execution_profile: z.string().nullable().default(null),
+  execution_spec_sha256: z.string().nullable().default(null),
+  execution_spec: z.object({
+    dataset: z.object({ case_ids: z.array(z.string()), fixture_sha256: z.string() }),
+    evaluation: z.object({ sha256: z.string() }),
+    generation: z.object({ prompt_sha256: z.string() }).nullable(),
+  }).nullable().default(null),
   id: z.uuid(), dataset_id: z.string(), dataset_label: z.string(), requested_by: z.string(), requested_by_id: z.string(), can_retry: z.boolean(),
   baseline_version: z.number().int().positive().nullable().default(null),
   candidate_capture_id: z.string(), reference_capture_id: z.string(), candidate_label: z.string(), reference_label: z.string(),
@@ -149,15 +157,16 @@ export const saveEvaluationCaseReview = (id: string, caseId: string, decision: C
 export const promoteEvaluationBaseline = (id: string, reviewId: number, version: number) => post(`/evaluations/${encodeURIComponent(id)}/baseline`, { review_id: reviewId, baseline_version: version }, reviewSchema)
 export const clearEvaluationBaseline = (id: string, version: number, reason: string) => post(`/evaluations/${encodeURIComponent(id)}/baseline`, { baseline_version: version, reason }, reviewSchema, false, undefined, 'DELETE')
 export const recoverEvaluation = (id: string, requestId: string) => post(`/evaluations/${encodeURIComponent(id)}/recover`, { request_id: requestId }, runSchema, true)
-export const submitEvaluation = (requestId: string, datasetId: string, candidateCaptureId: string, referenceCaptureId: string, liveConfig: z.infer<typeof liveConfigSchema> | null = null, baselineVersion: number | null = null, owner?: string) => post('/evaluations', {
+export const submitEvaluation = (requestId: string, datasetId: string, candidateCaptureId: string, referenceCaptureId: string, liveConfig: z.infer<typeof liveConfigSchema> | null = null, baselineVersion: number | null = null, owner?: string, executionProfile: string | null = null) => post('/evaluations', {
   request_id: requestId, dataset_id: datasetId, candidate_capture_id: candidateCaptureId, reference_capture_id: referenceCaptureId,
-  execution_mode: liveConfig ? 'live' : 'replay', live_config: liveConfig ?? {}, confirm_paid_run: liveConfig !== null, baseline_version: baselineVersion,
+  execution_mode: liveConfig ? 'live' : 'replay', live_config: liveConfig ?? {}, confirm_paid_run: liveConfig !== null, baseline_version: baselineVersion, execution_profile: executionProfile,
 }, runSchema, true, owner)
 
 
 export const evaluationSubmissionSchema = z.object({
   request_id: z.uuid(), dataset_id: z.string().min(1).max(100),
   candidate_capture_id: z.string().min(1).max(100), reference_capture_id: z.string().min(1).max(100),
+  execution_profile: z.string().regex(/^[a-f0-9]{64}$/).nullable().default(null),
   live_config: liveConfigSchema.nullable(), baseline_version: z.number().int().positive().nullable(),
 }).strict()
 export type EvaluationSubmission = z.infer<typeof evaluationSubmissionSchema>

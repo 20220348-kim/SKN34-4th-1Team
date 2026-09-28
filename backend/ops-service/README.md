@@ -73,7 +73,8 @@ Django HTTP 요청 안에서는 평가하지 않으며 Django에 평가 SDK 전�
 `LLMOPS_LIVE_ENABLED=false`가 기본입니다. `GET /api/v1/ops/session`은 `live_enabled`와 자료별
 `live_config`(모델, fixture SHA-256, 최대 호출 수, 호출당 최대 출력 토큰)를 반환합니다.
 POST는 기존 요청에 `execution_mode: "live"`, `candidate_capture_id: "new-model-response"`,
-`live_config: <사용자가 확인한 session의 명세>`, `confirm_paid_run: true`를 함께 전송해야 합니다.
+`live_config: <사용자가 확인한 session의 명세>`, `confirm_paid_run: true`,
+`execution_profile: <session의 execution_profiles.live>`를 함께 전송해야 합니다.
 기준 캡처는 같은 자료의 등록 캡처 또는 현재 검토 기준 실행만 가능합니다. 명세 불일치·미확인·비활성화는 DB 생성 전에 400입니다.
 기존 요청 키로 실행 방식·승인 명세를 바꾸면 409이며 접수 재확인은 같은 명세를 유지합니다.
 
@@ -84,6 +85,36 @@ Migration `0003_evaluationrun_live`는 실행 방식·승인 명세·실제 호�
 Ops 응답의 `model_api_calls`는 새 응답 생성 단계의 `capture.modelApiCalls`를 확인한 값입니다.
 완료 판정에는 기존 보고서 검증 외에 새 캡처 해시·모델·자료·사례·예산 확인이 필요합니다.
 `trace_links`는 사례별 Langfuse 추적/점수 링크이며 과거 캡처는 기존 점수 목록 링크를 사용합니다.
+
+## 접수 시 실행 명세 고정
+
+새 접수는 session의 `datasets[].execution_profiles.replay` 또는 `.live`를
+`execution_profile`로 전송합니다. 현재 서버 명세와 다르면 DB 생성·Prefect 전송 전에 `400`입니다.
+같은 UUID에 다른 명세를 보내면 `409`이며, 접수 응답 유실 후 재전송은 최초 명세를 유지합니다.
+React가 쓰기 직전 세션을 다시 조회해도 사용자가 확인한 명세를 최신 값으로 자동 교체하지 않습니다.
+
+`0009_execution_spec`은 `execution_spec` JSON과 `execution_spec_sha256`을 추가합니다.
+서버가 생성한 명세에 순서가 있는 사례 ID, fixture·후보·기준 해시, 평가 코드·잠금 의존성,
+실행 흐름 코드, 검토 기준 버전·승인 ID를 고정합니다. 새 응답 생성에는 모델·프롬프트·
+Agent/Service/공통 호출 코드·출력 제한·추론·timeout·재시도 설정도 포함합니다.
+Django에는 모델 SDK를 추가하지 않았습니다.
+
+흐름: `React 확인 식별자 → Django DB 명세 고정 → Prefect → 실제 실행 파일·입력 검증 → 생성/평가`.
+`request.json`은 명세 전체와 SHA-256을, 평가 `manifest.json`은 같은 SHA-256을 기록합니다.
+Ops는 결과의 명세·평가기·선택 사례·입력 해시를 확인한 뒤 완료로 표시합니다.
+실행기의 `preflight.json`이 요청과 일치하고 호출 전 거절을 입증할 때만 실패 호출 수를 0으로 확정합니다.
+전송 후 timeout 등 확인되지 않은 호출 수는 계속 `null`입니다.
+
+- `EXECUTION_SPEC_MISMATCH`: 접수 조건과 실행 파일·입력·설정 불일치. 실행기를 확인하고 새 조건을 검토합니다.
+- `EXECUTION_SPEC_REQUIRED`: 명세가 없는 구형 미접수 요청을 최신 기본값으로 실행하지 않습니다.
+  먼저 기존 Prefect 접수 여부를 확인합니다. 기존 실행 조회는 계속 가능합니다.
+- 구형 완료·검토 기록에는 명세를 소급 생성하지 않습니다. 화면에 **기존 기록 · 실행 명세 없음**을 표시합니다.
+- 저장 응답 재평가는 과거 모델·프롬프트가 달라도 가능합니다. 이번 평가기와 입력만 고정합니다.
+- 후처리 복구는 원본 manifest의 평가기와 현재 평가기가 같아야 합니다. 검증 불가·버전 변경이면 복구를 차단합니다.
+  예전 두 파일 해시만 있는 기록은 새 의존성 포함 평가기와 동일함을 입증할 수 없어 복구 대상이 아닙니다.
+- 활성 기준의 교체·해제는 이미 접수된 기준 스냅샷을 바꾸지 않습니다.
+
+명세 생성·이미지 갱신·불일치 smoke는 [LLMOps 실행 명세 운영](../../infrastructure/llmops/README.md#실행-명세-생성과-갱신)을 따릅니다.
 
 ## 응답 검토와 비교 기준
 
@@ -279,7 +310,8 @@ Vite는 `/api/v1/ops`를 Core보다 먼저 라우팅하고 Host와 Origin을 보
 별도 프록시에서는 실제 웹 Origin을 `DJANGO_CSRF_TRUSTED_ORIGINS`에 명시해야 합니다.
 기존 `/api/v1/evaluations`는 `/api/v1/ops/evaluations`로 이동했습니다.
 
-가상 6건 재현은 `{"request_id":"<새 UUID>","dataset_id":"target-coverage-20260907-v1"}`을 사용합니다.
+가상 6건 재현은 `request_id`, `dataset_id: "target-coverage-20260907-v1"`와 해당 자료의
+`execution_profiles.replay` 값을 `execution_profile`로 전송합니다.
 프롬프트 변경 비교 요청은 다음과 같습니다. 선택 가능한 자료·사례·캡처 목록은 session 응답의 `datasets`에 있습니다.
 
 ```json
@@ -287,7 +319,8 @@ Vite는 `/api/v1/ops`를 Core보다 먼저 라우팅하고 Host와 Origin을 보
   "request_id": "<새 UUID>",
   "dataset_id": "fixed-context-e01-v1",
   "reference_capture_id": "fixed-context-20260906-diagnostic-v1",
-  "candidate_capture_id": "fixed-context-20260907-index-v1"
+  "candidate_capture_id": "fixed-context-20260907-index-v1",
+  "execution_profile": "<session에서 확인한 해당 자료의 execution_profiles.replay>"
 }
 ```
 

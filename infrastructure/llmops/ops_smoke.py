@@ -84,6 +84,7 @@ def main():
     assert status == 200 and json.loads(body)["account"]["role"] == "ADMIN"
     status, body, _ = request("/api/v1/ops/session")
     assert status == 200 and json.loads(body)["user"]["username"] == os.environ["CORE_ADMIN_EMAIL"]
+    datasets = {item["id"]: item for item in json.loads(body)["datasets"]}
     submit_path = "/api/v1/ops/evaluations"
     payload = {"request_id": str(uuid4()), "dataset_id": "target-coverage-20260907-v1"}
     if args.recover_source:
@@ -98,6 +99,8 @@ def main():
         payload.update(dataset_id="fixed-context-e01-v1",
                        candidate_capture_id="fixed-context-20260907-index-v1",
                        reference_capture_id="fixed-context-20260906-diagnostic-v1")
+    if not args.recover_source:
+        payload["execution_profile"] = datasets[payload["dataset_id"]]["execution_profiles"]["replay"]
     assert request(submit_path, payload, csrf=False)[0] == 403
     if not args.recover_source:
         assert request(submit_path, {**payload, "dataset_id": "../../invalid"})[0] == 400
@@ -116,6 +119,11 @@ def main():
     replay = json.loads(body)
     assert status == 200 and replay["prefect_flow_run_id"] == first["prefect_flow_run_id"]
     run = wait_for_list_state(request, payload["request_id"])
+    assert run["execution_spec_sha256"] == first["execution_spec_sha256"] == replay["execution_spec_sha256"]
+    assert run["execution_spec"] and run["execution_spec"]["generation"] is None
+    assert run["execution_spec"]["dataset"]["case_ids"] == run["comparison"]["case_ids"]
+    if not args.recover_source:
+        assert run["execution_profile"] == payload["execution_profile"]
     if args.recover_source:
         assert run["execution_mode"] == "recovery" and run["source_run_id"] == source_id
         assert run["model_api_calls"] == 0
@@ -146,6 +154,7 @@ def main():
     summary = {
         "request_id": run["id"], "prefect_flow_run_id": run["prefect_flow_run_id"],
         "evaluation_run_id": run["evaluation_run_id"], "status": run["status"],
+        "execution_spec_sha256": run["execution_spec_sha256"],
         "case_count": expected_count, "comparison": comparison["comparison"],
         "metrics": comparison["metrics"], "duplicate_request_same_flow": True, "csrf_enforced": True,
         "core_admin_login": True, "core_logout_revokes_ops": True,

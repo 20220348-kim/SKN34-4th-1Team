@@ -164,6 +164,7 @@ function EvaluationList({ owner, datasets, liveEnabled, onExpired }: { owner: st
       if (!request) {
         request = {
           request_id: crypto.randomUUID(), dataset_id: dataset,
+          execution_profile: selected!.execution_profiles[mode],
           candidate_capture_id: mode === 'live' ? 'new-model-response' : candidate,
           reference_capture_id: reference, live_config: mode === 'live' ? selected!.live_config : null,
           baseline_version: reference === selected?.baseline?.id ? selected.baseline.version : null,
@@ -177,7 +178,7 @@ function EvaluationList({ owner, datasets, liveEnabled, onExpired }: { owner: st
         catch (reason) { if (!(reason instanceof OpsApiError && reason.status === 404)) throw reason }
       }
       const run = await submitEvaluation(request.request_id, request.dataset_id, request.candidate_capture_id,
-        request.reference_capture_id, request.live_config, request.baseline_version, owner)
+        request.reference_capture_id, request.live_config, request.baseline_version, owner, request.execution_profile)
       finish(run, request)
     } catch (reason) {
       if (reason instanceof OpsApiError && [401, 403].includes(reason.status)) expiry.current()
@@ -265,7 +266,7 @@ function EvaluationDetail({ onExpired, onReviewChanged }: { onExpired: () => voi
     try {
       setRun(run.execution_mode === 'recovery' && run.source_run_id
         ? await recoverEvaluation(run.source_run_id, run.id)
-        : await submitEvaluation(run.id, run.dataset_id, run.candidate_capture_id, run.reference_capture_id, run.live_config, run.baseline_version))
+        : await submitEvaluation(run.id, run.dataset_id, run.candidate_capture_id, run.reference_capture_id, run.live_config, run.baseline_version, undefined, run.execution_profile))
       setRefresh((value) => value + 1)
     }
     catch (reason) {
@@ -296,6 +297,12 @@ function EvaluationDetail({ onExpired, onReviewChanged }: { onExpired: () => voi
         <section className={styles.card}><h2 className={styles.cardTitle}>{run.dataset_label}</h2><p className="text-sm leading-6 text-sample-muted">{run.execution_mode === 'recovery' ? recoveryNotice : run.execution_mode === 'live' ? liveNotice : notice}</p>
           <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-5 gap-y-3 text-sm">{[
             ['실행 방식', modeLabel(run)], ['요청 ID', run.id],
+            ['접수 명세 ID', run.execution_spec_sha256 ?? '기존 기록 · 실행 명세 없음'],
+            ...(run.execution_spec ? [
+              ['고정 사례', run.execution_spec.dataset.case_ids.join(', ')],
+              ['평가기 버전', run.execution_spec.evaluation.sha256],
+              ...(run.execution_spec.generation ? [['프롬프트 버전', run.execution_spec.generation.prompt_sha256]] : []),
+            ] : []),
             ['모델 호출 시도', run.model_api_calls === null ? '아직 확인되지 않음' : `${run.model_api_calls}회`],
             ...(run.live_config ? [['승인 예산', `${run.live_config.model} · 최대 ${run.live_config.max_model_calls}회 · 출력 최대 ${run.live_config.max_output_tokens}토큰/호출`]] : []), ['기준 실행', run.reference_label], ['후보 실행', run.candidate_label], ['요청자', run.requested_by], ['요청 시각', date(run.created_at)],
             ['시작 / 종료', `${date(run.started_at)} / ${date(run.finished_at)}`], ['마지막 상태 확인', date(run.synced_at)], ['평가 결과 ID', run.evaluation_run_id ?? '결과 대기'],
@@ -304,11 +311,11 @@ function EvaluationDetail({ onExpired, onReviewChanged }: { onExpired: () => voi
         {run.source_run_id && <Link className="text-sm font-semibold text-brand-primary underline" to={`${listPath}/${run.source_run_id}`}>원본 실행과 실패 기록 보기</Link>}
         {run.postprocessing && <section className={styles.card} aria-label="후처리 복구">
           <h2 className={styles.cardTitle}>후처리 복구</h2>
-          <p className="text-sm">저장 응답·비교 입력: {run.postprocessing.inputs_ready ? '완료 및 무결성 확인' : '미확인 또는 불완전'}</p>
+          <p className="text-sm">복구 입력·평가기 호환: {run.postprocessing.inputs_ready ? '입력 무결성·평가기 호환 확인' : '미확인 또는 호환되지 않음'}</p>
           <p className="text-sm">마지막 후처리 단계: {{ unverified: '미확인', report: '보고서 생성', publish: 'Langfuse 등록·재조회', completed: '완료' }[run.postprocessing.stage]}</p>
           <p className="text-xs leading-5 text-sample-muted">{recoveryNotice}</p>
           {run.postprocessing.can_recover ? <button className={`${styles.primaryButton} self-start`} disabled={busy} onClick={() => void recover()}>{busy ? '복구 접수 중…' : '후처리 다시 실행'}</button>
-            : run.status !== 'COMPLETED' && <p className="text-sm text-sample-muted">{run.postprocessing.blocked_reason}</p>}
+            : (run.status !== 'COMPLETED' || !run.postprocessing.inputs_ready) && <p className="text-sm text-sample-muted">{run.postprocessing.blocked_reason}</p>}
           {run.postprocessing.attempts.length > 0 && <ul className="space-y-2 text-sm">{run.postprocessing.attempts.map((attempt) => <li key={attempt.id}><Link className="text-brand-primary underline" to={`${listPath}/${attempt.id}`}>복구 실행 {attempt.id.slice(0, 8)} · {attempt.status_label}</Link></li>)}</ul>}
         </section>}
         {run.status === 'COMPLETED' && <section className={styles.card} aria-label="평가 결과"><h2 className={styles.cardTitle}>평가 결과</h2><div className="grid grid-cols-2 gap-3 md:grid-cols-4">{[

@@ -275,7 +275,9 @@ backend/ai-service/.venv/bin/python infrastructure/llmops/smoke.py \
 flowchart LR
     UI["React: 자료·기준·예산 확인"] --> OPS["Django: 관리자·CSRF·명세 검증"]
     OPS --> P["Prefect: UUID당 한 실행"]
-    P --> A["기존 Service → Agent → OpenAI"]
+    P --> V["실제 소스·의존성·입력과 접수 명세 대조"]
+    V -->|일치| A["기존 Service → Agent → OpenAI"]
+    V -->|불일치| F["호출 전 차단 · 실패 사유 기록"]
     A --> C["새 capture.json: 응답·호출 시도·토큰·지연·trace ID"]
     C --> E["pandas/Pandera → 기준 비교 → Evidently/Langfuse"]
     E --> R["React: 결과·변화량·사례별 추적"]
@@ -290,10 +292,44 @@ flowchart LR
 무료 테스트는 전송 명세·실패·중복·비교·UI 동작을 검증한다. 실제 OpenAI 품질 검증은 별도 승인/실행 전까지 미검증이다.
 기존 캡처의 이름이나 모델 메타데이터를 현재 모델로 변경하지 않는다.
 
+## 실행 명세 생성과 갱신
+
+Ops 이미지와 실행기는 같은 `execution_release.json`을 사용해야 한다. 생성 도구는 SDK 없이
+소스·uv.lock·등록 자료를 읽어 결정적인 manifest를 만든다. 생성 시각이나 manifest 자체는 해시하지 않는다.
+해시 대상은 명시적 목록이며 생성 경로의 새 import·설정 책임이 생기면 목록도 함께 검토한다.
+잠금 파일은 빌드 시 `uv sync --locked`로 설치한다. 이 검증은 동일 응답의 완전 재현이나 모델 품질을 보장하지 않는다.
+
+```bash
+# 저장소 루트. 해당 코드/설정을 의도적으로 바꾼 뒤 생성 결과를 함께 검토한다.
+python3 backend/ops-service/apps/evaluations/execution_spec.py --write
+# 기본 실행은 비교만 하며 불일치하면 실패한다.
+python3 backend/ops-service/apps/evaluations/execution_spec.py
+```
+
+Ops CI·LLMOps CI와 실행기 Docker 빌드에서 manifest가 소스와 일치하는지 검사한다.
+실행기는 접수 때 저장된 명세를 실제 파일로 다시 계산해 비교한다. 생성 경로만 바뀌면 무료
+저장 응답 재평가를 막지 않으며, 평가 코드·입력 변경은 재평가에서도 감지한다.
+
+갱신 전 접수를 잠시 제한하고 Ops와 Prefect에 실행 중인 작업이 없는지 확인한다. 진행 중인 유료
+작업을 중지하지 않는다. 동일 릴리스의 Ops·실행기를 빌드하고 `0009` additive migration을 적용한 뒤
+서비스와 React를 갱신한다. 기존 DB·결과 볼륨은 보존한다. 무료 재평가와 다음 불일치 검증을 확인한
+후 접수를 재개한다. 구형 미실행 유료 요청에는 최신 명세를 소급 채우지 않는다.
+
+```bash
+# 실행 중인 로컬 Compose의 Ops 이미지 A에서 명세를 읽고,
+# 별도 일회용 실행기 B에 변경된 프롬프트를 읽기 전용으로 마운트한다.
+# OpenAI 키 제거 + 모델/평가 함수 차단. 기존 컨테이너와 결과 파일은 변경하지 않는다.
+python3 infrastructure/llmops/spec_mismatch_smoke.py --output work/llmops-spec-mismatch.json
+```
+
+일반 HTTP smoke도 session의 명세 식별자로 접수한다. 명세 전체는 `request.json`, 식별자는 결과
+manifest와 React 상세에서 연결된다. 불일치 기록은 `preflight.json`에 남으며 확인되지 않은
+전송 시도는 0회로 추정하지 않는다. 상세 API 계약은 [Ops README](../../backend/ops-service/README.md#접수-시-실행-명세-고정)를 따른다.
+
 ## 후처리 복구
 
-Ops·평가 실행기를 함께 재빌드하고 `python manage.py migrate --noinput`으로 `0005`까지 적용한다.
-실패한 평가 상세에서 **저장 응답·비교 입력: 완료 및 무결성 확인**과 마지막 실패 단계를 확인한 뒤
+Ops·평가 실행기를 함께 재빌드하고 `python manage.py migrate --noinput`으로 `0009`까지 적용한다.
+실패한 평가 상세에서 **복구 입력·평가기 호환: 입력 무결성·평가기 호환 확인**과 마지막 실패 단계를 확인한 뒤
 **후처리 다시 실행**을 누른다. 새 실행으로 이동하며 원본 실패 기록은 링크로 보존된다.
 접수 응답을 확인하지 못하면 같은 요청으로 재확인한다. 진행 중인 복구가 있으면 해당 이력을 먼저 확인한다.
 
@@ -306,7 +342,7 @@ Ops·평가 실행기를 함께 재빌드하고 `python manage.py migrate --noin
 원본 요청·fixture·캡처·비교 기준 해시를 접수 시 고정하고 실행 직전 다시 확인한다.
 실행 중 사용한 비교 기준이 이후 철회되어도 원본에 보존된 스냅샷으로 비교한다.
 같은 캡처·평가 자료·사례·평가기 버전의 점수 ID를 재사용하므로 전송 재시도가 중복 점수를 만들지 않는다.
-평가기 코드가 변경되면 별도 평가 버전으로 기록하며 이전 실행·보고서를 덮어쓰지 않는다.
+평가기·잠금 의존성이 변경되면 원래 후처리 복구를 차단한다. 새로운 평가로 재계산하는 작업과 구분하며 이전 실행·보고서를 덮어쓰지 않는다.
 
 ## 저장 캡처 평가
 
@@ -619,3 +655,60 @@ TC01에는 개발 기능 확인임을 밝힌 **판단 보류** 기록 한 건만
 Core/AI/Web/Shared/Mobile·Container integration, LLMOps 실제 서버 검증은 수정본의 최신 SHA에서
 통과해야 한다. 관련 경로는 기존 워크플로의 push/PR 조건에 포함되어 있다. 로컬 76개 통과를
 전체 CI 통과나 운영 배포 완료로 보고하지 않는다. 다음 기능은 접수 시 프롬프트·실행기·평가기 명세 고정이다.
+
+
+### 실행 명세 고정 검증 — 2026-09-28
+
+접수 명세 고정·실행 직전 실제 파일 비교·원본 평가기 호환 검사와 React 명세 표시를 구현했다.
+새 라이브러리·서비스는 추가하지 않았다. 생성/평가/파이프라인 파일 목록과 잠금 파일은
+`execution_spec.py`가 소유하며, AI 해시 대상 소스의 checkout 줄바꿈도 LF로 고정했다.
+
+로컬에서는 다음 관련 검증을 수행했다. 재실행한 테스트는 중복 합산하지 않는다.
+
+- Ops: 격리 MySQL 8.4에서 명세·API·기준·복구 41개, 명세·migration·동기화·Prefect 19개를
+  검사했다. 두 묶음의 중복 5개를 제외한 55개가 통과했다. 구형 미접수 요청의 오류를
+  `EXECUTION_SPEC_REQUIRED`로 바꾼 테스트 한 개는 기대 계약을 수정한 뒤 선택 재검증했다.
+- 평가 실행기: `test_ops_flow.py`, `test_evaluate.py`, `test_recovery.py`, `test_execution_spec.py`
+  관련 111개가 통과했다. 실제 소스·잠금 파일·입력 바이트 변경, 사례 순서, 구형 유료 요청 차단,
+  생성 프롬프트 변경 후 무료 재평가, 호출 후 오류의 호출 수 미확정, 평가기 변경 시 복구 거절을 포함한다.
+  실제 Agent/SDK 경로는 HTTP 스텁으로 검증했으며 OpenAI 호출은 없었다.
+- Web: `pnpm test src/App.ops.test.tsx` 41개, TypeScript와 변경 파일 Oxlint가 통과했다.
+  접수 직전 서버 버전이 바뀌어도 이전 명세를 전송하고, 구형 탭 기록에는 현재 명세를 채우지 않는다.
+  이미지 빌드 부하 중 일부 기존 비동기 UI 테스트가 시간 초과했으며 재실행에서 41개 모두 통과했다.
+- Ops Ruff·format, Django migration 정합성, 릴리스 manifest와 실제 소스 비교,
+  Compose 설정·smoke 스크립트 구문, `git diff --check`를 확인했다.
+
+Ops 테스트는 Python 3.12 이미지의 `uv run --locked python manage.py test <선택 라벨> --noinput`,
+평가 테스트는 기존 Python 3.12 가상환경의 `python -m pytest <위 네 테스트 파일>`을 사용했다.
+이번 작업 전용 MySQL·검사 컨테이너·네트워크는 정리했고 기존 개발 DB·결과 볼륨은 유지했다.
+
+실제 로컬 Compose 이미지도 빌드하고 migration `0009_execution_spec`을 적용했다. Ops API·동기화·
+평가 실행기를 갱신한 뒤 다음 두 경로를 검증했다.
+
+- **명세 불일치 차단:** 실제 Ops 이미지에서 만든 명세와 프롬프트 파일만 다른 일회용 실행기를
+  대조했다. `EXECUTION_SPEC_MISMATCH`, `before_model_call`, 모델 호출 0회를 확인했고 응답 파일은
+  생성되지 않았다. 모델·평가 함수는 호출 시 실패하도록 막았으며 실제 유료 API 요청은 없었다.
+  이 검사는 실행기 함수를 직접 호출하는 Compose 검사이며 HTTP 접수·Prefect 전송 검사는 아니다.
+- **정상 경로:** 기존 관리자 React 화면에서 무료 재평가를 접수해
+  `React → Django → Prefect → 실행기 → 보고서·Langfuse → Django → React`의 6/6 완료를 확인했다.
+  DB·`request.json`·평가 manifest의 명세 해시가 일치하고 보고서 SHA-256 검증도 통과했다.
+  Langfuse 첫 등록에서 읽기 시간 초과가 발생했지만 기존 재시도 1회 후 등록·실행이 완료됐다.
+  복구 입력·평가기 호환 안내를 다듬은 뒤 관련 React 선택 테스트 8개도 통과했다.
+
+| 기록 | 식별자 |
+|---|---|
+| [명세를 고정한 무료 평가](http://localhost:5173/ops/evaluations/f5f5fe26-76cb-4979-a58b-b0735406be04) | `f5f5fe26-76cb-4979-a58b-b0735406be04` |
+| Prefect 실행 | `52aa9a7b-024c-49ee-b9e1-09a9ffdd4faf` |
+| 콘텐츠 평가 ID | `dbfc2cd570358b9fb71fe9695c0100a0` |
+| 접수 명세 SHA-256 | `3c73ea1193d2c72f4562f7ebae649d081b0807193d2d5387a8218b17ae6e657c` |
+| 평가기 버전 | `a6c84c4328591db81aa2f433660573dd1456ed8abdaa4705de6e52872b7fba53` |
+| 모델 호출 | 0회 |
+
+기존 18개 실행은 명세를 소급 생성하지 않고 보존했다. 이전 상세의 TC01 판단 보류 기록도
+유지했으며 새 평가에는 사례 판단·전체 승인·기준 지정을 추가하지 않았다. 저장 응답 재평가이므로
+현재 모델의 품질 검증은 아니다. 로컬 검증 증거는 git 제외 경로인
+`work/llmops-spec-mismatch.json`, `work/llmops-execution-spec-verification.json`에 저장했다.
+
+기준 `main / ab7add7`의 필수 CI 5개는 통과했지만, 이번 변경은 아직 커밋·푸시하지 않았다.
+변경 SHA의 전체 Ops/MySQL·컨테이너, AI/Web/Shared/Mobile/Core, 실제 서버 LLMOps CI는 별도 확인 대상이다.
+LLMOps CI에는 실제 Ops 이미지 A와 프롬프트 파일이 다른 일회용 실행기 B의 무료 차단 검증을 추가했다.

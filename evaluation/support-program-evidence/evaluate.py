@@ -282,7 +282,11 @@ async def execute(prepared: list, fixture_hash: str, output_dir: Path, *,
         body = json.loads(request.content)
         require(str(request.url) == "https://api.openai.com/v1/responses"
                 and body.get("model") == model and body.get("max_output_tokens") == 2000
-                and body.get("store") is False and not body.get("tools"), "unexpected model request")
+                and body.get("store") is False and not body.get("tools")
+                and body.get("reasoning") == {"effort": "none"}
+                and body.get("text", {}).get("format", {}).get("type") == "json_schema"
+                and body.get("text", {}).get("format", {}).get("strict") is True,
+                "unexpected model request")
         require(capture["modelApiCalls"] < limit, "model call budget exhausted")
         capture["modelApiCalls"] += 1
         save_capture()

@@ -14,8 +14,9 @@ const id = '10000000-0000-4000-8000-000000000001'
 const flowId = '20000000-0000-4000-8000-000000000002'
 const capture = { id: 'target-coverage-20260907-v1', label: '저장 캡처' }
 const liveConfig = { model: 'gpt-6-luna', fixture_sha256: 'c'.repeat(64), max_model_calls: 6, max_output_tokens: 2000 }
-const dataset = { baseline: null, fixture: 'target-coverage-fixture.json', live_config: liveConfig, id: capture.id, label: '지원 대상 근거 답변 · 저장된 가상 평가 6건', case_ids: ['TC01', 'TC02', 'TC03', 'TC04', 'TC05', 'TC06'], captures: [capture] }
-const comparisonDataset = { baseline: null, fixture: 'fixture.json', live_config: { ...liveConfig, max_model_calls: 1 }, id: 'fixed-context-e01-v1', label: '공통 E01 비교', case_ids: ['E01'], captures: [{ id: 'reference', label: '기준 프롬프트' }, { id: 'candidate', label: '후보 프롬프트' }] }
+const executionProfiles = { replay: "d".repeat(64), live: "e".repeat(64) }
+const dataset = { execution_profiles: executionProfiles, baseline: null, fixture: 'target-coverage-fixture.json', live_config: liveConfig, id: capture.id, label: '지원 대상 근거 답변 · 저장된 가상 평가 6건', case_ids: ['TC01', 'TC02', 'TC03', 'TC04', 'TC05', 'TC06'], captures: [capture] }
+const comparisonDataset = { execution_profiles: executionProfiles, baseline: null, fixture: 'fixture.json', live_config: { ...liveConfig, max_model_calls: 1 }, id: 'fixed-context-e01-v1', label: '공통 E01 비교', case_ids: ['E01'], captures: [{ id: 'reference', label: '기준 프롬프트' }, { id: 'candidate', label: '후보 프롬프트' }] }
 const completed = {
   execution_mode: 'replay', live_config: null, trace_links: [],
   candidate_capture_id: capture.id, reference_capture_id: capture.id, candidate_label: capture.label, reference_label: capture.label, comparison: null,
@@ -292,7 +293,7 @@ describe('React LLMOps 운영 화면', () => {
     let submitted = false
     fetchMock.mockImplementation(async (path, options) => {
       if (path === '/api/v1/ops/evaluations') {
-        expect(JSON.parse(String(options?.body))).toEqual({ request_id: id, dataset_id: dataset.id, candidate_capture_id: capture.id, reference_capture_id: capture.id, execution_mode: 'replay', live_config: {}, confirm_paid_run: false, baseline_version: null })
+        expect(JSON.parse(String(options?.body))).toEqual({ request_id: id, dataset_id: dataset.id, candidate_capture_id: capture.id, reference_capture_id: capture.id, execution_mode: 'replay', live_config: {}, confirm_paid_run: false, baseline_version: null, execution_profile: null })
         submitted = true
         return json({ ...completed, status: 'QUEUED', status_label: '실행 대기', report_url: null })
       }
@@ -488,7 +489,7 @@ it('확인할 수 없는 자료를 승인하거나 기준으로 지정하지 않
   expect(screen.queryByRole('button', { name: '비교 기준으로 지정' })).toBeNull()
 })
 
-const pendingRequest = () => ({ request_id: id, dataset_id: dataset.id, candidate_capture_id: 'new-model-response', reference_capture_id: capture.id, live_config: liveConfig, baseline_version: null })
+const pendingRequest = () => ({ execution_profile: executionProfiles.live, request_id: id, dataset_id: dataset.id, candidate_capture_id: 'new-model-response', reference_capture_id: capture.id, live_config: liveConfig, baseline_version: null })
 
 it('유료 접수 응답 유실 후 새로고침·재로그인하면 기존 요청만 조회한다', async () => {
   const original = fetchMock.getMockImplementation()!
@@ -702,4 +703,42 @@ it('과거 전체 승인을 사례별 승인으로 표시하지 않고 기존 �
   expect(screen.getByText(/검토와 전체 승인을 완료하기 전에는/)).toBeTruthy()
   expect(screen.getByText('저장된 판단: 미검토')).toBeTruthy()
   expect(screen.getByRole('button', { name: '검토 승인 저장' })).toHaveProperty('disabled', true)
+})
+
+it('접수 직전 서버 버전이 바뀌어도 사용자가 확인한 명세를 자동 교체하지 않는다', async () => {
+  const original = fetchMock.getMockImplementation()!
+  let sessions = 0
+  fetchMock.mockImplementation(async (path, options) => {
+    if (path === '/api/v1/ops/session') {
+      sessions += 1
+      const value = session()
+      if (sessions > 1) value.datasets = value.datasets.map((item) => ({ ...item, execution_profiles: { replay: 'f'.repeat(64), live: 'f'.repeat(64) } }))
+      return json(value)
+    }
+    return original(path, options)
+  })
+  open()
+  fireEvent.click(await screen.findByRole('button', { name: '평가 실행' }))
+  await waitFor(() => expect(fetchMock.mock.calls.some(([path]) => path === '/api/v1/ops/evaluations')).toBe(true))
+  const request = fetchMock.mock.calls.find(([path]) => path === '/api/v1/ops/evaluations')!
+  expect(JSON.parse(request[1]!.body as string).execution_profile).toBe(executionProfiles.replay)
+})
+
+it('명세 불일치와 접수 명세 ID를 표시하고 확인되지 않은 호출 수를 0회로 바꾸지 않는다', async () => {
+  const original = fetchMock.getMockImplementation()!
+  fetchMock.mockImplementation(async (path, options) => path === `/api/v1/ops/evaluations/${id}`
+    ? json({ ...completed, status: 'FAILED', status_label: '실패', model_api_calls: null, report_url: null,
+      execution_spec_sha256: 'f'.repeat(64), error_code: 'EXECUTION_SPEC_MISMATCH',
+      error_message: '접수 당시 명세와 실행 환경이 달라 모델 호출 전에 차단했습니다.' })
+    : original(path, options))
+  open(`/ops/evaluations/${id}`)
+  expect(await screen.findByText('접수 당시 명세와 실행 환경이 달라 모델 호출 전에 차단했습니다.')).toBeTruthy()
+  expect(screen.getByText('f'.repeat(64))).toBeTruthy()
+  expect(screen.getByText('아직 확인되지 않음')).toBeTruthy()
+})
+
+it('명세가 없던 탭 보관 기록을 현재 명세로 소급 채우지 않는다', () => {
+  const { execution_profile: _profile, ...legacy } = pendingRequest()
+  sessionStorage.setItem('govbiz.ops.pending.v1.core%3A99', JSON.stringify(legacy))
+  expect(readPendingEvaluation('core:99')?.execution_profile).toBeNull()
 })
