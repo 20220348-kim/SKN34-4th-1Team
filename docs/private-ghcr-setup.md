@@ -66,9 +66,9 @@ python3.13 -B infrastructure/release/bootstrap_packages.py verify
 - `MSA_RELEASE_ENABLED=true`
 - `MSA_PROMOTION_ENABLED=true`
 
-원본 PR 병합 → 자기 포크의 원격 기본 브랜치 동기화 → 같은 SHA의 네 CI 성공 → 비공개 이미지 발행 →
+원본 PR 병합 → 자기 포크의 원격 기본 브랜치 동기화 → 같은 SHA의 다섯 CI 성공 → 비공개 이미지 발행 →
 검증된 digest 커밋 순서입니다. 초기 준비 중 이미 CI가 완료됐다면 기본 브랜치에서 **MSA image candidates**를
-한 번 수동 실행할 수 있습니다. 수동 실행도 원본 병합·동일 소스·네 CI 검증을 우회하지 않습니다.
+한 번 수동 실행할 수 있습니다. 수동 실행도 원본 병합·동일 소스·다섯 CI 검증을 우회하지 않습니다.
 
 다음 결과를 각각 확인합니다.
 
