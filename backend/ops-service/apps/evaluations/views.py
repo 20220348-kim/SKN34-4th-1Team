@@ -17,6 +17,7 @@ from rest_framework.response import Response
 
 from .catalog import DATASETS, public_datasets, selection
 from .models import EvaluationRun
+from .quality import assess, save_fixture_review
 from .recovery import recovery_state, submit_recovery
 from .reviews import (
     baseline_choices,
@@ -254,6 +255,67 @@ class ReviewRequestSerializer(serializers.Serializer):
     fixture_sha256 = serializers.RegexField(r"^[a-f0-9]{64}$")
     rubric_version = serializers.CharField(max_length=40)
     review_version = serializers.IntegerField(min_value=0)
+
+
+class FixtureReviewSerializer(serializers.Serializer):
+    decision = serializers.ChoiceField(choices=["APPROVED", "CHANGES_REQUESTED", "DEFERRED"])
+    comment = serializers.CharField(max_length=3000, allow_blank=False)
+    fixture_sha256 = serializers.RegexField(r"^[a-f0-9]{64}$")
+    case_ids = serializers.ListField(child=serializers.CharField(max_length=100), allow_empty=False)
+    rubric_version = serializers.CharField(max_length=40)
+    fixture_version = serializers.IntegerField(min_value=0)
+
+
+class QualityRequestSerializer(serializers.Serializer):
+    input_sha256 = serializers.RegexField(r"^[a-f0-9]{64}$")
+
+
+def review_response(run):
+    try:
+        material = review_material(run)
+    except ResultsUnavailable:
+        material = None
+    return Response(
+        {
+            **review_state(run, material),
+            "material": material,
+            "material_error": "검토 자료를 확인할 수 없습니다. 완료 상태와 저장소를 확인하세요."
+            if material is None
+            else "",
+        }
+    )
+
+
+@never_cache
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def api_fixture_review(request, run_id):
+    run = get_object_or_404(EvaluationRun, pk=run_id)
+    serializer = FixtureReviewSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    try:
+        save_fixture_review(run, request.user, **serializer.validated_data)
+    except RequestConflict:
+        return Response({"code": "REVIEW_CONFLICT"}, status=409)
+    except ResultsUnavailable:
+        return Response({"code": "RESULTS_UNAVAILABLE"}, status=503)
+    return review_response(run)
+
+
+@never_cache
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def api_quality(request, run_id):
+    run = get_object_or_404(EvaluationRun, pk=run_id)
+    serializer = QualityRequestSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    try:
+        assess(run, request.user, **serializer.validated_data)
+    except RequestConflict:
+        return Response({"code": "REVIEW_CONFLICT"}, status=409)
+    except ResultsUnavailable:
+        return Response({"code": "RESULTS_UNAVAILABLE"}, status=503)
+    return review_response(run)
 
 
 class CaseReviewRequestSerializer(serializers.Serializer):

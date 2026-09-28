@@ -3,6 +3,8 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
+    path("api/v1/ops/evaluations/<uuid:run_id>/fixture-review", views.api_fixture_review),
+    path("api/v1/ops/evaluations/<uuid:run_id>/quality", views.api_quality),
     path("", views.web_redirect),
     path("ops/login", views.web_redirect),
     path("ops/evaluations", views.web_redirect),

@@ -8,6 +8,7 @@ from django.db import transaction
 from .baselines import change_baseline, lock_baseline
 from .catalog import DATASETS, selection
 from .models import EvaluationBaseline, EvaluationCaseReview, EvaluationReview, EvaluationRun
+from .quality import quality_pass, quality_state
 from .review_eligibility import (
     RUBRIC_CRITERIA,
     RUBRIC_VERSION,
@@ -114,7 +115,11 @@ def review_state(run, material=None):
         and reviews[0].capture_sha256 == material["capture_sha256"]
         and current_approval(reviews[0], run)
     )
+    quality = quality_state(run, material)
+    eligible = approved and quality["is_current"] and quality["status"] == "PASS"
     return {
+        "quality": quality,
+        "can_promote": bool(eligible),
         "reviews": [review_data(item) for item in reviews],
         "review_version": run.review_version,
         "rubric": {"version": RUBRIC_VERSION, "criteria": RUBRIC_CRITERIA},
@@ -140,7 +145,7 @@ def review_state(run, material=None):
         ),
         "approval_current": approved,
         "is_baseline": is_baseline,
-        "baseline_requires_review": is_baseline and not approved,
+        "baseline_requires_review": is_baseline and not eligible,
         "baseline_version": baseline.version if baseline else 0,
         "baseline_history": [
             {
@@ -296,6 +301,7 @@ def promote_baseline(run, user, review_id, baseline_version):
             or latest.decision != EvaluationReview.Decision.APPROVED
             or latest.capture_sha256 != material["capture_sha256"]
             or not current_approval(latest, locked)
+            or not quality_pass(locked, material)
         ):
             raise RequestConflict
         if (
@@ -341,5 +347,5 @@ def baseline_choices():
         for item in EvaluationBaseline.objects.select_related("review__run").filter(
             review__isnull=False
         )
-        if current_approval(item.review, item.review.run)
+        if current_approval(item.review, item.review.run) and quality_pass(item.review.run)
     }

@@ -36,6 +36,7 @@ PIPELINE_FILES = (
     OPS + "catalog.py",
     OPS + "recovery_inputs.py",
     OPS + "execution_spec.py",
+    OPS + "quality_policy.py",
 )
 
 
@@ -148,6 +149,16 @@ def build_release(root):
         }
     return {
         "schema_version": 1,
+        "quality_policy": {
+            "definition": ast.literal_eval(
+                next(
+                    node.value
+                    for node in ast.parse((root / (OPS + "quality_policy.py")).read_text()).body
+                    if isinstance(node, ast.Assign) and node.targets[0].id == "POLICY"
+                )
+            ),
+            "code_sha256": file_digest(root / (OPS + "quality_policy.py")),
+        },
         "evaluation": evaluation,
         "generation": {
             **fingerprint(GENERATION_FILES),
@@ -166,6 +177,7 @@ def read_release():
 def profile(release, dataset_id, mode, config):
     return {
         "schema_version": 1,
+        "quality_policy": release["quality_policy"],
         "dataset_id": dataset_id,
         "dataset": release["datasets"][dataset_id],
         "execution_mode": mode,

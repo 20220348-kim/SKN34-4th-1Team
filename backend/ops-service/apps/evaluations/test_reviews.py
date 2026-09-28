@@ -138,6 +138,30 @@ class ReviewFixture:
                 )
                 self.assertEqual(response.status_code, 200)
                 data = response.json()
+        if decision == "APPROVED":
+            quality = data["quality"]
+            if not quality["fixture_reviews"]:
+                response = self.client.post(
+                    target + "/fixture-review",
+                    {
+                        "decision": "APPROVED",
+                        "comment": "테스트 전용 참조 검토",
+                        "fixture_sha256": data["material"]["fixture_sha256"],
+                        "case_ids": [case["case_id"] for case in data["material"]["cases"]],
+                        "rubric_version": quality["fixture_rubric_version"],
+                        "fixture_version": quality["fixture_version"],
+                    },
+                    format="json",
+                )
+                self.assertEqual(response.status_code, 200)
+                data = response.json()
+            response = self.client.post(
+                target + "/quality",
+                {"input_sha256": data["quality"]["input_sha256"]},
+                format="json",
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json()["quality"]["status"], "PASS")
         comment = "근거·지역·법인 조건 확인 <script>실행 금지</script>"
         previous = data["reviews"][0] if data["reviews"] else None
         retry = previous and previous["decision"] == decision and previous["comment"] == comment
@@ -207,16 +231,24 @@ class ReviewTests(ReviewFixture, TestCase):
     def test_reference_is_pinned_and_retry_survives_baseline_revocation(self, create):
         create.return_value = uuid4()
         self.promote()
+        datasets = self.client.get("/api/v1/ops/session").json()["datasets"]
+        profile = next(item for item in datasets if item["id"] == self.dataset)[
+            "execution_profiles"
+        ]["replay"]
         payload = {
             "request_id": str(uuid4()),
             "dataset_id": self.dataset,
             "candidate_capture_id": self.capture_id,
             "reference_capture_id": f"run:{self.run.id}",
             "baseline_version": 1,
+            "execution_profile": profile,
         }
         response = self.client.post("/api/v1/ops/evaluations", payload, format="json")
         self.assertEqual(response.status_code, 202)
         accepted = EvaluationRun.objects.get(pk=payload["request_id"])
+        original_spec = accepted.execution_spec
+        original_sha = accepted.execution_spec_sha256
+        self.assertEqual(original_spec["profile_sha256"], profile)
         self.assertEqual(accepted.reference_config["run_id"], str(self.run.id))
         self.assertEqual(
             accepted.reference_config["capture_sha256"], review_material(self.run)["capture_sha256"]
@@ -226,6 +258,9 @@ class ReviewTests(ReviewFixture, TestCase):
             self.client.post("/api/v1/ops/evaluations", payload, format="json").status_code, 200
         )
         self.assertEqual(create.call_count, 1)
+        accepted.refresh_from_db()
+        self.assertEqual(accepted.execution_spec, original_spec)
+        self.assertEqual(accepted.execution_spec_sha256, original_sha)
         payload["request_id"] = str(uuid4())
         self.assertEqual(
             self.client.post("/api/v1/ops/evaluations", payload, format="json").status_code, 400

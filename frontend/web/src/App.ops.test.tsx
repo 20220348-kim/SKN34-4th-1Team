@@ -30,6 +30,7 @@ const completed = {
   report_url: `/api/v1/ops/evaluations/${id}/report`,
 }
 const reviewDefaults = {
+  quality: null, can_promote: true,
   review_version: 0, can_approve: false, approval_current: false, baseline_requires_review: false,
   rubric: { version: 'evidence-review-v1', criteria: ['조건·근거·인용을 확인합니다.'] }, case_reviews: [],
 }
@@ -416,6 +417,76 @@ const reviewMaterial = {
   }],
 }
 
+const qualityState: NonNullable<EvaluationReview['quality']> = {
+  status: 'NOT_EVALUATED', is_current: false, current_id: null, input_sha256: '9'.repeat(64),
+  policy: { definition: { version: 'fixed-evidence-quality-v1' }, code_sha256: '8'.repeat(64) },
+  fixture_version: 0, fixture_rubric_version: 'fixture-reference-review-v1', fixture_reviews: [],
+  blocked_reason: '', history: [],
+}
+
+it('완료 실행도 미판정으로 표시하고 현재 근거 해시로만 품질 판정을 저장한다', async () => {
+  const original = fetchMock.getMockImplementation()!
+  let state: EvaluationReview = { ...reviewDefaults, can_promote: false, quality: qualityState, material: reviewMaterial, material_error: '', is_baseline: false, baseline_version: 0, baseline_history: [], reviews: [] }
+  fetchMock.mockImplementation(async (path, options) => {
+    if (path.endsWith('/review')) return json(state)
+    if (path.endsWith('/quality')) {
+      expect(JSON.parse(String(options?.body))).toEqual({ input_sha256: qualityState.input_sha256 })
+      expect(options?.headers).toMatchObject({ 'X-CSRFToken': 'rotated-token' })
+      state = { ...state, quality: { ...qualityState, status: 'NEEDS_REVIEW', is_current: true, current_id: 1,
+        history: [{ id: 1, status: 'NEEDS_REVIEW', policy: qualityState.policy!, policy_sha256: '7'.repeat(64), input_sha256: qualityState.input_sha256!,
+          assessed_by: 'operator@example.com', created_at: completed.created_at, reasons: [{ code: 'FIXTURE_REVIEW_REQUIRED', case_id: null, message: '평가 기준 자료의 사람 검토가 필요합니다.' }] }] } }
+      return json(state)
+    }
+    return original(path, options)
+  })
+  open(`/ops/evaluations/${id}`)
+  expect(await screen.findByText('미판정')).toBeTruthy()
+  expect(screen.getByText('완료')).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: '현재 근거로 품질 판정 저장' }))
+  expect(await screen.findByText('검토 필요')).toBeTruthy()
+  expect(screen.getByRole('button', { name: '비교 기준으로 지정' })).toHaveProperty('disabled', true)
+  expect(fetchMock.mock.calls.some(([path, options]) => path === '/api/v1/ops/evaluations' && options?.method === 'POST')).toBe(false)
+})
+
+it('평가 기준 자료 검토는 사유와 확인 후 저장하며 후보 답변 승인을 대신하지 않는다', async () => {
+  const original = fetchMock.getMockImplementation()!
+  const state: EvaluationReview = { ...reviewDefaults, can_promote: false, quality: qualityState, material: reviewMaterial, material_error: '', is_baseline: false, baseline_version: 0, baseline_history: [], reviews: [] }
+  fetchMock.mockImplementation(async (path, options) => {
+    if (path.endsWith('/review')) return json(state)
+    if (path.endsWith('/fixture-review')) {
+      expect(JSON.parse(String(options?.body))).toEqual({
+        decision: 'DEFERRED', comment: '예외 조건의 근거 재검토', fixture_sha256: reviewMaterial.fixture_sha256,
+        case_ids: ['E01'], rubric_version: qualityState.fixture_rubric_version, fixture_version: 0,
+      })
+      return json(state)
+    }
+    return original(path, options)
+  })
+  open(`/ops/evaluations/${id}`)
+  const button = await screen.findByRole('button', { name: '평가 기준 자료 검토 저장', hidden: true })
+  expect(button).toHaveProperty('disabled', true)
+  fireEvent.change(screen.getByLabelText('평가 기준 자료 판단'), { target: { value: 'DEFERRED' } })
+  fireEvent.change(screen.getByLabelText('평가 기준 자료 검토 사유'), { target: { value: '예외 조건의 근거 재검토' } })
+  expect(button).toHaveProperty('disabled', true)
+  fireEvent.click(screen.getByLabelText('모든 대상 사례의 평가 기준 자료를 확인하고 위 판단을 기록합니다.'))
+  fireEvent.click(button)
+  await waitFor(() => expect(fetchMock.mock.calls.filter(([path]) => path.endsWith('/fixture-review'))).toHaveLength(1))
+  expect(fetchMock.mock.calls.some(([path, options]) => path.endsWith('/review') && options?.method === 'POST')).toBe(false)
+})
+
+it('과거 품질 합격이 있어도 근거가 바뀌면 기준 지정이 차단되고 이력이 유지된다', async () => {
+  const original = fetchMock.getMockImplementation()!
+  const state = { ...reviewDefaults, approval_current: true, can_promote: false, quality: { ...qualityState, status: 'NEEDS_REVIEW', history: [{
+    id: 1, status: 'PASS', policy: qualityState.policy, policy_sha256: '7'.repeat(64), input_sha256: '6'.repeat(64),
+    assessed_by: 'operator@example.com', created_at: completed.created_at, reasons: [],
+  }] }, material: reviewMaterial, material_error: '', is_baseline: false, baseline_version: 0, baseline_history: [], reviews: [] }
+  fetchMock.mockImplementation(async (path, options) => path.endsWith('/review') ? json(state) : original(path, options))
+  open(`/ops/evaluations/${id}`)
+  expect(await screen.findByText(/자료·정책·검토가 변경됐습니다/)).toBeTruthy()
+  expect(screen.getByText('품질 판정 이력 · 1건')).toBeTruthy()
+  expect(screen.getByRole('button', { name: '비교 기준으로 지정' })).toHaveProperty('disabled', true)
+})
+
 it('근거·응답을 검토한 후 의견과 승인 기록을 저장하고 기준을 지정한다', async () => {
   const original = fetchMock.getMockImplementation()!
   let state: EvaluationReview = { ...reviewDefaults, material: reviewMaterial, material_error: '', is_baseline: false, baseline_version: 0, baseline_history: [], reviews: [] }
@@ -700,7 +771,7 @@ it('과거 전체 승인을 사례별 승인으로 표시하지 않고 기존 �
   })) : original(path, options))
   open(`/ops/evaluations/${id}`)
   await screen.findByText('이전 승인 · 사례별 재검토 필요')
-  expect(screen.getByText(/검토와 전체 승인을 완료하기 전에는/)).toBeTruthy()
+  expect(screen.getByText(/유효한 품질 합격과 전체 승인을 완료하기 전에는/)).toBeTruthy()
   expect(screen.getByText('저장된 판단: 미검토')).toBeTruthy()
   expect(screen.getByRole('button', { name: '검토 승인 저장' })).toHaveProperty('disabled', true)
 })

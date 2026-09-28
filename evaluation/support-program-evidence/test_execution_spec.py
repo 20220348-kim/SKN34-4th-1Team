@@ -62,6 +62,7 @@ def test_checked_in_release_matches_repository():
     AI + "app/support_program_identity.py",
     AI + "uv.lock",
     EVIDENCE + "llmops.py",
+    OPS + "quality_policy.py",
     EVIDENCE + "target-coverage-fixture.json",
     EVIDENCE + "runs/target-coverage-20260907-v1/capture.json",
 ])

@@ -293,6 +293,7 @@ function EvaluationDetail({ onExpired, onReviewChanged }: { onExpired: () => voi
       <div className="flex flex-wrap items-center gap-3"><button className={styles.secondaryButton} onClick={() => setRefresh((value) => value + 1)}>상태 다시 확인</button>{run?.prefect_flow_run_id && !terminal && !error && <p className="text-xs text-sample-muted">5초마다 상태를 확인합니다.</p>}</div>
       {!run ? !error && <p role="status">실행 정보를 불러오고 있습니다.</p> : <>
         {run.error_message && <p role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm">{run.error_message}</p>}
+        {run.status !== 'COMPLETED' && <p className="text-sm text-sample-muted">품질 판정: 미판정 · 완료된 평가 결과가 필요합니다. 실행 오류를 모델 품질 불합격으로 처리하지 않습니다.</p>}
         {run.can_retry && <button className={`${styles.primaryButton} self-start`} disabled={busy} onClick={() => void retry()}>{busy ? '접수 확인 중…' : '같은 요청으로 접수 재확인'}</button>}
         <section className={styles.card}><h2 className={styles.cardTitle}>{run.dataset_label}</h2><p className="text-sm leading-6 text-sample-muted">{run.execution_mode === 'recovery' ? recoveryNotice : run.execution_mode === 'live' ? liveNotice : notice}</p>
           <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-5 gap-y-3 text-sm">{[

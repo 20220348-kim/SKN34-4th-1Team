@@ -113,6 +113,10 @@ def submit_run(
                     raise ResultsUnavailable
                 if not current_approval(prepared_baseline.review, source):
                     raise ValueError("기준의 사례별 검토가 필요합니다. 다시 선택하세요.")
+                from .quality import quality_pass
+
+                if not quality_pass(source):
+                    raise ValueError("기준의 유효한 품질 판정이 필요합니다. 다시 선택하세요.")
                 reference_config = {
                     "run_id": str(prepared_baseline.review.run_id),
                     "capture_sha256": capture_hash,

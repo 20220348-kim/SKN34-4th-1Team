@@ -66,7 +66,25 @@ const runSchema = z.object({
   report_url: z.string().regex(/^\/api\/v1\/ops\/evaluations\/[a-f0-9-]+\/report$/).nullable(),
 })
 const pageSchema = z.object({ count: z.number(), next: z.string().nullable(), previous: z.string().nullable(), results: z.array(runSchema) })
+const qualitySchema = z.object({
+  status: z.enum(['NOT_EVALUATED', 'NEEDS_REVIEW', 'FAIL', 'PASS']), is_current: z.boolean(),
+  current_id: z.number().nullable(), input_sha256: z.string().nullable(), blocked_reason: z.string(),
+  policy: z.object({ definition: z.object({ version: z.string() }), code_sha256: z.string() }).nullable(),
+  fixture_version: z.number().int().nonnegative(), fixture_rubric_version: z.string(),
+  fixture_reviews: z.array(z.object({
+    id: z.number(), version: z.number(), decision: z.enum(['APPROVED', 'CHANGES_REQUESTED', 'DEFERRED']),
+    comment: z.string(), fixture_sha256: z.string(), case_ids: z.array(z.string()), rubric_version: z.string(),
+    reviewed_by: z.string(), created_at: z.string(),
+  })),
+  history: z.array(z.object({
+    id: z.number(), status: z.enum(['PASS', 'FAIL', 'NEEDS_REVIEW']),
+    policy: z.object({ definition: z.object({ version: z.string() }) }),
+    policy_sha256: z.string(), input_sha256: z.string(), assessed_by: z.string(), created_at: z.string(),
+    reasons: z.array(z.object({ code: z.string(), case_id: z.string().nullable(), message: z.string() })),
+  })),
+})
 const reviewSchema = z.object({
+  quality: qualitySchema.nullable().default(null), can_promote: z.boolean().default(false),
   is_baseline: z.boolean(), material_error: z.string(), baseline_version: z.number().int().nonnegative(),
   review_version: z.number().int().nonnegative(), can_approve: z.boolean(), approval_current: z.boolean(), baseline_requires_review: z.boolean(),
   rubric: z.object({ version: z.string(), criteria: z.array(z.string()) }),
@@ -152,6 +170,8 @@ async function post<T>(path: string, data: unknown, schema: z.ZodType<T>, dispat
 export const listEvaluations = (page: number, signal?: AbortSignal) => request(`/evaluations?page=${page}`, pageSchema, { signal })
 export const getEvaluation = (id: string, signal?: AbortSignal) => request(`/evaluations/${encodeURIComponent(id)}`, runSchema, { signal })
 export const getEvaluationReview = (id: string, signal?: AbortSignal) => request(`/evaluations/${encodeURIComponent(id)}/review`, reviewSchema, { signal })
+export const assessEvaluationQuality = (id: string, inputSha256: string) => post(`/evaluations/${encodeURIComponent(id)}/quality`, { input_sha256: inputSha256 }, reviewSchema)
+export const saveFixtureReview = (id: string, data: { decision: 'APPROVED' | 'CHANGES_REQUESTED' | 'DEFERRED'; comment: string; fixture_sha256: string; case_ids: string[]; rubric_version: string; fixture_version: number }) => post(`/evaluations/${encodeURIComponent(id)}/fixture-review`, data, reviewSchema)
 export const saveEvaluationReview = (id: string, decision: 'APPROVED' | 'CHANGES_REQUESTED', comment: string, stamp: ReviewStamp) => post(`/evaluations/${encodeURIComponent(id)}/review`, { decision, comment, ...stamp }, reviewSchema)
 export const saveEvaluationCaseReview = (id: string, caseId: string, decision: CaseReviewDecision, comment: string, stamp: ReviewStamp) => post(`/evaluations/${encodeURIComponent(id)}/case-review`, { case_id: caseId, decision, comment, ...stamp }, reviewSchema)
 export const promoteEvaluationBaseline = (id: string, reviewId: number, version: number) => post(`/evaluations/${encodeURIComponent(id)}/baseline`, { review_id: reviewId, baseline_version: version }, reviewSchema)
