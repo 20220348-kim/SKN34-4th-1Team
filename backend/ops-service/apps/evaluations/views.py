@@ -34,12 +34,16 @@ from .services import (
     PENDING_SYNC,
     RequestConflict,
     ResultsUnavailable,
+    cancel_run,
     read_result,
     submit_run,
     sync_run,
 )
 
 ERROR_MESSAGES = {
+    "PREFECT_CANCEL_UNCONFIRMED": (
+        "취소 요청은 저장됐지만 실행 종료를 확인하지 못했습니다. 상태를 다시 확인합니다."
+    ),
     "EXECUTION_SPEC_REQUIRED": (
         "과거 요청에는 실행 명세가 없습니다. 접수 이력을 확인한 뒤 새 요청으로 실행하세요."
     ),
@@ -140,7 +144,18 @@ def run_data(run, viewer_id=None):
         "requested_by_id": run.requested_by.get_username(),
         "can_retry": bool(run.execution_spec)
         and run.prefect_flow_run_id is None
-        and run.requested_by_id == viewer_id,
+        and run.requested_by_id == viewer_id
+        and run.cancel_requested_at is None
+        and run.status in {"REQUESTED", "QUEUED", "RUNNING"},
+        "can_cancel": run.requested_by_id == viewer_id
+        and run.cancel_requested_at is None
+        and run.status in {"REQUESTED", "QUEUED", "RUNNING", "CANCELLING"},
+        "cancel_requested_at": run.cancel_requested_at,
+        "cancel_requested_by": (
+            run.cancel_requested_by.email or run.cancel_requested_by.get_username()
+            if run.cancel_requested_by_id
+            else None
+        ),
         "status": run.status,
         "status_label": run.get_status_display(),
         "created_at": run.created_at,
@@ -215,7 +230,13 @@ def api_runs(request):
     except ResultsUnavailable:
         return Response({"code": "RESULTS_UNAVAILABLE"}, status=503)
     # 응답 유실 가능성이 있으므로 접수 불확실을 실패/완료로 숨기지 않는다.
-    status = 503 if run.prefect_flow_run_id is None else (202 if created else 200)
+    status = (
+        200
+        if run.cancel_requested_at
+        else 503
+        if run.prefect_flow_run_id is None
+        else (202 if created else 200)
+    )
     return Response(run_data(run, request.user.pk), status=status)
 
 
@@ -226,6 +247,24 @@ def api_run_detail(request, run_id):
     run = get_object_or_404(EvaluationRun.objects.select_related("requested_by"), pk=run_id)
     sync_run(run)
     return Response({**run_data(run, request.user.pk), "postprocessing": recovery_state(run)})
+
+
+@never_cache
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def api_cancel(request, run_id):
+    run = get_object_or_404(EvaluationRun, pk=run_id)
+    try:
+        run = cancel_run(run, request.user)
+    except PermissionError:
+        return Response({"code": "CANCEL_FORBIDDEN"}, status=403)
+    except RequestConflict:
+        return Response({"code": "CANCEL_CONFLICT"}, status=409)
+    # 취소 의사를 먼저 커밋해 다음 호출을 막고, 외부 종료를 별도로 확인한다.
+    sync_run(run)
+    return Response(
+        run_data(run, request.user.pk), status=202 if run.status == "CANCELLING" else 200
+    )
 
 
 class RecoveryRequestSerializer(serializers.Serializer):
@@ -247,7 +286,13 @@ def api_recover(request, run_id):
         return Response({"code": "RECOVERY_CONFLICT"}, status=409)
     except ResultsUnavailable:
         return Response({"code": "RECOVERY_INPUTS_UNAVAILABLE"}, status=409)
-    status = 503 if run.prefect_flow_run_id is None else (202 if created else 200)
+    status = (
+        200
+        if run.cancel_requested_at
+        else 503
+        if run.prefect_flow_run_id is None
+        else (202 if created else 200)
+    )
     return Response(run_data(run, request.user.pk), status=status)
 
 

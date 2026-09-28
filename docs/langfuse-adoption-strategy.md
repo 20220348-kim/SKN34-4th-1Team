@@ -199,7 +199,7 @@ DB 전체의 누적 호출 수·출력 토큰을 예약하고 단일 실행기 �
 입력 사용량은 기록하며 응답/사용량 미확인은 최대 출력 예약을 유지한다. 예산 미설정은 차단 상태다.
 운영 계약·제한과 설정은 [Ops README](../backend/ops-service/README.md#누적-호출출력-토큰-한도)를 따른다.
 
-이는 아래 3A의 첫 단계다. **금액 상한·입력 토큰 상한·기간별 예산·단가 버전·미확인 예약 복구·취소 API는 후속 과제**로 남는다.
+이는 아래 3A의 첫 단계다. **금액 상한·입력 토큰 상한·기간별 예산·단가 버전·미확인 예약 복구는 후속 과제**로 남는다.
 정기 실행은 활성화하지 않는다. DB migration은 새 `0011`만 추가하며 실제 DB에는 아직 적용하지 않았다.
 Windows checkout의 기존 5개 파일은 Git blob과 LF 변환 바이트가 같음을 확인한 뒤 줄바꿈만 복원했다.
 명세에 포함한 Python 파일을 `.gitattributes`에서 LF로 고정하고, 의도한 실행기 변경만 새 manifest에 반영한다.
@@ -221,6 +221,35 @@ DB에 연결한 migration 이력·제약·rollback·동시성 검증은 수행�
 기존 실행 환경을 기동·중지하지 않았고, MySQL 테스트는 Ops CI의 전체 `manage.py test`에 포함했다.
 평가 테스트는 GovBiz CI의 evidence 디렉터리 pytest, 웹 테스트는 Web job의 기존 수집 경로에 포함된다.
 `skn-39`의 원격 전체 CI·컨테이너 검증은 해당 커밋의 실행 결과로 별도 확인한다. 실제 한도 설정·유료 호출·배포는 수행하지 않았다.
+
+### 평가 취소 — 후속 구현
+
+기준은 `skn-39`가 병합된 `main / 770572a`이며 작업 브랜치는
+`skn-40`이다. 요청자만 쓰는 취소 API·React 상세 버튼,
+`CANCELLING`과 최초 요청자·시각, 접수 이후 호출 차단, Prefect 종료 확인 뒤 예약 정리를 추가한다.
+기존 실행 ID와 명세를 보존하며 취소와 접수 응답·상태 조회·호출 승인·종료 정산의 경합을 검증한다.
+실행기 소유권 인계나 사용량 미확정 건의 수동 환급 기능은 이번 변경에 포함하지 않는다.
+운영 계약과 한계는 [Ops 평가 취소](../backend/ops-service/README.md#평가-취소)를 따른다.
+
+기준 기능 `d65cfa4`의 GovBiz·Ops·LLMOps·Catalog·Infra CI는 모두 통과했다.
+후속 취소 변경은 로컬 무료 계약·웹 테스트와 정적 검사를 수행하고, 실제 MySQL 8.4의
+새 취소·경합 테스트와 전체 컨테이너 검증은 해당 변경 SHA의 CI 결과로 별도 판단한다.
+로컬 Docker 엔진이 실행되지 않아 DB 검증을 다른 DB로 대체하지 않았다.
+실제 Prefect 실행기 종료·유료 호출 중 취소의 운영 검증, 스케줄 활성화·배포는 수행하지 않았다.
+
+로컬 검증은 Ops 무료 계약 9개(취소 5·예산 3·접수 조회 1)와 Web Ops 테스트 49개가 통과했다.
+Web 첫 실행은 테스트 시작 전 worker timeout이었고 같은 명령의 단독 재실행에서 49개가 통과했다.
+실행 명령은 다음과 같다. `uv`는 잠금 파일을 따르는 기존 로컬 도구를 사용했다.
+
+- Ops: `uv run --locked python manage.py test apps.evaluations.test_cancellation.CancellationContractTests apps.evaluations.test_budget.BudgetContractTests apps.evaluations.test_sync.DispatchLookupTests --noinput`.
+  취소 CSRF·응답 검증을 추가한 뒤 해당 취소 계약 클래스만 다시 실행했다.
+- Ops: 변경 파일의 `uv run --locked ruff check` 및 `ruff format --check` 통과.
+  Django system check, `makemigrations --check --dry-run`, `python apps/evaluations/execution_spec.py` 통과.
+  DB 연결이 없어 migration 적용 이력 자체는 확인하지 못했다.
+- Web: `pnpm exec vitest run src/App.ops.test.tsx --pool=threads --maxWorkers=1`,
+  변경 파일의 `pnpm exec oxlint`, `pnpm exec tsc -b --pretty false` 통과.
+- 최종 공백 검사는 `git diff --check`로 확인한다. 새 DB 테스트는 Ops CI의 전체 Django 테스트에
+  자동 포함되며, 현재 변경의 원격 CI는 아직 실행하지 않았다.
 
 ### 누적 예산·취소·자동화의 계약
 

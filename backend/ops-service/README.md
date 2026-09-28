@@ -126,6 +126,38 @@ uv run --locked python manage.py set_evaluation_budget --calls "$APPROVED_CALL_L
 별도 Bearer 비밀값과 실행 UUID·명세 해시·소유자 UUID를 확인합니다. 사용자 세션 API와 인증을 공유하지 않습니다.
 기본 한도를 넣거나 스케줄·유료 평가를 자동 활성화하지 않습니다.
 
+## 평가 취소
+
+상세 화면의 **평가 취소 요청**은 현재 Core 관리자 세션 중 해당 평가 요청자만 사용할 수 있습니다.
+`POST /api/v1/ops/evaluations/{run_id}/cancel`에 빈 JSON과 CSRF 토큰을 보냅니다.
+`REQUESTED`, `QUEUED`, `RUNNING`, `CANCELLING`에서 접수하며, 이미 종료된 실행의 새 취소는
+`409 CANCEL_CONFLICT`, 다른 요청자는 `403 CANCEL_FORBIDDEN`입니다. 동일 실행 재요청은
+최초 취소 요청자·시각을 보존하며 새 평가를 만들지 않습니다.
+
+흐름은 `React → Django 인증·요청자 확인 → 취소 의사 DB 커밋 → Prefect 취소 요청 →
+ops-sync/상세 조회의 실제 종료 확인 → 미사용 예약 정리`입니다. 새 production 의존성은 없습니다.
+
+- `0012_evaluation_cancellation` migration으로 `cancel_requested_at`, `cancel_requested_by`와
+  `CANCELLING` 상태를 추가합니다. 과거 실행의 두 필드는 null이며 운영 데이터는 삭제하지 않습니다.
+- 응답의 `can_cancel`은 현재 사용자의 취소 가능 여부입니다. 목록·상세에 최초 취소 요청자와 시각을
+  제공하며 취소 요청 뒤에는 `can_retry=false`로 접수 재전송을 막습니다.
+- 취소 접수는 실행 행과 전역 예산 행 잠금으로 호출 승인과 직렬화합니다. 커밋 뒤 새 소유권·호출
+  승인을 거절하며 이미 승인된 요청의 전송·과금을 취소했다고 보장하지 않습니다.
+- Prefect에는 `CANCELLING`, `force=false`로 요청합니다. HTTP 성공만으로 완료 처리하지 않고
+  실행 상태를 다시 확인합니다. `CANCELLING`은 HTTP 202이며 확인된 최종 상태는 HTTP 200입니다.
+  완료가 먼저 확정되면 결과 검증을 거쳐 `COMPLETED`를 유지하고 취소 이력도 보존합니다.
+- Prefect 장애·접수 응답 유실은 `CANCELLING / PREFECT_CANCEL_UNCONFIRMED`로 남깁니다.
+  백그라운드 동기화는 기존 실행만 찾아 재확인하며 새 실행을 생성하지 않습니다. 끝내 실행 ID를
+  찾지 못하면 취소를 완료로 꾸미거나 예약을 자동 반환하지 않습니다.
+- 실행기의 정상 close 또는 취소 요청의 실제 종료 확인 시 미승인 호출 몫과 확인된 출력 차액만
+  반환합니다. 승인됐지만 사용량이 불명확한 호출은 1회와 최대 출력 토큰을 유지합니다.
+  중복 종료·실행기 close와 동기화 경합도 한 번만 반환합니다.
+- 실행기 재시작의 소유권 인계, 미확인 사용량의 수동 보정, 금액·기간 예산은 후속 범위입니다.
+
+취소 계약·웹 테스트는 무료 대역으로 검증하고 MySQL 잠금·환급 경합 테스트는 Ops CI에서 실행합니다.
+실제 Prefect 실행기 강제 종료와 유료 호출 중단은 별도 운영 검증이 필요합니다.
+Prefect의 [상태 변경 API](https://reference.prefect.io/prefect/server/api/flow_runs/) 계약을 사용합니다.
+
 ## 접수 시 실행 명세 고정
 
 새 접수는 session의 `datasets[].execution_profiles.replay` 또는 `.live`를

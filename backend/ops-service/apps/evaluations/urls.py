@@ -3,6 +3,7 @@ from django.urls import path
 from . import budget_views, views
 
 urlpatterns = [
+    path("api/v1/ops/evaluations/<uuid:run_id>/cancel", views.api_cancel, name="evaluation-cancel"),
     path("internal/llmops/evaluations/<uuid:run_id>/budget/<str:action>", budget_views.api_budget),
     path("api/v1/ops/evaluations/<uuid:run_id>/fixture-review", views.api_fixture_review),
     path("api/v1/ops/evaluations/<uuid:run_id>/quality", views.api_quality),

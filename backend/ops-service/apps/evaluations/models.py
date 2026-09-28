@@ -9,6 +9,7 @@ class EvaluationRun(models.Model):
         REQUESTED = "REQUESTED", "접수 중"
         QUEUED = "QUEUED", "실행 대기"
         RUNNING = "RUNNING", "실행 중"
+        CANCELLING = "CANCELLING", "취소 요청 중"
         COMPLETED = "COMPLETED", "완료"
         FAILED = "FAILED", "실패"
         CANCELLED = "CANCELLED", "취소"
@@ -36,6 +37,13 @@ class EvaluationRun(models.Model):
     recovery_config = models.JSONField(default=dict)
     model_api_calls = models.PositiveSmallIntegerField(default=0, null=True)
     requested_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    cancel_requested_at = models.DateTimeField(null=True)
+    cancel_requested_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        on_delete=models.PROTECT,
+        related_name="evaluation_cancellations",
+    )
     status = models.CharField(max_length=16, choices=Status.choices, default=Status.REQUESTED)
     prefect_flow_run_id = models.UUIDField(null=True, unique=True)
     evaluation_run_id = models.CharField(max_length=32, blank=True)

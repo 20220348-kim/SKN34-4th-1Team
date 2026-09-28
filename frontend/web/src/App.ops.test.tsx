@@ -66,6 +66,87 @@ function open(path = '/ops/evaluations') {
 }
 
 describe('React LLMOps 운영 화면', () => {
+  it('평가 취소를 CSRF와 함께 접수하고 종료 확인까지 취소 요청 중으로 표시한다', async () => {
+    const original = fetchMock.getMockImplementation()!
+    let run = { ...completed, status: 'RUNNING', status_label: '실행 중', can_cancel: true,
+      cancel_requested_at: null as string | null, cancel_requested_by: null as string | null, report_url: null }
+    let finish: ((value: Response) => void) | undefined
+    fetchMock.mockImplementation(async (path, options) => {
+      if (path === `/api/v1/ops/evaluations/${id}`) return json(run)
+      if (path.endsWith('/cancel')) return new Promise<Response>((resolve) => { finish = resolve })
+      return original(path, options)
+    })
+    open(`/ops/evaluations/${id}`)
+    const button = await screen.findByRole('button', { name: '평가 취소 요청' })
+    fireEvent.click(button)
+    await waitFor(() => expect(finish).toBeTruthy())
+    expect(button).toHaveProperty('disabled', true)
+    fireEvent.click(button)
+    const calls = fetchMock.mock.calls.filter(([path]) => path.endsWith('/cancel'))
+    expect(calls).toHaveLength(1)
+    expect(calls[0][1]).toMatchObject({ method: 'POST', credentials: 'same-origin',
+      headers: { 'X-CSRFToken': 'rotated-token' }, body: '{}' })
+    run = { ...run, status: 'CANCELLING', status_label: '취소 요청 중', can_cancel: false,
+      cancel_requested_at: '2026-09-29T00:00:00Z', cancel_requested_by: 'operator@example.com' }
+    await act(async () => { finish!(json(run, 202)) })
+    expect(await screen.findByText('취소 요청 중')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '평가 취소 요청' })).toBeNull()
+    expect(screen.getByText(/실행 종료를 확인하고 있습니다/)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '같은 요청으로 접수 재확인' })).toBeNull()
+  })
+
+  it('취소 응답 유실을 완료로 표시하지 않고 같은 실행에 재요청할 수 있다', async () => {
+    const original = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (path, options) => {
+      if (path === `/api/v1/ops/evaluations/${id}`) return json({ ...completed, status: 'RUNNING', status_label: '실행 중', can_cancel: true, report_url: null })
+      if (path.endsWith('/cancel')) throw new Error('connection lost')
+      return original(path, options)
+    })
+    open(`/ops/evaluations/${id}`)
+    fireEvent.click(await screen.findByRole('button', { name: '평가 취소 요청' }))
+    expect(await screen.findByText(/취소 접수 여부는 상태를 다시 확인하세요/)).toBeTruthy()
+    expect(screen.queryByText('취소')).toBeNull()
+    await waitFor(() => expect(screen.getByRole('button', { name: '평가 취소 요청' })).toHaveProperty('disabled', false))
+    fireEvent.click(screen.getByRole('button', { name: '평가 취소 요청' }))
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([path]) => path.endsWith('/cancel'))).toHaveLength(2))
+  })
+
+  it('실행 ID를 찾는 중인 취소 요청도 자동 갱신해 실제 취소 완료를 확인한다', async () => {
+    const original = fetchMock.getMockImplementation()!
+    let reads = 0
+    fetchMock.mockImplementation(async (path, options) => {
+      if (path === `/api/v1/ops/evaluations/${id}`) return json({ ...completed,
+        status: ++reads === 1 ? 'CANCELLING' : 'CANCELLED', status_label: reads === 1 ? '취소 요청 중' : '취소',
+        prefect_flow_run_id: null, prefect_url: null, report_url: null,
+        cancel_requested_at: '2026-09-29T00:00:00Z', cancel_requested_by: 'operator@example.com' })
+      return original(path, options)
+    })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    open(`/ops/evaluations/${id}`)
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+    expect(screen.getByText('취소 요청 중')).toBeTruthy()
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+    expect(screen.getByText('취소')).toBeTruthy()
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
+    expect(reads).toBe(2)
+  })
+
+  it('취소 버튼을 누르기 전에 계정이 바뀌면 취소를 전송하지 않는다', async () => {
+    const original = fetchMock.getMockImplementation()!
+    let changed = false
+    fetchMock.mockImplementation(async (path, options) => {
+      if (path === '/api/v1/ops/session' && changed) return json({ ...session(), user: { id: 'core:100', username: 'other' } })
+      if (path === `/api/v1/ops/evaluations/${id}`) return json({ ...completed, status: 'RUNNING', status_label: '실행 중', can_cancel: true, report_url: null })
+      return original(path, options)
+    })
+    open(`/ops/evaluations/${id}`)
+    const button = await screen.findByRole('button', { name: '평가 취소 요청' })
+    changed = true
+    fireEvent.click(button)
+    expect(await screen.findByText(/로그인 계정이 변경되었습니다/)).toBeTruthy()
+    expect(fetchMock.mock.calls.some(([path]) => path.endsWith('/cancel'))).toBe(false)
+  })
+
   it('상세를 열지 않아도 목록을 갱신하고 상태 확인 지연과 복구를 표시한다', async () => {
     const original = fetchMock.getMockImplementation()!
     let reads = 0
