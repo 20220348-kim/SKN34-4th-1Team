@@ -32,15 +32,16 @@ jobs:
       reason: ${{ steps.select.outputs.reason }}
       publisher_run_id: ${{ steps.select.outputs.publisher_run_id }}
       selection_result: ${{ steps.select.outcome }}
-      validation_result: ${{ steps.validate.outcome }}
-      commit_result: ${{ steps.commit.outcome }}
-      push_attempted: ${{ steps.commit.outputs.push_attempted }}
-      pushed: ${{ steps.commit.outputs.pushed }}
-      unchanged: ${{ steps.commit.outputs.unchanged }}
-      revision: ${{ steps.commit.outputs.revision }}
+      proposal_result: ${{ steps.propose.outcome }}
+      candidate_created: ${{ steps.propose.outputs.candidate_created }}
+      check_dispatched: ${{ steps.propose.outputs.check_dispatched }}
+      candidate_sha: ${{ steps.propose.outputs.candidate_sha }}
+      candidate_branch: ${{ steps.propose.outputs.candidate_branch }}
+      candidate_pr: ${{ steps.propose.outputs.candidate_pr }}
     permissions:
       contents: write
-      actions: read
+      actions: write
+      pull-requests: write
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -70,54 +71,21 @@ jobs:
           echo "$tool_dir/linux-amd64" >> "$GITHUB_PATH"
       - name: Test policy and promotion tools
         run: python -B -m unittest discover -s scripts -p 'test_*.py'
-      - name: Fetch verified receipts and select digests
+      - name: Prepare a complete verified deployment snapshot
         id: select
-        run: python -B scripts/sync_images.py --write
-      - name: Validate proposed deployment before any push
-        id: validate
+        run: python -B scripts/deployment.py prepare --directory "${RUNNER_TEMP}/deployment-candidate"
+      - name: Preserve the exact candidate for review
         if: steps.select.outputs.prepared == 'true'
-        run: |
-          set -euo pipefail
-          python -B scripts/check_repository.py
-          python -B scripts/check_kubernetes.py
-          python -B scripts/check_msa.py
-          python -B scripts/check_portfolio.py
-          if test -f environments/fork/release.json; then
-            python -B -c 'import sys; sys.path.insert(0,"scripts"); from check_portfolio import fork_errors; from sync_images import from_ci; problems=fork_errors(from_ci()); sys.exit("\n".join(problems)) if problems else None'
-          fi
-          for service in core-service catalog-service ai-service ops-service; do
-            if test -f "environments/fork/$service.yaml"; then
-              helm lint charts/govbiz-service -f "environments/fork/$service.yaml" --strict
-              helm template "$service" charts/govbiz-service -f "environments/fork/$service.yaml" > /dev/null
-            fi
-          done
-          git diff --check
-      - name: Commit only this fork's image selection without force-push
-        id: commit
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: deployment-candidate
+          path: ${{ runner.temp }}/deployment-candidate/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Create a candidate PR and explicitly dispatch its required check
+        id: propose
         if: steps.select.outputs.prepared == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          git add environments/fork/core-service.yaml environments/fork/catalog-service.yaml environments/fork/ai-service.yaml environments/fork/ops-service.yaml environments/fork/release.json
-          python -B -c 'import subprocess,sys; sys.path.insert(0,"../release"); from gate import PROMOTION_PATHS; changed=set(subprocess.check_output(["git", "diff", "--cached", "--name-only"],text=True).splitlines()); sys.exit("Unexpected staged files") if changed - PROMOTION_PATHS else None'
-          python -B scripts/sync_images.py --verify-record
-          if git diff --cached --quiet; then
-            echo 'unchanged=true' >> "$GITHUB_OUTPUT"
-            echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m '배포: 검증된 서비스 이미지 digest 자동 갱신'
-          gh auth setup-git
-          # A GITHUB_TOKEN push does not trigger new push workflows. This avoids
-          # an image→digest→image loop; Argo still observes the Git commit.
-          revision="$(git rev-parse HEAD)"
-          echo 'push_attempted=true' >> "$GITHUB_OUTPUT"
-          git push origin "HEAD:refs/heads/$GOVBIZ_RELEASE_BRANCH"
-          test "$(git ls-remote --heads origin "refs/heads/$GOVBIZ_RELEASE_BRANCH" | cut -f1)" = "$revision"
-          echo "revision=$revision" >> "$GITHUB_OUTPUT"
-          echo 'pushed=true' >> "$GITHUB_OUTPUT"
+        run: python -B scripts/deployment.py propose --directory "${RUNNER_TEMP}/deployment-candidate"
 
   outcome:
     needs: [promote]

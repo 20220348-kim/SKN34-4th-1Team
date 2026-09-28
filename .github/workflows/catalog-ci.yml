@@ -5,13 +5,6 @@ on:
     # Validate every submitted branch, including commits that only change release
     # policy or documentation. Publication separately checks upstream merge and fork opt-in.
   pull_request:
-    paths:
-      - "backend/catalog-service/**"
-      - "backend/core-service/**"
-      - "backend/ai-service/**"
-      - "infrastructure/**"
-      - "compose*.yaml"
-      - ".github/workflows/**"
 
 permissions:
   contents: read

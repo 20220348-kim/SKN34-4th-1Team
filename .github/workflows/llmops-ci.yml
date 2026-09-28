@@ -5,27 +5,6 @@ on:
   # Publication separately restricts the default branch, upstream merge and fork opt-in.
   push:
   pull_request:
-    paths:
-      - 'backend/ai-service/**'
-      - 'backend/ops-service/**'
-      - 'backend/core-service/**'
-      - 'frontend/web/src/**/ops/**'
-      - 'frontend/web/src/App*'
-      - 'frontend/web/src/data/api/accountApi.ts'
-      - 'frontend/web/src/data/repositories/AccountRepositoryImpl.ts'
-      - 'frontend/web/src/presentation/**/auth/**'
-      - 'frontend/web/vite.config*'
-      - 'frontend/web/package.json'
-      - 'pnpm-lock.yaml'
-      - 'package.json'
-      - 'evaluation/support-program-evidence/**'
-      - 'infrastructure/llmops/**'
-      - '.github/workflows/llmops-ci.yml'
-      - '.github/workflows/msa-images.yml'
-      - '.github/workflows/msa-promotion.yml'
-      - 'infrastructure/release/**'
-      - 'infrastructure/gitops/scripts/sync_images.py'
-      - 'infrastructure/gitops/scripts/test_sync_images.py'
 
 permissions:
   contents: read

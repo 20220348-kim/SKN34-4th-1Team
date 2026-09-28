@@ -148,12 +148,13 @@ class ForkBootstrapTests(unittest.TestCase):
     def test_failed_anonymous_pull_stops_bootstrap_before_cluster_or_secret_writes(self):
         args = SimpleNamespace(local_images=None, helm="helm", kind="kind", token_file=None)
         with tempfile.TemporaryDirectory() as directory, patch("fork_cluster.doctor"), \
-                patch("fork_cluster.checked_release", return_value={"visibility": "public", "images": {}}), \
-                patch("fork_cluster.render_services", return_value={}), patch("fork_cluster.run", return_value="") as execute, \
+                patch("fork_cluster.approved_bundle", return_value=({"visibility": "public", "images": {}},
+                    {f"infrastructure/gitops/rendered/{s}.json": b"[]" for s in cluster.SERVICES}, "a" * 40)), \
+                patch("fork_cluster.render_services", side_effect=AssertionError("Must use approved snapshot")), patch("fork_cluster.run", return_value="") as execute, \
                 patch("fork_cluster.verify_pull_rights", side_effect=ValueError("anonymous denied")), \
                 patch("fork_cluster.authenticate") as authenticate, patch("fork_cluster.apply") as apply:
             with self.assertRaisesRegex(ValueError, "anonymous denied"):
-                cluster.up(args, Path(directory), self.settings)
+                cluster._up(args, Path(directory), self.settings)
         self.assertEqual(execute.call_count, 1)
         self.assertEqual(execute.call_args.args[0], ["kind", "get", "clusters"])
         authenticate.assert_not_called()
@@ -261,7 +262,7 @@ class ForkBootstrapTests(unittest.TestCase):
             self.assertNotIn("finalizers", app["metadata"])
             spec = app["spec"]
             self.assertEqual(spec["source"]["repoURL"], self.fork.url)
-            self.assertEqual(spec["source"]["targetRevision"], "main")
+            self.assertEqual(spec["source"]["targetRevision"], "deploy/fork")
             self.assertEqual(spec["source"]["path"], "infrastructure/gitops/charts/govbiz-service")
             self.assertEqual(spec["source"]["helm"]["valueFiles"], [f"../../environments/fork/{service}.yaml"])
             self.assertEqual(spec["destination"]["namespace"], "govbiz-msa")

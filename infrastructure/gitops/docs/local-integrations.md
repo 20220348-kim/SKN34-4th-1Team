@@ -1,5 +1,9 @@
 # 개인 Kubernetes의 실제 외부 연동
 
+> 이 안내의 Argo `valuesObject` 적용은 이전 소스 브랜치 기반 환경에 한정됩니다.
+> 승인된 `deploy/fork` Application에는 직접 적용을 차단합니다. 기존 연동 프로필이 있으면 새 `gitops` 전환도 중단합니다.
+> [배포 후보 안내](deployment-candidates.md)에 따라 Git으로 검토할 연동 실행 정책을 별도로 준비해야 합니다.
+
 기본 `up`은 무료·격리 시연 설정입니다. 실제 기능은 이 문서의 **명시적 연동 프로필**로 연결합니다.
 팀원마다 자기 키와 클러스터를 사용하며, 공용 GitHub 저장소·GHCR 이미지에 키를 넣지 않습니다.
 
@@ -57,7 +61,7 @@ RabbitMQ만 연결하면 자동 갱신 임베딩을 수행하는 관심 공고 �
 비밀값은 기존 서비스별 Secret에 필드 단위로 전달합니다. `.local/fork/integrations.json`에는 기능 목록,
 로컬 origin과 변수 **이름**만 저장합니다. Argo Application의 `helm.valuesObject`에는 env 설정과 Secret 참조만
 넣고 이미지/digest는 건드리지 않습니다. 이후 Git의 이미지 promotion과 self-heal을 계속 사용할 수 있습니다.
-`up`, `gitops` 재진입에서도 이 프로필을 반영합니다. 실행 중 다른 Argo override가 있으면 자동 덮어쓰지 않습니다.
+`up --local-images` 개발 경로는 이 프로필을 반영합니다. 승인 snapshot을 쓰는 일반 `up`·`gitops`는 로컬 override를 거절합니다. 실행 중 다른 Argo override가 있으면 자동 덮어쓰지 않습니다.
 적용 중 오류가 나면 부분 적용 여부를 확인해야 하며, 데이터·비밀값을 자동 rollback하지 않습니다.
 
 공식 기준: [Argo CD Helm 값 우선순위](https://argo-cd.readthedocs.io/en/stable/user-guide/helm/#helm-value-precedence).

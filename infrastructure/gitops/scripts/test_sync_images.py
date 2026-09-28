@@ -403,12 +403,17 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertCountEqual(publication["strategy"]["matrix"]["service"], sync.SERVICES)
         promotion = self.workflow("msa-promotion.yml")["jobs"]["promote"]
         steps = {step.get("id"): step for step in promotion["steps"] if "id" in step}
-        for step in ("validate", "commit"):
-            self.assertEqual(steps[step]["if"], "steps.select.outputs.prepared == 'true'")
-        command = steps["commit"]["run"]
-        self.assertLess(command.index('--verify-record'), command.index('git diff --cached --quiet'))
-        self.assertLess(command.index('git push origin'), command.index('git ls-remote'))
-        self.assertLess(command.index('git ls-remote'), command.index("echo 'pushed=true'"))
+        self.assertEqual(steps["propose"]["if"], "steps.select.outputs.prepared == 'true'")
+        self.assertIn("deployment.py prepare", steps["select"]["run"])
+        self.assertIn("deployment.py propose", steps["propose"]["run"])
+        self.assertNotIn("git push", steps["propose"]["run"])
+        self.assertEqual(promotion["permissions"], {"contents": "write", "actions": "write", "pull-requests": "write"})
+        checker = self.workflow("deployment-ci.yml")
+        self.assertEqual(set(checker["on"]), {"workflow_dispatch"})
+        self.assertEqual(checker["permissions"], {"contents": "read", "actions": "read", "pull-requests": "read", "statuses": "write"})
+        checkout = checker["jobs"]["validate"]["steps"][0]["with"]
+        self.assertEqual(checkout["ref"], "${{ github.event.repository.default_branch }}")
+        self.assertEqual(checkout["persist-credentials"], "false")
 
     def test_every_required_push_and_completion_trigger_is_present(self):
         names = []
@@ -421,10 +426,8 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertCountEqual(publisher["on"]["workflow_run"]["workflows"], names)
         self.assertEqual(publisher["on"]["workflow_run"]["types"], ["completed"])
         llmops = self.workflow("llmops-ci.yml")
-        paths = llmops["on"]["pull_request"]["paths"]
-        for path in ("infrastructure/release/**", ".github/workflows/msa-images.yml",
-                     ".github/workflows/msa-promotion.yml", "infrastructure/gitops/scripts/sync_images.py"):
-            self.assertIn(path, paths)
+        for filename in gate.WORKFLOWS:
+            self.assertEqual(self.workflow(filename)["on"]["pull_request"], "")
         self.assertNotIn("schedule", llmops["on"])
 
 

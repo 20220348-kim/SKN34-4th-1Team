@@ -98,7 +98,55 @@ def workflow_report(stage, needs, event, env):
         )
         # Matrix failures may occur after some pushes; upload/reuse facts live in
         # each service report and must not be inferred from the aggregate result.
+    elif "candidate_created" in outputs or "proposal_result" in outputs:
+        revision = outputs.get("candidate_sha")
+        number = outputs.get("candidate_pr", "")
+        created = bool(
+            personal
+            and enabled
+            and outputs.get("candidate_created") == "true"
+            and valid_sha(source)
+            and valid_sha(revision)
+            and number.isdecimal()
+            and int(number) > 0
+        )
+        state = (
+            "candidate_created"
+            if created
+            else "blocked"
+            if result in {"success", "skipped"}
+            else result
+        )
+        dispatched = bool(created and outputs.get("check_dispatched") == "true")
+        if created:
+            reason = (
+                "review_and_manual_merge_required"
+                if dispatched
+                else "candidate_check_not_dispatched"
+            )
+        elif result in {"failure", "cancelled"}:
+            phase = next(
+                (
+                    name
+                    for name in ("selection", "proposal")
+                    if outputs.get(name + "_result") in {"failure", "cancelled"}
+                ),
+                "job",
+            )
+            reason = phase + "_" + result
+        report.update(
+            jobResult=result,
+            state=state,
+            reason=reason,
+            candidateCreated=created,
+            checkDispatched=dispatched,
+            candidateSha=revision if valid_sha(revision) else None,
+            candidatePr=int(number) if number.isdecimal() and int(number) > 0 else None,
+            deploymentUpdated=False,
+            publisherRunId=outputs.get("publisher_run_id") or None,
+        )
     else:
+        # Retain interpretation of historical direct-promotion reports.
         pushed = outputs.get("pushed") == "true"
         attempted = outputs.get("push_attempted") == "true"
         revision = outputs.get("revision")

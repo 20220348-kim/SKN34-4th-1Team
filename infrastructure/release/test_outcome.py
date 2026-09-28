@@ -170,6 +170,36 @@ class OutcomeTests(unittest.TestCase):
             self.report("promotion", {"unchanged": "true"})["state"], "unchanged"
         )
 
+    def test_candidate_pr_is_not_deployment_and_needs_exact_identity(self):
+        outputs = {
+            "source_sha": SHA,
+            "candidate_created": "true",
+            "candidate_sha": REVISION,
+            "candidate_pr": "42",
+            "check_dispatched": "true",
+            "proposal_result": "success",
+        }
+        report = self.report("promotion", outputs)
+        self.assertEqual(report["state"], "candidate_created")
+        self.assertEqual(report["candidatePr"], 42)
+        self.assertFalse(report["deploymentUpdated"])
+        self.assertFalse(report["clusterVerified"])
+        failed = self.report(
+            "promotion", outputs | {"check_dispatched": "false"}, result="failure"
+        )
+        self.assertTrue(failed["candidateCreated"])
+        self.assertFalse(failed["checkDispatched"])
+        self.assertEqual(failed["reason"], "candidate_check_not_dispatched")
+        for field in ("source_sha", "candidate_sha", "candidate_pr"):
+            self.assertFalse(
+                self.report("promotion", outputs | {field: ""})["candidateCreated"]
+            )
+        report = self.report(
+            "promotion", {"proposal_result": "failure"}, result="failure"
+        )
+        self.assertEqual(report["reason"], "proposal_failure")
+        self.assertFalse(report["deploymentUpdated"])
+
     def test_summary_and_json_are_same_facts_without_environment_secrets(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "report.json"

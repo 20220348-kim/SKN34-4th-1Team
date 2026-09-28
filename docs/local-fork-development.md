@@ -59,7 +59,7 @@ python -B infrastructure/gitops/scripts/fork_cluster.py doctor
 ```
 
 `origin`은 자기 포크, `upstream`은 교육기관 원본이어야 합니다. `init`은 `origin`의 계정·저장소와
-기본 브랜치를 읽습니다. 현재 작업 중인 `skn34-1` 같은 개발 브랜치를 배포 브랜치로 삼지 않습니다.
+소스 기본 브랜치를 읽습니다. 승인된 서비스 배포 입력은 고정된 `deploy/fork`입니다. 작업 브랜치를 배포 ref로 삼지 않습니다.
 GitHub의 기본 브랜치 자체를 변경한 경우에만 처음에 `init --branch 브랜치명`으로 명시합니다.
 생성된 설정은 `infrastructure/gitops/.local/fork/settings.json`에만 저장됩니다.
 클러스터 이름은 저장소 식별값으로 정해지므로 사용자마다 파일의 이름을 바꿀 필요가 없습니다.
@@ -74,7 +74,8 @@ GHCR 경로의 선행 조건은 [이미지 발행 안내](msa-image-release.md)�
 앱 코드 없는 빈 이미지를 로컬 PAT로 등록한 후 권한을 확인합니다.
 
 이 선행 조건을 충족하고 발행·승격을 명시적으로 허용한 뒤에는, 개발 코드를 교육기관 원본에 PR로
-병합하고 그 결과를 자기 포크의 기본 브랜치에 동기화합니다. 동일 소스의 다섯 CI·발행·승격이 모두
+병합하고 그 결과를 자기 포크의 기본 브랜치에 동기화합니다. [배포 승인 설정](../infrastructure/gitops/docs/deployment-candidates.md)을 준비하고
+동일 소스의 다섯 CI·발행·후보 검사·PR 리뷰·수동 병합이 모두
 통과해야 자기 GHCR 이미지와 `environments/fork`의 검증된 digest가 준비됩니다.
 미병합 개인 커밋의 push나 포크 생성만으로 이미지가 발행·복사되는 것은 아닙니다.
 
@@ -172,21 +173,25 @@ python -B infrastructure/gitops/scripts/dev.py --restore --service all
 이 명령은 개발 도구가 처음 발견했던 기존 이미지로 복원할 뿐, 수정한 소스 파일을 되돌리거나 Git을
 커밋하지 않습니다. 제출할 코드를 직접 커밋·푸시하고 교육기관 원본에 PR을 올립니다. 원본에 병합되면
 자기 포크의 기본 브랜치를 원본과 동기화합니다. 비공개 패키지 준비와 발행 활성화 조건을 충족하여
-포크 CI 발행·digest 갱신이 성공한 경우에만 그 결과를 로컬에 pull한 뒤 실행합니다.
+포크 CI·발행·전체 후보 검사와 배포 PR 리뷰·수동 병합까지 완료한 뒤 전환합니다. 로컬 소스 도구도 pull로 최신화합니다.
 
 ```bash
 python -B infrastructure/gitops/scripts/fork_cluster.py gitops
 python -B infrastructure/gitops/scripts/fork_cluster.py status
 ```
 
-GitOps 활성화는 자기 포크의 배포 브랜치에 푸시된 깨끗한 작업 트리와 유효한 개인 GHCR 인증을 요구합니다.
-Argo CD는 자기 포크의 Helm·digest만 읽고 자기 PC에 적용합니다. GitOps 모드가 활성화된 후의 자동
+GitOps 활성화는 원격과 일치하는 깨끗한 소스 checkout, 활성 보호 규칙과 승인된 `deploy/fork` snapshot을 요구합니다.
+비공개 이미지에는 유효한 개인 GHCR 인증도 필요합니다. Argo CD는 `deploy/fork`의 Chart·values만 읽습니다. GitOps 모드가 활성화된 후의 자동
 감지는 로컬 `git pull` 없이도 동작하지만, 수동 도구·개발 코드의 최신화에는 pull이 필요합니다.
 Mac/Windows와 Docker가 실행 중이어야 하며 토큰이 만료되면 `credentials` 명령으로 갱신합니다.
 교육기관 원본에 병합되었다는 이유로
 모든 팀원의 개인 클러스터가 동시에 바뀌는 구조는 아닙니다. 각자 원본 변경을 **GitHub의 자기 포크 기본
 브랜치에** 동기화해야 합니다. 로컬에서 `git pull`만 하는 것은 GitHub 원격을 바꾸지 않으므로 새로운
 발행 워크플로를 시작하지 않습니다. 로컬 코드 저장 반영은 이 승인·발행 절차 없이 개발 모드에서 계속 가능합니다.
+
+기존 `integrations.json`이 있으면 새 승인 snapshot으로의 `gitops` 전환은 변경 전에 중단합니다.
+Git 밖의 연동 설정을 자동 삭제하거나 유지한 채 승인된 것으로 취급하지 않습니다. 연동 기능을 쓰는 기존 환경의
+전환은 [전체 후보 안내](../infrastructure/gitops/docs/deployment-candidates.md)의 제한을 확인하세요.
 
 ## 검증 범위
 

@@ -33,8 +33,8 @@ GitHub는 워크플로가 `GITHUB_TOKEN`으로 만든 패키지가 기본적으�
 3. [네 서비스 패키지 최초 준비](private-ghcr-setup.md)를 수행합니다.
    각 패키지의 Private 상태, 본인 소유, 정확한 자기 포크 연결, 해당 포크 Actions의 쓰기 권한을
    확인해야 합니다. `read:packages` 토큰은 기존 이미지를 받기 위한 것이며 패키지를 만들 수 없습니다.
-4. 위 준비를 별도로 완료·검증하고 발행을 명시적으로 허용할 때에만 두 변수를 `true`로 변경합니다.
-   단순히 CI가 성공했다는 이유로 활성화하지 않습니다.
+4. 패키지 준비를 검증한 뒤 이미지 발행만 `MSA_RELEASE_ENABLED=true`로 허용합니다.
+   `MSA_PROMOTION_ENABLED`는 [배포 브랜치·Ruleset·리뷰 설정](../infrastructure/gitops/docs/deployment-candidates.md)까지 완료한 뒤 활성화합니다.
 5. 기능은 개인 작업 브랜치에서 개발하고 교육기관 원본에 PR을 제출합니다. **원본 PR이 병합된 뒤**
    본인 포크의 기본 브랜치를 최신 upstream과 동기화합니다. 로컬 `git pull`만으로는 원격 Actions가 실행되지 않습니다.
    GitHub의 Sync fork 또는 동기화한 로컬 기본 브랜치를 origin에 push해야 합니다.
@@ -43,8 +43,8 @@ GitHub는 워크플로가 `GITHUB_TOKEN`으로 만든 패키지가 기본적으�
    `MSA image candidates`가 실행됩니다. 단, 개인 포크의 내용이 최신 upstream 병합본과 일치해야 합니다.
    원본에 아직 병합되지 않은 코드·CI·발행 정책 변경은 본인 포크에서 테스트가 성공해도 발행하지 않습니다.
    필요하면 같은 검증된 SHA의 기본 브랜치에서 해당 workflow를 수동 실행합니다.
-7. `Fork image promotion`이 완료되면 `infrastructure/gitops/environments/fork/`에 실제 digest와
-   `release.json`이 생깁니다. 첫 발행 전에는 예시 digest로 이 폴더를 만들지 않습니다.
+7. `Fork image promotion`은 Chart·values·digest·receipt·렌더링 결과를 묶어 `deploy/fork` 대상 PR을 만듭니다.
+   별도 후보 검사와 리뷰 승인 후 사람이 수동 병합합니다. 소스 기본 브랜치에 digest를 직접 push하지 않습니다.
 
 ### 새 포크가 이미 최신인데 CI 실행 기록이 없는 경우
 
@@ -57,7 +57,7 @@ push해 다섯 push CI를 시작할 수 있습니다. 비공개 패키지 초기
 
 아래는 기본 브랜치가 `main`인 경우의 Mac·Windows/WSL2 명령입니다. `origin`이 **본인 포크**인지
 먼저 `git remote -v`로 확인하세요. 다른 브랜치에서 실행하거나 추적·미추적 변경이 있으면
-첫 두 검사가 중단하므로 커밋하지 않습니다. 다른 기본 브랜치를 쓰면 두 `main`을 해당 이름으로 맞춥니다.
+첫 두 검사가 중단하므로 커밋하지 않습니다. PR 필수 보호를 이미 적용한 저장소는 직접 push 대신 같은 내용을 PR로 제출합니다. 다른 기본 브랜치를 쓰면 두 `main`을 해당 이름으로 맞춥니다.
 
 ```bash
 test "$(git branch --show-current)" = "main" &&
@@ -95,7 +95,7 @@ git push origin main
 
 비공개 패키지 준비·검증과 발행 활성화가 완료된 뒤에는
 원본 PR 병합 → 개인 포크 기본 브랜치 Sync → 다섯 CI 성공 → 서비스별 추적 소스 빌드/기존 이미지 재사용 → 기존 개인 GHCR 패키지 →
-receipt 검증 → 같은 포크의 digest 커밋 → 각 PC의 Argo CD가 Git 변경 감지 순서입니다.
+receipt·전체 후보 검증 → 배포 PR 리뷰·수동 병합 → 각 PC의 Argo CD가 `deploy/fork` 변경 감지 순서입니다.
 
 **PC에서 코드를 저장할 때마다 GHCR에 올리는 방식이 아닙니다.** 저장 즉시 반영하는 개발 모드와
 검증된 이미지를 실행하는 GitOps 모드는 별개입니다. 로컬 개발 방법은 [공통 개발 안내](local-fork-development.md)를 확인합니다.
@@ -111,7 +111,7 @@ receipt 검증 → 같은 포크의 digest 커밋 → 각 PC의 Argo CD가 Git �
   job 목록이 불완전하거나 다른 SHA·실행의 결과이면 차단하며, job 조회 중 재실행이 시작되어도 이전 성공을 사용하지 않습니다.
   필수 job의 이름·matrix 구성을 바꾸면 `infrastructure/release/gate.py`의 정책도 함께 갱신해야 합니다.
 - 발행 시작·업로드 전과 승격 파일 쓰기·커밋 직전에 같은 CI 조건을 다시 확인합니다. 원격 브랜치 보호/Ruleset 설정과는 별개입니다.
-- LLMOps CI는 문서 변경·빈 커밋을 포함한 모든 push에서 실행합니다. PR의 관련 경로 필터는 유지하며 발행·승격 도구 변경도 포함합니다.
+- 다섯 필수 CI는 모든 push와 PR에서 실행합니다. 필수 상태 검사가 경로 필터 때문에 누락되지 않도록 Catalog·LLMOps의 PR 필터도 제거했습니다.
 - 최신 upstream 기본 브랜치가 후보의 조상이어야 하고 다섯 개인 이미지 선택 파일 외에는 모든 추적 파일이 같아야 합니다.
   이 기준은 bot digest와 upstream 동기화로 생긴 개인 merge SHA는 허용하지만 미병합 변경·동기화되지 않은 upstream은 차단합니다.
   upstream API 오류나 불완전한 비교 결과를 성공으로 취급하지 않습니다.
@@ -122,11 +122,11 @@ receipt 검증 → 같은 포크의 digest 커밋 → 각 PC의 Argo CD가 Git �
 - receipt ZIP checksum·정확한 네 artifact·같은 저장소/실행/SHA·실제 Git tree를 모두 검사합니다. receipt 자체가 서명된 provenance는 아닙니다.
 - 새 receipt는 schemaVersion 2와 `visibility`를 필수로 포함하며, 네 서비스의 공개 범위가 다르면 승격하지 않습니다.
   기존 v1 receipt 및 공개 범위가 없는 과거 배포 기록은 비공개로만 해석합니다.
-- 배포 파일은 `environments/fork`의 네 YAML과 `release.json`만 갱신합니다. 과거 `environments/portfolio`는 수정하지 않습니다.
-- bot의 digest-only 후속 커밋은 검증된 소스 SHA를 무효화하지 않습니다. 다른 소스 변경이 섞이면 차단합니다.
-- `GITHUB_TOKEN`의 digest push는 새 push workflow를 만들지 않아 발행 반복을 막습니다. Argo CD의 Git 감지는 별개입니다.
+- 배포 후보는 Chart 전체·네 values·release·receipt·렌더링 결과·Argo 선언·manifest를 한 snapshot으로 구성합니다. 과거 portfolio는 설정 기본값으로만 읽습니다.
+- 이전 이미지 발행기의 digest-only 호환 규칙과 달리 새 배포 후보는 소스 기본 브랜치의 정확한 현재 SHA를 요구합니다.
+- `GITHUB_TOKEN`으로 생성한 PR은 자동 PR CI를 기대하지 않습니다. 소스 기본 브랜치의 검사기를 명시적으로 dispatch해 정확한 후보 SHA에 required status를 게시합니다.
 - 다른 사람의 `environments/fork`가 포크에 포함되어도 그 이미지를 실행하지 않습니다. 본인의 첫 CI·발행이 성공하면
-  검증된 본인 이미지 네 개로 다섯 파일을 한 커밋에 교체합니다. 계정명 수동 변경이나 파일 삭제는 필요 없습니다.
+  검증된 본인 이미지 네 개를 포함한 후보를 구성하며, 배포 PR 승인 전에는 사용하지 않습니다. 계정명 수동 변경이나 파일 삭제는 필요 없습니다.
 
 오프라인 검사(Python 3.13, GitOps requirements 필요):
 

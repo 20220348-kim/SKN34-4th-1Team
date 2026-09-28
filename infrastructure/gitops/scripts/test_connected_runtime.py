@@ -110,15 +110,15 @@ class ConnectedRuntimeTests(unittest.TestCase):
         self.assertNotIn("private-fixture", str(call.call_args.args))
         self.assertIn("data", json.loads(call.call_args.kwargs["input"]))
 
-    def test_argo_preserves_git_digest_promotions_with_local_integration_overlay(self):
+    def test_approved_argo_refuses_local_overrides_and_tracks_deployment_branch(self):
         profile = self.profile()
-        resources = argo_resources(self.settings, profile)
-        for app in resources[1:]:
+        with self.assertRaisesRegex(ValueError, "local integration overrides"):
+            argo_resources(self.settings, profile)
+        for app in argo_resources(self.settings)[1:]:
             source = app["spec"]["source"]
-            self.assertEqual(source["targetRevision"], "main")
-            self.assertNotIn("image", source["helm"].get("valuesObject", {}))
+            self.assertEqual(source["targetRevision"], "deploy/fork")
+            self.assertNotIn("valuesObject", source["helm"])
             self.assertTrue(app["spec"]["syncPolicy"]["automated"]["selfHeal"])
-        self.assertNotIn("valuesObject", argo_resources(self.settings)[1]["spec"]["source"]["helm"])
 
     @unittest.skipUnless(shutil.which("helm"), "Helm render checks run in the dedicated Helm CI job")
     def test_real_helm_manifests_preserve_msa_policy(self):
