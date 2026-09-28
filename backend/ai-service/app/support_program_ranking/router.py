@@ -2,6 +2,8 @@ from typing import Annotated
 import logging
 from time import perf_counter
 
+from app.tracing import remote_parent
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from app.support_program_ranking.errors import AgentExecutionError, AgentFailureCode, AgentTimeoutError
@@ -28,6 +30,7 @@ def get_support_program_ranking_service(
     summary="지원사업 후보 LLM 점수화",
 )
 async def rank_support_programs(
+    request: Request,
     payload: SupportProgramRankingRequest,
     service: Annotated[
         SupportProgramRankingService,
@@ -36,7 +39,10 @@ async def rank_support_programs(
 ) -> SupportProgramRankingResponse:
     started = perf_counter()
     try:
-        return await service.rank(payload)
+        with request.app.state.container.llm_tracing.observation(
+            "search.ranking.request", **remote_parent(request.headers.get("traceparent")),
+        ):
+            return await service.rank(payload)
     except AgentExecutionError as error:
         timed_out = isinstance(error, AgentTimeoutError)
         reason_code = (

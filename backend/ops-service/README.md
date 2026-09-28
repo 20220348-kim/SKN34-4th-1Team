@@ -411,7 +411,7 @@ uv run --locked python manage.py runserver 127.0.0.1:8001
 | --- | --- | --- |
 | `GET /api/v1/health` | `200`, `status: UP` | DB를 호출하지 않음 |
 | `GET /api/v1/health/ready` | `200`, `database: UP` | MySQL 연결/질의 실패 시 `503`, 내부 연결 정보는 응답에 노출하지 않음 |
-| `GET /api/v1/ops/session` | `200`, `user`(쿠키가 없으면 null), `csrf_token`, 허용 자료 목록 | 만료 `401`, 비관리자 `403`, Core 장애 `503` |
+| `GET /api/v1/ops/session` | `200`, `user`(쿠키가 없으면 null), `csrf_token`, 허용 자료 목록, `search_traces_url` | 만료 `401`, 비관리자 `403`, Core 장애 `503` |
 | `GET /api/v1/ops/evaluations/{UUID}/report` | `200`, CSP sandbox가 적용된 HTML | 미인증 `401`, 비관리자 `403`, Core 장애 `503`, 없거나 훼손된 보고서 `404` |
 | `POST /api/v1/ops/evaluations` | 최초 `202`, 재전송 `200`; 실행 메타데이터 | 자료/UUID 오류 `400`, 미인증 `401`, 권한·CSRF `403`, 요청 충돌 `409`, 인증 서버 장애·접수 미확인 `503` |
 | `GET /api/v1/ops/evaluations` | `200`, 25건 페이지 (`count`, `next`, `previous`, `results`) | 미인증 `401`, 비관리자 `403`, Core 장애 `503` |
@@ -523,6 +523,12 @@ scripts/check-image.py   배포 이미지 기본 명령·격리·상태 확인 �
 Core·Ops API에서 공유하고, Ops CSRF 쿠키는 `govbiz_ops_csrf`로 구별합니다. `localhost`와
 `127.0.0.1`을 브라우저 주소에서 혼용하지 않습니다. `govbiz_ops_session`은 인증 근거로 사용하지 않습니다.
 Langfuse 자체 UI는 별도 로그인입니다.
+
+관리자 세션의 `search_traces_url`은 `LANGFUSE_PROJECT_URL` 아래 `/traces` 목록입니다.
+비로그인 또는 프로젝트 URL 미설정이면 null입니다. React 운영 메뉴의 **검색 실행 추적 ↗**가
+이 링크를 새 탭으로 열며, Langfuse에서 `support-program-search` 이름으로 검색 이력을 찾습니다.
+개별 평가 점수 링크와 구분하며 새 검색 실행이나 모델 호출을 발생시키지 않습니다.
+추적 범위·설정·실서버 검증 상태는 [검색 추적 안내](../../infrastructure/llmops/README.md#지원사업-ai-검색-추적)를 따릅니다.
 
 Compose의 DB 이름/사용자는 `govbiz4`로 고정하여 테스트 초기화 SQL과 일치시킵니다. 포트를 변경하면 호스트 실행의 `DB_PORT`도 맞춰야 합니다.
 

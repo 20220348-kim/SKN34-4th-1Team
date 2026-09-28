@@ -13,7 +13,7 @@ from app.main import create_app
 from app.support_program_evidence.agent import SupportProgramEvidenceAnswerAgent
 from app.support_program_evidence.answer_service import SupportProgramEvidenceAnswerService
 from app.support_program_evidence.errors import SupportProgramEvidenceError
-from app.support_program_evidence import tracing as tracing_module
+from app import tracing as tracing_module
 from tests.langchain_stub import ResponsesChatStub, response_message
 from tests.support_program_evidence.test_agent import answer_request, valid_selection
 from tests.test_bootstrap import OPENAI_SETTINGS
@@ -29,7 +29,7 @@ def trace_environment(monkeypatch):
 
 
 def make_service(settings, output=None):
-    tracing = tracing_module.EvidenceTracing(settings)
+    tracing = tracing_module.LLMTracing(settings)
     stub = ResponsesChatStub([[response_message(output or valid_selection().model_dump_json(by_alias=True))]])
     agent = SupportProgramEvidenceAnswerAgent(model=stub.model, model_timeout_seconds=10,
                                               run_timeout_seconds=15, tracing=tracing)
@@ -131,7 +131,7 @@ async def test_disabled_tracing_never_creates_client(monkeypatch):
 @pytest.mark.anyio
 async def test_export_mask_removes_body_and_filters_unrelated_spans(trace_environment):
     settings, exporter = trace_environment
-    tracing = tracing_module.EvidenceTracing(settings)
+    tracing = tracing_module.LLMTracing(settings)
     with tracing.observation("evidence.model", input="private input", output="private output"):
         pass
     with tracing.client.start_as_current_observation(name="unrelated", input="private other feature"):

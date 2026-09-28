@@ -66,6 +66,18 @@ function open(path = '/ops/evaluations') {
 }
 
 describe('React LLMOps 운영 화면', () => {
+  it('관리자 세션의 Langfuse 추적 링크를 별도 탭으로 연다', async () => {
+    const original = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation((path, options) => path === '/api/v1/ops/session'
+      ? Promise.resolve(json({ ...session(), search_traces_url: 'http://localhost:13000/project/development/traces' }))
+      : original(path, options))
+    open()
+    const link = await screen.findByRole('link', { name: '검색 실행 추적 ↗' })
+    expect(link.getAttribute('href')).toBe('http://localhost:13000/project/development/traces')
+    expect(link.getAttribute('target')).toBe('_blank')
+    expect(link.getAttribute('rel')).toBe('noopener noreferrer')
+  })
+
   it('평가 취소를 CSRF와 함께 접수하고 종료 확인까지 취소 요청 중으로 표시한다', async () => {
     const original = fetchMock.getMockImplementation()!
     let run = { ...completed, status: 'RUNNING', status_label: '실행 중', can_cancel: true,

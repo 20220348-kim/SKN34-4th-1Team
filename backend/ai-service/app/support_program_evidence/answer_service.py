@@ -4,7 +4,7 @@ from uuid import uuid4
 from app.support_program_evidence.agent import SupportProgramEvidenceAnswerAgent
 from app.support_program_evidence.errors import SupportProgramEvidenceError
 from app.config import LangfuseSettings
-from app.support_program_evidence.tracing import EvidenceTracing
+from app.tracing import LLMTracing
 from app.support_program_evidence.models import (
     SupportProgramEvidenceAnswerRequest,
     SupportProgramEvidenceAnswerResponse,
@@ -14,9 +14,9 @@ from app.support_program_evidence.models import (
 class SupportProgramEvidenceAnswerService:
     """Agent 인용이 요청한 근거 청크 집합을 벗어나지 않도록 검증한다."""
 
-    def __init__(self, agent: SupportProgramEvidenceAnswerAgent, tracing: EvidenceTracing | None = None) -> None:
+    def __init__(self, agent: SupportProgramEvidenceAnswerAgent, tracing: LLMTracing | None = None) -> None:
         self._agent = agent
-        self._tracing = tracing or EvidenceTracing(LangfuseSettings())
+        self._tracing = tracing or LLMTracing(LangfuseSettings())
 
     async def answer(
         self,

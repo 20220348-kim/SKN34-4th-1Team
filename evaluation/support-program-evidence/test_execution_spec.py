@@ -58,6 +58,7 @@ def test_checked_in_release_matches_repository():
     AI + "app/support_program_evidence/prompt.py",
     AI + "app/support_program_evidence/agent.py",
     AI + "app/support_program_evidence/answer_service.py",
+    AI + "app/tracing.py",
     AI + "app/support_program_llm.py",
     AI + "app/support_program_identity.py",
     AI + "uv.lock",

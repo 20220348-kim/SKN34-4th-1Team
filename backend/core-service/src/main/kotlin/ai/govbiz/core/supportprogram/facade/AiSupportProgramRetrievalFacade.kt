@@ -9,6 +9,7 @@ import ai.govbiz.core.supportprogram.domain.CatalogSupportProgram
 import ai.govbiz.core.supportprogram.client.elasticsearch.ElasticsearchSupportProgramClient
 import ai.govbiz.core.supportprogram.client.elasticsearch.dto.ElasticsearchSupportProgramReferenceRequest
 import ai.govbiz.core.supportprogram.client.elasticsearch.mapper.ElasticsearchSupportProgramDocumentMapper
+import ai.govbiz.core.supportprogram.helper.SupportProgramSearchTracingHelper
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Component
 
@@ -17,6 +18,7 @@ import org.springframework.stereotype.Component
 class AiSupportProgramRetrievalFacade(
     private val client: AiSupportProgramIndexClient,
     private val lexicalClient: ElasticsearchSupportProgramClient,
+    private val tracing: SupportProgramSearchTracingHelper = SupportProgramSearchTracingHelper(),
 ) {
     // 한 개의 불변 스냅샷만 게시합니다. 동시 준비가 중복될 수 있지만 검색이나 HTTP 호출에 락을 걸지 않습니다.
     @Volatile
@@ -61,7 +63,7 @@ class AiSupportProgramRetrievalFacade(
                 id
             }
         }
-        val candidateIds = combineRanks(semanticIds, keywordIds)
+        val candidateIds = timed("candidate_merge") { combineRanks(semanticIds, keywordIds) }
         return java.util.List.copyOf(candidateIds.map(programsById::getValue))
     }
 
@@ -138,11 +140,11 @@ class AiSupportProgramRetrievalFacade(
         val lexicalReferences: List<ElasticsearchSupportProgramReferenceRequest>,
     )
 
-    private inline fun <T> timed(stage: String, action: () -> T): T {
+    private fun <T> timed(stage: String, action: () -> T): T = tracing.observe(stage) {
         val started = System.nanoTime()
         var completed = false
         try {
-            return action().also { completed = true }
+            action().also { completed = true }
         } finally {
             logger.info(
                 "support_program_search stage={} outcome={} duration_ms={}",
