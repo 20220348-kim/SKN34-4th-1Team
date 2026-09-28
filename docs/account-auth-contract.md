@@ -99,7 +99,7 @@ Content-Type: application/json
 | 필드 | 규칙 |
 |---|---|
 | `email` | 이메일 형식, 320자 이하. Core가 앞뒤 공백 제거·소문자로 정규화해 저장하며 같은 이메일은 409. 탈퇴한 계정의 이메일은 익명화되므로 다시 가입할 수 있음 |
-| `password` | 8~72자. 길이만 검사하고 문자 종류는 강제하지 않음. BCrypt 해시만 저장 |
+| `password` | 영문 대·소문자, 숫자, 특수문자(공백을 뺀 ASCII)만 8~72자이며 UTF-8 72바이트 이하. 한글·이모지·공백이 있으면 400 `REQUEST_VALIDATION_FAILED`. 조합 종류는 강제하지 않으며 BCrypt 해시만 저장 |
 | `emailPassToken` | 아래 회원가입 이메일 인증에서 인증번호를 맞히면 받는 43자 통행 토큰. 같은 이메일로 인증한 것이어야 하며 없거나 다르면 422 `EMAIL_VERIFICATION_REQUIRED` |
 
 성공하면 201과 함께 아래 로그인과 같은 세션 응답을 돌려주고 브라우저 세션 쿠키(`rememberMe=false`와 같음)를
@@ -346,7 +346,7 @@ Origin: http://127.0.0.1:5173
 
 | 필드 | 규칙 |
 |---|---|
-| `newPassword` | 8~72자(가입과 같음) |
+| `newPassword` | 영문·숫자·특수문자 8~72자(가입과 같음) |
 
 성공은 204입니다. 새 해시를 저장하고 **요청한 세션만 남긴 채 같은 계정의 다른 세션 행을 지워** 다른 기기는 401이 됩니다.
 
@@ -424,7 +424,7 @@ POST /api/v1/auth/password-reset/confirm
 | 필드 | 규칙 |
 |---|---|
 | `token` | 인증번호 확인이 돌려준 43자 통행 토큰. 형식이 다르면 400 |
-| `newPassword` | 8~72자(가입과 같음) |
+| `newPassword` | 영문·숫자·특수문자 8~72자(가입과 같음) |
 
 성공은 204입니다. 새 해시를 저장하고 **같은 계정의 남은 인증번호·통행 토큰과 모든 세션을 지워** 새 비밀번호로 다시
 로그인해야 합니다. 통행 토큰이 없거나 만료됐거나 이미 쓴 토큰이면 422 `PASSWORD_RESET_TOKEN_INVALID`이며 셋을 구분하지
@@ -651,7 +651,7 @@ ISO 로컬 시각(`2026-09-11T17:49:09.591286`, 초 아래 자리는 있을 때�
 | `ACCOUNT_DEV_LOGIN_ENABLED` | `false` (Compose는 `true`) | 개발용 시드 로그인 endpoint 등록 여부 |
 | `ACCOUNT_DEV_LOGIN_EMAIL` | `admin@govbiz.local` | 관리자 시드 계정 이메일 |
 | `ACCOUNT_DEV_LOGIN_MEMBER_EMAIL` | `member@govbiz.local` | 회원 시드 계정 이메일 |
-| `ACCOUNT_DEV_LOGIN_PASSWORD` | `govbiz-admin1` | 시드 계정을 만들 때 저장하는 비밀번호(8~72자) |
+| `ACCOUNT_DEV_LOGIN_PASSWORD` | `govbiz-admin1` | 시드 계정을 만들 때 저장하는 비밀번호(영문·숫자·특수문자 8~72자) |
 | `ACCOUNT_PASSWORD_RESET_MAIL_ENABLED` | `false` | 재설정 메일 SMTP 전송 여부. `SMTP_*`(리포트와 공용)를 함께 설정 |
 | `ACCOUNT_PASSWORD_RESET_FROM` | 빈 값 | 재설정 메일 발신 주소. 메일을 켜면 필수 |
 | `ACCOUNT_PASSWORD_RESET_FRONTEND_BASE_URL` | `http://127.0.0.1:5173` | 메일 링크의 프런트 origin. 운영은 HTTPS |

@@ -4,7 +4,7 @@ import { useSearchParams } from 'react-router'
 
 import { useAppDispatch, useAppSelector } from '../../../../app/hooks'
 import { GuestSearchLayout } from '../../../shared/support-program/GuestSearchLayout'
-import { SearchModeTabs } from '../../../shared/support-program/SearchModeTabs'
+import { SearchModeTabs, WorkspaceSearchTabsRow } from '../../../shared/support-program/SearchModeTabs'
 import { conversationReset, selectConversationCount } from '../../chat/state/chatSlice'
 import { ChatPage, type ChatPageLayout } from '../../chat/view/ChatPage'
 import { SupportProgramCatalogPanel } from './SupportProgramCatalogPanel'
@@ -44,8 +44,7 @@ export function SupportProgramSearchPage({ layout = 'landing' }: { layout?: Chat
 
   return isGuest ? <GuestSearchLayout showConversationPanel={hasConversation && !isFilter} searchTabs={searchTabs} onNewChat={startNewChat}>{panels}</GuestSearchLayout>
     : <div className="flex min-w-0 flex-1 flex-col">
-      {/* 다른 작업 화면의 머리글처럼 탭 줄만 위에 붙이고 본문은 작업 칸과 함께 스크롤됩니다. */}
-      <div className="sticky top-0 z-[3] flex shrink-0 justify-center bg-white px-4 pt-3 pb-2">{searchTabs}</div>
+      <WorkspaceSearchTabsRow>{searchTabs}</WorkspaceSearchTabsRow>
       {panels}
     </div>
 }

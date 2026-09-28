@@ -49,12 +49,12 @@ test('changing the email discards its verification pass and blocks signup', asyn
 })
 
 
-test('signup rejects a multibyte password over the server BCrypt limit before sending it', async () => {
+test('signup rejects a password with Korean characters before sending it', async () => {
   const view = await verifyEmail()
-  const password = '가'.repeat(25)
+  const password = '비밀번호1234'
   fireEvent.changeText(view.getByLabelText('비밀번호'), password)
   fireEvent.changeText(view.getByLabelText('비밀번호 확인'), password)
   fireEvent.press(view.getByText('회원가입'))
-  await waitFor(() => expect(view.getByText('비밀번호는 8~72자, UTF-8 72바이트 이하로 입력해 주세요.')).toBeTruthy())
+  await waitFor(() => expect(view.getByText('비밀번호는 영문·숫자·특수문자만 쓸 수 있습니다.')).toBeTruthy())
   expect(signUp).not.toHaveBeenCalled()
 })

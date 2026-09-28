@@ -278,7 +278,7 @@ describe('계정 화면', () => {
     const form = screen.getByRole('form', { name: '비밀번호 재설정' })
     fireEvent.change(within(form).getByLabelText('새 비밀번호'), { target: { value: 'short' } })
     fireEvent.submit(form)
-    expect(screen.getByRole('alert').textContent).toBe(resetPasswordMessages.passwordLength)
+    expect(screen.getByRole('alert').textContent).toBe(resetPasswordMessages.passwordTooShort)
 
     fireEvent.change(within(form).getByLabelText('새 비밀번호'), { target: { value: 'new-password-2' } })
     fireEvent.change(within(form).getByLabelText('새 비밀번호 확인'), { target: { value: 'new-password-3' } })
@@ -381,7 +381,7 @@ describe('계정 화면', () => {
     fireEvent.change(within(form).getByLabelText('비밀번호'), { target: { value: password } })
     fireEvent.change(within(form).getByLabelText('비밀번호 확인'), { target: { value: password } })
     fireEvent.submit(form)
-    expect(screen.getByRole('alert').textContent).toContain('8자')
+    expect(screen.getByRole('alert').textContent).toBe(password.length < 8 ? signupMessages.passwordTooShort : signupMessages.passwordTooLong)
     expect(document.activeElement).toBe(within(form).getByLabelText('비밀번호'))
     expect(execute).not.toHaveBeenCalled()
   })
@@ -1768,15 +1768,15 @@ function defaultAccountFor(initialEntry: string): Account | null {
 }
 
 
-it('회원가입은 한글 비밀번호가 UTF-8 72바이트를 넘으면 가입 요청 전에 안내한다', async () => {
+it('회원가입은 한글이 섞인 비밀번호를 가입 요청 전에 안내한다', async () => {
   const signUp = vi.spyOn(appContainer.resolve('signUpUseCase'), 'execute')
   renderApp('/signup')
   const form = screen.getByRole('form', { name: '회원가입' })
   await verifySignupEmail(form, 'user@example.com')
-  const password = '가'.repeat(25)
+  const password = '비밀번호1234'
   fireEvent.change(within(form).getByLabelText('비밀번호'), { target: { value: password } })
   fireEvent.change(within(form).getByLabelText('비밀번호 확인'), { target: { value: password } })
   fireEvent.submit(form)
-  expect(screen.getByRole('alert').textContent).toBe(signupMessages.passwordLength)
+  expect(screen.getByRole('alert').textContent).toBe(signupMessages.passwordInvalidCharacter)
   expect(signUp).not.toHaveBeenCalled()
 })

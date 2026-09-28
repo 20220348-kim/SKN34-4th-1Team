@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { Provider } from 'react-redux'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -27,10 +27,10 @@ describe('상세 오류 복구와 검색 화면 복귀', () => {
     expect(question).not.toHaveBeenCalled()
     // 비로그인은 로그인 뒤 신청 문서 작성으로 이어지고, 관심 공고 저장도 로그인 뒤 이 공고로 돌아옵니다.
     const preparationPath = `/app/application-preparations/new?${new URLSearchParams({ sourceCode: supportPrograms[0].sourceCode, sourceProgramId: supportPrograms[0].id })}`
-    expect(screen.getByRole('link', { name: '로그인하고 신청 양식 상태 확인' }).getAttribute('href')).toBe(`/login?next=${encodeURIComponent(preparationPath)}`)
-    expect(screen.queryByRole('link', { name: '이 공고의 신청 양식 상태 확인' })).toBeNull()
+    expect(screen.getByRole('link', { name: '로그인하고 이 공고로 신청 문서 작성' }).getAttribute('href')).toBe(`/login?next=${encodeURIComponent(preparationPath)}`)
+    expect(screen.queryByRole('link', { name: '이 공고로 신청 문서 작성' })).toBeNull()
     const detailPath = `/support-programs/detail?${new URLSearchParams({ sourceCode: supportPrograms[0].sourceCode, sourceProgramId: supportPrograms[0].id })}`
-    expect(screen.getByRole('link', { name: '로그인하고 관심 공고 저장' }).getAttribute('href')).toBe(`/login?next=${encodeURIComponent(detailPath)}`)
+    expect(screen.getByRole('link', { name: '로그인하고 관심 공고에 담기' }).getAttribute('href')).toBe(`/login?next=${encodeURIComponent(detailPath)}`)
     expect(screen.queryByRole('button', { name: /관심 공고 저장/ })).toBeNull()
     expect(screen.queryByText('지원사업 상세')).toBeNull()
     expect(screen.queryByText('private failure')).toBeNull()
@@ -41,11 +41,42 @@ describe('상세 오류 복구와 검색 화면 복귀', () => {
     // 원문 질문은 회원 기능이라 로그인한 상태로 왕복합니다.
     vi.spyOn(appContainer.resolve('checkSavedSupportProgramUseCase'), 'execute').mockResolvedValue(false)
     renderDetail({ searchReturnTo: '/app/chat' }, undefined, memberAccount)
-    expect(screen.getByRole('link', { name: '← 검색 결과로 돌아가기' }).getAttribute('href')).toBe('/app/chat')
-    fireEvent.click(await screen.findByRole('link', { name: '이 공고에 질문하기' }))
-    fireEvent.click(screen.getByRole('link', { name: '← 공고 상세로 돌아가기' }))
+    expect(screen.getByRole('link', { name: '검색 결과로 돌아가기' }).getAttribute('href')).toBe('/app/chat')
+    fireEvent.click(await screen.findByRole('button', { name: '원문에 질문하기' }))
+    expect(screen.getByRole('textbox', { name: '공고 원문에 질문하기' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '질문 패널 닫기' }))
     await screen.findByRole('heading', { name: supportPrograms[0].title })
-    expect(screen.getByRole('link', { name: '← 검색 결과로 돌아가기' }).getAttribute('href')).toBe('/app/chat')
+    expect(screen.getByRole('link', { name: '검색 결과로 돌아가기' }).getAttribute('href')).toBe('/app/chat')
+  })
+
+  it('질문 패널은 상세를 떠나지 않고 답과 근거를 쌓으며, ?ask=1로 열어 둔 채 새로고침해도 열린다', async () => {
+    vi.spyOn(appContainer.resolve('getSupportProgramDetailUseCase'), 'execute').mockResolvedValue(supportProgramDetails[0])
+    vi.spyOn(appContainer.resolve('checkSavedSupportProgramUseCase'), 'execute').mockResolvedValue(false)
+    const ask = vi.spyOn(appContainer.resolve('askSupportProgramEvidenceQuestionUseCase'), 'execute')
+      .mockResolvedValueOnce({ outcome: 'answer', answer: { answer: '중소기업이 대상입니다.', answerStatus: 'ANSWERED', citations: [{ excerpt: '지원 대상: 중소기업', sourceUrl: 'https://example.com/1', chunkOrder: 1 }] } })
+      .mockResolvedValueOnce({ outcome: 'answer', answer: { answer: '', answerStatus: 'INSUFFICIENT_EVIDENCE', citations: [] } })
+    renderDetail({ searchReturnTo: '/app/chat' }, `?${new URLSearchParams({ sourceCode: supportPrograms[0].sourceCode, sourceProgramId: supportPrograms[0].id, ask: '1' })}`, memberAccount)
+
+    await screen.findByRole('heading', { name: supportPrograms[0].title })
+    const panel = screen.getByRole('region', { name: '원문에 질문하기' })
+    // 처음에는 본문에서 답할 수 있는 예시 키워드가 있고, 누르면 입력에 질문 문장이 채워집니다.
+    fireEvent.click(within(panel).getByRole('button', { name: '지원 대상' }))
+    expect((within(panel).getByRole('textbox', { name: '공고 원문에 질문하기' }) as HTMLTextAreaElement).value).toBe('지원 대상이 어떻게 되나요?')
+    fireEvent.click(within(panel).getByRole('button', { name: '질문하고 근거 받기' }))
+    expect(await within(panel).findByText('중소기업이 대상입니다.')).toBeTruthy()
+    expect(within(panel).getByRole('link', { name: '근거 1 원문 보기 ↗' }).getAttribute('href')).toBe('https://example.com/1')
+    expect(ask).toHaveBeenCalledWith({ sourceCode: supportPrograms[0].sourceCode, sourceProgramId: supportPrograms[0].id, question: '지원 대상이 어떻게 되나요?' }, expect.any(AbortSignal))
+    // 답이 오면 입력이 비고 자주 묻는 질문은 사라집니다. 두 번째 질문은 첫 답 아래에 쌓입니다.
+    expect((within(panel).getByRole('textbox', { name: '공고 원문에 질문하기' }) as HTMLTextAreaElement).value).toBe('')
+    expect(within(panel).queryByRole('button', { name: '지원 대상' })).toBeNull()
+    fireEvent.change(within(panel).getByRole('textbox', { name: '공고 원문에 질문하기' }), { target: { value: '제출 서류는?' } })
+    fireEvent.click(within(panel).getByRole('button', { name: '질문하고 근거 받기' }))
+    expect(await within(panel).findByText(/충분한 근거를 찾지 못했습니다/)).toBeTruthy()
+    expect(within(panel).getByText('지원 대상이 어떻게 되나요?')).toBeTruthy()
+    expect(within(panel).getByText('제출 서류는?')).toBeTruthy()
+    expect(within(panel).getByText('중소기업이 대상입니다.')).toBeTruthy()
+    // 본문은 그대로 옆에 있습니다.
+    expect(screen.getByRole('note')).toBeTruthy()
   })
 
   it('과기정통부 공고는 근거 질문 없이 신청 문서 작성 도우미로 연결한다', async () => {
@@ -54,8 +85,8 @@ describe('상세 오류 복구와 검색 화면 복귀', () => {
     renderDetail(null, `?${new URLSearchParams({ sourceCode: program.sourceCode, sourceProgramId: program.id })}`)
 
     await screen.findByRole('heading', { name: program.title })
-    expect(screen.queryByRole('link', { name: '이 공고에 질문하기' })).toBeNull()
-    expect(screen.getByRole('link', { name: '로그인하고 신청 양식 상태 확인' }).getAttribute('href')).toBe(
+    expect(screen.queryByRole('link', { name: '원문에 질문하기' })).toBeNull()
+    expect(screen.getByRole('link', { name: '로그인하고 이 공고로 신청 문서 작성' }).getAttribute('href')).toBe(
       `/login?next=${encodeURIComponent(`/app/application-preparations/new?${new URLSearchParams({ sourceCode: program.sourceCode, sourceProgramId: program.id })}`)}`,
     )
   })
@@ -70,7 +101,7 @@ describe('상세 오류 복구와 검색 화면 복귀', () => {
 
     await screen.findByRole('heading', { name: program.title })
     const preparationPath = `/app/application-preparations/new?${new URLSearchParams({ sourceCode, sourceProgramId: id })}`
-    expect(screen.getByRole('link', { name: '로그인하고 신청 양식 상태 확인' }).getAttribute('href')).toBe(
+    expect(screen.getByRole('link', { name: '로그인하고 이 공고로 신청 문서 작성' }).getAttribute('href')).toBe(
       `/login?next=${encodeURIComponent(preparationPath)}`,
     )
   })
@@ -80,7 +111,7 @@ describe('상세 오류 복구와 검색 화면 복귀', () => {
       vi.spyOn(appContainer.resolve('getSupportProgramDetailUseCase'), 'execute').mockResolvedValue(null)
       renderDetail(state)
       await screen.findByRole('heading', { name: '공고 정보를 찾을 수 없습니다' })
-      expect(screen.getByRole('link', { name: '← 검색 결과로 돌아가기' }).getAttribute('href')).toBe('/')
+      expect(screen.getByRole('link', { name: '검색 결과로 돌아가기' }).getAttribute('href')).toBe('/')
       expect(screen.queryByRole('button', { name: '상세 정보 다시 불러오기' })).toBeNull()
     },
   )
@@ -90,19 +121,19 @@ describe('상세 오류 복구와 검색 화면 복귀', () => {
     const identity = new URLSearchParams({ sourceCode: supportPrograms[0].sourceCode, sourceProgramId: supportPrograms[0].id })
     renderDetail(null, `?${identity}&back=${encodeURIComponent('/?mode=filter&keyword=AI')}`)
     await screen.findByRole('heading', { name: supportPrograms[0].title })
-    expect(screen.getByRole('link', { name: '← 검색 결과로 돌아가기' }).getAttribute('href')).toBe('/?mode=filter&keyword=AI')
+    expect(screen.getByRole('link', { name: '검색 결과로 돌아가기' }).getAttribute('href')).toBe('/?mode=filter&keyword=AI')
 
     cleanup()
     renderDetail(null, `?${identity}&back=${encodeURIComponent('https://example.com')}`)
     await screen.findByRole('heading', { name: supportPrograms[0].title })
-    expect(screen.getByRole('link', { name: '← 검색 결과로 돌아가기' }).getAttribute('href')).toBe('/')
+    expect(screen.getByRole('link', { name: '검색 결과로 돌아가기' }).getAttribute('href')).toBe('/')
   })
 
   it('잘못된 식별자는 조회하지 않고 원래 검색 화면의 복귀 링크를 유지한다', () => {
     const detail = vi.spyOn(appContainer.resolve('getSupportProgramDetailUseCase'), 'execute').mockResolvedValue(null)
     renderDetail({ searchReturnTo: '/app/chat' }, '?sourceCode=BIZINFO')
     expect(screen.getByRole('heading', { name: '공고 정보를 찾을 수 없습니다' })).toBeTruthy()
-    expect(screen.getByRole('link', { name: '← 검색 결과로 돌아가기' }).getAttribute('href')).toBe('/app/chat')
+    expect(screen.getByRole('link', { name: '검색 결과로 돌아가기' }).getAttribute('href')).toBe('/app/chat')
     expect(detail).not.toHaveBeenCalled()
   })
 })

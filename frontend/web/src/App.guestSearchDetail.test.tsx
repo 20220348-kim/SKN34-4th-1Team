@@ -50,7 +50,7 @@ describe('비로그인 검색 흐름의 공고 상세', () => {
     const tabs = screen.getByRole('tablist', { name: '지원사업 검색 방식' })
     expect(within(tabs).getByRole('tab', { name: '필터 검색' }).getAttribute('aria-selected')).toBe('true')
     expect(screen.queryByRole('combobox', { name: '출처' })).toBeNull()
-    expect(screen.getByRole('link', { name: '로그인하고 관심 공고 저장' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: '로그인하고 관심 공고에 담기' })).toBeTruthy()
 
     // 같은 탭을 누르면 필터가 복원된 검색 화면으로, 다른 탭을 누르면 그 검색의 처음 화면으로 돌아갑니다.
     fireEvent.click(within(tabs).getByRole('tab', { name: '필터 검색' }))
@@ -70,8 +70,8 @@ describe('비로그인 검색 흐름의 공고 상세', () => {
     fireEvent.click(await screen.findByRole('link', { name: program.title }))
     await screen.findByRole('heading', { name: program.title })
     const identity = new URLSearchParams({ sourceCode: program.sourceCode, sourceProgramId: program.id })
-    expect(screen.queryByRole('link', { name: '이 공고에 질문하기' })).toBeNull()
-    expect(screen.getByRole('link', { name: '로그인하고 이 공고에 질문하기' }).getAttribute('href'))
+    expect(screen.queryByRole('link', { name: '원문에 질문하기' })).toBeNull()
+    expect(screen.getByRole('link', { name: '로그인하고 원문에 질문하기' }).getAttribute('href'))
       .toBe(`/login?next=${encodeURIComponent(`/app/support-programs/detail/question?${identity}`)}`)
     cleanup()
 

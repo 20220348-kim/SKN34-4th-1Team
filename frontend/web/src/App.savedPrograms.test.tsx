@@ -12,7 +12,6 @@ import { supportProgramDetails, supportPrograms } from './data/fixtures/supportP
 import type { Account } from './domain/entities/Account'
 import type { SavedSupportProgram } from './domain/entities/SavedSupportProgram'
 import { savedSupportProgramMessages } from './presentation/features/saved-support-program/viewmodel/useSavedSupportProgramsViewModel'
-import { supportProgramSaveMessages } from './presentation/shared/support-program/useSupportProgramSaveViewModel'
 import { sessionRestored } from './presentation/shared/auth/state/authSlice'
 import { searchStarted, searchSucceeded } from './presentation/features/chat/state/chatSlice'
 
@@ -79,11 +78,11 @@ describe('관심 공고함', () => {
     await waitFor(() => expect(resultButtons()[0]!.getAttribute('aria-pressed')).toBe('true'))
 
     fireEvent.click(screen.getAllByRole('link', { name: '상세 조건 보기' })[0]!)
-    const detailToggle = await screen.findByRole('button', { name: '관심 공고 저장됨' })
+    const detailToggle = await screen.findByRole('button', { name: '관심 공고에서 빼기' })
     expect(detailToggle.getAttribute('aria-pressed')).toBe('true')
     fireEvent.click(detailToggle)
-    await screen.findByText(supportProgramSaveMessages.removed)
-    fireEvent.click(screen.getByRole('link', { name: '← 검색 결과로 돌아가기' }))
+    await screen.findByRole('button', { name: '관심 공고에 담기' })
+    fireEvent.click(screen.getByRole('link', { name: '검색 결과로 돌아가기' }))
     await waitFor(() => expect(resultButtons().every((button) => !button.hasAttribute('disabled'))).toBe(true))
     expect(resultButtons().every((button) => button.getAttribute('aria-pressed') === 'false')).toBe(true)
     fireEvent.click(resultButtons()[0]!)
@@ -135,27 +134,31 @@ describe('관심 공고함', () => {
     fireEvent.click(await screen.findByRole('link', { name: program.title }))
     await screen.findByRole('heading', { name: program.title })
     // 상세 위 돌아가기 링크가 관심 공고함을 가리킵니다.
-    expect(screen.getByRole('link', { name: '← 관심 공고함으로 돌아가기' }).getAttribute('href')).toBe('/app/saved-programs')
-    expect(screen.queryByRole('link', { name: '← 검색 결과로 돌아가기' })).toBeNull()
+    expect(screen.getByRole('link', { name: '관심 공고함으로 돌아가기' }).getAttribute('href')).toBe('/app/saved-programs')
+    expect(screen.queryByRole('link', { name: '검색 결과로 돌아가기' })).toBeNull()
+    // 관심 공고함에서 연 상세는 사이드바도 관심 공고함이 켜진 채이고, 검색 탭 줄은 없습니다.
+    const sidebar = screen.getByRole('complementary', { name: '작업 사이드바' })
+    expect(within(sidebar).getByRole('link', { name: '관심 공고함' }).getAttribute('aria-current')).toBe('page')
+    expect(within(sidebar).getByRole('button', { name: '지원사업 새검색' }).getAttribute('aria-current')).toBeNull()
+    expect(screen.queryByRole('tablist', { name: '지원사업 검색 방식' })).toBeNull()
 
     // 저장 버튼은 책갈피 아이콘 하나이고 이름·눌림 상태로 담김 여부를 알립니다.
-    const toggle = await screen.findByRole('button', { name: '관심 공고 저장됨' })
+    const toggle = await screen.findByRole('button', { name: '관심 공고에서 빼기' })
     expect(toggle.getAttribute('aria-pressed')).toBe('true')
-    expect(toggle.textContent).toBe('')
+    expect(toggle.getAttribute('aria-label')).toBe('관심 공고에서 빼기')
     expect(toggle.querySelector('svg')?.getAttribute('fill')).toBe('currentColor')
     expect(screen.queryByRole('link', { name: '관심 공고함 보기' })).toBeNull()
     fireEvent.click(toggle)
     await waitFor(() => expect(remove).toHaveBeenCalledWith({ sourceCode: program.sourceCode, sourceProgramId: program.id }, expect.any(AbortSignal)))
-    expect(await screen.findByText(supportProgramSaveMessages.removed)).toBeTruthy()
-
-    const unsaved = screen.getByRole('button', { name: '관심 공고 저장' })
+    // 알림 문장은 접어 두었으므로 버튼 이름·눌림 상태로만 결과를 확인합니다.
+    const unsaved = await screen.findByRole('button', { name: '관심 공고에 담기' })
+    expect(unsaved.getAttribute('aria-pressed')).toBe('false')
     expect(unsaved.querySelector('svg')?.getAttribute('fill')).toBe('none')
     fireEvent.click(unsaved)
     await waitFor(() => expect(save).toHaveBeenCalledWith({ sourceCode: program.sourceCode, sourceProgramId: program.id }, expect.any(AbortSignal)))
-    expect(await screen.findByText(supportProgramSaveMessages.saved)).toBeTruthy()
-    expect(screen.getByRole('button', { name: '관심 공고 저장됨' }).getAttribute('aria-pressed')).toBe('true')
+    expect((await screen.findByRole('button', { name: '관심 공고에서 빼기' })).getAttribute('aria-pressed')).toBe('true')
     // 로그인 상태에서는 신청 문서 작성으로 바로 갑니다.
-    expect(screen.getByRole('link', { name: '이 공고의 신청 양식 상태 확인' }).getAttribute('href')).toBe(
+    expect(screen.getByRole('link', { name: '이 공고로 신청 문서 작성' }).getAttribute('href')).toBe(
       `/app/application-preparations/new?${new URLSearchParams({ sourceCode: program.sourceCode, sourceProgramId: program.id })}`,
     )
   })
@@ -166,8 +169,8 @@ describe('관심 공고함', () => {
     renderApp(detailPath, memberAccount, { searchReturnTo: '/app/chat' })
 
     await screen.findByRole('heading', { name: program.title })
-    expect(screen.getByRole('link', { name: '← 검색 결과로 돌아가기' }).getAttribute('href')).toBe('/app/chat')
-    expect((await screen.findByRole('button', { name: '관심 공고 저장' })).getAttribute('aria-pressed')).toBe('false')
+    expect(screen.getByRole('link', { name: '검색 결과로 돌아가기' }).getAttribute('href')).toBe('/app/chat')
+    expect((await screen.findByRole('button', { name: '관심 공고에 담기' })).getAttribute('aria-pressed')).toBe('false')
   })
 })
 

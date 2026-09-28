@@ -6,6 +6,7 @@ import { Link, useLocation, useNavigate } from 'react-router'
 import type { Account } from '../../../domain/entities/Account'
 import { useAppSelector } from '../../../app/hooks'
 import { selectChatActivity } from '../../features/chat/state/chatSlice'
+import { getSupportProgramSearchReturnTo, isSavedProgramsReturnTo } from '../../features/support-program-detail/view/supportProgramNavigation'
 import { useAuthSession } from '../auth/hooks/useAuthSession'
 import { ChatActivityDot } from '../chat-activity/ChatActivityDot'
 import { usePendingReceivedProposalCount } from '../partner-proposal/useReceivedProposals'
@@ -148,13 +149,17 @@ export function AppSidebar({ onClose, onNewChat, closeLabel, onNavigate, history
   /** 삭제 확인 대화상자는 모바일 메뉴 <dialog> 밖에 떠야 하므로 레이아웃이 띄웁니다. */
   onDeleteHistory: (id: string, title: string) => void
 }) {
-  const { pathname } = useLocation()
+  const location = useLocation()
+  const { pathname } = location
   const { account, logOut } = useAuthSession()
   const navigate = useNavigate()
   const pendingProposalCount = usePendingReceivedProposalCount()
   // 해당 대화 기록 항목의 점은 조건 해석·검색 진행 중과 아직 보지 않은 결과를 모두 표시합니다.
   const chatActivity = useAppSelector(selectChatActivity)
-  const isSearchPage = pathname === appPaths.chat || pathname.startsWith(appPaths.supportProgramDetail)
+  // 공고 상세·원문 질문은 연 곳을 따라갑니다. 관심 공고함에서 열었으면 관심 공고함이, 검색에서 열었으면 새검색이 켜집니다.
+  const isDetailPage = pathname.startsWith(appPaths.supportProgramDetail)
+  const detailFromSavedPrograms = isDetailPage && isSavedProgramsReturnTo(getSupportProgramSearchReturnTo(location.state, location.search))
+  const isSearchPage = pathname === appPaths.chat || (isDetailPage && !detailFromSavedPrograms)
   // 계정 카드를 누르면 내 프로필·로그아웃과 관리자 전용 회원·기업 메뉴가 열립니다.
   // 화면을 옮기거나 Esc·바깥 클릭이면 닫힙니다.
   const accountMenuId = useId()
@@ -193,6 +198,11 @@ export function AppSidebar({ onClose, onNewChat, closeLabel, onNavigate, history
     navigate(publicPaths.landing, { replace: true })
   }
 
+  function isMenuItemActive(item: MenuItem): boolean {
+    if (item.to === appPaths.savedPrograms && detailFromSavedPrograms) return true
+    return item.matches?.(pathname) ?? false
+  }
+
   /** 파트너 관리는 받은 제안 대기 건수를 배지로 보여 줍니다. 나머지 메뉴는 고정 문구를 씁니다. */
   function badgeFor(item: MenuItem): string | undefined {
     if (item.to === appPaths.partners) return pendingProposalCount === null || pendingProposalCount === 0 ? undefined : String(pendingProposalCount)
@@ -224,11 +234,11 @@ export function AppSidebar({ onClose, onNewChat, closeLabel, onNavigate, history
                 item.to ? (
                   <Link
                     className={sidebarMenuItemClassName(
-                      item.matches?.(pathname) ? 'active' : 'inactive',
+                      isMenuItemActive(item) ? 'active' : 'inactive',
                     )}
                     key={item.label}
                     to={item.to}
-                    aria-current={item.matches?.(pathname) ? 'page' : undefined}
+                    aria-current={isMenuItemActive(item) ? 'page' : undefined}
                   >
                     <MenuIconGraphic name={item.icon} />
                     <span>{item.label}</span>

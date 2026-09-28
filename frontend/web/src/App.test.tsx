@@ -92,25 +92,27 @@ describe('App navigation', () => {
     await screen.findByRole('heading', { name: programs[0].title })
     const messages = store.getState().chat.messages
     fireEvent.click(screen.getAllByRole('link', { name: '상세 조건 보기' })[0])
-    await screen.findByText('자격 미평가 · 공고 상세 정보')
-    expect(screen.getByRole('link', { name: '← 검색 결과로 돌아가기' }).getAttribute('href')).toBe(returnPath)
+    await screen.findByRole('note')
+    expect(screen.getByRole('link', { name: '검색 결과로 돌아가기' }).getAttribute('href')).toBe(returnPath)
     if (returnPath === '/') {
       // 원문 질문은 회원 기능이라 비로그인은 로그인 링크만 봅니다.
-      expect(screen.getByRole('link', { name: '로그인하고 이 공고에 질문하기' }).getAttribute('href')).toMatch(/^\/login\?next=/)
+      expect(screen.getByRole('link', { name: '로그인하고 원문에 질문하기' }).getAttribute('href')).toMatch(/^\/login\?next=/)
     } else {
-      fireEvent.click(screen.getByRole('link', { name: '이 공고에 질문하기' }))
-      fireEvent.click(screen.getByRole('link', { name: '← 공고 상세로 돌아가기' }))
-      await screen.findByText('자격 미평가 · 공고 상세 정보')
-      expect(screen.getByRole('link', { name: '← 검색 결과로 돌아가기' }).getAttribute('href')).toBe(returnPath)
+      // 회원의 원문 질문은 상세 안 패널로 열리고, 닫아도 검색 복귀 경로가 남습니다.
+      fireEvent.click(screen.getByRole('button', { name: '원문에 질문하기' }))
+      expect(screen.getByRole('textbox', { name: '공고 원문에 질문하기' })).toBeTruthy()
+      fireEvent.click(screen.getByRole('button', { name: '질문 패널 닫기' }))
+      await screen.findByRole('note')
+      expect(screen.getByRole('link', { name: '검색 결과로 돌아가기' }).getAttribute('href')).toBe(returnPath)
     }
-    fireEvent.click(screen.getByRole('link', { name: '← 검색 결과로 돌아가기' }))
+    fireEvent.click(screen.getByRole('link', { name: '검색 결과로 돌아가기' }))
     const cards = screen.getByRole('region', { name: '지원사업 검색 결과' }).querySelectorAll('article')
     expect(Array.from(cards).map(card => card.querySelector('h2')?.textContent)).toEqual(programs.map(p => p.title))
     expect(Boolean(screen.queryByRole('complementary', { name: '작업 사이드바' }))).toBe(returnPath === '/app/chat')
     expect(store.getState().chat.messages).toEqual(messages)
-    // 작업 화면 상세는 관심 공고 저장 여부도 확인하므로 검색·상세 조회만 셉니다.
+    // 작업 화면 상세는 관심 공고 저장 여부도 확인하므로 검색·상세 조회만 셉니다. 질문 패널은 상세를 다시 조회하지 않습니다.
     const searchAndDetailCalls = fetchMock.mock.calls.filter(([url]) => !String(url).includes('/me/saved-programs'))
-    expect(searchAndDetailCalls).toHaveLength(returnPath === '/' ? 2 : 3)
+    expect(searchAndDetailCalls).toHaveLength(2)
   })
 
   it('준비 상태 재확인 중 오류 안내의 버튼을 비활성화한다', () => {
@@ -265,10 +267,10 @@ describe('App navigation', () => {
     expect(screen.getByText(/검색 당시 조건: 접수 중만 · 현재 소재지: 서울/)).toBeTruthy()
     expect(fetchMock).toHaveBeenCalledTimes(2)
     fireEvent.click(within(getProgramCard(conditionMatchedProgram.title)).getByRole('link', { name: '상세 조건 보기' }))
-    await screen.findByText('자격 미평가 · 공고 상세 정보')
-    expect(screen.getByText(/상세 조회는 검색 당시 기업 조건으로 자격을 다시 평가하지 않습니다/)).toBeTruthy()
+    await screen.findByRole('note')
+    expect(screen.getByText(/기업 조건으로 자격을 다시 평가하지 않아요/)).toBeTruthy()
     expect(screen.queryByText('조건 확인 · API 본문 기준')).toBeNull()
-    fireEvent.click(screen.getByRole('link', { name: '← 검색 결과로 돌아가기' }))
+    fireEvent.click(screen.getByRole('link', { name: '검색 결과로 돌아가기' }))
     expect(within(getProgramCard(conditionMatchedProgram.title)).getByText('조건 확인 · API 본문 기준')).toBeTruthy()
     expect(within(screen.getByRole('region', { name: '지원사업 검색 결과' })).getAllByRole('article')
       .map((card) => within(card).getByRole('heading', { level: 2 }).textContent)).toEqual(programs.map((program) => program.title))
@@ -534,7 +536,7 @@ describe('App navigation', () => {
     expect(sourceLink.getAttribute('target')).toBe('_blank')
     expect(sourceLink.getAttribute('rel')).toBe('noreferrer')
 
-    fireEvent.click(screen.getByRole('link', { name: '← 검색 결과로 돌아가기' }))
+    fireEvent.click(screen.getByRole('link', { name: '검색 결과로 돌아가기' }))
     expect(screen.getByRole('textbox', { name: '지원사업 검색어' })).toBeTruthy()
   })
 
@@ -564,7 +566,7 @@ describe('App navigation', () => {
     expect(screen.queryByRole('textbox', { name: '공고 원문에 질문하기' })).toBeNull()
 
     // 원문 질문은 회원 기능이라 비로그인 상세는 로그인 뒤 작업 화면의 질문으로 잇고, 공개 질문 화면은 주소로 엽니다.
-    const loginLink = screen.getByRole('link', { name: '로그인하고 이 공고에 질문하기' })
+    const loginLink = screen.getByRole('link', { name: '로그인하고 원문에 질문하기' })
     const nextUrl = new URL(new URLSearchParams(loginLink.getAttribute('href')!.split('?')[1]).get('next')!, 'http://localhost')
     expect(nextUrl.pathname).toBe('/app/support-programs/detail/question')
     expect(nextUrl.searchParams.get('sourceCode')).toBe(detail.sourceCode)
@@ -620,7 +622,7 @@ describe('App navigation', () => {
       .toBeTruthy()
     expect(screen.queryByRole('textbox', { name: '공고 원문에 질문하기' })).toBeNull()
     expect(screen.queryByRole('button', { name: '질문하고 근거 받기' })).toBeNull()
-    expect(screen.queryByRole('link', { name: '이 공고에 질문하기' })).toBeNull()
+    expect(screen.queryByRole('link', { name: '원문에 질문하기' })).toBeNull()
     expect(screen.getByRole('link', { name: 'K-Startup 원문 보기 ↗' }).getAttribute('href')).toBe(detail.sourceUrl)
     expect(fetchMock).toHaveBeenCalledOnce()
     expect(new URL(String(fetchMock.mock.calls[0]?.[0])).pathname).toBe('/api/v1/support-programs/detail')
@@ -693,7 +695,7 @@ describe('App navigation', () => {
     renderApp(createAppStore(), path)
 
     expect(screen.getByRole('heading', { name: '공고 정보를 찾을 수 없습니다' })).toBeTruthy()
-    expect(screen.getByRole('link', { name: '← 검색 결과로 돌아가기' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: '검색 결과로 돌아가기' })).toBeTruthy()
     expect(screen.queryByRole('textbox', { name: '공고 원문에 질문하기' })).toBeNull()
     expect(fetchMock).not.toHaveBeenCalled()
   })
@@ -744,7 +746,7 @@ describe('App navigation', () => {
     fireEvent.click(screen.getByRole('link', { name: '← 공고 상세로 돌아가기' }))
     expect(signal.aborted).toBe(true)
     await screen.findByRole('heading', { name: detail.title })
-    fireEvent.click(screen.getByRole('link', { name: '이 공고에 질문하기' }))
+    fireEvent.click(screen.getByRole('button', { name: '원문에 질문하기' }))
     const nextQuestion = screen.getByRole('textbox', { name: '공고 원문에 질문하기' })
     expect((nextQuestion as HTMLTextAreaElement).value).toBe('')
     fireEvent.change(nextQuestion, { target: { value: '새 질문' } })
@@ -897,7 +899,7 @@ describe('App navigation', () => {
       sourceProgramId: sharedProgramId,
     }, expect.any(AbortSignal))
 
-    fireEvent.click(screen.getByRole('link', { name: '← 검색 결과로 돌아가기' }))
+    fireEvent.click(screen.getByRole('link', { name: '검색 결과로 돌아가기' }))
     await screen.findByRole('heading', { name: otherProgram.title, level: 2 })
 
     fireEvent.click(within(getProgramCard(otherProgram.title)).getByRole('link', { name: '상세 조건 보기' }))
@@ -1307,7 +1309,7 @@ describe('App navigation', () => {
 
     await screen.findByRole('heading', { name: '공고 정보를 찾을 수 없습니다' })
     expect(screen.getByText(/존재하지 않거나 더 이상 제공되지 않는 공고입니다/)).toBeTruthy()
-    expect(screen.getByRole('link', { name: '← 검색 결과로 돌아가기' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: '검색 결과로 돌아가기' })).toBeTruthy()
   })
 
   it.each([

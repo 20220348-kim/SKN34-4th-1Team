@@ -1,6 +1,14 @@
-import { useRef, type KeyboardEvent } from 'react'
+import { useRef, type KeyboardEvent, type ReactNode } from 'react'
 
 const searchModeTabLabels = ['AI 대화 검색', '필터 검색'] as const
+
+/**
+ * 로그인 뒤 작업 화면에서 검색 탭을 담는 줄입니다. 다른 작업 화면의 머리글처럼 위에 붙고 본문은 작업 칸과 함께 스크롤됩니다.
+ * 검색 화면과 그 화면에서 연 공고 상세·원문 질문이 같은 줄을 써서 화면을 옮겨도 위쪽이 바뀌지 않습니다.
+ */
+export function WorkspaceSearchTabsRow({ children }: { children: ReactNode }) {
+  return <div className="sticky top-0 z-[3] flex shrink-0 justify-center bg-white px-4 pt-3 pb-2">{children}</div>
+}
 
 /**
  * 검색 화면 위의 가로 검색 탭입니다. 검색 화면에서는 아래 패널을 바꾸고, 공고 상세·원문 질문 화면에서는 같은 자리에 남아

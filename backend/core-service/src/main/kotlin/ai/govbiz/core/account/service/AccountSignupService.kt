@@ -61,7 +61,7 @@ class AccountSignupService(
     }
 
     companion object {
-        /** 문자 길이와 별도로 BCrypt의 UTF-8 72바이트 상한을 검사합니다. */
+        /** 문자 종류(영문·숫자·특수문자만)와 BCrypt의 UTF-8 72바이트 상한은 PasswordValidationHelper.requireNewPassword가 함께 검사합니다. */
         val PASSWORD_LENGTH: IntRange = PasswordValidationHelper.CHARACTER_LENGTH
     }
 }

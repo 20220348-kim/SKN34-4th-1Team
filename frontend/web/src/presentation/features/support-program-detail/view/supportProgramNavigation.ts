@@ -33,9 +33,14 @@ export function getSupportProgramSearchReturnTo(state: unknown, search = ''): Su
   return `${path}?${writeCatalogFilters(readCatalogFilters(params))}`
 }
 
-/** 상세 위 돌아가기 링크 문구입니다. 관심 공고함에서 열었으면 관심 공고함으로, 아니면 검색 결과로 돌아갑니다. */
+/** 관심 공고함에서 연 상세인지입니다. 머리글과 사이드바 활성 항목이 이것으로 갈립니다. */
+export function isSavedProgramsReturnTo(returnTo: SupportProgramSearchReturnTo): boolean {
+  return returnTo.startsWith(appPaths.savedPrograms)
+}
+
+/** 상세 위 돌아가기 링크 문구입니다. 관심 공고함에서 열었으면 관심 공고함으로, 아니면 검색 결과로 돌아갑니다. 화살표는 아이콘이 맡습니다. */
 export function supportProgramBackLabel(returnTo: SupportProgramSearchReturnTo): string {
-  return returnTo.startsWith(appPaths.savedPrograms) ? '← 관심 공고함으로 돌아가기' : '← 검색 결과로 돌아가기'
+  return isSavedProgramsReturnTo(returnTo) ? '관심 공고함으로 돌아가기' : '검색 결과로 돌아가기'
 }
 
 /**

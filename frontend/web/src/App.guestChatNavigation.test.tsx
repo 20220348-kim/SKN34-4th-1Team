@@ -289,13 +289,13 @@ describe('비로그인 대화의 화면 이동 수명', () => {
     const previous = store.getState().chat
     renderApp(store)
     await act(async () => fireEvent.click(screen.getByRole('link', { name: '상세 조건 보기' })))
-    expect(screen.getByText('자격 미평가 · 공고 상세 정보')).toBeTruthy()
+    expect(screen.getByRole('note')).toBeTruthy()
     expect(store.getState().chat).toEqual(previous)
 
     fireEvent.click(within(screen.getByRole('navigation', { name: '화면 이동' })).getByRole('link', { name: '요금제' }))
     expect(store.getState().chat).toEqual(previous)
     await act(async () => fireEvent.click(screen.getByRole('button', { name: '브라우저 뒤로가기' })))
-    fireEvent.click(screen.getByRole('link', { name: '← 검색 결과로 돌아가기' }))
+    fireEvent.click(screen.getByRole('link', { name: '검색 결과로 돌아가기' }))
     expect(screen.getByRole('heading', { name: program.title })).toBeTruthy()
     expect((screen.getByRole('textbox', { name: '지원사업 검색어' }) as HTMLTextAreaElement).value).toBe(unsentDraft)
     expect(store.getState().chat).toEqual(previous)

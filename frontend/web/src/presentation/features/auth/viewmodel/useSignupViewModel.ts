@@ -5,7 +5,7 @@ import { useLocation, useNavigate } from 'react-router'
 import { appContainer } from '../../../../app/appContainer'
 import { useAppDispatch } from '../../../../app/hooks'
 import type { SendSignupEmailCodeUseCase } from '../../../../domain/usecases/SendSignupEmailCodeUseCase'
-import { isValidSignUpPassword, type SignUpUseCase, signUpPasswordLength } from '../../../../domain/usecases/SignUpUseCase'
+import { type SignUpPasswordIssue, signUpPasswordIssue, type SignUpUseCase, signUpPasswordLength } from '../../../../domain/usecases/SignUpUseCase'
 import { isValidSignupEmailCode, type VerifySignupEmailCodeUseCase } from '../../../../domain/usecases/VerifySignupEmailCodeUseCase'
 import { signedIn } from '../../../shared/auth/state/authSlice'
 import { loginPathFor, readReturnPath } from '../../../shared/auth/returnPath'
@@ -24,7 +24,11 @@ export const signupMessages = {
   codeExpired: '인증번호가 만료됐거나 입력 횟수를 넘겼습니다. 인증번호를 다시 받아 주세요.',
   codeVerified: '이메일 인증을 마쳤습니다.',
   mailUnavailable: '지금은 인증 메일을 보낼 수 없습니다. 잠시 후 다시 시도해 주세요.',
-  passwordLength: `비밀번호는 ${signUpPasswordLength.min}자 이상 ${signUpPasswordLength.max}자 이하, UTF-8 ${signUpPasswordLength.maxBytes}바이트 이하로 입력해 주세요.`,
+  passwordTooShort: `비밀번호는 ${signUpPasswordLength.min}자 이상 입력해 주세요.`,
+  // 72자 또는 UTF-8 72바이트를 넘는 경우입니다. 허용 범위만 짧게 말합니다.
+  passwordTooLong: `비밀번호는 ${signUpPasswordLength.min}~${signUpPasswordLength.max}자까지 입력해 주세요.`,
+  // 한글·이모지·공백이 섞인 경우입니다.
+  passwordInvalidCharacter: '비밀번호는 영문·숫자·특수문자만 쓸 수 있습니다.',
   passwordMismatch: '비밀번호 확인이 일치하지 않습니다.',
   emailTaken: '이미 가입된 이메일입니다. 로그인하거나 다른 이메일을 사용해 주세요.',
   rateLimited: (retryAfterSeconds: number | null) =>
@@ -33,6 +37,12 @@ export const signupMessages = {
       : `요청이 많아 잠시 막혔습니다. ${retryAfterSeconds}초 뒤에 다시 시도해 주세요.`,
   requestFailed: '요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.',
 } as const
+
+const signupPasswordIssueMessages: Record<SignUpPasswordIssue, string> = {
+  tooShort: signupMessages.passwordTooShort,
+  tooLong: signupMessages.passwordTooLong,
+  invalidCharacter: signupMessages.passwordInvalidCharacter,
+}
 
 type SignupError = { field: 'email' | 'code' | 'password' | 'passwordConfirmation' | null; message: string }
 
@@ -162,8 +172,9 @@ export function useSignupViewModel(
       setError({ field: 'email', message: signupMessages.emailNotVerified })
       return
     }
-    if (!isValidSignUpPassword(password)) {
-      setError({ field: 'password', message: signupMessages.passwordLength })
+    const passwordIssue = signUpPasswordIssue(password)
+    if (passwordIssue !== null) {
+      setError({ field: 'password', message: signupPasswordIssueMessages[passwordIssue] })
       ;(elements.namedItem('password') as HTMLInputElement).focus()
       return
     }
