@@ -163,6 +163,10 @@ class EvaluationTests(TestCase):
             self.assertEqual(client.get(path).status_code, 401)
         self.assertIsNone(client.get("/api/v1/ops/session").json()["user"])
         self.assertEqual(client.post("/api/v1/ops/login", {}).status_code, 404)
+        self.assertEqual(
+            client.post(f"/api/v1/ops/evaluations/{run.id}/case-review", {}).status_code,
+            401,
+        )
         self.auth.assert_not_called()
 
     def test_non_admin_expired_and_unavailable_core_fail_closed_on_every_request(self):
@@ -185,12 +189,32 @@ class EvaluationTests(TestCase):
             ]:
                 self.assertEqual(self.client.get(path).status_code, status)
             self.assertEqual(self.post().status_code, status)
+            self.assertEqual(
+                self.client.post(f"/api/v1/ops/evaluations/{run.id}/case-review", {}).status_code,
+                status,
+            )
         self.assertEqual(EvaluationRun.objects.count(), 1)
 
     def test_csrf_and_browser_origin_are_required_for_core_cookie_writes(self):
+        run = self.queued_run()
         client = Client(enforce_csrf_checks=True)
         client.cookies["govbiz_session"] = "core-session"
         token = client.get("/api/v1/ops/session").json()["csrf_token"]
+        case_review_path = f"/api/v1/ops/evaluations/{run.id}/case-review"
+        self.assertEqual(
+            client.post(case_review_path, {}, content_type="application/json").status_code,
+            403,
+        )
+        self.assertEqual(
+            client.post(
+                case_review_path,
+                {},
+                content_type="application/json",
+                HTTP_X_CSRFTOKEN=token,
+                HTTP_ORIGIN="https://untrusted.invalid",
+            ).status_code,
+            403,
+        )
         self.assertEqual(
             client.post(
                 "/api/v1/ops/evaluations", self.payload, content_type="application/json"

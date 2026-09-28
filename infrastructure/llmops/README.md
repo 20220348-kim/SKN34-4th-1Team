@@ -461,7 +461,8 @@ migration 정합성, Compose 구문과 두 서비스 이미지 빌드도 확인�
 ### 응답 검토·비교 기준 지정
 
 Ops와 실행기를 재빌드한 뒤 `python manage.py migrate --noinput`으로 `0004`를 적용합니다.
-완료 상세에서 질문·근거·답변을 확인하고 검토 의견을 저장한 뒤 **비교 기준으로 지정**합니다.
+완료 상세에서 질문·근거·답변을 확인하고 모든 필수 사례의 적합 판단·사유를 저장합니다.
+전체 검토 승인을 따로 저장한 뒤 **비교 기준으로 지정**합니다.
 다음 평가의 기준 선택에 해당 실행이 나타납니다. 검토 승인이나 기준 지정은 모델을 호출하지 않습니다.
 기존 결과를 개발 확인만으로 자동 승인하지 않으며 관리자의 실제 검토 기록을 기다립니다.
 
@@ -560,3 +561,61 @@ Ruff 검사·포맷, TypeScript·Oxlint, migration 정합성·Ops 이미지 빌�
 React 개발 서버는 실행 중이지만 Core 로그인 서버가 중단된 상태라 실제 관리자 로그인부터 이어지는
 브라우저 검증은 미완료다. 브라우저에는 인증/운영 서버 연결 실패 안내가 표시되는 것을 확인했다.
 이번 변경의 전체 테스트·컨테이너 통합 결과는 커밋·푸시 후 최신 SHA의 원격 CI로 확인해야 한다.
+
+### 사례별 검토와 Core 검증 보완 — 2026-09-28
+
+React 상세에서 사례별 **적합 / 부적합 / 판단 보류**와 필수 사유를 저장한다. 검토 기준
+`evidence-review-v1`은 조건·예외·제외 사유, 근거 일치와 근거 부족 판단, 인용 적절성을 다룬다.
+각 기록은 검토자·시각·자료/응답 해시·검토 기준 버전과 연결한다. 전체 승인은 사용한 사례 기록을
+참조하며, 필수 사례 전체가 적합하지 않으면 API에서도 전체 승인·신규 기준 지정을 거절한다.
+
+사례 판단 수정은 새 이력으로 남기고 기존 승인 자격·활성 기준을 해제한다. 같은 버전·내용의
+직전 저장 재전송은 중복을 만들지 않으며 다른 관리자의 오래된 저장은 409다. 이미 접수한 평가의
+기준 스냅샷은 유지한다. 기존 전체 승인·기준 이력도 보존하지만 사례별 판단을 소급 생성하지 않는다.
+구형 기준은 재검토 전 새 접수 선택에서 제외한다.
+
+반영 순서는 `Ops 이미지 빌드 → migration 0008_case_reviews → Ops API·ops-sync → React`다.
+로컬 Ops DB에 적용하고 두 컨테이너를 갱신했다. 기존 DB·볼륨·평가 이력은 유지했고 실행기 인자는
+변경하지 않았다. 새로운 production 의존성이나 외부 서비스를 추가하지 않았다.
+계약은 [Ops README](../../backend/ops-service/README.md#응답-검토와-비교-기준),
+화면은 [Web README](../../frontend/web/README.md#llmops-운영-화면--react--django)를 따른다.
+
+Core의 기존 CI 실패도 실제 MySQL 8.4에서 재현했다. `AccountPasswordResetFlowIntegrationTest`의
+인증번호 확인이 HTTP 429 `LOGIN_RATE_LIMITED`로 실패했다. Spring의 IP별 요청 제한 상태가
+DB 초기화 후에도 남아 테스트들이 같은 주소의 예산을 공유한 문제였다. 테스트별 주소를 분리했고
+production 요청 제한·동시 토큰 사용 검사는 유지했다. 재시도·sleep·테스트 제외로 우회하지 않았다.
+
+로컬 선택 검증은 다음 **76개**이며 재실행한 테스트를 중복 합산하지 않았다.
+
+- JDK 21: 비밀번호 재설정 MySQL 통합 3개 + 로그인 제한 단위 4개
+- Python 3.12/MySQL 8.4 격리 DB: 기존 검토·기준 16개 + 사례별 검토·경합·migration 11개 + 인증/CSRF 3개 + 복구 결과 검토·자료 손상 1개
+- Node 24/pnpm 11.22: React Ops 38개. 판단별 승인 차단, 응답 유실 재시도, 재진입 조회, 관리자 충돌과 기존 승인 구분 포함
+- Ruff 검사·포맷, TypeScript·Oxlint, migration 정합성, Ops 이미지 빌드·로컬 migration·`git diff --check` 확인
+
+실행 명령은 Core의 `./gradlew test --tests 'ai.govbiz.core.account.controller.AccountPasswordResetFlowIntegrationTest' --tests 'ai.govbiz.core.account.service.AccountLoginAttemptGuardTest' --no-daemon`,
+Ops의 `uv run --locked python manage.py test <위 대상 테스트 라벨> --noinput`,
+Web의 `pnpm test src/App.ops.test.tsx`를 사용했다. Ops 검증 DB는 개발 DB와 분리한 임시 MySQL 8.4다.
+
+로컬 Core를 다시 기동했다. 기존 V42/V43 migration 적용 전에 비밀번호 재설정 행이 비어 있음을
+확인했고 기존 계정·업무 데이터는 유지했다. Core CORS origin은 React 주소인
+`http://localhost:5173`과 일치시켰다. 이번 기동에서는 외부 수집·모델 작업·큐 소비를 활성화하지 않았다.
+
+실제 브라우저에서 기존 관리자 **이메일/비밀번호 로그인 → 무료 평가 접수 → 즉시 새로고침 → 같은
+UUID 상세 복원 → 6/6 완료**를 확인했다. 로그아웃 후 기존 일반 회원의 Ops 접근 거절, 관리자
+재로그인 후 같은 상세와 저장된 보류 이력 복원도 확인했다. 네트워크 응답 유실 자체는 React 테스트의
+실패 주입으로 확인했으며 브라우저에서는 접수 직후 새로고침을 수행했다.
+
+| 기록 | 식별자 |
+|---|---|
+| [무료 평가](http://localhost:5173/ops/evaluations/4e38c6b8-b07e-4969-b3be-a578cd8792eb) | `4e38c6b8-b07e-4969-b3be-a578cd8792eb` |
+| Prefect 실행 | `338b8244-a62d-4594-b56a-2fc1d551df6b` |
+| 콘텐츠 평가 ID | `a192eaecf11e8363ba58ab9e53ae884e` |
+| 모델 호출 | 0회 |
+
+TC01에는 개발 기능 확인임을 밝힌 **판단 보류** 기록 한 건만 저장했다. 전체 승인·비교 기준 지정은
+하지 않았으며 과거 평가를 사람 검토 정답이나 현재 모델의 품질 측정으로 바꾸지 않았다.
+
+원격 전체 검증 범위는 Ops CI의 전체 MySQL·컨테이너 검사, GovBiz CI의 전체
+Core/AI/Web/Shared/Mobile·Container integration, LLMOps 실제 서버 검증은 수정본의 최신 SHA에서
+통과해야 한다. 관련 경로는 기존 워크플로의 push/PR 조건에 포함되어 있다. 로컬 76개 통과를
+전체 CI 통과나 운영 배포 완료로 보고하지 않는다. 다음 기능은 접수 시 프롬프트·실행기·평가기 명세 고정이다.

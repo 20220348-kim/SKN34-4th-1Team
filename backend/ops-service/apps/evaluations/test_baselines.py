@@ -9,7 +9,7 @@ from django.db.migrations.executor import MigrationExecutor
 from django.test import TransactionTestCase
 
 from . import services
-from .models import EvaluationBaseline, EvaluationBaselineChange, EvaluationReview, EvaluationRun
+from .models import EvaluationBaseline, EvaluationBaselineChange, EvaluationRun
 from .reviews import clear_baseline, promote_baseline
 from .services import RequestConflict, ResultsUnavailable, submit_run
 from .test_reviews import ReviewFixture
@@ -214,6 +214,7 @@ class BaselineTests(ReviewFixture, TransactionTestCase):
 class BaselineMigrationTests(TransactionTestCase):
     def test_existing_selection_is_preserved_without_inventing_old_run_approval(self):
         executor = MigrationExecutor(connection)
+        latest = executor.loader.graph.leaf_nodes()
         old = [("evaluations", "0006_evaluationrun_sync_attempted_at")]
         new = [("evaluations", "0007_baseline_versions")]
         try:
@@ -235,13 +236,21 @@ class BaselineMigrationTests(TransactionTestCase):
             )
             executor = MigrationExecutor(connection)
             executor.migrate(new)
-            preserved = EvaluationBaseline.objects.get(pk="legacy")
+            apps = executor.loader.project_state(new).apps
+            preserved = apps.get_model("evaluations", "EvaluationBaseline").objects.get(pk="legacy")
             self.assertEqual((preserved.version, preserved.review_id), (1, review.pk))
             change = preserved.changes.get()
             self.assertEqual(change.created_at, baseline.selected_at)
             self.assertEqual(change.fixture_sha256, "")
             self.assertIsNone(change.previous_review_id)
-            self.assertIsNone(EvaluationRun.objects.get(pk=run.pk).baseline_review_id)
-            self.assertEqual(EvaluationReview.objects.get(pk=review.pk).comment, "과거 검토")
+            self.assertIsNone(
+                apps.get_model("evaluations", "EvaluationRun")
+                .objects.get(pk=run.pk)
+                .baseline_review_id
+            )
+            self.assertEqual(
+                apps.get_model("evaluations", "EvaluationReview").objects.get(pk=review.pk).comment,
+                "과거 검토",
+            )
         finally:
-            MigrationExecutor(connection).migrate(new)
+            MigrationExecutor(connection).migrate(latest)

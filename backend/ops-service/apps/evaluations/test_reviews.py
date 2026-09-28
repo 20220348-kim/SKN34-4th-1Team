@@ -39,11 +39,11 @@ class ReviewFixture:
         reference_hash = sha256(reference_raw).hexdigest()
         capture = json.loads(reference_raw)
         capture.update(
-            caseIds=["E01"],
-            cases=capture["cases"][:1],
+            caseIds=dataset["case_ids"],
+            cases=[item for item in capture["cases"] if item["caseId"] in dataset["case_ids"]],
             model=live_config(self.dataset)["model"],
-            modelApiCalls=1,
-            maxModelCalls=1,
+            modelApiCalls=len(dataset["case_ids"]),
+            maxModelCalls=len(dataset["case_ids"]),
             maxOutputTokens=2000,
         )
         run = EvaluationRun.objects.create(
@@ -76,13 +76,17 @@ class ReviewFixture:
             )
         )
         # 실제 비교 JSON은 지표만 담으며 답변은 별도 capture.json에만 있다.
-        summary = {"completed": True, "caseCount": 1, "observedCaseCount": 1}
+        summary = {
+            "completed": True,
+            "caseCount": len(dataset["case_ids"]),
+            "observedCaseCount": len(dataset["case_ids"]),
+        }
         comparison = {
             "schema_version": 2,
             "evaluation_run_id": "a" * 32,
             "reference_run_id": "b" * 32,
             "fixture_sha256": dataset["fixture_sha256"],
-            "case_ids": ["E01"],
+            "case_ids": dataset["case_ids"],
             "current": summary,
             "reference": summary,
             "candidate_execution": {
@@ -115,12 +119,37 @@ class ReviewFixture:
         return run
 
     def review(self, decision="APPROVED", url=None):
+        target = url or self.url
+        data = self.client.get(target + "/review").json()
+        if not data["case_reviews"]:
+            for case in data["material"]["cases"]:
+                response = self.client.post(
+                    target + "/case-review",
+                    {
+                        "case_id": case["case_id"],
+                        "decision": "SUITABLE",
+                        "comment": "근거와 조건 확인",
+                        "capture_sha256": data["material"]["capture_sha256"],
+                        "fixture_sha256": data["material"]["fixture_sha256"],
+                        "rubric_version": data["rubric"]["version"],
+                        "review_version": data["review_version"],
+                    },
+                    format="json",
+                )
+                self.assertEqual(response.status_code, 200)
+                data = response.json()
+        comment = "근거·지역·법인 조건 확인 <script>실행 금지</script>"
+        previous = data["reviews"][0] if data["reviews"] else None
+        retry = previous and previous["decision"] == decision and previous["comment"] == comment
         return self.client.post(
-            (url or self.url) + "/review",
+            target + "/review",
             {
                 "decision": decision,
-                "comment": "근거·지역·법인 조건 확인 <script>실행 금지</script>",
-                "capture_sha256": review_material(self.run)["capture_sha256"],
+                "comment": comment,
+                "capture_sha256": data["material"]["capture_sha256"],
+                "fixture_sha256": data["material"]["fixture_sha256"],
+                "rubric_version": data["rubric"]["version"],
+                "review_version": data["review_version"] - (1 if retry else 0),
             },
             format="json",
         )
@@ -211,6 +240,9 @@ class ReviewTests(ReviewFixture, TestCase):
                     "decision": "APPROVED",
                     "comment": "검토",
                     "capture_sha256": "0" * 64,
+                    "fixture_sha256": material["fixture_sha256"],
+                    "rubric_version": "evidence-review-v1",
+                    "review_version": 0,
                 },
                 format="json",
             ).status_code,

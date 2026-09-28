@@ -23,6 +23,7 @@ class EvaluationRun(models.Model):
     reference_config = models.JSONField(default=dict)
     baseline_version = models.PositiveIntegerField(null=True)
     baseline_review = models.ForeignKey("EvaluationReview", null=True, on_delete=models.PROTECT)
+    review_version = models.PositiveIntegerField(default=0)
     comparison = models.JSONField(default=dict)
     execution_mode = models.CharField(max_length=10, default="replay")
     live_config = models.JSONField(default=dict)
@@ -57,11 +58,42 @@ class EvaluationReview(models.Model):
     decision = models.CharField(max_length=20, choices=Decision.choices)
     comment = models.TextField()
     capture_sha256 = models.CharField(max_length=64)
+    fixture_sha256 = models.CharField(max_length=64, blank=True)
+    rubric_version = models.CharField(max_length=40, blank=True)
+    version = models.PositiveIntegerField(null=True)
+    case_reviews = models.ManyToManyField("EvaluationCaseReview", blank=True)
     reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ["-id"]
+        constraints = [
+            models.UniqueConstraint(fields=["run", "version"], name="unique_run_review_version")
+        ]
+
+
+class EvaluationCaseReview(models.Model):
+    class Decision(models.TextChoices):
+        SUITABLE = "SUITABLE", "적합"
+        UNSUITABLE = "UNSUITABLE", "부적합"
+        DEFERRED = "DEFERRED", "판단 보류"
+
+    run = models.ForeignKey(EvaluationRun, on_delete=models.PROTECT, related_name="case_reviews")
+    case_id = models.CharField(max_length=100)
+    version = models.PositiveIntegerField()
+    decision = models.CharField(max_length=20, choices=Decision.choices)
+    comment = models.TextField()
+    capture_sha256 = models.CharField(max_length=64)
+    fixture_sha256 = models.CharField(max_length=64)
+    rubric_version = models.CharField(max_length=40)
+    reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-version"]
+        constraints = [
+            models.UniqueConstraint(fields=["run", "version"], name="unique_case_review_version")
+        ]
 
 
 class EvaluationBaseline(models.Model):
