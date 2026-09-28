@@ -152,7 +152,7 @@ describe('App navigation', () => {
       outcome: 'session',
       session: {
         expiresAt: '2026-10-06T12:00:00+09:00',
-        account: { email: 'member@govbiz.local', role: 'USER', tier: 'MEMBER', emailVerified: true, hasPassword: true, company: null },
+        account: { email: 'member@govbiz.local', role: 'USER', tier: 'MEMBER', emailVerified: true, hasPassword: true, accountType: null, onboarded: true, company: null },
       },
     })
     renderApp(createAppStore(), '/login')
@@ -1366,7 +1366,7 @@ function renderApp(
   // 공개 화면은 비로그인, 작업 화면(/app)은 회원 세션으로 시작합니다. 세션 복원 요청은 보내지 않습니다.
   appStore.dispatch(sessionRestored(
     initialEntry.startsWith('/app/')
-      ? { email: 'member@govbiz.local', role: 'USER', tier: 'MEMBER', emailVerified: true, hasPassword: true, company: null }
+      ? { email: 'member@govbiz.local', role: 'USER', tier: 'MEMBER', emailVerified: true, hasPassword: true, accountType: null, onboarded: true, company: null }
       : null,
   ))
   return render(

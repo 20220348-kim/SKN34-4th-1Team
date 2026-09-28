@@ -18,12 +18,14 @@ const lookup = {
   businessNumber: '1248100998',
   companyName: '삼성전자(주)',
   businessStatus: '계속사업자',
+  businessStatusCode: '01' as const,
   isActive: true,
 }
 const company = {
   businessNumber: '1248100998',
   companyName: '삼성전자(주)',
   businessStatus: '계속사업자',
+  businessStatusCode: '01' as const,
   region: '서울특별시',
   industry: '정보통신업',
   foundedYear: 2020,

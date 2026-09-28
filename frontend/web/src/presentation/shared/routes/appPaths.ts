@@ -5,6 +5,10 @@
 export const APP_PREFIX = '/app'
 
 export const appPaths = {
+  /** 가입 직후 한 번 거치는 환영 화면입니다. 사이드바 없이 단독으로 뜹니다. */
+  welcome: `${APP_PREFIX}/welcome`,
+  /** 환영 화면에서 기업 회원을 고른 뒤 사업자등록번호를 조회해 기업을 등록하는 2단계입니다. 건너뛸 수 있습니다. */
+  welcomeCompany: `${APP_PREFIX}/welcome/company`,
   savedPrograms: `${APP_PREFIX}/saved-programs`,
   reports: `${APP_PREFIX}/reports`,
   applicationPreparations: `${APP_PREFIX}/application-preparations`,

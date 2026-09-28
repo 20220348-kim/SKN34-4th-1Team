@@ -71,7 +71,7 @@ class CompanyServiceTest {
     }
 
     @Test
-    fun registerRejectsClosedOrSuspendedBusinesses() {
+    fun registerRejectsClosedBusinessesButAcceptsSuspendedOnes() {
         doReturn(null).`when`(companyRepository).findByAccountId(7L)
         doReturn(activeBusiness().copy(businessStatus = "폐업자", businessStatusCode = "03"))
             .`when`(lookupService).lookup("1248100998")
@@ -82,6 +82,19 @@ class CompanyServiceTest {
 
         assertEquals("폐업자", exception.businessStatus)
         verify(companyRepository, never()).createCompany(AccountTestHelper.anyValue())
+
+        // 휴업자는 등록됩니다. 파트너 기능은 등록 뒤 상태 코드로 따로 막습니다.
+        doReturn(activeBusiness().copy(businessStatus = "휴업자", businessStatusCode = "02"))
+            .`when`(lookupService).lookup("1248100998")
+        var created: NewCompany? = null
+        doAnswer { invocation ->
+            created = invocation.getArgument(0)
+            company()
+        }.`when`(companyRepository).createCompany(AccountTestHelper.anyValue())
+
+        service.register(account, "1248100998", profile())
+
+        assertEquals("02", requireNotNull(created).businessStatusCode)
     }
 
     @Test

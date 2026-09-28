@@ -305,7 +305,7 @@ describe('비로그인 대화의 화면 이동 수명', () => {
 function emptyStore(authenticated = false) {
   const store = createAppStore()
   store.dispatch(sessionRestored(authenticated
-    ? { email: 'member@govbiz.local', role: 'USER', tier: 'MEMBER', emailVerified: true, hasPassword: true, company: null }
+    ? { email: 'member@govbiz.local', role: 'USER', tier: 'MEMBER', emailVerified: true, hasPassword: true, accountType: null, onboarded: true, company: null }
     : null))
   return store
 }

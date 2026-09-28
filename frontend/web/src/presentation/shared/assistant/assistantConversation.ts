@@ -402,7 +402,7 @@ export function receivedProposalsAnswer(
 /** 로그인·회원가입처럼 도우미를 두지 않는 화면입니다. */
 export function isAssistantHiddenOn(pathname: string): boolean {
   const path = pathname.replace(/\/+$/, '') || publicPaths.landing
-  return [publicPaths.login, publicPaths.signup, publicPaths.oauthComplete, publicPaths.reportEmail, '/forgot-password', '/reset-password'].includes(path)
+  return path === appPaths.welcome || path === appPaths.welcomeCompany || [publicPaths.login, publicPaths.signup, publicPaths.oauthComplete, publicPaths.reportEmail, '/forgot-password', '/reset-password'].includes(path)
     || path.startsWith('/examples/')
 }
 

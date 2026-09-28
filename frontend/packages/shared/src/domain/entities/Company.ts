@@ -6,6 +6,8 @@ export type Company = {
   businessNumber: string
   companyName: string
   businessStatus: string
+  /** 국세청 상태 코드. `01` 계속사업자 · `02` 휴업자. 파트너 모집글·제안은 `01`만 씁니다. */
+  businessStatusCode: BusinessStatusCode
   region: string
   industry: string
   foundedYear: number
@@ -19,8 +21,16 @@ export type BusinessLookup = {
   businessNumber: string
   companyName: string
   businessStatus: string
+  /** 국세청 상태 코드. `01` 계속사업자 · `02` 휴업자 · `03` 폐업자 */
+  businessStatusCode: BusinessStatusCode
+  /** 계속사업자만 참. 파트너 모집글·제안을 쓸 수 있는지입니다. */
   isActive: boolean
+  /** 계속·휴업자는 참, 폐업자는 거짓. 기업 등록이 되는지입니다. */
+  canRegister: boolean
 }
+
+/** 국세청 사업자 상태 코드입니다. */
+export type BusinessStatusCode = '01' | '02' | '03'
 
 /** 담당자가 입력하는 항목입니다. 등록과 수정이 같은 규칙을 씁니다. */
 export type CompanyProfileInput = {

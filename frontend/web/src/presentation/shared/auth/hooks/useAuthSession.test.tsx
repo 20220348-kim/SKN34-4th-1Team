@@ -11,10 +11,10 @@ import { authSessionMessages, useAuthSession, useRestoreAuthSession } from './us
 
 afterEach(cleanup)
 
-const account = { email: 'manager@company.co.kr', role: 'USER' as const, tier: 'MEMBER' as const, emailVerified: false, hasPassword: true, company: null }
+const account = { email: 'manager@company.co.kr', role: 'USER' as const, tier: 'MEMBER' as const, emailVerified: false, hasPassword: true, accountType: null, onboarded: true, company: null }
 const adminSession = {
   expiresAt: '2026-10-06T12:00:00+09:00',
-  account: { email: 'admin@govbiz.local', role: 'ADMIN' as const, tier: 'ADMIN' as const, emailVerified: true, hasPassword: true, company: null },
+  account: { email: 'admin@govbiz.local', role: 'ADMIN' as const, tier: 'ADMIN' as const, emailVerified: true, hasPassword: true, accountType: null, onboarded: true, company: null },
 }
 
 describe('useRestoreAuthSession', () => {

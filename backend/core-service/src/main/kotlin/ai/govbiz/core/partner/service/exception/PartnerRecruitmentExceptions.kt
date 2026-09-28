@@ -11,6 +11,9 @@ class RecruitmentRegionFilterInvalidException : RuntimeException()
 /** 기업을 등록하지 않은 회원이 모집글을 쓰려 할 때 발생합니다. */
 class CompanyRequiredException : RuntimeException()
 
+/** 등록한 기업이 계속사업자가 아닐 때(휴업) 모집글·제안 쓰기를 막습니다. 둘러보기와 받은 제안 읽기는 허용합니다. */
+class ActiveBusinessRequiredException : RuntimeException()
+
 /** 모집글에 묶을 공고가 없거나 제공처에서 사라졌을 때 발생합니다. */
 class RecruitmentProgramNotFoundException : RuntimeException()
 

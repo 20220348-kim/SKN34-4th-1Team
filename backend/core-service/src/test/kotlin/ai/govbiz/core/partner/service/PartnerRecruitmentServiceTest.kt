@@ -13,6 +13,7 @@ import ai.govbiz.core.partner.domain.PartnerRecruitmentView
 import ai.govbiz.core.partner.domain.PartnerRole
 import ai.govbiz.core.partner.repository.PartnerProposalRepository
 import ai.govbiz.core.partner.repository.PartnerRecruitmentRepository
+import ai.govbiz.core.partner.service.exception.ActiveBusinessRequiredException
 import ai.govbiz.core.partner.service.exception.CompanyRequiredException
 import ai.govbiz.core.partner.service.exception.RecruitmentActionForbiddenException
 import ai.govbiz.core.partner.service.exception.RecruitmentAlreadyExistsException
@@ -28,6 +29,7 @@ import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.ExtendWith
+import org.mockito.ArgumentMatchers
 import org.mockito.ArgumentMatchers.anyLong
 import org.mockito.ArgumentMatchers.eq
 import org.mockito.Mock
@@ -86,6 +88,23 @@ class PartnerRecruitmentServiceTest {
             service.create(AccountTestHelper.account(id = 8L), "BIZINFO", "PBLN-1", input())
         }
         verify(recruitmentRepository, never()).findPresentProgram(AccountTestHelper.anyValue(), AccountTestHelper.anyValue())
+    }
+
+    @Test
+    fun createUpdateAndCloseRejectSuspendedBusinesses() {
+        // 작성자(7번 계정)의 기업이 휴업이 된 경우입니다. 작성은 DB를 건드리기 전에, 수정·마감은 작성자 확인 뒤에 막습니다.
+        val suspended = AccountTestHelper.account(
+            id = 7L,
+            company = CompanySummary(id = 3L, companyName = "데이터브릿지 주식회사", businessNumber = "1248100998", businessStatusCode = "02"),
+        )
+        assertThrows(ActiveBusinessRequiredException::class.java) { service.create(suspended, "BIZINFO", "PBLN-1", input()) }
+        verify(recruitmentRepository, never()).findPresentProgram(AccountTestHelper.anyValue(), AccountTestHelper.anyValue())
+
+        doReturn(recruitment()).`when`(recruitmentRepository).findById(21L)
+        assertThrows(ActiveBusinessRequiredException::class.java) { service.update(suspended, 21L, input()) }
+        assertThrows(ActiveBusinessRequiredException::class.java) { service.close(suspended, 21L) }
+        verify(recruitmentRepository, never()).update(ArgumentMatchers.anyLong(), AccountTestHelper.anyValue(), AccountTestHelper.anyValue())
+        verify(recruitmentRepository, never()).close(ArgumentMatchers.anyLong(), AccountTestHelper.anyValue())
     }
 
     @Test

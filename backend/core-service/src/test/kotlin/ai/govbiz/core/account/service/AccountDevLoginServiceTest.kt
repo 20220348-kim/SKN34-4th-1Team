@@ -1,6 +1,7 @@
 package ai.govbiz.core.account.service
 
 import ai.govbiz.core.account.domain.AccountRole
+import ai.govbiz.core.account.domain.AccountType
 import ai.govbiz.core.account.domain.NewAccount
 import ai.govbiz.core.account.helper.AccountTestHelper
 import ai.govbiz.core.account.helper.AccountTestHelper.NOW
@@ -53,6 +54,8 @@ class AccountDevLoginServiceTest {
             created = invocation.getArgument(0)
             admin
         }.`when`(repository).createAccount(AccountTestHelper.anyValue())
+        val onboarded = admin.copy(accountType = AccountType.INDIVIDUAL, onboardedAt = NOW)
+        doReturn(onboarded).`when`(repository).completeOnboarding(9L, AccountType.INDIVIDUAL, NOW)
 
         val result = service.logInAs(AccountRole.ADMIN)
 
@@ -61,7 +64,8 @@ class AccountDevLoginServiceTest {
         assertEquals(AccountRole.ADMIN, newAccount.role)
         assertEquals(NOW, newAccount.emailVerifiedAt)
         assertTrue(passwordEncoder.matches("govbiz-admin1", newAccount.passwordHash))
-        assertEquals(admin, result.account)
+        // 시드 계정은 환영 화면을 건너뛰도록 만들자마자 유형이 채워집니다.
+        assertEquals(onboarded, result.account)
         assertTrue(result.rememberMe)
         verify(repository).createSession(eq(9L), AccountTestHelper.anyValue())
         assertEquals(9L, requireNotNull(SessionTokenHelper.verify(result.sessionToken, AccountTestHelper.JWT_SECRET, AccountTestHelper.FIXED_CLOCK.instant())).accountId)
@@ -75,13 +79,15 @@ class AccountDevLoginServiceTest {
             created = invocation.getArgument(0)
             member
         }.`when`(repository).createAccount(AccountTestHelper.anyValue())
+        val onboarded = member.copy(accountType = AccountType.BUSINESS, onboardedAt = NOW)
+        doReturn(onboarded).`when`(repository).completeOnboarding(4L, AccountType.BUSINESS, NOW)
 
         val result = service.logInAs(AccountRole.USER)
 
         val newAccount = requireNotNull(created)
         assertEquals("member@govbiz.local", newAccount.email)
         assertEquals(AccountRole.USER, newAccount.role)
-        assertEquals(member, result.account)
+        assertEquals(onboarded, result.account)
         verify(repository).createSession(eq(4L), AccountTestHelper.anyValue())
     }
 

@@ -163,7 +163,7 @@ describe('후속 발화의 미확정 조건과 검색 결과 맥락', () => {
       .mockResolvedValueOnce(readyConversationProposal(trade)).mockResolvedValueOnce(readyConversationProposal(daegu))
       .mockReturnValueOnce(pending.promise)
     const chat = renderConversation(interpret)
-    const account = { email: 'first@example.test', role: 'USER' as const, tier: 'MEMBER' as const, emailVerified: true, hasPassword: true, company: null }
+    const account = { email: 'first@example.test', role: 'USER' as const, tier: 'MEMBER' as const, emailVerified: true, hasPassword: true, accountType: null, onboarded: true, company: null }
     act(() => chat.store.dispatch(signedIn(account)))
     await chat.submit('무역')
     await act(async () => chat.result.current.confirmInterpretation())

@@ -3,6 +3,7 @@ package ai.govbiz.core.account.service
 import ai.govbiz.core.account.config.AccountDevLoginProperties
 import ai.govbiz.core.account.domain.Account
 import ai.govbiz.core.account.domain.AccountRole
+import ai.govbiz.core.account.domain.AccountType
 import ai.govbiz.core.account.domain.NewAccount
 import ai.govbiz.core.account.helper.normalizeEmail
 import ai.govbiz.core.account.repository.AccountRepository
@@ -39,10 +40,11 @@ class AccountDevLoginService(
         return sessionService.toResult(issued, account)
     }
 
+    /** 시드 계정은 환영 화면을 거치지 않도록 회원 유형을 미리 채웁니다(관리자는 개인, 회원은 기업). */
     private fun createSeedAccount(email: String, role: AccountRole): Account =
         try {
             val now = LocalDateTime.now(clock)
-            repository.createAccount(
+            val created = repository.createAccount(
                 NewAccount(
                     email = email,
                     passwordHash = requireNotNull(passwordEncoder.encode(properties.password)) { "password hash must not be null" },
@@ -51,6 +53,7 @@ class AccountDevLoginService(
                     emailVerifiedAt = now,
                 ),
             )
+            repository.completeOnboarding(created.id, if (role == AccountRole.ADMIN) AccountType.INDIVIDUAL else AccountType.BUSINESS, now)
         } catch (_: DuplicateKeyException) {
             // 같은 순간 다른 요청이 먼저 만들었으면 그 계정을 씁니다.
             requireNotNull(repository.findByEmail(email)) { "dev seed account was not readable" }

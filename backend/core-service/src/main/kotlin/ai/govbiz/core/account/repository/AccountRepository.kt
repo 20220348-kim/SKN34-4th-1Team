@@ -1,5 +1,6 @@
 package ai.govbiz.core.account.repository
 
+import ai.govbiz.core.account.domain.AccountType
 import ai.govbiz.core.account.domain.Account
 import ai.govbiz.core.account.domain.AccountCredential
 import ai.govbiz.core.account.domain.AccountRole
@@ -76,6 +77,12 @@ class AccountRepository(
      * 바꿔 UNIQUE 제약을 비웁니다. 같은 이메일로 다시 가입하면 새 계정이 됩니다. 삭제된 행은 모든 조회에서 제외됩니다.
      */
     @Transactional
+    /** 환영 화면의 답을 저장하고 갱신된 계정을 돌려줍니다. */
+    fun completeOnboarding(accountId: Long, type: AccountType, at: LocalDateTime): Account {
+        check(accountMapper.updateAccountOnboarding(accountId, type.name, at) == 1) { "account onboarding was not saved" }
+        return requireNotNull(findById(accountId)) { "account row was not readable" }
+    }
+
     fun markDeleted(accountId: Long, deletedAt: LocalDateTime) {
         val anonymizedEmail = "deleted+$accountId+${deletedAt.toEpochSecond(java.time.ZoneOffset.UTC)}@deleted.invalid"
         check(accountMapper.updateAccountDeletedAt(accountId, deletedAt, anonymizedEmail) == 1) { "account row was not marked deleted" }
@@ -183,8 +190,11 @@ class AccountRepository(
                     id = id,
                     companyName = requireNotNull(companyName) { "company name must not be null" },
                     businessNumber = requireNotNull(companyBusinessNumber) { "company business number must not be null" },
+                    businessStatusCode = requireNotNull(companyBusinessStatusCode) { "company business status code must not be null" },
                 )
             },
             hasPassword = passwordHash != null,
+            accountType = accountType?.let(AccountType::valueOf),
+            onboardedAt = onboardedAt,
         )
 }

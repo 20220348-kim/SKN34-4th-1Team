@@ -19,9 +19,25 @@ export function programDeadlineLabel(applicationEndDate: string | null): string 
   return applicationEndDate === null ? '공고 마감일 미정' : `공고 마감 ${applicationEndDate}`
 }
 
-/** 기업명 첫 글자를 아바타로 씁니다. */
+/**
+ * 법인 형태 표기입니다. 상호 앞뒤에 붙는 "(주)"·"주식회사"·"㈜" 같은 말은 회사를 구분해 주지 않으므로 아바타 글자에서 뺍니다.
+ * 괄호 안 표기와 풀어 쓴 이름을 모두 다루고, 긴 것부터 지워 "유한책임회사"가 "유한회사"로 잘못 남지 않게 합니다.
+ */
+const legalFormMarkers = [
+  '유한책임회사', '농업회사법인', '어업회사법인', '사회적협동조합', '주식회사', '유한회사', '합자회사', '합명회사', '사단법인', '재단법인', '협동조합',
+  '(주)', '(유)', '(합)', '(사)', '(재)', '（주）', '㈜',
+]
+const legalFormPattern = new RegExp(
+  `(?:${legalFormMarkers.map((marker) => marker.replace(/[()]/g, '\\$&')).join('|')})`,
+  'g',
+)
+
+/** 기업명 첫 글자를 아바타로 씁니다. "(주) 미래중앙"은 "미", "주식회사 한빛"은 "한"이고, 이름이 비면 "?"입니다. */
 export function companyInitial(companyName: string): string {
-  return companyName.trim().slice(0, 1) || '?'
+  const stripped = companyName.replace(legalFormPattern, ' ')
+  // 남은 것 중 글자·숫자로 시작하는 첫 자를 고릅니다. 괄호·점·공백 같은 기호는 건너뜁니다.
+  const match = stripped.match(/[\p{L}\p{N}]/u) ?? companyName.match(/[\p{L}\p{N}]/u)
+  return match?.[0] ?? '?'
 }
 
 /** 목록·상세가 함께 쓰는 기업 한 줄 요약입니다. 프로필 정식 명칭은 공고 분류 이름으로 줄입니다. */

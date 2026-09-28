@@ -107,7 +107,7 @@ describe('상세 오류 복구와 검색 화면 복귀', () => {
   })
 })
 
-const memberAccount: Account = { email: 'member@govbiz.local', role: 'USER', tier: 'MEMBER', emailVerified: true, hasPassword: true, company: null }
+const memberAccount: Account = { email: 'member@govbiz.local', role: 'USER', tier: 'MEMBER', emailVerified: true, hasPassword: true, accountType: null, onboarded: true, company: null }
 
 function renderDetail(
   state: unknown = null,

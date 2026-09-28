@@ -96,7 +96,7 @@ describe('대화 조건 해석·확인 검색 HTTP E2E', () => {
       interpretation: { status: 'idle' }, searchOptions: { acceptingOnly: true },
     })
     expect(store.getState().chat.messages).toHaveLength(1)
-    act(() => store.dispatch(signedIn({ email: 'other@govbiz.local', role: 'USER', tier: 'MEMBER', emailVerified: true, hasPassword: true, company: null })))
+    act(() => store.dispatch(signedIn({ email: 'other@govbiz.local', role: 'USER', tier: 'MEMBER', emailVerified: true, hasPassword: true, accountType: null, onboarded: true, company: null })))
     const input = await screen.findByRole('textbox', { name: '지원사업 검색어' }) as HTMLTextAreaElement
     expect(input.value).toBe('')
     expect(screen.queryByText(privateMessage)).toBeNull()
@@ -766,7 +766,7 @@ function renderConversationApp(path = '/') {
   const store = createAppStore()
   // 작업 채팅(/chat)은 회원 세션이 있어야 열립니다. 세션 복원 요청은 보내지 않습니다.
   store.dispatch(sessionRestored(
-    path.startsWith('/app/chat') ? { email: 'member@govbiz.local', role: 'USER', tier: 'MEMBER', emailVerified: true, hasPassword: true, company: null } : null,
+    path.startsWith('/app/chat') ? { email: 'member@govbiz.local', role: 'USER', tier: 'MEMBER', emailVerified: true, hasPassword: true, accountType: null, onboarded: true, company: null } : null,
   ))
   const tree = <Provider store={store}><MemoryRouter initialEntries={[path]}><App /></MemoryRouter></Provider>
   return { ...render(tree), store, tree }

@@ -22,7 +22,7 @@ function renderApp(path: string, signedIn = path.startsWith('/app')) {
   const store = createAppStore()
   // 작업 화면(/partners 등)은 회원 세션이 있어야 열립니다. 세션 복원 요청은 보내지 않습니다.
   store.dispatch(sessionRestored(
-    signedIn ? { email: 'member@govbiz.local', role: 'USER', tier: 'MEMBER', emailVerified: true, hasPassword: true, company: null } : null,
+    signedIn ? { email: 'member@govbiz.local', role: 'USER', tier: 'MEMBER', emailVerified: true, hasPassword: true, accountType: null, onboarded: true, company: null } : null,
   ))
   render(
     <Provider store={store}>

@@ -17,7 +17,7 @@ import { conversationReset, draftChanged } from '../state/chatSlice'
 import { searchResultRestoreMessages, useRestoreSupportProgramSearch } from './useRestoreSupportProgramSearch'
 
 const token = 'ce5a0b64-5496-47e4-8bab-05392e7661c9'
-const account = { email: 'member@example.test', role: 'USER' as const, tier: 'MEMBER' as const, emailVerified: true, hasPassword: true, company: null }
+const account = { email: 'member@example.test', role: 'USER' as const, tier: 'MEMBER' as const, emailVerified: true, hasPassword: true, accountType: null, onboarded: true, company: null }
 const restored: RestoredSupportProgramSearchResult = {
   query: seoulConversationContext.query!, context: seoulConversationContext,
   programs: Array.from({ length: 5 }, (_, index) => ({ ...supportPrograms[0]!, id: 'selected-' + index, title: '선택한 공고 ' + index })),

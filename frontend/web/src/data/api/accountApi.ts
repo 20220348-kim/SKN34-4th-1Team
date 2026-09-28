@@ -26,6 +26,7 @@ const LOGOUT_PATH = '/api/v1/auth/logout'
 const CURRENT_ACCOUNT_PATH = '/api/v1/auth/me'
 const ACCOUNT_PATH = '/api/v1/me'
 const PASSWORD_PATH = '/api/v1/me/password'
+const ONBOARDING_PATH = '/api/v1/me/onboarding'
 const DELETION_PREVIEW_PATH = '/api/v1/me/deletion-preview'
 
 /** 계정 endpoint의 HTTP 상태와 ProblemDetail `code`를 Repository가 업무 결과로 바꿀 수 있게 합니다. */
@@ -118,6 +119,19 @@ export async function getCurrentAccountApi(signal?: AbortSignal): Promise<Accoun
 }
 
 /** 로그인 세션이 본인 확인이므로 새 비밀번호만 보냅니다. */
+/** 환영 화면의 답을 저장하고 갱신된 계정을 받습니다. */
+export async function completeOnboardingApi(body: { accountType: string }, signal?: AbortSignal): Promise<AccountDto> {
+  const response = await fetch(`${getCoreApiBaseUrl()}${ONBOARDING_PATH}`, {
+    method: 'PUT',
+    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    credentials: withSessionCookie,
+    signal,
+  })
+  await rejectFailedResponse(response)
+  return currentAccountResponseDtoSchema.parse(await response.json()).account
+}
+
 export async function changePasswordApi(newPassword: string, signal?: AbortSignal): Promise<void> {
   const response = await fetch(`${getCoreApiBaseUrl()}${PASSWORD_PATH}`, {
     method: 'PUT',

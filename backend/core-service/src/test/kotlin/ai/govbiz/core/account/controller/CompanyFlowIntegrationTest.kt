@@ -62,6 +62,8 @@ class CompanyFlowIntegrationTest {
         doReturn(listOf(activeBusiness())).`when`(biznoClient).findByBusinessNumber("1248100998")
         doReturn(listOf(activeBusiness().copy(businessNumber = "1112233334", businessStatus = "폐업자", businessStatusCode = "03")))
             .`when`(biznoClient).findByBusinessNumber("1112233334")
+        doReturn(listOf(activeBusiness().copy(businessNumber = "1208734519", companyName = "한빛정밀", businessStatus = "휴업자", businessStatusCode = "02")))
+            .`when`(biznoClient).findByBusinessNumber("1208734519")
         doReturn(emptyList<BiznoBusiness>()).`when`(biznoClient).findByBusinessNumber("1234567890")
         doThrow(BiznoClientException.notConfigured()).`when`(biznoClient).findByBusinessNumber("9999999999")
     }
@@ -78,7 +80,15 @@ class CompanyFlowIntegrationTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.companyName").value("삼성전자(주)"))
             .andExpect(jsonPath("$.businessNumber").value("1248100998"))
+            .andExpect(jsonPath("$.businessStatusCode").value("01"))
             .andExpect(jsonPath("$.isActive").value(true))
+            .andExpect(jsonPath("$.canRegister").value(true))
+        // 휴업자는 등록은 되고 파트너 기능만 막히므로 canRegister만 참입니다.
+        mockMvc.perform(get("/api/v1/me/company/lookup").param("businessNumber", "120-87-34519").cookie(session))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.businessStatusCode").value("02"))
+            .andExpect(jsonPath("$.isActive").value(false))
+            .andExpect(jsonPath("$.canRegister").value(true))
         mockMvc.perform(get("/api/v1/me/company/lookup").param("businessNumber", "1234567890").cookie(session))
             .andExpect(status().isNotFound())
             .andExpect(jsonPath("$.code").value("BUSINESS_NOT_FOUND"))
@@ -136,6 +146,7 @@ class CompanyFlowIntegrationTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.account.tier").value("COMPANY"))
             .andExpect(jsonPath("$.account.company.companyName").value("삼성전자(주)"))
+            .andExpect(jsonPath("$.account.company.businessStatusCode").value("01"))
 
         mockMvc.perform(
             post("/api/v1/me/company").cookie(session).origin()
@@ -153,6 +164,19 @@ class CompanyFlowIntegrationTest {
         )
             .andExpect(status().isConflict())
             .andExpect(jsonPath("$.code").value("BUSINESS_NUMBER_ALREADY_REGISTERED"))
+
+        // 휴업 사업자는 등록되고 요약에 상태 코드 02가 실립니다.
+        mockMvc.perform(
+            post("/api/v1/me/company").cookie(other).origin()
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"businessNumber":"120-87-34519","region":"경기도","industry":"제조업","foundedYear":2015}"""),
+        )
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.businessStatus").value("휴업자"))
+            .andExpect(jsonPath("$.businessStatusCode").value("02"))
+        mockMvc.perform(get("/api/v1/auth/me").cookie(other))
+            .andExpect(jsonPath("$.account.tier").value("COMPANY"))
+            .andExpect(jsonPath("$.account.company.businessStatusCode").value("02"))
 
         mockMvc.perform(
             put("/api/v1/me/company").cookie(session).origin()

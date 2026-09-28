@@ -17,7 +17,7 @@ vi.mock('./presentation/shared/core-api-status/CoreApiConnectionStatus', () => (
   CoreApiConnectionStatus: () => null,
 }))
 
-const memberAccount: Account = { email: 'manager@kakao.com', role: 'USER', tier: 'MEMBER', emailVerified: true, hasPassword: true, company: null }
+const memberAccount: Account = { email: 'manager@kakao.com', role: 'USER', tier: 'MEMBER', emailVerified: true, hasPassword: true, accountType: null, onboarded: true, company: null }
 
 beforeEach(() => {
   // 세션 확인 외의 화면 요청은 실제 서버에 연결하지 않습니다.

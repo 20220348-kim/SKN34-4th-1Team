@@ -44,6 +44,7 @@ import {
 } from '../../domain/usecases/PartnerProposalUseCases'
 import {
   ChangePasswordUseCase,
+  CompleteOnboardingUseCase,
   DeleteAccountUseCase,
   GetAccountDeletionPreviewUseCase,
 } from '../../domain/usecases/AccountProfileUseCases'
@@ -198,6 +199,9 @@ export function registerUseCases(container: AppContainer) {
     ).singleton(),
     changePasswordUseCase: asFunction(
       ({ accountRepository }: Pick<AppCradle, 'accountRepository'>) => new ChangePasswordUseCase(accountRepository),
+    ).singleton(),
+    completeOnboardingUseCase: asFunction(
+      ({ accountRepository }: Pick<AppCradle, 'accountRepository'>) => new CompleteOnboardingUseCase(accountRepository),
     ).singleton(),
     getAccountDeletionPreviewUseCase: asFunction(
       ({ accountRepository }: Pick<AppCradle, 'accountRepository'>) => new GetAccountDeletionPreviewUseCase(accountRepository),

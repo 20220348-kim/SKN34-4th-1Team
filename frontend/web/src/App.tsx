@@ -25,6 +25,8 @@ import { CompanyProfilePage } from './presentation/features/company-profile/view
 import { PartnerRecruitmentCreatePage } from './presentation/features/partner-recruitment/view/PartnerRecruitmentCreatePage'
 import { PartnerRecruitmentDetailPage } from './presentation/features/partner-recruitment/view/PartnerRecruitmentDetailPage'
 import { PartnerRecruitmentEditPage } from './presentation/features/partner-recruitment/view/PartnerRecruitmentEditPage'
+import { CompanyOnboardingPage } from './presentation/features/onboarding/view/CompanyOnboardingPage'
+import { WelcomePage } from './presentation/features/onboarding/view/WelcomePage'
 import { PartnerRecruitmentListPage } from './presentation/features/partner-recruitment/view/PartnerRecruitmentListPage'
 import { MyPartnerRecruitmentsPage } from './presentation/features/partner-recruitment/view/MyPartnerRecruitmentsPage'
 import { PartnerProposalBoxPage } from './presentation/features/partner-proposal/view/PartnerProposalBoxPage'
@@ -114,6 +116,9 @@ function CoreApp() {
       </Route>
 
       <Route element={<RequireAuth />}>
+        {/* 환영 화면은 사이드바 없는 단독 화면입니다. 아직 답하지 않은 계정은 가드가 다른 /app 화면 대신 여기로 보냅니다. */}
+        <Route path={appPaths.welcome} element={<WelcomePage />} />
+        <Route path={appPaths.welcomeCompany} element={<CompanyOnboardingPage />} />
         <Route element={<WorkspaceLayout />}>
           <Route path={appPaths.reports} element={<DailyReportPage />} />
           <Route path={appPaths.savedPrograms} element={<SavedProgramsPage />} />

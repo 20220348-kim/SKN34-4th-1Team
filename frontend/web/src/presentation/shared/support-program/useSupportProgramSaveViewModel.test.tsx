@@ -22,7 +22,7 @@ afterEach(() => { cleanup(); vi.useRealTimers() })
 
 function wrapper(authenticated: boolean) {
   const store = createAppStore()
-  store.dispatch(sessionRestored(authenticated ? { email: 'member@govbiz.local', role: 'USER', tier: 'MEMBER', emailVerified: true, hasPassword: true, company: null } : null))
+  store.dispatch(sessionRestored(authenticated ? { email: 'member@govbiz.local', role: 'USER', tier: 'MEMBER', emailVerified: true, hasPassword: true, accountType: null, onboarded: true, company: null } : null))
   return ({ children }: { children: ReactNode }) => (
     <Provider store={store}><MemoryRouter initialEntries={['/app/support-programs/detail?sourceCode=BIZINFO&sourceProgramId=PBLN-1']}>{children}</MemoryRouter></Provider>
   )
@@ -70,7 +70,7 @@ describe('useSupportProgramSaveViewModel', () => {
 describe('관심 공고 저장 요청 수명', () => {
   function setup() {
     const store = createAppStore()
-    store.dispatch(signedIn({ email: 'first@example.com', role: 'USER', tier: 'MEMBER', emailVerified: true, hasPassword: true, company: null }))
+    store.dispatch(signedIn({ email: 'first@example.com', role: 'USER', tier: 'MEMBER', emailVerified: true, hasPassword: true, accountType: null, onboarded: true, company: null }))
     const useCases = {
       check: { execute: vi.fn().mockResolvedValue(false) },
       save: { execute: vi.fn() },
@@ -102,7 +102,7 @@ describe('관심 공고 저장 요청 수명', () => {
     const { result, store, useCases } = setup()
     await act(async () => {})
     useCases.check.execute.mockResolvedValueOnce(true)
-    await act(async () => { store.dispatch(signedIn({ email: 'second@example.com', role: 'USER', tier: 'MEMBER', emailVerified: true, hasPassword: true, company: null })) })
+    await act(async () => { store.dispatch(signedIn({ email: 'second@example.com', role: 'USER', tier: 'MEMBER', emailVerified: true, hasPassword: true, accountType: null, onboarded: true, company: null })) })
     expect(useCases.check.execute).toHaveBeenCalledTimes(2)
     expect(result.current.isSaved).toBe(true)
     await act(async () => { store.dispatch(signedOut()) })

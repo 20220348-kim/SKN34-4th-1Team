@@ -3,11 +3,11 @@ import type { Company } from '../../../../domain/entities/Company'
 import type { DailyReport, DailyReportSettings } from '../../../../domain/entities/DailyReport'
 
 export const reportAccount: Account = {
-  email: 'report@example.test', role: 'USER', tier: 'COMPANY', emailVerified: false, hasPassword: true,
-  company: { companyName: '리포트 기업', businessNumber: '1234567890' },
+  email: 'report@example.test', role: 'USER', tier: 'COMPANY', emailVerified: false, hasPassword: true, accountType: null, onboarded: true,
+  company: { companyName: '리포트 기업', businessNumber: '1234567890', businessStatusCode: '01' },
 }
 export const reportCompany: Company = {
-  businessNumber: '1234567890', companyName: '리포트 기업', businessStatus: '계속사업자',
+  businessNumber: '1234567890', companyName: '리포트 기업', businessStatus: '계속사업자', businessStatusCode: '01',
   region: '서울특별시', industry: '정보통신업', foundedYear: 2023, homepageUrl: null,
   businessVerifiedAt: '2026-09-09T09:00:00+09:00', updatedAt: '2026-09-09T09:00:00+09:00',
 }

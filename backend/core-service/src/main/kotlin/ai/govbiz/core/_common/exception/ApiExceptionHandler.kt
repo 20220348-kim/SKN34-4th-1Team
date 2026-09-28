@@ -46,6 +46,7 @@ import ai.govbiz.core.combinationreview.controller.exception.InvalidCombinationR
 import ai.govbiz.core.combinationreview.service.exception.CombinationReviewRunException
 import ai.govbiz.core.combinationreview.domain.exception.CombinationReviewRunConflictException
 import ai.govbiz.core.combinationreview.service.exception.ReviewRunFailureCode
+import ai.govbiz.core.partner.service.exception.ActiveBusinessRequiredException
 import ai.govbiz.core.partner.service.exception.CompanyRequiredException
 import ai.govbiz.core.partner.service.exception.RecruitmentActionForbiddenException
 import ai.govbiz.core.partner.service.exception.RecruitmentRegionFilterInvalidException
@@ -607,6 +608,19 @@ class ApiExceptionHandler {
             request,
         )
 
+    @ExceptionHandler(ActiveBusinessRequiredException::class)
+    fun handleActiveBusinessRequiredException(request: HttpServletRequest): ResponseEntity<ProblemDetail> =
+        problemResponse(
+            ProblemDefinition(
+                HttpStatus.FORBIDDEN,
+                URI.create("urn:govbiz:problem:active-business-required"),
+                "Active Business Required",
+                "Only a company whose business is active can write partner recruitments or proposals.",
+                "ACTIVE_BUSINESS_REQUIRED",
+            ),
+            request,
+        )
+
     @ExceptionHandler(CompanyRequiredException::class)
     fun handleCompanyRequiredException(request: HttpServletRequest): ResponseEntity<ProblemDetail> =
         problemResponse(
@@ -792,7 +806,7 @@ class ApiExceptionHandler {
                 HttpStatus.UNPROCESSABLE_CONTENT,
                 URI.create("urn:govbiz:problem:business-not-active"),
                 "Business Not Active",
-                "Only an active business can be registered.",
+                "A closed business cannot be registered.",
                 "BUSINESS_NOT_ACTIVE",
             ),
             request,

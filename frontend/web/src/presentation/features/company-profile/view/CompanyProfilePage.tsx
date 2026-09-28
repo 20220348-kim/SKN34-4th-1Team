@@ -1,4 +1,3 @@
-import { useEffect } from 'react'
 import type { ReactNode } from 'react'
 
 import {
@@ -6,17 +5,14 @@ import {
   workspaceTagClassName,
 } from '../../../shared/workspace/WorkspacePage.styles'
 import { HelpTip } from '../../../shared/workspace/HelpTip'
-import { SelectField } from '../../../shared/workspace/SelectField'
+import { companyInitial } from '../../../shared/partner-recruitment/partnerRecruitmentLabels'
 import { WorkspaceToggle } from '../../../shared/workspace/WorkspaceToggle'
 import { WorkspacePageHeader } from '../../../shared/workspace/WorkspacePageHeader'
-import { YearPicker } from '../../../shared/workspace/YearPicker'
-import { formatBusinessNumber } from '../../../../domain/entities/Company'
+import { BusinessLookupResult } from '../../../shared/company/BusinessLookupResult'
+import { BusinessNumberField } from '../../../shared/company/BusinessNumberField'
+import { CompanyProfileFields } from '../../../shared/company/CompanyProfileFields'
 import { useAccountSecurityViewModel } from '../viewmodel/useAccountSecurityViewModel'
-import {
-  useCompanyProfileViewModel,
-  type NotificationKey,
-  type ProfileFormValues,
-} from '../viewmodel/useCompanyProfileViewModel'
+import { useCompanyProfileViewModel, type NotificationKey } from '../viewmodel/useCompanyProfileViewModel'
 import { ChangePasswordModal, DeleteAccountModal } from './AccountSecurityModals'
 import { CompanyPartnerProfileSection } from './CompanyPartnerProfileSection'
 import { companyProfileStyles } from './CompanyProfilePage.styles'
@@ -140,7 +136,7 @@ export function CompanyProfilePage() {
               <div className={companyProfileStyles.summaryTop}>
                 <div className={companyProfileStyles.summaryIdentity}>
                   <span className={companyProfileStyles.summaryAvatar} aria-hidden="true">
-                    {company === null ? '?' : company.companyName.slice(0, 1)}
+                    {company === null ? '?' : companyInitial(company.companyName)}
                   </span>
                   <div>
                     <strong className={companyProfileStyles.summaryName}>
@@ -364,9 +360,11 @@ export function CompanyProfilePage() {
 
 type ViewModel = ReturnType<typeof useCompanyProfileViewModel>
 
-/** 기업이 없을 때 기본정보 카드 자리에 나오는 등록 폼입니다. 사업자등록번호 조회로 상호·상태를 채운 뒤 나머지를 입력합니다. */
+/**
+ * 기업이 없을 때 기본정보 카드 자리에 나오는 등록 폼입니다. 사업자등록번호 조회·결과 카드·입력 칸은 온보딩 2단계와 같은
+ * shared/company 부품이고, 여기서는 카드 머리와 [기업 등록] 버튼만 둡니다. 폐업 사업자는 결과 카드가 이유를 말하고 버튼이 잠깁니다.
+ */
 function RegistrationCard({ vm, titleHelp }: { vm: ViewModel; titleHelp: ReactNode }) {
-  const lookupBusy = vm.lookup.status === 'looking'
   return (
     <section className={workspacePageStyles.card} aria-label="기업 등록">
       <div className={workspacePageStyles.cardHeader}>
@@ -381,54 +379,21 @@ function RegistrationCard({ vm, titleHelp }: { vm: ViewModel; titleHelp: ReactNo
         </div>
       </div>
       <form className={companyProfileStyles.form} aria-label="기업 등록" onSubmit={vm.submitRegistration} noValidate>
-        <div className={companyProfileStyles.lookupRow}>
-          <label className={companyProfileStyles.formField} htmlFor="register-businessNumber">
-            <span className={companyProfileStyles.formLabel}>사업자등록번호</span>
-            <input
-              className={companyProfileStyles.input}
-              id="register-businessNumber"
-              type="text"
-              name="businessNumber"
-              inputMode="numeric"
-              autoComplete="off"
-              maxLength={12}
-              placeholder="000-00-00000"
-              aria-invalid={vm.formErrors.businessNumber !== undefined}
-              aria-describedby={vm.formErrors.businessNumber ? 'register-businessNumber-error' : 'register-businessNumber-hint'}
-              value={vm.businessNumber}
-              onChange={(event) => vm.updateBusinessNumber(event.target.value)}
-            />
-          </label>
-          <button className={workspacePageStyles.secondaryButton} type="button" onClick={() => void vm.lookupBusiness()} disabled={lookupBusy || !vm.canLookup}>
-            {lookupBusy ? '조회 중…' : '조회'}
-          </button>
-        </div>
-        {vm.formErrors.businessNumber
-          ? <p id="register-businessNumber-error" className={companyProfileStyles.formError} role="alert">{vm.formErrors.businessNumber}</p>
-          : <span id="register-businessNumber-hint" className={companyProfileStyles.formHint}>{vm.businessNumberHint}</span>}
-
-        {vm.lookup.status === 'found' ? (
-          <div className={companyProfileStyles.lookupResult} role="status" aria-label="조회 결과">
-            <div className={companyProfileStyles.lookupHeadline}>
-              <strong className={companyProfileStyles.lookupName}>{vm.lookup.business.companyName}</strong>
-              <span className={workspaceTagClassName(vm.lookup.business.isActive ? 'ok' : 'warn')}>{vm.lookup.business.businessStatus}</span>
-            </div>
-            <span className={companyProfileStyles.lookupDetail}>{formatBusinessNumber(vm.lookup.business.businessNumber)}</span>
-            {vm.lookup.business.isActive ? null : (
-              <span className={companyProfileStyles.lookupWarning}>계속사업자만 등록할 수 있습니다.</span>
-            )}
-          </div>
-        ) : null}
+        <BusinessNumberField
+          id="register-businessNumber"
+          value={vm.businessNumber}
+          hint={vm.businessNumberHint}
+          error={vm.formErrors.businessNumber}
+          lookup={{ canLookup: vm.canLookup, isLooking: vm.isLooking, onLookup: () => void vm.lookupBusiness() }}
+          onChange={vm.updateBusinessNumber}
+        />
+        {vm.lookup.status === 'found' ? <BusinessLookupResult business={vm.lookup.business} /> : null}
         {vm.lookup.status === 'failed' ? <p className={companyProfileStyles.formError} role="alert">{vm.lookup.message}</p> : null}
 
         <ProfileFields vm={vm} idPrefix="register" />
         {vm.formErrors.form ? <p className={companyProfileStyles.formError} role="alert">{vm.formErrors.form}</p> : null}
         <div className={companyProfileStyles.formActions}>
-          <button
-            className={workspacePageStyles.primaryButton}
-            type="submit"
-            disabled={vm.isSaving || vm.lookup.status !== 'found' || !vm.lookup.business.isActive}
-          >
+          <button className={workspacePageStyles.primaryButton} type="submit" disabled={vm.isSaving || !vm.canRegister}>
             {vm.isSaving ? '등록 중…' : '기업 등록'}
           </button>
         </div>
@@ -437,79 +402,21 @@ function RegistrationCard({ vm, titleHelp }: { vm: ViewModel; titleHelp: ReactNo
   )
 }
 
-/**
- * 등록과 수정이 같은 입력 항목을 씁니다. `idPrefix`로 두 폼의 label·input 연결을 구분하고,
- * 오류는 필드 아래에 각각 보여 주며 검증에 실패하면 첫 오류 필드로 포커스를 옮깁니다.
- */
+/** 등록과 수정이 같은 입력 항목을 씁니다. 공용 칸에 ViewModel 값을 이어 주기만 합니다. */
 function ProfileFields({ vm, idPrefix }: { vm: ViewModel; idPrefix: string }) {
-  const { focusField, clearFocusField } = vm
-  useEffect(() => {
-    if (focusField === null) return
-    document.getElementById(`${idPrefix}-${focusField}`)?.focus()
-    clearFocusField()
-  }, [focusField, clearFocusField, idPrefix])
-
-  const field = (name: keyof ProfileFormValues) => ({
-    id: `${idPrefix}-${name}`,
-    name,
-    'aria-invalid': vm.formErrors[name] !== undefined,
-    'aria-describedby': vm.formErrors[name] ? `${idPrefix}-${name}-error` : undefined,
-    value: vm.form[name],
-  })
-  // 공용 드롭다운은 같은 값을 prop 이름만 다르게 받습니다.
-  const selectField = (name: 'region' | 'industry') => ({
-    id: `${idPrefix}-${name}`,
-    name,
-    invalid: vm.formErrors[name] !== undefined,
-    describedBy: vm.formErrors[name] ? `${idPrefix}-${name}-error` : undefined,
-    value: vm.form[name],
-  })
-  const errorOf = (name: keyof ProfileFormValues) =>
-    vm.formErrors[name] ? <p id={`${idPrefix}-${name}-error`} className={companyProfileStyles.formError} role="alert">{vm.formErrors[name]}</p> : null
-  const foundedYear = /^\d{4}$/.test(vm.form.foundedYear) ? Number(vm.form.foundedYear) : null
-
   return (
-    <div className={companyProfileStyles.formGrid}>
-      <div className={companyProfileStyles.formField}>
-        <label className={companyProfileStyles.formLabel} htmlFor={`${idPrefix}-region`}>소재지</label>
-        <SelectField className={companyProfileStyles.input} {...selectField('region')}
-          options={[{ value: '', label: '선택' }, ...vm.regions.map((region) => ({ value: region, label: region }))]}
-          onChange={(value) => vm.updateForm('region', value)} />
-        {errorOf('region')}
-      </div>
-      <div className={companyProfileStyles.formField}>
-        <label className={companyProfileStyles.formLabel} htmlFor={`${idPrefix}-industry`}>업종</label>
-        <SelectField className={companyProfileStyles.input} {...selectField('industry')}
-          options={[{ value: '', label: '선택' }, ...vm.industries.map((industry) => ({ value: industry, label: industry }))]}
-          onChange={(value) => vm.updateForm('industry', value)} />
-        {errorOf('industry')}
-      </div>
-      <div className={companyProfileStyles.formField}>
-        <label className={companyProfileStyles.formLabel} htmlFor={`${idPrefix}-foundedYear`}>설립연도</label>
-        <YearPicker
-          id={`${idPrefix}-foundedYear`}
-          label="설립연도"
-          value={foundedYear}
-          min={vm.foundedYearMin}
-          max={vm.currentYear}
-          invalid={vm.formErrors.foundedYear !== undefined}
-          onChange={(year) => vm.updateForm('foundedYear', String(year))}
-        />
-        {errorOf('foundedYear')}
-      </div>
-      <div className={companyProfileStyles.formField}>
-        <label className={companyProfileStyles.formLabel} htmlFor={`${idPrefix}-homepageUrl`}>홈페이지 <span className={companyProfileStyles.optionalMark}>선택</span></label>
-        <input
-          className={companyProfileStyles.input}
-          type="text"
-          inputMode="url"
-          autoComplete="url"
-          placeholder="https://company.co.kr"
-          {...field('homepageUrl')}
-          onChange={(event) => vm.updateForm('homepageUrl', event.target.value)}
-        />
-        {errorOf('homepageUrl') ?? (vm.homepagePreview ? <span className={companyProfileStyles.formHint}>{vm.homepagePreview}</span> : null)}
-      </div>
-    </div>
+    <CompanyProfileFields
+      idPrefix={idPrefix}
+      values={vm.form}
+      errors={vm.formErrors}
+      regions={vm.regions}
+      industries={vm.industries}
+      foundedYearMin={vm.foundedYearMin}
+      currentYear={vm.currentYear}
+      homepagePreview={vm.homepagePreview}
+      focusField={vm.focusField}
+      onFocused={vm.clearFocusField}
+      onChange={vm.updateForm}
+    />
   )
 }

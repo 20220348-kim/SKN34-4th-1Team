@@ -14,7 +14,7 @@ import type { SaveSupportProgramResult } from '../../../../domain/repositories/S
 import { sessionRestored, signedOut } from '../../../shared/auth/state/authSlice'
 import { searchResultInterestKey, searchResultInterestMessages, useSearchResultInterests } from './useSearchResultInterests'
 
-const member: Account = { email: 'member@govbiz.local', role: 'USER', tier: 'MEMBER', emailVerified: true, hasPassword: true, company: null }
+const member: Account = { email: 'member@govbiz.local', role: 'USER', tier: 'MEMBER', emailVerified: true, hasPassword: true, accountType: null, onboarded: true, company: null }
 const program = supportPrograms[0]!
 const identity = { sourceCode: program.sourceCode, sourceProgramId: program.id }
 const key = searchResultInterestKey(identity)

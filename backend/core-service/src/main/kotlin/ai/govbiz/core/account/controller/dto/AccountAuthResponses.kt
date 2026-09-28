@@ -1,5 +1,6 @@
 package ai.govbiz.core.account.controller.dto
 
+import ai.govbiz.core.account.domain.AccountType
 import ai.govbiz.core.account.domain.Account
 import ai.govbiz.core.account.domain.AccountRole
 import ai.govbiz.core.account.domain.AccountTier
@@ -37,6 +38,10 @@ data class AccountResponse(
     val emailVerified: Boolean,
     /** 등록한 기업 요약. 없으면 null이며 사이드바가 이메일만 보여 줍니다. */
     val company: CompanySummaryResponse?,
+    /** 환영 화면에서 고른 회원 유형. 아직이면 null */
+    val accountType: AccountType?,
+    /** 거짓이면 로그인 뒤 `/app/welcome`을 먼저 보여 줍니다. */
+    val onboarded: Boolean,
     /** 거짓이면 소셜 로그인으로만 가입한 계정이라 프로필이 비밀번호 항목을 숨기고 계정 삭제에 비밀번호를 묻지 않습니다. */
     val hasPassword: Boolean,
 ) {
@@ -49,6 +54,8 @@ data class AccountResponse(
                 emailVerified = account.isEmailVerified,
                 company = account.company?.let(CompanySummaryResponse::from),
                 hasPassword = account.hasPassword,
+                accountType = account.accountType,
+                onboarded = account.isOnboarded,
             )
     }
 }

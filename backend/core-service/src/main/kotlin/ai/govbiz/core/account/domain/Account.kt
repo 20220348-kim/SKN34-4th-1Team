@@ -19,6 +19,15 @@ enum class AccountTier {
     ADMIN,
 }
 
+/**
+ * 회원 유형입니다. 사업자등록번호가 있으면 기업, 아직 없으면 개인입니다. 환영 화면에서 한 번 고르고 프로필에서 바꿀 수 있습니다.
+ * 기업 회원이라도 사업자 등록(`company`)은 별개라, 협업 기능은 등록을 마쳐야 열립니다.
+ */
+enum class AccountType {
+    INDIVIDUAL,
+    BUSINESS,
+}
+
 /** 로그인 가능한 계정입니다. 비밀번호 해시는 포함하지 않습니다. */
 data class Account(
     val id: Long,
@@ -31,10 +40,17 @@ data class Account(
     val company: CompanySummary? = null,
     /** 비밀번호를 만든 계정인지입니다. 소셜 로그인으로만 가입한 계정은 거짓이며 화면이 비밀번호 항목을 숨깁니다. */
     val hasPassword: Boolean = true,
+    /** 환영 화면에서 고른 회원 유형입니다. 아직 고르지 않았으면 null입니다. */
+    val accountType: AccountType? = null,
+    /** 환영 화면을 마친 시각입니다. null이면 로그인 뒤 `/app/welcome`을 먼저 보여 줍니다. */
+    val onboardedAt: LocalDateTime? = null,
 ) {
     init {
         requireEmail(email)
     }
+
+    val isOnboarded: Boolean
+        get() = onboardedAt != null
 
     val isAdmin: Boolean
         get() = role == AccountRole.ADMIN

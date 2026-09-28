@@ -11,6 +11,7 @@ import ai.govbiz.core.partner.domain.PartnerProposalView
 import ai.govbiz.core.partner.domain.PartnerRecruitmentStatus
 import ai.govbiz.core.partner.repository.PartnerProposalRepository
 import ai.govbiz.core.partner.repository.PartnerRecruitmentRepository
+import ai.govbiz.core.partner.service.exception.ActiveBusinessRequiredException
 import ai.govbiz.core.partner.service.exception.CompanyRequiredException
 import ai.govbiz.core.partner.service.exception.ProposalActionForbiddenException
 import ai.govbiz.core.partner.service.exception.ProposalAlreadySentException
@@ -38,6 +39,8 @@ class PartnerProposalService(
 
     fun send(account: Account, recruitmentId: Long, content: PartnerProposalInput): PartnerProposalView {
         val company = account.company ?: throw CompanyRequiredException()
+        // 제안은 계속사업자만 보냅니다. 휴업 기업은 받은 제안을 읽고 수락·거절하는 것만 됩니다.
+        if (!company.isActiveBusiness) throw ActiveBusinessRequiredException()
         val recruitment = recruitmentRepository.findById(recruitmentId) ?: throw RecruitmentNotFoundException()
         if (recruitment.isOwnedBy(account.id)) throw ProposalToOwnRecruitmentException()
         if (recruitment.status(LocalDateTime.now(clock).toLocalDate()) == PartnerRecruitmentStatus.CLOSED) {
