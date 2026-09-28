@@ -40,6 +40,9 @@ health 응답은 각각 `govbiz-core-service`·`govbiz-ops-service`이며 현재
 `frontend/web`의 React가 `/ops` 운영 화면을 제공하며 기존 Core 관리자 로그인과 세션 쿠키를 공유합니다.
 `backend/ops-service`는 Python 3.12의 Django와 전용 MySQL로 인증·평가 실행·이력·보고서 API를 제공합니다.
 `ops-sync`는 동일한 Django 이미지로 기존 Prefect 실행 상태를 주기적으로 확인해 Ops DB에 반영합니다.
+React는 관리자별 탭 저장소에 접수 명세를 보관해 새로고침·재로그인 뒤 같은 UUID를 먼저 조회합니다.
+Django는 데이터셋 기준 행 잠금으로 기준 변경과 접수를 직렬화하고 승인 버전·변경 이력을 보존합니다.
+파일 검증은 잠금 밖에서 수행하고 버전·검토를 DB에서 재확인한 뒤 커밋 후 Prefect에 전송합니다.
 React 목록은 DB 결과와 마지막 확인 시각을 읽으며 상세 방문 없이 갱신됩니다. 새 모델 실행을 생성하지 않습니다.
 
 `운영자 → React → /api/v1/ops 프록시 → Django 인증·평가 Service → Prefect API → 상시 평가 실행기 → Langfuse / Evidently`로 연결하며,

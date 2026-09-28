@@ -4,11 +4,13 @@ from datetime import timedelta
 from hashlib import sha256
 
 from django.conf import settings
+from django.db import transaction
 from django.db.models import F, Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
 from . import prefect_client
+from .baselines import lock_baseline
 from .catalog import (
     DATASETS,
     LEGACY_DATASET_ID,
@@ -42,54 +44,94 @@ def submit_run(
     execution_mode="replay",
     live_config=None,
     confirm_paid_run=False,
+    baseline_version=None,
 ):
     config = live_config or {}
-    validate_execution(
-        dataset_id, candidate_capture_id, reference_capture_id, execution_mode, config
-    )
-    if execution_mode == "live" and (not settings.LLMOPS_LIVE_ENABLED or not confirm_paid_run):
-        raise ValueError("새 모델 평가는 활성화와 전송 자료·호출 예산 확인이 필요합니다.")
+
+    def check_request(run):
+        if (
+            run.requested_by_id != user.pk
+            or run.dataset_id != dataset_id
+            or run.candidate_capture_id != candidate_capture_id
+            or run.reference_capture_id != reference_capture_id
+            or run.execution_mode != execution_mode
+            or run.live_config != config
+            or run.baseline_version != baseline_version
+        ):
+            raise RequestConflict
+
     existing = EvaluationRun.objects.filter(pk=request_id).first()
-    reference_config = existing.reference_config if existing else {}
-    if not existing and reference_capture_id.startswith("run:"):
-        baseline = (
+    if existing:
+        check_request(existing)
+        return dispatch_run(existing), False
+
+    # 파일 검증은 잠금 밖에서 수행하고 기준 버전·승인 기록을 잠금 안에서 재확인한다.
+    prepared_baseline = None
+    capture_hash = None
+    if reference_capture_id.startswith("run:"):
+        prepared_baseline = (
             EvaluationBaseline.objects.select_related("review__run")
             .filter(dataset_id=dataset_id, review__run_id=reference_run_id(reference_capture_id))
             .first()
         )
-        if baseline is None:
-            raise ValueError("현재 자료의 검토 기준이 변경되었습니다. 새로고침 후 선택하세요.")
-        _, capture_hash, _ = read_candidate(baseline.review.run)
-        if capture_hash != baseline.review.capture_sha256:
-            raise ResultsUnavailable
-        reference_config = {
-            "run_id": str(baseline.review.run_id),
-            "capture_sha256": capture_hash,
-            "fixture_sha256": DATASETS[dataset_id]["fixture_sha256"],
-        }
-    run, created = EvaluationRun.objects.get_or_create(
-        id=request_id,
-        defaults={
-            "requested_by": user,
-            "dataset_id": dataset_id,
-            "candidate_capture_id": candidate_capture_id,
-            "reference_capture_id": reference_capture_id,
-            "reference_config": reference_config,
-            "execution_mode": execution_mode,
-            "live_config": config,
-            "model_api_calls": None if execution_mode == "live" else 0,
-        },
-    )
-    if (
-        run.requested_by_id != user.pk
-        or run.dataset_id != dataset_id
-        or run.candidate_capture_id != candidate_capture_id
-        or run.reference_capture_id != reference_capture_id
-        or run.execution_mode != execution_mode
-        or run.live_config != config
-    ):
-        raise RequestConflict
-    validate_reference_config(dataset_id, reference_capture_id, run.reference_config)
+        if prepared_baseline is not None:
+            _, capture_hash, _ = read_candidate(prepared_baseline.review.run)
+            if capture_hash != prepared_baseline.review.capture_sha256:
+                raise ResultsUnavailable
+
+    with transaction.atomic():
+        baseline = lock_baseline(dataset_id)
+        existing = EvaluationRun.objects.filter(pk=request_id).first()
+        if existing:
+            check_request(existing)
+            run, created = existing, False
+        else:
+            validate_execution(
+                dataset_id, candidate_capture_id, reference_capture_id, execution_mode, config
+            )
+            if execution_mode == "live" and (
+                not settings.LLMOPS_LIVE_ENABLED or not confirm_paid_run
+            ):
+                raise ValueError("새 모델 평가는 활성화와 전송 자료·호출 예산 확인이 필요합니다.")
+            reference_config = {}
+            if reference_capture_id.startswith("run:"):
+                if (
+                    prepared_baseline is None
+                    or baseline.review_id != prepared_baseline.review_id
+                    or baseline.version != baseline_version
+                    or baseline.version != prepared_baseline.version
+                ):
+                    raise ValueError("현재 자료의 검토 기준이 변경되었습니다. 다시 선택하세요.")
+                source = EvaluationRun.objects.select_for_update().get(
+                    pk=prepared_baseline.review.run_id
+                )
+                if source.status != "COMPLETED":
+                    raise ResultsUnavailable
+                reference_config = {
+                    "run_id": str(prepared_baseline.review.run_id),
+                    "capture_sha256": capture_hash,
+                    "fixture_sha256": DATASETS[dataset_id]["fixture_sha256"],
+                }
+            elif baseline_version is not None:
+                raise ValueError("저장 캡처에는 검토 기준 버전을 지정할 수 없습니다.")
+            validate_reference_config(dataset_id, reference_capture_id, reference_config)
+            run, created = EvaluationRun.objects.get_or_create(
+                id=request_id,
+                defaults={
+                    "requested_by": user,
+                    "dataset_id": dataset_id,
+                    "candidate_capture_id": candidate_capture_id,
+                    "reference_capture_id": reference_capture_id,
+                    "reference_config": reference_config,
+                    "baseline_version": baseline_version,
+                    "baseline_review_id": baseline.review_id if reference_config else None,
+                    "execution_mode": execution_mode,
+                    "live_config": config,
+                    "model_api_calls": None if execution_mode == "live" else 0,
+                },
+            )
+            check_request(run)
+    # 외부 전송은 기준 검증과 접수를 커밋한 다음 수행한다.
     return dispatch_run(run), created
 
 

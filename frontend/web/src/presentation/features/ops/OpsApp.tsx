@@ -1,11 +1,12 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
 import { getEvaluation, getOpsSession, listEvaluations, OpsApiError, recoverEvaluation, submitEvaluation } from '../../../data/ops/opsApi'
 import { appContainer } from '../../../app/appContainer'
 import { useAppDispatch } from '../../../app/hooks'
 import { signedOut } from '../../shared/auth/state/authSlice'
 import { loginPathFor } from '../../shared/auth/returnPath'
-import type { EvaluationPage, EvaluationRun, OpsSession } from '../../../data/ops/opsApi'
+import { readPendingEvaluation, storePendingEvaluation, clearPendingEvaluation } from '../../../data/ops/pendingEvaluation'
+import type { EvaluationPage, EvaluationRun, OpsSession, EvaluationSubmission } from '../../../data/ops/opsApi'
 import { workspacePageStyles as styles, workspaceTagClassName } from '../../shared/workspace/WorkspacePage.styles'
 import { EvaluationReviewPanel } from './EvaluationReviewPanel'
 import { WorkspacePageHeader } from '../../shared/workspace/WorkspacePageHeader'
@@ -75,7 +76,7 @@ export function OpsApp() {
       {!session ? (!error && <p className="p-8" role="status">운영자 세션을 확인하고 있습니다.</p>)
         : !session.user ? <Navigate replace to={loginPathFor(location.pathname === '/ops/login' ? listPath : location.pathname + location.search)} />
           : <Routes>
-            <Route path="/ops/evaluations" element={<EvaluationList key={session.user.username} datasets={session.datasets} liveEnabled={session.live_enabled} onExpired={expired} />} />
+            <Route path="/ops/evaluations" element={<EvaluationList key={session.user.id} owner={session.user.id} datasets={session.datasets} liveEnabled={session.live_enabled} onExpired={expired} />} />
             <Route path="/ops/evaluations/:runId" element={<EvaluationDetail key={`${session.user.username}:${location.pathname}`} onExpired={expired} onReviewChanged={() => setReload((value) => value + 1)} />} />
             <Route path="*" element={<Navigate replace to={listPath} />} />
           </Routes>}
@@ -83,26 +84,33 @@ export function OpsApp() {
   </div>
 }
 
-function EvaluationList({ datasets, liveEnabled, onExpired }: { datasets: OpsSession['datasets']; liveEnabled: boolean; onExpired: () => void }) {
+function EvaluationList({ owner, datasets, liveEnabled, onExpired }: { owner: string; datasets: OpsSession['datasets']; liveEnabled: boolean; onExpired: () => void }) {
   const [search, setSearch] = useSearchParams()
   const pageValue = Number(search.get('page') ?? 1)
   const page = Number.isInteger(pageValue) && pageValue > 0 ? pageValue : 1
   const [data, setData] = useState<EvaluationPage | null>(null)
   const [error, setError] = useState('')
+  const [restored] = useState(() => {
+    try { return { pending: readPendingEvaluation(owner), error: '' } }
+    catch { return { pending: null, error: '보관한 요청을 읽을 수 없습니다. 이 탭의 요청 기록과 실행 이력을 확인해야 새 평가를 접수할 수 있습니다.' } }
+  })
+  const [pending, setPending] = useState<EvaluationSubmission | null>(restored.pending)
+  const [storageError, setStorageError] = useState(restored.error)
+  const [rejected, setRejected] = useState(false)
   const [submitError, setSubmitError] = useState('')
   const [refresh, setRefresh] = useState(0)
   const [busy, setBusy] = useState(false)
-  const [mode, setMode] = useState<'replay' | 'live'>('replay')
-  const [approved, setApproved] = useState(false)
-  const [dataset, setDataset] = useState(datasets[0]?.id ?? '')
+  const [mode, setMode] = useState<'replay' | 'live'>(restored.pending?.live_config ? 'live' : 'replay')
+  const [approved, setApproved] = useState(!!restored.pending?.live_config)
+  const [dataset, setDataset] = useState(restored.pending?.dataset_id ?? datasets[0]?.id ?? '')
   const selected = datasets.find((item) => item.id === dataset)
-  const [reference, setReference] = useState(datasets[0]?.baseline?.id ?? datasets[0]?.captures[0]?.id ?? '')
-  const [candidate, setCandidate] = useState(datasets[0]?.captures.at(-1)?.id ?? '')
+  const [reference, setReference] = useState(restored.pending?.reference_capture_id ?? datasets[0]?.baseline?.id ?? datasets[0]?.captures[0]?.id ?? '')
+  const [candidate, setCandidate] = useState(restored.pending?.candidate_capture_id ?? datasets[0]?.captures.at(-1)?.id ?? '')
   const changeDataset = (id: string) => {
     const value = datasets.find((item) => item.id === id)
     setApproved(false); setDataset(id); setReference(value?.baseline?.id ?? value?.captures[0]?.id ?? ''); setCandidate(value?.captures.at(-1)?.id ?? '')
   }
-  const requestId = useRef<string | null>(null)
+  const requestId = useRef<string | null>(restored.pending?.request_id ?? null)
   const submitting = useRef(false)
   const navigate = useNavigate()
   const expiry = useRef(onExpired); expiry.current = onExpired
@@ -127,17 +135,62 @@ function EvaluationList({ datasets, liveEnabled, onExpired }: { datasets: OpsSes
     void read()
     return () => { controller.abort(); clearTimeout(timer) }
   }, [page, refresh])
+  const finish = useCallback((value: EvaluationRun, request: EvaluationSubmission) => {
+    if (value.id !== request.request_id || value.requested_by_id !== owner) throw new Error('접수된 요청의 식별자와 계정이 일치하지 않습니다.')
+    clearPendingEvaluation(owner, request.request_id)
+    navigate(`${listPath}/${value.id}`)
+  }, [owner, navigate])
+  // 재진입은 조회만 수행한다. 서버에 아직 없더라도 자동으로 유료 요청을 전송하지 않는다.
+  useEffect(() => {
+    if (!restored.pending) return
+    const controller = new AbortController()
+    setBusy(true)
+    getEvaluation(restored.pending.request_id, controller.signal).then((value) => {
+      if (!controller.signal.aborted) finish(value, restored.pending!)
+    }).catch((reason) => {
+      if (controller.signal.aborted) return
+      if (reason instanceof OpsApiError && [401, 403].includes(reason.status)) expiry.current()
+      else setSubmitError(reason instanceof OpsApiError && reason.status === 404
+        ? '아직 접수된 요청을 찾지 못했습니다. 보관한 조건과 같은 요청으로 재확인할 수 있습니다.' : message(reason))
+    }).finally(() => { if (!controller.signal.aborted) setBusy(false) })
+    return () => controller.abort()
+  }, [restored, finish])
   const submit = async () => {
-    if (submitting.current || (mode === 'live' && (!approved || !liveEnabled || !selected))) return
-    submitting.current = true; setBusy(true); setSubmitError('')
-    requestId.current ??= crypto.randomUUID()
+    if (submitting.current || busy || storageError || (!pending && mode === 'live' && (!approved || !liveEnabled || !selected))) return
+    submitting.current = true; setBusy(true); setSubmitError(''); setRejected(false)
     try {
-      const run = await submitEvaluation(requestId.current, dataset, mode === 'live' ? 'new-model-response' : candidate, reference, mode === 'live' ? selected!.live_config : null)
-      navigate(`${listPath}/${run.id}`)
+      let request = pending ?? readPendingEvaluation(owner)
+      const retrying = request !== null
+      if (!request) {
+        request = {
+          request_id: crypto.randomUUID(), dataset_id: dataset,
+          candidate_capture_id: mode === 'live' ? 'new-model-response' : candidate,
+          reference_capture_id: reference, live_config: mode === 'live' ? selected!.live_config : null,
+          baseline_version: reference === selected?.baseline?.id ? selected.baseline.version : null,
+        }
+        try { storePendingEvaluation(owner, request) }
+        catch { setStorageError('요청을 보관할 수 없어 전송하지 않았습니다. 브라우저의 탭 저장소를 확인하세요.'); return }
+      }
+      requestId.current = request.request_id; setPending(request)
+      if (retrying) {
+        try { finish(await getEvaluation(request.request_id), request); return }
+        catch (reason) { if (!(reason instanceof OpsApiError && reason.status === 404)) throw reason }
+      }
+      const run = await submitEvaluation(request.request_id, request.dataset_id, request.candidate_capture_id,
+        request.reference_capture_id, request.live_config, request.baseline_version, owner)
+      finish(run, request)
     } catch (reason) {
-      if (reason instanceof OpsApiError && (reason.status === 401 || reason.status === 403)) expiry.current()
-      else setSubmitError(`${message(reason)} 재시도할 때 같은 요청을 사용합니다.`)
+      if (reason instanceof OpsApiError && [401, 403].includes(reason.status)) expiry.current()
+      else {
+        setRejected(reason instanceof OpsApiError && reason.status === 400)
+        setSubmitError(`${message(reason)} 재시도할 때 보관한 요청을 사용합니다.`)
+      }
     } finally { submitting.current = false; setBusy(false) }
+  }
+  const reselect = () => {
+    if (!rejected || !pending) return
+    try { clearPendingEvaluation(owner, pending.request_id); onExpired() }
+    catch { setStorageError('접수되지 않은 요청 기록을 정리하지 못했습니다. 탭 저장소를 확인하세요.') }
   }
   return <>
     <WorkspacePageHeader title="평가 실행 관리" actions={<button className={styles.secondaryButton} onClick={() => setRefresh((value) => value + 1)}>목록 새로고침</button>} />
@@ -150,7 +203,7 @@ function EvaluationList({ datasets, liveEnabled, onExpired }: { datasets: OpsSes
           <label className="grid min-w-0 flex-1 gap-2 text-sm font-semibold">평가 자료<select className={field} value={dataset} disabled={busy || requestId.current !== null} onChange={(event) => changeDataset(event.target.value)}>{datasets.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
           <label className="grid min-w-56 flex-1 gap-2 text-sm font-semibold">기준 실행<select className={field} value={reference} disabled={busy || requestId.current !== null} onChange={(event) => setReference(event.target.value)}>{selected?.baseline && <option value={selected.baseline.id}>{selected.baseline.label}</option>}{selected?.captures.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
           {mode === 'replay' && <label className="grid min-w-56 flex-1 gap-2 text-sm font-semibold">후보 실행<select className={field} value={candidate} disabled={busy || requestId.current !== null} onChange={(event) => setCandidate(event.target.value)}>{selected?.captures.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>}
-          <button className={styles.primaryButton} disabled={busy || !dataset || !reference || !candidate || (mode === 'live' && (!approved || !liveEnabled))}>{busy ? '접수 중…' : submitError ? '같은 요청으로 재시도' : mode === 'live' ? '새 응답 생성 및 평가' : '평가 실행'}</button>
+          <button className={styles.primaryButton} disabled={busy || !!storageError || rejected || (!pending && (!dataset || !reference || !candidate || (mode === 'live' && (!approved || !liveEnabled))))}>{busy ? '접수 중…' : pending ? '같은 요청으로 재시도' : mode === 'live' ? '새 응답 생성 및 평가' : '평가 실행'}</button>
           {mode === 'live' && selected && <div className="w-full rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6">
             <p>모델: <strong>{selected.live_config.model}</strong> · 최대 {selected.live_config.max_model_calls}회 · 호출당 출력 최대 {selected.live_config.max_output_tokens.toLocaleString()}토큰 · 자동 재호출 없음</p>
             <p>전송 자료: {selected.fixture}의 {selected.case_ids.join(', ')} 질문과 고정 근거 청크. 시스템 답변 지침을 함께 전송합니다. 평가용 가상 자료이며 실제 회원 대화는 사용하지 않습니다.</p>
@@ -159,7 +212,10 @@ function EvaluationList({ datasets, liveEnabled, onExpired }: { datasets: OpsSes
           </div>}
         </form>
         {selected && <p className="text-xs leading-5 text-sample-muted">비교 범위: {selected.case_ids.join(', ')} · {selected.case_ids.length}건. {mode === 'live' ? '현재 모델의 새 응답과 선택한 기준 응답을 비교합니다.' : reference === candidate ? '같은 저장 결과의 재현 검증입니다.' : '두 실행의 위 사례만 비교합니다. 원본의 다른 사례는 평가 범위에 포함하지 않습니다.'}</p>}
+        {pending && <div className="rounded-xl bg-amber-50 p-3 text-sm" role="status"><p>보관한 요청: {pending.request_id}</p><p>{pending.dataset_id} · 기준 {pending.reference_capture_id}{pending.baseline_version ? ` · 기준 버전 ${pending.baseline_version}` : ''} · {pending.live_config ? `${pending.live_config.model} · 최대 ${pending.live_config.max_model_calls}회 · 출력 ${pending.live_config.max_output_tokens}토큰/회` : '저장 응답 재평가'}</p><p>새로고침·재로그인 뒤에도 이 탭에서 같은 요청을 확인합니다. 탭을 닫기 전 실행 이력에서 접수 여부를 확인하세요.</p></div>}
+        {storageError && <p role="alert" className="text-sm text-red-700">{storageError}</p>}
         {submitError && <p role="alert" className="text-sm text-red-700">{submitError}</p>}
+        {rejected && <button className={styles.secondaryButton} onClick={reselect}>접수되지 않은 조건 다시 선택</button>}
       </section>
       <section className={styles.card} aria-label="평가 실행 이력">
         <h2 className={styles.cardTitle}>실행 이력{data ? ` · ${data.count}건` : ''}</h2>
@@ -209,7 +265,7 @@ function EvaluationDetail({ onExpired, onReviewChanged }: { onExpired: () => voi
     try {
       setRun(run.execution_mode === 'recovery' && run.source_run_id
         ? await recoverEvaluation(run.source_run_id, run.id)
-        : await submitEvaluation(run.id, run.dataset_id, run.candidate_capture_id, run.reference_capture_id, run.live_config))
+        : await submitEvaluation(run.id, run.dataset_id, run.candidate_capture_id, run.reference_capture_id, run.live_config, run.baseline_version))
       setRefresh((value) => value + 1)
     }
     catch (reason) {
