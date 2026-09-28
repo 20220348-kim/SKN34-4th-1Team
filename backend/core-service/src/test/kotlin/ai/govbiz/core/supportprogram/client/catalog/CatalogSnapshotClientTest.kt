@@ -3,6 +3,7 @@ package ai.govbiz.core.supportprogram.client.catalog
 import ai.govbiz.core.supportprogram.client.catalog.config.CatalogClientProperties
 import ai.govbiz.core.supportprogram.client.catalog.exception.CatalogServiceCallException
 import ai.govbiz.core.supportprogram.client.catalog.exception.CatalogServiceCallException.Failure
+import ai.govbiz.core.supportprogram.domain.SupportProgramApplicationRouteType
 import java.net.URI
 import java.net.SocketTimeoutException
 import org.junit.jupiter.api.AfterEach
@@ -70,6 +71,23 @@ class CatalogSnapshotClientTest {
             assertEquals(Failure.INVALID_RESPONSE,
                 assertThrows(CatalogServiceCallException::class.java) { client.fetch("KSTARTUP") }.failure)
         }
+    }
+
+    @Test
+    fun mapsApplicationRouteFromCatalogSnapshot() {
+        val program = """{"program":{"id":"PBLN_1","sourceCode":"BIZINFO","title":"지원","organization":"기관",
+          "summary":"본문","categories":[],"regions":[],"targetDescription":"중소기업",
+          "applicationPeriod":"상시","applicationStartDate":null,"applicationEndDate":null,
+          "status":"UNKNOWN","sourceName":"기업마당","sourceUrl":"https://www.bizinfo.go.kr/detail?id=PBLN_1",
+          "applicationRoute":{"method":"온라인 접수","url":"https://forms.gle/abc123","type":"GOOGLE_FORMS"}},
+          "sortTimestamp":"","startupDetails":null}"""
+        val body = snapshot().replace("\"programs\":[]", "\"programs\":[$program]")
+            .replace("\"publishedProgramCount\":0", "\"publishedProgramCount\":1")
+        server.expect(anything()).andRespond(withSuccess(body, MediaType.APPLICATION_JSON))
+        val route = client.fetch("BIZINFO").programs.single().program.applicationRoute
+        assertEquals("온라인 접수", route.method)
+        assertEquals("https://forms.gle/abc123", route.url)
+        assertEquals(SupportProgramApplicationRouteType.GOOGLE_FORMS, route.type)
     }
 
     @Test

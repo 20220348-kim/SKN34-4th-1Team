@@ -18,6 +18,9 @@
         <result column="application_start_date" property="applicationStartDate" />
         <result column="application_end_date" property="applicationEndDate" />
         <result column="source_url" property="sourceUrl" />
+        <result column="application_method" property="applicationMethod" />
+        <result column="application_url" property="applicationUrl" />
+        <result column="application_route_type" property="applicationRouteType" />
         <result column="source_sort_timestamp" property="sourceSortTimestamp" />
         <result column="startup_details" property="startupDetailsJson" />
     </resultMap>
@@ -49,6 +52,9 @@
             application_start_date,
             application_end_date,
             source_url,
+            application_method,
+            application_url,
+            application_route_type,
             source_sort_timestamp,
             startup_details,
             is_source_present
@@ -65,6 +71,9 @@
             #{applicationStartDate,jdbcType=DATE},
             #{applicationEndDate,jdbcType=DATE},
             #{sourceUrl},
+            #{applicationMethod,jdbcType=VARCHAR},
+            #{applicationUrl,jdbcType=VARCHAR},
+            #{applicationRouteType},
             #{sourceSortTimestamp,jdbcType=VARCHAR},
             #{startupDetailsJson,jdbcType=VARCHAR},
             TRUE
@@ -81,6 +90,9 @@
             application_start_date = #{applicationStartDate,jdbcType=DATE},
             application_end_date = #{applicationEndDate,jdbcType=DATE},
             source_url = #{sourceUrl},
+            application_method = #{applicationMethod,jdbcType=VARCHAR},
+            application_url = #{applicationUrl,jdbcType=VARCHAR},
+            application_route_type = #{applicationRouteType},
             source_sort_timestamp = #{sourceSortTimestamp,jdbcType=VARCHAR},
             startup_details = #{startupDetailsJson,jdbcType=VARCHAR},
             is_source_present = TRUE,
@@ -92,6 +104,7 @@
             source_code, source_program_id, title, organization, summary,
             categories, regions, target_description, application_period_raw,
             application_start_date, application_end_date, source_url,
+            application_method, application_url, application_route_type,
             source_sort_timestamp, startup_details, is_source_present
         ) VALUES
         <foreach collection="rows" item="row" separator=",">
@@ -101,7 +114,9 @@
                 #{row.categoriesJson,jdbcType=VARCHAR}, #{row.regionsJson,jdbcType=VARCHAR},
                 #{row.targetDescription}, #{row.applicationPeriodRaw},
                 #{row.applicationStartDate,jdbcType=DATE}, #{row.applicationEndDate,jdbcType=DATE},
-                #{row.sourceUrl}, #{row.sourceSortTimestamp,jdbcType=VARCHAR},
+                #{row.sourceUrl}, #{row.applicationMethod,jdbcType=VARCHAR},
+                #{row.applicationUrl,jdbcType=VARCHAR}, #{row.applicationRouteType},
+                #{row.sourceSortTimestamp,jdbcType=VARCHAR},
                 #{row.startupDetailsJson,jdbcType=VARCHAR}, TRUE
             )
         </foreach>
@@ -118,6 +133,9 @@
             application_start_date = incoming.application_start_date,
             application_end_date = incoming.application_end_date,
             source_url = incoming.source_url,
+            application_method = incoming.application_method,
+            application_url = incoming.application_url,
+            application_route_type = incoming.application_route_type,
             source_sort_timestamp = incoming.source_sort_timestamp,
             startup_details = incoming.startup_details,
             is_source_present = TRUE,
@@ -145,6 +163,9 @@
             application_start_date,
             application_end_date,
             source_url,
+            application_method,
+            application_url,
+            application_route_type,
             source_sort_timestamp,
             startup_details
         FROM support_program
@@ -167,6 +188,9 @@
             application_start_date,
             application_end_date,
             source_url,
+            application_method,
+            application_url,
+            application_route_type,
             source_sort_timestamp,
             startup_details
         FROM support_program
@@ -188,6 +212,9 @@
             program.application_start_date,
             program.application_end_date,
             program.source_url,
+            program.application_method,
+            program.application_url,
+            program.application_route_type,
             program.source_sort_timestamp,
             program.startup_details
         FROM support_program program
@@ -218,7 +245,8 @@
     <select id="findPresentBySource" resultMap="supportProgramDbRow">
         SELECT source_code, source_program_id, title, organization, summary, categories, regions,
                target_description, application_period_raw, application_start_date, application_end_date,
-               source_url, source_sort_timestamp, startup_details
+               source_url, application_method, application_url, application_route_type,
+               source_sort_timestamp, startup_details
         FROM support_program
         WHERE source_code = #{sourceCode} AND is_source_present = TRUE
         ORDER BY source_program_id ASC

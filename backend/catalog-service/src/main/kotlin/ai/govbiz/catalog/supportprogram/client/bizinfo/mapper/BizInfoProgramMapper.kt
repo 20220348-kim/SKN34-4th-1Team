@@ -3,6 +3,7 @@ package ai.govbiz.catalog.supportprogram.client.bizinfo.mapper
 import ai.govbiz.catalog.supportprogram.client.bizinfo.dto.BizInfoProgramPayload
 import ai.govbiz.catalog.supportprogram.client.bizinfo.exception.BizInfoClientException
 import ai.govbiz.catalog.supportprogram.domain.SupportProgram
+import ai.govbiz.catalog.supportprogram.domain.SupportProgramApplicationRoute
 import ai.govbiz.catalog.supportprogram.domain.CatalogSupportProgram
 import ai.govbiz.catalog.supportprogram.domain.SupportProgramStatusResolver
 import java.net.URI
@@ -99,6 +100,11 @@ internal object BizInfoProgramMapper {
         val applicationPeriod = firstPresent(requiredPayload.applicationPeriod, "정보 없음")
         val dates = parseDates(applicationPeriod)
         val summary = plainText(requiredPayload.summaryHtml)
+        val applicationRoute = try {
+            SupportProgramApplicationRoute.fromOfficialFields(plainText(requiredPayload.applicationMethod), requiredPayload.applicationUrl)
+        } catch (exception: IllegalArgumentException) {
+            throw BizInfoClientException.invalidResponse("BizInfo API returned an oversized application method", exception)
+        }
         val organization = firstPresent(
             requiredPayload.executingOrganization,
             requiredPayload.jurisdictionOrganization,
@@ -126,6 +132,7 @@ internal object BizInfoProgramMapper {
                 ),
                 sourceName = "기업마당",
                 sourceUrl = sourceUrl,
+                applicationRoute = applicationRoute,
                 matchedReasons = emptyList(),
             ),
             sortTimestamp = firstPresent(requiredPayload.updatedAt, requiredPayload.createdAt, ""),

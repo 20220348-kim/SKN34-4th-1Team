@@ -68,6 +68,13 @@ Core의 `AdminPrincipalArgumentResolver → AccountSessionService`가 세션·�
 
 루트 `compose.yaml`은 `infrastructure/compose.catalog.yaml`을 포함해 공고 카탈로그 분리를 기본 적용합니다.
 Catalog는 별도 프로세스·DB로 네 제공처 수집, 정규화, 검색 색인과 공개 snapshot을 소유합니다.
+기업마당 공식 API의 사업신청방법·사업신청URL은 Catalog의 신청 경로로 정규화해 저장합니다.
+`sourceUrl`은 공고 상세 주소로 유지하며 신청 URL이 없을 때 대체하지 않습니다. Catalog 내부 snapshot이
+신청 경로를 Core projection에 전달하고 Core 상세 응답의 `applicationRoute`가 이를 노출합니다.
+K-Startup·MSIT·충남 공고는 이번 작업에서 신청 URL 응답 필드의 이름과 의미를 검증하지 못해
+`UNKNOWN`으로 둡니다. K-Startup 공식 데이터 소개에는 신청방법이 언급되지만 현재 사용하는
+공고 응답에서 대응 필드를 확인하기 전까지 임의로 매핑하지 않습니다.
+신청 경로는 검색 문서·임베딩에 넣지 않으며 URL 분류 중 외부 접속을 하지 않습니다.
 Core는 `CatalogProjectionScheduler → Service → 인증된 HTTP Client → Catalog`로 완전한 응답을 받은 뒤,
 Service가 짧은 transaction을 시작한 뒤 `CatalogProjectionRepository → MyBatis → Core MySQL`로
 조회용 복제본·신청서 분석 등록·checkpoint를 함께 갱신합니다. HTTP 수신은 transaction 밖입니다.

@@ -3,6 +3,7 @@ package ai.govbiz.catalog.internal.controller.dto
 import ai.govbiz.catalog.supportprogram.domain.CatalogSnapshot
 import ai.govbiz.catalog.supportprogram.domain.CatalogSupportProgram
 import ai.govbiz.catalog.supportprogram.domain.SupportProgram
+import ai.govbiz.catalog.supportprogram.domain.SupportProgramApplicationRoute
 import ai.govbiz.catalog.supportprogram.domain.SupportProgramStartupDetails
 import ai.govbiz.catalog.supportprogram.domain.SupportProgramSyncStatus
 import java.time.LocalDate
@@ -71,14 +72,26 @@ data class CatalogProgramDetailsResponse(
     val status: String,
     val sourceName: String,
     val sourceUrl: String,
+    val applicationRoute: CatalogApplicationRouteResponse = CatalogApplicationRouteResponse(null, null, "UNKNOWN"),
 ) {
     companion object {
         fun from(program: SupportProgram) = CatalogProgramDetailsResponse(
             program.id, program.sourceCode, program.title, program.organization, program.summary,
             program.categories, program.regions, program.targetDescription, program.applicationPeriod,
             program.applicationStartDate, program.applicationEndDate, program.status.name,
-            program.sourceName, program.sourceUrl,
+            program.sourceName, program.sourceUrl, CatalogApplicationRouteResponse.from(program.applicationRoute),
         )
+    }
+}
+
+data class CatalogApplicationRouteResponse(
+    val method: String?,
+    val url: String?,
+    val type: String,
+) {
+    companion object {
+        fun from(route: SupportProgramApplicationRoute) =
+            CatalogApplicationRouteResponse(route.method, route.url, route.type.name)
     }
 }
 

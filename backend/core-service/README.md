@@ -328,7 +328,7 @@ Controller의 `SupportProgramRequestAdmissionService.execute`가 공개 요청 �
 | `POST /api/v1/support-programs/search/results` | 로그인 후 기존 검색 결과와 조건 복원(검색·모델 재호출 없음) |
 | `POST /api/v1/support-programs/conversation/interpret` | 현재 발화로 조건 변경 초안을 만들며 사용자 확인 전에는 검색하지 않음 |
 | `POST /api/v1/assistant/messages` | 도우미 자유 질문 한 건의 의도 분류·답변. 비로그인 허용, 세션이 있으면 관심 공고함·받은 제안함·기업 상태로 답함. 프런트 `VITE_ASSISTANT_AI_ENABLED=true`일 때만 호출됨 |
-| `GET /api/v1/support-programs/detail` | 제공처 코드와 원본 ID로 현재 공고 상세 조회 |
+| `GET /api/v1/support-programs/detail` | 제공처 코드와 원본 ID로 현재 공고 상세 조회. `sourceUrl`은 공고 상세, `applicationRoute`는 공식 신청방법·URL·경로 분류를 반환 |
 | `POST /api/v1/support-programs/detail/answers` | 특정 공고의 공식 원문 근거 질문·답변 |
 | `POST /api/v1/sample-items/prepare` | 계층 연결 학습용 예제 |
 | `POST /api/v1/auth/signup` | 이메일·비밀번호 회원가입(201). 계정을 만들고 바로 브라우저 세션 쿠키 발급, 중복 이메일은 409 |

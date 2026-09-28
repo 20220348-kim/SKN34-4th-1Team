@@ -6,6 +6,7 @@ import ai.govbiz.core._common.exception.AiServiceFailure
 import ai.govbiz.core.supportprogram.client.ai.mapper.SupportProgramIndexDocumentMapper
 import ai.govbiz.core.supportprogram.domain.CatalogSupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgram
+import ai.govbiz.core.supportprogram.domain.SupportProgramApplicationRoute
 import ai.govbiz.core.supportprogram.domain.SupportProgramSourceDocument
 import ai.govbiz.core.supportprogram.domain.SupportProgramStatus
 import ai.govbiz.core.supportprogram.domain.SupportProgramStartupDetails
@@ -106,6 +107,22 @@ class SupportProgramRepositoryIntegrationTest {
         jdbcTemplate.update("DELETE FROM support_program")
         jdbcTemplate.update("DELETE FROM support_program_sync_status")
         jdbcTemplate.update("DELETE FROM support_program_sync_generation")
+    }
+
+    @Test
+    fun readsLegacyRowWithoutApplicationColumnsAsUnknown() {
+        jdbcTemplate.update("""
+            INSERT INTO support_program (
+                source_code, source_program_id, title, organization, summary, categories, regions,
+                target_description, application_period_raw, source_url
+            ) VALUES (
+                'BIZINFO', 'legacy', '기존 공고', '기관', '요약', JSON_ARRAY(), JSON_ARRAY(),
+                '중소기업', '상시', 'https://www.bizinfo.go.kr/detail?id=legacy'
+            )
+        """.trimIndent())
+
+        assertEquals(SupportProgramApplicationRoute(),
+            repository.findPresentBySourceAndProgramId("BIZINFO", "legacy")?.program?.applicationRoute)
     }
 
     @Test

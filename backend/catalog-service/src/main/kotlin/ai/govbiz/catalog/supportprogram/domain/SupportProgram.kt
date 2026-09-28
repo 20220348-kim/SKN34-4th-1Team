@@ -20,6 +20,7 @@ data class SupportProgram(
     val matchedReasons: List<String>,
     val recommendationScore: Int? = null,
     val eligibilityReview: SupportProgramEligibilityReview? = null,
+    val applicationRoute: SupportProgramApplicationRoute = SupportProgramApplicationRoute(),
 ) {
     init {
         require(SOURCE_CODE_PATTERN.matches(sourceCode)) {

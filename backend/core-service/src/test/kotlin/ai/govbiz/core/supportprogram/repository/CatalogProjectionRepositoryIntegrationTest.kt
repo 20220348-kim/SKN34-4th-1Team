@@ -5,6 +5,8 @@ import ai.govbiz.core.applicationpreparation.repository.ApplicationFormAvailabil
 import ai.govbiz.core.supportprogram.domain.CatalogProjectionSnapshot
 import ai.govbiz.core.supportprogram.domain.CatalogSupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgram
+import ai.govbiz.core.supportprogram.domain.SupportProgramApplicationRoute
+import ai.govbiz.core.supportprogram.domain.SupportProgramApplicationRouteType
 import ai.govbiz.core.supportprogram.domain.SupportProgramStatus
 import ai.govbiz.core.supportprogram.domain.SupportProgramSyncOutcome
 import ai.govbiz.core.supportprogram.domain.SupportProgramSyncStatus
@@ -59,7 +61,10 @@ class CatalogProjectionRepositoryIntegrationTest {
 
     @Test
     fun appliesCompleteSnapshotAndRoundTripsKoreanJsonAndNullableDates() {
-        val incoming = snapshot(listOf(program("한글-🚀")))
+        val incoming = snapshot(listOf(program("한글-🚀").let {
+            it.copy(program = it.program.copy(applicationRoute = SupportProgramApplicationRoute(
+                "온라인 신청", "https://forms.gle/abc123", SupportProgramApplicationRouteType.GOOGLE_FORMS)))
+        }))
         assertFalse(projection.hasCheckpoints())
 
         assertTrue(projection.apply(incoming))
@@ -70,6 +75,7 @@ class CatalogProjectionRepositoryIntegrationTest {
         assertEquals(listOf("서울", "전국"), stored.program.regions)
         assertNull(stored.program.applicationStartDate)
         assertNull(stored.program.applicationEndDate)
+        assertEquals(incoming.programs.single().program.applicationRoute, stored.program.applicationRoute)
         assertEquals(incoming.status, programs.findSyncStatus("BIZINFO"))
         assertNotNull(availability.find("BIZINFO", "한글-🚀"))
         assertTrue(projection.hasCheckpoints())
@@ -93,12 +99,36 @@ class CatalogProjectionRepositoryIntegrationTest {
     }
 
     @Test
+    fun newerPublishedRouteReplacesAndThenClearsThePreviousApplicationUrl() {
+        val original = program("one").let { item ->
+            item.copy(program = item.program.copy(applicationRoute = SupportProgramApplicationRoute(
+                "온라인 신청", "https://apply.example.go.kr/old", SupportProgramApplicationRouteType.OTHER_ONLINE_FORM)))
+        }
+        assertTrue(projection.apply(snapshot(listOf(original), revision = 1, generation = 1)))
+
+        val changed = original.copy(program = original.program.copy(applicationRoute = SupportProgramApplicationRoute(
+            "온라인 신청", "https://apply.example.go.kr/new", SupportProgramApplicationRouteType.OTHER_ONLINE_FORM)))
+        assertTrue(projection.apply(snapshot(listOf(changed), revision = 2, generation = 2)))
+        assertEquals(changed.program.applicationRoute,
+            programs.findPresentBySourceAndProgramId("BIZINFO", "one")?.program?.applicationRoute)
+
+        val cleared = original.copy(program = original.program.copy(applicationRoute = SupportProgramApplicationRoute()))
+        assertTrue(projection.apply(snapshot(listOf(cleared), revision = 3, generation = 3)))
+        assertEquals(cleared.program.applicationRoute,
+            programs.findPresentBySourceAndProgramId("BIZINFO", "one")?.program?.applicationRoute)
+    }
+
+    @Test
     fun rejectsSameRevisionPayloadChangesIncludingFieldsOutsideSearchFingerprint() {
         val incoming = snapshot(listOf(program("one")))
         projection.apply(incoming)
         val changedUrl = incoming.copy(programs = incoming.programs.map { it.copy(program = it.program.copy(sourceUrl = "https://example.com/changed")) })
+        val changedRoute = incoming.copy(programs = incoming.programs.map { it.copy(program = it.program.copy(
+            applicationRoute = SupportProgramApplicationRoute("온라인 접수", "https://apply.example.go.kr", SupportProgramApplicationRouteType.OTHER_ONLINE_FORM),
+        )) })
 
         assertThrows(IllegalStateException::class.java) { projection.apply(changedUrl) }
+        assertThrows(IllegalStateException::class.java) { projection.apply(changedRoute) }
         assertThrows(IllegalStateException::class.java) { projection.apply(incoming.copy(status = incoming.status.copy(indexReady = false))) }
 
         assertEquals("https://example.com/one", programs.findPresentBySourceAndProgramId("BIZINFO", "one")?.program?.sourceUrl)
