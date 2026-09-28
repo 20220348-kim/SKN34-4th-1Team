@@ -30,7 +30,7 @@ AI 프로젝트는 `>=3.12,<3.13`으로 제한하며 `.python-version`과 `uv.lo
 화면 사용법은 [Web README](../../frontend/web/README.md#llmops-운영-화면--react--django),
 평가 입력·출력은 [평가 README](../../evaluation/support-program-evidence/README.md#ops에서-새-응답-생성)에 둔다.
 전체 도입 순서와 후속 범위는 [전략 문서](../../docs/langfuse-adoption-strategy.md)에서 관리한다.
-현재 작업 우선순위와 진입·완료 조건은 [skn-35 이후 개발 전략](../../docs/langfuse-adoption-strategy.md#후속-개발-전략--skn-35-이후)을 따른다.
+현재 작업 우선순위와 진입·완료 조건은 [LLMOps 후속 개발 전략](../../docs/llmops-next-development-plan.md)을 따른다.
 
 사례별 검토와 실행 명세 고정은 구현했다. `skn-35 / 5626586`의 Ops CI에서 새 접수 프로필이 빠진
 기존 검토 테스트 1개가 실패했고 `b32efa1`에서 수정해 필수 CI 5개가 모두 통과했다.

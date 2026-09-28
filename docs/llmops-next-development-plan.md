@@ -1,17 +1,17 @@
-# LLMOps 후속 개발 전략 — skn-40 이후
+# LLMOps 후속 개발 전략 — main baae7bd 기준
 
 [문서 목록](README.md) · [도입·구현 이력](langfuse-adoption-strategy.md) · [Ops API](../backend/ops-service/README.md) · [실행 안내](../infrastructure/llmops/README.md)
 
 ## 판단과 기준
 
 2026-09-29 KST 검토 기준은 [origin 저장소](https://github.com/ilil1/SKN34-4th-1Team)의
-`main / 9a72f7749f93592618e85885d5656eb30b2325e7`이다.
-`skn-40 / 86ccb76`은
-`1fc114c` 병합 커밋을 통해 이 main에 포함된다. skn-40부터 기준 main까지 Ops·평가 실행기·
-LLMOps CI·예산·취소·근거 답변 추적 코드의 차이는 없다. 다른 웹 화면·공통 스타일과 Core 조회
-변경은 추가됐으므로 skn-40의 CI 통과를 최신 main 전체 검증으로 대신하지 않는다.
+`main / baae7bd45298db2bd206d6d6bfdf7416bd47a53b`이다. 작업 트리는 검토 시작 시 깨끗했다.
+`skn-43 / fe39c03`의 실제 취소·예산 통합 도구와 CI가 PR #88로 병합됐다. 취소 API·누적 예약·
+품질 판정·발행 gate에 더해 11개 실제 서버 시나리오의 코드도 이미 있다.
+그러나 skn-43의 해당 CI는 시나리오 진입 전 실패했으며 이 영역의 코드는 현재 main과 동일하다.
+따라서 새 통합 도구를 다시 만드는 대신 실패 원인과 검증 증거부터 해결한다.
 
-**다음 개발은 실제 서버 취소·예산 검증 → 예산 조회·감사 이력 → 미확인 예약 정리 순서로 진행한다.**
+**다음 개발은 통합 CI 실패 재현·수정 → 예산 조회·한도 변경 감사 → 종료 예약 정리 → 미확인 사용량 보정 순서다.**
 사람의 자료 검토는 독립적으로 준비한다. 자동 유료 실행과 실행기 증설은 비용 통제·복구·운영 검증을
 충족한 뒤 시작한다. 이미 구현한 취소 API·품질 판정·기준 지정·CI 발행 차단을 다시 만들지 않는다.
 
@@ -24,8 +24,8 @@ LLMOps CI·예산·취소·근거 답변 추적 코드의 차이는 없다. 다�
 |---|---|---|
 | 접수·검토·품질 판정 | [실행 명세](../backend/ops-service/apps/evaluations/execution_spec.py), [품질 판정](../backend/ops-service/apps/evaluations/quality.py), [정책](../backend/ops-service/apps/evaluations/quality_policy.py) | 버전 고정·자료/사례 검토·판정·기준 지정은 구현됐다. 현재 모델의 사람 검토 기준 확보는 별도 운영 증거가 필요하다. 이번 검토에서 운영 DB의 검토 여부는 확인하지 않았다. |
 | 누적 호출·출력 예산 | [budget.py](../backend/ops-service/apps/evaluations/budget.py), [모델](../backend/ops-service/apps/evaluations/models.py) | DB 전역 예약·단일 소유권·정산·초과 차단은 구현됐다. 입력 토큰/금액/기간 한도는 없다. |
-| 평가 취소 | [services.py](../backend/ops-service/apps/evaluations/services.py), [취소 테스트](../backend/ops-service/apps/evaluations/test_cancellation.py) | 요청자 권한·취소 기록·신규 승인 차단·종료 확인·환급 경합은 구현됐다. 실제 실행기 중단 통합 시나리오는 추가해야 한다. |
-| 실서버 CI | [LLMOps CI](../.github/workflows/llmops-ci.yml), [Ops smoke](../infrastructure/llmops/ops_smoke.py) | 저장 응답·인증·재접수·보고서·무료 복구·실행 명세 불일치를 검증한다. 실제 예산 API와 취소를 통과하는 실행기 수명주기 검증은 없다. |
+| 평가 취소 | [services.py](../backend/ops-service/apps/evaluations/services.py), [취소 테스트](../backend/ops-service/apps/evaluations/test_cancellation.py) | 요청자 권한·취소 기록·신규 승인 차단·종료 확인·환급 경합은 구현됐다. 실제 실행기 중단 통합 시나리오도 추가됐으나 전체 통과 증거가 없다. |
+| 실서버 CI | [LLMOps CI](../.github/workflows/llmops-ci.yml), [취소 smoke](../infrastructure/llmops/cancellation_smoke.py) | 기존 저장 응답·인증·복구 검증에 11개 취소·예산 시나리오를 연결했다. skn-43 CI에서 테스트 서비스 포트 조회가 실패해 artifact의 완료 시나리오는 0개다. |
 | 한도 변경·장부 조회 | [한도 명령](../backend/ops-service/apps/evaluations/management/commands/set_evaluation_budget.py), [공개 API](../backend/ops-service/apps/evaluations/urls.py), [웹 계약](../frontend/web/src/data/ops/opsApi.ts) | 한도 변경은 CLI이며 변경자·사유·이전/새 값의 별도 감사 이력이 없다. 예산 잔여·예약·미확인 내역을 보는 관리자 API·화면도 없다. |
 | 미확인 예약 복구 | [worker_action/close_after_cancellation](../backend/ops-service/apps/evaluations/budget.py), [ops_flow.py](../evaluation/support-program-evidence/ops_flow.py) | claim은 실행 try/finally 앞에 있고 close 실패를 자동 재정산하지 않는다. 취소 기록 없는 FAILED/CRASHED 등은 동기화에서 예약을 정리하지 않으며 종료된 실행에는 새 취소도 거절한다. closed 예약의 늦은 settle도 거절한다. 보수적으로 한도를 유지하지만 이를 안전하게 정리하는 별도 경로가 필요하다. |
 | 추적·평가 범위 | [tracing.py](../backend/ai-service/app/support_program_evidence/tracing.py), [evaluate.py](../evaluation/support-program-evidence/evaluate.py) | trace 허용 범위는 answer/model 두 span이다. 고정 근거 평가 자료는 synthetic·ai-authored, 최대 3문서·12사례다. 자동 의미 충실도는 미측정이다. |
@@ -44,7 +44,7 @@ LLMOps CI·예산·취소·근거 답변 추적 코드의 차이는 없다. 다�
 4. **운영 준비 완료:** 대상 환경의 인증·백업 복원·장애 정리·롤백을 실제로 확인했다.
    workflow 전체 success만으로 이미지 발행이나 배포 성공을 선언하지 않는다.
 
-조회 시 원격 main은 `protected=false`, 적용 branch rules 조회는 빈 목록이었다.
+2026-09-29 재조회에서도 원격 main은 `protected=false`, 적용 branch rules 조회는 빈 목록이었다.
 코드의 발행 gate와 main 병합 제한은 별개다. 저장소 관리자는 main의 필수 검사·리뷰·우회 정책을
 정하고 설정한 뒤 API로 적용 결과를 확인해야 한다. 필수 검사로 지정하기 전에 PR 경로 필터·
 검사 이름·대상 SHA를 대조하고, 문서 PR에서도 필요한 검사가 생성되는지 확인한다. 필수 테스트의
@@ -58,9 +58,10 @@ LLMOps CI·예산·취소·근거 답변 추적 코드의 차이는 없다. 다�
 | 순서 | 우선순위·작업 | 담당 | 선행 조건 | 완료 증거 |
 |---|---|---|---|---|
 | 0 | P0: 기준 SHA 검증·병합 규칙 확인 | 개발·저장소 관리자 | 기준 커밋 고정 | 최신 main 필수 CI 완료, 원격 보호 규칙 적용 여부와 미적용 이유 기록 |
-| 1 | P0: 실제 취소·예산 통합 검증 | Ops·평가 실행기 | 기존 취소·예산 코드 | 아래 장애 행렬이 실제 MySQL·Prefect·Ops·실행기에서 무료로 통과 |
+| 1 | P0: 취소 통합 CI 기동 실패 수정·실제 검증 | Ops·평가 실행기 | 병합된 skn-43의 실패 로그·artifact | 포트 조회 실패 재현·원인 수정, 아래 11개 시나리오와 수정 SHA의 필수 CI 통과 |
 | 2 | P1: 장부 조회와 한도 변경 감사 | Ops·Web | 현재 예약 계산식·용어 확정 | 합계 불변식, 권한·페이지 조회, 변경 이력·원자성 테스트 통과 |
-| 3 | P1: 종료 예약 정리·미확인 사용량 보정 | Ops·실행기 | 1의 재현 fixture, 2의 조회·감사 | 승인 차단 후 정리, 중복 정리·늦은 사용량·rollback·재시작 경합 검증 |
+| 3A | P1: 종료 예약의 미사용 몫 정리 | Ops·실행기 | 1의 재현 fixture, 2의 조회·감사 | 향후 승인 차단 후 미승인 몫·확정 출력 차액 정리, 중복 요청·정산 경합·rollback 검증; 승인된 미확인 몫 유지 |
+| 3B | P1: 증거가 있는 미확인 사용량 보정 | Ops·실행기 | 3A, 채택할 사용량 증거 계약 | 중복/충돌 증거·늦은 정산 검증, 원본 보존·불변 보정 이력과 잔액 일치 |
 | Q | P1: 사람 검토 기준과 제한된 현재 모델 기준 | 제품·검토자·평가 담당 | 자료 검토는 즉시 준비; 새 호출은 1 통과 및 구체적 실행 승인 | 검토된 자료·전체 사례 판단·정책 판정·명시적 기준 지정, 호출/토큰/trace/보고서 대조 |
 | 4 | P2: 입력·금액·기간 예산 | Ops·실행기 | 2·3, 대상 모델·통화·기간 정책 확정 | 전송 전 보수적 예약, 한도 경합·가격 변경·기간 경계·미확인 이월 검증 |
 | 5 | P2: 운영 검증·품질 증거의 승격 연결 | Infra·Ops | 1~3·Q, 배포 범위 확정 | 스테이징 복원·롤백, 같은 생성/평가 계약의 유효한 품질 증거로 승격 차단 |
@@ -71,13 +72,30 @@ Q의 사람 자료 검토는 1~3과 독립적으로 준비할 수 있다. 금액
 호출·출력 상한을 승인한 소규모 수동 평가는 가능하지만, 이를 금액 상한 보장이나 자동 운영으로
 표현하지 않는다. 고정 근거만 배포한다면 6을 필수 의존성으로 묶지 않는다.
 
-## 다음 세 PR의 구체적인 범위
+## 다음 구현 묶음의 구체적인 범위
 
-### PR A — 취소·예산의 실제 서버 통합 검증
+### PR A — 기존 취소 통합 검증의 실패 수정
 
-현재 `test_cancellation.py`의 MySQL 경합 테스트를 유지하고, Prefect HTTP 대역을 실제
-Prefect 서버·실행기로 바꾼 별도 CI 시나리오를 추가한다. 모델 응답만 격리된 테스트용 HTTP 대역을
-사용한다. production에 provider 선택·fallback·테스트 우회 옵션을 추가하지 않는다.
+[skn-43 LLMOps CI 실패](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36467702501)의
+`Verify real cancellation, process exit and budget accounting with offline model HTTP` 단계에서
+`cancellation_smoke.py:100`의 `docker compose ... port cancellation-probe 8099`가 exit 1을 반환했다.
+`Smoke.ready()`에서 실패했으며 보관 artifact는 `passed=false`, `failure=CalledProcessError`,
+`scenarios=[]`다. 즉 **11개 시나리오의 통과 건수는 0개**이며 취소 로직 자체의 결함이 입증된 것은 아니다.
+
+실패한 subprocess의 stderr와 서비스 상태가 현재 증거에 없으므로 포트 미노출·컨테이너 종료·
+Compose/네트워크 동작 중 무엇이 원인인지 아직 확정하지 않는다. 다음 변경은 아래로 한정한다.
+
+1. 실패한 서비스의 상태·건강 상태·포트 매핑과 비밀값을 제거한 stderr를 정리 전에 보존한다.
+   서비스 환경변수 전체나 모델 요청 원문을 로그에 추가하지 않는다.
+2. CI와 같은 Linux Docker/Compose에서 준비 단계만 먼저 재현한다. 반환 코드·빈 포트·예상 밖 주소를
+   명시적 오류로 구별하고 해당 계약의 무료 테스트를 추가한다.
+3. 확인한 원인만 수정한다. 외부 전송 차단과 테스트 전용 프로젝트 격리를 유지하고,
+   외부 모델 연결·고정 sleep·테스트 skip으로 기동 실패를 우회하지 않는다.
+4. 이후 기존 11개 시나리오 전체를 실행하고 이름 집합·중복 여부·단계별 증거까지 대조한다.
+   준비 단계 성공이나 `passed` 플래그 하나만으로 완료 처리하지 않는다.
+
+현재 `test_cancellation.py`의 MySQL 경합 테스트와 실제 Prefect·Ops·실행기 경로를 유지한다.
+모델 응답과 인증 fixture만 테스트 대역이며 production에 provider 선택·fallback을 추가하지 않는다.
 
 기존 [LLMOps CI](../.github/workflows/llmops-ci.yml)와 smoke 도구를 확장하고, 호출 승인 직전·전송 직후
 등을 테스트용 동기화 지점으로 제어한다. 임의 sleep만으로 경합을 재현하지 않는다.
@@ -102,14 +120,37 @@ Prefect 서버·실행기로 바꾼 별도 CI 시나리오를 추가한다. 모�
 [테스트 실행 안내](../infrastructure/llmops/README.md#실제-취소예산-통합-검증)를 추가했다.
 위 행렬을 승인 응답 유실·첫 승인 전 취소까지 포함한 11개 시나리오로 구성하고 기존 필수 LLMOps CI
 job에 연결했다. 모델 응답과 Core 인증 fixture를 제외한 Ops·MySQL·Prefect·평가·Langfuse 경로를
-실제로 실행한다. 현재 로컬 Docker 엔진이 꺼져 있어 실제 컨테이너 시나리오는 검증 대기다.
-무료 계약 테스트/설정 렌더링을 실제 통합 통과로 간주하거나 PR B 진입 근거로 사용하지 않는다.
+실제로 실행하도록 구현했다. 이전 로컬 검증에서는 Docker 엔진이 꺼져 있었고, 이후 skn-43의
+원격 실행은 위 준비 단계에서 실패했다. 현재 main의 원격 재검증은 별도 SHA로 확인한다.
+무료 계약 테스트/설정 렌더링을 실제 통합 통과로 간주하지 않는다. PR B의 계약 설계는 독립적으로
+준비할 수 있지만 유료 반복 실행·운영 준비 완료의 근거는 PR A 통과 후 확보한다.
 
 ### PR B — 예산을 설명할 수 있는 운영 API·화면
 
 현재 관리자 인증을 재사용해 전체 한도·예약 유지분·확정 사용량·미확인 호출·잔여 한도와
 실행별 상세를 조회한다. 취소 가능 여부와 비용 미확정 여부를 따로 표시한다.
 관리자 전체 장부 조회와 요청자만 가능한 취소 권한을 혼동하지 않는다.
+
+첫 구현은 기존 평가 목록의 예산 요약과 실행 상세의 예약 내역, 읽기 API, CLI 한도 변경 감사로
+묶는다. 공개 경로 제안은 `GET /api/v1/ops/budget`, `GET /api/v1/ops/budget/reservations`,
+`GET /api/v1/ops/evaluations/{id}/budget`이다. 기존 Core 관리자 인증을 사용하고 내부 실행기의
+Bearer API를 브라우저에 노출하지 않는다. 한도 변경 화면·자동 환급·소유권 인계는 별도 범위다.
+
+**중요한 계산 계약:** 현재 `settle`은 사용량만 기록하고 출력 여유를 돌려주는 시점은 `close`다.
+따라서 실제 출력 합계를 `allocated_output_tokens`로 표시하면 한도를 잘못 안내한다.
+
+| 장부 항목 | 제안하는 계산·표시 |
+|---|---|
+| 확정 사용량 | `settled_at`이 있는 호출의 입력/출력 합계. 입력 사용량은 참고이며 현재 한도 대상 아님 |
+| 승인 후 사용량 미확인 | 미정산 승인 호출 수와 각 호출의 최대 출력 예약. 모델 전송 완료나 0원으로 표시하지 않음 |
+| 아직 승인하지 않은 예약 | 열린 예약의 `max_calls - 승인 호출 수`; 출력은 이 값 × 호출당 최대 출력 |
+| 종료 전 반환 대기 출력 | 열린 예약의 정산 완료 호출마다 `최대 출력 - 확정 출력` 합계 |
+| 잔여 한도 | 한도에서 위 항목으로 설명한 할당량을 뺀 값. 미설정·불일치는 별도 상태로 표시 |
+
+호출 할당량은 **정산 완료 호출 + 사용량 미확인 승인 호출 + 열린 예약의 미승인 호출**이다.
+출력 할당량은 **확정 출력 + 미확인 최대 출력 + 미승인 예약 출력 + 종료 전 반환 대기 출력**이다.
+예를 들어 6회×2,000을 예약하고 첫 호출이 50토큰으로 정산돼도 close 전 할당량은 12,000이다.
+이 중 50은 확정, 10,000은 아직 미승인, 1,950은 종료 전 반환 대기다. 이 예시는 정책 설명이다.
 
 - 현재 `allocated_*`에 대응하는 합계 정의를 API 계약에 먼저 적는다. 출력 토큰의 예약 유지분에는
   미승인 호출뿐 아니라 정상 종료 전 아직 반환하지 않은 출력 여유도 포함한다. 중복 합산하지 않는다.
@@ -118,17 +159,24 @@ job에 연결했다. 모델 응답과 Core 인증 fixture를 제외한 Ops·MySQ
   기존 CLI도 같은 감사 경로를 사용하고, 사용량 초기화나 이미 할당된 값 미만으로의 축소는 거절한다.
   적용될 수 있는 기존 migration 0011/0012는 수정하지 않고 필요한 새 migration을 추가한다.
 - API 인증·페이지 경계·누락된 과거 예약·동시 조회/정산·감사 기록 실패 rollback을 검증한다.
+- 한 응답 안의 총계와 내역은 동일한 DB 조회 시점으로 계산하고 `as_of`를 제공한다. 페이지 합계를 전체 합계로
+  표시하지 않는다. 과거 live 실행에 예약이 없으면 기록 없음으로 표시하고 사용량 0을 만들지 않는다.
+- 새 감사 모델은 주체·경로(CLI)·사유·이전/새 한도·시각과 재요청 식별자를 보존한다. 기존 한도는
+  migration에서 가짜 변경자/사유를 채우지 않는다. 새 한도 변경과 감사 저장을 같은 transaction으로 묶는다.
 - 첫 화면에 자동 환급·강제 재시작 버튼을 넣지 않는다. 정리 계약은 PR C에서 추가한다.
 
 호출 흐름은 `React → Ops 관리자 API → MySQL 장부/변경 이력`이다. 모델 호출은 없다.
 
 ### PR C — 종료된 예약의 안전한 정리와 사용량 보정
 
+구현은 C1(종료 증거에 따른 미승인 몫·확정 출력 차액 정리)과 C2(확인된 사용량의 감사 보정)로 나눈다.
+C1만으로 승인 후 미확인 몫을 반환하지 않는다. C2는 신뢰할 증거의 출처·식별자를 정한 뒤 시작한다.
+
 취소 요청 없는 FAILED/CRASHED, preflight 실패, claim 응답 유실, close 실패를 재현 대상으로 한다.
 **예약 정리와 모델 실행 재개를 분리한다.** 첫 버전은 새 소유자에게 유료 실행을 넘기지 않는다.
 
 - 종료 증거와 요청 UUID·flow ID·명세·소유자·호출 번호를 대조하고, 같은 DB 잠금 아래 향후 승인을
-  닫은 뒤 미승인 몫만 정리한다. 상태를 모르면 유지하며 단순 시간 만료로 전액 환급하지 않는다.
+  닫은 뒤 미승인 몫과 이미 확인된 출력 차액만 정리한다. 상태를 모르면 유지하며 단순 시간 만료로 전액 환급하지 않는다.
 - 승인 이력이 있는 미확인 호출은 최대 예약을 유지한다. 실제 사용량을 확인할 수 있을 때만
   증거 식별자/해시·담당자·사유·전후 값을 남겨 정산을 보정한다.
 - closed 이후 늦은 정산은 현재 거절되므로 별도 보정 계약을 정의한다. 중복 증거는 멱등 처리하고
@@ -194,14 +242,39 @@ Ops 명세·실행기 검증·웹 동의·migration·CI 양쪽 계약을 함께 
 
 - 새로운 provider, 범용 Agent 프레임워크, Airflow/Celery, 평가 SDK의 Ops API 유입은 계획에 없다.
 - 새 production 의존성·외부 서비스가 필요해지면 해당 변경의 책임과 이유를 먼저 알린다.
-- 현재 부족한 실제 서버 취소 검증을 먼저 만들고, 실패 재현 없이 예산·취소 구조 전체를 다시 쓰지 않는다.
+- 현재 실패한 실제 서버 검증을 먼저 수정하고, 실패 재현 없이 예산·취소 구조 전체를 다시 쓰지 않는다.
 - 로컬은 변경한 기능의 무료 테스트·정적 검사만 실행한다. MySQL 경합과 전체 빌드·컨테이너는 CI에서
   검증하며 같은 코드를 커밋·설명만 바뀌었다고 반복 테스트하지 않는다.
 - 모든 PR은 기준 SHA, 문제 재현, API/상태/장부 불변식, migration 영향, 로컬 결과, 최신 SHA의 CI 링크,
   미검증 범위, 배포/복구 절차를 남긴다. 유료·운영 검증 대기를 코드/CI 완료와 섞지 않는다.
 - 작업량이 커지면 범위를 나누되 사용자 동작·예산 안전성에 필요한 생산자/소비자 변경과 테스트를 분리 배포하지 않는다.
 
-## 이번 검토의 증거와 한계
+## 현재 검토의 증거와 한계 — baae7bd
+
+2026-09-29 04:02 KST 조회 기준이다. 이 표는 시간에 따른 실행 기록이며 최종 결과를 추정하지 않는다.
+
+| 필수 CI | main / baae7bd |
+|---|---|
+| GovBiz | [실행 중](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36468708560) |
+| Ops | [성공](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36468708516) |
+| LLMOps | [실행 중](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36468708595) |
+| Catalog | [실행 중](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36468708650) |
+| Infra | [성공](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36468708423) |
+
+- skn-43의 [실패 실행](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36467702501) 로그와
+  `llmops-cancellation-fe39c03b8a00d211fa9a8a0498d95d36415cfbf8` artifact를 확인했다.
+  포트 조회 exit 1·완료 시나리오 0건을 확인했으며 컨테이너 실패의 근본 원인은 아직 미확정이다.
+- `git diff fe39c03 HEAD -- infrastructure/llmops .github/workflows/llmops-ci.yml backend/ops-service evaluation/support-program-evidence`
+  는 비어 있다. 병합 전 실패 코드가 현재 main에도 있다는 근거이며 main의 동일 실패를 미리 확정하는 뜻은 아니다.
+- 현재 main의 [이미지 후보 실행](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36468777870)은
+  `gate=success`, `publish=skipped`였다. workflow success를 이미지 발행 완료로 해석하지 않는다.
+- 원격 main의 `protected=false`·적용 rules 빈 목록을 확인했다. 이번 작업에서 보호 규칙을 변경하지 않았다.
+- 이번 전략에서는 운영 DB·현재 실제 검토 이력·예산을 조회하거나 수정하지 않았다. 과거 UI 확인 결과로
+  오늘의 모델 품질 기준 확보 여부를 단정하지 않는다. 로컬 컨테이너나 유료 평가도 실행하지 않았다.
+- 변경은 이 전략과 문서 진입 링크뿐이다. 문서 경로·링크와 `git diff --check`를 확인하며
+  애플리케이션 테스트는 반복하지 않는다. 문서 변경은 사용자 요청에 따라 `skn-44`에서 관리한다.
+
+## 이전 검토 기록 — 9a72f77
 
 `skn-40 / 86ccb76`의 [Ops CI](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36458646801)는
 MySQL 8.4에서 132개 테스트와 Ops 컨테이너 검증을 통과했다. 기존 58개 로컬 선택 테스트에 대한
@@ -223,5 +296,4 @@ main의 진행 중 상태는 통과로 간주하지 않는다.
 workflow success지만 `publish` job은 skipped였다. 이미지 발행·승격·클러스터 배포 성공으로 보고하지 않는다.
 원격 API의 PR 번호 조회는 404였으므로 병합 포함 여부는 Git 커밋 ancestry와 코드 diff를 근거로 확인했다.
 
-이번 변경은 문서 3개뿐이다. 코드·실행 설정·의존성은 변경하지 않았으며 문서 경로·링크와
-`git diff --check`를 확인한다. 애플리케이션 테스트는 반복하지 않는다.
+당시 변경은 문서 3개뿐이었다. 코드·실행 설정·의존성은 변경하지 않았고 애플리케이션 테스트를 반복하지 않았다.
