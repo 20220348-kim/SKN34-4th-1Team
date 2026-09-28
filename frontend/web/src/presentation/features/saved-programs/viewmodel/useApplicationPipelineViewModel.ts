@@ -33,30 +33,27 @@ export function useApplicationPipelineViewModel(
   const [requestVersion, setRequestVersion] = useState(0)
   const [changingId, setChangingId] = useState<number | null>(null)
   const [updateError, setUpdateError] = useState<string | null>(null)
-  const hasRequested = useRef(false)
-  const activeController = useRef<AbortController | null>(null)
+  const loadedOnce = useRef(false)
 
-  useEffect(() => () => activeController.current?.abort(), [])
-
+  // `enabled`가 켜져 있는 동안 한 번 읽습니다. 정리(cleanup)에서 요청을 끊으므로 개발 모드의 이중 마운트처럼
+  // 효과가 다시 돌면 새 요청을 보냅니다("한 번 보냈음" 플래그로 막으면 끊긴 첫 요청만 남아 목록이 비어 보입니다).
   useEffect(() => {
-    if (!enabled || hasRequested.current) return
-    hasRequested.current = true
+    if (!enabled) return
+    if (loadedOnce.current) return
     const controller = new AbortController()
-    activeController.current = controller
     setState(current => ({ ...current, phase: 'loading' }))
     void useCase.list(undefined, controller.signal).then(page => {
-      if (!controller.signal.aborted) setState({ phase: 'ready', items: page.items, nextBeforeId: page.nextBeforeId, loadingMore: false })
+      if (controller.signal.aborted) return
+      loadedOnce.current = true
+      setState({ phase: 'ready', items: page.items, nextBeforeId: page.nextBeforeId, loadingMore: false })
     }).catch(() => {
       if (!controller.signal.aborted) setState(current => ({ ...current, phase: 'failed', loadingMore: false }))
-    }).finally(() => {
-      if (activeController.current === controller) activeController.current = null
     })
+    return () => controller.abort()
   }, [enabled, requestVersion, useCase])
 
   const retry = useCallback(() => {
-    activeController.current?.abort()
-    activeController.current = null
-    hasRequested.current = false
+    loadedOnce.current = false
     setRequestVersion(value => value + 1)
   }, [])
 

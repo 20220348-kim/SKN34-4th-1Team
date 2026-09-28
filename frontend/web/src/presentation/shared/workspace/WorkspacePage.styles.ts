@@ -23,6 +23,15 @@ export const workspacePageStyles = {
   // 제목 옆에 화면을 오가는 탭을 같은 줄로 붙일 때 씁니다. 좁은 폭에서는 세로 구분선을 숨기고 탭 줄이 아래로 내려갑니다.
   headerDivider: 'h-[22px] w-px shrink-0 bg-sample-border max-chat:hidden',
   headerTabs: 'flex min-w-0 grow items-center',
+  // 제목 옆 세그먼트(관심 공고함 · 제안함 · 파트너 관리가 함께 씀): 연한 회색 알약 묶음 안에서 고른 것만 흰색으로 떠 보입니다.
+  // 버튼(aria-selected)과 링크(aria-current="page") 어느 쪽이든 같은 모양입니다. 좁은 폭에서는 칸이 폭을 나눠 가집니다.
+  segment: 'inline-flex max-w-full gap-[3px] rounded-full bg-surface-muted p-[3px] max-chat:flex max-chat:w-full',
+  segmentTab: classes(
+    'inline-flex h-[34px] cursor-pointer items-center gap-1.5 rounded-full border-0 bg-transparent px-3.5 text-[0.8125rem] font-bold whitespace-nowrap text-ink-muted no-underline',
+    'hover:text-app-ink aria-selected:bg-white aria-selected:text-app-ink aria-selected:shadow-[0_1px_3px_rgb(32_33_36_/_12%)]',
+    'aria-[current=page]:bg-white aria-[current=page]:text-app-ink aria-[current=page]:shadow-[0_1px_3px_rgb(32_33_36_/_12%)]',
+    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary max-chat:h-[38px] max-chat:flex-1 max-chat:justify-center max-chat:px-2',
+  ),
   title: 'm-0 text-[1.25rem] font-bold tracking-[-0.04em] break-words text-app-ink',
   headerActions: 'ml-auto flex min-w-0 max-w-full flex-wrap items-center gap-2',
   content: classes(

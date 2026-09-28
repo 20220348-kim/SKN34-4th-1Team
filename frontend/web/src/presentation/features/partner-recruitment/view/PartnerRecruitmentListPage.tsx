@@ -6,8 +6,8 @@ import {
   workspaceTagClassName,
 } from '../../../shared/workspace/WorkspacePage.styles'
 import { PartnerManagementHeader } from '../../../shared/partner-recruitment/PartnerManagementHeader'
-import { FilterChoices } from '../../../shared/workspace/FilterChoices'
 import { FilterMultiChoices } from '../../../shared/workspace/FilterMultiChoices'
+import { SelectField } from '../../../shared/workspace/SelectField'
 import {
   companyInitial,
   companySummaryLine,
@@ -18,6 +18,7 @@ import {
 import { appPaths } from '../../../shared/routes/appPaths'
 import { usePartnerRecruitmentListViewModel } from '../viewmodel/usePartnerRecruitmentListViewModel'
 import { partnerRecruitmentStyles } from './PartnerRecruitment.styles'
+import { RecruitmentCardSkeleton } from './RecruitmentCardSkeleton'
 
 function RecruitmentCard({ recruitment }: { recruitment: PartnerRecruitmentSummary }) {
   const cardClassName = recruitment.isMine
@@ -117,7 +118,7 @@ export function PartnerRecruitmentListPage() {
     goToPage,
     hasActiveNarrowing,
     clearNarrowing,
-    resultSummary,
+    total,
   } = usePartnerRecruitmentListViewModel()
 
   return (
@@ -166,17 +167,21 @@ export function PartnerRecruitmentListPage() {
 
             <FilterMultiChoices label="찾는 역할" name="partner-role" options={roleOptions} selected={draft.seekingRoles} onToggle={toggleSeekingRole} onClearAll={clearSeekingRoles} />
             <FilterMultiChoices label="지역" name="partner-region" options={regionOptions} selected={draft.regions} onToggle={toggleRegion} onClearAll={clearRegions} />
-            <FilterChoices label="정렬" name="partner-sort" options={sortOptions} selected={query.sort} onSelect={selectSort} includeAll={false} />
-
             <div className={partnerRecruitmentStyles.filterFooter}>
-              <span className={partnerRecruitmentStyles.tagRow}>
-                {hasActiveNarrowing ? (
-                  <button className={workspacePageStyles.quietLink} type="button" onClick={clearNarrowing}>검색·필터 초기화</button>
-                ) : null}
-              </span>
-              <span className={partnerRecruitmentStyles.resultCount} aria-live="polite">{resultSummary}</span>
+              <p className={partnerRecruitmentStyles.resultCount}>조건을 바꾼 뒤 조회를 눌러 주세요.</p>
+              {hasActiveNarrowing ? (
+                <button className={workspacePageStyles.quietLink} type="button" onClick={clearNarrowing}>검색·필터 초기화</button>
+              ) : null}
             </div>
           </form>
+
+          {/* 결과 머리줄: 왼쪽 건수, 오른쪽 정렬 드롭다운(필터 검색과 같은 배치). 정렬은 바로 적용됩니다. */}
+          <div className={partnerRecruitmentStyles.resultHead}>
+            <h2 className={partnerRecruitmentStyles.resultTitle} aria-live="polite">검색 결과 <span className="text-brand-primary">{total.toLocaleString()}건</span></h2>
+            <label className={partnerRecruitmentStyles.sortLabel}>정렬
+              <SelectField label="모집글 정렬" className={partnerRecruitmentStyles.sortSelect} value={query.sort} options={sortOptions} onChange={selectSort} />
+            </label>
+          </div>
 
           {phase === 'failed' ? (
             <section className={workspacePageStyles.card} aria-label="모집글 불러오기 실패">
@@ -184,9 +189,7 @@ export function PartnerRecruitmentListPage() {
               <button className={workspacePageStyles.quietLink} type="button" onClick={retry}>다시 시도</button>
             </section>
           ) : phase === 'loading' && recruitments.length === 0 ? (
-            <section className={workspacePageStyles.card} aria-label="모집글 불러오는 중">
-              <p className={workspacePageStyles.emptyNote}>모집글을 불러오는 중입니다.</p>
-            </section>
+            <RecruitmentCardSkeleton label="모집글 불러오는 중" text="모집글을 불러오는 중입니다." />
           ) : recruitments.length === 0 ? (
             <section className={workspacePageStyles.card} aria-label="검색 결과 없음">
               <p className={workspacePageStyles.emptyNote}>

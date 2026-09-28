@@ -2,10 +2,10 @@ import { useRef } from 'react'
 import { flushSync } from 'react-dom'
 import { useSearchParams } from 'react-router'
 
-import { useAppDispatch, useAppSelector } from '../../../../app/hooks'
+import { useAppDispatch } from '../../../../app/hooks'
 import { GuestSearchLayout } from '../../../shared/support-program/GuestSearchLayout'
 import { SearchModeTabs, WorkspaceSearchTabsRow } from '../../../shared/support-program/SearchModeTabs'
-import { conversationReset, selectConversationCount } from '../../chat/state/chatSlice'
+import { conversationReset } from '../../chat/state/chatSlice'
 import { ChatPage, type ChatPageLayout } from '../../chat/view/ChatPage'
 import { SupportProgramCatalogPanel } from './SupportProgramCatalogPanel'
 
@@ -16,7 +16,6 @@ export function SupportProgramSearchPage({ layout = 'landing' }: { layout?: Chat
   const contentRef = useRef<HTMLDivElement>(null)
   const isFilter = params.get('mode') === 'filter'
   const isGuest = layout === 'landing'
-  const hasConversation = useAppSelector(selectConversationCount) > 0
   const select = (filter: boolean) => {
     const next = new URLSearchParams(params)
     if (filter) next.set('mode', 'filter')
@@ -42,7 +41,7 @@ export function SupportProgramSearchPage({ layout = 'landing' }: { layout?: Chat
     </div>
   </div>
 
-  return isGuest ? <GuestSearchLayout showConversationPanel={hasConversation && !isFilter} searchTabs={searchTabs} onNewChat={startNewChat}>{panels}</GuestSearchLayout>
+  return isGuest ? <GuestSearchLayout showConversationPanel={false /* 비로그인 AI 검색에는 세션 목록(보조 패널)을 두지 않습니다 */} searchTabs={searchTabs} onNewChat={startNewChat}>{panels}</GuestSearchLayout>
     : <div className="flex min-w-0 flex-1 flex-col">
       <WorkspaceSearchTabsRow>{searchTabs}</WorkspaceSearchTabsRow>
       {panels}

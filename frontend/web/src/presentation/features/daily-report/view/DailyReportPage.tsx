@@ -4,6 +4,7 @@ import { appPaths, supportProgramDetailPath } from '../../../shared/routes/appPa
 import { workspacePageStyles as styles } from '../../../shared/workspace/WorkspacePage.styles'
 import { WorkspacePageHeader } from '../../../shared/workspace/WorkspacePageHeader'
 import { useDailyReportViewModel } from '../viewmodel/useDailyReportViewModel'
+import { useDelayedFlag } from '../../../shared/workspace/useDelayedFlag'
 
 const inputClass = 'w-full rounded-xl border border-sample-border bg-white p-3 text-sm outline-offset-2 focus:outline-brand-primary disabled:opacity-60'
 const noteClass = 'm-0 text-sm leading-6 text-sample-muted'
@@ -13,6 +14,9 @@ export function DailyReportPage() {
   const vm = useDailyReportViewModel()
   const busy = vm.busy !== null
   const settings = vm.settings
+  // 설정 조회는 보통 금방 끝나므로 300ms까지는 아무것도 그리지 않고, 그보다 길어지면 설정 카드 자리의 스켈레톤을 보여 줍니다.
+  const isLoading = !vm.loaded && !vm.error
+  const showSkeleton = useDelayedFlag(isLoading)
   return (
     <>
       <WorkspacePageHeader
@@ -23,7 +27,8 @@ export function DailyReportPage() {
         <p className={noteClass}>등록한 지역·업종과 지원 목적에 맞는 접수 중 공고를 모아 봅니다. 관련도는 검색 순위를 위한 점수이며, 선정확률이나 신청 자격 보장이 아닙니다.</p>
         {vm.error && <p role="alert" className={warningClass}>{vm.error}</p>}
         {vm.notice && <p role="status" className={noteClass}>{vm.notice}</p>}
-        {!vm.loaded && !vm.error && <p role="status">리포트 설정을 불러오는 중입니다.</p>}
+        {isLoading && <p role="status" className="sr-only">리포트 설정을 불러오는 중입니다.</p>}
+        {showSkeleton && <ReportSettingsSkeleton />}
         {vm.loaded && settings && <>
           {!settings.emailDeliveryAvailable && <p className={warningClass}>현재 서버의 이메일 발송이 꺼져 있습니다. 웹 미리보기는 사용할 수 있지만, 확인 메일과 정기 이메일 발송은 운영자의 설정 후 사용할 수 있습니다.</p>}
           {settings.emailDeliveryAvailable && !settings.schedulerEnabled && <p className={warningClass}>서버의 새 정기 발송 예약이 꺼져 있습니다. 이미 예약된 메일은 처리될 수 있습니다. 주소 확인과 수신 설정은 미리 저장할 수 있습니다. 메일 설정이 있어도 실제 도착을 보장하지는 않습니다.</p>}
@@ -71,6 +76,26 @@ export function DailyReportPage() {
       </main>
     </>
   )
+}
+
+const skeletonBar = 'rounded-md bg-surface-muted motion-safe:animate-pulse'
+
+/** 리포트 설정 카드와 미리보기 카드의 자리를 잡아 두는 스켈레톤입니다. */
+function ReportSettingsSkeleton() {
+  return <div className="flex flex-col gap-5" aria-hidden="true">
+    <section className={styles.card}>
+      <span className={`${skeletonBar} h-5 w-24`} />
+      <span className={`${skeletonBar} h-4 w-3/5`} />
+      <span className={`${skeletonBar} h-4 w-2/5`} />
+      <span className={`${skeletonBar} h-11 w-full rounded-xl`} />
+      <span className={`${skeletonBar} h-10 w-36 rounded-full`} />
+    </section>
+    <section className={styles.card}>
+      <span className={`${skeletonBar} h-5 w-40`} />
+      <span className={`${skeletonBar} h-4 w-full`} />
+      <span className={`${skeletonBar} h-4 w-4/5`} />
+    </section>
+  </div>
 }
 
 const deliveryLabels: Record<DailyReport['deliveryStatus'], string> = {

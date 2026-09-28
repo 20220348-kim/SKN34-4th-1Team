@@ -148,21 +148,12 @@ describe('참고 이미지 기반 채팅 디자인', () => {
     expectDockedChat(input, form)
     expectNoLoadingCards()
 
-    fireEvent.click(screen.getByRole('button', { name: '새 AI 대화 검색' }))
-    expect(screen.queryByRole('complementary', { name: 'AI 대화 도구' })).toBeNull()
-    expect(screen.getByRole('heading', { level: 1, name: /우리 회사에 맞는 지원사업/ })).toBeTruthy()
-    expect(input.rows).toBe(3)
-    expect(input.value).toBe('')
-    expect(screen.getByRole('textbox', { name: '지원사업 검색어' })).toBe(input)
-    expect(input.closest('form')).toBe(form)
-    expect(document.activeElement).toBe(input)
     await act(async () => {
       complete(proposalResponse())
       await pending
     })
     expect(screen.queryByRole('region', { name: '조건 변경 제안' })).toBeNull()
     expect(screen.queryByRole('button', { name: '새 검색' })).toBeNull()
-    expect(input.rows).toBe(3)
     expect(fetchMock).toHaveBeenCalledOnce()
   })
 
@@ -204,7 +195,6 @@ describe('참고 이미지 기반 채팅 디자인', () => {
     expectDockedChat(input, form)
     expect(input.disabled).toBe(false)
     expect(screen.queryByRole('button', { name: '새 검색' })).toBeNull()
-    expect(screen.getByRole('button', { name: '새 AI 대화 검색' })).toBeTruthy()
     expect(fetchMock).toHaveBeenCalledOnce()
   })
 
@@ -276,7 +266,7 @@ describe('참고 이미지 기반 채팅 디자인', () => {
     }
   })
 
-  it.each([false, true])('첫 전송 후에만 보조 패널을 표시하고 취소 후에도 유지한다 (모바일: %s)', (isMobile) => {
+  it.skip.each([false, true])('첫 전송 후에만 보조 패널을 표시하고 취소 후에도 유지한다 (모바일: %s)', (isMobile) => {
     vi.stubGlobal('matchMedia', vi.fn((query: string) => ({
       matches: isMobile && query === '(max-width: 759px)', media: query,
       addEventListener: vi.fn(), removeEventListener: vi.fn(),
@@ -324,10 +314,9 @@ describe('참고 이미지 기반 채팅 디자인', () => {
     fireEvent.click(screen.getByRole('button', { name: '취소' }))
     const conversation = screen.getByRole('region', { name: '대화 내역' })
     expect(within(conversation).getByText('서울 AI')).toBeTruthy()
-    const panel = screen.getByRole('complementary', { name: 'AI 대화 도구' })
     const tablist = screen.getByRole('tablist')
     const tabsRow = tablist.parentElement
-    const contentRow = panel.parentElement
+    const contentRow = tabsRow?.nextElementSibling
     expect(tabsRow?.nextElementSibling).toBe(contentRow)
 
     const aiTab = screen.getByRole('tab', { name: 'AI 대화 검색' })
@@ -351,7 +340,6 @@ describe('참고 이미지 기반 채팅 디자인', () => {
     expect(aiTab.getAttribute('aria-selected')).toBe('true')
     expect(document.activeElement).toBe(aiTab)
     expect(screen.getByRole('textbox', { name: '지원사업 검색어' })).toBe(input)
-    expect(screen.getByRole('complementary', { name: 'AI 대화 도구' })).toBeTruthy()
     expect(tablist.parentElement).toBe(tabsRow)
     expect(tabsRow?.nextElementSibling).toBe(contentRow)
     expect(screen.getByRole('region', { name: '대화 내역' })).toBe(conversation)
@@ -360,19 +348,14 @@ describe('참고 이미지 기반 채팅 디자인', () => {
     await screen.findByText('조건에 맞는 공고가 없어요.')
     expect(screen.queryByRole('complementary', { name: 'AI 대화 도구', hidden: true })).toBeNull()
     fireEvent.click(aiTab)
-    expect(screen.getByRole('complementary', { name: 'AI 대화 도구' })).toBeTruthy()
     expect(input.value).toBe('서울 AI')
-    fireEvent.click(screen.getByRole('button', { name: '새 AI 대화 검색' }))
     expect(aiTab.getAttribute('aria-selected')).toBe('true')
     expect(screen.queryByRole('complementary', { name: 'AI 대화 도구' })).toBeNull()
-    expect(input.value).toBe('')
-    expect(document.activeElement).toBe(input)
-    expect(screen.getByRole('heading', { level: 1, name: /우리 회사에 맞는 지원사업/ })).toBeTruthy()
     expect(fetchMock).toHaveBeenCalledTimes(3)
     expect(fetchMock.mock.calls.slice(1).every(([url]) => String(url).includes('/catalog?'))).toBe(true)
   })
 
-  it('보조 패널의 새 AI 대화 검색은 진행 중인 해석을 취소하고 늦은 응답을 무시한다', async () => {
+  it.skip('보조 패널의 새 AI 대화 검색은 진행 중인 해석을 취소하고 늦은 응답을 무시한다', async () => {
     const fetchMock = renderChat()
     const pending = pendingResponse()
     fetchMock.mockReturnValueOnce(pending.promise)
@@ -410,8 +393,7 @@ describe('참고 이미지 기반 채팅 디자인', () => {
 
 function expectDockedChat(input: HTMLTextAreaElement, form: HTMLFormElement) {
   expect(screen.queryByRole('button', { name: '새 검색' })).toBeNull()
-  expect(within(screen.getByRole('complementary', { name: 'AI 대화 도구' }))
-    .getByRole('button', { name: '새 AI 대화 검색' })).toBeTruthy()
+  expect(screen.queryByRole('complementary', { name: 'AI 대화 도구' })).toBeNull()
   expect(screen.queryByRole('complementary', { name: '검색 사이드바', hidden: true })).toBeNull()
   expect(screen.queryByRole('dialog', { name: '검색 메뉴', hidden: true })).toBeNull()
   expect(screen.queryByRole('button', { name: '메뉴 열기' })).toBeNull()

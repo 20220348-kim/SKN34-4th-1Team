@@ -4,8 +4,8 @@ import { Link, useLocation, useSearchParams } from 'react-router'
 import type { SupportProgram } from '../../../../domain/entities/SupportProgram'
 import { catalogSourceCodes, catalogSourceLabels, type SupportProgramCatalogFilters } from '../../../../domain/entities/SupportProgramCatalog'
 import { isAppPath, supportProgramDetailPath } from '../../../shared/routes/appPaths'
-import { defaultCatalogFilters, readCatalogFilters, writeCatalogFilters } from '../../../shared/support-program/catalogSearchParams'
-import { FilterChoices } from '../../../shared/workspace/FilterChoices'
+import { defaultCatalogFilters, joinFilterValues, readCatalogFilters, splitFilterValues, writeCatalogFilters } from '../../../shared/support-program/catalogSearchParams'
+import { FilterMultiChoices } from '../../../shared/workspace/FilterMultiChoices'
 import { SelectField } from '../../../shared/workspace/SelectField'
 import { toFilterChoiceOptions } from '../../../shared/workspace/filterChoiceOptions'
 import { useSupportProgramCatalogViewModel } from '../viewmodel/useSupportProgramCatalogViewModel'
@@ -95,8 +95,13 @@ function CatalogFilters({ filters, regions, categories, startupStages, applicant
       <button type="submit" className={`${buttonStyle} shrink-0 bg-brand-primary text-white hover:bg-[#066538]`}>검색</button>
     </div>
     <div className="grid gap-4 border-t border-sample-border pt-4">
-      <FilterChoices label="지역" name="catalog-region" options={toFilterChoiceOptions(regions)} selected={draft.region} onSelect={(region) => setDraft({ ...draft, region })} />
-      <FilterChoices label="분야" name="catalog-category" options={toFilterChoiceOptions(categories)} selected={draft.category} onSelect={(category) => setDraft({ ...draft, category })} />
+      {/* 지역·분야는 여러 개를 함께 고를 수 있습니다(파트너 모집 필터와 같은 체크 칩). 값은 쉼표로 이어 서버에 보냅니다. */}
+      <FilterMultiChoices label="지역" name="catalog-region" options={toFilterChoiceOptions(withSelected(regions, splitFilterValues(draft.region)))} selected={splitFilterValues(draft.region)}
+        onToggle={(region) => setDraft({ ...draft, region: joinFilterValues(toggled(splitFilterValues(draft.region), region)) })}
+        onClearAll={() => setDraft({ ...draft, region: '' })} />
+      <FilterMultiChoices label="분야" name="catalog-category" options={toFilterChoiceOptions(withSelected(categories, splitFilterValues(draft.category)))} selected={splitFilterValues(draft.category)}
+        onToggle={(category) => setDraft({ ...draft, category: joinFilterValues(toggled(splitFilterValues(draft.category), category)) })}
+        onClearAll={() => setDraft({ ...draft, category: '' })} />
       {/* 지역·분야 줄과 같은 라벨 폭(w-13)·간격으로 맞춰 드롭다운 상자가 같은 세로선에서 시작합니다. */}
       <div className="grid gap-3 sm:grid-cols-2 sm:gap-x-8">
         <label className="flex min-w-0 gap-3 text-xs font-semibold text-sample-muted max-chat:flex-col max-chat:gap-2">
@@ -143,6 +148,15 @@ function CatalogFilters({ filters, regions, categories, startupStages, applicant
         onClick={() => { setDraft({ ...defaultCatalogFilters }); setShowStartupFilters(false); onApply({ ...defaultCatalogFilters }) }}>필터 초기화</button>
     </div>
   </form>
+}
+
+/** URL로 들어온 값이 지금 목록에 없어도 선택 상태를 잃지 않도록 뒤에 붙여 보여 줍니다. */
+function withSelected(options: string[], selected: string[]): string[] {
+  return [...options, ...selected.filter((value) => !options.includes(value))]
+}
+
+function toggled(values: string[], value: string): string[] {
+  return values.includes(value) ? values.filter((item) => item !== value) : [...values, value]
 }
 
 function CatalogExtraSelect({ label, options, selected, onSelect }: {

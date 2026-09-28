@@ -65,7 +65,9 @@ describe('관심 공고 캘린더', () => {
   it('검색어·지역·분야·지원 대상 조건을 함께 적용한다', () => {
     const programs = createCalendarPreview('2026-09-10')
     expect(filterCalendarPrograms(programs, { ...defaultSavedProgramCalendarFilters, keyword: '서울경제' })).toHaveLength(8)
-    expect(filterCalendarPrograms(programs, { ...defaultSavedProgramCalendarFilters, region: '서울', category: '사업화', target: '창업기업' })).toHaveLength(4)
+    expect(filterCalendarPrograms(programs, { ...defaultSavedProgramCalendarFilters, region: ['서울'], category: ['사업화'], target: ['창업기업'] })).toHaveLength(4)
+    // 여러 값을 고르면 그중 하나라도 맞는 공고가 남습니다.
+    expect(filterCalendarPrograms(programs, { ...defaultSavedProgramCalendarFilters, region: ['서울', '경기'] })).toHaveLength(8)
   })
 
   it('연도·월 이동, 직접 선택, 오늘 복귀와 범위를 처리한다', () => {
@@ -101,7 +103,7 @@ describe('관심 공고 캘린더', () => {
     act(() => result.current.chooseListPage(2))
     expect(result.current.viewMode).toBe('list')
     expect(result.current.listPage).toBe(2)
-    act(() => result.current.changeFilter('category', '사업화'))
+    act(() => result.current.toggleFilterValue('category', '사업화'))
     expect(result.current.listPage).toBe(1)
     expect(result.current.filteredProgramCount).toBe(4)
     expect(result.current.listTotalPages).toBe(1)

@@ -21,8 +21,9 @@ class SupportProgramCatalogController(
     @GetMapping
     fun browse(
         @RequestParam(defaultValue = "") @Size(max = 100) @Pattern(regexp = "[^\\p{C}]*") keyword: String,
-        @RequestParam(defaultValue = "") @Size(max = 50) @Pattern(regexp = "[^\\p{C}]*") region: String,
-        @RequestParam(defaultValue = "") @Size(max = 100) @Pattern(regexp = "[^\\p{C}]*") category: String,
+        // 지역·분야는 쉼표로 여러 값을 이어 보낼 수 있어 길이를 넉넉히 둡니다.
+        @RequestParam(defaultValue = "") @Size(max = 200) @Pattern(regexp = "[^\\p{C}]*") region: String,
+        @RequestParam(defaultValue = "") @Size(max = 300) @Pattern(regexp = "[^\\p{C}]*") category: String,
         @RequestParam(defaultValue = "OPEN") @Pattern(regexp = "ALL|OPEN|UPCOMING|CLOSED|UNKNOWN") status: String,
         @RequestParam(defaultValue = "RECENT") @Pattern(regexp = "RECENT|DEADLINE") sort: String,
         @RequestParam(defaultValue = "1") @Min(1) @Max(1_000_000) page: Int,

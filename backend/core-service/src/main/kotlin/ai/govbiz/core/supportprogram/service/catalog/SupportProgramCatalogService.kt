@@ -8,6 +8,10 @@ import ai.govbiz.core.supportprogram.service.catalog.exception.SupportProgramCat
 import ai.govbiz.core.supportprogram.service.dto.SupportProgramCatalogResult
 import org.springframework.stereotype.Service
 
+/** 쉼표로 이어진 필터 값을 나눕니다. 공백만 있는 조각은 버립니다. */
+internal fun splitFilterValues(raw: String): Set<String> =
+    raw.split(',').map(String::trim).filter(String::isNotEmpty).toSet()
+
 /** 공개된 DB 공고를 명시적인 조건으로 조회하며 AI 검색이나 자격 판정을 실행하지 않습니다. */
 @Service
 class SupportProgramCatalogService(
@@ -28,8 +32,9 @@ class SupportProgramCatalogService(
     ): SupportProgramCatalogResult {
         require(page in 1..1_000_000 && pageSize in 1..50) { "invalid catalog pagination" }
         val keyword = rawKeyword.trim()
-        val region = rawRegion.trim()
-        val category = rawCategory.trim()
+        // 지역·분야는 쉼표로 여러 값을 받습니다("서울,경기"). 하나라도 맞으면 통과합니다.
+        val regions = splitFilterValues(rawRegion)
+        val categories = splitFilterValues(rawCategory)
         val startupStage = rawStartupStage.trim()
         val applicantType = rawApplicantType.trim()
         val founderAge = rawFounderAge.trim()
@@ -44,8 +49,8 @@ class SupportProgramCatalogService(
             val startup = candidate.startupDetails
             (keyword.isEmpty() || program.title.contains(keyword, ignoreCase = true) ||
                 program.organization.contains(keyword, ignoreCase = true)) &&
-                (region.isEmpty() || region in program.regions) &&
-                (category.isEmpty() || category in program.categories) &&
+                (regions.isEmpty() || program.regions.any { it in regions }) &&
+                (categories.isEmpty() || program.categories.any { it in categories }) &&
                 (status == null || program.status == status) &&
                 (sourceCode.isEmpty() || program.sourceCode == sourceCode) &&
                 (startupStage.isEmpty() || startupStage in startup?.startupStages.orEmpty()) &&

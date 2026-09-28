@@ -21,7 +21,7 @@ describe('상세 오류 복구와 검색 화면 복귀', () => {
     const question = vi.spyOn(appContainer.resolve('askSupportProgramEvidenceQuestionUseCase'), 'execute')
       .mockResolvedValue({ outcome: 'unavailable' })
     renderDetail()
-    fireEvent.click(await screen.findByRole('button', { name: '상세 정보 다시 불러오기' }))
+    fireEvent.click(await screen.findByRole('button', { name: '다시 시도' }))
     await screen.findByRole('heading', { name: supportPrograms[0].title })
     expect(detail).toHaveBeenCalledTimes(2)
     expect(question).not.toHaveBeenCalled()
@@ -62,7 +62,7 @@ describe('상세 오류 복구와 검색 화면 복귀', () => {
     // 처음에는 본문에서 답할 수 있는 예시 키워드가 있고, 누르면 입력에 질문 문장이 채워집니다.
     fireEvent.click(within(panel).getByRole('button', { name: '지원 대상' }))
     expect((within(panel).getByRole('textbox', { name: '공고 원문에 질문하기' }) as HTMLTextAreaElement).value).toBe('지원 대상이 어떻게 되나요?')
-    fireEvent.click(within(panel).getByRole('button', { name: '질문하고 근거 받기' }))
+    fireEvent.click(within(panel).getByRole('button', { name: '질문 보내기' }))
     expect(await within(panel).findByText('중소기업이 대상입니다.')).toBeTruthy()
     expect(within(panel).getByRole('link', { name: '근거 1 원문 보기 ↗' }).getAttribute('href')).toBe('https://example.com/1')
     expect(ask).toHaveBeenCalledWith({ sourceCode: supportPrograms[0].sourceCode, sourceProgramId: supportPrograms[0].id, question: '지원 대상이 어떻게 되나요?' }, expect.any(AbortSignal))
@@ -70,7 +70,7 @@ describe('상세 오류 복구와 검색 화면 복귀', () => {
     expect((within(panel).getByRole('textbox', { name: '공고 원문에 질문하기' }) as HTMLTextAreaElement).value).toBe('')
     expect(within(panel).queryByRole('button', { name: '지원 대상' })).toBeNull()
     fireEvent.change(within(panel).getByRole('textbox', { name: '공고 원문에 질문하기' }), { target: { value: '제출 서류는?' } })
-    fireEvent.click(within(panel).getByRole('button', { name: '질문하고 근거 받기' }))
+    fireEvent.click(within(panel).getByRole('button', { name: '질문 보내기' }))
     expect(await within(panel).findByText(/충분한 근거를 찾지 못했습니다/)).toBeTruthy()
     expect(within(panel).getByText('지원 대상이 어떻게 되나요?')).toBeTruthy()
     expect(within(panel).getByText('제출 서류는?')).toBeTruthy()
@@ -112,7 +112,7 @@ describe('상세 오류 복구와 검색 화면 복귀', () => {
       renderDetail(state)
       await screen.findByRole('heading', { name: '공고 정보를 찾을 수 없습니다' })
       expect(screen.getByRole('link', { name: '검색 결과로 돌아가기' }).getAttribute('href')).toBe('/')
-      expect(screen.queryByRole('button', { name: '상세 정보 다시 불러오기' })).toBeNull()
+      expect(screen.queryByRole('button', { name: '다시 시도' })).toBeNull()
     },
   )
 

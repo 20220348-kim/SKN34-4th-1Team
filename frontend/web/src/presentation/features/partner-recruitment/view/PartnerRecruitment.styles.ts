@@ -13,8 +13,13 @@ export const partnerRecruitmentStyles = {
   searchInput: 'min-w-0 flex-1 border-0 bg-transparent text-[0.85rem] text-app-ink outline-0 placeholder:text-sample-muted',
   plainList: 'm-0 flex list-disc flex-col gap-1 pl-5 text-[0.78rem] leading-[1.5] text-sample-muted',
   filterPanel: 'flex flex-col gap-3 rounded-[1rem] border border-sample-border bg-white p-4',
-  filterFooter: 'flex flex-wrap items-center justify-between gap-3',
-  resultCount: 'text-[0.78rem] text-sample-muted',
+  filterFooter: 'flex flex-wrap items-center justify-between gap-3 border-t border-sample-border pt-3',
+  resultCount: 'm-0 text-[0.78rem] text-sample-muted',
+  // 결과 머리줄(필터 검색과 같은 배치): 왼쪽 "검색 결과 n건", 오른쪽 정렬 드롭다운.
+  resultHead: 'flex flex-wrap items-center justify-between gap-3',
+  resultTitle: 'm-0 text-base font-bold text-app-ink',
+  sortLabel: 'flex items-center gap-2 text-xs text-sample-muted',
+  sortSelect: 'min-h-9 cursor-pointer rounded-xl border border-sample-border bg-white px-3 text-xs font-semibold text-app-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary',
   pagination: 'flex items-center justify-center gap-3 pt-2',
   // 폭에 따라 3열·2열·1열로 저절로 줄어드는 격자입니다. 한 줄은 최대 3열(카드 폭이 전체의 1/3 이상)이고 같은 줄의 카드는 같은 높이로 늘어납니다.
   cardGrid: 'grid gap-4 grid-cols-[repeat(auto-fill,minmax(min(100%,max(300px,calc((100%_-_2rem)/3))),1fr))]',

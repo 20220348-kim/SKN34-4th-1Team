@@ -15,6 +15,7 @@ import {
 } from '../../../shared/partner-recruitment/partnerRecruitmentLabels'
 import { useMyPartnerRecruitmentsViewModel } from '../viewmodel/useMyPartnerRecruitmentsViewModel'
 import { partnerRecruitmentStyles } from './PartnerRecruitment.styles'
+import { RecruitmentCardSkeleton } from './RecruitmentCardSkeleton'
 
 /**
  * 파트너 관리의 "내 모집글" 탭입니다. 내가 쓴 글을 최근 등록순으로 모아 상태·받은 제안 수를 보여 주고,
@@ -52,9 +53,7 @@ export function MyPartnerRecruitmentsPage() {
               <button className={workspacePageStyles.quietLink} type="button" onClick={retry}>다시 시도</button>
             </section>
           ) : phase === 'loading' && recruitments.length === 0 ? (
-            <section className={workspacePageStyles.card} aria-label="모집글 불러오는 중">
-              <p className={workspacePageStyles.emptyNote}>내 모집글을 불러오는 중입니다.</p>
-            </section>
+            <RecruitmentCardSkeleton label="모집글 불러오는 중" text="내 모집글을 불러오는 중입니다." />
           ) : recruitments.length === 0 ? (
             <section className={workspacePageStyles.card} aria-label="내 모집글 없음">
               <p className={workspacePageStyles.emptyNote}>

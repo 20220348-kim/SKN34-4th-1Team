@@ -102,7 +102,8 @@ class SupportProgramCatalogControllerTest {
 
     @Test
     fun validatesRawTextLengthsAndControlCharactersBeforeCallingService() {
-        for ((field, limit) in listOf("keyword" to 100, "region" to 50, "category" to 100, "startupStage" to 100, "applicantType" to 100, "founderAge" to 100)) {
+        // 지역·분야는 쉼표로 여러 값을 이어 보내므로 한도가 200·300입니다.
+        for ((field, limit) in listOf("keyword" to 100, "region" to 200, "category" to 300, "startupStage" to 100, "applicantType" to 100, "founderAge" to 100)) {
             for (value in listOf("가".repeat(limit + 1), "😀".repeat(limit / 2 + 1), "가\u0000", "가\u200b", "가\n")) {
                 mvc.perform(get(URL).param(field, value)).andExpect(status().isBadRequest())
                     .andExpect(jsonPath("$.code").value("REQUEST_VALIDATION_FAILED"))
@@ -115,8 +116,8 @@ class SupportProgramCatalogControllerTest {
     @Test
     fun acceptsMaximumTextAndPaginationBoundaries() {
         val keyword = "가".repeat(100)
-        val region = "나".repeat(50)
-        val category = "다".repeat(100)
+        val region = "나".repeat(200)
+        val category = "다".repeat(300)
         Mockito.`when`(service.browse(keyword, region, category, SupportProgramStatus.OPEN, SupportProgramCatalogSort.RECENT, 1_000_000, 50))
             .thenReturn(result().copy(programs = emptyList(), page = 1_000_000, pageSize = 50))
 

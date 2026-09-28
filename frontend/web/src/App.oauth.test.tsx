@@ -75,7 +75,9 @@ describe('소셜 로그인', () => {
     const execute = vi.spyOn(appContainer.resolve('completeOAuthSignInUseCase'), 'execute').mockResolvedValue(memberAccount)
     renderApp('/oauth/complete?next=%2Fapp%2Fpricing')
 
-    expect(screen.getByRole('status').textContent).toBe(oauthCompleteMessages.signingIn)
+    expect(screen.getByRole('heading', { name: oauthCompleteMessages.signingIn })).toBeTruthy()
+    expect(screen.getByRole('status').textContent).toContain(oauthCompleteMessages.description)
+    expect(screen.queryByRole('link', { name: oauthCompleteMessages.backToLogin })).toBeNull()
     // 요금제 작업 화면은 사이드바와 함께 그려져 부하가 큰 전체 실행에서 1초를 넘길 수 있어 기다림을 늘립니다.
     expect(await screen.findByRole('heading', { name: '기업의 다음 단계에 맞는 요금제' }, { timeout: 10000 })).toBeTruthy()
     expect(execute).toHaveBeenCalled()

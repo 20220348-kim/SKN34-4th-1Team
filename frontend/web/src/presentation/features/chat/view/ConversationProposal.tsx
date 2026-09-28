@@ -37,26 +37,29 @@ export function ConversationProposal({ proposal, onConfirm, onCancel }: {
       ) : null}
       {ready && proposal.hasRetainedConditions ? <p className={chatPageStyles.proposalHint}>나머지 조건은 유지됩니다.</p> : null}
       {!ready ? <p className={chatPageStyles.proposalHint}>답변을 입력해 주세요. 아직 검색하지 않았어요.</p> : null}
-      {ready ? <details className={chatPageStyles.proposalDetails}>
-        <summary className={chatPageStyles.proposalDetailsSummary}>검색 조건 자세히</summary>
-        <dl className={chatPageStyles.proposalDetailsList}>
-          <dt className={chatPageStyles.proposalDetailsLabel}>검색어</dt>
-          <dd className={chatPageStyles.proposalDetailsValue}>{proposal.query}</dd>
-          <dt className={chatPageStyles.proposalDetailsLabel}>접수 상태</dt>
-          <dd className={chatPageStyles.proposalDetailsValue}>
-            {proposal.acceptingOnly ? '접수 중만' : '전체 (접수 중·예정·마감·상태 미확인)'}
-          </dd>
-          {proposal.appliedConditions.map((condition) => <Fragment key={condition.label}>
-            <dt className={chatPageStyles.proposalDetailsLabel}>{condition.label}</dt>
-            <dd className={chatPageStyles.proposalDetailsValue}>{condition.value}</dd>
-          </Fragment>)}
-        </dl>
-        <p className={chatPageStyles.proposalHint}>아직 검색하지 않았어요. 바꾸고 싶은 조건은 새 메시지로 알려주세요.</p>
-      </details> : null}
-      <div className={chatPageStyles.conditionsActions}>
-        {ready ? <button type="button" className={chatPageStyles.conditionsButton} disabled={!canConfirm}
-          onClick={onConfirm}>이 조건으로 검색 <span aria-hidden="true">→</span></button> : null}
-        <button type="button" className={chatPageStyles.proposalCancelButton} onClick={onCancel}>제안 취소</button>
+      {/* "검색 조건 자세히"와 같은 줄 오른쪽에 [제안 취소][이 조건으로 검색]을 둡니다. 펼친 조건 표는 왼쪽 칸 아래로 이어집니다. */}
+      <div className={chatPageStyles.proposalFooter}>
+        {ready ? <details className={chatPageStyles.proposalDetails}>
+          <summary className={chatPageStyles.proposalDetailsSummary}>검색 조건 자세히</summary>
+          <dl className={chatPageStyles.proposalDetailsList}>
+            <dt className={chatPageStyles.proposalDetailsLabel}>검색어</dt>
+            <dd className={chatPageStyles.proposalDetailsValue}>{proposal.query}</dd>
+            <dt className={chatPageStyles.proposalDetailsLabel}>접수 상태</dt>
+            <dd className={chatPageStyles.proposalDetailsValue}>
+              {proposal.acceptingOnly ? '접수 중만' : '전체 (접수 중·예정·마감·상태 미확인)'}
+            </dd>
+            {proposal.appliedConditions.map((condition) => <Fragment key={condition.label}>
+              <dt className={chatPageStyles.proposalDetailsLabel}>{condition.label}</dt>
+              <dd className={chatPageStyles.proposalDetailsValue}>{condition.value}</dd>
+            </Fragment>)}
+          </dl>
+          <p className={chatPageStyles.proposalHint}>아직 검색하지 않았어요. 바꾸고 싶은 조건은 새 메시지로 알려주세요.</p>
+        </details> : null}
+        <div className={chatPageStyles.conditionsActions}>
+          <button type="button" className={chatPageStyles.proposalCancelButton} onClick={onCancel}>제안 취소</button>
+          {ready ? <button type="button" className={chatPageStyles.conditionsButton} disabled={!canConfirm}
+            onClick={onConfirm}>이 조건으로 검색 <span aria-hidden="true">→</span></button> : null}
+        </div>
       </div>
       {ready && !canConfirm ? <p className={chatPageStyles.conditionsHint}>
         {proposal.hasUnsentMessage

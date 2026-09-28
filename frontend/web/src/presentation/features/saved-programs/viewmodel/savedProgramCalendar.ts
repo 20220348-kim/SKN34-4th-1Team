@@ -17,6 +17,10 @@ export type CalendarProgram = {
   category: string
   categoryValues?: readonly string[]
   target: string
+  /** 담은 시각(서울 기준 ISO 로컬 시각)입니다. 미리보기 샘플에는 없습니다. */
+  savedAt?: string
+  /** 원문 주소입니다. 모바일 카드의 "원문 보기"에 씁니다. */
+  sourceUrl?: string
 }
 
 export type CalendarEventType = 'START' | 'END' | 'SAME_DAY'
@@ -26,15 +30,16 @@ export type CalendarEvent = {
   type: CalendarEventType
 }
 
+/** 지역·분야·대상은 여러 값을 함께 고릅니다. 빈 배열이 "전체"입니다. */
 export type SavedProgramCalendarFilters = {
   keyword: string
-  region: string
-  category: string
-  target: string
+  region: string[]
+  category: string[]
+  target: string[]
 }
 
 export const defaultSavedProgramCalendarFilters: SavedProgramCalendarFilters = {
-  keyword: '', region: '', category: '', target: '',
+  keyword: '', region: [], category: [], target: [],
 }
 
 export const savedProgramTargetOptions = ['예비창업자', '창업기업', '중소기업', '소상공인', '기타'] as const
@@ -55,7 +60,7 @@ export function calendarToday(now = new Date()): string {
 
 /** Core API가 돌려준 회원별 관심 공고를 달력 화면 모델로 변환합니다. */
 export function toCalendarPrograms(savedPrograms: readonly SavedSupportProgram[]): CalendarProgram[] {
-  return savedPrograms.map(({ program }) => {
+  return savedPrograms.map(({ program, savedAt }) => {
     const target = savedProgramTargetOptions.find((option) => option !== '기타' && program.targetDescription.includes(option))
       ?? (program.targetDescription.trim() ? '기타' : '대상 미확인')
     return {
@@ -72,8 +77,26 @@ export function toCalendarPrograms(savedPrograms: readonly SavedSupportProgram[]
       category: program.categories.join(' · ') || '분야 미분류',
       categoryValues: program.categories,
       target,
+      savedAt,
+      sourceUrl: program.sourceUrl,
     }
   })
+}
+
+/** 마감 임박순입니다. 마감일이 없는 공고는 뒤로 갑니다. */
+export function sortByDeadline(programs: readonly CalendarProgram[]): CalendarProgram[] {
+  return [...programs].sort((left, right) => {
+    if (left.endDate === right.endDate) return left.title.localeCompare(right.title, 'ko-KR')
+    if (left.endDate === null) return 1
+    if (right.endDate === null) return -1
+    return left.endDate < right.endDate ? -1 : 1
+  })
+}
+
+/** 오늘부터 마감일까지 남은 날입니다. 마감일이 없거나 지났으면 null입니다. */
+export function daysUntilDeadline(program: CalendarProgram, today: string): number | null {
+  if (program.endDate === null || program.endDate < today) return null
+  return Math.round((Date.parse(program.endDate) - Date.parse(today)) / 86_400_000)
 }
 
 /** 샘플은 최초 표시 월에만 만듭니다. 월 이동 때 가짜 공고를 계속 생성하지 않습니다. */
@@ -111,9 +134,9 @@ export function filterCalendarPrograms(
   const keyword = filters.keyword.trim().toLocaleLowerCase('ko-KR')
   return programs.filter((program) => {
     if (keyword && !`${program.title} ${program.organization}`.toLocaleLowerCase('ko-KR').includes(keyword)) return false
-    if (filters.region && !(program.regionValues ?? [program.region]).includes(filters.region)) return false
-    if (filters.category && !(program.categoryValues ?? [program.category]).includes(filters.category)) return false
-    if (filters.target && program.target !== filters.target) return false
+    if (filters.region.length && !(program.regionValues ?? [program.region]).some((value) => filters.region.includes(value))) return false
+    if (filters.category.length && !(program.categoryValues ?? [program.category]).some((value) => filters.category.includes(value))) return false
+    if (filters.target.length && !filters.target.includes(program.target)) return false
     return true
   })
 }

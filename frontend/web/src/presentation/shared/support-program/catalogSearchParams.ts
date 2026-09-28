@@ -12,9 +12,11 @@ export const defaultProgramSelectionFilters: SupportProgramCatalogFilters = {
 
 /** URL을 검색 상태로 복원할 때 알려진 필터만 받아들입니다. */
 export function readCatalogFilters(params: URLSearchParams): SupportProgramCatalogFilters {
+  // 지역·분야는 "서울,경기"처럼 쉼표로 여러 값을 담을 수 있어 길이를 넉넉히 둡니다(서버와 같은 한도).
   const text = (key: string) => {
     const value = (params.get(key) ?? '').trim()
-    return value.length <= (key === 'region' ? 50 : 100) && !/\p{C}/u.test(value) ? value : ''
+    const limit = key === 'region' ? 200 : key === 'category' ? 300 : 100
+    return value.length <= limit && !/\p{C}/u.test(value) ? value : ''
   }
   const status = params.get('status') as SupportProgramCatalogFilters['status']
   const sort = params.get('sort') as SupportProgramCatalogFilters['sort']
@@ -28,6 +30,15 @@ export function readCatalogFilters(params: URLSearchParams): SupportProgramCatal
     founderAge: sourceCode === 'KSTARTUP' ? text('founderAge') : '',
     status: catalogStatuses.includes(status) ? status : 'OPEN', sort: catalogSorts.includes(sort) ? sort : 'RECENT',
     page: page >= 1 && page <= 1_000_000 ? page : 1 }
+}
+
+/** "서울,경기" → ['서울', '경기']. 지역·분야 필터는 쉼표로 여러 값을 담습니다. */
+export function splitFilterValues(value: string): string[] {
+  return value.split(',').map((item) => item.trim()).filter(Boolean)
+}
+
+export function joinFilterValues(values: readonly string[]): string {
+  return values.map((item) => item.trim()).filter(Boolean).join(',')
 }
 
 export function writeCatalogFilters(filters: SupportProgramCatalogFilters): URLSearchParams {

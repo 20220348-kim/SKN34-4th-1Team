@@ -124,16 +124,17 @@ function ProgramCard({ program, interests }: { program: SupportProgram; interest
       <div className={chatPageStyles.programDetails}>
         <span>{program.targetDescription}</span>
       </div>
+      {/* 자격 판정은 축별 한 줄 판정 + 설명만 펼쳐 두고, 원문 인용은 두 축을 합쳐 중복을 뺀 뒤 접어 둡니다(위 요약과 겹치는 경우가 많음). */}
       <div className={chatPageStyles.eligibilityReview}>
         {review ? (
           <>
             <EligibilityAxis label="지원 대상" axis={review.target} />
             <EligibilityAxis label="지역" axis={review.region} />
+            <EligibilityEvidence axes={[review.target, review.region]} />
           </>
         ) : <p className={chatPageStyles.conditionsHint}>지원 대상·지역의 자격 판정이 제공되지 않았습니다.</p>}
         <p className={chatPageStyles.conditionsHint}>
-          기업마당 등 공식 API 본문 기준 · 첨부파일 미검증<br />
-          최종 신청 자격을 보장하지 않습니다. 미입력 조건·이전 의향 등은 원문에서 추가 확인하세요.
+          공식 API 본문 기준 · 첨부파일 미검증 · 최종 신청 자격은 원문에서 확인하세요.
         </p>
       </div>
       {program.matchedReasons.length ? (
@@ -144,7 +145,20 @@ function ProgramCard({ program, interests }: { program: SupportProgram; interest
           ))}
         </div>
       ) : null}
+      {/* 왼쪽은 새 창으로 여는 원문 링크(새 창 아이콘), 오른쪽은 상세 조건 보기입니다. */}
       <div className={chatPageStyles.programActions}>
+        <a
+          href={program.sourceUrl}
+          target="_blank"
+          rel="noreferrer"
+          className={chatPageStyles.programSourceLink}
+        >
+          {program.sourceCode === 'CNTRADE_NOTICE' ? '공식 공지 목록' : '원문 보기'}
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+            strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M14 4h6v6" /><path d="M20 4 10 14" /><path d="M18 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h5" />
+          </svg>
+        </a>
         <Link
           className={chatPageStyles.programDetailsButton}
           to={supportProgramDetailPath({ sourceCode: program.sourceCode, sourceProgramId: program.id }, inApp, searchReturnTo)}
@@ -152,14 +166,6 @@ function ProgramCard({ program, interests }: { program: SupportProgram; interest
         >
           상세 조건 보기
         </Link>
-        <a
-          href={program.sourceUrl}
-          target="_blank"
-          rel="noreferrer"
-          className={chatPageStyles.programSourceLink}
-        >
-          {program.sourceCode === 'CNTRADE_NOTICE' ? '공식 공지 목록 ↗' : '원문 보기 ↗'}
-        </a>
       </div>
       {program.sourceCode === 'CNTRADE_NOTICE' ? (
         <p className={chatPageStyles.conditionsHint}>제목으로 해당 공지를 확인해 주세요.</p>
@@ -174,17 +180,23 @@ function EligibilityAxis({ label, axis }: { label: string; axis: SupportProgramE
       <h3 className={chatPageStyles.eligibilityAxisTitle}>
         {label} · {axis.status === 'MATCH' ? '본문 조건 확인' : '확인 필요'}
       </h3>
-      <p className={chatPageStyles.conditionsHint}>{axis.explanation}</p>
-      {axis.evidence.map((evidence) => (
-        <div key={evidence.field}>
-          <span className={chatPageStyles.matchedReason}>
-            공식 API {evidence.field === 'SUMMARY' ? '사업 요약' : '지원 대상'} 인용
-          </span>
-          <blockquote className={chatPageStyles.eligibilityQuote}>{evidence.quote}</blockquote>
-        </div>
-      ))}
-      {!axis.evidence.length ? <p className={chatPageStyles.conditionsHint}>확인 가능한 본문 인용 없음</p> : null}
+      <p className={chatPageStyles.conditionsHint}>
+        {axis.explanation}
+        {!axis.evidence.length ? <>{' '}<span className={chatPageStyles.matchedReason}>확인 가능한 본문 인용 없음</span></> : null}
+      </p>
     </div>
+  )
+}
+
+/** 두 축의 원문 인용을 같은 문장은 한 번만 남겨 합치고, 기본은 접어 둡니다. */
+function EligibilityEvidence({ axes }: { axes: SupportProgramEligibilityAxis[] }) {
+  const quotes = Array.from(new Set(axes.flatMap((axis) => axis.evidence.map((evidence) => evidence.quote))))
+  if (!quotes.length) return null
+  return (
+    <details className={chatPageStyles.eligibilityEvidence}>
+      <summary className={chatPageStyles.eligibilityEvidenceSummary}>원문 근거 {quotes.length}건</summary>
+      {quotes.map((quote) => <blockquote key={quote} className={chatPageStyles.eligibilityQuote}>{quote}</blockquote>)}
+    </details>
   )
 }
 
