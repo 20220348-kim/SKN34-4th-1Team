@@ -152,3 +152,32 @@ async def interpret(payload: InterpretRequest, service: Annotated[ApplicationPre
             status_code=status.HTTP_504_GATEWAY_TIMEOUT if timed_out else status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"code": str(error)},
         ) from error
+
+@router.post("/online-form/inspect")
+async def inspect_public_online_form(request: Request):
+    """Internal, authenticated inspection; no OpenAI call or persistence."""
+    import hmac
+    import json
+    import os
+    from app.application_preparation.online_form_mcp import OnlineFormMcpError, inspect_via_mcp
+
+    token = os.getenv("DOCUMENT_INTERNAL_TOKEN", "")
+    if len(token) < 32:
+        raise HTTPException(503, detail={"code": "APPLICATION_ONLINE_FORM_MCP_NOT_READY"})
+    if not hmac.compare_digest(request.headers.get("authorization", ""), "Bearer " + token):
+        raise HTTPException(401, detail={"code": "UNAUTHORIZED"})
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > 4096:
+            raise HTTPException(413, detail={"code": "APPLICATION_ONLINE_FORM_LIMIT_EXCEEDED"})
+    try:
+        payload = json.loads(body)
+        if not isinstance(payload, dict) or set(payload) != {"url"} or not isinstance(payload["url"], str):
+            raise ValueError()
+        return await inspect_via_mcp(payload["url"])
+    except (ValueError, UnicodeDecodeError):
+        raise HTTPException(422, detail={"code": "APPLICATION_ONLINE_FORM_INVALID_URL"}) from None
+    except OnlineFormMcpError as error:
+        logger.warning("online_form_inspection_failed code=%s", error.code)
+        raise HTTPException(503, detail={"code": "APPLICATION_ONLINE_FORM_" + error.code}) from None

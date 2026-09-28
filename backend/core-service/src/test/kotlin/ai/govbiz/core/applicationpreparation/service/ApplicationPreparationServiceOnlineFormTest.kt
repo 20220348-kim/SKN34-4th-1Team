@@ -2,6 +2,7 @@ package ai.govbiz.core.applicationpreparation.service
 
 import ai.govbiz.core.account.domain.Account
 import ai.govbiz.core.account.domain.AccountRole
+import ai.govbiz.core.applicationpreparation.client.ai.ApplicationOnlineFormMcpClient
 import ai.govbiz.core.applicationpreparation.domain.*
 import ai.govbiz.core.applicationpreparation.domain.exception.ApplicationPreparationNotFoundException
 import ai.govbiz.core.applicationpreparation.facade.AiApplicationPreparationFacade
@@ -11,7 +12,15 @@ import ai.govbiz.core.applicationpreparation.service.dto.ApplicationOnlineFormSo
 import java.time.LocalDateTime
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
+import org.springframework.http.MediaType
+import org.springframework.http.converter.json.JacksonJsonHttpMessageConverter
+import org.springframework.test.web.client.MockRestServiceServer
+import org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo
+import org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess
+import org.springframework.web.client.RestClient
 import org.mockito.Mockito.*
+import tools.jackson.databind.json.JsonMapper
+import tools.jackson.module.kotlin.KotlinModule
 import tools.jackson.module.kotlin.jacksonObjectMapper
 
 class ApplicationPreparationServiceOnlineFormTest {
@@ -21,13 +30,70 @@ class ApplicationPreparationServiceOnlineFormTest {
     private val ai = mock(AiApplicationPreparationFacade::class.java)
     private val contents = mock(ApplicationPreparationContentRepository::class.java)
     private val saved = mock(SavedSupportProgramRepository::class.java)
-    private val service = ApplicationPreparationService(repository, forms, inputs, ai, contents, saved)
+    private val onlineMcp = mock(ApplicationOnlineFormMcpClient::class.java)
+    private val service = ApplicationPreparationService(repository, forms, inputs, ai, contents, saved, onlineMcp)
     private val now = LocalDateTime.of(2026, 9, 27, 12, 0)
     private val owner = Account(1, "owner@example.com", AccountRole.USER, null, null, now)
     private val source = ApplicationOnlineFormSource(1, "review-form", "검토 신청서", listOf(
         ApplicationOnlineFormSourceControl("name", "업체명", true),
         ApplicationOnlineFormSourceControl("consent", "개인정보 수집 동의", true),
     ))
+
+    @Test
+    fun inspectsOwnedPreparationThroughMcpAndExistingDeterministicReview() {
+        val form = javaClass.getResourceAsStream("/application-preparation/innovation-voucher-2026-v1.json")!!.use {
+            jacksonObjectMapper().readValue(it, ApplicationFormManifest::class.java)
+        }
+        val draft = NewApplicationPreparation(form.sourceCode, form.sourceProgramId, form.formVersionId, form.supportedServiceFields.first())
+        `when`(repository.findOwned(owner.id, 10)).thenReturn(StoredApplicationPreparation(10, owner.id, 3, ApplicationProgressStage.PREPARING, 2, now, draft, now, now))
+        `when`(forms.requireVersion(form.formVersionId)).thenReturn(form)
+        val reference = ApplicationOnlineFormSourceReference("https://docs.google.com/forms/d/e/public-id/viewform", "GOOGLE_FORMS")
+        `when`(onlineMcp.inspect(reference.sourceUrl)).thenReturn(source)
+        val result = service.inspectPublicOnlineForm(owner, 10, reference)
+        assertEquals(1, result.mappedCount)
+        assertEquals(source.formId, result.formId)
+        assertFalse(result.fieldMappings.first().writable)
+        verify(onlineMcp).inspect(reference.sourceUrl)
+        verify(repository).findOwned(owner.id, 10)
+        verify(forms).requireVersion(form.formVersionId)
+        verifyNoInteractions(inputs, ai, contents, saved)
+    }
+
+    @Test
+    fun realClientHttpContractCanConfirmOneManifestMapping() {
+        val json = JsonMapper.builder().addModule(KotlinModule.Builder().build()).build()
+        val builder = RestClient.builder().baseUrl("http://ai.test")
+            .messageConverters { it.clear(); it.add(JacksonJsonHttpMessageConverter(json)) }
+        val http = MockRestServiceServer.bindTo(builder).build()
+        val realClient = ApplicationOnlineFormMcpClient(builder.build(), "t".repeat(32), json)
+        val connected = ApplicationPreparationService(repository, forms, inputs, ai, contents, saved, realClient)
+        val manifest = javaClass.getResourceAsStream("/application-preparation/innovation-voucher-2026-v1.json")!!.use {
+            json.readValue(it, ApplicationFormManifest::class.java)
+        }
+        val draft = NewApplicationPreparation(manifest.sourceCode, manifest.sourceProgramId,
+            manifest.formVersionId, manifest.supportedServiceFields.first())
+        `when`(repository.findOwned(owner.id, 10)).thenReturn(
+            StoredApplicationPreparation(10, owner.id, 3, ApplicationProgressStage.PREPARING, 2, now, draft, now, now))
+        `when`(forms.requireVersion(manifest.formVersionId)).thenReturn(manifest)
+        val reference = ApplicationOnlineFormSourceReference("https://docs.google.com/forms/d/e/public-id/viewform", "GOOGLE_FORMS")
+        val response = mapOf(
+            "contractVersion" to "google-public-form-reader-v1", "parserVersion" to "semantic-dom-v1",
+            "sourceUrl" to reference.sourceUrl, "finalUrl" to reference.sourceUrl,
+            "formTitle" to "합성 신청서", "semanticFingerprint" to "a".repeat(64),
+            "questions" to listOf(mapOf("order" to 1, "controlId" to "gpub-v1:1:abcd",
+                "label" to "업체명", "required" to true, "kind" to "SHORT_TEXT",
+                "options" to emptyList<String>(), "supported" to true, "unsupportedReason" to null)),
+        )
+        http.expect(requestTo("http://ai.test/internal/v1/application-preparations/online-form/inspect"))
+            .andRespond(withSuccess(json.writeValueAsString(response), MediaType.APPLICATION_JSON))
+        val result = connected.inspectPublicOnlineForm(owner, 10, reference)
+        assertEquals(1, result.mappedCount)
+        assertTrue(result.fieldMappings.first().mapped)
+        assertEquals("gpub-v1:1:abcd", result.fieldMappings.first().bindings.single().referenceId)
+        assertFalse(result.fieldMappings.first().writable)
+        http.verify()
+        verifyNoInteractions(inputs, ai, contents, saved)
+    }
 
     @Test
     fun classifiesReferencesWithoutMutationOrAiCalls() {
@@ -40,12 +106,12 @@ class ApplicationPreparationServiceOnlineFormTest {
         val manifestBefore = jacksonObjectMapper().writeValueAsString(form)
         `when`(repository.findOwned(owner.id, 10)).thenReturn(preparation)
         `when`(forms.requireVersion(form.formVersionId)).thenReturn(form)
-        val google = listOf(
-            "https://docs.google.com/forms/d/form-id/edit",
+        val publicCandidates = listOf(
             "https://docs.google.com/forms/d/e/published-id/viewform?usp=sf_link",
             "https://docs.google.com/forms/u/0/d/form-id/viewform",
             "https://forms.gle/shortId",
         ).map { ApplicationOnlineFormSourceReference(it, "GOOGLE_FORMS") }
+        val edit = ApplicationOnlineFormSourceReference("https://docs.google.com/forms/d/form-id/edit", "GOOGLE_FORMS")
         val unsupported = listOf(
             ApplicationOnlineFormSourceReference("https://example.com/form", "PUBLIC_HTML_FORM"),
             ApplicationOnlineFormSourceReference("https://docs.google.com/forms/d/id/edit", "UNKNOWN"),
@@ -59,22 +125,24 @@ class ApplicationPreparationServiceOnlineFormTest {
             "https://172.16.0.1/form", "https://172.31.0.1/form", "https://192.168.0.1/form",
             "https://[::1]/form", "https://169.254.169.254/form",
         ).map { ApplicationOnlineFormSourceReference(it, "GOOGLE_FORMS") }
-        google.forEach { reference ->
+        publicCandidates.forEach { reference ->
             repeat(2) {
-                assertEquals(ApplicationOnlineFormSourceCapabilityStatus.REQUIRES_AUTH,
+                assertEquals(ApplicationOnlineFormSourceCapabilityStatus.PUBLIC_READ_SUPPORTED,
                     service.checkOnlineFormSourceCapability(owner, 10, reference).status)
             }
         }
+        assertEquals(ApplicationOnlineFormSourceCapabilityStatus.REQUIRES_AUTH,
+            service.checkOnlineFormSourceCapability(owner, 10, edit).status)
         unsupported.forEach {
             assertEquals(ApplicationOnlineFormSourceCapabilityStatus.UNSUPPORTED_PROVIDER,
                 service.checkOnlineFormSourceCapability(owner, 10, it).status)
         }
         assertEquals(before, preparation)
         assertEquals(manifestBefore, jacksonObjectMapper().writeValueAsString(form))
-        verify(repository, times(google.size * 2 + unsupported.size)).findOwned(owner.id, 10)
-        verify(forms, times(google.size * 2 + unsupported.size)).requireVersion(form.formVersionId)
+        verify(repository, times(publicCandidates.size * 2 + 1 + unsupported.size)).findOwned(owner.id, 10)
+        verify(forms, times(publicCandidates.size * 2 + 1 + unsupported.size)).requireVersion(form.formVersionId)
         verifyNoMoreInteractions(repository, forms)
-        verifyNoInteractions(inputs, ai, contents, saved)
+        verifyNoInteractions(inputs, ai, contents, saved, onlineMcp)
     }
 
     @Test

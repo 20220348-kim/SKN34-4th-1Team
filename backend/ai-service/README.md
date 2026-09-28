@@ -849,3 +849,6 @@ HWP/HWPX 위치 응답이 서로 다른 답변을 같은 텍스트 칸에 배치
 Discovery configuration 응답은 두 값을 Core에 알려 Core read timeout(기본 270초)보다 작은지 검증하게 합니다.
 실행 로그에는 공고 식별자, durationMs, AI_MODEL / AI_RUN timeoutStage를 기록하고 504 응답에도 단계를 제공합니다.
 [운영값의 근거와 상태·재시도 정책](../../docs/application-form-availability.md)을 참고하세요.
+
+
+공개 Google Form 질문 조회는 `skn-31`의 내부 읽기 전용 경로입니다. 별도 단기 stdio MCP를 사용하며 `DOCUMENT_INTERNAL_TOKEN`으로 Core ↔ AI 인증을 재사용합니다. 자세한 경계와 제한은 `docs/architecture.md`를 참고합니다.
