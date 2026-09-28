@@ -9,7 +9,6 @@ import {
   type PartnerRecruitmentSort,
 } from '../../../../domain/entities/PartnerRecruitmentQuery'
 import { catalogSourceCodes, catalogSourceLabels } from '../../../../domain/entities/SupportProgramCatalog'
-import { loginPathFor } from '../../../shared/auth/returnPath'
 import { usePartnerRecruitmentBrowse } from '../../../shared/partner-recruitment/usePartnerRecruitmentBrowse'
 import { publicPaths } from '../../../shared/routes/appPaths'
 
@@ -63,7 +62,7 @@ export function usePublicPartnerRecruitmentListViewModel() {
       setKeywordDraft('')
       setQuery((current) => ({ ...current, keyword: '', sourceCode: '', page: 1 }))
     },
-    loginPrompt: promptReturnPath === null ? null : { loginPath: loginPathFor(promptReturnPath) },
+    loginPrompt: promptReturnPath === null ? null : { returnPath: promptReturnPath },
     openLoginPrompt: (recruitment: PartnerRecruitmentSummary) => setPromptRecruitmentId(recruitment.id),
     closeLoginPrompt: () => setPromptRecruitmentId(null),
   }

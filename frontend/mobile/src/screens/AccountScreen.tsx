@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { ActivityIndicator, Text, View } from 'react-native'
 import { z } from 'zod'
 import { isEmailAddress, normalizeEmail } from '@govbiz/shared/domain/entities/EmailAddress'
-import { isValidSignUpPassword } from '@govbiz/shared/domain/usecases/SignUpUseCase'
+import { signUpPasswordIssue } from '@govbiz/shared/domain/usecases/SignUpUseCase'
 import { apiRequest } from '../api/client'
 import { useAuth } from '../auth/session'
 import { authErrorMessage } from '../auth/errors'
@@ -72,7 +72,10 @@ export function AccountScreen({ onCompany }: { onCompany(): void }) {
       setEmailPass(null)
       throw new Error('이메일 인증을 완료한 뒤 가입해 주세요. 만료됐다면 인증번호를 다시 받아 주세요.')
     }
-    if (!isValidSignUpPassword(password)) throw new Error('비밀번호는 8~72자, UTF-8 72바이트 이하로 입력해 주세요.')
+    const passwordIssue = signUpPasswordIssue(password)
+    if (passwordIssue === 'tooShort') throw new Error('비밀번호는 8자 이상 입력해 주세요.')
+    if (passwordIssue === 'tooLong') throw new Error('비밀번호는 8~72자까지 입력해 주세요.')
+    if (passwordIssue === 'invalidCharacter') throw new Error('비밀번호는 영문·숫자·특수문자만 쓸 수 있습니다.')
     if (password !== confirmation) throw new Error('비밀번호 확인이 일치하지 않습니다.')
     await auth.signUp({ email: normalized, password, emailPassToken: emailPass.passToken })
   })

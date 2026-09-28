@@ -8,7 +8,8 @@ import {
 } from '../../../shared/partner-recruitment/partnerRecruitmentLabels'
 import { usePublicPartnerRecruitmentListViewModel } from '../viewmodel/usePublicPartnerRecruitmentListViewModel'
 import { MaskedCompanyRow } from './MaskedCompanyRow'
-import { PublicLoginPromptDialog } from './PublicLoginPromptDialog'
+import { LoginPromptDialog } from '../../../shared/auth/LoginPromptDialog'
+import { publicPartnerLoginDescription, publicPartnerMemberBenefits } from './publicPartnerMessages'
 import { publicPartnerRecruitmentStyles as styles } from './PublicPartnerRecruitment.styles'
 
 function RecruitmentCard({
@@ -185,9 +186,8 @@ export function PublicPartnerRecruitmentListPage() {
         )}
       </div>
 
-      <PublicLoginPromptDialog
-        isOpen={loginPrompt !== null}
-        loginPath={loginPrompt?.loginPath ?? ''}
+      <LoginPromptDialog
+        prompt={loginPrompt === null ? null : { returnPath: loginPrompt.returnPath, description: publicPartnerLoginDescription, benefits: publicPartnerMemberBenefits }}
         onClose={closeLoginPrompt}
       />
     </main>

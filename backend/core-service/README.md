@@ -367,8 +367,8 @@ Controller의 `SupportProgramRequestAdmissionService.execute`가 공개 요청 �
 관리자 정지·세션 폐기·비밀번호 변경 정책을 그대로 적용합니다. refresh token은 발급하지 않으며 만료되면 다시 로그인합니다.
 가입 전 인증번호 발송/확인은 기존 `/api/v1/auth/signup/email-code`, `/verify`를 사용합니다.
 
-새 비밀번호(회원가입·변경·재설정)는 8~72자이면서 UTF-8 72바이트 이하여야 합니다.
-예를 들어 한글 24자는 가능하고 25자는 400 `REQUEST_VALIDATION_FAILED`로 거부합니다.
+새 비밀번호(회원가입·변경·재설정)는 영문 대·소문자, 숫자, 특수문자(공백을 뺀 ASCII)만 8~72자입니다.
+한글·이모지·공백이 들어가면 400 `REQUEST_VALIDATION_FAILED`로 거부하며, BCrypt의 UTF-8 72바이트 한도는 문자 규칙과 별개로 계속 검사합니다.
 로그인·탈퇴에서 기존 비밀번호를 확인할 때는 과거 BCrypt 해시 호환성을 유지합니다.
 재설정 토큰은 비밀번호 변경 transaction에서 잠가 같은 토큰의 동시 요청도 한 번만 성공합니다.
 

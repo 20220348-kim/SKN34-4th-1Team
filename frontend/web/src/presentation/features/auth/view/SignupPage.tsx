@@ -114,11 +114,11 @@ export function SignupPage() {
                 maxLength={72}
                 aria-invalid={error?.field === 'password'}
                 aria-describedby={error?.field === 'password' ? 'signup-password-hint signup-error' : 'signup-password-hint'}
-                placeholder="비밀번호를 입력해 주세요. (8~72자)"
+                placeholder="비밀번호 (영문·숫자·특수문자 8자 이상)"
                 value={password}
                 onChange={(event) => updatePassword(event.target.value)}
               />
-              <span id="signup-password-hint" className={authPageStyles.fieldHint}>8~72자, UTF-8 72바이트 이하로 입력합니다. 한글은 보통 한 글자에 3바이트입니다.</span>
+              <span id="signup-password-hint" className={authPageStyles.fieldHintStart}>영문·숫자·특수문자로 8자 이상 입력해 주세요.</span>
             </div>
 
             <label className={authPageStyles.field}>

@@ -34,6 +34,7 @@ import { PricingPage } from './presentation/features/pricing/view/PricingPage'
 import { PublicPartnerRecruitmentDetailPage } from './presentation/features/public-partner-recruitment/view/PublicPartnerRecruitmentDetailPage'
 import { PublicPartnerRecruitmentListPage } from './presentation/features/public-partner-recruitment/view/PublicPartnerRecruitmentListPage'
 import { GuestSearchDetailLayout } from './presentation/features/support-program-detail/view/GuestSearchDetailLayout'
+import { WorkspaceSearchDetailLayout } from './presentation/features/support-program-detail/view/WorkspaceSearchDetailLayout'
 import { SupportProgramDetailPage } from './presentation/features/support-program-detail/view/SupportProgramDetailPage'
 import { SupportProgramEvidenceQuestionPage } from './presentation/features/support-program-detail/view/SupportProgramEvidenceQuestionPage'
 import { ReduxSampleItemPage } from './presentation/features/sample-item/view/ReduxSampleItemPage'
@@ -139,8 +140,11 @@ function CoreApp() {
           <Route path={appPaths.partnerDetail} element={<PartnerRecruitmentDetailPage />} />
           <Route path={appPaths.proposals} element={<PartnerProposalBoxPage />} />
           <Route path={appPaths.profile} element={<CompanyProfilePage />} />
-          <Route path={appPaths.supportProgramDetail} element={<SupportProgramDetailPage />} />
-          <Route path={appPaths.supportProgramQuestion} element={<SupportProgramEvidenceQuestionPage />} />
+          {/* 작업 화면의 상세·원문 질문은 연 곳(검색·관심 공고함)의 머리글을 이어받습니다. */}
+          <Route element={<WorkspaceSearchDetailLayout />}>
+            <Route path={appPaths.supportProgramDetail} element={<SupportProgramDetailPage />} />
+            <Route path={appPaths.supportProgramQuestion} element={<SupportProgramEvidenceQuestionPage />} />
+          </Route>
         </Route>
       </Route>
 

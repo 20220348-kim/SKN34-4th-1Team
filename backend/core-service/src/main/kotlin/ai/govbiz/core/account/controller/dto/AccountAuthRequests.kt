@@ -1,6 +1,7 @@
 package ai.govbiz.core.account.controller.dto
 
 import ai.govbiz.core.account.controller.validation.PasswordByteLimit
+import ai.govbiz.core.account.controller.validation.PasswordCharacters
 
 import ai.govbiz.core.account.domain.AccountRole
 import jakarta.validation.constraints.Email
@@ -35,6 +36,7 @@ class SignupRequest(
     @field:NotBlank
     @field:Size(min = 8, max = 72)
     @field:PasswordByteLimit
+    @field:PasswordCharacters
     val password: String,
     @field:NotBlank
     @field:Pattern(regexp = "[A-Za-z0-9_-]{43}")

@@ -10,7 +10,8 @@ import {
 import { publicPaths } from '../../../shared/routes/appPaths'
 import { usePublicPartnerRecruitmentDetailViewModel } from '../viewmodel/usePublicPartnerRecruitmentDetailViewModel'
 import { MaskedCompanyRow } from './MaskedCompanyRow'
-import { PublicLoginPromptDialog } from './PublicLoginPromptDialog'
+import { LoginPromptDialog } from '../../../shared/auth/LoginPromptDialog'
+import { publicPartnerLoginDescription, publicPartnerMemberBenefits } from './publicPartnerMessages'
 import { publicPartnerRecruitmentStyles as styles } from './PublicPartnerRecruitment.styles'
 
 /**
@@ -22,7 +23,7 @@ export function PublicPartnerRecruitmentDetailPage() {
   const {
     phase,
     recruitment,
-    loginPath,
+    returnPath,
     proposalFlowSteps,
     isLoginPromptOpen,
     openLoginPrompt,
@@ -138,7 +139,10 @@ export function PublicPartnerRecruitmentDetailPage() {
         </aside>
       </div>
 
-      <PublicLoginPromptDialog isOpen={isLoginPromptOpen} loginPath={loginPath} onClose={closeLoginPrompt} />
+      <LoginPromptDialog
+        prompt={isLoginPromptOpen ? { returnPath, description: publicPartnerLoginDescription, benefits: publicPartnerMemberBenefits } : null}
+        onClose={closeLoginPrompt}
+      />
     </main>
   )
 }

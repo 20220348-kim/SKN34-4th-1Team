@@ -61,7 +61,7 @@ export function ResetPasswordPage() {
                   value={password}
                   onChange={(event) => updatePassword(event.target.value)}
                 />
-                <span id="reset-password-hint" className={authPageStyles.fieldHint}>8~72자, UTF-8 72바이트 이하로 입력합니다. 한글은 보통 한 글자에 3바이트입니다.</span>
+                <span id="reset-password-hint" className={authPageStyles.fieldHintStart}>영문·숫자·특수문자로 8자 이상 입력해 주세요.</span>
               </div>
 
               <label className={authPageStyles.field}>

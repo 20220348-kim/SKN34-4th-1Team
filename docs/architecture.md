@@ -826,7 +826,8 @@ C02 해석은 별도 `40s` 제한이며 사용자 확인을 사이에 두므로 
 계정 흐름은 `AccountAuthController → AccountSignupService · AccountLoginService · AccountSessionService → AccountRepository → MySQL`입니다.
 회원가입은 이메일·비밀번호만 받아 BCrypt 해시와 약관 동의 시각을 저장하고 같은 요청에서 세션을 발급합니다. 이메일 중복은 DB unique
 제약의 `DuplicateKeyException`을 Service가 409로 바꿉니다.
-가입·변경·재설정의 새 비밀번호는 8~72자이면서 UTF-8 72바이트 이하여야 합니다. 로그인·탈퇴는 기존 BCrypt 해시의
+가입·변경·재설정의 새 비밀번호는 영문 대·소문자, 숫자, 특수문자만 8~72자이며 한글·이모지·공백은 거부합니다. BCrypt의
+UTF-8 72바이트 한도는 문자 규칙과 별개로 계속 검사합니다. 로그인·탈퇴는 기존 BCrypt 해시의
 비밀번호 검증 호환성을 유지합니다. 재설정 토큰은 비밀번호 변경 transaction 안에서 잠가 같은 토큰의 동시 재사용을 막습니다.
 사업자등록번호 확인은 `BusinessLookupController → BusinessLookupService → BiznoClient`로 외부 HTTP를 한 번 부르고,
 `BiznoClient`가 응답 검증과 오류를 `BiznoClientException`으로 바꿔 API 키가 담긴 URL이 로그·응답에 남지 않게 합니다.

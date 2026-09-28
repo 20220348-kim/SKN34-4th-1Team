@@ -13,7 +13,7 @@ export class ChangePasswordUseCase {
 
   execute(newPassword: string, signal?: AbortSignal): Promise<ChangePasswordResult> {
     if (!isValidSignUpPassword(newPassword)) {
-      throw new RangeError(`newPassword must be ${signUpPasswordLength.min}~${signUpPasswordLength.max} characters and at most ${signUpPasswordLength.maxBytes} UTF-8 bytes`)
+      throw new RangeError(`newPassword must be ${signUpPasswordLength.min}~${signUpPasswordLength.max} ASCII letters, digits or symbols and at most ${signUpPasswordLength.maxBytes} UTF-8 bytes`)
     }
     return this.repository.changePassword(newPassword, signal)
   }

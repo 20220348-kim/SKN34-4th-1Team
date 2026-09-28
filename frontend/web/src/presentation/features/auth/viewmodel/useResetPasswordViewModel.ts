@@ -3,13 +3,17 @@ import { useLocation } from 'react-router'
 
 import { appContainer } from '../../../../app/appContainer'
 import type { ResetPasswordUseCase } from '../../../../domain/usecases/ResetPasswordUseCase'
-import { isValidSignUpPassword, signUpPasswordLength } from '../../../../domain/usecases/SignUpUseCase'
+import { type SignUpPasswordIssue, signUpPasswordIssue, signUpPasswordLength } from '../../../../domain/usecases/SignUpUseCase'
 
 type PasswordResetUseCase = Pick<ResetPasswordUseCase, 'execute'>
 
 export const resetPasswordMessages = {
   missingToken: '인증을 마친 뒤에 새 비밀번호를 정할 수 있습니다. 비밀번호 찾기에서 인증번호를 받아 주세요.',
-  passwordLength: `비밀번호는 ${signUpPasswordLength.min}자 이상 ${signUpPasswordLength.max}자 이하, UTF-8 ${signUpPasswordLength.maxBytes}바이트 이하로 입력해 주세요.`,
+  passwordTooShort: `비밀번호는 ${signUpPasswordLength.min}자 이상 입력해 주세요.`,
+  // 72자 또는 UTF-8 72바이트를 넘는 경우입니다. 허용 범위만 짧게 말합니다.
+  passwordTooLong: `비밀번호는 ${signUpPasswordLength.min}~${signUpPasswordLength.max}자까지 입력해 주세요.`,
+  // 한글·이모지·공백이 섞인 경우입니다.
+  passwordInvalidCharacter: '비밀번호는 영문·숫자·특수문자만 쓸 수 있습니다.',
   passwordMismatch: '비밀번호 확인이 일치하지 않습니다.',
   tokenInvalid: '인증이 만료됐거나 이미 사용됐습니다. 비밀번호 찾기에서 인증번호를 다시 받아 주세요.',
   socialAccount: '카카오·Google로 가입한 계정이라 비밀번호가 없습니다. 로그인 화면에서 소셜 로그인으로 들어와 주세요.',
@@ -20,6 +24,12 @@ export const resetPasswordMessages = {
       : `요청이 많아 잠시 막혔습니다. ${retryAfterSeconds}초 뒤에 다시 시도해 주세요.`,
   requestFailed: '요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.',
 } as const
+
+const resetPasswordIssueMessages: Record<SignUpPasswordIssue, string> = {
+  tooShort: resetPasswordMessages.passwordTooShort,
+  tooLong: resetPasswordMessages.passwordTooLong,
+  invalidCharacter: resetPasswordMessages.passwordInvalidCharacter,
+}
 
 type ResetPasswordError = { field: 'password' | 'passwordConfirmation' | null; message: string }
 
@@ -57,8 +67,9 @@ export function useResetPasswordViewModel(
     event.preventDefault()
     if (isSubmitting || token === null) return
 
-    if (!isValidSignUpPassword(password)) {
-      setError({ field: 'password', message: resetPasswordMessages.passwordLength })
+    const passwordIssue = signUpPasswordIssue(password)
+    if (passwordIssue !== null) {
+      setError({ field: 'password', message: resetPasswordIssueMessages[passwordIssue] })
       ;(event.currentTarget.elements.namedItem('password') as HTMLInputElement).focus()
       return
     }

@@ -39,6 +39,8 @@ export const authPageStyles = {
   ),
   verifiedTag: 'inline-flex min-h-14 shrink-0 items-center rounded-xl bg-brand-accent px-4 text-[0.9rem] font-extrabold text-brand-primary',
   fieldHint: 'm-0 text-center text-[0.75rem] font-medium text-sample-muted',
+  // 입력칸 바로 아래 규칙 안내는 칸의 왼쪽 끝에 맞춥니다.
+  fieldHintStart: 'm-0 text-left text-[0.75rem] font-medium text-sample-muted',
   fieldError: 'm-0 text-[0.82rem] font-medium text-[#9a3947]',
   notice: 'm-0 rounded-xl bg-brand-accent px-4 py-3 text-[0.88rem] leading-[1.6] text-app-ink',
   optionsRow: 'flex flex-wrap items-center justify-between gap-4',

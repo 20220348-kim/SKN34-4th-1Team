@@ -157,8 +157,8 @@ class AccountAuthControllerTest {
     }
 
     @Test
-    fun signUpRejectsPasswordsOverTheBcryptUtf8ByteLimitBeforeReachingTheService() {
-        for (password in listOf("한".repeat(25), "😀".repeat(19))) {
+    fun signUpRejectsKoreanEmojiAndSpacePasswordsBeforeReachingTheService() {
+        for (password in listOf("한".repeat(8), "😀".repeat(8), "pass word1")) {
             mockMvc.perform(
                 post(SIGNUP_PATH)
                     .contentType(MediaType.APPLICATION_JSON)

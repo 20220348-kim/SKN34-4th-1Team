@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { useLocation, useSearchParams } from 'react-router'
 
-import { loginPathFor } from '../../../shared/auth/returnPath'
 import { readRecruitmentId, usePartnerRecruitmentDetail } from '../../../shared/partner-recruitment/usePartnerRecruitmentBrowse'
 
 /**
@@ -18,7 +17,7 @@ export function usePublicPartnerRecruitmentDetailViewModel() {
   return {
     phase,
     recruitment,
-    loginPath: loginPathFor(returnPath),
+    returnPath,
     isLoginPromptOpen,
     openLoginPrompt: () => setIsLoginPromptOpen(true),
     closeLoginPrompt: () => setIsLoginPromptOpen(false),

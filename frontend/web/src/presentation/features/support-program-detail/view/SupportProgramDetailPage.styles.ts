@@ -2,71 +2,114 @@ function classes(...groups: string[]) {
   return groups.join(' ')
 }
 
+/**
+ * 공고 상세의 배치입니다. 웹 화면 v2의 공고 상세 보드를 따릅니다.
+ * 넓은 화면은 본문 열과 320px 할 일 카드가 두 열이고, 좁은 화면(600px 미만)은 흰 바탕 한 열에 위 앱 바(뒤로·공고 상세)와
+ * 아래 고정 동작 바(관심 공고·더 보기·원문에 질문하기)가 붙습니다.
+ */
 export const supportProgramDetailStyles = {
-  page: 'mx-auto w-[min(920px,calc(100%_-_2rem))] py-[clamp(1.5rem,5vw,4rem)] [overflow-wrap:anywhere]',
-  unavailablePage: 'mx-auto w-[min(720px,calc(100%_-_2rem))] py-[clamp(1.5rem,5vw,4rem)]',
-  header: 'mb-8 flex flex-wrap items-center justify-between gap-4',
-  headerActions: 'flex flex-wrap items-center gap-3',
-  // 관심 공고 저장은 책갈피 아이콘 하나로 둡니다. 담긴 상태는 브랜드색으로 채웁니다.
-  saveIconButton: classes(
-    'inline-flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-full border border-sample-border bg-white text-app-ink',
-    'hover:border-brand-primary hover:text-brand-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary',
-    'disabled:cursor-not-allowed disabled:opacity-60 aria-pressed:border-brand-primary aria-pressed:bg-brand-primary aria-pressed:text-white aria-pressed:hover:text-white',
-  ),
-  // 담기·빼기 결과 안내입니다. 잠깐 보이고 닫을 수 있습니다.
-  saveNotice: 'mb-4 flex items-center justify-between gap-3 rounded-[1rem] border border-brand-primary/30 bg-brand-accent px-4 py-3 text-[0.85rem] text-app-ink',
-  // 신청 준비 중인 공고를 뺄 때 받는 확인입니다. 결과 안내와 구분되도록 주의색을 씁니다.
-  removeConfirm: 'mb-4 flex flex-wrap items-center justify-between gap-3 rounded-[1rem] border border-[#e0b04a] bg-[#fffaf0] px-4 py-3 text-[0.85rem] text-app-ink',
+  page: 'mx-auto w-full max-w-[1240px] px-6 pt-5 pb-12 text-app-ink [overflow-wrap:anywhere] max-[1023px]:px-5 max-[599px]:bg-surface max-[599px]:px-0 max-[599px]:pt-0 max-[599px]:pb-36',
+  unavailablePage: 'mx-auto w-full max-w-[720px] px-10 pt-6 pb-12 max-[599px]:px-5',
+  // 맨 위 줄입니다. 넓은 화면은 돌아가기 링크 하나, 좁은 화면은 앱 바(뒤로 화살표 · "공고 상세")입니다.
+  topBar: 'flex flex-wrap items-center gap-1 max-[599px]:h-14 max-[599px]:border-b max-[599px]:border-line max-[599px]:px-1',
+  // 돌아가기 링크는 브랜드 연한 초록 알약입니다. 화살표는 아이콘 하나뿐이고 좁은 화면은 아이콘만 남습니다.
   backLink: classes(
-    'inline-flex items-center rounded-full border px-[0.85rem] py-[0.65rem]',
-    'border-sample-border bg-white text-[0.85rem] font-bold text-app-ink no-underline',
-    'hover:border-brand-primary hover:bg-[#f6f7f8] hover:text-[#066538] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary',
+    'inline-flex h-9 items-center gap-1 rounded-full bg-brand-accent py-0 pr-3.5 pl-2 text-[0.8125rem] font-semibold text-brand-primary no-underline',
+    'hover:bg-brand-line focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary',
+    'max-[599px]:size-11 max-[599px]:justify-center max-[599px]:rounded-xl max-[599px]:bg-transparent max-[599px]:p-0 max-[599px]:text-app-ink',
   ),
-  sourceBadge: 'rounded-full bg-brand-accent px-3 py-[0.45rem] text-[0.72rem] font-extrabold text-[#066538]',
-  hero: classes(
-    'mb-6 grid grid-cols-[minmax(0,1fr)_minmax(160px,200px)] items-start gap-6 rounded-[1.4rem] border border-sample-border',
-    'bg-white p-[clamp(1.4rem,4vw,2.5rem)] shadow-[0_16px_42px_rgb(32_33_36_/_5%)]',
-    'max-chat:grid-cols-1',
+  backLabel: 'max-[599px]:sr-only',
+  mobileTitle: 'hidden flex-1 text-[1.0625rem] font-semibold text-app-ink max-[599px]:block',
+  // 담기·빼기 결과 안내와 빼기 확인입니다. 본문 위에 한 줄로 둡니다.
+  saveNotice: 'mt-4 flex items-center justify-between gap-3 rounded-[14px] bg-brand-soft px-4 py-3 text-[0.85rem] text-app-ink max-[599px]:mx-5',
+  removeConfirm: 'mt-4 flex flex-wrap items-center justify-between gap-3 rounded-[14px] border border-warning-line bg-warning-soft px-4 py-3 text-[0.85rem] text-app-ink max-[599px]:mx-5',
+  layout: 'mt-3.5 grid grid-cols-[minmax(0,1fr)_300px] items-start gap-7 max-[1023px]:grid-cols-1 max-[1023px]:gap-6 max-[599px]:mt-0 max-[599px]:px-5 max-[599px]:pt-5',
+  // 질문 패널이 열리면 오른쪽 열이 400px로 넓어지고 화면 위에 붙어 본문을 읽으며 대조할 수 있습니다.
+  layoutAsking: 'grid-cols-[minmax(0,1fr)_380px]',
+  article: 'flex min-w-0 flex-col gap-6 max-[599px]:gap-[18px]',
+  heading: 'flex flex-col gap-2',
+  meta: 'flex flex-wrap items-center gap-2.5 max-[599px]:gap-2',
+  status: 'inline-flex items-center gap-1.5 text-[0.8125rem] font-semibold',
+  statusOpen: 'text-brand-primary',
+  statusUpcoming: 'text-info',
+  statusClosed: 'text-ink-muted',
+  statusUnknown: 'text-ink-muted',
+  statusDot: 'size-[7px] rounded-full',
+  statusDotOpen: 'bg-brand-primary',
+  statusDotUpcoming: 'bg-info',
+  statusDotClosed: 'bg-line-strong',
+  statusDotUnknown: 'border-[1.5px] border-ink-subtle',
+  deadline: 'rounded-md px-[7px] py-[3px] text-[0.75rem] font-bold tabular-nums',
+  deadlineUrgent: 'bg-warning-soft text-warning',
+  deadlineCalm: 'bg-surface-muted text-ink-muted',
+  source: 'text-[0.8125rem] text-ink-subtle',
+  title: 'm-0 text-[1.75rem] font-bold leading-[1.35] tracking-[-0.02em] text-app-ink max-[599px]:text-[1.375rem] max-[599px]:leading-[1.4]',
+  organization: 'm-0 text-[0.9375rem] text-ink-muted',
+  summary: 'm-0 max-w-[620px] text-[1rem] leading-[1.75] text-app-ink max-[599px]:max-w-none max-[599px]:leading-[1.7]',
+  // 한눈에 보기입니다. 넓은 화면은 흰 카드에 두 열 정의 목록, 좁은 화면은 연한 바탕에 한 열입니다.
+  glance: 'rounded-2xl bg-surface px-6 pt-1.5 pb-2 max-[599px]:bg-app-canvas max-[599px]:px-4 max-[599px]:pt-1',
+  glanceTitle: 'mt-3.5 mb-1.5 text-[0.9375rem] font-semibold text-app-ink max-[599px]:mt-3 max-[599px]:mb-1',
+  glanceList: 'm-0',
+  glanceRow: 'grid grid-cols-[112px_minmax(0,1fr)] gap-4 border-t border-surface-muted py-3.5 max-[599px]:grid-cols-1 max-[599px]:gap-1 max-[599px]:border-line max-[599px]:py-3',
+  glanceRowTight: 'items-center py-3',
+  glanceLabel: 'text-[0.875rem] text-ink-subtle max-[599px]:text-[0.8125rem]',
+  glanceValue: 'm-0 text-[0.9375rem] leading-[1.6] text-app-ink',
+  glanceValueStrong: 'font-medium tabular-nums',
+  glanceValueMuted: 'text-ink-muted',
+  tagList: 'm-0 flex list-none flex-wrap gap-1.5 p-0',
+  tag: 'rounded-md bg-surface-muted px-[9px] py-1 text-[0.8125rem] font-medium text-ink-muted',
+  emptyValue: 'text-ink-muted',
+  note: 'm-0 flex items-start gap-2.5 text-[0.8125rem] leading-[1.6] text-ink-muted',
+  notePill: 'shrink-0 rounded-full bg-surface-muted px-[9px] py-0.5 text-[0.75rem] font-semibold text-ink-muted',
+  // 할 일 카드입니다. 넓은 화면은 오른쪽 흰 카드, 좁은 화면은 아래 고정 동작 바가 되고 나머지 줄은 [더 보기]로 펼칩니다.
+  aside: classes(
+    'flex flex-col gap-4 rounded-2xl bg-surface p-5',
+    'max-[599px]:fixed max-[599px]:inset-x-0 max-[599px]:bottom-0 max-[599px]:z-10 max-[599px]:gap-3 max-[599px]:rounded-none max-[599px]:border-t max-[599px]:border-line max-[599px]:px-4 max-[599px]:pt-3 max-[599px]:pb-[calc(1.75rem+env(safe-area-inset-bottom))]',
   ),
-  eyebrow:
-    'mt-0 mb-2 text-[0.72rem] font-extrabold tracking-[0.12em] text-sample-muted uppercase',
-  title: 'm-0 text-[clamp(1.65rem,4vw,2.45rem)] font-bold leading-[1.25] tracking-[-0.045em] text-app-ink',
-  organization: 'mt-3 mb-0 text-[0.9rem] font-bold text-sample-muted',
-  summary: 'mt-5 mb-0 leading-[1.7] text-sample-muted',
-  qualificationNotice: 'mt-3 mb-4 leading-[1.6] text-sample-muted',
-  statusCard: 'grid gap-2 rounded-[1rem] border border-sample-border bg-[#f6f7f8] p-5 text-left',
-  statusLabel: 'text-[0.72rem] font-extrabold tracking-[0.08em] text-sample-muted uppercase',
-  statusValue: 'text-[1.2rem] text-app-ink',
-  score: 'mt-1 w-fit rounded-full bg-brand-accent px-2 py-1 text-[0.72rem] font-extrabold text-brand-primary',
-  details: 'grid grid-cols-2 gap-3 max-chat:grid-cols-1',
-  detailItem: 'rounded-[1.4rem] border border-sample-border bg-white p-5',
-  detailLabel: 'mt-0 mb-3 text-[0.75rem] font-extrabold tracking-[0.08em] text-sample-muted uppercase',
-  detailValue: 'leading-[1.6] text-app-ink',
-  tagList: 'm-0 flex list-none flex-wrap gap-2 p-0',
-  tag: 'rounded-full bg-brand-accent px-3 py-1 text-[0.78rem] font-bold text-[#066538]',
-  emptyValue: 'text-sample-muted',
-  sectionTitle: 'm-0 text-[1.25rem] font-bold tracking-[-0.03em] text-app-ink',
-  questionSection: 'mt-6 rounded-[1.4rem] border border-sample-border bg-white p-[clamp(1.4rem,4vw,2.1rem)]',
-  questionDescription: 'mt-3 mb-0 leading-[1.6] text-sample-muted',
-  /** 질문하기·신청 문서 작성하기 버튼을 가운데 정렬하고 사이를 띄웁니다. 좁은 화면에서는 줄을 바꿉니다. */
-  questionActions: 'mt-5 flex flex-wrap items-center justify-center gap-x-4 gap-y-3',
-  questionLink: classes(
-    'inline-flex rounded-full bg-brand-primary px-4 py-3 text-[0.84rem] font-extrabold text-white no-underline',
-    'hover:bg-[#066538] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary',
+  // 질문 패널이 열린 오른쪽 열입니다. 넓은 화면은 화면 위에 붙고, 좁은 화면은 아래 시트(85dvh)가 됩니다.
+  asideAsking: 'sticky top-4 max-h-[calc(100dvh-2rem)] overflow-hidden max-[1023px]:static max-[1023px]:max-h-none max-[599px]:fixed max-[599px]:top-auto max-[599px]:max-h-[85dvh] max-[599px]:rounded-t-[20px] max-[599px]:pt-4 max-[599px]:pb-[calc(1rem+env(safe-area-inset-bottom))] max-[599px]:shadow-[0_-12px_32px_rgb(32_33_36_/_12%)]',
+  sheetBackdrop: 'hidden max-[599px]:block max-[599px]:fixed max-[599px]:inset-0 max-[599px]:z-[9] max-[599px]:border-0 max-[599px]:bg-black/35 max-[599px]:p-0',
+  // 좁은 화면의 동작 바 한 줄입니다. 넓은 화면에서는 세로로 풀립니다.
+  asideBar: 'contents max-[599px]:flex max-[599px]:items-center max-[599px]:gap-2',
+  primaryAction: classes(
+    'inline-flex h-12 w-full cursor-pointer items-center justify-center gap-2 rounded-full border-0 bg-brand-primary px-5 text-[0.9375rem] font-semibold text-white no-underline',
+    'hover:bg-brand-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary',
+    'max-[599px]:order-last max-[599px]:h-[52px] max-[599px]:w-auto max-[599px]:flex-1 max-[599px]:text-base',
   ),
-  sourceSection: classes(
-    'mt-6 flex items-center justify-between gap-6 rounded-[1.4rem] border border-sample-border bg-white p-[clamp(1.4rem,4vw,2.1rem)]',
-    'text-app-ink max-chat:items-start max-chat:flex-col',
+  primaryHint: 'm-0 text-center text-[0.75rem] leading-[1.55] text-ink-subtle max-[599px]:hidden',
+  divider: 'h-px bg-surface-muted max-[599px]:hidden',
+  moreButton: classes(
+    'hidden h-[52px] shrink-0 cursor-pointer items-center rounded-full border border-line-strong bg-surface px-[18px] text-base font-semibold text-app-ink',
+    'max-[599px]:inline-flex focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary',
   ),
-  sourceEyebrow:
-    'mt-0 mb-2 text-[0.72rem] font-extrabold tracking-[0.12em] text-sample-muted uppercase',
-  sourceTitle: 'm-0 text-[1.25rem] font-bold tracking-[-0.03em] text-app-ink',
-  sourceDescription: 'mt-3 mb-0 leading-[1.6] text-sample-muted',
+  // [더 보기]로 펼치는 줄들입니다. 넓은 화면에서는 항상 보입니다.
+  more: '-mx-2 -my-1 flex flex-col gap-0.5 max-[599px]:m-0 max-[599px]:border-b max-[599px]:border-line max-[599px]:pb-3',
+  moreHidden: 'max-[599px]:hidden',
+  row: classes(
+    'flex h-11 w-full cursor-pointer items-center gap-2.5 rounded-[10px] border-0 bg-transparent px-2 text-left text-[0.875rem] font-medium text-app-ink no-underline',
+    'hover:bg-surface-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary disabled:cursor-not-allowed disabled:opacity-60',
+  ),
+  rowIcon: 'shrink-0 text-ink-muted',
+  rowIconActive: 'shrink-0 text-brand-primary',
+  rowLabel: 'flex-1',
+  // 관심 공고 담기는 [원문에 질문하기] 아래 테두리 알약입니다. 담기면 연한 초록으로 채워지고, 좁은 화면은 동작 바의 동그라미 하나가 됩니다.
+  saveButton: classes(
+    'inline-flex h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-full border border-line-strong bg-surface px-4 text-[0.875rem] font-semibold text-app-ink no-underline',
+    'hover:border-brand-primary hover:text-brand-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary disabled:cursor-not-allowed disabled:opacity-60',
+    'aria-pressed:border-brand-line aria-pressed:bg-brand-soft aria-pressed:text-brand-primary',
+    'max-[599px]:order-first max-[599px]:size-[52px] max-[599px]:w-[52px] max-[599px]:shrink-0 max-[599px]:gap-0 max-[599px]:border-0 max-[599px]:bg-surface-muted max-[599px]:p-0',
+  ),
+  saveIcon: 'shrink-0',
+  saveLabel: 'max-[599px]:sr-only',
+  sourceBlock: 'flex flex-col gap-2.5',
+  sourceNote: 'm-0 text-[0.8125rem] leading-[1.6] text-ink-muted',
+  sourceNoteLead: 'font-semibold text-app-ink',
   sourceLink: classes(
-    'max-w-full shrink-0 rounded-full bg-brand-primary px-4 py-3 text-[0.84rem] font-extrabold',
-    'text-white no-underline hover:bg-[#066538] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary',
+    'inline-flex h-10 items-center justify-center gap-1.5 rounded-full border border-line-strong bg-surface px-4 text-[0.875rem] font-semibold text-app-ink no-underline',
+    'hover:border-brand-primary hover:text-brand-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary',
   ),
-  unavailableCard: 'mt-6 rounded-[1.4rem] border border-sample-border bg-white p-[clamp(1.5rem,5vw,3rem)] shadow-[0_16px_42px_rgb(32_33_36_/_5%)]',
-  unavailableDescription: 'mt-4 mb-0 leading-[1.65] text-sample-muted',
-  retryButton: 'mt-5 cursor-pointer rounded-full border-0 bg-brand-primary px-4 py-3 text-[0.84rem] font-extrabold text-white hover:bg-[#066538] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary',
+  unavailableCard: 'mt-4 rounded-2xl bg-surface p-8 max-[599px]:p-6',
+  unavailableTitle: 'm-0 text-[1.5rem] font-bold tracking-[-0.02em] text-app-ink',
+  unavailableDescription: 'mt-3 mb-0 leading-[1.65] text-ink-muted',
+  retryButton: 'mt-5 inline-flex h-11 cursor-pointer items-center rounded-full border-0 bg-brand-primary px-5 text-[0.9375rem] font-semibold text-white hover:bg-brand-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary',
 } as const

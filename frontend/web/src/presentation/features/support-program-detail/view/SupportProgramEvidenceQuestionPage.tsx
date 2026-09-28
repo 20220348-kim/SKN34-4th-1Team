@@ -8,6 +8,7 @@ import {
   maximumSupportProgramEvidenceQuestionLength,
   useSupportProgramEvidenceQuestionViewModel,
 } from '../viewmodel/useSupportProgramEvidenceQuestionViewModel'
+import { EvidenceQuestionFeedback } from './EvidenceQuestionFeedback'
 import { supportProgramEvidenceQuestionStyles } from './SupportProgramEvidenceQuestionPage.styles'
 import { getSupportProgramSearchReturnTo } from './supportProgramNavigation'
 
@@ -23,7 +24,7 @@ export function SupportProgramEvidenceQuestionPage() {
     return (
       <main className={supportProgramEvidenceQuestionStyles.page}>
         <Link className={supportProgramEvidenceQuestionStyles.backLink} to={searchReturnTo}>
-          ← 검색 결과로 돌아가기
+          검색 결과로 돌아가기
         </Link>
         <section className={supportProgramEvidenceQuestionStyles.evidenceSection}>
           <h1 className={supportProgramEvidenceQuestionStyles.title}>공고 정보를 찾을 수 없습니다</h1>
@@ -153,85 +154,4 @@ function SupportProgramEvidenceQuestionContent({
       <EvidenceQuestionFeedback state={state} />
     </section>
   )
-}
-
-function EvidenceQuestionFeedback({
-  state,
-}: {
-  state: ReturnType<typeof useSupportProgramEvidenceQuestionViewModel>['state']
-}) {
-  if (state.status === 'idle') return null
-
-  if (state.status === 'loading') {
-    return (
-      <p className={supportProgramEvidenceQuestionStyles.evidenceFeedback} role="status" aria-live="polite">
-        공고 원문에서 답변 근거를 찾고 있습니다.
-      </p>
-    )
-  }
-
-  if (state.status === 'answered') {
-    return (
-      <article className={supportProgramEvidenceQuestionStyles.evidenceAnswer} aria-live="polite">
-        <p className={supportProgramEvidenceQuestionStyles.evidenceAnswerEyebrow}>원문 근거 답변</p>
-        <p className={supportProgramEvidenceQuestionStyles.evidenceAnswerText}>{state.answer.answer}</p>
-        <h2 className={supportProgramEvidenceQuestionStyles.evidenceCitationTitle}>답변 근거</h2>
-        <ol className={supportProgramEvidenceQuestionStyles.evidenceCitationList}>
-          {state.answer.citations.map((citation, index) => (
-            <li
-              key={`${citation.chunkOrder}:${citation.sourceUrl}:${citation.excerpt}`}
-              className={supportProgramEvidenceQuestionStyles.evidenceCitation}
-            >
-              <blockquote className={supportProgramEvidenceQuestionStyles.evidenceExcerpt}>
-                {citation.excerpt}
-              </blockquote>
-              <a
-                className={supportProgramEvidenceQuestionStyles.evidenceSourceLink}
-                href={citation.sourceUrl}
-                target="_blank"
-                rel="noreferrer"
-              >
-                근거 {index + 1} 원문 보기 ↗
-              </a>
-            </li>
-          ))}
-        </ol>
-      </article>
-    )
-  }
-
-  if (state.status === 'validation-failed' || state.status === 'rate-limited' || state.status === 'busy') {
-    return <p className={supportProgramEvidenceQuestionStyles.evidenceError} role="alert">{state.message}</p>
-  }
-
-  const message = evidenceFeedbackMessage(state.status)
-  const isFailure = state.status === 'failed' || state.status === 'unavailable' || state.status === 'timed-out'
-  return (
-    <p
-      className={isFailure
-        ? supportProgramEvidenceQuestionStyles.evidenceError
-        : supportProgramEvidenceQuestionStyles.evidenceFeedback}
-      role={isFailure ? 'alert' : 'status'}
-      aria-live="polite"
-    >
-      {message}
-    </p>
-  )
-}
-
-function evidenceFeedbackMessage(
-  status: Exclude<
-    ReturnType<typeof useSupportProgramEvidenceQuestionViewModel>['state']['status'],
-    'idle' | 'loading' | 'answered' | 'validation-failed' | 'rate-limited' | 'busy'
-  >,
-) {
-  const messages = {
-    cancelled: '질문 요청을 취소했습니다.',
-    'timed-out': '답변 시간이 초과되었습니다. 입력한 질문을 다시 전송해 주세요.',
-    'insufficient-evidence': '공고 원문에서 이 질문에 답할 만큼 충분한 근거를 찾지 못했습니다. 원문 공고를 확인해 주세요.',
-    'not-supported': '이 제공처 공고는 아직 원문 근거 답변을 지원하지 않습니다. 원문 공고에서 확인해 주세요.',
-    unavailable: '원문 근거 답변을 지금 준비하지 못했습니다. 잠시 후 다시 시도해 주세요.',
-    failed: '질문에 답하지 못했습니다. 잠시 후 다시 시도해 주세요.',
-  } as const
-  return messages[status]
 }
