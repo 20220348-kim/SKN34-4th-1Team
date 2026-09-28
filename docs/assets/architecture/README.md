@@ -15,6 +15,7 @@
 - [생성 스크립트](build-local.mjs) · [Kubernetes 로고 출처·해시](kubernetes-logo-sources.json) · [RabbitMQ 로고 출처·해시](logo-sources.json)
 
 교육기관 원본 병합 → 개인 포크 main Sync → 네 CI → 비공개 GHCR → 같은 포크의 digest 갱신 → 로컬 Argo CD를 표시합니다.
+그림은 2026-09-21 기록이며, 이후 코드의 발행 조건은 LLMOps를 포함한 다섯 CI와 필수 job 성공으로 강화했습니다. [현재 발행 조건](../../msa-image-release.md)을 따릅니다.
 PC의 Vite·port-forward·네 서비스와 독립 DB를 보여주고, 코드 저장을 로컬 재빌드로 반영하는 개발 모드를 별도로 구분합니다.
 공개 GHCR 전환은 준비 단계이며, 그림은 기존 비공개 실행 구성을 기준으로 합니다.
 

@@ -36,6 +36,8 @@ port-forward → Kubernetes `core-service:8080`으로 요청합니다. 웹 개�
 
 ## 2. GitOps 배포 경로
 
+아래는 그림 제작일인 2026-09-21의 기록입니다. 이후 코드의 발행 조건은 LLMOps를 포함한 다섯 CI와 필수 job 성공으로 강화했습니다. [현재 발행 조건](../../msa-image-release.md)을 따릅니다.
+
 교육기관 원본 PR 병합 → **개인 포크 원격 `main` Sync** → 같은 SHA의 네 CI 통과 → 비공개 GHCR 발행
 → `Fork image promotion`이 검증 기록을 확인 → 같은 포크의 `infrastructure/gitops/environments/fork/`에
 digest 자동 커밋 → 실행 중인 로컬 Argo CD가 Helm으로 네 서비스를 반영합니다.

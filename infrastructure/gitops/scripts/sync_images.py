@@ -170,7 +170,7 @@ def verify_record(root, fork, get=api):
     record = validate_record(json.loads(marker.read_text()), fork)
     sha = record["verifiedRevision"]
     if not eligible(sha, fork, get):
-        raise ValueError("Source or one of its four CI results changed")
+        raise ValueError("Source or required CI workflow/job results changed")
     release = select_release(fork, get, record["runId"])
     if release is None or release[0]["head_sha"] != sha:
         raise ValueError("Recorded publisher is not a successful release")
@@ -191,7 +191,7 @@ def synchronize(fork, root=ROOT, write=False, get=api, run_id=None):
     run, _ = release
     sha = run["head_sha"]
     if not eligible(sha, fork, get):
-        print("No promotion: source changed or all four CI workflows have not passed")
+        print("No promotion: source changed or required CI workflows/jobs have not passed")
         return
     receipts = checked_receipts(sha, release, fork, get)
     changes = prepare(root, receipts, fork)

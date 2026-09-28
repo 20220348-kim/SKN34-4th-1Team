@@ -12,6 +12,7 @@ import zipfile
 import yaml
 
 import sync_images as sync
+import gate
 from test_promote_image import FORK, receipt, values
 
 SHA = "c" * 40
@@ -39,7 +40,80 @@ def zipped(data, filename="ai-service.json"):
     return payload, metadata
 
 
+def ci_results(llmops_state):
+    """Serve fixture GitHub responses to the real gate used by promotion."""
+    def get(path):
+        if path == f"repos/{gate.UPSTREAM}":
+            return {"full_name": gate.UPSTREAM, "default_branch": "main"}
+        if "/git/ref/" in path:
+            return {"object": {"sha": SHA}}
+        if "/workflows/" in path:
+            filename = path.split("/workflows/")[1].split("/")[0]
+        else:
+            run_id = int(path.split("/runs/")[1].split("/")[0])
+            filename = list(gate.WORKFLOWS)[run_id - 100]
+        run_id = 100 + list(gate.WORKFLOWS).index(filename)
+        record = {**run(), "id": run_id, "run_attempt": 1, "event": "push",
+                  "path": ".github/workflows/" + filename}
+        if "/workflows/" in path:
+            if filename == "llmops-ci.yml" and llmops_state[0] == "missing":
+                return {"workflow_runs": []}
+            if filename == "llmops-ci.yml" and llmops_state[0] == "failure":
+                record["conclusion"] = "failure"
+            return {"workflow_runs": [record]}
+        if "/jobs?" in path:
+            jobs = [{"name": name, "head_sha": SHA, "run_id": run_id,
+                     "status": "completed", "conclusion": "success"}
+                    for name in gate.WORKFLOWS[filename]]
+            if filename == "llmops-ci.yml" and llmops_state[0] == "skipped":
+                jobs[0]["conclusion"] = "skipped"
+            return {"total_count": len(jobs), "jobs": jobs}
+        return record
+    return get
+
+
 class SyncTests(unittest.TestCase):
+    def test_real_gate_blocks_promotion_without_successful_llmops(self):
+        for state in ("failure", "missing", "skipped"):
+            with self.subTest(state=state), tempfile.TemporaryDirectory() as directory, \
+                    patch.object(sync, "select_release", return_value=(run(), [])), \
+                    patch.object(sync, "checked_receipts") as receipts:
+                root = Path(directory).resolve()
+                sync.synchronize(FORK, root=root, write=True, get=ci_results([state]))
+                receipts.assert_not_called()
+                self.assertEqual(list(root.iterdir()), [])
+
+    def test_llmops_changes_after_receipts_prevent_promotion_write(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            shutil.copytree(sync.ROOT / "environments/portfolio", root / "environments/portfolio")
+            state = ["success"]
+            def receipts(*args):
+                state[0] = "failure"
+                return [{**receipt(), "service": service, "repository": FORK.image(service)}
+                        for service in sync.SERVICES]
+            with patch.object(sync, "select_release", return_value=(run(), [])), \
+                    patch.object(sync, "checked_receipts", side_effect=receipts), \
+                    self.assertRaisesRegex(ValueError, "Source/CI changed"):
+                sync.synchronize(FORK, root=root, write=True, get=ci_results(state))
+            self.assertFalse((root / "environments/fork").exists())
+
+    def test_record_recheck_blocks_commit_when_llmops_loses_eligibility(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            marker = root / "environments/fork/release.json"
+            marker.parent.mkdir(parents=True)
+            record = {"repository": FORK.repository, "branch": FORK.branch, "verifiedRevision": SHA,
+                      "runId": 123, "runUrl": f"https://github.com/{FORK.repository}/actions/runs/123",
+                      "images": {service: FORK.image(service) + "@" + receipt()["digest"]
+                                 for service in sync.SERVICES}}
+            marker.write_text(json.dumps(record))
+            with patch.object(sync, "select_release") as select, \
+                    self.assertRaisesRegex(ValueError, "required CI"):
+                sync.verify_record(root, FORK, get=ci_results(["skipped"]))
+            select.assert_not_called()
+            self.assertEqual(json.loads(marker.read_text()), record)
+
     def test_public_batch_removes_pull_secret_but_retains_runtime_secrets(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
@@ -230,6 +304,44 @@ class SyncTests(unittest.TestCase):
                 {"path": "backend/ai-service", "sha": "d" * 40, "type": "tree"}]}
         with self.assertRaises(ValueError):
             sync.checked_receipts(SHA, (run(), [metadata]), FORK, get)
+
+
+class WorkflowContractTests(unittest.TestCase):
+    def workflow(self, filename):
+        # BaseLoader preserves the Actions YAML key "on" instead of YAML 1.1 booleans.
+        path = sync.ROOT.parents[1] / ".github/workflows" / filename
+        return yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+
+    def test_required_jobs_match_all_workflow_definitions(self):
+        for filename, required in gate.WORKFLOWS.items():
+            names = []
+            for job_id, job in self.workflow(filename)["jobs"].items():
+                name = job.get("name", job_id)
+                if "strategy" in job:
+                    matrix = job["strategy"]["matrix"]
+                    self.assertEqual(set(matrix), {"os"})
+                    names.extend(name.replace("${{ matrix.os }}", os) for os in matrix["os"])
+                else:
+                    names.append(name)
+            with self.subTest(workflow=filename):
+                self.assertCountEqual(names, required)
+
+    def test_every_required_push_and_completion_trigger_is_present(self):
+        names = []
+        for filename in gate.WORKFLOWS:
+            workflow = self.workflow(filename)
+            self.assertIn("push", workflow["on"])
+            self.assertEqual(workflow["on"]["push"], "")
+            names.append(workflow["name"])
+        publisher = self.workflow("msa-images.yml")
+        self.assertCountEqual(publisher["on"]["workflow_run"]["workflows"], names)
+        self.assertEqual(publisher["on"]["workflow_run"]["types"], ["completed"])
+        llmops = self.workflow("llmops-ci.yml")
+        paths = llmops["on"]["pull_request"]["paths"]
+        for path in ("infrastructure/release/**", ".github/workflows/msa-images.yml",
+                     ".github/workflows/msa-promotion.yml", "infrastructure/gitops/scripts/sync_images.py"):
+            self.assertIn(path, paths)
+        self.assertNotIn("schedule", llmops["on"])
 
 
 if __name__ == "__main__":

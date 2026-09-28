@@ -18,7 +18,7 @@
 | Argo CD | 포크·기본 브랜치·중첩 Chart 경로를 반영한 Application 4개를 공통 도구가 생성. 전용 클러스터만 허용 |
 | 로컬 이미지 검증 | 로컬 빌드·kind 적재 smoke 유지. GHCR 계정 불필요 |
 | 개인 GHCR | 개인 포크가 자기 `ghcr.io/<계정>/<저장소>-<서비스>`에만 비공개 발행. 최초 계정별 인증/활성화 필요 |
-| 자동 발행·승격 | upstream 병합 소스를 본인 포크 기본 브랜치로 동기화하고 네 CI 통과 후 발행. digest는 같은 포크 `environments/fork`에 기록 |
+| 자동 발행·승격 | upstream 병합 소스를 본인 포크 기본 브랜치로 동기화하고 다섯 CI 통과 후 발행. digest는 같은 포크 `environments/fork`에 기록 |
 | 공통 bootstrap | `fork_cluster.py init/doctor/up/status/credentials/dev/gitops/web`. 무작위 로컬 비밀값·전용 kind·소유권 검사 |
 | 로컬 코드 반영 | 개발 모드에서 `dev.py --watch`가 변경 서비스만 로컬 빌드·kind 적재·재시작. GHCR 업로드 없음 |
 | Windows 개발 | WSL2·kind의 로컬 소스 이미지 기동과 Windows 웹 연결 확인. 네이티브 Windows Python·ARM은 미지원이며 GHCR·GitOps·개발 감시는 별도 검증 |

@@ -39,7 +39,7 @@ GitHub는 워크플로가 `GITHUB_TOKEN`으로 만든 패키지가 기본적으�
    본인 포크의 기본 브랜치를 최신 upstream과 동기화합니다. 로컬 `git pull`만으로는 원격 Actions가 실행되지 않습니다.
    GitHub의 Sync fork 또는 동기화한 로컬 기본 브랜치를 origin에 push해야 합니다.
    포크 생성만으로 기존 커밋의 CI가 재실행되지는 않습니다.
-6. `GovBiz CI`, `Catalog separation CI`, `GovBiz Ops CI`, `Infra CI`가 **동일 SHA**에서 모두 성공하면
+6. `GovBiz CI`, `Catalog separation CI`, `GovBiz Ops CI`, `Infra CI`, `LLMOps CI`와 각 필수 job이 **동일 SHA**에서 모두 성공하면
    `MSA image candidates`가 실행됩니다. 단, 개인 포크의 내용이 최신 upstream 병합본과 일치해야 합니다.
    원본에 아직 병합되지 않은 코드·CI·발행 정책 변경은 본인 포크에서 테스트가 성공해도 발행하지 않습니다.
    필요하면 같은 검증된 SHA의 기본 브랜치에서 해당 workflow를 수동 실행합니다.
@@ -50,7 +50,7 @@ GitHub는 워크플로가 `GITHUB_TOKEN`으로 만든 패키지가 기본적으�
 
 포크 생성과 `Sync fork: up to date`는 새로운 push 이벤트를 만들지 않을 수 있습니다. 이 경우
 기본 브랜치를 최신 upstream과 동기화하고 Actions를 허용한 뒤 **최초 한 번만 빈 커밋**을
-push해 네 push CI를 시작할 수 있습니다. 비공개 패키지 초기 준비가 끝나지 않았다면 두 발행 변수는
+push해 다섯 push CI를 시작할 수 있습니다. 비공개 패키지 초기 준비가 끝나지 않았다면 두 발행 변수는
 계속 `false`로 둡니다. 빈 커밋은 CI 기록을 만들 뿐 패키지를 준비하거나 발행 잠금을 해제하지 않습니다.
 파일 변경이 없는 빈 커밋은 upstream 내용과 같으므로 소스 검증에서 허용하지만,
 미병합 코드가 섞인 커밋은 계속 차단합니다.
@@ -66,7 +66,7 @@ git commit --allow-empty -m "설정: 개인 포크 CI 최초 실행" &&
 git push origin main
 ```
 
-이는 파일이나 권한을 바꾸는 커밋이 아닙니다. 이미 같은 소스 SHA의 네 CI 실행 기록이 있다면
+이는 파일이나 권한을 바꾸는 커밋이 아닙니다. 이미 같은 소스 SHA의 다섯 CI 실행 기록이 있다면
 반복할 필요가 없습니다. 이미지 workflow만 수동 실행하는 것으로 누락된 push CI 검증을 대체할 수 없습니다.
 
 기존 비공개 패키지에 새 버전을 발행할 때는 Actions의 단기 `GITHUB_TOKEN`을 사용합니다.
@@ -94,7 +94,7 @@ git push origin main
 ## 발행과 로컬 개발의 차이
 
 비공개 패키지 준비·검증과 발행 활성화가 완료된 뒤에는
-원본 PR 병합 → 개인 포크 기본 브랜치 Sync → 네 CI 성공 → 서비스별 추적 소스 빌드/기존 이미지 재사용 → 기존 개인 GHCR 패키지 →
+원본 PR 병합 → 개인 포크 기본 브랜치 Sync → 다섯 CI 성공 → 서비스별 추적 소스 빌드/기존 이미지 재사용 → 기존 개인 GHCR 패키지 →
 receipt 검증 → 같은 포크의 digest 커밋 → 각 PC의 Argo CD가 Git 변경 감지 순서입니다.
 
 **PC에서 코드를 저장할 때마다 GHCR에 올리는 방식이 아닙니다.** 저장 즉시 반영하는 개발 모드와
@@ -107,6 +107,11 @@ receipt 검증 → 같은 포크의 digest 커밋 → 각 PC의 Argo CD가 Git �
 ## 검증·재실행 경계
 
 - PR, 다른 저장소/브랜치, 최신 실패·대기 중 CI는 발행 자격이 없습니다. privileged workflow는 기본 브랜치 정책을 실행합니다.
+- 다섯 CI의 최신 실행·재실행에서 필수 job 전부가 실제 성공해야 합니다. workflow 성공만으로 job 누락·건너뜀·실패를 허용하지 않습니다.
+  job 목록이 불완전하거나 다른 SHA·실행의 결과이면 차단하며, job 조회 중 재실행이 시작되어도 이전 성공을 사용하지 않습니다.
+  필수 job의 이름·matrix 구성을 바꾸면 `infrastructure/release/gate.py`의 정책도 함께 갱신해야 합니다.
+- 발행 시작·업로드 전과 승격 파일 쓰기·커밋 직전에 같은 CI 조건을 다시 확인합니다. 원격 브랜치 보호/Ruleset 설정과는 별개입니다.
+- LLMOps CI는 문서 변경·빈 커밋을 포함한 모든 push에서 실행합니다. PR의 관련 경로 필터는 유지하며 발행·승격 도구 변경도 포함합니다.
 - 최신 upstream 기본 브랜치가 후보의 조상이어야 하고 다섯 개인 이미지 선택 파일 외에는 모든 추적 파일이 같아야 합니다.
   이 기준은 bot digest와 upstream 동기화로 생긴 개인 merge SHA는 허용하지만 미병합 변경·동기화되지 않은 upstream은 차단합니다.
   upstream API 오류나 불완전한 비교 결과를 성공으로 취급하지 않습니다.

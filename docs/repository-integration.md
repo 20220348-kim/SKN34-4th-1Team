@@ -51,7 +51,7 @@ Argo CD의 repository URL·`main` revision·chart 경로는 통합 저장소에 
 하드코딩하지 않지만, 개인 인증·발행 동의까지 다른 사용자를 대신해 자동 승인하지는 않는다.
 
 1. 각 포크의 Actions 활성화·발행 동의. 개인 GHCR 경로는 자동 계산한다.
-2. 교육기관 원본 PR 병합 → 개인 포크 원격 기본 브랜치 동기화 → 같은 소스의 네 CI 통과 → 발행·digest 갱신.
+2. 교육기관 원본 PR 병합 → 개인 포크 원격 기본 브랜치 동기화 → 같은 소스의 다섯 CI 통과 → 발행·digest 갱신.
 3. 각 PC의 Kubernetes에 자기 계정의 `read:packages` 인증을 안전하게 등록.
 4. Argo CD가 자기 포크의 chart·values를 읽도록 설정하고 실제 동기화 검증.
 

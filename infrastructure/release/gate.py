@@ -10,7 +10,17 @@ from urllib.parse import quote
 
 from repository import from_ci, validate_branch
 
-WORKFLOWS = ("ci.yml", "catalog-ci.yml", "ops-ci.yml", "infra-ci.yml")
+# These are the mandatory job display names, including expanded matrix jobs.
+# Keep this policy in sync with the workflow definitions; absent/skipped jobs fail closed.
+WORKFLOWS = {
+    "ci.yml": ("Web and shared", "Mobile", "Core API", "AI Service", "Container integration"),
+    "catalog-ci.yml": ("Catalog clean build and boundaries",
+                       "Catalog to Core HTTP projection with offline fixtures"),
+    "ops-ci.yml": ("Ops checks and MySQL tests", "Ops container integration"),
+    "infra-ci.yml": ("Fork identity (ubuntu-24.04)", "Fork identity (macos-15-intel)",
+                     "Fork identity (windows-2025)", "repository", "kubernetes-manifests", "helm-gitops"),
+    "llmops-ci.yml": ("Saved capture pipeline with local servers",),
+}
 # This is the submission/merge authority, never a registry publication owner.
 UPSTREAM = "SKNETWORKS-FAMILY-AICAMP/SKN34-4th-1Team"
 PROMOTION_PATHS = {"infrastructure/gitops/environments/fork/" + name for name in (
@@ -97,7 +107,7 @@ def upstream_merged(sha, fork, get=api):
 def eligible(sha, fork, get=api):
     if not current_source(sha, fork, get) or not upstream_merged(sha, fork, get):
         return False
-    for filename in WORKFLOWS:
+    for filename, required_jobs in WORKFLOWS.items():
         response = get(f"repos/{fork.repository}/actions/workflows/{filename}/runs"
                        f"?head_sha={sha}&branch={quote(fork.branch, safe='')}&event=push&per_page=100")
         runs = response.get("workflow_runs", [])
@@ -108,7 +118,29 @@ def eligible(sha, fork, get=api):
                 or run.get("event") != "push" or run.get("status") != "completed"
                 or run.get("conclusion") != "success"
                 or run.get("path") != f".github/workflows/{filename}"
-                or run.get("head_repository", {}).get("full_name") != fork.repository):
+                or run.get("head_repository", {}).get("full_name") != fork.repository
+                or type(run.get("id")) is not int or run["id"] <= 0
+                or type(run.get("run_attempt")) is not int or run["run_attempt"] <= 0):
+            return False
+        jobs_response = get(f"repos/{fork.repository}/actions/runs/{run['id']}/jobs"
+                            "?filter=latest&per_page=100")
+        jobs = jobs_response.get("jobs", [])
+        # Current workflows have at most six jobs. Reject incomplete/paginated results
+        # instead of treating the first page or a successful gate-only run as complete CI.
+        if (not isinstance(jobs, list)
+                or type(jobs_response.get("total_count")) is not int
+                or jobs_response["total_count"] != len(jobs)
+                or len(jobs) != len(required_jobs)
+                or any(not isinstance(job, dict) for job in jobs)
+                or {job.get("name") for job in jobs} != set(required_jobs)
+                or any(job.get("status") != "completed" or job.get("conclusion") != "success"
+                       or job.get("head_sha") != sha or job.get("run_id") != run["id"]
+                       for job in jobs)):
+            return False
+        # A rerun starting during the jobs query must not inherit the prior success.
+        confirmed = get(f"repos/{fork.repository}/actions/runs/{run['id']}")
+        if any(confirmed.get(field) != run.get(field) for field in (
+                "id", "run_attempt", "head_sha", "head_branch", "event", "status", "conclusion", "path")):
             return False
     return True
 
@@ -123,7 +155,7 @@ def main():
         raise SystemExit("Image publication is disabled; opt in on your personal fork")
     if args.check_sha:
         if not eligible(args.check_sha, fork):
-            raise SystemExit("Release blocked: sync the latest merged upstream source and pass all four CI checks")
+            raise SystemExit("Release blocked: sync the latest merged upstream source and pass all required CI workflows and jobs")
         return
     event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
     sha = candidate(os.environ["GITHUB_EVENT_NAME"], event,

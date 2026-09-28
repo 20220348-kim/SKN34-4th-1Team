@@ -21,7 +21,7 @@ REAL_RUN = subprocess.run
 
 
 def run_record(filename="ci.yml", **changes):
-    return {"id": 10, "run_attempt": 1, "head_sha": SHA, "head_branch": "develop",
+    return {"id": 10 + list(gate.WORKFLOWS).index(filename), "run_attempt": 1, "head_sha": SHA, "head_branch": "develop",
             "event": "push", "status": "completed", "conclusion": "success",
             "path": ".github/workflows/" + filename,
             "head_repository": {"full_name": FORK.repository}, **changes}
@@ -31,14 +31,32 @@ class ReleaseGateTests(unittest.TestCase):
     def event(self, **changes):
         return {"repository": {"full_name": FORK.repository}, "workflow_run": run_record(**changes)}
 
-    def responses(self, changed=None):
+    def responses(self, changed=None, *, workflows=None, jobs=None, confirmed=None):
+        selected = {}
         def get(path):
             if path == f"repos/{gate.UPSTREAM}":
                 return {"full_name": gate.UPSTREAM, "default_branch": "main"}
             if "/git/ref/" in path:
                 return {"object": {"sha": SHA}}
-            filename = path.split("/workflows/")[1].split("/")[0]
-            return {"workflow_runs": changed if changed is not None else [run_record(filename)]}
+            if "/workflows/" in path:
+                filename = path.split("/workflows/")[1].split("/")[0]
+                runs = (workflows or {}).get(filename,
+                    changed if changed is not None else [run_record(filename)])
+                if runs:
+                    record = max(runs, key=lambda item: (item["id"], item["run_attempt"]))
+                    selected[record["id"]] = (filename, record)
+                return {"workflow_runs": runs}
+            run_id = int(path.split("/runs/")[1].split("/")[0])
+            filename, record = selected[run_id]
+            if "/jobs?" in path:
+                self.assertTrue(path.endswith("?filter=latest&per_page=100"))
+                rows = [{"name": name, "run_id": run_id, "head_sha": SHA,
+                         "status": "completed", "conclusion": "success"}
+                        for name in gate.WORKFLOWS[filename]]
+                response = {"total_count": len(rows), "jobs": rows}
+                transform = (jobs or {}).get(filename)
+                return transform(response) if transform else response
+            return {**record, **(confirmed or {}).get(filename, {})}
         return get
 
     def test_only_own_develop_push_success_can_trigger(self):
@@ -59,7 +77,7 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertIsNone(gate.candidate("workflow_dispatch", self.event(), "refs/heads/topic", SHA, FORK))
         self.assertIsNone(gate.candidate("push", self.event(), "refs/heads/develop", SHA, FORK))
 
-    def test_all_four_exact_workflows_required(self):
+    def test_all_five_exact_workflows_required(self):
         self.assertTrue(gate.eligible(SHA, FORK, self.responses()))
         self.assertFalse(gate.eligible(SHA, FORK, self.responses([])))
         self.assertFalse(gate.eligible(SHA, FORK, self.responses([run_record(path=".github/workflows/fake.yml")])))
@@ -136,11 +154,98 @@ class ReleaseGateTests(unittest.TestCase):
                 return {"object": {"sha": SHA}}
             if "/compare/" in path:
                 return comparison
-            filename = path.split("/workflows/")[1].split("/")[0]
-            return {"workflow_runs": [run_record(filename)]}
+            return checks(path)
+        checks = self.responses()
         self.assertTrue(gate.eligible(SHA, FORK, get))
         comparison["files"] = [{"filename": "backend/ai-service/app/main.py", "status": "modified"}]
         self.assertFalse(gate.eligible(SHA, FORK, get))
+
+    def test_each_required_workflow_must_exist(self):
+        self.assertEqual(set(gate.WORKFLOWS),
+                         {"ci.yml", "catalog-ci.yml", "ops-ci.yml", "infra-ci.yml", "llmops-ci.yml"})
+        for filename in gate.WORKFLOWS:
+            with self.subTest(workflow=filename):
+                self.assertFalse(gate.eligible(SHA, FORK, self.responses(workflows={filename: []})))
+
+    def test_llmops_failure_or_untrusted_run_cannot_hide_behind_four_successes(self):
+        for changes in ({"conclusion": state} for state in
+                        ("failure", "cancelled", "skipped", "neutral", "timed_out", None)):
+            self.assertFalse(gate.eligible(SHA, FORK, self.responses(
+                workflows={"llmops-ci.yml": [run_record("llmops-ci.yml", **changes)]})))
+        for changes in ({"status": "in_progress"}, {"head_sha": TREE}, {"event": "pull_request"},
+                        {"head_branch": "feature"}, {"path": ".github/workflows/fake.yml"},
+                        {"head_repository": {"full_name": "attacker/Example"}}):
+            with self.subTest(changes=changes):
+                self.assertFalse(gate.eligible(SHA, FORK, self.responses(
+                    workflows={"llmops-ci.yml": [run_record("llmops-ci.yml", **changes)]})))
+
+    def test_latest_llmops_failure_or_rerun_blocks_previous_success(self):
+        for changes in ({"id": 99, "conclusion": "failure"},
+                        {"run_attempt": 2, "conclusion": "cancelled"},
+                        {"run_attempt": 2, "status": "queued", "conclusion": None}):
+            runs = [run_record("llmops-ci.yml"), run_record("llmops-ci.yml", **changes)]
+            self.assertFalse(gate.eligible(SHA, FORK, self.responses(workflows={"llmops-ci.yml": runs})))
+        runs = [run_record("llmops-ci.yml", conclusion="failure"),
+                run_record("llmops-ci.yml", run_attempt=2)]
+        self.assertTrue(gate.eligible(SHA, FORK, self.responses(workflows={"llmops-ci.yml": runs})))
+
+    def test_successful_workflow_requires_every_job_to_succeed(self):
+        for filename, names in gate.WORKFLOWS.items():
+            for name in names:
+                for state in ("skipped", "cancelled", "failure", "neutral", "timed_out", None):
+                    def change(response):
+                        for job in response["jobs"]:
+                            if job["name"] == name:
+                                job["conclusion"] = state
+                        return response
+                    with self.subTest(workflow=filename, job=name, conclusion=state):
+                        self.assertFalse(gate.eligible(SHA, FORK, self.responses(jobs={filename: change})))
+
+    def test_missing_duplicate_unknown_or_untrusted_jobs_are_rejected(self):
+        filename = "ops-ci.yml"
+        def rows(transform):
+            def response(value):
+                jobs = transform(value["jobs"])
+                return {"total_count": len(jobs), "jobs": jobs}
+            return response
+        changes = [lambda jobs: jobs[:-1], lambda jobs: [jobs[0], jobs[0]],
+                   lambda jobs: jobs + [{**jobs[0], "name": "unexpected"}],
+                   lambda jobs: [{**jobs[0], "name": "gate-only"}, jobs[1]]]
+        for fields in ({"head_sha": TREE}, {"run_id": 0}, {"status": "queued"}):
+            changes.append(lambda jobs, fields=fields: [{**jobs[0], **fields}, jobs[1]])
+        for change in changes:
+            self.assertFalse(gate.eligible(SHA, FORK, self.responses(jobs={filename: rows(change)})))
+        for response in ({}, {"total_count": 101, "jobs": []}, {"total_count": 0, "jobs": []},
+                         {"total_count": 1, "jobs": None}):
+            self.assertFalse(gate.eligible(SHA, FORK, self.responses(
+                jobs={filename: lambda _, response=response: response})))
+        self.assertFalse(gate.eligible(SHA, FORK, self.responses(
+            jobs={filename: lambda value: {**value, "total_count": 1000}})))
+
+    def test_rerun_during_job_read_cannot_use_previous_success(self):
+        for fields in ({"run_attempt": 2}, {"status": "queued"}, {"conclusion": "failure"},
+                       {"head_sha": TREE}):
+            self.assertFalse(gate.eligible(SHA, FORK, self.responses(confirmed={"llmops-ci.yml": fields})))
+
+    def test_llmops_rejection_stops_publication_before_registry_or_build(self):
+        get = self.responses(workflows={"llmops-ci.yml": [run_record("llmops-ci.yml", conclusion="failure")]})
+        with tempfile.TemporaryDirectory() as directory, \
+                patch.object(publish, "git", return_value=SHA), \
+                patch.object(publish, "eligible", side_effect=lambda sha, fork: gate.eligible(sha, fork, get)), \
+                patch.object(publish, "package_exists") as registry, \
+                patch.object(publish, "run") as command:
+            output = Path(directory) / "receipt.json"
+            with self.assertRaisesRegex(ValueError, "successfully tested"):
+                publish.publish("ai-service", SHA, output, "actor", "fixture-token", FORK)
+            registry.assert_not_called()
+            command.assert_not_called()
+            self.assertFalse(output.exists())
+
+    def test_jobs_api_errors_propagate(self):
+        def fail(_):
+            raise subprocess.CalledProcessError(1, "gh")
+        with self.assertRaises(subprocess.CalledProcessError):
+            gate.eligible(SHA, FORK, self.responses(jobs={"llmops-ci.yml": fail}))
 
     def test_api_failures_are_not_hidden(self):
         with self.assertRaises(subprocess.CalledProcessError):

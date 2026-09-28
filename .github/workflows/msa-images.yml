@@ -2,7 +2,7 @@ name: MSA image candidates
 
 on:
   workflow_run:
-    workflows: [GovBiz CI, Catalog separation CI, GovBiz Ops CI, Infra CI]
+    workflows: [GovBiz CI, Catalog separation CI, GovBiz Ops CI, Infra CI, LLMOps CI]
     types: [completed]
   workflow_dispatch:
 
