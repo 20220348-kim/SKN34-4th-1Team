@@ -92,6 +92,30 @@ class SupportProgramCatalogServiceTest {
         assertEquals(listOf("기술", "수출"), result.categories)
     }
 
+    // 스냅샷은 한 번만 읽는 규칙(@AfterEach) 때문에 테스트마다 browse를 한 번씩만 부릅니다.
+    @Test
+    fun commaSeparatedRegionsMatchAnyValue() {
+        snapshot(
+            candidate("seoul", regions = listOf("서울"), categories = listOf("수출")),
+            candidate("busan", regions = listOf("부산"), categories = listOf("기술")),
+            candidate("daegu", regions = listOf("대구"), categories = listOf("창업")),
+        )
+
+        assertEquals(setOf("seoul", "busan"), service.browse(rawRegion = "없는 지역, 서울,부산").programs.map { it.id }.toSet())
+        assertEquals(setOf("서울", "경기"), splitFilterValues(" 서울 , 경기 ,, "))
+    }
+
+    @Test
+    fun commaSeparatedCategoriesMatchAnyValue() {
+        snapshot(
+            candidate("seoul", regions = listOf("서울"), categories = listOf("수출")),
+            candidate("busan", regions = listOf("부산"), categories = listOf("기술")),
+            candidate("daegu", regions = listOf("대구"), categories = listOf("창업")),
+        )
+
+        assertEquals(setOf("busan", "daegu"), service.browse(rawCategory = "기술,창업").programs.map { it.id }.toSet())
+    }
+
     @Test
     fun facetsComeFromTheWholeSnapshotEvenWhenUnknownFilterMatchesNothing() {
         snapshot(

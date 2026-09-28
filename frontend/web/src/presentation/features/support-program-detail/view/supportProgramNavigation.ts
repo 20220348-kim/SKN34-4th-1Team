@@ -26,7 +26,7 @@ export function getSupportProgramSearchReturnTo(state: unknown, search = ''): Su
   const path = value.slice(0, queryIndex)
   if (queryIndex < 0 || value.includes('#')) return '/'
   const params = new URLSearchParams(value.slice(queryIndex + 1))
-  // 관심 공고함은 보던 탭만 되살립니다. 모르는 탭 이름이면 기본 탭인 달력으로 돌아갑니다.
+  // 관심 공고함은 보던 탭만 되살립니다. 모르는 탭 이름이면 기본 탭인 목록으로 돌아갑니다.
   if (path === appPaths.savedPrograms) return savedProgramsPath(readSavedProgramsViewMode(params.get('view'))) as SupportProgramSearchReturnTo
   if (path !== '/' && path !== appPaths.chat) return '/'
   if (params.get('mode') !== 'filter') return '/'

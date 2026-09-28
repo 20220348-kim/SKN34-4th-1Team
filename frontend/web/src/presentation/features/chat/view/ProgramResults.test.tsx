@@ -153,12 +153,12 @@ describe('ProgramResults', () => {
     ]
     render(<ProgramResults programs={programs} />, { wrapper: SearchRouter })
     const cards = screen.getAllByRole('article')
-    const noticeLink = within(cards[0]).getByRole('link', { name: '공식 공지 목록 ↗' })
+    const noticeLink = within(cards[0]).getByRole('link', { name: '공식 공지 목록' })
     expect(noticeLink.getAttribute('href')).toBe(programs[0].sourceUrl)
     expect(noticeLink.getAttribute('rel')).toBe('noreferrer')
     expect(within(cards[0]).getByText('제목으로 해당 공지를 확인해 주세요.')).toBeTruthy()
-    expect(within(cards[0]).queryByRole('link', { name: '원문 보기 ↗' })).toBeNull()
-    expect(within(cards[1]).getByRole('link', { name: '원문 보기 ↗' }).getAttribute('href')).toBe(programs[1].sourceUrl)
+    expect(within(cards[0]).queryByRole('link', { name: '원문 보기' })).toBeNull()
+    expect(within(cards[1]).getByRole('link', { name: '원문 보기' }).getAttribute('href')).toBe(programs[1].sourceUrl)
     expect(within(cards[1]).queryByText('제목으로 해당 공지를 확인해 주세요.')).toBeNull()
   })
 

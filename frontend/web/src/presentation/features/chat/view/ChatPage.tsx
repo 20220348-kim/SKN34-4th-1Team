@@ -1,3 +1,6 @@
+import type { FormEvent } from 'react'
+import { flushSync } from 'react-dom'
+
 import type { SupportProgramSearchReadiness } from '../../../../domain/entities/SupportProgramSearchReadiness'
 import { useChatPageViewModel } from '../viewmodel/useChatPageViewModel'
 import { companyConditionFields } from '../viewmodel/chatConversationProposal'
@@ -18,7 +21,6 @@ export function ChatPage({ layout = 'landing' }: { layout?: ChatPageLayout }) {
   const {
     isRestoredHistory,
     displayProposal,
-    hasConfirmedSearch,
     interpretationError,
     canRetryInterpretation,
     isInterpreting,
@@ -45,7 +47,6 @@ export function ChatPage({ layout = 'landing' }: { layout?: ChatPageLayout }) {
     searchError,
     inputError,
     interests,
-    searchOptions,
     searchStatusAnnouncement,
     suggestions,
     timelineRef,
@@ -57,13 +58,18 @@ export function ChatPage({ layout = 'landing' }: { layout?: ChatPageLayout }) {
   const isDockedLanding = layout === 'landing' && !isLandingIntro
   const isGuest = layout === 'landing'
 
-  const searchContextControls = hasConfirmedSearch ? (
-    <div className={chatPageStyles.searchContextControls}>
-      <p id="support-program-current-conditions" className={chatPageStyles.currentConditions}>
-        적용 중인 조건: {formatSearchOptions(searchOptions)}
-      </p>
-    </div>
-  ) : null
+  /**
+   * 공개 첫 화면의 첫 전송은 소개가 사라지고 입력창이 아래로 내려가는 큰 전환이라 View Transition으로 잇습니다.
+   * 첫 메시지는 전송 즉시 동기로 쌓이므로 flushSync 한 번이면 전환 전후 화면이 잡힙니다.
+   * 지원하지 않는 브라우저와 움직임 줄이기 설정에서는 지금처럼 바로 바뀝니다.
+   */
+  function handleLandingSubmit(event: FormEvent<HTMLFormElement>) {
+    const canTransition = isLandingIntro && typeof document.startViewTransition === 'function'
+      && !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    if (!canTransition) { handleSubmit(event); return }
+    event.preventDefault()
+    document.startViewTransition(() => { flushSync(() => handleSubmit(event)) })
+  }
 
   const introBlock = (
     <div className={chatPageStyles.intro}>
@@ -89,10 +95,7 @@ export function ChatPage({ layout = 'landing' }: { layout?: ChatPageLayout }) {
           ref={composerInputRef}
           className={isDockedLanding ? chatPageStyles.guestComposerInput : `${chatPageStyles.composerInput} ${isLandingIntro ? chatPageStyles.landingComposerInput : chatPageStyles.workspaceComposerInput}`}
           aria-label="지원사업 검색어"
-          aria-describedby={[
-            hasReadinessNotice ? 'support-program-search-readiness' : null,
-            hasConfirmedSearch ? 'support-program-current-conditions' : null,
-          ].filter(Boolean).join(' ') || undefined}
+          aria-describedby={hasReadinessNotice ? 'support-program-search-readiness' : undefined}
           value={draft}
           disabled={isInterpreting}
           onChange={handleDraftChange}
@@ -111,13 +114,17 @@ export function ChatPage({ layout = 'landing' }: { layout?: ChatPageLayout }) {
             key="cancel"
             type="button"
             className={isDockedLanding ? chatPageStyles.guestCancelButton : chatPageStyles.cancelSearchButton}
+            aria-label="취소"
             onClick={(event) => {
               // 취소 후 전송 버튼으로 바뀌어도 이 클릭이 폼을 다시 제출하지 않게 합니다.
               event.preventDefault()
               cancelSearch()
             }}
           >
-            취소
+            {/* 전송 화살표와 같은 자리에 같은 크기의 둥근 버튼으로 두고, 안에는 정지 표시(네모)만 그립니다. */}
+            <svg width="25" height="25" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <rect x="7" y="7" width="10" height="10" rx="2" />
+            </svg>
           </button>
         ) : (
           <button
@@ -287,7 +294,6 @@ export function ChatPage({ layout = 'landing' }: { layout?: ChatPageLayout }) {
           {timeline}
           <form className={chatPageStyles.composerWorkspace} onSubmit={handleSubmit}>
             {readinessNotice}
-            {searchContextControls}
             {composerInputGroup}
             {composerErrors}
           </form>
@@ -302,15 +308,15 @@ export function ChatPage({ layout = 'landing' }: { layout?: ChatPageLayout }) {
         {isLandingIntro ? introBlock : <h1 className="sr-only">지원사업 채팅</h1>}
         {timeline}
         {/* 같은 폼·입력 노드를 유지하여 전환 중 요청 수명과 한글 입력 상태를 보존합니다. */}
-        <form className={isLandingIntro ? chatPageStyles.composer : chatPageStyles.guestComposerDock} onSubmit={handleSubmit}>
+        <form className={isLandingIntro ? chatPageStyles.composer : chatPageStyles.guestComposerDock} onSubmit={handleLandingSubmit}>
           {!isLandingIntro ? readinessNotice : null}
-          {searchContextControls}
-          {composerInputGroup}
-          {composerErrors}
-          {isDockedLanding ? composerFooter : null}
+          {/* 고지는 입력창 바로 위에 둡니다. 대화가 스크롤되면 흰 도크 뒤로 들어가며 위쪽 가장자리에서 서서히 가려집니다. */}
           {isDockedLanding ? <small className={chatPageStyles.guestDisclaimer}>
             AI 답변은 참고용입니다. 최종 신청 조건은 공고 원문에서 확인하세요.
           </small> : null}
+          {composerInputGroup}
+          {composerErrors}
+          {isDockedLanding ? composerFooter : null}
         </form>
         {isLandingIntro ? suggestionChips : null}
         {isLandingIntro ? <p className={chatPageStyles.sourceHint}>

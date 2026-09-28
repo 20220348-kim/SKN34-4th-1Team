@@ -514,7 +514,11 @@ describe('작업 화면 사이드바', () => {
     expect(savedPrograms.getAttribute('aria-disabled')).toBeNull()
     expect(within(sidebar).queryByText('준비 중')).toBeNull()
 
+    // 요금제는 사이드바 메뉴가 아니라 계정 메뉴(내 프로필 옆)에 있습니다. 화면을 옮기면 메뉴가 닫히므로 다시 열어 확인합니다.
+    expect(within(sidebar).queryByRole('link', { name: '요금제' })).toBeNull()
+    fireEvent.click(within(sidebar).getByRole('button', { name: /^계정 메뉴/ }))
     fireEvent.click(within(sidebar).getByRole('link', { name: '요금제' }))
+    fireEvent.click(within(sidebar).getByRole('button', { name: /^계정 메뉴/ }))
     expect(within(sidebar).getByRole('link', { name: '요금제' }).getAttribute('aria-current')).toBe('page')
     expect(within(sidebar).getByRole('link', { name: '요금제' }).classList.contains('bg-[#e6f5ed]')).toBe(true)
     expect(search.getAttribute('aria-current')).toBeNull()
@@ -531,11 +535,13 @@ describe('작업 화면 사이드바', () => {
     const tabs = within(header).getByRole('navigation', { name: '파트너 관리 탭' })
     expect(within(tabs).getByRole('link', { name: '모집글' }).getAttribute('aria-current')).toBe('page')
     expect(within(header).getByRole('link', { name: /작성$/ })).toBeTruthy()
-    fireEvent.click(within(tabs).getByRole('link', { name: /제안함/ }))
-    expect(screen.getByRole('heading', { name: '파트너 관리' })).toBeTruthy()
-    expect(within(screen.getByRole('navigation', { name: '파트너 관리 탭' })).getByRole('link', { name: /제안함/ }).getAttribute('aria-current')).toBe('page')
+    // 제안함은 파트너 관리 탭이 아니라 사이드바의 별도 메뉴(협업)입니다.
+    expect(within(tabs).queryByRole('link', { name: /제안함/ })).toBeNull()
+    fireEvent.click(within(sidebar).getByRole('link', { name: /^제안함/ }))
+    expect(screen.getByRole('heading', { name: '제안함' })).toBeTruthy()
     expect(screen.getByRole('tablist', { name: '제안함 종류' })).toBeTruthy()
-    expect(within(sidebar).getByRole('link', { name: /파트너 관리/ }).getAttribute('aria-current')).toBe('page')
+    expect(within(sidebar).getByRole('link', { name: /^제안함/ }).getAttribute('aria-current')).toBe('page')
+    expect(within(sidebar).getByRole('link', { name: '파트너 관리' }).getAttribute('aria-current')).toBeNull()
 
     expect(within(sidebar).queryByRole('navigation', { name: '관리자' })).toBeNull()
     expect(within(sidebar).queryByRole('link', { name: '회원·기업' })).toBeNull()
@@ -1109,7 +1115,9 @@ describe('파트너 모집 화면', () => {
     renderApp('/app/partners')
 
     expect(await screen.findByRole('article', { name: 'AI 실증 과제 데이터 구축·라벨링 참여기관 구합니다' })).toBeTruthy()
-    expect(screen.getByText('4건 · 마감 임박순')).toBeTruthy()
+    // 결과 머리줄은 필터 검색처럼 왼쪽 "검색 결과 n건", 오른쪽 정렬 드롭다운입니다.
+    expect(screen.getByRole('heading', { name: '검색 결과 4건' })).toBeTruthy()
+    expect(selectedValue(screen.getByRole('combobox', { name: '모집글 정렬' }))).toBe('DEADLINE')
     expect(appContainer.resolve('browsePartnerRecruitmentsUseCase').execute).toHaveBeenCalledWith(
       { keyword: '', seekingRoles: [], regions: [], mineOnly: false, sourceCode: '', sort: 'DEADLINE', page: 1 },
       expect.any(AbortSignal),
@@ -1170,13 +1178,14 @@ describe('파트너 모집 화면', () => {
     fireEvent.click(within(panel).getByRole('button', { name: '조회' }))
     // 내 글만 보기는 칩이 아니라 "내 모집글" 탭이 맡습니다.
     expect(within(panel).queryByRole('button', { name: '내가 쓴 모집글만' })).toBeNull()
-    fireEvent.click(within(panel).getByRole('radio', { name: '최근 등록순' }))
+    chooseOption(screen.getByRole('combobox', { name: '모집글 정렬' }), 'RECENT')
 
     await waitFor(() => expect(browse).toHaveBeenLastCalledWith(
       { keyword: '스마트', seekingRoles: ['LEAD'], regions: ['서울', '부산'], mineOnly: false, sourceCode: '', sort: 'RECENT', page: 1 },
       expect.any(AbortSignal),
     ))
-    expect(screen.getByText('4건 · 최근 등록순')).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '검색 결과 4건' })).toBeTruthy()
+    expect(selectedValue(screen.getByRole('combobox', { name: '모집글 정렬' }))).toBe('RECENT')
 
     fireEvent.click(screen.getByRole('button', { name: '검색·필터 초기화' }))
     await waitFor(() => expect(browse).toHaveBeenLastCalledWith(
@@ -1627,53 +1636,67 @@ describe('제안함 화면', () => {
   it('사이드바 제안함 배지는 받은 제안 대기 건수를 보여주고 받은 제안함으로 이동한다', async () => {
     renderApp('/app/partners', companyAccount)
     const sidebar = screen.getByRole('complementary', { name: '작업 사이드바' })
-    // 파트너 관리 메뉴가 대기 건수를 배지로 보여 주고, 제안함은 머리글 아래 탭으로 갑니다.
-    const menu = await within(sidebar).findByRole('link', { name: /파트너 관리/ })
+    // 제안함 메뉴가 대기 건수를 배지로 보여 주고, 파트너 관리 메뉴에는 배지가 없습니다.
+    const menu = await within(sidebar).findByRole('link', { name: /^제안함/ })
     expect(menu.textContent).toContain('1')
-    expect(menu.getAttribute('href')).toBe('/app/partners')
+    expect(menu.getAttribute('href')).toBe('/app/proposals')
+    expect(within(sidebar).getByRole('link', { name: '파트너 관리' }).textContent).not.toContain('1')
 
-    const proposalsTab = within(screen.getByRole('navigation', { name: '파트너 관리 탭' })).getByRole('link', { name: /제안함/ })
-    expect(proposalsTab.textContent).toContain('1')
-    fireEvent.click(proposalsTab)
-    expect(screen.getByRole('tablist', { name: '제안함 종류' })).toBeTruthy()
+    fireEvent.click(menu)
+    const boxTabs = screen.getByRole('tablist', { name: '제안함 종류' })
+    expect(within(boxTabs).getByRole('tab', { name: '받은 제안 (1)' }).getAttribute('aria-selected')).toBe('true')
     const panel = await screen.findByRole('tabpanel', { name: '받은 제안' })
     expect(within(panel).getAllByRole('article')).toHaveLength(2)
-    expect(within(panel).getByRole('article', { name: '데이터브릿지 주식회사 제안' })).toBeTruthy()
-    // 수락 전에는 담당자 연락처가 없고, 수락된 제안에만 이메일이 보입니다.
-    const pending = within(panel).getByRole('article', { name: '데이터브릿지 주식회사 제안' })
-    expect(within(pending).queryByText('수락됨 · 담당자 연락처')).toBeNull()
-    expect(within(pending).queryByRole('link', { name: /@/ })).toBeNull()
-    const accepted = within(panel).getByRole('article', { name: '그린푸드랩 제안' })
+    // 상태 칩은 전체 · 응답 대기 · 수락 · 종료이고 개수를 함께 보여 줍니다.
+    const chips = screen.getByRole('group', { name: '제안 상태' })
+    expect(within(chips).getByRole('button', { name: /^응답 대기/ }).textContent).toContain('1')
+    fireEvent.click(within(chips).getByRole('button', { name: /^수락/ }))
+    expect(within(panel).getAllByRole('article')).toHaveLength(1)
+    fireEvent.click(within(chips).getByRole('button', { name: /^전체/ }))
+
+    // 행을 누르면 옆 패널이 열립니다. 수락 전에는 담당자 연락처가 없고, 수락된 제안에만 이메일이 보입니다.
+    fireEvent.click(within(within(panel).getByRole('article', { name: '데이터브릿지 주식회사 제안' })).getByRole('button'))
+    const detail = screen.getByRole('region', { name: '받은 제안 상세' })
+    expect(within(detail).queryByText('수락됨 · 담당자 연락처')).toBeNull()
+    expect(within(detail).queryByRole('link', { name: /@/ })).toBeNull()
+    expect(within(detail).getByRole('button', { name: '수락' })).toBeTruthy()
+    fireEvent.click(within(within(panel).getByRole('article', { name: '그린푸드랩 제안' })).getByRole('button'))
+    const accepted = screen.getByRole('region', { name: '받은 제안 상세' })
     expect(within(accepted).getByRole('link', { name: 'manager@greenfood.example' }).getAttribute('href')).toBe('mailto:manager@greenfood.example')
     expect(within(accepted).queryByRole('button', { name: '수락' })).toBeNull()
+    fireEvent.click(within(accepted).getByRole('button', { name: '제안 패널 닫기' }))
+    expect(screen.queryByRole('region', { name: '받은 제안 상세' })).toBeNull()
   })
 
-  it('받은 제안은 확인을 거쳐 수락하고 결과로 카드가 바뀐다', async () => {
+  it('받은 제안은 옆 패널에서 확인 모달을 거쳐 수락하고 결과로 행과 패널이 바뀐다', async () => {
     const respond = vi.spyOn(appContainer.resolve('respondPartnerProposalUseCase'), 'execute')
       .mockResolvedValue({ outcome: 'updated', proposal: { ...receivedPendingProposal, ...receivedAcceptedProposal, id: 301, counterpart: { ...receivedAcceptedProposal.counterpart, companyName: '데이터브릿지 주식회사' } } })
     renderApp('/app/proposals', companyAccount)
     const pending = await screen.findByRole('article', { name: '데이터브릿지 주식회사 제안' })
+    fireEvent.click(within(pending).getByRole('button'))
+    const detail = screen.getByRole('region', { name: '받은 제안 상세' })
 
-    fireEvent.click(within(pending).getByRole('button', { name: '수락' }))
-    const confirm = within(pending).getByRole('group', { name: '수락 확인' })
+    fireEvent.click(within(detail).getByRole('button', { name: '수락' }))
+    const confirm = screen.getByRole('dialog', { name: '제안을 수락할까요?' })
     expect(confirm.textContent).toContain('담당자 이메일과 기업 기본정보가 서로에게 공개')
     fireEvent.click(within(confirm).getByRole('button', { name: '취소' }))
-    expect(within(pending).queryByRole('group', { name: '수락 확인' })).toBeNull()
+    expect(screen.queryByRole('dialog', { name: '제안을 수락할까요?' })).toBeNull()
     expect(respond).not.toHaveBeenCalled()
 
-    fireEvent.click(within(pending).getByRole('button', { name: '거절' }))
-    expect(within(pending).getByRole('group', { name: '거절 확인' })).toBeTruthy()
-    fireEvent.click(within(pending).getByRole('button', { name: '취소' }))
-    fireEvent.click(within(pending).getByRole('button', { name: '수락' }))
-    fireEvent.click(within(pending).getByRole('button', { name: '수락 확정' }))
+    fireEvent.click(within(detail).getByRole('button', { name: '거절' }))
+    expect(screen.getByRole('dialog', { name: '제안을 거절할까요?' })).toBeTruthy()
+    fireEvent.click(within(screen.getByRole('dialog', { name: '제안을 거절할까요?' })).getByRole('button', { name: '취소' }))
+    fireEvent.click(within(detail).getByRole('button', { name: '수락' }))
+    fireEvent.click(within(screen.getByRole('dialog', { name: '제안을 수락할까요?' })).getByRole('button', { name: '수락' }))
 
     await waitFor(() => expect(respond).toHaveBeenCalledWith(301, 'accept'))
     expect(await within(pending).findByText('수락')).toBeTruthy()
-    expect(within(pending).getByRole('link', { name: 'manager@greenfood.example' })).toBeTruthy()
-    expect(within(pending).queryByRole('button', { name: '거절' })).toBeNull()
+    // 패널은 열린 채 수락된 제안으로 바뀌어 담당자 연락처가 보이고 바닥 버튼은 사라집니다.
+    expect(within(detail).getByRole('link', { name: 'manager@greenfood.example' })).toBeTruthy()
+    expect(within(detail).queryByRole('button', { name: '거절' })).toBeNull()
     // 받은 제안함은 Redux에 있으므로 사이드바 배지도 다시 읽지 않고 함께 사라집니다.
     const sidebar = screen.getByRole('complementary', { name: '작업 사이드바' })
-    await waitFor(() => expect(within(sidebar).getByRole('link', { name: /파트너 관리/ }).textContent).not.toContain('1'))
+    await waitFor(() => expect(within(sidebar).getByRole('link', { name: /^제안함/ }).textContent).not.toContain('1'))
     const browse = appContainer.resolve('browsePartnerProposalsUseCase').execute as ReturnType<typeof vi.fn>
     expect(browse.mock.calls.filter(([box]) => box === 'received')).toHaveLength(1)
   })
@@ -1686,7 +1709,8 @@ describe('제안함 화면', () => {
     await screen.findByRole('tabpanel', { name: '받은 제안' })
 
     const pending = screen.getByRole('article', { name: '데이터브릿지 주식회사 제안' })
-    fireEvent.click(within(pending).getByRole('link', { name: receivedPendingProposal.recruitment.title }))
+    fireEvent.click(within(pending).getByRole('button'))
+    fireEvent.click(within(screen.getByRole('region', { name: '받은 제안 상세' })).getByRole('link', { name: receivedPendingProposal.recruitment.title }))
     const received = await screen.findByRole('region', { name: '받은 제안' })
     expect(await within(received).findByText('데이터브릿지 주식회사')).toBeTruthy()
     expect(browse.mock.calls.filter(([box]) => box === 'received')).toHaveLength(1)
@@ -1703,11 +1727,14 @@ describe('제안함 화면', () => {
     const panel = await screen.findByRole('tabpanel', { name: '보낸 제안' })
     const pending = within(panel).getByRole('article', { name: '데이터브릿지 주식회사 제안' })
     const declined = within(panel).getByRole('article', { name: '비전솔루션 제안' })
-    expect(within(declined).queryByRole('button')).toBeNull()
     expect(within(declined).getByText('거절')).toBeTruthy()
+    // 거절된 제안은 패널에 철회 버튼이 없습니다.
+    fireEvent.click(within(declined).getByRole('button'))
+    expect(within(screen.getByRole('region', { name: '보낸 제안 상세' })).queryByRole('button', { name: '철회' })).toBeNull()
 
-    fireEvent.click(within(pending).getByRole('button', { name: '철회' }))
-    fireEvent.click(within(pending).getByRole('button', { name: '철회 확정' }))
+    fireEvent.click(within(pending).getByRole('button'))
+    fireEvent.click(within(screen.getByRole('region', { name: '보낸 제안 상세' })).getByRole('button', { name: '철회' }))
+    fireEvent.click(within(screen.getByRole('dialog', { name: '제안을 철회할까요?' })).getByRole('button', { name: '철회' }))
     await waitFor(() => expect(respond).toHaveBeenCalledWith(303, 'withdraw'))
     expect((await screen.findByRole('alert')).textContent).toContain('이미 처리됐거나 만료된')
     await waitFor(() => expect(browse).toHaveBeenLastCalledWith('sent', expect.any(AbortSignal)))
@@ -1731,6 +1758,7 @@ describe('제안함 화면', () => {
     const browse = appContainer.resolve('browsePartnerProposalsUseCase').execute as ReturnType<typeof vi.fn>
     renderApp('/app/proposals', memberAccount)
     expect(screen.getByRole('region', { name: '기업 등록 필요' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: '프로필에서 기업 등록' }).getAttribute('href')).toBe('/app/profile')
     expect(screen.getByRole('region', { name: '제안 없음' })).toBeTruthy()
     expect(browse).not.toHaveBeenCalled()
   })

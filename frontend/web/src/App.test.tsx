@@ -252,7 +252,7 @@ describe('App navigation', () => {
     expect(within(relocationCard).getByText('전국 사업')).toBeTruthy()
     expect(relocationCard.textContent).not.toContain('✓')
     expect(relocationCard.textContent).not.toContain('AI 추천')
-    expect(within(relocationCard).getByText(/기업마당 등 공식 API 본문 기준 · 첨부파일 미검증/)).toBeTruthy()
+    expect(within(relocationCard).getByText(/공식 API 본문 기준 · 첨부파일 미검증/)).toBeTruthy()
     expect(within(getProgramCard(supportPrograms[1].title)).getByText('자격 판정 없음 · 확인 필요')).toBeTruthy()
     expect(screen.getByRole('status').textContent)
       .toBe('지원사업 검색 결과 4건: 조건 확인 공고 1건, 확인 필요 공고 2건, 최신 공고 1건(자격 미평가)을 표시했습니다.')
@@ -363,10 +363,6 @@ describe('App navigation', () => {
     fireEvent.change(searchInput, { target: { value: '제주 소프트웨어 개발업 2024-02-29 설립 사업화 지원금' } })
     await submitConfirmedSearch(searchInput)
     expect(store.getState().chat.searchOptions.companyConditions?.region).toBe('제주')
-    fireEvent.click(screen.getByRole('button', { name: '새 AI 대화 검색' }))
-    expect((searchInput as HTMLTextAreaElement).value).toBe('')
-    expect(screen.queryByText(/검색 당시 조건:/)).toBeNull()
-    expect(store.getState().chat.searchOptions).toEqual({ acceptingOnly: true })
   })
 
   it('준비 상태와 오류 안내가 있어도 검색·취소 버튼을 입력창 안에 배치한다', async () => {
@@ -759,7 +755,7 @@ describe('App navigation', () => {
 
     expect(screen.queryByText('이전 질문의 늦은 답변입니다.')).toBeNull()
     expect((nextQuestion as HTMLTextAreaElement).value).toBe('새 질문')
-    expect((screen.getByRole('button', { name: '질문하고 근거 받기' }) as HTMLButtonElement).disabled)
+    expect((screen.getByRole('button', { name: '질문 보내기' }) as HTMLButtonElement).disabled)
       .toBe(false)
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
@@ -887,9 +883,9 @@ describe('App navigation', () => {
 
     const bizInfoCard = getProgramCard(bizInfoProgram.title)
     const otherCard = getProgramCard(otherProgram.title)
-    expect(within(bizInfoCard).getByRole('link', { name: '원문 보기 ↗' }).getAttribute('href'))
+    expect(within(bizInfoCard).getByRole('link', { name: '원문 보기' }).getAttribute('href'))
       .toBe(bizInfoProgram.sourceUrl)
-    expect(within(otherCard).getByRole('link', { name: '원문 보기 ↗' }).getAttribute('href'))
+    expect(within(otherCard).getByRole('link', { name: '원문 보기' }).getAttribute('href'))
       .toBe(otherProgram.sourceUrl)
 
     fireEvent.click(within(bizInfoCard).getByRole('link', { name: '상세 조건 보기' }))
@@ -1258,7 +1254,7 @@ describe('App navigation', () => {
 
     await screen.findByText('현재 일치하는 공고를 찾지 못했습니다. 지역이나 분야를 바꿔 다시 검색해 보세요.')
     expect(document.getElementById('support-program-search-readiness')).toBeNull()
-    expect(searchInput.getAttribute('aria-describedby')).toBe('support-program-current-conditions')
+    expect(searchInput.getAttribute('aria-describedby')).toBeNull()
   })
 
   it('진행 중인 검색은 취소할 수 있고 검색어를 유지한다', async () => {
@@ -1308,7 +1304,7 @@ describe('App navigation', () => {
     renderApp(createAppStore(), '/support-programs/detail?sourceCode=BIZINFO&sourceProgramId=unknown-program')
 
     await screen.findByRole('heading', { name: '공고 정보를 찾을 수 없습니다' })
-    expect(screen.getByText(/존재하지 않거나 더 이상 제공되지 않는 공고입니다/)).toBeTruthy()
+    expect(screen.getByText(/존재하지 않거나 더 이상 제공되지 않는 공고예요/)).toBeTruthy()
     expect(screen.getByRole('link', { name: '검색 결과로 돌아가기' })).toBeTruthy()
   })
 
@@ -1325,7 +1321,7 @@ describe('App navigation', () => {
     renderApp(createAppStore(), path)
 
     expect(screen.getByRole('heading', { name: '공고 정보를 찾을 수 없습니다' })).toBeTruthy()
-    expect(screen.getByText('공고 주소가 올바르지 않습니다. 검색 결과에서 공고를 다시 선택해 주세요.'))
+    expect(screen.getByText('공고 주소가 올바르지 않아요. 검색 결과에서 공고를 다시 선택해 주세요.'))
       .toBeTruthy()
     expect(fetchMock).not.toHaveBeenCalled()
   })

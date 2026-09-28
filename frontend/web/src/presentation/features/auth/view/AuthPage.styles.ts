@@ -43,6 +43,13 @@ export const authPageStyles = {
   fieldHintStart: 'm-0 text-left text-[0.75rem] font-medium text-sample-muted',
   fieldError: 'm-0 text-[0.82rem] font-medium text-[#9a3947]',
   notice: 'm-0 rounded-xl bg-brand-accent px-4 py-3 text-[0.88rem] leading-[1.6] text-app-ink',
+  // 소셜 로그인 처리처럼 기다리는 화면입니다. 카드 가운데에 스피너 32px + 제목 + 설명 한 줄을 세로로 둡니다.
+  statusBlock: 'flex flex-col items-center gap-2.5 py-2 text-center',
+  statusSpinner: 'mb-1 size-8 rounded-full border-[3px] border-sample-border border-t-brand-primary motion-safe:animate-spin',
+  statusTitle: 'm-0 text-[1.5rem] font-bold tracking-[-0.03em] text-sample-heading',
+  statusDescription: 'm-0 text-[0.9rem] leading-[1.65] text-sample-muted',
+  // 오래 넘어가지 않을 때 보여 주는 "화면이 넘어가지 않나요?" + 링크입니다.
+  statusFallback: 'm-0 mt-3 flex flex-col items-center gap-1 text-[0.85rem] text-sample-muted',
   optionsRow: 'flex flex-wrap items-center justify-between gap-4',
   checkboxLabel: 'inline-flex items-center gap-2 text-[0.82rem] font-normal text-sample-muted',
   checkbox: 'size-[1.05rem] accent-brand-primary',

@@ -103,12 +103,16 @@ describe('관심 공고함', () => {
     expect(screen.getByRole('heading', { level: 1, name: '관심 공고함' })).toBeTruthy()
     expect(within(sidebar).getByRole('link', { name: '관심 공고함' }).getAttribute('aria-current')).toBe('page')
     await screen.findAllByRole('link', { name: program.title })
-    fireEvent.click(screen.getByRole('tab', { name: '목록 보기' }))
-    const cards = await screen.findAllByRole('article')
-    expect(cards).toHaveLength(2)
-    expect(within(cards[0]!).getByRole('link', { name: program.title }).getAttribute('href')).toBe(detailPath)
-    expect(within(cards[0]!).getByText(`${program.applicationStartDate ?? '시작일 미확인'} ~ ${program.applicationEndDate ?? '마감일 미확인'}`)).toBeTruthy()
-    expect(within(cards[1]!).getByText(`${saved[1]!.program.applicationStartDate ?? '시작일 미확인'} ~ ${saved[1]!.program.applicationEndDate ?? '마감일 미확인'}`)).toBeTruthy()
+    // 기본 보기는 목록(마감 임박순)입니다. 표 행에 담은 날과 [관심 공고에서 빼기][상세 보기]가 있습니다.
+    expect(screen.getByRole('tab', { name: '목록' }).getAttribute('aria-selected')).toBe('true')
+    const table = screen.getByRole('table')
+    const rows = within(table).getAllByRole('article')
+    expect(rows).toHaveLength(2)
+    expect(within(rows[0]!).getByRole('link', { name: program.title }).getAttribute('href')).toBe(detailPath)
+    expect(within(table).getByText('09.12 담음')).toBeTruthy()
+    expect(within(table).getByText('기간 없음')).toBeTruthy()
+    expect(within(table).getAllByRole('button', { name: '관심 공고에서 빼기' })).toHaveLength(2)
+    expect(within(table).queryByRole('link', { name: '상세 보기' })).toBeNull()
   })
 
   it('담은 공고가 없으면 안내와 지원사업 찾기 링크를 보여 주고, 실패하면 다시 시도한다', async () => {

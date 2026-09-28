@@ -25,6 +25,7 @@ const emptyDraft: PartnerRecruitmentDraft = { keyword: '', seekingRoles: [], reg
 function toggled<Value>(values: Value[], value: Value): Value[] {
   return values.includes(value) ? values.filter((item) => item !== value) : [...values, value]
 }
+/** 결과 머리줄의 정렬 드롭다운 선택지입니다(필터 검색의 정렬과 같은 자리·모양). */
 const sortOptions: FilterChoiceOption[] = (Object.keys(partnerRecruitmentSortLabels) as PartnerRecruitmentSort[])
   .map((sort) => ({ value: sort, label: partnerRecruitmentSortLabels[sort] }))
 
@@ -69,7 +70,5 @@ export function usePartnerRecruitmentListViewModel() {
       setDraft(emptyDraft)
       setQuery({ ...defaultPartnerRecruitmentQuery, sort: query.sort })
     },
-    // 처음 읽기 전에도 "0건 · 정렬"로 보여 건수 자리를 비우지 않습니다.
-    resultSummary: `${page?.total ?? 0}건 · ${partnerRecruitmentSortLabels[query.sort]}`,
   }
 }

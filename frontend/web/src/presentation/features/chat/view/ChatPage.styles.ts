@@ -13,13 +13,15 @@ export const chatPageStyles = {
   guestUserBubble: 'whitespace-pre-wrap rounded-3xl bg-[#f1f3f2] px-5 py-3.5 text-[0.95rem] leading-7 text-app-ink',
   guestAssistantBubble: 'whitespace-pre-wrap rounded-xl py-3 text-[0.95rem] leading-8 text-app-ink',
   // 입력창은 스크롤 껍데기의 아래에 붙습니다. 대화가 비치지 않도록 흰 배경을 깝니다.
-  guestComposerDock: 'sticky bottom-0 z-[2] mx-auto mt-auto w-[min(860px,calc(100%_-_4rem))] shrink-0 bg-white pt-3 pb-[max(0.8rem,env(safe-area-inset-bottom))] max-chat:w-[calc(100%_-_1.5rem)]',
+  // 도크 위쪽에 흰색 그라데이션 띠를 두어 스크롤되는 대화가 도크에 닿기 전에 부드럽게 가려집니다.
+  guestComposerDock: '[view-transition-name:search-composer] sticky bottom-0 z-[2] mx-auto mt-auto w-[min(860px,calc(100%_-_4rem))] shrink-0 bg-white pt-1 pb-[max(0.8rem,env(safe-area-inset-bottom))] before:pointer-events-none before:absolute before:inset-x-0 before:-top-8 before:h-8 before:bg-linear-to-t before:from-white before:to-white/0 max-chat:w-[calc(100%_-_1.5rem)]',
   guestComposerGroup: 'relative rounded-[1.8rem] border border-[#dce2de] bg-white shadow-[0_2px_12px_rgb(0_0_0_/_4%)] focus-within:border-[#7b9c88] focus-within:ring-2 focus-within:ring-brand-primary/10',
   guestComposerInput: 'block max-h-40 min-h-15 w-full resize-none rounded-[1.8rem] border-0 bg-transparent py-[1.05rem] pr-17 pl-6 text-base leading-7 text-app-ink placeholder:text-sample-muted outline-0 [field-sizing:content] max-chat:pl-4 max-chat:text-base',
-  guestSubmitButton: 'absolute right-2.5 bottom-2.5 grid size-10 cursor-pointer place-items-center rounded-full bg-[#202124] text-white hover:bg-black focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary disabled:cursor-not-allowed disabled:bg-[#e9edeb] disabled:text-[#959e98]',
-  guestCancelButton: 'absolute right-2 bottom-2 min-h-11 cursor-pointer rounded-full bg-[#edf2ef] px-3 text-xs font-semibold text-app-ink hover:bg-[#dee7e1] focus-visible:outline-2 focus-visible:outline-brand-primary',
+  guestSubmitButton: '[view-transition-name:search-submit] absolute right-2.5 bottom-2.5 grid size-10 cursor-pointer place-items-center rounded-full bg-[#202124] text-white hover:bg-black focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary disabled:cursor-not-allowed disabled:bg-[#e9edeb] disabled:text-[#959e98]',
+  // 검색 중에는 전송 화살표 자리에 같은 크기의 정지 버튼이 들어갑니다.
+  guestCancelButton: '[view-transition-name:search-submit] absolute right-2.5 bottom-2.5 grid size-10 cursor-pointer place-items-center rounded-full bg-[#202124] text-white hover:bg-black focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary',
   guestComposerFooter: 'mx-2 mt-2 flex min-h-7 items-center justify-between gap-2 [&_small]:text-[0.65rem] [&_button]:py-1',
-  guestDisclaimer: 'mx-2 mt-1 block text-center text-[0.65rem] leading-5 text-sample-muted [@media(max-height:500px)]:sr-only',
+  guestDisclaimer: 'mx-2 mb-1.5 block text-center text-[0.65rem] leading-5 text-sample-muted [@media(max-height:500px)]:sr-only',
   proposalPanel: 'ml-11 grid w-[min(40rem,calc(100%_-_2.75rem))] min-w-0 grid-cols-1 scroll-mt-36 gap-2 rounded-3xl border border-[#c9e4d6] bg-white p-4 shadow-[0_8px_28px_rgb(32_33_36_/_4%)] max-chat:ml-0 max-chat:w-full',
   proposalHeader: 'flex flex-wrap items-center justify-between gap-2',
   proposalEyebrow: 'inline-flex items-center gap-1.5 text-xs font-semibold text-brand-primary',
@@ -30,12 +32,14 @@ export const chatPageStyles = {
   proposalChanges: 'm-0 flex list-none flex-wrap gap-1.5 p-0',
   proposalChange: 'max-w-[calc(50%_-_0.1875rem)] truncate rounded-lg border border-sample-border bg-[#f8faf9] px-2.5 py-1 text-xs leading-relaxed text-[#345745]',
   proposalHint: 'm-0 text-xs leading-relaxed text-sample-muted',
-  proposalDetails: 'min-w-0 border-t border-sample-border pt-2.5',
-  proposalDetailsSummary: 'w-fit cursor-pointer rounded text-[0.72rem] font-semibold text-sample-muted hover:text-brand-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary',
+  // 아래 줄: 왼쪽에 "검색 조건 자세히", 오른쪽에 [제안 취소][이 조건으로 검색]. 좁으면 버튼 묶음이 다음 줄 오른쪽으로 내려갑니다.
+  proposalFooter: 'flex flex-wrap items-start justify-between gap-x-3 gap-y-1 border-t border-sample-border pt-2',
+  proposalDetails: 'min-w-0 flex-1 basis-40',
+  proposalDetailsSummary: 'w-fit cursor-pointer rounded text-[0.72rem] leading-10 font-semibold text-sample-muted hover:text-brand-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary',
   proposalDetailsList: 'my-3 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2 rounded-xl bg-[#f8faf9] p-3 text-xs leading-relaxed',
   proposalDetailsLabel: 'text-sample-muted',
   proposalDetailsValue: 'm-0 whitespace-pre-wrap text-app-ink [overflow-wrap:anywhere]',
-  conditionsActions: 'col-span-full flex flex-wrap items-center gap-2 pt-0.5',
+  conditionsActions: 'ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2',
   conditionsButton: 'inline-flex min-h-10 cursor-pointer items-center justify-center gap-2 rounded-full border border-brand-primary bg-brand-primary px-4 py-2 text-xs font-bold text-white hover:bg-[#066538] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary disabled:cursor-not-allowed disabled:opacity-50',
   proposalCancelButton: 'min-h-10 cursor-pointer rounded-full border border-sample-border bg-white px-3.5 py-2 text-xs font-semibold text-sample-muted hover:bg-[#f5f6f7] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary',
   conditionsHint: 'my-2 text-xs leading-relaxed text-sample-muted',
@@ -80,6 +84,8 @@ export const chatPageStyles = {
   programList: 'mt-[0.9rem] grid gap-[0.8rem]',
   eligibilityReview: 'mt-3 grid gap-2 rounded-lg border border-sample-border bg-[#f6f7f8] p-3',
   eligibilityAxisTitle: 'm-0 text-sm font-bold text-app-ink',
+  eligibilityEvidence: 'min-w-0',
+  eligibilityEvidenceSummary: 'w-fit cursor-pointer text-[0.72rem] font-semibold text-sample-muted hover:text-brand-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary',
   eligibilityQuote: 'mx-0 my-2 break-words border-l-2 border-sample-border pl-3 text-xs leading-relaxed text-sample-muted',
   reviewRequiredTag: 'rounded-[0.35rem] bg-[#fff4df] px-[0.48rem] py-1 text-[0.68rem] font-extrabold text-[#805a20]',
   searchingBubble: classes(
@@ -93,7 +99,7 @@ export const chatPageStyles = {
   loadingDescription: 'm-0 text-xs leading-relaxed text-sample-muted [overflow-wrap:anywhere]',
   loadingTrack: 'h-1 overflow-hidden rounded-full bg-brand-accent',
   loadingSweep: 'block h-full w-1/3 rounded-full bg-brand-primary/75 motion-safe:animate-chat-loading-sweep motion-reduce:mx-auto motion-reduce:animate-none',
-  intro: 'mx-auto w-[min(1180px,calc(100%_-_2rem))] pt-[clamp(2.5rem,5vw,4.5rem)] text-center',
+  intro: '[view-transition-name:search-intro] mx-auto w-[min(1180px,calc(100%_-_2rem))] pt-[clamp(2.5rem,5vw,4.5rem)] text-center',
   introTitle: 'mt-7 mb-0 break-keep text-[clamp(1.85rem,4vw,3.5rem)] font-extrabold leading-[1.38] tracking-[-0.065em] text-app-ink [text-wrap:balance] max-chat:mt-6',
   introTitleLine: 'inline-block max-w-full motion-safe:animate-search-intro-enter',
   introTitleSecondLine: 'motion-safe:[animation-delay:120ms]',
@@ -108,7 +114,7 @@ export const chatPageStyles = {
   ),
   introDescription: 'mt-6 mb-0 break-keep text-[clamp(0.9rem,1.45vw,1.15rem)] leading-[1.85] tracking-[-0.025em] text-sample-muted [text-wrap:pretty] max-chat:mt-4',
   composer:
-    'mx-auto w-[min(1040px,calc(100%_-_3rem))] shrink-0 pt-10 pb-5 max-chat:w-[calc(100%_-_2rem)] max-chat:pt-7',
+    '[view-transition-name:search-composer] mx-auto w-[min(1040px,calc(100%_-_3rem))] shrink-0 pt-10 pb-5 max-chat:w-[calc(100%_-_2rem)] max-chat:pt-7',
   composerDock:
     'mx-auto max-h-[55%] w-[min(1040px,calc(100%_-_3rem))] shrink-0 overflow-y-auto overscroll-contain px-1 pt-2 pb-[max(0.75rem,env(safe-area-inset-bottom))] max-chat:w-[calc(100%_-_1rem)]',
   dockedComposerInput: '[@media(max-height:500px)]:min-h-12 [@media(max-height:500px)]:pt-3 [@media(max-height:500px)]:pb-1',
@@ -119,8 +125,6 @@ export const chatPageStyles = {
   composerWorkspace:
     'sticky bottom-0 z-[2] mx-auto mt-auto w-[min(860px,calc(100%_-_2rem))] bg-white pt-2 pb-6 max-chat:w-[calc(100%_-_1.2rem)]',
   composerInputGroup: 'relative overflow-hidden rounded-[1.65rem] border border-[#b8dfc9] bg-white shadow-[0_3px_5px_rgb(23_68_45_/_5%),0_16px_48px_rgb(23_68_45_/_3%)] focus-within:border-[#23805a] focus-within:ring-2 focus-within:ring-[#23805a]/10',
-  searchContextControls: 'mb-2',
-  currentConditions: 'm-0 min-w-0 flex-1 text-xs leading-relaxed text-sample-muted [overflow-wrap:anywhere]',
   searchStatus: 'sr-only',
   searchError: classes(
     'mt-0 mb-[0.55rem] flex items-center justify-between gap-3 rounded-[0.7rem] border px-[0.8rem] py-[0.65rem] text-[0.76rem]',
@@ -143,13 +147,13 @@ export const chatPageStyles = {
   landingComposerInput: 'min-h-[8.5rem] text-[1.1rem] max-chat:min-h-[8rem] max-chat:text-base',
   workspaceComposerInput: 'min-h-[4.25rem] text-[0.95rem]',
   submitButton: classes(
-    'absolute right-5 bottom-4 grid size-12 place-items-center max-chat:right-4 max-chat:bottom-4',
+    '[view-transition-name:search-submit] absolute right-5 bottom-4 grid size-12 place-items-center max-chat:right-4 max-chat:bottom-4',
     'cursor-pointer rounded-full border-0 bg-brand-primary text-white hover:bg-[#066538] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary',
     'disabled:cursor-not-allowed disabled:bg-[#d7dce1]',
   ),
   cancelSearchButton: classes(
-    'absolute right-5 bottom-4 min-h-12 rounded-full border-0 px-3 max-chat:right-4',
-    'cursor-pointer bg-[#e8f5ed] text-[0.75rem] font-bold text-[#286044] hover:bg-[#d6ecdf]',
+    '[view-transition-name:search-submit] absolute right-5 bottom-4 grid size-12 place-items-center max-chat:right-4 max-chat:bottom-4',
+    'cursor-pointer rounded-full border-0 bg-brand-primary text-white hover:bg-[#066538] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary',
   ),
   composerFooter: 'flex min-h-[4.25rem] flex-wrap items-center gap-x-4 gap-y-2 pt-1 pr-[5.5rem] pb-5 pl-7 max-chat:pl-5',
   composerHint: 'block text-[0.75rem] leading-relaxed text-sample-muted max-chat:text-[0.68rem]',
@@ -178,13 +182,13 @@ export const chatPageStyles = {
   ),
   matchedReasons: 'mt-[0.7rem] flex flex-wrap gap-[0.35rem]',
   matchedReason: 'text-[0.7rem] text-sample-muted',
-  programActions: 'mt-[0.85rem] flex items-center justify-start gap-3',
+  programActions: 'mt-[0.85rem] flex flex-wrap items-center justify-between gap-3',
   programDetailsButton: classes(
     'cursor-pointer rounded-full border-0 px-[0.7rem] py-[0.55rem]',
     'bg-brand-primary text-[0.74rem] font-extrabold text-white',
   ),
   programSourceLink:
-    'rounded-full bg-[#edf7f1] px-[0.7rem] py-[0.55rem] text-[0.74rem] font-extrabold text-[#286044] no-underline',
+    'inline-flex items-center gap-1 text-[0.8rem] font-bold text-brand-primary no-underline hover:underline underline-offset-4 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary',
 } as const
 
 export function chatMessageRowClassName(isUser: boolean) {

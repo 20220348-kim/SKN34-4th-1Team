@@ -44,14 +44,14 @@ export const savedProgramsViewModes = ['calendar', 'list', 'pipeline'] as const
 
 export type SavedProgramsViewMode = (typeof savedProgramsViewModes)[number]
 
-/** 기본 탭인 달력은 주소에 남기지 않아 기존 `/app/saved-programs` 주소를 그대로 씁니다. */
+/** 기본 탭인 목록은 주소에 남기지 않아 기존 `/app/saved-programs` 주소를 그대로 씁니다. 달력·진행 관리는 `?view=`로 기억합니다. */
 export function savedProgramsPath(view: SavedProgramsViewMode): string {
-  return view === 'calendar' ? appPaths.savedPrograms : `${appPaths.savedPrograms}?view=${view}`
+  return view === 'list' ? appPaths.savedPrograms : `${appPaths.savedPrograms}?view=${view}`
 }
 
-/** 주소의 보기 방식입니다. 모르는 값이면 기본 탭인 달력으로 봅니다. */
+/** 주소의 보기 방식입니다. 모르는 값이면 기본 탭인 목록으로 봅니다. */
 export function readSavedProgramsViewMode(value: string | null | undefined): SavedProgramsViewMode {
-  return savedProgramsViewModes.find((mode) => mode === value) ?? 'calendar'
+  return savedProgramsViewModes.find((mode) => mode === value) ?? 'list'
 }
 
 export const publicPaths = {

@@ -7,9 +7,19 @@ export const appSidebarStyles = {
   brandMark: 'grid size-8 shrink-0 place-items-center rounded-xl bg-brand-accent text-lg font-black text-brand-primary',
   brandTitle: 'block text-xl font-semibold tracking-tight',
   iconButton: 'grid size-9 shrink-0 cursor-pointer place-items-center rounded-lg border-0 bg-transparent text-[#777] hover:bg-black/5 hover:text-app-ink focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand-primary',
-  scrollArea: 'min-h-0 flex-1 overflow-y-auto overscroll-contain pb-4',
-  newChatButton: 'mb-1 w-full cursor-pointer border-0 text-left',
+  // relative: 안쪽의 sr-only(absolute) 요소가 스크롤 칸 밖으로 튀어 문서 높이를 늘리지 않게 위치 기준을 둡니다.
+  scrollArea: 'relative min-h-0 flex-1 overflow-y-auto overscroll-contain pb-4',
+  newChatButton: 'w-full cursor-pointer border-0 text-left',
   menuGroup: 'flex flex-col gap-1',
+  // 무리 이름(찾기 · 준비 · 협업)입니다. 첫 무리는 위 여백을 줄입니다.
+  menuGroupTitle: 'mt-4 mb-0.5 px-3 text-[0.68rem] font-semibold tracking-[0.08em] text-ink-subtle first:mt-0',
+  // 대화 기록은 새검색 바로 아래 들여쓴 목록이고, 다섯 줄(줄당 2.5rem)까지만 보이고 넘치면 안에서 스크롤합니다.
+  history: 'mb-1 ml-3 flex max-h-[13rem] flex-col gap-0.5 overflow-y-auto overscroll-contain border-l border-line pl-1',
+  historyItem: 'min-h-10 min-w-0 flex-1 cursor-pointer border-0 py-1.5 text-left text-[0.8125rem] disabled:cursor-wait disabled:opacity-60',
+  historyDelete: 'size-8 disabled:cursor-wait disabled:opacity-40',
+  historyNote: 'px-3 py-1 text-xs text-ink-subtle',
+  historyError: 'px-3 py-1 text-xs text-danger',
+  historyMore: 'min-h-9 w-full cursor-pointer rounded-lg border-0 bg-transparent px-3 text-left text-xs font-medium text-ink-muted hover:bg-black/5 focus-visible:outline-2 focus-visible:outline-brand-primary',
   menuItem: 'flex min-h-11 min-w-0 items-center gap-2.5 rounded-2xl px-3 py-2.5 text-sm font-semibold no-underline transition-colors focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand-primary [&_svg]:size-[18px]',
   activeMenuItem: 'bg-[#e6f5ed] text-brand-primary hover:bg-[#dcefe5]',
   inactiveMenuItem: 'bg-transparent text-app-ink hover:bg-[#f5f6f7]',
@@ -25,7 +35,7 @@ export const appSidebarStyles = {
   accountAvatar: 'grid size-8 shrink-0 place-items-center rounded-full bg-brand-primary text-sm font-medium text-white',
   accountName: 'block truncate text-sm font-medium text-app-ink',
   accountCompany: 'mt-0.5 block truncate text-xs text-[#888]',
-  workspace: '@container/workspace flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto',
+  workspace: '@container/workspace relative flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto',
   compactHeader: 'flex h-14 shrink-0 items-center gap-2 bg-white px-3',
   mobileDialog: 'fixed inset-y-0 left-0 m-0 h-dvh max-h-none w-[min(280px,85vw)] max-w-none border-0 p-0 backdrop:bg-black/30',
 } as const

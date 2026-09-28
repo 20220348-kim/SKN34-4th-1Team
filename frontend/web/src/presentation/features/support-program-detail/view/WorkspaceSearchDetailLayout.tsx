@@ -23,11 +23,12 @@ export function WorkspaceSearchDetailLayout() {
         <div className={workspacePageStyles.header}>
           {/* 관심 공고함 머리글의 제목 줄과 같은 최소 높이(2.5rem)를 두어 목록↔상세 전환 때 줄 높이가 같습니다. */}
           <div className={workspacePageStyles.headerTitleGroup}>
-          <Link className={s.backLink} to={searchReturnTo}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+          {/* 상세의 맨 위 줄과 같은 "‹ 공고 상세" 모양입니다. 이름은 관심 공고함으로 돌아간다는 뜻을 유지합니다. */}
+          <Link className={s.backLink} to={searchReturnTo} aria-label={supportProgramBackLabel(searchReturnTo)} title={supportProgramBackLabel(searchReturnTo)}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
               <path d="m15 18-6-6 6-6" />
             </svg>
-            {supportProgramBackLabel(searchReturnTo)}
+            <span aria-hidden="true">공고 상세</span>
           </Link>
           </div>
         </div>

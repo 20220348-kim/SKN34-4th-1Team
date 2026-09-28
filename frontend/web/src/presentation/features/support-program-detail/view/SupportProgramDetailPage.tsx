@@ -8,9 +8,12 @@ import { workspacePageStyles } from '../../../shared/workspace/WorkspacePage.sty
 import type { SupportProgramDetail } from '../../../../domain/entities/SupportProgram'
 import type { SupportProgramIdentity } from '../../../../domain/repositories/SupportProgramRepository'
 import { useSupportProgramDetailViewModel } from '../viewmodel/useSupportProgramDetailViewModel'
-import { useSupportProgramSaveViewModel } from '../../../shared/support-program/useSupportProgramSaveViewModel'
+import { supportProgramSaveMessages, supportProgramSaveNoticeDurationMs, useSupportProgramSaveViewModel } from '../../../shared/support-program/useSupportProgramSaveViewModel'
+import { WorkspaceToast } from '../../../shared/workspace/WorkspaceToast'
+import { workspaceToastActionClassName } from '../../../shared/workspace/WorkspaceToast.styles'
 import { EvidenceQuestionPanel } from './EvidenceQuestionPanel'
 import { supportProgramDetailStyles as s } from './SupportProgramDetailPage.styles'
+import { supportProgramEvidenceQuestionStyles as q } from './SupportProgramEvidenceQuestionPage.styles'
 import { getSupportProgramFromPipeline, getSupportProgramSearchReturnTo, isSavedProgramsReturnTo, supportProgramBackLabel, type SupportProgramSearchReturnTo } from './supportProgramNavigation'
 import { supportProgramDeadlineChip, supportProgramStatusLabel } from './supportProgramStatus'
 
@@ -31,7 +34,8 @@ export function SupportProgramDetailPage() {
     return (
       <UnavailableSupportProgramDetail
         searchReturnTo={searchReturnTo}
-        description="공고 주소가 올바르지 않습니다. 검색 결과에서 공고를 다시 선택해 주세요."
+        icon="search"
+        description="공고 주소가 올바르지 않아요. 검색 결과에서 공고를 다시 선택해 주세요."
         title="공고 정보를 찾을 수 없습니다"
       />
     )
@@ -62,7 +66,8 @@ function SupportProgramDetailContent({ identity, searchReturnTo, fromPipeline }:
     return (
       <UnavailableSupportProgramDetail
         searchReturnTo={searchReturnTo}
-        description="존재하지 않거나 더 이상 제공되지 않는 공고입니다. 검색 결과에서 다른 공고를 확인해 주세요."
+        icon="search"
+        description="존재하지 않거나 더 이상 제공되지 않는 공고예요. 검색 결과에서 다른 공고를 확인해 주세요."
         title="공고 정보를 찾을 수 없습니다"
       />
     )
@@ -72,7 +77,8 @@ function SupportProgramDetailContent({ identity, searchReturnTo, fromPipeline }:
     return <UnavailableSupportProgramDetail
       searchReturnTo={searchReturnTo}
       retry={detail.retry}
-      description="공고 상세 정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요."
+      icon="alert"
+      description="공고 상세 정보를 불러오지 못했어요. 잠시 후 다시 시도해 주세요."
       title="공고 정보를 불러오지 못했습니다"
     />
   }
@@ -80,49 +86,61 @@ function SupportProgramDetailContent({ identity, searchReturnTo, fromPipeline }:
   return <SupportProgramDetail program={detail.program} searchReturnTo={searchReturnTo} fromPipeline={fromPipeline} />
 }
 
+/** 불러오는 동안은 완성 화면과 같은 자리에 스켈레톤을 그려 화면이 튀지 않게 합니다. 제목은 읽기 전용으로만 알립니다. */
 function LoadingSupportProgramDetail({ searchReturnTo }: { searchReturnTo: SupportProgramSearchReturnTo }) {
+  const bar = (width: string, tall = false) => <span className={`${tall ? s.skeletonBarTall : s.skeletonBar} ${width}`} aria-hidden="true" />
   return (
-    <DetailShell searchReturnTo={searchReturnTo} live>
-      <section className={s.unavailableCard}>
-        <h1 className={s.unavailableTitle}>공고 정보를 불러오는 중입니다</h1>
-        <p className={s.unavailableDescription}>최신 공고 조건을 확인하고 있습니다.</p>
-      </section>
-    </DetailShell>
+    <main className={s.page} aria-busy="true">
+      <TopBar searchReturnTo={searchReturnTo} />
+      <h1 className="sr-only" aria-live="polite">공고 정보를 불러오는 중입니다</h1>
+      <div className={s.layout}>
+        <div className={s.article}>
+          <div className={s.skeletonCard}>
+            <div className="flex gap-2">{bar('w-12')}{bar('w-14')}{bar('w-16')}</div>
+            {bar('h-6 w-4/5')}
+            {bar('w-2/5')}
+          </div>
+          <div className={s.skeletonCard}>
+            {bar('w-20')}
+            {bar('w-full')}{bar('w-11/12')}{bar('w-3/4')}{bar('w-2/3')}
+          </div>
+          <div className={s.skeletonCard}>
+            {bar('w-16')}
+            {bar('w-full')}{bar('w-5/6')}
+            {bar('mt-2 w-16')}
+            {bar('w-full')}{bar('w-2/3')}
+          </div>
+        </div>
+        <aside className={s.aside} aria-hidden="true">
+          {bar('w-full', true)}
+          {bar('w-full', true)}
+          <div className={s.divider} />
+          {bar('w-3/5')}{bar('w-2/5')}
+        </aside>
+      </div>
+    </main>
   )
 }
 
 /**
- * 맨 위 줄입니다. 넓은 화면은 돌아가기 알약 하나이고, 좁은 화면은 뒤로 화살표와 "공고 상세"가 있는 앱 바가 됩니다.
- * 돌아가기 링크는 하나뿐이라 화면 폭이 바뀌어도 같은 요소가 모양만 바꿉니다. 작업 화면에서 관심 공고함으로부터 열린 상세는
- * `WorkspaceSearchDetailLayout`이 머리글 높이의 줄에 같은 알약을 두므로 여기서는 그리지 않습니다.
+ * 맨 위 줄입니다. 화면 폭과 관계없이 모바일 앱 바처럼 "‹ 공고 상세" 한 덩어리이고, 이 영역 전체를 누르면 들어온 화면으로 돌아갑니다.
+ * 보이는 글자는 "공고 상세"지만 접근성 이름은 어디로 가는지("검색 결과로 돌아가기" 등)를 말합니다. 작업 화면에서 관심 공고함으로부터
+ * 열린 상세는 `WorkspaceSearchDetailLayout`이 머리글 높이의 줄에 같은 링크를 두므로 여기서는 그리지 않습니다.
  */
 function TopBar({ searchReturnTo }: { searchReturnTo: SupportProgramSearchReturnTo }) {
   const inApp = isAppPath(useLocation().pathname)
   if (inApp && isSavedProgramsReturnTo(searchReturnTo)) return null
+  const backLabel = supportProgramBackLabel(searchReturnTo)
   return (
     <div className={s.topBar}>
-      <Link className={s.backLink} to={searchReturnTo}>
-        <Icon name="chevronLeft" size={20} />
-        <span className={s.backLabel}>{supportProgramBackLabel(searchReturnTo)}</span>
+      <Link className={s.backLink} to={searchReturnTo} aria-label={backLabel} title={backLabel}>
+        <Icon name="chevronLeft" size={22} />
+        <span aria-hidden="true">공고 상세</span>
       </Link>
-      <span className={s.mobileTitle} aria-hidden="true">공고 상세</span>
     </div>
   )
 }
 
-/** 불러오는 중·없음·실패 화면의 껍데기입니다. 상세와 같은 맨 위 줄 아래에 카드 하나를 둡니다. */
-function DetailShell({ children, live = false, searchReturnTo }: {
-  children: ReactNode
-  live?: boolean
-  searchReturnTo: SupportProgramSearchReturnTo
-}) {
-  return (
-    <main className={s.unavailablePage} aria-live={live ? 'polite' : undefined}>
-      <TopBar searchReturnTo={searchReturnTo} />
-      {children}
-    </main>
-  )
-}
 
 /**
  * 공고 상세 본문입니다. 웹 화면 v2의 공고 상세 보드를 따릅니다. 왼쪽은 접수 상태·D-day·출처, 제목, 요약, "한눈에 보기",
@@ -145,7 +163,7 @@ function SupportProgramDetail({ program, searchReturnTo, fromPipeline }: {
   const needsRemoveConfirm = fromPipeline && save.isSaved === true
   const identity = { sourceCode: program.sourceCode, sourceProgramId: program.id }
   const applicationPreparationPath = `${appPaths.applicationPreparationNew}?${new URLSearchParams(identity)}`
-  // 원문 질문은 상세를 떠나지 않고 오른쪽(좁은 화면은 아래 시트) 패널로 엽니다. 열림은 `?ask=1`로 주소에 남겨 뒤로가기·새로고침이 그대로 됩니다.
+  // 원문 질문은 상세를 떠나지 않고 위에 겹치는 옆 패널(좁은 화면은 아래 시트)로 엽니다. 열림은 `?ask=1`로 주소에 남겨 뒤로가기·새로고침이 그대로 됩니다.
   const isAsking = searchParams.get('ask') === '1' && save.isAuthenticated && program.evidenceQuestionSupported
   const openAsk = () => {
     const next = new URLSearchParams(searchParams)
@@ -214,16 +232,17 @@ function SupportProgramDetail({ program, searchReturnTo, fromPipeline }: {
         </div>
       ) : null}
 
-      {/* 담기·빼기 결과 알림은 버튼의 눌림 상태로 충분해 잠시 접어 둡니다. 다시 쓰려면 아래 블록을 살립니다.
-      {save.notice ? (
-        <p className={s.saveNotice} role="status" key={save.notice.id}>
-          <span>{save.notice.text}</span>
-          <button className={workspacePageStyles.quietLink} type="button" onClick={save.dismissNotice}>닫기</button>
-        </p>
-      ) : null}
-      */}
+      {/* 담기·빼기 결과는 흰 토스트로 알립니다. 담으면 [관심 공고함 보기], 빼면 [되돌리기]. */}
+      <WorkspaceToast notice={save.notice} onClose={save.dismissNotice} durationMs={supportProgramSaveNoticeDurationMs}
+        tone={save.notice?.text === supportProgramSaveMessages.saved || save.notice?.text === supportProgramSaveMessages.removed ? 'success' : 'danger'}
+        action={save.notice?.text === supportProgramSaveMessages.saved
+          ? <Link className={workspaceToastActionClassName} to={save.savedProgramsPath}>관심 공고함 보기</Link>
+          : save.notice?.text === supportProgramSaveMessages.removed
+            ? <button type="button" className={workspaceToastActionClassName} disabled={save.isBusy} onClick={() => void save.toggle()}>되돌리기</button>
+            : null} />
 
-      <div className={`${s.layout} ${isAsking ? s.layoutAsking : ''}`}>
+      <div className={s.layout}>
+        {/* 본문은 화면 통일안 18번처럼 요약 hero → 한눈에 보기 → 공고 내용 세 카드로 나눕니다. */}
         <article className={s.article} aria-labelledby="support-program-title">
           <header className={s.heading}>
             <div className={s.meta}>
@@ -238,28 +257,34 @@ function SupportProgramDetail({ program, searchReturnTo, fromPipeline }: {
             <p className={s.organization}>{program.organization}</p>
           </header>
 
-          <p className={s.summary}>{program.summary}</p>
-
           <section className={s.glance} aria-labelledby="support-program-glance">
             <h2 id="support-program-glance" className={s.glanceTitle}>한눈에 보기</h2>
             <dl className={s.glanceList}>
-              <GlanceRow label="신청 기간"><span className={s.glanceValueStrong}>{program.applicationPeriod}</span></GlanceRow>
-              <GlanceRow label="지원 대상">{program.targetDescription}</GlanceRow>
-              <GlanceRow label="분야" tight><TagList values={program.categories} emptyLabel="분야 정보 없음" /></GlanceRow>
-              <GlanceRow label="지역" tight><TagList values={program.regions} emptyLabel="지역 정보 없음" /></GlanceRow>
               <GlanceRow label="지원 규모"><span className={s.glanceValueMuted}>공고문에서 확인해 주세요</span></GlanceRow>
+              <GlanceRow label="접수 기간"><span className={s.glanceValueStrong}>{program.applicationPeriod}</span></GlanceRow>
+              <GlanceRow label="지역" tight><TagList values={program.regions} emptyLabel="지역 정보 없음" /></GlanceRow>
+              <GlanceRow label="분야" tight><TagList values={program.categories} emptyLabel="분야 정보 없음" /></GlanceRow>
             </dl>
           </section>
 
-          <p className={s.note} role="note">
-            <span className={s.notePill}>자격 미평가</span>
-            <span>상세 화면은 기업 조건으로 자격을 다시 평가하지 않아요. 지역·분야 태그만으로 신청 자격을 판단하지 마세요.</span>
-          </p>
+          <section className={s.prose} aria-labelledby="support-program-prose">
+            <h2 id="support-program-prose" className="sr-only">공고 내용</h2>
+            <section className={s.proseSection}>
+              <h3 className={s.proseTitle}>지원 내용</h3>
+              <p className={s.summary}>{program.summary}</p>
+            </section>
+            <section className={s.proseSection}>
+              <h3 className={s.proseTitle}>지원 대상</h3>
+              <p className={s.summary}>{program.targetDescription}</p>
+            </section>
+            <p className={s.note} role="note">
+              <span className={s.notePill}>자격 미평가</span>
+              <span>상세 화면은 기업 조건으로 자격을 다시 평가하지 않아요. 지역·분야 태그만으로 신청 자격을 판단하지 마세요. 최종 조건은 원문 공고에서 확인해 주세요.</span>
+            </p>
+          </section>
         </article>
 
-        {isAsking ? <button type="button" className={s.sheetBackdrop} aria-label="닫기" onClick={closeAsk} /> : null}
-        <aside className={`${s.aside} ${isAsking ? s.asideAsking : ''}`} aria-label={isAsking ? '원문 질문' : '이 공고로 할 일'}>
-          {isAsking ? <EvidenceQuestionPanel identity={identity} onClose={closeAsk} /> : (<>
+        <aside className={s.aside} aria-label="이 공고로 할 일">
           {/* 넓은 화면은 관심 공고 → 질문 → 설명 순서로 세로로, 좁은 화면은 동작 바 한 줄(관심 공고 · 더 보기 · 질문)로 다시 정렬됩니다. */}
           <div className={s.asideBar}>
             {saveControl}
@@ -307,29 +332,42 @@ function SupportProgramDetail({ program, searchReturnTo, fromPipeline }: {
               </a>
             </div>
           </div>
-          </>)}
         </aside>
       </div>
+
+      {/* 원문 질문 옆 패널은 상세 위에 겹칩니다. 좁은 화면은 아래 시트라 뒤를 어둡게 덮고, 덮개를 누르면 닫힙니다. */}
+      {isAsking ? <>
+        <button type="button" className={q.panelScrim} aria-label="닫기" onClick={closeAsk} />
+        <EvidenceQuestionPanel identity={identity} programTitle={program.title} onClose={closeAsk} />
+      </> : null}
     </main>
   )
 }
 
-function UnavailableSupportProgramDetail({ description, retry, searchReturnTo, title }: {
+/**
+ * 없음·실패 상태입니다. 상세와 같은 폭·맨 위 줄 아래에 상태 카드(원 표지 + 제목 + 설명 + 동작) 하나를 둡니다.
+ * 보여 줄 공고가 없으니 오른쪽 할 일 열도 없이 카드가 본문 전체 폭을 씁니다.
+ * 실패는 빨간 표지와 [다시 시도], 없음은 회색 표지만 두고, 돌아가는 길은 맨 위 줄의 "‹ 공고 상세"가 맡습니다.
+ */
+function UnavailableSupportProgramDetail({ description, icon, retry, searchReturnTo, title }: {
   description: string
+  icon: 'alert' | 'search'
   retry?: () => void
   searchReturnTo: SupportProgramSearchReturnTo
   title: string
 }) {
   return (
-    <DetailShell searchReturnTo={searchReturnTo}>
-      <section className={s.unavailableCard}>
-        <h1 className={s.unavailableTitle}>{title}</h1>
-        <p className={s.unavailableDescription}>{description}</p>
-        {retry ? (
-          <button type="button" className={s.retryButton} onClick={retry}>상세 정보 다시 불러오기</button>
-        ) : null}
-      </section>
-    </DetailShell>
+    <main className={s.page}>
+      <TopBar searchReturnTo={searchReturnTo} />
+      <div className={s.stateLayout}>
+        <section className={s.stateCard} aria-live={retry ? 'polite' : undefined}>
+          <span className={`${s.stateGlyph} ${retry ? s.stateGlyphDanger : ''}`} aria-hidden="true"><Icon name={icon} size={22} /></span>
+          <h1 className={s.stateTitle}>{title}</h1>
+          <p className={s.stateDescription}>{description}</p>
+          {retry ? <button type="button" className={s.retryButton} onClick={retry}>다시 시도</button> : null}
+        </section>
+      </div>
+    </main>
   )
 }
 
@@ -358,6 +396,8 @@ const iconPaths = {
   chat: 'M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z',
   document: 'M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5M9 13h6M9 17h6',
   shield: 'M12 3 5 6v6c0 4.5 3 7.5 7 9 4-1.5 7-4.5 7-9V6zM9 12l2 2 4-4',
+  alert: 'M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z',
+  search: 'm21 21-4.3-4.3M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14z',
 } as const
 
 function Icon({ name, size = 20, filled = false }: { name: keyof typeof iconPaths; size?: number; filled?: boolean }) {
