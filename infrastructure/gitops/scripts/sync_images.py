@@ -15,6 +15,7 @@ import yaml
 from promote_image import ROOT, SERVICES, UniqueLoader, updated_values, validate_receipt
 from gate import eligible, valid_sha
 from repository import Fork, from_ci
+from outcome import PUBLICATION_REPORTS
 
 ENVIRONMENT = "fork"
 
@@ -50,7 +51,8 @@ def select_release(fork, get=api, run_id=None):
                          {"workflow_run", "workflow_dispatch"}, fork):
             raise ValueError("Unexpected publisher source")
         artifacts = get(f"repos/{fork.repository}/actions/runs/{run['id']}/artifacts?per_page=100")["artifacts"]
-        if not artifacts:  # successful gate-only run
+        artifacts = [item for item in artifacts if item.get("name") not in PUBLICATION_REPORTS]
+        if not artifacts:  # successful gate-only run; reports are not receipts
             continue
         if len(artifacts) != 4 or {a["name"] for a in artifacts} != {"msa-image-" + s for s in SERVICES}:
             raise ValueError("Publisher must provide exactly four image receipts")
@@ -186,13 +188,11 @@ def synchronize(fork, root=ROOT, write=False, get=api, run_id=None):
     fork.require_personal_publish()
     release = select_release(fork, get, run_id)
     if release is None:
-        print("No promotion: no complete successful image release")
-        return
+        return {"prepared": False, "reason": "no_complete_release", "source_sha": ""}
     run, _ = release
     sha = run["head_sha"]
     if not eligible(sha, fork, get):
-        print("No promotion: source changed or required CI workflows/jobs have not passed")
-        return
+        return {"prepared": False, "reason": "source_or_ci_not_ready", "source_sha": sha}
     receipts = checked_receipts(sha, release, fork, get)
     changes = prepare(root, receipts, fork)
     marker = root / "environments/fork/release.json"
@@ -214,6 +214,8 @@ def synchronize(fork, root=ROOT, write=False, get=api, run_id=None):
             path.write_text(result)
         marker.write_text(json.dumps(record, indent=2) + "\n")
     print(f"Verified release {run['id']} at {sha}; {len(changes)} image changes; write={write}")
+    return {"prepared": write, "reason": "prepared" if write else "preview",
+            "source_sha": sha, "publisher_run_id": run["id"]}
 
 
 def main():
@@ -239,7 +241,16 @@ def main():
     if args.verify_record:
         verify_record(ROOT, fork)
     else:
-        synchronize(fork, write=args.write, run_id=run_id)
+        decision = {"prepared": False, "reason": "selection_error", "source_sha": ""}
+        try:
+            decision = synchronize(fork, write=args.write, run_id=run_id)
+        finally:
+            if os.environ.get("GITHUB_OUTPUT"):
+                with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+                    output.writelines(
+                        f"{key}={str(value).lower() if isinstance(value, bool) else value}\n"
+                        for key, value in decision.items())
+        print(json.dumps(decision))
 
 
 if __name__ == "__main__":

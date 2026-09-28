@@ -69,3 +69,35 @@ PC의 읽기 인증과 CI의 임시 `GITHUB_TOKEN`은 별개입니다. **기존 
 
 로컬 개발 감시 도구는 이 발행 경로와 별개로 **저장한 서비스만 PC에서 재빌드**합니다.
 세부 검증·권한·실패 시 동작은 [이미지 릴리스 안내](../../docs/msa-image-release.md)를 참고하세요.
+
+## 발행·승격 결과 확인
+
+`MSA image candidates`와 `Fork image promotion`은 선행 job의 성공·실패·건너뛰기에도
+읽기 전용 `outcome` job을 실행한다. Actions Summary와 JSON artifact의
+`schema=msa-release-outcome-v1` 기록을 확인한다. workflow의 초록색 표시만으로 발행·배포를 판단하지 않는다.
+
+| artifact | 확인할 사실 |
+|---|---|
+| `msa-publication-result` | gate·발행 matrix 결과, `sourceSha`, `triggerSha`, 차단 사유, `imagesVerified` |
+| `msa-publication-<service>` | 서비스별 새 업로드·재사용·receipt 생성 여부. 발행 도구가 실행된 경우 생성 |
+| `msa-promotion-result` | 후보 선택·렌더링 검사·커밋 단계 결과, publisher run, 실제 push 여부와 원격 확인 revision |
+
+- `imagesVerified=true`는 gate와 네 서비스 발행 job이 모두 성공했다는 뜻이다. 새 업로드 횟수는
+  이 집계에서 추정하지 않고 서비스별 기록을 본다.
+- 서비스별 `state=published`는 새 업로드와 검증 receipt 생성 완료, `state=reused`는 이미 검증된
+  이미지 재사용이다. `upload=confirmed`여도 후속 검증이 실패하면 `receiptWritten=false`이며 승격 근거가 없다.
+  `upload=attempted`는 push 응답을 확정하지 못한 상태다. 보고서 누락도 업로드 0회 증거가 아니다.
+- `sourceSha`는 gate/후보 선택에서 확인한 소스다. 그 단계에 도달하지 못하면 null이며,
+  이벤트의 `triggerSha`로 대신 승인하지 않는다. run ID와 attempt를 함께 기록한다.
+- `reason`은 `disabled`, `event_not_eligible`, `source_not_current`, `upstream_not_merged`,
+  `ci_run_missing:<workflow>`, `ci_jobs_not_successful_or_incomplete:<workflow>` 등으로 차단 위치를 구분한다.
+- 승격은 검증된 후보의 `prepared=true`일 때만 렌더링·쓰기 단계로 진행한다. 후보가 없을 때 기존
+  release 파일을 다음 승격의 근거로 재사용하지 않는다. 변경 없음은 `unchanged`, 원격 SHA까지 확인한
+  push는 `pushed`다. push를 시도했으나 확인하지 못하면 `pushed=null`과 `push_unconfirmed`를 기록한다.
+- 보고서는 배포 승인 자료가 아니다. 네 `msa-image-<service>` receipt의 출처·checksum·소스 검증은
+  그대로 필수다. 승격기는 정해진 보고서 이름만 receipt 목록에서 제외하며, 미지의 artifact는 거절한다.
+- `clusterVerified=false`는 이 도구가 실제 클러스터를 검증하지 않았다는 뜻이다. Argo CD 동기화와
+  서비스 준비 완료는 별도 증거로 확인한다. 이 변경은 배포 ref 분리나 원격 보호 규칙을 설정하지 않는다.
+
+결과 job의 `always()` 동작은 [GitHub job 의존성 규칙](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-jobs)을 따른다.
+runner 시작 전 실패나 강제 종료 등으로 보고서가 없으면 검증 대기로 남기며 성공으로 추정하지 않는다.

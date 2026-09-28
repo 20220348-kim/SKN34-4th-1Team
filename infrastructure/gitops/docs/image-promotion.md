@@ -9,7 +9,7 @@
 `MSA image candidates` 완료 이벤트 또는 기본 브랜치의 수동 실행만 받습니다.
 개인 포크에서 `MSA_PROMOTION_ENABLED=true`를 명시해야 합니다. 학교 소유 저장소는 계속 차단합니다.
 
-검증 대상은 네 CI의 같은 SHA 성공, 최신 소스 또는 digest-only 후속 커밋, 정확한 발행 workflow,
+검증 대상은 다섯 CI와 필수 하위 job의 같은 SHA 성공, 최신 소스 또는 digest-only 후속 커밋, 정확한 발행 workflow,
 네 서비스 receipt의 artifact 출처·checksum·플랫폼·실제 Git tree·개인 이미지 경로입니다.
 다른 사람의 패키지나 예전 `GovBiz-Team` receipt를 받아주는 fallback은 없습니다.
 
@@ -44,6 +44,17 @@ infrastructure/gitops/environments/fork/
 
 digest 커밋은 단기 `GITHUB_TOKEN`으로 push하므로 새 push CI를 재귀적으로 만들지 않습니다.
 GitOps 클러스터는 그 Git 변경을 직접 감지합니다. 새 애플리케이션 소스가 push되면 새 CI를 거칩니다.
+
+## 결과를 읽는 기준
+
+[발행·승격 결과 안내](../../release/README.md#발행승격-결과-확인)에 JSON artifact와 상태 계약을 정리했다.
+검증된 후보 선택이 성공해야 렌더링 검사와 쓰기 단계가 실행된다. 기존 release 파일이 있다는 사실만으로
+승격하지 않는다. 변경 없음은 `unchanged`이며, 일반 push 뒤 원격 SHA까지 일치해야 `pushed`를 기록한다.
+응답 유실·동시 변경으로 원격 확인이 끝나지 않으면 `pushed=null`로 남긴다.
+
+`msa-publication-*`의 정해진 결과 보고서는 receipt가 아니므로 발행 artifact 목록에서 별도로 제외한다.
+여전히 정확한 네 이미지 receipt가 모두 필요하며, 알 수 없는 추가 artifact는 거절한다.
+워크플로 success·후보 준비·Git push·Argo 동기화는 서로 다른 상태다.
 
 ## 수동 검토와 안전장치
 
