@@ -1,82 +1,45 @@
-# 개인 포크의 이미지 digest 승격
+# 개인 포크의 배포 후보 PR
 
-이미지 빌드는 CI, 보관은 비공개 GHCR, 버전 선택은 Git, 실제 리소스 반영은 Argo CD의 책임입니다.
-학교 조직의 GHCR 대신 본인 포크의 패키지를 사용하며 계정명은 공통 코드에서 수정하지 않습니다.
+이미지 빌드는 CI, 보관은 개인 GHCR, 배포 입력 선택은 리뷰된 Git PR, 실제 반영은 Argo CD가 담당합니다.
+소스 기본 브랜치와 승인된 `deploy/fork` 브랜치를 분리합니다. 상세 설정과 승인 절차는
+[전체 배포 후보 안내](deployment-candidates.md)를 따릅니다.
 
-## 자동 승격
+`Fork image promotion`은 성공한 `MSA image candidates` 이벤트 또는 소스 기본 브랜치의 수동 실행을 받습니다.
+개인 포크의 `MSA_PROMOTION_ENABLED=true`와 활성 보호 규칙이 필요합니다. 교육기관 원본의 GHCR 발행은 차단합니다.
+upstream에 병합된 최신 소스, 같은 SHA의 다섯 CI·16개 job, 정확한 발행 run과 네 receipt의 출처·checksum·Git tree를 검사합니다.
 
-루트 `.github/workflows/msa-promotion.yml`의 `Fork image promotion`은 성공한
-`MSA image candidates` 완료 이벤트 또는 기본 브랜치의 수동 실행만 받습니다.
-개인 포크에서 `MSA_PROMOTION_ENABLED=true`를 명시해야 합니다. 학교 소유 저장소는 계속 차단합니다.
+후보에는 네 digest뿐 아니라 Chart 전체, 서비스 values, receipt, 렌더링 결과, Argo 선언과 검증 manifest가 포함됩니다.
+본인 fork values가 있으면 실행 설정을 보존해 검증하고, 없거나 타인 설정을 물려받았으면 안전한 portfolio 값에서
+본인의 receipt로 재구성합니다. 검증된 후보 branch에만 한국어 커밋을 push하고 `deploy/fork` 대상 PR을 만듭니다.
+소스·배포 브랜치 직접 push와 자동 merge는 하지 않습니다.
 
-검증 대상은 다섯 CI와 필수 하위 job의 같은 SHA 성공, 최신 소스 또는 digest-only 후속 커밋, 정확한 발행 workflow,
-네 서비스 receipt의 artifact 출처·checksum·플랫폼·실제 Git tree·개인 이미지 경로입니다.
-다른 사람의 패키지나 예전 `GovBiz-Team` receipt를 받아주는 fallback은 없습니다.
+## 결과와 수동 승인
 
-발행의 기준은 **교육기관 원본 PR 병합 → 개인 포크 기본 브랜치 동기화**입니다. 최신 upstream
-기본 브랜치가 후보 커밋의 조상이며, 다섯 개인 배포 선택 파일을 제외한 내용이 동일해야 합니다.
-개인 코드만 push하거나 원본에 병합되지 않은 변경은 CI가 통과해도 발행·승격하지 않습니다.
-동기화 뒤 생긴 개인 merge SHA 자체가 upstream에 없어도 위 조건을 만족하면 허용합니다.
-로컬 pull만으로 원격 CI가 시작되지는 않습니다. 원격 포크의 Sync 또는 동기화 결과 push가 필요합니다.
+[발행·승격 결과 안내](../../release/README.md#발행승격-결과-확인)의 `msa-promotion-result`는 후보 PR과
+그 SHA를 기록합니다. `candidateCreated=true`여도 배포 완료가 아닙니다.
+별도로 dispatch한 검사기가 정확한 후보 SHA에 `govbiz/deployment-candidate` 상태를 게시합니다.
+리뷰 승인 후 사람이 수동 병합해야 Argo의 배포 입력이 바뀝니다.
+소스·배포 base·CI 증거가 달라지거나 파일이 변조되면 새 후보를 만들어야 합니다.
 
-처음에는 `environments/fork`가 없습니다. 검증된 네 receipt를 받은 뒤에만 안전한 portfolio 런타임
-기본값에서 **이전 이미지·digest를 제거**하고 본인 이미지의 실제 digest를 넣어 생성합니다.
-기존 본인 설정이 있으면 registry·서비스 일치를 확인하고 digest만 바꿉니다. 다른 사람의 release를
-포크로 물려받았다면 본인의 검증된 네 receipt를 받은 뒤 안전한 기본값으로 다섯 파일을 재생성하여
-동일한 Git 커밋으로 교체합니다. 물려받은 이미지나 receipt를 배포 근거로 재사용하지 않습니다. 모든 사전 검사를 마치기
-전에는 파일을 쓰지 않습니다. 예전 `environments/portfolio`는 보존합니다.
+`msa-publication-*` 정보 보고서는 receipt가 아니며 네 이미지 receipt 검증을 대신하지 않습니다.
+후보 PR 생성, 검사 통과, 병합, Argo 동기화와 실제 서비스 준비를 구분합니다.
 
-갱신 범위는 다음 다섯 파일로 제한합니다.
+## 기존 수동 도구
 
-```text
-infrastructure/gitops/environments/fork/
-  core-service.yaml
-  catalog-service.yaml
-  ai-service.yaml
-  ops-service.yaml
-  release.json
-```
+`scripts/promote_image.py`는 기존 `environments/fork/<service>.yaml`의 digest diff를 미리 보거나 적용하는
+로컬 편집 도구입니다. push·승인·클러스터 접근은 하지 않으며 단독 실행으로 배포 후보가 승인되지 않습니다.
+`sync_images.py`의 receipt 검증·values 구성 함수는 새 후보 생성기에서도 사용합니다.
+이전 다섯 파일 직접 승격 CLI는 배포 PR 절차를 대신하지 않습니다.
 
-`release.json`은 `repository`, `branch`, `verifiedRevision`, `runId`, `runUrl`,
-네 서비스별 `images`(repository@sha256)를 기록합니다. 실행 토큰이나 비밀값은 기록하지 않습니다.
-실제 Helm render 검증과 push 직전 원격/receipt 재검사 후 한국어 bot 커밋을 일반 push합니다.
-동시에 사용자가 push하여 충돌하면 강제 덮어쓰기하지 않고 실패합니다.
-
-digest 커밋은 단기 `GITHUB_TOKEN`으로 push하므로 새 push CI를 재귀적으로 만들지 않습니다.
-GitOps 클러스터는 그 Git 변경을 직접 감지합니다. 새 애플리케이션 소스가 push되면 새 CI를 거칩니다.
-
-## 결과를 읽는 기준
-
-[발행·승격 결과 안내](../../release/README.md#발행승격-결과-확인)에 JSON artifact와 상태 계약을 정리했다.
-검증된 후보 선택이 성공해야 렌더링 검사와 쓰기 단계가 실행된다. 기존 release 파일이 있다는 사실만으로
-승격하지 않는다. 변경 없음은 `unchanged`이며, 일반 push 뒤 원격 SHA까지 일치해야 `pushed`를 기록한다.
-응답 유실·동시 변경으로 원격 확인이 끝나지 않으면 `pushed=null`로 남긴다.
-
-`msa-publication-*`의 정해진 결과 보고서는 receipt가 아니므로 발행 artifact 목록에서 별도로 제외한다.
-여전히 정확한 네 이미지 receipt가 모두 필요하며, 알 수 없는 추가 artifact는 거절한다.
-워크플로 success·후보 준비·Git push·Argo 동기화는 서로 다른 상태다.
-
-## 수동 검토와 안전장치
-
-`scripts/promote_image.py`는 검토한 receipt로 **기존 `environments/fork/<service>.yaml`**의
-diff를 미리 보거나 적용합니다. 자동 Git push·클러스터 접근은 하지 않습니다. 수동 작업자는
-먼저 발행 run의 성공과 receipt 출처를 확인해야 하며, 자동 승격에는 더 엄격한 `sync_images.py`를 사용합니다.
-
-`validate_record(record, fork)`는 로컬에서 레코드의 정확한 계정·브랜치·서비스/digest 형식을 검사합니다.
-`verify_record(root, fork)`는 GitHub의 CI·발행 run·artifact·Git tree와 현재 values를 추가 검증합니다.
-형식 검사만으로 실제 pull 권한이나 컨테이너 정상 실행이 증명되지는 않습니다.
-
-다른 사람의 release가 포함된 checkout에서는 본인의 첫 발행·승격 완료 전까지 클러스터를 시작하지 않습니다.
-자동 승격이 본인 이미지 선택을 다시 생성하므로 계정명 편집이나 파일 수동 삭제는 필요 없습니다.
-이미지 rollback과 DB migration/data 복구는 별도입니다.
+`release.json`의 형식 검증만으로 GitHub CI·실제 pull·컨테이너 실행이 증명되지는 않습니다.
+계정명 수정이나 예시 digest 삽입으로 초기 release를 만들지 않습니다. 이미지 rollback과 DB 복구도 별도입니다.
 
 ```bash
-cd infrastructure/gitops
-python -B -m unittest discover -s scripts -p 'test_promote_image.py'
-python -B -m unittest discover -s scripts -p 'test_sync_images.py'
+python -B -m unittest discover -s infrastructure/gitops/scripts -p 'test_promote_image.py'
+python -B -m unittest discover -s infrastructure/gitops/scripts -p 'test_sync_images.py'
+python -B -m unittest discover -s infrastructure/gitops/scripts -p 'test_deployment.py'
 ```
 
-Python 3.13과 `scripts/requirements.txt`가 필요합니다. 다른 계정·mutable tag·stale digest·symlink·
-경로 이탈·중복 YAML·잘못된 artifact·중간 검증 실패 시 무변경을 검사합니다.
+Python 3.13, Helm 4.3.0과 GitOps requirements가 필요합니다.
 
-[발행 최초 설정](../../../docs/msa-image-release.md) · [이전 환경 기록](portfolio-validation-20260920.md)
+[발행 최초 설정](../../../docs/msa-image-release.md) · [과거 환경 기록](portfolio-validation-20260920.md)

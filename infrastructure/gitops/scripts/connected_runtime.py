@@ -213,6 +213,8 @@ def configure(args, state, settings):
         for app in current:
             service = app["metadata"]["name"].removeprefix("govbiz-fork-")
             source = app["spec"]["source"]
+            if source["targetRevision"] == "deploy/fork":
+                raise ValueError("Approved deployment configuration must change through a deployment PR, not valuesObject")
             if (source["repoURL"] != "https://github.com/" + settings["repository"] + ".git"
                     or source["targetRevision"] != settings["branch"]
                     or source["path"] != "infrastructure/gitops/charts/govbiz-service"

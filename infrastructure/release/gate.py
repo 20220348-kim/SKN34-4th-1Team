@@ -104,7 +104,7 @@ def upstream_merged(sha, fork, get=api):
                     and item.get("status") in {"added", "modified"} for item in files))
 
 
-def blocked_reason(sha, fork, get=api):
+def blocked_reason(sha, fork, get=api, *, evidence=None):
     if not current_source(sha, fork, get):
         return "source_not_current"
     if not upstream_merged(sha, fork, get):
@@ -144,6 +144,8 @@ def blocked_reason(sha, fork, get=api):
         if any(confirmed.get(field) != run.get(field) for field in (
                 "id", "run_attempt", "head_sha", "head_branch", "event", "status", "conclusion", "path")):
             return "ci_run_changed:" + filename
+        if evidence is not None:
+            evidence.append({"workflow": filename, "runId": run["id"], "runAttempt": run["run_attempt"]})
     return None
 
 

@@ -1,0 +1,59 @@
+name: Deployment candidate validation
+
+on:
+  # Never execute a workflow or Python script from the deployment candidate.
+  # Explicit dispatch also covers PRs created with GITHUB_TOKEN.
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Deployment PR number
+        required: true
+        type: string
+      candidate_sha:
+        description: Exact 40-character candidate commit
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+  statuses: write
+
+env:
+  GOVBIZ_RELEASE_BRANCH: ${{ github.event.repository.default_branch }}
+
+concurrency:
+  group: deployment-candidate-${{ inputs.pr_number }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate deployment candidate
+    if: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+      - run: python -m pip install --requirement infrastructure/gitops/scripts/requirements.txt
+      - name: Install pinned Helm
+        shell: bash
+        run: |
+          set -euo pipefail
+          tool_dir="$(mktemp -d)"
+          cd "$tool_dir"
+          curl -fsSLO https://get.helm.sh/helm-v4.3.0-linux-amd64.tar.gz
+          curl -fsSLO https://get.helm.sh/helm-v4.3.0-linux-amd64.tar.gz.sha256sum
+          sha256sum --check helm-v4.3.0-linux-amd64.tar.gz.sha256sum
+          tar -xzf helm-v4.3.0-linux-amd64.tar.gz
+          echo "$tool_dir/linux-amd64" >> "$GITHUB_PATH"
+      - name: Validate and publish a status on the exact candidate SHA
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python -B infrastructure/gitops/scripts/deployment.py check

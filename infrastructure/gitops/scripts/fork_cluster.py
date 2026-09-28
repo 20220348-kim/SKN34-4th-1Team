@@ -143,13 +143,13 @@ def verify_pull_rights(login, token, record):
                 raise ValueError("Registry returned a different digest; do not use unverified images")
 
 
+def approved_bundle(settings, helm="helm"):
+    from deployment import approved_release
+    return approved_release(REPOSITORY_ROOT, Fork(settings["repository"], settings["branch"]), helm)
+
+
 def checked_release(settings, helm="helm"):
-    from check_portfolio import fork_errors
-    fork = Fork(settings["repository"], settings["branch"])
-    problems = fork_errors(fork, helm=helm)
-    if problems:
-        raise ValueError("\n".join(problems))
-    return json.loads((ROOT / "environments/fork/release.json").read_text())
+    return approved_bundle(settings, helm)[0]
 
 
 def authenticate(args, settings, record):
@@ -334,9 +334,17 @@ def _up(args, state, settings):
         raise ValueError("up is development initialization only; GitOps mode must use status/dev")
     doctor(args, settings)
     images = local_images(args.local_images) if args.local_images else None
-    record = None if images else checked_release(settings, args.helm)
     from connected_runtime import load_profile, overrides
-    rendered_services = render_services(args.helm, images, overlay=overrides(load_profile(state, settings)))
+    profile = load_profile(state, settings)
+    record = None
+    if images:
+        rendered_services = render_services(args.helm, images, overlay=overrides(profile))
+    else:
+        if profile:
+            raise ValueError("Approved deployment snapshots cannot use local integration overrides")
+        record, snapshot, _ = approved_bundle(settings, args.helm)
+        rendered_services = {service: yaml.safe_dump_all(json.loads(snapshot[
+            f"infrastructure/gitops/rendered/{service}.json"])) for service in SERVICES}
     print("PASS: four service Helm manifests and free-runtime policy preflight", flush=True)
     kube, nk, _ = commands(state, settings)
     clusters = run([args.kind, "get", "clusters"], capture=True).splitlines()
@@ -392,25 +400,10 @@ def _up(args, state, settings):
 
 
 def argo_resources(settings, profile=None):
-    fork = Fork(settings["repository"], settings["branch"])
-    destination = {"server": "https://kubernetes.default.svc", "namespace": NAMESPACE}
-    project = {"apiVersion": "argoproj.io/v1alpha1", "kind": "AppProject", "metadata": {"name": "govbiz-fork", "namespace": "argocd"},
-               "spec": {"sourceRepos": [fork.url], "destinations": [destination], "clusterResourceWhitelist": [],
-                        "namespaceResourceWhitelist": [{"group": "apps", "kind": "Deployment"}, {"group": "", "kind": "Service"}]}}
-    apps = [{"apiVersion": "argoproj.io/v1alpha1", "kind": "Application", "metadata": {"name": "govbiz-fork-" + service, "namespace": "argocd"},
-             "spec": {"project": "govbiz-fork", "source": {"repoURL": fork.url, "targetRevision": fork.branch,
-                      "path": CHART_PATH, "helm": {"releaseName": service, "valueFiles": [f"../../environments/fork/{service}.yaml"]}},
-                      "destination": destination, "syncPolicy": {"automated": {"enabled": True, "prune": False, "selfHeal": True},
-                      "syncOptions": ["FailOnSharedResource=true"], "retry": {"limit": 5, "backoff": {"duration": "10s", "factor": 2, "maxDuration": "3m"}}}}}
-            for service in SERVICES]
     if profile:
-        from connected_runtime import overrides
-        for app in apps:
-            service = app["metadata"]["name"].removeprefix("govbiz-fork-")
-            value = overrides(profile).get(service)
-            if value:
-                app["spec"]["source"]["helm"]["valuesObject"] = value
-    return [project, *apps]
+        raise ValueError("Approved deployment snapshots cannot use local integration overrides")
+    from deployment_candidate import argo_resources as resources
+    return resources(Fork(settings["repository"], settings["branch"]))
 
 
 def gitops(args, state, settings):
@@ -421,7 +414,10 @@ def gitops(args, state, settings):
 def _gitops(args, state, settings):
     if (state / "dev-images.json").exists():
         raise ValueError("Local development images exist; restore them explicitly with dev.py --restore first")
-    record = checked_release(settings, args.helm)
+    from connected_runtime import load_profile
+    if load_profile(state, settings):
+        raise ValueError("Review integration configuration in Git before enabling approved deployment snapshots")
+    record, snapshot, revision = approved_bundle(settings, args.helm)
     fork = Fork(settings["repository"], settings["branch"])
     head = run(["git", "-C", REPOSITORY_ROOT, "rev-parse", "HEAD"], capture=True).strip()
     remote = run(["git", "-C", REPOSITORY_ROOT, "ls-remote", fork.url, "refs/heads/" + fork.branch], capture=True).split()
@@ -434,8 +430,19 @@ def _gitops(args, state, settings):
     elif not run(nk + ["get", "secret", "ghcr-pull", "--ignore-not-found", "-o", "name"], capture=True).strip():
         raise ValueError("Private GHCR read credentials are missing; run credentials first")
     existing = applications(kube, ak)
-    if any(a["metadata"]["name"] not in {"govbiz-fork-" + s for s in SERVICES} for a in existing):
-        raise ValueError("Unexpected Argo Application: refusing to widen ownership")
+    desired = list(yaml.safe_load_all(snapshot["infrastructure/gitops/argocd/fork/applications.yaml"]))
+    expected = {app["metadata"]["name"]: app["spec"] for app in desired[1:]}
+    for app in existing:
+        target = expected.get(app["metadata"]["name"])
+        if target is None:
+            raise ValueError("Unexpected Argo Application: refusing to widen ownership")
+        source = target["source"]
+        legacy = {**source, "targetRevision": fork.branch,
+                  "helm": {key: value for key, value in source["helm"].items() if key != "kubeVersion"}}
+        actual = app["spec"]
+        if ("sources" in actual or actual.get("source") not in (source, legacy)
+                or actual.get("destination") != target["destination"] or actual.get("project") != target["project"]):
+            raise ValueError("Unexpected Argo source/overrides or ownership: review before activating the snapshot")
     apply(kube, [{"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": "argocd"}}])
     with urlopen(ARGO_INSTALL, timeout=60) as response:
         payload = response.read()
@@ -448,8 +455,10 @@ def _gitops(args, state, settings):
     workloads = json.loads(run(ak + ["get", "deployments,statefulsets", "-o", "json"], capture=True))["items"]
     for item in workloads:
         run(ak + ["rollout", "status", item["kind"].lower() + "/" + item["metadata"]["name"], "--timeout=450s"])
-    from connected_runtime import load_profile
-    apply(ak, argo_resources(settings, load_profile(state, settings)))
+    from deployment import head as deployment_head, public_api, DEPLOYMENT_BRANCH
+    if deployment_head(fork, DEPLOYMENT_BRANCH, public_api) != revision:
+        raise ValueError("Approved deployment changed during Argo installation; rerun gitops")
+    apply(ak, desired)
     settings["mode"] = "gitops"
     write_json(state / "settings.json", settings)
     print("GitOps enabled for this fork only. Inspect status until all four Applications are Synced/Healthy.")
