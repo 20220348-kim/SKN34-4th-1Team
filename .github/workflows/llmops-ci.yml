@@ -122,8 +122,9 @@ jobs:
         if: always()
         run: docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml -f infrastructure/llmops/compose.auth-test.yaml --profile evaluation down
       - name: Verify real cancellation, process exit and budget accounting with offline model HTTP
-        timeout-minutes: 15
-        run: python3 infrastructure/llmops/cancellation_smoke.py --output work/llmops-ci/cancellation.json
+        # Includes cold server startup and all 11 scenarios; per-scenario deadlines stay strict.
+        timeout-minutes: 20
+        run: backend/ai-service/.venv/bin/python infrastructure/llmops/cancellation_smoke.py --output work/llmops-ci/cancellation.json
       - name: Preserve cancellation evidence including failed scenarios
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
