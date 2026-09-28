@@ -20,7 +20,7 @@ vi.mock('./presentation/shared/core-api-status/CoreApiConnectionStatus', () => (
   CoreApiConnectionStatus: () => null,
 }))
 
-const memberAccount: Account = { email: 'member@govbiz.local', role: 'USER', tier: 'MEMBER', emailVerified: true, hasPassword: true, company: null }
+const memberAccount: Account = { email: 'member@govbiz.local', role: 'USER', tier: 'MEMBER', emailVerified: true, hasPassword: true, accountType: null, onboarded: true, company: null }
 const program = supportPrograms[0]!
 const saved: SavedSupportProgram[] = [
   { savedAt: '2026-09-12T10:00:00', program },

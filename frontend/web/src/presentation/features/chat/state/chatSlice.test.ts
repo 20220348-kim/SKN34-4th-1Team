@@ -28,7 +28,7 @@ import {
 } from './chatSlice'
 
 const account: Account = {
-  email: 'first@example.test', role: 'USER', tier: 'MEMBER', emailVerified: true, hasPassword: true, company: null,
+  email: 'first@example.test', role: 'USER', tier: 'MEMBER', emailVerified: true, hasPassword: true, accountType: null, onboarded: true, company: null,
 }
 const otherAccount: Account = { ...account, email: 'second@example.test' }
 
@@ -129,7 +129,7 @@ describe('대화의 로그인 세션 경계', () => {
     completeSearch(store)
     const previousConversation = store.getState().chat
     const updatedAccount: Account = { ...account, tier: 'COMPANY',
-      company: { companyName: '서울 소프트웨어', businessNumber: '1248100998' } }
+      company: { companyName: '서울 소프트웨어', businessNumber: '1248100998', businessStatusCode: '01' } }
 
     store.dispatch(signedIn(updatedAccount))
     expect(store.getState().chat).toBe(previousConversation)

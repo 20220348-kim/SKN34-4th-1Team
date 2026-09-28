@@ -18,7 +18,7 @@ vi.mock('./presentation/shared/core-api-status/CoreApiConnectionStatus', () => (
   CoreApiConnectionStatus: () => null,
 }))
 
-const adminAccount: Account = { email: 'admin@govbiz.local', role: 'ADMIN', tier: 'ADMIN', emailVerified: true, hasPassword: true, company: null }
+const adminAccount: Account = { email: 'admin@govbiz.local', role: 'ADMIN', tier: 'ADMIN', emailVerified: true, hasPassword: true, company: null, accountType: null, onboarded: true }
 
 const member: AdminAccountSummary = {
   id: 11,

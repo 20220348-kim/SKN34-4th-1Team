@@ -40,7 +40,8 @@ class CompanyService(
         requireFoundedYearNotInFuture(profile)
 
         val business = lookupService.lookup(businessNumber)
-        if (!business.isActive) throw BusinessNotActiveException(business.businessStatus)
+        // 휴업자도 등록은 받되(지원사업 검색·문서 준비는 쓸 수 있음) 폐업자는 거절합니다. 파트너 기능은 등록 뒤 상태로 따로 막습니다.
+        if (!business.canRegister) throw BusinessNotActiveException(business.businessStatus)
 
         return try {
             companyRepository.createCompany(

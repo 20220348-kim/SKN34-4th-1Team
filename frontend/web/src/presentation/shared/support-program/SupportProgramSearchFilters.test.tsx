@@ -18,7 +18,7 @@ describe.each([
 ])('$title 공고 필터 검색', ({ path, next, selected }) => {
   function mount() {
     const store = createAppStore()
-    store.dispatch(signedIn({ email: 'filters@example.com', role: 'USER', tier: 'MEMBER', emailVerified: false, hasPassword: true, company: null }))
+    store.dispatch(signedIn({ email: 'filters@example.com', role: 'USER', tier: 'MEMBER', emailVerified: false, hasPassword: true, accountType: null, onboarded: true, company: null }))
     render(<Provider store={store}><MemoryRouter initialEntries={[path]}><Routes>
       <Route path="/app/application-preparations/new" element={<ApplicationPreparationEditorPage create />} />
       <Route path="/app/combination-reviews/new" element={<CombinationReviewEditorPage create />} />

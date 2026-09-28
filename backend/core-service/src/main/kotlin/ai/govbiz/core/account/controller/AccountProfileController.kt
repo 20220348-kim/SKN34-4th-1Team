@@ -2,10 +2,13 @@ package ai.govbiz.core.account.controller
 
 import ai.govbiz.core.account.controller.dto.AccountDeletionPreviewResponse
 import ai.govbiz.core.account.controller.dto.ChangePasswordRequest
+import ai.govbiz.core.account.controller.dto.CompleteOnboardingRequest
+import ai.govbiz.core.account.controller.dto.CurrentAccountResponse
 import ai.govbiz.core.account.controller.dto.DeleteAccountRequest
 import ai.govbiz.core.account.domain.Account
 import ai.govbiz.core.account.helper.SessionCookieHelper
 import ai.govbiz.core.account.helper.SessionRequestTokenHelper
+import ai.govbiz.core.account.service.AccountOnboardingService
 import ai.govbiz.core.account.service.AccountProfileService
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.validation.Valid
@@ -24,9 +27,18 @@ import org.springframework.web.bind.annotation.RestController
 class AccountProfileController(
     private val profileService: AccountProfileService,
     private val cookieHelper: SessionCookieHelper,
+    private val onboardingService: AccountOnboardingService,
 ) {
 
     /** 로그인한 세션으로 본인을 확인하고 바꾸며, 지금 쓰는 세션만 남기고 다른 기기의 세션은 끝냅니다. */
+    /** 환영 화면의 답을 저장하고 갱신된 계정을 돌려줍니다. 프로필에서 유형을 바꿀 때도 같은 API를 씁니다. */
+    @PutMapping("/onboarding")
+    fun completeOnboarding(
+        account: Account,
+        @RequestBody @Valid request: CompleteOnboardingRequest,
+    ): CurrentAccountResponse =
+        CurrentAccountResponse.from(onboardingService.complete(account, requireNotNull(request.accountType)))
+
     @PutMapping("/password")
     fun changePassword(
         account: Account,

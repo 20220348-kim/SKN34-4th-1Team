@@ -14,8 +14,11 @@ data class AccountDbRow(
     var deletedAt: LocalDateTime? = null,
     var termsAgreedAt: LocalDateTime? = null,
     var createdAt: LocalDateTime? = null,
+    var accountType: String? = null,
+    var onboardedAt: LocalDateTime? = null,
     /** company를 LEFT JOIN한 요약입니다. 기업이 없으면 셋 다 null입니다. */
     var companyId: Long? = null,
     var companyName: String? = null,
     var companyBusinessNumber: String? = null,
+    var companyBusinessStatusCode: String? = null,
 )

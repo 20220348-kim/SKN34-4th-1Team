@@ -24,11 +24,11 @@ vi.mock('./presentation/shared/core-api-status/CoreApiConnectionStatus', () => (
   CoreApiConnectionStatus: () => null,
 }))
 
-const memberAccount: Account = { email: 'member@govbiz.local', role: 'USER', tier: 'MEMBER', emailVerified: true, hasPassword: true, company: null }
-const adminAccount: Account = { email: 'admin@govbiz.local', role: 'ADMIN', tier: 'ADMIN', emailVerified: true, hasPassword: true, company: null }
+const memberAccount: Account = { email: 'member@govbiz.local', role: 'USER', tier: 'MEMBER', emailVerified: true, hasPassword: true, accountType: null, onboarded: true, company: null }
+const adminAccount: Account = { email: 'admin@govbiz.local', role: 'ADMIN', tier: 'ADMIN', emailVerified: true, hasPassword: true, accountType: null, onboarded: true, company: null }
 const companyAccount: Account = {
-  email: 'company@govbiz.local', role: 'USER', tier: 'COMPANY', emailVerified: false, hasPassword: true,
-  company: { companyName: '테스트 기업 주식회사', businessNumber: '1234567890' },
+  email: 'company@govbiz.local', role: 'USER', tier: 'COMPANY', emailVerified: false, hasPassword: true, accountType: null, onboarded: true,
+  company: { companyName: '테스트 기업 주식회사', businessNumber: '1234567890', businessStatusCode: '01' as const },
 }
 
 beforeEach(() => {
@@ -334,7 +334,7 @@ describe('계정 화면', () => {
   it('가입에 성공하면 세션 계정으로 작업 채팅에 들어간다', async () => {
     const execute = vi.spyOn(appContainer.resolve('signUpUseCase'), 'execute').mockResolvedValue({
       outcome: 'session',
-      session: { expiresAt: '2026-09-07T00:00:00+09:00', account: { email: 'new@example.test', role: 'USER', tier: 'MEMBER', emailVerified: false, hasPassword: true, company: null } },
+      session: { expiresAt: '2026-09-07T00:00:00+09:00', account: { email: 'new@example.test', role: 'USER', tier: 'MEMBER', emailVerified: false, hasPassword: true, accountType: null, onboarded: true, company: null } },
     })
     renderApp('/signup')
     const form = screen.getByRole('form', { name: '회원가입' })
@@ -636,6 +636,7 @@ describe('기업 프로필 화면', () => {
     businessNumber: '1248100998',
     companyName: '삼성전자(주)',
     businessStatus: '계속사업자',
+    businessStatusCode: '01' as const,
     region: '서울특별시',
     industry: '정보통신업',
     foundedYear: 2020,
@@ -693,7 +694,7 @@ describe('기업 프로필 화면', () => {
     vi.spyOn(appContainer.resolve('getMyCompanyUseCase'), 'execute').mockResolvedValue(null)
     const lookup = vi.spyOn(appContainer.resolve('lookupBusinessUseCase'), 'execute').mockResolvedValue({
       outcome: 'found',
-      business: { businessNumber: '1248100998', companyName: '삼성전자(주)', businessStatus: '계속사업자', isActive: true },
+      business: { businessNumber: '1248100998', companyName: '삼성전자(주)', businessStatus: '계속사업자', businessStatusCode: '01' as const, isActive: true, canRegister: true },
     })
     const register = vi.spyOn(appContainer.resolve('registerCompanyUseCase'), 'execute')
       .mockResolvedValue({ outcome: 'registered', company: registeredCompany })
@@ -733,7 +734,7 @@ describe('기업 프로필 화면', () => {
       .mockResolvedValueOnce({ outcome: 'not-found' })
       .mockResolvedValueOnce({
         outcome: 'found',
-        business: { businessNumber: '1112233334', companyName: '문 닫은 회사', businessStatus: '폐업자', isActive: false },
+        business: { businessNumber: '1112233334', companyName: '문 닫은 회사', businessStatus: '폐업자', businessStatusCode: '03' as const, isActive: false, canRegister: false },
       })
     const register = vi.spyOn(appContainer.resolve('registerCompanyUseCase'), 'execute')
     renderApp('/app/profile')
@@ -753,9 +754,39 @@ describe('기업 프로필 화면', () => {
 
     fireEvent.change(within(form).getByLabelText('사업자등록번호'), { target: { value: '1112233334' } })
     fireEvent.click(within(form).getByRole('button', { name: '조회' }))
-    await screen.findByText('계속사업자만 등록할 수 있습니다.')
+    const closed = await screen.findByRole('status', { name: '조회 결과' })
+    expect(within(closed).getByText('폐업자')).toBeTruthy()
+    expect(within(closed).getByText(/폐업한 사업자는 등록할 수 없어요/)).toBeTruthy()
     expect((within(form).getByRole('button', { name: '기업 등록' }) as HTMLButtonElement).disabled).toBe(true)
     expect(register).not.toHaveBeenCalled()
+  })
+
+  it('휴업 사업자는 등록할 수 있지만 파트너 기능이 잠긴다고 안내한다', async () => {
+    vi.spyOn(appContainer.resolve('getMyCompanyUseCase'), 'execute').mockResolvedValue(null)
+    vi.spyOn(appContainer.resolve('lookupBusinessUseCase'), 'execute').mockResolvedValue({
+      outcome: 'found',
+      business: { businessNumber: '1112233334', companyName: '쉬는 회사', businessStatus: '휴업자', businessStatusCode: '02' as const, isActive: false, canRegister: true },
+    })
+    const register = vi.spyOn(appContainer.resolve('registerCompanyUseCase'), 'execute')
+      .mockResolvedValue({ outcome: 'registered', company: { ...registeredCompany, businessNumber: '1112233334', companyName: '쉬는 회사', businessStatus: '휴업자', businessStatusCode: '02' as const } })
+    renderApp('/app/profile')
+    const form = await screen.findByRole('form', { name: '기업 등록' })
+
+    fireEvent.change(within(form).getByLabelText('사업자등록번호'), { target: { value: '1112233334' } })
+    fireEvent.click(within(form).getByRole('button', { name: '조회' }))
+    const result = await screen.findByRole('status', { name: '조회 결과' })
+    expect(within(result).getByText('휴업자')).toBeTruthy()
+    expect(within(result).getByText(/등록은 할 수 있어요/)).toBeTruthy()
+    expect((within(form).getByRole('button', { name: '기업 등록' }) as HTMLButtonElement).disabled).toBe(false)
+
+    chooseOption(within(form).getByLabelText('소재지'), '서울특별시')
+    chooseOption(within(form).getByLabelText('업종'), '정보통신업')
+    chooseOption(within(form).getByLabelText('설립연도'), '2020')
+    fireEvent.click(within(form).getByRole('button', { name: '기업 등록' }))
+
+    await screen.findByRole('region', { name: '기업 기본정보' })
+    expect(register).toHaveBeenCalledWith('1112233334', expect.objectContaining({ region: '서울특별시' }))
+    expect(screen.getByText(/사업을 다시 시작한 뒤 쓸 수 있습니다/)).toBeTruthy()
   })
 
   it('등록된 기업은 조회 값과 담당자 입력을 보여 주고 수정 폼은 입력 항목만 바꾼다', async () => {
@@ -1040,7 +1071,7 @@ describe('계정 보안 모달', () => {
       hasCompany: false, openRecruitmentCount: 0, receivedPendingProposalCount: 0, sentPendingProposalCount: 0,
     })
     const remove = vi.spyOn(appContainer.resolve('deleteAccountUseCase'), 'execute').mockResolvedValue({ outcome: 'deleted' })
-    renderApp('/app/profile', { ...memberAccount, hasPassword: false })
+    renderApp('/app/profile', { ...memberAccount, hasPassword: false, accountType: null, onboarded: true })
     const account = await screen.findByRole('region', { name: '계정과 알림' })
 
     expect(within(account).queryByText('비밀번호')).toBeNull()

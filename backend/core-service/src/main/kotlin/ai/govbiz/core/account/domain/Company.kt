@@ -25,7 +25,7 @@ data class Company(
 
     /** 세션 응답과 사이드바가 쓰는 요약입니다. */
     val summary: CompanySummary
-        get() = CompanySummary(id = id, companyName = companyName, businessNumber = businessNumber)
+        get() = CompanySummary(id = id, companyName = companyName, businessNumber = businessNumber, businessStatusCode = businessStatusCode)
 }
 
 /** 계정 조회에 함께 실리는 기업 요약입니다. 기업이 없으면 계정의 `company`가 null입니다. */
@@ -33,7 +33,14 @@ data class CompanySummary(
     val id: Long,
     val companyName: String,
     val businessNumber: String,
-)
+    /** 국세청 상태 코드. `01` 계속사업자만 파트너 모집글·제안을 쓸 수 있습니다. */
+    val businessStatusCode: String = ACTIVE_BUSINESS_STATUS_CODE,
+) {
+    val isActiveBusiness: Boolean
+        get() = businessStatusCode == ACTIVE_BUSINESS_STATUS_CODE
+}
+
+const val ACTIVE_BUSINESS_STATUS_CODE = "01"
 
 /** 담당자가 직접 입력하는 프로필 항목입니다. 등록과 수정이 같은 규칙을 씁니다. */
 data class CompanyProfileInput(

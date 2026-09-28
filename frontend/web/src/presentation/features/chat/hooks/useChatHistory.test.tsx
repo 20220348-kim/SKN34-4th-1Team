@@ -14,7 +14,7 @@ import { sessionRestored, signedIn, signedOut } from '../../../shared/auth/state
 import { conversationReset, createChatConversationSnapshot, draftChanged, interpretationStarted, interpretationSucceeded, proposalConfirmed, searchStarted, searchSucceeded } from '../state/chatSlice'
 import { useChatHistory } from './useChatHistory'
 
-const account: Account = { email: 'first@test.local', tier: 'MEMBER', role: 'USER', emailVerified: true, hasPassword: true, company: null }
+const account: Account = { email: 'first@test.local', tier: 'MEMBER', role: 'USER', emailVerified: true, hasPassword: true, accountType: null, onboarded: true, company: null }
 const other = { ...account, email: 'other@test.local' }
 const summary = (id: string, version = 1): ChatConversationSummary => ({ id, version, title: '서울 AI', updatedAt: '2026-09-12T12:00:00' })
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>((done) => { resolve = done }); return { promise, resolve } }

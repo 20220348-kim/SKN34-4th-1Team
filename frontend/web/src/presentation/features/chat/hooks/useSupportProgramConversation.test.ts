@@ -36,7 +36,7 @@ describe('해석 → 명시적 확인 → 기존 검색', () => {
     if (phase === 'interpretation') interpret.mockReturnValueOnce(pendingInterpretation.promise)
     const search = vi.fn<SearchSupportProgramsUseCase['execute']>().mockReturnValueOnce(pendingSearch.promise)
     const { result, store } = renderConversation(interpret, search)
-    const account = { email: 'first@example.test', role: 'USER' as const, tier: 'MEMBER' as const, emailVerified: true, hasPassword: true, company: null }
+    const account = { email: 'first@example.test', role: 'USER' as const, tier: 'MEMBER' as const, emailVerified: true, hasPassword: true, accountType: null, onboarded: true, company: null }
     act(() => store.dispatch(signedIn(account)))
     act(() => result.current.updateDraft('서울 SW 사업화'))
     let request!: Promise<void>

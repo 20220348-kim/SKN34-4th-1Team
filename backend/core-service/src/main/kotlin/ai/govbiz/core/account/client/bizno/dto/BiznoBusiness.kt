@@ -12,11 +12,16 @@ data class BiznoBusiness(
     val businessStatus: String,
     val businessStatusCode: String,
 ) {
-    /** 계속사업자만 기업 등록을 허용합니다. */
+    /** 계속사업자인지입니다. 파트너 모집글·제안은 이 상태만 씁니다. */
     val isActive: Boolean
         get() = businessStatusCode == ACTIVE_STATUS_CODE
 
+    /** 기업 등록은 계속사업자와 휴업자까지 허용하고 폐업자는 거절합니다. */
+    val canRegister: Boolean
+        get() = businessStatusCode == ACTIVE_STATUS_CODE || businessStatusCode == SUSPENDED_STATUS_CODE
+
     companion object {
         const val ACTIVE_STATUS_CODE = "01"
+        const val SUSPENDED_STATUS_CODE = "02"
     }
 }

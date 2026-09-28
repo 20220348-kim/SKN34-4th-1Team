@@ -23,7 +23,7 @@ vi.mock('./presentation/features/chat/hooks/useSupportProgramSearchReadiness', (
   data: { searchState: 'SEARCHABLE', programCount: 10, indexReady: true, sources: [] },
 }) }))
 
-const account: Account = { email: 'member@test.local', tier: 'MEMBER', role: 'USER', emailVerified: true, hasPassword: true, company: null }
+const account: Account = { email: 'member@test.local', tier: 'MEMBER', role: 'USER', emailVerified: true, hasPassword: true, accountType: null, onboarded: true, company: null }
 const records = new Map<string, Map<string, ChatConversationDetail>>()
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } })
 let historyRequests: { email: string; url: string; method: string; body?: { expectedVersion: number; snapshot: ChatConversationSnapshot } }[]

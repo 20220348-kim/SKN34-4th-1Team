@@ -14,12 +14,12 @@ import { useSupportProgramChat } from './useSupportProgramChat'
 
 afterEach(cleanup)
 const company: Company = {
-  businessNumber: '1208734519', companyName: '데이터브릿지 주식회사', businessStatus: '계속사업자',
+  businessNumber: '1208734519', companyName: '데이터브릿지 주식회사', businessStatus: '계속사업자', businessStatusCode: '01',
   region: '서울특별시', industry: '정보통신업', foundedYear: 2021, homepageUrl: null,
   businessVerifiedAt: '2026-09-01T00:00:00', updatedAt: '2026-09-01T00:00:00',
 }
 const account = { email: 'jihoon.park@demo.govbiz.local', role: 'USER' as const, tier: 'COMPANY' as const,
-  emailVerified: true, hasPassword: true, company: { companyName: company.companyName, businessNumber: company.businessNumber } }
+  emailVerified: true, hasPassword: true, accountType: null, onboarded: true, company: { companyName: company.companyName, businessNumber: company.businessNumber, businessStatusCode: '01' as const } }
 
 function setup(loadCompany = vi.fn<(signal?: AbortSignal) => Promise<Company | null>>().mockResolvedValue(company)) {
   const store = createAppStore()

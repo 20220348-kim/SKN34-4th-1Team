@@ -22,6 +22,8 @@ export function RequireAuth({ minimumTier = 'MEMBER' }: { minimumTier?: AccountT
     return <Navigate replace to={loginPathFor(`${location.pathname}${location.search}`)} />
   }
   if (!meetsTier(account, minimumTier)) return <Navigate replace to={appPaths.chat} />
+  // 환영 화면을 아직 마치지 않은 계정은 어떤 작업 화면을 열어도 먼저 환영 화면을 봅니다. 마치면 원래 가려던 곳으로 갑니다.
+  if (!account.onboarded && location.pathname !== appPaths.welcome) return <Navigate replace to={appPaths.welcome} />
   return <Outlet />
 }
 

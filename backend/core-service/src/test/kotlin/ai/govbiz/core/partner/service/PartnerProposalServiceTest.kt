@@ -17,6 +17,7 @@ import ai.govbiz.core.partner.domain.PartnerRecruitmentProgram
 import ai.govbiz.core.partner.domain.PartnerRole
 import ai.govbiz.core.partner.repository.PartnerProposalRepository
 import ai.govbiz.core.partner.repository.PartnerRecruitmentRepository
+import ai.govbiz.core.partner.service.exception.ActiveBusinessRequiredException
 import ai.govbiz.core.partner.service.exception.CompanyRequiredException
 import ai.govbiz.core.partner.service.exception.ProposalActionForbiddenException
 import ai.govbiz.core.partner.service.exception.ProposalAlreadySentException
@@ -79,6 +80,9 @@ class PartnerProposalServiceTest {
     @Test
     fun sendRejectsMembersWithoutCompanyOwnersAndClosedRecruitments() {
         assertThrows(CompanyRequiredException::class.java) { service.send(AccountTestHelper.account(id = 9L), 21L, input()) }
+        // 휴업 기업은 제안을 보낼 수 없습니다.
+        val suspended = AccountTestHelper.account(id = 10L, company = CompanySummary(5L, "한빛정밀", "1208734519", businessStatusCode = "02"))
+        assertThrows(ActiveBusinessRequiredException::class.java) { service.send(suspended, 21L, input()) }
         verify(recruitmentRepository, never()).findById(anyLong())
 
         doReturn(recruitment()).`when`(recruitmentRepository).findById(21L)

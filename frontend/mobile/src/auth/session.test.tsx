@@ -11,7 +11,7 @@ jest.mock('../api/client', () => ({
   ApiError: class extends Error { status: number; constructor(status: number, message: string) { super(message); this.status = status } },
 }))
 
-const account = { email: 'first@example.com', role: 'USER', tier: 'MEMBER', emailVerified: true, company: null, hasPassword: true }
+const account = { email: 'first@example.com', role: 'USER', tier: 'MEMBER', emailVerified: true, company: null, hasPassword: true, accountType: null, onboardingPurpose: null, onboarded: true }
 const response = () => ({ accessToken: 'test-token', tokenType: 'Bearer', expiresAt: new Date(Date.now() + 3_600_000).toISOString(), account })
 let current: ReturnType<typeof useAuth>
 function Probe() { current = useAuth(); return <Text>{current.status}:{current.session?.account.email ?? 'none'}</Text> }

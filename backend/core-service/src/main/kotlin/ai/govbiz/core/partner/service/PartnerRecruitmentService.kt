@@ -1,6 +1,7 @@
 package ai.govbiz.core.partner.service
 
 import ai.govbiz.core.account.domain.Account
+import ai.govbiz.core.account.domain.CompanySummary
 import ai.govbiz.core.partner.domain.MyPartnerProposal
 import ai.govbiz.core.partner.domain.NewPartnerRecruitment
 import ai.govbiz.core.partner.domain.PartnerRecruitment
@@ -11,6 +12,7 @@ import ai.govbiz.core.partner.domain.PartnerRecruitmentStatus
 import ai.govbiz.core.partner.domain.PartnerRecruitmentView
 import ai.govbiz.core.partner.repository.PartnerProposalRepository
 import ai.govbiz.core.partner.repository.PartnerRecruitmentRepository
+import ai.govbiz.core.partner.service.exception.ActiveBusinessRequiredException
 import ai.govbiz.core.partner.service.exception.CompanyRequiredException
 import ai.govbiz.core.partner.service.exception.RecruitmentActionForbiddenException
 import ai.govbiz.core.partner.service.exception.RecruitmentAlreadyExistsException
@@ -38,7 +40,7 @@ class PartnerRecruitmentService(
 ) {
 
     fun create(account: Account, sourceCode: String, sourceProgramId: String, content: PartnerRecruitmentInput): PartnerRecruitmentView {
-        val company = account.company ?: throw CompanyRequiredException()
+        val company = requireActiveCompany(account)
         val program = recruitmentRepository.findPresentProgram(sourceCode, sourceProgramId)
             ?: throw RecruitmentProgramNotFoundException()
         val today = LocalDate.now(clock)
@@ -71,6 +73,7 @@ class PartnerRecruitmentService(
     /** 작성자만 모집 중인 글을 고칩니다. 묶인 공고는 바꾸지 않으며 마감일 규칙은 작성과 같습니다. */
     fun update(account: Account, id: Long, content: PartnerRecruitmentInput): PartnerRecruitmentView {
         val recruitment = findOwned(account, id)
+        requireActiveCompany(account)
         val today = LocalDate.now(clock)
         if (recruitment.status(today) == PartnerRecruitmentStatus.CLOSED) throw RecruitmentClosedException()
         val latestAllowed = recruitment.program.latestRecruitmentDeadline
@@ -85,10 +88,18 @@ class PartnerRecruitmentService(
     /** 작성자가 모집을 수동으로 마감합니다. 이미 끝난 글은 다시 마감하지 않고, 대기 중인 제안은 조회 시점에 만료로 계산됩니다. */
     fun close(account: Account, id: Long): PartnerRecruitmentView {
         val recruitment = findOwned(account, id)
+        requireActiveCompany(account)
         val now = LocalDateTime.now(clock)
         if (recruitment.status(now.toLocalDate()) == PartnerRecruitmentStatus.CLOSED) throw RecruitmentClosedException()
         recruitmentRepository.close(id, now)
         return findView(id, account.id)
+    }
+
+    /** 모집글 쓰기는 기업을 등록한 계속사업자만 합니다. 휴업 기업은 둘러보기만 됩니다. 수정·마감은 작성자 확인 뒤에 검사합니다. */
+    private fun requireActiveCompany(account: Account): CompanySummary {
+        val company = account.company ?: throw CompanyRequiredException()
+        if (!company.isActiveBusiness) throw ActiveBusinessRequiredException()
+        return company
     }
 
     private fun findOwned(account: Account, id: Long): PartnerRecruitment {

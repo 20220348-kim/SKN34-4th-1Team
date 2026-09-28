@@ -53,6 +53,13 @@ interface AccountMapper {
         @Param("lastLoginAt") lastLoginAt: LocalDateTime,
     ): Int
 
+    /** 환영 화면의 답을 저장합니다. 다시 부르면 덮어씁니다. */
+    fun updateAccountOnboarding(
+        @Param("accountId") accountId: Long,
+        @Param("accountType") accountType: String,
+        @Param("onboardedAt") onboardedAt: LocalDateTime,
+    ): Int
+
     /** 삭제·정지되지 않은 관리자 수입니다. */
     fun countActiveAdmins(): Int
 }

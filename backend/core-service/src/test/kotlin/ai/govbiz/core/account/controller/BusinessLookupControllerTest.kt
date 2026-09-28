@@ -60,7 +60,9 @@ class BusinessLookupControllerTest {
             .andExpect(jsonPath("$.businessNumber").value("1248100998"))
             .andExpect(jsonPath("$.companyName").value("삼성전자(주)"))
             .andExpect(jsonPath("$.businessStatus").value("계속사업자"))
+            .andExpect(jsonPath("$.businessStatusCode").value("01"))
             .andExpect(jsonPath("$.isActive").value(true))
+            .andExpect(jsonPath("$.canRegister").value(true))
     }
 
     @Test

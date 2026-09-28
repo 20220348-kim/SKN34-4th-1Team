@@ -430,7 +430,7 @@ afterEach(() => {
 
 function mount(path: string) {
   const store = createAppStore()
-  store.dispatch(signedIn({ email: 'owner@example.com', role: 'USER', tier: 'MEMBER', emailVerified: false, hasPassword: true, company: null }))
+  store.dispatch(signedIn({ email: 'owner@example.com', role: 'USER', tier: 'MEMBER', emailVerified: false, hasPassword: true, accountType: null, onboarded: true, company: null }))
   const rendered = render(<Provider store={store}><MemoryRouter initialEntries={[path]}><Routes>
     <Route path="/app/application-preparations" element={<ApplicationPreparationListPage />} />
     <Route path="/app/application-preparations/:preparationId/documents" element={<ApplicationDocumentPage />} />
@@ -511,7 +511,7 @@ describe('application preparation list', () => {
     const firstSignal = repository.list.mock.calls[0]?.[1] as AbortSignal
 
     act(() => {
-      store.dispatch(signedIn({ email: 'next@example.com', role: 'USER', tier: 'MEMBER', emailVerified: false, hasPassword: true, company: null }))
+      store.dispatch(signedIn({ email: 'next@example.com', role: 'USER', tier: 'MEMBER', emailVerified: false, hasPassword: true, accountType: null, onboarded: true, company: null }))
     })
     expect(firstSignal.aborted).toBe(true)
     await act(async () => secondRequest.resolve({

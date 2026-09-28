@@ -73,6 +73,24 @@ class PartnerRecruitmentFlowIntegrationTest {
         insertProgram("gone-program", today.plusDays(30), present = false)
         doReturn(listOf(BiznoBusiness("1248100998", "삼성전자(주)", "계속사업자", "01")))
             .`when`(biznoClient).findByBusinessNumber("1248100998")
+        doReturn(listOf(BiznoBusiness("1208734519", "한빛정밀", "휴업자", "02")))
+            .`when`(biznoClient).findByBusinessNumber("1208734519")
+    }
+
+    @Test
+    fun suspendedCompaniesCanRegisterButCannotWriteRecruitments() {
+        val suspended = signUp("suspended@company.co.kr")
+        mockMvc.perform(
+            post("/api/v1/me/company").cookie(suspended).origin()
+                .json("""{"businessNumber":"120-87-34519","region":"경기도","industry":"제조업","foundedYear":2015}"""),
+        ).andExpect(status().isCreated())
+
+        mockMvc.perform(post("/api/v1/partners/recruitments").cookie(suspended).origin().json(requestBody()))
+            .andExpect(status().isForbidden())
+            .andExpect(jsonPath("$.code").value("ACTIVE_BUSINESS_REQUIRED"))
+        // 둘러보기는 됩니다.
+        mockMvc.perform(get("/api/v1/partners/recruitments").cookie(suspended))
+            .andExpect(status().isOk())
     }
 
     @Test

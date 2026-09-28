@@ -45,7 +45,7 @@ beforeEach(() => {
   })
   vi.spyOn(appContainer.resolve('logInUseCase'), 'execute').mockImplementation(async () => {
     authenticated = true
-    return { outcome: 'session', session: { account: { email: 'operator@example.com', role: 'ADMIN', tier: 'ADMIN', emailVerified: true, hasPassword: true, company: null }, expiresAt: '2026-12-01T00:00:00+09:00' } }
+    return { outcome: 'session', session: { account: { email: 'operator@example.com', role: 'ADMIN', tier: 'ADMIN', emailVerified: true, hasPassword: true, accountType: null, onboarded: true, company: null }, expiresAt: '2026-12-01T00:00:00+09:00' } }
   })
   vi.stubGlobal('fetch', fetchMock)
 })
@@ -191,7 +191,7 @@ describe('React LLMOps 운영 화면', () => {
   it('일반 회원은 기존 서비스 로그인 상태를 유지하면서 Ops 접근이 차단된다', async () => {
     fetchMock.mockResolvedValue(json({ detail: 'denied' }, 403))
     const store = createAppStore()
-    store.dispatch(sessionRestored({ email: 'member@example.com', role: 'USER', tier: 'MEMBER', emailVerified: true, hasPassword: true, company: null }))
+    store.dispatch(sessionRestored({ email: 'member@example.com', role: 'USER', tier: 'MEMBER', emailVerified: true, hasPassword: true, accountType: null, onboarded: true, company: null }))
     render(<Provider store={store}><MemoryRouter initialEntries={['/ops/evaluations']}><App /></MemoryRouter></Provider>)
     expect(await screen.findByRole('alert')).toHaveProperty('textContent', expect.stringContaining('관리자 계정만'))
     expect(screen.queryByRole('button', { name: '평가 실행' })).toBeNull()

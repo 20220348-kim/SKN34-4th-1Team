@@ -26,7 +26,7 @@ vi.mock('./presentation/features/chat/hooks/useSupportProgramSearchReadiness', (
 
 const token = 'ce5a0b64-5496-47e4-8bab-05392e7661c9'
 const returnTo = '/app/chat?searchResult=' + token
-const account = { email: 'member@example.test', role: 'USER' as const, tier: 'MEMBER' as const, emailVerified: true, hasPassword: true, company: null }
+const account = { email: 'member@example.test', role: 'USER' as const, tier: 'MEMBER' as const, emailVerified: true, hasPassword: true, accountType: null, onboarded: true, company: null }
 const originals = [4, 2, 5, 1, 3].map((index) => ({ ...supportPrograms[0]!, id: 'original-' + index, title: '선택한 검색 공고 ' + index }))
 const restored = { query: seoulConversationContext.query, context: seoulConversationContext,
   programs: originals, totalCount: originals.length, resultToken: null, expiresAt: null }

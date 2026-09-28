@@ -1,3 +1,4 @@
+import type { AccountType } from '../entities/Account'
 import type { Account, AccountRole } from '../entities/Account'
 import type { AccountDeletionPreview } from '../entities/AccountDeletionPreview'
 import type { AuthSession } from '../entities/AuthSession'
@@ -86,6 +87,8 @@ export type VerifySignupEmailCodeResult =
   | { outcome: 'rate-limited'; retryAfterSeconds: number | null }
 
 /** 계정 기능이 Data Layer의 HTTP·저장소 세부사항과 분리되도록 하는 Domain 포트입니다. */
+export type CompleteOnboarding = { accountType: AccountType }
+
 export interface AccountRepository {
   signUp(command: AccountSignUp, signal?: AbortSignal): Promise<SignUpResult>
   logIn(command: AccountLogIn, signal?: AbortSignal): Promise<LogInResult>
@@ -96,6 +99,8 @@ export interface AccountRepository {
   getCurrentAccount(signal?: AbortSignal): Promise<Account | null>
   /** 로그인 세션으로 본인을 확인하고 새 비밀번호로 바꿉니다. 성공하면 서버가 다른 기기의 세션을 끝냅니다. */
   changePassword(newPassword: string, signal?: AbortSignal): Promise<ChangePasswordResult>
+  /** 환영 화면의 답(회원 유형)을 저장하고 갱신된 계정을 받습니다. 다시 부르면 덮어씁니다. */
+  completeOnboarding(command: CompleteOnboarding, signal?: AbortSignal): Promise<Account>
   /** 삭제 확인 모달에 보여 줄, 함께 사라지는 것들의 수입니다. */
   getDeletionPreview(signal?: AbortSignal): Promise<AccountDeletionPreview>
   /** 현재 비밀번호를 확인하고 계정을 삭제합니다. 성공하면 세션 힌트를 지웁니다. */

@@ -24,6 +24,7 @@ Browser
 | `POST /api/v1/auth/dev-login` | 없음 | 200 세션 응답 + `Set-Cookie` (개발 환경 전용) |
 | `GET /api/v1/auth/me` | 세션 쿠키 | 200 계정 |
 | `POST /api/v1/auth/logout` | 세션 쿠키 | 204 + 쿠키 만료 |
+| `PUT /api/v1/me/onboarding` | 세션 쿠키 + Origin | 200 `{ account }`. 환영 화면의 회원 유형(`accountType`, 필수) 저장. 다시 부르면 유형을 바꿈 |
 | `PUT /api/v1/me/password` | 세션 쿠키 + Origin | 204. 현재 비밀번호 없이 새 비밀번호만 받고 다른 기기 세션 종료 |
 | `GET /api/v1/me/deletion-preview` | 세션 쿠키 | 200 삭제 시 함께 닫히는 것의 수 |
 | `DELETE /api/v1/me` | 세션 쿠키 + Origin | 204 + 쿠키 만료 |
@@ -125,7 +126,7 @@ Content-Type: application/json
 ```json
 {
   "expiresAt": "2026-10-06T12:00:00+09:00",
-  "account": { "email": "manager@company.co.kr", "role": "USER", "tier": "MEMBER", "emailVerified": true, "hasPassword": true }
+  "account": { "email": "manager@company.co.kr", "role": "USER", "tier": "MEMBER", "emailVerified": true, "hasPassword": true, "accountType": null, "onboarded": false }
 }
 ```
 
@@ -135,6 +136,8 @@ Content-Type: application/json
 | `account.role` | `USER` 또는 `ADMIN`. 가입 시에는 항상 `USER` |
 | `account.tier` | 권한 단계 `MEMBER`·`COMPANY`·`ADMIN` |
 | `account.emailVerified` | 이메일 인증 완료 여부. 이메일 가입은 인증번호를 거치고 소셜 가입은 공급자가 인증한 이메일만 받으므로 새 계정은 항상 `true`. 인증 기능 이전에 만든 계정만 `false`일 수 있음 |
+| `account.accountType` | 환영 화면에서 고른 회원 유형 `INDIVIDUAL`·`BUSINESS`. 아직이면 `null` |
+| `account.onboarded` | 환영 화면을 마쳤는지. `false`면 프런트가 로그인 뒤 `/app/welcome`을 먼저 보여 줍니다 |
 | `account.hasPassword` | 비밀번호를 만든 계정인지. 소셜 로그인으로만 가입한 계정은 `false`이며 프로필이 비밀번호 항목을 숨기고 계정 삭제에 비밀번호를 묻지 않음 |
 
 ### 로그인 시도 제한
@@ -168,14 +171,16 @@ Cookie: govbiz_session=<JWT>
 ```
 
 ```json
-{ "businessNumber": "1248100998", "companyName": "삼성전자(주)", "businessStatus": "계속사업자", "isActive": true }
+{ "businessNumber": "1248100998", "companyName": "삼성전자(주)", "businessStatus": "계속사업자", "businessStatusCode": "01", "isActive": true, "canRegister": true }
 ```
 
 | 필드 | 설명 |
 |---|---|
 | `businessNumber` | 요청은 하이픈 선택, 응답은 숫자 10자리 |
 | `companyName` `businessStatus` | 국세청 원문. 상태는 계속사업자·휴업자·폐업자 |
-| `isActive` | 계속사업자(상태 코드 `01`)만 `true`. 기업 등록은 이 값이 `true`일 때만 허용할 예정 |
+| `businessStatusCode` | 국세청 상태 코드 `01` 계속사업자 · `02` 휴업자 · `03` 폐업자 |
+| `isActive` | 계속사업자(`01`)만 `true`. 파트너 모집글·제안은 이 값이 `true`인 기업만 씁니다 |
+| `canRegister` | 계속·휴업자는 `true`, 폐업자는 `false`. 기업 등록은 이 값이 `true`일 때만 허용합니다 |
 
 등록되지 않은 번호는 404 `BUSINESS_NOT_FOUND`이고, 국세청 조회가 안 되는 경우는 `BIZNO_*` 코드로 구분합니다.
 ## 기업 등록·프로필
@@ -185,9 +190,9 @@ Cookie: govbiz_session=<JWT>
 
 | 메서드·경로 | 용도 | 성공 |
 |---|---|---|
-| `GET /api/v1/me/company/lookup?businessNumber=` | 등록 전 미리보기. 하이픈 선택 | 200 `businessNumber`(10자리) `companyName` `businessStatus` `isActive` |
+| `GET /api/v1/me/company/lookup?businessNumber=` | 등록 전 미리보기. 하이픈 선택 | 200 `businessNumber`(10자리) `companyName` `businessStatus` `businessStatusCode` `isActive` `canRegister` |
 | `GET /api/v1/me/company` | 내 기업 | 200 기업 응답, 없으면 404 `COMPANY_NOT_REGISTERED` |
-| `POST /api/v1/me/company` | 등록. 서버가 다시 조회해 계속사업자만 허용 | 201 기업 응답. 이후 `/auth/me`의 `tier`가 `COMPANY` |
+| `POST /api/v1/me/company` | 등록. 서버가 다시 조회해 계속·휴업자만 허용(폐업자 거절) | 201 기업 응답. 이후 `/auth/me`의 `tier`가 `COMPANY` |
 | `PUT /api/v1/me/company` | 담당자 입력 항목 수정 | 200 기업 응답 |
 
 ```http
@@ -207,7 +212,7 @@ Cookie: govbiz_session=<JWT>
 | `homepageUrl` | 선택. `http(s)://`로 시작하고 공백이 없는 500자 이하 주소. 앞뒤 공백은 다듬고 빈 문자열은 비운 것으로 저장. 다른 스킴은 400 `errors[].field=homepageUrl` |
 
 기업 응답은 요청 필드(`businessNumber`·`region`·`industry`·`foundedYear`·`homepageUrl`)에 `companyName` `businessStatus`
-`businessVerifiedAt` `updatedAt`을 더한 것입니다. 세션·내 계정 응답의 `account.company`에는 `companyName`·`businessNumber` 요약이 실리고 기업이 없으면 `null`입니다.
+`businessStatusCode`(`01` 계속 · `02` 휴업) `businessVerifiedAt` `updatedAt`을 더한 것입니다. 세션·내 계정 응답의 `account.company`에는 `companyName`·`businessNumber`·`businessStatusCode`(`01` 계속 · `02` 휴업) 요약이 실리고 기업이 없으면 `null`입니다. 프런트는 상태 코드로 파트너 메뉴 잠금 이유를 고릅니다.
 
 ### 협업·파트너 설정
 
@@ -592,10 +597,11 @@ ISO 로컬 시각(`2026-09-11T17:49:09.591286`, 초 아래 자리는 있을 때�
 | SMTP가 없어 재설정 메일을 보낼 수 없음(개발용 로그인도 꺼짐) | 503 | `PASSWORD_RESET_MAIL_UNAVAILABLE` |
 | 기업을 등록하지 않은 계정의 기업 조회·수정 | 404 | `COMPANY_NOT_REGISTERED` |
 | 등록되지 않은 사업자등록번호 | 404 | `BUSINESS_NOT_FOUND` |
-| 휴업·폐업 사업자 등록 시도 | 422 | `BUSINESS_NOT_ACTIVE` (`businessStatus`) |
+| 폐업 사업자 등록 시도 | 422 | `BUSINESS_NOT_ACTIVE` (`businessStatus`) |
 | 이미 기업을 등록한 계정의 재등록 | 409 | `COMPANY_ALREADY_REGISTERED` |
 | 다른 계정이 등록한 사업자등록번호 | 409 | `BUSINESS_NUMBER_ALREADY_REGISTERED` |
 | 기업을 등록하지 않은 회원의 모집글 작성·제안 보내기 | 403 | `COMPANY_REQUIRED` |
+| 휴업 기업의 모집글 작성·수정·마감·제안 보내기 | 403 | `ACTIVE_BUSINESS_REQUIRED` |
 | 모집글에 묶을 공고가 없거나 제공처에서 사라짐 | 404 | `RECRUITMENT_PROGRAM_NOT_FOUND` |
 | 접수가 끝난 공고에 모집글 작성 | 422 | `RECRUITMENT_PROGRAM_CLOSED` |
 | 모집 마감일이 오늘 이전이거나 공고 접수 마감 전날을 넘김 | 422 | `RECRUITMENT_DEADLINE_NOT_ALLOWED` (`latestAllowedDeadline`) |
