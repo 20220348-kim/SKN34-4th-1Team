@@ -876,6 +876,15 @@ Hook 로컬 상태로 두는 것이 규칙입니다.
 
 ## 오류 경계
 
+AI 검색은 Core의 `search.total → database_fetch/eligibility_prepare/retrieval/ranking`과
+Python의 `search.semantic → embedding/vector`, `search.ranking → ranking.model/selection`을
+내부 HTTP `traceparent`로 연결합니다. Core는 OpenTelemetry OTLP로, AI는 공유 `app/tracing.py`의
+Langfuse 클라이언트로 같은 프로젝트에 전송합니다. 전송 장애가 검색 재시도나 정상 응답 변경을 유발하지 않습니다.
+추적 metadata에는 공고 ID·건수·캐시 상태·모델·제공된 사용량·프롬프트 해시를 남기며 본문·기업 정보·예외 원문은
+제외합니다. 로그의 후보 ID 제외 정책과 별개로, Langfuse에서는 공식 공고 식별자만 허용합니다.
+React Ops의 관리자 세션은 Django에서 받은 프로젝트 trace 목록 링크를 표시합니다. Langfuse 로그인은 별도입니다.
+[단계별 구조·설정·검증 범위](../infrastructure/llmops/README.md#지원사업-ai-검색-추적)를 참고하세요.
+
 AI Service의 랭킹·조건 해석 모델·HTTP·Agent 시간 초과는 내부 504로 반환되고 Core는 공개 `504 AI_SERVICE_TIMEOUT`으로
 전달합니다. 의미 검색의 전체 실행·임베딩·Qdrant 전송 시간초과도 내부 `INDEX_TIMEOUT` 504로 전달합니다.
 화면은 해당 endpoint의 검증된 오류 계약에 한해 AI 처리 시간 초과와 수동 재시도를 안내합니다.

@@ -4,6 +4,7 @@ import ai.govbiz.core._common.exception.AiServiceCallException
 import ai.govbiz.core._common.helper.executeAiServiceCall
 import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramRankingPayload
 import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramRankingRequest
+import ai.govbiz.core.supportprogram.helper.SupportProgramSearchTracingHelper
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
@@ -22,6 +23,7 @@ class HttpAiSupportProgramRankingClient(
             val response = restClient.post()
                 .uri(SUPPORT_PROGRAM_RANKING_PATH)
                 .contentType(MediaType.APPLICATION_JSON)
+                .headers { headers -> SupportProgramSearchTracingHelper.currentTraceParent()?.let { headers.set("traceparent", it) } }
                 .body(request)
                 .retrieve()
                 .onStatus(

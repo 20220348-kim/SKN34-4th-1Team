@@ -26,7 +26,7 @@ GENERATION_FILES = (
     AI + "app/support_program_evidence/answer_service.py",
     AI + "app/support_program_evidence/models.py",
     AI + "app/support_program_evidence/errors.py",
-    AI + "app/support_program_evidence/tracing.py",
+    AI + "app/tracing.py",
     AI + "app/support_program_llm.py",
     AI + "app/support_program_identity.py",
     *DEPENDENCIES,

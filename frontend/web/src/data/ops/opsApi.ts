@@ -8,6 +8,7 @@ const sessionSchema = z.object({
   user: z.object({ id: z.string(), username: z.string() }).nullable(),
   csrf_token: z.string(),
   live_enabled: z.boolean(),
+  search_traces_url: z.url().refine((value) => /^https?:\/\//.test(value)).nullable().default(null),
   datasets: z.array(z.object({
     id: z.string(), label: z.string(), case_ids: z.array(z.string()).min(1),
     captures: z.array(z.object({ id: z.string(), label: z.string() })).min(1),

@@ -20,7 +20,7 @@ from app.config import LangfuseSettings
 from app.support_program_evidence.agent import SupportProgramEvidenceAnswerAgent
 from app.support_program_evidence.answer_service import SupportProgramEvidenceAnswerService
 from app.support_program_evidence.errors import SupportProgramEvidenceError
-from app.support_program_evidence.tracing import EvidenceTracing
+from app.tracing import LLMTracing
 from tests.langchain_stub import ResponsesChatStub, response_message
 from tests.support_program_evidence.test_agent import answer_request, valid_selection
 from llmops import evaluate_capture, write_json
@@ -39,8 +39,9 @@ def wait_ready(base_url: str, path: str) -> None:
     raise RuntimeError("Local LLMOps server readiness timed out")
 
 
-async def trace_examples(settings):
-    tracing = EvidenceTracing(settings)
+async def trace_examples(settings, tracing=None):
+    owns_tracing = tracing is None
+    tracing = tracing or LLMTracing(settings)
     records = []
     try:
         for failing in [False, True]:
@@ -58,7 +59,59 @@ async def trace_examples(settings):
             await stub.model.root_async_client.close()
             records.append({"trace_id": trace_id, "expected_failure": failing})
     finally:
-        await tracing.close()
+        if owns_tracing:
+            await tracing.close()
+    return records
+
+
+async def search_trace_examples(settings):
+    """근거 답변과 검색을 같은 SDK 생애에서 검증한다. Core 부모 헤더만 합성한다."""
+    from dataclasses import replace
+    import httpx2
+    from openai import AsyncOpenAI
+    from qdrant_client import AsyncQdrantClient
+    from app.main import create_app
+    from app.support_program_index.models import SupportProgramIndexBatchRequest, SupportProgramIndexSearchRequest
+    from app.support_program_index.service import SupportProgramIndexService
+    from app.support_program_ranking.agent import SupportProgramRecommendationAgent
+    from tests.support_program_index.conftest import EmbeddingHttpStub, document, identity
+    from tests.support_program_ranking.test_agent import ranking_request, llm_output_json
+    from tests.test_bootstrap import OPENAI_SETTINGS
+
+    embeddings = EmbeddingHttpStub()
+    openai = AsyncOpenAI(api_key="test-key-never-sent", base_url="https://embedding.test/v1", max_retries=0,
+                         http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(embeddings)))
+    qdrant = AsyncQdrantClient(location=":memory:")
+    index = SupportProgramIndexService(openai, qdrant, embedding_model="text-embedding-3-small",
+                                      embedding_dimensions=3, embedding_timeout_seconds=10)
+    stub = ResponsesChatStub([[response_message(llm_output_json())]])
+    agent = SupportProgramRecommendationAgent(model=stub.model, model_timeout_seconds=10, run_timeout_seconds=15)
+    app = create_app(settings=replace(OPENAI_SETTINGS, langfuse=settings), support_program_recommendation_agent=agent)
+    tracing = app.state.container.llm_tracing
+    agent._tracing = index._tracing = tracing
+    app.state.container.support_program_index_service = index
+    try:
+        records = await trace_examples(settings, tracing)
+        item = document("BIZINFO:smoke", "서울 AI 합성 공고 PRIVATE-SMOKE")
+        await index.index_batch(SupportProgramIndexBatchRequest(documents=[item]))
+        search = SupportProgramIndexSearchRequest(query="서울 AI PRIVATE-SMOKE", eligibleDocuments=[identity(item)], limit=1)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+            for cached in [False, True]:
+                trace_id, parent_id = uuid4().hex, uuid4().hex[:16]
+                for path, payload in [("support-program-index/search", search), ("support-program-rankings/rank", ranking_request())]:
+                    response = await client.post("/internal/v1/" + path, json=payload.model_dump(mode="json", by_alias=True),
+                                                 headers={"traceparent": f"00-{trace_id}-{parent_id}-01"})
+                    response.raise_for_status()
+                names = ["search.semantic.request", "search.semantic", "search.vector", "search.ranking.request", "search.ranking"]
+                if not cached:
+                    names += ["search.embedding", "search.ranking.model", "search.selection"]
+                records.append({"trace_id": trace_id, "parent_id": parent_id, "names": names, "cached": cached})
+        assert len(stub.calls) == 1 and len(embeddings.requests) == 2  # 색인 1회 + 질의 1회, 모두 HTTP 대역
+    finally:
+        await app.state.container.close()
+        await qdrant.close()
+        await openai.close()
+        await stub.model.root_async_client.close()
     return records
 
 
@@ -72,19 +125,32 @@ def verify_traces(settings, records):
                 })
                 response.raise_for_status()
                 observations = response.json()["data"]
-                if len(observations) == 2:
+                if len(observations) == len(record.get("names", ["evidence.answer", "evidence.model"])):
                     break
                 if time.monotonic() >= deadline:
                     raise RuntimeError("Trace readback timed out")
                 time.sleep(1)
-            root = next(item for item in observations if item["name"] == "evidence.answer")
-            model = next(item for item in observations if item["name"] == "evidence.model")
-            assert model["parentObservationId"] == root["id"]
-            assert (root["level"] == "ERROR") == record["expected_failure"]
+            if "names" in record:
+                assert sorted(item["name"] for item in observations) == sorted(record["names"])
+                ids = {item["id"] for item in observations}
+                for item in observations:
+                    assert item["level"] != "ERROR"
+                    expected_parent = record["parent_id"] if item["name"].endswith(".request") else None
+                    if expected_parent:
+                        assert item["parentObservationId"] == expected_parent
+                    else:
+                        assert item["parentObservationId"] in ids
+                ranking = next(item for item in observations if item["name"] == "search.ranking")
+                assert ranking["metadata"]["cache_state"] == ("hit" if record["cached"] else "miss")
+            else:
+                root = next(item for item in observations if item["name"] == "evidence.answer")
+                model = next(item for item in observations if item["name"] == "evidence.model")
+                assert model["parentObservationId"] == root["id"]
+                assert (root["level"] == "ERROR") == record["expected_failure"]
             for item in observations:
                 assert item.get("input") in (None, "", "null") and item.get("output") in (None, "", "null")
             serialized = json.dumps(observations, ensure_ascii=False)
-            for private in [answer_request().question, valid_selection().answer, "invalid-private-output", settings.secret_key]:
+            for private in [answer_request().question, valid_selection().answer, "invalid-private-output", "PRIVATE-SMOKE", settings.secret_key]:
                 assert private not in serialized
 
 
@@ -104,7 +170,7 @@ def main():
     output.mkdir(parents=True, exist_ok=False)
     wait_ready(settings.base_url, "/api/public/health")
     wait_ready(os.environ["PREFECT_API_URL"], "/health")
-    traces = asyncio.run(trace_examples(settings))
+    traces = asyncio.run(search_trace_examples(settings))
     verify_traces(settings, traces)
     fixture = str(ROOT / "evaluation/support-program-evidence/target-coverage-fixture.json")
     capture = str(ROOT / "evaluation/support-program-evidence/runs/target-coverage-20260907-v1/capture.json")

@@ -28,7 +28,7 @@
 | 실서버 CI | [LLMOps CI](../.github/workflows/llmops-ci.yml), [취소 smoke](../infrastructure/llmops/cancellation_smoke.py) | 기존 저장 응답·인증·복구 검증에 11개 취소·예산 시나리오를 연결했다. skn-43 CI에서 테스트 서비스 포트 조회가 실패해 artifact의 완료 시나리오는 0개다. |
 | 한도 변경·장부 조회 | [한도 명령](../backend/ops-service/apps/evaluations/management/commands/set_evaluation_budget.py), [공개 API](../backend/ops-service/apps/evaluations/urls.py), [웹 계약](../frontend/web/src/data/ops/opsApi.ts) | 한도 변경은 CLI이며 변경자·사유·이전/새 값의 별도 감사 이력이 없다. 예산 잔여·예약·미확인 내역을 보는 관리자 API·화면도 없다. |
 | 미확인 예약 복구 | [worker_action/close_after_cancellation](../backend/ops-service/apps/evaluations/budget.py), [ops_flow.py](../evaluation/support-program-evidence/ops_flow.py) | claim은 실행 try/finally 앞에 있고 close 실패를 자동 재정산하지 않는다. 취소 기록 없는 FAILED/CRASHED 등은 동기화에서 예약을 정리하지 않으며 종료된 실행에는 새 취소도 거절한다. closed 예약의 늦은 settle도 거절한다. 보수적으로 한도를 유지하지만 이를 안전하게 정리하는 별도 경로가 필요하다. |
-| 추적·평가 범위 | [tracing.py](../backend/ai-service/app/support_program_evidence/tracing.py), [evaluate.py](../evaluation/support-program-evidence/evaluate.py) | trace 허용 범위는 answer/model 두 span이다. 고정 근거 평가 자료는 synthetic·ai-authored, 최대 3문서·12사례다. 자동 의미 충실도는 미측정이다. |
+| 추적·평가 범위 | [tracing.py](../backend/ai-service/app/tracing.py), [evaluate.py](../evaluation/support-program-evidence/evaluate.py) | 기준 검토 이후 Core→AI 검색 단계·임베딩/랭킹·선택 추적과 Ops 이동 링크를 추가했다. 상세 범위·미검증 항목은 [실행 안내](../infrastructure/llmops/README.md#지원사업-ai-검색-추적)를 참조한다. 고정 근거 평가는 synthetic·ai-authored, 최대 3문서·12사례이며 자동 의미 충실도는 미측정이다. |
 | 발행·승격 | [gate.py](../infrastructure/release/gate.py) | 동일 SHA의 5개 CI·필수 job 검사는 구현됐다. 현재 모델의 사람 검토 품질 증거와 배포 대상의 연결은 별도 과제다. |
 
 미확인 예약 유지 자체를 과금 오류로 단정하지 않는다. 현재 설계는 초과 사용 방지를 우선하며,

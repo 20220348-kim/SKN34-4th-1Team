@@ -8,6 +8,7 @@ import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramIndexPrunePay
 import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramIndexPruneRequest
 import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramIndexSearchPayload
 import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramIndexSearchRequest
+import ai.govbiz.core.supportprogram.helper.SupportProgramSearchTracingHelper
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.http.HttpMethod
 import org.springframework.http.HttpStatus
@@ -34,6 +35,7 @@ class AiSupportProgramIndexClient(
             restClient.method(method)
                 .uri("/internal/v1/support-program-index/$operation")
                 .contentType(MediaType.APPLICATION_JSON)
+                .headers { headers -> SupportProgramSearchTracingHelper.currentTraceParent()?.let { headers.set("traceparent", it) } }
                 .body(request)
                 .retrieve()
                 .onStatus(

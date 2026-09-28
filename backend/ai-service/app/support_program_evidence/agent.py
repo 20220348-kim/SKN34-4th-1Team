@@ -5,7 +5,7 @@ from time import perf_counter
 from langchain_openai import ChatOpenAI
 from openai import OpenAIError
 from app.config import LangfuseSettings
-from app.support_program_evidence.tracing import EvidenceTracing
+from app.tracing import LLMTracing
 
 from app.support_program_llm import (
     get_support_program_usage_details,
@@ -36,11 +36,11 @@ class SupportProgramEvidenceAnswerAgent:
         model: ChatOpenAI,
         model_timeout_seconds: float,
         run_timeout_seconds: float,
-        tracing: EvidenceTracing | None = None,
+        tracing: LLMTracing | None = None,
     ) -> None:
         self._run_timeout_seconds = run_timeout_seconds
         self._model_timeout_seconds = model_timeout_seconds
-        self._tracing = tracing or EvidenceTracing(LangfuseSettings())
+        self._tracing = tracing or LLMTracing(LangfuseSettings())
         self._model_name = model.model_name
         self._model = model.bind(
             max_tokens=2_000, store=False,

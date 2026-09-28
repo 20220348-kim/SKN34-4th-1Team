@@ -18,7 +18,7 @@ from app.assistant_agent.tools import CoreToolClient
 from app.support_program_evidence.agent import SupportProgramEvidenceAnswerAgent
 from app.support_program_evidence.answer_service import SupportProgramEvidenceAnswerService
 from app.support_program_evidence.service import SupportProgramEvidenceService
-from app.support_program_evidence.tracing import EvidenceTracing
+from app.tracing import LLMTracing
 from app.support_program_ranking.agent import SupportProgramRecommendationAgent
 from app.support_program_ranking.service import SupportProgramRankingService
 from app.config import Settings
@@ -43,7 +43,7 @@ class ApplicationContainer:
     assistant_service: AssistantService | None = None
     assistant_agent_service: AssistantAgentService | None = None
     assistant_tool_client: CoreToolClient | None = None
-    evidence_tracing: EvidenceTracing | None = None
+    llm_tracing: LLMTracing | None = None
 
     async def close(self) -> None:
         try:
@@ -58,8 +58,8 @@ class ApplicationContainer:
                     if self.openai_client is not None:
                         await self.openai_client.close()
                 finally:
-                    if self.evidence_tracing is not None:
-                        await self.evidence_tracing.close()
+                    if self.llm_tracing is not None:
+                        await self.llm_tracing.close()
 
 
 def build_application_container(
@@ -74,7 +74,7 @@ def build_application_container(
 ) -> ApplicationContainer:
     """환경설정과 선택적 테스트 대역을 실제 애플리케이션 객체로 조립한다."""
 
-    evidence_tracing = EvidenceTracing(settings.langfuse)
+    llm_tracing = LLMTracing(settings.langfuse)
     openai_client = AsyncOpenAI(
         api_key=settings.openai_api_key,
         timeout=settings.llm_model_timeout_seconds,
@@ -94,6 +94,7 @@ def build_application_container(
         )
     if ranking_agent is None:
         ranking_agent = SupportProgramRecommendationAgent(
+            tracing=llm_tracing,
             model=ChatOpenAI(
                 model=settings.openai_ranking_model or settings.openai_model,
                 api_key=settings.openai_api_key, use_responses_api=True, max_retries=0,
@@ -107,7 +108,7 @@ def build_application_container(
     if evidence_answer_agent is None:
         assert general_model is not None
         evidence_answer_agent = SupportProgramEvidenceAnswerAgent(
-            tracing=evidence_tracing,
+            tracing=llm_tracing,
             model=general_model,
             model_timeout_seconds=settings.llm_model_timeout_seconds,
             run_timeout_seconds=settings.llm_run_timeout_seconds,
@@ -192,10 +193,10 @@ def build_application_container(
             timeout_seconds=settings.assistant_agent_timeout_seconds,
         )
     return ApplicationContainer(
-        evidence_tracing=evidence_tracing,
+        llm_tracing=llm_tracing,
         combination_review_service=CombinationReviewService(combination_agent, settings.openai_model),
         application_preparation_service=ApplicationPreparationService(application_preparation_agent, settings.openai_model),
-        support_program_ranking_service=SupportProgramRankingService(ranking_agent),
+        support_program_ranking_service=SupportProgramRankingService(ranking_agent, tracing=llm_tracing),
         support_program_conversation_service=SupportProgramConversationService(conversation_agent),
         assistant_service=AssistantService(assistant_agent),
         assistant_agent_service=assistant_agent_service,
@@ -208,10 +209,11 @@ def build_application_container(
             embedding_model=settings.openai_embedding_model,
             embedding_dimensions=settings.openai_embedding_dimensions,
             embedding_timeout_seconds=settings.embedding_timeout_seconds,
+            tracing=llm_tracing,
         ),
         support_program_evidence_service=evidence_service,
         support_program_evidence_answer_service=SupportProgramEvidenceAnswerService(
-            evidence_answer_agent, evidence_tracing,
+            evidence_answer_agent, llm_tracing,
         ),
     )
 

@@ -58,6 +58,10 @@ dependencies {
     implementation 'org.apache.tika:tika-parser-miscoffice-module:4.0.0'
     // 회원 비밀번호 BCrypt 해시 전용. Security filter chain·자동 설정은 사용하지 않는다.
     implementation 'org.springframework.security:spring-security-crypto'
+    // 검색 경로만 명시적으로 계측해 기존 Langfuse OTLP 수신기로 전송한다.
+    // Spring Boot BOM의 동일 버전으로 SDK와 exporter 내부 모듈을 맞춘다.
+    implementation 'io.opentelemetry:opentelemetry-sdk'
+    implementation 'io.opentelemetry:opentelemetry-exporter-otlp'
 
     runtimeOnly 'com.mysql:mysql-connector-j'
     runtimeOnly 'org.flywaydb:flyway-mysql'
@@ -68,6 +72,7 @@ dependencies {
     testImplementation 'org.testcontainers:testcontainers-junit-jupiter'
     testImplementation 'org.testcontainers:testcontainers-mysql'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+    testImplementation 'io.opentelemetry:opentelemetry-sdk-testing'
 }
 
 tasks.named('test') {

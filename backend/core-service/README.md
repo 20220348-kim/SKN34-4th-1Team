@@ -893,6 +893,24 @@ Elasticsearch 실패는 AI 오류와 별도 경계이며 ES 직접 시간 초과
 
 ## 검증
 
+### AI 검색 Langfuse 추적
+
+`SupportProgramSearchTracingHelper`는 `search.total` 아래 DB 조회·적격 후보 준비·문서 준비·
+키워드 검색·의미 검색·후보 병합·랭킹 시간을 기록합니다. Core의 OpenTelemetry SDK/OTLP exporter는
+Spring Boot BOM의 같은 버전을 사용하며 Java agent나 전역 자동 HTTP 본문 수집은 추가하지 않습니다.
+두 AI HTTP Client가 현재 검색 span의 `traceparent`만 전달하고 Python의 임베딩·Qdrant·랭킹 span이
+같은 trace에 이어집니다. 외부 요청의 부모 ID를 Core 검색 루트로 받아들이지 않습니다.
+최종 후보/선택 ID와 건수를 기록하며 질문·기업 조건·공고 원문·예외 메시지는 수집하지 않습니다.
+
+Core와 AI Service에 `LANGFUSE_ENABLED=true`, 같은 프로젝트의 `LANGFUSE_BASE_URL`,
+`LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`를 설정합니다. 기본값은 비활성화이며
+`LANGFUSE_ENVIRONMENT`는 `development`, `GIT_SHA`는 선택적인 빌드 SHA입니다.
+업무 Compose가 두 서비스에 이 값을 전달합니다. Core는 최대 1,024 span의 비동기 큐와 2초 전송 제한을
+사용하며 Langfuse 전송 실패로 검색·모델을 재실행하지 않습니다. 활성 검색의 로그 `trace_id`로 조회할 수 있습니다.
+Ops 링크·단계 구조·전체 검증의 한계는 [LLMOps 실행 안내](../../infrastructure/llmops/README.md#지원사업-ai-검색-추적)를 참고하세요.
+
+### 기존 기능 검증
+
 `backend/core-service` 디렉터리에서 JDK 21 환경으로 실행합니다. Repository 통합 테스트가 실제
 `mysql:8.4` Testcontainers를 실행하므로 Docker가 필요합니다.
 

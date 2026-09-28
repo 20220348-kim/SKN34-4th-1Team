@@ -663,7 +663,19 @@ SDK의 JSON 출력 검증 실패는 `MODEL_OUTPUT_INVALID_JSON`, 스키마·서�
 구분합니다. 이 로그만으로 이전 `ModelBehaviorError`의 세부 원인을 소급 확정할 수는 없습니다.
 이 진단 코드는 HTTP 응답에 노출하지 않으며, 검증 기준이나 부적합 후보 처리 방식을 바꾸지 않습니다.
 
-## 근거 답변 LLMOps
+## 검색·근거 답변 LLMOps
+
+검색 추적은 `Core 검색 → Elasticsearch/Qdrant 후보 조회 → 후보 병합 → AI 랭킹 → 최종 선정`을
+같은 trace ID로 연결합니다. Core가 내부 HTTP의 `traceparent`를 만들고 Python이 검증된 ID만 이어받습니다.
+`app/tracing.py`의 `LLMTracing`을 검색과 근거 답변이 공유하며 LangChain 자동 본문 수집은 켜지 않습니다.
+검색 단계·캐시 상태·실제 모델/질의 임베딩 호출·제공된 사용량·프롬프트 해시와 최종 선택·제외 건수를 기록합니다.
+허용된 공고 ID만 metadata로 수집하고 질문·기업 조건·공고 원문·프롬프트/응답 본문·예외 원문은 제외합니다.
+캐시 적중과 동시 공유 요청은 모델 span을 중복 만들지 않습니다. 공유 랭킹의 `shared_source_trace_id`는
+실제 호출을 시작한 요청을 가리킵니다. `usage_reported=false`는 미확정 사용량이며 0원이라는 뜻이 아닙니다.
+
+Core와 AI 모두 같은 Langfuse 프로젝트로 활성화해야 전체 검색 경로가 연결됩니다. 단계 목록·설정·
+Ops 화면의 **검색 실행 추적 ↗** 링크 사용법과 검증 범위는
+[검색 추적 안내](../../infrastructure/llmops/README.md#지원사업-ai-검색-추적)를 따릅니다.
 
 `LANGFUSE_ENABLED=true`일 때 근거 답변 Service의 검증까지 `evidence.answer`로,
 LangChain 모델 호출을 하위 `evidence.model`로 기록합니다. HTTP 경로와 평가 실행기 모두 같은 추적 객체를 사용합니다.

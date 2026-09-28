@@ -252,7 +252,7 @@ async def execute(prepared: list, fixture_hash: str, output_dir: Path, *,
     from app.support_program_evidence.agent import SupportProgramEvidenceAnswerAgent
     from app.support_program_evidence.answer_service import SupportProgramEvidenceAnswerService
     from app.config import LangfuseSettings
-    from app.support_program_evidence.tracing import EvidenceTracing
+    from app.tracing import LLMTracing
     from uuid import uuid4
 
     key = os.environ.get("OPENAI_API_KEY", "").strip()
@@ -310,7 +310,7 @@ async def execute(prepared: list, fixture_hash: str, output_dir: Path, *,
         api_key=key, base_url="https://api.openai.com/v1", max_retries=0,
         http_client=httpx2.AsyncClient(event_hooks={"request": [record_attempt], "response": [record_usage]}),
     )
-    tracing = EvidenceTracing(tracing_settings)
+    tracing = LLMTracing(tracing_settings)
     service = SupportProgramEvidenceAnswerService(SupportProgramEvidenceAnswerAgent(
         tracing=tracing,
         model=ChatOpenAI(

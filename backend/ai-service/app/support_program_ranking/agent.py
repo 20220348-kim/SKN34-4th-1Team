@@ -1,6 +1,10 @@
 import asyncio
 import logging
 from functools import lru_cache
+from hashlib import sha256
+
+from app.config import LangfuseSettings
+from app.tracing import LLMTracing
 from time import perf_counter
 from typing import Annotated, Literal
 from unicodedata import category
@@ -184,6 +188,7 @@ class SupportProgramRecommendationAgent:
         model: ChatOpenAI,
         model_timeout_seconds: float,
         run_timeout_seconds: float,
+        tracing: LLMTracing | None = None,
         reasoning_effort: Literal["none", "low"] = "none",
         service_tier: Literal["default", "priority"] | None = None,
     ) -> None:
@@ -191,6 +196,10 @@ class SupportProgramRecommendationAgent:
             raise ValueError("ranking reasoning effort must be none or low")
         if service_tier not in (None, "default", "priority"):
             raise ValueError("ranking service tier must be default or priority")
+        self._tracing = tracing or LLMTracing(LangfuseSettings())
+        self._model_name = model.model_name
+        self._reasoning_effort = reasoning_effort
+        self._service_tier = service_tier
         self._instructions = SUPPORT_PROGRAM_RANKING_INSTRUCTIONS
         self._run_timeout_seconds = run_timeout_seconds
         self._model_timeout_seconds = model_timeout_seconds
@@ -236,11 +245,23 @@ class SupportProgramRecommendationAgent:
         prepared = perf_counter()
         try:
             async with asyncio.timeout(self._run_timeout_seconds):
-                result = await invoke_support_program_model(
-                    self._model, instructions=instructions, payload=payload,
-                    output_type=output_type, timeout_seconds=self._model_timeout_seconds,
-                )
-                output = validate_support_program_output(result, output_type)
+                with self._tracing.observation(
+                    "search.ranking.model", as_type="generation", model=self._model_name,
+                    model_parameters={"max_tokens": 10_000, "reasoning_effort": self._reasoning_effort,
+                                      "service_tier": self._service_tier, "max_retries": 0},
+                    metadata={"prompt_sha256": sha256(instructions.encode()).hexdigest(), "usage_reported": False},
+                ) as generation:
+                    result = await invoke_support_program_model(
+                        self._model, instructions=instructions, payload=payload,
+                        output_type=output_type, timeout_seconds=self._model_timeout_seconds,
+                    )
+                    self._tracing.update(generation, usage_details={
+                        key: value for key, value in (
+                            ("input", (getattr(result, "usage_metadata", None) or {}).get("input_tokens")),
+                            ("output", (getattr(result, "usage_metadata", None) or {}).get("output_tokens")),
+                        ) if value is not None
+                    }, metadata={"usage_reported": getattr(result, "usage_metadata", None) is not None})
+                    output = validate_support_program_output(result, output_type)
         except (APITimeoutError, TimeoutError) as error:
             logger.info(
                 "support_program_ranking_model_failed outcome=timeout candidate_count=%d model_ms=%d",

@@ -11,6 +11,9 @@ from openai import APITimeoutError, AsyncOpenAI
 from qdrant_client import AsyncQdrantClient, models
 from qdrant_client.http.exceptions import ResponseHandlingException
 
+from app.config import LangfuseSettings
+from app.tracing import LLMTracing
+
 from app.support_program_embedding import prepare_embedding_inputs
 from app.support_program_index.models import (
     IndexedDocumentIdentity,
@@ -48,7 +51,9 @@ class SupportProgramIndexService:
         embedding_model: str,
         embedding_dimensions: int,
         embedding_timeout_seconds: float,
+        tracing: LLMTracing | None = None,
     ) -> None:
+        self._tracing = tracing or LLMTracing(LangfuseSettings())
         self.openai_client = openai_client
         self.qdrant_client = qdrant_client
         self.embedding_model = embedding_model
@@ -135,6 +140,10 @@ class SupportProgramIndexService:
             raise SupportProgramIndexError() from error
 
     async def search(self, request: SupportProgramIndexSearchRequest) -> SupportProgramIndexSearchResponse:
+        with self._tracing.observation("search.semantic", metadata={"eligible_count": len(request.eligible_documents)}) as observation:
+            return await self._search(request, observation)
+
+    async def _search(self, request, observation):
         if not request.eligible_documents:
             return SupportProgramIndexSearchResponse(query=request.query, matches=[])
         started_at = monotonic()
@@ -151,31 +160,34 @@ class SupportProgramIndexService:
                 ready_at = monotonic()
                 stage = "embedding"
                 vector, cache_state = await self._embed_query(request.query)
+                self._tracing.update(observation, metadata={"embedding_cache_state": cache_state})
                 embedded_at = monotonic()
                 stage = "vector_search"
-                response = await self.qdrant_client.query_points(
-                    collection_name=self.collection_name,
-                    query=vector,
-                    query_filter=models.Filter(must=[models.HasIdCondition(has_id=point_ids)]),
-                    limit=min(request.limit, len(point_ids)),
-                    with_payload=True,
-                    with_vectors=False,
-                )
-                matches: list[SupportProgramIndexMatch] = []
-                seen: set[str] = set()
-                for point in response.points:
-                    point_id = str(point.id)
-                    identity = identities.get(point_id)
-                    if identity is None or point_id in seen or not _payload_matches(point.payload, identity):
-                        raise SupportProgramIndexError()
-                    seen.add(point_id)
-                    matches.append(SupportProgramIndexMatch(
-                        id=identity.id, contentHash=identity.content_hash, score=point.score,
-                    ))
-                if len(matches) != min(request.limit, len(point_ids)):
-                    raise SupportProgramIndexError("INDEX_NOT_READY")
-                matches.sort(key=lambda match: (-match.score, match.id))
-                result = SupportProgramIndexSearchResponse(query=request.query, matches=matches)
+                with self._tracing.observation("search.vector") as vector_observation:
+                    response = await self.qdrant_client.query_points(
+                        collection_name=self.collection_name,
+                        query=vector,
+                        query_filter=models.Filter(must=[models.HasIdCondition(has_id=point_ids)]),
+                        limit=min(request.limit, len(point_ids)),
+                        with_payload=True,
+                        with_vectors=False,
+                    )
+                    matches: list[SupportProgramIndexMatch] = []
+                    seen: set[str] = set()
+                    for point in response.points:
+                        point_id = str(point.id)
+                        identity = identities.get(point_id)
+                        if identity is None or point_id in seen or not _payload_matches(point.payload, identity):
+                            raise SupportProgramIndexError()
+                        seen.add(point_id)
+                        matches.append(SupportProgramIndexMatch(
+                            id=identity.id, contentHash=identity.content_hash, score=point.score,
+                        ))
+                    if len(matches) != min(request.limit, len(point_ids)):
+                        raise SupportProgramIndexError("INDEX_NOT_READY")
+                    matches.sort(key=lambda match: (-match.score, match.id))
+                    result = SupportProgramIndexSearchResponse(query=request.query, matches=matches)
+                    self._tracing.update(vector_observation, metadata={"candidate_ids": [match.id for match in matches]})
                 finished_at = monotonic()
                 outcome = "completed"
                 logger.info(
@@ -205,6 +217,7 @@ class SupportProgramIndexService:
         except Exception as error:
             raise SupportProgramIndexError() from error
         finally:
+            self._tracing.update(observation, metadata={"stage": stage, "outcome": outcome})
             if outcome != "completed":
                 logger.info(
                     "support_program_index_search_failed outcome=%s stage=%s code=%s elapsed_ms=%d",
@@ -245,7 +258,9 @@ class SupportProgramIndexService:
                         self._query_embedding_cache.move_to_end(query)
                         return list(vector), "coalesced" if waited else "hit"
                     del self._query_embedding_cache[query]
-                vector = (await self._embed([query]))[0]
+                with self._tracing.observation("search.embedding", as_type="embedding", model=self.embedding_model,
+                                               metadata={"usage_reported": False}) as generation:
+                    vector = (await self._embed([query], observation=generation))[0]
                 now = monotonic()
                 for key, (expires_at, _) in list(self._query_embedding_cache.items()):
                     if expires_at <= now:
@@ -264,7 +279,7 @@ class SupportProgramIndexService:
             else:
                 self._query_embedding_locks[query] = (lock, users - 1)
 
-    async def _embed(self, texts: list[str]) -> list[list[float]]:
+    async def _embed(self, texts: list[str], *, observation=None) -> list[list[float]]:
         inputs = await asyncio.to_thread(prepare_embedding_inputs, texts)
         vectors: list[list[float]] = []
         # 32 × 8191 < OpenAI 요청당 최대 300,000 tokens.
@@ -280,6 +295,10 @@ class SupportProgramIndexService:
                 )
             # SDK의 float 강제 변환 전 원문 JSON을 검증해 bool·문자열을 숫자로 허용하지 않는다.
             response = raw_response.http_response.json()
+            usage = response.get("usage") if isinstance(response, dict) else None
+            tokens = usage.get("prompt_tokens") if isinstance(usage, dict) else None
+            if type(tokens) is int and tokens >= 0:
+                self._tracing.update(observation, usage_details={"input": tokens}, metadata={"usage_reported": True})
             if not isinstance(response, dict) or response.get("model") != self.embedding_model:
                 raise SupportProgramIndexError()
             data = response.get("data")

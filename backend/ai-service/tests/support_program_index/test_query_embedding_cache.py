@@ -100,7 +100,7 @@ async def test_query_cache_is_instance_local_even_for_same_model_dimensions_and_
     monkeypatch.setattr(other, "_embed", embed)
 
     assert await other._embed_query("서울 AI") == (vector, "miss")
-    embed.assert_awaited_once_with(["서울 AI"])
+    embed.assert_awaited_once_with(["서울 AI"], observation=None)
     assert await service._embed_query("서울 AI") == ([1.0, 0.0, 0.0], "hit")
 
 
@@ -203,7 +203,7 @@ async def test_simultaneous_identical_queries_share_one_embedding_and_independen
     service, stub = index_environment
     started, release = asyncio.Event(), asyncio.Event()
     original_embed = service._embed
-    async def paused_embed(texts):
+    async def paused_embed(texts, **_kwargs):
         started.set()
         await release.wait()
         return await original_embed(texts)
@@ -229,7 +229,7 @@ async def test_different_queries_can_embed_concurrently(index_environment, monke
     service, _ = index_environment
     both_started = asyncio.Event()
     started_queries = []
-    async def concurrent_embed(texts):
+    async def concurrent_embed(texts, **_kwargs):
         started_queries.extend(texts)
         if len(started_queries) == 2:
             both_started.set()
@@ -249,7 +249,7 @@ async def test_cancellation_releases_query_lock_without_poisoning_other_requests
     service, _ = index_environment
     started, retried, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
     calls = 0
-    async def paused_embed(texts):
+    async def paused_embed(texts, **_kwargs):
         nonlocal calls
         calls += 1
         (started if calls == 1 else retried).set()

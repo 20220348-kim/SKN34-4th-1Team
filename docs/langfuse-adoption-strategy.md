@@ -58,7 +58,7 @@ workflow가 성공이지만 `publish` job은 건너뛰었다. 이미지 발행 �
 | P1 · 품질 | [품질 정책](../backend/ops-service/apps/evaluations/quality_policy.py)과 [판정 이력](../backend/ops-service/apps/evaluations/quality.py)은 구현됐지만 실제 사람 검토·현재 모델 기준은 미확보 | 개발 테스트의 `PASS`와 사람이 승인한 평가 기준을 구별한다. 자료 검토 → 승인 범위의 새 응답 → 사례 검토 → 품질 판정 → 별도 기준 지정 순서로 진행한다. |
 | P1 · 반복 실행 전 | [호출 설정](../backend/ops-service/apps/evaluations/catalog.py), [실행기](../evaluation/support-program-evidence/ops_flow.py), [API](../backend/ops-service/apps/evaluations/urls.py) | 실행별 호출 수·출력 토큰은 있지만 누적 예산 장부·취소 API가 없다. `CANCELLED` 상태 수신과 취소 기능은 다르다. `serve(limit=1)`·로컬 FileLock은 다중 실행기의 전역 제한이 아니다. |
 | P2 · 자료 확대 전 | [평가기](../evaluation/support-program-evidence/evaluate.py)의 `load_fixture`·`report` | `synthetic`·`ai-authored`, 문서 최대 3개·사례 최대 12개로 제한된다. 자동 의미 충실도는 미측정이며 인용 recall은 불필요한 인용을 벌점 처리하지 않는다. 실제 공고·사람 참조·범위 확장은 자료 계약과 검토 기준부터 확장한다. |
-| P2 · 운영 전 | [추적](../backend/ai-service/app/support_program_evidence/tracing.py)과 [개발 Compose](../infrastructure/llmops/compose.ops.yaml) | 허용 span은 답변·모델 두 개다. 전체 RAG 연결, 운영 인증·보존 기간·백업/복원·결과 저장소 운영 검증이 남았다. |
+| P2 · 운영 전 | [추적](../backend/ai-service/app/tracing.py)과 [개발 Compose](../infrastructure/llmops/compose.ops.yaml) | 당시 허용 span은 답변·모델 두 개였다. 이후 일반 지원사업 검색의 Core→AI 추적을 추가했다([현재 범위](../infrastructure/llmops/README.md#지원사업-ai-검색-추적)). 상세 RAG 전체 연결, 운영 인증·보존 기간·백업/복원·결과 저장소 운영 검증은 남았다. |
 
 ### skn-35 초기 검토 기록
 
@@ -709,7 +709,7 @@ AI HTTP /answers → AnswerService → AnswerAgent → LangChain → OpenAI
 - `backend/ai-service/pyproject.toml`, `uv.lock`: SDK 의존성 고정
 - `app/config.py`, `app/bootstrap.py`, `app/main.py`: 명시적 활성화, 설정 검증, 초기화와 종료 시 유한 시간의 전송 마무리
 - `app/support_program_evidence/answer_service.py`, `agent.py`: 실행·검증 결과와 모델 호출 연결
-- `app/support_program_evidence/tracing.py`: 명시적 span, 전송 필터, 본문 제거, 유한 종료 대기. 공통 LLM 호출부는 변경하지 않음
+- `app/tracing.py`(초기에는 근거 답변 디렉터리): 명시적 span, 전송 필터, 본문 제거, 유한 종료 대기. 검색 추적 추가 시 공유 위치로 이동했으며 공통 LLM 호출부는 변경하지 않음
 - `evaluation/support-program-evidence/evaluate.py`: Service·Agent 직접 생성 경로의 명시적 추적 초기화·종료 연결. 저장 캡처 재계산에는 새 모델 호출 trace를 만들지 않음
 - `tests/support_program_evidence/` 및 설정·초기화 관련 테스트: 추적과 기존 응답 동작 확인
 - AI Service README와 개발 Compose 안내: 실행 방법·수집 범위·제한 사항

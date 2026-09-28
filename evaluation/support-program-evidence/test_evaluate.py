@@ -174,7 +174,7 @@ def test_execute_uses_production_agent_with_mock_http_only(
     if tracing_enabled:
         from langfuse import Langfuse
         from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-        from app.support_program_evidence import tracing as tracing_module
+        from app import tracing as tracing_module
 
         exporter = InMemorySpanExporter()
         monkeypatch.setattr(tracing_module, "Langfuse", lambda **kwargs: Langfuse(**kwargs, span_exporter=exporter))

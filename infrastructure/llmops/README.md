@@ -15,7 +15,7 @@ AI 프로젝트는 `>=3.12,<3.13`으로 제한하며 `.python-version`과 `uv.lo
 | 영역 | 반영 내용 |
 |---|---|
 | 실행 환경 | AI·Ops·평가 실행기·Prefect의 Python 3.12 통일, 의존성 잠금 파일, 별도 개발 Compose |
-| Langfuse 추적 | 근거 답변 HTTP 경로와 평가 실행기의 직접 Service 호출에서 모델·토큰·지연·오류·trace 연결. 일반 요청 본문은 기본 수집 제외 |
+| Langfuse 추적 | Core→AI 검색의 단계·캐시·선택·임베딩/랭킹 사용량과 근거 답변 HTTP/평가 실행기의 모델·지연·오류 연결. 본문 수집 제외 |
 | 평가 파이프라인 | Prefect → pandas/Pandera 검증 → 지표 재계산 → Evidently 보고서·Langfuse 점수 등록 및 재조회 |
 | 과거 응답 비교 | 저장된 가상 6건 재현, 과거 두 실행의 공통 E01 비교, 모델·프롬프트·지표 차이와 미측정 값 표시 |
 | 운영 화면·인증 | React `/ops/evaluations`, Django API, 기존 Core 관리자 로그인·공유 로그아웃, CSRF·일반 회원 접근 차단 |
@@ -393,6 +393,60 @@ backend/ai-service/.venv/bin/python evaluation/support-program-evidence/llmops.p
 새 캡처는 사례별 `apiResponseIndexes`로 토큰 기록을 연결한다. 과거 캡처처럼 사례와 API 사용량의 연결 정보가 없으면
 토큰은 `null`로 둔다. 지연·토큰 미제공을 0으로 집계하지 않는다.
 
+## 지원사업 AI 검색 추적
+
+`support-program-search` 이름으로 일반 지원사업 검색을 추적한다. Core와 AI Service를 **같은 프로젝트**의
+키·환경·URL로 활성화한다. 아래 구조는 실제 거치는 단계이며 키워드 검색 실패 등으로 호출되지 않은 단계는 생성되지 않는다.
+
+```text
+search.total (Core가 생성한 trace ID)
+├─ search.database_fetch / search.eligibility_prepare
+├─ search.retrieval
+│  ├─ search.document_prepare
+│  ├─ search.keyword_search (Elasticsearch)
+│  ├─ search.semantic_search (내부 HTTP)
+│  │  └─ search.semantic.request → search.semantic (Python)
+│  │     ├─ search.embedding (질의 캐시 miss만)
+│  │     └─ search.vector (Qdrant 조회·응답 검증)
+│  └─ search.candidate_merge (RRF)
+└─ search.ranking (내부 HTTP)
+   └─ search.ranking.request → search.ranking (Python)
+      ├─ search.ranking.model (실제 호출만)
+      └─ search.selection (검증·선택·제외)
+```
+
+- Core는 OpenTelemetry SDK/OTLP HTTP, AI는 공유 `LLMTracing`으로 기록한다. 공개 질문·회사 정보·
+  공고 본문·프롬프트/모델 응답·원문 예외는 전송하지 않는다. 후보·선택 ID는 제공처를 포함한 공식 공고 ID다.
+- 모델·질의 임베딩의 보고된 토큰, 랭킹 프롬프트 해시·설정, 성공/오류, 캐시 상태를 기록한다.
+  `usage_reported=false`는 사용량을 확인하지 못했다는 뜻이며 비용 0으로 해석하지 않는다.
+- 랭킹 캐시는 `miss/shared/hit`를 구분한다. 공유 요청에는 `shared_source_trace_id`를 남기고 모델 span은
+  호출 소유자에게 한 번만 만든다. 임베딩 캐시도 `miss/coalesced/hit`를 구분한다.
+- Core 로그의 `trace_id`로 찾거나 React `/ops/evaluations`의 **검색 실행 추적 ↗**에서 Langfuse로 이동한다.
+  목록에서 `support-program-search`로 필터한다. 이 링크는 관리자에게 제공되며 Langfuse 자체 로그인이 필요하다.
+  평가 실행 상세의 점수 링크와는 용도가 다르며, 개별 검색의 trace ID를 React 공개 응답에 추가하지 않는다.
+- 범위는 일반 지원사업 검색과 기존 근거 답변이다. 색인 배치 전체, 상세 근거 RAG의 검색/생성 전체 연결,
+  LangGraph 노드·도구 호출 전체 추적과 사람 검토 검색 품질 측정은 이번 구현에 포함하지 않는다.
+
+로컬 무료 검증은 Core의 실제 OTLP HTTP 요청·장애 분리, HTTP 부모 전파, Python ASGI 검색/랭킹과
+메모리 Qdrant·모델 HTTP 대역, 동시 요청·캐시·취소·원문 미수집, Ops API·React 링크를 대상으로 한다.
+LLMOps CI의 `smoke.py`는 같은 시나리오의 Langfuse 저장·재조회도 확인한다. 이 smoke의 Core 부모 헤더는
+합성이므로 실제 Core/MySQL/Elasticsearch를 거치는 검색 전체 통합 검증이나 모델 품질 평가로 해석하지 않는다.
+2026-09-29 로컬 Langfuse 4.46.0을 기존 볼륨으로 시작한 뒤 `search_trace_examples()`와
+`verify_traces()`를 실행해 **4개 trace·17개 observation의 실제 저장·API 재조회**를 통과했다.
+기존 관리자 계정으로 UI에 접속해 검색 트리·모델 설정·빈 Input/Output·캐시 상태도 확인했다.
+
+| 검증 사례 | trace ID | 확인 결과 |
+|---|---|---|
+| 검색 최초 호출 | `9df226b410e7487ba1f981fdd72d5b3d` | 8단계. 임베딩·Qdrant·랭킹 모델·선택의 부모 연결, `cache_state=miss`, 본문 미수집 |
+| 같은 검색 캐시 적중 | `3601025587e1499ab3d7c73a9a17e851` | 5단계. `cache_state=hit`·`embedding_cache_state=hit`, 추가 모델/임베딩 span 없음 |
+| 근거 답변 정상/실패 | `472883a843fb497590b277c42e8c94c2` / `c19bb4228ef0468e841023c7da794cac` | 각각 2단계. 성공/오류 구분과 본문 미수집을 API로 확인 |
+
+로컬 검증 기록은 `work/llmops-search-trace-ui-20260929-v1/`에 남겼다(Git 제외).
+UI의 Tracing에서 날짜 범위를 최근 1일로 두고 **Trace ID**로 검색하면 확인할 수 있다.
+이 실행은 **모델·임베딩 HTTP 대역을 쓴 무료 검증**이며 유료 API 호출은 0회다. UI에 표시되는 임베딩
+1토큰은 대역의 합성 사용량이다. Core 부모 헤더도 합성이므로 Core/MySQL/Elasticsearch 전체 실검색,
+현재 모델 품질, Prefect 평가·점수 파이프라인, 최신 커밋 전체 CI 통과를 검증한 것으로 해석하지 않는다.
+
 ## 실제 AI Service 추적 활성화
 
 `LANGFUSE_ENABLED=false`가 기본값이다. 활성화 시 `LANGFUSE_BASE_URL`, `LANGFUSE_PUBLIC_KEY`,
@@ -402,7 +456,7 @@ backend/ai-service/.venv/bin/python evaluation/support-program-evidence/llmops.p
 
 호출 흐름은 `HTTP /answers → AnswerService → AnswerAgent → LangChain → OpenAI`다.
 `evidence.answer`에는 Service의 인용 검증까지, 하위 `evidence.model`에는 모델·토큰·지연을 기록한다.
-LangChain 자동 콜백은 붙이지 않고 명시적인 두 span만 내보내므로 공통 LLM 호출부와 다른 기능의 추적 정책은 유지한다.
+LangChain 자동 콜백은 붙이지 않는다. 근거 답변 두 span과 위 검색 span 허용 목록만 내보낸다.
 질문·답변·청크 본문과 예외 원문은 기록하지 않는다. 정상 근거 부족과 시스템 오류·시간 초과·취소를 구별한다.
 Langfuse 전송 실패는 로컬 로그로 드러내며 모델 호출을 반복하지 않는다. 종료 대기는 최대 5초다.
 
@@ -410,7 +464,7 @@ Langfuse 전송 실패는 로컬 로그로 드러내며 모델 호출을 반복�
 이 기존 명령은 **유료 모델 실행**이므로 승인한 자료·호출 예산을 정한 경우에만 사용한다.
 저장 캡처 재계산과 위 smoke 명령은 이 실행 모드를 사용하지 않는다.
 
-업무 Compose의 AI 컨테이너에서 연결할 경우 `localhost`는 컨테이너 자신이다.
+업무 Compose의 Core·AI 컨테이너에서 연결할 경우 `localhost`는 각 컨테이너 자신이다.
 Docker Desktop에서는 `LANGFUSE_BASE_URL=http://host.docker.internal:13000`을 사용한다.
 Linux에서는 두 Compose 네트워크의 연결 또는 호스트 게이트웨이 설정을 별도로 준비해야 한다.
 
@@ -420,7 +474,8 @@ Linux에서는 두 Compose 네트워크의 연결 또는 호스트 게이트웨�
 cd backend/ai-service
 uv run --locked --extra dev --group evaluation python -m pytest \
   tests/test_config.py tests/test_bootstrap.py tests/test_container_image_contract.py \
-  tests/support_program_evidence/test_agent.py tests/support_program_evidence/test_tracing.py \
+  tests/support_program_evidence/test_agent.py tests/support_program_evidence/test_tracing.py tests/test_search_tracing.py \
+  ../../infrastructure/llmops/test_search_trace_smoke.py \
   ../../evaluation/support-program-evidence
 ```
 

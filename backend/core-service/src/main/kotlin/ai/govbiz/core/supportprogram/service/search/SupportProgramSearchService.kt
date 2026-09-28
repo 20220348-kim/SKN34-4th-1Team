@@ -14,6 +14,7 @@ import ai.govbiz.core.supportprogram.service.dto.SupportProgramSearchResult
 import ai.govbiz.core.supportprogram.service.dto.SupportProgramSearchTrace
 import java.time.LocalDate
 import java.time.Clock
+import ai.govbiz.core.supportprogram.helper.SupportProgramSearchTracingHelper
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.stereotype.Service
@@ -25,6 +26,7 @@ class SupportProgramSearchService(
     private val rankingFacade: SupportProgramRankingFacade,
     private val retrievalFacade: AiSupportProgramRetrievalFacade,
     @param:Qualifier("seoulClock") private val clock: Clock,
+    private val tracing: SupportProgramSearchTracingHelper = SupportProgramSearchTracingHelper(),
 ) {
     fun search(
         rawQuery: String?,
@@ -128,6 +130,7 @@ class SupportProgramSearchService(
             }
         }
 
+        tracing.recordSelection(candidates.map { it.program.sourceQualifiedId }, programs.map { it.sourceQualifiedId })
         SearchExecution(
             query = query,
             result = SupportProgramSearchResult(
@@ -171,11 +174,11 @@ class SupportProgramSearchService(
             ),
         )
 
-    private inline fun <T> timed(stage: String, action: () -> T): T {
+    private fun <T> timed(stage: String, action: () -> T): T = tracing.observe(stage) {
         val started = System.nanoTime()
         var completed = false
         try {
-            return action().also { completed = true }
+            action().also { completed = true }
         } finally {
             logger.info(
                 "support_program_search stage={} outcome={} duration_ms={}",

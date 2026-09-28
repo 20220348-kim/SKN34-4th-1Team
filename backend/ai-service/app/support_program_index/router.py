@@ -1,5 +1,7 @@
 from typing import Annotated
 
+from app.tracing import remote_parent
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from app.support_program_index.models import (
@@ -44,11 +46,15 @@ async def prune_index(
 
 @router.post("/search", response_model=SupportProgramIndexSearchResponse)
 async def search_index(
+    request: Request,
     payload: SupportProgramIndexSearchRequest,
     service: Annotated[SupportProgramIndexService, Depends(get_support_program_index_service)],
 ) -> SupportProgramIndexSearchResponse:
     try:
-        return await service.search(payload)
+        with request.app.state.container.llm_tracing.observation(
+            "search.semantic.request", **remote_parent(request.headers.get("traceparent")),
+        ):
+            return await service.search(payload)
     except SupportProgramIndexError as error:
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT if error.code == "INDEX_TIMEOUT" else status.HTTP_503_SERVICE_UNAVAILABLE,
