@@ -947,7 +947,9 @@ HWP 체크박스의 FORM_OBJECT Caption은 주변 문항과 함께 별도 근거
 
 신규·변경 공고의 상태와 시스템 분석 Outbox는 `application_form_availability`에 저장합니다. 공식 제공처 전체 동기화 성공 transaction에서 등록하고, 별도 Worker가 첨부 수집·파싱·AI 분석을 수행합니다. 성공 snapshot 저장과 AVAILABLE 활성화는 하나의 짧은 transaction입니다.
 
-현재 사용자 작성 화면은 계정별 Discovery Job을 실행하지 않고 공고별 availability API에서 활성 snapshot을 읽습니다. 기존 계정별 discovery job API는 별도 책임으로 남아 있습니다. 새 작성은 활성 formVersionId만 허용하고, 기존 작성의 과거 버전과 최종 생성의 공식 원본 해시 대조는 유지합니다.
+공식 첨부는 파일별 원문 길이 제한을 적용하고 AI 문항 추출도 첨부별로 실행합니다. 한 첨부의 원문·응답·입력 위치 매핑이 실패해도 다른 첨부를 계속 확인하며, 검증과 매핑을 통과한 양식이 하나라도 있으면 그 결과만 함께 저장합니다. 모든 후보가 실패하면 해당 실패 코드를 남깁니다.
+
+사용자 작성 화면은 신청 양식 확인 시 availability API에서 활성 snapshot을 먼저 읽습니다. PENDING 또는 STALE이면 기존 계정별 Discovery Job으로 공식 첨부를 분석해 snapshot을 저장하고 결과를 표시합니다. 다른 실패 상태는 자동 재분석하지 않습니다. 새 작성은 활성 formVersionId만 허용하고, 기존 작성의 과거 버전과 최종 생성의 공식 원본 해시 대조는 유지합니다.
 
 Discovery 전용 timeout은 model 210초 < AI run 240초 < Core read 270초 < Worker lease 1,800초입니다. 다른 신청 준비 기능의 전역 timeout은 변경하지 않습니다. [상태·재시도·백필 실행 방법](../../docs/application-form-availability.md)을 참고하세요.
 

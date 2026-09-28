@@ -16,6 +16,7 @@ from openpyxl.cell.cell import MergedCell
 from openpyxl.cell.rich_text import CellRichText
 from openpyxl.styles.numbers import is_date_format
 from openpyxl.utils.cell import range_boundaries
+from openpyxl.worksheet.datavalidation import DataValidation
 
 from app.application_preparation.document_contract import (
     DocumentError, DocumentMap, ENGINES, MAX_BYTES, NativeTarget,
@@ -26,6 +27,20 @@ S = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 MAX_CELLS = 100000
 MAIN_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"
+X14 = "{http://schemas.microsoft.com/office/spreadsheetml/2009/9/main}"
+XM = "{http://schemas.microsoft.com/office/excel/2006/main}"
+
+
+def _comment_only_vml(value: bytes) -> bool:
+    try:
+        root = ET.fromstring(value)
+        shapes = [node for node in root.iter() if node.tag == "{urn:schemas-microsoft-com:vml}shape"]
+        return bool(shapes) and all(
+            shape.get("type") == "#_x0000_t202" and
+            (client := shape.find("{urn:schemas-microsoft-com:office:excel}ClientData")) is not None and
+            client.get("ObjectType") == "Note" for shape in shapes)
+    except ET.ParseError:
+        return False
 
 
 def _package(data: bytes) -> dict[str, bytes]:
@@ -50,20 +65,22 @@ def _package(data: bytes) -> dict[str, bytes]:
         types = ET.fromstring(parts["[Content_Types].xml"])
         if not any(n.get("PartName") == "/xl/workbook.xml" and n.get("ContentType") == MAIN_TYPE for n in types):
             raise DocumentError("UNSUPPORTED", reason="XLSX_ONLY")
-        if any(any(marker in n.get("ContentType", "").lower() for marker in
-                       ("macroenabled", "vbaproject", "activex", "oleobject", "drawing", "chart", "controlproperties", "digital-signature"))
-               for n in types):
+        if any(any(marker in content_type for marker in
+                       ("macroenabled", "vbaproject", "activex", "oleobject", "chart", "controlproperties", "digital-signature"))
+                   or "drawing" in content_type and content_type != "application/vnd.openxmlformats-officedocument.vmldrawing"
+               for n in types if (content_type := n.get("ContentType", "").lower())):
             raise DocumentError("UNSUPPORTED", reason="XLSX_UNSUPPORTED_OBJECT_OR_EXTERNAL_LINK")
         # Never sign, bypass, evaluate, or silently remove unsupported workbook objects.
         if any(name.startswith(("xl/externalLinks/", "_xmlsignatures/", "xl/activeX/",
-                                "xl/ctrlProps/", "xl/embeddings/", "xl/drawings/", "xl/charts/"))
+                                "xl/ctrlProps/", "xl/embeddings/", "xl/charts/"))
+               or name.startswith("xl/drawings/") and not (name.endswith(".vml") and _comment_only_vml(parts[name]))
                or "vba" in name.lower() for name in parts):
             raise DocumentError("UNSUPPORTED", reason="XLSX_UNSUPPORTED_OBJECT_OR_EXTERNAL_LINK")
         for name, value in parts.items():
             if name.endswith(".rels"):
                 root = ET.fromstring(value)
                 if any(n.get("Type", "").lower().rsplit("/", 1)[-1] in {
-                        "vbaproject", "oleobject", "control", "drawing", "vmldrawing", "chart",
+                        "vbaproject", "oleobject", "control", "drawing", "chart",
                         "activexcontrol", "externallink", "externallinkpath", "customui"} for n in root):
                     raise DocumentError("UNSUPPORTED", reason="XLSX_UNSUPPORTED_OBJECT_OR_EXTERNAL_LINK")
                 if any(n.get("TargetMode") == "External" and not n.get("Type", "").endswith("/hyperlink") for n in root):
@@ -89,8 +106,37 @@ def _sheet_parts(parts: dict[str, bytes]) -> dict[str, str]:
     return result
 
 
+def _extended_validations(parts: dict[str, bytes], paths: dict[str, str]) -> dict[str, list[DataValidation]]:
+    result = {}
+    for sheet_name, path in paths.items():
+        root = ET.fromstring(parts[path])
+        rules = []
+        extensions = root.find(S + "extLst")
+        for extension in extensions if extensions is not None else []:
+            if len(extension) != 1 or extension[0].tag != X14 + "dataValidations":
+                raise DocumentError("UNSUPPORTED", reason="XLSX_EXTENDED_VALIDATION_UNSUPPORTED")
+            group = extension[0]
+            items = group.findall(X14 + "dataValidation")
+            if len(items) != len(group) or group.get("count") != str(len(items)):
+                raise DocumentError("UNSUPPORTED", reason="XLSX_EXTENDED_VALIDATION_UNSUPPORTED")
+            for item in items:
+                formula = item.find("./" + X14 + "formula1/" + XM + "f")
+                address = item.find(XM + "sqref")
+                if item.get("type") != "list" or formula is None or not formula.text or address is None or not address.text:
+                    raise DocumentError("UNSUPPORTED", reason="XLSX_EXTENDED_VALIDATION_UNSUPPORTED")
+                try:
+                    rule = DataValidation(type="list", formula1=formula.text)
+                    rule.add(address.text)
+                except (TypeError, ValueError):
+                    raise DocumentError("UNSUPPORTED", reason="XLSX_EXTENDED_VALIDATION_UNSUPPORTED") from None
+                rules.append(rule)
+        result[sheet_name] = rules
+    return result
+
+
 def _workbook(data: bytes, parts: dict[str, bytes]):
     paths = _sheet_parts(parts)
+    extended = _extended_validations(parts, paths)
     total = 0
     for path in paths.values():
         root = ET.fromstring(parts[path])
@@ -117,10 +163,11 @@ def _workbook(data: bytes, parts: dict[str, bytes]):
         with warnings.catch_warnings(record=True) as notices:
             warnings.simplefilter("always")
             workbook = load_workbook(BytesIO(data), data_only=False, keep_links=False, rich_text=True)
-        if notices:
+        if any(str(notice.message) != "Data Validation extension is not supported and will be removed"
+               or not any(extended.values()) for notice in notices):
             workbook.close()
             raise DocumentError("UNSUPPORTED", reason="XLSX_READER_WARNING")
-        return workbook, paths
+        return workbook, paths, extended
     except DocumentError:
         raise
     except Exception:
@@ -218,7 +265,9 @@ def cell_value(target: NativeTarget, value: str):
 class XlsxDocumentAdapter:
     def _inspect_bytes(self, data: bytes):
         parts = _package(data)
-        workbook, paths = _workbook(data, parts)
+        workbook, paths, extended = _workbook(data, parts)
+        sparse_layout = sum(len(ET.fromstring(parts[path]).findall("./" + S + "sheetData/" + S + "row/" + S + "c"))
+                            for path in paths.values()) > 3000
         targets = []
         sheets = []
         workbook_protected = bool(workbook.security and
@@ -257,7 +306,8 @@ class XlsxDocumentAdapter:
                           "freezePanes": str(sheet.freeze_panes) if sheet.freeze_panes else None,
                           "tables": [{"name": t.name, "ref": t.ref} for t in sheet.tables.values()],
                           "dataValidations": [{"type": v.type, "sourceRange": str(v.sqref),
-                              "formula1": v.formula1, "formula2": v.formula2} for v in sheet.data_validations.dataValidation],
+                              "formula1": v.formula1, "formula2": v.formula2} for v in
+                              [*sheet.data_validations.dataValidation, *extended[sheet.title]]],
                           "formulaCount": formulas, "protected": bool(sheet.protection.sheet)}
             sheets.append(sheet_info)
             section = ""
@@ -294,7 +344,8 @@ class XlsxDocumentAdapter:
                     labels = list(dict.fromkeys(v for v in (left, above) if v))
                     repeated_blank = bool(header_row and cell.row > header_row + 1
                                           and sheet.cell(cell.row - 1, cell.column).value is None)
-                    validations = [v for v in sheet.data_validations.dataValidation if cell.coordinate in v]
+                    validations = [v for v in [*sheet.data_validations.dataValidation, *extended[sheet.title]]
+                                   if cell.coordinate in v]
                     validation = None
                     if validations:
                         v = validations[0]
@@ -322,8 +373,8 @@ class XlsxDocumentAdapter:
                               "DATA_TABLE" if table_region else "REPEATED_ROW_NOT_SELECTED" if repeated_blank else "UNSUPPORTED_CELL_OBJECT" if complex_cell else
                                "UNRESOLVED_OPTION" if validation and not validation["promptOnly"] and not validation["allowedValues"] else
                               "NONEMPTY_CELL" if not blank else "AMBIGUOUS_BLANK_CELL" if not evidence else None)
-                    # Skip unmaterialized/layout blanks rather than inventing a used-grid address.
-                    if blank and not child and node is None:
+                    # Styled blank cells without a label or native validation are layout, not inputs.
+                    if blank and not child and (node is None or sparse_layout and not labels and not validations):
                         continue
                     text = _text(cell.value)
                     if len(text) > 6000 or len(targets) >= 3000:

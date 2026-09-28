@@ -5,7 +5,7 @@
 - 제공처 전체 수집·검증 성공 → SupportProgramCatalogPublicationService의 공개 snapshot transaction → 공고별 `application_form_availability` PENDING 등록. 같은 제공처 transaction이 rollback되면 분석 작업도 남지 않는다.
 - ApplicationFormAnalysisWorker → ApplicationFormAnalysisService → ApplicationFormDiscoveryService → 제공처 AttachmentClient → 공식 첨부 다운로드 → SupportProgramDocumentParser → AiApplicationPreparationFacade → AI Service discovery → OpenAI.
 - 외부 I/O가 모두 끝나면 분석·백필 Service가 소유하는 짧은 transaction에서 application_form_snapshot 저장과 AVAILABLE 활성화를 함께 commit한다.
-- 작성 화면에서 공고 선택 → **저장된 신청 양식 확인** 버튼 클릭 → GET `/api/v1/application-preparations/forms/availability?sourceCode=...&sourceProgramId=...` → DB 상태와 활성 snapshot 직접 조회. 공고 선택만으로 조회하지 않으며 계정별 Discovery Job POST·폴링을 실행하지 않는다. AVAILABLE이면 첫 양식을 선택해 신청 문서 확인 단계로 이동하고, 그 외 상태는 빈 양식 목록과 함께 상태·실패 원인을 표시한다.
+- 작성 화면에서 공고 선택 → **신청 양식 확인** 버튼 클릭 → GET `/api/v1/application-preparations/forms/availability?sourceCode=...&sourceProgramId=...` → DB 상태와 활성 snapshot 조회. AVAILABLE이면 저장된 양식을 즉시 표시한다. PENDING 또는 STALE이면 기존 계정별 Discovery Job을 요청·폴링하여 공식 첨부 수집·분석 결과를 저장한 뒤 표시한다. 다른 실패 상태는 자동 재분석하지 않고 상태·실패 원인을 표시한다. 공고 선택만으로 유료 분석을 시작하지 않는다.
 - 새 작성 POST는 같은 transaction에서 활성 공고 행을 잠그고 formVersionId를 확인한다. 기존 작성은 원래 formVersionId를 계속 사용한다.
 - 최종 문서 생성은 공식 첨부를 재다운로드해 attachmentSha256을 대조한다. 불일치·소실이면 생성하지 않고 STALE로 등록한다. 이미 만들어진 파일 조회·다운로드는 기존 작성 버전을 유지한다.
 

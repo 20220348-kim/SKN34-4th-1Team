@@ -228,6 +228,47 @@ def test_discovery_recovers_the_original_punctuation_in_a_field_quote():
     assert result["forms"][0]["sections"][0]["fields"][0]["evidenceQuote"] == "사업명(국문)"
 
 
+def test_discovery_recovers_bounded_source_span_when_ai_omits_intervening_instruction():
+    from app.application_preparation.models import validate_discovery, FormDiscoveryValidationError
+    source = ("① 대체수입처 발굴 및 현장검증\n"
+              "* 신청기업이 발굴 중인 대체수입처를 기재하고, 없으면 해외무역관의 조사를 요청합니다.\n"
+              "희망국가\n희망 공급사\n*있을 경우 기재")
+    proposed = "① 대체수입처 발굴 및 현장검증\n희망국가\n희망 공급사\n*있을 경우 기재"
+    request_data = discovery_request_data()
+    output_data = discovery_selection_data()
+    field = output_data["forms"][0]["sections"][0]["fields"][0]
+    block = next(item for item in request_data["documents"][0]["blocks"] if item["blockId"] == field["evidenceBlockId"])
+    block["text"] = source
+    field.update(label="첫 번째 희망국가", evidenceQuote=proposed)
+    request = DiscoverFormsRequest.model_validate(request_data)
+    output = FormDiscoverySelection.model_validate(output_data)
+    validate_discovery(request, output)
+    assert output.forms[0].sections[0].fields[0].evidenceQuote == source
+
+    output_data["forms"][0]["sections"][0]["fields"][0]["evidenceQuote"] = proposed.replace("희망 공급사", "원문에 없는 공급사")
+    with pytest.raises(FormDiscoveryValidationError, match="EVIDENCE_QUOTE_MISMATCH"):
+        validate_discovery(request, FormDiscoverySelection.model_validate(output_data))
+
+
+def test_discovery_uses_ordered_row_and_year_label_when_ai_quote_has_wrong_column_order():
+    from app.application_preparation.models import validate_discovery, FormDiscoveryValidationError
+    source = "매출액\n2023년\n2024년\n2025년\n수입액\n(단위: USD)\n2023년\n2024년\n2025년\n다음 항목"
+    request_data = discovery_request_data()
+    output_data = discovery_selection_data()
+    field = output_data["forms"][0]["sections"][0]["fields"][0]
+    block = next(item for item in request_data["documents"][0]["blocks"] if item["blockId"] == field["evidenceBlockId"])
+    block["text"] = source
+    field.update(label="수입액 2025년", evidenceQuote="2024년\n2025년\n구분")
+    request = DiscoverFormsRequest.model_validate(request_data)
+    output = FormDiscoverySelection.model_validate(output_data)
+    validate_discovery(request, output)
+    assert output.forms[0].sections[0].fields[0].evidenceQuote == "수입액\n(단위: USD)\n2023년\n2024년\n2025년"
+
+    field["label"] = "원문에 없는 항목 2025년"
+    with pytest.raises(FormDiscoveryValidationError, match="EVIDENCE_QUOTE_MISMATCH"):
+        validate_discovery(request, FormDiscoverySelection.model_validate(output_data))
+
+
 def test_discovery_still_rejects_a_field_without_any_source_anchor():
     output = discovery_selection_data()
     field = output["forms"][0]["sections"][0]["fields"][0]

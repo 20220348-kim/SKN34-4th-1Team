@@ -122,6 +122,8 @@ native write는 기존 `input` 또는 `set_field`를 재사용하며 빈 셀에�
 
 ZIP entry 512개, 압축 해제 합계 32 MiB, 전체 used grid 100,000칸, sheet 30개, native target 3,000개 제한을 적용한다. XML DTD/ENTITY, 암호 ZIP, 중복/경로 탈출 entry, macro/signature, external calculation link, embedded/ActiveX/form control, drawing/chart는 미지원으로 중단한다. 원본 binary와 작성본은 평가 자료에 저장하지 않는다.
 
+주석만 표시하는 VML과 목록형 확장 데이터 검증은 원본 구조를 확인해 허용한다. 확장 목록의 실제 허용값은 native mapping에 전달하며, 편집 시 변경 대상 셀 XML만 교체해 주석·VML·검증 XML을 보존한다. 다른 VML 컨트롤이나 해석할 수 없는 검증 규칙은 계속 거절한다. 서식만 적용된 대규모 빈 범위는 문항 근거에서 제외하고, native inspect에서도 문항 라벨·검증 규칙이 없는 빈 셀만 대상 목록에서 생략한다.
+
 XLSX label 근거에는 visible sheet/row/column의 텍스트만 사용합니다. 숨긴 label 옆의 visible blank도 입력 근거가 없으면 제외합니다. validation의 `sourceRange`는 적용 범위(sqref)이고 실제 option source는 `formula1`에 원문 그대로 기록합니다.
 
 ### 상위 업무 mapping과 MCP 경계

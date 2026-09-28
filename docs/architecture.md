@@ -112,7 +112,7 @@ DB transaction 밖에서 해석합니다. 요청 키와 당시 입력을 먼저 
 본인 준비 건의 DELETE는 `ApplicationPreparationRepository → MyBatis → MySQL`에서 소유자 조건으로 한 행을 지우고,
 확인 사실·AI 실행 기록은 FK cascade로 삭제하지만 공용 `application_form_snapshot`은 유지합니다.
 Frontend는 `/app/application-preparations`의 목록·삭제, `/new`의 지연 조회 관심 공고 팝업과 전체 카탈로그 공고 검색·선택을 첫 단계로,
-저장된 신청 양식 확인 버튼으로 공고별 availability API를 조회한 뒤 활성 snapshot을 별도 두 번째 단계로 표시하고, `/:preparationId`의 공식 문항
+신청 양식 확인 버튼으로 공고별 availability API를 조회하고 활성 snapshot을 별도 두 번째 단계로 표시합니다. 미분석·변경 공고는 Discovery Job 완료 후 표시하며, `/:preparationId`의 공식 문항
 상세와 질문·사실 확인을 연결합니다. AI 제안은 저장하지 않고 사용자가 선택·수정한 전체 문항 입력만 revision을 올려 저장합니다.
 신청 문서와 중복 지원 검토의 공고 검색은 공용 `SupportProgramSearchFilters`에서 검색어·지역·지원 분야·출처·접수 상태를 입력받고,
 각 ViewModel → `BrowseSupportProgramsUseCase` → 기존 catalog HTTP API로 전달합니다. 검색 버튼은 1페이지부터 조회하고,
@@ -953,7 +953,9 @@ HWP 체크박스의 FORM_OBJECT Caption은 주변 문항과 함께 별도 근거
 
 신규·변경 공고의 상태와 시스템 분석 Outbox는 `application_form_availability`에 저장합니다. 공식 제공처 전체 동기화 성공 transaction에서 등록하고, 별도 Worker가 첨부 수집·파싱·AI 분석을 수행합니다. 성공 snapshot 저장과 AVAILABLE 활성화는 하나의 짧은 transaction입니다.
 
-현재 사용자 작성 화면은 계정별 Discovery Job을 실행하지 않고 공고별 availability API에서 활성 snapshot을 읽습니다. 기존 계정별 discovery job API는 별도 책임으로 남아 있습니다. 새 작성은 활성 formVersionId만 허용하고, 기존 작성의 과거 버전과 최종 생성의 공식 원본 해시 대조는 유지합니다.
+사용자 작성 화면은 신청 양식 확인 시 availability API에서 활성 snapshot을 먼저 읽습니다. PENDING 또는 STALE이면 기존 계정별 Discovery Job으로 공식 첨부를 분석해 snapshot을 저장하고 결과를 표시합니다. 다른 실패 상태는 자동 재분석하지 않습니다. 새 작성은 활성 formVersionId만 허용하고, 기존 작성의 과거 버전과 최종 생성의 공식 원본 해시 대조는 유지합니다.
+
+Discovery는 첨부별 파싱 길이를 제한하고 각 첨부의 AI 문항 추출·Core 모델 변환·입력 위치 매핑을 독립적으로 처리합니다. 검증된 후보만 저장하며 다른 후보의 실패가 이미 검증된 양식을 취소하지 않습니다. 모든 후보가 실패하면 공고는 검토 상태와 실패 사유를 유지합니다.
 
 Discovery 전용 timeout은 model 210초 < AI run 240초 < Core read 270초 < Worker lease 1,800초입니다. 다른 신청 준비 기능의 전역 timeout은 변경하지 않습니다. [상태·재시도·백필 실행 방법](application-form-availability.md)을 참고하세요.
 

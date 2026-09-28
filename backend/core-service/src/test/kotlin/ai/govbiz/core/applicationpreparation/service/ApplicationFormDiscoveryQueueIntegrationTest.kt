@@ -10,6 +10,7 @@ import ai.govbiz.core.admin.service.QueueOperationsService
 import ai.govbiz.core.applicationpreparation.client.ApplicationFormDiscoveryQueueClient
 import ai.govbiz.core.applicationpreparation.config.ApplicationFormDiscoveryRabbitConfig
 import ai.govbiz.core.applicationpreparation.domain.ApplicationFormDiscoveryResult
+import ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentMapSnapshot
 import ai.govbiz.core.applicationpreparation.repository.ApplicationFormDiscoveryJobRepository
 import ai.govbiz.core.applicationpreparation.service.exception.ApplicationFormDiscoveryException
 import jakarta.servlet.http.Cookie
@@ -180,6 +181,38 @@ class ApplicationFormDiscoveryQueueIntegrationTest {
         mvc.perform(get("$BASE/${job.id}").cookie(cookie(account))).andExpect(status().isOk)
             .andExpect(jsonPath("$.status").value("FAILED"))
             .andExpect(jsonPath("$.failureCode").value("APPLICATION_FORM_AI_INVALID_RESPONSE"))
+    }
+
+    @Test
+    fun largeNativeMapResultIsRecordedBeforeJobAcknowledgement() {
+        val targets = (0 until 1100).map { index ->
+            mapOf("targetId" to "xlsx:cell-$index", "context" to "공식 입력칸 문맥".repeat(350))
+        }
+        val snapshot = ApplicationDocumentMapSnapshot("application-document-mcp-v1", "large-map-test", form.attachmentSha256,
+            "native-map-v2", "test-engine", emptyList(), emptyList(), mapOf("targets" to targets))
+        val largeResult = ApplicationFormDiscoveryResult(listOf(form.copy(documentMapSnapshot = snapshot)), emptyList(), false)
+        `when`(discovery.discoverQueued(anyString(), anyString(), any<() -> Unit>() ?: {})).thenAnswer { invocation ->
+            invocation.getArgument<() -> Unit>(2).invoke()
+            largeResult
+        }
+        val job = enqueue()
+        service.executeQueued(job.id)
+        assertEquals("SUCCEEDED", state(job.id))
+        assertEquals(1100, (jobs.findOwned(account.id, job.id)?.result?.forms?.single()?.documentMapSnapshot
+            ?.documentMap?.get("targets") as? List<*>)?.size)
+    }
+
+    @Test
+    fun invalidCoreManifestAfterAiResponseIsAConfirmedFailure() {
+        doAnswer { invocation ->
+            invocation.getArgument<() -> Unit>(2).invoke()
+            throw ai.govbiz.core._common.exception.AiServiceCallException.invalidResponse(
+                "Application form discovery output could not form a safe manifest", IllegalArgumentException("invalid application form choices"))
+        }.`when`(discovery).discoverQueued(anyString(), anyString(), any<() -> Unit>() ?: {})
+        val job = enqueue()
+        service.executeQueued(job.id)
+        assertEquals("FAILED", state(job.id))
+        assertEquals("APPLICATION_FORM_AI_INVALID_RESPONSE", jobs.findOwned(account.id, job.id)?.failureCode)
     }
 
     @Test

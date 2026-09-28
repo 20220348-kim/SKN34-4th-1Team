@@ -63,8 +63,9 @@ class BizInfoAttachmentClient(
             var totalBytes = 0
             var skippedForSize = false
             selected.forEach { (link, descriptor) ->
+                var mimeType: String? = null
                 val bytes = try {
-                    download(URI(link), MAX_SUPPORT_PROGRAM_ATTACHMENT_BYTES)
+                    download(URI(link), MAX_SUPPORT_PROGRAM_ATTACHMENT_BYTES) { mimeType = it }
                 } catch (error: SupportProgramDocumentException) {
                     if (error.reason != Reason.TOO_LARGE) throw error
                     skippedForSize = true
@@ -76,7 +77,7 @@ class BizInfoAttachmentClient(
                     warnings.add("미수집 첨부(공고별 전체 크기 제한 초과): ${descriptor.first.take(250)}")
                     return@forEach
                 }
-                files.add(SupportProgramAttachment(link, descriptor.first.take(300), descriptor.second, bytes))
+                files.add(SupportProgramAttachment(link, descriptor.first.take(300), descriptor.second, bytes, mimeType))
                 totalBytes += bytes.size
             }
             if (files.isEmpty()) fail(if (skippedForSize) Reason.TOO_LARGE else Reason.UNSUPPORTED)
@@ -109,9 +110,10 @@ class BizInfoAttachmentClient(
     private fun normalizedTitle(name: String): String = name.replace(Regex("(?i)\\.(hwpx|hwp|pdf|docx|xlsx).*"), "")
         .replace(Regex("[^\\p{L}\\p{N}]"), "").lowercase()
 
-    private fun download(uri: URI, limit: Int): ByteArray {
+    private fun download(uri: URI, limit: Int, observeMimeType: (String?) -> Unit = {}): ByteArray {
         requireTrustedUri(uri)
         return restClient.get().uri(uri).accept(MediaType.ALL).exchange { _, response ->
+            observeMimeType(response.headers.contentType?.toString())
             if (response.statusCode.value() == 404) fail(Reason.NOT_FOUND)
             if (response.statusCode.value() != 200) fail(Reason.UNAVAILABLE)
             if (response.headers.contentLength > limit) fail(Reason.TOO_LARGE)

@@ -174,10 +174,17 @@ async def map_document(request: MapDocumentRequest, agent) -> dict:
         if request.format == "hwpx":
             for field in request.fields:
                 key = mapping_label_key(field.label.partition(" / ")[2] or field.label)
+                if any(other.editable and other.nativeLocator.get("bindingEligible", True)
+                       and key in {mapping_label_key(label) for label in other.nativeLocator.get("rowLabels", [])}
+                       and key in {mapping_label_key(heading) for heading in other.nativeLocator.get("tableHeadings", [])}
+                       for other in document.targets):
+                    continue
                 for target in document.targets:
                     columns = target.nativeLocator.get("columnLabels", [])
                     headings = target.nativeLocator.get("tableHeadings", [])
                     if len(columns) > 1 and key in {mapping_label_key(h) for h in headings} and not any(mapping_label_key(c) in key for c in columns):
+                        logger.warning("hwpx_compound_question source_sha256=%s field_id=%s field_label=%s columns=%s",
+                                       request.sourceSha256, field.id, field.label[:100], columns[:12])
                         raise DocumentError("FORM_REANALYSIS_REQUIRED", reason="COMPOUND_TABLE_QUESTION")
         labels = {mapping_label_key(field.label.partition(" / ")[2] or field.label) for field in request.fields}
         labels.add(mapping_label_key(request.scope.splitlines()[0]))
@@ -212,7 +219,15 @@ async def map_document(request: MapDocumentRequest, agent) -> dict:
                 validate_mapping(request, document, selection)
                 break
             except DocumentError as error:
-                if attempt != 0 or error.reason not in {"MAPPING_BOX_COVERS_PRINTED_LABEL", "MAPPING_TARGET_OVERLAP", "MAPPING_BOX_OUT_OF_PAGE", "FIELD_LABEL_MISMATCH", "INVALID_UNMAPPED_FIELDS", "FIELD_COVERAGE_MISMATCH"}:
+                targets_by_id = {target.targetId: target for target in document.targets}
+                logger.warning("document_mapping_rejected format=%s source_sha256=%s attempt=%d reason=%s bindings=%s",
+                               request.format, request.sourceSha256, attempt, error.reason,
+                               [{"fieldId": binding.factId, "targetId": binding.targetId,
+                                 "kind": targets_by_id[binding.targetId].kind if binding.targetId in targets_by_id else "UNKNOWN",
+                                 "editable": targets_by_id[binding.targetId].editable if binding.targetId in targets_by_id else False,
+                                 "inScope": binding.targetId in selection.scopeTargetIds}
+                                for binding in selection.bindings[:30]])
+                if attempt != 0 or error.reason not in {"MAPPING_BOX_COVERS_PRINTED_LABEL", "MAPPING_TARGET_OVERLAP", "MAPPING_BOX_OUT_OF_PAGE", "FIELD_LABEL_MISMATCH", "INVALID_UNMAPPED_FIELDS", "FIELD_COVERAGE_MISMATCH", "MAPPING_TARGET_NOT_EDITABLE_OR_OUT_OF_SCOPE"}:
                     raise
                 rejected_reason = error.reason
                 logger.warning("document_mapping_correction reason=%s attempt=1", error.reason)

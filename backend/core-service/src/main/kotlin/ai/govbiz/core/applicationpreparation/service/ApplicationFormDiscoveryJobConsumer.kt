@@ -28,8 +28,8 @@ class ApplicationFormDiscoveryJobConsumer(private val service: ApplicationFormDi
         val recorded = try {
             service.executeQueued(id)
             true
-        } catch (_: Exception) {
-            log.warn("Application form discovery processing outcome unconfirmed; runId={}", id)
+        } catch (error: Exception) {
+            log.error("Application form discovery processing outcome unconfirmed; runId={}", id, error)
             false
         }
         if (recorded) channel.basicAck(tag, false) else channel.basicReject(tag, false)

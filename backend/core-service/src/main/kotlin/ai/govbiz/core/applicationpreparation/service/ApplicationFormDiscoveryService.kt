@@ -29,6 +29,7 @@ import ai.govbiz.core.supportprogram.service.detail.SupportProgramDetailService
 import ai.govbiz.core.supportprogram.service.detail.exception.SupportProgramNotFoundException
 import java.security.MessageDigest
 import org.springframework.stereotype.Service
+import org.slf4j.LoggerFactory
 
 /** 사용자가 선택한 지원 공고의 제공처별 공식 첨부를 분석해 재사용 가능한 양식 스냅샷을 만듭니다. */
 @Service
@@ -46,6 +47,7 @@ class ApplicationFormDiscoveryService(
     private val availability: ai.govbiz.core.applicationpreparation.repository.ApplicationFormAvailabilityRepository,
     transactionManager: org.springframework.transaction.PlatformTransactionManager,
 ) {
+    private val logger = LoggerFactory.getLogger(javaClass)
     private val transactions = org.springframework.transaction.support.TransactionTemplate(transactionManager)
     fun discover(account: Account, sourceCode: String, sourceProgramId: String): ApplicationFormDiscoveryResult {
         require(account.id > 0)
@@ -94,9 +96,15 @@ class ApplicationFormDiscoveryService(
                 },
             )
         } catch (error: Exception) {
-            if (lease != null) availability.finish(lease,
-                ApplicationFormAvailabilityStatus.REVIEW_REQUIRED,
-                "MANUAL_REANALYSIS_FAILED", cacheResult = false)
+            if (lease != null) {
+                val reason = when (error) {
+                    is ApplicationFormDiscoveryException -> "APPLICATION_FORM_${error.reason.name}"
+                    is ai.govbiz.core.applicationpreparation.service.exception.ApplicationDocumentException -> error.code
+                    is AiServiceCallException -> "AI_${error.failure.name}"
+                    else -> "MANUAL_REANALYSIS_FAILED"
+                }
+                availability.finish(lease, ApplicationFormAvailabilityStatus.REVIEW_REQUIRED, reason, cacheResult = false)
+            }
             throw error
         }
     }
@@ -166,6 +174,8 @@ class ApplicationFormDiscoveryService(
                 val blocks = try {
                     parser.parse(file.bytes, file.format)
                 } catch (error: SupportProgramDocumentException) {
+                    logger.warn("application_form_candidate sourceCode={} sourceProgramId={} candidateIndex={} attachmentId={} filename={} format={} mimeType={} fileSize={} stage=PARSER errorCode={} rootException={}",
+                        sourceCode, sourceProgramId, documentIndex, attachmentId(file.sourceUrl), file.fileName.take(250), file.format, file.mimeType, file.bytes.size, error.reason.name, error.javaClass.name)
                     if (error.reason !in setOf(
                             SupportProgramDocumentException.Reason.UNSUPPORTED,
                             SupportProgramDocumentException.Reason.TOO_LARGE,
@@ -175,6 +185,8 @@ class ApplicationFormDiscoveryService(
                     warnings.add("자동 분석 제외 첨부(SOURCE_${error.reason.name}): ${file.fileName.take(250)}")
                     return@mapIndexedNotNull null
                 }
+                logger.info("application_form_candidate sourceCode={} sourceProgramId={} candidateIndex={} attachmentId={} filename={} format={} mimeType={} fileSize={} stage=PARSED blockCount={} sourceLength={}",
+                    sourceCode, sourceProgramId, documentIndex, attachmentId(file.sourceUrl), file.fileName.take(250), file.format, file.mimeType, file.bytes.size, blocks.size, blocks.sumOf { it.text.length })
                 ApplicationFormDiscoveryDocument(
                     documentIndex,
                     file.sourceUrl,
@@ -188,22 +200,53 @@ class ApplicationFormDiscoveryService(
                     sourceBytes = file.bytes.takeIf { file.format == "HWPX" },
                 )
             }
-            if (documents.isEmpty()) throw ApplicationFormDiscoveryException(excludedReason)
-            if (documents.sumOf { document -> document.blocks.sumOf { it.text.length } } > 120_000) {
-                throw ApplicationFormDiscoveryException(Reason.SOURCE_TOO_LARGE)
+            val sourceLimit = 120_000
+            val eligibleDocuments = documents.filter { document ->
+                val length = document.blocks.sumOf { it.text.length }
+                if (length > sourceLimit) {
+                    hasExcludedDocument = true
+                    excludedReason = Reason.SOURCE_TOO_LARGE
+                    logger.warn("application_form_candidate sourceCode={} sourceProgramId={} candidateIndex={} attachmentId={} filename={} format={} fileSize={} stage=SOURCE_LIMIT sourceLength={} limit={} errorCode=SOURCE_TOO_LARGE",
+                        sourceCode, sourceProgramId, document.documentIndex, attachmentId(document.sourceUrl), document.fileName.take(250), document.format, document.bytes, length, sourceLimit)
+                    warnings.add("자동 분석 제외 첨부(SOURCE_TOO_LARGE): ${document.fileName.take(250)}")
+                    false
+                } else true
             }
+            if (eligibleDocuments.isEmpty()) throw ApplicationFormDiscoveryException(excludedReason)
             val input = ApplicationFormDiscoveryInput(
                 sourceCode,
                 sourceProgramId,
                 collected.programTitle.ifBlank { catalogTitle },
                 sourceUrl,
-                documents,
+                eligibleDocuments,
             )
+            var candidateFailure: Exception? = null
             val extracted = if (recordedPayload != null) ai.validateDiscoveryPayload(input, configuration, recordedPayload)
-                else { beforeAi(); ai.discover(input, configuration) }
-            if (extracted.isEmpty()) throw ApplicationFormDiscoveryException(if (hasExcludedDocument) excludedReason else Reason.NO_FORM)
-            val forms = try {
-                extracted.map { candidate ->
+                else {
+                    beforeAi()
+                    eligibleDocuments.flatMap { document ->
+                        try {
+                            val candidates = ai.discover(input.copy(documents = listOf(document)), configuration)
+                            logger.info("application_form_candidate sourceCode={} sourceProgramId={} candidateIndex={} attachmentId={} filename={} stage=AI_ANALYSIS formCount={} model={}",
+                                sourceCode, sourceProgramId, document.documentIndex, attachmentId(document.sourceUrl), document.fileName.take(250), candidates.size, configuration.model)
+                            candidates
+                        } catch (error: AiApplicationFormValidationException) {
+                            if (candidateFailure == null) candidateFailure = ApplicationFormDiscoveryException(Reason.AI_INVALID_RESPONSE, error)
+                            logger.warn("application_form_candidate sourceCode={} sourceProgramId={} candidateIndex={} attachmentId={} filename={} stage=AI_VALIDATION errorCode=AI_INVALID_RESPONSE",
+                                sourceCode, sourceProgramId, document.documentIndex, attachmentId(document.sourceUrl), document.fileName.take(250))
+                            emptyList()
+                        } catch (error: AiServiceCallException) {
+                            if (error.failure.name != "INVALID_RESPONSE") throw error
+                            if (candidateFailure == null) candidateFailure = error
+                            logger.warn("application_form_candidate sourceCode={} sourceProgramId={} candidateIndex={} attachmentId={} filename={} stage=CORE_RESPONSE_VALIDATION errorCode=AI_INVALID_RESPONSE",
+                                sourceCode, sourceProgramId, document.documentIndex, attachmentId(document.sourceUrl), document.fileName.take(250))
+                            emptyList()
+                        }
+                    }
+                }
+            if (extracted.isEmpty()) throw candidateFailure ?: ApplicationFormDiscoveryException(if (hasExcludedDocument) excludedReason else Reason.NO_FORM)
+            val forms = extracted.mapNotNull { candidate ->
+                try {
                     val document = requireNotNull(documents.find { it.documentIndex == candidate.documentIndex })
                     val blockById = document.blocks.associateBy { it.blockId }
                     ApplicationFormManifest(
@@ -236,11 +279,36 @@ class ApplicationFormDiscoveryService(
                             )
                         },
                     )
+                } catch (error: IllegalArgumentException) {
+                    val document = documents.find { it.documentIndex == candidate.documentIndex }
+                    val failure = AiServiceCallException.invalidResponse("Application form discovery output could not form a safe manifest", error)
+                    if (candidateFailure == null) candidateFailure = failure
+                    val optionDiagnostics = candidate.sections.flatMap { section -> section.fields.mapNotNull { field ->
+                        field.options.takeIf { it.isNotEmpty() }?.let { options ->
+                            "${section.key}:${field.key} count=${options.size} distinct=${options.distinct().size} " +
+                                "controlCodePoints=${options.flatMap { option -> option.codePoints().toArray().toList() }.filter { Character.getType(it) in setOf(Character.CONTROL.toInt(), Character.FORMAT.toInt()) }.distinct()}"
+                        }
+                    } }.take(10)
+                    logger.warn("application_form_candidate sourceCode={} sourceProgramId={} candidateIndex={} attachmentId={} filename={} stage=CORE_MODEL errorCode=AI_INVALID_RESPONSE rootException={} rootMessage={} optionDiagnostics={}",
+                        sourceCode, sourceProgramId, candidate.documentIndex, document?.sourceUrl?.let(::attachmentId), document?.fileName?.take(250), error.javaClass.name, error.message?.take(500), optionDiagnostics, error)
+                    null
                 }
-            } catch (error: IllegalArgumentException) {
-                throw AiServiceCallException.invalidResponse("Application form discovery output could not form a safe manifest", error)
             }
-            val bound = if (recordedPayload == null) bindDocumentMaps(forms, collected.files) else forms
+            val bound = if (recordedPayload == null) forms.mapNotNull { form ->
+                try {
+                    bindDocumentMaps(listOf(form), collected.files).single()
+                } catch (error: ai.govbiz.core.applicationpreparation.service.exception.ApplicationDocumentException) {
+                    val root = generateSequence(error as Throwable) { it.cause }.last()
+                    if (candidateFailure == null) candidateFailure = error
+                    val original = collected.files.find { sha256(it.bytes) == form.attachmentSha256 }
+                    logger.error("application_form_candidate sourceCode={} sourceProgramId={} candidateIndex={} attachmentId={} filename={} sourceSha256={} fileSize={} stage=DOCUMENT_MAPPING errorCode={} rootException={} rootMessage={}",
+                        sourceCode, sourceProgramId, documents.find { it.sha256 == form.attachmentSha256 }?.documentIndex,
+                        original?.sourceUrl?.let(::attachmentId), form.attachmentFileName.take(250), form.attachmentSha256,
+                        form.attachmentBytes, error.code, root.javaClass.name, root.message?.take(500), error)
+                    null
+                }
+            } else forms
+            if (bound.isEmpty()) throw candidateFailure ?: ApplicationFormDiscoveryException(if (hasExcludedDocument) excludedReason else Reason.NO_FORM)
             if (persist != null) persist(bound, metadata)
             else snapshots.save(bound, sourceFingerprint, SupportProgramDocumentParser.VERSION, configuration)
             val storedForms = bound.map { form -> requireNotNull(snapshots.findByVersion(form.formVersionId)) }
@@ -272,6 +340,9 @@ class ApplicationFormDiscoveryService(
             ?: throw ApplicationFormDiscoveryException(Reason.SOURCE_CHANGED)
         form.copy(documentMapSnapshot = documentMapping.ensure(form, original.bytes, original.format))
     }
+
+    private fun attachmentId(sourceUrl: String): String? =
+        Regex("(?:[?&])atchFileId=(FILE_[0-9]+)&fileSn=([0-9]+)").find(sourceUrl)?.let { "${it.groupValues[1]}:${it.groupValues[2]}" }
 
     private fun formVersionId(
         sourceCode: String,

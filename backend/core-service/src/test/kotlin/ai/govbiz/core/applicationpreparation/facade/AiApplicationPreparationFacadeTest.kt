@@ -228,6 +228,20 @@ class AiApplicationPreparationFacadeTest {
         assertThrows(AiServiceCallException::class.java) { facade.discover(discoveryInput(quote), configuration) }
     }
 
+    @Test
+    fun normalizesSourceVerifiedLineBreaksInChoicesWithoutMergingDifferentOptions() {
+        val configuration = ApplicationFormDiscoveryConfiguration(AI_APPLICATION_FORM_DISCOVERY_CONTRACT_VERSION, "test-model", "sha256:${"b".repeat(64)}")
+        val quote = "신청분야: 안전관리\n체계 구축, 화학물질\n안전관리"
+        `when`(client.discover(any(AiApplicationFormDiscoveryRequest::class.java) ?: fallbackDiscovery())).thenReturn(
+            discoveryPayload("하나 선택", quote, listOf("안전관리\n체계 구축", "화학물질\n안전관리")))
+        assertEquals(listOf("안전관리 체계 구축", "화학물질 안전관리"),
+            facade.discover(discoveryInput(quote), configuration).single().sections.single().fields.single().options)
+        val duplicateQuote = "분야: 안전 관리 / 안전\n관리"
+        `when`(client.discover(any(AiApplicationFormDiscoveryRequest::class.java) ?: fallbackDiscovery())).thenReturn(
+            discoveryPayload("하나 선택", duplicateQuote, listOf("안전 관리", "안전\n관리")))
+        assertThrows(AiServiceCallException::class.java) { facade.discover(discoveryInput(duplicateQuote), configuration) }
+    }
+
     private fun discoveryPayload(guidance: String, quote: String, options: List<String> = emptyList()) = AiApplicationFormDiscoveryPayload(
         AI_APPLICATION_FORM_DISCOVERY_CONTRACT_VERSION,
         "test-model",
