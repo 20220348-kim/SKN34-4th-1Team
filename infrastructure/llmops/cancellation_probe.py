@@ -2,10 +2,12 @@
 
 import json
 import os
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Event, Lock
-from urllib.error import HTTPError
-from urllib.request import HTTPRedirectHandler, Request, build_opener
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 from uuid import UUID
 
 TOKEN = "offline-cancellation-test-token-not-for-deployment"
@@ -27,6 +29,45 @@ def exchange(url, method, body=None, headers=None):
         response = error
     with response:
         return response.status, response.read()
+
+
+def control_request(payload):
+    """Execute the smoke client's HTTP request inside the isolated test network."""
+    url = urlsplit(payload["url"])
+    if (
+        url.scheme != "http"
+        or url.netloc not in {"cancellation-probe:8099", "ops-service:8000", "prefect:4200"}
+        or url.fragment
+    ):
+        raise ValueError("Only cancellation test services are allowed")
+    data = payload.get("data")
+    raw = json.dumps(data).encode() if data is not None else None
+    try:
+        response = build_opener(ProxyHandler({}), NoRedirect()).open(
+            Request(
+                payload["url"],
+                data=raw,
+                headers={"Content-Type": "application/json", **payload.get("headers", {})},
+            ),
+            timeout=20,
+        )
+    except HTTPError as error:
+        response = error
+    with response:
+        body = response.read()
+        cookies = SimpleCookie()
+        for header in response.headers.get_all("Set-Cookie", []):
+            cookies.load(header)
+        try:
+            decoded = json.loads(body) if body else None
+        except json.JSONDecodeError:
+            # Preserve the client's decoding failure without leaking an HTML error body.
+            return {"status": response.status, "response_error": "invalid_json"}
+        return {
+            "status": response.status,
+            "body": decoded,
+            "cookies": {key: value.value for key, value in cookies.items()},
+        }
 
 
 def model_response(model):
@@ -244,5 +285,12 @@ if __name__ == "__main__":
 
     if len(sys.argv) > 1 and sys.argv[1] == "snapshot":
         print(json.dumps(database_snapshot(sys.argv[2] if len(sys.argv) > 2 else None)))
+    elif len(sys.argv) > 1 and sys.argv[1] == "request":
+        # JSON/stdin keeps cookies, authorization and request bodies out of process arguments.
+        try:
+            result = control_request(json.load(sys.stdin))
+        except (URLError, OSError) as error:
+            result = {"transport_error": type(error).__name__}
+        print(json.dumps(result))
     else:
         ThreadingHTTPServer(("0.0.0.0", 8099), handler(Probe())).serve_forever()

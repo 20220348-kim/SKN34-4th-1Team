@@ -55,6 +55,7 @@ Windows의 로컬 소스 빌드·기동·웹 연결 확인은 [WSL2 수동 설�
 
 | 문서 | 확인할 내용 |
 |---|---|
+| [GitOps 검수·후속 전략](gitops-strategy-review-20260929.md) | 영상 주제 대조, 배포 설정의 CI 우회 가능성, 원격 통제·CI 실측, 전체 배포 상태 승격과 단계별 완료 기준 |
 | [Windows Kubernetes 수동 설치](windows-kubernetes-setup.md) | Ubuntu 연동, 도구 설치, GHCR 없는 소스 빌드·kind 배포, Windows 웹 연결, 재시작·문제 해결 |
 | [현재 로컬 시스템 아키텍처](assets/architecture/README-local.md) | 개인 포크·같은 저장소의 Helm·비공개 GHCR·로컬 kind·개발 모드/GitOps 구분 |
 | [통합 전 Kubernetes 아키텍처](assets/architecture/README-kubernetes.md) | 2026-09-20 GovBiz-Team 두 저장소와 Mac portfolio 실행 기록 |
