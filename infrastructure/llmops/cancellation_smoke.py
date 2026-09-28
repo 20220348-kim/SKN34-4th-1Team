@@ -7,10 +7,9 @@ import secrets
 import subprocess
 import tempfile
 import time
-from http.cookiejar import CookieJar
 from pathlib import Path
 from urllib.error import HTTPError, URLError
-from urllib.request import HTTPCookieProcessor, Request, build_opener
+from urllib.request import Request, build_opener
 from uuid import uuid4
 
 from cancellation_probe import TOKEN, NoRedirect
@@ -86,8 +85,10 @@ def verify_budget(before, after, *, calls, output, closed, sent, events):
 class Smoke:
     def __init__(self, compose):
         self.compose = compose
-        self.cookies = CookieJar()
-        self.client = build_opener(NoRedirect(), HTTPCookieProcessor(self.cookies))
+        self.cookies = {}
+        self.probe = "http://cancellation-probe:8099"
+        self.ops = "http://ops-service:8000"
+        self.prefect = "http://prefect:4200/api"
         self.csrf = None
         self.records = []
         self.active = None
@@ -96,19 +97,30 @@ class Smoke:
         result = self.compose(*args, capture=True)
         return result.stdout.strip()
 
-    def url(self, service, port):
-        address = self.dc("port", service, str(port)).splitlines()[0]
-        assert address.startswith("127.0.0.1:"), "Test ports must bind loopback only"
-        return "http://" + address
+    def request(self, url, data=None, *, headers=None):
+        result = self.compose(
+            "exec",
+            "-T",
+            "cancellation-probe",
+            "python",
+            "/test/cancellation_probe.py",
+            "request",
+            capture=True,
+            input=json.dumps({"url": url, "data": data, "headers": headers or {}}),
+        )
+        reply = json.loads(result.stdout)
+        if "transport_error" in reply:
+            raise URLError(reply["transport_error"])
+        if "response_error" in reply:
+            raise ValueError(f"Invalid JSON response: HTTP {reply['status']}")
+        if url.startswith(self.ops + "/"):
+            self.cookies.update(reply["cookies"])
+        return reply["status"], reply["body"]
 
     def ready(self):
-        self.probe = self.url("cancellation-probe", 8099)
-        self.ops = self.url("ops-service", 8000)
-        self.prefect = self.url("prefect", 4200) + "/api"
-
         def langfuse():
             try:
-                return request(self.probe + "/langfuse-health")
+                return self.request(self.probe + "/langfuse-health")
             except (URLError, OSError, ValueError):
                 return 0, {}
 
@@ -127,7 +139,7 @@ class Smoke:
 
         def deployment():
             try:
-                return request(
+                return self.request(
                     self.prefect + "/deployments/name/govbiz-ops-evidence-evaluation/saved-capture"
                 )
             except (URLError, OSError):
@@ -141,14 +153,16 @@ class Smoke:
 
     def api(self, path, data=None):
         cookies = ["govbiz_session=offline-admin-session"]
-        cookies.extend(f"{cookie.name}={cookie.value}" for cookie in self.cookies)
+        cookies.extend(f"{name}={value}" for name, value in self.cookies.items())
         headers = {"Cookie": "; ".join(cookies), "Origin": self.ops}
         if self.csrf:
             headers["X-CSRFToken"] = self.csrf
-        return request(self.ops + path, data, client=self.client, headers=headers)
+        return self.request(self.ops + path, data, headers=headers)
 
     def control(self, action, data=None):
-        status, body = request(f"{self.probe}/control/{self.active['request_id']}/{action}", data)
+        status, body = self.request(
+            f"{self.probe}/control/{self.active['request_id']}/{action}", data
+        )
         assert status == 200, f"Probe {action}: HTTP {status}"
         return body
 
@@ -262,7 +276,7 @@ class Smoke:
         # 반복 조회/취소 확인으로도 중복 환급이 없어야 한다.
         self.read()
         assert self.db(self.active["request_id"])["allocated"] == after["allocated"]
-        status, flows = request(
+        status, flows = self.request(
             self.prefect + "/flow_runs/filter",
             {"flow_runs": {"idempotency_key": {"any_": ["ops-" + self.active["request_id"]]}}},
         )
@@ -279,6 +293,7 @@ class Smoke:
                 "passed": True,
             }
         )
+        print(f"Passed cancellation scenario: {self.active['scenario']}", flush=True)
         self.active = None
 
     def run(self):
@@ -323,7 +338,7 @@ class Smoke:
         self.start("completion_wins")
         # 상세 조회를 하지 않아 Ops는 아직 QUEUED다. 실제 Prefect 완료를 먼저 확인한다.
         wait_for(
-            lambda: request(self.prefect + "/flow_runs/" + self.active["flow_id"])[1],
+            lambda: self.request(self.prefect + "/flow_runs/" + self.active["flow_id"])[1],
             lambda flow: flow["state_type"] in TERMINAL,
             label="Completion winner",
             timeout=360,
@@ -376,7 +391,7 @@ class Smoke:
         )
         assert rejected == {"duplicate_claim_rejected": True}
         # 같은 owner/sequence의 승인 응답도 재발급하지 않는다.
-        status, _ = request(
+        status, _ = self.request(
             self.ops + f"/internal/llmops/evaluations/{self.active['request_id']}/budget/authorize",
             {
                 "worker_id": record["worker_id"],
@@ -424,6 +439,51 @@ def isolated_environment():
     return values
 
 
+def verify_isolation(config):
+    networks = config.get("networks", {})
+    if set(networks) != {"default"} or networks["default"].get("internal") is not True:
+        raise ValueError("Cancellation smoke requires only an internal network")
+    for name, service in config["services"].items():
+        if (
+            set(service.get("networks", {})) != {"default"}
+            or service.get("network_mode")
+            or service.get("ports")
+        ):
+            raise ValueError(
+                f"Cancellation service must stay internal without published ports: {name}"
+            )
+
+
+def failure_details(error, credentials):
+    result = {"type": type(error).__name__}
+    if isinstance(error, subprocess.CalledProcessError):
+        result["exit_code"] = error.returncode
+        # Never retain stdout: it may be an HTTP body, cookie or database snapshot.
+        message = error.stderr or ""
+        for value in sorted(set(credentials.values()), key=len, reverse=True):
+            if value:
+                message = message.replace(value, "[REDACTED]")
+        result["stderr"] = message[:4000]
+    return result
+
+
+def service_states(compose):
+    """Capture state only, excluding container env, commands and healthcheck logs."""
+    try:
+        raw = compose("ps", "--all", "--format", "json", capture=True).stdout.strip()
+        rows = (
+            json.loads(raw)
+            if raw.startswith("[")
+            else [json.loads(line) for line in raw.splitlines()]
+        )
+        return [
+            {key: row.get(key) for key in ("Service", "State", "Health", "ExitCode", "Publishers")}
+            for row in rows
+        ]
+    except Exception as error:
+        return {"unavailable": type(error).__name__}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=ROOT / "work/llmops-ci/cancellation.json")
@@ -436,6 +496,8 @@ def main():
     environment.update(values)
     smoke = None
     failure = None
+    detail = None
+    phase = "configuration"
     with tempfile.TemporaryDirectory(prefix="cancellation-", dir=args.output.parent) as temporary:
         env_file = Path(temporary) / "isolated.env"
         env_file.write_text("".join(f"{k}={v}\n" for k, v in values.items()), encoding="utf-8")
@@ -451,7 +513,7 @@ def main():
             command.extend(["-f", str(HERE / name)])
         command.extend(["--profile", "evaluation"])
 
-        def compose(*parts, capture=False):
+        def compose(*parts, capture=False, input=None):
             return subprocess.run(
                 command + list(parts),
                 cwd=ROOT,
@@ -460,11 +522,13 @@ def main():
                 text=True,
                 encoding="utf-8",
                 capture_output=capture,
+                input=input,
                 timeout=900 if parts[0] == "up" else 120,
             )
 
         try:
-            compose("config", "--quiet")
+            verify_isolation(json.loads(compose("config", "--format", "json", capture=True).stdout))
+            phase = "startup"
             # No ops-sync: race tests explicitly control the timing of the real detail/cancel API.
             compose(
                 "up",
@@ -477,6 +541,7 @@ def main():
                 "cancellation-probe",
                 "evaluation-runner",
             )
+            phase = "migrations"
             compose(
                 "exec",
                 "-T",
@@ -486,6 +551,7 @@ def main():
                 "migrate",
                 "--noinput",
             )
+            phase = "budget_setup"
             compose(
                 "exec",
                 "-T",
@@ -499,10 +565,13 @@ def main():
                 "400000",
             )
             smoke = Smoke(compose)
+            phase = "readiness"
             smoke.ready()
+            phase = "scenarios"
             smoke.run()
         except Exception as error:
             failure = type(error).__name__  # HTTP bodies and credentials must not enter artifacts.
+            detail = failure_details(error, values)
             raise
         finally:
             report = {
@@ -514,6 +583,12 @@ def main():
                 "failure": failure,
                 "scenarios": smoke.records if smoke else [],
             }
+            if failure:
+                report["diagnostics"] = {
+                    "phase": phase,
+                    "error": detail,
+                    "services": service_states(compose),
+                }
             if smoke and smoke.active:
                 unfinished = {k: v for k, v in smoke.active.items() if k != "payload"}
                 for name, read in (

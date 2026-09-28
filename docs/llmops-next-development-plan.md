@@ -8,8 +8,9 @@
 `main / baae7bd45298db2bd206d6d6bfdf7416bd47a53b`이다. 작업 트리는 검토 시작 시 깨끗했다.
 `skn-43 / fe39c03`의 실제 취소·예산 통합 도구와 CI가 PR #88로 병합됐다. 취소 API·누적 예약·
 품질 판정·발행 gate에 더해 11개 실제 서버 시나리오의 코드도 이미 있다.
-그러나 skn-43의 해당 CI는 시나리오 진입 전 실패했으며 이 영역의 코드는 현재 main과 동일하다.
-따라서 새 통합 도구를 다시 만드는 대신 실패 원인과 검증 증거부터 해결한다.
+최초 검토 당시 skn-43의 해당 CI는 시나리오 진입 전 실패했으며 이 영역의 코드는 기준 main과 동일했다.
+따라서 새 통합 도구를 다시 만드는 대신 실패 원인과 검증 증거부터 해결하기로 했다.
+이후 skn-45의 원인 수정·실제 로컬 검증 결과와 원격 CI 대기는 아래 PR A에 반영했다.
 
 **다음 개발은 통합 CI 실패 재현·수정 → 예산 조회·한도 변경 감사 → 종료 예약 정리 → 미확인 사용량 보정 순서다.**
 사람의 자료 검토는 독립적으로 준비한다. 자동 유료 실행과 실행기 증설은 비용 통제·복구·운영 검증을
@@ -24,8 +25,8 @@
 |---|---|---|
 | 접수·검토·품질 판정 | [실행 명세](../backend/ops-service/apps/evaluations/execution_spec.py), [품질 판정](../backend/ops-service/apps/evaluations/quality.py), [정책](../backend/ops-service/apps/evaluations/quality_policy.py) | 버전 고정·자료/사례 검토·판정·기준 지정은 구현됐다. 현재 모델의 사람 검토 기준 확보는 별도 운영 증거가 필요하다. 이번 검토에서 운영 DB의 검토 여부는 확인하지 않았다. |
 | 누적 호출·출력 예산 | [budget.py](../backend/ops-service/apps/evaluations/budget.py), [모델](../backend/ops-service/apps/evaluations/models.py) | DB 전역 예약·단일 소유권·정산·초과 차단은 구현됐다. 입력 토큰/금액/기간 한도는 없다. |
-| 평가 취소 | [services.py](../backend/ops-service/apps/evaluations/services.py), [취소 테스트](../backend/ops-service/apps/evaluations/test_cancellation.py) | 요청자 권한·취소 기록·신규 승인 차단·종료 확인·환급 경합은 구현됐다. 실제 실행기 중단 통합 시나리오도 추가됐으나 전체 통과 증거가 없다. |
-| 실서버 CI | [LLMOps CI](../.github/workflows/llmops-ci.yml), [취소 smoke](../infrastructure/llmops/cancellation_smoke.py) | 기존 저장 응답·인증·복구 검증에 11개 취소·예산 시나리오를 연결했다. skn-43 CI에서 테스트 서비스 포트 조회가 실패해 artifact의 완료 시나리오는 0개다. |
+| 평가 취소 | [services.py](../backend/ops-service/apps/evaluations/services.py), [취소 테스트](../backend/ops-service/apps/evaluations/test_cancellation.py) | 요청자 권한·취소 기록·신규 승인 차단·종료 확인·환급 경합은 구현됐다. 실제 실행기 중단 11개 시나리오를 추가했으며, 아래 PR A의 최신 검증 상태를 따른다. |
+| 실서버 CI | [LLMOps CI](../.github/workflows/llmops-ci.yml), [Ops smoke](../infrastructure/llmops/ops_smoke.py), [취소 smoke](../infrastructure/llmops/cancellation_smoke.py) | 저장 응답·인증·재접수·보고서·무료 복구·실행 명세 불일치 검증에 11개 취소·예산 시나리오를 연결했다. skn-43 CI의 포트 조회 실패와 후속 수정·검증 상태는 아래 PR A에서 구분한다. |
 | 한도 변경·장부 조회 | [한도 명령](../backend/ops-service/apps/evaluations/management/commands/set_evaluation_budget.py), [공개 API](../backend/ops-service/apps/evaluations/urls.py), [웹 계약](../frontend/web/src/data/ops/opsApi.ts) | 한도 변경은 CLI이며 변경자·사유·이전/새 값의 별도 감사 이력이 없다. 예산 잔여·예약·미확인 내역을 보는 관리자 API·화면도 없다. |
 | 미확인 예약 복구 | [worker_action/close_after_cancellation](../backend/ops-service/apps/evaluations/budget.py), [ops_flow.py](../evaluation/support-program-evidence/ops_flow.py) | claim은 실행 try/finally 앞에 있고 close 실패를 자동 재정산하지 않는다. 취소 기록 없는 FAILED/CRASHED 등은 동기화에서 예약을 정리하지 않으며 종료된 실행에는 새 취소도 거절한다. closed 예약의 늦은 settle도 거절한다. 보수적으로 한도를 유지하지만 이를 안전하게 정리하는 별도 경로가 필요하다. |
 | 추적·평가 범위 | [tracing.py](../backend/ai-service/app/support_program_evidence/tracing.py), [evaluate.py](../evaluation/support-program-evidence/evaluate.py) | trace 허용 범위는 answer/model 두 span이다. 고정 근거 평가 자료는 synthetic·ai-authored, 최대 3문서·12사례다. 자동 의미 충실도는 미측정이다. |
@@ -82,8 +83,9 @@ Q의 사람 자료 검토는 1~3과 독립적으로 준비할 수 있다. 금액
 `Smoke.ready()`에서 실패했으며 보관 artifact는 `passed=false`, `failure=CalledProcessError`,
 `scenarios=[]`다. 즉 **11개 시나리오의 통과 건수는 0개**이며 취소 로직 자체의 결함이 입증된 것은 아니다.
 
-실패한 subprocess의 stderr와 서비스 상태가 현재 증거에 없으므로 포트 미노출·컨테이너 종료·
-Compose/네트워크 동작 중 무엇이 원인인지 아직 확정하지 않는다. 다음 변경은 아래로 한정한다.
+최초 실패 artifact에는 subprocess의 stderr와 서비스 상태가 없어 포트 미노출·컨테이너 종료·
+Compose/네트워크 동작 중 원인을 확정할 수 없었다. 아래 범위로 후속 수정을 진행했으며,
+재현 결과와 검증 상태는 이 절의 구현 현황에 기록한다.
 
 1. 실패한 서비스의 상태·건강 상태·포트 매핑과 비밀값을 제거한 stderr를 정리 전에 보존한다.
    서비스 환경변수 전체나 모델 요청 원문을 로그에 추가하지 않는다.
@@ -120,10 +122,13 @@ Compose/네트워크 동작 중 무엇이 원인인지 아직 확정하지 않�
 [테스트 실행 안내](../infrastructure/llmops/README.md#실제-취소예산-통합-검증)를 추가했다.
 위 행렬을 승인 응답 유실·첫 승인 전 취소까지 포함한 11개 시나리오로 구성하고 기존 필수 LLMOps CI
 job에 연결했다. 모델 응답과 Core 인증 fixture를 제외한 Ops·MySQL·Prefect·평가·Langfuse 경로를
-실제로 실행하도록 구현했다. 이전 로컬 검증에서는 Docker 엔진이 꺼져 있었고, 이후 skn-43의
-원격 실행은 위 준비 단계에서 실패했다. 현재 main의 원격 재검증은 별도 SHA로 확인한다.
+실제로 실행한다. 병합 `baae7bd`의 CI는 시나리오 시작 전 호스트 포트 조회에서 실패했다.
+후속 수정에서 내부 네트워크의 포트 게시 누락을 Docker 29.6.2로 재현하고, 공개 포트 없이 내부
+HTTP를 호출하도록 바꿨다. 무료 관련 테스트 43개·Compose 격리 검사·Ruff는 통과했다.
+Windows 호스트 + Docker Desktop Linux Engine 29.6.2에서 실제 11개 시나리오도 모두 통과했고
+테스트 자원 정리를 확인했다. 최신 수정 SHA의 원격 필수 CI는 아직 검증 대기다.
 무료 계약 테스트/설정 렌더링을 실제 통합 통과로 간주하지 않는다. PR B의 계약 설계는 독립적으로
-준비할 수 있지만 유료 반복 실행·운영 준비 완료의 근거는 PR A 통과 후 확보한다.
+준비할 수 있지만 유료 반복 실행·운영 준비 완료의 근거는 PR A의 완료 조건 충족 후 확보한다.
 
 ### PR B — 예산을 설명할 수 있는 운영 API·화면
 

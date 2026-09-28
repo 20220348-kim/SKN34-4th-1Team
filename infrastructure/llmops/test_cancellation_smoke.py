@@ -3,8 +3,10 @@
 import asyncio
 import importlib.util
 import json
+import socket
+import subprocess
 import sys
-from http.server import ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Event, Thread
 from unittest.mock import Mock
@@ -264,3 +266,228 @@ def test_readiness_checks_real_langfuse_endpoint_without_model_calls(server, mon
     assert smoke.request(base + "/langfuse-health") == (200, {"status": "OK"})
     forwarded.assert_called_once_with("http://langfuse-web:3000/api/public/health", "GET")
     assert not state.runs
+
+
+@pytest.fixture
+def control_server(monkeypatch):
+    received = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_GET(self):
+            self.handle_request()
+
+        def do_POST(self):
+            self.handle_request()
+
+        def handle_request(self):
+            data = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            received.append({"path": self.path, "headers": dict(self.headers), "body": data})
+            status = {"/redirect": 302, "/unavailable": 503}.get(self.path, 200)
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            if self.path == "/session":
+                self.send_header("Set-Cookie", "csrftoken=csrf-cookie; Path=/; SameSite=Lax")
+            if self.path == "/redirect":
+                self.send_header("Location", "https://example.com/should-not-be-called")
+            self.end_headers()
+            self.wfile.write(
+                b"<html>private failure detail</html>"
+                if self.path == "/invalid"
+                else b'{"csrf_token":"csrf-header"}'
+            )
+
+    instance = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = Thread(target=instance.serve_forever, daemon=True)
+    resolve = socket.getaddrinfo
+
+    def local_only(host, port, *args, **kwargs):
+        assert (host, port) == ("ops-service", 8000), "Unexpected outbound destination"
+        return resolve("127.0.0.1", instance.server_port, *args, **kwargs)
+
+    monkeypatch.setattr(socket, "getaddrinfo", local_only)
+    thread.start()
+    try:
+        yield received
+    finally:
+        instance.shutdown()
+        instance.server_close()
+        thread.join(timeout=2)
+
+
+def test_internal_client_preserves_real_http_csrf_cookies_and_failure(control_server):
+    commands = []
+
+    def compose(*parts, **kwargs):
+        commands.append((parts, kwargs))
+        payload = json.loads(kwargs["input"])
+        reply = probe.control_request(payload)
+        return subprocess.CompletedProcess(parts, 0, stdout=json.dumps(reply))
+
+    client = smoke.Smoke(compose)
+    status, session = client.api("/session")
+    assert status == 200
+    client.csrf = session["csrf_token"]
+    assert client.api("/unavailable", {"test": "한글"})[0] == 503
+    request = control_server[-1]
+    assert request["headers"]["Origin"] == "http://ops-service:8000"
+    assert request["headers"]["X-Csrftoken"] == "csrf-header"
+    assert (
+        request["headers"]["Cookie"]
+        == "govbiz_session=offline-admin-session; csrftoken=csrf-cookie"
+    )
+    assert json.loads(request["body"]) == {"test": "한글"}
+    for parts, kwargs in commands:
+        assert parts == (
+            "exec",
+            "-T",
+            "cancellation-probe",
+            "python",
+            "/test/cancellation_probe.py",
+            "request",
+        )
+        assert kwargs["capture"] is True
+        assert "csrf-cookie" not in str(parts)  # Credentials travel through stdin only.
+
+
+def test_internal_client_does_not_follow_redirects_or_use_ambient_proxy(
+    control_server, monkeypatch
+):
+    monkeypatch.setenv("http_proxy", "http://unexpected-proxy.invalid:8080")
+    monkeypatch.setenv("HTTP_PROXY", "http://unexpected-proxy.invalid:8080")
+    monkeypatch.setenv("no_proxy", "")
+    monkeypatch.setenv("NO_PROXY", "")
+    reply = probe.control_request({"url": "http://ops-service:8000/redirect"})
+    assert reply["status"] == 302 and len(control_server) == 1
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://api.openai.com/v1/responses",
+        "http://169.254.169.254/",
+        "http://ops-service:8000.evil.test/path",
+        "http://ops-service:8001/path",
+        "http://user@ops-service:8000/path",
+        "https://ops-service:8000/path",
+        "http://ops-service:8000/path#fragment",
+    ],
+)
+def test_internal_client_rejects_other_destinations(url, monkeypatch):
+    opener = Mock()
+    monkeypatch.setattr(probe, "build_opener", opener)
+    with pytest.raises(ValueError, match="Only cancellation test services"):
+        probe.control_request({"url": url})
+    assert not opener.called
+
+
+def test_transport_failure_never_becomes_http_success():
+    compose = Mock(
+        return_value=subprocess.CompletedProcess([], 0, stdout='{"transport_error":"URLError"}')
+    )
+    with pytest.raises(smoke.URLError):
+        smoke.Smoke(compose).api("/session")
+
+
+def isolated_config():
+    return {
+        "networks": {"default": {"internal": True}},
+        "services": {"ops-service": {"networks": {"default": None}}},
+    }
+
+
+@pytest.mark.parametrize("defect", ["egress", "extra_network", "host", "port"])
+def test_network_regression_is_rejected_before_startup(defect):
+    config = isolated_config()
+    smoke.verify_isolation(config)
+    if defect == "egress":
+        config["networks"]["default"]["internal"] = False
+    elif defect == "extra_network":
+        config["networks"]["egress"] = {}
+    elif defect == "host":
+        config["services"]["ops-service"]["network_mode"] = "host"
+    else:
+        config["services"]["ops-service"]["ports"] = [{"target": 8000, "published": "18001"}]
+    with pytest.raises(ValueError):
+        smoke.verify_isolation(config)
+
+
+def test_startup_failure_records_safe_diagnostics_and_cleans_only_own_project(
+    monkeypatch, tmp_path
+):
+    output = tmp_path / "failure.json"
+    monkeypatch.setattr(sys, "argv", ["cancellation_smoke", "--output", str(output)])
+    secret = "do-not-include-password"
+    monkeypatch.setattr(smoke, "isolated_environment", lambda: {"OPS_DB_PASSWORD": secret})
+    commands = []
+
+    def run(command, **kwargs):
+        commands.append(command)
+        parts = command[command.index("evaluation") + 1 :]
+        if parts[0] == "config":
+            return subprocess.CompletedProcess(command, 0, stdout=json.dumps(isolated_config()))
+        if parts[0] == "up":
+            raise subprocess.CalledProcessError(
+                1, command, output="private HTTP body", stderr=f"startup failed: {secret}"
+            )
+        if parts[0] == "ps":
+            row = {
+                "Service": "ops-service",
+                "State": "exited",
+                "ExitCode": 1,
+                "Command": secret,
+                "Env": [secret],
+            }
+            return subprocess.CompletedProcess(command, 0, stdout=json.dumps(row) + "\n")
+        assert parts == ["down", "--volumes", "--remove-orphans", "--timeout", "5"]
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(smoke.subprocess, "run", run)
+    with pytest.raises(subprocess.CalledProcessError):
+        smoke.main()
+    raw = output.read_text(encoding="utf-8")
+    report = json.loads(raw)
+    assert report["passed"] is False and report["scenarios"] == []
+    assert report["diagnostics"]["phase"] == "startup"
+    assert report["diagnostics"]["error"]["exit_code"] == 1
+    assert report["diagnostics"]["services"][0]["State"] == "exited"
+    assert secret not in raw and "private HTTP body" not in raw
+    assert "[REDACTED]" in raw
+    assert len({c[c.index("--project-name") + 1] for c in commands}) == 1
+    assert commands[-1][-5:] == ["down", "--volumes", "--remove-orphans", "--timeout", "5"]
+
+
+def test_diagnostic_collection_failure_does_not_hide_primary_failure():
+    states = smoke.service_states(Mock(side_effect=RuntimeError("private detail")))
+    assert states == {"unavailable": "RuntimeError"}
+
+
+def test_non_json_http_response_preserves_failure_without_body(control_server):
+    reply = probe.control_request({"url": "http://ops-service:8000/invalid"})
+    assert reply == {"status": 200, "response_error": "invalid_json"}
+    compose = Mock(return_value=subprocess.CompletedProcess([], 0, stdout=json.dumps(reply)))
+    with pytest.raises(ValueError, match="Invalid JSON response: HTTP 200"):
+        smoke.Smoke(compose).api("/invalid")
+
+
+def test_readiness_waits_for_valid_langfuse_json(monkeypatch):
+    client = smoke.Smoke(Mock())
+    session = {
+        "live_enabled": True,
+        "user": {"id": 1},
+        "csrf_token": "csrf",
+        "datasets": [{"id": "target-coverage-20260907-v1"}],
+    }
+    client.request = Mock(
+        side_effect=[
+            ValueError("Invalid JSON response: HTTP 500"),
+            (200, {"status": "OK"}),
+            (200, session),
+            (200, {}),
+        ]
+    )
+    monkeypatch.setattr(smoke.time, "sleep", Mock())
+    client.ready()
+    assert client.request.call_count == 4 and client.csrf == "csrf"
