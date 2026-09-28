@@ -300,6 +300,18 @@ def main():
             require(len(snapshots["KSTARTUP"]["programs"]) == 2, "Incomplete K-Startup fixture")
             require(len(snapshots["MSIT"]["programs"]) == 11, "Incomplete MSIT pagination")
             require(len(snapshots["CNTRADE_NOTICE"]["programs"]) == 2, "Incomplete CNTRADE pagination")
+            bizinfo_programs = {
+                item["program"]["id"]: item["program"] for item in snapshots["BIZINFO"]["programs"]
+            }
+            application = bizinfo_programs["PBLN_COMPOSE_EXPORT"]
+            require(application["sourceUrl"].endswith("pblancId=PBLN_COMPOSE_EXPORT"),
+                    "Catalog lost the official announcement URL")
+            require(application["applicationRoute"] == {
+                "method": "온라인 신청", "url": "https://forms.gle/composeRoute123", "type": "GOOGLE_FORMS",
+            }, "Catalog snapshot lost the official application route")
+            require(bizinfo_programs["PBLN_COMPOSE_RECENT_01"]["applicationRoute"] == {
+                "method": "온라인 신청", "url": None, "type": "UNKNOWN",
+            }, "A method-only announcement invented an application URL")
 
             def projected_catalog():
                 code, value = call_json(core_url + "/api/v1/support-programs/catalog?sourceCode=KSTARTUP&status=OPEN")
@@ -323,6 +335,23 @@ def main():
             catalog_counts = sql("catalog-mysql", count_sql)
             wait_for("matching Core and Catalog active source counts", lambda:
                      catalog_counts == sql("mysql", count_sql), args.timeout)
+            def projected_application_route():
+                code, value = call_json(core_url + "/api/v1/support-programs/detail?"
+                                        + urllib.parse.urlencode({
+                                            "sourceCode": "BIZINFO",
+                                            "sourceProgramId": "PBLN_COMPOSE_EXPORT",
+                                        }))
+                return code == 200 and value.get("sourceUrl") == application["sourceUrl"] and (
+                    value.get("applicationRoute") == application["applicationRoute"])
+
+            wait_for("BizInfo application route survives Catalog HTTP and Core detail",
+                     projected_application_route, args.timeout)
+            require(sql("catalog-mysql", "SELECT application_route_type FROM support_program "
+                        "WHERE source_code='BIZINFO' AND source_program_id='PBLN_COMPOSE_EXPORT'")
+                    == "GOOGLE_FORMS", "Catalog DB lost the application route")
+            require(sql("mysql", "SELECT application_route_type FROM support_program "
+                        "WHERE source_code='BIZINFO' AND source_program_id='PBLN_COMPOSE_EXPORT'")
+                    == "GOOGLE_FORMS", "Core DB lost the projected application route")
             print("PASS: distinct MySQL databases, catalog-only tables and four persisted projection checkpoints", flush=True)
 
             def search():

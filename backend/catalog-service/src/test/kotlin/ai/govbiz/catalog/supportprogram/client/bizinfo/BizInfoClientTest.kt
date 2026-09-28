@@ -80,6 +80,23 @@ class BizInfoClientTest {
     }
 
     @Test
+    fun decodesOfficialApplicationFieldsSeparatelyFromTheAnnouncementUrl() {
+        server.expect(requestTo(expectedUrl(1))).andRespond(withSuccess(
+            wrappedPage(1, "PBLN_1").replace(
+                "\"hashtags\": \"기술,서울\"",
+                "\"hashtags\": \"기술,서울\", \"reqstMthPapersCn\": \"온라인 접수\", " +
+                    "\"rceptEngnHmpgUrl\": \"https://forms.gle/abc123\"",
+            ),
+            MediaType.APPLICATION_JSON,
+        ))
+
+        val payload = client.fetchAll().single()
+        assertEquals("온라인 접수", payload.applicationMethod)
+        assertEquals("https://forms.gle/abc123", payload.applicationUrl)
+        assertEquals(true, payload.sourceUrl != payload.applicationUrl)
+    }
+
+    @Test
     fun rejectsAProtocolLevelFailureWithoutExposingItsMessage() {
         server.expect(requestTo(expectedUrl(1)))
             .andRespond(
@@ -185,7 +202,7 @@ class BizInfoClientTest {
     @Test
     fun ignoresUnusedSourceFieldsWithoutRejectingAnOtherwiseValidCatalog() {
         val sourceItem = item("PBLN_1").trim().dropLast(1) +
-            """, "reqstMthPapersCn": {"unexpected": "unused source data"}}"""
+            """, "refrncNm": {"unexpected": "unused source data"}}"""
         server.expect(requestTo(expectedUrl(1)))
             .andRespond(
                 withSuccess(
@@ -195,6 +212,16 @@ class BizInfoClientTest {
             )
 
         assertEquals(listOf("PBLN_1"), client.fetchAll().map { it.id })
+    }
+
+    @Test
+    fun rejectsStructuredOfficialApplicationMethod() {
+        val sourceItem = item("PBLN_1").trim().dropLast(1) +
+            """, "reqstMthPapersCn": {"unexpected": "not text"}}"""
+        server.expect(requestTo(expectedUrl(1)))
+            .andRespond(withSuccess(pageWithItems(1, "[$sourceItem]"), MediaType.APPLICATION_JSON))
+
+        assertFailure(BizInfoClientException.Failure.INVALID_RESPONSE)
     }
 
     @Test

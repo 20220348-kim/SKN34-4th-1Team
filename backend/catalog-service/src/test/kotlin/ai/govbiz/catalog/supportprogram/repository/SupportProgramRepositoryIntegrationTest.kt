@@ -90,7 +90,11 @@ class SupportProgramRepositoryIntegrationTest {
     @Test
     fun roundTripsKoreanJsonNullableDatesStartupMetadataAndCompositeIdentities() {
         val first = program("공고-🚀", "BIZINFO").let {
-            it.copy(program = it.program.copy(categories = listOf("AI", "기술 \"지원\""), regions = listOf("서울", "충남")))
+            it.copy(program = it.program.copy(
+                categories = listOf("AI", "기술 \"지원\""), regions = listOf("서울", "충남"),
+                applicationRoute = SupportProgramApplicationRoute(
+                    "온라인 신청", "https://forms.gle/abc123", SupportProgramApplicationRouteType.GOOGLE_FORMS),
+            ))
         }
         val startup = program(first.program.id, "KSTARTUP").copy(
             startupDetails = SupportProgramStartupDetails(listOf("예비창업"), listOf("개인"), listOf("청년")),
@@ -99,10 +103,29 @@ class SupportProgramRepositoryIntegrationTest {
         publish("KSTARTUP", listOf(startup))
         assertEquals(first, repository.findSnapshot("BIZINFO")?.programs?.single())
         assertEquals(startup, repository.findSnapshot("KSTARTUP")?.programs?.single())
-        val updated = first.copy(program = first.program.copy(title = "수정", applicationStartDate = LocalDate.of(2020, 1, 1)))
+        val updated = first.copy(program = first.program.copy(
+            title = "수정", applicationStartDate = LocalDate.of(2020, 1, 1),
+            applicationRoute = SupportProgramApplicationRoute("이메일 제출", null, SupportProgramApplicationRouteType.FILE),
+        ))
         publish("BIZINFO", listOf(updated))
         assertEquals(updated, repository.findSnapshot("BIZINFO")?.programs?.single())
         assertEquals(2, jdbc.queryForObject("SELECT COUNT(*) FROM support_program", Int::class.java))
+    }
+
+    @Test
+    fun readsLegacyRowWithoutApplicationColumnsAsUnknown() {
+        jdbc.update("""
+            INSERT INTO support_program (
+                source_code, source_program_id, title, organization, summary, categories, regions,
+                target_description, application_period_raw, source_url
+            ) VALUES (
+                'BIZINFO', 'legacy', '기존 공고', '기관', '요약', JSON_ARRAY(), JSON_ARRAY(),
+                '중소기업', '상시', 'https://www.bizinfo.go.kr/detail?id=legacy'
+            )
+        """.trimIndent())
+
+        val route = repository.findPresentBySourceAndProgramId("BIZINFO", "legacy")?.program?.applicationRoute
+        assertEquals(SupportProgramApplicationRoute(), route)
     }
 
     @Test

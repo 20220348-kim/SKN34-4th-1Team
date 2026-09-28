@@ -2,6 +2,7 @@ package ai.govbiz.core.supportprogram.controller.dto
 
 import ai.govbiz.core.supportprogram.domain.SupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgramStatus
+import ai.govbiz.core.supportprogram.domain.SupportProgramApplicationRoute
 import ai.govbiz.core.supportprogram.service.evidence.SupportProgramEvidenceService
 
 /**
@@ -23,6 +24,7 @@ data class SupportProgramDetailResponse(
     val status: SupportProgramStatus,
     val sourceName: String,
     val sourceUrl: String,
+    val applicationRoute: SupportProgramApplicationRouteResponse,
     val evidenceQuestionSupported: Boolean,
 ) {
     companion object {
@@ -42,7 +44,19 @@ data class SupportProgramDetailResponse(
                 status = program.status,
                 sourceName = program.sourceName,
                 sourceUrl = program.sourceUrl,
+                applicationRoute = SupportProgramApplicationRouteResponse.from(program.applicationRoute),
                 evidenceQuestionSupported = program.sourceCode == SupportProgramEvidenceService.BIZINFO_SOURCE_CODE,
             )
+    }
+}
+
+data class SupportProgramApplicationRouteResponse(
+    val method: String?,
+    val url: String?,
+    val type: String,
+) {
+    companion object {
+        fun from(route: SupportProgramApplicationRoute) =
+            SupportProgramApplicationRouteResponse(route.method, route.url, route.type.name)
     }
 }

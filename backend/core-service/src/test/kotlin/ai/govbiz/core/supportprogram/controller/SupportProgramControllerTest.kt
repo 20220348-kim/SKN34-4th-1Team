@@ -15,6 +15,8 @@ import ai.govbiz.core.supportprogram.domain.SupportProgramEligibilityReview
 import ai.govbiz.core.supportprogram.domain.SupportProgramEligibilityReviewStatus
 import ai.govbiz.core.supportprogram.domain.SupportProgramEligibilityStatus
 import ai.govbiz.core.supportprogram.domain.SupportProgramStatus
+import ai.govbiz.core.supportprogram.domain.SupportProgramApplicationRoute
+import ai.govbiz.core.supportprogram.domain.SupportProgramApplicationRouteType
 import ai.govbiz.core.supportprogram.facade.AiSupportProgramRetrievalFacade
 import ai.govbiz.core.supportprogram.facade.SupportProgramRankingFacade
 import ai.govbiz.core.supportprogram.repository.SupportProgramRepository
@@ -223,7 +225,11 @@ class SupportProgramControllerTest {
 
     @Test
     fun returnsTheCurrentProgramDetailsBySourceAndOriginalId() {
-        Mockito.doReturn(catalogProgram()).`when`(supportProgramRepository)
+        val detailed = catalogProgram().let { item ->
+            item.copy(program = item.program.copy(applicationRoute = SupportProgramApplicationRoute(
+                "온라인 접수", "https://forms.gle/abc123", SupportProgramApplicationRouteType.GOOGLE_FORMS)))
+        }
+        Mockito.doReturn(detailed).`when`(supportProgramRepository)
             .findPresentBySourceAndProgramId("BIZINFO", "PBLN_TEST")
 
         mockMvc.perform(
@@ -236,6 +242,10 @@ class SupportProgramControllerTest {
             .andExpect(jsonPath("$.id").value("PBLN_TEST"))
             .andExpect(jsonPath("$.sourceCode").value("BIZINFO"))
             .andExpect(jsonPath("$.title").value("서울 AI 지원사업"))
+            .andExpect(jsonPath("$.sourceUrl").value("https://www.bizinfo.go.kr/detail?id=PBLN_TEST"))
+            .andExpect(jsonPath("$.applicationRoute.type").value("GOOGLE_FORMS"))
+            .andExpect(jsonPath("$.applicationRoute.method").value("온라인 접수"))
+            .andExpect(jsonPath("$.applicationRoute.url").value("https://forms.gle/abc123"))
             .andExpect(jsonPath("$.evidenceQuestionSupported").value(true))
             // 상세는 검색 결과가 아니므로 관련도·추천 이유·자격 판정 필드를 내지 않는다.
             .andExpect(jsonPath("$.matchedReasons").doesNotExist())

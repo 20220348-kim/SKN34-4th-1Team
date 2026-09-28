@@ -1,6 +1,9 @@
 package ai.govbiz.core.supportprogram.service.detail
 
 import ai.govbiz.core.supportprogram.helper.SupportProgramTestHelper
+import ai.govbiz.core.supportprogram.controller.dto.SupportProgramDetailResponse
+import ai.govbiz.core.supportprogram.domain.SupportProgramApplicationRoute
+import ai.govbiz.core.supportprogram.domain.SupportProgramApplicationRouteType
 import ai.govbiz.core.supportprogram.repository.SupportProgramRepository
 import ai.govbiz.core.supportprogram.service.detail.exception.SupportProgramNotFoundException
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -35,6 +38,19 @@ class SupportProgramDetailServiceTest {
         val result = service.get("BIZINFO", "PBLN_TEST")
 
         assertEquals(catalogProgram.program, result)
+    }
+
+    @Test
+    fun detailResponseKeepsTheAnnouncementAndApplicationUrlsSeparate() {
+        val program = SupportProgramTestHelper.catalogProgram("PBLN_TEST").program.copy(
+            applicationRoute = SupportProgramApplicationRoute(
+                "온라인 접수", "https://forms.gle/abc123", SupportProgramApplicationRouteType.GOOGLE_FORMS),
+        )
+        val response = SupportProgramDetailResponse.from(program)
+        assertEquals(program.sourceUrl, response.sourceUrl)
+        assertEquals(program.applicationRoute.method, response.applicationRoute.method)
+        assertEquals(program.applicationRoute.url, response.applicationRoute.url)
+        assertEquals(program.applicationRoute.type.name, response.applicationRoute.type)
     }
 
     @Test

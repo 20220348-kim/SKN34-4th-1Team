@@ -3,6 +3,7 @@ package ai.govbiz.catalog.supportprogram.client.bizinfo.mapper
 import ai.govbiz.catalog.supportprogram.client.bizinfo.dto.BizInfoProgramPayload
 import ai.govbiz.catalog.supportprogram.client.bizinfo.exception.BizInfoClientException
 import ai.govbiz.catalog.supportprogram.domain.SupportProgramStatus
+import ai.govbiz.catalog.supportprogram.domain.SupportProgramApplicationRouteType
 import java.time.LocalDate
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -25,6 +26,36 @@ class BizInfoProgramMapperTest {
         assertEquals(listOf("PBLN_1", "PBLN_2"), programs.map { it.program.id })
         assertEquals(listOf("BIZINFO", "BIZINFO"), programs.map { it.program.sourceCode })
         assertEquals(listOf("서울 AI 사업", "부산 수출 사업"), programs.map { it.program.title })
+    }
+
+    @Test
+    fun mapsOfficialApplicationFieldsWithoutReplacingTheAnnouncementUrl() {
+        val input = payload().copy(
+            applicationMethod = "<p>온라인 &amp; 신청</p>",
+            applicationUrl = "https://forms.gle/abc123",
+        )
+        val program = BizInfoProgramMapper.mapValidated(listOf(input), TODAY).single().program
+
+        assertEquals(input.sourceUrl, program.sourceUrl)
+        assertEquals("온라인 & 신청", program.applicationRoute.method)
+        assertEquals(input.applicationUrl, program.applicationRoute.url)
+        assertEquals(SupportProgramApplicationRouteType.GOOGLE_FORMS, program.applicationRoute.type)
+    }
+
+    @Test
+    fun keepsMissingUrlUnknownAndUsesOnlyExplicitSubmissionEvidenceForFile() {
+        val programs = BizInfoProgramMapper.mapValidated(listOf(
+            payload(id = "PBLN_1"),
+            payload(id = "PBLN_2").copy(applicationMethod = "별도 문의"),
+            payload(id = "PBLN_3").copy(applicationMethod = "신청서 작성 후 이메일 제출"),
+        ), TODAY).map { it.program }
+
+        assertEquals(SupportProgramApplicationRouteType.UNKNOWN, programs[0].applicationRoute.type)
+        assertNull(programs[0].applicationRoute.url)
+        assertEquals(SupportProgramApplicationRouteType.UNKNOWN, programs[1].applicationRoute.type)
+        assertEquals(SupportProgramApplicationRouteType.FILE, programs[2].applicationRoute.type)
+        assertNull(programs[2].applicationRoute.url)
+        assertEquals(payload(id = "PBLN_3").sourceUrl, programs[2].sourceUrl)
     }
 
     @Test

@@ -4,6 +4,8 @@ import ai.govbiz.core.supportprogram.client.catalog.dto.CatalogSnapshotResponse
 import ai.govbiz.core.supportprogram.domain.CatalogProjectionSnapshot
 import ai.govbiz.core.supportprogram.domain.CatalogSupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgram
+import ai.govbiz.core.supportprogram.domain.SupportProgramApplicationRoute
+import ai.govbiz.core.supportprogram.domain.SupportProgramApplicationRouteType
 import ai.govbiz.core.supportprogram.domain.SupportProgramStartupDetails
 import ai.govbiz.core.supportprogram.domain.SupportProgramStatus
 import ai.govbiz.core.supportprogram.domain.SupportProgramSyncOutcome
@@ -30,6 +32,11 @@ object CatalogSnapshotMapper {
                         applicationStartDate = it.applicationStartDate, applicationEndDate = it.applicationEndDate,
                         status = SupportProgramStatus.valueOf(it.status), sourceName = it.sourceName,
                         sourceUrl = it.sourceUrl, matchedReasons = emptyList(),
+                        applicationRoute = it.applicationRoute?.let { route ->
+                            SupportProgramApplicationRoute(
+                                route.method, route.url, SupportProgramApplicationRouteType.valueOf(route.type),
+                            )
+                        } ?: SupportProgramApplicationRoute(),
                     )
                 },
                 sortTimestamp = item.sortTimestamp,

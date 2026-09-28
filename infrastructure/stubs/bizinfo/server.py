@@ -41,6 +41,8 @@ items.append({
     "hashtags": "AI,서울",
     "updtPnttm": "2020-01-01 10:00:00",
 })
+# Synthetic official application field for the Catalog → Core route contract.
+items[0]["rceptEngnHmpgUrl"] = "https://forms.gle/composeRoute123"
 body["totalCount"] = len(items)
 RESPONSE_BODY = json.dumps(fixture, ensure_ascii=False).encode("utf-8")
 

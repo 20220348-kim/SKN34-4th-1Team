@@ -2,6 +2,8 @@ package ai.govbiz.catalog.supportprogram.repository
 
 import ai.govbiz.catalog.supportprogram.domain.CatalogSupportProgram
 import ai.govbiz.catalog.supportprogram.domain.SupportProgram
+import ai.govbiz.catalog.supportprogram.domain.SupportProgramApplicationRoute
+import ai.govbiz.catalog.supportprogram.domain.SupportProgramApplicationRouteType
 import ai.govbiz.catalog.supportprogram.domain.CatalogSnapshot
 import ai.govbiz.catalog.supportprogram.domain.CatalogSource
 import ai.govbiz.catalog.supportprogram.domain.SupportProgramStartupDetails
@@ -249,6 +251,9 @@ class SupportProgramRepository(
             applicationStartDate = supportProgram.applicationStartDate,
             applicationEndDate = supportProgram.applicationEndDate,
             sourceUrl = supportProgram.sourceUrl,
+            applicationMethod = supportProgram.applicationRoute.method,
+            applicationUrl = supportProgram.applicationRoute.url,
+            applicationRouteType = supportProgram.applicationRoute.type.name,
             sourceSortTimestamp = sortTimestamp.takeIf(String::isNotBlank),
             startupDetailsJson = startupDetails?.let(objectMapper::writeValueAsString),
         )
@@ -280,6 +285,11 @@ class SupportProgramRepository(
                 ),
                 sourceName = sourceNameFor(sourceCode),
                 sourceUrl = sourceUrl,
+                applicationRoute = SupportProgramApplicationRoute(
+                    method = applicationMethod,
+                    url = applicationUrl,
+                    type = SupportProgramApplicationRouteType.valueOf(applicationRouteType),
+                ),
                 matchedReasons = emptyList(),
                 recommendationScore = null,
             ),

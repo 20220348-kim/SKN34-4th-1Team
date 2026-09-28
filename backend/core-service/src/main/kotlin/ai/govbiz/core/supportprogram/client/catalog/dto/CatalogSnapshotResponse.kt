@@ -52,6 +52,13 @@ data class CatalogProgramPayload(
     val status: String,
     val sourceName: String,
     val sourceUrl: String,
+    val applicationRoute: CatalogApplicationRoutePayload? = null,
+)
+
+data class CatalogApplicationRoutePayload(
+    val method: String?,
+    val url: String?,
+    val type: String,
 )
 
 data class CatalogStartupDetailsPayload(

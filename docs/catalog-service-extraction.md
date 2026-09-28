@@ -59,7 +59,7 @@ Catalog의 DB 숫자 ID는 다른 서비스에 전달하지 않고 `(source_code
 - `programs`: 해당 source의 완전한 현재 공고 목록. 최대 20,000개
 
 양쪽 HTTP DTO는 Domain과 별도로 정의한다. `programs[].program`에는 식별자·제목·기관·본문·
-분류·지역·대상·신청 기간·날짜·접수 상태·출처 이름·URL을 명시적으로 담고,
+분류·지역·대상·신청 기간·날짜·접수 상태·출처 이름·공고 상세 URL·공식 신청 경로를 명시적으로 담고,
 `sortTimestamp`와 `startupDetails`를 함께 전송한다. 검색 추천 이유·점수·자격 검토와
 계산 getter는 이 계약에 포함하지 않는다. Core의 Client Mapper에서 업무 모델로 변환한다.
 
