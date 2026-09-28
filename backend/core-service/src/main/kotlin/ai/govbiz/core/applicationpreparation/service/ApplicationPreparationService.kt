@@ -2,6 +2,7 @@ package ai.govbiz.core.applicationpreparation.service
 
 import ai.govbiz.core.applicationpreparation.service.dto.ApplicationOnlineInputGuideResult
 import ai.govbiz.core.applicationpreparation.client.ai.ApplicationOnlineFormMcpClient
+import ai.govbiz.core.applicationpreparation.client.ai.exception.ApplicationOnlineFormMcpException
 import ai.govbiz.core.applicationpreparation.domain.ApplicationOnlineFormSourceReference
 import ai.govbiz.core.applicationpreparation.service.dto.ApplicationOnlineFormSourceCapabilityResult
 import ai.govbiz.core.applicationpreparation.service.dto.ApplicationOnlineFormSourceCapabilityStatus
@@ -29,6 +30,8 @@ import ai.govbiz.core.applicationpreparation.service.dto.ApplicationPreparationL
 import ai.govbiz.core.applicationpreparation.service.dto.ApplicationPreparationPageResult
 import ai.govbiz.core.applicationpreparation.service.dto.ApplicationInterpretationResult
 import ai.govbiz.core.supportprogram.repository.SavedSupportProgramRepository
+import ai.govbiz.core.supportprogram.repository.SupportProgramRepository
+import ai.govbiz.core.supportprogram.domain.SupportProgramApplicationRouteType
 import org.springframework.stereotype.Service
 import ai.govbiz.core.applicationpreparation.domain.ApplicationDraftInput
 import ai.govbiz.core.applicationpreparation.domain.ApplicationContentVersion
@@ -44,6 +47,7 @@ class ApplicationPreparationService(
     private val contents: ApplicationPreparationContentRepository,
     private val savedSupportPrograms: SavedSupportProgramRepository,
     private val onlineFormMcp: ApplicationOnlineFormMcpClient,
+    private val supportPrograms: SupportProgramRepository,
 ) {
     /** 소유권 확인 후 고정 Manifest를 계산에만 사용한다. Fact·revision·snapshot은 변경하지 않는다. */
     fun reviewOnlineFormMapping(account: Account, preparationId: Long, source: ApplicationOnlineFormSource): ApplicationOnlineFormMappingReviewResult {
@@ -95,14 +99,18 @@ class ApplicationPreparationService(
         return ApplicationOnlineFormSourceCapabilityResult(status)
     }
 
-    /** 소유권을 먼저 확인한다. 저장된 사용자 Fact만 읽고 외부 I/O나 쓰기를 수행하지 않는다. */
-    @org.springframework.transaction.annotation.Transactional(readOnly = true, isolation = org.springframework.transaction.annotation.Isolation.REPEATABLE_READ)
+    /** 소유권을 확인한 뒤 공식 경로를 읽는다. MCP 외부 I/O는 DB transaction 밖에서 수행한다. */
     fun onlineInputGuide(account: Account, preparationId: Long): ApplicationOnlineInputGuideResult {
         val preparation = repository.findOwned(account.id, preparationId) ?: throw ApplicationPreparationNotFoundException()
-        return ApplicationOnlineInputGuideResult.from(
-            preparationId, preparation.inputRevision, forms.requireVersion(preparation.draft.formVersionId),
-            inputs.listOwnedFacts(account.id, preparationId),
-        )
+        val manifest = forms.requireVersion(preparation.draft.formVersionId)
+        val route = supportPrograms.findPresentBySourceAndProgramId(preparation.draft.sourceCode, preparation.draft.sourceProgramId)
+            ?.program?.applicationRoute
+        val facts = inputs.listOwnedFacts(account.id, preparationId)
+        return if (route?.type == SupportProgramApplicationRouteType.GOOGLE_FORMS) {
+            val url = route.url ?: throw ApplicationOnlineFormMcpException("APPLICATION_ONLINE_FORM_SOURCE_CHANGED")
+            ApplicationOnlineInputGuideResult.fromSource(preparationId, preparation.inputRevision, manifest, facts,
+                onlineFormMcp.inspect(url), url)
+        } else ApplicationOnlineInputGuideResult.from(preparationId, preparation.inputRevision, manifest, facts)
     }
 
     fun supportedForms(account: Account) = forms.listSupported().also { require(account.id > 0) }

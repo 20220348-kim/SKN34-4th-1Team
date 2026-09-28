@@ -2,22 +2,21 @@ package ai.govbiz.core.applicationpreparation.client.ai
 
 import ai.govbiz.core.applicationpreparation.client.ai.dto.AiOnlineFormInspectionPayload
 import ai.govbiz.core.applicationpreparation.client.ai.exception.ApplicationOnlineFormMcpException
+import ai.govbiz.core.applicationpreparation.client.ai.mapper.ApplicationOnlineFormMcpMapper
 import ai.govbiz.core.applicationpreparation.domain.ApplicationOnlineFormSource
-import ai.govbiz.core.applicationpreparation.domain.ApplicationOnlineFormSourceControl
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.http.MediaType
 import org.springframework.stereotype.Component
 import org.springframework.web.client.RestClient
 import tools.jackson.databind.ObjectMapper
-import java.nio.charset.StandardCharsets
-import java.security.MessageDigest
 
 @Component
 class ApplicationOnlineFormMcpClient(
     @param:Qualifier("aiApplicationFormDiscoveryRestClient") private val client: RestClient,
     @param:Value("\${DOCUMENT_INTERNAL_TOKEN:}") private val token: String,
     private val json: ObjectMapper,
+    private val mapper: ApplicationOnlineFormMcpMapper,
 ) {
     fun inspect(url: String): ApplicationOnlineFormSource {
         if (token.length < 32) throw ApplicationOnlineFormMcpException("APPLICATION_ONLINE_FORM_MCP_NOT_READY")
@@ -47,9 +46,6 @@ class ApplicationOnlineFormMcpClient(
         if (payload.questions.any { !it.supported || it.kind == "UNKNOWN" }) {
             throw ApplicationOnlineFormMcpException("APPLICATION_ONLINE_FORM_UNSUPPORTED")
         }
-        val digest = MessageDigest.getInstance("SHA-256").digest(payload.finalUrl.toByteArray(StandardCharsets.UTF_8))
-            .joinToString("") { "%02x".format(it) }
-        return ApplicationOnlineFormSource(1, "gpub-form-v1:${digest.take(24)}", payload.formTitle,
-            payload.questions.map { ApplicationOnlineFormSourceControl(it.controlId, it.label, it.required) })
+        return mapper.toSource(payload)
     }
 }

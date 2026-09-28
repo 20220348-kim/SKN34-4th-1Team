@@ -71,6 +71,11 @@ Catalog는 별도 프로세스·DB로 네 제공처 수집, 정규화, 검색 �
 기업마당 공식 API의 사업신청방법·사업신청URL은 Catalog의 신청 경로로 정규화해 저장합니다.
 `sourceUrl`은 공고 상세 주소로 유지하며 신청 URL이 없을 때 대체하지 않습니다. Catalog 내부 snapshot이
 신청 경로를 Core projection에 전달하고 Core 상세 응답의 `applicationRoute`가 이를 노출합니다.
+신청 준비의 온라인 입력 안내는 소유권과 공고의 `applicationRoute`를 확인합니다. 공식 경로가
+`GOOGLE_FORMS`이면 `ApplicationPreparationService → ApplicationOnlineFormMcpClient → AI 공개 Form Reader MCP`로
+실제 질문을 읽고, 검증된 payload를 Client의 Mapper에서 내부 Source로 변환합니다. 고정 Manifest의
+결정적 review와 저장된 확정 Fact로 실제 질문 순서의 복사 안내를 만들며, MCP 외부 호출은 DB transaction 밖에서 수행합니다.
+다른 경로는 기존 Manifest 기반 안내를 유지합니다. 답변 입력과 제출은 공식 신청 화면에서 사용자가 직접 수행합니다.
 K-Startup·MSIT·충남 공고는 이번 작업에서 신청 URL 응답 필드의 이름과 의미를 검증하지 못해
 `UNKNOWN`으로 둡니다. K-Startup 공식 데이터 소개에는 신청방법이 언급되지만 현재 사용하는
 공고 응답에서 대응 필드를 확인하기 전까지 임의로 매핑하지 않습니다.

@@ -8,7 +8,14 @@ import ai.govbiz.core.applicationpreparation.domain.exception.ApplicationPrepara
 import ai.govbiz.core.applicationpreparation.facade.AiApplicationPreparationFacade
 import ai.govbiz.core.applicationpreparation.repository.*
 import ai.govbiz.core.supportprogram.repository.SavedSupportProgramRepository
+import ai.govbiz.core.supportprogram.repository.SupportProgramRepository
+import ai.govbiz.core.applicationpreparation.client.ai.mapper.ApplicationOnlineFormMcpMapper
+import ai.govbiz.core.applicationpreparation.client.ai.exception.ApplicationOnlineFormMcpException
 import ai.govbiz.core.applicationpreparation.service.dto.ApplicationOnlineFormSourceCapabilityStatus
+import ai.govbiz.core.applicationpreparation.service.dto.ApplicationOnlineInputGuideStatus
+import ai.govbiz.core.supportprogram.domain.SupportProgramApplicationRoute
+import ai.govbiz.core.supportprogram.domain.SupportProgramApplicationRouteType
+import ai.govbiz.core.supportprogram.helper.SupportProgramTestHelper
 import java.time.LocalDateTime
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
@@ -31,7 +38,7 @@ class ApplicationPreparationServiceOnlineFormTest {
     private val contents = mock(ApplicationPreparationContentRepository::class.java)
     private val saved = mock(SavedSupportProgramRepository::class.java)
     private val onlineMcp = mock(ApplicationOnlineFormMcpClient::class.java)
-    private val service = ApplicationPreparationService(repository, forms, inputs, ai, contents, saved, onlineMcp)
+    private val service = ApplicationPreparationService(repository, forms, inputs, ai, contents, saved, onlineMcp, mock(SupportProgramRepository::class.java))
     private val now = LocalDateTime.of(2026, 9, 27, 12, 0)
     private val owner = Account(1, "owner@example.com", AccountRole.USER, null, null, now)
     private val source = ApplicationOnlineFormSource(1, "review-form", "검토 신청서", listOf(
@@ -65,8 +72,8 @@ class ApplicationPreparationServiceOnlineFormTest {
         val builder = RestClient.builder().baseUrl("http://ai.test")
             .messageConverters { it.clear(); it.add(JacksonJsonHttpMessageConverter(json)) }
         val http = MockRestServiceServer.bindTo(builder).build()
-        val realClient = ApplicationOnlineFormMcpClient(builder.build(), "t".repeat(32), json)
-        val connected = ApplicationPreparationService(repository, forms, inputs, ai, contents, saved, realClient)
+        val realClient = ApplicationOnlineFormMcpClient(builder.build(), "t".repeat(32), json, ApplicationOnlineFormMcpMapper())
+        val connected = ApplicationPreparationService(repository, forms, inputs, ai, contents, saved, realClient, mock(SupportProgramRepository::class.java))
         val manifest = javaClass.getResourceAsStream("/application-preparation/innovation-voucher-2026-v1.json")!!.use {
             json.readValue(it, ApplicationFormManifest::class.java)
         }
@@ -93,6 +100,79 @@ class ApplicationPreparationServiceOnlineFormTest {
         assertFalse(result.fieldMappings.first().writable)
         http.verify()
         verifyNoInteractions(inputs, ai, contents, saved)
+    }
+
+    @Test
+    fun officialRouteThroughRealClientMapperReviewAndFactBuildsGuide() {
+        val json = JsonMapper.builder().addModule(KotlinModule.Builder().build()).build()
+        val builder = RestClient.builder().baseUrl("http://ai.test")
+            .messageConverters { it.clear(); it.add(JacksonJsonHttpMessageConverter(json)) }
+        val http = MockRestServiceServer.bindTo(builder).build()
+        val supportPrograms = mock(SupportProgramRepository::class.java)
+        val realClient = ApplicationOnlineFormMcpClient(builder.build(), "t".repeat(32), json, ApplicationOnlineFormMcpMapper())
+        val connected = ApplicationPreparationService(repository, forms, inputs, ai, contents, saved, realClient, supportPrograms)
+        val manifest = javaClass.getResourceAsStream("/application-preparation/innovation-voucher-2026-v1.json")!!.use {
+            json.readValue(it, ApplicationFormManifest::class.java)
+        }
+        val field = manifest.sections.flatMap { section ->
+            section.fields.map { section.key to it }
+        }.first { it.second.label == "업체명" }
+        val draft = NewApplicationPreparation(manifest.sourceCode, manifest.sourceProgramId,
+            manifest.formVersionId, manifest.supportedServiceFields.first())
+        `when`(repository.findOwned(owner.id, 10)).thenReturn(
+            StoredApplicationPreparation(10, owner.id, 3, ApplicationProgressStage.PREPARING, 2, now, draft, now, now))
+        `when`(forms.requireVersion(manifest.formVersionId)).thenReturn(manifest)
+        val url = "https://docs.google.com/forms/d/e/public-id/viewform"
+        val catalog = SupportProgramTestHelper.catalogProgram(manifest.sourceProgramId)
+        `when`(supportPrograms.findPresentBySourceAndProgramId(manifest.sourceCode, manifest.sourceProgramId))
+            .thenReturn(catalog.copy(program = catalog.program.copy(applicationRoute =
+                SupportProgramApplicationRoute("온라인", url, SupportProgramApplicationRouteType.GOOGLE_FORMS))))
+        `when`(inputs.listOwnedFacts(owner.id, 10)).thenReturn(listOf(
+            ConfirmedApplicationFact(10, field.first, field.second.key, ApplicationFactStatus.PROVIDED,
+                "합성기업", "synthetic user input", 1, now)))
+        val response = mapOf(
+            "contractVersion" to "google-public-form-reader-v1", "parserVersion" to "semantic-dom-v1",
+            "sourceUrl" to url, "finalUrl" to url, "formTitle" to "공개 신청서",
+            "semanticFingerprint" to "a".repeat(64),
+            "questions" to listOf(mapOf("order" to 1, "controlId" to "gpub-v1:1:abcd",
+                "label" to "업체명", "required" to true, "kind" to "SHORT_TEXT",
+                "options" to emptyList<String>(), "supported" to true, "unsupportedReason" to null)),
+        )
+        http.expect(requestTo("http://ai.test/internal/v1/application-preparations/online-form/inspect"))
+            .andRespond(withSuccess(json.writeValueAsString(response), MediaType.APPLICATION_JSON))
+        val guide = connected.onlineInputGuide(owner, 10)
+        assertEquals(1, guide.totalCount)
+        assertEquals(url, guide.officialApplicationUrl)
+        assertEquals("gpub-v1:1:abcd", guide.items.single().sourceControlId)
+        assertEquals("${field.first}:${field.second.key}", guide.items.single().fieldId)
+        assertEquals(ApplicationOnlineInputGuideStatus.READY, guide.items.single().status)
+        assertEquals("합성기업", guide.savedAnswers.single().answer)
+        assertFalse(guide.externalMappingVerified) // 나머지 필수 Manifest 문항이 없어 review issue가 남는다.
+        http.verify()
+    }
+
+    @Test
+    fun googleMcpFailureIsNotReplacedByManifestGuide() {
+        val manifest = javaClass.getResourceAsStream("/application-preparation/innovation-voucher-2026-v1.json")!!.use {
+            jacksonObjectMapper().readValue(it, ApplicationFormManifest::class.java)
+        }
+        val supportPrograms = mock(SupportProgramRepository::class.java)
+        val connected = ApplicationPreparationService(repository, forms, inputs, ai, contents, saved, onlineMcp, supportPrograms)
+        val draft = NewApplicationPreparation(manifest.sourceCode, manifest.sourceProgramId,
+            manifest.formVersionId, manifest.supportedServiceFields.first())
+        `when`(repository.findOwned(owner.id, 10)).thenReturn(
+            StoredApplicationPreparation(10, owner.id, 3, ApplicationProgressStage.PREPARING, 2, now, draft, now, now))
+        `when`(forms.requireVersion(manifest.formVersionId)).thenReturn(manifest)
+        val url = "https://docs.google.com/forms/d/e/public-id/viewform"
+        val catalog = SupportProgramTestHelper.catalogProgram(manifest.sourceProgramId)
+        `when`(supportPrograms.findPresentBySourceAndProgramId(manifest.sourceCode, manifest.sourceProgramId))
+            .thenReturn(catalog.copy(program = catalog.program.copy(applicationRoute =
+                SupportProgramApplicationRoute("온라인", url, SupportProgramApplicationRouteType.GOOGLE_FORMS))))
+        `when`(inputs.listOwnedFacts(owner.id, 10)).thenReturn(emptyList())
+        `when`(onlineMcp.inspect(url)).thenThrow(ApplicationOnlineFormMcpException("APPLICATION_ONLINE_FORM_SOURCE_UNAVAILABLE"))
+        assertEquals("APPLICATION_ONLINE_FORM_SOURCE_UNAVAILABLE",
+            assertThrows(ApplicationOnlineFormMcpException::class.java) { connected.onlineInputGuide(owner, 10) }.code)
+        verify(onlineMcp).inspect(url)
     }
 
     @Test

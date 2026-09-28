@@ -180,6 +180,7 @@ export function toSupportProgramDetailFixture(program: SupportProgram): SupportP
     sourceName: program.sourceName,
     sourceUrl: program.sourceUrl,
     evidenceQuestionSupported: program.sourceCode === 'BIZINFO',
+    applicationRoute: { method: null, url: null, type: 'UNKNOWN' },
   }
 }
 

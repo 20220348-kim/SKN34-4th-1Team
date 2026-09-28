@@ -28,4 +28,14 @@ describe('saved answer export contract', () => {
   it.each(['https://example.test/apply', 'http://example.test/apply'])('allows HTTP(S) links %s', (url) => {
     expect(applicationOnlineInputGuideSchema.safeParse({ ...guide, officialApplicationUrl: url }).success).toBe(true)
   })
+  it('accepts Google question identity and rejects a READY checkbox answer', () => {
+    const items = [{ fieldId: 'company:name', sourceControlId: 'gpub-v1:1:id', label: '실제 질문', required: true,
+      status: 'READY', answer: '합성테크', inputMode: 'SHORT_TEXT', options: [], copyable: true }]
+    const google = { ...guide, totalCount: 1, readyCount: 1, needsReviewCount: 0, missingCount: 0,
+      externalMappingVerified: true, officialApplicationUrl: 'https://docs.google.com/forms/d/e/id/viewform',
+      items, savedAnswers: [{ fieldId: 'company:name', label: '실제 질문', answer: '합성테크' }] }
+    expect(applicationOnlineInputGuideSchema.safeParse(google).success).toBe(true)
+    expect(applicationOnlineInputGuideSchema.safeParse({ ...google, items: [{ ...items[0], inputMode: 'MULTI_CHOICE' }] }).success).toBe(false)
+    expect(applicationOnlineInputGuideSchema.safeParse({ ...google, items: [{ ...items[0], fieldId: null }] }).success).toBe(false)
+  })
 })

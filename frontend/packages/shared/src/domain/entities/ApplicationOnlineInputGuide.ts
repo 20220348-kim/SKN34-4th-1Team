@@ -8,7 +8,7 @@ export type ApplicationOnlineInputGuide = {
   directInputCount: number
   externalMappingVerified: boolean
   officialApplicationUrl: string | null
-  items: { fieldId: string; label: string; required: boolean; status: 'READY' | 'NEEDS_REVIEW' | 'MISSING' | 'DIRECT_INPUT'; answer: string | null; inputMode: 'UNKNOWN'; options: string[]; copyable: boolean }[]
+  items: { fieldId: string | null; sourceControlId: string | null; label: string; required: boolean; status: 'READY' | 'NEEDS_REVIEW' | 'MISSING' | 'DIRECT_INPUT'; answer: string | null; inputMode: 'UNKNOWN' | 'SHORT_TEXT' | 'LONG_TEXT' | 'SINGLE_CHOICE' | 'MULTI_CHOICE' | 'DROPDOWN'; options: string[]; copyable: boolean }[]
   savedAnswers: { fieldId: string; label: string; answer: string }[]
 }
 
