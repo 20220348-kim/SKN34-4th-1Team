@@ -79,7 +79,10 @@ class SyncTests(unittest.TestCase):
                     patch.object(sync, "select_release", return_value=(run(), [])), \
                     patch.object(sync, "checked_receipts") as receipts:
                 root = Path(directory).resolve()
-                sync.synchronize(FORK, root=root, write=True, get=ci_results([state]))
+                decision = sync.synchronize(FORK, root=root, write=True, get=ci_results([state]))
+                self.assertFalse(decision["prepared"])
+                self.assertEqual(decision["reason"], "source_or_ci_not_ready")
+                self.assertEqual(decision["source_sha"], SHA)
                 receipts.assert_not_called()
                 self.assertEqual(list(root.iterdir()), [])
 
@@ -161,6 +164,68 @@ class SyncTests(unittest.TestCase):
         for changes in ({"head_branch": "feature"}, {"head_repository": {"full_name": "attacker/GovBiz"}},
                         {"event": "pull_request"}, {"conclusion": "failure"}, {"path": "fake.yml"}):
             self.assertFalse(sync.valid_run({**run(), **changes}, SHA, run()["path"], {"workflow_dispatch"}, FORK))
+
+    def test_reports_are_never_counted_as_receipts(self):
+        artifacts = [{"name": name} for name in sync.PUBLICATION_REPORTS]
+        def get(path):
+            return {"artifacts": artifacts} if "/artifacts?" in path else {"workflow_runs": [run()]}
+        self.assertIsNone(sync.select_release(FORK, get))
+        artifacts.extend(artifact(service) for service in sync.SERVICES)
+        selected = sync.select_release(FORK, get)
+        self.assertEqual(len(selected[1]), 4)
+        artifacts.pop()
+        with self.assertRaisesRegex(ValueError, "exactly four"):
+            sync.select_release(FORK, get)
+
+    def test_unknown_artifact_is_not_silently_ignored(self):
+        artifacts = [artifact(service) for service in sync.SERVICES] + [{"name": "msa-publication-forged"}]
+        def get(path):
+            return {"artifacts": artifacts} if "/artifacts?" in path else {"workflow_runs": [run()]}
+        with self.assertRaisesRegex(ValueError, "exactly four"):
+            sync.select_release(FORK, get)
+
+    def test_no_release_preserves_existing_selection_and_reports_block(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(sync, "select_release", return_value=None), patch.object(sync, "prepare") as prepare:
+            root = Path(directory)
+            marker = root / "environments/fork/release.json"
+            marker.parent.mkdir(parents=True)
+            marker.write_text("previous selection")
+            result = sync.synchronize(FORK, root=root, write=True)
+            self.assertFalse(result["prepared"])
+            self.assertEqual(result["reason"], "no_complete_release")
+            self.assertEqual(marker.read_text(), "previous selection")
+            prepare.assert_not_called()
+
+    def test_selection_cli_outputs_prepared_or_blocked_without_guessing(self):
+        decisions = [
+            {"prepared": True, "reason": "prepared", "source_sha": SHA, "publisher_run_id": 123},
+            {"prepared": False, "reason": "no_complete_release", "source_sha": ""},
+        ]
+        for decision in decisions:
+            with self.subTest(decision=decision), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory) / "output.txt"
+                env = {"GITHUB_REPOSITORY": FORK.repository, "GOVBIZ_RELEASE_BRANCH": FORK.branch,
+                       "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/" + FORK.branch,
+                       "GITHUB_OUTPUT": str(output), "MSA_PROMOTION_ENABLED": "true"}
+                with patch.dict(sync.os.environ, env, clear=True), patch("sys.argv", ["sync_images.py", "--write"]), patch.object(sync, "synchronize", return_value=decision):
+                    sync.main()
+                recorded = dict(line.split("=", 1) for line in output.read_text().splitlines())
+                self.assertEqual(recorded["prepared"], str(decision["prepared"]).lower())
+                self.assertEqual(recorded["source_sha"], decision["source_sha"])
+                self.assertEqual(recorded["reason"], decision["reason"])
+
+    def test_selection_cli_error_is_not_success_and_outputs_no_permission(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "output.txt"
+            env = {"GITHUB_REPOSITORY": FORK.repository, "GOVBIZ_RELEASE_BRANCH": FORK.branch,
+                   "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/" + FORK.branch,
+                   "GITHUB_OUTPUT": str(output), "MSA_PROMOTION_ENABLED": "true"}
+            with patch.dict(sync.os.environ, env, clear=True), patch("sys.argv", ["sync_images.py", "--write"]), patch.object(sync, "synchronize", side_effect=ValueError("private details")), self.assertRaises(ValueError):
+                sync.main()
+            text = output.read_text()
+            self.assertIn("prepared=false", text)
+            self.assertIn("reason=selection_error", text)
+            self.assertNotIn("private details", text)
 
     def test_latest_failed_publish_is_not_hidden(self):
         get = lambda _: {"workflow_runs": [{**run(), "id": 124, "conclusion": "failure"}, run()]}
@@ -325,6 +390,25 @@ class WorkflowContractTests(unittest.TestCase):
                     names.append(name)
             with self.subTest(workflow=filename):
                 self.assertCountEqual(names, required)
+
+    def test_results_always_run_read_only_and_selection_controls_writes(self):
+        for filename, dependencies in (("msa-images.yml", ["gate", "publish"]), ("msa-promotion.yml", ["promote"])):
+            job = self.workflow(filename)["jobs"]["outcome"]
+            self.assertEqual(job["needs"], dependencies)
+            self.assertIn("always()", job["if"])
+            self.assertEqual(job["permissions"], {"contents": "read"})
+            self.assertEqual(job["steps"][0]["with"]["ref"], "${{ github.event.repository.default_branch }}")
+            self.assertEqual(job["steps"][0]["with"]["persist-credentials"], "false")
+        publication = self.workflow("msa-images.yml")["jobs"]["publish"]
+        self.assertCountEqual(publication["strategy"]["matrix"]["service"], sync.SERVICES)
+        promotion = self.workflow("msa-promotion.yml")["jobs"]["promote"]
+        steps = {step.get("id"): step for step in promotion["steps"] if "id" in step}
+        for step in ("validate", "commit"):
+            self.assertEqual(steps[step]["if"], "steps.select.outputs.prepared == 'true'")
+        command = steps["commit"]["run"]
+        self.assertLess(command.index('--verify-record'), command.index('git diff --cached --quiet'))
+        self.assertLess(command.index('git push origin'), command.index('git ls-remote'))
+        self.assertLess(command.index('git ls-remote'), command.index("echo 'pushed=true'"))
 
     def test_every_required_push_and_completion_trigger_is_present(self):
         names = []

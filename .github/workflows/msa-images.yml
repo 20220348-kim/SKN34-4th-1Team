@@ -29,6 +29,8 @@ jobs:
     outputs:
       ready: ${{ steps.gate.outputs.ready }}
       sha: ${{ steps.gate.outputs.sha }}
+      source_sha: ${{ steps.gate.outputs.source_sha }}
+      reason: ${{ steps.gate.outputs.reason }}
     steps:
       # Always execute trusted default-branch policy, never PR-provided scripts.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -73,11 +75,42 @@ jobs:
           python3 -B infrastructure/release/gate.py --check-sha "$SOURCE_SHA"
           docker buildx version
       - name: Build tracked service source or reuse its verified GHCR image
-        run: python3 -B infrastructure/release/publish.py --service "$SERVICE" --sha "$SOURCE_SHA" --output "${RUNNER_TEMP}/${SERVICE}.json"
+        run: python3 -B infrastructure/release/publish.py --service "$SERVICE" --sha "$SOURCE_SHA" --output "${RUNNER_TEMP}/${SERVICE}.json" --report "${RUNNER_TEMP}/${SERVICE}-outcome.json"
       - name: Save only the public image receipt, never environment files
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: msa-image-${{ matrix.service }}
           path: ${{ runner.temp }}/${{ matrix.service }}.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Save publication facts even after failure
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: msa-publication-${{ matrix.service }}
+          path: ${{ runner.temp }}/${{ matrix.service }}-outcome.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  outcome:
+    needs: [gate, publish]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Record publication result including blocked and skipped runs
+        env:
+          RELEASE_NEEDS: ${{ toJSON(needs) }}
+        run: python3 -B infrastructure/release/outcome.py --stage publication --output "${RUNNER_TEMP}/publication-result.json"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: msa-publication-result
+          path: ${{ runner.temp }}/publication-result.json
           if-no-files-found: error
           retention-days: 30

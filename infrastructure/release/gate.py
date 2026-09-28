@@ -104,15 +104,17 @@ def upstream_merged(sha, fork, get=api):
                     and item.get("status") in {"added", "modified"} for item in files))
 
 
-def eligible(sha, fork, get=api):
-    if not current_source(sha, fork, get) or not upstream_merged(sha, fork, get):
-        return False
+def blocked_reason(sha, fork, get=api):
+    if not current_source(sha, fork, get):
+        return "source_not_current"
+    if not upstream_merged(sha, fork, get):
+        return "upstream_not_merged"
     for filename, required_jobs in WORKFLOWS.items():
         response = get(f"repos/{fork.repository}/actions/workflows/{filename}/runs"
                        f"?head_sha={sha}&branch={quote(fork.branch, safe='')}&event=push&per_page=100")
         runs = response.get("workflow_runs", [])
         if not runs:
-            return False
+            return "ci_run_missing:" + filename
         run = max(runs, key=lambda item: (item["id"], item.get("run_attempt", 1)))
         if (run.get("head_sha") != sha or run.get("head_branch") != fork.branch
                 or run.get("event") != "push" or run.get("status") != "completed"
@@ -121,7 +123,7 @@ def eligible(sha, fork, get=api):
                 or run.get("head_repository", {}).get("full_name") != fork.repository
                 or type(run.get("id")) is not int or run["id"] <= 0
                 or type(run.get("run_attempt")) is not int or run["run_attempt"] <= 0):
-            return False
+            return "ci_run_not_successful_or_untrusted:" + filename
         jobs_response = get(f"repos/{fork.repository}/actions/runs/{run['id']}/jobs"
                             "?filter=latest&per_page=100")
         jobs = jobs_response.get("jobs", [])
@@ -136,13 +138,17 @@ def eligible(sha, fork, get=api):
                 or any(job.get("status") != "completed" or job.get("conclusion") != "success"
                        or job.get("head_sha") != sha or job.get("run_id") != run["id"]
                        for job in jobs)):
-            return False
+            return "ci_jobs_not_successful_or_incomplete:" + filename
         # A rerun starting during the jobs query must not inherit the prior success.
         confirmed = get(f"repos/{fork.repository}/actions/runs/{run['id']}")
         if any(confirmed.get(field) != run.get(field) for field in (
                 "id", "run_attempt", "head_sha", "head_branch", "event", "status", "conclusion", "path")):
-            return False
-    return True
+            return "ci_run_changed:" + filename
+    return None
+
+
+def eligible(sha, fork, get=api):
+    return blocked_reason(sha, fork, get) is None
 
 
 def main():
@@ -160,10 +166,15 @@ def main():
     event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
     sha = candidate(os.environ["GITHUB_EVENT_NAME"], event,
                     os.environ["GITHUB_REF"], os.environ["GITHUB_SHA"], fork)
-    ready = bool(sha and eligible(sha, fork))
-    with open(os.environ["GITHUB_OUTPUT"], "a") as output:
-        output.write(f"ready={str(ready).lower()}\nsha={sha if ready else ''}\n")
-    print("Release gate: eligible" if ready else "Release gate: not eligible (no images will be published)")
+    reason = "gate_error"
+    try:
+        reason = blocked_reason(sha, fork) if sha else "event_not_eligible"
+    finally:
+        ready = reason is None
+        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+            output.write(f"ready={str(ready).lower()}\nsha={sha if ready else ''}\n")
+            output.write(f"source_sha={sha or ''}\nreason={reason or 'eligible'}\n")
+    print("Release gate: " + (reason or "eligible"))
 
 
 if __name__ == "__main__":

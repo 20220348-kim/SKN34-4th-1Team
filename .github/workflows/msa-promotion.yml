@@ -27,6 +27,17 @@ jobs:
     if: ${{ github.repository_owner != 'SKNETWORKS-FAMILY-AICAMP' && github.event.repository.owner.type == 'User' && github.event.repository.fork && vars.MSA_PROMOTION_ENABLED == 'true' && (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 12
+    outputs:
+      source_sha: ${{ steps.select.outputs.source_sha }}
+      reason: ${{ steps.select.outputs.reason }}
+      publisher_run_id: ${{ steps.select.outputs.publisher_run_id }}
+      selection_result: ${{ steps.select.outcome }}
+      validation_result: ${{ steps.validate.outcome }}
+      commit_result: ${{ steps.commit.outcome }}
+      push_attempted: ${{ steps.commit.outputs.push_attempted }}
+      pushed: ${{ steps.commit.outputs.pushed }}
+      unchanged: ${{ steps.commit.outputs.unchanged }}
+      revision: ${{ steps.commit.outputs.revision }}
     permissions:
       contents: write
       actions: read
@@ -60,8 +71,11 @@ jobs:
       - name: Test policy and promotion tools
         run: python -B -m unittest discover -s scripts -p 'test_*.py'
       - name: Fetch verified receipts and select digests
+        id: select
         run: python -B scripts/sync_images.py --write
       - name: Validate proposed deployment before any push
+        id: validate
+        if: steps.select.outputs.prepared == 'true'
         run: |
           set -euo pipefail
           python -B scripts/check_repository.py
@@ -79,24 +93,52 @@ jobs:
           done
           git diff --check
       - name: Commit only this fork's image selection without force-push
+        id: commit
+        if: steps.select.outputs.prepared == 'true'
         shell: bash
         run: |
           set -euo pipefail
-          if ! test -f environments/fork/release.json; then
-            echo 'No complete release to promote'
-            exit 0
-          fi
           git add environments/fork/core-service.yaml environments/fork/catalog-service.yaml environments/fork/ai-service.yaml environments/fork/ops-service.yaml environments/fork/release.json
           python -B -c 'import subprocess,sys; sys.path.insert(0,"../release"); from gate import PROMOTION_PATHS; changed=set(subprocess.check_output(["git", "diff", "--cached", "--name-only"],text=True).splitlines()); sys.exit("Unexpected staged files") if changed - PROMOTION_PATHS else None'
+          python -B scripts/sync_images.py --verify-record
           if git diff --cached --quiet; then
-            echo 'No new image selection'
+            echo 'unchanged=true' >> "$GITHUB_OUTPUT"
+            echo "revision=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          python -B scripts/sync_images.py --verify-record
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git commit -m '배포: 검증된 서비스 이미지 digest 자동 갱신'
           gh auth setup-git
           # A GITHUB_TOKEN push does not trigger new push workflows. This avoids
           # an image→digest→image loop; Argo still observes the Git commit.
+          revision="$(git rev-parse HEAD)"
+          echo 'push_attempted=true' >> "$GITHUB_OUTPUT"
           git push origin "HEAD:refs/heads/$GOVBIZ_RELEASE_BRANCH"
+          test "$(git ls-remote --heads origin "refs/heads/$GOVBIZ_RELEASE_BRANCH" | cut -f1)" = "$revision"
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+          echo 'pushed=true' >> "$GITHUB_OUTPUT"
+
+  outcome:
+    needs: [promote]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Record promotion separately from cluster deployment
+        working-directory: .
+        env:
+          RELEASE_NEEDS: ${{ toJSON(needs) }}
+        run: python3 -B infrastructure/release/outcome.py --stage promotion --output "${RUNNER_TEMP}/promotion-result.json"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: msa-promotion-result
+          path: ${{ runner.temp }}/promotion-result.json
+          if-no-files-found: error
+          retention-days: 30

@@ -94,7 +94,9 @@ def lookup(uri, tag, key, docker_env, fork):
     return digest
 
 
-def publish(service, sha, output, actor, token, fork, visibility="private"):
+def publish(service, sha, output, actor, token, fork, visibility="private", *, result=None):
+    result = {} if result is None else result
+    result.update(state="failed", upload="not_attempted", reused=False, receiptWritten=False)
     fork.require_personal_publish()
     uri = repository(service, fork)
     if not valid_sha(sha) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9\[\]-]*", actor) or not token:
@@ -117,6 +119,7 @@ def publish(service, sha, output, actor, token, fork, visibility="private"):
             run("docker", "login", "--username", actor, "--password-stdin", "ghcr.io",
                 input=token, capture_output=True, env=docker_env)
             digest = lookup(uri, tag, key, docker_env, fork)
+            result["reused"] = digest is not None
             if digest is None:
                 archive = temporary / "source.tar"
                 run("git", "archive", "--format=tar", "--output", str(archive), sha,
@@ -134,7 +137,9 @@ def publish(service, sha, output, actor, token, fork, visibility="private"):
                 if not package_exists(service, token, fork, visibility):
                     raise ValueError("Package disappeared or became inaccessible during build; "
                                      "refusing upload instead of creating a new package")
+                result["upload"] = "attempted"
                 run("docker", "push", reference, env=docker_env)
+                result["upload"] = "confirmed"
                 # Recheck after upload as well; an unverified image gets no receipt.
                 if not package_exists(service, token, fork, visibility):
                     raise RuntimeError("Published package visibility/ownership could not be verified")
@@ -153,7 +158,8 @@ def publish(service, sha, output, actor, token, fork, visibility="private"):
     with output.open("x") as file:
         json.dump(receipt, file, indent=2)
         file.write("\n")
-    print(f"Published candidate: {uri}@{digest} (not deployed)")
+    result.update(state="reused" if result["reused"] else "published", receiptWritten=True)
+    print(f"Verified candidate: {uri}@{digest} (not deployed)")
 
 
 def main():
@@ -161,13 +167,27 @@ def main():
     parser.add_argument("--service", choices=SERVICES, required=True)
     parser.add_argument("--sha", required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--report", type=Path)
     args = parser.parse_args()
-    if os.environ.get("MSA_RELEASE_ENABLED") != "true":
-        raise SystemExit("Image publication is disabled")
-    fork = from_ci()
-    fork.require_personal_publish()
-    publish(args.service, args.sha, args.output, os.environ["GITHUB_ACTOR"], os.environ["GH_TOKEN"], fork,
-            os.environ.get("MSA_PACKAGE_VISIBILITY", "private"))
+    if args.report and args.report.resolve() == args.output.resolve():
+        parser.error("Report and image receipt must use different paths")
+    result = {"stage": "publication-service", "sourceSha": args.sha if valid_sha(args.sha) else None,
+              "service": args.service, "state": "failed", "upload": "not_attempted",
+              "reused": False, "receiptWritten": False, "clusterVerified": False}
+    try:
+        if os.environ.get("MSA_RELEASE_ENABLED") != "true":
+            raise ValueError("Image publication is disabled")
+        fork = from_ci().require_personal_publish()
+        result["repository"] = fork.repository
+        publish(args.service, args.sha, args.output, os.environ["GITHUB_ACTOR"], os.environ["GH_TOKEN"], fork,
+                os.environ.get("MSA_PACKAGE_VISIBILITY", "private"), result=result)
+    except Exception as exc:
+        result["errorType"] = type(exc).__name__
+        raise
+    finally:
+        if args.report:
+            from outcome import write_report
+            write_report(args.report, result)
 
 
 if __name__ == "__main__":

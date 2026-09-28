@@ -77,6 +77,19 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertIsNone(gate.candidate("workflow_dispatch", self.event(), "refs/heads/topic", SHA, FORK))
         self.assertIsNone(gate.candidate("push", self.event(), "refs/heads/develop", SHA, FORK))
 
+    def test_blocked_reason_distinguishes_missing_failed_and_changed_ci(self):
+        self.assertIsNone(gate.blocked_reason(SHA, FORK, self.responses()))
+        self.assertEqual(gate.blocked_reason(SHA, FORK, self.responses(workflows={"llmops-ci.yml": []})),
+                         "ci_run_missing:llmops-ci.yml")
+        self.assertEqual(gate.blocked_reason(SHA, FORK, self.responses(workflows={"llmops-ci.yml": [run_record("llmops-ci.yml", conclusion="failure")]})),
+                         "ci_run_not_successful_or_untrusted:llmops-ci.yml")
+        self.assertEqual(gate.blocked_reason(SHA, FORK, self.responses(confirmed={"ci.yml": {"run_attempt": 2}})),
+                         "ci_run_changed:ci.yml")
+        with patch.object(gate, "current_source", return_value=False):
+            self.assertEqual(gate.blocked_reason(SHA, FORK), "source_not_current")
+        with patch.object(gate, "current_source", return_value=True), patch.object(gate, "upstream_merged", return_value=False):
+            self.assertEqual(gate.blocked_reason(SHA, FORK), "upstream_not_merged")
+
     def test_all_five_exact_workflows_required(self):
         self.assertTrue(gate.eligible(SHA, FORK, self.responses()))
         self.assertFalse(gate.eligible(SHA, FORK, self.responses([])))
@@ -523,13 +536,17 @@ class PublicationTests(unittest.TestCase):
                         patch.object(publish, "run", side_effect=command), \
                         patch.object(publish.subprocess, "run") as logout:
                     output = root / "receipt.json"
+                    outcome = {}
                     if fail_push:
                         with self.assertRaises(subprocess.CalledProcessError):
-                            publish.publish("ai-service", sha, output, "actor", "fixture-token", FORK)
+                            publish.publish("ai-service", sha, output, "actor", "fixture-token", FORK, result=outcome)
                         self.assertFalse(output.exists())
                     else:
-                        publish.publish("ai-service", sha, output, "actor", "fixture-token", FORK)
+                        publish.publish("ai-service", sha, output, "actor", "fixture-token", FORK, result=outcome)
                         self.assertTrue(output.exists())
+                    self.assertEqual(outcome["upload"], "attempted" if fail_push else "confirmed")
+                    self.assertEqual(outcome["receiptWritten"], not fail_push)
+                    self.assertEqual(outcome["state"], "failed" if fail_push else "published")
                     logout.assert_called_once()
                     self.assertTrue(any(c[:2] == ("docker", "push") for c in commands))
 
