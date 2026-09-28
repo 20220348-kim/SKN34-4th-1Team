@@ -892,8 +892,8 @@ PID 재사용을 구분한다. 취소 상태를 강제로 CANCELLED로 덮어쓰
 close HTTP 실패 후 예약을 유지하는 현재 동작을 검증하며, 미확인 예약 복구 기능을 추가하지 않는다.
 
 ```bash
-# 저장소 루트: Linux 컨테이너가 가능한 Docker Engine + Compose 필요
-python infrastructure/llmops/cancellation_smoke.py --output work/llmops-ci/cancellation.json
+# 저장소 루트: Python 3.12, Linux 컨테이너가 가능한 Docker Engine + Compose 필요
+backend/ai-service/.venv/bin/python infrastructure/llmops/cancellation_smoke.py --output work/llmops-ci/cancellation.json
 
 # backend/ai-service: 서버/유료 API 없이 도구 계약과 SDK→HTTP 대역 확인
 uv run --locked --extra dev --group evaluation python -m pytest ../../infrastructure/llmops/test_cancellation_smoke.py ../../infrastructure/llmops/test_ops_smoke.py -q
@@ -920,3 +920,22 @@ Compose 5.3.1에서 수정본의 실제 11개 시나리오가 모두 통과했�
 통과했다. Windows 공용 pytest 임시 디렉터리 권한 오류가 난 3개 테스트는 작업 공간의 새
 `--basetemp` 경로에서 통과했다. 모델 HTTP 응답과 Core 관리자 응답은 테스트 대역이며,
 실제 OpenAI 품질 평가·배포 검증이나 최신 수정 SHA의 원격 전체 CI 성공을 뜻하지 않는다.
+
+#### skn-48 리베이스 통합
+
+`skn-48`은 `main / 626ecf6`에 병합된 skn-45의 내부 HTTP 호출·네트워크 격리 검사·실패 진단을
+유지한다. 별도 ingress 서비스나 외부 네트워크를 추가하지 않는다. 준비 상태 GET 조회는 재기동
+중의 연결 실패·비JSON 응답을 다시 확인하되, 정해진 시간 안에 회복하지 않으면 실패한다.
+접수·취소·모델 요청 재전송 정책은 변경하지 않는다. 호스트 도구와 CI는 Python 3.12 가상환경
+경로를 사용하고 다른 버전은 Docker 실행 전에 거절한다.
+
+리베이스 전 `b548c3b`의 별도 중계기 구현에서는 무료 회귀 36개와 실제 서버 시나리오 11개가
+통과했다. 초기화·정리 포함 15분 46초가 걸려 CI 단계 한도는 20분으로 보강했다. 개별 준비·barrier·
+종료 대기의 실패 조건은 유지한다. 당시 결과 `work/llmops-ci/cancellation-current.json`과 두 실패
+기록(`cancellation-local.json`, `cancellation-python312.json`)은 git 제외 로컬 파일로 보존한다.
+이 결과를 내부 HTTP 방식으로 통합한 최신 커밋의 실제 컨테이너 검증 결과로 대체하지 않는다.
+
+리베이스 충돌 해결 후 Python 3.12에서 `test_cancellation_smoke.py`와 `test_ops_smoke.py`의
+무료 회귀 테스트 **46개**, Ruff 검사·포맷, Compose 내부 네트워크·포트 미게시 검사,
+CI YAML·Python 실행 경로, `git diff --check`가 통과했다. 실제 서버의 11개 시나리오와 전체 필수
+검증은 리베이스된 최신 SHA의 GitHub Actions에서 확인하며, 실행 중·대기는 통과로 표시하지 않는다.

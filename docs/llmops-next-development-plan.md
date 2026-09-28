@@ -1,8 +1,34 @@
-# LLMOps 후속 개발 전략 — main baae7bd 기준
+# LLMOps 후속 개발 전략 — skn-48 기준
 
 [문서 목록](README.md) · [도입·구현 이력](langfuse-adoption-strategy.md) · [Ops API](../backend/ops-service/README.md) · [실행 안내](../infrastructure/llmops/README.md)
 
-## 판단과 기준
+## 최신 구현과 착수 순서 — skn-48 / main 626ecf6
+
+2026-09-29 `skn-48`을 최신 `main / 626ecf6` 위로 리베이스했다. main에는 skn-45의 취소 통합
+검증 수정, skn-46의 Core→AI 검색 추적, skn-47의 이미지 발행·승격 결과 기록과 쓰기 차단이
+병합돼 있다. 병합된 기능을 다시 만들지 않고 남은 차이를 검증한다.
+
+취소 테스트는 skn-45의 `docker compose exec` 기반 내부 HTTP 방식과 실패 진단을 유지한다.
+skn-48의 별도 ingress는 중복되어 제외하고 Python 3.12 실행 고정, 재기동 중 비JSON 준비 응답
+처리, CI 단계 20분 한도를 통합했다. 각 준비·종료 대기의 시간 초과는 계속 실패로 처리한다.
+기존 `b548c3b`의 무료 36개·실제 서버 11개 통과는 리베이스 전 기록이며 최신 SHA의 CI 성공과
+구별한다. 상세 명령과 검증 범위는 [실행 안내](../infrastructure/llmops/README.md#skn-48-리베이스-통합)에 있다.
+리베이스 충돌 해결 후 무료 관련 회귀 **46개**와 Ruff·Compose 격리·CI YAML 검사는 통과했다.
+리베이스된 최신 SHA의 실제 서버 11개 시나리오와 필수 CI 전체 결과는 별도로 확인한다.
+
+| 순서 | 작업 | 진입·완료 조건 |
+|---|---|---|
+| 1 | 리베이스 통합 검증 | 내부 HTTP·격리·쿠키/CSRF·실패 진단·준비 검사 회귀, 최신 SHA의 필수 CI 5개 및 취소 시나리오 11개 통과 |
+| 2A | 현재 모델 기준 확보 준비 | 사람이 기존 6건의 자료 검토. 실제 호출은 1 통과 후 자료·모델·호출/출력 상한 승인, 전 사례 검토·품질 판정·명시적 기준 지정 |
+| 2B | 예산 조회 API·React 표시·한도 변경 감사 | 확정 사용량·미확인·미승인 예약·종료 전 반환 대기 구분, 합계·권한·동시 정산·감사 rollback 검증 |
+| 3 | 종료 예약 정리·증거 기반 사용량 보정 | 미확인 몫 보존, 중복 반환·새 모델 전송 0회, 보정 근거와 이력 보존 |
+| 4 | 실제 검색 전체 경로 추적·RAG 평가 확대 | 실제 Core부터 Langfuse까지 연결 확인, 검색과 답변 지표·대역 검증과 실제 품질 측정 구분 |
+| 5 | 입력·금액·기간 예산과 정기 실행 | 예산 통제와 주기·수신 대상 승인, 중복 tick·미확인 비용·복구 확인 후 활성화 |
+
+2A의 사람 검토는 독립적으로 준비한다. 다음 코드 구현은 1의 검증 완료 후 2B이며, 무료 검증을
+현재 모델의 사람 검토 기준 확보로 표시하지 않는다. 아래는 최초 전략과 상세 완료 조건의 기록이다.
+
+## 이전 판단과 기준 — main baae7bd
 
 2026-09-29 KST 검토 기준은 [origin 저장소](https://github.com/ilil1/SKN34-4th-1Team)의
 `main / baae7bd45298db2bd206d6d6bfdf7416bd47a53b`이다. 작업 트리는 검토 시작 시 깨끗했다.
@@ -81,7 +107,7 @@ Q의 사람 자료 검토는 1~3과 독립적으로 준비할 수 있다. 금액
 `Verify real cancellation, process exit and budget accounting with offline model HTTP` 단계에서
 `cancellation_smoke.py:100`의 `docker compose ... port cancellation-probe 8099`가 exit 1을 반환했다.
 `Smoke.ready()`에서 실패했으며 보관 artifact는 `passed=false`, `failure=CalledProcessError`,
-`scenarios=[]`다. 즉 **11개 시나리오의 통과 건수는 0개**이며 취소 로직 자체의 결함이 입증된 것은 아니다.
+`scenarios=[]`다. 즉 **당시 CI의 시나리오 통과 건수는 0개**이며 취소 로직 자체의 결함이 입증된 것은 아니다.
 
 최초 실패 artifact에는 subprocess의 stderr와 서비스 상태가 없어 포트 미노출·컨테이너 종료·
 Compose/네트워크 동작 중 원인을 확정할 수 없었다. 아래 범위로 후속 수정을 진행했으며,

@@ -5,6 +5,7 @@ import json
 import os
 import secrets
 import subprocess
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -129,7 +130,7 @@ class Smoke:
         def session():
             try:
                 return self.api("/api/v1/ops/session")
-            except (URLError, OSError):
+            except (URLError, OSError, ValueError):
                 return 0, {}
 
         _, body = wait_for(session, lambda r: r[0] == 200, label="Ops readiness")
@@ -142,7 +143,7 @@ class Smoke:
                 return self.request(
                     self.prefect + "/deployments/name/govbiz-ops-evidence-evaluation/saved-capture"
                 )
-            except (URLError, OSError):
+            except (URLError, OSError, ValueError):
                 return 0, {}
 
         wait_for(
@@ -488,6 +489,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=ROOT / "work/llmops-ci/cancellation.json")
     args = parser.parse_args()
+    if sys.version_info[:2] != (3, 12):
+        parser.error("Python 3.12 is required; use backend/ai-service/.venv/bin/python")
     args.output.parent.mkdir(parents=True, exist_ok=True)
     project = "govbiz-cancel-test-" + uuid4().hex[:12]
     values = isolated_environment()

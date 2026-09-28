@@ -491,3 +491,44 @@ def test_readiness_waits_for_valid_langfuse_json(monkeypatch):
     monkeypatch.setattr(smoke.time, "sleep", Mock())
     client.ready()
     assert client.request.call_count == 4 and client.csrf == "csrf"
+
+
+def test_wrong_python_version_fails_before_docker(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        sys, "argv", ["cancellation_smoke.py", "--output", str(tmp_path / "x.json")]
+    )
+    monkeypatch.setattr(smoke.sys, "version_info", (3, 9, 6))
+    docker = Mock()
+    monkeypatch.setattr(smoke.subprocess, "run", docker)
+    with pytest.raises(SystemExit) as raised:
+        smoke.main()
+    assert raised.value.code == 2 and not docker.called
+
+
+@pytest.mark.parametrize("recovers", [True, False])
+def test_readiness_retries_non_json_startup_response_but_still_times_out(monkeypatch, recovers):
+    instance = smoke.Smoke(Mock())
+    monkeypatch.setattr(instance, "request", Mock(return_value=(200, {})))
+    monkeypatch.setattr(smoke.time, "sleep", Mock())
+    monkeypatch.setattr(
+        smoke.time, "monotonic", Mock(side_effect=[0, 0, 1, 1] if recovers else [0, 0, 181])
+    )
+    unavailable = json.JSONDecodeError("Not JSON", "<html>Upstream not ready</html>", 0)
+    ready = (
+        200,
+        {
+            "live_enabled": True,
+            "user": {"id": 1},
+            "csrf_token": "test-csrf",
+            "datasets": [{"id": "target-coverage-20260907-v1"}],
+        },
+    )
+    api = Mock(side_effect=[unavailable, ready] if recovers else unavailable)
+    monkeypatch.setattr(instance, "api", api)
+    if recovers:
+        instance.ready()
+        assert instance.csrf == "test-csrf" and api.call_count == 2
+    else:
+        with pytest.raises(TimeoutError, match="Ops readiness"):
+            instance.ready()
+        assert instance.csrf is None
