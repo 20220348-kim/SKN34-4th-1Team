@@ -27,6 +27,10 @@ RUN = {
 }
 RAW = b"<html>" + b"report" * 200 + b"</html>"
 FINGERPRINT = hashlib.sha256(RAW).hexdigest()
+ALTERED = {
+    "sha256": hashlib.sha256(RAW[:-1] + bytes([RAW[-1] ^ 1])).hexdigest(),
+    "size": len(RAW),
+}
 
 
 class ArtifactFaultTests(unittest.TestCase):
@@ -199,6 +203,116 @@ class ArtifactFaultTests(unittest.TestCase):
         command.assert_not_called()
 
 
+class TamperedReportTests(unittest.TestCase):
+    @contextmanager
+    def fixture(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory) / RUN_ID / "evaluation"
+            folder.mkdir(parents=True)
+            report = folder / "report.html"
+            report.write_bytes(RAW)
+            manifest = folder / "manifest.json"
+            manifest_raw = json.dumps(
+                {"artifact_sha256": {"report.html": FINGERPRINT}}
+            ).encode()
+            manifest.write_bytes(manifest_raw)
+
+            def execute(command, *, env, data):
+                result = subprocess.run(
+                    [sys.executable, "-c", command[-1]],
+                    input=data,
+                    text=True,
+                    capture_output=True,
+                    check=True,
+                    env={**os.environ, "LLMOPS_RESULTS_DIR": directory},
+                )
+                return result.stdout
+
+            with patch.object(smoke, "execute", side_effect=execute):
+                yield report, manifest
+            self.assertEqual(manifest.read_bytes(), manifest_raw)
+
+    def test_same_size_single_byte_change_restores_exact_original_after_http_failure(
+        self,
+    ):
+        with self.fixture() as (report, _):
+            with (
+                self.assertRaisesRegex(RuntimeError, "HTTP"),
+                smoke.tampered_report([], {}, RUN_ID, FINGERPRINT) as evidence,
+            ):
+                changed = report.read_bytes()
+                self.assertEqual(len(changed), len(RAW))
+                self.assertEqual(sum(a != b for a, b in zip(changed, RAW)), 1)
+                self.assertEqual(evidence, ALTERED)
+                self.assertEqual(
+                    report.with_name("report.html.smoke-held").read_bytes(), RAW
+                )
+                raise RuntimeError("HTTP")
+            self.assertEqual(report.read_bytes(), RAW)
+            self.assertFalse(report.with_name("report.html.smoke-held").exists())
+
+    def test_unexpected_writer_or_backup_change_blocks_destructive_restore(self):
+        for backup_changed in (False, True):
+            with (
+                self.subTest(backup_changed=backup_changed),
+                self.fixture() as (report, _),
+            ):
+                backup = report.with_name("report.html.smoke-held")
+                with (
+                    self.assertRaises(subprocess.CalledProcessError),
+                    smoke.tampered_report([], {}, RUN_ID, FINGERPRINT),
+                ):
+                    target = backup if backup_changed else report
+                    target.write_bytes(b"new writer")
+                self.assertEqual(target.read_bytes(), b"new writer")
+                self.assertTrue(backup.exists())
+                if not backup_changed:
+                    self.assertEqual(backup.read_bytes(), RAW)
+
+    def test_wrong_hash_or_existing_backup_prevents_tampering(self):
+        for backup_exists in (False, True):
+            with (
+                self.subTest(backup_exists=backup_exists),
+                self.fixture() as (report, _),
+            ):
+                backup = report.with_name("report.html.smoke-held")
+                if backup_exists:
+                    backup.write_bytes(b"keep backup")
+                with (
+                    self.assertRaises(subprocess.CalledProcessError),
+                    smoke.tampered_report(
+                        [], {}, RUN_ID, FINGERPRINT if backup_exists else "0" * 64
+                    ),
+                ):
+                    self.fail("invalid original must not be changed")
+                self.assertEqual(report.read_bytes(), RAW)
+                if backup_exists:
+                    self.assertEqual(backup.read_bytes(), b"keep backup")
+
+    @unittest.skipIf(os.name == "nt", "Linux deployed path guard")
+    def test_symlink_report_cannot_modify_another_file(self):
+        with self.fixture() as (report, _):
+            other = report.with_name("other.html")
+            report.rename(other)
+            report.symlink_to(other)
+            with (
+                self.assertRaises(subprocess.CalledProcessError),
+                smoke.tampered_report([], {}, RUN_ID, FINGERPRINT),
+            ):
+                self.fail("symlink must not be followed")
+            self.assertEqual(other.read_bytes(), RAW)
+            self.assertTrue(report.is_symlink())
+
+    def test_invalid_run_id_is_rejected_before_exec(self):
+        with (
+            patch.object(smoke, "execute") as command,
+            self.assertRaises(ValueError),
+            smoke.tampered_report([], {}, "../other", FINGERPRINT),
+        ):
+            self.fail("invalid path")
+        command.assert_not_called()
+
+
 class AccessEvidenceTests(unittest.TestCase):
     def replies(self, failed=()):
         checks = {
@@ -332,7 +446,7 @@ class RecoveryEvidenceTests(unittest.TestCase):
             patch.object(smoke, "execute", side_effect=["container", PROJECT]),
             patch.object(smoke, "rejected_token", side_effect=fault),
             patch.object(smoke.fork_web, "forwards", return_value=nullcontext()),
-            patch.object(smoke, "artifact_status", return_value=401),
+            patch.object(smoke, "artifact_response", return_value={"status": 401}),
             patch.object(smoke, "check_access", side_effect=AssertionError("HTTP")),
             self.assertRaisesRegex(AssertionError, "HTTP"),
         ):
@@ -341,26 +455,37 @@ class RecoveryEvidenceTests(unittest.TestCase):
         self.assertEqual(report["artifact_recovery"]["status"], "FAIL")
         self.assertEqual(report["evaluation_phase"], "artifact_token_rejected")
 
-    def test_both_faults_and_recoveries_required_for_pass(self):
+    def test_all_three_faults_and_recoveries_required_for_pass(self):
         report = {"compose_project": PROJECT}
         with (
             patch.object(smoke, "execute", side_effect=["container", PROJECT]),
             patch.object(smoke, "rejected_token", side_effect=lambda nk: nullcontext()),
             patch.object(smoke, "missing_report", side_effect=lambda *a: nullcontext()),
             patch.object(
+                smoke, "tampered_report", side_effect=lambda *a: nullcontext(ALTERED)
+            ),
+            patch.object(
                 smoke.fork_web, "forwards", side_effect=lambda nk: nullcontext()
             ),
-            patch.object(smoke, "artifact_status", side_effect=[401, 404]),
+            patch.object(
+                smoke,
+                "artifact_response",
+                side_effect=[
+                    {"status": 401},
+                    {"status": 404},
+                    {"status": 200, **ALTERED},
+                ],
+            ),
             patch.object(
                 smoke, "check_access", return_value={"checked": True}
             ) as check,
         ):
             smoke.verify(NK, [], {}, "password", RUN, FINGERPRINT, report)
-        self.assertEqual(check.call_count, 4)
+        self.assertEqual(check.call_count, 6)
         self.assertEqual(report["artifact_recovery"]["status"], "PASS")
         self.assertEqual(
             set(report["artifact_recovery"]["scenarios"]),
-            {"token_rejected", "report_missing"},
+            {"token_rejected", "report_missing", "report_tampered"},
         )
         self.assertTrue(
             all(
@@ -368,6 +493,85 @@ class RecoveryEvidenceTests(unittest.TestCase):
                 for item in report["artifact_recovery"]["scenarios"].values()
             )
         )
+
+    def test_tampered_transport_requires_changed_hash_exact_size_and_http_200(self):
+        for remote in (
+            {"status": 404},
+            {"status": 200, **ALTERED, "sha256": FINGERPRINT},
+            {"status": 200, **ALTERED, "size": len(RAW) + 1},
+        ):
+            report = {"compose_project": PROJECT}
+            with (
+                patch.object(smoke, "require_disposable"),
+                patch.object(
+                    smoke, "rejected_token", side_effect=lambda nk: nullcontext()
+                ),
+                patch.object(
+                    smoke, "missing_report", side_effect=lambda *a: nullcontext()
+                ),
+                patch.object(
+                    smoke,
+                    "tampered_report",
+                    side_effect=lambda *a: nullcontext(ALTERED),
+                ),
+                patch.object(
+                    smoke.fork_web, "forwards", side_effect=lambda nk: nullcontext()
+                ),
+                patch.object(
+                    smoke,
+                    "artifact_response",
+                    side_effect=[{"status": 401}, {"status": 404}, remote],
+                ),
+                patch.object(smoke, "check_access", return_value={}),
+                self.assertRaises(AssertionError),
+            ):
+                smoke.verify(NK, [], {}, "password", RUN, FINGERPRINT, report)
+            self.assertEqual(report["evaluation_phase"], "artifact_report_tampered")
+            self.assertEqual(report["artifact_recovery"]["status"], "FAIL")
+            self.assertFalse(
+                report["artifact_recovery"]["scenarios"]["report_tampered"][
+                    "recovery_verified"
+                ]
+            )
+
+    def test_tampered_report_http_assertion_failure_restores_and_cannot_pass(self):
+        restored = []
+
+        @contextmanager
+        def tamper(*args):
+            try:
+                yield ALTERED
+            finally:
+                restored.append(True)
+
+        report = {"compose_project": PROJECT}
+        with (
+            patch.object(smoke, "require_disposable"),
+            patch.object(smoke, "rejected_token", side_effect=lambda nk: nullcontext()),
+            patch.object(smoke, "missing_report", side_effect=lambda *a: nullcontext()),
+            patch.object(smoke, "tampered_report", side_effect=tamper),
+            patch.object(
+                smoke.fork_web, "forwards", side_effect=lambda nk: nullcontext()
+            ),
+            patch.object(
+                smoke,
+                "artifact_response",
+                side_effect=[
+                    {"status": 401},
+                    {"status": 404},
+                    {"status": 200, **ALTERED},
+                ],
+            ),
+            patch.object(
+                smoke,
+                "check_access",
+                side_effect=[{}, {}, {}, {}, AssertionError("HTTP")],
+            ),
+            self.assertRaisesRegex(AssertionError, "HTTP"),
+        ):
+            smoke.verify(NK, [], {}, "password", RUN, FINGERPRINT, report)
+        self.assertEqual(restored, [True])
+        self.assertEqual(report["artifact_recovery"]["status"], "FAIL")
 
 
 if __name__ == "__main__":
