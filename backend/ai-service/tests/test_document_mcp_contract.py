@@ -342,14 +342,17 @@ def test_rejected_write_plan_logs_reason_without_answers(monkeypatch, caplog):
 
 
 @pytest.mark.parametrize("failure,reason", [("tool", "REMOTE_TOOL_ERROR"), ("payload", "REMOTE_RESULT_FAILURE"),
-                                           ("transport", "TRANSPORT_CALL"), ("schema", "ARGUMENT_SCHEMA")])
+                                           ("transport", "TRANSPORT_CALL"), ("timeout", "TRANSPORT_TIMEOUT"), ("schema", "ARGUMENT_SCHEMA")])
 def test_mcp_failure_identifies_tool_without_exposing_document(failure, reason, caplog):
     from unittest.mock import AsyncMock
-    from mcp_types import TextContent
+    from mcp.shared.exceptions import MCPError
+    from mcp_types import REQUEST_TIMEOUT, TextContent
     private = "PRIVATE_DOCUMENT_TEXT_AND_PATH"
     session = SimpleNamespace(call_tool=AsyncMock())
     if failure == "transport":
         session.call_tool.side_effect = RuntimeError(private)
+    elif failure == "timeout":
+        session.call_tool.side_effect = MCPError(code=REQUEST_TIMEOUT, message=private)
     else:
         session.call_tool.return_value = CallToolResult(is_error=failure == "tool",
             structured_content={"error": private} if failure == "payload" else None,
@@ -471,6 +474,97 @@ def test_hwpx_physical_body_indices_include_blanks_and_survive_filling(monkeypat
     output.write_text(changed, encoding="utf-8")
     assert addressed.body_field_index(output) == addressed.body_field_index(source)
     assert verify_edits(str(source), str(output), [{"target": "b1", "expected_text": "검증 기업"}])["verified"] is True
+
+
+
+def _pinned_find_cell_span(section, table_index, row, col):
+    """Port of the pinned engine's fill._find_cell_span, kept as the oracle for the index."""
+    import re
+    from app.application_preparation.hwpx_mcp_extension import TAG
+    open_tbl = seen_tbl = 0
+    target_level = cell_start = None
+    for m in TAG.finditer(section):
+        closing, name, attrs, selfclose = m.group(1) == "/", m.group(2), m.group(3), m.group(4) == "/"
+        if name == "hp:tbl" and not selfclose:
+            if not closing:
+                open_tbl += 1
+                seen_tbl += 1
+                if seen_tbl == table_index:
+                    target_level = open_tbl
+            else:
+                open_tbl -= 1
+                if target_level is not None and open_tbl < target_level:
+                    return None
+        elif name == "hp:tc" and not selfclose and not closing:
+            if target_level is not None and open_tbl == target_level:
+                cell_start = m.start()
+        elif name == "hp:cellAddr" and target_level is not None and open_tbl == target_level:
+            ca = dict(re.findall(r'(\w+)="(-?\d+)"', attrs))
+            if ca.get("rowAddr") == str(row) and ca.get("colAddr") == str(col) and cell_start is not None:
+                depth = 0
+                for close in TAG.finditer(section, cell_start):
+                    if close.group(2) != "hp:tc" or close.group(4) == "/":
+                        continue
+                    depth += -1 if close.group(1) == "/" else 1
+                    if depth == 0:
+                        return cell_start, close.end()
+                return cell_start, len(section)
+    return None
+
+
+def test_hwpx_cell_span_index_matches_the_pinned_engine_lookup():
+    from app.application_preparation.hwpx_mcp_extension import cell_span_index
+    cell = lambda r, c, body: f'<hp:tc><hp:cellAddr colAddr="{c}" rowAddr="{r}"/>{body}</hp:tc>'
+    nested = '<hp:tbl>' + cell(0, 0, '<hp:p>안쪽</hp:p>') + cell(0, 1, '<hp:tc/>') + '</hp:tbl>'
+    section = ('<hp:sec><hp:p>본문</hp:p><hp:tbl>' + cell(0, 0, '<hp:p>기업명</hp:p>') + cell(0, 1, nested)
+               + cell(1, 0, '<hp:p>대표자</hp:p>') + cell(1, 0, '<hp:p>중복 주소</hp:p>') + '</hp:tbl>'
+               + '<hp:tbl>' + cell(0, 0, '<hp:p>둘째 표</hp:p>') + '</hp:tbl></hp:sec>')
+    index = cell_span_index(section)
+    assert set(index) == {(1, 0, 0), (1, 0, 1), (1, 1, 0), (2, 0, 0), (2, 0, 1), (3, 0, 0)}
+    for table in range(0, 5):
+        for row in range(0, 3):
+            for col in range(0, 3):
+                assert index.get((table, row, col)) == _pinned_find_cell_span(section, table, row, col), (table, row, col)
+    start, end = index[(1, 0, 1)]
+    assert section[start:end].startswith('<hp:tc><hp:cellAddr colAddr="1" rowAddr="0"/><hp:tbl>') and section[start:end].endswith('</hp:tbl></hp:tc>')
+    assert '중복 주소' not in section[slice(*index[(1, 1, 0)])]
+
+
+
+def test_hwpx_inspection_over_the_target_limit_is_an_explicit_limit_error(monkeypatch, tmp_path):
+    import zipfile
+    from contextlib import asynccontextmanager
+    from app.application_preparation import document_adapters
+    from app.application_preparation.document_contract import DOCUMENT_TARGET_LIMIT
+    path = tmp_path / "source.hwpx"
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("mimetype", "application/hwp+zip")
+    regions = [{"target": f"b{i}", "kind": "body_para", "text": "", "editable": True} for i in range(1, DOCUMENT_TARGET_LIMIT + 2)]
+    payload = {"source_sha256": digest(path.read_bytes()), "regions": regions, "unsupported_controls": []}
+    @asynccontextmanager
+    async def session(_kind, _directory):
+        yield SimpleNamespace(call=lambda name, _args: asyncio.sleep(0, result=payload))
+    monkeypatch.setattr(document_adapters, "document_session", session)
+    with pytest.raises(DocumentError) as error:
+        asyncio.run(document_adapters.HwpxDocumentAdapter().inspect(path, analyze=False))
+    assert error.value.code == "APPLICATION_DOCUMENT_LIMIT_EXCEEDED" and error.value.reason == "HWPX_TARGET_COUNT"
+
+
+def test_hwpx_cell_span_index_refuses_an_unverified_engine(monkeypatch):
+    import sys
+    from types import ModuleType
+    from app.application_preparation.hwpx_mcp_extension import install_cell_span_index
+    package, addressed, fill = ModuleType("hangeul_core"), ModuleType("hangeul_core.addressed"), ModuleType("hangeul_core.fill")
+    def _find_cell_span(section, table_index, row, col):
+        return None
+    fill._find_cell_span = addressed._find_cell_span = _find_cell_span
+    package.addressed, package.fill = addressed, fill
+    monkeypatch.setitem(sys.modules, "hangeul_core", package)
+    monkeypatch.setitem(sys.modules, "hangeul_core.addressed", addressed)
+    monkeypatch.setitem(sys.modules, "hangeul_core.fill", fill)
+    with pytest.raises(RuntimeError, match="GOVBIZ_HWPX_ENGINE_CHANGED"):
+        install_cell_span_index()
+    assert fill._find_cell_span is _find_cell_span
 
 
 @pytest.mark.parametrize("x,passes", [(0.67, False), (0.78, True)])

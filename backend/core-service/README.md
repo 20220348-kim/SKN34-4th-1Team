@@ -219,6 +219,10 @@ worker도 기존 검색·AI 기능의 공유 동시 실행 슬롯을 사용합�
 두 기능이 함께 쓰는 공식 첨부 수집·파싱은 제공처별 `BizInfoAttachmentClient`·`MsitAttachmentClient`·
 `KStartupAttachmentClient`·`CnTradeNoticeAttachmentClient`와
 `supportprogram/client/document/SupportProgramDocumentParser`에 두고, AI DTO 변환은 `AiCombinationReviewMapper`가 담당합니다.
+신청 양식 발견은 파싱한 첨부를 `applicationpreparation/domain/ApplicationAttachmentRole`의 파일명 규칙으로 걸러 위원용·공고문 같은
+비신청 문서를 AI 호출 전에 제외하고(남는 문서가 없으면 전부 분석), 신청서로 보이는 문서부터 최대 3개씩 동시에 추출합니다.
+양식은 찾았으나 입력칸 매핑만 실패하면 `RETRY_WAITING`으로 두어 3회까지 다시 시도합니다.
+AI Service가 HWPX native 입력 대상 한도 초과를 413(`APPLICATION_DOCUMENT_LIMIT_EXCEEDED`)으로 확정하면 그 첨부만 제외하고, 남는 문서가 없으면 `TOO_LARGE`로 닫습니다.
 업무 실패는 `domain/exception`, 외부 시스템 실패는 `client/exception`에 두어 Repository·Client가 Service에 역으로 의존하지 않습니다.
 이는 프로젝트의 기능 중심 레이어드 구조이며 범용 port/interface나 전달만 하는 Facade를 추가한 구조는 아닙니다.
 

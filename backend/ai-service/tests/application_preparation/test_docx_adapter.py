@@ -266,3 +266,99 @@ def test_empty_docx_input_inherits_its_paragraph_character_style(tmp_path: Path)
     properties = paragraph.find('./' + W + 'r/' + W + 'rPr')
     assert properties.find(W + 'rFonts').get(W + 'ascii') == 'Arial'
     assert properties.find(W + 'sz').get(W + 'val') == '18'
+
+
+def test_docx_mapping_sends_schema_violations_back_once_then_accepts_a_valid_answer():
+    from pydantic import ValidationError
+    from app.application_preparation import document_pipeline
+    data = docx()
+    mapping = MapDocumentRequest(sourceBase64=base64.b64encode(data).decode(), sourceSha256=digest(data),
+        format='docx', scope='신청서', fields=[{'id': 'company', 'label': '기업명',
+        'guidance': '기업명을 입력합니다.', 'required': False}])
+    calls = []
+
+    class Agent:
+        async def map_document(self, req, document, **kwargs):
+            calls.append(kwargs)
+            if len(calls) == 1:
+                raise ValidationError.from_exception_data('NativeMappingBinding', [{
+                    'type': 'string_pattern_mismatch', 'loc': ('bindings', 0, 'targetId'),
+                    'input': 'docx:bogus', 'ctx': {'pattern': '^docx:t:1$'}}])
+            target = next(t for t in document.targets if t.editable)
+            return MappingSelection(bindings=[{'factId': 'company', 'targetId': target.targetId, 'box': None}],
+                                    scopeTargetIds=[target.targetId], unmappedFieldIds=[])
+
+    result = asyncio.run(document_pipeline.map_document(mapping, Agent()))
+    assert len(calls) == 2
+    assert calls[0] == {}
+    assert calls[1]['rejection_reason'] == 'MAPPING_SCHEMA_VIOLATION'
+    assert calls[1]['rejected_output'] is None
+    assert calls[1]['schema_errors'] == [{'loc': 'bindings.0.targetId', 'type': 'string_pattern_mismatch', 'input': 'docx:bogus'}]
+    assert result['bindings'][0]['factId'] == 'company'
+
+
+def test_docx_mapping_fails_closed_after_a_second_schema_violation():
+    from pydantic import ValidationError
+    from app.application_preparation import document_pipeline
+    data = docx()
+    mapping = MapDocumentRequest(sourceBase64=base64.b64encode(data).decode(), sourceSha256=digest(data),
+        format='docx', scope='신청서', fields=[{'id': 'company', 'label': '기업명',
+        'guidance': '기업명을 입력합니다.', 'required': False}])
+    calls = []
+
+    class Agent:
+        async def map_document(self, req, document, **kwargs):
+            calls.append(kwargs)
+            raise ValidationError.from_exception_data('NativeMappingBinding', [{
+                'type': 'string_pattern_mismatch', 'loc': ('bindings', 0, 'targetId'),
+                'input': 'docx:bogus', 'ctx': {'pattern': '^docx:t:1$'}}])
+
+    with pytest.raises(DocumentError) as error:
+        asyncio.run(document_pipeline.map_document(mapping, Agent()))
+    assert error.value.code == 'APPLICATION_DOCUMENT_PLAN_FAILED'
+    assert len(calls) == 2
+
+
+def test_agent_repair_prompt_lists_schema_errors(tmp_path: Path):
+    data = docx()
+    path = tmp_path / 'source.docx'
+    path.write_bytes(data)
+    document = asyncio.run(DocxDocumentAdapter().inspect(path))
+    target = next(t for t in document.targets if t.editable)
+    mapping = MapDocumentRequest(sourceBase64=base64.b64encode(data).decode(), sourceSha256=digest(data),
+        format='docx', scope='신청서', fields=[{'id': 'company', 'label': '기업명',
+        'guidance': '기업명을 입력합니다.', 'required': False}])
+    agent = ApplicationPreparationAgent(model=None, run_timeout_seconds=3)
+    agent._invoke = AsyncMock(return_value=SimpleNamespace(model_dump=lambda: {
+        'bindings': [{'factId': 'company', 'targetId': target.targetId, 'box': None}],
+        'scopeTargetIds': [target.targetId], 'unmappedFieldIds': []}))
+    errors = [{'loc': 'bindings.0.targetId', 'type': 'string_pattern_mismatch', 'input': 'docx:bogus'}]
+    asyncio.run(agent.map_document(mapping, document, rejection_reason='MAPPING_SCHEMA_VIOLATION', schema_errors=errors))
+    content = agent._invoke.call_args.args[2]
+    repair = json.loads(content[1]['text'])['repair']
+    assert repair['reason'] == 'MAPPING_SCHEMA_VIOLATION'
+    assert repair['schemaErrors'] == errors
+    assert 'docx:bogus' not in content[0]['text']
+
+
+def test_docx_mapping_fails_fast_when_the_answer_was_truncated():
+    from pydantic import ValidationError
+    from app.application_preparation import document_pipeline
+    data = docx()
+    mapping = MapDocumentRequest(sourceBase64=base64.b64encode(data).decode(), sourceSha256=digest(data),
+        format='docx', scope='신청서', fields=[{'id': 'company', 'label': '기업명',
+        'guidance': '기업명을 입력합니다.', 'required': False}])
+    calls = []
+
+    class Agent:
+        async def map_document(self, req, document, **kwargs):
+            calls.append(kwargs)
+            raise ValidationError.from_exception_data('NativeMappingSelection', [{
+                'type': 'json_invalid', 'loc': (), 'input': '{"bindings":[{"factId":"company"', 'ctx': {'error': 'EOF while parsing'}}])
+
+    with pytest.raises(DocumentError) as error:
+        asyncio.run(document_pipeline.map_document(mapping, Agent()))
+    # 잘린 JSON은 교정 요청으로 고칠 수 없으므로 유료 호출을 한 번만 쓰고 바로 실패합니다.
+    assert len(calls) == 1
+    assert error.value.code == 'APPLICATION_DOCUMENT_PLAN_FAILED'
+    assert error.value.reason == 'OUTPUT_TRUNCATED'

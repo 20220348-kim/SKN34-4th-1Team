@@ -8,6 +8,8 @@ from pathlib import Path
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from mcp.shared.exceptions import MCPError
+from mcp_types import REQUEST_TIMEOUT
 from jsonschema import validate, ValidationError as SchemaValidationError
 
 from app.application_preparation.document_contract import DocumentError
@@ -39,6 +41,9 @@ class DocumentMcpSession:
             raise self._failure(name, "ARGUMENT_SCHEMA") from error
         try:
             result = await self.session.call_tool(name, arguments)
+        except MCPError as error:
+            # A deterministic slow tool is not a transport fault; keep the two apart in logs.
+            raise self._failure(name, "TRANSPORT_TIMEOUT" if error.code == REQUEST_TIMEOUT else "TRANSPORT_CALL") from error
         except Exception as error:
             raise self._failure(name, "TRANSPORT_CALL") from error
         if result.is_error:

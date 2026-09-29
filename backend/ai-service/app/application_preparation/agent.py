@@ -19,6 +19,11 @@ from app.application_preparation.models import DraftRequest, DraftSelection
 from app.application_preparation.document import DOCUMENT_INSTRUCTIONS, DocumentRequest, DocumentSelection
 
 
+"""Output budget for one mapping answer. A large HWP form lists every bound target and its scope; 16k tokens was cut
+before the JSON closed on real notices (json_invalid), so the budget is doubled and truncation fails fast instead."""
+MAPPING_MAX_OUTPUT_TOKENS = 32000
+
+
 class ApplicationFormDiscoveryTimeoutError(TimeoutError):
     def __init__(self, stage: str):
         super().__init__("Application form discovery timed out")
@@ -161,7 +166,7 @@ class ApplicationPreparationAgent:
         selection.scopeTargetIds = list(dict.fromkeys(selection.scopeTargetIds))
         return selection
 
-    async def map_document(self, request, document, *, rejected_output=None, rejection_reason=None):
+    async def map_document(self, request, document, *, rejected_output=None, rejection_reason=None, schema_errors=None):
         import re
         from typing import Annotated
         from pydantic import Field, create_model
@@ -259,10 +264,16 @@ class ApplicationPreparationAgent:
                     for binding in rejected_output.bindings if binding.targetId not in rejected_output.scopeTargetIds],
                 "instruction": "Correct the complete mapping once using only supplied field IDs and native input targets. Every field ID must be bound OR unmapped, never both; omit no fields. Include a bound target in scope only when it belongs to this form and is writable; otherwise choose another verified target or leave an optional field unmapped. Match table/row/column evidence and Hangeul formFields/labelSearch to each question. Ambiguous label searches require table context. Never use a table's first column for a whole-table question, invent coordinates or targets, or cover printed words."
             }}, ensure_ascii=False)})
+        if schema_errors:
+            # The previous answer used IDs that do not exist in this document. Show them so the model can pick real ones.
+            content.append({"type": "text", "text": json.dumps({"repair": {
+                "reason": rejection_reason or "MAPPING_SCHEMA_VIOLATION", "schemaErrors": schema_errors,
+                "instruction": "Your previous answer contained values that are not valid IDs for this document. Use only the field IDs listed in fields and only target IDs that appear in documentMap.targets (or null / unmappedFieldIds for a field without a safe input). Never invent, shorten or rename an ID."
+            }}, ensure_ascii=False)})
         content.extend({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{page}", "detail": "high"}} for page in request.pageImages)
         output_instructions = ("\nReturn assignments keyed by every supplied question ID. Each property's targetId is ONE native input ID; use null only when unbound. Each question addresses one input slot; never copy its value into several repeated rows. Never assign a physical target to two different questions. In scope, mark each supplied target ID true only if it belongs to the selected form, including its examples; otherwise false. This keyed object replaces scopeTargetIds and cannot repeat a target. The rejectedSelection, if present, is diagnostic data in normalized server format; return the assignments and scope schema instead."
                                if request.format == "hwpx" else "\nReturn bindings with factId equal to the supplied question ID, and list only unbound question IDs in unmappedFieldIds.")
-        result = await self._invoke(selection_type, MAPPING_INSTRUCTIONS + output_instructions + ("\nFor XLSX choose only supplied editable XLSX_CELL addresses. fieldLabels, rowLabels, columnLabels, sectionPath and sheetName are inspected context. Never bind hidden/protected/formula/merged-child cells. Ambiguous blank cells are not inputs." if request.format == "xlsx" else ""), content, 16000, "Document mapping timed out", document=True)
+        result = await self._invoke(selection_type, MAPPING_INSTRUCTIONS + output_instructions + ("\nFor XLSX choose only supplied editable XLSX_CELL addresses. fieldLabels, rowLabels, columnLabels, sectionPath and sheetName are inspected context. Never bind hidden/protected/formula/merged-child cells. Ambiguous blank cells are not inputs." if request.format == "xlsx" else ""), content, MAPPING_MAX_OUTPUT_TOKENS, "Document mapping timed out", document=True)
         if request.format == "hwpx":
             assignments = result.model_dump(by_alias=True)["assignments"]
             selection = MappingSelection(bindings=[DocumentPlacement(factId=field_id, targetId=target_id, box=None)

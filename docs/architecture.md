@@ -102,7 +102,12 @@ Nginx 한 IP의 전달 헤더만 신뢰하고 기존 계정·Origin 검증을 �
 `ApplicationFormDiscoveryOutboxScheduler → QueueClient → RabbitMQ → ApplicationFormDiscoveryJobConsumer → JobService`
 가 공유 실행 슬롯·DB 실행권을 선점한 뒤, 기존 세션 Account가 명시적으로 요청한 네 제공처 공고를
 `ApplicationFormDiscoveryService → 제공처별 AttachmentClient → 공식 첨부 → SupportProgramDocumentParser →
-AiApplicationPreparationFacade → AI Service`로 분석합니다. 검증된 응답은 `ApplicationFormSnapshotRepository → MyBatis → MySQL`에
+AiApplicationPreparationFacade → AI Service`로 분석합니다. 파싱한 첨부는 파일명 규칙(`ApplicationAttachmentRole`)으로 위원용·공고문 같은
+비신청 문서를 AI 호출 전에 제외하고(남는 문서가 없으면 전부 분석) 신청서로 보이는 문서부터 최대 3개씩 동시에 추출합니다.
+AI Service가 HWPX native 입력 대상 한도(3,000개) 초과를 413으로 확정한 첨부는 재시도·검토 잠금 없이 그 첨부만 제외하고
+(`자동 분석 제외 첨부(NATIVE_TARGET_LIMIT)` 경고) 남는 문서가 없으면 `TOO_LARGE`로 닫습니다.
+양식은 찾았으나 입력칸 매핑만 실패한 경우는 `RETRY_WAITING`으로 두어 3회까지 다시 시도하며, AI Service는 매핑 응답이 스키마
+(문서에 없는 ID)를 어기면 위반 값을 돌려보내 한 번 교정 요청을 보낸 뒤 실패로 닫습니다. 검증된 응답은 `ApplicationFormSnapshotRepository → MyBatis → MySQL`에
 파일 hash·파서·모델·프롬프트 버전과 함께 저장해 동일 추출 버전에서 재사용합니다. 발견 양식을 선택한 뒤
 `ApplicationPreparationService → ApplicationPreparationRepository`가 계정 소유 준비 건을 생성합니다. 화면 진입과 목록·상세
 조회만으로 DB 쓰기나 AI 호출을 실행하지 않으며, 기존 classpath manifest는 검수 기준과 이전 준비 건 복원에 사용합니다.

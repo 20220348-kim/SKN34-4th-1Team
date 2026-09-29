@@ -3,6 +3,7 @@ package ai.govbiz.core.applicationpreparation.client.ai
 import ai.govbiz.core._common.exception.AiServiceCallException
 import ai.govbiz.core._common.exception.AiServiceFailure
 import ai.govbiz.core.applicationpreparation.client.ai.dto.AiApplicationFormDiscoveryRequest
+import ai.govbiz.core.applicationpreparation.client.ai.exception.AiApplicationFormTooLargeException
 import ai.govbiz.core.applicationpreparation.client.ai.exception.AiApplicationFormValidationException
 import ai.govbiz.core.applicationpreparation.domain.ApplicationFormDiscoveryBlock
 import ai.govbiz.core.applicationpreparation.domain.ApplicationFormDiscoveryDocument
@@ -92,10 +93,16 @@ class AiApplicationPreparationClientTest {
         assertThrows(AiApplicationFormValidationException::class.java) { client.discover(request) }
         server.verify()
         server.reset()
+        server.expect(requestTo("http://ai.test/internal/v1/application-preparations/discovery"))
+            .andRespond(withStatus(HttpStatus.PAYLOAD_TOO_LARGE).contentType(MediaType.APPLICATION_JSON)
+                .body("""{"detail":{"code":"APPLICATION_DOCUMENT_LIMIT_EXCEEDED"}}"""))
+        assertThrows(AiApplicationFormTooLargeException::class.java) { client.discover(request) }
+        server.verify()
+        server.reset()
         for ((status, body, expected) in listOf(
             Triple(HttpStatus.UNPROCESSABLE_CONTENT, """{"detail":{"code":"REQUEST_VALIDATION_FAILED"}}""", AiServiceFailure.UNAVAILABLE),
             Triple(HttpStatus.SERVICE_UNAVAILABLE, """{"detail":{"code":"APPLICATION_PREPARATION_FAILED"}}""", AiServiceFailure.INVALID_RESPONSE),
-
+            Triple(HttpStatus.PAYLOAD_TOO_LARGE, """{"detail":{"code":"REQUEST_BODY_TOO_LARGE"}}""", AiServiceFailure.UNAVAILABLE),
         )) {
             server.expect(requestTo("http://ai.test/internal/v1/application-preparations/discovery"))
                 .andRespond(withStatus(status).contentType(MediaType.APPLICATION_JSON).body(body))

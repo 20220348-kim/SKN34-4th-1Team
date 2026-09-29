@@ -98,6 +98,12 @@ Google Forms와 일반 Web Form은 파일이 아니므로 현재 MCP의 네 번�
 
 서초구 공식 신청서(원본 SHA-256 `8d253d5c0f5af214caf28d20f108b106d7261c79334b77f167c3886b4b552c91`)의 기업체명 셀은 `<hp:run charPrIDRef="33"/>`로 되어 있어 고정 Hangeul 엔진이 `no_text_nodes`를 반환했다. `hwpx_mcp_extension.py`는 이 엔진의 in-memory 텍스트 치환 primitive에만 빈 run/t 처리를 추가한다. 원본 파일을 미리 고치거나 별도 편집기로 전환하지 않는다. 기존 charPrIDRef와 문단을 유지하며 이미지·컨트롤·중첩 표·기존 문자가 있으면 확장을 거절한다. 다문단 빈 셀은 실제 조회된 자식 문단이 하나일 때 그 주소로 배치 편집하고 엔진의 확장 문단 검증 결과를 확인한다.
 
+### 큰 HWPX 양식의 셀 주소 조회 색인
+
+화성시 제출서식(392 KB, 셀 2,200개)은 고정 Hangeul 엔진의 `inspect_editable_regions`가 셀마다 섹션 XML 전체를 다시 훑는(`fill._find_cell_span`) 구조 때문에 약 120초가 걸려 MCP 읽기 시한(100초)을 결정적으로 넘겼다. 재시도로 해결되는 일시 장애가 아니므로 `hwpx_mcp_extension.py`는 서버 시작 시 `fill._find_cell_span`을 섹션당 한 번 만든 `(표 순번, 행, 열) → <hp:tc> 구간` 색인으로 바꾼다. 표 순번은 중첩 표를 포함해 문서 순서로 세고, 셀은 가장 안쪽 열린 표에 속하며, 같은 주소는 먼저 나온 셀이 이기는 원래 의미를 그대로 따른다. 고정 엔진의 함수 원본 해시가 다르면 `GOVBIZ_HWPX_ENGINE_CHANGED`로 서버를 시작하지 않아 엔진을 올릴 때 색인을 다시 검증하게 한다. 주소 체계와 결과는 바뀌지 않으므로 engine version과 저장된 snapshot·binding은 유지된다. MCP 요청 시한 초과는 `TRANSPORT_TIMEOUT`, 그 밖의 전송 실패는 `TRANSPORT_CALL`로 나누어 기록한다.
+
+색인 뒤에도 같은 양식은 native 입력 대상이 5,769개로 DocumentMap 한도(3,000개)를 넘는다. `HwpxDocumentAdapter.inspect`는 이 경우 스키마 오류 대신 `APPLICATION_DOCUMENT_LIMIT_EXCEEDED`(reason `HWPX_TARGET_COUNT`)를 명시적으로 돌려주고, 발견 API는 이를 413으로 응답한다. Core는 그 첨부만 `NATIVE_TARGET_LIMIT`로 제외하며 남는 문서가 없으면 `TOO_LARGE`로 닫는다. 한도 자체를 올리지 않는 이유는 2,000개가 넘는 셀 layout을 발견 프롬프트에 그대로 넣으면 모델 시한(210초)과 출력 한도를 넘기 때문이며, 큰 양식의 layout 압축은 별도 작업이다.
+
 ### PDF 한글 문자 매핑 보완
 
 정상적인 PDF `/ToUnicode`가 있고 내장 TrueType subset에 선택적인 `cmap` 테이블이 없는 경우, pdf-edit-engine 0.2.0의 추가 문자 복원 함수가 KeyError를 발생시켜 기존 매핑까지 누락했다. `pdf_mcp_extension.py`는 이 선택적 복원 함수의 명시된 계약대로 추가 매핑이 없음을 반환하고 기존 `/ToUnicode`를 유지한다. 임의 문자·폰트 매핑을 만들지 않는다. 일반 텍스트까지 비어 있거나 Core가 읽은 페이지 텍스트에 대응하는 native layout이 없으면 미지원 오류로 중단한다. 여러 PDF 텍스트 연산자에 나뉜 예시는 주 MCP의 `pdf_detect_paragraphs`가 반환한 실제 문단과 원문 구간으로 묶는다. 이 엔진의 글꼴 크기/문단 bbox는 변환 행렬에 따라 시각적 크기와 다를 수 있어 `geometryVerified=false`로 기록하며, 새 입력란 좌표는 렌더 이미지와 PDFBox CropBox/회전 변환으로 검증한다.

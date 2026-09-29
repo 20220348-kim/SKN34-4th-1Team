@@ -11,7 +11,7 @@ from xml.etree import ElementTree
 
 
 from app.application_preparation.document_contract import (
-    DocumentError, DocumentMap, ENGINES, GenerateDocumentRequest, MAX_BYTES,
+    DOCUMENT_TARGET_LIMIT, DocumentError, DocumentMap, ENGINES, GenerateDocumentRequest, MAX_BYTES,
     NativeTarget, NativeTargetAnalysis, WritePlan, digest, edited_text,
 )
 from app.application_preparation.document_mcp import document_session
@@ -107,6 +107,9 @@ class HwpxDocumentAdapter:
                 targets.append(NativeTarget(targetId=paragraph["target"], nativeLocator=paragraph_locator,
                                             kind="paragraph", currentText=paragraph["text"], context=item["text"][:1000],
                                             editable=item["editable"], unsupportedReason=item.get("reason"), analysis=analysis.model_copy(deep=True)))
+        if len(targets) > DOCUMENT_TARGET_LIMIT:
+            # A form this large cannot be mapped within the contract; say so instead of surfacing a schema error.
+            raise DocumentError("LIMIT_EXCEEDED", reason="HWPX_TARGET_COUNT")
         for i, target in enumerate(targets):
             target.context = (target.context + " | " + " | ".join(t.currentText for t in targets[max(0, i-2):i+3]))[:1000]
         return DocumentMap(sourceSha256=result["source_sha256"], format="hwpx", engineVersion=ENGINES["hwpx"], targets=targets)
