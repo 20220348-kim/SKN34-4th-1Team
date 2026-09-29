@@ -90,7 +90,7 @@ class AiApplicationPreparationFacade(private val client: AiApplicationPreparatio
         return validateDiscoveryPayload(input, configuration, client.discover(request))
     }
 
-    /** 일회성 백필도 원문 block과 동일한 AI 계약 검증을 통과해야 한다. 외부 호출 없음. */
+    /** AI 응답의 계약과 원문 block 근거를 검증한다. */
     fun validateDiscoveryPayload(input: ApplicationFormDiscoveryInput, configuration: ApplicationFormDiscoveryConfiguration,
         payload: ai.govbiz.core.applicationpreparation.client.ai.dto.AiApplicationFormDiscoveryPayload): List<ExtractedApplicationForm> = try {
         validateDiscovery(

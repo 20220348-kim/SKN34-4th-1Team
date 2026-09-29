@@ -120,7 +120,7 @@ class ApplicationFormAvailabilityRepository(
 
     /** 스냅샷 저장과 활성 포인터 전환은 반드시 같은 짧은 transaction에서 수행한다. */
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
-    fun available(lease: ApplicationFormAnalysisLease, forms: List<ApplicationFormManifest>, metadata: ApplicationFormAnalysisMetadata, importHash: String? = null) {
+    fun available(lease: ApplicationFormAnalysisLease, forms: List<ApplicationFormManifest>, metadata: ApplicationFormAnalysisMetadata) {
         val row = owned(lease)
         require(forms.isNotEmpty() && forms.all { it.sourceCode == lease.sourceCode && it.sourceProgramId == lease.sourceProgramId })
         snapshots.save(forms, metadata.sourceFingerprint, metadata.parserVersion, metadata.configuration)
@@ -128,14 +128,14 @@ class ApplicationFormAvailabilityRepository(
         row.status = "AVAILABLE"; row.reasonCode = "FORM_FOUND"; row.activeFormVersionId = forms.first().formVersionId
         row.sourceFingerprint = metadata.sourceFingerprint; row.parserVersion = metadata.parserVersion
         row.extractionModel = metadata.configuration.model; row.extractionPromptVersion = metadata.configuration.promptVersion
-        row.verifiedAt = now(); row.nextRetryAt = now().plusDays(1); row.importSha256 = importHash
+        row.verifiedAt = now(); row.nextRetryAt = now().plusDays(1)
         release(row); mapper.update(row)
         org.slf4j.LoggerFactory.getLogger(javaClass).info("application_form_analysis sourceCode={} sourceProgramId={} status={} reasonCode={} durationMs={} timeoutStage={}",
             row.sourceCode, row.sourceProgramId, row.status, row.reasonCode, row.durationMs, row.timeoutStage)
     }
 
     @Transactional
-    fun finish(lease: ApplicationFormAnalysisLease, status: ApplicationFormAvailabilityStatus, reason: String, retryable: Boolean = false, importHash: String? = null, timeoutStage: String? = null, cacheResult: Boolean = true, failureConfiguration: ApplicationFormDiscoveryConfiguration? = null) {
+    fun finish(lease: ApplicationFormAnalysisLease, status: ApplicationFormAvailabilityStatus, reason: String, retryable: Boolean = false, timeoutStage: String? = null, cacheResult: Boolean = true, failureConfiguration: ApplicationFormDiscoveryConfiguration? = null) {
         val row = owned(lease)
         row.durationMs = (System.nanoTime() - lease.startedNanos) / 1_000_000; row.timeoutStage = timeoutStage
         if (row.sourceFingerprint == null && failureConfiguration != null) {
@@ -146,7 +146,7 @@ class ApplicationFormAvailabilityRepository(
         row.status = if (retryable && row.attemptCount >= 3) "REVIEW_REQUIRED" else status.name
         row.reasonCode = if (retryable && row.attemptCount >= 3) "RETRY_EXHAUSTED:$reason" else reason
         if (cacheResult && row.status in setOf("NO_FORM", "DOCUMENT_UNAVAILABLE", "TOO_LARGE", "REVIEW_REQUIRED")) { row.lastCompletedStatus = row.status; row.lastCompletedReasonCode = row.reasonCode }
-        row.activeFormVersionId = null; row.verifiedAt = now(); row.importSha256 = importHash
+        row.activeFormVersionId = null; row.verifiedAt = now()
         row.nextRetryAt = when {
             retryable && row.attemptCount < 3 -> now().plusMinutes(if (row.attemptCount == 1) 5 else 30)
             status == ApplicationFormAvailabilityStatus.STALE || status == ApplicationFormAvailabilityStatus.PENDING -> now()
@@ -173,17 +173,6 @@ class ApplicationFormAvailabilityRepository(
             requireNotNull(row.parserVersion), requireNotNull(row.extractionModel), requireNotNull(row.extractionPromptVersion))
         check(forms.any { it.formVersionId == row.activeFormVersionId }) { "Active application form snapshot is missing" }
         return forms
-    }
-
-    /** 명시적으로 실행한 importer만 사용한다. 기존 분석 또는 더 최신 결과를 덮어쓰지 않는다. */
-    @Transactional
-    fun claimImport(sourceCode: String, sourceProgramId: String, fileHash: String, catalogFingerprint: String): ApplicationFormAnalysisLease? {
-        mapper.insert(ApplicationFormAvailabilityDbRow(sourceCode=sourceCode, sourceProgramId=sourceProgramId, catalogFingerprint=catalogFingerprint))
-        val row = requireNotNull(mapper.lock(sourceCode, sourceProgramId))
-        if (row.importSha256 == fileHash || row.verifiedAt != null || (row.leaseToken != null && (row.aiStarted || row.leaseUntil?.isAfter(now()) == true))) return null
-        row.leaseToken = UUID.randomUUID().toString(); row.leaseUntil = now().plus(timeouts.applicationFormWorkerLease); row.attemptCount++
-        mapper.update(row)
-        return ApplicationFormAnalysisLease(sourceCode, sourceProgramId, row.generation, requireNotNull(row.leaseToken), row.attemptCount)
     }
 
     private fun owned(lease: ApplicationFormAnalysisLease): ApplicationFormAvailabilityDbRow =

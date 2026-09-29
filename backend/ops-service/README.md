@@ -662,6 +662,13 @@ Docker 안에서도 테스트할 수 있습니다.
 docker compose exec -T ops-service python manage.py test --noinput
 ```
 
+사용량 증거의 실행기→Ops 계약 테스트는 `LLMOPS_EVIDENCE_DIR/budget_client.py`의 실제 실행기
+코드를 읽습니다. 로컬 기본값은 저장소의 `evaluation/support-program-evidence`이며, 단독·루트
+Compose는 같은 디렉터리를 `/evaluation-data`에 읽기 전용으로 연결합니다. 테스트 컨테이너에서도
+이 설정과 마운트를 유지해야 합니다. `/app/apps/evaluations`의 부모 깊이로 저장소 루트를 추정하지 않습니다.
+DB가 필요 없는 서명·파일 검증은 `apps.evaluations.test_usage_correction.UsageReceiptTests`,
+격리된 MySQL 8.4에서 수행할 보정·경합 검증은 `apps.evaluations.test_usage_correction`으로 선택합니다.
+
 테스트 러너는 별도 `test_govbiz4` DB를 생성·삭제합니다. Compose의 최초 DB 초기화 SQL은 개발 사용자에게 그 DB의 권한만 추가로 부여합니다. 테스트는 실제 MySQL 연결, DB 장애 시 503 응답, liveness의 DB 비의존성, HTTP 메서드 제한, 허용 호스트를 확인합니다.
 
 GitHub Actions는 모노레포 루트의

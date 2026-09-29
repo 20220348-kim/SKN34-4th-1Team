@@ -12,6 +12,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 from uuid import uuid4
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.core.management.base import CommandError
@@ -27,9 +28,10 @@ from .test_budget import TOKEN, USAGE
 from .usage_correction import CorrectionUnavailable, correct_usage, read_receipt
 
 # Test the real producer/consumer contract across the runner and Ops packages.
+# Use the configured evidence directory in both checkouts and Compose's /app layout.
 _spec = importlib.util.spec_from_file_location(
     "receipt_budget_client",
-    Path(__file__).resolve().parents[4] / "evaluation/support-program-evidence/budget_client.py",
+    settings.LLMOPS_EVIDENCE_DIR / "budget_client.py",
 )
 _runner = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_runner)

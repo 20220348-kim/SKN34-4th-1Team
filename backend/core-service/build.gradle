@@ -86,12 +86,3 @@ tasks.named('test') {
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
 }
-
-// Dry-run reads an external file without starting Spring or a database.
-tasks.register('applicationFormBackfillDryRun', JavaExec) {
-    group = 'verification'
-    dependsOn tasks.named('classes')
-    classpath = sourceSets.main.runtimeClasspath
-    mainClass = 'ai.govbiz.core.applicationpreparation.service.backfill.ApplicationFormBackfillInput'
-    doFirst { args = [project.property('inputFile'), project.property('inputSha256')] }
-}
