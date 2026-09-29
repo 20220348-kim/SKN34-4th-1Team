@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router'
 import { appContainer } from '../../../../app/appContainer'
-import type { ApplicationPreparationPage } from '../../../../domain/entities/ApplicationPreparation'
+import type { ApplicationPreparationListStatus, ApplicationPreparationPage } from '../../../../domain/entities/ApplicationPreparation'
+import type { WorkspaceToastNotice } from '../../../shared/workspace/WorkspaceToast'
 
 type FailedRequest = { kind: 'list'; beforeId?: number } | { kind: 'delete'; id: number }
 type ListBusyState = 'initial' | 'more' | null
@@ -9,8 +11,16 @@ function asError(value: unknown): Error {
   return value instanceof Error ? value : new Error('신청 준비 목록을 불러오지 못했습니다.')
 }
 
+function listStatusFrom(value: string | null): ApplicationPreparationListStatus | undefined {
+  return value === 'in_progress' || value === 'done' ? value : undefined
+}
+
 export function useApplicationPreparationListViewModel() {
   const useCase = appContainer.resolve('applicationPreparationUseCase')
+  const [searchParams, setSearchParams] = useSearchParams()
+  // 진행 중·완료 칩은 주소의 ?status= 와 같이 움직여 새로고침·뒤로 가기에도 남는다.
+  const status = listStatusFrom(searchParams.get('status'))
+  const [toast, setToast] = useState<WorkspaceToastNotice | null>(null)
   const [page, setPage] = useState<ApplicationPreparationPage | null>(null)
   const [busy, setBusy] = useState<ListBusyState>(null)
   const [error, setError] = useState<Error | null>(null)
@@ -32,7 +42,7 @@ export function useApplicationPreparationListViewModel() {
     setFailedRequest(null)
     if (!append) setPage(null)
 
-    void useCase.list(beforeId, controller.signal).then((result) => {
+    void useCase.list({ ...(beforeId === undefined ? {} : { beforeId }), ...(status === undefined ? {} : { status }) }, controller.signal).then((result) => {
       if (controller.signal.aborted || sequence !== requestSequence.current) return
       setPage((previous) => append && previous
         ? {
@@ -53,7 +63,7 @@ export function useApplicationPreparationListViewModel() {
     })
 
     return controller
-  }, [useCase])
+  }, [useCase, status])
 
   useEffect(() => {
     const controller = load()
@@ -79,6 +89,7 @@ export function useApplicationPreparationListViewModel() {
       await useCase.delete(id, controller.signal)
       if (controller.signal.aborted || deleteController.current !== controller) return false
       setPage((current) => current ? { ...current, items: current.items.filter((item) => item.id !== id) } : current)
+      setToast({ id: Date.now(), text: '삭제했어요.' })
       return true
     } catch (caught) {
       if (!controller.signal.aborted && deleteController.current === controller) {
@@ -100,8 +111,16 @@ export function useApplicationPreparationListViewModel() {
     if (failedRequest?.kind === 'delete') void deletePreparation(failedRequest.id)
   }, [failedRequest, load, deletePreparation])
 
+  const setStatus = useCallback((next: ApplicationPreparationListStatus | undefined) => {
+    setSearchParams(next === undefined ? {} : { status: next }, { replace: true })
+  }, [setSearchParams])
+
   return {
     page,
+    status,
+    setStatus,
+    toast,
+    dismissToast: () => setToast(null),
     error,
     retry,
     deletePreparation,

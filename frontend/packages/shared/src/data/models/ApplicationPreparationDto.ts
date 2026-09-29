@@ -84,6 +84,11 @@ export const applicationPreparationSummarySchema = z.object({
   programTitle: z.string().min(1),
   formTitle: z.string().min(1),
   updatedAt: time,
+  answeredRequired: z.number().int().min(0).optional(),
+  requiredTotal: z.number().int().min(0).optional(),
+  hasCurrentDocument: z.boolean().optional(),
+  applicationPeriod: z.string().nullable().optional(),
+  applicationEndDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
 })
 
 export const applicationFormDiscoveryJobSchema = z.object({

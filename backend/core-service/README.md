@@ -147,7 +147,7 @@ HWPX discovery 요청에는 원본 `sourceBase64`·`sourceSha256`을 내부 AI �
 | `GET /api/v1/application-preparations/forms/discovery-jobs` | 본인의 최근 20개 분석 작업을 공고명·공식 원문 URL과 함께 요약 |
 | `GET /api/v1/application-preparations/forms/discovery-jobs/{id}` | 본인 작업의 공고명·공식 원문 URL·상태·결과 조회 |
 | `POST /api/v1/application-preparations` | 공고·양식 버전·지원 분야를 검증해 본인 준비 건 생성. 201·Location·상세 반환 |
-| `GET /api/v1/application-preparations?size=20&beforeId=123` | 본인 준비 건 목록을 생성 ID 내림차순으로 조회 |
+| `GET /api/v1/application-preparations?size=20&beforeId=123&status=in_progress` | 본인 준비 건 목록을 생성 ID 내림차순으로 조회. 각 항목에 필수 문항 중 저장된 답변 수(`answeredRequired`/`requiredTotal`), 현재 입력 버전의 문서 유무(`hasCurrentDocument`), 카탈로그의 접수 기간·마감일(`applicationPeriod`/`applicationEndDate`, 공고가 없으면 null)을 더한다. `status=in_progress|done`은 현재 버전 문서 유무로 서버에서 거르고, 다른 값은 400 |
 | `GET /api/v1/application-preparations/{id}` | 본인 준비 건과 선택한 버전의 양식 문항 조회. 타인 건과 없는 건은 같은 404 |
 | `PUT /api/v1/application-preparations/{id}/progress-stage` | 본인 준비 건의 진행 단계 변경. 독립된 진행 revision 충돌은 409 |
 | `DELETE /api/v1/application-preparations/{id}` | 본인 준비 건 삭제. 확인 사실·AI 실행 기록은 FK cascade 삭제하고 공용 양식 스냅샷은 유지 |
@@ -164,6 +164,7 @@ HWPX discovery 요청에는 원본 `sourceBase64`·`sourceSha256`을 내부 AI �
 | `GET /api/v1/application-preparations/{id}/documents` | 현재 입력 revision의 생성 파일 메타데이터 목록 |
 | `POST /api/v1/application-preparations/{id}/documents` | `expectedRevision`으로 원본 양식 기입 및 같은 형식 파일 저장 |
 | `GET /api/v1/application-preparations/{id}/documents/{fileId}/download` | 소유자 확인 후 binary attachment·no-store 반환 |
+| `GET /api/v1/application-preparations/{id}/documents/archive?revision=N` | 그 답변 버전의 저장 파일을 한 번에 반환. 파일이 하나면 그 파일 그대로, 여럿이면 UTF-8 이름의 zip(`application/zip`, `X-Archive-File-Count`). 새 파일을 저장하지 않으며 없는 버전·타인 건은 404 |
 
 V32은 원본 SHA-256·기입 위치 JSON·결과 binary를 준비 건/revision별로 보관합니다. 입력 변경 중 생성된 파일은 409로 저장을 거절하며 준비 건 삭제 시 cascade 삭제됩니다. HWP는 hwplib 1.1.11, HWPX는 ZIP/XML, PDF는 PDFBox의 편집 가능한 AcroForm과 OFL NanumGothic을 사용합니다. 원본 첨부는 기존 공식 제공처 Client로 재수집하고 해시를 대조합니다. 임의 URL을 받지 않습니다.
 

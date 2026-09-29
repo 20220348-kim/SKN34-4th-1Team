@@ -31,6 +31,7 @@ import java.time.LocalDateTime
 import java.util.UUID
 import org.hamcrest.Matchers.endsWith
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -422,6 +423,76 @@ class ApplicationPreparationApiIntegrationTest {
         mvc.perform(get("$BASE/$id").cookie(owner)).andExpect(status().isNotFound())
         mvc.perform(delete("$BASE/$id").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN))
             .andExpect(status().isNotFound())
+    }
+
+    @Test
+    fun listsAnswerProgressAndDocumentCompletionAndFiltersByStatus() {
+        val answered = create(owner)
+        mvc.perform(put("$BASE/$answered/sections/company-overview/inputs").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("""{"expectedRevision":1,"facts":[
+                {"fieldKey":"company-name","status":"PROVIDED","value":"새봄테크","sourceText":"업체명은 새봄테크"},
+                {"fieldKey":"contact-person","status":"UNKNOWN","value":null,"sourceText":"담당자는 미정"}
+            ]}"""))
+            .andExpect(status().isOk())
+        val untouched = create(owner, "CONSULTING")
+        mvc.perform(get(BASE).cookie(owner))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.items[0].id").value(untouched))
+            .andExpect(jsonPath("$.items[0].answeredRequired").value(0))
+            .andExpect(jsonPath("$.items[0].requiredTotal").value(11))
+            .andExpect(jsonPath("$.items[0].hasCurrentDocument").value(false))
+            .andExpect(jsonPath("$.items[1].id").value(answered))
+            .andExpect(jsonPath("$.items[1].answeredRequired").value(1))
+            .andExpect(jsonPath("$.items[1].requiredTotal").value(11))
+            .andExpect(jsonPath("$.items[1].hasCurrentDocument").value(false))
+            .andExpect(jsonPath("$.items[1].applicationPeriod").doesNotExist())
+
+        documentFiles.save(ownerId, answered, 2, "초안.hwpx", "application/hwp+zip", byteArrayOf(80, 75, 3, 4), "a".repeat(64), emptyList())
+        mvc.perform(get(BASE).cookie(owner).param("status", "done"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.items.length()").value(1))
+            .andExpect(jsonPath("$.items[0].id").value(answered))
+            .andExpect(jsonPath("$.items[0].hasCurrentDocument").value(true))
+        mvc.perform(get(BASE).cookie(owner).param("status", "in_progress"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.items.length()").value(1))
+            .andExpect(jsonPath("$.items[0].id").value(untouched))
+        mvc.perform(get(BASE).cookie(owner).param("status", "archived"))
+            .andExpect(status().isBadRequest())
+    }
+
+    @Test
+    fun archivesEveryFileOfOneAnswerRevisionAndReturnsASingleFileAsItself() {
+        val id = create(owner)
+        documentFiles.save(ownerId, id, 1, "신청서 & 초안.hwpx", "application/hwp+zip", byteArrayOf(80, 75, 3, 4), "a".repeat(64), emptyList(), fingerprint = "f".repeat(64))
+        documentFiles.save(ownerId, id, 1, "신청서 & 초안.hwpx", "application/hwp+zip", byteArrayOf(80, 75, 5, 6), "b".repeat(64), emptyList(), fingerprint = "e".repeat(64))
+        val zipped = mvc.perform(get("$BASE/$id/documents/archive").cookie(owner).param("revision", "1"))
+            .andExpect(status().isOk())
+            .andExpect(content().contentType("application/zip"))
+            .andExpect(header().string(HttpHeaders.CACHE_CONTROL, "no-store"))
+            .andExpect(header().string("X-Archive-File-Count", "2"))
+            .andExpect(header().string(HttpHeaders.CONTENT_DISPOSITION, org.hamcrest.Matchers.containsString("filename*=UTF-8''")))
+            .andReturn().response.contentAsByteArray
+        val entries = java.util.zip.ZipInputStream(java.io.ByteArrayInputStream(zipped), Charsets.UTF_8).use { zip ->
+            generateSequence { zip.nextEntry }.map { it.name to zip.readBytes() }.toList()
+        }
+        assertEquals(listOf("신청서 & 초안.hwpx", "신청서 & 초안_2.hwpx"), entries.map { it.first })
+        org.junit.jupiter.api.Assertions.assertArrayEquals(byteArrayOf(80, 75, 5, 6), entries[1].second)
+
+        mvc.perform(put("$BASE/$id/sections/company-overview/inputs").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("""{"expectedRevision":1,"facts":[{"fieldKey":"company-name","status":"PROVIDED","value":"새봄테크","sourceText":"업체명"}]}"""))
+            .andExpect(status().isOk())
+        documentFiles.save(ownerId, id, 2, "혼자.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", byteArrayOf(1, 2, 3), "c".repeat(64), emptyList())
+        mvc.perform(get("$BASE/$id/documents/archive").cookie(owner).param("revision", "2"))
+            .andExpect(status().isOk())
+            .andExpect(content().contentType("application/vnd.openxmlformats-officedocument.wordprocessingml.document"))
+            .andExpect(header().string("X-Archive-File-Count", "1"))
+            .andExpect(content().bytes(byteArrayOf(1, 2, 3)))
+        mvc.perform(get("$BASE/$id/documents/archive").cookie(owner).param("revision", "3")).andExpect(status().isNotFound())
+        mvc.perform(get("$BASE/$id/documents/archive").cookie(other).param("revision", "1")).andExpect(status().isNotFound())
+        mvc.perform(get("$BASE/$id/documents/archive").cookie(owner)).andExpect(status().isBadRequest())
     }
 
     @Test
@@ -849,9 +920,14 @@ class ApplicationPreparationApiIntegrationTest {
         stubDocumentMapping(documentMcp, target.id)
 
         var rejectNext = blueExamples
+        var unknownNext = false
         // HTTP/MCP is a stub here; actual editor sessions are covered by document-tools/smoke.py.
         `when`(documentMcp.generate(any(AiDocumentGenerationRequest::class.java) ?: fallback)).thenAnswer { invocation ->
             val request = invocation.getArgument<AiDocumentGenerationRequest>(0)
+            if (unknownNext) {
+                unknownNext = false
+                throw ApplicationDocumentMcpException("APPLICATION_DOCUMENT_OUTCOME_UNKNOWN", "결과 불명 fixture")
+            }
             if (rejectNext) {
                 rejectNext = false
                 throw ApplicationDocumentException("APPLICATION_DOCUMENT_VALIDATION_FAILED", "검증 실패 fixture")
@@ -918,6 +994,15 @@ class ApplicationPreparationApiIntegrationTest {
         org.junit.jupiter.api.Assertions.assertNotEquals(fileId, revised)
         val revisedBytes = mvc.perform(get("$BASE/$id/documents/$revised/download").cookie(owner)).andExpect(status().isOk()).andReturn().response.contentAsByteArray
         assertEquals("수정한 사업", documentEditor.inspect(revisedBytes, "HWPX").targets.single { it.id == target.id }.text)
+
+        // 결과를 확인하지 못한 실행은 영구 잠금이 아니라 하루 TTL 잠금으로 남는다.
+        save(3, "다시 수정한 사업")
+        unknownNext = true
+        mvc.perform(post("$BASE/$id/documents").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN).contentType(MediaType.APPLICATION_JSON)
+            .content("""{"expectedRevision":4}""")).andExpect(jsonPath("$.code").value("APPLICATION_DOCUMENT_OUTCOME_UNKNOWN"))
+        val ttl = redis.getExpire("application-document-run:$id", java.util.concurrent.TimeUnit.SECONDS)
+        assertTrue(ttl in 1..86_400) { "unknown-outcome lock ttl=$ttl" }
+        redis.delete("application-document-run:$id")
     }
 
     @Test

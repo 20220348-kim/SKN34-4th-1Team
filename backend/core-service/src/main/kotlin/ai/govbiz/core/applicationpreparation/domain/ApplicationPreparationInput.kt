@@ -4,6 +4,14 @@ import java.time.LocalDateTime
 
 enum class ApplicationFactStatus { PROVIDED, UNKNOWN }
 
+/** 목록 요약을 위해 값 없이 읽는 사실의 위치와 상태입니다. */
+data class ApplicationFactKey(
+    val preparationId: Long,
+    val sectionKey: String,
+    val fieldKey: String,
+    val status: ApplicationFactStatus,
+)
+
 data class ConfirmedApplicationFact(
     val id: Long,
     val sectionKey: String,

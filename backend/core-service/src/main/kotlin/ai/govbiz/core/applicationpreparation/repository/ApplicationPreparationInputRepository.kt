@@ -1,6 +1,7 @@
 package ai.govbiz.core.applicationpreparation.repository
 
 import ai.govbiz.core.applicationpreparation.domain.ApplicationFactStatus
+import ai.govbiz.core.applicationpreparation.domain.ApplicationFactKey
 import ai.govbiz.core.applicationpreparation.domain.ApplicationInputReplaceResult
 import ai.govbiz.core.applicationpreparation.domain.ApplicationInterpretation
 import ai.govbiz.core.applicationpreparation.domain.ApplicationInterpretationInputSnapshot
@@ -32,6 +33,13 @@ class ApplicationPreparationInputRepository(
     private val json: ObjectMapper,
     @param:Qualifier("seoulClock") private val clock: Clock,
 ) {
+    /** 목록 한 페이지의 사실 위치와 상태만 읽는다. 값은 목록에 필요 없다. */
+    fun listFactKeys(ownerId: Long, preparationIds: List<Long>): List<ApplicationFactKey> =
+        if (preparationIds.isEmpty()) emptyList()
+        else mapper.listFactKeys(ownerId, preparationIds).map {
+            ApplicationFactKey(it.preparationId, it.sectionKey, it.fieldKey, ApplicationFactStatus.valueOf(it.factStatus))
+        }
+
     fun listOwnedFacts(ownerId: Long, preparationId: Long): List<ConfirmedApplicationFact> =
         mapper.listOwnedFacts(ownerId, preparationId).map { row -> row.toDomain() }
 

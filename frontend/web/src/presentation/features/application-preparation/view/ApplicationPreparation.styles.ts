@@ -38,7 +38,20 @@ export const applicationPreparationStyles = {
   suggestion: 'flex flex-col gap-2 rounded-xl border border-sky-200 bg-sky-50 p-3',
   checkboxLabel: 'flex items-start gap-2 text-sm font-bold text-slate-900',
   quote: 'm-0 border-l-2 border-sky-300 pl-3 text-xs leading-5 text-slate-600',
+  chipRow: 'flex flex-wrap gap-2',
+  chip: 'inline-flex min-h-9 items-center rounded-full border border-slate-300 bg-white px-3.5 text-sm font-semibold text-slate-700 hover:bg-slate-50',
+  chipActive: 'inline-flex min-h-9 items-center rounded-full border border-emerald-700 bg-emerald-700 px-3.5 text-sm font-semibold text-white',
+  cardGrid: 'grid gap-3 md:grid-cols-2 xl:grid-cols-3',
+  listCard: 'flex min-h-44 flex-col gap-3 rounded-[1.4rem] border border-sample-border bg-white p-[1.15rem]',
+  badgeRow: 'flex flex-wrap items-center gap-2 text-xs font-semibold',
+  badgeDone: 'rounded-full bg-emerald-100 px-2.5 py-0.5 text-emerald-900',
+  badgeDeadline: 'rounded-full bg-slate-100 px-2.5 py-0.5 text-slate-700',
+  badgeUrgent: 'rounded-full bg-amber-100 px-2.5 py-0.5 text-amber-900',
+  progressTrack: 'h-1.5 w-full overflow-hidden rounded-full bg-slate-100',
+  progressFill: 'h-full rounded-full bg-emerald-600',
+  cardActions: 'mt-auto flex flex-wrap items-center gap-2',
   stepBar: 'sticky bottom-0 flex flex-wrap items-center justify-end gap-2 rounded-2xl border border-slate-200 bg-white/95 p-3 shadow-[0_-4px_16px_rgba(15,23,42,0.06)] backdrop-blur',
+  skeleton: 'min-h-44 animate-pulse rounded-[1.4rem] border border-slate-100 bg-slate-100',
 } as const
 
 /**

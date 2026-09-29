@@ -27,6 +27,20 @@
         <result column="started_at" property="startedAt" />
         <result column="finished_at" property="finishedAt" />
     </resultMap>
+    <resultMap id="factKeyRow" type="ai.govbiz.core.applicationpreparation.repository.mapper.ApplicationPreparationFactKeyDbRow">
+        <result column="preparation_id" property="preparationId" />
+        <result column="section_key" property="sectionKey" />
+        <result column="field_key" property="fieldKey" />
+        <result column="fact_status" property="factStatus" />
+    </resultMap>
+    <select id="listFactKeys" resultMap="factKeyRow">
+        SELECT f.preparation_id, f.section_key, f.field_key, f.fact_status
+        FROM application_preparation_fact f
+        INNER JOIN application_preparation p ON p.id = f.preparation_id
+        WHERE p.owner_account_id = #{ownerId}
+          AND f.preparation_id IN
+          <foreach collection="preparationIds" item="preparationId" open="(" separator="," close=")">#{preparationId}</foreach>
+    </select>
     <select id="lockOwnedRevision" resultType="long">
         SELECT input_revision FROM application_preparation
         WHERE id = #{preparationId} AND owner_account_id = #{ownerId} FOR UPDATE

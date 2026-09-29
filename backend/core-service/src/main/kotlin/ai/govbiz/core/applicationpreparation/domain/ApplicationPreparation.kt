@@ -58,7 +58,12 @@ data class ApplicationPreparationSummary(
     val serviceField: ApplicationServiceField,
     val createdAt: LocalDateTime,
     val updatedAt: LocalDateTime,
+    /** 현재 입력 버전으로 생성된 문서 파일이 있으면 완료로 본다. */
+    val hasCurrentDocument: Boolean = false,
 )
+
+/** 목록 필터: 완료 = 현재 입력 버전의 문서가 있음. */
+enum class ApplicationPreparationListStatus { IN_PROGRESS, DONE }
 
 sealed interface ApplicationProgressUpdateResult {
     data object NotFound : ApplicationProgressUpdateResult

@@ -61,7 +61,7 @@ export function useApplicationPipelineViewModel(
     if (state.nextBeforeId === null || state.loadingMore) return
     const beforeId = state.nextBeforeId
     setState(current => ({ ...current, loadingMore: true }))
-    void useCase.list(beforeId).then(page => {
+    void useCase.list({ beforeId }).then(page => {
       setState(current => ({
         phase: 'ready',
         items: [...current.items, ...page.items.filter(item => !current.items.some(currentItem => currentItem.id === item.id))],

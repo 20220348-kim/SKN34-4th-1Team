@@ -195,6 +195,11 @@ data class ApplicationPreparationSummaryResponse(
     val programTitle: String,
     val formTitle: String,
     val updatedAt: OffsetDateTime,
+    val answeredRequired: Int,
+    val requiredTotal: Int,
+    val hasCurrentDocument: Boolean,
+    val applicationPeriod: String?,
+    val applicationEndDate: String?,
 ) {
     companion object {
         fun from(result: ApplicationPreparationListItemResult) = ApplicationPreparationSummaryResponse(
@@ -209,6 +214,11 @@ data class ApplicationPreparationSummaryResponse(
             programTitle = result.form.programTitle,
             formTitle = result.form.formTitle,
             updatedAt = result.preparation.updatedAt.atZone(SEOUL).toOffsetDateTime(),
+            answeredRequired = result.answeredRequired,
+            requiredTotal = result.requiredTotal,
+            hasCurrentDocument = result.preparation.hasCurrentDocument,
+            applicationPeriod = result.applicationPeriod,
+            applicationEndDate = result.applicationEndDate?.toString(),
         )
     }
 }

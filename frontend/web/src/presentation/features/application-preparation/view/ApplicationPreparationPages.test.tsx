@@ -66,7 +66,7 @@ const detail = {
   updatedAt: '2026-09-11T01:00:00+09:00',
   form: structuredClone(firstForm),
 }
-const repository = { onlineInputGuide: vi.fn(), documents: vi.fn(), generateDocuments: vi.fn(), confirmDocumentMappingMigration: vi.fn(), downloadDocument: vi.fn(), generateDraft: vi.fn(), saveContent: vi.fn(), confirmContent: vi.fn(), discoveryJobs: vi.fn(), discoveryJob: vi.fn(), availability: vi.fn(), forms: vi.fn(), discover: vi.fn(), list: vi.fn(), delete: vi.fn(), get: vi.fn(), create: vi.fn(), interpret: vi.fn(), replaceInputs: vi.fn(), updateProgress: vi.fn() }
+const repository = { onlineInputGuide: vi.fn(), documents: vi.fn(), generateDocuments: vi.fn(), confirmDocumentMappingMigration: vi.fn(), downloadDocument: vi.fn(), downloadDocumentArchive: vi.fn(), generateDraft: vi.fn(), saveContent: vi.fn(), confirmContent: vi.fn(), discoveryJobs: vi.fn(), discoveryJob: vi.fn(), availability: vi.fn(), forms: vi.fn(), discover: vi.fn(), list: vi.fn(), delete: vi.fn(), get: vi.fn(), create: vi.fn(), interpret: vi.fn(), replaceInputs: vi.fn(), updateProgress: vi.fn() }
 
 function completedDiscovery(result: { items: ApplicationForm[]; warnings: string[]; cached: boolean }) {
   return { id: 77, sourceCode: result.items[0].sourceCode, sourceProgramId: result.items[0].sourceProgramId,
@@ -234,6 +234,47 @@ it('shows the immutable partial-draft answer summary beside the download', async
   expect(screen.getByText('1개 기입 / 1개 미기입')).toBeTruthy()
   expect(screen.getByLabelText('자동 기입하지 못한 답변').textContent).toContain('기업 개요 / 개인정보 동의: 동의함 — 입력 위치 확인 불가')
   expect(screen.getByRole('button', { name: '신청문서 1 다운로드' })).toBeTruthy()
+})
+
+it('offers a whole-revision archive only for several current files and folds older versions away', async () => {
+  repository.get.mockResolvedValue(readyPreparation())
+  repository.documents.mockResolvedValue([
+    { ...documentFile, id: 83, inputRevision: 3, fileName: '신청서_초안_v3.hwpx' },
+    { ...documentFile, id: 82, inputRevision: 3, fileName: '사업계획서_초안_v3.docx' },
+    { ...documentFile, id: 70, inputRevision: 2, fileName: '신청서_초안_v2.hwpx' },
+  ])
+  repository.downloadDocumentArchive.mockResolvedValue(new Blob(['zip'], { type: 'application/zip' }))
+  vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: vi.fn(() => 'blob:test'), revokeObjectURL: vi.fn() }))
+  const clicked = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+    expect(this.download).toBe('신청문서_초안_v3.zip')
+  })
+  mount('/app/application-preparations/12/documents')
+  await screen.findByRole('button', { name: '신청문서 1 다운로드' })
+  expect(screen.getByRole('button', { name: '신청문서 2 다운로드' })).toBeTruthy()
+  const older = screen.getByText('이전 버전 1개 보기').closest('details') as HTMLDetailsElement
+  expect(within(older).getByText('신청서_초안_v2.hwpx')).toBeTruthy()
+  expect((screen.getByRole('button', { name: '다시 만들기' }) as HTMLButtonElement).disabled).toBe(true)
+  fireEvent.click(screen.getByRole('button', { name: '전체 내려받기' }))
+  await waitFor(() => expect(clicked).toHaveBeenCalledTimes(1))
+  expect(repository.downloadDocumentArchive).toHaveBeenCalledWith(12, 3, expect.any(AbortSignal))
+  expect(repository.generateDocuments).not.toHaveBeenCalled()
+  clicked.mockRestore()
+  vi.unstubAllGlobals()
+})
+
+it('enables regeneration only after the answers changed and starts it from the header', async () => {
+  repository.get.mockResolvedValue(readyPreparation())
+  repository.documents.mockResolvedValueOnce([{ ...documentFile, inputRevision: 2 }]).mockResolvedValue([])
+  repository.generateDocuments.mockResolvedValue([{ ...documentFile, id: 84, inputRevision: 3 }])
+  mount('/app/application-preparations/12/documents')
+  await screen.findByRole('button', { name: '신청문서 1 다운로드' })
+  expect(screen.queryByRole('button', { name: '전체 내려받기' })).toBeNull()
+  const regenerate = screen.getByRole('button', { name: '다시 만들기' }) as HTMLButtonElement
+  expect(regenerate.disabled).toBe(false)
+  fireEvent.click(regenerate)
+  expect((await screen.findByRole('status', { name: '문서 생성 진행' })).textContent).toContain('답변 버전 3로 만들고 있어요')
+  await screen.findByRole('button', { name: '신청문서 1 다운로드' })
+  expect(repository.generateDocuments).toHaveBeenCalledWith(12, 3, expect.any(AbortSignal))
 })
 
 it('regenerates the document with the revised answers after returning to the input page', async () => {
@@ -532,7 +573,7 @@ describe('application preparation list', () => {
     }))
 
     expect(await screen.findByText(secondForm.programTitle)).toBeTruthy()
-    expect(repository.list.mock.calls[1]?.[0]).toBe(12)
+    expect(repository.list.mock.calls[1]?.[0]).toEqual({ beforeId: 12 })
   })
 
   it('aborts the previous account request and ignores its late response', async () => {
@@ -574,14 +615,46 @@ describe('application preparation list', () => {
     await screen.findByText(firstForm.programTitle)
 
     fireEvent.click(screen.getByRole('button', { name: '삭제' }))
-    const confirmation = screen.getByRole('group', { name: `${firstForm.programTitle} 삭제 확인` })
-    expect(confirmation.textContent).toContain('작성 내용과 AI 실행 기록')
+    const confirmation = screen.getByRole('dialog', { name: '작성 중인 문서를 삭제할까요?' })
+    expect(confirmation.textContent).toContain('AI 실행 기록')
     expect(repository.delete).not.toHaveBeenCalled()
     fireEvent.click(within(confirmation).getByRole('button', { name: '정말 삭제' }))
 
     expect(repository.delete).toHaveBeenCalledWith(12, expect.any(AbortSignal))
     expect(await screen.findByRole('heading', { name: '아직 시작한 신청 문서가 없습니다.' })).toBeTruthy()
     expect(screen.queryByText(firstForm.programTitle)).toBeNull()
+    expect(screen.getByText('삭제했어요.')).toBeTruthy()
+  })
+
+  it('filters by status through the address and shows answer progress, deadline and the document link', async () => {
+    const soon = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(new Date(Date.now() + 3 * 86_400_000))
+    repository.list.mockResolvedValue({
+      items: [
+        { id: 12, inputRevision: 3, progressStage: 'PREPARING', progressRevision: 1, progressStageUpdatedAt: detail.updatedAt,
+          sourceCode: firstForm.sourceCode, sourceProgramId: firstForm.sourceProgramId, serviceField: 'TECHNICAL_SUPPORT',
+          programTitle: firstForm.programTitle, formTitle: firstForm.formTitle, updatedAt: detail.updatedAt,
+          answeredRequired: 11, requiredTotal: 11, hasCurrentDocument: true, applicationPeriod: '2026-09-01 ~ 2026-10-03', applicationEndDate: soon },
+        { id: 11, inputRevision: 1, progressStage: 'PREPARING', progressRevision: 1, progressStageUpdatedAt: detail.updatedAt,
+          sourceCode: secondForm.sourceCode, sourceProgramId: secondForm.sourceProgramId, serviceField: 'MARKETING',
+          programTitle: secondForm.programTitle, formTitle: secondForm.formTitle, updatedAt: detail.updatedAt,
+          answeredRequired: 2, requiredTotal: 9, hasCurrentDocument: false, applicationPeriod: null, applicationEndDate: null },
+      ],
+      nextBeforeId: null,
+    })
+    mount('/app/application-preparations?status=done')
+
+    await screen.findByText(firstForm.programTitle)
+    expect(repository.list.mock.calls[0]?.[0]).toEqual({ status: 'done' })
+    expect((screen.getByRole('button', { name: '완료' }) as HTMLButtonElement).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByText('D-3')).toBeTruthy()
+    expect(screen.getByText('필수 답변 11 / 11')).toBeTruthy()
+    expect(screen.getByText('필수 답변 2 / 9')).toBeTruthy()
+    expect(screen.getByRole('link', { name: '문서 보기' }).getAttribute('href')).toBe('/app/application-preparations/12/documents')
+    expect(screen.getByRole('link', { name: '이어서 작성' }).getAttribute('href')).toBe('/app/application-preparations/11')
+    fireEvent.click(screen.getByRole('button', { name: '진행 중' }))
+    await waitFor(() => expect(repository.list.mock.calls[1]?.[0]).toEqual({ status: 'in_progress' }))
+    fireEvent.click(screen.getByRole('button', { name: '전체' }))
+    await waitFor(() => expect(repository.list.mock.calls[2]?.[0]).toEqual({}))
   })
 })
 

@@ -33,9 +33,17 @@ function DocumentResults({ id }: { id: number }) {
   const [migrationBusy, setMigrationBusy] = useState(false)
   const [regenerationRevision, setRegenerationRevision] = useState<number | null>(null)
   const [migrationMessage, setMigrationMessage] = useState<string | null>(null)
+  const [busySince, setBusySince] = useState<number | null>(null)
+  const [elapsedSeconds, setElapsedSeconds] = useState(0)
+  const [archiving, setArchiving] = useState(false)
   const downloadController = useRef<AbortController | null>(null)
   const migrationController = useRef<AbortController | null>(null)
   const back = `${appPaths.applicationPreparations}/${id}`
+  const latestRevision = files.length > 0 ? Math.max(...files.map((file) => file.inputRevision)) : null
+  const latestFiles = files.filter((file) => file.inputRevision === latestRevision)
+  const previousFiles = files.filter((file) => file.inputRevision !== latestRevision)
+  // 같은 답변 버전은 기존 파일을 즉시 돌려주므로, 다시 만들기는 답변이 바뀐 뒤(현재 버전 파일 없음)에만 켠다.
+  const canRegenerate = !busy && preparation !== null && !files.some((file) => file.inputRevision === preparation.inputRevision)
   const unanswered = preparation?.form.sections.flatMap((section) => section.fields
     .filter((field) => !section.facts.some((fact) => fact.fieldKey === field.key && fact.status === 'PROVIDED'))
     .map((field) => `${section.title} · ${field.label}`)) ?? []
@@ -67,7 +75,7 @@ function DocumentResults({ id }: { id: number }) {
       throw new Error('기존 문서 생성 결과를 아직 확인하지 못했습니다. 잠시 후 다시 시도해 주세요. 답변은 저장되어 있습니다.')
     }
     async function load() {
-      setBusy(true); setError(null); setMigration(null)
+      setBusy(true); setBusySince(Date.now()); setError(null); setMigration(null)
       try {
         const detail = await useCase.get(id, controller.signal)
         if (controller.signal.aborted) return
@@ -98,11 +106,19 @@ function DocumentResults({ id }: { id: number }) {
         requestedRevision.current = null
       } catch (caught) {
         if (!controller.signal.aborted) setError(caught instanceof Error ? caught.message : '문서를 생성하지 못했습니다.')
-      } finally { if (!controller.signal.aborted) setBusy(false) }
+      } finally { if (!controller.signal.aborted) { setBusy(false); setBusySince(null) } }
     }
     void load()
     return () => { controller.abort(); downloadController.current?.abort(); migrationController.current?.abort() }
   }, [id, useCase, attempt])
+
+  useEffect(() => {
+    if (busySince === null) { setElapsedSeconds(0); return }
+    const tick = () => setElapsedSeconds(Math.max(0, Math.floor((Date.now() - busySince) / 1000)))
+    tick()
+    const timer = setInterval(tick, 1000)
+    return () => clearInterval(timer)
+  }, [busySince])
 
   async function confirmMigration() {
     if (!migration || migrationController.current) return
@@ -126,6 +142,31 @@ function DocumentResults({ id }: { id: number }) {
     }
   }
 
+  function saveBlob(blob: Blob, fileName: string) {
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url; link.download = fileName
+    document.body.appendChild(link); link.click(); link.remove()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  }
+
+  async function downloadArchive(revision: number) {
+    if (downloadController.current) return
+    const controller = new AbortController()
+    downloadController.current = controller
+    setArchiving(true); setError(null)
+    try {
+      const blob = await useCase.downloadDocumentArchive(id, revision, controller.signal)
+      if (controller.signal.aborted) return
+      saveBlob(blob, `신청문서_초안_v${revision}.zip`)
+    } catch (caught) {
+      if (!controller.signal.aborted) setError(caught instanceof Error ? caught.message : '전체 내려받기에 실패했습니다.')
+    } finally {
+      if (!controller.signal.aborted) setArchiving(false)
+      if (downloadController.current === controller) downloadController.current = null
+    }
+  }
+
   async function download(file: ApplicationDocument) {
     if (downloadController.current) return
     const controller = new AbortController()
@@ -134,11 +175,7 @@ function DocumentResults({ id }: { id: number }) {
     try {
       const blob = await useCase.downloadDocument(id, file.id, controller.signal)
       if (controller.signal.aborted) return
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url; link.download = file.fileName
-      document.body.appendChild(link); link.click(); link.remove()
-      setTimeout(() => URL.revokeObjectURL(url), 1000)
+      saveBlob(blob, file.fileName)
     } catch (caught) {
       if (!controller.signal.aborted) setError(caught instanceof Error ? caught.message : '다운로드하지 못했습니다.')
     } finally {
@@ -147,13 +184,44 @@ function DocumentResults({ id }: { id: number }) {
     }
   }
 
+  function renderFile(file: ApplicationDocument, index: number) {
+    const extension = file.fileName.split('.').pop()?.toUpperCase() ?? ''
+    return <section className={s.card} key={file.id} aria-label={`신청문서 ${index + 1}`}>
+      <div className={s.badgeRow}><span className={s.badgeDeadline}>{extension}</span><span className={s.muted}>답변 버전 {file.inputRevision}</span></div>
+      <h2 className={s.cardTitle}>{file.unfilledAnswerCount && file.unfilledAnswerCount > 0 ? '일부 항목 미기입 초안' : `신청문서 ${index + 1}`}</h2>
+      <p className="break-all font-semibold">{file.fileName}</p>
+      <p className={s.muted}>원본과 같은 {extension} 형식 · 답변 버전 {file.inputRevision} · {Math.ceil(file.size / 1024)} KB</p>
+      {preparation && <><p className={s.label}>문서에 포함된 작성 항목</p><ul className={s.fieldList}>{preparation.form.sections.map((section) => <li key={section.key}>{section.title}</li>)}</ul></>}
+      <button type="button" className={s.primary} disabled={downloading !== null || archiving} onClick={() => { void download(file) }}>{downloading === file.id ? '다운로드 중…' : `신청문서 ${index + 1} 다운로드`}</button>
+      {file.filledAnswerCount !== null && file.unfilledAnswerCount !== null && <p className={s.muted}>{file.filledAnswerCount}개 기입 / {file.unfilledAnswerCount}개 미기입</p>}
+      {file.unfilledAnswers.length > 0 && <details className={s.warning}>
+        <summary className={s.label}>자동 기입 못한 답변 보기 ({file.unfilledAnswers.length})</summary>
+        <div aria-label="자동 기입하지 못한 답변">
+          <ul>{file.unfilledAnswers.map((answer) => <li key={answer.fieldId}><strong>{answer.fieldLabel}</strong>: {answer.value} — {reasonLabel(answer.reason)}</li>)}</ul>
+        </div>
+      </details>}
+      <p className={s.muted}>문서를 다운로드해 내용을 확인하세요. 내려받은 파일에서 직접 수정하거나, 답변 입력으로 돌아가 정보를 고친 뒤 다시 생성할 수 있습니다.</p>
+    </section>
+  }
+
   return <>
     <WorkspacePageHeader parent={[
       { to: appPaths.applicationPreparations, label: '신청 문서 작성 도우미' },
       { to: back, label: '신청 문서 / 답변 입력' },
-    ]} title="신청 문서 초안" />
+    ]} title="신청 문서 초안" actions={<>
+      <button type="button" className={s.button} disabled={!canRegenerate} title={canRegenerate ? undefined : '답변을 바꾼 뒤에만 새 버전을 만들 수 있어요'} onClick={() => {
+        if (!preparation) return
+        requestedRevision.current = String(preparation.inputRevision); setAttempt((n) => n + 1)
+      }}>다시 만들기</button>
+      {latestRevision !== null && latestFiles.length > 1 && <button type="button" className={s.primary} disabled={busy || downloading !== null || archiving} onClick={() => { void downloadArchive(latestRevision) }}>
+        {archiving ? '묶는 중…' : '전체 내려받기'}
+      </button>}
+    </>} />
     <main className={workspacePageStyles.content}>
-      {busy && <p className={s.notice} role="status">공식 양식을 확인하고 저장된 답변으로 문서를 준비하고 있습니다…</p>}
+      {busy && <section className={s.notice} role="status" aria-label="문서 생성 진행">
+        <p><strong>{requestedRevision.current !== null ? `답변 버전 ${requestedRevision.current}로 만들고 있어요` : '저장된 문서를 확인하고 있어요'}</strong> · 경과 {Math.floor(elapsedSeconds / 60)}:{String(elapsedSeconds % 60).padStart(2, '0')}</p>
+        <p>공식 양식을 확인하고 저장된 답변으로 문서를 준비하고 있습니다… 화면을 나가도 계속돼요. 돌아오면 저장된 결과부터 확인합니다.</p>
+      </section>}
       {error && <div className={s.warning} role="alert"><p>{error}</p>{!busy && <button type="button" className={s.button} onClick={() => setAttempt((n) => n + 1)}>다시 시도</button>}</div>}
       {error && preparation && <Link className={s.button} to={`${appPaths.applicationPreparationNew}?${new URLSearchParams({ sourceCode: preparation.form.sourceCode, sourceProgramId: preparation.form.sourceProgramId })}`}>기존 답변을 보관하고 입력칸별 양식 확인</Link>}
       {migration && <section className={s.card} aria-label="신청서 입력 위치 변경 확인">
@@ -179,23 +247,16 @@ function DocumentResults({ id }: { id: number }) {
         }}>새 초안 생성</button>}
       </div>}
       {!busy && !error && files.length === 0 && <p className={s.notice}>현재 답변으로 생성된 문서가 없습니다. 답변 입력에서 초안 생성하기를 눌러 주세요.</p>}
-      {!busy && files.map((file, index) => <section className={s.card} key={file.id} aria-label={`신청문서 ${index + 1}`}>
-        <h2 className={s.cardTitle}>{file.unfilledAnswerCount && file.unfilledAnswerCount > 0 ? '일부 항목 미기입 초안' : `신청문서 ${index + 1}`}</h2>
-        <p className="break-all font-semibold">{file.fileName}</p>
-        <p className={s.muted}>원본과 같은 {file.fileName.split('.').pop()?.toUpperCase()} 형식 · 답변 버전 {file.inputRevision} · {Math.ceil(file.size / 1024)} KB</p>
-        {preparation && <><p className={s.label}>문서에 포함된 작성 항목</p><ul className={s.fieldList}>{preparation.form.sections.map((section) => <li key={section.key}>{section.title}</li>)}</ul></>}
-        <button type="button" className={s.primary} disabled={downloading !== null} onClick={() => { void download(file) }}>{downloading === file.id ? '다운로드 중…' : `신청문서 ${index + 1} 다운로드`}</button>
-        {file.filledAnswerCount !== null && file.unfilledAnswerCount !== null && <p className={s.muted}>{file.filledAnswerCount}개 기입 / {file.unfilledAnswerCount}개 미기입</p>}
-        {file.unfilledAnswers.length > 0 && <div className={s.warning} aria-label="자동 기입하지 못한 답변">
-          <p className={s.label}>자동 기입하지 못한 답변</p>
-          <ul>{file.unfilledAnswers.map((answer) => <li key={answer.fieldId}><strong>{answer.fieldLabel}</strong>: {answer.value} — {reasonLabel(answer.reason)}</li>)}</ul>
-        </div>}
-        <p className={s.muted}>문서를 다운로드해 내용을 확인하세요. 내려받은 파일에서 직접 수정하거나, 답변 입력으로 돌아가 정보를 고친 뒤 다시 생성할 수 있습니다.</p>
-      </section>)}
+      {!busy && latestFiles.map((file, index) => renderFile(file, index))}
+      {!busy && previousFiles.length > 0 && <details className={s.card}>
+        <summary className={s.label}>이전 버전 {previousFiles.length}개 보기</summary>
+        <div className="mt-3 flex flex-col gap-3">{previousFiles.map((file, index) => renderFile(file, latestFiles.length + index))}</div>
+      </details>}
       {!busy && files.length > 0 && unanswered.length > 0 && <section className={s.warning} aria-label="답변이 없어 기입하지 않은 항목">
         <h2 className={s.cardTitle}>답변이 없어 기입하지 않은 항목</h2>
         <p>미정으로 저장했거나 답변하지 않은 항목입니다. 아래 항목은 자동으로 채우지 않았으므로 제출 전에 확인해 주세요.</p>
         <ul>{unanswered.map((label) => <li key={label}>{label}</li>)}</ul>
+        <Link className={s.button} to={back}>답변 입력으로</Link>
       </section>}
       <p className={s.notice}>한 원본 파일에 여러 신청서가 있으면 한 파일로 제공됩니다. 내려받은 문서의 기입 위치와 내용, 줄바꿈을 확인한 뒤 제출해 주세요.</p>
       <Link className={s.button} to={back}>이전으로 · 답변 수정</Link>

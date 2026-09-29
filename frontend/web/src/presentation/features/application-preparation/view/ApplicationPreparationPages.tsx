@@ -3,18 +3,22 @@ import { SelectField } from '../../../shared/workspace/SelectField'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 import { useAppSelector } from '../../../../app/hooks'
 import {
+  applicationDeadlineDays,
   applicationServiceFieldLabels,
   type ApplicationForm,
   type ApplicationFormField,
   type ApplicationFormSection,
+  type ApplicationPreparationListStatus,
+  type ApplicationPreparationSummary,
 } from '../../../../domain/entities/ApplicationPreparation'
 import { catalogSourceLabels } from '../../../../domain/entities/SupportProgramCatalog'
 import { ApplicationPreparationError } from '../../../../domain/errors/ApplicationPreparationError'
 import { selectCurrentAccount } from '../../../shared/auth/state/authSlice'
 import { appPaths } from '../../../shared/routes/appPaths'
 import { WorkspacePageHeader } from '../../../shared/workspace/WorkspacePageHeader'
-import { workspacePageStyles } from '../../../shared/workspace/WorkspacePage.styles'
+import { WorkspaceModal } from '../../../shared/workspace/WorkspaceModal'
 import { WorkspaceToast } from '../../../shared/workspace/WorkspaceToast'
+import { workspacePageStyles } from '../../../shared/workspace/WorkspacePage.styles'
 import { workspaceToastActionClassName } from '../../../shared/workspace/WorkspaceToast.styles'
 import { useFloatingPopover } from '../../../shared/workspace/useFloatingPopover'
 import { SavedSupportProgramPickerDialog } from '../../../shared/support-program/SavedSupportProgramPickerDialog'
@@ -26,7 +30,7 @@ import { answerEditorStyles as e, applicationPreparationStyles as s } from './Ap
 
 import { ApplicationOnlineInputGuide } from './ApplicationOnlineInputGuide'
 
-const listTitle = '신청 문서 작성 도우미'
+const listTitle = '신청 문서 작성'
 /** 사이드바 항목과 같은 이름입니다. 답변 입력·새 문서 화면의 상위 경로에 씁니다. */
 const featureTitle = '신청 문서 작성'
 const programStatusLabels = {
@@ -329,49 +333,91 @@ export function ApplicationPreparationListPage() {
   return account ? <ApplicationPreparationList key={account.email} /> : null
 }
 
+const listStatusTabs: { value: ApplicationPreparationListStatus | undefined; label: string }[] = [
+  { value: undefined, label: '전체' }, { value: 'in_progress', label: '진행 중' }, { value: 'done', label: '완료' },
+]
+function deadlineBadge(item: ApplicationPreparationSummary) {
+  const days = applicationDeadlineDays(item.applicationEndDate)
+  if (days === null) return null
+  if (days < 0) return { label: '접수 마감', className: s.badgeDeadline }
+  return { label: days === 0 ? 'D-Day' : `D-${days}`, className: days <= 7 ? s.badgeUrgent : s.badgeDeadline }
+}
+function sourceLabel(sourceCode: string) {
+  return (catalogSourceLabels as Record<string, string>)[sourceCode] ?? sourceCode
+}
+
 function ApplicationPreparationList() {
   const vm = useApplicationPreparationListViewModel()
-  const [confirmingId, setConfirmingId] = useState<number | null>(null)
+  const [confirming, setConfirming] = useState<ApplicationPreparationSummary | null>(null)
+  const items = vm.page?.items ?? []
   return <>
     <WorkspacePageHeader
       title={listTitle}
-      actions={<Link className={workspacePageStyles.primaryButton} to={appPaths.applicationPreparationNew}>새 작성</Link>}
+      tabs={<div className={s.chipRow} role="group" aria-label="작성 상태 필터">
+        {listStatusTabs.map((tab) => <button className={vm.status === tab.value ? s.chipActive : s.chip} key={tab.label} type="button"
+          aria-pressed={vm.status === tab.value} onClick={() => vm.setStatus(tab.value)}>{tab.label}</button>)}
+      </div>}
+      actions={<Link className={workspacePageStyles.primaryButton} to={appPaths.applicationPreparationNew}>새 문서</Link>}
     />
     <main className={workspacePageStyles.content}>
       <p className={s.muted}>검수된 공식 양식과 지원 분야를 선택해 신청 준비를 시작하고, 저장한 작업을 다시 열 수 있습니다.</p>
       {vm.error && <ErrorNotice message={vm.error.message} retryLabel="목록 다시 불러오기" onRetry={vm.retry} />}
-      {vm.isInitialLoading && <p className={s.status} role="status" aria-live="polite">신청 준비 목록을 불러오는 중입니다.</p>}
-      {vm.page?.items.length === 0 && !vm.isInitialLoading && <section className={s.card} aria-labelledby="empty-preparations-title">
-        <h2 className={s.cardTitle} id="empty-preparations-title">아직 시작한 신청 문서가 없습니다.</h2>
-        <p className={s.muted}>새 작성에서 공식 양식과 지원 분야를 확인한 뒤 시작해 주세요.</p>
+      {vm.isInitialLoading && <>
+        <p className={s.status} role="status" aria-live="polite">신청 준비 목록을 불러오는 중입니다.</p>
+        <div className={s.cardGrid} aria-hidden="true">{[0, 1, 2, 3, 4, 5].map((index) => <div className={s.skeleton} key={index} />)}</div>
+      </>}
+      {vm.page && items.length === 0 && !vm.isInitialLoading && <section className={s.card} aria-labelledby="empty-preparations-title">
+        <h2 className={s.cardTitle} id="empty-preparations-title">{vm.status === undefined ? '아직 시작한 신청 문서가 없습니다.' : vm.status === 'done' ? '완료한 신청 문서가 없습니다.' : '진행 중인 신청 문서가 없습니다.'}</h2>
+        <p className={s.muted}>새 문서에서 공식 양식과 지원 분야를 확인한 뒤 시작해 주세요.</p>
       </section>}
-      {vm.page && vm.page.items.length > 0 && <ul className={s.list} aria-label="신청 준비 목록">
-        {vm.page.items.map((item) => <li className={s.card} key={item.id}>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <Link className={`${s.listLink} min-w-0 flex-1`} to={`${appPaths.applicationPreparations}/${item.id}`}>
+      {items.length > 0 && <ul className={s.cardGrid} aria-label="신청 준비 목록">
+        {items.map((item) => {
+          const deadline = deadlineBadge(item)
+          const done = item.hasCurrentDocument === true
+          const progress = item.requiredTotal !== undefined && item.answeredRequired !== undefined ? { answered: item.answeredRequired, total: item.requiredTotal } : null
+          return <li className={s.listCard} key={item.id}>
+            <div className={s.badgeRow}>
+              {done && <span className={s.badgeDone}>완료</span>}
+              {deadline && <span className={deadline.className}>{deadline.label}</span>}
+              <span className={s.muted}>{sourceLabel(item.sourceCode)}</span>
+            </div>
+            <Link className={`${s.listLink} min-w-0`} to={`${appPaths.applicationPreparations}/${item.id}`}>
               <strong>{item.programTitle}</strong>
               <span className={s.muted}>{item.formTitle} · {applicationServiceFieldLabels[item.serviceField]}</span>
-              <span className={s.muted}>입력 버전 {item.inputRevision} · {readableTime(item.updatedAt)} 수정</span>
             </Link>
-            {confirmingId === item.id
-              ? <div className="flex flex-wrap items-center gap-2" role="group" aria-label={`${item.programTitle} 삭제 확인`}>
-                <span className="text-sm text-red-800">작성 내용과 AI 실행 기록을 삭제할까요?</span>
-                <button className={s.danger} disabled={vm.deletingId !== null} type="button" onClick={() => {
-                  void vm.deletePreparation(item.id).then((deleted) => { if (deleted) setConfirmingId(null) })
-                }}>{vm.deletingId === item.id ? '삭제 중…' : '정말 삭제'}</button>
-                <button className={s.button} disabled={vm.deletingId !== null} type="button" onClick={() => setConfirmingId(null)}>취소</button>
-              </div>
-              : <button className={s.danger} disabled={vm.deletingId !== null} type="button" onClick={() => setConfirmingId(item.id)}>삭제</button>}
-          </div>
-        </li>)}
+            {progress && <div className="flex flex-col gap-1" aria-label={`필수 답변 ${progress.answered} / ${progress.total}`}>
+              <span className={s.muted}>필수 답변 {progress.answered} / {progress.total}</span>
+              <div className={s.progressTrack}><div className={s.progressFill} style={{ width: `${progress.total === 0 ? 0 : Math.min(100, Math.round(progress.answered / progress.total * 100))}%` }} /></div>
+            </div>}
+            <span className={s.muted}>입력 버전 {item.inputRevision} · {readableTime(item.updatedAt)} 수정</span>
+            <div className={s.cardActions}>
+              {done
+                ? <Link className={s.primary} to={`${appPaths.applicationPreparations}/${item.id}/documents`}>문서 보기</Link>
+                : <Link className={s.primary} to={`${appPaths.applicationPreparations}/${item.id}`}>이어서 작성</Link>}
+              <button className={s.danger} disabled={vm.deletingId !== null} type="button" onClick={() => setConfirming(item)}>삭제</button>
+            </div>
+          </li>
+        })}
       </ul>}
       {vm.page && vm.page.nextBeforeId !== null && !vm.error && <div className={s.moreActions}>
         <button className={s.button} disabled={vm.isLoadingMore} type="button" onClick={() => { vm.loadMore() }}>
           {vm.isLoadingMore ? '이전 작업 불러오는 중…' : '이전 작업 더 보기'}
         </button>
+        <span className={s.muted}>{items.length}건 표시</span>
         {vm.isLoadingMore && <p className={s.status} role="status" aria-live="polite">이전 신청 준비를 불러오는 중입니다.</p>}
       </div>}
     </main>
+    <WorkspaceModal isOpen={confirming !== null} title="작성 중인 문서를 삭제할까요?" tone="danger" onClose={() => setConfirming(null)}
+      description={confirming ? `${confirming.programTitle}의 답변${confirming.answeredRequired !== undefined ? ` ${confirming.answeredRequired}개` : ''}와 AI 실행 기록이 함께 삭제되며 되돌릴 수 없습니다.` : undefined}>
+      <div className="flex flex-wrap justify-end gap-2">
+        <button className={s.button} disabled={vm.deletingId !== null} type="button" onClick={() => setConfirming(null)}>취소</button>
+        <button className={s.danger} disabled={vm.deletingId !== null} type="button" onClick={() => {
+          if (confirming === null) return
+          void vm.deletePreparation(confirming.id).then((deleted) => { if (deleted) setConfirming(null) })
+        }}>{vm.deletingId !== null ? '삭제 중…' : '정말 삭제'}</button>
+      </div>
+    </WorkspaceModal>
+    <WorkspaceToast notice={vm.toast} onClose={vm.dismissToast} />
   </>
 }
 

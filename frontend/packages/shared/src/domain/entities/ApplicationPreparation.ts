@@ -89,6 +89,27 @@ export type ApplicationPreparationSummary = {
   programTitle: string
   formTitle: string
   updatedAt: string
+  /** 필수 문항 중 저장된 답변 수. 구 서버 응답에는 없다. */
+  answeredRequired?: number
+  requiredTotal?: number
+  /** 현재 입력 버전으로 만든 문서가 있으면 완료로 본다. */
+  hasCurrentDocument?: boolean
+  applicationPeriod?: string | null
+  /** 공고 접수 마감일(YYYY-MM-DD). 카탈로그에 공고가 없으면 null. */
+  applicationEndDate?: string | null
+}
+
+export const applicationPreparationListStatuses = ['in_progress', 'done'] as const
+export type ApplicationPreparationListStatus = typeof applicationPreparationListStatuses[number]
+export type ApplicationPreparationListQuery = { beforeId?: number; status?: ApplicationPreparationListStatus }
+
+/** 접수 마감까지 남은 날. 마감일이 없으면 null, 지났으면 음수. 서울 날짜 기준. */
+export function applicationDeadlineDays(applicationEndDate: string | null | undefined, now: Date = new Date()): number | null {
+  if (!applicationEndDate) return null
+  const today = new Date(new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(now) + 'T00:00:00Z')
+  const end = new Date(applicationEndDate + 'T00:00:00Z')
+  if (Number.isNaN(end.getTime())) return null
+  return Math.round((end.getTime() - today.getTime()) / 86_400_000)
 }
 
 export type ApplicationPreparation = {

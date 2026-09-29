@@ -16,4 +16,6 @@ data class ApplicationPreparationDbRow(
     var inputRevision: Long = 1,
     var createdAt: LocalDateTime? = null,
     var updatedAt: LocalDateTime? = null,
+    /** 현재 input_revision으로 생성된 문서 파일이 있는지. 목록 조회에서만 채워진다. */
+    var hasCurrentDocument: Boolean = false,
 )

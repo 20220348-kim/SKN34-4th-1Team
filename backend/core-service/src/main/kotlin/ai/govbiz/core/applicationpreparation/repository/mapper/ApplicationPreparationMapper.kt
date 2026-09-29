@@ -25,6 +25,7 @@ interface ApplicationPreparationMapper {
         @Param("ownerAccountId") ownerAccountId: Long,
         @Param("beforeId") beforeId: Long?,
         @Param("limit") limit: Int,
+        @Param("status") status: String?,
     ): List<ApplicationPreparationDbRow>
 
     fun deleteOwned(

@@ -9,8 +9,9 @@ import type {
   UpdateApplicationProgress,
 } from '../../domain/entities/ApplicationPreparation'
 import type { ApplicationPreparationRepository, ReplaceApplicationPreparationInputsOptions } from '../../domain/repositories/ApplicationPreparationRepository'
+import type { ApplicationPreparationListQuery } from '../../domain/entities/ApplicationPreparation'
 import { ApplicationPreparationError } from '../../domain/errors/ApplicationPreparationError'
-import { applicationPreparationRequest as request, downloadApplicationDocument } from '../api/applicationPreparationApi'
+import { applicationPreparationRequest as request, downloadApplicationDocument, downloadApplicationDocumentArchive } from '../api/applicationPreparationApi'
 import {
   applicationPreparationPageSchema,
   applicationPreparationSchema,
@@ -22,7 +23,8 @@ import {
 
 import { applicationOnlineInputGuideSchema } from '@govbiz/shared/data/models/ApplicationOnlineInputGuideDto'
 
-const cursor = (beforeId?: number) => `?size=20${beforeId === undefined ? '' : `&beforeId=${beforeId}`}`
+const cursor = (query: ApplicationPreparationListQuery = {}) =>
+  `?size=20${query.beforeId === undefined ? '' : `&beforeId=${query.beforeId}`}${query.status === undefined ? '' : `&status=${query.status}`}`
 const documentsSchema = z.array(z.object({
   id: z.number().int().positive(), inputRevision: z.number().int().positive(),
   fileName: z.string().min(1).max(500).regex(/^[^\\/]+\.(hwp|hwpx|pdf|docx|xlsx)$/i).refine((name) => [...name].every((character) => character.charCodeAt(0) >= 32)),
@@ -84,6 +86,7 @@ export class ApplicationPreparationRepositoryImpl implements ApplicationPreparat
     return result
   }
   downloadDocument(id: number, fileId: number, signal?: AbortSignal) { return downloadApplicationDocument(id, fileId, signal) }
+  downloadDocumentArchive(id: number, revision: number, signal?: AbortSignal) { return downloadApplicationDocumentArchive(id, revision, signal) }
   async generateDraft(id: number, sectionKey: string, input: GenerateApplicationDraft, signal?: AbortSignal) {
     const result = await request(`/${id}/sections/${encodeURIComponent(sectionKey)}/drafts`, applicationPreparationSchema, 'POST', input, signal, 'preparation')
     if (result.id !== id || !result.contents.some((version) => version.sectionKey === sectionKey)) throw new ApplicationPreparationError(502, 'INVALID_RESPONSE')
@@ -117,8 +120,8 @@ export class ApplicationPreparationRepositoryImpl implements ApplicationPreparat
   discoveryJobs(signal?: AbortSignal) {
     return request('/forms/discovery-jobs', z.array(applicationFormDiscoveryJobSchema).max(20), 'GET', undefined, signal)
   }
-  list(beforeId?: number, signal?: AbortSignal) {
-    return request(cursor(beforeId), applicationPreparationPageSchema, 'GET', undefined, signal)
+  list(query?: ApplicationPreparationListQuery, signal?: AbortSignal) {
+    return request(cursor(query), applicationPreparationPageSchema, 'GET', undefined, signal)
   }
   delete(id: number, signal?: AbortSignal) {
     return request(`/${id}`, z.undefined(), 'DELETE', undefined, signal, 'preparation')
