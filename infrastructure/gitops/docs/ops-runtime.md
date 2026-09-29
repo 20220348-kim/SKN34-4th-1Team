@@ -294,6 +294,29 @@ Prefect 장애 중에도 기존 완료 보고서와 Ops 생존·DB 준비 probe�
 복구된 실행은 Kubernetes DB에서도 직접 읽어 요청·flow·명세·완료 상태를 대조한다.
 이 경로는 무료 저장 캡처만 사용하며, 실행기에서 Kubernetes 예산 API로 연결하는 live 경로는 별도 작업이다.
 
+마지막으로 실제 Compose 컨테이너 교체 후의 복구를 검사한다.
+
+| 단계 | 확인 조건 |
+|---|---|
+| Prefect 재생성 | 같은 이미지·`prefect-data` 볼륨, 새 컨테이너 ID |
+| 결과 서버 교체 | 기존 읽기 전용 서버를 유지한 채 두 번째 서버 시작 → 같은 이미지·`ops-results` 볼륨 및 다른 IP 확인 → 이전 시험 서버만 제거 |
+| 오래된 경로 검사 | `check`가 주소 변경을 거절하고 기존 EndpointSlice를 수정하지 않음 |
+| 명시적 경로 갱신 | `connect` 후 `check` 통과, 기존 Service UID·ClusterIP와 Docker 네트워크·kind 노드 유지 |
+| 결과·업무 복구 | Pod 런타임 진단 PASS, 기존 인증 보고서 해시 보존, 새 무료 평가 완료·Prefect 실행 정확히 1건·Kubernetes DB 대조 |
+
+단순 재시작은 Docker가 이전 IP를 재사용할 수 있으므로 결과 서버의 실제 주소 변경을 강제한다.
+임시 복제는 같은 결과를 읽는 서버에만 적용하며 Prefect를 동시에 두 개 실행하지 않는다.
+교체 전에 프로젝트·서비스·컨테이너·네트워크·named volume·읽기 전용 마운트를 확인하고,
+새 서버 검증을 통과한 뒤 확인된 이전 결과 서버 ID만 제거한다. 교체 중 볼륨을 삭제하지 않는다.
+예외가 발생하면 전체 E2E를 실패로 남기고 최상위 정리에서 생성한 시험 프로젝트·클러스터만 제거한다.
+
+`ops-bridge.json`의 `replacement_recovery`에는 교체 전후 ID·IP·이미지·볼륨,
+경로 복구·기존 보고서 해시, 새 평가·Kubernetes DB 대조 결과를 남긴다.
+`replacement_recovery.status=PASS`, `new_request_flow_count=1`, 새 평가의 `model_api_calls=0`과
+기존 평가·artifact·동기화 복구·최종 정리가 모두 성공해야 한다. 경로 갱신만으로 PASS를 기록하지 않는다.
+새 무료 평가에서도 Core 인증·권한·CSRF·중복 접수·목록 자동 동기화·보고서·로그아웃 검증을 재사용한다.
+이전 두 평가의 Kubernetes DB 기록도 보존돼야 한다.
+
 필수 LLMOps CI의 기존 integration 작업에 이 전체 검증을 연결했다.
 코드 추가·오프라인 검사와 실제 CI 통과는 구분하며 최신 커밋의 원격 결과는 푸시 후 확인한다.
 
