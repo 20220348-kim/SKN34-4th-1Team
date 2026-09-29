@@ -514,11 +514,7 @@ describe('작업 화면 사이드바', () => {
     expect(savedPrograms.getAttribute('aria-disabled')).toBeNull()
     expect(within(sidebar).queryByText('준비 중')).toBeNull()
 
-    // 요금제는 사이드바 메뉴가 아니라 계정 메뉴(내 프로필 옆)에 있습니다. 화면을 옮기면 메뉴가 닫히므로 다시 열어 확인합니다.
-    expect(within(sidebar).queryByRole('link', { name: '요금제' })).toBeNull()
-    fireEvent.click(within(sidebar).getByRole('button', { name: /^계정 메뉴/ }))
     fireEvent.click(within(sidebar).getByRole('link', { name: '요금제' }))
-    fireEvent.click(within(sidebar).getByRole('button', { name: /^계정 메뉴/ }))
     expect(within(sidebar).getByRole('link', { name: '요금제' }).getAttribute('aria-current')).toBe('page')
     expect(within(sidebar).getByRole('link', { name: '요금제' }).classList.contains('bg-[#e6f5ed]')).toBe(true)
     expect(search.getAttribute('aria-current')).toBeNull()
@@ -535,13 +531,11 @@ describe('작업 화면 사이드바', () => {
     const tabs = within(header).getByRole('navigation', { name: '파트너 관리 탭' })
     expect(within(tabs).getByRole('link', { name: '모집글' }).getAttribute('aria-current')).toBe('page')
     expect(within(header).getByRole('link', { name: /작성$/ })).toBeTruthy()
-    // 제안함은 파트너 관리 탭이 아니라 사이드바의 별도 메뉴(협업)입니다.
-    expect(within(tabs).queryByRole('link', { name: /제안함/ })).toBeNull()
-    fireEvent.click(within(sidebar).getByRole('link', { name: /^제안함/ }))
-    expect(screen.getByRole('heading', { name: '제안함' })).toBeTruthy()
+    fireEvent.click(within(tabs).getByRole('link', { name: /제안함/ }))
+    expect(screen.getByRole('heading', { name: '파트너 관리' })).toBeTruthy()
+    expect(within(screen.getByRole('navigation', { name: '파트너 관리 탭' })).getByRole('link', { name: /제안함/ }).getAttribute('aria-current')).toBe('page')
     expect(screen.getByRole('tablist', { name: '제안함 종류' })).toBeTruthy()
-    expect(within(sidebar).getByRole('link', { name: /^제안함/ }).getAttribute('aria-current')).toBe('page')
-    expect(within(sidebar).getByRole('link', { name: '파트너 관리' }).getAttribute('aria-current')).toBeNull()
+    expect(within(sidebar).getByRole('link', { name: /파트너 관리/ }).getAttribute('aria-current')).toBe('page')
 
     expect(within(sidebar).queryByRole('navigation', { name: '관리자' })).toBeNull()
     expect(within(sidebar).queryByRole('link', { name: '회원·기업' })).toBeNull()
@@ -1636,13 +1630,14 @@ describe('제안함 화면', () => {
   it('사이드바 제안함 배지는 받은 제안 대기 건수를 보여주고 받은 제안함으로 이동한다', async () => {
     renderApp('/app/partners', companyAccount)
     const sidebar = screen.getByRole('complementary', { name: '작업 사이드바' })
-    // 제안함 메뉴가 대기 건수를 배지로 보여 주고, 파트너 관리 메뉴에는 배지가 없습니다.
-    const menu = await within(sidebar).findByRole('link', { name: /^제안함/ })
+    // 파트너 관리 메뉴가 대기 건수를 배지로 보여 주고, 제안함은 머리글 아래 탭으로 갑니다.
+    const menu = await within(sidebar).findByRole('link', { name: /파트너 관리/ })
     expect(menu.textContent).toContain('1')
-    expect(menu.getAttribute('href')).toBe('/app/proposals')
-    expect(within(sidebar).getByRole('link', { name: '파트너 관리' }).textContent).not.toContain('1')
+    expect(menu.getAttribute('href')).toBe('/app/partners')
 
-    fireEvent.click(menu)
+    const proposalsTab = within(screen.getByRole('navigation', { name: '파트너 관리 탭' })).getByRole('link', { name: /제안함/ })
+    expect(proposalsTab.textContent).toContain('1')
+    fireEvent.click(proposalsTab)
     const boxTabs = screen.getByRole('tablist', { name: '제안함 종류' })
     expect(within(boxTabs).getByRole('tab', { name: '받은 제안 (1)' }).getAttribute('aria-selected')).toBe('true')
     const panel = await screen.findByRole('tabpanel', { name: '받은 제안' })
@@ -1696,7 +1691,7 @@ describe('제안함 화면', () => {
     expect(within(detail).queryByRole('button', { name: '거절' })).toBeNull()
     // 받은 제안함은 Redux에 있으므로 사이드바 배지도 다시 읽지 않고 함께 사라집니다.
     const sidebar = screen.getByRole('complementary', { name: '작업 사이드바' })
-    await waitFor(() => expect(within(sidebar).getByRole('link', { name: /^제안함/ }).textContent).not.toContain('1'))
+    await waitFor(() => expect(within(sidebar).getByRole('link', { name: /파트너 관리/ }).textContent).not.toContain('1'))
     const browse = appContainer.resolve('browsePartnerProposalsUseCase').execute as ReturnType<typeof vi.fn>
     expect(browse.mock.calls.filter(([box]) => box === 'received')).toHaveLength(1)
   })

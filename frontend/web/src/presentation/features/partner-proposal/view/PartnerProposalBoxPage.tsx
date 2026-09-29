@@ -7,7 +7,7 @@ import { companyInitial } from '../../../shared/partner-recruitment/partnerRecru
 import { workspaceChipClassName, workspacePageStyles, workspaceTagClassName } from '../../../shared/workspace/WorkspacePage.styles'
 import { WorkspaceModal } from '../../../shared/workspace/WorkspaceModal'
 import { workspaceModalStyles } from '../../../shared/workspace/WorkspaceModal.styles'
-import { WorkspacePageHeader } from '../../../shared/workspace/WorkspacePageHeader'
+import { PartnerManagementHeader } from '../../../shared/partner-recruitment/PartnerManagementHeader'
 import {
   proposalActionConfirmations,
   proposalActionLabels,
@@ -64,29 +64,27 @@ export function PartnerProposalBoxPage() {
 
   return (
     <>
-      {/* 받은 제안 · 보낸 제안 세그먼트는 관심 공고함처럼 제목 옆 왼쪽에 둡니다. */}
-      <WorkspacePageHeader
-        title="제안함"
-        tabs={
-          <div className={workspacePageStyles.segment} role="tablist" aria-label="제안함 종류">
-            {boxes.map((item) => (
-              <button
-                className={workspacePageStyles.segmentTab}
-                key={item.key}
-                type="button"
-                role="tab"
-                aria-selected={box === item.key}
-                onClick={() => vm.selectBox(item.key)}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
-        }
-      />
+      {/* 머리글은 모집글·내 모집글과 같은 "파트너 관리"이고, 제안함은 그 탭 중 하나입니다. */}
+      <PartnerManagementHeader active="proposals" />
 
       <div className={workspacePageStyles.content}>
         <p className={s.lede}>기업 회원끼리 주고받은 참여 제안이에요 · 모집글 하나에 한 번, 7일 안에 답하지 않으면 끝나요</p>
+
+        {/* 받은 제안 · 보낸 제안 세그먼트는 본문 첫 줄 왼쪽에 내용 폭만큼만 둡니다(세로 flex 안에서 늘어나지 않게 self-start). */}
+        <div className={`${workspacePageStyles.segment} self-start`} role="tablist" aria-label="제안함 종류">
+          {boxes.map((item) => (
+            <button
+              className={workspacePageStyles.segmentTab}
+              key={item.key}
+              type="button"
+              role="tab"
+              aria-selected={box === item.key}
+              onClick={() => vm.selectBox(item.key)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
 
         {vm.hasCompany ? null : (
           <section className={s.infoAlert} aria-label="기업 등록 필요">
