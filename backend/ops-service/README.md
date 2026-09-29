@@ -114,7 +114,9 @@ Ops로 접수한 새 응답 생성은 `EvaluationBudget`의 **DB 전체 누적 �
 
 ```bash
 # backend/ops-service, 승인된 환경변수 값을 사용
-uv run --locked python manage.py set_evaluation_budget --calls "$APPROVED_CALL_LIMIT" --output-tokens "$APPROVED_OUTPUT_TOKEN_LIMIT"
+uv run --locked python manage.py set_evaluation_budget \
+  --calls "$APPROVED_CALL_LIMIT" --output-tokens "$APPROVED_OUTPUT_TOKEN_LIMIT" \
+  --actor "$BUDGET_OPERATOR" --reason "$BUDGET_CHANGE_REASON" --request-id "$BUDGET_CHANGE_REQUEST_ID"
 ```
 
 이 명령은 사용량을 초기화하거나 live를 활성화하지 않습니다. 기존 예약·확정 합계보다 낮은 한도는
@@ -125,6 +127,57 @@ uv run --locked python manage.py set_evaluation_budget --calls "$APPROVED_CALL_L
 실행기 전용 API는 `POST /internal/llmops/evaluations/{run_id}/budget/{claim|authorize|settle|close}`이며,
 별도 Bearer 비밀값과 실행 UUID·명세 해시·소유자 UUID를 확인합니다. 사용자 세션 API와 인증을 공유하지 않습니다.
 기본 한도를 넣거나 스케줄·유료 평가를 자동 활성화하지 않습니다.
+
+## 예산 조회와 한도 변경 감사
+
+호출 흐름은 `React → Core 관리자 세션을 확인하는 Django Ops API → MySQL 장부`입니다.
+추가 production 의존성과 모델 호출은 없습니다. 아래 세 API는 GET만 허용하고 기존 관리자
+로그인을 재사용합니다. 내부 실행기 Bearer 토큰이나 이전 Django 세션으로는 조회할 수 없습니다.
+관리자는 다른 요청자의 장부도 볼 수 있지만, 평가 취소는 계속 요청자만 가능합니다.
+
+| API | 응답 |
+|---|---|
+| `GET /api/v1/ops/budget` | 전체 한도·저장된 할당량·잔여 한도·구성별 총계·최근 변경 10건과 전체 변경 건수 |
+| `GET /api/v1/ops/budget/reservations?page=1` | 25건씩 예약 목록과 같은 조회 시점의 **전체** 예산 요약 |
+| `GET /api/v1/ops/evaluations/{run_id}/budget` | 해당 실행의 예약·호출별 승인 시각·확정 사용량·정산 시각 |
+
+React 평가 목록에는 전체 요약·실행별 예약·최근 한도 변경을, 실행 상세에는 예약과 호출별
+승인·정산을 표시합니다. 15초 간격으로 조회하며 실패 시 마지막 조회 시각과 오류를 함께 유지합니다.
+자동 환급·한도 수정 버튼은 없습니다. 전체 변경 이력은 DB에 보존하며 첫 화면은 최근 10건만 표시합니다.
+
+예산 구성은 다음과 같습니다. 호출 한도는 호출 횟수, 출력 한도는 토큰 수이며 금액이 아닙니다.
+
+| 구분 | 호출 수 | 출력 토큰 |
+|---|---|---|
+| 확정 사용량 | 정산 완료 호출 | 정산된 실제 출력 |
+| 승인 후 미확인 | 미정산 승인 호출 | 해당 호출의 최대 출력 예약 |
+| 미승인 예약 | 열린 예약의 미승인 호출 | 미승인 호출 × 호출당 최대 출력 |
+| 종료 전 반환 대기 | 추가 호출 없음 | 열린 예약의 정산 완료 호출별 최대 출력 − 실제 출력 |
+
+`settle`은 사용량만 기록하므로 6회 × 2,000을 예약해 첫 호출이 50토큰으로 정산돼도
+`close` 전 할당량은 12,000입니다(확정 50 + 미승인 10,000 + 반환 대기 1,950).
+미확인 호출은 예약이 닫힌 뒤에도 최대 출력 몫을 유지합니다. 입력 토큰은 참고용 확정 합계입니다.
+승인 기록을 실제 전송 완료·비용 확정으로 해석하지 않습니다.
+
+응답마다 전역 예산 행을 쓰기 경로와 같은 방식으로 잠그고 총계·페이지 내역을 구체화한 후 해제합니다.
+외부 관리자 인증은 이 transaction 전에 끝납니다. `as_of`는 잠금을 획득한 조회 시각입니다.
+합계가 저장된 할당량과 다르면 `state=inconsistent`, `remaining=null`이며 자동 보정하지 않습니다.
+미설정은 `unconfigured`와 null 값으로 표시합니다. 과거 live 실행의 예약 부재는 `missing`으로
+구분하고 전체 응답에 `legacy_live_run_count`를 제공합니다. 이 실행의 사용량을 0으로 만들지 않습니다.
+replay/recovery 자체에는 새 모델 예약이 없어 `not_applicable`이며 원본 비용은 원본 장부를 확인합니다.
+
+배포 전 additive migration **`0013_budget_change_audit`**를 적용해야 합니다.
+`set_evaluation_budget`에는 변경자·사유·요청 UUID가 필수입니다. `--actor`는 CLI 운영자가 입력하는
+식별자이며 Core 로그인으로 인증한 신원이 아닙니다. 위 예시의 `BUDGET_CHANGE_REQUEST_ID`는
+요청 전에 한 번 생성·보관한 UUID를 사용하고 **같은 요청 재시도에는 같은 값**을 전달합니다.
+동일 UUID의 한도·변경자·사유가 다르면 거절하며, 이전 요청을 재전송해도 이후 변경을 되돌리지 않습니다.
+현재 한도 변경과 감사 행 저장은 같은 transaction입니다. 감사 저장 실패 시 한도 변경도 롤백합니다.
+이전/새 한도·CLI 출처·변경자·사유·시각을 저장하며 기존 한도에 가짜 과거 이력을 소급 생성하지 않습니다.
+
+관련 검증은 `apps.evaluations.test_budget_reporting`, `test_budget`, `test_cancellation`과 Web의
+`BudgetPanel.test.tsx`, `App.ops.test.tsx`입니다. MySQL 동시 조회/정산·최초 한도 설정 경합·
+감사 실패 롤백, API 권한·페이지 경계, 화면의 미확인/0토큰 구분을 포함합니다.
+전체 Ops/MySQL·Web 빌드·실제 취소 서버 검증은 기존 필수 CI에서 계속 실행합니다.
 
 ## 평가 취소
 

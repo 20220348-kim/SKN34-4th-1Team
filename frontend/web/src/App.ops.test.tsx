@@ -45,6 +45,12 @@ beforeEach(() => {
   vi.spyOn(crypto, 'randomUUID').mockReturnValue(id)
   fetchMock = vi.fn(async (path: string, _options?: RequestInit) => {
     if (path === '/api/v1/ops/session') return json(session())
+    if (path.startsWith('/api/v1/ops/budget/reservations')) return json({
+      as_of: '2026-09-29T00:00:00Z', count: 0, next: null, previous: null, results: [],
+      summary: { state: 'unconfigured', limits: null, allocated: null, remaining: null, breakdown: null,
+        reservation_count: 0, legacy_live_run_count: 0, change_count: 0, recent_changes: [] },
+    })
+    if (path.endsWith('/budget')) return json({ as_of: '2026-09-29T00:00:00Z', state: 'not_applicable', reservation: null, calls: [] })
     if (String(path).endsWith('/api/v1/auth/logout')) { authenticated = false; return new Response(null, { status: 204 }) }
     if (path.startsWith('/api/v1/ops/evaluations?page=')) return json({ count: 1, next: null, previous: null, results: [completed] })
     if (path === `/api/v1/ops/evaluations/${id}/review`) return json({ ...reviewDefaults, is_baseline: false, baseline_version: 0, baseline_history: [], reviews: [], material: null, material_error: '' })

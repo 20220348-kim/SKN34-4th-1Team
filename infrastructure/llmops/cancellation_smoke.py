@@ -566,6 +566,12 @@ def main():
                 "200",
                 "--output-tokens",
                 "400000",
+                "--actor",
+                "cancellation-smoke",
+                "--reason",
+                "Isolated offline cancellation scenarios",
+                "--request-id",
+                str(uuid4()),
             )
             smoke = Smoke(compose)
             phase = "readiness"

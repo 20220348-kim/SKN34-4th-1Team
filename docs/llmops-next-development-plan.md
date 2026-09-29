@@ -1,8 +1,36 @@
-# LLMOps 후속 개발 전략 — skn-48 기준
+# LLMOps 후속 개발 전략 — 예산 조회·감사 구현
 
 [문서 목록](README.md) · [도입·구현 이력](langfuse-adoption-strategy.md) · [Ops API](../backend/ops-service/README.md) · [실행 안내](../infrastructure/llmops/README.md)
 
-## 최신 구현과 착수 순서 — skn-48 / main 626ecf6
+## 현재 구현 — main 80d55a9 위 작업
+
+2026-09-29 `skn-48 / 3cc6341`의 필수 CI 5개와 실제 취소 통합 검증 단계가 모두 성공한 것을
+확인했다. [LLMOps CI 결과](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36486640472)는
+이전 중계기 버전의 로컬 결과와 구분한다. 현재 작업은 이후 병합된 `main / 80d55a9` 위에서 진행했다.
+
+PR B 범위의 관리자 예산 조회 API·React 화면·CLI 한도 변경 감사를 구현했다.
+확정 사용량·승인 후 미확인·미승인 예약·종료 전 반환 대기를 구분하고, 총계와 페이지는 같은 전역
+예산 잠금 안에서 조회한다. 미설정·합계 불일치·과거 예약 기록 부재는 0으로 표시하지 않는다.
+`0013_budget_change_audit`로 변경자·CLI 출처·사유·이전/새 한도·시각·요청 UUID를 보존한다.
+동일 요청은 멱등이며 감사와 한도 변경은 함께 커밋/롤백한다. 변경자는 CLI 운영자의 자기 기입 값이다.
+
+구현 계약과 적용 명령은 [Ops README](../backend/ops-service/README.md#예산-조회와-한도-변경-감사)에 있다.
+선택 검증은 격리된 MySQL 8.4에서 예산·감사·취소 **55개**, React 관련 **60개**, 취소 도구의
+무료 회귀 **37개**가 통과했다. Ruff·포맷·oxlint·TypeScript 및 migration 정합성 검사도 통과했다.
+이 변경의 전체 CI는 커밋·푸시 후 확인해야 하며, 기존 개발 DB에는 새 migration을 적용하지 않았다.
+유료 모델 호출·실제 한도 변경·예약 환급은 실행하지 않았다.
+
+다음 순서는 아래와 같다. 기존 기능을 다시 만들지 않고 검증 증거가 준비된 범위부터 진행한다.
+
+| 순서 | 작업 | 완료 조건 |
+|---|---|---|
+| 1 | 이번 조회·감사 변경의 CI와 대상 환경 적용 | 최신 변경 SHA의 필수 CI 통과, 대상 환경에 0013 적용 후 기존 관리자 로그인으로 조회 확인 |
+| 2 | PR C1: 종료 예약의 미사용 몫 정리 | 종료 증거 확인 후 신규 승인 차단, 미승인 몫·확정 출력 차액만 반환, 미확인 몫 유지와 중복 반환 방지 |
+| 3 | PR C2: 증거 기반 미확인 사용량 보정 | 증거 출처·원본 보존·중복/충돌 판정·보정 이력 및 잔액 일치 |
+| 병행 | 사람 검토 기준 준비 | 자료·사례를 사람이 검토; 실제 모델 평가는 승인된 자료·호출/출력 상한에서 별도 실행 |
+| 후속 | 입력·금액·기간 예산, RAG 확대와 정기 실행 | 각 하위 절의 비용·품질·복구 조건 충족 후 활성화 |
+
+## 이전 통합 검증 — skn-48 / main 626ecf6
 
 2026-09-29 `skn-48`을 최신 `main / 626ecf6` 위로 리베이스했다. main에는 skn-45의 취소 통합
 검증 수정, skn-46의 Core→AI 검색 추적, skn-47의 이미지 발행·승격 결과 기록과 쓰기 차단이
@@ -53,7 +81,7 @@ skn-48의 별도 ingress는 중복되어 제외하고 Python 3.12 실행 고정,
 | 누적 호출·출력 예산 | [budget.py](../backend/ops-service/apps/evaluations/budget.py), [모델](../backend/ops-service/apps/evaluations/models.py) | DB 전역 예약·단일 소유권·정산·초과 차단은 구현됐다. 입력 토큰/금액/기간 한도는 없다. |
 | 평가 취소 | [services.py](../backend/ops-service/apps/evaluations/services.py), [취소 테스트](../backend/ops-service/apps/evaluations/test_cancellation.py) | 요청자 권한·취소 기록·신규 승인 차단·종료 확인·환급 경합은 구현됐다. 실제 실행기 중단 11개 시나리오를 추가했으며, 아래 PR A의 최신 검증 상태를 따른다. |
 | 실서버 CI | [LLMOps CI](../.github/workflows/llmops-ci.yml), [Ops smoke](../infrastructure/llmops/ops_smoke.py), [취소 smoke](../infrastructure/llmops/cancellation_smoke.py) | 저장 응답·인증·재접수·보고서·무료 복구·실행 명세 불일치 검증에 11개 취소·예산 시나리오를 연결했다. skn-43 CI의 포트 조회 실패와 후속 수정·검증 상태는 아래 PR A에서 구분한다. |
-| 한도 변경·장부 조회 | [한도 명령](../backend/ops-service/apps/evaluations/management/commands/set_evaluation_budget.py), [공개 API](../backend/ops-service/apps/evaluations/urls.py), [웹 계약](../frontend/web/src/data/ops/opsApi.ts) | 한도 변경은 CLI이며 변경자·사유·이전/새 값의 별도 감사 이력이 없다. 예산 잔여·예약·미확인 내역을 보는 관리자 API·화면도 없다. |
+| 한도 변경·장부 조회 | [조회·감사](../backend/ops-service/apps/evaluations/budget_reporting.py), [공개 API](../backend/ops-service/apps/evaluations/urls.py), [웹 계약](../frontend/web/src/data/ops/opsApi.ts) | 후속 PR B 구현으로 관리자 읽기 API·React 표시·CLI 감사 이력을 추가했다. 새 migration 적용과 해당 변경의 필수 CI는 현재 구현 절의 상태를 따른다. |
 | 미확인 예약 복구 | [worker_action/close_after_cancellation](../backend/ops-service/apps/evaluations/budget.py), [ops_flow.py](../evaluation/support-program-evidence/ops_flow.py) | claim은 실행 try/finally 앞에 있고 close 실패를 자동 재정산하지 않는다. 취소 기록 없는 FAILED/CRASHED 등은 동기화에서 예약을 정리하지 않으며 종료된 실행에는 새 취소도 거절한다. closed 예약의 늦은 settle도 거절한다. 보수적으로 한도를 유지하지만 이를 안전하게 정리하는 별도 경로가 필요하다. |
 | 추적·평가 범위 | [tracing.py](../backend/ai-service/app/tracing.py), [evaluate.py](../evaluation/support-program-evidence/evaluate.py) | 기준 검토 이후 Core→AI 검색 단계·임베딩/랭킹·선택 추적과 Ops 이동 링크를 추가했다. 상세 범위·미검증 항목은 [실행 안내](../infrastructure/llmops/README.md#지원사업-ai-검색-추적)를 참조한다. 고정 근거 평가는 synthetic·ai-authored, 최대 3문서·12사례이며 자동 의미 충실도는 미측정이다. |
 | 발행·승격 | [gate.py](../infrastructure/release/gate.py) | 동일 SHA의 5개 CI·필수 job 검사는 구현됐다. 현재 모델의 사람 검토 품질 증거와 배포 대상의 연결은 별도 과제다. |
@@ -157,6 +185,9 @@ Windows 호스트 + Docker Desktop Linux Engine 29.6.2에서 실제 11개 시나
 준비할 수 있지만 유료 반복 실행·운영 준비 완료의 근거는 PR A의 완료 조건 충족 후 확보한다.
 
 ### PR B — 예산을 설명할 수 있는 운영 API·화면
+
+구현됨: 세 GET API, React 목록·실행 상세, CLI 감사 migration을 추가했다. 적용·검증 상태는
+문서 상단의 현재 구현을 따른다. 아래는 계산 계약과 완료 조건이며 예약 정리 기능은 PR C 범위다.
 
 현재 관리자 인증을 재사용해 전체 한도·예약 유지분·확정 사용량·미확인 호출·잔여 한도와
 실행별 상세를 조회한다. 취소 가능 여부와 비용 미확정 여부를 따로 표시한다.
