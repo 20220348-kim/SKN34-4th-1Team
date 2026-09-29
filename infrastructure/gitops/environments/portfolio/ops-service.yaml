@@ -19,6 +19,14 @@ resources:
     memory: 384Mi
 env:
   DJANGO_DEBUG: 'false'
+  DJANGO_COOKIE_SECURE: 'false' # loopback web development only
+  CORE_API_URL: http://core-service:8080
+  OPS_WEB_URL: http://localhost:5173
+  PREFECT_API_URL: http://disabled-prefect.invalid/api
+  PREFECT_UI_URL: http://localhost:14200
+  LLMOPS_EVIDENCE_DIR: /evaluation-data
+  LLMOPS_RESULTS_DIR: /results
+  LLMOPS_LIVE_ENABLED: 'false'
   DJANGO_ALLOWED_HOSTS: localhost,127.0.0.1,ops-service
   DB_NAME: govbiz_ops
   DB_USER: govbiz_ops

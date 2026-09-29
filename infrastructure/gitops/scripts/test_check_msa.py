@@ -47,6 +47,19 @@ class MsaChartTests(unittest.TestCase):
         changed["ai-service"] = render("ai-service", HELM, ["--set", "image.tag=independent-v2"])
         self.assertEqual([s for s in SERVICES if changed[s] != baseline[s]], ["ai-service"])
 
+    def test_ops_declares_core_auth_and_unconnected_evaluation_explicitly(self):
+        from check_portfolio import free_runtime_errors
+        resources = render("ops-service", HELM)
+        deployment = next(item for item in resources if item["kind"] == "Deployment")
+        env = {entry["name"]: entry.get("value") for entry in deployment["spec"]["template"]["spec"]["containers"][0]["env"]}
+        self.assertEqual(env["CORE_API_URL"], "http://core-service:8080")
+        self.assertEqual(env["DJANGO_COOKIE_SECURE"], "false")
+        self.assertEqual(env["LLMOPS_EVIDENCE_DIR"], "/evaluation-data")
+        self.assertEqual(env["LLMOPS_RESULTS_DIR"], "/results")
+        self.assertEqual(env["PREFECT_API_URL"], "http://disabled-prefect.invalid/api")
+        self.assertEqual(free_runtime_errors("ops-service", {"env": env}), [])
+        self.assertTrue(free_runtime_errors("ops-service", {"env": {**env, "LLMOPS_LIVE_ENABLED": "true"}}))
+
     def test_writer_policy_detects_regression(self):
         resources = render("core-service", HELM, ["--set-string", "env.BIZINFO_SYNC_ENABLED=true"])
         self.assertIn("core-service: Core source writer enabled", policy_errors("core-service", resources))

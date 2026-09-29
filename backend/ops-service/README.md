@@ -467,12 +467,24 @@ uv run --locked python manage.py runserver 127.0.0.1:8001
 
 호스트에서 실행할 때는 Compose의 `ops-service`를 동시에 실행하지 않습니다. 이미 켜져 있다면 `docker compose stop ops-service`를 먼저 실행합니다. Linux에서 mysqlclient 빌드 도구가 없다면 `default-libmysqlclient-dev`, `build-essential`, `pkg-config`를 설치하거나 Docker 실행 경로를 사용합니다.
 
+## 평가 배포 환경 진단
+
+관리자 전용 `GET /api/v1/ops/runtime`은 평가 자료 해시·결과 디렉터리 접근·Prefect deployment 등록을
+읽기 전용으로 확인합니다. `?run_id=<완료된 실행 UUID>`를 지정하면 해당 실행의 결과 무결성도 검사합니다.
+실패 시 503을 반환하며, 미인증·비관리자·Core 장애의 접근 제한은 기존 Ops API와 같습니다.
+Kubernetes liveness/readiness와 분리되어 있으며, 결과에는 검사 범위와 미검증 항목을 명시합니다.
+
+`python manage.py check_evaluation_runtime [--run-id <UUID>]`로 같은 진단을 실행할 수 있습니다.
+진단은 평가를 시작하거나 디렉터리를 생성하지 않습니다. `status: PASS`를 실행기 생존·공유 volume·
+새 평가 성공으로 해석하지 않습니다. [Compose 연결 계약과 진단 응답](../../infrastructure/gitops/docs/ops-runtime.md)을 참고하세요.
+
 ## API
 
 | 경로 | 성공 응답 | 실패 동작 |
 | --- | --- | --- |
 | `GET /api/v1/health` | `200`, `status: UP` | DB를 호출하지 않음 |
 | `GET /api/v1/health/ready` | `200`, `database: UP, schema: UP` | DB 실패는 `database: DOWN`, 미적용 migration·이력 불일치·실제 테이블/컬럼 누락은 `schema: DOWN`으로 `503`; 내부 정보 비노출 |
+| `GET /api/v1/ops/runtime` | `200`, 설정 검사 PASS와 검증 범위 | 구성·자료·Prefect·선택한 결과 검증 실패 `503`; 잘못된 run_id `400`; 관리자 인증 필수 |
 | `GET /api/v1/ops/session` | `200`, `user`(쿠키가 없으면 null), `csrf_token`, 허용 자료 목록, `search_traces_url` | 만료 `401`, 비관리자 `403`, Core 장애 `503` |
 | `GET /api/v1/ops/evaluations/{UUID}/report` | `200`, CSP sandbox가 적용된 HTML | 미인증 `401`, 비관리자 `403`, Core 장애 `503`, 없거나 훼손된 보고서 `404` |
 | `POST /api/v1/ops/evaluations` | 최초 `202`, 재전송 `200`; 실행 메타데이터 | 자료/UUID 오류 `400`, 미인증 `401`, 권한·CSRF `403`, 요청 충돌 `409`, 인증 서버 장애·접수 미확인 `503` |

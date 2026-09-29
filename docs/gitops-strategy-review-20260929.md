@@ -220,6 +220,28 @@ Python 3.12/MySQL 8.4 전체 검증을 대체하지 않는다.
 **G2 전체 완료는 아니다.** Core·Prefect·데이터셋·결과 저장소의 배포 연결과
 관리자 인증부터 저장된 캡처 평가·결과 조회·재시작 후 유지까지의 실제 E2E가 남았다.
 
+G2 migration 후속 CI 확인: `skn-54 / 08f4051c1e1e2fe210dc270ff3c6e5949348083c`의
+5개 workflow·16개 필수 job이 모두 성공했다.
+[Ops CI](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36529070375)의 빈 MySQL 스키마·
+migration 단계와 컨테이너 검증도 실제 성공했으며,
+[Infra CI](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36529070393)의 Helm 누락 수정도 확인했다.
+이는 이전 migration 커밋의 증거이며 아래 새 진단 구현의 원격 CI 결과는 아니다.
+
+G2 다음 구현: 사용자는 **Prefect·평가 실행기·결과 저장소를 Compose에 유지**하는 방식을 선택했다.
+[연결 계약과 진단](../infrastructure/gitops/docs/ops-runtime.md)에 데이터·권한·배치 책임을 정리했다.
+새 local values·후보 템플릿에서 Core 인증 주소와 loopback CSRF 쿠키 설정을 수정하고,
+미연결 Prefect 주소·평가 자료/결과 경로·유료 실행 금지를 명시했다.
+관리자 전용 `/api/v1/ops/runtime`과 `check_evaluation_runtime` 명령은 자료 해시·결과 경로·
+Prefect 등록 및 선택한 완료 실행의 결과 무결성을 검사한다. 새 평가나 파일 쓰기를 수행하지 않고,
+공유 volume의 동일성·실행기 생존·새 평가 실행 성공을 검증했다고 표시하지 않는다.
+기존 Compose 무료 평가 CI에서 이 API의 인증과 실제 완료 결과 검증을 수행하도록 연결했다.
+
+로컬 관련 무료 테스트 45개(Ops 단위 10, Helm 정책 21, smoke 판정 11, 실제 후보 렌더링/호환 3)가
+통과했다. Ops 테스트는 이전과 같은 Python 3.13·잠금 버전의 격리 도구 환경을 사용했다.
+새 DB 통합 테스트는 Ops CI, 실제 관리자 인증·완료 결과 접근은 LLMOps CI에서 확인해야 한다.
+최신 변경은 커밋·푸시 전이다. Kubernetes↔Compose 내부 통신, 결과 저장소 공유, `ops-sync`의
+DB 소유권 연결과 재시작 유지 검증이 남았으므로 실제 연결 또는 G2 완료로 보고하지 않는다.
+
 ### G3 — 실제 Argo 배포·복구 검증을 필수 증거로 연결
 
 담당 책임: 인프라 CI와 서비스 운영 담당.

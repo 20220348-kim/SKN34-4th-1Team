@@ -48,3 +48,24 @@ def test_unavailable_api_and_timeout_fail(monkeypatch):
     monkeypatch.setattr(smoke.time, "monotonic", Mock(side_effect=[0, 361]))
     with pytest.raises(RuntimeError, match="synchronization timed out"):
         smoke.wait_for_list_state(Mock(return_value=response("RUNNING")), "run")
+
+
+def test_runtime_verification_requires_all_checks_and_correlated_result():
+    result = {"status": "PASS", "checks": {key: "PASS" for key in
+              ("evidence", "results_directory", "prefect_deployment", "result_artifact")},
+              "result_artifact_verified": True, "evaluation_executed": False}
+    request = Mock(return_value=(200, json.dumps(result).encode(), {}))
+    assert smoke.verify_runtime(request, "fixture-run") == result
+    request.assert_called_once_with("/api/v1/ops/runtime?run_id=fixture-run")
+    invalid = [
+        {**result, "status": "FAIL"},
+        {**result, "checks": {**result["checks"], "result_artifact": "NOT_CHECKED"}},
+        {**result, "checks": {}},
+        {**result, "result_artifact_verified": False},
+        {**result, "evaluation_executed": True},
+    ]
+    for payload in invalid:
+        with pytest.raises(AssertionError):
+            smoke.verify_runtime(Mock(return_value=(200, json.dumps(payload).encode(), {})), "fixture-run")
+    with pytest.raises(AssertionError):
+        smoke.verify_runtime(Mock(return_value=(503, json.dumps(result).encode(), {})), "fixture-run")

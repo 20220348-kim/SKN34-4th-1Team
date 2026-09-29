@@ -29,6 +29,16 @@ def wait_for_list_state(request, run_id, expected="COMPLETED"):
         time.sleep(3)
 
 
+def verify_runtime(request, run_id):
+    status, body, _ = request("/api/v1/ops/runtime?run_id=" + run_id)
+    runtime = json.loads(body)
+    assert status == 200 and runtime["status"] == "PASS"
+    assert set(runtime["checks"]) == {"evidence", "results_directory", "prefect_deployment", "result_artifact"}
+    assert all(value == "PASS" for value in runtime["checks"].values())
+    assert runtime["result_artifact_verified"] is True and runtime["evaluation_executed"] is False
+    return runtime
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", default="http://localhost:5173")
@@ -69,11 +79,13 @@ def main():
             raise RuntimeError("Ops readiness timed out")
         time.sleep(2)
     assert request("/api/v1/ops/evaluations")[0] == 401
+    assert request("/api/v1/ops/runtime")[0] == 401
     if args.seed_dev_accounts:
         # 이 플래그는 CI의 별도 Core/빈 DB fixture에만 사용한다. 기존 회원의 권한은 변경하지 않는다.
         assert request("/api/v1/auth/dev-login", {"role": "USER"}, csrf=False)[0] == 200
         assert request("/api/v1/ops/session")[0] == 403
         assert request("/api/v1/ops/evaluations")[0] == 403
+        assert request("/api/v1/ops/runtime")[0] == 403
         assert request("/api/v1/auth/dev-login", {"role": "ADMIN"}, csrf=False)[0] == 200
         assert request("/api/v1/auth/logout", {}, csrf=False)[0] == 204
     status, body, _ = request("/api/v1/auth/login", {
@@ -147,10 +159,12 @@ def main():
     status, body, headers = request(run["report_url"])
     assert status == 200 and len(body) > 1000
     assert "sandbox allow-scripts;" in headers["Content-Security-Policy"]
+    runtime = verify_runtime(request, run["id"])
     # Django 세션을 지우는 대신 Core 로그아웃 한 번으로 Ops도 차단되어야 한다.
     assert request("/api/v1/auth/logout", {}, csrf=False)[0] == 204
     assert request(run["report_url"])[0] == 401
     assert request("/api/v1/ops/evaluations")[0] == 401
+    assert request("/api/v1/ops/runtime")[0] == 401
     summary = {
         "request_id": run["id"], "prefect_flow_run_id": run["prefect_flow_run_id"],
         "evaluation_run_id": run["evaluation_run_id"], "status": run["status"],
@@ -158,6 +172,7 @@ def main():
         "case_count": expected_count, "comparison": comparison["comparison"],
         "metrics": comparison["metrics"], "duplicate_request_same_flow": True, "csrf_enforced": True,
         "core_admin_login": True, "core_logout_revokes_ops": True,
+        "deployment_runtime_checks": runtime,
         "background_sync_without_detail": True, "source_run_id": run.get("source_run_id"),
         "report_http_status": status, "model_api_calls": 0,
         "detail_url": base + run["detail_url"],

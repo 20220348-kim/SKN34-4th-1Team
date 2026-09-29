@@ -76,6 +76,14 @@ docker compose --env-file infrastructure/llmops/.env \
   -f infrastructure/llmops/compose.yaml --profile evaluation down
 ```
 
+## 평가 환경 연결 확인
+
+운영자 로그인 후 `GET /api/v1/ops/runtime`으로 평가 자료·결과 디렉터리·Prefect 등록을 진단합니다.
+`dc exec -T ops-service python manage.py check_evaluation_runtime`도 같은 검사를 수행합니다.
+완료된 실행 UUID를 `--run-id`로 전달하면 기존 결과의 무결성까지 확인합니다.
+이 검사는 flow 생성·유료 호출·파일 수정을 하지 않으며 실행기의 생존이나 새 평가 성공을 뜻하지 않습니다.
+[Ops와 Compose 연결 계약](../gitops/docs/ops-runtime.md)을 참고하세요.
+
 ## Django 운영 화면
 
 화면은 기존 `frontend/web`의 React로 제공하고 Django는 인증·평가 API를 담당한다.
@@ -98,7 +106,7 @@ dc() {
 }
 dc up -d ops-mysql
 dc build ops-service ops-sync evaluation-runner
-dc run --rm ops-service python manage.py migrate --noinput
+dc run --rm ops-service python manage.py migrate_deployment
 dc up -d ops-service ops-sync evaluation-runner
 
 ```
