@@ -17,6 +17,7 @@ import fork_cluster
 import fork_web
 import ops_runtime
 import smoke_ops_artifacts
+import smoke_ops_replacement
 import smoke_ops_sync_recovery
 import yaml
 from check_msa import NAMESPACE, REPOSITORY_ROOT, ROOT
@@ -63,6 +64,32 @@ def database_record(nk, run_id):
             data=program,
         )
     )
+
+
+def free_evaluation(output, password, web_env, *, seed=False):
+    env = {
+        **web_env,
+        "CORE_ADMIN_EMAIL": "admin@govbiz.local",
+        "CORE_ADMIN_PASSWORD": password,
+    }
+    execute(
+        [
+            sys.executable,
+            REPOSITORY_ROOT / "infrastructure/llmops/ops_smoke.py",
+            *(["--seed-dev-accounts"] if seed else []),
+            "--base-url",
+            BASE,
+            "--storage-transport",
+            "http",
+            "--output",
+            output,
+        ],
+        env=env,
+        timeout=600,
+    )
+    result = json.loads(output.read_text())
+    assert result["status"] == "COMPLETED" and result["model_api_calls"] == 0
+    return result
 
 
 def verify(state, settings, compose, compose_env, ops_image, kind, helm, report):
@@ -249,30 +276,8 @@ def verify(state, settings, compose, compose_env, ops_image, kind, helm, report)
                             ) from None
                         time.sleep(1)
                 report["evaluation_phase"] = "authenticated_free_evaluation"
-                output = state / "evaluation.json"
-                env = {
-                    **web_env,
-                    "CORE_ADMIN_EMAIL": "admin@govbiz.local",
-                    "CORE_ADMIN_PASSWORD": password,
-                }
-                execute(
-                    [
-                        sys.executable,
-                        REPOSITORY_ROOT / "infrastructure/llmops/ops_smoke.py",
-                        "--seed-dev-accounts",
-                        "--base-url",
-                        BASE,
-                        "--storage-transport",
-                        "http",
-                        "--output",
-                        output,
-                    ],
-                    env=env,
-                    timeout=600,
-                )
-                result = json.loads(output.read_text())
-                assert (
-                    result["status"] == "COMPLETED" and result["model_api_calls"] == 0
+                result = free_evaluation(
+                    state / "evaluation.json", password, web_env, seed=True
                 )
                 report["evaluation"] = result
                 report["evaluation_executed"] = True
@@ -380,7 +385,50 @@ def verify(state, settings, compose, compose_env, ops_image, kind, helm, report)
                     key: recovered[key] for key in recovered_db["run"]
                 }
                 report["sync_recovery"]["kubernetes_database"] = recovered_db
+                smoke_ops_replacement.verify(
+                    state,
+                    settings,
+                    compose,
+                    compose_env,
+                    password,
+                    before["run"],
+                    original_report,
+                    report,
+                )
+                report["evaluation_phase"] = "evaluation_after_replacement"
+                with fork_web.forwards(nk):
+                    fresh = free_evaluation(
+                        state / "replacement-evaluation.json", password, web_env
+                    )
+                assert fresh["request_id"] not in {
+                    result["request_id"],
+                    recovered["id"],
+                }
+                assert fresh["prefect_flow_run_id"] not in {
+                    result["prefect_flow_run_id"],
+                    recovered["prefect_flow_run_id"],
+                }
+                fresh_db = database_record(nk, fresh["request_id"])
+                assert fresh_db["run"]["id"] == fresh["request_id"]
+                for key in (
+                    "status",
+                    "prefect_flow_run_id",
+                    "execution_spec_sha256",
+                    "model_api_calls",
+                ):
+                    assert fresh_db["run"][key] == fresh[key]
+                flows = smoke_ops_sync_recovery.prefect_runs(nk, fresh["request_id"])
+                assert len(flows) == 1 and flows[0]["state"] == "COMPLETED"
+                assert flows[0]["id"] == fresh["prefect_flow_run_id"]
+                assert flows[0]["spec"] == fresh["execution_spec_sha256"]
+                assert database_record(nk, recovered["id"]) == recovered_db
                 assert database_record(nk, result["request_id"]) == before
+                report["replacement_recovery"].update(
+                    status="PASS",
+                    new_evaluation=fresh,
+                    kubernetes_database=fresh_db,
+                    new_request_flow_count=1,
+                )
             finally:
                 web.terminate()
                 try:

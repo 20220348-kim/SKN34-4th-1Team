@@ -1,6 +1,37 @@
-# LLMOps 개발 현황과 후속 전략 — skn-70 상세 RAG 통합 검사
+# LLMOps 개발 현황과 후속 전략 — skn-71
 
 [문서 목록](README.md) · [도입·구현 이력](langfuse-adoption-strategy.md) · [Ops API](../backend/ops-service/README.md) · [실행 안내](../infrastructure/llmops/README.md)
+
+## 후속 구현 — Compose 컨테이너 교체·브리지 복구 검증, 2026-09-30
+
+`skn-69 / 8b79d2e` 다음 작업으로 S3의 실제 Compose 컨테이너 교체 검증을 추가했다.
+이번 후속 변경은 `skn-71`에 기록한다. PR #149가 반영된 `origin/main / c517396` 위로
+리베이스하며 `skn-70`의 실제 Core 상세 RAG 통합 검사와 CI 연결을 함께 유지한다.
+[교체 검증](../infrastructure/gitops/scripts/smoke_ops_replacement.py)을 기존 Kubernetes E2E의
+artifact·Prefect·동기화 복구 뒤에 연결했다. Prefect·실행기·결과 저장소의 Compose 배치를 유지한다.
+
+1. 시험 Prefect를 같은 이미지·볼륨으로 재생성하고 컨테이너 ID 변경을 확인한다.
+2. 읽기 전용 결과 서버를 임시로 두 개 실행해 서로 다른 실제 IP를 확보한 뒤, 소유권을 확인한 이전 서버만 제거한다.
+   Docker가 해제된 IP를 재사용해 주소 변경 검사가 생략되는 일을 막는다.
+3. 기존 `check`가 오래된 주소를 거절하고 EndpointSlice를 수정하지 않는지 확인한다.
+   명시적 `connect` 후 Service UID·ClusterIP, 내부 네트워크·kind 노드·이미지·볼륨이 보존돼야 한다.
+4. 실제 Pod의 런타임 진단과 인증된 기존 보고서 SHA-256을 확인한다.
+   새 무료 평가 한 건이 완료되고 Kubernetes DB·Prefect의 요청·flow·실행 명세·모델 호출 0회가 일치해야 통과한다.
+   이전 두 평가의 DB 기록도 그대로 유지돼야 한다.
+
+호출 흐름은 `Compose 서버 교체 → 오래된 경로 거절 → connect로 EndpointSlice 갱신 →
+Kubernetes Ops 진단·기존 보고서 조회 → 새 무료 평가 → ops-sync·DB 대조`다.
+`replacement_recovery`는 경로 복구만으로 PASS가 되지 않으며 새 평가 검증까지 성공해야 한다.
+시험 자원만 교체하고 최상위 E2E의 정리·실패 처리를 유지한다.
+
+로컬에서는 신규 11개와 기존 artifact·동기화 복구 31개, 총 42개 테스트가 격리 Linux 컨테이너에서 통과했다.
+추가로 작은 임시 Compose 환경에서 대기 프로세스를 사용해 실제 Docker ID·결과 서버 IP 변경,
+동일 named volume 유지와 생성 자원 정리를 확인했다. 이 검사는 실제 Prefect·Kubernetes 업무 검증을 대신하지 않는다.
+전체 경로는 필수 LLMOps CI의 기존 `--evaluate`에 연결했으며 이번 변경의 새 SHA 검증은 커밋·푸시 후 필요하다.
+
+남은 S3는 보고서 변조·복구와 runner→Kubernetes 예산 경로다.
+발행 이미지·Argo·백업 복원 및 사용할 개인 환경의 활성화도 별도 완료 증거가 필요하다.
+아래 절은 각 시점의 구현 기록이며 현재 범위·미검증 항목은 이 절을 우선한다.
 
 ## 후속 구현 — Prefect 장애·동기화 복구 검증, 2026-09-30
 
