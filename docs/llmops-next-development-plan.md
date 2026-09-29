@@ -1,6 +1,40 @@
-# LLMOps 개발 현황과 후속 전략 — skn-68 상세 RAG 추적
+# LLMOps 개발 현황과 후속 전략 — skn-69
 
 [문서 목록](README.md) · [도입·구현 이력](langfuse-adoption-strategy.md) · [Ops API](../backend/ops-service/README.md) · [실행 안내](../infrastructure/llmops/README.md)
+
+## 후속 구현 — Prefect 장애·동기화 복구 검증, 2026-09-30
+
+`skn-67 / ec71717` 다음 작업으로 S3의 Prefect 응답 중단과 동기화 프로세스 중단·재시작 검증을 추가했다.
+기존 Kubernetes E2E에서 무료 저장 캡처 평가 한 건을 추가하며 실제 모델은 호출하지 않는다.
+PR #146을 포함한 `origin/main / bdd212e` 위로 리베이스했으며 상세 RAG 추적과 갱신된 실행 명세를 유지한다.
+
+1. 시험 Prefect 컨테이너를 일시 정지하고 새 무료 요청을 접수한다. HTTP 503, 접수 미확인과 상태 조회 오류,
+   실제 60초 경과 후 `status_stale=true`를 확인한다. DB 시각이나 실행 상태를 시험 코드로 수정하지 않는다.
+2. Prefect를 재개한 뒤 기존 동기화 프로세스가 다시 조회하는지 확인한다.
+   새 조회 시각·접수 미확인 상태와 Prefect 실행 0건으로 자동 재접수가 없음을 검사한다.
+3. 시험 Ops sync 명령을 대기 프로세스로 교체하고 Pod를 배포한다. 같은 요청 ID로 명시적 재시도와 중복 접수를 수행한다.
+   Prefect의 실제 무료 평가가 완료돼도 Ops 목록의 상태·동기화 시각이 바뀌지 않고 지연 표시가 유지돼야 한다.
+4. 원래 sync 명령을 복원하고 새 Pod에서 목록 조회만으로 자동 완료 반영을 기다린다.
+   요청·flow·명세·모델 호출 0회·보고서를 검증하며 Prefect 실행은 정확히 한 건이어야 한다.
+
+호출 흐름은 `Core 인증 → 웹 프록시 → Kubernetes Ops 접수 → Compose Prefect/실행기 → Kubernetes ops-sync → Ops DB`다.
+상세 API·수동 동기화 명령·DB 직접 갱신으로 완료를 만들지 않는다.
+Prefect 장애 중 기존 완료 보고서 조회와 Ops 생존·DB 준비 상태도 유지돼야 한다.
+
+검증은 기존 `--evaluate`와 필수 LLMOps CI에 연결했다. 보고서의 `sync_recovery`에는 장애 상태,
+자동 재접수 0건, 중단 중 DB 상태, 복구 결과·요청·flow·명세·보고서 해시를 남긴다.
+임시 Compose 프로젝트·kind context·실행기 및 Prefect 소유권을 확인하고 예외 시 Prefect와 sync 설정을 복원한다.
+전체 workflow 85분·Kubernetes 단계 25분 제한은 유지한다.
+
+로컬에서는 신규 동기화 복구 테스트 15개와 기존 artifact·포트 전달 21개, 총 36개가 통과했다.
+네트워크 없는 격리 Linux 컨테이너에서 예외 복원·중복/잘못된 실행 거절·기한 초과 실패와 실제 SIGTERM 종료를 확인했다.
+Ruff 검사·포맷, Python·워크플로 구문·참조 경로와 `git diff --check`도 확인한다.
+무료 로직·프로세스 검증을 실제 Kubernetes 장애 주입 성공으로 간주하지 않는다.
+
+기준 커밋 `skn-67 / ec71717`의 필수 CI 5개 성공을 확인했다. 이번 후속 변경은 `skn-69`에 기록한다.
+이번 변경의 실제 클러스터 검증은 새 커밋 CI에서 확인해야 한다.
+남은 S3는 Compose 컨테이너 실제 교체·브리지 갱신, 보고서 변조, runner→Kubernetes 예산 연결이며,
+발행 이미지·Argo·백업 복원도 별도 후속 작업이다.
 
 ## 후속 구현 — artifact 장애 복구 검증, 2026-09-30
 

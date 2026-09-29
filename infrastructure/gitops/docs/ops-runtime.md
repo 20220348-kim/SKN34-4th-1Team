@@ -266,7 +266,33 @@ Kubernetes Ops DB의 요청·flow·명세를 직접 대조한 뒤 API+sync Pod�
 
 `ops-bridge.json`의 `artifact_recovery`에 두 사례의 장애 응답·복구 진단·보고서 해시가 기록된다.
 `artifact_recovery.status=PASS`와 `evaluation_status=PASS`, 최상위 정리 성공이 모두 필요하다.
-이 검증은 Prefect 장애·동기화 중단·유료 예산의 역방향 연결을 포함하지 않는다.
+Prefect 장애·동기화 중단은 아래 추가 단계에서 검사한다. 유료 예산의 역방향 연결은 별도 후속 작업이다.
+
+추가로 무료 replay 한 건을 사용해 Prefect 응답 중단과 동기화 중단·재개를 검증한다.
+
+| 단계 | 확인 조건 |
+|---|---|
+| 시험 Prefect 일시 정지 | 새 접수 HTTP 503, REQUESTED·flow 없음, 상태 조회 오류와 실제 60초 경과 후 지연 표시 |
+| Prefect 재개 | 동기화 시도 시각 갱신, 접수 미확인 유지, Prefect 실행 0건으로 자동 재접수 없음 |
+| 시험 ops-sync 중단 | 같은 요청을 명시적으로 재시도·중복 접수. Prefect는 COMPLETED이지만 Ops 목록은 QUEUED·지연 상태 유지 |
+| ops-sync 복원 | 상세 조회 없이 목록에서 COMPLETED로 갱신. 같은 flow·명세·호출 0회, Prefect 실행 1건과 보고서 조회 확인 |
+
+Prefect 중단은 생성된 시험 컨테이너 ID에 대한 `pause/unpause`로 재현한다.
+기존 사용자 컨테이너·다른 서비스·이미 정지된 컨테이너는 대상으로 삼지 않는다.
+동기화는 시험 Deployment의 `ops-sync` 명령만 종료 신호를 처리하는 대기 프로세스로 교체한다.
+원래 명령과 배포 UID를 비교해 복원하며 API 이미지·Secret·DB 데이터는 그대로 유지한다.
+각 주입 구간의 예외에서도 원상 복원을 시도하고 복원 실패를 정상 결과로 처리하지 않는다.
+
+시험 중 상태·시각을 DB에서 조작하지 않고 실제 지연 시간과 목록 응답을 관찰한다.
+직접 상태를 갱신하는 상세 API·수동 sync 명령은 호출하지 않는다.
+Prefect 장애 중에도 기존 완료 보고서와 Ops 생존·DB 준비 probe가 정상이어야 한다.
+동기화가 멈춘 동안 런타임 구성 진단은 PASS일 수 있다. 이 진단은 실행기·sync의 진척을 증명하지 않으며,
+목록의 `status_stale`·`synced_at`·`sync_attempted_at`으로 지연 상태를 확인한다.
+
+`ops-bridge.json`의 `sync_recovery.status=PASS`, `automatic_dispatch_count=0`,
+`prefect_flow_count=1`, `model_api_calls=0`과 기존 artifact·평가·정리 결과가 모두 필요하다.
+복구된 실행은 Kubernetes DB에서도 직접 읽어 요청·flow·명세·완료 상태를 대조한다.
+이 경로는 무료 저장 캡처만 사용하며, 실행기에서 Kubernetes 예산 API로 연결하는 live 경로는 별도 작업이다.
 
 필수 LLMOps CI의 기존 integration 작업에 이 전체 검증을 연결했다.
 코드 추가·오프라인 검사와 실제 CI 통과는 구분하며 최신 커밋의 원격 결과는 푸시 후 확인한다.
