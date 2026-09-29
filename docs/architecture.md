@@ -894,6 +894,13 @@ React Ops의 관리자 세션은 Django에서 받은 프로젝트 trace 목록 �
 기존 분류 모드는 Core 단계만 추적합니다. 사람 검토·Ops 평가 점수·품질 합격을 생성하는 기능은 아닙니다.
 [설정·단계와 검증 범위](../backend/core-service/README.md#도우미-core--ai-분산-추적)를 참고하세요.
 
+상세 공고 질문도 `SupportProgramEvidenceService → AiSupportProgramEvidenceFacade → Client → AI 색인·검색·답변`
+경로를 같은 `support-program-evidence` trace로 연결합니다. Core의 새 `evidence.total` 아래 원문·청킹 캐시,
+세 HTTP 호출과 최종 인용 검증을 구분합니다. AI는 각 Core 부모 아래 준비·임베딩·Qdrant·모델·출력 검증을 기록합니다.
+`SupportProgramEvidenceTracingHelper`가 기존 공용 OTLP provider를 사용하며 새 의존성·DB 스키마는 없습니다.
+단독 원문 선수집에는 별도 Core 루트를 추가하지 않습니다. 이 추적은 Ops의 전체 RAG 평가 유형이나 검색·답변
+품질 점수 생성을 포함하지 않습니다. [단계 구조와 검증 범위](../backend/core-service/README.md#상세-공고-rag-분산-추적)를 참고하세요.
+
 AI Service의 랭킹·조건 해석 모델·HTTP·Agent 시간 초과는 내부 504로 반환되고 Core는 공개 `504 AI_SERVICE_TIMEOUT`으로
 전달합니다. 의미 검색의 전체 실행·임베딩·Qdrant 전송 시간초과도 내부 `INDEX_TIMEOUT` 504로 전달합니다.
 화면은 해당 endpoint의 검증된 오류 계약에 한해 AI 처리 시간 초과와 수동 재시도를 안내합니다.

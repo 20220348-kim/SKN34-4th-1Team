@@ -1,6 +1,7 @@
 package ai.govbiz.core._common.config
 
 import ai.govbiz.core.assistant.helper.AssistantTracingHelper
+import ai.govbiz.core.supportprogram.helper.SupportProgramEvidenceTracingHelper
 import ai.govbiz.core.supportprogram.helper.SupportProgramSearchTracingHelper
 import com.sun.net.httpserver.HttpServer
 import java.net.InetSocketAddress
@@ -35,14 +36,16 @@ class LlmTracingConfigTest {
                 var calls = 0
                 assertEquals("selected", tracing.observe("total") { calls++; "selected" })
                 assertEquals("answered", config.assistantTracingHelper(provider, environment).observe("total") { calls++; "answered" })
+                assertEquals("evidence", config.supportProgramEvidenceTracingHelper(provider, environment).observe("total") { calls++; "evidence" })
                 provider.forceFlush().join(5, TimeUnit.SECONDS)
                 val request = received.poll(5, TimeUnit.SECONDS)
                 assertNotNull(request)
                 assertEquals("Basic " + Base64.getEncoder().encodeToString("pk-local-test:sk-local-test".toByteArray()), request.first)
                 assertTrue(request.second.isNotEmpty())
-                assertEquals(2, calls)
+                assertEquals(3, calls)
                 assertNull(AssistantTracingHelper.currentTraceParent())
                 assertNull(SupportProgramSearchTracingHelper.currentTraceParent())
+                assertNull(SupportProgramEvidenceTracingHelper.currentTraceParent())
             }
         } finally {
             server.stop(0)
@@ -59,6 +62,9 @@ class LlmTracingConfigTest {
             }
             config.assistantTracingHelper(provider, environment).observe("total") {
                 assertNull(AssistantTracingHelper.currentTraceParent())
+            }
+            config.supportProgramEvidenceTracingHelper(provider, environment).observe("total") {
+                assertNull(SupportProgramEvidenceTracingHelper.currentTraceParent())
             }
         }
     }

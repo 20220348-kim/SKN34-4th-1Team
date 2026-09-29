@@ -23,8 +23,11 @@ class SupportProgramEvidenceAnswerService:
         request: SupportProgramEvidenceAnswerRequest,
         *,
         trace_id: str | None = None,
+        parent_span_id: str | None = None,
     ) -> SupportProgramEvidenceAnswerResponse:
-        with self._tracing.observation("evidence.answer", trace_id=trace_id or uuid4().hex) as observation:
+        with self._tracing.observation(
+            "evidence.answer", trace_id=trace_id or uuid4().hex, parent_span_id=parent_span_id,
+        ) as observation:
             self._tracing.update(observation, metadata={
                 "chunk_ids": [chunk.id for chunk in request.chunks], "chunk_count": len(request.chunks),
             })
@@ -37,13 +40,14 @@ class SupportProgramEvidenceAnswerService:
 
     async def _answer(self, request: SupportProgramEvidenceAnswerRequest) -> SupportProgramEvidenceAnswerResponse:
         output = await self._agent.answer(request)
-        try:
-            answer = SupportProgramEvidenceAnswerResponse.model_validate(
-                output.model_dump(by_alias=True)
-            )
-        except ValidationError as error:
-            raise SupportProgramEvidenceError() from error
-        eligible_chunk_ids = {chunk.id for chunk in request.chunks}
-        if not set(answer.citation_chunk_ids).issubset(eligible_chunk_ids):
-            raise SupportProgramEvidenceError()
-        return answer
+        with self._tracing.observation("evidence.validate_response"):
+            try:
+                answer = SupportProgramEvidenceAnswerResponse.model_validate(
+                    output.model_dump(by_alias=True)
+                )
+            except ValidationError as error:
+                raise SupportProgramEvidenceError() from error
+            eligible_chunk_ids = {chunk.id for chunk in request.chunks}
+            if not set(answer.citation_chunk_ids).issubset(eligible_chunk_ids):
+                raise SupportProgramEvidenceError()
+            return answer

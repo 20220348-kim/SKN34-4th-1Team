@@ -21,7 +21,7 @@ def test_search_smoke_exports_miss_hit_and_checks_parent_and_privacy(
     settings, exporter = trace_environment
     records = asyncio.run(smoke.search_trace_examples(settings))
     spans = exporter.get_finished_spans()
-    assert len(spans) == 40  # 근거 2+2, 도우미 정상/map 실패/timeout 10+10+3, 검색 8+5
+    assert len(spans) == 69  # 근거 4+3, RAG miss/hit/실패 13+11+2, 도우미 10+10+3, 검색 8+5
     documents = {}
     for span in spans:
         attrs = span.attributes
@@ -51,6 +51,17 @@ def test_search_smoke_exports_miss_hit_and_checks_parent_and_privacy(
         smoke.httpx, "Client", lambda **kwargs: client_type(**kwargs, transport=transport)
     )
     smoke.verify_traces(settings, records)
+    evidence_records = [item for item in records if "evidence_scenario" in item]
+    hit = next(item for item in evidence_records if item["evidence_scenario"] == "hit")
+    search = next(item for item in documents[hit["trace_id"]] if item["name"] == "evidence.search")
+    search["metadata"]["embedding_cache_state"] = "miss"
+    with pytest.raises(AssertionError):
+        smoke.verify_traces(settings, [hit])
+    search["metadata"]["embedding_cache_state"] = "hit"
+    search["parentObservationId"] = "wrong-parent"
+    with pytest.raises(AssertionError):
+        smoke.verify_traces(settings, [hit])
+    search["parentObservationId"] = hit["parents"]["evidence.search"]
     assistant_records = [item for item in records if "assistant_scenario" in item]
     failed_map = next(item for item in assistant_records if item["assistant_scenario"] == "map-failure")
     root = next(item for item in documents[failed_map["trace_id"]] if item["name"] == "assistant.agent")

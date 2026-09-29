@@ -533,7 +533,7 @@ search.total (Core가 생성한 trace ID)
   `usage_reported=false`는 사용량을 확인하지 못했다는 뜻이며 비용 0으로 해석하지 않는다.
 - 랭킹 캐시는 `miss/shared/hit`를 구분한다. 공유 요청에는 `shared_source_trace_id`를 남기고 모델 span은
   호출 소유자에게 한 번만 만든다. 임베딩 캐시도 `miss/coalesced/hit`를 구분한다.
-- Core 로그의 `trace_id`로 찾거나 React `/ops/evaluations`의 **검색 실행 추적 ↗**에서 Langfuse로 이동한다.
+- Core 로그의 `trace_id`로 찾거나 React `/ops/evaluations`의 **AI 실행 추적 ↗**에서 Langfuse로 이동한다.
   목록에서 `support-program-search`로 필터한다. 이 링크는 관리자에게 제공되며 Langfuse 자체 로그인이 필요하다.
   평가 실행 상세의 점수 링크와는 용도가 다르며, 개별 검색의 trace ID를 React 공개 응답에 추가하지 않는다.
 - 범위는 일반 지원사업 검색과 기존 근거 답변이다. 색인 배치 전체, 상세 근거 RAG의 검색/생성 전체 연결,
@@ -648,7 +648,8 @@ Langfuse의 `core-search-smoke` 환경에서 다음 trace ID로 확인할 수 �
 
 `assistant_trace_smoke.py`는 무료 대역 모델·도구·검색으로 정상과 map 일부 실패를 각 10개 관측,
 시간 초과를 3개 관측으로 생성합니다. 기존 `smoke.py`가 같은 Langfuse client 생애 안에서 근거 답변·검색과
-함께 저장·재조회하므로, LLMOps CI의 기존 필수 작업에서 총 7개 trace·40개 관측을 검증합니다.
+함께 저장·재조회합니다. 상세 근거 RAG의 캐시·실패와 답변 검증 단계를 추가한 현재 `smoke.py`는
+LLMOps CI의 기존 필수 작업에서 총 10개 trace·69개 관측을 검증합니다.
 모델 호출 수·미확정 사용량을 잘못 기록하거나 병렬 판단의 부모가 끊기면 검사에 실패합니다.
 실제 Core 검색 검사의 별도 네 trace·63개 관측도 유지합니다.
 
@@ -703,11 +704,59 @@ python3 -B infrastructure/scripts/verify-catalog-separation.py \
 
 LLMOps CI가 기존 실제 Core 검색 검사와 같은 서버에서 도우미 검사도 실행하고,
 `work/llmops-ci/core-assistant-traces.json`을 성공·실패 증거로 업로드하도록 연결했습니다.
-새 코드의 전체 컨테이너·Langfuse 저장/재조회 완료 판단은 **새 커밋의 CI 통과 후**에 합니다.
+`skn-66 / 8e8592a`의 [LLMOps CI](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36617864837)가
+실제 Core 검색·도우미 검사까지 성공했습니다. 아래 상세 공고 RAG의 새 변경분은 별도 SHA CI가 필요합니다.
 로컬은 Core 선택 테스트, AI 부모 헤더·오류 검증, 실제 SDK와 localhost HTTP 대역 및 검사기 회귀를 수행합니다.
 로그인 회원의 자료 준비·두 번째 AI 호출은 Core Service → HTTP 대역 테스트와 기존 AI 관심 공고 그래프
 테스트로 검증하며, 이 CI의 게스트 세 사례가 회원 RAG 전체 E2E를 검증한 것으로 보고하지 않습니다.
-상세 공고 RAG 추적·Ops 평가 계약·사람 검토 기준 확보는 후속 작업입니다.
+상세 공고 RAG 추적의 추가 범위는 아래와 같습니다. Ops 평가 계약·사람 검토 기준 확보는 후속 작업입니다.
+
+## 상세 공고 RAG 추적 검증
+
+Core 상세 질문의 `evidence.total`에 공고 조회·원문·청킹·색인·검색·답변·인용 검증을 연결합니다.
+Langfuse에서 `support-program-evidence`로 필터하거나 Core의 `support_program_evidence trace_id=...`를
+조회합니다. 설정은 기존 Core·AI의 같은 프로젝트 키를 그대로 사용하며 운영 화면의 **AI 실행 추적 ↗**가
+검색·도우미·상세 근거의 세 이름을 안내합니다. [단계 트리](../../backend/core-service/README.md#상세-공고-rag-분산-추적)를 참고하세요.
+
+`evidence_trace_smoke.py`는 합성 Core 부모와 실제 AI Router·Service·Agent, 메모리 Qdrant 및 HTTP 모델 대역으로
+색인→검색→답변을 두 번 실행합니다. 첫 요청 13개, 캐시 재사용 11개, 색인 미준비 실패 2개 관측을 확인합니다.
+부모 연결·캐시 상태·실패 단계·사용량 미확정·본문 미수집을 검사하며 임베딩은 2회, 답변은 2회의 대역 호출만 합니다.
+이 세 trace는 기존 `smoke.py`에 포함돼 CI에서 실제 Langfuse 저장 후 API 재조회로도 확인합니다.
+`test_search_trace_smoke.py`는 잘못된 부모·캐시 metadata를 검사기가 거절하는지도 검증합니다.
+
+```bash
+# backend/ai-service, Python 3.12. 평가 실행기와 API 경로는 별도 테스트로 확인합니다.
+uv run --locked --extra dev --group evaluation python -m pytest \
+  tests/support_program_evidence/test_rag_tracing.py \
+  ../../infrastructure/llmops/test_search_trace_smoke.py
+uv run --locked --extra dev --group evaluation python -m pytest \
+  ../../evaluation/support-program-evidence/test_evaluate.py \
+  ../../evaluation/support-program-evidence/test_execution_spec.py
+```
+
+Core는 JDK 21에서 `SupportProgramEvidenceTracingTest`, 기존 근거 Service·Facade·Client,
+`LlmTracingConfigTest`를 선택해 확인합니다. 실제 Service→Facade→Client를 사용하되 DB·공식 원문·AI HTTP는
+대역입니다. 최초와 캐시 요청, 원문 준비·검색·답변·인용 실패, 전송 실패 격리와 비활성 설정을 검사합니다.
+전체 MySQL·컨테이너 검증은 GovBiz/LLMOps CI가 담당합니다. 실제 Core 서버부터 상세 AI·Langfuse까지의
+단일 E2E는 아직 추가하지 않았으며, 이 검증을 실제 모델 품질·Ops 전체 RAG 평가 완료로 보고하지 않습니다.
+
+추적 소스 변경에 맞춰 `execution_release.json`을 재생성했습니다. 접수된 과거 실행 명세를 덮어쓰지 않으며,
+Ops와 실행기의 코드가 다르면 기존 명세 불일치 차단을 유지합니다. 개발 컨테이너 교체와 유료 호출은 하지 않습니다.
+
+2026-09-30 로컬에서 실제 Langfuse 저장·재조회 **3건·26개 관측**을 통과했습니다.
+Git 제외 증거는 `work/evidence-rag-traces-20260930.json`입니다. Core 부모만 합성한 AI 경로 검증입니다.
+
+| 시나리오 | trace ID | 관측 수 |
+|---|---|---:|
+| 최초 색인·검색·답변 | `6dc64222b99643bbb5b7a40155289862` | 13 |
+| 색인·질의 임베딩 캐시 재사용 | `a91ac345d9ca4708bc8d6e6ebb2a1a14` | 11 |
+| 자료 해시 불일치로 색인 미준비 | `01de33298b674b46b343aa9d8bc7f268` | 2 |
+
+로컬 선택 검증은 Core 위 5개 테스트 클래스, AI 근거·도우미 추적·bootstrap,
+평가 실행기 64건·명세 20건, Web Ops 50건, smoke 검사기까지 통과했습니다.
+Ruff·oxlint, 실행 명세 정합성, 문서 링크와 `git diff --check`도 확인했습니다.
+로컬 PATH에 `uv`가 없어 기존 Python 3.12 `.venv/bin/python`으로 실행했으며 잠금 환경의 전체 검증은 CI에 맡깁니다.
+이번 변경분은 `skn-68`에 기록하며 **최종 SHA 전체 CI는 별도 확인**합니다.
 
 ## 실제 AI Service 추적 활성화
 
@@ -717,8 +766,9 @@ LLMOps CI가 기존 실제 Core 검색 검사와 같은 서버에서 도우미 �
 서비스용 `OPENAI_API_KEY` 등 기존 설정은 별도로 필요하다. smoke 검증에는 필요하지 않다.
 
 호출 흐름은 `HTTP /answers → AnswerService → AnswerAgent → LangChain → OpenAI`다.
-`evidence.answer`에는 Service의 인용 검증까지, 하위 `evidence.model`에는 모델·토큰·지연을 기록한다.
-LangChain 자동 콜백은 붙이지 않는다. 근거 답변 두 span과 위 검색 span 허용 목록만 내보낸다.
+`evidence.answer` 아래 모델·토큰·지연의 `evidence.model`, 출력 검증 `evidence.validate_selection`,
+Service 인용 검증 `evidence.validate_response`를 기록한다. 색인·검색은 위 상세 RAG 단계를 사용한다.
+LangChain 자동 콜백은 붙이지 않으며 명시적인 `SPAN_NAMES` 허용 목록만 내보낸다.
 질문·답변·청크 본문과 예외 원문은 기록하지 않는다. 정상 근거 부족과 시스템 오류·시간 초과·취소를 구별한다.
 Langfuse 전송 실패는 로컬 로그로 드러내며 모델 호출을 반복하지 않는다. 종료 대기는 최대 5초다.
 

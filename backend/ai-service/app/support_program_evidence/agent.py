@@ -67,6 +67,7 @@ class SupportProgramEvidenceAnswerAgent:
             async with asyncio.timeout(self._run_timeout_seconds):
                 with self._tracing.observation(
                     "evidence.model", as_type="generation", model=self._model_name,
+                    metadata={"usage_reported": False},
                     model_parameters={"max_tokens": 2_000, "reasoning_effort": "none", "max_retries": 0},
                 ) as generation:
                     result = await invoke_support_program_model(
@@ -81,14 +82,15 @@ class SupportProgramEvidenceAnswerAgent:
                     }, metadata={"usage_reported": result.usage_metadata is not None})
             model_finished_at = perf_counter()
             usage = result.usage_metadata
-            selection = validate_support_program_output(result, SupportProgramEvidenceAnswerSelection)
-            if any(index >= len(request.chunks) for index in selection.citation_chunk_indexes):
-                raise SupportProgramEvidenceError()
-            answer = SupportProgramEvidenceAnswerOutput(
-                answer=selection.answer,
-                answerStatus=selection.answer_status,
-                citationChunkIds=[request.chunks[index].id for index in selection.citation_chunk_indexes],
-            )
+            with self._tracing.observation("evidence.validate_selection"):
+                selection = validate_support_program_output(result, SupportProgramEvidenceAnswerSelection)
+                if any(index >= len(request.chunks) for index in selection.citation_chunk_indexes):
+                    raise SupportProgramEvidenceError()
+                answer = SupportProgramEvidenceAnswerOutput(
+                    answer=selection.answer,
+                    answerStatus=selection.answer_status,
+                    citationChunkIds=[request.chunks[index].id for index in selection.citation_chunk_indexes],
+                )
             outcome = "completed"
             return answer
         except (OpenAIError, ValueError, TimeoutError) as error:

@@ -1,4 +1,4 @@
-# LLMOps 개발 현황과 후속 전략 — skn-67
+# LLMOps 개발 현황과 후속 전략 — skn-68 상세 RAG 추적
 
 [문서 목록](README.md) · [도입·구현 이력](langfuse-adoption-strategy.md) · [Ops API](../backend/ops-service/README.md) · [실행 안내](../infrastructure/llmops/README.md)
 
@@ -39,10 +39,10 @@ S2는 기존 무료 평가 검증을 재사용하는 `smoke_ops_bridge.py --eval
 반복 활성화의 비밀값 보존, 관리자 인증, 중복 접수, 목록 자동 동기화, Pod 재시작 후 DB·보고서 해시 보존을 검사한다.
 실행 절차와 경계는 [Ops 연결 계약](../infrastructure/gitops/docs/ops-runtime.md)을 따른다.
 
-현재는 코드와 오프라인 검증 단계다. 새 전체 클러스터 E2E와 최신 커밋 CI는 아직 실행 결과가 없으며,
+skn-65 구현 당시에는 아래 로컬 검증까지 확인했다. 후속 `skn-66 / 8e8592a`의 LLMOps CI에서는
+격리 Kubernetes Ops 활성화·무료 평가·동기화·재시작 보존 단계까지 성공했다.
 기존 체험용 Compose나 개인 kind 환경에 적용 완료했다고 판단하지 않는다.
-다음 완료 조건은 이 변경을 푸시한 SHA의 필수 CI 및 `ops-bridge.json`에서
-`evaluation_status=PASS`, 재시작 보존과 정리 성공을 확인하는 것이다. S3 이후 장애·live 예산·GHCR/Argo·복원 작업은 남아 있다.
+S3 이후 장애·live 예산·GHCR/Argo·복원 작업은 남아 있다.
 
 로컬에서는 관련 무료 테스트 74개를 통과했다. 소유권·잠금·Helm·migration 검증은 격리 Linux 컨테이너에서,
 실제 Compose 병합·브리지 검사는 Windows Docker 환경에서 확인했다. 신규 Python 파일의 Ruff 검사·포맷,
@@ -50,32 +50,27 @@ S2는 기존 무료 평가 검증을 재사용하는 `smoke_ops_bridge.py --eval
 
 ## 현재 판단과 확인 범위 — 2026-09-30
 
-현재 개발 기준은 `skn-64 / d33a1405ee6117f9b9dc65ef482f1fdabfe96b14`이며,
-그 위에 개발한 Core 도우미 → AI 분산 추적 연결을 `skn-66`에 기록한다.
-리베이스 기준은 PR #140이 반영된 `upstream/main / 7bde865b3de774992051e6e39ab19b8ceff3318f`다.
-`skn-65`의 Kubernetes Ops 활성화·무료 평가 검증과 CI의 웹 프록시 종료·85분 제한을 함께 유지한다.
-마지막 조회에서 기준 커밋의 Infra·Ops·Catalog·LLMOps CI는 성공, GovBiz CI는 실행 중이었다.
-이전 `skn-63 / 8edfa32`의 필수 CI 5개와 실제 Core 검색 검사는 모두 통과했다.
-이전 성공 결과를 `d33a140` 전체 또는 `skn-66`의 전체 검증 완료로 간주하지 않는다.
+상세 RAG 개발·로컬 검증은 `skn-66 / 8e8592ace5709535b5d0cb9b9ab484ab5a6b0d36`에서 진행했다.
+한국어 커밋 후 PR #144가 반영된 `upstream/main / d1b348ca83d3b3c263515bfc2ea9a0813bb106e7`을 pull·rebase했다.
+그 위에 추가한 상세 공고의 원문 준비→청킹→색인→검색→답변→인용 검증 추적을 `skn-68`에 기록한다.
+`skn-65`의 Kubernetes Ops 활성화·무료 평가 검증, `skn-67`의 artifact 장애·복구 검사,
+CI의 웹 프록시 종료·85분 제한을 함께 유지한다. 충돌은 이 문서 제목뿐이었으며 양쪽 구현 기록을 보존했다.
+기준 SHA의 GovBiz·Catalog·Ops·Infra·LLMOps CI 5개와 필수 하위 작업은 모두 성공했다.
+`skn-68`의 전체 검증은 최종 SHA의 필수 CI 통과 후 판단하며 기준 SHA의 성공으로 대신하지 않는다.
+뒤의 기록은 당시의 장애·검증 이력이다.
 
-기준 커밋은 당시 원본·개인 포크 `main`의
-`814d084fb77b8f68c751d490d1434a90f666a379` 위로 리베이스했다. 개발과 아래 실제 서버 검증은
-`f0eae4ad493791a372782d58b99a22e406a7058a`를 기준으로 수행했다. 최신 main의 배포 브랜치 제거와
-Kubernetes–Compose 연결 검증을 유지했다.
-뒤의 접힌 기록은 당시의 장애·검증 이력이다.
-
-**실제 Core 검색 추적은 CI까지 통과했다. 도우미 노드 추적에 이어 Core의 첫 호출·자료 준비·재호출을 연결했다.
-다음 순서는 새 코드의 실제 서버 CI 검증 → 상세 공고 RAG 추적 → Ops 전체 RAG 평가 계약 연결이다. 사람의 자료·응답 검토와 현재 모델 비교 기준 확보는 병행한다.**
+**상세 RAG 추적의 Core·AI 연결 코드를 추가했다. 다음 순서는 새 SHA의 필수 CI 확인 → 실제 Core 상세
+RAG 전체 경로 검사 → Ops 전체 RAG 평가 계약 연결이다. 사람의 자료·응답 검토와 현재 모델 비교 기준 확보는 병행한다.**
 이미 구현된 검토·예산 보정·실패 사용량 기록을 다시 구현하지 않는다.
 
 | 항목 | 현재 확인한 상태 | 완료 판단 |
 |---|---|---|
-| 기존 CI 회귀 | `d33a140`의 Infra·Ops·Catalog·LLMOps 성공, GovBiz 실행 중(마지막 조회) | `skn-66` 최종 SHA의 전체 CI는 푸시 후 별도 확인 |
+| 기존 CI 회귀 | `8e8592a`의 필수 CI 5개와 하위 작업 모두 성공 | 새 변경분의 전체 CI는 커밋·푸시 후 별도 확인 |
 | 개발 환경 | Ops·sync·실행기·Prefect 실행 중, migration `0015_usage_correction` 적용 | 이전 무료 replay·복구 결과 유지. 이번 조회는 집계·상태 확인 |
 | 사람 검토·기준 | 자료 검토 0건, 사례 보류 1건, 전체 검토 승인 0건, 품질 `NEEDS_REVIEW` 1건, 활성 기준 0건 | 현재 모델의 검토된 비교 기준 미확보 |
 | 평가 이력 | live 완료 2건, recovery 완료 2건, replay 완료 14건·실패 3건 | 과거 live 완료를 현재 모델 전체 품질 증거로 사용하지 않음 |
 | 예산 적용 | 설정·예약 0건, live 비활성화 | 호출·출력 예약 기능은 구현됐지만 실제 유료 평가 통제 적용은 별도 |
-| 전체 추적·평가 | Core 검색 CI 통과. 도우미 노드 추적에 Core 첫 호출·자료 준비·재호출 연결 추가 | 새 코드 서버 CI, 회원 RAG 전체 E2E, 상세 공고 RAG·Ops 평가 연결은 남음 |
+| 전체 추적·평가 | Core 검색·도우미 연결에 상세 공고의 Core 원문 준비·청킹 및 AI 색인·검색·답변·인용 검증 연결 추가 | 새 코드 CI, 실제 Core 상세 RAG·회원 RAG E2E, Ops 평가 연결은 남음 |
 
 이전 `8edfa32` CI: [GovBiz](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36580527445),
 [Catalog](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36580527441),
@@ -83,6 +78,11 @@ Kubernetes–Compose 연결 검증을 유지했다.
 [Infra](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36580527498),
 [LLMOps](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36580527473).
 개발 환경·검토·예산의 DB 집계는 2026-09-29 기록이며 이번 작업에서 다시 조회하거나 변경하지 않았다.
+기준 `8e8592a` CI: [GovBiz](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36617864693),
+[Catalog](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36617864700),
+[Ops](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36617864891),
+[Infra](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36617864600),
+[LLMOps](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36617864837).
 
 ## 현재 사용 방침 — 배포 브랜치 방식 제외
 
@@ -106,8 +106,9 @@ Sync fork 해결과 당시 기준 커밋의 CI 통과 사실은 그대로 유지
 |---|---|---|
 | P1 완료 | 실제 Core 검색 추적 통합 검증 | `8edfa32`의 실제 서버 CI 네 사례 통과 |
 | 병행 | 사람이 검토한 현재 모델 기준 확보 | TC01~TC06 자료 검토, 예산 설정·호출 범위 승인 후 새 평가. 응답 검토와 품질 합격 후 명시적 기준 지정 |
-| P2 추적 로컬 완료·CI 대기 | Core 도우미 → AI 연결 | 첫 호출·자료 준비·재호출·검증의 부모 연결과 오류·미확정 사용량을 무료 검증. 실제 Core 게스트 3건은 새 SHA CI에서 저장·재조회 |
-| P2 후속 | 상세 공고 RAG·Ops 평가 계약 연결 | 검색과 답변 지표 분리, 실패 단계·trace·모델/프롬프트/자료 버전을 평가 결과에 연결. 추적 화면 링크만으로 평가 완료로 판단하지 않음 |
+| P2 도우미 연결 CI 완료 | Core 도우미 → AI | `8e8592a` 실제 Core 게스트 정상·오류·시간 초과 저장/재조회 성공. 회원 RAG 전체 E2E는 별도 |
+| P2 상세 추적 로컬 완료 | 상세 공고 RAG 연결 | Core 선택 테스트와 AI 캐시·실패·부모·본문 미수집, 실제 Langfuse 3건·26개 관측 통과. 새 SHA 전체 CI와 실제 Core 상세 RAG E2E는 남음 |
+| P2 후속 | Ops 전체 RAG 평가 계약 연결 | 검색과 답변 지표 분리, 실패 단계·trace·모델/프롬프트/자료 버전을 평가 결과에 연결. 검토한 자료·허용 호출 경로·예산 계약을 고정하고 고정 문맥 평가와 구분 |
 | 자동 실행 전 | 입력·금액·기간 예산 및 알림 | 동시 예약·기간 경계·취소·미확인 사용량 보존·중복 보정 거절을 검증. 전체 서비스 적용 범위 명시 |
 | 마지막 | 정기 실행 | 검토된 자료·예산·중복 실행 방지·취소 정책을 충족한 뒤 활성화 |
 
@@ -115,7 +116,24 @@ Sync fork 해결과 당시 기준 커밋의 CI 통과 사실은 그대로 유지
 확장한 뒤 연결하며 단순히 가상 자료 제한을 제거하지 않는다. 새 유료 호출과 품질 승인을 자동으로
 생성하지 않는다. 작은 데이터셋의 합격을 일반 정확도나 전체 서비스 품질로 확대 해석하지 않는다.
 
-## 이번 후속 구현과 검증 — 실제 Core 검색 추적
+## 이번 후속 구현 — 상세 공고 RAG 추적
+
+`SupportProgramEvidenceService → Facade → Client → AI Router → 색인·검색·답변 Service`를 연결했다.
+Core는 새 `evidence.total` 아래 일곱 업무 단계를 기록하고 세 AI 호출에 각각의 부모를 전달한다.
+AI는 색인 준비·임베딩·저장, 검색 준비·질의 임베딩·벡터 조회·결과 검증, 모델 응답·인용 검증을 구분한다.
+원문·청킹·임베딩 캐시, 실패 단계와 사용량 미확정을 기록하며 질문·문서·답변·키·예외 본문은 수집하지 않는다.
+기존 오류 상태·출력 검증·캐시·DB 정책은 유지하고 새 의존성이나 유료 호출을 추가하지 않았다.
+
+Ops 링크는 **AI 실행 추적 ↗**로 세 기능을 안내한다. 평가 실행 명세의 소스 해시를 재생성했으며
+기존 접수 이력과 품질·예산 기록은 변경하지 않았다. API와 평가 실행기의 추적 경로를 함께 회귀 검증한다.
+무료 RAG smoke는 합성 Core 부모·실제 AI HTTP·메모리 Qdrant·HTTP 모델 대역으로
+정상/캐시/미준비 실패 3건·26개 관측을 검사하며 기존 LLMOps CI 저장·재조회 과정에 포함한다.
+세부 명령·결과·미검증 범위는 [상세 RAG 검증 안내](../infrastructure/llmops/README.md#상세-공고-rag-추적-검증)를 따른다.
+
+실제 Core 서버에서 시작하는 상세 공고 RAG E2E와 Ops 검색/답변 품질 평가는 아직 남아 있다.
+사람이 검토한 현재 모델 기준이나 정기 실행 완료로 해석하지 않는다.
+
+## 이전 구현과 검증 — 실제 Core 검색 추적
 
 기존 `smoke.py`의 합성 Core 부모 검증에 더해, Catalog 분리 검증 도구에
 `--search-traces-output` 옵션을 추가했다. 실제 Core 로그의 trace ID로 Langfuse 관측을 찾아

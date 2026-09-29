@@ -25,6 +25,7 @@ from tests.langchain_stub import ResponsesChatStub, response_message
 from tests.support_program_evidence.test_agent import answer_request, valid_selection
 from llmops import evaluate_capture, write_json
 from assistant_trace_smoke import assistant_trace_examples, verify_assistant_observations
+from evidence_trace_smoke import evidence_trace_examples, verify_evidence_observations
 
 
 def wait_ready(base_url: str, path: str) -> None:
@@ -58,7 +59,7 @@ async def trace_examples(settings, tracing=None):
                 assert failing
             assert len(stub.calls) == 1
             await stub.model.root_async_client.close()
-            records.append({"trace_id": trace_id, "expected_failure": failing})
+            records.append({"trace_id": trace_id, "expected_failure": failing, "observation_count": 3 if failing else 4})
     finally:
         if owns_tracing:
             await tracing.close()
@@ -93,6 +94,7 @@ async def search_trace_examples(settings):
     app.state.container.support_program_index_service = index
     try:
         records = await trace_examples(settings, tracing)
+        records += await evidence_trace_examples(tracing)
         records += await assistant_trace_examples(tracing)
         item = document("BIZINFO:smoke", "서울 AI 합성 공고 PRIVATE-SMOKE")
         await index.index_batch(SupportProgramIndexBatchRequest(documents=[item]))
@@ -134,6 +136,8 @@ def verify_traces(settings, records):
                 time.sleep(1)
             if "assistant_scenario" in record:
                 verify_assistant_observations(observations, record)
+            elif "evidence_scenario" in record:
+                verify_evidence_observations(observations, record)
             elif "names" in record:
                 assert sorted(item["name"] for item in observations) == sorted(record["names"])
                 ids = {item["id"] for item in observations}
@@ -150,6 +154,12 @@ def verify_traces(settings, records):
                 root = next(item for item in observations if item["name"] == "evidence.answer")
                 model = next(item for item in observations if item["name"] == "evidence.model")
                 assert model["parentObservationId"] == root["id"]
+                selection = next(item for item in observations if item["name"] == "evidence.validate_selection")
+                assert selection["parentObservationId"] == root["id"]
+                assert (selection["level"] == "ERROR") == record["expected_failure"]
+                if not record["expected_failure"]:
+                    validation = next(item for item in observations if item["name"] == "evidence.validate_response")
+                    assert validation["parentObservationId"] == root["id"]
                 assert (root["level"] == "ERROR") == record["expected_failure"]
             for item in observations:
                 assert item.get("input") in (None, "", "null") and item.get("output") in (None, "", "null")

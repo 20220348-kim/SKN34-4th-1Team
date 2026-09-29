@@ -9,6 +9,8 @@ from uuid import NAMESPACE_URL, uuid5
 from openai import AsyncOpenAI
 from qdrant_client import AsyncQdrantClient, models
 
+from app.config import LangfuseSettings
+from app.tracing import LLMTracing
 from app.support_program_embedding import prepare_embedding_inputs
 from app.support_program_evidence.errors import SupportProgramEvidenceError
 from app.support_program_evidence.models import (
@@ -39,7 +41,9 @@ class SupportProgramEvidenceService:
         embedding_model: str,
         embedding_dimensions: int,
         embedding_timeout_seconds: float,
+        tracing: LLMTracing | None = None,
     ) -> None:
+        self._tracing = tracing or LLMTracing(LangfuseSettings())
         self.openai_client = openai_client
         self.qdrant_client = qdrant_client
         self.embedding_model = embedding_model
@@ -56,74 +60,86 @@ class SupportProgramEvidenceService:
         self._chunk_embedding_cache: OrderedDict[str, tuple[float, tuple[float, ...]]] = OrderedDict()
 
     async def index_chunks(
-        self,
-        request: SupportProgramEvidenceBatchRequest,
+        self, request: SupportProgramEvidenceBatchRequest, *, trace_id: str | None = None, parent_span_id: str | None = None,
     ) -> SupportProgramEvidenceBatchResponse:
+        with self._tracing.observation(
+            "evidence.index", trace_id=trace_id, parent_span_id=parent_span_id,
+            metadata={"chunk_count": len(request.chunks), "embedding_model": self.embedding_model,
+                      "embedding_dimensions": self.embedding_dimensions},
+        ) as observation:
+            return await self._index_chunks(request, observation)
+
+    async def _index_chunks(self, request: SupportProgramEvidenceBatchRequest, observation) -> SupportProgramEvidenceBatchResponse:
         started_at = monotonic()
         stage = "readiness"
         outcome = "failed"
         try:
             async with asyncio.timeout(25), self._write_lock:
-                await self._ensure_collection()
-                identities = {_point_id(chunk): chunk for chunk in request.chunks}
-                existing = await self.qdrant_client.retrieve(
-                    collection_name=self.collection_name,
-                    ids=list(identities),
-                    with_payload=True,
-                    with_vectors=False,
-                )
-                existing_ids: set[str] = set()
-                missing_text_ids: list[str] = []
-                for point in existing:
-                    identity = identities.get(str(point.id))
-                    if identity is None or not _payload_matches(point.payload, identity):
-                        # 같은 chunk ID·해시를 다른 상세 공고에 재사용하면 안 된다.
-                        raise SupportProgramEvidenceError()
-                    existing_ids.add(str(point.id))
-                    if not isinstance((point.payload or {}).get("text"), str):
-                        missing_text_ids.append(str(point.id))
-                # 원문 없이 색인된 이전 버전 point에는 벡터를 다시 만들지 않고 원문만 붙인다(문서 묶음 검색용).
-                for point_id in missing_text_ids:
-                    await self.qdrant_client.set_payload(
-                        collection_name=self.collection_name, payload={"text": identities[point_id].text},
-                        points=[point_id], wait=True,
+                with self._tracing.observation("evidence.index.readiness"):
+                    await self._ensure_collection()
+                    identities = {_point_id(chunk): chunk for chunk in request.chunks}
+                    existing = await self.qdrant_client.retrieve(
+                        collection_name=self.collection_name,
+                        ids=list(identities),
+                        with_payload=True,
+                        with_vectors=False,
                     )
-                missing = [
-                    chunk
-                    for point_id, chunk in identities.items()
-                    if point_id not in existing_ids
-                ]
+                    existing_ids: set[str] = set()
+                    missing_text_ids: list[str] = []
+                    for point in existing:
+                        identity = identities.get(str(point.id))
+                        if identity is None or not _payload_matches(point.payload, identity):
+                            # 같은 chunk ID·해시를 다른 상세 공고에 재사용하면 안 된다.
+                            raise SupportProgramEvidenceError()
+                        existing_ids.add(str(point.id))
+                        if not isinstance((point.payload or {}).get("text"), str):
+                            missing_text_ids.append(str(point.id))
+                    # 원문 없이 색인된 이전 버전 point에는 벡터를 다시 만들지 않고 원문만 붙인다(문서 묶음 검색용).
+                    for point_id in missing_text_ids:
+                        await self.qdrant_client.set_payload(
+                            collection_name=self.collection_name, payload={"text": identities[point_id].text},
+                            points=[point_id], wait=True,
+                        )
+                    missing = [
+                        chunk
+                        for point_id, chunk in identities.items()
+                        if point_id not in existing_ids
+                    ]
                 ready_at = monotonic()
                 cache_hits = 0
                 if missing:
                     stage = "embedding"
-                    vectors, cache_hits = await self._embed_chunks([chunk.text for chunk in missing])
+                    with self._tracing.observation("evidence.index.embedding") as embedding:
+                        vectors, cache_hits = await self._embed_chunks([chunk.text for chunk in missing])
+                        self._tracing.update(embedding, metadata={"cache_hits": cache_hits, "chunk_count": len(missing)})
                     embedded_at = monotonic()
                     stage = "upsert"
-                    points = [
-                        models.PointStruct(
-                            id=_point_id(chunk),
-                            vector=vector,
-                            payload={
-                                "id": chunk.id,
-                                "contentHash": chunk.content_hash,
-                                "documentId": chunk.document_id,
-                                "order": chunk.order,
-                                # 도우미 관심 공고 질문이 청크 원문을 다시 읽을 수 있게 저장한다. 공개 공고 원문이다.
-                                "text": chunk.text,
-                            },
+                    with self._tracing.observation("evidence.index.upsert"):
+                        points = [
+                            models.PointStruct(
+                                id=_point_id(chunk),
+                                vector=vector,
+                                payload={
+                                    "id": chunk.id,
+                                    "contentHash": chunk.content_hash,
+                                    "documentId": chunk.document_id,
+                                    "order": chunk.order,
+                                    # 도우미 관심 공고 질문이 청크 원문을 다시 읽을 수 있게 저장한다. 공개 공고 원문이다.
+                                    "text": chunk.text,
+                                },
+                            )
+                            for chunk, vector in zip(missing, vectors, strict=True)
+                        ]
+                        result = await self.qdrant_client.upsert(
+                            collection_name=self.collection_name,
+                            points=points,
+                            wait=True,
                         )
-                        for chunk, vector in zip(missing, vectors, strict=True)
-                    ]
-                    result = await self.qdrant_client.upsert(
-                        collection_name=self.collection_name,
-                        points=points,
-                        wait=True,
-                    )
-                    if result.status != models.UpdateStatus.COMPLETED:
-                        raise SupportProgramEvidenceError()
+                        if result.status != models.UpdateStatus.COMPLETED:
+                            raise SupportProgramEvidenceError()
                 else:
                     embedded_at = ready_at
+                self._tracing.update(observation, metadata={"missing_count": len(missing), "embedding_cache_hits": cache_hits})
                 finished_at = monotonic()
                 outcome = "completed"
                 logger.info(
@@ -146,80 +162,93 @@ class SupportProgramEvidenceService:
                 )
 
     async def search(
-        self,
-        request: SupportProgramEvidenceSearchRequest,
+        self, request: SupportProgramEvidenceSearchRequest, *, trace_id: str | None = None, parent_span_id: str | None = None,
     ) -> SupportProgramEvidenceSearchResponse:
+        with self._tracing.observation(
+            "evidence.search", trace_id=trace_id, parent_span_id=parent_span_id,
+            metadata={"chunk_count": len(request.eligible_chunks), "embedding_model": self.embedding_model,
+                      "embedding_dimensions": self.embedding_dimensions},
+        ) as observation:
+            return await self._search(request, observation)
+
+    async def _search(self, request: SupportProgramEvidenceSearchRequest, observation) -> SupportProgramEvidenceSearchResponse:
         started_at = monotonic()
         stage = "readiness"
         outcome = "failed"
         try:
             async with asyncio.timeout(25):
-                if not await self.qdrant_client.collection_exists(self.collection_name):
-                    raise SupportProgramEvidenceError("EVIDENCE_NOT_READY")
-                identities = {
-                    _point_id(chunk): chunk for chunk in request.eligible_chunks
-                }
-                point_ids = list(identities)
-                indexed_points = await self.qdrant_client.retrieve(
-                    collection_name=self.collection_name,
-                    ids=point_ids,
-                    with_payload=True,
-                    with_vectors=False,
-                )
-                if len(indexed_points) != len(point_ids):
-                    raise SupportProgramEvidenceError("EVIDENCE_NOT_READY")
-                for point in indexed_points:
-                    identity = identities.get(str(point.id))
-                    if identity is None or not _payload_matches(point.payload, identity):
-                        # 같은 ID·해시를 다른 documentId로 위장한 요청은 임베딩 전 차단한다.
-                        raise SupportProgramEvidenceError()
+                with self._tracing.observation("evidence.search.readiness"):
+                    if not await self.qdrant_client.collection_exists(self.collection_name):
+                        raise SupportProgramEvidenceError("EVIDENCE_NOT_READY")
+                    identities = {
+                        _point_id(chunk): chunk for chunk in request.eligible_chunks
+                    }
+                    point_ids = list(identities)
+                    indexed_points = await self.qdrant_client.retrieve(
+                        collection_name=self.collection_name,
+                        ids=point_ids,
+                        with_payload=True,
+                        with_vectors=False,
+                    )
+                    if len(indexed_points) != len(point_ids):
+                        raise SupportProgramEvidenceError("EVIDENCE_NOT_READY")
+                    for point in indexed_points:
+                        identity = identities.get(str(point.id))
+                        if identity is None or not _payload_matches(point.payload, identity):
+                            # 같은 ID·해시를 다른 documentId로 위장한 요청은 임베딩 전 차단한다.
+                            raise SupportProgramEvidenceError()
                 ready_at = monotonic()
                 stage = "embedding"
-                vector, cache_state = await self._embed_query(request.question)
+                with self._tracing.observation("evidence.search.embedding") as embedding:
+                    vector, cache_state = await self._embed_query(request.question)
+                    self._tracing.update(embedding, metadata={"cache_state": cache_state})
+                self._tracing.update(observation, metadata={"embedding_cache_state": cache_state})
                 embedded_at = monotonic()
                 stage = "vector_search"
-                response = await self.qdrant_client.query_points(
-                    collection_name=self.collection_name,
-                    query=vector,
-                    query_filter=models.Filter(
-                        must=[models.HasIdCondition(has_id=point_ids)]
-                    ),
-                    limit=min(request.limit, len(point_ids)),
-                    with_payload=True,
-                    with_vectors=False,
-                )
-                matches: list[SupportProgramEvidenceMatch] = []
-                seen: set[str] = set()
-                for point in response.points:
-                    point_id = str(point.id)
-                    identity = identities.get(point_id)
-                    if (
-                        identity is None
-                        or point_id in seen
-                        or not _payload_matches(point.payload, identity)
-                    ):
-                        # HasId filter만 믿지 않고 문서 ID·청크 순서까지 다시 확인한다.
-                        raise SupportProgramEvidenceError()
-                    seen.add(point_id)
-                    matches.append(
-                        SupportProgramEvidenceMatch(
-                            id=identity.id,
-                            contentHash=identity.content_hash,
-                            documentId=identity.document_id,
-                            order=identity.order,
-                            score=point.score,
+                with self._tracing.observation("evidence.search.vector"):
+                    response = await self.qdrant_client.query_points(
+                        collection_name=self.collection_name,
+                        query=vector,
+                        query_filter=models.Filter(
+                            must=[models.HasIdCondition(has_id=point_ids)]
+                        ),
+                        limit=min(request.limit, len(point_ids)),
+                        with_payload=True,
+                        with_vectors=False,
+                    )
+                with self._tracing.observation("evidence.search.validate"):
+                    matches: list[SupportProgramEvidenceMatch] = []
+                    seen: set[str] = set()
+                    for point in response.points:
+                        point_id = str(point.id)
+                        identity = identities.get(point_id)
+                        if (
+                            identity is None
+                            or point_id in seen
+                            or not _payload_matches(point.payload, identity)
+                        ):
+                            # HasId filter만 믿지 않고 문서 ID·청크 순서까지 다시 확인한다.
+                            raise SupportProgramEvidenceError()
+                        seen.add(point_id)
+                        matches.append(
+                            SupportProgramEvidenceMatch(
+                                id=identity.id,
+                                contentHash=identity.content_hash,
+                                documentId=identity.document_id,
+                                order=identity.order,
+                                score=point.score,
+                            )
+                        )
+                    expected_count = min(request.limit, len(point_ids))
+                    if len(matches) != expected_count:
+                        raise SupportProgramEvidenceError("EVIDENCE_NOT_READY")
+                    matches.sort(
+                        key=lambda match: (
+                            -match.score,
+                            match.id,
                         )
                     )
-                expected_count = min(request.limit, len(point_ids))
-                if len(matches) != expected_count:
-                    raise SupportProgramEvidenceError("EVIDENCE_NOT_READY")
-                matches.sort(
-                    key=lambda match: (
-                        -match.score,
-                        match.id,
-                    )
-                )
-                result = SupportProgramEvidenceSearchResponse(question=request.question, matches=matches)
+                    result = SupportProgramEvidenceSearchResponse(question=request.question, matches=matches)
                 finished_at = monotonic()
                 outcome = "completed"
                 logger.info(
