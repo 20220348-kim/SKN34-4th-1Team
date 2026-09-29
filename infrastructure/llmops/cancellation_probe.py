@@ -139,7 +139,9 @@ class Probe:
     def forward(self, run_id, action, url, method, body, headers):
         with self.lock:
             fault = self.runs[run_id]["config"].get("fault")
-        if fault == action + "_error":
+        if fault == action + "_error" or (
+            fault == "settle_and_close_error" and action in {"settle", "close"}
+        ):
             self.event(run_id, action, status=503, forwarded=False)
             return 503, b'{"error":"injected_http_failure"}'
         status, result = exchange(url, method, body, headers)

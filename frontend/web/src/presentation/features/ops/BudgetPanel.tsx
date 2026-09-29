@@ -123,6 +123,16 @@ export function RunBudgetPanel({ runId, onExpired, refreshKey }: { runId: string
         <p className="text-sm">예약 상태: {data.reservation.closed_at ? `닫힘 · ${date(data.reservation.closed_at)}` : '열림'} · 실행의 완료·취소 상태와 별도로 관리합니다.</p>
         <Breakdown value={data.reservation.breakdown} />
         {data.reservation.breakdown.unknown_calls > 0 && <p className="text-sm text-amber-800">미확인 호출은 전송·사용량을 확정하지 못한 상태입니다. 예약이 닫혀도 해당 호출의 최대 출력 몫은 유지됩니다.</p>}
+        {data.cleanup && <section aria-label="종료 예약 정리 이력" className="space-y-2 rounded-xl bg-[#f3f7f5] p-4 text-sm">
+          <h3 className="font-semibold">종료 예약 정리 이력</h3>
+          <p>{date(data.cleanup.created_at)} · {data.cleanup.actor} · CLI</p>
+          <p>사유: {data.cleanup.reason}</p>
+          <p>반환: {count(data.cleanup.before.reservation_calls - data.cleanup.after.reservation_calls)}회 · {count(data.cleanup.before.reservation_output_tokens - data.cleanup.after.reservation_output_tokens)}출력 토큰</p>
+          <p>유지된 미확인 몫: {count(data.cleanup.after.unknown_calls)}회 · {count(data.cleanup.after.unknown_output_tokens)}출력 토큰</p>
+          <p>종료 근거: Prefect {data.cleanup.evidence.state_type} · 확인 {date(data.cleanup.evidence.observed_at)}</p>
+          <p className="break-all text-xs text-sample-muted">정리 요청: {data.cleanup.request_id} · 종료 상태 ID: {data.cleanup.evidence.state_id}</p>
+          <p className="text-xs text-sample-muted">변경자는 CLI 운영자가 입력한 값입니다. 실제 결제 환불이나 미확인 사용량 보정이 아니며 새 모델 실행을 시작하지 않습니다.</p>
+        </section>}
         <details><summary className="cursor-pointer text-sm font-semibold">호출별 승인·정산 · {data.calls.length}건</summary>
           <ul className="mt-3 space-y-2 text-sm">{data.calls.map((call) => <li key={call.sequence}>
             호출 {call.sequence + 1} · 승인 {date(call.authorized_at)} · {call.settled_at ? `정산 ${date(call.settled_at)} · 입력 ${count(call.input_tokens!)} / 출력 ${count(call.output_tokens!)}토큰` : '사용량 미확인'}

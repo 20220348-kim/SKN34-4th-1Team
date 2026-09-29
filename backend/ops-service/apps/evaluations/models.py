@@ -280,3 +280,28 @@ class EvaluationBudgetCall(models.Model):
                 name="complete_evaluation_call_usage",
             ),
         ]
+
+
+class EvaluationBudgetCleanup(models.Model):
+    """Prefect 종료 증거로 수행한 CLI 예약 정리. 사용량 보정이나 실행 재개가 아니다."""
+
+    request_id = models.UUIDField(primary_key=True)
+    reservation = models.OneToOneField(
+        EvaluationBudgetReservation, on_delete=models.PROTECT, related_name="cleanup"
+    )
+    actor = models.CharField(max_length=150)
+    reason = models.CharField(max_length=1000)
+    evidence = models.JSONField()
+    worker_id = models.UUIDField(null=True)
+    calls = models.JSONField()
+    before = models.JSONField()
+    after = models.JSONField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=~models.Q(actor="") & ~models.Q(reason=""),
+                name="budget_cleanup_attribution",
+            ),
+        ]

@@ -29,6 +29,7 @@ SCENARIOS = (
     "authorize_response_lost",
     "settle_error",
     "close_error",
+    "settle_and_close_error",
     "duplicate_worker",
 )
 
@@ -81,6 +82,22 @@ def verify_budget(before, after, *, calls, output, closed, sent, events):
         "authorizations": accepted("authorize"),
         "settlements": accepted("settle"),
     }
+
+
+def verify_cleanup(record, before, after, *, unknown_calls, events_before, events_after):
+    assert record["applied"] is True
+    assert record["evidence"]["state_type"] in {"COMPLETED", "FAILED", "CRASHED", "CANCELLED"}
+    assert not before["closed"] and after["closed"]
+    assert before["calls"] == after["calls"]
+    assert events_before == events_after, "Cleanup must not issue worker/model requests"
+    assert record["after"]["unknown_calls"] == unknown_calls
+    assert record["after"]["unknown_output_tokens"] == unknown_calls * 2000
+    assert [record["before"]["global_calls"], record["before"]["global_output_tokens"]] == before[
+        "allocated"
+    ]
+    assert [record["after"]["global_calls"], record["after"]["global_output_tokens"]] == after[
+        "allocated"
+    ]
 
 
 class Smoke:
@@ -297,6 +314,51 @@ class Smoke:
         print(f"Passed cancellation scenario: {self.active['scenario']}", flush=True)
         self.active = None
 
+    def cleanup(self, *, unknown_calls):
+        wait_for(self.process, lambda process: not process["alive"], label="Failed child exit")
+        run_id = self.active["request_id"]
+        before = self.db(run_id)
+        assert before["allocated"] == [
+            self.active["before"]["allocated"][0] + before["reserved_calls"],
+            self.active["before"]["allocated"][1] + before["reserved_output_tokens"],
+        ]
+        events = self.control("state")["events"]
+        args = (
+            "exec",
+            "-T",
+            "ops-service",
+            "python",
+            "manage.py",
+            "cleanup_evaluation_budget",
+            "--run-id",
+            run_id,
+            "--actor",
+            "offline-ci-operator",
+            "--reason",
+            "Failed close cleanup",
+            "--request-id",
+            str(uuid4()),
+        )
+        preview = json.loads(self.dc(*args))
+        assert preview["applied"] is False
+        assert self.db(run_id) == before
+        applied = json.loads(self.dc(*args, "--apply"))
+        after = self.db(run_id)
+        verify_cleanup(
+            applied,
+            before,
+            after,
+            unknown_calls=unknown_calls,
+            events_before=events,
+            events_after=self.control("state")["events"],
+        )
+        replay = json.loads(self.dc(*args, "--apply"))
+        assert replay == {**applied, "replayed": True}
+        assert self.db(run_id) == after
+        status, detail = self.api(f"/api/v1/ops/evaluations/{run_id}/budget")
+        assert status == 200 and detail["cleanup"]["request_id"] == applied["request_id"]
+        self.active["cleanup"] = applied
+
     def run(self):
         self.pause()
         try:
@@ -373,10 +435,13 @@ class Smoke:
         for name, fault, calls, output, sent, closed in (
             ("authorize_response_lost", "authorize_lost", 1, 2000, 0, True),
             ("settle_error", "settle_error", 1, 2000, 1, True),
-            ("close_error", "close_error", 6, 12000, 6, False),
+            ("close_error", "close_error", 6, 300, 6, True),
+            ("settle_and_close_error", "settle_and_close_error", 1, 2000, 1, True),
         ):
             self.start(name, fault=fault)
             self.terminal("FAILED")
+            if name in {"close_error", "settle_and_close_error"}:
+                self.cleanup(unknown_calls=1 if name == "settle_and_close_error" else 0)
             self.finish(calls=calls, output=output, sent=sent, closed=closed)
 
         self.start("duplicate_worker", hold="model_sent")

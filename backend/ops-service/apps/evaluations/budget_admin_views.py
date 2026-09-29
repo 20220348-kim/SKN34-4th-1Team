@@ -8,6 +8,7 @@ from rest_framework.decorators import api_view
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 
+from .budget_cleanup import cleanup_data
 from .budget_reporting import budget_summary, reservation_data
 from .models import EvaluationBudget, EvaluationBudgetReservation, EvaluationRun
 
@@ -51,7 +52,7 @@ def api_run_budget(request, run_id):
     run = get_object_or_404(EvaluationRun, pk=run_id)
     reservation = (
         EvaluationBudgetReservation.objects.filter(run=run)
-        .select_related("run")
+        .select_related("run", "cleanup")
         .prefetch_related("calls")
         .first()
     )
@@ -62,6 +63,7 @@ def api_run_budget(request, run_id):
                 "state": "missing" if run.execution_mode == "live" else "not_applicable",
                 "reservation": None,
                 "calls": [],
+                "cleanup": None,
             }
         )
     return Response(
@@ -69,6 +71,9 @@ def api_run_budget(request, run_id):
             "as_of": as_of,
             "state": "recorded",
             "reservation": reservation_data(reservation),
+            "cleanup": cleanup_data(reservation.cleanup)
+            if hasattr(reservation, "cleanup")
+            else None,
             "calls": [
                 {
                     "sequence": call.sequence,

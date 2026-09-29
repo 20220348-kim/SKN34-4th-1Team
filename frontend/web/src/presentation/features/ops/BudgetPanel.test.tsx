@@ -31,6 +31,12 @@ const detail: RunBudget = {
     { sequence: 1, authorized_at: time, settled_at: null, input_tokens: null, output_tokens: null },
   ],
 }
+const cleanupRecord = {
+  request_id: id, actor: '김 운영자', source: 'CLI', reason: '종료 후 close 실패 확인', created_at: time,
+  evidence: { source: 'PREFECT', flow_id: id, run_id: id, spec_sha256: 'a'.repeat(64), parameters_sha256: 'b'.repeat(64), state_id: id, state_type: 'FAILED', state_timestamp: time, observed_at: time },
+  before: { global_calls: 6, global_output_tokens: 12000, reservation_calls: 6, reservation_output_tokens: 12000 },
+  after: { global_calls: 2, global_output_tokens: 2050, reservation_calls: 2, reservation_output_tokens: 2050, unknown_calls: 1, unknown_output_tokens: 2000 },
+}
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
@@ -103,6 +109,30 @@ describe('관리자 예산 장부', () => {
     await act(async () => { await vi.advanceTimersByTimeAsync(15_000) })
     expect(screen.getByRole('alert').textContent).toContain('마지막 조회 기록')
     expect(screen.getByRole('row', { name: '확정 사용량 1 50' })).toBeTruthy()
+  })
+
+  it('종료 정리의 반환분·미확인 유지분·근거를 읽기 전용으로 표시한다', async () => {
+    const fetch = vi.fn().mockResolvedValue(json({ ...detail, reservation: { ...reservation, closed_at: time }, cleanup: cleanupRecord }))
+    vi.stubGlobal('fetch', fetch)
+    render(<RunBudgetPanel runId={id} onExpired={vi.fn()} refreshKey={0} />)
+    const audit = await screen.findByRole('region', { name: '종료 예약 정리 이력' })
+    expect(within(audit).getByText('반환: 4회 · 9,950출력 토큰')).toBeTruthy()
+    expect(within(audit).getByText('유지된 미확인 몫: 1회 · 2,000출력 토큰')).toBeTruthy()
+    expect(within(audit).getByText(/종료 근거: Prefect FAILED/)).toBeTruthy()
+    expect(within(audit).getByText(/실제 결제 환불이나 미확인 사용량 보정이 아니며/)).toBeTruthy()
+    expect(within(audit).queryByRole('button')).toBeNull()
+    expect(fetch.mock.calls.every(([, options]) => !options.method || options.method === 'GET')).toBe(true)
+  })
+
+  it.each(['active', 'wrong-run', 'not-closed', 'wrong-total'])('확인할 수 없는 정리 근거 %s는 거절한다', async (scenario) => {
+    const body = { ...detail, reservation: { ...reservation, closed_at: scenario === 'not-closed' ? null : time },
+      cleanup: { ...cleanupRecord, evidence: { ...cleanupRecord.evidence,
+        ...(scenario === 'active' ? { state_type: 'RUNNING' } : {}),
+        ...(scenario === 'wrong-run' ? { run_id: '20000000-0000-4000-8000-000000000002' } : {}),
+      }, ...(scenario === 'wrong-total' ? { after: { ...cleanupRecord.after, global_output_tokens: 0 } } : {}) },
+    }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json(body)))
+    await expect(getRunBudget(id)).rejects.toThrow('운영 서버 응답을 확인할 수 없습니다.')
   })
 
   it.each([401, 403])('권한 오류 %s에는 세션을 재확인한다', async (status) => {
