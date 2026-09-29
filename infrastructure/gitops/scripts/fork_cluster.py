@@ -266,10 +266,10 @@ def load_image(args, settings, image, state=None):
         write_json(path, ledger)
 
 
-def render_services(helm, images=None, root=ROOT, overlay=None):
+def render_services(helm, images=None, root=ROOT, overlay=None, services=SERVICES):
     """Preflight every free-runtime contract and exact Helm command before writes."""
     rendered = {}
-    for service in SERVICES:
+    for service in services:
         values = root / (f"environments/portfolio/{service}.yaml" if images else f"environments/fork/{service}.yaml")
         source_values = yaml.safe_load(values.read_text())
         safety = free_runtime_errors(service, source_values)
@@ -350,11 +350,13 @@ def _up(args, state, settings):
     images = local_images(args.local_images) if args.local_images else None
     from connected_runtime import load_profile, overrides
     profile = load_profile(state, settings)
+    from ops_runtime import check_connection, load_overlay
+    ops_overlay = load_overlay(state, settings)
     record = None
     if images:
-        rendered_services = render_services(args.helm, images, overlay=overrides(profile))
+        rendered_services = render_services(args.helm, images, overlay={**overrides(profile), **ops_overlay})
     else:
-        if profile:
+        if profile or ops_overlay:
             raise ValueError("Published images require tracked runtime settings; use local images for local integration overrides")
         record, snapshot, _ = published_bundle(settings, args.helm)
         rendered_services = {service: yaml.safe_dump_all(json.loads(snapshot[
@@ -368,6 +370,8 @@ def _up(args, state, settings):
         require_dev(state, settings)
     elif (state / "kubeconfig").exists():
         raise ValueError("Stale kubeconfig: inspect it manually before creating a replacement cluster")
+    if ops_overlay:
+        check_connection(state, settings)
     credential = None
     if not images:
         if record.get("visibility", "private") == "public":
@@ -585,7 +589,8 @@ def main():
             kube, nk, ak = commands(state, settings)
             verify_context(kube, settings)
             if args.action == "web":
-                run(nk + ["port-forward", "--address", "127.0.0.1", "service/core-service", "18080:8080"], timeout=None)
+                from fork_web import serve
+                serve(nk)
             else:
                 print("Mode: " + settings["mode"] + "; repository: " + settings["repository"])
                 run(nk + ["get", "pods"])

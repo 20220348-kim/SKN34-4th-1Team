@@ -1,4 +1,4 @@
-"""Disposable kind-to-Compose DNS/HTTP/authentication smoke; no evaluation or model calls."""
+"""Disposable kind/Compose HTTP smoke, optionally including a free Kubernetes evaluation."""
 
 import argparse
 import hashlib
@@ -85,6 +85,12 @@ def main():
         help="Optional existing local Ops image; otherwise build current source",
     )
     parser.add_argument("--report", type=Path, required=True)
+    parser.add_argument(
+        "--evaluate",
+        action="store_true",
+        help="Also run isolated Kubernetes Ops evaluation and restart checks",
+    )
+    parser.add_argument("--helm", default="helm")
     args = parser.parse_args()
     if args.report.exists():
         parser.error("Report must be a new file")
@@ -110,7 +116,7 @@ def main():
     ):
         parser.error("Generated Compose project already exists; refusing adoption")
     report = {
-        "scope": "kind_compose_http",
+        "scope": "kubernetes_ops_evaluation" if args.evaluate else "kind_compose_http",
         "cluster": cluster,
         "compose_project": project,
         "evaluation_executed": False,
@@ -141,7 +147,15 @@ def main():
             "".join(
                 key
                 + "="
-                + (token if key == "LLMOPS_ARTIFACT_TOKEN" else secrets.token_hex(32))
+                + (
+                    token
+                    if key == "LLMOPS_ARTIFACT_TOKEN"
+                    else "pk-lf-" + secrets.token_hex(16)
+                    if key == "LANGFUSE_PUBLIC_KEY"
+                    else "sk-lf-" + secrets.token_hex(32)
+                    if key == "LANGFUSE_SECRET_KEY"
+                    else secrets.token_hex(32)
+                )
                 + "\n"
                 for key in keys
                 if not key.startswith("GOVBIZ_OPS_BRIDGE_")
@@ -151,7 +165,7 @@ def main():
         os.chmod(env, 0o600)
         overlay = state / "smoke.yaml"
         overlay.write_text(
-            "services:\n  prefect:\n    ports: !reset []\n"
+            "services:\n  prefect:\n    ports: !reset []\n  langfuse-web:\n    ports: !reset []\n"
             + (
                 "  ops-artifacts:\n    image: " + json.dumps(args.ops_image) + "\n"
                 if args.ops_image
@@ -195,7 +209,7 @@ def main():
             image_id = execute(
                 ["docker", "inspect", "--format", "{{.Image}}", artifact_id]
             ).strip()
-            image = project + ":probe"
+            image = "govbiz-ops-service:bridge-" + identity
             execute(["docker", "image", "tag", image_id, image])
             print(
                 "Creating isolated kind cluster and loading the local probe image",
@@ -350,6 +364,19 @@ def main():
                     timeout=120,
                 )
             )
+            if args.evaluate:
+                from smoke_ops_evaluation import verify
+
+                verify(
+                    state,
+                    settings,
+                    compose,
+                    compose_env,
+                    image,
+                    args.kind,
+                    args.helm,
+                    report,
+                )
             report["status"] = "PASS"
             print(
                 "PASS: real Pod DNS, Prefect HTTP, artifact authentication/read-only access and evidence SHA-256",

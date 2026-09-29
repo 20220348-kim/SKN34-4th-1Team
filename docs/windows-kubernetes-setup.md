@@ -198,7 +198,8 @@ kind 클러스터를 삭제하면 그 안의 데이터도 잃을 수 있으므�
 python -B infrastructure/gitops/scripts/fork_cluster.py web
 ```
 
-`Forwarding from 127.0.0.1:18080 -> 8080`이 나와야 합니다.
+Core `127.0.0.1:18080`과 Ops `127.0.0.1:18001`이 같은 클러스터로 연결됐다는 안내가 나와야 합니다.
+둘 중 하나라도 포트를 사용 중이면 중단합니다. Pod가 교체되어 연결이 끊기면 이 명령을 다시 실행합니다.
 
 **Windows PowerShell 터미널 B**에서는 [Node.js](https://nodejs.org/en/download)의
 프로젝트 지정 버전인 **24.x**를 설치하고 새 터미널을 엽니다.
@@ -278,7 +279,7 @@ Pod가 준비되면 6절의 port-forward와 웹 명령을 다시 실행합니다
 | 이미지 태그/ID 불일치 | 해당 JSON을 생성한 빌드 이미지가 남아 있는지 확인. JSON을 임의 편집하지 않음 |
 | 웹은 열리는데 API 연결 실패 | Ubuntu port-forward 터미널, Core Pod Ready, `localhost:18080` 연결 확인 |
 | PowerShell에서 `pnpm.ps1` 실행 정책 오류 | 위 명령처럼 `pnpm.cmd` 사용 |
-| 5173/18080 포트가 이미 사용 중 | 기존 웹/port-forward 프로세스를 확인하고 중복 실행하지 않음 |
+| 5173/18080/18001 포트가 이미 사용 중 | 기존 웹/port-forward 프로세스를 확인하고 중복 실행하지 않음 |
 | Pod가 준비되지 않음 | 해당 Pod의 `describe` Events와 `logs` 확인. 데이터 삭제로 해결하지 않음 |
 | CPU·메모리·디스크 부족 | 기존 스택 중복 실행, `docker stats`, WSL `free -h`, Windows 드라이브 여유 확인 |
 
