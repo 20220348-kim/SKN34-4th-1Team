@@ -84,6 +84,16 @@ jobs:
           (cd "$tool_dir" && echo "$(< kubectl.sha256)  kubectl" | sha256sum --check)
           chmod +x "$tool_dir/kubectl"
           echo "$tool_dir" >> "$GITHUB_PATH"
+      - name: Install pinned Helm with checksum verification
+        run: |
+          set -euo pipefail
+          tool_dir="$(mktemp -d)"
+          cd "$tool_dir"
+          curl -fsSLO https://get.helm.sh/helm-v4.3.0-linux-amd64.tar.gz
+          curl -fsSLO https://get.helm.sh/helm-v4.3.0-linux-amd64.tar.gz.sha256sum
+          sha256sum --check helm-v4.3.0-linux-amd64.tar.gz.sha256sum
+          tar -xzf helm-v4.3.0-linux-amd64.tar.gz
+          echo "$tool_dir/linux-amd64" >> "$GITHUB_PATH"
       - name: Test repository, manifest policies and smoke-test safety guards
         run: python -B -m unittest discover -s scripts -p 'test_*.py'
       - name: Render local overlays and validate policies without a cluster

@@ -11,6 +11,7 @@ from urllib.request import urlopen
 
 from check_msa import REPOSITORY_ROOT
 from deployment_candidate import (
+    SCHEMA,
     CHECK_WORKFLOW,
     DEPLOYMENT_BRANCH,
     MANIFEST,
@@ -131,6 +132,8 @@ def source_checks(fork, sha, get=api):
 
 def admit(root, fork, files, helm="helm", get=api):
     manifest = manifest_of(files, fork)
+    if manifest["schema"] != SCHEMA:
+        raise ValueError("Create a new candidate with the required Ops migration contract")
     if os.environ.get("GITHUB_ACTIONS") == "true":
         policy_sha = git_bytes(root, "rev-parse", "HEAD").decode().strip()
         if policy_sha != manifest["sourceSha"]:

@@ -141,6 +141,32 @@ class SnapshotTests(SourceFixture):
             any("valuesObject" in app["spec"]["source"]["helm"] for app in apps[1:])
         )
 
+    def test_v1_history_remains_verifiable_but_cannot_be_newly_admitted(self):
+        legacy_source = dict(self.source)
+        del legacy_source[bundle.CHART_PATH + "/templates/ops-migration.yaml"]
+        sha = deploy.commit_tree(self.root, legacy_source, self.sha)
+        receipts = self.receipts_for(sha)
+        files = bundle.build(
+            self.root,
+            FORK,
+            sha,
+            BASE,
+            123,
+            CHECKS,
+            receipts,
+            schema="govbiz-deployment-v1",
+        )
+        self.assertEqual(
+            bundle.verify(self.root, FORK, files)["schema"], "govbiz-deployment-v1"
+        )
+        with self.assertRaisesRegex(ValueError, "required Ops migration"):
+            bundle.build(self.root, FORK, sha, BASE, 123, CHECKS, receipts)
+        with (
+            patch.object(deploy, "require_rules"),
+            self.assertRaisesRegex(ValueError, "new candidate"),
+        ):
+            deploy.admit(self.root, FORK, files)
+
     def test_recomputed_hash_cannot_authorize_tampered_chart_values_or_rendering(self):
         paths = [
             bundle.CHART_PATH + "/Chart.yaml",

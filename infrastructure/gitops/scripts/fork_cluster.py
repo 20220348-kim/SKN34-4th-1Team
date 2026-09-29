@@ -387,8 +387,17 @@ def _up(args, state, settings):
     run(kube + ["apply", "--server-side", "--field-manager=govbiz-local", "-f", "-"], data=data)
     for name in ("core-mysql", "catalog-mysql", "ops-mysql", "redis", "qdrant", "elasticsearch"):
         run(nk + ["rollout", "status", "statefulset/" + name, "--timeout=450s"])
+    from ops_migration import run_migration
+    if images:
+        load_image(args, settings, images["ops-service"], state)
+    ops_resources = list(yaml.safe_load_all(rendered_services["ops-service"]))
+    for job in (item for item in ops_resources if item["kind"] == "Job"):
+        run_migration(job, kube, nk, run)
+    # Historical v1 bundles have no Job and retain their original image/contract.
+    rendered_services["ops-service"] = yaml.safe_dump_all(
+        item for item in ops_resources if item["kind"] != "Job")
     for service in SERVICES:
-        if images:
+        if images and service != "ops-service":
             load_image(args, settings, images[service], state)
         run(kube + ["apply", "--server-side", "--field-manager=govbiz-local", "-f", "-"], data=rendered_services[service])
     for service in SERVICES:

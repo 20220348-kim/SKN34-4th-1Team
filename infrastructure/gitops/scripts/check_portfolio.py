@@ -40,7 +40,7 @@ def errors(root=ROOT, helm="helm"):
     project = yaml.safe_load((root / "argocd/portfolio/project.yaml").read_text())["spec"]
     if (project["destinations"] != [expected] or project["clusterResourceWhitelist"]
             or project["sourceRepos"] != [REPOSITORY_URL]
-            or project["namespaceResourceWhitelist"] != [{"group": "apps", "kind": "Deployment"}, {"group": "", "kind": "Service"}]):
+            or project["namespaceResourceWhitelist"] != [{"group": "apps", "kind": "Deployment"}, {"group": "", "kind": "Service"}, {"group": "batch", "kind": "Job"}]):
         problems.append("Portfolio Argo permissions widened")
     apps = list(yaml.safe_load_all((root / "argocd/portfolio/applications.yaml").read_text()))
     if len(apps) != 4 or {a["metadata"]["name"] for a in apps} != {"govbiz-portfolio-" + s for s in SERVICES}:

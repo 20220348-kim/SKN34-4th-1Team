@@ -184,6 +184,12 @@ Catalog·LLMOps PR 경로 필터도 제거해 필수 상태 검사 누락을 방
 검사 후 main이 전진하는 사건과 수동 merge 사이의 ref 간 원자성도 보장하지 않으므로 병합 직전 최신 상태를 확인해야 한다.
 현재 후보는 무료 실행 정책에 한정되며 기존 유료 연동 프로필을 자동 이전하지 않는다.
 
+G1 원격 검증 정정: `7d87e60371b26e00fc8efded41ab17d499d1604b`의 5개 workflow 중
+4개는 성공했지만 [Infra run 36488308755](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36488308755)의
+`kubernetes-manifests`가 pinned Helm 누락으로 실패했다. 별도 `helm-gitops` job은 통과했다.
+후속 구현에서 전체 테스트를 발견하는 두 job 모두 Helm 4.3.0과 checksum 검증을 설치하도록 맞췄다.
+이 로컬 수정의 최신 SHA CI 결과는 푸시 후 확인해야 한다.
+
 ### G2 — Ops의 실제 배포 계약 완성
 
 담당 책임: Ops 서비스와 GitOps 배포 계약 관리.
@@ -194,6 +200,25 @@ Catalog·LLMOps PR 경로 필터도 제거해 필수 상태 검사 누락을 방
 4. 평가 runner·ops-sync·Prefect·Langfuse·저장소의 배포 책임을 먼저 확정한다. 단기에는 현재 Compose LLMOps를 별도 관리 대상으로 명시하고 연결 계약부터 완성한다. 전체 LLMOps의 Kubernetes 운영이 목표라면 해당 구성요소와 영속 데이터도 별도 선언·검증 단계로 이전해야 완료다.
 
 **완료 증거:** 비어 있는 격리 DB에서 배포·migration·Core 관리자 확인·저장된 캡처 평가·결과 조회가 실제 성공. 재시작 후 결과 유지. migration 실패·인증 실패·저장소 쓰기 실패를 Ready나 평가 성공으로 오인하지 않음. 유료 호출은 이 단계의 검증 조건에 포함하지 않음.
+
+G2 1차 구현: [Ops migration과 readiness](../infrastructure/gitops/docs/ops-migration.md)를 추가했다.
+빈 DB·미적용/불일치 migration·실제 테이블/컬럼 누락은 503으로 차단하고 liveness는 DB와 분리한다.
+같은 Ops 이미지·설정의 PreSync Job, MySQL 동시 실행 잠금, 실패 Job 보존,
+로컬/Compose/격리 smoke의 명시적 실행 순서를 연결했다. 새 후보는 v2 계약을 필수로 검사하고
+기존 v1 배포 이력의 재구성 검증은 유지한다. 원격 보호 규칙·클러스터·운영 DB는 변경하지 않았다.
+
+Ops CI에 빈 MySQL 8.4 → migration → readiness, 반복 실행 데이터 보존,
+실제 lock 경합과 컬럼 누락 감지 검증을 추가했다. 실행 결과는 아직 CI 대기다.
+로컬 검증: DB 없는 Ops 단위 테스트 7개, 배포 후보 20개, Helm·migration·smoke 안전장치·workflow
+관련 테스트 66개가 통과했다(총 93개, 중복 제외). 새 테스트의 잘못된 Application 이름을 수정한 뒤
+실패한 1개만 다시 실행해 통과했다. Ops Ruff와 문서 경계 검사를 확인했다.
+사용자 지침의 Python 3.13과 저장소의 `>=3.12,<3.13` 제약이 달라, 로컬 Ops 테스트는
+`work/ops-schema-tools`의 Python 3.13에 `uv.lock`과 같은 Django·MySQL 드라이버·Ruff 버전을
+설치해 수행했다. production Python·잠금 파일은 변경하지 않았고, CI의 `uv run --locked`
+Python 3.12/MySQL 8.4 전체 검증을 대체하지 않는다.
+
+**G2 전체 완료는 아니다.** Core·Prefect·데이터셋·결과 저장소의 배포 연결과
+관리자 인증부터 저장된 캡처 평가·결과 조회·재시작 후 유지까지의 실제 E2E가 남았다.
 
 ### G3 — 실제 Argo 배포·복구 검증을 필수 증거로 연결
 

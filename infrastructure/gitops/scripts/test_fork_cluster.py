@@ -257,7 +257,7 @@ class ForkBootstrapTests(unittest.TestCase):
         project = resources[0]["spec"]
         self.assertEqual(project["sourceRepos"], [self.fork.url])
         self.assertEqual(project["clusterResourceWhitelist"], [])
-        self.assertEqual(project["namespaceResourceWhitelist"], [{"group": "apps", "kind": "Deployment"}, {"group": "", "kind": "Service"}])
+        self.assertEqual(project["namespaceResourceWhitelist"], [{"group": "apps", "kind": "Deployment"}, {"group": "", "kind": "Service"}, {"group": "batch", "kind": "Job"}])
         for service, app in zip(cluster.SERVICES, resources[1:], strict=True):
             self.assertNotIn("finalizers", app["metadata"])
             spec = app["spec"]

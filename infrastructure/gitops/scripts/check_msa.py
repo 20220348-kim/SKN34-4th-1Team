@@ -1,6 +1,7 @@
 """Offline Helm/Argo policy checks. Not a cluster or GitOps sync test."""
 
 import argparse
+import copy
 from pathlib import Path
 import subprocess
 
@@ -24,13 +25,18 @@ def render(service, helm="helm", extra=()):
     return list(yaml.safe_load_all(result.stdout))
 
 
-def policy_errors(service, resources):
+def policy_errors(service, resources, *, require_ops_migration=True):
     errors = []
 
     def require(condition, message):
         if not condition:
             errors.append(f"{service}: {message}")
 
+    jobs = [r for r in resources if r["kind"] == "Job"]
+    resources = [r for r in resources if r["kind"] != "Job"]
+    require(not jobs or service == "ops-service", "only Ops may own a migration Job")
+    require(len(jobs) == (1 if service == "ops-service" and require_ops_migration else 0),
+            "expected one required Ops migration Job and no other Jobs")
     by_kind = {r["kind"]: r for r in resources}
     require(len(resources) == 2 and set(by_kind) == {"Deployment", "Service"},
             "one service release must own only Deployment and Service")
@@ -70,6 +76,23 @@ def policy_errors(service, resources):
         require("core-mysql" not in str(env), "Catalog must not access Core DB")
     if service == "ai-service":
         require(not any("DATASOURCE" in key or key.startswith("DB_") for key in env), "AI must not get SQL credentials")
+    if jobs and service == "ops-service":
+        expected_pod = copy.deepcopy(pod)
+        expected_pod["restartPolicy"] = "Never"
+        migration = expected_pod["containers"][0]
+        for name in ("ports", "startupProbe", "readinessProbe", "livenessProbe"):
+            migration.pop(name, None)
+        migration.update(name="ops-migrate", command=["python", "manage.py", "migrate_deployment"])
+        expected = {"backoffLimit": 0, "activeDeadlineSeconds": 300,
+                    "template": {"metadata": {"labels": {"app.kubernetes.io/name": "ops-service-migrate"}},
+                                 "spec": expected_pod}}
+        job = jobs[0]
+        require(job.get("apiVersion") == "batch/v1" and job.get("spec") == expected,
+                "migration must use the same image, configuration and security with no automatic retry")
+        require(job.get("metadata") == {"name": "ops-service-migrate", "namespace": NAMESPACE,
+                "annotations": {"argocd.argoproj.io/hook": "PreSync",
+                "argocd.argoproj.io/hook-delete-policy": "BeforeHookCreation,HookSucceeded"}},
+                "migration must be a bounded PreSync hook retaining failed Jobs")
     network = by_kind["Service"]["spec"]
     require(network["type"] == "ClusterIP", "internal service required")
     require(network["selector"] == spec["template"]["metadata"]["labels"], "Service must select its own pods")
@@ -85,7 +108,7 @@ def argo_errors(root=ROOT):
     expected_destination = {"server": "https://kubernetes.default.svc", "namespace": NAMESPACE}
     if project["destinations"] != [expected_destination] or project["clusterResourceWhitelist"]:
         errors.append("Argo destination/cluster permission scope widened")
-    if project["namespaceResourceWhitelist"] != [{"group": "apps", "kind": "Deployment"}, {"group": "", "kind": "Service"}]:
+    if project["namespaceResourceWhitelist"] != [{"group": "apps", "kind": "Deployment"}, {"group": "", "kind": "Service"}, {"group": "batch", "kind": "Job"}]:
         errors.append("Argo resource scope widened")
     if {app["metadata"]["name"] for app in apps} != {"govbiz-" + s for s in SERVICES} or len(apps) != 4:
         errors.append("Expected four independent Argo Applications")

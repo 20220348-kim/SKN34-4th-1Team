@@ -77,6 +77,10 @@ jobs:
         run: uv run --locked python manage.py check
       - name: Check migrations
         run: uv run --locked python manage.py makemigrations --check --dry-run
+      - name: Verify empty schema and deployment migration on MySQL 8.4
+        env:
+          OPS_SCHEMA_TEST_ONLY: "true"
+        run: uv run --locked python scripts/check-schema.py
       - name: Test against MySQL 8.4
         run: uv run --locked python manage.py test --noinput
 
