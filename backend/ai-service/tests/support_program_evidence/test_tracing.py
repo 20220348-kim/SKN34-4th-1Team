@@ -44,7 +44,7 @@ async def test_parallel_traces_link_model_and_validation_without_bodies(trace_en
     await asyncio.gather(service.answer(answer_request()), service.answer(answer_request()))
     await tracing.close()
     spans = exporter.get_finished_spans()
-    assert len(spans) == 4
+    assert len(spans) == 8
     roots = [span for span in spans if span.name == "evidence.answer"]
     models = [span for span in spans if span.name == "evidence.model"]
     assert len({span.context.trace_id for span in roots}) == 2
@@ -155,7 +155,11 @@ async def test_service_citation_validation_is_inside_trace(trace_environment, mo
     with pytest.raises(SupportProgramEvidenceError):
         await service.answer(answer_request())
     await tracing.close()
-    root, = exporter.get_finished_spans()
+    spans = exporter.get_finished_spans()
+    root = next(span for span in spans if span.name == "evidence.answer")
+    validation = next(span for span in spans if span.name == "evidence.validate_response")
+    assert validation.parent.span_id == root.context.span_id
+    assert validation.attributes["langfuse.observation.status_message"] == "failed"
     assert root.attributes["langfuse.observation.status_message"] == "failed"
     assert not stub.calls
 
@@ -166,11 +170,16 @@ def test_http_bootstrap_uses_same_tracing_and_closes_it(trace_environment):
     app = create_app(settings=replace(OPENAI_SETTINGS, langfuse=settings))
     container = app.state.container
     agent = container.support_program_evidence_answer_service._agent
+    assert container.support_program_evidence_service._tracing is container.llm_tracing
+    assert container.support_program_evidence_answer_service._tracing is container.llm_tracing
+    assert agent._tracing is container.llm_tracing
     agent._model = stub.model.bind(max_tokens=2000, store=False, reasoning={"effort": "none"})
     with TestClient(app) as client:
         response = client.post("/internal/v1/support-program-evidence/answers", json=answer_request().model_dump(by_alias=True))
         assert response.status_code == 200
-    assert {span.name for span in exporter.get_finished_spans()} == {"evidence.answer", "evidence.model"}
+    assert {span.name for span in exporter.get_finished_spans()} == {
+        "evidence.answer", "evidence.model", "evidence.validate_selection", "evidence.validate_response",
+    }
 
 
 @pytest.mark.parametrize("changes", [

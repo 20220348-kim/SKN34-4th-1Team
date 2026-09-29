@@ -274,13 +274,23 @@ def test_execute_uses_production_agent_with_mock_http_only(
         assert ("traceId" in record) is tracing_enabled
     if tracing_enabled:
         spans = exporter.get_finished_spans()
-        assert len(spans) == 2 * len(capture["cases"])
+        count_per_case = 4 if status == 200 else 2 if status == 429 else 3
+        assert len(spans) == count_per_case * len(capture["cases"])
         roots = {format(span.context.trace_id, "032x"): span for span in spans if span.name == "evidence.answer"}
         models = {format(span.context.trace_id, "032x"): span for span in spans if span.name == "evidence.model"}
         assert len(roots) == len(capture["cases"])
         for record in capture["cases"]:
             root = roots[record["traceId"]]
             assert models[record["traceId"]].parent.span_id == root.context.span_id
+            assert models[record["traceId"]].attributes["langfuse.observation.metadata.usage_reported"] is (status != 429)
+            validations = [span for span in spans if span.context.trace_id == root.context.trace_id
+                           and span.name.startswith("evidence.validate_")]
+            expected_validations = {"evidence.validate_selection", "evidence.validate_response"} if status == 200 else (
+                set() if status == 429 else {"evidence.validate_selection"}
+            )
+            assert {span.name for span in validations} == expected_validations
+            assert all(span.parent.span_id == root.context.span_id for span in validations)
+            assert all((span.attributes.get("langfuse.observation.level") == "ERROR") == (status != 200) for span in validations)
             assert root.attributes["langfuse.observation.metadata.outcome"] == (
                 "completed" if record["outcome"] == "success" else "failed"
             )

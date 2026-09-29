@@ -6,6 +6,7 @@ import ai.govbiz.core.supportprogram.facade.AiSupportProgramEvidenceFacade
 import ai.govbiz.core.supportprogram.facade.BizInfoSupportProgramSourceDocumentFacade
 import ai.govbiz.core.supportprogram.facade.exception.SupportProgramSourceDocumentFacadeException
 import ai.govbiz.core.supportprogram.repository.SupportProgramRepository
+import ai.govbiz.core.supportprogram.helper.SupportProgramEvidenceTracingHelper
 import ai.govbiz.core.supportprogram.service.detail.SupportProgramDetailService
 import ai.govbiz.core.supportprogram.service.dto.SupportProgramEvidenceAnswerResult
 import ai.govbiz.core.supportprogram.service.evidence.exception.SupportProgramEvidenceNotSupportedException
@@ -25,6 +26,7 @@ class SupportProgramEvidenceService(
     private val sourceDocumentFacade: BizInfoSupportProgramSourceDocumentFacade,
     private val aiEvidenceFacade: AiSupportProgramEvidenceFacade,
     @param:Qualifier("seoulClock") private val clock: Clock,
+    private val tracing: SupportProgramEvidenceTracingHelper = SupportProgramEvidenceTracingHelper(),
 ) {
     private val chunkCacheLock = Any()
     private val chunkCache = LinkedHashMap<String, PreparedChunks>(16, 0.75f, true)
@@ -33,13 +35,14 @@ class SupportProgramEvidenceService(
         sourceCode: String,
         sourceProgramId: String,
         question: String,
-    ): SupportProgramEvidenceAnswerResult {
-        val program = detailService.get(sourceCode, sourceProgramId)
+    ): SupportProgramEvidenceAnswerResult = tracing.observe("total") {
+        val program = tracing.observe("core.detail") { detailService.get(sourceCode, sourceProgramId) }
         if (program.sourceCode != BIZINFO_SOURCE_CODE) throw SupportProgramEvidenceNotSupportedException()
-        val document = currentSourceDocument(program)
-        return aiEvidenceFacade.answer(
+        val document = tracing.observe("core.source") { currentSourceDocument(program) }
+        val chunks = tracing.observe("core.chunk") { chunksFor(document) }
+        aiEvidenceFacade.answer(
             question = question.trim(),
-            chunks = chunksFor(document),
+            chunks = chunks,
             sourceUrl = document.sourceUrl,
         )
     }
@@ -60,7 +63,11 @@ class SupportProgramEvidenceService(
             // 이전 버전에서 저장된 읽을 수 없는 원문은 재수집해 교체합니다.
             null
         }
-        if (cached != null && cached.sourceUrl == program.sourceUrl && isFresh(cached)) return cached
+        if (cached != null && cached.sourceUrl == program.sourceUrl && isFresh(cached)) {
+            tracing.recordCache("hit")
+            return cached
+        }
+        tracing.recordCache("miss")
 
         val loaded = try {
             sourceDocumentFacade.load(program)
@@ -103,6 +110,7 @@ class SupportProgramEvidenceService(
         } catch (exception: IllegalStateException) {
             throw SupportProgramEvidenceUnavailableException(exception)
         } finally {
+            tracing.recordCache(cacheState, chunkCount)
             logger.info(
                 "support_program_evidence_chunks cache_state={} outcome={} chunk_count={} elapsed_ms={}",
                 cacheState, outcome, chunkCount, (System.nanoTime() - started) / 1_000_000,

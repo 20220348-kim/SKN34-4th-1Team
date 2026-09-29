@@ -263,7 +263,7 @@ AI Service를 직접 생성하는 검증 경로도 유지합니다. 내부 `/ass
 trace ID·부모 span ID만 전달받아 `assistant.agent`를 연결합니다. 없거나 잘못된 헤더는 새 독립 trace로 처리하며
 `baggage`·공개 응답 JSON 계약은 추가하지 않습니다. Core는 공개 요청의 trace ID를 받아들이지 않고 새 루트를 생성합니다.
 Langfuse에서 `assistant-agent` trace 이름으로 필터하거나 `assistant_agent_run` 로그의 `trace_id`로 찾습니다.
-Ops 화면의 **검색·도우미 실행 추적** 링크에서도 같은 프로젝트로 이동할 수 있습니다. Langfuse 로그인은 별도입니다.
+Ops 화면의 **AI 실행 추적** 링크에서도 같은 프로젝트로 이동할 수 있습니다. Langfuse 로그인은 별도입니다.
 
 ```text
 assistant.agent
@@ -745,13 +745,24 @@ SDK의 JSON 출력 검증 실패는 `MODEL_OUTPUT_INVALID_JSON`, 스키마·서�
 실제 호출을 시작한 요청을 가리킵니다. `usage_reported=false`는 미확정 사용량이며 0원이라는 뜻이 아닙니다.
 
 Core와 AI 모두 같은 Langfuse 프로젝트로 활성화해야 전체 검색 경로가 연결됩니다. 단계 목록·설정·
-Ops 화면의 **검색 실행 추적 ↗** 링크 사용법과 검증 범위는
+Ops 화면의 **AI 실행 추적 ↗** 링크 사용법과 검증 범위는
 [검색 추적 안내](../../infrastructure/llmops/README.md#지원사업-ai-검색-추적)를 따릅니다.
 
-`LANGFUSE_ENABLED=true`일 때 근거 답변 Service의 검증까지 `evidence.answer`로,
-LangChain 모델 호출을 하위 `evidence.model`로 기록합니다. HTTP 경로와 평가 실행기 모두 같은 추적 객체를 사용합니다.
+`LANGFUSE_ENABLED=true`일 때 상세 근거의 색인은 `evidence.index` 아래 준비·임베딩·upsert,
+검색은 `evidence.search` 아래 준비·질의 임베딩·벡터 검색·결과 검증으로 기록합니다.
+기존 point를 재사용하면 색인 임베딩·upsert span을 만들지 않으며, 질의 임베딩의 캐시 상태는 별도로 남깁니다.
+`/chunks`, `/search`, `/answers` 세 HTTP 경로가 sampled W3C v00 `traceparent`를 검증해 Core 부모에 연결됩니다.
+헤더가 없거나 잘못되면 새 trace를 만들고 `baggage`는 전달하지 않습니다. Core가 시작한 상세 답변은
+`support-program-evidence`로 찾습니다. Core 외의 독립 호출은 해당 AI 관측 이름으로 찾습니다.
+
+답변 Service의 `evidence.answer` 아래에는 LangChain 호출 `evidence.model`, 모델 출력·인용 번호 검증
+`evidence.validate_selection`, Service 인용 검증 `evidence.validate_response`가 있습니다.
+실패한 시점 이후의 단계는 생성하지 않으며 제공받지 못한 사용량은 `usage_reported=false`로 표시합니다.
+HTTP 경로와 평가 실행기 모두 같은 추적 객체를 사용합니다. 고정 문맥 평가기는 색인·검색을 실행하지 않습니다.
 질문·답변·청크 본문·예외 원문은 수집하지 않으며 전송 실패로 모델을 재실행하지 않습니다.
 기본값은 비활성화이고 URL·키가 없는 활성화 설정은 시작 오류입니다.
+기존 근거 API의 상세정보 없는 503 계약은 유지합니다. 새 trace를 품질 점수나 사람 검토로 취급하지 않습니다.
+[상세 RAG 검증 범위](../../infrastructure/llmops/README.md#상세-공고-rag-추적-검증)를 참고하세요.
 
 `langfuse`는 런타임 의존성입니다. pandas·Pandera·Evidently·Prefect는 `evaluation` 의존성 그룹으로 분리하고
 AI API 이미지에 설치하지 않습니다. 저장 캡처로 다섯 도구를 연결하는 무료 배치와 실제 개발 서버 검증은

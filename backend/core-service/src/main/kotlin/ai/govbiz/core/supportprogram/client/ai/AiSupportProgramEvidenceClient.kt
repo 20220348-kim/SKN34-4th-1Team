@@ -8,6 +8,7 @@ import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramEvidenceIndex
 import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramEvidenceIndexRequest
 import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramEvidenceSearchPayload
 import ai.govbiz.core.supportprogram.client.ai.dto.AiSupportProgramEvidenceSearchRequest
+import ai.govbiz.core.supportprogram.helper.SupportProgramEvidenceTracingHelper
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.http.HttpMethod
 import org.springframework.http.HttpStatus
@@ -59,6 +60,7 @@ class AiSupportProgramEvidenceClient(
             restClient.method(method)
                 .uri("/internal/v1/support-program-evidence/$operation")
                 .contentType(MediaType.APPLICATION_JSON)
+                .headers { headers -> SupportProgramEvidenceTracingHelper.currentTraceParent()?.let { headers.set("traceparent", it) } }
                 .body(request)
                 .retrieve()
                 .onStatus(

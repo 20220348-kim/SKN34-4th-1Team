@@ -39,6 +39,17 @@ SPAN_NAMES = {
     "assistant.saved.verify",
     "evidence.answer",
     "evidence.model",
+    "evidence.validate_response",
+    "evidence.validate_selection",
+    "evidence.index",
+    "evidence.index.readiness",
+    "evidence.index.embedding",
+    "evidence.index.upsert",
+    "evidence.search",
+    "evidence.search.readiness",
+    "evidence.search.embedding",
+    "evidence.search.vector",
+    "evidence.search.validate",
     "search.semantic.request",
     "search.semantic",
     "search.embedding",
@@ -130,7 +141,9 @@ class LLMTracing:
             manager = self.client.start_as_current_observation(
                 name=name,
                 trace_context=context,
-                metadata=({"prompt_sha256": PROMPT_HASH} if name.startswith("evidence.") else {})
+                metadata=({"prompt_sha256": PROMPT_HASH} if name in {
+                    "evidence.answer", "evidence.model", "evidence.validate_response", "evidence.validate_selection",
+                } else {})
                 | (metadata or {}),
                 **kwargs,
             )

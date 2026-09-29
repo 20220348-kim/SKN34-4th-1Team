@@ -911,7 +911,7 @@ Ops 링크·단계 구조·전체 검증의 한계는 [LLMOps 실행 안내](../
 
 ### 도우미 Core → AI 분산 추적
 
-`LlmTracingConfig`가 검색과 도우미의 OTLP provider·비동기 전송 큐를 하나로 구성합니다.
+`LlmTracingConfig`가 검색·도우미·상세 근거 답변의 OTLP provider·비동기 전송 큐를 하나로 구성합니다.
 기존 검색 전용 설정을 `_common/config`로 옮겼으며 환경변수·비활성화 기본값은 위와 같습니다.
 `AssistantTracingHelper`는 각 `AssistantMessageService.answer` 호출을 새 `assistant.total` 루트로 시작합니다.
 `assistant_request trace_id=...` 로그나 Langfuse의 `assistant-agent` 이름으로 조회합니다.
@@ -934,6 +934,32 @@ assistant.total (Core)
 로컬 선택 테스트는 `AssistantMessageTracingTest`, `AssistantTracingHelperTest`, 기존 도우미 Service·Client,
 `LlmTracingConfigTest`, 검색 추적 회귀를 포함합니다. 실제 서버 저장·재조회는
 [LLMOps 도우미 연결 검사](../../infrastructure/llmops/README.md#core-도우미-분산-추적-검증)를 따릅니다.
+
+### 상세 공고 RAG 분산 추적
+
+`SupportProgramEvidenceTracingHelper`가 상세 질문마다 새 `evidence.total`을 만들고,
+Service의 공고 조회·원문 준비·청킹과 Facade의 색인·검색·답변·인용 검증을 연결합니다.
+Langfuse의 `support-program-evidence` 이름 또는 `support_program_evidence trace_id=...` 로그로 조회합니다.
+
+```text
+evidence.total (Core)
+├─ evidence.core.detail
+├─ evidence.core.source       원문 캐시 hit/miss
+├─ evidence.core.chunk        청킹 캐시 hit/miss·청크 수
+├─ evidence.core.index  → evidence.index (AI) → readiness / embedding / upsert
+├─ evidence.core.search → evidence.search (AI) → readiness / embedding / vector / validate
+├─ evidence.core.answer → evidence.answer (AI) → model / validate_selection / validate_response
+└─ evidence.core.validate     최종 답변·허용 인용 검증
+```
+
+세 내부 HTTP 호출은 각각의 Core 단계가 만든 부모 헤더를 사용합니다. 외부 부모 ID는 채택하지 않으며
+질문·원문·답변·예외 본문은 기록하지 않습니다. 단독 `prepareChunks`·자료 선수집 경로는 별도 Core 근거
+trace를 만들지 않습니다. 기존 문서 준비·캐시·DB 저장·응답 검증·오류 상태와 재시도 정책은 유지합니다.
+
+무료 검증은 `SupportProgramEvidenceTracingTest`의 실제 Service→Facade→Client와 HTTP 대역,
+AI 세 HTTP 경로 및 Langfuse 저장·재조회를 조합합니다. 실제 Core 서버와 AI·Langfuse를 한 번에 거치는
+상세 공고 E2E, 검색/답변 품질 점수와 Ops 평가 계약은 후속 범위입니다.
+[검증 명령과 한계](../../infrastructure/llmops/README.md#상세-공고-rag-추적-검증)를 참고하세요.
 
 ### 기존 기능 검증
 

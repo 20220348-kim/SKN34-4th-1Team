@@ -167,6 +167,7 @@ def build_application_container(
     evidence_service = SupportProgramEvidenceService(
         openai_client,
         qdrant_client,
+        tracing=llm_tracing,
         embedding_model=settings.openai_embedding_model,
         embedding_dimensions=settings.openai_embedding_dimensions,
         embedding_timeout_seconds=settings.embedding_timeout_seconds,

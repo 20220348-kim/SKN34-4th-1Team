@@ -69,7 +69,7 @@ export function OpsApp() {
       <Link to={listPath} className="text-lg font-extrabold tracking-tight text-brand-primary">GovBiz <span className="ml-2 text-sm font-semibold text-sample-muted">LLMOps</span></Link>
       <nav aria-label="운영 메뉴" className="flex flex-wrap items-center gap-4 text-sm">
         <Link to="/" className={styles.mutedLink}>서비스 홈</Link>
-        {session?.user && session.search_traces_url && <a href={session.search_traces_url} target="_blank" rel="noopener noreferrer" className={styles.mutedLink} title="Langfuse에서 support-program-search 또는 assistant-agent 이름으로 필터하세요. 별도 로그인이 필요합니다.">검색·도우미 실행 추적 ↗</a>}
+        {session?.user && session.search_traces_url && <a href={session.search_traces_url} target="_blank" rel="noopener noreferrer" className={styles.mutedLink} title="Langfuse에서 support-program-search, assistant-agent, support-program-evidence 이름으로 필터하세요. 별도 로그인이 필요합니다.">AI 실행 추적 ↗</a>}
         {(session?.user || denied) && <><span>{session?.user?.username}</span><button className={styles.secondaryButton} onClick={() => void signOut()} disabled={loggingOut}>로그아웃</button></>}
       </nav>
     </header>

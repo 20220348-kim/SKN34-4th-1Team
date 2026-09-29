@@ -10,6 +10,7 @@ import ai.govbiz.core.supportprogram.service.dto.SupportProgramEvidenceAnswerRes
 import ai.govbiz.core.supportprogram.service.dto.SupportProgramEvidenceAnswerStatus
 import ai.govbiz.core.supportprogram.service.dto.SupportProgramEvidenceCitationResult
 import ai.govbiz.core.supportprogram.service.evidence.SupportProgramEvidenceChunk
+import ai.govbiz.core.supportprogram.helper.SupportProgramEvidenceTracingHelper
 import kotlin.math.min
 import org.springframework.stereotype.Component
 
@@ -17,6 +18,7 @@ import org.springframework.stereotype.Component
 @Component
 class AiSupportProgramEvidenceFacade(
     private val client: AiSupportProgramEvidenceClient,
+    private val tracing: SupportProgramEvidenceTracingHelper = SupportProgramEvidenceTracingHelper(),
 ) {
     fun answer(
         question: String,
@@ -30,31 +32,35 @@ class AiSupportProgramEvidenceFacade(
         }
 
         val chunkRequests = chunks.map(::toChunkRequest)
-        val indexed = client.indexChunks(AiSupportProgramEvidenceIndexRequest(chunkRequests))
-        if (indexed.indexedCount != chunks.size) {
-            throw AiServiceCallException.invalidResponse("AI evidence did not acknowledge every chunk", null)
+        tracing.observe("core.index") {
+            val indexed = client.indexChunks(AiSupportProgramEvidenceIndexRequest(chunkRequests))
+            if (indexed.indexedCount != chunks.size) {
+                throw AiServiceCallException.invalidResponse("AI evidence did not acknowledge every chunk", null)
+            }
         }
 
-        val searched = client.searchChunks(
-            AiSupportProgramEvidenceSearchRequest(
-                question = question,
-                eligibleChunks = chunkRequests.map(AiSupportProgramEvidenceChunkRequest::reference),
-                limit = min(MAX_RETRIEVED_CHUNKS, chunks.size),
-            ),
-        )
-        if (searched.question != question) {
-            throw AiServiceCallException.invalidResponse("AI evidence returned a different question", null)
+        val retrieved = tracing.observe("core.search") {
+            val searched = client.searchChunks(
+                AiSupportProgramEvidenceSearchRequest(
+                    question = question,
+                    eligibleChunks = chunkRequests.map(AiSupportProgramEvidenceChunkRequest::reference),
+                    limit = min(MAX_RETRIEVED_CHUNKS, chunks.size),
+                ),
+            )
+            if (searched.question != question) {
+                throw AiServiceCallException.invalidResponse("AI evidence returned a different question", null)
+            }
+            requireRetrievedChunks(searched.matches, chunks.associateBy(SupportProgramEvidenceChunk::id))
         }
 
-        val candidatesById = chunks.associateBy(SupportProgramEvidenceChunk::id)
-        val retrieved = requireRetrievedChunks(searched.matches, candidatesById)
-        val answered = client.answer(
-            AiSupportProgramEvidenceAnswerRequest(
-                question = question,
-                chunks = retrieved.map { chunk -> toChunkRequest(chunk).answerInput() },
-            ),
-        )
-        return validateAnswer(answered.answer, answered.answerStatus, answered.citationChunkIds, retrieved, sourceUrl)
+        val answered = tracing.observe("core.answer") {
+            client.answer(AiSupportProgramEvidenceAnswerRequest(
+                question = question, chunks = retrieved.map { chunk -> toChunkRequest(chunk).answerInput() },
+            ))
+        }
+        return tracing.observe("core.validate") {
+            validateAnswer(answered.answer, answered.answerStatus, answered.citationChunkIds, retrieved, sourceUrl)
+        }
     }
 
     /** 청크를 색인만 합니다. 도우미 관심 공고 질문과 원문 선수집이 검색 전에 부릅니다. */

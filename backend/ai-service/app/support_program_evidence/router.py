@@ -15,6 +15,7 @@ from app.support_program_evidence.models import (
     SupportProgramEvidenceSearchResponse,
 )
 from app.support_program_evidence.service import SupportProgramEvidenceService
+from app.tracing import remote_parent
 
 
 router = APIRouter(prefix="/internal/v1/support-program-evidence", tags=["internal"])
@@ -39,13 +40,14 @@ def get_support_program_evidence_answer_service(
 @router.put("/chunks", response_model=SupportProgramEvidenceBatchResponse)
 async def index_chunks(
     payload: SupportProgramEvidenceBatchRequest,
+    request: Request,
     service: Annotated[
         SupportProgramEvidenceService,
         Depends(get_support_program_evidence_service),
     ],
 ) -> SupportProgramEvidenceBatchResponse:
     try:
-        return await service.index_chunks(payload)
+        return await service.index_chunks(payload, **remote_parent(request.headers.get("traceparent")))
     except SupportProgramEvidenceError as error:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -56,13 +58,14 @@ async def index_chunks(
 @router.post("/search", response_model=SupportProgramEvidenceSearchResponse)
 async def search_evidence(
     payload: SupportProgramEvidenceSearchRequest,
+    request: Request,
     service: Annotated[
         SupportProgramEvidenceService,
         Depends(get_support_program_evidence_service),
     ],
 ) -> SupportProgramEvidenceSearchResponse:
     try:
-        return await service.search(payload)
+        return await service.search(payload, **remote_parent(request.headers.get("traceparent")))
     except SupportProgramEvidenceError as error:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -73,13 +76,14 @@ async def search_evidence(
 @router.post("/answers", response_model=SupportProgramEvidenceAnswerResponse)
 async def answer_with_evidence(
     payload: SupportProgramEvidenceAnswerRequest,
+    request: Request,
     service: Annotated[
         SupportProgramEvidenceAnswerService,
         Depends(get_support_program_evidence_answer_service),
     ],
 ) -> SupportProgramEvidenceAnswerResponse:
     try:
-        return await service.answer(payload)
+        return await service.answer(payload, **remote_parent(request.headers.get("traceparent")))
     except SupportProgramEvidenceError as error:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
