@@ -283,7 +283,7 @@ Compose가 Ops와 실행기에 같은 값을 전달하고, 실행기는 `http://
 새 응답 생성은 기존 `govbiz-ops-evidence-evaluation/saved-capture` deployment의 명시적 live 모드다.
 기존 요청·북마크 호환을 위해 deployment 이름을 유지한다. 기본 실행 방식은 replay, live 활성화는 false다.
 
-1. 위 `dc build` → `dc run --rm ops-service python manage.py migrate --noinput`로 최신 코드와 migration `0013_budget_change_audit`까지 반영한다.
+1. 위 `dc build` → `dc run --rm ops-service python manage.py migrate --noinput`로 최신 코드와 migration `0014_budget_cleanup`까지 반영한다.
 2. 전송할 자료와 예산을 승인한 후 Git에서 제외된 `.env.ops`에 `LLMOPS_LIVE_ENABLED=true`,
    `LLMOPS_LIVE_MODEL=gpt-6-luna`, `OPENAI_API_KEY=<승인된 프로젝트의 키>`를 설정한다.
    키를 커밋하거나 브라우저·Prefect 인자로 전송하지 않는다. 키는 evaluation-runner에만 주입된다.
@@ -545,6 +545,67 @@ Django 설정·migration 정합성, 캡처 목록 경로·워크플로 구문을
 최초 6건 검증에서는 인증 API 503과 Langfuse 점수 저장의 읽기 시간 초과가 발생해 실행이 실패했다.
 서버 응답 확인 후 단독 재실행은 통과했으며, 실패 이력과 엄격한 오류 처리는 유지했다.
 새 모델 호출은 0회다. 이 비교 변경의 전체 원격 CI와 운영 배포는 아직 수행하지 않았다.
+
+### 예산 조회 개발 환경 적용 — 2026-09-29
+
+`main / 4339f7c`의 예산 조회·감사를 기존 개발 DB에 적용했다. Ops 이미지를 다시 빌드하고
+`0011_cumulative_budget`, `0012_evaluation_cancellation`, `0013_budget_change_audit`를 적용했다.
+적용 전후 평가 실행은 **19건 → 19건**이며 기존 DB·결과 볼륨은 유지했다.
+예산·예약·감사 행은 각각 0건이다. 장부 조회는 `state=unconfigured`, 한도·할당·잔여는 null,
+`legacy_live_run_count=2`를 반환했다. 과거 live 실행에 예약이나 사용량을 소급 생성하지 않았다.
+
+이번 확인은 **조회용 개발 환경**이다. Web `localhost:5173`, Core `localhost:8080`,
+Ops `localhost:18001`을 실행했고 Prefect는 정지 상태로 유지했다. Core는 기존 계정 DB와
+세션 서명 키를 재사용했다. 확인에 필요한 인증 기능을 실행하면서 외부 동기화·메일·큐·AI 실행은
+비활성화했고, 조회와 무관한 Core Flyway migration도 자동 적용하지 않았다.
+따라서 전체 서비스 실행·평가 접수·Prefect 상태 동기화까지 정상이라는 의미는 아니다.
+
+실제 읽기 요청으로 아래를 확인했다.
+
+- Core health `200`, 미인증 관리자 세션 `401`.
+- Ops 컨테이너에서 `host.docker.internal:8080`의 Core 관리자 세션 API에 연결되며 미인증 `401`.
+- Vite를 경유한 예산 요약·예약 목록·실행별 예산의 세 GET API 모두 미인증 `401` 및 `Cache-Control: no-store`.
+- 브라우저의 `/ops/evaluations` 접근은 기존 `/login?next=%2Fops%2Fevaluations` 화면으로 이동.
+
+이후 기존 관리자로 로그인된 실제 React 화면에서 아래를 확인했다.
+
+- 목록: 누적 한도 미설정, 과거 모델 실행의 예약 누락 2건, 기존 실행 이력 19건 표시.
+- 예약·한도 변경 이력을 펼치면 각각 기록 없음 표시. 조회 시각은 15초 간격으로 갱신.
+- 과거 live `c52fa671-2b67-4553-9d5e-6c043f4a5ea0`: 예약 기록 부재와 사용량을 0으로 판단할 수 없다는 안내.
+- replay `f5f5fe26-76cb-4979-a58b-b0735406be04`: 새 모델 호출을 예약하는 실행이 아니라는 안내.
+
+비밀번호 재설정·계정 생성·개발용 자동 로그인은 수행하지 않았다. 한도 변경·새 평가 요청·예약
+환급 없이 조회만 확인했다. 실제 예약과 감사 행이 있는 화면, 정산 중 갱신, 오류 시 마지막
+데이터 유지·세션 만료는 자동 테스트로 검증한 범위이며 이번 개발 DB의 실제 UI 검증과 구분한다.
+
+해당 병합 SHA의 [GovBiz CI](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36526150717),
+[Ops CI](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36526150742),
+[LLMOps CI](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36526150749),
+[Catalog separation CI](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36526150763)는 성공했다.
+[Infra CI](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36526150724)는 Helm 버전 문제로
+실패했으며, 로컬 보완과 검증 상태는 [후속 전략](../../docs/llmops-next-development-plan.md#현재-구현--예산-조회감사-및-infra-ci-보완)에 기록한다.
+이 개발 환경 적용을 필수 CI 전체 통과나 운영 배포 완료로 표시하지 않는다.
+
+### 종료 예약 정리의 로컬 선택 검증 — 2026-09-29
+
+추가 개발한 `cleanup_evaluation_budget`는 기본 미리보기와 명시적 `--apply`를 분리한다.
+소유권을 넘기거나 모델을 다시 호출하지 않고, Prefect 종료 증거와 장부를 대조해 미승인 몫·확정
+출력 차액만 반환한다. 원본 호출·미확인 최대 출력 몫은 유지한다. 새 감사 테이블 `0014`와
+실행별 GET 응답·React 읽기 표시를 추가했다. 상세 계약은 [Ops README](../../backend/ops-service/README.md#종료된-예약의-미사용-몫-정리)에 있다.
+
+Python 3.12 검사 컨테이너와 일회용 MySQL 8.4에서 정리·기존 예산·조회·취소 **74개**가
+통과했다. 로컬 DB 검증은 `manage.py test apps.evaluations.test_budget_cleanup
+apps.evaluations.test_budget_reporting apps.evaluations.test_budget apps.evaluations.test_cancellation
+--noinput` 범위다. 초기 73개 이후 경합 회귀 1개를 추가해 정리 19개를 다시 확인했으며 중복 합산하지 않았다.
+변경한 무료 도구 검증은 `test_cancellation_smoke.py` **45개**가 통과했다. 첫 실행에서 localhost
+바인딩 제한으로 실행되지 못한 HTTP 대역 테스트는 로컬 포트 사용이 가능한 환경에서 재검증했다.
+React `BudgetPanel.test.tsx`와 `App.ops.test.tsx`는 합계 **65개**, 타입·Oxlint·Ruff·포맷,
+Django 설정·migration 정합성과 실행 명세 검사가 통과했다. Ruff는 이미 설치된 Python 3.12
+환경에서 `uv run --locked --no-sync`로 실행하고 DB 검증은 MySQL 드라이버가 있는 검사 이미지에서 수행했다.
+
+기존 개발 DB는 `0013` 상태로 유지했으며 실제 예약 정리·유료 호출은 수행하지 않았다.
+새 정리 이력의 실제 개발 UI·확장한 12개 Prefect 통합 시나리오·최신 SHA 전체 CI는 아직
+미검증이다. 앞선 예산 조회 UI 검증과 이 새 기능의 자동 테스트 결과를 구분한다.
 
 ### 새 응답 생성 연결의 로컬 검증
 
@@ -892,12 +953,16 @@ proxy를 사용하지 않는다. Ops의 CSRF cookie와 header 검증은 그대�
 | 실제 완료와 뒤늦은 취소 요청 경합 | 실제 COMPLETED 보존, worker close와 취소 정리의 중복 환급 없음 |
 | 접수/취소 응답 유실 및 Ops 재기동 | 같은 flow 조회, 실행·모델 전송 증가 없음 |
 | 승인 응답 유실 | 승인 기록 1건·모델 대역 전송 0회, 불확실한 몫 보수적 유지 |
-| settle / close HTTP 실패 | FAILED 표시, 미확인 사용량/열린 예약 유지 |
+| settle HTTP 실패 | FAILED 표시, 미확인 사용량 유지 |
+| close HTTP 실패 후 CLI 정리 | 열린 예약 미리보기 무변경, 실제 종료 근거로 확정 출력 차액 반환, 재전송의 중복 반환 없음 |
+| settle·close 동시 실패 후 CLI 정리 | 미승인 몫만 반환, 미확인 호출 1회·출력 2,000 유지, 추가 모델 전송 없음 |
 | 별도 프로세스의 중복 claim / 동일 sequence 재승인 | 각각 거절, 기존 소유자만 모델 전송 |
 
 경합은 명시적 barrier로 제어한다. 실행 프로세스는 `/proc`의 PID와 시작 시각을 함께 비교해
 PID 재사용을 구분한다. 취소 상태를 강제로 CANCELLED로 덮어쓰지 않고, 제한 시간 초과는 실패다.
-close HTTP 실패 후 예약을 유지하는 현재 동작을 검증하며, 미확인 예약 복구 기능을 추가하지 않는다.
+close HTTP 실패 직후 전체 예약이 유지되는지 확인한 뒤, 별도 CLI 미리보기·적용·동일 요청
+재전송을 검증한다. 정리 전후 호출 원본과 모델 전송 이벤트는 그대로여야 한다. 사용량 보정이나
+새 실행은 수행하지 않는다. 명령·감사 계약은 [Ops README](../../backend/ops-service/README.md#종료된-예약의-미사용-몫-정리)에 있다.
 
 ```bash
 # 저장소 루트: Python 3.12, Linux 컨테이너가 가능한 Docker Engine + Compose 필요
@@ -911,8 +976,10 @@ uv run --locked --extra dev --group evaluation python -m pytest ../../infrastruc
 Ops 승인 → HTTP 모델 대역 → Ops 정산`이다. 완료 시 실제 보고서 생성과 Langfuse 저장도 거친다.
 도구가 만든 프로젝트와 볼륨만 마지막에 정리하며 기존 개발 프로젝트는 변경하지 않는다.
 
-[LLMOps CI](../../.github/workflows/llmops-ci.yml)의 기존 필수 job 안에서 11개 시나리오를 실행한다.
+[LLMOps CI](../../.github/workflows/llmops-ci.yml)의 기존 필수 job 안에서 12개 시나리오를 실행한다.
 JSON에는 실행/flow ID, 단계 상태, 승인·전송·정산 횟수, 예산 전후 값, 프로세스 종료 증거를 남긴다.
+종료 예약 정리를 수행한 두 시나리오는 Prefect 상태 ID/시각·실행 파라미터 해시·정리 전후 장부와
+동일 요청 재전송 결과도 검사한다. 이 추가 시나리오의 최신 SHA 실제 서버 실행 결과는 CI 확인 대상이다.
 실패하면 준비/실행 단계, 오류 종류·종료 코드, 캡처된 stderr의 생성 인증값 제거본,
 서비스 상태·health·종료 코드·게시 포트를 `diagnostics`에 보관한다. 컨테이너 환경변수·명령·
 healthcheck 원문과 HTTP 응답 stdout은 제외한다. 진단 조회 실패가 최초 오류를 가리지 않으며,

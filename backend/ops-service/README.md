@@ -166,7 +166,8 @@ React 평가 목록에는 전체 요약·실행별 예약·최근 한도 변경�
 구분하고 전체 응답에 `legacy_live_run_count`를 제공합니다. 이 실행의 사용량을 0으로 만들지 않습니다.
 replay/recovery 자체에는 새 모델 예약이 없어 `not_applicable`이며 원본 비용은 원본 장부를 확인합니다.
 
-배포 전 additive migration **`0013_budget_change_audit`**를 적용해야 합니다.
+최신 예산 상세 API 배포 전 additive migration **`0014_budget_cleanup`까지** 적용해야 합니다.
+`0013_budget_change_audit`는 한도 변경 감사를, `0014`는 종료 예약 정리 감사를 저장합니다.
 `set_evaluation_budget`에는 변경자·사유·요청 UUID가 필수입니다. `--actor`는 CLI 운영자가 입력하는
 식별자이며 Core 로그인으로 인증한 신원이 아닙니다. 위 예시의 `BUDGET_CHANGE_REQUEST_ID`는
 요청 전에 한 번 생성·보관한 UUID를 사용하고 **같은 요청 재시도에는 같은 값**을 전달합니다.
@@ -178,6 +179,56 @@ replay/recovery 자체에는 새 모델 예약이 없어 `not_applicable`이며 
 `BudgetPanel.test.tsx`, `App.ops.test.tsx`입니다. MySQL 동시 조회/정산·최초 한도 설정 경합·
 감사 실패 롤백, API 권한·페이지 경계, 화면의 미확인/0토큰 구분을 포함합니다.
 전체 Ops/MySQL·Web 빌드·실제 취소 서버 검증은 기존 필수 CI에서 계속 실행합니다.
+
+## 종료된 예약의 미사용 몫 정리
+
+취소 없이 실패하거나 실행기의 `close`가 실패해 열린 예약이 남았을 때 운영자가
+`cleanup_evaluation_budget`를 사용합니다. 기본값은 **쓰기 없는 미리보기**이며 `--apply`를
+명시해야 예약을 닫습니다. 새로운 production 의존성·모델 호출·실행 재개는 없습니다.
+기존 실행기의 `close`와 취소 종료 정리는 유지하며, 이 CLI는 이미 닫힌 예약에 이력을 소급 생성하지 않습니다.
+
+호출 흐름은 `운영자 CLI → Prefect 종료 증거 GET → Django → MySQL 예약·정리 감사`입니다.
+외부 조회는 transaction 밖에서 끝내고 `실행 → 전역 예산 → 예약` 순서로 잠급니다.
+잠금 안에서 소유자·명세·예약 변경 여부와 전체 장부 합계를 다시 대조합니다.
+
+- Prefect의 실행 ID·접수 UUID·전체 실행 파라미터·명세 해시·종료 상태 ID/시각을 확인합니다.
+  `COMPLETED`, `FAILED`, `CRASHED`, `CANCELLED`만 허용합니다. 로컬 DB 상태나 시간 경과만으로 정리하지 않습니다.
+- 미승인 호출 몫과 정산된 호출의 최대 출력 대비 차액만 반환합니다. 승인 후 미확인 호출은
+  최대 출력 몫을 그대로 유지합니다. 호출 번호가 끊기거나 전체 할당량이 상세와 다르면 거절합니다.
+- 정리 이후 기존 worker의 claim·authorize·settle은 거절됩니다. 늦은 사용량 증거를 반영하는
+  C2 보정은 별도 후속 기능이며, 미확인 예약을 자동으로 0원 처리하지 않습니다.
+- 변경자·사유·요청 UUID·종료 증거·당시 소유자/호출별 승인·정산·전후 장부를
+  `EvaluationBudgetCleanup`에 같은 transaction으로 기록합니다. 감사 저장 실패 시 정리도 롤백합니다.
+- 같은 요청 UUID/실행/변경자/사유의 재전송은 원래 기록을 반환합니다. 이때 Prefect가 내려가도
+  새 조회·반환을 하지 않습니다. UUID의 내용 변경은 거절하고 예약당 정리 감사는 DB에서 한 건으로 제한합니다.
+- `--actor`는 CLI 운영자의 자기 기입 값이며 Core에서 인증한 신원이 아닙니다.
+
+```bash
+# backend/ops-service: 운영자가 확인한 실행·사유·고정 요청 UUID. 예시는 실행 승인이 아닙니다.
+uv run --locked python manage.py cleanup_evaluation_budget \
+  --run-id "$CLEANUP_RUN_ID" --actor "$BUDGET_OPERATOR" \
+  --reason "$CLEANUP_REASON" --request-id "$CLEANUP_REQUEST_ID"
+
+# 미리보기의 반환량·미확인 유지분을 확인한 뒤 같은 인자에 --apply를 추가합니다.
+uv run --locked python manage.py cleanup_evaluation_budget \
+  --run-id "$CLEANUP_RUN_ID" --actor "$BUDGET_OPERATOR" \
+  --reason "$CLEANUP_REASON" --request-id "$CLEANUP_REQUEST_ID" --apply
+```
+
+미리보기와 적용 사이에 승인·정산이 진행되면 적용 시점의 잠긴 장부로 다시 계산합니다.
+응답의 `applied=false`는 미리보기, `applied=true/replayed=false`는 이번 적용,
+`applied=true/replayed=true`는 기존 정리 결과의 재조회입니다. 미리보기 자체는 요청 UUID를 예약하지 않습니다.
+6회 × 2,000 예약에서 확정 50토큰 1회와 미확인 1회가 있으면 **4회·9,950토큰 반환**, **2회·2,050토큰 유지**입니다.
+이는 누적 예약 한도 반환이며 결제 환불이 아닙니다.
+
+실행별 예산 GET 응답의 `cleanup`에는 공개 감사 항목을 추가했고, React 상세는 반환분·미확인
+유지분·변경자·사유·Prefect 종료 근거를 읽기 전용으로 표시합니다. 없으면 null이며 브라우저에
+실행기 소유자 UUID를 노출하지 않습니다. 정리·한도 변경 버튼은 제공하지 않습니다.
+
+`apps.evaluations.test_budget_cleanup`은 미리보기, 정합성 거절, 멱등·rollback,
+승인/정산/worker close 경합을 실제 MySQL 8.4에서 검증합니다. 실제 Prefect 응답과
+`close` 실패·`settle/close` 동시 실패 후 정리 경로는 [기존 통합 도구](../../infrastructure/llmops/README.md#실제-취소예산-통합-검증)의
+LLMOps CI에서 검증합니다. 해당 CI 성공 전에는 실제 서버 통합 검증 완료로 표시하지 않습니다.
 
 ## 평가 취소
 

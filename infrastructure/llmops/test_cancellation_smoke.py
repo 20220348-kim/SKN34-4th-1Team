@@ -143,6 +143,72 @@ def test_unknown_usage_keeps_full_cap():
     )["retained_delta"] == [1, 2000]
 
 
+def test_settle_and_close_failure_does_not_forward_either_write(monkeypatch):
+    state = probe.Probe()
+    run_id = str(uuid4())
+    state.configure(run_id, {"fault": "settle_and_close_error"})
+    forwarded = Mock()
+    monkeypatch.setattr(probe, "exchange", forwarded)
+    for action in ("settle", "close"):
+        assert (
+            state.forward(run_id, action, "http://ops-service:8000/internal", "POST", b"{}", {})[0]
+            == 503
+        )
+    forwarded.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "defect",
+    [
+        None,
+        "unknown_refunded",
+        "calls_changed",
+        "new_send",
+        "not_closed",
+        "not_terminal",
+        "bad_global",
+    ],
+)
+def test_cleanup_evidence_rejects_unsafe_release(defect):
+    before = {
+        "allocated": [6, 12000],
+        "closed": False,
+        "calls": [{"sequence": 0, "output_tokens": None}],
+    }
+    after = {**before, "allocated": [1, 2000], "closed": True}
+    record = {
+        "applied": True,
+        "evidence": {"state_type": "FAILED"},
+        "before": {"global_calls": 6, "global_output_tokens": 12000},
+        "after": {
+            "global_calls": 1,
+            "global_output_tokens": 2000,
+            "unknown_calls": 1,
+            "unknown_output_tokens": 2000,
+        },
+    }
+    events_before = [{"stage": "model_sent"}]
+    events_after = list(events_before)
+    if defect == "unknown_refunded":
+        record["after"]["unknown_output_tokens"] = 0
+    elif defect == "calls_changed":
+        after["calls"] = []
+    elif defect == "new_send":
+        events_after.append({"stage": "model_sent"})
+    elif defect == "not_closed":
+        after["closed"] = False
+    elif defect == "not_terminal":
+        record["evidence"]["state_type"] = "RUNNING"
+    elif defect == "bad_global":
+        after["allocated"] = [0, 0]
+    args = dict(unknown_calls=1, events_before=events_before, events_after=events_after)
+    if defect:
+        with pytest.raises(AssertionError):
+            smoke.verify_cleanup(record, before, after, **args)
+    else:
+        smoke.verify_cleanup(record, before, after, **args)
+
+
 @pytest.mark.parametrize(
     "defect",
     [

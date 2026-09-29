@@ -84,6 +84,7 @@ jobs:
           (cd "$tool_dir" && echo "$(< kubectl.sha256)  kubectl" | sha256sum --check)
           chmod +x "$tool_dir/kubectl"
           echo "$tool_dir" >> "$GITHUB_PATH"
+      # This job also discovers test_deployment.py, which renders with the pinned Helm CLI.
       - name: Install pinned Helm with checksum verification
         run: |
           set -euo pipefail
@@ -94,6 +95,10 @@ jobs:
           sha256sum --check helm-v4.3.0-linux-amd64.tar.gz.sha256sum
           tar -xzf helm-v4.3.0-linux-amd64.tar.gz
           echo "$tool_dir/linux-amd64" >> "$GITHUB_PATH"
+      - name: Verify pinned Helm version
+        run: |
+          actual_helm_version="$(helm version --template '{{.Version}}')"
+          test "$actual_helm_version" = "v4.3.0"
       - name: Test repository, manifest policies and smoke-test safety guards
         run: python -B -m unittest discover -s scripts -p 'test_*.py'
       - name: Render local overlays and validate policies without a cluster
@@ -120,6 +125,10 @@ jobs:
           sha256sum --check helm-v4.3.0-linux-amd64.tar.gz.sha256sum
           tar -xzf helm-v4.3.0-linux-amd64.tar.gz
           echo "$tool_dir/linux-amd64" >> "$GITHUB_PATH"
+      - name: Verify pinned Helm version
+        run: |
+          actual_helm_version="$(helm version --template '{{.Version}}')"
+          test "$actual_helm_version" = "v4.3.0"
       - name: Test chart boundaries and rejected settings
         run: |
           python -B -m unittest discover -s scripts -p 'test_check_msa.py'

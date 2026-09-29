@@ -95,6 +95,15 @@ python3 -m venv .tools/venv
 git diff --check
 ```
 
+Infra CI의 `kubernetes-manifests` 작업은 `test_*.py` 전체를 검색하므로 배포 후보의 실제
+Helm 렌더링 테스트도 실행합니다. `helm-gitops` 작업과 **각각** Helm 4.3.0을 설치하고,
+배포 아카이브 체크섬 검증과 실행 버전 확인을 테스트 전에 수행합니다. 다른 작업의 설치 결과나
+GitHub 호스트에 기본 설치된 Helm 버전에 의존하지 않습니다.
+
+`test_ci_toolchain.py`는 두 작업의 설치·검증·테스트 순서와 필수 실행을 확인하고, 다른 Helm
+버전 및 CLI 실패가 버전 검사에서 거절되는지 검증합니다. 기존 Helm 렌더링 테스트와 유료 실행
+설정 거절 검증은 그대로 유지합니다. 이 검증은 오프라인 렌더링이며 실제 배포나 동기화가 아닙니다.
+
 Windows에서는 Docker Desktop Linux 컨테이너와 WSL2를 사용합니다.
 **팀원 Windows에서 전체 절차가 검증되었다는 뜻은 아닙니다.** 위 POSIX 명령은 WSL용이며
 네이티브 PowerShell 자동 설치 도구는 없습니다. Intel Mac과 Linux amd64 이미지가 기준입니다.
