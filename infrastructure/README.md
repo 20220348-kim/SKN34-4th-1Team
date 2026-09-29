@@ -6,6 +6,8 @@ Kubernetes·Helm·Argo CD 설정은 같은 저장소의 [`gitops/`](gitops/READM
 공고 수집을 별도 프로세스·DB로 분리한 선택 경로는 `compose.catalog.yaml` overlay와
 [Catalog 서비스 분리 안내](../docs/catalog-service-extraction.md)를 사용합니다.
 `python3 -B infrastructure/scripts/verify-catalog-separation.py`는 실제 키·기존 볼륨 없이 분리 경로를 검증합니다.
+로컬 Langfuse까지 연결하는 선택 옵션 `--search-traces-output`과 검증 범위는
+[실제 Core 검색 trace 검사](llmops/README.md#실제-core를-거치는-검색-trace-통합-검사)에 정리했습니다.
 아래 기본 Compose 설명과 운영 `compose.prod.yaml`은 기존 embedded 경로이며 자동으로 전환되지 않습니다.
 
 이 문서의 `compose.yaml`은 **이 디렉터리의 기존 웹·Core·AI 구성**을 뜻합니다.

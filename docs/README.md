@@ -55,7 +55,7 @@ Windows의 로컬 소스 빌드·기동·웹 연결 확인은 [WSL2 수동 설�
 
 | 문서 | 확인할 내용 |
 |---|---|
-| [GitOps 검수·후속 전략](gitops-strategy-review-20260929.md) | 영상 주제 대조, 배포 설정의 CI 우회 가능성, 원격 통제·CI 실측, 전체 배포 상태 승격과 단계별 완료 기준 |
+| [GitOps 검수·후속 전략](gitops-strategy-review-20260929.md) | 당시 배포·CI 검수 기록. deploy/fork 도입 제안은 현재 미사용이며 최신 LLMOps 전략과 구분 |
 | [Windows Kubernetes 수동 설치](windows-kubernetes-setup.md) | Ubuntu 연동, 도구 설치, GHCR 없는 소스 빌드·kind 배포, Windows 웹 연결, 재시작·문제 해결 |
 | [현재 로컬 시스템 아키텍처](assets/architecture/README-local.md) | 개인 포크·같은 저장소의 Helm·비공개 GHCR·로컬 kind·개발 모드/GitOps 구분 |
 | [통합 전 Kubernetes 아키텍처](assets/architecture/README-kubernetes.md) | 2026-09-20 GovBiz-Team 두 저장소와 Mac portfolio 실행 기록 |
@@ -74,7 +74,7 @@ C01 문서의 수동 조건 입력 UI와 개발 전략의 최초 UI 계획은 �
 | 문서 | 확인할 내용 |
 |---|---|
 | [기획 정합성·국내 경쟁 전략·개발 백로그](development-strategy-20260907.md) | 기획서 요구별 현재 차이, 국내 경쟁군 근거, P0/P1 작업·선행 조건·완료 기준·출시 게이트 |
-| [LLMOps 후속 개발 전략](llmops-next-development-plan.md) | skn-58 기준 구현·CI·로컬 적용·품질 증거 구분, 환경 복구·도우미 실패 사용량 보존과 전체 추적·평가의 후속 조건 |
+| [LLMOps 후속 개발 전략](llmops-next-development-plan.md) | skn-63 기준 배포 브랜치 방식 제외, 기준 커밋 CI 확인, 실제 Core 추적·사람 검토 기준·예산 확대의 후속 조건 |
 | [Langfuse 기반 LLMOps 도입·구현 이력](langfuse-adoption-strategy.md) | 다섯 평가 도구의 최초 설계와 커밋별 구현·검증 기록 |
 | [신청 문서 작성 도우미 설계](application-preparation-design.md) | skn-89 최초 검수 기준과 skn-96 기업마당 공고 기반 공식 첨부·문항 발견, 작성 보조 계약 |
 | [중복 지원·수혜 검토 설계](duplicate-support-review-design.md) | skn-59 입력·실행 API, 공식 첨부 수집·파싱·단일 Agent·원문/결과 보존과 검증·한계 |

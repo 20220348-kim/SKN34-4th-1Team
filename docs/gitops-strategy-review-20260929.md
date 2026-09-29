@@ -5,6 +5,7 @@
 > `main`의 필수 CI·리뷰 0명 정책과 이미지 발행은 유지합니다.
 > 아래 최초 분석·G1 계획은 과거 기록이며 현재 실행 지침이 아닙니다.
 > [현재 적용 상태](../infrastructure/gitops/docs/deployment-candidates.md)를 따릅니다.
+> LLMOps 개발 순서는 [후속 개발 전략](llmops-next-development-plan.md)을 따릅니다.
 
 현재 구성은 **개인 포크의 로컬 개발·GitOps 실습 기반으로는 타당하다. 전체 LLMOps의 운영 배포가 완성됐다고 판단할 근거는 부족하다.** 가장 먼저 해결할 문제는 이미지 발행 가드와 실제 Argo 배포 대상의 불일치다. 이미지 CI가 실패해도 `main`의 Chart·values 변경은 별도로 Argo에 전달될 수 있다.
 

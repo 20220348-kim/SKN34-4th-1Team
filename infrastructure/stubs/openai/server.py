@@ -1,9 +1,44 @@
 """Deterministic HTTP test double; never a production AI fallback or quality benchmark."""
 
 import json
+import hashlib
+import os
 import re
+from threading import Lock
+import time
 from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+
+# Only the opt-in Core trace smoke's synthetic queries activate fault injection.
+TRACE_QUERY = re.compile(r"서울 AI PRIVATE-CORE-TRACE-[0-9a-f]{32}-(ok|fail|timeout)")
+TRACE_COUNTS: dict[str, dict[str, int]] = {}
+TRACE_LOCK = Lock()
+
+
+def record_trace_call(query: str, kind: str) -> str | None:
+    match = TRACE_QUERY.fullmatch(query)
+    if not match:
+        return None
+    with TRACE_LOCK:
+        counts = TRACE_COUNTS.setdefault(query, {"embedding": 0, "ranking": 0})
+        counts[kind] += 1
+    return match[1]
+
+
+def embedding_vector(text: str, dimensions: int) -> list[float]:
+    vector = [0.0] * dimensions
+    primary = topic(text)
+    vector[primary] = 1.0
+    if os.environ.get("CORE_TRACE_FIXTURE") == "true" and dimensions >= 3:
+        # One-hot fixtures tie every document in a topic, so real ANN search may
+        # return different top-k candidates and legitimately miss ranking cache.
+        # Distinguish synthetic texts deterministically only in this opt-in smoke.
+        digest = hashlib.sha256(text.encode()).digest()
+        for offset in (1, 2):
+            value = int.from_bytes(digest[(offset - 1) * 4:offset * 4], "big") / (2**32)
+            vector[(primary + offset) % dimensions] = 0.05 + 0.3 * value
+    return vector
 
 
 def topic(text: str) -> int:
@@ -204,6 +239,10 @@ def application_form_discovery_output(payload: dict) -> dict | None:
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
+        if self.path == "/trace-counts":
+            with TRACE_LOCK:
+                self.respond(200, TRACE_COUNTS)
+            return
         self.respond(200, {"status": "up"})
 
     def do_POST(self) -> None:
@@ -218,8 +257,8 @@ class Handler(BaseHTTPRequestHandler):
             dimensions = request.get("dimensions", 1536)
             data = []
             for index, value in enumerate(inputs):
-                vector = [0.0] * dimensions
-                vector[topic(value)] = 1.0
+                record_trace_call(value, "embedding")
+                vector = embedding_vector(value, dimensions)
                 data.append({"object": "embedding", "index": index, "embedding": vector})
             self.respond(200, {"object": "list", "model": request["model"], "data": data,
                                "usage": {"prompt_tokens": len(inputs), "total_tokens": len(inputs)}})
@@ -268,6 +307,12 @@ class Handler(BaseHTTPRequestHandler):
                 return
             # Match the Agent's keyed assessment contract. The production Service
             # attaches program IDs and calculates totals; the model does neither.
+            scenario = record_trace_call(payload["originalQuery"], "ranking")
+            if scenario == "fail":
+                self.respond(503, {"error": {"message": "PRIVATE-CORE-MODEL-ERROR"}})
+                return
+            if scenario == "timeout":
+                time.sleep(5)  # The trace smoke sets the AI model deadline to 2s.
             rankings = {}
             for candidate in payload["candidates"]:
                 relevant = topic(candidate["title"] + " " + candidate["summary"]) == topic(payload["originalQuery"])
@@ -330,7 +375,11 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
-        self.wfile.write(data)
+        try:
+            self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError):
+            # Expected when the timeout fixture's caller has already disconnected.
+            pass
 
     def log_message(self, _format: str, *_args: object) -> None:
         pass
