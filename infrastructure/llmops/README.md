@@ -8,7 +8,7 @@ AI Service의 `uv.lock`으로 고정한다. 요청 처리에는 Langfuse만 설�
 AI Service·Django Ops의 로컬·CI·Docker와 평가 실행기·Prefect 서버는 모두 Python 3.12를 사용한다.
 AI 프로젝트는 `>=3.12,<3.13`으로 제한하며 `.python-version`과 `uv.lock`에 맞춰 설치한다.
 
-## 개발 반영 현황 — 2026-09-28
+## 개발 반영 현황
 
 지금까지 개발한 기능과 로컬 검증 범위다. 아래 상세 절에는 실행 방법과 당시 검증 기록을 보존한다.
 
@@ -25,6 +25,12 @@ AI 프로젝트는 `>=3.12,<3.13`으로 제한하며 `.python-version`과 `uv.lo
 | 관리자 검토·비교 기준 | 질문·근거·후보/기준 답변 조회, 승인·수정 필요 의견과 검토자·이력 저장, 데이터셋별 기준 지정, 접수 시 기준 해시 고정·실행별 원본 복사 |
 | 품질 판정 | 기준 자료 검토와 응답 검토 분리, 정책·입력·검토 이력 고정, 실행 상태와 품질 상태 분리, 최신 품질 합격·전체 승인이 있는 실행만 기준 지정 |
 | 후처리 복구 | 완료된 응답을 재사용해 보고서·점수 등록만 새 실행에서 처리. 입력 해시 고정·복사, 원본 이력 보존, 동시 접수 차단·응답 유실 재확인. 추가 모델 호출 0회 |
+| 예산·취소·감사 | Ops live의 누적 호출/출력 예약, 취소·종료 확인, 예산 조회, 한도 변경 감사. 입력/금액/기간 및 전체 서비스 지출 한도와 구별 |
+| 종료 정리·사용량 보정 | C1의 종료 증거 기반 미사용 예약 정리, C2의 서명된 실행기 응답 사용량 보정·원본/감사 보존·React 조회. 최신 CI와 대상 환경 적용은 별도 확인 |
+
+2026-09-29 `skn-58 / 762be64`의 코드·원격 CI·로컬 실행 환경을 대조한 현재 상태는
+[후속 개발 전략의 현재 판단](../../docs/llmops-next-development-plan.md#현재-판단과-확인-범위)에 정리했다.
+아래 초기 검증 기록을 현재 환경 적용 완료로 해석하지 않는다.
 
 상세 계약은 [Ops README](../../backend/ops-service/README.md#응답-검토와-비교-기준),
 화면 사용법은 [Web README](../../frontend/web/README.md#llmops-운영-화면--react--django),
@@ -35,7 +41,7 @@ AI 프로젝트는 `>=3.12,<3.13`으로 제한하며 `.python-version`과 `uv.lo
 사례별 검토와 실행 명세 고정은 구현했다. `skn-35 / 5626586`의 Ops CI에서 새 접수 프로필이 빠진
 기존 검토 테스트 1개가 실패했고 `b32efa1`에서 수정해 필수 CI 5개가 모두 통과했다.
 후속 품질 판정 기능은 로컬 구현·검증을 마쳤으며 `skn-36`의 원격 CI 결과는 별도로 확인한다.
-남은 범위는 실제 사람의 평가 자료 검토·확장과 현재 모델 기준 확보, 취소·정기 실행·알림,
+남은 범위는 최신 CI·환경 적용, 실제 사람의 평가 자료 검토·확장과 현재 모델 기준 확보, 정기 실행·알림,
 Core부터 이어지는 전체 RAG 추적과 Ops 평가 연동, 운영 배포다. 별도 도구의 과거 전체 RAG 검증 기록과
 현재 Ops의 고정 근거 평가는 구별한다. `skn-23`의 `fba8aeb`에서 원격 Ops CI가 실행됐으며,
 단독·루트 Compose의 평가 자료 마운트 누락으로 컨테이너 검토 테스트 7개가 실패했다.
@@ -110,6 +116,55 @@ dc run --rm ops-service python manage.py migrate_deployment
 dc up -d ops-service ops-sync evaluation-runner
 
 ```
+
+### 기존 개발 환경 복구 — 모델 호출 없이 확인
+
+서비스 이미지가 다른 시점에 빌드됐거나 Prefect가 중지된 경우에는 다음 순서로 복구한다.
+이 절은 기존 Compose 개발 환경용이며 Kubernetes 배포나 품질 승인 절차가 아니다.
+
+1. Ops의 진행 중 평가, Prefect의 미완료 작업·활성 스케줄을 먼저 확인한다. 남은 작업이 있으면
+   실행기를 무작정 시작하거나 기존 요청의 명세·상태를 덮어쓰지 않는다.
+2. `.env.ops`의 `LLMOPS_LIVE_ENABLED=false`를 유지한다. 복구용 실행기는 아래처럼
+   `OPENAI_API_KEY=`도 덮어써 시작한다. 기존 비밀키 파일이나 예산·검토 기록은 초기화하지 않는다.
+3. 새 이미지를 빌드하고 Ops API·ops-sync·실행기를 잠시 중지한다. Ops DB SQL, 결과 volume,
+   중지된 Prefect 저장소를 접근 권한이 제한된 로컬 경로에 백업한다. Git에 백업을 넣지 않는다.
+   SQL 백업은 격리된 MySQL 8.4에 복원하여 행 수·해시를 대조한 뒤 원본 DB에 migration을 적용한다.
+4. `migrate_deployment`로 **0015까지** 전진 적용하고 기존 평가·검토·감사 데이터 보존을 확인한다.
+   신규 모델의 Django content type·권한 추가는 기존 업무 행 변경과 구분한다.
+5. Prefect와 Ops의 준비 상태를 확인한 다음 동기화·실행기를 시작한다.
+
+```bash
+# 위 dc 함수 사용. 사전 점검·백업·복원 검증 후 실행한다.
+dc run --rm --no-deps ops-service python manage.py migrate_deployment
+LLMOPS_LIVE_ENABLED=false OPENAI_API_KEY= dc up -d --no-deps prefect ops-service
+# Ops /api/v1/health/ready, Prefect /api/health가 정상인지 확인한 뒤:
+LLMOPS_LIVE_ENABLED=false OPENAI_API_KEY= dc up -d --no-deps ops-sync evaluation-runner
+dc exec -T ops-service python manage.py check_evaluation_runtime
+```
+
+6. 기존 Core 관리자로 React에 로그인해 **저장 응답 재평가**를 접수한다. 완료·호출 0회·보고서 표시·
+   Langfuse 점수 저장을 확인한다. 백그라운드 동기화는 완료되기 전에 목록으로 돌아가 검증한다.
+   상세 조회 자체도 상태를 갱신하므로 상세 화면의 완료 표시만으로 ops-sync 동작을 입증하지 않는다.
+7. 진행 중 작업이 없는 상태에서 세 서비스를 재시작하고 이력·결과·명세 일치가 유지되는지 확인한다.
+   무료 재현 성공을 현재 모델 품질 합격이나 유료 실행 승인으로 처리하지 않는다.
+
+2026-09-29 로컬 복구에서는 Ops DB 21개 테이블의 백업 복원 일치를 확인하고 `0014~0015`를 적용했다.
+기존 20개 데이터 테이블의 행은 보존됐으며, 신규 빈 감사 테이블 2개와 Django 메타데이터
+(content type 2개·권한 8개)만 추가됐다. 기존 평가 19건은 보존했고 무료 검증 이력 2건을 새로 추가했다.
+검증 자료와 비공개 백업은 Git 제외 경로 `work/llmops-recovery-20260929/`에 둔다.
+
+| 무료 검증 | 실행 ID | 확인 결과 |
+|---|---|---|
+| 가상 TC01~TC06 재평가 | `da6c2183-e080-43de-a5ae-ebdd8d19c75c` | 6/6 완료, 모델 호출 0회, Evidently 브라우저 표시, Langfuse 점수 22개 재조회 |
+| 과거 프롬프트 공통 E01 비교 | `05f30b8d-8ced-4dfa-aa5d-4adc226f6ea1` | 완료 전에 목록으로 이동한 뒤 자동 완료 반영, ops-sync 처리 로그, 점수 4개 재조회, 모델 호출 0회 |
+
+Ops·sync·실행기는 현재 작업 트리로 재빌드했고 Ops/실행기 release 파일의 SHA-256 일치를 확인했다.
+세 서비스 재시작 후에도 결과·점수 26개·요청당 Prefect 부모 실행 1건을 확인했다. 원래 결과 파일
+123개의 해시는 백업과 일치했고 총 평가 21건·지정 기준 0건·예산 예약 0건을 유지했다.
+최종 읽기 검증은 `work/llmops-recovery-20260929/final-verification.json`에 저장했다.
+개발 환경 적용 증거이며 수정 코드의 원격 필수 CI 통과를 대신하지 않는다.
+
+### React 접속과 평가 실행
 
 React 웹은 별도 터미널에서 저장소 루트 기준으로 실행한다(Node 24.x/pnpm 11.22.x).
 
@@ -291,7 +346,7 @@ Compose가 Ops와 실행기에 같은 값을 전달하고, 실행기는 `http://
 새 응답 생성은 기존 `govbiz-ops-evidence-evaluation/saved-capture` deployment의 명시적 live 모드다.
 기존 요청·북마크 호환을 위해 deployment 이름을 유지한다. 기본 실행 방식은 replay, live 활성화는 false다.
 
-1. 위 `dc build` → `dc run --rm ops-service python manage.py migrate --noinput`로 최신 코드와 migration `0014_budget_cleanup`까지 반영한다.
+1. 위 `dc build` → `dc run --rm ops-service python manage.py migrate_deployment`로 최신 코드와 migration `0015_usage_correction`까지 반영한다.
 2. 전송할 자료와 예산을 승인한 후 Git에서 제외된 `.env.ops`에 `LLMOPS_LIVE_ENABLED=true`,
    `LLMOPS_LIVE_MODEL=gpt-6-luna`, `OPENAI_API_KEY=<승인된 프로젝트의 키>`를 설정한다.
    키를 커밋하거나 브라우저·Prefect 인자로 전송하지 않는다. 키는 evaluation-runner에만 주입된다.

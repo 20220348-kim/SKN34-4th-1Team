@@ -16,7 +16,6 @@ from app.assistant_agent.models import SavedProgramDocument
 from app.assistant_agent.retriever import RetrievedChunk
 from app.assistant_agent.tools import SECRET_HEADER, TOKEN_HEADER
 
-
 HANG = object()
 
 
@@ -57,7 +56,9 @@ class ScriptedChatModel(BaseChatModel):
             await asyncio.Event().wait()
         if isinstance(item, Exception):
             raise item
-        assert isinstance(item, AIMessage), "plan calls must be scripted as AIMessage"
+        if isinstance(item, dict):
+            item = AIMessage(content=json.dumps(item, ensure_ascii=False), usage_metadata={"input_tokens": 200, "output_tokens": 20, "total_tokens": 220})
+        assert isinstance(item, AIMessage)
         return ChatResult(generations=[ChatGeneration(message=item)])
 
     def bind_tools(self, tools, **kwargs):
@@ -67,23 +68,17 @@ class ScriptedChatModel(BaseChatModel):
     def with_structured_output(self, schema: type[BaseModel], *, include_raw: bool = False, **kwargs):
         self.structured_schemas.append(schema.__name__)
 
-        async def run(messages: list[BaseMessage]) -> Any:
-            self.calls.append(list(messages))
-            item = self._next()
-            if item is HANG:
-                await asyncio.Event().wait()
-            if isinstance(item, Exception):
-                raise item
-            raw = AIMessage(content=json.dumps(item, ensure_ascii=False), usage_metadata={"input_tokens": 200, "output_tokens": 20, "total_tokens": 220})
+        def parse(raw: AIMessage) -> Any:
             try:
-                parsed = schema.model_validate(item)
+                parsed = schema.model_validate_json(raw.content)
             except ValidationError as error:
                 if not include_raw:
                     raise
                 return {"raw": raw, "parsed": None, "parsing_error": error}
             return {"raw": raw, "parsed": parsed, "parsing_error": None} if include_raw else parsed
 
-        return RunnableLambda(run)
+        # 실제 모델과 같이 BaseChatModel의 start/end/error callback을 거친 뒤 파싱한다.
+        return self | RunnableLambda(parse)
 
     def assert_complete(self) -> None:
         assert not self.responses, f"unused scripted responses: {len(self.responses)}"
