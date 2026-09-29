@@ -92,6 +92,7 @@ def public_datasets():
         {
             "id": item["id"],
             "label": item["label"],
+            "evaluation_scope": release["evaluation"]["scope"],
             "case_ids": item["case_ids"],
             "fixture": item["fixture"],
             "live_config": live_config(item["id"]),

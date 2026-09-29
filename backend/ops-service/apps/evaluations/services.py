@@ -21,7 +21,7 @@ from .catalog import (
     validate_execution,
     validate_reference_config,
 )
-from .execution_spec import digest, make_spec, read_release
+from .execution_spec import EVALUATION_SCOPE, digest, make_spec, read_release
 from .models import EvaluationBaseline, EvaluationBudget, EvaluationRun
 from .review_eligibility import current_approval
 
@@ -253,6 +253,17 @@ def read_live_capture(run):
     calls = capture["modelApiCalls"]
     if (
         capture["model"] != config["model"]
+        or capture.get("scope", EVALUATION_SCOPE) != EVALUATION_SCOPE
+        or (
+            (
+                run.execution_spec.get("schema_version") == 2
+                or "evaluation_scope" in run.execution_spec
+            )
+            and (
+                run.execution_spec.get("evaluation_scope") != EVALUATION_SCOPE
+                or capture.get("scope") != EVALUATION_SCOPE
+            )
+        )
         or capture["fixtureSha256"] != config["fixture_sha256"]
         or capture["caseIds"]
         != run.execution_spec.get("dataset", DATASETS[run.dataset_id])["case_ids"]
@@ -285,6 +296,24 @@ def read_result(run):
         manifest = json.loads(read_artifact(run.id, "evaluation/manifest.json"))
         comparison_raw = read_artifact(run.id, "evaluation/comparison.json")
         comparison = json.loads(comparison_raw)
+        if not isinstance(manifest, dict) or not isinstance(comparison, dict):
+            raise ResultsUnavailable
+        if (
+            run.execution_spec.get("schema_version") == 2
+            or "evaluation_scope" in run.execution_spec
+        ) and (
+            run.execution_spec.get("evaluation_scope") != EVALUATION_SCOPE
+            or comparison.get("schema_version") != 2
+            or manifest.get("scope") != EVALUATION_SCOPE
+            or comparison.get("retrieval_evaluated") is not False
+        ):
+            raise ResultsUnavailable
+        if comparison.get("schema_version") == 2 and (
+            comparison.get("scope") != EVALUATION_SCOPE
+            or comparison.get("retrieval_evaluated", False) is not False
+            or manifest.get("scope", EVALUATION_SCOPE) != EVALUATION_SCOPE
+        ):
+            raise ResultsUnavailable
         if run.execution_spec and (
             manifest.get("execution_spec_sha256") != run.execution_spec_sha256
             or manifest.get("evaluator_version") != run.execution_spec["evaluation"]["version"]
@@ -397,6 +426,8 @@ def read_candidate(run):
         capture_hash = sha256(raw).hexdigest()
         if (
             capture_hash != comparison["candidate_execution"]["capture_sha256"]
+            or capture.get("schemaVersion") != "support-program-evidence-capture-v1"
+            or capture.get("scope", EVALUATION_SCOPE) != EVALUATION_SCOPE
             or capture["completed"] is not True
             or capture["fixtureSha256"] != dataset["fixture_sha256"]
             or comparison["fixture_sha256"] != dataset["fixture_sha256"]

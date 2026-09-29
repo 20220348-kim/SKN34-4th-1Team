@@ -83,6 +83,8 @@ class ReviewFixture:
         }
         comparison = {
             "schema_version": 2,
+            "scope": "fixed-answer-context-only",
+            "retrieval_evaluated": False,
             "evaluation_run_id": "a" * 32,
             "reference_run_id": "b" * 32,
             "fixture_sha256": dataset["fixture_sha256"],

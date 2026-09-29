@@ -81,6 +81,8 @@ def test_report_detects_known_change_and_preserves_run_ids(tmp_path):
     candidate.write_text(json.dumps(capture))
     current = llmops.load_results(FIXTURE, candidate)
     report = llmops.create_report(current, baseline, tmp_path)
+    assert report["scope"] == "fixed-answer-context-only"
+    assert report["retrieval_evaluated"] is False
     assert report["current"]["statusAccuracy"] == pytest.approx(5 / 6)
     assert report["reference"]["statusAccuracy"] == 1
     assert report["evaluation_run_id"] != report["reference_run_id"]
@@ -123,6 +125,36 @@ def test_score_retry_uses_stable_ids_without_inventing_model_traces(monkeypatch)
     assert len(store) == len(first)
     payloads = json.dumps(llmops.score_payloads(result, settings))
     assert result["capture"]["cases"][0]["response"]["answer"] not in payloads
+
+
+@pytest.mark.parametrize("scope", [None, "full-rag", "core-http-mysql-frozen-html-ai-evidence-flow"])
+def test_other_capture_scopes_are_not_relabeled_as_fixed_context(tmp_path, scope):
+    capture = json.loads(CAPTURE.read_text())
+    capture["scope"] = scope
+    target = tmp_path / "capture.json"
+    target.write_text(json.dumps(capture))
+    with pytest.raises(ValueError, match="capture scope"):
+        llmops.load_results(FIXTURE, target)
+
+
+def test_mixed_scopes_never_produce_reports_or_scores(tmp_path):
+    fixed = llmops.load_results(FIXTURE, CAPTURE)
+    other = deepcopy(fixed)
+    other["summary"]["scope"] = "full-rag"
+    with pytest.raises(ValueError, match="scopes"):
+        llmops.create_report(fixed, other, tmp_path)
+    with pytest.raises(ValueError, match="score scope"):
+        llmops.score_payloads(other, LangfuseSettings())
+    assert not (tmp_path / "report.html").exists()
+
+
+def test_other_fixture_scope_is_rejected_before_loading_capture(tmp_path):
+    fixture = json.loads(FIXTURE.read_text())
+    fixture["scope"] = "full-rag"
+    target = tmp_path / "fixture.json"
+    target.write_text(json.dumps(fixture))
+    with pytest.raises(ValueError, match="fixture scope"):
+        llmops.load_results(target, tmp_path / "absent-capture.json")
 
 
 @pytest.mark.parametrize("stage", ["prepare", "render", "publish"])

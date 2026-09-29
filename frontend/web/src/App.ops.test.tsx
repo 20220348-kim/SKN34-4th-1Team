@@ -15,9 +15,10 @@ const flowId = '20000000-0000-4000-8000-000000000002'
 const capture = { id: 'target-coverage-20260907-v1', label: '저장 캡처' }
 const liveConfig = { model: 'gpt-6-luna', fixture_sha256: 'c'.repeat(64), max_model_calls: 6, max_output_tokens: 2000 }
 const executionProfiles = { replay: "d".repeat(64), live: "e".repeat(64) }
-const dataset = { execution_profiles: executionProfiles, baseline: null, fixture: 'target-coverage-fixture.json', live_config: liveConfig, id: capture.id, label: '지원 대상 근거 답변 · 저장된 가상 평가 6건', case_ids: ['TC01', 'TC02', 'TC03', 'TC04', 'TC05', 'TC06'], captures: [capture] }
-const comparisonDataset = { execution_profiles: executionProfiles, baseline: null, fixture: 'fixture.json', live_config: { ...liveConfig, max_model_calls: 1 }, id: 'fixed-context-e01-v1', label: '공통 E01 비교', case_ids: ['E01'], captures: [{ id: 'reference', label: '기준 프롬프트' }, { id: 'candidate', label: '후보 프롬프트' }] }
+const dataset = { evaluation_scope: 'fixed-answer-context-only', execution_profiles: executionProfiles, baseline: null, fixture: 'target-coverage-fixture.json', live_config: liveConfig, id: capture.id, label: '지원 대상 근거 답변 · 저장된 가상 평가 6건', case_ids: ['TC01', 'TC02', 'TC03', 'TC04', 'TC05', 'TC06'], captures: [capture] }
+const comparisonDataset = { evaluation_scope: 'fixed-answer-context-only', execution_profiles: executionProfiles, baseline: null, fixture: 'fixture.json', live_config: { ...liveConfig, max_model_calls: 1 }, id: 'fixed-context-e01-v1', label: '공통 E01 비교', case_ids: ['E01'], captures: [{ id: 'reference', label: '기준 프롬프트' }, { id: 'candidate', label: '후보 프롬프트' }] }
 const completed = {
+  evaluation_scope: 'fixed-answer-context-only',
   execution_mode: 'replay', live_config: null, trace_links: [],
   candidate_capture_id: capture.id, reference_capture_id: capture.id, candidate_label: capture.label, reference_label: capture.label, comparison: null,
   id, dataset_id: dataset.id, dataset_label: dataset.label, requested_by: 'operator@example.com', requested_by_id: 'core:99', can_retry: false,
@@ -72,6 +73,36 @@ function open(path = '/ops/evaluations') {
 }
 
 describe('React LLMOps 운영 화면', () => {
+  it('고정 근거 답변의 인용 지표를 검색 품질과 구분한다', async () => {
+    open(`/ops/evaluations/${id}`)
+    expect(await screen.findByText('고정 근거 답변')).toBeTruthy()
+    expect(screen.getByText(/검색 품질은 미측정이며 인용 재현율은 답변이 선택한 인용만 평가/)).toBeTruthy()
+  })
+
+  it('평가 범위가 없는 세션에서는 새 평가를 접수하지 않는다', async () => {
+    const original = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation((path, options) => path === '/api/v1/ops/session'
+      ? Promise.resolve(json({ ...session(), datasets: [{ ...dataset, evaluation_scope: null }] }))
+      : original(path, options))
+    open()
+    const button = await screen.findByRole('button', { name: '평가 실행' })
+    expect(button).toHaveProperty('disabled', true)
+    expect(screen.getByText(/미확인 또는 지원하지 않는 범위/)).toBeTruthy()
+    fireEvent.click(button)
+    expect(fetchMock.mock.calls.some(([path, options]) => path === '/api/v1/ops/evaluations' && options?.method === 'POST')).toBe(false)
+  })
+
+  it('범위가 기록되지 않은 과거 실행에 검색 평가를 추정해 표시하지 않는다', async () => {
+    const original = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation((path, options) => path === `/api/v1/ops/evaluations/${id}`
+      ? Promise.resolve(json({ ...completed, evaluation_scope: null }))
+      : original(path, options))
+    open(`/ops/evaluations/${id}`)
+    expect(await screen.findByText('미확인 또는 지원하지 않는 범위')).toBeTruthy()
+    expect(screen.getByText(/전체 RAG 평가로 해석할 수 없습니다/)).toBeTruthy()
+    expect(screen.queryByText('고정 근거 답변')).toBeNull()
+  })
+
   it('관리자 세션의 Langfuse 추적 링크를 별도 탭으로 연다', async () => {
     const original = fetchMock.getMockImplementation()!
     fetchMock.mockImplementation((path, options) => path === '/api/v1/ops/session'

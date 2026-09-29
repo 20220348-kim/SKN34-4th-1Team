@@ -44,6 +44,8 @@ def review_material(run):
         reference_capture = json.loads(reference_raw)
         if (
             sha256(reference_raw).hexdigest() != comparison["reference_execution"]["capture_sha256"]
+            or reference_capture.get("schemaVersion") != "support-program-evidence-capture-v1"
+            or reference_capture.get("scope", "fixed-answer-context-only") != comparison["scope"]
             or reference_capture["fixtureSha256"] != dataset["fixture_sha256"]
             or reference_capture["completed"] is not True
         ):
@@ -62,6 +64,7 @@ def review_material(run):
             }
             cited_orders[case_id] = [by_id[value] for value in results[case_id]["citationChunkIds"]]
         return {
+            "evaluation_scope": comparison["scope"],
             "capture_sha256": capture_hash,
             "fixture_sha256": dataset["fixture_sha256"],
             "cases": [

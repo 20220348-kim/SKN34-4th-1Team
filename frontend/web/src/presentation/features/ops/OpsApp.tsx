@@ -159,6 +159,7 @@ function EvaluationList({ owner, datasets, liveEnabled, onExpired }: { owner: st
   }, [restored, finish])
   const submit = async () => {
     if (submitting.current || busy || storageError || (!pending && mode === 'live' && (!approved || !liveEnabled || !selected))) return
+    if (!pending && selected?.evaluation_scope !== 'fixed-answer-context-only') return
     submitting.current = true; setBusy(true); setSubmitError(''); setRejected(false)
     try {
       let request = pending ?? readPendingEvaluation(owner)
@@ -202,12 +203,13 @@ function EvaluationList({ owner, datasets, liveEnabled, onExpired }: { owner: st
       <section className={styles.card} aria-label="평가 실행">
         <p className={styles.sectionEyebrow}>LLMOps 평가</p><h2 className={styles.cardTitle}>지원 대상 근거 답변 평가</h2>
         <p className="text-sm leading-6 text-sample-muted">{mode === 'live' ? liveNotice : notice}</p>
+        {selected && <p className="text-sm" role="status">평가 범위: {scopeLabel(selected.evaluation_scope)}. {scopeNotice(selected.evaluation_scope)}</p>}
         <form className="flex flex-wrap items-end gap-3" onSubmit={(event) => { event.preventDefault(); void submit() }}>
           <label className="grid w-full gap-2 text-sm font-semibold">실행 방식<select className={field} value={mode} disabled={busy || requestId.current !== null} onChange={(event) => { setMode(event.target.value as 'replay' | 'live'); setApproved(false) }}><option value="replay">저장 응답 재평가 · API 호출 없음</option><option value="live">새 응답 생성 · 유료 모델 호출</option></select></label>
           <label className="grid min-w-0 flex-1 gap-2 text-sm font-semibold">평가 자료<select className={field} value={dataset} disabled={busy || requestId.current !== null} onChange={(event) => changeDataset(event.target.value)}>{datasets.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
           <label className="grid min-w-56 flex-1 gap-2 text-sm font-semibold">기준 실행<select className={field} value={reference} disabled={busy || requestId.current !== null} onChange={(event) => setReference(event.target.value)}>{selected?.baseline && <option value={selected.baseline.id}>{selected.baseline.label}</option>}{selected?.captures.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
           {mode === 'replay' && <label className="grid min-w-56 flex-1 gap-2 text-sm font-semibold">후보 실행<select className={field} value={candidate} disabled={busy || requestId.current !== null} onChange={(event) => setCandidate(event.target.value)}>{selected?.captures.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>}
-          <button className={styles.primaryButton} disabled={busy || !!storageError || rejected || (!pending && (!dataset || !reference || !candidate || (mode === 'live' && (!approved || !liveEnabled))))}>{busy ? '접수 중…' : pending ? '같은 요청으로 재시도' : mode === 'live' ? '새 응답 생성 및 평가' : '평가 실행'}</button>
+          <button className={styles.primaryButton} disabled={busy || !!storageError || rejected || (!pending && (selected?.evaluation_scope !== 'fixed-answer-context-only' || !dataset || !reference || !candidate || (mode === 'live' && (!approved || !liveEnabled))))}>{busy ? '접수 중…' : pending ? '같은 요청으로 재시도' : mode === 'live' ? '새 응답 생성 및 평가' : '평가 실행'}</button>
           {mode === 'live' && selected && <div className="w-full rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6">
             <p>모델: <strong>{selected.live_config.model}</strong> · 최대 {selected.live_config.max_model_calls}회 · 호출당 출력 최대 {selected.live_config.max_output_tokens.toLocaleString()}토큰 · 자동 재호출 없음</p>
             <p>전송 자료: {selected.fixture}의 {selected.case_ids.join(', ')} 질문과 고정 근거 청크. 시스템 답변 지침을 함께 전송합니다. 평가용 가상 자료이며 실제 회원 대화는 사용하지 않습니다.</p>
@@ -323,7 +325,7 @@ function EvaluationDetail({ onExpired, onReviewChanged }: { onExpired: () => voi
         {run.can_retry && <button className={`${styles.primaryButton} self-start`} disabled={busy} onClick={() => void retry()}>{busy ? '접수 확인 중…' : '같은 요청으로 접수 재확인'}</button>}
         <section className={styles.card}><h2 className={styles.cardTitle}>{run.dataset_label}</h2><p className="text-sm leading-6 text-sample-muted">{run.execution_mode === 'recovery' ? recoveryNotice : run.execution_mode === 'live' ? liveNotice : notice}</p>
           <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-5 gap-y-3 text-sm">{[
-            ['실행 방식', modeLabel(run)], ['요청 ID', run.id],
+            ['실행 방식', modeLabel(run)], ['평가 범위', scopeLabel(run.evaluation_scope)], ['요청 ID', run.id],
             ['접수 명세 ID', run.execution_spec_sha256 ?? '기존 기록 · 실행 명세 없음'],
             ...(run.execution_spec ? [
               ['고정 사례', run.execution_spec.dataset.case_ids.join(', ')],
@@ -346,7 +348,7 @@ function EvaluationDetail({ onExpired, onReviewChanged }: { onExpired: () => voi
             : (run.status !== 'COMPLETED' || !run.postprocessing.inputs_ready) && <p className="text-sm text-sample-muted">{run.postprocessing.blocked_reason}</p>}
           {run.postprocessing.attempts.length > 0 && <ul className="space-y-2 text-sm">{run.postprocessing.attempts.map((attempt) => <li key={attempt.id}><Link className="text-brand-primary underline" to={`${listPath}/${attempt.id}`}>복구 실행 {attempt.id.slice(0, 8)} · {attempt.status_label}</Link></li>)}</ul>}
         </section>}
-        {run.status === 'COMPLETED' && <section className={styles.card} aria-label="평가 결과"><h2 className={styles.cardTitle}>평가 결과</h2><div className="grid grid-cols-2 gap-3 md:grid-cols-4">{[
+        {run.status === 'COMPLETED' && <section className={styles.card} aria-label="평가 결과"><h2 className={styles.cardTitle}>평가 결과</h2><p className="text-sm">{scopeNotice(run.evaluation_scope)}</p><div className="grid grid-cols-2 gap-3 md:grid-cols-4">{[
           ['처리 사례', `${run.summary.observedCaseCount ?? '—'} / ${run.summary.caseCount ?? '—'}`], ['상태 일치율', run.summary.statusAccuracy?.toFixed(2) ?? '미측정'],
           ['인용 재현율', run.summary.referenceCitationRecall?.toFixed(2) ?? '미측정'], ['모델 API 호출', run.model_api_calls === null ? '미확인' : `${run.model_api_calls}회`],
         ].map(([label, value]) => <div className="rounded-xl bg-[#f3f7f5] p-4" key={label}><p className="text-xs text-sample-muted">{label}</p><strong className="mt-3 block text-2xl">{value}</strong></div>)}</div><p className="text-xs leading-5 text-sample-muted">점수 범위는 0–1입니다. AI 작성 참조 자료에 대한 평가이며 의미 충실도는 미측정입니다. 완료 상태는 품질 합격을 뜻하지 않습니다.</p></section>}
@@ -368,10 +370,15 @@ const metricLabels = {
   statusAccuracy: '상태 일치율', referenceCitationRecall: '인용 재현율', failureRate: '실패율', missingRate: '누락률',
   meanLatencyMs: '평균 지연 (ms)', meanInputTokens: '평균 입력 토큰', meanOutputTokens: '평균 출력 토큰', semanticFaithfulness: '의미 충실도',
 }
+const scopeLabel = (scope: string | null) => scope === 'fixed-answer-context-only' ? '고정 근거 답변' : '미확인 또는 지원하지 않는 범위'
+const scopeNotice = (scope: string | null) => scope === 'fixed-answer-context-only'
+  ? '원문 수집·청킹·색인·검색을 실행하지 않습니다. 검색 품질은 미측정이며 인용 재현율은 답변이 선택한 인용만 평가합니다.'
+  : '기록된 범위를 확인할 수 없어 전체 RAG 평가로 해석할 수 없습니다.'
 const measurement = (value: number | null) => value === null ? '미측정' : value.toLocaleString('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 function ComparisonResult({ comparison }: { comparison: NonNullable<EvaluationRun['comparison']> }) {
   return <section className={styles.card} aria-label="기준·후보 비교">
     <h2 className={styles.cardTitle}>기준·후보 비교</h2>
+    <p className="text-sm">비교 평가 범위: {scopeLabel(comparison.scope)}. {scopeNotice(comparison.scope)}</p>
     <p className={styles.cardDescription}>{comparison.comparison === 'self-replay' ? '같은 저장 결과를 다시 계산한 재현 검증입니다.' : '기준 응답과 후보 응답을 비교합니다.'} 비교 사례: {comparison.case_ids.join(', ')} ({comparison.case_ids.length}건).</p>
     <p className="text-xs leading-5 text-sample-muted">변화량은 후보 − 기준입니다. 비율은 0–1이며 미측정 값은 0으로 계산하지 않습니다. 이 표만으로 전체 모델의 품질 향상이나 변경 원인의 효과를 판단하지 않습니다.</p>
     <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="border-b border-sample-border"><tr>{['지표', '기준', '후보', '변화량 (후보 − 기준)'].map((label) => <th className="px-3 py-3 whitespace-nowrap" key={label}>{label}</th>)}</tr></thead><tbody>

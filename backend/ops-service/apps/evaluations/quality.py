@@ -56,6 +56,8 @@ def assessment_inputs(run, material):
     if run.status != "COMPLETED" or material is None:
         raise ResultsUnavailable
     policy = current_policy()
+    if material.get("evaluation_scope") != policy["definition"]["scope"]:
+        raise ResultsUnavailable
     pinned = run.execution_spec.get("quality_policy")
     cases = material["cases"]
     fixture = fixture_reviews(run.dataset_id).first()
@@ -90,6 +92,7 @@ def assessment_inputs(run, material):
         )
     return {
         "policy": policy,
+        "evaluation_scope": material["evaluation_scope"],
         # 재판정은 현재 정책을 명시적으로 적용하며 접수 당시 정책을 수정하지 않는다.
         "accepted_policy_sha256": digest(pinned) if pinned is not None else None,
         "assessment_code_sha256": sha256(Path(__file__).read_bytes()).hexdigest(),

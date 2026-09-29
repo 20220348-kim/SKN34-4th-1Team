@@ -460,6 +460,8 @@ class EvaluationTests(TestCase):
             comparison = json.loads(path.read_text())
             comparison.update(
                 schema_version=2,
+                scope="fixed-answer-context-only",
+                retrieval_evaluated=False,
                 reference_run_id="b" * 32,
                 fixture_sha256="c" * 64,
                 case_ids=[f"TC0{i}" for i in range(1, 7)],
@@ -622,6 +624,8 @@ class EvaluationTests(TestCase):
             comparison = json.loads(comparison_path.read_text())
             comparison.update(
                 schema_version=2,
+                scope="fixed-answer-context-only",
+                retrieval_evaluated=False,
                 reference_run_id="b" * 32,
                 fixture_sha256=run.live_config["fixture_sha256"],
                 case_ids=capture["caseIds"],
