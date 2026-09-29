@@ -35,6 +35,7 @@ jobs:
         run: |
           backend/ai-service/.venv/bin/python infrastructure/llmops/init_env.py
           backend/ai-service/.venv/bin/python infrastructure/llmops/init_ops_env.py
+          backend/ai-service/.venv/bin/python infrastructure/llmops/init_ops_env.py --artifacts
       - name: Start local Langfuse and Prefect
         run: |
           docker compose --env-file infrastructure/llmops/.env -f infrastructure/llmops/compose.yaml --profile evaluation config --quiet
@@ -46,16 +47,16 @@ jobs:
           source infrastructure/llmops/.env
           set +a
           backend/ai-service/.venv/bin/python infrastructure/llmops/smoke.py --output-dir work/llmops-ci
-      - name: Build and start Core auth fixture, Django Ops and evaluation runner
+      - name: Build isolated HTTP artifact storage, Core auth fixture, Ops and runner
         run: |
-          docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml -f infrastructure/llmops/compose.auth-test.yaml --profile evaluation config --quiet
-          docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml -f infrastructure/llmops/compose.auth-test.yaml --profile evaluation up -d --build auth-core ops-service evaluation-runner
+          docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops --env-file infrastructure/llmops/.env.artifacts -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml -f infrastructure/llmops/compose.artifacts.yaml -f infrastructure/llmops/compose.auth-test.yaml --profile evaluation config --format json | python3 infrastructure/llmops/check_artifact_compose.py
+          docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops --env-file infrastructure/llmops/.env.artifacts -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml -f infrastructure/llmops/compose.artifacts.yaml -f infrastructure/llmops/compose.auth-test.yaml --profile evaluation up -d --build auth-core ops-artifacts ops-service evaluation-runner
       - name: Apply isolated Ops migrations
-        run: docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml -f infrastructure/llmops/compose.auth-test.yaml --profile evaluation exec -T ops-service python manage.py migrate_deployment
+        run: docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops --env-file infrastructure/llmops/.env.artifacts -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml -f infrastructure/llmops/compose.artifacts.yaml -f infrastructure/llmops/compose.auth-test.yaml --profile evaluation exec -T ops-service python manage.py migrate_deployment
       - name: Reject mismatched Ops and runner releases before model calls
         run: python3 infrastructure/llmops/spec_mismatch_smoke.py --output work/llmops-spec-mismatch.json
       - name: Start background Ops status synchronization after migrations
-        run: docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml -f infrastructure/llmops/compose.auth-test.yaml --profile evaluation up -d --build ops-sync
+        run: docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops --env-file infrastructure/llmops/.env.artifacts -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml -f infrastructure/llmops/compose.artifacts.yaml -f infrastructure/llmops/compose.auth-test.yaml --profile evaluation up -d --build ops-sync
       - name: Set up pnpm and Node.js
         uses: pnpm/setup@84cb39b217b10273981911c288cd62326dc7c6d2 # v2.0.2
         with:
@@ -77,8 +78,8 @@ jobs:
           set +a
           export CORE_ADMIN_EMAIL=admin@govbiz.local
           export CORE_ADMIN_PASSWORD="$OPS_ADMIN_PASSWORD"
-          python infrastructure/llmops/ops_smoke.py --seed-dev-accounts --base-url http://localhost:5173 --output work/llmops-ci/ops-verification.json
-          python infrastructure/llmops/ops_smoke.py --compare-captures --base-url http://localhost:5173 --output work/llmops-ci/ops-comparison-verification.json
+          python infrastructure/llmops/ops_smoke.py --seed-dev-accounts --base-url http://localhost:5173 --storage-transport http --output work/llmops-ci/ops-verification.json
+          python infrastructure/llmops/ops_smoke.py --compare-captures --base-url http://localhost:5173 --storage-transport http --output work/llmops-ci/ops-comparison-verification.json
       - name: Verify failed publication recovery through Ops and Prefect without model calls
         shell: bash
         run: |
@@ -88,18 +89,18 @@ jobs:
           export CORE_ADMIN_EMAIL=admin@govbiz.local
           export CORE_ADMIN_PASSWORD="$OPS_ADMIN_PASSWORD"
           dc() {
-            docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml -f infrastructure/llmops/compose.auth-test.yaml --profile evaluation "$@"
+            docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops --env-file infrastructure/llmops/.env.artifacts -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml -f infrastructure/llmops/compose.artifacts.yaml -f infrastructure/llmops/compose.auth-test.yaml --profile evaluation "$@"
           }
           source_id=$(python -c 'from uuid import uuid4; print(uuid4())')
           fixture="$PWD/infrastructure/llmops/recovery_smoke_fixture.py:/tmp/recovery_smoke_fixture.py:ro"
           dc run --rm --no-deps -v "$fixture" -e OPENAI_API_KEY= -e LLMOPS_LIVE_ENABLED=false evaluation-runner .venv/bin/python /tmp/recovery_smoke_fixture.py prepare --source-id "$source_id"
           dc run --rm --no-deps -v "$fixture" ops-service python /tmp/recovery_smoke_fixture.py register --source-id "$source_id" --operator-email "$CORE_ADMIN_EMAIL"
-          python infrastructure/llmops/ops_smoke.py --recover-source "$source_id" --base-url http://localhost:5173 --output work/llmops-ci/ops-recovery-verification.json
+          python infrastructure/llmops/ops_smoke.py --recover-source "$source_id" --base-url http://localhost:5173 --storage-transport http --output work/llmops-ci/ops-recovery-verification.json
           recovery_id=$(python -c 'import json; print(json.load(open("work/llmops-ci/ops-recovery-verification.json"))["request_id"])')
           dc run --rm --no-deps -v "$fixture" -e OPENAI_API_KEY= -e LLMOPS_LIVE_ENABLED=false evaluation-runner .venv/bin/python /tmp/recovery_smoke_fixture.py verify --source-id "$source_id" --recovery-id "$recovery_id"
       - name: Stop this job's development containers
         if: always()
-        run: docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml -f infrastructure/llmops/compose.auth-test.yaml --profile evaluation down
+        run: docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops --env-file infrastructure/llmops/.env.artifacts -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml -f infrastructure/llmops/compose.artifacts.yaml -f infrastructure/llmops/compose.auth-test.yaml --profile evaluation down
       - name: Verify real cancellation, process exit and budget accounting with offline model HTTP
         # Includes cold server startup and all 11 scenarios; per-scenario deadlines stay strict.
         timeout-minutes: 20

@@ -5,6 +5,7 @@ from hashlib import sha256
 
 from django.db import transaction
 
+from .artifact_store import read_artifact, read_evidence
 from .baselines import change_baseline, lock_baseline
 from .catalog import DATASETS, selection
 from .models import EvaluationBaseline, EvaluationCaseReview, EvaluationReview, EvaluationRun
@@ -18,8 +19,6 @@ from .review_eligibility import (
 from .services import (
     RequestConflict,
     ResultsUnavailable,
-    artifact_path,
-    evidence_path,
     read_candidate,
 )
 
@@ -28,7 +27,7 @@ def review_material(run):
     try:
         capture, capture_hash, comparison = read_candidate(run)
         dataset = DATASETS[run.dataset_id]
-        raw = evidence_path(dataset["fixture"]).read_bytes()
+        raw = read_evidence(dataset["fixture"])
         if sha256(raw).hexdigest() != dataset["fixture_sha256"]:
             raise ResultsUnavailable
         fixture = json.loads(raw)
@@ -37,12 +36,11 @@ def review_material(run):
         _, _, reference = selection(
             run.dataset_id, run.candidate_capture_id, run.reference_capture_id
         )
-        reference_path = (
-            artifact_path(run, "reference-capture.json")
+        reference_raw = (
+            read_artifact(run.id, "reference-capture.json")
             if run.reference_config or run.execution_mode == "recovery"
-            else evidence_path(reference["path"])
+            else read_evidence(reference["path"])
         )
-        reference_raw = reference_path.read_bytes()
         reference_capture = json.loads(reference_raw)
         if (
             sha256(reference_raw).hexdigest() != comparison["reference_execution"]["capture_sha256"]

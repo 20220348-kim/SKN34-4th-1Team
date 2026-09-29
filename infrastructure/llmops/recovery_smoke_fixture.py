@@ -48,16 +48,17 @@ def prepare(source_id, root):
     print(json.dumps({"source_run_id": source_id, "status": "FAILED", "model_api_calls": 0}))
 
 
-def register(source_id, root, email):
+def register(source_id, email):
     sys.path.insert(0, "/app")
     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
     import django
     django.setup()
     from django.contrib.auth import get_user_model
+    from apps.evaluations.artifact_store import read_artifact
     from apps.evaluations.catalog import LEGACY_DATASET_ID
     from apps.evaluations.models import EvaluationRun
 
-    marker = json.loads((root / source_id / "request.json").read_text())
+    marker = json.loads(read_artifact(source_id, "request.json"))
     assert marker["request_id"] == source_id and marker["dataset_id"] == LEGACY_DATASET_ID
     assert marker["execution_mode"] == "replay"
     owner = get_user_model().objects.get(email=email, is_staff=True)
@@ -116,7 +117,7 @@ def main():
     if args.action == "register":
         if not args.operator_email:
             parser.error("register requires --operator-email for the existing smoke operator")
-        register(source_id, root, args.operator_email)
+        register(source_id, args.operator_email)
     elif args.action == "prepare":
         prepare(source_id, root)
     else:

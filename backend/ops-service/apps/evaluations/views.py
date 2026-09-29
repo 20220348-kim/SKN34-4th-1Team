@@ -2,7 +2,7 @@ import re
 from urllib.parse import urlencode
 
 from django.conf import settings
-from django.http import FileResponse, Http404
+from django.http import Http404, HttpResponse
 from django.middleware.csrf import get_token
 from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse
@@ -489,7 +489,7 @@ def evaluation_report(request, run_id):
     run = get_object_or_404(EvaluationRun, pk=run_id, status="COMPLETED")
     try:
         _, _, report, _ = read_result(run)
-        response = FileResponse(report.open("rb"), content_type="text/html; charset=utf-8")
+        response = HttpResponse(report, content_type="text/html; charset=utf-8")
     except (ResultsUnavailable, OSError) as exc:
         raise Http404("보고서를 확인할 수 없습니다.") from exc
     # 생성 HTML의 스크립트가 Ops 쿠키·DOM·API를 읽을 수 없는 별도 origin sandbox.

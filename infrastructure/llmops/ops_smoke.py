@@ -29,10 +29,11 @@ def wait_for_list_state(request, run_id, expected="COMPLETED"):
         time.sleep(3)
 
 
-def verify_runtime(request, run_id):
+def verify_runtime(request, run_id, expected_transport="filesystem"):
     status, body, _ = request("/api/v1/ops/runtime?run_id=" + run_id)
     runtime = json.loads(body)
     assert status == 200 and runtime["status"] == "PASS"
+    assert runtime["storage_transport"] == expected_transport
     assert set(runtime["checks"]) == {"evidence", "results_directory", "prefect_deployment", "result_artifact"}
     assert all(value == "PASS" for value in runtime["checks"].values())
     assert runtime["result_artifact_verified"] is True and runtime["evaluation_executed"] is False
@@ -46,6 +47,7 @@ def main():
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--compare-captures", action="store_true", help="기존 프롬프트 실행의 공통 E01 비교")
     mode.add_argument("--recover-source", type=UUID, help="무료 fixture가 만든 실패 실행을 복구")
+    parser.add_argument("--storage-transport", choices=["filesystem", "http"], default="filesystem")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     base = args.base_url.rstrip("/")
@@ -159,7 +161,7 @@ def main():
     status, body, headers = request(run["report_url"])
     assert status == 200 and len(body) > 1000
     assert "sandbox allow-scripts;" in headers["Content-Security-Policy"]
-    runtime = verify_runtime(request, run["id"])
+    runtime = verify_runtime(request, run["id"], args.storage_transport)
     # Django 세션을 지우는 대신 Core 로그아웃 한 번으로 Ops도 차단되어야 한다.
     assert request("/api/v1/auth/logout", {}, csrf=False)[0] == 204
     assert request(run["report_url"])[0] == 401

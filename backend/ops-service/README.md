@@ -758,3 +758,17 @@ Argo CD가 이 서비스의 Deployment를 동기화했습니다. 교육기관 �
 설정 근거: [Django Gunicorn 배포](https://docs.djangoproject.com/en/5.2/howto/deployment/wsgi/gunicorn/),
 [Gunicorn 설정](https://gunicorn.org/reference/settings/),
 [Django 배포 체크리스트](https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/).
+
+### 내부 HTTP 평가 저장소
+
+`LLMOPS_ARTIFACT_URL`이 비어 있으면 기존 파일 저장소를 사용한다. URL과 별도
+`LLMOPS_ARTIFACT_TOKEN`을 지정하면 결과와 평가 자료를 모두 인증된 내부 HTTP로 읽는다.
+호출 흐름은 `Ops API·동기화 → 결과 HTTP 서버 → Compose 결과 볼륨·평가 자료`다.
+보고서·비교·검토·복구 입력의 기존 무결성 검증은 유지하며 원격 장애 시 파일 방식으로 대체하지 않는다.
+결과 서버는 같은 이미지에서 `gunicorn 'apps.evaluations.artifact_server:create_app()'`로 실행하고,
+Django 설정·DB·평가 SDK·모델 키를 필요로 하지 않는다. 호스트 포트는 공개하지 않는다.
+
+[Compose 실행 방법](../../infrastructure/llmops/README.md#내부-http로-결과-조회)과
+[Kubernetes 연결 조건](../../infrastructure/gitops/docs/ops-runtime.md)을 참고한다.
+진단 응답의 `storage_transport`로 실제 선택한 방식을 확인한다. `results_directory`는 호환성을 위해
+HTTP 모드에서도 유지하며 인증된 원격 저장소 상태를 검사한다. 파일당 8 MiB를 넘거나 변조된 결과는 거절한다.

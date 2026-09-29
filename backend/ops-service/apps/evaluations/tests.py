@@ -12,10 +12,11 @@ from django.test import Client, SimpleTestCase, TestCase, override_settings
 from rest_framework.exceptions import AuthenticationFailed, PermissionDenied
 
 from . import prefect_client
+from .artifact_store import read_artifact
 from .authentication import CoreUnavailable, NoAuthRedirect, read_core_admin
 from .catalog import public_datasets
 from .models import EvaluationRun
-from .services import DATASET_ID, ResultsUnavailable, artifact_path, sync_run
+from .services import DATASET_ID, ResultsUnavailable, sync_run
 from .views import run_data
 
 
@@ -73,7 +74,7 @@ class PrefectClientTests(SimpleTestCase):
             folder.mkdir()
             (folder / "request.json").symlink_to(private)
             with self.assertRaises(ResultsUnavailable):
-                artifact_path(run, "request.json")
+                read_artifact(run.id, "request.json")
 
 
 @override_settings(PASSWORD_HASHERS=["django.contrib.auth.hashers.MD5PasswordHasher"])
@@ -381,7 +382,7 @@ class EvaluationTests(TestCase):
             self.assertEqual(response.status_code, 200)
             self.assertIn("sandbox allow-scripts;", response["Content-Security-Policy"])
             self.assertNotIn("allow-same-origin", response["Content-Security-Policy"])
-            self.assertIn("평가 결과".encode(), b"".join(response.streaming_content))
+            self.assertIn("평가 결과".encode(), response.content)
             data = self.client.get(f"/api/v1/ops/evaluations/{run.id}").json()
             self.assertEqual(data["report_url"], f"/api/v1/ops/evaluations/{run.id}/report")
             self.assertIn("/scores?", data["langfuse_url"])

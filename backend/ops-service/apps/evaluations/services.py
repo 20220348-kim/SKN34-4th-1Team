@@ -10,6 +10,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
 from . import prefect_client
+from .artifact_store import ResultsUnavailable, read_artifact, read_evidence
 from .baselines import lock_baseline
 from .budget import BudgetUnavailable, close_after_cancellation, reserve
 from .catalog import (
@@ -31,10 +32,6 @@ PENDING_SYNC = {"REQUESTED", "QUEUED", "RUNNING", "CANCELLING", "RESULT_ERROR"}
 
 
 class RequestConflict(Exception):
-    pass
-
-
-class ResultsUnavailable(Exception):
     pass
 
 
@@ -227,16 +224,8 @@ def dispatch_run(run):
     return run
 
 
-def artifact_path(run, name):
-    root = settings.LLMOPS_RESULTS_DIR.resolve()
-    path = (root / str(run.id) / name).resolve()
-    if not path.is_relative_to(root / str(run.id)) or not path.is_file():
-        raise ResultsUnavailable
-    return path
-
-
 def read_request(run):
-    request = json.loads(artifact_path(run, "request.json").read_text())
+    request = json.loads(read_artifact(run.id, "request.json"))
     if (
         request["request_id"] != str(run.id)
         or request["dataset_id"] != run.dataset_id
@@ -258,8 +247,8 @@ def read_request(run):
 
 def read_live_capture(run):
     read_request(run)
-    path = artifact_path(run, "capture/capture.json")
-    capture = json.loads(path.read_text())
+    raw = read_artifact(run.id, "capture/capture.json")
+    capture = json.loads(raw)
     config = run.live_config
     calls = capture["modelApiCalls"]
     if (
@@ -283,7 +272,7 @@ def read_live_capture(run):
             or capture["runTimeoutSeconds"] != generation["settings"]["run_timeout_seconds"]
         ):
             raise ResultsUnavailable
-    return capture, sha256(path.read_bytes()).hexdigest()
+    return capture, sha256(raw).hexdigest()
 
 
 def read_result(run):
@@ -293,8 +282,9 @@ def read_result(run):
             run.dataset_id, run.candidate_capture_id, run.reference_capture_id
         )
         dataset = run.execution_spec.get("dataset", dataset)
-        manifest = json.loads(artifact_path(run, "evaluation/manifest.json").read_text())
-        comparison = json.loads(artifact_path(run, "evaluation/comparison.json").read_text())
+        manifest = json.loads(read_artifact(run.id, "evaluation/manifest.json"))
+        comparison_raw = read_artifact(run.id, "evaluation/comparison.json")
+        comparison = json.loads(comparison_raw)
         if run.execution_spec and (
             manifest.get("execution_spec_sha256") != run.execution_spec_sha256
             or manifest.get("evaluator_version") != run.execution_spec["evaluation"]["version"]
@@ -315,8 +305,8 @@ def read_result(run):
             or comparison["current"]["completed"] is not True
         ):
             raise ResultsUnavailable
-        report = artifact_path(run, "evaluation/report.html")
-        if sha256(report.read_bytes()).hexdigest() != manifest["artifact_sha256"]["report.html"]:
+        report = read_artifact(run.id, "evaluation/report.html")
+        if sha256(report).hexdigest() != manifest["artifact_sha256"]["report.html"]:
             raise ResultsUnavailable
         if run.execution_mode == "live":
             capture, capture_hash = read_live_capture(run)
@@ -341,20 +331,18 @@ def read_result(run):
                 or comparison["candidate_execution"]["capture_sha256"] != config["capture_sha256"]
                 or comparison["reference_execution"]["capture_sha256"]
                 != config["reference_capture_sha256"]
-                or sha256(artifact_path(run, "capture/capture.json").read_bytes()).hexdigest()
+                or sha256(read_artifact(run.id, "capture/capture.json")).hexdigest()
                 != config["capture_sha256"]
-                or sha256(artifact_path(run, "reference-capture.json").read_bytes()).hexdigest()
+                or sha256(read_artifact(run.id, "reference-capture.json")).hexdigest()
                 != config["reference_capture_sha256"]
-                or sha256(artifact_path(run, "recovery-fixture.json").read_bytes()).hexdigest()
+                or sha256(read_artifact(run.id, "recovery-fixture.json")).hexdigest()
                 != config["fixture_sha256"]
             ):
                 raise ResultsUnavailable
         verified_comparison = {}
         if comparison.get("schema_version") == 2:
-            comparison_path = artifact_path(run, "evaluation/comparison.json")
             if (
-                sha256(comparison_path.read_bytes()).hexdigest()
-                != manifest["artifact_sha256"]["comparison.json"]
+                sha256(comparison_raw).hexdigest() != manifest["artifact_sha256"]["comparison.json"]
                 or comparison["reference_run_id"] != manifest["reference_run_id"]
                 or comparison["fixture_sha256"] != manifest["fixture_sha256"]
                 or comparison["case_ids"] != dataset["case_ids"]
@@ -389,14 +377,6 @@ def read_result(run):
         raise ResultsUnavailable from exc
 
 
-def evidence_path(name):
-    root = settings.LLMOPS_EVIDENCE_DIR.resolve()
-    path = (root / name).resolve()
-    if not path.is_relative_to(root) or not path.is_file():
-        raise ResultsUnavailable
-    return path
-
-
 def read_candidate(run):
     """검토와 기준 지정에 쓰는 실제 응답을 완료 보고서의 해시와 대조한다."""
     try:
@@ -408,12 +388,11 @@ def read_candidate(run):
         dataset, candidate, _ = selection(
             run.dataset_id, run.candidate_capture_id, run.reference_capture_id
         )
-        path = (
-            artifact_path(run, "capture/capture.json")
+        raw = (
+            read_artifact(run.id, "capture/capture.json")
             if run.execution_mode in {"live", "recovery"}
-            else evidence_path(candidate["path"])
+            else read_evidence(candidate["path"])
         )
-        raw = path.read_bytes()
         capture = json.loads(raw)
         capture_hash = sha256(raw).hexdigest()
         if (
@@ -520,7 +499,7 @@ def sync_run(run):
     if values.get("status") in TERMINAL and values.get("status") != "COMPLETED":
         try:
             read_request(run)
-            preflight = json.loads(artifact_path(run, "preflight.json").read_text())
+            preflight = json.loads(read_artifact(run.id, "preflight.json"))
             if (
                 preflight["phase"] == "before_model_call"
                 and type(preflight["model_api_calls"]) is int

@@ -51,7 +51,7 @@ def test_unavailable_api_and_timeout_fail(monkeypatch):
 
 
 def test_runtime_verification_requires_all_checks_and_correlated_result():
-    result = {"status": "PASS", "checks": {key: "PASS" for key in
+    result = {"status": "PASS", "storage_transport": "filesystem", "checks": {key: "PASS" for key in
               ("evidence", "results_directory", "prefect_deployment", "result_artifact")},
               "result_artifact_verified": True, "evaluation_executed": False}
     request = Mock(return_value=(200, json.dumps(result).encode(), {}))
@@ -69,3 +69,14 @@ def test_runtime_verification_requires_all_checks_and_correlated_result():
             smoke.verify_runtime(Mock(return_value=(200, json.dumps(payload).encode(), {})), "fixture-run")
     with pytest.raises(AssertionError):
         smoke.verify_runtime(Mock(return_value=(503, json.dumps(result).encode(), {})), "fixture-run")
+
+
+def test_http_runtime_verification_rejects_filesystem_shortcut():
+    result = {"status": "PASS", "storage_transport": "filesystem",
+              "checks": {key: "PASS" for key in
+              ("evidence", "results_directory", "prefect_deployment", "result_artifact")},
+              "result_artifact_verified": True, "evaluation_executed": False}
+    with pytest.raises(AssertionError):
+        smoke.verify_runtime(Mock(return_value=(200, json.dumps(result).encode(), {})), "run", "http")
+    result["storage_transport"] = "http"
+    assert smoke.verify_runtime(Mock(return_value=(200, json.dumps(result).encode(), {})), "run", "http") == result

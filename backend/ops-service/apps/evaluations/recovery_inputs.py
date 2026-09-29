@@ -8,7 +8,9 @@ from .catalog import selection, validate_reference_config
 from .execution_spec import digest, read_release
 
 
-def read_recovery_inputs(results_root, evidence_root, source_id):
+def read_recovery_inputs(
+    results_root, evidence_root, source_id, *, artifact_reader=None, evidence_reader=None
+):
     """원본 요청·검증 manifest에 고정된 완료 응답만 반환한다. 경로는 서버가 구성한다."""
     try:
         source_id = str(UUID(source_id))
@@ -20,9 +22,12 @@ def read_recovery_inputs(results_root, evidence_root, source_id):
                 raise ValueError("Recovery input path is invalid")
             return path.read_bytes()
 
-        request_raw = read(folder, "request.json")
+        # Ops can read through authenticated HTTP; the Compose runner keeps local reads.
+        result_bytes = artifact_reader or (lambda name: read(folder, name))
+        evidence_bytes = evidence_reader or (lambda name: read(evidence_root.resolve(), name))
+        request_raw = result_bytes("request.json")
         marker = json.loads(request_raw)
-        manifest = json.loads(read(folder, "evaluation/manifest.json"))
+        manifest = json.loads(result_bytes("evaluation/manifest.json"))
         evaluator = read_release()["evaluation"]
         spec = marker.get("execution_spec")
         if manifest.get("evaluator_version") != evaluator["version"] or (
@@ -49,17 +54,16 @@ def read_recovery_inputs(results_root, evidence_root, source_id):
             raise ValueError("Invalid source mode")
         reference_config = marker.get("reference_config", {})
         validate_reference_config(dataset["id"], marker["reference_capture_id"], reference_config)
-        evidence_root = evidence_root.resolve()
         inputs = {
-            "fixture": read(folder, "recovery-fixture.json")
+            "fixture": result_bytes("recovery-fixture.json")
             if mode == "recovery"
-            else read(evidence_root, dataset["fixture"]),
-            "capture": read(folder, "capture/capture.json")
+            else evidence_bytes(dataset["fixture"]),
+            "capture": result_bytes("capture/capture.json")
             if mode in {"live", "recovery"}
-            else read(evidence_root, candidate["path"]),
-            "reference_capture": read(folder, "reference-capture.json")
+            else evidence_bytes(candidate["path"]),
+            "reference_capture": result_bytes("reference-capture.json")
             if reference_config or mode == "recovery"
-            else read(evidence_root, reference["path"]),
+            else evidence_bytes(reference["path"]),
         }
         config = {
             "source_run_id": source_id,
