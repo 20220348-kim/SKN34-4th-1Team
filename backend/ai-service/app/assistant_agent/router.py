@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from app.assistant.errors import AssistantAnswerError, AssistantAnswerTimeoutError
 from app.assistant_agent.models import AssistantAgentRequest, AssistantAgentResponse
 from app.assistant_agent.service import AssistantAgentService
+from app.tracing import remote_parent
 
 
 router = APIRouter(prefix="/internal/v1/assistant", tags=["internal"])
@@ -23,11 +24,12 @@ def get_assistant_agent_service(request: Request) -> AssistantAgentService:
 @router.post("/agent", response_model=AssistantAgentResponse, summary="도우미 도구 에이전트(의도 분류·도구 호출·답·카드)")
 async def answer_with_agent(
     payload: AssistantAgentRequest,
+    request: Request,
     service: Annotated[AssistantAgentService, Depends(get_assistant_agent_service)],
 ) -> AssistantAgentResponse:
     started = perf_counter()
     try:
-        return await service.answer(payload)
+        return await service.answer(payload, **remote_parent(request.headers.get("traceparent")))
     except AssistantAnswerError as error:
         timed_out = isinstance(error, AssistantAnswerTimeoutError)
         # 실패 종류·예외 이름·시간만 남긴다. 질문·모델 문장·스택은 남기지 않는다.

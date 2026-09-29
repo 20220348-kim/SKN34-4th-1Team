@@ -12,6 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # Only the opt-in Core trace smoke's synthetic queries activate fault injection.
 TRACE_QUERY = re.compile(r"서울 AI PRIVATE-CORE-TRACE-[0-9a-f]{32}-(ok|fail|timeout)")
+ASSISTANT_TRACE_QUERY = re.compile(r"이 공고 PRIVATE-ASSISTANT-TRACE-[0-9a-f]{32}-(ok|fail|timeout)")
 TRACE_COUNTS: dict[str, dict[str, int]] = {}
 TRACE_LOCK = Lock()
 
@@ -23,6 +24,18 @@ def record_trace_call(query: str, kind: str) -> str | None:
     with TRACE_LOCK:
         counts = TRACE_COUNTS.setdefault(query, {"embedding": 0, "ranking": 0})
         counts[kind] += 1
+    return match[1]
+
+
+def record_assistant_trace_call(payload: dict) -> str | None:
+    if os.environ.get("CORE_TRACE_FIXTURE") != "true" or payload.get("step") != "classify":
+        return None
+    message = payload.get("message", "")
+    match = ASSISTANT_TRACE_QUERY.fullmatch(message)
+    if not match:
+        return None
+    with TRACE_LOCK:
+        TRACE_COUNTS.setdefault(message, {"assistant": 0})["assistant"] += 1
     return match[1]
 
 
@@ -273,6 +286,12 @@ class Handler(BaseHTTPRequestHandler):
                 text = content if isinstance(content, str) else "".join(part.get("text", "") for part in content)
                 payload = json.loads(text)
             if payload.get("schemaVersion") == "govbiz-assistant-agent-v1":
+                scenario = record_assistant_trace_call(payload)
+                if scenario == "fail":
+                    self.respond(503, {"error": {"message": "PRIVATE-ASSISTANT-MODEL-ERROR"}})
+                    return
+                if scenario == "timeout":
+                    time.sleep(5)
                 kind, output = assistant_agent_output(request, payload)
                 if kind == "tool_calls":
                     self.respond_tool_calls(request, output)

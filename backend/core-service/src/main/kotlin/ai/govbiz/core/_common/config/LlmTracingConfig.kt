@@ -1,5 +1,6 @@
-package ai.govbiz.core.supportprogram.config
+package ai.govbiz.core._common.config
 
+import ai.govbiz.core.assistant.helper.AssistantTracingHelper
 import ai.govbiz.core.supportprogram.helper.SupportProgramSearchTracingHelper
 import io.opentelemetry.exporter.otlp.http.trace.OtlpHttpSpanExporter
 import io.opentelemetry.sdk.trace.SdkTracerProvider
@@ -13,9 +14,9 @@ import org.springframework.context.annotation.Configuration
 import org.springframework.core.env.Environment
 
 @Configuration(proxyBeanMethods = false)
-class SupportProgramSearchTracingConfig {
+class LlmTracingConfig {
     @Bean(destroyMethod = "close")
-    fun searchTracerProvider(environment: Environment): SdkTracerProvider {
+    fun llmTracerProvider(environment: Environment): SdkTracerProvider {
         val enabled = environment.getProperty("LANGFUSE_ENABLED", "false")
         require(enabled in setOf("true", "false")) { "LANGFUSE_ENABLED must be true or false" }
         val builder = SdkTracerProvider.builder()
@@ -42,11 +43,20 @@ class SupportProgramSearchTracingConfig {
     }
 
     @Bean
-    fun supportProgramSearchTracingHelper(searchTracerProvider: SdkTracerProvider, environment: Environment): SupportProgramSearchTracingHelper {
+    fun supportProgramSearchTracingHelper(llmTracerProvider: SdkTracerProvider, environment: Environment): SupportProgramSearchTracingHelper {
         val deployment = environment.getProperty("LANGFUSE_ENVIRONMENT", "development")
         val release = environment.getProperty("GIT_SHA", "")
         require(deployment.matches(Regex("[a-z0-9][a-z0-9_-]{0,39}"))) { "Invalid LANGFUSE_ENVIRONMENT" }
         require(release.isEmpty() || release.matches(Regex("[0-9a-f]{7,40}"))) { "Invalid GIT_SHA" }
-        return SupportProgramSearchTracingHelper(searchTracerProvider.get("govbiz-search"), deployment, release)
+        return SupportProgramSearchTracingHelper(llmTracerProvider.get("govbiz-search"), deployment, release)
+    }
+
+    @Bean
+    fun assistantTracingHelper(llmTracerProvider: SdkTracerProvider, environment: Environment): AssistantTracingHelper {
+        val deployment = environment.getProperty("LANGFUSE_ENVIRONMENT", "development")
+        val release = environment.getProperty("GIT_SHA", "")
+        require(deployment.matches(Regex("[a-z0-9][a-z0-9_-]{0,39}"))) { "Invalid LANGFUSE_ENVIRONMENT" }
+        require(release.isEmpty() || release.matches(Regex("[0-9a-f]{7,40}"))) { "Invalid GIT_SHA" }
+        return AssistantTracingHelper(llmTracerProvider.get("govbiz-assistant"), deployment, release)
     }
 }

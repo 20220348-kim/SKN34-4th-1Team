@@ -6,6 +6,7 @@ import ai.govbiz.core.assistant.client.dto.AiAssistantAgentPayload
 import ai.govbiz.core.assistant.client.dto.AiAssistantAgentRequest
 import ai.govbiz.core.assistant.client.dto.AiAssistantAnswerPayload
 import ai.govbiz.core.assistant.client.dto.AiAssistantAnswerRequest
+import ai.govbiz.core.assistant.helper.AssistantTracingHelper
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
@@ -30,6 +31,9 @@ class AiAssistantClient(
         restClient.post()
             .uri(path)
             .contentType(MediaType.APPLICATION_JSON)
+            .headers { headers ->
+                if (path == AGENT_PATH) AssistantTracingHelper.currentTraceParent()?.let { headers.set("traceparent", it) }
+            }
             .body(request)
             .retrieve()
             .onStatus(

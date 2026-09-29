@@ -316,8 +316,18 @@ async def test_disabled_tracing_does_not_construct_exporter(request_data, empty_
     harness.assert_complete()
 
 
+@pytest.mark.parametrize("header", [
+    None,
+    "00-" + "1" * 32 + "-" + "2" * 16 + "-01",
+    "00-" + "1" * 32 + "-" + "2" * 16 + "-00",
+    "00-" + "0" * 32 + "-" + "2" * 16 + "-01",
+    "00-" + "1" * 32 + "-" + "0" * 16 + "-01",
+    "01-" + "1" * 32 + "-" + "2" * 16 + "-01",
+    "00-" + "A" * 32 + "-" + "2" * 16 + "-01",
+    "private-invalid-header",
+])
 def test_http_bootstrap_traces_actual_graph_and_closes_exporter(
-    trace_environment, request_data, empty_classification, monkeypatch
+    trace_environment, request_data, empty_classification, monkeypatch, header
 ):
     _, exporter, settings = trace_environment
     model = ScriptedChatModel(responses=[{**empty_classification, "intent": "PROGRAM_QUESTION"}])
@@ -327,7 +337,10 @@ def test_http_bootstrap_traces_actual_graph_and_closes_exporter(
     app = create_app(settings=replace(OPENAI_SETTINGS, langfuse=settings))
     assert app.state.container.assistant_agent_service._tracing is app.state.container.llm_tracing
     with TestClient(app) as client:
-        response = client.post("/internal/v1/assistant/agent", json=request_data)
+        response = client.post(
+            "/internal/v1/assistant/agent", json=request_data,
+            headers={"traceparent": header, "baggage": "private-baggage"} if header else {},
+        )
         assert response.status_code == 200
     model.assert_complete()
     assert {span.name for span in exporter.get_finished_spans()} == {
@@ -335,3 +348,42 @@ def test_http_bootstrap_traces_actual_graph_and_closes_exporter(
         "assistant.classify",
         "assistant.finalize",
     }
+    spans = exporter.get_finished_spans()
+    (root,) = named(spans, "assistant.agent")
+    if header == "00-" + "1" * 32 + "-" + "2" * 16 + "-01":
+        assert root.context.trace_id == int("1" * 32, 16)
+        assert root.parent.span_id == int("2" * 16, 16)
+    else:
+        assert root.context.trace_id != int("1" * 32, 16)
+    assert all(span.context.trace_id == root.context.trace_id for span in spans)
+    assert all(span.parent.span_id == root.context.span_id for span in spans if span != root)
+    assert "private-baggage" not in assert_private(spans, request_data)
+
+
+@pytest.mark.parametrize("outcome,status", [(RuntimeError("private upstream detail"), 503), (HANG, 504)])
+def test_http_failure_keeps_core_parent_and_unknown_usage(
+    trace_environment, request_data, monkeypatch, outcome, status
+):
+    _, exporter, settings = trace_environment
+    model = ScriptedChatModel(responses=[outcome])
+    monkeypatch.setattr(bootstrap, "_chat_model", lambda *args: model)
+    settings = replace(settings, public_key="pk-lf-" + uuid4().hex)
+    app = create_app(settings=replace(
+        OPENAI_SETTINGS, langfuse=settings, llm_model_timeout_seconds=0.05, llm_run_timeout_seconds=0.1,
+    ))
+    with TestClient(app) as client:
+        response = client.post(
+            "/internal/v1/assistant/agent", json=request_data,
+            headers={"traceparent": "00-" + "3" * 32 + "-" + "4" * 16 + "-01"},
+        )
+        assert response.status_code == status
+    model.assert_complete()
+    spans = exporter.get_finished_spans()
+    (root,) = named(spans, "assistant.agent")
+    assert root.context.trace_id == int("3" * 32, 16)
+    assert root.parent.span_id == int("4" * 16, 16)
+    assert attribute(root, "usage_unknown_calls") == 1
+    assert attribute(root, "usage_complete") is False
+    assert attribute(root, "usage_input_tokens") is None
+    assert root.attributes["langfuse.observation.level"] == "ERROR"
+    assert_private(spans, request_data)

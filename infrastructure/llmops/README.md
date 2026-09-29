@@ -652,7 +652,7 @@ Langfuse의 `core-search-smoke` 환경에서 다음 trace ID로 확인할 수 �
 모델 호출 수·미확정 사용량을 잘못 기록하거나 병렬 판단의 부모가 끊기면 검사에 실패합니다.
 실제 Core 검색 검사의 별도 네 trace·63개 관측도 유지합니다.
 
-이 검사는 합성 데이터로 연결·장애 처리만 확인합니다. 실제 검색·답변 품질 평가, Core 도우미 전체 분산 추적,
+위 그래프 단독 검사는 합성 데이터로 연결·장애 처리만 확인합니다. 실제 검색·답변 품질 평가, Core 도우미 전체 분산 추적,
 Ops의 새 평가 유형·검색/답변 점수 등록이나 비교 기준 승인은 아직 포함하지 않습니다.
 공용 `app/tracing.py` 변경에 맞춰 평가 실행 명세도 재생성했으며, 기존 접수 이력의 명세를 소급 수정하지 않습니다.
 
@@ -676,6 +676,38 @@ Web은 Node.js 24.19.0과 pnpm 11.22.0을 사용했다.
 이번 변경은 `main / 36b968f`에서 분기한 `skn-64`에 기록한다. 위 결과는 커밋 전 로컬 검증이며,
 새 SHA의 GovBiz·Ops·LLMOps 전체 CI 결과는 별도로 확인해야 한다. 상시 실행 중인 AI 컨테이너의
 이미지를 교체한 것은 아니며, 새 코드는 로컬 Python·HTTP 대역과 실제 Langfuse로 검증했다.
+
+## Core 도우미 분산 추적 검증
+
+`skn-64` 이후 작업은 Core의 첫 도우미 호출과 관심 공고 자료 준비·재호출을 AI 노드 trace에 연결합니다.
+검색과 도우미가 하나의 Core OTLP provider를 사용하며 새 의존성은 없습니다.
+`core_assistant_trace.py`는 격리된 실제 Core → AI → 무료 OpenAI HTTP 대역 경로에서
+정상 200·모델 오류 503·시간 초과 504의 세 trace를 Langfuse에서 다시 읽습니다.
+정상 6개·실패 각 4개 관측의 부모 연결, 외부 trace ID 무시, 오류 코드, 요청당 모델 호출 1회,
+사용량 누락을 0으로 바꾸지 않는 동작과 본문·비밀 키 미수집을 검사합니다.
+
+```bash
+# 저장소 루트. 기존 로컬 Langfuse 프로젝트·네트워크만 명시적으로 공유합니다.
+set -a
+source infrastructure/llmops/.env
+set +a
+python3 -B infrastructure/scripts/verify-catalog-separation.py \
+  --search-traces-output work/core-search-traces-new.json \
+  --assistant-traces-output work/core-assistant-traces-new.json
+```
+
+출력 경로는 서로 다르고 존재하지 않아야 합니다. `--assistant-traces-output`은 검색 추적 옵션과 함께만
+사용합니다. 임시 Compose 프로젝트에만 도우미를 켜고 DB·색인·API 키·모델 응답을 검증 자료로 분리합니다.
+공개 도우미 한도의 기본 분당 3건 이내로 세 요청을 보내며 기존 개발 서비스의 설정·데이터를 바꾸지 않습니다.
+실제 모델 품질 검증이나 유료 호출은 하지 않습니다.
+
+LLMOps CI가 기존 실제 Core 검색 검사와 같은 서버에서 도우미 검사도 실행하고,
+`work/llmops-ci/core-assistant-traces.json`을 성공·실패 증거로 업로드하도록 연결했습니다.
+새 코드의 전체 컨테이너·Langfuse 저장/재조회 완료 판단은 **새 커밋의 CI 통과 후**에 합니다.
+로컬은 Core 선택 테스트, AI 부모 헤더·오류 검증, 실제 SDK와 localhost HTTP 대역 및 검사기 회귀를 수행합니다.
+로그인 회원의 자료 준비·두 번째 AI 호출은 Core Service → HTTP 대역 테스트와 기존 AI 관심 공고 그래프
+테스트로 검증하며, 이 CI의 게스트 세 사례가 회원 RAG 전체 E2E를 검증한 것으로 보고하지 않습니다.
+상세 공고 RAG 추적·Ops 평가 계약·사람 검토 기준 확보는 후속 작업입니다.
 
 ## 실제 AI Service 추적 활성화
 
