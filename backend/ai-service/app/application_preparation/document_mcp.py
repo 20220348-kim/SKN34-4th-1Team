@@ -73,8 +73,30 @@ class DocumentMcpSession:
         return payload
 
 
+DEFAULT_SESSION_TIMEOUT_SECONDS = 120.0
+# The discovery/mapping HTTP deadline is 240s on this service and 270s on Core; keep a session under it.
+MAX_SESSION_TIMEOUT_SECONDS = 220.0
+
+
+def session_failure_reason(error: BaseException) -> str:
+    """Name the innermost failure kind of a session-level error without exposing any message text."""
+    leaves: list[BaseException] = []
+    def collect(item: BaseException) -> None:
+        children = getattr(item, "exceptions", None)
+        if children:
+            for child in children:
+                collect(child)
+        else:
+            leaves.append(item)
+    collect(error)
+    if any(isinstance(leaf, TimeoutError) for leaf in leaves):
+        return "SESSION_TIMEOUT"
+    return "+".join(dict.fromkeys(type(leaf).__name__ for leaf in leaves)) or type(error).__name__
+
+
 @asynccontextmanager
-async def document_session(kind: str, directory: Path):
+async def document_session(kind: str, directory: Path, *, timeout_seconds: float = DEFAULT_SESSION_TIMEOUT_SECONDS):
+    timeout_seconds = min(max(float(timeout_seconds), DEFAULT_SESSION_TIMEOUT_SECONDS), MAX_SESSION_TIMEOUT_SECONDS)
     command = os.getenv(f"DOCUMENT_{kind.upper()}_COMMAND", "")
     if not command:
         raise DocumentError("MCP_NOT_READY")
@@ -85,23 +107,32 @@ async def document_session(kind: str, directory: Path):
     env = {k: v for k, v in os.environ.items() if k in {"PATH", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT"}}
     env.update({"HOME": str(directory), "USERPROFILE": str(directory), "TMP": str(directory), "TEMP": str(directory), "TMPDIR": str(directory), "PYTHONIOENCODING": "utf-8"})
     parameters = StdioServerParameters(command=command, args=args, cwd=str(directory), env=env)
+    caller_failure: BaseException | None = None
     try:
         # Upstream stderr can contain complete document text. Discard it; log fixed metadata only.
         with open(os.devnull, "w") as stderr:
-            async with asyncio.timeout(120):
+            async with asyncio.timeout(timeout_seconds):
                 async with stdio_client(parameters, errlog=stderr) as (read, write):
-                    async with ClientSession(read, write, read_timeout_seconds=100.0) as session:
+                    async with ClientSession(read, write, read_timeout_seconds=timeout_seconds - 20.0) as session:
                         await session.initialize()
                         listing = await session.list_tools()
                         schemas = {t.name: t.input_schema for t in listing.tools}
                         if not ALLOWED[kind] <= schemas.keys():
                             raise DocumentError("MCP_NOT_READY")
-                        yield DocumentMcpSession(kind, session, schemas)
+                        try:
+                            yield DocumentMcpSession(kind, session, schemas)
+                        except BaseException as error:
+                            # The caller's own processing failed while the session was open; the transport
+                            # wrappers below will re-raise it inside an exception group, so keep the original.
+                            caller_failure = error
+                            raise
     except DocumentError:
         raise
     except BaseException as error:
         if isinstance(error, asyncio.CancelledError):
             raise
+        if caller_failure is not None and not isinstance(caller_failure, (asyncio.CancelledError, TimeoutError, DocumentError)):
+            raise caller_failure from None
         def document_error(item):
             if isinstance(item, DocumentError):
                 return item
@@ -113,5 +144,6 @@ async def document_session(kind: str, directory: Path):
         known = document_error(error)
         if known is not None:
             raise known from None
-        logger.warning("document_mcp_failed engine=%s type=%s", kind, type(error).__name__)
-        raise DocumentError("MCP_FAILED") from error
+        reason = session_failure_reason(error)
+        logger.warning("document_mcp_failed engine=%s type=%s reason=%s timeoutSeconds=%.0f", kind, type(error).__name__, reason, timeout_seconds)
+        raise DocumentError("MCP_FAILED", reason=f"{kind}:session:{reason}") from error

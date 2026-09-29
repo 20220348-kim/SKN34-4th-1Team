@@ -200,9 +200,14 @@ AI가 답변에서 추출한 값은 제안이며 사용자 확인 전에는 초�
 쓰기 요청은 현재 상태의 `expectedRevision`을 받고, AI 실행 요청은 소문자 UUID `requestKey`를 추가로 받는다.
 같은 신청 준비 건·요청 키·payload는 기존 실행을 반환하고, 같은 키의 다른 payload는 409로 거절한다.
 
-양식 발견 응답의 `title`, `description`, `label`, `guidance`는 AI Service와 Core가 같은 규칙으로
-공백·탭·줄바꿈을 단일 공백으로 정규화하고, 그 밖의 Unicode control/format 문자는 거부한다.
+양식 발견 응답의 `title`, `description`, `label`, `guidance`는 AI Service가 공백·탭·줄바꿈을 단일 공백으로
+정규화하고, 파서가 남긴 zero-width·soft hyphen·private-use 같은 Unicode control/format 문자는 표시 의미가 없으므로
+제거한 뒤 개수만 로그에 남긴다(제거 후 비면 `EMPTY_DISPLAY_TEXT`). Core는 정규화된 결과만 받으므로 그런 문자가 남아 있으면 계약 위반으로 거부한다.
 `evidenceQuote`는 표시 문자열과 달리 공식 원문에 존재하는 연속 부분 문자열을 그대로 보존하며 길이는 Unicode code point로 계산한다.
+모델이 이웃 블록 ID를 인용한 경우 같은 문서의 다른 블록에서 인용이 한 곳에서만 확인되면 `evidenceBlockId`를 그 블록으로 바로잡고,
+PDF 표에서 이웃 셀 글자가 끼어들어 순서대로 이어진 부분 문자열이 없을 때는 인용(또는 라벨)의 낱말을 문장부호·문자 계열 경계로 나눠 모두 들어 있는 가장 짧은 원문 구간(인용 길이의 3배+30자, 최대 120자)을 인용으로 삼고, 선택지가 있으면 그 구간 안에서 확인한다. 두 곳 이상이거나 없으면 `EVIDENCE_QUOTE_MISMATCH`로 거부한다. `options`는 확정된 인용 안에서 확인하고, 인용이 선택지 앞에서 끝났으면
+라벨·선택지를 함께 덮는 원문 구간으로 인용을 넓힌다. 그래도 확인되지 않는 선택지나 하나뿐인 선택지는 양식 전체를 거부하지 않고
+그 문항의 선택지를 비워 자유 입력으로 두며 `application_form_choice_rejected`로 기록한다. 중복 선택지는 순서를 유지해 하나로 합친다.
 계약 위반 로그에는 응답 본문 대신 실패 경로·검증 사유·문자 길이·문서/블록/항목 개수만 남긴다.
 
 문항 답변 해석은 현재 확인 사실을 자동 변경하지 않는다.

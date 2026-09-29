@@ -542,12 +542,127 @@ def test_hwpx_inspection_over_the_target_limit_is_an_explicit_limit_error(monkey
     regions = [{"target": f"b{i}", "kind": "body_para", "text": "", "editable": True} for i in range(1, DOCUMENT_TARGET_LIMIT + 2)]
     payload = {"source_sha256": digest(path.read_bytes()), "regions": regions, "unsupported_controls": []}
     @asynccontextmanager
-    async def session(_kind, _directory):
+    async def session(_kind, _directory, **_options):
         yield SimpleNamespace(call=lambda name, _args: asyncio.sleep(0, result=payload))
     monkeypatch.setattr(document_adapters, "document_session", session)
     with pytest.raises(DocumentError) as error:
         asyncio.run(document_adapters.HwpxDocumentAdapter().inspect(path, analyze=False))
     assert error.value.code == "APPLICATION_DOCUMENT_LIMIT_EXCEEDED" and error.value.reason == "HWPX_TARGET_COUNT"
+
+
+
+def test_pdf_session_budget_grows_with_page_count_and_is_capped_below_the_http_deadline():
+    from app.application_preparation.document_adapters import pdf_session_timeout_seconds
+    from app.application_preparation.document_mcp import DEFAULT_SESSION_TIMEOUT_SECONDS, MAX_SESSION_TIMEOUT_SECONDS
+    assert pdf_session_timeout_seconds(0) == DEFAULT_SESSION_TIMEOUT_SECONDS
+    assert pdf_session_timeout_seconds(17) == 162.0
+    assert pdf_session_timeout_seconds(50) > MAX_SESSION_TIMEOUT_SECONDS
+    assert MAX_SESSION_TIMEOUT_SECONDS < 240
+
+
+def test_pdf_inspection_passes_a_page_scaled_budget_to_the_session(monkeypatch, tmp_path):
+    from contextlib import asynccontextmanager
+    from app.application_preparation import document_adapters
+    source = b"%PDF-synthetic budget fixture"
+    req = request(format="pdf", sourceBase64=base64.b64encode(source).decode(), sourceSha256=digest(source),
+        pageImages=[base64.b64encode(b"\x89PNG\r\n\x1a\n").decode()] * 17,
+        pdfTargets=[{"id": "page-0", "text": "라벨", "context": "page 1"}])
+    budgets = []
+    @asynccontextmanager
+    async def session(kind, directory, **options):
+        budgets.append(options.get("timeout_seconds"))
+        raise DocumentError("MCP_FAILED", reason="pdf:session:SESSION_TIMEOUT")
+        yield
+    monkeypatch.setattr(document_adapters, "document_session", session)
+    path = tmp_path / "source.pdf"
+    path.write_bytes(source)
+    with pytest.raises(DocumentError) as error:
+        asyncio.run(document_adapters.PdfDocumentAdapter().inspect(path, req))
+    assert budgets == [162.0]
+    assert error.value.reason == "pdf:session:SESSION_TIMEOUT"
+
+
+def test_session_failure_reason_names_a_timeout_hidden_inside_an_exception_group():
+    from app.application_preparation.document_mcp import session_failure_reason
+    grouped = BaseExceptionGroup("session", [ExceptionGroup("inner", [TimeoutError()]), RuntimeError("PRIVATE")])
+    assert session_failure_reason(grouped) == "SESSION_TIMEOUT"
+    assert session_failure_reason(ExceptionGroup("x", [RuntimeError("a"), ValueError("b")])) == "RuntimeError+ValueError"
+    assert session_failure_reason(OSError("spawn")) == "OSError"
+
+
+def test_document_session_reports_a_session_timeout_reason_without_the_message(monkeypatch, tmp_path, caplog):
+    from contextlib import asynccontextmanager
+    from app.application_preparation import document_mcp
+    monkeypatch.setenv("DOCUMENT_PDF_COMMAND", "python")
+    monkeypatch.setenv("DOCUMENT_PDF_ARGS", "[]")
+    @asynccontextmanager
+    async def stdio(parameters, errlog):
+        raise ExceptionGroup("transport", [TimeoutError("PRIVATE_DETAIL")])
+        yield
+    monkeypatch.setattr(document_mcp, "stdio_client", stdio)
+    caplog.set_level("WARNING", logger="app.application_preparation.document_mcp")
+    async def run():
+        async with document_mcp.document_session("pdf", tmp_path, timeout_seconds=500):
+            pass
+    with pytest.raises(DocumentError) as error:
+        asyncio.run(run())
+    assert error.value.reason == "pdf:session:SESSION_TIMEOUT"
+    assert "document_mcp_failed engine=pdf type=ExceptionGroup reason=SESSION_TIMEOUT timeoutSeconds=220" in caplog.text
+    assert "PRIVATE_DETAIL" not in caplog.text
+
+
+
+def test_document_session_re_raises_the_callers_own_error_instead_of_an_mcp_failure(monkeypatch, tmp_path, caplog):
+    from contextlib import asynccontextmanager
+    from app.application_preparation import document_mcp
+    monkeypatch.setenv("DOCUMENT_PDF_COMMAND", "python")
+    monkeypatch.setenv("DOCUMENT_PDF_ARGS", "[]")
+    @asynccontextmanager
+    async def stdio(parameters, errlog):
+        try:
+            yield (None, None)
+        except Exception as error:
+            raise ExceptionGroup("transport", [error])
+    class Session:
+        def __init__(self, read, write, read_timeout_seconds): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_): return False
+        async def initialize(self): pass
+        async def list_tools(self):
+            return SimpleNamespace(tools=[SimpleNamespace(name=name, input_schema={}) for name in document_mcp.ALLOWED["pdf"]])
+    monkeypatch.setattr(document_mcp, "stdio_client", stdio)
+    monkeypatch.setattr(document_mcp, "ClientSession", Session)
+    caplog.set_level("WARNING", logger="app.application_preparation.document_mcp")
+    async def run():
+        async with document_mcp.document_session("pdf", tmp_path):
+            raise ValueError("PDF_DETECTION_OVERLAP")
+    with pytest.raises(ValueError, match="PDF_DETECTION_OVERLAP"):
+        asyncio.run(run())
+    assert "document_mcp_failed" not in caplog.text
+
+
+def test_pdf_detection_post_processing_failure_is_a_named_validation_error(monkeypatch, tmp_path):
+    from contextlib import asynccontextmanager
+    from app.application_preparation import document_adapters
+    source = b"%PDF-synthetic overlap fixture"
+    req = request(format="pdf", sourceBase64=base64.b64encode(source).decode(), sourceSha256=digest(source),
+        pageImages=[base64.b64encode(b"\x89PNG\r\n\x1a\n").decode()],
+        pdfTargets=[{"id": "page-0", "text": "라벨", "context": "page 1"}])
+    box = {"x": .9, "y": .1, "width": .3, "height": .1}  # runs past the page edge
+    responses = {"pdf_get_text": {"page_count": 1, "text": "라벨"},
+        "govbiz_pdf_text_regions": {"page_count": 1, "pages": [{"page": 0, "regions": [], "blankRegions": []}]},
+        "govbiz_pdf_detect_inputs": {"page_count": 1, "modelSha256": document_adapters.MODEL_SHA256,
+            "pages": [{"page": 0, "detections": [{"kind": 0, "confidence": .8, "box": box}]}]}}
+    @asynccontextmanager
+    async def session(_kind, _directory, **_options):
+        yield SimpleNamespace(call=lambda name, _args: asyncio.sleep(0, result=responses[name]))
+    monkeypatch.setattr(document_adapters, "document_session", session)
+    path = tmp_path / "source.pdf"
+    path.write_bytes(source)
+    with pytest.raises(DocumentError) as error:
+        asyncio.run(document_adapters.PdfDocumentAdapter().inspect(path, req))
+    assert error.value.code == "APPLICATION_DOCUMENT_VALIDATION_FAILED"
+    assert error.value.reason == "PDF_DETECTION_BOX:page-0"
 
 
 def test_hwpx_cell_span_index_refuses_an_unverified_engine(monkeypatch):
@@ -656,7 +771,7 @@ def test_pdf_page_is_an_empty_new_field_slot_with_read_only_page_text(monkeypatc
                 "box": {"x": .5, "y": .1, "width": .2, "height": .1}}]}]},
         "pdf_get_text_layout": {"blocks": [{}]}, "pdf_detect_paragraphs": {"paragraphs": []}}
     @asynccontextmanager
-    async def session(kind, directory):
+    async def session(kind, directory, **_options):
         async def call(name, args): return responses[name]
         yield SimpleNamespace(call=call)
     monkeypatch.setattr(document_adapters, "document_session", session)
@@ -716,7 +831,7 @@ def test_acroform_native_field_names_constrain_mapping(monkeypatch, tmp_path):
         "govbiz_pdf_text_regions": {"page_count": 1, "pages": [{"page": 0, "regions": [], "blankRegions": []}]},
         "pdf_get_text_layout": {"blocks": [{}]}, "pdf_detect_paragraphs": {"paragraphs": []}}
     @asynccontextmanager
-    async def session(_kind, _directory):
+    async def session(_kind, _directory, **_options):
         yield SimpleNamespace(call=lambda name, _args: asyncio.sleep(0, result=replies[name]))
     monkeypatch.setattr(document_adapters, "document_session", session)
     path = tmp_path / "source.pdf"
@@ -1075,7 +1190,7 @@ def test_hwpx_only_printed_blank_slot_excludes_empty_sibling_from_mapping(monkey
                "formFields": [], "bindingEligible": True}
 
     @asynccontextmanager
-    async def session(_kind, _directory):
+    async def session(_kind, _directory, **_options):
         yield SimpleNamespace(call=AsyncMock(return_value={"source_sha256": digest(source),
                                                "regions": [region], "unsupported_controls": []}))
 
@@ -1399,7 +1514,7 @@ def test_hwpx_fit_failure_stops_before_writing_a_file(monkeypatch, tmp_path):
                                   valueRef="company:name", box=None, reason="확인된 빈칸")], unresolvedTargets=[], scopeTargetIds=[cell.targetId])
     session = SimpleNamespace(call=AsyncMock(return_value={"checked": 1, "warnings": [{"overflow": True}]}))
     @asynccontextmanager
-    async def open_session(*_args):
+    async def open_session(*_args, **_kwargs):
         yield session
     adapter = document_adapters.HwpxDocumentAdapter()
     monkeypatch.setattr(adapter, "inspect", AsyncMock(return_value=doc))

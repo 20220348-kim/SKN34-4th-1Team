@@ -245,8 +245,11 @@ async def map_document(request: MapDocumentRequest, agent) -> dict:
                 break
             except DocumentError as error:
                 targets_by_id = {target.targetId: target for target in document.targets}
-                logger.warning("document_mapping_rejected format=%s source_sha256=%s attempt=%d reason=%s bindings=%s",
+                bound_ids = {binding.factId for binding in selection.bindings}
+                logger.warning("document_mapping_rejected format=%s source_sha256=%s attempt=%d reason=%s unmappedRequired=%s unmapped=%s bindings=%s",
                                request.format, request.sourceSha256, attempt, error.reason,
+                               [field.id for field in request.fields if field.required and field.id not in bound_ids][:30],
+                               list(selection.unmappedFieldIds)[:30],
                                [{"fieldId": binding.factId, "targetId": binding.targetId,
                                  "kind": targets_by_id[binding.targetId].kind if binding.targetId in targets_by_id else "UNKNOWN",
                                  "editable": targets_by_id[binding.targetId].editable if binding.targetId in targets_by_id else False,

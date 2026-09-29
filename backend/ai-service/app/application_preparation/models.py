@@ -212,17 +212,20 @@ class FormDiscoveryValidationError(ValueError):
 
 
 def _canonical_display_text(value: str, maximum: int, path: str) -> str:
-    normalized = re.sub(r"[ \t\r\n]+", " ", value).strip(" ")
+    collapsed = re.sub(r"[ \t\r\n]+", " ", value)
+    # Parsed forms carry zero-width spaces, soft hyphens and private-use glyphs inside labels the model copies verbatim.
+    # They are never meaningful for display, so drop them instead of rejecting the whole form.
+    visible = "".join(character for character in collapsed if not unicodedata.category(character).startswith("C"))
+    dropped = len(collapsed) - len(visible)
+    normalized = re.sub(r" {2,}", " ", visible).strip(" ")
+    if dropped:
+        import logging
+        logging.getLogger(__name__).info(
+            "application_form_display_text_normalized path=%s dropped_code_points=%d code_point_count=%d",
+            path, dropped, len(normalized),
+        )
     if not normalized:
         raise FormDiscoveryValidationError("EMPTY_DISPLAY_TEXT", path=path, code_point_count=0)
-    forbidden_count = sum(unicodedata.category(character).startswith("C") for character in normalized)
-    if forbidden_count:
-        raise FormDiscoveryValidationError(
-            "FORBIDDEN_DISPLAY_CHARACTER",
-            path=path,
-            code_point_count=len(normalized),
-            forbidden_character_count=forbidden_count,
-        )
     if len(normalized) > maximum:
         raise FormDiscoveryValidationError(
             "DISPLAY_TEXT_TOO_LONG",
@@ -312,6 +315,51 @@ def _ordered_gapped_source_spans(
     return spans
 
 
+_SCRIPT_TERM = re.compile(r"[0-9a-z]+|[\uac00-\ud7a3]+|[\u4e00-\u9fff]+|[^\W_]+")
+
+
+def _unordered_window_span(source: str, proposed: str, *, maximum_span: int = 120) -> tuple[int, int] | None:
+    """Locate a short source window that holds every term of the quote in any order.
+
+    PDF table rows interleave the characters of neighbouring cells ("(복수IOT게이트웨이 /pH단수계中택1)"),
+    so a label the model reads correctly may not exist as an ordered substring. The returned span is
+    still verbatim source text; the caller keeps it only when it is short relative to the quote.
+    """
+    def key(text: str) -> str:
+        return "".join(normalized for character in text
+                       for normalized in unicodedata.normalize("NFKC", character).casefold() if normalized.isalnum())
+    chunks = re.findall(r"[^\W_]+", unicodedata.normalize("NFKC", proposed).casefold())
+    terms = list(dict.fromkeys(term for chunk in chunks for term in _SCRIPT_TERM.findall(chunk)))
+    if len(terms) < 2:
+        return None
+    source_key, indexes = [], []
+    for index, character in enumerate(source):
+        for normalized in unicodedata.normalize("NFKC", character).casefold():
+            if normalized.isalnum():
+                source_key.append(normalized)
+                indexes.append(index)
+    joined = "".join(source_key)
+    positions = []
+    for term in terms:
+        found = [match.start() for match in re.finditer(re.escape(term), joined)]
+        if not found:
+            return None
+        positions.append((term, found))
+    anchor_term, anchor_positions = max(positions, key=lambda item: len(item[0]))
+    best: tuple[int, int] | None = None
+    for anchor in anchor_positions:
+        start, end = anchor, anchor + len(anchor_term)
+        for term, found in positions:
+            if term == anchor_term:
+                continue
+            nearest = min(found, key=lambda position: min(abs(position - anchor), abs(position + len(term) - end)))
+            start, end = min(start, nearest), max(end, nearest + len(term))
+        span = (indexes[start], indexes[end - 1] + 1)
+        if span[1] - span[0] <= maximum_span and (best is None or span[1] - span[0] < best[1] - best[0]):
+            best = span
+    return best
+
+
 def _canonical_source_quote(
     source: str,
     proposed: str,
@@ -363,6 +411,10 @@ def _canonical_source_quote(
     relaxed_spans = [span for span in _source_spans(source, proposed) if span[1] - span[0] <= 300]
     relaxed_spans += _ordered_gapped_source_spans(source, proposed)
     if not relaxed_spans:
+        for candidate in (proposed, label or ""):
+            window = _unordered_window_span(source, candidate, maximum_span=min(120, 3 * len(candidate) + 30))
+            if window is not None and all(_source_spans(source[window[0]:window[1]], option) for option in options or []):
+                return source[window[0]:window[1]]
         return None
     start, end = min(relaxed_spans, key=lambda span: (span[1] - span[0], span[0]))
     return source[start:end]
@@ -379,6 +431,40 @@ def _unique_key(key: str, used: set[str]) -> str:
             used.add(candidate)
             return candidate
         suffix += 1
+
+
+def _relocate_evidence(blocks, field, exclude_block_id: str):
+    """The model sometimes cites a neighbouring block ID for a verbatim quote. Accept one unambiguous match elsewhere."""
+    matches = []
+    for block in blocks:
+        if block.blockId == exclude_block_id:
+            continue
+        quote = _canonical_source_quote(block.text, field.evidenceQuote, label=field.label, options=field.options)
+        if quote is not None:
+            matches.append((block, quote))
+    return matches[0] if len(matches) == 1 else None
+
+
+def _canonical_options(quote: str, options: list[str]) -> list[str] | None:
+    canonical: list[str] = []
+    for option in options:
+        if not option or len(option) > 100 or option != option.strip():
+            return None
+        found = _canonical_source_quote(quote, option)
+        if found is None or len(found) > 100:
+            return None
+        canonical.append(found)
+    return canonical
+
+
+def _log_choice_rejection(reason: str, field_path: str, field, quote: str, option: str | None) -> None:
+    """Field-level diagnostics only: the label, the already-verified quote and the proposed options."""
+    import logging
+    logging.getLogger(__name__).warning(
+        "application_form_choice_rejected reason=%s path=%s label=%r quote=%r options=%r rejected_option=%r",
+        reason, f"{field_path}.options", field.label[:100], quote[:300],
+        [item[:100] for item in field.options[:30]], None if option is None else option[:100],
+    )
 
 
 def validate_discovery(request: DiscoverFormsRequest, output: FormDiscoverySelection) -> None:
@@ -423,6 +509,16 @@ def validate_discovery(request: DiscoverFormsRequest, output: FormDiscoverySelec
                     options=field.options,
                 )
                 if canonical_quote is None:
+                    relocated = _relocate_evidence(documents[form.documentIndex].blocks, field, field.evidenceBlockId)
+                    if relocated is not None:
+                        import logging
+                        logging.getLogger(__name__).info(
+                            "application_form_evidence_relocated path=%s from_block_id=%s to_block_id=%s",
+                            f"{field_path}.evidenceBlockId", field.evidenceBlockId, relocated[0].blockId,
+                        )
+                        block, canonical_quote = relocated
+                        field.evidenceBlockId = block.blockId
+                if canonical_quote is None:
                     import logging
                     logging.getLogger(__name__).warning(
                         "application_form_evidence_mismatch path=%s block_id=%s label=%r quote=%r options=%r source_length=%d",
@@ -434,17 +530,23 @@ def validate_discovery(request: DiscoverFormsRequest, output: FormDiscoverySelec
                         path=f"{field_path}.evidenceQuote",
                         code_point_count=len(field.evidenceQuote),
                     )
+                canonical_options = _canonical_options(canonical_quote, field.options)
+                if canonical_options is None:
+                    # The exact quote may stop short of the printed choices; retry with the label-plus-options span.
+                    widened = _canonical_source_quote(block.text, "", label=field.label, options=field.options)
+                    if widened is not None:
+                        canonical_options = _canonical_options(widened, field.options)
+                        if canonical_options is not None:
+                            canonical_quote = widened
+                if canonical_options is None:
+                    # Choices the source cannot confirm are not answer options; keep the question as free text.
+                    _log_choice_rejection("CHOICE_OPTIONS_DROPPED", field_path, field, canonical_quote, None)
+                    canonical_options = []
+                canonical_options = list(dict.fromkeys(canonical_options))
+                if len(canonical_options) == 1:
+                    _log_choice_rejection("SINGLE_CHOICE_DROPPED", field_path, field, canonical_quote, None)
+                    canonical_options = []
                 field.evidenceQuote = canonical_quote
-                canonical_options: list[str] = []
-                for option in field.options:
-                    if not option or len(option) > 100 or option != option.strip():
-                        raise FormDiscoveryValidationError("CHOICE_OPTION_NOT_IN_SOURCE", path=f"{field_path}.options")
-                    canonical_option = _canonical_source_quote(canonical_quote, option)
-                    if canonical_option is None or len(canonical_option) > 100:
-                        raise FormDiscoveryValidationError("CHOICE_OPTION_NOT_IN_SOURCE", path=f"{field_path}.options")
-                    canonical_options.append(canonical_option)
-                if len(canonical_options) != len(set(canonical_options)) or len(canonical_options) == 1:
-                    raise FormDiscoveryValidationError("INVALID_CHOICE_OPTIONS", path=f"{field_path}.options")
                 field.options = canonical_options
 
 

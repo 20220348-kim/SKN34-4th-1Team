@@ -14,7 +14,7 @@ from app.application_preparation.document_contract import (
     DOCUMENT_TARGET_LIMIT, DocumentError, DocumentMap, ENGINES, GenerateDocumentRequest, MAX_BYTES,
     NativeTarget, NativeTargetAnalysis, WritePlan, digest, edited_text,
 )
-from app.application_preparation.document_mcp import document_session
+from app.application_preparation.document_mcp import DEFAULT_SESSION_TIMEOUT_SECONDS, document_session
 from app.application_preparation.hwpx_form_analysis import analyze_cells
 from app.application_preparation.pdf_form_detection import checked_regions, MODEL_SHA256
 
@@ -167,6 +167,11 @@ class HwpxDocumentAdapter:
                       "xml": "PASSED", "fitChecked": fit["checked"], "fitPolicy": "ESTIMATE_ONLY", "render": "NOT_RUN", "hancom": "NOT_RUN"}
 
 
+def pdf_session_timeout_seconds(page_count: int) -> float:
+    """FFDetr loads in ~20s and needs ~2-3s per page on CPU; text tools add ~1s per page."""
+    return max(DEFAULT_SESSION_TIMEOUT_SECONDS, 60.0 + 6.0 * max(0, page_count))
+
+
 class PdfDocumentAdapter:
     async def inspect(self, path: Path, request: GenerateDocumentRequest) -> DocumentMap:
         async with _pdf_inspection_lock:
@@ -187,7 +192,7 @@ class PdfDocumentAdapter:
             targets.append(NativeTarget(targetId=target.id, nativeLocator=field_locator,
                 kind="PDF_FIELD" if is_field else "PDF_PAGE", label=target.context, currentText=target.text if is_field else "", context=target.context,
                 editable=(field.editable if field else not is_field), unsupportedReason=None if (field and field.editable) or not is_field else "FIELD_NOT_EDITABLE_OR_METADATA_MISSING"))
-        async with document_session("pdf", path.parent) as session:
+        async with document_session("pdf", path.parent, timeout_seconds=pdf_session_timeout_seconds(len(request.pageImages))) as session:
             text = await session.call("pdf_get_text", {"pdf_path": str(path)})
             if text["page_count"] != len(request.pageImages) or not 1 <= text["page_count"] <= 50:
                 raise DocumentError("LIMIT_EXCEEDED")
@@ -216,7 +221,11 @@ class PdfDocumentAdapter:
                         target.editable = False
                         target.unsupportedReason = "PAGE_IS_READ_ONLY"
                 if not fields:
-                    for region in checked_regions(detections["pages"][page]["detections"], item["regions"], item.get("blankRegions", [])):
+                    try:
+                        regions = checked_regions(detections["pages"][page]["detections"], item["regions"], item.get("blankRegions", []), page=page)
+                    except ValueError as error:
+                        raise DocumentError("VALIDATION_FAILED", reason=f"{error}:page-{page}") from error
+                    for region in regions:
                         targets.append(NativeTarget(targetId=f"pdf-blank:{page}:{region['id']}", kind="PDF_INPUT", currentText="",
                             label=" / ".join(region["labels"])[:1000], context=f"FFDetr input on PDF page {page+1}; no printed-word overlap",
                             nativeLocator={"page": page, "pageTarget": f"page-{page}", "box": region["box"], "fieldLabels": region["labels"],
