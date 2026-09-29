@@ -258,7 +258,10 @@ SDK가 사용량을 제공하지 않고 읽을 수 있는 수신 응답도 없�
 두 그래프에 주입합니다. 직접 Service·그래프를 생성하는 평가·검증 실행기도 같은 객체를 전달합니다.
 새 provider·실행 계층·모델 호출은 추가하지 않습니다.
 
-호출 흐름은 `HTTP API 또는 직접 Service 호출 → LangGraph → Core 도구 / 근거 검색 / 채팅 모델 → 응답`입니다.
+호출 흐름은 `Core AssistantMessageService → AiAssistantClient → AI HTTP API → AssistantAgentService → LangGraph → Core 도구 / 근거 검색 / 채팅 모델 → 응답`입니다.
+AI Service를 직접 생성하는 검증 경로도 유지합니다. 내부 `/assistant/agent`는 유효한 sampled W3C v00 `traceparent`의
+trace ID·부모 span ID만 전달받아 `assistant.agent`를 연결합니다. 없거나 잘못된 헤더는 새 독립 trace로 처리하며
+`baggage`·공개 응답 JSON 계약은 추가하지 않습니다. Core는 공개 요청의 trace ID를 받아들이지 않고 새 루트를 생성합니다.
 Langfuse에서 `assistant-agent` trace 이름으로 필터하거나 `assistant_agent_run` 로그의 `trace_id`로 찾습니다.
 Ops 화면의 **검색·도우미 실행 추적** 링크에서도 같은 프로젝트로 이동할 수 있습니다. Langfuse 로그인은 별도입니다.
 
@@ -291,7 +294,9 @@ assistant.agent
 
 무료 검증은 `tests/assistant_agent/test_tracing.py`에서 실제 LangGraph와 메모리 exporter로 수행합니다.
 기존 LLMOps `smoke.py`에도 정상·map 일부 실패·시간 초과의 Langfuse 저장·재조회 검사를 추가했습니다.
-Core 도우미 요청의 분산 부모 연결, 상세 공고 RAG의 전체 단계, Ops 평가 지표·점수 등록은 후속 범위입니다.
+Core 도우미의 첫 호출·자료 준비·재호출과 부모 연결도 구현했습니다.
+[실제 Core 도우미 연결 검사](../../infrastructure/llmops/README.md#core-도우미-분산-추적-검증)에서 로컬 선택 검증과 CI 서버 검증 범위를 구분합니다.
+상세 공고 RAG의 전체 단계, Ops 평가 지표·점수 등록은 후속 범위입니다.
 
 모델은 상태·패치·질문 또는 결과 설명을 출력하고 Service가 검증 후 계약 버전을 붙입니다. 검색/임베딩/랭킹은 호출하지 않습니다.
 

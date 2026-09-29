@@ -1,5 +1,6 @@
-package ai.govbiz.core.supportprogram.config
+package ai.govbiz.core._common.config
 
+import ai.govbiz.core.assistant.helper.AssistantTracingHelper
 import ai.govbiz.core.supportprogram.helper.SupportProgramSearchTracingHelper
 import com.sun.net.httpserver.HttpServer
 import java.net.InetSocketAddress
@@ -10,7 +11,7 @@ import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import org.springframework.mock.env.MockEnvironment
 
-class SupportProgramSearchTracingConfigTest {
+class LlmTracingConfigTest {
     @Test
     fun exportsToLangfuseOtlpEndpointAndIsolatesIngestionFailure() {
         val received = LinkedBlockingQueue<Pair<String?, ByteArray>>()
@@ -23,22 +24,24 @@ class SupportProgramSearchTracingConfigTest {
         }
         server.start()
         try {
-            val config = SupportProgramSearchTracingConfig()
+            val config = LlmTracingConfig()
             val environment = MockEnvironment()
                 .withProperty("LANGFUSE_ENABLED", "true")
                 .withProperty("LANGFUSE_BASE_URL", "http://127.0.0.1:${server.address.port}")
                 .withProperty("LANGFUSE_PUBLIC_KEY", "pk-local-test")
                 .withProperty("LANGFUSE_SECRET_KEY", "sk-local-test")
-            config.searchTracerProvider(environment).use { provider ->
+            config.llmTracerProvider(environment).use { provider ->
                 val tracing = config.supportProgramSearchTracingHelper(provider, environment)
                 var calls = 0
                 assertEquals("selected", tracing.observe("total") { calls++; "selected" })
+                assertEquals("answered", config.assistantTracingHelper(provider, environment).observe("total") { calls++; "answered" })
                 provider.forceFlush().join(5, TimeUnit.SECONDS)
                 val request = received.poll(5, TimeUnit.SECONDS)
                 assertNotNull(request)
                 assertEquals("Basic " + Base64.getEncoder().encodeToString("pk-local-test:sk-local-test".toByteArray()), request.first)
                 assertTrue(request.second.isNotEmpty())
-                assertEquals(1, calls)
+                assertEquals(2, calls)
+                assertNull(AssistantTracingHelper.currentTraceParent())
                 assertNull(SupportProgramSearchTracingHelper.currentTraceParent())
             }
         } finally {
@@ -48,11 +51,14 @@ class SupportProgramSearchTracingConfigTest {
 
     @Test
     fun disabledTracingNeedsNoKeysAndDoesNotPropagateParent() {
-        val config = SupportProgramSearchTracingConfig()
+        val config = LlmTracingConfig()
         val environment = MockEnvironment()
-        config.searchTracerProvider(environment).use { provider ->
+        config.llmTracerProvider(environment).use { provider ->
             config.supportProgramSearchTracingHelper(provider, environment).observe("total") {
                 assertNull(SupportProgramSearchTracingHelper.currentTraceParent())
+            }
+            config.assistantTracingHelper(provider, environment).observe("total") {
+                assertNull(AssistantTracingHelper.currentTraceParent())
             }
         }
     }
@@ -61,7 +67,7 @@ class SupportProgramSearchTracingConfigTest {
     fun rejectsUnsafeConfigurationWithoutEchoingItsValue() {
         for (url in listOf("http://user:PRIVATE@localhost", "http://localhost/PRIVATE", "http://PRIVATE invalid")) {
             val error = assertThrows(IllegalArgumentException::class.java) {
-                SupportProgramSearchTracingConfig().searchTracerProvider(MockEnvironment()
+                LlmTracingConfig().llmTracerProvider(MockEnvironment()
                     .withProperty("LANGFUSE_ENABLED", "true").withProperty("LANGFUSE_BASE_URL", url))
             }
             assertEquals("Invalid LANGFUSE_BASE_URL", error.message)

@@ -885,6 +885,15 @@ Langfuse 클라이언트로 같은 프로젝트에 전송합니다. 전송 장�
 React Ops의 관리자 세션은 Django에서 받은 프로젝트 trace 목록 링크를 표시합니다. Langfuse 로그인은 별도입니다.
 [단계별 구조·설정·검증 범위](../infrastructure/llmops/README.md#지원사업-ai-검색-추적)를 참고하세요.
 
+도우미도 `AssistantMessageService → AiAssistantClient → AI AssistantAgentService → LangGraph`를
+하나의 `assistant-agent` trace로 연결합니다. Core는 새 `assistant.total`을 만들고 첫 AI 호출·응답 검증·
+관심 공고 자료 준비·재호출·재검증을 구분합니다. 두 AI 호출의 `assistant.agent`는 각 Core HTTP 단계의
+자식입니다. 검색과 도우미는 `_common/config/LlmTracingConfig`의 단일 OTLP provider를 공유하고,
+특정 기능의 span·헤더 처리는 각 기능의 Helper가 담당합니다.
+공개 요청의 부모 ID·baggage를 전파하지 않으며 내부 AI API만 유효한 sampled v00 부모를 수용합니다.
+기존 분류 모드는 Core 단계만 추적합니다. 사람 검토·Ops 평가 점수·품질 합격을 생성하는 기능은 아닙니다.
+[설정·단계와 검증 범위](../backend/core-service/README.md#도우미-core--ai-분산-추적)를 참고하세요.
+
 AI Service의 랭킹·조건 해석 모델·HTTP·Agent 시간 초과는 내부 504로 반환되고 Core는 공개 `504 AI_SERVICE_TIMEOUT`으로
 전달합니다. 의미 검색의 전체 실행·임베딩·Qdrant 전송 시간초과도 내부 `INDEX_TIMEOUT` 504로 전달합니다.
 화면은 해당 endpoint의 검증된 오류 계약에 한해 AI 처리 시간 초과와 수동 재시도를 안내합니다.

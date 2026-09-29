@@ -30,7 +30,9 @@ class AssistantAgentService:
         self._timeout_seconds = timeout_seconds
         self._tracing = tracing or LLMTracing(LangfuseSettings())
 
-    async def answer(self, request: AssistantAgentRequest, *, trace_id: str | None = None) -> AssistantAgentResponse:
+    async def answer(
+        self, request: AssistantAgentRequest, *, trace_id: str | None = None, parent_span_id: str | None = None,
+    ) -> AssistantAgentResponse:
         started = perf_counter()
         outcome = "failed"
         state: dict = {}
@@ -45,7 +47,9 @@ class AssistantAgentService:
                 sort_keys=True, ensure_ascii=False, separators=(",", ":"),
             ).encode()).hexdigest(),
         }
-        with self._tracing.observation("assistant.agent", trace_id=trace_id, metadata=metadata) as observation:
+        with self._tracing.observation(
+            "assistant.agent", trace_id=trace_id, parent_span_id=parent_span_id, metadata=metadata,
+        ) as observation:
             try:
                 async with asyncio.timeout(self._timeout_seconds):
                     async for update in self._graph.astream({

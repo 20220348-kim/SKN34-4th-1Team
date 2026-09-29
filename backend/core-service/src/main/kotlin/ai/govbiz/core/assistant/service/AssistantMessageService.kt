@@ -24,6 +24,7 @@ import ai.govbiz.core.assistant.domain.AssistantHelpEntry
 import ai.govbiz.core.assistant.domain.AssistantIntent
 import ai.govbiz.core.assistant.domain.AssistantNavigation
 import ai.govbiz.core.assistant.domain.AssistantQuestion
+import ai.govbiz.core.assistant.helper.AssistantTracingHelper
 import ai.govbiz.core.partner.domain.PartnerProposalBox
 import ai.govbiz.core.partner.domain.PartnerProposalStatus
 import ai.govbiz.core.partner.service.PartnerProposalService
@@ -53,10 +54,11 @@ class AssistantMessageService(
     private val properties: AssistantAgentProperties = AssistantAgentProperties(),
     private val tokenService: AssistantToolTokenService? = null,
     private val documentService: AssistantSavedProgramDocumentService? = null,
+    private val tracing: AssistantTracingHelper = AssistantTracingHelper(),
 ) {
-    fun answer(account: Account?, question: AssistantQuestion): AssistantAnswer {
+    fun answer(account: Account?, question: AssistantQuestion): AssistantAnswer = tracing.observe("total") {
         val verified = if (properties.agentEnabled) askAgent(account, question) else askClassifier(account, question)
-        return when (verified.intent) {
+        when (verified.intent) {
             AssistantIntent.PRODUCT_HELP -> productHelp(verified, question)
             AssistantIntent.ACCOUNT_STATE -> accountState(verified, account)
             AssistantIntent.SEARCH -> search(verified.searchQuery!!)
@@ -68,7 +70,9 @@ class AssistantMessageService(
     }
 
     private fun askClassifier(account: Account?, question: AssistantQuestion): VerifiedPayload =
-        verify(client.answer(toRequest(account, question)).toRaw(), question, agent = false)
+        tracing.observe("core.classifier") {
+            verify(client.answer(toRequest(account, question)).toRaw(), question, agent = false)
+        }
 
     /**
      * 로그인 회원이면 이 요청에만 쓰는 계정 묶음 토큰을 발급해 AI Service의 도구가 Core를 되부를 수 있게 합니다.
@@ -82,27 +86,31 @@ class AssistantMessageService(
         val request = AiAssistantAgentRequest(
             AGENT_SCHEMA_VERSION, base.message, base.history, base.session, base.context, base.helpEntries, principal,
         )
-        val first = client.agent(request)
-        val verified = verify(first.toRaw(), question, agent = true)
+        val first = tracing.observe("core.request") { client.agent(request) }
+        val verified = tracing.observe("core.validate") { verify(first.toRaw(), question, agent = true) }
         if (first.needsDocuments != true || account == null || verified.intent != AssistantIntent.SAVED_PROGRAMS_QUESTION) return verified
         val documents = documentService ?: throw IllegalStateException("assistant agent requires the document service")
-        val prepared = documents.prepare(account.id)
+        val prepared = tracing.observe("core.documents") { documents.prepare(account.id) }
         if (prepared.documents.isEmpty()) return verified
-        val second = client.agent(request.copy(
-            principal = AiAssistantPrincipal(account.id, tokens.issue(account.id).value, account.company != null),
-            savedProgramDocuments = prepared.documents, resumeIntent = AssistantIntent.SAVED_PROGRAMS_QUESTION.name,
-        ))
-        if (second.needsDocuments == true) invalidResponse()
-        val resumed = verify(second.toRaw(), question, agent = true)
-        if (resumed.intent != AssistantIntent.SAVED_PROGRAMS_QUESTION) invalidResponse()
-        val allowed = prepared.documents.map { it.documentId }.toSet()
-        // 카드는 준비한 관심 공고 안에서만, 인용은 그 공고의 청크 원문에 글자 그대로 있어야 남깁니다.
-        val cards = resumed.cards.map { card ->
-            if (card.kind != AssistantCardKind.PROGRAM || card.id !in allowed) invalidResponse()
-            val quote = card.quote?.takeIf { text -> prepared.chunkTexts[card.id].orEmpty().any { it.contains(text) } }
-            card.copy(quote = quote)
+        val second = tracing.observe("core.resume_request") {
+            client.agent(request.copy(
+                principal = AiAssistantPrincipal(account.id, tokens.issue(account.id).value, account.company != null),
+                savedProgramDocuments = prepared.documents, resumeIntent = AssistantIntent.SAVED_PROGRAMS_QUESTION.name,
+            ))
         }
-        return resumed.copy(cards = cards)
+        return tracing.observe("core.validate_resume") {
+            if (second.needsDocuments == true) invalidResponse()
+            val resumed = verify(second.toRaw(), question, agent = true)
+            if (resumed.intent != AssistantIntent.SAVED_PROGRAMS_QUESTION) invalidResponse()
+            val allowed = prepared.documents.map { it.documentId }.toSet()
+            // 카드는 준비한 관심 공고 안에서만, 인용은 그 공고의 청크 원문에 글자 그대로 있어야 남깁니다.
+            val cards = resumed.cards.map { card ->
+                if (card.kind != AssistantCardKind.PROGRAM || card.id !in allowed) invalidResponse()
+                val quote = card.quote?.takeIf { text -> prepared.chunkTexts[card.id].orEmpty().any { it.contains(text) } }
+                card.copy(quote = quote)
+            }
+            resumed.copy(cards = cards)
+        }
     }
 
     private fun toRequest(account: Account?, question: AssistantQuestion): AiAssistantAnswerRequest =

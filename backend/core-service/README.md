@@ -909,6 +909,32 @@ Core와 AI Service에 `LANGFUSE_ENABLED=true`, 같은 프로젝트의 `LANGFUSE_
 사용하며 Langfuse 전송 실패로 검색·모델을 재실행하지 않습니다. 활성 검색의 로그 `trace_id`로 조회할 수 있습니다.
 Ops 링크·단계 구조·전체 검증의 한계는 [LLMOps 실행 안내](../../infrastructure/llmops/README.md#지원사업-ai-검색-추적)를 참고하세요.
 
+### 도우미 Core → AI 분산 추적
+
+`LlmTracingConfig`가 검색과 도우미의 OTLP provider·비동기 전송 큐를 하나로 구성합니다.
+기존 검색 전용 설정을 `_common/config`로 옮겼으며 환경변수·비활성화 기본값은 위와 같습니다.
+`AssistantTracingHelper`는 각 `AssistantMessageService.answer` 호출을 새 `assistant.total` 루트로 시작합니다.
+`assistant_request trace_id=...` 로그나 Langfuse의 `assistant-agent` 이름으로 조회합니다.
+
+```text
+assistant.total (Core)
+├─ assistant.core.request → assistant.agent (AI) → 분류·도구·답변 단계
+├─ assistant.core.validate
+├─ assistant.core.documents (관심 공고 원문·청크 준비가 필요할 때)
+├─ assistant.core.resume_request → assistant.agent (AI) → 관심 공고 RAG
+└─ assistant.core.validate_resume
+```
+
+첫 호출과 재호출은 같은 trace의 서로 다른 부모 span을 사용합니다. 자료가 비면 재호출하지 않으며,
+응답 계약·허용 카드·인용 검증과 503/504 처리도 유지합니다. 준비·검증 실패는 해당 Core 단계에 표시합니다.
+질문·문서·계정·토큰·응답 본문·예외 원문은 추적에 넣지 않습니다. 외부 요청의 `traceparent`는 Core 루트로
+채택하지 않고, 현재 도우미 문맥에서 만든 헤더만 내부 `/assistant/agent`에 전달합니다.
+기존 분류 모드는 Core의 `assistant.core.classifier`까지만 기록하며 AI 분류기 내부 연결은 포함하지 않습니다.
+
+로컬 선택 테스트는 `AssistantMessageTracingTest`, `AssistantTracingHelperTest`, 기존 도우미 Service·Client,
+`LlmTracingConfigTest`, 검색 추적 회귀를 포함합니다. 실제 서버 저장·재조회는
+[LLMOps 도우미 연결 검사](../../infrastructure/llmops/README.md#core-도우미-분산-추적-검증)를 따릅니다.
+
 ### 기존 기능 검증
 
 `backend/core-service` 디렉터리에서 JDK 21 환경으로 실행합니다. Repository 통합 테스트가 실제

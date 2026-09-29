@@ -206,7 +206,11 @@ def main():
     parser.add_argument("--timeout", type=int, default=300, help="Seconds per readiness condition")
     parser.add_argument("--search-traces-output", type=Path,
                         help="Also verify Core search traces in local Langfuse and save new JSON evidence")
+    parser.add_argument("--assistant-traces-output", type=Path,
+                        help="With --search-traces-output, also verify Core assistant HTTP traces")
     args = parser.parse_args()
+    require(not args.assistant_traces_output or args.search_traces_output,
+            "Assistant tracing requires --search-traces-output to share the isolated tracing fixture")
     project = "govbiz-catalog-check-" + uuid.uuid4().hex[:12]
     values = fixture_env()
     if args.search_traces_output:
@@ -214,6 +218,14 @@ def main():
         import core_search_trace
         values.update(core_search_trace.tracing_env(os.environ))
         require(not args.search_traces_output.exists(), "Use a new search trace evidence output path")
+    if args.assistant_traces_output:
+        import core_assistant_trace
+        require(not args.assistant_traces_output.exists(), "Use a new assistant trace evidence output path")
+        require(args.assistant_traces_output.resolve() != args.search_traces_output.resolve(), "Use distinct trace evidence paths")
+        values.update({
+            "ASSISTANT_AGENT_ENABLED": "true", "ASSISTANT_TOOLS_TOKEN": "assistant-trace-fixture-secret-never-use-in-production",
+            "LLM_MODEL_TIMEOUT_SECONDS": "2", "LLM_RUN_TIMEOUT_SECONDS": "3",
+        })
     ports = iter(range(19080, 19086)) if args.config_only else None
     selected = set()
     port_keys = ["CORE_API_HOST_PORT", "MYSQL_HOST_PORT", "QDRANT_HOST_PORT", "WEB_HOST_PORT", "CATALOG_HOST_PORT"]
@@ -446,6 +458,12 @@ def main():
                         environment=os.environ, call_json=call_json, output=args.search_traces_output,
                         core_logs=lambda: run(compose + ["logs", "--no-color", "core-service"], capture=True, timeout=15).stdout,
                     )
+                    if args.assistant_traces_output:
+                        core_assistant_trace.verify_assistant_traces(
+                            core_url=core_url, stub_url="http://127.0.0.1:" + values["OPENAI_STUB_HOST_PORT"],
+                            environment=os.environ, call_json=call_json, output=args.assistant_traces_output,
+                            core_logs=lambda: run(compose + ["logs", "--no-color", "core-service"], capture=True, timeout=15).stdout,
+                        )
                 finally:
                     run(compose + ["start", "catalog-service"], timeout=60)
             before = {source: hashlib.sha256(json.dumps(value["programs"], sort_keys=True, ensure_ascii=False).encode()).hexdigest()

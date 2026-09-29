@@ -1,8 +1,8 @@
-# LLMOps 개발 현황과 후속 전략 — skn-65
+# LLMOps 개발 현황과 후속 전략 — skn-66
 
 [문서 목록](README.md) · [도입·구현 이력](langfuse-adoption-strategy.md) · [Ops API](../backend/ops-service/README.md) · [실행 안내](../infrastructure/llmops/README.md)
 
-## 후속 구현 — 2026-09-30
+## main에서 함께 반영한 skn-65 구현 — 2026-09-30
 
 S1의 로컬 이미지 Ops 활성화와 Core·Ops 동시 웹 연결을 추가했다.
 소유권·현재 브리지·DB 대상·Secret 참조를 검증하고 artifact 토큰만 추가한 뒤 migration→API+sync→진단으로 진행한다.
@@ -24,11 +24,13 @@ S2는 기존 무료 평가 검증을 재사용하는 `smoke_ops_bridge.py --eval
 
 ## 현재 판단과 확인 범위 — 2026-09-30
 
-기준 커밋은 `skn-63 / 8edfa32bbf0677e6a44cd7809e0762f28f83550d`이며 **필수 CI 5개가 모두 통과했다.**
-LLMOps의 실제 Core 검색 추적·취소·Kubernetes–Compose 연결 단계도 모두 실행·성공했다.
-이후 작업 트리에 추가한 도우미 추적은 이 CI 결과에 포함되지 않으며 새 커밋의 CI가 필요하다.
-이번 도우미 변경은 PR #136 병합 후 `main / 36b968f`에서 분기한 `skn-64`에 기록한다.
-분기 기준 `36b968f`와 `8edfa32`의 파일 내용은 같다.
+현재 개발 기준은 `skn-64 / d33a1405ee6117f9b9dc65ef482f1fdabfe96b14`이며,
+그 위에 개발한 Core 도우미 → AI 분산 추적 연결을 `skn-66`에 기록한다.
+리베이스 기준은 PR #140이 반영된 `upstream/main / 7bde865b3de774992051e6e39ab19b8ceff3318f`다.
+`skn-65`의 Kubernetes Ops 활성화·무료 평가 검증과 CI의 웹 프록시 종료·85분 제한을 함께 유지한다.
+마지막 조회에서 기준 커밋의 Infra·Ops·Catalog·LLMOps CI는 성공, GovBiz CI는 실행 중이었다.
+이전 `skn-63 / 8edfa32`의 필수 CI 5개와 실제 Core 검색 검사는 모두 통과했다.
+이전 성공 결과를 `d33a140` 전체 또는 `skn-66`의 전체 검증 완료로 간주하지 않는다.
 
 기준 커밋은 당시 원본·개인 포크 `main`의
 `814d084fb77b8f68c751d490d1434a90f666a379` 위로 리베이스했다. 개발과 아래 실제 서버 검증은
@@ -36,20 +38,20 @@ LLMOps의 실제 Core 검색 추적·취소·Kubernetes–Compose 연결 단계�
 Kubernetes–Compose 연결 검증을 유지했다.
 뒤의 접힌 기록은 당시의 장애·검증 이력이다.
 
-**실제 Core 검색 추적은 CI까지 통과했다. 도우미 단계 추적을 이어서 구현했으며,
-다음 순서는 이 변경의 검증 → Ops 전체 RAG 평가 계약 연결이다. 사람의 자료·응답 검토와 현재 모델 비교 기준 확보는 병행한다.**
+**실제 Core 검색 추적은 CI까지 통과했다. 도우미 노드 추적에 이어 Core의 첫 호출·자료 준비·재호출을 연결했다.
+다음 순서는 새 코드의 실제 서버 CI 검증 → 상세 공고 RAG 추적 → Ops 전체 RAG 평가 계약 연결이다. 사람의 자료·응답 검토와 현재 모델 비교 기준 확보는 병행한다.**
 이미 구현된 검토·예산 보정·실패 사용량 기록을 다시 구현하지 않는다.
 
 | 항목 | 현재 확인한 상태 | 완료 판단 |
 |---|---|---|
-| 기존 CI 회귀 | `8edfa32`의 필수 5개 workflow 성공, 실제 Core 검색 추적도 통과 | 이후 작업 트리의 도우미 변경은 새 SHA에서 별도 검증 |
+| 기존 CI 회귀 | `d33a140`의 Infra·Ops·Catalog·LLMOps 성공, GovBiz 실행 중(마지막 조회) | `skn-66` 최종 SHA의 전체 CI는 푸시 후 별도 확인 |
 | 개발 환경 | Ops·sync·실행기·Prefect 실행 중, migration `0015_usage_correction` 적용 | 이전 무료 replay·복구 결과 유지. 이번 조회는 집계·상태 확인 |
 | 사람 검토·기준 | 자료 검토 0건, 사례 보류 1건, 전체 검토 승인 0건, 품질 `NEEDS_REVIEW` 1건, 활성 기준 0건 | 현재 모델의 검토된 비교 기준 미확보 |
 | 평가 이력 | live 완료 2건, recovery 완료 2건, replay 완료 14건·실패 3건 | 과거 live 완료를 현재 모델 전체 품질 증거로 사용하지 않음 |
 | 예산 적용 | 설정·예약 0건, live 비활성화 | 호출·출력 예약 기능은 구현됐지만 실제 유료 평가 통제 적용은 별도 |
-| 전체 추적·평가 | 실제 Core 검색 추적 CI 통과. 도우미·관심 공고 RAG 노드 추적과 Ops 추적 링크 안내 추가 | 새 변경 CI, Core 도우미 분산 연결·상세 공고 RAG 단계·Ops 전체 RAG 평가 연결은 남음 |
+| 전체 추적·평가 | Core 검색 CI 통과. 도우미 노드 추적에 Core 첫 호출·자료 준비·재호출 연결 추가 | 새 코드 서버 CI, 회원 RAG 전체 E2E, 상세 공고 RAG·Ops 평가 연결은 남음 |
 
-기준 커밋 CI: [GovBiz](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36580527445),
+이전 `8edfa32` CI: [GovBiz](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36580527445),
 [Catalog](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36580527441),
 [Ops](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36580527440),
 [Infra](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36580527498),
@@ -78,7 +80,7 @@ Sync fork 해결과 당시 기준 커밋의 CI 통과 사실은 그대로 유지
 |---|---|---|
 | P1 완료 | 실제 Core 검색 추적 통합 검증 | `8edfa32`의 실제 서버 CI 네 사례 통과 |
 | 병행 | 사람이 검토한 현재 모델 기준 확보 | TC01~TC06 자료 검토, 예산 설정·호출 범위 승인 후 새 평가. 응답 검토와 품질 합격 후 명시적 기준 지정 |
-| P2 추적 로컬 완료·CI 대기 | 도우미·관심 공고 RAG 노드 추적 | 무료 회귀와 실제 Langfuse 3건·23개 관측 통과. 새 SHA CI는 커밋·푸시 후 확인 |
+| P2 추적 로컬 완료·CI 대기 | Core 도우미 → AI 연결 | 첫 호출·자료 준비·재호출·검증의 부모 연결과 오류·미확정 사용량을 무료 검증. 실제 Core 게스트 3건은 새 SHA CI에서 저장·재조회 |
 | P2 후속 | 상세 공고 RAG·Ops 평가 계약 연결 | 검색과 답변 지표 분리, 실패 단계·trace·모델/프롬프트/자료 버전을 평가 결과에 연결. 추적 화면 링크만으로 평가 완료로 판단하지 않음 |
 | 자동 실행 전 | 입력·금액·기간 예산 및 알림 | 동시 예약·기간 경계·취소·미확인 사용량 보존·중복 보정 거절을 검증. 전체 서비스 적용 범위 명시 |
 | 마지막 | 정기 실행 | 검토된 자료·예산·중복 실행 방지·취소 정책을 충족한 뒤 활성화 |
@@ -116,6 +118,26 @@ HTTP bootstrap·직접 Service 경로와 기존 LLMOps CI smoke에 연결했다.
 도우미·기존 추적 테스트 167개, 통합 smoke 1개, 실행 명세 20개, Web Ops 50개와 실제 Langfuse
 저장·재조회 3건·23개 관측이 통과했다. 유료 API 호출·품질 승인·운영 컨테이너 이미지 교체는 하지 않았다.
 검증 결과와 실행 범위는 [도우미 추적 안내](../infrastructure/llmops/README.md#도우미-그래프-추적-검증--2026-09-30)를 따른다.
+
+## 이번 후속 구현 — Core 도우미 분산 연결
+
+`AssistantMessageService → AiAssistantClient → AI Router → AssistantAgentService → LangGraph`를
+같은 trace로 연결했다. Core의 `assistant.total` 아래 첫 요청·응답 검증·자료 준비·재호출·재검증을 기록한다.
+검색 전용 OTLP 설정은 두 기능이 실제 공유하는 `_common/config/LlmTracingConfig`로 옮겼으며,
+새 의존성·모델 호출·공개 JSON 필드는 없다. 내부 AI 헤더만 검증해 사용하고 외부 부모 ID·baggage는 채택하지 않는다.
+
+로컬 결과는 Core 선택 **51개**, AI 추적·Router **31개**, 인프라 검사기·HTTP 대역 **56개** 통과다.
+Core는 JDK 21의 `./gradlew test --tests ... --no-daemon`, Python은 PATH에 `uv`가 없어 기존 Python 3.12
+가상환경의 `python -m pytest`로 실행했다. 컨테이너 기동 없는 Compose 설정 경계·Python 정적 검사도 통과했다.
+SDK → localhost OpenAI HTTP 대역의 실제 통신은 정상·503·504와 사용량 누락 보존을 검증했다.
+처음에는 테스트 서버 바인딩이 sandbox에서 차단됐고, 허용된 로컬 서버 실행으로 재검증했다.
+Core의 개인정보 마스킹이 무작위 숫자 표식을 바꾸지 않도록 smoke 표식은 문자만으로 생성한다.
+
+LLMOps CI에 실제 Core 게스트 세 사례의 Langfuse 저장·재조회와 실패 증거 업로드를 추가했다.
+로컬에서는 이 무거운 전체 Compose 검사를 반복하지 않았다. 회원의 자료 준비·재호출은 Core Service/HTTP 대역과
+기존 AI 그래프에서 각각 검증했으며, 실제 회원 RAG 전체 E2E 완료로 표시하지 않는다.
+유료 호출, 사람 검토·품질 판정·비교 기준 생성, 개발 컨테이너 교체는 수행하지 않았다.
+[실행 방법과 검증 범위](../infrastructure/llmops/README.md#core-도우미-분산-추적-검증)를 따른다.
 
 <details>
 <summary>2026-09-29 GitOps 분석 기록 — 당시 상태</summary>
