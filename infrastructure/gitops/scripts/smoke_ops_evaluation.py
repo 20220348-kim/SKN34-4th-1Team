@@ -10,13 +10,13 @@ import subprocess
 import sys
 import tempfile
 import time
-from http.cookiejar import CookieJar
 from urllib.error import URLError
-from urllib.request import HTTPCookieProcessor, ProxyHandler, Request, build_opener
+from urllib.request import ProxyHandler, build_opener
 
 import fork_cluster
 import fork_web
 import ops_runtime
+import smoke_ops_artifacts
 import yaml
 from check_msa import NAMESPACE, REPOSITORY_ROOT, ROOT
 from ops_migration import run_migration
@@ -62,34 +62,6 @@ def database_record(nk, run_id):
             data=program,
         )
     )
-
-
-def read_completed_report(password, run_id):
-    client = build_opener(ProxyHandler({}), HTTPCookieProcessor(CookieJar()))
-    login = Request(
-        BASE + "/api/v1/auth/login",
-        data=json.dumps(
-            {"email": "admin@govbiz.local", "password": password, "rememberMe": False}
-        ).encode(),
-        headers={"Origin": BASE, "Content-Type": "application/json"},
-    )
-    with client.open(login, timeout=15) as response:
-        assert (
-            response.status == 200 and json.load(response)["account"]["role"] == "ADMIN"
-        )
-    with client.open(BASE + "/api/v1/ops/evaluations", timeout=15) as response:
-        run = next(
-            item for item in json.load(response)["results"] if item["id"] == run_id
-        )
-    assert run["status"] == "COMPLETED" and not run["status_stale"]
-    with client.open(BASE + run["report_url"], timeout=15) as response:
-        assert response.status == 200
-        raw = response.read()
-        assert (
-            len(raw) > 1000
-            and "sandbox allow-scripts;" in response.headers["Content-Security-Policy"]
-        )
-        return hashlib.sha256(raw).hexdigest()
 
 
 def verify(state, settings, compose, compose_env, ops_image, kind, helm, report):
@@ -308,7 +280,9 @@ def verify(state, settings, compose, compose_env, ops_image, kind, helm, report)
                     before["run"]["prefect_flow_run_id"]
                     == result["prefect_flow_run_id"]
                 )
-                original_report = read_completed_report(password, result["request_id"])
+                original_report = smoke_ops_artifacts.read_completed_report(
+                    password, result["request_id"]
+                )
             finally:
                 web.terminate()
                 try:
@@ -350,7 +324,7 @@ def verify(state, settings, compose, compose_env, ops_image, kind, helm, report)
         )["items"][0]
         assert pod["metadata"]["uid"] != old_pod
         # Query the restarted Pod over its new owned forwarding process.
-        with fork_web.forwards(nk), tempfile.TemporaryFile(mode="w+t") as log:
+        with tempfile.TemporaryFile(mode="w+t") as log:
             web = subprocess.Popen(
                 [
                     "node",
@@ -366,20 +340,31 @@ def verify(state, settings, compose, compose_env, ops_image, kind, helm, report)
                 stderr=log,
             )
             try:
-                deadline = time.monotonic() + 90
-                while True:
-                    if web.poll() is not None:
-                        raise ValueError("Restart verification Vite process exited")
-                    try:
-                        restored_report = read_completed_report(
-                            password, result["request_id"]
-                        )
-                        break
-                    except (URLError, OSError):
-                        if time.monotonic() >= deadline:
-                            raise
-                        time.sleep(1)
-                assert restored_report == original_report
+                with fork_web.forwards(nk):
+                    deadline = time.monotonic() + 90
+                    while True:
+                        if web.poll() is not None:
+                            raise ValueError("Restart verification Vite process exited")
+                        try:
+                            restored_report = smoke_ops_artifacts.read_completed_report(
+                                password, result["request_id"]
+                            )
+                            break
+                        except (URLError, OSError):
+                            if time.monotonic() >= deadline:
+                                raise
+                            time.sleep(1)
+                    assert restored_report == original_report
+                smoke_ops_artifacts.verify(
+                    nk,
+                    compose,
+                    compose_env,
+                    password,
+                    before["run"],
+                    original_report,
+                    report,
+                )
+                assert database_record(nk, result["request_id"]) == before
             finally:
                 web.terminate()
                 try:
