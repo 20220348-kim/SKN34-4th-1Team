@@ -13,6 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 # Only the opt-in Core trace smoke's synthetic queries activate fault injection.
 TRACE_QUERY = re.compile(r"서울 AI PRIVATE-CORE-TRACE-[0-9a-f]{32}-(ok|fail|timeout)")
 ASSISTANT_TRACE_QUERY = re.compile(r"이 공고 PRIVATE-ASSISTANT-TRACE-[0-9a-f]{32}-(ok|fail|timeout)")
+EVIDENCE_TRACE_QUERY = re.compile(r"접수 PRIVATE-EVIDENCE-TRACE-[0-9a-f]{32}-(ok|fail|timeout|invalid-citation|search-fail)")
 TRACE_COUNTS: dict[str, dict[str, int]] = {}
 TRACE_LOCK = Lock()
 
@@ -36,6 +37,21 @@ def record_assistant_trace_call(payload: dict) -> str | None:
         return None
     with TRACE_LOCK:
         TRACE_COUNTS.setdefault(message, {"assistant": 0})["assistant"] += 1
+    return match[1]
+
+
+def record_evidence_trace_call(text: str, kind: str) -> str | None:
+    if os.environ.get("CORE_TRACE_FIXTURE") != "true":
+        return None
+    if kind == "embedding" and text.startswith("PRIVATE-EVIDENCE-SOURCE "):
+        with TRACE_LOCK:
+            TRACE_COUNTS.setdefault(text, {"source_embedding": 0})["source_embedding"] += 1
+        return "source"
+    match = EVIDENCE_TRACE_QUERY.fullmatch(text)
+    if not match:
+        return None
+    with TRACE_LOCK:
+        TRACE_COUNTS.setdefault(text, {"embedding": 0, "answer": 0})[kind] += 1
     return match[1]
 
 
@@ -271,6 +287,9 @@ class Handler(BaseHTTPRequestHandler):
             data = []
             for index, value in enumerate(inputs):
                 record_trace_call(value, "embedding")
+                if record_evidence_trace_call(value, "embedding") == "search-fail":
+                    self.respond(503, {"error": {"message": "PRIVATE-EVIDENCE-EMBEDDING-ERROR"}})
+                    return
                 vector = embedding_vector(value, dimensions)
                 data.append({"object": "embedding", "index": index, "embedding": vector})
             self.respond(200, {"object": "list", "model": request["model"], "data": data,
@@ -323,6 +342,21 @@ class Handler(BaseHTTPRequestHandler):
                     self.respond(400, {"error": {"message": "unsupported application form discovery fixture"}})
                     return
                 self.respond_model_output(request, output)
+                return
+            if "question" in payload and "chunks" in payload:
+                scenario = record_evidence_trace_call(payload["question"], "answer")
+                if scenario is None or scenario == "search-fail" or not payload["chunks"]:
+                    self.respond(400, {"error": {"message": "unsupported evidence fixture question"}})
+                    return
+                if scenario == "fail":
+                    self.respond(503, {"error": {"message": "PRIVATE-EVIDENCE-MODEL-ERROR"}})
+                    return
+                if scenario == "timeout":
+                    time.sleep(5)
+                self.respond_model_output(request, {
+                    "answer": "PRIVATE-EVIDENCE-ANSWER", "answerStatus": "ANSWERED",
+                    "citationChunkIndexes": [len(payload["chunks"]) if scenario == "invalid-citation" else 0],
+                })
                 return
             # Match the Agent's keyed assessment contract. The production Service
             # attaches program IDs and calculates totals; the model does neither.

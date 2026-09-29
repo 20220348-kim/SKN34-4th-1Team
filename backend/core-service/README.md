@@ -957,8 +957,10 @@ evidence.total (Core)
 trace를 만들지 않습니다. 기존 문서 준비·캐시·DB 저장·응답 검증·오류 상태와 재시도 정책은 유지합니다.
 
 무료 검증은 `SupportProgramEvidenceTracingTest`의 실제 Service→Facade→Client와 HTTP 대역,
-AI 세 HTTP 경로 및 Langfuse 저장·재조회를 조합합니다. 실제 Core 서버와 AI·Langfuse를 한 번에 거치는
-상세 공고 E2E, 검색/답변 품질 점수와 Ops 평가 계약은 후속 범위입니다.
+AI 세 HTTP 경로 및 Langfuse 저장·재조회를 조합합니다. 실제 Core 서버→합성 원문의 MySQL snapshot→AI·Qdrant→
+Langfuse를 거치는 여섯 사례는 기존 격리 CI에 `--evidence-traces-output`으로 추가했습니다.
+정상·캐시·모델 오류·시간 초과·인용 오류·검색 실패를 확인하며 공식 원문 HTTP 수집은 포함하지 않습니다.
+새 코드의 실제 전체 통과 여부는 최종 SHA의 CI로 판단합니다. 검색/답변 품질 점수와 Ops 평가 계약은 후속 범위입니다.
 [검증 명령과 한계](../../infrastructure/llmops/README.md#상세-공고-rag-추적-검증)를 참고하세요.
 
 ### 기존 기능 검증

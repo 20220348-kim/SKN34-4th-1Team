@@ -737,8 +737,8 @@ uv run --locked --extra dev --group evaluation python -m pytest \
 Core는 JDK 21에서 `SupportProgramEvidenceTracingTest`, 기존 근거 Service·Facade·Client,
 `LlmTracingConfigTest`를 선택해 확인합니다. 실제 Service→Facade→Client를 사용하되 DB·공식 원문·AI HTTP는
 대역입니다. 최초와 캐시 요청, 원문 준비·검색·답변·인용 실패, 전송 실패 격리와 비활성 설정을 검사합니다.
-전체 MySQL·컨테이너 검증은 GovBiz/LLMOps CI가 담당합니다. 실제 Core 서버부터 상세 AI·Langfuse까지의
-단일 E2E는 아직 추가하지 않았으며, 이 검증을 실제 모델 품질·Ops 전체 RAG 평가 완료로 보고하지 않습니다.
+전체 MySQL·컨테이너 검증은 GovBiz/LLMOps CI가 담당합니다. 아래 실제 Core 상세 RAG 검사를 추가했으며,
+위 합성 부모 검증과 구분합니다. 어느 쪽도 실제 모델 품질·Ops 전체 RAG 평가 완료를 의미하지 않습니다.
 
 추적 소스 변경에 맞춰 `execution_release.json`을 재생성했습니다. 접수된 과거 실행 명세를 덮어쓰지 않으며,
 Ops와 실행기의 코드가 다르면 기존 명세 불일치 차단을 유지합니다. 개발 컨테이너 교체와 유료 호출은 하지 않습니다.
@@ -757,6 +757,61 @@ Git 제외 증거는 `work/evidence-rag-traces-20260930.json`입니다. Core 부
 Ruff·oxlint, 실행 명세 정합성, 문서 링크와 `git diff --check`도 확인했습니다.
 로컬 PATH에 `uv`가 없어 기존 Python 3.12 `.venv/bin/python`으로 실행했으며 잠금 환경의 전체 검증은 CI에 맡깁니다.
 이번 변경분은 `skn-68`에 기록하며 **최종 SHA 전체 CI는 별도 확인**합니다.
+
+### 실제 Core를 거치는 상세 RAG 통합 검사
+
+`core_evidence_trace.py`와 `verify-catalog-separation.py --evidence-traces-output`을 추가했습니다.
+기존 격리 프로젝트에서 `POST /api/v1/support-programs/detail/answers`를 호출하고 Core 로그의 실제 trace ID로
+Langfuse를 재조회합니다. 호출 경로는 다음과 같습니다.
+
+```text
+Core HTTP → MySQL 합성 원문 snapshot → 청킹
+→ AI 색인 → 실제 Qdrant → 근거 검색 → HTTP 모델 대역 → 인용 검증 → Core 응답
+Core와 AI의 span → 로컬 Langfuse 저장·재조회
+```
+
+공식 사이트에서 원문을 새로 수집하는 검사는 아닙니다. 시험 프로젝트의 MySQL에 단일 합성 원문을 새로 넣으며,
+같은 원문 행이 있으면 덮어쓰지 않고 실패합니다. Core 컨테이너의 공식 원문 호스트를 loopback으로 지정해
+캐시 회귀가 발생해도 실제 사이트에 요청하지 않습니다. 운영 코드의 공식 HTTPS URL 검증은 변경하지 않습니다.
+DB·Qdrant·모델 대역은 임시 프로젝트 소유 자원이고, 기존 로컬 Langfuse 프로젝트·네트워크만 명시적으로 공유합니다.
+
+| 시나리오 | Core HTTP | 기대 관측 수 | 확인 사항 |
+|---|---:|---:|---|
+| 최초 색인·검색·답변 | 200 | 21 | 원문 snapshot·청킹·세 AI 호출과 최종 인용 |
+| 동일 질문 재호출 | 200 | 19 | 청킹·색인·질의 임베딩 재사용, 답변 모델은 다시 1회 호출 |
+| 답변 모델 오류 | 503 | 16 | 모델 이후 검증 단계 없음, 재시도 없음 |
+| 답변 모델 시간 초과 | 503 | 16 | AI span의 timeout과 Core의 기존 503 계약 유지 |
+| 범위 밖 인용 번호 | 503 | 17 | 모델 호출 성공 후 출력 검증에서 실패 |
+| 검색 임베딩 오류 | 503 | 11 | 벡터 조회·답변 호출 없음 |
+
+여섯 trace, 총 100개 관측이 목표입니다. 같은 요청의 부모 연결·외부 부모 ID 무시·종료 시각·단계별 오류·캐시를 검사합니다.
+원문 임베딩은 총 1회, 질의 임베딩은 실패 포함 총 5회, 답변 모델은 실패 포함 총 5회의 **HTTP 대역 호출**이어야 합니다.
+대역의 사용량 누락은 정상·실패 모두 `usage_reported=false`여야 하며 본문·키·원문 예외가 관측에 있으면 실패합니다.
+저장 보고서는 trace·부모·단계·결과·호출 수만 포함하며 실패 시에도 진행 지점과 실패 상태를 보존합니다.
+
+```bash
+# 저장소 루트. --config-only는 컨테이너 생성 없이 Compose·격리 설정만 확인합니다.
+set -a
+source infrastructure/llmops/.env
+set +a
+python3 -B infrastructure/scripts/verify-catalog-separation.py --config-only \
+  --search-traces-output work/core-search-new.json \
+  --assistant-traces-output work/core-assistant-new.json \
+  --evidence-traces-output work/core-evidence-new.json
+# 실제 격리 컨테이너 검증은 위 명령에서 --config-only를 제외합니다.
+```
+
+출력은 서로 다른 새 경로여야 합니다. 상세 RAG 옵션은 검색 추적 옵션과 함께만 사용하며 도우미 옵션은 선택입니다.
+LLMOps CI가 같은 기존 통합 단계에서 실행하고 `work/llmops-ci/core-evidence-traces.json`을 성공·실패 산출물로 업로드합니다.
+현재 로컬에서는 검사기·HTTP 대역·실제 AI SDK·메모리 Qdrant 및 Compose 렌더링을 검증했습니다.
+실제 JVM·MySQL·Qdrant 서버·Langfuse를 함께 거치는 **새 전체 검증 결과는 이 변경을 푸시한 SHA의 CI에서 확인해야 합니다.**
+기존 개발 컨테이너·볼륨·평가 승인·유료 API는 변경하거나 호출하지 않습니다.
+
+로컬 명령은 Python 3.12의 기존 가상환경에서 실행했습니다(`uv`는 로컬 PATH에 없음).
+`test_core_evidence_trace.py`, 기존 Core 검색·도우미 검사기, `test_catalog_separation_config.py`의 관련 테스트
+91건이 통과했습니다. 최초 localhost HTTP 테스트는 샌드박스의 포트 바인딩 제한으로 실행되지 못했고,
+권한을 허용한 재실행에서 통과했습니다. 새 검사기 Ruff·포맷, 워크플로 YAML·Bash와 문서 링크도 확인했습니다.
+전체 잠금 환경·컨테이너 검증은 CI에 맡기며 Ops 전체 RAG 품질 평가와 사람 검토 기준 확보는 후속 범위입니다.
 
 ## 실제 AI Service 추적 활성화
 
