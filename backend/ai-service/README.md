@@ -217,7 +217,10 @@ classify(nano, 구조화) ─┬─ PRODUCT_HELP·SEARCH·PROGRAM_QUESTION·OUT_
   모델 없이 "기업 등록이 먼저" 문장과 프로필 이동을 돌려줍니다.
 - 모델 호출은 질문당 최대 5회(분류 1, 계획 ≤3, 답 ≤2)이고 전체 제한 시간은 `ASSISTANT_AGENT_TIMEOUT_SECONDS`(기본 15초)입니다.
   넘으면 504, 그 밖의 장애·계약 위반은 503입니다. 체크포인터·서버 대화 세션은 없습니다.
-- 로그는 결과·의도·모델 호출 수·도구 호출 수·실패 수·토큰 수·시간만 남깁니다. 질문·답·도구 결과 본문은 남기지 않습니다.
+- `assistant_agent_run` 로그는 결과·의도·모델 호출 수·도구 호출 수·실패 수·토큰 수·시간만 남깁니다.
+  요청별 [사용량 집계기](app/assistant_agent/usage.py)가 채팅 모델 시작·응답을 기록하므로, 뒤 노드가 실패하거나
+  시간 초과·취소돼도 이미 받은 사용량을 보존합니다. SDK가 출력 검증 중 실패하면 오류에 첨부한 HTTP 200
+  Responses 응답의 사용량도 확인합니다. 질문·답·도구 결과·외부 예외 원문은 집계기에 저장하거나 로그로 남기지 않습니다.
 - 관심 공고 묶음 질문(`SAVED_PROGRAMS_QUESTION`)은 도구 루프 대신 서브그래프 `retrieve → map → reduce → verify`
   (`app/assistant_agent/subgraphs/saved_programs_question.py`)를 씁니다. 첫 호출에 청크 허용 목록이 없으면 `needsDocuments=true`로 끝나고,
   Core가 원문을 준비해 `resumeIntent`로 다시 부르면 분류를 건너뜁니다. `retrieve`는 기존 근거 컬렉션을 허용 청크 id로 좁혀 질문과 가까운 청크를
@@ -226,6 +229,28 @@ classify(nano, 구조화) ─┬─ PRODUCT_HELP·SEARCH·PROGRAM_QUESTION·OUT_
   문서 id가 관심 공고 안에 있는지와 인용이 검색 청크 원문에 글자 그대로 있는지를 보고, 대조에 실패한 인용은 카드에서 뺍니다.
 - 단위 테스트(`tests/assistant_agent`)는 대본대로 답하는 채팅 모델과 httpx 대역 Core로 분기·상한·재시도·강등을 검증하고,
   `infrastructure/stubs/openai/server.py`는 `govbiz-assistant-agent-v1` 입력의 분류·도구 호출·답 픽스처를 갖습니다.
+
+도우미 사용량 로그는 다음과 같이 읽습니다. HTTP 호출 흐름은 `API → Service → LangGraph → ChatOpenAI → 응답`이며,
+Service는 내부 `astream(values)`로 마지막 완료 상태를 보존합니다. HTTP 응답 스트리밍을 추가한 것은 아닙니다.
+
+| 필드 | 의미 |
+|---|---|
+| `model_calls` | 요청 내 시작된 LangChain 채팅 모델 호출 수. 응답이 없는 호출도 포함하며 공급자의 청구 확정 건수는 아님 |
+| `input_tokens`, `output_tokens` | 해당 토큰 수를 모든 호출에서 확인했을 때의 합계. 하나라도 미확인이면 해당 필드는 `None` |
+| `observed_input_tokens`, `observed_output_tokens` | 확인한 값만 더한 부분 합계. 전체 사용량·비용으로 해석하지 않음 |
+| `usage_unknown_calls` | 입력 또는 출력 사용량을 확인하지 못한 호출 수. 미응답·사용량 누락은 0토큰으로 추정하지 않음 |
+| `intent`, `tool_calls`, `tool_failures`, `answer_attempts` | 마지막으로 완료된 상위 그래프 상태. 실행 중인 노드·도구의 완료를 추정하지 않음 |
+
+예를 들어 분류에서 입력 200·출력 20을 받은 뒤 다음 모델 호출이 시간 초과되면 `model_calls=2`,
+`input_tokens=None output_tokens=None observed_input_tokens=200 observed_output_tokens=20 usage_unknown_calls=1`입니다.
+명시적으로 받은 0토큰과 모델 호출을 시작하지 않은 경우의 0은 유지합니다. 서브그래프의 병렬 map도 같은 요청에서
+집계하며, 동시 HTTP 요청끼리는 집계기를 공유하지 않습니다. 처리된 map 오류가 있어 `outcome=completed`인 경우에도
+`usage_unknown_calls`가 남을 수 있습니다. 그래프 내부의 기존 누적 필드는 최종 운영 로그의 집계 근거로 사용하지 않습니다.
+
+범위는 도우미의 채팅 모델 관측입니다. 검색 임베딩 비용·전체 서비스 예산 장부·Langfuse 노드별 span은 포함하지 않습니다.
+SDK가 사용량을 제공하지 않고 읽을 수 있는 수신 응답도 없으면 미확인으로 유지합니다.
+`tests/assistant_agent/test_usage.py`는 실제 LangGraph와 ChatOpenAI Responses SDK에 무료 HTTP 대역을 연결해
+출력 검증 실패·누락·취소·시간 초과·병렬 map·동시 요청 격리를 검증합니다.
 
 모델은 상태·패치·질문 또는 결과 설명을 출력하고 Service가 검증 후 계약 버전을 붙입니다. 검색/임베딩/랭킹은 호출하지 않습니다.
 

@@ -11,8 +11,13 @@ from app.assistant_agent.models import SCHEMA_VERSION, AssistantAgentRequest
 from app.assistant_agent.nodes.verify import NO_COMPANY_ANSWER, TOOL_FAILURE_ANSWER
 from app.assistant_agent.service import AssistantAgentService
 from app.assistant_agent.tools import CoreToolClient
-from tests.assistant_agent.fakes import HANG, FakeCoreTools, FakeRetriever, ScriptedChatModel, tool_call_message
-
+from tests.assistant_agent.fakes import (
+    HANG,
+    FakeCoreTools,
+    FakeRetriever,
+    ScriptedChatModel,
+    tool_call_message,
+)
 
 PROFILE_CALL = ("get_my_company_profile", {})
 SEARCH_CALL = ("search_partner_recruitments", {"region": "서울", "seekingRole": "PARTICIPANT"})
@@ -92,7 +97,8 @@ async def test_partner_match_runs_profile_then_search_then_answers_with_verified
     record = next(record for record in caplog.records if record.name == "app.assistant_agent.service")
     assert re.fullmatch(
         r"assistant_agent_run outcome=completed intent=PARTNER_MATCH model_calls=5 tool_calls=2 tool_failures=0 "
-        r"answer_attempts=1 input_tokens=\d+ output_tokens=\d+ elapsed_ms=\d+", record.getMessage(),
+        r"answer_attempts=1 input_tokens=650 output_tokens=62 observed_input_tokens=650 "
+        r"observed_output_tokens=62 usage_unknown_calls=0 elapsed_ms=\d+", record.getMessage(),
     )
     assert request_data["message"] not in record.getMessage()
 
