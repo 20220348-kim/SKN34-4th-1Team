@@ -13,7 +13,8 @@ jobs:
   integration:
     name: Saved capture pipeline with local servers
     runs-on: ubuntu-24.04
-    timeout-minutes: 55
+    # Retain both actual Core trace and Kubernetes-to-Compose bridge verification.
+    timeout-minutes: 70
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -30,7 +31,7 @@ jobs:
         run: backend/ai-service/.venv/bin/python backend/ops-service/apps/evaluations/execution_spec.py
       - name: Test synchronization and cancellation smoke assertions without servers
         working-directory: backend/ai-service
-        run: uv run --locked --extra dev --group evaluation python -m pytest ../../infrastructure/llmops/test_ops_smoke.py ../../infrastructure/llmops/test_cancellation_smoke.py ../../infrastructure/llmops/test_search_trace_smoke.py -q
+        run: uv run --locked --extra dev --group evaluation python -m pytest ../../infrastructure/llmops/test_ops_smoke.py ../../infrastructure/llmops/test_cancellation_smoke.py ../../infrastructure/llmops/test_search_trace_smoke.py ../../infrastructure/llmops/test_core_search_trace.py ../../infrastructure/scripts/test_catalog_separation_config.py -q
       - name: Generate isolated development credentials
         run: |
           backend/ai-service/.venv/bin/python infrastructure/llmops/init_env.py
@@ -47,6 +48,22 @@ jobs:
           source infrastructure/llmops/.env
           set +a
           backend/ai-service/.venv/bin/python infrastructure/llmops/smoke.py --output-dir work/llmops-ci
+      - name: Verify actual Core search traces, cache hits, failures and timeouts
+        timeout-minutes: 30
+        shell: bash
+        run: |
+          set -a
+          source infrastructure/llmops/.env
+          set +a
+          python3 -B infrastructure/scripts/verify-catalog-separation.py --search-traces-output work/llmops-ci/core-search-traces.json
+      - name: Preserve actual Core search trace evidence including failed scenarios
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: llmops-core-search-traces-${{ github.sha }}
+          path: work/llmops-ci/core-search-traces.json
+          if-no-files-found: warn
+          retention-days: 7
       - name: Build isolated HTTP artifact storage, Core auth fixture, Ops and runner
         run: |
           docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops --env-file infrastructure/llmops/.env.artifacts -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml -f infrastructure/llmops/compose.artifacts.yaml -f infrastructure/llmops/compose.auth-test.yaml --profile evaluation config --format json | python3 infrastructure/llmops/check_artifact_compose.py

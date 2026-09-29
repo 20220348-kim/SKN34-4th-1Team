@@ -559,6 +559,86 @@ UI의 Tracing에서 날짜 범위를 최근 1일로 두고 **Trace ID**로 검�
 1토큰은 대역의 합성 사용량이다. Core 부모 헤더도 합성이므로 Core/MySQL/Elasticsearch 전체 실검색,
 현재 모델 품질, Prefect 평가·점수 파이프라인, 최신 커밋 전체 CI 통과를 검증한 것으로 해석하지 않는다.
 
+### 실제 Core를 거치는 검색 trace 통합 검사
+
+`verify-catalog-separation.py --search-traces-output <새 JSON 경로>`는 임시 Catalog/Core,
+서로 분리된 MySQL 8.4 DB, Elasticsearch·Qdrant, OpenAI HTTP 대역을 실행하고 로컬 Langfuse에서
+관측을 재조회한다. 기본 Catalog 검증은 그대로 유지하며 이 옵션을 지정한 경우에만 추적을 활성화한다.
+
+```bash
+# 저장소 루트, 로컬 Langfuse가 이미 실행 중인 환경
+set -a
+source infrastructure/llmops/.env
+set +a
+python3 -B infrastructure/scripts/verify-catalog-separation.py \
+  --search-traces-output work/core-search-traces.json
+```
+
+`--config-only`를 함께 주면 빌드·DB·모델 요청 없이 설정 경계를 검사한다. 실행할 때는 사용하지
+않은 출력 경로를 지정한다. 실제 요청 흐름은 다음과 같다.
+
+```text
+검증 도구 → 실제 Core 검색 API → MySQL 조회·후보 준비
+                              → Elasticsearch + AI 의미 검색 → Qdrant
+                              → AI 랭킹·선택 → 모델 HTTP 대역
+              Core·AI span → 로컬 Langfuse 저장 → API로 trace·부모·오류·본문 미수집 검사
+```
+
+| 사례 | 공개 HTTP | 기대 observation | 추가 확인 |
+|---|---|---|---|
+| 최초 검색 | 200 | Core 9 + AI 8 | 실제 Core가 만든 root와 두 AI HTTP 경로의 부모 연결 |
+| 동일 질문·후보 재검색 | 200 | Core 9 + AI 5 | 두 캐시 `hit`, 임베딩·랭킹 대역 호출 횟수 증가 없음 |
+| 랭킹 모델 503 | 503 | Core 9 + AI 7 | 모델→AI→Core의 오류 전달, 성공으로 숨기지 않음 |
+| 랭킹 모델 지연 | 504 | Core 9 + AI 7 | AI 제한 시간 초과와 Core `AI_SERVICE_TIMEOUT` 전달 |
+
+검증 전용 질문의 정확한 형식에만 대역 오류·지연이 적용된다. 정상 서비스의 모델 선택·재시도·제한
+시간 정책은 바꾸지 않는다. 검증 컨테이너에만 모델 2초·실행 3초·Core 대기 10초를 적용한다.
+질문·모델 오류 본문·비밀 키가 관측에 없는지 검사하며 JSON 증거에는 trace/관측 ID, 부모 ID,
+허용된 상태와 대역 호출 횟수만 저장한다. 실패 시에도 진행한 사례의 상태를 남긴다.
+SDK가 instrumentation scope에 기록하는 공개 프로젝트 키는 비밀 키와 구분한다.
+자료 수집·재색인으로 후보 순서가 바뀌면 같은 질문도 랭킹 캐시 입력이 달라진다. 캐시 검증 동안은
+임시 Catalog만 중지하고 Core의 기존 투영 유지 상태를 확인해 후보를 고정한다. 네 사례 검사가
+끝나면 다시 시작하고 기존 제공처 장애·Catalog 중단 시 데이터 보존 검사도 수행한다.
+또한 이 옵션의 모델 대역은 문서마다 결정적인 벡터 차이를 줘 동일 주제의 모든 문서가 완전히
+동점이 되지 않게 한다. 기본 one-hot 대역의 ANN 동점 후보 변동을 캐시 장애로 오판하지 않기
+위한 검증 설정이며 실제 임베딩 품질을 흉내 낸 것이 아니다.
+
+호스트 Langfuse URL은 loopback만 허용한다. 임시 Core·AI만 기존 `govbiz-llmops_default`
+네트워크에 연결하고 다른 DB·볼륨은 임의 이름의 새 Compose 프로젝트에 격리한다. 정리는 이
+도구가 만든 프로젝트만 대상으로 하며 기존 Langfuse·Ops DB를 초기화하지 않는다.
+공유 네트워크의 서비스 별칭이 다른 프로젝트와 겹치지 않도록 업무 요청은 임시 컨테이너의 고유
+이름을 사용한다. 이 옵션에서는 검증용 JVM·MySQL·Elasticsearch·AI에 메모리 상한을 적용한다.
+MySQL은 작은 fixture에 맞춰 buffer pool 64MB와 performance schema 비활성화를 사용한다.
+실패 진단 조회에도 제한 시간을 두어 Docker 장애가 임시 자원 정리를 무기한 막지 않게 한다.
+
+LLMOps CI는 기존 합성 부모 검증에 이어 이 실제 Core 검사를 실행하고
+`llmops-core-search-traces-<SHA>` artifact로 증거를 보관한다. 전체 Catalog 검사도 수행하므로
+추가 단계는 최대 30분으로 제한한다. 최신 main의 Kubernetes–Compose 연결 검증도 함께 유지하며
+전체 job은 70분으로 제한한다. 모델 대역을 사용한 연결·장애 검증이며
+실제 OpenAI·검색 품질 평가나 상세 RAG 전체 추적 완료를 의미하지 않는다.
+
+2026-09-29 로컬 실제 서버 검증은 **네 사례·63개 관측 모두 통과**했다.
+증거는 `work/core-search-traces-verified.json`(Git 제외)에 저장했다.
+Langfuse의 `core-search-smoke` 환경에서 다음 trace ID로 확인할 수 있다.
+
+| 사례 | trace ID | 관측 |
+|---|---|---|
+| 정상 | `50fcd0ceb9776b70d8b9c33fa8d3cf4e` | 17 |
+| 캐시 | `b11524b4f36067bbb54a6999fec0a65d` | 14 |
+| 모델 오류 | `e32ab6364afbbf78cc25a6f957f8e51c` | 16 |
+| 시간 초과 | `70f7e3a6d263713502ab1a0edbaf9f8b` | 16 |
+
+앞선 시도에서 메모리 부족으로 Langfuse worker가 종료된 것을 확인해 복구했다. 검증 컨테이너의
+메모리 상한, SDK 공개 키에 대한 검사 오탐 수정, 자료 고정·벡터 동점 제거를 적용한 뒤 위 결과를
+새 실행으로 얻었다. 초기 실패 기록을 통과로 바꾸지 않았다. 이 로컬 실행은 미커밋 작업 트리의
+확인이며 최신 커밋의 전체 원격 CI 통과와 구분한다.
+
+관련 무료 테스트는 `test_search_trace_smoke.py`, `test_core_search_trace.py`,
+`test_catalog_separation_config.py`의 **34개**가 통과했다. 로컬 PATH에 `uv`가 없어 기존 AI
+가상환경의 Python 3.12로 실행했고, CI는 기존 `uv sync --locked`·평가 의존성 설정을 유지한다.
+새 검증 모듈의 Ruff·포맷, Python/워크플로 구문·문서 링크·`git diff --check`도 확인했다.
+전체 Catalog 통합 실행은 제공처 실패·Catalog 중단 뒤 Core 데이터와 검색 유지까지 통과했다.
+
 ## 실제 AI Service 추적 활성화
 
 `LANGFUSE_ENABLED=false`가 기본값이다. 활성화 시 `LANGFUSE_BASE_URL`, `LANGFUSE_PUBLIC_KEY`,

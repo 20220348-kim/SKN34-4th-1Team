@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Verify the catalog boundary using disposable MySQL and local HTTP fixtures.
 
-No developer .env files, existing databases, public source APIs or paid model APIs
-are used. --config-only validates the Compose and source boundaries without Docker
+By default, no developer .env files, existing databases, public source APIs or paid
+model APIs are used. --config-only validates Compose and source boundaries without Docker
 Engine access; the default also builds and exercises the separated services.
+--search-traces-output additionally checks real Core → AI spans in an explicitly
+configured local Langfuse; only that opt-in shares the existing tracing network.
 """
 
 import argparse
@@ -15,6 +17,7 @@ from pathlib import Path
 import re
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.error
@@ -129,7 +132,7 @@ def fixture_env():
     return values
 
 
-def validate_boundaries(model, project):
+def validate_boundaries(model, project, search_traces=False):
     services = model["services"]
     core = services["core-service"]["environment"]
     catalog = services["catalog-service"]["environment"]
@@ -138,7 +141,8 @@ def validate_boundaries(model, project):
     require(Path(services["core-service"]["build"]["context"]).resolve()
             == ROOT / "backend/core-service", "Core build context changed")
     require(core["CATALOG_PROJECTION_ENABLED"] == "true", "Core projection is disabled")
-    require(core["CATALOG_SERVICE_URL"] == "http://catalog-service:8081", "Wrong catalog DNS")
+    catalog_host = f"{project}-catalog-service-1" if search_traces else "catalog-service"
+    require(core["CATALOG_SERVICE_URL"] == f"http://{catalog_host}:8081", "Wrong catalog DNS")
     require(core["CATALOG_INTERNAL_TOKEN"] == catalog["CATALOG_INTERNAL_TOKEN"] == TOKEN,
             "The server-to-server fixture token was not isolated")
     for source in SOURCES:
@@ -164,9 +168,29 @@ def validate_boundaries(model, project):
     for key, volume in model["volumes"].items():
         require(not volume.get("external") and volume["name"] == f"{project}_{key}",
                 "A verification volume is not isolated: " + key)
-    for network in model["networks"].values():
+    for key, network in model["networks"].items():
+        if search_traces and key == "tracing":
+            require(network.get("external") and network["name"] == "govbiz-llmops_default",
+                    "Only the local Langfuse network may be shared")
+            continue
         require(not network.get("external") and network["name"].startswith(project + "_"),
                 "A verification network is not isolated")
+    if search_traces:
+        require("tracing" in model["networks"], "Missing local tracing network")
+        for name, service in services.items():
+            attached = "tracing" in service.get("networks", {})
+            require(attached == (name in {"core-service", "ai-service"}),
+                    "Unexpected service on the tracing network: " + name)
+        ai = services["ai-service"]["environment"]
+        for key in ("LANGFUSE_ENABLED", "LANGFUSE_BASE_URL", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"):
+            require(core[key] == ai[key] and core[key], "Core and AI tracing settings disagree: " + key)
+        require(core["LANGFUSE_BASE_URL"] == "http://langfuse-web:3000" and core["LANGFUSE_ENABLED"] == "true",
+                "Tracing must use the local Langfuse container")
+        require(ai["OPENAI_BASE_URL"] == f"http://{project}-openai-stub-1:8002/v1"
+                and ai["OPENAI_API_KEY"] == "catalog-verification-key-never-sent",
+                "Search traces must use the offline OpenAI fixture")
+        require(core["AI_SERVICE_BASE_URL"] == f"http://{project}-ai-service-1:8000",
+                "Core must call this project's AI container")
     build = (ROOT / "backend/catalog-service/build.gradle").read_text(encoding="utf-8")
     require(not any(name in build for name in ("core-api", "core-service")),
             "Catalog Gradle build depends on the Core source tree")
@@ -180,12 +204,22 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config-only", action="store_true")
     parser.add_argument("--timeout", type=int, default=300, help="Seconds per readiness condition")
+    parser.add_argument("--search-traces-output", type=Path,
+                        help="Also verify Core search traces in local Langfuse and save new JSON evidence")
     args = parser.parse_args()
     project = "govbiz-catalog-check-" + uuid.uuid4().hex[:12]
     values = fixture_env()
-    ports = iter(range(19080, 19085)) if args.config_only else None
+    if args.search_traces_output:
+        sys.path.insert(0, str(INFRA / "llmops"))
+        import core_search_trace
+        values.update(core_search_trace.tracing_env(os.environ))
+        require(not args.search_traces_output.exists(), "Use a new search trace evidence output path")
+    ports = iter(range(19080, 19086)) if args.config_only else None
     selected = set()
-    for key in ("CORE_API_HOST_PORT", "MYSQL_HOST_PORT", "QDRANT_HOST_PORT", "WEB_HOST_PORT", "CATALOG_HOST_PORT"):
+    port_keys = ["CORE_API_HOST_PORT", "MYSQL_HOST_PORT", "QDRANT_HOST_PORT", "WEB_HOST_PORT", "CATALOG_HOST_PORT"]
+    if args.search_traces_output:
+        port_keys.append("OPENAI_STUB_HOST_PORT")
+    for key in port_keys:
         port = next(ports) if ports else free_port()
         while port in selected:
             port = free_port()
@@ -209,7 +243,45 @@ def main():
         fixture_services = {name: {"healthcheck": {"start_period": "60s", "retries": max(12, args.timeout // 5)}}
                             for name in ("mysql", "catalog-mysql", "elasticsearch", "rabbitmq", "core-service", "catalog-service")}
         fixture_services["catalog-service"]["ports"] = [f"127.0.0.1:{values['CATALOG_HOST_PORT']}:8081"]
-        port_overlay.write_text(json.dumps({"services": fixture_services}), encoding="utf-8")
+        overlay = {"services": fixture_services}
+        if args.search_traces_output:
+            overlay["networks"] = {"tracing": {"external": True, "name": core_search_trace.NETWORK}}
+            for name in ("core-service", "ai-service"):
+                fixture_services.setdefault(name, {})["networks"] = ["default", "tracing"]
+            # Shared tracing DNS can also expose another project's redis/ai-service
+            # aliases. Pin business traffic to this disposable project's containers.
+            fixture_services["core-service"]["environment"] = {
+                "AI_SERVICE_BASE_URL": f"http://{project}-ai-service-1:8000",
+                "CATALOG_SERVICE_URL": f"http://{project}-catalog-service-1:8081",
+                "SPRING_DATASOURCE_URL": f"jdbc:mysql://{project}-mysql-1:3306/{values['MYSQL_DATABASE']}",
+                "ELASTICSEARCH_BASE_URL": f"http://{project}-elasticsearch-1:9200",
+                "REDIS_HOST": f"{project}-redis-1", "RABBITMQ_HOST": f"{project}-rabbitmq-1",
+                "JAVA_TOOL_OPTIONS": "-Xms64m -Xmx384m",
+            }
+            fixture_services["ai-service"]["environment"] = {
+                "OPENAI_BASE_URL": f"http://{project}-openai-stub-1:8002/v1",
+                "QDRANT_URL": f"http://{project}-qdrant-1:6333",
+                "ASSISTANT_TOOLS_BASE_URL": f"http://{project}-core-service-1:8080",
+            }
+            # Coexist with Langfuse on small runners without unbounded JVM heaps.
+            fixture_services["core-service"]["mem_limit"] = "768m"
+            fixture_services["catalog-service"].update({
+                "mem_limit": "512m", "environment": {"JAVA_TOOL_OPTIONS": "-Xms64m -Xmx256m"},
+            })
+            fixture_services["ai-service"]["mem_limit"] = "768m"
+            fixture_services["elasticsearch"].update({
+                "mem_limit": "768m", "environment": {"ES_JAVA_OPTS": "-Xms256m -Xmx256m"},
+            })
+            for name in ("mysql", "catalog-mysql"):
+                fixture_services[name].update({
+                    "mem_limit": "512m", "command": "--character-set-server=utf8mb4 --collation-server=utf8mb4_0900_ai_ci "
+                    "--innodb-buffer-pool-size=64M --performance-schema=OFF",
+                })
+            fixture_services["openai-stub"] = {
+                "ports": [f"127.0.0.1:{values['OPENAI_STUB_HOST_PORT']}:8002"],
+                "environment": {"CORE_TRACE_FIXTURE": "true"},
+            }
+        port_overlay.write_text(json.dumps(overlay), encoding="utf-8")
         # Limit Compose operations too; image builds below use separate invocations
         # because Bake can otherwise parallelize builds despite --parallel 1.
         compose = ["docker", "compose", "--parallel", "1", "--project-name", project, "--env-file", str(fixture),
@@ -226,8 +298,8 @@ def main():
                        '--password="$MYSQL_PASSWORD" "$MYSQL_DATABASE"']
             return run(compose + command, capture=True, input=statement + ";\n").stdout.strip()
 
-        model = json.loads(run(compose + ["config", "--format", "json"], capture=True).stdout)
-        validate_boundaries(model, project)
+        model = json.loads(run(compose + ["config", "--format", "json"], capture=True, timeout=30).stdout)
+        validate_boundaries(model, project, search_traces=bool(args.search_traces_output))
         print("PASS: isolated Compose, credentials, scheduler ownership and standalone source boundary", flush=True)
         # Explicit fixture activation must not mask an unsafe opt-in overlay default.
         # Keep the dummy credentials but render again without any writer activation flags.
@@ -237,7 +309,7 @@ def main():
                                            if key not in writer_flags), encoding="utf-8")
         defaults_compose = list(compose)
         defaults_compose[defaults_compose.index(str(fixture))] = str(defaults_fixture)
-        defaults_model = json.loads(run(defaults_compose + ["config", "--format", "json"], capture=True).stdout)
+        defaults_model = json.loads(run(defaults_compose + ["config", "--format", "json"], capture=True, timeout=30).stdout)
         defaults = defaults_model["services"]["catalog-service"]["environment"]
         for flag in sorted(writer_flags):
             require(defaults[flag] == "false", "Catalog writer is enabled without explicit activation: " + flag)
@@ -359,6 +431,23 @@ def main():
                 return value if code == 200 and value.get("totalCount", 0) >= 2 else None
 
             wait_for("Core semantic search through local OpenAI fixtures and real indexes", search, args.timeout)
+            if args.search_traces_output:
+                # Reindexing changes tied candidate order even for the same query.
+                # A cache hit requires identical candidates, not just identical text.
+                run(compose + ["stop", "catalog-service"], timeout=60)
+                paused_at = datetime.now(timezone.utc).isoformat(timespec="microseconds")
+                try:
+                    wait_for("Core retains a fixed catalog while search cache is checked", lambda:
+                             set(SOURCES) <= set(re.findall(r"catalog_projection source=([A-Z_]+) outcome=retained_previous failure=",
+                                 run(compose + ["logs", "--no-color", "--since", paused_at, "core-service"],
+                                     capture=True, timeout=15).stdout)), args.timeout)
+                    core_search_trace.verify_search_traces(
+                        core_url=core_url, stub_url="http://127.0.0.1:" + values["OPENAI_STUB_HOST_PORT"],
+                        environment=os.environ, call_json=call_json, output=args.search_traces_output,
+                        core_logs=lambda: run(compose + ["logs", "--no-color", "core-service"], capture=True, timeout=15).stdout,
+                    )
+                finally:
+                    run(compose + ["start", "catalog-service"], timeout=60)
             before = {source: hashlib.sha256(json.dumps(value["programs"], sort_keys=True, ensure_ascii=False).encode()).hexdigest()
                       for source, value in snapshots.items()}
             failures_before = {
@@ -414,13 +503,16 @@ def main():
             require(sql("mysql", count_sql) == catalog_counts, "Catalog outage deactivated Core data")
             print("PASS: catalog outage retains Core public catalog/search; no paid APIs were called", flush=True)
         except BaseException:
-            run(compose + ["ps"], check=False)
-            run(compose + ["logs", "--no-color", "--tail", "100", "catalog-service", "core-service"], check=False)
+            for arguments in (["ps"], ["logs", "--no-color", "--tail", "100", "catalog-service", "core-service", "ai-service"]):
+                try:
+                    run(compose + arguments, check=False, timeout=15)
+                except subprocess.TimeoutExpired:
+                    print("Docker diagnostics timed out; continuing to disposable project cleanup", flush=True)
             raise
         finally:
             if started:
                 # Only the fresh random project, checked above, is removed. Existing-data overlays are never used.
-                run(compose + ["down", "--volumes", "--remove-orphans"])
+                run(compose + ["down", "--volumes", "--remove-orphans"], timeout=120)
 
 
 if __name__ == "__main__":

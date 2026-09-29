@@ -3,6 +3,7 @@
 애플리케이션과 배포 설정은 통합 저장소의 `infrastructure/gitops/`에서 함께 관리합니다.
 **별도 배포 브랜치와 배포 PR은 제거했습니다.** 개발은 `skn-* → main` PR 흐름을 사용하며,
 필수 CI와 이미지 발행 검증은 유지합니다. [제거 범위와 현재 상태](docs/deployment-candidates.md)를 참고하세요.
+LLMOps 개발 순서는 [후속 개발 전략](../../docs/llmops-next-development-plan.md)을 따릅니다.
 
 ## 현재 상태
 
