@@ -109,20 +109,18 @@ class ApplicationFormDiscoveryService(
         }
     }
 
-    /** 시스템 작업과 백필은 계정별 discovery job을 사용하지 않으며 저장 transaction을 호출자가 소유한다. */
+    /** 시스템 작업은 계정별 discovery job을 사용하지 않으며 저장 transaction을 호출자가 소유한다. */
     fun analyzeSystem(
         sourceCode: String, sourceProgramId: String,
         configuration: ai.govbiz.core.applicationpreparation.domain.ApplicationFormDiscoveryConfiguration,
         observe: (ApplicationFormAnalysisMetadata) -> Unit,
         beforeAi: () -> Unit,
         persist: (List<ApplicationFormManifest>, ApplicationFormAnalysisMetadata) -> Unit,
-        recordedPayload: ai.govbiz.core.applicationpreparation.client.ai.dto.AiApplicationFormDiscoveryPayload? = null,
-        expectedFiles: List<Pair<String, String>>? = null,
     ): ApplicationFormDiscoveryResult {
         validateIdentity(sourceCode, sourceProgramId)
         val program = details.get(sourceCode, sourceProgramId)
         return discoverFresh(sourceCode, sourceProgramId, program.title, program.targetDescription, program.sourceUrl,
-            configuration, beforeAi, observe, persist, recordedPayload, expectedFiles)
+            configuration, beforeAi, observe, persist)
     }
 
     private fun discoverFresh(
@@ -135,8 +133,6 @@ class ApplicationFormDiscoveryService(
         beforeAi: () -> Unit,
         observe: (ApplicationFormAnalysisMetadata) -> Unit = {},
         persist: ((List<ApplicationFormManifest>, ApplicationFormAnalysisMetadata) -> Unit)? = null,
-        recordedPayload: ai.govbiz.core.applicationpreparation.client.ai.dto.AiApplicationFormDiscoveryPayload? = null,
-        expectedFiles: List<Pair<String, String>>? = null,
     ): ApplicationFormDiscoveryResult {
         return try {
             val collected = when (sourceCode) {
@@ -151,16 +147,13 @@ class ApplicationFormDiscoveryService(
                 "${file.sourceUrl}\u0000${file.fileName}\u0000${sha256(file.bytes)}"
             }.toByteArray())
             val metadata = ApplicationFormAnalysisMetadata(sourceFingerprint, configuration, SupportProgramDocumentParser.VERSION)
-            if (expectedFiles != null && collected.files.map { it.sourceUrl to sha256(it.bytes) } != expectedFiles) {
-                throw ApplicationFormDiscoveryException(Reason.SOURCE_CHANGED)
-            }
             observe(metadata)
             snapshots.findByProgram(
                 sourceCode, sourceProgramId, sourceFingerprint, SupportProgramDocumentParser.VERSION,
                 configuration.model, configuration.promptVersion,
             )
                 .takeIf { it.isNotEmpty() }?.let { cached ->
-                    val bound = if (recordedPayload == null) bindDocumentMaps(cached, collected.files) else cached
+                    val bound = bindDocumentMaps(cached, collected.files)
                     persist?.invoke(bound, metadata)
                     return ApplicationFormDiscoveryResult(
                         bound,
@@ -221,29 +214,26 @@ class ApplicationFormDiscoveryService(
                 eligibleDocuments,
             )
             var candidateFailure: Exception? = null
-            val extracted = if (recordedPayload != null) ai.validateDiscoveryPayload(input, configuration, recordedPayload)
-                else {
-                    beforeAi()
-                    eligibleDocuments.flatMap { document ->
-                        try {
-                            val candidates = ai.discover(input.copy(documents = listOf(document)), configuration)
-                            logger.info("application_form_candidate sourceCode={} sourceProgramId={} candidateIndex={} attachmentId={} filename={} stage=AI_ANALYSIS formCount={} model={}",
-                                sourceCode, sourceProgramId, document.documentIndex, attachmentId(document.sourceUrl), document.fileName.take(250), candidates.size, configuration.model)
-                            candidates
-                        } catch (error: AiApplicationFormValidationException) {
-                            if (candidateFailure == null) candidateFailure = ApplicationFormDiscoveryException(Reason.AI_INVALID_RESPONSE, error)
-                            logger.warn("application_form_candidate sourceCode={} sourceProgramId={} candidateIndex={} attachmentId={} filename={} stage=AI_VALIDATION errorCode=AI_INVALID_RESPONSE",
-                                sourceCode, sourceProgramId, document.documentIndex, attachmentId(document.sourceUrl), document.fileName.take(250))
-                            emptyList()
-                        } catch (error: AiServiceCallException) {
-                            if (error.failure.name != "INVALID_RESPONSE") throw error
-                            if (candidateFailure == null) candidateFailure = error
-                            logger.warn("application_form_candidate sourceCode={} sourceProgramId={} candidateIndex={} attachmentId={} filename={} stage=CORE_RESPONSE_VALIDATION errorCode=AI_INVALID_RESPONSE",
-                                sourceCode, sourceProgramId, document.documentIndex, attachmentId(document.sourceUrl), document.fileName.take(250))
-                            emptyList()
-                        }
-                    }
+            beforeAi()
+            val extracted = eligibleDocuments.flatMap { document ->
+                try {
+                    val candidates = ai.discover(input.copy(documents = listOf(document)), configuration)
+                    logger.info("application_form_candidate sourceCode={} sourceProgramId={} candidateIndex={} attachmentId={} filename={} stage=AI_ANALYSIS formCount={} model={}",
+                        sourceCode, sourceProgramId, document.documentIndex, attachmentId(document.sourceUrl), document.fileName.take(250), candidates.size, configuration.model)
+                    candidates
+                } catch (error: AiApplicationFormValidationException) {
+                    if (candidateFailure == null) candidateFailure = ApplicationFormDiscoveryException(Reason.AI_INVALID_RESPONSE, error)
+                    logger.warn("application_form_candidate sourceCode={} sourceProgramId={} candidateIndex={} attachmentId={} filename={} stage=AI_VALIDATION errorCode=AI_INVALID_RESPONSE",
+                        sourceCode, sourceProgramId, document.documentIndex, attachmentId(document.sourceUrl), document.fileName.take(250))
+                    emptyList()
+                } catch (error: AiServiceCallException) {
+                    if (error.failure.name != "INVALID_RESPONSE") throw error
+                    if (candidateFailure == null) candidateFailure = error
+                    logger.warn("application_form_candidate sourceCode={} sourceProgramId={} candidateIndex={} attachmentId={} filename={} stage=CORE_RESPONSE_VALIDATION errorCode=AI_INVALID_RESPONSE",
+                        sourceCode, sourceProgramId, document.documentIndex, attachmentId(document.sourceUrl), document.fileName.take(250))
+                    emptyList()
                 }
+            }
             if (extracted.isEmpty()) throw candidateFailure ?: ApplicationFormDiscoveryException(if (hasExcludedDocument) excludedReason else Reason.NO_FORM)
             val forms = extracted.mapNotNull { candidate ->
                 try {
@@ -294,7 +284,7 @@ class ApplicationFormDiscoveryService(
                     null
                 }
             }
-            val bound = if (recordedPayload == null) forms.mapNotNull { form ->
+            val bound = forms.mapNotNull { form ->
                 try {
                     bindDocumentMaps(listOf(form), collected.files).single()
                 } catch (error: ai.govbiz.core.applicationpreparation.service.exception.ApplicationDocumentException) {
@@ -307,7 +297,7 @@ class ApplicationFormDiscoveryService(
                         form.attachmentBytes, error.code, root.javaClass.name, root.message?.take(500), error)
                     null
                 }
-            } else forms
+            }
             if (bound.isEmpty()) throw candidateFailure ?: ApplicationFormDiscoveryException(if (hasExcludedDocument) excludedReason else Reason.NO_FORM)
             if (persist != null) persist(bound, metadata)
             else snapshots.save(bound, sourceFingerprint, SupportProgramDocumentParser.VERSION, configuration)

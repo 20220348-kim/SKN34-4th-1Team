@@ -951,7 +951,7 @@ HWP 체크박스의 FORM_OBJECT Caption은 주변 문항과 함께 별도 근거
 
 사용자 작성 화면은 신청 양식 확인 시 availability API에서 활성 snapshot을 먼저 읽습니다. PENDING 또는 STALE이면 기존 계정별 Discovery Job으로 공식 첨부를 분석해 snapshot을 저장하고 결과를 표시합니다. 다른 실패 상태는 자동 재분석하지 않습니다. 새 작성은 활성 formVersionId만 허용하고, 기존 작성의 과거 버전과 최종 생성의 공식 원본 해시 대조는 유지합니다.
 
-Discovery 전용 timeout은 model 210초 < AI run 240초 < Core read 270초 < Worker lease 1,800초입니다. 다른 신청 준비 기능의 전역 timeout은 변경하지 않습니다. [상태·재시도·백필 실행 방법](../../docs/application-form-availability.md)을 참고하세요.
+Discovery 전용 timeout은 model 210초 < AI run 240초 < Core read 270초 < Worker lease 1,800초입니다. 다른 신청 준비 기능의 전역 timeout은 변경하지 않습니다. [상태·재시도 정책](../../docs/application-form-availability.md)을 참고하세요.
 
 ## 신청 문서 MCP 파이프라인
 
