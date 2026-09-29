@@ -8,8 +8,8 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
+import sync_images as sync  # Initializes the shared release-module import path.
 import gate
-import sync_images as sync
 import yaml
 from test_promote_image import FORK, receipt, values
 
