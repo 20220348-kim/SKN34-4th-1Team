@@ -10,7 +10,7 @@ import time
 from uuid import uuid4
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path[:0] = [str(ROOT / "backend/ai-service"), str(ROOT / "evaluation/support-program-evidence")]
+sys.path[:0] = [str(Path(__file__).resolve().parent), str(ROOT / "backend/ai-service"), str(ROOT / "evaluation/support-program-evidence")]
 os.environ["DO_NOT_TRACK"] = "1"
 os.environ["PREFECT_SERVER_ANALYTICS_ENABLED"] = "false"
 os.environ.setdefault("PREFECT_HOME", str(ROOT / "work/llmops/prefect-client"))
@@ -24,6 +24,7 @@ from app.tracing import LLMTracing
 from tests.langchain_stub import ResponsesChatStub, response_message
 from tests.support_program_evidence.test_agent import answer_request, valid_selection
 from llmops import evaluate_capture, write_json
+from assistant_trace_smoke import assistant_trace_examples, verify_assistant_observations
 
 
 def wait_ready(base_url: str, path: str) -> None:
@@ -92,6 +93,7 @@ async def search_trace_examples(settings):
     app.state.container.support_program_index_service = index
     try:
         records = await trace_examples(settings, tracing)
+        records += await assistant_trace_examples(tracing)
         item = document("BIZINFO:smoke", "서울 AI 합성 공고 PRIVATE-SMOKE")
         await index.index_batch(SupportProgramIndexBatchRequest(documents=[item]))
         search = SupportProgramIndexSearchRequest(query="서울 AI PRIVATE-SMOKE", eligibleDocuments=[identity(item)], limit=1)
@@ -121,16 +123,18 @@ def verify_traces(settings, records):
             deadline = time.monotonic() + 60
             while True:
                 response = client.get("/api/public/v2/observations", params={
-                    "traceId": record["trace_id"], "fields": "basic,io,metadata,model,usage", "limit": 10,
+                    "traceId": record["trace_id"], "fields": "basic,io,metadata,model,usage", "limit": 100,
                 })
                 response.raise_for_status()
                 observations = response.json()["data"]
-                if len(observations) == len(record.get("names", ["evidence.answer", "evidence.model"])):
+                if len(observations) == record.get("observation_count", len(record.get("names", ["evidence.answer", "evidence.model"]))):
                     break
                 if time.monotonic() >= deadline:
                     raise RuntimeError("Trace readback timed out")
                 time.sleep(1)
-            if "names" in record:
+            if "assistant_scenario" in record:
+                verify_assistant_observations(observations, record)
+            elif "names" in record:
                 assert sorted(item["name"] for item in observations) == sorted(record["names"])
                 ids = {item["id"] for item in observations}
                 for item in observations:

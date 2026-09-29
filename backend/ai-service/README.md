@@ -247,10 +247,51 @@ Service는 내부 `astream(values)`로 마지막 완료 상태를 보존합니�
 집계하며, 동시 HTTP 요청끼리는 집계기를 공유하지 않습니다. 처리된 map 오류가 있어 `outcome=completed`인 경우에도
 `usage_unknown_calls`가 남을 수 있습니다. 그래프 내부의 기존 누적 필드는 최종 운영 로그의 집계 근거로 사용하지 않습니다.
 
-범위는 도우미의 채팅 모델 관측입니다. 검색 임베딩 비용·전체 서비스 예산 장부·Langfuse 노드별 span은 포함하지 않습니다.
+사용량 집계 범위는 도우미의 채팅 모델입니다. 검색 임베딩 비용·전체 서비스 예산 장부는 포함하지 않습니다.
 SDK가 사용량을 제공하지 않고 읽을 수 있는 수신 응답도 없으면 미확인으로 유지합니다.
 `tests/assistant_agent/test_usage.py`는 실제 LangGraph와 ChatOpenAI Responses SDK에 무료 HTTP 대역을 연결해
 출력 검증 실패·누락·취소·시간 초과·병렬 map·동시 요청 격리를 검증합니다.
+
+### 도우미 단계별 Langfuse 추적
+
+`LANGFUSE_ENABLED=true`이면 bootstrap이 검색·근거 답변과 같은 `LLMTracing`을 도우미 Service와
+두 그래프에 주입합니다. 직접 Service·그래프를 생성하는 평가·검증 실행기도 같은 객체를 전달합니다.
+새 provider·실행 계층·모델 호출은 추가하지 않습니다.
+
+호출 흐름은 `HTTP API 또는 직접 Service 호출 → LangGraph → Core 도구 / 근거 검색 / 채팅 모델 → 응답`입니다.
+Langfuse에서 `assistant-agent` trace 이름으로 필터하거나 `assistant_agent_run` 로그의 `trace_id`로 찾습니다.
+Ops 화면의 **검색·도우미 실행 추적** 링크에서도 같은 프로젝트로 이동할 수 있습니다. Langfuse 로그인은 별도입니다.
+
+```text
+assistant.agent
+├─ assistant.classify 또는 assistant.resume
+├─ assistant.plan → assistant.tools → assistant.tool (병렬)
+├─ assistant.answer → assistant.verify (필요 시 기존 답변 재생성)
+├─ assistant.saved_programs (관심 공고 질문 분기)
+│  ├─ assistant.saved.retrieve
+│  ├─ assistant.saved.map → assistant.saved.judge (공고별 병렬)
+│  ├─ assistant.saved.reduce
+│  └─ assistant.saved.verify
+└─ assistant.finalize
+```
+
+모델을 호출하는 노드는 설정된 모델 이름·프롬프트 SHA-256을 기록합니다. 루트는 계약 버전과
+허용 문서 메타데이터·청크 해시 목록의 `document_manifest_sha256`, 문서 수를 남깁니다.
+질문·답변·원문·도움말·문서 식별자·계정·도구 인자와 결과·토큰·외부 예외 원문은 전송하지 않습니다.
+문서 해시는 검토된 평가셋이나 사람 정답 버전을 뜻하지 않습니다.
+
+예외가 전파되면 해당 단계에 `ERROR`와 `failed`·`timeout`·`cancelled`를 기록합니다. 기존 정책으로 처리된
+검색·도구·map 실패와 검증 실패는 해당 노드에 `WARNING`, `result_status=degraded`를 남깁니다.
+요청의 `outcome=completed`는 응답 완료이며 모든 하위 단계의 성공·답변 품질 합격을 뜻하지 않습니다.
+시간 제한에 의해 취소된 하위 노드는 `cancelled`, 이를 시간 초과로 변환한 요청 루트는 `timeout`입니다.
+
+루트의 `usage_input_tokens`, `usage_output_tokens`, `usage_observed_*`, `usage_unknown_calls`,
+`usage_complete`는 위 요청별 사용량 집계기를 사용합니다. 미확정 합계는 숫자 0으로 채우지 않으며,
+일부 값만 확인된 실행은 `usage_complete=false`로 식별합니다. 추적 전송 실패로 업무·모델을 재실행하지 않습니다.
+
+무료 검증은 `tests/assistant_agent/test_tracing.py`에서 실제 LangGraph와 메모리 exporter로 수행합니다.
+기존 LLMOps `smoke.py`에도 정상·map 일부 실패·시간 초과의 Langfuse 저장·재조회 검사를 추가했습니다.
+Core 도우미 요청의 분산 부모 연결, 상세 공고 RAG의 전체 단계, Ops 평가 지표·점수 등록은 후속 범위입니다.
 
 모델은 상태·패치·질문 또는 결과 설명을 출력하고 Service가 검증 후 계약 버전을 붙입니다. 검색/임베딩/랭킹은 호출하지 않습니다.
 

@@ -54,6 +54,7 @@ async def test_agent_models_tool_client_and_service_are_wired_and_closed(monkeyp
     container = build_application_container(settings)
     try:
         assert isinstance(container.assistant_agent_service, AssistantAgentService)
+        assert container.assistant_agent_service._tracing is container.llm_tracing
         assert container.assistant_agent_service._timeout_seconds == 15.0
         general, ranking, application, combination, classify, agent = FakeChatOpenAI.instances
         assert application.kwargs["root_async_client"] is client

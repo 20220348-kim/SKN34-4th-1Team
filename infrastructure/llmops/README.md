@@ -639,6 +639,44 @@ Langfuse의 `core-search-smoke` 환경에서 다음 trace ID로 확인할 수 �
 새 검증 모듈의 Ruff·포맷, Python/워크플로 구문·문서 링크·`git diff --check`도 확인했다.
 전체 Catalog 통합 실행은 제공처 실패·Catalog 중단 뒤 Core 데이터와 검색 유지까지 통과했다.
 
+## 도우미 그래프 추적 검증 — 2026-09-30
+
+도우미의 분류·계획·도구·답변·검증과 관심 공고 RAG의 검색·병렬 판단·합성·검증을
+`assistant-agent` trace로 기록합니다. API bootstrap과 직접 Service 실행 모두 같은 추적 객체를 사용합니다.
+부모 연결·경고·오류·미확정 사용량·본문 미수집 기준은
+[AI Service 안내](../../backend/ai-service/README.md#도우미-단계별-langfuse-추적)에 정리했습니다.
+
+`assistant_trace_smoke.py`는 무료 대역 모델·도구·검색으로 정상과 map 일부 실패를 각 10개 관측,
+시간 초과를 3개 관측으로 생성합니다. 기존 `smoke.py`가 같은 Langfuse client 생애 안에서 근거 답변·검색과
+함께 저장·재조회하므로, LLMOps CI의 기존 필수 작업에서 총 7개 trace·40개 관측을 검증합니다.
+모델 호출 수·미확정 사용량을 잘못 기록하거나 병렬 판단의 부모가 끊기면 검사에 실패합니다.
+실제 Core 검색 검사의 별도 네 trace·63개 관측도 유지합니다.
+
+이 검사는 합성 데이터로 연결·장애 처리만 확인합니다. 실제 검색·답변 품질 평가, Core 도우미 전체 분산 추적,
+Ops의 새 평가 유형·검색/답변 점수 등록이나 비교 기준 승인은 아직 포함하지 않습니다.
+공용 `app/tracing.py` 변경에 맞춰 평가 실행 명세도 재생성했으며, 기존 접수 이력의 명세를 소급 수정하지 않습니다.
+
+로컬에서 실제 Langfuse 저장·재조회 **3건·23개 관측**을 확인했다. 증거는 Git 제외 경로
+`work/assistant-traces-20260930.json`에 저장했으며 유료 모델 API 호출은 0회다.
+Langfuse의 `assistant-smoke` 환경에서 아래 ID로 확인할 수 있다.
+
+| 사례 | trace ID | 관측 수 |
+|---|---|---|
+| 관심 공고 정상 | `8d6d5bdd30b347a4905c469b854ab930` | 10 |
+| 병렬 판단 일부 실패 | `98fb531b5b2a40e88fa4e725434a1ad1` | 10 |
+| 모델 시간 초과 | `88310f38f11f4eb585a8be0b6e99b828` | 3 |
+
+로컬 무료 검증은 도우미·기존 근거/검색 추적 167개, 통합 trace smoke 1개,
+평가 실행 명세 20개와 React Ops 화면 50개가 통과했다. API bootstrap과 직접 Service 실행,
+병렬 요청 격리, 본문 미수집, exporter 오류에도 모델을 재호출하지 않는 동작을 포함한다.
+새 Python 파일 포맷·변경 Python 오류 검사·Oxlint·문서 링크·`git diff --check`도 확인했다.
+Python 검증은 로컬 PATH에 `uv`가 없어 기존 Python 3.12 가상환경으로 실행했고,
+Web은 Node.js 24.19.0과 pnpm 11.22.0을 사용했다.
+
+이번 변경은 `main / 36b968f`에서 분기한 `skn-64`에 기록한다. 위 결과는 커밋 전 로컬 검증이며,
+새 SHA의 GovBiz·Ops·LLMOps 전체 CI 결과는 별도로 확인해야 한다. 상시 실행 중인 AI 컨테이너의
+이미지를 교체한 것은 아니며, 새 코드는 로컬 Python·HTTP 대역과 실제 Langfuse로 검증했다.
+
 ## 실제 AI Service 추적 활성화
 
 `LANGFUSE_ENABLED=false`가 기본값이다. 활성화 시 `LANGFUSE_BASE_URL`, `LANGFUSE_PUBLIC_KEY`,

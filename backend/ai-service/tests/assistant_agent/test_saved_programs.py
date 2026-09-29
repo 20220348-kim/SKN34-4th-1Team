@@ -47,16 +47,16 @@ def reduce_output(*document_ids: str, answer: str = "관심 공고 3건 중 1건
 
 
 class Harness:
-    def __init__(self, *, classify: list, agent: list, retriever: FakeRetriever | None = None, timeout: float = 5) -> None:
+    def __init__(self, *, classify: list, agent: list, retriever: FakeRetriever | None = None, timeout: float = 5, tracing=None) -> None:
         self.fake = FakeCoreTools()
         self.classify_model = ScriptedChatModel(responses=classify)
         self.agent_model = ScriptedChatModel(responses=agent)
         self.retriever = retriever or FakeRetriever({SEOUL: [SEOUL_CHUNK, SEOUL_CHUNK2], GYEONGGI: [GYEONGGI_CHUNK]})
         self.client = CoreToolClient(base_url="http://core-service:8080", secret=self.fake.secret, timeout_seconds=1, transport=self.fake.transport())
         graph = build_assistant_agent_graph(
-            classify_model=self.classify_model, agent_model=self.agent_model, tool_client=self.client, max_tool_calls=3, retriever=self.retriever,
+            classify_model=self.classify_model, agent_model=self.agent_model, tool_client=self.client, max_tool_calls=3, retriever=self.retriever, tracing=tracing,
         )
-        self.service = AssistantAgentService(graph=graph, timeout_seconds=timeout)
+        self.service = AssistantAgentService(graph=graph, timeout_seconds=timeout, tracing=tracing)
 
     async def run(self, request_data: dict):
         try:

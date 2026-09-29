@@ -33,7 +33,7 @@ def partner_answer(*ids: str, navigation: str = "PARTNERS") -> dict:
 
 
 class Harness:
-    def __init__(self, *, classify: list, agent: list, max_tool_calls: int = 3, timeout: float = 5, fake: FakeCoreTools | None = None) -> None:
+    def __init__(self, *, classify: list, agent: list, max_tool_calls: int = 3, timeout: float = 5, fake: FakeCoreTools | None = None, tracing=None) -> None:
         self.fake = fake or FakeCoreTools()
         self.classify_model = ScriptedChatModel(responses=classify)
         self.agent_model = ScriptedChatModel(responses=agent)
@@ -41,9 +41,9 @@ class Harness:
         self.retriever = FakeRetriever()
         graph = build_assistant_agent_graph(
             classify_model=self.classify_model, agent_model=self.agent_model, tool_client=self.client, max_tool_calls=max_tool_calls,
-            retriever=self.retriever,
+            retriever=self.retriever, tracing=tracing,
         )
-        self.service = AssistantAgentService(graph=graph, timeout_seconds=timeout)
+        self.service = AssistantAgentService(graph=graph, timeout_seconds=timeout, tracing=tracing)
 
     async def run(self, request_data: dict):
         try:
@@ -98,7 +98,7 @@ async def test_partner_match_runs_profile_then_search_then_answers_with_verified
     assert re.fullmatch(
         r"assistant_agent_run outcome=completed intent=PARTNER_MATCH model_calls=5 tool_calls=2 tool_failures=0 "
         r"answer_attempts=1 input_tokens=650 output_tokens=62 observed_input_tokens=650 "
-        r"observed_output_tokens=62 usage_unknown_calls=0 elapsed_ms=\d+", record.getMessage(),
+        r"observed_output_tokens=62 usage_unknown_calls=0 elapsed_ms=\d+ trace_id=[0-9a-f]{32}", record.getMessage(),
     )
     assert request_data["message"] not in record.getMessage()
 

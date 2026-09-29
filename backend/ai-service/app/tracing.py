@@ -22,6 +22,21 @@ from app.support_program_evidence.prompt import (
 logger = logging.getLogger(__name__)
 PROMPT_HASH = sha256(SUPPORT_PROGRAM_EVIDENCE_ANSWER_INSTRUCTIONS.encode()).hexdigest()
 SPAN_NAMES = {
+    "assistant.agent",
+    "assistant.classify",
+    "assistant.resume",
+    "assistant.plan",
+    "assistant.tools",
+    "assistant.tool",
+    "assistant.answer",
+    "assistant.verify",
+    "assistant.finalize",
+    "assistant.saved_programs",
+    "assistant.saved.retrieve",
+    "assistant.saved.map",
+    "assistant.saved.judge",
+    "assistant.saved.reduce",
+    "assistant.saved.verify",
     "evidence.answer",
     "evidence.model",
     "search.semantic.request",
@@ -122,6 +137,8 @@ class LLMTracing:
             observation = manager.__enter__()
             if name.startswith("search."):
                 get_current_span().set_attribute("langfuse.trace.name", "support-program-search")
+            elif name.startswith("assistant."):
+                get_current_span().set_attribute("langfuse.trace.name", "assistant-agent")
         except Exception:
             logger.error("evidence_trace_start_failed")
             yield None
