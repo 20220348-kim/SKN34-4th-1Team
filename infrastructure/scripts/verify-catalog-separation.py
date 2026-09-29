@@ -132,7 +132,7 @@ def fixture_env():
     return values
 
 
-def validate_boundaries(model, project, search_traces=False):
+def validate_boundaries(model, project, search_traces=False, evidence_traces=False):
     services = model["services"]
     core = services["core-service"]["environment"]
     catalog = services["catalog-service"]["environment"]
@@ -191,6 +191,16 @@ def validate_boundaries(model, project, search_traces=False):
                 "Search traces must use the offline OpenAI fixture")
         require(core["AI_SERVICE_BASE_URL"] == f"http://{project}-ai-service-1:8000",
                 "Core must call this project's AI container")
+    if evidence_traces:
+        require(search_traces, "Evidence traces require the isolated tracing network")
+        hosts = services["core-service"].get("extra_hosts", {})
+        if isinstance(hosts, list):
+            hosts = dict(item.split("=", 1) for item in hosts)
+        require(all(hosts.get(host) == "127.0.0.1" for host in ("www.bizinfo.go.kr", "bizinfo.go.kr")),
+                "Evidence fixture must block official source network access")
+        ai = services["ai-service"]["environment"]
+        require(ai["LLM_MODEL_TIMEOUT_SECONDS"] == "2" and ai["LLM_RUN_TIMEOUT_SECONDS"] == "3",
+                "Evidence timeout fixture is not configured")
     build = (ROOT / "backend/catalog-service/build.gradle").read_text(encoding="utf-8")
     require(not any(name in build for name in ("core-api", "core-service")),
             "Catalog Gradle build depends on the Core source tree")
@@ -208,9 +218,13 @@ def main():
                         help="Also verify Core search traces in local Langfuse and save new JSON evidence")
     parser.add_argument("--assistant-traces-output", type=Path,
                         help="With --search-traces-output, also verify Core assistant HTTP traces")
+    parser.add_argument("--evidence-traces-output", type=Path,
+                        help="With --search-traces-output, verify detailed RAG using a synthetic DB source snapshot")
     args = parser.parse_args()
     require(not args.assistant_traces_output or args.search_traces_output,
             "Assistant tracing requires --search-traces-output to share the isolated tracing fixture")
+    require(not args.evidence_traces_output or args.search_traces_output,
+            "Evidence tracing requires --search-traces-output to share the isolated tracing fixture")
     project = "govbiz-catalog-check-" + uuid.uuid4().hex[:12]
     values = fixture_env()
     if args.search_traces_output:
@@ -226,6 +240,12 @@ def main():
             "ASSISTANT_AGENT_ENABLED": "true", "ASSISTANT_TOOLS_TOKEN": "assistant-trace-fixture-secret-never-use-in-production",
             "LLM_MODEL_TIMEOUT_SECONDS": "2", "LLM_RUN_TIMEOUT_SECONDS": "3",
         })
+    if args.evidence_traces_output:
+        import core_evidence_trace
+        require(not args.evidence_traces_output.exists(), "Use a new evidence trace output path")
+        require(all(args.evidence_traces_output.resolve() != path.resolve() for path in
+                    (args.search_traces_output, args.assistant_traces_output) if path), "Use distinct trace evidence paths")
+        values.update({"LLM_MODEL_TIMEOUT_SECONDS": "2", "LLM_RUN_TIMEOUT_SECONDS": "3"})
     ports = iter(range(19080, 19086)) if args.config_only else None
     selected = set()
     port_keys = ["CORE_API_HOST_PORT", "MYSQL_HOST_PORT", "QDRANT_HOST_PORT", "WEB_HOST_PORT", "CATALOG_HOST_PORT"]
@@ -293,6 +313,9 @@ def main():
                 "ports": [f"127.0.0.1:{values['OPENAI_STUB_HOST_PORT']}:8002"],
                 "environment": {"CORE_TRACE_FIXTURE": "true"},
             }
+        if args.evidence_traces_output:
+            # A cache regression must fail locally, never fetch the real official site.
+            fixture_services["core-service"]["extra_hosts"] = {"www.bizinfo.go.kr": "127.0.0.1", "bizinfo.go.kr": "127.0.0.1"}
         port_overlay.write_text(json.dumps(overlay), encoding="utf-8")
         # Limit Compose operations too; image builds below use separate invocations
         # because Bake can otherwise parallelize builds despite --parallel 1.
@@ -311,7 +334,8 @@ def main():
             return run(compose + command, capture=True, input=statement + ";\n").stdout.strip()
 
         model = json.loads(run(compose + ["config", "--format", "json"], capture=True, timeout=30).stdout)
-        validate_boundaries(model, project, search_traces=bool(args.search_traces_output))
+        validate_boundaries(model, project, search_traces=bool(args.search_traces_output),
+                            evidence_traces=bool(args.evidence_traces_output))
         print("PASS: isolated Compose, credentials, scheduler ownership and standalone source boundary", flush=True)
         # Explicit fixture activation must not mask an unsafe opt-in overlay default.
         # Keep the dummy credentials but render again without any writer activation flags.
@@ -462,6 +486,13 @@ def main():
                         core_assistant_trace.verify_assistant_traces(
                             core_url=core_url, stub_url="http://127.0.0.1:" + values["OPENAI_STUB_HOST_PORT"],
                             environment=os.environ, call_json=call_json, output=args.assistant_traces_output,
+                            core_logs=lambda: run(compose + ["logs", "--no-color", "core-service"], capture=True, timeout=15).stdout,
+                        )
+                    if args.evidence_traces_output:
+                        core_evidence_trace.verify_evidence_traces(
+                            core_url=core_url, stub_url="http://127.0.0.1:" + values["OPENAI_STUB_HOST_PORT"],
+                            environment=os.environ, call_json=call_json, sql=sql, program=application,
+                            output=args.evidence_traces_output,
                             core_logs=lambda: run(compose + ["logs", "--no-color", "core-service"], capture=True, timeout=15).stdout,
                         )
                 finally:

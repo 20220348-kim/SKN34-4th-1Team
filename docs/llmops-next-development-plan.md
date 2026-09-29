@@ -1,4 +1,4 @@
-# LLMOps 개발 현황과 후속 전략 — skn-69
+# LLMOps 개발 현황과 후속 전략 — skn-70 상세 RAG 통합 검사
 
 [문서 목록](README.md) · [도입·구현 이력](langfuse-adoption-strategy.md) · [Ops API](../backend/ops-service/README.md) · [실행 안내](../infrastructure/llmops/README.md)
 
@@ -84,27 +84,30 @@ S3 이후 장애·live 예산·GHCR/Argo·복원 작업은 남아 있다.
 
 ## 현재 판단과 확인 범위 — 2026-09-30
 
-상세 RAG 개발·로컬 검증은 `skn-66 / 8e8592ace5709535b5d0cb9b9ab484ab5a6b0d36`에서 진행했다.
-한국어 커밋 후 PR #144가 반영된 `upstream/main / d1b348ca83d3b3c263515bfc2ea9a0813bb106e7`을 pull·rebase했다.
-그 위에 추가한 상세 공고의 원문 준비→청킹→색인→검색→답변→인용 검증 추적을 `skn-68`에 기록한다.
+개발 시작 기준은 `skn-68 / 93093a37f8c67ea65551ad3a52079175b604a812`이며,
+PR #144가 반영된 `upstream/main / d1b348c` 위에 상세 공고 RAG 분산 추적을 커밋·푸시했다.
+그 후속으로 실제 Core HTTP→MySQL 합성 원문→AI·Qdrant→Langfuse 통합 검사 여섯 사례를 추가했다.
+이번 변경은 PR #148이 반영된 `upstream/main / fb46afa`를 pull·rebase했으며,
+`skn-69`의 Prefect 장애·동기화 복구 검증과 관련 문서를 함께 유지한다.
 `skn-65`의 Kubernetes Ops 활성화·무료 평가 검증, `skn-67`의 artifact 장애·복구 검사,
-CI의 웹 프록시 종료·85분 제한을 함께 유지한다. 충돌은 이 문서 제목뿐이었으며 양쪽 구현 기록을 보존했다.
-기준 SHA의 GovBiz·Catalog·Ops·Infra·LLMOps CI 5개와 필수 하위 작업은 모두 성공했다.
-`skn-68`의 전체 검증은 최종 SHA의 필수 CI 통과 후 판단하며 기준 SHA의 성공으로 대신하지 않는다.
+CI의 웹 프록시 종료·85분 제한을 함께 유지한다.
+기준 SHA의 GovBiz·Catalog·Ops·Infra·LLMOps CI 5개는 모두 성공했다.
+이번 통합 검사 변경은 `skn-70`에 기록하며 새 전체 검증은 최종 SHA의 필수 CI 통과 후 판단한다.
+이전 `skn-66 / 8e8592a`의 필수 CI 5개 성공으로 이번 변경의 검증을 대신하지 않는다.
 뒤의 기록은 당시의 장애·검증 이력이다.
 
-**상세 RAG 추적의 Core·AI 연결 코드를 추가했다. 다음 순서는 새 SHA의 필수 CI 확인 → 실제 Core 상세
-RAG 전체 경로 검사 → Ops 전체 RAG 평가 계약 연결이다. 사람의 자료·응답 검토와 현재 모델 비교 기준 확보는 병행한다.**
+**실제 Core를 거치는 상세 RAG 통합 검사를 CI에 추가했다. 다음 순서는 새 SHA의 필수 CI와 여섯 사례의
+보고서 확인 → Ops 전체 RAG 평가 계약 연결이다. 사람의 자료·응답 검토와 현재 모델 비교 기준 확보는 병행한다.**
 이미 구현된 검토·예산 보정·실패 사용량 기록을 다시 구현하지 않는다.
 
 | 항목 | 현재 확인한 상태 | 완료 판단 |
 |---|---|---|
-| 기존 CI 회귀 | `8e8592a`의 필수 CI 5개와 하위 작업 모두 성공 | 새 변경분의 전체 CI는 커밋·푸시 후 별도 확인 |
+| 기존 CI 회귀 | `93093a3`의 GovBiz·Catalog·Ops·Infra·LLMOps 모두 성공 | 새 통합 검사 변경분의 전체 CI는 커밋·푸시 후 별도 확인 |
 | 개발 환경 | Ops·sync·실행기·Prefect 실행 중, migration `0015_usage_correction` 적용 | 이전 무료 replay·복구 결과 유지. 이번 조회는 집계·상태 확인 |
 | 사람 검토·기준 | 자료 검토 0건, 사례 보류 1건, 전체 검토 승인 0건, 품질 `NEEDS_REVIEW` 1건, 활성 기준 0건 | 현재 모델의 검토된 비교 기준 미확보 |
 | 평가 이력 | live 완료 2건, recovery 완료 2건, replay 완료 14건·실패 3건 | 과거 live 완료를 현재 모델 전체 품질 증거로 사용하지 않음 |
 | 예산 적용 | 설정·예약 0건, live 비활성화 | 호출·출력 예약 기능은 구현됐지만 실제 유료 평가 통제 적용은 별도 |
-| 전체 추적·평가 | Core 검색·도우미 연결에 상세 공고의 Core 원문 준비·청킹 및 AI 색인·검색·답변·인용 검증 연결 추가 | 새 코드 CI, 실제 Core 상세 RAG·회원 RAG E2E, Ops 평가 연결은 남음 |
+| 전체 추적·평가 | 상세 공고 추적 연결에 실제 Core HTTP·MySQL·AI·Qdrant·Langfuse 검사 여섯 사례 추가 | 새 코드 CI·전체 서버 결과 확인, 회원 RAG E2E와 Ops 평가 연결은 남음 |
 
 이전 `8edfa32` CI: [GovBiz](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36580527445),
 [Catalog](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36580527441),
@@ -117,6 +120,11 @@ RAG 전체 경로 검사 → Ops 전체 RAG 평가 계약 연결이다. 사람�
 [Ops](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36617864891),
 [Infra](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36617864600),
 [LLMOps](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36617864837).
+개발 시작 기준 `93093a3` CI: [GovBiz](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36621640462),
+[Catalog](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36621640364),
+[Ops](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36621640474),
+[Infra](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36621640359),
+[LLMOps](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36621640407).
 
 ## 현재 사용 방침 — 배포 브랜치 방식 제외
 
@@ -141,7 +149,8 @@ Sync fork 해결과 당시 기준 커밋의 CI 통과 사실은 그대로 유지
 | P1 완료 | 실제 Core 검색 추적 통합 검증 | `8edfa32`의 실제 서버 CI 네 사례 통과 |
 | 병행 | 사람이 검토한 현재 모델 기준 확보 | TC01~TC06 자료 검토, 예산 설정·호출 범위 승인 후 새 평가. 응답 검토와 품질 합격 후 명시적 기준 지정 |
 | P2 도우미 연결 CI 완료 | Core 도우미 → AI | `8e8592a` 실제 Core 게스트 정상·오류·시간 초과 저장/재조회 성공. 회원 RAG 전체 E2E는 별도 |
-| P2 상세 추적 로컬 완료 | 상세 공고 RAG 연결 | Core 선택 테스트와 AI 캐시·실패·부모·본문 미수집, 실제 Langfuse 3건·26개 관측 통과. 새 SHA 전체 CI와 실제 Core 상세 RAG E2E는 남음 |
+| P2 상세 추적 CI 완료 | 상세 공고 RAG 연결 | `skn-68`에 기록. Core 선택 테스트와 실제 Langfuse 3건·26개 관측 통과, 해당 SHA의 필수 CI 5개 성공 |
+| P2 후속 구현·CI 대기 | 실제 Core 상세 RAG 통합 검사 | 여섯 trace·100개 관측, 캐시·인용·실패·호출 수·본문 미수집을 검사. 로컬 무료 테스트·Compose 렌더링 통과, 새 SHA 서버 CI 결과 확인 필요 |
 | P2 후속 | Ops 전체 RAG 평가 계약 연결 | 검색과 답변 지표 분리, 실패 단계·trace·모델/프롬프트/자료 버전을 평가 결과에 연결. 검토한 자료·허용 호출 경로·예산 계약을 고정하고 고정 문맥 평가와 구분 |
 | 자동 실행 전 | 입력·금액·기간 예산 및 알림 | 동시 예약·기간 경계·취소·미확인 사용량 보존·중복 보정 거절을 검증. 전체 서비스 적용 범위 명시 |
 | 마지막 | 정기 실행 | 검토된 자료·예산·중복 실행 방지·취소 정책을 충족한 뒤 활성화 |
@@ -150,7 +159,24 @@ Sync fork 해결과 당시 기준 커밋의 CI 통과 사실은 그대로 유지
 확장한 뒤 연결하며 단순히 가상 자료 제한을 제거하지 않는다. 새 유료 호출과 품질 승인을 자동으로
 생성하지 않는다. 작은 데이터셋의 합격을 일반 정확도나 전체 서비스 품질로 확대 해석하지 않는다.
 
-## 이번 후속 구현 — 상세 공고 RAG 추적
+## 이번 후속 구현 — 실제 Core 상세 RAG 통합 검사
+
+기존 Catalog 격리 검증에 `--evidence-traces-output`을 추가했다. 단일 합성 원문을 소유한 임시 MySQL에
+저장하고 실제 Core 공개 API를 호출한다. 원문은 공식 사이트에서 새로 수집하지 않으며 Core 컨테이너의
+해당 공식 호스트를 loopback으로 제한해 캐시 회귀가 외부 요청으로 이어지지 않게 했다.
+운영 코드의 공식 HTTPS 검증·공개 응답·오류 정책은 바꾸지 않았다.
+
+정상·동일 질문 캐시·모델 오류·모델 시간 초과·잘못된 인용·검색 임베딩 실패를 검사한다.
+답변 캐시는 없으므로 같은 질문의 두 번째 답변도 모델 대역 1회가 필요하며 질의 임베딩만 재사용한다.
+시간 초과는 AI span에서 `timeout`, Core 공개 응답은 기존 503으로 확인한다. 사용량이 없는 응답을 확정 0으로 처리하지 않는다.
+Langfuse 조회에는 Core가 생성한 trace ID를 사용하고 실패 보고서에도 본문·키·원문 예외를 저장하지 않는다.
+
+실제 AI SDK·localhost HTTP 대역·메모리 Qdrant, 검사기와 격리 Compose 렌더링을 로컬에서 검증했다.
+LLMOps CI의 기존 실제 서버 단계와 실패 산출물 보존에 연결했지만 **새 JVM·MySQL·Qdrant·Langfuse 전체 실행은
+CI 검증 대기**다. 로컬 기존 서비스의 컨테이너·볼륨·사용자 DB와 평가 승인 이력은 변경하지 않았다.
+[시나리오·명령·완료 기준](../infrastructure/llmops/README.md#실제-core를-거치는-상세-rag-통합-검사)을 따른다.
+
+## 이전 구현 — 상세 공고 RAG 추적
 
 `SupportProgramEvidenceService → Facade → Client → AI Router → 색인·검색·답변 Service`를 연결했다.
 Core는 새 `evidence.total` 아래 일곱 업무 단계를 기록하고 세 AI 호출에 각각의 부모를 전달한다.
@@ -164,7 +190,7 @@ Ops 링크는 **AI 실행 추적 ↗**로 세 기능을 안내한다. 평가 실
 정상/캐시/미준비 실패 3건·26개 관측을 검사하며 기존 LLMOps CI 저장·재조회 과정에 포함한다.
 세부 명령·결과·미검증 범위는 [상세 RAG 검증 안내](../infrastructure/llmops/README.md#상세-공고-rag-추적-검증)를 따른다.
 
-실제 Core 서버에서 시작하는 상세 공고 RAG E2E와 Ops 검색/답변 품질 평가는 아직 남아 있다.
+후속으로 실제 Core 상세 RAG 검사 코드를 추가했으며 전체 서버 결과 확인과 Ops 검색/답변 품질 평가는 남아 있다.
 사람이 검토한 현재 모델 기준이나 정기 실행 완료로 해석하지 않는다.
 
 ## 이전 구현과 검증 — 실제 Core 검색 추적
