@@ -2,7 +2,6 @@
 
 import json
 import shutil
-from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -105,7 +104,7 @@ def test_generation_change_does_not_prevent_free_replay(runner, monkeypatch):
     assert calls[0]["execution_spec_sha256"] == params["execution_spec_sha256"]
 
 
-@pytest.mark.parametrize("change", ["missing", "digest", "model", "settings"])
+@pytest.mark.parametrize("change", ["missing", "digest", "model", "settings", "scope"])
 def test_missing_or_altered_spec_never_uses_latest_defaults(runner, change):
     params = parameters()
     if change == "missing":
@@ -115,6 +114,9 @@ def test_missing_or_altered_spec_never_uses_latest_defaults(runner, change):
         params["execution_spec_sha256"] = "0" * 64
     elif change == "model":
         params["live_config"] = {**params["live_config"], "model": "different-model"}
+    elif change == "scope":
+        params["execution_spec"]["evaluation_scope"] = "full-rag"
+        params["execution_spec_sha256"] = digest(params["execution_spec"])
     else:
         params["execution_spec"]["generation"]["settings"]["run_timeout_seconds"] = 999
         params["execution_spec_sha256"] = digest(params["execution_spec"])

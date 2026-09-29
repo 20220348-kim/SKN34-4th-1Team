@@ -11,6 +11,7 @@ const sessionSchema = z.object({
   search_traces_url: z.url().refine((value) => /^https?:\/\//.test(value)).nullable().default(null),
   datasets: z.array(z.object({
     id: z.string(), label: z.string(), case_ids: z.array(z.string()).min(1),
+    evaluation_scope: z.string().nullable().default(null),
     captures: z.array(z.object({ id: z.string(), label: z.string() })).min(1),
     baseline: z.object({ id: z.string(), label: z.string(), version: z.number().int().nonnegative() }).nullable(),
     fixture: z.string(), live_config: liveConfigSchema,
@@ -24,6 +25,8 @@ const executionSchema = z.object({
 })
 const observationSchema = z.object({ outcome: z.enum(['success', 'error', 'missing']), status_match: z.number().nullable(), citation_recall: z.number().nullable() })
 const comparisonSchema = z.object({
+  scope: z.string().nullable().default(null),
+  retrieval_evaluated: z.boolean().nullable().default(null),
   schema_version: z.literal(2), comparison: z.enum(['self-replay', 'candidate-reference']), case_ids: z.array(z.string()),
   candidate_execution: executionSchema, reference_execution: executionSchema,
   metrics: z.array(z.object({
@@ -33,6 +36,7 @@ const comparisonSchema = z.object({
   cases: z.array(z.object({ case_id: z.string(), reference: observationSchema, candidate: observationSchema })),
 })
 const runSchema = z.object({
+  evaluation_scope: z.string().nullable().default(null),
   can_cancel: z.boolean().default(false),
   cancel_requested_at: z.string().nullable().default(null),
   cancel_requested_by: z.string().nullable().default(null),

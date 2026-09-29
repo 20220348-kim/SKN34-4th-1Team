@@ -804,14 +804,24 @@ python3 -B infrastructure/scripts/verify-catalog-separation.py --config-only \
 출력은 서로 다른 새 경로여야 합니다. 상세 RAG 옵션은 검색 추적 옵션과 함께만 사용하며 도우미 옵션은 선택입니다.
 LLMOps CI가 같은 기존 통합 단계에서 실행하고 `work/llmops-ci/core-evidence-traces.json`을 성공·실패 산출물로 업로드합니다.
 현재 로컬에서는 검사기·HTTP 대역·실제 AI SDK·메모리 Qdrant 및 Compose 렌더링을 검증했습니다.
-실제 JVM·MySQL·Qdrant 서버·Langfuse를 함께 거치는 **새 전체 검증 결과는 이 변경을 푸시한 SHA의 CI에서 확인해야 합니다.**
+실제 JVM·MySQL·Qdrant 서버·Langfuse를 함께 거치는 결과는 푸시한 SHA의 CI 보고서로 확인합니다.
 기존 개발 컨테이너·볼륨·평가 승인·유료 API는 변경하거나 호출하지 않습니다.
+
+2026-09-30 후속 확인: `skn-70 / 3fca0bf`의 [실제 서버 CI 단계](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36625188666)가
+통과했습니다. 보존된 `core-evidence-traces.json`에서 여섯 사례 모두 `passed`, 관측 합계 100개,
+실제 모델 호출 0회를 확인했습니다. 이후 취소·Kubernetes 단계를 포함한 LLMOps workflow와
+해당 커밋의 필수 CI 5개 모두 성공했습니다. 후속 평가 범위 변경의 CI 결과를 대신하지 않습니다.
 
 로컬 명령은 Python 3.12의 기존 가상환경에서 실행했습니다(`uv`는 로컬 PATH에 없음).
 `test_core_evidence_trace.py`, 기존 Core 검색·도우미 검사기, `test_catalog_separation_config.py`의 관련 테스트
 91건이 통과했습니다. 최초 localhost HTTP 테스트는 샌드박스의 포트 바인딩 제한으로 실행되지 못했고,
 권한을 허용한 재실행에서 통과했습니다. 새 검사기 Ruff·포맷, 워크플로 YAML·Bash와 문서 링크도 확인했습니다.
 전체 잠금 환경·컨테이너 검증은 CI에 맡기며 Ops 전체 RAG 품질 평가와 사람 검토 기준 확보는 후속 범위입니다.
+
+후속으로 Ops 접수·결과·품질 판정에 [평가 범위 계약](../../backend/ops-service/README.md#평가-범위-계약)을
+연결했습니다. 현재 고정 근거 답변은 검색 품질 미측정으로 표시하며 전체 RAG의 접수·호출 예산은 아직
+활성화하지 않습니다. 명세 v2와 갱신된 `execution_release.json`을 함께 배포해야 하며 기존 개발
+컨테이너는 이번 로컬 검증에서 교체하지 않았습니다.
 
 ## 실제 AI Service 추적 활성화
 

@@ -97,6 +97,8 @@ class ArtifactStoreTests(ArtifactServerMixin, SimpleTestCase):
         summary = {"completed": True, "caseCount": len(dataset["case_ids"])}
         comparison = {
             "schema_version": 2,
+            "scope": "fixed-answer-context-only",
+            "retrieval_evaluated": False,
             "evaluation_run_id": "a" * 32,
             "reference_run_id": "b" * 32,
             "current": summary,

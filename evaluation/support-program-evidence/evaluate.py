@@ -45,6 +45,7 @@ def load_fixture(path: Path) -> tuple[dict, list[tuple[dict, SupportProgramEvide
     fixture = json.loads(raw)
     require(isinstance(fixture, dict), "fixture must be an object")
     require(fixture.get("schemaVersion") == "support-program-evidence-eval-v1", "unsupported fixture schema")
+    require(fixture.get("scope", "fixed-answer-context-only") == "fixed-answer-context-only", "unsupported fixture scope")
     require(fixture.get("dataType") == "synthetic", "this fixture must be explicitly synthetic")
     require(fixture.get("referenceSource") == "ai-authored", "reference source must be disclosed")
     documents = fixture.get("documents")
@@ -134,6 +135,8 @@ def report(fixture: dict, prepared: list, fixture_hash: str, capture: dict | Non
         return result
     require(isinstance(capture, dict), "capture must be an object")
     require(capture.get("schemaVersion") == "support-program-evidence-capture-v1", "unsupported capture schema")
+    # v1 historical captures predate the explicit field; other scopes are never relabeled.
+    require(capture.get("scope", "fixed-answer-context-only") == "fixed-answer-context-only", "unsupported capture scope")
     require(capture.get("fixtureSha256") == fixture_hash, "capture fixture hash differs")
     for field in ("promptSha256", "runnerSha256"):
         value = capture.get(field)
@@ -263,6 +266,7 @@ async def execute(prepared: list, fixture_hash: str, output_dir: Path, *,
     output_dir.mkdir(parents=True, exist_ok=False)
     capture = {
         "schemaVersion": "support-program-evidence-capture-v1", "fixtureSha256": fixture_hash,
+        "scope": "fixed-answer-context-only",
         "promptSha256": digest(SUPPORT_PROGRAM_EVIDENCE_ANSWER_INSTRUCTIONS.encode()),
         "runnerSha256": digest(Path(__file__).read_bytes()), "model": model,
         "modelApiCalls": 0, "maxModelCalls": limit, "maxOutputTokens": 2000,

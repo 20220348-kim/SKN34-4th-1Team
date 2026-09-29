@@ -10,6 +10,7 @@ AI = "backend/ai-service/"
 OPS = "backend/ops-service/apps/evaluations/"
 EVIDENCE = "evaluation/support-program-evidence/"
 RELEASE_PATH = Path(__file__).with_name("execution_release.json")
+EVALUATION_SCOPE = "fixed-answer-context-only"
 DEPENDENCIES = (AI + "pyproject.toml", AI + "uv.lock")
 EVALUATION_FILES = (
     EVIDENCE + "evaluate.py",
@@ -134,6 +135,7 @@ def build_release(root):
     prompt_text = ast.literal_eval(value.func.value).strip()
     evaluation = fingerprint(EVALUATION_FILES)
     evaluation["version"] = evaluation["sha256"]
+    evaluation["scope"] = EVALUATION_SCOPE
     datasets = {}
     catalog = json.loads((root / (OPS + "capture_catalog.json")).read_text())
     for item in catalog:
@@ -177,7 +179,8 @@ def read_release():
 
 def profile(release, dataset_id, mode, config):
     return {
-        "schema_version": 1,
+        "schema_version": 2,
+        "evaluation_scope": release["evaluation"]["scope"],
         "quality_policy": release["quality_policy"],
         "dataset_id": dataset_id,
         "dataset": release["datasets"][dataset_id],

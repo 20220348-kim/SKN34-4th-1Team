@@ -117,6 +117,8 @@ class RecoveryTests(RecoveryFixture, TestCase):
         comparison = json.dumps(
             {
                 "schema_version": 2,
+                "scope": "fixed-answer-context-only",
+                "retrieval_evaluated": False,
                 "evaluation_run_id": "a" * 32,
                 "reference_run_id": "b" * 32,
                 "fixture_sha256": dataset["fixture_sha256"],
@@ -142,6 +144,7 @@ class RecoveryTests(RecoveryFixture, TestCase):
                     "status": "completed",
                     "stage": "completed",
                     "execution_spec_sha256": child.execution_spec_sha256,
+                    "scope": child.execution_spec["evaluation_scope"],
                     "evaluation_run_id": "a" * 32,
                     "reference_run_id": "b" * 32,
                     "artifact_sha256": {

@@ -138,6 +138,7 @@ def run_data(run, viewer_id=None):
         )[2]["label"],
         "comparison": run.comparison or None,
         "execution_mode": run.execution_mode,
+        "evaluation_scope": run.execution_spec.get("evaluation_scope", run.comparison.get("scope")),
         "source_run_id": str(run.source_run_id) if run.source_run_id else None,
         "live_config": run.live_config or None,
         "execution_profile": run.execution_spec.get("profile_sha256"),

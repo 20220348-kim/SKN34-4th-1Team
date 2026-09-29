@@ -1,5 +1,7 @@
+import json
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
+from hashlib import sha256
 from threading import Barrier
 from unittest.mock import patch
 
@@ -47,6 +49,33 @@ class QualityPolicyTests(SimpleTestCase):
 class QualityTests(ReviewFixture, TestCase):
     def state(self):
         return self.client.get(self.url + "/review").json()
+
+    def test_different_scope_blocks_review_and_quality_even_with_matching_artifact_hash(self):
+        current = self.state()
+        folder = self.root / str(self.run.id) / "evaluation"
+        path = folder / "comparison.json"
+        comparison = json.loads(path.read_bytes())
+        comparison["scope"] = "full-rag"
+        path.write_text(json.dumps(comparison))
+        manifest_path = folder / "manifest.json"
+        manifest = json.loads(manifest_path.read_bytes())
+        manifest["artifact_sha256"]["comparison.json"] = sha256(path.read_bytes()).hexdigest()
+        manifest_path.write_text(json.dumps(manifest))
+        blocked = self.state()
+        self.assertIsNone(blocked["material"])
+        self.assertFalse(blocked["can_approve"])
+        self.assertFalse(blocked["can_promote"])
+        self.assertEqual(
+            self.client.post(
+                self.url + "/quality",
+                {
+                    "input_sha256": current["quality"]["input_sha256"],
+                },
+                format="json",
+            ).status_code,
+            503,
+        )
+        self.assertFalse(QualityAssessment.objects.exists())
 
     def fixture_payload(self, decision="APPROVED"):
         state = self.state()

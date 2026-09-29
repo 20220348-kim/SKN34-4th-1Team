@@ -135,6 +135,8 @@ def write_json(path: Path, value) -> None:
 
 
 def create_report(current: dict, reference: dict, output: Path) -> dict:
+    evaluate.require(current["summary"].get("scope") == reference["summary"].get("scope") == "fixed-answer-context-only",
+                     "comparison scopes differ or are unsupported")
     evaluate.require(current["fixture_sha256"] == reference["fixture_sha256"], "comparison fixtures differ")
     evaluate.require(current["frame"].case_id.tolist() == reference["frame"].case_id.tolist(), "comparison cases differ")
     # 부분 캡처의 성공 행만으로 품질 평균을 내지 않는다. 실패·누락은 선택 사례 전체가 분모다.
@@ -146,7 +148,8 @@ def create_report(current: dict, reference: dict, output: Path) -> dict:
                 if current["frame"][name].notna().all() and reference["frame"][name].notna().all()]
     metadata = {"schema_version": 2, "fixture_sha256": current["fixture_sha256"],
                 "case_ids": current["frame"].case_id.tolist(), "evaluation_run_id": current["run_id"], "reference_run_id": reference["run_id"],
-                "evaluator_version": EVALUATOR_VERSION, "scope": "fixed-answer-context-only",
+                "evaluator_version": EVALUATOR_VERSION, "scope": current["summary"]["scope"],
+                "retrieval_evaluated": False,
                 "reference_source": "ai-authored", "semantic_faithfulness": "unmeasured",
                 "comparison": "self-replay" if current["run_id"] == reference["run_id"] else "candidate-reference"}
     snapshot = Report([RowCount(), *[MeanValue(column=name) for name in columns]],
@@ -204,13 +207,14 @@ def create_report(current: dict, reference: dict, output: Path) -> dict:
 
 
 def score_payloads(result: dict, settings: LangfuseSettings) -> list[dict]:
+    evaluate.require(result["summary"].get("scope") == "fixed-answer-context-only", "unsupported score scope")
     metadata = {"case_ids": result["frame"].case_id.tolist(),
                 "evaluation_run_id": result["run_id"], "capture_sha256": result["capture_sha256"],
                 "fixture_sha256": result["fixture_sha256"], "evaluator_version": EVALUATOR_VERSION,
                 "prompt_sha256": result["capture"]["promptSha256"], "model": result["capture"]["model"],
                 "source_started_at": result["capture"].get("startedAt"), "record_kind": "captured-model-evaluation" if "modelApiCalls" in result["capture"] else "saved-capture-recalculation",
                 "source_completed": result["summary"]["completed"],
-                "reference_source": "ai-authored", "scope": "fixed-answer-context-only"}
+                "reference_source": "ai-authored", "scope": result["summary"]["scope"], "retrieval_evaluated": False}
     payloads = []
     records = {case["caseId"]: case for case in result["capture"]["cases"]}
     for row in result["frame"].to_dict(orient="records"):
@@ -292,6 +296,7 @@ def evaluate_capture(fixture: str, capture: str, reference: str, output_dir: str
             current = prepare(fixture, capture, case_ids)
             baseline = prepare(fixture, reference, case_ids)
             manifest.update(evaluation_run_id=current["run_id"], reference_run_id=baseline["run_id"],
+                            scope=current["summary"]["scope"],
                             capture_sha256=current["capture_sha256"], reference_capture_sha256=baseline["capture_sha256"],
                             fixture_sha256=current["fixture_sha256"], evaluator_version=EVALUATOR_VERSION)
             # 프로세스가 강제 종료되어도 검증된 입력과 실패 단계를 복구할 수 있게 먼저 기록한다.
