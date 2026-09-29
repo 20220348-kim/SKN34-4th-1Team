@@ -23,6 +23,8 @@ def free_runtime_errors(service, values):
     if service in {"core-service", "catalog-service"}:
         disabled += [source + "_SYNC_ENABLED" for source in ("BIZINFO", "KSTARTUP", "MSIT", "CNTRADE_NOTICE")]
         disabled += ["SUPPORT_PROGRAM_INDEX_ENABLED"]
+    if service == "ops-service" and env.get("LLMOPS_LIVE_ENABLED", "false") != "false":
+        problems.append(service + ": paid evaluation must stay disabled in the shared bootstrap")
     if service == "core-service":
         disabled += ["ACCOUNT_DEV_LOGIN_ENABLED", "ACCOUNT_PASSWORD_RESET_MAIL_ENABLED", "APPLICATION_FORM_ANALYSIS_ENABLED",
                      "DAILY_REPORT_ENABLED", "DAILY_REPORT_MAIL_ENABLED", "ASSISTANT_AGENT_ENABLED"]

@@ -53,6 +53,9 @@ python -B scripts/dev.py --watch
 기존 일곱 런타임 Secret 중 일부만 있으면 DB 비밀번호를 덮어쓰지 않고 멈춥니다. 데이터는 본인 kind의
 로컬 볼륨에 저장하며 클러스터 삭제 시 잃을 수 있습니다. `up`·모드 전환은 클러스터를 자동 삭제하지 않습니다.
 
+Prefect·평가 실행기·결과 저장소는 Compose에 유지합니다. [Ops 연결 계약과 관리자 진단](docs/ops-runtime.md)은
+Core 주소와 평가 파일·Prefect 등록·기존 결과 접근을 확인하며 실제 환경 간 연결은 별도 구현 대상입니다.
+
 Ops는 [스키마 준비·migration 계약](docs/ops-migration.md)에 따라 빈 DB를 Ready로 처리하지 않습니다.
 새 v2 후보와 로컬 소스 부트스트랩은 migration Job 성공 후 Ops 앱을 적용합니다.
 실제 MySQL·Argo 실행 및 전체 평가 업무 검증은 별도 완료 기준입니다.

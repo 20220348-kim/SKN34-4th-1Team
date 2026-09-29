@@ -51,7 +51,7 @@ jobs:
           docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml -f infrastructure/llmops/compose.auth-test.yaml --profile evaluation config --quiet
           docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml -f infrastructure/llmops/compose.auth-test.yaml --profile evaluation up -d --build auth-core ops-service evaluation-runner
       - name: Apply isolated Ops migrations
-        run: docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml -f infrastructure/llmops/compose.auth-test.yaml --profile evaluation exec -T ops-service python manage.py migrate --noinput
+        run: docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml -f infrastructure/llmops/compose.auth-test.yaml --profile evaluation exec -T ops-service python manage.py migrate_deployment
       - name: Reject mismatched Ops and runner releases before model calls
         run: python3 infrastructure/llmops/spec_mismatch_smoke.py --output work/llmops-spec-mismatch.json
       - name: Start background Ops status synchronization after migrations
