@@ -228,8 +228,24 @@ class BudgetTests(TestCase):
     def test_operator_limit_change_never_resets_or_undercuts_allocated_usage(self):
         reserve(self.run)
         with self.assertRaises(CommandError):
-            call_command("set_evaluation_budget", calls=5, output_tokens=12000, stdout=StringIO())
-        call_command("set_evaluation_budget", calls=12, output_tokens=24000, stdout=StringIO())
+            call_command(
+                "set_evaluation_budget",
+                calls=5,
+                output_tokens=12000,
+                actor="test-operator",
+                reason="한도 축소 검증",
+                request_id=str(uuid4()),
+                stdout=StringIO(),
+            )
+        call_command(
+            "set_evaluation_budget",
+            calls=12,
+            output_tokens=24000,
+            actor="test-operator",
+            reason="한도 증액 검증",
+            request_id=str(uuid4()),
+            stdout=StringIO(),
+        )
         self.budget.refresh_from_db()
         self.assertEqual(self.budget.allocated_calls, 6)
         self.assertEqual(self.budget.call_limit, 12)

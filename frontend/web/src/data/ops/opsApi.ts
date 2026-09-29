@@ -70,6 +70,40 @@ const runSchema = z.object({
   report_url: z.string().regex(/^\/api\/v1\/ops\/evaluations\/[a-f0-9-]+\/report$/).nullable(),
 })
 const pageSchema = z.object({ count: z.number(), next: z.string().nullable(), previous: z.string().nullable(), results: z.array(runSchema) })
+const budgetAmountsSchema = z.object({ calls: z.number().int().nonnegative(), output_tokens: z.number().int().nonnegative() })
+const budgetBreakdownSchema = z.object({
+  settled_calls: z.number().int(), confirmed_input_tokens: z.number().int(), confirmed_output_tokens: z.number().int(),
+  unknown_calls: z.number().int(), unknown_output_tokens: z.number().int(),
+  unapproved_calls: z.number().int(), unapproved_output_tokens: z.number().int(),
+  pending_release_output_tokens: z.number().int(), allocated_calls: z.number().int(), allocated_output_tokens: z.number().int(),
+})
+const budgetSummarySchema = z.object({
+  state: z.enum(['consistent', 'inconsistent', 'unconfigured']),
+  limits: budgetAmountsSchema.nullable(), allocated: budgetAmountsSchema.nullable(), remaining: budgetAmountsSchema.nullable(),
+  breakdown: budgetBreakdownSchema.nullable(), reservation_count: z.number().int().nonnegative(),
+  legacy_live_run_count: z.number().int().nonnegative(), change_count: z.number().int().nonnegative(),
+  recent_changes: z.array(z.object({
+    request_id: z.uuid(), actor: z.string(), source: z.literal('CLI'), reason: z.string(),
+    previous_limits: budgetAmountsSchema.nullable(), limits: budgetAmountsSchema, created_at: z.string(),
+  })),
+})
+const budgetReservationSchema = z.object({
+  run_id: z.uuid(), dataset_id: z.string(), created_at: z.string(), closed_at: z.string().nullable(),
+  max_calls: z.number().int().positive(), max_output_tokens: z.number().int().positive(), breakdown: budgetBreakdownSchema,
+})
+const budgetPageSchema = z.object({
+  as_of: z.string(), summary: budgetSummarySchema,
+  count: z.number().int().nonnegative(), next: z.string().nullable(), previous: z.string().nullable(), results: z.array(budgetReservationSchema),
+})
+const runBudgetSchema = z.object({
+  as_of: z.string(), state: z.enum(['recorded', 'missing', 'not_applicable']), reservation: budgetReservationSchema.nullable(),
+  calls: z.array(z.object({
+    sequence: z.number().int().nonnegative(), authorized_at: z.string(), settled_at: z.string().nullable(),
+    input_tokens: z.number().int().nonnegative().nullable(), output_tokens: z.number().int().nonnegative().nullable(),
+  }).refine((call) => call.settled_at === null
+    ? call.input_tokens === null && call.output_tokens === null
+    : call.input_tokens !== null && call.output_tokens !== null)),
+}).refine((data) => data.state === 'recorded' ? data.reservation !== null : data.reservation === null && data.calls.length === 0)
 const qualitySchema = z.object({
   status: z.enum(['NOT_EVALUATED', 'NEEDS_REVIEW', 'FAIL', 'PASS']), is_current: z.boolean(),
   current_id: z.number().nullable(), input_sha256: z.string().nullable(), blocked_reason: z.string(),
@@ -122,6 +156,9 @@ const reviewSchema = z.object({
 export type OpsSession = z.infer<typeof sessionSchema>
 export type EvaluationRun = z.infer<typeof runSchema>
 export type EvaluationPage = z.infer<typeof pageSchema>
+export type BudgetBreakdown = z.infer<typeof budgetBreakdownSchema>
+export type BudgetPage = z.infer<typeof budgetPageSchema>
+export type RunBudget = z.infer<typeof runBudgetSchema>
 export type EvaluationReview = z.infer<typeof reviewSchema>
 export type CaseReviewDecision = EvaluationReview['case_reviews'][number]['decision']
 export type ReviewStamp = { capture_sha256: string; fixture_sha256: string; rubric_version: string; review_version: number }
@@ -164,6 +201,9 @@ async function request<T>(path: string, schema: z.ZodType<T>, options: RequestIn
 }
 
 export const getOpsSession = (signal?: AbortSignal) => request('/session', sessionSchema, { signal })
+export const getBudgetSummary = (signal?: AbortSignal) => request('/budget', budgetSummarySchema.extend({ as_of: z.string() }), { signal })
+export const getBudgetReservations = (page: number, signal?: AbortSignal) => request(`/budget/reservations?page=${page}`, budgetPageSchema, { signal })
+export const getRunBudget = (id: string, signal?: AbortSignal) => request(`/evaluations/${encodeURIComponent(id)}/budget`, runBudgetSchema, { signal })
 
 async function post<T>(path: string, data: unknown, schema: z.ZodType<T>, dispatch = false, owner?: string, method = 'POST') {
   // 쓰기 전 Core 관리자 세션과 최신 CSRF 토큰을 확인한다. 토큰·비밀번호는 저장하지 않는다.

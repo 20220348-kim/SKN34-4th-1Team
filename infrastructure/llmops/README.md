@@ -270,12 +270,20 @@ API·권한·장애 계약은 [Ops 평가 취소](../../backend/ops-service/READ
 Compose가 Ops와 실행기에 같은 값을 전달하고, 실행기는 `http://ops-service:8000`으로 예약을 확인한다.
 한도 설정은 [Ops 누적 한도 안내](../../backend/ops-service/README.md#누적-호출출력-토큰-한도)의 관리 명령을
 `dc run --rm ops-service python manage.py set_evaluation_budget`으로 실행한다. `--calls`, `--output-tokens`에는
-별도로 승인된 누적 한도를 전달한다. 이 문서 변경이나 테스트가 실제 한도 설정·유료 실행 승인을 뜻하지 않는다.
+별도로 승인된 누적 한도를 전달한다. `--actor`, `--reason`, `--request-id`도 필수이며 동일 요청 재시도에는
+같은 UUID를 사용한다. 변경자 값은 CLI 운영자가 입력한 식별자다. 이 문서 변경이나 테스트가 실제 한도
+설정·유료 실행 승인을 뜻하지 않는다.
+
+`0013_budget_change_audit` 적용 후 React 목록에서 누적 한도·확정·미확인·미승인 예약·반환 대기를,
+실행 상세에서 해당 예약과 호출별 정산을 조회할 수 있다. 관리자 인증을 재사용하며 모델 호출은 없다.
+최근 한도 변경 10건과 전체 변경 건수도 표시한다. 미확인 사용량은 최대 출력 예약을 유지하고,
+예약 기록이 없는 과거 모델 실행은 기록 없음으로 표시한다. API·합계 계산·감사 계약은
+[예산 조회와 한도 변경 감사](../../backend/ops-service/README.md#예산-조회와-한도-변경-감사)를 따른다.
 
 새 응답 생성은 기존 `govbiz-ops-evidence-evaluation/saved-capture` deployment의 명시적 live 모드다.
 기존 요청·북마크 호환을 위해 deployment 이름을 유지한다. 기본 실행 방식은 replay, live 활성화는 false다.
 
-1. 위 `dc build` → `dc run --rm ops-service python manage.py migrate --noinput`로 최신 코드와 migration `0011_cumulative_budget`까지 반영한다.
+1. 위 `dc build` → `dc run --rm ops-service python manage.py migrate --noinput`로 최신 코드와 migration `0013_budget_change_audit`까지 반영한다.
 2. 전송할 자료와 예산을 승인한 후 Git에서 제외된 `.env.ops`에 `LLMOPS_LIVE_ENABLED=true`,
    `LLMOPS_LIVE_MODEL=gpt-6-luna`, `OPENAI_API_KEY=<승인된 프로젝트의 키>`를 설정한다.
    키를 커밋하거나 브라우저·Prefect 인자로 전송하지 않는다. 키는 evaluation-runner에만 주입된다.

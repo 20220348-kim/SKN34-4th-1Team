@@ -1,8 +1,11 @@
 from django.urls import path
 
-from . import budget_views, views
+from . import budget_admin_views, budget_views, views
 
 urlpatterns = [
+    path("api/v1/ops/budget", budget_admin_views.api_summary),
+    path("api/v1/ops/budget/reservations", budget_admin_views.api_reservations),
+    path("api/v1/ops/evaluations/<uuid:run_id>/budget", budget_admin_views.api_run_budget),
     path("api/v1/ops/evaluations/<uuid:run_id>/cancel", views.api_cancel, name="evaluation-cancel"),
     path("internal/llmops/evaluations/<uuid:run_id>/budget/<str:action>", budget_views.api_budget),
     path("api/v1/ops/evaluations/<uuid:run_id>/fixture-review", views.api_fixture_review),

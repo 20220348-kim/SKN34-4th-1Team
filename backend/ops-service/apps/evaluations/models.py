@@ -222,6 +222,33 @@ class EvaluationBudgetReservation(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
 
+class EvaluationBudgetChange(models.Model):
+    """CLI가 기록하는 한도 변경 원장. 기존 한도의 출처를 소급해서 만들지 않는다."""
+
+    request_id = models.UUIDField(unique=True)
+    budget = models.ForeignKey(EvaluationBudget, on_delete=models.PROTECT)
+    actor = models.CharField(max_length=150)
+    source = models.CharField(max_length=10, default="CLI", editable=False)
+    reason = models.CharField(max_length=1000)
+    previous_call_limit = models.PositiveBigIntegerField(null=True)
+    previous_output_token_limit = models.PositiveBigIntegerField(null=True)
+    call_limit = models.PositiveBigIntegerField()
+    output_token_limit = models.PositiveBigIntegerField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-id"]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(source="CLI"), name="budget_change_cli_source"
+            ),
+            models.CheckConstraint(
+                condition=~models.Q(actor="") & ~models.Q(reason=""),
+                name="budget_change_attribution",
+            ),
+        ]
+
+
 class EvaluationBudgetCall(models.Model):
     reservation = models.ForeignKey(
         EvaluationBudgetReservation, on_delete=models.PROTECT, related_name="calls"

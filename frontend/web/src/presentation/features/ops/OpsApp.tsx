@@ -9,6 +9,7 @@ import { readPendingEvaluation, storePendingEvaluation, clearPendingEvaluation }
 import type { EvaluationPage, EvaluationRun, OpsSession, EvaluationSubmission } from '../../../data/ops/opsApi'
 import { workspacePageStyles as styles, workspaceTagClassName } from '../../shared/workspace/WorkspacePage.styles'
 import { EvaluationReviewPanel } from './EvaluationReviewPanel'
+import { BudgetOverview, RunBudgetPanel } from './BudgetPanel'
 import { WorkspacePageHeader } from '../../shared/workspace/WorkspacePageHeader'
 
 const listPath = '/ops/evaluations'
@@ -197,6 +198,7 @@ function EvaluationList({ owner, datasets, liveEnabled, onExpired }: { owner: st
   return <>
     <WorkspacePageHeader title="평가 실행 관리" actions={<button className={styles.secondaryButton} onClick={() => setRefresh((value) => value + 1)}>목록 새로고침</button>} />
     <div className={styles.content}>
+      <BudgetOverview onExpired={onExpired} refreshKey={refresh} />
       <section className={styles.card} aria-label="평가 실행">
         <p className={styles.sectionEyebrow}>LLMOps 평가</p><h2 className={styles.cardTitle}>지원 대상 근거 답변 평가</h2>
         <p className="text-sm leading-6 text-sample-muted">{mode === 'live' ? liveNotice : notice}</p>
@@ -334,6 +336,7 @@ function EvaluationDetail({ onExpired, onReviewChanged }: { onExpired: () => voi
           ].map(([label, value]) => <div key={label} className="contents"><dt className="text-sample-muted">{label}</dt><dd className="break-all">{value}</dd></div>)}</dl>
         </section>
         {run.source_run_id && <Link className="text-sm font-semibold text-brand-primary underline" to={`${listPath}/${run.source_run_id}`}>원본 실행과 실패 기록 보기</Link>}
+        <RunBudgetPanel runId={run.id} onExpired={onExpired} refreshKey={refresh} />
         {run.postprocessing && <section className={styles.card} aria-label="후처리 복구">
           <h2 className={styles.cardTitle}>후처리 복구</h2>
           <p className="text-sm">복구 입력·평가기 호환: {run.postprocessing.inputs_ready ? '입력 무결성·평가기 호환 확인' : '미확인 또는 호환되지 않음'}</p>

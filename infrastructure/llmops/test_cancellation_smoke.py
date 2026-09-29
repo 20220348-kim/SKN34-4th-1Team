@@ -10,7 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Event, Thread
 from unittest.mock import Mock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -462,6 +462,29 @@ def test_startup_failure_records_safe_diagnostics_and_cleans_only_own_project(
 def test_diagnostic_collection_failure_does_not_hide_primary_failure():
     states = smoke.service_states(Mock(side_effect=RuntimeError("private detail")))
     assert states == {"unavailable": "RuntimeError"}
+
+
+def test_smoke_budget_setup_passes_required_audit_metadata(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        sys, "argv", ["cancellation_smoke", "--output", str(tmp_path / "result.json")]
+    )
+    commands = []
+
+    def run(command, **kwargs):
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout=json.dumps(isolated_config()))
+
+    monkeypatch.setattr(smoke.subprocess, "run", run)
+    # Stop before scenarios: this verifies the CLI contract, not cancellation behavior.
+    monkeypatch.setattr(
+        smoke.Smoke, "ready", Mock(side_effect=RuntimeError("stop-before-scenarios"))
+    )
+    with pytest.raises(RuntimeError, match="stop-before-scenarios"):
+        smoke.main()
+    setup = next(command for command in commands if "set_evaluation_budget" in command)
+    assert setup[setup.index("--actor") + 1] == "cancellation-smoke"
+    assert setup[setup.index("--reason") + 1] == "Isolated offline cancellation scenarios"
+    assert UUID(setup[setup.index("--request-id") + 1]).version == 4
 
 
 def test_non_json_http_response_preserves_failure_without_body(control_server):
