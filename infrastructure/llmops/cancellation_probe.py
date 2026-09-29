@@ -8,7 +8,7 @@ from threading import Event, Lock
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
-from uuid import UUID
+from uuid import UUID, uuid4
 
 TOKEN = "offline-cancellation-test-token-not-for-deployment"
 USAGE = {"input_tokens": 100, "output_tokens": 50, "total_tokens": 150}
@@ -78,7 +78,7 @@ def model_response(model):
         "citationChunkIndexes": [],
     }
     return {
-        "id": "resp_offline",
+        "id": "resp_offline_" + uuid4().hex,
         "object": "response",
         "created_at": 0,
         "status": "completed",

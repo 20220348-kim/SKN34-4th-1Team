@@ -612,8 +612,37 @@ Django 설정·migration 정합성과 실행 명세 검사가 통과했다. Ruff
 환경에서 `uv run --locked --no-sync`로 실행하고 DB 검증은 MySQL 드라이버가 있는 검사 이미지에서 수행했다.
 
 기존 개발 DB는 `0013` 상태로 유지했으며 실제 예약 정리·유료 호출은 수행하지 않았다.
-새 정리 이력의 실제 개발 UI·확장한 12개 Prefect 통합 시나리오·최신 SHA 전체 CI는 아직
-미검증이다. 앞선 예산 조회 UI 검증과 이 새 기능의 자동 테스트 결과를 구분한다.
+당시 미검증이던 C1의 12개 Prefect 통합 시나리오와 필수 CI 5개는 이후 `skn-56 / 4fc3db7`에서
+성공했다. 새 정리 이력의 실제 개발 UI는 미검증이며 앞선 예산 조회 UI 확인과 구분한다.
+
+### 증거 기반 사용량 보정의 로컬 선택 검증 — 2026-09-29
+
+C2는 실행기가 정산 전에 서명된 사용량 증거를 저장하고, 운영자가 닫힌 예약에서 검토 후 적용한다.
+기존 호출·정리 원본을 보존하고, 별도 보정 감사와 출력 예약 차액을 한 transaction에서 반영한다.
+설정·명령·신뢰 범위는 [Ops README](../../backend/ops-service/README.md#증거-기반-미확인-사용량-보정)를 따른다.
+새 production 의존성은 없으며 `execution_release.json`은 실행기 소스 변경에 맞춰 재생성했다.
+
+로컬 검증 결과:
+
+- Python 3.12 검사 컨테이너·격리 MySQL 8.4의 `test_usage_correction`, `test_budget_reporting`,
+  `test_budget_cleanup`: **55개** 통과(추가 회귀 재실행은 중복 합산하지 않음). `manage.py check` 및
+  `makemigrations --check --dry-run`도 확인했다. 테스트 DB·컨테이너·네트워크만 정리했다.
+- `backend/ai-service`에서 `uv run --locked --no-sync --extra dev --group evaluation python -m pytest`
+  `../../evaluation/support-program-evidence/{test_budget_client,test_evaluate,test_ops_flow,test_execution_spec}.py`:
+  **126개** 통과. 모델 HTTP는 대역이며 정산 실패 후 증거 보존, 미확인 응답의 증거 미생성도 확인했다.
+- `../../infrastructure/llmops/test_cancellation_smoke.py`: **51개** 통과. 로컬 HTTP 대역의 소켓을
+  허용한 환경에서 실행했으며 외부 모델 전송은 없었다.
+- Node 24·pnpm 11.22의 `pnpm test src/presentation/features/ops/BudgetPanel.test.tsx`: **24개** 통과.
+  변경 Web 파일 Oxlint와 `pnpm exec tsc -b --pretty false`, Ops/통합 도구 Ruff·포맷 검사 통과.
+- 실행 명세 검사, GitOps 문서 경계 검사, `git diff --check` 통과.
+
+LLMOps CI의 기존 실제 서버 12개 시나리오 중 정산 실패·정산/종료 동시 실패 두 경로에 C2
+미리보기·적용·재전송과 API 조회를 추가했다. 원본 호출 보존·출력 차액만 반환·추가 전송 0회를
+검사한다. 이 확장본의 실제 서버 실행과 최신 SHA 전체 CI는 아직 확인하지 않았다.
+이전 C1 커밋 `4fc3db7`의 필수 CI 5개와 실제 종료 예약 정리 단계는 성공했다.
+
+기존 개발 DB는 `0013`을 유지했으며 `0014~0015`의 대상 환경 적용 및 실제 개발 UI의 보정
+이력 조회는 별도 확인 대상이다. 이번에는 유료 API 호출·실제 예산 보정·스케줄 활성화가 없었다.
 
 ### 새 응답 생성 연결의 로컬 검증
 
@@ -961,16 +990,17 @@ proxy를 사용하지 않는다. Ops의 CSRF cookie와 header 검증은 그대�
 | 실제 완료와 뒤늦은 취소 요청 경합 | 실제 COMPLETED 보존, worker close와 취소 정리의 중복 환급 없음 |
 | 접수/취소 응답 유실 및 Ops 재기동 | 같은 flow 조회, 실행·모델 전송 증가 없음 |
 | 승인 응답 유실 | 승인 기록 1건·모델 대역 전송 0회, 불확실한 몫 보수적 유지 |
-| settle HTTP 실패 | FAILED 표시, 미확인 사용량 유지 |
+| settle HTTP 실패 | FAILED·미확인 예약 유지 확인 후 서명 증거 미리보기/적용/재전송, 확정 출력 50 반영 |
 | close HTTP 실패 후 CLI 정리 | 열린 예약 미리보기 무변경, 실제 종료 근거로 확정 출력 차액 반환, 재전송의 중복 반환 없음 |
-| settle·close 동시 실패 후 CLI 정리 | 미승인 몫만 반환, 미확인 호출 1회·출력 2,000 유지, 추가 모델 전송 없음 |
+| settle·close 동시 실패 후 CLI 정리·보정 | C1은 미확인 1회·2,000 유지, C2는 별도 서명 증거로 50 확정, 원본 보존·추가 전송 없음 |
 | 별도 프로세스의 중복 claim / 동일 sequence 재승인 | 각각 거절, 기존 소유자만 모델 전송 |
 
 경합은 명시적 barrier로 제어한다. 실행 프로세스는 `/proc`의 PID와 시작 시각을 함께 비교해
 PID 재사용을 구분한다. 취소 상태를 강제로 CANCELLED로 덮어쓰지 않고, 제한 시간 초과는 실패다.
 close HTTP 실패 직후 전체 예약이 유지되는지 확인한 뒤, 별도 CLI 미리보기·적용·동일 요청
-재전송을 검증한다. 정리 전후 호출 원본과 모델 전송 이벤트는 그대로여야 한다. 사용량 보정이나
-새 실행은 수행하지 않는다. 명령·감사 계약은 [Ops README](../../backend/ops-service/README.md#종료된-예약의-미사용-몫-정리)에 있다.
+재전송을 검증한다. 정리 전후 호출 원본과 모델 전송 이벤트는 그대로여야 한다.
+정산 실패 두 시나리오는 이어서 서명된 실행기 증거로 C2 미리보기·적용·재전송과 공개 API의
+보정 이력/합계를 대조한다. 호출 원본과 전송 이벤트는 보정 후에도 그대로이며 새 실행은 없다. 명령·감사 계약은 [Ops README](../../backend/ops-service/README.md#종료된-예약의-미사용-몫-정리)에 있다.
 
 ```bash
 # 저장소 루트: Python 3.12, Linux 컨테이너가 가능한 Docker Engine + Compose 필요
@@ -987,7 +1017,8 @@ Ops 승인 → HTTP 모델 대역 → Ops 정산`이다. 완료 시 실제 보�
 [LLMOps CI](../../.github/workflows/llmops-ci.yml)의 기존 필수 job 안에서 12개 시나리오를 실행한다.
 JSON에는 실행/flow ID, 단계 상태, 승인·전송·정산 횟수, 예산 전후 값, 프로세스 종료 증거를 남긴다.
 종료 예약 정리를 수행한 두 시나리오는 Prefect 상태 ID/시각·실행 파라미터 해시·정리 전후 장부와
-동일 요청 재전송 결과도 검사한다. 이 추가 시나리오의 최신 SHA 실제 서버 실행 결과는 CI 확인 대상이다.
+동일 요청 재전송 결과도 검사한다. 보정 두 시나리오는 `correction`에 증거 해시·응답 ID·전후 값도 남긴다.
+C1의 `skn-56 / 4fc3db7` 실제 서버 검증은 성공했으며, 이번 C2 확장본의 최신 SHA 실제 실행은 CI 확인 대상이다.
 실패하면 준비/실행 단계, 오류 종류·종료 코드, 캡처된 stderr의 생성 인증값 제거본,
 서비스 상태·health·종료 코드·게시 포트를 `diagnostics`에 보관한다. 컨테이너 환경변수·명령·
 healthcheck 원문과 HTTP 응답 stdout은 제외한다. 진단 조회 실패가 최초 오류를 가리지 않으며,

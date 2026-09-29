@@ -113,9 +113,23 @@ const budgetCleanupSchema = z.object({
   && after.unknown_calls <= after.reservation_calls && after.unknown_output_tokens <= after.reservation_output_tokens
   && before.global_calls - after.global_calls === before.reservation_calls - after.reservation_calls
   && before.global_output_tokens - after.global_output_tokens === before.reservation_output_tokens - after.reservation_output_tokens)
+const correctionAmountsSchema = cleanupAmountsSchema.extend({
+  unknown_calls: z.number().int().nonnegative(), unknown_output_tokens: z.number().int().nonnegative(),
+})
+const usageCorrectionSchema = z.object({
+  request_id: z.string().uuid(), run_id: z.string().uuid(), sequence: z.number().int().nonnegative(),
+  source: z.literal('WORKER_RESPONSE'), actor: z.string().min(1), reason: z.string().min(1),
+  evidence_sha256: z.string().regex(/^[a-f0-9]{64}$/), response_id: z.string().regex(/^resp_[A-Za-z0-9_-]{1,180}$/),
+  input_tokens: z.number().int().nonnegative(), output_tokens: z.number().int().nonnegative(),
+  before: correctionAmountsSchema, after: correctionAmountsSchema, created_at: z.string().datetime({ offset: true }),
+}).refine(({ before, after }) => before.global_calls === after.global_calls
+  && before.reservation_calls === after.reservation_calls && before.unknown_calls - after.unknown_calls === 1
+  && before.global_output_tokens >= after.global_output_tokens
+  && before.global_output_tokens - after.global_output_tokens === before.reservation_output_tokens - after.reservation_output_tokens)
 const runBudgetSchema = z.object({
   as_of: z.string(), state: z.enum(['recorded', 'missing', 'not_applicable']), reservation: budgetReservationSchema.nullable(),
   cleanup: budgetCleanupSchema.nullable().optional(),
+  corrections: z.array(usageCorrectionSchema).optional(),
   calls: z.array(z.object({
     sequence: z.number().int().nonnegative(), authorized_at: z.string(), settled_at: z.string().nullable(),
     input_tokens: z.number().int().nonnegative().nullable(), output_tokens: z.number().int().nonnegative().nullable(),
@@ -124,6 +138,19 @@ const runBudgetSchema = z.object({
     : call.input_tokens !== null && call.output_tokens !== null)),
 }).refine((data) => data.state === 'recorded' ? data.reservation !== null : data.reservation === null && data.calls.length === 0)
   .refine((data) => !data.cleanup || Boolean(data.reservation?.closed_at && data.cleanup.evidence.run_id === data.reservation.run_id))
+  .refine((data) => {
+    const corrections = data.corrections ?? []
+    return new Set(corrections.map((record) => record.sequence)).size === corrections.length
+      && new Set(corrections.map((record) => record.response_id)).size === corrections.length
+      && corrections.every((record) => {
+        const reservation = data.reservation
+        const call = data.calls.find((item) => item.sequence === record.sequence)
+        return reservation?.closed_at && reservation.run_id === record.run_id && call?.settled_at === null
+          && record.output_tokens <= reservation.max_output_tokens
+          && record.before.unknown_output_tokens - record.after.unknown_output_tokens === reservation.max_output_tokens
+          && record.before.reservation_output_tokens - record.after.reservation_output_tokens === reservation.max_output_tokens - record.output_tokens
+      })
+  })
 const qualitySchema = z.object({
   status: z.enum(['NOT_EVALUATED', 'NEEDS_REVIEW', 'FAIL', 'PASS']), is_current: z.boolean(),
   current_id: z.number().nullable(), input_sha256: z.string().nullable(), blocked_reason: z.string(),

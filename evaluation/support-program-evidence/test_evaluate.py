@@ -457,3 +457,8 @@ def test_ops_budget_precedes_http_and_uncertain_usage_blocks_next_case(loaded, t
         assert events == ["authorize", "http", "settle"] * 2
     if failure == "settle":
         assert capture["apiResponses"][0]["usage"]["output_tokens"] == 50
+        receipt = json.loads((tmp_path / "budget/usage-0.json").read_bytes())
+        assert receipt["payload"]["usage"]["output_tokens"] == 50
+        assert receipt["payload"]["worker_id"] == budget.identity["worker_id"]
+    if failure in {"authorize", "unknown", "timeout"}:
+        assert not list((tmp_path / "budget").glob("usage-*.json"))
