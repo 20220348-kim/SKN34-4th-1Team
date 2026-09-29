@@ -1,9 +1,9 @@
-import json
 import io
-from pathlib import Path
+import json
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 from urllib.error import HTTPError
 
@@ -558,8 +558,7 @@ class PublicationTests(unittest.TestCase):
             self.assertNotIn(forbidden, source)
 
     def test_release_is_opt_in_personal_fork_only(self):
-        for filename, variable in (("msa-images.yml", "MSA_RELEASE_ENABLED"),
-                                   ("msa-promotion.yml", "MSA_PROMOTION_ENABLED")):
+        for filename, variable in (("msa-images.yml", "MSA_RELEASE_ENABLED"),):
             source = (publish.ROOT / ".github/workflows" / filename).read_text()
             with self.subTest(workflow=filename):
                 self.assertIn("workflow_dispatch:", source)

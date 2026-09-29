@@ -1,18 +1,16 @@
-import copy
 import hashlib
 import io
 import json
-from pathlib import Path
+import shutil
 import tempfile
 import unittest
-import shutil
-from unittest.mock import patch
 import zipfile
+from pathlib import Path
+from unittest.mock import patch
 
-import yaml
-
-import sync_images as sync
 import gate
+import sync_images as sync
+import yaml
 from test_promote_image import FORK, receipt, values
 
 SHA = "c" * 40
@@ -392,7 +390,7 @@ class WorkflowContractTests(unittest.TestCase):
                 self.assertCountEqual(names, required)
 
     def test_results_always_run_read_only_and_selection_controls_writes(self):
-        for filename, dependencies in (("msa-images.yml", ["gate", "publish"]), ("msa-promotion.yml", ["promote"])):
+        for filename, dependencies in (("msa-images.yml", ["gate", "publish"]),):
             job = self.workflow(filename)["jobs"]["outcome"]
             self.assertEqual(job["needs"], dependencies)
             self.assertIn("always()", job["if"])
@@ -401,19 +399,18 @@ class WorkflowContractTests(unittest.TestCase):
             self.assertEqual(job["steps"][0]["with"]["persist-credentials"], "false")
         publication = self.workflow("msa-images.yml")["jobs"]["publish"]
         self.assertCountEqual(publication["strategy"]["matrix"]["service"], sync.SERVICES)
-        promotion = self.workflow("msa-promotion.yml")["jobs"]["promote"]
-        steps = {step.get("id"): step for step in promotion["steps"] if "id" in step}
-        self.assertEqual(steps["propose"]["if"], "steps.select.outputs.prepared == 'true'")
-        self.assertIn("deployment.py prepare", steps["select"]["run"])
-        self.assertIn("deployment.py propose", steps["propose"]["run"])
-        self.assertNotIn("git push", steps["propose"]["run"])
-        self.assertEqual(promotion["permissions"], {"contents": "write", "actions": "write", "pull-requests": "write"})
-        checker = self.workflow("deployment-ci.yml")
-        self.assertEqual(set(checker["on"]), {"workflow_dispatch"})
-        self.assertEqual(checker["permissions"], {"contents": "read", "actions": "read", "pull-requests": "read", "statuses": "write"})
-        checkout = checker["jobs"]["validate"]["steps"][0]["with"]
-        self.assertEqual(checkout["ref"], "${{ github.event.repository.default_branch }}")
-        self.assertEqual(checkout["persist-credentials"], "false")
+
+    def test_deployment_pr_workflows_are_removed(self):
+        workflows = sync.ROOT.parents[1] / ".github/workflows"
+        for name in ("msa-promotion.yml", "deployment-ci.yml"):
+            self.assertFalse((workflows / name).exists())
+        for path in workflows.glob("*.yml"):
+            workflow = yaml.load(path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+            for job in workflow.get("jobs", {}).values():
+                for step in job.get("steps", []):
+                    command = step.get("run", "")
+                    self.assertNotIn("deployment.py propose", command)
+                    self.assertNotIn("deployment.py bootstrap", command)
 
     def test_both_infra_discovery_jobs_install_pinned_helm_before_tests(self):
         for name in ("kubernetes-manifests", "helm-gitops"):

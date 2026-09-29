@@ -1,12 +1,15 @@
 # Ops 스키마 준비와 배포 migration
 
 새 배포 후보 v2는 Ops 앱과 같은 이미지 digest·환경변수·Secret 참조를 사용하는
-`ops-service-migrate` Job을 포함한다. 후보 PR 리뷰 후 수동 병합 정책은 유지한다.
+`ops-service-migrate` Job을 포함한다. 별도 배포 PR 절차는 제거했으며 이 문서는 migration 실행 계약을 설명한다.
 이 문서는 구현된 계약이며 실제 클러스터 배포 성공 기록이 아니다.
 
 ## 실행 순서
 
-`승인된 deploy/fork → Argo Ops PreSync Job → migrate_deployment → MySQL → Ops Deployment → readiness`
+`검증된 배포 입력 → Ops migration Job → migrate_deployment → MySQL → Ops Deployment → readiness`
+
+Argo 자동 배포의 새 연결은 아직 없다. 로컬 소스와 현재 발행을 검증한 GHCR 초기화 모두
+Ops migration 성공 뒤에만 앱을 적용한다.
 
 - 앱 컨테이너는 Gunicorn만 실행한다. 시작할 때 migration을 숨겨서 실행하지 않는다.
 - Job은 `python manage.py migrate_deployment`로 전진 migration을 수행한다. DB 이름으로 구분한

@@ -482,6 +482,9 @@ Migration `0007_baseline_versions`는 해제해도 남는 데이터셋 기준 �
 기본 대기 간격은 10초, 배치 크기는 25건이며 `--interval`(2~300초), `--batch-size`(1~100)로 조절합니다.
 옵션 없이 실행하면 한 배치만 처리합니다. LLMOps Compose의 `ops-sync`가 같은 Django 이미지 구성으로 실행합니다.
 단독 Ops/루트 Compose에는 Prefect가 없으므로 자동 실행하지 않습니다. 별도 실행 시 DB·Prefect·결과 경로를 동일하게 지정합니다.
+Kubernetes는 연결 설정을 갖춘 뒤 `opsSync.enabled=true`를 선택하면 API와 같은 Pod에 동기화 컨테이너를 추가합니다.
+이미지·DB·Secret을 API와 공유하며 기본값은 비활성화입니다. Prefect·실행기·결과 저장소는 Compose에 유지합니다.
+[활성화 조건과 실제 연결 검증](../../infrastructure/gitops/docs/ops-runtime.md#kubernetes-ops-상태-동기화)을 참고하세요.
 
 - Migration `0006_evaluationrun_sync_attempted_at`을 먼저 적용합니다. 기존 행·결과 파일은 유지합니다.
 - 목록·상세 응답의 `synced_at`은 마지막 성공 확인, `sync_attempted_at`은 마지막 시도입니다.
@@ -659,15 +662,18 @@ uv run --locked python manage.py test --noinput
 Docker 안에서도 테스트할 수 있습니다.
 
 ```powershell
-docker compose exec -T ops-service python manage.py test --noinput
+docker compose exec -T --env OPS_TEST_BUDGET_CLIENT_PATH=/evaluation-data/budget_client.py ops-service python manage.py test --noinput
 ```
 
-사용량 증거의 실행기→Ops 계약 테스트는 `LLMOPS_EVIDENCE_DIR/budget_client.py`의 실제 실행기
-코드를 읽습니다. 로컬 기본값은 저장소의 `evaluation/support-program-evidence`이며, 단독·루트
-Compose는 같은 디렉터리를 `/evaluation-data`에 읽기 전용으로 연결합니다. 테스트 컨테이너에서도
-이 설정과 마운트를 유지해야 합니다. `/app/apps/evaluations`의 부모 깊이로 저장소 루트를 추정하지 않습니다.
+사용량 증거의 실행기→Ops 계약 테스트는 기본적으로 `LLMOPS_EVIDENCE_DIR/budget_client.py`의
+실제 실행기 코드를 읽습니다. 로컬 기본값은 저장소의 `evaluation/support-program-evidence`이며,
+단독·루트 Compose는 같은 디렉터리를 `/evaluation-data`에 읽기 전용으로 연결합니다.
+격리 이미지 테스트는 테스트 전용 `OPS_TEST_BUDGET_CLIENT_PATH`로 실제 소스의 절대 경로를
+지정할 수 있습니다. 위 명령은 기존 `/evaluation-data` 마운트를 사용하며, 소스가 없거나 경로가
+잘못되면 테스트를 생략하지 않고 실패합니다. 이 변수는 운영 설정이 아닙니다.
+`/app/apps/evaluations`의 부모 깊이로 저장소 루트를 추정하지 않습니다.
 DB가 필요 없는 서명·파일 검증은 `apps.evaluations.test_usage_correction.UsageReceiptTests`,
-격리된 MySQL 8.4에서 수행할 보정·경합 검증은 `apps.evaluations.test_usage_correction`으로 선택합니다.
+격리된 MySQL 8.4의 보정·경합 검증은 `apps.evaluations.test_usage_correction`으로 선택합니다.
 
 테스트 러너는 별도 `test_govbiz4` DB를 생성·삭제합니다. Compose의 최초 DB 초기화 SQL은 개발 사용자에게 그 DB의 권한만 추가로 부여합니다. 테스트는 실제 MySQL 연결, DB 장애 시 503 응답, liveness의 DB 비의존성, HTTP 메서드 제한, 허용 호스트를 확인합니다.
 
@@ -679,7 +685,10 @@ GitHub Actions는 모노레포 루트의
 `python3 -B backend/ops-service/scripts/check-image.py`는 모노레포 루트에서 기본 Gunicorn
 이미지를 별도로 검증합니다. 네트워크·DB·실제 환경 파일을 연결하지 않고 non-root,
 읽기 전용 파일시스템, 정상 liveness, DB 장애 readiness, Host 거절, SIGTERM 종료를
-확인한 뒤 이번 실행의 임시 컨테이너와 이미지 태그만 정리합니다.
+확인합니다. Ops 소스 마운트 없이 이미지 자체의 `/app` 테스트를 실행하고, 실행기의
+`budget_client.py` 한 파일만 테스트 입력으로 읽기 전용 마운트합니다. DB 없이 사용량 증거의
+생성·서명·변조·심볼릭 링크 검증과 입력 누락 시 명시적 실패를 확인합니다. 운영 이미지에
+평가 코드·SDK를 추가하지 않으며 이번 실행의 임시 컨테이너와 이미지 태그만 정리합니다.
 실제 GitHub CI 실행은 파일을 원격 저장소에 올린 뒤 확인할 수 있습니다.
 
 ## 디렉터리

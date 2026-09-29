@@ -9,6 +9,8 @@ replicas: 1
 env: {}
 secretName: ""
 secretKeys: []
+# Opt in only after the Compose Prefect/artifact endpoints and Secret are configured.
+opsSync: {enabled: false}
 resources:
   requests: {cpu: 100m, memory: 256Mi}
   limits: {cpu: "1", memory: 1Gi}

@@ -126,7 +126,10 @@ dc_artifacts exec -T ops-service python manage.py check_evaluation_runtime
 공개하지 않는다. 토큰이 없으면 서버 시작 또는 조회가 실패한다. HTTP 장애를 로컬 파일로 대체하지 않는다.
 보고서·비교·검토·후처리 복구에는 기존 무결성 검증이 그대로 적용되며 파일당 최대 크기는 8 MiB다.
 `check_evaluation_runtime`의 `storage_transport=http`는 HTTP 경로 사용을 뜻하며 새 평가 성공을 뜻하지 않는다.
-Kubernetes에서 위 Compose DNS 주소를 그대로 사용할 수 있는 상태는 아직 아니다.
+Kubernetes의 개인 kind 개발 환경에는 [전용 내부 네트워크와 서비스 경로](../gitops/docs/ops-runtime.md#로컬-kind와-compose의-전용-통신-경로)를
+선택적으로 구성할 수 있다. `compose.kind.yaml`을 추가하고 `ops_bridge.py`로 소유권을 확인해 연결한다.
+Pod에는 `ops-compose-prefect`·`ops-compose-artifacts` 주소를 제공하며 Compose 서비스 이름 자체를 사용하지 않는다.
+컨테이너 교체 시 경로 갱신이 필요하다. 이 통신 구성만으로 Ops 설정·Secret 반영이나 새 평가 E2E가 완료되지는 않는다.
 
 ## Django 운영 화면
 

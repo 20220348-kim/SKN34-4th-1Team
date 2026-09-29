@@ -13,7 +13,7 @@ jobs:
   integration:
     name: Saved capture pipeline with local servers
     runs-on: ubuntu-24.04
-    timeout-minutes: 50
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -111,5 +111,31 @@ jobs:
         with:
           name: llmops-cancellation-${{ github.sha }}
           path: work/llmops-ci/cancellation.json
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Install pinned kind and kubectl for isolated Compose bridge verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          tool_dir="$(mktemp -d)"
+          cd "$tool_dir"
+          curl -fsSLO https://github.com/kubernetes-sigs/kind/releases/download/v0.33.0/kind-linux-amd64
+          curl -fsSLO https://github.com/kubernetes-sigs/kind/releases/download/v0.33.0/kind-linux-amd64.sha256sum
+          sha256sum --check kind-linux-amd64.sha256sum
+          mv kind-linux-amd64 kind
+          curl -fsSL https://dl.k8s.io/release/v1.36.4/bin/linux/amd64/kubectl -o kubectl
+          curl -fsSL https://dl.k8s.io/release/v1.36.4/bin/linux/amd64/kubectl.sha256 -o kubectl.sha256
+          echo "$(< kubectl.sha256)  kubectl" | sha256sum --check
+          chmod +x kind kubectl
+          echo "$tool_dir" >> "$GITHUB_PATH"
+      - name: Verify real Kubernetes Pod to Compose DNS, HTTP, artifact auth and evidence hashes
+        timeout-minutes: 10
+        run: backend/ai-service/.venv/bin/python -B infrastructure/gitops/scripts/smoke_ops_bridge.py --report work/llmops-ci/ops-bridge.json
+      - name: Preserve isolated Compose bridge evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: llmops-ops-bridge-${{ github.sha }}
+          path: work/llmops-ci/ops-bridge.json
           if-no-files-found: warn
           retention-days: 7

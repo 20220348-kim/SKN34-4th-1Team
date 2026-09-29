@@ -168,22 +168,32 @@ def write_ledger(state, ledger):
     os.replace(temporary, state / "dev-images.json")
 
 
-def deployment(nk, service):
+def deployment_containers(nk, service):
     resource = json.loads(run(nk + ["get", "deployment", service, "-o", "json"], capture=True))
     metadata = resource.get("metadata", {})
     for field in ("annotations", "labels"):
         if any(key.startswith("argocd.argoproj.io/") for key in metadata.get(field, {})):
             raise ValueError("Argo CD tracks this Deployment; switch to dev mode before changing it")
     containers = resource["spec"]["template"]["spec"]["containers"]
-    if len(containers) != 1 or containers[0]["name"] != service:
+    names = [container["name"] for container in containers]
+    if names != [service] and not (service == "ops-service" and names == [service, "ops-sync"]):
         raise ValueError("Unexpected deployment container; refusing image update")
-    if containers[0].get("imagePullPolicy") not in {"IfNotPresent", "Never"}:
+    if any(container.get("imagePullPolicy") not in {"IfNotPresent", "Never"} for container in containers):
         raise ValueError("Local development requires imagePullPolicy IfNotPresent or Never")
-    return containers[0]["image"]
+    if any(container["image"] != containers[0]["image"] for container in containers):
+        raise ValueError("Ops API and sync images differ; inspect before updating or restoring")
+    return containers
+
+
+def deployment(nk, service):
+    return deployment_containers(nk, service)[0]["image"]
 
 
 def set_image(nk, service, image):
-    run(nk + ["set", "image", "deployment/" + service, service + "=" + image])
+    containers = deployment_containers(nk, service)
+    # One Pod-template mutation and rollout keeps API and sync on the same image.
+    run(nk + ["set", "image", "deployment/" + service,
+              *[container["name"] + "=" + image for container in containers]])
 
 
 def rollout(nk, service):

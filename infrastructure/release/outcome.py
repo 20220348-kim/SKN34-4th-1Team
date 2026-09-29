@@ -120,7 +120,7 @@ def workflow_report(stage, needs, event, env):
         dispatched = bool(created and outputs.get("check_dispatched") == "true")
         if created:
             reason = (
-                "review_and_manual_merge_required"
+                "manual_merge_required"
                 if dispatched
                 else "candidate_check_not_dispatched"
             )

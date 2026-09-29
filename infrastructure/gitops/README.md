@@ -1,64 +1,33 @@
 # GovBiz Kubernetes · GitOps
 
-기존 `GovBiz-infra`의 배포 설정·검증 도구를 **통합 저장소의 `infrastructure/gitops/`**로 옮겼습니다.
-별도 Git 저장소나 submodule이 아닙니다. 애플리케이션과 배포 설정을 같은
-`SKNETWORKS-FAMILY-AICAMP/SKN34-4th-1Team`의 소스에서 관리하며, 개인 포크의 승인된 서비스 배포 입력은 `deploy/fork`에 둡니다.
-
-앱 코드·Dockerfile·로컬 Compose는 [통합 저장소 루트](../../README.md)에 있으며,
-이 디렉터리는 Kubernetes의 원하는 상태와 격리된 로컬 검증을 담당합니다.
-기존 개인 Mac 클러스터와 새 포크의 개발 클러스터는 분리합니다. 공통 실행 도구는 로컬 `origin`에서
-계정·저장소를 읽고, CI는 GitHub가 제공한 저장소 정보를 사용하므로 팀원이 계정명을 소스에서 바꾸지 않습니다.
-
-[2026-09-29 GitOps 검수·후속 전략](../../docs/gitops-strategy-review-20260929.md)에 현재 코드와 원격 CI·보호 규칙을 대조한 결과, 배포 설정의 승격 경계와 Ops 실행 계약의 보완 순서를 정리했습니다. [전체 배포 후보와 PR 승인](docs/deployment-candidates.md)을 구현했으며 원격 보호 설정·실제 전환은 별도입니다.
+애플리케이션과 배포 설정은 통합 저장소의 `infrastructure/gitops/`에서 함께 관리합니다.
+**별도 배포 브랜치와 배포 PR은 제거했습니다.** 개발은 `skn-* → main` PR 흐름을 사용하며,
+필수 CI와 이미지 발행 검증은 유지합니다. [제거 범위와 현재 상태](docs/deployment-candidates.md)를 참고하세요.
 
 ## 현재 상태
 
-| 항목 | 통합 저장소에 포함한 범위 |
+| 항목 | 지원 범위 |
 | --- | --- |
-| 서비스 | 서비스별 Helm Deployment·Service, Ops 전용 PreSync migration Job |
-| 데이터 | Core·Catalog·Ops 전용 MySQL, 로컬 검증용 Redis·Elasticsearch·Qdrant |
-| Argo CD | 포크의 승인된 `deploy/fork` snapshot에 있는 Application 4개를 적용. 전용 클러스터만 허용 |
-| 로컬 이미지 검증 | 로컬 빌드·kind 적재 smoke 유지. GHCR 계정 불필요 |
-| 개인 GHCR | 개인 포크가 자기 `ghcr.io/<계정>/<저장소>-<서비스>`에만 비공개 발행. 최초 계정별 인증/활성화 필요 |
-| 자동 발행·승격 | upstream 병합 소스를 본인 포크 기본 브랜치로 동기화하고 다섯 CI 통과 후 발행. 전체 후보 검사·PR 리뷰·수동 병합 후 `deploy/fork` 갱신 |
-| 공통 bootstrap | `fork_cluster.py init/doctor/up/status/credentials/dev/gitops/web`. 무작위 로컬 비밀값·전용 kind·소유권 검사 |
-| 로컬 코드 반영 | 개발 모드에서 `dev.py --watch`가 변경 서비스만 로컬 빌드·kind 적재·재시작. GHCR 업로드 없음 |
-| Windows 개발 | WSL2·kind의 로컬 소스 이미지 기동과 Windows 웹 연결 확인. 네이티브 Windows Python·ARM은 미지원이며 GHCR·GitOps·개발 감시는 별도 검증 |
+| 서비스 | 서비스별 Helm Deployment·Service, Ops PreSync migration Job |
+| 로컬 Kubernetes | 로컬 소스의 `up --local-images` 또는 현재 CI·발행·receipt를 검증하는 GHCR `up` |
+| 이미지 발행 | 개인 포크의 같은 소스 SHA에 대한 필수 CI와 이미지 검증 후 GHCR 발행 |
+| 별도 배포 PR | 제거. 자동 브랜치 생성·PR 생성·검사 dispatch 없음 |
+| Argo 자동 배포 | 대체 연결 미구현. 기존 클러스터는 변경하지 않음 |
+| 과거 snapshot | 읽기·검증 및 오프라인 정책 테스트 보존 |
 
-`argocd/local`은 격리 검증용, `argocd/portfolio`와 `environments/portfolio`는 과거 기록과 안전한 로컬 환경값
-템플릿입니다. 이전 GovBiz-Team digest를 팀원의 이미지로 재사용하지 않습니다. 실제 포크의 release가 없으면
-일반 `up`은 멈춥니다. 개발 모드에서는 Argo Application을 두지 않고, 명시적 `gitops` 전환 때만 자동 sync와
-self-heal을 켭니다(prune는 끔). 기존 `govbiz-portfolio`를 변경하거나 인수하지 않습니다.
+`MSA_PROMOTION_ENABLED=false`를 유지합니다. GHCR `up`은 별도 배포 브랜치 없이
+[현재 발행 검증 경로](docs/image-promotion.md)로 초기화합니다. 새 Argo `gitops` 전환은 아직 연결하지 않았습니다.
 
 ## 팀원 시작 경로
 
-**이미지가 없거나 GHCR 없이 시작하려면 [Windows 수동 설치 안내](../../docs/windows-kubernetes-setup.md)를 따릅니다.**
-소스 빌드 → `up --local-images` → 웹 연결 순서이며, 이 경로는 개인 Actions나 PAT가 필요하지 않습니다.
-아래는 GHCR 이미지 발행·다운로드와 GitOps를 사용할 때의 준비 순서입니다.
+[Windows 수동 설치 안내](../../docs/windows-kubernetes-setup.md)의 소스 이미지 빌드와
+`up --local-images` 경로를 사용합니다. [공통 개발 안내](../../docs/local-fork-development.md)의
+개발 감시·웹 연결은 유지합니다. 소스 이미지 경로에는 GHCR 계정이나 PAT가 필요하지 않습니다.
+검증된 GHCR 이미지를 사용할 때는 `gh` 로그인과 해당 이미지의 pull 권한을 준비하고 일반 `up`을 실행합니다.
 
-[공통 로컬 개발 안내](../../docs/local-fork-development.md)에 따라 **개인 포크 → 클론 → 도구 설치 → 개인 Actions 활성화 →
-upstream 병합 코드의 원격 포크 동기화 → 이미지 발행 → 배포 브랜치·보호 규칙 준비 → 후보 PR 검사·승인·수동 병합 → `git pull` → 초기화**를 진행합니다.
-개인 작업 브랜치 push나 로컬 pull만으로 이미지가 발행되지는 않습니다. 누구의 개인 계정으로 포크하든 같은 명령을 씁니다.
-개인 비공개 패키지를 읽는 `read:packages` 전용 PAT만 각자 준비하고 Git·채팅·공용 `.env`로 공유하지 않습니다.
-
-```bash
-# 아래는 infrastructure/gitops 디렉터리, 준비한 Python 3.13 가상환경에서 실행
-python -B scripts/fork_cluster.py init
-python -B scripts/fork_cluster.py doctor
-python -B scripts/fork_cluster.py up
-python -B scripts/dev.py --watch
-```
-
-`up`은 필요할 때 토큰을 숨김 입력받고, 선택된 네 이미지 manifest에 실제 pull 권한이 있는지 확인합니다.
-기존 일곱 런타임 Secret 중 일부만 있으면 DB 비밀번호를 덮어쓰지 않고 멈춥니다. 데이터는 본인 kind의
-로컬 볼륨에 저장하며 클러스터 삭제 시 잃을 수 있습니다. `up`·모드 전환은 클러스터를 자동 삭제하지 않습니다.
-
-Prefect·평가 실행기·결과 저장소는 Compose에 유지합니다. [Ops 연결 계약과 관리자 진단](docs/ops-runtime.md)은
-Core 주소와 평가 파일·Prefect 등록·기존 결과 접근을 확인하며 실제 환경 간 연결은 별도 구현 대상입니다.
-
-Ops는 [스키마 준비·migration 계약](docs/ops-migration.md)에 따라 빈 DB를 Ready로 처리하지 않습니다.
-새 v2 후보와 로컬 소스 부트스트랩은 migration Job 성공 후 Ops 앱을 적용합니다.
-실제 MySQL·Argo 실행 및 전체 평가 업무 검증은 별도 완료 기준입니다.
+Prefect·평가 실행기·결과 저장소는 Compose에 유지합니다.
+[Ops 연결 계약](docs/ops-runtime.md)과 [스키마·migration 계약](docs/ops-migration.md)을 따릅니다.
+기존 개발 클러스터·서비스·DB·볼륨을 이번 제거 작업에서 삭제하거나 변경하지 않았습니다.
 
 ## 구조
 

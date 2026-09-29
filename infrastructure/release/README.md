@@ -17,13 +17,13 @@ GitHub의 공개 범위를 자동으로 변경하거나 원본 병합·CI 검증
 2. 자기 포크의 **Settings → Secrets and variables → Actions → Variables**에서 다음 두
    repository variable을 각각 `false`로 유지합니다. Secret이나 PAT를 넣는 칸이 아닙니다.
    - `MSA_RELEASE_ENABLED=false`: 비공개 패키지 준비 전 이미지 발행 중지
-   - `MSA_PROMOTION_ENABLED=false`: 검증된 발행 전 digest 승격 중지
+   - `MSA_PROMOTION_ENABLED=false`: 제거한 배포 PR 자동화 비활성 유지
 3. 네 서비스 패키지가 **Private·본인 소유·정확한 자기 포크 연결** 상태로 먼저 존재해야 합니다.
    `bootstrap_packages.py create`로 앱 코드 없는 초기화 패키지를 만들고, GitHub UI에서 포크를
    연결하되 권한 상속은 끈 채 정확한 포크의 Actions에만 Write를 부여합니다. `verify`로 다시 검사합니다.
    준비가 확인되지 않으면 다음 발행 활성화 단계로 넘어가지 않습니다.
 4. 준비된 패키지에 해당 포크 Actions가 새 버전을 쓸 권한까지 확인한 후, 사용자가 명시적으로
-   발행을 허용할 때에만 두 변수를 `true`로 변경합니다.
+   발행을 허용할 때에만 `MSA_RELEASE_ENABLED=true`로 변경합니다. `MSA_PROMOTION_ENABLED=false`는 유지합니다.
    `Settings → Environments → msa-release`에 별도 승인자를 지정했다면 릴리스마다 그 승인이
    필요합니다. 워크플로가 요청하는 `packages: write`를 조직·저장소 정책이 거부하면 관리자에게 문의합니다.
 5. PC에서 준비된 이미지를 받을 때는 본인 계정의 **classic PAT, `read:packages`만** 준비합니다.
@@ -44,15 +44,14 @@ PC의 읽기 인증과 CI의 임시 `GITHUB_TOKEN`은 별개입니다. **기존 
 ## 발행되는 시점
 
 **작업 브랜치에 push하는 것만으로는 발행하지 않습니다.**
-아래 경로는 비공개 패키지 준비·검증과 두 변수의 명시적 활성화가 끝난 뒤에만 실행됩니다.
+아래 경로는 비공개 패키지 준비·검증과 `MSA_RELEASE_ENABLED=true` 설정 뒤에만 실행됩니다.
 
 1. 교육기관 원본 `SKNETWORKS-FAMILY-AICAMP/SKN34-4th-1Team`에 PR을 올리고 병합합니다.
 2. 자기 포크의 원격 기본 브랜치에 원본의 최신 병합본을 동기화합니다.
 3. 같은 소스의 앱·Catalog·Ops·Infra·LLMOps CI와 각 필수 job이 모두 통과하면 이미지 발행이 진행됩니다.
-4. Chart·values·네 receipt·렌더링 결과를 묶은 전체 후보 PR을 만듭니다.
-5. 후보 검사와 리뷰 승인 후 사람이 `deploy/fork`에 수동 병합하면 Argo CD가 이 브랜치를 읽어 배포합니다.
-   먼저 [배포 브랜치·보호 규칙 설정](../gitops/docs/deployment-candidates.md)을 완료해야 합니다.
-   로컬 체크아웃의 `git pull`은 소스·수동 도구를 최신화하기 위한 것이며 Argo 자동 감지의 조건이 아닙니다.
+4. 발행 결과와 네 이미지 receipt를 확인합니다. 별도 배포 PR이나 배포 브랜치는 만들지 않습니다.
+   Argo 자동 배포로 이어지는 대체 경로는 이번 제거 작업에 포함하지 않았습니다.
+   [배포 PR 제거 기록](../gitops/docs/deployment-candidates.md)을 확인하세요.
 
 `git pull`은 내 PC만 바꿉니다. GitHub의 **Sync fork**로 원격 포크를 먼저 동기화하거나,
 로컬에서 원본 변경을 반영한 뒤 자기 포크에도 push해야 CI가 시작됩니다. 충돌이 있으면 기존 작업을
@@ -73,7 +72,7 @@ PC의 읽기 인증과 CI의 임시 `GITHUB_TOKEN`은 별개입니다. **기존 
 
 ## 발행·승격 결과 확인
 
-`MSA image candidates`와 `Fork image promotion`은 선행 job의 성공·실패·건너뛰기에도
+`MSA image candidates`는 선행 job의 성공·실패·건너뛰기에도
 읽기 전용 `outcome` job을 실행한다. Actions Summary와 JSON artifact의
 `schema=msa-release-outcome-v1` 기록을 확인한다. workflow의 초록색 표시만으로 발행·배포를 판단하지 않는다.
 
@@ -81,7 +80,7 @@ PC의 읽기 인증과 CI의 임시 `GITHUB_TOKEN`은 별개입니다. **기존 
 |---|---|
 | `msa-publication-result` | gate·발행 matrix 결과, `sourceSha`, `triggerSha`, 차단 사유, `imagesVerified` |
 | `msa-publication-<service>` | 서비스별 새 업로드·재사용·receipt 생성 여부. 발행 도구가 실행된 경우 생성 |
-| `msa-promotion-result` | 후보 준비·PR 생성 단계 결과, publisher run, `candidateCreated`, 후보 SHA·PR 번호 |
+| 과거 `msa-promotion-result` | 제거한 배포 PR 자동화의 이전 기록. 새로 생성하지 않음 |
 
 - `imagesVerified=true`는 gate와 네 서비스 발행 job이 모두 성공했다는 뜻이다. 새 업로드 횟수는
   이 집계에서 추정하지 않고 서비스별 기록을 본다.
@@ -92,10 +91,8 @@ PC의 읽기 인증과 CI의 임시 `GITHUB_TOKEN`은 별개입니다. **기존 
   이벤트의 `triggerSha`로 대신 승인하지 않는다. run ID와 attempt를 함께 기록한다.
 - `reason`은 `disabled`, `event_not_eligible`, `source_not_current`, `upstream_not_merged`,
   `ci_run_missing:<workflow>`, `ci_jobs_not_successful_or_incomplete:<workflow>` 등으로 차단 위치를 구분한다.
-- `prepared=true`여야 후보 PR 단계로 진행한다. 기존 release만으로 승격하지 않는다.
-  `candidateCreated=true`와 `state=candidate_created`는 PR 생성이며 리뷰·수동 병합이 남았다.
-  `deploymentUpdated=false`와 `clusterVerified=false`를 유지한다. 과거 직접 승격 보고서의
-  `pushed`/`unchanged`는 이전 계약으로만 해석한다.
+- 과거 `candidateCreated`·`pushed` 보고서는 당시 계약으로만 해석한다. 해당 자동화는 제거했다.
+  과거 후보 PR이나 push 기록은 현재 클러스터의 상태를 증명하지 않는다.
 - 보고서는 배포 승인 자료가 아니다. 네 `msa-image-<service>` receipt의 출처·checksum·소스 검증은
   그대로 필수다. 승격기는 정해진 보고서 이름만 receipt 목록에서 제외하며, 미지의 artifact는 거절한다.
 - `clusterVerified=false`는 이 도구가 실제 클러스터를 검증하지 않았다는 뜻이다. Argo CD 동기화와

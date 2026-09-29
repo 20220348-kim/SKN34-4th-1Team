@@ -223,7 +223,12 @@ def render(root, helm="helm", *, require_ops_migration=True):
             if item is not None
         ]
         problems.extend(
-            policy_errors(service, objects, require_ops_migration=require_ops_migration)
+            policy_errors(
+                service,
+                objects,
+                require_ops_migration=require_ops_migration,
+                ops_sync_enabled=values.get("opsSync", {}).get("enabled", False),
+            )
         )
         if problems:
             raise ValueError("\n".join(problems))
@@ -254,32 +259,20 @@ def render(root, helm="helm", *, require_ops_migration=True):
     return result
 
 
-def build(
+def release_files(
     root,
     fork,
     source_sha,
-    base_sha,
     publisher_id,
-    checks,
     receipts,
     helm="helm",
     *,
-    schema=SCHEMA,
+    require_ops_migration=True,
 ):
-    """Read only Git blobs; never execute candidate scripts or copy untracked files."""
-    if (
-        not valid_sha(source_sha)
-        or not valid_sha(base_sha)
-        or type(publisher_id) is not int
-        or publisher_id <= 0
-        or fork.branch == DEPLOYMENT_BRANCH
-    ):
-        raise ValueError("Invalid source, deployment base or publisher identity")
-    if schema not in {"govbiz-deployment-v1", SCHEMA}:
-        raise ValueError("Unsupported deployment schema")
+    """Render verified images using only the published commit's tracked inputs."""
+    if not valid_sha(source_sha) or type(publisher_id) is not int or publisher_id <= 0:
+        raise ValueError("Invalid published source or publisher identity")
     source = tracked_files(root, source_sha, SOURCE_PATHS)
-    if CHECK_WORKFLOW not in source:
-        raise ValueError("Source does not contain the deployment validation workflow")
     if len(receipts) != 4 or {item["service"] for item in receipts} != set(SERVICES):
         raise ValueError("Four image receipts are required")
     for receipt in receipts:
@@ -323,7 +316,7 @@ def build(
         marker = gitops / "environments/fork/release.json"
         marker.parent.mkdir(parents=True, exist_ok=True)
         marker.write_bytes(encoded(record))
-        rendered = render(gitops, helm, require_ops_migration=schema == SCHEMA)
+        rendered = render(gitops, helm, require_ops_migration=require_ops_migration)
         files = {
             name: value
             for name, value in source.items()
@@ -343,6 +336,43 @@ def build(
             files[PREFIX + f"receipts/{service}.json"] = encoded(receipt)
             files[PREFIX + f"rendered/{service}.json"] = rendered[service]
         files[PREFIX + "environments/fork/release.json"] = encoded(record)
+    return files
+
+
+def build(
+    root,
+    fork,
+    source_sha,
+    base_sha,
+    publisher_id,
+    checks,
+    receipts,
+    helm="helm",
+    *,
+    schema=SCHEMA,
+):
+    """Read only Git blobs; never execute candidate scripts or copy untracked files."""
+    if (
+        not valid_sha(source_sha)
+        or not valid_sha(base_sha)
+        or type(publisher_id) is not int
+        or publisher_id <= 0
+        or fork.branch == DEPLOYMENT_BRANCH
+    ):
+        raise ValueError("Invalid source, deployment base or publisher identity")
+    if schema not in {"govbiz-deployment-v1", SCHEMA}:
+        raise ValueError("Unsupported deployment schema")
+    if CHECK_WORKFLOW not in tracked_files(root, source_sha, (CHECK_WORKFLOW,)):
+        raise ValueError("Source does not contain the deployment validation workflow")
+    files = release_files(
+        root,
+        fork,
+        source_sha,
+        publisher_id,
+        receipts,
+        helm,
+        require_ops_migration=schema == SCHEMA,
+    )
     files[ARGO] = yaml.safe_dump_all(
         argo_resources(fork, ops_migration=schema == SCHEMA), sort_keys=False
     ).encode()

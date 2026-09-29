@@ -1,5 +1,11 @@
 # GitOps 현황 검수와 후속 개발 전략 — 2026-09-29
 
+> **최신 결정(2026-09-29): 별도 배포 브랜치·PR 설계는 사용자 요청으로 철회했습니다.**
+> 개인 포크의 빈 브랜치와 전용 Ruleset을 삭제하고 PR 자동화 2개와 Actions PR 생성 권한을 껐습니다.
+> `main`의 필수 CI·리뷰 0명 정책과 이미지 발행은 유지합니다.
+> 아래 최초 분석·G1 계획은 과거 기록이며 현재 실행 지침이 아닙니다.
+> [현재 적용 상태](../infrastructure/gitops/docs/deployment-candidates.md)를 따릅니다.
+
 현재 구성은 **개인 포크의 로컬 개발·GitOps 실습 기반으로는 타당하다. 전체 LLMOps의 운영 배포가 완성됐다고 판단할 근거는 부족하다.** 가장 먼저 해결할 문제는 이미지 발행 가드와 실제 Argo 배포 대상의 불일치다. 이미지 CI가 실패해도 `main`의 Chart·values 변경은 별도로 Argo에 전달될 수 있다.
 
 아래 초기 진단은 분석 시점의 기록이다. G0와 G1의 후속 구현 상태는 각 절에 구분했다. G1 후보 코드·검사 workflow는 구현했지만 원격 배포 브랜치·보호 규칙·실제 Argo 전환은 아직 적용하지 않았다. migration Job 등 G2 이후 작업도 남았다.
@@ -88,7 +94,7 @@ Argo는 Git의 원하는 상태를 보고 동기화한다. GitHub CI 결과를 �
 
 이 결과는 이미지 가드가 실패를 막고 있다는 증거이기도 하다. `blocked / waiting / published / promoted / deployed / verified` 상태를 따로 노출해야 초록색 워크플로를 배포 성공으로 오인하지 않는다.
 
-`msa-release`는 발행 job에서 사용하지만 현재 승인 규칙이 비어 있다. [승격 workflow](../.github/workflows/msa-promotion.yml)의 `promote` job에는 environment 지정도 없다. 발행 environment에 reviewer만 추가해도 실제 배포 상태 쓰기까지 승인되는 구조가 되지는 않는다. [GitHub environment 공식 설명](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments)
+`msa-release`는 발행 job에서 사용하지만 현재 승인 규칙이 비어 있다. 당시 승격 workflow(`msa-promotion.yml`, 현재 제거됨)의 `promote` job에는 environment 지정도 없다. 발행 environment에 reviewer만 추가해도 실제 배포 상태 쓰기까지 승인되는 구조가 되지는 않는다. [GitHub environment 공식 설명](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments)
 
 ### P1: Ops가 Ready여도 평가 기능은 준비되지 않을 수 있음
 
@@ -100,7 +106,16 @@ Argo는 Git의 원하는 상태를 보고 동기화한다. GitHub CI 결과를 �
 
 [선택된 release 기록](../infrastructure/gitops/environments/fork/release.json)의 `verifiedRevision`은 `23a268343a9176b2a2fcc4cd76de365b4426db93`, 발행 run은 `35542678635`다. 이것은 선택된 이미지의 출처이며 현재 클러스터에서 그 이미지가 실행 중이라는 증거는 아니다. 최신 기능과 선택 이미지의 차이를 별도로 보여줘야 한다.
 
-## 권고 구조: 같은 저장소에서 소스와 승인된 배포 상태 분리
+## 배포 PR 제거 후 현재 구현
+
+GHCR 로컬 초기화를 삭제한 배포 브랜치에서 분리했다. 현재 소스 SHA의 upstream 일치·필수 CI·발행 run/attempt·
+네 receipt와 Git tree를 확인하고 같은 커밋의 Helm 입력으로 렌더링한다. 검증 중 소스·CI·발행 결과 변경은 거절한다.
+사용자는 기존 `fork_cluster.py up`을 실행하며 작업 브랜치·index·원격 Git에는 쓰지 않는다.
+무료 정책·Ops migration·실제 pull 권한 확인을 유지하고 성공한 release 출처는 로컬 baseline에 보존한다.
+이 구현은 로컬 초기화 복구이며 새로운 Argo 자동 배포, Kubernetes↔Compose 실연결이나 유료 평가 완료가 아니다.
+자세한 명령과 조건은 [현재 GHCR 초기화 경로](../infrastructure/gitops/docs/image-promotion.md)를 따른다.
+
+## 철회된 권고 구조: 같은 저장소에서 소스와 승인된 배포 상태 분리
 
 현재 규모에서는 저장소를 늘리기보다 **같은 개인 포크의 보호된 `deploy/fork` 브랜치**를 배포 입력으로 추가하는 방안을 권고한다. 이 브랜치를 사용하는 후보 코드와 검사 workflow를 후속 구현했으며, 원격 브랜치 생성과 보호 규칙 설정은 별도 활성화 작업이다. 별도 설정 저장소도 가능하지만, 저장소 분리 자체보다 접근 통제와 검증된 변경의 선택이 먼저다. [Argo 구성 저장소 권고](https://argo-cd.readthedocs.io/en/stable/user-guide/best_practices/)
 
@@ -167,7 +182,7 @@ JSON·Actions Summary로 구분한다. 후보가 준비되지 않으면 렌더�
 
 1. 소스 브랜치와 배포 브랜치 식별자를 분리하고, 기존 receipt·출처 검사에 Chart·values·실행 설정을 포함한다. 포크 신원·교육기관 원본 병합 검사는 유지한다.
 2. 배포 후보 PR에서 전체 차이와 CI 증거를 검토한다. 후보 merge 또는 쓰기 작업에만 배포 권한을 부여한다. 운영 환경의 승인 규칙은 실제 배포 상태를 쓰는 job에 연결한다. 개인 로컬 자동 승격 정책은 별도로 명시한다.
-3. `main`의 PR·필수 상태 검사와 배포 브랜치의 쓰기·삭제·force-push 제한을 원격에 적용한다. release 정책·워크플로·Chart·환경 설정의 CODEOWNERS와 reviewer를 지정한다. 관리자·bot의 우회 범위를 점검한다. [GitHub 보호 브랜치 문서](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches)
+3. `main`의 PR·필수 상태 검사와 배포 브랜치의 쓰기·삭제·force-push 제한을 원격에 적용한다. 최신 사용자 선택에 따라 리뷰 승인 수는 0으로 두고 CODEOWNERS·마지막 push 승인을 요구하지 않는다. 관리자·bot의 우회 범위를 점검한다. [GitHub 보호 브랜치 문서](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches)
 4. 현재 bot의 `main` 직접 push를 그대로 둔 채 PR 필수 규칙만 켜면 승격이 막힌다. 후보 생성·검증·merge 권한을 먼저 설계하고, 검증된 초기 배포 상태와 보호 규칙을 준비한 뒤 Argo의 대상 ref를 전환한다. 전환 중에는 기존 자동 승격을 잠시 정지하는 절차와 원복 지점을 둔다.
 5. 필수 PR check와 `pull_request.paths`를 맞춘다. 필요한 검증이 실행되지 않는 PR은 통과로 간주하지 않는다. `GITHUB_TOKEN` push는 후속 push CI를 만들지 않으므로 새 배포 commit의 검증을 기대만 해서는 안 된다. 후보 검증을 쓰기 전에 수행하고, 필요한 별도 실행은 명시적으로 연결한다. [GitHub 이벤트 동작](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow)
 
@@ -176,13 +191,20 @@ JSON·Actions Summary로 구분한다. 후보가 준비되지 않으면 렌더�
 G1 구현 상태: [전체 배포 후보와 수동 승인](../infrastructure/gitops/docs/deployment-candidates.md)의 절차를 추가했다.
 소스 SHA·CI run/attempt·네 receipt·Chart·values·렌더링·Argo 선언을 묶고 원본 Git blob에서 재구성해 비교한다.
 bot은 후보 PR만 생성하며 신뢰된 기본 브랜치 검사기가 정확한 후보 SHA에 required status를 게시한다.
-사용자가 PR 리뷰 후 수동 병합을 선택했다. Argo와 GHCR 초기화는 승인된 snapshot을 읽고 로컬 `valuesObject` 우회를 거절한다.
+초기에는 PR 리뷰 후 수동 병합을 선택했으나, 후속 사용자 지시로 필수 리뷰 없이 검사 통과 후 수동 병합하도록 변경했다. Argo와 GHCR 초기화는 승인된 snapshot을 읽고 로컬 `valuesObject` 우회를 거절한다.
 Catalog·LLMOps PR 경로 필터도 제거해 필수 상태 검사 누락을 방지했다.
 
 로컬에서는 관련 무료 테스트 104개(중복 제외)와 실제 Helm 오프라인 렌더링·정적·구문·문서 검사를 확인했다.
-**아직 G1 완료가 아니다.** 원격 Ruleset·리뷰 담당자·bypass 감사·브랜치 초기화, 실제 거절 사례와 Argo 전환 검증이 남았다.
-검사 후 main이 전진하는 사건과 수동 merge 사이의 ref 간 원자성도 보장하지 않으므로 병합 직전 최신 상태를 확인해야 한다.
-현재 후보는 무료 실행 정책에 한정되며 기존 유료 연동 프로필을 자동 이전하지 않는다.
+개인 포크 `ilil1/SKN34-4th-1Team`의 `main`에는 [활성 Ruleset 24174638](https://github.com/ilil1/SKN34-4th-1Team/rules/24174638)을 적용했다.
+필수 리뷰 0명·CODEOWNERS/마지막 push/추가 승인 요구 없음, PR 경유·최신 base의 CI 16개 검사,
+삭제·force-push 차단을 원격 API로 확인했다. 검사는 GitHub Actions App에 고정했고 bypass actor는 없으며
+현재 관리자도 bypass 불가다. 자동 병합은 꺼져 있다. 실제 PR 병합·직접 push 거절 실험은 수행하지 않았다.
+
+후속 사용자 요청으로 별도 배포 승인 방식을 철회했다. 생성했던 빈 `deploy/fork`와 Ruleset 24174774는
+삭제했고, Actions의 PR 생성·승인 허용은 껐다. 기본 토큰은 `read`, `MSA_PROMOTION_ENABLED=false`다.
+`msa-promotion.yml`·`deployment-ci.yml`은 원격 비활성화 후 소스에서 제거했다. PR은 생성하지 않았다.
+`main`의 Ruleset 24174638과 필수 CI는 유지한다. 기존 클러스터는 변경하지 않았다.
+새로운 Argo 자동 배포 방식은 아직 구현하지 않았으며 이 G1 계획을 완료로 간주하지 않는다.
 
 G1 원격 검증 정정: `7d87e60371b26e00fc8efded41ab17d499d1604b`의 5개 workflow 중
 4개는 성공했지만 [Infra run 36488308755](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36488308755)의

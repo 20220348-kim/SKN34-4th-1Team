@@ -1,5 +1,8 @@
 # 개인 포크의 로컬 Kubernetes · GitOps
 
+> 이 문서는 과거 GHCR·GitOps 실행 경로의 기록입니다. 별도 배포 브랜치·PR은 제거했으며 새 환경에서는
+> [현재 상태](deployment-candidates.md)와 [로컬 소스 이미지 실행](../../../docs/windows-kubernetes-setup.md)을 따릅니다.
+
 교육기관 저장소는 공통 코드를 관리합니다. 각 팀원은 개인 포크의 Actions로 자기 **비공개 GHCR**에 이미지를
 발행하고, 자기 PC의 kind 클러스터에서 실행합니다. `ilil1` 같은 특정 계정을 코드에 쓰지 않습니다.
 이 문서는 공통 실행 계약이며 Windows 팀원의 실제 배포 성공 기록은 아닙니다.
@@ -8,7 +11,7 @@
 
 1. 교육기관 저장소를 개인 계정으로 포크하고 그 포크를 클론합니다. `origin`이 본인의 GitHub 저장소인지 확인합니다.
 2. 포크에서 GitHub Actions를 활성화하고 [이미지 발행 안내](image-promotion.md)의 `MSA_RELEASE_ENABLED=true`,
-   `MSA_PROMOTION_ENABLED=true`를 설정합니다. 이 동의는 포크마다 필요하며 원본의 비밀값·설정은 복제되지 않습니다.
+   `MSA_PROMOTION_ENABLED=false`를 유지합니다(배포 PR 자동화 제거). 이 동의는 포크마다 필요하며 원본의 비밀값·설정은 복제되지 않습니다.
 3. 교육기관 upstream에 PR이 병합된 코드를 **GitHub의 본인 포크 기본 브랜치로 동기화**합니다. 승인된 upstream 소스와
    네 CI 통과를 확인한 뒤 `MSA image candidates`가 발행하고 `Fork image promotion`이 승격합니다.
    이후 로컬에서 `git pull`합니다. 개인 작업 브랜치 push나 로컬 pull만으로 이미지를 발행하지 않습니다.

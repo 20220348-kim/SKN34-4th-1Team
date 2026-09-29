@@ -148,7 +148,7 @@ class ForkBootstrapTests(unittest.TestCase):
     def test_failed_anonymous_pull_stops_bootstrap_before_cluster_or_secret_writes(self):
         args = SimpleNamespace(local_images=None, helm="helm", kind="kind", token_file=None)
         with tempfile.TemporaryDirectory() as directory, patch("fork_cluster.doctor"), \
-                patch("fork_cluster.approved_bundle", return_value=({"visibility": "public", "images": {}},
+                patch("fork_cluster.published_bundle", return_value=({"visibility": "public", "images": {}},
                     {f"infrastructure/gitops/rendered/{s}.json": b"[]" for s in cluster.SERVICES}, "a" * 40)), \
                 patch("fork_cluster.render_services", side_effect=AssertionError("Must use approved snapshot")), patch("fork_cluster.run", return_value="") as execute, \
                 patch("fork_cluster.verify_pull_rights", side_effect=ValueError("anonymous denied")), \
