@@ -59,23 +59,25 @@ python3.13 -B infrastructure/release/bootstrap_packages.py verify
 검사가 끝나면 GitHub Settings → Developer settings → Personal access tokens에서 **이번 일회용 토큰만
 폐기**하고, 사용한 임시 토큰 파일도 삭제합니다. 삭제해도 이후 CI는 별도의 `GITHUB_TOKEN`으로 작동합니다.
 
-## 3. 자동 발행·승격 활성화
+## 3. 자동 이미지 발행 활성화
 
-준비가 끝난 자기 포크에서 두 repository variable을 `true`로 바꿉니다.
+준비가 끝난 자기 포크에서 이미지 발행만 활성화합니다.
 
 - `MSA_RELEASE_ENABLED=true`
-- `MSA_PROMOTION_ENABLED=true`
+- `MSA_PROMOTION_ENABLED=false` 유지: 별도 배포 PR 자동화는 제거했습니다.
 
 원본 PR 병합 → 자기 포크의 원격 기본 브랜치 동기화 → 같은 SHA의 다섯 CI 성공 → 비공개 이미지 발행 →
-검증된 digest 커밋 순서입니다. 초기 준비 중 이미 CI가 완료됐다면 기본 브랜치에서 **MSA image candidates**를
+검증된 digest·receipt 확인 순서입니다. 초기 준비 중 이미 CI가 완료됐다면 기본 브랜치에서 **MSA image candidates**를
 한 번 수동 실행할 수 있습니다. 수동 실행도 원본 병합·동일 소스·다섯 CI 검증을 우회하지 않습니다.
 
 다음 결과를 각각 확인합니다.
 
 1. `MSA image candidates`: 네 서비스 모두 성공. 패키지들은 계속 Private.
-2. `Fork image promotion`: 성공. 자기 포크의 `infrastructure/gitops/environments/fork/`에 digest 기록.
-3. [개인 포크 로컬 개발 안내](local-fork-development.md)의 `up`과 `gitops` 실행: 자기 읽기 전용 토큰으로
-   실제 이미지 pull, 네 Argo Application의 Synced/Healthy 확인.
+2. 네 서비스 receipt와 발행 보고서의 소스 SHA·이미지 digest·검증 결과 확인.
+
+별도 배포 PR과 자동 digest 커밋은 제거했습니다. Argo 자동 배포 연결은 아직 없습니다.
+로컬 실행은 [검증된 GHCR 초기화](../infrastructure/gitops/docs/image-promotion.md) 또는
+[소스 이미지 개발 안내](windows-kubernetes-setup.md)를 따릅니다.
 
 PC의 `read:packages` 토큰은 일회용 쓰기 토큰과 **별개**이며 만료·폐기 시 교체해야 합니다.
 다른 팀원은 자기 계정으로 이 최초 준비를 수행해야 합니다. 한 사람의 Mac 성공이 Windows 검증을 대신하지 않습니다.

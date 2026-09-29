@@ -132,11 +132,15 @@ jobs:
       - name: Test chart boundaries and rejected settings
         run: |
           python -B -m unittest discover -s scripts -p 'test_check_msa.py'
+          python -B -m unittest discover -s scripts -p 'test_ops_sync.py'
+          python -B -m unittest discover -s scripts -p 'test_ops_bridge.py'
+          python -B -m unittest discover -s scripts -p 'test_dev.py'
           python -B -m unittest discover -s scripts -p 'test_check_portfolio.py'
           python -B -m unittest discover -s scripts -p 'test_fork_cluster.py'
           python -B -m unittest discover -s scripts -p 'test_connected_runtime.py'
           python -B -m unittest discover -s scripts -p 'test_migration_guards.py'
           python -B -m unittest discover -s scripts -p 'test_deployment*.py'
+          python -B -m unittest discover -s scripts -p 'test_published_release.py'
           python -B -m unittest discover -s scripts -p 'test_sync_images.py'
       - name: Validate independent releases and Argo project scope
         run: |

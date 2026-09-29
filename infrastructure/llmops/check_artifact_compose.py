@@ -62,6 +62,33 @@ def check(config):
         "OPENAI_API_KEY"
     ), "Paid runner forbidden"
 
+    bridge = config.get("networks", {}).get("ops-bridge")
+    if bridge is not None:
+        assert bridge.get("internal") is True and bridge.get("driver") == "bridge", (
+            "Private Docker bridge required"
+        )
+        assert not bridge.get("external"), "Compose must own its private bridge"
+        state_id = bridge.get("labels", {}).get("dev.govbiz.state-id", "")
+        assert re.fullmatch(r"[a-f0-9]{32}", state_id), "Bridge state identity missing"
+        assert bridge.get("name", "").endswith("-ops-" + state_id[:12]), (
+            "Bridge network identity mismatch"
+        )
+        members = {
+            name
+            for name, service in services.items()
+            if "ops-bridge" in service.get("networks", {})
+        }
+        assert members == {"prefect", "ops-artifacts"}, (
+            "Only Prefect and artifacts may join the bridge"
+        )
+        assert all("default" in services[name]["networks"] for name in members), (
+            "Compose internal routes must remain"
+        )
+        assert all(
+            port.get("host_ip") == "127.0.0.1"
+            for port in services["prefect"].get("ports", [])
+        ), "Prefect must remain loopback-only"
+
 
 if __name__ == "__main__":
     try:

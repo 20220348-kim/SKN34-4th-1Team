@@ -1,5 +1,9 @@
 # 개인 포크의 Kubernetes에서 개발하기
 
+> 별도 배포 브랜치·PR 절차는 제거했습니다. 소스 이미지의 `up --local-images`와 검증된 GHCR의 `up`을 지원합니다.
+> GHCR `up`은 현재 기본 브랜치의 CI·발행·receipt를 직접 확인하며 추가 PR이 없습니다.
+> 새 Argo 자동 배포 연결은 아직 없습니다.
+
 Windows에서 도구 설치부터 시작하거나 GHCR 이미지 없이 실행하려면
 [WSL2·kind 수동 설치 안내](windows-kubernetes-setup.md)를 먼저 따릅니다.
 로컬 소스 빌드 경로에는 아래 GHCR 패키지 준비와 PAT가 필요하지 않습니다.
@@ -20,14 +24,14 @@ GHCR 이미지를 사용하는 경우 [비공개 GHCR 최초 준비](private-ghc
 먼저 완료해야 합니다. 공개 receipt로 승격된 뒤에는 PC의 pull PAT가 필요하지 않습니다.
 
 아래의 `init`·`doctor`와 명시적 로컬 이미지 경로는 GHCR 준비와 별개입니다.
-GHCR 기반 `up`·`gitops` 명령은 비공개 초기 준비와 검증된 발행이 완료된 뒤에만 사용합니다.
+GHCR 기반 `up`은 현재 발행 결과를 직접 검증합니다. `gitops` 전환은 과거 환경 호환 경로이며 새 활성화 안내가 아닙니다.
 
 ## 두 실행 모드
 
 | 모드 | 반영하는 코드 | 이미지 경로 | 서비스 변경 주체 |
 |---|---|---|---|
 | `dev` | 자기 PC에 저장한 코드, 아직 커밋하지 않은 새 소스도 포함 | 로컬 Docker 빌드 → 자기 kind에 적재 | `dev.py` |
-| `gitops` | 교육기관 원본에 병합된 뒤 자기 포크의 기본 브랜치에 동기화하고 CI 검증·발행을 통과한 코드 | 개인 GHCR(기본 비공개, 공개 선택 가능) → 자기 Kubernetes가 pull | Argo CD |
+| 기존 `gitops` | 과거 환경 호환용. 새 활성화 절차는 제거 | 기존 배포 이미지 | 기존 Argo CD |
 
 개발 모드는 Argo CD의 Application을 제거하되 서비스·DB·볼륨을 삭제하지 않습니다.
 동일 Deployment를 Argo CD와 개발 도구가 동시에 수정하지 않게 하는 구분입니다.
@@ -59,7 +63,7 @@ python -B infrastructure/gitops/scripts/fork_cluster.py doctor
 ```
 
 `origin`은 자기 포크, `upstream`은 교육기관 원본이어야 합니다. `init`은 `origin`의 계정·저장소와
-소스 기본 브랜치를 읽습니다. 승인된 서비스 배포 입력은 고정된 `deploy/fork`입니다. 작업 브랜치를 배포 ref로 삼지 않습니다.
+소스 기본 브랜치를 읽습니다. 별도 배포 브랜치는 만들지 않습니다.
 GitHub의 기본 브랜치 자체를 변경한 경우에만 처음에 `init --branch 브랜치명`으로 명시합니다.
 생성된 설정은 `infrastructure/gitops/.local/fork/settings.json`에만 저장됩니다.
 클러스터 이름은 저장소 식별값으로 정해지므로 사용자마다 파일의 이름을 바꿀 필요가 없습니다.
@@ -73,34 +77,20 @@ GHCR 경로의 선행 조건은 [이미지 발행 안내](msa-image-release.md)�
 처음부터 비공개라고 가정하지 않습니다. [별도 초기 생성·검증 절차](private-ghcr-setup.md)는
 앱 코드 없는 빈 이미지를 로컬 PAT로 등록한 후 권한을 확인합니다.
 
-이 선행 조건을 충족하고 발행·승격을 명시적으로 허용한 뒤에는, 개발 코드를 교육기관 원본에 PR로
-병합하고 그 결과를 자기 포크의 기본 브랜치에 동기화합니다. [배포 승인 설정](../infrastructure/gitops/docs/deployment-candidates.md)을 준비하고
-동일 소스의 다섯 CI·발행·후보 검사·PR 리뷰·수동 병합이 모두
-통과해야 자기 GHCR 이미지와 `environments/fork`의 검증된 digest가 준비됩니다.
-미병합 개인 커밋의 push나 포크 생성만으로 이미지가 발행·복사되는 것은 아닙니다.
-
-준비된 비공개 이미지를 PC에서 받을 때는 자기 계정의 classic PAT에 `read:packages`만 선택합니다.
-이 읽기 토큰은 패키지 생성·업로드 인증이 아닙니다. 토큰을 채팅·`.env`·Git 파일에 적지 않습니다.
-**검증된 이미지가 준비된 후** 아래 명령은 대화형 숨김 입력을 사용하며,
-클러스터의 이미지 pull Secret에만 전달합니다.
-공개 전환을 완료하고 `release.json`에 `visibility: public`이 기록된 경우에는 같은 명령으로
-익명 다운로드를 검사하며 PAT를 묻지 않습니다. 이때 `--token-file`은 전달하지 않습니다.
-기존 읽기 Secret이나 GitHub PAT는 자동 삭제·폐기하지 않습니다.
+패키지 준비와 이미지 발행을 명시적으로 허용하면, upstream에 병합한 소스를 개인 포크의 기본 브랜치에
+동기화하고 같은 SHA의 다섯 CI가 통과한 뒤 이미지를 발행합니다. 별도 배포 PR은 만들지 않습니다.
+GHCR 초기화는 [현재 발행 검증](../infrastructure/gitops/docs/image-promotion.md) 경로를 사용합니다.
+같은 커밋의 Git 설정과 네 receipt를 임시 디렉터리에서 렌더링하며 로컬 수정은 보존합니다.
+`gh auth status`로 CI·Actions artifact 조회 로그인을 확인한 뒤 실행합니다.
+비공개 pull 인증은 기존 숨김 입력 또는 `--token-file`을 사용하며 `read:packages`만 허용합니다.
 
 ```bash
 python -B infrastructure/gitops/scripts/fork_cluster.py up
 python -B infrastructure/gitops/scripts/fork_cluster.py status
 ```
 
-최초 `up`은 자기 이미지의 pull 권한을 확인하고, 독립된 kind 클러스터·데이터 저장소·서비스를
-준비합니다. 기존 `govbiz-portfolio`나 임의 클러스터를 재사용하거나 데이터를 옮기지 않습니다.
-DB·서비스 비밀값은 새 로컬 환경에 생성하며 유료 AI·메일·외부 공고 수집은 기본적으로 꺼 둡니다.
-
-첫 실행에서 큰 AI 이미지의 다운로드·압축 해제가 길어지면 `progress deadline` 오류가 먼저 날 수 있습니다.
-이는 성공으로 처리하지 않습니다. `status`와 해당 Pod의 Events에서 `Pulling`, `Pulled`, Ready 상태를
-확인하세요. 인증 오류·이미지 없음·기동 오류는 먼저 해결해야 하며, 단순 첫 다운로드 대기인 경우에는
-다운로드가 계속 진행됩니다. Pod가 Ready가 된 뒤 같은 `up`을 다시 실행하면 기존 Secret·DB·이미지
-캐시를 보존하며 초기화 결과를 기록합니다. 클러스터나 볼륨을 삭제해서 다시 시작할 필요는 없습니다.
+CI·receipt 검증, Helm 검사, 실제 pull 권한 확인, Ops migration이 실패하면 후속 실행을 중단합니다.
+성공한 소스 SHA·발행 run·이미지는 로컬 `baseline.json`에 기록합니다. 이 초기화가 Argo 자동 배포를 켜지는 않습니다.
 
 GHCR 없이 로컬 이미지로만 검증하려면 [로컬 이미지 빌드 도구](../infrastructure/scripts/build-msa-images.py)의
 새 이미지 manifest를 `up --local-images /절대경로/images.json`으로 전달할 수 있습니다.
@@ -162,36 +152,20 @@ pnpm --dir frontend/web dev:k8s
 전달됩니다. 프런트 파일 저장 반영은 Vite가 담당하며, 위 백엔드 이미지 감시 명령과 별개입니다.
 port-forward 터미널을 종료하면 웹의 API 연결도 끊깁니다.
 
-## 5. GitOps 모드로 돌아가기
+## 5. 개발 작업 제출
 
-감시 터미널을 `Ctrl+C`로 종료한 후 로컬 개발 이미지부터 명시적으로 복원합니다.
+개발 코드는 기존 `skn-*` 브랜치에 커밋·푸시하고 `main`으로 PR을 제출합니다.
+필수 CI 통과 후 리뷰 승인 없이 수동 병합합니다. 별도 배포 PR은 만들지 않습니다.
+
+개발 이미지를 이전 상태로 복원해야 할 때는 감시를 종료한 뒤 다음 명령을 사용합니다.
 
 ```bash
 python -B infrastructure/gitops/scripts/dev.py --restore --service all
 ```
 
-이 명령은 개발 도구가 처음 발견했던 기존 이미지로 복원할 뿐, 수정한 소스 파일을 되돌리거나 Git을
-커밋하지 않습니다. 제출할 코드를 직접 커밋·푸시하고 교육기관 원본에 PR을 올립니다. 원본에 병합되면
-자기 포크의 기본 브랜치를 원본과 동기화합니다. 비공개 패키지 준비와 발행 활성화 조건을 충족하여
-포크 CI·발행·전체 후보 검사와 배포 PR 리뷰·수동 병합까지 완료한 뒤 전환합니다. 로컬 소스 도구도 pull로 최신화합니다.
-
-```bash
-python -B infrastructure/gitops/scripts/fork_cluster.py gitops
-python -B infrastructure/gitops/scripts/fork_cluster.py status
-```
-
-GitOps 활성화는 원격과 일치하는 깨끗한 소스 checkout, 활성 보호 규칙과 승인된 `deploy/fork` snapshot을 요구합니다.
-비공개 이미지에는 유효한 개인 GHCR 인증도 필요합니다. Argo CD는 `deploy/fork`의 Chart·values만 읽습니다. GitOps 모드가 활성화된 후의 자동
-감지는 로컬 `git pull` 없이도 동작하지만, 수동 도구·개발 코드의 최신화에는 pull이 필요합니다.
-Mac/Windows와 Docker가 실행 중이어야 하며 토큰이 만료되면 `credentials` 명령으로 갱신합니다.
-교육기관 원본에 병합되었다는 이유로
-모든 팀원의 개인 클러스터가 동시에 바뀌는 구조는 아닙니다. 각자 원본 변경을 **GitHub의 자기 포크 기본
-브랜치에** 동기화해야 합니다. 로컬에서 `git pull`만 하는 것은 GitHub 원격을 바꾸지 않으므로 새로운
-발행 워크플로를 시작하지 않습니다. 로컬 코드 저장 반영은 이 승인·발행 절차 없이 개발 모드에서 계속 가능합니다.
-
-기존 `integrations.json`이 있으면 새 승인 snapshot으로의 `gitops` 전환은 변경 전에 중단합니다.
-Git 밖의 연동 설정을 자동 삭제하거나 유지한 채 승인된 것으로 취급하지 않습니다. 연동 기능을 쓰는 기존 환경의
-전환은 [전체 후보 안내](../infrastructure/gitops/docs/deployment-candidates.md)의 제한을 확인하세요.
+이 명령은 개발 도구가 보관한 기존 이미지로 복원하며 소스 파일·Git 커밋·DB 데이터를 되돌리지 않습니다.
+배포 PR 제거 이후의 Argo 자동 배포 연결은 아직 없으며, 기존 `gitops` 전환 절차를 새 포크에 적용하지 않습니다.
+[배포 PR 제거 기록](../infrastructure/gitops/docs/deployment-candidates.md)에 실제 적용 범위를 기록했습니다.
 
 ## 검증 범위
 

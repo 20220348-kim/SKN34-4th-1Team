@@ -181,6 +181,7 @@ class OutcomeTests(unittest.TestCase):
         }
         report = self.report("promotion", outputs)
         self.assertEqual(report["state"], "candidate_created")
+        self.assertEqual(report["reason"], "manual_merge_required")
         self.assertEqual(report["candidatePr"], 42)
         self.assertFalse(report["deploymentUpdated"])
         self.assertFalse(report["clusterVerified"])

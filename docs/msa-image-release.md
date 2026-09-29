@@ -11,7 +11,7 @@
 [비공개 패키지 최초 준비](private-ghcr-setup.md)는 일회용 최소 권한 PAT로 **앱 코드 없는 빈 패키지**를
 만들고, Private·소유자·포크 연결과 Actions Write 권한을 확인하는 절차입니다.
 준비 전에는 `MSA_RELEASE_ENABLED=false`, `MSA_PROMOTION_ENABLED=false`를 유지하고,
-준비·검증한 자기 포크에서만 두 변수를 `true`로 바꿉니다. 다른 팀원의 설정은 자동으로 복사되지 않습니다.
+준비·검증한 자기 포크에서 `MSA_RELEASE_ENABLED`만 `true`로 바꿉니다. `MSA_PROMOTION_ENABLED`는 `false`로 유지합니다. 다른 팀원의 설정은 자동으로 복사되지 않습니다.
 
 ### 새 패키지를 자동 생성하지 않는 이유
 
@@ -29,12 +29,12 @@ GitHub는 워크플로가 `GITHUB_TOKEN`으로 만든 패키지가 기본적으�
 1. 교육기관 원본을 **본인 계정으로 포크**하고 Actions를 활성화합니다.
 2. 포크의 Settings → Secrets and variables → Actions → Variables에서 두 변수를 **`false`로 유지**합니다.
    - `MSA_RELEASE_ENABLED=false`: 비공개 초기 준비 전 이미지 발행 중지
-   - `MSA_PROMOTION_ENABLED=false`: 검증된 발행 전 digest 승격 중지
+   - `MSA_PROMOTION_ENABLED=false`: 제거한 배포 PR 자동화 비활성 유지
 3. [네 서비스 패키지 최초 준비](private-ghcr-setup.md)를 수행합니다.
    각 패키지의 Private 상태, 본인 소유, 정확한 자기 포크 연결, 해당 포크 Actions의 쓰기 권한을
    확인해야 합니다. `read:packages` 토큰은 기존 이미지를 받기 위한 것이며 패키지를 만들 수 없습니다.
 4. 패키지 준비를 검증한 뒤 이미지 발행만 `MSA_RELEASE_ENABLED=true`로 허용합니다.
-   `MSA_PROMOTION_ENABLED`는 [배포 브랜치·Ruleset·리뷰 설정](../infrastructure/gitops/docs/deployment-candidates.md)까지 완료한 뒤 활성화합니다.
+   `MSA_PROMOTION_ENABLED=false`를 유지합니다. [별도 배포 PR은 제거했습니다](../infrastructure/gitops/docs/deployment-candidates.md).
 5. 기능은 개인 작업 브랜치에서 개발하고 교육기관 원본에 PR을 제출합니다. **원본 PR이 병합된 뒤**
    본인 포크의 기본 브랜치를 최신 upstream과 동기화합니다. 로컬 `git pull`만으로는 원격 Actions가 실행되지 않습니다.
    GitHub의 Sync fork 또는 동기화한 로컬 기본 브랜치를 origin에 push해야 합니다.
@@ -43,8 +43,7 @@ GitHub는 워크플로가 `GITHUB_TOKEN`으로 만든 패키지가 기본적으�
    `MSA image candidates`가 실행됩니다. 단, 개인 포크의 내용이 최신 upstream 병합본과 일치해야 합니다.
    원본에 아직 병합되지 않은 코드·CI·발행 정책 변경은 본인 포크에서 테스트가 성공해도 발행하지 않습니다.
    필요하면 같은 검증된 SHA의 기본 브랜치에서 해당 workflow를 수동 실행합니다.
-7. `Fork image promotion`은 Chart·values·digest·receipt·렌더링 결과를 묶어 `deploy/fork` 대상 PR을 만듭니다.
-   별도 후보 검사와 리뷰 승인 후 사람이 수동 병합합니다. 소스 기본 브랜치에 digest를 직접 push하지 않습니다.
+7. 이미지 발행 결과와 네 receipt를 확인합니다. 별도 배포 PR 생성이나 Argo 자동 배포는 수행하지 않습니다.
 
 ### 새 포크가 이미 최신인데 CI 실행 기록이 없는 경우
 
@@ -95,7 +94,7 @@ git push origin main
 
 비공개 패키지 준비·검증과 발행 활성화가 완료된 뒤에는
 원본 PR 병합 → 개인 포크 기본 브랜치 Sync → 다섯 CI 성공 → 서비스별 추적 소스 빌드/기존 이미지 재사용 → 기존 개인 GHCR 패키지 →
-receipt·전체 후보 검증 → 배포 PR 리뷰·수동 병합 → 각 PC의 Argo CD가 `deploy/fork` 변경 감지 순서입니다.
+이미지 digest·출처 receipt 확인 순서입니다. 이후 Argo 자동 배포 연결은 별도 구현 대상입니다.
 
 **PC에서 코드를 저장할 때마다 GHCR에 올리는 방식이 아닙니다.** 저장 즉시 반영하는 개발 모드와
 검증된 이미지를 실행하는 GitOps 모드는 별개입니다. 로컬 개발 방법은 [공통 개발 안내](local-fork-development.md)를 확인합니다.
@@ -122,11 +121,9 @@ receipt·전체 후보 검증 → 배포 PR 리뷰·수동 병합 → 각 PC의 
 - receipt ZIP checksum·정확한 네 artifact·같은 저장소/실행/SHA·실제 Git tree를 모두 검사합니다. receipt 자체가 서명된 provenance는 아닙니다.
 - 새 receipt는 schemaVersion 2와 `visibility`를 필수로 포함하며, 네 서비스의 공개 범위가 다르면 승격하지 않습니다.
   기존 v1 receipt 및 공개 범위가 없는 과거 배포 기록은 비공개로만 해석합니다.
-- 배포 후보는 Chart 전체·네 values·release·receipt·렌더링 결과·Argo 선언·manifest를 한 snapshot으로 구성합니다. 과거 portfolio는 설정 기본값으로만 읽습니다.
-- 이전 이미지 발행기의 digest-only 호환 규칙과 달리 새 배포 후보는 소스 기본 브랜치의 정확한 현재 SHA를 요구합니다.
-- `GITHUB_TOKEN`으로 생성한 PR은 자동 PR CI를 기대하지 않습니다. 소스 기본 브랜치의 검사기를 명시적으로 dispatch해 정확한 후보 SHA에 required status를 게시합니다.
+- 과거 전체 배포 snapshot의 오프라인 검증은 보존합니다. 현재는 배포 후보 PR을 생성하지 않습니다.
 - 다른 사람의 `environments/fork`가 포크에 포함되어도 그 이미지를 실행하지 않습니다. 본인의 첫 CI·발행이 성공하면
-  검증된 본인 이미지 네 개를 포함한 후보를 구성하며, 배포 PR 승인 전에는 사용하지 않습니다. 계정명 수동 변경이나 파일 삭제는 필요 없습니다.
+  검증된 본인 이미지 네 개의 receipt를 발급합니다. 타인의 digest를 실행하거나 계정명만 바꾸어 배포하지 않습니다.
 
 오프라인 검사(Python 3.13, GitOps requirements 필요):
 

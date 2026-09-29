@@ -36,9 +36,10 @@ def rules(required):
         {
             "type": "pull_request",
             "parameters": {
-                "required_approving_review_count": 1,
-                "dismiss_stale_reviews_on_push": True,
-                "require_last_push_approval": True,
+                "required_approving_review_count": 0,
+                "dismiss_stale_reviews_on_push": False,
+                "require_last_push_approval": False,
+                "require_code_owner_review": False,
                 "required_review_thread_resolution": True,
             },
         },
@@ -413,51 +414,6 @@ class AdmissionTests(SourceFixture):
         current.assert_not_called()
         artifacts.assert_not_called()
 
-    def test_proposal_pushes_only_candidate_and_dispatches_default_branch_checker(self):
-        manifest = json.loads(self.files[bundle.MANIFEST])
-        with (
-            patch.object(deploy, "admit", return_value=manifest),
-            patch.object(deploy, "ensure_revision"),
-            patch.object(deploy, "commit_tree", return_value=SHA),
-            patch.object(deploy, "tracked_files", return_value=self.files),
-            patch.object(deploy, "head", return_value=SHA),
-            patch.object(deploy, "git_bytes") as git,
-            patch.object(deploy.subprocess, "run") as command,
-            patch.object(deploy, "mutation", return_value={"number": 42}) as post,
-        ):
-            result = deploy.propose(self.root, FORK, self.files, "123-1")
-            partial = {}
-            command.side_effect = [None, RuntimeError("dispatch failed")]
-            with self.assertRaisesRegex(RuntimeError, "dispatch failed"):
-                deploy.propose(self.root, FORK, self.files, "123-2", result=partial)
-            self.assertTrue(partial["candidate_created"])
-            self.assertEqual(partial["candidate_pr"], "42")
-            self.assertFalse(partial["check_dispatched"])
-
-        self.assertTrue(result["candidate_created"])
-        self.assertEqual(git.call_args.args[1:3], ("push", "origin"))
-        self.assertTrue(
-            git.call_args.args[3].startswith(SHA + ":refs/heads/candidates/fork/")
-        )
-        self.assertEqual(post.call_args.args[1]["base"], "deploy/fork")
-        self.assertEqual(
-            command.call_args.args[0],
-            [
-                "gh",
-                "workflow",
-                "run",
-                "deployment-ci.yml",
-                "--repo",
-                FORK.repository,
-                "--ref",
-                "main",
-                "-f",
-                "candidate_sha=" + SHA,
-                "-f",
-                "pr_number=42",
-            ],
-        )
-
     def test_source_evidence_has_all_five_latest_run_attempts(self):
         evidence = []
         # Reuse the real gate fixture identity, not this class's source fixture identity.
@@ -479,13 +435,33 @@ class AdmissionTests(SourceFixture):
 
 
 class RuleAndCheckTests(unittest.TestCase):
-    def test_active_rules_require_all_checks_latest_review_and_strict_base(self):
+    def test_retired_cli_never_reads_credentials_or_changes_remote_state(self):
+        for action in ("bootstrap", "prepare", "propose", "check"):
+            with (
+                self.subTest(action=action),
+                patch("sys.argv", ["deployment.py", action]),
+                patch.object(deploy, "api") as remote,
+                patch.object(deploy.subprocess, "run") as command,
+                patch.object(deploy.subprocess, "check_output") as output,
+                self.assertRaisesRegex(SystemExit, "automation were removed"),
+            ):
+                deploy.main()
+            remote.assert_not_called()
+            command.assert_not_called()
+            output.assert_not_called()
+
+    def test_active_rules_allow_no_review_but_require_checks_prs_and_strict_base(self):
         valid = rules({deploy.CHECK_NAME})
         self.assertEqual(deploy.rule_errors(valid, {deploy.CHECK_NAME}), [])
-        variants = [[], valid[1:], rules({"unrelated"})]
+        variants = [[], rules({"unrelated"})]
+        variants.extend(
+            valid[:index] + valid[index + 1 :] for index in range(len(valid))
+        )
+        for count in (None, -1, True, "0"):
+            altered = copy.deepcopy(valid)
+            altered[2]["parameters"]["required_approving_review_count"] = count
+            variants.append(altered)
         for index, key in (
-            (2, "dismiss_stale_reviews_on_push"),
-            (2, "require_last_push_approval"),
             (2, "required_review_thread_resolution"),
             (3, "strict_required_status_checks_policy"),
         ):
@@ -494,6 +470,13 @@ class RuleAndCheckTests(unittest.TestCase):
             variants.append(altered)
         for value in variants:
             self.assertTrue(deploy.rule_errors(value, {deploy.CHECK_NAME}))
+        stricter = copy.deepcopy(valid)
+        stricter[2]["parameters"].update(
+            required_approving_review_count=1,
+            dismiss_stale_reviews_on_push=True,
+            require_last_push_approval=True,
+        )
+        self.assertEqual(deploy.rule_errors(stricter, {deploy.CHECK_NAME}), [])
         calls = []
 
         def get(path):
@@ -509,70 +492,6 @@ class RuleAndCheckTests(unittest.TestCase):
         self.assertTrue(any("deploy%2Ffork" in path for path in calls))
         with self.assertRaises(ValueError):
             deploy.require_rules(FORK, lambda _: [])
-
-    def run_check(self, *, failure=None, changed=False, ref="refs/heads/main"):
-        pr = {
-            "state": "open",
-            "base": {"ref": "deploy/fork", "repo": {"full_name": FORK.repository}},
-            "head": {
-                "ref": "candidates/fork/test",
-                "sha": SHA,
-                "repo": {"full_name": FORK.repository},
-            },
-        }
-        after = copy.deepcopy(pr)
-        if changed:
-            after["head"]["sha"] = BASE
-        with tempfile.TemporaryDirectory() as directory:
-            event = Path(directory) / "event.json"
-            event.write_text(
-                json.dumps({"inputs": {"pr_number": "42", "candidate_sha": SHA}})
-            )
-            env = {
-                "GITHUB_EVENT_NAME": "workflow_dispatch",
-                "GITHUB_EVENT_PATH": str(event),
-                "GITHUB_REPOSITORY": FORK.repository,
-                "GOVBIZ_RELEASE_BRANCH": "main",
-                "GITHUB_REF": ref,
-                "GITHUB_RUN_ID": "99",
-            }
-            with (
-                patch.dict(os.environ, env),
-                patch("sys.argv", ["deployment.py", "check"]),
-                patch.object(deploy, "api", side_effect=[pr, after]),
-                patch.object(deploy, "mutation") as post,
-                patch.object(deploy, "ensure_revision"),
-                patch.object(deploy, "tracked_files"),
-                patch.object(
-                    deploy,
-                    "admit",
-                    side_effect=failure,
-                    return_value={"candidateHash": "abc", "baseSha": BASE},
-                ),
-                patch.object(deploy, "candidate_parent"),
-                contextlib.redirect_stdout(io.StringIO()),
-            ):
-                if failure or changed or ref != "refs/heads/main":
-                    with self.assertRaises(ValueError):
-                        deploy.main()
-                else:
-                    deploy.main()
-        return post.call_args_list
-
-    def test_check_posts_to_exact_candidate_and_failure_never_inherits_success(self):
-        calls = self.run_check()
-        self.assertEqual(
-            [call.args[1]["state"] for call in calls], ["pending", "success"]
-        )
-        self.assertTrue(
-            all(call.args[0].endswith("/statuses/" + SHA) for call in calls)
-        )
-        for options in ({"failure": ValueError("stale")}, {"changed": True}):
-            calls = self.run_check(**options)
-            self.assertEqual(
-                [call.args[1]["state"] for call in calls], ["pending", "failure"]
-            )
-        self.assertEqual(self.run_check(ref="refs/heads/candidates/fork/untrusted"), [])
 
     def test_connected_runtime_cannot_write_secrets_or_argo_overrides_on_approved_branch(
         self,

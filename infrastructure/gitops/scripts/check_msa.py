@@ -4,6 +4,7 @@ import argparse
 import copy
 from pathlib import Path
 import subprocess
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -25,7 +26,7 @@ def render(service, helm="helm", extra=()):
     return list(yaml.safe_load_all(result.stdout))
 
 
-def policy_errors(service, resources, *, require_ops_migration=True):
+def policy_errors(service, resources, *, require_ops_migration=True, ops_sync_enabled=None):
     errors = []
 
     def require(condition, message):
@@ -54,7 +55,36 @@ def policy_errors(service, resources, *, require_ops_migration=True):
     require(not any(k in pod for k in ("hostNetwork", "hostPID", "hostIPC")), "host isolation required")
     require(not any("hostPath" in v for v in pod["volumes"]), "no host data mounts")
     container = pod["containers"][0]
-    require(len(pod["containers"]) == 1 and container["name"] == service, "wrong container")
+    containers = pod["containers"]
+    sync_enabled = len(containers) == 2 and service == "ops-service"
+    if ops_sync_enabled is not None:
+        require(type(ops_sync_enabled) is bool and sync_enabled == ops_sync_enabled,
+                "Ops sync container does not match the selected values")
+    require(container["name"] == service and (len(containers) == 1 or sync_enabled), "wrong container")
+    if sync_enabled:
+        expected_sync = copy.deepcopy(container)
+        for name in ("ports", "startupProbe", "readinessProbe", "livenessProbe"):
+            expected_sync.pop(name, None)
+        expected_sync.update(name="ops-sync", command=["python", "manage.py", "sync_evaluations", "--watch"])
+        require(containers[1] == expected_sync,
+                "Ops sync must use the API image, environment, secrets and security without HTTP probes")
+        sync_env = {item["name"]: item.get("value", "") for item in container["env"]}
+        for name in ("PREFECT_API_URL", "LLMOPS_ARTIFACT_URL"):
+            try:
+                url = urlsplit(sync_env.get(name, ""))
+                valid = (url.scheme in {"http", "https"} and bool(url.hostname)
+                         and not (url.username or url.password or url.query or url.fragment)
+                         and not url.hostname.endswith(".invalid")
+                         and url.hostname not in {"localhost", "::1"}
+                         and not url.hostname.startswith("127.")
+                         and not any(char.isspace() or char == "\\" for char in url.geturl()))
+                _ = url.port
+            except ValueError:
+                valid = False
+            require(valid, "Ops sync requires a configured remote " + name)
+        token = next((item for item in container["env"] if item["name"] == "LLMOPS_ARTIFACT_TOKEN"), {})
+        require(token.get("valueFrom") == {"secretKeyRef": {"name": "ops-runtime", "key": "LLMOPS_ARTIFACT_TOKEN"}}
+                and "value" not in token, "Ops sync requires an ops-runtime artifact token reference")
     require(container["securityContext"]["readOnlyRootFilesystem"] is True, "read-only image required")
     require(not container["securityContext"]["allowPrivilegeEscalation"], "privilege escalation forbidden")
     require(not container["image"].endswith(":latest"), "mutable latest tag forbidden")
@@ -79,6 +109,7 @@ def policy_errors(service, resources, *, require_ops_migration=True):
     if jobs and service == "ops-service":
         expected_pod = copy.deepcopy(pod)
         expected_pod["restartPolicy"] = "Never"
+        expected_pod["containers"] = [copy.deepcopy(container)]
         migration = expected_pod["containers"][0]
         for name in ("ports", "startupProbe", "readinessProbe", "livenessProbe"):
             migration.pop(name, None)

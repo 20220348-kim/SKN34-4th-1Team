@@ -44,6 +44,8 @@ with response:
 def main():
     name = "govbiz-ops-service-image-check-" + uuid.uuid4().hex[:12]
     image = name + ":test"
+    runner_source = ROOT.parent.parent / "evaluation/support-program-evidence/budget_client.py"
+    require(runner_source.is_file(), "The checkout's real budget_client.py is required.")
     built = False
     created = False
     try:
@@ -66,6 +68,8 @@ def main():
             "no-new-privileges:true",
             "--tmpfs",
             "/tmp:rw,noexec,nosuid,nodev,size=16m,uid=10001,gid=10001,mode=1770",
+            "--mount",
+            f"type=bind,source={runner_source},target=/test-inputs/budget_client.py,readonly",
             "--env",
             "DJANGO_SECRET_KEY=image-test-only-no-production-secret-2026",
             "--env",
@@ -109,10 +113,48 @@ def main():
             docker("exec", name, "id", "-u", capture=True).stdout.strip() == "10001",
             "The running process must not use root.",
         )
+        # Run the image's own tests under /app, without mounting Ops code or a DB.
+        # The runner source is a test-only input, not a production image dependency.
+        receipt_tests = [
+            name,
+            "python",
+            "manage.py",
+            "test",
+            "apps.evaluations.test_usage_correction.UsageReceiptTests",
+            "--noinput",
+        ]
+        docker(
+            "exec",
+            "--env",
+            "LLMOPS_EVIDENCE_DIR=/test-inputs",
+            *receipt_tests,
+        )
+        docker(
+            "exec",
+            "--env",
+            "OPS_TEST_BUDGET_CLIENT_PATH=/test-inputs/budget_client.py",
+            *receipt_tests,
+        )
+        missing_source = docker(
+            "exec",
+            "--env",
+            "OPS_TEST_BUDGET_CLIENT_PATH=/test-inputs/missing-budget-client.py",
+            *receipt_tests,
+            capture=True,
+            check=False,
+        )
+        require(
+            missing_source.returncode != 0
+            and "Usage receipt tests require the real runner source" in missing_source.stderr,
+            "Missing runner test input must fail explicitly, never skip the receipt tests.",
+        )
         docker("stop", "--time", "30", name)
         state = json.loads(docker("inspect", name, capture=True).stdout)[0]["State"]
         require(state["ExitCode"] == 0, "Gunicorn did not terminate gracefully.")
-        print("Gunicorn image: non-root/read-only, health, DB failure, Host and SIGTERM OK.")
+        print(
+            "Gunicorn image: non-root/read-only, health, DB failure, Host, "
+            "receipt contract/input rejection and SIGTERM OK."
+        )
     except BaseException:
         if created:
             docker("logs", name, check=False)

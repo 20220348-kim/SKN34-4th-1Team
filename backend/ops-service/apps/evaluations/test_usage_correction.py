@@ -28,11 +28,19 @@ from .test_budget import TOKEN, USAGE
 from .usage_correction import CorrectionUnavailable, correct_usage, read_receipt
 
 # Test the real producer/consumer contract across the runner and Ops packages.
-# Use the configured evidence directory in both checkouts and Compose's /app layout.
-_spec = importlib.util.spec_from_file_location(
-    "receipt_budget_client",
-    settings.LLMOPS_EVIDENCE_DIR / "budget_client.py",
+# Keep the configured evidence path; isolated image tests may supply a test-only input.
+_runner_source = Path(
+    os.environ.get(
+        "OPS_TEST_BUDGET_CLIENT_PATH",
+        settings.LLMOPS_EVIDENCE_DIR / "budget_client.py",
+    )
 )
+if not _runner_source.is_absolute() or not _runner_source.is_file():
+    raise RuntimeError(
+        "Usage receipt tests require the real runner source. Set OPS_TEST_BUDGET_CLIENT_PATH "
+        "to the absolute path of the checkout's budget_client.py; tests must not be skipped."
+    )
+_spec = importlib.util.spec_from_file_location("receipt_budget_client", _runner_source)
 _runner = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_runner)
 

@@ -73,7 +73,7 @@ DB 연결·migration·스키마 준비는 별도의 [Ops readiness](ops-migratio
 Ops API·동기화 컨테이너의 파일 mount는 모두 제거하고 실행기의 유료 실행과 모델 키는 비활성화한다.
 [실행 방법](../../llmops/README.md#내부-http로-결과-조회)을 따른다.
 
-- 서버와 클라이언트는 별도의 무작위 토큰을 사용한다. 예산 승인 토큰·Core 세션과 공유하지 않는다.
+- 서버와 클라이언트에 같은 전용 무작위 토큰을 설정한다. 예산 승인 토큰·Core 세션과 공유하지 않는다.
 - `GET /v1/status`, 허용된 UUID 아래 결과 파일 8종, 카탈로그에 등록된 평가 자료만 읽는다.
   디렉터리 목록·임의 경로·업로드·수정·삭제 API는 제공하지 않는다.
 - 파일당 최대 8 MiB, 클라이언트 HTTP timeout 3초다. 경로 이탈·심볼릭 링크·비정규 파일을 거절한다.
@@ -87,21 +87,141 @@ Ops API·동기화 컨테이너의 파일 mount는 모두 제거하고 실행기
 
 이 구성의 HTTP는 신뢰하는 전용 내부 개발 네트워크를 전제로 한다. 외부·공유 네트워크에 노출할 때는
 TLS·접근 제한을 갖춘 별도 주소를 승인된 배포 후보에 반영해야 한다. Kubernetes Pod가 Compose DNS 이름을
-자동으로 해석한다고 가정하지 않는다. 새 URL과 Secret 참조는 PR 리뷰 후 수동 병합으로 승인한다.
+자동으로 해석한다고 가정하지 않는다. 새 URL과 Secret 참조는 기존 개발 PR에서 필수 검사를 통과한 뒤 반영한다. 별도 배포 PR은 만들지 않는다.
+
+## Kubernetes Ops 상태 동기화
+
+Helm의 `opsSync.enabled` 기본값은 `false`다. 연결 설정을 준비한 뒤 `true`로 선택하면
+`ops-service` Deployment의 **같은 Pod**에 `ops-sync` 일반 컨테이너가 추가된다.
+기존 `python manage.py sync_evaluations --watch`를 실행하며 새 평가나 모델 호출을 접수하지 않는다.
+실행 흐름은 `Ops migration Job 완료 → Ops API + ops-sync → Compose Prefect·결과 HTTP 조회 → Kubernetes Ops DB 갱신`이다.
+Prefect·평가 실행기·결과 볼륨은 Compose에 유지한다.
+
+- API와 같은 이미지·DB 환경변수·`ops-runtime` Secret 참조·보안 설정을 사용한다.
+  별도 DB, Kubernetes Service, hostPath, production 패키지를 추가하지 않는다.
+- `replicas: 1`, `Recreate`를 유지한다. migration Job에는 동기화 컨테이너를 넣지 않는다.
+  동일 Pod의 일반 컨테이너는 시작 순서를 보장하지 않으므로 둘 사이의 시작 순서에 의존하지 않는다.
+  [Kubernetes의 다중 컨테이너 Pod 설명](https://kubernetes.io/docs/concepts/workloads/pods/)을 따른다.
+- 두 컨테이너 각각에 기존 Ops resources를 적용한다. 활성화 시 Ops Pod의 CPU·메모리 요청량과 제한량은
+  기존 API 컨테이너의 두 배가 되므로 클러스터 용량을 확인한다.
+- 기본 10초 주기·최대 25개 실행의 기존 동기화 명령을 재사용한다. DB 오류로 종료되면 Kubernetes가
+  재시작하며 SIGTERM/SIGINT 종료 처리를 유지한다. API용 HTTP probe를 동기화 컨테이너에 복사하지 않는다.
+  Pod Ready·rollout 성공만으로 동기화 진척, Prefect 실행기 생존 또는 실제 결과 조회를 증명하지 않는다.
+- `dev.py`의 이미지 갱신·실패 복구·원래 이미지 복원은 두 컨테이너를 한 번에 변경한다.
+  두 이미지가 이미 다르거나 알 수 없는 컨테이너가 있으면 변경을 거절한다.
+
+연결 values의 형태는 다음과 같다. 아래 `.internal` 주소는 형식 예시이며 저장소에서 이 DNS를 제공하지 않는다.
+실제로 Pod에서 접근 가능한 전용 내부 주소로 바꿔 기존 개발 변경에 포함한다.
+
+```yaml
+opsSync:
+  enabled: true
+env:
+  PREFECT_API_URL: http://prefect.internal:4200/api
+  LLMOPS_ARTIFACT_URL: http://artifacts.internal:8010
+secretName: ops-runtime
+secretKeys: [DJANGO_SECRET_KEY, DB_PASSWORD, LLMOPS_ARTIFACT_TOKEN]
+```
+
+`secretKeys`는 Helm에서 배열 전체를 교체하므로 기존 필수 키를 함께 선언한다.
+토큰 값은 Git·values에 넣지 않고 namespace의 기존 `ops-runtime` Secret에 주입한다.
+유효한 HTTP(S) 주소·토큰 참조가 없거나 `.invalid`·loopback·URL 내 인증값을 지정하면 Helm 렌더링을 거절한다.
+참조 존재·DNS·실제 인증 성공까지 오프라인 렌더링이 확인하지는 않는다.
+
+무료 검증은 `scripts/test_ops_sync.py`에서 실제 Helm 렌더링, 설정 누락 거절, API/동기화 이미지·DB·Secret 일치,
+migration 분리, 이미지 교체·실패 복구를 검사한다. 활성화 후에는 관리자 런타임 진단과 **새 무료 평가**의
+자동 상태 갱신·완료 결과 검증을 별도로 수행해야 한다. Compose의 `ops-sync`가 Kubernetes DB 동기화를
+대신하지 않으며, 두 환경이 실수로 서로 다른 Ops API·DB에 평가를 접수하지 않는지도 확인한다.
+
+## 로컬 kind와 Compose의 전용 통신 경로
+
+`compose.kind.yaml`과 `scripts/ops_bridge.py`는 기존 개인 개발 kind 클러스터와 같은 Docker Engine의
+Compose를 연결한다. WSL2/Linux·Intel Mac의 `dev` 모드용이며 Argo가 소유한 환경에는 적용하지 않는다.
+기존 `fork_cluster.py init/up`으로 준비된 상태·kubeconfig·클러스터 소유권 표시가 필요하다.
+Docker의 `network connect --gw-priority`를 지원하는 Engine을 사용한다(검증 기준 29.6.2).
+
+연결 흐름은 `Ops Pod → ClusterIP 서비스 → EndpointSlice → Docker 내부 네트워크 → Compose HTTP 서버`다.
+[Docker 내부 네트워크](https://docs.docker.com/reference/compose-file/networks/#internal)에는 Prefect,
+`ops-artifacts`, 해당 kind 노드만 참가한다. 다른 kind 클러스터가 공유하는 기본 네트워크를 통신 경로로 쓰거나
+호스트에 새 포트를 열지 않는다. Prefect의 기존 UI 포트는 loopback에 유지한다.
+Kubernetes는 [selector 없는 Service와 EndpointSlice](https://kubernetes.io/docs/concepts/services-networking/service/#services-without-selectors)를
+사용해 클러스터 외부 서버에 고정된 이름을 제공한다. Compose DNS 이름을 Pod에 그대로 전달하지 않는다.
+
+저장소 루트에서 실행한다. 기본 `.env`·`.env.ops`·`.env.artifacts`는 앞의 Compose 절차로 준비하며
+기존 비밀값과 볼륨을 유지한다. 다음 `govbiz-llmops`는 실제 연결할 Compose 프로젝트 이름과 일치해야 한다.
+
+```bash
+python3 -B infrastructure/gitops/scripts/ops_bridge.py env \
+  > infrastructure/gitops/.local/fork/ops-bridge.env
+
+dc_bridge() {
+  docker compose --project-name govbiz-llmops \
+    --env-file infrastructure/llmops/.env \
+    --env-file infrastructure/llmops/.env.ops \
+    --env-file infrastructure/llmops/.env.artifacts \
+    --env-file infrastructure/gitops/.local/fork/ops-bridge.env \
+    -f infrastructure/llmops/compose.yaml \
+    -f infrastructure/llmops/compose.ops.yaml \
+    -f infrastructure/llmops/compose.artifacts.yaml \
+    -f infrastructure/llmops/compose.kind.yaml --profile evaluation "$@"
+}
+dc_bridge config --format json | python3 infrastructure/llmops/check_artifact_compose.py
+dc_bridge up -d --no-deps prefect ops-artifacts
+python3 -B infrastructure/gitops/scripts/ops_bridge.py connect --compose-project govbiz-llmops
+python3 -B infrastructure/gitops/scripts/ops_bridge.py check --compose-project govbiz-llmops
+```
+
+연결 도구는 토큰을 읽거나 애플리케이션을 자동 변경하지 않는다. 클러스터·Docker 노드·Compose 프로젝트·
+네트워크 state ID·참가자·포트·현재 IP·Pod/Service CIDR 중복과 기존 Kubernetes 리소스 소유권을 검사한 뒤 경로만 만든다.
+다른 소유자의 동명 Service/EndpointSlice를 인수하지 않고, 기존 Service는 변경하지 않는다.
+EndpointSlice 갱신에는 `resourceVersion`을 사용하며 연결 중 컨테이너 교체를 감지하면 실패한다.
+도구는 bootstrap·개발 이미지 watcher와 같은 작업 잠금을 사용한다.
+
+생성되는 `.local/fork/ops-bridge-values.json`은 비밀값 없는 다음 설정을 제공한다.
+
+- Prefect: `http://ops-compose-prefect:4200/api`
+- 결과 서버: `http://ops-compose-artifacts:8010`
+- `opsSync.enabled=true`, `LLMOPS_LIVE_ENABLED=false`, 기존 Ops 필수 Secret 키와 artifact 토큰 참조
+
+현재 배포에 사용하는 Ops values에 이 설정을 반영하고, 기존 `ops-runtime` Secret의 DB·Django 키를
+유지하면서 Compose 결과 서버와 동일한 `LLMOPS_ARTIFACT_TOKEN`을 추가해야 한다.
+GitOps용 주소·참조 변경은 기존 개발 변경에 포함하며 별도 배포 브랜치나 PR은 만들지 않는다.
+발행 이미지의 추적된 설정 검증을 로컬 overlay로 우회하지 않는다.
+활성화 후 `check_evaluation_runtime`과 새 무료 평가 검증이 필요하다.
+
+`connect`는 자동 컨트롤러가 아니다. Compose가 Prefect/결과 서버를 교체하거나 네트워크를 다시 만들면
+**다시 실행해 EndpointSlice를 갱신**한다. `check`는 현재 IP·소유권만 읽어 확인하며 HTTP 성공을 뜻하지 않는다.
+EndpointSlice의 ready 표시는 구성된 라우팅 대상으로만 해석한다. Prefect에는 이 개발 구성의 별도 인증이 없으므로
+신뢰하는 로컬 Docker 환경에 한정하며 외부·공유 환경으로 그대로 확장하지 않는다.
+
+무료 실제 통신 검증은 다음과 같다.
+
+```bash
+python3 -B infrastructure/gitops/scripts/smoke_ops_bridge.py --report work/ops-bridge.json
+```
+
+새 이름의 임시 kind 클러스터와 Compose 프로젝트만 만들고 종료 시 해당 시험 컨테이너·볼륨을 정리한다.
+실제 Pod에서 DNS·Prefect HTTP·결과 서버 토큰 거절(401)·쓰기 거절(405)·평가 자료 SHA-256을 확인한다.
+오래된 EndpointSlice를 의도적으로 넣어 `check`가 거절하고 `connect`로 복구되는지도 확인한다.
+시험 Compose는 호출 셸의 토큰·경로·Compose 설정을 상속하지 않고 임시 환경변수를 사용한다.
+기본 실행은 현재 Ops 소스를 빌드한다. `--ops-image <기존 로컬 이미지>`를 명시하면 해당 이미지로만 검사하므로
+최신 소스의 빌드 증거로 보고하지 않는다. 모델 호출·평가 접수·Core 로그인·Ops DB 동기화는 수행하지 않는다.
+필수 LLMOps CI의 기존 integration 작업에 이 smoke를 포함하며 원격 실행 결과는 푸시 후 확인한다.
 
 ## 실제 연결의 남은 조건
 
-1. Kubernetes Pod에서 Compose Prefect와 결과 HTTP 서버로 접근할 전용 내부 주소·DNS·접근 경로를 구성한다.
-   현재 Compose의 loopback 포트를 전체 인터페이스로 바꾸어 해결하지 않는다.
+1. 사용할 개인 개발 환경에 위 전용 브리지를 연결한다. 임시 환경의 통신 검증과 기존 개발 환경 활성화는
+   별개다. 외부·공유 클러스터의 TLS·인증·네트워크 정책은 이 로컬 브리지 범위 밖이다.
 2. 새 Ops 배포 후보에 해당 URL과 별도 인증 Secret 참조를 반영한다. 실제 결과 볼륨은 Compose에 남긴다.
    hostPath 허용·기존 volume 삭제·스토리지 이관 없이 새 실행 결과 조회를 검증한다.
 3. 실행 release에 맞는 평가 자료가 HTTP로 전달되는지 해시로 확인한다.
-4. `ops-sync`의 Kubernetes 배치·Ops DB 접근 책임을 연결한다. 현재 Compose 동기화 프로세스는
-   여전히 Compose Ops DB를 사용하므로 Kubernetes Ops DB의 동기화를 대신하지 않는다.
+4. 위 연결 values와 Secret을 준비한 뒤 `opsSync.enabled=true`로 활성화하고 Kubernetes Ops DB의
+   실행 상태가 실제로 갱신되는지 확인한다. 배치 기능은 구현했지만 기본 설정은 계속 비활성화다.
 5. 새 격리 환경에서 Core 관리자 인증 → 무료 저장 캡처 평가 → 목록 자동 갱신 → 결과 조회 →
    재시작 후 유지까지 확인한다. 진단 응답만으로 이 E2E를 대체하지 않는다.
 
 LLMOps CI는 HTTP overlay와 실제 Compose 병합 검사를 사용한다. Ops에 파일 mount가 없는 상태에서
 무료 평가·완료 결과 진단·비교·후처리 복구를 검증하고 `storage_transport=http`를 확인한다.
 기존 파일 방식은 Ops 테스트와 취소 통합 검증에 유지한다. 이는 Compose 내부 HTTP 통합 검증이며,
-Kubernetes↔Compose 통신 또는 Argo 동기화 완료의 증거는 아니다. 새 변경의 CI 결과는 푸시 후 확인한다.
+전체 평가 E2E나 Argo 동기화 완료의 증거는 아니다. 별도의 kind 브리지 smoke도 통신·인증·자료 해시만
+검사한다. 새 변경의 CI 결과는 푸시 후 확인한다.

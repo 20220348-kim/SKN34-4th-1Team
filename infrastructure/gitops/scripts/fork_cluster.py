@@ -148,8 +148,18 @@ def approved_bundle(settings, helm="helm"):
     return approved_release(REPOSITORY_ROOT, Fork(settings["repository"], settings["branch"]), helm)
 
 
+def published_bundle(settings, helm="helm"):
+    from deployment import verified_release
+    if not shutil.which("gh"):
+        raise ValueError("GitHub CLI gh is required to read CI and image receipts; authenticate with gh auth login")
+    return verified_release(REPOSITORY_ROOT, Fork(settings["repository"], settings["branch"]), helm)
+
+
 def checked_release(settings, helm="helm"):
-    return approved_bundle(settings, helm)[0]
+    # Existing GitOps environments still authenticate their pinned historical images.
+    if settings["mode"] == "gitops":
+        return approved_bundle(settings, helm)[0]
+    return published_bundle(settings, helm)[0]
 
 
 def authenticate(args, settings, record):
@@ -261,7 +271,8 @@ def render_services(helm, images=None, root=ROOT, overlay=None):
     rendered = {}
     for service in SERVICES:
         values = root / (f"environments/portfolio/{service}.yaml" if images else f"environments/fork/{service}.yaml")
-        safety = free_runtime_errors(service, yaml.safe_load(values.read_text()))
+        source_values = yaml.safe_load(values.read_text())
+        safety = free_runtime_errors(service, source_values)
         if safety:
             raise ValueError("\n".join(safety))
         extra = []
@@ -273,7 +284,10 @@ def render_services(helm, images=None, root=ROOT, overlay=None):
         output = run([helm, "template", service, root / "charts/govbiz-service", "-n", NAMESPACE, "-f", values, *extra,
                       *(["-f", "-"] if override else [])],
                      **({"data": yaml.safe_dump(override)} if override else {}), capture=True)
-        problems = policy_errors(service, list(yaml.safe_load_all(output)))
+        sync_values = dict(source_values.get("opsSync", {}))
+        sync_values.update((override or {}).get("opsSync", {}))
+        problems = policy_errors(service, list(yaml.safe_load_all(output)),
+                                 ops_sync_enabled=sync_values.get("enabled", False))
         if problems:
             raise ValueError("\n".join(problems))
         rendered[service] = output
@@ -341,8 +355,8 @@ def _up(args, state, settings):
         rendered_services = render_services(args.helm, images, overlay=overrides(profile))
     else:
         if profile:
-            raise ValueError("Approved deployment snapshots cannot use local integration overrides")
-        record, snapshot, _ = approved_bundle(settings, args.helm)
+            raise ValueError("Published images require tracked runtime settings; use local images for local integration overrides")
+        record, snapshot, _ = published_bundle(settings, args.helm)
         rendered_services = {service: yaml.safe_dump_all(json.loads(snapshot[
             f"infrastructure/gitops/rendered/{service}.json"])) for service in SERVICES}
     print("PASS: four service Helm manifests and free-runtime policy preflight", flush=True)
@@ -402,7 +416,10 @@ def _up(args, state, settings):
         run(kube + ["apply", "--server-side", "--field-manager=govbiz-local", "-f", "-"], data=rendered_services[service])
     for service in SERVICES:
         run(nk + ["rollout", "status", "deployment/" + service, "--timeout=600s"])
-    write_json(state / "baseline.json", {"source": "local" if images else "ghcr", "images": images or record["images"]})
+    baseline = {"source": "local" if images else "ghcr", "images": images or record["images"]}
+    if record is not None:
+        baseline["release"] = record
+    write_json(state / "baseline.json", baseline)
     print("Ready: isolated development services; Argo CD does not own these workloads.")
     if images:
         print("LOCAL IMAGE VALIDATION ONLY: private GHCR authentication/pull was not tested.")

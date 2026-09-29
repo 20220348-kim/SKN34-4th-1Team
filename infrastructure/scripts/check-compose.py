@@ -394,12 +394,19 @@ def main():
             for arguments in (
                 ["check"],
                 ["makemigrations", "--check", "--dry-run"],
-                ["test", "--noinput"],
             ):
                 run(
                     base + ["exec", "-T", "ops-service", "python", "manage.py"] + arguments,
                     environment,
                 )
+            # The /app layout is not a repository checkout. Reuse the validated,
+            # read-only source mount only for the producer/consumer contract tests.
+            run(
+                base + ["exec", "-T", "--env",
+                        "OPS_TEST_BUDGET_CLIENT_PATH=/evaluation-data/budget_client.py",
+                        "ops-service", "python", "manage.py", "test", "--noinput"],
+                environment,
+            )
             probe = (
                 "import json,urllib.request; "
                 "r=urllib.request.urlopen('http://ops-service:8000/api/v1/health/ready',timeout=10); "

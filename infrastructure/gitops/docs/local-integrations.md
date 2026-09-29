@@ -1,7 +1,8 @@
 # 개인 Kubernetes의 실제 외부 연동
 
 > 이 안내의 Argo `valuesObject` 적용은 이전 소스 브랜치 기반 환경에 한정됩니다.
-> 승인된 `deploy/fork` Application에는 직접 적용을 차단합니다. 기존 연동 프로필이 있으면 새 `gitops` 전환도 중단합니다.
+> 별도 배포 브랜치·PR 절차는 제거했습니다. 과거 snapshot Application에는 직접 적용을 계속 차단합니다.
+> 로컬 `up --local-images` 연동은 유지하며 새 Argo 자동 배포 연결은 아직 없습니다.
 > [배포 후보 안내](deployment-candidates.md)에 따라 Git으로 검토할 연동 실행 정책을 별도로 준비해야 합니다.
 
 기본 `up`은 무료·격리 시연 설정입니다. 실제 기능은 이 문서의 **명시적 연동 프로필**로 연결합니다.
