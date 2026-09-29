@@ -24,5 +24,4 @@ data class ApplicationFormAvailabilityDbRow(
     var leaseToken: String? = null,
     var leaseUntil: LocalDateTime? = null,
     var aiStarted: Boolean = false,
-    var importSha256: String? = null,
 )

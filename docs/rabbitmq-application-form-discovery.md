@@ -167,4 +167,4 @@ Core 테스트 컨텍스트 캐시를 제한할 때만 `JAVA_TOOL_OPTIONS=-Dspri
 
 현재 사용자 작성 화면은 계정별 Discovery Job을 실행하지 않고 공고별 availability API에서 활성 snapshot을 읽습니다. 기존 계정별 discovery job API는 별도 책임으로 남아 있습니다. 새 작성은 활성 formVersionId만 허용하고, 기존 작성의 과거 버전과 최종 생성의 공식 원본 해시 대조는 유지합니다.
 
-Discovery 전용 timeout은 model 210초 < AI run 240초 < Core read 270초 < Worker lease 1,800초입니다. 다른 신청 준비 기능의 전역 timeout은 변경하지 않습니다. [상태·재시도·백필 실행 방법](application-form-availability.md)을 참고하세요.
+Discovery 전용 timeout은 model 210초 < AI run 240초 < Core read 270초 < Worker lease 1,800초입니다. 다른 신청 준비 기능의 전역 timeout은 변경하지 않습니다. [상태·재시도 정책](application-form-availability.md)을 참고하세요.

@@ -957,7 +957,7 @@ HWP 체크박스의 FORM_OBJECT Caption은 주변 문항과 함께 별도 근거
 
 Discovery는 첨부별 파싱 길이를 제한하고 각 첨부의 AI 문항 추출·Core 모델 변환·입력 위치 매핑을 독립적으로 처리합니다. 검증된 후보만 저장하며 다른 후보의 실패가 이미 검증된 양식을 취소하지 않습니다. 모든 후보가 실패하면 공고는 검토 상태와 실패 사유를 유지합니다.
 
-Discovery 전용 timeout은 model 210초 < AI run 240초 < Core read 270초 < Worker lease 1,800초입니다. 다른 신청 준비 기능의 전역 timeout은 변경하지 않습니다. [상태·재시도·백필 실행 방법](application-form-availability.md)을 참고하세요.
+Discovery 전용 timeout은 model 210초 < AI run 240초 < Core read 270초 < Worker lease 1,800초입니다. 다른 신청 준비 기능의 전역 timeout은 변경하지 않습니다. [상태·재시도 정책](application-form-availability.md)을 참고하세요.
 
 ## 신청 문서 MCP 파이프라인
 

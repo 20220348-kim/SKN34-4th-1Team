@@ -12,14 +12,11 @@ import ai.govbiz.core.applicationpreparation.client.ai.exception.ApplicationForm
 import ai.govbiz.core.applicationpreparation.client.ai.exception.ApplicationDocumentMcpException
 import ai.govbiz.core.applicationpreparation.service.exception.ApplicationFormNotSupportedException
 import ai.govbiz.core.applicationpreparation.service.exception.ApplicationFormDiscoveryException
-import ai.govbiz.core.applicationpreparation.service.backfill.ApplicationFormBackfillInput
-import ai.govbiz.core.applicationpreparation.service.backfill.ApplicationFormBackfillService
 import ai.govbiz.core.supportprogram.client.bizinfo.BizInfoAttachmentClient
 import ai.govbiz.core.supportprogram.client.document.*
 import ai.govbiz.core.supportprogram.domain.*
 import ai.govbiz.core.supportprogram.repository.SupportProgramRepository
 import ai.govbiz.core.supportprogram.service.detail.SupportProgramDetailService
-import java.nio.file.Files
 import java.security.MessageDigest
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -46,7 +43,6 @@ class ApplicationFormAvailabilityIntegrationTest {
     @org.springframework.test.context.bean.override.mockito.MockitoSpyBean lateinit var snapshots: ApplicationFormSnapshotRepository
     @Autowired lateinit var publication: ai.govbiz.core.supportprogram.service.sync.SupportProgramCatalogPublicationService
     @Autowired lateinit var catalog: SupportProgramRepository
-    @Autowired lateinit var importer: ApplicationFormBackfillService
     @Autowired lateinit var json: ObjectMapper
     @Autowired lateinit var jdbc: JdbcTemplate
     @Autowired lateinit var transactions: PlatformTransactionManager
@@ -309,27 +305,6 @@ class ApplicationFormAvailabilityIntegrationTest {
         assertNotEquals(ApplicationFormAvailabilityStatus.AVAILABLE, state().status)
         assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM application_form_snapshot", Int::class.java))
     }
-    @Test fun backfillValidatesEvidenceWithoutAiAndIsIdempotent() {
-        catalog.upsert(CatalogSupportProgram(program, ""))
-        val analysis: tools.jackson.databind.JsonNode = json.valueToTree(payload())
-        val raw = json.readTree("""{"schemaVersion":"application-form-openai-analysis-v2","programs":[{"sourceCode":"BIZINFO","sourceProgramId":"$id",
-          "files":[{"sourceUrl":"$url","fileName":"신청서.hwpx","sha256":"${hash(bytes)}"}],
-          "aiAnalysis":{"sourceCode":"BIZINFO","sourceProgramId":"$id","status":"FORM_FOUND","contractVersion":"application-form-discovery-v1","model":"test-model","promptVersion":"$prompt","forms":${analysis.path("forms")}}}]}""")
-        val path = Files.createTempFile("form-backfill-test", ".json")
-        try {
-            Files.write(path, json.writeValueAsBytes(raw))
-            val input = ApplicationFormBackfillInput(json).read(path, hash(Files.readAllBytes(path)), 1, 1)
-            val first = importer.applyValidated(input)
-            assertEquals(1, first.availablePrograms); assertEquals(1, first.snapshotCount)
-            val second = importer.applyValidated(input)
-            assertEquals(1, second.skipped); assertEquals(1, second.snapshotCount)
-            publication.publish("BIZINFO", listOf(CatalogSupportProgram(program, "")), catalog.startSyncGeneration("BIZINFO"))
-            assertEquals(ApplicationFormAvailabilityStatus.AVAILABLE, state().status)
-            verify(ai, never()).discoveryConfiguration()
-            verify(ai, never()).discover(any(AiApplicationFormDiscoveryRequest::class.java) ?: AiApplicationFormDiscoveryRequest("application-form-discovery-v1", "BIZINFO", id, program.title, emptyList()))
-        } finally { Files.deleteIfExists(path) }
-    }
-
     @Test fun missingAvailabilityReturnsNotFoundAndDiscoveryStillWorksWithoutPublishing() {
         assertEquals(RequestedAnalysisClaimResult.NotFound, availability.claimRequested("BIZINFO", id))
         val result = discovery.discoverQueued("BIZINFO", id) {}
