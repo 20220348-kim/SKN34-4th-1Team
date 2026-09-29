@@ -796,10 +796,12 @@ def test_hwp_mapping_preserves_authoritative_core_table_context(monkeypatch):
     async def invoke(selection_type, _instructions, content, *_args, **_kwargs):
         target = json.loads(content[0]["text"])["documentMap"]["targets"][0]
         assert target["context"] == req.hwpTargets[0].context
-        return selection_type.model_validate({"bindings": [], "scopeTargetIds": [], "unmappedFieldIds": ["company:name"]})
+        # HWP 응답 스키마는 scope를 받지 않는다(서버가 바인딩된 표에서 계산).
+        return selection_type.model_validate({"bindings": [], "unmappedFieldIds": ["company:name"]})
     agent = ApplicationPreparationAgent(model=None, run_timeout_seconds=1)
     monkeypatch.setattr(agent, "_invoke", invoke)
-    asyncio.run(agent.map_document(req, HwpDocumentAdapter().inspect(req)))
+    selection = asyncio.run(agent.map_document(req, HwpDocumentAdapter().inspect(req)))
+    assert selection.scopeTargetIds == [] and selection.unmappedFieldIds == ["company:name"]
 
 
 def test_pdf_blank_regions_require_closed_edges_and_never_cover_printed_labels():
@@ -1525,3 +1527,36 @@ def test_hwpx_fit_failure_stops_before_writing_a_file(monkeypatch, tmp_path):
     assert session.call.await_args.args[0] == "analyze_formfit"
     assert session.call.await_count == 1
     assert not (tmp_path / "completed.hwpx").exists()
+
+
+def test_hwp_mapping_answer_omits_scope_and_server_derives_it_from_bound_tables(monkeypatch):
+    from app.application_preparation.agent import ApplicationPreparationAgent
+    from app.application_preparation.document_contract import MapDocumentRequest
+    req = MapDocumentRequest(**hwp_request().model_dump(exclude={"facts", "answerRevision"}), fields=[
+        {"id": "company:name", "label": "기업명", "guidance": "", "required": True},
+        {"id": "consent", "label": "동의", "guidance": "", "required": False}])
+
+    def para(target_id, text="", editable=True):
+        return NativeTarget(targetId=target_id, nativeLocator={"paragraph": target_id}, kind="paragraph", currentText=text, editable=editable)
+
+    def choice(target_id, caption):
+        return NativeTarget(targetId=target_id, nativeLocator={"paragraph": "s0-p2", "group": "g1"}, kind="CHECKBOX", label=caption, currentText=caption)
+
+    document = DocumentMap(sourceSha256=req.sourceSha256, format="hwp", engineVersion="test", targets=[
+        para("s0-p0", "신청서 제목"), para("s0-p1-t0-r0-c0-p0", "기업명"), para("s0-p1-t0-r0-c1-p0"), para("s0-p1-t0-r1-c1-p0"),
+        para("s0-p1-t0-r2-c1-p0", editable=False), choice("s0-p2-f0", "동의"), choice("s0-p2-f1", "비동의"), para("s0-p5-t0-r0-c1-p0")])
+
+    async def invoke(selection_type, instructions, _content, *_args, **_kwargs):
+        # 모델 응답 스키마에 scope 목록이 없어야 큰 양식에서도 답이 잘리지 않는다.
+        assert "scopeTargetIds" not in selection_type.model_fields
+        assert "derives the editable scope" in instructions
+        return selection_type.model_validate({"bindings": [
+            {"factId": "company:name", "targetId": "s0-p1-t0-r0-c1-p0", "box": None},
+            {"factId": "consent", "targetId": "s0-p2-f0", "box": None}], "unmappedFieldIds": []})
+
+    agent = ApplicationPreparationAgent(model=None, run_timeout_seconds=1)
+    monkeypatch.setattr(agent, "_invoke", invoke)
+    selection = asyncio.run(agent.map_document(req, document))
+    assert [b.factId for b in selection.bindings] == ["company:name", "consent"]
+    # 바인딩된 표 전체(편집 가능한 것만) + 체크박스 그룹 전원. 제목 문단과 다른 표는 제외.
+    assert selection.scopeTargetIds == ["s0-p1-t0-r0-c0-p0", "s0-p1-t0-r0-c1-p0", "s0-p1-t0-r1-c1-p0", "s0-p2-f0", "s0-p2-f1"]

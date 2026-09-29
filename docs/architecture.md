@@ -125,6 +125,9 @@ Frontend는 `/app/application-preparations`의 목록·삭제, `/new`의 지연 
 문서 생성은 `ApplicationDocumentController → ApplicationDocumentService → 공식 첨부 Client →
 ApplicationDocumentEditor → AiApplicationPreparationClient → AI Service Router → Service → 위치 선택 Agent → OpenAI`로 이어집니다.
 공식 첨부 SHA-256이 선택한 양식 버전과 일치할 때 원본의 문단·표 셀 또는 PDF 페이지를 분석합니다.
+저장된 바인딩이 있는 HWP·HWPX·DOCX·XLSX는 작성 계획을 AI에 다시 묻지 않고 바인딩에서 결정적으로 만듭니다(빈 칸은 입력, 인쇄된 빈칸 표시는 그 구간 교체,
+라벨 뒤는 삽입, 예시 문구는 전체 교체, 체크박스·필드는 set_check·set_field). 한 문단에 여러 답변이 묶인 경우만 그 답변들에 한해 모델에 배치를 묻고,
+합친 계획은 기존과 같이 저장 바인딩·범위·scope 검증을 통과해야 합니다. PDF는 기존 경로(AcroForm 결정적, 평면 PDF는 모델)를 유지합니다.
 AI는 답변을 다시 쓰지 않고 기입 위치만 선택합니다. Core가 답변 전체의 매핑을 검증하고 원본에 사용자 값을 기입합니다.
 서로 다른 답변이 같은 HWP/HWPX 텍스트 칸을 선택한 AI 응답은 그대로 사용하지 않습니다. AI Service가 칸마다 첫 답변과 충돌하지 않은 위치를 고정하고 나머지 충돌 답변을 고정된 칸을 금지한 한 번의 요청으로 다시 배치하며, 필요하면 답변 없는 예시 분류 요청을 분리한 뒤 전체 계약을 다시 검증합니다. 교정 실패는 정상 결과로 숨기지 않습니다.
 HWP/HWPX는 파란 텍스트 후보와 표 문맥을 함께 전달하여 예시 삭제 대상도 선택합니다. Core는 후보 ID를 검증하고 선택된 파란 예시만 제거한 뒤 검은 글씨로 기입합니다. PDF의 기존 텍스트 삭제는 지원하지 않습니다.

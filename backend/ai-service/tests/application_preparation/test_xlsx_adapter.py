@@ -327,8 +327,8 @@ def test_real_ai_router_map_generate_roundtrip_without_paid_model(tmp_path, monk
                 scopeTargetIds=[t.targetId], unmappedFieldIds=[])
 
         async def plan_document(self, req, document):
-            t = target(document, 'B2')
-            return PlanSelection(operations=[operation(t)], unresolvedTargets=[], scopeTargetIds=[t.targetId])
+            # 저장된 바인딩이 있으면 작성 계획은 결정적으로 만들어지므로 모델 계획은 호출되지 않아야 합니다.
+            raise AssertionError('xlsx plan must be derived from saved bindings')
 
     monkeypatch.setenv('DOCUMENT_INTERNAL_TOKEN', 't' * 32)
     app = FastAPI()

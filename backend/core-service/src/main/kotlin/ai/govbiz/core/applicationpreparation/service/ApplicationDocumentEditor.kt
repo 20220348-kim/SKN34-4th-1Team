@@ -505,8 +505,18 @@ class ApplicationDocumentEditor {
         }
         val changedCells = locations.filter { it.paragraph in changed }.mapNotNull { it.cell }.distinct()
         changedCells.forEach { cell ->
-            require(cell.paragraphList.all { it.controlList.isNullOrEmpty() })
             val h = cell.listHeader
+            if (cell.paragraphList.any { !it.controlList.isNullOrEmpty() }) {
+                // 셀 안에 표·그림 같은 컨트롤 문단이 있으면 셀 높이를 다시 계산할 수 없습니다(컨트롤 높이를 모름).
+                // 실제 공고 신청서(강원 모빌리티)의 표 안 표가 이 경우라, 생성을 거절하는 대신 바뀐 문단의 줄 나눔만 다시 잡고
+                // 셀·표 높이는 그대로 둡니다. 한/글은 열 때 높이를 다시 계산합니다.
+                val width = (h.width - h.leftMargin - h.rightMargin).toInt()
+                cell.paragraphList.filter { it in changed }.forEach { paragraph ->
+                    val line = paragraph.lineSeg?.lineSegItemList?.firstOrNull()
+                    layout(paragraph, width, line?.lineVerticalPosition ?: 0)
+                }
+                return@forEach
+            }
             h.property.lineChange = LineChange.Normal
             val width = (h.width - h.leftMargin - h.rightMargin).toInt()
             var cursor = 0
@@ -814,6 +824,10 @@ class ApplicationDocumentEditor {
 
     private fun fail(message: String): Nothing = throw ApplicationDocumentException("APPLICATION_DOCUMENT_UNSUPPORTED", message)
     private fun <T> safely(block: () -> T): T = try { block() } catch (error: ApplicationDocumentException) { throw error } catch (error: Exception) {
+        // 어느 검증에서 걸렸는지 운영 로그로 남깁니다. 답변 값은 예외 메시지에 넣지 않으므로 클래스·메시지·발생 위치만 기록합니다.
+        val origin = error.stackTrace.firstOrNull { it.className.startsWith("ai.govbiz") }?.let { "${it.fileName}:${it.lineNumber}" }
+        org.slf4j.LoggerFactory.getLogger(javaClass).warn("application_document_editor_unsupported rootException={} rootMessage={} origin={}",
+            error.javaClass.name, error.message?.take(300), origin)
         throw ApplicationDocumentException("APPLICATION_DOCUMENT_UNSUPPORTED", "원본의 구조 또는 편집 제한으로 문서를 생성하지 못했습니다. 원본 파일을 확인해 주세요.", error)
     }
     private companion object { const val MAX_BYTES = 32 * 1024 * 1024 }
