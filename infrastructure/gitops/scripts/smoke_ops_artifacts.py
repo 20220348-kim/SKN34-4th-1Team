@@ -39,6 +39,35 @@ print("restored" if value["restore"] else "hidden")
 """
 
 
+TAMPER_REPORT = r"""
+import hashlib,json,os,sys
+from pathlib import Path
+from uuid import UUID
+value=json.load(sys.stdin)
+run_id=str(UUID(value["run_id"]))
+assert run_id==value["run_id"]
+root=Path(os.environ["LLMOPS_RESULTS_DIR"]).resolve(strict=True)
+folder=root/run_id/"evaluation"
+assert not (root/run_id).is_symlink() and not folder.is_symlink()
+assert folder.resolve(strict=True).is_relative_to(root)
+report=folder/"report.html"
+backup=folder/"report.html.smoke-held"
+assert not report.is_symlink() and not backup.is_symlink()
+assert backup.is_file()
+raw=backup.read_bytes()
+assert 0<len(raw)<=8*1024*1024
+assert hashlib.sha256(raw).hexdigest()==value["sha256"]
+changed=raw[:-1]+bytes([raw[-1]^1])
+if value["remove"]:
+    assert report.is_file() and report.read_bytes()==changed
+    report.unlink()
+else:
+    with report.open("xb") as target:
+        target.write(changed)
+print(json.dumps({"sha256":hashlib.sha256(changed).hexdigest(),"size":len(changed)}))
+"""
+
+
 def response(client, target, *, allow_error=False):
     try:
         result = client.open(target, timeout=15)
@@ -204,21 +233,56 @@ def missing_report(compose, env, run_id, expected_hash):
         move(True)
 
 
-def artifact_status(nk, run_id):
+@contextmanager
+def tampered_report(compose, env, run_id, expected_hash):
+    run_id = str(UUID(run_id))
+    command = compose + [
+        "exec",
+        "-T",
+        "evaluation-runner",
+        "python",
+        "-c",
+        TAMPER_REPORT,
+    ]
+
+    def change(remove):
+        return json.loads(
+            execute(
+                command,
+                env=env,
+                data=json.dumps(
+                    {"run_id": run_id, "sha256": expected_hash, "remove": remove}
+                ),
+            )
+        )
+
+    # Hold the verified original outside the served path. Only the synthetic copy
+    # is removed; an unexpected writer or changed backup blocks restoration.
+    with missing_report(compose, env, run_id, expected_hash):
+        altered = change(False)
+        try:
+            assert altered["sha256"] != expected_hash and altered["size"] > 0
+            yield altered
+        finally:
+            assert change(True) == altered
+
+
+def artifact_response(nk, run_id):
     run_id = str(UUID(run_id))
     program = (
-        "import os; os.environ.setdefault('DJANGO_SETTINGS_MODULE','config.settings'); "
+        "import os,json,hashlib; os.environ.setdefault('DJANGO_SETTINGS_MODULE','config.settings'); "
         "from django.conf import settings; "
         "from urllib.request import Request,build_opener,ProxyHandler; "
         "from urllib.error import HTTPError\n"
         "try:\n"
         " with build_opener(ProxyHandler({})).open(Request("
         f"settings.LLMOPS_ARTIFACT_URL+'/v1/results/{run_id}/evaluation/report.html',"
-        "headers={'Authorization':'Bearer '+settings.LLMOPS_ARTIFACT_TOKEN}),timeout=3) as r: "
-        "print(r.status)\n"
-        "except HTTPError as e:\n print(e.code); e.close()\n"
+        "headers={'Authorization':'Bearer '+settings.LLMOPS_ARTIFACT_TOKEN}),timeout=3) as r:\n"
+        "  raw=r.read(8*1024*1024+1); assert len(raw)<=8*1024*1024\n"
+        "  print(json.dumps({'status':r.status,'sha256':hashlib.sha256(raw).hexdigest(),'size':len(raw)}))\n"
+        "except HTTPError as e:\n print(json.dumps({'status':e.code})); e.close()\n"
     )
-    return int(
+    return json.loads(
         execute(
             nk
             + [
@@ -232,7 +296,7 @@ def artifact_status(nk, run_id):
                 "-",
             ],
             data=program,
-        ).strip()
+        )
     )
 
 
@@ -272,12 +336,24 @@ def verify(nk, compose, env, password, expected_run, expected_hash, report):
             404,
             ("result_artifact",),
         ),
+        (
+            "report_tampered",
+            lambda: tampered_report(compose, env, expected_run["id"], expected_hash),
+            200,
+            ("result_artifact",),
+        ),
     ):
         report["evaluation_phase"] = "artifact_" + name
         scenario = {"status": "FAIL", "recovery_verified": False}
         evidence["scenarios"][name] = scenario
-        with fault(), fork_web.forwards(nk):
-            assert artifact_status(nk, expected_run["id"]) == internal_status
+        with fault() as altered, fork_web.forwards(nk):
+            remote = artifact_response(nk, expected_run["id"])
+            assert remote["status"] == internal_status
+            if name == "report_tampered":
+                assert remote == {"status": 200, **altered}
+                assert remote["sha256"] != expected_hash
+                scenario["tampered_report_sha256"] = remote["sha256"]
+                scenario["report_bytes"] = remote["size"]
             scenario["failure"] = check_access(
                 password, expected_run, expected_hash, failed_checks
             )
