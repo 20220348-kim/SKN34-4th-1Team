@@ -1,6 +1,26 @@
-# LLMOps 개발 현황과 후속 전략 — skn-64
+# LLMOps 개발 현황과 후속 전략 — skn-65
 
 [문서 목록](README.md) · [도입·구현 이력](langfuse-adoption-strategy.md) · [Ops API](../backend/ops-service/README.md) · [실행 안내](../infrastructure/llmops/README.md)
+
+## 후속 구현 — 2026-09-30
+
+S1의 로컬 이미지 Ops 활성화와 Core·Ops 동시 웹 연결을 추가했다.
+소유권·현재 브리지·DB 대상·Secret 참조를 검증하고 artifact 토큰만 추가한 뒤 migration→API+sync→진단으로 진행한다.
+성공한 연결은 다음 로컬 초기화에도 유지하며 GHCR·Argo 입력을 로컬 설정으로 변경하지 않는다.
+
+S2는 기존 무료 평가 검증을 재사용하는 `smoke_ops_bridge.py --evaluate`로 구현해 필수 LLMOps CI에 연결했다.
+격리 Kubernetes Core/Ops/MySQL과 Compose 실행기를 사용하며 Compose Ops DB가 없음을 확인한다.
+반복 활성화의 비밀값 보존, 관리자 인증, 중복 접수, 목록 자동 동기화, Pod 재시작 후 DB·보고서 해시 보존을 검사한다.
+실행 절차와 경계는 [Ops 연결 계약](../infrastructure/gitops/docs/ops-runtime.md)을 따른다.
+
+현재는 코드와 오프라인 검증 단계다. 새 전체 클러스터 E2E와 최신 커밋 CI는 아직 실행 결과가 없으며,
+기존 체험용 Compose나 개인 kind 환경에 적용 완료했다고 판단하지 않는다.
+다음 완료 조건은 이 변경을 푸시한 SHA의 필수 CI 및 `ops-bridge.json`에서
+`evaluation_status=PASS`, 재시작 보존과 정리 성공을 확인하는 것이다. S3 이후 장애·live 예산·GHCR/Argo·복원 작업은 남아 있다.
+
+로컬에서는 관련 무료 테스트 74개를 통과했다. 소유권·잠금·Helm·migration 검증은 격리 Linux 컨테이너에서,
+실제 Compose 병합·브리지 검사는 Windows Docker 환경에서 확인했다. 신규 Python 파일의 Ruff 검사·포맷,
+워크플로 YAML·Bash 구문, 문서 경로와 `git diff --check`도 확인했다.
 
 ## 현재 판단과 확인 범위 — 2026-09-30
 
@@ -96,6 +116,108 @@ HTTP bootstrap·직접 Service 경로와 기존 LLMOps CI smoke에 연결했다.
 도우미·기존 추적 테스트 167개, 통합 smoke 1개, 실행 명세 20개, Web Ops 50개와 실제 Langfuse
 저장·재조회 3건·23개 관측이 통과했다. 유료 API 호출·품질 승인·운영 컨테이너 이미지 교체는 하지 않았다.
 검증 결과와 실행 범위는 [도우미 추적 안내](../infrastructure/llmops/README.md#도우미-그래프-추적-검증--2026-09-30)를 따른다.
+
+<details>
+<summary>2026-09-29 GitOps 분석 기록 — 당시 상태</summary>
+
+## 최신 판단 — 2026-09-29 22:11 KST 확인
+
+**다음 개발의 중심은 Kubernetes Ops에서 새 무료 평가를 접수하고 결과를 읽는 전체 흐름을 완성하는 것이다.**
+네트워크 연결·migration·동기화 컨테이너는 구현됐지만, 활성화·웹 접속·새 평가·장애 복구의 연결 증거가 부족하다.
+아래 순서가 과거 계획보다 우선한다. 문서 아래의 과거 DB 집계·CI 상태·배포 PR 설계는 현재 상태가 아니다.
+
+| 분석 기준 | 확인 결과 |
+|---|---|
+| 로컬 브랜치 | `skn-62 / 0cb2997973311ee7f641c589d0b2e2763e0b2cda`; 분석 시작 시 작업 트리 깨끗함 |
+| 개인 포크와 원본 main | 둘 다 `814d084fb77b8f68c751d490d1434a90f666a379`; 로컬 HEAD와 파일 내용 동일 |
+| 원격 CI | 두 SHA 모두 Infra·Ops 성공, GovBiz·Catalog·LLMOps 실행 중으로 관찰. 16개 작업 전체 완료 판정은 보류 |
+| 이미지 발행 | 확인한 run `36572945076`은 workflow success지만 `publish=skipped`, `state=blocked`; CI 미완료 차단 |
+| main 보호 | Ruleset `24174638` 활성. 실제 규칙은 deletion·non_fast_forward 두 개. PR·required_status_checks 없음; 별도 branch protection API도 404 |
+| 실행 환경 | 현재 Docker context에서는 kind 노드 1개만 실행 중. 이 체크아웃의 기본 `.local/fork/settings.json` 없음. 다른 WSL 경로·context·클러스터 내부 상태는 확인하지 않음 |
+| 이번 작업 범위 | 코드·GitHub API·실행 목록의 읽기 전용 조사와 문서 갱신. 배포, 원격 규칙 변경, 유료 호출, 사람 검토 승인 없음 |
+
+CI 상태는 위 조회 시점의 기록이다. 이후 배포 판단 시 대상 SHA와 최신 run attempt를 다시 확인한다.
+같은 파일 내용이어도 병합 커밋의 CI를 이전 SHA 결과로 대체하지 않는다.
+
+## 확인된 공백과 영향
+
+| 우선순위 | 코드·원격 근거 | 판단 |
+|---|---|---|
+| P0 | main rules API에 필수 CI 규칙 없음. [발행 gate](../infrastructure/release/gate.py)는 별도로 5 workflow·16 job 검사 | 병합 차단과 이미지 발행 차단이 서로 다르다. 현재 CI 실패 병합은 원격 규칙으로 막지 않는다. 발행 가드를 우회하지 않고, 리뷰 0명 정책과 필수 CI 정책을 분리해 정리해야 한다. |
+| P1 | [ops_bridge.py](../infrastructure/gitops/scripts/ops_bridge.py)는 `ops-bridge-values.json` 생성만 수행. [connected_runtime.py](../infrastructure/gitops/scripts/connected_runtime.py)는 Ops 제외 | URL·Secret·opsSync 활성화가 하나의 지원되는 실행 절차로 이어지지 않는다. 생성 파일 존재를 적용 완료로 표시하면 안 된다. |
+| P1 | [fork_cluster.py](../infrastructure/gitops/scripts/fork_cluster.py)의 web은 Core 18080만 전달. [Vite](../frontend/web/vite.config.ts)는 Ops 18001 사용 | Ops 포트 전달이 별도로 없으면 화면에서 연결 실패. 기존 Compose가 18001을 점유하면 다른 Ops DB를 볼 위험이 있다. 포트 충돌과 실제 목적지를 검사해야 한다. |
+| P1 | [브리지 smoke](../infrastructure/gitops/scripts/smoke_ops_bridge.py)는 `evaluation_executed=false`; [기존 LLMOps CI](../.github/workflows/llmops-ci.yml)는 실제 Core 인증과 Compose Ops 평가를 검증 | 두 검증의 통과를 Kubernetes Ops의 실제 평가 E2E 성공으로 합산할 수 없다. Kubernetes 배치에서 같은 업무 흐름의 검증이 필요하다. |
+| P1 / live 전 | [Compose 실행기](../infrastructure/llmops/compose.ops.yaml)의 `LLMOPS_OPS_API_URL=http://ops-service:8000`. [BudgetClient](../evaluation/support-program-evidence/budget_client.py)는 이 주소로 claim·authorize·settle·close | 기존 주소는 Compose Ops용이다. Kubernetes DB의 예약을 처리하는 역방향 경로·토큰·실행 ID를 연결해야 한다. 무료 저장 캡처는 BudgetClient를 사용하지 않으므로 첫 무료 E2E를 이 작업에 묶어 지연시키지 않는다. 취소는 기존 Prefect 경로도 함께 검증한다. |
+| P1 | 브리지 주소 갱신은 수동 connect. 동기화 컨테이너는 HTTP probe 없음; 런타임 진단은 runner 생존을 증명하지 않음 | 기존 실행별 `status_stale`·동기화 시각 표시를 활용한다. 프로세스가 살아 있으나 진척이 없는 경우와 외부 장애를 구분해 검증한다. Prefect 장애를 API liveness 실패로 연결하지 않는다. |
+| P2 / Argo 전 | 공개 gitops 명령 → approved_bundle → approved_release가 여전히 `deploy/fork`를 조회 | 별도 브랜치 제거 후 새 Argo 활성화 경로는 정리되지 않았다. 과거 snapshot 조회 호환성과 신규 활성화를 분리하고, 신규 실행은 명확한 안내로 차단해야 한다. 별도 배포 브랜치·PR을 다시 만들지 않는다. |
+| P2 / AI 품질 | [평가기](../evaluation/support-program-evidence/evaluate.py)는 synthetic·ai-authored·최대 3문서/12사례·고정 근거. 의미 충실도 자동 지표 없음 | 기반 기능과 현재 모델 품질 기준은 별개다. 사람 검토 기록·현재 설정의 비교 기준이 확보되기 전 자동 품질 승격을 주장하지 않는다. |
+
+## 개발 순서와 종료 조건
+
+| 단계 | 구현 범위 | 완료 증거 / 다음 단계 진입 조건 |
+|---|---|---|
+| S0: 검증 기준 확정 | 최신 main의 16개 작업·브리지 artifact 확인. 원격 규칙의 문서 불일치 정정. 권고는 리뷰 0명을 유지하면서 필수 CI를 강제하는 것; PR 강제와 별도 배포 PR은 별개의 결정 | 정확한 SHA·run attempt·job별 성공과 `ops-bridge.json`의 실제 PASS. 원격 정책을 변경한다면 변경 후 API 결과로 확인. 이번 조사에서는 규칙을 수정하지 않음 |
+| S1: Ops 활성화와 웹 경로 | 기존 dev 렌더러에 검증된 Ops 연결 입력을 전달. 기존 DB·Django Secret 보존, artifact token 키만 명시적 주입. Core·Ops loopback 포트 전달과 대상 확인 | 렌더링·정책 검증 후 migration→API+sync 반영. 재실행 시 동일 결과, 잘못된 소유권·포트 충돌·누락 토큰 거부. HTTP 결과 조회·인증 성공. GHCR 경로의 추적된 입력 검증은 유지 |
+| S2: 무료 Kubernetes 업무 E2E | 격리된 실제 Core·MySQL·Kubernetes Ops/API+sync와 Compose Prefect·runner·artifact 구성. 기존 ops_smoke의 인증·접수·결과 검증 재사용 | 관리자 로그인→무료 접수→Prefect 실행→Kubernetes DB 자동 완료→HTTP 보고서·비교 조회→재시작 후 보존. 모델 호출 0, 동일 request ID 중복 접수 시 flow 1개. 화면 조회가 상태 동기화를 대신하지 않아야 함 |
+| S3: 장애·복구와 역방향 예산 경로 | E2E 환경에서 서비스 교체·동기화 중단·토큰 실패·결과 누락 재현. live 전에는 runner→Kubernetes Ops 예산 API를 격리된 내부 경로로 연결 | 아래 장애 표 통과. 무료 모델 HTTP 대역으로 취소·예산 소진·응답 유실·미확인 사용량 보존 검증. 임의 외부 포트 공개와 기존 장부/volume 삭제 없음 |
+| S4: 배포·데이터 복구 | 지원되지 않는 신규 gitops 진입점 정리. 검증된 SHA의 Chart·values·digest를 묶어 실제 GHCR 초기화 확인. Argo 실사용 단계에서는 새 정책에 맞는 입력·동기화·되돌리기 계약 확정 | 새 환경에서 네 이미지 실제 pull·migration·업무 E2E·이전 호환 이미지 복구. Argo를 구현하면 A→B→A와 실패 차단을 별도 검증. Ops DB와 결과물 백업을 새 볼륨으로 복원해 동일 실행 조회 |
+| Q: 품질 기준 / 병행 | 기존 자료·기대 답의 사람 검토와 현재 모델의 제한 평가 준비. 실제 Core 검색 추적→상세 근거 RAG 추적으로 확장 | 검토자·자료 해시·프롬프트/모델/평가기 버전·사례별 판정·기준 지정 이력. 유료 실행은 자료와 호출 예산 승인을 받은 범위만 사용 |
+| S5: 평가 범위와 자동 실행 | 검색·답변·도우미 평가를 단계별로 연결하고 입력/금액/기간 예산 및 필요한 알림 마련 | 검색 지표와 답변 품질 분리, 미확인 비용 보존, 동일 버전 품질 증거 확인. 중복 일정·재시작·한도 소진 검증 이후 정기 실행 활성화 |
+
+S1~S2는 무료 경로부터 완성한다. Q의 사람 검토 준비는 병행할 수 있다.
+기존 기능을 새로 만드는 대신 이미 있는 인증, 실행 명세, 상태 동기화, 결과 검증, 취소·예산 검증을 실제 배치에 연결한다.
+별도 배포 브랜치, 강제 리뷰어, 범용 오케스트레이터, Prefect의 Kubernetes 이관, HA/HPA는 이번 선행 과제가 아니다.
+
+## 다음 구현 묶음의 구체적인 범위
+
+첫 묶음은 **S1 + S2의 최소 성공 경로**로 제한한다.
+
+1. 브리지 결과의 repository·state·namespace·서비스 주소를 확인한 뒤 기존 dev 렌더러에 Ops 설정을 전달한다.
+   Secret 값은 Git·values·명령 인자·진단 출력에 남기지 않는다. 기존 DB·Django 키를 회전하지 않는다.
+2. Core와 Ops의 웹 접근을 함께 관리하고, 사용 중인 포트를 임의로 종료하거나 기존 Compose Ops로 조용히 연결하지 않는다.
+3. 기존 `ops_smoke.py`의 검증을 재사용하되 Kubernetes Ops DB가 실제 접수·상태·결과의 기준인지 증명한다.
+   테스트용 관리자 생성은 격리된 DB에만 수행하며 기존 회원 DB를 사용하지 않는다.
+4. 정상 접수와 동일 ID 재접수, 비관리자/CSRF 거부, 보고서 해시, API+sync 재시작 후 이력 보존을 검증한다.
+5. 결과에 소스 SHA, 실제 image ID/digest, execution release 해시, request/flow ID, transport,
+   단계별 PASS/FAIL, `model_api_calls=0`, 정리 결과를 기록한다. 비밀값·세션·원문은 제외한다.
+
+예상 변경 지점은 기존 fork_cluster/connected_runtime·Ops 연결 설정·웹 실행 경로·격리 smoke와 관련 테스트다.
+새 DB나 production 패키지는 필요성이 입증되기 전 추가하지 않는다.
+처음부터 모든 장애·Argo·품질 자동 승격을 한 변경에 넣지 않는다.
+
+## 통합 검증에 반드시 포함할 장애
+
+| 상황 | 기대 결과 |
+|---|---|
+| Ops sync 종료·재시작 | API 조회와 무관하게 자동 동기화 재개, 동일 flow 중복 생성 없음 |
+| Prefect 중단 | 상태를 성공으로 바꾸지 않고 기존 오류/지연 표시. API/DB 이력 조회 보존 |
+| artifact token 불일치·결과 누락/변조 | HTTP 오류·해시 실패를 명시, 완료/정상 보고서로 표시하지 않음 |
+| Compose 컨테이너 실제 재생성 | 이전 주소 감지, connect 갱신 후 새 요청과 결과 조회 복구 |
+| Ops API+sync 이미지 변경 실패 | 두 이미지 함께 복구. DB migration의 하위 버전 호환성을 별도 확인 |
+| 실행기 예산 주소/토큰/실행 명세 오류 | 모델 전송 전 차단. 다른 Ops DB의 예약으로 진행하지 않음 |
+| 예산 승인 후 취소·응답 유실 | 추가 전송 차단, 확인된 사용량 보존, 미확인 몫을 임의 환급하지 않음 |
+| DB·결과물 복원 | 새 격리 저장소에서 실행·결과 해시·검토·장부 연결 일치. 기존 볼륨 삭제 없음 |
+
+외부 장애를 liveness로 연결해 Pod를 반복 재시작하는 설계를 피한다.
+[Kubernetes probe 문서](https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/)처럼
+생존·서비스 준비·업무 의존성 진단의 목적을 구분하고, 기존 읽기 전용 런타임 진단을 재사용한다.
+
+## 설계 판단의 외부 근거와 검증 한계
+
+selector 없는 Service·EndpointSlice는 클러스터 밖 서버를 연결하는 공식 지원 방식이다.
+다만 대응 EndpointSlice가 자동 생성되지 않으므로 외부 IP 갱신 책임은 이 연결 도구에 있다.
+현재 규모에서는 명시적 connect·check와 실패 보고를 먼저 완성한다.
+[Kubernetes Service 문서](https://kubernetes.io/docs/concepts/services-networking/service/#services-without-selectors)
+
+Argo의 자동 동기화는 GitHub CI의 성공 판정을 대신하지 않는다. 자동 동기화 중 rollback 제약도 있으므로
+복구 전략은 이미지 변경뿐 아니라 Git revision·동기화 정책까지 포함해야 한다.
+현재의 과거 branch 기반 진입점을 그대로 재활성화하지 않는다.
+[Argo 자동 동기화 문서](https://argo-cd.readthedocs.io/en/stable/user-guide/auto_sync/)
+
+이번에는 분석과 문서 변경만 수행했다. 통과한 기존 테스트를 다시 실행하지 않았으며 문서 경로와 diff를 확인한다.
+실제 현재 품질·로컬 DB 집계·Argo 상태·GHCR pull은 이번 조사에서 측정하지 않았다.
+
+</details>
 
 <details>
 <summary>skn-58~60의 분석·복구·사용량 수정 기록 — 당시 상태</summary>

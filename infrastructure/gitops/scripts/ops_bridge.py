@@ -49,6 +49,9 @@ def values():
     return {
         "opsSync": {"enabled": True},
         "env": {
+            "CORE_API_URL": "http://core-service:8080",
+            "DJANGO_COOKIE_SECURE": "false",
+            "OPS_WEB_URL": "http://localhost:5173",
             "PREFECT_API_URL": "http://ops-compose-prefect:4200/api",
             "LLMOPS_ARTIFACT_URL": "http://ops-compose-artifacts:8010",
             "LLMOPS_LIVE_ENABLED": "false",
@@ -406,8 +409,10 @@ def connect(state, settings, project, *, check=False):
             "Compose topology changed during route update; rerun connect before using Ops"
         )
     write_json(Path(state) / "ops-bridge-values.json", values())
+    from ops_runtime import BRIDGE, connection
+    write_json(Path(state) / BRIDGE, connection(settings, project))
     print(
-        "Connected private Compose routes. Ops values written to ops-bridge-values.json; Secret/application activation and HTTP checks are still required."
+        "Connected private Compose routes. Ops values written to ops-bridge-values.json; Run ops_runtime.py with the private artifact env file to activate local-image Ops."
     )
 
 

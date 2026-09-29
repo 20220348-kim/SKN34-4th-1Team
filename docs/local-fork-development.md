@@ -148,9 +148,12 @@ pnpm install --frozen-lockfile
 pnpm --dir frontend/web dev:k8s
 ```
 
-웹의 Vite 개발 서버는 `localhost:5173`에서 실행되고 API는 `127.0.0.1:18080`을 거쳐 Kubernetes Core로
-전달됩니다. 프런트 파일 저장 반영은 Vite가 담당하며, 위 백엔드 이미지 감시 명령과 별개입니다.
-port-forward 터미널을 종료하면 웹의 API 연결도 끊깁니다.
+웹의 Vite 개발 서버는 `localhost:5173`에서 실행됩니다. `web` 명령은 Core `127.0.0.1:18080`과
+Ops `127.0.0.1:18001`을 같은 클러스터로 함께 연결합니다. 이미 사용 중인 포트가 있으면 중단하므로
+기존 Compose Ops에 잘못 접속하지 않습니다. Pod 교체로 한쪽 전달이 끊기면 두 전달을 정리하며 명령을 다시 실행해야 합니다.
+프런트 파일 저장 반영은 Vite가 담당하며 백엔드 이미지 감시 명령과 별개입니다.
+평가 실행은 [Ops 활성화 절차](../infrastructure/gitops/docs/ops-runtime.md)를 먼저 완료하고
+기존 Core 관리자 계정으로 `/ops/evaluations`에 접속합니다.
 
 ## 5. 개발 작업 제출
 

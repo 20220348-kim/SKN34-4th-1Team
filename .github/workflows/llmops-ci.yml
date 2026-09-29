@@ -13,8 +13,8 @@ jobs:
   integration:
     name: Saved capture pipeline with local servers
     runs-on: ubuntu-24.04
-    # Retain both actual Core trace and Kubernetes-to-Compose bridge verification.
-    timeout-minutes: 70
+    # Retain Core tracing and the expanded Kubernetes evaluation/restart checks.
+    timeout-minutes: 85
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -86,7 +86,8 @@ jobs:
       - name: Start React development proxy
         run: |
           pnpm install --frozen-lockfile
-          VITE_DEV_PROXY_TARGET=http://127.0.0.1:18082 VITE_CORE_API_BASE_URL=/ pnpm --filter govbiz-web dev --host 127.0.0.1 > /tmp/govbiz-ops-web.log 2>&1 &
+          (cd frontend/web && VITE_DEV_PROXY_TARGET=http://127.0.0.1:18082 VITE_CORE_API_BASE_URL=/ exec node node_modules/vite/bin/vite.js --host 127.0.0.1) > /tmp/govbiz-ops-web.log 2>&1 &
+          echo "$!" > /tmp/govbiz-ops-web.pid
       - name: Verify Core admin login, Ops CSRF, duplicate requests, reports and shared logout
         shell: bash
         run: |
@@ -118,6 +119,12 @@ jobs:
       - name: Stop this job's development containers
         if: always()
         run: docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops --env-file infrastructure/llmops/.env.artifacts -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml -f infrastructure/llmops/compose.artifacts.yaml -f infrastructure/llmops/compose.auth-test.yaml --profile evaluation down
+      - name: Stop this job's initial web proxy before Kubernetes verification
+        if: always()
+        run: |
+          if [ -f /tmp/govbiz-ops-web.pid ]; then
+            kill "$(cat /tmp/govbiz-ops-web.pid)" 2>/dev/null || true
+          fi
       - name: Verify real cancellation, process exit and budget accounting with offline model HTTP
         # Includes cold server startup and all 11 scenarios; per-scenario deadlines stay strict.
         timeout-minutes: 20
@@ -130,7 +137,7 @@ jobs:
           path: work/llmops-ci/cancellation.json
           if-no-files-found: warn
           retention-days: 7
-      - name: Install pinned kind and kubectl for isolated Compose bridge verification
+      - name: Install pinned kind, kubectl and Helm for isolated Kubernetes evaluation
         shell: bash
         run: |
           set -euo pipefail
@@ -144,10 +151,16 @@ jobs:
           curl -fsSL https://dl.k8s.io/release/v1.36.4/bin/linux/amd64/kubectl.sha256 -o kubectl.sha256
           echo "$(< kubectl.sha256)  kubectl" | sha256sum --check
           chmod +x kind kubectl
+          curl -fsSLO https://get.helm.sh/helm-v4.3.0-linux-amd64.tar.gz
+          curl -fsSLO https://get.helm.sh/helm-v4.3.0-linux-amd64.tar.gz.sha256sum
+          sha256sum --check helm-v4.3.0-linux-amd64.tar.gz.sha256sum
+          tar -xzf helm-v4.3.0-linux-amd64.tar.gz
+          mv linux-amd64/helm .
+          test "$(./helm version --template '{{.Version}}')" = v4.3.0
           echo "$tool_dir" >> "$GITHUB_PATH"
-      - name: Verify real Kubernetes Pod to Compose DNS, HTTP, artifact auth and evidence hashes
-        timeout-minutes: 10
-        run: backend/ai-service/.venv/bin/python -B infrastructure/gitops/scripts/smoke_ops_bridge.py --report work/llmops-ci/ops-bridge.json
+      - name: Verify Kubernetes Ops activation, free evaluation, background sync and restart preservation
+        timeout-minutes: 25
+        run: backend/ai-service/.venv/bin/python -B infrastructure/gitops/scripts/smoke_ops_bridge.py --evaluate --report work/llmops-ci/ops-bridge.json
       - name: Preserve isolated Compose bridge evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

@@ -2,7 +2,8 @@
 
 > **최신 결정(2026-09-29): 별도 배포 브랜치·PR 설계는 사용자 요청으로 철회했습니다.**
 > 개인 포크의 빈 브랜치와 전용 Ruleset을 삭제하고 PR 자동화 2개와 Actions PR 생성 권한을 껐습니다.
-> `main`의 필수 CI·리뷰 0명 정책과 이미지 발행은 유지합니다.
+> **2026-09-29 22:11 KST 재확인:** 현재 main Ruleset은 삭제·강제 푸시 방지만 유지하며 필수 CI·PR 규칙은 없습니다.
+> 이미지 발행 gate는 별도로 동작합니다. 최신 코드의 공백과 실행 순서는 [LLMOps 후속 전략](llmops-next-development-plan.md)을 따릅니다.
 > 아래 최초 분석·G1 계획은 과거 기록이며 현재 실행 지침이 아닙니다.
 > [현재 적용 상태](../infrastructure/gitops/docs/deployment-candidates.md)를 따릅니다.
 > LLMOps 개발 순서는 [후속 개발 전략](llmops-next-development-plan.md)을 따릅니다.

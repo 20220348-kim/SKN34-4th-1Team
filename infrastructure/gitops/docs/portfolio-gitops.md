@@ -55,7 +55,7 @@ python -B scripts/dev.py --watch
 필요하므로 모든 백엔드가 브라우저 HMR처럼 즉시 바뀌는 것은 아닙니다. 자세한 서비스 선택·복구·웹 연결은
 [로컬 개발 안내](../../../docs/local-fork-development.md)를 따릅니다.
 
-다른 터미널에서 `python -B scripts/fork_cluster.py web`을 실행하면 Core를 `127.0.0.1:18080`으로 연결합니다.
+다른 터미널에서 `python -B scripts/fork_cluster.py web`을 실행하면 Core `127.0.0.1:18080`과 Ops `127.0.0.1:18001`을 함께 연결합니다.
 웹은 저장소의 Node 24·pnpm 버전을 맞춘 뒤 `frontend/web`에서 `pnpm dev:k8s`로 실행합니다. 외부 IP로 공개하지 않습니다.
 
 ## Argo CD 자동 배포 모드

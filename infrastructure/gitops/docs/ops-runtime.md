@@ -183,11 +183,32 @@ EndpointSlice 갱신에는 `resourceVersion`을 사용하며 연결 중 컨테�
 - 결과 서버: `http://ops-compose-artifacts:8010`
 - `opsSync.enabled=true`, `LLMOPS_LIVE_ENABLED=false`, 기존 Ops 필수 Secret 키와 artifact 토큰 참조
 
-현재 배포에 사용하는 Ops values에 이 설정을 반영하고, 기존 `ops-runtime` Secret의 DB·Django 키를
-유지하면서 Compose 결과 서버와 동일한 `LLMOPS_ARTIFACT_TOKEN`을 추가해야 한다.
-GitOps용 주소·참조 변경은 기존 개발 변경에 포함하며 별도 배포 브랜치나 PR은 만들지 않는다.
-발행 이미지의 추적된 설정 검증을 로컬 overlay로 우회하지 않는다.
-활성화 후 `check_evaluation_runtime`과 새 무료 평가 검증이 필요하다.
+로컬 소스 이미지로 초기화한 `dev` 환경에서는 다음 명령으로 적용한다. 실행기는 먼저 시작해 둔다.
+`--artifact-env`는 Compose 결과 서버에 사용한 소유자 전용 0600 파일을 지정한다.
+
+```bash
+dc_bridge up -d --build langfuse-worker evaluation-runner
+python3 -B infrastructure/gitops/scripts/ops_runtime.py \
+  --artifact-env infrastructure/llmops/.env.artifacts
+python3 -B infrastructure/gitops/scripts/fork_cluster.py web
+```
+
+활성화 도구는 `ops-bridge.json`의 repository·state·namespace·Compose 프로젝트와 현재 연결 주소,
+변조되지 않은 values, 로컬 이미지 baseline, 현재 Ops DB 주소·계정·Secret 참조를 검사한다.
+결과 서버에서 토큰 인증을 확인한 뒤 기존 `ops-runtime`에 artifact 토큰 키만 추가한다.
+DB 비밀번호·Django 키를 재발급하지 않으며 기존 artifact 토큰이 다르면 회전을 거절한다.
+Secret 쓰기는 [resourceVersion을 통한 동시 갱신 검사](https://kubernetes.io/docs/reference/using-api/api-concepts/)를 사용한다.
+migration → API+sync 적용 → rollout → 읽기 전용 런타임 진단 순서로 실행하며, migration 실패 시 API를 적용하지 않는다.
+
+성공한 연결은 비밀값 없는 `ops-activation.json`에 저장해 다음 `up --local-images`에도 유지한다.
+GHCR baseline·Argo 소유 환경·미복원 개발 이미지에는 적용하지 않으며 발행 이미지의 추적된 입력 검증을 우회하지 않는다.
+진단 PASS는 새 평가 실행 완료가 아니다. 이후 기존 Core 관리자 계정으로 웹에 로그인해 무료 평가를 확인한다.
+
+웹 명령은 같은 클러스터의 Core `127.0.0.1:18080`, Ops `127.0.0.1:18001`을 함께 전달한다.
+Vite는 다른 터미널에서 `pnpm --dir frontend/web dev:k8s`로 실행한다.
+두 포트 중 하나라도 점유되면 다른 프로세스를 종료하거나 재사용하지 않고 거절한다.
+[port-forward는 선택한 Pod 종료 시 끊어지므로](https://kubernetes.io/docs/reference/kubectl/generated/kubectl_port-forward/),
+한쪽이 종료되면 함께 시작한 두 전달을 정리한다. Pod 교체 후 웹 명령을 다시 실행한다.
 
 `connect`는 자동 컨트롤러가 아니다. Compose가 Prefect/결과 서버를 교체하거나 네트워크를 다시 만들면
 **다시 실행해 EndpointSlice를 갱신**한다. `check`는 현재 IP·소유권만 읽어 확인하며 HTTP 성공을 뜻하지 않는다.
@@ -205,8 +226,29 @@ python3 -B infrastructure/gitops/scripts/smoke_ops_bridge.py --report work/ops-b
 오래된 EndpointSlice를 의도적으로 넣어 `check`가 거절하고 `connect`로 복구되는지도 확인한다.
 시험 Compose는 호출 셸의 토큰·경로·Compose 설정을 상속하지 않고 임시 환경변수를 사용한다.
 기본 실행은 현재 Ops 소스를 빌드한다. `--ops-image <기존 로컬 이미지>`를 명시하면 해당 이미지로만 검사하므로
-최신 소스의 빌드 증거로 보고하지 않는다. 모델 호출·평가 접수·Core 로그인·Ops DB 동기화는 수행하지 않는다.
-필수 LLMOps CI의 기존 integration 작업에 이 smoke를 포함하며 원격 실행 결과는 푸시 후 확인한다.
+최신 소스의 빌드 증거로 보고하지 않는다. 기본 통신 검증은 평가를 접수하지 않는다.
+
+전체 무료 업무 검증은 `--evaluate`를 추가한다. Helm 4.3.0, 저장소의 Node·pnpm 의존성과
+비어 있는 loopback 5173·18080·18001 포트가 필요하다.
+
+```bash
+python3 -B infrastructure/gitops/scripts/smoke_ops_bridge.py --evaluate \
+  --report work/ops-kubernetes-evaluation.json
+```
+
+새 격리 클러스터에 실제 Core·MySQL 8.4·Ops API+sync를 배치하고,
+Compose에는 Prefect·실행기·결과 서버·Langfuse만 실행한다. Compose Ops API·sync·DB가 없음을 확인한다.
+운영용 활성화 명령을 두 번 실행해 비밀값 보존을 검사하고, 기존 `ops_smoke.py`의
+관리자/일반 사용자 권한·CSRF·동일 요청 중복 접수·자동 목록 동기화·보고서·로그아웃 검증을 재사용한다.
+개발 로그인 계정 생성은 이 임시 Core DB에서만 수행한다.
+
+Kubernetes Ops DB의 요청·flow·명세를 직접 대조한 뒤 API+sync Pod를 재시작한다.
+새 Pod에서 같은 DB 기록과 인증된 보고서 SHA-256이 유지돼야 통과한다.
+보고서에는 소스 SHA, Ops 실제 image ID, 실행 release 해시, request/flow ID, HTTP transport,
+모델 호출 0회, 실행·재시작·정리 결과를 남긴다. 사람의 품질 검토나 현재 모델의 실제 품질 측정은 아니다.
+
+필수 LLMOps CI의 기존 integration 작업에 이 전체 검증을 연결했다.
+코드 추가·오프라인 검사와 실제 CI 통과는 구분하며 최신 커밋의 원격 결과는 푸시 후 확인한다.
 
 ## 실제 연결의 남은 조건
 
@@ -223,5 +265,5 @@ python3 -B infrastructure/gitops/scripts/smoke_ops_bridge.py --report work/ops-b
 LLMOps CI는 HTTP overlay와 실제 Compose 병합 검사를 사용한다. Ops에 파일 mount가 없는 상태에서
 무료 평가·완료 결과 진단·비교·후처리 복구를 검증하고 `storage_transport=http`를 확인한다.
 기존 파일 방식은 Ops 테스트와 취소 통합 검증에 유지한다. 이는 Compose 내부 HTTP 통합 검증이며,
-전체 평가 E2E나 Argo 동기화 완료의 증거는 아니다. 별도의 kind 브리지 smoke도 통신·인증·자료 해시만
-검사한다. 새 변경의 CI 결과는 푸시 후 확인한다.
+Kubernetes 평가 E2E나 Argo 동기화 완료의 증거는 아니다. 새 `--evaluate` 경로는 위 Kubernetes 업무 검증을
+별도로 수행한다. 실행하지 않았거나 실패한 검증은 완료로 표시하지 않으며 새 변경의 CI 결과는 푸시 후 확인한다.
