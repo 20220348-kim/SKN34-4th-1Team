@@ -12,6 +12,8 @@ export async function applicationPreparationRequest<T>(
   body?: unknown,
   signal?: AbortSignal,
   notFoundScope: ApplicationPreparationNotFoundScope = 'feature',
+  /** `keepalive`: 화면을 떠나는 순간의 마지막 답변 저장처럼 브라우저가 끊지 않고 보내야 하는 요청입니다. */
+  options: { keepalive?: boolean } = {},
 ): Promise<T> {
   const controller = new AbortController()
   const abort = () => controller.abort()
@@ -29,6 +31,7 @@ export async function applicationPreparationRequest<T>(
       credentials: 'include',
       cache: 'no-store',
       signal: controller.signal,
+      ...(options.keepalive ? { keepalive: true } : {}),
       ...(body === undefined ? {} : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
     })
     if (!response.ok) {

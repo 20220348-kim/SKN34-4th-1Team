@@ -15,6 +15,9 @@ import type {
   UpdateApplicationProgress,
 } from '../entities/ApplicationPreparation'
 
+/** 화면을 떠나는 순간의 마지막 저장은 `keepalive`로 보내 브라우저가 요청을 끊지 않게 합니다. */
+export type ReplaceApplicationPreparationInputsOptions = { keepalive?: boolean }
+
 export interface ApplicationPreparationRepository {
   onlineInputGuide(id: number, signal?: AbortSignal): Promise<import('../entities/ApplicationOnlineInputGuide').ApplicationOnlineInputGuide>
   availability(sourceCode: string, sourceProgramId: string, signal?: AbortSignal): Promise<import('../entities/ApplicationPreparation').ApplicationFormAvailability>
@@ -35,6 +38,7 @@ export interface ApplicationPreparationRepository {
   get(id: number, signal?: AbortSignal): Promise<ApplicationPreparation>
   create(input: NewApplicationPreparation, signal?: AbortSignal): Promise<ApplicationPreparation>
   interpret(id: number, sectionKey: string, input: InterpretApplicationPreparation, signal?: AbortSignal): Promise<ApplicationInterpretation>
-  replaceInputs(id: number, sectionKey: string, input: ReplaceApplicationPreparationInputs, signal?: AbortSignal): Promise<ApplicationPreparation>
+  replaceInputs(id: number, sectionKey: string, input: ReplaceApplicationPreparationInputs, signal?: AbortSignal,
+    options?: ReplaceApplicationPreparationInputsOptions): Promise<ApplicationPreparation>
   updateProgress(id: number, input: UpdateApplicationProgress, signal?: AbortSignal): Promise<ApplicationPreparation>
 }
