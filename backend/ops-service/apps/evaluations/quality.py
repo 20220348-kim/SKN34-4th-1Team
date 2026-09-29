@@ -6,12 +6,13 @@ from pathlib import Path
 from django.db import transaction
 
 from . import quality_policy
+from .artifact_store import read_artifact
 from .baselines import change_baseline, lock_baseline
 from .catalog import DATASETS
 from .execution_spec import digest, read_release
 from .models import EvaluationRun, FixtureReview, QualityAssessment
 from .review_eligibility import RUBRIC_VERSION, latest_case_reviews
-from .services import RequestConflict, ResultsUnavailable, artifact_path
+from .services import RequestConflict, ResultsUnavailable
 
 REASONS = {
     "FIXTURE_REVIEW_REQUIRED": "평가 기준 자료의 사람 검토가 필요합니다.",
@@ -96,7 +97,7 @@ def assessment_inputs(run, material):
         "fixture_sha256": material["fixture_sha256"],
         "capture_sha256": material["capture_sha256"],
         "comparison_sha256": sha256(
-            artifact_path(run, "evaluation/comparison.json").read_bytes()
+            read_artifact(run.id, "evaluation/comparison.json")
         ).hexdigest(),
         "fixture_review_id": fixture.pk if fixture else None,
         "fixture_approved": fixture_approved,

@@ -5,13 +5,13 @@ import json
 from django.conf import settings
 from django.db import transaction
 
+from .artifact_store import read_artifact, read_evidence
 from .execution_spec import digest, make_spec, read_release
 from .models import EvaluationRun
 from .recovery_inputs import read_recovery_inputs
 from .services import (
     RequestConflict,
     ResultsUnavailable,
-    artifact_path,
     dispatch_run,
     read_request,
     sync_run,
@@ -25,7 +25,11 @@ def recovery_config(run):
     try:
         read_request(run)
         _, config, _ = read_recovery_inputs(
-            settings.LLMOPS_RESULTS_DIR, settings.LLMOPS_EVIDENCE_DIR, str(run.id)
+            settings.LLMOPS_RESULTS_DIR,
+            settings.LLMOPS_EVIDENCE_DIR,
+            str(run.id),
+            artifact_reader=lambda name: read_artifact(run.id, name),
+            evidence_reader=read_evidence,
         )
         return config
     except (ValueError, OSError, KeyError, TypeError) as exc:
@@ -46,7 +50,7 @@ def recovery_state(run):
         ready = False
     stage = "unverified"
     try:
-        value = json.loads(artifact_path(run, "evaluation/manifest.json").read_text()).get("stage")
+        value = json.loads(read_artifact(run.id, "evaluation/manifest.json")).get("stage")
         if isinstance(value, str) and value in {"report", "publish", "completed"}:
             stage = value
     except (ResultsUnavailable, ValueError, OSError, AttributeError):

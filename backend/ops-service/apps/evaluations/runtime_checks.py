@@ -1,8 +1,6 @@
 """Read-only deployment diagnostics; never starts an evaluation or repairs files."""
 
-import os
 from hashlib import sha256
-from pathlib import Path
 from urllib.parse import quote, urlsplit
 from uuid import UUID
 
@@ -10,12 +8,12 @@ from django.conf import settings
 from django.db import DatabaseError
 
 from . import prefect_client
+from .artifact_store import ResultsUnavailable, check_results, read_evidence
 from .catalog import DATASETS
 from .execution_spec import read_release
 
 
 def check_evidence():
-    root = Path(settings.LLMOPS_EVIDENCE_DIR).resolve(strict=True)
     pinned = read_release()["datasets"]
     if set(pinned) != set(DATASETS):
         return False
@@ -32,13 +30,7 @@ def check_evidence():
             (item["path"], expected["captures"][item["id"]]) for item in dataset["captures"]
         )
         for name, fingerprint in files:
-            path = (root / name).resolve(strict=True)
-            if not path.is_relative_to(root) or not path.is_file():
-                return False
-            # Bound local reads even when a mounted file has been replaced.
-            with path.open("rb") as source:
-                payload = source.read(8 * 1024 * 1024 + 1)
-            if len(payload) > 8 * 1024 * 1024 or sha256(payload).hexdigest() != fingerprint:
+            if sha256(read_evidence(name)).hexdigest() != fingerprint:
                 return False
     return True
 
@@ -47,15 +39,9 @@ def inspect_runtime(run_id=None):
     checks = {}
     try:
         checks["evidence"] = "PASS" if check_evidence() else "FAIL"
-    except (OSError, ValueError, KeyError, TypeError):
+    except (OSError, ValueError, KeyError, TypeError, ResultsUnavailable):
         checks["evidence"] = "FAIL"
-    try:
-        # Ops only reads runner output. Do not create a directory or test-write here.
-        with os.scandir(settings.LLMOPS_RESULTS_DIR) as entries:
-            next(entries, None)
-        checks["results_directory"] = "PASS"
-    except OSError:
-        checks["results_directory"] = "FAIL"
+    checks["results_directory"] = "PASS" if check_results() else "FAIL"
     try:
         endpoint = urlsplit(settings.PREFECT_API_URL)
         if (
@@ -84,7 +70,7 @@ def inspect_runtime(run_id=None):
     checks["result_artifact"] = "NOT_CHECKED"
     if run_id is not None:
         from .models import EvaluationRun
-        from .services import ResultsUnavailable, read_result
+        from .services import read_result
 
         try:
             run = EvaluationRun.objects.get(pk=run_id)
@@ -96,6 +82,7 @@ def inspect_runtime(run_id=None):
             checks["result_artifact"] = "FAIL"
     return {
         "scope": "deployment_configuration",
+        "storage_transport": "http" if settings.LLMOPS_ARTIFACT_URL else "filesystem",
         "status": "FAIL" if "FAIL" in checks.values() else "PASS",
         "checks": checks,
         "evaluation_executed": False,

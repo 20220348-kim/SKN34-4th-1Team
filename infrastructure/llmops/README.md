@@ -84,6 +84,44 @@ docker compose --env-file infrastructure/llmops/.env \
 이 검사는 flow 생성·유료 호출·파일 수정을 하지 않으며 실행기의 생존이나 새 평가 성공을 뜻하지 않습니다.
 [Ops와 Compose 연결 계약](../gitops/docs/ops-runtime.md)을 참고하세요.
 
+## 내부 HTTP로 결과 조회
+
+Kubernetes Ops가 Compose named volume을 직접 mount하지 않아도 결과·평가 자료를 읽도록
+인증된 읽기 전용 `ops-artifacts` 프로세스를 추가했다. 기존 파일 방식은 기본값으로 유지한다.
+[연결 계약과 남은 Kubernetes 작업](../gitops/docs/ops-runtime.md)을 먼저 확인한다.
+
+다음 overlay는 무료 평가용이며 Ops API와 `ops-sync`의 결과·평가 자료 mount를 제거한다.
+실행기와 결과 서버는 같은 기존 `ops-results` 볼륨을 각각 읽기/쓰기·읽기 전용으로 사용한다.
+새 외부 저장소·DB를 추가하지 않으며 기존 결과를 이동하거나 삭제하지 않는다.
+Compose 2.24.4 이상을 사용하고 [공식 `!reset` 병합 규칙](https://docs.docker.com/reference/compose-file/merge/#reset-value)에
+따라 mount가 실제로 제거되었는지 아래 검사로 확인한다.
+
+```bash
+# .env와 .env.ops는 기존 개발 서버 절차로 준비한다.
+# .env.artifacts가 이미 있으면 생성 명령은 생략한다. 기존 비밀값을 덮어쓰지 않는다.
+python3 infrastructure/llmops/init_ops_env.py --artifacts
+
+dc_artifacts() {
+  docker compose --env-file infrastructure/llmops/.env \
+    --env-file infrastructure/llmops/.env.ops \
+    --env-file infrastructure/llmops/.env.artifacts \
+    -f infrastructure/llmops/compose.yaml \
+    -f infrastructure/llmops/compose.ops.yaml \
+    -f infrastructure/llmops/compose.artifacts.yaml --profile evaluation "$@"
+}
+dc_artifacts config --format json | python3 infrastructure/llmops/check_artifact_compose.py
+dc_artifacts build ops-service ops-sync ops-artifacts evaluation-runner
+dc_artifacts run --rm ops-service python manage.py migrate_deployment
+dc_artifacts up -d ops-artifacts ops-service ops-sync evaluation-runner
+dc_artifacts exec -T ops-service python manage.py check_evaluation_runtime
+```
+
+`.env.artifacts`는 Git에서 제외된다. 결과 서버에는 DB·Core·OpenAI 인증정보를 주입하지 않고 호스트 포트도
+공개하지 않는다. 토큰이 없으면 서버 시작 또는 조회가 실패한다. HTTP 장애를 로컬 파일로 대체하지 않는다.
+보고서·비교·검토·후처리 복구에는 기존 무결성 검증이 그대로 적용되며 파일당 최대 크기는 8 MiB다.
+`check_evaluation_runtime`의 `storage_transport=http`는 HTTP 경로 사용을 뜻하며 새 평가 성공을 뜻하지 않는다.
+Kubernetes에서 위 Compose DNS 주소를 그대로 사용할 수 있는 상태는 아직 아니다.
+
 ## Django 운영 화면
 
 화면은 기존 `frontend/web`의 React로 제공하고 Django는 인증·평가 API를 담당한다.

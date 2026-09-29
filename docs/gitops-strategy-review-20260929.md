@@ -242,6 +242,33 @@ Prefect 등록 및 선택한 완료 실행의 결과 무결성을 검사한다. 
 최신 변경은 커밋·푸시 전이다. Kubernetes↔Compose 내부 통신, 결과 저장소 공유, `ops-sync`의
 DB 소유권 연결과 재시작 유지 검증이 남았으므로 실제 연결 또는 G2 완료로 보고하지 않는다.
 
+G2 진단 후속 CI 확인: 리베이스한 `skn-55 / f4770ce07ef3752e3aecc591ab171b9a363b3dc9`의
+5개 workflow·16개 필수 job이 모두 성공했다.
+[Ops](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36549479146),
+[LLMOps](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36549479103),
+[Infra](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36549479147),
+[GovBiz](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36549479144),
+[Catalog](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36549479115)에서 확인했다.
+이 결과는 아래의 새 HTTP 저장소 변경에 대한 CI 통과를 의미하지 않는다.
+
+G2 저장소 후속 구현: Compose 결과 볼륨과 평가 자료를 인증된 읽기 전용 HTTP로 제공한다.
+별도 외부 저장소·패키지 없이 기존 Ops 이미지의 Gunicorn 프로세스를 사용하며 DB·모델 키를 주입하지 않는다.
+Ops의 결과·보고서·검토·복구 경로가 같은 바이트 무결성 검증을 거치고 HTTP 장애를 로컬 사본으로 숨기지 않는다.
+공유 복구 입력 코드의 pipeline 해시를 갱신했으므로 Ops와 실행기는 같은 release가 필요하다.
+기본 파일 모드는 유지하고, 선택형 Compose overlay는 API·동기화의 파일 mount를 제거한다.
+LLMOps CI의 무료 평가·비교·후처리 복구는 해당 HTTP 모드로 실행하도록 변경했다.
+
+로컬 검증은 Linux 컨테이너의 DB 없는 Ops 25개, 복구·실행 명세 32개, smoke 판정 12개로 총 69개다.
+Python 3.13의 Ops 빠른 확인에서 Windows 심볼릭 링크 권한 오류가 발생해, 관련 Ops 검증은 기존 Python 3.12
+이미지의 격리 Linux 컨테이너에서 모두 통과했다. 평가 도구 테스트는 새 workspace 임시 경로를 사용했고,
+기존 실행기 symlink 테스트 1개는 Windows에서 제외해 Linux CI에 남겼다. 새 테스트를 무력화하지 않았다.
+실제 Compose 렌더링·위험 설정 4종 거절, DB·외부 네트워크 없는 Gunicorn 기동·재시작 후 원본 보존도 확인했다.
+새 HTTP 검토·품질·기준 지정 DB 테스트와 전체 Compose 평가는 푸시 후 최신 SHA CI에서 확인해야 한다.
+
+**실제 Kubernetes 연결은 여전히 남아 있다.** 전용 Prefect·저장소 주소와 Secret을 배포 후보로 승인하고,
+Kubernetes Ops DB를 사용하는 `ops-sync` 배치 및 전체 관리자 인증·평가·재시작 E2E를 완성해야 한다.
+현재 변경은 `hostPath`·원격 보호 규칙·실행 중인 개발 환경·기존 volume을 수정하지 않는다.
+
 ### G3 — 실제 Argo 배포·복구 검증을 필수 증거로 연결
 
 담당 책임: 인프라 CI와 서비스 운영 담당.

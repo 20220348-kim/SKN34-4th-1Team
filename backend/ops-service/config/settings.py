@@ -63,6 +63,9 @@ AUTH_PASSWORD_VALIDATORS = [
 PREFECT_API_URL = env("PREFECT_API_URL", default="http://127.0.0.1:14200/api").rstrip("/")
 PREFECT_UI_URL = env("PREFECT_UI_URL", default="http://localhost:14200").rstrip("/")
 PREFECT_DEPLOYMENT_NAME = "govbiz-ops-evidence-evaluation/saved-capture"
+# Empty URL explicitly selects filesystem storage. HTTP failure never falls back.
+LLMOPS_ARTIFACT_URL = env("LLMOPS_ARTIFACT_URL", default="").rstrip("/")
+LLMOPS_ARTIFACT_TOKEN = env("LLMOPS_ARTIFACT_TOKEN", default="")
 LLMOPS_BUDGET_TOKEN = env("LLMOPS_BUDGET_TOKEN", default="")
 LLMOPS_LIVE_ENABLED = env.bool("LLMOPS_LIVE_ENABLED", default=False)
 LLMOPS_RESULTS_DIR = Path(
