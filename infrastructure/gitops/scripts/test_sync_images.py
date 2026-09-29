@@ -415,6 +415,14 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertEqual(checkout["ref"], "${{ github.event.repository.default_branch }}")
         self.assertEqual(checkout["persist-credentials"], "false")
 
+    def test_both_infra_discovery_jobs_install_pinned_helm_before_tests(self):
+        for name in ("kubernetes-manifests", "helm-gitops"):
+            steps = self.workflow("infra-ci.yml")["jobs"][name]["steps"]
+            setup = next(i for i, step in enumerate(steps) if "helm-v4.3.0-linux-amd64.tar.gz" in step.get("run", ""))
+            tests = next(i for i, step in enumerate(steps) if "unittest discover" in step.get("run", ""))
+            self.assertLess(setup, tests)
+            self.assertIn("sha256sum --check", steps[setup]["run"])
+
     def test_every_required_push_and_completion_trigger_is_present(self):
         names = []
         for filename in gate.WORKFLOWS:

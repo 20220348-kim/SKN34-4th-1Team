@@ -368,6 +368,9 @@ def main():
         started = False
         try:
             started = True
+            run(base + ["up", "--detach", "--wait", "--wait-timeout", "180", "ops-mysql"], environment)
+            run(base + ["run", "--rm", "--no-deps", "ops-service",
+                        "python", "manage.py", "migrate_deployment"], environment)
             run(
                 base
                 + [

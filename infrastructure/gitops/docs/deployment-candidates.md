@@ -12,7 +12,7 @@
 | 같은 소스 SHA의 서비스 Chart 전체 | `charts/govbiz-service/` |
 | 네 서비스의 개인 GHCR digest·실행 설정 | `environments/fork/*.yaml`, `release.json` |
 | 발행 artifact에서 검증한 네 receipt | `receipts/*.json` |
-| Helm 4.3.0, Kubernetes 1.36.4로 렌더링한 Deployment·Service | `rendered/*.json` |
+| Helm 4.3.0, Kubernetes 1.36.4로 렌더링한 Deployment·Service·Ops PreSync Job | `rendered/*.json` |
 | 제한된 AppProject와 네 Application 선언 | `argocd/fork/applications.yaml` |
 | 소스·기존 배포 SHA, CI run/attempt, publisher, 파일 hash와 전체 hash | `deployment.json` |
 
@@ -22,8 +22,13 @@
 미추적 파일, symlink, 외부 Chart dependency, 무료 실행 정책 위반, 렌더링된 이미지 불일치는 거절한다.
 비밀값은 후보에 넣지 않고 기존 Secret 참조만 사용한다. 이미 소스에 커밋된 비밀값을 정화하는 도구는 아니다.
 
-이 범위는 네 서비스의 배포 입력이다. 로컬 데이터 Chart·kind 저장소·DB migration·백업·LLMOps 운영 구성까지
-승인하거나 검증하지 않는다. 네 Application의 rollout도 원자적이지 않다.
+새 후보 `govbiz-deployment-v2`는 Ops migration Job과 제한된 Job 권한·재시도 정책을 포함한다.
+실제 렌더링의 Job 이미지·설정·명령·보안 계약을 검사한다.
+과거 v1은 원본 소스로 재구성해 읽을 수 있지만 새 승인에는 v2가 필요하다.
+[Ops migration 실행·복구 경계](ops-migration.md)를 따른다.
+
+이 범위는 네 서비스의 배포 입력이다. 로컬 데이터 Chart·kind 저장소·백업·전체 LLMOps 운영 구성이나
+실제 migration 성공까지 검증하지 않는다. 네 Application의 rollout도 원자적이지 않다.
 
 ## 원격 활성화 순서
 

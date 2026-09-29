@@ -305,7 +305,22 @@ def main():
                 namespaced
                 + ["rollout", "status", "statefulset/ops-mysql", "--timeout=240s"]
             )
-            # Only the in-memory test image differs from the checked-in local overlay.
+            # This legacy Kustomize smoke explicitly initializes its empty fixture DB.
+            # Production Helm releases carry a reviewed PreSync Job in the snapshot.
+            from ops_migration import run_migration
+            apply([item for item in app_docs if item["kind"] != "Deployment"])
+            deployment = next(item for item in app_docs if item["kind"] == "Deployment")
+            pod = deepcopy(deployment["spec"]["template"]["spec"])
+            pod["restartPolicy"] = "Never"
+            container = pod["containers"][0]
+            for field in ("ports", "startupProbe", "readinessProbe", "livenessProbe"):
+                container.pop(field, None)
+            container.update(name="ops-migrate", command=["python", "manage.py", "migrate_deployment"])
+            job = {"apiVersion": "batch/v1", "kind": "Job",
+                   "metadata": {"name": "ops-service-migrate", "namespace": NAMESPACE},
+                   "spec": {"backoffLimit": 0, "activeDeadlineSeconds": 300,
+                            "template": {"spec": pod}}}
+            run_migration(job, kube, namespaced, run)
             apply(app_docs)
             run(
                 namespaced

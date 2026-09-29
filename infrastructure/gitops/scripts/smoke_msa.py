@@ -204,6 +204,12 @@ def main():
                         overrides.update({source + "_SYNC_ENABLED": "true", source + "_SYNC_INITIAL_DELAY": "PT0S", source + "_SYNC_FIXED_DELAY": "PT10S"})
                     container["env"] = [e for e in container["env"] if e["name"] not in overrides]
                     container["env"].extend({"name": k, "value": v} for k, v in overrides.items())
+                if service == "ops-service":
+                    from ops_migration import run_migration
+                    job = next(item for item in resources if item["kind"] == "Job")
+                    job["spec"]["template"]["spec"]["containers"][0]["image"] = images[service]
+                    run_migration(job, kube, nk, run)
+                    resources = [item for item in resources if item["kind"] != "Job"]
                 service_resources[service] = resources
                 apply(resources)
                 run(nk + ["rollout", "status", "deployment/" + service, "--timeout=500s"])

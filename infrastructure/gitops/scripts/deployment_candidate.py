@@ -18,6 +18,7 @@ from gate import valid_sha
 from promote_image import UniqueLoader, validate_receipt
 from sync_images import prepare, validate_record
 
+SCHEMA = "govbiz-deployment-v2"
 DEPLOYMENT_BRANCH = "deploy/fork"
 CHECK_WORKFLOW = ".github/workflows/deployment-ci.yml"
 MANIFEST = "infrastructure/gitops/deployment.json"
@@ -106,7 +107,7 @@ def directory_files(root):
     return result
 
 
-def argo_resources(fork):
+def argo_resources(fork, *, ops_migration=True):
     if fork.branch == DEPLOYMENT_BRANCH:
         raise ValueError("Source and deployment branches must be distinct")
     destination = {"server": "https://kubernetes.default.svc", "namespace": NAMESPACE}
@@ -124,6 +125,10 @@ def argo_resources(fork):
             ],
         },
     }
+    if ops_migration:
+        project["spec"]["namespaceResourceWhitelist"].append(
+            {"group": "batch", "kind": "Job"}
+        )
     apps = [
         {
             "apiVersion": "argoproj.io/v1alpha1",
@@ -158,10 +163,12 @@ def argo_resources(fork):
         }
         for service in SERVICES
     ]
+    if ops_migration:
+        apps[-1]["spec"]["syncPolicy"]["retry"]["limit"] = 0
     return [project, *apps]
 
 
-def render(root, helm="helm"):
+def render(root, helm="helm", *, require_ops_migration=True):
     version = subprocess.check_output(
         [helm, "version", "--template", "{{.Version}}"], text=True, timeout=30
     ).strip()
@@ -215,7 +222,9 @@ def render(root, helm="helm"):
             for item in yaml.load_all(output, Loader=UniqueLoader)
             if item is not None
         ]
-        problems.extend(policy_errors(service, objects))
+        problems.extend(
+            policy_errors(service, objects, require_ops_migration=require_ops_migration)
+        )
         if problems:
             raise ValueError("\n".join(problems))
         deployment = next(item for item in objects if item["kind"] == "Deployment")
@@ -246,7 +255,16 @@ def render(root, helm="helm"):
 
 
 def build(
-    root, fork, source_sha, base_sha, publisher_id, checks, receipts, helm="helm"
+    root,
+    fork,
+    source_sha,
+    base_sha,
+    publisher_id,
+    checks,
+    receipts,
+    helm="helm",
+    *,
+    schema=SCHEMA,
 ):
     """Read only Git blobs; never execute candidate scripts or copy untracked files."""
     if (
@@ -257,6 +275,8 @@ def build(
         or fork.branch == DEPLOYMENT_BRANCH
     ):
         raise ValueError("Invalid source, deployment base or publisher identity")
+    if schema not in {"govbiz-deployment-v1", SCHEMA}:
+        raise ValueError("Unsupported deployment schema")
     source = tracked_files(root, source_sha, SOURCE_PATHS)
     if CHECK_WORKFLOW not in source:
         raise ValueError("Source does not contain the deployment validation workflow")
@@ -303,7 +323,7 @@ def build(
         marker = gitops / "environments/fork/release.json"
         marker.parent.mkdir(parents=True, exist_ok=True)
         marker.write_bytes(encoded(record))
-        rendered = render(gitops, helm)
+        rendered = render(gitops, helm, require_ops_migration=schema == SCHEMA)
         files = {
             name: value
             for name, value in source.items()
@@ -323,9 +343,11 @@ def build(
             files[PREFIX + f"receipts/{service}.json"] = encoded(receipt)
             files[PREFIX + f"rendered/{service}.json"] = rendered[service]
         files[PREFIX + "environments/fork/release.json"] = encoded(record)
-    files[ARGO] = yaml.safe_dump_all(argo_resources(fork), sort_keys=False).encode()
+    files[ARGO] = yaml.safe_dump_all(
+        argo_resources(fork, ops_migration=schema == SCHEMA), sort_keys=False
+    ).encode()
     manifest = {
-        "schema": "govbiz-deployment-v1",
+        "schema": schema,
         "repository": fork.repository,
         "sourceBranch": fork.branch,
         "deploymentBranch": DEPLOYMENT_BRANCH,
@@ -360,7 +382,7 @@ def manifest_of(files, fork):
     }
     if (
         set(manifest) != keys
-        or manifest["schema"] != "govbiz-deployment-v1"
+        or manifest["schema"] not in {"govbiz-deployment-v1", SCHEMA}
         or manifest["repository"] != fork.repository
         or manifest["sourceBranch"] != fork.branch
         or manifest["deploymentBranch"] != DEPLOYMENT_BRANCH
@@ -391,6 +413,7 @@ def verify(root, fork, files, helm="helm"):
         manifest["sourceChecks"],
         receipts,
         helm,
+        schema=manifest["schema"],
     )
     if files != expected:
         raise ValueError(

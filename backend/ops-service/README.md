@@ -366,13 +366,16 @@ PowerShell:
 
 ```powershell
 Copy-Item .env.example .env
-docker compose up --build --detach --wait --wait-timeout 180
+docker compose build ops-service
+docker compose up --detach --wait --wait-timeout 180 ops-mysql
+docker compose run --rm --no-deps ops-service python manage.py migrate_deployment
+docker compose up --detach --wait --wait-timeout 180 ops-service
 ```
 
 Linux/macOS에서는 첫 명령을 `cp .env.example .env`로 실행합니다. 이미 `.env`를 설정했다면 복사 단계는 건너뜁니다.
 
 - 실행 확인: [http://127.0.0.1:8001/api/v1/health](http://127.0.0.1:8001/api/v1/health)
-- DB 연결 확인: [http://127.0.0.1:8001/api/v1/health/ready](http://127.0.0.1:8001/api/v1/health/ready)
+- DB 연결·스키마 준비 확인: [http://127.0.0.1:8001/api/v1/health/ready](http://127.0.0.1:8001/api/v1/health/ready)
 - MySQL: `127.0.0.1:3308`, DB/사용자 `govbiz4`
 - Compose 프로젝트: `govbiz-ops` (컨테이너 `govbiz-ops-ops-service-1`, `govbiz-ops-ops-mysql-1`)
 - 데이터 볼륨: 이 프로젝트의 `mysql-data`
@@ -388,6 +391,12 @@ docker compose down
 `manage.py runserver`로 재정의하여 소스 변경을 자동 반영합니다. Kubernetes 등에서
 이미지를 직접 실행하면 자동 재시작 개발 서버가 아닌 Gunicorn이 실행됩니다.
 
+빈 DB는 연결할 수 있어도 readiness가 실패합니다. 앱 시작 전에 migration을 명시적으로 실행합니다.
+`migrate_deployment`는 MySQL 세션 잠금 아래 전진 migration과 스키마 준비를 확인하고,
+동시 실행이나 미완료 스키마를 오류로 반환합니다. 기존 migration을 고치거나 DB를 되돌리지 않습니다.
+Kubernetes는 같은 이미지의 PreSync Job을 사용합니다.
+[Ops migration 운영·복구 경계](../../infrastructure/gitops/docs/ops-migration.md)를 확인하세요.
+
 ## Python을 호스트에서 실행
 
 이 절의 명령도 `backend/ops-service`에서 실행합니다.
@@ -399,7 +408,7 @@ Copy-Item .env.example .env
 uv sync --locked
 docker compose up --detach ops-mysql --wait
 uv run --locked python manage.py check
-uv run --locked python manage.py migrate
+uv run --locked python manage.py migrate_deployment
 uv run --locked python manage.py runserver 127.0.0.1:8001
 ```
 
@@ -410,7 +419,7 @@ uv run --locked python manage.py runserver 127.0.0.1:8001
 | 경로 | 성공 응답 | 실패 동작 |
 | --- | --- | --- |
 | `GET /api/v1/health` | `200`, `status: UP` | DB를 호출하지 않음 |
-| `GET /api/v1/health/ready` | `200`, `database: UP` | MySQL 연결/질의 실패 시 `503`, 내부 연결 정보는 응답에 노출하지 않음 |
+| `GET /api/v1/health/ready` | `200`, `database: UP, schema: UP` | DB 실패는 `database: DOWN`, 미적용 migration·이력 불일치·실제 테이블/컬럼 누락은 `schema: DOWN`으로 `503`; 내부 정보 비노출 |
 | `GET /api/v1/ops/session` | `200`, `user`(쿠키가 없으면 null), `csrf_token`, 허용 자료 목록, `search_traces_url` | 만료 `401`, 비관리자 `403`, Core 장애 `503` |
 | `GET /api/v1/ops/evaluations/{UUID}/report` | `200`, CSP sandbox가 적용된 HTML | 미인증 `401`, 비관리자 `403`, Core 장애 `503`, 없거나 훼손된 보고서 `404` |
 | `POST /api/v1/ops/evaluations` | 최초 `202`, 재전송 `200`; 실행 메타데이터 | 자료/UUID 오류 `400`, 미인증 `401`, 권한·CSRF `403`, 요청 충돌 `409`, 인증 서버 장애·접수 미확인 `503` |

@@ -10,4 +10,5 @@ spec:
   namespaceResourceWhitelist:
     - {group: apps, kind: Deployment}
     - {group: "", kind: Service}
+    - {group: batch, kind: Job}
   orphanedResources: {warn: true}

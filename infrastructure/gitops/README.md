@@ -15,7 +15,7 @@
 
 | 항목 | 통합 저장소에 포함한 범위 |
 | --- | --- |
-| 서비스 | `core-service`·`catalog-service`·`ai-service`·`ops-service`별 Helm Deployment·Service |
+| 서비스 | 서비스별 Helm Deployment·Service, Ops 전용 PreSync migration Job |
 | 데이터 | Core·Catalog·Ops 전용 MySQL, 로컬 검증용 Redis·Elasticsearch·Qdrant |
 | Argo CD | 포크의 승인된 `deploy/fork` snapshot에 있는 Application 4개를 적용. 전용 클러스터만 허용 |
 | 로컬 이미지 검증 | 로컬 빌드·kind 적재 smoke 유지. GHCR 계정 불필요 |
@@ -52,6 +52,10 @@ python -B scripts/dev.py --watch
 `up`은 필요할 때 토큰을 숨김 입력받고, 선택된 네 이미지 manifest에 실제 pull 권한이 있는지 확인합니다.
 기존 일곱 런타임 Secret 중 일부만 있으면 DB 비밀번호를 덮어쓰지 않고 멈춥니다. 데이터는 본인 kind의
 로컬 볼륨에 저장하며 클러스터 삭제 시 잃을 수 있습니다. `up`·모드 전환은 클러스터를 자동 삭제하지 않습니다.
+
+Ops는 [스키마 준비·migration 계약](docs/ops-migration.md)에 따라 빈 DB를 Ready로 처리하지 않습니다.
+새 v2 후보와 로컬 소스 부트스트랩은 migration Job 성공 후 Ops 앱을 적용합니다.
+실제 MySQL·Argo 실행 및 전체 평가 업무 검증은 별도 완료 기준입니다.
 
 ## 구조
 
