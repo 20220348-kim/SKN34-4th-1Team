@@ -21,7 +21,7 @@ def test_search_smoke_exports_miss_hit_and_checks_parent_and_privacy(
     settings, exporter = trace_environment
     records = asyncio.run(smoke.search_trace_examples(settings))
     spans = exporter.get_finished_spans()
-    assert len(spans) == 17  # 근거 정상/실패 2+2, 검색 miss/hit 8+5
+    assert len(spans) == 40  # 근거 2+2, 도우미 정상/map 실패/timeout 10+10+3, 검색 8+5
     documents = {}
     for span in spans:
         attrs = span.attributes
@@ -51,6 +51,19 @@ def test_search_smoke_exports_miss_hit_and_checks_parent_and_privacy(
         smoke.httpx, "Client", lambda **kwargs: client_type(**kwargs, transport=transport)
     )
     smoke.verify_traces(settings, records)
+    assistant_records = [item for item in records if "assistant_scenario" in item]
+    failed_map = next(item for item in assistant_records if item["assistant_scenario"] == "map-failure")
+    root = next(item for item in documents[failed_map["trace_id"]] if item["name"] == "assistant.agent")
+    root["metadata"]["usage_unknown_calls"] = 0
+    with pytest.raises(AssertionError):
+        smoke.verify_traces(settings, [failed_map])
+    root["metadata"]["usage_unknown_calls"] = 1
+    judge = next(item for item in documents[failed_map["trace_id"]] if item["name"] == "assistant.saved.judge")
+    parent = judge["parentObservationId"]
+    judge["parentObservationId"] = root["id"]
+    with pytest.raises(AssertionError):
+        smoke.verify_traces(settings, [failed_map])
+    judge["parentObservationId"] = parent
     search_records = [item for item in records if "names" in item]
     root = next(
         item

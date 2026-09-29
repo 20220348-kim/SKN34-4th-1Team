@@ -189,8 +189,10 @@ def build_application_container(
                 tool_client=assistant_tool_client,
                 max_tool_calls=settings.assistant_agent_max_tool_calls,
                 retriever=QdrantEvidenceRetriever(evidence_service),
+                tracing=llm_tracing,
             ),
             timeout_seconds=settings.assistant_agent_timeout_seconds,
+            tracing=llm_tracing,
         )
     return ApplicationContainer(
         llm_tracing=llm_tracing,

@@ -78,10 +78,11 @@ describe('React LLMOps 운영 화면', () => {
       ? Promise.resolve(json({ ...session(), search_traces_url: 'http://localhost:13000/project/development/traces' }))
       : original(path, options))
     open()
-    const link = await screen.findByRole('link', { name: '검색 실행 추적 ↗' })
+    const link = await screen.findByRole('link', { name: '검색·도우미 실행 추적 ↗' })
     expect(link.getAttribute('href')).toBe('http://localhost:13000/project/development/traces')
     expect(link.getAttribute('target')).toBe('_blank')
     expect(link.getAttribute('rel')).toBe('noopener noreferrer')
+    expect(link.getAttribute('title')).toContain('assistant-agent')
   })
 
   it('평가 취소를 CSRF와 함께 접수하고 종료 확인까지 취소 요청 중으로 표시한다', async () => {

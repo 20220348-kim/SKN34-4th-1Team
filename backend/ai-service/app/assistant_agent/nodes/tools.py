@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+from contextlib import nullcontext
 from time import perf_counter
 from typing import Any
 
@@ -9,12 +10,15 @@ from langchain_core.messages import ToolMessage
 from app.assistant_agent.errors import AssistantAgentError
 from app.assistant_agent.state import AgentState, ToolResult
 from app.assistant_agent.tools import CoreToolClient, build_tools
+from app.tracing import LLMTracing
 
 
 logger = logging.getLogger(__name__)
 
 
-async def run_tools(state: AgentState, *, tool_client: CoreToolClient, max_tool_calls: int) -> dict:
+async def run_tools(
+    state: AgentState, *, tool_client: CoreToolClient, max_tool_calls: int, tracing: LLMTracing | None = None,
+) -> dict:
     """계획이 고른 도구를 병렬로 부른다. 실패는 예외가 아니라 ok=false 결과와 오류 ToolMessage로 남긴다."""
     principal = state["request"].principal
     if principal is None:
@@ -27,11 +31,12 @@ async def run_tools(state: AgentState, *, tool_client: CoreToolClient, max_tool_
         ok = False
         data: Any = None
         try:
-            message = await tools[call["name"]].ainvoke(call)
-            if not isinstance(message, ToolMessage):
-                raise AssistantAgentError("tool must return a ToolMessage")
-            ok = True
-            data = message.artifact
+            with tracing.observation("assistant.tool", metadata={"tool": call["name"]}) if tracing else nullcontext():
+                message = await tools[call["name"]].ainvoke(call)
+                if not isinstance(message, ToolMessage):
+                    raise AssistantAgentError("tool must return a ToolMessage")
+                ok = True
+                data = message.artifact
         except asyncio.CancelledError:
             raise
         except Exception as error:  # noqa: BLE001 - 도구 실패는 답을 강등할 뿐 요청을 실패시키지 않는다.

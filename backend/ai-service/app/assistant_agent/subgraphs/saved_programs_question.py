@@ -1,9 +1,9 @@
 """관심 공고 묶음 질문 서브그래프: retrieve(multi-doc) → map(공고마다 싼 모델, 병렬) → reduce(답 모델) → verify."""
 
 import asyncio
-import json
 import logging
 import operator
+from contextlib import nullcontext
 from functools import partial
 from typing import Annotated, Any, TypedDict
 from urllib.parse import urlencode
@@ -20,6 +20,9 @@ from app.assistant_agent.models import (
 from app.assistant_agent.nodes.common import request_payload, structured_call
 from app.assistant_agent.prompts import MAP_INSTRUCTIONS, REDUCE_INSTRUCTIONS
 from app.assistant_agent.retriever import EvidenceRetriever, RetrievedChunk
+from app.assistant_agent.tracing import traced_node
+from app.config import LangfuseSettings
+from app.tracing import LLMTracing
 
 
 logger = logging.getLogger(__name__)
@@ -56,7 +59,7 @@ async def retrieve(state: SavedProgramsState, *, retriever: EvidenceRetriever) -
         return {"retrieved": {}, "retrieval_failed": True}
 
 
-async def map_findings(state: SavedProgramsState, *, model: BaseChatModel) -> dict:
+async def map_findings(state: SavedProgramsState, *, model: BaseChatModel, tracing: LLMTracing | None = None) -> dict:
     """청크가 있는 공고마다 싼 모델이 판단을 낸다. 병렬이며 하나가 실패해도 그 공고만 UNKNOWN이다."""
     request = state["request"]
     retrieved = state.get("retrieved", {})
@@ -73,7 +76,8 @@ async def map_findings(state: SavedProgramsState, *, model: BaseChatModel) -> di
             )),
         ]
         try:
-            parsed, counts = await structured_call(model, ProgramFinding, messages)
+            with tracing.observation("assistant.saved.judge") if tracing else nullcontext():
+                parsed, counts = await structured_call(model, ProgramFinding, messages)
         except asyncio.CancelledError:
             raise
         except Exception as error:  # noqa: BLE001
@@ -158,12 +162,17 @@ def _subtitle(document: SavedProgramDocument) -> str | None:
 
 def build_saved_programs_subgraph(
     *, map_model: BaseChatModel, reduce_model: BaseChatModel, retriever: EvidenceRetriever,
+    tracing: LLMTracing | None = None,
 ) -> CompiledStateGraph:
+    tracing = tracing or LLMTracing(LangfuseSettings())
     graph: StateGraph = StateGraph(SavedProgramsState)
-    graph.add_node("retrieve", partial(retrieve, retriever=retriever))
-    graph.add_node("map", partial(map_findings, model=map_model))
-    graph.add_node("reduce", partial(reduce_answer, model=reduce_model))
-    graph.add_node("verify", verify)
+    graph.add_node("retrieve", traced_node(tracing, "assistant.saved.retrieve", partial(retrieve, retriever=retriever)))
+    graph.add_node("map", traced_node(tracing, "assistant.saved.map", partial(
+        map_findings, model=map_model, tracing=tracing,
+    ), model=map_model, prompt=MAP_INSTRUCTIONS))
+    graph.add_node("reduce", traced_node(tracing, "assistant.saved.reduce", partial(reduce_answer, model=reduce_model),
+                                       model=reduce_model, prompt=REDUCE_INSTRUCTIONS))
+    graph.add_node("verify", traced_node(tracing, "assistant.saved.verify", verify))
     graph.add_edge(START, "retrieve")
     graph.add_edge("retrieve", "map")
     graph.add_edge("map", "reduce")
