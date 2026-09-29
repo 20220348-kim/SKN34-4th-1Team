@@ -133,9 +133,22 @@ export function RunBudgetPanel({ runId, onExpired, refreshKey }: { runId: string
           <p className="break-all text-xs text-sample-muted">정리 요청: {data.cleanup.request_id} · 종료 상태 ID: {data.cleanup.evidence.state_id}</p>
           <p className="text-xs text-sample-muted">변경자는 CLI 운영자가 입력한 값입니다. 실제 결제 환불이나 미확인 사용량 보정이 아니며 새 모델 실행을 시작하지 않습니다.</p>
         </section>}
+        {Boolean(data.corrections?.length) && <section aria-label="사용량 보정 이력" className="space-y-3 rounded-xl bg-[#f3f7f5] p-4 text-sm">
+          <h3 className="font-semibold">사용량 보정 이력</h3>
+          <p>서명을 검증한 실행기 응답 기록으로 미확인 사용량을 확인했습니다. 원래 호출 기록은 보존하며 확정 합계에는 보정값을 포함합니다.</p>
+          {data.corrections!.map((record) => <article key={record.request_id} className="space-y-1 border-t pt-3">
+            <p>호출 {record.sequence + 1} · {date(record.created_at)} · {record.actor} · CLI</p>
+            <p>사유: {record.reason}</p>
+            <p>확인 사용량: 입력 {count(record.input_tokens)} / 출력 {count(record.output_tokens)}토큰</p>
+            <p>예약 차액 반환: {count(record.before.reservation_output_tokens - record.after.reservation_output_tokens)}출력 토큰 · 호출 횟수 유지</p>
+            <p className="break-all text-xs text-sample-muted">응답: {record.response_id} · 증거 SHA-256: {record.evidence_sha256}</p>
+            <p className="break-all text-xs text-sample-muted">보정 요청: {record.request_id}</p>
+          </article>)}
+          <p className="text-xs text-sample-muted">변경자는 CLI 운영자가 입력한 값입니다. 실행기가 보관한 사용량이며 제공자의 청구 확정이나 실제 결제 환불을 뜻하지 않습니다.</p>
+        </section>}
         <details><summary className="cursor-pointer text-sm font-semibold">호출별 승인·정산 · {data.calls.length}건</summary>
           <ul className="mt-3 space-y-2 text-sm">{data.calls.map((call) => <li key={call.sequence}>
-            호출 {call.sequence + 1} · 승인 {date(call.authorized_at)} · {call.settled_at ? `정산 ${date(call.settled_at)} · 입력 ${count(call.input_tokens!)} / 출력 ${count(call.output_tokens!)}토큰` : '사용량 미확인'}
+            호출 {call.sequence + 1} · 승인 {date(call.authorized_at)} · {call.settled_at ? `정산 ${date(call.settled_at)} · 입력 ${count(call.input_tokens!)} / 출력 ${count(call.output_tokens!)}토큰` : data.corrections?.some((record) => record.sequence === call.sequence) ? '원본 정산 미수신 · 사용량 보정 이력 참조' : '사용량 미확인'}
           </li>)}</ul>
         </details>
       </>}

@@ -69,3 +69,53 @@ def test_unknown_usage_is_recorded_but_never_allows_more_calls(monkeypatch, clie
     with pytest.raises(budget_client.BudgetUnavailable):
         asyncio.run(client.settle(0, None))
     assert calls == [("settle", {"sequence": 0, "usage": None})]
+
+
+def test_receipt_is_exclusive_signed_and_omits_response_content(client, tmp_path):
+    import hashlib
+    import hmac
+    body = {"id": "resp_test", "status": "completed", "usage": {
+        "input_tokens": 10, "output_tokens": 20, "total_tokens": 30,
+    }, "output": [{"text": "private-answer"}], "secret": "private-key"}
+    client.record_usage_receipt(tmp_path, 0, "test-model", 2000, 200, body)
+    raw = (tmp_path / "usage-0.json").read_bytes()
+    envelope = json.loads(raw)
+    canonical = json.dumps(envelope["payload"], sort_keys=True, separators=(",", ":")).encode()
+    assert hmac.compare_digest(envelope["signature"], hmac.new(
+        client.token.encode(), b"govbiz-budget-usage-v1\n" + canonical, hashlib.sha256).hexdigest())
+    assert envelope["payload"]["run_id"] == client.run_id
+    assert b"private" not in raw and client.token.encode() not in raw
+    with pytest.raises(budget_client.BudgetUnavailable):
+        client.record_usage_receipt(tmp_path, 0, "test-model", 2000, 200, body)
+    assert (tmp_path / "usage-0.json").read_bytes() == raw
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+@pytest.mark.parametrize("change", [
+    {"usage": None}, {"id": "bad"}, {"status": "in_progress"},
+    {"usage": {"input_tokens": True, "output_tokens": 1, "total_tokens": 2}},
+    {"usage": {"input_tokens": 0, "output_tokens": 2001, "total_tokens": 2001}},
+])
+def test_invalid_response_never_creates_usage_evidence(client, tmp_path, change):
+    body = {"id": "resp_test", "status": "completed", "usage": {
+        "input_tokens": 10, "output_tokens": 20, "total_tokens": 30,
+    }, **change}
+    client.record_usage_receipt(tmp_path, 0, "test-model", 2000, 200, body)
+    assert not list(tmp_path.iterdir())
+
+
+def test_receipt_write_failure_is_explicit_and_does_not_attempt_settlement(client, tmp_path, monkeypatch):
+    from unittest.mock import Mock
+    request = Mock()
+    monkeypatch.setattr(client, "request", request)
+    def fail(*args):
+        raise OSError("disk full")
+    monkeypatch.setattr(budget_client.os, "fsync", fail)
+    with pytest.raises(budget_client.BudgetUnavailable, match="preserved"):
+        client.record_usage_receipt(tmp_path, 0, "test-model", 2000, 200, {
+            "id": "resp_test", "status": "completed", "usage": {
+                "input_tokens": 10, "output_tokens": 20, "total_tokens": 30,
+            },
+        })
+    request.assert_not_called()
+    assert not list(tmp_path.iterdir())

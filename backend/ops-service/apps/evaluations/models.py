@@ -305,3 +305,31 @@ class EvaluationBudgetCleanup(models.Model):
                 name="budget_cleanup_attribution",
             ),
         ]
+
+
+class EvaluationUsageCorrection(models.Model):
+    """원래 호출 행을 보존하는, 서명된 실행기 사용량 증거의 단발성 보정."""
+
+    request_id = models.UUIDField(primary_key=True)
+    call = models.OneToOneField(
+        EvaluationBudgetCall, on_delete=models.PROTECT, related_name="correction"
+    )
+    actor = models.CharField(max_length=150)
+    reason = models.CharField(max_length=1000)
+    evidence_sha256 = models.CharField(max_length=64, unique=True)
+    response_id = models.CharField(max_length=185, unique=True)
+    evidence_raw = models.TextField()
+    input_tokens = models.PositiveBigIntegerField()
+    output_tokens = models.PositiveBigIntegerField()
+    original_call = models.JSONField()
+    before = models.JSONField()
+    after = models.JSONField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=~models.Q(actor="") & ~models.Q(reason=""),
+                name="usage_correction_attribution",
+            ),
+        ]

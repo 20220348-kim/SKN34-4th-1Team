@@ -11,6 +11,7 @@ from rest_framework.response import Response
 from .budget_cleanup import cleanup_data
 from .budget_reporting import budget_summary, reservation_data
 from .models import EvaluationBudget, EvaluationBudgetReservation, EvaluationRun
+from .usage_correction import correction_data
 
 
 @never_cache
@@ -33,7 +34,7 @@ def api_reservations(request):
     rows = (
         EvaluationBudgetReservation.objects.filter(budget=budget)
         .select_related("run")
-        .prefetch_related("calls")
+        .prefetch_related("calls__correction")
         .order_by("-created_at", "-run_id")
     )
     page = paginator.paginate_queryset(rows, request)
@@ -53,7 +54,7 @@ def api_run_budget(request, run_id):
     reservation = (
         EvaluationBudgetReservation.objects.filter(run=run)
         .select_related("run", "cleanup")
-        .prefetch_related("calls")
+        .prefetch_related("calls__correction")
         .first()
     )
     if reservation is None:
@@ -64,6 +65,7 @@ def api_run_budget(request, run_id):
                 "reservation": None,
                 "calls": [],
                 "cleanup": None,
+                "corrections": [],
             }
         )
     return Response(
@@ -71,6 +73,11 @@ def api_run_budget(request, run_id):
             "as_of": as_of,
             "state": "recorded",
             "reservation": reservation_data(reservation),
+            "corrections": [
+                correction_data(call.correction)
+                for call in sorted(reservation.calls.all(), key=lambda call: call.sequence)
+                if hasattr(call, "correction")
+            ],
             "cleanup": cleanup_data(reservation.cleanup)
             if hasattr(reservation, "cleanup")
             else None,

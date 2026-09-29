@@ -4,6 +4,7 @@ from uuid import UUID
 
 from django.db import transaction
 from django.db.models import Count, F, Q, Sum
+from django.db.models.functions import Coalesce
 
 from .models import (
     EvaluationBudget,
@@ -20,13 +21,16 @@ def ledger_totals(reservations):
         calls=Sum("max_calls", default=0),
         output=Sum(F("max_calls") * F("max_output_tokens"), default=0),
     )
-    calls = EvaluationBudgetCall.objects.filter(reservation__in=reservations)
-    settled = Q(settled_at__isnull=False)
+    calls = EvaluationBudgetCall.objects.filter(reservation__in=reservations).annotate(
+        effective_input=Coalesce("correction__input_tokens", "input_tokens"),
+        effective_output=Coalesce("correction__output_tokens", "output_tokens"),
+    )
+    settled = Q(settled_at__isnull=False) | Q(correction__isnull=False)
     open_call = Q(reservation__closed_at__isnull=True)
     counts = calls.aggregate(
         settled_calls=Count("pk", filter=settled),
-        confirmed_input_tokens=Sum("input_tokens", filter=settled, default=0),
-        confirmed_output_tokens=Sum("output_tokens", filter=settled, default=0),
+        confirmed_input_tokens=Sum("effective_input", filter=settled, default=0),
+        confirmed_output_tokens=Sum("effective_output", filter=settled, default=0),
         unknown_calls=Count("pk", filter=~settled),
         unknown_output_tokens=Sum("reservation__max_output_tokens", filter=~settled, default=0),
         open_calls=Count("pk", filter=open_call),
@@ -34,7 +38,7 @@ def ledger_totals(reservations):
         open_settled_capacity=Sum(
             "reservation__max_output_tokens", filter=open_call & settled, default=0
         ),
-        open_settled_output=Sum("output_tokens", filter=open_call & settled, default=0),
+        open_settled_output=Sum("effective_output", filter=open_call & settled, default=0),
     )
     # Subtract in Python: MySQL's unsigned subtraction can fail on inconsistent historical rows.
     counts["unapproved_calls"] = opened["calls"] - counts.pop("open_calls")
@@ -126,7 +130,11 @@ def budget_summary(budget):
 def reservation_data(reservation):
     # A page prefetches these calls once. Never expose the worker's identity or bearer token.
     calls = list(reservation.calls.all())
-    settled = [call for call in calls if call.settled_at is not None]
+    settled = [
+        call.correction if hasattr(call, "correction") else call
+        for call in calls
+        if call.settled_at is not None or hasattr(call, "correction")
+    ]
     unknown = len(calls) - len(settled)
     unapproved = reservation.max_calls - len(calls) if reservation.closed_at is None else 0
     output = sum(call.output_tokens for call in settled)

@@ -37,6 +37,19 @@ const cleanupRecord = {
   before: { global_calls: 6, global_output_tokens: 12000, reservation_calls: 6, reservation_output_tokens: 12000 },
   after: { global_calls: 2, global_output_tokens: 2050, reservation_calls: 2, reservation_output_tokens: 2050, unknown_calls: 1, unknown_output_tokens: 2000 },
 }
+const correction = {
+  request_id: id, run_id: id, sequence: 1, source: 'WORKER_RESPONSE', actor: '김 운영자', reason: '정산 전달 실패 검토',
+  evidence_sha256: 'c'.repeat(64), response_id: 'resp_test', input_tokens: 100, output_tokens: 50, created_at: time,
+  before: { global_calls: 2, global_output_tokens: 2050, reservation_calls: 2, reservation_output_tokens: 2050, unknown_calls: 1, unknown_output_tokens: 2000 },
+  after: { global_calls: 2, global_output_tokens: 100, reservation_calls: 2, reservation_output_tokens: 100, unknown_calls: 0, unknown_output_tokens: 0 },
+}
+const correctedDetail = {
+  ...detail, corrections: [correction], reservation: { ...reservation, closed_at: time, breakdown: {
+    settled_calls: 2, confirmed_input_tokens: 200, confirmed_output_tokens: 100,
+    unknown_calls: 0, unknown_output_tokens: 0, unapproved_calls: 0, unapproved_output_tokens: 0,
+    pending_release_output_tokens: 0, allocated_calls: 2, allocated_output_tokens: 100,
+  } },
+}
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
@@ -132,6 +145,36 @@ describe('관리자 예산 장부', () => {
       }, ...(scenario === 'wrong-total' ? { after: { ...cleanupRecord.after, global_output_tokens: 0 } } : {}) },
     }
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json(body)))
+    await expect(getRunBudget(id)).rejects.toThrow('운영 서버 응답을 확인할 수 없습니다.')
+  })
+
+  it('보정된 사용량과 원본 미정산 기록을 구분하고 증거·차액 이력을 GET으로 조회한다', async () => {
+    const fetch = vi.fn().mockResolvedValue(json(correctedDetail))
+    vi.stubGlobal('fetch', fetch)
+    render(<RunBudgetPanel runId={id} onExpired={vi.fn()} refreshKey={0} />)
+    const audit = await screen.findByRole('region', { name: '사용량 보정 이력' })
+    expect(within(audit).getByText('확인 사용량: 입력 100 / 출력 50토큰')).toBeTruthy()
+    expect(within(audit).getByText('예약 차액 반환: 1,950출력 토큰 · 호출 횟수 유지')).toBeTruthy()
+    expect(within(audit).getByText(/증거 SHA-256/)).toBeTruthy()
+    expect(screen.getByText(/원본 정산 미수신 · 사용량 보정 이력 참조/)).toBeTruthy()
+    expect(screen.getByRole('row', { name: '확정 사용량 2 100' })).toBeTruthy()
+    expect(within(audit).queryByRole('button')).toBeNull()
+    expect(fetch.mock.calls.every(([, options]) => !options.method || options.method === 'GET')).toBe(true)
+  })
+
+  it.each(['wrong-run', 'wrong-call', 'settled', 'open', 'duplicate', 'wrong-delta', 'over-cap', 'fake-source'])('잘못된 사용량 보정 계약 %s를 거절한다', async (scenario) => {
+    const record = { ...correction,
+      ...(scenario === 'wrong-run' ? { run_id: '20000000-0000-4000-8000-000000000002' } : {}),
+      ...(scenario === 'wrong-call' ? { sequence: 9 } : {}),
+      ...(scenario === 'settled' ? { sequence: 0 } : {}),
+      ...(scenario === 'wrong-delta' ? { after: { ...correction.after, global_output_tokens: 0 } } : {}),
+      ...(scenario === 'over-cap' ? { output_tokens: 2001 } : {}),
+      ...(scenario === 'fake-source' ? { source: 'MANUAL' } : {}),
+    }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ ...correctedDetail,
+      reservation: { ...correctedDetail.reservation, closed_at: scenario === 'open' ? null : time },
+      corrections: scenario === 'duplicate' ? [record, record] : [record],
+    })))
     await expect(getRunBudget(id)).rejects.toThrow('운영 서버 응답을 확인할 수 없습니다.')
   })
 

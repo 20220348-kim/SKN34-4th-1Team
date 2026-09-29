@@ -304,6 +304,8 @@ async def execute(prepared: list, fixture_hash: str, output_dir: Path, *,
         capture["apiResponses"].append(observation)
         if budget is not None:
             save_capture()
+            budget.record_usage_receipt(output_dir, capture["modelApiCalls"] - 1,
+                                        model, 2000, response.status_code, body)
             await budget.settle(capture["modelApiCalls"] - 1, observation["usage"])
 
     client = AsyncOpenAI(

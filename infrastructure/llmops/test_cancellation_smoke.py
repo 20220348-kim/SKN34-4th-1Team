@@ -621,3 +621,46 @@ def test_readiness_retries_non_json_startup_response_but_still_times_out(monkeyp
         with pytest.raises(TimeoutError, match="Ops readiness"):
             instance.ready()
         assert instance.csrf is None
+
+
+@pytest.mark.parametrize(
+    "fault", [None, "extra-send", "over-release", "changed-original", "unknown", "source"]
+)
+def test_usage_correction_preserves_originals_and_does_not_hide_unknown_or_resend(fault):
+    import copy
+
+    before = {
+        "closed": True,
+        "calls": [{"sequence": 0, "output_tokens": None}],
+        "allocated": [1, 2000],
+    }
+    after = {**copy.deepcopy(before), "allocated": [1, 50]}
+    record = {
+        "applied": True,
+        "source": "WORKER_RESPONSE",
+        "input_tokens": 100,
+        "output_tokens": 50,
+        "before": {"global_output_tokens": 2000},
+        "after": {"global_output_tokens": 50, "unknown_calls": 0},
+    }
+    events = [{"stage": "model_sent"}]
+    events_after = copy.deepcopy(events)
+    if fault == "extra-send":
+        events_after.append({"stage": "model_sent"})
+    if fault == "over-release":
+        after["allocated"] = [1, 0]
+    if fault == "changed-original":
+        after["calls"][0]["output_tokens"] = 50
+    if fault == "unknown":
+        record["after"]["unknown_calls"] = 1
+    if fault == "source":
+        record["source"] = "MANUAL"
+    if fault:
+        with pytest.raises(AssertionError):
+            smoke.verify_correction(
+                record, before, after, events_before=events, events_after=events_after
+            )
+    else:
+        smoke.verify_correction(
+            record, before, after, events_before=events, events_after=events_after
+        )

@@ -100,6 +100,19 @@ def verify_cleanup(record, before, after, *, unknown_calls, events_before, event
     ]
 
 
+def verify_correction(record, before, after, *, events_before, events_after):
+    assert record["applied"] is True and record["source"] == "WORKER_RESPONSE"
+    assert before["closed"] and after["closed"]
+    assert before["calls"] == after["calls"], "Original settlement rows must be preserved"
+    assert events_before == events_after, "Correction must not send model or worker requests"
+    assert record["input_tokens"] == 100 and record["output_tokens"] == 50
+    assert before["allocated"][0] == after["allocated"][0]
+    assert before["allocated"][1] - after["allocated"][1] == 1950
+    assert record["after"]["unknown_calls"] == 0
+    assert record["after"]["global_output_tokens"] == after["allocated"][1]
+    assert record["before"]["global_output_tokens"] == before["allocated"][1]
+
+
 class Smoke:
     def __init__(self, compose):
         self.compose = compose
@@ -359,6 +372,56 @@ class Smoke:
         assert status == 200 and detail["cleanup"]["request_id"] == applied["request_id"]
         self.active["cleanup"] = applied
 
+    def correct_usage(self):
+        wait_for(self.process, lambda process: not process["alive"], label="Correction child exit")
+        run_id = self.active["request_id"]
+        before = self.db(run_id)
+        events = self.control("state")["events"]
+        assert before["allocated"] == [
+            self.active["before"]["allocated"][0] + 1,
+            self.active["before"]["allocated"][1] + 2000,
+        ]
+        args = (
+            "exec",
+            "-T",
+            "ops-service",
+            "python",
+            "manage.py",
+            "correct_evaluation_usage",
+            "--run-id",
+            run_id,
+            "--sequence",
+            "0",
+            "--actor",
+            "offline-ci-operator",
+            "--reason",
+            "Preserved response after settlement failure",
+            "--request-id",
+            str(uuid4()),
+        )
+        preview = json.loads(self.dc(*args))
+        assert preview["applied"] is False and self.db(run_id) == before
+        args += ("--evidence-sha256", preview["evidence_sha256"], "--apply")
+        applied = json.loads(self.dc(*args))
+        after = self.db(run_id)
+        verify_correction(
+            applied,
+            before,
+            after,
+            events_before=events,
+            events_after=self.control("state")["events"],
+        )
+        replay = json.loads(self.dc(*args))
+        assert replay == {**applied, "replayed": True} and self.db(run_id) == after
+        status, detail = self.api(f"/api/v1/ops/evaluations/{run_id}/budget")
+        assert status == 200 and detail["corrections"] == [
+            {key: value for key, value in applied.items() if key not in {"applied", "replayed"}}
+        ]
+        assert detail["calls"][0]["output_tokens"] is None
+        assert detail["reservation"]["breakdown"]["confirmed_output_tokens"] == 50
+        assert detail["reservation"]["breakdown"]["unknown_calls"] == 0
+        self.active["correction"] = applied
+
     def run(self):
         self.pause()
         try:
@@ -442,6 +505,9 @@ class Smoke:
             self.terminal("FAILED")
             if name in {"close_error", "settle_and_close_error"}:
                 self.cleanup(unknown_calls=1 if name == "settle_and_close_error" else 0)
+            if name in {"settle_error", "settle_and_close_error"}:
+                self.correct_usage()
+                output = 50
             self.finish(calls=calls, output=output, sent=sent, closed=closed)
 
         self.start("duplicate_worker", hold="model_sent")
