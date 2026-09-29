@@ -296,7 +296,7 @@ describe('review screens and execution safety', () => {
     repository.start.mockRejectedValueOnce(new TypeError('network lost')).mockImplementation(async (_id, request) => ({ ...runFixture, requestKey: request.requestKey }))
     const view = mount(); await screen.findByText('새 분석 실행')
     fireEvent.click(screen.getByText('← 참여 상태 수정'))
-    fireEvent.change(screen.getByLabelText('분석에 참고할 추가 설명 (선택)'), { target: { value: '한 번만 전달할 설명' } })
+    fireEvent.change(screen.getByLabelText('추가로 알려줄 내용이 있나요? (선택)'), { target: { value: '한 번만 전달할 설명' } })
     const button = screen.getByText('입력 저장 후 분석 시작'); fireEvent.click(button); fireEvent.click(button)
     await screen.findByRole('alert')
     expect(repository.start).toHaveBeenCalledTimes(1)
@@ -401,6 +401,7 @@ describe('review screens and execution safety', () => {
     mount('/app/combination-reviews/12/runs/30')
     const region = await screen.findByRole('region', { name: '두 사업의 중복 지원 검토 요약' })
     expect(within(region).getByText(expected)).toBeTruthy()
+    fireEvent.click(screen.getByText('단계별 상세 분석 보기'))
     fireEvent.click(screen.getByRole('button', { name: '원문인용 확인하기' }))
     expect(screen.getByText(citation.quote)).toBeTruthy()
     expect(repository.start).not.toHaveBeenCalled()
@@ -428,6 +429,10 @@ describe('review screens and execution safety', () => {
     expect(within(summary).getByRole('heading', { name: '두 사업의 중복 지원 검토 요약' })).toBeTruthy()
     expect(within(summary).getByText('선택한 두 사업을 함께 신청하거나 지원받을 때의 제한 사항을 요약한 내용입니다.')).toBeTruthy()
     expect(within(summary).getByText(runFixture.analysis!.summary)).toBeTruthy()
+    expect(screen.getByText('추가 확인이 필요한 정보')).toBeTruthy()
+    expect(screen.getByRole('link', { name: '입력 보완하기' }).getAttribute('href')).toBe('/app/combination-reviews/12?step=participation')
+    expect(screen.getByText('단계별 상세 분석 보기').closest('details')?.open).toBe(false)
+    fireEvent.click(screen.getByText('단계별 상세 분석 보기'))
     expect(screen.getAllByRole('tab')).toHaveLength(6)
     const citationsButton = screen.getByRole('button', { name: '원문인용 확인하기' })
     const citations = document.getElementById(citationsButton.getAttribute('aria-controls')!)!
@@ -469,11 +474,12 @@ describe('review screens and execution safety', () => {
     mount('/app/combination-reviews/12/runs/30')
 
     expect(await screen.findByText('사업 1은 ‘예’이고 사업 2는 ‘미확인’입니다.')).toBeTruthy()
+    fireEvent.click(screen.getByText('단계별 상세 분석 보기'))
     expect(screen.getByText(/입력한 참여 상태와 추가 사실, 자동 수집한 공식 원문의 범위/)).toBeTruthy()
     expect(screen.getByText('협약은 ‘아니오’이고 수행은 ‘시작 전’이며 교부는 ‘미확인’입니다.')).toBeTruthy()
     expect(screen.getByText(/‘수행 중’ 상태까지 확인/)).toBeTruthy()
     expect(screen.getByText('‘완료’ 또는 ‘중단’ 여부는 ‘미확인’입니다.')).toBeTruthy()
-    expect(screen.getByText('선정 결과가 ‘예’인가요?')).toBeTruthy()
+    expect(within(screen.getByRole('region', { name: '추가 확인이 필요한 정보' })).getByText('선정 결과가 ‘예’인가요?')).toBeTruthy()
   })
   it('loads the selected result automatically after the application StrictMode remount', async () => {
     mount('/app/combination-reviews/12/runs/30', true)
@@ -498,45 +504,38 @@ describe('review screens and execution safety', () => {
     expect(await screen.findByRole('region', { name: '실행 29 결과' })).toBeTruthy()
     expect(repository.run).toHaveBeenCalledWith(12, 29, expect.any(AbortSignal))
   })
-  it('keeps UNKNOWN independent from other participation fields', async () => {
+  it('uses one current status per program while keeping independent saved facts', async () => {
     mount('/app/combination-reviews/12'); await screen.findByDisplayValue(reviewFixture.title)
     fireEvent.click(screen.getByText('다음: 참여 상태 설정'))
     expect(screen.getByText(/사업 1 · 청년창업 사업화 지원 공고/)).toBeTruthy()
-    fireEvent.change(screen.getByLabelText('사업 1 신청'), { target: { value: 'YES' } })
-    expect(selectedValue(screen.getByLabelText('사업 1 교부'))).toBe('UNKNOWN')
-    expect(selectedValue(screen.getByLabelText('사업 1 확약'))).toBe('NO')
+    expect(screen.queryByLabelText('사업 1 신청')).toBeNull()
+    expect(screen.queryByLabelText('사업 1 선정')).toBeNull()
+    expect(screen.getAllByText('현재 이 지원사업은 어디까지 진행되었나요?')).toHaveLength(2)
+    fireEvent.change(screen.getByLabelText('사업 1 현재 진행 상태'), { target: { value: 'IN_PROGRESS' } })
+    expect(selectedValue(screen.getByLabelText('사업 1 현재 진행 상태'))).toBe('IN_PROGRESS')
+    expect(selectedValue(screen.getByLabelText('사업 1 지원금 교부 여부'))).toBe('UNKNOWN')
     await waitFor(() => expect(repository.start).not.toHaveBeenCalled())
   })
-  it('explains all six participation states on mouse hover and keyboard focus', async () => {
+  it('deduplicates stage questions above the collapsed detail and opens the input step', async () => {
+    const run = structuredClone(runFixture)
+    run.analysis!.pairs[0].stages[0].questions = ['두 사업의 비용이 같나요?']
+    run.analysis!.pairs[0].stages[1].questions = ['두 사업의 비용이 같나요?', '확약서를 제출했나요?']
+    repository.run.mockResolvedValue(run)
+    mount('/app/combination-reviews/12/runs/30')
+    const questions = await screen.findByRole('region', { name: '추가 확인이 필요한 정보' })
+    expect(within(questions).getAllByText('두 사업의 비용이 같나요?')).toHaveLength(1)
+    fireEvent.click(within(questions).getByRole('link', { name: '입력 보완하기' }))
+    expect(await screen.findByRole('heading', { name: '공고별 참여 상태' })).toBeTruthy()
+    expect(selectedValue(screen.getByLabelText('사업 1 현재 진행 상태'))).toBe('IN_PROGRESS')
+    expect((screen.getByLabelText('추가로 알려줄 내용이 있나요? (선택)') as HTMLTextAreaElement).value).toBe(run.input.additionalFacts)
+    expect(repository.replace).not.toHaveBeenCalled()
+    expect(repository.start).not.toHaveBeenCalled()
+  })
+  it('does not mark a loaded review dirty before the user edits its status', async () => {
     mount('/app/combination-reviews/12'); await screen.findByDisplayValue(reviewFixture.title)
     fireEvent.click(screen.getByText('다음: 참여 상태 설정'))
-    const descriptions = [
-      ['신청', '해당 사업에 신청서를 제출하여 접수가 이루어졌는지를 선택합니다.'],
-      ['선정', '평가·심사 후 지원 대상으로 선정되었다는 통보를 받았는지를 선택합니다.'],
-      ['확약', '선정 이후 사업 참여나 의무 이행을 위한 확약서를 제출했는지를 선택합니다.'],
-      ['협약', '주관기관과 지원 조건 및 사업 수행에 관한 협약을 체결했는지를 선택합니다.'],
-      ['수행', '협약 이후 사업이 시작 전·수행 중·완료·중단 중 어느 상태인지 선택합니다.'],
-      ['교부', '지원금·보조금이 실제로 지급(교부)되었는지를 선택합니다.'],
-    ]
-
-    for (const [label, description] of descriptions) {
-      const helpButtons = screen.getAllByRole('button', { name: `${label} 도움말` })
-      expect(helpButtons).toHaveLength(2)
-      const tooltip = document.getElementById(helpButtons[0]!.getAttribute('aria-describedby')!)!
-      expect(tooltip.textContent).toBe(description)
-      // 말풍선은 항상 설명으로 연결돼 있고, 마우스를 올리거나 포커스가 올 때만 보입니다(위치는 화면 밖으로 나가지 않게 훅이 잡음).
-      expect(tooltip.className).toContain('invisible')
-      fireEvent.mouseEnter(helpButtons[0]!.parentElement!)
-      expect(tooltip.className).toContain('visible')
-      expect(tooltip.className).not.toContain('invisible')
-      fireEvent.mouseLeave(helpButtons[0]!.parentElement!)
-      expect(tooltip.className).toContain('invisible')
-    }
-    const firstHelp = screen.getAllByRole('button', { name: '신청 도움말' })[0]!
-    fireEvent.focus(firstHelp)
-    expect(document.getElementById(firstHelp.getAttribute('aria-describedby')!)!.className).not.toContain('invisible')
-    fireEvent.blur(firstHelp)
-    expect(document.getElementById(firstHelp.getAttribute('aria-describedby')!)!.className).toContain('invisible')
+    expect(screen.queryByText('저장하지 않은 입력이 있습니다.')).toBeNull()
+    expect(repository.replace).not.toHaveBeenCalled()
   })
   it('moves the workspace scroll area to the top whenever the step changes', async () => {
     const view = mount('/app/combination-reviews/12')

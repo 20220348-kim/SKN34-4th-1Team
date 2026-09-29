@@ -17,7 +17,7 @@ function isEarlierState(current: RunSummary, next: RunSummary) {
   )
 }
 
-export function useReviewEditorViewModel(id: number | null, account: string, autoStart = false, loadSavedPrograms = false, resultRunId: number | null = null) {
+export function useReviewEditorViewModel(id: number | null, account: string, autoStart = false, loadSavedPrograms = false, resultRunId: number | null = null, initialFacts = '') {
   const useCase = appContainer.resolve('combinationReviewUseCase')
   const catalogUseCase = appContainer.resolve('browseSupportProgramsUseCase')
   const detailUseCase = appContainer.resolve('getSupportProgramDetailUseCase')
@@ -33,7 +33,7 @@ export function useReviewEditorViewModel(id: number | null, account: string, aut
   const [names, setNames] = useState<Record<string, string>>({})
   const [runs, setRuns] = useState<ReviewPage<RunSummary> | null>(null)
   const [run, setRun] = useState<ReviewRun | null>(null)
-  const [facts, setFacts] = useState('')
+  const [facts, setFacts] = useState(initialFacts)
   const [pending, setPending] = useState<RunRequest | null>(null)
   const [journalReady, setJournalReady] = useState(false)
   const [notice, setNotice] = useState('')

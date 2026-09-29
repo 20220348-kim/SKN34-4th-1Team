@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import { Link } from 'react-router'
+import { appPaths } from '../../../shared/routes/appPaths'
 import { reviewStages, type ReviewRun } from '../../../../domain/entities/CombinationReview'
 import { reviewRunFailureMessage } from '../viewmodel/reviewMessages'
 import { reviewStyles as s } from './CombinationReview.styles'
@@ -24,6 +26,7 @@ export function ReviewRunResult({ run, currentRevision, download, downloading }:
   const displayedSummary = displayReviewText(legacySummary
     ? summary.replace(/사업(\s*)([01])(?![0-9])/g, (_match, space: string, index: string) => `사업${space}${Number(index) + 1}`)
     : summary)
+  const questions = [...new Set(run.analysis?.pairs.flatMap((pair) => pair.stages.flatMap((stage) => stage.questions.map((question) => question.trim()))).filter(Boolean) ?? [])]
   return <section className="space-y-4" aria-label={`실행 ${run.id} 결과`}>
       {run.inputRevision !== currentRevision && <p className={`${s.warning} mt-3`}>과거 입력 버전의 결과입니다. 현재 저장 입력(버전 {currentRevision})에 대한 결과가 아닙니다.</p>}
       {run.status === 'QUEUED' && <p role="status" className={`${s.warning} mt-3`}>분석 대기 중입니다. 처리 가능한 순서에 따라 시작하며 새로고침해도 작업은 유지됩니다.</p>}
@@ -37,6 +40,15 @@ export function ReviewRunResult({ run, currentRevision, download, downloading }:
         <p className={s.muted}>선택한 두 사업을 함께 신청하거나 지원받을 때의 제한 사항을 요약한 내용입니다.</p>
         <p className="whitespace-pre-wrap text-sm leading-6">{displayedSummary}</p>
       </section>
+      <section className={`${s.card} space-y-3`} aria-label="추가 확인이 필요한 정보">
+        <h2 className="text-lg font-bold">추가 확인이 필요한 정보</h2>
+        {questions.length > 0 ? <ul className="list-disc space-y-1 pl-5 text-sm">{questions.map((question) => <li key={question}>{displayReviewText(question)}</li>)}</ul>
+          : <p className={s.muted}>현재 분석에서 추가 확인 질문은 없습니다.</p>}
+        <Link className={s.button} to={`${appPaths.combinationReviews}/${run.reviewId}?step=participation`}
+          state={{ additionalFacts: run.input.additionalFacts }}>입력 보완하기</Link>
+      </section>
+      <details className={s.card}>
+        <summary className="cursor-pointer font-bold focus-visible:outline-2 focus-visible:outline-emerald-700">단계별 상세 분석 보기</summary>
       {run.analysis.pairs.map((pair) => {
         const pairKey = `${run.id}:${pair.firstProgramIndex}:${pair.secondProgramIndex}`
         const activeStage = pair.stages.find((stage) => selectedStage === `${pairKey}:${stage.stage}`) ?? pair.stages.find((stage) => stage.stage === reviewStages[0])!
@@ -84,11 +96,7 @@ export function ReviewRunResult({ run, currentRevision, download, downloading }:
           </article>
         </section>
       })}
-      <section className={s.warning}>
-        <h3 className="font-bold">분석 한계</h3>
-        <p className="mt-1 text-sm">입력한 참여 상태와 추가 사실, 자동 수집한 공식 원문의 범위를 바탕으로 AI가 확정할 수 없는 내용과 추가 확인 사항을 정리했습니다.</p>
-        <ul className="mt-2 list-disc pl-5">{run.analysis.limitations.map((text, i) => <li key={i}>{displayReviewText(text)}</li>)}</ul>
-      </section>
+      </details>
     </>}
     {run.evidence && <section className={s.card}>
       <h3 className="font-bold">공식 원문과 수집 범위</h3><p className={s.muted}>자동 수집 · 사람 미검수</p>
@@ -98,6 +106,11 @@ export function ReviewRunResult({ run, currentRevision, download, downloading }:
         <button className={s.button} type="button" disabled={downloading} onClick={() => download(i)}>수집 원본 다운로드</button>
       </li>)}</ul>
       <ul className="mt-4 list-disc pl-5 text-sm">{run.evidence.coverageWarnings.map((warning, i) => <li key={i}>{warning}</li>)}</ul>
+    </section>}
+    {run.analysis && <section className={s.warning}>
+      <h3 className="font-bold">분석 한계</h3>
+      <p className="mt-1 text-sm">입력한 참여 상태와 추가 사실, 자동 수집한 공식 원문의 범위를 바탕으로 AI가 확정할 수 없는 내용과 추가 확인 사항을 정리했습니다.</p>
+      <ul className="mt-2 list-disc pl-5">{run.analysis.limitations.map((text, i) => <li key={i}>{displayReviewText(text)}</li>)}</ul>
     </section>}
   </section>
 }

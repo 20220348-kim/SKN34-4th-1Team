@@ -121,9 +121,14 @@ function RunResultPage({ reviewId, runId, account }: { reviewId: number; runId: 
 function ReviewEditor({ id, account }: { id: number | null; account: string }) {
   const location = useLocation()
   const autoStart = new URLSearchParams(location.search).get('start') === '1'
+  const suppliedFacts = (location.state as { additionalFacts?: unknown } | null)?.additionalFacts
+  const initialFacts = typeof suppliedFacts === 'string' ? suppliedFacts : ''
   const [savedProgramsOpen, setSavedProgramsOpen] = useState(false)
-  const vm = useReviewEditorViewModel(id, account, autoStart, savedProgramsOpen)
-  const [step, setStep] = useState<'selection' | 'participation' | 'analysis'>(() => id && new URLSearchParams(location.search).get('step') === 'analysis' ? 'analysis' : 'selection')
+  const vm = useReviewEditorViewModel(id, account, autoStart, savedProgramsOpen, null, initialFacts)
+  const [step, setStep] = useState<'selection' | 'participation' | 'analysis'>(() => {
+    const requested = new URLSearchParams(location.search).get('step')
+    return id && (requested === 'analysis' || requested === 'participation') ? requested : 'selection'
+  })
   const contentRef = useRef<HTMLElement>(null)
   const savedProgramsButtonRef = useRef<HTMLButtonElement>(null)
   const closeSavedPrograms = () => { setSavedProgramsOpen(false); savedProgramsButtonRef.current?.focus() }
@@ -193,7 +198,7 @@ function ReviewEditor({ id, account }: { id: number | null; account: string }) {
         <form className="space-y-4" onSubmit={(event) => { event.preventDefault(); vm.saveAndStart(() => changeStep('analysis')) }}>
           <fieldset disabled={inputBusy} className="space-y-4">
             {vm.draft.programs.map((program, index) => <ReviewParticipation key={reviewProgramKey(program)} program={program} index={index} name={vm.names[reviewProgramKey(program)]} onChange={(participation) => vm.setDraft({ ...vm.draft, programs: vm.draft.programs.map((p, i) => i === index ? { ...p, participation } : p) })} />)}
-            <div className={s.card}><label className="block text-sm font-semibold">분석에 참고할 추가 설명 <span className="font-normal text-slate-500">(선택)</span><textarea className={s.input} rows={4} maxLength={8000} value={vm.facts} onChange={(e) => vm.setFacts(e.target.value)} /></label><p className={s.muted}>{vm.facts.length}/8000 · 이 실행에만 저장됩니다.</p></div>
+            <div className={s.card}><label className="block text-sm font-semibold">추가로 알려줄 내용이 있나요? (선택)<textarea className={s.input} rows={4} maxLength={8000} value={vm.facts} onChange={(e) => vm.setFacts(e.target.value)} placeholder={'예: 두 사업에서 같은 인건비를 사용하려고 합니다.\n한 사업의 확약서를 철회할 예정입니다.\n두 사업의 수행 내용이 일부 같습니다.'} /></label><p className={s.muted}>{vm.facts.length}/8000 · 이 실행에만 저장됩니다.</p></div>
             {unsupported && <p className={s.warning}>선택한 공고는 현재 자동 분석을 지원하지 않습니다. 기업마당의 숫자형 PBLN_ 공고와 K-Startup·과기정통부·충남 수출지원의 숫자형 공고를 지원하며, 세부사업은 지정하지 않아야 합니다.</p>}
             <div className="flex flex-wrap justify-between gap-3"><button className={s.button} type="button" onClick={() => changeStep('selection')}>이전: 제목·공고 선택</button><button className={s.primary} type="submit" disabled={unsupported}>{inputBusy ? '입력 저장 중…' : '입력 저장 후 분석 시작'}</button></div>
           </fieldset>
