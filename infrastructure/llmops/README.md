@@ -823,6 +823,12 @@ LLMOps CI가 같은 기존 통합 단계에서 실행하고 `work/llmops-ci/core
 활성화하지 않습니다. 명세 v2와 갱신된 `execution_release.json`을 함께 배포해야 하며 기존 개발
 컨테이너는 이번 로컬 검증에서 교체하지 않았습니다.
 
+전체 RAG 확장의 다음 단계로 [오프라인 자료 계약·평가기](../../evaluation/support-program-evidence/README.md)를
+추가했습니다. 원문·청크 버전과 검색·답변 기록을 검증하고 검색 근거 재현율·답변 인용 재현율을
+각각 계산합니다. 무료 합성 예제는 모델·Qdrant·Langfuse를 호출하지 않으며 현재 Ops 카탈로그에는
+등록하지 않습니다. 실제 Core 캡처 수집, 임베딩·답변의 호출별 예산·취소, 사람 검토를 연결한 뒤
+별도 RAG 접수를 활성화해야 합니다.
+
 ## 실제 AI Service 추적 활성화
 
 `LANGFUSE_ENABLED=false`가 기본값이다. 활성화 시 `LANGFUSE_BASE_URL`, `LANGFUSE_PUBLIC_KEY`,

@@ -6,6 +6,90 @@
 검증하며, 이 전환으로 새 유료 평가나 의미 품질 측정을 수행한 것은 아닙니다. `runs/`의 과거 코드·
 캡처·보고서는 당시 구현과 설정에 대한 기록으로 유지합니다.
 
+## 전체 RAG 오프라인 계약·평가기 — 2026-09-30 후속
+
+[rag_evaluate.py](rag_evaluate.py)는 **고정 원문·청크 → 저장 검색 결과 → 저장 답변**을 대조하는
+무료 CLI입니다. production의 AI 요청·응답 모델을 재사용하고 검색 재현율과 답변 인용 재현율을
+독립적으로 계산합니다. 서버 실행·원문 수집·색인·임베딩·답변 생성·Langfuse 조회는 수행하지 않습니다.
+현재 Ops의 `fixed-answer-context-only` 접수·명세·품질 정책은 유지하며 이 자료를 등록하지 않습니다.
+
+```bash
+# 저장소 루트: 자료 검증만 수행. 모든 품질 지표는 null
+backend/ai-service/.venv/bin/python evaluation/support-program-evidence/rag_evaluate.py \
+  --fixture evaluation/support-program-evidence/rag-fixture.json
+
+# API 키·DB·서버 없이 합성 기록의 점수 계산을 검증. 보고서는 표준 출력으로만 반환
+backend/ai-service/.venv/bin/python evaluation/support-program-evidence/rag_evaluate.py \
+  --fixture evaluation/support-program-evidence/rag-fixture.json \
+  --capture evaluation/support-program-evidence/rag-synthetic-capture.json
+```
+
+[rag-fixture.json](rag-fixture.json)은 **AI 작성 가상 공고 2개·수동 분할 청크 8개·질문 3개**입니다.
+첫 공고는 청크 6개 중 5개를 검색하도록 고정해 근거 누락을 표현합니다. 이 분할은 production
+청커를 실행한 산출물이 아닙니다. [합성 캡처](rag-synthetic-capture.json)는 일부러 검색·인용을
+누락한 테스트 기록으로, 실제 OpenAI·Qdrant·Langfuse 실행 기록이 아닙니다.
+
+| 사례 | 의도적으로 고정한 상황 | 검색 재현율 | 답변 인용 재현율 |
+|---|---|---|---|
+| R01 | 기대 근거 2개를 모두 검색하고 1개만 인용 | 1.0 | 0.5 |
+| R02 | 기대 제출 서류 청크를 검색에서 누락하고 관련 없는 청크를 인용 | 0.0 | 0.0 |
+| R03 | 원문에 지원 금액이 없어 근거 부족 응답 | null | null |
+
+상태 일치율은 이 합성 예제에서 1.0이어도 답변 내용이 맞다는 뜻이 아닙니다. 답변 사실성은 항상
+`semanticFaithfulness=null`, `semanticReviewRequired=true`이며 `baselineEligible=false`입니다.
+
+### 버전과 실행 기록 계약
+
+- fixture schema는 `support-program-rag-fixture-v1`, capture는 `support-program-rag-capture-v1`,
+  report는 `support-program-rag-report-v1`이며 범위는 모두 `source-chunks-retrieval-answer`입니다.
+- fixture는 `datasetVersion`, 가상 자료·미검토 참조 표시, 원문·URL·`contentHash`, `chunkVersion`,
+  청크 원문·해시·순서와 질문별 `expectedEvidence`의 청크 ID·원문 구절을 고정합니다.
+  v1은 AI 작성 가상 자료만 허용하며 사람 검토나 실자료 승인을 만들어내지 않습니다.
+- 청크 ID는 Core의 `SHA256(documentId + NUL + sourceContentHash + NUL + order)` 규칙을 검증합니다.
+  공백을 제외한 원문 문자와 청크 문자 순서의 보존도 확인합니다. 청킹 알고리즘 실행 증명은 아닙니다.
+- capture는 **fixture 파일 바이트의 SHA-256**을 참조합니다. 사례마다 원문 해시, 청크 목록 해시,
+  색인 완료 개수, 실제 검색·답변 요청/응답 위치를 둡니다. 모든 질문에 성공 또는 실패 기록이 필요합니다.
+  누락·중복 사례, 다른 공고·버전의 청크, 순서가 잘못된 검색, 검색되지 않은 청크 인용은 거절합니다.
+- 검색은 현재 Core와 같은 `k=min(5, 청크 수)`를 사용하며 정확히 k개를 요구합니다. 점수 내림차순,
+  동점이면 ID 오름차순이고, 답변에는 검색 순서의 원문 청크만 전달돼야 합니다.
+- `execution.kind=synthetic`이면 모델·프롬프트·실행기 값과 모든 trace ID가 null이어야 합니다.
+  `recorded`이면 기록 당시 모델·임베딩 모델·프롬프트 해시·실행기 해시를 요구합니다.
+  trace ID는 제공된 32자리 소문자 16진 값을 그대로 보존하고 누락 시 null로 둡니다.
+  `recorded` 표시와 ID 형식 확인만으로 실제 호출·Langfuse 등록을 증명하지 않습니다.
+- 보고서는 fixture·capture·평가기·현재 AI 계약의 해시, 원문·청크 버전, 사례별 검색·답변 결과 해시를 남깁니다.
+  구조화된 값의 해시는 UTF-8 JSON에 `sort_keys=True`, `ensure_ascii=False`,
+  `separators=(",", ":")`, `allow_nan=False`를 적용합니다. 파일 해시와 구별합니다.
+
+### 실패와 지표 해석
+
+`failure`는 정상 시 null, 실패 시 `{ "stage": "search", "code": "timeout" }`처럼 기록합니다.
+단계는 `not_started`, `source`, `chunk`, `index`, `search`, `answer`입니다. 아직 시작하지 않은
+질문도 `not_started`로 명시하며 분모에서 삭제하지 않습니다. 실패한 단계의 성공 산출물과 이후
+산출물은 null이어야 합니다. 검색·답변에서 실패했다면 해당 요청은 보존하고 응답은 null로 둡니다.
+계약을 위반한 원시 응답을 성공으로 수용하지 않으며 실패 코드를 남깁니다.
+
+| 보고서 필드 | 해석 |
+|---|---|
+| `captureValidated` | 캡처가 계약을 만족함. 정상 완료나 품질 합격과 별개 |
+| `completed` | 모든 질문이 검증된 답변까지 도달함. 합성 기록도 true가 될 수 있음 |
+| `measurementKind` | 자료 검증만 / 합성 계산 검증 / 저장 실행 재계산을 구분 |
+| `retrievalRecallAtK` | 기대 근거 청크 중 검색된 비율. 기대 근거가 없거나 검색 실패면 null |
+| `answerCitationRecall` | 기대 근거 청크 중 인용된 비율. 기대 근거가 없거나 답변 실패면 null |
+| `answerStatusAccuracy` | 응답한 질문의 기대 답변 상태 일치 비율. 의미 정확도가 아님 |
+| `measuredCaseCount` / `eligibleCaseCount` | 평균에 실제 포함된 수 / 해당 지표 대상인 전체 질문 수 |
+| `coverage` | 검색·답변 측정 수, trace 보유 수, 실패 사례 수 |
+
+실패는 0점으로 바꾸지 않습니다. 평균은 측정된 사례만 사용하므로 반드시 대상 수·실패 수와 함께
+해석해야 합니다. 모든 사례가 실패하면 값은 null입니다. 인용 재현율은 불필요한 인용을 벌점주지 않습니다.
+입력 변조·계약 불일치는 종료 코드 1로 실패하며 점수 보고서를 출력하지 않습니다.
+
+로컬 Python 3.12에서 [무료 테스트](test_rag_evaluate.py) 69건, 합성 캡처 CLI,
+Ruff 검사·포맷을 확인했습니다. `uv`가 PATH에 없어 기존 AI 가상환경으로 실행했습니다.
+새 코드의 원격 전체 검증은 커밋·푸시 후 필요합니다. 전체 테스트는 기존
+`.github/workflows/ci.yml`의 `Test evidence evaluation tools without model calls`에서 자동 발견합니다.
+다음 단계는 실제 Core 기록을 이 계약으로 수집하는 경로, 호출별 누적 예산·취소, Ops 접수·검토 연동입니다.
+기존 공식 HTML 과거 캡처와 고정 근거 캡처를 이 형식으로 자동 승격하지 않습니다.
+
 ## Ops 평가 범위 고정 — 2026-09-30
 
 고정 근거 평가기의 fixture·capture v1은 `scope`를 지정할 경우 `fixed-answer-context-only`만
