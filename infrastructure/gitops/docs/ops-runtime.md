@@ -247,6 +247,27 @@ Kubernetes Ops DB의 요청·flow·명세를 직접 대조한 뒤 API+sync Pod�
 보고서에는 소스 SHA, Ops 실제 image ID, 실행 release 해시, request/flow ID, HTTP transport,
 모델 호출 0회, 실행·재시작·정리 결과를 남긴다. 사람의 품질 검토나 현재 모델의 실제 품질 측정은 아니다.
 
+이어서 같은 완료 실행에 두 artifact 장애를 주입한다. 내부 결과 서버의 응답과 사용자 API 응답을 구분해 검사한다.
+
+| 시험 | 내부 artifact HTTP | 사용자 보고서 | 관리자 런타임 진단 |
+|---|---|---|---|
+| API 토큰 불일치 | 401 | 404 | 503, evidence·results_directory·result_artifact 실패 |
+| 해당 보고서 누락 | 404 | 404 | 503, result_artifact만 실패 |
+| 원상 복구 후 | 보고서 읽기 성공 | 200, 원본 SHA-256 동일 | 200, 전체 PASS |
+
+장애 중에도 Ops 생존·DB 준비 probe는 200이어야 한다. 완료 기록의 상태·flow·실행 명세·모델 호출 0회를 보존하며
+추가 평가 접수·모델 호출·장부 보정 없이 복구한다. 보고서의 404만으로 내부 인증 오류와 파일 누락을 구별하지 않는다.
+
+주입은 도구가 생성한 시험 프로젝트·kind context·실행기 소유권을 확인한 후에만 수행한다.
+잘못된 토큰은 임시 Deployment의 Ops API 환경변수 하나에 적용하고 Secret 데이터는 그대로 둔다.
+배포 UID와 기존 값을 비교하는 JSON patch로 원래 참조를 복원한다. Pod 교체마다 포트 전달을 새로 연다.
+보고서는 실행기의 시험 결과 볼륨에서 해시를 확인하고 잠시 이름을 바꾸며, 원본이나 보관 파일을 덮어쓰지 않는다.
+각 장애는 `finally`에서 복원한다. 검사·복원 실패 시 전체 결과는 FAIL이며 다음 평가를 자동 생성하지 않는다.
+
+`ops-bridge.json`의 `artifact_recovery`에 두 사례의 장애 응답·복구 진단·보고서 해시가 기록된다.
+`artifact_recovery.status=PASS`와 `evaluation_status=PASS`, 최상위 정리 성공이 모두 필요하다.
+이 검증은 Prefect 장애·동기화 중단·유료 예산의 역방향 연결을 포함하지 않는다.
+
 필수 LLMOps CI의 기존 integration 작업에 이 전체 검증을 연결했다.
 코드 추가·오프라인 검사와 실제 CI 통과는 구분하며 최신 커밋의 원격 결과는 푸시 후 확인한다.
 
