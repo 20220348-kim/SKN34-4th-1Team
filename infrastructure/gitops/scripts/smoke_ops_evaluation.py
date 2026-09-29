@@ -17,6 +17,7 @@ import fork_cluster
 import fork_web
 import ops_runtime
 import smoke_ops_artifacts
+import smoke_ops_sync_recovery
 import yaml
 from check_msa import NAMESPACE, REPOSITORY_ROOT, ROOT
 from ops_migration import run_migration
@@ -364,6 +365,21 @@ def verify(state, settings, compose, compose_env, ops_image, kind, helm, report)
                     original_report,
                     report,
                 )
+                smoke_ops_sync_recovery.verify(
+                    nk,
+                    compose,
+                    compose_env,
+                    password,
+                    before["run"],
+                    original_report,
+                    report,
+                )
+                recovered = report["sync_recovery"]["completed"]
+                recovered_db = database_record(nk, recovered["id"])
+                assert recovered_db["run"] == {
+                    key: recovered[key] for key in recovered_db["run"]
+                }
+                report["sync_recovery"]["kubernetes_database"] = recovered_db
                 assert database_record(nk, result["request_id"]) == before
             finally:
                 web.terminate()

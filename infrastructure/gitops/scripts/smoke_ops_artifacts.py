@@ -236,8 +236,7 @@ def artifact_status(nk, run_id):
     )
 
 
-def verify(nk, compose, env, password, expected_run, expected_hash, report):
-    project = report["compose_project"]
+def require_disposable(nk, compose, env, project):
     if not re.fullmatch(r"govbiz-bridge-smoke-[a-f0-9]{10}", project):
         raise ValueError("Artifact faults require the generated disposable project")
     if nk[nk.index("--context") + 1] != "kind-" + project:
@@ -254,6 +253,10 @@ def verify(nk, compose, env, password, expected_run, expected_hash, report):
     ).strip()
     if owner != project:
         raise ValueError("Artifact faults require the matching disposable runner")
+
+
+def verify(nk, compose, env, password, expected_run, expected_hash, report):
+    require_disposable(nk, compose, env, report["compose_project"])
     evidence = {"status": "FAIL", "scenarios": {}}
     report["artifact_recovery"] = evidence
     for name, fault, internal_status, failed_checks in (
