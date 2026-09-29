@@ -15,7 +15,7 @@ import { useFloatingPopover } from '../workspace/useFloatingPopover'
 import { appSidebarStyles, sidebarMenuItemClassName } from './AppSidebar.styles'
 import type { ChatHistoryViewModel } from '../../features/chat/hooks/useChatHistory'
 
-type MenuIcon = 'search' | 'document' | 'bookmark' | 'users' | 'inbox' | 'mail' | 'building' | 'shield' | 'pricing' | 'logout' | 'more' | 'newChat' | 'panel' | 'trash'
+type MenuIcon = 'search' | 'document' | 'bookmark' | 'users' | 'inbox' | 'building' | 'shield' | 'pricing' | 'logout' | 'more' | 'newChat' | 'panel' | 'trash'
 
 /** 사이드바 메뉴 한 줄입니다. `to`가 없으면 아직 화면이 없는 메뉴이므로 링크로 만들지 않습니다. */
 type MenuItem = {
@@ -28,35 +28,24 @@ type MenuItem = {
 
 type MenuGroup = { title: string; items: MenuItem[] }
 
-// 화면 통일안의 세 무리(찾기 → 준비 → 협업)입니다. 찾기 무리의 첫 줄은 "지원사업 새검색" 버튼과 그 아래 대화 기록이고,
-// 요금제는 메뉴가 아니라 계정 메뉴(내 프로필 옆)에 둡니다.
+// 순서는 사용 빈도와 업무 흐름(찾기 → 모아두기 → 준비·검토 → 협업 → 결제)을 따르고, 도우미 도움말 주제 순서와 맞춥니다.
+// 무리 이름 없이 한 목록이고, 대화 기록은 목록 아래 별도 구역에 둡니다.
 const menuGroups: MenuGroup[] = [
   {
-    title: '찾기',
+    title: '메뉴',
     items: [
       { label: '관심 공고함', icon: 'bookmark', to: appPaths.savedPrograms, matches: (pathname) => pathname.startsWith(appPaths.savedPrograms) },
       { label: '기업 맞춤 리포트', icon: 'inbox', to: appPaths.reports, matches: (pathname) => pathname === appPaths.reports },
-    ],
-  },
-  {
-    title: '준비',
-    items: [
       { label: '신청 문서 작성', icon: 'document', to: appPaths.applicationPreparations, matches: (pathname) => pathname.startsWith(appPaths.applicationPreparations) },
       { label: '중복 지원·수혜 검토', icon: 'shield', to: appPaths.combinationReviews, matches: (pathname) => pathname.startsWith(appPaths.combinationReviews) },
-    ],
-  },
-  {
-    title: '협업',
-    items: [
       {
         label: '파트너 관리',
         icon: 'users',
         to: appPaths.partners,
-        // 모집글과 내 모집글은 한 메뉴 아래 탭으로 오갑니다.
-        matches: (pathname) => pathname.startsWith(appPaths.partners),
+        // 모집글과 제안함은 한 메뉴 아래 탭으로 오갑니다.
+        matches: (pathname) => pathname.startsWith(appPaths.partners) || pathname.startsWith(appPaths.proposals),
       },
-      // 제안함은 받은 제안의 대기 건수를 배지로 보여 줍니다.
-      { label: '제안함', icon: 'mail', to: appPaths.proposals, matches: (pathname) => pathname.startsWith(appPaths.proposals) },
+      { label: '요금제', icon: 'pricing', to: appPaths.pricing, matches: (pathname) => pathname === appPaths.pricing },
     ],
   },
 ]
@@ -70,12 +59,6 @@ const iconPaths: Record<MenuIcon, ReactNode> = {
     <>
       <rect x="3" y="5" width="18" height="14" rx="3" />
       <path d="M3 10h18M7 15h3" />
-    </>
-  ),
-  mail: (
-    <>
-      <rect x="3" y="5" width="18" height="14" rx="2" />
-      <path d="m3 7 9 6 9-6" />
     </>
   ),
   inbox: (
@@ -221,44 +204,11 @@ export function AppSidebar({ onClose, onNewChat, closeLabel, onNavigate, history
     return item.matches?.(pathname) ?? false
   }
 
-  /** 제안함은 받은 제안 대기 건수를 배지로 보여 줍니다. 나머지 메뉴는 고정 문구를 씁니다. */
+  /** 파트너 관리는 받은 제안 대기 건수를 배지로 보여 줍니다. 나머지 메뉴는 고정 문구를 씁니다. */
   function badgeFor(item: MenuItem): string | undefined {
-    if (item.to === appPaths.proposals) return pendingProposalCount === null || pendingProposalCount === 0 ? undefined : String(pendingProposalCount)
+    if (item.to === appPaths.partners) return pendingProposalCount === null || pendingProposalCount === 0 ? undefined : String(pendingProposalCount)
     return item.badge
   }
-
-  // 대화 기록은 "지원사업 새검색" 바로 아래에 붙습니다. 다섯 줄까지만 보이고 더 있으면 그 안에서 스크롤합니다.
-  const historySection = (
-    <section className={appSidebarStyles.history} aria-label="대화 기록">
-      <h2 className="sr-only">대화 기록</h2>
-      {history.items.map((item) => <div key={item.id} className="flex min-w-0 items-center gap-1">
-        <button type="button" disabled={history.deletingId === item.id}
-        className={`${sidebarMenuItemClassName(history.activeId === item.id && pathname === appPaths.chat ? 'active' : 'inactive')} ${appSidebarStyles.historyItem}`}
-        aria-label={`대화 열기: ${item.title}`} title={item.title}
-        aria-current={history.activeId === item.id && pathname === appPaths.chat ? 'page' : undefined}
-        onClick={() => onOpenHistory(item.id)}>
-        <span className="min-w-0 flex-1 truncate font-normal">{item.title}</span>
-        {/* 검색 중이거나 결과가 도착한 대화는 글자 대신 점으로 표시해 좁은 폭에서도 잘리지 않습니다. */}
-        {chatActivity && history.activeId === item.id ? <ChatActivityDot activity={chatActivity} /> : null}
-        {history.openingId === item.id ? <span className="shrink-0 text-xs">여는 중</span> : null}
-        </button>
-        <button type="button" className={`${appSidebarStyles.iconButton} ${appSidebarStyles.historyDelete}`}
-          disabled={history.deletingId !== null} aria-label={`대화 삭제: ${item.title}`} title="대화 삭제"
-          onClick={() => onDeleteHistory(item.id, item.title)}><MenuIconGraphic name="trash" /></button>
-      </div>)}
-      {history.deletingId !== null ? <p className={appSidebarStyles.historyNote} role="status">대화 삭제 중…</p> : null}
-      {history.deleteError ? <p className={appSidebarStyles.historyError} role="alert">{history.deleteError}</p> : null}
-      {history.loading ? <p className={appSidebarStyles.historyNote} role="status">기록을 불러오는 중…</p> : null}
-      {!history.loading && !history.loadError && history.items.length === 0 ? <p className={appSidebarStyles.historyNote}>대화를 시작하면 여기에 저장됩니다.</p> : null}
-      {history.loadError ? <p className={appSidebarStyles.historyError} role="alert">{history.loadError}</p> : null}
-      {history.nextCursor !== null || history.loadError ? <button type="button" className={appSidebarStyles.historyMore}
-        disabled={history.loading} onClick={history.loadMore}>{history.loadError ? '기록 다시 불러오기' : '이전 기록 더 보기'}</button> : null}
-      {history.saveError ? <div className={appSidebarStyles.historyError} role="alert">
-        <p>저장하지 못한 대화가 있습니다. 연결 오류·다른 창의 변경·저장 크기 제한 등을 확인해 주세요. 저장 전에는 이 창을 닫지 마세요.</p>
-        <button type="button" className="cursor-pointer underline" onClick={history.retrySave}>대화 저장 재시도</button>
-      </div> : history.saving ? <p className={appSidebarStyles.historyNote} role="status">대화 저장 중…</p> : null}
-    </section>
-  )
 
   return (
     <aside className={appSidebarStyles.sidebar} aria-label="작업 사이드바"
@@ -273,17 +223,14 @@ export function AppSidebar({ onClose, onNewChat, closeLabel, onNavigate, history
       </div>
 
       <div className={appSidebarStyles.scrollArea}>
+        <button type="button" className={`${appSidebarStyles.newChatButton} ${sidebarMenuItemClassName(isSearchPage ? 'active' : 'inactive')}`}
+          aria-current={isSearchPage ? 'page' : undefined} title="대화와 적용 조건을 초기화합니다" onClick={onNewChat}>
+          <MenuIconGraphic name="search" /><span>지원사업 새검색</span>
+        </button>
         {menuGroups
           .map((group) => (
             <nav className={appSidebarStyles.menuGroup} key={group.title} aria-label={group.title}>
-              <p className={appSidebarStyles.menuGroupTitle}>{group.title}</p>
-              {group.title === '찾기' ? <>
-                <button type="button" className={`${appSidebarStyles.newChatButton} ${sidebarMenuItemClassName(isSearchPage ? 'active' : 'inactive')}`}
-                  aria-current={isSearchPage ? 'page' : undefined} title="대화와 적용 조건을 초기화합니다" onClick={onNewChat}>
-                  <MenuIconGraphic name="search" /><span>지원사업 새검색</span>
-                </button>
-                {account ? historySection : null}
-              </> : null}
+              <p className="sr-only">{group.title}</p>
               {group.items.map((item) =>
                 item.to ? (
                   <Link
@@ -312,6 +259,35 @@ export function AppSidebar({ onClose, onNewChat, closeLabel, onNavigate, history
               )}
             </nav>
           ))}
+        {account ? <section className="mt-6 flex flex-col gap-1" aria-label="대화 기록">
+          <h2 className="mb-1 px-3 text-xs font-medium text-[#888]">대화 기록</h2>
+          {history.items.map((item) => <div key={item.id} className="flex min-w-0 items-center gap-1">
+            <button type="button" disabled={history.deletingId === item.id}
+            className={`${sidebarMenuItemClassName(history.activeId === item.id && pathname === appPaths.chat ? 'active' : 'inactive')} min-w-0 flex-1 cursor-pointer border-0 text-left disabled:cursor-wait disabled:opacity-60`}
+            aria-label={`대화 열기: ${item.title}`} title={item.title}
+            aria-current={history.activeId === item.id && pathname === appPaths.chat ? 'page' : undefined}
+            onClick={() => onOpenHistory(item.id)}>
+            <span className="min-w-0 flex-1 truncate font-normal">{item.title}</span>
+            {/* 검색 중이거나 결과가 도착한 대화는 글자 대신 점으로 표시해 좁은 폭에서도 잘리지 않습니다. */}
+            {chatActivity && history.activeId === item.id ? <ChatActivityDot activity={chatActivity} /> : null}
+            {history.openingId === item.id ? <span className="shrink-0 text-xs">여는 중</span> : null}
+            </button>
+            <button type="button" className={`${appSidebarStyles.iconButton} min-h-11 min-w-11 hover:text-red-700 disabled:cursor-wait disabled:opacity-40`}
+              disabled={history.deletingId !== null} aria-label={`대화 삭제: ${item.title}`} title="대화 삭제"
+              onClick={() => onDeleteHistory(item.id, item.title)}><MenuIconGraphic name="trash" /></button>
+          </div>)}
+          {history.deletingId !== null ? <p className="px-3 text-xs text-[#888]" role="status">대화 삭제 중…</p> : null}
+          {history.deleteError ? <p className="px-3 text-xs text-red-700" role="alert">{history.deleteError}</p> : null}
+          {history.loading ? <p className="px-3 text-xs text-[#888]" role="status">기록을 불러오는 중…</p> : null}
+          {!history.loading && !history.loadError && history.items.length === 0 ? <p className="px-3 text-xs text-[#888]">대화를 시작하면 여기에 저장됩니다.</p> : null}
+          {history.loadError ? <p className="px-3 text-xs text-red-700" role="alert">{history.loadError}</p> : null}
+          {history.nextCursor !== null || history.loadError ? <button type="button" className={appSidebarStyles.accountMenuButton}
+            disabled={history.loading} onClick={history.loadMore}>{history.loadError ? '기록 다시 불러오기' : '이전 기록 더 보기'}</button> : null}
+          {history.saveError ? <div className="px-3 text-xs text-red-700" role="alert">
+            <p>저장하지 못한 대화가 있습니다. 연결 오류·다른 창의 변경·저장 크기 제한 등을 확인해 주세요. 저장 전에는 이 창을 닫지 마세요.</p>
+            <button type="button" className="cursor-pointer underline" onClick={history.retrySave}>대화 저장 재시도</button>
+          </div> : history.saving ? <p className="px-3 text-xs text-[#888]" role="status">대화 저장 중…</p> : null}
+        </section> : null}
       </div>
 
       {account ? (
@@ -326,14 +302,6 @@ export function AppSidebar({ onClose, onNewChat, closeLabel, onNavigate, history
               >
                 <MenuIconGraphic name="building" />
                 <span>내 프로필</span>
-              </Link>
-              <Link
-                className={sidebarMenuItemClassName(pathname === appPaths.pricing ? 'active' : 'inactive')}
-                to={appPaths.pricing}
-                aria-current={pathname === appPaths.pricing ? 'page' : undefined}
-              >
-                <MenuIconGraphic name="pricing" />
-                <span>요금제</span>
               </Link>
               {account.tier === 'ADMIN' ? (
                 <Link

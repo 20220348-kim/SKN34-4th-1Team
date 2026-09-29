@@ -157,14 +157,13 @@ describe('사이드바 대화 기록 HTTP 통합', () => {
     expect(screen.queryByText(/대화 삭제를 확인하지 못했습니다/)).toBeNull()
   })
 
-  it('지원사업 새검색 아래 대화 단위로 쌓이고 새 대화·필터 이동 후 클릭으로 복원하며 AI를 다시 호출하지 않는다', async () => {
+  it('요금제 아래 대화 단위로 쌓이고 새 대화·필터 이동 후 클릭으로 복원하며 AI를 다시 호출하지 않는다', async () => {
     renderChat()
     await waitFor(() => expect(historyRequests).toHaveLength(1))
     await submit('서울 창업지원 찾아줘')
     const history = screen.getByRole('region', { name: '대화 기록' })
-    const newSearch = screen.getByRole('button', { name: '지원사업 새검색' })
-    expect(newSearch.compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
-    expect(screen.getByRole('link', { name: '관심 공고함' }).compareDocumentPosition(history) & Node.DOCUMENT_POSITION_PRECEDING).not.toBe(0)
+    const pricing = screen.getByRole('link', { name: '요금제' })
+    expect(pricing.compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0)
     await waitFor(() => expect([...records.get(account.email)!.values()][0].snapshot.interpretation.status).toBe('ready'))
     expect(within(history).getAllByRole('button', { name: /^대화 열기:/ })).toHaveLength(1)
     await submit('지원 목적도 알려줘')
@@ -272,8 +271,6 @@ describe('사이드바 대화 기록 HTTP 통합', () => {
     const second = renderChat()
     fireEvent.click(await screen.findByRole('button', { name: '대화 열기: 이전 기록' }))
     await waitFor(() => expect(finish).toBeTruthy())
-    // 요금제는 계정 메뉴 안에 있습니다.
-    fireEvent.click(screen.getByRole('button', { name: /^계정 메뉴/ }))
     fireEvent.click(screen.getByRole('link', { name: '요금제' }))
     await act(async () => finish(json(saved)))
     expect(screen.queryByRole('tab', { name: 'AI 대화 검색' })).toBeNull()
