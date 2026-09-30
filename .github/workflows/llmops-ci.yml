@@ -31,7 +31,7 @@ jobs:
         run: backend/ai-service/.venv/bin/python backend/ops-service/apps/evaluations/execution_spec.py
       - name: Test smoke assertions and offline HTTP model fixtures
         working-directory: backend/ai-service
-        run: uv run --locked --extra dev --group evaluation python -m pytest ../../infrastructure/llmops/test_ops_smoke.py ../../infrastructure/llmops/test_cancellation_smoke.py ../../infrastructure/llmops/test_search_trace_smoke.py ../../infrastructure/llmops/test_core_search_trace.py ../../infrastructure/llmops/test_core_assistant_trace.py ../../infrastructure/llmops/test_core_evidence_trace.py ../../infrastructure/scripts/test_catalog_separation_config.py -q
+        run: uv run --locked --extra dev --group evaluation python -m pytest ../../infrastructure/llmops/test_ops_smoke.py ../../infrastructure/llmops/test_cancellation_smoke.py ../../infrastructure/llmops/test_search_trace_smoke.py ../../infrastructure/llmops/test_core_search_trace.py ../../infrastructure/llmops/test_core_assistant_trace.py ../../infrastructure/llmops/test_core_evidence_trace.py ../../infrastructure/llmops/test_core_rag_capture.py ../../infrastructure/scripts/test_catalog_separation_config.py -q
       - name: Generate isolated development credentials
         run: |
           backend/ai-service/.venv/bin/python infrastructure/llmops/init_env.py
@@ -55,7 +55,7 @@ jobs:
           set -a
           source infrastructure/llmops/.env
           set +a
-          python3 -B infrastructure/scripts/verify-catalog-separation.py --search-traces-output work/llmops-ci/core-search-traces.json --assistant-traces-output work/llmops-ci/core-assistant-traces.json --evidence-traces-output work/llmops-ci/core-evidence-traces.json
+          backend/ai-service/.venv/bin/python -B infrastructure/scripts/verify-catalog-separation.py --search-traces-output work/llmops-ci/core-search-traces.json --assistant-traces-output work/llmops-ci/core-assistant-traces.json --evidence-traces-output work/llmops-ci/core-evidence-traces.json --rag-capture-output work/llmops-ci/core-rag
       - name: Preserve actual Core trace evidence including failed scenarios
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -65,6 +65,7 @@ jobs:
             work/llmops-ci/core-search-traces.json
             work/llmops-ci/core-assistant-traces.json
             work/llmops-ci/core-evidence-traces.json
+            work/llmops-ci/core-rag/
           if-no-files-found: warn
           retention-days: 7
       - name: Build isolated HTTP artifact storage, Core auth fixture, Ops and runner

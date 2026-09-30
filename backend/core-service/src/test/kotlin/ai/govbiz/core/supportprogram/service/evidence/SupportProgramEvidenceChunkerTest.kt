@@ -6,8 +6,31 @@ import java.time.LocalDateTime
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import tools.jackson.databind.json.JsonMapper
 
 class SupportProgramEvidenceChunkerTest {
+
+    @Test
+    fun sharedRagCaptureFixtureUsesActualSixChunkBoundariesAndNewIdsAfterSourceChange() {
+        val fixture = javaClass.getResourceAsStream("/support-program-evidence/rag-synthetic-source.json")!!.use {
+            JsonMapper.builder().build().readTree(it)
+        }
+        val original = SupportProgramEvidenceChunker.chunk(sourceDocument(fixture["content"].asString()))
+        val updated = SupportProgramEvidenceChunker.chunk(sourceDocument(fixture["updatedContent"].asString()))
+
+        for (chunks in listOf(original, updated)) {
+            assertEquals(6, chunks.size) // More candidates than the production top-5 retrieval window.
+            chunks.forEachIndexed { order, chunk ->
+                assertTrue(chunk.text.startsWith("PRIVATE-RAG-SOURCE SECTION-$order "))
+                assertTrue(chunk.text.length in 751..1_500)
+            }
+            fixture["expectedQuotes"].forEach { quote ->
+                assertEquals(1, chunks.count { quote.asString() in it.text })
+            }
+        }
+        assertTrue(original.map { it.id }.toSet().intersect(updated.map { it.id }.toSet()).isEmpty())
+        assertEquals(5, original.zip(updated).count { (before, after) -> before.contentHash == after.contentHash })
+    }
 
     @Test
     fun createsDeterministicBoundedChunksWithIndependentContentHashes() {

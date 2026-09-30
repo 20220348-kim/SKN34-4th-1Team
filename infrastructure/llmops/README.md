@@ -826,8 +826,46 @@ LLMOps CI가 같은 기존 통합 단계에서 실행하고 `work/llmops-ci/core
 전체 RAG 확장의 다음 단계로 [오프라인 자료 계약·평가기](../../evaluation/support-program-evidence/README.md)를
 추가했습니다. 원문·청크 버전과 검색·답변 기록을 검증하고 검색 근거 재현율·답변 인용 재현율을
 각각 계산합니다. 무료 합성 예제는 모델·Qdrant·Langfuse를 호출하지 않으며 현재 Ops 카탈로그에는
-등록하지 않습니다. 실제 Core 캡처 수집, 임베딩·답변의 호출별 예산·취소, 사람 검토를 연결한 뒤
+등록하지 않습니다. 실제 Core 캡처 수집의 후속 구현은 아래와 같습니다. 임베딩·답변의 호출별 예산·취소, 사람 검토를 연결한 뒤
 별도 RAG 접수를 활성화해야 합니다.
+
+### 실제 Core 다중 청크 캡처와 오프라인 평가
+
+`--rag-capture-output`은 기존 상세 RAG 6건 검증 뒤 별도 다중 청크 자료를 실행합니다.
+같은 임시 DB 원문 행이 예상 해시와 일치할 때만 갱신하며 원문 버전 두 개와 총 10개 사례를 검사합니다.
+공식 HTML 수집 대신 고정 가상 DB 원문을 사용합니다. 실제 Core 청커·공개 응답, AI 요청/응답,
+Qdrant 검색 결과와 Langfuse 관측을 이어서 검증하고 [오프라인 평가기](../../evaluation/support-program-evidence/README.md)로 재계산합니다.
+
+```bash
+# 저장소 루트, Python 3.12 AI 가상환경·명시적인 로컬 Langfuse 설정 필요
+set -a
+source infrastructure/llmops/.env
+set +a
+backend/ai-service/.venv/bin/python -B infrastructure/scripts/verify-catalog-separation.py --config-only \
+  --search-traces-output work/core-search-rag-new.json \
+  --evidence-traces-output work/core-evidence-rag-new.json \
+  --rag-capture-output work/core-rag-new
+# 전체 서버 실행은 --config-only를 제외. 기존 개발 환경을 교체하지 않고 임시 프로젝트를 만듭니다.
+# 수집한 파일은 서버·모델 호출 없이 다시 계산할 수 있습니다.
+backend/ai-service/.venv/bin/python evaluation/support-program-evidence/rag_evaluate.py \
+  --fixture work/core-rag-new/v1/fixture.json --capture work/core-rag-new/v1/capture.json
+```
+
+새 출력 폴더를 지정해야 하며 다른 추적 출력과 겹칠 수 없습니다. `--evidence-traces-output`과
+`--search-traces-output`이 필수입니다. 실제 실행은 Langfuse에 가상 시험 trace를 저장합니다.
+원문과 답변이 포함된 `wire.json`은 가상 시험 자료만 대상으로 하며 일반 운영 요청을 수집하는 기능이 아닙니다.
+`rag_capture_app.py`는 임시 AI에 읽기 전용으로 마운트하고 가짜 API 키·해당 프로젝트 모델 대역 주소를 검사합니다.
+production 이미지·서버 진입점·Ops 카탈로그는 변경하지 않습니다.
+
+첫 원문에서 정상·캐시·검색 누락·인용 누락·근거 부족·모델 오류·시간 초과·잘못된 인용·검색 오류를 확인합니다.
+두 번째 원문은 청크 ID 전환과 같은 질문 임베딩 재사용을 확인합니다. 정상 검색/인용 재현율 1/1,
+검색 누락 0/0, 인용 누락 1/0.5는 대역으로 의도한 결과이며 실제 모델 정확도가 아닙니다.
+`integration-stub` 출처, 미검토·기준 지정 불가 상태를 유지합니다.
+
+CI는 `work/llmops-ci/core-rag/`의 전체/버전별 진행 상태·원시 기록·평가 입력·보고서를 실패 시에도 보존합니다.
+Core trace와 실제 Langfuse 관측 연결이 깨지면 통합 검사도 실패합니다. 로컬의 실제 Core 청커 단위 테스트,
+AI HTTP/SDK·메모리 Qdrant, 캡처 재계산·중단 기록·격리 설정 검증과 전체 서버 CI를 구분합니다.
+기준 `skn-74 / 4537e5f`의 필수 CI 5개는 성공했으며 **이번 새 코드의 전체 서버 CI는 푸시 후 확인 대기**입니다.
 
 ## 실제 AI Service 추적 활성화
 

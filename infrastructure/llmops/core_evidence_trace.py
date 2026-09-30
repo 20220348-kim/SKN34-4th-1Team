@@ -45,7 +45,7 @@ def span_tree(scenario):
     return tree
 
 
-def verify_observations(observations, trace_id, scenario, private_values):
+def verify_observations(observations, trace_id, scenario, private_values, *, chunk_count=1, query_cache=None):
     tree = span_tree(scenario)
     require(len(observations) == len(tree), "Missing or unexpected evidence observations")
     require(len({item["id"] for item in observations}) == len(tree), "Duplicate evidence observations")
@@ -78,15 +78,15 @@ def verify_observations(observations, trace_id, scenario, private_values):
     )
     chunk = by_name["evidence.core.chunk"]["metadata"]
     require(
-        chunk.get("chunk_count") == 1 and chunk.get("cache_state") == ("miss" if scenario == "ok" else "hit"),
+        chunk.get("chunk_count") == chunk_count and chunk.get("cache_state") == ("miss" if scenario == "ok" else "hit"),
         "Wrong Core chunk cache",
     )
     require(
-        by_name["evidence.index"]["metadata"].get("missing_count") == (1 if scenario == "ok" else 0),
+        by_name["evidence.index"]["metadata"].get("missing_count") == (chunk_count if scenario == "ok" else 0),
         "Unexpected repeated indexing",
     )
     if scenario != "search-fail":
-        cache = "hit" if scenario == "hit" else "miss"
+        cache = query_cache or ("hit" if scenario == "hit" else "miss")
         require(
             by_name["evidence.search"]["metadata"].get("embedding_cache_state") == cache, "Wrong query embedding cache"
         )
