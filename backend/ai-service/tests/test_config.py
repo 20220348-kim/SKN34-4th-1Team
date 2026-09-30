@@ -21,6 +21,7 @@ def configure_required_openai_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("OPENAI_RANKING_MODEL", raising=False)
     monkeypatch.delenv("OPENAI_RANKING_REASONING_EFFORT", raising=False)
     monkeypatch.delenv("OPENAI_RANKING_SERVICE_TIER", raising=False)
+    monkeypatch.delenv("OPENAI_EMBEDDING_REQUEST_TOKEN_LIMIT", raising=False)
 
 
 def test_ranking_latency_options_are_explicit_and_default_to_standard_processing(monkeypatch):
@@ -313,3 +314,17 @@ def test_direct_settings_construction_also_rejects_invalid_combination_review_ti
     with pytest.raises(SettingsConfigurationError):
         Settings(openai_api_key="test-key", openai_model="test-model", llm_model_timeout_seconds=25,
                  llm_run_timeout_seconds=30, llm_combination_review_model_timeout_seconds=value)
+
+
+def test_embedding_request_token_limit_is_configurable(monkeypatch):
+    assert Settings.from_environment().embedding_request_token_limit == 262112
+    monkeypatch.setenv("OPENAI_EMBEDDING_REQUEST_TOKEN_LIMIT", "8191")
+    assert Settings.from_environment().embedding_request_token_limit == 8191
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "262113", "1.5", "true", "", "private-invalid"])
+def test_invalid_embedding_request_limit_fails_startup(monkeypatch, value):
+    monkeypatch.setenv("OPENAI_EMBEDDING_REQUEST_TOKEN_LIMIT", value)
+    with pytest.raises(SettingsConfigurationError, match="OPENAI_EMBEDDING_REQUEST_TOKEN_LIMIT") as error:
+        Settings.from_environment()
+    assert "private-invalid" not in str(error.value)

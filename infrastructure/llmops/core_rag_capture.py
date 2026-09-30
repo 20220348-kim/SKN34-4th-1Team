@@ -348,10 +348,11 @@ def verify_rag_capture(
                     }
                     else "hit"
                 )
+                query_cache = "hit" if version == "v2" or case["id"] == "hit" else "miss"
                 deadline = time.monotonic() + 90
                 while True:
                     spans = read_observations(environment, trace_id)
-                    if len(spans) >= len(trace.span_tree(base_scenario)) and all(
+                    if len(spans) >= trace.observation_count(base_scenario, query_cache) and all(
                         item.get("endTime") for item in spans
                     ):
                         break
@@ -370,9 +371,7 @@ def verify_rag_capture(
                         environment["LANGFUSE_SECRET_KEY"],
                     ],
                     chunk_count=6,
-                    query_cache="hit"
-                    if version == "v2" or case["id"] == "hit"
-                    else "miss",
+                    query_cache=query_cache,
                 )
                 write(directory / "wire.json", record)
                 write(

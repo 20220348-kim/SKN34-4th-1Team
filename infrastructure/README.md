@@ -228,6 +228,7 @@ OPENAI_API_KEY=발급받은_OpenAI_API_키
 | `AI_SEMANTIC_SEARCH_READ_TIMEOUT` | `30s` | Core API의 색인·의미 검색 요청 제한시간 |
 | `OPENAI_EMBEDDING_MODEL` | `text-embedding-3-small` | 공고·질의 임베딩 모델 |
 | `OPENAI_EMBEDDING_DIMENSIONS` | `1536` | 임베딩 차원 수. 모델·차원이 바뀌면 별도 컬렉션을 사용 |
+| `OPENAI_EMBEDDING_REQUEST_TOKEN_LIMIT` | `262112` | 요청별 임베딩 입력 토큰 상한(1~262112). 누적 예산과 별개 |
 | `EMBEDDING_TIMEOUT_SECONDS` | `15` | OpenAI 임베딩 호출 제한시간(초) |
 | `QDRANT_TIMEOUT_SECONDS` | `5` | Qdrant 요청 제한시간(초) |
 | `QDRANT_HOST_PORT` | `6333` | Host loopback에 연결할 Qdrant 포트 |

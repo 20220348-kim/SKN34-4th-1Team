@@ -797,6 +797,7 @@ QDRANT_API_KEY=
 QDRANT_TIMEOUT_SECONDS=5
 OPENAI_EMBEDDING_MODEL=text-embedding-3-small
 OPENAI_EMBEDDING_DIMENSIONS=1536
+OPENAI_EMBEDDING_REQUEST_TOKEN_LIMIT=262112
 EMBEDDING_TIMEOUT_SECONDS=15
 ```
 
@@ -854,6 +855,30 @@ Core 전용 읽기 `75s`를 사용합니다. 두 `LLM_COMBINATION_REVIEW_*` 값�
 한 문서 최대 8,191 tokens, 임베딩 API 요청당 최대 32개로 나눕니다. 긴 문서의 뒷부분은 이 단계의 후보
 검색에서 제외될 수 있습니다. 토큰 계산은 두 지원 모델 공통 `cl100k_base`를 사용합니다.
 Docker 이미지는 빌드 시 토크나이저 파일을 받아 런타임에 별도 다운로드가 필요하지 않습니다.
+
+`OPENAI_EMBEDDING_REQUEST_TOKEN_LIMIT`은 전송 문자열 기준 **요청별** 토큰 상한이며 기본값은
+262,112(32 × 8,191), 허용 범위는 1~262,112입니다. 낮추면 원문 순서를 유지하며 더 작은 배치로 나눕니다.
+빈 문자열 또는 기존 8,191 토큰 절단 후에도 설정 상한을 넘는 단일 입력이 있으면 전체 입력 사전 검사에서
+첫 OpenAI 호출 전에 오류를 반환합니다. 이 상한 때문에 문서를 추가로 자르지는 않습니다.
+흐름은 `Core → AI Service → 입력 준비·토큰별 배치 → OpenAI → 사용량·벡터 검증 → Qdrant`입니다.
+두 임베딩 서비스에 같은 검사를 적용하고 설정 변경은 서비스 재시작 시 반영합니다.
+
+응답 `usage.prompt_tokens`와 `usage.total_tokens`는 bool·문자열·소수가 아닌 동일한 비음수 정수여야 하며
+요청 상한 이하여야 합니다. 누락·불일치·상한 초과는 기존 오류 계약으로 반환하고 새 벡터를 캐시에
+넣거나 Qdrant에 저장하지 않습니다. 로컬 토큰 추정과 제공자가 보고한 사용량은 구분합니다.
+실패 직전까지 이미 보고된 사용량이 사라지거나 미보고 사용량이 0으로 바뀌면 안 됩니다.
+
+근거 RAG에는 실제 HTTP 배치마다 `evidence.embedding.request` 관측을 남깁니다. 부모는
+`evidence.index.embedding` 또는 `evidence.search.embedding`이며 모델·배치 순서/크기·추정 입력 토큰·상한과
+보고 사용량을 기록합니다. 응답 유실·잘못된 사용량은 `usage_state=unknown`으로 남고, 캐시 재사용은
+새 임베딩 관측을 만들지 않습니다. 원문·질문·API 키는 관측에 포함하지 않습니다.
+이는 요청 제한과 사용량 관측이며 **Ops 누적 입력 예약·금액 한도·전체 RAG 예산 통제가 아닙니다.**
+전체 RAG live 접수는 후속 승인·정산 연결 전까지 활성화하지 않습니다.
+
+API의 입력·배치 한도와 사용량 필드는 2026-09-30 확인한
+[OpenAI Embeddings API 문서](https://developers.openai.com/api/reference/python/resources/embeddings/methods/create),
+토크나이저는 [임베딩 가이드](https://developers.openai.com/api/docs/guides/embeddings)를 기준으로 합니다.
+현재 프로젝트의 보수적인 8,191/262,112 한도를 유지합니다.
 
 `OPENAI_EMBEDDING_MODEL`은 `text-embedding-3-small`과 `text-embedding-3-large`를 지원합니다.
 차원은 small 최대 1,536, large 최대 3,072로 검증합니다. 기존 순위화 OpenAI client를 공유하며

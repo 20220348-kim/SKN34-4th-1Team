@@ -38,7 +38,7 @@ PROGRAM = {
 }
 
 
-def documents(scenario="ok", trace_id=TRACE_ID):
+def documents(scenario="ok", trace_id=TRACE_ID, query_cache=None):
     # Fixed wire representation independent of the checker's span_tree builder.
     nodes = [
         ("total", None),
@@ -108,12 +108,27 @@ def documents(scenario="ok", trace_id=TRACE_ID):
                 "metadata": metadata,
             }
         )
+    parents = ([11] if scenario == "ok" else []) + (
+        [] if (query_cache or ("hit" if scenario == "hit" else "miss")) == "hit" else [15]
+    )
+    for number, parent in enumerate(parents, 22):
+        failed = scenario == "search-fail"
+        rows.append({
+            "id": f"{number:016x}", "parentObservationId": f"{parent:016x}",
+            "name": "evidence.embedding.request", "traceId": trace_id,
+            "endTime": "2026-09-30T00:00:00Z", "level": "ERROR" if failed else "DEFAULT",
+            "metadata": {"batch_sequence": 0, "batch_size": 1, "estimated_tokens": 20,
+                         "request_token_limit": 262112, "usage_reported": not failed,
+                         "usage_state": "unknown" if failed else "reported",
+                         "outcome": "failed" if failed else "completed"},
+            "usageDetails": {} if failed else {"input": 1, "output": 0, "total": 1},
+        })
     return rows
 
 
 @pytest.mark.parametrize(
     "scenario,count",
-    [("ok", 21), ("hit", 19), ("fail", 16), ("timeout", 16), ("invalid-citation", 17), ("search-fail", 11)],
+    [("ok", 23), ("hit", 19), ("fail", 17), ("timeout", 17), ("invalid-citation", 18), ("search-fail", 12)],
 )
 def test_complete_tree_and_safe_evidence(scenario, count):
     rows = trace.verify_observations(documents(scenario), TRACE_ID, scenario, ["PRIVATE"])
@@ -124,6 +139,11 @@ def test_complete_tree_and_safe_evidence(scenario, count):
 @pytest.mark.parametrize(
     "mutation",
     [
+        lambda rows: rows[-1]["metadata"].update(usage_reported=False),
+        lambda rows: rows[-1].update(usageDetails={}),
+        lambda rows: rows[-1].update(parentObservationId=rows[0]["id"]),
+        lambda rows: rows[-1]["metadata"].update(estimated_tokens=262113),
+        lambda rows: rows[-1].update(input="PRIVATE embedding"),
         lambda rows: rows.pop(),
         lambda rows: rows.append(dict(rows[-1])),
         lambda rows: rows[0].update(parentObservationId="external"),
@@ -307,7 +327,7 @@ def test_real_ai_routes_sdk_qdrant_cache_and_faults(trace_environment, monkeypat
                     "answer": 0 if scenario == "search-fail" else 2 if scenario == "hit" else 1,
                 }
         spans = exporter.get_finished_spans()
-        assert len(spans) == 57
+        assert len(spans) == 63
         for scenario, tid in zip(trace.SCENARIOS, tids, strict=True):
             # JVM spans are wire fixtures here; the actual Core/MySQL path runs in CI.
             rows = [
@@ -327,6 +347,7 @@ def test_real_ai_routes_sdk_qdrant_cache_and_faults(trace_environment, monkeypat
                         "parentObservationId": f"{span.parent.span_id:016x}",
                         "endTime": span.end_time,
                         "level": span.attributes.get("langfuse.observation.level", "DEFAULT"),
+                        "usageDetails": json.loads(span.attributes.get("langfuse.observation.usage_details", "{}")),
                         "metadata": {
                             key.removeprefix("langfuse.observation.metadata."): value
                             for key, value in span.attributes.items()

@@ -11,7 +11,11 @@ from qdrant_client import AsyncQdrantClient, models
 
 from app.config import LangfuseSettings
 from app.tracing import LLMTracing
-from app.support_program_embedding import prepare_embedding_inputs
+from app.support_program_embedding import (
+    MAX_EMBEDDING_REQUEST_TOKENS,
+    embedding_usage,
+    prepare_embedding_batches,
+)
 from app.support_program_evidence.errors import SupportProgramEvidenceError
 from app.support_program_evidence.models import (
     EvidenceChunkIdentity,
@@ -41,6 +45,7 @@ class SupportProgramEvidenceService:
         embedding_model: str,
         embedding_dimensions: int,
         embedding_timeout_seconds: float,
+        embedding_request_token_limit: int = MAX_EMBEDDING_REQUEST_TOKENS,
         tracing: LLMTracing | None = None,
     ) -> None:
         self._tracing = tracing or LLMTracing(LangfuseSettings())
@@ -49,6 +54,7 @@ class SupportProgramEvidenceService:
         self.embedding_model = embedding_model
         self.embedding_dimensions = embedding_dimensions
         self.embedding_timeout_seconds = embedding_timeout_seconds
+        self.embedding_request_token_limit = embedding_request_token_limit
         configuration_hash = sha256(
             f"{embedding_model}:{embedding_dimensions}:cl100k_base:8191".encode()
         ).hexdigest()[:16]
@@ -423,54 +429,68 @@ class SupportProgramEvidenceService:
             raise SupportProgramEvidenceError()
 
     async def _embed(self, texts: list[str]) -> list[list[float]]:
-        inputs = await asyncio.to_thread(prepare_embedding_inputs, texts)
+        try:
+            batches = await asyncio.to_thread(
+                prepare_embedding_batches, texts, self.embedding_request_token_limit,
+            )
+        except ValueError as error:
+            raise SupportProgramEvidenceError() from error
         vectors: list[list[float]] = []
-        # 32 × 8191 < OpenAI 요청당 최대 300,000 tokens.
-        for offset in range(0, len(inputs), 32):
-            batch = inputs[offset : offset + 32]
-            async with asyncio.timeout(self.embedding_timeout_seconds):
-                raw_response = await self.openai_client.embeddings.with_raw_response.create(
-                    model=self.embedding_model,
-                    input=batch,
-                    dimensions=self.embedding_dimensions,
-                    encoding_format="float",
-                    timeout=self.embedding_timeout_seconds,
-                )
-            response = raw_response.http_response.json()
-            if (
-                not isinstance(response, dict)
-                or response.get("model") != self.embedding_model
-            ):
-                raise SupportProgramEvidenceError()
-            data = response.get("data")
-            if not isinstance(data, list) or len(data) != len(batch):
-                raise SupportProgramEvidenceError()
-            ordered: dict[int, list[float]] = {}
-            for item in data:
-                if not isinstance(item, dict):
-                    raise SupportProgramEvidenceError()
-                index = item.get("index")
-                if (
-                    type(index) is not int
-                    or index not in range(len(batch))
-                    or index in ordered
-                ):
-                    raise SupportProgramEvidenceError()
-                vector = item.get("embedding")
-                if (
-                    not isinstance(vector, list)
-                    or len(vector) != self.embedding_dimensions
-                    or any(
-                        isinstance(value, bool)
-                        or not isinstance(value, (int, float))
-                        or not isfinite(value)
-                        for value in vector
+        for sequence, (batch, token_count) in enumerate(batches):
+            with self._tracing.observation(
+                "evidence.embedding.request", as_type="embedding", model=self.embedding_model,
+                metadata={
+                    "batch_sequence": sequence, "batch_size": len(batch),
+                    "estimated_tokens": token_count,
+                    "request_token_limit": self.embedding_request_token_limit,
+                    "usage_reported": False, "usage_state": "unknown",
+                },
+            ) as observation:
+                async with asyncio.timeout(self.embedding_timeout_seconds):
+                    raw_response = await self.openai_client.embeddings.with_raw_response.create(
+                        model=self.embedding_model, input=batch, dimensions=self.embedding_dimensions,
+                        encoding_format="float", timeout=self.embedding_timeout_seconds,
                     )
-                    or not any(value != 0 for value in vector)
-                ):
+                response = raw_response.http_response.json()
+                if not isinstance(response, dict) or response.get("model") != self.embedding_model:
                     raise SupportProgramEvidenceError()
-                ordered[index] = vector
-            vectors.extend(ordered[index] for index in range(len(batch)))
+                try:
+                    tokens = embedding_usage(response, self.embedding_request_token_limit)
+                except ValueError as error:
+                    raise SupportProgramEvidenceError() from error
+                self._tracing.update(
+                    observation, usage_details={"input": tokens, "output": 0, "total": tokens},
+                    metadata={"usage_reported": True, "usage_state": "reported"},
+                )
+                data = response.get("data")
+                if not isinstance(data, list) or len(data) != len(batch):
+                    raise SupportProgramEvidenceError()
+                ordered: dict[int, list[float]] = {}
+                for item in data:
+                    if not isinstance(item, dict):
+                        raise SupportProgramEvidenceError()
+                    index = item.get("index")
+                    if (
+                        type(index) is not int
+                        or index not in range(len(batch))
+                        or index in ordered
+                    ):
+                        raise SupportProgramEvidenceError()
+                    vector = item.get("embedding")
+                    if (
+                        not isinstance(vector, list)
+                        or len(vector) != self.embedding_dimensions
+                        or any(
+                            isinstance(value, bool)
+                            or not isinstance(value, (int, float))
+                            or not isfinite(value)
+                            for value in vector
+                        )
+                        or not any(value != 0 for value in vector)
+                    ):
+                        raise SupportProgramEvidenceError()
+                    ordered[index] = vector
+                vectors.extend(ordered[index] for index in range(len(batch)))
         return vectors
 
 

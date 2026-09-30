@@ -156,6 +156,7 @@ services:
       OPENAI_RANKING_SERVICE_TIER: default
       OPENAI_EMBEDDING_MODEL: text-embedding-3-small
       OPENAI_EMBEDDING_DIMENSIONS: "1536"
+      OPENAI_EMBEDDING_REQUEST_TOKEN_LIMIT: ${OPENAI_EMBEDDING_REQUEST_TOKEN_LIMIT:-262112}
       QDRANT_URL: http://qdrant:6333
       QDRANT_API_KEY: ${QDRANT_API_KEY:?Set a Qdrant API key}
     networks: [backend]

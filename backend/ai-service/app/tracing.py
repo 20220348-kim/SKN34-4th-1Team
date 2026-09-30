@@ -44,6 +44,7 @@ SPAN_NAMES = {
     "evidence.index",
     "evidence.index.readiness",
     "evidence.index.embedding",
+    "evidence.embedding.request",
     "evidence.index.upsert",
     "evidence.search",
     "evidence.search.readiness",

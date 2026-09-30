@@ -2,6 +2,7 @@
 
 import asyncio
 import importlib.util
+import json
 from pathlib import Path
 
 import httpx
@@ -21,7 +22,7 @@ def test_search_smoke_exports_miss_hit_and_checks_parent_and_privacy(
     settings, exporter = trace_environment
     records = asyncio.run(smoke.search_trace_examples(settings))
     spans = exporter.get_finished_spans()
-    assert len(spans) == 69  # 근거 4+3, RAG miss/hit/실패 13+11+2, 도우미 10+10+3, 검색 8+5
+    assert len(spans) == 71  # 근거 4+3, RAG miss/hit/실패 15+11+2, 도우미 10+10+3, 검색 8+5
     documents = {}
     for span in spans:
         attrs = span.attributes
@@ -31,6 +32,7 @@ def test_search_smoke_exports_miss_hit_and_checks_parent_and_privacy(
                 "name": span.name,
                 "parentObservationId": f"{span.parent.span_id:016x}" if span.parent else None,
                 "level": attrs.get("langfuse.observation.level", "DEFAULT"),
+                "usageDetails": json.loads(attrs.get("langfuse.observation.usage_details", "{}")),
                 "metadata": {
                     k.removeprefix("langfuse.observation.metadata."): v
                     for k, v in attrs.items()
