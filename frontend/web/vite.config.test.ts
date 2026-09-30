@@ -10,6 +10,7 @@ vi.mock('vite', async (original) => ({
 beforeEach(() => {
   vi.stubEnv('K8S_CORE_PORT', undefined)
   vi.stubEnv('K8S_OPS_PORT', undefined)
+  vi.stubEnv('K8S_DEV_LOGIN', undefined)
 })
 
 afterEach(() => {
@@ -36,6 +37,7 @@ describe('Kubernetes portfolio mode', () => {
     vi.stubEnv('VITE_DEV_PROXY_TARGET', 'https://must-not-be-used.invalid')
     vi.stubEnv('VITE_CORE_API_BASE_URL', 'https://must-not-be-used.invalid')
     vi.stubEnv('VITE_ASSISTANT_AI_ENABLED', 'true')
+    vi.stubEnv('VITE_DEV_LOGIN_ENABLED', 'true')
     const result = config({ mode: 'portfolio', command: 'serve' })
 
     expect(loadEnv).not.toHaveBeenCalled()
@@ -45,6 +47,7 @@ describe('Kubernetes portfolio mode', () => {
       'import.meta.env.VITE_CORE_API_BASE_URL': '"/"',
       'import.meta.env.VITE_ASSISTANT_AI_ENABLED': '"false"',
       'import.meta.env.VITE_KAKAO_CHANNEL_ID': '""',
+      'import.meta.env.VITE_DEV_LOGIN_ENABLED': '"false"',
     })
     expect(result.server.host).toBe('127.0.0.1')
     expect(result.server.port).toBe(5173)
@@ -93,8 +96,26 @@ describe('Kubernetes portfolio mode', () => {
     expect(result.server.proxy['/api/v1/ops'].target).toBe('http://127.0.0.1:65535')
   })
 
+  it.each(['portfolio', 'connected'])('allows explicit development login only for serving %s', (mode) => {
+    vi.stubEnv('K8S_DEV_LOGIN', 'true')
+    const result = config({ mode, command: 'serve' })
+    expect(result.define['import.meta.env.VITE_DEV_LOGIN_ENABLED']).toBe('"true"')
+    expect(result.server.host).toBe('127.0.0.1')
+    expect(loadEnv).not.toHaveBeenCalled()
+    expect(config({ mode, command: 'build' }).define['import.meta.env.VITE_DEV_LOGIN_ENABLED']).toBe('"false"')
+    vi.stubEnv('K8S_DEV_LOGIN', 'false')
+    expect(config({ mode, command: 'serve' }).define['import.meta.env.VITE_DEV_LOGIN_ENABLED']).toBe('"false"')
+  })
+
+  it.each(['', '1', 'TRUE', ' true '])('rejects ambiguous development login setting %j', (value) => {
+    vi.stubEnv('K8S_DEV_LOGIN', value)
+    expect(() => config({ mode: 'portfolio', command: 'serve' })).toThrow('K8S_DEV_LOGIN')
+    expect(loadEnv).not.toHaveBeenCalled()
+  })
+
   it('preserves normal development and Compose configuration', () => {
     vi.stubEnv('K8S_CORE_PORT', 'invalid-but-irrelevant')
+    vi.stubEnv('K8S_DEV_LOGIN', 'invalid-but-irrelevant')
     vi.stubEnv('K8S_OPS_PORT', 'invalid-but-irrelevant')
     vi.mocked(loadEnv).mockReturnValueOnce({
       VITE_DEV_PROXY_TARGET: 'http://core-service:8080',

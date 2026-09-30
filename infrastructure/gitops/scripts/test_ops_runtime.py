@@ -187,7 +187,7 @@ class ActivationTests(unittest.TestCase):
         self.env.write_text("LLMOPS_ARTIFACT_TOKEN=" + TOKEN)
         self.env.chmod(0o600)
         self.workload = {
-            "metadata": {},
+            "metadata": {"resourceVersion": "12", "uid": "owned-ops"},
             "spec": {
                 "template": {
                     "spec": {
@@ -231,6 +231,14 @@ class ActivationTests(unittest.TestCase):
             "quiet": {"side_effect": self.secret_execute},
             "render_services": {"return_value": {"ops-service": self.rendered}},
             "verify_artifact_token": {},
+            "verify_release": {
+                "return_value": {
+                    "imageId": "sha256:" + "a" * 64,
+                    "runnerId": "runner",
+                    "releaseSha256": "b" * 64,
+                }
+            },
+            "load_image": {},
             "run_migration": {
                 "side_effect": lambda *args: self.events.append("migration")
             },
@@ -253,6 +261,11 @@ class ActivationTests(unittest.TestCase):
         if "apply" in command:
             self.events.append("apply")
             self.assertNotIn("kind: Job", data)
+            self.workload = next(
+                item
+                for item in yaml.safe_load_all(data)
+                if item["kind"] == "Deployment"
+            )
         if "check_evaluation_runtime" in command:
             self.events.append("diagnostics")
         return ""
@@ -333,6 +346,238 @@ class ActivationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "values changed"):
             runtime.activate(self.state, SETTINGS, self.env)
         self.assertEqual(self.events, [])
+
+    def target_image(self):
+        target = "govbiz-ops-service:next"
+        resources = list(yaml.safe_load_all(self.rendered))
+        resources[1]["spec"]["template"]["spec"]["containers"][0]["image"] = target
+        self.mocks["render_services"].return_value = {
+            "ops-service": yaml.safe_dump_all(resources)
+        }
+        return target
+
+    def test_explicit_upgrade_only_updates_ops_baseline_after_runtime_success(self):
+        self.baseline["images"]["core-service"] = "govbiz-core-service:unchanged"
+        self.baseline["metadata"] = {"preserved": True}
+        self.save_baseline()
+        target = self.target_image()
+        runtime.activate(
+            self.state, SETTINGS, self.env, ops_image=target, kind="owned-kind"
+        )
+        saved = json.loads((self.state / "baseline.json").read_text())
+        self.assertEqual(
+            saved,
+            {
+                **self.baseline,
+                "images": {**self.baseline["images"], "ops-service": target},
+            },
+        )
+        self.mocks["load_image"].assert_called_once_with(
+            SimpleNamespace(kind="owned-kind"), SETTINGS, target, self.state
+        )
+        self.assertEqual(
+            self.mocks["render_services"].call_args.kwargs["services"], ("ops-service",)
+        )
+        self.assertEqual(self.mocks["verify_release"].call_count, 2)
+        self.assertEqual(self.workload["metadata"]["resourceVersion"], "12")
+
+    def test_incompatible_runner_stops_before_loading_or_writing(self):
+        self.mocks["verify_release"].side_effect = ValueError("release differs")
+        with self.assertRaisesRegex(ValueError, "release differs"):
+            runtime.activate(
+                self.state, SETTINGS, self.env, ops_image=self.target_image()
+            )
+        self.mocks["load_image"].assert_not_called()
+        self.assertEqual(self.events, [])
+        self.assertEqual(
+            json.loads((self.state / "baseline.json").read_text()), self.baseline
+        )
+
+    def test_runner_replacement_during_preflight_stops_before_credentials_and_migration(
+        self,
+    ):
+        self.mocks["verify_release"].side_effect = [
+            {"runnerId": "old"},
+            {"runnerId": "new"},
+        ]
+        with self.assertRaisesRegex(ValueError, "changed during activation"):
+            runtime.activate(
+                self.state, SETTINGS, self.env, ops_image=self.target_image()
+            )
+        self.assertEqual(self.events, [])
+
+    def test_workload_change_during_preflight_is_not_overwritten(self):
+        count = 0
+
+        def execute(command, **kwargs):
+            nonlocal count
+            if "get" in command:
+                count += 1
+                if count == 2:
+                    changed = copy.deepcopy(self.workload)
+                    changed["metadata"]["resourceVersion"] = "concurrent-change"
+                    return json.dumps(changed)
+            return self.execute(command, **kwargs)
+
+        self.mocks["run"].side_effect = execute
+        with self.assertRaisesRegex(ValueError, "workload or baseline changed"):
+            runtime.activate(self.state, SETTINGS, self.env)
+        self.assertEqual(self.events, [])
+
+    def test_upgrade_migration_failure_preserves_baseline_and_workload(self):
+        self.mocks["run_migration"].side_effect = ValueError("migration failed")
+        with self.assertRaisesRegex(ValueError, "migration failed"):
+            runtime.activate(
+                self.state, SETTINGS, self.env, ops_image=self.target_image()
+            )
+        self.assertEqual(
+            json.loads((self.state / "baseline.json").read_text()), self.baseline
+        )
+        self.assertNotIn("apply", self.events)
+        self.assertFalse((self.state / runtime.PROFILE).exists())
+
+    def test_applied_upgrade_can_be_explicitly_retried_after_diagnostics_failure(self):
+        target = self.target_image()
+
+        def execute(command, **kwargs):
+            if "check_evaluation_runtime" in command:
+                raise ValueError("runtime failed")
+            return self.execute(command, **kwargs)
+
+        self.mocks["run"].side_effect = execute
+        with self.assertRaisesRegex(ValueError, "runtime failed"):
+            runtime.activate(self.state, SETTINGS, self.env, ops_image=target)
+        self.assertEqual(
+            json.loads((self.state / "baseline.json").read_text()), self.baseline
+        )
+        self.assertFalse((self.state / runtime.PROFILE).exists())
+        self.mocks["run"].side_effect = self.execute
+        with self.assertRaisesRegex(ValueError, "baseline"):
+            runtime.activate(self.state, SETTINGS, self.env)
+        runtime.activate(self.state, SETTINGS, self.env, ops_image=target)
+        self.assertEqual(
+            json.loads((self.state / "baseline.json").read_text())["images"][
+                "ops-service"
+            ],
+            target,
+        )
+
+    def test_mixed_api_sync_images_are_rejected_even_for_explicit_upgrade(self):
+        target = self.target_image()
+        containers = self.workload["spec"]["template"]["spec"]["containers"]
+        containers.append(
+            {**copy.deepcopy(containers[0]), "name": "ops-sync", "image": target}
+        )
+        with self.assertRaisesRegex(ValueError, "baseline"):
+            runtime.activate(self.state, SETTINGS, self.env, ops_image=target)
+        self.assertEqual(self.events, [])
+
+    def test_invalid_target_tags_do_not_load_or_write(self):
+        for image in (
+            "other:tag",
+            "govbiz-ops-service:latest",
+            "ghcr.io/other/ops:tag",
+        ):
+            with (
+                self.subTest(image=image),
+                self.assertRaisesRegex(ValueError, "tagged local"),
+            ):
+                runtime.activate(self.state, SETTINGS, self.env, ops_image=image)
+        self.mocks["load_image"].assert_not_called()
+        self.assertEqual(self.events, [])
+
+
+class ReleasePreflightTests(unittest.TestCase):
+    def setUp(self):
+        self.runner = {
+            "Id": "runner-id",
+            "Running": True,
+            "Ports": {},
+            "Labels": {
+                "com.docker.compose.project": "fixture",
+                "com.docker.compose.service": "evaluation-runner",
+            },
+        }
+        self.identity = "sha256:" + "a" * 64
+        self.digest = "b" * 64
+        run = patch.object(runtime, "run", side_effect=["runner-id", self.identity])
+        inspect = patch.object(
+            ops_bridge, "inspect_container", return_value=self.runner
+        )
+        quiet = patch.object(
+            runtime,
+            "quiet",
+            side_effect=[
+                self.digest,
+                json.dumps({"release": self.digest, "free": True}),
+            ],
+        )
+        self.run, self.inspect, self.quiet = run.start(), inspect.start(), quiet.start()
+        for patcher in (run, inspect, quiet):
+            self.addCleanup(patcher.stop)
+
+    def test_matching_free_release_uses_immutable_image_and_no_network(self):
+        self.assertEqual(
+            runtime.verify_release(IMAGE, "fixture"),
+            {
+                "imageId": self.identity,
+                "runnerId": "runner-id",
+                "releaseSha256": self.digest,
+            },
+        )
+        command = self.quiet.call_args_list[0].args[0]
+        self.assertIn(self.identity, command)
+        self.assertIn("--network=none", command)
+        self.assertIn("--read-only", command)
+        self.assertIn("--pull=never", command)
+        self.assertNotIn(IMAGE, command)
+
+    def test_missing_or_multiple_runners_are_rejected(self):
+        for identities in ("", "one two"):
+            self.run.side_effect = None
+            self.run.return_value = identities
+            with (
+                self.subTest(identities=identities),
+                self.assertRaisesRegex(ValueError, "exactly one"),
+            ):
+                runtime.verify_release(IMAGE, "fixture")
+        self.quiet.assert_not_called()
+
+    def test_foreign_stopped_oneoff_or_published_runner_is_rejected(self):
+        changes = (
+            {"Running": False},
+            {"Ports": {"8000/tcp": [{"HostPort": "8000"}]}},
+            {
+                "Labels": {
+                    **self.runner["Labels"],
+                    "com.docker.compose.project": "foreign",
+                }
+            },
+            {"Labels": {**self.runner["Labels"], "com.docker.compose.oneoff": "true"}},
+        )
+        for change in changes:
+            self.run.side_effect = ["runner-id"]
+            self.inspect.return_value = {**self.runner, **change}
+            with (
+                self.subTest(change=change),
+                self.assertRaisesRegex(ValueError, "ownership"),
+            ):
+                runtime.verify_release(IMAGE, "fixture")
+        self.quiet.assert_not_called()
+
+    def test_different_release_or_live_runner_is_rejected(self):
+        for result in (
+            {"release": "c" * 64, "free": True},
+            {"release": self.digest, "free": False},
+            {"release": self.digest},
+        ):
+            self.run.side_effect = ["runner-id", self.identity]
+            self.quiet.side_effect = [self.digest, json.dumps(result)]
+            with (
+                self.subTest(result=result),
+                self.assertRaisesRegex(ValueError, "releases differ"),
+            ):
+                runtime.verify_release(IMAGE, "fixture")
 
 
 if __name__ == "__main__":

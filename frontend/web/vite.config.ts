@@ -14,13 +14,17 @@ function kubernetesPort(name: 'K8S_CORE_PORT' | 'K8S_OPS_PORT', fallback: number
   return Number(raw)
 }
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ mode, command }) => {
   // Kubernetes 모드는 개발/운영 .env와 상속된 VITE_*를 사용하지 않는다.
   // API는 loopback port-forward만 사용하며 portfolio는 유료 도우미도 끈다.
   const portfolio = mode === 'portfolio'
   // 명시적인 외부 연동 모드도 .env의 서버 비밀값과 임의 VITE 변수를 읽지 않는다.
   const connected = mode === 'connected'
   const kubernetes = portfolio || connected
+  const devLogin = kubernetes ? process.env.K8S_DEV_LOGIN ?? 'false' : 'false'
+  if (!['true', 'false'].includes(devLogin)) {
+    throw new Error('K8S_DEV_LOGIN must be true or false')
+  }
   const corePort = kubernetes ? kubernetesPort('K8S_CORE_PORT', 18080) : 18080
   const opsPort = kubernetes ? kubernetesPort('K8S_OPS_PORT', 18001) : 18001
   if (kubernetes && corePort === opsPort) {
@@ -41,6 +45,7 @@ export default defineConfig(({ mode }) => {
       'import.meta.env.VITE_CORE_API_BASE_URL': JSON.stringify('/'),
       'import.meta.env.VITE_ASSISTANT_AI_ENABLED': JSON.stringify(connected ? 'true' : 'false'),
       'import.meta.env.VITE_KAKAO_CHANNEL_ID': JSON.stringify(''),
+      'import.meta.env.VITE_DEV_LOGIN_ENABLED': JSON.stringify(command === 'serve' && devLogin === 'true' ? 'true' : 'false'),
     } : undefined,
     server: {
       host: kubernetes ? '127.0.0.1' : '0.0.0.0',

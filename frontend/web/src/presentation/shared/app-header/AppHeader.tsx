@@ -121,7 +121,7 @@ function AccountMenu({ isMarketingPage }: { isMarketingPage: boolean }) {
       <Link className={isMarketingPage ? appHeaderStyles.landingAccountButton : appHeaderStyles.loginButton} to={publicPaths.login}>
         로그인
       </Link>
-      {import.meta.env.DEV && !['portfolio', 'connected'].includes(import.meta.env.MODE) ? (
+      {import.meta.env.DEV && (!['portfolio', 'connected'].includes(import.meta.env.MODE) || import.meta.env.VITE_DEV_LOGIN_ENABLED === 'true') ? (
         <span className={appHeaderStyles.devLogin}>
           <button
             className={appHeaderStyles.devLoginButton}

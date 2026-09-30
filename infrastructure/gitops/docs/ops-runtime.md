@@ -200,6 +200,34 @@ DB 비밀번호·Django 키를 재발급하지 않으며 기존 artifact 토큰�
 Secret 쓰기는 [resourceVersion을 통한 동시 갱신 검사](https://kubernetes.io/docs/reference/using-api/api-concepts/)를 사용한다.
 migration → API+sync 적용 → rollout → 읽기 전용 런타임 진단 순서로 실행하며, migration 실패 시 API를 적용하지 않는다.
 
+### 기존 개인 Ops 이미지 갱신
+
+기존 클러스터의 Ops가 오래된 이미지라면 같은 소스에서 Ops와 Compose 실행기를 먼저 빌드한다.
+실행 중인 평가가 없는지 확인하고 실행기를 갱신한 뒤, 고유한 로컬 Ops 태그를 지정한다.
+기존 Core·Ops DB와 Prefect·결과 볼륨은 백업하고 유지한다. Core 관리자 세션 API의 지원 여부도 별도로 확인한다.
+
+```bash
+python3 -B infrastructure/gitops/scripts/ops_runtime.py \
+  --state-dir /기존/개인/state/경로 \
+  --artifact-env /소유자/전용/artifacts.env \
+  --ops-image govbiz-ops-service:msa-고유태그
+```
+
+- `--ops-image`는 `local` baseline·`dev` 환경에서 Ops만 갱신한다. `--kind`로 사용할 kind 실행 파일을 지정할 수 있다.
+- 동일 Compose 프로젝트의 실행 중인 실행기 하나를 확인한다. 다른 프로젝트·one-off·호스트 포트 노출은 거절한다.
+- 선택한 Ops 이미지와 실행기의 `execution_release.json` SHA-256이 같아야 한다.
+  실행기는 `LLMOPS_LIVE_ENABLED=false`이고 모델 키가 비어 있어야 한다. 토큰이나 키 값은 출력하지 않는다.
+- 이미지 검사는 immutable Docker ID로 네트워크 없는 읽기 전용 컨테이너에서 수행한다.
+  이후 기존 kind 적재 검증을 재사용하며 Secret·migration 전에 이미지·실행기와 현재 Deployment·baseline을 다시 확인한다.
+- DB 주소·계정·Secret 참조를 보존한다. API·sync의 이미지를 함께 적용하며 Deployment의 `resourceVersion`으로 동시 변경을 거절한다.
+- migration·rollout·런타임 진단이 모두 성공한 뒤 baseline의 Ops 이미지 항목만 갱신한다.
+  다른 서비스 이미지·기존 baseline 부가 정보는 유지한다.
+
+migration 실패 시 workload와 baseline을 갱신하지 않는다. rollout·진단 실패 시 새 workload가 이미 적용됐을 수 있지만
+성공으로 기록하거나 DB·이미지를 자동으로 되돌리지 않는다. 실패 Job과 원인을 확인한 뒤 같은 `--ops-image`로 재시도한다.
+현재 API·sync가 서로 다른 이미지이거나 baseline·명시한 대상 이외의 이미지라면 변경을 거절한다.
+이 사전검사는 실행기 프로세스의 실제 평가 처리 성공을 증명하지 않는다. 활성화 후 무료 평가와 보고서 조회를 확인해야 한다.
+
 성공한 연결은 비밀값 없는 `ops-activation.json`에 저장해 다음 `up --local-images`에도 유지한다.
 GHCR baseline·Argo 소유 환경·미복원 개발 이미지에는 적용하지 않으며 발행 이미지의 추적된 입력 검증을 우회하지 않는다.
 진단 PASS는 새 평가 실행 완료가 아니다. 이후 기존 Core 관리자 계정으로 웹에 로그인해 무료 평가를 확인한다.

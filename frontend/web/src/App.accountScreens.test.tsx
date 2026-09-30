@@ -44,6 +44,20 @@ afterEach(() => {
 })
 
 describe('계정 화면', () => {
+  it.each([
+    ['portfolio', 'true', true, true],
+    ['connected', 'true', true, true],
+    ['portfolio', 'false', true, false],
+    ['portfolio', 'true', false, false],
+  ] as const)('gates the optional Kubernetes login button: %s/%s/%s', (mode, enabled, development, visible) => {
+    vi.stubEnv('MODE', mode)
+    vi.stubEnv('DEV', development)
+    vi.stubEnv('VITE_DEV_LOGIN_ENABLED', enabled)
+    renderApp('/', null)
+    expect(Boolean(screen.queryByRole('button', { name: '개발 로그인 · 관리자' }))).toBe(visible)
+    expect(Boolean(screen.queryByRole('button', { name: '개발 로그인 · 회원' }))).toBe(visible)
+  })
+
   it.each([['portfolio', false], ['connected', false], ['development', true]] as const)(
     '%s 모드에서 개발 로그인 버튼 노출을 구분한다', (mode, visible) => {
       vi.stubEnv('MODE', mode)

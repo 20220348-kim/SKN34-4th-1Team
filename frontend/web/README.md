@@ -136,6 +136,24 @@ Compose Ops와 포트가 겹치면 `web --core-port 28080 --ops-port 28001`과
 잘못된 값·중복 포트는 시작을 차단하며 일반 `dev`/Compose 프록시에는 영향을 주지 않습니다.
 개인 환경의 [Ops 활성화](../../infrastructure/gitops/docs/ops-runtime.md)는 별도로 필요합니다.
 
+개인 Core에서 개발용 로그인을 별도로 승인·활성화한 경우에만 `K8S_DEV_LOGIN=true`로
+관리자·회원 테스트 로그인 버튼을 표시할 수 있습니다. 기본값은 `false`이며 `true`/`false` 이외 값은 거절합니다.
+이 옵션은 웹 표시만 바꾸고 Core 설정·계정·비밀번호를 만들거나 수정하지 않습니다.
+Core의 `ACCOUNT_DEV_LOGIN_ENABLED=true`와 개인 Secret의 개발 계정 비밀번호는 별도로 준비해야 합니다.
+Kubernetes 재적용으로 Core의 기본값 `false`가 복원되면 버튼을 눌러도 로그인에 실패합니다.
+
+```powershell
+# 저장소 루트, 이미 Core·Ops 포트 전달을 실행한 개인 PC
+$env:K8S_CORE_PORT='28080'
+$env:K8S_OPS_PORT='28001'
+$env:K8S_DEV_LOGIN='true'
+pnpm --dir frontend/web dev:k8s
+```
+
+Bash/WSL에서는 `K8S_CORE_PORT=28080 K8S_OPS_PORT=28001 K8S_DEV_LOGIN=true pnpm --dir frontend/web dev:k8s`를 사용합니다.
+Kubernetes 모드의 `.env`·상속된 `VITE_*` 차단과 loopback 바인딩은 유지하며,
+`build` 결과에는 이 옵션을 켜더라도 개발 로그인 버튼을 포함하지 않습니다.
+
 ### 일반 네이티브 웹 개발
 
 Node.js `24.x`, pnpm `11.22.x`가 필요합니다. Core API와 검색에 필요한 MySQL·AI Service·Qdrant는
