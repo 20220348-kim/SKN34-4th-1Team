@@ -11,6 +11,7 @@ from .model_fixture import make_model
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from app.application_preparation.document_contract import DocumentError
 from app.application_preparation.agent import ApplicationPreparationAgent
 from app.application_preparation.discovery_prompt import DISCOVERY_PROMPT_VERSION
 from app.application_preparation.models import (
@@ -364,8 +365,13 @@ def test_discovery_failure_log_keeps_only_safe_path_and_counts(caplog):
     assert discovery_request_data()["documents"][0]["blocks"][0]["text"] not in caplog.text
 
 
-@pytest.mark.parametrize("error, expected_status", [(TimeoutError("lost response"), 504), (RuntimeError("execution unknown"), 503)])
-def test_discovery_execution_errors_are_not_reported_as_confirmed_validation_failures(error, expected_status):
+@pytest.mark.parametrize("error, expected_status, expected_code", [
+    (TimeoutError("lost response"), 504, "APPLICATION_PREPARATION_TIMEOUT"),
+    (RuntimeError("execution unknown"), 503, "APPLICATION_PREPARATION_FAILED"),
+    (DocumentError("MCP_FAILED", reason="hwpx:inspect_editable_regions:TRANSPORT_TIMEOUT"), 503, "APPLICATION_PREPARATION_FAILED"),
+    (DocumentError("LIMIT_EXCEEDED", reason="HWPX_TARGET_COUNT"), 413, "APPLICATION_DOCUMENT_LIMIT_EXCEEDED"),
+])
+def test_discovery_execution_errors_are_not_reported_as_confirmed_validation_failures(error, expected_status, expected_code):
     app = create_app(settings=Settings(openai_api_key="unused", openai_model="test-model", llm_model_timeout_seconds=2, llm_run_timeout_seconds=3))
     app.state.container.application_preparation_service = ApplicationPreparationService(
         SimpleNamespace(discovery_model_timeout_seconds=210.0, discovery_run_timeout_seconds=240.0, discover=AsyncMock(side_effect=error)), "test-model",
@@ -373,7 +379,7 @@ def test_discovery_execution_errors_are_not_reported_as_confirmed_validation_fai
     with TestClient(app) as client:
         response = client.post("/internal/v1/application-preparations/discovery", json=discovery_request_data())
     assert response.status_code == expected_status
-    assert response.json()["detail"]["code"] != "APPLICATION_FORM_AI_INVALID_RESPONSE"
+    assert response.json()["detail"]["code"] == expected_code
 
 
 def test_discovery_evidence_mismatch_returns_confirmed_validation_failure():

@@ -7,6 +7,7 @@ import ai.govbiz.core.applicationpreparation.repository.RequestedAnalysisClaimRe
 import ai.govbiz.core.applicationpreparation.repository.ApplicationFormAvailabilityRepository
 import ai.govbiz.core.applicationpreparation.repository.ApplicationFormSnapshotRepository
 import ai.govbiz.core.applicationpreparation.client.ai.AiApplicationPreparationClient
+import ai.govbiz.core.applicationpreparation.client.ai.exception.AiApplicationFormTooLargeException
 import ai.govbiz.core.applicationpreparation.client.ai.dto.*
 import ai.govbiz.core.applicationpreparation.client.ai.exception.ApplicationFormTimeoutException
 import ai.govbiz.core.applicationpreparation.client.ai.exception.ApplicationDocumentMcpException
@@ -209,14 +210,16 @@ class ApplicationFormAvailabilityIntegrationTest {
         assertEquals(ApplicationFormAvailabilityStatus.AVAILABLE, state().status)
         assertEquals("계획서.hwpx", availability.activeForms("BIZINFO", id).single().attachmentFileName)
     }
-    @Test fun allCandidateMappingFailuresRemainReviewRequired() {
+    @Test fun allCandidateMappingFailuresWaitForRetryAndRequireReviewAfterThreeAttempts() {
         configureFiles(two=true)
         discoverEachDocument()
         rejectMappingFor(bytes, "second".toByteArray())
         availability.register("BIZINFO", id, "a".repeat(64))
-        assertTrue(worker.runNext())
+        // 양식은 찾았고 입력칸 매핑만 실패했으므로 하루 잠그지 않고 일시 실패처럼 3회까지 다시 시도한다.
+        repeat(3) { assertTrue(worker.runNext()); if (it < 2) { assertEquals(ApplicationFormAvailabilityStatus.RETRY_WAITING, state().status); assertEquals("APPLICATION_DOCUMENT_MAPPING_FAILED", state().reasonCode); assertNotNull(state().nextRetryAt); due() } }
         assertEquals(ApplicationFormAvailabilityStatus.REVIEW_REQUIRED, state().status)
-        assertEquals("APPLICATION_DOCUMENT_MAPPING_FAILED", state().reasonCode)
+        assertEquals("RETRY_EXHAUSTED:APPLICATION_DOCUMENT_MAPPING_FAILED", state().reasonCode)
+        assertEquals(3, state().attemptCount)
     }
     @Test fun twoIndividuallyAllowedSourcesDoNotFailAtTheirCombinedLength() {
         configureFiles(two=true)
@@ -244,11 +247,48 @@ class ApplicationFormAvailabilityIntegrationTest {
         assertEquals(ApplicationFormAvailabilityStatus.AVAILABLE, state().status)
         assertEquals("계획서.hwpx", availability.activeForms("BIZINFO", id).single().attachmentFileName)
     }
-    @Test fun manualReanalysisPreservesSourceTooLargeReason() {
+    @Test fun nativeTargetLimitExcludesOnlyThatAttachmentAndAloneEndsAsTooLarge() {
+        configureFiles(two=true)
+        `when`(ai.discover(any(AiApplicationFormDiscoveryRequest::class.java) ?: AiApplicationFormDiscoveryRequest("application-form-discovery-v1", "BIZINFO", id, program.title, emptyList()))).thenAnswer { invocation ->
+            val request = invocation.getArgument<AiApplicationFormDiscoveryRequest>(0)
+            if (request.documents.any { it.documentIndex == 0 }) throw AiApplicationFormTooLargeException()
+            payload(true).copy(forms = payload(true).forms.filter { it.documentIndex == 1 })
+        }
+        availability.register("BIZINFO", id, "a".repeat(64))
+        assertTrue(worker.runNext())
+        assertEquals(ApplicationFormAvailabilityStatus.AVAILABLE, state().status)
+        assertEquals("계획서.hwpx", availability.activeForms("BIZINFO", id).single().attachmentFileName)
+
+        configureFiles()
+        `when`(ai.discover(any(AiApplicationFormDiscoveryRequest::class.java) ?: AiApplicationFormDiscoveryRequest("application-form-discovery-v1", "BIZINFO", id, program.title, emptyList())))
+            .thenThrow(AiApplicationFormTooLargeException())
+        due()
+        assertTrue(worker.runNext())
+        assertEquals(ApplicationFormAvailabilityStatus.TOO_LARGE, state().status)
+        assertEquals("SOURCE_TOO_LARGE", state().reasonCode)
+    }
+    @Test fun manualReanalysisRecordsDocumentReasonsWithTheSameStatusAsTheScheduler() {
         availability.register("BIZINFO", id, "a".repeat(64))
         `when`(parser.parse(any(ByteArray::class.java) ?: bytes, anyString())).thenThrow(SupportProgramDocumentException(SupportProgramDocumentException.Reason.TOO_LARGE))
         assertThrows(ApplicationFormDiscoveryException::class.java) { discovery.discoverQueued("BIZINFO", id) {} }
+        assertEquals(ApplicationFormAvailabilityStatus.TOO_LARGE, state().status)
         assertEquals("APPLICATION_FORM_SOURCE_TOO_LARGE", state().reasonCode)
+        assertNotNull(state().nextRetryAt)
+
+        availability.register("BIZINFO", id, "b".repeat(64))
+        doReturn(listOf(SupportProgramDocumentBlock("문단 1", "업체명"))).`when`(parser).parse(any(ByteArray::class.java) ?: bytes, anyString())
+        `when`(ai.discover(any(AiApplicationFormDiscoveryRequest::class.java) ?: AiApplicationFormDiscoveryRequest("application-form-discovery-v1", "BIZINFO", id, program.title, emptyList()))).thenReturn(payload().copy(forms = emptyList()))
+        assertThrows(ApplicationFormDiscoveryException::class.java) { discovery.discoverQueued("BIZINFO", id) {} }
+        assertEquals(ApplicationFormAvailabilityStatus.NO_FORM, state().status)
+        assertEquals("APPLICATION_FORM_NO_FORM", state().reasonCode)
+
+        availability.register("BIZINFO", id, "c".repeat(64))
+        `when`(ai.discover(any(AiApplicationFormDiscoveryRequest::class.java) ?: AiApplicationFormDiscoveryRequest("application-form-discovery-v1", "BIZINFO", id, program.title, emptyList()))).thenThrow(ApplicationFormTimeoutException("AI_MODEL"))
+        assertThrows(ApplicationFormTimeoutException::class.java) { discovery.discoverQueued("BIZINFO", id) {} }
+        assertEquals(ApplicationFormAvailabilityStatus.RETRY_WAITING, state().status)
+        assertEquals("DISCOVERY_TIMEOUT", state().reasonCode)
+        assertEquals("AI_MODEL", state().timeoutStage)
+        assertNotNull(state().nextRetryAt)
     }
     @Test fun noFormIsCachedIncludingCatalogOnlyChange() {
         `when`(ai.discover(any(AiApplicationFormDiscoveryRequest::class.java) ?: AiApplicationFormDiscoveryRequest("application-form-discovery-v1", "BIZINFO", id, program.title, emptyList()))).thenReturn(payload().copy(forms=emptyList()))

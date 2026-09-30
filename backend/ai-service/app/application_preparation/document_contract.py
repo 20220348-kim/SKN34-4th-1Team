@@ -2,6 +2,7 @@
 import base64
 import hashlib
 import json
+import logging
 import re
 import unicodedata
 from typing import Literal
@@ -10,6 +11,8 @@ from pydantic import Field, model_validator
 
 from app.application_preparation.models import Contract
 from app.application_preparation.document import DocumentBox, DocumentFact, DocumentTarget, DocumentPlacement
+
+logger = logging.getLogger(__name__)
 
 CONTRACT = "application-document-mcp-v1"
 MAP_VERSION = "native-map-v15-pdf-field-scope-options"
@@ -93,13 +96,16 @@ class NativeTarget(Contract):
     analysis: NativeTargetAnalysis = Field(default_factory=NativeTargetAnalysis)
 
 
+DOCUMENT_TARGET_LIMIT = 3000
+
+
 class DocumentMap(Contract):
     contractVersion: Literal["application-document-mcp-v1"] = CONTRACT
     sourceSha256: str
     format: Literal["hwp", "hwpx", "pdf", "docx", "xlsx"]
     engineVersion: str
     mapVersion: str = MAP_VERSION
-    targets: list[NativeTarget] = Field(max_length=3000)
+    targets: list[NativeTarget] = Field(max_length=DOCUMENT_TARGET_LIMIT)
     workbookMetadata: dict = Field(default_factory=dict)
     auxiliaryStatus: str = "SKIPPED_PRIMARY_SUFFICIENT"
     auxiliaryText: str = Field(default="", max_length=40000)
@@ -318,6 +324,9 @@ def validate_plan(request: GenerateDocumentRequest, document: DocumentMap, selec
                 raise DocumentError("INPUT_REQUIRED")
             used.add(op.valueRef)
             if request.bindings and not any(b.factId == op.valueRef and b.targetId == op.targetId and b.box == op.box for b in request.bindings):
+                saved = [b.targetId for b in request.bindings if b.factId == op.valueRef]
+                logger.warning("document_plan_saved_binding_changed format=%s field_id=%s planned_target=%s saved_targets=%s",
+                               request.format, op.valueRef, op.targetId, saved)
                 raise DocumentError("MAPPING_FAILED", reason="SAVED_BINDING_CHANGED")
         if op.operation == "input" and (op.start != op.end or target.currentText.strip()):
             raise DocumentError("MAPPING_FAILED", reason="INPUT_TARGET_NOT_EMPTY")

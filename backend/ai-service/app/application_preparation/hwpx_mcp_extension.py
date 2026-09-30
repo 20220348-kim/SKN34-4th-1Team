@@ -121,6 +121,75 @@ def verify_edits(source_path: str, output_path: str, expected_targets: list[dict
         return {"verified": False, "reason": "CELL_TEXT_MISMATCH"}
     return {"verified": True, "counts": {"requested": len(expected_targets), "verified": len(expected_targets), "failed": 0}}
 
+TAG = re.compile(r"<(/?)([A-Za-z][\w:.\-]*)([^>]*?)(/?)>")  # identical to the pinned engine's fill._TAG
+CELL_ADDRESS = re.compile(r'(\w+)="(-?\d+)"')
+# Source hash of the pinned engine's fill._find_cell_span; the index below replays its exact semantics.
+PINNED_FIND_CELL_SPAN_SHA256 = "e6c76c7a7f5b8c2a4ddb99521b543ba10cd0f2ee5f1e22091ce91074168465c3"
+
+
+def cell_span_index(section: str) -> dict[tuple[int, int, int], tuple[int, int]]:
+    """One pass over a section: (table ordinal, row, col) -> <hp:tc> span.
+
+    The pinned engine rescans the whole section for every cell, which costs minutes on
+    large forms. Table ordinals count every <hp:tbl> open in document order (nested included),
+    a cell belongs to the innermost open table, and the first address wins, exactly as
+    fill._find_cell_span resolves them.
+    """
+    index: dict[tuple[int, int, int], tuple[int, int]] = {}
+    pending: dict[int, tuple[int, int, int]] = {}
+    tables: list[int] = []
+    cells: list[int] = []
+    seen_tables = 0
+    for match in TAG.finditer(section):
+        closing, name, attrs, self_closing = match.group(1) == "/", match.group(2), match.group(3), match.group(4) == "/"
+        if name == "hp:tbl" and not self_closing:
+            if closing:
+                if tables:
+                    tables.pop()
+            else:
+                seen_tables += 1
+                tables.append(seen_tables)
+        elif name == "hp:tc" and not self_closing:
+            if closing:
+                if cells:
+                    start = cells.pop()
+                    key = pending.pop(start, None)
+                    if key is not None:
+                        index.setdefault(key, (start, match.end()))
+            elif tables:
+                cells.append(match.start())
+        elif name == "hp:cellAddr" and not closing and tables and cells and cells[-1] not in pending:
+            address = dict(CELL_ADDRESS.findall(attrs))
+            if "rowAddr" in address and "colAddr" in address:
+                pending[cells[-1]] = (tables[-1], int(address["rowAddr"]), int(address["colAddr"]))
+    return index
+
+
+def install_cell_span_index():
+    """Replace the engine's per-cell section rescan with a cached per-section index."""
+    import hashlib
+    import inspect
+    from collections import OrderedDict
+    import hangeul_core.addressed as addressed
+    import hangeul_core.fill as fill
+    source = inspect.getsource(fill._find_cell_span).encode("utf-8")
+    if hashlib.sha256(source).hexdigest() != PINNED_FIND_CELL_SPAN_SHA256:
+        raise RuntimeError("GOVBIZ_HWPX_ENGINE_CHANGED")
+    cache: "OrderedDict[tuple[int, int], dict]" = OrderedDict()
+
+    def find_cell_span(section, table_index, row, col):
+        key = (len(section), hash(section))
+        index = cache.get(key)
+        if index is None:
+            index = cache[key] = cell_span_index(section)
+            while len(cache) > 8:
+                cache.popitem(last=False)
+        return index.get((table_index, row, col))
+
+    fill._find_cell_span = find_cell_span
+    addressed._find_cell_span = find_cell_span
+
+
 def install_addressed_patches():
     """Keep inspect, preview, apply and verify on the same physical paragraphs."""
     import hangeul_core.addressed as addressed
@@ -191,6 +260,7 @@ def install_addressed_patches():
 
 
 def main():
+    install_cell_span_index()
     install_addressed_patches()
     from hangeul_mcp.server import main as serve
     from hangeul_mcp.server import mcp

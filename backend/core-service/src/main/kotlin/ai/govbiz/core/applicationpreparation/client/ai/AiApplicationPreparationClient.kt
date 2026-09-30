@@ -8,6 +8,7 @@ import ai.govbiz.core.applicationpreparation.client.ai.dto.AiApplicationPreparat
 import ai.govbiz.core.applicationpreparation.client.ai.dto.AiApplicationPreparationInterpretRequest
 import ai.govbiz.core.applicationpreparation.client.ai.dto.AiApplicationFormDiscoveryPayload
 import ai.govbiz.core.applicationpreparation.client.ai.dto.AiApplicationFormDiscoveryRequest
+import ai.govbiz.core.applicationpreparation.client.ai.exception.AiApplicationFormTooLargeException
 import ai.govbiz.core.applicationpreparation.client.ai.exception.AiApplicationFormValidationException
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.http.MediaType
@@ -104,6 +105,12 @@ class AiApplicationPreparationClient(
                 .onStatus({ it.value() == 503 }, { _, response ->
                     if (readErrorCode(response) == "APPLICATION_PREPARATION_FAILED") {
                         throw AiServiceCallException.invalidResponse("Application form discovery response failed validation", null)
+                    }
+                    throw AiServiceCallException.unavailable(null)
+                })
+                .onStatus({ it.value() == 413 }, { _, response ->
+                    if (readErrorCode(response) == "APPLICATION_DOCUMENT_LIMIT_EXCEEDED") {
+                        throw AiApplicationFormTooLargeException()
                     }
                     throw AiServiceCallException.unavailable(null)
                 })

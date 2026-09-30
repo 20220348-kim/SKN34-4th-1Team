@@ -16,6 +16,7 @@ from app.application_preparation.models import (
 from app.application_preparation.prompt import PROMPT_VERSION
 from app.application_preparation.draft_prompt import DRAFT_PROMPT_VERSION
 from app.application_preparation.models import DraftRequest, validate_draft
+from app.application_preparation.document_contract import DocumentError
 from app.application_preparation.document import (
     DocumentRequest,
     DocumentValidationError,
@@ -188,6 +189,11 @@ class ApplicationPreparationService:
         except TimeoutError as error:
             timeout_stage = getattr(error, "stage", "AI_UNKNOWN")
             raise ApplicationPreparationError("APPLICATION_PREPARATION_TIMEOUT") from error
+        except DocumentError as error:
+            # A native form over the target limit is a document size fact, not a failed AI run.
+            if error.code == "APPLICATION_DOCUMENT_LIMIT_EXCEEDED":
+                raise ApplicationPreparationError(error.code) from error
+            raise ApplicationPreparationError("APPLICATION_PREPARATION_FAILED") from error
         except Exception as error:
             raise ApplicationPreparationError("APPLICATION_PREPARATION_FAILED") from error
 

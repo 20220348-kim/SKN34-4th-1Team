@@ -2,7 +2,9 @@ package ai.govbiz.core.applicationpreparation.service
 
 import ai.govbiz.core._common.exception.AiServiceCallException
 import ai.govbiz.core.account.domain.Account
+import ai.govbiz.core.applicationpreparation.client.ai.exception.AiApplicationFormTooLargeException
 import ai.govbiz.core.applicationpreparation.client.ai.exception.AiApplicationFormValidationException
+import ai.govbiz.core.applicationpreparation.domain.ApplicationAttachmentRole
 import ai.govbiz.core.applicationpreparation.domain.ApplicationFormAnalysisMetadata
 import ai.govbiz.core.applicationpreparation.domain.ApplicationFormAvailabilityStatus
 import ai.govbiz.core.applicationpreparation.domain.ApplicationFormDiscoveryBlock
@@ -13,6 +15,7 @@ import ai.govbiz.core.applicationpreparation.domain.ApplicationFormFieldDefiniti
 import ai.govbiz.core.applicationpreparation.domain.ApplicationFormManifest
 import ai.govbiz.core.applicationpreparation.domain.ApplicationFormSectionDefinition
 import ai.govbiz.core.applicationpreparation.domain.ApplicationServiceField
+import ai.govbiz.core.applicationpreparation.domain.ExtractedApplicationForm
 import ai.govbiz.core.applicationpreparation.facade.AiApplicationPreparationFacade
 import ai.govbiz.core.applicationpreparation.repository.RequestedAnalysisClaimResult
 import ai.govbiz.core.applicationpreparation.repository.ApplicationFormSnapshotRepository
@@ -49,6 +52,36 @@ class ApplicationFormDiscoveryService(
 ) {
     private val logger = LoggerFactory.getLogger(javaClass)
     private val transactions = org.springframework.transaction.support.TransactionTemplate(transactionManager)
+
+    companion object {
+        /** 문서별 AI 양식 추출을 동시에 보내는 최대 수입니다. 첨부는 제공처당 최대 8개입니다. */
+        const val DISCOVERY_CONCURRENCY = 3
+        /** 양식 추출은 성공했으나 입력칸 매핑에서 난 실패입니다. 모델 결과가 일정하지 않아 재시도로 풀릴 수 있습니다. */
+        val RETRYABLE_DOCUMENT_FAILURES = setOf("APPLICATION_DOCUMENT_PLAN_FAILED", "APPLICATION_DOCUMENT_MAPPING_FAILED", "APPLICATION_DOCUMENT_PLAN_TIMEOUT")
+
+        private class CandidateOutcome(
+            val candidates: List<ExtractedApplicationForm> = emptyList(),
+            val failure: Exception? = null,
+            val excluded: ApplicationFormDiscoveryDocument? = null,
+        )
+
+        fun isRetryableDocumentFailure(error: Throwable): Boolean =
+            error is ai.govbiz.core.applicationpreparation.service.exception.ApplicationDocumentException && error.code in RETRYABLE_DOCUMENT_FAILURES
+
+        /** 항목을 최대 [DISCOVERY_CONCURRENCY]개씩 동시에 처리하고 결과를 입력 순서대로 돌려줍니다. 한 항목의 예외는 그대로 던집니다. */
+        fun <T, R> mapConcurrently(items: List<T>, block: (T) -> R): List<R> {
+            if (items.size <= 1) return items.map(block)
+            val executor = java.util.concurrent.Executors.newFixedThreadPool(minOf(items.size, DISCOVERY_CONCURRENCY))
+            try {
+                val futures = items.map { item -> executor.submit(java.util.concurrent.Callable { block(item) }) }
+                return futures.map { future ->
+                    try { future.get() } catch (error: java.util.concurrent.ExecutionException) { throw error.cause ?: error }
+                }
+            } finally {
+                executor.shutdownNow()
+            }
+        }
+    }
     fun discover(account: Account, sourceCode: String, sourceProgramId: String): ApplicationFormDiscoveryResult {
         require(account.id > 0)
         validateIdentity(sourceCode, sourceProgramId)
@@ -101,12 +134,35 @@ class ApplicationFormDiscoveryService(
                     is ApplicationFormDiscoveryException -> "APPLICATION_FORM_${error.reason.name}"
                     is ai.govbiz.core.applicationpreparation.service.exception.ApplicationDocumentException -> error.code
                     is AiServiceCallException -> "AI_${error.failure.name}"
+                    is ai.govbiz.core.applicationpreparation.client.ai.exception.ApplicationFormTimeoutException -> "DISCOVERY_TIMEOUT"
                     else -> "MANUAL_REANALYSIS_FAILED"
                 }
-                availability.finish(lease, ApplicationFormAvailabilityStatus.REVIEW_REQUIRED, reason, cacheResult = false)
+                val (status, retryable) = queuedFailureStatus(error)
+                availability.finish(lease, status, reason, retryable = retryable, cacheResult = false,
+                    timeoutStage = (error as? ai.govbiz.core.applicationpreparation.client.ai.exception.ApplicationFormTimeoutException)?.stage)
             }
             throw error
         }
+    }
+
+    /**
+     * 사용자 요청 재분석도 스케줄러 분석과 같은 상태로 기록한다. 문서 자체의 확정 사유(양식 없음·크기 초과·수집 불가)는
+     * 운영자 검토 대상이 아니고, 일시 장애와 입력칸 매핑 실패만 재시도 대기로 둔다.
+     */
+    private fun queuedFailureStatus(error: Exception): Pair<ApplicationFormAvailabilityStatus, Boolean> = when {
+        // 양식은 찾았지만 입력칸 연결(매핑)만 실패한 경우는 모델 결과가 매번 달라 재시도 가치가 있으므로 하루 잠그지 않습니다.
+        isRetryableDocumentFailure(error) -> ApplicationFormAvailabilityStatus.RETRY_WAITING to true
+        error is ApplicationFormDiscoveryException -> when (error.reason) {
+            Reason.NO_FORM -> ApplicationFormAvailabilityStatus.NO_FORM to false
+            Reason.SOURCE_CHANGED -> ApplicationFormAvailabilityStatus.STALE to false
+            Reason.SOURCE_TOO_LARGE -> ApplicationFormAvailabilityStatus.TOO_LARGE to false
+            Reason.SOURCE_UNAVAILABLE -> ApplicationFormAvailabilityStatus.RETRY_WAITING to true
+            Reason.SOURCE_NOT_FOUND, Reason.SOURCE_UNSUPPORTED, Reason.SOURCE_INVALID -> ApplicationFormAvailabilityStatus.DOCUMENT_UNAVAILABLE to false
+            else -> ApplicationFormAvailabilityStatus.REVIEW_REQUIRED to false
+        }
+        error is ai.govbiz.core.applicationpreparation.client.ai.exception.ApplicationFormTimeoutException -> ApplicationFormAvailabilityStatus.RETRY_WAITING to true
+        error is AiServiceCallException && error.failure.name in setOf("UNAVAILABLE", "TIMEOUT") -> ApplicationFormAvailabilityStatus.RETRY_WAITING to true
+        else -> ApplicationFormAvailabilityStatus.REVIEW_REQUIRED to false
     }
 
     /** 시스템 작업은 계정별 discovery job을 사용하지 않으며 저장 transaction을 호출자가 소유한다. */
@@ -194,7 +250,7 @@ class ApplicationFormDiscoveryService(
                 )
             }
             val sourceLimit = 120_000
-            val eligibleDocuments = documents.filter { document ->
+            val sizedDocuments = documents.filter { document ->
                 val length = document.blocks.sumOf { it.text.length }
                 if (length > sourceLimit) {
                     hasExcludedDocument = true
@@ -204,6 +260,17 @@ class ApplicationFormDiscoveryService(
                     warnings.add("자동 분석 제외 첨부(SOURCE_TOO_LARGE): ${document.fileName.take(250)}")
                     false
                 } else true
+            }
+            // 파일명이 위원용·공고문처럼 신청자가 채우지 않는 문서를 가리키면 유료 분석 전에 제외하고, 신청서로 보이는 문서를 먼저 분석합니다.
+            // 판정으로 남는 문서가 없으면 판정을 무시하고 전부 분석합니다. 결과 없음은 NO_FORM이지 수집 실패가 아닙니다.
+            val roles = sizedDocuments.associate { it.documentIndex to ApplicationAttachmentRole.classify(it.fileName) }
+            val eligibleDocuments = sizedDocuments.filter { roles[it.documentIndex] != ApplicationAttachmentRole.NON_APPLICANT }
+                .ifEmpty { sizedDocuments }
+                .sortedBy { if (roles[it.documentIndex] == ApplicationAttachmentRole.APPLICANT) 0 else 1 }
+            sizedDocuments.filter { it !in eligibleDocuments }.forEach { document ->
+                logger.info("application_form_candidate sourceCode={} sourceProgramId={} candidateIndex={} attachmentId={} filename={} stage=ROLE_FILTER role=NON_APPLICANT",
+                    sourceCode, sourceProgramId, document.documentIndex, attachmentId(document.sourceUrl), document.fileName.take(250))
+                warnings.add("자동 분석 제외 첨부(NON_APPLICANT_ROLE): ${document.fileName.take(250)}")
             }
             if (eligibleDocuments.isEmpty()) throw ApplicationFormDiscoveryException(excludedReason)
             val input = ApplicationFormDiscoveryInput(
@@ -215,25 +282,36 @@ class ApplicationFormDiscoveryService(
             )
             var candidateFailure: Exception? = null
             beforeAi()
-            val extracted = eligibleDocuments.flatMap { document ->
+            // 문서마다 별도 OpenAI 호출이므로 몇 개씩 동시에 보냅니다. 결과와 첫 실패는 문서 순서대로 모읍니다.
+            val outcomes = mapConcurrently(eligibleDocuments) { document ->
                 try {
                     val candidates = ai.discover(input.copy(documents = listOf(document)), configuration)
                     logger.info("application_form_candidate sourceCode={} sourceProgramId={} candidateIndex={} attachmentId={} filename={} stage=AI_ANALYSIS formCount={} model={}",
                         sourceCode, sourceProgramId, document.documentIndex, attachmentId(document.sourceUrl), document.fileName.take(250), candidates.size, configuration.model)
-                    candidates
+                    CandidateOutcome(candidates)
                 } catch (error: AiApplicationFormValidationException) {
-                    if (candidateFailure == null) candidateFailure = ApplicationFormDiscoveryException(Reason.AI_INVALID_RESPONSE, error)
                     logger.warn("application_form_candidate sourceCode={} sourceProgramId={} candidateIndex={} attachmentId={} filename={} stage=AI_VALIDATION errorCode=AI_INVALID_RESPONSE",
                         sourceCode, sourceProgramId, document.documentIndex, attachmentId(document.sourceUrl), document.fileName.take(250))
-                    emptyList()
+                    CandidateOutcome(failure = ApplicationFormDiscoveryException(Reason.AI_INVALID_RESPONSE, error))
+                } catch (error: AiApplicationFormTooLargeException) {
+                    // native 입력 대상 수 초과는 문서 자체의 크기 문제라 재시도나 검토 잠금 없이 이 첨부만 제외합니다.
+                    logger.warn("application_form_candidate sourceCode={} sourceProgramId={} candidateIndex={} attachmentId={} filename={} stage=AI_NATIVE_LIMIT errorCode=SOURCE_TOO_LARGE",
+                        sourceCode, sourceProgramId, document.documentIndex, attachmentId(document.sourceUrl), document.fileName.take(250))
+                    CandidateOutcome(excluded = document)
                 } catch (error: AiServiceCallException) {
                     if (error.failure.name != "INVALID_RESPONSE") throw error
-                    if (candidateFailure == null) candidateFailure = error
                     logger.warn("application_form_candidate sourceCode={} sourceProgramId={} candidateIndex={} attachmentId={} filename={} stage=CORE_RESPONSE_VALIDATION errorCode=AI_INVALID_RESPONSE",
                         sourceCode, sourceProgramId, document.documentIndex, attachmentId(document.sourceUrl), document.fileName.take(250))
-                    emptyList()
+                    CandidateOutcome(failure = error)
                 }
             }
+            outcomes.mapNotNull { it.excluded }.forEach { document ->
+                hasExcludedDocument = true
+                excludedReason = Reason.SOURCE_TOO_LARGE
+                warnings.add("자동 분석 제외 첨부(NATIVE_TARGET_LIMIT): ${document.fileName.take(250)}")
+            }
+            candidateFailure = outcomes.firstNotNullOfOrNull { it.failure }
+            val extracted = outcomes.flatMap { it.candidates }
             if (extracted.isEmpty()) throw candidateFailure ?: ApplicationFormDiscoveryException(if (hasExcludedDocument) excludedReason else Reason.NO_FORM)
             val forms = extracted.mapNotNull { candidate ->
                 try {
@@ -289,7 +367,8 @@ class ApplicationFormDiscoveryService(
                     bindDocumentMaps(listOf(form), collected.files).single()
                 } catch (error: ai.govbiz.core.applicationpreparation.service.exception.ApplicationDocumentException) {
                     val root = generateSequence(error as Throwable) { it.cause }.last()
-                    if (candidateFailure == null) candidateFailure = error
+                    // 양식을 찾고도 매핑에서 실패한 사실이 다른 문서의 추출 검증 실패보다 우선입니다. 재시도 가능 여부가 여기서 갈립니다.
+                    if (candidateFailure == null || isRetryableDocumentFailure(error)) candidateFailure = error
                     val original = collected.files.find { sha256(it.bytes) == form.attachmentSha256 }
                     logger.error("application_form_candidate sourceCode={} sourceProgramId={} candidateIndex={} attachmentId={} filename={} sourceSha256={} fileSize={} stage=DOCUMENT_MAPPING errorCode={} rootException={} rootMessage={}",
                         sourceCode, sourceProgramId, documents.find { it.sha256 == form.attachmentSha256 }?.documentIndex,

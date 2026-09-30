@@ -27,10 +27,12 @@ Worker는 `FOR UPDATE SKIP LOCKED`로 한 공고를 선점한다. generation과 
 | AVAILABLE | 검증된 활성 snapshot 존재 | 24시간 후 첨부 재확인 |
 | NO_FORM | 분석 성공, 양식 없음 | 24시간 후 지문 확인; 동일하면 AI 미호출 |
 | DOCUMENT_UNAVAILABLE | NOT_FOUND / UNSUPPORTED / INVALID 등 확정 수집·파싱 실패 | 24시간 후 첨부 재확인 |
-| TOO_LARGE | 파서 또는 전체 입력 크기 초과 | 24시간 후 첨부 재확인 |
-| RETRY_WAITING | 일시적 503·timeout 등 | 총 3회 시도; 첫 실패 5분, 두 번째 30분 후 |
+| TOO_LARGE | 파서·전체 입력 크기 초과, 또는 HWPX native 입력 대상이 3,000개를 넘어 AI Service가 `APPLICATION_DOCUMENT_LIMIT_EXCEEDED`(413)로 확정한 첨부만 남은 경우 | 24시간 후 첨부 재확인 |
+| RETRY_WAITING | 일시적 503·timeout, 양식은 찾았으나 입력칸 매핑만 실패(`APPLICATION_DOCUMENT_PLAN_FAILED`·`MAPPING_FAILED`·`PLAN_TIMEOUT`) | 총 3회 시도; 첫 실패 5분, 두 번째 30분 후. 사용자 재분석 요청은 회차를 1부터 다시 센다 |
 | STALE | 공고·첨부·분석 버전 변경 또는 원본 해시 불일치 | 재분석 대기 |
 | REVIEW_REQUIRED | 계약 위반·결과 불명·3회 재시도 소진 | 운영자 확인. 24시간 후 지문만 확인하며 동일 입력에 AI 재호출 없음 |
+
+사용자가 요청한 재분석(discovery job)도 같은 표로 기록한다. 양식 없음·크기 초과·수집 불가 같은 문서 확정 사유는 NO_FORM·TOO_LARGE·DOCUMENT_UNAVAILABLE로, 일시 장애·시한 초과·입력칸 매핑 실패는 RETRY_WAITING으로 두며, 계약 위반과 결과 불명만 REVIEW_REQUIRED다. 사유 코드는 `APPLICATION_FORM_` 접두를 유지하고 결과는 캐시하지 않는다.
 
 nextRetryAt은 다음 분석 또는 지문 재확인 시각이다. REVIEW_REQUIRED도 새 공식 첨부나 분석 버전으로 바뀌었는지 확인하되, 같은 입력의 유료 분석을 다시 시도하지 않는다.
 

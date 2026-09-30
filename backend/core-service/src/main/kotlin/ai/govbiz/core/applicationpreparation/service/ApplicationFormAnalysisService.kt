@@ -46,7 +46,9 @@ class ApplicationFormAnalysisService(
         } catch (error: ai.govbiz.core.applicationpreparation.client.ai.exception.ApplicationFormTimeoutException) {
             finish(ApplicationFormAvailabilityStatus.RETRY_WAITING, "DISCOVERY_TIMEOUT", true, stage=error.stage)
         } catch (error: ai.govbiz.core.applicationpreparation.service.exception.ApplicationDocumentException) {
-            finish(ApplicationFormAvailabilityStatus.REVIEW_REQUIRED, error.code)
+            // 입력칸 매핑 실패는 모델 결과가 일정하지 않으므로 일시 실패처럼 3회까지 다시 시도합니다.
+            val retryable = ApplicationFormDiscoveryService.isRetryableDocumentFailure(error)
+            finish(if (retryable) ApplicationFormAvailabilityStatus.RETRY_WAITING else ApplicationFormAvailabilityStatus.REVIEW_REQUIRED, error.code, retryable)
         } catch (error: AiServiceCallException) {
             val retry = error.failure.name in setOf("UNAVAILABLE", "TIMEOUT")
             finish(if (retry) ApplicationFormAvailabilityStatus.RETRY_WAITING else ApplicationFormAvailabilityStatus.REVIEW_REQUIRED,
