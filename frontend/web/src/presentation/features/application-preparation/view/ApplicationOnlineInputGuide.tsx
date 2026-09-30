@@ -7,7 +7,12 @@ const labels = { READY: '준비 완료', NEEDS_REVIEW: '확인 필요', MISSING:
 const inputModes = { UNKNOWN: '입력 형태 미확인', SHORT_TEXT: '짧은 답변', LONG_TEXT: '긴 답변',
   SINGLE_CHOICE: '단일 선택', MULTI_CHOICE: '복수 선택', DROPDOWN: '드롭다운' }
 
-export function ApplicationOnlineInputGuide({ preparationId, inputRevision }: { preparationId: number; inputRevision: number }) {
+/**
+ * 답변 입력 화면 질문 카드 아래의 접힌 칸입니다. 처음에는 닫혀 있고 `defaultOpen`(주소 `?helper=open`)이면 펼친 채 엽니다.
+ * 닫혀 있어도 안내를 미리 불러와 접힌 줄에 준비된 답변 수를 보여 줍니다.
+ */
+export function ApplicationOnlineInputGuide({ preparationId, inputRevision, defaultOpen = false }: { preparationId: number; inputRevision: number; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen)
   const [guide, setGuide] = useState<Guide | null>(null)
   const [error, setError] = useState('')
   const [feedback, setFeedback] = useState('')
@@ -42,8 +47,14 @@ export function ApplicationOnlineInputGuide({ preparationId, inputRevision }: { 
     link.click()
     setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
-  return <section className={s.card} aria-labelledby="online-input-guide-title">
-    <h2 className={s.cardTitle} id="online-input-guide-title">온라인 신청 입력 도우미</h2>
+  return <details className={s.guide} aria-labelledby="online-input-guide-title" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
+    <summary className={s.guideSummary}>
+      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <h2 className={s.cardTitle} id="online-input-guide-title">온라인 신청 입력 도우미</h2>
+        <span className={s.muted}>{`${guide ? `준비된 답변 ${guide.readyCount} / ${guide.totalCount} · ` : ''}복사하거나 TXT로 받아 공식 신청 페이지에 직접 입력해요`}</span>
+      </span>
+      <svg className={s.guideChevron} width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.25" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+    </summary>
     <p className={s.muted}>저장된 확정 답변을 복사하거나 TXT로 내려받아 공식 신청 페이지에서 직접 입력해주세요. 답변은 자동 입력되지 않으며 최종 제출은 사용자가 직접 수행합니다.</p>
     {guide && !guide.externalMappingVerified && <p className={s.notice}>{guide.officialApplicationUrl
       ? '실제 Google Form 질문을 확인했지만 일부 문항의 대응 관계는 검토가 필요합니다. 답변을 확인하고 직접 입력해주세요.'
@@ -70,5 +81,5 @@ export function ApplicationOnlineInputGuide({ preparationId, inputRevision }: { 
         })}
       </ul>
     </>}
-  </section>
+  </details>
 }

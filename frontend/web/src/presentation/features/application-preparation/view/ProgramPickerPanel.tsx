@@ -60,7 +60,7 @@ function PickAvailability({ lookup, onRetry }: { lookup: AvailabilityLookup; onR
   const count = storedForms(lookup.result).length
   return count > 0
     ? <p className={p.availOk} role="status"><CheckIcon />양식 {count}개 · 바로 작성할 수 있어요</p>
-    : <p className={p.availNone} role="status">저장된 양식이 없어요 · 다음 단계에서 분석</p>
+    : <p className={p.availNone} role="status">저장된 양식이 없어요 · 고른 뒤 입력칸별로 분석</p>
 }
 
 function RowSkeletons({ label }: { label: string }) {
@@ -70,9 +70,16 @@ function RowSkeletons({ label }: { label: string }) {
   </>
 }
 
+/** 여러 값 필터 버튼에 보일 글자입니다. 없으면 "전체", 하나면 그 값, 여럿이면 "서울 외 1"입니다. */
+function multiValueText(values: string[]) {
+  if (values.length === 0) return '전체'
+  return values.length === 1 ? values[0]! : `${values[0]} 외 ${values.length - 1}`
+}
+
 /**
- * 신청 문서를 만들 공고 1개를 고르는 옆 패널(600px 미만은 바텀 시트)입니다. 관심 공고함 · 전체 검색 두 목록의 라디오 행에서
- * 고르면 그 공고의 저장된 양식을 바로 조회하고, [이 공고 선택]을 눌러야 뒤 화면에 반영합니다. Esc · 바깥 · ✕ · [취소]는 버리고 닫습니다.
+ * 신청 문서를 만들 공고 1개를 고르는 옆 패널(600px 미만은 전체 높이 시트)입니다. 관심 공고함 · 전체 검색 두 목록의 라디오 행에서
+ * 고르면 그 공고의 저장된 양식을 바로 조회하고, [이 공고 선택]을 눌러야 뒤 화면에 반영합니다.
+ * 뒤 화면은 흐린 배경으로 덮고, 흐린 곳 · Esc · ✕ · [취소]는 고른 것을 버리고 닫습니다.
  */
 export function ProgramPickerPanel({ current, currentAvailability, urlProgramKey, onConfirm, onClose }: {
   current: SelectableSupportProgram | null
@@ -84,15 +91,24 @@ export function ProgramPickerPanel({ current, currentAvailability, urlProgramKey
 }) {
   const vm = useProgramPickerViewModel(current, currentAvailability)
   const dialogRef = useRef<HTMLDivElement>(null)
+  const searchInputRef = useRef<HTMLInputElement>(null)
   const [filtersOpen, setFiltersOpen] = useState(false)
   const filtersId = useId()
   const radioName = useId()
+  const sourceId = useId()
+  const statusId = useId()
 
+  // 처음 포커스는 [✕]가 아니라 지금 고른 탭에 둡니다. 바로 화살표·Tab으로 목록을 고를 수 있습니다.
   useEffect(() => {
-    const first = dialogRef.current?.querySelector<HTMLElement>('input:not([disabled]), select:not([disabled]), textarea:not([disabled])')
-      ?? dialogRef.current?.querySelector<HTMLElement>(FOCUSABLE)
-    ;(first ?? dialogRef.current)?.focus()
+    ;(dialogRef.current?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]') ?? dialogRef.current)?.focus()
   }, [])
+
+  // 관심 공고함이 비어 전체 검색으로 저절로 넘어가면, 선택이 풀린 탭에 있던 포커스를 검색칸으로 옮깁니다.
+  useEffect(() => {
+    const active = document.activeElement
+    if (vm.tab === 'search' && active instanceof HTMLElement && dialogRef.current?.contains(active)
+      && active.getAttribute('role') === 'tab' && active.getAttribute('aria-selected') !== 'true') searchInputRef.current?.focus()
+  }, [vm.tab])
 
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     // 드롭다운이 먼저 Esc를 처리했으면(목록 닫기) 패널은 그대로 둡니다.
@@ -157,7 +173,6 @@ export function ProgramPickerPanel({ current, currentAvailability, urlProgramKey
 
   return <div className={p.overlay} onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
     <div ref={dialogRef} className={p.panel} role="dialog" aria-modal="true" aria-label="공고 고르기" tabIndex={-1} onKeyDown={handleKeyDown}>
-      <span className={p.grab} aria-hidden="true" />
       <div className={p.header}>
         <div className={p.headerText}>
           <h2 className={p.title}>공고 고르기</h2>
@@ -188,7 +203,7 @@ export function ProgramPickerPanel({ current, currentAvailability, urlProgramKey
                 : renderRows(vm.saved.programs, '관심 공고 목록')}
         </div> : <div className={p.tabPanel} role="tabpanel" aria-label="전체 검색">
           <div className={p.searchRow}>
-            <input className={p.searchInput} type="search" aria-label="공고명·기관명" placeholder="공고명, 기관명" maxLength={100}
+            <input ref={searchInputRef} className={p.searchInput} type="search" aria-label="공고명·기관명" placeholder="공고명, 기관명" maxLength={100}
               value={vm.keyword} onChange={(event) => vm.setKeyword(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' && !event.nativeEvent.isComposing) { event.preventDefault(); vm.searchKeyword() }
@@ -198,21 +213,32 @@ export function ProgramPickerPanel({ current, currentAvailability, urlProgramKey
           <button type="button" className={p.filterToggle} aria-expanded={filtersOpen} aria-controls={filtersId} onClick={() => setFiltersOpen((open) => !open)}>
             필터 ({filterCount})<span aria-hidden="true">{filtersOpen ? '▴' : '▾'}</span>
           </button>
+          {/* 네 필터 모두 칸 위 같은 자리에 같은 글자의 이름표를 두고, 칸에는 고른 값(없으면 "전체")을 보여 줍니다. */}
           {filtersOpen && <div className={p.filters} id={filtersId} role="group" aria-label="공고 검색 필터">
-            <MultiSelectField label="지역" className={p.multiInput} options={choices(regionNames, catalog?.regions, splitFilterValues(draft.region))}
-              selected={splitFilterValues(draft.region)} onToggle={(value) => vm.toggleDraftValue('region', value)} onClearAll={() => vm.changeDraft({ region: '' })} />
-            <MultiSelectField label="지원 분야" className={p.multiInput} options={choices(supportProgramCategories, catalog?.categories, splitFilterValues(draft.category))}
-              selected={splitFilterValues(draft.category)} onToggle={(value) => vm.toggleDraftValue('category', value)} onClearAll={() => vm.changeDraft({ category: '' })} />
-            <label className={p.filterField}>출처
-              <SelectField label="출처" className={p.filterInput} value={draft.sourceCode}
+            <div className={p.filterField}>
+              <span className={p.filterLabel} aria-hidden="true">지역</span>
+              <MultiSelectField label="지역" className={p.multiInput} valueText={multiValueText(splitFilterValues(draft.region))}
+                options={choices(regionNames, catalog?.regions, splitFilterValues(draft.region))}
+                selected={splitFilterValues(draft.region)} onToggle={(value) => vm.toggleDraftValue('region', value)} onClearAll={() => vm.changeDraft({ region: '' })} />
+            </div>
+            <div className={p.filterField}>
+              <span className={p.filterLabel} aria-hidden="true">지원 분야</span>
+              <MultiSelectField label="지원 분야" className={p.multiInput} valueText={multiValueText(splitFilterValues(draft.category))}
+                options={choices(supportProgramCategories, catalog?.categories, splitFilterValues(draft.category))}
+                selected={splitFilterValues(draft.category)} onToggle={(value) => vm.toggleDraftValue('category', value)} onClearAll={() => vm.changeDraft({ category: '' })} />
+            </div>
+            <div className={p.filterField}>
+              <label className={p.filterLabel} htmlFor={sourceId}>출처</label>
+              <SelectField id={sourceId} label="출처" className={p.filterInput} value={draft.sourceCode}
                 options={catalogSourceCodes.map((value) => ({ value, label: catalogSourceLabels[value] }))}
                 onChange={(value) => vm.changeDraft({ sourceCode: value as SupportProgramCatalogFilters['sourceCode'] })} />
-            </label>
-            <label className={p.filterField}>접수 상태
-              <SelectField label="접수 상태" className={p.filterInput} value={draft.status}
+            </div>
+            <div className={p.filterField}>
+              <label className={p.filterLabel} htmlFor={statusId}>접수 상태</label>
+              <SelectField id={statusId} label="접수 상태" className={p.filterInput} value={draft.status}
                 options={Object.entries(filterStatusLabels).map(([value, label]) => ({ value, label }))}
                 onChange={(value) => vm.changeDraft({ status: value as SupportProgramCatalogFilters['status'] })} />
-            </label>
+            </div>
             <p className={p.filterHint}>조건을 고른 뒤 [검색]을 눌러 주세요.</p>
           </div>}
           {conditions.length > 0 && <div className={p.chips} aria-label="적용된 검색 조건">

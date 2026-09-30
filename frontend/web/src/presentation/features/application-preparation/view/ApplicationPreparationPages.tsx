@@ -17,10 +17,12 @@ import { WorkspaceToast } from '../../../shared/workspace/WorkspaceToast'
 import { workspacePageStyles } from '../../../shared/workspace/WorkspacePage.styles'
 import { workspaceToastActionClassName } from '../../../shared/workspace/WorkspaceToast.styles'
 import { useFloatingPopover } from '../../../shared/workspace/useFloatingPopover'
+import { useMediaQuery } from '../../../shared/workspace/useMediaQuery'
 import { answerMaxLength, undecidedAnswer, useApplicationPreparationEditorViewModel } from '../viewmodel/useApplicationPreparationEditorViewModel'
 import { useApplicationPreparationListViewModel } from '../viewmodel/useApplicationPreparationListViewModel'
 import { answerEditorStyles as e, applicationPreparationStyles as s } from './ApplicationPreparation.styles'
 import { ApplicationOnlineInputGuide } from './ApplicationOnlineInputGuide'
+import { ApplicationPreparationLede } from './ApplicationPreparationLede'
 
 const listTitle = '신청 문서 작성'
 /** 사이드바 항목과 같은 이름입니다. 답변 입력 화면의 상위 경로에 씁니다. */
@@ -49,8 +51,15 @@ function ErrorNotice({ message, retryLabel, onRetry }: {
 // ── 답변 입력(25) ──
 
 type EditorViewModel = ReturnType<typeof useApplicationPreparationEditorViewModel>
-/** 질문 하나입니다. `order`·`sectionSize`는 항목 안에서의 순번과 질문 수입니다("질문 2 / 5"). */
-type Question = { section: ApplicationFormSection; field: ApplicationFormField; sectionIndex: number; key: string; order: number; sectionSize: number }
+/** 질문 하나입니다. 진행 표시는 항목 안 순번이 아니라 전체 기준("질문 8 / 34")입니다. */
+type Question = { section: ApplicationFormSection; field: ApplicationFormField; sectionIndex: number; key: string }
+/** 섹션이 바뀐 첫 질문 위의 띠입니다. `missingIndex`가 있으면 지나온 항목의 빈 필수 질문으로 가는 버튼을 둡니다. */
+type SectionNotice = { text: string; missingIndex: number | null }
+
+/** 이 폭보다 좁으면 이동 버튼을 카드 바닥 대신 아래 고정 바로 그립니다. 스타일의 `max-[599px]`과 같은 경계입니다. */
+const narrowEditorQuery = '(max-width: 599px)'
+/** 같은 자리의 버튼이 [다음 →]에서 [초안 만들기]로 바뀐 뒤 클릭을 받지 않는 시간입니다(두 번 클릭으로 AI 작업이 시작되지 않게). */
+const swappedButtonGuardMs = 400
 
 /** 자동 기입할 수 있는 문항만 답변 대상으로 셉니다. 나머지는 원문에서 직접 작성합니다. */
 function writable(field: ApplicationFormField) { return field.documentWritable !== false }
@@ -68,7 +77,7 @@ function savedTimeLabel(savedAt: number, now: number) {
   return clock
 }
 
-/** 머리글·시트·[초안 만들기]에 쓰는 선 아이콘입니다. 이름은 버튼의 aria-label이 맡습니다. */
+/** 머리글·시트·검토의 [초안 만들기]에 쓰는 선 아이콘입니다. 이름은 버튼의 aria-label이 맡습니다. */
 function EditorIcon({ name, size = 20 }: { name: 'list' | 'more' | 'close' | 'doc'; size?: number }) {
   return <svg className="shrink-0" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
     strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -82,14 +91,23 @@ function EditorIcon({ name, size = 20 }: { name: 'list' | 'more' | 'close' | 'do
   </svg>
 }
 
-/** 항목 목록(PC 왼쪽 · 모바일 시트)입니다. 전체 진행, 항목별 상태, [초안 만들기]를 한 벌로 그립니다. */
-function SectionNav({ sections, valueOf, activeSectionIndex, onSelect, requiredMissing, generate }: {
+/** 비어 있는 필수 질문인지입니다. 원문에서 직접 작성하는 문항은 세지 않습니다. */
+function requiredEmpty(question: Pick<Question, 'section' | 'field'>, valueOf: (section: ApplicationFormSection, field: ApplicationFormField) => string) {
+  return question.field.required && writable(question.field) && !valueOf(question.section, question.field).trim()
+}
+
+/**
+ * 항목 목록(PC 왼쪽 · 모바일 시트)입니다. 전체 진행, 항목별 상태, "검토하고 초안 만들기" 링크를 한 벌로 그립니다.
+ * 지금 항목보다 앞에 있는(지나온) 항목에 빈 필수 질문이 있으면 "필수 비어 있음"으로 남깁니다. 검토 단계에서는 모든 항목이 지나온 항목입니다.
+ */
+function SectionNav({ sections, valueOf, activeSectionIndex, onSelect, requiredMissing, reviewing, onReview }: {
   sections: ApplicationFormSection[]
   valueOf: (section: ApplicationFormSection, field: ApplicationFormField) => string
   activeSectionIndex: number
   onSelect: (sectionIndex: number) => void
   requiredMissing: number
-  generate: { disabled: boolean; onClick: () => void }
+  reviewing: boolean
+  onReview: () => void
 }) {
   const totals = sections.reduce((sum, section) => {
     const fields = section.fields.filter(writable)
@@ -112,8 +130,10 @@ function SectionNav({ sections, valueOf, activeSectionIndex, onSelect, requiredM
         const answered = fields.filter((field) => valueOf(section, field).trim()).length
         const done = fields.length > 0 && answered === fields.length
         const active = index === activeSectionIndex
+        const passedWithGap = index < activeSectionIndex && fields.some((field) => requiredEmpty({ section, field }, valueOf))
         // 지금 보고 있는 항목은 답이 없어도 "진행 중"입니다.
-        const status = done ? '완료' : answered > 0 || active ? '진행 중' : '시작 전'
+        const status = done ? '완료' : passedWithGap ? '필수 비어 있음' : answered > 0 || active ? '진행 중' : '시작 전'
+        const badge = done ? e.badgeDone : passedWithGap ? e.badgeWarning : status === '진행 중' ? e.badgeActive : e.badgeIdle
         return <li key={section.key}>
           <button type="button" className={e.sectionButton} aria-current={active ? 'step' : undefined} onClick={() => onSelect(index)}>
             <span className={`${e.sectionNumber} ${done ? e.sectionNumberDone : active ? e.sectionNumberActive : ''}`} aria-hidden="true">{done ? '✓' : index + 1}</span>
@@ -121,24 +141,27 @@ function SectionNav({ sections, valueOf, activeSectionIndex, onSelect, requiredM
               <span className={e.sectionTitle}>{section.title}</span>
               <span className={e.sectionMeta}>{fields.length === 0 ? '원문에서 직접 작성' : `답변 ${answered} / ${fields.length}`}</span>
             </span>
-            {fields.length > 0 && <span className={done ? e.badgeDone : status === '진행 중' ? e.badgeActive : e.badgeIdle}>{status}</span>}
+            {fields.length > 0 && <span className={badge}>{status}</span>}
           </button>
         </li>
       })}
     </ol>
-    <button type="button" className={e.generateButton} disabled={generate.disabled} onClick={generate.onClick}><EditorIcon name="doc" size={16} />초안 만들기</button>
-    {generate.disabled && requiredMissing > 0 && <p className={e.generateHint}>필수 답변을 모두 채우면 만들 수 있어요</p>}
+    <Link className={e.reviewLink} to="?step=review" aria-current={reviewing ? 'step' : undefined}
+      onClick={(event) => { event.preventDefault(); onReview() }}>검토하고 초안 만들기</Link>
   </>
 }
 
 function AnswerEditor({ vm }: { vm: EditorViewModel }) {
   const navigate = useNavigate()
-  const [search] = useSearchParams()
+  const [search, setSearch] = useSearchParams()
+  const narrow = useMediaQuery(narrowEditorQuery)
+  // 마지막 "검토" 단계는 질문 카드 자리에 그리고 주소(`?step=review`)로 남겨 새로고침 · 뒤로 가기에도 유지합니다.
+  const reviewing = search.get('step') === 'review'
   const preparation = vm.preparation!
   const form = preparation.form
   const sections = form.sections
   const questions = useMemo<Question[]>(() => sections.flatMap((section, sectionIndex) =>
-    section.fields.map((field, order) => ({ section, field, sectionIndex, key: `${section.key}:${field.key}`, order, sectionSize: section.fields.length }))), [sections])
+    section.fields.map((field) => ({ section, field, sectionIndex, key: `${section.key}:${field.key}` }))), [sections])
   const valueOf = (section: ApplicationFormSection, field: ApplicationFormField) => {
     const key = `${section.key}:${field.key}`
     if (vm.deletedAnswerKeys.has(key)) return ''
@@ -162,17 +185,28 @@ function AnswerEditor({ vm }: { vm: EditorViewModel }) {
   const [typedBeforeUndecided, setTypedBeforeUndecided] = useState<Record<string, string>>({})
   /** 붙여 넣은 글이 2,000자에서 잘린 질문입니다. 칸 아래에 한 줄로 알립니다. */
   const [truncatedKey, setTruncatedKey] = useState<string | null>(null)
+  const [sectionNotice, setSectionNotice] = useState<SectionNotice | null>(null)
+  /** 이동할 때마다 1씩 오릅니다. 새 질문을 그린 뒤 스크롤 · 포커스를 옮기는 신호입니다. */
+  const [moveCount, setMoveCount] = useState(0)
   const headingRef = useRef<HTMLHeadingElement>(null)
+  const mainRef = useRef<HTMLElement>(null)
+  const cardRef = useRef<HTMLDivElement>(null)
+  const summaryRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const sheetRef = useRef<HTMLDivElement>(null)
   const listButtonRef = useRef<HTMLButtonElement>(null)
+  /** [다음 →]이 검토의 [초안 만들기]로 바뀐 시각입니다. */
+  const reviewShownAt = useRef(0)
   const menu = useFloatingPopover({ open: menuOpen, placement: 'bottom-end' })
   const current = questions[Math.min(index, Math.max(0, questions.length - 1))]
   const currentValue = current ? valueOf(current.section, current.field) : ''
   const undecided = currentValue === undecidedAnswer
   const options = current?.field.options ?? []
   const missingOptions = current ? options.length === 0 && /택\s*1|하나.{0,10}선택|중.{0,10}선택/.test(`${current.field.label} ${current.field.guidance}`) : false
-  const requiredMissing = questions.filter(({ section, field }) => field.required && writable(field) && !valueOf(section, field).trim()).length
+  const missingRequired = questions.filter((question) => requiredEmpty(question, valueOf))
+  const requiredMissing = missingRequired.length
+  const missingOptional = questions.filter(({ section, field }) => !field.required && writable(field) && !valueOf(section, field).trim())
+  const optionalMissing = missingOptional.length
   const fieldError = current && vm.fieldError?.key === current.key ? vm.fieldError.message : null
   // 지금 질문의 칸 오류는 칸 아래에만 보여 줍니다. 같은 문구를 위쪽 실패 알림으로 겹쳐 띄우지 않습니다.
   const failed = vm.autosave.status === 'failed' && !fieldError ? vm.autosave : null
@@ -195,7 +229,7 @@ function AnswerEditor({ vm }: { vm: EditorViewModel }) {
   }, [menuOpen])
 
   // 항목 목록 시트: 열리면 시트 안 첫 요소로 포커스를 옮기고, 닫히면 [항목 목록] 버튼으로 돌려줍니다.
-  // 항목을 골라 닫을 때는 go()가 이미 질문 제목으로 포커스를 옮겼으므로 그대로 둡니다.
+  // 항목을 골라 닫을 때는 move()가 이미 질문 제목으로 포커스를 옮겼으므로 그대로 둡니다.
   useEffect(() => {
     if (!sheetOpen) return
     const sheet = sheetRef.current
@@ -227,19 +261,95 @@ function AnswerEditor({ vm }: { vm: EditorViewModel }) {
     }
   }
 
-  function go(next: number) {
+  /**
+   * 질문 카드 윗변이 머리글 밑으로 들어가 있으면 작업 영역 스크롤 칸을 "카드 윗변 − 머리글 높이 − 16px"로 직접 스크롤합니다.
+   * 포커스의 부수 효과로 스크롤하지 않도록 포커스는 호출하는 쪽이 `preventScroll`로 줍니다.
+   */
+  function revealCard() {
+    const scroller = mainRef.current?.parentElement
+    const card = cardRef.current
+    if (!scroller || !card || typeof scroller.scrollTo !== 'function') return
+    const headerHeight = Number.parseFloat(getComputedStyle(scroller).getPropertyValue('--workspace-header-h')) || 0
+    const offset = card.getBoundingClientRect().top - scroller.getBoundingClientRect().top - headerHeight - 16
+    if (offset < 0) scroller.scrollTo({ top: Math.max(0, scroller.scrollTop + offset) })
+  }
+
+  // 이동한 뒤: 새 질문(또는 검토)을 그린 다음 카드를 머리글 바로 아래로 올리고 제목에 포커스를 줍니다.
+  useLayoutEffect(() => {
+    if (moveCount === 0) return
+    revealCard()
+    headingRef.current?.focus({ preventScroll: true })
+  }, [moveCount])
+
+  /** 검토 단계를 주소에 넣거나 뺍니다. 질문 주소(`?question=`)는 그대로 둡니다. */
+  function setReviewStep(on: boolean) {
+    if (on === reviewing) return
+    setSearch((previous) => {
+      const next = new URLSearchParams(previous)
+      if (on) next.set('step', 'review')
+      else next.delete('step')
+      return next
+    })
+  }
+
+  /** 자동 저장을 먼저 비운 뒤 질문(또는 검토)을 바꿉니다. 섹션 띠는 이동마다 새로 정합니다. */
+  function move(target: number | 'review', notice: SectionNotice | null = null) {
     void vm.flushAutosave()
-    setIndex(Math.max(0, Math.min(questions.length - 1, next)))
+    if (target === 'review') setReviewStep(true)
+    else {
+      setIndex(Math.max(0, Math.min(questions.length - 1, target)))
+      setReviewStep(false)
+    }
+    setSectionNotice(notice)
     setSheetOpen(false)
-    headingRef.current?.focus()
+    setMoveCount((count) => count + 1)
+  }
+  /** 마지막 질문의 [다음 →]은 검토 단계로 갑니다. 섹션을 넘어가면 앞 항목의 결과를 띠와 status로 한 번 알립니다. */
+  function goNext() {
+    if (!current) return
+    if (index >= questions.length - 1) {
+      reviewShownAt.current = Date.now()
+      move('review')
+      return
+    }
+    const target = questions[index + 1]!
+    if (target.sectionIndex === current.sectionIndex) {
+      move(index + 1)
+      return
+    }
+    const gaps = questions.filter((question) => question.sectionIndex === current.sectionIndex && requiredEmpty(question, valueOf))
+    move(index + 1, gaps.length > 0
+      ? { text: `${current.section.title}에 비어 있는 필수 질문이 ${gaps.length}개 있어요 → ${target.section.title}`, missingIndex: questions.indexOf(gaps[0]!) }
+      : { text: `${current.section.title} 완료 → ${target.section.title}`, missingIndex: null })
+  }
+  function goPrevious() {
+    if (reviewing) move(questions.length - 1)
+    else if (index > 0) move(index - 1)
   }
   function goSection(sectionIndex: number) {
     const inSection = questions.filter((question) => question.sectionIndex === sectionIndex)
     const open = inSection.find(({ section, field }) => writable(field) && !valueOf(section, field).trim()) ?? inSection[0]
-    if (open) go(questions.indexOf(open))
+    if (open) move(questions.indexOf(open))
     else setSheetOpen(false)
   }
-  async function generate() {
+  /** Ctrl/⌘ + Enter는 다음, Ctrl/⌘ + Shift + Enter는 이전입니다. 한글 조합 중에는 무시하고, 그냥 Enter는 줄바꿈 그대로입니다. */
+  function onQuestionKeyDown(event: ReactKeyboardEvent<HTMLElement>) {
+    if (event.key !== 'Enter' || !(event.ctrlKey || event.metaKey) || event.nativeEvent.isComposing || event.keyCode === 229) return
+    event.preventDefault()
+    if (event.shiftKey) goPrevious()
+    else goNext()
+  }
+  /**
+   * 검토의 [초안 만들기]입니다. 비어 있는 필수 질문이 있으면 작업을 보내지 않고 위 요약으로 포커스를 옮깁니다(버튼은 비활성화하지 않음).
+   * 모두 채웠으면 입력 중인 답변을 먼저 저장하고 그 입력 버전으로 초안 화면에 갑니다.
+   */
+  async function createDraft() {
+    if (Date.now() - reviewShownAt.current < swappedButtonGuardMs) return
+    if (requiredMissing > 0) {
+      revealCard()
+      summaryRef.current?.focus({ preventScroll: true })
+      return
+    }
     if (!(await vm.flushAutosave())) return
     const revision = vm.latestRevision()
     if (revision !== null) navigate(`${appPaths.applicationPreparations}/${preparation.id}/documents?generate=${revision}`)
@@ -253,30 +363,79 @@ function AnswerEditor({ vm }: { vm: EditorViewModel }) {
       vm.setSectionMessage(current.key, typedBeforeUndecided[current.key] ?? '')
     }
   }
-  const generateDisabled = requiredMissing > 0 || questions.length === 0
   const saveStatus = vm.autosave.status === 'saving' ? '저장 중…'
     : vm.autosave.status === 'saved' ? `자동 저장됨 · ${savedTimeLabel(vm.autosave.savedAt, now)}`
       : vm.autosave.status === 'failed' ? '저장 실패' : vm.hasPendingAnswers ? '입력을 멈추면 저장돼요' : '입력하면 자동으로 저장돼요'
   const reanalyzeTo = `${appPaths.applicationPreparationNew}?${new URLSearchParams({ sourceCode: form.sourceCode, sourceProgramId: form.sourceProgramId })}`
   const documentsTo = `${appPaths.applicationPreparations}/${preparation.id}/documents`
-  const nav = <SectionNav sections={sections} valueOf={valueOf} activeSectionIndex={current?.sectionIndex ?? 0} onSelect={goSection}
-    requiredMissing={requiredMissing} generate={{ disabled: generateDisabled, onClick: () => { void generate() } }} />
-  const isLast = current ? index >= questions.length - 1 : true
-  // 마지막 질문에서 [초안 만들기]가 비활성이면 바의 상태 자리에 남은 필수 답변 수를 둡니다.
-  const barStatus = isLast && requiredMissing > 0 ? `필수 답변 ${requiredMissing}개가 남았어요` : saveStatus
+  // 검토 단계에서는 모든 항목을 지나온 항목으로 봅니다(빈 필수 질문이 있으면 "필수 비어 있음").
+  const nav = <SectionNav sections={sections} valueOf={valueOf} activeSectionIndex={reviewing ? sections.length : current?.sectionIndex ?? 0} onSelect={goSection}
+    requiredMissing={requiredMissing} reviewing={reviewing} onReview={() => move('review')} />
+  const hasQuestions = questions.length > 0
+  // [← 이전] · 자동 저장 상태 · [다음 →](검토에서는 [초안 만들기]). PC는 카드 바닥 줄, 600px 미만은 아래 고정 바입니다.
+  // 600px 미만에서는 자동 저장 상태를 위쪽 진행 줄에 두므로 바에는 버튼만 둡니다.
+  const moveButtons = hasQuestions ? <div className={narrow ? e.bar : e.cardFooter}>
+    <button type="button" className={e.prevButton} disabled={!reviewing && index === 0} aria-keyshortcuts="Control+Shift+Enter" onClick={goPrevious}>← 이전</button>
+    {!narrow && <p className={e.footerStatus} role="status" aria-live="polite">{saveStatus}</p>}
+    {reviewing
+      ? <button type="button" className={e.nextButton} onClick={() => { void createDraft() }}><EditorIcon name="doc" size={16} />초안 만들기</button>
+      : <button type="button" className={e.nextButton} aria-keyshortcuts="Control+Enter" onClick={goNext}>다음 →</button>}
+  </div> : null
+  // 검토 단계("Check answers"): 비어 있는 필수 질문 요약(각 질문으로 가는 링크) · 항목별 답변 수 · 선택 질문 안내 · 주 버튼 하나.
+  const reviewCard = <section className={e.question} aria-labelledby="answer-review-title">
+    <p className={e.questionEyebrow}>검토 · 질문 {questions.length}개를 모두 지났어요</p>
+    <h3 className={e.questionTitle} id="answer-review-title" ref={headingRef} tabIndex={-1}>초안을 만들기 전에 확인해 주세요</h3>
+    {requiredMissing > 0
+      ? <div ref={summaryRef} className={e.errorSummary} role="alert" tabIndex={-1} aria-labelledby="answer-review-missing">
+        <p className={e.errorSummaryTitle} id="answer-review-missing">필수 질문 {requiredMissing}개가 비어 있어요</p>
+        <ul className={e.errorList}>
+          {missingRequired.map((question) => <li key={question.key}>
+            <Link className={e.errorLink} to={`?question=${encodeURIComponent(question.field.key)}`}
+              onClick={(event) => { event.preventDefault(); move(questions.indexOf(question)) }}>{question.section.title} · {question.field.label}</Link>
+          </li>)}
+        </ul>
+        <button type="button" className={`${e.retryButton} self-start`} onClick={() => move(questions.indexOf(missingRequired[0]))}>첫 빈 필수 질문으로</button>
+      </div>
+      : <p className={e.successNote}>필수 질문을 모두 채웠어요</p>}
+    <ol className={e.reviewRows} aria-label="항목별 답변">
+      {sections.map((section, sectionIndex) => {
+        const fields = section.fields.filter(writable)
+        const answered = fields.filter((field) => valueOf(section, field).trim()).length
+        const requiredLeft = fields.filter((field) => requiredEmpty({ section, field }, valueOf)).length
+        const optionalLeft = fields.length - answered - requiredLeft
+        const badge = fields.length === 0 ? null
+          : requiredLeft > 0 ? { label: `필수 ${requiredLeft}`, className: e.badgeWarning }
+            : optionalLeft > 0 ? { label: `선택 ${optionalLeft}`, className: e.badgeIdle } : { label: '완료', className: e.badgeDone }
+        return <li key={section.key}>
+          <button type="button" className={e.sectionButton} onClick={() => goSection(sectionIndex)}>
+            <span className={e.sectionText}>
+              <span className={e.sectionTitle}>{sectionIndex + 1}. {section.title}</span>
+              <span className={e.sectionMeta}>{fields.length === 0 ? '원문에서 직접 작성' : `답변 ${answered} / ${fields.length}`}</span>
+            </span>
+            {badge && <span className={badge.className}>{badge.label}</span>}
+          </button>
+        </li>
+      })}
+    </ol>
+    {optionalMissing > 0 && <p className={e.reviewNote}>
+      선택 질문 {optionalMissing}개는 비워 두면 문서에 빈칸으로 남아요.
+      {requiredMissing === 0 && <> <button type="button" className={e.retryButton} onClick={() => move(questions.indexOf(missingOptional[0]))}>첫 빈 선택 질문으로</button></>}
+    </p>}
+    {requiredMissing === 0 && <p className={e.reviewNote}>AI가 공식 양식에 답변을 기입해요 · 보통 1~3분</p>}
+    {!narrow && moveButtons}
+  </section>
 
   return <>
     <WorkspacePageHeader
       parent={{ to: appPaths.applicationPreparations, label: featureTitle }}
-      current={form.programTitle}
       title="답변 입력"
-      subtitle={`${form.formTitle} · ${applicationServiceFieldLabels[preparation.serviceField]}`}
       actions={<>
         <button ref={listButtonRef} type="button" className={`${e.iconButton} ${e.iconButtonM}`} aria-label="항목 목록" aria-haspopup="dialog" aria-expanded={sheetOpen} onClick={() => setSheetOpen(true)}><EditorIcon name="list" /></button>
-        {vm.documentCount > 0 && <Link className={e.headerButton} to={documentsTo}><EditorIcon name="doc" size={16} />문서 보기</Link>}
+        {vm.documentCount > 0 && <Link className={`${workspacePageStyles.secondaryButton} max-[599px]:hidden`} to={documentsTo}><EditorIcon name="doc" size={16} />문서 보기</Link>}
         <div ref={menuRef} className="relative">
           <button ref={menu.reference} type="button" className={e.iconButton} aria-label="문서 메뉴" aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}><EditorIcon name="more" /></button>
-          {menuOpen && <div ref={menu.floating} style={menu.floatingStyles} className={e.menu} role="menu" aria-label="문서 메뉴">
+          {/* data-covers-assistant: 600px 미만에서 열려 있는 동안 도우미 런처를 숨깁니다(Assistant.styles 참고). */}
+          {menuOpen && <div ref={menu.floating} style={menu.floatingStyles} className={e.menu} role="menu" aria-label="문서 메뉴" data-covers-assistant="true">
             {vm.documentCount > 0 && <Link className={`${e.menuItem} min-[600px]:hidden`} role="menuitem" to={documentsTo} onClick={() => setMenuOpen(false)}>문서 보기</Link>}
             <a className={e.menuItem} role="menuitem" href={form.sourceUrl} target="_blank" rel="noreferrer" onClick={() => setMenuOpen(false)}>원문 보기 ↗</a>
             <Link className={e.menuItem} role="menuitem" to={reanalyzeTo} onClick={() => setMenuOpen(false)}>양식 다시 분석해 새로 시작</Link>
@@ -284,7 +443,8 @@ function AnswerEditor({ vm }: { vm: EditorViewModel }) {
         </div>
       </>}
     />
-    <main className={workspacePageStyles.content}>
+    <main className={workspacePageStyles.content} ref={mainRef}>
+      <ApplicationPreparationLede preparation={preparation} />
       {form.verificationStatus === 'SOURCE_DOCUMENT_EXTRACTED' && <div className={e.infoAlert} role="note">
         <div className={e.infoText}>
           <strong className={e.infoTitle}>AI가 공식 첨부에서 뽑은 문항이에요</strong>
@@ -296,9 +456,13 @@ function AnswerEditor({ vm }: { vm: EditorViewModel }) {
       <div className={e.layout}>
         <aside className={e.aside} aria-label="작성 항목">{nav}</aside>
         <div className="flex min-w-0 flex-col gap-3">
-          {current && <div className={e.stepperM}>
-            <p className={e.stepperMLabel}><span>{current.section.title}</span><span className="tabular-nums">{current.sectionIndex + 1} / {sections.length}</span></p>
-            <div className={e.progressBar} aria-hidden="true"><span className={e.progressFill} style={{ width: `${Math.round(((current.sectionIndex + 1) / sections.length) * 100)}%` }} /></div>
+          {narrow && current && <div className={e.stepperM}>
+            {/* 카드와 같은 전체 기준 진행("질문 8 / 34")입니다. 항목 번호("섹션 1/3")를 섞지 않습니다. */}
+            <p className={e.stepperMLabel}>
+              <span className="min-w-0 truncate">{reviewing ? '검토하고 초안 만들기' : current.section.title}</span>
+              <span className="shrink-0 tabular-nums">{reviewing ? `질문 ${questions.length}개` : `질문 ${index + 1} / ${questions.length}`}</span>
+            </p>
+            <div className={e.progressBar} aria-hidden="true"><span className={e.progressFill} style={{ width: `${reviewing ? 100 : Math.round(((index + 1) / questions.length) * 100)}%` }} /></div>
             <p className={e.barStatusM} role="status" aria-live="polite">{saveStatus}</p>
           </div>}
           {failed && <div className={e.dangerAlert} role="alert">
@@ -307,73 +471,77 @@ function AnswerEditor({ vm }: { vm: EditorViewModel }) {
               : `답변을 저장하지 못했어요. ${failed.error.message}`}</p>
             <button type="button" className={e.retryButton} onClick={vm.retryAutosave}>{failed.conflict ? '내 답변으로 다시 저장' : '다시 시도'}</button>
           </div>}
-          {current ? <section className={e.question} aria-label={`${current.section.title} 작성`}>
-            <div className={e.questionHead}>
-              <p className={e.questionEyebrow}>{current.sectionIndex + 1}. {current.section.title} · 질문 {current.order + 1} / {current.sectionSize}</p>
-              <span className={current.field.required ? e.requiredTag : e.optionalTag}>{current.field.required ? '필수' : '선택'}</span>
+          <div ref={cardRef} className="flex min-w-0 flex-col gap-3">
+            {/* 섹션 경계 알림. status는 늘 두고(내용이 바뀔 때 한 번 읽힘), 띠는 섹션이 바뀐 첫 질문에서만 보입니다. */}
+            <div className={sectionNotice ? (sectionNotice.missingIndex === null ? e.sectionBand : e.sectionBandWarning) : 'contents'}>
+              <p className={sectionNotice ? e.sectionBandText : 'sr-only'} role="status" aria-live="polite">{sectionNotice?.text ?? ''}</p>
+              {sectionNotice && sectionNotice.missingIndex !== null && <button type="button" className={e.retryButton} onClick={() => move(sectionNotice.missingIndex!)}>그 질문으로</button>}
             </div>
-            <h3 className={e.questionTitle} ref={headingRef} tabIndex={-1}>{current.field.label}</h3>
-            {current.field.guidance && <p className={e.guidance}>{current.field.guidance}</p>}
-            {!writable(current.field) && <p className={s.warning}>이 항목은 자동 기입할 수 없습니다. 내려받은 원본 문서에서 직접 작성해 주세요.</p>}
-            {options.length > 0
-              ? <fieldset className={e.choiceList} disabled={!writable(current.field) || undecided}>
-                <legend className="sr-only">공식 선택지 중 하나를 선택하세요</legend>
-                {options.map((option) => <label className={e.choice} key={option}>
-                  <input type="radio" name={`choice-${current.key}`} value={option} checked={currentValue === option} onChange={() => vm.setSectionMessage(current.key, option)} />
-                  {option}
-                </label>)}
-              </fieldset>
-              : <>
-                <textarea
-                  className={e.textarea}
-                  aria-label="답변 입력"
-                  aria-invalid={fieldError ? true : undefined}
-                  disabled={!writable(current.field) || undecided}
-                  id={`section-answer-${current.section.key}`}
-                  maxLength={answerMaxLength}
-                  value={undecided ? '' : currentValue}
-                  onPaste={(event) => {
-                    // maxLength가 붙여 넣은 글을 조용히 자르므로, 잘릴 길이인지 미리 계산해 칸 아래에 알립니다.
-                    const target = event.currentTarget
-                    const selected = target.selectionEnd - target.selectionStart
-                    const next = target.value.length - selected + event.clipboardData.getData('text').length
-                    setTruncatedKey(next > answerMaxLength ? current.key : null)
-                  }}
-                  onChange={(event) => {
-                    if (truncatedKey !== null && event.target.value.length < answerMaxLength) setTruncatedKey(null)
-                    vm.setSectionMessage(current.key, event.target.value)
-                  }}
-                  placeholder="확인된 사실만 적어 주세요."
-                />
-                <p className={`${e.counter} ${[...currentValue].length > answerMaxLength ? e.counterOver : ''}`} aria-hidden="true">
-                  {undecided ? 0 : [...currentValue].length} / {answerMaxLength.toLocaleString('ko-KR')}자
-                </p>
-                {truncatedKey === current.key && <p className={e.fieldNote}>{answerMaxLength.toLocaleString('ko-KR')}자까지만 저장돼요</p>}
-              </>}
-            {fieldError && <p className={e.fieldError} role="alert">{fieldError}</p>}
-            <div className={e.answerActions}>
-              <label className={e.undecided}>
-                <input type="checkbox" checked={undecided} disabled={!writable(current.field)} onChange={(event) => setUndecided(event.target.checked)} />
-                아직 정해지지 않았어요
-              </label>
-              {writable(current.field) && currentValue && <button type="button" className={e.clearButton} onClick={() => vm.deleteSectionAnswer(current.key)}>답변 지우기</button>}
-            </div>
-            {missingOptions && <p className={s.warning}>공식 선택지를 확인하지 못했습니다. 공식 공고에서 첨부 양식의 선택지를 확인한 뒤 입력해 주세요. <a className="underline" href={form.sourceUrl} target="_blank" rel="noreferrer">공식 공고 열기</a></p>}
-          </section> : <p className={s.notice}>이 양식에는 자동 기입할 문항이 없습니다. 원문 양식에서 직접 작성해 주세요.</p>}
-          <ApplicationOnlineInputGuide preparationId={preparation.id} inputRevision={preparation.inputRevision} />
+            {!hasQuestions ? <p className={s.notice}>이 양식에는 자동 기입할 문항이 없습니다. 원문 양식에서 직접 작성해 주세요.</p>
+              : reviewing ? reviewCard : current && <section className={e.question} aria-label={`${current.section.title} 작성`} onKeyDown={onQuestionKeyDown}>
+              <div className={e.questionHead}>
+                {/* 600px 미만은 위 진행 줄이 "질문 n / m"을 알리므로 카드에는 섹션 이름만 둡니다. */}
+                <p className={e.questionEyebrow}>{narrow ? current.section.title : `${current.section.title} · 질문 ${index + 1} / ${questions.length}`}</p>
+                <span className={current.field.required ? e.requiredTag : e.optionalTag}>{current.field.required ? '필수' : '선택'}</span>
+              </div>
+              <h3 className={e.questionTitle} ref={headingRef} tabIndex={-1}>{current.field.label}</h3>
+              {current.field.guidance && <p className={e.guidance}>{current.field.guidance}</p>}
+              {!writable(current.field) && <p className={s.warning}>이 항목은 자동 기입할 수 없습니다. 내려받은 원본 문서에서 직접 작성해 주세요.</p>}
+              {options.length > 0
+                ? <fieldset className={e.choiceList} disabled={!writable(current.field) || undecided}>
+                  <legend className="sr-only">공식 선택지 중 하나를 선택하세요</legend>
+                  {options.map((option) => <label className={e.choice} key={option}>
+                    <input type="radio" name={`choice-${current.key}`} value={option} checked={currentValue === option} onChange={() => vm.setSectionMessage(current.key, option)} />
+                    {option}
+                  </label>)}
+                </fieldset>
+                : <>
+                  <textarea
+                    className={e.textarea}
+                    aria-label="답변 입력"
+                    aria-invalid={fieldError ? true : undefined}
+                    disabled={!writable(current.field) || undecided}
+                    id={`section-answer-${current.section.key}`}
+                    maxLength={answerMaxLength}
+                    value={undecided ? '' : currentValue}
+                    onPaste={(event) => {
+                      // maxLength가 붙여 넣은 글을 조용히 자르므로, 잘릴 길이인지 미리 계산해 칸 아래에 알립니다.
+                      const target = event.currentTarget
+                      const selected = target.selectionEnd - target.selectionStart
+                      const next = target.value.length - selected + event.clipboardData.getData('text').length
+                      setTruncatedKey(next > answerMaxLength ? current.key : null)
+                    }}
+                    onChange={(event) => {
+                      if (truncatedKey !== null && event.target.value.length < answerMaxLength) setTruncatedKey(null)
+                      vm.setSectionMessage(current.key, event.target.value)
+                    }}
+                    placeholder="확인된 사실만 적어 주세요."
+                  />
+                  <p className={`${e.counter} ${[...currentValue].length > answerMaxLength ? e.counterOver : ''}`} aria-hidden="true">
+                    {undecided ? 0 : [...currentValue].length} / {answerMaxLength.toLocaleString('ko-KR')}자
+                  </p>
+                  {truncatedKey === current.key && <p className={e.fieldNote}>{answerMaxLength.toLocaleString('ko-KR')}자까지만 저장돼요</p>}
+                </>}
+              {fieldError && <p className={e.fieldError} role="alert">{fieldError}</p>}
+              <div className={e.answerActions}>
+                <label className={e.undecided}>
+                  <input type="checkbox" checked={undecided} disabled={!writable(current.field)} onChange={(event) => setUndecided(event.target.checked)} />
+                  아직 정해지지 않았어요
+                </label>
+                {writable(current.field) && currentValue && <button type="button" className={e.clearButton} onClick={() => vm.deleteSectionAnswer(current.key)}>답변 지우기</button>}
+              </div>
+              {missingOptions && <p className={s.warning}>공식 선택지를 확인하지 못했습니다. 공식 공고에서 첨부 양식의 선택지를 확인한 뒤 입력해 주세요. <a className="underline" href={form.sourceUrl} target="_blank" rel="noreferrer">공식 공고 열기</a></p>}
+              {!narrow && moveButtons}
+            </section>}
+          </div>
+          <ApplicationOnlineInputGuide preparationId={preparation.id} inputRevision={preparation.inputRevision} defaultOpen={search.get('helper') === 'open'} />
         </div>
       </div>
-      <div className={e.bar}>
-        <button type="button" className={e.prevButton} disabled={index === 0 || !current} onClick={() => go(index - 1)}>← 이전</button>
-        <p className={e.barStatus} role="status" aria-live="polite">{barStatus}</p>
-        {isLast
-          ? <button type="button" className={e.nextButton} disabled={generateDisabled} onClick={() => { void generate() }}>초안 만들기</button>
-          : <button type="button" className={e.nextButton} onClick={() => go(index + 1)}>다음 →</button>}
-      </div>
+      {narrow && moveButtons}
     </main>
     {sheetOpen && <>
       <button type="button" className={e.sheetScrim} aria-label="항목 목록 닫기" tabIndex={-1} onClick={() => setSheetOpen(false)} />
-      <div ref={sheetRef} className={e.sheet} role="dialog" aria-modal="true" aria-label="항목 목록" tabIndex={-1} onKeyDown={onSheetKeyDown}>
+      <div ref={sheetRef} className={e.sheet} role="dialog" aria-modal="true" aria-label="항목 목록" tabIndex={-1} onKeyDown={onSheetKeyDown} data-covers-assistant="true">
         <span className={e.sheetGrab} aria-hidden="true" />
         <div className={e.sheetHeader}>
           <h2 className={e.sheetTitle}>항목 목록</h2>
@@ -437,9 +605,9 @@ function ApplicationPreparationList() {
   return <>
     <WorkspacePageHeader
       title={listTitle}
-      tabs={<div className={s.chipRow} role="group" aria-label="작성 상태 필터">
-        {listStatusTabs.map((tab) => <button className={vm.status === tab.value ? s.chipActive : s.chip} key={tab.label} type="button"
-          aria-pressed={vm.status === tab.value} onClick={() => vm.setStatus(tab.value)}>{tab.label}</button>)}
+      tabs={<div className={workspacePageStyles.segment} role="tablist" aria-label="작성 상태 필터">
+        {listStatusTabs.map((tab) => <button className={workspacePageStyles.segmentTab} key={tab.label} type="button" role="tab"
+          aria-selected={vm.status === tab.value} onClick={() => vm.setStatus(tab.value)}>{tab.label}</button>)}
       </div>}
       actions={<Link className={workspacePageStyles.primaryButton} to={appPaths.applicationPreparationNew}>새 문서</Link>}
     />
@@ -525,7 +693,10 @@ function ApplicationPreparationEditor({ id }: { id: number }) {
   return <>
     <WorkspacePageHeader parent={{ to: appPaths.applicationPreparations, label: featureTitle }} title="답변 입력" />
     <main className={workspacePageStyles.content}>
-      {vm.loading && <p className={s.status} role="status" aria-live="polite">신청 문서 정보를 불러오는 중입니다.</p>}
+      {vm.loading && <>
+        <ApplicationPreparationLede preparation={null} />
+        <p className={s.status} role="status" aria-live="polite">신청 문서 정보를 불러오는 중입니다.</p>
+      </>}
       {vm.error && <ErrorNotice message={vm.error.message} onRetry={vm.load} />}
     </main>
   </>

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router'
 import { appContainer } from '../../../../app/appContainer'
 import { useAppSelector } from '../../../../app/hooks'
@@ -8,7 +8,8 @@ import { selectCurrentAccount } from '../../../shared/auth/state/authSlice'
 import { appPaths } from '../../../shared/routes/appPaths'
 import { WorkspacePageHeader } from '../../../shared/workspace/WorkspacePageHeader'
 import { WorkspaceToast, type WorkspaceToastNotice } from '../../../shared/workspace/WorkspaceToast'
-import { workspacePageStyles } from '../../../shared/workspace/WorkspacePage.styles'
+import { workspacePageStyles, workspaceTagClassName } from '../../../shared/workspace/WorkspacePage.styles'
+import { ApplicationPreparationLede } from './ApplicationPreparationLede'
 import {
   answerEditorStyles as e,
   applicationPreparationStyles as s,
@@ -46,10 +47,31 @@ const generationStages = [
   ['SAVING', '파일 저장'],
 ] as const
 
-/** 입력칸을 다시 찾아야 풀리는 실패입니다. 양식을 다시 분석해 새로 시작하는 길을 함께 보여 줍니다. */
-const reanalysisFailureCodes = new Set(['APPLICATION_DOCUMENT_MAPPING_FAILED', 'APPLICATION_DOCUMENT_FORM_REANALYSIS_REQUIRED', 'APPLICATION_DOCUMENT_NO_WRITABLE_INPUT'])
-/** 유료 호출 뒤 결과를 확인하지 못한 실패입니다. 서버가 저장된 결과를 정리할 때까지 기다리게 합니다. */
-const outcomeUnknownFailureCodes = new Set(['RUN_OUTCOME_UNKNOWN', 'APPLICATION_DOCUMENT_OUTCOME_UNKNOWN'])
+/**
+ * 실패 안내 묶음입니다. 다시 시도로 풀리는 일시 오류(temporary)에만 [다시 시도]를 둡니다.
+ * formLimit 양식 한계 · reanalysis 양식 재분석 필요 · userFix 답변을 고치면 풀림 · serviceDown 서비스 중단 · outcomeUnknown 결과 확인 중.
+ */
+type FailureGroup = 'formLimit' | 'reanalysis' | 'userFix' | 'temporary' | 'serviceDown' | 'outcomeUnknown'
+
+/** 실패 코드(앞의 APPLICATION_DOCUMENT_ 생략) → 묶음입니다. 표에 없는 코드는 일시 오류로 둡니다. */
+const failureGroups: Record<string, FailureGroup> = {
+  LIMIT_EXCEEDED: 'formLimit', UNSUPPORTED: 'formLimit', UNMAPPED_INPUT: 'formLimit',
+  // 기입할 칸이 원래 없어 재분석으로 풀릴 가능성이 낮습니다. 유료 재분석 대신 원본에 직접 작성하게 합니다.
+  NO_WRITABLE_INPUT: 'formLimit',
+  MAPPING_FAILED: 'reanalysis', SOURCE_CHANGED: 'reanalysis', FORM_REANALYSIS_REQUIRED: 'reanalysis',
+  INPUT_REQUIRED: 'userFix', OVERFLOW: 'userFix', APPLICATION_PREPARATION_REVISION_CONFLICT: 'userFix',
+  MCP_NOT_READY: 'serviceDown',
+  OUTCOME_UNKNOWN: 'outcomeUnknown', RUN_OUTCOME_UNKNOWN: 'outcomeUnknown',
+}
+
+function failureCodeOf(job: ApplicationDocumentGenerationJob) {
+  return (job.failureCode ?? '').replace(/^APPLICATION_DOCUMENT_/, '')
+}
+
+function failureGroupOf(job: ApplicationDocumentGenerationJob): FailureGroup {
+  if (job.status === 'UNKNOWN') return 'outcomeUnknown'
+  return failureGroups[failureCodeOf(job)] ?? 'temporary'
+}
 
 const formatLabels: Record<string, string> = {
   'application/x-hwp': 'HWP',
@@ -82,7 +104,8 @@ function Spinner() {
 
 function DocumentResults({ id }: { id: number }) {
   const useCase = appContainer.resolve('applicationPreparationUseCase')
-  const [search] = useSearchParams()
+  const [search, setSearch] = useSearchParams()
+  /** 답변 입력에서 [초안 만들기]로 들어온 버전입니다. 한 번 읽으면 주소에서 지워, 다시 들어와도 같은 버전을 저절로 제출하지 않습니다. */
   const requestedRevision = useRef(search.get('generate'))
   const [preparation, setPreparation] = useState<ApplicationPreparation | null>(null)
   const [files, setFiles] = useState<ApplicationDocument[]>([])
@@ -92,6 +115,8 @@ function DocumentResults({ id }: { id: number }) {
   const [error, setError] = useState<string | null>(null)
   /** 끝났지만 성공하지 못한 생성 작업. 실패 코드에 따라 알림의 동작이 달라집니다. */
   const [failedJob, setFailedJob] = useState<ApplicationDocumentGenerationJob | null>(null)
+  /** 제출 때 계정의 진행 작업 3건이 차 있었는지. 전용 안내와 [다시 시도]를 보여 줍니다. */
+  const [capacityFull, setCapacityFull] = useState(false)
   const [attempt, setAttempt] = useState(0)
   const [downloading, setDownloading] = useState<number | null>(null)
   const [migration, setMigration] = useState<ApplicationDocumentMigrationNotice | null>(null)
@@ -115,7 +140,9 @@ function DocumentResults({ id }: { id: number }) {
     && latestFiles.some((file) => candidate.fileIds.includes(file.id)))
   const latestMadeAt = latestJob?.finishedAt ? madeAtLabel(latestJob.finishedAt) : null
   // 같은 답변 버전은 기존 파일을 즉시 돌려주므로, 다시 만들기는 답변이 바뀐 뒤(현재 버전 파일 없음)에만 켠다.
-  const canRegenerate = !busy && preparation !== null && files.length > 0 && !files.some((file) => file.inputRevision === preparation.inputRevision)
+  // 지금 버전의 실패 안내가 떠 있으면 끈다. 다시 제출하는 길은 일시 오류 카드의 [다시 시도] 하나뿐이다.
+  const canRegenerate = !busy && preparation !== null && failedJob === null && files.length > 0
+    && !files.some((file) => file.inputRevision === preparation.inputRevision)
   const unanswered = preparation?.form.sections.flatMap((section) => section.fields
     .filter((field) => field.documentWritable !== false && !section.facts.some((fact) => fact.fieldKey === field.key && fact.status === 'PROVIDED'))
     .map((field) => ({ key: field.key, label: `${section.title} · ${field.label}` }))) ?? []
@@ -127,6 +154,15 @@ function DocumentResults({ id }: { id: number }) {
     TARGET_ADDED: '새 입력칸', TARGET_REMOVED: '입력칸 사라짐', TARGET_CHANGED: '입력칸 변경',
     BOX_CHANGED: '입력 영역 변경', KIND_CHANGED: '입력 방식 변경', SCOPE_CHANGED: '편집 범위 변경',
   }
+
+  useEffect(() => {
+    if (!search.has('generate')) return
+    setSearch((current) => {
+      const next = new URLSearchParams(current)
+      next.delete('generate')
+      return next
+    }, { replace: true })
+  }, [search, setSearch])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -154,7 +190,7 @@ function DocumentResults({ id }: { id: number }) {
       return current
     }
     async function load() {
-      setBusy(true); setBusySince(Date.now()); setError(null); setFailedJob(null); setMigration(null); setJob(null)
+      setBusy(true); setBusySince(Date.now()); setError(null); setFailedJob(null); setCapacityFull(false); setMigration(null); setJob(null)
       try {
         const [detail, stored, recent] = await Promise.all([
           useCase.get(id, controller.signal),
@@ -184,6 +220,11 @@ function DocumentResults({ id }: { id: number }) {
               finished = await follow(existing)
             }
           }
+        } else if (!stored.some((file) => file.inputRevision === detail.inputRevision)) {
+          // 다시 들어왔을 때 지금 답변 버전의 마지막 작업이 실패·결과 불명이면 빈 상태 대신 그 안내를 다시 보여 준다.
+          // 새로 제출하지 않는다. 답변이 그 뒤에 바뀌었으면(더 오래된 버전의 작업) 빈 상태의 [초안 만들기]를 둔다.
+          const latest = recent.reduce<ApplicationDocumentGenerationJob | null>((newest, candidate) => !newest || candidate.id > newest.id ? candidate : newest, null)
+          if (latest && latest.expectedRevision === detail.inputRevision && (latest.status === 'FAILED' || latest.status === 'UNKNOWN')) setFailedJob(latest)
         }
         if (finished) {
           const done = finished
@@ -193,6 +234,8 @@ function DocumentResults({ id }: { id: number }) {
           setFiles(documents)
           setJobs((previous) => [done, ...previous.filter((candidate) => candidate.id !== done.id)])
           if (done.status !== 'SUCCEEDED') {
+            // 실패·결과 불명 뒤에는 요청한 버전을 비웁니다. 다시 제출하는 길은 일시 오류의 [다시 시도] 하나뿐입니다.
+            requestedRevision.current = null
             if (done.mappingMigration) setMigration(done.mappingMigration)
             else setFailedJob(done)
             return
@@ -201,7 +244,10 @@ function DocumentResults({ id }: { id: number }) {
         }
         requestedRevision.current = null
       } catch (caught) {
-        if (!controller.signal.aborted) setError(caught instanceof Error ? caught.message : '문서를 생성하지 못했습니다.')
+        if (controller.signal.aborted) return
+        // 한도 초과는 작업을 만들지 않았으므로 요청한 버전을 남겨 두고 [다시 시도]로 같은 버전을 제출합니다.
+        if (caught instanceof ApplicationPreparationError && caught.code === 'APPLICATION_DOCUMENT_JOB_CAPACITY') setCapacityFull(true)
+        else setError(caught instanceof Error ? caught.message : '문서를 생성하지 못했습니다.')
       } finally { if (!controller.signal.aborted) { setBusy(false); setBusySince(null); setJob(null) } }
     }
     void load()
@@ -327,23 +373,26 @@ function DocumentResults({ id }: { id: number }) {
   const changedBadge = canRegenerate ? <span className={d.changedBadge}>답변이 바뀜</span> : null
   const downloadLabel = single ? '내려받기' : '전체 내려받기'
 
-  const failureCode = failedJob?.failureCode ?? ''
-  const outcomeUnknown = outcomeUnknownFailureCodes.has(failureCode)
+  // 초안을 만드는 동안 머리글 동작 자리에는 버튼 대신 상태 태그만 둡니다. 진행은 본문 진행 카드가 알립니다.
+  const generating = job !== null && (job.status === 'QUEUED' || job.status === 'RUNNING')
+  const headerActions = generating
+    ? <span className={`${workspaceTagClassName('muted')} gap-1.5`}><Spinner />초안 만드는 중</span>
+    : files.length > 0 ? <>
+      {changedBadge && <span className={d.headerOnly}>{changedBadge}</span>}
+      <button type="button" className={`${workspacePageStyles.secondaryButton} ${d.headerOnly}`} disabled={!canRegenerate} onClick={regenerate}>다시 만들기</button>
+      <button type="button" className={`${workspacePageStyles.primaryButton} ${d.headerOnly}`} disabled={downloading !== null || archiving} onClick={downloadLatest}>
+        {downloadPending && <Spinner />}{downloadLabel}
+      </button>
+    </> : undefined
 
   return <>
     <WorkspacePageHeader
-      parent={{ to: back, label: '답변 입력' }}
+      parent={[{ to: appPaths.applicationPreparations, label: '신청 문서 작성' }, { to: back, label: '답변 입력' }]}
       title={pageTitle}
-      subtitle={preparation ? `${preparation.form.programTitle} · ${preparation.form.formTitle}` : undefined}
-      actions={files.length > 0 ? <>
-        {changedBadge && <span className={d.headerOnly}>{changedBadge}</span>}
-        <button type="button" className={`${n.secondary} ${d.headerOnly}`} disabled={!canRegenerate} onClick={regenerate}>다시 만들기</button>
-        <button type="button" className={`${n.primary} ${d.headerOnly}`} disabled={downloading !== null || archiving} onClick={downloadLatest}>
-          {downloadPending && <Spinner />}{downloadLabel}
-        </button>
-      </> : undefined}
+      actions={headerActions}
     />
     <main className={workspacePageStyles.content}>
+      {(preparation || busy) && <ApplicationPreparationLede preparation={preparation} />}
       <div className={d.body}>
         {busy && job && <section className={n.progress} role="status" aria-live="polite" aria-label="문서 생성 진행">
           <div className={n.progressHead}>
@@ -351,20 +400,23 @@ function DocumentResults({ id }: { id: number }) {
             <strong className={n.progressTitle}>답변 버전 {job.expectedRevision}로 초안을 {files.length > 0 ? '다시 ' : ''}만들고 있어요</strong>
             <span className={n.progressTime}>{elapsedLabel(elapsedSeconds)}</span>
           </div>
+          <p className={n.muted}>보통 1~3분 걸려요. 양식이 크면 더 걸릴 수 있어요.</p>
           {job.status === 'QUEUED' && <p className={n.muted}>순서를 기다리고 있어요.</p>}
           <StageList job={job} />
           <p className={n.progressNote}>화면을 나가도 계속돼요. 돌아오면 이어서 보여 드려요.</p>
         </section>}
         {busy && !job && <p className={n.muted} role="status">저장된 문서를 확인하고 있어요.</p>}
 
-        {failedJob && <div className={`${n.alert} ${n.alertDanger}`} role="alert">
+        {failedJob && preparation && <FailureCard job={failedJob} sourceUrl={preparation.form.sourceUrl} editorTo={back}
+          reanalyzeTo={reanalyzeTo} retryDisabled={busy} onRetry={regenerate} />}
+        {capacityFull && <div className={`${n.alert} ${n.alertWarning}`} role="alert">
           <div className={n.alertText}>
-            <strong className={n.alertTitle}>초안을 만들지 못했어요. 답변은 저장되어 있어요.</strong>
-            <p>{outcomeUnknown ? '결과를 확인하는 중이에요. 잠시 뒤 다시 열어 주세요.' : failedJob.failureMessage ?? '문서를 생성하지 못했습니다.'}</p>
+            <strong className={n.alertTitle}>진행 중인 초안 만들기가 3건이에요</strong>
+            <p>계정당 동시에 3건까지 만들 수 있어요. 다른 문서의 초안이 끝나면 다시 시도해 주세요. 답변은 그대로 저장되어 있어요.</p>
           </div>
           <div className={d.alertActions}>
-            {!outcomeUnknown && reanalysisFailureCodes.has(failureCode) && <Link className={n.secondarySm} to={reanalyzeTo}>양식 다시 분석해 새로 시작</Link>}
             <button type="button" className={n.secondarySm} disabled={busy} onClick={() => setAttempt((count) => count + 1)}>다시 시도</button>
+            <Link className={n.secondarySm} to={appPaths.applicationPreparations}>목록으로</Link>
           </div>
         </div>}
         {error && <div className={`${n.alert} ${n.alertDanger}`} role="alert">
@@ -397,7 +449,7 @@ function DocumentResults({ id }: { id: number }) {
           }}>새 초안 생성</button>}
         </div>}
 
-        {!busy && preparation && files.length === 0 && !error && !failedJob && !migration && !migrationMessage && <section className={n.card} aria-labelledby="documents-empty-title">
+        {!busy && preparation && files.length === 0 && !error && !failedJob && !capacityFull && !migration && !migrationMessage && <section className={n.card} aria-labelledby="documents-empty-title">
           <div className={n.empty}>
             <h2 className={n.cardTitle} id="documents-empty-title">아직 만든 초안이 없어요</h2>
             <p className={n.muted}>저장된 답변을 공식 양식의 입력칸에 기입해 초안을 만들어요.</p>
@@ -442,6 +494,83 @@ function DocumentResults({ id }: { id: number }) {
     </main>
     <WorkspaceToast notice={toast} onClose={() => setToast(null)} />
   </>
+}
+
+type FailureCardProps = {
+  job: ApplicationDocumentGenerationJob
+  /** 공고 원문 주소입니다. 원본 양식은 여기서 받습니다. */
+  sourceUrl: string
+  /** 답변 입력 화면 주소입니다. */
+  editorTo: string
+  reanalyzeTo: string
+  retryDisabled: boolean
+  onRetry: () => void
+}
+
+/**
+ * 끝났지만 성공하지 못한 초안 작업의 안내 카드입니다. 제목 · 본문 · 버튼은 실패 코드의 묶음으로 고르고,
+ * 서버 문장은 아래에 작은 글씨로만 둡니다. 빨간 경고는 다시 시도로 풀리는 일시 오류에만 씁니다.
+ */
+function FailureCard({ job, sourceUrl, editorTo, reanalyzeTo, retryDisabled, onRetry }: FailureCardProps) {
+  const code = failureCodeOf(job)
+  const group = failureGroupOf(job)
+  const review = `${editorTo}?step=review`
+  const toEditor = (to: string) => <Link className={n.secondarySm} to={to}>답변 입력으로</Link>
+  let title: string
+  let body: string
+  let actions: ReactNode = null
+  switch (group) {
+    case 'formLimit':
+      title = '이 양식은 자동으로 채우기 어려워요'
+      body = '양식이 크거나 복잡해 입력칸 위치를 찾지 못했어요. 다시 시도해도 결과는 같아요. 저장된 답변을 보며 원본 양식에 직접 옮겨 적어 주세요.'
+      actions = <>
+        <a className={n.secondarySm} href={sourceUrl} target="_blank" rel="noreferrer">원문에서 양식 받기 ↗<span className="sr-only"> (새 창)</span></a>
+        <Link className={n.secondarySm} to={`${review}&helper=open`}>답변 모아 보기</Link>
+      </>
+      break
+    case 'reanalysis':
+      title = '양식을 다시 분석해야 해요'
+      body = `${code === 'SOURCE_CHANGED' ? '공고의 첨부 파일이 바뀌었어요. 바뀐 양식으로 다시 분석해 주세요.'
+        : '양식의 입력칸 위치를 확인하지 못했어요. 양식을 다시 분석하면 해결될 수 있어요.'} 다시 분석하면 새 문서로 시작하고, 지금 문서와 답변은 목록에 그대로 남아요.`
+      actions = <Link className={n.secondarySm} to={reanalyzeTo}>양식 다시 분석해 새로 시작</Link>
+      break
+    case 'userFix':
+      if (code === 'INPUT_REQUIRED') {
+        title = '저장된 답변이 없어 초안을 만들 수 없어요'
+        body = '답변을 먼저 저장해 주세요. 검토 단계에서 비어 있는 필수 질문을 확인할 수 있어요.'
+        actions = toEditor(review)
+      } else if (code === 'OVERFLOW') {
+        title = '답변이 입력칸보다 길어요'
+        body = '줄인 뒤 다시 만들어 주세요. 답변은 그대로 저장되어 있어요.'
+        actions = toEditor(editorTo)
+      } else {
+        title = '답변이 바뀌었어요'
+        body = '최신 답변으로 다시 만들어 주세요.'
+        actions = toEditor(editorTo)
+      }
+      break
+    case 'serviceDown':
+      title = '지금은 초안 만들기를 쓸 수 없어요'
+      body = '서비스 쪽 문제라 다시 시도해도 해결되지 않아요. 답변은 그대로 있고, 문제가 풀리면 이 화면에서 다시 만들 수 있어요.'
+      actions = toEditor(editorTo)
+      break
+    case 'outcomeUnknown':
+      title = '초안 결과를 확인하고 있어요'
+      body = '파일이 만들어졌는지 아직 확인하지 못했어요. 같은 초안이 두 번 만들어지지 않도록 확인이 끝날 때까지 새로 만들 수 없어요. 확인이 끝나면 자동으로 풀리고, 이 화면을 다시 열면 결과부터 확인해요. 답변은 그대로 저장되어 있어요.'
+      break
+    default:
+      title = '일시적인 문제로 초안을 만들지 못했어요'
+      body = '잠시 후 다시 시도해 주세요. 답변은 그대로 저장되어 있어요.'
+      actions = <button type="button" className={n.secondarySm} disabled={retryDisabled} onClick={onRetry}>다시 시도</button>
+  }
+  return <div className={`${n.alert} ${group === 'temporary' ? n.alertDanger : n.alertWarning}`} role="alert">
+    <div className={n.alertText}>
+      <strong className={n.alertTitle}>{title}</strong>
+      <p>{body}</p>
+      {job.failureMessage && <p className={d.failureDetail}>{job.failureMessage}</p>}
+    </div>
+    {actions && <div className={d.alertActions}>{actions}</div>}
+  </div>
 }
 
 /** 진행 카드의 서버 단계 목록입니다. 순서를 기다리는 동안은 모두 대기, 실행 중인데 단계가 아직 없으면 첫 단계를 진행 중으로 둡니다. */

@@ -8,6 +8,7 @@ const styles = {
   triggerActive: 'border-brand-line bg-brand-soft text-brand-primary',
   count: 'inline-flex min-w-5 items-center justify-center rounded-full bg-brand-primary px-1.5 text-[0.68rem] font-extrabold text-white',
   caret: 'text-[0.7rem] text-sample-muted',
+  value: 'min-w-0 flex-1 truncate text-left',
   // 펼침 목록입니다. 여섯 줄 남짓 보이고 나머지는 안에서 스크롤합니다.
   popover: 'z-40 flex flex-col gap-0.5 rounded-xl border border-sample-border bg-white p-1.5 shadow-[0_12px_32px_rgb(32_33_36_/_14%)] outline-0',
   // 체크 상자 없이 고른 줄은 연한 초록 바탕과 굵은 글자로만 표시합니다.
@@ -23,9 +24,12 @@ const visibleRows = 7
  * 여러 값을 고르는 드롭다운 필터입니다. 버튼에는 이름과 고른 개수가 보이고, 펼치면 목록이 스크롤 안에서 열립니다.
  * 고른 줄은 체크 상자 대신 배경색으로만 표시합니다(입력 요소는 화면 낭독용으로 숨겨 둡니다).
  * 아무것도 고르지 않은 상태가 "전체"이고, 전체를 누르면 고른 값을 모두 지웁니다. 고르는 동안 목록은 닫히지 않습니다.
+ * 칸 위에 이름표를 따로 두는 화면은 `valueText`로 버튼에 이름 대신 고른 값을 보여 줍니다(접근성 이름은 그대로 `label`).
  */
-export function MultiSelectField({ label, options, selected, onToggle, onClearAll, className = '' }: {
+export function MultiSelectField({ label, valueText, options, selected, onToggle, onClearAll, className = '' }: {
   label: string
+  /** 버튼에 이름 대신 보일 글자입니다. 주면 개수 배지는 두지 않습니다. */
+  valueText?: string
   options: readonly FilterChoiceOption[]
   selected: readonly string[]
   onToggle: (value: string) => void
@@ -72,8 +76,8 @@ export function MultiSelectField({ label, options, selected, onToggle, onClearAl
         onClick={() => setIsOpen((open) => !open)}
         onKeyDown={handleKeyDown}
       >
-        <span>{label}</span>
-        {isAll ? null : <span className={styles.count} aria-label={`${selected.length}개 선택`}>{selected.length}</span>}
+        {valueText === undefined ? <span>{label}</span> : <span className={styles.value}>{valueText}</span>}
+        {isAll || valueText !== undefined ? null : <span className={styles.count} aria-label={`${selected.length}개 선택`}>{selected.length}</span>}
         <span className={styles.caret} aria-hidden="true">▾</span>
       </button>
       {isOpen ? (

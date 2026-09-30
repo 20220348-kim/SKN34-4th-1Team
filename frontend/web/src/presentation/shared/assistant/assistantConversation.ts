@@ -411,3 +411,10 @@ export function isComposerScreen(pathname: string): boolean {
   const path = pathname.replace(/\/+$/, '') || publicPaths.landing
   return path === publicPaths.landing || path === appPaths.chat
 }
+
+/** 답변 입력 화면(`/app/application-preparations/:id`)입니다. 600px 미만에서 아래 고정 바가 있어 런처를 그 위로 올립니다. */
+export function isAnswerEditorScreen(pathname: string): boolean {
+  const path = pathname.replace(/\/+$/, '')
+  const prefix = `${appPaths.applicationPreparations}/`
+  return path.startsWith(prefix) && /^\d+$/.test(path.slice(prefix.length))
+}

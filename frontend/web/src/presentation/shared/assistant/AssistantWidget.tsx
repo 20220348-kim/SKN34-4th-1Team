@@ -18,7 +18,7 @@ export function AssistantWidget() {
   return (
     <>
       {vm.isOpen ? <AssistantPanel vm={vm} launcherRef={launcherRef} /> : null}
-      <div className={`${styles.launcherWrap} ${vm.isLifted ? styles.launcherWrapLifted : styles.launcherWrapDefault}`}>
+      <div className={`${styles.launcherWrap} ${vm.isLifted ? styles.launcherWrapLifted : vm.isAnswerEditor ? styles.launcherWrapAnswerEditor : styles.launcherWrapDefault}`}>
         {vm.showLabel ? <span className={styles.launcherLabel} aria-hidden="true">{assistantMessages.launcherLabel}</span> : null}
         <button
           ref={launcherRef}

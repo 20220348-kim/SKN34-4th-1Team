@@ -1,20 +1,20 @@
-import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { type ReactNode, type RefObject, useEffect, useId, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { useAppSelector } from '../../../../app/hooks'
 import { applicationServiceFieldLabels, type ApplicationFormDiscoveryJob } from '../../../../domain/entities/ApplicationPreparation'
 import { ApplicationPreparationError } from '../../../../domain/errors/ApplicationPreparationError'
 import { selectCurrentAccount } from '../../../shared/auth/state/authSlice'
 import { appPaths } from '../../../shared/routes/appPaths'
+import { SelectField } from '../../../shared/workspace/SelectField'
 import { WorkspacePageHeader } from '../../../shared/workspace/WorkspacePageHeader'
 import { WorkspaceToast } from '../../../shared/workspace/WorkspaceToast'
 import { workspacePageStyles } from '../../../shared/workspace/WorkspacePage.styles'
 import { useApplicationPreparationNewViewModel, type SelectableSupportProgram } from '../viewmodel/useApplicationPreparationNewViewModel'
-import { newPreparationStyles as n } from './ApplicationPreparation.styles'
+import { applicationPreparationStyles as s, newPreparationStyles as n } from './ApplicationPreparation.styles'
 import { ProgramBadges, ProgramPickerPanel } from './ProgramPickerPanel'
 
 type NewViewModel = ReturnType<typeof useApplicationPreparationNewViewModel>
 
-const steps = ['공고 선택', '신청 문서 확인'] as const
 const jobStatusLabels: Partial<Record<ApplicationFormDiscoveryJob['status'], string>> = {
   QUEUED: '대기 중', RUNNING: '분석 중', UNKNOWN: '결과 확인 필요',
 }
@@ -29,7 +29,7 @@ function elapsedLabel(seconds: number) {
   return minutes > 0 ? `${minutes}분 ${seconds % 60}초 지남` : `${seconds}초 지남`
 }
 
-/** 새 문서(24) 화면입니다. 주소의 `sourceCode`·`sourceProgramId`가 있으면 그 공고를 미리 고릅니다. */
+/** 새 문서(24) 화면입니다. 주소의 `sourceCode`·`sourceProgramId`가 있으면 그 공고를 미리 고르고 ②를 연 채 시작합니다. */
 export function ApplicationPreparationNewPage() {
   const account = useAppSelector(selectCurrentAccount)
   const [searchParams, setSearchParams] = useSearchParams()
@@ -46,23 +46,17 @@ export function ApplicationPreparationNewPage() {
   />
 }
 
-function StepIndicator({ index }: { index: number }) {
-  return <>
-    <ol className={n.stepper} aria-label="새 문서 단계">
-      {steps.map((label, position) => {
-        const current = position === index
-        const done = position < index
-        return <li key={label} className={current ? n.stepCurrent : done ? n.stepDone : n.step} aria-current={current ? 'step' : undefined}>
-          <span className={n.stepNo}>{position + 1}단계{done ? ' · 완료' : current ? ' · 진행 중' : ''}</span>
-          <b className={n.stepLabel}>{label}</b>
-        </li>
-      })}
-    </ol>
-    <div className={n.stepperM} aria-hidden="true">
-      <p className={n.stepperMLabel}>{steps[index]}<span>{index + 1} / {steps.length}</span></p>
-      <div className={n.stepperMBar}><span className={n.stepperMFill} style={{ width: `${((index + 1) / steps.length) * 100}%` }} /></div>
-    </div>
-  </>
+function SearchIcon({ size = 16 }: { size?: number }) {
+  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <circle cx="11" cy="11" r="6.5" /><path d="m20 20-4.2-4.2" />
+  </svg>
+}
+
+/** 유료 AI 분석 버튼에 붙는 반짝임 아이콘입니다. */
+function AiIcon() {
+  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M11 3.5 12.8 9 18.5 11l-5.7 2L11 18.5 9.2 13 3.5 11 9.2 9zM18.5 3v4M16.5 5h4" />
+  </svg>
 }
 
 function SourceLink({ href, title }: { href: string; title: string }) {
@@ -76,45 +70,50 @@ function DangerAlert({ title, message, onRetry }: { title: string; message: stri
   </div>
 }
 
-/** 1단계 카드 안의 저장된 양식 조회 결과입니다. */
-function AvailabilityResult({ vm }: { vm: NewViewModel }) {
-  const lookup = vm.availability
-  if (!lookup) return null
-  if (lookup.status === 'loading') return <>
-    <p className="sr-only" role="status">저장된 신청 양식을 확인하고 있어요.</p>
-    <div className="flex flex-col gap-2 py-1" aria-hidden="true"><span className={`${n.skeletonLine} w-4/5`} /><span className={`${n.skeletonLine} w-3/5`} /></div>
-  </>
-  if (lookup.status === 'failed') return <DangerAlert title="저장된 신청 양식을 확인하지 못했어요" message={lookup.error.message} onRetry={vm.retryAvailability} />
+/** 번호 붙은 섹션 제목입니다. `off`는 아직 열리지 않은 섹션으로, 흐린 제목과 언제 열리는지를 보여 줍니다. */
+function SectionHeading({ id, number, title, off = false, hint, headingRef }: {
+  id: string
+  number: number
+  title: string
+  off?: boolean
+  hint?: ReactNode
+  headingRef?: RefObject<HTMLHeadingElement | null>
+}) {
+  return <h2 ref={headingRef} id={id} className={off ? n.sectionTitleOff : n.sectionTitle} tabIndex={headingRef ? -1 : undefined}>
+    <span className={off ? n.sectionNumberOff : n.sectionNumber} aria-hidden="true">{number}</span>{title}
+    {hint && <small className={n.sectionHint}>{hint}</small>}
+  </h2>
+}
+
+/** ① 카드 안의 저장된 양식 조회 결과입니다. 조회 중 · 실패는 ②에서 보여 줍니다. */
+function AvailabilitySummary({ vm }: { vm: NewViewModel }) {
+  if (vm.availability?.status !== 'ready') return null
   return vm.forms.length > 0
     ? <div className={`${n.alert} ${n.alertBrand}`} role="status">
       <div className={n.alertText}>
         <strong className={n.alertTitle}>작성할 수 있는 신청 양식 {vm.forms.length}개를 찾았어요</strong>
-        <p>{vm.forms.map((form) => form.formTitle).join(' · ')} — 다음 단계에서 고를 수 있어요.</p>
+        <p>{vm.forms.length >= 2 ? '아래 ②에서 작성할 양식을 골라 주세요.' : '아래 ②에서 양식을 확인하고 작성을 시작해 주세요.'}</p>
       </div>
     </div>
     : <div className={`${n.alert} ${n.alertNeutral}`} role="status">
       <div className={n.alertText}>
         <strong className={n.alertTitle}>저장된 신청 양식이 없어요</strong>
-        <p>다음 단계에서 입력칸별로 분석할 수 있어요.</p>
+        <p>아래 ②에서 입력칸별로 분석할 수 있어요.</p>
       </div>
     </div>
 }
 
-function ProgramStep({ vm, openPicker, pickButtonRef, changeButtonRef }: {
+/** ① 공고. 고르기 전에는 [공고 고르기] 하나만 크게 두고, 고른 뒤에는 공고 요약 카드입니다. */
+function ProgramSection({ vm, openPicker, pickButtonRef, changeButtonRef }: {
   vm: NewViewModel
   openPicker: () => void
   pickButtonRef: RefObject<HTMLButtonElement | null>
   changeButtonRef: RefObject<HTMLButtonElement | null>
 }) {
   const program = vm.program
-  const pickButton = <div className={n.empty}>
-    <p className={n.muted}>신청 문서를 만들 공고를 골라 주세요</p>
-    <button ref={pickButtonRef} type="button" className={n.secondary} aria-haspopup="dialog" onClick={openPicker}>공고 고르기</button>
-  </div>
-  return <>
-    {vm.activeJobs.length > 0 && <ActiveJobsAlert jobs={vm.activeJobs} />}
-    <section className={n.card} aria-labelledby="new-program-title">
-      <h2 className={n.cardTitle} id="new-program-title">지원 공고</h2>
+  return <section className={n.section} aria-labelledby="new-program-heading">
+    <SectionHeading id="new-program-heading" number={1} title="공고" />
+    <div className={n.card}>
       {vm.programLoad.status === 'loading' && !program
         ? <>
           <p className="sr-only" role="status">공고를 불러오는 중입니다.</p>
@@ -127,7 +126,7 @@ function ProgramStep({ vm, openPicker, pickButtonRef, changeButtonRef }: {
             <ProgramBadges program={program} withSource />
             <strong className={n.programTitle}>{program.title}</strong>
             <span className={n.programMeta}>{[program.organization, program.applicationPeriod && `접수 ${program.applicationPeriod}`].filter(Boolean).join(' · ')}</span>
-            <AvailabilityResult vm={vm} />
+            <AvailabilitySummary vm={vm} />
             <div className={n.cardFoot}>
               <SourceLink href={program.sourceUrl} title={program.title} />
               <button ref={changeButtonRef} type="button" className={n.secondarySm} aria-haspopup="dialog" disabled={vm.submitting} onClick={openPicker}>공고 바꾸기</button>
@@ -135,11 +134,16 @@ function ProgramStep({ vm, openPicker, pickButtonRef, changeButtonRef }: {
           </>
           : <>
             {vm.programLoad.status === 'failed' && <DangerAlert title="공고를 불러오지 못했어요" message={vm.programLoad.error.message} onRetry={vm.retryProgramLoad} />}
-            {pickButton}
+            <div className={n.empty}>
+              <span className={n.emptyIcon} aria-hidden="true"><SearchIcon size={20} /></span>
+              <p className={n.emptyTitle}>신청 문서를 만들 공고를 골라 주세요</p>
+              <p className={n.muted}>관심 공고함이나 전체 검색에서 한 건을 고르면, 저장된 신청 양식이 있는지 바로 확인해요.</p>
+              <button ref={pickButtonRef} type="button" className={n.primaryLg} aria-haspopup="dialog" onClick={openPicker}><SearchIcon />공고 고르기</button>
+              <p className={n.subtle}>작성을 시작하기 전까지는 AI를 부르지 않아요.</p>
+            </div>
           </>}
-    </section>
-    <p className={n.subtle}>작성을 시작하기 전까지는 AI를 부르지 않아요. 양식이 없는 공고는 원문에서 직접 작성해 주세요.</p>
-  </>
+    </div>
+  </section>
 }
 
 function CapacityAlert({ jobs, onRetry }: { jobs: ApplicationFormDiscoveryJob[]; onRetry: () => void }) {
@@ -159,12 +163,57 @@ function CapacityAlert({ jobs, onRetry }: { jobs: ApplicationFormDiscoveryJob[];
   </div>
 }
 
-function FormStep({ vm }: { vm: NewViewModel }) {
+/** ②의 양식 카드입니다. 양식이 2개 이상이면 라디오 카드로 고르고, 신청 분야가 "일반 신청" 하나뿐이면 분야 칸을 두지 않습니다. */
+function FormChoice({ vm }: { vm: NewViewModel }) {
+  const fieldId = useId()
+  const form = vm.selectedForm!
+  const generalOnly = form.supportedServiceFields.length === 1 && form.supportedServiceFields[0] === 'GENERAL'
+  return <section className={n.card} aria-labelledby="new-form-title">
+    <h3 className={n.cardTitle} id="new-form-title">작성할 양식</h3>
+    {vm.forms.length >= 2
+      ? <div className={n.choiceList} role="radiogroup" aria-labelledby="new-form-title">
+        {vm.forms.map((candidate) => <label className={n.choice} key={candidate.formVersionId}>
+          <input className={n.radio} type="radio" name="application-form" disabled={vm.submitting}
+            checked={candidate.formVersionId === vm.selectedFormVersionId} onChange={() => vm.selectForm(candidate.formVersionId)} />
+          <span className={n.choiceText}>{candidate.formTitle}<span>{candidate.attachmentFileName}</span></span>
+        </label>)}
+      </div>
+      : <p className={`m-0 ${n.choiceText}`}>{form.formTitle}<span>{form.attachmentFileName}</span></p>}
+
+    {!generalOnly && <div className={n.field}>
+      <label className={n.fieldLabel} htmlFor={fieldId}>신청 분야</label>
+      <SelectField id={fieldId} label="신청 분야" className={n.select} value={vm.serviceField} disabled={vm.submitting}
+        options={form.supportedServiceFields.map((field) => ({ value: field, label: applicationServiceFieldLabels[field] }))}
+        onChange={(value) => vm.setServiceField(value as typeof vm.serviceField)} />
+    </div>}
+
+    {/* 공고명 · 원문 링크는 ①에 있으므로 여기에는 면책 문구와 재분석만 둡니다. */}
+    <section className={n.summary} aria-label="양식 안내">
+      <p className={n.muted}>{form.verificationStatus === 'SOURCE_DOCUMENT_EXTRACTED'
+        ? '공식 첨부에서 AI가 뽑은 문항이에요. 원문과 대조해 주세요.'
+        : '공식 첨부와 작성 문항을 확인한 양식이에요.'} 기관 검수나 선정 가능성을 뜻하지 않으며, 작성 시작은 AI를 부르지 않아요.</p>
+      {vm.discoveryWarnings.length > 0 && <ul className={n.warningList}>{vm.discoveryWarnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>}
+      <p className={n.reanalysis}>
+        양식이 원문과 달라 보이면
+        <button type="button" className={n.secondarySm} disabled={vm.submitting} onClick={vm.discoverForms}><AiIcon />입력칸별로 다시 분석</button>
+        <span className={n.cost}>유료 AI · 계정당 동시에 3건</span>
+      </p>
+    </section>
+  </section>
+}
+
+/** ② 양식 · 분야의 내용입니다. 저장된 양식 조회 중 · 실패 · 분석 진행 · 양식 카드 · 양식 없음 중 하나를 보여 줍니다. */
+function FormSectionBody({ vm }: { vm: NewViewModel }) {
   const program = vm.program
-  const form = vm.selectedForm
+  const lookup = vm.availability
   const discoveryError = vm.discoveryError
   const officialOnly = discoveryError instanceof ApplicationPreparationError
     && ['APPLICATION_FORM_NO_FORM', 'APPLICATION_FORM_SOURCE_UNSUPPORTED'].includes(discoveryError.code)
+  if (!lookup || lookup.status === 'loading') return <div className={n.card}>
+    <p className="sr-only" role="status">저장된 신청 양식을 확인하고 있어요.</p>
+    <div className="flex flex-col gap-2 py-1" aria-hidden="true"><span className={`${n.skeletonLine} w-2/5`} /><span className={`${n.skeletonLine} w-4/5`} /><span className={`${n.skeletonLine} w-3/5`} /></div>
+  </div>
+  if (lookup.status === 'failed') return <DangerAlert title="저장된 신청 양식을 확인하지 못했어요" message={lookup.error.message} onRetry={vm.retryAvailability} />
   return <>
     {vm.discovery
       ? <section className={n.progress} role="status" aria-live="polite" aria-label="양식 분석 진행">
@@ -173,53 +222,17 @@ function FormStep({ vm }: { vm: NewViewModel }) {
           <strong className={n.progressTitle}>{vm.discovery.reanalysis ? '입력칸별로 다시 분석하고 있어요' : '공식 첨부에서 신청 양식을 분석하고 있어요'}</strong>
           <span className={n.progressTime}>{elapsedLabel(vm.elapsedSeconds)}</span>
         </div>
-        {vm.discovery.resumed && <p className={n.muted}>이전에 시작한 분석을 이어서 보여 드려요.</p>}
+        <p className={n.muted}>{vm.discovery.resumed ? '이전에 시작한 분석을 이어서 보여 드려요. ' : ''}양식 크기에 따라 몇 분 걸릴 수 있어요.</p>
         <p className={n.progressNote}>화면을 나가도 계속돼요. 끝나면 알려 드려요.</p>
       </section>
-      : form
-        ? <>
-          <section className={n.card} aria-labelledby="new-form-title">
-            <h2 className={n.cardTitle} id="new-form-title">작성할 양식</h2>
-            {vm.forms.length >= 2
-              ? <div className={n.choiceList} role="radiogroup" aria-labelledby="new-form-title">
-                {vm.forms.map((candidate) => <label className={n.choice} key={candidate.formVersionId}>
-                  <input className={n.radio} type="radio" name="application-form" disabled={vm.submitting}
-                    checked={candidate.formVersionId === vm.selectedFormVersionId} onChange={() => vm.selectForm(candidate.formVersionId)} />
-                  <span className={n.choiceText}>{candidate.formTitle}<span>{candidate.attachmentFileName}</span></span>
-                </label>)}
-              </div>
-              : <p className={n.choiceText}>{form.formTitle}<span>{form.attachmentFileName}</span></p>}
-          </section>
-
-          {!(form.supportedServiceFields.length === 1 && form.supportedServiceFields[0] === 'GENERAL') && <section className={n.card} aria-labelledby="new-field-title">
-            <h2 className={n.cardTitle} id="new-field-title">작성할 지원 분야</h2>
-            <div className={n.choiceList} role="radiogroup" aria-labelledby="new-field-title">
-              {form.supportedServiceFields.map((field) => <label className={n.choice} key={field}>
-                <input className={n.radio} type="radio" name="application-service-field" disabled={vm.submitting}
-                  checked={vm.serviceField === field} onChange={() => vm.setServiceField(field)} />
-                <span className={n.choiceText}>{applicationServiceFieldLabels[field]}</span>
-              </label>)}
-            </div>
-          </section>}
-
-          <section className={n.summary} aria-label="공고 및 양식 요약">
-            <div className={n.summaryHead}>
-              <p className={n.summaryText}><strong>{form.programTitle}</strong>{form.formTitle} · {form.attachmentFileName}</p>
-              <SourceLink href={form.sourceUrl} title={form.programTitle} />
-            </div>
-            <p className={n.muted}>{form.verificationStatus === 'SOURCE_DOCUMENT_EXTRACTED'
-              ? '공식 첨부에서 AI가 뽑은 문항이에요. 원문과 대조해 주세요.'
-              : '공식 첨부와 작성 문항을 확인한 양식이에요.'} 기관 검수나 선정 가능성을 뜻하지 않으며, 작성 시작은 AI를 부르지 않아요.</p>
-            {vm.discoveryWarnings.length > 0 && <ul className={n.warningList}>{vm.discoveryWarnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>}
-          </section>
-          <button type="button" className={n.textLink} disabled={vm.submitting} onClick={vm.discoverForms}>입력칸별로 다시 분석</button>
-        </>
+      : vm.selectedForm
+        ? <FormChoice vm={vm} />
         : <section className={n.card} aria-labelledby="new-no-form-title">
-          <h2 className={n.cardTitle} id="new-no-form-title">저장된 양식이 없어요</h2>
+          <h3 className={n.cardTitle} id="new-no-form-title">저장된 양식이 없어요</h3>
           {vm.noFormReason && <p className={n.muted}>{vm.noFormReason}</p>}
           <div className={n.centeredAction}>
-            <button type="button" className={n.secondary} disabled={vm.submitting} onClick={vm.discoverForms}>입력칸별로 분석</button>
-            <p className={n.muted}>AI가 공식 첨부를 읽어 문항을 뽑아요 · 계정당 동시에 3건까지</p>
+            <button type="button" className={n.secondary} disabled={vm.submitting} onClick={vm.discoverForms}><AiIcon />입력칸별로 분석</button>
+            <p className={n.muted}>AI가 공식 첨부를 읽어 문항을 뽑아요. 유료 AI 호출이며 계정당 동시에 3건까지 할 수 있어요.</p>
             {program && <SourceLink href={program.sourceUrl} title={program.title} />}
           </div>
         </section>}
@@ -232,6 +245,15 @@ function FormStep({ vm }: { vm: NewViewModel }) {
     {vm.createError && <DangerAlert title="작성을 시작하지 못했어요" message={vm.createError.message} />}
     {vm.submitting && <p className="sr-only" role="status">신청 문서를 만들고 있어요.</p>}
   </>
+}
+
+/** [작성 시작]을 아직 누를 수 없는 이유입니다. 조회 중에는 ②의 스켈레톤이 알리므로 따로 적지 않습니다. */
+function startBlockedReason(vm: NewViewModel): string | null {
+  if (vm.selectedForm && !vm.discovery) return null
+  if (vm.discovery) return '분석이 끝나면 시작할 수 있어요'
+  if (vm.availability?.status === 'failed') return '저장된 양식을 확인하면 시작할 수 있어요'
+  if (vm.availability?.status === 'ready') return '양식을 분석하면 시작할 수 있어요'
+  return null
 }
 
 function newPathFor(program: { sourceCode: string; sourceProgramId: string }) {
@@ -266,54 +288,53 @@ function NewPreparation({ addressSourceCode, addressProgramId, onProgramChosen }
   const [pickerOpen, setPickerOpen] = useState(false)
   const pickButtonRef = useRef<HTMLButtonElement>(null)
   const changeButtonRef = useRef<HTMLButtonElement>(null)
+  const formHeadingRef = useRef<HTMLHeadingElement>(null)
   const pickerWasOpen = useRef(false)
-  const stepBodyRef = useRef<HTMLDivElement>(null)
-  const renderedStep = useRef(vm.step)
-  const stepIndex = vm.step === 'PROGRAM' ? 0 : 1
+  const pickerConfirmed = useRef(false)
+  const reasonId = useId()
+  const formOpen = vm.program !== null
+  const blockedReason = startBlockedReason(vm)
 
-  // 패널이 닫히면 연 버튼으로 포커스를 돌려줍니다. 공고를 처음 고른 경우 [공고 고르기] 대신 [공고 바꾸기]가 그 자리입니다.
+  // 패널이 닫히면, 공고를 고른 경우 ② 제목으로 포커스를 옮겨 이어서 앞으로 진행하게 하고, 버리고 닫은 경우 연 버튼으로 돌려줍니다.
   useEffect(() => {
-    if (pickerWasOpen.current && !pickerOpen) (changeButtonRef.current ?? pickButtonRef.current)?.focus()
+    if (pickerWasOpen.current && !pickerOpen) {
+      if (pickerConfirmed.current) formHeadingRef.current?.focus()
+      else (changeButtonRef.current ?? pickButtonRef.current)?.focus()
+      pickerConfirmed.current = false
+    }
     pickerWasOpen.current = pickerOpen
   }, [pickerOpen])
-
-  // 단계가 바뀌면 새 단계 내용의 처음으로 포커스를 옮깁니다(첫 화면에서는 옮기지 않음).
-  useLayoutEffect(() => {
-    if (renderedStep.current === vm.step) return
-    renderedStep.current = vm.step
-    stepBodyRef.current?.focus()
-  }, [vm.step])
 
   return <>
     <WorkspacePageHeader parent={{ to: appPaths.applicationPreparations, label: '신청 문서 작성' }} title="새 문서" />
     <main className={workspacePageStyles.content}>
       <div className={n.body}>
-        <p className={n.sub}>공고를 고르면 저장된 신청 양식이 있는지 바로 확인해요</p>
-        <StepIndicator index={stepIndex} />
-        <div className={n.actions} role="group" aria-label="단계 이동">
-          {vm.step === 'PROGRAM'
-            ? <>
-              <Link className={n.ghost} to={appPaths.applicationPreparations}>취소</Link>
-              <button type="button" className={n.primary} disabled={!vm.canProceed} onClick={vm.goToFormStep}>다음<span aria-hidden="true">→</span></button>
-            </>
-            : <>
-              <button type="button" className={n.secondary} disabled={vm.submitting} onClick={vm.backToProgramStep}>이전</button>
-              <button type="button" className={n.primary} disabled={!vm.selectedForm || vm.discovery !== null || vm.submitting}
-                onClick={() => { void vm.create() }}>{vm.submitting ? '만드는 중…' : '작성 시작'}</button>
-            </>}
-        </div>
-        <div ref={stepBodyRef} className={n.stepBody} tabIndex={-1} role="group" aria-label={`${stepIndex + 1}단계 ${steps[stepIndex]}`}>
-          {vm.step === 'PROGRAM'
-            ? <ProgramStep vm={vm} openPicker={() => setPickerOpen(true)} pickButtonRef={pickButtonRef} changeButtonRef={changeButtonRef} />
-            : <FormStep vm={vm} />}
-        </div>
+        <p className={s.lede}>공고를 고르면 저장된 신청 양식이 있는지 바로 확인해요</p>
+        {vm.activeJobs.length > 0 && <ActiveJobsAlert jobs={vm.activeJobs} />}
+        <ProgramSection vm={vm} openPicker={() => setPickerOpen(true)} pickButtonRef={pickButtonRef} changeButtonRef={changeButtonRef} />
+        <section className={n.section} aria-labelledby="new-form-heading">
+          <SectionHeading id="new-form-heading" number={2} title="양식 · 분야" off={!formOpen} hint={formOpen ? undefined : '공고를 고르면 열려요'} headingRef={formHeadingRef} />
+          {formOpen && <FormSectionBody vm={vm} />}
+        </section>
+        {/* 동작은 내용 끝 오른쪽에 둡니다. 탭 순서도 내용 → [취소] → [작성 시작]입니다. 공고를 고르기 전에는 그리지 않습니다. */}
+        {formOpen && <div className={n.actions}>
+          {blockedReason && <p className={n.actionsReason} id={reasonId}>{blockedReason}</p>}
+          <Link className={n.ghost} to={appPaths.applicationPreparations}>취소</Link>
+          <button type="button" className={n.primary} disabled={!vm.selectedForm || vm.discovery !== null || vm.submitting}
+            aria-describedby={blockedReason ? reasonId : undefined} onClick={() => { void vm.create() }}>{vm.submitting ? '만드는 중…' : '작성 시작'}</button>
+        </div>}
       </div>
     </main>
     {pickerOpen && <ProgramPickerPanel
       current={vm.program}
       currentAvailability={vm.availability}
       urlProgramKey={entryProgramKey}
-      onConfirm={(program, availability) => { vm.choose(program, availability); onProgramChosen(program); setPickerOpen(false) }}
+      onConfirm={(program, availability) => {
+        pickerConfirmed.current = true
+        vm.choose(program, availability)
+        onProgramChosen(program)
+        setPickerOpen(false)
+      }}
       onClose={() => setPickerOpen(false)}
     />}
     <WorkspaceToast notice={vm.toast} onClose={vm.dismissToast} />
