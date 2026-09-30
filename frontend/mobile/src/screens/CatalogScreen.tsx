@@ -17,7 +17,9 @@ export const initialFilters: SupportProgramCatalogFilters = {
 
 const options = (values: readonly string[]) => [{ value: '', label: '전체' }, ...[...new Set(values)].map((value) => ({ value, label: value }))]
 
-export function CatalogScreen({ onOpenProgram }: { onOpenProgram: (identity: SupportProgramIdentity) => void }) {
+export function CatalogScreen({ onOpenProgram, keyboardOffset = 0 }: {
+  onOpenProgram: (identity: SupportProgramIdentity) => void; keyboardOffset?: number
+}) {
   const [draft, setDraft] = useState(initialFilters)
   const [applied, setApplied] = useState(initialFilters)
   const [catalog, setCatalog] = useState<SupportProgramCatalog | null>(null)
@@ -43,7 +45,7 @@ export function CatalogScreen({ onOpenProgram }: { onOpenProgram: (identity: Sup
       ...(key === 'sourceCode' && value !== 'KSTARTUP' ? { startupStage: '', applicantType: '', founderAge: '' } : {}) }))
   }
 
-  return <Page>
+  return <Page keyboardOffset={keyboardOffset}>
     <View><Text style={[styles.label, { color: colors.primary, marginBottom: 8 }]}>GOVBIZ · 지원사업 찾기</Text><Title>우리 회사의 다음 기회</Title></View>
     <Subtitle>공고를 찾아 조건을 확인하고, 관심 있는 사업을 모아 보세요.</Subtitle>
     <Card>

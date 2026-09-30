@@ -1,7 +1,10 @@
-import { useRouter } from 'expo-router'
-import { CatalogScreen } from '../../src/screens/CatalogScreen'
+import { useLocalSearchParams, useRouter } from 'expo-router'
+import { SearchScreen } from '../../src/screens/SearchScreen'
 
-export default function CatalogRoute() {
+export default function SearchRoute() {
   const router = useRouter()
-  return <CatalogScreen onOpenProgram={(identity) => router.push({ pathname: '/program', params: identity })} />
+  const { mode } = useLocalSearchParams<{ mode?: string }>()
+  return <SearchScreen mode={mode === 'filter' ? 'filter' : 'ai'} onModeChange={(next) => router.setParams({ mode: next })}
+    onOpenProgram={(identity) => router.push({ pathname: '/program', params: identity })}
+    onLogin={() => router.push('/(tabs)/account')} />
 }

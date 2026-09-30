@@ -1,7 +1,7 @@
 import { Pressable, Text, View } from 'react-native'
 import type { SupportProgram } from '@govbiz/shared/domain/entities/SupportProgram'
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
-import { Card, styles } from '../ui'
+import { Card, StatusBadge, styles } from '../ui'
 
 export const statusLabels = { OPEN: '접수 중', UPCOMING: '접수 예정', CLOSED: '마감', UNKNOWN: '상태 미확인' }
 
@@ -9,7 +9,8 @@ export function ProgramCard({ program, onOpen }: { program: SupportProgram; onOp
   return <Pressable accessibilityRole="button" accessibilityLabel={`${program.title}, 상세 보기`}
     onPress={() => onOpen({ sourceCode: program.sourceCode, sourceProgramId: program.id })}>
     <Card>
-      <View style={styles.row}><Text style={styles.badge}>{statusLabels[program.status]}</Text><Text style={styles.muted}>{program.sourceName}</Text></View>
+      <View style={styles.row}><StatusBadge label={statusLabels[program.status]}
+        tone={program.status === 'OPEN' ? 'success' : program.status === 'UPCOMING' ? 'info' : 'neutral'} /><Text style={styles.muted}>{program.sourceName}</Text></View>
       <Text style={styles.heading}>{program.title}</Text>
       <Text style={styles.muted}>{program.organization}</Text>
       <Text style={styles.body} numberOfLines={2}>{program.summary}</Text>
