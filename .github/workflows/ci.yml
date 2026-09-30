@@ -156,7 +156,7 @@ jobs:
         run: uv run --locked --extra dev --group evaluation python -m pytest ../../evaluation/support-program-evidence
 
       - name: Test Compose cleanup guards without Docker mutations
-        run: python -B -m unittest discover -s ../../infrastructure/scripts -p 'test_*.py'
+        run: uv run --locked --extra dev --group evaluation python -B -m unittest discover -s ../../infrastructure/scripts -p 'test_*.py'
 
       - name: Test backend deployment guards without AWS or Docker mutations
         run: python -B -m unittest discover -s ../../infrastructure/codebuild -p 'test_*.py'

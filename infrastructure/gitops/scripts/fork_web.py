@@ -9,17 +9,26 @@ from contextlib import ExitStack, contextmanager
 FORWARDS = (("core-service", 18080, 8080), ("ops-service", 18001, 8000))
 
 
-def check_ports():
+def forward_targets(core_port=18080, ops_port=18001):
+    for port in (core_port, ops_port):
+        if type(port) is not int or not 1024 <= port <= 65535:
+            raise ValueError("Core/Ops ports must be integers between 1024 and 65535")
+    if core_port == ops_port:
+        raise ValueError("Core and Ops must use different local ports")
+    return (("core-service", core_port, 8080), ("ops-service", ops_port, 8000))
+
+
+def check_ports(targets=FORWARDS):
     sockets = []
     try:
-        for _, port, _ in FORWARDS:
+        for _, port, _ in targets:
             listener = socket.socket()
             sockets.append(listener)
             try:
                 listener.bind(("127.0.0.1", port))
             except OSError:
                 raise ValueError(
-                    f"Loopback port {port} is occupied; stop or reconfigure its owner explicitly"
+                    f"Loopback port {port} is occupied; select another --core-port/--ops-port and match the Vite K8S_*_PORT settings"
                 ) from None
     finally:
         for listener in sockets:
@@ -34,12 +43,13 @@ def ensure_running(processes):
 
 
 @contextmanager
-def forwards(nk):
-    check_ports()
+def forwards(nk, *, core_port=18080, ops_port=18001):
+    targets = forward_targets(core_port, ops_port)
+    check_ports(targets)
     processes, logs = [], []
     with ExitStack() as stack:
         try:
-            for service, port, remote in FORWARDS:
+            for service, port, remote in targets:
                 log = stack.enter_context(tempfile.TemporaryFile(mode="w+t"))
                 logs.append(log)
                 process = subprocess.Popen(
@@ -59,7 +69,7 @@ def forwards(nk):
             while True:
                 ensure_running(processes)
                 ready = []
-                for log, (_, port, remote) in zip(logs, FORWARDS):
+                for log, (_, port, remote) in zip(logs, targets):
                     log.seek(0)
                     ready.append(
                         f"Forwarding from 127.0.0.1:{port} -> {remote}" in log.read()
@@ -83,11 +93,13 @@ def forwards(nk):
             stack.close()
 
 
-def serve(nk):
-    with forwards(nk) as processes:
+def serve(nk, *, core_port=18080, ops_port=18001):
+    with forwards(nk, core_port=core_port, ops_port=ops_port) as processes:
         print(
-            "Core 127.0.0.1:18080 and Ops 127.0.0.1:18001 forward to this cluster. "
-            "Start Vite with --mode portfolio; Ctrl+C stops both forwards.",
+            f"Core 127.0.0.1:{core_port} and Ops 127.0.0.1:{ops_port} forward to this cluster. "
+            "Ctrl+C stops both forwards.\n"
+            "In another Bash/WSL terminal at the repository root, run:\n"
+            f"K8S_CORE_PORT={core_port} K8S_OPS_PORT={ops_port} pnpm --dir frontend/web dev:k8s",
             flush=True,
         )
         while True:
