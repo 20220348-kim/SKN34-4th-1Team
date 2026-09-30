@@ -74,7 +74,7 @@ async def test_builds_and_wires_agent_in_the_composition_root(monkeypatch):
         captured.update(kwargs)
         return client
     monkeypatch.setattr(bootstrap_module, "AsyncOpenAI", openai_client)
-    container = build_application_container(OPENAI_SETTINGS)
+    container = build_application_container(replace(OPENAI_SETTINGS, embedding_request_token_limit=8191))
     try:
         assert isinstance(container.support_program_ranking_service, SupportProgramRankingService)
         assert isinstance(container.support_program_conversation_service, SupportProgramConversationService)
@@ -84,6 +84,7 @@ async def test_builds_and_wires_agent_in_the_composition_root(monkeypatch):
         assert captured == {"api_key": "private-key", "timeout": 1.25, "max_retries": 0}
         assert container.openai_client is client
         for service in (container.support_program_index_service, container.support_program_evidence_service):
+            assert service.embedding_request_token_limit == 8191
             assert service.openai_client is client
             assert service.qdrant_client is container.qdrant_client
         assert container.application_preparation_service.agent._model.root_async_client is client

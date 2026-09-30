@@ -45,11 +45,25 @@ def span_tree(scenario):
     return tree
 
 
+def embedding_parents(scenario, query_cache=None):
+    # These fixture traces use one document batch and at most one uncached question.
+    parents = ["evidence.index.embedding"] if scenario == "ok" else []
+    if (query_cache or ("hit" if scenario == "hit" else "miss")) != "hit":
+        parents.append("evidence.search.embedding")
+    return parents
+
+
+def observation_count(scenario, query_cache=None):
+    return len(span_tree(scenario)) + len(embedding_parents(scenario, query_cache))
+
+
 def verify_observations(observations, trace_id, scenario, private_values, *, chunk_count=1, query_cache=None):
     tree = span_tree(scenario)
-    require(len(observations) == len(tree), "Missing or unexpected evidence observations")
-    require(len({item["id"] for item in observations}) == len(tree), "Duplicate evidence observations")
-    by_name = {item["name"]: item for item in observations}
+    expected_count = observation_count(scenario, query_cache)
+    require(len(observations) == expected_count, "Missing or unexpected evidence observations")
+    require(len({item["id"] for item in observations}) == expected_count, "Duplicate evidence observations")
+    embedding_requests = [item for item in observations if item["name"] == "evidence.embedding.request"]
+    by_name = {item["name"]: item for item in observations if item["name"] != "evidence.embedding.request"}
     require(set(by_name) == set(tree), "Unexpected evidence stages")
     failures = set()
     if scenario == "search-fail":
@@ -94,6 +108,34 @@ def verify_observations(observations, trace_id, scenario, private_values, *, chu
             by_name["evidence.model"]["metadata"].get("usage_reported") is False,
             "Unknown fixture usage became confirmed",
         )
+    expected_parents = {by_name[name]["id"] for name in embedding_parents(scenario, query_cache)}
+    require(
+        len(embedding_requests) == len(expected_parents)
+        and {item.get("parentObservationId") for item in embedding_requests} == expected_parents,
+        "Wrong embedding request parents or cache calls",
+    )
+    for item in embedding_requests:
+        failed = scenario == "search-fail"
+        metadata = item["metadata"]
+        require(item["traceId"] == trace_id and item.get("endTime"), "Disconnected embedding request")
+        require((item["level"] == "ERROR") == failed, "Wrong embedding request error level")
+        require(metadata.get("outcome") == ("failed" if failed else "completed"), "Wrong embedding request outcome")
+        require(metadata.get("batch_sequence") == 0, "Wrong embedding batch sequence")
+        size, estimate, limit = (metadata.get(key) for key in ("batch_size", "estimated_tokens", "request_token_limit"))
+        require(type(size) is int and 1 <= size <= 32, "Wrong embedding batch size")
+        require(type(estimate) is int and type(limit) is int and 0 < estimate <= limit <= 262112,
+                "Invalid embedding request token bound")
+        require(metadata.get("usage_reported") is (not failed), "Wrong embedding usage status")
+        require(metadata.get("usage_state") == ("unknown" if failed else "reported"), "Wrong embedding usage state")
+        usage = item.get("usageDetails") or {}
+        if failed:
+            require(not usage, "Unknown embedding usage became confirmed")
+        else:
+            require(type(usage.get("input")) is int and 0 <= usage["input"] <= limit
+                    and usage.get("output") == 0 and usage.get("total") == usage["input"],
+                    "Missing or invalid embedding usage")
+        require(item.get("input") in (None, "", "null") and item.get("output") in (None, "", "null"),
+                "Embedding body captured")
     serialized = json.dumps(observations, ensure_ascii=False)
     require(all(value not in serialized for value in private_values if value), "Private evidence trace data captured")
     return [
@@ -103,7 +145,7 @@ def verify_observations(observations, trace_id, scenario, private_values, *, chu
             "name": item["name"],
             "outcome": item["metadata"]["outcome"],
         }
-        for item in by_name.values()
+        for item in observations
     ]
 
 
@@ -220,7 +262,7 @@ def verify_evidence_traces(*, core_url, stub_url, environment, core_logs, call_j
             deadline = time.monotonic() + 90
             while True:
                 observations = read_observations(environment, trace_id)
-                if len(observations) >= len(span_tree(scenario)) and all(item.get("endTime") for item in observations):
+                if len(observations) >= observation_count(scenario) and all(item.get("endTime") for item in observations):
                     break
                 require(time.monotonic() < deadline, "Evidence Langfuse readback timed out")
                 time.sleep(1)

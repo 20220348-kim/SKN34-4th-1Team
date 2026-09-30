@@ -82,6 +82,7 @@ class Settings:
     openai_embedding_model: str = "text-embedding-3-small"
     openai_embedding_dimensions: int = 1536
     embedding_timeout_seconds: float = 15.0
+    embedding_request_token_limit: int = 262112
     llm_ranking_model_timeout_seconds: float = DEFAULT_LLM_RANKING_MODEL_TIMEOUT_SECONDS
     llm_ranking_run_timeout_seconds: float = DEFAULT_LLM_RANKING_RUN_TIMEOUT_SECONDS
     llm_combination_review_model_timeout_seconds: float = DEFAULT_LLM_COMBINATION_REVIEW_MODEL_TIMEOUT_SECONDS
@@ -101,6 +102,9 @@ class Settings:
     langfuse: LangfuseSettings = field(default_factory=LangfuseSettings)
 
     def __post_init__(self) -> None:
+        if (type(self.embedding_request_token_limit) is not int
+                or not 1 <= self.embedding_request_token_limit <= 262112):
+            raise SettingsConfigurationError("OPENAI_EMBEDDING_REQUEST_TOKEN_LIMIT is invalid")
         model = self.application_form_discovery_model_timeout_seconds
         run = self.application_form_discovery_run_timeout_seconds
         if isinstance(model, bool) or isinstance(run, bool) or not isfinite(model) or not isfinite(run) or not 0 < model < run <= 1500:
@@ -213,6 +217,7 @@ class Settings:
             ),
             openai_embedding_model=_embedding_model(),
             openai_embedding_dimensions=_embedding_dimensions(),
+            embedding_request_token_limit=_embedding_request_token_limit(),
             embedding_timeout_seconds=_positive_float(
                 environ.get("EMBEDDING_TIMEOUT_SECONDS"), default=15.0,
             ),
@@ -278,3 +283,13 @@ def _embedding_dimensions() -> int:
     if not 1 <= dimensions <= maximum:
         raise SettingsConfigurationError("OPENAI_EMBEDDING_DIMENSIONS is invalid")
     return dimensions
+
+
+def _embedding_request_token_limit() -> int:
+    try:
+        limit = int(environ.get("OPENAI_EMBEDDING_REQUEST_TOKEN_LIMIT", "262112"))
+        if not 1 <= limit <= 262112:
+            raise ValueError
+        return limit
+    except ValueError:
+        raise SettingsConfigurationError("OPENAI_EMBEDDING_REQUEST_TOKEN_LIMIT is invalid") from None

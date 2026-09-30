@@ -171,6 +171,7 @@ def build_application_container(
         embedding_model=settings.openai_embedding_model,
         embedding_dimensions=settings.openai_embedding_dimensions,
         embedding_timeout_seconds=settings.embedding_timeout_seconds,
+        embedding_request_token_limit=settings.embedding_request_token_limit,
     )
 
     assistant_tool_client = None
@@ -212,6 +213,7 @@ def build_application_container(
             embedding_model=settings.openai_embedding_model,
             embedding_dimensions=settings.openai_embedding_dimensions,
             embedding_timeout_seconds=settings.embedding_timeout_seconds,
+            embedding_request_token_limit=settings.embedding_request_token_limit,
             tracing=llm_tracing,
         ),
         support_program_evidence_service=evidence_service,

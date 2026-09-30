@@ -388,7 +388,7 @@ def verify_driver_replays_actual_ai_records(monkeypatch, tmp_path, nonce, replay
                 in {"ok", "hit", "fail", "timeout", "invalid-citation", "search-fail"}
                 else "hit"
             )
-            spans[:] = documents(base, tid)
+            spans[:] = documents(base, tid, query_cache="hit" if version == "v2" or scenario == "hit" else "miss")
             for span in spans:
                 if span["name"] == "evidence.core.chunk":
                     span["metadata"]["chunk_count"] = 6

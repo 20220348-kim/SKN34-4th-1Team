@@ -14,7 +14,11 @@ from qdrant_client.http.exceptions import ResponseHandlingException
 from app.config import LangfuseSettings
 from app.tracing import LLMTracing
 
-from app.support_program_embedding import prepare_embedding_inputs
+from app.support_program_embedding import (
+    MAX_EMBEDDING_REQUEST_TOKENS,
+    embedding_usage,
+    prepare_embedding_batches,
+)
 from app.support_program_index.models import (
     IndexedDocumentIdentity,
     SupportProgramIndexBatchRequest,
@@ -51,6 +55,7 @@ class SupportProgramIndexService:
         embedding_model: str,
         embedding_dimensions: int,
         embedding_timeout_seconds: float,
+        embedding_request_token_limit: int = MAX_EMBEDDING_REQUEST_TOKENS,
         tracing: LLMTracing | None = None,
     ) -> None:
         self._tracing = tracing or LLMTracing(LangfuseSettings())
@@ -59,6 +64,7 @@ class SupportProgramIndexService:
         self.embedding_model = embedding_model
         self.embedding_dimensions = embedding_dimensions
         self.embedding_timeout_seconds = embedding_timeout_seconds
+        self.embedding_request_token_limit = embedding_request_token_limit
         configuration_hash = sha256(f"{embedding_model}:{embedding_dimensions}:cl100k_base:8191".encode()).hexdigest()[:16]
         self.collection_name = f"govbiz_support_program_v1_{configuration_hash}"
         self._write_lock = asyncio.Lock()
@@ -259,7 +265,7 @@ class SupportProgramIndexService:
                         return list(vector), "coalesced" if waited else "hit"
                     del self._query_embedding_cache[query]
                 with self._tracing.observation("search.embedding", as_type="embedding", model=self.embedding_model,
-                                               metadata={"usage_reported": False}) as generation:
+                                               metadata={"usage_reported": False, "usage_state": "unknown"}) as generation:
                     vector = (await self._embed([query], observation=generation))[0]
                 now = monotonic()
                 for key, (expires_at, _) in list(self._query_embedding_cache.items()):
@@ -280,11 +286,15 @@ class SupportProgramIndexService:
                 self._query_embedding_locks[query] = (lock, users - 1)
 
     async def _embed(self, texts: list[str], *, observation=None) -> list[list[float]]:
-        inputs = await asyncio.to_thread(prepare_embedding_inputs, texts)
+        try:
+            batches = await asyncio.to_thread(
+                prepare_embedding_batches, texts, self.embedding_request_token_limit,
+            )
+        except ValueError as error:
+            raise SupportProgramIndexError() from error
         vectors: list[list[float]] = []
-        # 32 × 8191 < OpenAI 요청당 최대 300,000 tokens.
-        for offset in range(0, len(inputs), 32):
-            batch = inputs[offset:offset + 32]
+        reported_tokens = 0
+        for batch, _ in batches:
             async with asyncio.timeout(self.embedding_timeout_seconds):
                 raw_response = await self.openai_client.embeddings.with_raw_response.create(
                     model=self.embedding_model,
@@ -295,12 +305,16 @@ class SupportProgramIndexService:
                 )
             # SDK의 float 강제 변환 전 원문 JSON을 검증해 bool·문자열을 숫자로 허용하지 않는다.
             response = raw_response.http_response.json()
-            usage = response.get("usage") if isinstance(response, dict) else None
-            tokens = usage.get("prompt_tokens") if isinstance(usage, dict) else None
-            if type(tokens) is int and tokens >= 0:
-                self._tracing.update(observation, usage_details={"input": tokens}, metadata={"usage_reported": True})
             if not isinstance(response, dict) or response.get("model") != self.embedding_model:
                 raise SupportProgramIndexError()
+            try:
+                reported_tokens += embedding_usage(response, self.embedding_request_token_limit)
+            except ValueError as error:
+                raise SupportProgramIndexError() from error
+            self._tracing.update(
+                observation, usage_details={"input": reported_tokens},
+                metadata={"usage_reported": True, "usage_state": "reported"},
+            )
             data = response.get("data")
             if not isinstance(data, list) or len(data) != len(batch):
                 raise SupportProgramIndexError()

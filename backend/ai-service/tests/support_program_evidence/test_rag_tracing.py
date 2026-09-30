@@ -114,7 +114,7 @@ async def test_three_http_routes_share_remote_trace_and_preserve_cache_hits(evid
         await tracing.close()
         await model.model.root_async_client.close()
     spans = exporter.get_finished_spans()
-    assert len(spans) == 24
+    assert len(spans) == 26
     assert all(span.context.trace_id == int(trace_id, 16) for span in spans)
     for name, parent in (("evidence.index", 1), ("evidence.search", 2), ("evidence.answer", 3)):
         roots = [span for span in spans if span.name == name]
@@ -124,6 +124,14 @@ async def test_three_http_routes_share_remote_trace_and_preserve_cache_hits(evid
     for span in spans:
         if span.name not in {"evidence.index", "evidence.search", "evidence.answer"}:
             parent = by_id[span.parent.span_id]
+            if span.name == "evidence.embedding.request":
+                assert parent.name in {"evidence.index.embedding", "evidence.search.embedding"}
+                assert metadata(span, "usage_reported") is True
+                assert metadata(span, "usage_state") == "reported"
+                assert json.loads(span.attributes["langfuse.observation.usage_details"]) == {
+                    "input": 1, "output": 0, "total": 1,
+                }
+                continue
             expected = (
                 "evidence.index"
                 if span.name.startswith("evidence.index.")
@@ -137,6 +145,7 @@ async def test_three_http_routes_share_remote_trace_and_preserve_cache_hits(evid
         "miss",
         "hit",
     ]
+    assert len([span for span in spans if span.name == "evidence.embedding.request"]) == 2
     assert len(embeddings.requests) == 2 and len(model.calls) == 2
     assert_private(spans)
 
@@ -215,3 +224,46 @@ async def test_index_exporter_failure_never_repeats_embedding_or_upsert(
     finally:
         await tracing.close()
         await model.model.root_async_client.close()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("fault", ["usage", "timeout", "cancelled"])
+async def test_partial_embedding_failure_preserves_known_and_unknown_usage(evidence_environment, trace_environment, monkeypatch, fault):
+    service, stub = evidence_environment
+    settings, exporter = trace_environment
+    _, tracing, model = make_service(settings)
+    service._tracing = tracing
+    service.embedding_request_token_limit = 8
+    upsert = AsyncMock(wraps=service.qdrant_client.upsert)
+    monkeypatch.setattr(service.qdrant_client, "upsert", upsert)
+    items = [chunk("BIZINFO:PRIVATE-DOC", i, "PRIVATE text " + str(i)) for i in range(5)]
+    def transform(body):
+        if len(stub.requests) != 2:
+            return body
+        if fault == "usage":
+            return {**body, "usage": None}
+        raise TimeoutError("PRIVATE") if fault == "timeout" else asyncio.CancelledError()
+
+    stub.transform = transform
+    try:
+        with pytest.raises(asyncio.CancelledError if fault == "cancelled" else SupportProgramEvidenceError):
+            await service.index_chunks(SupportProgramEvidenceBatchRequest(chunks=items))
+        upsert.assert_not_awaited()
+        assert len(stub.requests) == 2
+        assert not service._chunk_embedding_cache
+    finally:
+        await tracing.close()
+        await model.model.root_async_client.close()
+    spans = exporter.get_finished_spans()
+    requests = [span for span in spans if span.name == "evidence.embedding.request"]
+    assert len(requests) == 2
+    first, failed = requests
+    assert metadata(first, "usage_state") == "reported"
+    assert json.loads(first.attributes["langfuse.observation.usage_details"])["input"] == 1
+    assert metadata(failed, "usage_state") == "unknown"
+    assert metadata(failed, "usage_reported") is False
+    assert "langfuse.observation.usage_details" not in failed.attributes
+    assert failed.attributes["langfuse.observation.level"] == "ERROR"
+    assert [metadata(span, "batch_sequence") for span in requests] == [0, 1]
+    assert all(metadata(span, "estimated_tokens") <= 8 for span in requests)
+    assert_private(spans)

@@ -100,7 +100,7 @@ async def evidence_trace_examples(tracing):
                         "trace_id": trace_id,
                         "evidence_scenario": scenario,
                         "parents": parents,
-                        "observation_count": {"miss": 13, "hit": 11, "not-ready": 2}[scenario],
+                        "observation_count": {"miss": 15, "hit": 11, "not-ready": 2}[scenario],
                     }
                 )
         assert len(embeddings.requests) == 2 and len(model.calls) == 2
@@ -113,7 +113,8 @@ async def evidence_trace_examples(tracing):
 
 def verify_evidence_observations(observations, record):
     scenario = record["evidence_scenario"]
-    by_name = {item["name"]: item for item in observations}
+    requests = [item for item in observations if item["name"] == "evidence.embedding.request"]
+    by_name = {item["name"]: item for item in observations if item["name"] != "evidence.embedding.request"}
     expected = {"evidence.search": ["readiness"]}
     if scenario != "not-ready":
         expected = {
@@ -121,7 +122,18 @@ def verify_evidence_observations(observations, record):
             "evidence.search": ["readiness", "embedding", "vector", "validate"],
             "evidence.answer": ["model", "validate_selection", "validate_response"],
         }
-    assert len(by_name) == len(observations) == record["observation_count"]
+    assert len(by_name) + len(requests) == len(observations) == record["observation_count"]
+    assert len({item["id"] for item in observations}) == len(observations)
+    assert len(requests) == (2 if scenario == "miss" else 0)
+    if requests:
+        assert {item["parentObservationId"] for item in requests} == {
+            by_name["evidence.index.embedding"]["id"], by_name["evidence.search.embedding"]["id"],
+        }
+        for item in requests:
+            assert item["metadata"]["usage_reported"] is True
+            assert item["metadata"]["usage_state"] == "reported"
+            assert 0 < item["metadata"]["estimated_tokens"] <= item["metadata"]["request_token_limit"]
+            assert item["usageDetails"] == {"input": 1, "output": 0, "total": 1}
     names = set(expected)
     for root_name, children in expected.items():
         root = by_name[root_name]
