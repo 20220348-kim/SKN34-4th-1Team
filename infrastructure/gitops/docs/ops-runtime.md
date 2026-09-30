@@ -200,6 +200,39 @@ DB 비밀번호·Django 키를 재발급하지 않으며 기존 artifact 토큰�
 Secret 쓰기는 [resourceVersion을 통한 동시 갱신 검사](https://kubernetes.io/docs/reference/using-api/api-concepts/)를 사용한다.
 migration → API+sync 적용 → rollout → 읽기 전용 런타임 진단 순서로 실행하며, migration 실패 시 API를 적용하지 않는다.
 
+### 소스와 실행 환경의 버전 점검
+
+`main`을 갱신해도 이미 실행 중인 이미지가 자동으로 바뀌지는 않는다. 기존 개인 환경을 다시 사용할 때는
+다음 읽기 전용 점검으로 현재 체크아웃과 실행 환경을 대조한다. WSL2/Linux에서 실행하며 artifact env 파일은 필요 없다.
+
+```bash
+python3 -B infrastructure/gitops/scripts/ops_runtime.py --check \
+  --state-dir /기존/개인/state/경로
+
+# 과거 완료 평가의 결과까지 검증
+python3 -B infrastructure/gitops/scripts/ops_runtime.py --check \
+  --state-dir /기존/개인/state/경로 \
+  --run-id <완료된-평가-UUID>
+```
+
+- 현재 소스의 실행 release가 최신인지 검증한 뒤 API·sync·Compose 실행기·결과 서버의 SHA-256과 비교한다.
+  이전 버전끼리 서로 일치하는 경우도 현재 소스와 다르면 실패한다.
+- 활성화 기록·브리지·baseline 소유권, API/sync 이미지와 실제 Pod의 ReplicaSet 소유 관계·준비 상태를 확인한다.
+  점검 중 Pod·컨테이너·실행기·경로·baseline이 바뀌면 성공을 반환하지 않는다.
+- API·sync·실행기의 무료 설정과 모델 키 미설정을 확인한다. DB migration 이력뿐 아니라 실제 모델 컬럼도 검사한다.
+- 기존 런타임 진단으로 평가 자료·Prefect 등록·결과 HTTP 연결을 확인한다. `--run-id`는 완료된 결과를 읽어서 검증한다.
+- 클러스터·DB·컨테이너 설정을 변경하거나 Secret 리소스를 읽거나 비밀값을 출력하지 않는다.
+  migration·평가 접수·모델 호출·상태 보정은 하지 않는다.
+  동일 작업의 충돌 방지를 위한 로컬 작업 잠금은 사용한다.
+- `--check`는 `--artifact-env`·`--ops-image`와 함께 사용할 수 없다. 실패 시 자동으로 재배포하지 않는다.
+
+성공 범위는 `local_ops_release_and_configuration`이다. 새 평가 실행이나 Core 관리자 인증의 검증을 대신하지 않으며,
+`evaluation_executed`와 `core_admin_auth_verified`는 false로 남긴다. `runtime.result_artifact_verified`는
+지정한 완료 결과를 실제 검증한 경우에만 true다. 버전 불일치는 아래의 명시적인 이미지 갱신 절차로 해소한다.
+
+기존 LLMOps CI의 Kubernetes E2E에서도 최초 활성화 후와 Compose 컨테이너 교체·새 평가 완료 후에
+같은 점검을 호출한다. 설정 점검 성공과 새 평가·재시작·장애 복구 검증 결과는 보고서에서 별도로 기록한다.
+
 ### 기존 개인 Ops 이미지 갱신
 
 기존 클러스터의 Ops가 오래된 이미지라면 같은 소스에서 Ops와 Compose 실행기를 먼저 빌드한다.

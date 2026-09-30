@@ -2,12 +2,14 @@
 
 import base64
 import copy
+import hashlib
 import json
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+from uuid import UUID
 
 import fork_cluster
 import ops_bridge
@@ -578,6 +580,377 @@ class ReleasePreflightTests(unittest.TestCase):
                 self.assertRaisesRegex(ValueError, "releases differ"),
             ):
                 runtime.verify_release(IMAGE, "fixture")
+
+
+class ReadOnlyRuntimeTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.state = Path(temporary.name)
+        self.source = (
+            self.state / "backend/ops-service/apps/evaluations/execution_release.json"
+        )
+        self.source.parent.mkdir(parents=True)
+        self.source.write_text('{"version": 1}')
+        self.digest = hashlib.sha256(self.source.read_bytes()).hexdigest()
+        self.baseline = {"source": "local", "images": {"ops-service": IMAGE}}
+        (self.state / "baseline.json").write_text(json.dumps(self.baseline))
+        for name in (runtime.PROFILE, runtime.BRIDGE):
+            (self.state / name).write_text(
+                json.dumps(runtime.connection(SETTINGS, "fixture"))
+            )
+        self.deployment = {
+            "metadata": {"uid": "deployment", "resourceVersion": "1"},
+            "spec": {
+                "replicas": 1,
+                "selector": {"matchLabels": {"app": "ops"}},
+                "template": {
+                    "spec": {
+                        "containers": [
+                            {
+                                "name": name,
+                                "image": IMAGE,
+                                "imagePullPolicy": "Never",
+                                "env": [
+                                    {"name": "LLMOPS_LIVE_ENABLED", "value": "false"}
+                                ],
+                            }
+                            for name in ("ops-service", "ops-sync")
+                        ]
+                    }
+                },
+            },
+        }
+        self.pod = {
+            "metadata": {
+                "name": "ops-pod",
+                "uid": "pod-uid",
+                "ownerReferences": [
+                    {
+                        "kind": "ReplicaSet",
+                        "name": "ops-rs",
+                        "uid": "rs-uid",
+                        "controller": True,
+                    }
+                ],
+            },
+            "spec": copy.deepcopy(self.deployment["spec"]["template"]["spec"]),
+            "status": {
+                "phase": "Running",
+                "containerStatuses": [
+                    {"name": name, "ready": True, "containerID": "containerd://" + name}
+                    for name in ("ops-service", "ops-sync")
+                ],
+            },
+        }
+        self.replica = {
+            "metadata": {
+                "uid": "rs-uid",
+                "ownerReferences": [
+                    {"kind": "Deployment", "uid": "deployment", "controller": True}
+                ],
+            }
+        }
+        self.pods = [self.pod]
+        self.latest_pod = self.pod
+        self.latest_deployment = self.deployment
+        self.deployment_reads = 0
+        self.target_results = {
+            name: {"release": self.digest, "free": True}
+            for name in (
+                "ops-service",
+                "ops-sync",
+                "evaluation-runner",
+                "ops-artifacts",
+            )
+        }
+        self.diagnostics = {
+            "schema_ready": True,
+            "runtime": {
+                "status": "PASS",
+                "storage_transport": "http",
+                "result_artifact_verified": False,
+            },
+        }
+        self.commands = []
+        mocks = {
+            "require_dev": {},
+            "commands": {
+                "return_value": (["kubectl"], ["kubectl", "-n", "fixture"], [])
+            },
+            "run": {"return_value": "Execution release verified"},
+            "quiet": {"side_effect": self.execute},
+            "evaluation_runner": {"return_value": {"Id": "runner-id"}},
+            "REPOSITORY_ROOT": {"new": self.state},
+        }
+        self.mocks = {}
+        for name, options in mocks.items():
+            patcher = patch.object(runtime, name, **options)
+            self.mocks[name] = patcher.start()
+            self.addCleanup(patcher.stop)
+        patcher = patch.object(ops_bridge, "connect")
+        self.connect = patcher.start()
+        self.addCleanup(patcher.stop)
+        patcher = patch.object(
+            ops_bridge,
+            "topology",
+            return_value={"containers": {"ops-artifacts": "artifact-id"}},
+        )
+        self.topology = patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def execute(self, command, data=None):
+        self.commands.append(command)
+        self.assertIsNone(data)
+        self.assertFalse(
+            set(command) & {"apply", "patch", "create", "delete", "migrate", "run"}
+        )
+        if "get" in command:
+            kind = command[command.index("get") + 1]
+            if kind == "deployment":
+                self.deployment_reads += 1
+                if self.deployment_reads % 2 == 0:
+                    return json.dumps(self.latest_deployment)
+            return json.dumps(
+                {
+                    "deployment": self.deployment,
+                    "pods": {"items": self.pods},
+                    "pod": self.latest_pod,
+                    "replicaset": self.replica,
+                }[kind]
+            )
+        if "schema_is_ready" in command[-1]:
+            return json.dumps(self.diagnostics)
+        name = (
+            ("evaluation-runner" if command[2] == "runner-id" else "ops-artifacts")
+            if command[0] == "docker"
+            else command[command.index("-c") + 1]
+        )
+        return json.dumps(self.target_results[name])
+
+    def check(self, run_id=None):
+        return runtime.check_runtime(self.state, SETTINGS, run_id)
+
+    def test_matching_runtime_reads_all_components_without_mutations_or_artifact_env(
+        self,
+    ):
+        before = {
+            path: path.read_bytes() for path in self.state.rglob("*") if path.is_file()
+        }
+        # Kubernetes may inject a service account mount into a Pod.
+        self.pod["spec"]["containers"][0]["volumeMounts"] = [
+            {
+                "name": "kube-api-access",
+                "mountPath": "/var/run/secrets/kubernetes.io/serviceaccount",
+                "readOnly": True,
+            }
+        ]
+        result = self.check()
+        self.assertEqual(result["status"], "PASS")
+        self.assertEqual(
+            result["checked_components"],
+            ["ops-service", "ops-sync", "evaluation-runner", "ops-artifacts"],
+        )
+        self.assertEqual(result["release_sha256"], self.digest)
+        self.assertFalse(result["evaluation_executed"])
+        self.assertFalse(result["core_admin_auth_verified"])
+        self.assertEqual(
+            before,
+            {
+                path: path.read_bytes()
+                for path in self.state.rglob("*")
+                if path.is_file()
+            },
+        )
+        self.assertTrue(
+            all(call.kwargs["check"] is True for call in self.connect.call_args_list)
+        )
+        self.assertNotIn("--write", self.mocks["run"].call_args.args[0])
+
+    def test_existing_run_is_only_read_by_runtime_diagnostics(self):
+        run_id = UUID("7f5ea1ca-6c60-4bca-a6a3-8af661a241c6")
+        self.diagnostics["runtime"]["result_artifact_verified"] = True
+        result = self.check(run_id)
+        command = next(
+            command for command in self.commands if "schema_is_ready" in command[-1]
+        )
+        self.assertIn("inspect_runtime('" + str(run_id) + "')", command[-1])
+        self.assertTrue(result["runtime"]["result_artifact_verified"])
+
+    def test_source_must_have_an_up_to_date_execution_manifest(self):
+        self.mocks["run"].side_effect = ValueError("stale source release")
+        with self.assertRaisesRegex(ValueError, "stale source"):
+            self.check()
+        self.assertEqual(self.commands, [])
+
+    def test_each_outdated_component_is_rejected_without_diagnostics(self):
+        for name in self.target_results:
+            with self.subTest(component=name):
+                self.commands.clear()
+                self.target_results[name]["release"] = "0" * 64
+                with self.assertRaisesRegex(ValueError, "differs.*" + name):
+                    self.check()
+                self.assertFalse(
+                    any("schema_is_ready" in command[-1] for command in self.commands)
+                )
+                self.target_results[name]["release"] = self.digest
+
+    def test_api_sync_and_runner_must_remain_free_only(self):
+        for name in ("ops-service", "ops-sync", "evaluation-runner"):
+            with self.subTest(component=name):
+                self.target_results[name]["free"] = False
+                with self.assertRaisesRegex(ValueError, "not free-only: " + name):
+                    self.check()
+                self.target_results[name]["free"] = True
+        self.target_results["ops-artifacts"]["free"] = False
+        self.assertEqual(self.check()["status"], "PASS")
+
+    def test_unready_schema_or_failed_diagnostics_or_filesystem_transport_is_rejected(
+        self,
+    ):
+        for change in (
+            {"schema_ready": False},
+            {"runtime": {"status": "FAIL", "storage_transport": "http"}},
+            {"runtime": {"status": "PASS", "storage_transport": "filesystem"}},
+        ):
+            with self.subTest(change=change):
+                original = self.diagnostics
+                self.diagnostics = {**original, **change}
+                with self.assertRaisesRegex(ValueError, "schema or evaluation"):
+                    self.check()
+                self.diagnostics = original
+
+    def test_no_or_multiple_or_terminating_pods_are_rejected(self):
+        for pods in ([], [self.pod, self.pod]):
+            self.pods = pods
+            with self.assertRaisesRegex(ValueError, "one stable"):
+                self.check()
+        self.pods = [self.pod]
+        self.pod["metadata"]["deletionTimestamp"] = "now"
+        with self.assertRaisesRegex(ValueError, "lifecycle"):
+            self.check()
+
+    def test_replica_owned_by_another_deployment_is_rejected(self):
+        self.replica["metadata"]["ownerReferences"][0]["uid"] = "foreign"
+        with self.assertRaisesRegex(ValueError, "another Deployment"):
+            self.check()
+
+    def test_old_pod_image_or_unready_sync_is_rejected(self):
+        self.pod["spec"]["containers"][0]["image"] = "govbiz-ops-service:old"
+        with self.assertRaisesRegex(ValueError, "not ready"):
+            self.check()
+        self.pod["spec"]["containers"][0]["image"] = IMAGE
+        self.pod["status"]["containerStatuses"][1]["ready"] = False
+        with self.assertRaisesRegex(ValueError, "not ready"):
+            self.check()
+
+    def test_baseline_mismatch_or_argo_label_is_rejected(self):
+        self.deployment["spec"]["template"]["spec"]["containers"][0]["image"] = (
+            "govbiz-ops-service:other"
+        )
+        with self.assertRaisesRegex(ValueError, "baseline"):
+            self.check()
+        self.deployment["spec"]["template"]["spec"]["containers"][0]["image"] = IMAGE
+        self.deployment["metadata"]["labels"] = {
+            "argocd.argoproj.io/instance": "owned-elsewhere"
+        }
+        with self.assertRaisesRegex(ValueError, "baseline"):
+            self.check()
+
+    def test_pod_replacement_or_container_restart_during_check_is_rejected(self):
+        self.latest_pod = copy.deepcopy(self.pod)
+        self.latest_pod["metadata"]["uid"] = "replacement"
+        with self.assertRaisesRegex(ValueError, "changed during"):
+            self.check()
+        self.latest_pod = copy.deepcopy(self.pod)
+        self.latest_pod["status"]["containerStatuses"][0]["containerID"] = "restarted"
+        with self.assertRaisesRegex(ValueError, "changed during"):
+            self.check()
+
+    def test_deployment_replacement_or_pod_termination_during_check_is_rejected(self):
+        self.latest_deployment = copy.deepcopy(self.deployment)
+        self.latest_deployment["metadata"]["uid"] = "replacement"
+        with self.assertRaisesRegex(ValueError, "changed during"):
+            self.check()
+        self.latest_deployment = self.deployment
+        self.latest_pod = copy.deepcopy(self.pod)
+        self.latest_pod["metadata"]["deletionTimestamp"] = "now"
+        with self.assertRaisesRegex(ValueError, "changed during"):
+            self.check()
+
+    def test_runner_replacement_or_network_change_during_check_is_rejected(self):
+        self.mocks["evaluation_runner"].side_effect = [
+            {"Id": "runner-id"},
+            {"Id": "replacement"},
+        ]
+        with self.assertRaisesRegex(ValueError, "changed during"):
+            self.check()
+        self.mocks["evaluation_runner"].side_effect = None
+        self.topology.side_effect = [
+            {"containers": {"ops-artifacts": "artifact-id"}},
+            {"containers": {"ops-artifacts": "replacement"}},
+        ]
+        with self.assertRaisesRegex(ValueError, "changed during"):
+            self.check()
+
+    def test_other_active_project_is_rejected_before_any_resource_read(self):
+        (self.state / runtime.PROFILE).write_text(
+            json.dumps(runtime.connection(SETTINGS, "other"))
+        )
+        with self.assertRaisesRegex(ValueError, "projects differ"):
+            self.check()
+        self.assertEqual(self.commands, [])
+
+    def test_check_cli_does_not_require_artifact_credentials(self):
+        from contextlib import nullcontext, redirect_stdout
+        from io import StringIO
+
+        with (
+            patch(
+                "sys.argv",
+                [
+                    "ops_runtime.py",
+                    "--check",
+                    "--run-id",
+                    "7f5ea1ca-6c60-4bca-a6a3-8af661a241c6",
+                ],
+            ),
+            patch.object(runtime, "load_settings", return_value=SETTINGS),
+            patch.object(runtime, "locked", return_value=nullcontext()),
+            patch.object(
+                runtime, "check_runtime", return_value={"status": "PASS"}
+            ) as check,
+            patch.object(runtime, "activate") as activate,
+            redirect_stdout(StringIO()),
+        ):
+            runtime.main()
+        self.assertEqual(
+            check.call_args.args[2], UUID("7f5ea1ca-6c60-4bca-a6a3-8af661a241c6")
+        )
+        activate.assert_not_called()
+
+    def test_check_cli_rejects_activation_inputs(self):
+        from contextlib import redirect_stderr
+        from io import StringIO
+
+        for args in (
+            ["--check", "--artifact-env", "secret.env"],
+            ["--check", "--ops-image", IMAGE],
+            [
+                "--run-id",
+                "7f5ea1ca-6c60-4bca-a6a3-8af661a241c6",
+                "--artifact-env",
+                "secret.env",
+            ],
+            [],
+        ):
+            with (
+                self.subTest(args=args),
+                patch("sys.argv", ["ops_runtime.py", *args]),
+                self.assertRaises(SystemExit),
+                redirect_stderr(StringIO()),
+            ):
+                runtime.main()
 
 
 if __name__ == "__main__":

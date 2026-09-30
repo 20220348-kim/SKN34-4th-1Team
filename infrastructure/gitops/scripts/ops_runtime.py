@@ -2,18 +2,22 @@
 
 import argparse
 import base64
+import hashlib
 import json
 import os
 import re
 import stat
 import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import UUID
 
 import ops_bridge
 import yaml
 from connected_runtime import quiet
 from fork_cluster import (
+    REPOSITORY_ROOT,
     STATE,
     commands,
     load_image,
@@ -142,8 +146,8 @@ def verify_artifact_token(settings, project, token):
     )
 
 
-def verify_release(image, project):
-    """Compare the selected image with the owned free runner; never emit credentials."""
+def evaluation_runner(project):
+    """Select one private runner from the connected Compose project."""
     identities = run(
         [
             "docker",
@@ -169,6 +173,12 @@ def verify_release(image, project):
         or runner.get("Ports")
     ):
         raise ValueError("Evaluation runner ownership or private runtime changed")
+    return runner
+
+
+def verify_release(image, project):
+    """Compare the selected image with the owned free runner; never emit credentials."""
+    runner = evaluation_runner(project)
     identity = run(
         ["docker", "image", "inspect", image, "--format", "{{.Id}}"], capture=True
     ).strip()
@@ -218,6 +228,215 @@ def verify_release(image, project):
             "Ops and runner execution releases differ or runner is not free-only"
         )
     return {"imageId": identity, "runnerId": runner["Id"], "releaseSha256": image_hash}
+
+
+def check_runtime(state, settings, run_id=None):
+    """Read source/runtime releases and readiness without applying or executing work."""
+    require_dev(state, settings)
+    state = Path(state)
+    record = read_connection(state / PROFILE, settings)
+    if read_connection(state / BRIDGE, settings) != record:
+        raise ValueError("Active Ops and bridge projects differ")
+    project = record["composeProject"]
+    ops_bridge.connect(state, settings, project, check=True)
+    baseline_path = state / "baseline.json"
+    if baseline_path.is_symlink() or (state / "dev-images.json").exists():
+        raise ValueError(
+            "Inspect local baseline or restore development overrides first"
+        )
+    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+    if baseline.get("source") != "local":
+        raise ValueError("This runtime check requires a local-image baseline")
+    image = baseline["images"]["ops-service"]
+    if not re.fullmatch(
+        r"govbiz-ops-service:[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}", image
+    ) or image.endswith(":latest"):
+        raise ValueError("Expected a tagged local govbiz-ops-service image")
+    source = (
+        REPOSITORY_ROOT / "backend/ops-service/apps/evaluations/execution_release.json"
+    )
+    if source.is_symlink():
+        raise ValueError("Source execution release must not be a symlink")
+    run(
+        [
+            sys.executable,
+            "-B",
+            source.with_name("execution_spec.py"),
+            "--root",
+            REPOSITORY_ROOT,
+        ],
+        capture=True,
+    )
+    expected = hashlib.sha256(source.read_bytes()).hexdigest()
+    _, nk, _ = commands(state, settings)
+    deployment = json.loads(
+        quiet(nk + ["get", "deployment", "ops-service", "-o", "json"])
+    )
+    containers = deployment["spec"]["template"]["spec"]["containers"]
+    if (
+        [item["name"] for item in containers] != ["ops-service", "ops-sync"]
+        or any(
+            item["image"] != image or item.get("imagePullPolicy") != "Never"
+            for item in containers
+        )
+        or any(
+            key.startswith("argocd.argoproj.io/")
+            for field in ("labels", "annotations")
+            for key in deployment["metadata"].get(field, {})
+        )
+    ):
+        raise ValueError("Ops API/sync do not match the activated local baseline")
+    selector = ",".join(
+        key + "=" + value
+        for key, value in sorted(deployment["spec"]["selector"]["matchLabels"].items())
+    )
+    pods = json.loads(quiet(nk + ["get", "pods", "-l", selector, "-o", "json"]))[
+        "items"
+    ]
+    if len(pods) != 1:
+        raise ValueError("Expected one stable Ops Pod; wait for rollout")
+    pod = pods[0]
+    owners = [
+        item
+        for item in pod["metadata"].get("ownerReferences", [])
+        if item.get("controller") and item["kind"] == "ReplicaSet"
+    ]
+    if len(owners) != 1 or pod["metadata"].get("deletionTimestamp"):
+        raise ValueError("Ops Pod ownership or lifecycle changed")
+    replica = json.loads(
+        quiet(nk + ["get", "replicaset", owners[0]["name"], "-o", "json"])
+    )
+    if replica["metadata"]["uid"] != owners[0]["uid"] or not any(
+        item.get("controller")
+        and item["kind"] == "Deployment"
+        and item["uid"] == deployment["metadata"]["uid"]
+        for item in replica["metadata"].get("ownerReferences", [])
+    ):
+        raise ValueError("Ops Pod belongs to another Deployment")
+    statuses = pod.get("status", {}).get("containerStatuses", [])
+    if (
+        pod.get("status", {}).get("phase") != "Running"
+        or {item["name"] for item in statuses} != {"ops-service", "ops-sync"}
+        or any(
+            item.get("ready") is not True or not item.get("containerID")
+            for item in statuses
+        )
+        or [
+            {
+                key: item.get(key)
+                for key in (
+                    "name",
+                    "image",
+                    "imagePullPolicy",
+                    "env",
+                    "command",
+                    "args",
+                )
+            }
+            for item in pod["spec"]["containers"]
+        ]
+        != [
+            {
+                key: item.get(key)
+                for key in (
+                    "name",
+                    "image",
+                    "imagePullPolicy",
+                    "env",
+                    "command",
+                    "args",
+                )
+            }
+            for item in containers
+        ]
+    ):
+        raise ValueError("Ops API/sync Pod is not ready or its configuration differs")
+    snapshot = ops_bridge.topology(settings, project)
+    runner = evaluation_runner(project)
+    targets = [
+        (
+            name,
+            nk + ["exec", pod["metadata"]["name"], "-c", name, "--", "python"],
+            "/app/apps/evaluations/execution_release.json",
+        )
+        for name in ("ops-service", "ops-sync")
+    ] + [
+        (
+            "evaluation-runner",
+            [
+                "docker",
+                "exec",
+                runner["Id"],
+                "/app/backend/ai-service/.venv/bin/python",
+            ],
+            "/app/backend/ops-service/apps/evaluations/execution_release.json",
+        ),
+        (
+            "ops-artifacts",
+            ["docker", "exec", snapshot["containers"]["ops-artifacts"], "python"],
+            "/app/apps/evaluations/execution_release.json",
+        ),
+    ]
+    for name, command, path in targets:
+        program = (
+            "import hashlib,json,os; from pathlib import Path; print(json.dumps({'release':hashlib.sha256(Path("
+            + repr(path)
+            + ").read_bytes()).hexdigest(),'free':os.environ.get('LLMOPS_LIVE_ENABLED','').lower()=='false' and not os.environ.get('OPENAI_API_KEY')}))"
+        )
+        result = json.loads(quiet(command + ["-c", program]))
+        if result.get("release") != expected:
+            raise ValueError(
+                "Execution release differs from this checkout: "
+                + name
+                + "; rebuild and update matching Ops, runner and artifacts"
+            )
+        if name != "ops-artifacts" and result.get("free") is not True:
+            raise ValueError("Runtime is not free-only: " + name)
+    selected_run = None if run_id is None else str(UUID(str(run_id)))
+    program = (
+        "import os,json; os.environ.setdefault('DJANGO_SETTINGS_MODULE','config.settings'); "
+        "import django; django.setup(); from apps.health.schema import schema_is_ready; "
+        "from apps.evaluations.runtime_checks import inspect_runtime; "
+        "print(json.dumps({'schema_ready':schema_is_ready(),'runtime':inspect_runtime("
+        + repr(selected_run)
+        + ")}))"
+    )
+    diagnostics = json.loads(quiet(targets[0][1] + ["-c", program]))
+    if (
+        diagnostics.get("schema_ready") is not True
+        or diagnostics.get("runtime", {}).get("status") != "PASS"
+        or diagnostics["runtime"].get("storage_transport") != "http"
+    ):
+        raise ValueError("Ops database schema or evaluation configuration is not ready")
+    latest = json.loads(
+        quiet(nk + ["get", "pod", pod["metadata"]["name"], "-o", "json"])
+    )
+    latest_deployment = json.loads(
+        quiet(nk + ["get", "deployment", "ops-service", "-o", "json"])
+    )
+    if (
+        latest["metadata"]["uid"] != pod["metadata"]["uid"]
+        or latest["metadata"].get("deletionTimestamp")
+        or latest.get("status", {}).get("containerStatuses") != statuses
+        or latest_deployment["metadata"]["uid"] != deployment["metadata"]["uid"]
+        or latest_deployment["spec"] != deployment["spec"]
+        or ops_bridge.topology(settings, project) != snapshot
+        or evaluation_runner(project)["Id"] != runner["Id"]
+        or hashlib.sha256(source.read_bytes()).hexdigest() != expected
+        or json.loads(baseline_path.read_text(encoding="utf-8")) != baseline
+    ):
+        raise ValueError("Runtime or source changed during the read-only check; retry")
+    ops_bridge.connect(state, settings, project, check=True)
+    return {
+        "status": "PASS",
+        "scope": "local_ops_release_and_configuration",
+        "release_sha256": expected,
+        "checked_components": [item[0] for item in targets],
+        "pod_uid": pod["metadata"]["uid"],
+        **diagnostics,
+        "evaluation_executed": False,
+        "core_admin_auth_verified": False,
+    }
 
 
 def activate(
@@ -367,7 +586,17 @@ def activate(
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--state-dir", type=Path, default=STATE)
-    parser.add_argument("--artifact-env", type=Path, required=True)
+    parser.add_argument("--artifact-env", type=Path)
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Read source/runtime releases, schema and connection without activation",
+    )
+    parser.add_argument(
+        "--run-id",
+        type=UUID,
+        help="With --check, verify an existing completed evaluation",
+    )
     parser.add_argument("--helm", default="helm")
     parser.add_argument(
         "--ops-image",
@@ -375,6 +604,10 @@ def main():
     )
     parser.add_argument("--kind", default="kind")
     args = parser.parse_args()
+    if args.check and (args.artifact_env is not None or args.ops_image is not None):
+        parser.error("--check cannot be combined with activation inputs")
+    if not args.check and (args.artifact_env is None or args.run_id is not None):
+        parser.error("Activation requires --artifact-env; --run-id requires --check")
     if os.name == "nt":
         parser.error(
             "Run activation inside WSL2 with Linux Python, as for fork_cluster.py"
@@ -382,6 +615,14 @@ def main():
     try:
         settings = load_settings(args.state_dir)
         with locked(args.state_dir):
+            if args.check:
+                print(
+                    json.dumps(
+                        check_runtime(args.state_dir, settings, args.run_id),
+                        sort_keys=True,
+                    )
+                )
+                return
             activate(
                 args.state_dir,
                 settings,
@@ -398,7 +639,14 @@ def main():
         subprocess.SubprocessError,
     ) as error:
         message = str(error) if isinstance(error, ValueError) else type(error).__name__
-        parser.exit(1, "Ops activation stopped: " + message + "\n")
+        parser.exit(
+            1,
+            "Ops "
+            + ("runtime check" if args.check else "activation")
+            + " stopped: "
+            + message
+            + "\n",
+        )
 
 
 if __name__ == "__main__":
