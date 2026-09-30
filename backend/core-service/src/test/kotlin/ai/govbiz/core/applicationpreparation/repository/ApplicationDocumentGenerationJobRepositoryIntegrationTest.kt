@@ -131,14 +131,15 @@ class ApplicationDocumentGenerationJobRepositoryIntegrationTest {
         val expiredInterrupted = requireNotNull(jobs.findOwned(ownerId, interrupted, interruptedJob.id))
         assertEquals(ApplicationDocumentGenerationJobStatus.FAILED, expiredInterrupted.status)
         assertEquals("RUN_INTERRUPTED", expiredInterrupted.failureCode)
-        requireNotNull(jobs.reserve(ownerId, UUID.randomUUID().toString(), interrupted, 1).job)
+        val retried = requireNotNull(jobs.reserve(ownerId, UUID.randomUUID().toString(), interrupted, 1).job)
         val expiredQueued = requireNotNull(jobs.findOwned(ownerId, queued, queuedJob.id))
         assertEquals(ApplicationDocumentGenerationJobStatus.FAILED, expiredQueued.status)
         assertEquals("QUEUE_EXPIRED", expiredQueued.failureCode)
         val expiredRunning = requireNotNull(jobs.findOwned(ownerId, running, runningJob.id))
         assertEquals(ApplicationDocumentGenerationJobStatus.UNKNOWN, expiredRunning.status)
         assertEquals("RUN_OUTCOME_UNKNOWN", expiredRunning.failureCode)
-        assertTrue(jobs.claimable(10).isEmpty())
+        // 만료된 작업은 다시 집히지 않고, 끊긴 준비 건에 새로 접수한 작업만 실행 대상이다.
+        assertEquals(listOf(retried.id), jobs.claimable(10))
         // 결과 불명은 TTL이 지나면 실패로 내려가 준비 건의 활성 슬롯을 비운다.
         jdbc.update("UPDATE application_document_generation_job SET finished_at = DATE_SUB(finished_at, INTERVAL 25 HOUR) WHERE id = ?", runningJob.id)
         jobs.expireStaleWork(java.time.Duration.ofHours(24))

@@ -134,3 +134,131 @@ export const answerEditorStyles = {
   sheetHeader: 'flex items-center justify-between gap-3',
   sheetTitle: 'm-0 text-base font-extrabold text-app-ink',
 } as const
+
+/**
+ * 새 문서 화면(24)입니다. 본문은 다른 작업 화면처럼 내용 폭 전체를 쓰고, 위에서부터 부제 · 2단계 표시 · 이동 버튼 줄 · 단계 내용입니다.
+ * 600px 미만은 단계 표시를 "공고 선택 1 / 2" 막대로 줄이고, 이동 버튼 두 개를 1 : 2로 나눕니다.
+ */
+export const newPreparationStyles = {
+  body: 'flex w-full min-w-0 flex-col gap-4',
+  sub: 'm-0 text-[0.875rem] leading-[1.6] text-ink-muted',
+  stepper: 'm-0 grid list-none grid-cols-2 gap-2 p-0 max-[599px]:hidden',
+  step: 'flex flex-col gap-px rounded-2xl border border-line bg-white px-3 py-2.5',
+  stepDone: 'flex flex-col gap-px rounded-2xl border border-brand-line bg-white px-3 py-2.5 [&>span]:text-brand-primary',
+  stepCurrent: 'flex flex-col gap-px rounded-2xl border border-brand-primary bg-brand-soft px-3 py-2.5 [&>span]:text-brand-primary',
+  stepNo: 'text-[0.72rem] font-bold text-ink-subtle',
+  stepLabel: 'text-[0.85rem] font-bold text-app-ink',
+  stepperM: 'hidden max-[599px]:flex max-[599px]:flex-col max-[599px]:gap-1.5',
+  stepperMLabel: 'm-0 flex items-center justify-between text-[0.85rem] font-extrabold text-app-ink [&>span]:text-ink-muted [&>span]:tabular-nums',
+  stepperMBar: 'h-1.5 overflow-hidden rounded-full bg-surface-muted',
+  stepperMFill: 'block h-full rounded-full bg-brand-primary',
+  stepBody: 'flex flex-col gap-4 outline-none',
+  card: 'flex flex-col gap-2.5 rounded-2xl border border-line bg-white p-5 max-[599px]:p-4',
+  cardTitle: 'm-0 text-[0.95rem] font-extrabold tracking-[-0.02em] text-app-ink',
+  muted: 'm-0 text-[0.8125rem] leading-[1.6] text-ink-muted',
+  subtle: 'm-0 text-[0.78rem] leading-[1.6] text-ink-subtle',
+  empty: 'flex flex-col items-center gap-3 py-4 text-center',
+  // 가운데 정렬한 버튼 아래에 안내 한 줄을 두는 묶음입니다(양식 없음 카드).
+  centeredAction: 'flex flex-col items-center gap-2 py-2 text-center',
+  programTitle: 'text-base leading-[1.45] font-bold text-app-ink [overflow-wrap:anywhere]',
+  programMeta: 'text-[0.8125rem] text-ink-muted tabular-nums',
+  cardFoot: 'flex flex-wrap items-center justify-between gap-2 pt-1',
+  sourceLink: `rounded text-[0.78rem] font-bold text-ink-muted no-underline hover:text-app-ink hover:underline ${focus}`,
+  textLink: `self-start cursor-pointer rounded border-0 bg-transparent p-0 text-[0.8125rem] font-bold text-brand-primary underline-offset-2 hover:underline disabled:cursor-not-allowed disabled:opacity-50 ${focus}`,
+  skeletonLine: 'h-3.5 rounded-md bg-surface-muted motion-safe:animate-pulse',
+  // Alert: 테두리·바탕 색으로 뜻을 나눕니다. 오른쪽에 [다시 시도] 같은 동작 하나를 둘 수 있습니다.
+  alert: 'flex flex-wrap items-start gap-x-4 gap-y-2 rounded-2xl border px-4 py-3 text-[0.8125rem] leading-[1.6] text-app-ink',
+  alertBrand: 'border-brand-line bg-brand-soft',
+  alertInfo: 'border-info-line bg-info-soft',
+  alertNeutral: 'border-line bg-surface-muted',
+  alertWarning: 'border-warning-line bg-warning-soft',
+  alertDanger: 'border-danger-line bg-danger-soft',
+  alertText: 'flex min-w-0 flex-1 flex-col gap-0.5 [&>p]:m-0',
+  alertTitle: 'text-[0.85rem] font-bold',
+  jobList: 'm-0 mt-1.5 flex list-none flex-col gap-1.5 p-0',
+  jobItem: 'flex flex-wrap items-center gap-x-2 gap-y-0.5 rounded-xl bg-white/80 px-3 py-2 text-[0.78rem]',
+  jobTitle: 'min-w-0 flex-1 font-bold text-app-ink',
+  jobMeta: 'text-ink-muted tabular-nums',
+  // 2단계 선택 카드(작성할 양식 · 지원 분야).
+  choiceList: 'm-0 flex min-w-0 flex-col gap-2 border-0 p-0',
+  choice: 'flex cursor-pointer items-start gap-3 rounded-xl border border-line-strong px-3.5 py-3 has-[:checked]:border-brand-primary has-[:checked]:bg-brand-soft has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-60',
+  radio: 'mt-1 size-4 shrink-0 accent-brand-primary',
+  choiceText: 'flex min-w-0 flex-col gap-0.5 text-[0.875rem] font-bold text-app-ink [&>span]:text-[0.78rem] [&>span]:font-normal [&>span]:text-ink-muted',
+  summary: 'flex flex-col gap-2 rounded-2xl border border-line bg-surface-muted px-4 py-3',
+  summaryHead: 'flex flex-wrap items-start justify-between gap-x-3 gap-y-1',
+  summaryText: 'flex min-w-0 flex-1 flex-col gap-0.5 text-[0.8125rem] text-ink-muted [&>strong]:text-[0.875rem] [&>strong]:text-app-ink',
+  warningList: 'm-0 list-disc pl-5 text-[0.78rem] leading-[1.6] text-ink-muted',
+  // 10초 넘는 작업의 진행 카드: 스피너 + 제목 + 경과, 아래 줄 "화면을 나가도 계속돼요".
+  progress: 'flex flex-col gap-3 rounded-2xl border border-brand-line bg-white p-5 shadow-[0_8px_24px_rgb(32_33_36_/_6%)] max-[599px]:p-4',
+  progressHead: 'flex items-start gap-2.5',
+  spinner: 'mt-0.5 size-[18px] shrink-0 rounded-full border-2 border-brand-line border-t-brand-primary motion-safe:animate-spin',
+  progressTitle: 'min-w-0 flex-1 text-[0.95rem] leading-[1.4] font-bold text-app-ink',
+  progressTime: 'text-[0.78rem] whitespace-nowrap text-ink-muted tabular-nums',
+  progressNote: 'm-0 border-t border-line pt-2.5 text-[0.78rem] text-ink-muted',
+  // 버튼. md는 40px, sm은 32px입니다.
+  primary: `inline-flex h-10 cursor-pointer items-center justify-center gap-1 rounded-full border-0 bg-brand-primary px-5 text-[0.8125rem] font-bold text-white no-underline hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-50 ${focus}`,
+  secondary: `inline-flex h-10 cursor-pointer items-center justify-center gap-1 rounded-full border border-line-strong bg-white px-4 text-[0.8125rem] font-bold text-app-ink no-underline hover:border-brand-primary hover:text-brand-primary disabled:cursor-not-allowed disabled:opacity-50 ${focus}`,
+  secondarySm: `inline-flex h-8 shrink-0 cursor-pointer items-center justify-center rounded-full border border-line-strong bg-white px-3 text-[0.75rem] font-bold text-app-ink hover:border-brand-primary hover:text-brand-primary disabled:cursor-not-allowed disabled:opacity-50 ${focus}`,
+  primarySm: `inline-flex h-8 shrink-0 cursor-pointer items-center justify-center rounded-full border-0 bg-brand-primary px-3 text-[0.75rem] font-bold text-white hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-50 ${focus}`,
+  ghost: `inline-flex h-10 cursor-pointer items-center justify-center rounded-full border-0 bg-transparent px-4 text-[0.8125rem] font-bold text-ink-muted no-underline hover:bg-surface-muted hover:text-app-ink disabled:cursor-not-allowed disabled:opacity-50 ${focus}`,
+  // 단계 표시 바로 아래의 이동 버튼 줄입니다. 오른쪽 끝에 [취소]/[이전] · 주 버튼 순서로 두고, 600px 미만은 전체 폭을 1 : 2로 나눕니다.
+  actions: 'flex items-center justify-end gap-2 max-[599px]:[&>*:first-child]:flex-1 max-[599px]:[&>*:last-child]:flex-[2]',
+} as const
+
+/** 지원 공고 상태 배지 · D-n 배지 · 출처 배지입니다. 1단계 카드와 공고 고르기 행이 함께 씁니다. */
+export const programBadgeStyles = {
+  row: 'flex flex-wrap items-center gap-1.5',
+  badge: 'inline-flex h-[22px] items-center gap-1 rounded-md border border-transparent px-[7px] text-[0.72rem] font-bold whitespace-nowrap',
+  dot: 'size-1.5 rounded-full bg-current',
+  brand: 'bg-brand-soft text-brand-primary',
+  info: 'bg-info-soft text-info',
+  neutral: 'bg-surface-muted text-ink-muted',
+  warning: 'bg-warning-soft text-warning',
+  danger: 'bg-danger-soft text-danger',
+  outline: 'border-line bg-white text-ink-muted',
+} as const
+
+/**
+ * 공고 고르기 패널입니다. PC는 오른쪽 400px 옆 패널(화면 높이 전체), 600px 미만은 86dvh 바텀 시트입니다.
+ * 뒤 화면을 가리지 않는 투명 배경을 깔아 바깥을 누르면 닫힙니다.
+ */
+export const programPickerStyles = {
+  overlay: 'fixed inset-0 z-50 bg-transparent',
+  panel: 'fixed inset-y-0 right-0 flex w-[400px] max-w-full flex-col border-l border-line bg-white shadow-[-12px_0_32px_rgb(32_33_36_/_12%)] outline-none max-[599px]:inset-x-0 max-[599px]:top-auto max-[599px]:h-[86dvh] max-[599px]:w-full max-[599px]:rounded-t-[22px] max-[599px]:border-t max-[599px]:border-l-0 max-[599px]:shadow-[0_-12px_32px_rgb(32_33_36_/_12%)]',
+  grab: 'absolute top-2 left-1/2 hidden h-1 w-9 -translate-x-1/2 rounded-full bg-line-strong max-[599px]:block',
+  header: 'flex items-start gap-3 border-b border-line px-5 pt-5 pb-4 max-[599px]:px-4',
+  headerText: 'flex min-w-0 flex-1 flex-col gap-0.5',
+  title: 'm-0 text-base font-extrabold text-app-ink',
+  sub: 'm-0 text-[0.78rem] text-ink-muted',
+  close: `grid size-9 shrink-0 cursor-pointer place-items-center rounded-full border-0 bg-transparent text-base text-ink-muted hover:bg-surface-muted hover:text-app-ink ${focus}`,
+  body: 'flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-y-auto px-5 py-4 max-[599px]:px-4',
+  // 관심 공고함 · 전체 검색 세그먼트. 패널 안쪽 폭을 넘지 않고 두 탭이 폭을 반씩 나눕니다(글자가 길면 줄바꿈).
+  segment: 'flex w-full min-w-0 max-w-full shrink-0 gap-[3px] rounded-full bg-surface-muted p-[3px]',
+  segmentTab: `flex min-h-[34px] min-w-0 flex-[1_1_0] cursor-pointer items-center justify-center rounded-full border-0 bg-transparent px-2 py-1 text-center text-[0.8125rem] leading-[1.3] font-bold text-ink-muted hover:text-app-ink aria-selected:bg-white aria-selected:text-app-ink aria-selected:shadow-[0_1px_3px_rgb(32_33_36_/_12%)] ${focus} max-[599px]:min-h-[38px]`,
+  tabPanel: 'flex min-w-0 flex-col gap-3',
+  searchRow: 'flex gap-2',
+  searchInput: `h-10 min-w-0 flex-1 rounded-xl border border-line-strong bg-white px-3 text-[0.875rem] text-app-ink placeholder:text-ink-subtle focus-visible:border-brand-primary ${focus} max-[599px]:text-base`,
+  filterToggle: `inline-flex h-8 cursor-pointer items-center gap-1 self-start rounded-full border border-line-strong bg-white px-3 text-[0.75rem] font-bold text-app-ink hover:border-brand-primary aria-expanded:border-brand-primary aria-expanded:text-brand-primary ${focus}`,
+  filters: 'grid grid-cols-2 gap-2 rounded-xl border border-line bg-surface-muted p-3',
+  filterField: 'grid min-w-0 gap-1 text-[0.7rem] font-bold text-ink-muted',
+  multiInput: 'w-full min-w-0 justify-between',
+  filterHint: 'col-span-2 m-0 text-[0.72rem] text-ink-muted',
+  filterInput: 'h-10 w-full min-w-0 rounded-xl border border-line-strong bg-white px-3 text-[0.8125rem] font-semibold text-app-ink focus-visible:outline-2 focus-visible:outline-brand-primary disabled:opacity-50',
+  chips: 'flex flex-wrap items-center gap-1.5',
+  chip: `inline-flex h-7 cursor-pointer items-center gap-1 rounded-full border border-line bg-white px-2.5 text-[0.72rem] font-semibold text-app-ink hover:border-brand-primary ${focus}`,
+  resetLink: `ml-auto cursor-pointer rounded border-0 bg-transparent p-0 text-[0.72rem] font-bold text-brand-primary hover:underline ${focus}`,
+  count: 'm-0 text-[0.72rem] text-ink-muted tabular-nums',
+  list: 'm-0 flex list-none flex-col gap-2 p-0',
+  row: 'flex flex-col gap-2 rounded-2xl border border-line bg-white px-3.5 py-3 has-[:checked]:border-brand-primary has-[:checked]:shadow-[0_0_0_3px_rgb(8_127_70_/_14%)]',
+  rowLabel: 'flex cursor-pointer items-start gap-2.5',
+  radio: 'mt-0.5 size-4 shrink-0 accent-brand-primary',
+  rowText: 'flex min-w-0 flex-1 flex-col gap-1',
+  rowTitle: 'text-[0.85rem] leading-[1.45] font-bold text-app-ink [overflow-wrap:anywhere]',
+  rowMeta: 'text-[0.75rem] text-ink-muted tabular-nums',
+  availOk: 'm-0 flex items-center gap-1.5 pl-[26px] text-[0.78rem] font-bold text-brand-primary',
+  availNone: 'm-0 flex items-center gap-1.5 pl-[26px] text-[0.78rem] font-bold text-ink-muted',
+  availError: 'ml-[26px] flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-xl border border-danger-line bg-danger-soft px-3 py-2 text-[0.75rem] text-app-ink',
+  rowSkeleton: 'h-[76px] rounded-2xl bg-surface-muted motion-safe:animate-pulse',
+  state: 'flex flex-col items-center gap-3 rounded-2xl border border-dashed border-line-strong px-4 py-8 text-center text-[0.8125rem] text-ink-muted',
+  footer: 'flex items-center gap-2 border-t border-line px-5 pt-3 pb-4 max-[599px]:px-4 max-[599px]:pb-[calc(1rem+env(safe-area-inset-bottom))] [&>*:last-child]:flex-1 max-[599px]:[&>*:first-child]:flex-1 max-[599px]:[&>*:last-child]:flex-[2]',
+} as const

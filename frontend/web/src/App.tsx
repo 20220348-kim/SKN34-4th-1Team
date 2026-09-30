@@ -6,6 +6,7 @@ import { useRestoreSupportProgramSearch } from './presentation/features/chat/hoo
 import { ChatActivityToast } from './presentation/shared/chat-activity/ChatActivityToast'
 import { CombinationReviewListPage, CombinationReviewEditorPage, CombinationReviewRunResultPage } from './presentation/features/combination-review/view/CombinationReviewPages'
 import { ApplicationPreparationEditorPage, ApplicationPreparationListPage } from './presentation/features/application-preparation/view/ApplicationPreparationPages'
+import { ApplicationPreparationNewPage } from './presentation/features/application-preparation/view/ApplicationPreparationNewPage'
 import { ApplicationDocumentPage } from './presentation/features/application-preparation/view/ApplicationDocumentPage'
 import { DailyReportPage } from './presentation/features/daily-report/view/DailyReportPage'
 import { DailyReportEmailPage } from './presentation/features/daily-report/view/DailyReportEmailPage'
@@ -124,7 +125,7 @@ function CoreApp() {
           <Route path={appPaths.reports} element={<DailyReportPage />} />
           <Route path={appPaths.savedPrograms} element={<SavedProgramsPage />} />
           <Route path={appPaths.applicationPreparations} element={<ApplicationPreparationListPage />} />
-          <Route path={appPaths.applicationPreparationNew} element={<ApplicationPreparationEditorPage create />} />
+          <Route path={appPaths.applicationPreparationNew} element={<ApplicationPreparationNewPage />} />
           <Route path={appPaths.applicationPreparationDetail} element={<ApplicationPreparationEditorPage />} />
           <Route path={appPaths.applicationPreparationDocuments} element={<ApplicationDocumentPage />} />
           <Route path={appPaths.combinationReviews} element={<CombinationReviewListPage />} />

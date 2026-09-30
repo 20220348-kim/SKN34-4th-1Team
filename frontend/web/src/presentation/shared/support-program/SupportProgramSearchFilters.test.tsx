@@ -6,21 +6,19 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createAppStore } from '../../../app/store'
 import { supportPrograms } from '../../../data/fixtures/supportPrograms'
 import { signedIn } from '../auth/state/authSlice'
-import { ApplicationPreparationEditorPage } from '../../features/application-preparation/view/ApplicationPreparationPages'
 import { CombinationReviewEditorPage } from '../../features/combination-review/view/CombinationReviewPages'
 import { chooseOption, selectedValue } from '../../../test/selectField'
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
+// 신청 문서 새 문서 화면은 공고 고르기 패널로 바뀌어 ApplicationPreparationPages.test.tsx에서 필터 검색을 검증한다.
 describe.each([
-  { title: '신청 문서', path: '/app/application-preparations/new', next: '다음', selected: '선택한 공고' },
   { title: '중복 지원 검토', path: '/app/combination-reviews/new', next: '다음 공고', selected: '현재 선택한 공고' },
 ])('$title 공고 필터 검색', ({ path, next, selected }) => {
   function mount() {
     const store = createAppStore()
     store.dispatch(signedIn({ email: 'filters@example.com', role: 'USER', tier: 'MEMBER', emailVerified: false, hasPassword: true, accountType: null, onboarded: true, company: null }))
     render(<Provider store={store}><MemoryRouter initialEntries={[path]}><Routes>
-      <Route path="/app/application-preparations/new" element={<ApplicationPreparationEditorPage create />} />
       <Route path="/app/combination-reviews/new" element={<CombinationReviewEditorPage create />} />
     </Routes></MemoryRouter></Provider>)
   }
