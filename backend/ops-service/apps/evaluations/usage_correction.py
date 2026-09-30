@@ -54,50 +54,89 @@ def read_receipt(run_id, sequence):
         if set(envelope) != {"payload", "signature"} or len(settings.LLMOPS_BUDGET_TOKEN) < 32:
             raise ValueError
         payload = envelope["payload"]
+        version = payload.get("version")
+        if type(version) is not int or version not in {1, 2}:
+            raise ValueError
         canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
         signature = hmac.new(
             settings.LLMOPS_BUDGET_TOKEN.encode(),
-            b"govbiz-budget-usage-v1\n" + canonical,
+            f"govbiz-budget-usage-v{version}\n".encode() + canonical,
             hashlib.sha256,
         ).hexdigest()
         if not hmac.compare_digest(signature, envelope["signature"]):
             raise ValueError
-        if (
-            set(payload)
-            != {
-                "version",
-                "source",
-                "run_id",
-                "worker_id",
-                "flow_id",
-                "spec_hash",
-                "sequence",
-                "model",
-                "max_output_tokens",
-                "response_id",
-                "response_status",
-                "usage",
-                "observed_at",
+        fields = {
+            "version",
+            "source",
+            "run_id",
+            "worker_id",
+            "flow_id",
+            "spec_hash",
+            "sequence",
+            "model",
+            "max_output_tokens",
+            "usage",
+            "observed_at",
+        }
+        fields |= (
+            {"response_id", "response_status"}
+            if version == 1
+            else {
+                "operation_id",
+                "operation_kind",
+                "dimensions",
+                "input_sha256",
+                "max_input_tokens",
+                "provider_request_id",
             }
-            or type(payload["version"]) is not int
-            or payload["version"] != 1
-            or payload["source"] != "WORKER_RESPONSE"
+        )
+        if (
+            set(payload) != fields
+            or payload["source"]
+            != ("WORKER_RESPONSE" if version == 1 else "WORKER_EMBEDDING_RESPONSE")
             or type(payload["sequence"]) is not int
+            or not 0 <= payload["sequence"] <= 511
             or payload["sequence"] != sequence
             or payload["run_id"] != str(run_id)
             or type(payload["max_output_tokens"]) is not int
-            or not re.fullmatch(r"resp_[A-Za-z0-9_-]{1,180}", payload["response_id"])
             or not re.fullmatch(r"[a-f0-9]{64}", payload["spec_hash"])
-            or payload["response_status"] not in {"completed", "incomplete", "failed", "cancelled"}
         ):
             raise ValueError
+        if version == 1:
+            if not re.fullmatch(r"resp_[A-Za-z0-9_-]{1,180}", payload["response_id"]) or payload[
+                "response_status"
+            ] not in {"completed", "incomplete", "failed", "cancelled"}:
+                raise ValueError
+        else:
+            kind = payload["operation_kind"]
+            if (
+                kind not in {"document_embedding", "query_embedding"}
+                or not re.fullmatch(
+                    kind + r":[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}", payload["operation_id"]
+                )
+                or payload["model"] not in {"text-embedding-3-small", "text-embedding-3-large"}
+                or type(payload["dimensions"]) is not int
+                or not 1
+                <= payload["dimensions"]
+                <= (1536 if payload["model"].endswith("small") else 3072)
+                or not re.fullmatch(r"[a-f0-9]{64}", payload["input_sha256"])
+                or type(payload["max_input_tokens"]) is not int
+                or not 1 <= payload["max_input_tokens"] <= 262112
+                or payload["max_output_tokens"] != 0
+                or not re.fullmatch(
+                    r"[A-Za-z0-9][A-Za-z0-9_-]{0,199}", payload["provider_request_id"]
+                )
+            ):
+                raise ValueError
         for key in ("worker_id", "flow_id"):
             if str(UUID(payload[key])) != payload[key]:
                 raise ValueError
         stamp = parse_datetime(payload["observed_at"])
         if stamp is None or timezone.is_naive(stamp):
             raise ValueError
-        validate_usage(payload["usage"], payload["max_output_tokens"])
+        validate_usage(
+            payload["usage"], payload["max_output_tokens"], payload.get("max_input_tokens")
+        )
         return raw.decode("utf-8"), hashlib.sha256(raw).hexdigest(), payload, stamp
     except (OSError, ValueError, TypeError, KeyError, AttributeError, BudgetUnavailable):
         raise CorrectionUnavailable("사용량 증거의 파일·서명·계약을 확인할 수 없습니다.") from None
@@ -108,7 +147,12 @@ def correction_data(record):
         "request_id": str(record.request_id),
         "run_id": str(record.call.reservation_id),
         "sequence": record.call.sequence,
-        "source": "WORKER_RESPONSE",
+        "source": "WORKER_EMBEDDING_RESPONSE" if record.provider_request_id else "WORKER_RESPONSE",
+        **(
+            {"provider_request_id": record.provider_request_id}
+            if record.provider_request_id
+            else {}
+        ),
         "actor": record.actor,
         "reason": record.reason,
         "evidence_sha256": record.evidence_sha256,
@@ -182,7 +226,6 @@ def correct_usage(
             or evidence["spec_hash"] != run.execution_spec_sha256
             or evidence["flow_id"] != str(run.prefect_flow_run_id)
             or evidence["worker_id"] != str(reservation.worker_id)
-            or evidence["model"] != run.live_config.get("model")
             or reservation.max_input_tokens != run.live_config.get("max_input_tokens")
             or reservation.max_calls != run.live_config.get("max_model_calls")
             or reservation.max_output_tokens != run.live_config.get("max_output_tokens")
@@ -210,17 +253,40 @@ def correct_usage(
             raise CorrectionUnavailable("승인된 호출 번호를 확인할 수 없습니다.")
         call = next(call for call in calls if call.sequence == sequence)
         input_cap, output_cap = call_limits(call)
-        if evidence["max_output_tokens"] != output_cap or (
-            plan is not None and plan[sequence]["kind"] != "answer"
+        item = plan[sequence] if plan is not None else None
+        if evidence["version"] == 1:
+            if (
+                evidence["max_output_tokens"] != output_cap
+                or evidence["model"] != run.live_config.get("model")
+                or (item is not None and item["kind"] != "answer")
+            ):
+                raise CorrectionUnavailable("답변 생성 응답의 승인 상한과 증거가 일치해야 합니다.")
+        elif (
+            item is None
+            or item["kind"] == "answer"
+            or evidence["operation_id"] != call.operation_id
+            or evidence["operation_kind"] != item["kind"]
+            or evidence["model"] != item["model"]
+            or evidence["dimensions"] != item["dimensions"]
+            or evidence["input_sha256"] != item["input_sha256"]
+            or evidence["max_input_tokens"] != input_cap
+            or input_cap != item["max_input_tokens"]
+            or evidence["max_output_tokens"] != output_cap
+            or output_cap != item["max_output_tokens"]
         ):
-            raise CorrectionUnavailable("답변 생성 응답의 승인 상한과 증거가 일치해야 합니다.")
+            raise CorrectionUnavailable("임베딩 배치의 승인 명세·상한과 증거가 일치해야 합니다.")
         if call.settled_at or hasattr(call, "correction"):
             raise CorrectionUnavailable(
                 "이미 정산·보정된 호출입니다. 원래 보정 요청 ID를 재사용하세요."
             )
         if not call.authorized_at <= observed_at <= reservation.closed_at:
             raise CorrectionUnavailable("사용량 관측 시각이 승인과 예약 종료 사이에 있어야 합니다.")
-        if EvaluationUsageCorrection.objects.filter(response_id=evidence["response_id"]).exists():
+        identity = (
+            {"response_id": evidence["response_id"]}
+            if evidence["version"] == 1
+            else {"provider_request_id": evidence["provider_request_id"]}
+        )
+        if EvaluationUsageCorrection.objects.filter(**identity).exists():
             raise CorrectionUnavailable("이미 다른 호출에 반영한 응답 증거입니다.")
         if EvaluationUsageCorrection.objects.filter(evidence_sha256=evidence_hash).exists():
             raise CorrectionUnavailable("이미 반영한 사용량 증거입니다.")
@@ -271,12 +337,16 @@ def correct_usage(
             reason=reason,
             evidence_sha256=evidence_hash,
             evidence_raw=raw,
-            response_id=evidence["response_id"],
+            response_id=evidence.get("response_id"),
+            provider_request_id=evidence.get("provider_request_id"),
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             original_call={
                 "worker_id": str(reservation.worker_id),
                 "sequence": sequence,
+                "operation_id": call.operation_id,
+                "max_input_tokens": input_cap,
+                "max_output_tokens": output_cap,
                 "authorized_at": call.authorized_at.isoformat(),
                 "settled_at": None,
                 "input_tokens": call.input_tokens,

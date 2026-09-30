@@ -82,8 +82,39 @@ class BudgetClient:
             "response_status": body["status"], "usage": usage,
             "observed_at": datetime.now(timezone.utc).isoformat(),
         }
+        self._write_usage_receipt(directory, sequence, payload)
+
+    def record_embedding_usage_receipt(self, directory, sequence, operation, provider_request_id, usage):
+        """Keep the observed request ID, batch identity and usage; never invent a response ID."""
+        if (not isinstance(provider_request_id, str)
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,199}", provider_request_id)):
+            return  # Usage can settle normally; a lost settlement without this ID stays unknown.
+        if (operation.get("kind") not in {"document_embedding", "query_embedding"}
+                or type(sequence) is not int or not 0 <= sequence <= 511
+                or type(operation.get("max_input_tokens")) is not int
+                or not 1 <= operation["max_input_tokens"] <= 262112
+                or type(operation.get("max_output_tokens")) is not int or operation["max_output_tokens"] != 0
+                or not isinstance(usage, dict) or set(usage) != {"input_tokens", "output_tokens", "total_tokens"}
+                or any(type(value) is not int for value in usage.values())
+                or not 0 <= usage["input_tokens"] <= operation["max_input_tokens"]
+                or usage["output_tokens"] != 0 or usage["total_tokens"] != usage["input_tokens"]):
+            raise BudgetUnavailable("Invalid embedding usage receipt")
+        payload = {
+            "version": 2, "source": "WORKER_EMBEDDING_RESPONSE", "run_id": self.run_id,
+            **self.identity, "sequence": sequence, "operation_id": operation["id"],
+            "operation_kind": operation["kind"], "model": operation["model"],
+            "dimensions": operation["dimensions"], "input_sha256": operation["input_sha256"],
+            "max_input_tokens": operation["max_input_tokens"], "max_output_tokens": 0,
+            "provider_request_id": provider_request_id, "usage": usage,
+            "observed_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self._write_usage_receipt(directory, sequence, payload)
+
+    def _write_usage_receipt(self, directory, sequence, payload):
+        """Both receipt versions use the same exclusive, durable file boundary."""
         canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-        signature = hmac.new(self.token.encode(), b"govbiz-budget-usage-v1\n" + canonical,
+        domain = f"govbiz-budget-usage-v{payload['version']}\n".encode()
+        signature = hmac.new(self.token.encode(), domain + canonical,
                              hashlib.sha256).hexdigest()
         raw = json.dumps({"payload": payload, "signature": signature},
                          sort_keys=True, separators=(",", ":")).encode()

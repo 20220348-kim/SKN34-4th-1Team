@@ -342,7 +342,8 @@ class EvaluationUsageCorrection(models.Model):
     actor = models.CharField(max_length=150)
     reason = models.CharField(max_length=1000)
     evidence_sha256 = models.CharField(max_length=64, unique=True)
-    response_id = models.CharField(max_length=185, unique=True)
+    response_id = models.CharField(max_length=185, unique=True, null=True)
+    provider_request_id = models.CharField(max_length=200, unique=True, null=True)
     evidence_raw = models.TextField()
     input_tokens = models.PositiveBigIntegerField()
     output_tokens = models.PositiveBigIntegerField()
@@ -356,5 +357,16 @@ class EvaluationUsageCorrection(models.Model):
             models.CheckConstraint(
                 condition=~models.Q(actor="") & ~models.Q(reason=""),
                 name="usage_correction_attribution",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(response_id__isnull=False, provider_request_id__isnull=True)
+                    & ~models.Q(response_id="")
+                )
+                | (
+                    models.Q(response_id__isnull=True, provider_request_id__isnull=False)
+                    & ~models.Q(provider_request_id="")
+                ),
+                name="usage_correction_response_identity",
             ),
         ]

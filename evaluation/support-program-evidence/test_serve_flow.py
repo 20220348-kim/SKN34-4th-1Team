@@ -130,7 +130,7 @@ def test_embedding_guard_is_wired_before_sdk_transmission(tmp_path, monkeypatch)
     operations = embedding_operations(["hello"], kind="document_embedding", label="doc",
         model="text-embedding-3-small", dimensions=1536, request_token_limit=8191)
     budget = Mock(authorize=AsyncMock(), settle=AsyncMock())
-    guard = EmbeddingBudget(budget, operations)
+    guard = EmbeddingBudget(budget, operations, receipt_directory=tmp_path / "run")
     original_init = httpx2.AsyncClient.__init__
 
     def forbidden(request):

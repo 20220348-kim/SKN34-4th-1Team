@@ -150,8 +150,9 @@ export function RunBudgetPanel({ runId, onExpired, refreshKey }: { runId: string
             <p>사유: {record.reason}</p>
             <p>확인 사용량: 입력 {count(record.input_tokens)} / 출력 {count(record.output_tokens)}토큰</p>
             <p>입력 할당 기록: {inputCount(data.reservation?.max_input_tokens == null ? null : record.before.reservation_input_tokens)} → {inputCount(data.reservation?.max_input_tokens == null && record.after.unknown_calls > 0 ? null : record.after.reservation_input_tokens)} · 과거 미확인 입력은 보정 후 합산됩니다.</p>
+            {record.source === 'WORKER_EMBEDDING_RESPONSE' && <p>입력 차액 반환: {count(record.before.reservation_input_tokens! - record.after.reservation_input_tokens!)}토큰</p>}
             <p>예약 차액 반환: {count(record.before.reservation_output_tokens - record.after.reservation_output_tokens)}출력 토큰 · 호출 횟수 유지</p>
-            <p className="break-all text-xs text-sample-muted">응답: {record.response_id} · 증거 SHA-256: {record.evidence_sha256}</p>
+            <p className="break-all text-xs text-sample-muted">{record.source === 'WORKER_EMBEDDING_RESPONSE' ? `임베딩 요청: ${record.provider_request_id}` : `응답: ${record.response_id}`} · 증거 SHA-256: {record.evidence_sha256}</p>
             <p className="break-all text-xs text-sample-muted">보정 요청: {record.request_id}</p>
           </article>)}
           <p className="text-xs text-sample-muted">변경자는 CLI 운영자가 입력한 값입니다. 실행기가 보관한 사용량이며 제공자의 청구 확정이나 실제 결제 환불을 뜻하지 않습니다.</p>
