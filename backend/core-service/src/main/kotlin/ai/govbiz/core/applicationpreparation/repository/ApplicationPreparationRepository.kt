@@ -1,6 +1,7 @@
 package ai.govbiz.core.applicationpreparation.repository
 
 import ai.govbiz.core.applicationpreparation.domain.ApplicationPreparationSummary
+import ai.govbiz.core.applicationpreparation.domain.ApplicationPreparationListStatus
 import ai.govbiz.core.applicationpreparation.domain.ApplicationProgressStage
 import ai.govbiz.core.applicationpreparation.domain.ApplicationProgressUpdateResult
 import ai.govbiz.core.applicationpreparation.domain.ApplicationServiceField
@@ -46,9 +47,9 @@ class ApplicationPreparationRepository(
         return mapper.findOwned(ownerAccountId, preparationId)?.toStored()
     }
 
-    fun listOwned(ownerAccountId: Long, beforeId: Long?, limit: Int): List<ApplicationPreparationSummary> {
+    fun listOwned(ownerAccountId: Long, beforeId: Long?, limit: Int, status: ApplicationPreparationListStatus? = null): List<ApplicationPreparationSummary> {
         require(ownerAccountId > 0 && (beforeId == null || beforeId > 0) && limit in 1..51)
-        return mapper.listOwned(ownerAccountId, beforeId, limit).map { row ->
+        return mapper.listOwned(ownerAccountId, beforeId, limit, status?.name).map { row ->
             ApplicationPreparationSummary(
                 id = row.id,
                 inputRevision = row.inputRevision,
@@ -61,6 +62,7 @@ class ApplicationPreparationRepository(
                 serviceField = ApplicationServiceField.valueOf(row.serviceField),
                 createdAt = requireNotNull(row.createdAt),
                 updatedAt = requireNotNull(row.updatedAt),
+                hasCurrentDocument = row.hasCurrentDocument,
             )
         }
     }

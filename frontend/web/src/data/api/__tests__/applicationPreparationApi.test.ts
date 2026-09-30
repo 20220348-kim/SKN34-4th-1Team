@@ -200,7 +200,7 @@ describe('application preparation HTTP boundary', () => {
     const repository = new ApplicationPreparationRepositoryImpl()
     await repository.forms()
     await repository.discover('BIZINFO', 'PBLN_1')
-    await repository.list(20)
+    await repository.list({ beforeId: 20, status: 'done' })
     await repository.create(creation)
     await repository.get(1)
 
@@ -208,7 +208,7 @@ describe('application preparation HTTP boundary', () => {
     expect(calls.map(([url]) => url)).toEqual([
       expect.stringMatching(/\/api\/v1\/application-preparations\/forms$/),
       expect.stringMatching(/\/api\/v1\/application-preparations\/forms\/discovery-jobs$/),
-      expect.stringMatching(/\/api\/v1\/application-preparations\?size=20&beforeId=20$/),
+      expect.stringMatching(/\/api\/v1\/application-preparations\?size=20&beforeId=20&status=done$/),
       expect.stringMatching(/\/api\/v1\/application-preparations$/),
       expect.stringMatching(/\/api\/v1\/application-preparations\/1$/),
     ])

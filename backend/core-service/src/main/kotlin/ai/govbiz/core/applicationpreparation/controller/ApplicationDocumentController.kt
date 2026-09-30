@@ -40,11 +40,22 @@ class ApplicationDocumentController(private val service: ApplicationDocumentServ
     @GetMapping("/{fileId}/download")
     fun download(account: Account, @PathVariable @Min(1) id: Long, @PathVariable @Min(1) fileId: Long): ResponseEntity<ByteArray> {
         val file = service.download(account, id, fileId)
-        return ResponseEntity.ok().cacheControl(CacheControl.noStore())
-            .contentType(MediaType.parseMediaType(file.mediaType)).contentLength(file.bytes.size.toLong())
-            .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment().filename(file.fileName, StandardCharsets.UTF_8).build().toString())
-            .header("X-Content-Type-Options", "nosniff").body(file.bytes)
+        return attachment(file.fileName, file.mediaType, file.bytes)
     }
+
+    @GetMapping("/archive")
+    fun archive(account: Account, @PathVariable @Min(1) id: Long, @RequestParam @Min(1) revision: Long): ResponseEntity<ByteArray> {
+        val archive = service.archive(account, id, revision)
+        return attachment(archive.fileName, archive.mediaType, archive.bytes).let {
+            ResponseEntity.status(it.statusCode).headers(it.headers).header("X-Archive-File-Count", archive.fileCount.toString()).body(it.body)
+        }
+    }
+
+    private fun attachment(fileName: String, mediaType: String, bytes: ByteArray): ResponseEntity<ByteArray> =
+        ResponseEntity.ok().cacheControl(CacheControl.noStore())
+            .contentType(MediaType.parseMediaType(mediaType)).contentLength(bytes.size.toLong())
+            .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment().filename(fileName, StandardCharsets.UTF_8).build().toString())
+            .header("X-Content-Type-Options", "nosniff").body(bytes)
 
     private fun response(files: List<ApplicationDocumentFile>) = ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(files.map {
         ApplicationDocumentResponse(it.id, it.inputRevision, it.fileName, it.mediaType, it.bytes.size,

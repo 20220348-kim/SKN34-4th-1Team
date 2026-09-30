@@ -4,6 +4,8 @@ import ai.govbiz.core.applicationpreparation.service.dto.ApplicationOnlineInputG
 import ai.govbiz.core.applicationpreparation.client.ai.ApplicationOnlineFormMcpClient
 import ai.govbiz.core.applicationpreparation.client.ai.exception.ApplicationOnlineFormMcpException
 import ai.govbiz.core.applicationpreparation.domain.ApplicationOnlineFormSourceReference
+import ai.govbiz.core.applicationpreparation.domain.ApplicationFactStatus
+import ai.govbiz.core.applicationpreparation.domain.ApplicationPreparationListStatus
 import ai.govbiz.core.applicationpreparation.service.dto.ApplicationOnlineFormSourceCapabilityResult
 import ai.govbiz.core.applicationpreparation.service.dto.ApplicationOnlineFormSourceCapabilityStatus
 import java.net.URI
@@ -139,11 +141,25 @@ class ApplicationPreparationService(
         )
     }
 
-    fun listOwned(account: Account, beforeId: Long?, size: Int): ApplicationPreparationPageResult {
+    fun listOwned(account: Account, beforeId: Long?, size: Int, status: ApplicationPreparationListStatus? = null): ApplicationPreparationPageResult {
         require(size in 1..50 && (beforeId == null || beforeId > 0))
-        val rows = repository.listOwned(account.id, beforeId, size + 1)
-        val items = rows.take(size).map { summary ->
-            ApplicationPreparationListItemResult(summary, forms.requireVersion(summary.formVersionId))
+        val rows = repository.listOwned(account.id, beforeId, size + 1, status)
+        val page = rows.take(size)
+        // 목록 카드의 "답변 n / m"은 양식 매니페스트의 필수 문항과 저장된 PROVIDED 사실을 대조해 계산한다.
+        val factKeys = inputs.listFactKeys(account.id, page.map { it.id }).groupBy { it.preparationId }
+        val items = page.map { summary ->
+            val manifest = forms.requireVersion(summary.formVersionId)
+            val required = manifest.sections.flatMap { section -> section.fields.filter { it.required }.map { section.key to it.key } }.toSet()
+            val answered = factKeys[summary.id].orEmpty()
+                .filter { it.status == ApplicationFactStatus.PROVIDED }
+                .map { it.sectionKey to it.fieldKey }
+                .toSet()
+            val program = supportPrograms.findPresentBySourceAndProgramId(summary.sourceCode, summary.sourceProgramId)?.program
+            ApplicationPreparationListItemResult(
+                summary, manifest,
+                answeredRequired = required.count { it in answered }, requiredTotal = required.size,
+                applicationPeriod = program?.applicationPeriod, applicationEndDate = program?.applicationEndDate,
+            )
         }
         return ApplicationPreparationPageResult(items, items.lastOrNull()?.preparation?.id?.takeIf { rows.size > size })
     }

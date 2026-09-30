@@ -8,6 +8,7 @@ import org.apache.ibatis.annotations.Param
 interface ApplicationPreparationInputMapper {
     fun lockOwnedRevision(@Param("ownerId") ownerId: Long, @Param("preparationId") preparationId: Long): Long?
     fun listOwnedFacts(@Param("ownerId") ownerId: Long, @Param("preparationId") preparationId: Long): List<ApplicationPreparationFactDbRow>
+    fun listFactKeys(@Param("ownerId") ownerId: Long, @Param("preparationIds") preparationIds: List<Long>): List<ApplicationPreparationFactKeyDbRow>
     fun listSectionFacts(@Param("preparationId") preparationId: Long, @Param("sectionKey") sectionKey: String): List<ApplicationPreparationFactDbRow>
     fun deleteSectionFacts(@Param("preparationId") preparationId: Long, @Param("sectionKey") sectionKey: String): Int
     fun insertFact(row: ApplicationPreparationFactDbRow): Int

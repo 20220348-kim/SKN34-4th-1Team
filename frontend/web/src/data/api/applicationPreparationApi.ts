@@ -67,10 +67,18 @@ export async function applicationPreparationRequest<T>(
   }
 }
 
-export async function downloadApplicationDocument(id: number, fileId: number, signal?: AbortSignal): Promise<Blob> {
+export function downloadApplicationDocument(id: number, fileId: number, signal?: AbortSignal): Promise<Blob> {
+  return downloadApplicationBinary(`/api/v1/application-preparations/${id}/documents/${fileId}/download`, signal)
+}
+
+export function downloadApplicationDocumentArchive(id: number, revision: number, signal?: AbortSignal): Promise<Blob> {
+  return downloadApplicationBinary(`/api/v1/application-preparations/${id}/documents/archive?revision=${revision}`, signal)
+}
+
+async function downloadApplicationBinary(path: string, signal?: AbortSignal): Promise<Blob> {
   const timeout = AbortSignal.timeout(60_000)
   try {
-    const response = await fetch(`${getCoreApiBaseUrl()}/api/v1/application-preparations/${id}/documents/${fileId}/download`, {
+    const response = await fetch(`${getCoreApiBaseUrl()}${path}`, {
       credentials: 'include', cache: 'no-store', signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
     })
     if (!response.ok) {
@@ -78,7 +86,7 @@ export async function downloadApplicationDocument(id: number, fileId: number, si
       throw new ApplicationPreparationError(response.status, problem.success ? problem.data.code : 'REQUEST_FAILED')
     }
     const type = response.headers.get('content-type')?.split(';')[0]
-    if (!type || !['application/pdf', 'application/x-hwp', 'application/hwp+zip', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'].includes(type)) throw new ApplicationPreparationError(502, 'INVALID_RESPONSE')
+    if (!type || !['application/pdf', 'application/x-hwp', 'application/hwp+zip', 'application/zip', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'].includes(type)) throw new ApplicationPreparationError(502, 'INVALID_RESPONSE')
     const blob = await response.blob()
     if (blob.size === 0 || blob.size > 32 * 1024 * 1024) throw new ApplicationPreparationError(502, 'INVALID_RESPONSE')
     return blob

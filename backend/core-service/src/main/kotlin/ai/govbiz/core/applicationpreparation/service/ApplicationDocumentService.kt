@@ -23,6 +23,7 @@ import ai.govbiz.core.supportprogram.client.msit.MsitAttachmentClient
 import ai.govbiz.core.supportprogram.client.document.SupportProgramAttachment
 import ai.govbiz.core.supportprogram.service.detail.SupportProgramDetailService
 import ai.govbiz.core.supportprogram.service.admission.SupportProgramRequestAdmissionService
+import ai.govbiz.core.applicationpreparation.service.dto.ApplicationDocumentArchiveResult
 import org.springframework.stereotype.Service
 import java.security.MessageDigest
 
@@ -44,6 +45,8 @@ class ApplicationDocumentService(
     private val admission: SupportProgramRequestAdmissionService,
     private val availability: ai.govbiz.core.applicationpreparation.repository.ApplicationFormAvailabilityRepository,
     private val json: tools.jackson.databind.ObjectMapper,
+    @param:org.springframework.beans.factory.annotation.Value("\${app.application-document.unknown-outcome-lock-ttl:PT24H}")
+    private val unknownOutcomeLockTtl: java.time.Duration,
 ) {
     private fun sha256(bytes: ByteArray) = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
     private fun fingerprint(source: String, revision: Long, pipeline: String, engine: String? = null) =
@@ -56,6 +59,30 @@ class ApplicationDocumentService(
 
     fun download(account: Account, id: Long, fileId: Long): ApplicationDocumentFile =
         files.findOwned(account.id, id, fileId) ?: throw ApplicationPreparationNotFoundException()
+
+    /** 답변 버전 하나의 파일을 묶는다. 저장된 LONGBLOB만 읽으며 새 파일을 저장하지 않는다. */
+    fun archive(account: Account, id: Long, revision: Long): ApplicationDocumentArchiveResult {
+        preparations.findOwned(account, id)
+        val matching = files.listOwned(account.id, id).filter { it.inputRevision == revision }.sortedBy { it.id }
+        if (matching.isEmpty()) throw ApplicationPreparationNotFoundException()
+        matching.singleOrNull()?.let { return ApplicationDocumentArchiveResult(it.fileName, it.mediaType, it.bytes, 1) }
+        val output = java.io.ByteArrayOutputStream()
+        java.util.zip.ZipOutputStream(output, Charsets.UTF_8).use { zip ->
+            val used = mutableSetOf<String>()
+            for (file in matching) {
+                var name = file.fileName
+                var suffix = 2
+                while (!used.add(name)) {
+                    name = file.fileName.replaceFirst(Regex("(\\.[^.]+)?$"), "_$suffix$1")
+                    suffix += 1
+                }
+                zip.putNextEntry(java.util.zip.ZipEntry(name))
+                zip.write(file.bytes)
+                zip.closeEntry()
+            }
+        }
+        return ApplicationDocumentArchiveResult("신청문서_초안_v$revision.zip", "application/zip", output.toByteArray(), matching.size)
+    }
 
     fun confirmMigration(account: Account, id: Long, expectedRevision: Long,
                          approvalToken: String): ApplicationDocumentMigrationConfirmedResult {
@@ -216,8 +243,9 @@ class ApplicationDocumentService(
             unfilledAnswers = unfilledAnswers))
         } catch (error: ApplicationDocumentException) {
             if (error.code == "APPLICATION_DOCUMENT_OUTCOME_UNKNOWN") {
+                // 결과를 확인하지 못한 실행은 사람이 확인할 시간만 잠그고, 영구 잠금으로 남기지 않는다.
                 outcomeUnknown = true
-                redis.persist(lockKey)
+                redis.expire(lockKey, unknownOutcomeLockTtl)
             }
             throw error
         } finally {

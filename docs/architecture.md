@@ -116,7 +116,7 @@ DB transaction 밖에서 해석합니다. 요청 키와 당시 입력을 먼저 
 별도 transaction으로 저장합니다. 사용자가 제안을 확인한 PUT만 문항 사실을 전체 교체하고 입력 revision을 증가시킵니다.
 본인 준비 건의 DELETE는 `ApplicationPreparationRepository → MyBatis → MySQL`에서 소유자 조건으로 한 행을 지우고,
 확인 사실·AI 실행 기록은 FK cascade로 삭제하지만 공용 `application_form_snapshot`은 유지합니다.
-Frontend는 `/app/application-preparations`의 목록·삭제, `/new`의 지연 조회 관심 공고 팝업과 전체 카탈로그 공고 검색·선택을 첫 단계로,
+Frontend는 `/app/application-preparations`의 목록(상태 칩 `?status=`, 필수 답변 진행 막대, 현재 버전 문서 유무로 완료 배지, 접수 마감 D-n)·모달 삭제, `/new`의 지연 조회 관심 공고 팝업과 전체 카탈로그 공고 검색·선택을 첫 단계로,
 공고를 고르면 곧바로 공고별 availability API와 최근 discovery job 목록을 읽어(AI 호출 없음) 저장된 양식 상태를 보여 주고, QUEUED·RUNNING job이 있으면 폴링을 이어받습니다. 유료 분석은 [입력칸별로 분석] 클릭에서만 시작하며 활성 snapshot은 [다음]으로 여는 두 번째 단계에 표시합니다. 미분석·변경 공고는 Discovery Job 완료 후 표시하며, `/:preparationId`의 공식 문항
 상세와 질문·사실 확인을 연결합니다. AI 제안은 저장하지 않고 사용자가 선택·수정한 전체 문항 입력만 revision을 올려 저장합니다.
 웹 답변 입력은 입력을 2초 멈추거나 질문·항목을 이동할 때 그 항목의 `PUT …/inputs`를 자동으로 호출하고(보낼 사실이 저장된 사실과 같으면 호출하지 않음),
@@ -143,7 +143,7 @@ V33의 생성기 버전으로 이전 결과와 구분하여 같은 답변 revisi
 생성기 5는 HWP 선택 컨트롤의 정확한 값 매칭을 Core에서 처리하고 나머지 답변 위치를 AI에 요청합니다. 체크 그룹 갱신·밑줄 빈칸 치환·HWP 줄 배치 재계산 뒤 저장합니다. 미정 답변은 기입 대상에서 제외하고 Frontend가 누락 항목을 표시합니다. 표가 있는 HWP 섹션의 표 밖 빈 문단은 위치 후보에서 제외하고, 예시 삭제 후 빈 문단이 되는 경우도 기입 단계에서 거절합니다. 이전 생성기 결과는 재사용하지 않습니다. 전체 페이지 조판과 실제 양식의 의미적 배치 품질은 자동 테스트와 별도로 검수해야 합니다.
 외부 호출은 DB transaction 밖에서 실행하고 저장 시 입력 revision을 잠금으로 재확인합니다.
 같은 revision의 저장 파일은 재사용하며, 현재 프로세스에서 같은 준비 건의 동시 생성은 거절합니다.
-Frontend는 입력 화면과 `/:preparationId/documents` 결과 화면을 분리합니다. 원본 파일 단위로 다운로드하며,
+Frontend는 입력 화면과 `/:preparationId/documents` 결과 화면을 분리합니다. 원본 파일 단위로 다운로드하고 현재 버전 파일이 여럿이면 `documents/archive?revision=`으로 zip을 받으며, 결과를 확인하지 못한 생성의 Redis 잠금은 영구가 아니라 `app.application-document.unknown-outcome-lock-ttl`(기본 24시간) 뒤 풀립니다.
 내려받은 파일에서 수정하거나 이전 입력 화면에서 답변을 수정·저장한 뒤 다시 생성합니다.
 V31의 문항별 텍스트 작성본 API·기록은 남아 있으나 현재 UI는 호출하지 않습니다.
 

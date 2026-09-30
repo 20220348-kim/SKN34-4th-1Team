@@ -13,6 +13,8 @@ import ai.govbiz.core.applicationpreparation.controller.dto.DiscoverApplicationF
 import ai.govbiz.core.applicationpreparation.controller.dto.DiscoveredApplicationFormsResponse
 import ai.govbiz.core.applicationpreparation.service.ApplicationFormDiscoveryService
 import ai.govbiz.core.applicationpreparation.service.ApplicationPreparationService
+import ai.govbiz.core.applicationpreparation.domain.ApplicationPreparationListStatus
+import ai.govbiz.core.applicationpreparation.domain.exception.InvalidApplicationPreparationInputException
 import jakarta.validation.Valid
 import jakarta.validation.constraints.Max
 import jakarta.validation.constraints.Min
@@ -74,9 +76,17 @@ class ApplicationPreparationController(
         account: Account,
         @RequestParam(required = false) @Min(1) beforeId: Long?,
         @RequestParam(defaultValue = "20") @Min(1) @Max(50) size: Int,
+        @RequestParam(required = false) status: String?,
     ): ResponseEntity<ApplicationPreparationPageResponse> =
         ResponseEntity.ok().cacheControl(CacheControl.noStore())
-            .body(ApplicationPreparationPageResponse.from(service.listOwned(account, beforeId, size)))
+            .body(ApplicationPreparationPageResponse.from(service.listOwned(account, beforeId, size, listStatus(status))))
+
+    private fun listStatus(value: String?): ApplicationPreparationListStatus? = when (value) {
+        null, "" -> null
+        "in_progress" -> ApplicationPreparationListStatus.IN_PROGRESS
+        "done" -> ApplicationPreparationListStatus.DONE
+        else -> throw InvalidApplicationPreparationInputException()
+    }
 
     @GetMapping("/{id}/online-input-guide")
     fun onlineInputGuide(account: Account, @PathVariable @Min(1) id: Long):

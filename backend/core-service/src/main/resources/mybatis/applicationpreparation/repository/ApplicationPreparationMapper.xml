@@ -14,7 +14,12 @@
         <result column="input_revision" property="inputRevision" />
         <result column="created_at" property="createdAt" />
         <result column="updated_at" property="updatedAt" />
+        <result column="has_current_document" property="hasCurrentDocument" />
     </resultMap>
+
+    <sql id="currentDocumentExists">
+        EXISTS (SELECT 1 FROM application_document_file f WHERE f.preparation_id = p.id AND f.input_revision = p.input_revision)
+    </sql>
 
     <sql id="columns">
         id, owner_account_id, source_code, source_program_id, form_version_id,
@@ -55,13 +60,22 @@
     </update>
 
     <select id="listOwned" resultMap="preparationRow">
-        SELECT <include refid="columns" />
-        FROM application_preparation
-        WHERE owner_account_id = #{ownerAccountId}
+        SELECT p.id, p.owner_account_id, p.source_code, p.source_program_id, p.form_version_id,
+               p.service_field, p.progress_stage, p.progress_revision, p.progress_stage_updated_at,
+               p.input_revision, p.created_at, p.updated_at,
+               (<include refid="currentDocumentExists" />) AS has_current_document
+        FROM application_preparation p
+        WHERE p.owner_account_id = #{ownerAccountId}
         <if test="beforeId != null">
-            AND id &lt; #{beforeId}
+            AND p.id &lt; #{beforeId}
         </if>
-        ORDER BY id DESC
+        <if test="status == 'DONE'">
+            AND <include refid="currentDocumentExists" />
+        </if>
+        <if test="status == 'IN_PROGRESS'">
+            AND NOT <include refid="currentDocumentExists" />
+        </if>
+        ORDER BY p.id DESC
         LIMIT #{limit}
     </select>
 

@@ -1,5 +1,6 @@
 import { applicationProgressStages, validateNewApplicationPreparation, type InterpretApplicationPreparation, type NewApplicationPreparation, type ReplaceApplicationPreparationInputs, type UpdateApplicationProgress } from '../entities/ApplicationPreparation'
 import type { ApplicationPreparationRepository, ReplaceApplicationPreparationInputsOptions } from '../repositories/ApplicationPreparationRepository'
+import type { ApplicationPreparationListQuery } from '../entities/ApplicationPreparation'
 import type { GenerateApplicationDraft, SaveApplicationContent, ConfirmApplicationContent } from '../entities/ApplicationPreparation'
 
 /** 지원 양식 조회와 신청 준비 건 생성·목록·상세는 AI 실행 없이 동작합니다. */
@@ -28,6 +29,10 @@ export class ApplicationPreparationUseCase {
     return this.repository.confirmDocumentMappingMigration(id, revision, token, signal)
   }
   downloadDocument(id: number, fileId: number, signal?: AbortSignal) { return this.repository.downloadDocument(id, fileId, signal) }
+  downloadDocumentArchive(id: number, revision: number, signal?: AbortSignal) {
+    if (!Number.isSafeInteger(revision) || revision <= 0) throw new Error('내려받을 답변 버전이 올바르지 않습니다.')
+    return this.repository.downloadDocumentArchive(id, revision, signal)
+  }
   generateDraft(id: number, sectionKey: string, input: GenerateApplicationDraft, signal?: AbortSignal) {
     return this.repository.generateDraft(id, sectionKey, input, signal)
   }
@@ -61,7 +66,10 @@ export class ApplicationPreparationUseCase {
     if (!sourceProgramId) throw new Error('기업마당 공식 공고 URL 또는 PBLN 공고 ID를 입력해 주세요.')
     return this.discover('BIZINFO', sourceProgramId, signal, requestKey)
   }
-  list(beforeId?: number, signal?: AbortSignal) { return this.repository.list(beforeId, signal) }
+  list(query: ApplicationPreparationListQuery = {}, signal?: AbortSignal) {
+    if (query.beforeId !== undefined && (!Number.isSafeInteger(query.beforeId) || query.beforeId <= 0)) throw new Error('목록 커서가 올바르지 않습니다.')
+    return this.repository.list(query, signal)
+  }
   delete(id: number, signal?: AbortSignal) {
     if (!Number.isSafeInteger(id) || id <= 0) throw new Error('삭제할 신청 준비 건이 올바르지 않습니다.')
     return this.repository.delete(id, signal)

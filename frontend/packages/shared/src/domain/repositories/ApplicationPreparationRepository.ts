@@ -1,6 +1,7 @@
 import type {
   ApplicationForm,
   ApplicationPreparation,
+  ApplicationPreparationListQuery,
   ApplicationPreparationPage,
   NewApplicationPreparation,
   InterpretApplicationPreparation,
@@ -26,6 +27,8 @@ export interface ApplicationPreparationRepository {
   confirmDocumentMappingMigration(id: number, expectedRevision: number, approvalToken: string,
     signal?: AbortSignal): Promise<ApplicationDocumentMigrationConfirmation>
   downloadDocument(id: number, fileId: number, signal?: AbortSignal): Promise<Blob>
+  /** 한 답변 버전의 파일을 모두 내려받는다. 파일이 하나면 그 파일, 여럿이면 zip이다. */
+  downloadDocumentArchive(id: number, revision: number, signal?: AbortSignal): Promise<Blob>
   generateDraft(id: number, sectionKey: string, input: GenerateApplicationDraft, signal?: AbortSignal): Promise<ApplicationPreparation>
   saveContent(id: number, sectionKey: string, input: SaveApplicationContent, signal?: AbortSignal): Promise<ApplicationPreparation>
   confirmContent(id: number, sectionKey: string, input: ConfirmApplicationContent, signal?: AbortSignal): Promise<ApplicationPreparation>
@@ -33,7 +36,7 @@ export interface ApplicationPreparationRepository {
   discover(sourceCode: string, sourceProgramId: string, signal?: AbortSignal, requestKey?: string): Promise<ApplicationFormDiscoveryJob>
   discoveryJob(id: number, signal?: AbortSignal): Promise<ApplicationFormDiscoveryJob>
   discoveryJobs(signal?: AbortSignal): Promise<ApplicationFormDiscoveryJob[]>
-  list(beforeId?: number, signal?: AbortSignal): Promise<ApplicationPreparationPage>
+  list(query?: ApplicationPreparationListQuery, signal?: AbortSignal): Promise<ApplicationPreparationPage>
   delete(id: number, signal?: AbortSignal): Promise<void>
   get(id: number, signal?: AbortSignal): Promise<ApplicationPreparation>
   create(input: NewApplicationPreparation, signal?: AbortSignal): Promise<ApplicationPreparation>

@@ -5,6 +5,7 @@ import ai.govbiz.core.account.domain.NewAccount
 import ai.govbiz.core.account.repository.AccountRepository
 import ai.govbiz.core.applicationpreparation.domain.ApplicationServiceField
 import ai.govbiz.core.applicationpreparation.domain.ApplicationProgressStage
+import ai.govbiz.core.applicationpreparation.domain.ApplicationPreparationListStatus
 import ai.govbiz.core.applicationpreparation.domain.ApplicationProgressUpdateResult
 import ai.govbiz.core.applicationpreparation.domain.NewApplicationPreparation
 import ai.govbiz.core.applicationpreparation.domain.ApplicationFactStatus
@@ -124,6 +125,39 @@ class ApplicationPreparationRepositoryIntegrationTest {
             jdbc.update("UPDATE application_preparation SET form_version_id = '잘못된-버전' WHERE id = ?", created.id)
         }
         assertEquals(created, repository.findOwned(ownerId, created.id))
+    }
+
+    @Test
+    fun listsCurrentDocumentCompletionAndFactKeysForTheOwnerOnly() {
+        val inProgress = repository.create(ownerId, draft())
+        val done = repository.create(ownerId, draft())
+        inputs.replaceOwned(ownerId, done.id, "company-overview", 1, listOf(
+            NewConfirmedApplicationFact("company-name", ApplicationFactStatus.PROVIDED, "새봄테크 & 연구소", "업체명"),
+            NewConfirmedApplicationFact("contact-person", ApplicationFactStatus.UNKNOWN, null, "미정"),
+        ))
+        documents.save(ownerId, done.id, 2, "초안.hwpx", "application/hwp+zip", byteArrayOf(80, 75, 3, 4), "a".repeat(64), emptyList())
+        val stale = repository.create(ownerId, draft())
+        documents.save(ownerId, stale.id, 1, "구버전.hwpx", "application/hwp+zip", byteArrayOf(80, 75, 3, 4), "b".repeat(64), emptyList())
+        inputs.replaceOwned(ownerId, stale.id, "company-overview", 1, listOf(
+            NewConfirmedApplicationFact("company-name", ApplicationFactStatus.PROVIDED, "새 이름", "업체명"),
+        ))
+        repository.create(otherId, draft())
+
+        val all = repository.listOwned(ownerId, null, 10)
+        assertEquals(listOf(stale.id, done.id, inProgress.id), all.map { it.id })
+        assertEquals(listOf(false, true, false), all.map { it.hasCurrentDocument })
+        assertEquals(listOf(done.id), repository.listOwned(ownerId, null, 10, ApplicationPreparationListStatus.DONE).map { it.id })
+        assertEquals(listOf(stale.id, inProgress.id), repository.listOwned(ownerId, null, 10, ApplicationPreparationListStatus.IN_PROGRESS).map { it.id })
+
+        val keys = inputs.listFactKeys(ownerId, listOf(done.id, stale.id, inProgress.id))
+        assertEquals(
+            setOf(Triple(done.id, "company-name", ApplicationFactStatus.PROVIDED), Triple(done.id, "contact-person", ApplicationFactStatus.UNKNOWN),
+                Triple(stale.id, "company-name", ApplicationFactStatus.PROVIDED)),
+            keys.map { Triple(it.preparationId, it.fieldKey, it.status) }.toSet(),
+        )
+        assertEquals(setOf("company-overview"), keys.map { it.sectionKey }.toSet())
+        assertTrue(inputs.listFactKeys(otherId, listOf(done.id)).isEmpty())
+        assertTrue(inputs.listFactKeys(ownerId, emptyList()).isEmpty())
     }
 
     @Test
