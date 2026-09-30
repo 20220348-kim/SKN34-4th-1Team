@@ -67,6 +67,27 @@ test('loads the latest owned report and retains its source identity for the deta
   expect(jest.mocked(apiRequest).mock.calls.some(([path]) => path.endsWith('/preview'))).toBe(false)
 })
 
+test.each(['예산 소진 시까지', '예산소진시까지', '상시 접수', '상시'])('shows rolling period %s as open without an invented deadline', async (applicationPeriod) => {
+  jest.mocked(apiRequest).mockImplementation((path) => path.endsWith('/latest') ? Promise.resolve({ report: {
+    ...report, programs: [{ ...report.programs[0], applicationPeriod }],
+  } }) : respond(path))
+  render(<DailyReportScreen {...callbacks} />)
+  await screen.findByText(applicationPeriod)
+  expect(screen.getByText('접수 중')).toBeTruthy()
+  expect(screen.queryByText(/^D-\d+$/)).toBeNull()
+  expect(screen.queryByText('접수 상태 미확인')).toBeNull()
+})
+
+test.each(['공고문 참조', '상시 접수 (접수 종료)'])('keeps unresolved or ended rolling period %s from being labelled open', async (applicationPeriod) => {
+  jest.mocked(apiRequest).mockImplementation((path) => path.endsWith('/latest') ? Promise.resolve({ report: {
+    ...report, programs: [{ ...report.programs[0], applicationPeriod }],
+  } }) : respond(path))
+  render(<DailyReportScreen {...callbacks} />)
+  await screen.findByText(applicationPeriod)
+  expect(screen.getByText('접수 상태 미확인')).toBeTruthy()
+  expect(screen.queryByText('접수 중')).toBeNull()
+})
+
 test('shows actionable report limitations without repeated green notices or raw collection timestamps', async () => {
   const warnings = [
     '관련도 점수는 검색 조건과 공고의 관련성입니다. 선정확률이나 신청 자격 확정이 아닙니다.',

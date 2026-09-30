@@ -69,7 +69,14 @@ function completeness(company: Company | null, purpose: string) {
 
 function periodLabel(period: string) {
   const range = /^(\d{4})[-.](\d{2})[-.](\d{2})\s*~\s*(\d{4})[-.](\d{2})[-.](\d{2})$/.exec(period)
-  if (!range) return null
+  if (!range) {
+    const normalized = period.normalize('NFKC').replace(/\s+/g, '')
+    if (/예산소진|상시/.test(normalized)
+      && !/접수종료|모집종료|마감완료|접수예정|추후공지/.test(normalized)) {
+      return { status: '접수 중', deadline: null }
+    }
+    return null
+  }
   const [, sy, sm, sd, ey, em, ed] = range
   const start = Date.UTC(Number(sy), Number(sm) - 1, Number(sd))
   const end = Date.UTC(Number(ey), Number(em) - 1, Number(ed))
@@ -291,9 +298,9 @@ function ReportProgramCard({ item, saved, busy, onOpen, onSource, onToggle }: {
 }) {
   const period = periodLabel(item.applicationPeriod)
   return <Card>
-    <View style={local.meta}><StatusBadge label={period?.status ?? '접수 기간 확인'}
+    <View style={local.meta}><StatusBadge label={period?.status ?? '접수 상태 미확인'}
       tone={period?.status === '접수 중' ? 'success' : period?.status === '접수 예정' ? 'info' : 'neutral'} />
-      {period && <Text style={styles.muted}>{period.deadline}</Text>}
+      {period?.deadline && <Text style={styles.muted}>{period.deadline}</Text>}
       <Text style={local.score}>{item.relevanceScore === null ? '관련도 점수 없음' : `관련도 ${item.relevanceScore}`}</Text></View>
     <Text style={styles.heading}>{item.title}</Text>
     <Text style={styles.muted}>{item.applicationPeriod || '공고문에서 접수 기간을 확인해 주세요.'}</Text>

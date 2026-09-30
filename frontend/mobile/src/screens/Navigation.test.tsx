@@ -9,10 +9,12 @@ import ReportRoute from '../../app/(tabs)/report'
 import SavedRoute from '../../app/(tabs)/saved'
 import AccountRoute from '../../app/(tabs)/account'
 import { programClient } from '../api/client'
+import { browseRecruitments } from '../api/partners'
 
 jest.mock('../auth/session', () => ({ useAuth: () => ({ status: 'signedOut', session: null, restoreError: null }) }))
 jest.mock('../api/client', () => ({ ...jest.requireActual('../api/client'), programClient: jest.fn() }))
 jest.mock('../auth/oauth', () => ({ supportsNativeOAuth: () => false }))
+jest.mock('../api/partners', () => ({ ...jest.requireActual('../api/partners'), browseRecruitments: jest.fn() }))
 
 function ProgramDestination() {
   const params = useLocalSearchParams()
@@ -26,6 +28,7 @@ const routes = {
 }
 
 beforeEach(() => {
+  jest.mocked(browseRecruitments).mockResolvedValue({ recruitments: [], total: 0, page: 1, pageSize: 20, totalPages: 0 })
   jest.mocked(programClient).mockReturnValue({ browseCatalog: jest.fn().mockResolvedValue({
     programs: [], total: 0, page: 1, pageSize: 12, totalPages: 0, regions: [], categories: [],
     startupStages: [], applicantTypes: [], founderAges: [],
@@ -39,7 +42,7 @@ test('five visible destinations retain their order and expose preparation notice
     .toEqual(['검색', '관심함', '협업', '리포트', '내 정보'])
   expect(screen.queryByText('AI 대화')).toBeNull()
   fireEvent.press(screen.getByLabelText('협업'))
-  await screen.findByText('협업 공간을 준비하고 있어요')
+  await screen.findByText('모집글 0건')
   fireEvent.press(screen.getByLabelText('리포트'))
   await screen.findByText('로그인하면 기업 조건에 맞춘 리포트를 확인할 수 있어요.')
   fireEvent.press(screen.getByLabelText('관심함'))
