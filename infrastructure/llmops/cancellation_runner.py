@@ -61,6 +61,8 @@ def install_http_double(run_id):
             self.local = httpx2.AsyncHTTPTransport(retries=0)
 
         async def handle_async_request(self, request):
+            if str(request.url) == "https://api.openai.com/v1/responses/input_tokens":
+                return httpx2.Response(200, json={"object": "response.input_tokens", "input_tokens": 100})
             if str(request.url) != "https://api.openai.com/v1/responses":
                 raise RuntimeError("Test transport refused a non-allowlisted model URL")
             # 원본 request hook의 명세 검증·실제 예산 승인이 끝난 뒤 HTTP 대역으로 전송한다.
@@ -88,10 +90,10 @@ def install_http_double(run_id):
     original_authorize = BudgetClient.authorize
     original_settle = BudgetClient.settle
 
-    async def authorize(self, sequence, model, max_output_tokens, *, operation_id):
+    async def authorize(self, sequence, model, max_output_tokens, *, operation_id, input_token_count):
         await asyncio.to_thread(barrier, run_id, f"before_authorize_{sequence}")
         await original_authorize(
-            self, sequence, model, max_output_tokens, operation_id=operation_id
+            self, sequence, model, max_output_tokens, operation_id=operation_id, input_token_count=input_token_count
         )
 
     async def settle(self, sequence, usage, *, operation_id):

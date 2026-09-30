@@ -57,6 +57,7 @@ class BudgetOperationContractTests(SimpleTestCase):
             ("case_id", "another"),
             ("model", "unapproved"),
             ("max_output_tokens", 1),
+            ("max_input_tokens", 1),
         ):
             spec = deepcopy(original)
             spec["model_operations"][0][field] = value
@@ -81,6 +82,15 @@ class BudgetOperationContractTests(SimpleTestCase):
                 operation_plan(
                     SimpleNamespace(execution_spec=spec, live_config=original["live_config"])
                 )
+
+    def test_input_count_does_not_coerce_booleans_strings_or_floats(self):
+        fields = {"worker_id": uuid4(), "flow_id": uuid4(), "spec_hash": "a" * 64}
+        for value in (True, "100", 100.0, -1, 32769, None):
+            with self.subTest(value=value):
+                self.assertFalse(
+                    BudgetRequest(data={**fields, "input_token_count": value}).is_valid()
+                )
+        self.assertTrue(BudgetRequest(data={**fields, "input_token_count": 32768}).is_valid())
 
     def test_worker_contract_accepts_case_id_but_rejects_unimplemented_operation(self):
         fields = {"worker_id": uuid4(), "flow_id": uuid4(), "spec_hash": "a" * 64}
@@ -129,6 +139,7 @@ class BudgetOperationTests(TestCase):
             operation_id=operation_id,
             model=self.run.live_config["model"],
             max_output_tokens=2000,
+            input_token_count=100,
         )
 
     def test_substituted_or_missing_case_cannot_authorize_or_settle(self):
@@ -233,14 +244,41 @@ class BudgetOperationMigrationTests(TransactionTestCase):
                 output_tokens=50,
                 settled_at=timezone.now(),
             )
+            corrected = calls.objects.create(reservation_id=reservation.pk, sequence=2)
+            apps.get_model("evaluations", "EvaluationUsageCorrection").objects.create(
+                request_id=uuid4(),
+                call_id=corrected.pk,
+                actor="legacy",
+                reason="receipt",
+                evidence_sha256="c" * 64,
+                response_id="resp_legacy",
+                evidence_raw="{}",
+                input_tokens=150,
+                output_tokens=30,
+                original_call={},
+                before={},
+                after={},
+            )
             executor = MigrationExecutor(connection)
             executor.migrate(latest)
             apps = executor.loader.project_state(latest).apps
             kept = list(
                 apps.get_model("evaluations", "EvaluationBudgetCall").objects.order_by("sequence")
             )
-            self.assertEqual([call.operation_id for call in kept], [None, None])
-            self.assertEqual([call.output_tokens for call in kept], [None, 50])
+            self.assertEqual([call.counted_input_tokens for call in kept], [None, None, None])
+            self.assertEqual(
+                apps.get_model("evaluations", "EvaluationBudget")
+                .objects.get(pk=1)
+                .allocated_input_tokens,
+                250,
+            )
+            self.assertIsNone(
+                apps.get_model("evaluations", "EvaluationBudgetReservation")
+                .objects.get(pk=run.pk)
+                .max_input_tokens
+            )
+            self.assertEqual([call.operation_id for call in kept], [None, None, None])
+            self.assertEqual([call.output_tokens for call in kept], [None, 50, None])
             self.assertEqual(
                 apps.get_model("evaluations", "EvaluationBudget")
                 .objects.get(pk=1)

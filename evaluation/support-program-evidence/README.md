@@ -357,12 +357,12 @@ backend/ai-service/.venv/bin/python evaluation/support-program-evidence/evaluate
 
 ## Ops에서 새 응답 생성
 
-Ops 실행기는 접수 시 DB에 예약한 누적 호출·출력 토큰 한도를 사용합니다. 모델 HTTP 전송 전에
+Ops 실행기는 접수 시 DB에 예약한 누적 호출·입력·출력 토큰 한도를 사용합니다. 모델 HTTP 전송 전에
 전용 인증으로 소유권과 호출 번호를 승인받고, 응답의 입력·출력 토큰을 정산합니다. 승인·정산 실패나
 사용량 누락이면 다음 호출을 차단하며, 응답 유실을 0회/0토큰으로 환급하지 않습니다.
-새 명세는 선택 사례마다 `answer:{case_id}` 작업과 모델·출력 상한을 `model_operations`에 고정합니다.
+새 명세는 선택 사례마다 `answer:{case_id}` 작업과 모델·입력·출력 상한을 `model_operations`에 고정합니다.
 전송 전에 그 작업을 승인받고 응답이 속한 원래 요청의 작업 ID로 정산합니다. 같은 사례의 중복
-전송도 차단합니다. 과거 호출의 작업 ID는 추정하지 않습니다. Ops의 `0016_budget_operation_identity`
+전송도 차단합니다. 과거 호출의 작업 ID는 추정하지 않습니다. Ops의 `0017_input_token_budget`
 migration과 같은 소스로 생성한 실행기·실행 명세가 필요합니다.
 `budget_client.py`도 실행 명세에 포함합니다. 예약은 금액 상한이 아니며 전체 RAG 및 직접 실행 CLI의
 호출을 합산하지 않습니다. [Ops 누적 한도와 설정](../../backend/ops-service/README.md#누적-호출출력-토큰-한도)을 따릅니다.
@@ -373,6 +373,16 @@ migration과 같은 소스로 생성한 실행기·실행 명세가 필요합니
 모델은 승인 명세에서 고정하고, 전송 직전 endpoint·모델·출력 제한·호출 예산을 다시 검사합니다.
 자동 재시도는 없고 첫 실패에서 중단합니다. `capture.modelApiCalls`는 응답 유실을 포함한 전송 시도 횟수이며
 확인된 과금 횟수나 금액이 아닙니다. API 응답이 없으면 토큰을 추정하지 않습니다.
+
+생성 전에는 같은 요청의 모델·입력·지침·응답 스키마·추론 설정을
+[OpenAI 입력 토큰 계산 API](https://developers.openai.com/api/docs/guides/token-counting)로 전송합니다.
+입력 32,768토큰 초과, 계산 실패·누락·잘못된 형식은 생성 승인 이전에 중단하며 로컬 추정값으로 대체하지 않습니다.
+흐름은 `Ops 예약·claim → Service·Agent 요청 → 입력 계산 → Ops authorize → Responses 생성 → settle → close`입니다.
+`capture.inputTokenCountRequests`는 계산 요청 시도, `inputTokenCounts`는 작업별 확인값,
+`modelApiCalls`는 답변 생성 시도입니다. 계산 요청을 포함한 전체 HTTP 횟수를 생성 횟수로 표시하지 않습니다.
+계산은 같은 실행 제한 시간 안에서 수행하며 재시도하지 않습니다. 이는 실제 사용량·청구 확정이 아니며,
+Ops 정산은 생성 응답의 usage를 따릅니다. 누적 입력 한도는 CLI에서 활성화해야 합니다.
+직접 `--execute`도 호출당 입력 검사를 거치지만 Ops 누적 장부에는 포함되지 않습니다.
 
 생성된 파일은 `/results/<요청 UUID>/capture/capture.json`에 보존하고 같은 질문의 저장 기준과 비교합니다.
 각 사례에 응답 사용량 인덱스와 trace ID를 연결하므로 새 응답의 토큰·지연과 Langfuse 점수를 확인할 수 있습니다.

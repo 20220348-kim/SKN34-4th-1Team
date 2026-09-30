@@ -75,11 +75,11 @@ def test_approval_and_settlement_send_the_same_explicit_operation(monkeypatch, c
     calls = []
     monkeypatch.setattr(client, "request", lambda action, **fields: calls.append((action, fields)))
     usage = {"input_tokens": 10, "output_tokens": 20, "total_tokens": 30}
-    asyncio.run(client.authorize(0, "test-model", 2000, operation_id="answer:TC01"))
+    asyncio.run(client.authorize(0, "test-model", 2000, operation_id="answer:TC01", input_token_count=10))
     asyncio.run(client.settle(0, usage, operation_id="answer:TC01"))
     assert calls == [
         ("authorize", {"sequence": 0, "model": "test-model", "max_output_tokens": 2000,
-                       "operation_id": "answer:TC01"}),
+                       "operation_id": "answer:TC01", "input_token_count": 10}),
         ("settle", {"sequence": 0, "usage": usage, "operation_id": "answer:TC01"}),
     ]
 

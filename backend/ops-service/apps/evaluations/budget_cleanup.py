@@ -112,6 +112,7 @@ def cleanup_reservation(*, run_id, actor, reason, request_id, apply=False):
             or locked.worker_id != reservation.worker_id
             or locked.max_calls != reservation.max_calls
             or locked.max_output_tokens != reservation.max_output_tokens
+            or locked.max_input_tokens != reservation.max_input_tokens
             or locked.max_calls != locked_run.live_config.get("max_model_calls")
             or locked.max_output_tokens != locked_run.live_config.get("max_output_tokens")
             or locked_run.prefect_flow_run_id != run.prefect_flow_run_id
@@ -124,6 +125,7 @@ def cleanup_reservation(*, run_id, actor, reason, request_id, apply=False):
             any(value < 0 for value in totals.values())
             or totals["allocated_calls"] != budget.allocated_calls
             or totals["allocated_output_tokens"] != budget.allocated_output_tokens
+            or totals["allocated_input_tokens"] != budget.allocated_input_tokens
             or budget.allocated_calls > budget.call_limit
             or budget.allocated_output_tokens > budget.output_token_limit
         ):
@@ -143,15 +145,22 @@ def cleanup_reservation(*, run_id, actor, reason, request_id, apply=False):
         returned_output = (
             breakdown["unapproved_output_tokens"] + breakdown["pending_release_output_tokens"]
         )
+        returned_input = (
+            breakdown["unapproved_input_tokens"] + breakdown["pending_release_input_tokens"]
+        )
         before = {
             "global_calls": budget.allocated_calls,
             "global_output_tokens": budget.allocated_output_tokens,
+            "global_input_tokens": budget.allocated_input_tokens,
+            "reservation_input_tokens": breakdown["allocated_input_tokens"],
             "reservation_calls": breakdown["allocated_calls"],
             "reservation_output_tokens": breakdown["allocated_output_tokens"],
         }
         after = {
             "global_calls": before["global_calls"] - returned_calls,
             "global_output_tokens": before["global_output_tokens"] - returned_output,
+            "global_input_tokens": before["global_input_tokens"] - returned_input,
+            "reservation_input_tokens": before["reservation_input_tokens"] - returned_input,
             "reservation_calls": before["reservation_calls"] - returned_calls,
             "reservation_output_tokens": before["reservation_output_tokens"] - returned_output,
             "unknown_calls": breakdown["unknown_calls"],

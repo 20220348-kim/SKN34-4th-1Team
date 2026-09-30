@@ -184,6 +184,7 @@ def correct_usage(
             or evidence["worker_id"] != str(reservation.worker_id)
             or evidence["model"] != run.live_config.get("model")
             or evidence["max_output_tokens"] != reservation.max_output_tokens
+            or reservation.max_input_tokens != run.live_config.get("max_input_tokens")
             or reservation.max_calls != run.live_config.get("max_model_calls")
             or reservation.max_output_tokens != run.live_config.get("max_output_tokens")
         ):
@@ -211,20 +212,29 @@ def correct_usage(
             any(value < 0 for value in totals.values())
             or totals["allocated_calls"] != budget.allocated_calls
             or totals["allocated_output_tokens"] != budget.allocated_output_tokens
+            or totals["allocated_input_tokens"] != budget.allocated_input_tokens
             or budget.allocated_calls > budget.call_limit
             or budget.allocated_output_tokens > budget.output_token_limit
         ):
             raise CorrectionUnavailable(
                 "전체 예산과 상세 장부가 일치하지 않아 보정을 거절했습니다."
             )
-        input_tokens, output_tokens = validate_usage(
-            evidence["usage"], reservation.max_output_tokens
-        )
+        try:
+            input_tokens, output_tokens = validate_usage(
+                evidence["usage"], reservation.max_output_tokens, reservation.max_input_tokens
+            )
+        except BudgetUnavailable:
+            raise CorrectionUnavailable(
+                "증거의 사용량이 예약한 입력·출력 상한을 초과합니다."
+            ) from None
         released = reservation.max_output_tokens - output_tokens
+        input_delta = input_tokens - (reservation.max_input_tokens or 0)
         breakdown = reservation_data(reservation)["breakdown"]
         before = {
             "global_calls": budget.allocated_calls,
             "global_output_tokens": budget.allocated_output_tokens,
+            "global_input_tokens": budget.allocated_input_tokens,
+            "reservation_input_tokens": breakdown["allocated_input_tokens"],
             "reservation_calls": breakdown["allocated_calls"],
             "reservation_output_tokens": breakdown["allocated_output_tokens"],
             "unknown_calls": breakdown["unknown_calls"],
@@ -233,6 +243,8 @@ def correct_usage(
         after = {
             **before,
             "global_output_tokens": before["global_output_tokens"] - released,
+            "global_input_tokens": before["global_input_tokens"] + input_delta,
+            "reservation_input_tokens": before["reservation_input_tokens"] + input_delta,
             "reservation_output_tokens": before["reservation_output_tokens"] - released,
             "unknown_calls": before["unknown_calls"] - 1,
             "unknown_output_tokens": before["unknown_output_tokens"]
@@ -262,6 +274,9 @@ def correct_usage(
         )
         if apply:
             budget.allocated_output_tokens = after["global_output_tokens"]
-            budget.save(update_fields=["allocated_output_tokens", "updated_at"])
+            budget.allocated_input_tokens = after["global_input_tokens"]
+            budget.save(
+                update_fields=["allocated_output_tokens", "allocated_input_tokens", "updated_at"]
+            )
             record.save(force_insert=True)
         return {"applied": apply, "replayed": False, **correction_data(record)}

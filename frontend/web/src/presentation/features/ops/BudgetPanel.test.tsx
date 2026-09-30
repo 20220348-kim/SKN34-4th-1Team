@@ -78,10 +78,10 @@ describe('관리자 예산 장부', () => {
     vi.stubGlobal('fetch', fetch)
     render(<MemoryRouter><BudgetOverview onExpired={vi.fn()} refreshKey={0} /></MemoryRouter>)
     const table = await screen.findByRole('table', { name: '예산 할당량 구성' })
-    expect(within(table).getByRole('row', { name: '확정 사용량 1 50' })).toBeTruthy()
-    expect(within(table).getByRole('row', { name: '승인 후 사용량 미확인 1 2,000' })).toBeTruthy()
-    expect(within(table).getByRole('row', { name: '아직 승인하지 않은 예약 4 8,000' })).toBeTruthy()
-    expect(within(table).getByRole('row', { name: '종료 전 반환 대기 — 1,950' })).toBeTruthy()
+    expect(within(table).getByRole('row', { name: '확정 사용량 1 50 100토큰' })).toBeTruthy()
+    expect(within(table).getByRole('row', { name: '승인 후 사용량 미확인 1 2,000 미확인·미설정' })).toBeTruthy()
+    expect(within(table).getByRole('row', { name: '아직 승인하지 않은 예약 4 8,000 미확인·미설정' })).toBeTruthy()
+    expect(within(table).getByRole('row', { name: '종료 전 반환 대기 — 1,950 미확인·미설정' })).toBeTruthy()
     expect(screen.getByText(/예약 기록이 없는 과거 모델 실행 2건/)).toBeTruthy()
     fireEvent.click(screen.getByText('한도 변경 이력 · 최근 1 / 전체 1건'))
     expect(screen.getByText(/김 운영자 · CLI/)).toBeTruthy()
@@ -140,7 +140,7 @@ describe('관리자 예산 장부', () => {
     expect(screen.getByRole('table', { name: '예산 할당량 구성' })).toBeTruthy()
     await act(async () => { await vi.advanceTimersByTimeAsync(15_000) })
     expect(screen.getByRole('alert').textContent).toContain('마지막 조회 기록')
-    expect(screen.getByRole('row', { name: '확정 사용량 1 50' })).toBeTruthy()
+    expect(screen.getByRole('row', { name: '확정 사용량 1 50 100토큰' })).toBeTruthy()
   })
 
   it('종료 정리의 반환분·미확인 유지분·근거를 읽기 전용으로 표시한다', async () => {
@@ -176,7 +176,7 @@ describe('관리자 예산 장부', () => {
     expect(within(audit).getByText('예약 차액 반환: 1,950출력 토큰 · 호출 횟수 유지')).toBeTruthy()
     expect(within(audit).getByText(/증거 SHA-256/)).toBeTruthy()
     expect(screen.getByText(/원본 정산 미수신 · 사용량 보정 이력 참조/)).toBeTruthy()
-    expect(screen.getByRole('row', { name: '확정 사용량 2 100' })).toBeTruthy()
+    expect(screen.getByRole('row', { name: '확정 사용량 2 100 200토큰' })).toBeTruthy()
     expect(within(audit).queryByRole('button')).toBeNull()
     expect(fetch.mock.calls.every(([, options]) => !options.method || options.method === 'GET')).toBe(true)
   })
@@ -209,4 +209,37 @@ describe('관리자 예산 장부', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ ...detail, calls: [{ ...detail.calls[0], output_tokens: null }] })))
     await expect(getRunBudget(id)).rejects.toThrow('운영 서버 응답을 확인할 수 없습니다.')
   })
+})
+
+it.each(['enforced', 'legacy_unknown', 'unconfigured'] as const)('누적 입력 %s 상태와 잔여 토큰을 구분한다', async (input_state) => {
+  const unknown = input_state === 'legacy_unknown'
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ ...page, summary: { ...page.summary,
+    input_state, legacy_live_run_count: 0,
+    limits: { ...page.summary.limits, input_tokens: input_state === 'enforced' ? 300000 : null },
+    allocated: { ...page.summary.allocated, input_tokens: unknown ? null : 196608 },
+    remaining: { ...page.summary.remaining, input_tokens: input_state === 'enforced' ? 103392 : null },
+    breakdown: { ...breakdown, unbounded_input_calls: unknown ? 1 : 0, unbounded_input_reservations: 0,
+      unknown_input_tokens: 32768, unapproved_input_tokens: 131072, pending_release_input_tokens: 32668, allocated_input_tokens: 196608 },
+  } })))
+  render(<MemoryRouter><BudgetOverview onExpired={vi.fn()} refreshKey={0} /></MemoryRouter>)
+  expect(await screen.findByText(input_state === 'enforced' ? '누적 입력 토큰 한도 적용 중'
+    : input_state === 'legacy_unknown' ? /과거 입력 미확인:/ : /누적 입력 한도 미설정:/)).toBeTruthy()
+  const row = screen.getByRole('row', { name: /^현재 할당량 합계/ })
+  expect(row.textContent).toContain(unknown ? '미확인·미설정' : '196,608토큰')
+  if (input_state === 'enforced') expect(screen.getByText(/입력 103,392토큰/)).toBeTruthy()
+})
+
+it('입력 보정 차액 불일치와 예약 상한 초과 사용량을 거절한다', async () => {
+  const bounded = { ...correctedDetail, reservation: { ...correctedDetail.reservation, max_input_tokens: 32768 },
+    corrections: [{ ...correction, before: { ...correction.before, global_input_tokens: 32868, reservation_input_tokens: 32868 },
+      after: { ...correction.after, global_input_tokens: 200, reservation_input_tokens: 200 } }] }
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json(bounded)))
+  expect((await getRunBudget(id)).reservation?.max_input_tokens).toBe(32768)
+  for (const changed of [
+    { ...bounded.corrections[0], after: { ...bounded.corrections[0].after, global_input_tokens: 100 } },
+    { ...bounded.corrections[0], input_tokens: 32769 },
+  ]) {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ ...bounded, corrections: [changed] })))
+    await expect(getRunBudget(id)).rejects.toThrow()
+  }
 })

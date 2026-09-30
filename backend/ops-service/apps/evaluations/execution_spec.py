@@ -101,7 +101,15 @@ def generation_settings(root):
     ]
     if len(retries) != 2 or any(value != 0 for value in retries):
         raise ValueError("Generation retry policy needs review")
+    input_limit = next(
+        ast.literal_eval(node.value)
+        for node in runner.body
+        if isinstance(node, ast.Assign)
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == "MAX_INPUT_TOKENS"
+    )
     return {
+        "max_input_tokens": input_limit,
         "max_output_tokens": bound["max_tokens"],
         "store": bound["store"],
         "reasoning": bound["reasoning"],
@@ -196,6 +204,11 @@ def profile(release, dataset_id, mode, config):
                 "case_id": case_id,
                 "model": config["model"],
                 "max_output_tokens": config["max_output_tokens"],
+                **(
+                    {"max_input_tokens": config["max_input_tokens"]}
+                    if "max_input_tokens" in config
+                    else {}
+                ),
             }
             for case_id in release["datasets"][dataset_id]["case_ids"]
         ]

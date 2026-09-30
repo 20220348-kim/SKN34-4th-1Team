@@ -76,11 +76,21 @@ class BudgetReportingTests(TestCase):
         self.action("settle", sequence=0, usage=USAGE)
         summary = self.summary()
         self.assertEqual(summary["state"], "consistent")
-        self.assertEqual(summary["allocated"], {"calls": 6, "output_tokens": 12000})
-        self.assertEqual(summary["remaining"], {"calls": 6, "output_tokens": 12000})
+        self.assertEqual(
+            summary["allocated"], {"calls": 6, "output_tokens": 12000, "input_tokens": None}
+        )
+        self.assertEqual(
+            summary["remaining"], {"calls": 6, "output_tokens": 12000, "input_tokens": None}
+        )
         self.assertEqual(
             summary["breakdown"],
             {
+                "allocated_input_tokens": 100,
+                "unknown_input_tokens": 0,
+                "unapproved_input_tokens": 0,
+                "pending_release_input_tokens": 0,
+                "unbounded_input_calls": 0,
+                "unbounded_input_reservations": 1,
                 "settled_calls": 1,
                 "confirmed_input_tokens": 100,
                 "confirmed_output_tokens": 50,
@@ -96,7 +106,9 @@ class BudgetReportingTests(TestCase):
         self.action("authorize", sequence=1, model="test-only", max_output_tokens=2000)
         self.action("close")
         summary = self.summary()
-        self.assertEqual(summary["allocated"], {"calls": 2, "output_tokens": 2050})
+        self.assertEqual(
+            summary["allocated"], {"calls": 2, "output_tokens": 2050, "input_tokens": None}
+        )
         self.assertEqual(summary["breakdown"]["unknown_output_tokens"], 2000)
         self.assertEqual(summary["breakdown"]["pending_release_output_tokens"], 0)
         detail = self.client.get(f"/api/v1/ops/evaluations/{self.run.pk}/budget").json()

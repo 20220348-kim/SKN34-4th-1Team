@@ -12,6 +12,7 @@ DATASETS = {
 }
 LEGACY_DATASET_ID = "target-coverage-20260907-v1"
 LIVE_CAPTURE_ID = "new-model-response"
+MAX_INPUT_TOKENS = 32768
 
 
 def live_config(dataset_id):
@@ -21,6 +22,7 @@ def live_config(dataset_id):
         "fixture_sha256": dataset["fixture_sha256"],
         "max_model_calls": len(dataset["case_ids"]),
         "max_output_tokens": 2000,
+        "max_input_tokens": MAX_INPUT_TOKENS,
     }
 
 
@@ -32,6 +34,7 @@ def validate_execution(dataset_id, candidate_id, reference_id, execution_mode, c
             or config != live_config(dataset_id)
             or type(config.get("max_model_calls")) is not int
             or type(config.get("max_output_tokens")) is not int
+            or type(config.get("max_input_tokens")) is not int
         ):
             raise ValueError("전송 자료·모델·호출 예산이 변경되었습니다. 새로고침 후 확인하세요.")
     elif execution_mode != "replay" or candidate_id == LIVE_CAPTURE_ID or config:

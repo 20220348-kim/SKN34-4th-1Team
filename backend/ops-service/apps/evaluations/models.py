@@ -192,6 +192,8 @@ class EvaluationBudget(models.Model):
     id = models.PositiveSmallIntegerField(primary_key=True, default=1, editable=False)
     call_limit = models.PositiveBigIntegerField(default=0)
     output_token_limit = models.PositiveBigIntegerField(default=0)
+    input_token_limit = models.PositiveBigIntegerField(null=True)
+    allocated_input_tokens = models.PositiveBigIntegerField(default=0)
     allocated_calls = models.PositiveBigIntegerField(default=0)
     allocated_output_tokens = models.PositiveBigIntegerField(default=0)
     updated_at = models.DateTimeField(auto_now=True)
@@ -199,6 +201,11 @@ class EvaluationBudget(models.Model):
     class Meta:
         constraints = [
             models.CheckConstraint(condition=models.Q(id=1), name="single_evaluation_budget"),
+            models.CheckConstraint(
+                condition=models.Q(input_token_limit__isnull=True)
+                | models.Q(allocated_input_tokens__lte=models.F("input_token_limit")),
+                name="evaluation_input_budget_limit",
+            ),
             models.CheckConstraint(
                 condition=models.Q(allocated_calls__lte=models.F("call_limit")),
                 name="evaluation_call_budget_limit",
@@ -217,6 +224,8 @@ class EvaluationBudgetReservation(models.Model):
     budget = models.ForeignKey(EvaluationBudget, on_delete=models.PROTECT)
     max_calls = models.PositiveSmallIntegerField()
     max_output_tokens = models.PositiveIntegerField()
+    # NULL means a legacy reservation with no approved input bound.
+    max_input_tokens = models.PositiveIntegerField(null=True)
     worker_id = models.UUIDField(null=True)
     closed_at = models.DateTimeField(null=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -232,6 +241,8 @@ class EvaluationBudgetChange(models.Model):
     reason = models.CharField(max_length=1000)
     previous_call_limit = models.PositiveBigIntegerField(null=True)
     previous_output_token_limit = models.PositiveBigIntegerField(null=True)
+    previous_input_token_limit = models.PositiveBigIntegerField(null=True)
+    input_token_limit = models.PositiveBigIntegerField(null=True)
     call_limit = models.PositiveBigIntegerField()
     output_token_limit = models.PositiveBigIntegerField()
     created_at = models.DateTimeField(auto_now_add=True)
@@ -256,6 +267,7 @@ class EvaluationBudgetCall(models.Model):
     sequence = models.PositiveSmallIntegerField()
     # 과거 승인의 사례를 소급 추정하지 않는다. 새 승인은 고정 실행 명세의 작업을 가리킨다.
     operation_id = models.CharField(max_length=128, null=True, db_collation="utf8mb4_bin")
+    counted_input_tokens = models.PositiveBigIntegerField(null=True)
     input_tokens = models.PositiveBigIntegerField(null=True)
     output_tokens = models.PositiveBigIntegerField(null=True)
     authorized_at = models.DateTimeField(auto_now_add=True)

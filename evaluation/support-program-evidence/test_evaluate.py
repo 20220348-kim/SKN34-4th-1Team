@@ -183,6 +183,7 @@ def test_execute_uses_production_agent_with_mock_http_only(
         monkeypatch.setenv("LANGFUSE_SECRET_KEY", "private-trace-test-key")
     clients = []
     requests = []
+    count_requests = []
     fake_capture = capture_for(loaded)
     fake_capture["cases"][0]["response"]["answer"] = "지원 대상 확인 🔎"
     real_client = httpx2.AsyncClient
@@ -194,6 +195,9 @@ def test_execute_uses_production_agent_with_mock_http_only(
     monkeypatch.setattr(Path, "write_text", write_with_legacy_default)
 
     def handler(request):
+        if str(request.url).endswith("/responses/input_tokens"):
+            count_requests.append(json.loads(request.content))
+            return httpx2.Response(200, json={"object": "response.input_tokens", "input_tokens": 100})
         assert str(request.url) == "https://api.openai.com/v1/responses"
         body = json.loads(request.content)
         assert body["store"] is False
@@ -241,6 +245,10 @@ def test_execute_uses_production_agent_with_mock_http_only(
     capture = asyncio.run(evaluate.execute(loaded[1], loaded[2], output))
     assert clients and all(client.is_closed for client in clients)
     assert len(requests) == (12 if status == 200 else 1)
+    assert len(count_requests) == capture["inputTokenCountRequests"] == len(requests)
+    for counted, generated in zip(count_requests, requests):
+        assert counted == {key: value for key, value in generated.items()
+                           if key in {"model", "input", "instructions", "text", "reasoning"}}
     assert capture["completed"] == (status == 200)
     assert len(capture["apiResponses"]) == len(requests)
     assert capture["modelApiCalls"] == len(requests)
@@ -400,6 +408,8 @@ def test_live_timeout_counts_attempt_without_inventing_usage(loaded, tmp_path, m
     real_client = httpx2.AsyncClient
     attempts = []
     def handler(request):
+        if str(request.url).endswith("/responses/input_tokens"):
+            return httpx2.Response(200, json={"object": "response.input_tokens", "input_tokens": 100})
         attempts.append(request)
         assert json.loads(request.content)["model"] == "gpt-6-luna"
         raise httpx2.ReadTimeout("private-error", request=request)
@@ -443,6 +453,8 @@ def test_ops_budget_precedes_http_and_uncertain_usage_blocks_next_case(loaded, t
     attempts = []
     real_client = httpx2.AsyncClient
     def handler(request):
+        if str(request.url).endswith("/responses/input_tokens"):
+            return httpx2.Response(200, json={"object": "response.input_tokens", "input_tokens": 100})
         assert events[-1] == "authorize"
         events.append("http")
         index = len(attempts)
@@ -482,3 +494,32 @@ def test_ops_budget_precedes_http_and_uncertain_usage_blocks_next_case(loaded, t
         assert receipt["payload"]["worker_id"] == budget.identity["worker_id"]
     if failure in {"authorize", "unknown", "timeout"}:
         assert not list((tmp_path / "budget").glob("usage-*.json"))
+
+
+@pytest.mark.parametrize("count_response", [None, True, -1, "100", 1.5, 32769, "http_error", "timeout"])
+def test_input_count_failure_prevents_generation_and_approval(loaded, tmp_path, monkeypatch, count_response):
+    from unittest.mock import AsyncMock, Mock
+    monkeypatch.setenv("OPENAI_API_KEY", "fake-not-sent")
+    monkeypatch.setenv("LANGFUSE_ENABLED", "false")
+    requests = []
+    def handler(request):
+        requests.append(request)
+        assert request.url.path == "/v1/responses/input_tokens"
+        if count_response == "timeout":
+            raise httpx2.ReadTimeout("PRIVATE", request=request)
+        if count_response == "http_error":
+            return httpx2.Response(503, json={"error": {"message": "PRIVATE"}})
+        return httpx2.Response(200, json={"object": "response.input_tokens", "input_tokens": count_response})
+    real_client = httpx2.AsyncClient
+    class MockClient(real_client):
+        def __init__(self, **kwargs):
+            super().__init__(transport=httpx2.MockTransport(handler), **kwargs)
+    monkeypatch.setattr(httpx2, "AsyncClient", MockClient)
+    budget = Mock(authorize=AsyncMock(), settle=AsyncMock())
+    capture = asyncio.run(evaluate.execute(loaded[1][:1], loaded[2], tmp_path / "capture", budget=budget))
+    assert len(requests) == capture["inputTokenCountRequests"] == 1
+    assert capture["modelApiCalls"] == 0 and not capture["completed"]
+    assert capture["inputTokenCounts"] == [] and capture["apiResponses"] == []
+    budget.authorize.assert_not_called()
+    budget.settle.assert_not_called()
+    assert "PRIVATE" not in json.dumps(capture)

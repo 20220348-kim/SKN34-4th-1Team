@@ -16,6 +16,7 @@ class BudgetRequest(serializers.Serializer):
     spec_hash = serializers.RegexField(r"^[a-f0-9]{64}$")
     sequence = serializers.IntegerField(min_value=0, max_value=11, required=False)
     usage = serializers.JSONField(required=False, allow_null=True)
+    input_token_count = serializers.IntegerField(min_value=0, max_value=32768, required=False)
     model = serializers.CharField(max_length=100, required=False)
     max_output_tokens = serializers.IntegerField(min_value=1, required=False)
     operation_id = serializers.RegexField(
@@ -24,6 +25,11 @@ class BudgetRequest(serializers.Serializer):
         required=False,
         trim_whitespace=False,
     )
+
+    def validate_input_token_count(self, value):
+        if type(self.initial_data["input_token_count"]) is not int:
+            raise serializers.ValidationError("정수 토큰 수가 필요합니다.")
+        return value
 
 
 @api_view(["POST"])

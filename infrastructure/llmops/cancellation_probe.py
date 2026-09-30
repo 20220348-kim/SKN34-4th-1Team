@@ -274,7 +274,10 @@ def database_snapshot(run_id):
     from apps.evaluations.models import EvaluationBudget, EvaluationRun
 
     budget = EvaluationBudget.objects.get(pk=1)
-    result = {"allocated": [budget.allocated_calls, budget.allocated_output_tokens]}
+    result = {
+        "allocated": [budget.allocated_calls, budget.allocated_output_tokens],
+        "allocated_input": budget.allocated_input_tokens,
+    }
     if run_id:
         run = EvaluationRun.objects.get(pk=UUID(run_id))
         reservation = run.budget_reservation
@@ -285,11 +288,16 @@ def database_snapshot(run_id):
             spec_hash=run.execution_spec_sha256,
             closed=reservation.closed_at is not None,
             reserved_calls=reservation.max_calls,
+            reserved_input_tokens=reservation.max_calls * reservation.max_input_tokens,
             reserved_output_tokens=reservation.max_calls * reservation.max_output_tokens,
             operation_ids=[item["id"] for item in run.execution_spec["model_operations"]],
             calls=list(
                 reservation.calls.order_by("sequence").values(
-                    "sequence", "operation_id", "output_tokens"
+                    "sequence",
+                    "operation_id",
+                    "output_tokens",
+                    "input_tokens",
+                    "counted_input_tokens",
                 )
             ),
         )
