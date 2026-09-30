@@ -11,11 +11,11 @@ export const colors = {
 }
 
 // Navigation owns the header/tab insets. Only headerless pages apply the top inset here.
-export function Page({ children, scroll = true, headerless = false, keyboardOffset = 0, refreshing, onRefresh }: PropsWithChildren<{
-  scroll?: boolean; headerless?: boolean; keyboardOffset?: number; refreshing?: boolean; onRefresh?: () => void
+export function Page({ children, scroll = true, headerless = false, keyboardOffset = 0, refreshing, onRefresh, backgroundColor = colors.background }: PropsWithChildren<{
+  scroll?: boolean; headerless?: boolean; keyboardOffset?: number; refreshing?: boolean; onRefresh?: () => void; backgroundColor?: string
 }>) {
   const insets = useSafeAreaInsets()
-  return <KeyboardAvoidingView style={[styles.page, { paddingTop: headerless ? insets.top : 0,
+  return <KeyboardAvoidingView style={[styles.page, { backgroundColor, paddingTop: headerless ? insets.top : 0,
     paddingLeft: insets.left, paddingRight: insets.right }]}
     behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     keyboardVerticalOffset={keyboardOffset + (headerless ? 0 : insets.top + 56)}>

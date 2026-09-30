@@ -1,7 +1,7 @@
 import Svg, { Circle, Path, Rect } from 'react-native-svg'
 import type { ColorValue } from 'react-native'
 
-export type AppIconName = 'search' | 'bookmark' | 'collaboration' | 'report' | 'account' | 'pencil' | 'send' | 'calendar' | 'message'
+export type AppIconName = 'search' | 'bookmark' | 'collaboration' | 'report' | 'account' | 'pencil' | 'send' | 'calendar' | 'message' | 'document' | 'shield'
 
 /** Paths from the approved mobile design; do not substitute emoji or a heart for the bookmark. */
 export function AppIcon({ name, color, size = 24, selected = false }: {
@@ -21,5 +21,7 @@ export function AppIcon({ name, color, size = 24, selected = false }: {
     {name === 'calendar' && <><Rect x={3} y={5} width={18} height={16} rx={2} />
       <Path d="M7 3v4M17 3v4M3 10h18" /></>}
     {name === 'message' && <Path d="M4 5h16v12H9l-5 4z" />}
+    {name === 'document' && <Path d="M6 3h8l4 4v14H6zM14 3v5h4M9 12h6M9 16h6" />}
+    {name === 'shield' && <Path d="m12 3 8 3v6c0 4-4 7-8 9-4-2-8-5-8-9V6z" />}
   </Svg>
 }
