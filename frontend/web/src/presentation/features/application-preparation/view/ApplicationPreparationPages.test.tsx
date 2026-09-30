@@ -2,7 +2,7 @@
 import { asValue } from 'awilix/browser'
 import { act, cleanup, fireEvent, render, screen, within, waitFor } from '@testing-library/react'
 import { Provider } from 'react-redux'
-import { MemoryRouter, Route, Routes } from 'react-router'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { appContainer } from '../../../../app/appContainer'
 import { createAppStore } from '../../../../app/store'
@@ -13,8 +13,9 @@ import { ApplicationPreparationUseCase } from '../../../../domain/usecases/Appli
 import { signedIn } from '../../../shared/auth/state/authSlice'
 import { ApplicationPreparationEditorPage, ApplicationPreparationListPage } from './ApplicationPreparationPages'
 import { supportProgramDetailPath } from '../../../shared/routes/appPaths'
+import { ApplicationPreparationNewPage } from './ApplicationPreparationNewPage'
 import { ApplicationDocumentPage } from './ApplicationDocumentPage'
-import { chooseOption, optionValues, selectedValue } from '../../../../test/selectField'
+import { chooseOption } from '../../../../test/selectField'
 
 const original = appContainer.resolve('applicationPreparationUseCase')
 const originalCatalog = appContainer.resolve('browseSupportProgramsUseCase')
@@ -453,10 +454,15 @@ it('shows a partial answer count even when the server confirms all required fiel
 
 it('starts reanalysis only on an explicit click and preserves existing preparations', async () => {
   mount('/app/application-preparations/new?sourceCode=BIZINFO&sourceProgramId=PBLN_1')
+  await screen.findByText('작성할 수 있는 신청 양식 1개를 찾았어요')
+  fireEvent.click(screen.getByRole('button', { name: '다음' }))
   const button = await screen.findByRole('button', { name: '입력칸별로 다시 분석' })
   expect(repository.discover).not.toHaveBeenCalled()
   fireEvent.click(button)
-  await screen.findByText(/입력칸별로 분석한 양식입니다/)
+  // 끝나면 2단계에 머문 채 토스트로 알리고, 분석이 남긴 경고를 요약 카드에 보여 줍니다.
+  expect(await screen.findByText('양식을 다시 분석했어요')).toBeTruthy()
+  expect(screen.getByText('원문 대조 필요')).toBeTruthy()
+  expect(screen.getByRole('heading', { name: '작성할 양식' })).toBeTruthy()
   expect(repository.discover).toHaveBeenCalledTimes(1)
   expect(repository.create).not.toHaveBeenCalled()
   expect(repository.delete).not.toHaveBeenCalled()
@@ -541,15 +547,21 @@ afterEach(() => {
   })
 })
 
+/** 현재 주소를 읽기 위한 숨은 표시입니다. 새 문서 화면이 고른 공고를 주소에 적는지 확인합니다. */
+function LocationProbe() {
+  const location = useLocation()
+  return <span hidden data-testid="location">{location.pathname + location.search}</span>
+}
+
 function mount(path: string) {
   const store = createAppStore()
   store.dispatch(signedIn({ email: 'owner@example.com', role: 'USER', tier: 'MEMBER', emailVerified: false, hasPassword: true, accountType: null, onboarded: true, company: null }))
   const rendered = render(<Provider store={store}><MemoryRouter initialEntries={[path]}><Routes>
     <Route path="/app/application-preparations" element={<ApplicationPreparationListPage />} />
     <Route path="/app/application-preparations/:preparationId/documents" element={<ApplicationDocumentPage />} />
-    <Route path="/app/application-preparations/new" element={<ApplicationPreparationEditorPage create />} />
+    <Route path="/app/application-preparations/new" element={<ApplicationPreparationNewPage />} />
     <Route path="/app/application-preparations/:preparationId" element={<ApplicationPreparationEditorPage />} />
-  </Routes></MemoryRouter></Provider>)
+  </Routes><LocationProbe /></MemoryRouter></Provider>)
   return { store, ...rendered }
 }
 
@@ -708,164 +720,378 @@ describe('application preparation list', () => {
 })
 
 describe('application preparation creation and detail', () => {
-  it('reads the stored availability as soon as a notice is selected from its detail page without calling AI', async () => {
-    mount('/app/application-preparations/new?sourceCode=BIZINFO&sourceProgramId=PBLN_1')
-    await screen.findByRole('region', { name: '선택한 공고' })
-    await waitFor(() => expect(repository.availability).toHaveBeenCalledWith('BIZINFO', 'PBLN_1', expect.any(AbortSignal)))
-    expect(await screen.findByText('양식 1개 · 바로 작성할 수 있어요')).toBeTruthy()
-    expect(screen.queryByRole('heading', { name: '신청 문서를 찾았습니다' })).toBeNull()
-    expect(screen.getByRole('button', { name: '입력칸별로 다시 분석' })).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: '다음 단계' }))
-    await screen.findByRole('heading', { name: '신청 문서를 찾았습니다' })
+  const newPath = '/app/application-preparations/new?sourceCode=BIZINFO&sourceProgramId=PBLN_1'
+  const availabilityOf = (status: string, reasonCode: string, items: ApplicationForm[] = []) => ({ state: { sourceCode: 'BIZINFO',
+    sourceProgramId: 'PBLN_1', status, reasonCode, nextRetryAt: null, attemptCount: 1 }, forms: { items } })
+  const nextButton = () => screen.getByRole('button', { name: '다음' }) as HTMLButtonElement
+  const startButton = () => screen.getByRole('button', { name: '작성 시작' }) as HTMLButtonElement
+
+  it('loads the program from the address, shows its stored form without AI and creates the preparation from step 2', async () => {
+    mount(newPath)
+    expect(screen.getByRole('heading', { name: '새 문서' })).toBeTruthy()
+    const crumbs = screen.getByRole('navigation', { name: '상위 화면' })
+    expect(within(crumbs).getByRole('link', { name: '신청 문서 작성' }).getAttribute('href')).toBe('/app/application-preparations')
+    expect(screen.getByText('공고를 고르면 저장된 신청 양식이 있는지 바로 확인해요')).toBeTruthy()
+    expect(screen.getByRole('status').textContent).toContain('공고를 불러오는 중입니다.')
+    expect(nextButton().disabled).toBe(true)
+
+    const found = await screen.findByText('작성할 수 있는 신청 양식 1개를 찾았어요')
+    expect(found.parentElement?.textContent).toContain(`${firstForm.formTitle} — 다음 단계에서 고를 수 있어요.`)
+    expect(repository.availability).toHaveBeenCalledWith('BIZINFO', 'PBLN_1', expect.any(AbortSignal))
+    const card = screen.getByRole('region', { name: '지원 공고' })
+    expect(within(card).getByText(supportProgramDetails[0].title)).toBeTruthy()
+    expect(within(card).getByText('기업마당')).toBeTruthy()
+    const source = within(card).getByRole('link', { name: /원문 보기/ })
+    expect(source.getAttribute('href')).toBe(supportProgramDetails[0].sourceUrl)
+    expect(source.getAttribute('rel')).toBe('noreferrer')
+    expect(source.getAttribute('target')).toBe('_blank')
+    expect(screen.getByText(/작성을 시작하기 전까지는 AI를 부르지 않아요/)).toBeTruthy()
+
+    fireEvent.click(nextButton())
+    expect(await screen.findByRole('heading', { name: '작성할 양식' })).toBeTruthy()
+    expect(screen.getByRole('listitem', { current: 'step' }).textContent).toContain('신청 문서 확인')
+    // 양식이 하나면 고를 것 없이 요약만, 지원 분야는 "일반 신청" 하나가 아니므로 라디오로 고릅니다.
+    expect(screen.queryByRole('radio', { name: new RegExp(firstForm.formTitle) })).toBeNull()
+    const fields = screen.getByRole('radiogroup', { name: '작성할 지원 분야' })
+    expect((within(fields).getByRole('radio', { name: '컨설팅' }) as HTMLInputElement).checked).toBe(true)
+    fireEvent.click(within(fields).getByRole('radio', { name: '마케팅' }))
+    fireEvent.click(startButton())
+    expect(await screen.findByRole('heading', { name: '답변 입력' })).toBeTruthy()
+    expect(repository.create).toHaveBeenCalledWith({ sourceCode: 'BIZINFO', sourceProgramId: 'PBLN_1',
+      formVersionId: firstForm.formVersionId, serviceField: 'MARKETING' }, expect.any(AbortSignal))
     expect(repository.availability).toHaveBeenCalledTimes(1)
     expect(repository.discover).not.toHaveBeenCalled()
     expect(repository.discoveryJob).not.toHaveBeenCalled()
   })
 
-  it.each([
-    ['NO_FORM', 'NO_FORM', '분석한 공식 첨부에서 작성할 신청 양식을 찾지 못했습니다.'],
-    ['DOCUMENT_UNAVAILABLE', 'SOURCE_NOT_FOUND', '공식 공고 또는 첨부가 없어졌거나 변경되었습니다.'],
-    ['DOCUMENT_UNAVAILABLE', 'SOURCE_INVALID', '공식 첨부의 형식이나 출처를 검증하지 못했습니다.'],
-    ['TOO_LARGE', 'SOURCE_TOO_LARGE', '첨부 파일의 크기나 문서 분량이 분석 제한을 초과했습니다.'],
-    ['RETRY_WAITING', 'SOURCE_UNAVAILABLE', '공식 사이트에서 공고나 첨부 파일을 불러오지 못했습니다.'],
-    ['RETRY_WAITING', 'AI_UNAVAILABLE', 'AI 분석 서비스에 연결하지 못했습니다.'],
-    ['REVIEW_REQUIRED', 'AI_INVALID_RESPONSE', 'AI 분석 응답이 올바르지 않거나 추출한 문항의 근거를 검증하지 못했습니다.'],
-    ['REVIEW_REQUIRED', 'DISCOVERY_CONFIGURATION_INVALID', '신청 양식 분석 설정이 올바르지 않아 분석을 시작하지 못했습니다.'],
-    ['REVIEW_REQUIRED', 'RETRY_EXHAUSTED:AI_UNAVAILABLE', 'AI 분석 서비스에 연결하지 못했습니다. 자동 재시도 한도에 도달하여 관리자 확인이 필요합니다.'],
-    ['REVIEW_REQUIRED', 'WORKER_RETRY_EXHAUSTED', '분석 작업이 완료되지 않은 채 재시도 한도에 도달했습니다. 관리자 확인이 필요합니다.'],
-  ])('shows the stored reason for %s / %s right after selection and keeps the next step closed', async (status, reasonCode, message) => {
-    repository.availability.mockResolvedValue({ state: { sourceCode: 'BIZINFO', sourceProgramId: 'PBLN_1', status,
-      reasonCode, nextRetryAt: null, attemptCount: 1 }, forms: { items: [] } })
-    mount('/app/application-preparations/new?sourceCode=BIZINFO&sourceProgramId=PBLN_1')
-    const result = await screen.findByRole('status', { name: '신청 양식 확인 결과' })
-    expect(within(result).getByText(message)).toBeTruthy()
-    expect(screen.getByText(status === 'RETRY_WAITING' ? '분석이 필요해요' : '이 공고에서는 작성할 양식을 찾지 못했어요')).toBeTruthy()
-    expect((screen.getByRole('button', { name: '다음 단계' }) as HTMLButtonElement).disabled).toBe(true)
-    expect(screen.queryByRole('heading', { name: '신청 문서를 찾았습니다' })).toBeNull()
-    expect(repository.create).not.toHaveBeenCalled()
+  it('retries a failed program detail and a failed availability lookup, keeping the next step closed meanwhile', async () => {
+    getProgramDetail.mockRejectedValueOnce(new Error('공고 상세를 불러오지 못했습니다.'))
+    const request = deferred<never>()
+    repository.availability.mockReturnValueOnce(request.promise)
+    mount(newPath)
+    const detailAlert = await screen.findByRole('alert')
+    expect(detailAlert.textContent).toContain('공고 상세를 불러오지 못했습니다.')
+    fireEvent.click(within(detailAlert).getByRole('button', { name: '다시 시도' }))
+    await screen.findByText(supportProgramDetails[0].title)
+    expect(screen.getByRole('status').textContent).toContain('저장된 신청 양식을 확인하고 있어요.')
+    expect(nextButton().disabled).toBe(true)
+    await act(async () => request.reject(new ApplicationPreparationError(504, 'REQUEST_TIMEOUT')))
+    const lookupAlert = await screen.findByRole('alert')
+    expect(lookupAlert.textContent).toContain('신청 준비 요청 시간이 초과되었습니다.')
+    expect(nextButton().disabled).toBe(true)
+    fireEvent.click(within(lookupAlert).getByRole('button', { name: '다시 시도' }))
+    await screen.findByText('작성할 수 있는 신청 양식 1개를 찾았어요')
+    expect(nextButton().disabled).toBe(false)
+    expect(repository.availability).toHaveBeenCalledTimes(2)
     expect(repository.discover).not.toHaveBeenCalled()
   })
 
-  it.each(['PENDING', 'STALE'])('analyzes an uncached %s form only after the explicit analysis click', async (status) => {
-    repository.availability.mockResolvedValue({ state: { sourceCode: 'BIZINFO', sourceProgramId: 'PBLN_1', status,
-      reasonCode: status === 'PENDING' ? 'NOT_ANALYZED' : 'SOURCE_CHANGED', nextRetryAt: null, attemptCount: 0 }, forms: { items: [] } })
-    mount('/app/application-preparations/new?sourceCode=BIZINFO&sourceProgramId=PBLN_1')
-    expect(await screen.findByText('분석이 필요해요')).toBeTruthy()
-    expect((screen.getByRole('button', { name: '다음 단계' }) as HTMLButtonElement).disabled).toBe(true)
+  it('picks a saved program in the panel without AI, discards on cancel and applies only on confirm', async () => {
+    browseSavedPrograms.mockResolvedValue([{ savedAt: detail.createdAt, program: structuredClone(supportPrograms[0]) }])
+    mount('/app/application-preparations/new')
+    expect(screen.getByText('신청 문서를 만들 공고를 골라 주세요')).toBeTruthy()
+    expect(nextButton().disabled).toBe(true)
+    const pickButton = screen.getByRole('button', { name: '공고 고르기' })
+    fireEvent.click(pickButton)
+    const panel = screen.getByRole('dialog', { name: '공고 고르기' })
+    expect(panel.getAttribute('aria-modal')).toBe('true')
+    expect(within(panel).getByText('신청 문서를 만들 공고 1개를 골라 주세요')).toBeTruthy()
+    const row = await within(panel).findByRole('radio', { name: new RegExp(supportPrograms[0].title) })
+    expect(within(panel).getByRole('tab', { name: '관심 공고함' }).getAttribute('aria-selected')).toBe('true')
+    expect((within(panel).getByRole('button', { name: '이 공고 선택' }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(row)
+    expect(await within(panel).findByText('양식 1개 · 바로 작성할 수 있어요')).toBeTruthy()
+    expect(repository.availability).toHaveBeenCalledWith(supportPrograms[0].sourceCode, supportPrograms[0].id, expect.any(AbortSignal))
+
+    fireEvent.click(within(panel).getByRole('button', { name: '취소' }))
+    expect(screen.queryByRole('dialog', { name: '공고 고르기' })).toBeNull()
+    expect(screen.getByText('신청 문서를 만들 공고를 골라 주세요')).toBeTruthy()
+    expect(document.activeElement).toBe(pickButton)
+
+    fireEvent.click(pickButton)
+    fireEvent.keyDown(screen.getByRole('dialog', { name: '공고 고르기' }), { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: '공고 고르기' })).toBeNull()
+
+    fireEvent.click(pickButton)
+    const reopened = screen.getByRole('dialog', { name: '공고 고르기' })
+    fireEvent.click(await within(reopened).findByRole('radio', { name: new RegExp(supportPrograms[0].title) }))
+    await within(reopened).findByText('양식 1개 · 바로 작성할 수 있어요')
+    fireEvent.click(within(reopened).getByRole('button', { name: '이 공고 선택' }))
+    expect(screen.queryByRole('dialog', { name: '공고 고르기' })).toBeNull()
+    const card = screen.getByRole('region', { name: '지원 공고' })
+    expect(within(card).getByText(supportPrograms[0].title)).toBeTruthy()
+    expect(within(card).getByText('작성할 수 있는 신청 양식 1개를 찾았어요')).toBeTruthy()
+    expect(document.activeElement).toBe(within(card).getByRole('button', { name: '공고 바꾸기' }))
+    expect(nextButton().disabled).toBe(false)
+    // 고른 공고를 주소에 적어 새로고침·재방문 때 같은 공고(와 진행 중인 분석)로 돌아옵니다. 다시 불러오지는 않습니다.
+    expect(screen.getByTestId('location').textContent).toBe(`/app/application-preparations/new?sourceCode=${supportPrograms[0].sourceCode}&sourceProgramId=${supportPrograms[0].id}`)
+    expect(getProgramDetail).not.toHaveBeenCalled()
+    // 패널에서 조회한 결과를 그대로 씁니다(두 번 조회했지만 모두 행을 고를 때뿐).
+    expect(repository.availability).toHaveBeenCalledTimes(2)
     expect(repository.discover).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button', { name: '입력칸별로 분석' }))
-    expect(await screen.findByRole('status', { name: '양식 분석 진행' })).toBeTruthy()
-    await screen.findByRole('heading', { name: '신청 문서를 찾았습니다' })
+    expect(repository.create).not.toHaveBeenCalled()
+  })
+
+  it('lists running analyses when opened without a program and resumes one through its link without calling discover', async () => {
+    repository.availability.mockResolvedValue(availabilityOf('PENDING', 'NOT_ANALYZED'))
+    const running = { ...completedDiscovery({ items: [structuredClone(firstForm)], warnings: [], cached: false }), status: 'RUNNING' as const, result: null }
+    repository.discoveryJobs.mockResolvedValue([running, { ...running, id: 78, status: 'UNKNOWN' as const, programTitle: '확인 필요 공고' }])
+    repository.discoveryJob.mockReturnValue(new Promise(() => {}))
+    mount('/app/application-preparations/new')
+    const alert = (await screen.findByText('분석 중인 공고가 있어요')).closest('[role="status"]') as HTMLElement
+    const rows = within(alert).getAllByRole('listitem')
+    expect(rows).toHaveLength(1)
+    expect(rows[0].textContent).toContain(firstForm.programTitle)
+    expect(rows[0].textContent).toContain('분석 중')
+    const link = within(rows[0]).getByRole('link', { name: /이어서 보기/ })
+    expect(link.getAttribute('href')).toBe('/app/application-preparations/new?sourceCode=BIZINFO&sourceProgramId=PBLN_1')
+    fireEvent.click(link)
+    const progress = await screen.findByRole('status', { name: '양식 분석 진행' })
+    expect(progress.textContent).toContain('화면을 나가도 계속돼요')
+    expect(screen.queryByText('분석 중인 공고가 있어요')).toBeNull()
+    expect(getProgramDetail).toHaveBeenCalledWith({ sourceCode: 'BIZINFO', sourceProgramId: 'PBLN_1' }, expect.any(AbortSignal))
+    expect(repository.discover).not.toHaveBeenCalled()
+  })
+
+  it('marks the program from the address in the panel and keeps its known availability', async () => {
+    browseSavedPrograms.mockResolvedValue([{ savedAt: detail.createdAt, program: { ...structuredClone(supportPrograms[0]), id: 'PBLN_1' } }])
+    mount(newPath)
+    await screen.findByText('작성할 수 있는 신청 양식 1개를 찾았어요')
+    fireEvent.click(screen.getByRole('button', { name: '공고 바꾸기' }))
+    const panel = screen.getByRole('dialog', { name: '공고 고르기' })
+    const row = await within(panel).findByRole('radio', { name: /지금 공고/ })
+    expect((row as HTMLInputElement).checked).toBe(true)
+    expect(within(panel).getByText('양식 1개 · 바로 작성할 수 있어요')).toBeTruthy()
+    expect((within(panel).getByRole('button', { name: '이 공고 선택' }) as HTMLButtonElement).disabled).toBe(false)
+    expect(repository.availability).toHaveBeenCalledTimes(1)
+  })
+
+  it('opens the full search when the saved list is empty, filters with chips and appends more results', async () => {
+    const page = (number: number) => ({
+      programs: [{ ...structuredClone(supportPrograms[number - 1]), id: `PBLN_${number}0` }], total: 2, page: number, pageSize: 10, totalPages: 2,
+      regions: ['서울'], categories: [], startupStages: [], applicantTypes: [], founderAges: [],
+    })
+    browsePrograms.mockImplementation(async (query: { page: number }) => page(query.page))
+    mount('/app/application-preparations/new')
+    fireEvent.click(screen.getByRole('button', { name: '공고 고르기' }))
+    const panel = screen.getByRole('dialog', { name: '공고 고르기' })
+    await waitFor(() => expect(within(panel).getByRole('tab', { name: '전체 검색' }).getAttribute('aria-selected')).toBe('true'))
+    await within(panel).findByRole('radio', { name: new RegExp(supportPrograms[0].title) })
+    expect(browsePrograms.mock.calls[0][0]).toMatchObject({ keyword: '', status: 'ALL', page: 1 })
+
+    fireEvent.click(within(panel).getByRole('button', { name: '더 보기' }))
+    await within(panel).findByRole('radio', { name: new RegExp(supportPrograms[1].title) })
+    expect(within(panel).getByRole('radio', { name: new RegExp(supportPrograms[0].title) })).toBeTruthy()
+    expect(browsePrograms.mock.calls[1][0]).toMatchObject({ page: 2 })
+    expect(within(panel).queryByRole('button', { name: '더 보기' })).toBeNull()
+
+    fireEvent.change(within(panel).getByRole('searchbox', { name: '공고명·기관명' }), { target: { value: '  AI  ' } })
+    fireEvent.keyDown(within(panel).getByRole('searchbox', { name: '공고명·기관명' }), { key: 'Enter' })
+    await waitFor(() => expect(browsePrograms).toHaveBeenCalledTimes(3))
+    expect(browsePrograms.mock.calls[2][0]).toMatchObject({ keyword: 'AI', page: 1 })
+    // 필터 칸은 고르는 중인 값만 바꾸고, [검색]을 눌러야 적용됩니다. 지역·분야는 여러 개를 쉼표로 이어 보냅니다.
+    fireEvent.click(within(panel).getByRole('button', { name: '필터 (0)' }))
+    fireEvent.click(within(panel).getByRole('button', { name: '지역' }))
+    fireEvent.click(within(panel).getByRole('checkbox', { name: '서울' }))
+    fireEvent.click(within(panel).getByRole('checkbox', { name: '부산' }))
+    chooseOption(within(panel).getByRole('combobox', { name: '출처' }), 'BIZINFO')
+    expect(browsePrograms).toHaveBeenCalledTimes(3)
+    expect(within(panel).getByRole('button', { name: '필터 (0)' })).toBeTruthy()
+    expect(within(panel).queryByRole('button', { name: '지역 · 서울 조건 해제' })).toBeNull()
+    fireEvent.click(within(panel).getByRole('button', { name: '검색' }))
+    await waitFor(() => expect(browsePrograms).toHaveBeenCalledTimes(4))
+    expect(browsePrograms.mock.calls[3][0]).toMatchObject({ keyword: 'AI', region: '서울,부산', sourceCode: 'BIZINFO', page: 1 })
+    expect(await within(panel).findByRole('button', { name: '필터 (3)' })).toBeTruthy()
+    expect(within(panel).getByRole('button', { name: '지역 · 부산 조건 해제' })).toBeTruthy()
+    expect(within(panel).getByRole('button', { name: '출처 · 기업마당 조건 해제' })).toBeTruthy()
+    // 칩 해제와 필터 초기화는 누르는 즉시 적용합니다.
+    fireEvent.click(within(panel).getByRole('button', { name: '지역 · 서울 조건 해제' }))
+    await waitFor(() => expect(browsePrograms).toHaveBeenCalledTimes(5))
+    expect(browsePrograms.mock.calls[4][0]).toMatchObject({ keyword: 'AI', region: '부산', sourceCode: 'BIZINFO' })
+    expect(await within(panel).findByRole('button', { name: '필터 (2)' })).toBeTruthy()
+    expect(within(panel).queryByRole('button', { name: '지역 · 서울 조건 해제' })).toBeNull()
+    fireEvent.click(within(panel).getByRole('button', { name: '필터 초기화' }))
+    await waitFor(() => expect(browsePrograms).toHaveBeenCalledTimes(6))
+    expect(browsePrograms.mock.calls[5][0]).toMatchObject({ keyword: 'AI', region: '', category: '', sourceCode: '', status: 'ALL' })
+    expect(await within(panel).findByRole('button', { name: '필터 (0)' })).toBeTruthy()
+
+    fireEvent.click(within(panel).getByRole('tab', { name: '관심 공고함' }))
+    expect(within(panel).getByText('관심 공고함이 비어 있어요')).toBeTruthy()
+    fireEvent.click(within(panel).getByRole('button', { name: '전체 검색' }))
+    expect(within(panel).getByRole('tab', { name: '전체 검색' }).getAttribute('aria-selected')).toBe('true')
+    expect(repository.availability).not.toHaveBeenCalled()
+  })
+
+  it('shows retry states for failed panel lists and a failed row lookup', async () => {
+    browseSavedPrograms.mockRejectedValueOnce(new Error('saved failed')).mockResolvedValue([{ savedAt: detail.createdAt, program: structuredClone(supportPrograms[0]) }])
+    repository.availability.mockRejectedValueOnce(new ApplicationPreparationError(504, 'REQUEST_TIMEOUT'))
+    mount('/app/application-preparations/new')
+    fireEvent.click(screen.getByRole('button', { name: '공고 고르기' }))
+    const panel = screen.getByRole('dialog', { name: '공고 고르기' })
+    const listError = await within(panel).findByRole('alert')
+    expect(listError.textContent).toContain('관심 공고를 불러오지 못했어요.')
+    fireEvent.click(within(listError).getByRole('button', { name: '다시 시도' }))
+    fireEvent.click(await within(panel).findByRole('radio', { name: new RegExp(supportPrograms[0].title) }))
+    const rowError = await within(panel).findByRole('alert')
+    expect(rowError.textContent).toContain('신청 준비 요청 시간이 초과되었습니다.')
+    expect((within(panel).getByRole('button', { name: '이 공고 선택' }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(within(rowError).getByRole('button', { name: '다시 시도' }))
+    expect(await within(panel).findByText('양식 1개 · 바로 작성할 수 있어요')).toBeTruthy()
+    expect((within(panel).getByRole('button', { name: '이 공고 선택' }) as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it.each([
+    ['NO_FORM', 'NO_FORM', '분석한 공식 첨부에서 작성할 신청 양식을 찾지 못했습니다.'],
+    ['DOCUMENT_UNAVAILABLE', 'SOURCE_NOT_FOUND', '공식 공고 또는 첨부가 없어졌거나 변경되었습니다.'],
+    ['TOO_LARGE', 'SOURCE_TOO_LARGE', '첨부 파일의 크기나 문서 분량이 분석 제한을 초과했습니다.'],
+    ['RETRY_WAITING', 'AI_UNAVAILABLE', 'AI 분석 서비스에 연결하지 못했습니다.'],
+    ['REVIEW_REQUIRED', 'RETRY_EXHAUSTED:AI_UNAVAILABLE', 'AI 분석 서비스에 연결하지 못했습니다. 자동 재시도 한도에 도달하여 관리자 확인이 필요합니다.'],
+    ['PENDING', 'NOT_ANALYZED', null],
+    ['STALE', 'SOURCE_CHANGED', null],
+  ])('lets a %s / %s program into step 2 with the analysis card and keeps writing closed', async (status, reasonCode, reason) => {
+    repository.availability.mockResolvedValue(availabilityOf(status, reasonCode))
+    mount(newPath)
+    const notice = await screen.findByText('저장된 신청 양식이 없어요')
+    expect(notice.parentElement?.textContent).toContain('다음 단계에서 입력칸별로 분석할 수 있어요.')
+    expect(nextButton().disabled).toBe(false)
+    fireEvent.click(nextButton())
+    const card = await screen.findByRole('region', { name: '저장된 양식이 없어요' })
+    expect(within(card).getByText('AI가 공식 첨부를 읽어 문항을 뽑아요 · 계정당 동시에 3건까지')).toBeTruthy()
+    if (reason) expect(card.textContent).toContain(reason)
+    else expect(card.textContent).not.toContain('최근 분석')
+    expect(startButton().disabled).toBe(true)
+    expect(repository.discover).not.toHaveBeenCalled()
+    expect(repository.create).not.toHaveBeenCalled()
+  })
+
+  it('analyzes a program without a stored form only on click, shows progress and stays in step 2 with a toast', async () => {
+    repository.availability.mockResolvedValue(availabilityOf('PENDING', 'NOT_ANALYZED'))
+    const started = deferred<ReturnType<typeof completedDiscovery>>()
+    repository.discover.mockReturnValueOnce(started.promise)
+    mount(newPath)
+    await screen.findByText('저장된 신청 양식이 없어요')
+    fireEvent.click(nextButton())
+    fireEvent.click(await screen.findByRole('button', { name: '입력칸별로 분석' }))
+    const progress = await screen.findByRole('status', { name: '양식 분석 진행' })
+    expect(progress.textContent).toContain('공식 첨부에서 신청 양식을 분석하고 있어요')
+    expect(progress.textContent).toContain('화면을 나가도 계속돼요')
+    expect(within(progress).queryByRole('button', { name: '취소' })).toBeNull()
+    expect(startButton().disabled).toBe(true)
+    await act(async () => started.resolve(completedDiscovery({ items: [structuredClone(firstForm)], warnings: [], cached: false })))
+    expect(await screen.findByText('양식을 분석했어요')).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '작성할 양식' })).toBeTruthy()
+    expect(startButton().disabled).toBe(false)
     expect(repository.discover).toHaveBeenCalledTimes(1)
     expect(repository.discover).toHaveBeenCalledWith('BIZINFO', 'PBLN_1', expect.any(AbortSignal), expect.any(String))
+    expect(repository.create).not.toHaveBeenCalled()
   })
 
   it('resumes a discovery job that is still running for the selected notice', async () => {
     vi.useFakeTimers()
-    repository.availability.mockResolvedValue({ state: { sourceCode: 'BIZINFO', sourceProgramId: 'PBLN_1', status: 'PENDING',
-      reasonCode: 'NOT_ANALYZED', nextRetryAt: null, attemptCount: 0 }, forms: { items: [] } })
+    repository.availability.mockResolvedValue(availabilityOf('PENDING', 'NOT_ANALYZED'))
     const running = { ...completedDiscovery({ items: [structuredClone(firstForm)], warnings: [], cached: false }), status: 'RUNNING' as const, result: null }
     repository.discoveryJobs.mockResolvedValue([running])
     repository.discoveryJob.mockResolvedValueOnce(running)
       .mockResolvedValueOnce(completedDiscovery({ items: [structuredClone(firstForm)], warnings: [], cached: false }))
-    await act(async () => { mount('/app/application-preparations/new?sourceCode=BIZINFO&sourceProgramId=PBLN_1') })
+    await act(async () => { mount(newPath) })
     await act(async () => { await vi.advanceTimersByTimeAsync(10) })
-    expect(screen.getByRole('status', { name: '양식 분석 진행' }).textContent).toContain('화면을 나가도 계속돼요')
-    expect(screen.getByText(/이전에 시작한 양식 분석이 진행 중입니다/)).toBeTruthy()
+    const progress = screen.getByRole('status', { name: '양식 분석 진행' })
+    expect(progress.textContent).toContain('화면을 나가도 계속돼요')
+    expect(progress.textContent).toContain('이전에 시작한 분석을 이어서 보여 드려요.')
     await act(async () => { await vi.advanceTimersByTimeAsync(4100) })
     expect(repository.discoveryJob).toHaveBeenCalledWith(77, expect.any(AbortSignal))
-    expect(screen.getByRole('heading', { name: '신청 문서를 찾았습니다' })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '작성할 양식' })).toBeTruthy()
+    expect(screen.getByText('양식을 분석했어요')).toBeTruthy()
     expect(repository.discover).not.toHaveBeenCalled()
   })
 
-  it('shows discovery failure without pretending an uncached form is available', async () => {
-    repository.availability.mockResolvedValue({ state: { sourceCode: 'BIZINFO', sourceProgramId: 'PBLN_1', status: 'PENDING',
-      reasonCode: 'NOT_ANALYZED', nextRetryAt: null, attemptCount: 0 }, forms: { items: [] } })
-    repository.discover.mockRejectedValue(new ApplicationPreparationError(503, 'AI_UNAVAILABLE'))
-    mount('/app/application-preparations/new?sourceCode=BIZINFO&sourceProgramId=PBLN_1')
+  it('lists the account analyses that fill the capacity when starting another one is refused', async () => {
+    repository.availability.mockResolvedValue(availabilityOf('NO_FORM', 'NO_FORM'))
+    repository.discoveryJobs.mockResolvedValueOnce([]).mockResolvedValue([
+      { ...completedDiscovery({ items: [structuredClone(firstForm)], warnings: [], cached: false }), id: 1, status: 'QUEUED', result: null, programTitle: '대기 공고' },
+      { ...completedDiscovery({ items: [structuredClone(firstForm)], warnings: [], cached: false }), id: 2, status: 'RUNNING', result: null, programTitle: '분석 공고' },
+      { ...completedDiscovery({ items: [structuredClone(firstForm)], warnings: [], cached: false }), id: 3, status: 'UNKNOWN', result: null, programTitle: '확인 공고' },
+      { ...completedDiscovery({ items: [structuredClone(firstForm)], warnings: [], cached: false }), id: 4, programTitle: '끝난 공고' },
+    ])
+    repository.discover.mockRejectedValue(new ApplicationPreparationError(429, 'APPLICATION_FORM_JOB_CAPACITY'))
+    mount(newPath)
+    await screen.findByText('저장된 신청 양식이 없어요')
+    fireEvent.click(nextButton())
     fireEvent.click(await screen.findByRole('button', { name: '입력칸별로 분석' }))
-    expect((await screen.findByRole('alert')).textContent).toContain('신청 준비 정보를 처리하지 못했습니다.')
-    expect(screen.queryByRole('heading', { name: '신청 문서를 찾았습니다' })).toBeNull()
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('진행 중이거나 확인이 필요한 분석이 3건입니다')
+    const jobs = within(alert).getByRole('list', { name: '진행 중인 분석' })
+    expect(within(jobs).getAllByRole('listitem').map((item) => item.textContent)).toEqual([
+      expect.stringContaining('대기 공고대기 중'), expect.stringContaining('분석 공고분석 중'), expect.stringContaining('확인 공고결과 확인 필요'),
+    ])
+    expect(within(jobs).getByText('최대 30분 뒤 자동으로 풀립니다')).toBeTruthy()
+    fireEvent.click(within(alert).getByRole('button', { name: '다시 시도' }))
+    await waitFor(() => expect(repository.discover).toHaveBeenCalledTimes(2))
     expect(repository.create).not.toHaveBeenCalled()
   })
 
-  it('offers multiple stored forms for one notice', async () => {
-    repository.availability.mockResolvedValue({ state: { sourceCode: 'BIZINFO', sourceProgramId: 'PBLN_1', status: 'AVAILABLE',
-      reasonCode: 'FORM_FOUND', nextRetryAt: null, attemptCount: 1 }, forms: { items: [firstForm, { ...secondForm, sourceProgramId: 'PBLN_1' }] } })
-    mount('/app/application-preparations/new?sourceCode=BIZINFO&sourceProgramId=PBLN_1')
-    expect(await screen.findByText('양식 2개 · 바로 작성할 수 있어요')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: '다음 단계' }))
-    const formSelect = await screen.findByLabelText('작성할 공식 첨부')
-    expect(optionValues(formSelect)).toEqual([firstForm.formVersionId, secondForm.formVersionId])
-    chooseOption(formSelect, secondForm.formVersionId)
-    expect(selectedValue(formSelect)).toBe(secondForm.formVersionId)
+  it('shows discovery failure without pretending an uncached form is available', async () => {
+    repository.availability.mockResolvedValue(availabilityOf('PENDING', 'NOT_ANALYZED'))
+    repository.discover.mockRejectedValue(new ApplicationPreparationError(503, 'AI_UNAVAILABLE'))
+    mount(newPath)
+    await screen.findByText('저장된 신청 양식이 없어요')
+    fireEvent.click(nextButton())
+    fireEvent.click(await screen.findByRole('button', { name: '입력칸별로 분석' }))
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('양식을 분석하지 못했어요')
+    expect(alert.textContent).toContain('신청 준비 정보를 처리하지 못했습니다.')
+    expect(screen.queryByRole('heading', { name: '작성할 양식' })).toBeNull()
+    expect(startButton().disabled).toBe(true)
+    expect(repository.create).not.toHaveBeenCalled()
+  })
+
+  it('offers multiple stored forms as radio cards and re-fits the service field to the chosen form', async () => {
+    repository.availability.mockResolvedValue(availabilityOf('AVAILABLE', 'FORM_FOUND', [firstForm, { ...secondForm, sourceProgramId: 'PBLN_1' }]))
+    mount(newPath)
+    const found = await screen.findByText('작성할 수 있는 신청 양식 2개를 찾았어요')
+    expect(found.parentElement?.textContent).toContain(`${firstForm.formTitle} · ${secondForm.formTitle}`)
+    fireEvent.click(nextButton())
+    const forms = await screen.findByRole('radiogroup', { name: '작성할 양식' })
+    const [first, second] = within(forms).getAllByRole('radio') as HTMLInputElement[]
+    expect([first.checked, second.checked]).toEqual([true, false])
+    expect(second.labels?.[0]?.textContent).toContain(secondForm.formTitle)
+    fireEvent.click(second)
+    const fields = screen.getByRole('radiogroup', { name: '작성할 지원 분야' })
+    expect(within(fields).getAllByRole('radio').map((radio) => (radio as HTMLInputElement).checked)).toEqual([true])
+    expect(within(fields).getByRole('radio', { name: '마케팅' })).toBeTruthy()
     expect(repository.discover).not.toHaveBeenCalled()
+  })
+
+  it('hides the service field choice when the form only supports general applications', async () => {
+    repository.availability.mockResolvedValue(availabilityOf('AVAILABLE', 'FORM_FOUND', [{ ...firstForm, supportedServiceFields: ['GENERAL'] }]))
+    mount(newPath)
+    await screen.findByText('작성할 수 있는 신청 양식 1개를 찾았어요')
+    fireEvent.click(nextButton())
+    await screen.findByRole('heading', { name: '작성할 양식' })
+    expect(screen.queryByRole('radiogroup', { name: '작성할 지원 분야' })).toBeNull()
+    fireEvent.click(startButton())
+    await waitFor(() => expect(repository.create).toHaveBeenCalledWith(expect.objectContaining({ serviceField: 'GENERAL' }), expect.any(AbortSignal)))
   })
 
   it('aborts active snapshot lookup when leaving the page', async () => {
     repository.availability.mockReturnValue(new Promise(() => {}))
-    const page = mount('/app/application-preparations/new?sourceCode=BIZINFO&sourceProgramId=PBLN_1')
+    const page = mount(newPath)
     await waitFor(() => expect(repository.availability).toHaveBeenCalled())
     const signal = repository.availability.mock.calls[0][2] as AbortSignal
     page.unmount()
     expect(signal.aborted).toBe(true)
   })
 
-  it('keeps the stored availability when moving between steps and re-reads it only for a new selection', async () => {
-    mount('/app/application-preparations/new')
-    fireEvent.click(screen.getByRole('button', { name: '공고 검색' }))
-    fireEvent.click(await screen.findByRole('button', { name: '선택' }))
-    await waitFor(() => expect(repository.availability).toHaveBeenCalledTimes(1))
-    fireEvent.click(await screen.findByRole('button', { name: '다음 단계' }))
-    await screen.findByRole('heading', { name: '신청 문서를 찾았습니다' })
-    fireEvent.click(screen.getByRole('button', { name: '이전 단계' }))
-    expect(screen.getByRole('button', { name: '다음 단계' })).toBeTruthy()
+  it('keeps the stored availability when moving between steps', async () => {
+    mount(newPath)
+    await screen.findByText('작성할 수 있는 신청 양식 1개를 찾았어요')
+    fireEvent.click(nextButton())
+    await screen.findByRole('heading', { name: '작성할 양식' })
+    fireEvent.click(screen.getByRole('button', { name: '이전' }))
+    expect(screen.getByText('작성할 수 있는 신청 양식 1개를 찾았어요')).toBeTruthy()
+    fireEvent.click(nextButton())
+    await screen.findByRole('heading', { name: '작성할 양식' })
     expect(repository.availability).toHaveBeenCalledTimes(1)
-    fireEvent.click(screen.getByRole('button', { name: '다음 단계' }))
-    await screen.findByRole('heading', { name: '신청 문서를 찾았습니다' })
-    expect(repository.availability).toHaveBeenCalledTimes(1)
-  })
-
-  it('reads the stored availability after choosing a saved program', async () => {
-    browseSavedPrograms.mockResolvedValue([{ savedAt: detail.createdAt, program: structuredClone(supportPrograms[0]) }])
-    mount('/app/application-preparations/new')
-    fireEvent.click(screen.getByRole('button', { name: '관심 공고함에서 선택' }))
-    fireEvent.click(await screen.findByRole('button', { name: `${supportPrograms[0].title} 관심 공고 선택` }))
-    fireEvent.click(screen.getByRole('button', { name: '선택 완료' }))
-    await waitFor(() => expect(repository.availability).toHaveBeenCalledWith(supportPrograms[0].sourceCode, supportPrograms[0].id, expect.any(AbortSignal)))
-    fireEvent.click(await screen.findByRole('button', { name: '다음 단계' }))
-    await screen.findByRole('heading', { name: '신청 문서를 찾았습니다' })
-  })
-
-  it('shows lookup errors with a retry, clears them when the selection is cleared, and never starts AI on its own', async () => {
-    const request = deferred<never>()
-    repository.availability.mockReturnValueOnce(request.promise)
-    mount('/app/application-preparations/new?sourceCode=BIZINFO&sourceProgramId=PBLN_1')
-    await screen.findByRole('region', { name: '선택한 공고' })
-    expect(screen.queryByText('공식 공고 URL·ID 직접 입력')).toBeNull()
-    expect(screen.getByRole('status').textContent).toContain('저장된 신청 양식을 확인하는 중')
-    await act(async () => request.reject(new ApplicationPreparationError(504, 'REQUEST_TIMEOUT')))
-    const alert = await screen.findByRole('alert')
-    expect(alert.textContent).toContain('신청 준비 요청 시간이 초과되었습니다.')
-    fireEvent.click(within(alert).getByRole('button', { name: '다시 시도' }))
-    expect(await screen.findByText('양식 1개 · 바로 작성할 수 있어요')).toBeTruthy()
-    expect(repository.availability).toHaveBeenCalledTimes(2)
-    fireEvent.click(screen.getByRole('button', { name: '선택 취소' }))
-    expect(screen.queryByRole('status', { name: '신청 양식 확인 결과' })).toBeNull()
-    expect(repository.discover).not.toHaveBeenCalled()
-  })
-
-  it('clears the previous result when selecting another program', async () => {
-    repository.availability.mockResolvedValueOnce({ state: { sourceCode: 'BIZINFO', sourceProgramId: 'PBLN_1', status: 'NO_FORM',
-      reasonCode: 'NO_FORM', nextRetryAt: null, attemptCount: 1 }, forms: { items: [] } })
-    mount('/app/application-preparations/new?sourceCode=BIZINFO&sourceProgramId=PBLN_1')
-    await screen.findByRole('status', { name: '신청 양식 확인 결과' })
-    fireEvent.click(screen.getByRole('button', { name: '선택 취소' }))
-    expect(screen.queryByRole('status', { name: '신청 양식 확인 결과' })).toBeNull()
-    fireEvent.click(screen.getByRole('button', { name: '공고 검색' }))
-    fireEvent.click(await screen.findByRole('button', { name: '선택' }))
-    await waitFor(() => expect(repository.availability).toHaveBeenCalledTimes(2))
-    expect(await screen.findByText('양식 1개 · 바로 작성할 수 있어요')).toBeTruthy()
   })
 
   it('displays the complete official detail without starting AI', async () => {
