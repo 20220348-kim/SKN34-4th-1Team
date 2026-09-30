@@ -92,4 +92,17 @@
         UPDATE application_form_discovery_job SET status = 'UNKNOWN', failure_code = 'RUN_OUTCOME_UNKNOWN', finished_at = #{now}
         WHERE status = 'RUNNING' AND started_at &lt;= DATE_SUB(#{now}, INTERVAL 20 MINUTE)
     </update>
+    <!-- 결과 불명 작업이라도 같은 공고의 양식 가용성이 AI 시작 이후에 확정됐고 다른 분석이 잡고 있지 않으면 닫는다. AI는 다시 부르지 않는다. -->
+    <update id="settleUnknown">
+        UPDATE application_form_discovery_job j
+        INNER JOIN application_form_availability v ON v.source_code = j.source_code AND v.source_program_id = j.source_program_id
+        SET j.status = 'FAILED', j.failure_code = 'RUN_OUTCOME_SETTLED'
+        WHERE j.status = 'UNKNOWN' AND v.status &lt;&gt; 'PENDING'
+          AND (v.lease_until IS NULL OR v.lease_until &lt;= #{now})
+          AND v.verified_at IS NOT NULL AND v.verified_at &gt;= COALESCE(j.ai_started_at, j.started_at, j.created_at)
+    </update>
+    <update id="releaseUnknown">
+        UPDATE application_form_discovery_job SET status = 'FAILED', failure_code = 'RUN_OUTCOME_UNKNOWN_EXPIRED'
+        WHERE status = 'UNKNOWN' AND finished_at &lt;= DATE_SUB(#{now}, INTERVAL #{ttlSeconds} SECOND)
+    </update>
 </mapper>

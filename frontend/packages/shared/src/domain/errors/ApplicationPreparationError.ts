@@ -20,6 +20,8 @@ function messageFor(code: string, status: number): string {
   if (code === 'APPLICATION_DOCUMENT_NO_WRITABLE_INPUT') return '자동 기입할 수 있는 답변이 없어 초안을 생성하지 않았습니다. 저장된 답변을 확인하며 원본 문서에서 직접 작성해 주세요.'
   if (status === 401) return '로그인이 만료되었습니다. 다시 로그인해 주세요.'
   if (code === 'RUN_OUTCOME_UNKNOWN') return '분석 결과를 확정할 수 없어 자동 재실행을 중단했습니다. 관리자 확인이 필요합니다.'
+  if (code === 'RUN_OUTCOME_SETTLED') return '결과를 확정하지 못했던 분석이 공고의 양식 상태에 반영되어 닫혔습니다. 공고를 다시 선택하면 현재 상태를 확인할 수 있습니다.'
+  if (code === 'RUN_OUTCOME_UNKNOWN_EXPIRED') return '결과를 확정하지 못한 분석이 대기 시간을 넘겨 닫혔습니다. 공고를 다시 선택해 새 분석을 요청할 수 있습니다.'
   if (code === 'QUEUE_EXPIRED') return '분석 대기 시간이 초과되었습니다. 공고를 다시 선택해 새 작업을 요청할 수 있습니다.'
   if (code === 'ACCOUNT_INACTIVE') return '계정 상태가 변경되어 분석을 중단했습니다.'
   if (code === 'DISCOVERY_FAILED') return '공식 문서 분석을 완료하지 못했습니다. 작업 내역을 확인해 주세요.'

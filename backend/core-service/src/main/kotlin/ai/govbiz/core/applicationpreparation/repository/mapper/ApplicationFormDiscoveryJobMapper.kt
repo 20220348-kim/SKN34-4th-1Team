@@ -21,4 +21,6 @@ interface ApplicationFormDiscoveryJobMapper {
     fun markPublished(id: Long, now: LocalDateTime): Int
     fun expireQueued(now: LocalDateTime): Int
     fun expireRunning(now: LocalDateTime): Int
+    fun settleUnknown(now: LocalDateTime): Int
+    fun releaseUnknown(now: LocalDateTime, ttlSeconds: Long): Int
 }

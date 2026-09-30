@@ -8,9 +8,11 @@ import ai.govbiz.core.applicationpreparation.repository.mapper.ApplicationFormDi
 import ai.govbiz.core.applicationpreparation.service.exception.ApplicationFormDiscoveryException
 import ai.govbiz.core.applicationpreparation.service.exception.ApplicationFormDiscoveryException.Reason
 import java.time.Clock
+import java.time.Duration
 import java.time.LocalDateTime
 import java.time.temporal.ChronoUnit
 import org.springframework.beans.factory.annotation.Qualifier
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Repository
 import org.springframework.transaction.annotation.Transactional
 import tools.jackson.databind.ObjectMapper
@@ -20,7 +22,12 @@ class ApplicationFormDiscoveryJobRepository(
     private val mapper: ApplicationFormDiscoveryJobMapper,
     private val json: ObjectMapper,
     @param:Qualifier("seoulClock") private val clock: Clock,
+    /** 결과 불명(UNKNOWN) 작업이 계정 한도를 잡아 두는 최대 시간. RUNNING 20분 만료보다 길어야 늦은 완료가 먼저 판정된다. */
+    @param:Value("\${app.application-form-discovery.unknown-ttl:PT30M}") private val unknownTtl: Duration,
 ) {
+    init {
+        require(unknownTtl >= Duration.ofMinutes(20)) { "app.application-form-discovery.unknown-ttl must be at least PT20M" }
+    }
     @Transactional
     fun reserve(ownerId: Long, key: String, sourceCode: String, programId: String): ApplicationFormDiscoveryJob {
         mapper.lockActiveAccount(ownerId) ?: throw ApplicationFormDiscoveryException(Reason.JOB_NOT_FOUND)
@@ -55,8 +62,16 @@ class ApplicationFormDiscoveryJobRepository(
     fun publishable() = mapper.publishable(now())
     fun reservePublication(id: Long) = mapper.reservePublication(id, now()) == 1
     fun markPublished(id: Long) { mapper.markPublished(id, now()) }
+    /**
+     * 만료 정리. QUEUED 1시간·계정 비활성 → FAILED, RUNNING 20분 → UNKNOWN. UNKNOWN은 같은 공고의 가용성이 AI 시작 이후 확정됐으면
+     * 바로, 아니면 TTL이 지나면 FAILED로 닫아 계정 한도(활성 3건)를 돌려준다. 어느 경우에도 AI를 다시 부르지 않는다.
+     */
     @Transactional
-    fun expireStaleWork() { mapper.expireQueued(now()); mapper.expireRunning(now()) }
+    fun expireStaleWork() {
+        val now = now()
+        mapper.expireQueued(now); mapper.expireRunning(now)
+        mapper.settleUnknown(now); mapper.releaseUnknown(now, unknownTtl.seconds)
+    }
     private fun now() = LocalDateTime.now(clock).truncatedTo(ChronoUnit.MICROS)
     private fun ApplicationFormDiscoveryJobDbRow.toDomain() = ApplicationFormDiscoveryJob(
         id, ownerAccountId, requestKey, sourceCode, sourceProgramId, programTitle, programSourceUrl,

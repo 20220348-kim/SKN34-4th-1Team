@@ -193,6 +193,8 @@ V31는 기존 텍스트 초안 실행과 작성본 버전을 저장합니다. �
 
 `ApplicationFormDiscoveryOutboxScheduler → ApplicationFormDiscoveryQueueClient → RabbitMQ → ApplicationFormDiscoveryJobConsumer`
 가 MySQL 실행권을 선점하고 기존 수집·추출 Service를 실행합니다. V26 작업 행이 Outbox이며 UNKNOWN은 새 분석도 차단합니다.
+UNKNOWN은 같은 공고의 양식 가용성이 AI 시작 이후에 확정되면 `RUN_OUTCOME_SETTLED`로, 아니면 `app.application-form-discovery.unknown-ttl`
+(`APPLICATION_FORM_DISCOVERY_UNKNOWN_TTL`, 기본 PT30M, 최소 PT20M)이 지나면 `RUN_OUTCOME_UNKNOWN_EXPIRED`로 FAILED 처리해 계정 활성 한도(3건)에서 뺍니다. 두 경우 모두 AI를 다시 부르지 않습니다.
 AI Service가 원문 근거 검증 실패를 `422 / APPLICATION_FORM_AI_INVALID_RESPONSE`로 확정하면 FAILED로 종료해 공고 재선택 후 새 요청을 허용합니다. 통신 유실·시간 초과는 UNKNOWN을 유지하며 자동 재호출하지 않습니다.
 `APPLICATION_FORM_DISCOVERY_QUEUE_ENABLED`는 Compose에서 true, Core 단독 기본 false입니다. 새 API는 비활성 시 503입니다.
 구형 동기 `POST .../forms/discover`는 큐 비활성 환경에서만 남기며, 큐 활성 환경은 409로 차단합니다.

@@ -162,6 +162,7 @@ V35·V37의 `(owner_account_id, demo_seed_key)` 유일 제약은 목업 중복�
 
 Frontend는 현재 공고의 활성 분석 작업을 3초마다 확인하며, 조회 재시도는 새 분석을 만들지 않습니다.
 AI Service의 명시적 근거 검증 실패(`422 / APPLICATION_FORM_AI_INVALID_RESPONSE`)는 Client의 전용 예외 → DiscoveryService의 업무 오류 → JobService의 FAILED 저장으로 연결됩니다. 공고 재선택 후 새 요청은 허용하되 자동 재호출하지 않으며, 통신 유실·시간 초과는 UNKNOWN으로 차단합니다.
+UNKNOWN은 Outbox 스케줄러의 만료 정리에서 같은 공고의 가용성이 AI 시작 이후 확정됐으면 즉시, 아니면 TTL(기본 30분) 뒤 FAILED로 닫혀 계정 활성 한도(3건)를 돌려주며, 이때도 AI를 다시 부르지 않습니다.
 관리자 큐 운영 조회는 `QueueOperationsController → QueueOperationsService → Repository/MyBatis/MySQL + QueueOperationsClient/RabbitMQ`
 로 생성·메일 발송·중복 검토·문서 분석·카카오 연결 해제의 다섯 큐 보관 상태·브로커 관측치를 읽습니다. 메시지 소비/재발행/DB 작업 상태 수정은 없습니다.
 [실행권·만료·결과 불명·관리자 지표·운영 한계](rabbitmq-application-form-discovery.md)를 참고하세요.
