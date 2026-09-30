@@ -132,3 +132,14 @@ def test_receipt_write_failure_is_explicit_and_does_not_attempt_settlement(clien
         })
     request.assert_not_called()
     assert not list(tmp_path.iterdir())
+
+
+def test_embedding_approval_sends_hash_dimensions_and_zero_output(monkeypatch, client):
+    calls = []
+    monkeypatch.setattr(client, "request", lambda action, **fields: calls.append((action, fields)))
+    asyncio.run(client.authorize(12, "text-embedding-3-small", 0,
+        operation_id="document_embedding:D1:12", input_token_count=500,
+        input_sha256="a" * 64, dimensions=1536))
+    assert calls == [("authorize", {"sequence": 12, "model": "text-embedding-3-small", "max_output_tokens": 0,
+        "operation_id": "document_embedding:D1:12", "input_token_count": 500,
+        "input_sha256": "a" * 64, "dimensions": 1536})]

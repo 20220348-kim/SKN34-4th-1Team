@@ -85,7 +85,7 @@ class BudgetOperationContractTests(SimpleTestCase):
 
     def test_input_count_does_not_coerce_booleans_strings_or_floats(self):
         fields = {"worker_id": uuid4(), "flow_id": uuid4(), "spec_hash": "a" * 64}
-        for value in (True, "100", 100.0, -1, 32769, None):
+        for value in (True, "100", 100.0, -1, 262113, None):
             with self.subTest(value=value):
                 self.assertFalse(
                     BudgetRequest(data={**fields, "input_token_count": value}).is_valid()
@@ -97,7 +97,7 @@ class BudgetOperationContractTests(SimpleTestCase):
         valid = BudgetRequest(data={**fields, "operation_id": "answer:TC01"})
         self.assertTrue(valid.is_valid(), valid.errors)
         self.assertEqual(valid.validated_data["operation_id"], "answer:TC01")
-        for value in (None, "", "query_embedding:TC01", "answer:", "answer:" + "a" * 101):
+        for value in (None, "", "unsupported:TC01", "answer:", "answer:" + "a" * 101):
             with self.subTest(value=value):
                 self.assertFalse(BudgetRequest(data={**fields, "operation_id": value}).is_valid())
 
@@ -266,6 +266,16 @@ class BudgetOperationMigrationTests(TransactionTestCase):
                 apps.get_model("evaluations", "EvaluationBudgetCall").objects.order_by("sequence")
             )
             self.assertEqual([call.counted_input_tokens for call in kept], [None, None, None])
+            self.assertEqual([call.max_input_tokens for call in kept], [None, None, None])
+            self.assertEqual([call.max_output_tokens for call in kept], [None, None, None])
+            from .budget import call_limits, reservation_limits
+            from .models import EvaluationBudgetReservation
+
+            current = EvaluationBudgetReservation.objects.get(pk=run.pk)
+            self.assertIsNone(current.reserved_input_tokens)
+            self.assertIsNone(current.reserved_output_tokens)
+            self.assertEqual(reservation_limits(current), (None, 12000))
+            self.assertEqual(call_limits(current.calls.get(sequence=0)), (None, 2000))
             self.assertEqual(
                 apps.get_model("evaluations", "EvaluationBudget")
                 .objects.get(pk=1)

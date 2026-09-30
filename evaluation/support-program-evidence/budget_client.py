@@ -52,10 +52,11 @@ class BudgetClient:
     def claim(self):
         self.request("claim")
 
-    async def authorize(self, sequence, model, max_output_tokens, *, operation_id, input_token_count):
+    async def authorize(self, sequence, model, max_output_tokens, *, operation_id, input_token_count, input_sha256=None, dimensions=None):
+        embedding = {} if input_sha256 is None else {"input_sha256": input_sha256, "dimensions": dimensions}
         await asyncio.to_thread(self.request, "authorize", sequence=sequence,
                                 model=model, max_output_tokens=max_output_tokens, operation_id=operation_id,
-                                input_token_count=input_token_count)
+                                input_token_count=input_token_count, **embedding)
 
     async def settle(self, sequence, usage, *, operation_id):
         await asyncio.to_thread(self.request, "settle", sequence=sequence, usage=usage, operation_id=operation_id)

@@ -3,9 +3,10 @@
 from uuid import UUID
 
 from django.db import transaction
-from django.db.models import Count, F, Q, Sum
+from django.db.models import BigIntegerField, Count, F, Q, Sum
 from django.db.models.functions import Coalesce
 
+from .budget import call_limits, reservation_limits
 from .models import (
     EvaluationBudget,
     EvaluationBudgetCall,
@@ -19,11 +20,27 @@ def ledger_totals(reservations):
     """정산해도 close 전에는 출력 차액이 반환되지 않는 기존 장부 계약을 계산한다."""
     opened = reservations.filter(closed_at__isnull=True).aggregate(
         calls=Sum("max_calls", default=0),
-        output=Sum(F("max_calls") * F("max_output_tokens"), default=0),
-        input=Sum(F("max_calls") * F("max_input_tokens"), default=0),
+        output=Sum(
+            Coalesce(
+                "reserved_output_tokens",
+                F("max_calls") * F("max_output_tokens"),
+                output_field=BigIntegerField(),
+            ),
+            default=0,
+        ),
+        input=Sum(
+            Coalesce(
+                "reserved_input_tokens",
+                F("max_calls") * F("max_input_tokens"),
+                output_field=BigIntegerField(),
+            ),
+            default=0,
+        ),
         unbounded=Count("pk", filter=Q(max_input_tokens__isnull=True)),
     )
     calls = EvaluationBudgetCall.objects.filter(reservation__in=reservations).annotate(
+        input_cap=Coalesce("max_input_tokens", "reservation__max_input_tokens"),
+        output_cap=Coalesce("max_output_tokens", "reservation__max_output_tokens"),
         effective_input=Coalesce("correction__input_tokens", "input_tokens"),
         effective_output=Coalesce("correction__output_tokens", "output_tokens"),
     )
@@ -34,25 +51,19 @@ def ledger_totals(reservations):
         confirmed_input_tokens=Sum("effective_input", filter=settled, default=0),
         confirmed_output_tokens=Sum("effective_output", filter=settled, default=0),
         unknown_calls=Count("pk", filter=~settled),
-        unbounded_input_calls=Count(
-            "pk", filter=~settled & Q(reservation__max_input_tokens__isnull=True)
-        ),
-        unknown_input_tokens=Sum("reservation__max_input_tokens", filter=~settled, default=0),
-        open_input=Sum("reservation__max_input_tokens", filter=open_call, default=0),
-        open_settled_input_capacity=Sum(
-            "reservation__max_input_tokens", filter=open_call & settled, default=0
-        ),
+        unbounded_input_calls=Count("pk", filter=~settled & Q(input_cap__isnull=True)),
+        unknown_input_tokens=Sum("input_cap", filter=~settled, default=0),
+        open_input=Sum("input_cap", filter=open_call, default=0),
+        open_settled_input_capacity=Sum("input_cap", filter=open_call & settled, default=0),
         open_settled_input=Sum(
             "effective_input",
-            filter=open_call & settled & Q(reservation__max_input_tokens__isnull=False),
+            filter=open_call & settled & Q(input_cap__isnull=False),
             default=0,
         ),
-        unknown_output_tokens=Sum("reservation__max_output_tokens", filter=~settled, default=0),
+        unknown_output_tokens=Sum("output_cap", filter=~settled, default=0),
         open_calls=Count("pk", filter=open_call),
-        open_output=Sum("reservation__max_output_tokens", filter=open_call, default=0),
-        open_settled_capacity=Sum(
-            "reservation__max_output_tokens", filter=open_call & settled, default=0
-        ),
+        open_output=Sum("output_cap", filter=open_call, default=0),
+        open_settled_capacity=Sum("output_cap", filter=open_call & settled, default=0),
         open_settled_output=Sum("effective_output", filter=open_call & settled, default=0),
     )
     # Subtract in Python: MySQL's unsigned subtraction can fail on inconsistent historical rows.
@@ -187,59 +198,61 @@ def budget_summary(budget):
 def reservation_data(reservation):
     # A page prefetches these calls once. Never expose the worker's identity or bearer token.
     calls = list(reservation.calls.all())
-    settled = [
-        call.correction if hasattr(call, "correction") else call
-        for call in calls
-        if call.settled_at is not None or hasattr(call, "correction")
-    ]
-    unknown = len(calls) - len(settled)
-    unapproved = reservation.max_calls - len(calls) if reservation.closed_at is None else 0
-    output = sum(call.output_tokens for call in settled)
-    pending = (
-        len(settled) * reservation.max_output_tokens - output
-        if reservation.closed_at is None
+    known = [call for call in calls if call.settled_at is not None or hasattr(call, "correction")]
+    unknown = [call for call in calls if call not in known]
+    settled = [call.correction if hasattr(call, "correction") else call for call in known]
+    opened = reservation.closed_at is None
+    capacity, output_capacity = reservation_limits(reservation)
+    input_used = sum(call.input_tokens for call in settled)
+    output_used = sum(call.output_tokens for call in settled)
+    input_unknown = sum((call_limits(call)[0] or 0) for call in unknown)
+    output_unknown = sum(call_limits(call)[1] for call in unknown)
+    input_unapproved = (
+        (capacity or 0) - sum((call_limits(call)[0] or 0) for call in calls) if opened else 0
+    )
+    output_unapproved = (
+        output_capacity - sum(call_limits(call)[1] for call in calls) if opened else 0
+    )
+    input_pending = (
+        sum(
+            (call_limits(call)[0] or 0) - usage.input_tokens
+            for call, usage in zip(known, settled, strict=True)
+            if call_limits(call)[0] is not None
+        )
+        if opened
         else 0
     )
+    output_pending = sum(call_limits(call)[1] for call in known) - output_used if opened else 0
+    unapproved = reservation.max_calls - len(calls) if opened else 0
     totals = {
-        "settled_calls": len(settled),
-        "confirmed_input_tokens": sum(call.input_tokens for call in settled),
-        "confirmed_output_tokens": output,
-        "unknown_calls": unknown,
-        "unknown_output_tokens": unknown * reservation.max_output_tokens,
+        "settled_calls": len(known),
+        "confirmed_input_tokens": input_used,
+        "confirmed_output_tokens": output_used,
+        "unknown_calls": len(unknown),
+        "unknown_input_tokens": input_unknown,
+        "unknown_output_tokens": output_unknown,
         "unapproved_calls": unapproved,
-        "unapproved_output_tokens": unapproved * reservation.max_output_tokens,
-        "pending_release_output_tokens": pending,
+        "unapproved_input_tokens": input_unapproved,
+        "unapproved_output_tokens": output_unapproved,
+        "pending_release_input_tokens": input_pending,
+        "pending_release_output_tokens": output_pending,
         "allocated_calls": len(calls) + unapproved,
-        "allocated_output_tokens": output
-        + (unknown + unapproved) * reservation.max_output_tokens
-        + pending,
+        "allocated_input_tokens": input_used + input_unknown + input_unapproved + input_pending,
+        "allocated_output_tokens": output_used
+        + output_unknown
+        + output_unapproved
+        + output_pending,
+        "unbounded_input_calls": sum(call_limits(call)[0] is None for call in unknown),
+        "unbounded_input_reservations": int(capacity is None and opened),
     }
-    capacity = reservation.max_input_tokens
-    confirmed_input = totals["confirmed_input_tokens"]
-    totals.update(
-        unbounded_input_calls=unknown if capacity is None else 0,
-        unbounded_input_reservations=int(capacity is None and reservation.closed_at is None),
-        unknown_input_tokens=unknown * (capacity or 0),
-        unapproved_input_tokens=unapproved * (capacity or 0),
-        pending_release_input_tokens=(len(settled) * capacity - confirmed_input)
-        if capacity is not None and reservation.closed_at is None
-        else 0,
-    )
-    totals["allocated_input_tokens"] = sum(
-        totals[key]
-        for key in (
-            "confirmed_input_tokens",
-            "unknown_input_tokens",
-            "unapproved_input_tokens",
-            "pending_release_input_tokens",
-        )
-    )
     return {
         "run_id": str(reservation.run_id),
         "dataset_id": reservation.run.dataset_id,
         "created_at": reservation.created_at.isoformat(),
         "closed_at": reservation.closed_at.isoformat() if reservation.closed_at else None,
         "max_calls": reservation.max_calls,
+        "reserved_input_tokens": capacity,
+        "reserved_output_tokens": output_capacity,
         "max_output_tokens": reservation.max_output_tokens,
         "max_input_tokens": reservation.max_input_tokens,
         "breakdown": totals,

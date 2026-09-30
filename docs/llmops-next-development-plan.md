@@ -1,8 +1,8 @@
-# LLMOps 개발 현황과 후속 전략 — 고정 근거 평가의 누적 입력 예산
+# LLMOps 개발 현황과 후속 전략 — 임베딩 배치별 예산 연결
 
 [문서 목록](README.md) · [도입·구현 이력](langfuse-adoption-strategy.md) · [Ops API](../backend/ops-service/README.md) · [실행 안내](../infrastructure/llmops/README.md)
 
-## 현재 완료 판단과 다음 개발 순서 — G2 고정 근거 입력 예산
+## 현재 완료 판단과 다음 개발 순서 — G2 작업별 입력·출력 예산
 
 2026-09-30 저장소와 원격 CI를 다시 대조했다. 아래의 이전 구현·DB 집계는 당시 기록이며
 현재 개발 우선순위는 이 절을 따른다. 후속으로 G1의 캡처 연결을 구현했으며 운영 DB의
@@ -15,12 +15,61 @@
 |---|---|---|
 | React·Django 운영 기능 | 기존 Core 관리자 로그인, 접수·조회·비교·동기화·실패 후처리 복구 구현 | 새 RAG 평가의 접수·실행·비교는 미연결 |
 | 자료·응답 검토와 품질 정책 | 고정 근거의 사람 검토, 판정 이력, 기준 지정·철회·오래된 합격 차단 구현 | 현재 모델의 유효한 사람 검토 기준은 이번 점검에서 미확인; 전체 RAG 정책 없음 |
-| 예산·취소 | 고정 근거 live의 누적 호출/입력/출력 예약·정산·취소·종료 정리·증거 보정, 사례별 작업 ID·생성 전 입력 계산 구현. 입력 한도는 CLI로 명시적 활성화 | 새 migration의 실제 환경 적용·최신 SHA CI, 임베딩·금액/기간 한도, 전체 서비스 비용 통제 및 runner→Kubernetes 예산 검증 |
+| 예산·취소 | 고정 근거 live의 누적 호출/입력/출력 장부와 입력 계산 구현. 내부 혼합 작업 예약·임베딩 SDK 승인/정산 가드와 호출별 상한 추가 | 새 migration의 실제 환경 적용·최신 SHA CI, RAG 접수/실행기 연결·임베딩 증거 보정·금액/기간 한도·runner→Kubernetes 왕복 검증 |
 | 관측·인프라 복구 | Core→AI 상세 RAG 추적, Prefect·sync·artifact·컨테이너 교체·보고서 변조 검증 구현 | 최신 SHA의 전체 통합 CI, 개인/운영 환경 적용·복원 완료는 별도 증거 필요 |
 | RAG 오프라인 평가 | v1 계산기·v2 대역 출처와 Core 다중 청크 수집 10사례 실제 서버 검증 | 필수 CI 회귀 수정, 공식 HTML 수집 연결, 사람 검토 계약과 Ops 품질·기준 지정 |
 | 자동 운영 | 상시 실행기와 상태 동기화 존재 | 정기 모델 평가, 품질/비용 알림, 품질에 따른 배포 차단은 별도 후속 |
 
-### 이번 후속 구현 — 입력 예산의 승인·정산·운영 화면 연결
+### 이번 후속 구현 — 혼합 작업 장부와 임베딩 SDK 승인 경계
+
+`skn-92 / 20f03c2` 이후 작업이다. **공개 RAG 실행은 아직 연결하지 않았다.**
+작업별 예산 계약과 기존 Service의 실제 SDK 전송 경계를 먼저 구현했다.
+
+- 내부 RAG 명세는 문서/질문 임베딩과 답변의 작업 ID·모델·개별 상한을 고정한다. 임베딩은 차원과
+  전처리 배치 해시도 대조하며 출력 0, 누적 입력 한도 필수를 적용한다. 예약 총량은 개별 상한의 합계다.
+- 가상 사용량을 만들지 않고 실제 응답의 usage로 정산한다. 승인/정산 유실·timeout·미확인 사용량은
+  다음 호출을 막고 해당 입력 예약을 유지한다. 캐시로 전송하지 않은 임베딩 슬롯만 건너뛰며 답변은 건너뛸 수 없다.
+- 종료·취소·종료 정리·답변 증거 보정과 관리자 API/React가 호출별 상한을 사용한다.
+  migration `0018_operation_token_limits`는 nullable 4개 필드를 추가하며 과거 기록에는 당시 예약 상한을 사용한다.
+- `EmbeddingBudget`은 `serve_flow.build_evaluation_app`에 주입할 수 있는 내부 색인·검색 연결점이다.
+  현재 CLI·Prefect·공개 Ops 접수에서 자동으로 사용하지 않는다. 부분 캐시로 배치가 달라지면 승인 해시 불일치로 중단한다.
+- 임베딩용 서명 증거·보정은 미구현이다. 기존 답변 영수증을 임베딩 보정에 재사용하지 않는다.
+
+호출 흐름: `고정 배치 → 기존 Service → SDK 요청 대조 → Ops 작업 승인 → OpenAI 임베딩 →
+usage 검증·Ops 정산 → 벡터 검증·캐시 → 종료 후 미사용 예약 반환`.
+실제 API 대신 HTTP 대역을 사용했고 개발 DB·사용량·실제 승인 기록은 변경하지 않았다.
+
+검증 결과와 실행 제약은 [Ops README](../backend/ops-service/README.md#임베딩-배치별-예산-내부-실행-계약)와
+[평가 실행기 README](../evaluation/support-program-evidence/README.md#임베딩-배치-예산-연결-내부-실행기)를 함께 따른다.
+이번 변경은 `skn-96`에 기록하며 최종 SHA의 전체 CI를 별도로 확인한다. 실제 Kubernetes 연결·현재 모델 품질 검증으로 판단하지 않는다.
+
+로컬 검증: 격리 MySQL 8.4의 예산·동시성·migration·복구·보정 82건, 평가 실행기 선택 pytest
+83건과 평가 서버 13건, React 관련 84건이 통과했다. Ops Ruff·웹 타입/정적 검사·migration 정합성·
+실행 manifest 검사를 수행했다. Python 3.12 기존 가상환경을 사용했으며 새 의존성은 없다.
+예약 명세와 저장 총량 불일치 차단을 추가한 뒤 관련 MySQL 41건을 재검증했다(위 82건과 중복 포함).
+전체 컨테이너·실제 RAG/Prefect·Kubernetes 검증은 완료하지 않았다.
+
+실행 명령은 기존 Python 3.12 가상환경의 `python -m pytest`로 평가 경로의
+`test_embedding_budget.py`, `test_budget_client.py`, `test_execution_spec.py`, `test_ops_flow.py`,
+`test_serve_flow.py`와 인프라의 `test_cancellation_smoke.py`를 선택했다.
+격리 MySQL에서는 `manage.py test`로 `apps.evaluations.test_embedding_budget`,
+`test_budget_operations`, `test_budget_cleanup`, `test_usage_correction`, `test_input_budget`,
+`test_budget_reporting`, `test_budget`을 선택했다. Web은 Node 24의 Vitest로
+`BudgetPanel.test.tsx`, `App.ops.test.tsx`를 실행하고 `tsc -b`·Oxlint를 확인했다.
+전체 CI는 기존 `ci.yml`·`ops-ci.yml`·`llmops-ci.yml`의 push/PR에서 수행한다.
+
+**기준 SHA CI 실패 보완:** [LLMOps CI의 취소 검사](https://github.com/SKNETWORKS-FAMILY-AICAMP/SKN34-4th-1Team/actions/runs/36728469723)가
+`settle_error` 시나리오에서 실패했다. artifact상 별도 보정 이력은 입력 100을 반영했고 전역 입력 증가도
+100이었다. 원래 호출 행은 계약대로 NULL로 유지됐지만 검증기가 보정 행을 무시해 32,768을 기대했다.
+DB 스냅샷에 별도 보정 행을 포함하고 최종 검증에서 이를 대조하도록 수정했다. 취소 도구 무료 테스트 62건이 통과했다. 원래 호출 행은 변경하지
+않는다. 보정 누락·중복·다른 호출 지정·0 반환·원본 변경 거절 회귀를 추가했다.
+CI artifact의 같은 장부/보정 근거를 대조해 수정 계산을 확인했으며 전체 Compose CI 재실행 성공은 별도 확인이 필요하다.
+
+다음은 **임베딩 증거·보정 계약 → 실제 RAG 실행 명세/자료/Prefect 경로 연결과 무료 통합 검증 →
+Compose 실행기→Kubernetes Ops 왕복 → 공개 RAG replay·검토 계약** 순서다.
+그 뒤 승인된 자료·호출 예산에서 live를 검증하며 금액·기간 한도와 정기 실행은 별도 후속으로 유지한다.
+
+### 직전 구현 — 입력 예산의 승인·정산·운영 화면 연결
 
 적용 범위는 `fixed-answer-context-only`의 새 live 평가다. **전체 RAG G2 완료가 아니다.**
 
@@ -47,11 +96,7 @@ OpenAI 답변 → 사용량 정산 → 종료/보정 → React 장부`.
 웹 타입 검사와 정적 검사·`git diff --check`도 통과했다. 마지막으로 입력 초과 증거 거절과 과거 보정값 migration 보존 2건을 재확인했다. `uv`가 PATH에 없어 기존 Python 3.12 가상환경을 사용했다.
 실제 개발 DB migration·입력 한도 설정·기존 컨테이너 교체·유료 API 검증은 수행하지 않았다.
 전체 Ops/MySQL/컨테이너·LLMOps Compose·Web 검증은 기존 CI의 push/PR 이벤트에 연결돼 있으며
-이번 변경의 최종 SHA가 아직 없어 CI 완료로 간주하지 않는다.
-
-다음 구현은 **임베딩 작업의 누적 입력 예약·배치별 승인·정산·취소 연결**이다. 그 뒤 동일한 작업 명세로
-Compose 실행기→Kubernetes Ops 경계를 검증하고, Ops 전체 RAG replay/검토 계약을 연결한다.
-금액·기간 한도와 정기 실행은 그 이후이며 자동 활성화하지 않는다.
+위 검증은 직전 입력 예산 개발 당시 기록이다. 현재 변경과 후속 순서는 문서 상단을 따른다.
 
 ### 확인한 차이와 후속 구현 상태
 
@@ -64,8 +109,8 @@ Compose 실행기→Kubernetes Ops 경계를 검증하고, Ops 전체 RAG replay
 3. **자료·실행의 출처 구분이 더 필요하다.** RAG fixture v1은 가상·미검토 자료만 허용한다.
    합성 capture는 trace가 null이어야 하고, 저장 capture의 모델명·trace 형식은 실제 유료 호출 증명이 아니다.
    v2에 실제 서버+모델 대역의 `integration-stub` 출처를 추가했다. 승인된 유료 실행·자료 검토 계약은 남았다.
-4. **기존 예산은 RAG 지출 상한이 아니다.** `budget.py`는 고정 근거 답변의 호출·입력·출력 예약을 검사한다.
-   문서 임베딩·질문 임베딩·답변을 각각 승인·정산하고 입력 크기/토큰 상한을 연결하기 전에는 RAG live를 열지 않는다.
+4. **내부 예산 계약만으로 RAG 실행이 연결되지는 않는다.** 작업별 입력·출력 예약과 SDK 가드는 구현했다.
+   실제 RAG 명세·자료·실행기·승인/정산/취소 왕복을 통합 검증하기 전에는 RAG live를 열지 않는다.
 5. **평균만으로 합격을 판단할 수 없다.** 새 지표는 성공한 측정의 평균이며 실패는 null이다.
    측정 수·전체 대상 수·필수 사례 실패를 같이 판정해야 하고 인용 recall만으로 과잉 인용·의미 정확성을 보장하지 않는다.
 
@@ -73,9 +118,9 @@ Compose 실행기→Kubernetes Ops 경계를 검증하고, Ops 전체 RAG replay
 
 | 순서 | 구현 묶음 | 종료 조건 |
 |---|---|---|
-| G0 — 이전 SHA CI 확인 중 | 최신 커밋 검증 확정 | `skn-91 / cabc982`의 GovBiz·Ops·Infra·Catalog 성공, LLMOps는 조회 당시 취소 통합 단계 실행 중. 이번 입력 예산 변경은 미커밋이므로 별도 최종 SHA CI 필요 |
+| G0 — 취소 검사 회귀 보완 | 최신 커밋 검증 확정 | `skn-92 / 20f03c2`의 GovBiz·Ops·Infra·Catalog 성공, LLMOps 취소 검사 실패 확인. 보정 이력 누락 계산을 수정했으며 `skn-96` 최종 SHA의 전체 CI가 필요 |
 | G1 — 해당 통합 단계 통과 | production 청킹 자료와 실제 Core 캡처 수집 | `b1d9f03` 실제 서버 CI·artifact의 2개 원문 버전·10사례 통과 확인. 전체 workflow 실패와 구별. 공식 HTML 다운로드·추출은 별도 미구현 범위 |
-| G2 — 답변 작업 식별 구현·검증 중 | RAG 호출별 예산·취소와 Kubernetes 경로 | 고정 근거 답변의 사례별 작업 ID·모델·출력 상한 연결을 구현. 문서/질문 임베딩의 요청별 상한·사용량 검증·배치 관측과 고정 근거 답변의 누적 입력 예약을 구현. 임베딩 작업 승인/정산은 미구현. 동시 접수, 승인 응답 유실, 정산 실패, 취소·중복 실행 및 Compose 실행기→Kubernetes Ops 인증·DB 왕복 검증 필요 |
+| G2 — 작업별 예산 기반 구현 | RAG 호출별 예산·취소와 Kubernetes 경로 | 혼합 예약·임베딩 SDK 가드·캐시 슬롯·호출별 정산/복구/화면 구현. 실제 RAG 명세·실행기 연결, 임베딩 증거 보정, Compose 실행기→Kubernetes Ops 인증·DB 왕복은 남음 |
 | G3 | Ops RAG 접수·결과·검토 계약 | 명세·카탈로그·manifest·복구·Django API·React를 함께 연결. 먼저 무료 replay, 그 뒤 G2를 충족한 live 경로. 기존 고정 근거와 범위가 다른 기준 비교·혼합 판정 거절. 전체 사례·실패·trace·두 지표를 화면에서 대조 |
 | G4 | 검토 자료와 현재 모델의 실제 기준 | 출처·고정 원문·기대 근거에 대한 사람 검토와 전송/호출 예산 승인 후 실제 평가. 응답 사례 검토→해당 범위 품질 판정→명시적 기준 지정. 같은 자료·질문·정책의 후보 비교 1회를 끝까지 검증 |
 | G5 | 정기 실행·알림·승격·배포 | 기간별 입력/임베딩/출력 또는 금액 한도, 겹친 실행 방지·취소·실패 알림을 먼저 검증. 동일 모델/프롬프트/자료/정책의 유효한 품질 판정을 배포 판단에 연결. 발행 이미지·실제 환경·백업 복원 증거를 별도로 확보 |

@@ -7,7 +7,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
 from . import prefect_client
-from .budget import _close_reservation
+from .budget import BudgetUnavailable, _close_reservation, call_limits, operation_plan
 from .budget_reporting import ledger_totals, reservation_data
 from .execution_spec import digest
 from .models import (
@@ -113,6 +113,8 @@ def cleanup_reservation(*, run_id, actor, reason, request_id, apply=False):
             or locked.max_calls != reservation.max_calls
             or locked.max_output_tokens != reservation.max_output_tokens
             or locked.max_input_tokens != reservation.max_input_tokens
+            or locked.reserved_input_tokens != reservation.reserved_input_tokens
+            or locked.reserved_output_tokens != reservation.reserved_output_tokens
             or locked.max_calls != locked_run.live_config.get("max_model_calls")
             or locked.max_output_tokens != locked_run.live_config.get("max_output_tokens")
             or locked_run.prefect_flow_run_id != run.prefect_flow_run_id
@@ -131,12 +133,34 @@ def cleanup_reservation(*, run_id, actor, reason, request_id, apply=False):
         ):
             raise CleanupUnavailable("전체 예산과 상세 장부가 일치하지 않아 정리를 거절했습니다.")
         calls = list(locked.calls.order_by("sequence"))
+        try:
+            plan = operation_plan(locked_run)
+        except BudgetUnavailable:
+            raise CleanupUnavailable("실행 작업 명세를 확인할 수 없습니다.") from None
         if (
-            [call.sequence for call in calls] != list(range(len(calls)))
+            (
+                locked_run.execution_spec.get("evaluation_scope")
+                != "source-chunks-retrieval-answer"
+                and [call.sequence for call in calls] != list(range(len(calls)))
+            )
+            or (plan is not None and len(plan) != locked.max_calls)
+            or any(
+                call.sequence >= locked.max_calls
+                or (plan is not None and call.operation_id != plan[call.sequence]["id"])
+                for call in calls
+            )
             or len(calls) > locked.max_calls
             or (calls and locked.worker_id is None)
             or any(
-                call.settled_at and call.output_tokens > locked.max_output_tokens for call in calls
+                call.settled_at
+                and (
+                    call.output_tokens > call_limits(call)[1]
+                    or (
+                        call_limits(call)[0] is not None
+                        and call.input_tokens > call_limits(call)[0]
+                    )
+                )
+                for call in calls
             )
         ):
             raise CleanupUnavailable("소유자·호출 번호·출력 장부를 확인할 수 없습니다.")

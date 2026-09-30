@@ -11,7 +11,7 @@ from django.db import transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
-from .budget import BudgetUnavailable, validate_usage
+from .budget import BudgetUnavailable, call_limits, operation_plan, validate_usage
 from .budget_reporting import ledger_totals, reservation_data
 from .execution_spec import digest
 from .models import (
@@ -145,7 +145,7 @@ def correct_usage(
     actor, reason = actor.strip(), reason.strip()
     if (
         type(sequence) is not int
-        or not 0 <= sequence <= 11
+        or not 0 <= sequence <= 511
         or not 1 <= len(actor) <= 150
         or not 1 <= len(reason) <= 1000
         or (evidence_sha256 is not None and not re.fullmatch(r"[a-f0-9]{64}", evidence_sha256))
@@ -183,20 +183,37 @@ def correct_usage(
             or evidence["flow_id"] != str(run.prefect_flow_run_id)
             or evidence["worker_id"] != str(reservation.worker_id)
             or evidence["model"] != run.live_config.get("model")
-            or evidence["max_output_tokens"] != reservation.max_output_tokens
             or reservation.max_input_tokens != run.live_config.get("max_input_tokens")
             or reservation.max_calls != run.live_config.get("max_model_calls")
             or reservation.max_output_tokens != run.live_config.get("max_output_tokens")
         ):
             raise CorrectionUnavailable("닫힌 예약의 실행·소유자·명세와 증거가 일치해야 합니다.")
         calls = list(reservation.calls.select_related("correction").order_by("sequence"))
+        try:
+            plan = operation_plan(run)
+        except BudgetUnavailable:
+            raise CorrectionUnavailable("실행 작업 명세를 확인할 수 없습니다.") from None
         if (
-            [call.sequence for call in calls] != list(range(len(calls)))
+            (
+                run.execution_spec.get("evaluation_scope") != "source-chunks-retrieval-answer"
+                and [call.sequence for call in calls] != list(range(len(calls)))
+            )
+            or (plan is not None and len(plan) != reservation.max_calls)
             or len(calls) > reservation.max_calls
-            or sequence >= len(calls)
+            or not any(call.sequence == sequence for call in calls)
+            or any(
+                call.sequence >= reservation.max_calls
+                or (plan is not None and call.operation_id != plan[call.sequence]["id"])
+                for call in calls
+            )
         ):
             raise CorrectionUnavailable("승인된 호출 번호를 확인할 수 없습니다.")
-        call = calls[sequence]
+        call = next(call for call in calls if call.sequence == sequence)
+        input_cap, output_cap = call_limits(call)
+        if evidence["max_output_tokens"] != output_cap or (
+            plan is not None and plan[sequence]["kind"] != "answer"
+        ):
+            raise CorrectionUnavailable("답변 생성 응답의 승인 상한과 증거가 일치해야 합니다.")
         if call.settled_at or hasattr(call, "correction"):
             raise CorrectionUnavailable(
                 "이미 정산·보정된 호출입니다. 원래 보정 요청 ID를 재사용하세요."
@@ -220,15 +237,13 @@ def correct_usage(
                 "전체 예산과 상세 장부가 일치하지 않아 보정을 거절했습니다."
             )
         try:
-            input_tokens, output_tokens = validate_usage(
-                evidence["usage"], reservation.max_output_tokens, reservation.max_input_tokens
-            )
+            input_tokens, output_tokens = validate_usage(evidence["usage"], output_cap, input_cap)
         except BudgetUnavailable:
             raise CorrectionUnavailable(
                 "증거의 사용량이 예약한 입력·출력 상한을 초과합니다."
             ) from None
-        released = reservation.max_output_tokens - output_tokens
-        input_delta = input_tokens - (reservation.max_input_tokens or 0)
+        released = output_cap - output_tokens
+        input_delta = input_tokens - (input_cap or 0)
         breakdown = reservation_data(reservation)["breakdown"]
         before = {
             "global_calls": budget.allocated_calls,
@@ -247,8 +262,7 @@ def correct_usage(
             "reservation_input_tokens": before["reservation_input_tokens"] + input_delta,
             "reservation_output_tokens": before["reservation_output_tokens"] - released,
             "unknown_calls": before["unknown_calls"] - 1,
-            "unknown_output_tokens": before["unknown_output_tokens"]
-            - reservation.max_output_tokens,
+            "unknown_output_tokens": before["unknown_output_tokens"] - output_cap,
         }
         record = EvaluationUsageCorrection(
             request_id=request_id,

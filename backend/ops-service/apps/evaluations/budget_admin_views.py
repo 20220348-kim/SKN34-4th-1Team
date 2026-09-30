@@ -8,6 +8,7 @@ from rest_framework.decorators import api_view
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 
+from .budget import call_limits
 from .budget_cleanup import cleanup_data
 from .budget_reporting import budget_summary, reservation_data
 from .models import EvaluationBudget, EvaluationBudgetReservation, EvaluationRun
@@ -86,6 +87,8 @@ def api_run_budget(request, run_id):
                     "sequence": call.sequence,
                     "operation_id": call.operation_id,
                     "counted_input_tokens": call.counted_input_tokens,
+                    "max_input_tokens": call_limits(call)[0],
+                    "max_output_tokens": call_limits(call)[1],
                     "authorized_at": call.authorized_at.isoformat(),
                     "settled_at": call.settled_at.isoformat() if call.settled_at else None,
                     "input_tokens": call.input_tokens,

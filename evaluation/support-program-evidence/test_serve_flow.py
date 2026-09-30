@@ -121,3 +121,32 @@ def test_unexpected_service_error_stops_the_run_and_preserves_http_500(tmp_path,
     saved = (output / "api-capture.json").read_text(encoding="utf-8")
     assert json.loads(saved)["stopped"] is True
     assert "PRIVATE-UNEXPECTED-ERROR" not in saved
+
+
+def test_embedding_guard_is_wired_before_sdk_transmission(tmp_path, monkeypatch):
+    from unittest.mock import Mock
+    from embedding_budget import EmbeddingBudget, embedding_operations
+
+    operations = embedding_operations(["hello"], kind="document_embedding", label="doc",
+        model="text-embedding-3-small", dimensions=1536, request_token_limit=8191)
+    budget = Mock(authorize=AsyncMock(), settle=AsyncMock())
+    guard = EmbeddingBudget(budget, operations)
+    original_init = httpx2.AsyncClient.__init__
+
+    def forbidden(request):
+        pytest.fail("a guarded embedding session must not send unbudgeted answers")
+
+    def init_with_mock_transport(self, *args, **kwargs):
+        kwargs["transport"] = httpx2.MockTransport(forbidden)
+        original_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(httpx2.AsyncClient, "__init__", init_with_mock_transport)
+    monkeypatch.setenv("OPENAI_API_KEY", "offline-test-key")
+    app = serve_flow.build_evaluation_app(tmp_path / "run", "http://127.0.0.1:1", 2, embedding_budget=guard)
+    _, prepared, _ = evaluate.load_fixture(evaluate.HERE / "fixture.json")
+    with TestClient(app) as client:
+        response = client.post("/internal/v1/support-program-evidence/answers", json=prepared[0][1].model_dump(by_alias=True))
+        assert response.status_code == 503
+        assert client.get("/health").json()["stopped"]
+    budget.authorize.assert_not_called()
+    assert guard.stopped
