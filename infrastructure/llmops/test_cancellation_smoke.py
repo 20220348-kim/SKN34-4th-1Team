@@ -154,11 +154,20 @@ def test_barrier_timeout_is_recorded_as_failure():
 
 
 def accounting():
-    before = {"allocated": [3, 100]}
+    before = {"allocated": [3, 100], "allocated_input": 100}
     after = {
         "allocated": [4, 2100],
+        "allocated_input": 32868,
         "closed": True,
-        "calls": [{"sequence": 0, "operation_id": "answer:TC01", "output_tokens": None}],
+        "calls": [
+            {
+                "sequence": 0,
+                "operation_id": "answer:TC01",
+                "output_tokens": None,
+                "input_tokens": None,
+                "counted_input_tokens": 100,
+            }
+        ],
         "operation_ids": ["answer:TC01"],
     }
     events = [{"stage": "authorize", "status": 200}, {"stage": "model_sent"}]
@@ -209,15 +218,22 @@ def test_settle_and_close_failure_does_not_forward_either_write(monkeypatch):
 def test_cleanup_evidence_rejects_unsafe_release(defect):
     before = {
         "allocated": [6, 12000],
+        "allocated_input": 196608,
         "closed": False,
         "calls": [{"sequence": 0, "output_tokens": None}],
     }
-    after = {**before, "allocated": [1, 2000], "closed": True}
+    after = {**before, "allocated": [1, 2000], "closed": True, "allocated_input": 32768}
     record = {
         "applied": True,
         "evidence": {"state_type": "FAILED"},
-        "before": {"global_calls": 6, "global_output_tokens": 12000},
+        "before": {
+            "global_calls": 6,
+            "global_output_tokens": 12000,
+            "global_input_tokens": 196608,
+        },
         "after": {
+            "global_input_tokens": 32768,
+            "reservation_input_tokens": 32768,
             "global_calls": 1,
             "global_output_tokens": 2000,
             "unknown_calls": 1,
@@ -663,24 +679,32 @@ def test_readiness_retries_non_json_startup_response_but_still_times_out(monkeyp
 
 
 @pytest.mark.parametrize(
-    "fault", [None, "extra-send", "over-release", "changed-original", "unknown", "source"]
+    "fault",
+    [None, "extra-send", "over-release", "changed-original", "unknown", "source"],
 )
-def test_usage_correction_preserves_originals_and_does_not_hide_unknown_or_resend(fault):
+def test_usage_correction_preserves_originals_and_does_not_hide_unknown_or_resend(
+    fault,
+):
     import copy
 
     before = {
         "closed": True,
         "calls": [{"sequence": 0, "output_tokens": None}],
         "allocated": [1, 2000],
+        "allocated_input": 32768,
     }
-    after = {**copy.deepcopy(before), "allocated": [1, 50]}
+    after = {**copy.deepcopy(before), "allocated": [1, 50], "allocated_input": 100}
     record = {
         "applied": True,
         "source": "WORKER_RESPONSE",
         "input_tokens": 100,
         "output_tokens": 50,
-        "before": {"global_output_tokens": 2000},
-        "after": {"global_output_tokens": 50, "unknown_calls": 0},
+        "before": {"global_output_tokens": 2000, "global_input_tokens": 32768},
+        "after": {
+            "global_output_tokens": 50,
+            "unknown_calls": 0,
+            "global_input_tokens": 100,
+        },
     }
     events = [{"stage": "model_sent"}]
     events_after = copy.deepcopy(events)
@@ -703,3 +727,10 @@ def test_usage_correction_preserves_originals_and_does_not_hide_unknown_or_resen
         smoke.verify_correction(
             record, before, after, events_before=events, events_after=events_after
         )
+
+
+def test_unknown_input_cannot_be_refunded_as_zero():
+    before, after, events = accounting()
+    after["allocated_input"] = before["allocated_input"]
+    with pytest.raises(AssertionError):
+        smoke.verify_budget(before, after, calls=1, output=2000, closed=True, sent=1, events=events)

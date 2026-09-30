@@ -12,6 +12,8 @@ import sys
 from time import perf_counter
 
 
+MAX_INPUT_TOKENS = 32768
+
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parents[1] / "backend/ai-service"))
 
@@ -270,6 +272,7 @@ async def execute(prepared: list, fixture_hash: str, output_dir: Path, *,
         "promptSha256": digest(SUPPORT_PROGRAM_EVIDENCE_ANSWER_INSTRUCTIONS.encode()),
         "runnerSha256": digest(Path(__file__).read_bytes()), "model": model,
         "modelApiCalls": 0, "maxModelCalls": limit, "maxOutputTokens": 2000,
+        "maxInputTokens": MAX_INPUT_TOKENS, "inputTokenCountRequests": 0, "inputTokenCounts": [],
         "modelTimeoutSeconds": DEFAULT_LLM_MODEL_TIMEOUT_SECONDS,
         "runTimeoutSeconds": DEFAULT_LLM_RUN_TIMEOUT_SECONDS,
         "startedAt": datetime.now(timezone.utc).isoformat(), "completed": False,
@@ -279,6 +282,7 @@ async def execute(prepared: list, fixture_hash: str, output_dir: Path, *,
 
     active_operation_id = None
     authorized_operations = set()
+    counting_input = False
 
     def save_capture() -> None:
         temporary = output_dir / "capture.partial.json"
@@ -286,6 +290,10 @@ async def execute(prepared: list, fixture_hash: str, output_dir: Path, *,
         temporary.replace(output_dir / "capture.json")
 
     async def record_attempt(request: httpx2.Request) -> None:
+        nonlocal counting_input
+        if str(request.url) == "https://api.openai.com/v1/responses/input_tokens":
+            require(counting_input, "unexpected input counting request")
+            return
         # 전송 직전에 예산을 확인하고 기록한다. 응답 유실·timeout도 시도 횟수에 포함한다.
         body = json.loads(request.content)
         require(str(request.url) == "https://api.openai.com/v1/responses"
@@ -298,15 +306,34 @@ async def execute(prepared: list, fixture_hash: str, output_dir: Path, *,
         require(capture["modelApiCalls"] < limit, "model call budget exhausted")
         require(active_operation_id is not None and active_operation_id not in authorized_operations,
                 "model operation was already attempted")
+        require(set(body) <= {"model", "input", "instructions", "text", "reasoning",
+                                   "max_output_tokens", "store", "stream"}, "unsupported input counting contract")
+        capture["inputTokenCountRequests"] += 1
+        save_capture()
+        counting_input = True
+        try:
+            raw = await client.responses.input_tokens.with_raw_response.count(
+                **{key: body[key] for key in ("model", "input", "instructions", "text", "reasoning") if key in body},
+                timeout=DEFAULT_LLM_MODEL_TIMEOUT_SECONDS,
+            )
+            measured = raw.http_response.json()
+        finally:
+            counting_input = False
+        tokens = measured.get("input_tokens") if isinstance(measured, dict) else None
+        require(isinstance(measured, dict) and measured.get("object") == "response.input_tokens"
+                and type(tokens) is int and 0 <= tokens <= MAX_INPUT_TOKENS, "input token count is missing or over limit")
+        capture["inputTokenCounts"].append({"operationId": active_operation_id, "inputTokens": tokens})
         if budget is not None:
             await budget.authorize(capture["modelApiCalls"], model, 2000,
-                                   operation_id=active_operation_id)
+                                   operation_id=active_operation_id, input_token_count=tokens)
         authorized_operations.add(active_operation_id)
         request.extensions["llmops_budget"] = (capture["modelApiCalls"], active_operation_id)
         capture["modelApiCalls"] += 1
         save_capture()
 
     async def record_usage(response: httpx2.Response) -> None:
+        if str(response.request.url) == "https://api.openai.com/v1/responses/input_tokens":
+            return
         await response.aread()
         try:
             body = response.json()

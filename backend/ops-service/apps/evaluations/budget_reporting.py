@@ -20,6 +20,8 @@ def ledger_totals(reservations):
     opened = reservations.filter(closed_at__isnull=True).aggregate(
         calls=Sum("max_calls", default=0),
         output=Sum(F("max_calls") * F("max_output_tokens"), default=0),
+        input=Sum(F("max_calls") * F("max_input_tokens"), default=0),
+        unbounded=Count("pk", filter=Q(max_input_tokens__isnull=True)),
     )
     calls = EvaluationBudgetCall.objects.filter(reservation__in=reservations).annotate(
         effective_input=Coalesce("correction__input_tokens", "input_tokens"),
@@ -32,6 +34,19 @@ def ledger_totals(reservations):
         confirmed_input_tokens=Sum("effective_input", filter=settled, default=0),
         confirmed_output_tokens=Sum("effective_output", filter=settled, default=0),
         unknown_calls=Count("pk", filter=~settled),
+        unbounded_input_calls=Count(
+            "pk", filter=~settled & Q(reservation__max_input_tokens__isnull=True)
+        ),
+        unknown_input_tokens=Sum("reservation__max_input_tokens", filter=~settled, default=0),
+        open_input=Sum("reservation__max_input_tokens", filter=open_call, default=0),
+        open_settled_input_capacity=Sum(
+            "reservation__max_input_tokens", filter=open_call & settled, default=0
+        ),
+        open_settled_input=Sum(
+            "effective_input",
+            filter=open_call & settled & Q(reservation__max_input_tokens__isnull=False),
+            default=0,
+        ),
         unknown_output_tokens=Sum("reservation__max_output_tokens", filter=~settled, default=0),
         open_calls=Count("pk", filter=open_call),
         open_output=Sum("reservation__max_output_tokens", filter=open_call, default=0),
@@ -41,6 +56,20 @@ def ledger_totals(reservations):
         open_settled_output=Sum("effective_output", filter=open_call & settled, default=0),
     )
     # Subtract in Python: MySQL's unsigned subtraction can fail on inconsistent historical rows.
+    counts["unbounded_input_reservations"] = opened["unbounded"]
+    counts["unapproved_input_tokens"] = opened["input"] - counts.pop("open_input")
+    counts["pending_release_input_tokens"] = counts.pop("open_settled_input_capacity") - counts.pop(
+        "open_settled_input"
+    )
+    counts["allocated_input_tokens"] = sum(
+        counts[key]
+        for key in (
+            "confirmed_input_tokens",
+            "unknown_input_tokens",
+            "unapproved_input_tokens",
+            "pending_release_input_tokens",
+        )
+    )
     counts["unapproved_calls"] = opened["calls"] - counts.pop("open_calls")
     counts["unapproved_output_tokens"] = opened["output"] - counts.pop("open_output")
     counts["pending_release_output_tokens"] = counts.pop("open_settled_capacity") - counts.pop(
@@ -72,8 +101,13 @@ def change_data(change):
         else {
             "calls": change.previous_call_limit,
             "output_tokens": change.previous_output_token_limit,
+            "input_tokens": change.previous_input_token_limit,
         },
-        "limits": {"calls": change.call_limit, "output_tokens": change.output_token_limit},
+        "limits": {
+            "calls": change.call_limit,
+            "output_tokens": change.output_token_limit,
+            "input_tokens": change.input_token_limit,
+        },
         "created_at": change.created_at.isoformat(),
     }
 
@@ -87,6 +121,7 @@ def budget_summary(budget):
     if budget is None:
         return {
             "state": "unconfigured",
+            "input_state": "unconfigured",
             "limits": None,
             "allocated": None,
             "remaining": None,
@@ -100,22 +135,44 @@ def budget_summary(budget):
     totals = ledger_totals(reservations)
     consistent = (
         all(value >= 0 for value in totals.values())
+        and totals["allocated_input_tokens"] == budget.allocated_input_tokens
+        and (
+            budget.input_token_limit is None
+            or budget.allocated_input_tokens <= budget.input_token_limit
+        )
         and totals["allocated_calls"] == budget.allocated_calls <= budget.call_limit
         and totals["allocated_output_tokens"]
         == budget.allocated_output_tokens
         <= budget.output_token_limit
     )
+    input_unknown = (
+        missing + totals["unbounded_input_calls"] + totals["unbounded_input_reservations"]
+    )
+    consistent = consistent and (budget.input_token_limit is None or not input_unknown)
     changes = EvaluationBudgetChange.objects.filter(budget=budget)
     return {
         "state": "consistent" if consistent else "inconsistent",
-        "limits": {"calls": budget.call_limit, "output_tokens": budget.output_token_limit},
+        "input_state": "legacy_unknown"
+        if input_unknown
+        else "enforced"
+        if budget.input_token_limit is not None
+        else "unconfigured",
+        "limits": {
+            "calls": budget.call_limit,
+            "output_tokens": budget.output_token_limit,
+            "input_tokens": budget.input_token_limit,
+        },
         "allocated": {
             "calls": budget.allocated_calls,
             "output_tokens": budget.allocated_output_tokens,
+            "input_tokens": budget.allocated_input_tokens if not input_unknown else None,
         },
         "remaining": {
             "calls": budget.call_limit - budget.allocated_calls,
             "output_tokens": budget.output_token_limit - budget.allocated_output_tokens,
+            "input_tokens": budget.input_token_limit - budget.allocated_input_tokens
+            if budget.input_token_limit is not None and not input_unknown
+            else None,
         }
         if consistent
         else None,
@@ -157,6 +214,26 @@ def reservation_data(reservation):
         + (unknown + unapproved) * reservation.max_output_tokens
         + pending,
     }
+    capacity = reservation.max_input_tokens
+    confirmed_input = totals["confirmed_input_tokens"]
+    totals.update(
+        unbounded_input_calls=unknown if capacity is None else 0,
+        unbounded_input_reservations=int(capacity is None and reservation.closed_at is None),
+        unknown_input_tokens=unknown * (capacity or 0),
+        unapproved_input_tokens=unapproved * (capacity or 0),
+        pending_release_input_tokens=(len(settled) * capacity - confirmed_input)
+        if capacity is not None and reservation.closed_at is None
+        else 0,
+    )
+    totals["allocated_input_tokens"] = sum(
+        totals[key]
+        for key in (
+            "confirmed_input_tokens",
+            "unknown_input_tokens",
+            "unapproved_input_tokens",
+            "pending_release_input_tokens",
+        )
+    )
     return {
         "run_id": str(reservation.run_id),
         "dataset_id": reservation.run.dataset_id,
@@ -164,15 +241,17 @@ def reservation_data(reservation):
         "closed_at": reservation.closed_at.isoformat() if reservation.closed_at else None,
         "max_calls": reservation.max_calls,
         "max_output_tokens": reservation.max_output_tokens,
+        "max_input_tokens": reservation.max_input_tokens,
         "breakdown": totals,
     }
 
 
 @transaction.atomic
-def change_limits(*, calls, output_tokens, actor, reason, request_id):
+def change_limits(*, calls, output_tokens, actor, reason, request_id, input_tokens=None):
     """OS 운영자가 CLI에 명시한 신원이며 Core 로그인으로 인증한 신원은 아니다."""
     if any(
-        type(value) is not int or not 0 <= value <= 2**53 - 1 for value in (calls, output_tokens)
+        type(value) is not int or not 0 <= value <= 2**53 - 1
+        for value in (calls, output_tokens, *([] if input_tokens is None else [input_tokens]))
     ):
         raise ValueError("한도는 0 이상 안전한 정수 범위여야 합니다.")
     actor, reason = actor.strip(), reason.strip()
@@ -184,14 +263,40 @@ def change_limits(*, calls, output_tokens, actor, reason, request_id):
     budget = EvaluationBudget.objects.select_for_update().get(pk=budget.pk)
     previous = EvaluationBudgetChange.objects.filter(request_id=request_id).first()
     if previous:
-        if (previous.call_limit, previous.output_token_limit, previous.actor, previous.reason) != (
+        if (
+            previous.call_limit,
+            previous.output_token_limit,
+            previous.actor,
+            previous.reason,
+            previous.input_token_limit,
+        ) != (
             calls,
             output_tokens,
             actor,
             reason,
+            input_tokens,
         ):
             raise ValueError("같은 요청 ID의 한도·변경자·사유를 바꿀 수 없습니다.")
         return previous
+    if budget.input_token_limit is not None and input_tokens is None:
+        raise ValueError("활성화한 입력 한도를 생략하거나 해제할 수 없습니다.")
+    if input_tokens is not None:
+        totals = ledger_totals(EvaluationBudgetReservation.objects.filter(budget=budget))
+        if (
+            totals["unbounded_input_calls"]
+            or totals["unbounded_input_reservations"]
+            or EvaluationRun.objects.filter(
+                execution_mode="live", budget_reservation__isnull=True
+            ).exists()
+        ):
+            raise ValueError(
+                "과거 입력 사용량·예약이 미확인입니다. 먼저 증거를 확인하고 정리하세요."
+            )
+        if (
+            totals["allocated_input_tokens"] != budget.allocated_input_tokens
+            or input_tokens < budget.allocated_input_tokens
+        ):
+            raise ValueError("입력 장부가 불일치하거나 기존 할당량보다 한도가 작습니다.")
     if calls < budget.allocated_calls or output_tokens < budget.allocated_output_tokens:
         raise ValueError("이미 예약·확정한 사용량보다 한도를 낮출 수 없습니다.")
     change = EvaluationBudgetChange.objects.create(
@@ -201,9 +306,14 @@ def change_limits(*, calls, output_tokens, actor, reason, request_id):
         reason=reason,
         previous_call_limit=None if created else budget.call_limit,
         previous_output_token_limit=None if created else budget.output_token_limit,
+        previous_input_token_limit=budget.input_token_limit,
+        input_token_limit=input_tokens,
         call_limit=calls,
         output_token_limit=output_tokens,
     )
     budget.call_limit, budget.output_token_limit = calls, output_tokens
-    budget.save(update_fields=["call_limit", "output_token_limit", "updated_at"])
+    budget.input_token_limit = input_tokens
+    budget.save(
+        update_fields=["call_limit", "output_token_limit", "input_token_limit", "updated_at"]
+    )
     return change

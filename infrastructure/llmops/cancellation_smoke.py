@@ -67,6 +67,13 @@ def request(url, data=None, *, client=None, headers=None):
 def verify_budget(before, after, *, calls, output, closed, sent, events):
     delta = [b - a for a, b in zip(before["allocated"], after["allocated"], strict=True)]
     assert delta == [calls, output], f"Unexpected retained budget: {delta}"
+    retained_input = (
+        sum(c["input_tokens"] if c["input_tokens"] is not None else 32768 for c in after["calls"])
+        if closed
+        else after["reserved_input_tokens"]
+    )
+    assert after["allocated_input"] - before["allocated_input"] == retained_input
+    assert all(c["counted_input_tokens"] == 100 for c in after["calls"])
     assert after["closed"] is closed
     assert len({c["sequence"] for c in after["calls"]}) == len(after["calls"])
     assert [c["operation_id"] for c in after["calls"]] == after["operation_ids"][
@@ -82,6 +89,7 @@ def verify_budget(before, after, *, calls, output, closed, sent, events):
     assert accepted("settle") == sum(c["output_tokens"] is not None for c in after["calls"])
     return {
         "retained_delta": delta,
+        "retained_input_delta": retained_input,
         "model_sends": sent,
         "authorizations": accepted("authorize"),
         "settlements": accepted("settle"),
@@ -90,18 +98,28 @@ def verify_budget(before, after, *, calls, output, closed, sent, events):
 
 def verify_cleanup(record, before, after, *, unknown_calls, events_before, events_after):
     assert record["applied"] is True
-    assert record["evidence"]["state_type"] in {"COMPLETED", "FAILED", "CRASHED", "CANCELLED"}
+    assert record["evidence"]["state_type"] in {
+        "COMPLETED",
+        "FAILED",
+        "CRASHED",
+        "CANCELLED",
+    }
     assert not before["closed"] and after["closed"]
     assert before["calls"] == after["calls"]
     assert events_before == events_after, "Cleanup must not issue worker/model requests"
     assert record["after"]["unknown_calls"] == unknown_calls
+    assert record["before"]["global_input_tokens"] == before["allocated_input"]
+    assert record["after"]["global_input_tokens"] == after["allocated_input"]
+    assert record["after"]["reservation_input_tokens"] >= unknown_calls * 32768
     assert record["after"]["unknown_output_tokens"] == unknown_calls * 2000
-    assert [record["before"]["global_calls"], record["before"]["global_output_tokens"]] == before[
-        "allocated"
-    ]
-    assert [record["after"]["global_calls"], record["after"]["global_output_tokens"]] == after[
-        "allocated"
-    ]
+    assert [
+        record["before"]["global_calls"],
+        record["before"]["global_output_tokens"],
+    ] == before["allocated"]
+    assert [
+        record["after"]["global_calls"],
+        record["after"]["global_output_tokens"],
+    ] == after["allocated"]
 
 
 def verify_correction(record, before, after, *, events_before, events_after):
@@ -109,6 +127,9 @@ def verify_correction(record, before, after, *, events_before, events_after):
     assert before["closed"] and after["closed"]
     assert before["calls"] == after["calls"], "Original settlement rows must be preserved"
     assert events_before == events_after, "Correction must not send model or worker requests"
+    assert record["before"]["global_input_tokens"] == before["allocated_input"]
+    assert record["after"]["global_input_tokens"] == after["allocated_input"]
+    assert before["allocated_input"] - after["allocated_input"] == 32768 - 100
     assert record["input_tokens"] == 100 and record["output_tokens"] == 50
     assert before["allocated"][0] == after["allocated"][0]
     assert before["allocated"][1] - after["allocated"][1] == 1950
@@ -719,6 +740,8 @@ def main():
                 "200",
                 "--output-tokens",
                 "400000",
+                "--input-tokens",
+                "6553600",
                 "--actor",
                 "cancellation-smoke",
                 "--reason",

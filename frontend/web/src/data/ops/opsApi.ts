@@ -2,6 +2,7 @@ import { z } from 'zod'
 
 const base = '/api/v1/ops'
 const liveConfigSchema = z.object({
+  max_input_tokens: z.number().int().positive().optional(),
   model: z.string(), fixture_sha256: z.string(), max_model_calls: z.number().int().positive(), max_output_tokens: z.number().int().positive(),
 })
 const sessionSchema = z.object({
@@ -74,14 +75,18 @@ const runSchema = z.object({
   report_url: z.string().regex(/^\/api\/v1\/ops\/evaluations\/[a-f0-9-]+\/report$/).nullable(),
 })
 const pageSchema = z.object({ count: z.number(), next: z.string().nullable(), previous: z.string().nullable(), results: z.array(runSchema) })
-const budgetAmountsSchema = z.object({ calls: z.number().int().nonnegative(), output_tokens: z.number().int().nonnegative() })
+const budgetAmountsSchema = z.object({ input_tokens: z.number().int().nonnegative().nullable().optional(), calls: z.number().int().nonnegative(), output_tokens: z.number().int().nonnegative() })
 const budgetBreakdownSchema = z.object({
+  unknown_input_tokens: z.number().int().optional(), unapproved_input_tokens: z.number().int().optional(),
+  pending_release_input_tokens: z.number().int().optional(), allocated_input_tokens: z.number().int().optional(),
+  unbounded_input_calls: z.number().int().nonnegative().optional(), unbounded_input_reservations: z.number().int().nonnegative().optional(),
   settled_calls: z.number().int(), confirmed_input_tokens: z.number().int(), confirmed_output_tokens: z.number().int(),
   unknown_calls: z.number().int(), unknown_output_tokens: z.number().int(),
   unapproved_calls: z.number().int(), unapproved_output_tokens: z.number().int(),
   pending_release_output_tokens: z.number().int(), allocated_calls: z.number().int(), allocated_output_tokens: z.number().int(),
 })
 const budgetSummarySchema = z.object({
+  input_state: z.enum(['enforced', 'unconfigured', 'legacy_unknown']).optional(),
   state: z.enum(['consistent', 'inconsistent', 'unconfigured']),
   limits: budgetAmountsSchema.nullable(), allocated: budgetAmountsSchema.nullable(), remaining: budgetAmountsSchema.nullable(),
   breakdown: budgetBreakdownSchema.nullable(), reservation_count: z.number().int().nonnegative(),
@@ -92,6 +97,7 @@ const budgetSummarySchema = z.object({
   })),
 })
 const budgetReservationSchema = z.object({
+  max_input_tokens: z.number().int().positive().nullable().optional(),
   run_id: z.uuid(), dataset_id: z.string(), created_at: z.string(), closed_at: z.string().nullable(),
   max_calls: z.number().int().positive(), max_output_tokens: z.number().int().positive(), breakdown: budgetBreakdownSchema,
 })
@@ -100,9 +106,15 @@ const budgetPageSchema = z.object({
   count: z.number().int().nonnegative(), next: z.string().nullable(), previous: z.string().nullable(), results: z.array(budgetReservationSchema),
 })
 const cleanupAmountsSchema = z.object({
+  global_input_tokens: z.number().int().nonnegative().optional(), reservation_input_tokens: z.number().int().nonnegative().optional(),
   global_calls: z.number().int().nonnegative(), global_output_tokens: z.number().int().nonnegative(),
   reservation_calls: z.number().int().nonnegative(), reservation_output_tokens: z.number().int().nonnegative(),
 })
+const inputDeltaMatches = (before: z.infer<typeof cleanupAmountsSchema>, after: z.infer<typeof cleanupAmountsSchema>) => {
+  const values = [before.global_input_tokens, after.global_input_tokens, before.reservation_input_tokens, after.reservation_input_tokens]
+  return values.every((value) => value === undefined) || values.every((value) => value !== undefined)
+    && before.global_input_tokens! - after.global_input_tokens! === before.reservation_input_tokens! - after.reservation_input_tokens!
+}
 const budgetCleanupSchema = z.object({
   request_id: z.uuid(), actor: z.string(), source: z.literal('CLI'), reason: z.string(), created_at: z.string(),
   evidence: z.object({
@@ -112,7 +124,9 @@ const budgetCleanupSchema = z.object({
   }),
   before: cleanupAmountsSchema,
   after: cleanupAmountsSchema.extend({ unknown_calls: z.number().int().nonnegative(), unknown_output_tokens: z.number().int().nonnegative() }),
-}).refine(({ before, after }) => after.reservation_calls <= before.reservation_calls
+}).refine(({ before, after }) => inputDeltaMatches(before, after)
+  && (before.global_input_tokens === undefined || after.global_input_tokens! <= before.global_input_tokens)
+  && after.reservation_calls <= before.reservation_calls
   && after.reservation_output_tokens <= before.reservation_output_tokens
   && after.unknown_calls <= after.reservation_calls && after.unknown_output_tokens <= after.reservation_output_tokens
   && before.global_calls - after.global_calls === before.reservation_calls - after.reservation_calls
@@ -126,7 +140,7 @@ const usageCorrectionSchema = z.object({
   evidence_sha256: z.string().regex(/^[a-f0-9]{64}$/), response_id: z.string().regex(/^resp_[A-Za-z0-9_-]{1,180}$/),
   input_tokens: z.number().int().nonnegative(), output_tokens: z.number().int().nonnegative(),
   before: correctionAmountsSchema, after: correctionAmountsSchema, created_at: z.string().datetime({ offset: true }),
-}).refine(({ before, after }) => before.global_calls === after.global_calls
+}).refine(({ before, after }) => inputDeltaMatches(before, after) && before.global_calls === after.global_calls
   && before.reservation_calls === after.reservation_calls && before.unknown_calls - after.unknown_calls === 1
   && before.global_output_tokens >= after.global_output_tokens
   && before.global_output_tokens - after.global_output_tokens === before.reservation_output_tokens - after.reservation_output_tokens)
@@ -136,6 +150,7 @@ const runBudgetSchema = z.object({
   corrections: z.array(usageCorrectionSchema).optional(),
   calls: z.array(z.object({
     sequence: z.number().int().nonnegative(), authorized_at: z.string(), settled_at: z.string().nullable(),
+    counted_input_tokens: z.number().int().nonnegative().nullable().optional(),
     operation_id: z.string().regex(/^answer:[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}$/).nullable().optional(),
     input_tokens: z.number().int().nonnegative().nullable(), output_tokens: z.number().int().nonnegative().nullable(),
   }).refine((call) => call.settled_at === null
@@ -151,6 +166,7 @@ const runBudgetSchema = z.object({
         const reservation = data.reservation
         const call = data.calls.find((item) => item.sequence === record.sequence)
         return reservation?.closed_at && reservation.run_id === record.run_id && call?.settled_at === null
+          && (reservation.max_input_tokens == null || record.input_tokens <= reservation.max_input_tokens)
           && record.output_tokens <= reservation.max_output_tokens
           && record.before.unknown_output_tokens - record.after.unknown_output_tokens === reservation.max_output_tokens
           && record.before.reservation_output_tokens - record.after.reservation_output_tokens === reservation.max_output_tokens - record.output_tokens

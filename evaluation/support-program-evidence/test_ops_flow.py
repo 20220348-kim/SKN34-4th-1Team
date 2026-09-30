@@ -282,6 +282,8 @@ def test_live_response_to_report_pipeline_uses_only_stub_transport(monkeypatch, 
     # 실제 Agent/직렬화/사용량 캡처/표 검증/보고서를 연결하되 네트워크 경계만 대체한다.
     requests = []
     def handler(request):
+        if request.url.path == "/v1/responses/input_tokens":
+            return httpx2.Response(200, json={"object": "response.input_tokens", "input_tokens": 120})
         body = json.loads(request.content)
         assert body["model"] == "gpt-6-luna"
         assert body["max_output_tokens"] == 2000

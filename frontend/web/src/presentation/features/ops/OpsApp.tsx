@@ -211,14 +211,15 @@ function EvaluationList({ owner, datasets, liveEnabled, onExpired }: { owner: st
           {mode === 'replay' && <label className="grid min-w-56 flex-1 gap-2 text-sm font-semibold">후보 실행<select className={field} value={candidate} disabled={busy || requestId.current !== null} onChange={(event) => setCandidate(event.target.value)}>{selected?.captures.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>}
           <button className={styles.primaryButton} disabled={busy || !!storageError || rejected || (!pending && (selected?.evaluation_scope !== 'fixed-answer-context-only' || !dataset || !reference || !candidate || (mode === 'live' && (!approved || !liveEnabled))))}>{busy ? '접수 중…' : pending ? '같은 요청으로 재시도' : mode === 'live' ? '새 응답 생성 및 평가' : '평가 실행'}</button>
           {mode === 'live' && selected && <div className="w-full rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6">
-            <p>모델: <strong>{selected.live_config.model}</strong> · 최대 {selected.live_config.max_model_calls}회 · 호출당 출력 최대 {selected.live_config.max_output_tokens.toLocaleString()}토큰 · 자동 재호출 없음</p>
+            <p>모델: <strong>{selected.live_config.model}</strong> · 최대 {selected.live_config.max_model_calls}회 · 호출당 출력 최대 {selected.live_config.max_output_tokens.toLocaleString()}토큰 · 호출당 입력 최대 {selected.live_config.max_input_tokens?.toLocaleString() ?? '기록 없음'}토큰 · 자동 재호출 없음</p>
+            <p>각 답변 생성 전에 같은 입력과 응답 형식을 OpenAI 입력 토큰 계산 API로 전송합니다. 계산 실패 또는 입력 상한 초과 시 생성을 중단합니다.</p>
             <p>전송 자료: {selected.fixture}의 {selected.case_ids.join(', ')} 질문과 고정 근거 청크. 시스템 답변 지침을 함께 전송합니다. 평가용 가상 자료이며 실제 회원 대화는 사용하지 않습니다.</p>
             {!liveEnabled && <p role="status" className="font-semibold">새 모델 평가가 비활성화되어 있습니다. 실행기의 API 키와 서버 설정을 준비해야 합니다.</p>}
             <label className="mt-3 flex items-start gap-2"><input type="checkbox" className="mt-1" checked={approved} disabled={!liveEnabled || busy || requestId.current !== null} onChange={(event) => setApproved(event.target.checked)} />위 자료의 OpenAI 전송과 최대 호출 예산을 확인했습니다.</label>
           </div>}
         </form>
         {selected && <p className="text-xs leading-5 text-sample-muted">비교 범위: {selected.case_ids.join(', ')} · {selected.case_ids.length}건. {mode === 'live' ? '현재 모델의 새 응답과 선택한 기준 응답을 비교합니다.' : reference === candidate ? '같은 저장 결과의 재현 검증입니다.' : '두 실행의 위 사례만 비교합니다. 원본의 다른 사례는 평가 범위에 포함하지 않습니다.'}</p>}
-        {pending && <div className="rounded-xl bg-amber-50 p-3 text-sm" role="status"><p>보관한 요청: {pending.request_id}</p><p>{pending.dataset_id} · 기준 {pending.reference_capture_id}{pending.baseline_version ? ` · 기준 버전 ${pending.baseline_version}` : ''} · {pending.live_config ? `${pending.live_config.model} · 최대 ${pending.live_config.max_model_calls}회 · 출력 ${pending.live_config.max_output_tokens}토큰/회` : '저장 응답 재평가'}</p><p>새로고침·재로그인 뒤에도 이 탭에서 같은 요청을 확인합니다. 탭을 닫기 전 실행 이력에서 접수 여부를 확인하세요.</p></div>}
+        {pending && <div className="rounded-xl bg-amber-50 p-3 text-sm" role="status"><p>보관한 요청: {pending.request_id}</p><p>{pending.dataset_id} · 기준 {pending.reference_capture_id}{pending.baseline_version ? ` · 기준 버전 ${pending.baseline_version}` : ''} · {pending.live_config ? `${pending.live_config.model} · 최대 ${pending.live_config.max_model_calls}회 · 출력 ${pending.live_config.max_output_tokens}토큰/회 · 입력 ${pending.live_config.max_input_tokens ?? '기록 없음'}토큰/회` : '저장 응답 재평가'}</p><p>새로고침·재로그인 뒤에도 이 탭에서 같은 요청을 확인합니다. 탭을 닫기 전 실행 이력에서 접수 여부를 확인하세요.</p></div>}
         {storageError && <p role="alert" className="text-sm text-red-700">{storageError}</p>}
         {submitError && <p role="alert" className="text-sm text-red-700">{submitError}</p>}
         {rejected && <button className={styles.secondaryButton} onClick={reselect}>접수되지 않은 조건 다시 선택</button>}
@@ -333,7 +334,7 @@ function EvaluationDetail({ onExpired, onReviewChanged }: { onExpired: () => voi
               ...(run.execution_spec.generation ? [['프롬프트 버전', run.execution_spec.generation.prompt_sha256]] : []),
             ] : []),
             ['모델 호출 시도', run.model_api_calls === null ? '아직 확인되지 않음' : `${run.model_api_calls}회`],
-            ...(run.live_config ? [['승인 예산', `${run.live_config.model} · 최대 ${run.live_config.max_model_calls}회 · 출력 최대 ${run.live_config.max_output_tokens}토큰/호출`]] : []), ['기준 실행', run.reference_label], ['후보 실행', run.candidate_label], ['요청자', run.requested_by], ['요청 시각', date(run.created_at)],
+            ...(run.live_config ? [['승인 예산', `${run.live_config.model} · 최대 ${run.live_config.max_model_calls}회 · 출력 최대 ${run.live_config.max_output_tokens}토큰/호출 · 입력 최대 ${run.live_config.max_input_tokens ?? '기록 없음'}토큰/호출`]] : []), ['기준 실행', run.reference_label], ['후보 실행', run.candidate_label], ['요청자', run.requested_by], ['요청 시각', date(run.created_at)],
             ['시작 / 종료', `${date(run.started_at)} / ${date(run.finished_at)}`], ['마지막 상태 확인', date(run.synced_at)], ['평가 결과 ID', run.evaluation_run_id ?? '결과 대기'],
           ].map(([label, value]) => <div key={label} className="contents"><dt className="text-sample-muted">{label}</dt><dd className="break-all">{value}</dd></div>)}</dl>
         </section>

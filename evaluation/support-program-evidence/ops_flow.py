@@ -149,7 +149,8 @@ def evaluate_saved_capture(
             baseline = load_results(fixture_path, reference_path, dataset["case_ids"])
             evaluate.require(baseline["summary"]["completed"], "Reference must be complete")
             settings = execution_spec["generation"]["settings"]
-            evaluate.require(settings["max_output_tokens"] == config["max_output_tokens"]
+            evaluate.require(settings["max_input_tokens"] == config["max_input_tokens"] == evaluate.MAX_INPUT_TOKENS
+                             and settings["max_output_tokens"] == config["max_output_tokens"]
                              and settings["model_timeout_seconds"] == evaluate.DEFAULT_LLM_MODEL_TIMEOUT_SECONDS
                              and settings["run_timeout_seconds"] == evaluate.DEFAULT_LLM_RUN_TIMEOUT_SECONDS
                              and settings["max_retries"] == 0, "Generation settings differ")
