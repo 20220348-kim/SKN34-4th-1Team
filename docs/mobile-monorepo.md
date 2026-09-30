@@ -23,8 +23,10 @@ shared는 TypeScript 소스를 export하며 Vite와 Metro가 각 앱의 번들�
 패키지 이름 `@govbiz/shared`와 루트 workspace·lockfile은 유지합니다.
 
 모바일 진입점은 `검색 · 관심함 · 협업 · 리포트 · 내 정보` 5탭입니다. 검색 안에서 기존 AI/필터 화면을
-전환하며, 기존 `/chat`은 검색의 AI 모드로 연결합니다. 협업·리포트의 준비 중 안내는 아직 해당 기능의
-모바일 API 연결을 의미하지 않습니다. 원본 시안·공통 UI 및 현재 구현 범위는 [모바일 README](../frontend/mobile/README.md#화면-기준-skn-78--1단계)를 따릅니다.
+전환하며, 기존 `/chat`은 검색의 AI 모드로 연결합니다. 협업은 준비 중 안내이고, 리포트는
+`모바일 화면 → 모바일 Bearer API → 기존 Core 리포트·기업·관심 공고 API`로 조회·설정합니다.
+화면 진입만으로 유료 미리보기를 생성하지 않습니다. 원본 시안·공통 UI 및 현재 구현 범위는
+[모바일 README](../frontend/mobile/README.md#화면-기준-skn-78--1단계)를 따릅니다.
 
 ## 설치와 실행
 

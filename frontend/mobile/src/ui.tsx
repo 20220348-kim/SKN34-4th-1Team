@@ -1,5 +1,5 @@
 import type { PropsWithChildren } from 'react'
-import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type TextInputProps } from 'react-native'
+import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View, type TextInputProps } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 export const colors = {
@@ -11,8 +11,8 @@ export const colors = {
 }
 
 // Navigation owns the header/tab insets. Only headerless pages apply the top inset here.
-export function Page({ children, scroll = true, headerless = false, keyboardOffset = 0 }: PropsWithChildren<{
-  scroll?: boolean; headerless?: boolean; keyboardOffset?: number
+export function Page({ children, scroll = true, headerless = false, keyboardOffset = 0, refreshing, onRefresh }: PropsWithChildren<{
+  scroll?: boolean; headerless?: boolean; keyboardOffset?: number; refreshing?: boolean; onRefresh?: () => void
 }>) {
   const insets = useSafeAreaInsets()
   return <KeyboardAvoidingView style={[styles.page, { paddingTop: headerless ? insets.top : 0,
@@ -20,6 +20,7 @@ export function Page({ children, scroll = true, headerless = false, keyboardOffs
     behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     keyboardVerticalOffset={keyboardOffset + (headerless ? 0 : insets.top + 56)}>
     {scroll ? <ScrollView contentContainerStyle={[styles.content, { paddingBottom: 24 + insets.bottom }]}
+      refreshControl={onRefresh ? <RefreshControl refreshing={Boolean(refreshing)} onRefresh={onRefresh} tintColor={colors.primary} /> : undefined}
       keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">{children}</ScrollView>
       : <View style={[styles.content, { flex: 1, paddingBottom: 24 + insets.bottom }]}>{children}</View>}
   </KeyboardAvoidingView>
