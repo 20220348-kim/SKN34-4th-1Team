@@ -39,12 +39,15 @@ def test_printed_words_and_consent_controls_are_not_accepted_as_blank_inputs():
     assert checked_regions([{"kind": 0, "confidence": .39, "box": region}], [], []) == []
 
 
-def test_nearby_original_label_is_kept_and_ambiguous_overlapping_inputs_fail():
+def test_nearby_original_label_is_kept_and_a_labeled_overlap_keeps_only_the_first_input(caplog):
     detection = {"kind": 0, "confidence": .8, "box": box(.5, .2, .3, .1)}
     words = [{"text": "업체명", "box": box(.3, .23, .15, .03)}]
     assert checked_regions([detection], words, [])[0]["labels"] == ["업체명"]
-    with pytest.raises(ValueError, match="PDF_DETECTION_OVERLAP"):
-        checked_regions([detection, detection], words, [])
+    caplog.set_level("WARNING", logger="app.application_preparation.pdf_form_detection")
+    result = checked_regions([detection, {**detection, "confidence": .9}], words, [], page=6)
+    assert [region["id"] for region in result] == ["ffdetr-0"]
+    assert result[0]["confidence"] == .8
+    assert "pdf_detection_overlap_dropped page=6 kept=[['업체명']] dropped=['업체명'] confidence=0.90" in caplog.text
 
 
 def test_unlabeled_overlap_is_discarded_without_changing_labeled_input():

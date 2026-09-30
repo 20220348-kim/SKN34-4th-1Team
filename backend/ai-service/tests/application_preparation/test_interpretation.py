@@ -168,9 +168,28 @@ def test_discovery_normalizes_display_text_and_whitespace_only_quote_differences
     assert normalized["fields"][0]["evidenceQuote"] == "사업\n개요"
 
 
-def test_discovery_rejects_non_layout_control_or_format_characters_with_a_safe_path():
+def test_discovery_drops_control_format_and_private_use_characters_from_display_text(caplog):
     output = discovery_selection_data()
-    output["forms"][0]["sections"][0]["fields"][0]["guidance"] = "사업\u200b내용"
+    field = output["forms"][0]["sections"][0]["fields"][0]
+    field["guidance"] = "사업\u200b내용"
+    field["label"] = "\ue000 사업\u00ad 개요\x0b"
+    agent = SimpleNamespace(discovery_model_timeout_seconds=210.0, discovery_run_timeout_seconds=240.0, discover=AsyncMock(return_value=FormDiscoverySelection.model_validate(output)))
+    caplog.set_level("INFO", logger="app.application_preparation.models")
+
+    result = asyncio.run(ApplicationPreparationService(agent, "test-model").discover(
+        DiscoverFormsRequest.model_validate(discovery_request_data()),
+    ))
+
+    normalized = result["forms"][0]["sections"][0]["fields"][0]
+    assert normalized["guidance"] == "사업내용"
+    assert normalized["label"] == "사업 개요"
+    assert "application_form_display_text_normalized path=forms[0].sections[0].fields[0].label dropped_code_points=3" in caplog.text
+    assert "사업" not in caplog.text
+
+
+def test_discovery_still_rejects_display_text_that_is_only_control_characters():
+    output = discovery_selection_data()
+    output["forms"][0]["sections"][0]["fields"][0]["guidance"] = "\u200b\ufeff"
     agent = SimpleNamespace(discovery_model_timeout_seconds=210.0, discovery_run_timeout_seconds=240.0, discover=AsyncMock(return_value=FormDiscoverySelection.model_validate(output)))
 
     with pytest.raises(ApplicationPreparationError, match="APPLICATION_PREPARATION_FAILED") as failure:
@@ -178,11 +197,103 @@ def test_discovery_rejects_non_layout_control_or_format_characters_with_a_safe_p
             DiscoverFormsRequest.model_validate(discovery_request_data()),
         ))
 
-    cause = failure.value.__cause__
-    assert cause.reason == "FORBIDDEN_DISPLAY_CHARACTER"
-    assert cause.path == "forms[0].sections[0].fields[0].guidance"
-    assert cause.code_point_count == 5
-    assert cause.forbidden_character_count == 1
+    assert failure.value.__cause__.reason == "EMPTY_DISPLAY_TEXT"
+    assert failure.value.__cause__.path == "forms[0].sections[0].fields[0].guidance"
+
+
+def test_discovery_relocates_a_verbatim_quote_cited_under_a_neighbouring_block_id(caplog):
+    from app.application_preparation.models import validate_discovery, FormDiscoveryValidationError
+    request_data = discovery_request_data()
+    output_data = discovery_selection_data()
+    field = output_data["forms"][0]["sections"][0]["fields"][0]
+    document = request_data["documents"][0]
+    cited = next(item for item in document["blocks"] if item["blockId"] == field["evidenceBlockId"])
+    document["blocks"].append({"blockId": "D0-B9", "locator": "p9", "text": "대표자 성명을 기재합니다."})
+    field.update(label="대표자 성명", evidenceQuote="대표자 성명을 기재합니다.")
+    caplog.set_level("INFO", logger="app.application_preparation.models")
+    request = DiscoverFormsRequest.model_validate(request_data)
+    output = FormDiscoverySelection.model_validate(output_data)
+
+    validate_discovery(request, output)
+
+    repaired = output.forms[0].sections[0].fields[0]
+    assert repaired.evidenceBlockId == "D0-B9" != cited["blockId"]
+    assert repaired.evidenceQuote == "대표자 성명을 기재합니다."
+    assert f"application_form_evidence_relocated path=forms[0].sections[0].fields[0].evidenceBlockId from_block_id={cited['blockId']} to_block_id=D0-B9" in caplog.text
+
+    document["blocks"].append({"blockId": "D0-B10", "locator": "p10", "text": "대표자 성명을 기재합니다."})
+    with pytest.raises(FormDiscoveryValidationError, match="EVIDENCE_QUOTE_MISMATCH"):
+        validate_discovery(DiscoverFormsRequest.model_validate(request_data), FormDiscoverySelection.model_validate(output_data))
+
+
+def test_discovery_recovers_a_quote_whose_pdf_table_cells_are_interleaved_with_neighbouring_cells():
+    from app.application_preparation.models import validate_discovery, FormDiscoveryValidationError
+    source = "흡수에의한시설(300m)*13(복수IOT게이트웨이 /pH단수계中택1) 제외(VAT )\n*3 VPN(유선합계/무선 中택1)"
+    request_data = discovery_request_data()
+    output_data = discovery_selection_data()
+    field = output_data["forms"][0]["sections"][0]["fields"][0]
+    block = next(item for item in request_data["documents"][0]["blocks"] if item["blockId"] == field["evidenceBlockId"])
+    block["text"] = source
+    field.update(label="IOT게이트웨이 (복수/단수中택1)", evidenceQuote="IOT게이트웨이 \n(복수/단수中택1)", options=["복수", "단수"])
+    request = DiscoverFormsRequest.model_validate(request_data)
+    output = FormDiscoverySelection.model_validate(output_data)
+
+    validate_discovery(request, output)
+
+    repaired = output.forms[0].sections[0].fields[0]
+    assert repaired.evidenceQuote == "복수IOT게이트웨이 /pH단수계中택1"
+    assert repaired.options == ["복수", "단수"]
+
+    field.update(label="원문에 없는 항목 이름", evidenceQuote="원문에 없는 항목 이름", options=[])
+    with pytest.raises(FormDiscoveryValidationError, match="EVIDENCE_QUOTE_MISMATCH"):
+        validate_discovery(request, FormDiscoverySelection.model_validate(output_data))
+
+
+def test_discovery_widens_an_exact_quote_to_cover_printed_choices():
+    from app.application_preparation.models import validate_discovery
+    request = discovery_request_data()
+    output = discovery_selection_data()
+    field = output["forms"][0]["sections"][0]["fields"][0]
+    block = next(block for block in request["documents"][0]["blocks"] if block["blockId"] == field["evidenceBlockId"])
+    block["text"] += "\n신청 유형\n□ 신규 □ 계속"
+    field.update(label="신청 유형", options=["신규", "계속"], evidenceQuote="신청 유형")
+    request = DiscoverFormsRequest.model_validate(request)
+    output = FormDiscoverySelection.model_validate(output)
+
+    validate_discovery(request, output)
+
+    repaired = output.forms[0].sections[0].fields[0]
+    assert repaired.evidenceQuote == "신청 유형\n□ 신규 □ 계속"
+    assert repaired.options == ["신규", "계속"]
+
+
+@pytest.mark.parametrize("options, expected, reason", [
+    (["기술", "임의 분야"], [], "CHOICE_OPTIONS_DROPPED"),
+    (["기술"], [], "SINGLE_CHOICE_DROPPED"),
+    (["기술", "기술", "생활"], ["기술", "생활"], None),
+])
+def test_discovery_downgrades_unverifiable_choices_to_free_text_instead_of_failing(options, expected, reason, caplog):
+    from app.application_preparation.models import validate_discovery
+    request = discovery_request_data()
+    output = discovery_selection_data()
+    field = output["forms"][0]["sections"][0]["fields"][0]
+    quote = "사업 개요 분야 (택1): 기술, 생활"
+    block = next(block for block in request["documents"][0]["blocks"] if block["blockId"] == field["evidenceBlockId"])
+    block["text"] += " " + quote
+    field.update(options=options, evidenceQuote=quote)
+    caplog.set_level("WARNING", logger="app.application_preparation.models")
+    request = DiscoverFormsRequest.model_validate(request)
+    output = FormDiscoverySelection.model_validate(output)
+
+    validate_discovery(request, output)
+
+    repaired = output.forms[0].sections[0].fields[0]
+    assert repaired.options == expected
+    assert repaired.evidenceQuote == quote
+    if reason:
+        assert f"application_form_choice_rejected reason={reason} path=forms[0].sections[0].fields[0].options" in caplog.text
+    else:
+        assert "application_form_choice_rejected" not in caplog.text
 
 
 def test_discovery_merges_repeated_document_candidates_and_makes_generated_keys_unique():
@@ -336,8 +447,10 @@ def test_fastapi_contract_hides_private_failures():
 
 def test_discovery_failure_log_keeps_only_safe_path_and_counts(caplog):
     output = discovery_selection_data()
-    private_guidance = "민감한\u200b진단 원문"
+    private_guidance = "민감한 진단 원문"
     output["forms"][0]["sections"][0]["fields"][0]["guidance"] = private_guidance
+    output["forms"][0]["sections"][0]["fields"][0]["evidenceQuote"] = "원문 어디에도 없는 인용"
+    output["forms"][0]["sections"][0]["fields"][0]["label"] = "원문에 없는 문항"
     app = create_app(settings=Settings(
         openai_api_key="unused",
         openai_model="test-model",
@@ -355,10 +468,10 @@ def test_discovery_failure_log_keeps_only_safe_path_and_counts(caplog):
 
     assert response.status_code == 422
     assert response.json() == {"detail": {"code": "APPLICATION_FORM_AI_INVALID_RESPONSE"}}
-    assert "validation_reason=FORBIDDEN_DISPLAY_CHARACTER" in caplog.text
-    assert "validation_path=forms[0].sections[0].fields[0].guidance" in caplog.text
-    assert "code_point_count=9" in caplog.text
-    assert "forbidden_character_count=1" in caplog.text
+    assert "validation_reason=EVIDENCE_QUOTE_MISMATCH" in caplog.text
+    assert "validation_path=forms[0].sections[0].fields[0].evidenceQuote" in caplog.text
+    assert "code_point_count=13" in caplog.text
+    assert "forbidden_character_count=None" in caplog.text
     assert "document_count=1" in caplog.text
     assert "block_count=1" in caplog.text
     assert private_guidance not in caplog.text
@@ -396,24 +509,19 @@ def test_discovery_evidence_mismatch_returns_confirmed_validation_failure():
     assert response.json() == {"detail": {"code": "APPLICATION_FORM_AI_INVALID_RESPONSE"}}
 
 
-@pytest.mark.parametrize("options,valid", [(["기술", "생활"], True), (["기술", "임의 분야"], False), (["기술", "기술"], False)])
-def test_discovery_choices_must_be_present_in_the_exact_field_quote(options, valid):
-    from app.application_preparation.models import validate_discovery, FormDiscoveryValidationError
+def test_discovery_keeps_choices_that_are_present_in_the_exact_field_quote():
+    from app.application_preparation.models import validate_discovery
     request = discovery_request_data()
     output = discovery_selection_data()
     field = output["forms"][0]["sections"][0]["fields"][0]
     quote = "사업 개요 분야 (택1): 기술, 생활"
     block = next(block for block in request["documents"][0]["blocks"] if block["blockId"] == field["evidenceBlockId"])
     block["text"] += " " + quote
-    field.update(options=options, evidenceQuote=quote)
+    field.update(options=["기술", "생활"], evidenceQuote=quote)
     request = DiscoverFormsRequest.model_validate(request)
     output = FormDiscoverySelection.model_validate(output)
-    if valid:
-        validate_discovery(request, output)
-        assert output.forms[0].sections[0].fields[0].options == options
-    else:
-        with pytest.raises(FormDiscoveryValidationError):
-            validate_discovery(request, output)
+    validate_discovery(request, output)
+    assert output.forms[0].sections[0].fields[0].options == ["기술", "생활"]
 
 
 def test_discovery_recovers_a_choice_quote_from_the_grounded_label_and_options():

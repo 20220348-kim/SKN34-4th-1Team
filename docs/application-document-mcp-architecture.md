@@ -102,6 +102,9 @@ Google Forms와 일반 Web Form은 파일이 아니므로 현재 MCP의 네 번�
 
 화성시 제출서식(392 KB, 셀 2,200개)은 고정 Hangeul 엔진의 `inspect_editable_regions`가 셀마다 섹션 XML 전체를 다시 훑는(`fill._find_cell_span`) 구조 때문에 약 120초가 걸려 MCP 읽기 시한(100초)을 결정적으로 넘겼다. 재시도로 해결되는 일시 장애가 아니므로 `hwpx_mcp_extension.py`는 서버 시작 시 `fill._find_cell_span`을 섹션당 한 번 만든 `(표 순번, 행, 열) → <hp:tc> 구간` 색인으로 바꾼다. 표 순번은 중첩 표를 포함해 문서 순서로 세고, 셀은 가장 안쪽 열린 표에 속하며, 같은 주소는 먼저 나온 셀이 이기는 원래 의미를 그대로 따른다. 고정 엔진의 함수 원본 해시가 다르면 `GOVBIZ_HWPX_ENGINE_CHANGED`로 서버를 시작하지 않아 엔진을 올릴 때 색인을 다시 검증하게 한다. 주소 체계와 결과는 바뀌지 않으므로 engine version과 저장된 snapshot·binding은 유지된다. MCP 요청 시한 초과는 `TRANSPORT_TIMEOUT`, 그 밖의 전송 실패는 `TRANSPORT_CALL`로 나누어 기록한다.
 
+PDF 세션은 페이지 수에 따라 예산을 잡는다. 로컬 FFDetr는 CPU에서 모델 적재 약 20초, 페이지당 약 2.3초(측정: 빈 페이지 4장 9.2초)가 들고 텍스트 도구가 페이지당 약 1초를 더 쓰므로, 예천군 공고문(1.6 MB, 17쪽 이상)처럼 긴 PDF는 고정 120초를 결정적으로 넘겼다. `PdfDocumentAdapter`는 `60 + 6 × 페이지 수`초를 세션 시한으로 넘기고, `document_session`은 이를 120~220초로 잘라 이 서비스의 240초·Core의 270초 HTTP 시한 아래에 둔다. 세션 단위 실패는 예외 그룹 안의 `TimeoutError`를 찾아 `pdf:session:SESSION_TIMEOUT`처럼 사유를 남기고 메시지 본문은 기록하지 않는다. 매핑 거부 로그에는 바인딩되지 않은 필수 문항 ID를 함께 남긴다.
+세션 안에서 우리 쪽 후처리가 던진 예외(검출 좌표 오류 등)는 MCP 실패로 감싸지 않고 그대로 올려 `APPLICATION_DOCUMENT_VALIDATION_FAILED`(reason `PDF_DETECTION_BOX:page-N`)로 이름을 붙인다. 같은 페이지에서 라벨이 있는 검출이 이미 채택된 입력과 겹치면 예전처럼 문서 전체를 거부하지 않고 먼저 채택된(위·왼쪽) 입력만 남기고 나중 것을 버리며 `pdf_detection_overlap_dropped`로 기록한다(예천군 공고문 6쪽의 표에서 발생). 겹치는 대상은 여전히 공개하지 않는다.
+
 색인 뒤에도 같은 양식은 native 입력 대상이 5,769개로 DocumentMap 한도(3,000개)를 넘는다. `HwpxDocumentAdapter.inspect`는 이 경우 스키마 오류 대신 `APPLICATION_DOCUMENT_LIMIT_EXCEEDED`(reason `HWPX_TARGET_COUNT`)를 명시적으로 돌려주고, 발견 API는 이를 413으로 응답한다. Core는 그 첨부만 `NATIVE_TARGET_LIMIT`로 제외하며 남는 문서가 없으면 `TOO_LARGE`로 닫는다. 한도 자체를 올리지 않는 이유는 2,000개가 넘는 셀 layout을 발견 프롬프트에 그대로 넣으면 모델 시한(210초)과 출력 한도를 넘기 때문이며, 큰 양식의 layout 압축은 별도 작업이다.
 
 ### PDF 한글 문자 매핑 보완

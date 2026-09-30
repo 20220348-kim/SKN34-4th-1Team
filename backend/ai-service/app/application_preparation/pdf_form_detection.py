@@ -41,7 +41,7 @@ def detect_inputs(image_paths: list[str]) -> dict:
     return {"page_count": len(pages), "modelSha256": MODEL_SHA256, "pages": pages}
 
 
-def checked_regions(detections: list[dict], words: list[dict], ruled_regions: list[dict]) -> list[dict]:
+def checked_regions(detections: list[dict], words: list[dict], ruled_regions: list[dict], *, page: int | None = None) -> list[dict]:
     def bounds(box):
         return (box["x"], box["y"], box["x"] + box["width"], box["y"] + box["height"])
 
@@ -81,13 +81,17 @@ def checked_regions(detections: list[dict], words: list[dict], ruled_regions: li
         for region, labels in parts:
             if not area(region) or any(area(intersection(region, bounds(word["box"]))) > 0 for word in words):
                 continue
-            if any(area(intersection(region, bounds(previous["box"]))) > 0 for previous in result):
-                # Dense grids can yield an unlabeled second detection across the
-                # edge of a labeled input. Discard that unusable proposal; never
-                # publish overlapping targets or discard a labeled conflict.
-                if not labels:
-                    continue
-                raise ValueError("PDF_DETECTION_OVERLAP")
+            overlapping = [previous for previous in result if area(intersection(region, bounds(previous["box"]))) > 0]
+            if overlapping:
+                # Dense grids can yield a second detection across the edge of an accepted input.
+                # Never publish overlapping targets: keep the first (top-left) proposal and drop this one.
+                # A labeled conflict is logged so long notices with false-positive tables do not fail whole.
+                if labels:
+                    import logging
+                    logging.getLogger(__name__).warning(
+                        "pdf_detection_overlap_dropped page=%s kept=%r dropped=%r confidence=%.2f",
+                        page, [previous["labels"] for previous in overlapping][:3], labels, detection["confidence"])
+                continue
             result.append({"id": f"ffdetr-{len(result)}", "labels": labels, "confidence": detection["confidence"],
                            "box": {"x": region[0], "y": region[1], "width": region[2]-region[0], "height": region[3]-region[1]}})
     return result
