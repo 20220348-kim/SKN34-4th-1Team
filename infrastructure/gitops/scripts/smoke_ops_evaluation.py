@@ -236,6 +236,9 @@ def verify(state, settings, compose, compose_env, ops_image, kind, helm, report)
         )
         report["activation"] = "PASS"
         report["repeated_activation_preserves_secrets"] = True
+        report["runtime_check_before_evaluation"] = ops_runtime.check_runtime(
+            state, settings
+        )
         with socket.socket() as listener:
             listener.bind(("127.0.0.1", 5173))
         web_env = {
@@ -423,6 +426,9 @@ def verify(state, settings, compose, compose_env, ops_image, kind, helm, report)
                 assert flows[0]["spec"] == fresh["execution_spec_sha256"]
                 assert database_record(nk, recovered["id"]) == recovered_db
                 assert database_record(nk, result["request_id"]) == before
+                report["runtime_check_after_replacement"] = ops_runtime.check_runtime(
+                    state, settings, fresh["request_id"]
+                )
                 report["replacement_recovery"].update(
                     status="PASS",
                     new_evaluation=fresh,
