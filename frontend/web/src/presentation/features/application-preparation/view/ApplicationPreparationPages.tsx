@@ -1,10 +1,11 @@
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { SelectField } from '../../../shared/workspace/SelectField'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 import { useAppSelector } from '../../../../app/hooks'
 import {
   applicationServiceFieldLabels,
   type ApplicationForm,
+  type ApplicationFormField,
   type ApplicationFormSection,
 } from '../../../../domain/entities/ApplicationPreparation'
 import { catalogSourceLabels } from '../../../../domain/entities/SupportProgramCatalog'
@@ -13,22 +14,21 @@ import { selectCurrentAccount } from '../../../shared/auth/state/authSlice'
 import { appPaths } from '../../../shared/routes/appPaths'
 import { WorkspacePageHeader } from '../../../shared/workspace/WorkspacePageHeader'
 import { workspacePageStyles } from '../../../shared/workspace/WorkspacePage.styles'
+import { WorkspaceToast } from '../../../shared/workspace/WorkspaceToast'
+import { workspaceToastActionClassName } from '../../../shared/workspace/WorkspaceToast.styles'
+import { useFloatingPopover } from '../../../shared/workspace/useFloatingPopover'
 import { SavedSupportProgramPickerDialog } from '../../../shared/support-program/SavedSupportProgramPickerDialog'
 import { SupportProgramSearchFilters } from '../../../shared/support-program/SupportProgramSearchFilters'
-import { useApplicationPreparationEditorViewModel } from '../viewmodel/useApplicationPreparationEditorViewModel'
+import { answerMaxLength, undecidedAnswer, useApplicationPreparationEditorViewModel } from '../viewmodel/useApplicationPreparationEditorViewModel'
 import { useApplicationPreparationListViewModel } from '../viewmodel/useApplicationPreparationListViewModel'
-import { applicationPreparationStyles as s } from './ApplicationPreparation.styles'
+import { answerEditorStyles as e, applicationPreparationStyles as s } from './ApplicationPreparation.styles'
 
 
 import { ApplicationOnlineInputGuide } from './ApplicationOnlineInputGuide'
 
 const listTitle = '신청 문서 작성 도우미'
-function savedSectionStatus(section: ApplicationFormSection) {
-  const fields = section.fields.filter((field) => field.documentWritable !== false)
-  const answered = fields.filter((field) => section.facts.some((fact) => fact.fieldKey === field.key)).length
-  return { label: fields.length === 0 ? '원문에서 직접 작성' : `${answered}/${fields.length}개 입력 확인`,
-    className: answered === 0 ? s.notStarted : answered === fields.length ? s.confirmed : s.inProgress }
-}
+/** 사이드바 항목과 같은 이름입니다. 답변 입력·새 문서 화면의 상위 경로에 씁니다. */
+const featureTitle = '신청 문서 작성'
 const programStatusLabels = {
   OPEN: '접수 중',
   UPCOMING: '접수 예정',
@@ -74,157 +74,254 @@ function OfficialFormSummary({ form }: { form: ApplicationForm }) {
   </section>
 }
 
-function SectionInputEditor({ section, vm, isLastSection }: {
-  section: ApplicationFormSection
-  vm: ReturnType<typeof useApplicationPreparationEditorViewModel>
-  isLastSection: boolean
-}) {
-  const [questionIndex, setQuestionIndex] = useState(0)
-  const field = section.fields[questionIndex]
-  const options = field?.options ?? []
-  const missingOptions = options.length === 0 && /택\s*1|하나.{0,10}선택|중.{0,10}선택/.test(`${field?.label} ${field?.guidance}`)
-  const messageKey = field ? `${section.key}:${field.key}` : section.key
-  const valueFor = (candidate: ApplicationFormSection['fields'][number]) => {
-    const key = `${section.key}:${candidate.key}`
-    if (vm.deletedAnswerKeys.has(key)) return ''
-    if (Object.hasOwn(vm.sectionMessages, key)) return vm.sectionMessages[key]
-    const fact = section.facts.find((saved) => saved.fieldKey === candidate.key)
-    return fact?.status === 'UNKNOWN' ? '미정' : fact?.value ?? ''
-  }
-  const currentValue = field ? valueFor(field) : ''
-  const savedFact = section.facts.find((fact) => fact.fieldKey === field?.key)
-  const answeredCount = section.fields.filter((candidate) => valueFor(candidate).trim()).length
-  const busy = vm.busySection?.key === section.key
-  const status = savedSectionStatus(section)
-  const labels = new Map(section.fields.map((field) => [field.key, field.label]))
-  return <section className={s.sectionItem} aria-label={`${section.title} 작성`}>
-    <div className={s.sectionHeading}>
-      <h3 className="text-lg font-bold">{section.title}</h3>
-      <span className={status.className} >{status.label}</span>
-    </div>
-    {field && <div className="rounded-2xl rounded-tl-sm bg-emerald-50 p-4 text-sm leading-6 text-emerald-950" aria-live="polite">
-      <p className="mb-2 text-xs font-semibold">질문 {questionIndex + 1} / {section.fields.length} · 답변 {answeredCount}개</p>
-      <h4 className="font-bold">{field.label}을(를) 알려주세요.{field.required ? ' (필수)' : ' (선택)'}</h4>
-      <p className="mt-2">{field.guidance}</p>
-    </div>}
-    {section.facts.some((fact) => fact.fieldKey === field?.key) && <div>
-      <h3 className={s.label}>사용자가 확인한 사실</h3>
-      <ul className={s.fieldList}>
-        {section.facts.filter((fact) => fact.fieldKey === field?.key).map((fact) => <li className={s.factItem} key={fact.id}>
-          <strong>{labels.get(fact.fieldKey) ?? fact.fieldKey}</strong>
-          <p>{fact.status === 'UNKNOWN' ? '미정으로 확인함' : fact.value}</p>
-        </li>)}
-      </ul>
-    </div>}
-    <label className={s.label} htmlFor={`section-answer-${section.key}`}>답변 입력</label>
-    {field?.documentWritable === false && <p className={s.warning}>이 항목은 자동 기입할 수 없습니다. 내려받은 원본 문서에서 직접 작성해 주세요.</p>}
-    {options.length > 0 ? <fieldset className="space-y-2" disabled={vm.busySection !== null || field?.documentWritable === false}>
-      <legend className={s.label}>공식 선택지 중 하나를 선택하세요</legend>
-      {options.map((option) => <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-slate-200 p-3 text-sm has-[:checked]:border-emerald-700 has-[:checked]:bg-emerald-50" key={option}>
-        <input type="radio" name={`choice-${messageKey}`} value={option} checked={currentValue === option} onChange={() => vm.setSectionMessage(messageKey, option)} />
-        {option}
-      </label>)}
-      <label className="flex items-center gap-3 p-3 text-sm">
-        <input type="radio" name={`choice-${messageKey}`} value="미정" checked={currentValue === '미정'} onChange={() => vm.setSectionMessage(messageKey, '미정')} />아직 미정
-      </label>
-    </fieldset> : <textarea
-      className={s.textarea}
-      disabled={vm.busySection !== null || field?.documentWritable === false}
-      id={`section-answer-${section.key}`}
-      maxLength={2000}
-      value={currentValue}
-      onChange={(event) => vm.setSectionMessage(messageKey, event.target.value)}
-      placeholder="확인된 사실만 적어 주세요. 모르는 값은 미정이라고 밝혀 주세요."
-    />}
-    {field?.documentWritable !== false && (currentValue || savedFact) && <button className={s.button} type="button" disabled={vm.busySection !== null}
-      onClick={() => vm.deleteSectionAnswer(messageKey)}>{savedFact ? '저장된 답변 삭제' : '입력 내용 지우기'}</button>}
-    {vm.deletedAnswerKeys.has(messageKey) && <p className={s.warning}>문서 답변 저장을 누르면 기존 답변이 삭제됩니다.</p>}
-    {missingOptions && <p className={s.warning}>공식 선택지를 확인하지 못했습니다. 아래 공식 공고에서 첨부 양식의 선택지를 확인한 뒤 입력해 주세요. <a className="underline" href={vm.preparation!.form.sourceUrl} target="_blank" rel="noreferrer">공식 공고 열기</a></p>}
-    <div className="flex items-center justify-between gap-3" aria-label="입력 질문 이동">
-      <button className={s.button} type="button" disabled={questionIndex === 0} onClick={() => setQuestionIndex((index) => index - 1)}>이전 질문</button>
-      <button className={s.primary} type="button" disabled={questionIndex >= section.fields.length - 1} onClick={() => setQuestionIndex((index) => index + 1)}>다음 질문</button>
-    </div>
-    <p className={s.muted}>저장된 답변은 입력칸에 표시됩니다. 값을 수정하거나 답변 삭제를 선택한 뒤 문서 답변 저장을 눌러주세요.</p>
-    {isLastSection && <p className={s.notice}>마지막 항목입니다. 목록에서 저장 전 답변이나 아직 확인하지 않은 항목을 살펴보세요.</p>}
-    <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
-      <p className="text-sm text-emerald-950">화면에 보이는 이 항목의 전체 답변 상태를 저장합니다. 표시된 기존 답변은 수정하거나 명시적으로 삭제할 수 있습니다.</p>
-      <p className="mt-2 mb-3 text-sm text-emerald-950">저장 전 답변은 이 화면에서 항목을 이동할 때 유지됩니다. 화면을 나가기 전에는 문서 답변 저장을 눌러주세요.</p>
-      <button className={s.primary} type="button" disabled={vm.busySection !== null || !section.fields.some((value) => {
-        const key = `${section.key}:${value.key}`
-        return Object.hasOwn(vm.sectionMessages, key) || vm.deletedAnswerKeys.has(key)
-      })} onClick={() => { void vm.saveDocumentAnswers(section) }}>
-        {busy && vm.busySection?.action === 'save' ? '문서 답변 저장 중…' : '문서 답변 저장'}
-      </button>
-      {section.facts.length > 0 && <p className="mt-2 text-sm text-emerald-800" role="status">저장된 답변 {section.facts.length}개</p>}
-    </div>
-  </section>
+// ── 답변 입력(25) ──
+
+type EditorViewModel = ReturnType<typeof useApplicationPreparationEditorViewModel>
+type Question = { section: ApplicationFormSection; field: ApplicationFormField; sectionIndex: number; key: string }
+
+/** 자동 기입할 수 있는 문항만 답변 대상으로 셉니다. 나머지는 원문에서 직접 작성합니다. */
+function writable(field: ApplicationFormField) { return field.documentWritable !== false }
+
+function savedTimeLabel(savedAt: number, now: number) {
+  const elapsed = now - savedAt
+  if (elapsed < 60_000) return '방금'
+  if (elapsed < 3_600_000) return `${Math.floor(elapsed / 60_000)}분 전`
+  return new Intl.DateTimeFormat('ko-KR', { timeStyle: 'short' }).format(new Date(savedAt))
 }
 
-function DocumentGenerationAction({ vm }: { vm: ReturnType<typeof useApplicationPreparationEditorViewModel> }) {
+/** 항목 목록(PC 왼쪽 · 모바일 시트)입니다. 전체 진행, 항목별 상태, [초안 만들기]를 한 벌로 그립니다. */
+function SectionNav({ sections, valueOf, activeSectionIndex, onSelect, generate }: {
+  sections: ApplicationFormSection[]
+  valueOf: (section: ApplicationFormSection, field: ApplicationFormField) => string
+  activeSectionIndex: number
+  onSelect: (sectionIndex: number) => void
+  generate: { disabled: boolean; hint: string | null; onClick: () => void }
+}) {
+  const totals = sections.reduce((sum, section) => {
+    const fields = section.fields.filter(writable)
+    return { answered: sum.answered + fields.filter((field) => valueOf(section, field).trim()).length, total: sum.total + fields.length }
+  }, { answered: 0, total: 0 })
+  return <>
+    <div className={e.progress}>
+      <p className={e.progressLabel}><span>답변</span><span className={e.progressCount}>{totals.answered} / {totals.total}</span></p>
+      <div className={e.progressBar} role="progressbar" aria-label="전체 답변 진행" aria-valuemin={0} aria-valuemax={totals.total} aria-valuenow={totals.answered}>
+        <span className={e.progressFill} style={{ width: `${totals.total === 0 ? 0 : Math.round((totals.answered / totals.total) * 100)}%` }} />
+      </div>
+    </div>
+    <ol className={e.sectionList}>
+      {sections.map((section, index) => {
+        const fields = section.fields.filter(writable)
+        const answered = fields.filter((field) => valueOf(section, field).trim()).length
+        const status = fields.length === 0 ? '원문에서 직접 작성' : answered === fields.length ? '완료' : answered > 0 ? '진행 중' : '시작 전'
+        const done = fields.length > 0 && answered === fields.length
+        const active = index === activeSectionIndex
+        return <li key={section.key}>
+          <button type="button" className={e.sectionButton} aria-current={active ? 'step' : undefined} onClick={() => onSelect(index)}>
+            <span className={`${e.sectionNumber} ${done ? e.sectionNumberDone : active ? e.sectionNumberActive : ''}`} aria-hidden="true">{done ? '✓' : index + 1}</span>
+            <span className={e.sectionText}>
+              <span className={e.sectionTitle}>{index + 1}. {section.title}</span>
+              <span className={e.sectionMeta} aria-label={`작성 상태: ${status}`}>{fields.length === 0 ? status : `답변 ${answered} / ${fields.length} · ${status}`}</span>
+            </span>
+          </button>
+        </li>
+      })}
+    </ol>
+    <button type="button" className={e.generateButton} disabled={generate.disabled} onClick={generate.onClick}>초안 만들기</button>
+    {generate.hint && <p className={e.generateHint}>{generate.hint}</p>}
+  </>
+}
+
+function AnswerEditor({ vm }: { vm: EditorViewModel }) {
   const navigate = useNavigate()
   const preparation = vm.preparation!
-  const pending = Object.keys(vm.sectionMessages).length > 0 || vm.deletedAnswerKeys.size > 0
-  const incomplete = preparation.form.sections.every((section) => section.facts.length === 0) || preparation.form.sections.some((section) => section.fields.some((field) => field.required && !section.facts.some((fact) => fact.fieldKey === field.key)))
-  return <section className={s.sectionItem} aria-label="신청 문서 생성">
-    <h3 className="text-lg font-bold">신청 문서 초안 생성</h3>
-    <p className={s.muted}>모든 항목의 저장된 답변을 공식 원본 양식에 기입합니다. 다음 화면에서 편집 가능한 문서를 다운로드할 수 있습니다.</p>
-    {pending && <p className={s.warning}>저장하지 않은 답변이 있습니다. 해당 항목에서 문서 답변 저장을 눌러 주세요.</p>}
-    {incomplete && <p className={s.muted}>모든 필수 답변을 저장해 주세요. 모르는 내용은 미정으로 저장할 수 있습니다.</p>}
-    <button type="button" className={s.primary} disabled={pending || incomplete || vm.busySection !== null}
-      onClick={() => navigate(`${appPaths.applicationPreparations}/${preparation.id}/documents?generate=${preparation.inputRevision}`)}>초안 생성하기</button>
-    <Link className={s.officialLink} to={`${appPaths.applicationPreparations}/${preparation.id}/documents`}>생성된 문서 보기</Link>
-  </section>
-}
+  const form = preparation.form
+  const sections = form.sections
+  const questions = useMemo<Question[]>(() => sections.flatMap((section, sectionIndex) =>
+    section.fields.map((field) => ({ section, field, sectionIndex, key: `${section.key}:${field.key}` }))), [sections])
+  const valueOf = (section: ApplicationFormSection, field: ApplicationFormField) => {
+    const key = `${section.key}:${field.key}`
+    if (vm.deletedAnswerKeys.has(key)) return ''
+    if (Object.hasOwn(vm.sectionMessages, key)) return vm.sectionMessages[key]
+    const fact = section.facts.find((saved) => saved.fieldKey === field.key)
+    return fact?.status === 'UNKNOWN' ? undecidedAnswer : fact?.value ?? ''
+  }
+  // 들어오면 아직 답하지 않은 첫 필수 질문부터 엽니다(마지막으로 본 질문은 저장하지 않음). 모두 답했으면 첫 질문.
+  const [index, setIndex] = useState(() => {
+    const open = questions.findIndex(({ section, field }) => field.required && writable(field) && !valueOf(section, field).trim())
+    return open === -1 ? 0 : open
+  })
+  const [sheetOpen, setSheetOpen] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [now, setNow] = useState(() => Date.now())
+  const headingRef = useRef<HTMLHeadingElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const menu = useFloatingPopover({ open: menuOpen, placement: 'bottom-end' })
+  const current = questions[Math.min(index, Math.max(0, questions.length - 1))]
+  const currentValue = current ? valueOf(current.section, current.field) : ''
+  const undecided = currentValue === undecidedAnswer
+  const options = current?.field.options ?? []
+  const missingOptions = current ? options.length === 0 && /택\s*1|하나.{0,10}선택|중.{0,10}선택/.test(`${current.field.label} ${current.field.guidance}`) : false
+  const requiredMissing = questions.filter(({ section, field }) => field.required && writable(field) && !valueOf(section, field).trim()).length
+  const failed = vm.autosave.status === 'failed' ? vm.autosave : null
+  const fieldError = current && vm.fieldError?.key === current.key ? vm.fieldError.message : null
 
-function SectionWritingWorkspace({ vm }: { vm: ReturnType<typeof useApplicationPreparationEditorViewModel> }) {
-  const sections = vm.preparation!.form.sections
-  const [selectedKey, setSelectedKey] = useState(() => sections.find((section) => section.status !== 'INPUT_CONFIRMED')?.key ?? sections[0]?.key)
-  const activeIndex = Math.max(0, sections.findIndex((section) => section.key === selectedKey))
-  const activeSection = sections[activeIndex]
-  const confirmedCount = sections.filter((section) => section.status === 'INPUT_CONFIRMED').length
-  const headingRef = useRef<HTMLParagraphElement>(null)
-  function selectSection(index: number) {
-    setSelectedKey(sections[index].key)
+  // "자동 저장됨 · 방금"이 시간이 지나면 "n분 전"으로 바뀌도록 30초마다 다시 그립니다.
+  useEffect(() => {
+    if (vm.autosave.status !== 'saved') return
+    setNow(Date.now())
+    const timer = setInterval(() => setNow(Date.now()), 30_000)
+    return () => clearInterval(timer)
+  }, [vm.autosave])
+
+  useEffect(() => {
+    if (!menuOpen) return
+    const close = (event: Event) => { if (!(event.target instanceof Node) || !menuRef.current?.contains(event.target)) setMenuOpen(false) }
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setMenuOpen(false) }
+    document.addEventListener('pointerdown', close)
+    document.addEventListener('keydown', onKey)
+    return () => { document.removeEventListener('pointerdown', close); document.removeEventListener('keydown', onKey) }
+  }, [menuOpen])
+
+  function go(next: number) {
+    void vm.flushAutosave()
+    setIndex(Math.max(0, Math.min(questions.length - 1, next)))
+    setSheetOpen(false)
     headingRef.current?.focus()
   }
-  return <section className={s.card} aria-labelledby="official-sections-title">
-    <div className="flex flex-wrap items-center justify-between gap-2">
-      <h2 className={s.cardTitle} id="official-sections-title">공식 작성 항목</h2>
-      <p className="text-sm font-semibold text-emerald-800" role="status">사실 확인 {confirmedCount} / {sections.length}개 항목</p>
-    </div>
-    <p className={s.muted}>한 번에 한 항목씩 작성하세요. 목록에서 원하는 항목으로 이동해도 입력한 답변은 유지됩니다.</p>
-    <div className="grid items-start gap-5 lg:grid-cols-[minmax(12rem,0.8fr)_minmax(0,2fr)]">
-      <nav aria-label="신청 문서 작성 항목 목록" className="min-w-0 rounded-xl bg-slate-50 p-2 lg:sticky lg:top-4">
-        <ol className="flex max-h-64 flex-col gap-2 overflow-y-auto lg:max-h-[65vh]">
-          {sections.map((section, index) => {
-            const pending = section.fields.some((field) => {
-              const key = `${section.key}:${field.key}`
-              return Object.hasOwn(vm.sectionMessages, key) || vm.deletedAnswerKeys.has(key)
-            })
-            const status = pending ? { label: '저장 전 답변', className: s.inProgress } : savedSectionStatus(section)
-            return <li key={section.key}>
-              <button type="button" aria-current={index === activeIndex ? 'step' : undefined}
-                className={`flex w-full flex-col gap-2 rounded-xl border p-3 text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#087f46] ${index === activeIndex ? 'border-emerald-700 bg-white shadow-sm' : 'border-transparent hover:bg-white'}`}
-                onClick={() => selectSection(index)}>
-                <span className="text-sm font-bold">{index + 1}. {section.title}</span>
-                <span className={`${status.className} self-start`} aria-label={`작성 상태: ${status.label}`}>{status.label}</span>
-              </button>
-            </li>
-          })}
-        </ol>
-      </nav>
-      {activeSection && <div className="min-w-0 space-y-3">
-        <p ref={headingRef} tabIndex={-1} className="text-sm font-semibold text-emerald-800 focus:outline-none" aria-live="polite">{activeIndex + 1}. {activeSection.title}</p>
-        <SectionInputEditor key={activeSection.key} section={activeSection} vm={vm} isLastSection={activeIndex === sections.length - 1} />
-        <div className="flex items-center justify-between gap-3">
-          <button className={s.button} type="button" disabled={activeIndex === 0} onClick={() => selectSection(activeIndex - 1)}>이전 항목</button>
-          <button className={s.primary} type="button" disabled={activeIndex === sections.length - 1} onClick={() => selectSection(activeIndex + 1)}>다음 항목</button>
+  function goSection(sectionIndex: number) {
+    const inSection = questions.filter((question) => question.sectionIndex === sectionIndex)
+    const open = inSection.find(({ section, field }) => writable(field) && !valueOf(section, field).trim()) ?? inSection[0]
+    if (open) go(questions.indexOf(open))
+    else setSheetOpen(false)
+  }
+  async function generate() {
+    if (!(await vm.flushAutosave())) return
+    const revision = vm.latestRevision()
+    if (revision !== null) navigate(`${appPaths.applicationPreparations}/${preparation.id}/documents?generate=${revision}`)
+  }
+  const generateHint = requiredMissing > 0 ? `필수 답변 ${requiredMissing}개가 남았어요. 모르는 값은 "아직 정해지지 않았어요"로 둘 수 있어요.` : null
+  const statusLabel = vm.autosave.status === 'saving' ? '저장 중…'
+    : vm.autosave.status === 'saved' ? `자동 저장됨 · ${savedTimeLabel(vm.autosave.savedAt, now)}`
+      : vm.autosave.status === 'failed' ? '저장 실패' : vm.hasPendingAnswers ? '입력을 멈추면 저장돼요' : '입력하면 자동으로 저장돼요'
+  const reanalyzeTo = `${appPaths.applicationPreparationNew}?${new URLSearchParams({ sourceCode: form.sourceCode, sourceProgramId: form.sourceProgramId })}`
+  const documentsTo = `${appPaths.applicationPreparations}/${preparation.id}/documents`
+  const nav = <SectionNav sections={sections} valueOf={valueOf} activeSectionIndex={current?.sectionIndex ?? 0} onSelect={goSection}
+    generate={{ disabled: requiredMissing > 0 || questions.length === 0, hint: generateHint, onClick: () => { void generate() } }} />
+  const isLast = current ? index >= questions.length - 1 : true
+
+  return <>
+    <WorkspacePageHeader
+      parent={{ to: appPaths.applicationPreparations, label: featureTitle }}
+      title="답변 입력"
+      actions={<>
+        <button type="button" className={`${e.iconButton} ${e.iconButtonM}`} aria-label="항목 목록" aria-haspopup="dialog" aria-expanded={sheetOpen} onClick={() => setSheetOpen(true)}>☰</button>
+        {vm.documentCount > 0 && <Link className={e.headerButton} to={documentsTo}>문서 보기</Link>}
+        <div ref={menuRef} className="relative">
+          <button ref={menu.reference} type="button" className={e.iconButton} aria-label="문서 메뉴" aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}>⋯</button>
+          {menuOpen && <div ref={menu.floating} style={menu.floatingStyles} className={e.menu} role="menu" aria-label="문서 메뉴">
+            <a className={e.menuItem} role="menuitem" href={form.sourceUrl} target="_blank" rel="noreferrer" onClick={() => setMenuOpen(false)}>원문 보기 ↗</a>
+            <Link className={e.menuItem} role="menuitem" to={reanalyzeTo} onClick={() => setMenuOpen(false)}>양식 다시 분석해 새로 시작</Link>
+            {vm.documentCount > 0 && <Link className={`${e.menuItem} min-[600px]:hidden`} role="menuitem" to={documentsTo} onClick={() => setMenuOpen(false)}>문서 보기</Link>}
+          </div>}
         </div>
-        <DocumentGenerationAction vm={vm} />
-      </div>}
-    </div>
-    <p className={s.notice}>저장한 답변은 공식 기관에 자동 제출되지 않습니다. 제출 전 공식 양식과 작성 내용을 확인해 주세요.</p>
-  </section>
+      </>}
+    />
+    <main className={workspacePageStyles.content}>
+      <div className={e.infoAlert} role="note">
+        <div className={e.infoText}>
+          <strong className={e.infoTitle}>{form.programTitle}</strong>
+          <span>{form.attachmentFileName}</span> · {form.verificationStatus === 'SOURCE_DOCUMENT_EXTRACTED'
+            ? '공식 첨부에서 AI가 추출한 문항입니다. 원문과 직접 대조해 주세요.'
+            : '공식 첨부와 작성 문항을 확인한 양식입니다.'} 기관 검수나 선정 가능성을 뜻하지 않으며, 저장한 답변은 기관에 자동 제출되지 않습니다.
+        </div>
+        <a className={e.infoLink} href={form.sourceUrl} target="_blank" rel="noreferrer">원문 보기 ↗<span className="sr-only">: {form.programTitle} (새 창)</span></a>
+      </div>
+
+      <div className={e.layout}>
+        <aside className={e.aside} aria-label="신청 문서 작성 항목 목록">{nav}</aside>
+        <div className="flex min-w-0 flex-col gap-3">
+          {current && <div className={e.stepperM}>
+            <p className={e.stepperMLabel}><span>{current.section.title}</span><span className="tabular-nums">{index + 1} / {questions.length}</span></p>
+            <div className={e.progressBar} aria-hidden="true"><span className={e.progressFill} style={{ width: `${Math.round(((index + 1) / questions.length) * 100)}%` }} /></div>
+          </div>}
+          {failed && <div className={e.dangerAlert} role="alert">
+            <p className={e.dangerText}>{failed.conflict
+              ? '다른 곳에서 답변이 먼저 바뀌어 최신 답변을 다시 불러왔어요. 입력 중이던 값을 확인한 뒤 다시 저장해 주세요.'
+              : `답변을 저장하지 못했어요. ${failed.error.message}`}</p>
+            <button type="button" className={e.retryButton} onClick={vm.retryAutosave}>다시 시도</button>
+          </div>}
+          {current ? <section className={e.question} aria-label={`${current.section.title} 작성`}>
+            <p className={e.questionEyebrow}>항목 {current.sectionIndex + 1} / {sections.length} · 질문 {index + 1} / {questions.length}</p>
+            <h3 className={e.questionTitle} ref={headingRef} tabIndex={-1}>
+              {current.field.label}
+              <span className={current.field.required ? e.requiredTag : e.optionalTag}>{current.field.required ? '필수' : '선택'}</span>
+            </h3>
+            {current.field.guidance && <p className={e.guidance}>{current.field.guidance}</p>}
+            {!writable(current.field) && <p className={s.warning}>이 항목은 자동 기입할 수 없습니다. 내려받은 원본 문서에서 직접 작성해 주세요.</p>}
+            {options.length > 0
+              ? <fieldset className={e.choiceList} disabled={!writable(current.field) || undecided}>
+                <legend className="sr-only">공식 선택지 중 하나를 선택하세요</legend>
+                {options.map((option) => <label className={e.choice} key={option}>
+                  <input type="radio" name={`choice-${current.key}`} value={option} checked={currentValue === option} onChange={() => vm.setSectionMessage(current.key, option)} />
+                  {option}
+                </label>)}
+              </fieldset>
+              : <>
+                <textarea
+                  className={e.textarea}
+                  aria-label="답변 입력"
+                  aria-invalid={fieldError ? true : undefined}
+                  disabled={!writable(current.field) || undecided}
+                  id={`section-answer-${current.section.key}`}
+                  maxLength={answerMaxLength}
+                  value={undecided ? '' : currentValue}
+                  onChange={(event) => vm.setSectionMessage(current.key, event.target.value)}
+                  placeholder="확인된 사실만 적어 주세요."
+                />
+                <p className={`${e.counter} ${[...currentValue].length > answerMaxLength ? e.counterOver : ''}`} aria-hidden="true">
+                  {undecided ? 0 : [...currentValue].length} / {answerMaxLength.toLocaleString('ko-KR')}
+                </p>
+              </>}
+            {fieldError && <p className={e.fieldError} role="alert">{fieldError}</p>}
+            <div className={e.answerActions}>
+              <label className={e.undecided}>
+                <input type="checkbox" checked={undecided} disabled={!writable(current.field)}
+                  onChange={(event) => vm.setSectionMessage(current.key, event.target.checked ? undecidedAnswer : '')} />
+                아직 정해지지 않았어요
+              </label>
+              {writable(current.field) && currentValue && <button type="button" className={e.clearButton} onClick={() => vm.deleteSectionAnswer(current.key)}>답변 지우기</button>}
+            </div>
+            {missingOptions && <p className={s.warning}>공식 선택지를 확인하지 못했습니다. 공식 공고에서 첨부 양식의 선택지를 확인한 뒤 입력해 주세요. <a className="underline" href={form.sourceUrl} target="_blank" rel="noreferrer">공식 공고 열기</a></p>}
+          </section> : <p className={s.notice}>이 양식에는 자동 기입할 문항이 없습니다. 원문 양식에서 직접 작성해 주세요.</p>}
+          <div className={e.bar}>
+            <button type="button" className={e.prevButton} disabled={index === 0 || !current} onClick={() => go(index - 1)}>← 이전</button>
+            <p className={e.barStatus} role="status" aria-live="polite">{statusLabel}</p>
+            {isLast
+              ? <button type="button" className={e.nextButton} disabled={requiredMissing > 0 || questions.length === 0} onClick={() => { void generate() }}>초안 만들기</button>
+              : <button type="button" className={e.nextButton} onClick={() => go(index + 1)}>다음 →</button>}
+          </div>
+          <p className={e.barStatusM} role="status" aria-live="polite">{statusLabel}</p>
+          <ApplicationOnlineInputGuide preparationId={preparation.id} inputRevision={preparation.inputRevision} />
+        </div>
+      </div>
+    </main>
+    {sheetOpen && <>
+      <button type="button" className={e.sheetScrim} aria-label="항목 목록 닫기" onClick={() => setSheetOpen(false)} />
+      <div className={e.sheet} role="dialog" aria-modal="true" aria-label="항목 목록">
+        <span className={e.sheetGrab} aria-hidden="true" />
+        <div className={e.sheetHeader}>
+          <h2 className={e.sheetTitle}>항목 목록</h2>
+          <button type="button" className={e.iconButton} aria-label="닫기" onClick={() => setSheetOpen(false)}>✕</button>
+        </div>
+        {nav}
+      </div>
+    </>}
+    <WorkspaceToast
+      notice={vm.deletedAnswerNotice ? { id: vm.deletedAnswerNotice.id, text: `${vm.deletedAnswerNotice.label} 답변을 지웠어요` } : null}
+      action={<button type="button" className={workspaceToastActionClassName} onClick={vm.undoDeletedAnswer}>되돌리기</button>}
+      onClose={vm.dismissDeletedAnswerNotice}
+    />
+  </>
 }
 
 export function ApplicationPreparationListPage() {
@@ -286,7 +383,7 @@ export function ApplicationPreparationEditorPage({ create = false }: { create?: 
   if (!account) return null
   if (!create && (id === null || !Number.isSafeInteger(id) || id <= 0)) {
     return <>
-      <WorkspacePageHeader parent={{ to: appPaths.applicationPreparations, label: listTitle }} title="신청 문서 / 답변 입력" />
+      <WorkspacePageHeader parent={{ to: appPaths.applicationPreparations, label: featureTitle }} title="답변 입력" />
       <main className={workspacePageStyles.content}><ErrorNotice message="올바른 신청 준비 주소가 아닙니다." /></main>
     </>
   }
@@ -321,10 +418,12 @@ function ApplicationPreparationEditor({ id, initialSourceCode, initialSourceProg
   const officialSource = vm.selectedProgram
     ? { title: vm.selectedProgram.title, url: vm.selectedProgram.sourceUrl }
       : undefined
+  // 답변 입력은 머리글부터 화면 전체를 자기 배치로 그립니다. 불러오는 중·실패는 아래 공용 틀로 보여 줍니다.
+  if (detail) return <AnswerEditor key={detail.id} vm={vm} />
   return <>
     <WorkspacePageHeader
-      parent={{ to: appPaths.applicationPreparations, label: listTitle }}
-      title={id === null ? '새 신청 문서' : '신청 문서 / 답변 입력'}
+      parent={{ to: appPaths.applicationPreparations, label: id === null ? listTitle : featureTitle }}
+      title={id === null ? '새 신청 문서' : '답변 입력'}
     />
     <main className={workspacePageStyles.content}>
       {vm.loading && <p className={s.status} role="status" aria-live="polite">
@@ -333,20 +432,10 @@ function ApplicationPreparationEditor({ id, initialSourceCode, initialSourceProg
 
       {vm.error && <ErrorNotice
         message={vm.error.message}
-        onRetry={noDiscoveredForm || vm.submitting || vm.discovering ? undefined : id === null ? vm.discoverForms : vm.load}
+        onRetry={noDiscoveredForm || vm.submitting || vm.discovering ? undefined : id === null ? (vm.selectedProgram ? vm.retryAvailability : undefined) : vm.load}
         officialSource={canOpenOfficialSource ? officialSource : undefined}
       />}
 
-
-      {id === null && vm.selectedProgram && <section className={s.notice} aria-label="입력칸별 양식 분석">
-        <p>표의 여러 칸이 한 질문으로 묶여 있다면 입력칸별로 다시 분석해 새 작성을 시작하세요. 기존 작성본과 답변은 유지됩니다.</p>
-        <button type="button" className={s.button} disabled={vm.discovering || vm.submitting} onClick={() => { void vm.reanalyzeForms() }}>
-          {vm.discovering ? '양식 확인 중…' : '입력칸별 양식 다시 분석'}
-        </button>
-      </section>}
-      {detail && <p className={s.notice}>각 항목의 입력 확인 수를 확인하세요. 미입력 칸은 문서에서도 비어 있습니다.
-        {' '}<Link className={s.button} to={`${appPaths.applicationPreparationNew}?${new URLSearchParams({ sourceCode: detail.form.sourceCode, sourceProgramId: detail.form.sourceProgramId })}`}>기존 답변을 보관하고 새 양식 확인</Link>
-      </p>}
       {id === null && <form className={s.form} aria-labelledby="create-preparation-title" onSubmit={(event) => {
         event.preventDefault()
         if (vm.selectedForm) void vm.create()
@@ -369,14 +458,27 @@ function ApplicationPreparationEditor({ id, initialSourceCode, initialSourceProg
               <p className={s.muted}>{catalogSourceLabels[vm.selectedProgram.sourceCode as keyof typeof catalogSourceLabels] ?? vm.selectedProgram.sourceName} · {vm.selectedProgram.organization} · {programStatusLabels[vm.selectedProgram.status]}</p>
               <p className={s.muted}>{vm.selectedProgram.applicationPeriod}</p>
             </div>
-            <button className={s.primary} disabled={vm.discovering || vm.submitting} type="button" onClick={() => { void vm.discoverForms() }}>
-              {vm.discovering ? '신청 양식 확인 중…' : '신청 양식 확인'}
-            </button>
+            <button className={`${s.button} shrink-0`} disabled={vm.discovering || vm.submitting} type="button" onClick={vm.clearProgramSelection}>선택 취소</button>
           </div>
-          {vm.discovering && <p className={s.status} role="status" aria-live="polite">저장된 결과를 확인하고, 필요한 경우 공식 첨부를 분석하고 있습니다.</p>}
+          {vm.checkingAvailability && <p className={s.status} role="status" aria-live="polite">저장된 신청 양식을 확인하는 중입니다.</p>}
+          {!vm.checkingAvailability && !vm.discovering && vm.availabilityStatus && <p className={s.label} data-testid="availability-summary">
+            {vm.availabilityStatus === 'AVAILABLE'
+              ? `양식 ${vm.forms.length}개 · 바로 작성할 수 있어요`
+              : ['PENDING', 'STALE', 'RETRY_WAITING'].includes(vm.availabilityStatus)
+                ? '분석이 필요해요'
+                : '이 공고에서는 작성할 양식을 찾지 못했어요'}
+          </p>}
+          {vm.discovering && <section className={s.notice} role="status" aria-live="polite" aria-label="양식 분석 진행">
+            <p><strong>양식을 분석하고 있어요</strong> · 경과 {Math.floor(vm.discoveryElapsedSeconds / 60)}:{String(vm.discoveryElapsedSeconds % 60).padStart(2, '0')}</p>
+            <p className={s.muted}>화면을 나가도 계속돼요. 돌아오면 이 공고를 다시 선택해 진행 상태를 이어서 볼 수 있어요.</p>
+          </section>}
           <div className="flex flex-wrap items-end justify-between gap-3">
-            <p className={`${s.muted} min-w-0 flex-1`}>저장된 양식이 없거나 변경됐다면 공식 첨부를 분석합니다. 처음에는 시간이 걸릴 수 있습니다.</p>
-            <button className={`${s.button} ml-auto shrink-0`} disabled={vm.discovering || vm.submitting} type="button" onClick={vm.clearProgramSelection}>선택 취소</button>
+            <p className={`${s.muted} min-w-0 flex-1`}>{vm.availabilityStatus === 'AVAILABLE'
+              ? '표의 여러 칸이 한 질문으로 묶여 있다면 입력칸별로 다시 분석할 수 있어요. 기존 작성본과 답변은 유지됩니다.'
+              : '저장된 양식이 없으면 공식 첨부를 분석해요. 처음에는 시간이 걸릴 수 있어요.'}</p>
+            <button className={`${s.button} ml-auto shrink-0`} disabled={vm.discovering || vm.submitting || vm.checkingAvailability} type="button" onClick={() => { void vm.discoverForms() }}>
+              {vm.discovering ? '분석 중…' : vm.availabilityStatus === 'AVAILABLE' ? '입력칸별로 다시 분석' : '입력칸별로 분석'}
+            </button>
           </div>
         </section>}
 
@@ -439,13 +541,8 @@ function ApplicationPreparationEditor({ id, initialSourceCode, initialSourceProg
 
         {vm.creationStep === 'FORM' && <>
         <section className={s.card} aria-labelledby="discovered-application-forms-title">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h2 className={s.cardTitle} id="discovered-application-forms-title" ref={resultHeading} tabIndex={-1}>신청 문서를 찾았습니다</h2>
-              <p className={s.muted}>발견한 공식 첨부와 작성 문항을 확인한 뒤 작성을 시작하세요.</p>
-            </div>
-            <button className={s.button} disabled={vm.submitting} type="button" onClick={vm.backToProgramSelection}>공고 다시 선택</button>
-          </div>
+          <h2 className={s.cardTitle} id="discovered-application-forms-title" ref={resultHeading} tabIndex={-1}>신청 문서를 찾았습니다</h2>
+          <p className={s.muted}>발견한 공식 첨부와 작성 문항을 확인한 뒤 작성을 시작하세요.</p>
         </section>
 
 
@@ -481,20 +578,25 @@ function ApplicationPreparationEditor({ id, initialSourceCode, initialSourceProg
           />
           </>}
           <p className={s.muted}>추출된 문항을 확인했습니다. 작성 시작은 신청 준비 건만 만들며 추가 AI 호출은 하지 않습니다.</p>
-          <button className={s.primary} disabled={vm.submitting} type="submit">
-            {vm.submitting ? '신청 준비 생성 중…' : '신청 문서 작성 시작'}
-          </button>
           {vm.submitting && <p className={s.status} role="status" aria-live="polite">신청 준비를 생성하고 있습니다. 잠시만 기다려 주세요.</p>}
         </section>
         </>}
         </>}
-      </form>}
 
-      {detail && <>
-        <OfficialFormSummary form={detail.form} />
-        <SectionWritingWorkspace key={detail.id} vm={vm} />
-        <ApplicationOnlineInputGuide preparationId={detail.id} inputRevision={detail.inputRevision} />
-      </>}
+        <div className={s.stepBar} role="group" aria-label="단계 이동">
+          {vm.creationStep === 'PROGRAM'
+            ? <>
+              <Link className={s.button} to={appPaths.applicationPreparations}>취소</Link>
+              <button className={s.primary} disabled={!vm.canProceedToForm || vm.submitting} type="button" onClick={vm.goToFormStep}>다음 단계</button>
+            </>
+            : <>
+              <button className={s.button} disabled={vm.submitting} type="button" onClick={vm.backToProgramSelection}>이전 단계</button>
+              <button className={s.primary} disabled={vm.submitting || !vm.selectedForm} type="submit">
+                {vm.submitting ? '신청 준비 생성 중…' : '작성 시작'}
+              </button>
+            </>}
+        </div>
+      </form>}
     </main>
   </>
 }

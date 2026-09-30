@@ -8,7 +8,7 @@ import type {
   ConfirmApplicationContent,
   UpdateApplicationProgress,
 } from '../../domain/entities/ApplicationPreparation'
-import type { ApplicationPreparationRepository } from '../../domain/repositories/ApplicationPreparationRepository'
+import type { ApplicationPreparationRepository, ReplaceApplicationPreparationInputsOptions } from '../../domain/repositories/ApplicationPreparationRepository'
 import { ApplicationPreparationError } from '../../domain/errors/ApplicationPreparationError'
 import { applicationPreparationRequest as request, downloadApplicationDocument } from '../api/applicationPreparationApi'
 import {
@@ -147,8 +147,9 @@ export class ApplicationPreparationRepositoryImpl implements ApplicationPreparat
     }
     return result
   }
-  async replaceInputs(id: number, sectionKey: string, input: ReplaceApplicationPreparationInputs, signal?: AbortSignal) {
-    const result = await request(`/${id}/sections/${encodeURIComponent(sectionKey)}/inputs`, applicationPreparationSchema, 'PUT', input, signal, 'preparation')
+  async replaceInputs(id: number, sectionKey: string, input: ReplaceApplicationPreparationInputs, signal?: AbortSignal,
+    options: ReplaceApplicationPreparationInputsOptions = {}) {
+    const result = await request(`/${id}/sections/${encodeURIComponent(sectionKey)}/inputs`, applicationPreparationSchema, 'PUT', input, signal, 'preparation', options)
     if (result.id !== id || result.inputRevision !== input.expectedRevision + 1) {
       throw new ApplicationPreparationError(502, 'INVALID_RESPONSE')
     }

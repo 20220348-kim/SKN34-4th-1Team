@@ -117,8 +117,11 @@ DB transaction 밖에서 해석합니다. 요청 키와 당시 입력을 먼저 
 본인 준비 건의 DELETE는 `ApplicationPreparationRepository → MyBatis → MySQL`에서 소유자 조건으로 한 행을 지우고,
 확인 사실·AI 실행 기록은 FK cascade로 삭제하지만 공용 `application_form_snapshot`은 유지합니다.
 Frontend는 `/app/application-preparations`의 목록·삭제, `/new`의 지연 조회 관심 공고 팝업과 전체 카탈로그 공고 검색·선택을 첫 단계로,
-신청 양식 확인 버튼으로 공고별 availability API를 조회하고 활성 snapshot을 별도 두 번째 단계로 표시합니다. 미분석·변경 공고는 Discovery Job 완료 후 표시하며, `/:preparationId`의 공식 문항
+공고를 고르면 곧바로 공고별 availability API와 최근 discovery job 목록을 읽어(AI 호출 없음) 저장된 양식 상태를 보여 주고, QUEUED·RUNNING job이 있으면 폴링을 이어받습니다. 유료 분석은 [입력칸별로 분석] 클릭에서만 시작하며 활성 snapshot은 [다음]으로 여는 두 번째 단계에 표시합니다. 미분석·변경 공고는 Discovery Job 완료 후 표시하며, `/:preparationId`의 공식 문항
 상세와 질문·사실 확인을 연결합니다. AI 제안은 저장하지 않고 사용자가 선택·수정한 전체 문항 입력만 revision을 올려 저장합니다.
+웹 답변 입력은 입력을 2초 멈추거나 질문·항목을 이동할 때 그 항목의 `PUT …/inputs`를 자동으로 호출하고(보낼 사실이 저장된 사실과 같으면 호출하지 않음),
+탭 숨김·화면 이탈 시에는 `keepalive` 요청으로 마지막 저장을 보냅니다. `APPLICATION_PREPARATION_REVISION_CONFLICT`는 최신 준비 건을 다시 조회하되 입력 중 값은 유지해 사용자가 다시 저장하게 합니다.
+"아직 정해지지 않았어요" 체크는 기존 사실 상태 `UNKNOWN`(값 null)으로 저장하며 문서 생성에서 제외됩니다. 로컬 저장소·이탈 경고는 두지 않습니다.
 신청 문서와 중복 지원 검토의 공고 검색은 공용 `SupportProgramSearchFilters`에서 검색어·지역·지원 분야·출처·접수 상태를 입력받고,
 각 ViewModel → `BrowseSupportProgramsUseCase` → 기존 catalog HTTP API로 전달합니다. 검색 버튼은 1페이지부터 조회하고,
 페이지 이동은 마지막으로 적용한 조건을 유지합니다. 조건 해제·전체 초기화는 공고 선택을 유지한 채 다시 조회합니다.

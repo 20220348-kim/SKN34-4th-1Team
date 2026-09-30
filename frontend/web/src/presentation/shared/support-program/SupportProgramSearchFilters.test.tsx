@@ -25,6 +25,18 @@ describe.each([
     </Routes></MemoryRouter></Provider>)
   }
 
+  // 신청 문서 화면은 공고를 고르면 저장된 양식 상태와 진행 중인 분석 job을 GET으로 읽는다(AI 호출 없음).
+  function isFormLookup(url: string) {
+    return url.includes('/application-preparations/forms/availability') || url.includes('/application-preparations/forms/discovery-jobs')
+  }
+  function formLookup(url: string) {
+    if (url.includes('/discovery-jobs')) return Response.json([])
+    const query = new URL(url).searchParams
+    return Response.json({ state: { sourceCode: query.get('sourceCode'), sourceProgramId: query.get('sourceProgramId'), status: 'NO_FORM',
+      reasonCode: 'NO_FORM', nextRetryAt: null, attemptCount: 1 }, forms: { items: [] } })
+  }
+  const catalogCalls = (fetcher: { mock: { calls: [string, ...unknown[]][] } }) => fetcher.mock.calls.filter(([url]) => !isFormLookup(url))
+
   function response(page = 1, empty = false) {
     return Response.json({
       programs: empty ? [] : Array.from({ length: 10 }, (_, index) => ({ ...supportPrograms[0], id: `PBLN_${page}0${index}`,
@@ -36,7 +48,7 @@ describe.each([
   }
 
   it('sends filters through the HTTP adapter and preserves applied conditions and selected programs when paging', async () => {
-    const fetcher = vi.fn(async (url: string) => response(Number(new URL(url).searchParams.get('page'))))
+    const fetcher = vi.fn(async (url: string) => isFormLookup(url) ? formLookup(url) : response(Number(new URL(url).searchParams.get('page'))))
     vi.stubGlobal('fetch', fetcher)
     mount()
     const filters = within(screen.getByRole('group', { name: '공고 검색 필터' }))
@@ -49,7 +61,7 @@ describe.each([
     expect(fetcher).not.toHaveBeenCalled()
     fireEvent.keyDown(keyword, { key: 'Enter' })
     fireEvent.click((await screen.findAllByRole('button', { name: '선택' }))[0])
-    const firstQuery = new URL(fetcher.mock.calls[0][0]).searchParams
+    const firstQuery = new URL(catalogCalls(fetcher)[0][0]).searchParams
     expect(Object.fromEntries(firstQuery)).toMatchObject({ keyword: '혁신', region: '서울', category: '기술', sourceCode: 'BIZINFO', status: 'CLOSED', page: '1' })
     expect(screen.getByLabelText(selected).textContent).toContain('검색 공고 1')
     expect(filters.getByRole('button', { name: '지역 · 서울 조건 해제' })).toBeTruthy()
@@ -57,21 +69,19 @@ describe.each([
     chooseOption(filters.getByRole('combobox', { name: '지역' }), '부산')
     fireEvent.click(screen.getByRole('button', { name: next }))
     await screen.findByText('검색 공고 2')
-    expect(Object.fromEntries(new URL(fetcher.mock.calls[1][0]).searchParams)).toMatchObject({ keyword: '혁신', region: '서울', category: '기술', sourceCode: 'BIZINFO', status: 'CLOSED', page: '2' })
+    expect(Object.fromEntries(new URL(catalogCalls(fetcher)[1][0]).searchParams)).toMatchObject({ keyword: '혁신', region: '서울', category: '기술', sourceCode: 'BIZINFO', status: 'CLOSED', page: '2' })
     expect(screen.getByLabelText(selected).textContent).toContain('검색 공고 1')
 
     fireEvent.click(filters.getByRole('button', { name: '공고 검색' }))
-    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(3))
+    await waitFor(() => expect(catalogCalls(fetcher)).toHaveLength(3))
     await screen.findByRole('button', { name: next })
-    expect(Object.fromEntries(new URL(fetcher.mock.calls[2][0]).searchParams)).toMatchObject({ region: '부산', page: '1' })
-    expect(fetcher.mock.calls.every(([url]) => new URL(url).pathname.endsWith('/catalog'))).toBe(true)
+    expect(Object.fromEntries(new URL(catalogCalls(fetcher)[2][0]).searchParams)).toMatchObject({ region: '부산', page: '1' })
+    expect(fetcher.mock.calls.every(([url]) => new URL(url).pathname.endsWith('/catalog') || isFormLookup(url))).toBe(true)
   })
 
   it('removes conditions, resets filters, and shows empty or failed results while retaining the selection', async () => {
-    const fetcher = vi.fn().mockResolvedValueOnce(response())
-      .mockResolvedValueOnce(response(1, true))
-      .mockResolvedValueOnce(Response.json({ status: 503 }, { status: 503 }))
-      .mockResolvedValueOnce(response())
+    const catalogQueue = [response(), response(1, true), Response.json({ status: 503 }, { status: 503 }), response()]
+    const fetcher = vi.fn(async (url: string) => isFormLookup(url) ? formLookup(url) : catalogQueue.shift()!)
     vi.stubGlobal('fetch', fetcher)
     mount()
     const filters = within(screen.getByRole('group', { name: '공고 검색 필터' }))
@@ -81,8 +91,8 @@ describe.each([
     fireEvent.click((await screen.findAllByRole('button', { name: '선택' }))[0])
     fireEvent.click(filters.getByRole('button', { name: '지역 · 서울 조건 해제' }))
     await screen.findByText('검색 결과가 없습니다. 검색어나 필터를 바꿔 다시 검색해 주세요.')
-    expect(new URL(fetcher.mock.calls[1][0]).searchParams.get('region') ?? '').toBe('')
-    expect(new URL(fetcher.mock.calls[1][0]).searchParams.get('category')).toBe('기술')
+    expect(new URL(catalogCalls(fetcher)[1][0]).searchParams.get('region') ?? '').toBe('')
+    expect(new URL(catalogCalls(fetcher)[1][0]).searchParams.get('category')).toBe('기술')
     expect(screen.getByLabelText(selected).textContent).toContain('검색 공고 1')
 
     fireEvent.click(filters.getByRole('button', { name: '전체 초기화' }))
@@ -91,11 +101,11 @@ describe.each([
     expect(selectedValue(filters.getByRole('combobox', { name: '지역' }))).toBe('')
     expect(selectedValue(filters.getByRole('combobox', { name: '지원 분야' }))).toBe('')
     expect(selectedValue(filters.getByRole('combobox', { name: '접수 상태' }))).toBe('ALL')
-    expect(new URL(fetcher.mock.calls[2][0]).searchParams.get('status')).toBe('ALL')
+    expect(new URL(catalogCalls(fetcher)[2][0]).searchParams.get('status')).toBe('ALL')
     expect(screen.getByLabelText(selected).textContent).toContain('검색 공고 1')
     fireEvent.click(filters.getByRole('button', { name: '공고 검색' }))
     await screen.findByRole('button', { name: next })
     expect(screen.queryByRole('alert')).toBeNull()
-    expect(fetcher).toHaveBeenCalledTimes(4)
+    expect(catalogCalls(fetcher)).toHaveLength(4)
   })
 })
