@@ -14,7 +14,7 @@ import { workspaceToastActionClassName } from '../../../shared/workspace/Workspa
 import { EvidenceQuestionPanel } from './EvidenceQuestionPanel'
 import { supportProgramDetailStyles as s } from './SupportProgramDetailPage.styles'
 import { supportProgramEvidenceQuestionStyles as q } from './SupportProgramEvidenceQuestionPage.styles'
-import { getSupportProgramFromPipeline, getSupportProgramSearchReturnTo, isSavedProgramsReturnTo, supportProgramBackLabel, type SupportProgramSearchReturnTo } from './supportProgramNavigation'
+import { getSupportProgramFromPipeline, getSupportProgramSearchReturnTo, isWorkspaceListReturnTo, supportProgramBackLabel, type SupportProgramSearchReturnTo } from './supportProgramNavigation'
 import { supportProgramDeadlineChip, supportProgramStatusLabel } from './supportProgramStatus'
 
 /** URL의 제공처·원본 공고 ID로 최신 상세 정보를 조회하는 화면입니다. */
@@ -124,12 +124,12 @@ function LoadingSupportProgramDetail({ searchReturnTo }: { searchReturnTo: Suppo
 
 /**
  * 맨 위 줄입니다. 화면 폭과 관계없이 모바일 앱 바처럼 "‹ 공고 상세" 한 덩어리이고, 이 영역 전체를 누르면 들어온 화면으로 돌아갑니다.
- * 보이는 글자는 "공고 상세"지만 접근성 이름은 어디로 가는지("검색 결과로 돌아가기" 등)를 말합니다. 작업 화면에서 관심 공고함으로부터
- * 열린 상세는 `WorkspaceSearchDetailLayout`이 머리글 높이의 줄에 같은 링크를 두므로 여기서는 그리지 않습니다.
+ * 보이는 글자는 "공고 상세"지만 접근성 이름은 어디로 가는지("검색 결과로 돌아가기" 등)를 말합니다. 작업 화면에서 관심 공고함 · 신청 문서
+ * 목록으로부터 열린 상세는 `WorkspaceSearchDetailLayout`이 머리글 높이의 줄에 같은 링크를 두므로 여기서는 그리지 않습니다.
  */
 function TopBar({ searchReturnTo }: { searchReturnTo: SupportProgramSearchReturnTo }) {
   const inApp = isAppPath(useLocation().pathname)
-  if (inApp && isSavedProgramsReturnTo(searchReturnTo)) return null
+  if (inApp && isWorkspaceListReturnTo(searchReturnTo)) return null
   const backLabel = supportProgramBackLabel(searchReturnTo)
   return (
     <div className={s.topBar}>
