@@ -16,6 +16,7 @@ import ai.govbiz.core.applicationpreparation.service.exception.ApplicationFormDi
 import jakarta.servlet.http.Cookie
 import java.time.Duration
 import java.time.LocalDateTime
+import java.time.ZoneId
 import java.util.UUID
 import org.awaitility.Awaitility.await
 import org.junit.jupiter.api.Assertions.*
@@ -230,6 +231,50 @@ class ApplicationFormDiscoveryQueueIntegrationTest {
     }
 
     @Test
+    fun unknownWorkIsClosedWhenAvailabilitySettlesAfterAiStartOrAfterTtlSoTheSlotReturns() {
+        doAnswer { invocation ->
+            invocation.getArgument<() -> Unit>(2).invoke()
+            throw IllegalStateException("lost response")
+        }.`when`(discovery).discoverQueued(anyString(), anyString(), any<() -> Unit>() ?: {})
+        val program = "PBLN_UNKNOWN_SETTLE"
+        jdbc.update("DELETE FROM application_form_availability WHERE source_code = 'BIZINFO' AND source_program_id = ?", program)
+        try {
+            val settled = jobs.reserve(account.id, UUID.randomUUID().toString(), "BIZINFO", program)
+            service.executeQueued(settled.id)
+            assertEquals("UNKNOWN", state(settled.id))
+            // 가용성이 아직 분석 중이거나 AI 시작 전에 확정된 값이면 결과 불명을 그대로 둔다.
+            upsertAvailability(program, "PENDING", LocalDateTime.of(2000, 1, 1, 0, 0))
+            jobs.expireStaleWork()
+            assertEquals("UNKNOWN", state(settled.id))
+            upsertAvailability(program, "RETRY_WAITING", LocalDateTime.of(2000, 1, 1, 0, 0))
+            jobs.expireStaleWork()
+            assertEquals("UNKNOWN", state(settled.id))
+            assertThrows(ApplicationFormDiscoveryException::class.java) { jobs.reserve(account.id, UUID.randomUUID().toString(), "BIZINFO", program) }
+            // AI 시작 뒤에 확정된 가용성이 있으면 닫히고 같은 공고의 새 요청을 받는다. AI는 다시 부르지 않는다.
+            upsertAvailability(program, "RETRY_WAITING", null)
+            jobs.expireStaleWork()
+            assertEquals("FAILED", state(settled.id))
+            assertEquals("RUN_OUTCOME_SETTLED", failure(settled.id))
+            val expired = jobs.reserve(account.id, UUID.randomUUID().toString(), "BIZINFO", program)
+            service.executeQueued(expired.id)
+            assertEquals("UNKNOWN", state(expired.id))
+            // 확정된 가용성이 없어도 TTL이 지나면 닫힌다.
+            upsertAvailability(program, "PENDING", LocalDateTime.of(2000, 1, 1, 0, 0))
+            jobs.expireStaleWork()
+            assertEquals("UNKNOWN", state(expired.id))
+            jdbc.update("UPDATE application_form_discovery_job SET finished_at = '2000-01-01' WHERE id = ?", expired.id)
+            jobs.expireStaleWork()
+            assertEquals("FAILED", state(expired.id))
+            assertEquals("RUN_OUTCOME_UNKNOWN_EXPIRED", failure(expired.id))
+            assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM application_form_discovery_job WHERE owner_account_id = ? AND active_slot = 1", Int::class.java, account.id))
+            assertNotNull(jobs.reserve(account.id, UUID.randomUUID().toString(), "BIZINFO", program))
+            verify(discovery, times(2)).discoverQueued(anyString(), anyString(), any<() -> Unit>() ?: {})
+        } finally {
+            jdbc.update("DELETE FROM application_form_availability WHERE source_code = 'BIZINFO' AND source_program_id = ?", program)
+        }
+    }
+
+    @Test
     fun expiredAndInactiveWorkNeverCallsAiAndLateResultsCannotOverwriteUnknown() {
         val queued = enqueue()
         jdbc.update("UPDATE application_form_discovery_job SET created_at = '2000-01-01' WHERE id = ?", queued.id)
@@ -317,6 +362,17 @@ class ApplicationFormDiscoveryQueueIntegrationTest {
         return Cookie(SessionCookieHelper.COOKIE_NAME, issued.sessionToken)
     }
     private fun state(id: Long) = jdbc.queryForObject("SELECT status FROM application_form_discovery_job WHERE id = ?", String::class.java, id)
+    private fun failure(id: Long) = jdbc.queryForObject("SELECT failure_code FROM application_form_discovery_job WHERE id = ?", String::class.java, id)
+    /** 양식 가용성 한 행을 원하는 상태로 둔다. verifiedAt이 null이면 Core와 같은 서울 시계의 지금(= AI 시작 이후)으로 확정한 것으로 본다. */
+    private fun upsertAvailability(program: String, status: String, verifiedAt: LocalDateTime?) {
+        jdbc.update(
+            """INSERT INTO application_form_availability
+                (source_code, source_program_id, status, reason_code, catalog_fingerprint, verified_at, next_retry_at, attempt_count, generation, ai_started)
+               VALUES ('BIZINFO', ?, ?, 'TEST', REPEAT('a', 64), ?, NULL, 0, 1, 0) AS new
+               ON DUPLICATE KEY UPDATE status = new.status, verified_at = new.verified_at, lease_token = NULL, lease_until = NULL""".trimIndent(),
+            program, status, verifiedAt ?: LocalDateTime.now(ZoneId.of("Asia/Seoul")).plusSeconds(1),
+        )
+    }
     private fun awaitState(id: Long, state: String) { await().atMost(Duration.ofSeconds(15)).untilAsserted { assertEquals(state, state(id)) } }
 
     companion object {

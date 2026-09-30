@@ -70,7 +70,7 @@ V26 `application_form_discovery_job`에 아래 규칙을 적용한다.
 | RUNNING | Worker 실행권 획득. 동일 ID 재전달은 실행하지 않음 |
 | SUCCEEDED | 결과 저장 완료. 동일 키나 상세 조회는 저장된 결과만 반환 |
 | FAILED | 원문 수집 실패·신청 문서 없음 등 확정된 실패. 새 작업은 사용자가 공고를 다시 선택해 요청 |
-| UNKNOWN | 유료 호출 이후 결과 불명·완료 저장 불명 또는 RUNNING 20분 초과. 자동 재호출 및 새 키 분석 차단 |
+| UNKNOWN | 유료 호출 이후 결과 불명·완료 저장 불명 또는 RUNNING 20분 초과. 자동 재호출 및 새 키 분석 차단. 같은 공고의 가용성이 AI 시작 이후 확정되면 `RUN_OUTCOME_SETTLED`, 아니면 TTL(`APPLICATION_FORM_DISCOVERY_UNKNOWN_TTL`, 기본 30분) 뒤 `RUN_OUTCOME_UNKNOWN_EXPIRED`로 FAILED 처리해 한도를 돌려준다 |
 
 만료 정리는 Outbox 스케줄러가 수행한다. 기능 스위치가 꺼져 있으면 GET은 상태를 변경하지 않으므로
 예전 QUEUED/RUNNING이 보일 수 있다. 운영 API의 기능 활성 여부·오래된 시각도 함께 확인해야 한다.
@@ -78,7 +78,7 @@ V26 `application_form_discovery_job`에 아래 규칙을 적용한다.
 DB와 외부 AI를 원자적으로 묶을 수 없으므로 exactly-once 과금을 보장하지 않는다. 일별 비용 상한도 추가하지 않았다.
 
 AI Service가 응답 수신 후 근거 검증 실패를 `422 / APPLICATION_FORM_AI_INVALID_RESPONSE`로 확정한 경우에는 FAILED로 종료한다.
-기존의 포괄적인 503, 응답 유실, 시간 초과는 이 확정 실패로 간주하지 않는다. 이미 저장된 UNKNOWN을 일괄 해제하지 않으며,
+기존의 포괄적인 503, 응답 유실, 시간 초과는 이 확정 실패로 간주하지 않는다. 이미 저장된 UNKNOWN을 재시도하지 않으며(가용성 확정·TTL로 닫히더라도 AI를 다시 부르지 않는다),
 개별 작업의 AI 로그로 검증 실패가 확인된 경우에만 운영자가 해당 작업을 FAILED로 정정할 수 있다. 정정 자체는 AI를 재실행하지 않는다.
 
 ## 브로커 설정·장애
