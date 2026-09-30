@@ -2,7 +2,7 @@
 
 ## 현재 호출 경로
 
-React의 저장된 답변·expectedRevision → Core `ApplicationDocumentService` → 공식 첨부 재수집/hash 확인 → AI `/internal/v1/application-preparations/document/generate` → 원본 복사본 지도 → OpenAI 구조화 수정 계획 → HWP는 Core hwplib 계획 실행 / HWPX·PDF는 MCP → Core 결과 확인 → 소유권/revision 잠금 재확인 → 파일 저장 → 기존 다운로드 API.
+React의 저장된 답변·expectedRevision → Core 생성 작업 접수(`POST …/documents/jobs`, 202) → 같은 프로세스의 `ApplicationDocumentGenerationJobWorker`가 claim → `ApplicationDocumentService.generateNow` → 공식 첨부 재수집/hash 확인 → AI `/internal/v1/application-preparations/document/generate` → 원본 복사본 지도 → OpenAI 구조화 수정 계획 → HWP는 Core hwplib 계획 실행 / HWPX·PDF는 MCP → Core 결과 확인 → 소유권/revision 잠금 재확인 → 파일 저장 → 기존 다운로드 API.
 
 | 형식 | 편집 경로 | 현재 검증/제약 |
 |---|---|---|

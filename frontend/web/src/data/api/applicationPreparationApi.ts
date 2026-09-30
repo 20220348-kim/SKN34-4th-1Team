@@ -20,11 +20,11 @@ export async function applicationPreparationRequest<T>(
   signal?.addEventListener('abort', abort, { once: true })
   if (signal?.aborted) controller.abort()
   let timedOut = false
-  // A cold document request runs mapping and generation sequentially (up to 240s each).
+  // 문서 생성은 작업(job) 접수·조회라 짧다. 입력 위치 변경 승인만 원본 재수집을 포함해 길다.
   const timer = setTimeout(() => {
     timedOut = true
     abort()
-  }, path.endsWith('/documents') && method === 'POST' ? 660_000 : path.endsWith('/mapping-migration/confirm') ? 90_000 : path.endsWith('/messages') || path.endsWith('/drafts') ? 45_000 : 15_000)
+  }, path.endsWith('/mapping-migration/confirm') ? 90_000 : path.endsWith('/messages') || path.endsWith('/drafts') ? 45_000 : 15_000)
   try {
     const response = await fetch(`${getCoreApiBaseUrl()}/api/v1/application-preparations${path}`, {
       method,

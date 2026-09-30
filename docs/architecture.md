@@ -125,8 +125,13 @@ Frontend는 `/app/application-preparations`의 목록(상태 칩 `?status=`, 필
 신청 문서와 중복 지원 검토의 공고 검색은 공용 `SupportProgramSearchFilters`에서 검색어·지역·지원 분야·출처·접수 상태를 입력받고,
 각 ViewModel → `BrowseSupportProgramsUseCase` → 기존 catalog HTTP API로 전달합니다. 검색 버튼은 1페이지부터 조회하고,
 페이지 이동은 마지막으로 적용한 조건을 유지합니다. 조건 해제·전체 초기화는 공고 선택을 유지한 채 다시 조회합니다.
-문서 생성은 `ApplicationDocumentController → ApplicationDocumentService → 공식 첨부 Client →
-ApplicationDocumentEditor → AiApplicationPreparationClient → AI Service Router → Service → 위치 선택 Agent → OpenAI`로 이어집니다.
+문서 생성은 웹이 `POST …/{id}/documents/jobs`로 작업을 접수(202)하고 `GET …/documents/jobs/{jobId}`를 2초마다 읽는 흐름입니다.
+`ApplicationDocumentGenerationJobController → ApplicationDocumentGenerationJobService`가 계정별 작업(V45 `application_document_generation_job`, 준비 건당 진행 중 1개·계정당 3개)을 접수하고,
+같은 프로세스의 `ApplicationDocumentGenerationJobWorker`(2초 폴링, 인스턴스당 동시 2개)가 QUEUED 행을 UPDATE 한 번으로 claim해
+`ApplicationDocumentService.generateNow → 공식 첨부 Client → ApplicationDocumentMappingService → ApplicationDocumentEditor → AiApplicationPreparationClient → AI Service Router → Service → 위치 선택 Agent → OpenAI`를 실행합니다.
+작업은 단계(PREPARING·MAPPING·WRITING·SAVING)를 기록하고 SUCCEEDED면 파일 ID를, FAILED면 사용자용 실패 문구와(입력 위치 변경이면) 승인 안내를 돌려줍니다.
+유료 AI 호출 뒤 결과를 확인하지 못한 실행은 UNKNOWN으로 남아 그 준비 건의 새 작업을 막고, `unknown-outcome-lock-ttl`(기본 24시간)이 지나면 실패로 내려 다시 받습니다.
+QUEUED 1시간이 지나면 만료, RUNNING 30분이 지나면 유료 AI 호출 전(재시작 등으로 끊긴 실행)은 실패, 호출 뒤는 결과 불명으로 정리합니다. 동기 `POST …/documents`는 같은 규칙을 거치는 기존 계약으로 남아 있지만 웹은 호출하지 않습니다.
 공식 첨부 SHA-256이 선택한 양식 버전과 일치할 때 원본의 문단·표 셀 또는 PDF 페이지를 분석합니다.
 저장된 바인딩이 있는 HWP·HWPX·DOCX·XLSX는 작성 계획을 AI에 다시 묻지 않고 바인딩에서 결정적으로 만듭니다(빈 칸은 입력, 인쇄된 빈칸 표시는 그 구간 교체,
 라벨 뒤는 삽입, 예시 문구는 전체 교체, 체크박스·필드는 set_check·set_field). 한 문단에 여러 답변이 묶인 경우만 그 답변들에 한해 모델에 배치를 묻고,

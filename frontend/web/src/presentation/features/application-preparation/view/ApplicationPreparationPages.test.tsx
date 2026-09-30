@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { appContainer } from '../../../../app/appContainer'
 import { createAppStore } from '../../../../app/store'
 import { supportProgramDetails, supportPrograms } from '../../../../data/fixtures/supportPrograms'
-import type { ApplicationForm, ApplicationPreparation, ApplicationPreparationPage } from '../../../../domain/entities/ApplicationPreparation'
+import type { ApplicationDocumentGenerationJob, ApplicationForm, ApplicationPreparation, ApplicationPreparationPage } from '../../../../domain/entities/ApplicationPreparation'
 import { ApplicationPreparationError } from '../../../../domain/errors/ApplicationPreparationError'
 import { ApplicationPreparationUseCase } from '../../../../domain/usecases/ApplicationPreparationUseCase'
 import { signedIn } from '../../../shared/auth/state/authSlice'
@@ -66,7 +66,7 @@ const detail = {
   updatedAt: '2026-09-11T01:00:00+09:00',
   form: structuredClone(firstForm),
 }
-const repository = { onlineInputGuide: vi.fn(), documents: vi.fn(), generateDocuments: vi.fn(), confirmDocumentMappingMigration: vi.fn(), downloadDocument: vi.fn(), downloadDocumentArchive: vi.fn(), generateDraft: vi.fn(), saveContent: vi.fn(), confirmContent: vi.fn(), discoveryJobs: vi.fn(), discoveryJob: vi.fn(), availability: vi.fn(), forms: vi.fn(), discover: vi.fn(), list: vi.fn(), delete: vi.fn(), get: vi.fn(), create: vi.fn(), interpret: vi.fn(), replaceInputs: vi.fn(), updateProgress: vi.fn() }
+const repository = { onlineInputGuide: vi.fn(), documents: vi.fn(), submitDocumentJob: vi.fn(), documentJob: vi.fn(), documentJobs: vi.fn(), confirmDocumentMappingMigration: vi.fn(), downloadDocument: vi.fn(), downloadDocumentArchive: vi.fn(), generateDraft: vi.fn(), saveContent: vi.fn(), confirmContent: vi.fn(), discoveryJobs: vi.fn(), discoveryJob: vi.fn(), availability: vi.fn(), forms: vi.fn(), discover: vi.fn(), list: vi.fn(), delete: vi.fn(), get: vi.fn(), create: vi.fn(), interpret: vi.fn(), replaceInputs: vi.fn(), updateProgress: vi.fn() }
 
 function completedDiscovery(result: { items: ApplicationForm[]; warnings: string[]; cached: boolean }) {
   return { id: 77, sourceCode: result.items[0].sourceCode, sourceProgramId: result.items[0].sourceProgramId,
@@ -109,75 +109,112 @@ function deferred<T>() {
 const documentFile = { id: 81, inputRevision: 3, fileName: '신청서_초안_v3.hwpx', mediaType: 'application/hwp+zip', size: 400,
   filledAnswerCount: 2, unfilledAnswerCount: 0, unfilledAnswers: [] }
 
-it.each(['APPLICATION_PREPARATION_RUN_CONFLICT'])('waits for the existing document after %s without repeating generation', async (code) => {
+function generationJob(overrides: Partial<ApplicationDocumentGenerationJob> = {}): ApplicationDocumentGenerationJob {
+  return { id: 501, preparationId: 12, expectedRevision: 3, status: 'SUCCEEDED', stage: 'SAVING', fileIds: [81], failureCode: null,
+    failureMessage: null, mappingMigration: null, createdAt: detail.createdAt, finishedAt: detail.updatedAt, ...overrides }
+}
+
+/** 생성 작업 대역입니다. 접수 즉시 SUCCEEDED로 돌아오고, 그 뒤 문서 목록은 만든 파일을 돌려줍니다. */
+function jobSucceeds(files: (typeof documentFile)[]) {
+  repository.submitDocumentJob.mockImplementation(async (_id: number, revision: number) => {
+    const created = files.map((file) => ({ ...file, inputRevision: revision }))
+    repository.documents.mockResolvedValue(created)
+    return generationJob({ expectedRevision: revision, fileIds: created.map((file) => file.id) })
+  })
+}
+
+it('follows a queued job stage by stage and loads the files once it succeeds', async () => {
   vi.useFakeTimers()
   repository.get.mockResolvedValue(readyPreparation())
-  repository.documents.mockResolvedValueOnce([]).mockResolvedValueOnce([]).mockResolvedValueOnce([documentFile])
-  repository.generateDocuments.mockRejectedValueOnce(new ApplicationPreparationError(409, code))
+  repository.documents.mockResolvedValueOnce([]).mockResolvedValue([documentFile])
+  repository.submitDocumentJob.mockResolvedValue(generationJob({ status: 'QUEUED', stage: null, fileIds: [], finishedAt: null }))
+  repository.documentJob.mockResolvedValueOnce(generationJob({ status: 'RUNNING', stage: 'MAPPING', fileIds: [], finishedAt: null }))
+    .mockResolvedValueOnce(generationJob({ status: 'RUNNING', stage: 'WRITING', fileIds: [], finishedAt: null }))
+    .mockResolvedValueOnce(generationJob())
   await act(async () => { mount('/app/application-preparations/12/documents?generate=3') })
-  expect(screen.queryByRole('alert')).toBeNull()
-  await act(async () => { await vi.advanceTimersByTimeAsync(6000) })
+  const progress = screen.getByRole('status', { name: '문서 생성 진행' })
+  expect(progress.textContent).toContain('답변 버전 3로 만들고 있어요')
+  expect(progress.textContent).toContain('순서를 기다리고 있어요')
+  await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+  expect(screen.getByRole('status', { name: '문서 생성 진행' }).textContent).toContain('입력칸 위치를 확인하고 있어요')
+  await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+  expect(screen.getByRole('status', { name: '문서 생성 진행' }).textContent).toContain('답변을 문서에 기입하고 있어요')
+  await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
   expect(screen.getByRole('button', { name: '신청문서 1 다운로드' })).toBeTruthy()
-  expect(repository.generateDocuments).toHaveBeenCalledTimes(1)
-  expect(repository.documents).toHaveBeenCalledTimes(3)
+  expect(repository.submitDocumentJob).toHaveBeenCalledTimes(1)
+  expect(repository.submitDocumentJob).toHaveBeenCalledWith(12, 3, expect.any(AbortSignal), undefined)
+  expect(repository.documentJob).toHaveBeenCalledTimes(3)
+  expect(repository.documentJob).toHaveBeenLastCalledWith(12, 501, expect.any(AbortSignal))
 })
 
-it.each(['REQUEST_TIMEOUT', 'REQUEST_FAILED', 'AI_SERVICE_INVALID_RESPONSE'])('shows %s immediately without polling a potentially failed generation', async (code) => {
+it('resumes a job that is already running instead of submitting another paid generation', async () => {
   vi.useFakeTimers()
   repository.get.mockResolvedValue(readyPreparation())
-  repository.generateDocuments.mockRejectedValueOnce(new ApplicationPreparationError(502, code))
+  repository.documents.mockResolvedValueOnce([]).mockResolvedValue([documentFile])
+  repository.documentJobs.mockResolvedValue([generationJob({ id: 77, status: 'RUNNING', stage: 'WRITING', fileIds: [], finishedAt: null })])
+  repository.documentJob.mockResolvedValue(generationJob({ id: 77 }))
+  await act(async () => { mount('/app/application-preparations/12/documents?generate=3') })
+  expect(screen.getByRole('status', { name: '문서 생성 진행' }).textContent).toContain('답변을 문서에 기입하고 있어요')
+  await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+  expect(screen.getByRole('button', { name: '신청문서 1 다운로드' })).toBeTruthy()
+  expect(repository.submitDocumentJob).not.toHaveBeenCalled()
+  expect(repository.documentJob).toHaveBeenCalledWith(12, 77, expect.any(AbortSignal))
+})
+
+it('follows the existing job after a submit conflict without repeating generation', async () => {
+  vi.useFakeTimers()
+  repository.get.mockResolvedValue(readyPreparation())
+  repository.documents.mockResolvedValueOnce([]).mockResolvedValue([documentFile])
+  repository.submitDocumentJob.mockRejectedValueOnce(new ApplicationPreparationError(409, 'APPLICATION_PREPARATION_RUN_CONFLICT'))
+  repository.documentJobs.mockResolvedValueOnce([]).mockResolvedValueOnce([generationJob({ id: 78, status: 'RUNNING', stage: 'MAPPING', fileIds: [], finishedAt: null })])
+  repository.documentJob.mockResolvedValue(generationJob({ id: 78 }))
+  await act(async () => { mount('/app/application-preparations/12/documents?generate=3') })
+  expect(screen.queryByRole('alert')).toBeNull()
+  await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+  expect(screen.getByRole('button', { name: '신청문서 1 다운로드' })).toBeTruthy()
+  expect(repository.submitDocumentJob).toHaveBeenCalledTimes(1)
+  expect(repository.documentJob).toHaveBeenCalledWith(12, 78, expect.any(AbortSignal))
+})
+
+it('explains a blocked slot after an unknown outcome without starting another job', async () => {
+  repository.get.mockResolvedValue(readyPreparation())
+  repository.submitDocumentJob.mockRejectedValueOnce(new ApplicationPreparationError(409, 'APPLICATION_PREPARATION_RUN_CONFLICT'))
+  repository.documentJobs.mockResolvedValue([generationJob({ id: 79, status: 'UNKNOWN', stage: 'WRITING', fileIds: [], failureCode: 'APPLICATION_DOCUMENT_OUTCOME_UNKNOWN', failureMessage: '결과 불명' })])
+  mount('/app/application-preparations/12/documents?generate=3')
+  expect((await screen.findByRole('alert')).textContent).toContain('이전 문서 생성의 결과를 아직 확인하지 못해')
+  expect(repository.submitDocumentJob).toHaveBeenCalledTimes(1)
+  expect(repository.documentJob).not.toHaveBeenCalled()
+})
+
+it.each(['REQUEST_TIMEOUT', 'REQUEST_FAILED', 'AI_SERVICE_INVALID_RESPONSE'])('shows %s from the submit request without polling', async (code) => {
+  vi.useFakeTimers()
+  repository.get.mockResolvedValue(readyPreparation())
+  repository.submitDocumentJob.mockRejectedValueOnce(new ApplicationPreparationError(502, code))
   await act(async () => { mount('/app/application-preparations/12/documents?generate=3') })
   expect(screen.getByRole('alert')).toBeTruthy()
   await act(async () => { await vi.advanceTimersByTimeAsync(120000) })
   expect(repository.documents).toHaveBeenCalledTimes(1)
-  expect(repository.generateDocuments).toHaveBeenCalledTimes(1)
+  expect(repository.documentJob).not.toHaveBeenCalled()
+  expect(repository.submitDocumentJob).toHaveBeenCalledTimes(1)
 })
 
-it('recovers an existing document after the old two-minute polling limit without another paid request', async () => {
-  vi.useFakeTimers()
-  const started = Date.now()
-  repository.get.mockResolvedValue(readyPreparation())
-  repository.documents.mockImplementation(async () => Date.now() - started >= 300_000 ? [documentFile] : [])
-  repository.generateDocuments.mockRejectedValueOnce(new ApplicationPreparationError(409, 'APPLICATION_PREPARATION_RUN_CONFLICT'))
-  await act(async () => { mount('/app/application-preparations/12/documents?generate=3') })
-  await act(async () => { await vi.advanceTimersByTimeAsync(123_000) })
-  expect(screen.queryByRole('alert')).toBeNull()
-  await act(async () => { await vi.advanceTimersByTimeAsync(177_000) })
-  expect(screen.getByRole('button', { name: '신청문서 1 다운로드' })).toBeTruthy()
-  expect(repository.generateDocuments).toHaveBeenCalledTimes(1)
-})
-
-it('bounds polling when an existing document never finishes without automatically posting again', async () => {
+it('stops following a job when the results page is closed', async () => {
   vi.useFakeTimers()
   repository.get.mockResolvedValue(readyPreparation())
-  repository.documents.mockResolvedValue([])
-  repository.generateDocuments.mockRejectedValueOnce(new ApplicationPreparationError(409, 'APPLICATION_PREPARATION_RUN_CONFLICT'))
-  await act(async () => { mount('/app/application-preparations/12/documents?generate=3') })
-  await act(async () => { await vi.advanceTimersByTimeAsync(660_000) })
-  expect(screen.getByRole('alert').textContent).toContain('기존 문서 생성 결과를 아직 확인하지 못했습니다')
-  const reads = repository.documents.mock.calls.length
-  await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
-  expect(repository.documents).toHaveBeenCalledTimes(reads)
-  expect(repository.generateDocuments).toHaveBeenCalledTimes(1)
-})
-
-it('stops waiting for an existing generation when the results page is closed', async () => {
-  vi.useFakeTimers()
-  repository.get.mockResolvedValue(readyPreparation())
-  repository.generateDocuments.mockRejectedValueOnce(new ApplicationPreparationError(409, 'APPLICATION_PREPARATION_RUN_CONFLICT'))
+  repository.submitDocumentJob.mockResolvedValue(generationJob({ status: 'QUEUED', stage: null, fileIds: [], finishedAt: null }))
   let rendered!: ReturnType<typeof mount>
   await act(async () => { rendered = mount('/app/application-preparations/12/documents?generate=3') })
   rendered.unmount()
   await act(async () => { await vi.advanceTimersByTimeAsync(120000) })
-  expect(repository.documents).toHaveBeenCalledTimes(1)
-  expect(repository.generateDocuments).toHaveBeenCalledTimes(1)
+  expect(repository.documentJob).not.toHaveBeenCalled()
+  expect(repository.submitDocumentJob).toHaveBeenCalledTimes(1)
 })
 
 it('moves to a separate results page, generates a native file and returns to saved answers', async () => {
   repository.get.mockResolvedValue(readyPreparation())
   mount('/app/application-preparations/12')
   const button = await screen.findByRole('button', { name: '초안 만들기' })
-  expect(repository.generateDocuments).not.toHaveBeenCalled()
+  expect(repository.submitDocumentJob).not.toHaveBeenCalled()
   fireEvent.click(button)
   const downloadButton = await screen.findByRole('button', { name: '신청문서 1 다운로드' })
   const downloadHint = screen.getByText(/문서를 다운로드해 내용을 확인하세요/)
@@ -188,7 +225,7 @@ it('moves to a separate results page, generates a native file and returns to sav
   expect(downloadButton.compareDocumentPosition(downloadHint) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   expect(screen.queryByLabelText('답변 입력')).toBeNull()
   expect(screen.queryByLabelText('작성본 내용')).toBeNull()
-  expect(repository.generateDocuments).toHaveBeenCalledWith(12, 3, expect.any(AbortSignal))
+  expect(repository.submitDocumentJob).toHaveBeenCalledWith(12, 3, expect.any(AbortSignal), undefined)
   fireEvent.click(screen.getByRole('link', { name: '이전으로 · 답변 수정' }))
   expect((await screen.findByLabelText('답변 입력') as HTMLTextAreaElement).value).toBe('새봄테크')
 })
@@ -213,7 +250,7 @@ it('blocks generation until every required answer exists, then saves pending ans
   expect(repository.replaceInputs).toHaveBeenLastCalledWith(12, 'voucher-plan', { expectedRevision: 4, facts: [
     { fieldKey: 'project-title', status: 'PROVIDED', value: '스마트 공정 과제', sourceText: '과제명: 스마트 공정 과제' },
   ] }, expect.any(AbortSignal))
-  expect(repository.generateDocuments).toHaveBeenCalledWith(12, 5, expect.any(AbortSignal))
+  expect(repository.submitDocumentJob).toHaveBeenCalledWith(12, 5, expect.any(AbortSignal), undefined)
 })
 
 it('reuses a stored native document on refresh without another generation call', async () => {
@@ -221,7 +258,7 @@ it('reuses a stored native document on refresh without another generation call',
   repository.documents.mockResolvedValue([documentFile])
   mount('/app/application-preparations/12/documents?generate=3')
   await screen.findByRole('button', { name: '신청문서 1 다운로드' })
-  expect(repository.generateDocuments).not.toHaveBeenCalled()
+  expect(repository.submitDocumentJob).not.toHaveBeenCalled()
 })
 
 it('shows the immutable partial-draft answer summary beside the download', async () => {
@@ -257,7 +294,7 @@ it('offers a whole-revision archive only for several current files and folds old
   fireEvent.click(screen.getByRole('button', { name: '전체 내려받기' }))
   await waitFor(() => expect(clicked).toHaveBeenCalledTimes(1))
   expect(repository.downloadDocumentArchive).toHaveBeenCalledWith(12, 3, expect.any(AbortSignal))
-  expect(repository.generateDocuments).not.toHaveBeenCalled()
+  expect(repository.submitDocumentJob).not.toHaveBeenCalled()
   clicked.mockRestore()
   vi.unstubAllGlobals()
 })
@@ -265,7 +302,7 @@ it('offers a whole-revision archive only for several current files and folds old
 it('enables regeneration only after the answers changed and starts it from the header', async () => {
   repository.get.mockResolvedValue(readyPreparation())
   repository.documents.mockResolvedValueOnce([{ ...documentFile, inputRevision: 2 }]).mockResolvedValue([])
-  repository.generateDocuments.mockResolvedValue([{ ...documentFile, id: 84, inputRevision: 3 }])
+  jobSucceeds([{ ...documentFile, id: 84 }])
   mount('/app/application-preparations/12/documents')
   await screen.findByRole('button', { name: '신청문서 1 다운로드' })
   expect(screen.queryByRole('button', { name: '전체 내려받기' })).toBeNull()
@@ -274,7 +311,7 @@ it('enables regeneration only after the answers changed and starts it from the h
   fireEvent.click(regenerate)
   expect((await screen.findByRole('status', { name: '문서 생성 진행' })).textContent).toContain('답변 버전 3로 만들고 있어요')
   await screen.findByRole('button', { name: '신청문서 1 다운로드' })
-  expect(repository.generateDocuments).toHaveBeenCalledWith(12, 3, expect.any(AbortSignal))
+  expect(repository.submitDocumentJob).toHaveBeenCalledWith(12, 3, expect.any(AbortSignal), undefined)
 })
 
 it('regenerates the document with the revised answers after returning to the input page', async () => {
@@ -282,7 +319,7 @@ it('regenerates the document with the revised answers after returning to the inp
   repository.get.mockResolvedValue(ready)
   repository.documents.mockResolvedValueOnce([documentFile]).mockResolvedValue([])
   echoReplaceInputs(ready)
-  repository.generateDocuments.mockResolvedValue([{ ...documentFile, id: 82, inputRevision: 4, fileName: '신청서_초안_v4.hwpx' }])
+  jobSucceeds([{ ...documentFile, id: 82, fileName: '신청서_초안_v4.hwpx' }])
   mount('/app/application-preparations/12/documents')
   await screen.findByRole('button', { name: '신청문서 1 다운로드' })
   fireEvent.click(screen.getByRole('link', { name: '이전으로 · 답변 수정' }))
@@ -293,18 +330,19 @@ it('regenerates the document with the revised answers after returning to the inp
   expect(repository.replaceInputs).toHaveBeenCalledWith(12, 'company-overview', { expectedRevision: 3, facts: [
     { fieldKey: 'company-name', status: 'PROVIDED', value: '변경한 업체명', sourceText: '업체명: 변경한 업체명' },
   ] }, expect.any(AbortSignal))
-  expect(repository.generateDocuments).toHaveBeenCalledWith(12, 4, expect.any(AbortSignal))
+  expect(repository.submitDocumentJob).toHaveBeenCalledWith(12, 4, expect.any(AbortSignal), undefined)
 })
 
-it('does not expose a download for a failed generation and retries the same revision', async () => {
+it('shows the server failure message of a failed job and retries the same revision', async () => {
   repository.get.mockResolvedValue(readyPreparation())
-  repository.generateDocuments.mockRejectedValueOnce(new ApplicationPreparationError(422, 'APPLICATION_DOCUMENT_MAPPING_FAILED'))
+  repository.submitDocumentJob.mockResolvedValueOnce(generationJob({ status: 'FAILED', stage: 'MAPPING', fileIds: [],
+    failureCode: 'APPLICATION_DOCUMENT_MAPPING_FAILED', failureMessage: '질문 항목의 실제 입력 위치를 확인하지 못했습니다.' }))
   mount('/app/application-preparations/12/documents?generate=3')
   expect((await screen.findByRole('alert')).textContent).toContain('입력 위치')
   expect(screen.queryByRole('button', { name: /다운로드/ })).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: '다시 시도' }))
   await screen.findByRole('button', { name: '신청문서 1 다운로드' })
-  expect(repository.generateDocuments.mock.calls.map((call) => call[1])).toEqual([3, 3])
+  expect(repository.submitDocumentJob.mock.calls.map((call) => call[1])).toEqual([3, 3])
 })
 
 const migrationNotice = {
@@ -313,12 +351,13 @@ const migrationNotice = {
   changes: [{ fieldLabel: '기업 개요 · 업체명', changeType: 'TARGET_CHANGED' as const,
     oldLocation: '표 1 · 2행 · 기업명', newLocation: '표 2 · 3행 · 기업명' }],
 }
+const migrationBlockedJob = () => generationJob({ status: 'FAILED', stage: 'MAPPING', fileIds: [],
+  failureCode: 'APPLICATION_DOCUMENT_FORM_REANALYSIS_REQUIRED', failureMessage: '입력 위치가 변경됐습니다.', mappingMigration: migrationNotice })
 
 it('shows the mapping diff and keeps the old file when approval is cancelled', async () => {
   repository.get.mockResolvedValue(readyPreparation())
   repository.documents.mockResolvedValue([{ ...documentFile, inputRevision: 2 }])
-  repository.generateDocuments.mockRejectedValueOnce(new ApplicationPreparationError(422,
-    'APPLICATION_DOCUMENT_FORM_REANALYSIS_REQUIRED', migrationNotice))
+  repository.submitDocumentJob.mockResolvedValueOnce(migrationBlockedJob())
   mount('/app/application-preparations/12/documents?generate=3')
   const review = await screen.findByLabelText('신청서 입력 위치 변경 확인')
   expect(within(review).getByText(/표 1 · 2행/)).toBeTruthy()
@@ -328,15 +367,13 @@ it('shows the mapping diff and keeps the old file when approval is cancelled', a
   fireEvent.click(within(review).getByRole('button', { name: '취소하고 기존 작성 유지' }))
   expect(repository.confirmDocumentMappingMigration).not.toHaveBeenCalled()
   expect(await screen.findByText(/기존 답변과 파일은 그대로 유지됩니다/)).toBeTruthy()
-  expect(repository.generateDocuments).toHaveBeenCalledTimes(1)
+  expect(repository.submitDocumentJob).toHaveBeenCalledTimes(1)
 })
 
 it('applies the reviewed map only on approval and starts regeneration on a separate click', async () => {
   repository.get.mockResolvedValue(readyPreparation())
   repository.documents.mockResolvedValue([{ ...documentFile, inputRevision: 2 }])
-  repository.generateDocuments.mockRejectedValueOnce(new ApplicationPreparationError(422,
-    'APPLICATION_DOCUMENT_FORM_REANALYSIS_REQUIRED', migrationNotice))
-    .mockResolvedValueOnce([{ ...documentFile, id: 82, inputRevision: 3, fileName: '신청서_초안_v3_new.hwpx' }])
+  repository.submitDocumentJob.mockResolvedValueOnce(migrationBlockedJob())
   repository.confirmDocumentMappingMigration.mockResolvedValue({ status: 'REGENERATION_REQUIRED',
     preparationId: 12, inputRevision: 3, formVersionId: 'approved-form-v2' })
   mount('/app/application-preparations/12/documents?generate=3')
@@ -345,17 +382,18 @@ it('applies the reviewed map only on approval and starts regeneration on a separ
   expect(await screen.findByText(/새 입력 위치가 이 작성본에만 적용됐습니다/)).toBeTruthy()
   expect(repository.confirmDocumentMappingMigration).toHaveBeenCalledWith(12, 3,
     migrationNotice.approvalToken, expect.any(AbortSignal))
-  expect(repository.generateDocuments).toHaveBeenCalledTimes(1)
+  expect(repository.submitDocumentJob).toHaveBeenCalledTimes(1)
+  jobSucceeds([{ ...documentFile, id: 82, fileName: '신청서_초안_v3_new.hwpx' }])
   fireEvent.click(screen.getByRole('button', { name: '새 초안 생성' }))
   expect(await screen.findByText('신청서_초안_v3_new.hwpx')).toBeTruthy()
-  expect(repository.generateDocuments).toHaveBeenCalledTimes(2)
+  expect(repository.submitDocumentJob).toHaveBeenCalledTimes(2)
 })
 
 it('prevents generating with a stale revision and aborts requests after leaving', async () => {
   repository.get.mockResolvedValue(readyPreparation())
   const { unmount } = mount('/app/application-preparations/12/documents?generate=2')
   expect((await screen.findByRole('alert')).textContent).toContain('답변이 변경')
-  expect(repository.generateDocuments).not.toHaveBeenCalled()
+  expect(repository.submitDocumentJob).not.toHaveBeenCalled()
   const signal = repository.get.mock.calls[0][1] as AbortSignal
   unmount()
   expect(signal.aborted).toBe(true)
@@ -441,7 +479,8 @@ beforeEach(() => {
     readyCount: 0, needsReviewCount: 0, missingCount: 0, directInputCount: 0,
     externalMappingVerified: false, officialApplicationUrl: null, items: [], savedAnswers: [] })
   repository.documents.mockResolvedValue([])
-  repository.generateDocuments.mockResolvedValue([documentFile])
+  repository.documentJobs.mockResolvedValue([])
+  jobSucceeds([documentFile])
   repository.discoveryJobs.mockResolvedValue([])
   repository.availability.mockResolvedValue({ state: { sourceCode: 'BIZINFO', sourceProgramId: 'PBLN_1', status: 'AVAILABLE',
     reasonCode: 'FORM_FOUND', nextRetryAt: null, attemptCount: 1 }, forms: { items: [structuredClone(firstForm)] } })

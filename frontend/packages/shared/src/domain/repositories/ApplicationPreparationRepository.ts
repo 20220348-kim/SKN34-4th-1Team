@@ -12,6 +12,7 @@ import type {
   SaveApplicationContent,
   ConfirmApplicationContent,
   ApplicationDocument,
+  ApplicationDocumentGenerationJob,
   ApplicationDocumentMigrationConfirmation,
   UpdateApplicationProgress,
 } from '../entities/ApplicationPreparation'
@@ -23,7 +24,10 @@ export interface ApplicationPreparationRepository {
   onlineInputGuide(id: number, signal?: AbortSignal): Promise<import('../entities/ApplicationOnlineInputGuide').ApplicationOnlineInputGuide>
   availability(sourceCode: string, sourceProgramId: string, signal?: AbortSignal): Promise<import('../entities/ApplicationPreparation').ApplicationFormAvailability>
   documents(id: number, signal?: AbortSignal): Promise<ApplicationDocument[]>
-  generateDocuments(id: number, expectedRevision: number, signal?: AbortSignal): Promise<ApplicationDocument[]>
+  /** 문서 생성 작업을 접수한다. 같은 requestKey는 같은 작업을 돌려주고, 진행 중인 작업이 있으면 409다. */
+  submitDocumentJob(id: number, expectedRevision: number, signal?: AbortSignal, requestKey?: string): Promise<ApplicationDocumentGenerationJob>
+  documentJob(id: number, jobId: number, signal?: AbortSignal): Promise<ApplicationDocumentGenerationJob>
+  documentJobs(id: number, signal?: AbortSignal): Promise<ApplicationDocumentGenerationJob[]>
   confirmDocumentMappingMigration(id: number, expectedRevision: number, approvalToken: string,
     signal?: AbortSignal): Promise<ApplicationDocumentMigrationConfirmation>
   downloadDocument(id: number, fileId: number, signal?: AbortSignal): Promise<Blob>

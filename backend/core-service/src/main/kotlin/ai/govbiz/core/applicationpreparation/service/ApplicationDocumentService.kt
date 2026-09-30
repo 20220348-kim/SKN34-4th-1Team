@@ -134,7 +134,19 @@ class ApplicationDocumentService(
             }
     }
 
-    fun generate(account: Account, id: Long, expectedRevision: Long): List<ApplicationDocumentFile> = admission.execute("application-document:${account.id}:$id") {
+    /** 동기 HTTP 경로. 요청량 제한을 거친 뒤 [generateNow]를 그대로 실행한다. */
+    fun generate(account: Account, id: Long, expectedRevision: Long): List<ApplicationDocumentFile> =
+        admission.execute("application-document:${account.id}:$id") { generateNow(account, id, expectedRevision) }
+
+    /**
+     * 실제 생성 흐름. 생성 작업(job)은 이 함수를 배경 실행 슬롯에서 호출하고 [onStage]로 단계를 기록한다.
+     * [onAiStart]는 유료 AI 호출 직전에 한 번 불린다. 그 뒤의 알 수 없는 실패는 결과 불명으로 분류한다.
+     */
+    fun generateNow(
+        account: Account, id: Long, expectedRevision: Long,
+        onStage: (ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentGenerationStage) -> Unit = {},
+        onAiStart: () -> Unit = {},
+    ): List<ApplicationDocumentFile> {
         val detail = preparations.findOwned(account, id)
         if (detail.preparation.inputRevision != expectedRevision) throw ApplicationPreparationRevisionConflictException()
         val configuration = callMcp { mcp.configuration() }
@@ -143,7 +155,7 @@ class ApplicationDocumentService(
         val docxEngine = nativeFormat?.let { configuration.engineVersions[it]
             ?: throw ApplicationDocumentException("APPLICATION_DOCUMENT_MCP_NOT_READY", "${it.uppercase()} 편집기 버전을 확인하지 못했습니다.") }
         val fingerprint = fingerprint(detail.form.attachmentSha256, expectedRevision, pipelineVersion, docxEngine)
-        files.findFingerprint(account.id, id, expectedRevision, fingerprint)?.let { return@execute listOf(it) }
+        files.findFingerprint(account.id, id, expectedRevision, fingerprint)?.let { return listOf(it) }
         if (!running.add(id)) throw ApplicationPreparationRunConflictException()
         val lockKey = "application-document-run:$id"
         val lockToken = java.util.UUID.randomUUID().toString()
@@ -163,6 +175,7 @@ class ApplicationDocumentService(
         } }
         if (facts.isEmpty() || facts.size > 200) throw ApplicationDocumentException("APPLICATION_DOCUMENT_INPUT_REQUIRED", "문서에 기입할 답변을 확인해 주세요.")
         val original = loadOriginal(manifest)
+        onStage(ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentGenerationStage.MAPPING)
         val binding = try {
             documentMapping.ensure(manifest, original.bytes, original.format, captureChange = true)
         } catch (changed: ApplicationDocumentMappingChangedException) {
@@ -184,6 +197,8 @@ class ApplicationDocumentService(
         val writableFactIds = writableFacts.map(ApplicationDocumentFact::id).toSet()
         val writableBindings = binding.bindings.filter { it.factId in writableFactIds }
         val inspection = if (original.format.lowercase() in setOf("pdf", "hwp")) editor.inspect(original.bytes, original.format) else null
+        onStage(ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentGenerationStage.WRITING)
+        onAiStart()
         val result = callMcp { mcp.generate(ai.govbiz.core.applicationpreparation.client.ai.dto.AiDocumentGenerationRequest(
             sourceBase64 = java.util.Base64.getEncoder().encodeToString(original.bytes),
             sourceSha256 = manifest.attachmentSha256, format = original.format.lowercase(),
@@ -236,7 +251,8 @@ class ApplicationDocumentService(
             "docx" -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
             "xlsx" -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"; else -> "application/x-hwp" }
         val verification = if (format == "hwp") result.verification + mapOf("stage" to "HWPLIB_VERIFIED", "reopened" to true, "outputSha256" to sha256(bytes), "render" to "NOT_RUN") else result.verification
-        listOf(files.save(account.id, id, expectedRevision, fileName, mediaType, bytes, manifest.attachmentSha256, result.placements,
+        onStage(ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentGenerationStage.SAVING)
+        return listOf(files.save(account.id, id, expectedRevision, fileName, mediaType, bytes, manifest.attachmentSha256, result.placements,
             fingerprint = fingerprint,
             evidence = mapOf("documentMap" to result.documentMap, "writePlan" to result.writePlan, "verification" to verification, "pipelineVersion" to result.pipelineVersion),
             filledAnswerCount = writableFacts.size,

@@ -22,7 +22,15 @@ export class ApplicationPreparationUseCase {
   }
   forms(signal?: AbortSignal) { return this.repository.forms(signal) }
   documents(id: number, signal?: AbortSignal) { return this.repository.documents(id, signal) }
-  generateDocuments(id: number, revision: number, signal?: AbortSignal) { return this.repository.generateDocuments(id, revision, signal) }
+  submitDocumentJob(id: number, revision: number, signal?: AbortSignal, requestKey?: string) {
+    if (!Number.isSafeInteger(id) || id <= 0 || !Number.isSafeInteger(revision) || revision <= 0) throw new Error('문서 생성 요청이 올바르지 않습니다.')
+    return this.repository.submitDocumentJob(id, revision, signal, requestKey)
+  }
+  documentJob(id: number, jobId: number, signal?: AbortSignal) {
+    if (!Number.isSafeInteger(jobId) || jobId <= 0) throw new Error('올바른 문서 생성 작업이 아닙니다.')
+    return this.repository.documentJob(id, jobId, signal)
+  }
+  documentJobs(id: number, signal?: AbortSignal) { return this.repository.documentJobs(id, signal) }
   confirmDocumentMappingMigration(id: number, revision: number, token: string, signal?: AbortSignal) {
     if (!Number.isSafeInteger(id) || id <= 0 || !Number.isSafeInteger(revision) || revision <= 0 ||
       !/^[0-9a-f-]{36}$/.test(token)) throw new Error('입력 위치 확인 요청이 올바르지 않습니다.')

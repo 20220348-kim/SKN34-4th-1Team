@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router'
 import { appContainer } from '../../../../app/appContainer'
 import { useAppSelector } from '../../../../app/hooks'
-import type { ApplicationDocument, ApplicationDocumentMigrationNotice, ApplicationPreparation } from '../../../../domain/entities/ApplicationPreparation'
+import type { ApplicationDocument, ApplicationDocumentGenerationJob, ApplicationDocumentMigrationNotice, ApplicationPreparation } from '../../../../domain/entities/ApplicationPreparation'
 import { ApplicationPreparationError } from '../../../../domain/errors/ApplicationPreparationError'
 import { selectCurrentAccount } from '../../../shared/auth/state/authSlice'
 import { appPaths } from '../../../shared/routes/appPaths'
@@ -17,6 +17,17 @@ export function ApplicationDocumentPage() {
   if (!account) return null
   if (!Number.isSafeInteger(id) || id <= 0) return <p role="alert">올바른 신청 준비 주소가 아닙니다.</p>
   return <DocumentResults key={`${account.email}:${id}`} id={id} />
+}
+
+/** 서버가 기록한 단계를 사람이 읽는 문장으로 바꾼다. 단계는 서버 작업 표의 값이라 화면이 추측하지 않는다. */
+function stageLabel(job: ApplicationDocumentGenerationJob) {
+  if (job.status === 'QUEUED') return '순서를 기다리고 있어요.'
+  switch (job.stage) {
+    case 'MAPPING': return '입력칸 위치를 확인하고 있어요.'
+    case 'WRITING': return '답변을 문서에 기입하고 있어요.'
+    case 'SAVING': return '파일을 저장하고 있어요.'
+    default: return '공식 양식과 저장된 답변을 확인하고 있어요.'
+  }
 }
 
 function DocumentResults({ id }: { id: number }) {
@@ -36,6 +47,8 @@ function DocumentResults({ id }: { id: number }) {
   const [busySince, setBusySince] = useState<number | null>(null)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const [archiving, setArchiving] = useState(false)
+  /** 지금 따라가고 있는 생성 작업. 진행 카드가 서버가 기록한 단계를 보여 준다. */
+  const [job, setJob] = useState<ApplicationDocumentGenerationJob | null>(null)
   const downloadController = useRef<AbortController | null>(null)
   const migrationController = useRef<AbortController | null>(null)
   const back = `${appPaths.applicationPreparations}/${id}`
@@ -55,50 +68,69 @@ function DocumentResults({ id }: { id: number }) {
 
   useEffect(() => {
     const controller = new AbortController()
-    async function waitForExistingDocuments(revision: number) {
-      // A cancelled browser request does not cancel server-side file generation.
-      // Recover its stored result with GET only; never automatically repeat the paid POST.
-      // Match the generation request budget: a cold run includes mapping and writing.
-      const deadline = Date.now() + 660_000
-      while (Date.now() < deadline) {
-        await new Promise<void>((resolve, reject) => {
-          const abort = () => { clearTimeout(timer); reject(new DOMException('Aborted', 'AbortError')) }
-          const timer = setTimeout(() => { controller.signal.removeEventListener('abort', abort); resolve() }, 3000)
-          controller.signal.addEventListener('abort', abort, { once: true })
-          if (controller.signal.aborted) abort()
-        })
-        const documents = await useCase.documents(id, controller.signal)
-        if (documents.some((file) => file.inputRevision === revision)) {
-          return documents
-        }
+    const terminal = (candidate: ApplicationDocumentGenerationJob) => candidate.status === 'SUCCEEDED' || candidate.status === 'FAILED' || candidate.status === 'UNKNOWN'
+    const active = (candidates: ApplicationDocumentGenerationJob[]) => candidates.find((candidate) => candidate.status === 'QUEUED' || candidate.status === 'RUNNING') ?? null
+    function sleep(ms: number) {
+      return new Promise<void>((resolve, reject) => {
+        const abort = () => { clearTimeout(timer); reject(new DOMException('Aborted', 'AbortError')) }
+        const timer = setTimeout(() => { controller.signal.removeEventListener('abort', abort); resolve() }, ms)
+        controller.signal.addEventListener('abort', abort, { once: true })
+        if (controller.signal.aborted) abort()
+      })
+    }
+    /** 작업이 끝날 때까지 2초마다 상태를 읽는다. 서버가 30분 뒤 RUNNING을 결과 불명으로 내리므로 그보다 조금 더 기다린다. */
+    async function follow(started: ApplicationDocumentGenerationJob) {
+      let current = started
+      setJob(current)
+      const deadline = Date.now() + 35 * 60_000
+      while (!terminal(current)) {
+        if (Date.now() > deadline) throw new Error('문서 생성이 아직 끝나지 않았습니다. 잠시 후 다시 열면 저장된 결과부터 확인합니다. 답변은 저장되어 있습니다.')
+        await sleep(2000)
+        current = await useCase.documentJob(id, current.id, controller.signal)
+        setJob(current)
       }
-      throw new Error('기존 문서 생성 결과를 아직 확인하지 못했습니다. 잠시 후 다시 시도해 주세요. 답변은 저장되어 있습니다.')
+      return current
     }
     async function load() {
-      setBusy(true); setBusySince(Date.now()); setError(null); setMigration(null)
+      setBusy(true); setBusySince(Date.now()); setError(null); setMigration(null); setJob(null)
       try {
-        const detail = await useCase.get(id, controller.signal)
+        const [detail, stored, jobs] = await Promise.all([
+          useCase.get(id, controller.signal),
+          useCase.documents(id, controller.signal),
+          useCase.documentJobs(id, controller.signal).catch(() => [] as ApplicationDocumentGenerationJob[]),
+        ])
         if (controller.signal.aborted) return
         setPreparation(detail)
-        let documents = await useCase.documents(id, controller.signal)
-        if (controller.signal.aborted) return
-        if (requestedRevision.current !== null) {
+        let documents = stored
+        let finished: ApplicationDocumentGenerationJob | null = null
+        const running = active(jobs)
+        if (running) {
+          // 화면을 떠났다 돌아와도 진행 중인 작업을 이어받는다. 새 유료 생성을 시작하지 않는다.
+          finished = await follow(running)
+        } else if (requestedRevision.current !== null) {
           const revision = Number(requestedRevision.current)
           if (!Number.isSafeInteger(revision) || revision !== detail.inputRevision) throw new Error('답변이 변경되었습니다. 답변 입력으로 돌아가 최신 내용을 확인한 뒤 다시 생성해 주세요.')
           if (!documents.some((file) => file.inputRevision === revision)) {
             try {
-              const generated = await useCase.generateDocuments(id, revision, controller.signal)
-              documents = [...generated, ...documents.filter((file) => !generated.some((created) => created.id === file.id))]
+              finished = await follow(await useCase.submitDocumentJob(id, revision, controller.signal))
             } catch (caught) {
               if (controller.signal.aborted) throw caught
-              if (caught instanceof ApplicationPreparationError && caught.code === 'APPLICATION_PREPARATION_RUN_CONFLICT') {
-                documents = await waitForExistingDocuments(revision)
-              } else if (caught instanceof ApplicationPreparationError && ['REQUEST_TIMEOUT', 'REQUEST_FAILED'].includes(caught.code)) {
-                throw new Error('문서 생성 요청의 결과를 확인하지 못했습니다. 답변은 저장되어 있습니다. 잠시 후 다시 시도하면 저장된 결과부터 확인합니다.')
-              } else if (caught instanceof ApplicationPreparationError && caught.mappingMigration) {
-                setMigration(caught.mappingMigration)
-              } else throw caught
+              if (!(caught instanceof ApplicationPreparationError) || caught.code !== 'APPLICATION_PREPARATION_RUN_CONFLICT') throw caught
+              // 다른 탭이나 앞선 요청의 작업이 이미 진행 중이면 그 작업을 따라간다.
+              const existing = active(await useCase.documentJobs(id, controller.signal))
+              if (!existing) throw new Error('이전 문서 생성의 결과를 아직 확인하지 못해 새 생성을 시작하지 않았습니다. 저장된 문서를 확인한 뒤 잠시 후 다시 시도해 주세요.')
+              finished = await follow(existing)
             }
+          }
+        }
+        if (finished) {
+          // 실패·결과 불명이어도 앞서 저장된 파일이 있을 수 있으니 목록은 다시 읽는다.
+          documents = await useCase.documents(id, controller.signal)
+          if (controller.signal.aborted) return
+          if (finished.status !== 'SUCCEEDED') {
+            setFiles(documents)
+            if (finished.mappingMigration) { setMigration(finished.mappingMigration); return }
+            throw new Error(finished.failureMessage ?? '문서를 생성하지 못했습니다.')
           }
         }
         if (controller.signal.aborted) return
@@ -106,7 +138,7 @@ function DocumentResults({ id }: { id: number }) {
         requestedRevision.current = null
       } catch (caught) {
         if (!controller.signal.aborted) setError(caught instanceof Error ? caught.message : '문서를 생성하지 못했습니다.')
-      } finally { if (!controller.signal.aborted) { setBusy(false); setBusySince(null) } }
+      } finally { if (!controller.signal.aborted) { setBusy(false); setBusySince(null); setJob(null) } }
     }
     void load()
     return () => { controller.abort(); downloadController.current?.abort(); migrationController.current?.abort() }
@@ -219,8 +251,8 @@ function DocumentResults({ id }: { id: number }) {
     </>} />
     <main className={workspacePageStyles.content}>
       {busy && <section className={s.notice} role="status" aria-label="문서 생성 진행">
-        <p><strong>{requestedRevision.current !== null ? `답변 버전 ${requestedRevision.current}로 만들고 있어요` : '저장된 문서를 확인하고 있어요'}</strong> · 경과 {Math.floor(elapsedSeconds / 60)}:{String(elapsedSeconds % 60).padStart(2, '0')}</p>
-        <p>공식 양식을 확인하고 저장된 답변으로 문서를 준비하고 있습니다… 화면을 나가도 계속돼요. 돌아오면 저장된 결과부터 확인합니다.</p>
+        <p><strong>{job ? `답변 버전 ${job.expectedRevision}로 만들고 있어요` : requestedRevision.current !== null ? `답변 버전 ${requestedRevision.current}로 만들고 있어요` : '저장된 문서를 확인하고 있어요'}</strong> · 경과 {Math.floor(elapsedSeconds / 60)}:{String(elapsedSeconds % 60).padStart(2, '0')}</p>
+        <p>{job ? stageLabel(job) : '저장된 문서와 진행 중인 생성 작업을 확인하고 있어요.'} 화면을 나가도 계속돼요. 돌아오면 진행 중인 작업을 이어서 보여 드려요.</p>
       </section>}
       {error && <div className={s.warning} role="alert"><p>{error}</p>{!busy && <button type="button" className={s.button} onClick={() => setAttempt((n) => n + 1)}>다시 시도</button>}</div>}
       {error && preparation && <Link className={s.button} to={`${appPaths.applicationPreparationNew}?${new URLSearchParams({ sourceCode: preparation.form.sourceCode, sourceProgramId: preparation.form.sourceProgramId })}`}>기존 답변을 보관하고 입력칸별 양식 확인</Link>}

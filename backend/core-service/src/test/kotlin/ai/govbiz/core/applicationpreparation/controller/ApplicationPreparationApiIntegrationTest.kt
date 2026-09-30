@@ -1067,6 +1067,108 @@ class ApplicationPreparationApiIntegrationTest {
     private data class MigrationFixture(val version: String, val preparationId: Long, val token: String,
         val original: ByteArray, val targetId: String, val oldFileId: Long)
 
+    @Test
+    fun generatesDocumentsThroughAJobThatReportsStagesAndKeepsTheActiveSlotUntilTheOutcomeIsKnown() {
+        val original = requireNotNull(javaClass.getResourceAsStream("/combinationreview/general.hwpx")).readBytes()
+        val target = documentEditor.inspect(original, "HWPX").targets.first { it.text.isBlank() }
+        `when`(bizInfoAttachments.collect("BIZINFO", DISCOVERY_PROGRAM_ID)).thenReturn(SupportProgramAttachments("동적 지원사업", listOf(
+            SupportProgramAttachment("https://www.bizinfo.go.kr/file", "신청양식.hwpx", "HWPX", original),
+        ), emptyList()))
+        `when`(documentParser.parse(original, "HWPX")).thenReturn(listOf(SupportProgramDocumentBlock(DISCOVERY_LOCATOR, DISCOVERY_BLOCK_TEXT)))
+        stubDocumentMapping(documentMcp, target.id)
+        val fallback = AiDocumentGenerationRequest(sourceBase64 = "", sourceSha256 = "", format = "hwpx", answerRevision = 1, facts = emptyList(), scope = "test")
+        val placements = listOf(ApplicationDocumentPlacement("business-plan:business-overview", target.id))
+        var unknownNext = false
+        `when`(documentMcp.generate(any(AiDocumentGenerationRequest::class.java) ?: fallback)).thenAnswer { invocation ->
+            val request = invocation.getArgument<AiDocumentGenerationRequest>(0)
+            if (unknownNext) { unknownNext = false; throw ApplicationDocumentMcpException("APPLICATION_DOCUMENT_OUTCOME_UNKNOWN", "결과 불명 fixture") }
+            val bytes = documentEditor.fill(original, "HWPX", request.facts, placements)
+            val hash = java.security.MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+            AiDocumentGenerationPayload("application-document-mcp-v1", "b".repeat(64), request.sourceSha256, request.answerRevision,
+                java.util.Base64.getEncoder().encodeToString(bytes), hash, "c".repeat(64), "native-map-v2", "test-stub",
+                mapOf("verified" to 1, "unresolved" to 0), placements, emptyMap(), mapOf("answerRevision" to request.answerRevision))
+        }
+        val discovered = mvc.perform(post("$BASE/forms/discover").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN).contentType(MediaType.APPLICATION_JSON)
+            .content("""{"sourceCode":"BIZINFO","sourceProgramId":"$DISCOVERY_PROGRAM_ID"}""")).andExpect(status().isOk()).andReturn().response
+        val version = json.readTree(discovered.contentAsString).path("items").path(0).path("formVersionId").asString()
+        activateStored(version)
+        val created = mvc.perform(post(BASE).cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN).contentType(MediaType.APPLICATION_JSON)
+            .content("""{"sourceCode":"BIZINFO","sourceProgramId":"$DISCOVERY_PROGRAM_ID","formVersionId":"$version","serviceField":"GENERAL"}""")).andExpect(status().isCreated()).andReturn().response
+        val id = json.readTree(created.contentAsString).path("id").asLong()
+        fun save(revision: Long, value: String) {
+            mvc.perform(put("$BASE/$id/sections/business-plan/inputs").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN).contentType(MediaType.APPLICATION_JSON)
+                .content("""{"expectedRevision":$revision,"facts":[{"fieldKey":"business-overview","status":"PROVIDED","value":"$value","sourceText":"$value"}]}"""))
+                .andExpect(status().isOk())
+        }
+        fun submit(key: String, revision: Long) = mvc.perform(post("$BASE/$id/documents/jobs").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN)
+            .contentType(MediaType.APPLICATION_JSON).content("""{"requestKey":"$key","expectedRevision":$revision}"""))
+        fun job(jobId: Long) = json.readTree(mvc.perform(get("$BASE/$id/documents/jobs/$jobId").cookie(owner)).andExpect(status().isOk()).andReturn().response.contentAsString)
+        save(1, "새봄 & 연구소")
+        // 답변 버전이 다르면 접수하지 않는다. 접수 자체는 AI를 부르지 않는다.
+        submit(UUID.randomUUID().toString(), 1).andExpect(status().isConflict())
+        val key = UUID.randomUUID().toString()
+        val accepted = submit(key, 2).andExpect(status().isAccepted())
+            .andExpect(header().string(HttpHeaders.CACHE_CONTROL, "no-store"))
+            .andExpect(jsonPath("$.status").value("QUEUED")).andExpect(jsonPath("$.preparationId").value(id))
+            .andReturn().response
+        val jobId = json.readTree(accepted.contentAsString).path("id").asLong()
+        assertEquals("/api/v1/application-preparations/$id/documents/jobs/$jobId", accepted.getHeader(HttpHeaders.LOCATION))
+        submit(key, 2).andExpect(status().isAccepted()).andExpect(jsonPath("$.id").value(jobId))
+        submit(UUID.randomUUID().toString(), 2).andExpect(status().isConflict())
+        mvc.perform(get("$BASE/$id/documents/jobs/$jobId").cookie(other)).andExpect(status().isNotFound())
+        // 같은 프로세스의 실행기가 QUEUED 작업을 집어 단계를 기록하며 끝낸다.
+        org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(60)).pollInterval(java.time.Duration.ofMillis(500))
+            .until { job(jobId).path("status").asString() == "SUCCEEDED" }
+        val done = job(jobId)
+        assertEquals("SAVING", done.path("stage").asString())
+        assertEquals(1, done.path("fileIds").size())
+        assertTrue(done.path("failureCode").isNull)
+        val fileId = done.path("fileIds").path(0).asLong()
+        mvc.perform(get("$BASE/$id/documents").cookie(owner)).andExpect(status().isOk())
+            .andExpect(jsonPath("$[0].id").value(fileId)).andExpect(jsonPath("$[0].fileName").value("신청양식_초안_v2.hwpx"))
+        mvc.perform(get("$BASE/$id/documents/jobs").cookie(owner)).andExpect(status().isOk())
+            .andExpect(jsonPath("$[0].id").value(jobId)).andExpect(jsonPath("$[0].status").value("SUCCEEDED"))
+        verify(documentMcp, times(1)).generate(any(AiDocumentGenerationRequest::class.java) ?: fallback)
+        // 유료 호출 뒤 결과를 확인하지 못한 실행은 UNKNOWN으로 남고, 그 준비 건의 새 작업 접수를 막는다.
+        save(2, "수정한 사업")
+        unknownNext = true
+        val unknownJob = json.readTree(submit(UUID.randomUUID().toString(), 3).andExpect(status().isAccepted()).andReturn().response.contentAsString).path("id").asLong()
+        org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(60)).pollInterval(java.time.Duration.ofMillis(500))
+            .until { job(unknownJob).path("status").asString() == "UNKNOWN" }
+        val unknown = job(unknownJob)
+        assertEquals("APPLICATION_DOCUMENT_OUTCOME_UNKNOWN", unknown.path("failureCode").asString())
+        assertEquals("WRITING", unknown.path("stage").asString())
+        assertTrue(unknown.path("failureMessage").asString().isNotBlank())
+        submit(UUID.randomUUID().toString(), 3).andExpect(status().isConflict())
+        mvc.perform(get("$BASE/$id/documents").cookie(owner)).andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(1))
+        redis.delete("application-document-run:$id")
+    }
+
+    @Test
+    fun aJobBlockedByAChangedInputMapReturnsTheMigrationNoticeToTheOwnerOnly() {
+        val fixture = changedMappingFixture()
+        val accepted = mvc.perform(post("$BASE/${fixture.preparationId}/documents/jobs").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN)
+            .contentType(MediaType.APPLICATION_JSON).content("""{"requestKey":"${UUID.randomUUID()}","expectedRevision":2}"""))
+            .andExpect(status().isAccepted()).andReturn().response
+        val jobId = json.readTree(accepted.contentAsString).path("id").asLong()
+        val path = "$BASE/${fixture.preparationId}/documents/jobs/$jobId"
+        org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(60)).pollInterval(java.time.Duration.ofMillis(500)).until {
+            json.readTree(mvc.perform(get(path).cookie(owner)).andReturn().response.contentAsString).path("status").asString() == "FAILED"
+        }
+        val failed = json.readTree(mvc.perform(get(path).cookie(owner)).andExpect(status().isOk()).andReturn().response.contentAsString)
+        assertEquals("APPLICATION_DOCUMENT_FORM_REANALYSIS_REQUIRED", failed.path("failureCode").asString())
+        assertEquals("MAPPING_CHANGED", failed.path("mappingMigration").path("status").asString())
+        assertEquals("TARGET_CHANGED", failed.path("mappingMigration").path("changes").path(0).path("changeType").asString())
+        org.junit.jupiter.api.Assertions.assertFalse(failed.toString().contains("old-cell"))
+        // 목록 응답은 승인 토큰을 싣지 않는다.
+        val listed = json.readTree(mvc.perform(get("$BASE/${fixture.preparationId}/documents/jobs").cookie(owner)).andReturn().response.contentAsString)
+        assertTrue(listed.path(0).path("mappingMigration").isNull)
+        mvc.perform(get(path).cookie(other)).andExpect(status().isNotFound())
+        // 기존 답변·파일·지도는 그대로다.
+        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM application_document_file WHERE preparation_id=?", Int::class.java, fixture.preparationId))
+        org.junit.jupiter.api.Assertions.assertNotNull(documentFiles.findOwned(ownerId, fixture.preparationId, fixture.oldFileId))
+    }
+
     private fun changedMappingFixture(): MigrationFixture {
         val original = requireNotNull(javaClass.getResourceAsStream("/combinationreview/general.hwpx")).readBytes()
         val target = documentEditor.inspect(original, "HWPX").targets.first { it.text.isBlank() }
