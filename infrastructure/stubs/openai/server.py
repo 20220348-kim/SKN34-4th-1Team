@@ -14,6 +14,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 TRACE_QUERY = re.compile(r"서울 AI PRIVATE-CORE-TRACE-[0-9a-f]{32}-(ok|fail|timeout)")
 ASSISTANT_TRACE_QUERY = re.compile(r"이 공고 PRIVATE-ASSISTANT-TRACE-[0-9a-f]{32}-(ok|fail|timeout)")
 EVIDENCE_TRACE_QUERY = re.compile(r"접수 PRIVATE-EVIDENCE-TRACE-[0-9a-f]{32}-(ok|fail|timeout|invalid-citation|search-fail)")
+RAG_QUERY = re.compile(r"PRIVATE-RAG-QUERY-[0-9a-f]{32}-(ok|miss|citation-miss|insufficient|fail|timeout|invalid-citation|search-fail)")
 TRACE_COUNTS: dict[str, dict[str, int]] = {}
 TRACE_LOCK = Lock()
 
@@ -43,11 +44,11 @@ def record_assistant_trace_call(payload: dict) -> str | None:
 def record_evidence_trace_call(text: str, kind: str) -> str | None:
     if os.environ.get("CORE_TRACE_FIXTURE") != "true":
         return None
-    if kind == "embedding" and text.startswith("PRIVATE-EVIDENCE-SOURCE "):
+    if kind == "embedding" and text.startswith(("PRIVATE-EVIDENCE-SOURCE ", "PRIVATE-RAG-SOURCE ")):
         with TRACE_LOCK:
             TRACE_COUNTS.setdefault(text, {"source_embedding": 0})["source_embedding"] += 1
         return "source"
-    match = EVIDENCE_TRACE_QUERY.fullmatch(text)
+    match = EVIDENCE_TRACE_QUERY.fullmatch(text) or RAG_QUERY.fullmatch(text)
     if not match:
         return None
     with TRACE_LOCK:
@@ -57,6 +58,14 @@ def record_evidence_trace_call(text: str, kind: str) -> str | None:
 
 def embedding_vector(text: str, dimensions: int) -> list[float]:
     vector = [0.0] * dimensions
+    if os.environ.get("CORE_TRACE_FIXTURE") == "true" and dimensions >= 3:
+        section = re.match(r"PRIVATE-RAG-SOURCE SECTION-([0-5]) ", text)
+        query = RAG_QUERY.fullmatch(text)
+        if section or query:
+            # Deterministic ranking against real Qdrant. This is not semantic embedding quality.
+            vector[0] = 1.0
+            vector[1] = int(section[1]) / 5 if section else (1.0 if query[1] == "miss" else 0.0)
+            return vector
     primary = topic(text)
     vector[primary] = 1.0
     if os.environ.get("CORE_TRACE_FIXTURE") == "true" and dimensions >= 3:
@@ -353,6 +362,14 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 if scenario == "timeout":
                     time.sleep(5)
+                if RAG_QUERY.fullmatch(payload["question"]):
+                    self.respond_model_output(request, {
+                        "answer": "PRIVATE-RAG-ANSWER", "answerStatus": "INSUFFICIENT_EVIDENCE" if scenario == "insufficient" else "ANSWERED",
+                        "citationChunkIndexes": ([] if scenario == "insufficient" else
+                                                [len(payload["chunks"])] if scenario == "invalid-citation" else
+                                                [0] if scenario in {"citation-miss", "miss"} else [0, 1]),
+                    })
+                    return
                 self.respond_model_output(request, {
                     "answer": "PRIVATE-EVIDENCE-ANSWER", "answerStatus": "ANSWERED",
                     "citationChunkIndexes": [len(payload["chunks"]) if scenario == "invalid-citation" else 0],

@@ -132,7 +132,7 @@ def fixture_env():
     return values
 
 
-def validate_boundaries(model, project, search_traces=False, evidence_traces=False):
+def validate_boundaries(model, project, search_traces=False, evidence_traces=False, rag_capture=False):
     services = model["services"]
     core = services["core-service"]["environment"]
     catalog = services["catalog-service"]["environment"]
@@ -201,6 +201,15 @@ def validate_boundaries(model, project, search_traces=False, evidence_traces=Fal
         ai = services["ai-service"]["environment"]
         require(ai["LLM_MODEL_TIMEOUT_SECONDS"] == "2" and ai["LLM_RUN_TIMEOUT_SECONDS"] == "3",
                 "Evidence timeout fixture is not configured")
+    if rag_capture:
+        require(evidence_traces, "RAG capture requires evidence fixture ownership")
+        service = services["ai-service"]
+        require(service["environment"].get("RAG_CAPTURE_FIXTURE") == "true", "RAG recorder opt-in missing")
+        require(service.get("command") == ["python", "-m", "uvicorn", "rag_capture_app:create_app", "--factory",
+                                           "--host", "0.0.0.0", "--port", "8000"], "Unexpected RAG recorder entrypoint")
+        mounts = [mount for mount in service.get("volumes", []) if mount.get("target") == "/app/rag_capture_app.py"]
+        require(len(mounts) == 1 and mounts[0].get("read_only") is True
+                and Path(mounts[0]["source"]).resolve() == INFRA / "llmops/rag_capture_app.py", "Wrong RAG recorder mount")
     build = (ROOT / "backend/catalog-service/build.gradle").read_text(encoding="utf-8")
     require(not any(name in build for name in ("core-api", "core-service")),
             "Catalog Gradle build depends on the Core source tree")
@@ -220,11 +229,15 @@ def main():
                         help="With --search-traces-output, also verify Core assistant HTTP traces")
     parser.add_argument("--evidence-traces-output", type=Path,
                         help="With --search-traces-output, verify detailed RAG using a synthetic DB source snapshot")
+    parser.add_argument("--rag-capture-output", type=Path,
+                        help="With --evidence-traces-output, collect and replay actual multichunk Core/AI captures")
     args = parser.parse_args()
     require(not args.assistant_traces_output or args.search_traces_output,
             "Assistant tracing requires --search-traces-output to share the isolated tracing fixture")
     require(not args.evidence_traces_output or args.search_traces_output,
             "Evidence tracing requires --search-traces-output to share the isolated tracing fixture")
+    require(not args.rag_capture_output or args.evidence_traces_output,
+            "RAG capture requires --evidence-traces-output and its disposable source fixture")
     project = "govbiz-catalog-check-" + uuid.uuid4().hex[:12]
     values = fixture_env()
     if args.search_traces_output:
@@ -246,6 +259,14 @@ def main():
         require(all(args.evidence_traces_output.resolve() != path.resolve() for path in
                     (args.search_traces_output, args.assistant_traces_output) if path), "Use distinct trace evidence paths")
         values.update({"LLM_MODEL_TIMEOUT_SECONDS": "2", "LLM_RUN_TIMEOUT_SECONDS": "3"})
+    if args.rag_capture_output:
+        import core_rag_capture
+        require(not args.rag_capture_output.exists(), "Use a fresh RAG capture directory")
+        for path in (args.search_traces_output, args.assistant_traces_output, args.evidence_traces_output):
+            if path:
+                require(path.resolve() != args.rag_capture_output.resolve()
+                        and args.rag_capture_output.resolve() not in path.resolve().parents
+                        and path.resolve() not in args.rag_capture_output.resolve().parents, "Use distinct RAG capture paths")
     ports = iter(range(19080, 19086)) if args.config_only else None
     selected = set()
     port_keys = ["CORE_API_HOST_PORT", "MYSQL_HOST_PORT", "QDRANT_HOST_PORT", "WEB_HOST_PORT", "CATALOG_HOST_PORT"]
@@ -316,6 +337,12 @@ def main():
         if args.evidence_traces_output:
             # A cache regression must fail locally, never fetch the real official site.
             fixture_services["core-service"]["extra_hosts"] = {"www.bizinfo.go.kr": "127.0.0.1", "bizinfo.go.kr": "127.0.0.1"}
+        if args.rag_capture_output:
+            fixture_services["ai-service"]["environment"]["RAG_CAPTURE_FIXTURE"] = "true"
+            fixture_services["ai-service"]["command"] = ["python", "-m", "uvicorn", "rag_capture_app:create_app", "--factory",
+                                                         "--host", "0.0.0.0", "--port", "8000"]
+            fixture_services["ai-service"]["volumes"] = [{"type": "bind", "source": str(INFRA / "llmops/rag_capture_app.py"),
+                                                         "target": "/app/rag_capture_app.py", "read_only": True}]
         port_overlay.write_text(json.dumps(overlay), encoding="utf-8")
         # Limit Compose operations too; image builds below use separate invocations
         # because Bake can otherwise parallelize builds despite --parallel 1.
@@ -335,7 +362,7 @@ def main():
 
         model = json.loads(run(compose + ["config", "--format", "json"], capture=True, timeout=30).stdout)
         validate_boundaries(model, project, search_traces=bool(args.search_traces_output),
-                            evidence_traces=bool(args.evidence_traces_output))
+                            evidence_traces=bool(args.evidence_traces_output), rag_capture=bool(args.rag_capture_output))
         print("PASS: isolated Compose, credentials, scheduler ownership and standalone source boundary", flush=True)
         # Explicit fixture activation must not mask an unsafe opt-in overlay default.
         # Keep the dummy credentials but render again without any writer activation flags.
@@ -494,6 +521,15 @@ def main():
                             environment=os.environ, call_json=call_json, sql=sql, program=application,
                             output=args.evidence_traces_output,
                             core_logs=lambda: run(compose + ["logs", "--no-color", "core-service"], capture=True, timeout=15).stdout,
+                        )
+                    if args.rag_capture_output:
+                        core_rag_capture.verify_rag_capture(
+                            core_url=core_url, environment=os.environ, sql=sql, program=application,
+                            output=args.rag_capture_output,
+                            core_logs=lambda: run(compose + ["logs", "--no-color", "core-service"], capture=True, timeout=15).stdout,
+                            read_wire=lambda: run(compose + ["exec", "-T", "ai-service", "python", "-c",
+                                "from pathlib import Path; print(Path('/tmp/govbiz-rag-capture.jsonl').read_text(encoding='utf-8'))"],
+                                capture=True, timeout=15).stdout,
                         )
                 finally:
                     run(compose + ["start", "catalog-service"], timeout=60)

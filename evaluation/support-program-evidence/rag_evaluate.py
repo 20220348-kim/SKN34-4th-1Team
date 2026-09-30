@@ -384,7 +384,8 @@ def evaluate(fixture_path, capture_path=None):
         capture, capture_hash = read_json(capture_path)
         fields(capture, "schemaVersion scope fixtureSha256 execution cases")
         require(
-            capture["schemaVersion"] == "support-program-rag-capture-v1"
+            capture["schemaVersion"]
+            in ("support-program-rag-capture-v1", "support-program-rag-capture-v2")
             and capture["scope"] == SCOPE,
             "unsupported RAG capture or scope",
         )
@@ -392,10 +393,24 @@ def evaluate(fixture_path, capture_path=None):
             capture["fixtureSha256"] == fixture_hash, "capture fixture hash mismatch"
         )
         execution = capture["execution"]
-        fields(execution, "kind model embeddingModel promptSha256 recorderSha256")
-        require(
-            execution["kind"] in ("synthetic", "recorded"), "invalid execution kind"
+        stub = capture["schemaVersion"] == "support-program-rag-capture-v2"
+        fields(
+            execution,
+            "kind model embeddingModel promptSha256 recorderSha256"
+            + (" paidModelApiCalls" if stub else ""),
         )
+        require(
+            execution["kind"]
+            in (("integration-stub",) if stub else ("synthetic", "recorded")),
+            "invalid execution kind",
+        )
+        if stub:
+            require(
+                type(execution["paidModelApiCalls"]) is int
+                and execution["paidModelApiCalls"] == 0,
+                "integration stub must declare zero paid model calls",
+            )
+            report["schemaVersion"] = "support-program-rag-report-v2"
         if execution["kind"] == "synthetic":
             require(
                 all(
@@ -438,6 +453,8 @@ def evaluate(fixture_path, capture_path=None):
             captureValidated=True,
             measurementKind="synthetic-contract-check"
             if execution["kind"] == "synthetic"
+            else "integration-stub-replay"
+            if stub
             else "recorded-capture-replay",
         )
 

@@ -85,10 +85,44 @@ backend/ai-service/.venv/bin/python evaluation/support-program-evidence/rag_eval
 
 로컬 Python 3.12에서 [무료 테스트](test_rag_evaluate.py) 69건, 합성 캡처 CLI,
 Ruff 검사·포맷을 확인했습니다. `uv`가 PATH에 없어 기존 AI 가상환경으로 실행했습니다.
-새 코드의 원격 전체 검증은 커밋·푸시 후 필요합니다. 전체 테스트는 기존
+이 최초 계약의 `skn-74 / 4537e5f`는 필수 CI 5개가 성공했습니다. 전체 테스트는 기존
 `.github/workflows/ci.yml`의 `Test evidence evaluation tools without model calls`에서 자동 발견합니다.
-다음 단계는 실제 Core 기록을 이 계약으로 수집하는 경로, 호출별 누적 예산·취소, Ops 접수·검토 연동입니다.
+실제 Core 기록 수집의 후속 구현은 아래와 같습니다. 호출별 누적 예산·취소, Ops 접수·검토 연동은 남아 있습니다.
 기존 공식 HTML 과거 캡처와 고정 근거 캡처를 이 형식으로 자동 승격하지 않습니다.
+
+### 실제 Core 다중 청크 기록 수집 — 무료 CI 연결
+
+[수집기](../../infrastructure/llmops/core_rag_capture.py)는 소유권을 검증한 임시 Compose의 Core HTTP를
+호출하고, [시험용 AI 기록 래퍼](../../infrastructure/llmops/rag_capture_app.py)가 실제 색인·검색·답변의
+요청/응답을 수집합니다. 가상 원문을 임시 DB에 고정하므로 공식 HTML 다운로드·추출은 이 검사의 범위가 아닙니다.
+래퍼는 production 이미지에 포함하지 않으며 시험 Compose에서만 읽기 전용 파일로 연결합니다.
+
+```text
+임시 DB의 가상 원문 → 실제 Core 청커(6개) → AI 색인·Qdrant 검색(최대 5개)
+→ HTTP 모델 대역 → Core 답변·인용 검증
+→ 실제 요청/응답 캡처 + Core trace로 Langfuse 재조회 → 오프라인 평가 보고서
+```
+
+Core 단위 테스트와 통합 검사가 같은 [가상 원문](../../backend/core-service/src/test/resources/support-program-evidence/rag-synthetic-source.json)을
+사용합니다. 기존 수동 분할 예제는 그대로 보존합니다. 첫 버전은 정상·동일 질문 캐시·검색 근거 누락·
+답변 인용 누락·근거 부족·답변 오류·시간 초과·잘못된 인용·검색 오류 9건, 변경된 원문은 정상 1건입니다.
+원문 변경 시 모든 청크 ID가 달라지고 이전 버전의 청크가 검색·인용에 섞이지 않는지 확인합니다.
+대역의 고정 벡터가 검색 순위를 만들므로 이 점수는 실제 임베딩이나 모델의 품질을 뜻하지 않습니다.
+
+- 실제 Core가 보낸 청크로 `fixture.json`을 구성하고, 고정 기대 구절을 유일한 청크에 연결합니다.
+  모델의 응답으로 정답을 만들지 않습니다. 기대 구절 자체도 AI 작성·사람 미검토 자료입니다.
+- `capture-v2`와 `report-v2`는 `integration-stub` / `integration-stub-replay`만 추가합니다.
+  실제 런타임의 모델·프롬프트·기록기 해시와 `paidModelApiCalls=0`을 요구하며 v1은 유지합니다.
+  `liveExecutionPerformed=false`는 **재계산기가 새 호출을 하지 않았다**는 뜻입니다.
+  캡처의 문자열 표시만으로 실행을 증명하지 않으며, CI 수집기가 실제 Langfuse 부모·오류·캐시를 별도 확인합니다.
+- `integration.json`과 버전별 `wire.json`, `fixture.json`, `capture.json`, `report.json`을 보존합니다.
+  아직 실행하지 않은 사례는 `not_started`, 오류 단계의 지표는 null입니다. 수집 실패는 비정상 종료하며
+  가능한 지점까지의 파일을 남깁니다. 정상·실패 모두 CI artifact 업로드 대상입니다.
+- `baselineEligible=false`, `semanticFaithfulness=null`을 유지합니다. Ops 등록·검토·기준 승인은 생성하지 않습니다.
+
+실행·격리 조건과 전체 서버 CI 확인 방법은 [LLMOps 실행 안내](../../infrastructure/llmops/README.md#실제-core-다중-청크-캡처와-오프라인-평가)를 따릅니다.
+로컬에서는 실제 Core 청커 단위 테스트, 실제 AI/SDK·로컬 HTTP 대역·메모리 Qdrant와 수집기 테스트를 검증했습니다.
+새 변경의 JVM·MySQL·Qdrant 서버·Langfuse 통합 성공은 커밋·푸시 후 해당 SHA CI에서 확인해야 합니다.
 
 ## Ops 평가 범위 고정 — 2026-09-30
 

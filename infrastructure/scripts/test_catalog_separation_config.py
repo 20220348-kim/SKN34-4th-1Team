@@ -13,6 +13,24 @@ SPEC.loader.exec_module(checker)
 
 
 class CatalogSeparationEncodingTests(unittest.TestCase):
+    def test_rag_option_requires_evidence_and_fresh_distinct_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            existing = root / "existing"
+            existing.mkdir()
+            common = ["verify", "--config-only", "--search-traces-output", str(root / "search.json")]
+            for args, error in (
+                (common + ["--rag-capture-output", str(root / "new")], "requires --evidence-traces-output"),
+                (common + ["--evidence-traces-output", str(root / "evidence.json"), "--rag-capture-output", str(existing)], "fresh RAG"),
+                (common + ["--evidence-traces-output", str(root / "new/evidence.json"), "--rag-capture-output", str(root / "new")], "distinct RAG"),
+            ):
+                with patch("sys.argv", args), patch.dict(checker.os.environ, {
+                    "LANGFUSE_BASE_URL": "http://localhost:13000", "LANGFUSE_PUBLIC_KEY": "pk-test", "LANGFUSE_SECRET_KEY": "sk-test",
+                }), patch.object(checker.subprocess, "run") as run:
+                    with self.assertRaisesRegex(AssertionError, error):
+                        checker.main()
+                    run.assert_not_called()
+
     def test_evidence_option_requires_shared_tracing_and_distinct_fresh_outputs(self):
         with tempfile.TemporaryDirectory() as directory:
             first = str(Path(directory) / "first.json")
@@ -45,6 +63,10 @@ class CatalogSeparationEncodingTests(unittest.TestCase):
             self.assertEqual(overlay["services"]["openai-stub"]["environment"], {"CORE_TRACE_FIXTURE": "true"})
             self.assertEqual(overlay["networks"]["tracing"]["name"], "govbiz-llmops_default")
             self.assertEqual(overlay["services"]["core-service"]["extra_hosts"], {"www.bizinfo.go.kr": "127.0.0.1", "bizinfo.go.kr": "127.0.0.1"})
+            ai = overlay["services"]["ai-service"]
+            self.assertEqual(ai["environment"]["RAG_CAPTURE_FIXTURE"], "true")
+            self.assertEqual(ai["command"], ["python", "-m", "uvicorn", "rag_capture_app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"])
+            self.assertEqual(ai["volumes"], [{"type": "bind", "source": str(checker.INFRA / "llmops/rag_capture_app.py"), "target": "/app/rag_capture_app.py", "read_only": True}])
             calls.append(command)
             return subprocess.CompletedProcess(command, 0, json.dumps({"services": {"catalog-service": {"environment": {
                 name: "false" for name in {source + "_SYNC_ENABLED" for source in checker.SOURCES} | {"SUPPORT_PROGRAM_INDEX_ENABLED"}
@@ -53,11 +75,12 @@ class CatalogSeparationEncodingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, patch.dict(checker.os.environ, {
             "LANGFUSE_BASE_URL": "http://localhost:13000", "LANGFUSE_PUBLIC_KEY": "pk-test", "LANGFUSE_SECRET_KEY": "sk-test",
         }), patch("sys.argv", ["verify", "--config-only", "--search-traces-output", directory + "/search.json",
-                              "--evidence-traces-output", directory + "/evidence.json"]), \
+                              "--evidence-traces-output", directory + "/evidence.json", "--rag-capture-output", directory + "/rag"]), \
                 patch.object(checker.subprocess, "run", side_effect=render), patch.object(checker, "validate_boundaries") as validate:
             checker.main()
             self.assertTrue(validate.call_args.kwargs["search_traces"])
             self.assertTrue(validate.call_args.kwargs["evidence_traces"])
+            self.assertTrue(validate.call_args.kwargs["rag_capture"])
         self.assertEqual(len(calls), 2)
 
     def test_config_only_handles_cp949_and_keeps_tracing_boundaries(self):
@@ -119,6 +142,18 @@ class CatalogSeparationEncodingTests(unittest.TestCase):
             checker.validate_boundaries(model, "fixture", search_traces=True, evidence_traces=True)
         model["services"]["core-service"]["extra_hosts"] = ["www.bizinfo.go.kr=127.0.0.1", "bizinfo.go.kr=127.0.0.1"]
         checker.validate_boundaries(model, "fixture", search_traces=True, evidence_traces=True)
+        ai = model["services"]["ai-service"]
+        ai["environment"]["RAG_CAPTURE_FIXTURE"] = "true"
+        ai["command"] = ["python", "-m", "uvicorn", "rag_capture_app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+        ai["volumes"] = [{"type": "bind", "source": str(checker.INFRA / "llmops/rag_capture_app.py"), "target": "/app/rag_capture_app.py", "read_only": True}]
+        checker.validate_boundaries(model, "fixture", search_traces=True, evidence_traces=True, rag_capture=True)
+        ai["volumes"][0]["read_only"] = False
+        with self.assertRaisesRegex(AssertionError, "Wrong RAG recorder mount"):
+            checker.validate_boundaries(model, "fixture", search_traces=True, evidence_traces=True, rag_capture=True)
+        ai["volumes"][0]["read_only"] = True
+        ai["command"] = ["python", "-m", "unknown"]
+        with self.assertRaisesRegex(AssertionError, "Unexpected RAG recorder entrypoint"):
+            checker.validate_boundaries(model, "fixture", search_traces=True, evidence_traces=True, rag_capture=True)
         model["services"]["ai-service"]["environment"]["LLM_MODEL_TIMEOUT_SECONDS"] = "25"
         with self.assertRaisesRegex(AssertionError, "timeout fixture"):
             checker.validate_boundaries(model, "fixture", search_traces=True, evidence_traces=True)
