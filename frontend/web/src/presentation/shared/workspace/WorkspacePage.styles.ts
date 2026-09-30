@@ -16,10 +16,24 @@ export const workspacePageStyles = {
   // 오른쪽 동작이 버튼(2.5rem)이든 태그든 없든 머리글 높이가 같도록 제목 줄의 최소 높이를 버튼 높이에 맞춥니다.
   headerTitleGroup: 'flex min-h-10 min-w-0 max-w-full flex-wrap items-center gap-2',
   // "파트너 관리 › 모집글 작성"처럼 상위 화면 이름을 제목 앞에 링크로 둡니다. 제목과 같은 크기, 옅은 색.
-  headerCrumb: 'inline-flex flex-wrap items-center gap-2',
+  // 600px 미만에서는 경로 대신 [← 상위 화면] 한 칸(headerBackLink)만 두어 머리글을 앱 바처럼 한 줄로 줄입니다.
+  headerCrumb: 'inline-flex flex-wrap items-center gap-2 max-[599px]:hidden',
+  headerBackLink: classes(
+    'hidden size-10 shrink-0 place-items-center rounded-full text-app-ink no-underline hover:bg-surface-muted max-[599px]:-ml-2 max-[599px]:grid',
+    'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary',
+  ),
+  // 상위 화면이 있는 머리글의 600px 미만 한 줄: 제목 묶음이 남는 폭을 차지하고 제목은 한 줄로 줄입니다.
+  headerCompactItem: 'max-[599px]:basis-0 max-[599px]:grow max-[599px]:flex-nowrap',
+  headerCompactTitle: 'max-[599px]:min-w-0 max-[599px]:truncate',
   headerCrumbLink:
     'text-[1.25rem] font-bold tracking-[-0.04em] whitespace-nowrap text-sample-muted no-underline hover:text-app-ink',
   headerCrumbSeparator: 'shrink-0 text-sample-muted',
+  // 링크가 아닌 현재 위치(예: 작성 중인 공고명). 긴 공고명은 한 줄로 줄이고 전체 이름은 title로 보여 줍니다.
+  headerCrumbCurrent:
+    'max-w-[24rem] truncate text-[1.25rem] font-bold tracking-[-0.04em] text-sample-muted max-chat:max-w-[14rem]',
+  // 부제가 있으면 제목 줄과 부제를 세로로 쌓습니다.
+  headerTitleStack: 'flex min-w-0 max-w-full flex-col gap-1',
+  headerSubtitle: 'm-0 text-[0.8125rem] leading-[1.5] break-words text-sample-muted max-[599px]:hidden',
   // 제목 옆에 화면을 오가는 탭을 같은 줄로 붙일 때 씁니다. 좁은 폭에서는 세로 구분선을 숨기고 탭 줄이 아래로 내려갑니다.
   headerDivider: 'h-[22px] w-px shrink-0 bg-sample-border max-chat:hidden',
   headerTabs: 'flex min-w-0 grow items-center',

@@ -7,27 +7,77 @@ import { ApplicationPreparationError } from '../../../../domain/errors/Applicati
 import { selectCurrentAccount } from '../../../shared/auth/state/authSlice'
 import { appPaths } from '../../../shared/routes/appPaths'
 import { WorkspacePageHeader } from '../../../shared/workspace/WorkspacePageHeader'
+import { WorkspaceToast, type WorkspaceToastNotice } from '../../../shared/workspace/WorkspaceToast'
 import { workspacePageStyles } from '../../../shared/workspace/WorkspacePage.styles'
-import { applicationPreparationStyles as s } from './ApplicationPreparation.styles'
+import {
+  answerEditorStyles as e,
+  applicationPreparationStyles as s,
+  documentResultStyles as d,
+  newPreparationStyles as n,
+} from './ApplicationPreparation.styles'
 
+const pageTitle = '신청 문서 초안'
+
+/** 신청 문서 초안(26) 화면입니다. 주소가 잘못돼도 머리글은 그대로 두고 본문에 오류를 보여 줍니다. */
 export function ApplicationDocumentPage() {
   const account = useAppSelector(selectCurrentAccount)
   const { preparationId } = useParams()
   const id = Number(preparationId)
   if (!account) return null
-  if (!Number.isSafeInteger(id) || id <= 0) return <p role="alert">올바른 신청 준비 주소가 아닙니다.</p>
+  if (!Number.isSafeInteger(id) || id <= 0) {
+    return <>
+      <WorkspacePageHeader parent={{ to: appPaths.applicationPreparations, label: '신청 문서 작성' }} title={pageTitle} />
+      <main className={workspacePageStyles.content}>
+        <div className={`${n.alert} ${n.alertDanger} ${d.body}`} role="alert">
+          <div className={n.alertText}><strong className={n.alertTitle}>문서 주소가 올바르지 않아요</strong><p>목록에서 작성 중인 신청 문서를 다시 골라 주세요.</p></div>
+          <Link className={n.secondarySm} to={appPaths.applicationPreparations}>목록으로</Link>
+        </div>
+      </main>
+    </>
+  }
   return <DocumentResults key={`${account.email}:${id}`} id={id} />
 }
 
-/** 서버가 기록한 단계를 사람이 읽는 문장으로 바꾼다. 단계는 서버 작업 표의 값이라 화면이 추측하지 않는다. */
-function stageLabel(job: ApplicationDocumentGenerationJob) {
-  if (job.status === 'QUEUED') return '순서를 기다리고 있어요.'
-  switch (job.stage) {
-    case 'MAPPING': return '입력칸 위치를 확인하고 있어요.'
-    case 'WRITING': return '답변을 문서에 기입하고 있어요.'
-    case 'SAVING': return '파일을 저장하고 있어요.'
-    default: return '공식 양식과 저장된 답변을 확인하고 있어요.'
-  }
+/** 서버 작업 표가 기록하는 단계 순서입니다. 화면은 단계를 추측하지 않고 이 값만 표시합니다. */
+const generationStages = [
+  ['PREPARING', '답변 확인'],
+  ['MAPPING', '입력칸 위치 찾기'],
+  ['WRITING', '입력칸 기입'],
+  ['SAVING', '파일 저장'],
+] as const
+
+/** 입력칸을 다시 찾아야 풀리는 실패입니다. 양식을 다시 분석해 새로 시작하는 길을 함께 보여 줍니다. */
+const reanalysisFailureCodes = new Set(['APPLICATION_DOCUMENT_MAPPING_FAILED', 'APPLICATION_DOCUMENT_FORM_REANALYSIS_REQUIRED', 'APPLICATION_DOCUMENT_NO_WRITABLE_INPUT'])
+/** 유료 호출 뒤 결과를 확인하지 못한 실패입니다. 서버가 저장된 결과를 정리할 때까지 기다리게 합니다. */
+const outcomeUnknownFailureCodes = new Set(['RUN_OUTCOME_UNKNOWN', 'APPLICATION_DOCUMENT_OUTCOME_UNKNOWN'])
+
+const formatLabels: Record<string, string> = {
+  'application/x-hwp': 'HWP',
+  'application/hwp+zip': 'HWPX',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'DOCX',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'XLSX',
+  'application/pdf': 'PDF',
+}
+
+function formatOf(file: ApplicationDocument) {
+  return formatLabels[file.mediaType] ?? file.fileName.split('.').pop()?.toUpperCase() ?? ''
+}
+
+function elapsedLabel(seconds: number) {
+  const minutes = Math.floor(seconds / 60)
+  return minutes > 0 ? `${minutes}분 ${seconds % 60}초 지남` : `${seconds}초 지남`
+}
+
+/** "09.22 15:40"처럼 묶음 제목에 붙는 만든 시각입니다. */
+function madeAtLabel(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return null
+  const two = (part: number) => String(part).padStart(2, '0')
+  return `${two(date.getMonth() + 1)}.${two(date.getDate())} ${two(date.getHours())}:${two(date.getMinutes())}`
+}
+
+function Spinner() {
+  return <span className={d.buttonSpinner} aria-hidden="true" />
 }
 
 function DocumentResults({ id }: { id: number }) {
@@ -36,8 +86,12 @@ function DocumentResults({ id }: { id: number }) {
   const requestedRevision = useRef(search.get('generate'))
   const [preparation, setPreparation] = useState<ApplicationPreparation | null>(null)
   const [files, setFiles] = useState<ApplicationDocument[]>([])
+  /** 최근 생성 작업들. 문서 묶음 제목의 만든 시각을 작업의 끝난 시각에서 읽습니다. */
+  const [jobs, setJobs] = useState<ApplicationDocumentGenerationJob[]>([])
   const [busy, setBusy] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  /** 끝났지만 성공하지 못한 생성 작업. 실패 코드에 따라 알림의 동작이 달라집니다. */
+  const [failedJob, setFailedJob] = useState<ApplicationDocumentGenerationJob | null>(null)
   const [attempt, setAttempt] = useState(0)
   const [downloading, setDownloading] = useState<number | null>(null)
   const [migration, setMigration] = useState<ApplicationDocumentMigrationNotice | null>(null)
@@ -49,17 +103,25 @@ function DocumentResults({ id }: { id: number }) {
   const [archiving, setArchiving] = useState(false)
   /** 지금 따라가고 있는 생성 작업. 진행 카드가 서버가 기록한 단계를 보여 준다. */
   const [job, setJob] = useState<ApplicationDocumentGenerationJob | null>(null)
+  const [toast, setToast] = useState<WorkspaceToastNotice | null>(null)
   const downloadController = useRef<AbortController | null>(null)
   const migrationController = useRef<AbortController | null>(null)
   const back = `${appPaths.applicationPreparations}/${id}`
   const latestRevision = files.length > 0 ? Math.max(...files.map((file) => file.inputRevision)) : null
   const latestFiles = files.filter((file) => file.inputRevision === latestRevision)
   const previousFiles = files.filter((file) => file.inputRevision !== latestRevision)
+  const previousRevisions = [...new Set(previousFiles.map((file) => file.inputRevision))].sort((a, b) => b - a)
+  const latestJob = jobs.find((candidate) => candidate.status === 'SUCCEEDED' && candidate.finishedAt
+    && latestFiles.some((file) => candidate.fileIds.includes(file.id)))
+  const latestMadeAt = latestJob?.finishedAt ? madeAtLabel(latestJob.finishedAt) : null
   // 같은 답변 버전은 기존 파일을 즉시 돌려주므로, 다시 만들기는 답변이 바뀐 뒤(현재 버전 파일 없음)에만 켠다.
-  const canRegenerate = !busy && preparation !== null && !files.some((file) => file.inputRevision === preparation.inputRevision)
+  const canRegenerate = !busy && preparation !== null && files.length > 0 && !files.some((file) => file.inputRevision === preparation.inputRevision)
   const unanswered = preparation?.form.sections.flatMap((section) => section.fields
-    .filter((field) => !section.facts.some((fact) => fact.fieldKey === field.key && fact.status === 'PROVIDED'))
-    .map((field) => `${section.title} · ${field.label}`)) ?? []
+    .filter((field) => field.documentWritable !== false && !section.facts.some((fact) => fact.fieldKey === field.key && fact.status === 'PROVIDED'))
+    .map((field) => ({ key: field.key, label: `${section.title} · ${field.label}` }))) ?? []
+  const reanalyzeTo = preparation
+    ? `${appPaths.applicationPreparationNew}?${new URLSearchParams({ sourceCode: preparation.form.sourceCode, sourceProgramId: preparation.form.sourceProgramId })}`
+    : appPaths.applicationPreparationNew
   const reasonLabel = (reason: ApplicationDocument['unfilledAnswers'][number]['reason']) => reason === 'AUTO_FILL_UNSUPPORTED' ? '자동 기입 미지원' : '입력 위치 확인 불가'
   const changeTypeLabel: Record<ApplicationDocumentMigrationNotice['changes'][number]['changeType'], string> = {
     TARGET_ADDED: '새 입력칸', TARGET_REMOVED: '입력칸 사라짐', TARGET_CHANGED: '입력칸 변경',
@@ -92,25 +154,25 @@ function DocumentResults({ id }: { id: number }) {
       return current
     }
     async function load() {
-      setBusy(true); setBusySince(Date.now()); setError(null); setMigration(null); setJob(null)
+      setBusy(true); setBusySince(Date.now()); setError(null); setFailedJob(null); setMigration(null); setJob(null)
       try {
-        const [detail, stored, jobs] = await Promise.all([
+        const [detail, stored, recent] = await Promise.all([
           useCase.get(id, controller.signal),
           useCase.documents(id, controller.signal),
           useCase.documentJobs(id, controller.signal).catch(() => [] as ApplicationDocumentGenerationJob[]),
         ])
         if (controller.signal.aborted) return
-        setPreparation(detail)
-        let documents = stored
+        // 새 초안을 만드는 동안에도 이미 만든 문서는 그대로 받을 수 있게 먼저 보여 준다.
+        setPreparation(detail); setFiles(stored); setJobs(recent)
         let finished: ApplicationDocumentGenerationJob | null = null
-        const running = active(jobs)
+        const running = active(recent)
         if (running) {
           // 화면을 떠났다 돌아와도 진행 중인 작업을 이어받는다. 새 유료 생성을 시작하지 않는다.
           finished = await follow(running)
         } else if (requestedRevision.current !== null) {
           const revision = Number(requestedRevision.current)
           if (!Number.isSafeInteger(revision) || revision !== detail.inputRevision) throw new Error('답변이 변경되었습니다. 답변 입력으로 돌아가 최신 내용을 확인한 뒤 다시 생성해 주세요.')
-          if (!documents.some((file) => file.inputRevision === revision)) {
+          if (!stored.some((file) => file.inputRevision === revision)) {
             try {
               finished = await follow(await useCase.submitDocumentJob(id, revision, controller.signal))
             } catch (caught) {
@@ -124,17 +186,19 @@ function DocumentResults({ id }: { id: number }) {
           }
         }
         if (finished) {
+          const done = finished
           // 실패·결과 불명이어도 앞서 저장된 파일이 있을 수 있으니 목록은 다시 읽는다.
-          documents = await useCase.documents(id, controller.signal)
+          const documents = await useCase.documents(id, controller.signal)
           if (controller.signal.aborted) return
-          if (finished.status !== 'SUCCEEDED') {
-            setFiles(documents)
-            if (finished.mappingMigration) { setMigration(finished.mappingMigration); return }
-            throw new Error(finished.failureMessage ?? '문서를 생성하지 못했습니다.')
+          setFiles(documents)
+          setJobs((previous) => [done, ...previous.filter((candidate) => candidate.id !== done.id)])
+          if (done.status !== 'SUCCEEDED') {
+            if (done.mappingMigration) setMigration(done.mappingMigration)
+            else setFailedJob(done)
+            return
           }
+          setToast({ id: done.id, text: '초안을 만들었어요' })
         }
-        if (controller.signal.aborted) return
-        setFiles(documents)
         requestedRevision.current = null
       } catch (caught) {
         if (!controller.signal.aborted) setError(caught instanceof Error ? caught.message : '문서를 생성하지 못했습니다.')
@@ -151,6 +215,11 @@ function DocumentResults({ id }: { id: number }) {
     const timer = setInterval(tick, 1000)
     return () => clearInterval(timer)
   }, [busySince])
+
+  /** 현재 답변 버전으로 초안을 만든다. 같은 버전의 문서가 이미 있으면 서버를 부르지 않고 그 문서를 보여 준다. */
+  function generate(revision: number) {
+    requestedRevision.current = String(revision); setAttempt((count) => count + 1)
+  }
 
   async function confirmMigration() {
     if (!migration || migrationController.current) return
@@ -190,7 +259,7 @@ function DocumentResults({ id }: { id: number }) {
     try {
       const blob = await useCase.downloadDocumentArchive(id, revision, controller.signal)
       if (controller.signal.aborted) return
-      saveBlob(blob, `신청문서_초안_v${revision}.zip`)
+      saveBlob(blob, `신청 문서_초안_v${revision}.zip`)
     } catch (caught) {
       if (!controller.signal.aborted) setError(caught instanceof Error ? caught.message : '전체 내려받기에 실패했습니다.')
     } finally {
@@ -216,82 +285,178 @@ function DocumentResults({ id }: { id: number }) {
     }
   }
 
-  function renderFile(file: ApplicationDocument, index: number) {
-    const extension = file.fileName.split('.').pop()?.toUpperCase() ?? ''
-    return <section className={s.card} key={file.id} aria-label={`신청문서 ${index + 1}`}>
-      <div className={s.badgeRow}><span className={s.badgeDeadline}>{extension}</span><span className={s.muted}>답변 버전 {file.inputRevision}</span></div>
-      <h2 className={s.cardTitle}>{file.unfilledAnswerCount && file.unfilledAnswerCount > 0 ? '일부 항목 미기입 초안' : `신청문서 ${index + 1}`}</h2>
-      <p className="break-all font-semibold">{file.fileName}</p>
-      <p className={s.muted}>원본과 같은 {extension} 형식 · 답변 버전 {file.inputRevision} · {Math.ceil(file.size / 1024)} KB</p>
-      {preparation && <><p className={s.label}>문서에 포함된 작성 항목</p><ul className={s.fieldList}>{preparation.form.sections.map((section) => <li key={section.key}>{section.title}</li>)}</ul></>}
-      <button type="button" className={s.primary} disabled={downloading !== null || archiving} onClick={() => { void download(file) }}>{downloading === file.id ? '다운로드 중…' : `신청문서 ${index + 1} 다운로드`}</button>
-      {file.filledAnswerCount !== null && file.unfilledAnswerCount !== null && <p className={s.muted}>{file.filledAnswerCount}개 기입 / {file.unfilledAnswerCount}개 미기입</p>}
-      {file.unfilledAnswers.length > 0 && <details className={s.warning}>
-        <summary className={s.label}>자동 기입 못한 답변 보기 ({file.unfilledAnswers.length})</summary>
+  function renderFile(file: ApplicationDocument) {
+    const format = formatOf(file)
+    const filled = file.filledAnswerCount
+    const unfilled = file.unfilledAnswerCount
+    const total = filled !== null && unfilled !== null ? filled + unfilled : 0
+    return <article className={d.file} key={file.id} aria-label={file.fileName}>
+      <div className={d.fileHead}>
+        <span className={d.format} aria-hidden="true">{format}</span>
+        <div className={d.fileText}>
+          <p className={d.fileName}>{file.fileName}</p>
+          <span className={d.fileMeta}>{format} · {Math.ceil(file.size / 1024)} KB</span>
+        </div>
+        <div className={d.fileActions}>
+          <button type="button" className={n.secondarySm} disabled={downloading !== null || archiving} onClick={() => { void download(file) }}>
+            {downloading === file.id && <Spinner />}받기<span className="sr-only">: {file.fileName}</span>
+          </button>
+        </div>
+      </div>
+      {filled !== null && unfilled !== null && total > 0 && <div className={d.fill}>
+        <div className={s.progressTrack} aria-hidden="true"><div className={s.progressFill} style={{ width: `${Math.round((filled / total) * 100)}%` }} /></div>
+        <p className={d.fillLabel}>{unfilled === 0 ? `${filled}개 모두 기입` : `${filled}개 기입 · ${unfilled}개 미기입`}</p>
+      </div>}
+      {file.unfilledAnswers.length > 0 && <details className={d.unfilled}>
+        <summary className={d.unfilledSummary}>자동 기입 못한 답변 보기 ({file.unfilledAnswers.length})</summary>
         <div aria-label="자동 기입하지 못한 답변">
           <ul>{file.unfilledAnswers.map((answer) => <li key={answer.fieldId}><strong>{answer.fieldLabel}</strong>: {answer.value} — {reasonLabel(answer.reason)}</li>)}</ul>
         </div>
       </details>}
-      <p className={s.muted}>문서를 다운로드해 내용을 확인하세요. 내려받은 파일에서 직접 수정하거나, 답변 입력으로 돌아가 정보를 고친 뒤 다시 생성할 수 있습니다.</p>
-    </section>
+    </article>
   }
 
+  // 머리글 오른쪽과 600px 미만 아래 줄이 같은 두 버튼을 씁니다. 파일이 여러 개면 zip으로, 하나면 그 파일을 바로 받습니다.
+  const single = latestFiles.length === 1 ? latestFiles[0] : null
+  const downloadPending = archiving || (single !== null && downloading === single.id)
+  function downloadLatest() {
+    if (single) void download(single)
+    else if (latestRevision !== null) void downloadArchive(latestRevision)
+  }
+  const regenerate = () => { if (preparation) generate(preparation.inputRevision) }
+  const changedBadge = canRegenerate ? <span className={d.changedBadge}>답변이 바뀜</span> : null
+  const downloadLabel = single ? '내려받기' : '전체 내려받기'
+
+  const failureCode = failedJob?.failureCode ?? ''
+  const outcomeUnknown = outcomeUnknownFailureCodes.has(failureCode)
+
   return <>
-    <WorkspacePageHeader parent={[
-      { to: appPaths.applicationPreparations, label: '신청 문서 작성 도우미' },
-      { to: back, label: '신청 문서 / 답변 입력' },
-    ]} title="신청 문서 초안" actions={<>
-      <button type="button" className={s.button} disabled={!canRegenerate} title={canRegenerate ? undefined : '답변을 바꾼 뒤에만 새 버전을 만들 수 있어요'} onClick={() => {
-        if (!preparation) return
-        requestedRevision.current = String(preparation.inputRevision); setAttempt((n) => n + 1)
-      }}>다시 만들기</button>
-      {latestRevision !== null && latestFiles.length > 1 && <button type="button" className={s.primary} disabled={busy || downloading !== null || archiving} onClick={() => { void downloadArchive(latestRevision) }}>
-        {archiving ? '묶는 중…' : '전체 내려받기'}
-      </button>}
-    </>} />
+    <WorkspacePageHeader
+      parent={{ to: back, label: '답변 입력' }}
+      title={pageTitle}
+      subtitle={preparation ? `${preparation.form.programTitle} · ${preparation.form.formTitle}` : undefined}
+      actions={files.length > 0 ? <>
+        {changedBadge && <span className={d.headerOnly}>{changedBadge}</span>}
+        <button type="button" className={`${n.secondary} ${d.headerOnly}`} disabled={!canRegenerate} onClick={regenerate}>다시 만들기</button>
+        <button type="button" className={`${n.primary} ${d.headerOnly}`} disabled={downloading !== null || archiving} onClick={downloadLatest}>
+          {downloadPending && <Spinner />}{downloadLabel}
+        </button>
+      </> : undefined}
+    />
     <main className={workspacePageStyles.content}>
-      {busy && <section className={s.notice} role="status" aria-label="문서 생성 진행">
-        <p><strong>{job ? `답변 버전 ${job.expectedRevision}로 만들고 있어요` : requestedRevision.current !== null ? `답변 버전 ${requestedRevision.current}로 만들고 있어요` : '저장된 문서를 확인하고 있어요'}</strong> · 경과 {Math.floor(elapsedSeconds / 60)}:{String(elapsedSeconds % 60).padStart(2, '0')}</p>
-        <p>{job ? stageLabel(job) : '저장된 문서와 진행 중인 생성 작업을 확인하고 있어요.'} 화면을 나가도 계속돼요. 돌아오면 진행 중인 작업을 이어서 보여 드려요.</p>
-      </section>}
-      {error && <div className={s.warning} role="alert"><p>{error}</p>{!busy && <button type="button" className={s.button} onClick={() => setAttempt((n) => n + 1)}>다시 시도</button>}</div>}
-      {error && preparation && <Link className={s.button} to={`${appPaths.applicationPreparationNew}?${new URLSearchParams({ sourceCode: preparation.form.sourceCode, sourceProgramId: preparation.form.sourceProgramId })}`}>기존 답변을 보관하고 입력칸별 양식 확인</Link>}
-      {migration && <section className={s.card} aria-label="신청서 입력 위치 변경 확인">
-        <h2 className={s.cardTitle}>입력 위치가 변경됐습니다</h2>
-        <p className={s.notice}>승인 전에는 새 위치를 저장하거나 기존 답변·파일을 수정하지 않습니다. 아래 변경을 확인해 주세요.</p>
-        <ul className={s.fieldList}>{migration.changes.map((change, index) => <li key={`${change.fieldLabel}-${index}`}>
-          <strong>{change.fieldLabel}</strong> · {changeTypeLabel[change.changeType]}
-          <p>기존: {change.oldLocation ?? '입력 위치 없음'}</p>
-          <p>새 위치: {change.newLocation ?? '입력 위치 없음'}</p>
-        </li>)}</ul>
-        <div className="flex flex-wrap gap-2">
-          <button type="button" className={s.primary} disabled={migrationBusy} onClick={() => { void confirmMigration() }}>
-            {migrationBusy ? '적용 중…' : '새 입력 위치 적용'}
-          </button>
-          <button type="button" className={s.button} disabled={migrationBusy} onClick={() => {
-            setMigration(null); setMigrationMessage('변경 적용을 취소했습니다. 기존 답변과 파일은 그대로 유지됩니다.')
-          }}>취소하고 기존 작성 유지</button>
-        </div>
-      </section>}
-      {migrationMessage && <div className={s.notice} role="status"><p>{migrationMessage}</p>
-        {regenerationRevision !== null && <button type="button" className={s.button} onClick={() => {
-          requestedRevision.current = String(regenerationRevision); setRegenerationRevision(null); setMigrationMessage(null); setAttempt((n) => n + 1)
-        }}>새 초안 생성</button>}
-      </div>}
-      {!busy && !error && files.length === 0 && <p className={s.notice}>현재 답변으로 생성된 문서가 없습니다. 답변 입력에서 초안 생성하기를 눌러 주세요.</p>}
-      {!busy && latestFiles.map((file, index) => renderFile(file, index))}
-      {!busy && previousFiles.length > 0 && <details className={s.card}>
-        <summary className={s.label}>이전 버전 {previousFiles.length}개 보기</summary>
-        <div className="mt-3 flex flex-col gap-3">{previousFiles.map((file, index) => renderFile(file, latestFiles.length + index))}</div>
-      </details>}
-      {!busy && files.length > 0 && unanswered.length > 0 && <section className={s.warning} aria-label="답변이 없어 기입하지 않은 항목">
-        <h2 className={s.cardTitle}>답변이 없어 기입하지 않은 항목</h2>
-        <p>미정으로 저장했거나 답변하지 않은 항목입니다. 아래 항목은 자동으로 채우지 않았으므로 제출 전에 확인해 주세요.</p>
-        <ul>{unanswered.map((label) => <li key={label}>{label}</li>)}</ul>
-        <Link className={s.button} to={back}>답변 입력으로</Link>
-      </section>}
-      <p className={s.notice}>한 원본 파일에 여러 신청서가 있으면 한 파일로 제공됩니다. 내려받은 문서의 기입 위치와 내용, 줄바꿈을 확인한 뒤 제출해 주세요.</p>
-      <Link className={s.button} to={back}>이전으로 · 답변 수정</Link>
+      <div className={d.body}>
+        {busy && job && <section className={n.progress} role="status" aria-live="polite" aria-label="문서 생성 진행">
+          <div className={n.progressHead}>
+            <span className={n.spinner} aria-hidden="true" />
+            <strong className={n.progressTitle}>답변 버전 {job.expectedRevision}로 초안을 {files.length > 0 ? '다시 ' : ''}만들고 있어요</strong>
+            <span className={n.progressTime}>{elapsedLabel(elapsedSeconds)}</span>
+          </div>
+          {job.status === 'QUEUED' && <p className={n.muted}>순서를 기다리고 있어요.</p>}
+          <StageList job={job} />
+          <p className={n.progressNote}>화면을 나가도 계속돼요. 돌아오면 이어서 보여 드려요.</p>
+        </section>}
+        {busy && !job && <p className={n.muted} role="status">저장된 문서를 확인하고 있어요.</p>}
+
+        {failedJob && <div className={`${n.alert} ${n.alertDanger}`} role="alert">
+          <div className={n.alertText}>
+            <strong className={n.alertTitle}>초안을 만들지 못했어요. 답변은 저장되어 있어요.</strong>
+            <p>{outcomeUnknown ? '결과를 확인하는 중이에요. 잠시 뒤 다시 열어 주세요.' : failedJob.failureMessage ?? '문서를 생성하지 못했습니다.'}</p>
+          </div>
+          <div className={d.alertActions}>
+            {!outcomeUnknown && reanalysisFailureCodes.has(failureCode) && <Link className={n.secondarySm} to={reanalyzeTo}>양식 다시 분석해 새로 시작</Link>}
+            <button type="button" className={n.secondarySm} disabled={busy} onClick={() => setAttempt((count) => count + 1)}>다시 시도</button>
+          </div>
+        </div>}
+        {error && <div className={`${n.alert} ${n.alertDanger}`} role="alert">
+          <div className={n.alertText}><p>{error}</p></div>
+          {!busy && <button type="button" className={n.secondarySm} onClick={() => setAttempt((count) => count + 1)}>다시 시도</button>}
+        </div>}
+
+        {migration && <section className={n.card} aria-label="신청서 입력 위치 변경 확인">
+          <h2 className={n.cardTitle}>입력 위치가 변경됐습니다</h2>
+          <p className={n.muted}>승인 전에는 새 위치를 저장하거나 기존 답변·파일을 수정하지 않습니다. 아래 변경을 확인해 주세요.</p>
+          <ul className={s.fieldList}>{migration.changes.map((change, index) => <li className={`${n.summary} ${n.muted}`} key={`${change.fieldLabel}-${index}`}>
+            <strong className="text-app-ink">{change.fieldLabel} · {changeTypeLabel[change.changeType]}</strong>
+            <span>기존: {change.oldLocation ?? '입력 위치 없음'}</span>
+            <span>새 위치: {change.newLocation ?? '입력 위치 없음'}</span>
+          </li>)}</ul>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className={n.primary} disabled={migrationBusy} onClick={() => { void confirmMigration() }}>
+              {migrationBusy ? '적용 중…' : '새 입력 위치 적용'}
+            </button>
+            <button type="button" className={n.secondary} disabled={migrationBusy} onClick={() => {
+              setMigration(null); setMigrationMessage('변경 적용을 취소했습니다. 기존 답변과 파일은 그대로 유지됩니다.')
+            }}>취소하고 기존 작성 유지</button>
+          </div>
+        </section>}
+        {migrationMessage && <div className={`${n.alert} ${n.alertNeutral}`} role="status">
+          <div className={n.alertText}><p>{migrationMessage}</p></div>
+          {regenerationRevision !== null && <button type="button" className={n.secondarySm} onClick={() => {
+            const revision = regenerationRevision
+            setRegenerationRevision(null); setMigrationMessage(null); generate(revision)
+          }}>새 초안 생성</button>}
+        </div>}
+
+        {!busy && preparation && files.length === 0 && !error && !failedJob && !migration && !migrationMessage && <section className={n.card} aria-labelledby="documents-empty-title">
+          <div className={n.empty}>
+            <h2 className={n.cardTitle} id="documents-empty-title">아직 만든 초안이 없어요</h2>
+            <p className={n.muted}>저장된 답변을 공식 양식의 입력칸에 기입해 초안을 만들어요.</p>
+            <button type="button" className={n.secondarySm} onClick={() => generate(preparation.inputRevision)}>초안 만들기</button>
+          </div>
+        </section>}
+
+        {latestRevision !== null && <section className={d.group} aria-labelledby="documents-latest-title">
+          <h2 className={d.groupTitle} id="documents-latest-title">
+            답변 버전 {latestRevision} 문서<span className={d.groupMeta}>{[latestMadeAt, `${latestFiles.length}개`].filter(Boolean).map((part) => ` · ${part}`).join('')}</span>
+          </h2>
+          {latestFiles.map(renderFile)}
+          {previousFiles.length > 0 && <details className={d.older}>
+            <summary className={d.olderSummary}>이전 버전 문서 {previousFiles.length}개</summary>
+            <div className="mt-3 flex flex-col gap-3">{previousRevisions.map((revision) => <div className={d.group} key={revision}>
+              <h3 className={d.olderTitle}>답변 버전 {revision} 문서</h3>
+              {previousFiles.filter((file) => file.inputRevision === revision).map(renderFile)}
+            </div>)}</div>
+          </details>}
+        </section>}
+
+        {files.length > 0 && unanswered.length > 0 && <section className={`${n.alert} ${n.alertWarning}`} aria-labelledby="documents-unanswered-title">
+          <div className={n.alertText}>
+            <strong className={n.alertTitle} id="documents-unanswered-title">답하지 않은 선택 항목 {unanswered.length}개</strong>
+            <p>{unanswered[0].label}{unanswered.length > 1 ? ` 외 ${unanswered.length - 1}개` : ''} — 문서에 빈칸으로 남아요. 제출 전에 채우거나 답을 적고 다시 만들어 주세요.</p>
+          </div>
+          <Link className={n.secondarySm} to={`${back}?${new URLSearchParams({ question: unanswered[0].key })}`}>답변 입력으로</Link>
+        </section>}
+
+        {files.length > 0 && <p className={d.note}>한 원본 파일에 신청서가 여러 개 있으면 한 파일로 드려요. 내려받은 문서의 기입 위치와 줄바꿈을 확인한 뒤 제출해 주세요.</p>}
+
+        {files.length > 0 && <div className={d.mobileBar}>
+          {changedBadge && <span className="self-start">{changedBadge}</span>}
+          <div className={d.mobileButtons}>
+            <button type="button" className={e.prevButton} disabled={!canRegenerate} onClick={regenerate}>다시 만들기</button>
+            <button type="button" className={e.nextButton} disabled={downloading !== null || archiving} onClick={downloadLatest}>
+              {downloadPending && <Spinner />}{downloadLabel}
+            </button>
+          </div>
+        </div>}
+      </div>
     </main>
+    <WorkspaceToast notice={toast} onClose={() => setToast(null)} />
   </>
+}
+
+/** 진행 카드의 서버 단계 목록입니다. 순서를 기다리는 동안은 모두 대기, 실행 중인데 단계가 아직 없으면 첫 단계를 진행 중으로 둡니다. */
+function StageList({ job }: { job: ApplicationDocumentGenerationJob }) {
+  const current = job.status === 'QUEUED' ? -1 : Math.max(0, generationStages.findIndex(([stage]) => stage === job.stage))
+  return <ol className={d.stageList} aria-label="진행 단계">
+    {generationStages.map(([stage, label], index) => {
+      const state = index < current ? 'done' : index === current ? 'active' : 'idle'
+      return <li key={stage} className={state === 'done' ? d.stageDone : state === 'active' ? d.stageActive : d.stage} aria-current={state === 'active' ? 'step' : undefined}>
+        <span className={state === 'done' ? d.stageMarkDone : state === 'active' ? d.stageMarkActive : d.stageMark} aria-hidden="true">
+          {state === 'done' && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5" /></svg>}
+          {state === 'active' && <span className={d.buttonSpinner} />}
+        </span>
+        {label}<span className="sr-only"> · {state === 'done' ? '완료' : state === 'active' ? '진행 중' : '대기'}</span>
+      </li>
+    })}
+  </ol>
 }

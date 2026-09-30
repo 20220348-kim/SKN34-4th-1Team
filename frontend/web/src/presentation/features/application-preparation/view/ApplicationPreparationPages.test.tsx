@@ -125,6 +125,20 @@ function jobSucceeds(files: (typeof documentFile)[]) {
   })
 }
 
+/** 머리글 안에서만 찾습니다. 600px 미만 아래 동작 줄에도 같은 버튼이 있어서입니다. */
+function header() {
+  return within(screen.getByRole('banner'))
+}
+
+/** 파일 카드의 [받기] 버튼입니다. 파일 이름이 접근 이름에 붙습니다. */
+function receiveButton(fileName = documentFile.fileName) {
+  return screen.getByRole('button', { name: `받기: ${fileName}` }) as HTMLButtonElement
+}
+
+function stageStates() {
+  return within(screen.getByRole('list', { name: '진행 단계' })).getAllByRole('listitem').map((item) => item.textContent)
+}
+
 it('follows a queued job stage by stage and loads the files once it succeeds', async () => {
   vi.useFakeTimers()
   repository.get.mockResolvedValue(readyPreparation())
@@ -135,14 +149,20 @@ it('follows a queued job stage by stage and loads the files once it succeeds', a
     .mockResolvedValueOnce(generationJob())
   await act(async () => { mount('/app/application-preparations/12/documents?generate=3') })
   const progress = screen.getByRole('status', { name: '문서 생성 진행' })
-  expect(progress.textContent).toContain('답변 버전 3로 만들고 있어요')
+  expect(progress.textContent).toContain('답변 버전 3로 초안을 만들고 있어요')
   expect(progress.textContent).toContain('순서를 기다리고 있어요')
+  expect(progress.textContent).toContain('화면을 나가도 계속돼요')
+  expect(stageStates()).toEqual(['답변 확인 · 대기', '입력칸 위치 찾기 · 대기', '입력칸 기입 · 대기', '파일 저장 · 대기'])
   await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
-  expect(screen.getByRole('status', { name: '문서 생성 진행' }).textContent).toContain('입력칸 위치를 확인하고 있어요')
+  expect(stageStates()).toEqual(['답변 확인 · 완료', '입력칸 위치 찾기 · 진행 중', '입력칸 기입 · 대기', '파일 저장 · 대기'])
   await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
-  expect(screen.getByRole('status', { name: '문서 생성 진행' }).textContent).toContain('답변을 문서에 기입하고 있어요')
+  expect(stageStates()).toEqual(['답변 확인 · 완료', '입력칸 위치 찾기 · 완료', '입력칸 기입 · 진행 중', '파일 저장 · 대기'])
+  expect(screen.queryByText(/기입 \d+ \/ \d+/)).toBeNull()
   await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
-  expect(screen.getByRole('button', { name: '신청문서 1 다운로드' })).toBeTruthy()
+  expect(receiveButton()).toBeTruthy()
+  expect(screen.queryByRole('status', { name: '문서 생성 진행' })).toBeNull()
+  expect(screen.getByText('초안을 만들었어요')).toBeTruthy()
+  expect(screen.getByRole('heading', { level: 2, name: /^답변 버전 3 문서/ }).textContent).toMatch(/^답변 버전 3 문서 · \d{2}\.\d{2} \d{2}:\d{2} · 1개$/)
   expect(repository.submitDocumentJob).toHaveBeenCalledTimes(1)
   expect(repository.submitDocumentJob).toHaveBeenCalledWith(12, 3, expect.any(AbortSignal), undefined)
   expect(repository.documentJob).toHaveBeenCalledTimes(3)
@@ -156,11 +176,30 @@ it('resumes a job that is already running instead of submitting another paid gen
   repository.documentJobs.mockResolvedValue([generationJob({ id: 77, status: 'RUNNING', stage: 'WRITING', fileIds: [], finishedAt: null })])
   repository.documentJob.mockResolvedValue(generationJob({ id: 77 }))
   await act(async () => { mount('/app/application-preparations/12/documents?generate=3') })
-  expect(screen.getByRole('status', { name: '문서 생성 진행' }).textContent).toContain('답변을 문서에 기입하고 있어요')
+  expect(stageStates()).toContain('입력칸 기입 · 진행 중')
   await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
-  expect(screen.getByRole('button', { name: '신청문서 1 다운로드' })).toBeTruthy()
+  expect(receiveButton()).toBeTruthy()
   expect(repository.submitDocumentJob).not.toHaveBeenCalled()
   expect(repository.documentJob).toHaveBeenCalledWith(12, 77, expect.any(AbortSignal))
+})
+
+it('keeps the previous documents downloadable while a new draft is being made', async () => {
+  vi.useFakeTimers()
+  const previous = { ...documentFile, id: 70, inputRevision: 2, fileName: '신청서_초안_v2.hwpx' }
+  repository.get.mockResolvedValue(readyPreparation())
+  repository.documents.mockResolvedValueOnce([previous]).mockResolvedValue([previous, documentFile])
+  repository.submitDocumentJob.mockResolvedValue(generationJob({ status: 'RUNNING', stage: 'MAPPING', fileIds: [], finishedAt: null }))
+  repository.documentJob.mockResolvedValue(generationJob())
+  await act(async () => { mount('/app/application-preparations/12/documents?generate=3') })
+  expect(screen.getByRole('status', { name: '문서 생성 진행' }).textContent).toContain('답변 버전 3로 초안을 다시 만들고 있어요')
+  expect(screen.getByRole('heading', { level: 2, name: /^답변 버전 2 문서/ })).toBeTruthy()
+  expect(receiveButton(previous.fileName).disabled).toBe(false)
+  expect((header().getByRole('button', { name: '다시 만들기' }) as HTMLButtonElement).disabled).toBe(true)
+  expect(screen.queryByText('답변이 바뀜')).toBeNull()
+  await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+  expect(screen.getByRole('heading', { level: 2, name: /^답변 버전 3 문서/ })).toBeTruthy()
+  expect(screen.getByText('이전 버전 문서 1개')).toBeTruthy()
+  expect(screen.getByText('초안을 만들었어요')).toBeTruthy()
 })
 
 it('follows the existing job after a submit conflict without repeating generation', async () => {
@@ -173,7 +212,7 @@ it('follows the existing job after a submit conflict without repeating generatio
   await act(async () => { mount('/app/application-preparations/12/documents?generate=3') })
   expect(screen.queryByRole('alert')).toBeNull()
   await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
-  expect(screen.getByRole('button', { name: '신청문서 1 다운로드' })).toBeTruthy()
+  expect(receiveButton()).toBeTruthy()
   expect(repository.submitDocumentJob).toHaveBeenCalledTimes(1)
   expect(repository.documentJob).toHaveBeenCalledWith(12, 78, expect.any(AbortSignal))
 })
@@ -218,17 +257,18 @@ it('moves to a separate results page, generates a native file and returns to sav
   const button = await screen.findByRole('button', { name: '초안 만들기' })
   expect(repository.submitDocumentJob).not.toHaveBeenCalled()
   fireEvent.click(button)
-  const downloadButton = await screen.findByRole('button', { name: '신청문서 1 다운로드' })
-  const downloadHint = screen.getByText(/문서를 다운로드해 내용을 확인하세요/)
+  await waitFor(() => expect(receiveButton()).toBeTruthy())
   const breadcrumbs = screen.getByRole('navigation', { name: '상위 화면' })
-  expect(within(breadcrumbs).getByRole('link', { name: '신청 문서 작성 도우미' })).toBeTruthy()
-  expect(within(breadcrumbs).getByRole('link', { name: '신청 문서 / 답변 입력' })).toBeTruthy()
-  expect(screen.getByRole('heading', { name: '신청 문서 초안' })).toBeTruthy()
-  expect(downloadButton.compareDocumentPosition(downloadHint) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  expect(within(breadcrumbs).getAllByRole('link').map((link) => link.textContent)).toEqual(['답변 입력'])
+  expect(within(breadcrumbs).getByRole('link', { name: '답변 입력' }).getAttribute('href')).toBe('/app/application-preparations/12')
+  expect(screen.getByRole('heading', { level: 1, name: '신청 문서 초안' })).toBeTruthy()
+  expect(screen.getByText('혁신바우처 지원사업 · 혁신바우처 사업계획서')).toBeTruthy()
+  expect(screen.queryByRole('link', { name: '이전으로 · 답변 수정' })).toBeNull()
+  expect(screen.queryByText(/신청문서/)).toBeNull()
+  expect(screen.queryByRole('region', { name: /답하지 않은 선택 항목/ })).toBeNull()
   expect(screen.queryByLabelText('답변 입력')).toBeNull()
-  expect(screen.queryByLabelText('작성본 내용')).toBeNull()
   expect(repository.submitDocumentJob).toHaveBeenCalledWith(12, 3, expect.any(AbortSignal), undefined)
-  fireEvent.click(screen.getByRole('link', { name: '이전으로 · 답변 수정' }))
+  fireEvent.click(within(breadcrumbs).getByRole('link', { name: '답변 입력' }))
   expect((await screen.findByLabelText('답변 입력') as HTMLTextAreaElement).value).toBe('새봄테크')
 })
 
@@ -247,7 +287,7 @@ it('blocks generation until every required answer exists, then saves pending ans
   expect(generateButtons).toHaveLength(2)
   expect(generateButtons.every((button) => !(button as HTMLButtonElement).disabled)).toBe(true)
   fireEvent.click(generateButtons[1])
-  await screen.findByRole('button', { name: '신청문서 1 다운로드' })
+  await waitFor(() => expect(receiveButton()).toBeTruthy())
   expect(repository.replaceInputs).toHaveBeenCalledTimes(2)
   expect(repository.replaceInputs).toHaveBeenLastCalledWith(12, 'voucher-plan', { expectedRevision: 4, facts: [
     { fieldKey: 'project-title', status: 'PROVIDED', value: '스마트 공정 과제', sourceText: '과제명: 스마트 공정 과제' },
@@ -259,60 +299,92 @@ it('reuses a stored native document on refresh without another generation call',
   repository.get.mockResolvedValue(readyPreparation())
   repository.documents.mockResolvedValue([documentFile])
   mount('/app/application-preparations/12/documents?generate=3')
-  await screen.findByRole('button', { name: '신청문서 1 다운로드' })
+  await waitFor(() => expect(receiveButton()).toBeTruthy())
   expect(repository.submitDocumentJob).not.toHaveBeenCalled()
+  expect(screen.queryByText('초안을 만들었어요')).toBeNull()
 })
 
-it('shows the immutable partial-draft answer summary beside the download', async () => {
+it('shows each file with its format, size, fill meter and folded auto-fill misses', async () => {
   repository.get.mockResolvedValue(readyPreparation())
   repository.documents.mockResolvedValue([{ ...documentFile, filledAnswerCount: 1, unfilledAnswerCount: 1, unfilledAnswers: [{
     fieldId: 'company-overview:consent', fieldLabel: '기업 개요 / 개인정보 동의', value: '동의함', reason: 'INPUT_LOCATION_NOT_FOUND',
   }] }])
   mount('/app/application-preparations/12/documents')
-  expect(await screen.findByRole('heading', { name: '일부 항목 미기입 초안' })).toBeTruthy()
-  expect(screen.getByText('1개 기입 / 1개 미기입')).toBeTruthy()
-  expect(screen.getByLabelText('자동 기입하지 못한 답변').textContent).toContain('기업 개요 / 개인정보 동의: 동의함 — 입력 위치 확인 불가')
-  expect(screen.getByRole('button', { name: '신청문서 1 다운로드' })).toBeTruthy()
+  const card = await screen.findByRole('article', { name: documentFile.fileName })
+  expect(within(card).getByText('HWPX · 1 KB')).toBeTruthy()
+  expect(within(card).getByText('1개 기입 · 1개 미기입')).toBeTruthy()
+  expect(card.textContent).not.toContain('답변 버전')
+  expect(card.textContent).not.toContain('문서에 포함된 작성 항목')
+  const misses = within(card).getByText('자동 기입 못한 답변 보기 (1)').closest('details') as HTMLDetailsElement
+  expect(misses.open).toBe(false)
+  expect(within(card).getByLabelText('자동 기입하지 못한 답변').textContent).toContain('기업 개요 / 개인정보 동의: 동의함 — 입력 위치 확인 불가')
+  expect(within(card).getByRole('button', { name: `받기: ${documentFile.fileName}` })).toBeTruthy()
 })
 
 it('offers a whole-revision archive only for several current files and folds older versions away', async () => {
   repository.get.mockResolvedValue(readyPreparation())
   repository.documents.mockResolvedValue([
     { ...documentFile, id: 83, inputRevision: 3, fileName: '신청서_초안_v3.hwpx' },
-    { ...documentFile, id: 82, inputRevision: 3, fileName: '사업계획서_초안_v3.docx' },
+    { ...documentFile, id: 82, inputRevision: 3, fileName: '사업계획서_초안_v3.docx', mediaType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
     { ...documentFile, id: 70, inputRevision: 2, fileName: '신청서_초안_v2.hwpx' },
   ])
   repository.downloadDocumentArchive.mockResolvedValue(new Blob(['zip'], { type: 'application/zip' }))
   vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: vi.fn(() => 'blob:test'), revokeObjectURL: vi.fn() }))
   const clicked = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
-    expect(this.download).toBe('신청문서_초안_v3.zip')
+    expect(this.download).toBe('신청 문서_초안_v3.zip')
   })
   mount('/app/application-preparations/12/documents')
-  await screen.findByRole('button', { name: '신청문서 1 다운로드' })
-  expect(screen.getByRole('button', { name: '신청문서 2 다운로드' })).toBeTruthy()
-  const older = screen.getByText('이전 버전 1개 보기').closest('details') as HTMLDetailsElement
+  await waitFor(() => expect(receiveButton('신청서_초안_v3.hwpx')).toBeTruthy())
+  expect(within(screen.getByRole('article', { name: '사업계획서_초안_v3.docx' })).getByText('DOCX · 1 KB')).toBeTruthy()
+  expect(screen.getByRole('heading', { level: 2, name: /^답변 버전 3 문서/ }).textContent).toBe('답변 버전 3 문서 · 2개')
+  const older = screen.getByText('이전 버전 문서 1개').closest('details') as HTMLDetailsElement
+  expect(older.open).toBe(false)
   expect(within(older).getByText('신청서_초안_v2.hwpx')).toBeTruthy()
-  expect((screen.getByRole('button', { name: '다시 만들기' }) as HTMLButtonElement).disabled).toBe(true)
-  fireEvent.click(screen.getByRole('button', { name: '전체 내려받기' }))
+  expect((header().getByRole('button', { name: '다시 만들기' }) as HTMLButtonElement).disabled).toBe(true)
+  expect(screen.queryByText('답변이 바뀜')).toBeNull()
+  expect(header().queryByRole('button', { name: '내려받기' })).toBeNull()
+  fireEvent.click(header().getByRole('button', { name: '전체 내려받기' }))
   await waitFor(() => expect(clicked).toHaveBeenCalledTimes(1))
   expect(repository.downloadDocumentArchive).toHaveBeenCalledWith(12, 3, expect.any(AbortSignal))
+  expect(repository.downloadDocument).not.toHaveBeenCalled()
   expect(repository.submitDocumentJob).not.toHaveBeenCalled()
   clicked.mockRestore()
   vi.unstubAllGlobals()
 })
 
-it('enables regeneration only after the answers changed and starts it from the header', async () => {
+it('downloads a single current file directly from the header instead of an archive', async () => {
   repository.get.mockResolvedValue(readyPreparation())
-  repository.documents.mockResolvedValueOnce([{ ...documentFile, inputRevision: 2 }]).mockResolvedValue([])
+  repository.documents.mockResolvedValue([documentFile])
+  repository.downloadDocument.mockResolvedValue(new Blob(['hwpx'], { type: documentFile.mediaType }))
+  vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: vi.fn(() => 'blob:test'), revokeObjectURL: vi.fn() }))
+  const clicked = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+    expect(this.download).toBe(documentFile.fileName)
+  })
+  mount('/app/application-preparations/12/documents')
+  await waitFor(() => expect(receiveButton()).toBeTruthy())
+  expect(header().queryByRole('button', { name: '전체 내려받기' })).toBeNull()
+  fireEvent.click(header().getByRole('button', { name: '내려받기' }))
+  await waitFor(() => expect(clicked).toHaveBeenCalledTimes(1))
+  expect(repository.downloadDocument).toHaveBeenCalledWith(12, 81, expect.any(AbortSignal))
+  expect(repository.downloadDocumentArchive).not.toHaveBeenCalled()
+  clicked.mockRestore()
+  vi.unstubAllGlobals()
+})
+
+it('enables regeneration only after the answers changed and starts it from the header', async () => {
+  const previous = { ...documentFile, inputRevision: 2 }
+  repository.get.mockResolvedValue(readyPreparation())
+  repository.documents.mockResolvedValue([previous])
   jobSucceeds([{ ...documentFile, id: 84 }])
   mount('/app/application-preparations/12/documents')
-  await screen.findByRole('button', { name: '신청문서 1 다운로드' })
-  expect(screen.queryByRole('button', { name: '전체 내려받기' })).toBeNull()
-  const regenerate = screen.getByRole('button', { name: '다시 만들기' }) as HTMLButtonElement
+  await waitFor(() => expect(receiveButton()).toBeTruthy())
+  const regenerate = header().getByRole('button', { name: '다시 만들기' }) as HTMLButtonElement
   expect(regenerate.disabled).toBe(false)
+  expect(regenerate.title).toBe('')
+  expect(header().getByText('답변이 바뀜')).toBeTruthy()
   fireEvent.click(regenerate)
-  expect((await screen.findByRole('status', { name: '문서 생성 진행' })).textContent).toContain('답변 버전 3로 만들고 있어요')
-  await screen.findByRole('button', { name: '신청문서 1 다운로드' })
+  expect(await screen.findByText('초안을 만들었어요')).toBeTruthy()
+  expect(screen.queryByText('답변이 바뀜')).toBeNull()
   expect(repository.submitDocumentJob).toHaveBeenCalledWith(12, 3, expect.any(AbortSignal), undefined)
 })
 
@@ -323,8 +395,8 @@ it('regenerates the document with the revised answers after returning to the inp
   echoReplaceInputs(ready)
   jobSucceeds([{ ...documentFile, id: 82, fileName: '신청서_초안_v4.hwpx' }])
   mount('/app/application-preparations/12/documents')
-  await screen.findByRole('button', { name: '신청문서 1 다운로드' })
-  fireEvent.click(screen.getByRole('link', { name: '이전으로 · 답변 수정' }))
+  await waitFor(() => expect(receiveButton()).toBeTruthy())
+  fireEvent.click(within(screen.getByRole('navigation', { name: '상위 화면' })).getByRole('link', { name: '답변 입력' }))
   fireEvent.change(await screen.findByLabelText('답변 입력'), { target: { value: '변경한 업체명' } })
   // 초안 만들기는 입력 중인 답변을 먼저 저장하고(버전 3 → 4) 그 버전으로 결과 화면에 들어갑니다.
   fireEvent.click(screen.getByRole('button', { name: '초안 만들기' }))
@@ -340,11 +412,54 @@ it('shows the server failure message of a failed job and retries the same revisi
   repository.submitDocumentJob.mockResolvedValueOnce(generationJob({ status: 'FAILED', stage: 'MAPPING', fileIds: [],
     failureCode: 'APPLICATION_DOCUMENT_MAPPING_FAILED', failureMessage: '질문 항목의 실제 입력 위치를 확인하지 못했습니다.' }))
   mount('/app/application-preparations/12/documents?generate=3')
-  expect((await screen.findByRole('alert')).textContent).toContain('입력 위치')
-  expect(screen.queryByRole('button', { name: /다운로드/ })).toBeNull()
-  fireEvent.click(screen.getByRole('button', { name: '다시 시도' }))
-  await screen.findByRole('button', { name: '신청문서 1 다운로드' })
+  const alert = await screen.findByRole('alert')
+  expect(alert.textContent).toContain('초안을 만들지 못했어요. 답변은 저장되어 있어요.')
+  expect(alert.textContent).toContain('질문 항목의 실제 입력 위치를 확인하지 못했습니다.')
+  expect(within(alert).getByRole('link', { name: '양식 다시 분석해 새로 시작' }).getAttribute('href'))
+    .toBe('/app/application-preparations/new?sourceCode=BIZINFO&sourceProgramId=PBLN_1')
+  expect(screen.queryByRole('button', { name: /받기/ })).toBeNull()
+  expect(screen.queryByText('아직 만든 초안이 없어요')).toBeNull()
+  fireEvent.click(within(alert).getByRole('button', { name: '다시 시도' }))
+  await waitFor(() => expect(receiveButton()).toBeTruthy())
   expect(repository.submitDocumentJob.mock.calls.map((call) => call[1])).toEqual([3, 3])
+})
+
+it.each([
+  ['APPLICATION_DOCUMENT_NO_WRITABLE_INPUT', 'FAILED', '자동 기입할 수 있는 답변이 없어', true],
+  ['RUN_OUTCOME_UNKNOWN', 'UNKNOWN', '결과를 확인하는 중이에요. 잠시 뒤 다시 열어 주세요.', false],
+  ['GENERATION_FAILED', 'FAILED', '문서를 생성하지 못했습니다. 잠시 후 다시 시도해 주세요.', false],
+] as const)('offers the actions that fit the %s failure', async (failureCode, status, text, reanalysis) => {
+  repository.get.mockResolvedValue(readyPreparation())
+  repository.submitDocumentJob.mockResolvedValueOnce(generationJob({ status, stage: 'WRITING', fileIds: [], failureCode,
+    failureMessage: failureCode === 'APPLICATION_DOCUMENT_NO_WRITABLE_INPUT' ? '자동 기입할 수 있는 답변이 없어 초안을 생성하지 않았습니다.' : '문서를 생성하지 못했습니다. 잠시 후 다시 시도해 주세요.' }))
+  mount('/app/application-preparations/12/documents?generate=3')
+  const alert = await screen.findByRole('alert')
+  expect(alert.textContent).toContain('초안을 만들지 못했어요. 답변은 저장되어 있어요.')
+  expect(alert.textContent).toContain(text)
+  expect(within(alert).queryByRole('link', { name: '양식 다시 분석해 새로 시작' }) !== null).toBe(reanalysis)
+  expect(within(alert).getByRole('button', { name: '다시 시도' })).toBeTruthy()
+})
+
+it('shows the empty state and makes the first draft from the current answers on click', async () => {
+  repository.get.mockResolvedValue(readyPreparation())
+  mount('/app/application-preparations/12/documents')
+  expect(await screen.findByRole('heading', { name: '아직 만든 초안이 없어요' })).toBeTruthy()
+  expect(screen.getByText('혁신바우처 지원사업 · 혁신바우처 사업계획서')).toBeTruthy()
+  expect(header().queryByRole('button', { name: '다시 만들기' })).toBeNull()
+  expect(repository.submitDocumentJob).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: '초안 만들기' }))
+  await waitFor(() => expect(receiveButton()).toBeTruthy())
+  expect(screen.queryByText('아직 만든 초안이 없어요')).toBeNull()
+  expect(repository.submitDocumentJob).toHaveBeenCalledWith(12, 3, expect.any(AbortSignal), undefined)
+})
+
+it('keeps the header and explains an invalid document address with a way back to the list', () => {
+  mount('/app/application-preparations/not-a-number/documents')
+  expect(screen.getByRole('heading', { level: 1, name: '신청 문서 초안' })).toBeTruthy()
+  const alert = screen.getByRole('alert')
+  expect(alert.textContent).toContain('문서 주소가 올바르지 않아요')
+  expect(within(alert).getByRole('link', { name: '목록으로' }).getAttribute('href')).toBe('/app/application-preparations')
+  expect(repository.get).not.toHaveBeenCalled()
 })
 
 const migrationNotice = {
@@ -365,7 +480,8 @@ it('shows the mapping diff and keeps the old file when approval is cancelled', a
   expect(within(review).getByText(/표 1 · 2행/)).toBeTruthy()
   expect(within(review).getByText(/표 2 · 3행/)).toBeTruthy()
   expect(review.textContent).not.toContain('t1.r1')
-  expect(screen.getByRole('button', { name: '신청문서 1 다운로드' })).toBeTruthy()
+  expect(screen.queryByRole('alert')).toBeNull()
+  expect(receiveButton()).toBeTruthy()
   fireEvent.click(within(review).getByRole('button', { name: '취소하고 기존 작성 유지' }))
   expect(repository.confirmDocumentMappingMigration).not.toHaveBeenCalled()
   expect(await screen.findByText(/기존 답변과 파일은 그대로 유지됩니다/)).toBeTruthy()
@@ -411,9 +527,11 @@ it('downloads binary data using the original extension and reports download erro
     expect(this.download).toBe(documentFile.fileName)
   })
   mount('/app/application-preparations/12/documents')
-  fireEvent.click(await screen.findByRole('button', { name: '신청문서 1 다운로드' }))
+  await waitFor(() => expect(receiveButton()).toBeTruthy())
+  fireEvent.click(receiveButton())
   await waitFor(() => expect(clicked).toHaveBeenCalledTimes(1))
-  fireEvent.click(screen.getByRole('button', { name: '신청문서 1 다운로드' }))
+  await waitFor(() => expect(receiveButton().disabled).toBe(false))
+  fireEvent.click(receiveButton())
   await screen.findByRole('alert')
   expect(repository.downloadDocument).toHaveBeenCalledWith(12, 81, expect.any(AbortSignal))
   clicked.mockRestore()
@@ -430,16 +548,21 @@ function readyPreparation(): ApplicationPreparation {
   return ready
 }
 
-it('lists unknown and unanswered fields separately from the downloadable document', async () => {
+it('sums up unanswered fields in one alert that opens the first one in the editor', async () => {
   const ready = readyPreparation()
   ready.form.sections[1].facts[0].status = 'UNKNOWN'
   ready.form.sections[1].facts[0].value = null
   repository.get.mockResolvedValue(ready)
   repository.documents.mockResolvedValue([documentFile])
   mount('/app/application-preparations/12/documents')
-  const report = await screen.findByRole('region', { name: '답변이 없어 기입하지 않은 항목' })
-  expect(within(report).getByText('바우처 활용 계획 · 과제명')).toBeTruthy()
-  expect(within(report).queryByText('기업 개요 · 업체명')).toBeNull()
+  const report = await screen.findByRole('region', { name: '답하지 않은 선택 항목 1개' })
+  expect(report.textContent).toContain('바우처 활용 계획 · 과제명 — 문서에 빈칸으로 남아요.')
+  expect(report.textContent).not.toContain('기업 개요 · 업체명')
+  expect(within(report).queryByRole('listitem')).toBeNull()
+  const link = within(report).getByRole('link', { name: '답변 입력으로' })
+  expect(link.getAttribute('href')).toBe('/app/application-preparations/12?question=project-title')
+  fireEvent.click(link)
+  expect(await screen.findByText('2. 바우처 활용 계획 · 질문 1 / 1')).toBeTruthy()
 })
 
 it('shows a partial answer count even when the server confirms all required fields', async () => {
@@ -448,7 +571,8 @@ it('shows a partial answer count even when the server confirms all required fiel
   repository.get.mockResolvedValue(ready)
   mount('/app/application-preparations/12')
   await screen.findByRole('heading', { name: '답변 입력' })
-  expect(screen.getByText('답변 1 / 2 · 진행 중')).toBeTruthy()
+  expect(sectionRow('기업 개요').textContent).toContain('답변 1 / 2')
+  expect(sectionRow('기업 개요').textContent).toContain('진행 중')
   expect(screen.queryByText('사실 확인됨')).toBeNull()
 })
 
@@ -551,6 +675,11 @@ afterEach(() => {
 function LocationProbe() {
   const location = useLocation()
   return <span hidden data-testid="location">{location.pathname + location.search}</span>
+}
+
+/** 왼쪽 항목 목록에서 항목 행 버튼을 찾습니다. */
+function sectionRow(title: string) {
+  return within(screen.getByRole('complementary', { name: '작성 항목' })).getByRole('button', { name: new RegExp(title) })
 }
 
 function mount(path: string) {
@@ -1098,17 +1227,25 @@ describe('application preparation creation and detail', () => {
     mount('/app/application-preparations/12')
     await screen.findByRole('heading', { name: '답변 입력' })
 
+    // 경로는 "신청 문서 작성 › 공고명"이고 공고명은 링크가 아닌 현재 위치, 부제는 "양식명 · 신청 분야"입니다.
     const crumbs = screen.getByRole('navigation', { name: '상위 화면' })
     expect(within(crumbs).getByRole('link', { name: '신청 문서 작성' }).getAttribute('href')).toBe('/app/application-preparations')
-    expect(screen.getByText(firstForm.programTitle)).toBeTruthy()
-    expect(screen.getByText(firstForm.attachmentFileName)).toBeTruthy()
-    expect(screen.queryByText('양식명')).toBeNull()
+    expect(within(crumbs).getByText(firstForm.programTitle).tagName).toBe('SPAN')
+    expect(within(crumbs).queryByRole('link', { name: firstForm.programTitle })).toBeNull()
+    expect(screen.getByText('혁신바우처 사업계획서 · 기술지원')).toBeTruthy()
     expect(screen.queryByText('파일 SHA-256')).toBeNull()
-    expect(screen.getByRole('link', { name: /원문 보기/ }).getAttribute('href')).toBe(firstForm.sourceUrl)
-    expect(screen.getAllByLabelText('작성 상태: 시작 전')).toHaveLength(2)
-    expect(screen.getByText('1. 기업 개요')).toBeTruthy()
-    expect(screen.getByText('항목 1 / 2 · 질문 1 / 2')).toBeTruthy()
-    expect(screen.getByRole('heading', { name: /업체명/ })).toBeTruthy()
+    // 검증된 양식에는 AI 추출 안내가 없습니다.
+    expect(screen.queryByText('AI가 공식 첨부에서 뽑은 문항이에요')).toBeNull()
+    expect(screen.queryByRole('note')).toBeNull()
+    // 지금 보고 있는 항목은 답이 없어도 "진행 중", 나머지는 "시작 전"입니다.
+    expect(sectionRow('기업 개요').getAttribute('aria-current')).toBe('step')
+    expect(sectionRow('기업 개요').textContent).toContain('진행 중')
+    expect(sectionRow('바우처 활용 계획').textContent).toContain('시작 전')
+    expect(screen.getByText('전체 답변 0 / 2')).toBeTruthy()
+    expect(screen.getByText('1. 기업 개요 · 질문 1 / 1')).toBeTruthy()
+    expect(screen.getByText('필수').className).toContain('border-warning-line')
+    expect(screen.getByText('0 / 2,000자')).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '업체명' })).toBeTruthy()
     expect(screen.getAllByRole('status').some((node) => node.textContent?.includes('입력하면 자동으로 저장돼요'))).toBe(true)
     expect(screen.queryByRole('link', { name: '문서 보기' })).toBeNull()
     expect(repository.create).not.toHaveBeenCalled()
@@ -1122,14 +1259,26 @@ describe('application preparation creation and detail', () => {
     repository.get.mockResolvedValue(ready)
     repository.documents.mockResolvedValue([documentFile])
     mount('/app/application-preparations/12')
-    await screen.findByText('항목 2 / 2 · 질문 2 / 2')
+    await screen.findByText('2. 바우처 활용 계획 · 질문 1 / 1')
     expect(screen.getByRole('heading', { name: /과제명/ })).toBeTruthy()
     expect((screen.getByLabelText('답변 입력') as HTMLTextAreaElement).value).toBe('')
     expect(screen.getByRole('link', { name: '문서 보기' }).getAttribute('href')).toBe('/app/application-preparations/12/documents')
     fireEvent.click(screen.getByRole('button', { name: '문서 메뉴' }))
     const menu = screen.getByRole('menu', { name: '문서 메뉴' })
+    // 모바일에서만 보이는 [문서 보기]가 메뉴 첫 줄입니다.
+    expect(within(menu).getAllByRole('menuitem').map((item) => item.textContent)).toEqual(['문서 보기', '원문 보기 ↗', '양식 다시 분석해 새로 시작'])
     expect(within(menu).getByRole('menuitem', { name: '원문 보기 ↗' }).getAttribute('href')).toBe(firstForm.sourceUrl)
     expect(within(menu).getByRole('menuitem', { name: '양식 다시 분석해 새로 시작' }).getAttribute('href')).toBe('/app/application-preparations/new?sourceCode=BIZINFO&sourceProgramId=PBLN_1')
+  })
+
+  it('opens the question named in the address and ignores an unknown one', async () => {
+    repository.get.mockResolvedValue(readyPreparation())
+    const first = mount('/app/application-preparations/12?question=project-title')
+    expect(await screen.findByText('2. 바우처 활용 계획 · 질문 1 / 1')).toBeTruthy()
+    expect((screen.getByLabelText('답변 입력') as HTMLTextAreaElement).value).toBe('새봄테크')
+    first.unmount()
+    mount('/app/application-preparations/12?question=missing-field')
+    expect(await screen.findByText('1. 기업 개요 · 질문 1 / 1')).toBeTruthy()
   })
 
   it('shows every saved answer in its input instead of retaining it invisibly', async () => {
@@ -1207,7 +1356,8 @@ describe('application preparation creation and detail', () => {
     expect(repository.replaceInputs).toHaveBeenCalledWith(12, 'company-overview', { expectedRevision: 3, facts: [
       { fieldKey: 'company-name', status: 'UNKNOWN', value: null, sourceText: '업체명: 미정' },
     ] }, expect.any(AbortSignal))
-    expect(screen.getByText('답변 1 / 1 · 완료')).toBeTruthy()
+    expect(sectionRow('기업 개요').textContent).toContain('답변 1 / 1')
+    expect(sectionRow('기업 개요').textContent).toContain('완료')
     fireEvent.click(screen.getByRole('checkbox', { name: '아직 정해지지 않았어요' }))
     expect((screen.getByLabelText('답변 입력') as HTMLTextAreaElement).disabled).toBe(false)
   })
@@ -1221,8 +1371,10 @@ describe('application preparation creation and detail', () => {
     expect(screen.getByRole('alert').textContent).toContain('다른 곳에서 답변이 먼저 바뀌어')
     expect(repository.get).toHaveBeenCalledTimes(2)
     expect((screen.getByLabelText('답변 입력') as HTMLTextAreaElement).value).toBe('충돌 중 입력')
+    // 충돌 알림의 버튼은 "다시 시도"가 아니라 내 답변을 최신 버전 위에 다시 저장하는 동작입니다.
+    expect(screen.queryByRole('button', { name: '다시 시도' })).toBeNull()
     echoReplaceInputs(detail)
-    fireEvent.click(screen.getByRole('button', { name: '다시 시도' }))
+    fireEvent.click(screen.getByRole('button', { name: '내 답변으로 다시 저장' }))
     await act(async () => {})
     expect(repository.replaceInputs).toHaveBeenCalledTimes(2)
     expect(screen.queryByRole('alert')).toBeNull()
@@ -1309,20 +1461,20 @@ describe('application preparation creation and detail', () => {
     repository.get.mockResolvedValue(manyFields)
     echoReplaceInputs(manyFields)
     mount('/app/application-preparations/12')
-    await screen.findByText('항목 1 / 1 · 질문 1 / 16')
+    await screen.findByText('1. 기업 개요 · 질문 1 / 16')
     expect(screen.getByText('안내문1')).toBeTruthy()
     expect(screen.queryByText('안내문2')).toBeNull()
     fireEvent.change(screen.getByRole('textbox'), { target: { value: '첫 번째 답변' } })
     fireEvent.click(screen.getByRole('button', { name: '다음 →' }))
-    expect(screen.getByText('항목 1 / 1 · 질문 2 / 16')).toBeTruthy()
+    expect(screen.getByText('1. 기업 개요 · 질문 2 / 16')).toBeTruthy()
     expect(screen.getByText('안내문2')).toBeTruthy()
     expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('')
     fireEvent.change(screen.getByRole('textbox'), { target: { value: '두 번째 답변' } })
     fireEvent.click(screen.getByRole('button', { name: '← 이전' }))
     expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('첫 번째 답변')
-    await waitFor(() => expect(screen.getByText('답변 2 / 16 · 진행 중')).toBeTruthy())
+    await waitFor(() => expect(sectionRow('기업 개요').textContent).toContain('답변 2 / 16'))
     for (let index = 0; index < 15; index++) fireEvent.click(screen.getByRole('button', { name: '다음 →' }))
-    expect(screen.getByText('항목 1 / 1 · 질문 16 / 16')).toBeTruthy()
+    expect(screen.getByText('1. 기업 개요 · 질문 16 / 16')).toBeTruthy()
     expect(screen.queryByRole('button', { name: '다음 →' })).toBeNull()
     expect(screen.getAllByRole('button', { name: '초안 만들기' }).every((button) => (button as HTMLButtonElement).disabled)).toBe(true)
     expect(repository.interpret).not.toHaveBeenCalled()
@@ -1344,14 +1496,95 @@ describe('application preparation creation and detail', () => {
     // 마지막 질문: 아래 바의 [다음 →] 자리에 [초안 만들기]가 옵니다.
     expect(screen.queryByRole('button', { name: '다음 →' })).toBeNull()
     expect(screen.getAllByRole('button', { name: '초안 만들기' })).toHaveLength(2)
-    const list = screen.getByRole('complementary', { name: '신청 문서 작성 항목 목록' })
-    fireEvent.click(within(list).getByRole('button', { name: /1. 기업 개요/ }))
+    fireEvent.click(sectionRow('기업 개요'))
     expect((screen.getByLabelText('답변 입력') as HTMLTextAreaElement).value).toBe('업체명은 새봄테크입니다.')
-    expect(within(list).getByRole('button', { name: /1. 기업 개요/ }).getAttribute('aria-current')).toBe('step')
+    expect(sectionRow('기업 개요').getAttribute('aria-current')).toBe('step')
     fireEvent.click(screen.getByRole('button', { name: '다음 →' }))
     expect((screen.getByLabelText('답변 입력') as HTMLTextAreaElement).value).toBe('새로운 과제입니다.')
     await waitFor(() => expect(repository.replaceInputs).toHaveBeenCalledTimes(2))
     expect(repository.interpret).not.toHaveBeenCalled()
+  })
+
+  it('shows the AI extraction notice with the source link only for extracted forms', async () => {
+    const extracted = structuredClone(detail)
+    extracted.form.verificationStatus = 'SOURCE_DOCUMENT_EXTRACTED'
+    repository.get.mockResolvedValue(extracted)
+    mount('/app/application-preparations/12')
+    const note = await screen.findByRole('note')
+    expect(within(note).getByText('AI가 공식 첨부에서 뽑은 문항이에요')).toBeTruthy()
+    expect(note.textContent).toContain('원문과 대조해 주세요. 기관 검수 · 선정과 무관하며 자동 제출되지 않아요.')
+    expect(within(note).getByRole('link', { name: /원문 보기 ↗/ }).getAttribute('href')).toBe(firstForm.sourceUrl)
+  })
+
+  it('shows the remaining required count in the bar on the last question and the save time after saving', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date(2026, 8, 30, 9, 41))
+    echoReplaceInputs(detail)
+    await act(async () => { mount('/app/application-preparations/12') })
+    const bar = () => screen.getAllByRole('status').find((node) => node.className.includes('truncate'))!
+    fireEvent.change(screen.getByLabelText('답변 입력'), { target: { value: '새봄' } })
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+    expect(bar().textContent).toBe('자동 저장됨 · 방금 09:41')
+    fireEvent.click(screen.getByRole('button', { name: '다음 →' }))
+    await act(async () => {})
+    // 마지막 질문에서 [초안 만들기]가 비활성이면 바의 상태 자리에 남은 필수 답변 수가 옵니다.
+    expect(bar().textContent).toBe('필수 답변 1개가 남았어요')
+    expect(screen.getByText('필수 답변을 모두 채우면 만들 수 있어요')).toBeTruthy()
+    // 모바일 진행 표시는 항목 단위("바우처 활용 계획 2 / 2")이고 자동 저장 상태는 그 아래에 있습니다.
+    expect(screen.getAllByRole('status').some((node) => node.textContent?.startsWith('자동 저장됨'))).toBe(true)
+    expect(screen.getAllByText('2 / 2').length).toBeGreaterThan(0)
+  })
+
+  it('shows a validation error only under the field and warns once when a paste is cut at the limit', async () => {
+    vi.useFakeTimers()
+    await act(async () => { mount('/app/application-preparations/12') })
+    const input = screen.getByLabelText('답변 입력') as HTMLTextAreaElement
+    fireEvent.paste(input, { clipboardData: { getData: () => '가'.repeat(2001) } })
+    expect(screen.getByText('2,000자까지만 저장돼요')).toBeTruthy()
+    // 붙여 넣기 제한을 우회한 값은 저장 전에 칸 오류가 됩니다. 위쪽 실패 알림으로 겹쳐 띄우지 않습니다.
+    fireEvent.change(input, { target: { value: '가'.repeat(2001) } })
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+    expect(repository.replaceInputs).not.toHaveBeenCalled()
+    const alerts = screen.getAllByRole('alert')
+    expect(alerts).toHaveLength(1)
+    expect(alerts[0].textContent).toBe('답변은 2,000자 이내로 입력해 주세요.')
+    expect(input.getAttribute('aria-invalid')).toBe('true')
+    fireEvent.change(input, { target: { value: '짧은 답변' } })
+    expect(screen.queryByText('2,000자까지만 저장돼요')).toBeNull()
+    expect(screen.getByText('5 / 2,000자')).toBeTruthy()
+  })
+
+  it('restores the typed value when the undecided check is cleared', async () => {
+    mount('/app/application-preparations/12')
+    const input = await screen.findByLabelText('답변 입력') as HTMLTextAreaElement
+    fireEvent.change(input, { target: { value: '새봄테크' } })
+    const check = screen.getByRole('checkbox', { name: '아직 정해지지 않았어요' })
+    fireEvent.click(check)
+    expect(input.value).toBe('')
+    expect(input.disabled).toBe(true)
+    fireEvent.click(check)
+    expect(input.value).toBe('새봄테크')
+    expect(input.disabled).toBe(false)
+  })
+
+  it('opens the section sheet as a dialog that traps focus, closes with Escape and returns focus', async () => {
+    mount('/app/application-preparations/12')
+    await screen.findByLabelText('답변 입력')
+    const opener = screen.getByRole('button', { name: '항목 목록' })
+    fireEvent.click(opener)
+    const sheet = screen.getByRole('dialog', { name: '항목 목록' })
+    const close = within(sheet).getByRole('button', { name: '닫기' })
+    expect(document.activeElement).toBe(close)
+    // 마지막 요소에서 Tab을 누르면 첫 요소로, 첫 요소에서 Shift+Tab을 누르면 마지막 요소로 돕니다.
+    const focusable = Array.from(sheet.querySelectorAll<HTMLElement>('button:not([disabled])'))
+    const last = focusable[focusable.length - 1]!
+    fireEvent.keyDown(sheet, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(last)
+    fireEvent.keyDown(sheet, { key: 'Tab' })
+    expect(document.activeElement).toBe(close)
+    fireEvent.keyDown(sheet, { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: '항목 목록' })).toBeNull()
+    expect(document.activeElement).toBe(opener)
   })
 
   it('rejects a malformed detail id without making a request', () => {
