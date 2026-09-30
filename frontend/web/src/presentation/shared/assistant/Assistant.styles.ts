@@ -11,6 +11,9 @@ export const assistantStyles = {
   launcherWrap: 'fixed right-6 z-[30] flex items-center gap-2.5 max-[639px]:right-4',
   launcherWrapDefault: 'bottom-6',
   launcherWrapLifted: 'bottom-[92px]',
+  // 답변 입력 화면: 600px 미만에서만 아래 이동 바(약 72px) 위로 올립니다. 그 화면이 `data-covers-assistant`를 단
+  // 요소(항목 목록 시트 · 문서 메뉴)를 그리는 동안에는 런처가 그 위에 떠 있지 않도록 숨깁니다. PC는 기본 자리 그대로입니다.
+  launcherWrapAnswerEditor: 'bottom-6 max-[599px]:bottom-[92px] max-[599px]:[body:has([data-covers-assistant])_&]:hidden',
   launcher: classes(
     'relative flex size-14 cursor-pointer items-center justify-center rounded-full border-0 bg-brand-primary text-white',
     'shadow-[0_8px_22px_-8px_rgb(8_127_70_/_60%)] hover:bg-[#066538] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary',

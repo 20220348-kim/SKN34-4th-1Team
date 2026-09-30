@@ -61,18 +61,23 @@ function availabilityReason(code: string): string {
   return '공식 문서와 양식 준비 상태를 확인해야 합니다.'
 }
 
-/** 양식이 없을 때 지난 분석이 남긴 이유입니다. 아직 분석하지 않았거나 원문이 바뀐 경우(PENDING · STALE)는 알릴 이유가 없습니다. */
+/**
+ * 저장된 양식이 없는 이유입니다. 아직 분석하지 않았거나(PENDING) 원문이 바뀐 경우(STALE)는 그 사실을, 그 밖에는 지난 분석이
+ * 남긴 이유를 알립니다.
+ */
 function noFormReason(result: ApplicationFormAvailability): string | null {
   const { status, reasonCode, nextRetryAt } = result.state
-  if (status === 'AVAILABLE' || status === 'PENDING' || status === 'STALE') return null
+  if (status === 'AVAILABLE') return null
+  if (status === 'PENDING') return '이 공고는 아직 신청 양식을 분석한 적이 없어요.'
+  if (status === 'STALE') return '공고나 공식 첨부가 바뀌어 양식을 다시 분석해야 해요.'
   return `최근 분석: ${availabilityReason(reasonCode)}${nextRetryAt ? ` 다음 확인 ${nextRetryAt.replace('T', ' ')}` : ''}`
 }
 
 const activeJobStatuses: ApplicationFormDiscoveryJob['status'][] = ['QUEUED', 'RUNNING', 'UNKNOWN']
 
 /**
- * 새 문서(24) 화면의 상태입니다. 1단계는 공고를 고르고 저장된 양식을 조회하며(AI 호출 없음), 2단계는 양식·지원 분야를
- * 고르거나 저장된 양식이 없으면 사용자가 누를 때만 입력칸별 분석 작업을 시작합니다.
+ * 새 문서(24) 화면의 상태입니다. ① 공고를 고르면 저장된 양식을 조회하고(AI 호출 없음), ② 양식·지원 분야를 고르거나
+ * 저장된 양식이 없으면 사용자가 누를 때만 입력칸별 분석 작업을 시작합니다.
  */
 export function useApplicationPreparationNewViewModel(addressSourceCode: string, addressProgramId: string) {
   const useCase = appContainer.resolve('applicationPreparationUseCase')
@@ -88,7 +93,6 @@ export function useApplicationPreparationNewViewModel(addressSourceCode: string,
   const [forms, setForms] = useState<ApplicationForm[]>([])
   const [selectedFormVersionId, setSelectedFormVersionId] = useState('')
   const [serviceField, setServiceField] = useState<ApplicationServiceField>('GENERAL')
-  const [step, setStep] = useState<'PROGRAM' | 'FORM'>('PROGRAM')
   const [discovery, setDiscovery] = useState<DiscoveryProgress | null>(null)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const [discoveryError, setDiscoveryError] = useState<Error | null>(null)
@@ -133,7 +137,7 @@ export function useApplicationPreparationNewViewModel(addressSourceCode: string,
     return () => clearInterval(timer)
   }, [discovery])
 
-  /** 분석 작업을 시작(또는 이어받아)하고 끝날 때까지 2초마다 확인합니다. 끝나면 2단계에 머문 채 토스트로 알립니다. */
+  /** 분석 작업을 시작(또는 이어받아)하고 끝날 때까지 2초마다 확인합니다. 끝나면 ②를 양식 카드로 바꾸고 토스트로 알립니다. */
   const track = useCallback(async (start: (signal: AbortSignal) => Promise<ApplicationFormDiscoveryJob>, progress: DiscoveryProgress) => {
     if (discoveryController.current) return
     const controller = new AbortController()
@@ -141,7 +145,6 @@ export function useApplicationPreparationNewViewModel(addressSourceCode: string,
     setDiscovery(progress)
     setDiscoveryError(null)
     setCapacityJobs(null)
-    setStep('FORM')
     try {
       let job = await start(controller.signal)
       const deadline = Date.now() + 720_000
@@ -214,7 +217,6 @@ export function useApplicationPreparationNewViewModel(addressSourceCode: string,
     setDiscovery(null)
     chosenKey.current = programKey(next)
     setProgram(next)
-    setStep('PROGRAM')
     setDiscoveryError(null)
     setCapacityJobs(null)
     setDiscoveryWarnings([])
@@ -258,18 +260,6 @@ export function useApplicationPreparationNewViewModel(addressSourceCode: string,
     void track((signal) => useCase.discover(target.sourceCode, target.id, signal, crypto.randomUUID()),
       { reanalysis: forms.length > 0, resumed: false, startedAt: Date.now() })
   }, [forms.length, program, track, useCase])
-
-  const canProceed = program !== null && availability?.status === 'ready'
-  const goToFormStep = useCallback(() => {
-    if (!canProceed) return
-    setCreateError(null)
-    setStep('FORM')
-  }, [canProceed])
-  const backToProgramStep = useCallback(() => {
-    if (submittingGuard.current) return
-    setCreateError(null)
-    setStep('PROGRAM')
-  }, [])
 
   const selectForm = useCallback((formVersionId: string) => {
     const form = forms.find((candidate) => candidate.formVersionId === formVersionId)
@@ -320,8 +310,6 @@ export function useApplicationPreparationNewViewModel(addressSourceCode: string,
     selectedForm,
     selectedFormVersionId,
     serviceField,
-    step,
-    canProceed,
     discovery,
     elapsedSeconds,
     discoveryError,
@@ -334,8 +322,6 @@ export function useApplicationPreparationNewViewModel(addressSourceCode: string,
     retryProgramLoad,
     retryAvailability,
     discoverForms,
-    goToFormStep,
-    backToProgramStep,
     selectForm,
     setServiceField,
     create,

@@ -11,6 +11,7 @@ import { createAppStore } from '../../../app/store'
 import { receivedPendingProposal, receivedProposalBox } from '../../../data/fixtures/partnerProposals'
 import { supportPrograms } from '../../../data/fixtures/supportPrograms'
 import type { Account } from '../../../domain/entities/Account'
+import type { ApplicationPreparation } from '../../../domain/entities/ApplicationPreparation'
 import type { AssistantAnswer } from '../../../domain/entities/AssistantAnswer'
 import type { SavedSupportProgram } from '../../../domain/entities/SavedSupportProgram'
 import { sessionRestored } from '../auth/state/authSlice'
@@ -27,6 +28,20 @@ const memberAccount: Account = { email: 'member@govbiz.local', role: 'USER', tie
 const companyAccount: Account = {
   email: 'company@govbiz.local', role: 'USER', tier: 'COMPANY', emailVerified: true, hasPassword: true, accountType: null, onboarded: true,
   company: { companyName: '넥스트웨이브 주식회사', businessNumber: '2148812034', businessStatusCode: '01' },
+}
+
+/** 답변 입력 화면을 여는 최소한의 신청 준비 건입니다(항목 1개 · 필수 질문 1개). */
+const answerEditorPreparation: ApplicationPreparation = {
+  id: 12, inputRevision: 3, progressStage: 'PREPARING', progressRevision: 1, progressStageUpdatedAt: '2026-09-11T01:00:00+09:00',
+  serviceField: 'TECHNICAL_SUPPORT', createdAt: '2026-09-11T00:00:00+09:00', updatedAt: '2026-09-11T01:00:00+09:00', contents: [],
+  form: {
+    formVersionId: 'verified-form-v1', sourceCode: 'BIZINFO', sourceProgramId: 'PBLN_1', programTitle: '혁신바우처 지원사업',
+    formTitle: '혁신바우처 사업계획서', sourceUrl: 'https://www.bizinfo.go.kr/form', attachmentFileName: '혁신바우처 사업계획서.hwpx',
+    attachmentSha256: 'a'.repeat(64), verificationStatus: 'SOURCE_HASH_AND_LOCATORS_VERIFIED', institutionReviewed: false,
+    supportedServiceFields: ['TECHNICAL_SUPPORT'],
+    sections: [{ key: 'company-overview', title: '기업 개요', locator: 'HWPX 문단 1', description: '기업을 설명합니다.', status: 'NOT_STARTED',
+      fields: [{ key: 'company-name', label: '업체명', guidance: '공식 업체명을 입력합니다.', required: true }], facts: [] }],
+  },
 }
 
 function isoDaysFromNow(days: number): string {
@@ -190,6 +205,39 @@ describe('GovBiz 도우미 위젯', () => {
     fireEvent.click(screen.getByRole('button', { name: assistantMessages.openLauncher }))
     const again = screen.getByRole('dialog', { name: assistantMessages.name })
     expect(within(again).queryByRole('button', { name: assistantMessages.quickContact })).toBeNull()
+  })
+
+  it('답변 입력 화면에서는 600px 미만에서만 런처를 아래 이동 바 위로 올리고, 항목 목록 시트나 문서 메뉴가 열려 있는 동안 숨긴다', async () => {
+    const preparationUseCase = appContainer.resolve('applicationPreparationUseCase')
+    vi.spyOn(preparationUseCase, 'get').mockResolvedValue(answerEditorPreparation)
+    vi.spyOn(preparationUseCase, 'documents').mockResolvedValue([])
+    vi.spyOn(preparationUseCase, 'onlineInputGuide').mockReturnValue(new Promise(() => {}))
+    renderApp('/app/application-preparations/12', memberAccount)
+    await screen.findByLabelText('답변 입력')
+
+    const wrap = screen.getByRole('button', { name: assistantMessages.openLauncher }).parentElement!
+    // PC는 기본 자리(bottom 24px), 600px 미만은 채팅 화면과 같은 92px 위입니다.
+    expect(wrap.classList.contains('bottom-6')).toBe(true)
+    expect(wrap.classList.contains('max-[599px]:bottom-[92px]')).toBe(true)
+    expect(wrap.classList.contains('bottom-[92px]')).toBe(false)
+    // 화면이 data-covers-assistant를 단 요소를 그리는 동안 600px 미만에서 런처를 숨깁니다.
+    expect(wrap.classList.contains('max-[599px]:[body:has([data-covers-assistant])_&]:hidden')).toBe(true)
+    expect(document.querySelector('[data-covers-assistant]')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: '항목 목록' }))
+    expect(document.querySelector('[data-covers-assistant]')).toBe(screen.getByRole('dialog', { name: '항목 목록' }))
+    fireEvent.keyDown(screen.getByRole('dialog', { name: '항목 목록' }), { key: 'Escape' })
+    expect(document.querySelector('[data-covers-assistant]')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: '문서 메뉴' }))
+    expect(document.querySelector('[data-covers-assistant]')).toBe(screen.getByRole('menu', { name: '문서 메뉴' }))
+
+    // 초안 화면이나 목록에서는 올리지도 숨기지도 않습니다.
+    cleanup()
+    renderApp('/app/application-preparations', memberAccount)
+    const listWrap = screen.getByRole('button', { name: assistantMessages.openLauncher }).parentElement!
+    expect(listWrap.className).not.toContain('max-[599px]:bottom-[92px]')
+    expect(listWrap.classList.contains('bottom-6')).toBe(true)
   })
 
   it('비로그인이 상태 질문을 고르면 로그인 안내와 복귀 경로가 담긴 링크를 준다', () => {

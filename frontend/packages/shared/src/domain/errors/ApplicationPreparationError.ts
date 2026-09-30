@@ -54,6 +54,7 @@ function messageFor(code: string, status: number): string {
   if (code === 'APPLICATION_DOCUMENT_VALIDATION_FAILED') return '작성 결과가 검증을 통과하지 못해 파일을 공개하지 않았습니다.'
   if (code === 'APPLICATION_DOCUMENT_OVERFLOW') return '입력란에 답변 전체가 들어가지 않습니다. 답변을 수정하고 확인한 뒤 다시 생성해 주세요.'
   if (code === 'APPLICATION_DOCUMENT_UNRESOLVED_OPTION') return '선택한 답변과 원본 PDF의 선택지를 안전하게 연결할 수 없습니다. 해당 항목은 원본에서 직접 확인해 주세요.'
+  if (code === 'APPLICATION_DOCUMENT_JOB_CAPACITY') return '진행 중인 초안 만들기가 3건이에요. 끝난 뒤 다시 시도해 주세요.'
   if (code === 'APPLICATION_DOCUMENT_RUN_CONFLICT') return '문서 편집 서버가 다른 작업을 처리 중입니다. 잠시 후 다시 시도해 주세요.'
   if (code === 'APPLICATION_DOCUMENT_OUTCOME_UNKNOWN') return '문서 작업의 종료 여부를 확인하지 못했습니다. 중복 실행을 피하려면 관리자 확인이 필요합니다.'
   if (code === 'APPLICATION_DOCUMENT_LIMIT_EXCEEDED') return '문서가 크기·페이지·편집 작업 수 제한을 초과했습니다.'

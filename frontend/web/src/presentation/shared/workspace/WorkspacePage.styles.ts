@@ -28,15 +28,10 @@ export const workspacePageStyles = {
   headerCrumbLink:
     'text-[1.25rem] font-bold tracking-[-0.04em] whitespace-nowrap text-sample-muted no-underline hover:text-app-ink',
   headerCrumbSeparator: 'shrink-0 text-sample-muted',
-  // 링크가 아닌 현재 위치(예: 작성 중인 공고명). 긴 공고명은 한 줄로 줄이고 전체 이름은 title로 보여 줍니다.
-  headerCrumbCurrent:
-    'max-w-[24rem] truncate text-[1.25rem] font-bold tracking-[-0.04em] text-sample-muted max-chat:max-w-[14rem]',
-  // 부제가 있으면 제목 줄과 부제를 세로로 쌓습니다.
-  headerTitleStack: 'flex min-w-0 max-w-full flex-col gap-1',
-  headerSubtitle: 'm-0 text-[0.8125rem] leading-[1.5] break-words text-sample-muted max-[599px]:hidden',
-  // 제목 옆에 화면을 오가는 탭을 같은 줄로 붙일 때 씁니다. 좁은 폭에서는 세로 구분선을 숨기고 탭 줄이 아래로 내려갑니다.
+  // 제목 옆에 화면을 오가는 탭을 같은 줄로 붙일 때 씁니다. 좁은 폭에서는 세로 구분선을 숨기고, 제목 · 동작을 한 줄에 둔 채
+  // 탭 줄만 그 아래 전체 폭 줄로 내립니다.
   headerDivider: 'h-[22px] w-px shrink-0 bg-sample-border max-chat:hidden',
-  headerTabs: 'flex min-w-0 grow items-center',
+  headerTabs: 'flex min-w-0 grow items-center max-chat:order-last max-chat:basis-full',
   // 제목 옆 세그먼트(관심 공고함 · 제안함 · 파트너 관리가 함께 씀): 연한 회색 알약 묶음 안에서 고른 것만 흰색으로 떠 보입니다.
   // 버튼(aria-selected)과 링크(aria-current="page") 어느 쪽이든 같은 모양입니다. 좁은 폭에서는 칸이 폭을 나눠 가집니다.
   segment: 'inline-flex max-w-full gap-[3px] rounded-full bg-surface-muted p-[3px] max-chat:flex max-chat:w-full',
