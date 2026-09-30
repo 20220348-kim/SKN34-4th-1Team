@@ -226,3 +226,18 @@ export type ApplicationFormAvailability = {
   };
   forms: { items: ApplicationForm[] };
 }
+
+/** 문서 생성 작업. 접수 즉시 돌아오고, 결과 파일은 SUCCEEDED 뒤 문서 목록 API로 읽습니다. */
+export type ApplicationDocumentGenerationJob = {
+  id: number
+  preparationId: number
+  expectedRevision: number
+  status: 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'UNKNOWN'
+  stage: 'PREPARING' | 'MAPPING' | 'WRITING' | 'SAVING' | null
+  fileIds: number[]
+  failureCode: string | null
+  failureMessage: string | null
+  mappingMigration: ApplicationDocumentMigrationNotice | null
+  createdAt: string
+  finishedAt: string | null
+}

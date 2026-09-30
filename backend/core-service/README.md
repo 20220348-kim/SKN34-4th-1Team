@@ -162,11 +162,14 @@ HWPX discovery 요청에는 원본 `sourceBase64`·`sourceSha256`을 내부 AI �
 | 문서 API | 동작 |
 |---|---|
 | `GET /api/v1/application-preparations/{id}/documents` | 현재 입력 revision의 생성 파일 메타데이터 목록 |
-| `POST /api/v1/application-preparations/{id}/documents` | `expectedRevision`으로 원본 양식 기입 및 같은 형식 파일 저장 |
+| `POST /api/v1/application-preparations/{id}/documents` | `expectedRevision`으로 원본 양식 기입 및 같은 형식 파일 저장(동기 경로, 현재 웹은 호출하지 않음) |
+| `POST /api/v1/application-preparations/{id}/documents/jobs` | UUID `requestKey`·`expectedRevision`으로 V45 계정별 생성 작업 접수(202·Location). 같은 키는 같은 작업, 준비 건에 진행 중·결과 불명 작업이 있으면 409, 계정당 3개 초과는 422 `APPLICATION_DOCUMENT_JOB_CAPACITY`, 답변 버전이 다르면 409 |
+| `GET /api/v1/application-preparations/{id}/documents/jobs/{jobId}` | 본인 작업의 상태(QUEUED·RUNNING·SUCCEEDED·FAILED·UNKNOWN)·단계(PREPARING·MAPPING·WRITING·SAVING)·파일 ID·실패 코드/문구·입력 위치 변경 안내 |
+| `GET /api/v1/application-preparations/{id}/documents/jobs` | 그 준비 건의 최근 5개 작업(변경 안내 제외). 화면이 진행 중 작업을 이어받을 때 읽음 |
 | `GET /api/v1/application-preparations/{id}/documents/{fileId}/download` | 소유자 확인 후 binary attachment·no-store 반환 |
 | `GET /api/v1/application-preparations/{id}/documents/archive?revision=N` | 그 답변 버전의 저장 파일을 한 번에 반환. 파일이 하나면 그 파일 그대로, 여럿이면 UTF-8 이름의 zip(`application/zip`, `X-Archive-File-Count`). 새 파일을 저장하지 않으며 없는 버전·타인 건은 404 |
 
-V32은 원본 SHA-256·기입 위치 JSON·결과 binary를 준비 건/revision별로 보관합니다. 입력 변경 중 생성된 파일은 409로 저장을 거절하며 준비 건 삭제 시 cascade 삭제됩니다. HWP는 hwplib 1.1.11, HWPX는 ZIP/XML, PDF는 PDFBox의 편집 가능한 AcroForm과 OFL NanumGothic을 사용합니다. 원본 첨부는 기존 공식 제공처 Client로 재수집하고 해시를 대조합니다. 임의 URL을 받지 않습니다.
+V45 `application_document_generation_job`은 생성 작업을 보관하며 `ApplicationDocumentGenerationJobWorker`가 같은 프로세스에서 2초마다 QUEUED 행을 claim해 실행합니다(`app.application-document.jobs.enabled`·`concurrency`·`poll-ms`). QUEUED 1시간은 만료, RUNNING 30분은 유료 AI 호출 전이면 실패(`RUN_INTERRUPTED`)·호출 뒤면 결과 불명, 결과 불명은 `unknown-outcome-lock-ttl` 뒤 실패로 내려 준비 건의 활성 슬롯을 비웁니다. V32은 원본 SHA-256·기입 위치 JSON·결과 binary를 준비 건/revision별로 보관합니다. 입력 변경 중 생성된 파일은 409로 저장을 거절하며 준비 건 삭제 시 cascade 삭제됩니다. HWP는 hwplib 1.1.11, HWPX는 ZIP/XML, PDF는 PDFBox의 편집 가능한 AcroForm과 OFL NanumGothic을 사용합니다. 원본 첨부는 기존 공식 제공처 Client로 재수집하고 해시를 대조합니다. 임의 URL을 받지 않습니다.
 
 HWP/HWPX의 파란 글씨는 `exampleText` 후보로 AI에 전달합니다. AI가 기입란의 예시·작성 힌트로 선택한 `clearExampleTargetIds`만 제거하고, 검은 항목명과 선택하지 않은 제목은 유지한 뒤 답변을 검은 글씨로 기입합니다. 색상만으로 모든 파란 글씨를 삭제하지 않습니다. 범위 주석이 있는 HWP 문단의 예시 삭제는 지원하지 않으며 명시적인 오류를 반환합니다. PDF의 기존 예시 제거는 지원하지 않습니다.
 AI가 서로 다른 답변을 같은 HWP/HWPX 텍스트 칸에 배치하면 AI Service가 칸마다 첫 답변과 충돌하지 않은 위치를 고정하고, 나머지 충돌 답변을 고정된 칸을 금지한 한 번의 요청으로 다시 배치합니다. 첫 응답과 교정 응답의 예시 삭제 분류가 모두 유효하지 않으면 답변 없는 분류 요청으로 분리한 뒤 전체 위치 계약을 다시 검증합니다. 교정 뒤에도 안전한 고유 위치가 없으면 Core는 파일을 저장하지 않고 명시적인 생성 오류를 반환합니다.

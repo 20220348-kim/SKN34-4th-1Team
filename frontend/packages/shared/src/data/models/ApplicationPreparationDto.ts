@@ -180,3 +180,25 @@ export const applicationInterpretationSchema = z.object({
   missingFields: z.array(z.string().regex(/^[a-z][a-z0-9-]{0,63}$/)).max(20),
   nextQuestion: z.string().min(1).max(300).nullable(),
 })
+
+export const applicationDocumentGenerationJobSchema = z.object({
+  id,
+  preparationId: id,
+  expectedRevision: id,
+  status: z.enum(['QUEUED', 'RUNNING', 'SUCCEEDED', 'FAILED', 'UNKNOWN']),
+  stage: z.enum(['PREPARING', 'MAPPING', 'WRITING', 'SAVING']).nullable(),
+  fileIds: z.array(id).max(20),
+  failureCode: z.string().min(1).max(64).nullable(),
+  failureMessage: z.string().min(1).max(500).nullable(),
+  mappingMigration: applicationDocumentMigrationNoticeSchema.nullable().optional().transform((value) => value ?? null),
+  createdAt: time,
+  finishedAt: time.nullable(),
+}).superRefine((job, context) => {
+  const terminal = ['SUCCEEDED', 'FAILED', 'UNKNOWN'].includes(job.status)
+  if ((job.status === 'SUCCEEDED') !== (job.fileIds.length > 0)
+    || (['FAILED', 'UNKNOWN'].includes(job.status) !== (job.failureCode !== null))
+    || (terminal !== (job.finishedAt !== null))
+    || (job.mappingMigration !== null && job.failureCode !== 'APPLICATION_DOCUMENT_FORM_REANALYSIS_REQUIRED')) {
+    context.addIssue({ code: 'custom', message: '문서 생성 작업의 상태와 결과가 일치하지 않습니다.' })
+  }
+})

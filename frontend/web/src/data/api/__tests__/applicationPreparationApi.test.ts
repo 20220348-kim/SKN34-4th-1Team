@@ -3,22 +3,72 @@ import { ApplicationPreparationRepositoryImpl } from '../../repositories/Applica
 
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers() })
 
-it('waits for sequential document analysis but still bounds a stalled generation', async () => {
+const queuedJob = { id: 501, preparationId: 1, expectedRevision: 3, status: 'QUEUED', stage: null, fileIds: [], failureCode: null,
+  failureMessage: null, mappingMigration: null, createdAt: '2026-09-30T10:00:00+09:00', finishedAt: null }
+
+it('submits a generation job with a request key and bounds the short request', async () => {
   vi.useFakeTimers()
   const fetcher = vi.fn((_url: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
     init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true })
   }))
   vi.stubGlobal('fetch', fetcher)
-  const pending = new ApplicationPreparationRepositoryImpl().generateDocuments(1, 3)
+  const pending = new ApplicationPreparationRepositoryImpl().submitDocumentJob(1, 3, undefined, '12345678-1234-1234-1234-123456789abc')
   const rejected = expect(pending).rejects.toMatchObject({ code: 'REQUEST_TIMEOUT' })
-  await vi.advanceTimersByTimeAsync(540_000)
+  await vi.advanceTimersByTimeAsync(14_000)
   expect(fetcher.mock.calls[0][1]?.signal?.aborted).toBe(false)
-  await vi.advanceTimersByTimeAsync(120_000)
+  await vi.advanceTimersByTimeAsync(2_000)
   await rejected
   expect(fetcher).toHaveBeenCalledTimes(1)
+  expect(fetcher.mock.calls[0][0]).toContain('/1/documents/jobs')
+  expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body))).toEqual({ requestKey: '12345678-1234-1234-1234-123456789abc', expectedRevision: 3 })
 })
 
-it('requests and downloads the native document with credentials and validates binary content', async () => {
+it('reads a job by id and lists the recent jobs of a preparation', async () => {
+  const done = { ...queuedJob, status: 'SUCCEEDED', stage: 'SAVING', fileIds: [8], finishedAt: '2026-09-30T10:01:00+09:00' }
+  const fetcher = vi.fn().mockResolvedValueOnce(Response.json(queuedJob, { status: 202 }))
+    .mockResolvedValueOnce(Response.json(done)).mockResolvedValueOnce(Response.json([done]))
+  vi.stubGlobal('fetch', fetcher)
+  const repository = new ApplicationPreparationRepositoryImpl()
+  expect(await repository.submitDocumentJob(1, 3)).toEqual(queuedJob)
+  expect(JSON.parse(fetcher.mock.calls[0][1].body).requestKey).toMatch(/^[0-9a-f-]{36}$/)
+  expect(await repository.documentJob(1, 501)).toEqual(done)
+  expect(fetcher.mock.calls[1][0]).toContain('/1/documents/jobs/501')
+  expect(fetcher.mock.calls[1][1].credentials).toBe('include')
+  expect(await repository.documentJobs(1)).toEqual([done])
+  expect(fetcher.mock.calls[2][0]).toContain('/1/documents/jobs')
+})
+
+it('rejects job responses whose state and result disagree or belong elsewhere', async () => {
+  vi.stubGlobal('fetch', vi.fn()
+    .mockResolvedValueOnce(Response.json({ ...queuedJob, status: 'SUCCEEDED', fileIds: [], finishedAt: '2026-09-30T10:01:00+09:00' }))
+    .mockResolvedValueOnce(Response.json({ ...queuedJob, status: 'FAILED', finishedAt: '2026-09-30T10:01:00+09:00' }))
+    .mockResolvedValueOnce(Response.json({ ...queuedJob, preparationId: 2 }))
+    .mockResolvedValueOnce(Response.json({ ...queuedJob, id: 502 })))
+  const repository = new ApplicationPreparationRepositoryImpl()
+  await expect(repository.submitDocumentJob(1, 3)).rejects.toThrow('응답 형식')
+  await expect(repository.submitDocumentJob(1, 3)).rejects.toThrow('응답 형식')
+  await expect(repository.submitDocumentJob(1, 3)).rejects.toThrow('응답 형식')
+  await expect(repository.documentJob(1, 501)).rejects.toThrow('응답 형식')
+})
+
+it('carries the owner-scoped migration diff of a failed job and confirms it with the same revision', async () => {
+  const notice = { status: 'MAPPING_CHANGED', approvalToken: '12345678-1234-1234-1234-123456789abc',
+    expectedRevision: 3, expiresInSeconds: 900, changes: [{ fieldLabel: '기업 개요 · 업체명',
+      changeType: 'TARGET_CHANGED', oldLocation: '표 1 · 기업명', newLocation: '표 2 · 기업명' }] }
+  const failed = { ...queuedJob, status: 'FAILED', stage: 'MAPPING', failureCode: 'APPLICATION_DOCUMENT_FORM_REANALYSIS_REQUIRED',
+    failureMessage: '입력 위치가 변경됐습니다.', mappingMigration: notice, finishedAt: '2026-09-30T10:01:00+09:00' }
+  const confirmed = { status: 'REGENERATION_REQUIRED', preparationId: 1, inputRevision: 3,
+    formVersionId: 'approved-form-v2' }
+  const fetcher = vi.fn().mockResolvedValueOnce(Response.json(failed)).mockResolvedValueOnce(Response.json(confirmed))
+  vi.stubGlobal('fetch', fetcher)
+  const repository = new ApplicationPreparationRepositoryImpl()
+  expect((await repository.documentJob(1, 501)).mappingMigration).toEqual(notice)
+  expect(await repository.confirmDocumentMappingMigration(1, 3, notice.approvalToken)).toEqual(confirmed)
+  expect(fetcher.mock.calls[1][0]).toContain('/1/documents/mapping-migration/confirm')
+  expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({ expectedRevision: 3, approvalToken: notice.approvalToken })
+})
+
+it('downloads the native document with credentials and validates binary content', async () => {
   const file = { id: 8, inputRevision: 3, fileName: '신청서.hwpx', mediaType: 'application/hwp+zip', size: 4,
     filledAnswerCount: 1, unfilledAnswerCount: 0, unfilledAnswers: [] }
   const fetcher = vi.fn().mockResolvedValueOnce(Response.json([file]))
@@ -26,8 +76,7 @@ it('requests and downloads the native document with credentials and validates bi
     .mockResolvedValueOnce(new Response('<html>login</html>', { headers: { 'Content-Type': 'text/html' } }))
   vi.stubGlobal('fetch', fetcher)
   const repository = new ApplicationPreparationRepositoryImpl()
-  expect(await repository.generateDocuments(1, 3)).toEqual([file])
-  expect(JSON.parse(fetcher.mock.calls[0][1].body)).toEqual({ expectedRevision: 3 })
+  expect(await repository.documents(1)).toEqual([file])
   expect(fetcher.mock.calls[0][0]).toContain('/1/documents')
   const downloaded = await repository.downloadDocument(1, 8)
   expect(downloaded.size).toBe(4)
@@ -36,55 +85,16 @@ it('requests and downloads the native document with credentials and validates bi
   await expect(repository.downloadDocument(1, 8)).rejects.toThrow('응답 형식')
 })
 
-it('accepts a DOCX draft and its native download media type', async () => {
-  const file = { id: 9, inputRevision: 3, fileName: '신청서.docx',
-    mediaType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', size: 4,
-    filledAnswerCount: 1, unfilledAnswerCount: 0, unfilledAnswers: [] }
+it.each([
+  ['DOCX', '신청서.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+  ['XLSX', '신청서.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+])('accepts a %s draft and its native download media type', async (_format, fileName, mediaType) => {
+  const file = { id: 9, inputRevision: 3, fileName, mediaType, size: 4, filledAnswerCount: 1, unfilledAnswerCount: 0, unfilledAnswers: [] }
   vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(Response.json([file]))
     .mockResolvedValueOnce(new Response(new Uint8Array([80, 75, 3, 4]), { headers: { 'Content-Type': file.mediaType } })))
   const repository = new ApplicationPreparationRepositoryImpl()
-  expect(await repository.generateDocuments(1, 3)).toEqual([file])
+  expect(await repository.documents(1)).toEqual([file])
   expect((await repository.downloadDocument(1, 9)).size).toBe(4)
-})
-
-it('accepts a XLSX draft and its native download media type', async () => {
-  const file = { id: 9, inputRevision: 3, fileName: '신청서.xlsx',
-    mediaType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', size: 4,
-    filledAnswerCount: 1, unfilledAnswerCount: 0, unfilledAnswers: [] }
-  vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(Response.json([file]))
-    .mockResolvedValueOnce(new Response(new Uint8Array([80, 75, 3, 4]), { headers: { 'Content-Type': file.mediaType } })))
-  const repository = new ApplicationPreparationRepositoryImpl()
-  expect(await repository.generateDocuments(1, 3)).toEqual([file])
-  expect((await repository.downloadDocument(1, 9)).size).toBe(4)
-})
-
-it('rejects generation results from another revision or without files', async () => {
-  vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(Response.json([])).mockResolvedValueOnce(Response.json([
-    { id: 8, inputRevision: 2, fileName: '신청서.pdf', mediaType: 'application/pdf', size: 4,
-      filledAnswerCount: 1, unfilledAnswerCount: 0, unfilledAnswers: [] },
-  ])))
-  const repository = new ApplicationPreparationRepositoryImpl()
-  await expect(repository.generateDocuments(1, 3)).rejects.toThrow('응답 형식')
-  await expect(repository.generateDocuments(1, 3)).rejects.toThrow('응답 형식')
-})
-
-it('keeps the owner-scoped migration diff and confirms it with the same revision', async () => {
-  const notice = { status: 'MAPPING_CHANGED', approvalToken: '12345678-1234-1234-1234-123456789abc',
-    expectedRevision: 3, expiresInSeconds: 900, changes: [{ fieldLabel: '기업 개요 · 업체명',
-      changeType: 'TARGET_CHANGED', oldLocation: '표 1 · 기업명', newLocation: '표 2 · 기업명' }] }
-  const confirmed = { status: 'REGENERATION_REQUIRED', preparationId: 1, inputRevision: 3,
-    formVersionId: 'approved-form-v2' }
-  const fetcher = vi.fn().mockResolvedValueOnce(Response.json({
-    code: 'APPLICATION_DOCUMENT_FORM_REANALYSIS_REQUIRED', mappingMigration: notice,
-  }, { status: 422 })).mockResolvedValueOnce(Response.json(confirmed))
-  vi.stubGlobal('fetch', fetcher)
-  const repository = new ApplicationPreparationRepositoryImpl()
-  await expect(repository.generateDocuments(1, 3)).rejects.toMatchObject({
-    code: 'APPLICATION_DOCUMENT_FORM_REANALYSIS_REQUIRED', mappingMigration: notice,
-  })
-  expect(await repository.confirmDocumentMappingMigration(1, 3, notice.approvalToken)).toEqual(confirmed)
-  expect(fetcher.mock.calls[1][0]).toContain('/1/documents/mapping-migration/confirm')
-  expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({ expectedRevision: 3, approvalToken: notice.approvalToken })
 })
 
 const form = {

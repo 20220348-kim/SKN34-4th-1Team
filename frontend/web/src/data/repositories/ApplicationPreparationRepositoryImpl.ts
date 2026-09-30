@@ -19,6 +19,7 @@ import {
   supportedApplicationFormsSchema,
   applicationInterpretationSchema,
   applicationFormDiscoveryJobSchema,
+  applicationDocumentGenerationJobSchema,
 } from '../models/ApplicationPreparationDto'
 
 import { applicationOnlineInputGuideSchema } from '@govbiz/shared/data/models/ApplicationOnlineInputGuideDto'
@@ -74,10 +75,18 @@ export class ApplicationPreparationRepositoryImpl implements ApplicationPreparat
   }
 
   documents(id: number, signal?: AbortSignal) { return request(`/${id}/documents`, documentsSchema, 'GET', undefined, signal, 'preparation') }
-  async generateDocuments(id: number, expectedRevision: number, signal?: AbortSignal) {
-    const files = await request(`/${id}/documents`, documentsSchema, 'POST', { expectedRevision }, signal, 'preparation')
-    if (files.length === 0 || files.some((file) => file.inputRevision !== expectedRevision)) throw new ApplicationPreparationError(502, 'INVALID_RESPONSE')
-    return files
+  async submitDocumentJob(id: number, expectedRevision: number, signal?: AbortSignal, requestKey = crypto.randomUUID()) {
+    const job = await request(`/${id}/documents/jobs`, applicationDocumentGenerationJobSchema, 'POST', { requestKey, expectedRevision }, signal, 'preparation')
+    if (job.preparationId !== id || job.expectedRevision !== expectedRevision) throw new ApplicationPreparationError(502, 'INVALID_RESPONSE')
+    return job
+  }
+  async documentJob(id: number, jobId: number, signal?: AbortSignal) {
+    const job = await request(`/${id}/documents/jobs/${jobId}`, applicationDocumentGenerationJobSchema, 'GET', undefined, signal, 'preparation')
+    if (job.id !== jobId || job.preparationId !== id) throw new ApplicationPreparationError(502, 'INVALID_RESPONSE')
+    return job
+  }
+  documentJobs(id: number, signal?: AbortSignal) {
+    return request(`/${id}/documents/jobs`, z.array(applicationDocumentGenerationJobSchema).max(5), 'GET', undefined, signal, 'preparation')
   }
   async confirmDocumentMappingMigration(id: number, expectedRevision: number, approvalToken: string, signal?: AbortSignal) {
     const result = await request(`/${id}/documents/mapping-migration/confirm`, migrationConfirmationSchema,
