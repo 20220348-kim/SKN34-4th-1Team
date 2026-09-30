@@ -8,6 +8,7 @@ import re
 import stat
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 
 import ops_bridge
 import yaml
@@ -15,6 +16,7 @@ from connected_runtime import quiet
 from fork_cluster import (
     STATE,
     commands,
+    load_image,
     load_settings,
     locked,
     render_services,
@@ -140,12 +142,95 @@ def verify_artifact_token(settings, project, token):
     )
 
 
-def activate(state, settings, artifact_env, helm="helm"):
+def verify_release(image, project):
+    """Compare the selected image with the owned free runner; never emit credentials."""
+    identities = run(
+        [
+            "docker",
+            "ps",
+            "--filter",
+            "label=com.docker.compose.project=" + project,
+            "--filter",
+            "label=com.docker.compose.service=evaluation-runner",
+            "--format",
+            "{{.ID}}",
+        ],
+        capture=True,
+    ).split()
+    if len(identities) != 1:
+        raise ValueError("Expected exactly one running Compose evaluation-runner")
+    runner = ops_bridge.inspect_container(identities[0])
+    labels = runner.get("Labels") or {}
+    if (
+        runner.get("Running") is not True
+        or labels.get("com.docker.compose.project") != project
+        or labels.get("com.docker.compose.service") != "evaluation-runner"
+        or str(labels.get("com.docker.compose.oneoff", "false")).lower() != "false"
+        or runner.get("Ports")
+    ):
+        raise ValueError("Evaluation runner ownership or private runtime changed")
+    identity = run(
+        ["docker", "image", "inspect", image, "--format", "{{.Id}}"], capture=True
+    ).strip()
+    if not re.fullmatch(r"sha256:[a-f0-9]{64}", identity):
+        raise ValueError("Expected a local Ops image identity")
+    digest = "import hashlib; from pathlib import Path; "
+    image_hash = quiet(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--pull=never",
+            "--network=none",
+            "--read-only",
+            "--memory=128m",
+            "--cpus=0.5",
+            "--cap-drop=ALL",
+            "--security-opt=no-new-privileges:true",
+            "--entrypoint=python",
+            identity,
+            "-c",
+            digest
+            + "print(hashlib.sha256(Path('/app/apps/evaluations/execution_release.json').read_bytes()).hexdigest())",
+        ]
+    ).strip()
+    runner_result = json.loads(
+        quiet(
+            [
+                "docker",
+                "exec",
+                runner["Id"],
+                "/app/backend/ai-service/.venv/bin/python",
+                "-c",
+                digest + "import os,json; print(json.dumps({"
+                "'release':hashlib.sha256(Path('/app/backend/ops-service/apps/evaluations/execution_release.json').read_bytes()).hexdigest(),"
+                "'free':os.environ.get('LLMOPS_LIVE_ENABLED','').lower()=='false' and not os.environ.get('OPENAI_API_KEY')"
+                "}))",
+            ]
+        )
+    )
+    if (
+        not re.fullmatch(r"[a-f0-9]{64}", image_hash)
+        or runner_result.get("release") != image_hash
+        or runner_result.get("free") is not True
+    ):
+        raise ValueError(
+            "Ops and runner execution releases differ or runner is not free-only"
+        )
+    return {"imageId": identity, "runnerId": runner["Id"], "releaseSha256": image_hash}
+
+
+def activate(
+    state, settings, artifact_env, helm="helm", *, ops_image=None, kind="kind"
+):
     require_dev(state, settings)
     state = Path(state)
     if (state / "dev-images.json").exists():
         raise ValueError("Restore development image overrides before activating Ops")
-    baseline = json.loads((state / "baseline.json").read_text(encoding="utf-8"))
+    baseline_path = state / "baseline.json"
+    if baseline_path.is_symlink():
+        raise ValueError("Local baseline must not be a symlink")
+    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
     if baseline.get("source") != "local":
         raise ValueError(
             "Ops activation requires a local-image baseline; published inputs cannot use local overrides"
@@ -164,7 +249,9 @@ def activate(state, settings, artifact_env, helm="helm"):
         run(nk + ["get", "deployment", "ops-service", "-o", "json"], capture=True)
     )
     containers = current["spec"]["template"]["spec"]["containers"]
-    image = baseline["images"]["ops-service"]
+    previous_image = baseline["images"]["ops-service"]
+    image = previous_image if ops_image is None else ops_image
+    images = {**baseline["images"], "ops-service": image}
     if not re.fullmatch(
         r"govbiz-ops-service:[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}", image
     ) or image.endswith(":latest"):
@@ -173,9 +260,11 @@ def activate(state, settings, artifact_env, helm="helm"):
         [item["name"] for item in containers]
         not in (["ops-service"], ["ops-service", "ops-sync"])
         or any(
-            item["image"] != image or item.get("imagePullPolicy") != "Never"
+            item["image"] not in {previous_image, image}
+            or item.get("imagePullPolicy") != "Never"
             for item in containers
         )
+        or len({item["image"] for item in containers}) != 1
         or any(
             key.startswith("argocd.argoproj.io/")
             for field in ("labels", "annotations")
@@ -185,7 +274,7 @@ def activate(state, settings, artifact_env, helm="helm"):
         raise ValueError("Current Ops workload does not match the local baseline")
     rendered = render_services(
         helm,
-        baseline["images"],
+        images,
         overlay={"ops-service": ops_bridge.values()},
         services=("ops-service",),
     )["ops-service"]
@@ -211,11 +300,25 @@ def activate(state, settings, artifact_env, helm="helm"):
             raise ValueError(
                 "Current Ops database or credential references differ; refusing to switch databases"
             )
+    release = verify_release(image, project)
+    if ops_image is not None:
+        load_image(SimpleNamespace(kind=kind), settings, image, state)
     token = read_artifact_token(artifact_env)
     patch = prepare_secret(nk, token)
     verify_artifact_token(settings, project, token)
     require_dev(state, settings)
     ops_bridge.connect(state, settings, project, check=True)
+    if verify_release(image, project) != release:
+        raise ValueError("Ops image or runner changed during activation preflight")
+    latest = json.loads(
+        run(nk + ["get", "deployment", "ops-service", "-o", "json"], capture=True)
+    )
+    if (
+        latest != current
+        or json.loads(baseline_path.read_text(encoding="utf-8")) != baseline
+    ):
+        raise ValueError("Ops workload or baseline changed during activation preflight")
+    desired["metadata"]["resourceVersion"] = current["metadata"]["resourceVersion"]
     if patch:
         quiet(
             nk
@@ -249,6 +352,12 @@ def activate(state, settings, artifact_env, helm="helm"):
         ],
         capture=True,
     )
+    if json.loads(baseline_path.read_text(encoding="utf-8")) != baseline:
+        raise ValueError(
+            "Ops baseline changed; runtime is applied but success was not recorded"
+        )
+    if ops_image is not None:
+        write_json(baseline_path, {**baseline, "images": images})
     write_json(state / PROFILE, record)
     print(
         "Ops API + sync activated; credentials preserved and runtime checked. Run a new free evaluation to verify execution."
@@ -260,6 +369,11 @@ def main():
     parser.add_argument("--state-dir", type=Path, default=STATE)
     parser.add_argument("--artifact-env", type=Path, required=True)
     parser.add_argument("--helm", default="helm")
+    parser.add_argument(
+        "--ops-image",
+        help="Explicit tagged local Ops image; update only Ops after checks and migration",
+    )
+    parser.add_argument("--kind", default="kind")
     args = parser.parse_args()
     if os.name == "nt":
         parser.error(
@@ -268,7 +382,14 @@ def main():
     try:
         settings = load_settings(args.state_dir)
         with locked(args.state_dir):
-            activate(args.state_dir, settings, args.artifact_env, args.helm)
+            activate(
+                args.state_dir,
+                settings,
+                args.artifact_env,
+                args.helm,
+                ops_image=args.ops_image,
+                kind=args.kind,
+            )
     except (
         ValueError,
         KeyError,
