@@ -41,7 +41,7 @@ test('five visible destinations retain their order and expose preparation notice
   fireEvent.press(screen.getByLabelText('협업'))
   await screen.findByText('협업 공간을 준비하고 있어요')
   fireEvent.press(screen.getByLabelText('리포트'))
-  await screen.findByText('맞춤 리포트를 준비하고 있어요')
+  await screen.findByText('로그인하면 기업 조건에 맞춘 리포트를 확인할 수 있어요.')
   fireEvent.press(screen.getByLabelText('관심함'))
   await screen.findByText('내 정보 탭에서 로그인하면 웹과 앱에 저장한 관심 공고를 볼 수 있습니다.')
   fireEvent.press(screen.getByLabelText('내 정보'))
