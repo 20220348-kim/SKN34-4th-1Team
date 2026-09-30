@@ -68,24 +68,30 @@ export const applicationPreparationStyles = {
  * 항목 시트로 대신합니다. 이동은 아래 고정 바 하나로 합니다.
  */
 export const answerEditorStyles = {
-  // 공고·양식 안내 한 줄(info Alert). 추출 문항임을 알리고 원문 링크를 오른쪽에 둡니다.
-  infoAlert: 'flex flex-wrap items-start gap-x-4 gap-y-2 rounded-2xl border border-brand-line bg-brand-soft px-4 py-3 text-[0.8125rem] leading-[1.6] text-app-ink',
+  // AI 추출 안내(info Alert). 공식 첨부에서 AI가 뽑은 문항일 때만 보이고, 원문 링크를 오른쪽에 둡니다.
+  infoAlert: 'flex flex-wrap items-start gap-x-4 gap-y-2 rounded-2xl border border-info-line bg-info-soft px-4 py-3 text-[0.8125rem] leading-[1.6] text-app-ink',
   infoText: 'min-w-0 flex-1',
   infoTitle: 'block text-sm font-bold',
-  infoLink: `shrink-0 self-center rounded text-[0.8125rem] font-bold text-brand-primary no-underline hover:underline ${focus}`,
+  infoLink: `shrink-0 self-center rounded text-[0.8125rem] font-bold text-info no-underline hover:underline ${focus}`,
   // 자동 저장 실패 · 버전 충돌 알림. 질문 카드 위에 붙습니다.
   dangerAlert: 'flex flex-wrap items-center gap-x-4 gap-y-2 rounded-2xl border border-danger-line bg-danger-soft px-4 py-3 text-[0.8125rem] leading-[1.6] text-app-ink',
   dangerText: 'min-w-0 flex-1',
   retryButton: `inline-flex h-8 shrink-0 cursor-pointer items-center justify-center rounded-full border border-line-strong bg-white px-3 text-[0.75rem] font-bold text-app-ink hover:border-brand-primary hover:text-brand-primary ${focus}`,
   layout: 'grid items-start gap-5 grid-cols-[260px_minmax(0,1fr)] max-[599px]:grid-cols-1',
-  // 왼쪽 항목 목록. PC에서만 보이고 스크롤해도 따라옵니다. 600px 미만은 시트 안에 같은 내용을 그립니다.
-  aside: 'flex min-w-0 flex-col gap-3 rounded-2xl border border-line bg-white p-3 max-[599px]:hidden md:sticky md:top-4',
-  progress: 'flex flex-col gap-1.5 px-1',
-  progressLabel: 'flex items-center justify-between text-[0.8125rem] font-bold text-app-ink',
-  progressCount: 'text-ink-muted tabular-nums',
+  // 왼쪽 항목 목록. PC(600px 이상)에서만 보이고 스크롤해도 따라옵니다. 600px 미만은 시트 안에 같은 내용을 그립니다.
+  // 같은 스크롤 칸의 머리글(WorkspacePageHeader, sticky top 0 · 부제 없이 약 89px)이 --workspace-header-h로 알려 주는 높이만큼
+  // 내려 붙어야 목록이 머리글 밑으로 들어가지 않습니다. 변수가 아직 없을 때는 89px(5.5625rem)로 둡니다.
+  // 목록이 화면보다 길면 머리글과 아래 고정 바(약 5rem)를 뺀 높이 안에서 스크롤합니다.
+  aside: 'flex min-w-0 flex-col gap-3 self-start max-[599px]:hidden min-[600px]:sticky min-[600px]:top-[calc(var(--workspace-header-h,5.5625rem)_+_1rem)] min-[600px]:max-h-[calc(100dvh_-_var(--workspace-header-h,5.5625rem)_-_6rem)] min-[600px]:overflow-y-auto',
+  // 전체 답변 막대 카드.
+  meterCard: 'flex flex-col gap-2 rounded-2xl border border-line bg-white p-3.5',
+  progress: 'flex flex-col gap-1.5',
+  progressLabel: 'm-0 flex items-center justify-between text-[0.78rem] font-bold text-ink-muted',
+  progressPercent: 'text-brand-primary tabular-nums',
   progressBar: 'h-1.5 overflow-hidden rounded-full bg-surface-muted',
   progressFill: 'block h-full rounded-full bg-brand-primary transition-[width] motion-reduce:transition-none',
-  sectionList: 'm-0 flex list-none flex-col gap-1 p-0',
+  remaining: 'm-0 text-[0.75rem] text-ink-muted',
+  sectionList: 'm-0 flex list-none flex-col gap-1 rounded-2xl border border-line bg-white p-1.5',
   sectionButton: `flex w-full cursor-pointer items-center gap-2.5 rounded-xl border-0 bg-transparent px-2 py-2 text-left hover:bg-surface-muted aria-[current=step]:bg-brand-soft ${focus}`,
   sectionNumber: 'grid size-6 shrink-0 place-items-center rounded-full border border-line-strong bg-white text-[0.7rem] font-extrabold tabular-nums text-ink-muted',
   sectionNumberDone: 'border-brand-primary bg-brand-primary text-white',
@@ -93,43 +99,49 @@ export const answerEditorStyles = {
   sectionText: 'flex min-w-0 flex-1 flex-col',
   sectionTitle: 'truncate text-[0.8125rem] font-bold text-app-ink',
   sectionMeta: 'text-[0.72rem] text-ink-muted tabular-nums',
-  generateButton: `mt-1 inline-flex h-10 w-full cursor-pointer items-center justify-center rounded-full border-0 bg-brand-primary px-4 text-[0.8125rem] font-bold text-white hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-50 ${focus}`,
-  generateHint: 'm-0 px-1 text-[0.72rem] leading-[1.5] text-ink-muted',
-  // 600px 미만의 진행 표시: 항목명 + "3 / 5" + 막대.
+  // 항목 상태 배지: 완료 · 진행 중 · 시작 전.
+  badgeDone: 'shrink-0 rounded-full bg-brand-soft px-2 py-0.5 text-[0.68rem] font-extrabold text-brand-primary',
+  badgeActive: 'shrink-0 rounded-full bg-info-soft px-2 py-0.5 text-[0.68rem] font-extrabold text-info',
+  badgeIdle: 'shrink-0 rounded-full bg-surface-muted px-2 py-0.5 text-[0.68rem] font-extrabold text-ink-muted',
+  generateButton: `inline-flex h-10 w-full cursor-pointer items-center justify-center gap-1.5 rounded-full border border-line-strong bg-white px-4 text-[0.8125rem] font-bold text-app-ink hover:border-brand-primary hover:text-brand-primary disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-line-strong disabled:hover:text-app-ink ${focus}`,
+  generateHint: 'm-0 px-1 text-center text-[0.75rem] leading-[1.5] text-ink-muted',
+  // 600px 미만의 진행 표시: 항목명 + "3 / 5" + 막대, 바로 아래 자동 저장 상태.
   stepperM: 'hidden max-[599px]:flex max-[599px]:flex-col max-[599px]:gap-1.5',
-  stepperMLabel: 'flex items-center justify-between text-sm font-extrabold text-app-ink',
+  stepperMLabel: 'm-0 flex items-center justify-between text-sm font-extrabold text-app-ink',
   // 오른쪽 질문 카드.
   question: 'flex min-w-0 flex-col gap-3 rounded-2xl border border-line bg-white p-5 max-[599px]:p-4',
-  questionEyebrow: 'm-0 text-[0.72rem] font-extrabold tracking-[0.08em] text-ink-subtle uppercase tabular-nums',
-  questionTitle: 'm-0 flex flex-wrap items-center gap-2 text-[1.05rem] font-extrabold tracking-[-0.02em] text-app-ink',
-  requiredTag: 'rounded-md bg-danger-soft px-1.5 py-0.5 text-[0.68rem] font-extrabold text-danger',
-  optionalTag: 'rounded-md bg-surface-muted px-1.5 py-0.5 text-[0.68rem] font-extrabold text-ink-muted',
-  guidance: 'm-0 text-[0.875rem] leading-[1.65] text-ink-muted',
+  questionHead: 'flex items-center gap-1.5',
+  questionEyebrow: 'm-0 min-w-0 flex-1 text-[0.78rem] font-bold text-ink-subtle tabular-nums',
+  questionTitle: 'm-0 text-[1.1875rem] leading-[1.4] font-extrabold tracking-[-0.02em] text-app-ink outline-none',
+  requiredTag: 'ml-auto shrink-0 rounded-full border border-warning-line px-2 py-0.5 text-[0.68rem] font-extrabold text-warning',
+  optionalTag: 'ml-auto shrink-0 rounded-full border border-line-strong px-2 py-0.5 text-[0.68rem] font-extrabold text-ink-muted',
+  guidance: 'm-0 text-[0.84rem] leading-[1.65] text-ink-muted',
   textarea: `block min-h-28 w-full resize-y rounded-xl border border-line-strong bg-white px-3 py-2.5 text-[0.9375rem] leading-[1.6] text-app-ink placeholder:text-ink-subtle focus-visible:border-brand-primary aria-[invalid=true]:border-danger disabled:cursor-not-allowed disabled:bg-surface-muted ${focus} max-[599px]:text-base`,
   counter: 'm-0 text-right text-[0.72rem] text-ink-subtle tabular-nums',
   counterOver: 'text-danger',
   fieldError: 'm-0 text-[0.78rem] font-bold text-danger',
+  fieldNote: 'm-0 text-[0.78rem] font-semibold text-warning',
   choiceList: 'flex flex-col gap-2',
   choice: 'flex cursor-pointer items-center gap-3 rounded-xl border border-line-strong px-3 py-2.5 text-[0.9375rem] has-[:checked]:border-brand-primary has-[:checked]:bg-brand-soft has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-60',
   answerActions: 'flex flex-wrap items-center justify-between gap-3',
   undecided: 'flex cursor-pointer items-center gap-2 text-[0.8125rem] font-semibold text-app-ink',
   clearButton: `inline-flex h-8 cursor-pointer items-center justify-center rounded-full border border-line-strong bg-white px-3 text-[0.75rem] font-bold text-app-ink hover:border-brand-primary hover:text-brand-primary disabled:cursor-not-allowed disabled:opacity-50 ${focus}`,
   hint: 'm-0 rounded-xl bg-surface-muted px-3 py-2 text-[0.78rem] leading-[1.55] text-ink-muted',
-  // 아래 고정 바: [← 이전] · 자동 저장 상태 · [다음 →] / [초안 만들기]. 600px 미만은 전체 폭 1 : 2.
+  // 본문 맨 아래 고정 바(두 단 아래 전체 폭): [← 이전] · 자동 저장 상태 · [다음 →] / [초안 만들기]. 600px 미만은 전체 폭 1 : 2.
   bar: 'sticky bottom-0 z-[2] -mx-1 flex items-center gap-3 border-t border-line bg-[rgb(245_246_247_/_96%)] px-1 pt-3 pb-4 backdrop-blur max-[599px]:-mx-4 max-[599px]:px-4 max-[599px]:pb-[calc(1rem+env(safe-area-inset-bottom))]',
-  barStatus: 'min-w-0 flex-1 truncate text-[0.78rem] text-ink-muted max-[599px]:hidden',
-  barStatusM: 'hidden max-[599px]:block max-[599px]:text-[0.72rem] max-[599px]:text-ink-muted',
+  barStatus: 'm-0 min-w-0 flex-1 truncate text-[0.78rem] text-ink-muted max-[599px]:hidden',
+  barStatusM: 'm-0 hidden max-[599px]:block max-[599px]:text-[0.75rem] max-[599px]:text-ink-muted',
   prevButton: `inline-flex h-10 shrink-0 cursor-pointer items-center justify-center gap-1 rounded-full border border-line-strong bg-white px-4 text-[0.8125rem] font-bold text-app-ink hover:border-brand-primary hover:text-brand-primary disabled:cursor-not-allowed disabled:opacity-40 ${focus} max-[599px]:h-11 max-[599px]:flex-1`,
-  nextButton: `inline-flex h-10 shrink-0 cursor-pointer items-center justify-center gap-1 rounded-full border-0 bg-brand-primary px-5 text-[0.8125rem] font-bold text-white hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-50 ${focus} max-[599px]:h-11 max-[599px]:flex-[2]`,
+  nextButton: `ml-auto inline-flex h-10 shrink-0 cursor-pointer items-center justify-center gap-1 rounded-full border-0 bg-brand-primary px-5 text-[0.8125rem] font-bold text-white hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-50 ${focus} max-[599px]:h-11 max-[599px]:flex-[2]`,
   // 머리글 오른쪽: [문서 보기] · [⋯ 문서 메뉴] · 600px 미만 [항목 목록].
-  headerButton: `inline-flex h-10 cursor-pointer items-center justify-center rounded-full border border-line-strong bg-white px-4 text-[0.8125rem] font-bold text-app-ink no-underline hover:border-brand-primary hover:text-brand-primary ${focus} max-[599px]:hidden`,
-  iconButton: `grid size-10 shrink-0 cursor-pointer place-items-center rounded-full border border-line-strong bg-white text-lg leading-none text-ink-muted hover:text-app-ink ${focus}`,
+  headerButton: `inline-flex h-10 cursor-pointer items-center justify-center gap-1.5 rounded-full border border-line-strong bg-white px-4 text-[0.8125rem] font-bold text-app-ink no-underline hover:border-brand-primary hover:text-brand-primary ${focus} max-[599px]:hidden`,
+  iconButton: `grid size-10 shrink-0 cursor-pointer place-items-center rounded-full border border-line-strong bg-white text-ink-muted hover:text-app-ink ${focus}`,
   iconButtonM: 'hidden max-[599px]:grid',
   menu: 'z-30 flex min-w-[220px] flex-col gap-0.5 rounded-xl border border-line bg-white p-1.5 shadow-[0_12px_32px_rgb(32_33_36_/_12%)]',
   menuItem: `flex w-full cursor-pointer items-center justify-between gap-3 rounded-lg border-0 bg-transparent px-3 py-2 text-left text-[0.8125rem] font-semibold text-app-ink no-underline hover:bg-surface-muted ${focus}`,
   // 600px 미만 항목 목록 시트.
   sheetScrim: 'fixed inset-0 z-[19] cursor-default border-0 bg-black/35 p-0',
-  sheet: 'fixed inset-x-0 bottom-0 z-20 flex max-h-[86dvh] flex-col gap-3 overflow-y-auto rounded-t-[22px] bg-white px-4 pt-5 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-[0_-12px_32px_rgb(32_33_36_/_12%)]',
+  sheet: 'fixed inset-x-0 bottom-0 z-20 flex max-h-[86dvh] flex-col gap-3 overflow-y-auto rounded-t-[22px] bg-white px-4 pt-5 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-[0_-12px_32px_rgb(32_33_36_/_12%)] outline-none',
   sheetGrab: 'absolute top-2 left-1/2 h-1 w-9 -translate-x-1/2 rounded-full bg-line-strong',
   sheetHeader: 'flex items-center justify-between gap-3',
   sheetTitle: 'm-0 text-base font-extrabold text-app-ink',
@@ -203,6 +215,50 @@ export const newPreparationStyles = {
   ghost: `inline-flex h-10 cursor-pointer items-center justify-center rounded-full border-0 bg-transparent px-4 text-[0.8125rem] font-bold text-ink-muted no-underline hover:bg-surface-muted hover:text-app-ink disabled:cursor-not-allowed disabled:opacity-50 ${focus}`,
   // 단계 표시 바로 아래의 이동 버튼 줄입니다. 오른쪽 끝에 [취소]/[이전] · 주 버튼 순서로 두고, 600px 미만은 전체 폭을 1 : 2로 나눕니다.
   actions: 'flex items-center justify-end gap-2 max-[599px]:[&>*:first-child]:flex-1 max-[599px]:[&>*:last-child]:flex-[2]',
+} as const
+
+/**
+ * 신청 문서 초안 화면(26)입니다. 알림 · 진행 카드 · 버튼은 새 문서 화면(24)의 스타일을 함께 쓰고, 여기에는 이 화면에만 있는
+ * 단계 목록 · 파일 카드 · 600px 미만 아래 동작 줄을 둡니다. 본문은 읽기 폭(920px)까지만 넓어집니다.
+ */
+export const documentResultStyles = {
+  body: 'flex w-full max-w-[920px] min-w-0 flex-col gap-4',
+  headerOnly: 'max-[599px]:hidden',
+  // [다시 만들기] 옆 "답변이 바뀜" 배지. 답변이 마지막 문서 뒤에 바뀌어 다시 만들 수 있을 때만 보입니다.
+  changedBadge: 'inline-flex h-[22px] items-center rounded-md border border-brand-line bg-white px-[7px] text-[0.72rem] font-bold whitespace-nowrap text-brand-primary',
+  buttonSpinner: 'size-3 shrink-0 rounded-full border-[1.5px] border-current border-t-transparent motion-safe:animate-spin',
+  // 진행 카드의 서버 단계 목록: 완료(채운 ✓) · 진행 중(브랜드 테두리 + 스피너) · 대기(회색).
+  stageList: 'm-0 flex list-none flex-col gap-2 p-0',
+  stage: 'flex items-center gap-2.5 text-[0.8125rem] text-ink-subtle',
+  stageDone: 'flex items-center gap-2.5 text-[0.8125rem] text-app-ink',
+  stageActive: 'flex items-center gap-2.5 text-[0.8125rem] font-bold text-app-ink',
+  stageMark: 'grid size-5 shrink-0 place-items-center rounded-full border-2 border-line-strong bg-white',
+  stageMarkDone: 'grid size-5 shrink-0 place-items-center rounded-full border-2 border-brand-primary bg-brand-primary text-white',
+  stageMarkActive: 'grid size-5 shrink-0 place-items-center rounded-full border-2 border-brand-primary bg-white text-brand-primary',
+  alertActions: 'flex flex-wrap items-center gap-2',
+  // 답변 버전별 문서 묶음과 파일 카드.
+  group: 'flex flex-col gap-3',
+  groupTitle: 'm-0 flex flex-wrap items-baseline gap-x-1.5 text-[0.95rem] font-extrabold tracking-[-0.02em] text-app-ink',
+  groupMeta: 'text-[0.78rem] font-semibold text-ink-muted tabular-nums',
+  file: 'flex flex-col gap-3 rounded-2xl border border-line bg-white p-4',
+  fileHead: 'flex items-start gap-3',
+  format: 'grid h-9 min-w-11 shrink-0 place-items-center rounded-lg bg-info-soft px-1.5 text-[0.7rem] font-extrabold text-info',
+  fileText: 'flex min-w-0 flex-1 flex-col gap-0.5',
+  fileName: 'm-0 text-[0.875rem] leading-[1.45] font-bold text-app-ink [overflow-wrap:anywhere]',
+  fileMeta: 'text-[0.75rem] text-ink-muted tabular-nums',
+  // 파일 카드 머리 오른쪽 버튼 자리입니다. 보조 버튼을 하나 더 둘 수 있게 줄로 둡니다.
+  fileActions: 'flex shrink-0 flex-wrap items-center justify-end gap-1.5',
+  fill: 'flex flex-col gap-1.5',
+  fillLabel: 'm-0 text-[0.75rem] font-semibold text-ink-muted tabular-nums',
+  unfilled: 'rounded-xl border border-warning-line bg-warning-soft px-3 py-2 text-[0.78rem] leading-[1.6] text-app-ink [&_ul]:m-0 [&_ul]:mt-1.5 [&_ul]:flex [&_ul]:list-none [&_ul]:flex-col [&_ul]:gap-1 [&_ul]:p-0',
+  unfilledSummary: `cursor-pointer rounded font-bold text-warning ${focus}`,
+  older: 'flex flex-col gap-3',
+  olderSummary: `self-start cursor-pointer rounded text-[0.8125rem] font-bold text-ink-muted hover:text-app-ink ${focus}`,
+  olderTitle: 'm-0 text-[0.8125rem] font-bold text-ink-muted tabular-nums',
+  note: 'm-0 text-[0.78rem] leading-[1.6] text-ink-muted',
+  // 600px 미만 본문 맨 아래 동작 줄(고정하지 않음). 버튼은 답변 입력 화면(25) 아래 바와 같은 1 : 2입니다.
+  mobileBar: 'hidden flex-col gap-2 border-t border-line pt-3 max-[599px]:flex',
+  mobileButtons: 'flex items-center gap-3',
 } as const
 
 /** 지원 공고 상태 배지 · D-n 배지 · 출처 배지입니다. 1단계 카드와 공고 고르기 행이 함께 씁니다. */
