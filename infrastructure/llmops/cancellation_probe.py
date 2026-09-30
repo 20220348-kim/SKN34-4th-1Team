@@ -138,7 +138,16 @@ class Probe:
 
     def forward(self, run_id, action, url, method, body, headers):
         with self.lock:
-            fault = self.runs[run_id]["config"].get("fault")
+            record = self.runs[run_id]
+            fault = record["config"].get("fault")
+            busy = (
+                action == "create" and fault == "create_busy_once" and not record.get("busy_sent")
+            )
+            if busy:
+                record["busy_sent"] = True
+        if busy:
+            self.event(run_id, action, status=503, forwarded=False)
+            return 503, b'{"exception_message":"Service Unavailable"}'
         if fault == action + "_error" or (
             fault == "settle_and_close_error" and action in {"settle", "close"}
         ):
@@ -277,7 +286,12 @@ def database_snapshot(run_id):
             closed=reservation.closed_at is not None,
             reserved_calls=reservation.max_calls,
             reserved_output_tokens=reservation.max_calls * reservation.max_output_tokens,
-            calls=list(reservation.calls.order_by("sequence").values("sequence", "output_tokens")),
+            operation_ids=[item["id"] for item in run.execution_spec["model_operations"]],
+            calls=list(
+                reservation.calls.order_by("sequence").values(
+                    "sequence", "operation_id", "output_tokens"
+                )
+            ),
         )
     return result
 

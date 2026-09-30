@@ -277,6 +277,9 @@ async def execute(prepared: list, fixture_hash: str, output_dir: Path, *,
         "cases": [], "apiResponses": [],
     }
 
+    active_operation_id = None
+    authorized_operations = set()
+
     def save_capture() -> None:
         temporary = output_dir / "capture.partial.json"
         temporary.write_text(json.dumps(capture, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
@@ -293,8 +296,13 @@ async def execute(prepared: list, fixture_hash: str, output_dir: Path, *,
                 and body.get("text", {}).get("format", {}).get("strict") is True,
                 "unexpected model request")
         require(capture["modelApiCalls"] < limit, "model call budget exhausted")
+        require(active_operation_id is not None and active_operation_id not in authorized_operations,
+                "model operation was already attempted")
         if budget is not None:
-            await budget.authorize(capture["modelApiCalls"], model, 2000)
+            await budget.authorize(capture["modelApiCalls"], model, 2000,
+                                   operation_id=active_operation_id)
+        authorized_operations.add(active_operation_id)
+        request.extensions["llmops_budget"] = (capture["modelApiCalls"], active_operation_id)
         capture["modelApiCalls"] += 1
         save_capture()
 
@@ -307,10 +315,11 @@ async def execute(prepared: list, fixture_hash: str, output_dir: Path, *,
         observation = response_record(response.status_code, body)
         capture["apiResponses"].append(observation)
         if budget is not None:
+            sequence, operation_id = response.request.extensions["llmops_budget"]
             save_capture()
-            budget.record_usage_receipt(output_dir, capture["modelApiCalls"] - 1,
+            budget.record_usage_receipt(output_dir, sequence,
                                         model, 2000, response.status_code, body)
-            await budget.settle(capture["modelApiCalls"] - 1, observation["usage"])
+            await budget.settle(sequence, observation["usage"], operation_id=operation_id)
 
     client = AsyncOpenAI(
         api_key=key, base_url="https://api.openai.com/v1", max_retries=0,
@@ -328,6 +337,7 @@ async def execute(prepared: list, fixture_hash: str, output_dir: Path, *,
     ), tracing)
     try:
         for case, request in prepared:
+            active_operation_id = f"answer:{case['id']}"
             record = {"caseId": case["id"], "requestSha256": request_digest(request)}
             response_offset = len(capture["apiResponses"])
             started = perf_counter()

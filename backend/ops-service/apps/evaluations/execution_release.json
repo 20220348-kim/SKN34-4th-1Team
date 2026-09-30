@@ -13,22 +13,22 @@
     "code_sha256": "b2715707819f120f677aba684790f3f68d6c27c17c1613db455d162d89823b84"
   },
   "evaluation": {
-    "sha256": "714892366c7c5c52700e3740b75a8c7528e82abc632314b777a27478a7a37261",
+    "sha256": "78489245f3631c4388543d8363f715f730342e5d5950b59c160516a9e820a56e",
     "files": {
-      "evaluation/support-program-evidence/evaluate.py": "878e3f4661e45ba61a380546ba3eeecd601a0661a2f5c5af88e61939c1e1f806",
+      "evaluation/support-program-evidence/evaluate.py": "04eef8b92ec87215fccb27d61642da36576429e462509e0f7372c6e102d610da",
       "evaluation/support-program-evidence/llmops.py": "99f5bbf5ee70211c1fe76e898e42053c2450ca83744a2d284c7935791bdd535c",
       "backend/ai-service/app/support_program_evidence/models.py": "01e8da480d9ede6a976220a1a3bb6607ec8329783455d6c25c84a245a64b29b6",
       "backend/ai-service/app/support_program_identity.py": "aa706697f294fd4846263e73cd281c4a9d660a7939feb7e2e4e3d60fd5393fb1",
       "backend/ai-service/pyproject.toml": "50ef0fc8c53c9af3e1bb31fafed5200732725ea43691be538d90840d2168037c",
       "backend/ai-service/uv.lock": "349ecdd9152eb2f5479a3db41d39e9d1bf7a8f5a16103426c2cd78207add1fe3"
     },
-    "version": "714892366c7c5c52700e3740b75a8c7528e82abc632314b777a27478a7a37261",
+    "version": "78489245f3631c4388543d8363f715f730342e5d5950b59c160516a9e820a56e",
     "scope": "fixed-answer-context-only"
   },
   "generation": {
-    "sha256": "c523ee72e65dbe8528783cb8eff59c2a2088b77e059b0142c1f232d86c5b872a",
+    "sha256": "e43e83e06bc62f9d333f3a6bfda7fef46e1e4c8fdae12aff56af06e39a08bcc4",
     "files": {
-      "evaluation/support-program-evidence/evaluate.py": "878e3f4661e45ba61a380546ba3eeecd601a0661a2f5c5af88e61939c1e1f806",
+      "evaluation/support-program-evidence/evaluate.py": "04eef8b92ec87215fccb27d61642da36576429e462509e0f7372c6e102d610da",
       "backend/ai-service/app/config.py": "95e5b8a759e9cd2396e58f0f94636b48695f7d10e6c49d74fce60f21b860fe02",
       "backend/ai-service/app/support_program_evidence/prompt.py": "9619d00ab76b511cad15465ba5b97fe95e790dfe62b81333901c4ebda5ad5eb3",
       "backend/ai-service/app/support_program_evidence/agent.py": "4b33489593b9af37a5f2bc27cc54f4545726b22c8c4a1d0d8b40f2322690e582",
@@ -55,13 +55,13 @@
     }
   },
   "pipeline": {
-    "sha256": "77c60fcc09b0ed80458e69447658abb34d46908ad4da4cef7bf1051bd773ae7f",
+    "sha256": "902993fd0d9c64403c1bb1fef4d0bd014b550166d9e38fd4b635cfad47e26244",
     "files": {
       "evaluation/support-program-evidence/ops_flow.py": "dd58b054cda950acb7a5b79a2bd50b77247cae0491062cc719b1574c1f5086a0",
-      "evaluation/support-program-evidence/budget_client.py": "cdd895b0ae693ae324705866d4659ef14abc62f151edc16f7e1b41aaf573a425",
+      "evaluation/support-program-evidence/budget_client.py": "6f4cc8b5b49303e2b9b12581f98ad2ea5571d811b6981074a047f1f102a3f519",
       "backend/ops-service/apps/evaluations/catalog.py": "2f034ddd720dc0ee09f892eab5603d1702c51496d06bc907d3113f81e5518c99",
       "backend/ops-service/apps/evaluations/recovery_inputs.py": "01ba9fba7325280a542ad3fc9c2baecd7d6ab08cf05bda6205c59712572be242",
-      "backend/ops-service/apps/evaluations/execution_spec.py": "92be8efbcf6f5827ef0a59296f173e93a508cc580ef1fafd55dedfaf71c7634f",
+      "backend/ops-service/apps/evaluations/execution_spec.py": "aa638b500d6408db31de07e5b3fb81c91d385b94cc8755c535a2fc927f9f5d03",
       "backend/ops-service/apps/evaluations/quality_policy.py": "b2715707819f120f677aba684790f3f68d6c27c17c1613db455d162d89823b84"
     }
   },

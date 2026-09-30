@@ -260,7 +260,6 @@ def main():
                     (args.search_traces_output, args.assistant_traces_output) if path), "Use distinct trace evidence paths")
         values.update({"LLM_MODEL_TIMEOUT_SECONDS": "2", "LLM_RUN_TIMEOUT_SECONDS": "3"})
     if args.rag_capture_output:
-        import core_rag_capture
         require(not args.rag_capture_output.exists(), "Use a fresh RAG capture directory")
         for path in (args.search_traces_output, args.assistant_traces_output, args.evidence_traces_output):
             if path:
@@ -379,6 +378,10 @@ def main():
         print("PASS: all Catalog source and index writers default to disabled", flush=True)
         if args.config_only:
             return
+        if args.rag_capture_output:
+            # Configuration checks remain stdlib-only. Load the AI contracts before
+            # creating any disposable resources, only when actually collecting RAG.
+            import core_rag_capture
         # Never install a cleanup handler until proving that this project owns no existing resources.
         for arguments in (["ps", "--all", "--quiet"], ["network", "ls", "--quiet"], ["volume", "ls", "--quiet"]):
             output = run(["docker", *arguments, "--filter", "label=com.docker.compose.project=" + project], capture=True)

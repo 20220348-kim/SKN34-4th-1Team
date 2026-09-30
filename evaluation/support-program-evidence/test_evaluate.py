@@ -423,7 +423,7 @@ def test_live_rejects_too_small_call_budget_before_client_creation(loaded, tmp_p
     assert not (tmp_path / "new").exists()
 
 
-@pytest.mark.parametrize("failure", ["authorize", "settle", "unknown", "timeout", "none"])
+@pytest.mark.parametrize("failure", ["authorize", "settle", "unknown", "timeout", "none", "duplicate-case"])
 def test_ops_budget_precedes_http_and_uncertain_usage_blocks_next_case(loaded, tmp_path, monkeypatch, failure):
     from budget_client import BudgetClient, BudgetUnavailable
     monkeypatch.setenv("OPENAI_API_KEY", "offline-no-real-call")
@@ -432,8 +432,11 @@ def test_ops_budget_precedes_http_and_uncertain_usage_blocks_next_case(loaded, t
     monkeypatch.setenv("LLMOPS_OPS_API_URL", "http://127.0.0.1:18001")
     budget = BudgetClient(str(uuid4()), str(uuid4()), "a" * 64)
     events = []
+    budget_fields = []
     def budget_request(action, **fields):
         events.append(action)
+        budget_fields.append((action, fields))
+        assert fields["operation_id"] == f"answer:{loaded[1][fields['sequence']][0]['id']}"
         if action == failure:
             raise BudgetUnavailable("simulated budget failure")
     monkeypatch.setattr(budget, "request", budget_request)
@@ -459,12 +462,19 @@ def test_ops_budget_precedes_http_and_uncertain_usage_blocks_next_case(loaded, t
         def __init__(self, **kwargs):
             super().__init__(transport=httpx2.MockTransport(handler), **kwargs)
     monkeypatch.setattr(httpx2, "AsyncClient", MockClient)
-    capture = asyncio.run(evaluate.execute(loaded[1][:2], loaded[2], tmp_path / "budget", budget=budget))
+    prepared = [loaded[1][0]] * 2 if failure == "duplicate-case" else loaded[1][:2]
+    capture = asyncio.run(evaluate.execute(prepared, loaded[2], tmp_path / "budget", budget=budget))
     assert len(attempts) == (0 if failure == "authorize" else 2 if failure == "none" else 1)
     assert capture["completed"] is (failure == "none")
     assert events[0] == "authorize"
     if failure == "none":
         assert events == ["authorize", "http", "settle"] * 2
+        assert [fields["operation_id"] for action, fields in budget_fields if action == "authorize"] == [
+            f"answer:{case['id']}" for case, _ in loaded[1][:2]
+        ]
+    if failure == "duplicate-case":
+        assert events == ["authorize", "http", "settle"]
+        assert [case["outcome"] for case in capture["cases"]] == ["success", "error"]
     if failure == "settle":
         assert capture["apiResponses"][0]["usage"]["output_tokens"] == 50
         receipt = json.loads((tmp_path / "budget/usage-0.json").read_bytes())

@@ -88,12 +88,14 @@ def install_http_double(run_id):
     original_authorize = BudgetClient.authorize
     original_settle = BudgetClient.settle
 
-    async def authorize(self, sequence, model, max_output_tokens):
+    async def authorize(self, sequence, model, max_output_tokens, *, operation_id):
         await asyncio.to_thread(barrier, run_id, f"before_authorize_{sequence}")
-        await original_authorize(self, sequence, model, max_output_tokens)
+        await original_authorize(
+            self, sequence, model, max_output_tokens, operation_id=operation_id
+        )
 
-    async def settle(self, sequence, usage):
-        await original_settle(self, sequence, usage)
+    async def settle(self, sequence, usage, *, operation_id):
+        await original_settle(self, sequence, usage, operation_id=operation_id)
         await asyncio.to_thread(barrier, run_id, f"after_settle_{sequence}")
 
     BudgetClient.authorize = authorize

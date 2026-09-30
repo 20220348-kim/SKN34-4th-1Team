@@ -18,6 +18,12 @@ class BudgetRequest(serializers.Serializer):
     usage = serializers.JSONField(required=False, allow_null=True)
     model = serializers.CharField(max_length=100, required=False)
     max_output_tokens = serializers.IntegerField(min_value=1, required=False)
+    operation_id = serializers.RegexField(
+        r"^answer:[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}$",
+        max_length=128,
+        required=False,
+        trim_whitespace=False,
+    )
 
 
 @api_view(["POST"])

@@ -254,6 +254,8 @@ class EvaluationBudgetCall(models.Model):
         EvaluationBudgetReservation, on_delete=models.PROTECT, related_name="calls"
     )
     sequence = models.PositiveSmallIntegerField()
+    # 과거 승인의 사례를 소급 추정하지 않는다. 새 승인은 고정 실행 명세의 작업을 가리킨다.
+    operation_id = models.CharField(max_length=128, null=True, db_collation="utf8mb4_bin")
     input_tokens = models.PositiveBigIntegerField(null=True)
     output_tokens = models.PositiveBigIntegerField(null=True)
     authorized_at = models.DateTimeField(auto_now_add=True)
@@ -263,6 +265,13 @@ class EvaluationBudgetCall(models.Model):
         constraints = [
             models.UniqueConstraint(
                 fields=["reservation", "sequence"], name="unique_evaluation_budget_call"
+            ),
+            models.UniqueConstraint(
+                fields=["reservation", "operation_id"], name="unique_evaluation_budget_operation"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(operation_id__isnull=True) | ~models.Q(operation_id=""),
+                name="nonempty_evaluation_budget_operation",
             ),
             models.CheckConstraint(
                 condition=(

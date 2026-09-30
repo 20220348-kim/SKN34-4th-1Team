@@ -148,6 +148,7 @@ export function RunBudgetPanel({ runId, onExpired, refreshKey }: { runId: string
         </section>}
         <details><summary className="cursor-pointer text-sm font-semibold">호출별 승인·정산 · {data.calls.length}건</summary>
           <ul className="mt-3 space-y-2 text-sm">{data.calls.map((call) => <li key={call.sequence}>
+            <p>{call.operation_id ? `답변 작업 · ${call.operation_id}` : '작업 식별 기록 없음 · 과거 승인'}</p>
             호출 {call.sequence + 1} · 승인 {date(call.authorized_at)} · {call.settled_at ? `정산 ${date(call.settled_at)} · 입력 ${count(call.input_tokens!)} / 출력 ${count(call.output_tokens!)}토큰` : data.corrections?.some((record) => record.sequence === call.sequence) ? '원본 정산 미수신 · 사용량 보정 이력 참조' : '사용량 미확인'}
           </li>)}</ul>
         </details>

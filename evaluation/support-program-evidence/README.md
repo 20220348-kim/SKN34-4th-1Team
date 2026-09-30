@@ -122,7 +122,10 @@ Core 단위 테스트와 통합 검사가 같은 [가상 원문](../../backend/c
 
 실행·격리 조건과 전체 서버 CI 확인 방법은 [LLMOps 실행 안내](../../infrastructure/llmops/README.md#실제-core-다중-청크-캡처와-오프라인-평가)를 따릅니다.
 로컬에서는 실제 Core 청커 단위 테스트, 실제 AI/SDK·로컬 HTTP 대역·메모리 Qdrant와 수집기 테스트를 검증했습니다.
-새 변경의 JVM·MySQL·Qdrant 서버·Langfuse 통합 성공은 커밋·푸시 후 해당 SHA CI에서 확인해야 합니다.
+`skn-75 / b1d9f03`의 CI artifact에서 JVM·MySQL·Qdrant 서버·Langfuse를 거치는 두 원문 버전·10사례의
+통과를 확인했습니다. 검색 측정 9건·답변 측정 6건·실패 4건·trace 10건이며 실패 사례를 분모에서 삭제하지 않습니다.
+해당 SHA의 전체 CI는 설정 검사 의존성과 이후 취소 접수 503 문제로 실패했습니다. RAG 단계 통과와
+전체 workflow 성공을 구별하며, 후속 수정의 결과는 새 SHA에서 다시 확인해야 합니다.
 
 ## Ops 평가 범위 고정 — 2026-09-30
 
@@ -357,6 +360,10 @@ backend/ai-service/.venv/bin/python evaluation/support-program-evidence/evaluate
 Ops 실행기는 접수 시 DB에 예약한 누적 호출·출력 토큰 한도를 사용합니다. 모델 HTTP 전송 전에
 전용 인증으로 소유권과 호출 번호를 승인받고, 응답의 입력·출력 토큰을 정산합니다. 승인·정산 실패나
 사용량 누락이면 다음 호출을 차단하며, 응답 유실을 0회/0토큰으로 환급하지 않습니다.
+새 명세는 선택 사례마다 `answer:{case_id}` 작업과 모델·출력 상한을 `model_operations`에 고정합니다.
+전송 전에 그 작업을 승인받고 응답이 속한 원래 요청의 작업 ID로 정산합니다. 같은 사례의 중복
+전송도 차단합니다. 과거 호출의 작업 ID는 추정하지 않습니다. Ops의 `0016_budget_operation_identity`
+migration과 같은 소스로 생성한 실행기·실행 명세가 필요합니다.
 `budget_client.py`도 실행 명세에 포함합니다. 예약은 금액 상한이 아니며 전체 RAG 및 직접 실행 CLI의
 호출을 합산하지 않습니다. [Ops 누적 한도와 설정](../../backend/ops-service/README.md#누적-호출출력-토큰-한도)을 따릅니다.
 

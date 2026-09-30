@@ -189,6 +189,18 @@ def profile(release, dataset_id, mode, config):
         "pipeline": release["pipeline"],
         "generation": release["generation"] if mode == "live" else None,
         "live_config": config if mode == "live" else {},
+        "model_operations": [
+            {
+                "id": f"answer:{case_id}",
+                "kind": "answer",
+                "case_id": case_id,
+                "model": config["model"],
+                "max_output_tokens": config["max_output_tokens"],
+            }
+            for case_id in release["datasets"][dataset_id]["case_ids"]
+        ]
+        if mode == "live"
+        else [],
     }
 
 

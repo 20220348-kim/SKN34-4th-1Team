@@ -20,6 +20,7 @@ HERE = Path(__file__).resolve().parent
 TERMINAL = {"COMPLETED", "FAILED", "CANCELLED", "CRASHED", "RESULT_ERROR"}
 SCENARIOS = (
     "queued",
+    "dispatch_busy_once",
     "before_authorize",
     "after_settle",
     "ack_while_alive",
@@ -68,6 +69,9 @@ def verify_budget(before, after, *, calls, output, closed, sent, events):
     assert delta == [calls, output], f"Unexpected retained budget: {delta}"
     assert after["closed"] is closed
     assert len({c["sequence"] for c in after["calls"]}) == len(after["calls"])
+    assert [c["operation_id"] for c in after["calls"]] == after["operation_ids"][
+        : len(after["calls"])
+    ]
     assert sum(e["stage"] == "model_sent" for e in events) == sent
     assert not any(e["stage"] == "barrier_timeout" for e in events)
 
@@ -250,6 +254,7 @@ class Smoke:
         }
         self.active["payload"] = payload
         status, run = self.api("/api/v1/ops/evaluations", payload)
+        self.active["dispatch_http_status"] = status
         expected = 503 if config.get("fault") == "create_lost" else 202
         assert status == expected, f"{name} dispatch: HTTP {status}"
         self.observe(run)
@@ -425,11 +430,28 @@ class Smoke:
     def run(self):
         self.pause()
         try:
-            self.start("queued")
-            self.cancel()
-            self.terminal("CANCELLED")
-            assert not self.process()["started"]
-            self.finish(calls=0, output=0, sent=0)
+            for name, config in (
+                ("queued", {}),
+                ("dispatch_busy_once", {"fault": "create_busy_once"}),
+            ):
+                self.start(name, **config)
+                if config:
+                    creates = [e for e in self.control("state")["events"] if e["stage"] == "create"]
+                    assert 2 <= len(creates) <= 3
+                    assert creates[0] == {
+                        "stage": "create",
+                        "status": 503,
+                        "forwarded": False,
+                    }
+                    assert all(e["forwarded"] and e["status"] == 503 for e in creates[1:-1])
+                    assert creates[-1]["forwarded"] and creates[-1]["status"] in (
+                        200,
+                        201,
+                    )
+                self.cancel()
+                self.terminal("CANCELLED")
+                assert not self.process()["started"]
+                self.finish(calls=0, output=0, sent=0)
         finally:
             self.resume()
 
