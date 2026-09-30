@@ -52,7 +52,10 @@ Core가 기존 `documentMapSnapshot`의 `pipelineVersion`과 새 버전을 비�
 
 예시 삭제는 색상 필터를 사용하지 않는다. 모델이 의미·문맥과 정확한 문자열 구간을 지정하며, 미답변 예시 삭제에는 valueRef가 없다. 항목명과 예시가 섞이면 지정 구간 외 문자열은 보존한다. 단순하고 위치가 모호하지 않은 구간 변경은 원래 run을 유지하는 최소 확장으로 처리한다. 반복 텍스트 때문에 어느 run을 바꾸는지 모호하거나 보존 run을 합쳐야 하는 변경은 거절한다. 본문을 비워 bN 순번이 달라지는 경우에는 원본/결과를 다시 분석하여 유지된 문단 구조 위치에서 값을 확인한다. 독립 한글 렌더링은 별도 검증이 필요하다.
 
-HWP 작성 계획을 요청할 때는 저장된 선택 양식 scope에 포함된 targets만 모델에 전달하고, bindings는 현재 확정 답변이 있는 문항으로 한정한다. 검증·감사용 원본 지도는 바꾸지 않는다. 미답변 문항은 답변 배치 실패 대상으로 삼지 않으며, 선택 범위 안의 예시 정리는 별도로 판단한다. 모델이 범위 밖 위치를 반환하면 여전히 거절한다. 거절 로그에는 mode/code/고정 reason만 남기며 답변·원문·모델 응답은 기록하지 않는다.
+Core의 HWP 기입(`applyHwpPlan`)은 바뀐 문단의 줄 나눔과 셀 높이를 다시 계산하는데, 셀 안에 표·그림 같은 컨트롤 문단이 있으면 컨트롤 높이를 알 수 없으므로 셀·표 높이는 그대로 두고 바뀐 문단의 줄 나눔만 다시 잡는다(이전에는 생성을 `UNSUPPORTED`로 거절했고, 실제 공고 신청서의 표 안 표가 이 경우였다). 편집기 내부 검증이 실패하면 예외 클래스·메시지·발생 위치를 `application_document_editor_unsupported` 경고로 남긴다(답변 값은 남기지 않음).
+HWP 매핑 응답에는 `scopeTargetIds`가 없다. 큰 HWP 양식은 문단 target이 수천 개라 이를 모두 나열한 응답이 실제 공고에서 JSON 중간에 잘렸다(`OUTPUT_TRUNCATED`). 모델은 bindings와 unmappedFieldIds만 답하고, 서버 `hwp_scope`가 바인딩된 문단의 최상위 표(`s{n}-p{n}-t{n}` 접두) 안의 편집 가능한 target 전체, 바인딩된 본문 문단, 바인딩된 선택지의 그룹 전원을 scope로 만든다. 이후 `validate_mapping`·Core 검증·생성 규칙은 그대로 적용된다.
+저장된 bindings가 있는 HWP·HWPX·DOCX·XLSX 생성은 모델 계획을 부르지 않고 `deterministic_plan`이 binding마다 하나의 연산을 만든다. 빈 text target은 `input`(0,0), 인쇄된 빈칸 표시(`____`, `( )`, `[ ]`)는 첫 표시 구간의 `replace_range`, `:`로 끝나는 라벨 문단은 끝에 삽입하는 `replace_range`, 그 밖의 예시 문구는 전체 `replace_range`, CHECKBOX는 `set_check`, HWP_FIELD·DOCX_CONTROL은 `set_field`, XLSX_CELL은 `input`이다. 한 text target에 여러 fact가 묶인 경우만 그 fact와 binding으로 축소한 요청을 모델에 보내고 결과 연산을 합친다. 합친 계획도 `validate_plan`의 저장 binding·scope·범위 검증을 그대로 통과해야 하며, 실패는 이전과 같은 code/reason으로 닫힌다. 결정적 계획은 선택 범위 안의 예시 정리(`delete_range`)를 만들지 않으므로 bound되지 않은 셀의 예시 문구는 남는다. 이전 실제 실행에서 모델 계획이 `SAVED_BINDING_CHANGED`·`UNRESOLVED_TARGETS`로 흔들리던 문제를 없애기 위한 규칙이며 mapVersion/pipelineVersion은 바꾸지 않는다.
+HWP 작성 계획을 모델에 요청하는 경우(저장 binding이 없거나 축소 요청)에는 저장된 선택 양식 scope에 포함된 targets만 모델에 전달하고, bindings는 현재 확정 답변이 있는 문항으로 한정한다. 검증·감사용 원본 지도는 바꾸지 않는다. 미답변 문항은 답변 배치 실패 대상으로 삼지 않으며, 선택 범위 안의 예시 정리는 별도로 판단한다. 모델이 범위 밖 위치를 반환하면 여전히 거절한다. 거절 로그에는 mode/code/고정 reason만 남기며 답변·원문·모델 응답은 기록하지 않는다.
 
 ## PDF 좌표·단계
 

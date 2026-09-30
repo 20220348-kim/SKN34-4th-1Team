@@ -1,5 +1,6 @@
 import base64
 import logging
+import re
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -9,11 +10,91 @@ from app.application_preparation.document_adapters import HwpxDocumentAdapter, P
 from app.application_preparation.docx_adapter import DocxDocumentAdapter
 from app.application_preparation.xlsx_adapter import XlsxDocumentAdapter
 from app.application_preparation.document_contract import (
-    CONTRACT, DocumentAnalysisStage, DocumentError, DocumentMap, EditOperation, GenerateDocumentRequest, MapDocumentRequest, PIPELINE_VERSION, PlanSelection, digest, validate_plan, validate_mapping, mapping_label_key, mapping_label_matches,
+    CONTRACT, DocumentAnalysisStage, DocumentError, DocumentMap, EditOperation, GenerateDocumentRequest, MapDocumentRequest, NativeTarget, PIPELINE_VERSION, PlanSelection, digest, validate_plan, validate_mapping, mapping_label_key, mapping_label_matches,
 )
 from app.application_preparation.hwpx_form_analysis import annotate_semantic_reading_order
 
 logger = logging.getLogger(__name__)
+
+
+"""Formats whose write plan is derived from the saved bindings instead of a second model call.
+PDF keeps its own paths: AcroForm fields are already deterministic, and flat PDF needs the model for example-text deletion."""
+DETERMINISTIC_PLAN_FORMATS = {"hwp", "hwpx", "docx", "xlsx"}
+# A printed blank inside a label paragraph: "기업명: ____", "성명 (      )", "[ ]". The first one is the input slot.
+BLANK_MARKER = re.compile(r"_{2,}|＿{2,}|\(\s*\)|（\s*）|\[\s*\]|［\s*］")
+
+
+def _text_operation(target: NativeTarget, fact_id: str) -> EditOperation:
+    """One answer into one text target: fill an empty slot, replace a printed blank, append after a label, or replace an example."""
+    text = target.currentText
+    common = {"targetId": target.targetId, "expectedText": text, "valueRef": fact_id, "box": None}
+    if not text.strip():
+        return EditOperation(operation="input", start=0, end=0, reason="빈 입력칸에 저장된 답변을 입력", **common)
+    marker = BLANK_MARKER.search(text)
+    if marker:
+        return EditOperation(operation="replace_range", start=marker.start(), end=marker.end(), reason="빈칸 표시를 저장된 답변으로 교체", **common)
+    if text.rstrip().endswith((":", "：")):
+        return EditOperation(operation="replace_range", start=len(text), end=len(text), reason="라벨 뒤에 저장된 답변을 삽입", **common)
+    return EditOperation(operation="replace_range", start=0, end=len(text), reason="예시 문구를 저장된 답변으로 교체", **common)
+
+
+def deterministic_plan(request: GenerateDocumentRequest, document: DocumentMap) -> tuple[PlanSelection, list[str]]:
+    """Derive the write plan from the saved bindings without asking the model.
+
+    Every provided fact already has a verified native target from the mapping stage, so the only decision left is the
+    operation and text range on that target. Those follow fixed rules per target kind. Facts whose target cannot be
+    decided by rule (several answers bound to one text target) are returned as deferred so the caller can ask the model
+    for just those. validate_plan still checks the merged result against the saved bindings and scope.
+    """
+    facts = {fact.id: fact.value for fact in request.facts}
+    targets = {target.targetId: target for target in document.targets}
+    by_target: dict[str, list[str]] = {}
+    for binding in request.bindings:
+        if binding.factId in facts:
+            by_target.setdefault(binding.targetId, []).append(binding.factId)
+    operations: list[EditOperation] = []
+    deferred: list[str] = []
+    for target_id, fact_ids in by_target.items():
+        target = targets.get(target_id)
+        if target is None:
+            deferred.extend(fact_ids)
+            continue
+        text = target.currentText
+        if target.kind == "CHECKBOX":
+            operations.extend(EditOperation(targetId=target_id, operation="set_check", expectedText=text, start=0, end=len(text),
+                                            valueRef=fact_id, box=None, reason="저장된 답변이 선택지 캡션과 같아 선택") for fact_id in fact_ids)
+        elif target.kind in {"HWP_FIELD", "DOCX_CONTROL"}:
+            operations.extend(EditOperation(targetId=target_id, operation="set_field", expectedText=text, start=0, end=len(text),
+                                            valueRef=fact_id, box=None, reason="네이티브 입력 필드에 저장된 답변을 설정") for fact_id in fact_ids)
+        elif target.kind == "XLSX_CELL":
+            operations.extend(EditOperation(targetId=target_id, operation="input", expectedText=text, start=0, end=0,
+                                            valueRef=fact_id, box=None, reason="빈 셀에 저장된 답변을 입력") for fact_id in fact_ids)
+        elif len(fact_ids) == 1:
+            operations.append(_text_operation(target, fact_ids[0]))
+        else:
+            # Several answers share one paragraph ("대표자: ____ 연락처: ____"): the slot order needs the model.
+            deferred.extend(fact_ids)
+    scope = list(request.scopeTargetIds)
+    if not scope:
+        scope = list(dict.fromkeys(op.targetId for op in operations))
+        if request.format == "hwp":
+            for op in list(operations):
+                group = targets[op.targetId].nativeLocator.get("group") if targets[op.targetId].kind == "CHECKBOX" else None
+                if group:
+                    scope.extend(t.targetId for t in document.targets if t.kind == "CHECKBOX" and t.nativeLocator.get("group") == group and t.targetId not in scope)
+    return PlanSelection(operations=operations, unresolvedTargets=[], scopeTargetIds=scope), deferred
+
+
+async def _plan_with_model(request: GenerateDocumentRequest, document: DocumentMap, agent) -> PlanSelection:
+    try:
+        return await agent.plan_document(request, document)
+    except DocumentError:
+        raise
+    except TimeoutError:
+        raise DocumentError("PLAN_TIMEOUT") from None
+    except Exception as error:
+        logger.warning("document_plan_failed mode=write type=%s", type(error).__name__)
+        raise DocumentError("PLAN_FAILED") from None
 
 
 def validation_error_summary(error: ValidationError, limit: int = 10) -> list[dict]:
@@ -293,16 +374,22 @@ async def generate_document(request: GenerateDocumentRequest, agent) -> dict:
                 valueRef=binding.factId, box=None, reason="Saved native AcroForm field binding")
                 for binding in request.bindings], unresolvedTargets=[],
                 scopeTargetIds=list(dict.fromkeys(binding.targetId for binding in request.bindings)))
+        elif request.bindings and request.format in DETERMINISTIC_PLAN_FORMATS:
+            # The mapping stage already fixed where each answer goes. Do not ask the model to choose again;
+            # only slots it must arbitrate (several answers in one paragraph) go to the model, and only those.
+            selection, deferred = deterministic_plan(request, document)
+            if deferred:
+                reduced = request.model_copy(update={
+                    "facts": [fact for fact in request.facts if fact.id in deferred],
+                    "bindings": [binding for binding in request.bindings if binding.factId in deferred]})
+                modelled = await _plan_with_model(reduced, document, agent)
+                selection = PlanSelection(operations=[*selection.operations, *modelled.operations],
+                                          unresolvedTargets=modelled.unresolvedTargets,
+                                          scopeTargetIds=list(dict.fromkeys([*selection.scopeTargetIds, *modelled.scopeTargetIds])))
+            logger.info("document_plan_deterministic format=%s operations=%d deferred_facts=%d",
+                        request.format, len(selection.operations), len(deferred))
         else:
-            try:
-                selection = await agent.plan_document(request, document)
-            except DocumentError:
-                raise
-            except TimeoutError:
-                raise DocumentError("PLAN_TIMEOUT") from None
-            except Exception as error:
-                logger.warning("document_plan_failed mode=write type=%s", type(error).__name__)
-                raise DocumentError("PLAN_FAILED") from None
+            selection = await _plan_with_model(request, document, agent)
         plan = validate_plan(request, document, selection)
         document.documentAnalysis.mapping = DocumentAnalysisStage(
             status="PASSED", targetCount=len(plan.scopeTargetIds), resultCount=len(plan.operations),

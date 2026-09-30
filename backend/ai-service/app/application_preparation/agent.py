@@ -19,6 +19,39 @@ from app.application_preparation.models import DraftRequest, DraftSelection
 from app.application_preparation.document import DOCUMENT_INSTRUCTIONS, DocumentRequest, DocumentSelection
 
 
+def hwp_scope(document, bindings) -> list[str]:
+    """Editable scope of an HWP mapping, derived from the bindings instead of listed by the model.
+
+    Core names HWP paragraphs `s{section}-p{paragraph}` and paragraphs inside a table
+    `s0-p3-t0-r{row}-c{col}-p{n}` (nested tables repeat the pattern). A bound paragraph pulls its whole
+    outermost table into scope, a bound body paragraph only itself, and a bound choice pulls every member
+    of its choice group so Core can clear the other options.
+    """
+    import re
+    by_id = {target.targetId: target for target in document.targets}
+    scope: list[str] = []
+
+    def add(target_id: str) -> None:
+        if target_id not in scope and target_id in by_id and by_id[target_id].editable:
+            scope.append(target_id)
+
+    for binding in bindings:
+        outer = re.match(r"^(s\d+-p\d+-t\d+)(?=-)", binding.targetId)
+        if outer:
+            prefix = outer.group(1) + "-"
+            for target in document.targets:
+                if target.targetId.startswith(prefix):
+                    add(target.targetId)
+        add(binding.targetId)
+        bound = by_id.get(binding.targetId)
+        group = bound.nativeLocator.get("group") if bound is not None and bound.kind == "CHECKBOX" else None
+        if group:
+            for target in document.targets:
+                if target.kind == "CHECKBOX" and target.nativeLocator.get("group") == group:
+                    add(target.targetId)
+    return scope
+
+
 """Output budget for one mapping answer. A large HWP form lists every bound target and its scope; 16k tokens was cut
 before the JSON closed on real notices (json_invalid), so the budget is doubled and truncation fails fast instead."""
 MAPPING_MAX_OUTPUT_TOKENS = 32000
@@ -224,6 +257,13 @@ class ApplicationPreparationAgent:
                 **{f"target_{index}": (bool, Field(alias=target_id)) for index, target_id in enumerate(scope_ids)})
             selection_type = create_model("HwpxMappingSelection", __base__=Contract,
                 assignments=(assignments_type, ...), scope=(scope_type, ...))
+        if request.format == "hwp":
+            # A large HWP form has thousands of paragraph targets; listing them all as scope cut the answer mid-JSON on
+            # real notices. The model only binds fields; the server derives the scope from the tables it bound (see hwp_scope).
+            selection_type = create_model("HwpMappingSelection", __base__=Contract,
+                bindings=(list[binding_type], Field(max_length=600)),
+                unmappedFieldIds=(list[field_id], Field(max_length=200,
+                    description="Each supplied field ID must occur in bindings OR here, never both. No descriptions or target IDs.")))
         mapping_document = document.model_dump(exclude={"targets", "auxiliaryText"})
         if request.format != "xlsx":
             mapping_document.pop("workbookMetadata", None)
@@ -272,7 +312,10 @@ class ApplicationPreparationAgent:
             }}, ensure_ascii=False)})
         content.extend({"type": "image_url", "image_url": {"url": f"data:image/png;base64,{page}", "detail": "high"}} for page in request.pageImages)
         output_instructions = ("\nReturn assignments keyed by every supplied question ID. Each property's targetId is ONE native input ID; use null only when unbound. Each question addresses one input slot; never copy its value into several repeated rows. Never assign a physical target to two different questions. In scope, mark each supplied target ID true only if it belongs to the selected form, including its examples; otherwise false. This keyed object replaces scopeTargetIds and cannot repeat a target. The rejectedSelection, if present, is diagnostic data in normalized server format; return the assignments and scope schema instead."
-                               if request.format == "hwpx" else "\nReturn bindings with factId equal to the supplied question ID, and list only unbound question IDs in unmappedFieldIds.")
+                               if request.format == "hwpx" else
+                               "\nReturn bindings with factId equal to the supplied question ID, and list only unbound question IDs in unmappedFieldIds. Do not return scope IDs: the server derives the editable scope from the tables that contain your bindings."
+                               if request.format == "hwp" else
+                               "\nReturn bindings with factId equal to the supplied question ID, and list only unbound question IDs in unmappedFieldIds.")
         result = await self._invoke(selection_type, MAPPING_INSTRUCTIONS + output_instructions + ("\nFor XLSX choose only supplied editable XLSX_CELL addresses. fieldLabels, rowLabels, columnLabels, sectionPath and sheetName are inspected context. Never bind hidden/protected/formula/merged-child cells. Ambiguous blank cells are not inputs." if request.format == "xlsx" else ""), content, MAPPING_MAX_OUTPUT_TOKENS, "Document mapping timed out", document=True)
         if request.format == "hwpx":
             assignments = result.model_dump(by_alias=True)["assignments"]
@@ -280,6 +323,11 @@ class ApplicationPreparationAgent:
                 for field_id, assignment in assignments.items() if (target_id := assignment["targetId"]) is not None],
                 unmappedFieldIds=[field_id for field_id, assignment in assignments.items() if assignment["targetId"] is None],
                 scopeTargetIds=[target_id for target_id, included in result.model_dump(by_alias=True)["scope"].items() if included])
+        elif request.format == "hwp":
+            dumped = result.model_dump()
+            bindings_out = [DocumentPlacement(factId=b["factId"], targetId=b["targetId"], box=None) for b in dumped["bindings"]]
+            selection = MappingSelection(bindings=bindings_out, unmappedFieldIds=dumped["unmappedFieldIds"],
+                                         scopeTargetIds=hwp_scope(document, bindings_out))
         else:
             selection = MappingSelection.model_validate(result.model_dump())
             if request.format == "pdf" and request.pdfFields and all(
