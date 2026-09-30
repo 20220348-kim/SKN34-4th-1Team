@@ -15,6 +15,7 @@
   "dependencies": {
     "@govbiz/shared": "workspace:*",
     "expo": "~57.0.24",
+    "expo-clipboard": "~57.0.2",
     "expo-constants": "~57.0.19",
     "expo-crypto": "~57.0.3",
     "expo-linking": "~57.0.10",

@@ -24,6 +24,7 @@ export default function RootLayout() {
       headerStyle: { backgroundColor: colors.surface }, contentStyle: { backgroundColor: colors.background } }}>
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       <Stack.Screen name="program" options={{ title: '공고 상세' }} />
+      <Stack.Screen name="partner/[id]" options={{ title: '모집글 상세' }} />
       <Stack.Screen name="company" options={{ title: '기업 프로필' }} />
       <Stack.Screen name="oauth/complete" options={{ title: '로그인' }} />
     </Stack>
