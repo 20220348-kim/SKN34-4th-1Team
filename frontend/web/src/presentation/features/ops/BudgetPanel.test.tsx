@@ -68,7 +68,7 @@ describe('관리자 예산 장부', () => {
 
   it('지원하지 않는 작업 ID가 포함된 장부 응답을 거절한다', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ ...detail, calls: [
-      { ...detail.calls[0], operation_id: 'query_embedding:TC01' },
+      { ...detail.calls[0], operation_id: 'unsupported:TC01' },
     ] })))
     await expect(getRunBudget(id)).rejects.toThrow()
   })
@@ -242,4 +242,17 @@ it('입력 보정 차액 불일치와 예약 상한 초과 사용량을 거절�
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ ...bounded, corrections: [changed] })))
     await expect(getRunBudget(id)).rejects.toThrow()
   }
+})
+
+
+it('임베딩 승인과 답변의 개별 상한을 표시한다', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ ...detail, calls: [
+    { ...detail.calls[0], operation_id: 'document_embedding:D1:0', max_input_tokens: 120, max_output_tokens: 0 },
+    { ...detail.calls[1], operation_id: 'answer:E01', max_input_tokens: 32768, max_output_tokens: 2000 },
+  ] })))
+  render(<RunBudgetPanel runId={id} onExpired={vi.fn()} refreshKey={0} />)
+  fireEvent.click(await screen.findByText('호출별 승인·정산 · 2건'))
+  expect(screen.getByText('문서 임베딩 · document_embedding:D1:0')).toBeTruthy()
+  expect(screen.getByText('승인 상한: 입력 120토큰 / 출력 0토큰')).toBeTruthy()
+  expect(screen.getByText('승인 상한: 입력 32,768토큰 / 출력 2,000토큰')).toBeTruthy()
 })

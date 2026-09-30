@@ -226,6 +226,8 @@ class EvaluationBudgetReservation(models.Model):
     max_output_tokens = models.PositiveIntegerField()
     # NULL means a legacy reservation with no approved input bound.
     max_input_tokens = models.PositiveIntegerField(null=True)
+    reserved_input_tokens = models.PositiveBigIntegerField(null=True)
+    reserved_output_tokens = models.PositiveBigIntegerField(null=True)
     worker_id = models.UUIDField(null=True)
     closed_at = models.DateTimeField(null=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -267,6 +269,8 @@ class EvaluationBudgetCall(models.Model):
     sequence = models.PositiveSmallIntegerField()
     # 과거 승인의 사례를 소급 추정하지 않는다. 새 승인은 고정 실행 명세의 작업을 가리킨다.
     operation_id = models.CharField(max_length=128, null=True, db_collation="utf8mb4_bin")
+    max_input_tokens = models.PositiveIntegerField(null=True)
+    max_output_tokens = models.PositiveIntegerField(null=True)
     counted_input_tokens = models.PositiveBigIntegerField(null=True)
     input_tokens = models.PositiveBigIntegerField(null=True)
     output_tokens = models.PositiveBigIntegerField(null=True)

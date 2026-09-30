@@ -734,3 +734,43 @@ def test_unknown_input_cannot_be_refunded_as_zero():
     after["allocated_input"] = before["allocated_input"]
     with pytest.raises(AssertionError):
         smoke.verify_budget(before, after, calls=1, output=2000, closed=True, sent=1, events=events)
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [None, "missing", "duplicate", "wrong-call", "refund-zero", "mutated-original"],
+)
+def test_final_budget_accounts_for_separate_usage_correction(fault):
+    before, after, events = accounting()
+    after.update(
+        allocated=[4, 150],
+        allocated_input=200,
+        corrections=[
+            {
+                "sequence": 0,
+                "correction__input_tokens": 100,
+                "correction__output_tokens": 50,
+            }
+        ],
+    )
+    if fault == "missing":
+        after["corrections"] = []
+    if fault == "duplicate":
+        after["corrections"] *= 2
+    if fault == "wrong-call":
+        after["corrections"][0]["sequence"] = 1
+    if fault == "refund-zero":
+        after["allocated_input"] = before["allocated_input"]
+    if fault == "mutated-original":
+        after["calls"][0]["input_tokens"] = 100
+    if fault:
+        with pytest.raises(AssertionError):
+            smoke.verify_budget(
+                before, after, calls=1, output=50, closed=True, sent=1, events=events
+            )
+    else:
+        result = smoke.verify_budget(
+            before, after, calls=1, output=50, closed=True, sent=1, events=events
+        )
+        assert result["retained_input_delta"] == 100
+        assert result["settlements"] == 0  # signed correction never rewrites settlement history

@@ -403,6 +403,35 @@ Ops 정산은 생성 응답의 usage를 따릅니다. 누적 입력 한도는 CL
 `comparison.json`에는 집계 지표와 실행 식별자를 보관하며, 검토 화면의 답변 원문은 해시가 검증된
 후보·기준 캡처에서 읽습니다. 검토 승인은 별도 관리자 기록이며 AI 작성 참조의 출처나 미측정 의미 충실도 값을 바꾸지 않습니다.
 
+
+## 임베딩 배치 예산 연결: 내부 실행기
+
+`embedding_budget.py`는 기존 AI 서비스의 `prepare_embedding_batches`와 동일한 중복 제거·토큰 계산·
+전처리를 사용해 문서/질문 배치별 작업 ID, 모델, 차원, 입력 SHA-256, 최대 입력, 출력 0을 만듭니다.
+`EmbeddingBudget`을 `build_evaluation_app(..., embedding_budget=guard)`에 전달하면 기존 SDK의
+HTTP hook에서 배치를 대조하고 Ops 승인을 받은 뒤에만 전송합니다. production 의존성은 추가하지 않았습니다.
+
+흐름: `고정 배치 계획 → 기존 Service의 임베딩 요청 → SDK 요청 검증 → BudgetClient → Ops 승인 →
+OpenAI 임베딩 → usage 검증 → Ops 정산 → Service 벡터 검증·캐시`.
+요청 URL·모델·입력·차원·추가 필드가 달라지면 전송하지 않습니다. 사용량 누락·상한 초과·timeout·
+승인/정산 실패는 다음 전송을 차단합니다. 사용량이 확인되고 벡터만 잘못된 경우 사용량을 정산하고
+Service가 결과·캐시 반영을 거절합니다.
+
+이 도구는 **내부 색인·검색 세션용 연결점**입니다. 예약 생성·claim·close 및 자료/예산 승인은 호출자가
+수행해야 합니다. 가드를 전달한 세션은 답변 생성을 거절하며, 답변 슬롯을 임베딩 캐시로 건너뛰지 않습니다.
+현재 CLI와 `ops_flow.py`가 이 가드를 자동 사용하지 않으므로 전체 RAG Ops 실행이 연결된 상태는 아닙니다.
+공개 RAG 자료 계약·manifest·접수·실행 연결은 별도 후속입니다.
+
+캐시 적중으로 완전히 전송하지 않은 배치는 승인하지 않고 남겨 두며 종료 때 예약을 반환합니다.
+부분 캐시 적중으로 남은 문자열이 재배치되어 승인한 배치 해시와 달라지면 중단합니다. 이를 자동으로
+새 승인 계획으로 바꾸거나 넓은 상한만으로 전송하지 않습니다. 임베딩은 답변용 서명 영수증 v1을 생성하지
+않으므로 정산 실패 시 입력 예약이 유지됩니다. 임베딩 증거·보정 확장이 필요합니다.
+
+무료 검증은 실제 OpenAI SDK·기존 임베딩 Service와 HTTP 대역을 사용합니다. Ops의 실제 MySQL 장부
+테스트와 SDK 테스트는 각각 수행하며, 이 결과를 유료 API·전체 RAG/Prefect/Kubernetes 통합 완료로
+해석하지 않습니다. 기존 개발 DB migration이나 유료 평가를 자동 실행하지 않습니다.
+
+
 ## 공식 HTML 전체 경로 재실행
 
 [Core 통합 테스트](../../backend/core-service/src/test/kotlin/ai/govbiz/core/supportprogram/service/evidence/SupportProgramEvidenceIntegrationTest.kt)는

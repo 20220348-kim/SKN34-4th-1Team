@@ -98,8 +98,10 @@ const budgetSummarySchema = z.object({
 })
 const budgetReservationSchema = z.object({
   max_input_tokens: z.number().int().positive().nullable().optional(),
+  reserved_input_tokens: z.number().int().nonnegative().nullable().optional(),
+  reserved_output_tokens: z.number().int().nonnegative().optional(),
   run_id: z.uuid(), dataset_id: z.string(), created_at: z.string(), closed_at: z.string().nullable(),
-  max_calls: z.number().int().positive(), max_output_tokens: z.number().int().positive(), breakdown: budgetBreakdownSchema,
+  max_calls: z.number().int().positive(), max_output_tokens: z.number().int().nonnegative(), breakdown: budgetBreakdownSchema,
 })
 const budgetPageSchema = z.object({
   as_of: z.string(), summary: budgetSummarySchema,
@@ -150,8 +152,10 @@ const runBudgetSchema = z.object({
   corrections: z.array(usageCorrectionSchema).optional(),
   calls: z.array(z.object({
     sequence: z.number().int().nonnegative(), authorized_at: z.string(), settled_at: z.string().nullable(),
+    max_input_tokens: z.number().int().positive().nullable().optional(),
+    max_output_tokens: z.number().int().nonnegative().optional(),
     counted_input_tokens: z.number().int().nonnegative().nullable().optional(),
-    operation_id: z.string().regex(/^answer:[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}$/).nullable().optional(),
+    operation_id: z.string().regex(/^(answer|document_embedding|query_embedding):[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}$/).nullable().optional(),
     input_tokens: z.number().int().nonnegative().nullable(), output_tokens: z.number().int().nonnegative().nullable(),
   }).refine((call) => call.settled_at === null
     ? call.input_tokens === null && call.output_tokens === null
@@ -165,11 +169,13 @@ const runBudgetSchema = z.object({
       && corrections.every((record) => {
         const reservation = data.reservation
         const call = data.calls.find((item) => item.sequence === record.sequence)
-        return reservation?.closed_at && reservation.run_id === record.run_id && call?.settled_at === null
-          && (reservation.max_input_tokens == null || record.input_tokens <= reservation.max_input_tokens)
-          && record.output_tokens <= reservation.max_output_tokens
-          && record.before.unknown_output_tokens - record.after.unknown_output_tokens === reservation.max_output_tokens
-          && record.before.reservation_output_tokens - record.after.reservation_output_tokens === reservation.max_output_tokens - record.output_tokens
+        const inputCap = call?.max_input_tokens ?? reservation?.max_input_tokens
+        const outputCap = call?.max_output_tokens ?? reservation?.max_output_tokens
+        return outputCap !== undefined && reservation?.closed_at && reservation.run_id === record.run_id && call?.settled_at === null
+          && (inputCap == null || record.input_tokens <= inputCap)
+          && record.output_tokens <= outputCap
+          && record.before.unknown_output_tokens - record.after.unknown_output_tokens === outputCap
+          && record.before.reservation_output_tokens - record.after.reservation_output_tokens === outputCap - record.output_tokens
       })
   })
 const qualitySchema = z.object({

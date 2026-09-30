@@ -32,7 +32,7 @@ def require_loopback_url(value: str) -> str:
     return value.rstrip("/")
 
 
-def build_evaluation_app(output_dir: Path, qdrant_url: str, max_api_calls: int):
+def build_evaluation_app(output_dir: Path, qdrant_url: str, max_api_calls: int, *, embedding_budget=None):
     require_loopback_url(qdrant_url)
     require(type(max_api_calls) is int and 1 <= max_api_calls <= 20, "API budget must be between 1 and 20")
     key = os.environ.get("OPENAI_API_KEY", "").strip()
@@ -55,6 +55,9 @@ def build_evaluation_app(output_dir: Path, qdrant_url: str, max_api_calls: int):
         require(str(request.url) in {"https://api.openai.com/v1/embeddings", "https://api.openai.com/v1/responses"}
                 and request.method == "POST", "unexpected upstream endpoint")
         require(not trace["stopped"] and len(trace["calls"]) < max_api_calls, "evaluation API budget exhausted or stopped")
+        if embedding_budget is not None:
+            # A guarded indexing/search session must never silently send unbudgeted answers.
+            await embedding_budget.before_request(request)
         index = len(trace["calls"])
         request.extensions["evidence_eval_index"] = index
         request.extensions["evidence_eval_started"] = perf_counter()
@@ -79,6 +82,8 @@ def build_evaluation_app(output_dir: Path, qdrant_url: str, max_api_calls: int):
         if response.status_code != 200:
             trace["stopped"] = True
         save()
+        if embedding_budget is not None:
+            await embedding_budget.after_response(response)
 
     client = httpx2.AsyncClient(event_hooks={"request": [before_request], "response": [after_response]})
     # Evaluation-only construction hook: keep the existing production object graph and explicit SDK retry=0.

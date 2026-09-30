@@ -67,8 +67,30 @@ def request(url, data=None, *, client=None, headers=None):
 def verify_budget(before, after, *, calls, output, closed, sent, events):
     delta = [b - a for a, b in zip(before["allocated"], after["allocated"], strict=True)]
     assert delta == [calls, output], f"Unexpected retained budget: {delta}"
+    # 보정은 원래 미정산 호출 행을 변경하지 않는다. 별도 증거 보정 행을 함께 대조한다.
+    corrections = after.get("corrections", [])
+    corrected = {item["sequence"]: item for item in corrections}
+    assert len(corrected) == len(corrections), "Duplicate usage corrections"
+    for sequence, item in corrected.items():
+        assert closed and any(
+            call["sequence"] == sequence
+            and call["input_tokens"] is None
+            and call["output_tokens"] is None
+            for call in after["calls"]
+        ), "Correction must identify an originally unsettled call"
+        assert type(item["correction__input_tokens"]) is int
+        assert 0 <= item["correction__input_tokens"] <= 32768
+        assert type(item["correction__output_tokens"]) is int
+        assert 0 <= item["correction__output_tokens"] <= 2000
     retained_input = (
-        sum(c["input_tokens"] if c["input_tokens"] is not None else 32768 for c in after["calls"])
+        sum(
+            c["input_tokens"]
+            if c["input_tokens"] is not None
+            else corrected[c["sequence"]]["correction__input_tokens"]
+            if c["sequence"] in corrected
+            else 32768
+            for c in after["calls"]
+        )
         if closed
         else after["reserved_input_tokens"]
     )

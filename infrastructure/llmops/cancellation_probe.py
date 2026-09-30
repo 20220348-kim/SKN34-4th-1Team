@@ -291,6 +291,11 @@ def database_snapshot(run_id):
             reserved_input_tokens=reservation.max_calls * reservation.max_input_tokens,
             reserved_output_tokens=reservation.max_calls * reservation.max_output_tokens,
             operation_ids=[item["id"] for item in run.execution_spec["model_operations"]],
+            corrections=list(
+                reservation.calls.filter(correction__isnull=False)
+                .order_by("sequence")
+                .values("sequence", "correction__input_tokens", "correction__output_tokens")
+            ),
             calls=list(
                 reservation.calls.order_by("sequence").values(
                     "sequence",

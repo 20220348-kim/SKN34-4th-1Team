@@ -14,13 +14,15 @@ class BudgetRequest(serializers.Serializer):
     worker_id = serializers.UUIDField()
     flow_id = serializers.UUIDField()
     spec_hash = serializers.RegexField(r"^[a-f0-9]{64}$")
-    sequence = serializers.IntegerField(min_value=0, max_value=11, required=False)
+    sequence = serializers.IntegerField(min_value=0, max_value=511, required=False)
     usage = serializers.JSONField(required=False, allow_null=True)
-    input_token_count = serializers.IntegerField(min_value=0, max_value=32768, required=False)
+    input_token_count = serializers.IntegerField(min_value=0, max_value=262112, required=False)
+    input_sha256 = serializers.RegexField(r"^[a-f0-9]{64}$", required=False)
+    dimensions = serializers.IntegerField(min_value=1, max_value=3072, required=False)
     model = serializers.CharField(max_length=100, required=False)
-    max_output_tokens = serializers.IntegerField(min_value=1, required=False)
+    max_output_tokens = serializers.IntegerField(min_value=0, required=False)
     operation_id = serializers.RegexField(
-        r"^answer:[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}$",
+        r"^(answer|document_embedding|query_embedding):[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}$",
         max_length=128,
         required=False,
         trim_whitespace=False,
@@ -29,6 +31,11 @@ class BudgetRequest(serializers.Serializer):
     def validate_input_token_count(self, value):
         if type(self.initial_data["input_token_count"]) is not int:
             raise serializers.ValidationError("정수 토큰 수가 필요합니다.")
+        return value
+
+    def validate_dimensions(self, value):
+        if type(self.initial_data["dimensions"]) is not int:
+            raise serializers.ValidationError("정수 차원이 필요합니다.")
         return value
 
 
