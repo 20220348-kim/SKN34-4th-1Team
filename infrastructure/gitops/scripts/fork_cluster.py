@@ -554,7 +554,19 @@ def main():
     parser.add_argument("--local-images", type=Path, help="Explicit local-only smoke/development image JSON; no GHCR claim")
     parser.add_argument("--kind", default="kind")
     parser.add_argument("--helm", default="helm")
+    parser.add_argument("--core-port", type=int, help="web only: Core loopback port (default: 18080)")
+    parser.add_argument("--ops-port", type=int, help="web only: Ops loopback port (default: 18001)")
     args = parser.parse_args()
+    if args.action != "web" and (args.core_port is not None or args.ops_port is not None):
+        parser.error("--core-port and --ops-port are only supported by web")
+    core_port = 18080 if args.core_port is None else args.core_port
+    ops_port = 18001 if args.ops_port is None else args.ops_port
+    if args.action == "web":
+        from fork_web import forward_targets
+        try:
+            forward_targets(core_port, ops_port)
+        except ValueError as error:
+            parser.error(str(error))
     if os.name == "nt":
         parser.error("Run this tool inside Windows WSL2 Ubuntu with Linux Python, not native Windows Python")
     if sys.version_info < (3, 13):
@@ -590,7 +602,7 @@ def main():
             verify_context(kube, settings)
             if args.action == "web":
                 from fork_web import serve
-                serve(nk)
+                serve(nk, core_port=core_port, ops_port=ops_port)
             else:
                 print("Mode: " + settings["mode"] + "; repository: " + settings["repository"])
                 run(nk + ["get", "pods"])

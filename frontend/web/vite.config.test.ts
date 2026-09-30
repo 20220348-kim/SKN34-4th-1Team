@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import { loadEnv } from 'vite'
 import config from './vite.config'
 
@@ -6,6 +6,11 @@ vi.mock('vite', async (original) => ({
   ...await original<typeof import('vite')>(),
   loadEnv: vi.fn(() => ({})),
 }))
+
+beforeEach(() => {
+  vi.stubEnv('K8S_CORE_PORT', undefined)
+  vi.stubEnv('K8S_OPS_PORT', undefined)
+})
 
 afterEach(() => {
   vi.clearAllMocks()
@@ -47,7 +52,50 @@ describe('Kubernetes portfolio mode', () => {
     expect(result.server.proxy['/api'].target).toBe('http://127.0.0.1:18080')
   })
 
+  it.each(['portfolio', 'connected'])('uses only explicit loopback ports in %s mode', (mode) => {
+    vi.stubEnv('K8S_CORE_PORT', '28080')
+    vi.stubEnv('K8S_OPS_PORT', '28001')
+    vi.stubEnv('VITE_DEV_PROXY_TARGET', 'https://must-not-be-used.invalid')
+    vi.stubEnv('OPS_DEV_PROXY_TARGET', 'https://must-not-be-used.invalid')
+    const result = config({ mode, command: 'serve' })
+    expect(loadEnv).not.toHaveBeenCalled()
+    expect(result.envDir).toBe(false)
+    expect(result.envPrefix).toEqual([])
+    expect(result.server.proxy['/api'].target).toBe('http://127.0.0.1:28080')
+    expect(result.server.proxy['/api/v1/ops']).toEqual({ target: 'http://127.0.0.1:28001', changeOrigin: false })
+    expect(result.server.host).toBe('127.0.0.1')
+    expect(result.server.strictPort).toBe(true)
+    expect(JSON.stringify(result.define)).not.toContain('K8S_')
+    expect(JSON.stringify(result)).not.toContain('must-not-be-used')
+  })
+
+  it.each(['K8S_CORE_PORT', 'K8S_OPS_PORT'])('rejects invalid %s without reading env files', (name) => {
+    for (const value of ['', '0', '1023', '65536', '-1', '28001.5', '2e4', ' 28001 ', '28001/path', 'http://evil.invalid']) {
+      vi.stubEnv(name, value)
+      expect(() => config({ mode: 'portfolio', command: 'serve' })).toThrow(name)
+    }
+    expect(loadEnv).not.toHaveBeenCalled()
+  })
+
+  it('rejects ports shared between Core and Ops including the other default', () => {
+    vi.stubEnv('K8S_OPS_PORT', '18080')
+    expect(() => config({ mode: 'portfolio', command: 'serve' })).toThrow('must be different')
+    vi.stubEnv('K8S_CORE_PORT', '28001')
+    vi.stubEnv('K8S_OPS_PORT', '28001')
+    expect(() => config({ mode: 'connected', command: 'serve' })).toThrow('must be different')
+  })
+
+  it('allows unprivileged port boundaries without exposing arbitrary hosts', () => {
+    vi.stubEnv('K8S_CORE_PORT', '1024')
+    vi.stubEnv('K8S_OPS_PORT', '65535')
+    const result = config({ mode: 'portfolio', command: 'serve' })
+    expect(result.server.proxy['/api'].target).toBe('http://127.0.0.1:1024')
+    expect(result.server.proxy['/api/v1/ops'].target).toBe('http://127.0.0.1:65535')
+  })
+
   it('preserves normal development and Compose configuration', () => {
+    vi.stubEnv('K8S_CORE_PORT', 'invalid-but-irrelevant')
+    vi.stubEnv('K8S_OPS_PORT', 'invalid-but-irrelevant')
     vi.mocked(loadEnv).mockReturnValueOnce({
       VITE_DEV_PROXY_TARGET: 'http://core-service:8080',
       OPS_DEV_PROXY_TARGET: 'http://ops-service:8000',

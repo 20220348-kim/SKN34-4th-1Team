@@ -120,6 +120,20 @@ pnpm dev:k8s
 [Mac Kubernetes 무료 데모](../../docs/portfolio-demo.md)를 명시적으로 입력합니다.
 메일·소셜 로그인·유료 AI까지 검증한 환경은 아닙니다.
 
+### 개인 Kubernetes의 Core·Ops 함께 연결
+
+개인 포크에서는 [웹 연결 안내](../../docs/local-fork-development.md#4-웹-개발)의
+`fork_cluster.py web`으로 소유권을 확인한 Core·Ops를 함께 연결합니다.
+Compose Ops와 포트가 겹치면 `web --core-port 28080 --ops-port 28001`과
+`K8S_CORE_PORT=28080 K8S_OPS_PORT=28001 pnpm dev:k8s`를 각각 실행합니다.
+후자는 Bash/WSL 구문이며 PowerShell 구문은 연결 안내에 있습니다.
+`dev:k8s:connected`도 같은 포트 설정을 지원합니다.
+기본값은 Core `18080`, Ops `18001`이며 웹 주소는 `http://localhost:5173`을 유지합니다.
+
+숫자 포트만 서버에서 읽고 같은 origin API·loopback 바인딩·CSRF Host 보존을 유지합니다.
+잘못된 값·중복 포트는 시작을 차단하며 일반 `dev`/Compose 프록시에는 영향을 주지 않습니다.
+개인 환경의 [Ops 활성화](../../infrastructure/gitops/docs/ops-runtime.md)는 별도로 필요합니다.
+
 ### 일반 네이티브 웹 개발
 
 Node.js `24.x`, pnpm `11.22.x`가 필요합니다. Core API와 검색에 필요한 MySQL·AI Service·Qdrant는

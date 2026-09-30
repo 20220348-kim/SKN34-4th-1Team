@@ -16,6 +16,52 @@ import fork_cluster as cluster
 from repository import Fork
 
 
+class WebCommandTests(unittest.TestCase):
+    def test_web_passes_ports_only_after_verifying_cluster_ownership(self):
+        with (
+            patch("sys.argv", ["fork_cluster.py", "web", "--core-port", "28080", "--ops-port", "28001"]),
+            patch.object(cluster, "os", SimpleNamespace(name="posix")),
+            patch.object(cluster, "load_settings", return_value={}),
+            patch.object(cluster, "commands", return_value=(["kube"], ["namespaced"], ["argo"])),
+            patch.object(cluster, "verify_context") as verify,
+            patch("fork_web.serve") as serve,
+        ):
+            serve.side_effect = lambda *args, **kwargs: verify.assert_called_once_with(["kube"], {})
+            cluster.main()
+        serve.assert_called_once_with(["namespaced"], core_port=28080, ops_port=28001)
+
+    def test_failed_ownership_check_never_opens_forwards(self):
+        with (
+            patch("sys.argv", ["fork_cluster.py", "web", "--ops-port", "28001"]),
+            patch.object(cluster, "os", SimpleNamespace(name="posix")),
+            patch.object(cluster, "load_settings", return_value={}),
+            patch.object(cluster, "commands", return_value=(["kube"], ["namespaced"], ["argo"])),
+            patch.object(cluster, "verify_context", side_effect=ValueError("ownership marker")),
+            patch("fork_web.serve") as serve,
+            patch("sys.stderr", new_callable=io.StringIO),
+            self.assertRaises(SystemExit),
+        ):
+            cluster.main()
+        serve.assert_not_called()
+
+    def test_invalid_or_misplaced_options_fail_before_reading_state(self):
+        for args in (["web", "--ops-port", "0"], ["web", "--core-port", "65536"],
+                     ["web", "--ops-port", "18080"], ["status", "--ops-port", "28001"],
+                     ["up", "--core-port", "28080"]):
+            with (
+                self.subTest(args=args),
+                patch("sys.argv", ["fork_cluster.py", *args]),
+                patch.object(cluster, "load_settings") as load,
+                patch("fork_web.serve") as serve,
+                patch("sys.stderr", new_callable=io.StringIO),
+                self.assertRaises(SystemExit) as stopped,
+            ):
+                cluster.main()
+            self.assertEqual(stopped.exception.code, 2)
+            load.assert_not_called()
+            serve.assert_not_called()
+
+
 class Response(io.BytesIO):
     def __init__(self, payload, headers=None):
         super().__init__(json.dumps(payload).encode())

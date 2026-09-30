@@ -151,6 +151,37 @@ pnpm --dir frontend/web dev:k8s
 웹의 Vite 개발 서버는 `localhost:5173`에서 실행됩니다. `web` 명령은 Core `127.0.0.1:18080`과
 Ops `127.0.0.1:18001`을 같은 클러스터로 함께 연결합니다. 이미 사용 중인 포트가 있으면 중단하므로
 기존 Compose Ops에 잘못 접속하지 않습니다. Pod 교체로 한쪽 전달이 끊기면 두 전달을 정리하며 명령을 다시 실행해야 합니다.
+
+Compose Ops가 `18001`을 사용 중이면 기존 컨테이너를 중지하지 않고 전달 포트를 선택합니다.
+두 명령의 포트 번호를 반드시 일치시킵니다. 포트를 자동 탐색하거나 다른 리스너를 재사용하지 않습니다.
+
+```bash
+# WSL/Linux: 첫 번째 터미널, 기존 state 경로를 사용
+python -B infrastructure/gitops/scripts/fork_cluster.py web --core-port 28080 --ops-port 28001
+
+# WSL/Linux: 두 번째 터미널, 저장소 루트
+K8S_CORE_PORT=28080 K8S_OPS_PORT=28001 pnpm --dir frontend/web dev:k8s
+```
+
+Windows에서 웹을 실행한다면 두 번째 명령 대신 PowerShell에서 설정합니다.
+
+```powershell
+$env:K8S_CORE_PORT = '28080'
+$env:K8S_OPS_PORT = '28001'
+pnpm --dir frontend/web dev:k8s
+# 종료 후 해당 터미널의 설정 해제
+Remove-Item Env:K8S_CORE_PORT, Env:K8S_OPS_PORT
+```
+
+기존 상태가 다른 체크아웃에 있으면 `web --state-dir /기존/절대/state/경로`를 지정합니다.
+소유권 확인이 실패하면 상태 파일을 복사·수정해서 강제로 연결하지 않습니다.
+`--core-port`·`--ops-port`는 `web` 전용이며 서로 다른 `1024..65535` 정수만 받습니다.
+Vite의 `K8S_CORE_PORT`·`K8S_OPS_PORT`는 `portfolio`·`connected` 모드의 서버 프로세스에서만 읽습니다.
+`.env`에 저장해도 해당 모드는 읽지 않으며, 임의 URL·호스트 또는 브라우저 환경변수 노출은 허용하지 않습니다.
+웹 주소는 계속 `http://localhost:5173`입니다. `5173`도 사용 중이라면 웹 서버를 함께 실행할 수 없으며,
+임의 포트로 옮기기 전에 Core의 허용 Origin과 Ops의 웹/CSRF 설정을 함께 검토해야 합니다.
+포트 연결 성공은 Ops 활성화나 무료 평가 완료의 증거가 아닙니다.
+
 프런트 파일 저장 반영은 Vite가 담당하며 백엔드 이미지 감시 명령과 별개입니다.
 평가 실행은 [Ops 활성화 절차](../infrastructure/gitops/docs/ops-runtime.md)를 먼저 완료하고
 기존 Core 관리자 계정으로 `/ops/evaluations`에 접속합니다.

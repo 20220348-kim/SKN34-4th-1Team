@@ -5,6 +5,15 @@ import tailwindcss from '@tailwindcss/vite'
 // Docker Compose에서는 브라우저가 /api를 Vite 개발 서버로 보내고,
 // Vite가 Compose 내부 DNS 이름(core-service)으로 프록시한다.
 // 네이티브 개발의 기본 대상은 기존 localhost:8080을 유지한다.
+function kubernetesPort(name: 'K8S_CORE_PORT' | 'K8S_OPS_PORT', fallback: number): number {
+  const raw = process.env[name]
+  if (raw === undefined) return fallback
+  if (!/^[0-9]{4,5}$/.test(raw) || Number(raw) < 1024 || Number(raw) > 65535) {
+    throw new Error(name + ' must be an integer between 1024 and 65535')
+  }
+  return Number(raw)
+}
+
 export default defineConfig(({ mode }) => {
   // Kubernetes 모드는 개발/운영 .env와 상속된 VITE_*를 사용하지 않는다.
   // API는 loopback port-forward만 사용하며 portfolio는 유료 도우미도 끈다.
@@ -12,6 +21,11 @@ export default defineConfig(({ mode }) => {
   // 명시적인 외부 연동 모드도 .env의 서버 비밀값과 임의 VITE 변수를 읽지 않는다.
   const connected = mode === 'connected'
   const kubernetes = portfolio || connected
+  const corePort = kubernetes ? kubernetesPort('K8S_CORE_PORT', 18080) : 18080
+  const opsPort = kubernetes ? kubernetesPort('K8S_OPS_PORT', 18001) : 18001
+  if (kubernetes && corePort === opsPort) {
+    throw new Error('K8S_CORE_PORT and K8S_OPS_PORT must be different')
+  }
   const env = kubernetes ? {} : loadEnv(mode, process.cwd(), '')
   const usePolling = env.CHOKIDAR_USEPOLLING === 'true'
   // Docker Desktop(Windows/macOS)의 바인드 마운트는 파일 알림이 오지 않아 폴링이 필요하다.
@@ -37,12 +51,12 @@ export default defineConfig(({ mode }) => {
         : undefined,
       proxy: {
         '/api/v1/ops': {
-          target: kubernetes ? 'http://127.0.0.1:18001' : env.OPS_DEV_PROXY_TARGET || 'http://127.0.0.1:18001',
+          target: kubernetes ? 'http://127.0.0.1:' + opsPort : env.OPS_DEV_PROXY_TARGET || 'http://127.0.0.1:18001',
           // 브라우저의 Host와 Origin을 함께 보존하여 Django가 CSRF를 검증한다.
           changeOrigin: false,
         },
         '/api': {
-          target: kubernetes ? 'http://127.0.0.1:18080' : env.VITE_DEV_PROXY_TARGET || 'http://localhost:8080',
+          target: kubernetes ? 'http://127.0.0.1:' + corePort : env.VITE_DEV_PROXY_TARGET || 'http://localhost:8080',
           changeOrigin: true,
         },
       },
