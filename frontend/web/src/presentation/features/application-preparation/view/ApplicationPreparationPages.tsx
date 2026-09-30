@@ -14,7 +14,7 @@ import {
 import { catalogSourceLabels } from '../../../../domain/entities/SupportProgramCatalog'
 import { ApplicationPreparationError } from '../../../../domain/errors/ApplicationPreparationError'
 import { selectCurrentAccount } from '../../../shared/auth/state/authSlice'
-import { appPaths } from '../../../shared/routes/appPaths'
+import { appPaths, supportProgramDetailPath } from '../../../shared/routes/appPaths'
 import { WorkspacePageHeader } from '../../../shared/workspace/WorkspacePageHeader'
 import { WorkspaceModal } from '../../../shared/workspace/WorkspaceModal'
 import { WorkspaceToast } from '../../../shared/workspace/WorkspaceToast'
@@ -39,8 +39,10 @@ const programStatusLabels = {
   CLOSED: '접수 종료',
   UNKNOWN: '접수 상태 미확인',
 } as const
-function readableTime(value: string) {
-  return new Intl.DateTimeFormat('ko-KR', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
+/** 목록 카드의 날짜. "09.24"처럼 월·일만 보여 준다. */
+function shortDate(value: string) {
+  const date = new Date(value)
+  return `${String(date.getMonth() + 1).padStart(2, '0')}.${String(date.getDate()).padStart(2, '0')}`
 }
 
 function ErrorNotice({ message, retryLabel, onRetry, officialSource }: {
@@ -342,14 +344,36 @@ function deadlineBadge(item: ApplicationPreparationSummary) {
   if (days < 0) return { label: '접수 마감', className: s.badgeDeadline }
   return { label: days === 0 ? 'D-Day' : `D-${days}`, className: days <= 7 ? s.badgeUrgent : s.badgeDeadline }
 }
-function sourceLabel(sourceCode: string) {
-  return (catalogSourceLabels as Record<string, string>)[sourceCode] ?? sourceCode
+/** 카드의 [⋯] 메뉴입니다. 공고 상세로 가거나(돌아오면 이 목록 · 같은 필터) 삭제 확인을 엽니다. 바깥 클릭·Esc로 닫힙니다. */
+function PreparationMenu({ item, returnTo, disabled, onDelete }: { item: ApplicationPreparationSummary; returnTo: string; disabled: boolean; onDelete: () => void }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  const floating = useFloatingPopover({ open, placement: 'bottom-end' })
+  useEffect(() => {
+    if (!open) return
+    const close = (event: Event) => { if (!(event.target instanceof Node) || !ref.current?.contains(event.target)) setOpen(false) }
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') setOpen(false) }
+    document.addEventListener('pointerdown', close)
+    document.addEventListener('keydown', onKey)
+    return () => { document.removeEventListener('pointerdown', close); document.removeEventListener('keydown', onKey) }
+  }, [open])
+  return <div ref={ref} className="relative">
+    <button ref={floating.reference} type="button" className={s.menuButton} aria-label={`문서 메뉴: ${item.programTitle}`} aria-haspopup="menu" aria-expanded={open}
+      onClick={() => setOpen((current) => !current)}>⋯</button>
+    {open && <div ref={floating.floating} style={floating.floatingStyles} className={e.menu} role="menu" aria-label="문서 메뉴">
+      <Link className={e.menuItem} role="menuitem" to={supportProgramDetailPath({ sourceCode: item.sourceCode, sourceProgramId: item.sourceProgramId }, true)}
+        state={{ searchReturnTo: returnTo }} onClick={() => setOpen(false)}>공고 보기</Link>
+      <button type="button" className={`${e.menuItem} ${s.menuItemDanger}`} role="menuitem" disabled={disabled} onClick={() => { setOpen(false); onDelete() }}>삭제</button>
+    </div>}
+  </div>
 }
 
 function ApplicationPreparationList() {
   const vm = useApplicationPreparationListViewModel()
   const [confirming, setConfirming] = useState<ApplicationPreparationSummary | null>(null)
   const items = vm.page?.items ?? []
+  // 공고 상세에서 돌아올 때 보던 필터를 유지합니다.
+  const returnTo = vm.status ? `${appPaths.applicationPreparations}?status=${vm.status}` : appPaths.applicationPreparations
   return <>
     <WorkspacePageHeader
       title={listTitle}
@@ -360,7 +384,6 @@ function ApplicationPreparationList() {
       actions={<Link className={workspacePageStyles.primaryButton} to={appPaths.applicationPreparationNew}>새 문서</Link>}
     />
     <main className={workspacePageStyles.content}>
-      <p className={s.muted}>검수된 공식 양식과 지원 분야를 선택해 신청 준비를 시작하고, 저장한 작업을 다시 열 수 있습니다.</p>
       {vm.error && <ErrorNotice message={vm.error.message} retryLabel="목록 다시 불러오기" onRetry={vm.retry} />}
       {vm.isInitialLoading && <>
         <p className={s.status} role="status" aria-live="polite">신청 준비 목록을 불러오는 중입니다.</p>
@@ -375,26 +398,26 @@ function ApplicationPreparationList() {
           const deadline = deadlineBadge(item)
           const done = item.hasCurrentDocument === true
           const progress = item.requiredTotal !== undefined && item.answeredRequired !== undefined ? { answered: item.answeredRequired, total: item.requiredTotal } : null
+          const to = done ? `${appPaths.applicationPreparations}/${item.id}/documents` : `${appPaths.applicationPreparations}/${item.id}`
           return <li className={s.listCard} key={item.id}>
             <div className={s.badgeRow}>
-              {done && <span className={s.badgeDone}>완료</span>}
+              <span className={done ? s.badgeDone : s.badgeProgress}>{done ? '완료' : '진행 중'}</span>
               {deadline && <span className={deadline.className}>{deadline.label}</span>}
-              <span className={s.muted}>{sourceLabel(item.sourceCode)}</span>
             </div>
-            <Link className={`${s.listLink} min-w-0`} to={`${appPaths.applicationPreparations}/${item.id}`}>
-              <strong>{item.programTitle}</strong>
-              <span className={s.muted}>{item.formTitle} · {applicationServiceFieldLabels[item.serviceField]}</span>
+            <Link className={`${s.listLink} min-w-0`} to={to}>
+              <strong className={s.listTitle}>{item.programTitle}</strong>
+              <span className={s.listMeta}>{item.formTitle} · {applicationServiceFieldLabels[item.serviceField]}</span>
             </Link>
             {progress && <div className="flex flex-col gap-1" aria-label={`필수 답변 ${progress.answered} / ${progress.total}`}>
-              <span className={s.muted}>필수 답변 {progress.answered} / {progress.total}</span>
+              <span className={s.cardStamp}>필수 답변 {progress.answered} / {progress.total}</span>
               <div className={s.progressTrack}><div className={s.progressFill} style={{ width: `${progress.total === 0 ? 0 : Math.min(100, Math.round(progress.answered / progress.total * 100))}%` }} /></div>
             </div>}
-            <span className={s.muted}>입력 버전 {item.inputRevision} · {readableTime(item.updatedAt)} 수정</span>
-            <div className={s.cardActions}>
-              {done
-                ? <Link className={s.primary} to={`${appPaths.applicationPreparations}/${item.id}/documents`}>문서 보기</Link>
-                : <Link className={s.primary} to={`${appPaths.applicationPreparations}/${item.id}`}>이어서 작성</Link>}
-              <button className={s.danger} disabled={vm.deletingId !== null} type="button" onClick={() => setConfirming(item)}>삭제</button>
+            <div className={s.cardFooter}>
+              <span className={s.cardStamp}>{done ? `초안 있음 · ${shortDate(item.updatedAt)}` : `${shortDate(item.updatedAt)} 수정`}</span>
+              <div className={s.cardActions}>
+                <PreparationMenu item={item} returnTo={returnTo} disabled={vm.deletingId !== null} onDelete={() => setConfirming(item)} />
+                <Link className={s.secondarySm} to={to}>{done ? '문서 보기' : '이어서 작성'}</Link>
+              </div>
             </div>
           </li>
         })}
@@ -407,14 +430,14 @@ function ApplicationPreparationList() {
         {vm.isLoadingMore && <p className={s.status} role="status" aria-live="polite">이전 신청 준비를 불러오는 중입니다.</p>}
       </div>}
     </main>
-    <WorkspaceModal isOpen={confirming !== null} title="작성 중인 문서를 삭제할까요?" tone="danger" onClose={() => setConfirming(null)}
-      description={confirming ? `${confirming.programTitle}의 답변${confirming.answeredRequired !== undefined ? ` ${confirming.answeredRequired}개` : ''}와 AI 실행 기록이 함께 삭제되며 되돌릴 수 없습니다.` : undefined}>
+    <WorkspaceModal isOpen={confirming !== null} title="신청 문서를 삭제할까요?" tone="danger" onClose={() => setConfirming(null)}
+      description={confirming ? `${confirming.programTitle}의 답변${confirming.answeredRequired !== undefined ? ` ${confirming.answeredRequired}개` : ''}와 AI 실행 기록이 모두 지워져요. 되돌릴 수 없어요.` : undefined}>
       <div className="flex flex-wrap justify-end gap-2">
         <button className={s.button} disabled={vm.deletingId !== null} type="button" onClick={() => setConfirming(null)}>취소</button>
-        <button className={s.danger} disabled={vm.deletingId !== null} type="button" onClick={() => {
+        <button className={s.dangerSolid} disabled={vm.deletingId !== null} type="button" onClick={() => {
           if (confirming === null) return
           void vm.deletePreparation(confirming.id).then((deleted) => { if (deleted) setConfirming(null) })
-        }}>{vm.deletingId !== null ? '삭제 중…' : '정말 삭제'}</button>
+        }}>{vm.deletingId !== null ? '삭제 중…' : '삭제'}</button>
       </div>
     </WorkspaceModal>
     <WorkspaceToast notice={vm.toast} onClose={vm.dismissToast} />

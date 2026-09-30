@@ -6,7 +6,7 @@ import { Link, useLocation, useNavigate } from 'react-router'
 import type { Account } from '../../../domain/entities/Account'
 import { useAppSelector } from '../../../app/hooks'
 import { selectChatActivity } from '../../features/chat/state/chatSlice'
-import { getSupportProgramSearchReturnTo, isSavedProgramsReturnTo } from '../../features/support-program-detail/view/supportProgramNavigation'
+import { getSupportProgramSearchReturnTo, isApplicationPreparationsReturnTo, isSavedProgramsReturnTo } from '../../features/support-program-detail/view/supportProgramNavigation'
 import { useAuthSession } from '../auth/hooks/useAuthSession'
 import { ChatActivityDot } from '../chat-activity/ChatActivityDot'
 import { usePendingReceivedProposalCount } from '../partner-proposal/useReceivedProposals'
@@ -157,10 +157,12 @@ export function AppSidebar({ onClose, onNewChat, closeLabel, onNavigate, history
   const pendingProposalCount = usePendingReceivedProposalCount()
   // 해당 대화 기록 항목의 점은 조건 해석·검색 진행 중과 아직 보지 않은 결과를 모두 표시합니다.
   const chatActivity = useAppSelector(selectChatActivity)
-  // 공고 상세·원문 질문은 연 곳을 따라갑니다. 관심 공고함에서 열었으면 관심 공고함이, 검색에서 열었으면 새검색이 켜집니다.
+  // 공고 상세·원문 질문은 연 곳을 따라갑니다. 관심 공고함 · 신청 문서 목록에서 열었으면 그 항목이, 검색에서 열었으면 새검색이 켜집니다.
   const isDetailPage = pathname.startsWith(appPaths.supportProgramDetail)
-  const detailFromSavedPrograms = isDetailPage && isSavedProgramsReturnTo(getSupportProgramSearchReturnTo(location.state, location.search))
-  const isSearchPage = pathname === appPaths.chat || (isDetailPage && !detailFromSavedPrograms)
+  const detailReturnTo = isDetailPage ? getSupportProgramSearchReturnTo(location.state, location.search) : null
+  const detailFromSavedPrograms = detailReturnTo !== null && isSavedProgramsReturnTo(detailReturnTo)
+  const detailFromPreparations = detailReturnTo !== null && isApplicationPreparationsReturnTo(detailReturnTo)
+  const isSearchPage = pathname === appPaths.chat || (isDetailPage && !detailFromSavedPrograms && !detailFromPreparations)
   // 계정 카드를 누르면 내 프로필·로그아웃과 관리자 전용 회원·기업 메뉴가 열립니다.
   // 화면을 옮기거나 Esc·바깥 클릭이면 닫힙니다.
   const accountMenuId = useId()
@@ -201,6 +203,7 @@ export function AppSidebar({ onClose, onNewChat, closeLabel, onNavigate, history
 
   function isMenuItemActive(item: MenuItem): boolean {
     if (item.to === appPaths.savedPrograms && detailFromSavedPrograms) return true
+    if (item.to === appPaths.applicationPreparations && detailFromPreparations) return true
     return item.matches?.(pathname) ?? false
   }
 

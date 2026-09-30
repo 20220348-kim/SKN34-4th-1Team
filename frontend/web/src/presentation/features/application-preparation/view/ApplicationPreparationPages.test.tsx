@@ -12,6 +12,7 @@ import { ApplicationPreparationError } from '../../../../domain/errors/Applicati
 import { ApplicationPreparationUseCase } from '../../../../domain/usecases/ApplicationPreparationUseCase'
 import { signedIn } from '../../../shared/auth/state/authSlice'
 import { ApplicationPreparationEditorPage, ApplicationPreparationListPage } from './ApplicationPreparationPages'
+import { supportProgramDetailPath } from '../../../shared/routes/appPaths'
 import { ApplicationDocumentPage } from './ApplicationDocumentPage'
 import { chooseOption, optionValues, selectedValue } from '../../../../test/selectField'
 
@@ -653,11 +654,16 @@ describe('application preparation list', () => {
     mount('/app/application-preparations')
     await screen.findByText(firstForm.programTitle)
 
-    fireEvent.click(screen.getByRole('button', { name: '삭제' }))
-    const confirmation = screen.getByRole('dialog', { name: '작성 중인 문서를 삭제할까요?' })
+    // 삭제는 카드의 [⋯] 메뉴 안에만 있고, 카드에 빨간 버튼을 두지 않는다.
+    expect(screen.queryByRole('button', { name: '삭제' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: `문서 메뉴: ${firstForm.programTitle}` }))
+    const menu = screen.getByRole('menu', { name: '문서 메뉴' })
+    expect(within(menu).getByRole('menuitem', { name: '공고 보기' }).getAttribute('href')).toBe(supportProgramDetailPath({ sourceCode: firstForm.sourceCode, sourceProgramId: firstForm.sourceProgramId }, true))
+    fireEvent.click(within(menu).getByRole('menuitem', { name: '삭제' }))
+    const confirmation = screen.getByRole('dialog', { name: '신청 문서를 삭제할까요?' })
     expect(confirmation.textContent).toContain('AI 실행 기록')
     expect(repository.delete).not.toHaveBeenCalled()
-    fireEvent.click(within(confirmation).getByRole('button', { name: '정말 삭제' }))
+    fireEvent.click(within(confirmation).getByRole('button', { name: '삭제' }))
 
     expect(repository.delete).toHaveBeenCalledWith(12, expect.any(AbortSignal))
     expect(await screen.findByRole('heading', { name: '아직 시작한 신청 문서가 없습니다.' })).toBeTruthy()
@@ -686,8 +692,12 @@ describe('application preparation list', () => {
     expect(repository.list.mock.calls[0]?.[0]).toEqual({ status: 'done' })
     expect((screen.getByRole('button', { name: '완료' }) as HTMLButtonElement).getAttribute('aria-pressed')).toBe('true')
     expect(screen.getByText('D-3')).toBeTruthy()
+    // 답변 진행은 모든 카드에 보이고, 완료 카드는 날짜 자리에 "초안 있음"을 덧붙인다.
     expect(screen.getByText('필수 답변 11 / 11')).toBeTruthy()
+    expect(screen.getByText(/^초안 있음 · \d{2}\.\d{2}$/)).toBeTruthy()
     expect(screen.getByText('필수 답변 2 / 9')).toBeTruthy()
+    expect(screen.getByText('완료', { selector: 'span' })).toBeTruthy()
+    expect(screen.getByText('진행 중', { selector: 'span' })).toBeTruthy()
     expect(screen.getByRole('link', { name: '문서 보기' }).getAttribute('href')).toBe('/app/application-preparations/12/documents')
     expect(screen.getByRole('link', { name: '이어서 작성' }).getAttribute('href')).toBe('/app/application-preparations/11')
     fireEvent.click(screen.getByRole('button', { name: '진행 중' }))

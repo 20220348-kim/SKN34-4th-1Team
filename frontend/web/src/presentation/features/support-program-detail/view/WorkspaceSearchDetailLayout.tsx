@@ -4,12 +4,12 @@ import { appPaths } from '../../../shared/routes/appPaths'
 import { SearchModeTabs, WorkspaceSearchTabsRow } from '../../../shared/support-program/SearchModeTabs'
 import { workspacePageStyles } from '../../../shared/workspace/WorkspacePage.styles'
 import { supportProgramDetailStyles as s } from './SupportProgramDetailPage.styles'
-import { getSupportProgramSearchReturnTo, isSavedProgramsReturnTo, supportProgramBackLabel } from './supportProgramNavigation'
+import { getSupportProgramSearchReturnTo, isWorkspaceListReturnTo, supportProgramBackLabel } from './supportProgramNavigation'
 
 /**
  * 로그인 뒤 공고 상세·원문 질문의 껍데기입니다. 상세는 "어디서 열었는지"를 그대로 이어받습니다.
  * - 검색에서 열었으면 작업 검색 화면과 같은 검색 탭 줄을 위에 두고, 누르면 그 검색 화면으로 돌아갑니다(같은 탭은 조건 복원).
- * - 관심 공고함에서 열었으면 관심 공고함 머리글과 같은 높이의 줄에 돌아가기 알약만 두어 목록↔상세 전환 때 위쪽이 흔들리지 않게 합니다.
+ * - 관심 공고함 · 신청 문서 목록에서 열었으면 그 목록 머리글과 같은 높이의 줄에 돌아가기 알약만 두어 목록↔상세 전환 때 위쪽이 흔들리지 않게 합니다.
  * 비로그인 상세는 `GuestSearchDetailLayout`이 같은 역할을 합니다.
  */
 export function WorkspaceSearchDetailLayout() {
@@ -17,13 +17,13 @@ export function WorkspaceSearchDetailLayout() {
   const navigate = useNavigate()
   const searchReturnTo = getSupportProgramSearchReturnTo(location.state, location.search)
 
-  if (isSavedProgramsReturnTo(searchReturnTo)) {
+  if (isWorkspaceListReturnTo(searchReturnTo)) {
     return (
       <div className="flex min-w-0 flex-1 flex-col">
         <div className={workspacePageStyles.header}>
           {/* 관심 공고함 머리글의 제목 줄과 같은 최소 높이(2.5rem)를 두어 목록↔상세 전환 때 줄 높이가 같습니다. */}
           <div className={workspacePageStyles.headerTitleGroup}>
-          {/* 상세의 맨 위 줄과 같은 "‹ 공고 상세" 모양입니다. 이름은 관심 공고함으로 돌아간다는 뜻을 유지합니다. */}
+          {/* 상세의 맨 위 줄과 같은 "‹ 공고 상세" 모양입니다. 이름은 연 목록으로 돌아간다는 뜻을 유지합니다. */}
           <Link className={s.backLink} to={searchReturnTo} aria-label={supportProgramBackLabel(searchReturnTo)} title={supportProgramBackLabel(searchReturnTo)}>
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
               <path d="m15 18-6-6 6-6" />
