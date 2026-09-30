@@ -387,7 +387,7 @@ Compose가 Ops와 실행기에 같은 값을 전달하고, 실행기는 `http://
 새 응답 생성은 기존 `govbiz-ops-evidence-evaluation/saved-capture` deployment의 명시적 live 모드다.
 기존 요청·북마크 호환을 위해 deployment 이름을 유지한다. 기본 실행 방식은 replay, live 활성화는 false다.
 
-1. 위 `dc build` → `dc run --rm ops-service python manage.py migrate_deployment`로 최신 코드와 migration `0015_usage_correction`까지 반영한다.
+1. 위 `dc build` → `dc run --rm ops-service python manage.py migrate_deployment`로 최신 코드와 migration `0016_budget_operation_identity`까지 반영한다.
 2. 전송할 자료와 예산을 승인한 후 Git에서 제외된 `.env.ops`에 `LLMOPS_LIVE_ENABLED=true`,
    `LLMOPS_LIVE_MODEL=gpt-6-luna`, `OPENAI_API_KEY=<승인된 프로젝트의 키>`를 설정한다.
    키를 커밋하거나 브라우저·Prefect 인자로 전송하지 않는다. 키는 evaluation-runner에만 주입된다.
@@ -865,7 +865,14 @@ production 이미지·서버 진입점·Ops 카탈로그는 변경하지 않습�
 CI는 `work/llmops-ci/core-rag/`의 전체/버전별 진행 상태·원시 기록·평가 입력·보고서를 실패 시에도 보존합니다.
 Core trace와 실제 Langfuse 관측 연결이 깨지면 통합 검사도 실패합니다. 로컬의 실제 Core 청커 단위 테스트,
 AI HTTP/SDK·메모리 Qdrant, 캡처 재계산·중단 기록·격리 설정 검증과 전체 서버 CI를 구분합니다.
-기준 `skn-74 / 4537e5f`의 필수 CI 5개는 성공했으며 **이번 새 코드의 전체 서버 CI는 푸시 후 확인 대기**입니다.
+기준 `skn-74 / 4537e5f`의 필수 CI 5개는 성공했습니다. 후속 `skn-75 / b1d9f03`의
+[실제 서버 CI](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36662674423)에서 다중 청크
+v1 9건·v2 1건이 모두 통과했고 artifact의 `integration.json`, 버전별 보고서·trace를 확인했습니다.
+다만 해당 workflow는 이후 기존 취소 검증의 Prefect 생성 HTTP 503으로 실패했습니다.
+GovBiz CI도 `--config-only`가 Pydantic을 불러오는 의존성 회귀로 실패해 전체 성공으로 표시하지 않습니다.
+후속으로 RAG 평가기 import를 실제 수집 실행 직전으로 옮겨 표준 라이브러리만 사용하는 설정 검사를
+복구했습니다. 로컬 `python -S -B -m unittest discover -s infrastructure/scripts -p test_catalog_separation_config.py`
+4건에서 실패를 재현한 뒤 수정본 통과를 확인했습니다. 실제 수집의 AI 의존성 검사는 자원 생성 전에 유지합니다.
 
 ## 실제 AI Service 추적 활성화
 
@@ -1369,7 +1376,7 @@ Prefect 실행 ID·콘텐츠 평가 ID와 모델 호출 0회가 유지됐다. �
 Core의 관리자 응답은 테스트 대역으로 제공하며, 실제 Core 인증 연동은 앞선 기존 CI 단계에서 검증한다.
 모델 응답은 격리된 HTTP 대역으로 제공한다. 이 결과는 모델·검색·RAG 품질 측정이 아니다.
 
-production 코드·호출 재시도·실행 명세는 바꾸지 않는다. 읽기 전용으로 마운트한
+읽기 전용으로 마운트한
 [cancellation_runner.py](cancellation_runner.py)가 실제 `ops_flow.evaluate_saved_capture.fn`을
 Prefect flow 안에서 호출하고, 명세 검증과 예산 승인을 통과한 모델 요청만 대역으로 전달한다.
 [cancellation_probe.py](cancellation_probe.py)는 실제 Ops/Prefect HTTP 처리 전 실패 또는 처리 후
@@ -1389,6 +1396,7 @@ proxy를 사용하지 않는다. Ops의 CSRF cookie와 header 검증은 그대�
 | 시나리오 | 확인 내용 |
 |---|---|
 | 대기 중 / 첫 승인 전 취소 | 실제 종료, 모델 전송 0회, 미사용 예약 반환 |
+| Prefect 생성의 일시적 503 | 최초 생성 실패를 주입하고 같은 키로 최대 3회 전송. 실제 flow 1개·예약 1개, 대기 취소 후 모델 전송 0회·미사용 예약 반환 |
 | 첫 정산 후 취소 | 다음 승인·전송 없음, 출력 사용량 50 보존 |
 | 실행기가 살아 있는 동안 취소 ACK | 부모의 취소 감시를 잠시 멈춰 CANCELLING·자식 생존을 확인한 뒤 실제 종료 검증 |
 | 모델 응답 유실 | 자동 재전송 없음, 미확인 출력 상한 2000 유지 |
@@ -1419,11 +1427,23 @@ uv run --locked --extra dev --group evaluation python -m pytest ../../infrastruc
 Ops 승인 → HTTP 모델 대역 → Ops 정산`이다. 완료 시 실제 보고서 생성과 Langfuse 저장도 거친다.
 도구가 만든 프로젝트와 볼륨만 마지막에 정리하며 기존 개발 프로젝트는 변경하지 않는다.
 
-[LLMOps CI](../../.github/workflows/llmops-ci.yml)의 기존 필수 job 안에서 12개 시나리오를 실행한다.
+[LLMOps CI](../../.github/workflows/llmops-ci.yml)의 기존 필수 job 안에서 13개 시나리오를 실행한다.
+후속 503 사례는 production Prefect 클라이언트의 제한 재시도를 거친다. 생성 요청의 503만 같은
+요청 바이트·키로 최대 3회 전송하며, 응답 유실·예산/모델 호출은 자동 재시도하지 않는다.
+접수 실패 시에도 `dispatch_http_status`를 보존한다. 재시도 상한을 넘긴 실패를 성공으로 처리하지 않는다.
 JSON에는 실행/flow ID, 단계 상태, 승인·전송·정산 횟수, 예산 전후 값, 프로세스 종료 증거를 남긴다.
+새 실행 명세의 사례별 `answer:{case_id}` 작업 ID와 실제 호출 장부 ID도 대조한다.
+사용량 미확인 호출을 포함해 ID 누락·사례 교체를 거절하며 취소 시험 실행기는 승인/정산에 같은 ID를 전달한다.
+이 검사는 고정 근거 답변 범위다. 임베딩 예산이나 전체 RAG live 검증으로 해석하지 않는다.
 종료 예약 정리를 수행한 두 시나리오는 Prefect 상태 ID/시각·실행 파라미터 해시·정리 전후 장부와
 동일 요청 재전송 결과도 검사한다. 보정 두 시나리오는 `correction`에 증거 해시·응답 ID·전후 값도 남긴다.
 C1의 `skn-56 / 4fc3db7` 실제 서버 검증은 성공했으며, 이번 C2 확장본의 최신 SHA 실제 실행은 CI 확인 대상이다.
+`skn-75 / b1d9f03`은 `after_settle` 접수 때 실제 Prefect가 503을 반환했고 예약 6회/12,000토큰이
+보존된 상태에서 중단됐다. 이후 `main / 7a29f12`의 기존 LLMOps CI는 성공했으므로 항상 재현되는
+취소 로직 오류로 단정하지 않는다. 보존 증거만으로 Prefect 내부의 DB 잠금 여부는 확정할 수 없다.
+직전 503 보완은 로컬 Ops DB 없는 계약 테스트 14건과 대역·검사기 테스트 52건을 통과했다.
+후속 작업 ID 연결 뒤 대역·검사기 테스트는 55건이 통과했다.
+재시도 중 취소 의사·예약 보존·worker 차단 DB 회귀와 확장된 13개 실제 서버 시나리오는 새 SHA CI에서 확인한다.
 실패하면 준비/실행 단계, 오류 종류·종료 코드, 캡처된 stderr의 생성 인증값 제거본,
 서비스 상태·health·종료 코드·게시 포트를 `diagnostics`에 보관한다. 컨테이너 환경변수·명령·
 healthcheck 원문과 HTTP 응답 stdout은 제외한다. 진단 조회 실패가 최초 오류를 가리지 않으며,

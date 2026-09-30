@@ -104,6 +104,34 @@ def test_http_failure_does_not_forward_or_claim_commit(monkeypatch):
     assert state.snapshot(run_id)["events"][0]["forwarded"] is False
 
 
+def test_busy_creation_fault_fails_once_without_forwarding_then_uses_the_same_request(
+    monkeypatch,
+):
+    state = probe.Probe()
+    run_id, flow_id = str(uuid4()), str(uuid4())
+    state.configure(run_id, {"fault": "create_busy_once"})
+    forwarded = Mock(return_value=(201, json.dumps({"id": flow_id}).encode()))
+    monkeypatch.setattr(probe, "exchange", forwarded)
+    payload = json.dumps({"idempotency_key": "ops-" + run_id}).encode()
+    args = (
+        run_id,
+        "create",
+        "http://prefect:4200/api/deployments/test/create_flow_run",
+        "POST",
+        payload,
+        {},
+    )
+    assert state.forward(*args)[0] == 503
+    forwarded.assert_not_called()
+    assert state.forward(*args)[0] == 201
+    forwarded.assert_called_once_with(args[2], args[3], payload, {})
+    assert state.flow_runs[flow_id] == run_id
+    assert state.snapshot(run_id)["events"] == [
+        {"stage": "create", "status": 503, "forwarded": False},
+        {"stage": "create", "status": 201, "forwarded": True},
+    ]
+
+
 def test_timeout_is_failure(monkeypatch):
     monkeypatch.setattr(smoke.time, "monotonic", Mock(side_effect=[0, 2]))
     with pytest.raises(TimeoutError, match="still running"):
@@ -130,7 +158,8 @@ def accounting():
     after = {
         "allocated": [4, 2100],
         "closed": True,
-        "calls": [{"sequence": 0, "output_tokens": None}],
+        "calls": [{"sequence": 0, "operation_id": "answer:TC01", "output_tokens": None}],
+        "operation_ids": ["answer:TC01"],
     }
     events = [{"stage": "authorize", "status": 200}, {"stage": "model_sent"}]
     return before, after, events
@@ -141,6 +170,14 @@ def test_unknown_usage_keeps_full_cap():
     assert smoke.verify_budget(
         before, after, calls=1, output=2000, closed=True, sent=1, events=events
     )["retained_delta"] == [1, 2000]
+
+
+@pytest.mark.parametrize("operation_id", [None, "answer:TC02", "query_embedding:TC01"])
+def test_budget_evidence_rejects_missing_or_substituted_operation(operation_id):
+    before, after, events = accounting()
+    after["calls"][0]["operation_id"] = operation_id
+    with pytest.raises(AssertionError):
+        smoke.verify_budget(before, after, calls=1, output=2000, closed=True, sent=1, events=events)
 
 
 def test_settle_and_close_failure_does_not_forward_either_write(monkeypatch):
@@ -311,6 +348,8 @@ def test_real_sdk_and_evaluator_accept_http_double(monkeypatch, tmp_path, server
         "close",
     ]
     assert budget_actions[1][1]["sequence"] == 0
+    assert budget_actions[1][1]["operation_id"] == f"answer:{prepared[0][0]['id']}"
+    assert budget_actions[2][1]["operation_id"] == budget_actions[1][1]["operation_id"]
     assert budget_actions[2][1]["usage"] == probe.USAGE
     assert [event["stage"] for event in state.snapshot(run_id)["events"]] == [
         "claim",

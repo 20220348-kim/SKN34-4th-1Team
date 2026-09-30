@@ -52,12 +52,12 @@ class BudgetClient:
     def claim(self):
         self.request("claim")
 
-    async def authorize(self, sequence, model, max_output_tokens):
+    async def authorize(self, sequence, model, max_output_tokens, *, operation_id):
         await asyncio.to_thread(self.request, "authorize", sequence=sequence,
-                                model=model, max_output_tokens=max_output_tokens)
+                                model=model, max_output_tokens=max_output_tokens, operation_id=operation_id)
 
-    async def settle(self, sequence, usage):
-        await asyncio.to_thread(self.request, "settle", sequence=sequence, usage=usage)
+    async def settle(self, sequence, usage, *, operation_id):
+        await asyncio.to_thread(self.request, "settle", sequence=sequence, usage=usage, operation_id=operation_id)
         if usage is None:
             raise BudgetUnavailable("Model usage is unknown; further calls are blocked")
 

@@ -84,6 +84,7 @@ def api_run_budget(request, run_id):
             "calls": [
                 {
                     "sequence": call.sequence,
+                    "operation_id": call.operation_id,
                     "authorized_at": call.authorized_at.isoformat(),
                     "settled_at": call.settled_at.isoformat() if call.settled_at else None,
                     "input_tokens": call.input_tokens,

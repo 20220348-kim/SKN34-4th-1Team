@@ -54,6 +54,25 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 describe('관리자 예산 장부', () => {
+  it('새 호출의 답변 작업을 표시하고 과거 호출의 사례를 추정하지 않는다', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ ...detail, calls: [
+      { ...detail.calls[0], operation_id: 'answer:TC01' },
+      { ...detail.calls[1], operation_id: null },
+    ] })))
+    render(<MemoryRouter><RunBudgetPanel runId={id} onExpired={vi.fn()} refreshKey={0} /></MemoryRouter>)
+    fireEvent.click(await screen.findByText('호출별 승인·정산 · 2건'))
+    expect(screen.getByText('답변 작업 · answer:TC01')).toBeTruthy()
+    expect(screen.getByText('작업 식별 기록 없음 · 과거 승인')).toBeTruthy()
+    expect(screen.queryByText(/answer:TC02/)).toBeNull()
+  })
+
+  it('지원하지 않는 작업 ID가 포함된 장부 응답을 거절한다', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ ...detail, calls: [
+      { ...detail.calls[0], operation_id: 'query_embedding:TC01' },
+    ] })))
+    await expect(getRunBudget(id)).rejects.toThrow()
+  })
+
   it('확정·미확인·미승인·반환 대기와 CLI 감사 출처를 구분하고 GET만 사용한다', async () => {
     const fetch = vi.fn().mockResolvedValue(json(page))
     vi.stubGlobal('fetch', fetch)

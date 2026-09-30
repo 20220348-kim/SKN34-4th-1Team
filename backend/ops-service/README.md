@@ -55,6 +55,10 @@ Django 사용자 행은 `core:{회원 ID}`와 이메일로 실행 요청자를 �
 - 후보는 서버의 `apps/evaluations/capture_catalog.json` 등록 캡처 또는 승인된 새 응답 생성만 허용. 기준은 같은 자료의 등록 캡처 또는 관리자가 검토 후 지정한 완료 실행을 허용
 - `EvaluationRun`: 요청 UUID, 요청자·자료·기준/후보·상태·시간, Prefect 실행 ID, 콘텐츠 평가 ID, 요약·비교 저장
 - 요청 UUID를 DB 기본 키와 Prefect idempotency key로 사용; 같은 요청 재전송은 같은 실행을 반환
+- Prefect `create_flow_run`의 일시적 HTTP 503만 같은 deployment·요청 바이트·idempotency key로
+  최대 3회 전송하며 0.5초·1초 간격을 둡니다. 계속 실패하면 접수 미확인 상태를 유지합니다.
+  deployment 조회 실패, 응답 유실·시간 초과·잘못된 JSON/실행 ID와 다른 HTTP 오류는 자동 재시도하지 않습니다.
+  이 정책은 예산 승인·정산·모델 호출·취소 요청에는 적용하지 않습니다.
 - Prefect 접수 응답 유실 시 `REQUESTED`와 오류 코드를 유지; 같은 요청으로 접수 재확인 가능
 - 상태 원본은 Prefect. 상세/API 조회가 DB의 마지막 상태를 갱신하고 상세 화면은 진행 중 5초 간격으로 조회
 - 연결 장애는 마지막 상태와 오류를 함께 표시. 실패·취소·프로세스 중단·결과 확인 실패를 구별
@@ -128,6 +132,26 @@ uv run --locked python manage.py set_evaluation_budget \
 별도 Bearer 비밀값과 실행 UUID·명세 해시·소유자 UUID를 확인합니다. 사용자 세션 API와 인증을 공유하지 않습니다.
 기본 한도를 넣거나 스케줄·유료 평가를 자동 활성화하지 않습니다.
 
+### 사례별 답변 작업 승인
+
+새 live 명세의 `model_operations`는 사례 순서별 `answer:{case_id}` 작업 ID·종류 `answer`·
+사례 ID·모델·최대 출력 토큰을 고정합니다. 실행기는 실제 HTTP 전송 직전 해당 작업 ID를
+`authorize`에 전달하고, 그 요청에 연결된 같은 ID로 `settle`합니다.
+서버는 명세의 사례·모델·상한·순서와 다른 작업, ID 누락, 중복 승인, 미정산 상태의 다음 승인을 거절합니다.
+취소 뒤 새 작업은 승인하지 않지만 이미 승인한 작업의 정산·예약 닫기는 허용합니다.
+승인 응답이 유실되어도 같은 작업 승인을 다시 발급하지 않으며 미확인 몫은 유지합니다.
+
+흐름: `접수 명세의 사례별 작업 → 실행기 HTTP 전송 직전 승인 → MySQL 호출 장부 →
+응답 요청에 연결된 작업 정산 → 관리자 API → React 실행 예산 장부`.
+`0016_budget_operation_identity`는 호출의 nullable `operation_id`와 예약 안의 작업 고유성 제약을
+추가합니다. 과거 호출은 null로 유지하고 현재 사례 순서로 소급 매핑하지 않습니다.
+작업 계획이 없는 기존 명세에는 기존 프로토콜만 허용합니다. 새 실행기는 현재 실행 명세와 파일 해시가
+일치해야 하므로 구형 요청을 새 계획으로 자동 실행하지 않습니다. 배포 시 migration 후 Ops와 실행기를
+같은 소스로 갱신해야 합니다. 서명 사용량 기록 v1의 실행·명세 해시·호출 번호는 그대로 해당 장부를 식별합니다.
+
+이 단계는 **고정 근거 답변 평가의 작업 식별**입니다. 임베딩 작업은 거절하고 전체 RAG live는
+계속 미지원입니다. 입력·임베딩 토큰 예약, 금액 한도, runner→Kubernetes Ops 왕복 검증은 별도 후속입니다.
+
 ## 예산 조회와 한도 변경 감사
 
 호출 흐름은 `React → Core 관리자 세션을 확인하는 Django Ops API → MySQL 장부`입니다.
@@ -139,7 +163,7 @@ uv run --locked python manage.py set_evaluation_budget \
 |---|---|
 | `GET /api/v1/ops/budget` | 전체 한도·저장된 할당량·잔여 한도·구성별 총계·최근 변경 10건과 전체 변경 건수 |
 | `GET /api/v1/ops/budget/reservations?page=1` | 25건씩 예약 목록과 같은 조회 시점의 **전체** 예산 요약 |
-| `GET /api/v1/ops/evaluations/{run_id}/budget` | 해당 실행의 예약·호출별 승인 시각·확정 사용량·정산 시각 |
+| `GET /api/v1/ops/evaluations/{run_id}/budget` | 해당 실행의 예약·호출별 작업 ID(과거 null)·승인 시각·확정 사용량·정산 시각 |
 
 React 평가 목록에는 전체 요약·실행별 예약·최근 한도 변경을, 실행 상세에는 예약과 호출별
 승인·정산을 표시합니다. 15초 간격으로 조회하며 실패 시 마지막 조회 시각과 오류를 함께 유지합니다.
@@ -166,9 +190,10 @@ React 평가 목록에는 전체 요약·실행별 예약·최근 한도 변경�
 구분하고 전체 응답에 `legacy_live_run_count`를 제공합니다. 이 실행의 사용량을 0으로 만들지 않습니다.
 replay/recovery 자체에는 새 모델 예약이 없어 `not_applicable`이며 원본 비용은 원본 장부를 확인합니다.
 
-최신 예산 상세 API 배포 전 additive migration **`0015_usage_correction`까지** 적용해야 합니다.
+최신 예산 상세 API 배포 전 additive migration **`0016_budget_operation_identity`까지** 적용해야 합니다.
 `0013_budget_change_audit`는 한도 변경 감사를, `0014`는 종료 예약 정리 감사를,
-`0015_usage_correction`은 사용량 보정과 원본 증거를 저장합니다. 기존 행을 변경하는 데이터 migration은 없습니다.
+`0015_usage_correction`은 사용량 보정과 원본 증거를, `0016`은 새 호출의 작업 ID를 저장합니다.
+기존 행을 변경하는 데이터 migration은 없습니다.
 `set_evaluation_budget`에는 변경자·사유·요청 UUID가 필수입니다. `--actor`는 CLI 운영자가 입력하는
 식별자이며 Core 로그인으로 인증한 신원이 아닙니다. 위 예시의 `BUDGET_CHANGE_REQUEST_ID`는
 요청 전에 한 번 생성·보관한 UUID를 사용하고 **같은 요청 재시도에는 같은 값**을 전달합니다.

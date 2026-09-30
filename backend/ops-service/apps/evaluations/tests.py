@@ -1,8 +1,9 @@
 import json
 from hashlib import sha256
+from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from unittest.mock import call, patch
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
@@ -21,6 +22,79 @@ from .views import run_data
 
 
 class PrefectClientTests(SimpleTestCase):
+    @patch("apps.evaluations.prefect_client.time.sleep")
+    @patch("apps.evaluations.prefect_client.urlopen")
+    def test_temporary_create_503_reuses_exact_request_with_bounded_backoff(self, open_url, sleep):
+        run = EvaluationRun(id=uuid4(), dataset_id=DATASET_ID)
+        deployment_id, flow_id = uuid4(), uuid4()
+        open_url.side_effect = [
+            BytesIO(json.dumps({"id": str(deployment_id)}).encode()),
+            HTTPError("http://prefect.test", 503, "Service Unavailable", {}, None),
+            HTTPError("http://prefect.test", 503, "Service Unavailable", {}, None),
+            BytesIO(json.dumps({"id": str(flow_id)}).encode()),
+        ]
+        self.assertEqual(prefect_client.create_run(run), flow_id)
+        creates = [entry.args[0] for entry in open_url.call_args_list[1:]]
+        self.assertEqual(len(creates), 3)
+        self.assertTrue(
+            all(
+                request.full_url.endswith(f"/{deployment_id}/create_flow_run")
+                for request in creates
+            )
+        )
+        self.assertTrue(
+            all(request.method == "POST" and request.data == creates[0].data for request in creates)
+        )
+        self.assertEqual(json.loads(creates[0].data)["idempotency_key"], f"ops-{run.id}")
+        self.assertEqual(sleep.call_args_list, [call(0.5), call(1.0)])
+
+    @patch("apps.evaluations.prefect_client.time.sleep")
+    @patch("apps.evaluations.prefect_client.urlopen")
+    def test_persistent_create_503_stays_unconfirmed_after_three_attempts(self, open_url, sleep):
+        open_url.side_effect = [BytesIO(json.dumps({"id": str(uuid4())}).encode())] + [
+            HTTPError("http://prefect.test", 503, "Service Unavailable", {}, None) for _ in range(3)
+        ]
+        with self.assertRaises(prefect_client.PrefectUnavailable):
+            prefect_client.create_run(EvaluationRun(id=uuid4(), dataset_id=DATASET_ID))
+        self.assertEqual(open_url.call_count, 4)
+        self.assertEqual(sleep.call_count, 2)
+
+    def test_other_failures_and_lost_or_malformed_replies_are_not_retried(self):
+        failures = [
+            URLError("response lost"),
+            TimeoutError("response lost"),
+            *(
+                HTTPError("http://prefect.test", code, "error", {}, None)
+                for code in (401, 403, 404, 429, 500, 502, 504)
+            ),
+            b"not JSON",
+            b'{"id":"invalid"}',
+            b"{}",
+        ]
+        for failure in failures:
+            with (
+                self.subTest(failure=type(failure).__name__),
+                patch("apps.evaluations.prefect_client.time.sleep") as sleep,
+                patch("apps.evaluations.prefect_client.urlopen") as open_url,
+            ):
+                open_url.side_effect = [
+                    BytesIO(json.dumps({"id": str(uuid4())}).encode()),
+                    BytesIO(failure) if isinstance(failure, bytes) else failure,
+                ]
+                with self.assertRaises(prefect_client.PrefectUnavailable):
+                    prefect_client.create_run(EvaluationRun(id=uuid4(), dataset_id=DATASET_ID))
+                self.assertEqual(open_url.call_count, 2)
+                sleep.assert_not_called()
+
+    @patch("apps.evaluations.prefect_client.time.sleep")
+    @patch("apps.evaluations.prefect_client.urlopen")
+    def test_deployment_lookup_503_does_not_start_or_retry_creation(self, open_url, sleep):
+        open_url.side_effect = HTTPError("http://prefect.test", 503, "unavailable", {}, None)
+        with self.assertRaises(prefect_client.PrefectUnavailable):
+            prefect_client.create_run(EvaluationRun(id=uuid4(), dataset_id=DATASET_ID))
+        self.assertEqual(open_url.call_count, 1)
+        sleep.assert_not_called()
+
     @patch("apps.evaluations.prefect_client.request_json")
     def test_recovery_dispatch_uses_pinned_source_and_no_live_configuration(self, request):
         flow_id = uuid4()

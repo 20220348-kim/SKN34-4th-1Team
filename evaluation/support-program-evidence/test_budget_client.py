@@ -67,8 +67,21 @@ def test_unknown_usage_is_recorded_but_never_allows_more_calls(monkeypatch, clie
     calls = []
     monkeypatch.setattr(client, "request", lambda action, **fields: calls.append((action, fields)))
     with pytest.raises(budget_client.BudgetUnavailable):
-        asyncio.run(client.settle(0, None))
-    assert calls == [("settle", {"sequence": 0, "usage": None})]
+        asyncio.run(client.settle(0, None, operation_id="answer:TC01"))
+    assert calls == [("settle", {"sequence": 0, "usage": None, "operation_id": "answer:TC01"})]
+
+
+def test_approval_and_settlement_send_the_same_explicit_operation(monkeypatch, client):
+    calls = []
+    monkeypatch.setattr(client, "request", lambda action, **fields: calls.append((action, fields)))
+    usage = {"input_tokens": 10, "output_tokens": 20, "total_tokens": 30}
+    asyncio.run(client.authorize(0, "test-model", 2000, operation_id="answer:TC01"))
+    asyncio.run(client.settle(0, usage, operation_id="answer:TC01"))
+    assert calls == [
+        ("authorize", {"sequence": 0, "model": "test-model", "max_output_tokens": 2000,
+                       "operation_id": "answer:TC01"}),
+        ("settle", {"sequence": 0, "usage": usage, "operation_id": "answer:TC01"}),
+    ]
 
 
 def test_receipt_is_exclusive_signed_and_omits_response_content(client, tmp_path):

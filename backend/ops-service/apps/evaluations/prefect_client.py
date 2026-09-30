@@ -1,7 +1,8 @@
 """Django에는 평가 SDK 대신 Prefect의 HTTP 실행·조회 계약만 둔다."""
 
 import json
-from urllib.error import URLError
+import time
+from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 from uuid import UUID
@@ -57,15 +58,24 @@ def create_run(run):
             "/deployments/name/" + quote(settings.PREFECT_DEPLOYMENT_NAME, safe="/")
         )
         deployment_id = UUID(str(deployment["id"]))
-        result = request_json(
-            f"/deployments/{deployment_id}/create_flow_run",
-            {
-                "name": f"ops-{run.id}",
-                "parameters": run_parameters(run),
-                "idempotency_key": f"ops-{run.id}",
-                "state": {"type": "SCHEDULED"},
-            },
-        )
+        payload = {
+            "name": f"ops-{run.id}",
+            "parameters": run_parameters(run),
+            "idempotency_key": f"ops-{run.id}",
+            "state": {"type": "SCHEDULED"},
+        }
+        for attempt in range(3):
+            try:
+                result = request_json(f"/deployments/{deployment_id}/create_flow_run", payload)
+                break
+            except PrefectUnavailable as error:
+                # Prefect can return a temporary 503 (including database contention).
+                # Keep the same deployment, parameters and idempotency key. Never
+                # retry a lost response, malformed result, or a worker/model action.
+                cause = error.__cause__
+                if not isinstance(cause, HTTPError) or cause.code != 503 or attempt == 2:
+                    raise
+                time.sleep(0.5 * (attempt + 1))
         return UUID(str(result["id"]))
     except (KeyError, TypeError, ValueError) as exc:
         raise PrefectUnavailable from exc

@@ -5,6 +5,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from builtins import __import__ as original_import
 from unittest.mock import patch
 
 SPEC = importlib.util.spec_from_file_location("verify_catalog", Path(__file__).with_name("verify-catalog-separation.py"))
@@ -54,6 +55,9 @@ class CatalogSeparationEncodingTests(unittest.TestCase):
 
     def test_evidence_option_only_changes_disposable_fixture_settings(self):
         calls = []
+        def config_import(name, *args, **kwargs):
+            self.assertNotEqual(name, "core_rag_capture", "Configuration rendering must not import the AI runtime")
+            return original_import(name, *args, **kwargs)
         def render(command, **kwargs):
             values = dict(line.split("=", 1) for line in Path(command[command.index("--env-file") + 1]).read_text(encoding="utf-8").splitlines())
             overlay = json.loads(Path(command[-4]).read_text(encoding="utf-8"))
@@ -76,7 +80,8 @@ class CatalogSeparationEncodingTests(unittest.TestCase):
             "LANGFUSE_BASE_URL": "http://localhost:13000", "LANGFUSE_PUBLIC_KEY": "pk-test", "LANGFUSE_SECRET_KEY": "sk-test",
         }), patch("sys.argv", ["verify", "--config-only", "--search-traces-output", directory + "/search.json",
                               "--evidence-traces-output", directory + "/evidence.json", "--rag-capture-output", directory + "/rag"]), \
-                patch.object(checker.subprocess, "run", side_effect=render), patch.object(checker, "validate_boundaries") as validate:
+                patch.object(checker.subprocess, "run", side_effect=render), patch.object(checker, "validate_boundaries") as validate, \
+                patch("builtins.__import__", side_effect=config_import):
             checker.main()
             self.assertTrue(validate.call_args.kwargs["search_traces"])
             self.assertTrue(validate.call_args.kwargs["evidence_traces"])

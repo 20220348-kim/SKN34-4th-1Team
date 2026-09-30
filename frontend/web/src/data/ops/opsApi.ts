@@ -136,6 +136,7 @@ const runBudgetSchema = z.object({
   corrections: z.array(usageCorrectionSchema).optional(),
   calls: z.array(z.object({
     sequence: z.number().int().nonnegative(), authorized_at: z.string(), settled_at: z.string().nullable(),
+    operation_id: z.string().regex(/^answer:[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}$/).nullable().optional(),
     input_tokens: z.number().int().nonnegative().nullable(), output_tokens: z.number().int().nonnegative().nullable(),
   }).refine((call) => call.settled_at === null
     ? call.input_tokens === null && call.output_tokens === null

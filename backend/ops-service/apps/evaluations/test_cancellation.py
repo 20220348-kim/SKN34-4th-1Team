@@ -1,6 +1,7 @@
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
+from urllib.error import HTTPError
 from uuid import uuid4
 
 from django.contrib.auth import get_user_model
@@ -240,6 +241,34 @@ class CancellationTests(TransactionTestCase):
         self.assertFalse(run_data(run, self.user.pk)["can_retry"])
         dispatch_run(run)
         create.assert_called_once()
+
+    @patch("apps.evaluations.prefect_client.time.sleep")
+    @patch("apps.evaluations.prefect_client.request_json")
+    def test_cancel_during_503_backoff_keeps_reservation_and_blocks_worker(self, request, sleep):
+        EvaluationRun.objects.filter(pk=self.run.pk).update(
+            prefect_flow_run_id=None, status="REQUESTED"
+        )
+        flow_id = uuid4()
+        busy = prefect_client.PrefectUnavailable()
+        busy.__cause__ = HTTPError("http://prefect.test", 503, "unavailable", {}, None)
+        request.side_effect = [{"id": str(uuid4())}, busy, {"id": str(flow_id)}]
+
+        def cancel_while_waiting(seconds):
+            self.assertFalse(connection.in_atomic_block)
+            cancel_run(self.run, self.user)
+
+        sleep.side_effect = cancel_while_waiting
+        self.run = dispatch_run(self.run)
+        self.assertEqual(self.run.prefect_flow_run_id, flow_id)
+        self.assertEqual(self.run.status, "CANCELLING")
+        self.assertIsNotNone(self.run.cancel_requested_at)
+        self.assertEqual(request.call_args_list[1], request.call_args_list[2])
+        self.assertEqual(self.allocated(), (6, 12000))
+        self.assertEqual(self.run.budget_reservation.calls.count(), 0)
+        with self.assertRaises(BudgetUnavailable):
+            self.action("claim")
+        dispatch_run(self.run)
+        self.assertEqual(request.call_count, 3)
 
     @patch("apps.evaluations.prefect_client.read_run")
     def test_stale_poll_cannot_overwrite_new_cancel_request(self, read):

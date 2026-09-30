@@ -1,5 +1,7 @@
 """Ops DB가 소유하는 누적 호출·출력 토큰 예약. 금액 상한으로 해석하지 않는다."""
 
+import re
+
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
@@ -11,10 +13,57 @@ class BudgetUnavailable(Exception):
     pass
 
 
+def operation_plan(run):
+    """현재 지원하는 고정 근거 답변 작업만 허용한다. 과거 명세에는 작업을 만들어 넣지 않는다."""
+    spec = run.execution_spec
+    if not isinstance(spec, dict):
+        raise BudgetUnavailable
+    if "model_operations" not in spec:
+        return None
+    config = run.live_config
+    dataset = spec.get("dataset")
+    if not isinstance(config, dict) or not isinstance(dataset, dict):
+        raise BudgetUnavailable
+    cases = dataset.get("case_ids")
+    if (
+        spec.get("evaluation_scope") != "fixed-answer-context-only"
+        or spec.get("execution_mode") != "live"
+        or spec.get("live_config") != config
+        or not isinstance(cases, list)
+        or not 1 <= len(cases) <= 12
+        or any(
+            not isinstance(case, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}", case)
+            for case in cases
+        )
+        or len(set(cases)) != len(cases)
+        or type(config.get("max_model_calls")) is not int
+        or config["max_model_calls"] != len(cases)
+        or type(config.get("max_output_tokens")) is not int
+        or config["max_output_tokens"] <= 0
+        or not isinstance(config.get("model"), str)
+        or not config["model"]
+    ):
+        raise BudgetUnavailable
+    expected = [
+        {
+            "id": f"answer:{case}",
+            "kind": "answer",
+            "case_id": case,
+            "model": config["model"],
+            "max_output_tokens": config["max_output_tokens"],
+        }
+        for case in cases
+    ]
+    if spec["model_operations"] != expected:
+        raise BudgetUnavailable
+    return expected
+
+
 def reserve(run):
     """접수 transaction 안에서 호출한다. DB 한도 잠금은 모든 데이터셋이 공유한다."""
     if run.execution_mode != "live":
         return
+    operation_plan(run)
     budget = EvaluationBudget.objects.select_for_update().filter(pk=1).first()
     if budget is None or len(settings.LLMOPS_BUDGET_TOKEN) < 32:
         raise BudgetUnavailable
@@ -58,6 +107,7 @@ def worker_action(
     usage=None,
     model=None,
     max_output_tokens=None,
+    operation_id=None,
 ):
     # 모든 작업은 budget → reservation 순서로 잠근다. 외부 통신은 transaction 밖이다.
     budget = EvaluationBudget.objects.select_for_update().filter(pk=1).first()
@@ -76,6 +126,7 @@ def worker_action(
     ):
         raise BudgetUnavailable
     if action == "claim":
+        operation_plan(run)
         if (
             not settings.LLMOPS_LIVE_ENABLED
             or run.cancel_requested_at is not None
@@ -107,11 +158,18 @@ def worker_action(
             or max_output_tokens != reservation.max_output_tokens
         ):
             raise BudgetUnavailable
+        plan = operation_plan(run)
+        if plan is not None and len(plan) != reservation.max_calls:
+            raise BudgetUnavailable
+        if operation_id != (plan[sequence]["id"] if plan is not None else None):
+            raise BudgetUnavailable
         # 같은 sequence의 승인을 재발급하지 않는다. 응답 유실도 미확인 시도로 보존한다.
-        EvaluationBudgetCall.objects.create(reservation=reservation, sequence=sequence)
+        EvaluationBudgetCall.objects.create(
+            reservation=reservation, sequence=sequence, operation_id=operation_id
+        )
     elif action == "settle":
         call = reservation.calls.filter(sequence=sequence).first()
-        if call is None:
+        if call is None or call.operation_id != operation_id:
             raise BudgetUnavailable
         if usage is None:
             return  # 응답/사용량을 확인하지 못한 호출은 예약을 유지한다.
