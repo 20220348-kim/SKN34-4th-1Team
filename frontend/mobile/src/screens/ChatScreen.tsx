@@ -15,8 +15,8 @@ const emptyContext: SupportProgramConversationContext = {
 
 const conditionLabels = { region: '지역', industry: '업종', establishedOn: '설립일', foundedYear: '설립연도', supportPurpose: '지원 목적' }
 
-export function ChatScreen({ onOpenProgram, onLogin }: {
-  onOpenProgram: (identity: SupportProgramIdentity) => void; onLogin: () => void
+export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0 }: {
+  onOpenProgram: (identity: SupportProgramIdentity) => void; onLogin: () => void; keyboardOffset?: number
 }) {
   const { session, status, invalidateSession } = useAuth()
   const token = status === 'signedIn' ? session?.accessToken : undefined
@@ -93,7 +93,7 @@ export function ChatScreen({ onOpenProgram, onLogin }: {
     } finally { if (generation.current === revision) setBusy(null) }
   }
 
-  return <Page>
+  return <Page keyboardOffset={keyboardOffset}>
     <Title>대화로 찾는 지원사업</Title><Subtitle>회사의 상황과 필요한 지원을 알려주세요. 검색 조건을 함께 정리합니다.</Subtitle>
     {history.length === 0 && <Notice>예: “서울에서 AI 서비스를 만드는 창업기업인데, 사업화 지원을 찾고 있어요.”</Notice>}
     {history.map((item, index) => <Card key={index}>

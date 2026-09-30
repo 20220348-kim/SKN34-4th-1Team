@@ -10,7 +10,7 @@ class AppErrorBoundary extends Component<{ children: ReactNode }, { error: boole
   static getDerivedStateFromError() { return { error: true } }
   componentDidCatch(_error: Error, _info: ErrorInfo) { /* Do not log credentials or API responses. */ }
   render() {
-    if (this.state.error) return <Page><Title>앱을 열지 못했습니다</Title>
+    if (this.state.error) return <Page headerless><Title>앱을 열지 못했습니다</Title>
       <Notice error>앱 설정을 확인하거나 잠시 후 다시 실행해 주세요.</Notice>
       <Button label="다시 시도" onPress={() => this.setState({ error: false })} />
     </Page>
@@ -20,7 +20,8 @@ class AppErrorBoundary extends Component<{ children: ReactNode }, { error: boole
 
 export default function RootLayout() {
   return <SafeAreaProvider><StatusBar style="dark" /><AppErrorBoundary><AuthProvider>
-    <Stack screenOptions={{ headerTintColor: colors.text, headerStyle: { backgroundColor: colors.surface }, contentStyle: { backgroundColor: colors.background } }}>
+    <Stack screenOptions={{ headerTintColor: colors.text, headerTitleAlign: 'left', headerTitleStyle: { fontSize: 17, fontWeight: '600' },
+      headerStyle: { backgroundColor: colors.surface }, contentStyle: { backgroundColor: colors.background } }}>
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       <Stack.Screen name="program" options={{ title: '공고 상세' }} />
       <Stack.Screen name="company" options={{ title: '기업 프로필' }} />
