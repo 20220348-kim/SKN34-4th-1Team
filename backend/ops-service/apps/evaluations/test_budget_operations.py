@@ -289,6 +289,11 @@ class BudgetOperationMigrationTests(TransactionTestCase):
             )
             self.assertEqual([call.operation_id for call in kept], [None, None, None])
             self.assertEqual([call.output_tokens for call in kept], [None, 50, None])
+            receipt = apps.get_model("evaluations", "EvaluationUsageCorrection").objects.get()
+            self.assertEqual(receipt.response_id, "resp_legacy")
+            self.assertIsNone(receipt.provider_request_id)
+            self.assertEqual((receipt.input_tokens, receipt.output_tokens), (150, 30))
+            self.assertEqual(receipt.evidence_raw, "{}")
             self.assertEqual(
                 apps.get_model("evaluations", "EvaluationBudget")
                 .objects.get(pk=1)

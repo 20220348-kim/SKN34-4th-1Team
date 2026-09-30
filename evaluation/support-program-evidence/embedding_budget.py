@@ -48,11 +48,12 @@ def embedding_operations(texts, *, kind, label, model, dimensions, request_token
 class EmbeddingBudget:
     """승인된 작업 목록과 실제 임베딩 전송을 대조하고 Ops에 승인·정산한다."""
 
-    def __init__(self, client, operations):
+    def __init__(self, client, operations, *, receipt_directory):
         if not isinstance(operations, list) or not 1 <= len(operations) <= 512:
             raise ValueError("Approved operations are required")
         self.client = client
         self.operations = deepcopy(operations)
+        self.receipt_directory = receipt_directory
         self.last_sequence = -1
         self.stopped = False
 
@@ -125,9 +126,9 @@ class EmbeddingBudget:
         except (ValueError, TypeError):
             await self.client.settle(sequence, None, operation_id=item["id"])
             raise BudgetUnavailable("Embedding usage is unknown") from None
-        await self.client.settle(
-            sequence,
-            {"input_tokens": tokens, "output_tokens": 0, "total_tokens": tokens},
-            operation_id=item["id"],
+        usage = {"input_tokens": tokens, "output_tokens": 0, "total_tokens": tokens}
+        self.client.record_embedding_usage_receipt(
+            self.receipt_directory, sequence, item, response.headers.get("x-request-id"), usage
         )
+        await self.client.settle(sequence, usage, operation_id=item["id"])
         self.stopped = False

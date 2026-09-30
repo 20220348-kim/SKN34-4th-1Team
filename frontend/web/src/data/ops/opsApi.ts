@@ -138,11 +138,15 @@ const correctionAmountsSchema = cleanupAmountsSchema.extend({
 })
 const usageCorrectionSchema = z.object({
   request_id: z.string().uuid(), run_id: z.string().uuid(), sequence: z.number().int().nonnegative(),
-  source: z.literal('WORKER_RESPONSE'), actor: z.string().min(1), reason: z.string().min(1),
-  evidence_sha256: z.string().regex(/^[a-f0-9]{64}$/), response_id: z.string().regex(/^resp_[A-Za-z0-9_-]{1,180}$/),
+  source: z.enum(['WORKER_RESPONSE', 'WORKER_EMBEDDING_RESPONSE']), actor: z.string().min(1), reason: z.string().min(1),
+  evidence_sha256: z.string().regex(/^[a-f0-9]{64}$/), response_id: z.string().regex(/^resp_[A-Za-z0-9_-]{1,180}$/).nullable(),
+  provider_request_id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]{0,199}$/).optional(),
   input_tokens: z.number().int().nonnegative(), output_tokens: z.number().int().nonnegative(),
   before: correctionAmountsSchema, after: correctionAmountsSchema, created_at: z.string().datetime({ offset: true }),
-}).refine(({ before, after }) => inputDeltaMatches(before, after) && before.global_calls === after.global_calls
+}).refine((record) => record.source === 'WORKER_RESPONSE'
+  ? record.response_id !== null && record.provider_request_id === undefined
+  : record.response_id === null && record.provider_request_id !== undefined && record.output_tokens === 0)
+  .refine(({ before, after }) => inputDeltaMatches(before, after) && before.global_calls === after.global_calls
   && before.reservation_calls === after.reservation_calls && before.unknown_calls - after.unknown_calls === 1
   && before.global_output_tokens >= after.global_output_tokens
   && before.global_output_tokens - after.global_output_tokens === before.reservation_output_tokens - after.reservation_output_tokens)
@@ -165,13 +169,20 @@ const runBudgetSchema = z.object({
   .refine((data) => {
     const corrections = data.corrections ?? []
     return new Set(corrections.map((record) => record.sequence)).size === corrections.length
-      && new Set(corrections.map((record) => record.response_id)).size === corrections.length
+      && new Set(corrections.map((record) => record.source + ':' + (record.provider_request_id ?? record.response_id))).size === corrections.length
       && corrections.every((record) => {
         const reservation = data.reservation
         const call = data.calls.find((item) => item.sequence === record.sequence)
         const inputCap = call?.max_input_tokens ?? reservation?.max_input_tokens
         const outputCap = call?.max_output_tokens ?? reservation?.max_output_tokens
-        return outputCap !== undefined && reservation?.closed_at && reservation.run_id === record.run_id && call?.settled_at === null
+        const embedding = record.source === 'WORKER_EMBEDDING_RESPONSE'
+        const kindMatches = embedding
+          ? /^(document_embedding|query_embedding):/.test(call?.operation_id ?? '')
+            && call?.max_input_tokens != null && call.max_output_tokens === 0
+            && record.before.reservation_input_tokens !== undefined && record.after.reservation_input_tokens !== undefined
+            && record.before.reservation_input_tokens - record.after.reservation_input_tokens === call.max_input_tokens - record.input_tokens
+          : !call?.operation_id || call.operation_id.startsWith('answer:')
+        return kindMatches && outputCap !== undefined && reservation?.closed_at && reservation.run_id === record.run_id && call?.settled_at === null
           && (inputCap == null || record.input_tokens <= inputCap)
           && record.output_tokens <= outputCap
           && record.before.unknown_output_tokens - record.after.unknown_output_tokens === outputCap

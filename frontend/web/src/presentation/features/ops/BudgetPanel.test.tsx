@@ -256,3 +256,66 @@ it('임베딩 승인과 답변의 개별 상한을 표시한다', async () => {
   expect(screen.getByText('승인 상한: 입력 120토큰 / 출력 0토큰')).toBeTruthy()
   expect(screen.getByText('승인 상한: 입력 32,768토큰 / 출력 2,000토큰')).toBeTruthy()
 })
+
+const embeddingCorrection = {
+  ...correction, source: 'WORKER_EMBEDDING_RESPONSE', response_id: null,
+  provider_request_id: 'req_embedding_first', output_tokens: 0,
+  before: { ...correction.before, global_input_tokens: 1000, reservation_input_tokens: 1000,
+    global_output_tokens: 0, reservation_output_tokens: 0, unknown_calls: 2, unknown_output_tokens: 0 },
+  after: { ...correction.after, global_input_tokens: 600, reservation_input_tokens: 600,
+    global_output_tokens: 0, reservation_output_tokens: 0, unknown_calls: 1, unknown_output_tokens: 0 },
+}
+const correctedEmbedding = {
+  ...correctedDetail,
+  reservation: { ...correctedDetail.reservation, max_input_tokens: 32768 },
+  calls: [{ ...detail.calls[1], operation_id: 'document_embedding:D1:0', max_input_tokens: 500, max_output_tokens: 0 }],
+  corrections: [embeddingCorrection],
+}
+
+it('임베딩 보정은 실제 요청 ID와 입력 차액을 표시하고 GET만 사용한다', async () => {
+  const fetch = vi.fn().mockResolvedValue(json(correctedEmbedding))
+  vi.stubGlobal('fetch', fetch)
+  render(<RunBudgetPanel runId={id} onExpired={vi.fn()} refreshKey={0} />)
+  const audit = await screen.findByRole('region', { name: '사용량 보정 이력' })
+  expect(within(audit).getByText(/임베딩 요청: req_embedding_first/)).toBeTruthy()
+  expect(within(audit).getByText(/입력 차액 반환: 400토큰/)).toBeTruthy()
+  expect(within(audit).getByText('확인 사용량: 입력 100 / 출력 0토큰')).toBeTruthy()
+  expect(within(audit).queryByText(/응답:/)).toBeNull()
+  expect(within(audit).queryByRole('button')).toBeNull()
+  expect(fetch.mock.calls.every(([, options]) => !options.method || options.method === 'GET')).toBe(true)
+})
+
+it('서로 다른 임베딩 요청은 null 응답 ID가 같아도 조회할 수 있다', async () => {
+  const second = { ...embeddingCorrection, sequence: 2, request_id: '20000000-0000-4000-8000-000000000002',
+    provider_request_id: 'req_embedding_second', before: embeddingCorrection.after,
+    after: { ...embeddingCorrection.after, global_input_tokens: 200, reservation_input_tokens: 200, unknown_calls: 0 } }
+  const body = { ...correctedEmbedding, calls: [...correctedEmbedding.calls,
+    { ...correctedEmbedding.calls[0], sequence: 2, operation_id: 'query_embedding:E01:0' }],
+    corrections: [embeddingCorrection, second] }
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json(body)))
+  expect((await getRunBudget(id)).corrections).toHaveLength(2)
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ ...body,
+    corrections: [embeddingCorrection, { ...second, provider_request_id: embeddingCorrection.provider_request_id }],
+  })))
+  await expect(getRunBudget(id)).rejects.toThrow()
+})
+
+it.each(['missing-id', 'fake-response', 'answer-source', 'answer-call', 'legacy-call', 'output', 'input-delta', 'missing-input'])('잘못된 임베딩 보정 %s를 거절한다', async (fault) => {
+  const record = { ...embeddingCorrection,
+    ...(fault === 'missing-id' ? { provider_request_id: undefined } : {}),
+    ...(fault === 'fake-response' ? { response_id: 'resp_invented' } : {}),
+    ...(fault === 'answer-source' ? { source: 'WORKER_RESPONSE' } : {}),
+    ...(fault === 'output' ? { output_tokens: 1 } : {}),
+    ...(fault === 'input-delta' ? { after: { ...embeddingCorrection.after, global_input_tokens: 601, reservation_input_tokens: 601 } } : {}),
+    ...(fault === 'missing-input' ? {
+      before: { ...embeddingCorrection.before, global_input_tokens: undefined, reservation_input_tokens: undefined },
+      after: { ...embeddingCorrection.after, global_input_tokens: undefined, reservation_input_tokens: undefined },
+    } : {}),
+  }
+  const call = { ...correctedEmbedding.calls[0],
+    ...(fault === 'answer-call' ? { operation_id: 'answer:E01' } : {}),
+    ...(fault === 'legacy-call' ? { max_input_tokens: undefined, max_output_tokens: undefined } : {}),
+  }
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ ...correctedEmbedding, calls: [call], corrections: [record] })))
+  await expect(getRunBudget(id)).rejects.toThrow()
+})

@@ -410,9 +410,12 @@ Ops 정산은 생성 응답의 usage를 따릅니다. 누적 입력 한도는 CL
 전처리를 사용해 문서/질문 배치별 작업 ID, 모델, 차원, 입력 SHA-256, 최대 입력, 출력 0을 만듭니다.
 `EmbeddingBudget`을 `build_evaluation_app(..., embedding_budget=guard)`에 전달하면 기존 SDK의
 HTTP hook에서 배치를 대조하고 Ops 승인을 받은 뒤에만 전송합니다. production 의존성은 추가하지 않았습니다.
+가드는 `EmbeddingBudget(client, operations, receipt_directory=capture_directory)`로 생성합니다.
+호출자는 해당 실행의 `/results/{run UUID}/capture`가 최초 전송 전에 생성되고 Ops의 결과 볼륨과
+공유되도록 구성해야 합니다. `build_evaluation_app`의 `output_dir`로 같은 경로를 전달하면 앱 생성 시 준비합니다.
 
 흐름: `고정 배치 계획 → 기존 Service의 임베딩 요청 → SDK 요청 검증 → BudgetClient → Ops 승인 →
-OpenAI 임베딩 → usage 검증 → Ops 정산 → Service 벡터 검증·캐시`.
+OpenAI 임베딩 → usage 검증 → v2 사용량 증거 저장 → Ops 정산 → Service 벡터 검증·캐시`.
 요청 URL·모델·입력·차원·추가 필드가 달라지면 전송하지 않습니다. 사용량 누락·상한 초과·timeout·
 승인/정산 실패는 다음 전송을 차단합니다. 사용량이 확인되고 벡터만 잘못된 경우 사용량을 정산하고
 Service가 결과·캐시 반영을 거절합니다.
@@ -424,8 +427,23 @@ Service가 결과·캐시 반영을 거절합니다.
 
 캐시 적중으로 완전히 전송하지 않은 배치는 승인하지 않고 남겨 두며 종료 때 예약을 반환합니다.
 부분 캐시 적중으로 남은 문자열이 재배치되어 승인한 배치 해시와 달라지면 중단합니다. 이를 자동으로
-새 승인 계획으로 바꾸거나 넓은 상한만으로 전송하지 않습니다. 임베딩은 답변용 서명 영수증 v1을 생성하지
-않으므로 정산 실패 시 입력 예약이 유지됩니다. 임베딩 증거·보정 확장이 필요합니다.
+새 승인 계획으로 바꾸거나 넓은 상한만으로 전송하지 않습니다.
+
+임베딩 증거 v2는 실제 응답의 `x-request-id`·승인 배치 ID/종류·모델·차원·입력 해시·상한·사용량을
+보관합니다. 사용량은 `prompt_tokens`/`total_tokens`를 입력/전체로 정규화하며 출력은 0입니다.
+이 필드는 [OpenAI 임베딩 문서](https://developers.openai.com/api/docs/guides/embeddings)와
+[요청 ID 문서](https://developers.openai.com/api/reference/overview)의 응답 계약을 따릅니다.
+요청 ID는 불투명한 값이며 `req_` 접두사에 의존하지 않습니다. 현재 파일 계약은 1~200자의
+영문·숫자·`_`·`-`(첫 글자는 영문/숫자)만 허용하며 형식이 달라지면 증거를 생성하지 않습니다.
+원문·벡터·키는 저장하지 않고 답변 `response_id`를 임의 생성하지 않습니다.
+
+증거는 기존 `LLMOPS_BUDGET_TOKEN`과 v2 전용 도메인으로 서명해 `usage-{sequence}.json`에
+0600 권한·fsync·배타적 생성으로 저장합니다. 저장 실패는 정산 시도와 다음 전송을 막고,
+정산 실패에도 이미 저장한 파일은 남습니다. 유효한 요청 ID가 없으면 증거 없이 확인 사용량의 정산을
+시도하지만, 정산까지 유실되면 입력 예약을 유지합니다. 사용량 미확인을 0으로 기록하지 않습니다.
+닫힌 예약에서 기존 `correct_evaluation_usage`의 미리보기·증거 해시 확인 후 적용으로 복구하며
+[Ops 보정 계약](../../backend/ops-service/README.md#증거-기반-미확인-사용량-보정)을 따릅니다.
+이 파일은 실행기가 관측한 사용량의 서명 기록이며 제공자의 독립적인 청구 증명은 아닙니다.
 
 무료 검증은 실제 OpenAI SDK·기존 임베딩 Service와 HTTP 대역을 사용합니다. Ops의 실제 MySQL 장부
 테스트와 SDK 테스트는 각각 수행하며, 이 결과를 유료 API·전체 RAG/Prefect/Kubernetes 통합 완료로

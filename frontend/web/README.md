@@ -52,7 +52,7 @@ Core API와 함께 켠 뒤 저장소 루트에서 Node 24.x/pnpm 11.22.x로 `pnp
 - 목록 조회 실패 시 기존 결과와 오류를 함께 유지. 상태 반영은 별도 `ops-sync`가 수행하므로 상세 방문이 필요 없음
 - 누적 예산과 실행별 장부는 15초 간격으로 읽기 조회. 미설정·과거 예약 누락·사용량 미확인을 0으로 표시하지 않음
 - 호출별 장부에 `answer:{case_id}` 작업 ID를 표시. 과거 null/누락은 작업 식별 기록 없음으로 표시하며
-  호출 순서로 사례를 추정하지 않음. Ops `0018_operation_token_limits` 적용 필요
+  호출 순서로 사례를 추정하지 않음. 최신 API는 Ops `0019_embedding_usage_receipt`까지 적용 필요
 - 예산 상세는 답변·문서 임베딩·질문 임베딩 작업과 개별 입력·출력 상한을 표시합니다. 임베딩 출력 0을
   미확인 값으로 바꾸지 않습니다. 과거 상한 누락은 미확인으로 유지하며 공개 전체 RAG 접수 기능은 아직 없습니다.
 - 입력 한도 적용·미설정·과거 입력 미확인 상태, 호출당 상한·생성 전 계산·입력 예약/정산/반환을 함께 표시.
@@ -61,7 +61,10 @@ Core API와 함께 켠 뒤 저장소 루트에서 Node 24.x/pnpm 11.22.x로 `pnp
   정리 버튼은 제공하지 않으며 사용법과 migration은 [Ops README](../../backend/ops-service/README.md#종료된-예약의-미사용-몫-정리) 참고
 - 서명된 실행기 응답으로 보정한 호출은 상세의 사용량 보정 이력에서 근거 해시·응답 ID·담당자/사유·반환 차액 조회.
   합계에는 보정값을 포함하되 원본 미정산 기록을 구분하며, 브라우저는 읽기만 수행합니다.
-  `0015_usage_correction`과 [보정 계약](../../backend/ops-service/README.md#증거-기반-미확인-사용량-보정) 참고
+  임베딩은 `WORKER_EMBEDDING_RESPONSE`의 제공자 요청 ID와 입력 차액을 별도로 표시합니다.
+  답변/임베딩 식별자 혼용, 작업 종류·상한 불일치, 출력 사용량, 입력 차액 오류, 중복 요청 ID를 거절합니다.
+  서로 다른 임베딩 증거의 `response_id=null`은 허용하며 기존 답변 보정 응답도 계속 읽습니다.
+  `0019_embedding_usage_receipt`와 [보정 계약](../../backend/ops-service/README.md#증거-기반-미확인-사용량-보정) 참고
 - API: 상대 주소 `/api/v1/ops/*` → Vite → Django. 기본 대상은 `http://127.0.0.1:18001`
 - 서버 전용 `OPS_DEV_PROXY_TARGET`으로 단독 Ops(`http://127.0.0.1:8001`)나 Compose 내부 주소를 지정
 - 루트 통합 Compose는 웹 → `ops-service:8000`, Django → `core-service:8080`으로 연결
