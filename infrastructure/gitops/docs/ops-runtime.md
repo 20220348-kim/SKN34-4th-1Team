@@ -235,6 +235,11 @@ python3 -B infrastructure/gitops/scripts/ops_runtime.py --check \
 
 ### 기존 개인 Ops 이미지 갱신
 
+진행 중 평가·접수 중지·백업 복원과 실패 후 조치는
+[개인 Ops 갱신·복구 절차](../../../docs/ops-upgrade-runbook.md)를 따른다.
+활성화 단계별 결과는 state의 `ops-updates/<UUID>.json`에 남는다. `ACTIVATED`도 새 무료 평가와
+관리자 인증 성공을 뜻하지 않으며 `RUNNING`/`FAILED` 기록은 조사 없이 완료로 처리하지 않는다.
+
 기존 클러스터의 Ops가 오래된 이미지라면 같은 소스에서 Ops와 Compose 실행기를 먼저 빌드한다.
 실행 중인 평가가 없는지 확인하고 실행기를 갱신한 뒤, 고유한 로컬 Ops 태그를 지정한다.
 기존 Core·Ops DB와 Prefect·결과 볼륨은 백업하고 유지한다. Core 관리자 세션 API의 지원 여부도 별도로 확인한다.

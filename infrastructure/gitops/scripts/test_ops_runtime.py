@@ -287,6 +287,87 @@ class ActivationTests(unittest.TestCase):
         self.assertTrue((self.state / runtime.PROFILE).exists())
         self.assertEqual(self.connect.call_count, 2)
 
+    def journal(self):
+        paths = list((self.state / "ops-updates").glob("*.json"))
+        self.assertEqual(len(paths), 1)
+        return json.loads(paths[0].read_text())
+
+    def test_journal_distinguishes_activation_from_evaluation_and_contains_no_secrets(
+        self,
+    ):
+        runtime.activate(self.state, SETTINGS, self.env)
+        record = self.journal()
+        self.assertEqual(record["status"], "ACTIVATED")
+        self.assertEqual(record["stages"]["migration"], "COMPLETED")
+        self.assertEqual(record["stages"]["runtime_check"], "COMPLETED")
+        self.assertFalse(record["evaluationExecuted"])
+        self.assertFalse(record["adminAuthVerified"])
+        self.assertFalse(record["automaticDatabaseRestore"])
+        self.assertFalse(record["automaticImageRollback"])
+        self.assertNotIn(TOKEN, json.dumps(record))
+        self.assertNotIn("DB_PASSWORD", json.dumps(record))
+
+    def test_failure_keeps_migration_uncertain_and_never_records_workload_success(self):
+        self.mocks["run_migration"].side_effect = ValueError("sensitive input " + TOKEN)
+        with self.assertRaises(ValueError):
+            runtime.activate(self.state, SETTINGS, self.env)
+        record = self.journal()
+        self.assertEqual(record["status"], "FAILED")
+        self.assertEqual(record["stages"]["migration"], "RUNNING")
+        self.assertNotIn("workload_apply", record["stages"])
+        self.assertEqual(record["errorType"], "ValueError")
+        self.assertNotIn(TOKEN, json.dumps(record))
+
+    def test_lost_apply_response_preserves_completed_migration_and_unknown_apply(self):
+        def execute(command, **kwargs):
+            if "apply" in command:
+                self.execute(command, **kwargs)
+                raise ValueError("response lost")
+            return self.execute(command, **kwargs)
+
+        self.mocks["run"].side_effect = execute
+        with self.assertRaises(ValueError):
+            runtime.activate(self.state, SETTINGS, self.env)
+        record = self.journal()
+        self.assertEqual(record["status"], "FAILED")
+        self.assertEqual(record["stages"]["migration"], "COMPLETED")
+        self.assertEqual(record["stages"]["workload_apply"], "RUNNING")
+        self.assertNotIn("rollout", record["stages"])
+
+    def test_interruption_is_not_reported_as_completion(self):
+        self.mocks["run_migration"].side_effect = KeyboardInterrupt
+        with self.assertRaises(KeyboardInterrupt):
+            runtime.activate(self.state, SETTINGS, self.env)
+        record = self.journal()
+        self.assertEqual(record["status"], "FAILED")
+        self.assertEqual(record["errorType"], "KeyboardInterrupt")
+
+    def test_unwritable_or_redirected_journal_stops_before_mutations(self):
+        with (
+            patch.object(runtime, "write_json", side_effect=OSError("disk full")),
+            self.assertRaises(OSError),
+        ):
+            runtime.activate(self.state, SETTINGS, self.env)
+        self.assertEqual(self.events, [])
+        (self.state / "ops-updates").symlink_to(self.state, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, "symlink"):
+            runtime.activate(self.state, SETTINGS, self.env)
+        self.assertEqual(self.events, [])
+
+    def test_explicit_retry_keeps_previous_failure_record(self):
+        self.mocks["run_migration"].side_effect = ValueError("migration failed")
+        with self.assertRaises(ValueError):
+            runtime.activate(self.state, SETTINGS, self.env)
+        self.mocks["run_migration"].side_effect = None
+        runtime.activate(self.state, SETTINGS, self.env)
+        records = [
+            json.loads(path.read_text())
+            for path in (self.state / "ops-updates").glob("*.json")
+        ]
+        self.assertEqual(
+            {record["status"] for record in records}, {"FAILED", "ACTIVATED"}
+        )
+
     def test_migration_failure_does_not_apply_or_record_success(self):
         self.mocks["run_migration"].side_effect = ValueError("migration failed")
         with self.assertRaisesRegex(ValueError, "migration"):

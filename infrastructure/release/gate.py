@@ -3,24 +3,15 @@
 import argparse
 import json
 import os
-from pathlib import Path
 import re
 import subprocess
+from pathlib import Path
 from urllib.parse import quote
 
+from ci_policy import WORKFLOWS
 from repository import from_ci, validate_branch
 
-# These are the mandatory job display names, including expanded matrix jobs.
-# Keep this policy in sync with the workflow definitions; absent/skipped jobs fail closed.
-WORKFLOWS = {
-    "ci.yml": ("Web and shared", "Mobile", "Core API", "AI Service", "Container integration"),
-    "catalog-ci.yml": ("Catalog clean build and boundaries",
-                       "Catalog to Core HTTP projection with offline fixtures"),
-    "ops-ci.yml": ("Ops checks and MySQL tests", "Ops container integration"),
-    "infra-ci.yml": ("Fork identity (ubuntu-24.04)", "Fork identity (macos-15-intel)",
-                     "Fork identity (windows-2025)", "repository", "kubernetes-manifests", "helm-gitops"),
-    "llmops-ci.yml": ("Saved capture pipeline with local servers",),
-}
+# Merge protection and publication share the mandatory names, including summaries.
 # This is the submission/merge authority, never a registry publication owner.
 UPSTREAM = "SKNETWORKS-FAMILY-AICAMP/SKN34-4th-1Team"
 PROMOTION_PATHS = {"infrastructure/gitops/environments/fork/" + name for name in (
@@ -127,7 +118,7 @@ def blocked_reason(sha, fork, get=api, *, evidence=None):
         jobs_response = get(f"repos/{fork.repository}/actions/runs/{run['id']}/jobs"
                             "?filter=latest&per_page=100")
         jobs = jobs_response.get("jobs", [])
-        # Current workflows have at most six jobs. Reject incomplete/paginated results
+        # Current workflows have at most seven jobs. Reject incomplete/paginated results
         # instead of treating the first page or a successful gate-only run as complete CI.
         if (not isinstance(jobs, list)
                 or type(jobs_response.get("total_count")) is not int

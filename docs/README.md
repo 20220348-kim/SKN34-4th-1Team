@@ -56,6 +56,8 @@ Windows의 로컬 소스 빌드·기동·웹 연결 확인은 [WSL2 수동 설�
 | 문서 | 확인할 내용 |
 |---|---|
 | [GitOps 검수·후속 전략](gitops-strategy-review-20260929.md) | 당시 배포·CI 검수 기록. deploy/fork 도입 제안은 현재 미사용이며 최신 LLMOps 전략과 구분 |
+| [리뷰 0명·필수 CI 병합 조건](merge-protection.md) | 필수 21개 check·활성 ruleset·우회 권한 점검·실제 병합 차단 검증 |
+| [개인 Ops 갱신·복구](ops-upgrade-runbook.md) | 진행 중 평가·백업 복원·migration·이미지 교체·실패 단계 기록과 접수 재개 조건 |
 | [Windows Kubernetes 수동 설치](windows-kubernetes-setup.md) | Ubuntu 연동, 도구 설치, GHCR 없는 소스 빌드·kind 배포, Windows 웹 연결, 재시작·문제 해결 |
 | [현재 로컬 시스템 아키텍처](assets/architecture/README-local.md) | 개인 포크·같은 저장소의 Helm·비공개 GHCR·로컬 kind·개발 모드/GitOps 구분 |
 | [통합 전 Kubernetes 아키텍처](assets/architecture/README-kubernetes.md) | 2026-09-20 GovBiz-Team 두 저장소와 Mac portfolio 실행 기록 |

@@ -9,9 +9,10 @@ import re
 import stat
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import ops_bridge
 import yaml
@@ -538,46 +539,115 @@ def activate(
     ):
         raise ValueError("Ops workload or baseline changed during activation preflight")
     desired["metadata"]["resourceVersion"] = current["metadata"]["resourceVersion"]
-    if patch:
-        quiet(
-            nk
-            + [
-                "patch",
-                "secret",
-                "ops-runtime",
-                "--type=merge",
-                "--patch-file=/dev/stdin",
-            ],
-            json.dumps(patch),
+    journal_dir = state / "ops-updates"
+    if journal_dir.is_symlink():
+        raise ValueError("Ops update journal must not be a symlink")
+    journal = journal_dir / (str(uuid4()) + ".json")
+    attempt = {
+        "schemaVersion": 1,
+        **record,
+        "startedAt": datetime.now(timezone.utc).isoformat(),
+        "status": "RUNNING",
+        "previousImage": previous_image,
+        "targetImage": image,
+        "targetImageId": release["imageId"],
+        "releaseSha256": release["releaseSha256"],
+        "stages": {},
+        "evaluationExecuted": False,
+        "adminAuthVerified": False,
+        "automaticImageRollback": False,
+        "automaticDatabaseRestore": False,
+    }
+    # Persist before mutations. An interrupted RUNNING stage has an unknown outcome;
+    # neither a lost API response nor a completed migration implies DB rollback.
+    write_json(journal, attempt)
+
+    def stage(name, action):
+        attempt["stages"][name] = "RUNNING"
+        write_json(journal, attempt)
+        action()
+        attempt["stages"][name] = "COMPLETED"
+        write_json(journal, attempt)
+
+    try:
+        if patch:
+            stage(
+                "artifact_secret",
+                lambda: quiet(
+                    nk
+                    + [
+                        "patch",
+                        "secret",
+                        "ops-runtime",
+                        "--type=merge",
+                        "--patch-file=/dev/stdin",
+                    ],
+                    json.dumps(patch),
+                ),
+            )
+        for job in (item for item in resources if item["kind"] == "Job"):
+            stage("migration", lambda job=job: run_migration(job, kube, nk, run))
+        stage(
+            "workload_apply",
+            lambda: run(
+                kube
+                + ["apply", "--server-side", "--field-manager=govbiz-local", "-f", "-"],
+                data=yaml.safe_dump_all(
+                    item for item in resources if item["kind"] != "Job"
+                ),
+            ),
         )
-    for job in (item for item in resources if item["kind"] == "Job"):
-        run_migration(job, kube, nk, run)
-    run(
-        kube + ["apply", "--server-side", "--field-manager=govbiz-local", "-f", "-"],
-        data=yaml.safe_dump_all(item for item in resources if item["kind"] != "Job"),
-    )
-    run(nk + ["rollout", "status", "deployment/ops-service", "--timeout=600s"])
-    run(
-        nk
-        + [
-            "exec",
-            "deployment/ops-service",
-            "-c",
-            "ops-service",
-            "--",
-            "python",
-            "manage.py",
-            "check_evaluation_runtime",
-        ],
-        capture=True,
-    )
-    if json.loads(baseline_path.read_text(encoding="utf-8")) != baseline:
-        raise ValueError(
-            "Ops baseline changed; runtime is applied but success was not recorded"
+        stage(
+            "rollout",
+            lambda: run(
+                nk + ["rollout", "status", "deployment/ops-service", "--timeout=600s"]
+            ),
         )
-    if ops_image is not None:
-        write_json(baseline_path, {**baseline, "images": images})
-    write_json(state / PROFILE, record)
+        stage(
+            "runtime_check",
+            lambda: run(
+                nk
+                + [
+                    "exec",
+                    "deployment/ops-service",
+                    "-c",
+                    "ops-service",
+                    "--",
+                    "python",
+                    "manage.py",
+                    "check_evaluation_runtime",
+                ],
+                capture=True,
+            ),
+        )
+        if json.loads(baseline_path.read_text(encoding="utf-8")) != baseline:
+            raise ValueError(
+                "Ops baseline changed; runtime is applied but success was not recorded"
+            )
+        if ops_image is not None:
+            stage(
+                "baseline_record",
+                lambda: write_json(baseline_path, {**baseline, "images": images}),
+            )
+        stage("activation_record", lambda: write_json(state / PROFILE, record))
+        attempt["status"] = "ACTIVATED"
+        write_json(journal, attempt)
+    except BaseException as error:
+        attempt["status"] = "FAILED"
+        # Never store exception text: subprocess failures may include sensitive input.
+        attempt["errorType"] = type(error).__name__
+        try:
+            write_json(journal, attempt)
+        except OSError:
+            raise ValueError(
+                "Ops activation failed and journal persistence is unconfirmed; inspect DB and workloads"
+            ) from None
+        raise
+    print(
+        "Ops activation journal: "
+        + str(journal)
+        + "; activation does not verify a new evaluation or administrator authentication."
+    )
     print(
         "Ops API + sync activated; credentials preserved and runtime checked. Run a new free evaluation to verify execution."
     )
