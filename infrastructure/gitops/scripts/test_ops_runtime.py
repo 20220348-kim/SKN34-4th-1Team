@@ -182,10 +182,11 @@ class UpgradePreflightTests(unittest.TestCase):
             json.dumps(runtime.connection(SETTINGS, "fixture"))
         )
         self.result = {
-            "schemaVersion": 1,
+            "schemaVersion": 2,
             "scope": "ops_upgrade_preflight",
             "status": "PASS",
             "admission_blocked": False,
+            "admission_supported": False,
             "backup_verified": False,
             "evaluation_executed": False,
             "checks": {
@@ -194,6 +195,7 @@ class UpgradePreflightTests(unittest.TestCase):
                 "unfinished_flows": 0,
                 "active_schedules": 0,
                 "inspected_flows": 7,
+                "open_admission": 0,
             },
         }
 
@@ -230,6 +232,13 @@ class UpgradePreflightTests(unittest.TestCase):
         for status in ("BLOCKED", "UNKNOWN"):
             self.result["status"] = status
             self.assertEqual(self.check()["status"], status)
+
+    def test_supported_admission_must_be_paused_for_success(self):
+        self.result["admission_supported"] = True
+        with self.assertRaisesRegex(ValueError, "Pause"):
+            self.check()
+        self.result["admission_blocked"] = True
+        self.assertEqual(self.check()["status"], "PASS")
 
 
 class ActivationTests(unittest.TestCase):

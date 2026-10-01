@@ -17,6 +17,7 @@ MAX_PAGES = 20
 
 
 def database_snapshot():
+    from apps.evaluations import models
     from apps.evaluations.models import EvaluationBudgetReservation, EvaluationRun
     from django.db.models import Count
 
@@ -26,8 +27,17 @@ def database_snapshot():
         .annotate(total=Count("id"))
         .values_list("status", "total")
     )
+    admission_model = getattr(models, "EvaluationAdmission", None)
+    admission = None
+    if admission_model is not None:
+        admission = (
+            admission_model.objects.filter(pk=1).values("accepting", "version").first()
+        )
+        if admission is None:
+            admission = {"accepting": True, "version": 0}
     return {
         "states": states,
+        "admission": admission,
         "open_reservations": EvaluationBudgetReservation.objects.filter(
             closed_at__isnull=True
         ).count(),
@@ -106,18 +116,31 @@ def prefect_snapshot(request, name):
 
 def inspect_upgrade(request, deployment_name):
     report = {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "scope": "ops_upgrade_preflight",
         "status": "UNKNOWN",
         "started_at": datetime.now(timezone.utc).isoformat(),
         "checks": {},
         "admission_blocked": False,
+        "admission_supported": False,
         "backup_verified": False,
         "evaluation_executed": False,
     }
     try:
         before = database_snapshot()
+        admission = before.get("admission")
+        if admission is not None:
+            if (
+                type(admission["accepting"]) is not bool
+                or type(admission["version"]) is not int
+                or admission["version"] < 0
+            ):
+                raise ValueError("Invalid admission evidence")
+            report["admission_supported"] = True
+            report["admission_blocked"] = not admission["accepting"]
+            report["admission_version"] = admission["version"]
         report["checks"].update(
+            open_admission=int(admission is not None and admission["accepting"]),
             unsettled_evaluations=sum(
                 count
                 for state, count in before["states"].items()

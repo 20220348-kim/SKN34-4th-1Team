@@ -264,9 +264,16 @@ async function request<T>(path: string, schema: z.ZodType<T>, options: RequestIn
     if (options.signal?.aborted) throw error
     throw new OpsApiError('운영 서버에 연결할 수 없습니다. 잠시 후 다시 시도해 주세요.', 0)
   }
+  const body = await response.json().catch(() => null)
+  const admissionMessage = response.status === 503 && body?.code === 'EVALUATION_ADMISSION_PAUSED'
+    ? '점검을 위해 새 평가 접수가 중지되어 있습니다. 접수 재개 후 다시 시도해 주세요.'
+    : response.status === 503 && body?.code === 'EVALUATION_ADMISSION_UNAVAILABLE'
+    ? '평가 접수 상태를 확인할 수 없어 접수하지 않았습니다. 운영자에게 확인해 주세요.'
+    : null
+  if (admissionMessage) throw new OpsApiError(admissionMessage, response.status)
   // 접수가 불확실한 503에는 저장된 요청이 담긴다. 요청 ID를 보존해 재확인한다.
   if (!response.ok && !(dispatch && response.status === 503)) {
-    const error = await response.json().catch(() => null)
+    const error = body
     const message = response.status === 400 && error?.code === 'LIVE_BUDGET_UNAVAILABLE'
       ? '누적 평가 한도가 부족하거나 설정되지 않아 접수하지 않았습니다. 운영자에게 예약·미확인 사용량과 한도를 확인해 주세요.'
       : error?.code === 'CANCEL_FORBIDDEN' ? '평가를 요청한 계정만 취소할 수 있습니다.'
@@ -280,7 +287,7 @@ async function request<T>(path: string, schema: z.ZodType<T>, options: RequestIn
       : '요청을 처리하지 못했습니다. 다시 시도해 주세요.'
     throw new OpsApiError(message, response.status)
   }
-  const parsed = schema.safeParse(await response.json().catch(() => null))
+  const parsed = schema.safeParse(body)
   if (!parsed.success) throw new OpsApiError('운영 서버 응답을 확인할 수 없습니다.', response.status)
   return parsed.data
 }

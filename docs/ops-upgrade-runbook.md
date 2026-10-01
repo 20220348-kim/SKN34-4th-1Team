@@ -16,8 +16,27 @@
 - Ops의 진행 중/취소 처리 중 평가와 Prefect의 미완료 flow·예약·활성 스케줄을 함께 확인한다.
   남은 작업은 기다리거나 기존 취소 절차로 종료 증거를 확인한다. SQL로 강제 완료하거나 예산 정리
   CLI를 일괄 실행하지 않는다. 무료 평가도 완료를 확인한다.
-- 갱신 중 신규 접수를 막는 운영 통제를 정한다. 현재 전용 maintenance API는 없다.
-  다른 접수자나 자동 접수가 남아 있으면 갱신을 시작하지 않는다.
+- `0020` 이후 Ops에서는 아래 운영자 CLI로 신규 평가·후처리 복구 접수를 중지한다.
+  이미 접수한 요청의 동일 UUID 재시도·동기화·취소·정산은 계속 허용해 기존 작업을 종료한다.
+  Prefect 직접 접수·다른 flow·자동 스케줄은 별도 통제로 중지한다.
+
+```bash
+ops_manage() {
+  kubectl --kubeconfig "$OPS_STATE_DIR/kubeconfig" --namespace govbiz-msa \
+    exec deployment/ops-service -c ops-service -- python manage.py "$@"
+}
+ops_manage evaluation_admission status
+# 아래 변수에는 방금 확인한 version, 변경자, 이번 중지 요청의 UUID를 지정한다.
+# 응답 유실 시 같은 UUID와 같은 인자로 재시도한다.
+ops_manage evaluation_admission pause \
+  --expected-version "$OPS_ADMISSION_VERSION" --request-id "$OPS_PAUSE_REQUEST_ID" \
+  --actor "$OPS_OPERATOR" --reason "배포 전 신규 평가 접수 중지"
+```
+
+`accepting=false`는 Ops의 새 요청 생성만 중지한다. `version`을 새로 읽고 변경자·사유·UUID를
+명시해야 재개할 수 있다. 과거 resume 명령을 재전송해도 나중의 pause를 해제하지 않는다.
+변경 기록의 actor는 운영자가 입력한 값이며 Core 인증 주체를 증명하지 않는다.
+이 CLI는 DB 접근 권한이 있는 운영자용이며 공개 관리 API를 추가하지 않는다.
 
 ```bash
 # 변수는 개인 PC의 실제 state 경로와 기존 완료 평가 UUID로 지정한다.
@@ -40,8 +59,13 @@ python3 -B infrastructure/gitops/scripts/ops_runtime.py --preflight \
 - `PASS`: 검사한 범위에서 남은 작업 없음. `BLOCKED`: 남은 작업을 기존 처리 절차로 종료 후 재검사.
 - `UNKNOWN`: DB/Prefect 조회 실패, 불완전 응답, 점검 중 변경 등으로 확인 불가. 장애를 해결한 뒤 재검사.
   기존 이력을 보존하며 한 flow의 이력이 2,000개 이상이면 전체 검사 범위를 확장·검증하기 전까지 중단한다.
-- 점검은 분산 잠금이나 접수 중지 기능이 아니다. `admission_blocked=false`, `backup_verified=false`이며
-  다른 flow·다른 접수 경로·자동화는 운영자가 별도로 중지해야 한다. `PASS`를 재사용 가능한 승인서로 쓰지 않는다.
+- 새 Ops에서는 접수가 중지돼야 `PASS`가 되며 `admission_supported=true`, `admission_blocked=true`와
+  확인한 버전을 기록한다. 점검 중 접수 상태 버전이 바뀌면 중단한다.
+- `0020` 이전 이미지에는 접수 제어가 없어 `admission_supported=false`, `admission_blocked=false`다.
+  이 버전에서 처음 갱신할 때는 기존 외부 접수 통제를 유지하고 갱신 후 CLI를 사용한다.
+  새 이미지에서 테이블 조회에 실패한 경우는 구버전으로 대체하지 않고 `UNKNOWN`으로 중단한다.
+- Prefect 직접 접수 등 다른 경로와 백업은 별도다. `backup_verified=false`이며
+  `PASS`를 재사용 가능한 승인서로 쓰지 않는다. 갱신 실패 시 도구가 접수를 자동 재개하지 않는다.
 
 기존 연결을 갱신할 때 활성화 도구가 이 검사를 다시 실행하며, `PASS`가 아니면 Secret·migration·workload
 변경 전에 중단한다. 연결 기록이 없어도 현재 Ops에 Prefect URL이 설정돼 있으면 검사한다.
@@ -55,7 +79,7 @@ DB와 파일을 서로 다른 시점에 복사한 뒤 일관된 백업이라고 
 
 | 대상 | 보존·대조할 내용 |
 |---|---|
-| Kubernetes Ops MySQL | 전체 schema·행·migration 이력, 평가/요청/flow 식별자, 검토·기준·예산 장부·감사 연결 |
+| Kubernetes Ops MySQL | 전체 schema·행·migration 이력, 평가/요청/flow 식별자, 검토·기준·예산 장부, 접수 상태·변경 감사 연결 |
 | Compose 결과 볼륨 | 원본 입력·캡처·보고서·해시·서명 증거·경로 권한; 쓰기 중 복사 금지 |
 | Prefect 저장소 | 정지 상태의 실제 저장 backend, deployment·run 이력·스케줄; 결과 볼륨과 별개 |
 | Langfuse 관련 저장소 | trace·점수를 복구 범위에 포함하면 PostgreSQL·ClickHouse·객체 저장소도 함께 포함 |
@@ -122,16 +146,23 @@ API·sync를 함께 교체한다. `0015` 등 과거 번호에서 임의로 멈�
 **DB 복원**은 보존 시점 이후 쓰기를 잃을 수 있는 별도 작업이다. 쓰기 중지·복원 범위·결과/Prefect의
 동일 시점·새 저장소 복원 검증·전환 승인을 따로 확보한다. 도구는 둘 다 자동 실행하지 않는다.
 
+`0020` 접수 제어를 모르는 이전 이미지로 rollback하면 DB에 남은 pause를 읽지 못한다.
+이때는 외부 접수 통제를 계속 유지해야 한다. 이전 앱이 실행된다는 이유로 접수 차단이나
+새 schema 호환성을 확인했다고 판단하지 않는다.
+
 ## 5. 업무 검증 후 접수 재개
 
 1. `ops_runtime.py --check --run-id "$OPS_EXISTING_RUN_ID"`에 기존 `--state-dir`를 지정해
    API·sync·runner·artifact 소스 일치, 실제 schema, 기존 결과를 확인한다.
    다른 결과 해시·평가·검토·장부도 백업 기준과 대조한다.
-2. 기존 Core 관리자로 로그인해 새 저장 응답 재평가를 하나 접수한다. 목록만 관찰해 sync의
+2. 외부 접수 통제를 유지한 채 `evaluation_admission status`로 현재 버전을 확인한다.
+   새 재개 UUID와 현재 버전·변경자·사유로 `evaluation_admission resume`을 실행해 검증 담당자만
+   새 무료 평가를 접수한다. 기존 Core 관리자로 로그인해 새 저장 응답 재평가를 하나 접수하고, 목록만 관찰해 sync의
    완료 반영을 확인하고 보고서·비교·모델 호출 0회와 request/flow ID를 기록한다.
 3. 일반 사용자 거절·관리자 세션·CSRF·로그아웃을 확인한다. 개발 로그인이나 새 관리자 생성으로
    기존 인증 검증을 대신하지 않는다. 재시작 후 같은 보고서·이력·장부가 유지돼야 한다.
-4. 모든 증거를 기록한 뒤 접수를 재개한다. 실패·미실행 단계가 있으면 갱신 완료로 보고하지 않는다.
+4. 모든 증거를 기록한 뒤 외부 접수 통제를 해제한다. 검증 실패 시 새 UUID와 현재 버전으로
+   다시 pause하고 실패 원인을 조사한다. 실패·미실행 단계가 있으면 갱신 완료로 보고하지 않는다.
 
 전체 무료 통합 회귀는 별도 `smoke_ops_bridge.py --evaluate` 명령으로 수행할 수 있다.
 [전체 명령과 전제](../infrastructure/gitops/docs/ops-runtime.md)를 따르며, 새 임시 환경의 성공을

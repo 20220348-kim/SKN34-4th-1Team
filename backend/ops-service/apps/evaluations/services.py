@@ -10,6 +10,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
 from . import prefect_client
+from .admission import lock_admission, require_open
 from .artifact_store import ResultsUnavailable, read_artifact, read_evidence
 from .baselines import lock_baseline
 from .budget import BudgetUnavailable, close_after_cancellation, reserve
@@ -82,12 +83,14 @@ def submit_run(
                 raise ResultsUnavailable
 
     with transaction.atomic():
+        admission = lock_admission()
         baseline = lock_baseline(dataset_id)
         existing = EvaluationRun.objects.filter(pk=request_id).first()
         if existing:
             check_request(existing)
             run, created = existing, False
         else:
+            require_open(admission)
             validate_execution(
                 dataset_id, candidate_capture_id, reference_capture_id, execution_mode, config
             )

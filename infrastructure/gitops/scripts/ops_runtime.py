@@ -100,10 +100,11 @@ def upgrade_preflight(state, settings):
     )
     if (
         not isinstance(result, dict)
-        or result.get("schemaVersion") != 1
+        or result.get("schemaVersion") != 2
         or result.get("scope") != "ops_upgrade_preflight"
         or result.get("status") not in {"PASS", "BLOCKED", "UNKNOWN"}
-        or result.get("admission_blocked") is not False
+        or type(result.get("admission_blocked")) is not bool
+        or type(result.get("admission_supported")) is not bool
         or result.get("backup_verified") is not False
         or result.get("evaluation_executed") is not False
     ):
@@ -116,6 +117,7 @@ def upgrade_preflight(state, settings):
             "unfinished_flows",
             "active_schedules",
             "inspected_flows",
+            "open_admission",
         }
         if (
             not isinstance(checks, dict)
@@ -128,6 +130,8 @@ def upgrade_preflight(state, settings):
             )
         ):
             raise ValueError("Incomplete Ops upgrade preflight checks")
+        if result["admission_supported"] and not result["admission_blocked"]:
+            raise ValueError("Pause new Ops requests before upgrading")
     return result
 
 

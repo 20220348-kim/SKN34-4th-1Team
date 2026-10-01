@@ -4,6 +4,29 @@ from django.conf import settings
 from django.db import models
 
 
+class EvaluationAdmission(models.Model):
+    """새 Ops 평가 접수의 공통 잠금. 기존 실행의 종료·정산은 계속 허용한다."""
+
+    id = models.PositiveSmallIntegerField(primary_key=True, default=1, editable=False)
+    accepting = models.BooleanField(default=True)
+    version = models.PositiveBigIntegerField(default=0)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [models.CheckConstraint(condition=models.Q(id=1), name="single_admission")]
+
+
+class EvaluationAdmissionChange(models.Model):
+    request_id = models.UUIDField(primary_key=True)
+    admission = models.ForeignKey(EvaluationAdmission, on_delete=models.PROTECT)
+    version = models.PositiveBigIntegerField(unique=True)
+    previous_accepting = models.BooleanField()
+    accepting = models.BooleanField()
+    actor = models.CharField(max_length=150)
+    reason = models.CharField(max_length=500)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
 class EvaluationRun(models.Model):
     class Status(models.TextChoices):
         REQUESTED = "REQUESTED", "접수 중"

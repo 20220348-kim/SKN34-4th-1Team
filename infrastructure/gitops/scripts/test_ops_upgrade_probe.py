@@ -87,6 +87,30 @@ class PreflightTests(unittest.TestCase):
         self.database["open_reservations"] = 1
         self.assertEqual(self.inspect()["status"], "BLOCKED")
 
+    def test_supported_admission_must_be_paused_and_version_is_recorded(self):
+        self.database["admission"] = {"accepting": True, "version": 0}
+        self.assertEqual(self.inspect()["status"], "BLOCKED")
+        self.database["admission"] = {"accepting": False, "version": 7}
+        report = self.inspect()
+        self.assertEqual(report["status"], "PASS")
+        self.assertTrue(report["admission_supported"])
+        self.assertTrue(report["admission_blocked"])
+        self.assertEqual(report["admission_version"], 7)
+
+    def test_admission_change_or_incomplete_state_is_unknown(self):
+        for admission in (
+            {},
+            {"accepting": "false", "version": 0},
+            {"accepting": False, "version": -1},
+        ):
+            self.database["admission"] = admission
+            self.assertEqual(self.inspect()["status"], "UNKNOWN")
+        self.read_database.side_effect = [
+            {**self.database, "admission": {"accepting": False, "version": 1}},
+            {**self.database, "admission": {"accepting": False, "version": 3}},
+        ]
+        self.assertEqual(self.inspect()["status"], "UNKNOWN")
+
     def test_every_nonterminal_prefect_state_blocks(self):
         for state in probe.PREFECT_ACTIVE:
             self.rows = [self.row(state)]
