@@ -11,7 +11,10 @@
 [rag_evaluate.py](rag_evaluate.py)는 **고정 원문·청크 → 저장 검색 결과 → 저장 답변**을 대조하는
 무료 CLI입니다. production의 AI 요청·응답 모델을 재사용하고 검색 재현율과 답변 인용 재현율을
 독립적으로 계산합니다. 서버 실행·원문 수집·색인·임베딩·답변 생성·Langfuse 조회는 수행하지 않습니다.
-현재 Ops의 `fixed-answer-context-only` 접수·명세·품질 정책은 유지하며 이 자료를 등록하지 않습니다.
+Ops의 `fixed-answer-context-only` 접수·명세·품질 정책은 유지합니다. 아래 합성 3사례를
+`rag-synthetic-multichunk-v1`로 등록해 무료 재평가·보고서·점수 등록·결과 조회까지 연결했습니다.
+[Ops RAG 재평가 계약](../../backend/ops-service/README.md#전체-rag-저장-캡처-재평가)을 따르며
+RAG live·사람 검토·품질 합격·비교 기준 지정은 제공하지 않습니다.
 
 ```bash
 # 저장소 루트: 자료 검증만 수행. 모든 품질 지표는 null

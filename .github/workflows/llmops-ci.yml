@@ -102,6 +102,15 @@ jobs:
           export CORE_ADMIN_PASSWORD="$OPS_ADMIN_PASSWORD"
           python infrastructure/llmops/ops_smoke.py --seed-dev-accounts --base-url http://localhost:5173 --storage-transport http --output work/llmops-ci/ops-verification.json
           python infrastructure/llmops/ops_smoke.py --compare-captures --base-url http://localhost:5173 --storage-transport http --output work/llmops-ci/ops-comparison-verification.json
+          python infrastructure/llmops/ops_smoke.py --rag-replay --base-url http://localhost:5173 --storage-transport http --output work/llmops-ci/ops-rag-replay.json
+      - name: Preserve RAG replay evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: llmops-rag-replay-${{ github.sha }}
+          path: work/llmops-ci/ops-rag-replay.json
+          if-no-files-found: warn
+          retention-days: 7
       - name: Verify failed publication recovery through Ops and Prefect without model calls
         shell: bash
         run: |

@@ -970,3 +970,72 @@ it('명세가 없던 탭 보관 기록을 현재 명세로 소급 채우지 않�
   sessionStorage.setItem('govbiz.ops.pending.v1.core%3A99', JSON.stringify(legacy))
   expect(readPendingEvaluation('core:99')?.execution_profile).toBeNull()
 })
+
+const ragDataset = {
+  id: 'rag-synthetic-multichunk-v1', label: '전체 RAG · 합성 다중 청크 캡처 재계산',
+  evaluation_scope: 'source-chunks-retrieval-answer', fixture: 'rag-fixture.json',
+  live_config: null, execution_profiles: { replay: 'f'.repeat(64), live: null }, baseline: null,
+  case_ids: ['R01', 'R02', 'R03'], captures: [{ id: 'rag-synthetic-capture-v1', label: '합성 RAG 캡처' }],
+}
+const ragReport = {
+  scope: 'source-chunks-retrieval-answer', measurementKind: 'synthetic-contract-check',
+  baselineEligible: false, liveExecutionPerformed: false, completed: false, caseCount: 3,
+  fixtureSha256: 'a'.repeat(64), captureSha256: 'b'.repeat(64),
+  execution: { model: null, embeddingModel: null, promptSha256: null },
+  coverage: { retrievalCaseCount: 2, answerCaseCount: 2, failedCaseCount: 1, traceCaseCount: 0 },
+  metrics: {
+    retrievalRecallAtK: { value: 0, measuredCaseCount: 1, eligibleCaseCount: 2 },
+    answerCitationRecall: { value: 0, measuredCaseCount: 1, eligibleCaseCount: 2 },
+    answerStatusAccuracy: { value: 1, measuredCaseCount: 2, eligibleCaseCount: 3 },
+  },
+  cases: [
+    { caseId: 'R01', traceId: null, retrievalRecallAtK: null, answerCitationRecall: null, answerStatusMatches: null, failure: { stage: 'search', code: 'timeout' }, retrievedChunkIds: null, citedChunkIds: null },
+    { caseId: 'R02', traceId: null, retrievalRecallAtK: 0, answerCitationRecall: 0, answerStatusMatches: true, failure: null, retrievedChunkIds: ['chunk-2'], citedChunkIds: [] },
+    { caseId: 'R03', traceId: null, retrievalRecallAtK: null, answerCitationRecall: null, answerStatusMatches: true, failure: null, retrievedChunkIds: ['chunk-3'], citedChunkIds: [] },
+  ],
+}
+const ragRun = {
+  ...completed, dataset_id: ragDataset.id, dataset_label: ragDataset.label,
+  evaluation_scope: ragDataset.evaluation_scope,
+  candidate_capture_id: ragDataset.captures[0].id, reference_capture_id: ragDataset.captures[0].id,
+  comparison: { schema_version: 3, scope: ragDataset.evaluation_scope, retrieval_evaluated: true,
+    baseline_eligible: false, comparison: 'self-replay', case_ids: ragDataset.case_ids,
+    current: ragReport, reference: ragReport },
+  summary: { caseCount: 3, semanticFaithfulness: null },
+}
+
+describe('전체 RAG 저장 캡처 재평가', () => {
+  it('자료 변경 시 무료 재평가로 전환하고 live 명세 없이 접수한다', async () => {
+    const original = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (path, options) => {
+      if (path === '/api/v1/ops/session') return json({ ...session(), datasets: [dataset, ragDataset] })
+      if (path === '/api/v1/ops/evaluations' && options?.method === 'POST') return json(ragRun, 202)
+      if (path === `/api/v1/ops/evaluations/${id}`) return json(ragRun)
+      return original(path, options)
+    })
+    open('/ops/evaluations')
+    fireEvent.change(await screen.findByLabelText('실행 방식'), { target: { value: 'live' } })
+    fireEvent.change(screen.getByLabelText('평가 자료'), { target: { value: ragDataset.id } })
+    expect(screen.getByLabelText('실행 방식')).toHaveProperty('value', 'replay')
+    expect(screen.getByRole('option', { name: '새 응답 생성 · 유료 모델 호출' })).toHaveProperty('disabled', true)
+    fireEvent.click(screen.getByRole('button', { name: '평가 실행' }))
+    await screen.findByRole('heading', { name: '전체 RAG 저장 결과 비교' })
+    const post = fetchMock.mock.calls.find(([path, options]) => path === '/api/v1/ops/evaluations' && options?.method === 'POST')!
+    const body = JSON.parse(post[1]!.body as string)
+    expect(body).toMatchObject({ dataset_id: ragDataset.id, execution_mode: 'replay', live_config: {}, confirm_paid_run: false, execution_profile: ragDataset.execution_profiles.replay })
+  })
+
+  it('원본 실패·분모·합성 출처를 표시하고 품질 승인 화면을 열지 않는다', async () => {
+    const original = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (path, options) => path === `/api/v1/ops/evaluations/${id}` ? json(ragRun) : original(path, options))
+    open(`/ops/evaluations/${id}`)
+    await screen.findByRole('heading', { name: '전체 RAG 저장 결과 비교' })
+    expect(screen.getAllByText('합성 결과 재계산 · 실제 모델 품질 측정 아님').length).toBeGreaterThan(0)
+    expect(screen.getByText(/원본 실패 1건/)).toBeTruthy()
+    expect(screen.getByText('검색 실패 · timeout')).toBeTruthy()
+    expect(screen.getAllByText('0.00 (1 / 2)').length).toBeGreaterThan(0)
+    expect(screen.getByText(/이 결과는 품질 기준으로 지정할 수 없습니다/)).toBeTruthy()
+    expect(fetchMock.mock.calls.some(([path]) => path.endsWith('/review'))).toBe(false)
+    expect(screen.queryByRole('button', { name: /기준으로 지정/ })).toBeNull()
+  })
+})

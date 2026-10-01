@@ -15,8 +15,8 @@ const sessionSchema = z.object({
     evaluation_scope: z.string().nullable().default(null),
     captures: z.array(z.object({ id: z.string(), label: z.string() })).min(1),
     baseline: z.object({ id: z.string(), label: z.string(), version: z.number().int().nonnegative() }).nullable(),
-    fixture: z.string(), live_config: liveConfigSchema,
-    execution_profiles: z.object({ replay: z.string().regex(/^[a-f0-9]{64}$/), live: z.string().regex(/^[a-f0-9]{64}$/) }),
+    fixture: z.string(), live_config: liveConfigSchema.nullable(),
+    execution_profiles: z.object({ replay: z.string().regex(/^[a-f0-9]{64}$/), live: z.string().regex(/^[a-f0-9]{64}$/).nullable() }),
   })),
 })
 const externalUrl = z.url().refine((value) => /^https?:\/\//.test(value)).nullable()
@@ -25,7 +25,7 @@ const executionSchema = z.object({
   capture_sha256: z.string(), started_at: z.string().nullable(), source_case_ids: z.array(z.string()),
 })
 const observationSchema = z.object({ outcome: z.enum(['success', 'error', 'missing']), status_match: z.number().nullable(), citation_recall: z.number().nullable() })
-const comparisonSchema = z.object({
+const fixedComparisonSchema = z.object({
   scope: z.string().nullable().default(null),
   retrieval_evaluated: z.boolean().nullable().default(null),
   schema_version: z.literal(2), comparison: z.enum(['self-replay', 'candidate-reference']), case_ids: z.array(z.string()),
@@ -36,6 +36,31 @@ const comparisonSchema = z.object({
   })),
   cases: z.array(z.object({ case_id: z.string(), reference: observationSchema, candidate: observationSchema })),
 })
+const ragMetricSchema = z.object({ value: z.number().min(0).max(1).nullable(), measuredCaseCount: z.number().int().nonnegative(), eligibleCaseCount: z.number().int().nonnegative() })
+const ragReportSchema = z.object({
+  scope: z.literal('source-chunks-retrieval-answer'),
+  measurementKind: z.enum(['synthetic-contract-check', 'integration-stub-replay', 'recorded-capture-replay']),
+  baselineEligible: z.literal(false), liveExecutionPerformed: z.literal(false),
+  completed: z.boolean(), caseCount: z.number().int().positive(),
+  fixtureSha256: z.string(), captureSha256: z.string(),
+  execution: z.object({ model: z.string().nullable(), embeddingModel: z.string().nullable(), promptSha256: z.string().nullable() }),
+  coverage: z.object({ retrievalCaseCount: z.number().int().nonnegative(), answerCaseCount: z.number().int().nonnegative(), failedCaseCount: z.number().int().nonnegative(), traceCaseCount: z.number().int().nonnegative() }),
+  metrics: z.object({ retrievalRecallAtK: ragMetricSchema, answerCitationRecall: ragMetricSchema, answerStatusAccuracy: ragMetricSchema }),
+  cases: z.array(z.object({
+    caseId: z.string(), traceId: z.string().nullable(),
+    retrievalRecallAtK: z.number().nullable(), answerCitationRecall: z.number().nullable(), answerStatusMatches: z.boolean().nullable(),
+    failure: z.object({ stage: z.enum(['not_started', 'source', 'chunk', 'index', 'search', 'answer']), code: z.string() }).nullable(),
+    retrievedChunkIds: z.array(z.string()).nullable(), citedChunkIds: z.array(z.string()).nullable(),
+  })),
+})
+const ragComparisonSchema = z.object({
+  schema_version: z.literal(3), scope: z.literal('source-chunks-retrieval-answer'),
+  retrieval_evaluated: z.literal(true), baseline_eligible: z.literal(false),
+  comparison: z.enum(['self-replay', 'candidate-reference']), case_ids: z.array(z.string()),
+  current: ragReportSchema, reference: ragReportSchema,
+})
+export type RagComparison = z.infer<typeof ragComparisonSchema>
+const comparisonSchema = z.discriminatedUnion('schema_version', [fixedComparisonSchema, ragComparisonSchema])
 const runSchema = z.object({
   evaluation_scope: z.string().nullable().default(null),
   can_cancel: z.boolean().default(false),

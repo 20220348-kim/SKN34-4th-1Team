@@ -4,7 +4,7 @@ import json
 from hashlib import sha256
 from uuid import UUID
 
-from .catalog import selection, validate_reference_config
+from .catalog import RAG_SCOPE, evaluation_scope, selection, validate_reference_config
 from .execution_spec import digest, read_release
 
 
@@ -28,7 +28,8 @@ def read_recovery_inputs(
         request_raw = result_bytes("request.json")
         marker = json.loads(request_raw)
         manifest = json.loads(result_bytes("evaluation/manifest.json"))
-        evaluator = read_release()["evaluation"]
+        rag = evaluation_scope(marker["dataset_id"]) == RAG_SCOPE
+        evaluator = read_release()["rag_evaluation" if rag else "evaluation"]
         spec = marker.get("execution_spec")
         if manifest.get("evaluator_version") != evaluator["version"] or (
             spec
@@ -52,6 +53,16 @@ def read_recovery_inputs(
         mode = marker.get("execution_mode", "replay")
         if mode not in {"replay", "live", "recovery"}:
             raise ValueError("Invalid source mode")
+        if rag and (
+            not spec
+            or spec["evaluation_scope"] != RAG_SCOPE
+            or mode == "live"
+            or marker.get("live_config")
+            or marker.get("reference_config")
+            or manifest.get("scope") != RAG_SCOPE
+            or manifest.get("stage") not in {"report", "publish", "completed"}
+        ):
+            raise ValueError("RAG recovery requires validated replay inputs")
         reference_config = marker.get("reference_config", {})
         validate_reference_config(dataset["id"], marker["reference_capture_id"], reference_config)
         inputs = {
@@ -80,6 +91,16 @@ def read_recovery_inputs(
                 continue
             capture = json.loads(raw)
             case_ids = [case["caseId"] for case in capture["cases"]]
+            if rag:
+                if (
+                    capture.get("scope") != RAG_SCOPE
+                    or capture.get("schemaVersion")
+                    not in {"support-program-rag-capture-v1", "support-program-rag-capture-v2"}
+                    or capture["fixtureSha256"] != dataset["fixture_sha256"]
+                    or case_ids != dataset["case_ids"]
+                ):
+                    raise ValueError("RAG replay recovery source differs")
+                continue
             if (
                 capture["completed"] is not True
                 or capture["fixtureSha256"] != dataset["fixture_sha256"]

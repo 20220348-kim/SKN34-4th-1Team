@@ -10,6 +10,12 @@
 !evaluation/support-program-evidence/evaluate.py
 !evaluation/support-program-evidence/llmops.py
 !evaluation/support-program-evidence/ops_flow.py
+!evaluation/support-program-evidence/budget_client.py
+!evaluation/support-program-evidence/rag_evaluate.py
+!evaluation/support-program-evidence/rag_replay_flow.py
+!evaluation/support-program-evidence/rag-fixture.json
+!evaluation/support-program-evidence/rag-synthetic-capture.json
+!backend/ops-service/apps/evaluations/rag_replay.py
 !evaluation/support-program-evidence/target-coverage-fixture.json
 !evaluation/support-program-evidence/runs/
 !evaluation/support-program-evidence/runs/target-coverage-20260907-v1/

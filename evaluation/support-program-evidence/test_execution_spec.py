@@ -18,7 +18,7 @@ from catalog import live_config
 def runner(monkeypatch, tmp_path):
     release = read_release()
     root = tmp_path / "image"
-    names = {name for group in ("generation", "evaluation", "pipeline")
+    names = {name for group in ("generation", "evaluation", "pipeline", "rag_evaluation")
              for name in release[group]["files"]}
     names.add(OPS + "capture_catalog.json")
     catalog = json.loads((ops_flow.ROOT / OPS / "capture_catalog.json").read_text())

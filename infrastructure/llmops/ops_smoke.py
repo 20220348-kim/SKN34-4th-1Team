@@ -47,6 +47,7 @@ def main():
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--compare-captures", action="store_true", help="기존 프롬프트 실행의 공통 E01 비교")
     mode.add_argument("--recover-source", type=UUID, help="무료 fixture가 만든 실패 실행을 복구")
+    mode.add_argument("--rag-replay", action="store_true", help="합성 RAG 캡처 재계산과 출처·분모 확인")
     parser.add_argument("--storage-transport", choices=["filesystem", "http"], default="filesystem")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
@@ -113,6 +114,12 @@ def main():
         payload.update(dataset_id="fixed-context-e01-v1",
                        candidate_capture_id="fixed-context-20260907-index-v1",
                        reference_capture_id="fixed-context-20260906-diagnostic-v1")
+    if args.rag_replay:
+        payload.update(dataset_id="rag-synthetic-multichunk-v1",
+                       candidate_capture_id="rag-synthetic-capture-v1",
+                       reference_capture_id="rag-synthetic-capture-v1")
+        assert datasets[payload["dataset_id"]]["live_config"] is None
+        assert datasets[payload["dataset_id"]]["execution_profiles"]["live"] is None
     if not args.recover_source:
         payload["execution_profile"] = datasets[payload["dataset_id"]]["execution_profiles"]["replay"]
     assert request(submit_path, payload, csrf=False)[0] == 403
@@ -143,7 +150,7 @@ def main():
         assert run["model_api_calls"] == 0
         assert run["prefect_flow_run_id"] != source["prefect_flow_run_id"]
         assert wait_for_list_state(request, source_id, "FAILED")["prefect_flow_run_id"] == source["prefect_flow_run_id"]
-    expected_count = 1 if args.compare_captures else 6
+    expected_count = 3 if args.rag_replay else 1 if args.compare_captures else 6
     assert run["summary"]["caseCount"] == expected_count
     comparison = run["comparison"]
     assert comparison["comparison"] == ("candidate-reference" if args.compare_captures else "self-replay")
@@ -155,8 +162,15 @@ def main():
         tokens = next(item for item in comparison["metrics"] if item["key"] == "meanOutputTokens")
         assert tokens["candidate"] is None and tokens["delta"] is None
         assert request("/api/v1/ops/evaluations", {**payload, "reference_capture_id": payload["candidate_capture_id"]})[0] == 409
-    assert run["summary"]["statusAccuracy"] == 1
-    assert run["summary"]["referenceCitationRecall"] == 1
+    if args.rag_replay:
+        assert comparison["schema_version"] == 3 and comparison["baseline_eligible"] is False
+        assert run["summary"]["measurementKind"] == "synthetic-contract-check"
+        assert run["summary"]["metrics"]["retrievalRecallAtK"] == {"value": 0.5, "measuredCaseCount": 2, "eligibleCaseCount": 2}
+        assert run["summary"]["metrics"]["answerCitationRecall"]["value"] == 0.25
+        assert run["trace_links"] == [] and run["model_api_calls"] == 0
+    else:
+        assert run["summary"]["statusAccuracy"] == 1
+        assert run["summary"]["referenceCitationRecall"] == 1
     assert run["summary"]["semanticFaithfulness"] is None
     status, body, headers = request(run["report_url"])
     assert status == 200 and len(body) > 1000
@@ -172,7 +186,8 @@ def main():
         "evaluation_run_id": run["evaluation_run_id"], "status": run["status"],
         "execution_spec_sha256": run["execution_spec_sha256"],
         "case_count": expected_count, "comparison": comparison["comparison"],
-        "metrics": comparison["metrics"], "duplicate_request_same_flow": True, "csrf_enforced": True,
+        "metrics": run["summary"]["metrics"] if args.rag_replay else comparison["metrics"],
+        "duplicate_request_same_flow": True, "csrf_enforced": True,
         "core_admin_login": True, "core_logout_revokes_ops": True,
         "deployment_runtime_checks": runtime,
         "background_sync_without_detail": True, "source_run_id": run.get("source_run_id"),
