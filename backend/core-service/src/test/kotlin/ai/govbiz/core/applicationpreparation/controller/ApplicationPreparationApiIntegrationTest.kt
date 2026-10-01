@@ -88,6 +88,8 @@ import ai.govbiz.core.applicationpreparation.service.ApplicationDocumentEditor
     "app.bizinfo.sync.enabled=false",
     "app.support-program-index.enabled=false",
     "app.account.cookie-secure=false",
+    // 이 클래스의 테스트는 한 프로세스의 분당 전체 요청 한도(기본 60)를 함께 쓴다. 테스트 수와 실행 속도에 따라 뒤 테스트가 429를 받지 않게 넉넉히 둔다.
+    "app.support-program-request.global-per-minute=1000",
 ])
 @AutoConfigureMockMvc
 @Import(MySqlTestContainerConfig::class, ai.govbiz.core._common.test.RedisTestContainerConfig::class)
@@ -1128,6 +1130,21 @@ class ApplicationPreparationApiIntegrationTest {
             .andExpect(jsonPath("$[0].id").value(fileId)).andExpect(jsonPath("$[0].fileName").value("신청양식_초안_v2.hwpx"))
         mvc.perform(get("$BASE/$id/documents/jobs").cookie(owner)).andExpect(status().isOk())
             .andExpect(jsonPath("$[0].id").value(jobId)).andExpect(jsonPath("$[0].status").value("SUCCEEDED"))
+        // 계정의 최근 작업 목록은 준비 건을 고르지 않고 읽으며, 다른 계정의 작업은 섞이지 않는다.
+        mvc.perform(get("$BASE/documents/jobs").cookie(owner)).andExpect(status().isOk())
+            .andExpect(header().string(HttpHeaders.CACHE_CONTROL, "no-store"))
+            .andExpect(jsonPath("$.length()").value(1))
+            .andExpect(jsonPath("$[0].id").value(jobId)).andExpect(jsonPath("$[0].preparationId").value(id))
+            .andExpect(jsonPath("$[0].status").value("SUCCEEDED")).andExpect(jsonPath("$[0].stage").value("SAVING"))
+            .andExpect(jsonPath("$[0].seen").value(false))
+        mvc.perform(get("$BASE/documents/jobs").cookie(other)).andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(0))
+        mvc.perform(get("$BASE/documents/jobs")).andExpect(status().isUnauthorized())
+        // 끝난 결과는 초안 화면을 열 때 확인한 것으로 표시한다. 다른 계정은 남의 준비 건을 표시할 수 없다.
+        mvc.perform(post("$BASE/$id/documents/jobs/seen").cookie(other).header(HttpHeaders.ORIGIN, ORIGIN)).andExpect(status().isNotFound())
+        mvc.perform(get("$BASE/documents/jobs").cookie(owner)).andExpect(jsonPath("$[0].seen").value(false))
+        mvc.perform(post("$BASE/$id/documents/jobs/seen").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN)).andExpect(status().isNoContent())
+        mvc.perform(get("$BASE/documents/jobs").cookie(owner)).andExpect(jsonPath("$[0].id").value(jobId)).andExpect(jsonPath("$[0].seen").value(true))
+        mvc.perform(get("$BASE/$id/documents/jobs/$jobId").cookie(owner)).andExpect(jsonPath("$.seen").value(true))
         verify(documentMcp, times(1)).generate(any(AiDocumentGenerationRequest::class.java) ?: fallback)
         // 유료 호출 뒤 결과를 확인하지 못한 실행은 UNKNOWN으로 남고, 그 준비 건의 새 작업 접수를 막는다.
         save(2, "수정한 사업")
@@ -1492,6 +1509,81 @@ class ApplicationPreparationApiIntegrationTest {
         assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM application_document_file WHERE preparation_id = ?", Int::class.java, id))
         verify(documentMcp, org.mockito.Mockito.never()).generate(any(AiDocumentGenerationRequest::class.java) ?: AiDocumentGenerationRequest(
             sourceBase64 = "", sourceSha256 = "", format = "hwpx", answerRevision = 1, facts = emptyList(), scope = "test"))
+    }
+
+    @Test
+    fun savesTheOriginalWithoutAiWhenNothingIsAnsweredAndFillsOnlySavedAnswersWhenARequiredQuestionIsEmpty() {
+        val original = requireNotNull(javaClass.getResourceAsStream("/combinationreview/general.hwpx")).readBytes()
+        val targets = documentEditor.inspect(original, "HWPX").targets.filter { it.text.isBlank() }.take(2)
+        assertEquals(2, targets.size)
+        `when`(bizInfoAttachments.collect("BIZINFO", DISCOVERY_PROGRAM_ID)).thenReturn(SupportProgramAttachments("동적 지원사업", listOf(
+            SupportProgramAttachment("https://www.bizinfo.go.kr/file", "신청양식.hwpx", "HWPX", original),
+        ), emptyList()))
+        `when`(documentParser.parse(original, "HWPX")).thenReturn(listOf(SupportProgramDocumentBlock(DISCOVERY_LOCATOR, DISCOVERY_BLOCK_TEXT)))
+        val discovered = json.readValue(resource("discovery-contract-response.json"), AiApplicationFormDiscoveryPayload::class.java)
+        val requiredField = discovered.forms.single().sections.single().fields.single().copy(required = true)
+        val optionalField = requiredField.copy(fieldKey = "promotion-plan", label = "홍보 계획", guidance = "홍보 계획을 입력합니다.",
+            required = false, evidenceQuote = "지원 대상")
+        `when`(ai.discover(any(AiApplicationFormDiscoveryRequest::class.java) ?: fallbackDiscoveryRequest())).thenReturn(discovered.copy(forms = listOf(
+            discovered.forms.single().copy(sections = listOf(discovered.forms.single().sections.single().copy(fields = listOf(requiredField, optionalField))))
+        )))
+        val placements = listOf(ApplicationDocumentPlacement("business-plan:business-overview", targets[0].id),
+            ApplicationDocumentPlacement("business-plan:promotion-plan", targets[1].id))
+        val mappingFallback = AiDocumentMappingRequest(
+            sourceBase64 = "", sourceSha256 = "", format = "hwpx", scope = "test", fields = emptyList())
+        `when`(documentMcp.map(any(AiDocumentMappingRequest::class.java) ?: mappingFallback)).thenAnswer { invocation ->
+            val request = invocation.getArgument<AiDocumentMappingRequest>(0)
+            AiDocumentMappingPayload("application-document-mcp-v1", "b".repeat(64), request.sourceSha256,
+                "native-map-v2", "test-stub", placements, targets.map { it.id }, mapOf(
+                    "sourceSha256" to request.sourceSha256,
+                    "targets" to targets.map { mapOf("targetId" to it.id, "editable" to true, "currentText" to "") },
+                    "unmappedFieldIds" to emptyList<String>()))
+        }
+        val generationFallback = AiDocumentGenerationRequest(sourceBase64 = "", sourceSha256 = "", format = "hwpx", answerRevision = 1, facts = emptyList(), scope = "test")
+        `when`(documentMcp.generate(any(AiDocumentGenerationRequest::class.java) ?: generationFallback)).thenAnswer { invocation ->
+            val request = invocation.getArgument<AiDocumentGenerationRequest>(0)
+            // 비어 있는 필수 질문은 보내지 않고 저장된 답변만 기입한다.
+            assertEquals(listOf("business-plan:promotion-plan"), request.facts.map { it.id })
+            val placement = listOf(placements[1])
+            val bytes = documentEditor.fill(original, "HWPX", request.facts, placement)
+            val hash = java.security.MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+            AiDocumentGenerationPayload("application-document-mcp-v1", "b".repeat(64), request.sourceSha256, request.answerRevision,
+                java.util.Base64.getEncoder().encodeToString(bytes), hash, "c".repeat(64), "native-map-v2", "test-stub",
+                mapOf("verified" to 1, "unresolved" to 0), placement, emptyMap(), mapOf("answerRevision" to request.answerRevision))
+        }
+
+        val discoveryResponse = mvc.perform(post("$BASE/forms/discover").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN).contentType(MediaType.APPLICATION_JSON)
+            .content("""{"sourceCode":"BIZINFO","sourceProgramId":"$DISCOVERY_PROGRAM_ID"}""")).andExpect(status().isOk()).andReturn().response
+        val version = json.readTree(discoveryResponse.contentAsString).path("items").path(0).path("formVersionId").asString()
+        activateStored(version)
+        val created = mvc.perform(post(BASE).cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN).contentType(MediaType.APPLICATION_JSON)
+            .content("""{"sourceCode":"BIZINFO","sourceProgramId":"$DISCOVERY_PROGRAM_ID","formVersionId":"$version","serviceField":"GENERAL"}"""))
+            .andExpect(status().isCreated()).andReturn().response
+        val id = json.readTree(created.contentAsString).path("id").asLong()
+
+        // 저장된 답변이 없으면 AI를 부르지 않고 공식 원본을 0개 기입 초안으로 돌려준다.
+        val empty = mvc.perform(post("$BASE/$id/documents").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN).contentType(MediaType.APPLICATION_JSON)
+            .content("""{"expectedRevision":1}""")).andExpect(status().isOk())
+            .andExpect(jsonPath("$[0].inputRevision").value(1))
+            .andExpect(jsonPath("$[0].fileName").value("신청양식_초안_v1.hwpx"))
+            .andExpect(jsonPath("$[0].filledAnswerCount").value(0))
+            .andExpect(jsonPath("$[0].unfilledAnswerCount").value(0))
+            .andReturn().response
+        val emptyFileId = json.readTree(empty.contentAsString).path(0).path("id").asLong()
+        org.junit.jupiter.api.Assertions.assertArrayEquals(original, mvc.perform(get("$BASE/$id/documents/$emptyFileId/download").cookie(owner)).andExpect(status().isOk())
+            .andExpect(content().contentType("application/hwp+zip")).andReturn().response.contentAsByteArray)
+        verify(documentMcp, org.mockito.Mockito.never()).generate(any(AiDocumentGenerationRequest::class.java) ?: generationFallback)
+
+        // 필수 질문을 비워 둔 채 선택 질문만 저장해도 저장된 답변만 기입한 초안을 만든다.
+        mvc.perform(put("$BASE/$id/sections/business-plan/inputs").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN).contentType(MediaType.APPLICATION_JSON)
+            .content("""{"expectedRevision":1,"facts":[{"fieldKey":"promotion-plan","status":"PROVIDED","value":"가상기업 홍보 계획","sourceText":"가상기업 홍보 계획"}]}"""))
+            .andExpect(status().isOk())
+        mvc.perform(post("$BASE/$id/documents").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN).contentType(MediaType.APPLICATION_JSON)
+            .content("""{"expectedRevision":2}""")).andExpect(status().isOk())
+            .andExpect(jsonPath("$[0].inputRevision").value(2))
+            .andExpect(jsonPath("$[0].filledAnswerCount").value(1))
+            .andExpect(jsonPath("$[0].unfilledAnswerCount").value(0))
+        verify(documentMcp).generate(any(AiDocumentGenerationRequest::class.java) ?: generationFallback)
     }
 
     @Test

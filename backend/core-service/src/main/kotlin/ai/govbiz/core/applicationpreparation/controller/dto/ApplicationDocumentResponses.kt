@@ -32,6 +32,8 @@ data class ApplicationDocumentGenerationJobResponse(
     val mappingMigration: ApplicationDocumentMigrationNoticeResponse?,
     val createdAt: java.time.OffsetDateTime,
     val finishedAt: java.time.OffsetDateTime?,
+    /** 끝난 결과를 사용자가 확인했는지. 진행 중·결과 불명 작업에서는 뜻이 없다. */
+    val seen: Boolean,
 ) {
     companion object {
         fun from(job: ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentGenerationJob,
@@ -43,7 +45,7 @@ data class ApplicationDocumentGenerationJobResponse(
                     approvalToken = notice.approvalToken, expectedRevision = notice.expectedRevision, expiresInSeconds = notice.expiresInSeconds,
                     changes = notice.changes.map { ApplicationDocumentMappingChangeResponse(it.fieldLabel, it.changeType, it.oldLocation, it.newLocation) }) },
                 job.createdAt.atZone(java.time.ZoneId.of("Asia/Seoul")).toOffsetDateTime(),
-                job.finishedAt?.atZone(java.time.ZoneId.of("Asia/Seoul"))?.toOffsetDateTime(),
+                job.finishedAt?.atZone(java.time.ZoneId.of("Asia/Seoul"))?.toOffsetDateTime(), job.seenAt != null,
             )
     }
 }

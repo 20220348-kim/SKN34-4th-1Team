@@ -21,4 +21,6 @@ data class ApplicationDocumentGenerationJob(
     val failureMessage: String?,
     val createdAt: LocalDateTime,
     val finishedAt: LocalDateTime?,
+    /** 끝난 결과를 사용자가 확인한 시각. 끝났는데 null이면 아직 확인하지 않은 결과다. */
+    val seenAt: LocalDateTime? = null,
 )

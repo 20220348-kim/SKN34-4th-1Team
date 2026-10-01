@@ -41,6 +41,8 @@ class ApplicationDocumentGenerationJobRepository(
 
     fun findOwned(ownerId: Long, preparationId: Long, id: Long) = mapper.findOwned(ownerId, preparationId, id)?.toDomain()
     fun listOwned(ownerId: Long, preparationId: Long) = mapper.listOwned(ownerId, preparationId).map { it.toDomain() }
+    fun listRecentOwned(ownerId: Long) = mapper.listRecentOwned(ownerId).map { it.toDomain() }
+    fun markSeen(ownerId: Long, preparationId: Long) { mapper.markSeen(ownerId, preparationId, now()) }
     fun claimable(limit: Int): List<Long> = mapper.claimable(now(), limit)
     @Transactional
     fun claim(id: Long): ApplicationDocumentGenerationJob? =
@@ -68,6 +70,6 @@ class ApplicationDocumentGenerationJobRepository(
         id, ownerAccountId, preparationId, requestKey, expectedRevision,
         ApplicationDocumentGenerationJobStatus.valueOf(status), stage?.let(ApplicationDocumentGenerationStage::valueOf),
         resultJson?.let { json.readValue(it, LongArray::class.java).toList() }.orEmpty(),
-        failureCode, failureMessage, requireNotNull(createdAt), finishedAt,
+        failureCode, failureMessage, requireNotNull(createdAt), finishedAt, seenAt,
     )
 }

@@ -13,6 +13,10 @@ import { ApplicationPreparationUseCase } from '../../../../domain/usecases/Appli
 import { signedIn } from '../../../shared/auth/state/authSlice'
 import { ApplicationPreparationEditorPage, ApplicationPreparationListPage } from './ApplicationPreparationPages'
 import { formAnalysisPollMs, formAnalysisSettlePollMs, formAnalysisWindowMs } from '../viewmodel/useApplicationPreparationListViewModel'
+import { PreparationJobsSync } from '../../../shared/preparation-jobs/PreparationJobsSync'
+
+// 목록 화면은 작업 화면 틀이 읽어 둔 작업 목록을 씁니다. 여기서는 실제 읽기를 검증하므로 전역 mock을 해제합니다.
+vi.unmock('../../../shared/preparation-jobs/PreparationJobsSync')
 import { supportProgramDetailPath } from '../../../shared/routes/appPaths'
 import { ApplicationPreparationNewPage } from './ApplicationPreparationNewPage'
 import { ApplicationDocumentPage } from './ApplicationDocumentPage'
@@ -69,7 +73,7 @@ const detail = {
   updatedAt: '2026-09-11T01:00:00+09:00',
   form: structuredClone(firstForm),
 }
-const repository = { onlineInputGuide: vi.fn(), documents: vi.fn(), submitDocumentJob: vi.fn(), documentJob: vi.fn(), documentJobs: vi.fn(), confirmDocumentMappingMigration: vi.fn(), downloadDocument: vi.fn(), downloadDocumentArchive: vi.fn(), generateDraft: vi.fn(), saveContent: vi.fn(), confirmContent: vi.fn(), discoveryJobs: vi.fn(), discoveryJob: vi.fn(), availability: vi.fn(), forms: vi.fn(), discover: vi.fn(), list: vi.fn(), delete: vi.fn(), get: vi.fn(), create: vi.fn(), interpret: vi.fn(), replaceInputs: vi.fn(), updateProgress: vi.fn() }
+const repository = { onlineInputGuide: vi.fn(), documents: vi.fn(), submitDocumentJob: vi.fn(), documentJob: vi.fn(), documentJobs: vi.fn(), recentDocumentJobs: vi.fn(), markDocumentJobsSeen: vi.fn(), markDiscoveryJobsSeen: vi.fn(), confirmDocumentMappingMigration: vi.fn(), downloadDocument: vi.fn(), downloadDocumentArchive: vi.fn(), generateDraft: vi.fn(), saveContent: vi.fn(), confirmContent: vi.fn(), discoveryJobs: vi.fn(), discoveryJob: vi.fn(), availability: vi.fn(), forms: vi.fn(), discover: vi.fn(), list: vi.fn(), delete: vi.fn(), get: vi.fn(), create: vi.fn(), interpret: vi.fn(), replaceInputs: vi.fn(), updateProgress: vi.fn() }
 
 function completedDiscovery(result: { items: ApplicationForm[]; warnings: string[]; cached: boolean }) {
   return { id: 77, sourceCode: result.items[0].sourceCode, sourceProgramId: result.items[0].sourceProgramId,
@@ -334,6 +338,22 @@ it('reuses a stored native document on refresh without another generation call',
   expect(screen.queryByText('초안을 만들었어요')).toBeNull()
 })
 
+it('marks the finished drafts of a document as seen when its draft page is opened, and not again once they are seen', async () => {
+  repository.get.mockResolvedValue(readyPreparation())
+  repository.documents.mockResolvedValue([documentFile])
+  repository.documentJobs.mockResolvedValue([generationJob({ seen: false })])
+  const first = mount('/app/application-preparations/12/documents')
+  await waitFor(() => expect(receiveButton()).toBeTruthy())
+  expect(repository.markDocumentJobsSeen).toHaveBeenCalledTimes(1)
+  expect(repository.markDocumentJobsSeen).toHaveBeenCalledWith(12, undefined)
+  first.unmount()
+
+  repository.documentJobs.mockResolvedValue([generationJob({ seen: true })])
+  mount('/app/application-preparations/12/documents')
+  await waitFor(() => expect(receiveButton()).toBeTruthy())
+  expect(repository.markDocumentJobsSeen).toHaveBeenCalledTimes(1)
+})
+
 it('shows each file with its format, size, fill meter and folded auto-fill misses', async () => {
   repository.get.mockResolvedValue(readyPreparation())
   repository.documents.mockResolvedValue([{ ...documentFile, filledAnswerCount: 1, unfilledAnswerCount: 1, unfilledAnswers: [{
@@ -342,7 +362,7 @@ it('shows each file with its format, size, fill meter and folded auto-fill misse
   mount('/app/application-preparations/12/documents')
   const card = await screen.findByRole('article', { name: documentFile.fileName })
   expect(within(card).getByText('HWPX · 1 KB')).toBeTruthy()
-  expect(within(card).getByText('1개 기입 · 1개 미기입')).toBeTruthy()
+  expect(within(card).getByText('질문 2개 중 1개 기입 · 자동 기입 못한 답변 1개')).toBeTruthy()
   expect(card.textContent).not.toContain('답변 버전')
   expect(card.textContent).not.toContain('문서에 포함된 작성 항목')
   const misses = within(card).getByText('자동 기입 못한 답변 보기 (1)').closest('details') as HTMLDetailsElement
@@ -471,7 +491,7 @@ it.each([
   ['APPLICATION_DOCUMENT_SOURCE_CHANGED', 'FAILED', '양식을 다시 분석해야 해요', '공고의 첨부 파일이 바뀌었어요. 바뀐 양식으로 다시 분석해 주세요.',
     [['양식 다시 분석해 새로 시작', reanalyzePath]]],
   // (c) 답변을 고치면 풀림.
-  ['APPLICATION_DOCUMENT_INPUT_REQUIRED', 'FAILED', '저장된 답변이 없어 초안을 만들 수 없어요', '답변을 먼저 저장해 주세요',
+  ['APPLICATION_DOCUMENT_INPUT_REQUIRED', 'FAILED', '답변을 확인한 뒤 다시 만들어 주세요', '초안에 넣을 답변을 확인하지 못했어요',
     [['답변 입력으로', `${editorPath}?step=review`]]],
   ['APPLICATION_DOCUMENT_OVERFLOW', 'FAILED', '답변이 입력칸보다 길어요', '줄인 뒤 다시 만들어 주세요', [['답변 입력으로', editorPath]]],
   // (e) 서비스 중단 · 결과 확인 중.
@@ -721,6 +741,30 @@ function readyPreparation(): ApplicationPreparation {
   return ready
 }
 
+it('measures the fill meter against the questions the form can take, not against the answers given', async () => {
+  repository.get.mockResolvedValue(readyPreparation())
+  repository.documents.mockResolvedValue([
+    { ...documentFile, filledAnswerCount: 1, unfilledAnswerCount: 0, unfilledAnswers: [] },
+    // 아무것도 입력하지 않고 만든 초안은 0개 기입입니다.
+    { ...documentFile, id: 80, inputRevision: 2, fileName: '신청서_초안_v2.hwpx', filledAnswerCount: 0, unfilledAnswerCount: 0, unfilledAnswers: [] },
+    { ...documentFile, id: 79, inputRevision: 1, fileName: '신청서_초안_v1.hwpx', filledAnswerCount: 2, unfilledAnswerCount: 0, unfilledAnswers: [] },
+  ])
+  mount('/app/application-preparations/12/documents')
+  const meter = (fileName: string) => {
+    const card = screen.getByRole('article', { name: fileName, hidden: true })
+    return { label: card.querySelector('p[class*="text-"]:last-of-type')?.textContent, text: card.textContent ?? '',
+      width: (card.querySelector('[class*="bg-emerald-600"]') as HTMLElement).style.width }
+  }
+  await screen.findByRole('article', { name: documentFile.fileName })
+  // 답변 1개를 모두 기입했어도 질문 2개 가운데 1개이므로 막대는 절반입니다.
+  expect(meter(documentFile.fileName).text).toContain('질문 2개 중 1개 기입')
+  expect(meter(documentFile.fileName).width).toBe('50%')
+  expect(meter('신청서_초안_v2.hwpx').text).toContain('질문 2개 중 0개 기입')
+  expect(meter('신청서_초안_v2.hwpx').width).toBe('0%')
+  expect(meter('신청서_초안_v1.hwpx').text).toContain('질문 2개 모두 기입')
+  expect(meter('신청서_초안_v1.hwpx').width).toBe('100%')
+})
+
 it('sums up unanswered fields in one alert that opens the first one in the editor', async () => {
   const ready = readyPreparation()
   ready.form.sections[1].facts[0].status = 'UNKNOWN'
@@ -728,7 +772,7 @@ it('sums up unanswered fields in one alert that opens the first one in the edito
   repository.get.mockResolvedValue(ready)
   repository.documents.mockResolvedValue([documentFile])
   mount('/app/application-preparations/12/documents')
-  const report = await screen.findByRole('region', { name: '답하지 않은 선택 항목 1개' })
+  const report = await screen.findByRole('region', { name: '답하지 않은 질문 1개' })
   expect(report.textContent).toContain('바우처 활용 계획 · 과제명 — 문서에 빈칸으로 남아요.')
   expect(report.textContent).not.toContain('기업 개요 · 업체명')
   expect(within(report).queryByRole('listitem')).toBeNull()
@@ -785,6 +829,9 @@ beforeEach(() => {
   repository.documentJobs.mockResolvedValue([])
   jobSucceeds([documentFile])
   repository.discoveryJobs.mockResolvedValue([])
+  repository.recentDocumentJobs.mockResolvedValue([])
+  repository.markDocumentJobsSeen.mockResolvedValue(undefined)
+  repository.markDiscoveryJobsSeen.mockResolvedValue(undefined)
   repository.availability.mockResolvedValue({ state: { sourceCode: 'BIZINFO', sourceProgramId: 'PBLN_1', status: 'AVAILABLE',
     reasonCode: 'FORM_FOUND', nextRetryAt: null, attemptCount: 1 }, forms: { items: [structuredClone(firstForm)] } })
   repository.forms.mockResolvedValue([structuredClone(firstForm)])
@@ -871,7 +918,7 @@ function mount(path: string) {
   const store = createAppStore()
   store.dispatch(signedIn({ email: 'owner@example.com', role: 'USER', tier: 'MEMBER', emailVerified: false, hasPassword: true, accountType: null, onboarded: true, company: null }))
   const rendered = render(<Provider store={store}><MemoryRouter initialEntries={[path]}><Routes>
-    <Route path="/app/application-preparations" element={<ApplicationPreparationListPage />} />
+    <Route path="/app/application-preparations" element={<><PreparationJobsSync /><ApplicationPreparationListPage /></>} />
     <Route path="/app/application-preparations/:preparationId/documents" element={<ApplicationDocumentPage />} />
     <Route path="/app/application-preparations/new" element={<ApplicationPreparationNewPage />} />
     <Route path="/app/application-preparations/:preparationId" element={<ApplicationPreparationEditorPage />} />
@@ -1096,6 +1143,159 @@ describe('application preparation list', () => {
     vi.useRealTimers()
   })
 
+  it('marks documents whose draft is being made, checked or failed, and sends each to the draft page', async () => {
+    const recent = new Date(Date.now() - 60_000).toISOString()
+    const item = (id: number, title: string) => ({ ...summary(id, firstForm), programTitle: title, inputRevision: 3, answeredRequired: 2, requiredTotal: 4 })
+    repository.list.mockResolvedValue({ items: [item(25, '만드는 중 문서'), item(24, '대기 문서'), item(23, '확인 중 문서'), item(22, '실패 문서'), item(21, '지난 실패 문서')], nextBeforeId: null })
+    repository.recentDocumentJobs.mockResolvedValue([
+      generationJob({ id: 905, preparationId: 25, status: 'RUNNING', stage: 'WRITING', fileIds: [], createdAt: recent, finishedAt: null }),
+      generationJob({ id: 904, preparationId: 24, status: 'QUEUED', stage: null, fileIds: [], createdAt: recent, finishedAt: null }),
+      generationJob({ id: 903, preparationId: 23, status: 'UNKNOWN', stage: 'WRITING', fileIds: [], failureCode: 'APPLICATION_DOCUMENT_OUTCOME_UNKNOWN', createdAt: recent }),
+      generationJob({ id: 902, preparationId: 22, status: 'FAILED', stage: 'MAPPING', fileIds: [], failureCode: 'APPLICATION_DOCUMENT_MAPPING_FAILED' }),
+      // 답변을 고쳐 버전이 달라진 문서의 예전 실패는 더 알리지 않습니다.
+      generationJob({ id: 901, preparationId: 21, expectedRevision: 2, status: 'FAILED', stage: 'MAPPING', fileIds: [], failureCode: 'APPLICATION_DOCUMENT_MAPPING_FAILED' }),
+    ])
+    mount('/app/application-preparations')
+    const list = await screen.findByRole('list', { name: '신청 준비 목록' })
+    await waitFor(() => expect(within(list).getByText('초안 만드는 중')).toBeTruthy())
+    const [making, queued, checking, failed, stale] = within(list).getAllByRole('listitem')
+    const draftPage = (id: number) => `/app/application-preparations/${id}/documents`
+
+    // 만드는 중: 파란 테두리 · 배지 스피너 · 서버가 기록한 단계. 필수 답변 막대 대신 4단계 칸을 둡니다.
+    expect(making.className).toContain('border-info')
+    expect(within(making).getByText('초안 만드는 중').querySelector('[class*="animate-spin"]')).toBeTruthy()
+    expect(within(making).getByText('3 / 4 단계 · 입력칸 기입')).toBeTruthy()
+    expect(making.querySelectorAll('[class*="bg-info"][class*="h-1.5"]')).toHaveLength(3)
+    expect(within(making).queryByText(/필수 답변/)).toBeNull()
+    expect(within(making).getByText(/^\d{2}:\d{2} 시작$/)).toBeTruthy()
+    expect(within(making).getByRole('link', { name: '진행 보기: 만드는 중 문서' }).getAttribute('href')).toBe(draftPage(25))
+    expect(within(making).getAllByRole('link')[0].getAttribute('href')).toBe(draftPage(25))
+    // 만드는 동안에는 삭제할 수 없습니다.
+    fireEvent.click(within(making).getByRole('button', { name: '문서 메뉴: 만드는 중 문서' }))
+    expect((screen.getByRole('menuitem', { name: '삭제' }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    expect(within(queued).getByText('초안 대기').querySelector('[class*="animate-spin"]')).toBeNull()
+    expect(within(queued).getByText('차례를 기다리고 있어요')).toBeTruthy()
+    expect(within(queued).getByRole('link', { name: '진행 보기: 대기 문서' }).getAttribute('href')).toBe(draftPage(24))
+
+    expect(checking.className).toContain('border-warning')
+    expect(within(checking).getByText('결과 확인 중')).toBeTruthy()
+    expect(within(checking).getByText('초안 결과를 확인하고 있어요. 확인이 끝나면 자동으로 풀려요')).toBeTruthy()
+    expect(within(checking).getByRole('link', { name: '상태 보기: 확인 중 문서' }).getAttribute('href')).toBe(draftPage(23))
+
+    // 실패는 결과 화면의 실패 카드와 같은 제목을 쓰고, 지울 수는 있습니다.
+    expect(within(failed).getByText('초안 실패')).toBeTruthy()
+    expect(within(failed).getByText('양식을 다시 분석해야 해요')).toBeTruthy()
+    expect(within(failed).getByRole('link', { name: '자세히 보기: 실패 문서' }).getAttribute('href')).toBe(draftPage(22))
+    fireEvent.click(within(failed).getByRole('button', { name: '문서 메뉴: 실패 문서' }))
+    expect((screen.getByRole('menuitem', { name: '삭제' }) as HTMLButtonElement).disabled).toBe(false)
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    expect(within(stale).getByText('작성 중')).toBeTruthy()
+    expect(within(stale).getByText('필수 답변 2 / 4')).toBeTruthy()
+    expect(within(stale).getByRole('link', { name: '이어서 작성' }).getAttribute('href')).toBe('/app/application-preparations/21')
+    expect(repository.submitDocumentJob).not.toHaveBeenCalled()
+  })
+
+  it('turns the card into a finished one and tells when the watched draft is made', async () => {
+    const making = generationJob({ id: 905, preparationId: 25, expectedRevision: 1, status: 'RUNNING', stage: 'MAPPING', fileIds: [], createdAt: new Date().toISOString(), finishedAt: null })
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    repository.list.mockResolvedValue({ items: [summary(25, firstForm)], nextBeforeId: null })
+    repository.recentDocumentJobs.mockResolvedValueOnce([making]).mockResolvedValue([{ ...making, status: 'SUCCEEDED' as const, stage: 'SAVING' as const, fileIds: [81] }])
+    mount('/app/application-preparations')
+    const card = () => within(screen.getByRole('list', { name: '신청 준비 목록' })).getByRole('listitem')
+    await waitFor(() => expect(within(card()).getByText('2 / 4 단계 · 입력칸 위치 찾기')).toBeTruthy())
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(formAnalysisPollMs) })
+    expect((await screen.findAllByRole('status')).some((node) => node.textContent?.includes(`초안을 만들었어요 · ${firstForm.programTitle}`))).toBe(true)
+    expect(within(card()).getByText('완료')).toBeTruthy()
+    expect(within(card()).queryByText('초안 만드는 중')).toBeNull()
+    expect(card().className).not.toContain('border-info')
+    expect(within(card()).getByRole('link', { name: '문서 보기' }).getAttribute('href')).toBe('/app/application-preparations/25/documents')
+    vi.useRealTimers()
+  })
+
+  it('shows a running analysis as a working card with a spinner, elapsed time and a moving bar', async () => {
+    const started = new Date(Date.now() - 2 * 60_000 - 5_000).toISOString()
+    const job = (id: number, status: 'RUNNING' | 'QUEUED') => ({ id, sourceCode: 'BIZINFO', sourceProgramId: `PBLN_${id}`, programTitle: `분석 공고 ${id}`,
+      programSourceUrl: firstForm.sourceUrl, status, result: null, failureCode: null, createdAt: started })
+    repository.discoveryJobs.mockResolvedValue([job(31, 'RUNNING'), job(30, 'QUEUED')])
+    mount('/app/application-preparations')
+    const list = await screen.findByRole('list', { name: '신청 준비 목록' })
+    await waitFor(() => expect(within(list).getAllByRole('listitem')).toHaveLength(2))
+    const [running, queued] = within(list).getAllByRole('listitem')
+    expect(running.className).toContain('border-info')
+    expect(within(running).getByText('분석 중').querySelector('[class*="animate-spin"]')).toBeTruthy()
+    expect(within(running).getByText('2분 지남 · 보통 1~3분')).toBeTruthy()
+    expect(running.querySelector('[class*="chat-loading-sweep"]')).toBeTruthy()
+    expect(within(running).getByText(/^\d{2}:\d{2} 시작$/)).toBeTruthy()
+    // 대기 중인 분석은 아직 돌지 않으므로 스피너와 막대를 두지 않습니다.
+    expect(queued.className).toContain('border-info')
+    expect(within(queued).getByText('분석 대기').querySelector('[class*="animate-spin"]')).toBeNull()
+    expect(queued.querySelector('[class*="chat-loading-sweep"]')).toBeNull()
+  })
+
+  it('marks finished results that have not been opened, and keeps such an analysis visible even when its document exists', async () => {
+    const recent = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+    const item = (id: number, title: string, done: boolean) => ({ ...summary(id, firstForm), programTitle: title, hasCurrentDocument: done })
+    repository.list.mockResolvedValue({ items: [item(41, '새 초안 문서', true), item(40, '새 실패 문서', false), item(39, '이미 본 문서', true)], nextBeforeId: null })
+    repository.recentDocumentJobs.mockResolvedValue([
+      generationJob({ id: 941, preparationId: 41, expectedRevision: 1, seen: false }),
+      generationJob({ id: 940, preparationId: 40, expectedRevision: 1, status: 'FAILED', stage: 'MAPPING', fileIds: [], failureCode: 'APPLICATION_DOCUMENT_MAPPING_FAILED', seen: false }),
+      generationJob({ id: 939, preparationId: 39, expectedRevision: 1, seen: true }),
+    ])
+    // 이 공고에는 이미 신청 문서가 있어 끝난 분석 카드를 빼지만, 아직 확인하지 않은 결과는 보여 줍니다.
+    repository.discoveryJobs.mockResolvedValue([{ id: 51, sourceCode: firstForm.sourceCode, sourceProgramId: firstForm.sourceProgramId, programTitle: firstForm.programTitle,
+      programSourceUrl: firstForm.sourceUrl, status: 'SUCCEEDED' as const, result: null, failureCode: null, createdAt: recent, seen: false }])
+    mount('/app/application-preparations')
+
+    const list = await screen.findByRole('list', { name: '신청 준비 목록' })
+    await waitFor(() => expect(within(list).getAllByRole('listitem')).toHaveLength(4))
+    const [analysis, drafted, failed, seen] = within(list).getAllByRole('listitem')
+    // 색만으로 알리지 않도록 점과 함께 "새 결과" 글자를 두고, 카드 바탕을 옅게 칠합니다.
+    expect(within(analysis).getByText('분석 완료')).toBeTruthy()
+    expect(within(analysis).getByText('새 결과')).toBeTruthy()
+    expect(analysis.className).toContain('bg-brand-soft')
+    expect(within(drafted).getByText('새 결과')).toBeTruthy()
+    expect(drafted.className).toContain('bg-brand-soft')
+    expect(within(drafted).getByText('초안을 만들었어요. 열어서 확인해 주세요')).toBeTruthy()
+    expect(within(drafted).getByRole('link', { name: '문서 보기' }).getAttribute('href')).toBe('/app/application-preparations/41/documents')
+    expect(within(failed).getByText('초안 실패')).toBeTruthy()
+    expect(within(failed).getByText('새 결과')).toBeTruthy()
+    // 이미 열어 본 결과에는 표시가 없습니다.
+    expect(within(seen).queryByText('새 결과')).toBeNull()
+    expect(seen.className).not.toContain('bg-brand-soft')
+    expect(within(seen).getByText(new RegExp(firstForm.formTitle))).toBeTruthy()
+    // 목록을 보는 것만으로는 확인 처리하지 않습니다.
+    expect(repository.markDocumentJobsSeen).not.toHaveBeenCalled()
+    expect(repository.markDiscoveryJobsSeen).not.toHaveBeenCalled()
+  })
+
+  it('reads the jobs again after a delete and clears an unseen failure that the changed answers made obsolete', async () => {
+    const item = (id: number, title: string, revision: number) => ({ ...summary(id, firstForm), programTitle: title, inputRevision: revision })
+    repository.list.mockResolvedValue({ items: [item(61, '지울 문서', 1), item(60, '답변을 고친 문서', 3)], nextBeforeId: null })
+    repository.recentDocumentJobs.mockResolvedValue([
+      generationJob({ id: 961, preparationId: 61, expectedRevision: 1, status: 'FAILED', stage: 'MAPPING', fileIds: [], failureCode: 'APPLICATION_DOCUMENT_MAPPING_FAILED', seen: false }),
+      // 실패한 뒤 답변을 고쳐 버전이 달라졌습니다. 카드에서 더 알리지 않으므로 확인 전 표시도 남기지 않습니다.
+      generationJob({ id: 960, preparationId: 60, expectedRevision: 2, status: 'FAILED', stage: 'MAPPING', fileIds: [], failureCode: 'APPLICATION_DOCUMENT_MAPPING_FAILED', seen: false }),
+    ])
+    repository.delete.mockResolvedValue(undefined)
+    mount('/app/application-preparations')
+    const list = await screen.findByRole('list', { name: '신청 준비 목록' })
+    await waitFor(() => expect(within(list).getByText('초안 실패')).toBeTruthy())
+    await waitFor(() => expect(repository.markDocumentJobsSeen).toHaveBeenCalledWith(60, undefined))
+    expect(repository.markDocumentJobsSeen).toHaveBeenCalledTimes(1)
+
+    // 지운 문서의 작업이 사이드바 수에 남지 않게, 삭제가 끝나면 작업 목록을 다시 읽습니다.
+    const reads = repository.recentDocumentJobs.mock.calls.length
+    fireEvent.click(within(list).getByRole('button', { name: '문서 메뉴: 지울 문서' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '삭제' }))
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: '삭제' }))
+    await waitFor(() => expect(repository.delete).toHaveBeenCalledWith(61, expect.any(AbortSignal)))
+    await waitFor(() => expect(repository.recentDocumentJobs.mock.calls.length).toBeGreaterThan(reads))
+  })
+
   it('shows a focused error and retries the failed request', async () => {
     repository.list
       .mockRejectedValueOnce(new Error('목록을 잠시 불러올 수 없습니다.'))
@@ -1238,7 +1438,7 @@ describe('application preparation list', () => {
     expect(screen.getByText(/^초안 있음 · \d{2}\.\d{2}$/)).toBeTruthy()
     expect(screen.getByText('필수 답변 2 / 9')).toBeTruthy()
     expect(screen.getByText('완료', { selector: 'span' })).toBeTruthy()
-    expect(screen.getByText('진행 중', { selector: 'span' })).toBeTruthy()
+    expect(screen.getByText('작성 중', { selector: 'span' })).toBeTruthy()
     expect(screen.getByRole('link', { name: '문서 보기' }).getAttribute('href')).toBe('/app/application-preparations/12/documents')
     expect(screen.getByRole('link', { name: '이어서 작성' }).getAttribute('href')).toBe('/app/application-preparations/11')
     fireEvent.click(screen.getByRole('tab', { name: '진행 중' }))
@@ -1730,6 +1930,27 @@ describe('application preparation creation and detail', () => {
     expect(within(formSection()).queryByRole('alert')).toBeNull()
     expect((within(formSection()).getByRole('button', { name: '입력칸별로 분석' }) as HTMLButtonElement).disabled).toBe(true)
     expect(repository.discover).toHaveBeenCalledTimes(1)
+  })
+
+  it('marks the finished analysis of a program as seen when its new-document page is opened or when it ends there', async () => {
+    const finished = { ...completedDiscovery({ items: [structuredClone(firstForm)], warnings: [], cached: false }), result: null,
+      createdAt: new Date(Date.now() - 60_000).toISOString(), seen: false }
+    repository.discoveryJobs.mockResolvedValue([finished])
+    const first = mount(newPath)
+    await screen.findByRole('heading', { name: '작성할 양식' })
+    expect(repository.markDiscoveryJobsSeen).toHaveBeenCalledTimes(1)
+    expect(repository.markDiscoveryJobsSeen).toHaveBeenCalledWith('BIZINFO', 'PBLN_1', undefined)
+    first.unmount()
+
+    // 이미 확인한 분석은 다시 표시하지 않고, 이 화면에서 직접 돌려 끝난 분석은 지켜봤으므로 확인한 것으로 표시합니다.
+    repository.discoveryJobs.mockResolvedValue([{ ...finished, seen: true }])
+    repository.availability.mockResolvedValue(availabilityOf('PENDING', 'NOT_ANALYZED'))
+    mount(newPath)
+    await screen.findByText('저장된 신청 양식이 없어요')
+    expect(repository.markDiscoveryJobsSeen).toHaveBeenCalledTimes(1)
+    fireEvent.click(within(formSection()).getByRole('button', { name: '입력칸별로 분석' }))
+    expect(await screen.findByText('양식을 분석했어요')).toBeTruthy()
+    expect(repository.markDiscoveryJobsSeen).toHaveBeenCalledTimes(2)
   })
 
   it('lists the account analyses that fill the capacity in ② when starting another one is refused', async () => {
@@ -2308,7 +2529,7 @@ describe('application preparation creation and detail', () => {
     expect(repository.submitDocumentJob).toHaveBeenCalledWith(12, 3, expect.any(AbortSignal), undefined)
   })
 
-  it('keeps the review on refresh, links each empty required question and focuses that summary instead of creating a draft', async () => {
+  it('keeps the review on refresh, links each empty required question and says the draft can still be made', async () => {
     const partial = readyPreparation()
     partial.form.sections[0].fields.push({ key: 'position', label: '직위', guidance: '직위만 입력', required: false })
     partial.form.sections[1].facts = []
@@ -2325,13 +2546,10 @@ describe('application preparation creation and detail', () => {
     // 목록의 링크는 검토 단계를 가리키고, 지나온 항목의 빈 필수 질문을 "필수 비어 있음"으로 남깁니다.
     expect(screen.getByRole('link', { name: '검토하고 초안 만들기' }).getAttribute('aria-current')).toBe('step')
     expect(sectionRow('바우처 활용 계획').textContent).toContain('필수 비어 있음')
-    // 필수가 비어 있으면 버튼을 비활성화하지 않고, 눌러도 작업을 보내지 않은 채 요약으로 포커스를 옮깁니다.
-    const create = screen.getByRole('button', { name: '초안 만들기' }) as HTMLButtonElement
-    expect(create.disabled).toBe(false)
-    fireEvent.click(create)
-    await act(async () => {})
-    expect(document.activeElement).toBe(summary)
-    expect(screen.getByTestId('location').textContent).toBe('/app/application-preparations/12?step=review')
+    // 필수가 비어 있어도 초안을 만들 수 있다고 요약에서 알리고, 버튼은 그대로 누를 수 있습니다.
+    expect(within(summary).getByText('비워 둔 채로도 초안을 만들 수 있어요. 비운 질문은 문서에 빈칸으로 남아요.')).toBeTruthy()
+    expect(screen.getByText('AI가 공식 양식에 답변을 기입해요 · 보통 1~3분')).toBeTruthy()
+    expect((screen.getByRole('button', { name: '초안 만들기' }) as HTMLButtonElement).disabled).toBe(false)
     expect(repository.submitDocumentJob).not.toHaveBeenCalled()
     // [← 이전]은 마지막 질문으로 돌아갑니다.
     fireEvent.click(screen.getByRole('button', { name: '← 이전' }))
@@ -2346,6 +2564,21 @@ describe('application preparation creation and detail', () => {
     expect(screen.queryByRole('button', { name: '첫 빈 선택 질문으로' })).toBeNull()
     fireEvent.click(within(screen.getByRole('alert')).getByRole('button', { name: '첫 빈 필수 질문으로' }))
     expect(document.activeElement).toBe(screen.getByRole('heading', { name: '과제명' }))
+  })
+
+  it('creates the draft from the review even when nothing is answered', async () => {
+    const empty = readyPreparation()
+    empty.form.sections.forEach((section) => { section.facts = [] })
+    repository.get.mockResolvedValue(empty)
+    mount('/app/application-preparations/12?step=review')
+    const summary = await screen.findByRole('alert')
+    expect(within(summary).getByText('필수 질문 2개가 비어 있어요')).toBeTruthy()
+    // 기입할 답변이 없으면 AI가 기입한다는 안내 대신 빈 양식 그대로 저장된다고 알립니다.
+    expect(screen.getByText('입력한 답변이 없어요. 지금 초안을 만들면 답변을 기입하지 않은 공식 양식 그대로 저장돼요.')).toBeTruthy()
+    expect(screen.queryByText('AI가 공식 양식에 답변을 기입해요 · 보통 1~3분')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '초안 만들기' }))
+    await waitFor(() => expect(screen.getByTestId('location').textContent).toContain('/app/application-preparations/12/documents'))
+    await waitFor(() => expect(repository.submitDocumentJob).toHaveBeenCalledWith(12, 3, expect.any(AbortSignal), undefined))
   })
 
   it('points to the first empty optional question once every required one is answered', async () => {

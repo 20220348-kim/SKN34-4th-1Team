@@ -165,16 +165,23 @@ class ApplicationDocumentService(
         acquired = redis.opsForValue().setIfAbsent(lockKey, lockToken, java.time.Duration.ofMinutes(15)) == true
         if (!acquired) throw ApplicationPreparationRunConflictException()
         val manifest = detail.form
+        // 비어 있는 질문은 필수 여부와 관계없이 건너뛴다. 초안은 저장된 답변만 기입하고 나머지 칸은 원본 그대로 둔다.
         val facts = manifest.sections.flatMap { section -> section.fields.mapNotNull { field ->
             val fact = detail.facts.find { it.sectionKey == section.key && it.fieldKey == field.key }
-            if (fact == null) {
-                if (field.required) throw ApplicationDocumentException("APPLICATION_DOCUMENT_INPUT_REQUIRED", "필수 답변을 저장한 뒤 문서를 생성해 주세요.")
-                null
-            } else if (fact.status.name == "UNKNOWN") null
+            if (fact == null || fact.status.name == "UNKNOWN") null
             else ApplicationDocumentFact("${section.key}:${field.key}", "${section.title} / ${field.label}", requireNotNull(fact.value))
         } }
-        if (facts.isEmpty() || facts.size > 200) throw ApplicationDocumentException("APPLICATION_DOCUMENT_INPUT_REQUIRED", "문서에 기입할 답변을 확인해 주세요.")
+        if (facts.size > 200) throw ApplicationDocumentException("APPLICATION_DOCUMENT_INPUT_REQUIRED", "문서에 기입할 답변을 확인해 주세요.")
         val original = loadOriginal(manifest)
+        if (facts.isEmpty()) {
+            // 저장된 답변이 하나도 없으면 기입할 것이 없으므로 입력 위치 분석과 AI 호출 없이 공식 원본을 0개 기입 초안으로 저장한다.
+            val format = original.format.lowercase()
+            onStage(ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentGenerationStage.SAVING)
+            return listOf(files.save(account.id, id, expectedRevision, draftFileName(manifest.attachmentFileName, expectedRevision, format),
+                draftMediaType(format), original.bytes, manifest.attachmentSha256, emptyList(), fingerprint = fingerprint,
+                evidence = mapOf("verification" to mapOf("stage" to "ORIGINAL_WITHOUT_ANSWERS"), "pipelineVersion" to pipelineVersion),
+                filledAnswerCount = 0, unfilledAnswers = emptyList()))
+        }
         onStage(ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentGenerationStage.MAPPING)
         val binding = try {
             documentMapping.ensure(manifest, original.bytes, original.format, captureChange = true)
@@ -246,10 +253,8 @@ class ApplicationDocumentService(
             editor.fill(output, "pdf", writableFacts, result.placements)
         } else output
         val format = original.format.lowercase()
-        val fileName = manifest.attachmentFileName.replace(Regex("(?i)\\.(hwp|hwpx|pdf|docx|xlsx).*$"), "").replace(Regex("[\\\\/:*?\"<>|]"), "_").take(430) + "_초안_v$expectedRevision.$format"
-        val mediaType = when (format) { "pdf" -> "application/pdf"; "hwpx" -> "application/hwp+zip";
-            "docx" -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-            "xlsx" -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"; else -> "application/x-hwp" }
+        val fileName = draftFileName(manifest.attachmentFileName, expectedRevision, format)
+        val mediaType = draftMediaType(format)
         val verification = if (format == "hwp") result.verification + mapOf("stage" to "HWPLIB_VERIFIED", "reopened" to true, "outputSha256" to sha256(bytes), "render" to "NOT_RUN") else result.verification
         onStage(ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentGenerationStage.SAVING)
         return listOf(files.save(account.id, id, expectedRevision, fileName, mediaType, bytes, manifest.attachmentSha256, result.placements,
@@ -272,6 +277,11 @@ class ApplicationDocumentService(
             running.remove(id)
         }
     }
+    private fun draftFileName(attachmentFileName: String, revision: Long, format: String) =
+        attachmentFileName.replace(Regex("(?i)\\.(hwp|hwpx|pdf|docx|xlsx).*$"), "").replace(Regex("[\\\\/:*?\"<>|]"), "_").take(430) + "_초안_v$revision.$format"
+    private fun draftMediaType(format: String) = when (format) { "pdf" -> "application/pdf"; "hwpx" -> "application/hwp+zip";
+        "docx" -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+        "xlsx" -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"; else -> "application/x-hwp" }
     private fun <T> callMcp(block: () -> T): T = try { block() }
     catch (error: ApplicationDocumentMcpException) {
         throw ApplicationDocumentException(error.code, requireNotNull(error.message), error.cause)

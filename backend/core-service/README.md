@@ -170,6 +170,9 @@ HWPX discovery 요청에는 원본 `sourceBase64`·`sourceSha256`을 내부 AI �
 | `POST /api/v1/application-preparations/{id}/documents/jobs` | UUID `requestKey`·`expectedRevision`으로 V45 계정별 생성 작업 접수(202·Location). 같은 키는 같은 작업, 준비 건에 진행 중·결과 불명 작업이 있으면 409, 계정당 3개 초과는 422 `APPLICATION_DOCUMENT_JOB_CAPACITY`, 답변 버전이 다르면 409 |
 | `GET /api/v1/application-preparations/{id}/documents/jobs/{jobId}` | 본인 작업의 상태(QUEUED·RUNNING·SUCCEEDED·FAILED·UNKNOWN)·단계(PREPARING·MAPPING·WRITING·SAVING)·파일 ID·실패 코드/문구·입력 위치 변경 안내 |
 | `GET /api/v1/application-preparations/{id}/documents/jobs` | 그 준비 건의 최근 5개 작업(변경 안내 제외). 화면이 진행 중 작업을 이어받을 때 읽음 |
+| `GET /api/v1/application-preparations/documents/jobs` | 계정의 최근 20개 작업(준비 건 구분 없음, 변경 안내 제외). 목록 화면이 초안을 만드는 중·결과 확인 중·실패한 준비 건을 표시할 때 읽음. 각 작업의 `seen`은 끝난 결과를 확인했는지 |
+| `POST /api/v1/application-preparations/{id}/documents/jobs/seen` | 그 준비 건의 끝난 생성 결과를 확인한 것으로 표시(V47 `seen_at`, 204). 화면이 초안 화면을 열 때 호출 |
+| `POST /api/v1/application-preparations/forms/discovery-jobs/seen` | `sourceCode`·`sourceProgramId`의 끝난 분석 결과를 확인한 것으로 표시(204). 화면이 그 공고의 새 문서 화면을 열 때 호출 |
 | `GET /api/v1/application-preparations/{id}/documents/{fileId}/download` | 소유자 확인 후 binary attachment·no-store 반환 |
 | `GET /api/v1/application-preparations/{id}/documents/archive?revision=N` | 그 답변 버전의 저장 파일을 한 번에 반환. 파일이 하나면 그 파일 그대로, 여럿이면 UTF-8 이름의 zip(`application/zip`, `X-Archive-File-Count`). 새 파일을 저장하지 않으며 없는 버전·타인 건은 404 |
 
@@ -1026,7 +1029,7 @@ Discovery 전용 timeout은 model 210초 < AI run 240초 < Core read 270초 < Wo
 DOCX는 공식 첨부를 Core에서 ZIP/XML로 추출하고, AI Service가 OOXML의 실제 문단·표·셀·내용 컨트롤 주소를 검사합니다. 확인된 단순 입력칸만 원본과 분리해 편집한 뒤 다시 열어 값과 표 구조·스타일을 검증합니다. 세로 병합, 불명확한 다중 문단 셀과 혼합 스타일 등은 자동 작성하지 않습니다. 단순 가로 gridSpan은 하나의 실제 셀 주소로 유지합니다.
 DOCX의 `engineVersion`은 AI 설정 응답에서 확인하며 저장 지도와 생성 fingerprint에 반영합니다. DOCX 엔진이 바뀌면 해당 DOCX만 다시 매핑하고, 기존 HWP/HWPX/PDF의 공통 `pipelineVersion`과 생성 fingerprint는 유지합니다. Core는 DOCX 결과의 engineVersion·재열기·XML·스타일 검증 상태를 확인한 뒤 저장합니다.
 
-질문·입력칸 대응에서 선택 문항의 미지원 위치는 `documentMap.unmappedFieldIds`로 받으며, 공개 양식 필드의 `documentWritable=false`로 UI에 전달한다. 필수 미매핑 항목은 여전히 양식 검증에서 거절한다. 생성 시 저장된 답변은 binding 유무로 분리하고, binding이 있는 답변만 AI 문서 계획과 편집기로 전달한다. 미기입 답변의 식별자·표시명·당시 값·사유와 기입/미기입 답변 수는 생성 파일의 `placements_json.answerSummary`에 저장하므로 이후 답변 수정과 무관하게 목록 재조회에서 같은 값을 반환한다. 과거 파일에 이 정보가 없으면 현재 답변으로 추정하지 않는다. 자동 기입 가능한 답변이 하나도 없으면 `APPLICATION_DOCUMENT_NO_WRITABLE_INPUT`으로 원본 반환 없이 중단한다. 여러 표 열을 한 질문으로 묶은 이전 양식은 `APPLICATION_DOCUMENT_FORM_REANALYSIS_REQUIRED`를 유지한다. Core의 원문·소유권·revision·빈칸·값·결과 검증은 유지한다.
+질문·입력칸 대응에서 선택 문항의 미지원 위치는 `documentMap.unmappedFieldIds`로 받으며, 공개 양식 필드의 `documentWritable=false`로 UI에 전달한다. 필수 미매핑 항목은 여전히 양식 검증에서 거절한다. 생성은 비어 있는 질문을 필수 여부와 관계없이 건너뛰며, 저장된 답변이 하나도 없으면 입력 위치 분석과 AI 호출 없이 공식 원본을 기입 수 0의 초안으로 저장한다. 저장된 답변은 binding 유무로 분리하고, binding이 있는 답변만 AI 문서 계획과 편집기로 전달한다. 미기입 답변의 식별자·표시명·당시 값·사유와 기입/미기입 답변 수는 생성 파일의 `placements_json.answerSummary`에 저장하므로 이후 답변 수정과 무관하게 목록 재조회에서 같은 값을 반환한다. 과거 파일에 이 정보가 없으면 현재 답변으로 추정하지 않는다. 저장된 답변이 있는데 자동 기입 가능한 답변이 하나도 없으면 `APPLICATION_DOCUMENT_NO_WRITABLE_INPUT`으로 원본 반환 없이 중단한다. 여러 표 열을 한 질문으로 묶은 이전 양식은 `APPLICATION_DOCUMENT_FORM_REANALYSIS_REQUIRED`를 유지한다. Core의 원문·소유권·revision·빈칸·값·결과 검증은 유지한다.
 
 지도와 캐시는 `mapVersion`을 포함한 AI `pipelineVersion`과 원본 SHA-256으로 비교한다. 버전이 달라 기존 양식을 다시 매핑할 때 이전 binding의 field ID·target ID·box 집합과 편집 scope가 새 결과와 같으면 MySQL `documentMapSnapshot`만 갱신하고 기존 답변·생성 파일은 보존한다. 주소 또는 scope가 달라지면 `APPLICATION_DOCUMENT_FORM_REANALYSIS_REQUIRED`(422)로 자동 작성을 중단하고 이전 지도도 덮어쓰지 않는다. 해당 오류는 자동 재시도로 해결되지 않는다. 변경이 발생한 작성본의 생성 응답에는 비교 내용과 15분 승인 토큰이 포함된다. 사용자가 `POST /api/v1/application-preparations/{id}/documents/mapping-migration/confirm`으로 명시적으로 승인하면 해당 작성본만 참조하는 새 양식 스냅샷을 생성한다. 이전 답변·revision·파일과 다른 사용자의 지도는 유지하며, 새 초안 생성은 별도 액션이다.
 

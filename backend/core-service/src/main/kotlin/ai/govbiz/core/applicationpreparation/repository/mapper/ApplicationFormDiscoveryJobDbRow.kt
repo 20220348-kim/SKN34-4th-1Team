@@ -14,4 +14,5 @@ data class ApplicationFormDiscoveryJobDbRow(
     var resultJson: String? = null,
     var failureCode: String? = null,
     var createdAt: LocalDateTime? = null,
+    var seenAt: LocalDateTime? = null,
 )

@@ -15,10 +15,11 @@
         <result column="failure_detail_json" property="failureDetailJson" />
         <result column="created_at" property="createdAt" />
         <result column="finished_at" property="finishedAt" />
+        <result column="seen_at" property="seenAt" />
     </resultMap>
     <sql id="columns">
         id, owner_account_id, preparation_id, request_key, expected_revision, status, stage,
-        result_json, failure_code, failure_message, failure_detail_json, created_at, finished_at
+        result_json, failure_code, failure_message, failure_detail_json, created_at, finished_at, seen_at
     </sql>
     <select id="lockActiveAccount" resultType="long">
         SELECT id FROM account WHERE id = #{ownerId} AND deleted_at IS NULL AND suspended_at IS NULL FOR UPDATE
@@ -49,6 +50,16 @@
         SELECT <include refid="columns" /> FROM application_document_generation_job
         WHERE owner_account_id = #{ownerId} AND preparation_id = #{preparationId} ORDER BY id DESC LIMIT 5
     </select>
+    <select id="listRecentOwned" resultMap="job">
+        SELECT <include refid="columns" /> FROM application_document_generation_job
+        WHERE owner_account_id = #{ownerId} ORDER BY id DESC LIMIT 20
+    </select>
+    <!-- 그 준비 건에서 끝난 생성 결과를 확인한 것으로 표시한다. 진행 중·결과 불명 작업은 건드리지 않는다. -->
+    <update id="markSeen">
+        UPDATE application_document_generation_job SET seen_at = #{now}
+        WHERE owner_account_id = #{ownerId} AND preparation_id = #{preparationId}
+          AND status IN ('SUCCEEDED', 'FAILED') AND seen_at IS NULL
+    </update>
     <select id="claimable" resultType="long">
         SELECT id FROM application_document_generation_job WHERE status = 'QUEUED'
         AND created_at &gt; DATE_SUB(#{now}, INTERVAL 1 HOUR) ORDER BY id LIMIT #{limit}

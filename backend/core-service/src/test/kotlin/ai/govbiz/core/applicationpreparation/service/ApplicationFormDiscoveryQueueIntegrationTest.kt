@@ -162,6 +162,15 @@ class ApplicationFormDiscoveryQueueIntegrationTest {
         mvc.perform(get("$BASE/${job.id}").cookie(cookie(account))).andExpect(status().isOk)
             .andExpect(jsonPath("$.result.items[0].sourceProgramId").value(form.sourceProgramId))
             .andExpect(jsonPath("$.result.warnings[0]").value(result.warnings.first()))
+            .andExpect(jsonPath("$.seen").value(false))
+        // 끝난 분석 결과는 그 공고의 화면을 열 때 확인한 것으로 표시한다. 다른 계정의 요청은 이 계정의 작업을 바꾸지 않는다.
+        val seenBody = """{"sourceCode":"${job.sourceCode}","sourceProgramId":"${job.sourceProgramId}"}"""
+        mvc.perform(post("$BASE/seen").cookie(cookie(newAccount())).header("Origin", "http://localhost:5173").contentType(MediaType.APPLICATION_JSON).content(seenBody))
+            .andExpect(status().isNoContent)
+        mvc.perform(get(BASE).cookie(cookie(account))).andExpect(jsonPath("$[0].id").value(job.id)).andExpect(jsonPath("$[0].seen").value(false))
+        mvc.perform(post("$BASE/seen").cookie(cookie(account)).header("Origin", "http://localhost:5173").contentType(MediaType.APPLICATION_JSON).content(seenBody))
+            .andExpect(status().isNoContent)
+        mvc.perform(get(BASE).cookie(cookie(account))).andExpect(jsonPath("$[0].seen").value(true))
     }
 
     @Test

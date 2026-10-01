@@ -5,12 +5,14 @@ import { useAppSelector } from '../../../../app/hooks'
 import type { ApplicationDocument, ApplicationDocumentGenerationJob, ApplicationDocumentMigrationNotice, ApplicationPreparation } from '../../../../domain/entities/ApplicationPreparation'
 import { ApplicationPreparationError } from '../../../../domain/errors/ApplicationPreparationError'
 import { selectCurrentAccount } from '../../../shared/auth/state/authSlice'
+import { usePreparationJobActions } from '../../../shared/preparation-jobs/usePreparationJobs'
 import { appPaths } from '../../../shared/routes/appPaths'
 import { WorkspacePageHeader } from '../../../shared/workspace/WorkspacePageHeader'
 import { WorkspaceToast, type WorkspaceToastNotice } from '../../../shared/workspace/WorkspaceToast'
 import { workspacePageStyles, workspaceTagClassName } from '../../../shared/workspace/WorkspacePage.styles'
 import { useDelayedFlag } from '../../../shared/workspace/useDelayedFlag'
 import { ApplicationPreparationLede } from './ApplicationPreparationLede'
+import { failureCodeOf, failureGroupOf, generationFailureTitle, generationStages } from './documentGeneration'
 import { ButtonSpinner, DocumentFilesSkeleton } from './ApplicationPreparationSkeletons'
 import {
   answerEditorStyles as e,
@@ -41,40 +43,6 @@ export function ApplicationDocumentPage() {
   return <DocumentResults key={`${account.email}:${id}`} id={id} />
 }
 
-/** 서버 작업 표가 기록하는 단계 순서입니다. 화면은 단계를 추측하지 않고 이 값만 표시합니다. */
-const generationStages = [
-  ['PREPARING', '답변 확인'],
-  ['MAPPING', '입력칸 위치 찾기'],
-  ['WRITING', '입력칸 기입'],
-  ['SAVING', '파일 저장'],
-] as const
-
-/**
- * 실패 안내 묶음입니다. 다시 시도로 풀리는 일시 오류(temporary)에만 [다시 시도]를 둡니다.
- * formLimit 양식 한계 · reanalysis 양식 재분석 필요 · userFix 답변을 고치면 풀림 · serviceDown 서비스 중단 · outcomeUnknown 결과 확인 중.
- */
-type FailureGroup = 'formLimit' | 'reanalysis' | 'userFix' | 'temporary' | 'serviceDown' | 'outcomeUnknown'
-
-/** 실패 코드(앞의 APPLICATION_DOCUMENT_ 생략) → 묶음입니다. 표에 없는 코드는 일시 오류로 둡니다. */
-const failureGroups: Record<string, FailureGroup> = {
-  LIMIT_EXCEEDED: 'formLimit', UNSUPPORTED: 'formLimit', UNMAPPED_INPUT: 'formLimit',
-  // 기입할 칸이 원래 없어 재분석으로 풀릴 가능성이 낮습니다. 유료 재분석 대신 원본에 직접 작성하게 합니다.
-  NO_WRITABLE_INPUT: 'formLimit',
-  MAPPING_FAILED: 'reanalysis', SOURCE_CHANGED: 'reanalysis', FORM_REANALYSIS_REQUIRED: 'reanalysis',
-  INPUT_REQUIRED: 'userFix', OVERFLOW: 'userFix', APPLICATION_PREPARATION_REVISION_CONFLICT: 'userFix',
-  MCP_NOT_READY: 'serviceDown',
-  OUTCOME_UNKNOWN: 'outcomeUnknown', RUN_OUTCOME_UNKNOWN: 'outcomeUnknown',
-}
-
-function failureCodeOf(job: ApplicationDocumentGenerationJob) {
-  return (job.failureCode ?? '').replace(/^APPLICATION_DOCUMENT_/, '')
-}
-
-function failureGroupOf(job: ApplicationDocumentGenerationJob): FailureGroup {
-  if (job.status === 'UNKNOWN') return 'outcomeUnknown'
-  return failureGroups[failureCodeOf(job)] ?? 'temporary'
-}
-
 const formatLabels: Record<string, string> = {
   'application/x-hwp': 'HWP',
   'application/hwp+zip': 'HWPX',
@@ -102,6 +70,8 @@ function madeAtLabel(value: string) {
 
 function DocumentResults({ id }: { id: number }) {
   const useCase = appContainer.resolve('applicationPreparationUseCase')
+  // 이 화면을 열었거나 여기서 작업이 끝나는 것을 지켜봤으면 그 결과는 확인한 것입니다. 작업을 접수하면 사이드바·목록이 따라가게 다시 읽힙니다.
+  const { refresh: refreshJobs, markDocumentJobsSeen } = usePreparationJobActions()
   const [search, setSearch] = useSearchParams()
   /** 답변 입력에서 [초안 만들기]로 들어온 버전입니다. 한 번 읽으면 주소에서 지워, 다시 들어와도 같은 버전을 저절로 제출하지 않습니다. */
   const requestedRevision = useRef(search.get('generate'))
@@ -144,6 +114,9 @@ function DocumentResults({ id }: { id: number }) {
   const unanswered = preparation?.form.sections.flatMap((section) => section.fields
     .filter((field) => field.documentWritable !== false && !section.facts.some((fact) => fact.fieldKey === field.key && fact.status === 'PROVIDED'))
     .map((field) => ({ key: field.key, label: `${section.title} · ${field.label}` }))) ?? []
+  // 기입 막대의 분모입니다. 답변한 수가 아니라 이 양식에서 자동 기입할 수 있는 질문 수를 기준으로 삼습니다.
+  const writableQuestionCount = preparation?.form.sections.reduce(
+    (count, section) => count + section.fields.filter((field) => field.documentWritable !== false).length, 0) ?? 0
   const reanalyzeTo = preparation
     ? `${appPaths.applicationPreparationNew}?${new URLSearchParams({ sourceCode: preparation.form.sourceCode, sourceProgramId: preparation.form.sourceProgramId })}`
     : appPaths.applicationPreparationNew
@@ -198,6 +171,9 @@ function DocumentResults({ id }: { id: number }) {
         if (controller.signal.aborted) return
         // 새 초안을 만드는 동안에도 이미 만든 문서는 그대로 받을 수 있게 먼저 보여 준다.
         setPreparation(detail); setFiles(stored); setJobs(recent)
+        // 서버에 확인 전 결과가 있으면 확인한 것으로 표시하고, 없으면 작업 목록만 다시 읽습니다(다른 탭·기기에서 이미 확인한 표시가 이 탭에 남지 않게).
+        if (recent.some((candidate) => (candidate.status === 'SUCCEEDED' || candidate.status === 'FAILED') && candidate.seen === false)) markDocumentJobsSeen(id)
+        else refreshJobs()
         let finished: ApplicationDocumentGenerationJob | null = null
         const running = active(recent)
         if (running) {
@@ -208,7 +184,9 @@ function DocumentResults({ id }: { id: number }) {
           if (!Number.isSafeInteger(revision) || revision !== detail.inputRevision) throw new Error('답변이 변경되었습니다. 답변 입력으로 돌아가 최신 내용을 확인한 뒤 다시 생성해 주세요.')
           if (!stored.some((file) => file.inputRevision === revision)) {
             try {
-              finished = await follow(await useCase.submitDocumentJob(id, revision, controller.signal))
+              const submitted = await useCase.submitDocumentJob(id, revision, controller.signal)
+              refreshJobs()
+              finished = await follow(submitted)
             } catch (caught) {
               if (controller.signal.aborted) throw caught
               if (!(caught instanceof ApplicationPreparationError) || caught.code !== 'APPLICATION_PREPARATION_RUN_CONFLICT') throw caught
@@ -226,6 +204,9 @@ function DocumentResults({ id }: { id: number }) {
         }
         if (finished) {
           const done = finished
+          // 결과 불명은 아직 끝난 것이 아니므로 확인 처리하지 않고, 작업 목록만 다시 읽게 합니다.
+          if (done.status === 'UNKNOWN') refreshJobs()
+          else markDocumentJobsSeen(id)
           // 실패·결과 불명이어도 앞서 저장된 파일이 있을 수 있으니 목록은 다시 읽는다.
           const documents = await useCase.documents(id, controller.signal)
           if (controller.signal.aborted) return
@@ -250,7 +231,7 @@ function DocumentResults({ id }: { id: number }) {
     }
     void load()
     return () => { controller.abort(); downloadController.current?.abort(); migrationController.current?.abort() }
-  }, [id, useCase, attempt])
+  }, [id, useCase, attempt, markDocumentJobsSeen, refreshJobs])
 
   useEffect(() => {
     if (busySince === null) { setElapsedSeconds(0); return }
@@ -333,7 +314,8 @@ function DocumentResults({ id }: { id: number }) {
     const format = formatOf(file)
     const filled = file.filledAnswerCount
     const unfilled = file.unfilledAnswerCount
-    const total = filled !== null && unfilled !== null ? filled + unfilled : 0
+    // 기입한 수가 지금 양식의 질문 수보다 크면(입력 위치를 다시 적용하기 전의 파일) 모두 기입한 것으로 봅니다.
+    const total = filled !== null ? Math.max(writableQuestionCount, filled) : 0
     return <article className={d.file} key={file.id} aria-label={file.fileName}>
       <div className={d.fileHead}>
         <span className={d.format} aria-hidden="true">{format}</span>
@@ -349,7 +331,9 @@ function DocumentResults({ id }: { id: number }) {
       </div>
       {filled !== null && unfilled !== null && total > 0 && <div className={d.fill}>
         <div className={s.progressTrack} aria-hidden="true"><div className={s.progressFill} style={{ width: `${Math.round((filled / total) * 100)}%` }} /></div>
-        <p className={d.fillLabel}>{unfilled === 0 ? `${filled}개 모두 기입` : `${filled}개 기입 · ${unfilled}개 미기입`}</p>
+        <p className={d.fillLabel}>
+          {filled === total ? `질문 ${total}개 모두 기입` : `질문 ${total}개 중 ${filled}개 기입`}{unfilled > 0 ? ` · 자동 기입 못한 답변 ${unfilled}개` : ''}
+        </p>
       </div>}
       {file.unfilledAnswers.length > 0 && <details className={d.unfilled}>
         <summary className={d.unfilledSummary}>자동 기입 못한 답변 보기 ({file.unfilledAnswers.length})</summary>
@@ -476,7 +460,7 @@ function DocumentResults({ id }: { id: number }) {
 
         {files.length > 0 && unanswered.length > 0 && <section className={`${n.alert} ${n.alertWarning}`} aria-labelledby="documents-unanswered-title">
           <div className={n.alertText}>
-            <strong className={n.alertTitle} id="documents-unanswered-title">답하지 않은 선택 항목 {unanswered.length}개</strong>
+            <strong className={n.alertTitle} id="documents-unanswered-title">답하지 않은 질문 {unanswered.length}개</strong>
             <p>{unanswered[0].label}{unanswered.length > 1 ? ` 외 ${unanswered.length - 1}개` : ''} — 문서에 빈칸으로 남아요. 제출 전에 채우거나 답을 적고 다시 만들어 주세요.</p>
           </div>
           <Link className={n.secondarySm} to={`${back}?${new URLSearchParams({ question: unanswered[0].key })}`}>답변 입력으로</Link>
@@ -519,12 +503,11 @@ function FailureCard({ job, sourceUrl, editorTo, reanalyzeTo, retryDisabled, onR
   const group = failureGroupOf(job)
   const review = `${editorTo}?step=review`
   const toEditor = (to: string) => <Link className={n.secondarySm} to={to}>답변 입력으로</Link>
-  let title: string
+  const title = generationFailureTitle(job)
   let body: string
   let actions: ReactNode = null
   switch (group) {
     case 'formLimit':
-      title = '이 양식은 자동으로 채우기 어려워요'
       body = '양식이 크거나 복잡해 입력칸 위치를 찾지 못했어요. 다시 시도해도 결과는 같아요. 저장된 답변을 보며 원본 양식에 직접 옮겨 적어 주세요.'
       actions = <>
         <a className={n.secondarySm} href={sourceUrl} target="_blank" rel="noreferrer">원문에서 양식 받기 ↗<span className="sr-only"> (새 창)</span></a>
@@ -532,37 +515,30 @@ function FailureCard({ job, sourceUrl, editorTo, reanalyzeTo, retryDisabled, onR
       </>
       break
     case 'reanalysis':
-      title = '양식을 다시 분석해야 해요'
       body = `${code === 'SOURCE_CHANGED' ? '공고의 첨부 파일이 바뀌었어요. 바뀐 양식으로 다시 분석해 주세요.'
         : '양식의 입력칸 위치를 확인하지 못했어요. 양식을 다시 분석하면 해결될 수 있어요.'} 다시 분석하면 새 문서로 시작하고, 지금 문서와 답변은 목록에 그대로 남아요.`
       actions = <Link className={n.secondarySm} to={reanalyzeTo}>양식 다시 분석해 새로 시작</Link>
       break
     case 'userFix':
       if (code === 'INPUT_REQUIRED') {
-        title = '저장된 답변이 없어 초안을 만들 수 없어요'
-        body = '답변을 먼저 저장해 주세요. 검토 단계에서 비어 있는 필수 질문을 확인할 수 있어요.'
+        body = '초안에 넣을 답변을 확인하지 못했어요. 답변 입력에서 내용을 확인한 뒤 다시 만들어 주세요.'
         actions = toEditor(review)
       } else if (code === 'OVERFLOW') {
-        title = '답변이 입력칸보다 길어요'
         body = '줄인 뒤 다시 만들어 주세요. 답변은 그대로 저장되어 있어요.'
         actions = toEditor(editorTo)
       } else {
-        title = '답변이 바뀌었어요'
         body = '최신 답변으로 다시 만들어 주세요.'
         actions = toEditor(editorTo)
       }
       break
     case 'serviceDown':
-      title = '지금은 초안 만들기를 쓸 수 없어요'
       body = '서비스 쪽 문제라 다시 시도해도 해결되지 않아요. 답변은 그대로 있고, 문제가 풀리면 이 화면에서 다시 만들 수 있어요.'
       actions = toEditor(editorTo)
       break
     case 'outcomeUnknown':
-      title = '초안 결과를 확인하고 있어요'
       body = '파일이 만들어졌는지 아직 확인하지 못했어요. 같은 초안이 두 번 만들어지지 않도록 확인이 끝날 때까지 새로 만들 수 없어요. 확인이 끝나면 자동으로 풀리고, 이 화면을 다시 열면 결과부터 확인해요. 답변은 그대로 저장되어 있어요.'
       break
     default:
-      title = '일시적인 문제로 초안을 만들지 못했어요'
       body = '잠시 후 다시 시도해 주세요. 답변은 그대로 저장되어 있어요.'
       actions = <button type="button" className={n.secondarySm} disabled={retryDisabled} onClick={onRetry}>다시 시도</button>
   }

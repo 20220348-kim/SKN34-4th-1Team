@@ -37,6 +37,12 @@ class ApplicationFormDiscoveryJobService(
         ?: throw ApplicationFormDiscoveryException(Reason.JOB_NOT_FOUND)
     fun list(account: Account) = repository.listOwned(account.id)
 
+    /** 그 공고에서 끝난 분석 결과를 확인한 것으로 표시한다. 사용자가 결과 화면을 열었을 때 부른다. */
+    fun markSeen(account: Account, sourceCode: String, programId: String) {
+        discovery.validateIdentity(sourceCode, programId)
+        repository.markSeen(account.id, sourceCode, programId)
+    }
+
     fun executeQueued(id: Long) {
         try {
             admission.executeBackground {

@@ -131,7 +131,7 @@ DB transaction 밖에서 해석합니다. 요청 키와 당시 입력을 먼저 
 별도 transaction으로 저장합니다. 사용자가 제안을 확인한 PUT만 문항 사실을 전체 교체하고 입력 revision을 증가시킵니다.
 본인 준비 건의 DELETE는 `ApplicationPreparationRepository → MyBatis → MySQL`에서 소유자 조건으로 한 행을 지우고,
 확인 사실·AI 실행 기록은 FK cascade로 삭제하지만 공용 `application_form_snapshot`은 유지합니다.
-Frontend는 `/app/application-preparations`의 목록(상태 칩 `?status=`, 필수 답변 진행 막대, 현재 버전 문서 유무로 완료 배지, 접수 마감 D-n)·모달 삭제, `/new`의 지연 조회 관심 공고 팝업과 전체 카탈로그 공고 검색·선택을 첫 단계로,
+Frontend는 `/app/application-preparations`의 목록(상태 칩 `?status=`, 필수 답변 진행 막대, 현재 버전 문서 유무로 완료 배지, 접수 마감 D-n, 계정의 최근 양식 분석·문서 생성 작업으로 작업 중 카드와 확인 전 결과 표시, 같은 작업 목록을 작업 화면 틀이 읽어 사이드바 배지와 공유)·모달 삭제, `/new`의 지연 조회 관심 공고 팝업과 전체 카탈로그 공고 검색·선택을 첫 단계로,
 공고를 고르면 곧바로 공고별 availability API와 최근 discovery job 목록을 읽어(AI 호출 없음) 저장된 양식 상태를 보여 주고, QUEUED·RUNNING job이 있으면 폴링을 이어받습니다. 유료 분석은 [입력칸별로 분석] 클릭에서만 시작하며 활성 snapshot은 [다음]으로 여는 두 번째 단계에 표시합니다. 미분석·변경 공고는 Discovery Job 완료 후 표시하며, `/:preparationId`의 공식 문항
 상세와 질문·사실 확인을 연결합니다. AI 제안은 저장하지 않고 사용자가 선택·수정한 전체 문항 입력만 revision을 올려 저장합니다.
 웹 답변 입력은 입력을 2초 멈추거나 질문·항목을 이동할 때 그 항목의 `PUT …/inputs`를 자동으로 호출하고(보낼 사실이 저장된 사실과 같으면 호출하지 않음),

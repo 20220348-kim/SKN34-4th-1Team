@@ -13,6 +13,8 @@ interface ApplicationDocumentGenerationJobMapper {
     fun find(id: Long): ApplicationDocumentGenerationJobDbRow?
     fun findOwned(ownerId: Long, preparationId: Long, id: Long): ApplicationDocumentGenerationJobDbRow?
     fun listOwned(ownerId: Long, preparationId: Long): List<ApplicationDocumentGenerationJobDbRow>
+    fun listRecentOwned(ownerId: Long): List<ApplicationDocumentGenerationJobDbRow>
+    fun markSeen(ownerId: Long, preparationId: Long, now: LocalDateTime): Int
     fun claimable(now: LocalDateTime, limit: Int): List<Long>
     fun claim(id: Long, now: LocalDateTime): Int
     fun updateStage(id: Long, stage: String, now: LocalDateTime): Int

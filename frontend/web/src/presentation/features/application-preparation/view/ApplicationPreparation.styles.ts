@@ -55,6 +55,23 @@ export const applicationPreparationStyles = {
   badgeDone: 'rounded-full bg-emerald-100 px-2.5 py-0.5 text-emerald-900',
   badgeProgress: 'rounded-full bg-info-soft px-2.5 py-0.5 text-info',
   badgeDeadline: 'rounded-full bg-slate-100 px-2.5 py-0.5 text-slate-700',
+  // 분석·초안을 만드는 중인 카드의 배지입니다. 앞에 스피너가 붙습니다.
+  badgeWorking: 'inline-flex items-center gap-1.5 rounded-full bg-info-soft px-2.5 py-0.5 text-info',
+  badgeChecking: 'rounded-full bg-warning-soft px-2.5 py-0.5 text-warning',
+  badgeFailed: 'rounded-full bg-danger-soft px-2.5 py-0.5 text-danger',
+  // 작업 중인 카드는 테두리 색으로 다른 카드와 구분합니다. 결과 확인 중은 노란 테두리입니다.
+  listCardWorking: '!border-info/50',
+  listCardChecking: '!border-warning/50',
+  // 끝났지만 아직 결과 화면을 열지 않은 카드입니다. 옅은 바탕과 배지 줄 끝의 점 + "새 결과" 글자로 알립니다(색만으로 알리지 않음).
+  listCardUnseen: '!border-brand-line !bg-brand-soft/60',
+  newResult: 'ml-auto inline-flex shrink-0 items-center gap-1.5 text-brand-primary',
+  newResultDot: 'size-1.5 rounded-full bg-brand-primary',
+  // 필수 답변 막대 자리에 두는 진행 줄입니다. 분석은 흐르는 막대, 초안은 4단계 칸입니다.
+  workTrack: 'relative h-1.5 w-full overflow-hidden rounded-full bg-slate-100',
+  workSweep: 'absolute inset-y-0 left-0 w-1/3 rounded-full bg-info motion-safe:animate-[chat-loading-sweep_1.6s_ease-in-out_infinite]',
+  workSteps: 'grid grid-cols-4 gap-1',
+  workStep: 'h-1.5 rounded-full bg-slate-100',
+  workStepOn: 'h-1.5 rounded-full bg-info',
   badgeUrgent: 'rounded-full bg-amber-100 px-2.5 py-0.5 text-amber-900',
   // 신청 문서가 아니라 양식만 분석해 둔 공고의 카드임을 알리는 테두리 배지입니다.
   badgeAnalysis: 'rounded-full border border-line-strong bg-white px-2.5 py-px text-ink-muted',
