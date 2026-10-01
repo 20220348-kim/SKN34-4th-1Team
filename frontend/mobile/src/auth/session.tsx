@@ -8,6 +8,7 @@ import { normalizeEmail } from '@govbiz/shared/domain/usecases/LogInUseCase'
 import { apiRequest, ApiError, getApiBaseUrl } from '../api/client'
 import { openOAuthLogin, type MobileOAuthProvider } from './oauth'
 import { clearStoredSession, readStoredSession, saveStoredSession, type StoredSession } from './storage'
+import { clearPendingReview } from './reviewPending'
 
 const mobileSessionSchema = z.object({
   accessToken: z.string().min(1),
@@ -49,13 +50,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const invalidateSession = useCallback(async () => {
     beginRequest()
+    const previousEmail = sessionRef.current?.account.email
     sessionRef.current = null
     credentialsRef.current = null
     setSession(null)
     setStatus('signedOut')
     setRestoreError(null)
     try {
-      await clearStoredSession(baseUrl)
+      await Promise.all([clearStoredSession(baseUrl), previousEmail ? clearPendingReview(baseUrl, previousEmail) : Promise.resolve()])
     } catch {
       setRestoreError('기기에 저장된 로그인 정보를 지우지 못했습니다. 앱을 닫기 전에 로그아웃을 다시 시도해 주세요.')
       throw new Error('기기의 로그인 정보를 지우지 못했습니다. 다시 시도해 주세요.')

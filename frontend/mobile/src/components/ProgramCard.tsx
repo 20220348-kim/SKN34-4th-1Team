@@ -1,14 +1,15 @@
-import { Pressable, Text, View } from 'react-native'
+import { Pressable, StyleSheet, Text, View } from 'react-native'
 import type { SupportProgram } from '@govbiz/shared/domain/entities/SupportProgram'
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
-import { Card, StatusBadge, styles } from '../ui'
+import { Button, Card, StatusBadge, colors, styles } from '../ui'
 
 export const statusLabels = { OPEN: '접수 중', UPCOMING: '접수 예정', CLOSED: '마감', UNKNOWN: '상태 미확인' }
 
-export function ProgramCard({ program, onOpen }: { program: SupportProgram; onOpen: (identity: SupportProgramIdentity) => void }) {
-  return <Pressable accessibilityRole="button" accessibilityLabel={`${program.title}, 상세 보기`}
-    onPress={() => onOpen({ sourceCode: program.sourceCode, sourceProgramId: program.id })}>
-    <Card>
+export function ProgramCard({ program, onOpen, selection }: { program: SupportProgram; onOpen: (identity: SupportProgramIdentity) => void
+  selection?: { selected: boolean; disabled: boolean; onToggle(): void }
+}) {
+  const open = () => onOpen({ sourceCode: program.sourceCode, sourceProgramId: program.id })
+  const body = <>
       <View style={styles.row}><StatusBadge label={statusLabels[program.status]}
         tone={program.status === 'OPEN' ? 'success' : program.status === 'UPCOMING' ? 'info' : 'neutral'} /><Text style={styles.muted}>{program.sourceName}</Text></View>
       <Text style={styles.heading}>{program.title}</Text>
@@ -18,6 +19,20 @@ export function ProgramCard({ program, onOpen }: { program: SupportProgram; onOp
       {program.regions.length > 0 && <Text style={styles.muted}>{program.regions.join(' · ')}</Text>}
       {program.matchedReasons.map((reason) => <Text key={reason} style={styles.muted}>• {reason}</Text>)}
       <Text style={[styles.label, { textAlign: 'right' }]}>공고 상세 →</Text>
-    </Card>
-  </Pressable>
+    </>
+  if (!selection) return <Pressable accessibilityRole="button" accessibilityLabel={`${program.title}, 상세 보기`} onPress={open}><Card>{body}</Card></Pressable>
+  return <View testID={`review-program-${program.sourceCode}-${program.id}`} style={[styles.card, local.selectable, selection.selected && local.selected]}>
+    {selection.selected && <Text style={local.selectedLabel}>✓ 비교 대상 선택됨</Text>}
+    <Pressable accessibilityRole="button" accessibilityLabel={`${program.title}, 상세 보기`} onPress={open} style={{ gap: 9 }}>{body}</Pressable>
+    <View style={{ borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 12 }}>
+      <Button label={selection.selected ? '✓ 선택됨 · 해제' : '비교할 공고로 선택'} accessibilityLabel={`${program.title} ${selection.selected ? '선택 해제' : '선택'}`} variant={selection.selected ? 'primary' : 'secondary'}
+        disabled={selection.disabled} onPress={selection.onToggle} />
+    </View>
+  </View>
 }
+
+const local = StyleSheet.create({
+  selectable: { borderWidth: 1, borderColor: 'transparent' },
+  selected: { backgroundColor: colors.soft, borderColor: colors.primary },
+  selectedLabel: { color: colors.primaryText, fontSize: 13, fontWeight: '600' },
+})

@@ -1,11 +1,12 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native'
 import { Linking } from 'react-native'
+import { router } from 'expo-router'
 import { apiRequest } from '../api/client'
 import { useAuth } from '../auth/session'
 import { preparation, review, run } from '../test/preparationFixtures'
 import { PreparationScreen } from './PreparationScreen'
 
-jest.mock('expo-router', () => ({ useFocusEffect: (effect: () => void) => {
+jest.mock('expo-router', () => ({ router: { push: jest.fn() }, useFocusEffect: (effect: () => void) => {
   const React = jest.requireActual<typeof import('react')>('react'); React.useEffect(effect, [effect])
 } }))
 jest.mock('../auth/session', () => ({ useAuth: jest.fn() }))
@@ -26,7 +27,7 @@ beforeEach(() => {
   jest.mocked(apiRequest).mockReset().mockImplementation(respond)
 })
 
-test.each(['documents', 'reviews'] as const)('%s displays its own API list and opens the existing web detail', async (kind) => {
+test.each(['documents', 'reviews'] as const)('%s displays its own API list and opens the corresponding web/native detail', async (kind) => {
   process.env.EXPO_PUBLIC_WEB_BASE_URL = 'https://govbiz.example.test'
   const open = jest.spyOn(Linking, 'openURL').mockResolvedValue(true)
   try {
@@ -36,9 +37,11 @@ test.each(['documents', 'reviews'] as const)('%s displays its own API list and o
     if (kind === 'documents') expect(screen.queryByLabelText('동시 신청 검토 열기')).toBeNull()
     else expect(screen.queryByText(/사업계획서/)).toBeNull()
     fireEvent.press(screen.getByLabelText(row))
-    await waitFor(() => expect(open).toHaveBeenCalledWith(kind === 'documents'
-      ? 'https://govbiz.example.test/app/application-preparations/9'
-      : 'https://govbiz.example.test/app/combination-reviews/5/runs/6'))
+    if (kind === 'documents') await waitFor(() => expect(open).toHaveBeenCalledWith('https://govbiz.example.test/app/application-preparations/9'))
+    else {
+      expect(router.push).toHaveBeenCalledWith({ pathname: '/all/reviews/[id]', params: { id: '5', runId: '6' } })
+      expect(open).not.toHaveBeenCalled()
+    }
     expect(apiRequest).toHaveBeenCalledWith(expect.stringMatching(/^\/api\/v1\//), expect.objectContaining({ accessToken: 'owned-token' }))
     expect(jest.mocked(apiRequest).mock.calls.every(([, options]) => !options?.method)).toBe(true)
   } finally { open.mockRestore(); delete process.env.EXPO_PUBLIC_WEB_BASE_URL }

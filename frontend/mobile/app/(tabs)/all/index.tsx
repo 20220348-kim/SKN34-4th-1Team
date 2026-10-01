@@ -13,7 +13,7 @@ export default function MenuRoute() {
       case 'saved': router.navigate('/(tabs)/saved'); break
       case 'report': router.navigate('/(tabs)/report'); break
       case 'documents': router.push({ pathname: '/(tabs)/all/preparation', params: { kind: 'documents' } }); break
-      case 'reviews': router.push({ pathname: '/(tabs)/all/preparation', params: { kind: 'reviews' } }); break
+      case 'reviews': router.push('/(tabs)/all/reviews'); break
       case 'recruitments': router.push('/(tabs)/all/collab'); break
       case 'received': router.push({ pathname: '/(tabs)/all/collab', params: { view: 'box', box: 'received' } }); break
       case 'sent': router.push({ pathname: '/(tabs)/all/collab', params: { view: 'box', box: 'sent' } }); break

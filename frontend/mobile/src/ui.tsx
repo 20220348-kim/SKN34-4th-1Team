@@ -1,5 +1,5 @@
 import type { PropsWithChildren } from 'react'
-import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View, type TextInputProps } from 'react-native'
+import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View, type TextInputProps, type StyleProp, type ViewStyle } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 
 export const colors = {
@@ -26,16 +26,18 @@ export function Page({ children, scroll = true, headerless = false, keyboardOffs
   </KeyboardAvoidingView>
 }
 
-export function Button({ label, onPress, disabled, variant = 'primary', busy, size = 'medium' }: {
+export function Button({ label, onPress, disabled, variant = 'primary', busy, size = 'medium', accessibilityLabel, style }: {
   label: string; onPress: () => void; disabled?: boolean; variant?: 'primary' | 'secondary' | 'ghost' | 'danger'; busy?: boolean
   size?: 'small' | 'medium' | 'large'
+  accessibilityLabel?: string
+  style?: StyleProp<ViewStyle>
 }) {
-  return <Pressable accessibilityRole="button" accessibilityLabel={label} accessibilityState={{ disabled: Boolean(disabled || busy), busy: Boolean(busy) }}
+  return <Pressable accessibilityRole="button" accessibilityLabel={accessibilityLabel ?? label} accessibilityState={{ disabled: Boolean(disabled || busy), busy: Boolean(busy) }}
     disabled={disabled || busy} onPress={onPress}
     style={({ pressed }) => [styles.button, variant === 'secondary' && styles.secondary,
       variant === 'ghost' && styles.ghost, variant === 'danger' && styles.dangerButton,
       size === 'small' && styles.smallButton, size === 'large' && styles.largeButton,
-      (disabled || busy || pressed) && { opacity: 0.55 }]}>
+      (disabled || busy || pressed) && { opacity: 0.55 }, style]}>
     {busy && <ActivityIndicator color={variant === 'primary' ? colors.surface : colors.primary} />}
     <Text style={[styles.buttonText, variant === 'secondary' && { color: colors.text },
       variant === 'ghost' && { color: colors.secondaryText }, variant === 'danger' && { color: colors.danger },
@@ -78,7 +80,7 @@ export const styles = StyleSheet.create({
     paddingHorizontal: 14, paddingVertical: 13, fontSize: 16, color: colors.text, minHeight: 48 },
   button: { borderRadius: 999, backgroundColor: colors.primary, minHeight: 44, paddingHorizontal: 16, paddingVertical: 10,
     alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 8 },
-  buttonText: { color: colors.surface, fontSize: 15, fontWeight: '600' },
+  buttonText: { color: colors.surface, fontSize: 15, fontWeight: '600', flexShrink: 1, textAlign: 'center' },
   secondary: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.fieldBorder },
   ghost: { backgroundColor: 'transparent' },
   dangerButton: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.danger },

@@ -956,7 +956,18 @@ PDF·첨부·다른 제공처 확장은 후속 범위입니다.
 
 ## 중복 지원·수혜 검토 사용자 화면 (5-1)
 
-`/app/combination-reviews`는 본인 목록·커서 조회·확인 후 삭제, `/new`와 `/:reviewId`는
+모바일은 하단 `검색·관심함·리포트·전체`의 전체 메뉴에서 `/all/reviews`로 직접 진입한다.
+목록·새 검토·편집·결과와 실행 이력을 제공하며 관심 공고함은 공고 선택 방법 중 하나다.
+공고 선택의 `CatalogScreen`과 `ProgramCard`는 기존 필터 검색·상세 진입을 재사용하고 비교 대상 선택 버튼만 추가한다.
+`현재 참여 상태 → 독립 사실` 변환은 shared `CombinationReviewParticipation`이 소유하며 웹의 `currentStatus`는 재수출한다.
+호출은 `모바일 화면 → useCombinationReview → shared CombinationReviewUseCase → MobileCombinationReviewRepository → Core API`이며
+공개 계약·응답 검증은 shared DTO, 인증·15초 HTTP 대기는 모바일 API 경계가 담당한다. Core 공개 HTTP 계약은 변경하지 않는다.
+분석 전에 API origin·계정별 SecureStore에 요청 키·버전·추가 설명을 보관하고 유실 응답은 같은 요청으로만 수동 확인한다.
+화면·앱 활성 상태에서만 선택 실행을 3초 간격으로 읽으며 로그인·화면 진입·상태 조회만으로 분석 POST를 실행하지 않는다.
+계정 변경에는 화면 상태와 늦은 응답을 차단하고 로그아웃에는 보관 요청을 삭제한다. UNKNOWN과 기술 실패는 허용 판단으로 대체하지 않는다.
+모바일 결과의 인용·사업 순서는 실행 스냅샷 기준이다. 공식 HTTPS 페이지 열기와 보관 원본 다운로드(현재 웹 제공)를 구분한다.
+
+웹의 `/app/combination-reviews`는 본인 목록·커서 조회·확인 후 삭제, `/new`와 `/:reviewId`는
 `제목·공고 2개 선택 → 공고별 참여 상태 → 공고 분석`의 3단계 흐름을 제공한다. 단계 이동 시 스크롤을 상단으로 초기화하고, 분석 단계에서 실행과 이력 목록을 제공한다.
 실행 이력 항목은 `/:reviewId/runs/:runId` 결과 전용 화면으로 이동해 결과를 자동 조회한다. 결과 화면은 같은 검토의 다른 실행 선택·이전 이력 추가 조회·분석 결과·원본 다운로드를 제공한다. RequireAuth와 WorkspaceLayout을 사용한다.
 호출은 `View → ViewModel → CombinationReviewUseCase → Domain Repository 계약 → Data 구현 → HTTP/Zod → Core API`다.
