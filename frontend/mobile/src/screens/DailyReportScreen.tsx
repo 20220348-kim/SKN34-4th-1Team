@@ -93,7 +93,8 @@ function periodLabel(period: string) {
   return { status: '접수 중', deadline: `D-${Math.round((end - today) / 86_400_000)}` }
 }
 
-export function DailyReportScreen({ onLogin, onCompany, onSearch, onOpenProgram }: {
+export function DailyReportScreen({ onLogin, onCompany, onSearch, onOpenProgram, settingsOnly = false }: {
+  settingsOnly?: boolean
   onLogin(): void; onCompany(): void; onSearch(): void; onOpenProgram(identity: SupportProgramIdentity): void
 }) {
   const { session, status, refreshSession, invalidateSession } = useAuth()
@@ -127,7 +128,7 @@ export function DailyReportScreen({ onLogin, onCompany, onSearch, onOpenProgram 
               if (cause instanceof ApiError && cause.status === 404 && cause.code === 'COMPANY_NOT_REGISTERED') return null
               throw cause
             }),
-          getLatestDailyReport(token, controller.signal),
+          settingsOnly ? Promise.resolve(null) : getLatestDailyReport(token, controller.signal),
         ])
         const saved = report?.programs.length ? new Set(savedSupportProgramListDtoSchema.parse(
           await apiRequest('/api/v1/me/saved-programs', { accessToken: token, signal: controller.signal }),
@@ -147,7 +148,7 @@ export function DailyReportScreen({ onLogin, onCompany, onSearch, onOpenProgram 
       }
     })()
     return () => { controller.abort(); request.current?.abort() }
-  }, [token, revision, invalidateSession]))
+  }, [token, revision, invalidateSession, settingsOnly]))
 
   const visible = state.token === token ? state : emptyState(token)
   const settings = visible.settings
@@ -225,8 +226,8 @@ export function DailyReportScreen({ onLogin, onCompany, onSearch, onOpenProgram 
   if (status === 'loading') return <Page><ActivityIndicator accessibilityLabel="로그인 상태 확인 중" color={colors.primary} /></Page>
   if (status === 'unavailable') return <Page><Notice error>로그인 상태를 확인하지 못했습니다.</Notice>
     <Button label="다시 확인" onPress={() => void refreshSession()} /></Page>
-  if (!token) return <Page><Card><Text style={styles.heading}>맞춤 리포트</Text>
-    <Text style={styles.subtitle}>로그인하면 기업 조건에 맞춘 리포트를 확인할 수 있어요.</Text>
+  if (!token) return <Page><Card><Text style={styles.heading}>{settingsOnly ? '리포트 수신 설정' : '맞춤 리포트'}</Text>
+    <Text style={styles.subtitle}>{settingsOnly ? '로그인하면 리포트 수신 설정을 변경할 수 있어요.' : '로그인하면 기업 조건에 맞춘 리포트를 확인할 수 있어요.'}</Text>
     <Button label="로그인하기" onPress={onLogin} /></Card></Page>
   if (visible.loading) return <Page><ActivityIndicator accessibilityLabel="맞춤 리포트 불러오는 중" color={colors.primary} /></Page>
   if (visible.error && !visible.settings) return <Page><Notice error>{visible.error}</Notice><Button label="다시 시도" onPress={refresh} /></Page>
@@ -236,7 +237,7 @@ export function DailyReportScreen({ onLogin, onCompany, onSearch, onOpenProgram 
   const ready = report?.status === 'READY'
   return <Page refreshing={refreshing} onRefresh={refresh}>
     {visible.error && <Notice error>{visible.error}</Notice>}
-    {report ? <>
+    {!settingsOnly && (report ? <>
       <View style={local.dateLine}><Text style={local.dateTitle}>{reportDateLabel(report.reportDate)}</Text>
         <Text style={local.dateMeta}>{generatedTimeLabel(report.generatedAt)} · {deliveryLabels[report.deliveryStatus]}</Text></View>
       <Card><Text style={styles.heading}>{report.region} · {report.industry} 조건으로 {ready
@@ -260,12 +261,14 @@ export function DailyReportScreen({ onLogin, onCompany, onSearch, onOpenProgram 
         <View accessibilityLabel={`기업 조건 완성도 ${completeness(visible.company, settings.supportPurpose)}%`} style={local.track}>
           <View style={[local.progress, { width: `${completeness(visible.company, settings.supportPurpose)}%` }]} /></View>
         <Button label={visible.company ? '기업 정보 채우기' : '기업 등록하기'} variant="secondary" onPress={onCompany} /></Card>
-    </>}
-    <Pressable accessibilityRole="button" accessibilityLabel="수신 설정" accessibilityState={{ expanded }} onPress={() => setExpanded(!expanded)}>
+    </>)}
+    {!settingsOnly && <Pressable accessibilityRole="button" accessibilityLabel="수신 설정" accessibilityState={{ expanded }} onPress={() => setExpanded(!expanded)}>
       <Card><View style={local.dateLine}><Text style={styles.heading}>수신 설정 · 이메일 {settings.enabled ? '켬' : '끔'}</Text>
         <Text style={styles.muted}>{expanded ? '▴' : '▾'}</Text></View></Card>
-    </Pressable>
-    {expanded && <Card>
+    </Pressable>}
+    {settingsOnly && !visible.company && <Card><Text style={styles.body}>기업 정보를 등록하면 정기 리포트를 받을 수 있어요.</Text>
+      <Button label="기업 등록하기" variant="secondary" onPress={onCompany} /></Card>}
+    {(settingsOnly || expanded) && <Card>
       <Text style={styles.muted}>수신 주소: {session?.account.email} · {settings.emailConfirmed ? '확인 완료' : '확인 필요'}</Text>
       {!settings.emailDeliveryAvailable && <Notice>현재 이메일 발송 설정이 준비되지 않았어요. 확인 메일과 정기 발송을 사용할 수 없어요.</Notice>}
       {!settings.schedulerEnabled && <Notice>정기 리포트 예약이 꺼져 있어요. 이미 예약된 메일은 처리될 수 있어요.</Notice>}

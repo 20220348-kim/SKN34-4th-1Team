@@ -6,5 +6,5 @@ export default function SearchRoute() {
   const { mode } = useLocalSearchParams<{ mode?: string }>()
   return <SearchScreen mode={mode === 'filter' ? 'filter' : 'ai'} onModeChange={(next) => router.setParams({ mode: next })}
     onOpenProgram={(identity) => router.push({ pathname: '/program', params: identity })}
-    onLogin={() => router.push('/(tabs)/account')} />
+    onLogin={() => router.push('/(tabs)/all/account')} />
 }

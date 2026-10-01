@@ -86,3 +86,32 @@ test('account switch never leaves the previous account proposal open', async () 
   await screen.findByText('제안함은 로그인 후 확인할 수 있어요.')
   expect(screen.queryByText('제안 메시지')).toBeNull()
 })
+
+
+test('sent entry selects the sent box and queries it with the owned token', async () => {
+  jest.mocked(useAuth).mockReturnValue({ status: 'signedIn', session: { accessToken: 'my-token' },
+    invalidateSession: jest.fn() } as unknown as ReturnType<typeof useAuth>)
+  const view = render(<CollaborationScreen view="box" initialBox="sent" onViewChange={jest.fn()}
+    onOpenRecruitment={onOpenRecruitment} onLogin={onLogin} />)
+  await waitFor(() => expect(browseProposals).toHaveBeenCalledWith('sent', 'my-token', expect.any(AbortSignal)))
+  expect(screen.getByRole('tab', { name: '보낸 제안' }).props.accessibilityState.selected).toBe(true)
+  view.rerender(<CollaborationScreen view="box" initialBox="received" onViewChange={jest.fn()}
+    onOpenRecruitment={onOpenRecruitment} onLogin={onLogin} />)
+  await waitFor(() => expect(screen.getByRole('tab', { name: '받은 제안' }).props.accessibilityState.selected).toBe(true))
+})
+
+test('my recruitment entry sends the mine filter, while a guest entry only offers login', async () => {
+  jest.mocked(useAuth).mockReturnValue({ status: 'signedIn', session: { accessToken: 'my-token' },
+    invalidateSession: jest.fn() } as unknown as ReturnType<typeof useAuth>)
+  const view = render(<CollaborationScreen view="recruitments" mineOnly onViewChange={jest.fn()}
+    onOpenRecruitment={onOpenRecruitment} onLogin={onLogin} />)
+  await waitFor(() => expect(browseRecruitments).toHaveBeenCalledWith(expect.objectContaining({ mineOnly: true }), 'my-token', expect.any(AbortSignal)))
+  jest.mocked(useAuth).mockReturnValue({ status: 'signedOut', session: null,
+    invalidateSession: jest.fn() } as unknown as ReturnType<typeof useAuth>)
+  jest.mocked(browseRecruitments).mockClear()
+  view.rerender(<CollaborationScreen view="recruitments" mineOnly onViewChange={jest.fn()}
+    onOpenRecruitment={onOpenRecruitment} onLogin={onLogin} />)
+  await screen.findByText('내 모집글은 로그인 후 확인할 수 있어요.')
+  expect(browseRecruitments).not.toHaveBeenCalled()
+  expect(screen.queryByText(recruitment.title)).toBeNull()
+})

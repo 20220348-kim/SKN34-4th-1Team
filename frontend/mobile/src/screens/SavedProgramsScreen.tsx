@@ -94,7 +94,7 @@ export function SavedProgramsScreen({ onOpenProgram, onCountChange }: { onOpenPr
   const workCount = workspace.preparations !== null && workspace.reviews !== null ? workspace.preparations.length + workspace.reviews.length : null
   if (status === 'loading') return <Page><ActivityIndicator accessibilityLabel="로그인 상태 확인 중" /></Page>
   if (status === 'unavailable') return <Page><Notice error>로그인 상태를 확인하지 못했습니다.</Notice><Button label="다시 확인" onPress={() => void refreshSession()} /></Page>
-  if (!token) return <Page><Notice>내 정보 탭에서 로그인하면 웹과 앱에 저장한 관심 공고를 볼 수 있습니다.</Notice></Page>
+  if (!token) return <Page><Notice>전체 → 내 계정에서 로그인하면 웹과 앱에 저장한 관심 공고를 볼 수 있습니다.</Notice></Page>
   return <View style={local.page}>
     <View style={local.header}><SegmentedControl<'saved' | 'preparation'> label="관심함 보기" value={view} onChange={setView} options={[
       { value: 'saved', label: '담은 공고' }, { value: 'preparation', label: `준비 중인 작업${workCount === null ? '' : ` ${workCount}`}` }]} /></View>
