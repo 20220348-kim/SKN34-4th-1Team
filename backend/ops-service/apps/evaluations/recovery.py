@@ -106,7 +106,6 @@ def submit_recovery(user, source, request_id):
     # 종료된 복구 상태를 갱신하는 외부 HTTP 호출은 DB transaction 밖에서 한다.
     recovery_state(source)
     with transaction.atomic():
-        admission = lock_admission()
         locked = EvaluationRun.objects.select_for_update().get(pk=source.pk)
         existing = EvaluationRun.objects.filter(pk=request_id).first()
         if existing:
@@ -114,7 +113,7 @@ def submit_recovery(user, source, request_id):
                 raise RequestConflict
             run, created = existing, False
         else:
-            require_open(admission)
+            require_open(lock_admission())
             if (
                 locked.status not in RECOVERABLE
                 or locked.recoveries.exclude(status__in=FINISHED).exists()

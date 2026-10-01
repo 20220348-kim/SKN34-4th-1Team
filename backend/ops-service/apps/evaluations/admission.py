@@ -16,7 +16,7 @@ class AdmissionPaused(AdmissionUnavailable):
 
 
 def lock_admission():
-    """Call first in the submission transaction, before baseline/run/budget locks."""
+    """Lock after baseline/source checks, just before new run creation and budget locks."""
     try:
         # Before the first operation the new table is empty and admission is open.
         # Once changed, audit foreign keys protect the singleton from deletion.

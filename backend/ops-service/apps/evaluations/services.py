@@ -83,14 +83,12 @@ def submit_run(
                 raise ResultsUnavailable
 
     with transaction.atomic():
-        admission = lock_admission()
         baseline = lock_baseline(dataset_id)
         existing = EvaluationRun.objects.filter(pk=request_id).first()
         if existing:
             check_request(existing)
             run, created = existing, False
         else:
-            require_open(admission)
             validate_execution(
                 dataset_id, candidate_capture_id, reference_capture_id, execution_mode, config
             )
@@ -139,6 +137,9 @@ def submit_run(
             )
             if execution_profile != spec["profile_sha256"]:
                 raise ValueError("실행 명세가 변경되었습니다. 새로고침 후 다시 확인하세요.")
+            # Acquire only after reference/artifact checks. Pause must not wait
+            # for their HTTP reads; committing a new row still holds this lock.
+            require_open(lock_admission())
             run, created = EvaluationRun.objects.get_or_create(
                 id=request_id,
                 defaults={

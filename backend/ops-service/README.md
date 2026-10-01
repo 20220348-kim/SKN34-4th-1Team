@@ -81,8 +81,9 @@ Django HTTP 요청 안에서는 평가하지 않으며 Django에 평가 SDK 전�
 접수 상태 DB 조회 실패는 503 `EVALUATION_ADMISSION_UNAVAILABLE`이며 정상 허용으로 대체하지 않습니다.
 기존 요청 재확인·동기화·취소·예산 정산·보고서 조회는 계속 허용합니다.
 
-호출 흐름은 `새 요청 → DB 접수 상태 잠금 → 기존 평가 접수 transaction → commit → Prefect HTTP`입니다.
-중지 명령과 새 요청 생성이 같은 행을 잠그며, 외부 HTTP 호출 동안 DB 잠금을 유지하지 않습니다.
+호출 흐름은 `새 요청 → 기준 검증 → DB 접수 상태 잠금 → 요청·예산 기록 → commit → Prefect HTTP`입니다.
+중지 명령과 새 요청 생성이 같은 행을 잠급니다. 접수 상태 잠금은 기준 자료의 HTTP 조회가 끝난 뒤
+획득하고 Prefect 실행 요청 전에 해제하므로, 자료 조회 지연이 접수 중지 명령을 막지 않습니다.
 이 제어는 Prefect 직접 호출·스케줄을 중지하거나 백업 일관성을 보장하지 않습니다.
 실제 명령과 최초 적용·재개 절차는 [갱신 runbook](../../docs/ops-upgrade-runbook.md)을 따릅니다.
 

@@ -13,6 +13,7 @@ from django.db.models.deletion import ProtectedError
 from django.test import SimpleTestCase, TestCase, TransactionTestCase
 from rest_framework.test import APIClient
 
+from . import services
 from .admission import (
     AdmissionPaused,
     change_admission,
@@ -233,6 +234,42 @@ class AdmissionRecoveryTests(RecoveryFixture, TestCase):
 class AdmissionConcurrencyTests(TransactionTestCase):
     def setUp(self):
         self.user = get_user_model().objects.create_user("concurrent-admission")
+
+    def test_pause_does_not_wait_for_request_preparation(self):
+        preparing, release = Event(), Event()
+        original = services.make_spec
+
+        def prepare(*args, **kwargs):
+            preparing.set()
+            if not release.wait(timeout=10):
+                raise AssertionError("Preparation was not released")
+            return original(*args, **kwargs)
+
+        def submit():
+            close_old_connections()
+            try:
+                return submit_run(self.user, **payload())
+            finally:
+                close_old_connections()
+
+        def pause():
+            close_old_connections()
+            try:
+                return change()
+            finally:
+                close_old_connections()
+
+        with patch.object(services, "make_spec", side_effect=prepare):
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                pending = pool.submit(submit)
+                try:
+                    self.assertTrue(preparing.wait(timeout=5))
+                    self.assertFalse(pool.submit(pause).result(timeout=5)["accepting"])
+                finally:
+                    release.set()
+                with self.assertRaises(AdmissionPaused):
+                    pending.result(timeout=10)
+        self.assertFalse(EvaluationRun.objects.exists())
 
     def test_pause_commits_before_waiting_submission_can_create_a_run(self):
         started = Event()
