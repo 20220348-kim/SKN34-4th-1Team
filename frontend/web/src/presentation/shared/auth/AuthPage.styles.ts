@@ -4,6 +4,7 @@ function classes(...groups: string[]) {
 
 // 색상이나 CSS 속성이 아니라 로그인·회원가입·비밀번호 찾기 화면에서 맡는 UI 역할을 이름으로 사용합니다.
 // 네 화면은 테두리 없는 가운데 열(로고·구분선·입력·버튼·링크)이라는 같은 껍데기를 공유하고 입력 항목만 달라집니다.
+// 소셜 로그인 처리 화면과 리포트 메일 확인 화면(daily-report)도 같은 껍데기를 쓰므로 features/auth가 아닌 shared에 둡니다.
 export const authPageStyles = {
   page: 'flex min-h-screen flex-col items-center justify-center bg-white px-5 py-10 text-app-ink max-chat:py-8',
   logo: classes(

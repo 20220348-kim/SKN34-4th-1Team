@@ -2,8 +2,8 @@ import { Link } from 'react-router'
 
 import { publicPaths } from '../../../shared/routes/appPaths'
 import { resetPasswordMessages, useResetPasswordViewModel } from '../viewmodel/useResetPasswordViewModel'
-import { AuthLogo } from './AuthLogo'
-import { authPageStyles } from './AuthPage.styles'
+import { AuthLogo } from '../../../shared/auth/AuthLogo'
+import { authPageStyles } from '../../../shared/auth/AuthPage.styles'
 
 /** 인증번호를 맞힌 뒤 여는 비밀번호 재설정 화면입니다. 통행 토큰은 주소의 `#token=`에서 읽습니다. */
 export function ResetPasswordPage() {

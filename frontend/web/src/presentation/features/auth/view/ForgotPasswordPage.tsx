@@ -3,8 +3,8 @@ import { Link } from 'react-router'
 import { publicPaths } from '../../../shared/routes/appPaths'
 import { MAX_EMAIL_LENGTH } from '../../../../domain/entities/EmailAddress'
 import { useForgotPasswordViewModel } from '../viewmodel/useForgotPasswordViewModel'
-import { AuthLogo } from './AuthLogo'
-import { authPageStyles } from './AuthPage.styles'
+import { AuthLogo } from '../../../shared/auth/AuthLogo'
+import { authPageStyles } from '../../../shared/auth/AuthPage.styles'
 
 /**
  * 비밀번호 찾기 화면입니다. 로그인 화면의 "비밀번호 찾기" 링크가 이 화면으로 옵니다.

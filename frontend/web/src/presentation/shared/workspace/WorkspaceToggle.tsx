@@ -8,10 +8,12 @@ export function WorkspaceToggle({
   label,
   isOn,
   onToggle,
+  disabled = false,
 }: {
   label: string
   isOn: boolean
   onToggle: () => void
+  disabled?: boolean
 }) {
   return (
     <button
@@ -22,6 +24,7 @@ export function WorkspaceToggle({
       role="switch"
       aria-checked={isOn}
       aria-label={label}
+      disabled={disabled}
       onClick={onToggle}
     >
       <span

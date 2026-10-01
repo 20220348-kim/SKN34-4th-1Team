@@ -2,8 +2,8 @@ import { Link } from 'react-router'
 
 import { publicPaths } from '../../../shared/routes/appPaths'
 import { useLoginViewModel } from '../viewmodel/useLoginViewModel'
-import { AuthLogo } from './AuthLogo'
-import { authPageStyles } from './AuthPage.styles'
+import { AuthLogo } from '../../../shared/auth/AuthLogo'
+import { authPageStyles } from '../../../shared/auth/AuthPage.styles'
 import { EmailIcon } from './EmailIcon'
 import { OAuthSignInButtons } from './OAuthSignInButtons'
 
