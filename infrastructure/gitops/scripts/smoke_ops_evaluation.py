@@ -117,6 +117,38 @@ def verify_upgrade_probe_database(nk):
     assert result.strip() == "PASS", "Upgrade probe database verification failed"
 
 
+def set_admission(nk, action, version):
+    from uuid import uuid4
+
+    result = json.loads(
+        ops_runtime.quiet(
+            nk
+            + [
+                "exec",
+                "deployment/ops-service",
+                "-c",
+                "ops-service",
+                "--",
+                "python",
+                "manage.py",
+                "evaluation_admission",
+                action,
+                "--expected-version",
+                str(version),
+                "--request-id",
+                str(uuid4()),
+                "--actor",
+                "isolated-bridge-smoke",
+                "--reason",
+                "Verify upgrade admission control without model calls",
+            ],
+        )
+    )
+    assert result["version"] == version + 1
+    assert result["accepting"] is (action == "resume")
+    return result
+
+
 def free_evaluation(output, password, web_env, *, seed=False):
     env = {
         **web_env,
@@ -278,6 +310,7 @@ def verify(state, settings, compose, compose_env, ops_image, kind, helm, report)
             ops_runtime.quiet(nk + ["get", "secret", "ops-runtime", "-o", "json"])
         )["data"]
         assert all(secret_after[key] == value for key, value in secret_before.items())
+        report["admission_pause"] = set_admission(nk, "pause", 0)
         ops_runtime.activate(state, settings, state / ".env", helm)
         assert (
             json.loads(
@@ -293,6 +326,10 @@ def verify(state, settings, compose, compose_env, ops_image, kind, helm, report)
             state, settings
         )
         assert report["upgrade_preflight_before_evaluation"]["status"] == "PASS"
+        assert (
+            report["upgrade_preflight_before_evaluation"]["admission_blocked"] is True
+        )
+        report["admission_resume"] = set_admission(nk, "resume", 1)
         report["runtime_check_before_evaluation"] = ops_runtime.check_runtime(
             state, settings
         )

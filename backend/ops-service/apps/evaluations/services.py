@@ -10,6 +10,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
 from . import prefect_client
+from .admission import lock_admission, require_open
 from .artifact_store import ResultsUnavailable, read_artifact, read_evidence
 from .baselines import lock_baseline
 from .budget import BudgetUnavailable, close_after_cancellation, reserve
@@ -136,6 +137,9 @@ def submit_run(
             )
             if execution_profile != spec["profile_sha256"]:
                 raise ValueError("실행 명세가 변경되었습니다. 새로고침 후 다시 확인하세요.")
+            # Acquire only after reference/artifact checks. Pause must not wait
+            # for their HTTP reads; committing a new row still holds this lock.
+            require_open(lock_admission())
             run, created = EvaluationRun.objects.get_or_create(
                 id=request_id,
                 defaults={

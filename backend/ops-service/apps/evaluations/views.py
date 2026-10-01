@@ -15,6 +15,7 @@ from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
+from .admission import AdmissionUnavailable
 from .budget import BudgetUnavailable
 from .catalog import DATASETS, public_datasets, selection
 from .models import EvaluationRun
@@ -225,6 +226,8 @@ def api_runs(request):
     serializer.is_valid(raise_exception=True)
     try:
         run, created = submit_run(request.user, **serializer.validated_data)
+    except AdmissionUnavailable as error:
+        return Response({"code": error.code}, status=503)
     except BudgetUnavailable:
         return Response({"code": "LIVE_BUDGET_UNAVAILABLE"}, status=400)
     except RequestConflict:
@@ -286,6 +289,8 @@ def api_recover(request, run_id):
         run, created = submit_recovery(
             request.user, source, serializer.validated_data["request_id"]
         )
+    except AdmissionUnavailable as error:
+        return Response({"code": error.code}, status=503)
     except RequestConflict:
         return Response({"code": "RECOVERY_CONFLICT"}, status=409)
     except ResultsUnavailable:

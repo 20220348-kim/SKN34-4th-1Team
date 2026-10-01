@@ -5,6 +5,7 @@ import json
 from django.conf import settings
 from django.db import transaction
 
+from .admission import lock_admission, require_open
 from .artifact_store import read_artifact, read_evidence
 from .execution_spec import digest, make_spec, read_release
 from .models import EvaluationRun
@@ -112,6 +113,7 @@ def submit_recovery(user, source, request_id):
                 raise RequestConflict
             run, created = existing, False
         else:
+            require_open(lock_admission())
             if (
                 locked.status not in RECOVERABLE
                 or locked.recoveries.exclude(status__in=FINISHED).exists()

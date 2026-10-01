@@ -797,6 +797,30 @@ it.each(['INVALID_REFERENCE', 'LIVE_BUDGET_UNAVAILABLE'])('서버가 접수를 �
   expect(fetchMock.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(1)
 })
 
+it.each([
+  ['EVALUATION_ADMISSION_PAUSED', '점검을 위해 새 평가 접수가 중지되어 있습니다. 접수 재개 후 다시 시도해 주세요.'],
+  ['EVALUATION_ADMISSION_UNAVAILABLE', '평가 접수 상태를 확인할 수 없어 접수하지 않았습니다. 운영자에게 확인해 주세요.'],
+])('접수 중지 또는 확인 불가(%s)는 저장 요청의 503 응답과 구분한다', async (code, message) => {
+  const original = fetchMock.getMockImplementation()!
+  const requests: string[] = []
+  fetchMock.mockImplementation(async (path, options) => {
+    if (path === `/api/v1/ops/evaluations/${id}` && requests.length < 2) return json({}, 404)
+    if (path === '/api/v1/ops/evaluations') {
+      requests.push(JSON.parse(String(options?.body)).request_id)
+      return requests.length === 1 ? json({ code }, 503) : json(completed, 202)
+    }
+    return original(path, options)
+  })
+  open()
+  fireEvent.click(await screen.findByRole('button', { name: '평가 실행' }))
+  await screen.findByText(message, { exact: false })
+  expect(screen.queryByRole('heading', { name: '평가 실행 상세' })).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: '같은 요청으로 재시도' }))
+  expect(await screen.findByRole('heading', { name: '평가 실행 상세' })).toBeTruthy()
+  expect(requests).toHaveLength(2)
+  expect(requests[0]).toBe(requests[1])
+})
+
 it('접수 전 관리자 계정이 바뀌면 보관 요청을 다른 계정으로 전송하지 않는다', async () => {
   const original = fetchMock.getMockImplementation()!
   let sessions = 0

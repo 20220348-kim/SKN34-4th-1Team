@@ -71,6 +71,22 @@ Django 사용자 행은 `core:{회원 ID}`와 이메일로 실행 요청자를 �
 Django HTTP 요청 안에서는 평가하지 않으며 Django에 평가 SDK 전체를 설치하지 않습니다.
 별도 Celery·Airflow·LLM provider는 추가하지 않았습니다. 저장 응답 재평가는 모델 호출 0회이며, 새 응답 생성은 아래 승인 계약을 따릅니다.
 
+## 갱신 중 새 평가 접수 중지
+
+`0020_evaluation_admission`은 접수 상태와 변경 기록 테이블을 추가하며 기존 평가·예산 행을 변경하지 않습니다.
+기본 접수 상태는 허용입니다. 운영자는 `python manage.py evaluation_admission status`로 현재 상태·버전을
+조회하고 `pause`/`resume`에 `--expected-version`, `--request-id`, `--actor`, `--reason`을 지정합니다.
+동일 요청 재시도는 새 변경을 만들지 않으며, 이전 resume 재시도로 이후 pause를 해제하지 않습니다.
+새 UUID를 사용하는 평가·후처리 복구는 중지 중 503 `EVALUATION_ADMISSION_PAUSED`로 거절합니다.
+접수 상태 DB 조회 실패는 503 `EVALUATION_ADMISSION_UNAVAILABLE`이며 정상 허용으로 대체하지 않습니다.
+기존 요청 재확인·동기화·취소·예산 정산·보고서 조회는 계속 허용합니다.
+
+호출 흐름은 `새 요청 → 기준 검증 → DB 접수 상태 잠금 → 요청·예산 기록 → commit → Prefect HTTP`입니다.
+중지 명령과 새 요청 생성이 같은 행을 잠급니다. 접수 상태 잠금은 기준 자료의 HTTP 조회가 끝난 뒤
+획득하고 Prefect 실행 요청 전에 해제하므로, 자료 조회 지연이 접수 중지 명령을 막지 않습니다.
+이 제어는 Prefect 직접 호출·스케줄을 중지하거나 백업 일관성을 보장하지 않습니다.
+실제 명령과 최초 적용·재개 절차는 [갱신 runbook](../../docs/ops-upgrade-runbook.md)을 따릅니다.
+
 ## 새 응답 생성 API
 
 설정은 [LLMOps 실행 문서](../../infrastructure/llmops/README.md#ops에서-새-모델-평가)를 따릅니다.
