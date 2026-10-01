@@ -9,7 +9,9 @@ import { appPaths } from '../../../shared/routes/appPaths'
 import { WorkspacePageHeader } from '../../../shared/workspace/WorkspacePageHeader'
 import { WorkspaceToast, type WorkspaceToastNotice } from '../../../shared/workspace/WorkspaceToast'
 import { workspacePageStyles, workspaceTagClassName } from '../../../shared/workspace/WorkspacePage.styles'
+import { useDelayedFlag } from '../../../shared/workspace/useDelayedFlag'
 import { ApplicationPreparationLede } from './ApplicationPreparationLede'
+import { ButtonSpinner, DocumentFilesSkeleton } from './ApplicationPreparationSkeletons'
 import {
   answerEditorStyles as e,
   applicationPreparationStyles as s,
@@ -96,10 +98,6 @@ function madeAtLabel(value: string) {
   if (Number.isNaN(date.getTime())) return null
   const two = (part: number) => String(part).padStart(2, '0')
   return `${two(date.getMonth() + 1)}.${two(date.getDate())} ${two(date.getHours())}:${two(date.getMinutes())}`
-}
-
-function Spinner() {
-  return <span className={d.buttonSpinner} aria-hidden="true" />
 }
 
 function DocumentResults({ id }: { id: number }) {
@@ -345,7 +343,7 @@ function DocumentResults({ id }: { id: number }) {
         </div>
         <div className={d.fileActions}>
           <button type="button" className={n.secondarySm} disabled={downloading !== null || archiving} onClick={() => { void download(file) }}>
-            {downloading === file.id && <Spinner />}받기<span className="sr-only">: {file.fileName}</span>
+            {downloading === file.id && <ButtonSpinner />}받기<span className="sr-only">: {file.fileName}</span>
           </button>
         </div>
       </div>
@@ -373,15 +371,19 @@ function DocumentResults({ id }: { id: number }) {
   const changedBadge = canRegenerate ? <span className={d.changedBadge}>답변이 바뀜</span> : null
   const downloadLabel = single ? '내려받기' : '전체 내려받기'
 
+  // 저장된 문서를 읽는 동안(아직 보여 줄 문서가 없을 때) 300ms가 넘으면 문구 대신 파일 카드 자리를 그립니다.
+  const checking = busy && !job
+  const showFilesSkeleton = useDelayedFlag(checking && files.length === 0)
+
   // 초안을 만드는 동안 머리글 동작 자리에는 버튼 대신 상태 태그만 둡니다. 진행은 본문 진행 카드가 알립니다.
   const generating = job !== null && (job.status === 'QUEUED' || job.status === 'RUNNING')
   const headerActions = generating
-    ? <span className={`${workspaceTagClassName('muted')} gap-1.5`}><Spinner />초안 만드는 중</span>
+    ? <span className={`${workspaceTagClassName('muted')} gap-1.5`}><ButtonSpinner />초안 만드는 중</span>
     : files.length > 0 ? <>
       {changedBadge && <span className={d.headerOnly}>{changedBadge}</span>}
       <button type="button" className={`${workspacePageStyles.secondaryButton} ${d.headerOnly}`} disabled={!canRegenerate} onClick={regenerate}>다시 만들기</button>
       <button type="button" className={`${workspacePageStyles.primaryButton} ${d.headerOnly}`} disabled={downloading !== null || archiving} onClick={downloadLatest}>
-        {downloadPending && <Spinner />}{downloadLabel}
+        {downloadPending && <ButtonSpinner />}{downloadLabel}
       </button>
     </> : undefined
 
@@ -405,7 +407,8 @@ function DocumentResults({ id }: { id: number }) {
           <StageList job={job} />
           <p className={n.progressNote}>화면을 나가도 계속돼요. 돌아오면 이어서 보여 드려요.</p>
         </section>}
-        {busy && !job && <p className={n.muted} role="status">저장된 문서를 확인하고 있어요.</p>}
+        {checking && <p className="sr-only" role="status">저장된 문서를 확인하고 있어요.</p>}
+        {showFilesSkeleton && <DocumentFilesSkeleton />}
 
         {failedJob && preparation && <FailureCard job={failedJob} sourceUrl={preparation.form.sourceUrl} editorTo={back}
           reanalyzeTo={reanalyzeTo} retryDisabled={busy} onRetry={regenerate} />}
@@ -433,8 +436,8 @@ function DocumentResults({ id }: { id: number }) {
             <span>새 위치: {change.newLocation ?? '입력 위치 없음'}</span>
           </li>)}</ul>
           <div className="flex flex-wrap gap-2">
-            <button type="button" className={n.primary} disabled={migrationBusy} onClick={() => { void confirmMigration() }}>
-              {migrationBusy ? '적용 중…' : '새 입력 위치 적용'}
+            <button type="button" className={n.primary} disabled={migrationBusy} aria-busy={migrationBusy} onClick={() => { void confirmMigration() }}>
+              {migrationBusy && <ButtonSpinner />}{migrationBusy ? '적용 중…' : '새 입력 위치 적용'}
             </button>
             <button type="button" className={n.secondary} disabled={migrationBusy} onClick={() => {
               setMigration(null); setMigrationMessage('변경 적용을 취소했습니다. 기존 답변과 파일은 그대로 유지됩니다.')
@@ -486,7 +489,7 @@ function DocumentResults({ id }: { id: number }) {
           <div className={d.mobileButtons}>
             <button type="button" className={e.prevButton} disabled={!canRegenerate} onClick={regenerate}>다시 만들기</button>
             <button type="button" className={e.nextButton} disabled={downloading !== null || archiving} onClick={downloadLatest}>
-              {downloadPending && <Spinner />}{downloadLabel}
+              {downloadPending && <ButtonSpinner />}{downloadLabel}
             </button>
           </div>
         </div>}
@@ -582,7 +585,7 @@ function StageList({ job }: { job: ApplicationDocumentGenerationJob }) {
       return <li key={stage} className={state === 'done' ? d.stageDone : state === 'active' ? d.stageActive : d.stage} aria-current={state === 'active' ? 'step' : undefined}>
         <span className={state === 'done' ? d.stageMarkDone : state === 'active' ? d.stageMarkActive : d.stageMark} aria-hidden="true">
           {state === 'done' && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="m5 12.5 4.5 4.5L19 7.5" /></svg>}
-          {state === 'active' && <span className={d.buttonSpinner} />}
+          {state === 'active' && <ButtonSpinner />}
         </span>
         {label}<span className="sr-only"> · {state === 'done' ? '완료' : state === 'active' ? '진행 중' : '대기'}</span>
       </li>
