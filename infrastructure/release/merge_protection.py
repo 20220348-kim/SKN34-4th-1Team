@@ -14,6 +14,10 @@ RULESET_NAME = "GovBiz required CI - zero review approvals"
 GITHUB_ACTIONS_APP = 15368
 
 
+class PolicyAccessError(ValueError):
+    """Expose only a fixed reason code, never GitHub response text."""
+
+
 def ruleset(branch):
     return {
         "name": RULESET_NAME,
@@ -63,7 +67,7 @@ def api(path, *, pages=False, absent=False):
         path,
     ]
     if pages:
-        command += ["--paginate", "--slurp"]
+        command += ["--paginate"]
     result = subprocess.run(
         command, text=True, capture_output=True, timeout=90, check=False
     )
@@ -75,15 +79,28 @@ def api(path, *, pages=False, absent=False):
         if absent and str(status) == "404":
             return None
         # Never print gh stderr, request headers, credential hints, or response bodies.
-        raise ValueError("GitHub API access unavailable; remote policy is UNKNOWN")
-    data = json.loads(result.stdout)
+        reason = (
+            "github_api_permission_denied"
+            if str(status) in {"401", "403"}
+            else "github_api_unavailable"
+        )
+        raise PolicyAccessError(reason)
     if pages:
-        if not isinstance(data, list) or any(
-            not isinstance(page, list) for page in data
-        ):
+        # Older gh releases emit consecutive JSON documents and lack --slurp.
+        # Parse every page; partial or malformed output must never pass an audit.
+        remaining = result.stdout.strip()
+        if not remaining:
             raise ValueError("Incomplete GitHub list response")
-        return [item for page in data for item in page]
-    return data
+        items = []
+        decoder = json.JSONDecoder()
+        while remaining:
+            page, end = decoder.raw_decode(remaining)
+            if not isinstance(page, list):
+                raise TypeError("Incomplete GitHub list response")
+            items.extend(page)
+            remaining = remaining[end:].lstrip()
+        return items
+    return json.loads(result.stdout)
 
 
 def audit(fork, get=api):
@@ -228,13 +245,15 @@ def main():
         AttributeError,
         OSError,
         subprocess.SubprocessError,
-    ):
+    ) as error:
         print(
             json.dumps(
                 {
                     "status": "UNKNOWN",
                     "scope": "merge_rule_configuration",
-                    "reason": "API access, identity or complete policy evidence unavailable",
+                    "reason": str(error)
+                    if isinstance(error, PolicyAccessError)
+                    else "API access, identity or complete policy evidence unavailable",
                 }
             )
         )

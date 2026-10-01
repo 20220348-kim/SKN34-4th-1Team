@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from pathlib import Path
 from urllib.error import URLError
 from urllib.request import ProxyHandler, build_opener
 
@@ -64,6 +65,56 @@ def database_record(nk, run_id):
             data=program,
         )
     )
+
+
+def verify_upgrade_probe_database(nk):
+    """Run read checks against isolated MySQL fixtures, then roll back fixtures."""
+    probe = Path(__file__).with_name("ops_upgrade_probe.py").read_text()
+    program = (
+        "import os; os.environ.setdefault('DJANGO_SETTINGS_MODULE','config.settings')\n"
+        "import django; django.setup()\n"
+        "namespace={'__name__':'upgrade_probe'}\n"
+        f"exec({probe!r}, namespace)\n"
+        "snapshot=namespace['database_snapshot']\n"
+        "from django.contrib.auth import get_user_model\n"
+        "from django.db import transaction\n"
+        "from django.utils import timezone\n"
+        "from uuid import uuid4\n"
+        "from apps.evaluations.models import EvaluationRun, EvaluationBudget, EvaluationBudgetReservation\n"
+        "before=snapshot()\n"
+        "with transaction.atomic():\n"
+        "    user=get_user_model().objects.create_user('upgrade-probe-'+uuid4().hex)\n"
+        "    states=[*EvaluationRun.Status.values, 'UNKNOWN']\n"
+        "    for state in states:\n"
+        "        EvaluationRun.objects.create(requested_by=user,dataset_id='probe-fixture',status=state)\n"
+        "    expected=dict(before['states'])\n"
+        "    for state in states: expected[state]=expected.get(state,0)+1\n"
+        "    assert snapshot()['states']==expected\n"
+        "    run=EvaluationRun.objects.get(requested_by=user,status='FAILED')\n"
+        "    budget,_=EvaluationBudget.objects.get_or_create(pk=1)\n"
+        "    reservation=EvaluationBudgetReservation.objects.create(run=run,budget=budget,max_calls=0,max_output_tokens=0)\n"
+        "    assert snapshot()['open_reservations']==before['open_reservations']+1\n"
+        "    reservation.closed_at=timezone.now(); reservation.save(update_fields=['closed_at'])\n"
+        "    assert snapshot()['open_reservations']==before['open_reservations']\n"
+        "    transaction.set_rollback(True)\n"
+        "assert snapshot()==before\n"
+        "print('PASS')\n"
+    )
+    result = ops_runtime.quiet(
+        nk
+        + [
+            "exec",
+            "-i",
+            "deployment/ops-service",
+            "-c",
+            "ops-service",
+            "--",
+            "python",
+            "-",
+        ],
+        data=program,
+    )
+    assert result.strip() == "PASS", "Upgrade probe database verification failed"
 
 
 def free_evaluation(output, password, web_env, *, seed=False):
@@ -236,6 +287,12 @@ def verify(state, settings, compose, compose_env, ops_image, kind, helm, report)
         )
         report["activation"] = "PASS"
         report["repeated_activation_preserves_secrets"] = True
+        verify_upgrade_probe_database(nk)
+        report["upgrade_probe_mysql"] = "PASS"
+        report["upgrade_preflight_before_evaluation"] = ops_runtime.upgrade_preflight(
+            state, settings
+        )
+        assert report["upgrade_preflight_before_evaluation"]["status"] == "PASS"
         report["runtime_check_before_evaluation"] = ops_runtime.check_runtime(
             state, settings
         )

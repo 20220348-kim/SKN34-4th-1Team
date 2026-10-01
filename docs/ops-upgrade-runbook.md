@@ -24,10 +24,28 @@
 python3 -B infrastructure/gitops/scripts/ops_runtime.py --check \
   --state-dir "$OPS_STATE_DIR" --run-id "$OPS_EXISTING_RUN_ID"
 python3 -B backend/ops-service/apps/evaluations/execution_spec.py --root .
+# 버전 불일치와 별개로, 기존 실행 환경의 미완료 작업을 읽기 전용 점검한다.
+python3 -B infrastructure/gitops/scripts/ops_runtime.py --preflight \
+  --state-dir "$OPS_STATE_DIR"
 ```
 
 첫 점검의 소스/이미지 불일치는 갱신 필요 근거로 보존한다. 소유권·DB·인증·브리지 장애는 먼저 해결한다.
 `--check` 성공은 새 평가 성공이나 관리자의 실제 인증을 증명하지 않는다.
+
+`--preflight`는 기존 Pod의 Django 모델과 Prefect 조회 API를 사용한다. 새 명령 설치나 migration 없이
+미완료 평가(`RESULT_ERROR`와 알 수 없는 상태 포함), 종료되지 않은 예산 예약, 같은 Prefect flow의
+이전 deployment를 포함한 미완료 실행·현재 deployment의 활성 스케줄을 검사한다.
+중지된 deployment에 활성 스케줄이 남아 있어도 차단한다. 자동 취소·정산·환급은 하지 않는다.
+
+- `PASS`: 검사한 범위에서 남은 작업 없음. `BLOCKED`: 남은 작업을 기존 처리 절차로 종료 후 재검사.
+- `UNKNOWN`: DB/Prefect 조회 실패, 불완전 응답, 점검 중 변경 등으로 확인 불가. 장애를 해결한 뒤 재검사.
+  기존 이력을 보존하며 한 flow의 이력이 2,000개 이상이면 전체 검사 범위를 확장·검증하기 전까지 중단한다.
+- 점검은 분산 잠금이나 접수 중지 기능이 아니다. `admission_blocked=false`, `backup_verified=false`이며
+  다른 flow·다른 접수 경로·자동화는 운영자가 별도로 중지해야 한다. `PASS`를 재사용 가능한 승인서로 쓰지 않는다.
+
+기존 연결을 갱신할 때 활성화 도구가 이 검사를 다시 실행하며, `PASS`가 아니면 Secret·migration·workload
+변경 전에 중단한다. 연결 기록이 없어도 현재 Ops에 Prefect URL이 설정돼 있으면 검사한다.
+Prefect가 비활성인 최초 bootstrap은 이 검사 대상이 아니며 journal의 `upgradePreflight`가 `null`이다.
 
 ## 2. 일관된 백업과 복원 가능성 확인
 
@@ -85,6 +103,7 @@ API·sync를 함께 교체한다. `0015` 등 과거 번호에서 임의로 멈�
 활성화는 첫 Secret/DB/workload 변경 전에 state의 `ops-updates/<UUID>.json`을 생성한다.
 이전/대상 이미지, immutable ID, release 해시와 각 단계의 시작·완료를 원자적으로 기록한다.
 재시도는 새 파일을 만들고 이전 실패 기록을 보존한다. 키나 subprocess 오류 원문은 기록하지 않는다.
+갱신 사전 점검을 통과한 경우 그 시각·건수·검사 한계를 `upgradePreflight`에 함께 보존한다.
 
 | 마지막 기록 | 의미와 다음 조치 |
 |---|---|

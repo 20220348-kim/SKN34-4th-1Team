@@ -4,6 +4,7 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import ci_policy
 import merge_protection as protection
@@ -11,6 +12,42 @@ from repository import Fork
 
 ROOT = Path(__file__).resolve().parents[2]
 FORK = Fork("alice/project")
+
+
+class ApiTests(unittest.TestCase):
+    def call(self, output, code=0, **kwargs):
+        process = subprocess.CompletedProcess([], code, output, "private error text")
+        with patch.object(protection.subprocess, "run", return_value=process) as run:
+            result = protection.api("repos/alice/project/rules", **kwargs)
+        self.assertNotIn("--slurp", run.call_args.args[0])
+        return result
+
+    def test_older_cli_pagination_reads_all_pages(self):
+        self.assertEqual(self.call("[1,2]\n [3]\n []", pages=True), [1, 2, 3])
+        self.assertEqual(self.call("[]", pages=True), [])
+        self.assertEqual(self.call('{"id":7}'), {"id": 7})
+
+    def test_incomplete_pages_are_rejected(self):
+        for output in ("", "[1]\n[", '[1]\n{"message":"private"}', "[] trailing"):
+            with (
+                self.subTest(output=output),
+                self.assertRaises((TypeError, ValueError)),
+            ):
+                self.call(output, pages=True)
+
+    def test_only_explicit_optional_404_is_absent(self):
+        self.assertIsNone(self.call('{"status":"404"}', 1, absent=True))
+        for status in (401, "403", 404, 500, None):
+            with (
+                self.subTest(status=status),
+                self.assertRaises(protection.PolicyAccessError) as raised,
+            ):
+                self.call(json.dumps({"status": status, "message": "private"}), 1)
+            self.assertNotIn("private", str(raised.exception))
+        with self.assertRaisesRegex(protection.PolicyAccessError, "permission_denied"):
+            self.call('{"status":"403"}', 1, absent=True)
+        with self.assertRaises(protection.PolicyAccessError):
+            self.call("[]", 1, pages=True)
 
 
 class SummaryTests(unittest.TestCase):

@@ -74,6 +74,63 @@ def check_connection(state, settings):
     ops_bridge.connect(state, settings, record["composeProject"], check=True)
 
 
+def upgrade_preflight(state, settings):
+    require_dev(state, settings)
+    record = read_connection(Path(state) / BRIDGE, settings)
+    ops_bridge.connect(state, settings, record["composeProject"], check=True)
+    _, nk, _ = commands(state, settings)
+    # Execute the reviewed checkout's probe against the existing image/schema.
+    # It only imports stable models/client code; no file is installed in the Pod.
+    program = Path(__file__).with_name("ops_upgrade_probe.py").read_text()
+    result = json.loads(
+        quiet(
+            nk
+            + [
+                "exec",
+                "-i",
+                "deployment/ops-service",
+                "-c",
+                "ops-service",
+                "--",
+                "python",
+                "-",
+            ],
+            data=program,
+        )
+    )
+    if (
+        not isinstance(result, dict)
+        or result.get("schemaVersion") != 1
+        or result.get("scope") != "ops_upgrade_preflight"
+        or result.get("status") not in {"PASS", "BLOCKED", "UNKNOWN"}
+        or result.get("admission_blocked") is not False
+        or result.get("backup_verified") is not False
+        or result.get("evaluation_executed") is not False
+    ):
+        raise ValueError("Incomplete Ops upgrade preflight response")
+    if result["status"] == "PASS":
+        checks = result.get("checks", {})
+        expected = {
+            "unsettled_evaluations",
+            "open_reservations",
+            "unfinished_flows",
+            "active_schedules",
+            "inspected_flows",
+        }
+        if (
+            not isinstance(checks, dict)
+            or set(checks) != expected
+            or any(
+                type(value) is not int
+                or value < 0
+                or (key != "inspected_flows" and value != 0)
+                for key, value in checks.items()
+            )
+        ):
+            raise ValueError("Incomplete Ops upgrade preflight checks")
+    return result
+
+
 def read_artifact_token(path):
     path = Path(path)
     info = path.lstat()
@@ -530,6 +587,22 @@ def activate(
     ops_bridge.connect(state, settings, project, check=True)
     if verify_release(image, project) != release:
         raise ValueError("Ops image or runner changed during activation preflight")
+    preflight = None
+    # Only the explicit disabled bootstrap value can skip this guard. An absent
+    # variable may inherit an image default; an indirect Secret value is unknown.
+    bootstrap = all(
+        [item for item in container.get("env", []) if item["name"] == "PREFECT_API_URL"]
+        == [{"name": "PREFECT_API_URL", "value": "http://disabled-prefect.invalid/api"}]
+        for container in containers
+    )
+    if (state / PROFILE).exists() or (state / PROFILE).is_symlink() or not bootstrap:
+        if (state / PROFILE).exists() or (state / PROFILE).is_symlink():
+            read_connection(state / PROFILE, settings)
+        preflight = upgrade_preflight(state, settings)
+        if preflight["status"] != "PASS":
+            raise ValueError(
+                "Ops upgrade preflight did not pass; run --preflight and drain outstanding work"
+            )
     latest = json.loads(
         run(nk + ["get", "deployment", "ops-service", "-o", "json"], capture=True)
     )
@@ -548,6 +621,7 @@ def activate(
         **record,
         "startedAt": datetime.now(timezone.utc).isoformat(),
         "status": "RUNNING",
+        "upgradePreflight": preflight,
         "previousImage": previous_image,
         "targetImage": image,
         "targetImageId": release["imageId"],
@@ -657,10 +731,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--state-dir", type=Path, default=STATE)
     parser.add_argument("--artifact-env", type=Path)
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
         "--check",
         action="store_true",
         help="Read source/runtime releases, schema and connection without activation",
+    )
+    mode.add_argument(
+        "--preflight",
+        action="store_true",
+        help="Read outstanding evaluations, reservations, Prefect runs and schedules",
     )
     parser.add_argument(
         "--run-id",
@@ -674,9 +754,13 @@ def main():
     )
     parser.add_argument("--kind", default="kind")
     args = parser.parse_args()
-    if args.check and (args.artifact_env is not None or args.ops_image is not None):
-        parser.error("--check cannot be combined with activation inputs")
-    if not args.check and (args.artifact_env is None or args.run_id is not None):
+    if (args.check or args.preflight) and (
+        args.artifact_env is not None or args.ops_image is not None
+    ):
+        parser.error("Read-only checks cannot be combined with activation inputs")
+    if args.run_id is not None and not args.check:
+        parser.error("--run-id requires --check")
+    if not (args.check or args.preflight) and args.artifact_env is None:
         parser.error("Activation requires --artifact-env; --run-id requires --check")
     if os.name == "nt":
         parser.error(
@@ -685,6 +769,12 @@ def main():
     try:
         settings = load_settings(args.state_dir)
         with locked(args.state_dir):
+            if args.preflight:
+                result = upgrade_preflight(args.state_dir, settings)
+                print(json.dumps(result, sort_keys=True))
+                if result["status"] != "PASS":
+                    parser.exit(1)
+                return
             if args.check:
                 print(
                     json.dumps(
@@ -712,7 +802,13 @@ def main():
         parser.exit(
             1,
             "Ops "
-            + ("runtime check" if args.check else "activation")
+            + (
+                "preflight"
+                if args.preflight
+                else "runtime check"
+                if args.check
+                else "activation"
+            )
             + " stopped: "
             + message
             + "\n",

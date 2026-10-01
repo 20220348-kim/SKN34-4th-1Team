@@ -173,6 +173,65 @@ class ConnectionTests(unittest.TestCase):
         self.assertEqual(api["image"], sync["image"])
 
 
+class UpgradePreflightTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.state = Path(self.temporary.name)
+        (self.state / runtime.BRIDGE).write_text(
+            json.dumps(runtime.connection(SETTINGS, "fixture"))
+        )
+        self.result = {
+            "schemaVersion": 1,
+            "scope": "ops_upgrade_preflight",
+            "status": "PASS",
+            "admission_blocked": False,
+            "backup_verified": False,
+            "evaluation_executed": False,
+            "checks": {
+                "unsettled_evaluations": 0,
+                "open_reservations": 0,
+                "unfinished_flows": 0,
+                "active_schedules": 0,
+                "inspected_flows": 7,
+            },
+        }
+
+    def check(self):
+        with (
+            patch.object(runtime, "require_dev"),
+            patch.object(ops_bridge, "connect") as bridge,
+            patch.object(
+                runtime, "quiet", return_value=json.dumps(self.result)
+            ) as execute,
+        ):
+            result = runtime.upgrade_preflight(self.state, SETTINGS)
+        bridge.assert_called_once_with(self.state, SETTINGS, "fixture", check=True)
+        command = execute.call_args.args[0]
+        self.assertIn("exec", command)
+        self.assertEqual(command[-3:], ["--", "python", "-"])
+        self.assertIn("def database_snapshot", execute.call_args.kwargs["data"])
+        return result
+
+    def test_read_only_probe_does_not_require_an_activation_record(self):
+        self.assertEqual(self.check(), self.result)
+        self.assertFalse((self.state / runtime.PROFILE).exists())
+
+    def test_missing_or_false_success_evidence_is_rejected(self):
+        for value in (None, {}, {**self.result["checks"], "open_reservations": 1}):
+            self.result["checks"] = value
+            with self.subTest(value=value), self.assertRaises((TypeError, ValueError)):
+                self.check()
+        self.result["checks"] = {"unsettled_evaluations": False}
+        with self.assertRaises(ValueError):
+            self.check()
+
+    def test_blocked_and_unknown_are_not_converted_to_success(self):
+        for status in ("BLOCKED", "UNKNOWN"):
+            self.result["status"] = status
+            self.assertEqual(self.check()["status"], status)
+
+
 class ActivationTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -212,6 +271,7 @@ class ActivationTests(unittest.TestCase):
                 ("DB_NAME", "govbiz_ops"),
                 ("DB_USER", "govbiz_ops"),
                 ("DB_PORT", "3306"),
+                ("PREFECT_API_URL", "http://disabled-prefect.invalid/api"),
             )
         ] + [
             {
@@ -229,6 +289,7 @@ class ActivationTests(unittest.TestCase):
         )
         mocks = {
             "require_dev": {},
+            "upgrade_preflight": {"return_value": {"status": "PASS"}},
             "run": {"side_effect": self.execute},
             "quiet": {"side_effect": self.secret_execute},
             "render_services": {"return_value": {"ops-service": self.rendered}},
@@ -253,6 +314,62 @@ class ActivationTests(unittest.TestCase):
         patcher = patch.object(ops_bridge, "connect")
         self.connect = patcher.start()
         self.addCleanup(patcher.stop)
+
+    def test_connected_upgrade_blocks_before_secret_migration_or_workload_changes(self):
+        (self.state / runtime.PROFILE).write_text(
+            json.dumps(runtime.connection(SETTINGS, "fixture"))
+        )
+        for status in ("BLOCKED", "UNKNOWN"):
+            self.mocks["upgrade_preflight"].return_value = {"status": status}
+            with (
+                self.subTest(status=status),
+                self.assertRaisesRegex(ValueError, "preflight"),
+            ):
+                runtime.activate(self.state, SETTINGS, self.env)
+            self.assertEqual(self.events, [])
+            self.assertFalse((self.state / "ops-updates").exists())
+            self.mocks["run_migration"].assert_not_called()
+
+    def test_configured_workload_checks_even_without_activation_record(self):
+        self.workload["spec"]["template"]["spec"]["containers"][0]["env"].append(
+            {"name": "PREFECT_API_URL", "value": "http://prefect:4200/api"}
+        )
+        self.mocks["upgrade_preflight"].side_effect = ValueError("unavailable")
+        with self.assertRaisesRegex(ValueError, "unavailable"):
+            runtime.activate(self.state, SETTINGS, self.env)
+        self.assertEqual(self.events, [])
+
+    def test_successful_upgrade_preserves_preflight_evidence_in_journal(self):
+        (self.state / runtime.PROFILE).write_text(
+            json.dumps(runtime.connection(SETTINGS, "fixture"))
+        )
+        runtime.activate(self.state, SETTINGS, self.env)
+        self.mocks["upgrade_preflight"].assert_called_once_with(self.state, SETTINGS)
+        self.assertEqual(self.journal()["upgradePreflight"], {"status": "PASS"})
+
+    def test_missing_prefect_variable_is_not_assumed_to_be_unused_bootstrap(self):
+        container = self.workload["spec"]["template"]["spec"]["containers"][0]
+        container["env"] = [
+            row for row in container["env"] if row["name"] != "PREFECT_API_URL"
+        ]
+        self.mocks["upgrade_preflight"].return_value = {"status": "UNKNOWN"}
+        with self.assertRaisesRegex(ValueError, "preflight"):
+            runtime.activate(self.state, SETTINGS, self.env)
+        self.assertEqual(self.events, [])
+
+    def test_workload_change_during_upgrade_probe_stops_before_mutations(self):
+        (self.state / runtime.PROFILE).write_text(
+            json.dumps(runtime.connection(SETTINGS, "fixture"))
+        )
+
+        def changed(*args):
+            self.workload["metadata"]["resourceVersion"] = "13"
+            return {"status": "PASS"}
+
+        self.mocks["upgrade_preflight"].side_effect = changed
+        with self.assertRaisesRegex(ValueError, "workload or baseline changed"):
+            runtime.activate(self.state, SETTINGS, self.env)
+        self.assertEqual(self.events, [])
 
     def save_baseline(self):
         (self.state / "baseline.json").write_text(json.dumps(self.baseline))
