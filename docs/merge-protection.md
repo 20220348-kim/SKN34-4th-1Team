@@ -55,6 +55,9 @@ JSON은 `main`에만 적용하는 전용 ruleset이다. PR 경로·리뷰 0명·
 
 종료 코드 `0`은 **규칙 구성 확인**, `1`은 정책 불일치, `2`는 접근·증거 부족으로 **UNKNOWN**이다.
 403/404를 보호 없음이나 성공으로 바꾸지 않는다. 우회 목록을 볼 수 없는 경우도 UNKNOWN이다.
+`github_api_permission_denied`는 API의 401/403 응답이다. 저장소 metadata의 `admin=true`만으로
+현재 CLI 인증이 branch protection을 조회할 수 있다고 판단하지 않는다.
+구버전 GitHub CLI도 `--paginate` 응답 전체를 검사하며 `--slurp` 지원은 필요하지 않다.
 `merge_behavior_verified=false`는 시험 PR의 실제 병합 차단까지 실행하지 않았다는 뜻이다.
 
 관리자·앱·팀의 bypass 항목이 없어도 관리자는 규칙 자체를 수정할 수 있다. 병합 우회 권한과
@@ -65,5 +68,8 @@ JSON은 `main`에만 적용하는 전용 ruleset이다. PR 경로·리뷰 0명·
 [branch rules API](https://docs.github.com/en/rest/repos/rules#get-rules-for-a-branch),
 [job 의존성](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idneeds).
 
-이번 클라우드 작업에서는 GitHub API가 403으로 차단되어 실제 규칙·우회 권한·최신 CI 상태를
-확정하지 못했다. 과거 ruleset 기록을 현재 상태로 재사용하지 않는다. 원격 적용과 시험 PR 검증은 남아 있다.
+2026-10-01 클라우드 조회에서 `main`의 유효 ruleset `govbiz-source-main`(24174638)은
+삭제·non-fast-forward 방지 두 규칙과 빈 bypass 목록을 반환했다. 필수 CI 규칙은 없었다.
+별도 classic branch protection은 `Resource not accessible by integration`(403)으로 조회하지 못해
+전체 정책 판정은 `UNKNOWN`이다. 이 관찰은 원격 설정 적용이나 실제 병합 차단 검증이 아니다.
+과거 결과를 현재 상태로 재사용하지 않으며 원격 적용과 시험 PR 검증은 남아 있다.

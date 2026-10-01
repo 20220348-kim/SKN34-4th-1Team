@@ -136,6 +136,7 @@ jobs:
           python -B -m unittest discover -s scripts -p 'test_ops_sync.py'
           python -B -m unittest discover -s scripts -p 'test_ops_bridge.py'
           python -B -m unittest discover -s scripts -p 'test_ops_runtime.py'
+          python -B -m unittest discover -s scripts -p 'test_ops_upgrade_probe.py'
           python -B -m unittest discover -s scripts -p 'test_fork_web.py'
           python -B -m unittest discover -s scripts -p 'test_dev.py'
           python -B -m unittest discover -s scripts -p 'test_check_portfolio.py'
