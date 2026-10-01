@@ -12,7 +12,7 @@ import { Page, Button, Field, Notice, Card, Title, colors, styles } from '../ui'
 
 type CompanyState = { token: string | null; company: Company | null; loading: boolean; loadError: string | null }
 
-export function CompanyScreen() {
+export function CompanyScreen({ onLogin }: { onLogin?(): void } = {}) {
   const { session, status, refreshSession, invalidateSession } = useAuth()
   const token = session?.accessToken ?? null
   const [state, setState] = useState<CompanyState>({ token: null, company: null, loading: true, loadError: null })
@@ -101,7 +101,7 @@ export function CompanyScreen() {
 
   if (status === 'loading') return <Page><ActivityIndicator accessibilityLabel="로그인 상태 확인 중" /></Page>
   if (status === 'unavailable') return <Page><Notice error>로그인 상태를 확인하지 못했습니다.</Notice><Button label="다시 확인" onPress={() => void refreshSession()} /></Page>
-  if (!token) return <Page><Title>기업 프로필</Title><Notice>내 정보 탭에서 로그인한 뒤 기업 정보를 등록해 주세요.</Notice></Page>
+  if (!token) return <Page><Title>기업 프로필</Title><Notice>전체 → 내 계정에서 로그인한 뒤 기업 정보를 등록해 주세요.</Notice>{onLogin && <Button label="로그인하기" onPress={onLogin} />}</Page>
   if (state.token !== token || state.loading) return <Page><ActivityIndicator accessibilityLabel="기업 프로필 불러오는 중" /></Page>
   if (state.loadError) return <Page><Title>기업 프로필</Title><Notice error>{state.loadError}</Notice><Button label="다시 불러오기" onPress={() => setRevision((value) => value + 1)} /></Page>
   return <Page>

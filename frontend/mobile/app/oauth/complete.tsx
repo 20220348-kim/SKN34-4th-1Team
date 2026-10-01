@@ -5,6 +5,6 @@ import { Button, Notice, Page } from '../../src/ui'
 export default function OAuthCompleteRoute() {
   const router = useRouter()
   return <Page><Notice>로그인 화면에서 처리 결과를 확인해 주세요.</Notice>
-    <Button label="내 정보로 이동" onPress={() => router.replace('/(tabs)/account')} />
+    <Button label="내 정보로 이동" onPress={() => router.replace('/(tabs)/all/account')} />
   </Page>
 }

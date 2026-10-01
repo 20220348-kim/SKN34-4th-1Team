@@ -1,2 +1,5 @@
-import { CompanyScreen } from '../src/screens/CompanyScreen'
-export default CompanyScreen
+import { Redirect } from 'expo-router'
+
+export default function LegacyCompanyRoute() {
+  return <Redirect href="/(tabs)/all/company" />
+}

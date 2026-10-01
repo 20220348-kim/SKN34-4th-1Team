@@ -201,3 +201,19 @@ test('signed-out users see a login action without a private data request', () =>
   expect(callbacks.onLogin).toHaveBeenCalledTimes(1)
   expect(apiRequest).not.toHaveBeenCalled()
 })
+
+
+test('All settings opens the form directly and saves through the existing API without loading reports', async () => {
+  jest.mocked(apiRequest).mockImplementation((path, options) => path.endsWith('/settings') && options?.method === 'PUT'
+    ? Promise.resolve({ ...settings, supportPurpose: '제품 개발' }) : respond(path))
+  render(<DailyReportScreen {...callbacks} settingsOnly />)
+  await screen.findByLabelText('지원 목적 (선택, 최대 100자)')
+  expect(screen.queryByLabelText('수신 설정')).toBeNull()
+  expect(jest.mocked(apiRequest).mock.calls.some(([path]) => path.endsWith('/latest') || path.endsWith('/preview') || path.includes('/saved-programs'))).toBe(false)
+  fireEvent.changeText(screen.getByLabelText('지원 목적 (선택, 최대 100자)'), '제품 개발')
+  fireEvent.press(screen.getByLabelText('수신 설정 저장'))
+  await waitFor(() => expect(apiRequest).toHaveBeenCalledWith('/api/v1/me/daily-reports/settings', expect.objectContaining({
+    accessToken: 'first-account', method: 'PUT', body: { supportPurpose: '제품 개발', enabled: false, consent: false },
+  })))
+  await screen.findByText('수신 설정을 저장했어요. 이미 생성된 리포트의 조건은 바뀌지 않아요.')
+})

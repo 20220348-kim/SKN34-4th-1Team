@@ -11,5 +11,5 @@ export default function ProgramRoute() {
     || typeof sourceProgramId !== 'string' || !sourceProgramId || sourceProgramId.length > 500) {
     return <Page><Notice error>공고 링크가 올바르지 않습니다.</Notice></Page>
   }
-  return <ProgramScreen key={`${session?.account.email ?? 'guest'}:${sourceCode}:${sourceProgramId}`} identity={{ sourceCode, sourceProgramId }} onLogin={() => router.push('/(tabs)/account')} />
+  return <ProgramScreen key={`${session?.account.email ?? 'guest'}:${sourceCode}:${sourceProgramId}`} identity={{ sourceCode, sourceProgramId }} onLogin={() => router.push('/(tabs)/all/account')} />
 }

@@ -1,7 +1,5 @@
-import { useRouter } from 'expo-router'
-import { AccountScreen } from '../../src/screens/AccountScreen'
+import { Redirect } from 'expo-router'
 
-export default function AccountRoute() {
-  const router = useRouter()
-  return <AccountScreen onCompany={() => router.push('/company')} />
+export default function LegacyAccountRoute() {
+  return <Redirect href="/(tabs)/all/account" />
 }
