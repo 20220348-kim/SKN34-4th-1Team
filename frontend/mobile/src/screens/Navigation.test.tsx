@@ -16,6 +16,9 @@ import CompanyRoute from '../../app/(tabs)/all/company'
 import LegacyCompanyRoute from '../../app/company'
 import SettingsRoute from '../../app/(tabs)/all/settings'
 import PreparationRoute from '../../app/(tabs)/all/preparation'
+import ReviewListRoute from '../../app/(tabs)/all/reviews'
+import NewReviewRoute from '../../app/(tabs)/all/reviews/new'
+import ReviewRoute from '../../app/(tabs)/all/reviews/[id]'
 import { programClient } from '../api/client'
 import { browseRecruitments } from '../api/partners'
 
@@ -36,6 +39,7 @@ const routes = {
   '(tabs)/all/_layout': AllLayout, '(tabs)/all/index': MenuRoute, '(tabs)/all/account': AccountRoute,
   '(tabs)/all/collab': CollaborationRoute, '(tabs)/all/company': CompanyRoute,
   '(tabs)/all/settings': SettingsRoute, '(tabs)/all/preparation': PreparationRoute, company: LegacyCompanyRoute,
+  '(tabs)/all/reviews/index': ReviewListRoute, '(tabs)/all/reviews/new': NewReviewRoute, '(tabs)/all/reviews/[id]': ReviewRoute,
 }
 
 beforeEach(() => {
@@ -85,7 +89,7 @@ test.each([
 test.each([
   ['리포트 수신 설정', '/all/settings', '로그인하면 리포트 수신 설정을 변경할 수 있어요.'],
   ['신청 문서', '/all/preparation', '로그인하면 신청 문서와 중복 검토를 확인할 수 있어요.'],
-  ['중복 검토', '/all/preparation', '로그인하면 신청 문서와 중복 검토를 확인할 수 있어요.'],
+  ['중복 검토', '/all/reviews', '로그인하면 본인의 검토와 참여 이력을 관리할 수 있어요. 기업 등록 없이 직접 입력할 수 있습니다.'],
   ['받은 제안', '/all/collab', '제안함은 로그인 후 확인할 수 있어요.'],
   ['보낸 제안', '/all/collab', '제안함은 로그인 후 확인할 수 있어요.'],
   ['내 모집글', '/all/collab', '내 모집글은 로그인 후 확인할 수 있어요.'],
@@ -96,7 +100,7 @@ test.each([
   await screen.findByText(notice)
   expect(view.getPathname()).toBe(pathname)
   expect(screen.getByLabelText('전체').props.accessibilityState.selected).toBe(true)
-  fireEvent.press(screen.getByLabelText('로그인하기'))
+  fireEvent.press(screen.getByLabelText(label === '중복 검토' ? '로그인하고 시작' : '로그인하기'))
   await screen.findByLabelText('이메일')
   expect(view.getPathname()).toBe('/all/account')
 })
@@ -130,4 +134,16 @@ test('filter links and returning from a detail keep the selected search mode and
   fireEvent.press(screen.getByRole('tab', { name: 'AI 검색' }))
   await screen.findByLabelText('회사 상황이나 궁금한 점')
   expect(view.getSearchParams()).toMatchObject({ mode: 'ai' })
+})
+
+test('invalid review identifiers stop before entering the private review screen', async () => {
+  renderRouter(routes, { initialUrl: '/all/reviews/0' })
+  await screen.findByText('올바른 검토·실행 주소가 아닙니다.')
+})
+
+test('legacy preparation review links enter the independent native review list', async () => {
+  const view = renderRouter(routes, { initialUrl: '/all/preparation?kind=reviews' })
+  await screen.findByText('로그인하고 시작')
+  await waitFor(() => expect(view.getPathname()).toBe('/all/reviews'))
+  expect(screen.getByLabelText('전체').props.accessibilityState.selected).toBe(true)
 })

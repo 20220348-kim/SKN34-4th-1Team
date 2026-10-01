@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { ActivityIndicator, Text, View } from 'react-native'
 import { BrowseSupportProgramsUseCase } from '@govbiz/shared/domain/usecases/BrowseSupportProgramsUseCase'
 import { catalogSourceCodes, catalogSourceLabels, type SupportProgramCatalog, type SupportProgramCatalogFilters } from '@govbiz/shared/domain/entities/SupportProgramCatalog'
 import { regionNames } from '@govbiz/shared/domain/entities/Region'
 import { supportProgramCategories } from '@govbiz/shared/domain/entities/SupportProgramCategory'
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
+import type { SupportProgram } from '@govbiz/shared/domain/entities/SupportProgram'
 import { errorMessage, programClient } from '../api/client'
 import { ChoiceField } from '../components/ChoiceField'
 import { ProgramCard } from '../components/ProgramCard'
@@ -17,11 +18,14 @@ export const initialFilters: SupportProgramCatalogFilters = {
 
 const options = (values: readonly string[]) => [{ value: '', label: '전체' }, ...[...new Set(values)].map((value) => ({ value, label: value }))]
 
-export function CatalogScreen({ onOpenProgram, keyboardOffset = 0 }: {
+export function CatalogScreen({ onOpenProgram, keyboardOffset = 0, selection, header }: {
   onOpenProgram: (identity: SupportProgramIdentity) => void; keyboardOffset?: number
+  header?: ReactNode
+  selection?: { keys: string[]; disabled?: boolean; onToggle(program: SupportProgram): void }
 }) {
-  const [draft, setDraft] = useState(initialFilters)
-  const [applied, setApplied] = useState(initialFilters)
+  const defaults = { ...initialFilters, status: selection ? 'ALL' as const : initialFilters.status }
+  const [draft, setDraft] = useState(defaults)
+  const [applied, setApplied] = useState(defaults)
   const [catalog, setCatalog] = useState<SupportProgramCatalog | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -46,8 +50,9 @@ export function CatalogScreen({ onOpenProgram, keyboardOffset = 0 }: {
   }
 
   return <Page keyboardOffset={keyboardOffset}>
-    <View><Text style={[styles.label, { color: colors.primary, marginBottom: 8 }]}>GOVBIZ · 지원사업 찾기</Text><Title>우리 회사의 다음 기회</Title></View>
-    <Subtitle>공고를 찾아 조건을 확인하고, 관심 있는 사업을 모아 보세요.</Subtitle>
+    {header}
+    {!selection && <><View><Text style={[styles.label, { color: colors.primary, marginBottom: 8 }]}>GOVBIZ · 지원사업 찾기</Text><Title>우리 회사의 다음 기회</Title></View>
+      <Subtitle>공고를 찾아 조건을 확인하고, 관심 있는 사업을 모아 보세요.</Subtitle></>}
     <Card>
       <Field label="공고명·기관명" value={draft.keyword} onChangeText={(value) => change('keyword', value)} maxLength={100}
         placeholder="예: 창업, 수출, 연구개발" returnKeyType="search" onSubmitEditing={() => setApplied({ ...draft, page: 1 })} />
@@ -71,14 +76,19 @@ export function CatalogScreen({ onOpenProgram, keyboardOffset = 0 }: {
         <Text style={styles.muted}>필터는 제공처의 공고 분류입니다. 실제 신청 자격은 공고 원문에서 확인해 주세요.</Text>
       </>}
       <Button label="공고 검색" onPress={() => { setApplied({ ...draft, page: 1 }); setExpanded(false) }} />
-      <Button label="조건 초기화" variant="ghost" onPress={() => { setDraft(initialFilters); setApplied({ ...initialFilters }) }} />
+      <Button label="조건 초기화" variant="ghost" onPress={() => { setDraft(defaults); setApplied({ ...defaults }) }} />
+      {selection && <Text style={styles.muted}>마감 공고도 이력 검토에 사용할 수 있어요. 공고 상세 조회와 비교 대상 선택은 별도 동작입니다.</Text>}
     </Card>
     {loading && <ActivityIndicator accessibilityLabel="공고를 불러오는 중" color={colors.primary} />}
     {error && <><Notice error>{error}</Notice><Button label="다시 불러오기" onPress={() => setRetry((value) => value + 1)} /></>}
     {!loading && !error && catalog && <>
       <Text accessibilityLiveRegion="polite" style={styles.heading}>검색 결과 {catalog.total.toLocaleString()}건</Text>
       {catalog.programs.length === 0 && <Notice>조건에 맞는 공고가 없습니다. 검색 조건을 바꿔 보세요.</Notice>}
-      {catalog.programs.map((program) => <ProgramCard key={JSON.stringify([program.sourceCode, program.id])} program={program} onOpen={onOpenProgram} />)}
+      {catalog.programs.map((program) => {
+        const selected = selection?.keys.includes(`${program.sourceCode}:${program.id}`) ?? false
+        return <ProgramCard key={JSON.stringify([program.sourceCode, program.id])} program={program} onOpen={onOpenProgram}
+          selection={selection ? { selected, disabled: Boolean(selection.disabled || (!selected && selection.keys.length >= 2)), onToggle: () => selection.onToggle(program) } : undefined} />
+      })}
       {catalog.totalPages > 0 && <View style={styles.row}>
         <Button label="이전" variant="secondary" disabled={applied.page <= 1} onPress={() => setApplied((value) => ({ ...value, page: value.page - 1 }))} />
         <Text style={styles.body}>{catalog.page} / {catalog.totalPages}</Text>

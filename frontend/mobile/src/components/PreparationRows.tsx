@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { ActivityIndicator, Alert, Linking, Pressable, StyleSheet, Text, View } from 'react-native'
+import { router } from 'expo-router'
 import { applicationProgressStages, applicationServiceFieldLabels, type ApplicationPreparationSummary, type ApplicationProgressStage } from '@govbiz/shared/domain/entities/ApplicationPreparation'
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
 import { ApiError, errorMessage } from '../api/client'
@@ -14,6 +15,8 @@ export const preparationStageLabels: Record<ApplicationProgressStage, string> = 
 }
 export const preparationKey = (identity: SupportProgramIdentity) => JSON.stringify([identity.sourceCode, identity.sourceProgramId])
 export const preparationDate = (date: string) => date.slice(5, 10).replace('-', '.')
+const reviewDateFormatter = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', month: '2-digit', day: '2-digit' })
+const reviewRowDate = (date: string) => reviewDateFormatter.formatToParts(new Date(date)).filter(part => part.type === 'month' || part.type === 'day').map(part => part.value).join('.')
 
 export async function openPreparationWeb(path: string, identity?: SupportProgramIdentity) {
   try { await Linking.openURL(getPreparationWebUrl(path, identity)) }
@@ -54,13 +57,13 @@ export function ReviewRow({ item }: { item: PreparationReview }) {
   const label = !latestRun ? '분석 전' : !current ? '입력 변경' : labels[latestRun.status]
   const elapsed = latestRun ? Math.max(0, Math.floor((now - new Date(latestRun.startedAt).getTime()) / 1_000)) : 0
   return <Pressable accessibilityRole="button" accessibilityLabel={`${review.title} 열기`} style={local.row}
-    onPress={() => void openPreparationWeb(`/app/combination-reviews/${review.id}${current && latestRun ? `/runs/${latestRun.id}` : ''}`)}>
+    onPress={() => router.push({ pathname: '/all/reviews/[id]', params: { id: String(review.id), ...(current && latestRun ? { runId: String(latestRun.id) } : {}) } })}>
     <View style={[local.icon, { backgroundColor: completed ? colors.soft : colors.warningSoft }]}>{running
       ? <ActivityIndicator accessibilityLabel="중복 검토 진행 중" color={colors.primary} />
       : <AppIcon name="shield" color={completed ? colors.primary : colors.warning} size={18} />}</View>
     <View style={local.text}><Text style={local.rowTitle}>{review.title}</Text>
       <Text style={local.small}>{review.programs.length}개 공고 · {running ? `${elapsed}초 경과`
-        : latestRun ? `${preparationDate(latestRun.startedAt)} 실행 · 결과 보기` : `${preparationDate(review.updatedAt)} 수정`}</Text></View>
+        : latestRun ? `${reviewRowDate(latestRun.startedAt)} 실행 · 결과 보기` : `${reviewRowDate(review.updatedAt)} 수정`}</Text></View>
     <View style={local.pill}><StatusBadge label={label} tone={completed ? 'success' : running ? 'info' : 'neutral'} /></View>
   </Pressable>
 }
@@ -123,7 +126,7 @@ export function ProgramPreparationSection({ identity, token }: { identity: Suppo
     {!workspace.loading && workspace.preparations !== null && workspace.reviews !== null && !items.length && !reviews.length
       && <Text style={styles.muted}>아직 준비 중인 작업이 없어요.</Text>}
     <View style={local.buttons}><Button label="+ 새 문서" variant="secondary" onPress={() => void openPreparationWeb('/app/application-preparations/new', identity)} />
-      <Button label="중복 검토 요청" variant="secondary" onPress={() => void openPreparationWeb('/app/combination-reviews/new', identity)} /></View>
+      <Button label="중복 검토 요청" variant="secondary" onPress={() => router.push({ pathname: '/all/reviews/new', params: identity })} /></View>
     {stageOpen && <ProgressStageSheet items={items} token={token} onClose={() => setStageOpen(false)} onSaved={workspace.refresh} />}
   </View>
 }

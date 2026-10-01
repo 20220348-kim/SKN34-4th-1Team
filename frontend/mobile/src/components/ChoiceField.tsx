@@ -3,14 +3,15 @@ import { Modal, Pressable, ScrollView, Text, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { Button, colors, styles } from '../ui'
 
-export function ChoiceField({ label, value, options, onChange }: {
+export function ChoiceField({ label, value, options, onChange, disabled = false }: {
   label: string; value: string; options: readonly { value: string; label: string }[]; onChange: (value: string) => void
+  disabled?: boolean
 }) {
   const [open, setOpen] = useState(false)
   return <View style={{ gap: 7 }}>
     <Text style={styles.label}>{label}</Text>
     <Pressable accessibilityRole="button" accessibilityLabel={`${label}: ${options.find((item) => item.value === value)?.label ?? value}`}
-      onPress={() => setOpen(true)} style={styles.input}>
+      disabled={disabled} accessibilityState={{ disabled }} onPress={() => setOpen(true)} style={styles.input}>
       <Text style={styles.body}>{options.find((item) => item.value === value)?.label ?? value} ▾</Text>
     </Pressable>
     <Modal visible={open} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setOpen(false)}>

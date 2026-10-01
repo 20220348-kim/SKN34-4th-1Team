@@ -79,6 +79,16 @@ test('a late sign-in response cannot sign a user back in after logout', async ()
   expect(SecureStore.setItemAsync).not.toHaveBeenCalled()
 })
 
+test('logout clears the owning account analysis journal as well as credentials', async () => {
+  jest.mocked(apiRequest).mockResolvedValue(response())
+  mount()
+  await waitFor(() => expect(current.status).toBe('signedOut'))
+  await act(async () => current.signIn('first@example.com', 'password123'))
+  await act(async () => current.signOut())
+  expect(jest.mocked(SecureStore.deleteItemAsync).mock.calls.some(([key]) => key.includes('.review.'))).toBe(true)
+  expect(current.status).toBe('signedOut')
+})
+
 test('logout clears local state and reports a failed server revocation', async () => {
   jest.mocked(apiRequest).mockResolvedValueOnce(response()).mockRejectedValueOnce(new Error('offline'))
   mount()
