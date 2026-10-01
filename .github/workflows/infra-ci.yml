@@ -131,6 +131,7 @@ jobs:
           test "$actual_helm_version" = "v4.3.0"
       - name: Test chart boundaries and rejected settings
         run: |
+          python -B -m unittest discover -s scripts -p 'test_merge_workflows.py'
           python -B -m unittest discover -s scripts -p 'test_check_msa.py'
           python -B -m unittest discover -s scripts -p 'test_ops_sync.py'
           python -B -m unittest discover -s scripts -p 'test_ops_bridge.py'
@@ -156,3 +157,22 @@ jobs:
           done
           helm lint charts/govbiz-local-data --set allowDisposableData=true --strict
           helm lint charts/govbiz-local-data --set allowDisposableData=true --set rabbitmq.enabled=true --strict
+
+  merge-readiness:
+    name: Required CI / Infra
+    if: ${{ always() }}
+    needs: [fork-identity, repository, kubernetes-manifests, helm-gitops]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - name: Check out CI policy
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Require every dependency to succeed
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: python3 -B infrastructure/release/ci_policy.py infra-ci.yml

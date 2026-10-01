@@ -45,3 +45,22 @@ jobs:
           persist-credentials: false
       - name: Verify isolated catalog collection, projection, search and outage preservation
         run: python3 -B infrastructure/scripts/verify-catalog-separation.py
+
+  merge-readiness:
+    name: Required CI / Catalog
+    if: ${{ always() }}
+    needs: [catalog-service, catalog-integration]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - name: Check out CI policy
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Require every dependency to succeed
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: python3 -B infrastructure/release/ci_policy.py catalog-ci.yml

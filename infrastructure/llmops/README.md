@@ -170,7 +170,7 @@ dc up -d ops-service ops-sync evaluation-runner
 3. 새 이미지를 빌드하고 Ops API·ops-sync·실행기를 잠시 중지한다. Ops DB SQL, 결과 volume,
    중지된 Prefect 저장소를 접근 권한이 제한된 로컬 경로에 백업한다. Git에 백업을 넣지 않는다.
    SQL 백업은 격리된 MySQL 8.4에 복원하여 행 수·해시를 대조한 뒤 원본 DB에 migration을 적용한다.
-4. `migrate_deployment`로 **0015까지** 전진 적용하고 기존 평가·검토·감사 데이터 보존을 확인한다.
+4. `migrate_deployment`로 대상 소스의 최신 migration까지 전진 적용하고 기존 평가·검토·감사 데이터 보존을 확인한다.
    신규 모델의 Django content type·권한 추가는 기존 업무 행 변경과 구분한다.
 5. Prefect와 Ops의 준비 상태를 확인한 다음 동기화·실행기를 시작한다.
 
