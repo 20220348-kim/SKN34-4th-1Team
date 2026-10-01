@@ -102,7 +102,7 @@ export const workspacePageStyles = {
   pagination: 'flex items-center justify-between gap-3 text-[0.75rem] text-sample-muted',
   emptyNote: 'm-0 text-[0.78rem] leading-[1.6] text-sample-muted',
   toggle:
-    'relative inline-flex h-[22px] w-10 shrink-0 cursor-pointer items-center rounded-full border-0 p-0',
+    'relative inline-flex h-[22px] w-10 shrink-0 cursor-pointer items-center rounded-full border-0 p-0 disabled:cursor-not-allowed disabled:opacity-50',
   toggleOn: 'bg-brand-primary',
   toggleOff: 'bg-[#d7dce1]',
   toggleKnob: 'absolute top-[3px] size-4 rounded-full bg-white transition-[left]',

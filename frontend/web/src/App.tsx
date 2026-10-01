@@ -90,7 +90,6 @@ function CoreApp() {
     <ChatActivityToast />
     <Routes>
       <Route element={<PublicLayout />}>
-        <Route path={publicPaths.reportEmail} element={<DailyReportEmailPage />} />
         <Route element={<PublicOnly />}>
           <Route path={publicPaths.landing} element={<SupportProgramSearchPage />} />
           <Route path={publicPaths.pricing} element={<PricingPage />} />
@@ -109,6 +108,8 @@ function CoreApp() {
 
       {/* 소셜 로그인 완료 화면은 세션을 막 받은 순간이라 로그인 여부로 가르지 않고 스스로 복귀 경로로 옮깁니다. */}
       <Route path={publicPaths.oauthComplete} element={<OAuthCompletePage />} />
+      {/* 리포트 메일의 링크로 여는 화면도 헤더 없는 가운데 카드이고, 로그인 여부와 무관하게 엽니다. */}
+      <Route path={publicPaths.reportEmail} element={<DailyReportEmailPage />} />
 
       <Route element={<GuestOnly />}>
         <Route path={publicPaths.login} element={<LoginPage />} />

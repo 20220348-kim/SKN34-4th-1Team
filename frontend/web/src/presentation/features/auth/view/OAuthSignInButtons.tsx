@@ -1,5 +1,5 @@
 import type { OAuthSignInOption } from '../viewmodel/useOAuthSignInOptions'
-import { authPageStyles } from './AuthPage.styles'
+import { authPageStyles } from '../../../shared/auth/AuthPage.styles'
 
 /** 두 공급자가 같은 형식을 쓰도록 "{공급자} 계정으로 로그인 / 시작하기"로 맞춥니다. 카카오는 공식 표기 "카카오계정"을 씁니다. */
 const labels = {
