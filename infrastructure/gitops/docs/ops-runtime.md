@@ -176,6 +176,12 @@ python3 -B infrastructure/gitops/scripts/ops_bridge.py check --compose-project g
 다른 소유자의 동명 Service/EndpointSlice를 인수하지 않고, 기존 Service는 변경하지 않는다.
 EndpointSlice 갱신에는 `resourceVersion`을 사용하며 연결 중 컨테이너 교체를 감지하면 실패한다.
 도구는 bootstrap·개발 이미지 watcher와 같은 작업 잠금을 사용한다.
+`check`는 경로 조회 후 Docker 토폴로지를 다시 읽어 검사 도중 컨테이너가 교체되었는지도 확인한다.
+Docker·Kubernetes 조회와 개발 모드 소유권 조회는 명령당 15초, 연결·경로 쓰기는 명령당 60초로 제한한다.
+시간 초과는 종료 코드 1이며 HTTP 통신 성공으로 처리하지 않는다. `connect` 중 시간 초과라면 일부
+변경이 이미 반영되었을 수 있으므로 현재 상태를 먼저 확인한다. `check`는 경로를 수정하지 않는다.
+Docker가 응답하지 않으면 [읽기 전용 상태 진단](../../../docs/local-fork-development.md#실제-배포-이미지와-준비-상태-확인)으로
+Kubernetes와 디스크 상태를 별도로 확인한다. Docker 복구 전에는 컨테이너 교체 후 IP 일치 여부를 확정할 수 없다.
 
 생성되는 `.local/fork/ops-bridge-values.json`은 비밀값 없는 다음 설정을 제공한다.
 

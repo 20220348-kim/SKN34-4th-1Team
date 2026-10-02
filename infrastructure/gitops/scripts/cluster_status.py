@@ -1,11 +1,52 @@
 """Read deployment versions and readiness without Docker, secrets or mutations."""
 
 import json
+import shutil
 import subprocess
 from datetime import datetime, timezone
 
 from check_msa import REPOSITORY_ROOT, SERVICES
 from portfolio_cluster import run
+
+
+def node_status(node):
+    conditions = {
+        item["type"]: item.get("status", "Unknown")
+        for item in node.get("status", {}).get("conditions", [])
+    }
+    required = {
+        "Ready": "True",
+        "MemoryPressure": "False",
+        "DiskPressure": "False",
+        "PIDPressure": "False",
+    }
+    issues = [name for name, expected in required.items() if conditions.get(name) != expected]
+    if conditions.get("NetworkUnavailable", "False") != "False":
+        issues.append("NetworkUnavailable")
+    if node.get("spec", {}).get("unschedulable"):
+        issues.append("Unschedulable")
+    return {
+        "name": node["metadata"]["name"],
+        "healthy": not issues,
+        "conditions": {key: conditions.get(key) for key in (*required, "NetworkUnavailable")},
+        "issues": issues,
+    }
+
+
+def local_filesystems(state):
+    # WSL's virtual disk can have space while the Windows checkout drive is full.
+    # These paths describe the diagnostic process, not the Docker data location.
+    observations = []
+    for name, path in (("checkout", REPOSITORY_ROOT), ("state", state)):
+        item = {"name": name, "free_bytes": None, "minimum_free_bytes": 1024**3, "ok": False}
+        try:
+            item["free_bytes"] = shutil.disk_usage(path).free
+            item["ok"] = item["free_bytes"] >= item["minimum_free_bytes"]
+            item["issue"] = None if item["ok"] else "LOW_FREE_SPACE"
+        except OSError:
+            item["issue"] = "DISK_USAGE_UNAVAILABLE"
+        observations.append(item)
+    return observations
 
 
 def service_status(service, deployment, pods, expected_image):
@@ -100,6 +141,12 @@ def snapshot(state, settings, kube, nk, ak):
     resources = json.loads(
         run(nk + ["get", "deployments,pods,pvc", "-o", "json"], capture=True, timeout=15)
     )["items"]
+    nodes = [
+        node_status(item)
+        for item in json.loads(
+            run(kube + ["get", "nodes", "-o", "json"], capture=True, timeout=15)
+        )["items"]
+    ]
     deployments = {
         item["metadata"]["name"]: item for item in resources if item["kind"] == "Deployment"
     }
@@ -112,6 +159,34 @@ def snapshot(state, settings, kube, nk, ak):
         service_status(name, deployments.get(name), pods, baseline.get("images", {}).get(name))
         for name in SERVICES
     ]
+    claims = [
+        {
+            "name": item["metadata"]["name"],
+            "phase": item.get("status", {}).get("phase"),
+            "volume": item["spec"].get("volumeName"),
+            "storage_class": item["spec"].get("storageClassName"),
+            "terminating": bool(item["metadata"].get("deletionTimestamp")),
+        }
+        for item in resources
+        if item["kind"] == "PersistentVolumeClaim"
+    ]
+    referenced_claims = {
+        volume["persistentVolumeClaim"]["claimName"]
+        for pod in pods
+        if pod.get("status", {}).get("phase") not in {"Succeeded", "Failed"}
+        for volume in pod["spec"].get("volumes", [])
+        if "persistentVolumeClaim" in volume
+    }
+    missing_claims = sorted(referenced_claims - {claim["name"] for claim in claims})
+    storage_ready = (
+        bool(claims)
+        and not missing_claims
+        and all(
+            claim["phase"] == "Bound" and claim["volume"] and not claim["terminating"]
+            for claim in claims
+        )
+    )
+    filesystems = local_filesystems(state)
     crd = run(
         kube + ["get", "crd", "applications.argoproj.io", "--ignore-not-found", "-o", "name"],
         capture=True,
@@ -146,7 +221,7 @@ def snapshot(state, settings, kube, nk, ak):
     except (OSError, subprocess.SubprocessError):
         pass  # Missing checkout information is explicit; cluster observations remain useful.
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "scope": "deployment_snapshot",
         "collected_at": datetime.now(timezone.utc).isoformat(),
         "repository": settings["repository"],
@@ -159,17 +234,14 @@ def snapshot(state, settings, kube, nk, ak):
         "baseline_revision": baseline.get("release", {}).get("verifiedRevision"),
         "workloads_ready": all(s["ready"] for s in services),
         "baseline_matches": all(s["baseline_matches"] is True for s in services),
+        "nodes_healthy": bool(nodes) and all(node["healthy"] for node in nodes),
+        "nodes": nodes,
+        "storage_ready": storage_ready,
+        "missing_claims": missing_claims,
+        "local_storage_ok": all(item["ok"] for item in filesystems),
+        "local_filesystems": filesystems,
         "services": services,
-        "claims": [
-            {
-                "name": item["metadata"]["name"],
-                "phase": item.get("status", {}).get("phase"),
-                "volume": item["spec"].get("volumeName"),
-                "storage_class": item["spec"].get("storageClassName"),
-            }
-            for item in resources
-            if item["kind"] == "PersistentVolumeClaim"
-        ],
+        "claims": claims,
         "argocd": {"application_crd_present": bool(crd), "applications": applications},
         "image_source_verified": False,
         "application_paths_verified": False,

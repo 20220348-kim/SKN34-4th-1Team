@@ -2,6 +2,7 @@
 
 import copy
 import importlib.util
+import io
 import json
 import os
 import re
@@ -70,6 +71,20 @@ def fixture():
 
 
 class BridgePolicyTests(unittest.TestCase):
+    def test_topology_reads_are_bounded_without_requesting_container_environment(self):
+        network, node, containers = fixture()
+        responses = [
+            json.dumps([network]), json.dumps(node),
+            "prefect-id", json.dumps(containers["prefect"]),
+            "artifacts-id", json.dumps(containers["ops-artifacts"]),
+        ]
+        with patch.object(bridge, "run", side_effect=responses) as run:
+            bridge.topology(SETTINGS, PROJECT)
+        self.assertEqual(len(run.call_args_list), 6)
+        for call in run.call_args_list:
+            self.assertEqual(call.kwargs["timeout"], 15)
+            self.assertNotIn(".Config.Env", " ".join(call.args[0]))
+
     def test_accepts_exact_private_members_without_exposing_credentials(self):
         network, node, containers = fixture()
         self.assertEqual(
@@ -195,6 +210,7 @@ class BridgeConnectTests(unittest.TestCase):
     def execute(self, command, data=None, **kwargs):
         command = [str(value) for value in command]
         self.calls.append(command)
+        self.assertEqual(kwargs["timeout"], 15 if "get" in command else 60)
         if command[:3] == ["docker", "network", "connect"]:
             self.snapshot["nodeConnected"] = True
             return ""
@@ -302,6 +318,39 @@ class BridgeConnectTests(unittest.TestCase):
             bridge.connect(self.state, SETTINGS, PROJECT)
         self.assertFalse(any("create" in call for call in self.calls))
         self.assertFalse((self.state / "ops-bridge-values.json").exists())
+
+    def test_container_replacement_during_read_only_check_is_not_success(self):
+        bridge.connect(self.state, SETTINGS, PROJECT)
+        before = len(self.calls)
+        changed = copy.deepcopy(self.snapshot)
+        changed["containers"]["prefect"] = "replacement-id"
+        with (
+            patch.object(bridge, "topology", side_effect=[copy.deepcopy(self.snapshot), changed]),
+            self.assertRaisesRegex(ValueError, "topology changed during check"),
+        ):
+            bridge.connect(self.state, SETTINGS, PROJECT, check=True)
+        self.assertTrue(all("get" in call for call in self.calls[before:]))
+
+    def test_cli_timeout_is_failure_without_routes_or_private_output(self):
+        with (
+            patch("sys.argv", [
+                "ops_bridge.py", "check", "--state-dir", str(self.state),
+                "--compose-project", PROJECT,
+            ]),
+            patch.object(bridge, "load_settings", return_value=SETTINGS),
+            patch.object(
+                bridge, "topology",
+                side_effect=subprocess.TimeoutExpired("docker", 15, output="PRIVATE", stderr="PRIVATE"),
+            ),
+            patch("sys.stderr", new_callable=io.StringIO) as output,
+            self.assertRaises(SystemExit) as stopped,
+        ):
+            bridge.main()
+        self.assertEqual(stopped.exception.code, 1)
+        self.assertIn("timed out", output.getvalue())
+        self.assertNotIn("PRIVATE", output.getvalue())
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.resources, {})
 
 
 class ComposeBridgeTests(unittest.TestCase):

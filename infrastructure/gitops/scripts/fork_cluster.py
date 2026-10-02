@@ -95,15 +95,15 @@ def verify_context(kube, settings, *, owner=True, timeout=600):
 
 
 def applications(kube, ak):
-    crd = run(kube + ["get", "crd", "applications.argoproj.io", "--ignore-not-found", "-o", "name"], capture=True).strip()
-    return json.loads(run(ak + ["get", "applications", "-o", "json"], capture=True))["items"] if crd else []
+    crd = run(kube + ["get", "crd", "applications.argoproj.io", "--ignore-not-found", "-o", "name"], capture=True, timeout=15).strip()
+    return json.loads(run(ak + ["get", "applications", "-o", "json"], capture=True, timeout=15))["items"] if crd else []
 
 
 def require_dev(state, settings):
     if settings["mode"] != "dev":
         raise ValueError("GitOps owns the services; run fork_cluster.py dev before local development")
     kube, _, ak = commands(state, settings)
-    verify_context(kube, settings)
+    verify_context(kube, settings, timeout=15)
     if applications(kube, ak):
         raise ValueError("Argo Applications still exist: refusing local changes that self-heal could undo")
 
@@ -556,7 +556,7 @@ def main():
     parser.add_argument("--helm", default="helm")
     parser.add_argument("--core-port", type=int, help="web only: Core loopback port (default: 18080)")
     parser.add_argument("--ops-port", type=int, help="web only: Ops loopback port (default: 18001)")
-    parser.add_argument("--json", dest="json_output", action="store_true", help="status only: read-only deployment snapshot; exit 1 if rollout or image alignment is incomplete")
+    parser.add_argument("--json", dest="json_output", action="store_true", help="status only: read-only deployment snapshot; exit 1 on rollout, baseline, node, PVC or local disk issues")
     args = parser.parse_args()
     if args.json_output and args.action != "status":
         parser.error("--json is only supported by status")
@@ -613,7 +613,9 @@ def main():
                 from cluster_status import snapshot
                 report = snapshot(state, settings, kube, nk, ak)
                 print(json.dumps(report, indent=2))
-                if not report["workloads_ready"] or not report["baseline_matches"]:
+                if not all(report[key] for key in (
+                    "workloads_ready", "baseline_matches", "nodes_healthy", "storage_ready", "local_storage_ok"
+                )):
                     parser.exit(1)
             else:
                 print("Mode: " + settings["mode"] + "; repository: " + settings["repository"])

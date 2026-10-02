@@ -80,6 +80,7 @@ def inspect_container(identity):
                 identity,
             ],
             capture=True,
+            timeout=15,
         )
     )
 
@@ -168,7 +169,11 @@ def topology(settings, project):
     if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,62}", project):
         raise ValueError("Invalid Compose project name")
     network = json.loads(
-        run(["docker", "network", "inspect", network_name(settings)], capture=True)
+        run(
+            ["docker", "network", "inspect", network_name(settings)],
+            capture=True,
+            timeout=15,
+        )
     )[0]
     node = inspect_container(settings["cluster"] + "-control-plane")
     containers = {}
@@ -185,6 +190,7 @@ def topology(settings, project):
                 "{{.ID}}",
             ],
             capture=True,
+            timeout=15,
         ).split()
         if len(identities) != 1:
             raise ValueError(
@@ -205,11 +211,11 @@ def topology(settings, project):
 
 
 def verify_cluster_ranges(kube, snapshot):
-    nodes = json.loads(run(kube + ["get", "nodes", "-o", "json"], capture=True))[
-        "items"
-    ]
+    nodes = json.loads(
+        run(kube + ["get", "nodes", "-o", "json"], capture=True, timeout=15)
+    )["items"]
     services = json.loads(
-        run(kube + ["get", "servicecidrs", "-o", "json"], capture=True)
+        run(kube + ["get", "servicecidrs", "-o", "json"], capture=True, timeout=15)
     )["items"]
     pod_ranges = [
         cidr for node in nodes for cidr in node.get("spec", {}).get("podCIDRs", [])
@@ -283,7 +289,9 @@ def existing_resources(nk, desired):
     for item in desired:
         kind, name = item["kind"], item["metadata"]["name"]
         raw = run(
-            nk + ["get", kind, name, "--ignore-not-found", "-o", "json"], capture=True
+            nk + ["get", kind, name, "--ignore-not-found", "-o", "json"],
+            capture=True,
+            timeout=15,
         )
         if not raw.strip():
             continue
@@ -334,6 +342,7 @@ def existing_resources(nk, desired):
                     "json",
                 ],
                 capture=True,
+                timeout=15,
             )
         )["items"]
         if any(
@@ -366,6 +375,10 @@ def connect(state, settings, project, *, check=False):
                     raise ValueError(
                         "Compose container address changed; run connect again"
                     )
+        if topology(settings, project) != before:
+            raise ValueError(
+                "Compose topology changed during check; rerun check before using Ops"
+            )
         print(
             "PASS: current bridge ownership and endpoint addresses (not HTTP or evaluation success)"
         )
@@ -382,6 +395,7 @@ def connect(state, settings, project, *, check=False):
                 before["nodeId"],
             ],
             capture=True,
+            timeout=60,
         )
     after = topology(settings, project)
     if not after["nodeConnected"] or {**before, "nodeConnected": True} != after:
@@ -403,6 +417,7 @@ def connect(state, settings, project, *, check=False):
             nk + ["replace" if previous else "create", "-f", "-"],
             data=json.dumps(item),
             capture=True,
+            timeout=60,
         )
     if topology(settings, project) != after:
         raise ValueError(
@@ -436,6 +451,12 @@ def main():
                     args.compose_project,
                     check=args.action == "check",
                 )
+    except subprocess.TimeoutExpired:
+        parser.exit(
+            1,
+            "Ops bridge timed out; inspect Docker/Kubernetes connectivity "
+            "and current routes before retrying.\n",
+        )
     except (
         ValueError,
         KeyError,
