@@ -6,6 +6,7 @@ import json
 import socket
 import subprocess
 import sys
+from copy import deepcopy
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Event, Thread
@@ -378,6 +379,223 @@ def test_real_sdk_and_evaluator_accept_http_double(monkeypatch, tmp_path, server
     ]
 
 
+@pytest.mark.parametrize(
+    "fault,sent,unknown", [(None, 9, 0), ("embedding_lost", 1, 1), ("model_lost", 3, 1)]
+)
+def test_rag_service_and_sdk_use_http_double_and_preserve_mixed_budget(
+    monkeypatch, tmp_path, server, fault, sent, unknown
+):
+    import httpx2
+
+    evaluation_dir = HERE.parents[1] / "evaluation/support-program-evidence"
+    monkeypatch.syspath_prepend(str(evaluation_dir))
+    monkeypatch.syspath_prepend(str(HERE.parents[1] / "backend/ops-service"))
+    import rag_live
+    from apps.evaluations.catalog import live_config
+    from apps.evaluations.execution_spec import digest, make_spec, read_release
+    from apps.evaluations.rag_replay import validate_live_capture
+    from budget_client import BudgetClient
+
+    state, base = server
+    run_id = str(uuid4())
+    state.configure(run_id, {"fault": fault})
+    runner = load_runner()
+    monkeypatch.setattr(runner, "PROBE", base)
+    monkeypatch.setattr(httpx2, "AsyncClient", httpx2.AsyncClient)
+    monkeypatch.setattr(BudgetClient, "authorize", BudgetClient.authorize)
+    monkeypatch.setattr(BudgetClient, "settle", BudgetClient.settle)
+    monkeypatch.setenv("OPENAI_API_KEY", "offline-model-double-key")
+    monkeypatch.setenv("LANGFUSE_ENABLED", "false")
+    monkeypatch.setenv("LLMOPS_OPS_API_URL", base)
+    monkeypatch.setenv("LLMOPS_BUDGET_TOKEN", probe.TOKEN)
+    dataset = "rag-synthetic-multichunk-v1"
+    spec = make_spec(
+        read_release(),
+        dataset,
+        "live",
+        live_config(dataset),
+        "new-model-response",
+        "rag-synthetic-capture-v1",
+    )
+    plan = spec["model_operations"]
+    actions = []
+
+    def budget_http(url, method, body, headers):
+        assert url.startswith(
+            f"http://ops-service:8000/internal/llmops/evaluations/{run_id}/budget/"
+        )
+        assert method == "POST" and headers["Authorization"] == "Bearer " + probe.TOKEN
+        actions.append((url.rsplit("/", 1)[-1], json.loads(body)))
+        return 200, b'{"accepted":true}'
+
+    monkeypatch.setattr(probe, "exchange", budget_http)
+    runner.install_http_double(run_id)
+    budget = BudgetClient(run_id, str(uuid4()), digest(spec))
+    budget.claim()
+    capture, usage = asyncio.run(
+        rag_live.execute(
+            evaluation_dir / "rag-fixture.json",
+            tmp_path / "capture",
+            budget=budget,
+            execution_spec=spec,
+        )
+    )
+    budget.close()
+    validate_live_capture(capture, usage, spec, digest(spec))
+    assert usage["model_api_calls"] == sent
+    assert usage["completed"] is (fault is None)
+    assert len(list((tmp_path / "capture").glob("usage-*.json"))) == sent - unknown + 1
+    authorized = [fields for action, fields in actions if action == "authorize"]
+    assert [row["sequence"] for row in authorized] == list(range(sent))
+    settlements = {
+        fields["sequence"]: fields["usage"] for action, fields in actions if action == "settle"
+    }
+    rows = []
+    for request in authorized:
+        sequence = request["sequence"]
+        item = plan[sequence]
+        assert request["operation_id"] == item["id"]
+        if item["kind"] != "answer":
+            assert request["input_sha256"] == item["input_sha256"]
+            assert request["dimensions"] == item["dimensions"]
+        settled = settlements.get(sequence) or {}
+        rows.append(
+            {
+                "sequence": sequence,
+                "operation_id": item["id"],
+                "counted_input_tokens": request["input_token_count"],
+                "input_tokens": settled.get("input_tokens"),
+                "output_tokens": settled.get("output_tokens"),
+            }
+        )
+    assert sum(row["input_tokens"] is None for row in rows) == unknown
+    if fault:
+        failed = capture["cases"][0]["failure"]
+        assert failed["stage"] == ("index" if fault == "embedding_lost" else "answer")
+        assert all(case["failure"]["stage"] == "not_started" for case in capture["cases"][1:])
+    assert actions[0][0] == "claim" and actions[-1][0] == "close"
+    events = state.snapshot(run_id)["events"]
+    assert sum(event["stage"] == "embedding_sent" for event in events) == (
+        6 if fault is None else 1 if fault == "embedding_lost" else 2
+    )
+    assert sum(event["stage"] == "model_sent" for event in events) == (
+        3 if fault is None else 0 if fault == "embedding_lost" else 1
+    )
+
+
+def rag_accounting():
+    plan = []
+    for case in range(3):
+        for kind in ("document_embedding", "query_embedding", "answer"):
+            plan.append(
+                {
+                    "id": f"{kind}:R0{case + 1}",
+                    "kind": kind,
+                    "max_input_tokens": 32768 if kind == "answer" else 243,
+                    "max_output_tokens": 2000 if kind == "answer" else 0,
+                }
+            )
+    before = {"allocated": [5, 200], "allocated_input": 700}
+    after = {
+        "allocated": [8, 2200],
+        "allocated_input": 700 + 4 + 32768,
+        "closed": True,
+        "corrections": [],
+        "operation_plan": plan,
+        "reserved_input_tokens": sum(row["max_input_tokens"] for row in plan),
+        "reserved_output_tokens": 6000,
+        "calls": [
+            {
+                "sequence": i,
+                "operation_id": plan[i]["id"],
+                "counted_input_tokens": 100 if i == 2 else 243,
+                "input_tokens": None if i == 2 else 2,
+                "output_tokens": None if i == 2 else 0,
+            }
+            for i in range(3)
+        ],
+    }
+    events = [{"stage": "authorize", "status": 200}] * 3 + [{"stage": "settle", "status": 200}] * 2
+    events += [{"stage": "embedding_sent"}] * 2 + [{"stage": "model_sent"}]
+    return before, after, events
+
+
+def test_rag_accounting_keeps_unknown_answer_cap_and_zero_embedding_output():
+    before, after, events = rag_accounting()
+    result = smoke.verify_rag_budget(
+        before, after, calls=3, output=2000, sent=3, events=events, unknown_calls=1
+    )
+    assert result["unknown_calls"] == 1 and result["retained_input_delta"] == 32772
+    assert result["evidence_kind"] == "integration-stub-not-quality-evidence"
+
+
+@pytest.mark.parametrize(
+    "defect",
+    [
+        "input_refund",
+        "output_refund",
+        "wrong_operation",
+        "duplicate_sequence",
+        "not_closed",
+        "missing_send",
+        "wrong_send_kind",
+        "missing_settle",
+        "negative_usage",
+        "wrong_reservation",
+    ],
+)
+def test_rag_accounting_rejects_false_success(defect):
+    before, after, events = deepcopy(rag_accounting())
+    if defect == "input_refund":
+        after["allocated_input"] -= 32768
+    elif defect == "output_refund":
+        after["allocated"][1] -= 2000
+    elif defect == "wrong_operation":
+        after["calls"][1]["operation_id"] = "answer:R01"
+    elif defect == "duplicate_sequence":
+        after["calls"][1]["sequence"] = 0
+    elif defect == "not_closed":
+        after["closed"] = False
+    elif defect == "missing_send":
+        events.pop()
+    elif defect == "wrong_send_kind":
+        events[-1] = {"stage": "embedding_sent"}
+    elif defect == "missing_settle":
+        events[:] = [event for event in events if event["stage"] != "settle"]
+    elif defect == "negative_usage":
+        after["calls"][0]["input_tokens"] = -1
+    else:
+        after["reserved_output_tokens"] = 18000  # Every operation incorrectly charged as an answer.
+    with pytest.raises(AssertionError):
+        smoke.verify_rag_budget(
+            before, after, calls=3, output=2000, sent=3, events=events, unknown_calls=1
+        )
+
+
+@pytest.mark.parametrize("false_zero_usage", [False, True])
+def test_rag_accounting_preserves_unknown_embedding_even_with_zero_output(false_zero_usage):
+    before, after, _ = rag_accounting()
+    after["calls"] = after["calls"][:1]
+    after["calls"][0].update(input_tokens=None, output_tokens=None)
+    after["allocated"] = [before["allocated"][0] + 1, before["allocated"][1]]
+    after["allocated_input"] = before["allocated_input"] + 243
+    events = [{"stage": "authorize", "status": 200}, {"stage": "embedding_sent"}]
+    if false_zero_usage:
+        # 전체 장부까지 0으로 잘못 정산하면 합계만 비교하는 검사로는 탐지하지 못한다.
+        after["calls"][0].update(input_tokens=0, output_tokens=0)
+        after["allocated_input"] = before["allocated_input"]
+        events.append({"stage": "settle", "status": 200})
+        with pytest.raises(AssertionError):
+            smoke.verify_rag_budget(
+                before, after, calls=1, output=0, sent=1, events=events, unknown_calls=1
+            )
+    else:
+        result = smoke.verify_rag_budget(
+            before, after, calls=1, output=0, sent=1, events=events, unknown_calls=1
+        )
+        assert result["retained_input_delta"] == 243 and result["unknown_calls"] == 1
+
+
 def test_readiness_checks_real_langfuse_endpoint_without_model_calls(server, monkeypatch):
     state, base = server
     forwarded = Mock(return_value=(200, b'{"status":"OK"}'))
@@ -622,7 +840,14 @@ def test_readiness_waits_for_valid_langfuse_json(monkeypatch):
         "live_enabled": True,
         "user": {"id": 1},
         "csrf_token": "csrf",
-        "datasets": [{"id": "target-coverage-20260907-v1"}],
+        "datasets": [
+            {"id": "target-coverage-20260907-v1"},
+            {
+                "id": "rag-synthetic-multichunk-v1",
+                "live_config": {"model": "test"},
+                "execution_profiles": {"live": "test-profile"},
+            },
+        ],
     }
     client.request = Mock(
         side_effect=[
@@ -664,7 +889,14 @@ def test_readiness_retries_non_json_startup_response_but_still_times_out(monkeyp
             "live_enabled": True,
             "user": {"id": 1},
             "csrf_token": "test-csrf",
-            "datasets": [{"id": "target-coverage-20260907-v1"}],
+            "datasets": [
+                {"id": "target-coverage-20260907-v1"},
+                {
+                    "id": "rag-synthetic-multichunk-v1",
+                    "live_config": {"model": "test"},
+                    "execution_profiles": {"live": "test-profile"},
+                },
+            ],
         },
     )
     api = Mock(side_effect=[unavailable, ready] if recovers else unavailable)

@@ -17,6 +17,7 @@ services:
       CORE_API_URL: http://cancellation-probe:8099
       PREFECT_API_URL: http://cancellation-probe:8099/api
       LLMOPS_LIVE_ENABLED: "true"
+      LLMOPS_RAG_LIVE_ENABLED: "true"
       LLMOPS_BUDGET_TOKEN: offline-cancellation-test-token-not-for-deployment
     volumes:
       - ./cancellation_probe.py:/test/cancellation_probe.py:ro
@@ -29,6 +30,7 @@ services:
     environment:
       OPENAI_API_KEY: offline-model-double-key
       LLMOPS_LIVE_ENABLED: "true"
+      LLMOPS_RAG_LIVE_ENABLED: "true"
       LLMOPS_BUDGET_TOKEN: offline-cancellation-test-token-not-for-deployment
       LLMOPS_OPS_API_URL: http://cancellation-probe:8099
       PREFECT_RUNNER_POLL_FREQUENCY: "1"

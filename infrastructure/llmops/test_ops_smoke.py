@@ -84,6 +84,48 @@ def test_http_runtime_verification_rejects_filesystem_shortcut():
     assert smoke.verify_runtime(Mock(return_value=(200, json.dumps(result).encode(), {})), "run", "http") == result
 
 
+@pytest.mark.parametrize("planned", [True, False])
+def test_rag_replay_accepts_published_plan_but_requires_live_disabled(planned):
+    dataset = {"live_config": {"source_mode": "fixed-source-and-chunks"} if planned else None,
+               "execution_profiles": {"live": "a" * 64 if planned else None}}
+    request = Mock(side_effect=[(400, b'{"code":"INVALID_REFERENCE"}', {}), (404, b"{}", {})])
+    payload = {"request_id": "replay-id", "dataset_id": "rag", "reference_capture_id": "saved"}
+    smoke.verify_rag_live_disabled(request, {"rag_live_enabled": False}, dataset, payload)
+    assert request.call_count == (2 if planned else 0)
+    assert payload["request_id"] == "replay-id"
+    if planned:
+        body = request.call_args_list[0].args[1]
+        assert body["execution_mode"] == "live" and body["confirm_paid_run"]
+        assert body["live_config"] == dataset["live_config"]
+        assert body["execution_profile"] == dataset["execution_profiles"]["live"]
+        assert body["request_id"] != payload["request_id"]
+        assert request.call_args_list[1].args == (f'/api/v1/ops/evaluations/{body["request_id"]}',)
+
+
+@pytest.mark.parametrize("defect", ["enabled", "unplanned_profile", "missing_profile", "wrong_source"])
+def test_rag_replay_refuses_unsafe_or_inconsistent_session_before_sending(defect):
+    session = {"rag_live_enabled": defect == "enabled"}
+    dataset = {"live_config": {"source_mode": "fixed-source-and-chunks"}, "execution_profiles": {"live": "a" * 64}}
+    if defect == "unplanned_profile":
+        dataset["live_config"] = None
+    elif defect == "missing_profile":
+        dataset["execution_profiles"]["live"] = None
+    elif defect == "wrong_source":
+        dataset["live_config"]["source_mode"] = "other"
+    request = Mock()
+    with pytest.raises(AssertionError):
+        smoke.verify_rag_live_disabled(request, session, dataset, {})
+    request.assert_not_called()
+
+
+@pytest.mark.parametrize("status,code,detail_status", [(202, "INVALID_REFERENCE", 404), (400, "LIVE_BUDGET_UNAVAILABLE", 404), (400, "INVALID_REFERENCE", 200)])
+def test_rag_disabled_check_rejects_acceptance_budget_rejection_or_created_run(status, code, detail_status):
+    request = Mock(side_effect=[(status, json.dumps({"code": code}).encode(), {}), (detail_status, b"{}", {})])
+    dataset = {"live_config": {"source_mode": "fixed-source-and-chunks"}, "execution_profiles": {"live": "a" * 64}}
+    with pytest.raises(AssertionError):
+        smoke.verify_rag_live_disabled(request, {"rag_live_enabled": False}, dataset, {})
+
+
 @pytest.fixture
 def rag_run():
     # Use the real offline evaluator and committed capture, without a server or model call.

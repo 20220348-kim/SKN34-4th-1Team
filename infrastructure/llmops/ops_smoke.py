@@ -41,6 +41,25 @@ def verify_runtime(request, run_id, expected_transport="filesystem"):
     return runtime
 
 
+def verify_rag_live_disabled(request, session, dataset, payload):
+    """호출 계획 공개와 실행 활성화를 구분한다. 이 smoke는 비활성 환경에서만 실행한다."""
+    assert session["rag_live_enabled"] is False
+    config, profile = dataset["live_config"], dataset["execution_profiles"]["live"]
+    if config is None:
+        assert profile is None
+        return
+    assert config["source_mode"] == "fixed-source-and-chunks"
+    assert isinstance(profile, str) and len(profile) == 64
+    run_id = str(uuid4())
+    status, raw, _ = request("/api/v1/ops/evaluations", {
+        **payload, "request_id": run_id, "execution_mode": "live",
+        "candidate_capture_id": "new-model-response", "live_config": config,
+        "execution_profile": profile, "confirm_paid_run": True,
+    })
+    assert status == 400 and json.loads(raw) == {"code": "INVALID_REFERENCE"}
+    assert request(f"/api/v1/ops/evaluations/{run_id}")[0] == 404
+
+
 def verify_rag_replay(run):
     """Keep synthetic provenance and the different eligible-case denominators explicit."""
     scope = "source-chunks-retrieval-answer"
@@ -383,7 +402,8 @@ def main():
     assert status == 200 and json.loads(body)["account"]["role"] == "ADMIN"
     status, body, _ = request("/api/v1/ops/session")
     assert status == 200 and json.loads(body)["user"]["username"] == os.environ["CORE_ADMIN_EMAIL"]
-    datasets = {item["id"]: item for item in json.loads(body)["datasets"]}
+    session = json.loads(body)
+    datasets = {item["id"]: item for item in session["datasets"]}
     submit_path = "/api/v1/ops/evaluations"
     payload = {"request_id": str(uuid4()), "dataset_id": "target-coverage-20260907-v1"}
     if args.recover_source:
@@ -412,8 +432,7 @@ def main():
                        candidate_capture_id=registration["capture_id"],
                        reference_capture_id=registration["capture_id"])
     if is_rag:
-        assert datasets[payload["dataset_id"]]["live_config"] is None
-        assert datasets[payload["dataset_id"]]["execution_profiles"]["live"] is None
+        verify_rag_live_disabled(request, session, datasets[payload["dataset_id"]], payload)
     if not args.recover_source:
         payload["execution_profile"] = datasets[payload["dataset_id"]]["execution_profiles"]["replay"]
     assert request(submit_path, payload, csrf=False)[0] == 403

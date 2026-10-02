@@ -32,6 +32,10 @@ SCENARIOS = (
     "close_error",
     "settle_and_close_error",
     "duplicate_worker",
+    "rag_completed",
+    "rag_cancel_after_embedding",
+    "rag_embedding_response_lost",
+    "rag_answer_response_lost",
 )
 
 
@@ -144,6 +148,73 @@ def verify_cleanup(record, before, after, *, unknown_calls, events_before, event
     ] == after["allocated"]
 
 
+def verify_rag_budget(before, after, *, calls, output, sent, events, unknown_calls=0):
+    """혼합 실행의 작업별 상한으로 계산한다. 임베딩 미확정을 답변 상한이나 0으로 바꾸지 않는다."""
+    plan, rows = after["operation_plan"], after["calls"]
+    assert after["closed"] and not after["corrections"]
+    assert len(plan) == 9 and len(rows) == calls
+    assert [item["kind"] for item in plan] == [
+        "document_embedding",
+        "query_embedding",
+        "answer",
+    ] * 3
+    assert [row["sequence"] for row in rows] == list(range(calls))
+    assert [row["sequence"] for row in rows if row["input_tokens"] is None] == list(
+        range(calls - unknown_calls, calls)
+    )
+    retained_input = retained_output = 0
+    for row in rows:
+        operation = plan[row["sequence"]]
+        assert row["operation_id"] == operation["id"]
+        assert row["counted_input_tokens"] == (
+            100 if operation["kind"] == "answer" else operation["max_input_tokens"]
+        )
+        assert (row["input_tokens"] is None) == (row["output_tokens"] is None)
+        for dimension in ("input", "output"):
+            amount, limit = row[f"{dimension}_tokens"], operation[f"max_{dimension}_tokens"]
+            assert amount is None or (type(amount) is int and 0 <= amount <= limit)
+        retained_input += (
+            row["input_tokens"]
+            if row["input_tokens"] is not None
+            else operation["max_input_tokens"]
+        )
+        retained_output += (
+            row["output_tokens"]
+            if row["output_tokens"] is not None
+            else operation["max_output_tokens"]
+        )
+    assert retained_output == output
+    assert after["allocated"] == [before["allocated"][0] + calls, before["allocated"][1] + output]
+    assert after["allocated_input"] == before["allocated_input"] + retained_input
+    assert after["reserved_input_tokens"] == sum(item["max_input_tokens"] for item in plan)
+    assert after["reserved_output_tokens"] == sum(item["max_output_tokens"] for item in plan)
+    assert not any(event["stage"] == "barrier_timeout" for event in events)
+    assert sum(event["stage"] in {"model_sent", "embedding_sent"} for event in events) == sent
+    assert sum(event["stage"] == "embedding_sent" for event in events) == sum(
+        plan[row["sequence"]]["kind"] != "answer" for row in rows
+    )
+    assert sum(event["stage"] == "model_sent" for event in events) == sum(
+        plan[row["sequence"]]["kind"] == "answer" for row in rows
+    )
+    assert (
+        sum(event["stage"] == "authorize" and event.get("status") == 200 for event in events)
+        == calls
+    )
+    assert sum(
+        event["stage"] == "settle" and event.get("status") == 200 for event in events
+    ) == sum(row["input_tokens"] is not None for row in rows)
+    return {
+        "retained_delta": [calls, output],
+        "retained_input_delta": retained_input,
+        "model_sends": sent,
+        "embedding_sends": sum(event["stage"] == "embedding_sent" for event in events),
+        "answer_sends": sum(event["stage"] == "model_sent" for event in events),
+        "unknown_calls": sum(row["input_tokens"] is None for row in rows),
+        "evidence_kind": "integration-stub-not-quality-evidence",
+        "paid_model_calls": 0,
+    }
+
+
 def verify_correction(record, before, after, *, events_before, events_after):
     assert record["applied"] is True and record["source"] == "WORKER_RESPONSE"
     assert before["closed"] and after["closed"]
@@ -214,6 +285,10 @@ class Smoke:
         assert body["live_enabled"] and body["user"]
         self.csrf = body["csrf_token"]
         self.dataset = next(d for d in body["datasets"] if d["id"] == "target-coverage-20260907-v1")
+        self.rag_dataset = next(
+            d for d in body["datasets"] if d["id"] == "rag-synthetic-multichunk-v1"
+        )
+        assert self.rag_dataset["live_config"] and self.rag_dataset["execution_profiles"]["live"]
 
         def deployment():
             try:
@@ -277,7 +352,8 @@ class Smoke:
     def resume(self):
         self.runner("signal-parent", "CONT")
 
-    def start(self, name, **config):
+    def start(self, name, *, dataset=None, **config):
+        dataset = self.dataset if dataset is None else dataset
         self.active = {
             "scenario": name,
             "request_id": str(uuid4()),
@@ -287,13 +363,13 @@ class Smoke:
         self.control("configure", config)
         payload = {
             "request_id": self.active["request_id"],
-            "dataset_id": self.dataset["id"],
+            "dataset_id": dataset["id"],
             "candidate_capture_id": "new-model-response",
-            "reference_capture_id": self.dataset["captures"][0]["id"],
+            "reference_capture_id": dataset["captures"][0]["id"],
             "execution_mode": "live",
             "confirm_paid_run": True,
-            "live_config": self.dataset["live_config"],
-            "execution_profile": self.dataset["execution_profiles"]["live"],
+            "live_config": dataset["live_config"],
+            "execution_profile": dataset["execution_profiles"]["live"],
         }
         self.active["payload"] = payload
         status, run = self.api("/api/v1/ops/evaluations", payload)
@@ -338,19 +414,25 @@ class Smoke:
         )
         return run
 
-    def finish(self, *, calls, output, sent, closed=True):
+    def finish(self, *, calls, output, sent, closed=True, rag=False, unknown_calls=0):
         stopped = wait_for(self.process, lambda p: not p["alive"], label="Child process exit")
         before = self.active["before"]
         after = self.db(self.active["request_id"])
         events = self.control("state")["events"]
-        counters = verify_budget(
-            before,
-            after,
-            calls=calls,
-            output=output,
-            closed=closed,
-            sent=sent,
-            events=events,
+        counters = (
+            verify_rag_budget(
+                before,
+                after,
+                calls=calls,
+                output=output,
+                sent=sent,
+                events=events,
+                unknown_calls=unknown_calls,
+            )
+            if rag
+            else verify_budget(
+                before, after, calls=calls, output=output, closed=closed, sent=sent, events=events
+            )
         )
         # 반복 조회/취소 확인으로도 중복 환급이 없어야 한다.
         self.read()
@@ -606,7 +688,48 @@ class Smoke:
         self.control("release", {})
         self.terminal("COMPLETED")
         self.finish(calls=6, output=300, sent=6)
+        self.run_rag()
         assert [r["scenario"] for r in self.records] == list(SCENARIOS)
+
+    def run_rag(self):
+        self.start("rag_completed", dataset=self.rag_dataset)
+        run = self.terminal("COMPLETED")
+        assert run["model_api_calls"] == 9
+        report = run["comparison"]["current"]
+        assert report["measurementKind"] == "recorded-live-evaluation"
+        assert report["liveExecutionPerformed"] and report["completed"]
+        assert report["coverage"] == {
+            "retrievalCaseCount": 3,
+            "answerCaseCount": 3,
+            "traceCaseCount": 3,
+            "failedCaseCount": 0,
+        }
+        status, reviews = self.api(f"/api/v1/ops/evaluations/{run['id']}/rag-reviews")
+        assert status == 200 and reviews["case_reviews"] == []
+        assert reviews["quality"]["status"] == "NOT_EVALUATED"
+        assert (
+            not reviews["quality"]["baseline_eligible"]
+            and not reviews["reference_review"]["approved"]
+        )
+        self.active["review_state"] = {"quality": "NOT_EVALUATED", "reference_approved": False}
+        status, retry = self.api("/api/v1/ops/evaluations", self.active["payload"])
+        assert status == 200 and retry["prefect_flow_run_id"] == run["prefect_flow_run_id"]
+        self.finish(calls=9, output=150, sent=9, rag=True)
+
+        self.start("rag_cancel_after_embedding", dataset=self.rag_dataset, hold="after_settle_0")
+        self.stage("after_settle_0")
+        self.cancel()
+        self.terminal("CANCELLED")
+        self.control("release", {})
+        self.finish(calls=1, output=0, sent=1, rag=True)
+
+        for name, fault, calls, output in (
+            ("rag_embedding_response_lost", "embedding_lost", 1, 0),
+            ("rag_answer_response_lost", "model_lost", 3, 2000),
+        ):
+            self.start(name, dataset=self.rag_dataset, fault=fault)
+            self.terminal("FAILED")
+            self.finish(calls=calls, output=output, sent=calls, rag=True, unknown_calls=1)
 
 
 def isolated_environment():
@@ -629,6 +752,7 @@ def isolated_environment():
         LANGFUSE_PUBLIC_KEY="pk-lf-" + secrets.token_hex(16),
         LANGFUSE_SECRET_KEY="sk-lf-" + secrets.token_hex(32),
         LLMOPS_LIVE_ENABLED="true",
+        LLMOPS_RAG_LIVE_ENABLED="true",
         LLMOPS_LIVE_MODEL="gpt-6-luna",
         LLMOPS_BUDGET_TOKEN=TOKEN,
         OPENAI_API_KEY="offline-model-double-key",
