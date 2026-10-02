@@ -505,8 +505,47 @@ runner 이미지에 모듈을 포함하지만 기본 `ops_flow.py`가 자동으�
 
 무료 `test_rag_budget.py`는 실제 AI 앱·Service·Agent·SDK·메모리 Qdrant와 로컬 예산 HTTP 대역,
 모델 HTTP 대역으로 정상·캐시·계산/승인/정산 실패·취소 상태의 승인 거절·응답 유실·미확정 사용량·
-인용 오류·명세/CLI 변조를 검증합니다. 실제 Ops HTTP+MySQL, Core 수집기, Prefect를 같은 실행으로
-연결한 검증은 후속입니다. 공개 RAG live 접수·사람 검토·품질 판정과 유료 품질 측정 완료를 뜻하지 않습니다.
+인용 오류·명세/CLI 변조를 검증합니다. 실제 Ops HTTP+MySQL 연결은 아래 별도 통합 검사를 따릅니다.
+Core 수집기·Prefect를 같은 혼합 실행으로 연결하는 작업은 후속입니다. 공개 RAG live 접수·
+사람 검토·품질 판정과 유료 품질 측정 완료를 뜻하지 않습니다.
+
+## 실제 Ops HTTP·MySQL 혼합 예산 검증
+
+`infrastructure/llmops/rag_budget_http_checks.py`는 별도의 Python 3.12 AI 프로세스와 실제
+Django WSGI HTTP·serializer·예산 transaction·MySQL 8.4를 연결합니다. 테스트 데이터로
+내부 예약을 만들며 공개 RAG 접수 API를 열거나 운영 장부에 실행을 추가하지 않습니다.
+
+흐름: `AI HTTP → 기존 Service/Agent/SDK → 실제 BudgetClient HTTP → Django → MySQL`.
+모델 요청은 `rag_budget_http_worker.py`의 전송 대역이 모두 처리하고 Qdrant는 메모리 모드입니다.
+대역에 없는 모델 URL은 거절하며 production 예산 함수와 DB 동작은 대체하지 않습니다.
+
+검증 범위는 다음과 같습니다.
+
+- 같은 자료·질문 2회 실행: 문서·질문 캐시로 6개 예약 중 작업 0·1·2·5만 승인하고,
+  종료 후 실제 사용량인 호출 4회·입력 203·출력 40으로 장부가 일치해야 합니다.
+- 기존 취소 Service로 취소를 기록한 뒤 신규 승인은 거절합니다. 이미 전송된 답변의 확인된
+  사용량 정산은 허용하며 취소 상태를 완료 상태로 덮어쓰지 않습니다.
+- 승인 응답 유실, 정산 도착 전 실패, 정산 커밋 후 응답 유실을 구분합니다. 미확인 호출은
+  상한을 유지하고 이미 커밋한 사용량은 유지합니다. 어느 경우에도 추가 모델 전송을 재시도하지 않습니다.
+- 실제 HTTP로 동시 claim·동일 작업 승인을 요청해 소유자와 호출 행이 한 번만 확정되는지 확인합니다.
+  잘못된 토큰·배치 해시도 거절하며 종료 실패 후 같은 소유자의 재종료는 중복 차감하지 않습니다.
+- 임베딩 v2·답변 v1 증거를 실제 artifact HTTP로 조회해 미리보기·해시 대조·일회 보정을 수행합니다.
+  확인된 차액만 반환하고 원래 미정산 호출 행은 보존합니다. 같은 요청의 재적용은 파일 없이도 재현합니다.
+
+두 가상환경을 각 서비스의 잠금 파일로 설치한 뒤, **격리된 MySQL 8.4** 접속값을 지정하고 실행합니다.
+Django가 해당 서버에 `test_<DB_NAME>` DB를 생성·삭제하므로 개발·운영 DB 서버를 사용하지 않습니다.
+
+```bash
+# 저장소 루트. AI는 uv sync --locked --extra dev --group evaluation, Ops는 uv sync --locked로 설치
+RAG_BUDGET_AI_PYTHON="$PWD/backend/ai-service/.venv/bin/python" \
+PYTHONPATH="$PWD/infrastructure/llmops" \
+backend/ops-service/.venv/bin/python backend/ops-service/manage.py test rag_budget_http_checks --noinput
+```
+
+`RAG_BUDGET_AI_PYTHON` 누락·실제 MySQL 8.4 부재는 실패이며 테스트를 건너뛰지 않습니다.
+`ops-ci.yml`의 필수 `checks` 작업이 두 환경을 설치하고 전체 Ops 테스트 뒤 이 검사를 수행합니다.
+추가 실행 환경과 통합 검사 시간을 고려해 해당 작업의 제한은 25분입니다.
+Core·Prefect·외부 Qdrant·Kubernetes 및 관리자 UI 취소 경로는 이 검사의 범위가 아닙니다.
 
 
 ## 공식 HTML 전체 경로 재실행

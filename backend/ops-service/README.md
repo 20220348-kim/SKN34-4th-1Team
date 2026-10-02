@@ -238,7 +238,10 @@ uv run --locked python manage.py set_evaluation_budget \
 기존 AI 색인·검색·답변을 같은 예약으로 실행하는
 [혼합 RAG 예산 세션](../../evaluation/support-program-evidence/README.md#혼합-rag-예산-세션)도 추가했습니다.
 이미 예약된 내부 명세를 받으며 claim/close, 실제 검색 근거 대조, 답변 입력 계산·승인·정산을 수행합니다.
-로컬 검증의 예산 HTTP는 대역이므로 실제 Ops HTTP+MySQL 왕복 완료와 구분합니다.
+기존 실행기 단위 테스트의 예산 HTTP는 대역입니다. 별도의
+[실제 Ops HTTP·MySQL 통합 검사](../../evaluation/support-program-evidence/README.md#실제-ops-httpmysql-혼합-예산-검증)는
+격리 MySQL 8.4와 별도 AI 프로세스로 정상·캐시·취소·동시 승인·정산 전후 응답 유실·증거 보정을
+검증하며 필수 Ops CI에 연결했습니다. 이 검사에서도 모델은 무료 전송 대역입니다.
 전체 RAG live의 공개 접수·manifest·Prefect 실행 연결, runner→Kubernetes Ops 왕복 검증,
 금액·기간 한도는 남아 있습니다.
 

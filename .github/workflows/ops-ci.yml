@@ -15,7 +15,7 @@ jobs:
   checks:
     name: Ops checks and MySQL tests
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: backend/ops-service
@@ -83,6 +83,18 @@ jobs:
         run: uv run --locked python scripts/check-schema.py
       - name: Test against MySQL 8.4
         run: uv run --locked python manage.py test --noinput
+      - name: Install locked AI environment for mixed RAG HTTP checks
+        working-directory: backend/ai-service
+        run: uv sync --locked --extra dev --group evaluation
+      - name: Check mixed RAG integration sources
+        run: |
+          uv run --locked ruff check ../../infrastructure/llmops/rag_budget_http_checks.py ../../infrastructure/llmops/rag_budget_http_worker.py
+          uv run --locked ruff format --check ../../infrastructure/llmops/rag_budget_http_checks.py ../../infrastructure/llmops/rag_budget_http_worker.py
+      - name: Test real Ops HTTP and MySQL with offline RAG worker
+        env:
+          PYTHONPATH: ${{ github.workspace }}/infrastructure/llmops
+          RAG_BUDGET_AI_PYTHON: ${{ github.workspace }}/backend/ai-service/.venv/bin/python
+        run: uv run --locked python manage.py test rag_budget_http_checks --noinput
 
   docker:
     name: Ops container integration
