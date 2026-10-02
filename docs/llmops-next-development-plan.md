@@ -1,4 +1,4 @@
-# LLMOps 개발 현황과 후속 전략 — Core 캡처와 혼합 RAG 예산 명세 연결
+# LLMOps 개발 현황과 후속 전략 — Core 캡처의 실제 Ops 테스트 예약·정산
 
 [문서 목록](README.md) · [도입·구현 이력](langfuse-adoption-strategy.md) · [Ops API](../backend/ops-service/README.md) · [실행 안내](../infrastructure/llmops/README.md)
 
@@ -24,11 +24,52 @@
 |---|---|---|
 | React·Django 운영 기능 | 기존 Core 관리자 로그인, 고정 근거 및 RAG 저장 캡처 접수·조회·비교·동기화·후처리 복구 구현 | RAG live·사람 검토·품질 정책 연결은 후속 |
 | 자료·응답 검토와 품질 정책 | 고정 근거의 사람 검토, 판정 이력, 기준 지정·철회·오래된 합격 차단 구현 | 현재 모델의 유효한 사람 검토 기준은 이번 점검에서 미확인; 전체 RAG 정책 없음 |
-| 예산·취소 | 고정 근거 live의 누적 장부·입력 계산, 혼합 예약·AI HTTP 가드·증거 보정과 실제 Ops HTTP+MySQL 통합 검사 구현 | RAG 접수/Core 준비 명세의 실제 예약·Prefect 연결·변경 SHA CI·금액/기간 한도·runner→Kubernetes 검증 |
+| 예산·취소 | 고정 근거 live의 누적 장부·입력 계산, 혼합 예약·AI HTTP 가드·증거 보정 및 실제 Core 캡처의 Ops HTTP+MySQL 테스트 예약 구현 | RAG 운영 접수·Prefect 연결·변경 SHA의 새 Core 수집부터 전체 CI·금액/기간 한도·runner→Kubernetes 검증 |
 | 관측·인프라 복구 | Core→AI 상세 RAG 추적, Prefect·sync·artifact·컨테이너 교체·보고서 변조 검증 구현 | 최신 SHA의 전체 통합 CI, 개인/운영 환경 적용·복원 완료는 별도 증거 필요 |
 | RAG 오프라인 평가 | v1 계산기·v2 대역 출처와 Core 다중 청크 수집 10사례·예산 준비 명세, Ops 합성 3사례 재평가 연결 | 공식 HTML 수집 연결, 실제 캡처 등록, 사람 검토 계약과 Ops 품질·기준 지정 |
 
-### 후속 검증 — 질문 임베딩의 정산 실패와 사용량 보정
+### 이번 후속 구현 — 실제 Core 캡처의 테스트 예약·정산
+
+`skn-113 / 5e08737`의 준비 파일을 실제 Ops 예산에 연결하는 무료 통합 검사를 추가했다.
+`core_rag_budget_http_checks.py`는 Core의 v1 9사례·v2 1사례 준비 명세를 재검증하고,
+기존 `reserve`로 **격리 테스트 DB에 실행과 예약을 한 transaction으로 생성**한다.
+별도 AI worker는 같은 원본과 예약 명세를 확인한 뒤 실제 Ops HTTP로 승인·정산·종료한다.
+production 예산·HTTP 코드는 유지하고 기존 검사 서버와 AI worker를 테스트 전용으로 재사용했다.
+
+- 정상 실행은 캐시 생략 후 v1 18호출·입력 914·출력 180, v2 3호출·입력 107·출력 20을 대조한다.
+  이는 새 무료 대역이 반환한 수치이며 과거 응답 재생이나 현재 모델의 토큰·품질 측정이 아니다.
+- 재예약·재종료의 중복 할당·차감을 막고 실제 작업 ID·명세 해시·DB 사용량·증거 파일을 대조한다.
+- 취소 뒤 새 답변 승인을 거절하고, usage 미확정은 0으로 정산하지 않고 상한을 유지한다.
+- 예산 부족은 실행 행과 예약을 함께 롤백한다. 원본이 예약 전에 바뀌면 실행 생성 전 거절하고,
+  예약 후 바뀌면 claim·모델 호출 전 거절하면서 기존 예약은 보존한다.
+- 공개 RAG 접수·관리자 UI·Prefect·실제 모델 승인 기능은 추가하지 않았다. 새 production 의존성·migration도 없다.
+
+로컬 검증에서는 `skn-112 / 15baddb`의 성공한 **실제 Core 수집 artifact**(v1 9건·v2 1건)를
+임시 디렉터리에 내려받아 현행 코드의 준비 파일을 생성했다. 기존 Python 3.12 AI·Ops 이미지의 가상환경을
+합친 임시 이미지, 외부 통신이 차단된 전용 Docker 네트워크·메모리 저장 MySQL 8.4를 사용했다.
+소스·원본 캡처·토큰 계산기 캐시는 읽기 전용으로 마운트했다. 기존 개발 DB·서비스와 유료 모델은 호출하지 않았다.
+`manage.py test core_rag_budget_http_checks rag_budget_http_checks.RagBudgetHttpTests.test_mixed_execution_cache_and_http_close_match_real_ledger --noinput`
+에서 **검사 5개(신규 4개·기존 회귀 1개), 161.008초 통과**를 확인했다.
+테스트 DB는 Django가 삭제했고 임시 컨테이너·네트워크·이미지 태그도 정리했다.
+필수 CI 정책 회귀 15건, Ruff·포맷, workflow 구문·필수 실행 순서와 `git diff --check`를 확인했다.
+
+`skn-115` 커밋을 최신 `main / 5fd63e8`에 리베이스하면서 `skn-114`의 질문 임베딩 검증과
+하위 프로세스 환경 제한을 유지하고 문서의 양쪽 구현 이력을 보존했다. 병합된 코드로 같은 격리
+MySQL 8.4 환경에서 신규 Core 검사 4개·기존 정상 회귀·문서/질문/답변 증거 보정 검사를 다시 실행해
+**6개, 222.279초 통과**를 확인했다. 새 푸시 SHA의 전체 CI는 별도 검증 대상이다.
+
+CI는 같은 checkout에서 **실제 Core 수집 → 준비 파일 → 이번 MySQL 검사**를 연속 실행한다.
+별도 CI MySQL 8.4 서비스와 잠금 파일 기반 Ops 환경을 추가하고 필수 `integration` 제한을 90분으로 조정했다.
+조건부 생략이나 대체 자료는 없고 기존 종합 판정·발행 조건을 유지한다.
+로컬은 과거 실제 Core 산출물과 현행 예약 코드의 검증이며, 새 수집부터 연결되는 최신 SHA의 전체 CI는 아직 대기다.
+기준 `5e08737`의 Ops·Infra·Catalog CI 성공을 확인했으며, 확인 시점 GovBiz·LLMOps는 실행 중이다.
+
+실행 방법은 [Core 캡처의 Ops 예약·정산 연결](../evaluation/support-program-evidence/README.md#core-캡처의-ops-예약정산-연결)을 따른다.
+다음은 **새 실행 결과·원본 캡처의 Ops 등록과 Prefect 재평가 → 사람 검토·RAG 품질 정책 →
+승인된 자료·예산의 실제 모델 기준 확보**다. 이번 검사는 테스트 DB의 내부 경로이며 운영 접수 기능이나
+Core→Ops→Prefect의 전체 실행 완료로 표현하지 않는다.
+
+### 이전 구현 — skn-114 질문 임베딩의 정산 실패와 사용량 보정
 
 `skn-114`는 `main / 9827add`의 기존 HTTP·MySQL 통합 검사와 Core 캡처 준비 기능을 유지한다.
 혼합 실행 검사에 질문 임베딩의 정산 도착 전 실패와 사용량 누락을 추가해, 문서 사용량은 확정하고
@@ -46,7 +87,7 @@ Core 명세 불일치 시 Ops/모델 호출 전 차단 회귀 **3건**을 통과
 현재 소스를 별도 테스트 환경에서 사용했으며 기존 개발 서비스를 변경하지 않았다.
 Ops 작업 디렉터리의 Ruff·포맷, 필수 CI 연결·문서 링크·공백을 확인했다. 최신 푸시 SHA의 전체 CI는 별도 확인한다.
 
-### 기존 후속 구현 — Core 캡처의 예산 명세 준비
+### 이전 구현 — skn-113 Core 캡처의 예산 명세 준비
 
 `skn-112 / 15baddb` 이후에는 실제 Core 수집 산출물을 기존 혼합 예산 명세로 연결했다.
 `core_rag_budget.py`는 완료된 무료 수집의 fixture·capture·wire·integration을 대조하고,

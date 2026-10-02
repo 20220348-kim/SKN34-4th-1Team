@@ -14,7 +14,21 @@ jobs:
     name: Saved capture pipeline with local servers
     runs-on: ubuntu-24.04
     # Retain Core tracing and the expanded Kubernetes evaluation/restart checks.
-    timeout-minutes: 85
+    timeout-minutes: 90
+    services:
+      ragmysql:
+        image: mysql:8.4
+        env:
+          MYSQL_DATABASE: govbiz_rag_budget_ci
+          MYSQL_ROOT_PASSWORD: ci-only-rag-budget-password
+          MYSQL_ROOT_HOST: "%"
+        ports:
+          - 3306/tcp
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 --silent"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -56,6 +70,25 @@ jobs:
           source infrastructure/llmops/.env
           set +a
           backend/ai-service/.venv/bin/python -B infrastructure/scripts/verify-catalog-separation.py --search-traces-output work/llmops-ci/core-search-traces.json --assistant-traces-output work/llmops-ci/core-assistant-traces.json --evidence-traces-output work/llmops-ci/core-evidence-traces.json --rag-capture-output work/llmops-ci/core-rag
+      - name: Install locked Ops environment for Core budget integration
+        working-directory: backend/ops-service
+        run: |
+          sudo apt-get update && sudo apt-get install -y default-libmysqlclient-dev build-essential pkg-config
+          uv sync --locked
+      - name: Reserve actual Core plans and settle through Ops HTTP and MySQL
+        working-directory: backend/ops-service
+        env:
+          DJANGO_SECRET_KEY: ci-only-core-rag-budget-test-secret-not-for-deployment-2026
+          DJANGO_DEBUG: "false"
+          DB_NAME: govbiz_rag_budget_ci
+          DB_USER: root
+          DB_PASSWORD: ci-only-rag-budget-password
+          DB_HOST: 127.0.0.1
+          DB_PORT: ${{ job.services.ragmysql.ports[3306] }}
+          PYTHONPATH: ${{ github.workspace }}/infrastructure/llmops
+          RAG_BUDGET_AI_PYTHON: ${{ github.workspace }}/backend/ai-service/.venv/bin/python
+          CORE_RAG_CAPTURE_ROOT: ${{ github.workspace }}/work/llmops-ci/core-rag
+        run: uv run --locked python manage.py test core_rag_budget_http_checks --noinput
       - name: Preserve actual Core trace evidence including failed scenarios
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

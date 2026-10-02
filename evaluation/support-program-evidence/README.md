@@ -170,8 +170,9 @@ backend/ai-service/.venv/bin/python infrastructure/llmops/core_rag_budget.py pre
 
 로컬에서는 준비·변조 거절 17건과 기존 Core 캡처 12건, 총 29건을 확인했습니다. 로컬 Core HTTP·wire는
 테스트 대역이며 실제 AI/SDK·메모리 Qdrant를 사용한 검증과 구분합니다. 현재 변경의 실제 JVM/Core·MySQL·
-Qdrant·Langfuse 수집은 필수 LLMOps CI에 연결했고 아직 새 SHA의 결과는 없습니다. Core 준비 파일을 실제
-Ops 예약·Prefect 실행·캡처 등록까지 한 번에 연결하는 작업은 후속입니다.
+Qdrant·Langfuse 수집은 필수 LLMOps CI에 연결했습니다. 이후 추가한 실제 Ops 예약 검사는 아래
+[Core 캡처의 Ops 예약·정산 연결](#core-캡처의-ops-예약정산-연결)을 따릅니다.
+Prefect 실행·캡처 등록까지 한 번에 연결하는 작업은 후속입니다.
 
 ## Ops 평가 범위 고정 — 2026-09-30
 
@@ -593,6 +594,47 @@ AI 하위 프로세스는 테스트용 키·Ops 주소를 사용하고 실행 �
 `ops-ci.yml`의 필수 `checks` 작업이 두 환경을 설치하고 전체 Ops 테스트 뒤 이 검사를 수행합니다.
 추가 실행 환경과 통합 검사 시간을 고려해 해당 작업의 제한은 25분입니다.
 Core·Prefect·외부 Qdrant·Kubernetes 및 관리자 UI 취소 경로는 이 검사의 범위가 아닙니다.
+
+### Core 캡처의 Ops 예약·정산 연결
+
+`core_rag_budget_http_checks.py`는 완료된 Core 수집의 `budget-plan.json`을 읽고 **실제 Ops 테스트 DB에
+새 내부 실행과 예약을 같은 transaction으로 생성**합니다. AI 프로세스는 같은 준비 파일과 예약 명세를
+다시 확인한 뒤 실제 Django HTTP로 claim·승인·정산·close를 수행합니다. 기존 예약·예산·HTTP 코드는
+대역으로 바꾸지 않으며, 실행 환경만 Django `TransactionTestCase`의 격리 MySQL 8.4입니다.
+
+```text
+Core의 실제 수집 산출물 → 준비 명세 재검증 → 테스트 DB의 실행+예산 예약
+→ 별도 AI 프로세스의 명세 재검증 → 무료 모델 대역
+→ 실제 Ops HTTP 승인·정산·종료 → MySQL 장부·작업 ID·사용량 증거 대조
+```
+
+- v1 9사례·v2 1사례를 각각 새 세션으로 실행합니다. 예약 상한은 27·3작업이고, 무료 대역의 캐시 적용 후
+  예상 장부는 각각 **18회·입력 914·출력 180**, **3회·입력 107·출력 20**입니다.
+  입력·출력 수치는 대역이 반환한 사용량으로 실제 모델 토큰 측정이 아닙니다.
+- 같은 실행의 재예약과 같은 소유자의 재종료가 중복 할당·차감을 만들지 않아야 합니다.
+  승인된 작업 ID, 실행 명세 해시, DB 사용량과 저장된 증거를 대조합니다.
+- 첫 답변 승인 직전 취소 시 뒤 사례를 실행하지 않습니다. 답변 usage가 미확정이면 0으로 정산하지 않고
+  해당 호출의 상한을 유지합니다. 이미 확인된 문서·질문 임베딩 사용량은 정산합니다.
+- 한도가 부족하면 실행 생성과 예약을 함께 롤백합니다. 원본이 예약 전에 바뀌면 실행을 만들지 않고,
+  예약 후 바뀌면 claim·모델 호출 전에 거절하며 기존 예약을 임의로 반환하지 않습니다.
+
+이 검사는 과거 응답을 그대로 재생하는 품질 평가가 아닙니다. Core가 수집한 입력으로 새 무료 대역 세션을
+실행하며 원본 캡처의 실패 시나리오와 새 worker의 실패 주입은 별개입니다. 원본은 읽기 전용으로 보존하고,
+변조 검사는 사본만 바꿉니다. 공개 접수·관리자 UI·Prefect·현재 모델 품질 기준은 이 단계에 포함하지 않습니다.
+
+```bash
+# 저장소 루트, 별도 MySQL 8.4 테스트 서버의 DB_*와 DJANGO_SECRET_KEY를 지정한 환경
+# Core 수집 성공 후 생성된 원본·준비 파일이 모두 필요합니다.
+CORE_RAG_CAPTURE_ROOT="$PWD/work/core-rag-new" \
+RAG_BUDGET_AI_PYTHON="$PWD/backend/ai-service/.venv/bin/python" \
+PYTHONPATH="$PWD/infrastructure/llmops" \
+backend/ops-service/.venv/bin/python backend/ops-service/manage.py test core_rag_budget_http_checks --noinput
+```
+
+Core 산출물이나 AI 환경이 없거나 MySQL 8.4가 아니면 실패합니다. 대체 자료로 통과시키거나 건너뛰지 않습니다.
+`llmops-ci.yml`은 같은 checkout에서 실제 Core 수집 직후 이 검사를 실행하고, 별도 MySQL 서비스의
+`test_govbiz_rag_budget_ci`를 생성·삭제합니다. 새 단계는 기존 필수 `integration` 작업에 포함하며,
+Ops 환경 설치·검사 시간을 위해 작업 제한을 90분으로 늘렸습니다. CI 전용 테스트 DB이며 운영 서비스 추가는 아닙니다.
 
 
 ## 공식 HTML 전체 경로 재실행
