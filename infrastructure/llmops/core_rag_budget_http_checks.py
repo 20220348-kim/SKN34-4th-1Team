@@ -3,6 +3,7 @@
 import json
 import os
 import shutil
+from hashlib import sha256
 from pathlib import Path
 from uuid import uuid4
 
@@ -18,7 +19,9 @@ class CoreRagBudgetHttpTests(RagBudgetHttpTestCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        cls.captures = Path(os.environ["CORE_RAG_CAPTURE_ROOT"]).absolute()
+        cls.captures = Path(os.environ["CORE_RAG_CAPTURE_ROOT"])
+        if not cls.captures.is_absolute() or not cls.captures.is_dir():
+            raise RuntimeError("An absolute, completed Core capture directory is required")
         # No fallback fixture: CI must consume the actual Core producer from this checkout.
         for version in ("v1", "v2"):
             cls.worker("core-spec", {"directory": str(cls.captures / version)})
@@ -29,6 +32,7 @@ class CoreRagBudgetHttpTests(RagBudgetHttpTestCase):
         return directory
 
     def test_core_inputs_reserve_and_settle_through_real_http(self):
+        versions = []
         for version, cases, charged, counts in (
             ("v1", 9, (18, 914, 180), {"embedding": 9, "answer": 9, "input_count": 9}),
             ("v2", 1, (3, 107, 20), {"embedding": 2, "answer": 1, "input_count": 1}),
@@ -62,8 +66,19 @@ class CoreRagBudgetHttpTests(RagBudgetHttpTestCase):
                 )
                 self.assertIsNotNone(self.run.budget_reservation.closed_at)
                 self.assertEqual(digest(self.run.execution_spec), self.run.execution_spec_sha256)
+                plan_bytes = (directory / "budget-plan.json").read_bytes()
+                plan = json.loads(plan_bytes)
+                self.assertEqual(self.run.execution_spec, plan["executionSpec"])
+                self.assertEqual(self.run.execution_spec_sha256, plan["executionSpecSha256"])
                 calls = list(self.run.budget_reservation.calls.order_by("sequence"))
                 self.assertEqual(len(calls), charged[0])
+                self.assertEqual(
+                    result["sent_operations"],
+                    [
+                        {"sequence": call.sequence, "operation_id": call.operation_id}
+                        for call in calls
+                    ],
+                )
                 self.assertTrue(all(call.settled_at is not None for call in calls))
                 self.assertEqual(sum(call.input_tokens for call in calls), charged[1])
                 self.assertEqual(sum(call.output_tokens for call in calls), charged[2])
@@ -76,11 +91,49 @@ class CoreRagBudgetHttpTests(RagBudgetHttpTestCase):
                     receipt = json.loads(receipt_path.read_bytes())["payload"]
                     self.assertEqual(receipt["spec_hash"], self.run.execution_spec_sha256)
                     self.assertEqual(receipt["usage"]["input_tokens"], call.input_tokens)
+                    self.assertEqual(receipt["usage"]["output_tokens"], call.output_tokens)
                 self.assertEqual(self.request("close", result["worker_id"]), 200)
                 self.assertEqual(self.request("claim", uuid4()), 409)
                 self.assertEqual(
                     self.amounts(), tuple(a + b for a, b in zip(before, charged, strict=True))
                 )
+                versions.append(
+                    {
+                        "version": version,
+                        "testRunId": str(self.run.pk),
+                        "sourceSha256": plan["sourceSha256"],
+                        "planSha256": sha256(plan_bytes).hexdigest(),
+                        "executionSpecSha256": self.run.execution_spec_sha256,
+                        "caseIds": [case["case_id"] for case in self.spec["rag_cases"]],
+                        "sentOperations": result["sent_operations"],
+                        "allocatedCalls": charged[0],
+                        "allocatedInputTokens": charged[1],
+                        "allocatedOutputTokens": charged[2],
+                        "closed": True,
+                    }
+                )
+        # A failed subtest must not produce a successful partial report.
+        self.assertEqual(len(versions), 2)
+        report = os.environ.get("CORE_RAG_BUDGET_REPORT")
+        if report:
+            path = Path(report)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps(
+                    {
+                        "status": "passed",
+                        "measurementKind": "offline-budget-contract",
+                        "source": "core-http-capture",
+                        "paidModelApiCalls": 0,
+                        "baselineEligible": False,
+                        "versions": versions,
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
 
     def test_core_cancel_and_unknown_usage_stop_later_cases(self):
         for scenario, charged, attempted, unknown in (
@@ -140,6 +193,7 @@ class CoreRagBudgetHttpTests(RagBudgetHttpTestCase):
         self.run.refresh_from_db()
         self.assertEqual(self.events, [])
         self.assertFalse(self.run.budget_reservation.calls.exists())
+        self.assertIsNone(self.run.budget_reservation.worker_id)
         self.assertIsNone(self.run.budget_reservation.closed_at)
         self.assertEqual(self.amounts(), reserved)
         self.assertFalse((self.root / str(self.run.pk) / "capture").exists())

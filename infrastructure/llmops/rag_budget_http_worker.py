@@ -56,6 +56,7 @@ def run_session(config):
         LLMOPS_BUDGET_TOKEN=TOKEN,
     )
     counts = {"embedding": 0, "answer": 0, "input_count": 0}
+    sent_operations = []
     scenario = config["scenario"]
 
     def model_response(request):
@@ -72,6 +73,10 @@ def run_session(config):
             return httpx2.Response(
                 200, json={"object": "response.input_tokens", "input_tokens": 100}
             )
+        sequence, operation = (
+            request.extensions.get("embedding_budget") or request.extensions["rag_answer_budget"]
+        )
+        sent_operations.append({"sequence": sequence, "operation_id": operation["id"]})
         if request.url.path.endswith("embeddings"):
             counts["embedding"] += 1
             return httpx2.Response(
@@ -156,6 +161,7 @@ def run_session(config):
         "counts": counts,
         "worker_id": budget.identity["worker_id"],
         "statuses": [],
+        "sent_operations": sent_operations,
     }
     prefix = "/internal/v1/support-program-evidence/"
     with (

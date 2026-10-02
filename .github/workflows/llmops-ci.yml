@@ -88,6 +88,7 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}/infrastructure/llmops
           RAG_BUDGET_AI_PYTHON: ${{ github.workspace }}/backend/ai-service/.venv/bin/python
           CORE_RAG_CAPTURE_ROOT: ${{ github.workspace }}/work/llmops-ci/core-rag
+          CORE_RAG_BUDGET_REPORT: ${{ github.workspace }}/work/llmops-ci/core-budget.json
         run: uv run --locked python manage.py test core_rag_budget_http_checks --noinput
       - name: Preserve actual Core trace evidence including failed scenarios
         if: always()
@@ -99,6 +100,7 @@ jobs:
             work/llmops-ci/core-assistant-traces.json
             work/llmops-ci/core-evidence-traces.json
             work/llmops-ci/core-rag/
+            work/llmops-ci/core-budget.json
           if-no-files-found: warn
           retention-days: 7
       - name: Build isolated HTTP artifact storage, Core auth fixture, Ops and runner

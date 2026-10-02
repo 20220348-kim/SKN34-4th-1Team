@@ -612,7 +612,8 @@ Core의 실제 수집 산출물 → 준비 명세 재검증 → 테스트 DB의 
   예상 장부는 각각 **18회·입력 914·출력 180**, **3회·입력 107·출력 20**입니다.
   입력·출력 수치는 대역이 반환한 사용량으로 실제 모델 토큰 측정이 아닙니다.
 - 같은 실행의 재예약과 같은 소유자의 재종료가 중복 할당·차감을 만들지 않아야 합니다.
-  승인된 작업 ID, 실행 명세 해시, DB 사용량과 저장된 증거를 대조합니다.
+  모델 전송 대역에 도달한 작업 ID·순서, 준비 명세와 예약 명세·해시, DB 사용량과 저장된 증거의
+  입력·출력 사용량을 대조합니다. 실행기는 DB에 예약된 명세를 worker에 전달합니다.
 - 첫 답변 승인 직전 취소 시 뒤 사례를 실행하지 않습니다. 답변 usage가 미확정이면 0으로 정산하지 않고
   해당 호출의 상한을 유지합니다. 이미 확인된 문서·질문 임베딩 사용량은 정산합니다.
 - 한도가 부족하면 실행 생성과 예약을 함께 롤백합니다. 원본이 예약 전에 바뀌면 실행을 만들지 않고,
@@ -626,6 +627,7 @@ Core의 실제 수집 산출물 → 준비 명세 재검증 → 테스트 DB의 
 # 저장소 루트, 별도 MySQL 8.4 테스트 서버의 DB_*와 DJANGO_SECRET_KEY를 지정한 환경
 # Core 수집 성공 후 생성된 원본·준비 파일이 모두 필요합니다.
 CORE_RAG_CAPTURE_ROOT="$PWD/work/core-rag-new" \
+CORE_RAG_BUDGET_REPORT="$PWD/work/core-budget.json" \
 RAG_BUDGET_AI_PYTHON="$PWD/backend/ai-service/.venv/bin/python" \
 PYTHONPATH="$PWD/infrastructure/llmops" \
 backend/ops-service/.venv/bin/python backend/ops-service/manage.py test core_rag_budget_http_checks --noinput
@@ -635,6 +637,12 @@ Core 산출물이나 AI 환경이 없거나 MySQL 8.4가 아니면 실패합니�
 `llmops-ci.yml`은 같은 checkout에서 실제 Core 수집 직후 이 검사를 실행하고, 별도 MySQL 서비스의
 `test_govbiz_rag_budget_ci`를 생성·삭제합니다. 새 단계는 기존 필수 `integration` 작업에 포함하며,
 Ops 환경 설치·검사 시간을 위해 작업 제한을 90분으로 늘렸습니다. CI 전용 테스트 DB이며 운영 서비스 추가는 아닙니다.
+
+`CORE_RAG_CAPTURE_ROOT`는 완료된 수집의 절대 경로여야 합니다. `CORE_RAG_BUDGET_REPORT`는 선택 사항이며,
+지정하면 두 버전이 모두 통과했을 때 원본/명세 해시·새 테스트 실행 UUID·사례·전송 작업·확정 장부를 기록합니다.
+보고서는 `measurementKind=offline-budget-contract`, `paidModelApiCalls=0`, `baselineEligible=false`입니다.
+CI는 `core-budget.json`을 원본 Core 산출물과 함께 보존합니다. 이는 저장된 입력의 새 무료 예산 실행이며
+과거 실패 응답의 성공 처리나 실제 모델 품질·비용 측정이 아닙니다.
 
 
 ## 공식 HTML 전체 경로 재실행
