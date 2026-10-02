@@ -425,7 +425,8 @@ Service가 결과·캐시 반영을 거절합니다.
 
 이 도구는 **내부 색인·검색 세션용 연결점**입니다. 예약 생성·claim·close 및 자료/예산 승인은 호출자가
 수행해야 합니다. 가드를 전달한 세션은 답변 생성을 거절하며, 답변 슬롯을 임베딩 캐시로 건너뛰지 않습니다.
-현재 CLI와 `ops_flow.py`가 이 가드를 자동 사용하지 않으므로 전체 RAG Ops 실행이 연결된 상태는 아닙니다.
+`ops_flow.py`가 이 가드를 자동 사용하지 않으므로 전체 RAG Ops 실행이 연결된 상태는 아닙니다.
+답변까지 포함하는 별도의 내부 CLI 연결은 아래 혼합 RAG 예산 세션을 따릅니다.
 공개 RAG 자료 계약·manifest·접수·실행 연결은 별도 후속입니다.
 
 캐시 적중으로 완전히 전송하지 않은 배치는 승인하지 않고 남겨 두며 종료 때 예약을 반환합니다.
@@ -451,6 +452,58 @@ Service가 결과·캐시 반영을 거절합니다.
 무료 검증은 실제 OpenAI SDK·기존 임베딩 Service와 HTTP 대역을 사용합니다. Ops의 실제 MySQL 장부
 테스트와 SDK 테스트는 각각 수행하며, 이 결과를 유료 API·전체 RAG/Prefect/Kubernetes 통합 완료로
 해석하지 않습니다. 기존 개발 DB migration이나 유료 평가를 자동 실행하지 않습니다.
+
+
+## 혼합 RAG 예산 세션
+
+`rag_budget.py`는 기존 AI HTTP 색인·검색·답변을 하나의 예약에 연결합니다. 새 프레임워크나
+모델 구현은 추가하지 않습니다. `make_rag_spec(cases)`는 1~12개 사례의 `case_id`, `chunks`,
+`question`, `limit`를 검증하고 전송 자료·문서/질문 배치·답변 작업·소스/잠금 파일 해시를 고정합니다.
+현재 모델은 `gpt-6-luna`, 임베딩은 `text-embedding-3-small`/1536차원이며 답변 입력은 최대
+32,768토큰, 출력은 최대 2,000토큰입니다. Ops가 작업 수와 각 작업 상한의 합계로 예약합니다.
+
+흐름은 `앱 시작 → Ops claim → 승인 자료의 PUT chunks → 문서 임베딩 승인·증거·정산 →
+POST search → 질문 임베딩 승인·증거·정산 → 실제 검색 결과의 POST answers → 입력 토큰 계산 →
+답변 승인·증거·정산 → 앱 종료 시 Ops close`입니다. 기존 Service·Agent·SDK·Qdrant를 사용합니다.
+
+- HTTP의 자료·질문·순서와 SDK의 모델·프롬프트·출력 스키마·상한을 모두 대조합니다.
+  검색 결과의 청크 ID·내용 해시·문서 ID·순서가 승인 자료와 같아야 하며 답변에는 실제 검색된
+  청크 순서만 전달합니다. 빈 검색 결과, 동시 요청, 누락·재전송·변조는 세션을 중단합니다.
+- 답변 전에 [OpenAI 입력 토큰 계산 API](https://developers.openai.com/api/docs/guides/token-counting)에
+  실제 요청의 메시지·스키마·추론 설정을 보내고, 계산값을 Ops 승인에 포함합니다. 이 요청은 추가
+  외부 요청이며 `inputTokenCountRequests`에 따로 기록합니다. 계산 실패·입력 초과·승인 거절이면
+  답변 생성 요청을 보내지 않습니다. SDK 자동 재시도는 사용하지 않습니다.
+- 완전히 캐시된 문서/질문 임베딩 작업만 생략할 수 있습니다. 동일한 문자열이어도 문서와 질문의
+  작업 종류를 구분하고 답변 작업은 생략하지 않습니다. 부분 캐시로 배치 해시가 바뀌면 중단합니다.
+- 확인한 사용량은 정산 HTTP 전에 기존 임베딩 v2·답변 v1 증거로 저장합니다. 정산 실패에도 증거가
+  남으며 원래 미정산 기록의 보정 절차를 사용할 수 있습니다. 응답 유실·사용량 미확정은 0이 아니며
+  다음 호출을 막습니다. 잘못된 답변 인용도 실제 관측한 사용량을 먼저 정산한 뒤 서비스가 거절합니다.
+
+내부 `RagBudget(client, spec, receipt_directory=...)`를 `build_evaluation_app(..., rag_budget=guard)`에
+전달하거나 다음 CLI를 사용할 수 있습니다. **같은 명세 해시와 flow UUID로 이미 승인·예약된 내부
+Ops 실행**이 전제입니다. 이 명령은 실행 접수나 예산 승인·예약을 생성하지 않습니다.
+`LLMOPS_OPS_API_URL`, `LLMOPS_BUDGET_TOKEN`, `OPENAI_API_KEY`는 실행 환경에서 주입하고,
+자료 전송·모델 호출 승인을 받은 뒤 격리된 로컬 Qdrant와 새 출력 디렉터리를 지정합니다.
+
+```bash
+# backend/ai-service에서 실행. 아래 변수는 기존 승인/예약의 값이어야 합니다.
+uv run --locked --group evaluation python ../../evaluation/support-program-evidence/serve_flow.py \
+  --execute --output-dir "$RAG_CAPTURE_DIR" --qdrant-url http://127.0.0.1:16333 \
+  --max-api-calls "$RAG_MAX_MODEL_CALLS" --budget-spec "$RAG_SPEC_PATH" \
+  --request-id "$RAG_RUN_ID" --flow-id "$RAG_FLOW_ID" --spec-sha256 "$RAG_SPEC_SHA256"
+```
+
+예산 인자 4개는 함께 전달해야 하며 명세의 자료·모델·소스 해시가 현재 실행기와 다르면 시작하지
+않습니다. `--max-api-calls`는 명세 작업 수와 같아야 합니다. 서버는 loopback에서만 열리고
+세션 종료 시 서버를 정상 종료해야 `close`를 시도합니다. claim/close 실패는 오류로 드러나며
+프로세스 강제 종료·close 유실 시 기존 Ops 종료 정리/보정 절차가 필요합니다. 출력 경로는
+artifact 조회를 사용하려면 해당 실행의 `/results/{run UUID}/capture`에 연결해야 합니다.
+runner 이미지에 모듈을 포함하지만 기본 `ops_flow.py`가 자동으로 이 세션을 시작하지는 않습니다.
+
+무료 `test_rag_budget.py`는 실제 AI 앱·Service·Agent·SDK·메모리 Qdrant와 로컬 예산 HTTP 대역,
+모델 HTTP 대역으로 정상·캐시·계산/승인/정산 실패·취소 상태의 승인 거절·응답 유실·미확정 사용량·
+인용 오류·명세/CLI 변조를 검증합니다. 실제 Ops HTTP+MySQL, Core 수집기, Prefect를 같은 실행으로
+연결한 검증은 후속입니다. 공개 RAG live 접수·사람 검토·품질 판정과 유료 품질 측정 완료를 뜻하지 않습니다.
 
 
 ## 공식 HTML 전체 경로 재실행

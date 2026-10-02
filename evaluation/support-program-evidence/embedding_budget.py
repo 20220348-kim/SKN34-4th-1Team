@@ -57,7 +57,7 @@ class EmbeddingBudget:
         self.last_sequence = -1
         self.stopped = False
 
-    async def before_request(self, request):
+    async def before_request(self, request, *, operation_kind=None):
         if self.stopped:
             raise BudgetUnavailable("Embedding budget is stopped")
         # Mark before awaiting: concurrent sends, timeout and a lost approval cannot retry.
@@ -81,6 +81,7 @@ class EmbeddingBudget:
                 for sequence, item in enumerate(self.operations)
                 if sequence > self.last_sequence
                 and item["kind"] in {"document_embedding", "query_embedding"}
+                and (operation_kind is None or item["kind"] == operation_kind)
                 and item["input_sha256"] == fingerprint
                 and item["model"] == body["model"]
                 and item["dimensions"] == body["dimensions"]
