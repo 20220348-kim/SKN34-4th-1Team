@@ -5,13 +5,14 @@ import { SegmentedControl } from '../components/SegmentedControl'
 import { colors } from '../ui'
 import { CatalogScreen } from './CatalogScreen'
 import { ChatScreen } from './ChatScreen'
+import type { LoginRequest } from '../auth/loginFlow'
 
 export type SearchMode = 'ai' | 'filter'
 const modes = [{ value: 'ai', label: 'AI 검색' }, { value: 'filter', label: '필터 검색' }] as const
 
 export function SearchScreen({ mode, onModeChange, onOpenProgram, onLogin }: {
   mode: SearchMode; onModeChange(mode: SearchMode): void
-  onOpenProgram(identity: SupportProgramIdentity): void; onLogin(): void
+  onOpenProgram(identity: SupportProgramIdentity): void; onLogin(request?: LoginRequest): void
 }) {
   const [visited, setVisited] = useState<Record<SearchMode, boolean>>({ ai: mode === 'ai', filter: mode === 'filter' })
   const [controlHeight, setControlHeight] = useState(0)
@@ -34,7 +35,7 @@ export function SearchScreen({ mode, onModeChange, onOpenProgram, onLogin }: {
 }
 
 const local = StyleSheet.create({
-  page: { flex: 1, backgroundColor: colors.background },
+  page: { flex: 1, backgroundColor: colors.surface },
   header: { backgroundColor: colors.surface, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
   control: { paddingHorizontal: 16, paddingTop: 4, paddingBottom: 12, width: '100%', maxWidth: 720, alignSelf: 'center' },
   panel: { flex: 1 },

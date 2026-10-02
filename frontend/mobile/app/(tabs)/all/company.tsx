@@ -1,7 +1,7 @@
-import { useRouter } from 'expo-router'
+import { useLoginFlow } from '../../../src/auth/loginFlow'
 import { CompanyScreen } from '../../../src/screens/CompanyScreen'
 
 export default function CompanyRoute() {
-  const router = useRouter()
-  return <CompanyScreen onLogin={() => router.push('/(tabs)/all/account')} />
+  const requestLogin = useLoginFlow()
+  return <CompanyScreen onLogin={() => requestLogin()} />
 }

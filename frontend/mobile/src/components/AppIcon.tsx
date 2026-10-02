@@ -1,7 +1,7 @@
 import Svg, { Circle, Path, Rect } from 'react-native-svg'
 import type { ColorValue } from 'react-native'
 
-export type AppIconName = 'search' | 'bookmark' | 'collaboration' | 'report' | 'account' | 'pencil' | 'send' | 'calendar' | 'message' | 'document' | 'shield' | 'menu' | 'building' | 'bell' | 'inbox' | 'outbox' | 'back'
+export type AppIconName = 'search' | 'bookmark' | 'collaboration' | 'report' | 'account' | 'pencil' | 'send' | 'calendar' | 'message' | 'document' | 'shield' | 'menu' | 'building' | 'bell' | 'inbox' | 'outbox' | 'back' | 'arrowUp'
 
 /** Paths from the approved mobile design; do not substitute emoji or a heart for the bookmark. */
 export function AppIcon({ name, color, size = 24, selected = false }: {
@@ -11,6 +11,7 @@ export function AppIcon({ name, color, size = 24, selected = false }: {
     strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round" accessible={false}>
     {name === 'search' && <><Circle cx={11} cy={11} r={6.5} /><Path d="m16 16 4.5 4.5" /></>}
     {name === 'back' && <Path d="m15 5-7 7 7 7" />}
+    {name === 'arrowUp' && <Path d="M12 19V5M6 11l6-6 6 6" />}
     {name === 'bookmark' && <Path d="M6 4h12v16l-6-4-6 4z" fill={selected ? color : 'none'} />}
     {name === 'collaboration' && <><Circle cx={9} cy={8} r={3.5} fill={selected ? color : 'none'} />
       <Path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M21.5 20a6.5 6.5 0 0 0-4-6" /></>}

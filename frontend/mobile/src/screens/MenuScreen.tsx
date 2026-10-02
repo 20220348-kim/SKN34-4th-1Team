@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native'
+import { ActivityIndicator, DevSettings, Pressable, StyleSheet, Text, TextInput, View } from 'react-native'
 import { useAuth } from '../auth/session'
+import { clearIntroductionCompleted } from '../auth/introductionStorage'
 import { AppIcon, type AppIconName } from '../components/AppIcon'
 import { Button, Notice, Page, colors } from '../ui'
 
@@ -12,6 +13,17 @@ const normalize = (value: string) => value.replace(/\s/g, '').toLowerCase()
 export function MenuScreen({ onOpen }: { onOpen(destination: MenuDestination): void }) {
   const { status, session, restoreError } = useAuth()
   const [query, setQuery] = useState('')
+  const [introBusy, setIntroBusy] = useState(false)
+  const [introError, setIntroError] = useState<string | null>(null)
+  async function replayIntroduction() {
+    if (introBusy) return
+    setIntroBusy(true); setIntroError(null)
+    try {
+      await clearIntroductionCompleted()
+      DevSettings.reload()
+    } catch { setIntroError('기능 소개를 다시 열지 못했습니다. 다시 시도해 주세요.') }
+    finally { setIntroBusy(false) }
+  }
   if (status === 'loading') return <Page headerless backgroundColor={colors.surface}><ActivityIndicator accessibilityLabel="로그인 상태 확인 중" /></Page>
   if (status === 'unavailable') return <Page headerless><Notice error>{restoreError ?? '로그인 상태를 확인하지 못했습니다.'}</Notice>
     <Button label="로그인 상태 확인" onPress={() => onOpen('account')} /></Page>
@@ -48,7 +60,7 @@ export function MenuScreen({ onOpen }: { onOpen(destination: MenuDestination): v
         {!account?.company && <Text style={local.email}>{account?.email ?? '계정과 관심 공고를 이어서 사용하세요'}</Text>}
       </Pressable>
       <Pressable accessibilityRole="button" accessibilityLabel="내 정보 열기" onPress={() => onOpen('account')} style={local.account}>
-        <Text style={local.meta}>내 정보</Text><AppIcon name="account" color={colors.muted} size={19} />
+        <Text style={local.meta}>{account ? '내 정보' : '로그인'}</Text><AppIcon name="account" color={colors.muted} size={19} />
       </Pressable>
     </View>
     {restoreError && <Notice error>{restoreError}</Notice>}
@@ -65,9 +77,13 @@ export function MenuScreen({ onOpen }: { onOpen(destination: MenuDestination): v
         accessibilityHint={item.description} onPress={() => onOpen(item.destination)}
         style={({ pressed }) => [local.row, pressed && { backgroundColor: colors.background }]}>
         <View style={local.icon}><AppIcon name={item.icon} color={colors.primary} size={22} /></View>
-        <Text style={local.label}>{item.label}</Text><Text style={local.description}>{item.description}</Text>
+        <Text style={local.label}>{item.label}</Text><Text style={local.description}>{!account && !['filter', 'ai', 'recruitments'].includes(item.destination) ? '로그인 후 이용' : item.description}</Text>
       </Pressable>)}
     </View>)}
+    {__DEV__ && status === 'signedOut' && !query.trim() && <>
+      {introError && <Notice error>{introError}</Notice>}
+      <Button label="기능 소개 다시 보기" variant="secondary" busy={introBusy} onPress={() => void replayIntroduction()} />
+    </>}
   </Page>
 }
 

@@ -1,9 +1,13 @@
 import { useRouter } from 'expo-router'
 import { MenuScreen, type MenuDestination } from '../../../src/screens/MenuScreen'
+import { useAuth } from '../../../src/auth/session'
+import { useLoginFlow } from '../../../src/auth/loginFlow'
 
 export default function MenuRoute() {
   const router = useRouter()
-  function open(destination: MenuDestination) {
+  const { status } = useAuth()
+  const requestLogin = useLoginFlow()
+  function navigate(destination: MenuDestination, signedIn: boolean) {
     switch (destination) {
       case 'account': router.push('/(tabs)/all/account'); break
       case 'company': router.push('/(tabs)/all/company'); break
@@ -14,11 +18,19 @@ export default function MenuRoute() {
       case 'report': router.navigate('/(tabs)/report'); break
       case 'documents': router.push({ pathname: '/(tabs)/all/preparation', params: { kind: 'documents' } }); break
       case 'reviews': router.push('/(tabs)/all/reviews'); break
-      case 'recruitments': router.push('/(tabs)/all/collab'); break
+      case 'recruitments': router.navigate(signedIn ? '/(tabs)/all/collab' : '/(tabs)/collab'); break
       case 'received': router.push({ pathname: '/(tabs)/all/collab', params: { view: 'box', box: 'received' } }); break
       case 'sent': router.push({ pathname: '/(tabs)/all/collab', params: { view: 'box', box: 'sent' } }); break
       case 'mine': router.push({ pathname: '/(tabs)/all/collab', params: { mine: '1' } }); break
     }
+  }
+  function open(destination: MenuDestination) {
+    if (status === 'signedOut' && !['filter', 'ai', 'recruitments'].includes(destination)) {
+      requestLogin({ direct: destination === 'account', message: '이 기능은 로그인 후 이용할 수 있어요.',
+        onAuthenticated: () => navigate(destination, true) })
+      return
+    }
+    navigate(destination, status === 'signedIn')
   }
   return <MenuScreen onOpen={open} />
 }

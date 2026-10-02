@@ -17,9 +17,22 @@
 공고 호출은 `웹/앱 화면 → 공통 유스케이스 → 플랫폼 Repository → 공통 공고 HTTP 클라이언트 → Core API`
 로 이어집니다. 공통 클라이언트에는 공개 API 주소와 fetch만 주입하며 Vite/Expo 환경변수·브라우저 저장소·React를 참조하지 않습니다.
 웹은 기존 쿠키 설정을 유지하고 앱의 세션 저장·네비게이션은 모바일 쪽에서 담당합니다.
-모바일 하단은 검색·관심함·리포트·전체 4탭이며 `app/(tabs)/all`의 Stack에서 계정·기업·수신 설정·
-신청 준비 목록·협업으로 연결합니다. 메뉴는 기존 화면·Bearer API·공통 DTO를 재사용하며 서버 계약은 바꾸지 않습니다.
+모바일 비로그인 하단은 검색·협업·전체 3탭이며 공개 검색과 모집글 조회를 허용합니다. 전체 메뉴는 모든 기능을 노출하되
+개인 기능은 로그인 안내를 먼저 열고 확인된 인증 뒤 해당 라우트로 이동합니다. 확인된 로그인 뒤에는
+검색·관심함·리포트·전체 4탭과 `app/(tabs)/all`의 기존 계정·기업·수신 설정·신청 준비·협업 화면으로 연결합니다.
+협업 탭에서 로그인하면 기존 All Stack으로 이동하며 선택한 view·box·mine을 보존합니다. 메뉴는 기존 화면·Bearer API·공통 DTO를 재사용하며 서버 계약은 바꾸지 않습니다.
 기존 웹의 domain/model 파일은 공통 구현을 재수출하므로 두 구현이 따로 변경되지 않습니다.
+
+모바일의 `auth/AppEntryGate`는 세션 복원과 기기 소개 기록을 확인하고 첫 실행 소개 또는 기존 화면으로 연결합니다.
+기기 저장은 `auth/introductionStorage.ts`, 로그인 안내·폼·선택한 작업의 재개는 `auth/loginFlow.tsx`의 `LoginFlowProvider`가 소유합니다.
+로그인은 기존 화면 위의 네이티브 모달이며 라우트 이동 없이 취소·복귀합니다. 소개 화면과 가입 후 회원 유형 온보딩은 별개입니다.
+소개의 가입 버튼은 기존 가입 폼, 기존 계정 링크는 로그인 방법 시트를 엽니다. 해당 시트의 카카오·Google은 버튼과
+준비 안내만 제공하고, 이메일은 기존 인증 API에 연결합니다. 소개 예시와 실제 AI 검색은 `components`의 조건·결과 카드 모양을 재사용하며
+실제 검색의 상태·요청 수명은 `screens/ChatScreen`이 소유합니다. 로그인 전후 같은 UI를 사용하고 유료 요청 조건은 유지합니다.
+선택한 공개 검색 결과는 `ChatScreen → shared RestoreSupportProgramSearchUseCase → mobile api/searchResults
+→ shared 공고 HTTP 클라이언트 → Core 결과 복원 API`로 읽습니다. 모바일 API 경계에서 shared Mapper로 DTO를 내부 모델로 변환하고,
+화면은 복원 결과·만료·조회 실패를 구분합니다. 취소·계정 변경은 이전 요청과 작업 재개를 폐기합니다.
+Core HTTP·DB 계약과 shared 계약은 변경하지 않으며 로그인·화면 복귀만으로 검색이나 원문 질문을 다시 실행하지 않습니다.
 [공동 관리와 검증 명령](mobile-monorepo.md)을 참고하세요.
 
 앱 이메일 인증은 `AccountMobileAuthController → 기존 로그인/가입 Service → AccountRepository → MyBatis → MySQL`이며,

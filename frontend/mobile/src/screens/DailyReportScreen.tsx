@@ -11,6 +11,7 @@ import { ApiError, apiRequest, errorMessage } from '../api/client'
 import { dailyReportErrorMessage, getDailyReportSettings, getLatestDailyReport,
   requestDailyReportEmailVerification, saveDailyReportSettings } from '../api/dailyReport'
 import { useAuth } from '../auth/session'
+import { GuestFeatureNotice } from '../components/GuestFeatureNotice'
 import { Button, Card, Field, Notice, Page, StatusBadge, colors, styles } from '../ui'
 
 type ReportState = {
@@ -95,7 +96,7 @@ function periodLabel(period: string) {
 
 export function DailyReportScreen({ onLogin, onCompany, onSearch, onOpenProgram, settingsOnly = false }: {
   settingsOnly?: boolean
-  onLogin(): void; onCompany(): void; onSearch(): void; onOpenProgram(identity: SupportProgramIdentity): void
+  onLogin(mode?: 'login' | 'signup'): void; onCompany(): void; onSearch(): void; onOpenProgram(identity: SupportProgramIdentity): void
 }) {
   const { session, status, refreshSession, invalidateSession } = useAuth()
   const token = status === 'signedIn' ? session?.accessToken ?? null : null
@@ -226,9 +227,9 @@ export function DailyReportScreen({ onLogin, onCompany, onSearch, onOpenProgram,
   if (status === 'loading') return <Page><ActivityIndicator accessibilityLabel="로그인 상태 확인 중" color={colors.primary} /></Page>
   if (status === 'unavailable') return <Page><Notice error>로그인 상태를 확인하지 못했습니다.</Notice>
     <Button label="다시 확인" onPress={() => void refreshSession()} /></Page>
-  if (!token) return <Page><Card><Text style={styles.heading}>{settingsOnly ? '리포트 수신 설정' : '맞춤 리포트'}</Text>
-    <Text style={styles.subtitle}>{settingsOnly ? '로그인하면 리포트 수신 설정을 변경할 수 있어요.' : '로그인하면 기업 조건에 맞춘 리포트를 확인할 수 있어요.'}</Text>
-    <Button label="로그인하기" onPress={onLogin} /></Card></Page>
+  if (!token) return <Page><GuestFeatureNotice title={settingsOnly ? '리포트 수신 설정' : '우리 기업에 맞는 기회를 받아보세요'} icon="report"
+    description={settingsOnly ? '로그인하면 리포트 수신 설정을 변경할 수 있어요.' : '로그인하면 기업 조건에 맞춘 리포트를 확인할 수 있어요.'}
+    onLogin={onLogin} /></Page>
   if (visible.loading) return <Page><ActivityIndicator accessibilityLabel="맞춤 리포트 불러오는 중" color={colors.primary} /></Page>
   if (visible.error && !visible.settings) return <Page><Notice error>{visible.error}</Notice><Button label="다시 시도" onPress={refresh} /></Page>
   if (!settings) return <Page><Notice error>리포트 수신 설정을 확인하지 못했습니다.</Notice><Button label="다시 시도" onPress={refresh} /></Page>

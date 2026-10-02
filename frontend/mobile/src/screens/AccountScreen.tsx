@@ -11,9 +11,12 @@ import { Page, Button, Field, Notice, Card, colors } from '../ui'
 
 const emailPassSchema = z.object({ passToken: z.string().regex(/^[A-Za-z0-9_-]{43}$/), expiresAt: z.string().datetime({ offset: true }) })
 
-export function AccountScreen({ onCompany, onSettings }: { onCompany(): void; onSettings?(): void }) {
+export function AccountScreen({ onCompany, onSettings, initialMode = 'login', authOnly = false, onBusyChange, showSocialOptions = true }: {
+  onCompany(): void; onSettings?(): void; initialMode?: 'login' | 'signup'; authOnly?: boolean; onBusyChange?(busy: boolean): void
+  showSocialOptions?: boolean
+}) {
   const auth = useAuth()
-  const [mode, setMode] = useState<'login' | 'signup'>('login')
+  const [mode, setMode] = useState<'login' | 'signup'>(initialMode)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [confirmation, setConfirmation] = useState('')
@@ -26,6 +29,7 @@ export function AccountScreen({ onCompany, onSettings }: { onCompany(): void; on
   const request = useRef<AbortController | null>(null)
 
   useEffect(() => () => request.current?.abort(), [])
+  useEffect(() => { onBusyChange?.(busy); return () => onBusyChange?.(false) }, [busy, onBusyChange])
   useEffect(() => {
     setPassword(''); setConfirmation(''); setEmailPass(null); setCode(''); setCodeSent(false)
   }, [auth.session?.accessToken])
@@ -82,6 +86,7 @@ export function AccountScreen({ onCompany, onSettings }: { onCompany(): void; on
 
   if (auth.status === 'loading') return <Page><ActivityIndicator accessibilityLabel="로그인 상태 확인 중" /></Page>
   if (auth.status === 'unavailable') return <Page><Notice error>{auth.restoreError}</Notice><Button label="로그인 상태 다시 확인" onPress={() => void auth.refreshSession()} /><Button label="저장된 로그인 정보 지우기" variant="ghost" onPress={() => void run(() => auth.signOut())} />{error && <Notice error>{error}</Notice>}</Page>
+  if (auth.session && authOnly) return <Page><ActivityIndicator accessibilityLabel="보던 화면으로 돌아가는 중" /></Page>
   if (auth.session) return <Page>
     <Text style={{ fontSize: 26, fontWeight: '700', color: colors.text }}>내 계정</Text>
     <Card><Text style={{ color: colors.text, fontSize: 18 }}>{auth.session.account.email}</Text><Text style={{ color: colors.muted, marginTop: 8 }}>{auth.session.account.company?.companyName ?? '기업 정보를 등록하면 맞춤 서비스를 이용할 수 있습니다.'}</Text></Card>
@@ -95,7 +100,7 @@ export function AccountScreen({ onCompany, onSettings }: { onCompany(): void; on
   return <Page>
     <Text style={{ fontSize: 28, fontWeight: '700', color: colors.text }}>{mode === 'login' ? 'GovBiz 로그인' : '계정 만들기'}</Text>
     <Text style={{ color: colors.muted }}>웹에서 사용하던 계정과 관심 공고를 앱에서도 이어서 사용하세요.</Text>
-    {process.env.EXPO_PUBLIC_ENABLE_SOCIAL_LOGIN === 'true' && <View style={{ gap: 10 }}>
+    {showSocialOptions && process.env.EXPO_PUBLIC_ENABLE_SOCIAL_LOGIN === 'true' && <View style={{ gap: 10 }}>
       {supportsNativeOAuth() ? <><Button label="Google로 계속하기" variant="secondary" disabled={busy} onPress={() => void run(() => auth.signInWithOAuth('google'))} /><Button label="카카오로 계속하기" variant="secondary" disabled={busy} onPress={() => void run(() => auth.signInWithOAuth('kakao'))} /></> : <Notice>소셜 로그인은 GovBiz 개발 빌드 또는 설치된 앱에서 사용할 수 있습니다.</Notice>}
     </View>}
     <Field label="이메일" value={email} onChangeText={updateEmail} keyboardType="email-address" autoCapitalize="none" autoCorrect={false} autoComplete="email" editable={!busy} maxLength={320} />

@@ -73,4 +73,25 @@ test('guests do not request a private preparation workspace', async () => {
   expect(screen.queryByText('담은 공고라 보여요')).toBeNull()
   fireEvent.press(screen.getByLabelText('로그인하고 관심 공고 저장'))
   expect(login).toHaveBeenCalledTimes(1)
+  expect(login).toHaveBeenCalledWith('save')
+})
+
+test('the resumed save is idempotent for an already saved program and never removes it', async () => {
+  const resumed = jest.fn()
+  render(<ProgramScreen identity={identity} onLogin={jest.fn()} resumeAction={{ action: 'save', token: 'owner' }} onResumed={resumed} />)
+  await screen.findByText('이미 관심 공고함에 담은 공고예요.')
+  expect(resumed).toHaveBeenCalledTimes(1)
+  expect(jest.mocked(apiRequest).mock.calls.some(([, options]) => options?.method === 'POST' || options?.method === 'DELETE')).toBe(false)
+})
+test('resuming an original question opens input without issuing an AI request', async () => {
+  render(<ProgramScreen identity={identity} onLogin={jest.fn()} resumeAction={{ action: 'question', token: 'owner' }} />)
+  await screen.findByLabelText('공고에 대해 궁금한 점')
+  expect(answer).not.toHaveBeenCalled()
+})
+test('a continuation belonging to a different session cannot save or open questions', async () => {
+  const resumed = jest.fn()
+  render(<ProgramScreen identity={identity} onLogin={jest.fn()} resumeAction={{ action: 'question', token: 'other' }} onResumed={resumed} />)
+  await screen.findByText('테스트 지원사업')
+  expect(screen.queryByLabelText('공고에 대해 궁금한 점')).toBeNull()
+  expect(resumed).not.toHaveBeenCalled()
 })
