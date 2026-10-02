@@ -21,6 +21,7 @@ import smoke_ops_artifacts
 import smoke_ops_backup
 import smoke_ops_replacement
 import smoke_ops_sync_recovery
+import smoke_ops_volumes
 import yaml
 from check_msa import NAMESPACE, REPOSITORY_ROOT, ROOT
 from ops_migration import run_migration
@@ -638,6 +639,23 @@ def verify(state, settings, compose, compose_env, ops_image, kind, helm, report)
             nk, "pause", report["admission_resume"]["version"]
         )
         smoke_ops_backup.verify(state, settings, report)
+        report["evaluation_phase"] = "volume_restore_rehearsal"
+        expected_restores = {
+            result["request_id"]: {
+                "flow_id": result["prefect_flow_run_id"],
+                "report_sha256": original_report,
+            },
+            **{
+                item["evaluation"]["request_id"]: {
+                    "flow_id": item["evaluation"]["prefect_flow_run_id"],
+                    "report_sha256": item["report_sha256"],
+                }
+                for item in (rag_before, rag_after)
+            },
+        }
+        runner_image_id = smoke_ops_volumes.verify(
+            state, settings, compose, compose_env, expected_restores, report
+        )
         report.update(
             evaluation_status="PASS",
             evaluation_phase="complete",
@@ -648,17 +666,7 @@ def verify(state, settings, compose, compose_env, ops_image, kind, helm, report)
                 item["name"]: item["imageID"]
                 for item in pod["status"]["containerStatuses"]
             },
-            runner_image_id=execute(
-                [
-                    "docker",
-                    "inspect",
-                    "--format",
-                    "{{.Image}}",
-                    execute(
-                        compose + ["ps", "-q", "evaluation-runner"], env=compose_env
-                    ).strip(),
-                ]
-            ).strip(),
+            runner_image_id=runner_image_id,
             source_sha=execute(
                 ["git", "-C", REPOSITORY_ROOT, "rev-parse", "HEAD"]
             ).strip(),

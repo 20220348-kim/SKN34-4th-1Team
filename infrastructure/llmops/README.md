@@ -69,6 +69,12 @@ LLMOps CI는 기존 관리자 인증 smoke와 같은 환경에서 `ops_smoke.py 
 `llmops-rag-replay-<SHA>` artifact에 남깁니다. 옵션·연결 인자는 `python3 infrastructure/llmops/ops_smoke.py --help`와
 `.github/workflows/llmops-ci.yml`을 참고합니다. CI 성공을 개인 PC 환경 적용으로 해석하지 않습니다.
 
+새 평가를 접수하는 무료 smoke는 세션의 `live_enabled`·`rag_live_enabled`가 모두 `false`인지 확인합니다.
+카탈로그의 `live_config`·live profile은 실행 가능 옵션의 메타데이터이므로 존재 자체를 실패로 보지 않습니다.
+요청에는 `execution_mode=replay`, replay profile, 빈 `live_config`, `confirm_paid_run=false`를 명시하고
+완료 기록의 모델 호출 0회·무료 실행 명세를 별도로 검증합니다. replay profile 누락 시 live로 대체하지 않습니다.
+RAG에서는 비활성 상태의 live 요청이 거절되고 실행 기록도 생성되지 않는 차단 시험을 별도로 유지합니다.
+
 격리 CI의 합성 실행에는 `LLMOPS_ISOLATED_REVIEW_TEST=1`과 `--rag-review-check`를 함께 지정합니다.
 이 옵션은 `--rag-replay`와 loopback 주소에서만 사용하며 **이번 smoke가 새로 만든 미검토 합성 실행**에
 자동 검토·판정·철회 기록을 저장합니다. 기존 실행이나 실제 사용자 검토에 사용하지 않습니다.
