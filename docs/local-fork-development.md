@@ -131,6 +131,39 @@ python -B infrastructure/gitops/scripts/fork_cluster.py status --json \
 `doctor`도 Docker·kind 조회를 각각 15초로 제한합니다. Docker timeout이 Kubernetes 중단을 뜻하지는 않습니다.
 노드 condition 의미는 [Kubernetes 공식 문서](https://kubernetes.io/docs/concepts/architecture/nodes/#condition)를 따릅니다.
 
+### 실행 이미지와 현재 서비스 코드 비교
+
+Docker가 정상일 때 `--image-details`를 추가하면 전용 kind 노드의 이미지 메타데이터도 읽습니다.
+기본 `status --json`은 계속 Docker 없이 동작합니다.
+
+```bash
+python -B infrastructure/gitops/scripts/fork_cluster.py status --json --image-details \
+  --state-dir /실제/개인/state/경로
+```
+
+- `image_details.runtime_images_match`는 Deployment 이미지 참조를 CRI로 조회한 config ID·digest
+  목록과 Pod의 실제 `imageID`를 비교하고, 목록에 없는 실행 ID는 별도로 조회합니다.
+  archive import의 digest가 별도 조회 이름으로 등록되지 않았어도 정확한 digest 일치를 확인할 수 있습니다.
+  같은 태그를 다른 이미지에 다시 붙였더라도 실행 중인
+  이미지가 다르면 실패합니다. Docker manifest ID와 CRI config ID를 직접 비교하지 않습니다.
+  Ops API와 `ops-sync`도 각각 확인합니다.
+- `containers[].declared_revision`은 **실제 실행 이미지**의 `org.opencontainers.image.revision`
+  또는 기존 `dev.govbiz.source` 라벨입니다. 40자리 커밋 SHA가 아니거나 두 라벨이 서로 다르면
+  출처를 미확인으로 표시하며 임의 라벨 내용이나 컨테이너 환경변수는 출력하지 않습니다.
+- `service_tree_comparison`은 그 커밋과 **도구를 실행한 checkout의 `backend/<서비스>` 전체**를
+  비교합니다. `CHANGED`는 수정·삭제·stage된 파일이나 Git ignore 대상이 아닌 새 파일이 있다는
+  뜻입니다. `UNCHANGED`는 이 디렉터리의 차이가 없다는 뜻이며, 서비스 문서 변경도 비교에 포함됩니다.
+  다른 서비스나 인프라 파일만 바뀌었다면 해당 서비스는 변경으로 표시하지 않습니다.
+- 라벨 누락·충돌, checkout에 없는 커밋, Git 조회 실패는 `UNKNOWN`입니다. 자동 fetch나 빌드는
+  하지 않습니다. 이미지 조회 실패도 성공으로 처리하지 않으며 각 Docker·Git 조회는 15초로 제한합니다.
+- 이미지 불일치·조회 실패 또는 소스 비교가 `CHANGED`/`UNKNOWN`이면 기존 상태 JSON에 상세 결과를
+  함께 출력하고 종료 코드 1을 반환합니다. `source_review_required=true`는 배포할 소스와 이미지의
+  대응 관계를 검토하라는 뜻이며, 서비스 장애를 의미하지는 않습니다.
+
+이 진단은 이미지 라벨을 바탕으로 한 비교입니다. 라벨에는 빌드 당시 수정 파일·의존성·실제 빌드 입력의
+증명이 없으므로, 일치하더라도 `image_source_verified=false`를 유지합니다. 기존 상태 조회와 마찬가지로
+여러 조회를 묶은 원자적 배포 승인서가 아니며, 이미지 교체·클러스터 재시작·데이터 변경은 수행하지 않습니다.
+
 GHCR 없이 로컬 이미지로만 검증하려면 [로컬 이미지 빌드 도구](../infrastructure/scripts/build-msa-images.py)의
 새 이미지 manifest를 `up --local-images /절대경로/images.json`으로 전달할 수 있습니다.
 이 경로의 성공을 비공개 GHCR 인증·pull 성공이라고 보지는 않습니다.
