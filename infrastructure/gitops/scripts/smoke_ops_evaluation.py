@@ -356,6 +356,16 @@ def verify(state, settings, compose, compose_env, ops_image, kind, helm, report)
             ops_runtime.quiet(nk + ["get", "secret", "ops-runtime", "-o", "json"])
         )["data"]
         assert all(secret_after[key] == value for key, value in secret_before.items())
+        report["upgrade_preflight_open_admission"] = ops_runtime.upgrade_preflight(
+            state, settings
+        )
+        open_preflight = report["upgrade_preflight_open_admission"]
+        assert open_preflight["status"] == "BLOCKED"
+        assert open_preflight["reason"] == "admission_open"
+        assert open_preflight["admission_supported"] is True
+        assert open_preflight["admission_blocked"] is False
+        assert open_preflight["admission_version"] == 0
+        assert open_preflight["checks"]["open_admission"] == 1
         report["admission_pause"] = set_admission(nk, "pause", 0)
         ops_runtime.activate(state, settings, state / ".env", helm)
         assert (
@@ -371,10 +381,16 @@ def verify(state, settings, compose, compose_env, ops_image, kind, helm, report)
         report["upgrade_preflight_before_evaluation"] = ops_runtime.upgrade_preflight(
             state, settings
         )
-        assert report["upgrade_preflight_before_evaluation"]["status"] == "PASS"
+        paused_preflight = report["upgrade_preflight_before_evaluation"]
+        assert paused_preflight["schemaVersion"] == 3
+        assert paused_preflight["status"] == "PASS"
+        assert paused_preflight["admission_supported"] is True
+        assert paused_preflight["admission_blocked"] is True
         assert (
-            report["upgrade_preflight_before_evaluation"]["admission_blocked"] is True
+            paused_preflight["admission_version"]
+            == report["admission_pause"]["version"]
         )
+        assert paused_preflight["checks"]["open_admission"] == 0
         report["admission_resume"] = set_admission(nk, "resume", 1)
         report["runtime_check_before_evaluation"] = ops_runtime.check_runtime(
             state, settings

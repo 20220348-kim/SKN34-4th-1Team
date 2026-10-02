@@ -233,11 +233,12 @@ class UpgradePreflightTests(unittest.TestCase):
             json.dumps(runtime.connection(SETTINGS, "fixture"))
         )
         self.result = {
-            "schemaVersion": 2,
+            "schemaVersion": 3,
             "scope": "ops_upgrade_preflight",
             "status": "PASS",
-            "admission_blocked": False,
-            "admission_supported": False,
+            "admission_blocked": True,
+            "admission_supported": True,
+            "admission_version": 1,
             "backup_verified": False,
             "evaluation_executed": False,
             "checks": {
@@ -284,12 +285,39 @@ class UpgradePreflightTests(unittest.TestCase):
             self.result["status"] = status
             self.assertEqual(self.check()["status"], status)
 
-    def test_supported_admission_must_be_paused_for_success(self):
-        self.result["admission_supported"] = True
-        with self.assertRaisesRegex(ValueError, "Pause"):
+    def test_unsupported_or_open_admission_cannot_claim_success(self):
+        for supported, blocked in ((False, False), (False, True), (True, False)):
+            self.result.update(admission_supported=supported, admission_blocked=blocked)
+            with (
+                self.subTest(supported=supported, blocked=blocked),
+                self.assertRaisesRegex(ValueError, "supported and paused"),
+            ):
+                self.check()
+
+    def test_missing_or_invalid_admission_version_cannot_claim_success(self):
+        del self.result["admission_version"]
+        with self.assertRaisesRegex(ValueError, "admission version"):
             self.check()
-        self.result["admission_blocked"] = True
-        self.assertEqual(self.check()["status"], "PASS")
+        for version in (None, False, True, 0, -1, "1", 1.0):
+            self.result["admission_version"] = version
+            with self.subTest(version=version), self.assertRaises(ValueError):
+                self.check()
+
+    def test_legacy_probe_contract_is_rejected(self):
+        self.result["schemaVersion"] = 2
+        with self.assertRaisesRegex(ValueError, "preflight response"):
+            self.check()
+
+    def test_unsupported_admission_preserves_blocked_reason(self):
+        self.result.update(
+            status="BLOCKED",
+            reason="admission_control_unsupported",
+            admission_supported=False,
+            admission_blocked=False,
+        )
+        del self.result["admission_version"]
+        self.result["checks"]["open_admission"] = None
+        self.assertEqual(self.check(), self.result)
 
 
 class ActivationTests(unittest.TestCase):
@@ -379,10 +407,14 @@ class ActivationTests(unittest.TestCase):
         (self.state / runtime.PROFILE).write_text(
             json.dumps(runtime.connection(SETTINGS, "fixture"))
         )
-        for status in ("BLOCKED", "UNKNOWN"):
-            self.mocks["upgrade_preflight"].return_value = {"status": status}
+        for report in (
+            {"status": "BLOCKED"},
+            {"status": "UNKNOWN"},
+            {"status": "BLOCKED", "reason": "admission_control_unsupported"},
+        ):
+            self.mocks["upgrade_preflight"].return_value = report
             with (
-                self.subTest(status=status),
+                self.subTest(report=report),
                 self.assertRaisesRegex(ValueError, "preflight"),
             ):
                 runtime.activate(self.state, SETTINGS, self.env)

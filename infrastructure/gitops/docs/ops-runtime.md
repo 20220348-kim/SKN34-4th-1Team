@@ -208,9 +208,11 @@ migration → API+sync 적용 → rollout → 읽기 전용 런타임 진단 순
 
 ### 소스와 실행 환경의 버전 점검
 
-갱신 전 미완료 평가·열린 예산 예약·Prefect 작업과 활성 스케줄은 `ops_runtime.py --preflight`로
+갱신 전 접수 제어·미완료 평가·열린 예산 예약·Prefect 작업과 활성 스케줄은 `ops_runtime.py --preflight`로
 읽기 전용 점검한다. 기존 연결의 재활성화도 이 검사가 통과해야 Secret·migration·workload 변경을 진행한다.
-접수 중지·일관된 백업은 별도이며 [갱신 절차와 검사 범위](../../../docs/ops-upgrade-runbook.md)를 따른다.
+운영자가 접수를 중지한 뒤 지원 여부·중지 상태·버전을 모두 확인해야 통과한다. 접수 제어가 없는
+구버전은 남은 작업이 없어도 `admission_control_unsupported`로 차단하며 현재 자동 갱신 대상이 아니다.
+Prefect 직접 접수 통제·일관된 백업은 별도이며 [갱신 절차와 검사 범위](../../../docs/ops-upgrade-runbook.md)를 따른다.
 
 `main`을 갱신해도 이미 실행 중인 이미지가 자동으로 바뀌지는 않는다. 기존 개인 환경을 다시 사용할 때는
 다음 읽기 전용 점검으로 현재 체크아웃과 실행 환경을 대조한다. WSL2/Linux에서 실행하며 artifact env 파일은 필요 없다.

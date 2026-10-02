@@ -56,13 +56,20 @@ python3 -B infrastructure/gitops/scripts/ops_runtime.py --preflight \
 이전 deployment를 포함한 미완료 실행·현재 deployment의 활성 스케줄을 검사한다.
 중지된 deployment에 활성 스케줄이 남아 있어도 차단한다. 자동 취소·정산·환급은 하지 않는다.
 
-- `PASS`: 검사한 범위에서 남은 작업 없음. `BLOCKED`: 남은 작업을 기존 처리 절차로 종료 후 재검사.
+- `PASS`: 접수 제어 지원·중지 상태·양의 정수 버전을 확인했고 검사한 범위에서 남은 작업 없음.
+- `BLOCKED`: 접수 제어 미지원, 접수 중지 전 또는 남은 작업 존재. 사유에 맞게 조치한 뒤 재검사한다.
 - `UNKNOWN`: DB/Prefect 조회 실패, 불완전 응답, 점검 중 변경 등으로 확인 불가. 장애를 해결한 뒤 재검사.
   기존 이력을 보존하며 한 flow의 이력이 2,000개 이상이면 전체 검사 범위를 확장·검증하기 전까지 중단한다.
-- 새 Ops에서는 접수가 중지돼야 `PASS`가 되며 `admission_supported=true`, `admission_blocked=true`와
-  확인한 버전을 기록한다. 점검 중 접수 상태 버전이 바뀌면 중단한다.
+- 보고서는 `schemaVersion=3`이다. `PASS`에는 `admission_supported=true`, `admission_blocked=true`,
+  `admission_version>=1`과 `checks.open_admission=0`이 필요하며 활성화 도구도 이를 검증한다.
+  접수가 열려 있으면 `reason=admission_open`으로 차단한다. 점검 중 접수 상태 버전이 바뀌거나
+  중지 상태의 버전이 누락·잘못된 값이면 `UNKNOWN`으로 중단한다.
 - `0020` 이전 이미지에는 접수 제어가 없어 `admission_supported=false`, `admission_blocked=false`다.
-  이 버전에서 처음 갱신할 때는 기존 외부 접수 통제를 유지하고 갱신 후 CLI를 사용한다.
+  미완료 작업이 0건이어도 `BLOCKED`, `reason=admission_control_unsupported`로 갱신을 차단하며
+  `checks.open_admission=null`로 확인 불가를 표시한다. 외부 접수 통제를 했다는 운영자 확인만으로
+  이 CLI를 통과시킬 수 없다. 구버전의 최초 전환에는 접수 경로 차단·쓰기 중지·백업 복원 검증을
+  포함한 별도의 유지보수 절차가 필요하며, 현재 자동 갱신 도구는 이를 지원하지 않는다.
+  상태 기록 삭제·검사 우회·접수 제어 DB 행 수동 생성으로 통과시키지 않는다.
   새 이미지에서 테이블 조회에 실패한 경우는 구버전으로 대체하지 않고 `UNKNOWN`으로 중단한다.
 - Prefect 직접 접수 등 다른 경로와 백업은 별도다. `backup_verified=false`이며
   `PASS`를 재사용 가능한 승인서로 쓰지 않는다. 갱신 실패 시 도구가 접수를 자동 재개하지 않는다.

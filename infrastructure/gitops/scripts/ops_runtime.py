@@ -107,7 +107,8 @@ def upgrade_preflight(state, settings):
     )
     if (
         not isinstance(result, dict)
-        or result.get("schemaVersion") != 2
+        or type(result.get("schemaVersion")) is not int
+        or result.get("schemaVersion") != 3
         or result.get("scope") != "ops_upgrade_preflight"
         or result.get("status") not in {"PASS", "BLOCKED", "UNKNOWN"}
         or type(result.get("admission_blocked")) is not bool
@@ -137,8 +138,15 @@ def upgrade_preflight(state, settings):
             )
         ):
             raise ValueError("Incomplete Ops upgrade preflight checks")
-        if result["admission_supported"] and not result["admission_blocked"]:
-            raise ValueError("Pause new Ops requests before upgrading")
+        if not result["admission_supported"] or not result["admission_blocked"]:
+            raise ValueError(
+                "Ops upgrade requires supported and paused admission control"
+            )
+        if (
+            type(result.get("admission_version")) is not int
+            or result["admission_version"] < 1
+        ):
+            raise ValueError("Incomplete Ops upgrade admission version")
     return result
 
 
@@ -612,7 +620,8 @@ def activate(
         preflight = upgrade_preflight(state, settings)
         if preflight["status"] != "PASS":
             raise ValueError(
-                "Ops upgrade preflight did not pass; run --preflight and drain outstanding work"
+                "Ops upgrade preflight did not pass; run --preflight, verify supported "
+                "and paused admission control, and drain outstanding work"
             )
     latest = json.loads(
         run(nk + ["get", "deployment", "ops-service", "-o", "json"], capture=True)
@@ -751,7 +760,7 @@ def main():
     mode.add_argument(
         "--preflight",
         action="store_true",
-        help="Read outstanding evaluations, reservations, Prefect runs and schedules",
+        help="Read admission control, outstanding evaluations, reservations, Prefect runs and schedules",
     )
     parser.add_argument(
         "--run-id",

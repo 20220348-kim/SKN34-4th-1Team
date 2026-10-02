@@ -13,7 +13,11 @@ NAME = "govbiz-ops-evidence-evaluation/saved-capture"
 
 class PreflightTests(unittest.TestCase):
     def setUp(self):
-        self.database = {"states": {"COMPLETED": 2}, "open_reservations": 0}
+        self.database = {
+            "states": {"COMPLETED": 2},
+            "open_reservations": 0,
+            "admission": {"accepting": False, "version": 1},
+        }
         self.deployment = {
             "id": str(uuid4()),
             "flow_id": str(uuid4()),
@@ -58,17 +62,43 @@ class PreflightTests(unittest.TestCase):
     def inspect(self):
         return probe.inspect_upgrade(self.request, NAME)
 
-    def test_terminal_history_passes_without_claiming_admission_lock_or_backup(self):
+    def test_paused_terminal_history_passes_without_claiming_backup_or_writes(self):
         self.rows = [self.row(state) for state in probe.TERMINAL]
         before = copy.deepcopy((self.rows, self.database, self.deployment))
         result = self.inspect()
+        self.assertEqual(result["schemaVersion"], 3)
         self.assertEqual(result["status"], "PASS")
         self.assertEqual(result["checks"]["inspected_flows"], 4)
-        self.assertFalse(result["admission_blocked"])
+        self.assertTrue(result["admission_supported"])
+        self.assertTrue(result["admission_blocked"])
+        self.assertEqual(result["admission_version"], 1)
         self.assertFalse(result["backup_verified"])
         self.assertFalse(result["evaluation_executed"])
         self.assertEqual(before, (self.rows, self.database, self.deployment))
         self.assertNotIn(self.deployment["id"], json.dumps(result))
+
+    def test_legacy_image_cannot_pass_even_without_outstanding_work(self):
+        for admission in ({}, {"admission": None}):
+            self.database = {
+                "states": {"COMPLETED": 2},
+                "open_reservations": 0,
+                **admission,
+            }
+            with self.subTest(admission=admission):
+                report = self.inspect()
+                self.assertEqual(report["status"], "BLOCKED")
+                self.assertEqual(report["reason"], "admission_control_unsupported")
+                self.assertFalse(report["admission_supported"])
+                self.assertFalse(report["admission_blocked"])
+                self.assertNotIn("admission_version", report)
+                self.assertIsNone(report["checks"]["open_admission"])
+                self.assertTrue(
+                    all(
+                        value == 0
+                        for key, value in report["checks"].items()
+                        if key != "open_admission"
+                    )
+                )
 
     def test_every_unsettled_ops_state_and_unknown_status_blocks(self):
         for state in (
@@ -89,7 +119,12 @@ class PreflightTests(unittest.TestCase):
 
     def test_supported_admission_must_be_paused_and_version_is_recorded(self):
         self.database["admission"] = {"accepting": True, "version": 0}
-        self.assertEqual(self.inspect()["status"], "BLOCKED")
+        report = self.inspect()
+        self.assertEqual(report["status"], "BLOCKED")
+        self.assertEqual(report["reason"], "admission_open")
+        self.assertEqual(report["checks"]["open_admission"], 1)
+        self.assertTrue(report["admission_supported"])
+        self.assertFalse(report["admission_blocked"])
         self.database["admission"] = {"accepting": False, "version": 7}
         report = self.inspect()
         self.assertEqual(report["status"], "PASS")
@@ -102,9 +137,14 @@ class PreflightTests(unittest.TestCase):
             {},
             {"accepting": "false", "version": 0},
             {"accepting": False, "version": -1},
+            {"accepting": False, "version": 0},
+            {"accepting": False, "version": True},
+            {"accepting": False, "version": "1"},
+            {"accepting": False},
         ):
             self.database["admission"] = admission
-            self.assertEqual(self.inspect()["status"], "UNKNOWN")
+            with self.subTest(admission=admission):
+                self.assertEqual(self.inspect()["status"], "UNKNOWN")
         self.read_database.side_effect = [
             {**self.database, "admission": {"accepting": False, "version": 1}},
             {**self.database, "admission": {"accepting": False, "version": 3}},

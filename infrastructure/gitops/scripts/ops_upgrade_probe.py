@@ -116,7 +116,7 @@ def prefect_snapshot(request, name):
 
 def inspect_upgrade(request, deployment_name):
     report = {
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "scope": "ops_upgrade_preflight",
         "status": "UNKNOWN",
         "started_at": datetime.now(timezone.utc).isoformat(),
@@ -134,13 +134,15 @@ def inspect_upgrade(request, deployment_name):
                 type(admission["accepting"]) is not bool
                 or type(admission["version"]) is not int
                 or admission["version"] < 0
+                or (not admission["accepting"] and admission["version"] == 0)
             ):
                 raise ValueError("Invalid admission evidence")
             report["admission_supported"] = True
             report["admission_blocked"] = not admission["accepting"]
             report["admission_version"] = admission["version"]
         report["checks"].update(
-            open_admission=int(admission is not None and admission["accepting"]),
+            # An old image without admission control cannot attest a closed gate.
+            open_admission=None if admission is None else int(admission["accepting"]),
             unsettled_evaluations=sum(
                 count
                 for state, count in before["states"].items()
@@ -151,15 +153,22 @@ def inspect_upgrade(request, deployment_name):
         report["checks"].update(prefect_snapshot(request, deployment_name))
         if database_snapshot() != before:
             raise ValueError("Ops changed during inspection")
-        report["status"] = (
-            "BLOCKED"
-            if any(
-                value
-                for key, value in report["checks"].items()
-                if key != "inspected_flows"
+        if admission is None:
+            report["status"] = "BLOCKED"
+            report["reason"] = "admission_control_unsupported"
+        elif admission["accepting"]:
+            report["status"] = "BLOCKED"
+            report["reason"] = "admission_open"
+        else:
+            report["status"] = (
+                "BLOCKED"
+                if any(
+                    value
+                    for key, value in report["checks"].items()
+                    if key != "inspected_flows"
+                )
+                else "PASS"
             )
-            else "PASS"
-        )
     except Exception:  # noqa: BLE001 -- process boundary returns UNKNOWN, never success or raw errors
         # Includes old/incompatible DB schema and remote failures. Never expose
         # SQL, environment values, remote payloads or exception text.
