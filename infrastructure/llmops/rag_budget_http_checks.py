@@ -58,6 +58,8 @@ class RagBudgetHttpTests(ArtifactServerMixin, TransactionTestCase):
         super().setUpClass()
         if connection.vendor != "mysql" or connection.mysql_version[:2] != (8, 4):
             raise RuntimeError("These checks require an isolated MySQL 8.4 test database")
+        if not connection.settings_dict["NAME"].startswith("test_"):
+            raise RuntimeError("Only Django's isolated test database is allowed")
         cls.ai_python = Path(os.environ["RAG_BUDGET_AI_PYTHON"]).absolute()
         if not cls.ai_python.is_file():
             raise RuntimeError(
@@ -67,13 +69,20 @@ class RagBudgetHttpTests(ArtifactServerMixin, TransactionTestCase):
 
     @classmethod
     def worker(cls, command, data=None):
+        environment = {
+            key: os.environ[key]
+            for key in ("PATH", "SYSTEMROOT", "TIKTOKEN_CACHE_DIR")
+            if key in os.environ
+        }
+        environment["PYTHONUNBUFFERED"] = "1"
         process = subprocess.run(
-            [str(cls.ai_python), str(WORKER), command],
+            [str(cls.ai_python), "-X", "utf8", "-B", str(WORKER), command],
             input=json.dumps(data) if data is not None else None,
             capture_output=True,
             text=True,
             encoding="utf-8",
             cwd=ROOT / "backend/ai-service",
+            env=environment,
             timeout=60,
             check=False,
         )
@@ -111,11 +120,11 @@ class RagBudgetHttpTests(ArtifactServerMixin, TransactionTestCase):
             }:
                 cancel_run(EvaluationRun.objects.get(pk=run_id), self.user)
             target = (
-                (
-                    scenario == "embedding-settle-before-commit"
-                    and action == "settle"
-                    and sequence == 0
-                )
+                (scenario, action, sequence)
+                in {
+                    ("embedding-settle-before-commit", "settle", 0),
+                    ("query-settle-before-commit", "settle", 1),
+                }
                 or (
                     scenario in {"settle-before-commit", "settle-after-commit"}
                     and action == "settle"
@@ -198,6 +207,11 @@ class RagBudgetHttpTests(ArtifactServerMixin, TransactionTestCase):
         )
         # reserve() cached the reverse relation before the HTTP worker changed it.
         self.run.refresh_from_db()
+        for call in self.run.budget_reservation.calls.all():
+            operation = self.spec["model_operations"][call.sequence]
+            self.assertEqual(call.operation_id, operation["id"])
+            self.assertEqual(call.max_input_tokens, operation["max_input_tokens"])
+            self.assertEqual(call.max_output_tokens, operation["max_output_tokens"])
         return result
 
     def amounts(self):
@@ -252,6 +266,7 @@ class RagBudgetHttpTests(ArtifactServerMixin, TransactionTestCase):
             self.assertEqual(receipt["spec_hash"], self.run.execution_spec_sha256)
             self.assertEqual(receipt["version"], 2 if call.sequence < 2 else 1)
             self.assertEqual(receipt["usage"]["input_tokens"], call.input_tokens)
+            self.assertEqual(receipt["usage"]["output_tokens"], call.output_tokens)
             if call.sequence < 2:
                 self.assertEqual(receipt["operation_id"], call.operation_id)
         self.assertEqual(self.request("claim", uuid4()), 409)
@@ -260,6 +275,7 @@ class RagBudgetHttpTests(ArtifactServerMixin, TransactionTestCase):
 
     def test_failures_stop_calls_and_keep_confirmed_or_unknown_usage(self):
         doc_cap = self.spec["model_operations"][0]["max_input_tokens"]
+        query_cap = self.spec["model_operations"][1]["max_input_tokens"]
         cases = (
             ("cancel-before-answer", (2, 3, 0), (2, 0), None),
             ("cancel-after-answer", (3, 103, 20), (2, 1), None),
@@ -267,6 +283,8 @@ class RagBudgetHttpTests(ArtifactServerMixin, TransactionTestCase):
             ("settle-before-commit", (3, 32771, 2000), (2, 1), 2),
             ("settle-after-commit", (3, 103, 20), (2, 1), None),
             ("embedding-settle-before-commit", (1, doc_cap, 0), (1, 0), 0),
+            ("query-settle-before-commit", (2, 2 + query_cap, 0), (2, 0), 1),
+            ("query-unknown-usage", (2, 2 + query_cap, 0), (2, 0), 1),
             ("model-timeout", (3, 32771, 2000), (2, 1), 2),
             ("unknown-usage", (3, 32771, 2000), (2, 1), 2),
             ("invalid-citation", (3, 103, 20), (2, 1), None),
@@ -292,6 +310,12 @@ class RagBudgetHttpTests(ArtifactServerMixin, TransactionTestCase):
                     ),
                     [] if unknown is None else [unknown],
                 )
+                if scenario in {"lost-authorize-response", "query-unknown-usage"}:
+                    self.assertFalse(
+                        (
+                            self.root / str(self.run.pk) / "capture" / f"usage-{unknown}.json"
+                        ).exists()
+                    )
                 if scenario.startswith("cancel-"):
                     self.run.refresh_from_db()
                     self.assertIsNotNone(self.run.cancel_requested_at)
@@ -311,6 +335,8 @@ class RagBudgetHttpTests(ArtifactServerMixin, TransactionTestCase):
             ),
         )
         self.assertEqual(self.request("claim", uuid4()), 409)
+        self.assertEqual(self.request("close", result["worker_id"]), 200)
+        self.assertEqual(self.amounts(), (4, 203, 40))
         self.assertEqual(self.request("close", result["worker_id"]), 200)
         self.assertEqual(self.amounts(), (4, 203, 40))
 
@@ -359,6 +385,7 @@ class RagBudgetHttpTests(ArtifactServerMixin, TransactionTestCase):
         url = self.serve(application(self.root, self.root / "unused-evidence", artifact_token))
         for scenario, sequence, used_input, used_output in (
             ("embedding-settle-before-commit", 0, 2, 0),
+            ("query-settle-before-commit", 1, 1, 0),
             ("settle-before-commit", 2, 100, 20),
         ):
             with self.subTest(scenario=scenario):

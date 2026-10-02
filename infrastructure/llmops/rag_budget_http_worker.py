@@ -79,7 +79,10 @@ def run_session(config):
                 headers={"x-request-id": f"req_{config['run_id']}_{counts['embedding']}"},
                 json={
                     "model": body["model"],
-                    "usage": {
+                    "usage": None
+                    if scenario == "query-unknown-usage"
+                    and request.extensions["embedding_budget"][1]["kind"] == "query_embedding"
+                    else {
                         "prompt_tokens": len(body["input"]),
                         "total_tokens": len(body["input"]),
                     },
