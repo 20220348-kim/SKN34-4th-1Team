@@ -50,6 +50,24 @@ RAG_FILES = (
     *DEPENDENCIES,
 )
 
+RAG_GENERATION_FILES = (
+    *GENERATION_FILES,
+    *(
+        EVIDENCE + name + ".py"
+        for name in ("rag_live", "rag_budget", "embedding_budget", "budget_client", "serve_flow")
+    ),
+    *(
+        AI + "app/" + name + ".py"
+        for name in (
+            "bootstrap",
+            "main",
+            "support_program_embedding",
+            "support_program_evidence/service",
+            "support_program_evidence/router",
+        )
+    ),
+)
+
 
 class ExecutionSpecMismatch(ValueError):
     """모델 호출 전 명세 검증 실패. 외부 오류 본문을 담지 않는다."""
@@ -155,6 +173,7 @@ def build_release(root):
     evaluation["scope"] = EVALUATION_SCOPE
     datasets = {}
     catalog = json.loads((root / (OPS + "capture_catalog.json")).read_text())
+    rag_plans = json.loads((root / (OPS + "rag_live_plans.json")).read_text())
     for item in catalog:
         fixture_hash = file_digest(root / EVIDENCE / item["fixture"])
         if fixture_hash != item["fixture_sha256"]:
@@ -169,6 +188,11 @@ def build_release(root):
         }
         if "evaluation_scope" in item:
             datasets[item["id"]]["evaluation_scope"] = item["evaluation_scope"]
+            plan = rag_plans.get(item["id"])
+            if plan is not None:
+                if plan["fixture_sha256"] != fixture_hash or plan["case_ids"] != item["case_ids"]:
+                    raise ValueError("RAG call plan input differs")
+                datasets[item["id"]]["live_plan"] = plan
             datasets[item["id"]]["capture_kinds"] = {
                 capture["id"]: json.loads((root / EVIDENCE / capture["path"]).read_bytes())[
                     "execution"
@@ -196,6 +220,13 @@ def build_release(root):
             "prompt_sha256": sha256(prompt_text.encode()).hexdigest(),
             "settings": generation_settings(root),
         },
+        "rag_generation": {
+            **fingerprint(RAG_GENERATION_FILES),
+            "prompt_sha256": sha256(prompt_text.encode()).hexdigest(),
+            "settings": generation_settings(root),
+            "source_mode": "fixed-source-and-chunks",
+            "index_storage": "isolated-in-memory",
+        },
         "pipeline": fingerprint(PIPELINE_FILES),
         "datasets": datasets,
     }
@@ -212,8 +243,10 @@ def profile(release, dataset_id, mode, config):
     if rag:
         from .rag_replay import POLICY
 
-        if mode not in {"replay", "recovery"} or config:
-            raise ValueError("RAG supports saved capture replay only")
+        if mode not in {"replay", "recovery", "live"} or (mode != "live" and config):
+            raise ValueError("Invalid RAG execution mode")
+        if mode == "live" and not config:
+            raise ValueError("RAG generation requires an approved call plan")
     evaluation = release["rag_evaluation"] if rag else release["evaluation"]
     return {
         "schema_version": 2,
@@ -229,9 +262,19 @@ def profile(release, dataset_id, mode, config):
         "execution_mode": mode,
         "evaluation": evaluation,
         "pipeline": release["pipeline"],
-        "generation": release["generation"] if mode == "live" else None,
+        "generation": release["rag_generation" if rag else "generation"]
+        if mode == "live"
+        else None,
         "live_config": config if mode == "live" else {},
         "model_operations": [
+            {
+                **item,
+                "model": config["model"] if item["kind"] == "answer" else config["embedding_model"],
+            }
+            for item in release["datasets"][dataset_id]["live_plan"]["model_operations"]
+        ]
+        if rag and mode == "live"
+        else [
             {
                 "id": f"answer:{case_id}",
                 "kind": "answer",

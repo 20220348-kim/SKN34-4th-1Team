@@ -13,7 +13,7 @@ from django.test import SimpleTestCase
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.test import APIClient
 
-from .catalog import selection
+from .catalog import live_config, selection
 from .execution_spec import digest, make_spec, read_release
 from .models import EvaluationRun
 from .rag_material import read_material
@@ -102,6 +102,35 @@ class RagMaterialTests(SimpleTestCase):
         material_hash = result.pop("material_sha256")
         self.assertEqual(material_hash, digest(result))
 
+    def test_live_candidate_comes_from_execution_artifact_with_current_provenance(self):
+        self.run.execution_mode = "live"
+        self.run.candidate_capture_id = "new-model-response"
+        config = live_config(DATASET)
+        self.run.live_config = config
+        self.run.execution_spec = make_spec(
+            read_release(), DATASET, "live", config, "new-model-response", CAPTURE
+        )
+        self.capture["execution"] = {
+            "kind": "recorded",
+            "model": config["model"],
+            "embeddingModel": config["embedding_model"],
+            "promptSha256": self.run.execution_spec["generation"]["prompt_sha256"],
+            "recorderSha256": self.run.execution_spec["generation"]["files"][
+                "evaluation/support-program-evidence/rag_live.py"
+            ],
+        }
+        raw = json.dumps(self.capture).encode()
+        self.comparison["current"].update(
+            captureSha256=sha256(raw).hexdigest(),
+            execution=self.capture["execution"],
+            measurementKind="recorded-live-evaluation",
+        )
+        with patch("apps.evaluations.artifact_store.read_artifact", return_value=raw) as artifact:
+            result = self.read()
+        artifact.assert_called_once_with(self.run.pk, "capture/capture.json")
+        self.assertEqual(result["candidate_measurement_kind"], "recorded-live-evaluation")
+        self.assertFalse(result["baseline_eligible"])
+
     def test_changed_source_bytes_are_rejected_before_projection(self):
         for path in self.sources:
             original = self.sources[path]
@@ -163,6 +192,7 @@ class RagMaterialTests(SimpleTestCase):
 
     def test_recovery_uses_pinned_artifacts_without_falling_back_to_catalog(self):
         self.run.execution_mode = "recovery"
+        self.run.execution_spec["execution_mode"] = "recovery"
         artifacts = {
             "recovery-fixture.json": self.sources[self.fixture_path],
             "capture/capture.json": self.sources[self.capture_path],

@@ -444,6 +444,21 @@ Compose가 Ops와 실행기에 같은 값을 전달하고, 실행기는 `http://
 예약 기록이 없는 과거 모델 실행은 기록 없음으로 표시한다. API·합계 계산·감사 계약은
 [예산 조회와 한도 변경 감사](../../backend/ops-service/README.md#예산-조회와-한도-변경-감사)를 따른다.
 
+### 고정 원문·청크의 RAG live 평가
+
+RAG 신규 실행의 범위와 산출물은 [Ops 계약](../../backend/ops-service/README.md#고정-원문청크의-새-rag-실행)에 설명합니다.
+기존 Compose 서비스 구성을 사용합니다. API·runner 이미지를 같은 실행 release로 빌드한 뒤,
+승인된 자료·호출 예산 안에서만 `.env.ops`의 **두 설정** `LLMOPS_LIVE_ENABLED=true`,
+`LLMOPS_RAG_LIVE_ENABLED=true`를 API와 runner에 반영합니다. RAG 기본값은 비활성화입니다.
+누적 호출·출력 토큰뿐 아니라 **입력 토큰 한도**도 설정해야 합니다. 현재 로컬 한도나 키를 자동 변경하지 않습니다.
+
+React에서 RAG 자료와 **새 응답 생성**을 선택하면 답변 모델·임베딩 모델·최대 호출 수·총 입력/출력 예약을
+확인할 수 있습니다. 고정 fixture를 사용한 새 임베딩·검색·답변 실행이며 Core 원문 수집·청킹 및
+운영 색인 성능은 측정하지 않습니다. 실제 결과는 사람이 자료·사례를 검토한 뒤에만 비교 기준으로 지정합니다.
+실제 유료 실행이나 운영 Compose 재배포는 무료 테스트 통과와 별개의 단계입니다.
+
+아래 고정 근거 답변 실행 절차는 기존 방식이며 RAG 실행의 임베딩 예산과 구분합니다.
+
 새 응답 생성은 기존 `govbiz-ops-evidence-evaluation/saved-capture` deployment의 명시적 live 모드다.
 기존 요청·북마크 호환을 위해 deployment 이름을 유지한다. 기본 실행 방식은 replay, live 활성화는 false다.
 

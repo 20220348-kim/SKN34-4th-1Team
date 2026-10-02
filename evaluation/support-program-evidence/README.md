@@ -6,6 +6,33 @@
 검증하며, 이 전환으로 새 유료 평가나 의미 품질 측정을 수행한 것은 아닙니다. `runs/`의 과거 코드·
 캡처·보고서는 당시 구현과 설정에 대한 기록으로 유지합니다.
 
+## Ops의 고정 원문·청크 RAG 실행
+
+[`rag_live.py`](rag_live.py)는 등록 fixture의 원문·청크를 고정하고, 기존 AI Service로 문서 임베딩 →
+격리된 메모리 색인 → 질문 임베딩·검색 → Agent 답변을 새로 실행합니다. Core 서버의 원문 수집·청킹과
+운영 Qdrant 성능을 측정하지 않습니다. [`ops_flow.py`](ops_flow.py)가 승인된 명세와 두 활성화 설정을
+검증한 후 기존 `BudgetClient`와 `RagBudget`을 통해 전송 직전 승인·사용량 영수증·정산을 수행합니다.
+새 외부 서비스나 의존성은 추가하지 않습니다.
+
+호출 계획은 모델 API를 호출하지 않고 생성·검증합니다. fixture·토크나이저·호출 경로를 변경하면
+계획과 실행 release를 함께 검토·갱신해야 합니다. 새로 등록한 캡처는 계획을 생성하기 전까지 replay만 제공합니다.
+
+```bash
+backend/ai-service/.venv/bin/python evaluation/support-program-evidence/rag_live.py --write-plans
+python3 backend/ops-service/apps/evaluations/execution_spec.py --write
+backend/ai-service/.venv/bin/python evaluation/support-program-evidence/rag_live.py
+```
+
+`rag-synthetic-multichunk-v1`의 현재 계획은 최대 모델 호출 9회(문서 임베딩 3회·질문 임베딩 3회·답변 3회),
+전체 입력 예약 98,921토큰·출력 예약 6,000토큰입니다. 실제 전송·사용량과 이 예약 상한은 구분합니다.
+답변 전 입력 토큰 계산 요청은 모델 생성 호출 수에 포함하지 않고 별도 기록합니다.
+`capture.json`과 `usage-summary.json`은 실패 시에도 남기며, 완료된 생성 결과만 후처리합니다.
+새 실행은 `recorded-live-evaluation`, 저장 기록 재계산·복구는 `recorded-capture-replay`로 구분합니다.
+
+[Ops 승인·검토 계약](../../backend/ops-service/README.md#고정-원문청크의-새-rag-실행)을 따릅니다.
+`test_rag_live.py`는 실제 Service·Agent·SDK·메모리 Qdrant와 무료 HTTP 응답 대역으로 검증합니다.
+테스트 통과는 실제 OpenAI 품질 평가 또는 사람 검토 완료가 아닙니다.
+
 ## 전체 RAG 오프라인 계약·평가기 — 2026-09-30 후속
 
 [rag_evaluate.py](rag_evaluate.py)는 **고정 원문·청크 → 저장 검색 결과 → 저장 답변**을 대조하는
@@ -14,7 +41,7 @@
 Ops의 `fixed-answer-context-only` 접수·명세·품질 정책은 유지합니다. 아래 합성 3사례를
 `rag-synthetic-multichunk-v1`로 등록해 무료 재평가·보고서·점수 등록·결과 조회까지 연결했습니다.
 [Ops RAG 재평가 계약](../../backend/ops-service/README.md#전체-rag-저장-캡처-재평가)을 따르며
-RAG 사례 검토·검토 기반 품질 점검은 Ops에서 별도로 제공하며, RAG live·품질 합격·비교 기준 지정은 제공하지 않습니다.
+RAG 자료·사례 검토와 검토 기반 품질 합격·기준 지정은 Ops에서 제공합니다. 새 모델 실행은 아래의 별도 승인 경로를 사용합니다.
 
 ```bash
 # 저장소 루트: 자료 검증만 수행. 모든 품질 지표는 null
@@ -581,8 +608,8 @@ runner 이미지에 모듈을 포함하지만 기본 `ops_flow.py`가 자동으�
 무료 `test_rag_budget.py`는 실제 AI 앱·Service·Agent·SDK·메모리 Qdrant와 로컬 예산 HTTP 대역,
 모델 HTTP 대역으로 정상·캐시·계산/승인/정산 실패·취소 상태의 승인 거절·응답 유실·미확정 사용량·
 인용 오류·명세/CLI 변조를 검증합니다. 실제 Ops HTTP+MySQL 연결은 아래 별도 통합 검사를 따릅니다.
-Core 수집기·Prefect를 같은 혼합 실행으로 연결하는 작업은 후속입니다. 공개 RAG live 접수·
-사람 검토·품질 판정과 유료 품질 측정 완료를 뜻하지 않습니다.
+Core 수집기를 포함한 실행 연결은 후속입니다. 고정 원문·청크의 Ops/Prefect 연결은 위 `rag_live.py` 경로를 사용합니다.
+이 무료 테스트는 사람 검토·품질 합격 또는 유료 품질 측정 완료를 뜻하지 않습니다.
 
 ## 실제 Ops HTTP·MySQL 혼합 예산 검증
 
@@ -718,7 +745,7 @@ LLMOps CI는 같은 checkout의 v1 9사례·v2 1사례를 등록한 뒤 이미�
 
 원본 v1의 실패 4건은 재평가가 `COMPLETED`여도 `summary.completed=false`로 남습니다.
 `integration-stub-replay`, `baselineEligible=false`, 의미적 사실성 미측정, 신규 모델 호출 0 상태를 유지합니다.
-현재 모델의 품질 평가, RAG live 접수·Prefect 예산 연결, 사람 검토·기준 지정 완료를 뜻하지 않습니다.
+이 재평가는 현재 모델의 품질 평가나 사람 검토·기준 지정 완료를 뜻하지 않습니다. 새 RAG 실행은 위 별도 승인 경로입니다.
 
 RAG 점수는 원본 trace가 있으면 `trace_id`만, 없으면 재평가 실행 ID의 `session_id`만 지정합니다.
 두 대상을 함께 전송하면 Langfuse가 HTTP 400으로 거절하므로 동시에 보내지 않습니다. 평가 실행 ID는
@@ -731,7 +758,7 @@ RAG 점수는 원본 trace가 있으면 `trace_id`만, 없으면 재평가 실�
 [원문·참조 자료 검토와 철회](../../backend/ops-service/README.md#rag-원문참조-자료-검토와-승인-철회)는
 이 실행의 모든 원문·기대 조건에 대한 별도 사람 판단입니다. AI 작성 출처를 유지하고 다른 실행에
 승인을 재사용하지 않습니다. 승인·철회가 바뀌면 이전 품질 판정은 이력으로 남고 재점검이 필요합니다.
-현재 v3 정책은 실제 모델 저장 기록에서 전체 자료 승인·사례별 적합·실패/미측정 없음이 충족될 때
+현재 v4 정책은 실제 모델 저장 기록과 새 RAG 실행에서 전체 자료 승인·사례별 적합·실패/미측정 없음이 충족될 때
 합격을 허용합니다. 합성·무료 대역 기록은 계속 합격 불가입니다.
 [비교 기준 지정·재평가](../../backend/ops-service/README.md#rag-비교-기준-지정해제와-재평가)는
 현재 합격 판정의 별도 지정과 재검증을 거치며 검토 변경 시 기준을 해제합니다.

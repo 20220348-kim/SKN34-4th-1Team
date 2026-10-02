@@ -13,6 +13,7 @@
 !evaluation/support-program-evidence/budget_client.py
 !evaluation/support-program-evidence/embedding_budget.py
 !evaluation/support-program-evidence/rag_budget.py
+!evaluation/support-program-evidence/rag_live.py
 !evaluation/support-program-evidence/serve_flow.py
 !evaluation/support-program-evidence/rag_evaluate.py
 !evaluation/support-program-evidence/rag_replay_flow.py
@@ -40,6 +41,7 @@ evaluation/support-program-evidence/runs/core-rag-*/**
 !backend/ops-service/apps/evaluations/
 !backend/ops-service/apps/evaluations/catalog.py
 !backend/ops-service/apps/evaluations/capture_catalog.json
+!backend/ops-service/apps/evaluations/rag_live_plans.json
 !backend/ops-service/apps/evaluations/recovery_inputs.py
 !backend/ops-service/apps/evaluations/execution_spec.py
 !backend/ops-service/apps/evaluations/quality_policy.py

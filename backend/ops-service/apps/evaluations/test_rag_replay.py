@@ -17,15 +17,15 @@ CAPTURE = "rag-synthetic-capture-v1"
 
 
 class RagProfileTests(SimpleTestCase):
-    def test_registered_core_versions_advertise_only_pinned_free_replay(self):
+    def test_registered_core_versions_preserve_replay_and_require_live_plan(self):
         for version, count in (("v1", 9), ("v2", 1)):
             dataset = f"core-rag-20261002-{version}"
             capture = f"core-rag-capture-20261002-{version}"
             with self.subTest(version=version):
                 item = next(item for item in public_datasets() if item["id"] == dataset)
                 self.assertEqual(len(item["case_ids"]), count)
-                self.assertIsNone(item["live_config"])
-                self.assertIsNone(item["execution_profiles"]["live"])
+                self.assertEqual(item["live_config"]["source_mode"], "fixed-source-and-chunks")
+                self.assertTrue(item["execution_profiles"]["live"])
                 spec = make_spec(read_release(), dataset, "replay", {}, capture, capture)
                 self.assertEqual(spec["dataset"]["capture_kinds"][capture], "integration-stub")
                 self.assertEqual(spec["model_operations"], [])
@@ -37,10 +37,10 @@ class RagProfileTests(SimpleTestCase):
                     with self.assertRaises(ValueError):
                         validate_execution(dataset, candidate, reference, mode, {})
 
-    def test_only_free_replay_profile_is_advertised_and_live_is_rejected(self):
+    def test_plans_are_advertised_but_unapproved_live_is_rejected(self):
         item = next(item for item in public_datasets() if item["id"] == DATASET)
-        self.assertIsNone(item["live_config"])
-        self.assertIsNone(item["execution_profiles"]["live"])
+        self.assertEqual(item["live_config"]["source_mode"], "fixed-source-and-chunks")
+        self.assertTrue(item["execution_profiles"]["live"])
         spec = make_spec(read_release(), DATASET, "replay", {}, CAPTURE, CAPTURE)
         self.assertEqual(spec["evaluation_scope"], "source-chunks-retrieval-answer")
         self.assertEqual(spec["model_operations"], [])

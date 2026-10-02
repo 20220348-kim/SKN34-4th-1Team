@@ -8,6 +8,7 @@ import { RagReferenceReviewPanel } from './RagReferenceReviewPanel'
 const origins = {
   'synthetic-contract-check': '합성 결과 · 실제 모델 측정 아님',
   'integration-stub-replay': '무료 모델 대역의 실행 기록',
+  'recorded-live-evaluation': '새 임베딩·검색·답변 실행 기록',
   'recorded-capture-replay': '저장된 모델 실행 기록',
 }
 const stages = { not_started: '미실행', source: '원문', chunk: '청킹', index: '색인', search: '검색', answer: '답변' }

@@ -23,7 +23,23 @@ def evaluation_scope(dataset_id):
 def live_config(dataset_id):
     dataset = DATASETS[dataset_id]
     if evaluation_scope(dataset_id) == RAG_SCOPE:
-        return None
+        from .execution_spec import read_release
+
+        plan = read_release()["datasets"][dataset_id].get("live_plan")
+        if plan is None:
+            return None
+        return {
+            **plan["live_config"],
+            "model": os.environ.get("LLMOPS_LIVE_MODEL", "gpt-6-luna"),
+            "fixture_sha256": dataset["fixture_sha256"],
+            "source_mode": "fixed-source-and-chunks",
+            "max_total_input_tokens": sum(
+                item["max_input_tokens"] for item in plan["model_operations"]
+            ),
+            "max_total_output_tokens": sum(
+                item["max_output_tokens"] for item in plan["model_operations"]
+            ),
+        }
     return {
         "model": os.environ.get("LLMOPS_LIVE_MODEL", "gpt-6-luna"),
         "fixture_sha256": dataset["fixture_sha256"],
@@ -35,8 +51,6 @@ def live_config(dataset_id):
 
 def validate_execution(dataset_id, candidate_id, reference_id, execution_mode, config):
     selected = selection(dataset_id, candidate_id, reference_id)
-    if evaluation_scope(dataset_id) == RAG_SCOPE and (execution_mode != "replay" or config):
-        raise ValueError("RAG 자료는 저장 캡처 재평가만 지원합니다.")
     if execution_mode == "live":
         if (
             candidate_id != LIVE_CAPTURE_ID
@@ -121,9 +135,16 @@ def public_datasets():
             "live_config": live_config(item["id"]),
             "execution_profiles": {
                 mode: (
-                    None
-                    if mode == "live" and evaluation_scope(item["id"]) == RAG_SCOPE
-                    else digest(profile(release, item["id"], mode, live_config(item["id"])))
+                    digest(
+                        profile(
+                            release,
+                            item["id"],
+                            mode,
+                            live_config(item["id"]) if mode == "live" else {},
+                        )
+                    )
+                    if mode != "live" or live_config(item["id"])
+                    else None
                 )
                 for mode in ("replay", "live")
             },

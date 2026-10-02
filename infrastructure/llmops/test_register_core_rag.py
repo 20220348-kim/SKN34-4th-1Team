@@ -20,12 +20,13 @@ def repository(tmp_path):
     release = execution_spec.build_release(root)
     paths = {
         path
-        for group in ("evaluation", "rag_evaluation", "generation", "pipeline")
+        for group in ("evaluation", "rag_evaluation", "generation", "rag_generation", "pipeline")
         for path in release[group]["files"]
     }
     paths.update(
         (
             execution_spec.OPS + "capture_catalog.json",
+            execution_spec.OPS + "rag_live_plans.json",
             execution_spec.OPS + "execution_release.json",
             "infrastructure/llmops/core_rag_budget.py",
             "infrastructure/llmops/core_rag_capture.py",
@@ -71,7 +72,7 @@ def test_register_preserves_bytes_and_existing_catalog_and_pins_free_replay(
     assert spec["model_operations"] == [] and spec["generation"] is None
     assert spec["quality_policy"]["definition"]["baseline_eligible"] is False
     assert spec["dataset"]["capture_kinds"][entry["id"]] == "integration-stub"
-    with pytest.raises(ValueError, match="saved capture replay"):
+    with pytest.raises(ValueError, match="approved call plan"):
         execution_spec.make_spec(release, entry["id"], "live", {}, entry["id"], entry["id"])
     saved = catalog_path.read_bytes()
     with pytest.raises(ValueError, match="already registered"):
@@ -191,9 +192,7 @@ def test_registered_core_capture_uses_existing_ops_flow_and_preserves_failures(
             (repository / execution_spec.OPS / "capture_catalog.json").read_bytes()
         )
     }
-    # The runner currently imports the shared catalog under both module names.
     monkeypatch.setattr(catalog, "DATASETS", datasets)
-    monkeypatch.setattr(sys.modules["catalog"], "DATASETS", datasets)
     monkeypatch.setattr(execution_spec, "read_release", lambda: release)
     monkeypatch.setattr(ops_flow, "ROOT", repository)
     monkeypatch.setattr(

@@ -11,16 +11,16 @@ import ops_flow
 from apps.evaluations.execution_spec import (
     AI, OPS, EVIDENCE, ExecutionSpecMismatch, build_release, digest, make_spec, read_release,
 )
-from catalog import live_config
+from apps.evaluations.catalog import live_config
 
 
 @pytest.fixture
 def runner(monkeypatch, tmp_path):
     release = read_release()
     root = tmp_path / "image"
-    names = {name for group in ("generation", "evaluation", "pipeline", "rag_evaluation")
+    names = {name for group in ("generation", "evaluation", "pipeline", "rag_evaluation", "rag_generation")
              for name in release[group]["files"]}
-    names.add(OPS + "capture_catalog.json")
+    names.update({OPS + "capture_catalog.json", OPS + "rag_live_plans.json"})
     catalog = json.loads((ops_flow.ROOT / OPS / "capture_catalog.json").read_text())
     for dataset in catalog:
         names.add(EVIDENCE + dataset["fixture"])

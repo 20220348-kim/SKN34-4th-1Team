@@ -259,6 +259,12 @@ def worker_action(
     ):
         raise BudgetUnavailable
     if action in {"claim", "authorize"}:
+        if (
+            run.execution_spec.get("evaluation_scope") == "source-chunks-retrieval-answer"
+            and "dataset_id" in run.execution_spec
+            and not settings.LLMOPS_RAG_LIVE_ENABLED
+        ):
+            raise BudgetUnavailable
         plan = operation_plan(run)
         if plan is None:
             if reservation.max_input_tokens is not None:

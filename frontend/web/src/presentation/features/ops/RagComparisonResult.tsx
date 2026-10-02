@@ -4,6 +4,7 @@ import { workspacePageStyles as styles } from '../../shared/workspace/WorkspaceP
 const origins = {
   'synthetic-contract-check': '합성 결과 재계산 · 실제 모델 품질 측정 아님',
   'integration-stub-replay': '무료 모델 대역의 실행 기록 재계산',
+  'recorded-live-evaluation': '새 임베딩·검색·답변 실행 · 고정 원문·청크',
   'recorded-capture-replay': '저장된 실행 기록 재계산 · 새 모델 호출 없음',
 }
 const stages = { not_started: '미실행', source: '원문', chunk: '청킹', index: '색인', search: '검색', answer: '답변' }
@@ -13,9 +14,9 @@ const measure = (value: number | null) => value === null ? '미측정' : value.t
 export function RagComparisonResult({ comparison }: { comparison: RagComparison }) {
   const current = comparison.current
   return <section className={styles.card} aria-label="RAG 기준·후보 비교">
-    <h2 className={styles.cardTitle}>전체 RAG 저장 결과 비교</h2>
+    <h2 className={styles.cardTitle}>RAG 검색·답변 결과 비교</h2>
     <p>{origins[current.measurementKind]}</p>
-    <p className="text-sm">{comparison.comparison === 'self-replay' ? '같은 저장 캡처의 재현 검증입니다.' : '기준과 후보의 저장 캡처를 비교합니다.'} 이번 재계산의 모델 API 호출은 0회입니다.</p>
+    <p className="text-sm">{comparison.comparison === 'self-replay' ? '같은 저장 캡처의 재현 검증입니다.' : '기준과 후보의 저장 캡처를 비교합니다.'} {current.liveExecutionPerformed ? '새 모델 실행 결과입니다. 호출 수와 예산 정산은 실행 상세에서 확인하세요. 원문 재수집·재청킹 및 운영 색인 성능은 측정하지 않습니다.' : '이번 재계산의 모델 API 호출은 0회입니다.'}</p>
     <p className="text-sm">원본 답변 도달 {current.coverage.answerCaseCount} / {current.caseCount}건 · 검색 도달 {current.coverage.retrievalCaseCount} / {current.caseCount}건 · 원본 실패 {current.coverage.failedCaseCount}건</p>
     <p className="text-sm">원본 실행 상태: {current.completed ? '모든 사례 답변 도달' : '실패 또는 미실행 사례 포함'}. 재계산 완료는 원본 실행 성공이나 품질 합격을 뜻하지 않습니다.</p>
     <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr>{['지표', '기준 (측정 / 대상)', '후보 (측정 / 대상)', '변화량'].map((label) => <th key={label} className="p-2">{label}</th>)}</tr></thead><tbody>
