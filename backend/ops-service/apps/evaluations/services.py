@@ -17,6 +17,8 @@ from .budget import BudgetUnavailable, close_after_cancellation, reserve
 from .catalog import (
     DATASETS,
     LEGACY_DATASET_ID,
+    RAG_SCOPE,
+    evaluation_scope,
     reference_run_id,
     selection,
     validate_execution,
@@ -71,7 +73,21 @@ def submit_run(
     # 파일 검증은 잠금 밖에서 수행하고 기준 버전·승인 기록을 잠금 안에서 재확인한다.
     prepared_baseline = None
     capture_hash = None
-    if reference_capture_id.startswith("run:"):
+    prepared_rag = None
+    rag = evaluation_scope(dataset_id) == RAG_SCOPE if dataset_id in DATASETS else False
+    if reference_capture_id.startswith("run:") and rag:
+        from .rag_reviews import review_state
+
+        prepared_baseline = (
+            EvaluationBaseline.objects.select_related("rag_assessment__run")
+            .filter(
+                dataset_id=dataset_id, rag_assessment__run_id=reference_run_id(reference_capture_id)
+            )
+            .first()
+        )
+        if prepared_baseline is not None:
+            prepared_rag = review_state(prepared_baseline.rag_assessment.run, user)
+    elif reference_capture_id.startswith("run:"):
         prepared_baseline = (
             EvaluationBaseline.objects.select_related("review__run")
             .filter(dataset_id=dataset_id, review__run_id=reference_run_id(reference_capture_id))
@@ -97,7 +113,29 @@ def submit_run(
             ):
                 raise ValueError("새 모델 평가는 활성화와 전송 자료·호출 예산 확인이 필요합니다.")
             reference_config = {}
-            if reference_capture_id.startswith("run:"):
+            if reference_capture_id.startswith("run:") and rag:
+                from .rag_baselines import require_pass
+                from .rag_reviews import locked_run, state_for_material
+
+                if (
+                    prepared_baseline is None
+                    or baseline.rag_assessment_id != prepared_baseline.rag_assessment_id
+                    or baseline.version != baseline_version
+                    or baseline.version != prepared_baseline.version
+                ):
+                    raise ValueError("현재 자료의 검토 기준이 변경되었습니다. 다시 선택하세요.")
+                assessment = prepared_baseline.rag_assessment
+                source = locked_run(assessment.run)
+                state = state_for_material(source, prepared_rag["material"], user)
+                require_pass(source, state, assessment.pk, assessment.input_sha256)
+                reference_config = {
+                    "run_id": str(source.pk),
+                    "capture_sha256": state["material"]["candidate_capture_sha256"],
+                    "fixture_sha256": state["material"]["fixture_sha256"],
+                    "assessment_id": assessment.pk,
+                    "assessment_input_sha256": assessment.input_sha256,
+                }
+            elif reference_capture_id.startswith("run:"):
                 if (
                     prepared_baseline is None
                     or baseline.review_id != prepared_baseline.review_id
@@ -302,7 +340,18 @@ def read_result(run):
         if dataset.get("evaluation_scope") == "source-chunks-retrieval-answer":
             from .rag_replay import read_result as read_rag_result
 
-            if run.execution_mode not in {"replay", "recovery"} or run.reference_config:
+            if run.execution_mode not in {"replay", "recovery"}:
+                raise ResultsUnavailable
+            validate_reference_config(
+                run.dataset_id, run.reference_capture_id, run.reference_config
+            )
+            if run.reference_config and (
+                run.execution_spec["reference_config"] != run.reference_config
+                or run.execution_spec["reference_sha256"] != run.reference_config["capture_sha256"]
+                or manifest["reference_capture_sha256"] != run.reference_config["capture_sha256"]
+                or sha256(read_artifact(run.id, "reference-capture.json")).hexdigest()
+                != run.reference_config["capture_sha256"]
+            ):
                 raise ResultsUnavailable
             if run.execution_mode == "recovery":
                 for name, expected in (

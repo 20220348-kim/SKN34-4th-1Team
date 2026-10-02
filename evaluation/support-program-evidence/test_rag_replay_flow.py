@@ -107,7 +107,7 @@ def test_ops_entrypoint_replays_three_cases_with_real_report_and_distinct_metric
     assert len(scores) == 10
 
 
-@pytest.mark.parametrize("kind", ["synthetic", "integration-stub"])
+@pytest.mark.parametrize("kind", ["synthetic", "integration-stub", "recorded"])
 @pytest.mark.parametrize("stage", [None, "not_started", "source", "chunk", "index", "search", "answer"])
 def test_review_material_preserves_real_evaluator_stage_contract(tmp_path, kind, stage):
     from test_rag_evaluate import fail_at
@@ -116,11 +116,15 @@ def test_review_material_preserves_real_evaluator_stage_contract(tmp_path, kind,
     fixture = json.loads((here / "rag-fixture.json").read_bytes())
     candidate = json.loads((here / "rag-synthetic-capture.json").read_bytes())
     reference = deepcopy(candidate)
-    if kind == "integration-stub":
-        candidate["schemaVersion"] = "support-program-rag-capture-v2"
+    if kind != "synthetic":
+        candidate["schemaVersion"] = (
+            "support-program-rag-capture-v2" if kind == "integration-stub"
+            else "support-program-rag-capture-v1"
+        )
         candidate["execution"] = {
             "kind": kind, "model": "offline-model", "embeddingModel": "offline-embedding",
-            "promptSha256": "a" * 64, "recorderSha256": "b" * 64, "paidModelApiCalls": 0,
+            "promptSha256": "a" * 64, "recorderSha256": "b" * 64,
+            **({"paidModelApiCalls": 0} if kind == "integration-stub" else {}),
         }
         candidate["cases"][0]["traceId"] = "1" * 32
     if stage is not None:
@@ -352,3 +356,51 @@ def test_backend_contract_rejects_rehashed_false_evidence(runner, change):
             raw,
             report,
         )
+
+
+def test_reviewed_reference_snapshot_survives_postprocessing_recovery(runner, monkeypatch):
+    # Worker transport only: the DB tests own human approval/PASS admission.
+    root, _ = runner
+    source = parameters()
+    source_manifest = ops_flow.evaluate_saved_capture.fn(**source)
+    reference_id = "run:" + source["request_id"]
+    reference_config = {
+        "run_id": source["request_id"],
+        "capture_sha256": source_manifest["capture_sha256"],
+        "fixture_sha256": source_manifest["fixture_sha256"],
+        "assessment_id": 123,
+        "assessment_input_sha256": "a" * 64,
+    }
+
+    def request(mode="replay", recovery=None):
+        spec = make_spec(
+            read_release(), DATASET, mode, {}, CAPTURE, reference_id,
+            reference_config, 1, recovery_config=recovery,
+        )
+        return {
+            **parameters(), "reference_capture_id": reference_id,
+            "reference_config": reference_config, "execution_mode": mode,
+            "execution_spec": spec, "execution_spec_sha256": digest(spec),
+            "recovery_config": recovery,
+        }
+
+    original = rag_replay_flow.render
+    monkeypatch.setattr(rag_replay_flow, "render", lambda *a: (_ for _ in ()).throw(RuntimeError("report test failure")))
+    failed = request()
+    with pytest.raises(RuntimeError, match="report test failure"):
+        ops_flow.evaluate_saved_capture.fn(**failed)
+    here = Path(ops_flow.__file__).parent
+    marker, config, inputs = read_recovery_inputs(root, here, failed["request_id"])
+    assert marker["reference_config"] == reference_config
+    assert sha256(inputs["reference_capture"]).hexdigest() == reference_config["capture_sha256"]
+    monkeypatch.setattr(rag_replay_flow, "render", original)
+    recovered = request("recovery", config)
+    manifest = ops_flow.evaluate_saved_capture.fn(**recovered)
+    assert manifest["status"] == "completed" and manifest["model_api_calls"] == 0
+    assert (root / recovered["request_id"] / "reference-capture.json").read_bytes() == inputs["reference_capture"]
+    folder = root / recovered["request_id"] / "evaluation"
+    result = rag_replay.read_result(
+        recovered["execution_spec"], recovered["execution_spec_sha256"], manifest,
+        (folder / "comparison.json").read_bytes(), (folder / "report.html").read_bytes(),
+    )
+    assert result[3]["reference"]["captureSha256"] == reference_config["capture_sha256"]

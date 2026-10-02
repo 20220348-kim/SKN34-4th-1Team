@@ -32,7 +32,6 @@ class RagProfileTests(SimpleTestCase):
                 self.assertFalse(spec["quality_policy"]["definition"]["baseline_eligible"])
                 for mode, candidate, reference in (
                     ("live", "new-model-response", capture),
-                    ("replay", capture, "run:" + str(uuid4())),
                     ("replay", capture, CAPTURE),
                 ):
                     with self.assertRaises(ValueError):
@@ -51,7 +50,6 @@ class RagProfileTests(SimpleTestCase):
         )
         for mode, candidate, reference, config in (
             ("live", "new-model-response", CAPTURE, {}),
-            ("replay", CAPTURE, "run:" + str(uuid4()), {}),
             ("replay", CAPTURE, CAPTURE, {"model": "not-approved"}),
         ):
             with self.subTest(mode=mode, reference=reference), self.assertRaises(ValueError):

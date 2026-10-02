@@ -161,8 +161,8 @@ class RagReferenceReviewTests(ReferenceFixture, TestCase):
         self.assertEqual(self.assess(old["input_sha256"]).status_code, 409)
         current = self.assess().json()["quality"]
         self.assertEqual(current["status"], "NEEDS_REVIEW")
-        self.assertFalse(current["policy"]["definition"]["pass_enabled"])
-        self.assertIn("PASS_POLICY_PENDING", [r["code"] for r in current["history"][0]["reasons"]])
+        self.assertTrue(current["policy"]["definition"]["pass_enabled"])
+        self.assertIn("NON_MODEL_CAPTURE", [r["code"] for r in current["history"][0]["reasons"]])
         self.assertTrue(current["history"][0]["inputs"]["reference_review"]["approved"])
         self.reference_post(decision="REVOKED", review_version=1)
         self.assertEqual(self.assess(current["input_sha256"]).status_code, 409)

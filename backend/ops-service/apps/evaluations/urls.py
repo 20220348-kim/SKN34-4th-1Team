@@ -14,6 +14,7 @@ urlpatterns = [
     path("api/v1/ops/evaluations/<uuid:run_id>/rag-material", views.api_rag_material),
     path("api/v1/ops/evaluations/<uuid:run_id>/rag-reviews", views.api_rag_reviews),
     path("api/v1/ops/evaluations/<uuid:run_id>/rag-quality", views.api_rag_quality),
+    path("api/v1/ops/evaluations/<uuid:run_id>/rag-baseline", views.api_rag_baseline),
     path(
         "api/v1/ops/evaluations/<uuid:run_id>/rag-reference-review", views.api_rag_reference_review
     ),

@@ -60,7 +60,7 @@ class RagQualityPolicyTests(SimpleTestCase):
             self.assertEqual(status, "FAIL")
             self.assertIn({"code": "HUMAN_UNSUITABLE", "case_id": "R01", "dimension": key}, reasons)
 
-    def test_approved_reference_and_all_suitable_cases_still_require_pass_policy(self):
+    def test_approved_reference_and_all_suitable_recorded_cases_pass(self):
         inputs = self.inputs()
         inputs["reference_review"] = {
             "approved": True,
@@ -68,10 +68,13 @@ class RagQualityPolicyTests(SimpleTestCase):
             "history": [{"id": 1, "decision": "APPROVED"}],
         }
         status, reasons = rag_quality_policy.judge(inputs)
-        self.assertEqual(status, "NEEDS_REVIEW")
-        self.assertEqual(
-            reasons, [{"code": "PASS_POLICY_PENDING", "case_id": None, "dimension": None}]
-        )
+        self.assertEqual((status, reasons), ("PASS", []))
+        for kind in ("synthetic-contract-check", "integration-stub-replay"):
+            inputs["measurement_kind"] = kind
+            self.assertEqual(rag_quality_policy.judge(inputs)[0], "NEEDS_REVIEW")
+        inputs["measurement_kind"] = "recorded-capture-replay"
+        inputs["cases"] = []
+        self.assertEqual(rag_quality_policy.judge(inputs)[0], "NEEDS_REVIEW")
 
     def test_unmeasured_and_original_failure_are_not_false_quality_failures(self):
         inputs = self.inputs()

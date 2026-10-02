@@ -35,10 +35,8 @@ def live_config(dataset_id):
 
 def validate_execution(dataset_id, candidate_id, reference_id, execution_mode, config):
     selected = selection(dataset_id, candidate_id, reference_id)
-    if evaluation_scope(dataset_id) == RAG_SCOPE and (
-        execution_mode != "replay" or config or reference_id.startswith("run:")
-    ):
-        raise ValueError("RAG 자료는 저장 캡처 재평가만 지원하며 품질 기준으로 사용할 수 없습니다.")
+    if evaluation_scope(dataset_id) == RAG_SCOPE and (execution_mode != "replay" or config):
+        raise ValueError("RAG 자료는 저장 캡처 재평가만 지원합니다.")
     if execution_mode == "live":
         if (
             candidate_id != LIVE_CAPTURE_ID
@@ -87,15 +85,26 @@ def validate_reference_config(dataset_id, capture_id, config):
         if config:
             raise ValueError("저장 기준에는 실행 명세를 지정할 수 없습니다.")
         return
+    keys = {"run_id", "capture_sha256", "fixture_sha256"}
+    rag = evaluation_scope(dataset_id) == RAG_SCOPE
+    if rag:
+        keys |= {"assessment_id", "assessment_input_sha256"}
     if (
         not isinstance(config, dict)
-        or set(config) != {"run_id", "capture_sha256", "fixture_sha256"}
+        or set(config) != keys
         or config["run_id"] != reference_run_id(capture_id)
         or config["fixture_sha256"] != DATASETS[dataset_id]["fixture_sha256"]
         or not isinstance(config["capture_sha256"], str)
         or not re.fullmatch(r"[a-f0-9]{64}", config["capture_sha256"])
     ):
         raise ValueError("기준 실행의 자료·응답 명세가 일치하지 않습니다.")
+    if rag and (
+        type(config["assessment_id"]) is not int
+        or config["assessment_id"] < 1
+        or not isinstance(config["assessment_input_sha256"], str)
+        or not re.fullmatch(r"[a-f0-9]{64}", config["assessment_input_sha256"])
+    ):
+        raise ValueError("RAG 기준의 합격 판정 근거가 필요합니다.")
 
 
 def public_datasets():

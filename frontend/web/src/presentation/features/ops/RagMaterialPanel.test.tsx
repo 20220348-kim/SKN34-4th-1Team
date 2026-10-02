@@ -20,6 +20,7 @@ const material: RagMaterial = {
   }],
 }
 const reviewState = (source = material): RagReviewState => ({
+  baseline: { version: 0, run_id: null, assessment_id: null, selected: false, history: [] },
   material: source, reviewer_id: 'core:91', review_version: 0,
   reference_review: { rubric: { version: 'rag-reference-review-v1', scope: 'this-run-all-cases', description: '전체 사례의 원문과 기대 조건을 검토합니다.' }, fixture_sha256: source.fixture_sha256,
     case_ids: source.cases.map((item) => item.case_id), approved: false, current_id: null, can_revoke: false, history: [] },
@@ -509,4 +510,71 @@ it('다른 실행으로 이동하면 늦은 참조 저장 응답을 무시한다
   await act(async () => { resolve(json(referenceState())) })
   expect(screen.queryByRole('region', { name: 'RAG 참조 자료 검토' })).toBeNull()
   expect(screen.getByRole('button', { name: '검토 자료 보기' })).toHaveProperty('disabled', false)
+})
+
+
+const baselineRun = '00000000-0000-4000-8000-000000000001'
+function passingState(): RagReviewState {
+  const state = structuredClone(referenceState())
+  state.material.candidate_measurement_kind = 'recorded-capture-replay'
+  state.quality = { ...state.quality, status: 'PASS', is_current: true, current_id: 61, baseline_eligible: true,
+    policy: { ...state.quality.policy, definition: { ...state.quality.policy.definition, version: 'rag-review-quality-v3', pass_enabled: true, baseline_eligible: true } } }
+  state.quality.history = [{ id: 61, status: 'PASS', policy: state.quality.policy, policy_sha256: '8'.repeat(64), input_sha256: state.quality.input_sha256, inputs: {}, reasons: [], assessed_by: 'reviewer@example.com', created_at: '2026-10-02T04:00:00Z' }]
+  return state
+}
+
+it('합격 판정을 사유와 함께 기준으로 지정하고 세션의 기준 목록을 갱신한다', async () => {
+  const state = passingState()
+  const selected = structuredClone(state)
+  selected.baseline = { version: 1, run_id: baselineRun, assessment_id: 61, selected: true, history: [{ version: 1, assessment_id: 61, previous_assessment_id: null, reason: '전체 검토 완료', changed_by: 'reviewer@example.com', created_at: '2026-10-02T04:00:00Z' }] }
+  const fetcher = vi.fn().mockResolvedValueOnce(json(state)).mockResolvedValueOnce(json(session)).mockResolvedValueOnce(json(selected))
+  vi.stubGlobal('fetch', fetcher)
+  const onReviewChanged = vi.fn()
+  render(<RagMaterialPanel runId={baselineRun} onExpired={vi.fn()} onReviewChanged={onReviewChanged} />)
+  fireEvent.click(screen.getByRole('button', { name: '검토 자료 보기' }))
+  const select = await screen.findByRole('button', { name: '합격 실행을 비교 기준으로 지정' })
+  expect(select).toHaveProperty('disabled', true)
+  fireEvent.change(screen.getByLabelText('기준 변경 사유'), { target: { value: '전체 검토 완료' } })
+  fireEvent.click(select)
+  await screen.findByText('이 실행이 현재 비교 기준입니다.')
+  expect(fetcher.mock.calls[2][0]).toBe(`/api/v1/ops/evaluations/${baselineRun}/rag-baseline`)
+  expect(JSON.parse(fetcher.mock.calls[2][1].body)).toEqual({ assessment_id: 61, input_sha256: state.quality.input_sha256, baseline_version: 0, reason: '전체 검토 완료' })
+  expect(fetcher.mock.calls[2][1].headers['X-CSRFToken']).toBe('current-token')
+  expect(screen.getByRole('button', { name: '비교 기준 해제' })).toHaveProperty('disabled', true)
+  expect(onReviewChanged).toHaveBeenCalledOnce()
+})
+
+it.each([409, 401])('기준 지정 중 충돌 또는 사용자 변경 %s는 자동 재시도하지 않는다', async (status) => {
+  const state = passingState()
+  const fetcher = vi.fn().mockResolvedValueOnce(json(state)).mockResolvedValueOnce(json(session)).mockResolvedValueOnce(json({ code: 'REVIEW_CONFLICT' }, status))
+  vi.stubGlobal('fetch', fetcher)
+  const onExpired = vi.fn()
+  render(<RagMaterialPanel runId={baselineRun} onExpired={onExpired} />)
+  fireEvent.click(screen.getByRole('button', { name: '검토 자료 보기' }))
+  fireEvent.change(await screen.findByLabelText('기준 변경 사유'), { target: { value: '검토 완료' } })
+  fireEvent.click(screen.getByRole('button', { name: '합격 실행을 비교 기준으로 지정' }))
+  if (status === 401) await waitFor(() => expect(onExpired).toHaveBeenCalledOnce())
+  else {
+    await screen.findByRole('alert')
+    expect(screen.getByRole('button', { name: '합격 실행을 비교 기준으로 지정' })).toHaveProperty('disabled', true)
+  }
+  expect(fetcher).toHaveBeenCalledTimes(3)
+})
+
+it('오래된 합격 기준도 사유를 남겨 해제할 수 있다', async () => {
+  const state = passingState()
+  state.baseline = { version: 2, run_id: baselineRun, assessment_id: 61, selected: false, history: [] }
+  state.quality = { ...state.quality, status: 'NOT_EVALUATED', is_current: false, current_id: null, baseline_eligible: false }
+  const cleared = structuredClone(state)
+  cleared.baseline = { version: 3, run_id: null, assessment_id: null, selected: false, history: [] }
+  const fetcher = vi.fn().mockResolvedValueOnce(json(state)).mockResolvedValueOnce(json(session)).mockResolvedValueOnce(json(cleared))
+  vi.stubGlobal('fetch', fetcher)
+  render(<RagMaterialPanel runId={baselineRun} onExpired={vi.fn()} />)
+  fireEvent.click(screen.getByRole('button', { name: '검토 자료 보기' }))
+  fireEvent.change(await screen.findByLabelText('기준 변경 사유'), { target: { value: '정책 변경' } })
+  expect(screen.queryByRole('button', { name: '합격 실행을 비교 기준으로 지정' })).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: '비교 기준 해제' }))
+  await waitFor(() => expect(screen.queryByRole('button', { name: '비교 기준 해제' })).toBeNull())
+  expect(fetcher.mock.calls[2][1].method).toBe('DELETE')
+  expect(JSON.parse(fetcher.mock.calls[2][1].body)).toEqual({ baseline_version: 2, reason: '정책 변경' })
 })
