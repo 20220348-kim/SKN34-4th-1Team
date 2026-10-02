@@ -14,13 +14,11 @@ sys.path.insert(0, str(ROOT / "backend/ai-service"))
 from prefect import flow
 from prefect.runtime import flow_run
 import evaluate
-from budget_client import BudgetClient
+from budget_client import BudgetClient, BudgetUnavailable
 from llmops import evaluate_capture, load_results, write_json
 
-sys.path.insert(0, str(ROOT / "backend/ops-service/apps/evaluations"))
-from catalog import LEGACY_DATASET_ID, selection, validate_execution, validate_reference_config
-
 sys.path.insert(0, str(ROOT / "backend/ops-service"))
+from apps.evaluations.catalog import LEGACY_DATASET_ID, selection, validate_execution, validate_reference_config
 from apps.evaluations.recovery_inputs import read_recovery_inputs
 from apps.evaluations.execution_spec import (
     ExecutionSpecMismatch, build_release, file_digest, verify_spec,
@@ -145,20 +143,31 @@ def evaluate_saved_capture(
             evaluate.require(os.environ.get("LLMOPS_LIVE_ENABLED", "false").lower() == "true",
                              "Live evaluations are disabled")
             evaluate.require(bool(os.environ.get("OPENAI_API_KEY", "").strip()), "OpenAI key is required")
-            _, prepared, fixture_hash = evaluate.load_fixture(fixture_path)
-            evaluate.require(fixture_hash == config["fixture_sha256"], "Approved fixture has changed")
-            prepared = evaluate.select_cases(prepared, dataset["case_ids"])
-            baseline = load_results(fixture_path, reference_path, dataset["case_ids"])
-            evaluate.require(baseline["summary"]["completed"], "Reference must be complete")
-            settings = execution_spec["generation"]["settings"]
-            evaluate.require(settings["max_input_tokens"] == config["max_input_tokens"] == evaluate.MAX_INPUT_TOKENS
-                             and settings["max_output_tokens"] == config["max_output_tokens"]
-                             and settings["model_timeout_seconds"] == evaluate.DEFAULT_LLM_MODEL_TIMEOUT_SECONDS
-                             and settings["run_timeout_seconds"] == evaluate.DEFAULT_LLM_RUN_TIMEOUT_SECONDS
-                             and settings["max_retries"] == 0, "Generation settings differ")
-            evaluate.require(evaluate.digest(evaluate.SUPPORT_PROGRAM_EVIDENCE_ANSWER_INSTRUCTIONS.encode())
-                             == execution_spec["generation"]["prompt_sha256"], "Loaded prompt differs")
-    except (ValueError, OSError, KeyError, TypeError) as error:
+            if evaluation_scope(dataset_id) == RAG_SCOPE:
+                import rag_live
+                import rag_evaluate
+                evaluate.require(os.environ.get("LLMOPS_RAG_LIVE_ENABLED", "false").lower() == "true",
+                                 "RAG live evaluations are disabled")
+                _, fixture_hash, prepared = rag_live.prepare(fixture_path, model=config["model"])
+                evaluate.require(fixture_hash == config["fixture_sha256"] and
+                                 prepared["model_operations"] == execution_spec["model_operations"],
+                                 "Approved RAG inputs differ")
+                rag_evaluate.evaluate(fixture_path, reference_path)
+            else:
+                _, prepared, fixture_hash = evaluate.load_fixture(fixture_path)
+                evaluate.require(fixture_hash == config["fixture_sha256"], "Approved fixture has changed")
+                prepared = evaluate.select_cases(prepared, dataset["case_ids"])
+                baseline = load_results(fixture_path, reference_path, dataset["case_ids"])
+                evaluate.require(baseline["summary"]["completed"], "Reference must be complete")
+                settings = execution_spec["generation"]["settings"]
+                evaluate.require(settings["max_input_tokens"] == config["max_input_tokens"] == evaluate.MAX_INPUT_TOKENS
+                                 and settings["max_output_tokens"] == config["max_output_tokens"]
+                                 and settings["model_timeout_seconds"] == evaluate.DEFAULT_LLM_MODEL_TIMEOUT_SECONDS
+                                 and settings["run_timeout_seconds"] == evaluate.DEFAULT_LLM_RUN_TIMEOUT_SECONDS
+                                 and settings["max_retries"] == 0, "Generation settings differ")
+                evaluate.require(evaluate.digest(evaluate.SUPPORT_PROGRAM_EVIDENCE_ANSWER_INSTRUCTIONS.encode())
+                                 == execution_spec["generation"]["prompt_sha256"], "Loaded prompt differs")
+    except (ValueError, OSError, KeyError, TypeError, BudgetUnavailable) as error:
         code = "EXECUTION_SPEC_REQUIRED" if execution_mode == "live" and not execution_spec else "EXECUTION_SPEC_MISMATCH"
         # 이 기록은 execute() 이전에만 쓴다. 전송 후 실패나 응답 유실을 0회로 추정하지 않는다.
         write_json(output / "preflight.json", {
@@ -170,10 +179,15 @@ def evaluate_saved_capture(
         budget = BudgetClient(request_id, str(flow_run.id), execution_spec_sha256)
         budget.claim()
         try:
-            capture = asyncio.run(evaluate.execute(
-                prepared, fixture_hash, output / "capture", model=config["model"],
-                max_model_calls=config["max_model_calls"], budget=budget,
-            ))
+            if evaluation_scope(dataset_id) == RAG_SCOPE:
+                _, capture = asyncio.run(rag_live.execute(
+                    fixture_path, output / "capture", budget=budget, execution_spec=execution_spec,
+                ))
+            else:
+                capture = asyncio.run(evaluate.execute(
+                    prepared, fixture_hash, output / "capture", model=config["model"],
+                    max_model_calls=config["max_model_calls"], budget=budget,
+                ))
         finally:
             # 모델 전송이 끝난 뒤에만 미전송 몫을 반환한다. 미확인 전송은 예약을 유지한다.
             budget.close()

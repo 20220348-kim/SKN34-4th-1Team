@@ -164,7 +164,7 @@ def test_scores_target_either_original_trace_or_replay_session():
 
 def test_catalog_and_runner_reject_live_and_unpinned_rag_before_spending(runner):
     item = next(item for item in public_datasets() if item["id"] == DATASET)
-    assert item["live_config"] is None and item["execution_profiles"]["live"] is None
+    assert item["live_config"]["max_model_calls"] == 9 and item["execution_profiles"]["live"]
     with pytest.raises(ValueError):
         validate_execution(DATASET, "new-model-response", CAPTURE, "live", {})
     with pytest.raises(ValueError):
@@ -203,7 +203,7 @@ def test_registered_core_capture_replays_original_failures_and_trace_scores(
         assert score["trace_id"] == case["traceId"]
         assert score["metadata"]["source_completed"] is (failed == 0)
         assert score["metadata"]["measurement_kind"] == "integration-stub-replay"
-        assert score["metadata"]["model_api_calls"] == 0
+        assert score["metadata"]["score_computation_model_api_calls"] == 0
         if score["name"] == "ragSourceCaseFailed":
             assert score["value"] == float(case["failure"] is not None)
         elif case["failure"] is not None and score["name"] != "ragRetrievalRecallAtK":

@@ -19,6 +19,7 @@ RESULT_FILES = frozenset(
         "evaluation/comparison.json",
         "evaluation/report.html",
         "capture/capture.json",
+        "capture/usage-summary.json",
         "reference-capture.json",
         "recovery-fixture.json",
     }

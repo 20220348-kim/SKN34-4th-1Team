@@ -36,6 +36,7 @@ services:
       LLMOPS_EVIDENCE_DIR: /evaluation-data
       LLMOPS_BUDGET_TOKEN: ${LLMOPS_BUDGET_TOKEN:-}
       LLMOPS_LIVE_ENABLED: ${LLMOPS_LIVE_ENABLED:-false}
+      LLMOPS_RAG_LIVE_ENABLED: ${LLMOPS_RAG_LIVE_ENABLED:-false}
       LLMOPS_LIVE_MODEL: ${LLMOPS_LIVE_MODEL:-gpt-6-luna}
       LANGFUSE_PROJECT_URL: http://localhost:13000/project/govbiz-evidence-development
     volumes:
@@ -71,6 +72,7 @@ services:
       LLMOPS_RESULTS_DIR: /results
       LLMOPS_BUDGET_TOKEN: ${LLMOPS_BUDGET_TOKEN:-}
       LLMOPS_LIVE_ENABLED: ${LLMOPS_LIVE_ENABLED:-false}
+      LLMOPS_RAG_LIVE_ENABLED: ${LLMOPS_RAG_LIVE_ENABLED:-false}
       LLMOPS_LIVE_MODEL: ${LLMOPS_LIVE_MODEL:-gpt-6-luna}
       LLMOPS_OPS_API_URL: http://ops-service:8000
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}

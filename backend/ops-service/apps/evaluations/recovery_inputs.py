@@ -56,8 +56,7 @@ def read_recovery_inputs(
         if rag and (
             not spec
             or spec["evaluation_scope"] != RAG_SCOPE
-            or mode == "live"
-            or marker.get("live_config")
+            or (mode != "live" and marker.get("live_config"))
             or manifest.get("scope") != RAG_SCOPE
             or manifest.get("stage") not in {"report", "publish", "completed"}
         ):
@@ -122,7 +121,24 @@ def read_recovery_inputs(
             for name in inputs
         ):
             raise ValueError("Recovery snapshot differs from dispatch")
-        if mode == "live":
+        if rag and mode == "live":
+            from .rag_replay import validate_live_capture
+
+            capture = json.loads(inputs["capture"])
+            validated = validate_live_capture(
+                capture,
+                json.loads(result_bytes("capture/usage-summary.json")),
+                spec,
+                marker["execution_spec_sha256"],
+            )
+            if not validated["completed"]:
+                raise ValueError("RAG recovery requires complete responses")
+            config["recorded_execution"] = capture["execution"]
+        elif rag and mode == "recovery" and marker["recovery_config"].get("recorded_execution"):
+            config["recorded_execution"] = marker["recovery_config"]["recorded_execution"]
+            if json.loads(inputs["capture"])["execution"] != config["recorded_execution"]:
+                raise ValueError("Recovered RAG generation changed")
+        if mode == "live" and not rag:
             capture = json.loads(inputs["capture"])
             approved = marker["live_config"]
             if (

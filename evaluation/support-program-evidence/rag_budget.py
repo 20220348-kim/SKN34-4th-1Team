@@ -1,4 +1,4 @@
-"""고정 자료를 사용하는 내부 RAG 세션의 SDK 승인·정산 경계. 공개 live 접수는 제공하지 않는다."""
+"""고정 자료를 사용하는 내부 RAG 세션의 SDK 승인·정산 경계. Ops 실행 명세 또는 내부 세션 명세를 검증한다."""
 
 import json
 import re
@@ -70,8 +70,11 @@ def require(condition):
         raise BudgetUnavailable("RAG request differs from the approved session")
 
 
-def make_rag_spec(cases):
+def make_rag_spec(cases, *, model=DEFAULT_OPENAI_MODEL):
     """전송할 청크·질문과 순서, 현행 소스·모델·토큰 상한을 고정한다. 예약 생성은 하지 않는다."""
+    require(
+        isinstance(model, str) and bool(re.fullmatch(r"[A-Za-z0-9_.:-]{1,100}", model))
+    )
     require(isinstance(cases, list) and 1 <= len(cases) <= 12)
     prepared, operations, seen = [], [], set()
     for case in cases:
@@ -127,7 +130,7 @@ def make_rag_spec(cases):
                 "id": f"answer:{name}",
                 "kind": "answer",
                 "case_id": name,
-                "model": DEFAULT_OPENAI_MODEL,
+                "model": model,
                 "max_input_tokens": MAX_INPUT_TOKENS,
                 "max_output_tokens": 2000,
             }
@@ -142,7 +145,7 @@ def make_rag_spec(cases):
             for name in RUNTIME_FILES
         },
         "live_config": {
-            "model": DEFAULT_OPENAI_MODEL,
+            "model": model,
             "embedding_model": "text-embedding-3-small",
             "embedding_dimensions": 1536,
             "max_model_calls": len(operations),
@@ -156,10 +159,22 @@ def make_rag_spec(cases):
 class RagBudget:
     """하나의 승인된 세션에서 색인·검색·답변과 그 SDK 호출을 순서대로 대조한다."""
 
-    def __init__(self, client, spec, *, receipt_directory):
+    def __init__(self, client, spec, *, receipt_directory, execution_spec=None):
         require(
-            spec == make_rag_spec(spec["rag_cases"])
-            and digest(spec) == client.identity["spec_hash"]
+            spec == make_rag_spec(spec["rag_cases"], model=spec["live_config"]["model"])
+            and digest(execution_spec or spec) == client.identity["spec_hash"]
+            and (
+                execution_spec is None
+                or (
+                    execution_spec["evaluation_scope"] == spec["evaluation_scope"]
+                    and execution_spec["execution_mode"] == "live"
+                    and execution_spec["model_operations"] == spec["model_operations"]
+                    and all(
+                        execution_spec["live_config"][key] == value
+                        for key, value in spec["live_config"].items()
+                    )
+                )
+            )
         )
         self.client, self.spec = client, deepcopy(spec)
         self.receipt_directory = Path(receipt_directory)

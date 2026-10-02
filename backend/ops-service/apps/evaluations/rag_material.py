@@ -163,8 +163,9 @@ def read_material(run):
     from .services import ResultsUnavailable, read_result
 
     try:
-        require(run.status == "COMPLETED" and run.execution_mode in {"replay", "recovery"})
+        require(run.status == "COMPLETED" and run.execution_mode in {"replay", "recovery", "live"})
         require(run.execution_spec["evaluation_scope"] == RAG_SCOPE)
+        require(run.execution_spec["execution_mode"] == run.execution_mode)
         _, _, _, comparison = read_result(run)
         dataset, candidate, reference = selection(
             run.dataset_id, run.candidate_capture_id, run.reference_capture_id
@@ -177,7 +178,7 @@ def read_material(run):
                 "recovery-fixture.json",
                 run.execution_spec["dataset"]["fixture_sha256"],
             ),
-            (candidate["path"], "capture/capture.json", run.execution_spec["candidate_sha256"]),
+            (candidate.get("path"), "capture/capture.json", comparison["current"]["captureSha256"]),
             (
                 reference.get("path"),
                 "reference-capture.json",

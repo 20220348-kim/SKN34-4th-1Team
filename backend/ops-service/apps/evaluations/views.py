@@ -92,6 +92,9 @@ def api_session(request):
             if operator
             else [],
             "live_enabled": settings.LLMOPS_LIVE_ENABLED if operator else False,
+            "rag_live_enabled": settings.LLMOPS_LIVE_ENABLED and settings.LLMOPS_RAG_LIVE_ENABLED
+            if operator
+            else False,
             "search_traces_url": f"{settings.LANGFUSE_PROJECT_URL}/traces"
             if operator and settings.LANGFUSE_PROJECT_URL
             else None,

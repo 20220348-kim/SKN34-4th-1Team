@@ -73,7 +73,7 @@ def render(value, output):
     ).run(
         current_data=current[["case_id", *columns]],
         reference_data=reference[["case_id", *columns]],
-        name="GovBiz RAG saved capture replay",
+        name="GovBiz RAG evaluation comparison",
     )
     snapshot.save_html(str(output / "report.html.partial"))
     (output / "report.html.partial").replace(output / "report.html")
@@ -112,7 +112,8 @@ def score_payloads(value, spec, settings):
                     "evaluator_version": spec["evaluation"]["version"],
                     "baseline_eligible": False,
                     "source_completed": result["completed"],
-                    "model_api_calls": 0,
+                    "score_computation_model_api_calls": 0,
+                    "live_execution_performed": result["liveExecutionPerformed"],
                 },
             }
             if case["traceId"]:
@@ -151,6 +152,8 @@ def evaluate_rag_capture(
         write_json(output / "manifest.json", manifest)
         try:
             current = rag_evaluate.evaluate(Path(fixture), Path(capture))
+            if spec["execution_mode"] == "live":
+                current.update(measurementKind="recorded-live-evaluation", liveExecutionPerformed=True)
             baseline = rag_evaluate.evaluate(Path(fixture), Path(reference))
             value = rag_replay.comparison(current, baseline, spec)
             # 저장 원본이 실패한 사례도 정상적인 재계산 대상이다. 원본 완료 여부는 별도 필드다.

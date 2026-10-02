@@ -3,12 +3,16 @@ import { z } from 'zod'
 const base = '/api/v1/ops'
 const liveConfigSchema = z.object({
   max_input_tokens: z.number().int().positive().optional(),
+  embedding_model: z.string().optional(), embedding_dimensions: z.number().int().positive().optional(),
+  source_mode: z.literal('fixed-source-and-chunks').optional(),
+  max_total_input_tokens: z.number().int().positive().optional(), max_total_output_tokens: z.number().int().positive().optional(),
   model: z.string(), fixture_sha256: z.string(), max_model_calls: z.number().int().positive(), max_output_tokens: z.number().int().positive(),
 })
 const sessionSchema = z.object({
   user: z.object({ id: z.string(), username: z.string() }).nullable(),
   csrf_token: z.string(),
   live_enabled: z.boolean(),
+  rag_live_enabled: z.boolean().default(false),
   search_traces_url: z.url().refine((value) => /^https?:\/\//.test(value)).nullable().default(null),
   datasets: z.array(z.object({
     id: z.string(), label: z.string(), case_ids: z.array(z.string()).min(1),
@@ -39,8 +43,8 @@ const fixedComparisonSchema = z.object({
 const ragMetricSchema = z.object({ value: z.number().min(0).max(1).nullable(), measuredCaseCount: z.number().int().nonnegative(), eligibleCaseCount: z.number().int().nonnegative() })
 const ragReportSchema = z.object({
   scope: z.literal('source-chunks-retrieval-answer'),
-  measurementKind: z.enum(['synthetic-contract-check', 'integration-stub-replay', 'recorded-capture-replay']),
-  baselineEligible: z.literal(false), liveExecutionPerformed: z.literal(false),
+  measurementKind: z.enum(['synthetic-contract-check', 'integration-stub-replay', 'recorded-capture-replay', 'recorded-live-evaluation']),
+  baselineEligible: z.literal(false), liveExecutionPerformed: z.boolean(),
   completed: z.boolean(), caseCount: z.number().int().positive(),
   fixtureSha256: z.string(), captureSha256: z.string(),
   execution: z.object({ model: z.string().nullable(), embeddingModel: z.string().nullable(), promptSha256: z.string().nullable() }),

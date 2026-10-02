@@ -1019,7 +1019,7 @@ describe('전체 RAG 저장 캡처 재평가', () => {
     expect(screen.getByLabelText('실행 방식')).toHaveProperty('value', 'replay')
     expect(screen.getByRole('option', { name: '새 응답 생성 · 유료 모델 호출' })).toHaveProperty('disabled', true)
     fireEvent.click(screen.getByRole('button', { name: '평가 실행' }))
-    await screen.findByRole('heading', { name: '전체 RAG 저장 결과 비교' })
+    await screen.findByRole('heading', { name: 'RAG 검색·답변 결과 비교' })
     const post = fetchMock.mock.calls.find(([path, options]) => path === '/api/v1/ops/evaluations' && options?.method === 'POST')!
     const body = JSON.parse(post[1]!.body as string)
     expect(body).toMatchObject({ dataset_id: ragDataset.id, execution_mode: 'replay', live_config: {}, confirm_paid_run: false, execution_profile: ragDataset.execution_profiles.replay })
@@ -1029,7 +1029,7 @@ describe('전체 RAG 저장 캡처 재평가', () => {
     const original = fetchMock.getMockImplementation()!
     fetchMock.mockImplementation(async (path, options) => path === `/api/v1/ops/evaluations/${id}` ? json(ragRun) : original(path, options))
     open(`/ops/evaluations/${id}`)
-    await screen.findByRole('heading', { name: '전체 RAG 저장 결과 비교' })
+    await screen.findByRole('heading', { name: 'RAG 검색·답변 결과 비교' })
     expect(screen.getAllByText('합성 결과 재계산 · 실제 모델 품질 측정 아님').length).toBeGreaterThan(0)
     expect(screen.getByText(/원본 실패 1건/)).toBeTruthy()
     expect(screen.getByText('검색 실패 · timeout')).toBeTruthy()
@@ -1040,4 +1040,46 @@ describe('전체 RAG 저장 캡처 재평가', () => {
     expect(fetchMock.mock.calls.some(([path]) => path.endsWith('/review'))).toBe(false)
     expect(screen.queryByRole('button', { name: /기준으로 지정/ })).toBeNull()
   })
+})
+
+const ragLiveConfig = { ...liveConfig, max_model_calls: 9, max_input_tokens: 32768,
+  embedding_model: 'text-embedding-3-small', embedding_dimensions: 1536, source_mode: 'fixed-source-and-chunks',
+  max_total_input_tokens: 98999, max_total_output_tokens: 6000 }
+const ragLiveDataset = { ...ragDataset, live_config: ragLiveConfig, execution_profiles: executionProfiles }
+
+it.each([false, true])('RAG 별도 활성화(%s)와 전송·예산 확인이 있어야 새 실행을 접수한다', async (enabled) => {
+  const original = fetchMock.getMockImplementation()!
+  fetchMock.mockImplementation(async (path, options) => {
+    if (path === '/api/v1/ops/session') return json({ ...session(), rag_live_enabled: enabled, datasets: [ragLiveDataset] })
+    return original(path, options)
+  })
+  open()
+  fireEvent.change(await screen.findByLabelText('실행 방식'), { target: { value: 'live' } })
+  expect(screen.getAllByText(/Core 원문 재수집·재청킹 및 운영 색인 성능은 측정하지 않습니다/).length).toBeGreaterThan(0)
+  expect(screen.getByText(/전체 입력 예약 98,999토큰 · 전체 출력 예약 6,000토큰/)).toBeTruthy()
+  const button = screen.getByRole('button', { name: '새 응답 생성 및 평가' })
+  const confirmation = screen.getByLabelText('위 자료의 OpenAI 전송과 최대 호출 예산을 확인했습니다.')
+  expect(button).toHaveProperty('disabled', true)
+  expect(confirmation).toHaveProperty('disabled', !enabled)
+  if (enabled) {
+    fireEvent.click(confirmation)
+    expect(button).toHaveProperty('disabled', false)
+    fireEvent.click(button)
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([path, options]) => path === '/api/v1/ops/evaluations' && options?.method === 'POST')).toHaveLength(1))
+    const body = JSON.parse(String(fetchMock.mock.calls.find(([path, options]) => path === '/api/v1/ops/evaluations' && options?.method === 'POST')![1]?.body))
+    expect(body).toMatchObject({ execution_mode: 'live', candidate_capture_id: 'new-model-response',
+      dataset_id: ragDataset.id, live_config: ragLiveConfig, confirm_paid_run: true, execution_profile: executionProfiles.live })
+  } else {
+    expect(fetchMock.mock.calls.some(([path, options]) => path === '/api/v1/ops/evaluations' && options?.method === 'POST')).toBe(false)
+  }
+})
+
+it('RAG 새 실행을 무료 재계산으로 표시하지 않는다', async () => {
+  const original = fetchMock.getMockImplementation()!
+  const run = { ...ragRun, execution_mode: 'live', live_config: ragLiveConfig, model_api_calls: 9,
+    comparison: { ...ragRun.comparison, current: { ...ragReport, measurementKind: 'recorded-live-evaluation', liveExecutionPerformed: true } } }
+  fetchMock.mockImplementation(async (path, options) => path === `/api/v1/ops/evaluations/${id}` ? json(run) : original(path, options))
+  open(`/ops/evaluations/${id}`)
+  expect(await screen.findByText(/새 모델 실행 결과입니다/)).toBeTruthy()
+  expect(screen.queryByText(/이번 재계산의 모델 API 호출은 0회/)).toBeNull()
 })

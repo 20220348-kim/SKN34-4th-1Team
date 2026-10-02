@@ -1,6 +1,7 @@
 """무료 RAG 재계산 결과 계약. Django와 평가 실행기가 SDK 없이 함께 검증한다."""
 
 import json
+import re
 from hashlib import sha256
 from math import isclose, isfinite
 
@@ -25,7 +26,60 @@ def result_id(fixture_hash, capture_hash, evaluator_version):
     ).hexdigest()[:32]
 
 
-def validate_report(report, spec, capture_hash):
+def validate_recording(execution, spec):
+    config, generation = spec["live_config"], spec["generation"]
+    require(
+        execution
+        == {
+            "kind": "recorded",
+            "model": config["model"],
+            "embeddingModel": config["embedding_model"],
+            "promptSha256": generation["prompt_sha256"],
+            "recorderSha256": generation["files"][
+                "evaluation/support-program-evidence/rag_live.py"
+            ],
+        }
+    )
+
+
+def validate_live_capture(capture, usage, spec, spec_hash):
+    """관측한 전송 횟수만 읽는다. 누락된 사용량을 0으로 추정하지 않는다."""
+    require(spec["execution_mode"] == "live" and spec["evaluation_scope"] == SCOPE)
+    validate_recording(capture["execution"], spec)
+    require(
+        capture["schemaVersion"] == "support-program-rag-capture-v1"
+        and capture["scope"] == SCOPE
+        and capture["fixtureSha256"] == spec["dataset"]["fixture_sha256"]
+    )
+    cases = capture["cases"]
+    require([case["caseId"] for case in cases] == spec["dataset"]["case_ids"])
+    require(usage["schema_version"] == 1 and usage["execution_spec_sha256"] == spec_hash)
+    count, operations = usage["model_api_calls"], usage["operations"]
+    plan = spec["model_operations"]
+    require(type(count) is int and count == len(operations) and 0 <= count <= len(plan))
+    sequence = [item["sequence"] for item in operations]
+    require(all(type(item) is int and 0 <= item < len(plan) for item in sequence))
+    require(sequence == sorted(set(sequence)))
+    require(all(item["operation_id"] == plan[item["sequence"]]["id"] for item in operations))
+    require(
+        type(usage["input_token_count_requests"]) is int
+        and 0 <= usage["input_token_count_requests"] <= len(cases)
+    )
+    require(
+        type(usage["completed"]) is bool
+        and usage["completed"] is all(case["failure"] is None for case in cases)
+    )
+    if usage["completed"]:
+        # 임베딩 캐시는 전송을 생략할 수 있다. 답변은 모든 사례에 한 번씩 필요하다.
+        require(
+            {plan[item]["id"] for item in sequence if plan[item]["kind"] == "answer"}
+            == {item["id"] for item in plan if item["kind"] == "answer"}
+        )
+        require(usage["input_token_count_requests"] == len(cases))
+    return {**capture, "completed": usage["completed"], "modelApiCalls": count}
+
+
+def validate_report(report, spec, capture_hash, *, live=False, recovered=False):
     """해시만 맞는 다른 범위·출처·불완전 집계를 완료 결과로 받지 않는다."""
     require(isinstance(report, dict))
     require(
@@ -33,7 +87,7 @@ def validate_report(report, spec, capture_hash):
         and report["fixtureSha256"] == spec["dataset"]["fixture_sha256"]
         and report["captureSha256"] == capture_hash
         and report["captureValidated"] is True
-        and report["liveExecutionPerformed"] is False
+        and report["liveExecutionPerformed"] is live
         and report["baselineEligible"] is False
         and report["semanticFaithfulness"] is None
         and report["semanticReviewRequired"] is True
@@ -43,13 +97,29 @@ def validate_report(report, spec, capture_hash):
     )
     execution = report["execution"]
     kind = execution["kind"]
-    require(kind in KINDS and report["measurementKind"] == KINDS[kind])
+    require(isinstance(capture_hash, str) and re.fullmatch(r"[a-f0-9]{64}", capture_hash))
     require(
-        any(
+        kind in KINDS
+        and report["measurementKind"] == ("recorded-live-evaluation" if live else KINDS[kind])
+    )
+    if live:
+        validate_recording(execution, spec)
+        require(report["completed"] is True)
+    else:
+        known = any(
             source_hash == capture_hash and spec["dataset"]["capture_kinds"][name] == kind
             for name, source_hash in spec["dataset"]["captures"].items()
         )
-    )
+        approved = (
+            spec.get("reference_config", {}).get("capture_sha256") == capture_hash
+            and kind == "recorded"
+        )
+        recovered_source = spec.get("recovery_config", {}).get("recorded_execution")
+        require(
+            known
+            or approved
+            or (recovered and kind == "recorded" and execution == recovered_source)
+        )
     api_files = {
         path: spec["evaluation"]["files"]["backend/ai-service/app/" + path]
         for path in ("support_program_evidence/models.py", "support_program_identity.py")
@@ -142,10 +212,23 @@ def validate_report(report, spec, capture_hash):
 
 
 def comparison(current, reference, spec):
-    require(spec["evaluation_scope"] == SCOPE and spec["execution_mode"] in {"replay", "recovery"})
-    require(not spec["live_config"] and not spec["model_operations"] and spec["generation"] is None)
+    require(
+        spec["evaluation_scope"] == SCOPE
+        and spec["execution_mode"] in {"replay", "recovery", "live"}
+    )
+    live = spec["execution_mode"] == "live"
+    if not live:
+        require(
+            not spec["live_config"] and not spec["model_operations"] and spec["generation"] is None
+        )
     require(spec["quality_policy"]["definition"] == POLICY)
-    validate_report(current, spec, spec["candidate_sha256"])
+    validate_report(
+        current,
+        spec,
+        current["captureSha256"] if live else spec["candidate_sha256"],
+        live=live,
+        recovered=spec["execution_mode"] == "recovery",
+    )
     validate_report(reference, spec, spec["reference_sha256"])
     run_id = result_id(
         current["fixtureSha256"], current["captureSha256"], spec["evaluation"]["version"]
@@ -184,7 +267,7 @@ def read_result(spec, spec_hash, manifest, raw, report):
         and manifest["execution_spec_sha256"] == spec_hash
         and manifest["evaluator_version"] == spec["evaluation"]["version"]
         and manifest["fixture_sha256"] == spec["dataset"]["fixture_sha256"]
-        and manifest["capture_sha256"] == spec["candidate_sha256"]
+        and manifest["capture_sha256"] == value["current"]["captureSha256"]
         and manifest["reference_capture_sha256"] == spec["reference_sha256"]
         and manifest["evaluation_run_id"] == value["evaluation_run_id"]
         and manifest["reference_run_id"] == value["reference_run_id"]

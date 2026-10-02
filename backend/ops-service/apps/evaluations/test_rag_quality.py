@@ -40,6 +40,7 @@ class RagQualityPolicyTests(SimpleTestCase):
         inputs = self.inputs()
         for kind in (
             "recorded-capture-replay",
+            "recorded-live-evaluation",
             "synthetic-contract-check",
             "integration-stub-replay",
         ):
@@ -49,7 +50,7 @@ class RagQualityPolicyTests(SimpleTestCase):
             self.assertIn("REFERENCE_REVIEW_REQUIRED", [row["code"] for row in reasons])
             self.assertEqual(
                 "NON_MODEL_CAPTURE" in [row["code"] for row in reasons],
-                kind != "recorded-capture-replay",
+                kind not in {"recorded-capture-replay", "recorded-live-evaluation"},
             )
 
     def test_each_measured_unsuitable_dimension_fails_independently(self):
@@ -69,6 +70,8 @@ class RagQualityPolicyTests(SimpleTestCase):
         }
         status, reasons = rag_quality_policy.judge(inputs)
         self.assertEqual((status, reasons), ("PASS", []))
+        inputs["measurement_kind"] = "recorded-live-evaluation"
+        self.assertEqual(rag_quality_policy.judge(inputs), ("PASS", []))
         for kind in ("synthetic-contract-check", "integration-stub-replay"):
             inputs["measurement_kind"] = kind
             self.assertEqual(rag_quality_policy.judge(inputs)[0], "NEEDS_REVIEW")

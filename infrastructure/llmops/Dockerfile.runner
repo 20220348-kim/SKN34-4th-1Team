@@ -9,7 +9,7 @@ COPY backend/ai-service/pyproject.toml backend/ai-service/uv.lock ./
 RUN uv sync --locked --no-dev --group evaluation --no-install-project
 COPY backend/ai-service/app ./app
 COPY evaluation/support-program-evidence /app/evaluation/support-program-evidence
-COPY backend/ops-service/apps/evaluations/catalog.py backend/ops-service/apps/evaluations/capture_catalog.json /app/backend/ops-service/apps/evaluations/
+COPY backend/ops-service/apps/evaluations/catalog.py backend/ops-service/apps/evaluations/capture_catalog.json backend/ops-service/apps/evaluations/rag_live_plans.json /app/backend/ops-service/apps/evaluations/
 COPY backend/ops-service/apps/evaluations/recovery_inputs.py /app/backend/ops-service/apps/evaluations/
 COPY backend/ops-service/apps/evaluations/execution_spec.py backend/ops-service/apps/evaluations/execution_release.json /app/backend/ops-service/apps/evaluations/
 COPY backend/ops-service/apps/evaluations/quality_policy.py /app/backend/ops-service/apps/evaluations/

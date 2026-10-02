@@ -129,7 +129,7 @@ def test_recovery_cannot_accept_live_parameters(source):
 
 
 def test_completed_live_capture_recovers_with_live_disabled_and_changed_default_model(source, monkeypatch, tmp_path):
-    from catalog import live_config
+    from apps.evaluations.catalog import live_config
     source_id, _ = source
     folder = tmp_path / source_id
     here = Path(ops_flow.__file__).parent

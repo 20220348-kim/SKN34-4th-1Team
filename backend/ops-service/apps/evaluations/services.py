@@ -109,7 +109,9 @@ def submit_run(
                 dataset_id, candidate_capture_id, reference_capture_id, execution_mode, config
             )
             if execution_mode == "live" and (
-                not settings.LLMOPS_LIVE_ENABLED or not confirm_paid_run
+                not settings.LLMOPS_LIVE_ENABLED
+                or not confirm_paid_run
+                or (rag and not settings.LLMOPS_RAG_LIVE_ENABLED)
             ):
                 raise ValueError("새 모델 평가는 활성화와 전송 자료·호출 예산 확인이 필요합니다.")
             reference_config = {}
@@ -291,6 +293,13 @@ def read_live_capture(run):
     read_request(run)
     raw = read_artifact(run.id, "capture/capture.json")
     capture = json.loads(raw)
+    if run.execution_spec.get("evaluation_scope") == RAG_SCOPE:
+        from .rag_replay import validate_live_capture
+
+        usage = json.loads(read_artifact(run.id, "capture/usage-summary.json"))
+        return validate_live_capture(
+            capture, usage, run.execution_spec, run.execution_spec_sha256
+        ), sha256(raw).hexdigest()
     config = run.live_config
     calls = capture["modelApiCalls"]
     if (
@@ -340,7 +349,7 @@ def read_result(run):
         if dataset.get("evaluation_scope") == "source-chunks-retrieval-answer":
             from .rag_replay import read_result as read_rag_result
 
-            if run.execution_mode not in {"replay", "recovery"}:
+            if run.execution_mode not in {"replay", "recovery", "live"}:
                 raise ResultsUnavailable
             validate_reference_config(
                 run.dataset_id, run.reference_capture_id, run.reference_config
@@ -361,6 +370,10 @@ def read_result(run):
                 ):
                     if sha256(read_artifact(run.id, name)).hexdigest() != expected:
                         raise ResultsUnavailable
+            if run.execution_mode == "live":
+                capture, capture_hash = read_live_capture(run)
+                if not capture["completed"] or capture_hash != manifest["capture_sha256"]:
+                    raise ResultsUnavailable
             return read_rag_result(
                 run.execution_spec,
                 run.execution_spec_sha256,
