@@ -12,6 +12,13 @@ export async function getLatestDailyReport(accessToken: string, signal?: AbortSi
   return dailyReportResponseSchema.parse(await apiRequest(`${mine}/latest`, { accessToken, signal })).report
 }
 
+export async function getDailyReport(accessToken: string, id: string, signal?: AbortSignal) {
+  if (!/^[1-9][0-9]*$/.test(id) || !Number.isSafeInteger(Number(id))) throw new Error('리포트 주소를 확인해 주세요.')
+  const response = dailyReportResponseSchema.parse(await apiRequest(`${mine}/${id}`, { accessToken, signal }))
+  if (!response.report || response.report.id !== Number(id)) throw new Error('요청한 리포트를 확인하지 못했습니다.')
+  return response.report
+}
+
 export async function saveDailyReportSettings(accessToken: string, input: DailyReportSettingsInput, signal?: AbortSignal) {
   return dailyReportSettingsSchema.parse(await apiRequest(`${mine}/settings`, { method: 'PUT', body: input, accessToken, signal }))
 }

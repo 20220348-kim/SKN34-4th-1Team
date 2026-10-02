@@ -3,12 +3,16 @@ import { RefreshControl } from 'react-native'
 import { ApiError, apiRequest } from '../api/client'
 import { useAuth } from '../auth/session'
 import { DailyReportScreen } from './DailyReportScreen'
+import { useDailyReportPush } from '../notifications/DailyReportPushProvider'
 
 jest.mock('expo-router', () => ({ useFocusEffect: (effect: () => () => void) => {
   const React = jest.requireActual<typeof import('react')>('react')
   React.useEffect(effect, [effect])
 } }))
 jest.mock('../auth/session', () => ({ useAuth: jest.fn() }))
+jest.mock('../notifications/DailyReportPushProvider', () => ({ useDailyReportPush: jest.fn(() => ({
+  settings: { enabled: false, available: true, schedulerEnabled: true, sendHour: 8 }, busy: false, error: null, refresh: jest.fn(), toggle: jest.fn(),
+})) }))
 jest.mock('../api/client', () => ({ ...jest.requireActual('../api/client'), apiRequest: jest.fn() }))
 
 const settings = {
@@ -53,6 +57,25 @@ beforeEach(() => {
   invalidateSession.mockClear(); refreshSession.mockClear()
   jest.mocked(apiRequest).mockReset().mockImplementation(respond)
   signedIn()
+  jest.mocked(useDailyReportPush).mockReturnValue({ settings: { enabled: false, available: true, schedulerEnabled: true, sendHour: 8 },
+    busy: false, error: null, refresh: jest.fn(), toggle: jest.fn() })
+})
+
+test('push notification fetches its exact report instead of the latest report or paid preview', async () => {
+  jest.mocked(apiRequest).mockImplementation((path) => path === '/api/v1/me/daily-reports/1' ? Promise.resolve({ report }) : respond(path))
+  render(<DailyReportScreen {...callbacks} reportId="1" />)
+  await screen.findByText('9월 29일 리포트')
+  expect(apiRequest).toHaveBeenCalledWith('/api/v1/me/daily-reports/1', expect.objectContaining({ accessToken: 'first-account' }))
+  expect(jest.mocked(apiRequest).mock.calls.some(([path]) => path.endsWith('/latest') || path.endsWith('/preview'))).toBe(false)
+})
+
+test('push-only subscription shows next report timing without requiring email verification', async () => {
+  jest.mocked(useDailyReportPush).mockReturnValue({ settings: { enabled: true, available: true, schedulerEnabled: true, sendHour: 8 },
+    busy: false, error: null, refresh: jest.fn(), toggle: jest.fn() })
+  render(<DailyReportScreen {...callbacks} />)
+  await screen.findByText('다음 리포트는 서울 시간 8시 이후 생성될 예정이에요.')
+  fireEvent.press(screen.getByLabelText('수신 설정'))
+  expect(screen.getByText('이 기기 앱 알림 끄기')).toBeTruthy()
 })
 
 test('loads the latest owned report and retains its source identity for the detail action', async () => {

@@ -55,6 +55,7 @@ class DailyReportRepository(
     }
 
     fun latest(accountId: Long): DailyReport? = mapper.findLatest(accountId)?.toDomain()
+    fun owned(accountId: Long, id: Long): DailyReport? = mapper.findOwned(accountId, id)?.toDomain()
     fun forDay(accountId: Long, date: LocalDate): DailyReport? = mapper.findDay(accountId, date)?.toDomain()
 
     // 없는 날짜별 report의 gap lock과 공유 예산 행 잠금 사이 교착을 피한다.

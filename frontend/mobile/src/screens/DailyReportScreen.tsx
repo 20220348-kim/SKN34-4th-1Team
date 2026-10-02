@@ -9,17 +9,19 @@ import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/
 import { AppIcon } from '../components/AppIcon'
 import { ApiError, apiRequest, errorMessage } from '../api/client'
 import { dailyReportErrorMessage, getDailyReportSettings, getLatestDailyReport,
-  requestDailyReportEmailVerification, saveDailyReportSettings } from '../api/dailyReport'
+  requestDailyReportEmailVerification, saveDailyReportSettings, getDailyReport } from '../api/dailyReport'
+import { DailyReportPushSettings } from '../notifications/DailyReportPushSettings'
+import { useDailyReportPush } from '../notifications/DailyReportPushProvider'
 import { useAuth } from '../auth/session'
 import { GuestFeatureNotice } from '../components/GuestFeatureNotice'
 import { Button, Card, Field, Notice, Page, StatusBadge, colors, styles } from '../ui'
 
 type ReportState = {
-  token: string | null; settings: DailyReportSettings | null; company: Company | null
+  token: string | null; reportId?: string; settings: DailyReportSettings | null; company: Company | null
   report: DailyReport | null; saved: Set<string>; loading: boolean; error: string | null
 }
-const emptyState = (token: string | null): ReportState => ({
-  token, settings: null, company: null, report: null, saved: new Set(), loading: true, error: null,
+const emptyState = (token: string | null, reportId?: string): ReportState => ({
+  token, reportId, settings: null, company: null, report: null, saved: new Set(), loading: true, error: null,
 })
 const programKey = (identity: SupportProgramIdentity) => JSON.stringify([identity.sourceCode, identity.sourceProgramId])
 
@@ -55,8 +57,9 @@ function reportNotices(warnings: string[]) {
   }))]
 }
 
-function nextReportMessage(settings: DailyReportSettings, hasCompany: boolean) {
+function nextReportMessage(settings: DailyReportSettings, hasCompany: boolean, pushEnabled: boolean) {
   if (!hasCompany) return '기업 정보를 등록하면 지역·업종 조건으로 리포트를 받을 수 있어요.'
+  if (pushEnabled && settings.schedulerEnabled) return `다음 리포트는 서울 시간 ${settings.sendHour}시 이후 생성될 예정이에요.`
   if (!settings.enabled) return '수신 설정을 켜면 정기 리포트를 받을 수 있어요.'
   if (!settings.emailConfirmed) return '수신 주소를 확인하면 정기 리포트를 받을 수 있어요.'
   if (!settings.emailDeliveryAvailable || !settings.schedulerEnabled) return '정기 발송이 현재 준비되지 않았어요. 설정 상태를 확인해 주세요.'
@@ -94,13 +97,15 @@ function periodLabel(period: string) {
   return { status: '접수 중', deadline: `D-${Math.round((end - today) / 86_400_000)}` }
 }
 
-export function DailyReportScreen({ onLogin, onCompany, onSearch, onOpenProgram, settingsOnly = false }: {
+export function DailyReportScreen({ onLogin, onCompany, onSearch, onOpenProgram, settingsOnly = false, reportId }: {
   settingsOnly?: boolean
+  reportId?: string
   onLogin(mode?: 'login' | 'signup'): void; onCompany(): void; onSearch(): void; onOpenProgram(identity: SupportProgramIdentity): void
 }) {
   const { session, status, refreshSession, invalidateSession } = useAuth()
+  const push = useDailyReportPush()
   const token = status === 'signedIn' ? session?.accessToken ?? null : null
-  const [state, setState] = useState<ReportState>(() => emptyState(token))
+  const [state, setState] = useState<ReportState>(() => emptyState(token, reportId))
   const [revision, setRevision] = useState(0)
   const [refreshing, setRefreshing] = useState(false)
   const [expanded, setExpanded] = useState(false)
@@ -116,9 +121,9 @@ export function DailyReportScreen({ onLogin, onCompany, onSearch, onOpenProgram,
     const controller = new AbortController()
     request.current?.abort(); request.current = controller
     setBusy(null); setNotice(null); setActionError(null)
-    if (!token) { setState(emptyState(null)); setRefreshing(false); return () => controller.abort() }
-    setState((current) => current.token === token && current.settings
-      ? { ...current, loading: false, error: null } : emptyState(token))
+    if (!token) { setState(emptyState(null, reportId)); setRefreshing(false); return () => controller.abort() }
+    setState((current) => current.token === token && current.reportId === reportId && current.settings
+      ? { ...current, loading: false, error: null } : emptyState(token, reportId))
     setRefreshing(true)
     void (async () => {
       try {
@@ -129,29 +134,29 @@ export function DailyReportScreen({ onLogin, onCompany, onSearch, onOpenProgram,
               if (cause instanceof ApiError && cause.status === 404 && cause.code === 'COMPANY_NOT_REGISTERED') return null
               throw cause
             }),
-          settingsOnly ? Promise.resolve(null) : getLatestDailyReport(token, controller.signal),
+          settingsOnly ? Promise.resolve(null) : reportId ? getDailyReport(token, reportId, controller.signal) : getLatestDailyReport(token, controller.signal),
         ])
         const saved = report?.programs.length ? new Set(savedSupportProgramListDtoSchema.parse(
           await apiRequest('/api/v1/me/saved-programs', { accessToken: token, signal: controller.signal }),
         ).programs.map(({ program }) => programKey({ sourceCode: program.sourceCode, sourceProgramId: program.id }))) : new Set<string>()
         if (!controller.signal.aborted) {
-          setState({ token, settings, company, report, saved, loading: false, error: null })
+          setState({ token, reportId, settings, company, report, saved, loading: false, error: null })
           setPurpose(settings.supportPurpose); setEnabled(settings.enabled); setConsent(false)
           setRefreshing(false)
         }
       } catch (cause) {
         if (controller.signal.aborted) return
         if (cause instanceof ApiError && cause.status === 401) void invalidateSession().catch(() => undefined)
-        setState((current) => current.token === token && current.settings
+        setState((current) => current.token === token && current.reportId === reportId && current.settings
           ? { ...current, error: dailyReportErrorMessage(cause), loading: false }
-          : { ...emptyState(token), loading: false, error: dailyReportErrorMessage(cause) })
+          : { ...emptyState(token, reportId), loading: false, error: dailyReportErrorMessage(cause) })
         setRefreshing(false)
       }
     })()
     return () => { controller.abort(); request.current?.abort() }
-  }, [token, revision, invalidateSession, settingsOnly]))
+  }, [token, revision, invalidateSession, settingsOnly, reportId]))
 
-  const visible = state.token === token ? state : emptyState(token)
+  const visible = state.token === token && state.reportId === reportId ? state : emptyState(token, reportId)
   const settings = visible.settings
   const canSave = Boolean(token && settings && !busy)
   const refresh = () => { if (!busy) setRevision((value) => value + 1) }
@@ -254,7 +259,7 @@ export function DailyReportScreen({ onLogin, onCompany, onSearch, onOpenProgram,
         busy={Boolean(busy)} onOpen={() => onOpenProgram({ sourceCode: item.sourceCode, sourceProgramId: item.sourceProgramId })}
         onSource={() => void openSource(item.sourceUrl)} onToggle={() => void toggleSaved(item)} />)}
     </> : <>
-      <Card><Text style={styles.heading}>{nextReportMessage(settings, Boolean(visible.company))}</Text>
+      <Card><Text style={styles.heading}>{nextReportMessage(settings, Boolean(visible.company), push.settings?.enabled === true)}</Text>
         {visible.company && <Text style={styles.muted}>{visible.company.companyName} · {visible.company.region} · {visible.company.industry} 조건으로 접수 중인 공고를 골라 드려요.</Text>}
         <Button label="지원사업 검색하기" onPress={onSearch} /></Card>
       <Card><View style={local.dateLine}><Text style={styles.heading}>조건을 채우면 추천이 정확해져요</Text>
@@ -264,12 +269,13 @@ export function DailyReportScreen({ onLogin, onCompany, onSearch, onOpenProgram,
         <Button label={visible.company ? '기업 정보 채우기' : '기업 등록하기'} variant="secondary" onPress={onCompany} /></Card>
     </>)}
     {!settingsOnly && <Pressable accessibilityRole="button" accessibilityLabel="수신 설정" accessibilityState={{ expanded }} onPress={() => setExpanded(!expanded)}>
-      <Card><View style={local.dateLine}><Text style={styles.heading}>수신 설정 · 이메일 {settings.enabled ? '켬' : '끔'}</Text>
+      <Card><View style={local.dateLine}><Text style={styles.heading}>수신 설정 · 이메일 {settings.enabled ? '켬' : '끔'} · 앱 알림 {push.settings?.enabled ? '켬' : '끔'}</Text>
         <Text style={styles.muted}>{expanded ? '▴' : '▾'}</Text></View></Card>
     </Pressable>}
     {settingsOnly && !visible.company && <Card><Text style={styles.body}>기업 정보를 등록하면 정기 리포트를 받을 수 있어요.</Text>
       <Button label="기업 등록하기" variant="secondary" onPress={onCompany} /></Card>}
     {(settingsOnly || expanded) && <Card>
+      <DailyReportPushSettings hasCompany={Boolean(visible.company)} />
       <Text style={styles.muted}>수신 주소: {session?.account.email} · {settings.emailConfirmed ? '확인 완료' : '확인 필요'}</Text>
       {!settings.emailDeliveryAvailable && <Notice>현재 이메일 발송 설정이 준비되지 않았어요. 확인 메일과 정기 발송을 사용할 수 없어요.</Notice>}
       {!settings.schedulerEnabled && <Notice>정기 리포트 예약이 꺼져 있어요. 이미 예약된 메일은 처리될 수 있어요.</Notice>}

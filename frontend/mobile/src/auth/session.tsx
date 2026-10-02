@@ -104,6 +104,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (signal.aborted || revision !== revisionRef.current) return
     if (Date.parse(response.expiresAt) <= Date.now()) throw new Error('만료된 로그인 응답입니다. 다시 로그인해 주세요.')
     const next: MobileSession = { accessToken: response.accessToken, expiresAt: response.expiresAt, account: toAccount(response.account) }
+    const previous = credentialsRef.current
+    if (previous && previous.accessToken !== next.accessToken) {
+      try {
+        // 세션에 묶인 이전 기기 푸시 연결도 FK SET NULL로 종료한다.
+        await apiRequest('/api/v1/auth/mobile/logout', { method: 'POST', accessToken: previous.accessToken })
+      } catch {
+        await apiRequest('/api/v1/auth/mobile/logout', { method: 'POST', accessToken: next.accessToken }).catch(() => undefined)
+        throw new Error('이전 계정의 앱 알림 연결을 종료하지 못했습니다. 로그아웃 후 다시 로그인해 주세요.')
+      }
+    }
+    if (signal.aborted || revision !== revisionRef.current) return
     credentialsRef.current = next
     try {
       await saveStoredSession(baseUrl, next)
@@ -138,7 +149,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         await apiRequest('/api/v1/auth/mobile/logout', { method: 'POST', accessToken: current.accessToken })
       } catch {
-        throw new Error(localError ? '기기 로그인 정보와 서버 세션을 지우지 못했습니다. 로그아웃을 다시 시도해 주세요.' : '이 기기에서 로그아웃했습니다. 서버 세션은 연결 문제로 종료하지 못해 만료 시 종료됩니다.')
+        throw new Error(localError ? '기기 로그인 정보와 서버 세션을 지우지 못했습니다. 로그아웃을 다시 시도해 주세요.' : '이 기기에서 로그아웃했습니다. 서버 세션과 앱 알림 연결은 연결 문제로 종료하지 못해 세션 만료 시 종료됩니다.')
       }
     }
     if (localError) throw localError

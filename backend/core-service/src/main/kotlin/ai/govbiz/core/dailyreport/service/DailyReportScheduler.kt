@@ -25,6 +25,7 @@ class DailyReportScheduler(
     private val accounts: AccountRepository, private val mail: DailyReportMailClient,
     private val properties: DailyReportProperties, @param:Qualifier("seoulClock") private val clock: Clock,
     private val queue: DailyReportQueueProperties,
+    private val push: DailyReportPushService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -36,9 +37,11 @@ class DailyReportScheduler(
             log.warn("Scheduled daily report generation requires app.daily-report.queue.enabled=true")
             return
         }
-        if (!mail.isAvailable() || LocalTime.now(clock).hour < properties.sendHour) return
+        if (LocalTime.now(clock).hour < properties.sendHour) return
         val runDate = LocalDate.now(clock)
-        val due = repository.dueAccountIds(runDate, properties.maxAccountsPerRun + 1, includeQueuedDeliveries = !queue.deliveryEnabled)
+        val emailDue = if (mail.isAvailable()) repository.dueAccountIds(runDate, properties.maxAccountsPerRun + 1,
+            includeQueuedDeliveries = !queue.deliveryEnabled) else emptyList()
+        val due = (emailDue + push.dueAccounts(runDate, properties.maxAccountsPerRun + 1)).distinct()
         if (due.size > properties.maxAccountsPerRun) log.info("Daily report backlog remains after bounded batch")
         for (id in due.take(properties.maxAccountsPerRun)) {
             if (LocalDate.now(clock) != runDate || LocalTime.now(clock).hour < properties.sendHour) break

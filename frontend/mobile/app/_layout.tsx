@@ -5,6 +5,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context'
 import { AuthProvider } from '../src/auth/session'
 import { AppEntryGate } from '../src/auth/AppEntryGate'
 import { LoginFlowProvider } from '../src/auth/loginFlow'
+import { DailyReportPushProvider } from '../src/notifications/DailyReportPushProvider'
 import { Button, Notice, Page, Title, colors } from '../src/ui'
 
 class AppErrorBoundary extends Component<{ children: ReactNode }, { error: boolean }> {
@@ -21,7 +22,7 @@ class AppErrorBoundary extends Component<{ children: ReactNode }, { error: boole
 }
 
 export default function RootLayout() {
-  return <SafeAreaProvider><StatusBar style="dark" /><AppErrorBoundary><AuthProvider><LoginFlowProvider><AppEntryGate>
+  return <SafeAreaProvider><StatusBar style="dark" /><AppErrorBoundary><AuthProvider><DailyReportPushProvider><LoginFlowProvider><AppEntryGate>
     <Stack screenOptions={{ headerTintColor: colors.text, headerTitleAlign: 'left', headerTitleStyle: { fontSize: 17, fontWeight: '600' },
       headerStyle: { backgroundColor: colors.surface }, contentStyle: { backgroundColor: colors.background } }}>
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
@@ -30,5 +31,5 @@ export default function RootLayout() {
       <Stack.Screen name="company" options={{ title: '기업 프로필' }} />
       <Stack.Screen name="oauth/complete" options={{ title: '로그인' }} />
     </Stack>
-  </AppEntryGate></LoginFlowProvider></AuthProvider></AppErrorBoundary></SafeAreaProvider>
+  </AppEntryGate></LoginFlowProvider></DailyReportPushProvider></AuthProvider></AppErrorBoundary></SafeAreaProvider>
 }

@@ -16,6 +16,7 @@ interface DailyReportMapper {
     fun unsubscribe(@Param("hash") hash: String, @Param("now") now: LocalDateTime): Int
     fun tokenExists(@Param("hash") hash: String): Boolean
     fun findLatest(@Param("accountId") accountId: Long): DailyReportDbRow?
+    fun findOwned(@Param("accountId") accountId: Long, @Param("id") id: Long): DailyReportDbRow?
     fun findDay(@Param("accountId") accountId: Long, @Param("date") date: LocalDate): DailyReportDbRow?
     fun lockDay(@Param("accountId") accountId: Long, @Param("date") date: LocalDate): DailyReportDbRow?
     fun insertReport(row: DailyReportDbRow): Int

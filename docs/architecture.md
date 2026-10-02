@@ -266,6 +266,11 @@ Frontend는 확인 후 삭제 요청을 보내고 성공 시에만 목록·메�
 
 ## 기업 맞춤 일일 리포트
 
+앱 푸시는 기존 생성 큐를 재사용하고 이메일과 독립된 기기 설정·발송 Outbox를 사용합니다.
+`DailyReportPushScheduler → DailyReportPushService → DailyReportPushClient → Expo Push Service → FCM/APNs`
+경로로 READY 리포트만 알립니다. 모바일 세션·기기별 수신 설정과 receipt는 MySQL에 보존합니다.
+Firebase DB/Auth를 추가하지 않습니다. [앱 푸시 경계·설정·검증](mobile-report-push.md)을 참고하세요.
+
 `DailyReportController → DailyReportService`는 저장된 기업 조건·지원 목적을 기존 검색에 전달하고,
 추천 최대 3건 중 기업마당 공고에 기존 근거 답변을 연결합니다. 수집·검색·근거 답변 Agent를 새로 복제하지 않습니다.
 `DailyReportRepository → MyBatis Mapper → XML → MySQL`에서 수신 설정·일별 입력과 결과·생성 시도 예산을 보존합니다.

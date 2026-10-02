@@ -37,6 +37,7 @@ class DailyReportServiceTest {
     private val readiness = mock(SupportProgramSearchReadinessService::class.java)
     private val evidence = mock(SupportProgramEvidenceService::class.java)
     private val mail = mock(DailyReportMailClient::class.java)
+    private val push = mock(DailyReportPushService::class.java)
     private val account = AccountTestHelper.account()
     private val now = AccountTestHelper.NOW
     private val date = LocalDate.of(2026, 9, 6)
@@ -50,7 +51,7 @@ class DailyReportServiceTest {
     @BeforeEach
     fun setUp() {
         service = DailyReportService(repository, companies, accounts, search, readiness, evidence, mail,
-            DailyReportProperties(), SupportProgramRequestAdmissionService(SupportProgramRequestAdmissionProperties()), AccountTestHelper.FIXED_CLOCK)
+            DailyReportProperties(), SupportProgramRequestAdmissionService(SupportProgramRequestAdmissionProperties()), AccountTestHelper.FIXED_CLOCK, push)
         doReturn(company).`when`(companies).findByAccountId(account.id)
     }
 
@@ -143,7 +144,7 @@ class DailyReportServiceTest {
         doReturn(true).`when`(mail).isAvailable()
         val earlyClock = java.time.Clock.fixed(java.time.Instant.parse("2026-09-08T22:59:00Z"), java.time.ZoneId.of("Asia/Seoul"))
         DailyReportService(repository, companies, accounts, search, readiness, evidence, mail,
-            DailyReportProperties(), SupportProgramRequestAdmissionService(SupportProgramRequestAdmissionProperties()), earlyClock)
+            DailyReportProperties(), SupportProgramRequestAdmissionService(SupportProgramRequestAdmissionProperties()), earlyClock, mock(DailyReportPushService::class.java))
             .deliverQueued(report.id)
         verifyNoInteractions(repository, accounts, search, evidence)
         verify(mail, never()).sendReport(anyString(), anyString(), anyValue(), anyString(), anyString())
@@ -155,6 +156,17 @@ class DailyReportServiceTest {
         doReturn(DailyReportSubscription(account.id, "수출", false, null, null, null)).`when`(repository).subscription(account.id)
         doReturn(DailyReportReservation(report, true)).`when`(repository).reserve(account.id, date, input, 20)
         doReturn(null, ready()).`when`(repository).forDay(account.id, date)
+    }
+    @Test
+    fun queuedPushOnlyReportIsGeneratedWithoutEmailConfirmation() {
+        prepareGeneration()
+        doReturn(account).`when`(accounts).findById(account.id)
+        doReturn(report).`when`(repository).claimGenerationJob(7)
+        doReturn(true).`when`(push).hasSubscriber(account.id)
+        doReturn(SupportProgramSearchResult("q", emptyList())).`when`(search).search(anyString(), eq(true), anyValue())
+        org.junit.jupiter.api.Assertions.assertTrue(service.generateQueued(7))
+        verify(repository).finishGenerationJob(eq(7L), equalValue(report), anyValue(), eq(false))
+        verifyNoInteractions(mail)
     }
     private fun ready() = report.copy(status = DailyReportStatus.READY, content = DailyReportContent(emptyList(), listOf("선정확률이 아닙니다.")), generatedAt = now)
     private fun program(source: String, id: String) = SupportProgram(id, source, "AI 지원", "기관", "AI 지원사업", listOf("AI"),

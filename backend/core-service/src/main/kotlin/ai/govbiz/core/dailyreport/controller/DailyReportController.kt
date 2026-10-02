@@ -37,6 +37,10 @@ class DailyReportController(private val reports: DailyReportService, private val
     @PostMapping("/preview")
     fun preview(account: Account): ResponseEntity<DailyReportEnvelopeResponse> = ResponseEntity.ok().cacheControl(CacheControl.noStore())
         .body(DailyReportEnvelopeResponse(DailyReportResponse.from(reports.preview(account))))
+
+    @GetMapping("/{id}")
+    fun byId(account: Account, @PathVariable @jakarta.validation.constraints.Positive id: Long): ResponseEntity<DailyReportEnvelopeResponse> =
+        ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(DailyReportEnvelopeResponse(DailyReportResponse.from(reports.byId(account, id))))
 }
 
 /** 이메일 링크는 화면에서 토큰을 읽기만 하고 명시적 POST 확인 버튼을 누를 때만 상태를 바꾼다. */

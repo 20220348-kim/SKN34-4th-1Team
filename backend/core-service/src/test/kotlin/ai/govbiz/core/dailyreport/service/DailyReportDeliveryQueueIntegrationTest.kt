@@ -259,12 +259,12 @@ class DailyReportDeliveryQueueIntegrationTest {
         val next = ready("next")
         assertEquals(listOf(next.accountId), repository.dueAccountIds(today, 1, false))
         val scheduler = DailyReportScheduler(reports, repository, accounts, mail, DailyReportProperties(sendHour = 0, maxAccountsPerRun = 1),
-            Clock.system(ZoneId.of("Asia/Seoul")), DailyReportQueueProperties(true, true))
+            Clock.system(ZoneId.of("Asia/Seoul")), DailyReportQueueProperties(true, true), mock(DailyReportPushService::class.java))
         scheduler.run()
         assertNotNull(repository.queuedDelivery(next.id))
         verify(mail, never()).sendReport(anyString(), anyString(), anyValue(), anyString(), anyString())
         DailyReportScheduler(reports, repository, accounts, mail, DailyReportProperties(sendHour = 0),
-            Clock.system(ZoneId.of("Asia/Seoul")), DailyReportQueueProperties(true, false)).run()
+            Clock.system(ZoneId.of("Asia/Seoul")), DailyReportQueueProperties(true, false), mock(DailyReportPushService::class.java)).run()
         assertEquals(DailyReportDeliveryStatus.SENT, delivery(queued))
         assertEquals(DailyReportDeliveryStatus.SENT, delivery(next))
         verifyNoInteractions(search, evidence)
