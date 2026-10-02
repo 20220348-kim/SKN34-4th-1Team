@@ -14,6 +14,47 @@ smoke = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(smoke)
 
 
+@pytest.fixture
+def replay_session():
+    return {
+        "live_enabled": False,
+        "rag_live_enabled": False,
+        "datasets": [{
+            "id": "rag-synthetic-multichunk-v1",
+            "live_config": {"answer_model": "metadata-only"},
+            "execution_profiles": {"replay": "a" * 64, "live": "b" * 64},
+        }],
+    }
+
+
+@pytest.mark.parametrize("has_live_metadata", [False, True])
+def test_free_request_does_not_select_advertised_live_profile(replay_session, has_live_metadata):
+    dataset = replay_session["datasets"][0]
+    if not has_live_metadata:
+        dataset["live_config"] = dataset["execution_profiles"]["live"] = None
+    before = copy.deepcopy(replay_session)
+    assert smoke.replay_selection(replay_session, dataset["id"]) == {
+        "execution_mode": "replay", "execution_profile": "a" * 64,
+        "live_config": {}, "confirm_paid_run": False,
+    }
+    assert replay_session == before
+
+
+@pytest.mark.parametrize("flag", ["live_enabled", "rag_live_enabled"])
+@pytest.mark.parametrize("value", [True, None, 0, "false"])
+def test_free_smoke_rejects_enabled_or_unconfirmed_live_execution(replay_session, flag, value):
+    replay_session[flag] = value
+    with pytest.raises(AssertionError):
+        smoke.replay_selection(replay_session, "rag-synthetic-multichunk-v1")
+
+
+@pytest.mark.parametrize("profile", [None, "", "a" * 63, "z" * 64, 123])
+def test_missing_replay_profile_never_falls_back_to_live(replay_session, profile):
+    replay_session["datasets"][0]["execution_profiles"]["replay"] = profile
+    with pytest.raises(AssertionError):
+        smoke.replay_selection(replay_session, "rag-synthetic-multichunk-v1")
+
+
 def response(state, **overrides):
     return 200, json.dumps({"results": [{"id": "run", "status": state,
         "error_code": "", "synced_at": "confirmed", "sync_attempted_at": "attempted",

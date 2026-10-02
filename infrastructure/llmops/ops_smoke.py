@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import re
 import time
 from hashlib import sha256
 from http.cookiejar import CookieJar
@@ -11,6 +12,20 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPCookieProcessor, Request, build_opener
 from uuid import UUID, uuid4
+
+
+def replay_selection(session, dataset_id):
+    """공개 live 메타데이터와 실행 허용 여부를 구분하고 무료 요청을 고정한다."""
+    assert session["live_enabled"] is False and session["rag_live_enabled"] is False
+    dataset = next(item for item in session["datasets"] if item["id"] == dataset_id)
+    profile = dataset["execution_profiles"]["replay"]
+    assert isinstance(profile, str) and re.fullmatch(r"[a-f0-9]{64}", profile)
+    return {
+        "execution_mode": "replay",
+        "execution_profile": profile,
+        "live_config": {},
+        "confirm_paid_run": False,
+    }
 
 
 def wait_for_list_state(request, run_id, expected="COMPLETED"):
@@ -431,10 +446,10 @@ def main():
         payload.update(dataset_id=registration["dataset_id"],
                        candidate_capture_id=registration["capture_id"],
                        reference_capture_id=registration["capture_id"])
+    if not args.recover_source:
+        payload.update(replay_selection(session, payload["dataset_id"]))
     if is_rag:
         verify_rag_live_disabled(request, session, datasets[payload["dataset_id"]], payload)
-    if not args.recover_source:
-        payload["execution_profile"] = datasets[payload["dataset_id"]]["execution_profiles"]["replay"]
     assert request(submit_path, payload, csrf=False)[0] == 403
     if not args.recover_source:
         assert request(submit_path, {**payload, "dataset_id": "../../invalid"})[0] == 400
