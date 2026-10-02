@@ -1,0 +1,30 @@
+import { fireEvent, render, screen } from '@testing-library/react-native'
+import { WelcomeScreen } from './WelcomeScreen'
+
+test('four introduction previews show the actual condition and result card vocabulary without interactive searches', () => {
+  jest.useFakeTimers().setSystemTime(new Date('2026-10-02T03:00:00Z'))
+  const signup = jest.fn(); const login = jest.fn(); const browse = jest.fn()
+  render(<WelcomeScreen busy={false} error={null} onSignup={signup} onLogin={login} onBrowse={browse} />)
+  expect(screen.getByText('이 조건으로 검색할까요?')).toBeTruthy()
+  expect(screen.queryByRole('button', { name: '이 조건으로 검색' })).toBeNull()
+  fireEvent.press(screen.getByLabelText('다음'))
+  expect(screen.getByText('2026 스마트공장 고도화 지원사업 2차')).toBeTruthy()
+  expect(screen.getByText('청년일자리 도약장려금 하반기')).toBeTruthy()
+  expect(screen.getAllByTestId('program-status-dot')).toHaveLength(2)
+  expect(screen.getByText('D-5')).toBeTruthy()
+  expect(screen.getByText('D-3')).toBeTruthy()
+  expect(screen.getByText('조건 확인')).toHaveStyle({ backgroundColor: '#E7F5EE' })
+  expect(screen.getByText('확인 필요')).toHaveStyle({ backgroundColor: '#FFF4E5' })
+  fireEvent.press(screen.getByLabelText('다음'))
+  expect(screen.getByText('원문 근거 답변 · 예시')).toBeTruthy()
+  fireEvent.press(screen.getByLabelText('다음'))
+  expect(screen.getByText('사업계획서_초안_v4.hwpx')).toBeTruthy()
+  fireEvent.press(screen.getByLabelText('회원가입하고 시작하기'))
+  fireEvent.press(screen.getByLabelText('이미 계정이 있습니다'))
+  fireEvent.press(screen.getByLabelText('로그인 없이 둘러보기'))
+  expect(signup).toHaveBeenCalledTimes(1)
+  expect(login).toHaveBeenCalledTimes(1)
+  expect(browse).toHaveBeenCalledTimes(1)
+})
+
+afterEach(() => jest.useRealTimers())

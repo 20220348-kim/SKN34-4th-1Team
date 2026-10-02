@@ -1,3 +1,4 @@
+import { useLoginFlow } from '../../src/auth/loginFlow'
 import { Pressable } from 'react-native'
 import { useRouter } from 'expo-router'
 import { AppIcon } from '../../src/components/AppIcon'
@@ -6,7 +7,8 @@ import { colors } from '../../src/ui'
 
 export default function ReportRoute() {
   const router = useRouter()
-  return <DailyReportScreen onLogin={() => router.navigate('/(tabs)/all/account')}
+  const requestLogin = useLoginFlow()
+  return <DailyReportScreen onLogin={(mode) => requestLogin({ direct: true, mode: mode === 'signup' ? 'signup' : 'login' })}
     onCompany={() => router.push('/(tabs)/all/company')} onSearch={() => router.navigate('/(tabs)')}
     onOpenProgram={(identity) => router.push({ pathname: '/program', params: identity })} />
 }

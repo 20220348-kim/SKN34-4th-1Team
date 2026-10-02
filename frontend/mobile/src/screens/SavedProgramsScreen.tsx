@@ -14,6 +14,7 @@ import { partnerDeadlineDay } from '../components/PartnerDates'
 import { preparationDate, preparationKey, preparationStageLabels, PreparationRow, ReviewRow } from '../components/PreparationRows'
 import { usePreparationWorkspace } from '../components/usePreparationWorkspace'
 import { statusLabels } from '../components/ProgramCard'
+import { GuestFeatureNotice } from '../components/GuestFeatureNotice'
 
 type SavedState = { token: string | null; programs: SavedSupportProgram[]; loading: boolean; error: string | null }
 type Filter = 'all' | 'interest' | ApplicationProgressStage
@@ -21,7 +22,9 @@ type Undo = { owner: string; item: SavedSupportProgram; index: number }
 const filters: { value: Filter; label: string }[] = [{ value: 'all', label: '전체' }, { value: 'interest', label: '관심' },
   ...Object.entries(preparationStageLabels).map(([value, label]) => ({ value: value as ApplicationProgressStage, label }))]
 
-export function SavedProgramsScreen({ onOpenProgram, onCountChange }: { onOpenProgram(identity: SupportProgramIdentity): void; onCountChange?(count: number): void }) {
+export function SavedProgramsScreen({ onOpenProgram, onCountChange, onLogin }: {
+  onOpenProgram(identity: SupportProgramIdentity): void; onCountChange?(count: number): void; onLogin(mode?: 'login' | 'signup'): void
+}) {
   const { session, status, refreshSession, invalidateSession } = useAuth()
   const token = status === 'signedIn' ? session?.accessToken ?? null : null
   const [state, setState] = useState<SavedState>({ token: null, programs: [], loading: true, error: null })
@@ -94,7 +97,8 @@ export function SavedProgramsScreen({ onOpenProgram, onCountChange }: { onOpenPr
   const workCount = workspace.preparations !== null && workspace.reviews !== null ? workspace.preparations.length + workspace.reviews.length : null
   if (status === 'loading') return <Page><ActivityIndicator accessibilityLabel="로그인 상태 확인 중" /></Page>
   if (status === 'unavailable') return <Page><Notice error>로그인 상태를 확인하지 못했습니다.</Notice><Button label="다시 확인" onPress={() => void refreshSession()} /></Page>
-  if (!token) return <Page><Notice>전체 → 내 계정에서 로그인하면 웹과 앱에 저장한 관심 공고를 볼 수 있습니다.</Notice></Page>
+  if (!token) return <Page><GuestFeatureNotice title="관심 있는 공고를 한곳에 모아보세요" icon="bookmark"
+    description="로그인하면 웹과 앱에 저장한 관심 공고와 신청 준비를 이어서 볼 수 있어요." onLogin={onLogin} /></Page>
   return <View style={local.page}>
     <View style={local.header}><SegmentedControl<'saved' | 'preparation'> label="관심함 보기" value={view} onChange={setView} options={[
       { value: 'saved', label: '담은 공고' }, { value: 'preparation', label: `준비 중인 작업${workCount === null ? '' : ` ${workCount}`}` }]} /></View>

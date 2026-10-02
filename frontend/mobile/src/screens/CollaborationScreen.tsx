@@ -145,8 +145,8 @@ export function CollaborationScreen({ view, onViewChange, onPendingCount, onOpen
   if (status === 'unavailable') return <View style={local.loading}><Notice error>로그인 상태를 확인하지 못했습니다.</Notice></View>
 
   return <View style={local.page}>
-    <View style={local.header}><SegmentedControl label="협업 보기" value={view} onChange={onViewChange}
-      options={[{ value: 'recruitments', label: '모집글' }, { value: 'box', label: `제안함 ${pendingCount || ''}`.trim() }]} /></View>
+    {token && <View style={local.header}><SegmentedControl label="협업 보기" value={view} onChange={onViewChange}
+      options={[{ value: 'recruitments', label: '모집글' }, { value: 'box', label: `제안함 ${pendingCount || ''}`.trim() }]} /></View>}
     {view === 'recruitments' && query.mineOnly && !token ? <View style={local.list}><Notice>내 모집글은 로그인 후 확인할 수 있어요.</Notice><Button label="로그인하기" onPress={onLogin} /></View>
     : view === 'recruitments' ? <FlatList data={visibleRecruitments.items} keyExtractor={(item) => String(item.id)}
       contentContainerStyle={local.list} keyboardShouldPersistTaps="handled"
@@ -158,9 +158,9 @@ export function CollaborationScreen({ view, onViewChange, onPendingCount, onOpen
           onSubmitEditing={() => changeQuery({ keyword })} style={local.searchInput} />
           <Button label={`필터${query.regions.length + query.seekingRoles.length ? ` ${query.regions.length + query.seekingRoles.length}` : ''}`}
             size="small" variant="secondary" onPress={() => setFilterOpen(true)} /></View>
-        <View style={local.row}><Pressable accessibilityRole="button" accessibilityState={{ selected: query.mineOnly }}
+        <View style={local.row}>{token && <Pressable accessibilityRole="button" accessibilityState={{ selected: query.mineOnly }}
           onPress={() => token ? changeQuery({ mineOnly: !query.mineOnly }) : onLogin()} style={local.chip}>
-          <Text style={styles.muted}>내가 쓴 글</Text></Pressable>
+          <Text style={styles.muted}>내가 쓴 글</Text></Pressable>}
           <Pressable accessibilityRole="button" accessibilityLabel={partnerRecruitmentSortLabels[query.sort]}
             onPress={() => changeQuery({ sort: query.sort === 'DEADLINE' ? 'RECENT' : 'DEADLINE' })} style={local.sort}>
             <Text style={styles.muted}>{partnerRecruitmentSortLabels[query.sort]} ▾</Text></Pressable></View>
