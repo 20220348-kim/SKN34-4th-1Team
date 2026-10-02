@@ -108,8 +108,9 @@ Django에는 평가 SDK나 별도 작업 큐를 추가하지 않습니다.
 호출 흐름: `React → Django 명세 고정 → Prefect → rag_evaluate → Pandera → Evidently·Langfuse
 점수 등록/재조회 → ops-sync → React 결과 조회`.
 
-- 범위는 `source-chunks-retrieval-answer`, 접수 모드는 `replay`입니다. session의 `live_config`와
-  `execution_profiles.live`는 `null`이며 서버도 live·다른 범위 자료를 거절합니다. 검토 기준(`run:`)은
+- 이 절은 `source-chunks-retrieval-answer` 범위의 `replay` 모드입니다. 호출 계획이 없는 자료는
+  session의 `live_config`와 `execution_profiles.live`가 `null`입니다. 계획이 있는 자료의 새 실행은
+  위 별도 활성화·승인·예산 계약을 따릅니다. 검토 기준(`run:`)은
   아래의 현재 RAG 합격 판정과 기준 버전을 검증한 경우에만 비교 대상으로 허용합니다.
 - release의 `rag_evaluation`이 평가기·API 모델·결과 계약·잠금 의존성을 별도로 고정합니다.
   접수 명세에는 fixture·후보·비교 캡처 해시와 출처를 포함하며 기존 고정 근거 결과 형식은 유지합니다.
@@ -130,7 +131,7 @@ LLMOps CI의 `ops_smoke.py --rag-replay`는 기존 관리자 인증·CSRF·중�
 실제 Core 무료 수집도 [저장 재평가 등록 명령](../../evaluation/support-program-evidence/README.md#core-캡처의-ops-저장-재평가-등록)으로
 동일한 접수·Prefect 경로에 추가할 수 있습니다. 등록 목록·release·원본 자료를 함께 배포한 뒤 기존 React
 목록에서 선택합니다. CI는 v1 9건·v2 1건의 원본 실패·trace·해시·보고서를 대조합니다. 이 기능은
-무료 저장 캡처의 재계산이며 RAG live 접수는 비활성 상태입니다. 사례 검토·품질 판정·비교 기준은 아래에서 별도로 관리합니다.
+무료 저장 캡처의 재계산이며 이를 실행해도 RAG live가 활성화되지는 않습니다. 사례 검토·품질 판정·비교 기준은 아래에서 별도로 관리합니다.
 
 ### RAG 사례 검토 자료 조회
 
@@ -325,8 +326,9 @@ Ops 응답의 `model_api_calls`는 새 응답 생성 단계의 `capture.modelApi
 Ops로 접수한 새 응답 생성은 `EvaluationBudget`의 **DB 전체 누적 호출 수·입력·출력 토큰 한도**를
 공유합니다. 사용자·자료·실행기별로 별도 한도를 만들어 우회하지 않습니다. 예약·확정·미확인 사용량을
 합산하며, 달력 기준 자동 초기화는 없습니다. 누적 입력 한도는 운영자가 `--input-tokens`로
-명시적으로 활성화해야 합니다. 미설정이면 기존 호출·출력 한도만 적용됩니다. 이 기능은 원화/달러 지출 상한이 아닙니다. 수동 `evaluate.py --execute`와 전체 RAG 도구는 이 Ops 장부의
-적용 대상이 아니며 별도 승인·한도 관리가 필요합니다.
+명시적으로 활성화해야 합니다. 고정 근거 평가는 미설정이면 기존 호출·출력 한도만 적용되고,
+Ops RAG live는 입력 한도가 없으면 접수하지 않습니다. 이 기능은 원화/달러 지출 상한이 아닙니다.
+수동 `evaluate.py --execute`처럼 Ops 예약·승인 경로를 거치지 않는 호출은 적용 대상이 아닙니다.
 
 호출 흐름은 `관리자 접수 → MySQL 전역 한도 잠금·예약 → Prefect → 실행기 소유권 확보 →
 OpenAI 입력 토큰 계산 → 각 생성 전 Ops 승인 → 모델 응답 사용량 정산 → 실행 종료 시 미사용 예약 반환`입니다.

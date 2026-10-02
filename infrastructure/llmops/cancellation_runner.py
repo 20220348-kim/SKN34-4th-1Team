@@ -62,13 +62,19 @@ def install_http_double(run_id):
 
         async def handle_async_request(self, request):
             if str(request.url) == "https://api.openai.com/v1/responses/input_tokens":
-                return httpx2.Response(200, json={"object": "response.input_tokens", "input_tokens": 100})
-            if str(request.url) != "https://api.openai.com/v1/responses":
+                return httpx2.Response(
+                    200, json={"object": "response.input_tokens", "input_tokens": 100}
+                )
+            endpoint = {
+                "https://api.openai.com/v1/responses": "model",
+                "https://api.openai.com/v1/embeddings": "embedding",
+            }.get(str(request.url))
+            if request.method != "POST" or endpoint is None:
                 raise RuntimeError("Test transport refused a non-allowlisted model URL")
             # 원본 request hook의 명세 검증·실제 예산 승인이 끝난 뒤 HTTP 대역으로 전송한다.
             forwarded = httpx2.Request(
                 "POST",
-                f"{PROBE}/model/{run_id}",
+                f"{PROBE}/{endpoint}/{run_id}",
                 content=request.content,
                 headers={"Content-Type": "application/json"},
                 extensions=request.extensions,
@@ -90,10 +96,27 @@ def install_http_double(run_id):
     original_authorize = BudgetClient.authorize
     original_settle = BudgetClient.settle
 
-    async def authorize(self, sequence, model, max_output_tokens, *, operation_id, input_token_count):
+    async def authorize(
+        self,
+        sequence,
+        model,
+        max_output_tokens,
+        *,
+        operation_id,
+        input_token_count,
+        input_sha256=None,
+        dimensions=None,
+    ):
         await asyncio.to_thread(barrier, run_id, f"before_authorize_{sequence}")
         await original_authorize(
-            self, sequence, model, max_output_tokens, operation_id=operation_id, input_token_count=input_token_count
+            self,
+            sequence,
+            model,
+            max_output_tokens,
+            operation_id=operation_id,
+            input_token_count=input_token_count,
+            input_sha256=input_sha256,
+            dimensions=dimensions,
         )
 
     async def settle(self, sequence, usage, *, operation_id):

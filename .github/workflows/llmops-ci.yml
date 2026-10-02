@@ -202,8 +202,8 @@ jobs:
           if [ -f /tmp/govbiz-ops-web.pid ]; then
             kill "$(cat /tmp/govbiz-ops-web.pid)" 2>/dev/null || true
           fi
-      - name: Verify real cancellation, process exit and budget accounting with offline model HTTP
-        # Includes cold server startup and all 11 scenarios; per-scenario deadlines stay strict.
+      - name: Verify fixed-context and RAG execution, cancellation and budget with offline model HTTP
+        # Includes cold startup, 13 fixed-context and 4 RAG scenarios; deadlines stay strict.
         timeout-minutes: 20
         run: backend/ai-service/.venv/bin/python infrastructure/llmops/cancellation_smoke.py --output work/llmops-ci/cancellation.json
       - name: Preserve cancellation evidence including failed scenarios

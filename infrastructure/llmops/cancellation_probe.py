@@ -102,6 +102,29 @@ def model_response(model):
     }
 
 
+def embedding_response(data):
+    # 벡터는 테스트 계약용이며 검색 품질을 나타내지 않는다.
+    if (
+        data.get("model") != "text-embedding-3-small"
+        or data.get("dimensions") != 1536
+        or data.get("encoding_format") != "float"
+        or not isinstance(data.get("input"), list)
+        or not data["input"]
+        or any(not isinstance(item, str) for item in data["input"])
+    ):
+        raise ValueError("Unexpected embedding test request")
+    count = len(data["input"])
+    return {
+        "object": "list",
+        "model": data["model"],
+        "data": [
+            {"object": "embedding", "index": index, "embedding": [1.0] + [0.0] * 1535}
+            for index in range(count)
+        ],
+        "usage": {"prompt_tokens": count, "total_tokens": count},
+    }
+
+
 class Probe:
     def __init__(self):
         self.lock = Lock()
@@ -186,6 +209,8 @@ def handler(probe):
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(raw)))
+                if self.path.startswith("/embedding/"):
+                    self.send_header("x-request-id", "req_offline_" + uuid4().hex)
                 self.end_headers()
                 self.wfile.write(raw)
             except (BrokenPipeError, ConnectionResetError):
@@ -228,6 +253,13 @@ def handler(probe):
                 with probe.lock:
                     lost = probe.runs[run_id]["config"].get("fault") == "model_lost"
                 return (None, b"") if lost else (200, model_response(data["model"]))
+            if len(parts) == 2 and parts[0] == "embedding":
+                run_id = str(UUID(parts[1]))
+                response = embedding_response(data)
+                probe.gate(run_id, "embedding_sent")
+                with probe.lock:
+                    lost = probe.runs[run_id]["config"].get("fault") == "embedding_lost"
+                return (None, b"") if lost else (200, response)
             if len(parts) == 6 and parts[:3] == ["internal", "llmops", "evaluations"]:
                 run_id, _, action = parts[3:]
                 if parts[4] != "budget" or action not in {"claim", "authorize", "settle", "close"}:
@@ -288,9 +320,10 @@ def database_snapshot(run_id):
             spec_hash=run.execution_spec_sha256,
             closed=reservation.closed_at is not None,
             reserved_calls=reservation.max_calls,
-            reserved_input_tokens=reservation.max_calls * reservation.max_input_tokens,
-            reserved_output_tokens=reservation.max_calls * reservation.max_output_tokens,
+            reserved_input_tokens=reservation.reserved_input_tokens,
+            reserved_output_tokens=reservation.reserved_output_tokens,
             operation_ids=[item["id"] for item in run.execution_spec["model_operations"]],
+            operation_plan=run.execution_spec["model_operations"],
             corrections=list(
                 reservation.calls.filter(correction__isnull=False)
                 .order_by("sequence")
