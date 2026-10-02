@@ -317,6 +317,20 @@ Kubernetes Ops DB의 요청·flow·명세를 직접 대조한 뒤 API+sync Pod�
 보고서에는 소스 SHA, Ops 실제 image ID, 실행 release 해시, request/flow ID, HTTP transport,
 모델 호출 0회, 실행·재시작·정리 결과를 남긴다. 사람의 품질 검토나 현재 모델의 실제 품질 측정은 아니다.
 
+같은 격리 환경에서 `ops_smoke.py --rag-replay`도 호출한다. 기존 고정 근거 6사례 검증을 유지하며,
+합성 RAG 저장 캡처 3사례의 접수·중복 요청·목록 자동 동기화·인증 보고서·로그아웃을 추가로 확인한다.
+Kubernetes DB의 request/flow/명세/모델 호출 수와 Prefect의 완료 실행 정확히 1건을 대조한다.
+검색·인용 지표는 대상 2사례, 상태 일치율은 대상 3사례이며 비측정 값을 0으로 바꾸지 않는다.
+합성·미검토 출처, `baseline_eligible=false`, live 실행 없음도 검사한다.
+
+보고서의 `rag_replay`에는 최초 평가(`initial`), Pod 재시작 후 기존 결과 확인(`pod_restart`),
+Compose 교체 후 새 평가(`after_replacement`), 그 뒤 최초 DB 기록·인증 보고서 해시 보존
+(`endpoint_replacement`)을 기록한다. 두 RAG 요청은 서로 다른 request/flow ID와 같은 실행 명세를
+가져야 하며, 기존 고정 근거 요청과도 겹치면 안 된다. 모든 대조가 끝나야 `rag_replay.status=PASS`다.
+이 검사는 이미 저장된 합성 결과의 재계산이다. 새 검색·임베딩·답변 생성, RAG 예산 왕복,
+사람 검토·모델 품질 합격을 검증하지 않는다. 새 코드의 실제 Kubernetes 통과 여부는 해당 SHA의
+LLMOps CI 결과로 별도 확인하며, 로컬 선택 테스트만으로 배포 완료를 선언하지 않는다.
+
 이어서 같은 완료 실행에 세 가지 artifact 장애를 주입한다. 내부 결과 서버의 응답과 사용자 API 응답을 구분해 검사한다.
 
 | 시험 | 내부 artifact HTTP | 사용자 보고서 | 관리자 런타임 진단 |
@@ -391,7 +405,7 @@ Prefect 장애 중에도 기존 완료 보고서와 Ops 생존·DB 준비 probe�
 `replacement_recovery.status=PASS`, `new_request_flow_count=1`, 새 평가의 `model_api_calls=0`과
 기존 평가·artifact·동기화 복구·최종 정리가 모두 성공해야 한다. 경로 갱신만으로 PASS를 기록하지 않는다.
 새 무료 평가에서도 Core 인증·권한·CSRF·중복 접수·목록 자동 동기화·보고서·로그아웃 검증을 재사용한다.
-이전 두 평가의 Kubernetes DB 기록도 보존돼야 한다.
+이전 두 고정 근거 평가와 최초 RAG 평가의 Kubernetes DB 기록도 보존돼야 한다.
 
 필수 LLMOps CI의 기존 integration 작업에 이 전체 검증을 연결했다.
 코드 추가·오프라인 검사와 실제 CI 통과는 구분하며 최신 커밋의 원격 결과는 푸시 후 확인한다.

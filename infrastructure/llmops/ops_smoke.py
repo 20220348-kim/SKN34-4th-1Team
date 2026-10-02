@@ -1,11 +1,11 @@
 """기존 Core 관리자 로그인·Django CSRF·평가 접수·재전송·보고서 HTTP 경로를 무료로 검증한다."""
 
 import argparse
-from http.cookiejar import CookieJar
 import json
 import os
-from pathlib import Path
 import time
+from http.cookiejar import CookieJar
+from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import HTTPCookieProcessor, Request, build_opener
@@ -38,6 +38,50 @@ def verify_runtime(request, run_id, expected_transport="filesystem"):
     assert all(value == "PASS" for value in runtime["checks"].values())
     assert runtime["result_artifact_verified"] is True and runtime["evaluation_executed"] is False
     return runtime
+
+
+def verify_rag_replay(run):
+    """Keep synthetic provenance and the different eligible-case denominators explicit."""
+    scope = "source-chunks-retrieval-answer"
+    comparison, summary, spec = run["comparison"], run["summary"], run["execution_spec"]
+    assert run["dataset_id"] == "rag-synthetic-multichunk-v1"
+    assert run["execution_mode"] == "replay" and type(run["model_api_calls"]) is int
+    assert run["model_api_calls"] == 0 and run["trace_links"] == []
+    assert comparison["schema_version"] == 3 and comparison["scope"] == scope
+    assert comparison["baseline_eligible"] is False and comparison["comparison"] == "self-replay"
+    assert spec["evaluation_scope"] == scope and spec["model_operations"] == []
+    assert spec["generation"] is None and not spec["live_config"]
+    assert comparison["case_ids"] == spec["dataset"]["case_ids"] == ["R01", "R02", "R03"]
+    assert summary == comparison["current"]
+    for report in (summary, comparison["reference"]):
+        assert report["scope"] == scope and report["caseCount"] == 3
+        assert report["measurementKind"] == "synthetic-contract-check"
+        assert report["execution"]["kind"] == "synthetic"
+        assert report["referenceSource"] == "ai-authored-not-human-reviewed"
+        assert report["baselineEligible"] is False and report["liveExecutionPerformed"] is False
+        assert report["semanticFaithfulness"] is None and report["completed"] is True
+        assert [case["caseId"] for case in report["cases"]] == ["R01", "R02", "R03"]
+        assert all(case["failure"] is None for case in report["cases"])
+        assert all(case["traceId"] is None for case in report["cases"])
+        assert report["coverage"] == {
+            "retrievalCaseCount": 3, "answerCaseCount": 3, "traceCaseCount": 0, "failedCaseCount": 0,
+        }
+        for name, value in (("retrievalRecallAtK", 0.5), ("answerCitationRecall", 0.25)):
+            assert report["metrics"][name] == {
+                "value": value, "measuredCaseCount": 2, "eligibleCaseCount": 2,
+            }
+        assert report["metrics"]["answerStatusAccuracy"] == {
+            "value": 1, "measuredCaseCount": 3, "eligibleCaseCount": 3,
+        }
+        assert report["cases"][2]["retrievalRecallAtK"] is None
+        assert report["cases"][2]["answerCitationRecall"] is None
+    return {
+        "scope": scope, "measurement_kind": summary["measurementKind"],
+        "baseline_eligible": summary["baselineEligible"],
+        "live_execution_performed": summary["liveExecutionPerformed"],
+        "reference_source": summary["referenceSource"],
+        "case_ids": comparison["case_ids"], "coverage": summary["coverage"],
+    }
 
 
 def main():
@@ -163,11 +207,7 @@ def main():
         assert tokens["candidate"] is None and tokens["delta"] is None
         assert request("/api/v1/ops/evaluations", {**payload, "reference_capture_id": payload["candidate_capture_id"]})[0] == 409
     if args.rag_replay:
-        assert comparison["schema_version"] == 3 and comparison["baseline_eligible"] is False
-        assert run["summary"]["measurementKind"] == "synthetic-contract-check"
-        assert run["summary"]["metrics"]["retrievalRecallAtK"] == {"value": 0.5, "measuredCaseCount": 2, "eligibleCaseCount": 2}
-        assert run["summary"]["metrics"]["answerCitationRecall"]["value"] == 0.25
-        assert run["trace_links"] == [] and run["model_api_calls"] == 0
+        rag_evidence = verify_rag_replay(run)
     else:
         assert run["summary"]["statusAccuracy"] == 1
         assert run["summary"]["referenceCitationRecall"] == 1
@@ -194,6 +234,8 @@ def main():
         "report_http_status": status, "model_api_calls": 0,
         "detail_url": base + run["detail_url"],
     }
+    if args.rag_replay:
+        summary["rag_replay"] = rag_evidence
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(summary, indent=2) + "\n")
     print(json.dumps(summary, indent=2))

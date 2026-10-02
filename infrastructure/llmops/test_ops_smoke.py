@@ -1,5 +1,6 @@
 """완료 판정이 상세 API나 시간 초과를 통한 성공 처리에 의존하지 않는지 검증한다."""
 
+import copy
 import importlib.util
 import json
 from pathlib import Path
@@ -80,3 +81,77 @@ def test_http_runtime_verification_rejects_filesystem_shortcut():
         smoke.verify_runtime(Mock(return_value=(200, json.dumps(result).encode(), {})), "run", "http")
     result["storage_transport"] = "http"
     assert smoke.verify_runtime(Mock(return_value=(200, json.dumps(result).encode(), {})), "run", "http") == result
+
+
+@pytest.fixture
+def rag_run():
+    # Use the real offline evaluator and committed capture, without a server or model call.
+    root = Path(__file__).resolve().parents[2] / "evaluation/support-program-evidence"
+    module_spec = importlib.util.spec_from_file_location("smoke_rag_evaluate", root / "rag_evaluate.py")
+    evaluator = importlib.util.module_from_spec(module_spec)
+    module_spec.loader.exec_module(evaluator)
+    report = evaluator.evaluate(root / "rag-fixture.json", root / "rag-synthetic-capture.json")
+    return {
+        "dataset_id": "rag-synthetic-multichunk-v1", "execution_mode": "replay",
+        "model_api_calls": 0, "trace_links": [], "summary": report,
+        "execution_spec": {
+            "evaluation_scope": report["scope"], "model_operations": [], "generation": None,
+            "live_config": {}, "dataset": {"case_ids": ["R01", "R02", "R03"]},
+        },
+        "comparison": {
+            "schema_version": 3, "scope": report["scope"], "baseline_eligible": False,
+            "comparison": "self-replay", "case_ids": ["R01", "R02", "R03"],
+            "current": copy.deepcopy(report), "reference": copy.deepcopy(report),
+        },
+    }
+
+
+def test_rag_smoke_preserves_provenance_and_eligible_case_denominators(rag_run):
+    evidence = smoke.verify_rag_replay(rag_run)
+    assert evidence["scope"] == "source-chunks-retrieval-answer"
+    assert evidence["case_ids"] == ["R01", "R02", "R03"]
+    assert evidence["coverage"]["failedCaseCount"] == 0
+    assert evidence["coverage"]["answerCaseCount"] == 3
+    assert evidence["reference_source"] == "ai-authored-not-human-reviewed"
+    assert evidence["baseline_eligible"] is False and evidence["live_execution_performed"] is False
+
+
+@pytest.mark.parametrize("field,value", [
+    ("dataset_id", "target-coverage-20260907-v1"), ("execution_mode", "live"),
+    ("model_api_calls", 1), ("trace_links", [{"trace_id": "unexpected"}]),
+])
+def test_rag_smoke_rejects_wrong_or_paid_execution(rag_run, field, value):
+    rag_run[field] = value
+    with pytest.raises(AssertionError):
+        smoke.verify_rag_replay(rag_run)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("measurementKind", "recorded"), ("referenceSource", "human-reviewed"),
+    ("baselineEligible", True), ("liveExecutionPerformed", True), ("completed", False),
+    ("semanticFaithfulness", 1), ("caseCount", 2),
+])
+def test_rag_smoke_rejects_misleading_candidate_and_reference(rag_run, field, value):
+    for target in ("current", "reference"):
+        changed = copy.deepcopy(rag_run)
+        changed["comparison"][target][field] = value
+        if target == "current":
+            changed["summary"][field] = value
+        with pytest.raises(AssertionError):
+            smoke.verify_rag_replay(changed)
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda report: report["metrics"]["retrievalRecallAtK"].update(eligibleCaseCount=3),
+    lambda report: report["metrics"]["answerCitationRecall"].update(value=1),
+    lambda report: report["metrics"]["answerStatusAccuracy"].update(eligibleCaseCount=2),
+    lambda report: report["coverage"].update(failedCaseCount=1),
+    lambda report: report["cases"][2].update(failure={"stage": "answer", "code": "failed"}),
+    lambda report: report["cases"][2].update(retrievalRecallAtK=0),
+    lambda report: report["cases"].pop(),
+])
+def test_rag_smoke_rejects_failed_cases_or_changed_measurements(rag_run, mutation):
+    mutation(rag_run["summary"])
+    rag_run["comparison"]["current"] = copy.deepcopy(rag_run["summary"])
+    with pytest.raises(AssertionError):
+        smoke.verify_rag_replay(rag_run)
