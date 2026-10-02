@@ -530,6 +530,18 @@ Ops CI·LLMOps CI와 실행기 Docker 빌드에서 manifest가 소스와 일치�
 실행기는 접수 때 저장된 명세를 실제 파일로 다시 계산해 비교한다. 생성 경로만 바뀌면 무료
 저장 응답 재평가를 막지 않으며, 평가 코드·입력 변경은 재평가에서도 감지한다.
 
+실행기 이미지에는 임베딩 입력 계산에 필요한 `cl100k_base` 데이터를 빌드 시 포함한다.
+`TIKTOKEN_CACHE_DIR=/app/tokenizer-cache`를 사용하며, tiktoken이 고정한 SHA-256으로 검증한다.
+실행 중 캐시가 없거나 손상되면 오프라인 환경에서 다운로드할 수 없으므로 준비 단계가 실패한다.
+LLMOps CI는 빌드한 실행기를 `--network none --read-only`로 별도 실행하고
+[준비 검사](check_runner_runtime.py)로 `rag_live.prepare → make_rag_spec → prepare_embedding_batches`
+경로를 확인한다. 메모리 캐시를 비우고 다운로드를 차단한 상태에서 한글 토큰 변환과 등록된 RAG 자료의
+입력 해시·사례·호출 순서·토큰 상한·모델 설정을 승인된 계획과 대조한다. 모델 호출과 평가 실행은 하지 않는다.
+이 단계는 전체 Compose 취소·예산 및 Kubernetes 복원 검증에 앞서 누락된 실행 자원을 발견하기 위한 검사다.
+
+해시 대상 Python 파일은 `.gitattributes`의 LF 설정을 유지한다. Windows의 자동 CRLF 변환만으로
+불일치가 발생했다면 원래 LF 바이트를 복구하며, 이를 승인하려고 실행 manifest를 다시 생성하지 않는다.
+
 갱신 전 접수를 잠시 제한하고 Ops와 Prefect에 실행 중인 작업이 없는지 확인한다. 진행 중인 유료
 작업을 중지하지 않는다. 동일 릴리스의 Ops·실행기를 빌드하고 `0009` additive migration을 적용한 뒤
 서비스와 React를 갱신한다. 기존 DB·결과 볼륨은 보존한다. 무료 재평가와 다음 불일치 검증을 확인한
