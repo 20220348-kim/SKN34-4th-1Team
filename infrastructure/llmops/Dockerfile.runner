@@ -7,6 +7,9 @@ ENV UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never \
 WORKDIR /app/backend/ai-service
 COPY backend/ai-service/pyproject.toml backend/ai-service/uv.lock ./
 RUN uv sync --locked --no-dev --group evaluation --no-install-project
+# RAG 사전 검증과 임베딩 배치는 실행 중 외부 토크나이저 다운로드를 요구하지 않는다.
+ENV TIKTOKEN_CACHE_DIR=/app/tokenizer-cache
+RUN .venv/bin/python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')"
 COPY backend/ai-service/app ./app
 COPY evaluation/support-program-evidence /app/evaluation/support-program-evidence
 COPY backend/ops-service/apps/evaluations/catalog.py backend/ops-service/apps/evaluations/capture_catalog.json backend/ops-service/apps/evaluations/rag_live_plans.json /app/backend/ops-service/apps/evaluations/
@@ -20,4 +23,13 @@ RUN groupadd --gid 10001 govbiz \
     && mkdir -p /results /app/work/llmops \
     && chown -R govbiz:govbiz /results /app/work
 USER 10001:10001
+# 빈 캐시/권한 회귀는 긴 통합 실행 전에 빌드에서 거절한다. 모델 API 호출은 없다.
+RUN --network=none .venv/bin/python - <<'PY'
+from app.support_program_embedding import prepare_embedding_batches
+
+texts = ["지원사업 신청 자격과 제출 서류", "지원사업 신청 자격과 제출 서류"]
+batches = prepare_embedding_batches(texts)
+assert len(batches) == 1 and batches[0][0] == texts and batches[0][1] > 0
+print("Offline embedding preparation verified as runtime user; model calls: 0")
+PY
 CMD [".venv/bin/python", "/app/evaluation/support-program-evidence/ops_flow.py"]
