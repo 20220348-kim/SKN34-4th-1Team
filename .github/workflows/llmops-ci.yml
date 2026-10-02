@@ -156,7 +156,7 @@ jobs:
           export CORE_ADMIN_PASSWORD="$OPS_ADMIN_PASSWORD"
           python infrastructure/llmops/ops_smoke.py --seed-dev-accounts --base-url http://localhost:5173 --storage-transport http --output work/llmops-ci/ops-verification.json
           python infrastructure/llmops/ops_smoke.py --compare-captures --base-url http://localhost:5173 --storage-transport http --output work/llmops-ci/ops-comparison-verification.json
-          python infrastructure/llmops/ops_smoke.py --rag-replay --base-url http://localhost:5173 --storage-transport http --output work/llmops-ci/ops-rag-replay.json
+          LLMOPS_ISOLATED_REVIEW_TEST=1 python infrastructure/llmops/ops_smoke.py --rag-replay --rag-review-check --base-url http://localhost:5173 --storage-transport http --output work/llmops-ci/ops-rag-replay.json
           for version in v1 v2; do
             python infrastructure/llmops/ops_smoke.py --core-rag-replay "work/llmops-ci/core-registration-$version.json" --base-url http://localhost:5173 --storage-transport http --output "work/llmops-ci/ops-core-rag-$version.json"
           done

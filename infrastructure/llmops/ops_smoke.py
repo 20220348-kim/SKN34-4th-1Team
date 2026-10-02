@@ -202,10 +202,126 @@ def verify_rag_material(request, run):
     return {"material_sha256": fingerprint, "case_count": len(material["cases"]), "baseline_eligible": False}
 
 
+def verify_rag_review_lifecycle(request, run, actor):
+    """새 합성 실행에서만 자동 검토를 저장한다. 실제 사람 검토·모델 품질 증거가 아니다."""
+    verify_rag_replay(run)
+    path = f'/api/v1/ops/evaluations/{run["id"]}'
+
+    def read(suffix, data=None):
+        status, raw, headers = request(path + suffix, data)
+        assert status == 200, f"RAG review {suffix}: HTTP {status}"
+        assert "no-store" in headers["Cache-Control"]
+        return json.loads(raw)
+
+    state = read("/rag-reviews")
+    assert state["review_version"] == 0 and state["case_reviews"] == []
+    assert state["reference_review"]["history"] == [] and state["quality"]["history"] == []
+    assert state["baseline"]["run_id"] is None
+    material = state["material"]
+    assert material["candidate_measurement_kind"] == "synthetic-contract-check"
+    assert material["reference_source"] == "ai-authored-not-human-reviewed"
+    case_ids = [case["case_id"] for case in material["cases"]]
+    assert case_ids == run["comparison"]["case_ids"]
+    baseline_before = state["baseline"]
+    original_input = state["quality"]["input_sha256"]
+    comment = "자동 통합 검증용 기록: 실제 사람 검토·모델 품질 승인 아님"
+    approval = {
+        "decision": "APPROVED", "comment": comment, "confirmed_all_cases": True,
+        "fixture_sha256": material["fixture_sha256"], "case_ids": case_ids,
+        "rubric_version": state["reference_review"]["rubric"]["version"], "review_version": 0,
+    }
+    assert request(path + "/rag-reference-review", approval, csrf=False)[0] == 403
+    assert request(path + "/rag-reference-review", {**approval, "case_ids": case_ids[:1]})[0] == 409
+    assert read("/rag-reviews")["review_version"] == 0
+    state = read("/rag-reference-review", approval)
+    approved_record = state["reference_review"]["history"][0]
+    assert state["reference_review"]["approved"] and state["review_version"] == 1
+    assert approved_record["reviewed_by"] == actor and approved_record["comment"] == comment
+    assert read("/rag-reference-review", approval) == state
+    assert request(path + "/rag-reference-review", {**approval, "comment": "다른 판단"})[0] == 409
+
+    for index, case in enumerate(material["cases"]):
+        assert case["candidate"]["retrieved_chunk_ids"] is not None
+        assert case["candidate"]["answer"] is not None
+        body = {
+            "case_id": case["case_id"], "retrieval_decision": "SUITABLE",
+            "answer_decision": "SUITABLE", "citation_decision": "SUITABLE", "comment": comment,
+            "material_sha256": material["material_sha256"], "rubric_version": state["rubric"]["version"],
+            "review_version": state["review_version"],
+        }
+        if index == 0:
+            assert request(path + "/rag-reviews", body, csrf=False)[0] == 403
+        state = read("/rag-reviews", body)
+        assert state["review_version"] == index + 2 and len(state["case_reviews"]) == index + 1
+        assert state["case_reviews"][0]["case_id"] == case["case_id"]
+        assert state["case_reviews"][0]["reviewed_by"] == actor
+        assert state["case_reviews"][0]["is_current"]
+        assert read("/rag-reviews", body) == state
+    assert state["quality"]["status"] == "NOT_EVALUATED" and state["quality"]["history"] == []
+    assert request(path + "/rag-quality", {"input_sha256": original_input})[0] == 409
+    quality_request = {"input_sha256": state["quality"]["input_sha256"]}
+    assert request(path + "/rag-quality", quality_request, csrf=False)[0] == 403
+    state = read("/rag-quality", quality_request)
+    quality = state["quality"]
+    assert quality["status"] == "NEEDS_REVIEW" and quality["is_current"]
+    assert quality["baseline_eligible"] is False and len(quality["history"]) == 1
+    assessment = quality["history"][0]
+    assert {reason["code"] for reason in assessment["reasons"]} == {"NON_MODEL_CAPTURE"}
+    assert assessment["assessed_by"] == actor
+    assert assessment["inputs"]["reference_review"]["approved"] is True
+    assert read("/rag-quality", quality_request) == state
+    promotion = {
+        "assessment_id": quality["current_id"], "input_sha256": quality["input_sha256"],
+        "baseline_version": state["baseline"]["version"], "reason": comment,
+    }
+    assert request(path + "/rag-baseline", promotion, csrf=False)[0] == 403
+    assert request(path + "/rag-baseline", promotion)[0] == 409
+    assert read("/rag-reviews")["baseline"] == baseline_before
+
+    state = read("/rag-reference-review", {
+        **approval, "decision": "REVOKED", "review_version": state["review_version"],
+    })
+    reference = state["reference_review"]
+    assert reference["approved"] is False and reference["can_revoke"] is False
+    assert len(reference["history"]) == 2
+    revoked_record = reference["history"][0]
+    assert revoked_record["decision"] == "REVOKED" and revoked_record["is_current"]
+    assert revoked_record["revoked_review_id"] == approved_record["id"]
+    assert reference["history"][1] == {**approved_record, "is_current": False}
+    assert state["quality"]["status"] == "NOT_EVALUATED" and not state["quality"]["is_current"]
+    assert state["quality"]["history"] == quality["history"]
+    assert read("/rag-reference-review", approval) == state  # 과거 재전송이 철회를 되돌리면 실패한다.
+    assert request(path + "/rag-quality", quality_request)[0] == 409
+    state = read("/rag-quality", {"input_sha256": state["quality"]["input_sha256"]})
+    assert state["quality"]["status"] == "NEEDS_REVIEW" and state["quality"]["is_current"]
+    assert state["quality"]["baseline_eligible"] is False
+    assert len(state["quality"]["history"]) == 2
+    assert {r["code"] for r in state["quality"]["history"][0]["reasons"]} == {
+        "NON_MODEL_CAPTURE", "REFERENCE_REVOKED",
+    }
+    assert state["quality"]["history"][1] == assessment
+    assert state["material"] == material and state["baseline"] == baseline_before
+    assert state["review_version"] == len(case_ids) + 2
+    assert read("/rag-reviews") == state
+    final = read("")
+    for key in ("status", "model_api_calls", "prefect_flow_run_id", "execution_spec", "execution_spec_sha256"):
+        assert final[key] == run[key]
+    return {
+        "evidence_kind": "automated-isolated-review-check-not-human-review",
+        "case_review_count": len(case_ids), "reference_review_count": 2, "assessment_count": 2,
+        "review_version": state["review_version"], "final_quality_status": state["quality"]["status"],
+        "reference_approved": False, "synthetic_baseline_rejected": True,
+        "csrf_enforced": True, "idempotent_retry": True, "revocation_preserved": True,
+        "old_assessment_preserved": True, "material_sha256": material["material_sha256"],
+        "new_model_calls": 0,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", default="http://localhost:5173")
     parser.add_argument("--seed-dev-accounts", action="store_true", help="격리 CI Core에서만 개발용 계정 생성")
+    parser.add_argument("--rag-review-check", action="store_true", help="격리 합성 실행에 자동 검토·판정·철회 기록 저장")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--compare-captures", action="store_true", help="기존 프롬프트 실행의 공통 E01 비교")
     mode.add_argument("--recover-source", type=UUID, help="무료 fixture가 만든 실패 실행을 복구")
@@ -215,6 +331,8 @@ def main():
     parser.add_argument("--storage-transport", choices=["filesystem", "http"], default="filesystem")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    if args.rag_review_check and (not args.rag_replay or os.environ.get("LLMOPS_ISOLATED_REVIEW_TEST") != "1"):
+        parser.error("Review writes require --rag-replay and LLMOPS_ISOLATED_REVIEW_TEST=1 on an isolated test server")
     registration = json.loads(args.core_rag_replay.read_bytes()) if args.core_rag_replay else None
     is_rag = args.rag_replay or registration is not None or args.core_snapshot_replay is not None
     base = args.base_url.rstrip("/")
@@ -345,6 +463,8 @@ def main():
                         else verify_core_snapshot_replay(run, args.core_snapshot_replay) if args.core_snapshot_replay
                         else verify_rag_replay(run))
         rag_evidence["review_material"] = verify_rag_material(request, run)
+        if args.rag_review_check:
+            rag_evidence["review_lifecycle"] = verify_rag_review_lifecycle(request, run, os.environ["CORE_ADMIN_EMAIL"])
     else:
         assert run["summary"]["statusAccuracy"] == 1
         assert run["summary"]["referenceCitationRecall"] == 1
@@ -360,6 +480,10 @@ def main():
     assert request("/api/v1/ops/runtime")[0] == 401
     if is_rag:
         assert request(f'/api/v1/ops/evaluations/{run["id"]}/rag-material')[0] == 401
+        assert request(f'/api/v1/ops/evaluations/{run["id"]}/rag-reviews')[0] == 401
+        if args.rag_review_check:
+            for endpoint in ("rag-reviews", "rag-reference-review", "rag-quality", "rag-baseline"):
+                assert request(f'/api/v1/ops/evaluations/{run["id"]}/{endpoint}', {})[0] == 401
     summary = {
         "request_id": run["id"], "prefect_flow_run_id": run["prefect_flow_run_id"],
         "evaluation_run_id": run["evaluation_run_id"], "status": run["status"],

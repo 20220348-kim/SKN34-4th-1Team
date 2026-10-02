@@ -1025,7 +1025,7 @@ describe('전체 RAG 저장 캡처 재평가', () => {
     expect(body).toMatchObject({ dataset_id: ragDataset.id, execution_mode: 'replay', live_config: {}, confirm_paid_run: false, execution_profile: ragDataset.execution_profiles.replay })
   })
 
-  it('원본 실패·분모·합성 출처를 표시하고 품질 승인 화면을 열지 않는다', async () => {
+  it('원본 실패·분모·합성 출처와 기준 지정 조건을 표시하고 검토는 명시적으로 연다', async () => {
     const original = fetchMock.getMockImplementation()!
     fetchMock.mockImplementation(async (path, options) => path === `/api/v1/ops/evaluations/${id}` ? json(ragRun) : original(path, options))
     open(`/ops/evaluations/${id}`)
@@ -1034,7 +1034,7 @@ describe('전체 RAG 저장 캡처 재평가', () => {
     expect(screen.getByText(/원본 실패 1건/)).toBeTruthy()
     expect(screen.getByText('검색 실패 · timeout')).toBeTruthy()
     expect(screen.getAllByText('0.00 (1 / 2)').length).toBeGreaterThan(0)
-    expect(screen.getByText(/이 결과는 품질 기준으로 지정할 수 없습니다/)).toBeTruthy()
+    expect(screen.getByText(/비교 기준 지정에는 실제 모델 기록과 별도의 사람 검토·품질 합격이 필요합니다/)).toBeTruthy()
     expect(screen.getByRole('button', { name: '검토 자료 보기' })).toBeTruthy()
     expect(fetchMock.mock.calls.some(([path]) => path.endsWith('/rag-material') || path.endsWith('/rag-reviews'))).toBe(false)
     expect(fetchMock.mock.calls.some(([path]) => path.endsWith('/review'))).toBe(false)
