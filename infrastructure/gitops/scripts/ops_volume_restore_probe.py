@@ -7,10 +7,14 @@ import re
 import shutil
 import sqlite3
 import stat
+import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 from pathlib import Path
+from urllib.error import URLError
+from urllib.request import HTTPRedirectHandler, ProxyHandler, build_opener
 from uuid import UUID
 
 MAX_BYTES = 64 * 1024 * 1024
@@ -169,7 +173,135 @@ def check_prefect(root, expected):
         }
 
 
-def verify(source, target, kind, expected):
+def sqlite_digest(root):
+    with sqlite3.connect((root / "prefect.db").as_uri() + "?mode=ro", uri=True) as db:
+        db.execute("PRAGMA query_only=ON")
+        return hashlib.sha256("\n".join(sorted(db.iterdump())).encode()).hexdigest()
+
+
+def prefect_json(path):
+    class NoRedirect(HTTPRedirectHandler):
+        def redirect_request(self, *args, **kwargs):
+            return None
+
+    client = build_opener(ProxyHandler({}), NoRedirect())
+    with client.open("http://127.0.0.1:4200/api" + path, timeout=3) as response:
+        raw = response.read(4 * 1024 * 1024 + 1)
+        if response.status != 200 or len(raw) > 4 * 1024 * 1024:
+            raise ValueError("Unexpected restored Prefect HTTP response")
+        return json.loads(raw)
+
+
+def check_prefect_api(root, expected):
+    """Start only the restored API, never migrations, scheduling or a runner."""
+    before = sqlite_digest(root)
+    with tempfile.TemporaryDirectory(prefix="prefect-restore-") as home:
+        # No inherited profile, credentials, proxy, remote database or API URL.
+        env = {
+            "PATH": os.environ["PATH"],
+            "HOME": home,
+            "PREFECT_HOME": home,
+            "PREFECT_PROFILES_PATH": str(Path(home) / "profiles.toml"),
+            "PREFECT_SERVER_DATABASE_CONNECTION_URL": "sqlite+aiosqlite:///"
+            + str(root / "prefect.db"),
+            "PREFECT_API_DATABASE_MIGRATE_ON_START": "false",
+            "PREFECT_API_BLOCKS_REGISTER_ON_START": "false",
+            "PREFECT_SERVER_UI_ENABLED": "false",
+            "PREFECT_SERVER_ANALYTICS_ENABLED": "false",
+            "PREFECT_SERVER_SERVICES_SCHEDULER_ENABLED": "false",
+            "PREFECT_SERVER_SERVICES_LATE_RUNS_ENABLED": "false",
+            "PREFECT_SERVER_ALLOW_EPHEMERAL_MODE": "false",
+            "PYTHONDONTWRITEBYTECODE": "1",
+        }
+        server = subprocess.Popen(
+            [
+                "prefect",
+                "server",
+                "start",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                "4200",
+                "--no-services",
+                "--analytics-off",
+            ],
+            env=env,
+            cwd=home,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            deadline = time.monotonic() + 90
+            while True:
+                if server.poll() is not None:
+                    raise ValueError(
+                        "Restored Prefect server exited before verification"
+                    )
+                try:
+                    if prefect_json("/health") is not True:
+                        raise ValueError("Invalid restored Prefect health response")
+                    break
+                except (URLError, TimeoutError):
+                    if time.monotonic() >= deadline:
+                        raise ValueError(
+                            "Restored Prefect API startup timed out"
+                        ) from None
+                    time.sleep(1)
+            for request, evidence in expected.items():
+                flow = prefect_json("/flow_runs/" + evidence["flow_id"])
+                if (
+                    flow["id"] != evidence["flow_id"]
+                    or flow["state_type"] != "COMPLETED"
+                    or flow["state"]["type"] != "COMPLETED"
+                    or flow["parameters"].get("request_id") != request
+                    or flow["parameters"].get("execution_mode") != "replay"
+                    or flow["parameters"].get("live_config")
+                ):
+                    raise ValueError("Restored Prefect API execution differs")
+                deployment_id = str(UUID(flow["deployment_id"]))
+                deployment = prefect_json("/deployments/" + deployment_id)
+                if (
+                    deployment["id"] != deployment_id
+                    or deployment["flow_id"] != flow["flow_id"]
+                ):
+                    raise ValueError("Restored Prefect API deployment differs")
+                history = prefect_json(
+                    "/flow_run_states/?flow_run_id=" + evidence["flow_id"]
+                )
+                states = [row for row in history if row["id"] == flow["state"]["id"]]
+                if (
+                    len(states) != 1
+                    or states[0]["type"] != "COMPLETED"
+                    or states[0]["state_details"]["flow_run_id"] != flow["id"]
+                ):
+                    raise ValueError("Restored Prefect API state history differs")
+            if server.poll() is not None:
+                raise ValueError("Restored Prefect server exited during verification")
+        finally:
+            server.terminate()
+            try:
+                code = server.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                server.kill()
+                server.wait(timeout=5)
+                raise ValueError(
+                    "Restored Prefect server did not stop cleanly"
+                ) from None
+            if code not in (0, -15, 143):
+                raise ValueError("Restored Prefect server exit was unsuccessful")
+    if sqlite_digest(root) != before:
+        raise ValueError("Restored Prefect API changed database contents")
+    return {
+        "status": "PASS",
+        "matched_executions": len(expected),
+        "database_unchanged": True,
+        "server_stopped": True,
+        "scheduling_disabled": True,
+        "automatic_migrations": False,
+    }
+
+
+def verify(source, target, kind, expected, *, api=False):
     expected = expected_runs(expected)
     if kind not in {"results", "prefect"}:
         raise ValueError("Unsupported volume kind")
@@ -191,6 +323,8 @@ def verify(source, target, kind, expected):
         result["matched_reports"] = len(expected)
     else:
         result.update(check_prefect(target, expected))
+        if api:
+            result["api"] = check_prefect_api(target, expected)
     if tree(source) != before:
         raise ValueError("Source volume changed during verification")
     result["source_preserved"] = True
@@ -202,6 +336,12 @@ if __name__ == "__main__":
     value = json.loads(sys.argv[1])
     print(
         json.dumps(
-            verify(Path("/source"), Path("/restore"), value["kind"], value["expected"])
+            verify(
+                Path("/source"),
+                Path("/restore"),
+                value["kind"],
+                value["expected"],
+                api=value["kind"] == "prefect",
+            )
         )
     )

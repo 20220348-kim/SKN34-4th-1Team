@@ -11,6 +11,7 @@ from test_ops_volume_restore import EXPECTED
 PROJECT = "govbiz-bridge-smoke-0123456789"
 SETTINGS = {"repository": "bridge-smoke/local", "cluster": PROJECT}
 IMAGE = "sha256:" + "a" * 64
+PREFECT_IMAGE = "sha256:" + "b" * 64
 HELPER = "f" * 64
 IDS = {name: str(index) * 64 for index, name in enumerate(smoke.SERVICES, 1)}
 
@@ -25,6 +26,7 @@ class VolumeSmokeTests(unittest.TestCase):
         self.helper_exit = 0
         self.helper_failure = False
         self.missing_evidence = False
+        self.api_defect = None
         self.cleanup_failure = False
         self.name_collision = False
         self.volumes = {}
@@ -61,7 +63,7 @@ class VolumeSmokeTests(unittest.TestCase):
             return json.dumps(
                 {
                     "Id": command[-1],
-                    "Image": IMAGE,
+                    "Image": PREFECT_IMAGE if service == "prefect" else IMAGE,
                     "Labels": {
                         "com.docker.compose.project": "foreign"
                         if self.unsafe_owner
@@ -114,6 +116,17 @@ class VolumeSmokeTests(unittest.TestCase):
             compile(data, "restore-probe", "exec")
             if self.missing_evidence:
                 return '{"status":"PASS"}'
+            api = {
+                "status": "PASS",
+                "matched_executions": 1,
+                "database_unchanged": True,
+                "server_stopped": True,
+                "scheduling_disabled": True,
+                "automatic_migrations": False,
+            }
+            if self.api_defect is not None:
+                key, value = self.api_defect
+                api[key] = value
             return json.dumps(
                 {
                     "status": "PASS",
@@ -125,6 +138,7 @@ class VolumeSmokeTests(unittest.TestCase):
                     "matched_reports": 1,
                     "matched_executions": 1,
                     "sqlite_integrity": True,
+                    "api": api,
                 }
             )
         if command[:2] == ["docker", "rm"] and self.cleanup_failure:
@@ -141,16 +155,18 @@ class VolumeSmokeTests(unittest.TestCase):
             command for command, _ in self.events if command[: len(prefix)] == prefix
         ]
 
-    def test_restores_two_new_volumes_without_starting_applications(self):
+    def test_restores_with_matching_images_and_isolated_prefect_api(self):
         self.assertEqual(self.verify(), IMAGE)
         evidence = self.report["volume_restore"]
         self.assertEqual(evidence["status"], "PASS")
         self.assertFalse(evidence["backup_verified"])
         self.assertFalse(evidence["personal_environment_verified"])
-        self.assertFalse(evidence["prefect_server_started"])
+        self.assertTrue(evidence["prefect_server_started"])
         self.assertEqual(len(self.commands(["docker", "stop"])), 1)
         helpers = self.commands(["docker", "create"])
         self.assertEqual(len(helpers), 2)
+        self.assertEqual(helpers[0][-4], IMAGE)
+        self.assertEqual(helpers[1][-4], PREFECT_IMAGE)
         for command in helpers:
             self.assertEqual(command[command.index("--network") + 1], "none")
             self.assertEqual(command[command.index("--entrypoint") + 1], "python")
@@ -213,6 +229,7 @@ class VolumeSmokeTests(unittest.TestCase):
         self.assertEqual(len(self.commands(["docker", "rm"])), 1)
         self.assertEqual(len(self.commands(["docker", "volume", "rm"])), 1)
         self.assertEqual(self.report["volume_restore"]["status"], "FAIL")
+        self.assertIsNone(self.report["volume_restore"]["prefect_server_started"])
 
     def test_nonzero_helper_exit_or_incomplete_success_cannot_pass(self):
         for field, value in (("helper_exit", 1), ("missing_evidence", True)):
@@ -229,6 +246,27 @@ class VolumeSmokeTests(unittest.TestCase):
             self.verify()
         self.assertEqual(len(self.commands(["docker", "volume", "rm"])), 1)
         self.assertEqual(self.report["volume_restore"]["status"], "FAIL")
+
+    def test_prefect_api_requires_complete_evidence_and_cleanup_on_failure(self):
+        for key, value in (
+            ("status", "FAIL"),
+            ("matched_executions", True),
+            ("matched_executions", 0),
+            ("database_unchanged", False),
+            ("server_stopped", False),
+            ("scheduling_disabled", False),
+            ("automatic_migrations", True),
+        ):
+            self.stopped = False
+            self.events.clear()
+            self.api_defect = (key, value)
+            with (
+                self.subTest(key=key),
+                self.assertRaisesRegex(ValueError, "Prefect API evidence"),
+            ):
+                self.verify()
+            self.assertEqual(self.report["volume_restore"]["status"], "FAIL")
+            self.assertEqual(len(self.commands(["docker", "volume", "rm"])), 2)
 
 
 if __name__ == "__main__":

@@ -127,7 +127,8 @@ Prefect를 중지한다. 컨테이너 ID·이미지·Compose 소유권·볼륨 �
 다른 컨테이너가 볼륨을 사용하면 중단한다. 개인 환경의 컨테이너는 중지 대상으로 허용하지 않는다.
 
 - `ops-results`와 `prefect-data`를 각각 읽기 전용 원본으로 연결하고 새 임시 볼륨에 복원한다.
-  도우미는 기존 이미지의 Python 표준 라이브러리만 사용하며 네트워크·공개 포트가 없다.
+  파일 복사는 Python 표준 라이브러리를 사용하며 도우미에는 네트워크·공개 포트가 없다.
+  결과 볼륨은 기존 결과 서버 이미지, Prefect 볼륨은 기존 Prefect의 정확한 이미지 ID를 사용한다.
 - 정지된 원본 전체를 임시 tar로 묶어 복원하고 파일 SHA-256·경로·크기·권한·UID/GID·수정 시각을
   대조한다. 기존 대상 덮어쓰기, 심볼릭/하드 링크, 특수 파일·권한을 거절한다.
   볼륨당 64 MiB·10,000개 항목을 넘으면 실패하며 개인 데이터용 범용 백업 도구로 사용하지 않는다.
@@ -137,13 +138,20 @@ Prefect를 중지한다. 컨테이너 ID·이미지·Compose 소유권·볼륨 �
 - SQLite의 `prefect.db`뿐 아니라 남아 있는 WAL·SHM도 함께 복사한다.
   [SQLite WAL 문서](https://www.sqlite.org/wal.html)에 따라 WAL의 커밋 데이터를 놓치지 않도록
   `immutable=1` 없이 복원 사본을 읽기 전용으로 조회한다. 실제 WAL을 가진 SQLite 회귀 테스트를 유지한다.
+- 복원된 Prefect DB를 같은 이미지의 API 서버로 열어 3건의 실행·deployment·완료 상태 이력을 GET으로
+  다시 조회한다. `--no-services`로 기동하고 스케줄러·자동 migration·블록 자동 등록·분석 전송을 끈다.
+  실행기를 시작하지 않으며, 기존 profile·자격 증명·외부 DB/API 주소를 상속하지 않는다.
+- API는 네트워크 없는 컨테이너 내부의 `127.0.0.1:4200`에서만 사용한다. 기동 실패·시간 초과·
+  이력 불일치·비정상 종료는 실패다. 종료 후 논리 덤프 해시를 대조해 schema·행이 바뀌지 않았는지 확인한다.
 - 검사 전후 원본 보존을 확인하고 이번에 만든 도우미와 복원 볼륨만 삭제한다.
   실패·정리 오류는 전체 실패로 남기며 정지한 시험 프로젝트는 최상위 정리 단계에서 제거한다.
 
-`ops-bridge.json`의 `volume_restore.scope=disposable_results_and_prefect_sqlite`와 `status=PASS`는
-이 파일·SQLite 검증의 성공만 뜻한다. `results`와 `prefect`에 각각 대조 건수·해시·정리 결과를 남긴다.
-복원된 Prefect 서버·실행기를 시작하지 않으므로 서비스 재기동·Secret/서명 키 복구·Langfuse 저장소 복원은
-검증하지 않는다. `prefect_server_started`, `backup_verified`, `personal_environment_verified`는 `false`다.
+`ops-bridge.json`의 `volume_restore.scope=disposable_results_and_prefect_api`와 `status=PASS`는
+이 파일·SQLite·Prefect API 검증의 성공만 뜻한다. `results`와 `prefect`에 대조 건수·해시·정리 결과를,
+`prefect.api`에 API 대조·DB 무변경·정상 종료 결과를 남긴다. 성공 시 `prefect_server_started=true`이며,
+증거가 완성되지 않은 실패에서는 `null`로 미확인을 표시한다.
+실행기 재개·새 평가 실행·Secret/서명 키 복구·Langfuse 저장소 복원은 검증하지 않는다.
+`backup_verified`, `personal_environment_verified`는 계속 `false`다.
 개인 환경 갱신 승인이나 전체 저장소의 동일 시점 백업 증거로 사용하지 않는다.
 CI에 연결된 코드가 있어도 최신 SHA의 실제 통합 작업이 이 단계까지 통과해야 실행 완료로 기록한다.
 
