@@ -1,4 +1,4 @@
-# LLMOps 개발 현황과 후속 전략 — RAG 후처리 실패와 무료 복구 검증
+# LLMOps 개발 현황과 후속 전략 — RAG 실행기 오프라인 초기화 수정
 
 [문서 목록](README.md) · [도입·구현 이력](langfuse-adoption-strategy.md) · [Ops API](../backend/ops-service/README.md) · [실행 안내](../infrastructure/llmops/README.md)
 
@@ -29,7 +29,41 @@ Core 원문 재수집·재청킹, 운영 색인 성능 측정, 실제 사람 검
 | 관측·인프라 복구 | Core→AI 상세 RAG 추적, Prefect·sync·artifact·컨테이너 교체·보고서 변조 검증 구현 | 최신 SHA의 전체 통합 CI, 개인/운영 환경 적용·복원 완료는 별도 증거 필요 |
 | RAG 오프라인 평가 | v1 계산기·v2 대역 출처와 Core 다중 청크 수집 10사례·예산 준비 명세, 캡처 등록·재평가 및 검토된 실행을 비교 기준으로 사용하는 경로 구현 | 최신 SHA의 Core→Ops→Prefect CI, 공식 HTML 수집 연결, 검토·기준의 환경 적용 |
 
-### 이번 후속 구현 — RAG 후처리 실패와 무료 복구 검증
+### 이번 후속 수정 — RAG 토크나이저 캐시 누락
+
+선행 `67859d2`의 [LLMOps CI](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/37023938084)는
+고정 근거 13개 시나리오를 통과한 뒤 첫 `rag_completed`에서
+`EXECUTION_SPEC_MISMATCH`로 실패했다. 이 실패 때문에 이후 RAG 및 Kubernetes 단계는 완료되지 않았다.
+외부 통신을 차단한 기존 실행기에서 `rag_live.prepare()`를 실행해, `cl100k_base` 토크나이저를
+실행 중 다운로드하려다 실패하는 문제를 재현했다. 개발 PC의 기존 캐시를 사용하는 단위 검증으로는
+발견할 수 없었던 이미지 구성 누락이다.
+
+`Dockerfile.runner`는 토크나이저 파일을 빌드 때 `/app/tokenizer-cache`에 포함한다.
+마지막 단계에서는 일반 실행 사용자(UID 10001), `--network=none`으로 실제
+`prepare_embedding_batches()`를 실행한다. 캐시가 없거나 읽을 수 없으면 이미지 빌드가 실패한다.
+기존 외부 통신 차단, 실행 명세·예산 검증 및 모델 호출 경로는 유지한다.
+
+로컬 검증(2026-10-03):
+
+- 별도 태그 `govbiz-evaluation-runner:skn137-tokenizer-fix` 이미지 빌드와 오프라인 배치 계산 통과.
+- 수정 이미지의 읽기 전용 파일시스템·네트워크 없음·UID 10001에서 RAG 자료 3종의 호출 계획을
+  대조하고 실제 `evaluate_saved_capture` 사전 검증을 통과했다. 예산 claim 직전에 테스트 대역으로
+  중단했으므로 실제 예산 요청·모델 호출·운영 기록 변경은 없다.
+- CI 실패 재현을 위해 기존 검사 중 RAG 6개만 일회용 Compose로 선택 실행했다. 첫 실행에서 실제
+  Django·MySQL·Prefect 경로의 승인·무료 HTTP 대역 9회(임베딩 6회·답변 3회)·정산·예약 종료를
+  확인했다. 장부에는 호출 9회·입력 317토큰·출력 150토큰이 남고 사전 검증 실패는 없었다.
+  **전체 검사는 상태 조회 GET의 `TimeoutError`로 실패**했다. 후처리의 최종 완료와 후속 5개
+  시나리오는 확인하지 못했으며 통과로 집계하지 않는다. 임시 컨테이너·볼륨만 정리했다.
+- 수정 전 `6b5427e`의 GovBiz·Ops·Catalog·Infra CI는 성공했고,
+  [LLMOps CI](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/37026772618)는 동일한
+  `rag_completed: FAILED / EXECUTION_SPEC_MISMATCH`로 실패했다. 이는 이번 이미지 수정 전 결과다.
+
+이번 변경은 실행기 이미지 수정이며 새 평가 기능이나 실제 모델 품질 기준 확보를 의미하지 않는다.
+다음 확인 대상은 수정본 SHA의 19개 서버 시나리오와 후속 Kubernetes 검사, 로컬 상태 조회
+타임아웃의 재현 여부다. 필수 CI를 통과하기 전 전체 검증 완료로 판단하지 않으며,
+개인 개발 환경의 실행기 교체도 별도다. 유료 모델 호출과 운영 DB 변경은 수행하지 않았다.
+
+### 이전 구현 — skn-137 RAG 후처리 실패와 무료 복구 검증
 
 `skn-135 / 67859d2`의 RAG 실행·취소·응답 유실 검사에 후처리 실패와 무료 복구를 추가했다.
 완료된 임베딩·답변을 다시 생성하지 않고 보고서·점수만 복구하는 기존 기능을 실제 서버 경로로 검증한다.
