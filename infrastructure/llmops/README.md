@@ -61,12 +61,24 @@ Core부터 이어지는 전체 RAG 추적과 Ops 평가 연동, 운영 배포다
 
 관리 화면에서 **전체 RAG · 합성 다중 청크 캡처 재계산**을 선택하면 등록된 합성 3사례를
 재계산합니다. 실제 모델·검색 실행 기록이 아니며 신규 모델 호출은 0회입니다. 실행 명세를
-재생성했으므로 Ops·실행기·Web을 같은 소스로 갱신합니다. 새 migration은 없습니다.
+재생성했으므로 Ops·실행기·Web을 같은 소스로 갱신합니다. 재계산 도입 자체에는 migration이 없었지만,
+현재 검토·판정·비교 기준 기능을 사용하려면 `0023`까지 적용해야 합니다.
 
 LLMOps CI는 기존 관리자 인증 smoke와 같은 환경에서 `ops_smoke.py --rag-replay`도 실행합니다.
 접수→Prefect→보고서·Langfuse 점수 재조회→sync→인증된 결과 조회를 확인하고 요약을
 `llmops-rag-replay-<SHA>` artifact에 남깁니다. 옵션·연결 인자는 `python3 infrastructure/llmops/ops_smoke.py --help`와
 `.github/workflows/llmops-ci.yml`을 참고합니다. CI 성공을 개인 PC 환경 적용으로 해석하지 않습니다.
+
+격리 CI의 합성 실행에는 `LLMOPS_ISOLATED_REVIEW_TEST=1`과 `--rag-review-check`를 함께 지정합니다.
+이 옵션은 `--rag-replay`와 loopback 주소에서만 사용하며 **이번 smoke가 새로 만든 미검토 합성 실행**에
+자동 검토·판정·철회 기록을 저장합니다. 기존 실행이나 실제 사용자 검토에 사용하지 않습니다.
+기록의 근거와 artifact에 자동 테스트임을 표시하며 실제 사람 검토·현재 모델 품질의 증거로 사용하지 않습니다.
+
+검증 범위는 관리자·CSRF → 전체 참조 승인 → 사례별 판단 → 명시적 품질 점검 → 합성 기준 지정 거절
+→ 참조 철회 → 과거 승인 재전송 차단 → 재판정·이력 보존 → 공유 로그아웃 후 쓰기 거절입니다.
+자료·실행 명세·Prefect 실행 ID와 호출 수를 유지하는지도 대조합니다. 결과는 같은 artifact의
+`rag_replay.review_lifecycle`에 남습니다. 실제 모델 기록의 합격·기준 지정 성공 경로는 Ops 격리 MySQL
+테스트의 자료 대역 검증이며, 이 HTTP 검사가 실제 모델의 품질 합격을 증명하지는 않습니다.
 
 [입력·결과·실패 복구 계약](../../backend/ops-service/README.md#전체-rag-저장-캡처-재평가)에
 출처·미측정 값·원본 실패와 재계산 작업 상태의 구분을 설명합니다.

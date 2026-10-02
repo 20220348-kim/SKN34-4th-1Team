@@ -6,13 +6,21 @@ from threading import Barrier
 from unittest.mock import patch
 from uuid import uuid4
 
-from django.db import IntegrityError, close_old_connections, transaction
+from django.db import IntegrityError, close_old_connections, connection, transaction
+from django.db.migrations.executor import MigrationExecutor
 from django.test import TestCase, TransactionTestCase
 from rest_framework.test import APIClient
 
 from . import rag_quality_policy
 from .catalog import public_datasets, validate_reference_config
-from .models import EvaluationBaseline, EvaluationBaselineChange, EvaluationBudgetReservation
+from .models import (
+    EvaluationBaseline,
+    EvaluationBaselineChange,
+    EvaluationBudgetReservation,
+    EvaluationRun,
+    QualityAssessment,
+    RagReferenceReview,
+)
 from .rag_baselines import baseline_choices, select_baseline
 from .rag_reference_reviews import save_reference_review
 from .services import RequestConflict, submit_run
@@ -270,3 +278,77 @@ class RagBaselineConcurrencyTests(BaselineFixture, TransactionTestCase):
         self.parallel(True)
         self.assertEqual(baseline_choices(), {})
         self.assertFalse(EvaluationBaseline.objects.filter(rag_assessment__isnull=False).exists())
+
+
+class RagBaselineMigrationTests(TransactionTestCase):
+    def test_upgrade_preserves_fixed_baseline_and_rag_review_without_promoting_old_assessment(self):
+        executor = MigrationExecutor(connection)
+        latest = executor.loader.graph.leaf_nodes()
+        old = [("evaluations", "0022_rag_reference_reviews")]
+        try:
+            executor.migrate(old)
+            apps = executor.loader.project_state(old).apps
+            user = apps.get_model("auth", "User").objects.create(username="legacy-reviewer")
+            runs = apps.get_model("evaluations", "EvaluationRun")
+            fixed = runs.objects.create(dataset_id="fixed", requested_by_id=user.pk)
+            fixed_review = apps.get_model("evaluations", "EvaluationReview").objects.create(
+                run_id=fixed.pk,
+                reviewed_by_id=user.pk,
+                decision="APPROVED",
+                comment="기존 고정 근거 승인",
+                capture_sha256="a" * 64,
+            )
+            apps.get_model("evaluations", "EvaluationBaseline").objects.create(
+                dataset_id="fixed",
+                review_id=fixed_review.pk,
+                selected_by_id=user.pk,
+                version=3,
+            )
+            change = apps.get_model("evaluations", "EvaluationBaselineChange").objects.create(
+                baseline_id="fixed",
+                version=3,
+                review_id=fixed_review.pk,
+                changed_by_id=user.pk,
+                reason="기존 기준 지정",
+                fixture_sha256="b" * 64,
+            )
+            rag = runs.objects.create(dataset_id="rag", requested_by_id=user.pk, review_version=2)
+            reference = apps.get_model("evaluations", "RagReferenceReview").objects.create(
+                run_id=rag.pk,
+                version=2,
+                decision="APPROVED",
+                comment="기존 참조 승인",
+                fixture_sha256="c" * 64,
+                case_ids=["R01", "R02"],
+                rubric_version="rag-reference-review-v1",
+                execution_spec_sha256="d" * 64,
+                reviewed_by_id=user.pk,
+            )
+            assessment = apps.get_model("evaluations", "QualityAssessment").objects.create(
+                run_id=rag.pk,
+                status="NEEDS_REVIEW",
+                assessed_by_id=user.pk,
+                policy={"definition": {"version": "rag-review-quality-v2"}},
+                inputs={"review_version": 2},
+                reasons=[{"code": "PASS_POLICY_PENDING"}],
+            )
+            MigrationExecutor(connection).migrate(latest)
+            baseline = EvaluationBaseline.objects.get(pk="fixed")
+            self.assertEqual((baseline.review_id, baseline.version), (fixed_review.pk, 3))
+            self.assertIsNone(baseline.rag_assessment_id)
+            history = EvaluationBaselineChange.objects.get(pk=change.pk)
+            self.assertEqual(history.reason, "기존 기준 지정")
+            self.assertEqual(history.review_id, fixed_review.pk)
+            self.assertIsNone(history.rag_assessment_id)
+            self.assertIsNone(history.previous_rag_assessment_id)
+            preserved = RagReferenceReview.objects.get(pk=reference.pk)
+            self.assertEqual(preserved.case_ids, ["R01", "R02"])
+            self.assertEqual(preserved.comment, "기존 참조 승인")
+            self.assertEqual(EvaluationRun.objects.get(pk=rag.pk).review_version, 2)
+            record = QualityAssessment.objects.get(pk=assessment.pk)
+            self.assertEqual(record.status, "NEEDS_REVIEW")
+            self.assertEqual(record.policy["definition"]["version"], "rag-review-quality-v2")
+            self.assertEqual(record.reasons, [{"code": "PASS_POLICY_PENDING"}])
+            self.assertFalse(EvaluationBaseline.objects.filter(dataset_id="rag").exists())
+        finally:
+            MigrationExecutor(connection).migrate(latest)

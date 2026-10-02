@@ -243,3 +243,141 @@ def test_core_rag_smoke_rejects_success_promotion_or_lost_evidence(core_rag_run,
     run["comparison"]["reference"] = copy.deepcopy(run["summary"])
     with pytest.raises(AssertionError):
         smoke.verify_core_snapshot_replay(run, version)
+
+
+@pytest.fixture
+def review_exchange(rag_run):
+    """서버의 단계별 계약 응답. 검증기가 잘못된 응답도 성공으로 기록하는지 변조한다."""
+    rag_run.update(id="test-run", status="COMPLETED", prefect_flow_run_id="original-flow", execution_spec_sha256="fixed-spec")
+    actor = "reviewer@example.com"
+    original = {
+        "review_version": 0, "case_reviews": [], "rubric": {"version": "rag-case-review-v1"},
+        "material": {"candidate_measurement_kind": "synthetic-contract-check", "reference_source": "ai-authored-not-human-reviewed",
+                     "fixture_sha256": "f" * 64, "material_sha256": "a" * 64,
+                     "cases": [{"case_id": case, "candidate": {"retrieved_chunk_ids": [], "answer": "합성 답변"}} for case in ("R01", "R02", "R03")]},
+        "reference_review": {"history": [], "rubric": {"version": "rag-reference-review-v1"}, "approved": False},
+        "quality": {"history": [], "status": "NOT_EVALUATED", "input_sha256": "before"},
+        "baseline": {"run_id": None, "version": 0, "history": []},
+    }
+    approved = copy.deepcopy(original)
+    approved["review_version"] = 1
+    approved["reference_review"].update(approved=True, can_revoke=True, history=[{
+        "id": 10, "decision": "APPROVED", "is_current": True, "reviewed_by": actor,
+        "comment": "자동 통합 검증용 기록: 실제 사람 검토·모델 품질 승인 아님", "created_at": "2026-10-02T00:00:00Z",
+    }])
+    cases = []
+    for index in range(3):
+        value = copy.deepcopy(cases[-1] if cases else approved)
+        value["review_version"] += 1
+        value["case_reviews"].insert(0, {"id": index + 1, "case_id": f"R0{index + 1}", "reviewed_by": actor, "is_current": True})
+        value["quality"]["input_sha256"] = f"case-{index}"
+        cases.append(value)
+    assessed = copy.deepcopy(cases[-1])
+    record = {"id": 20, "reasons": [{"code": "NON_MODEL_CAPTURE"}], "assessed_by": actor,
+              "inputs": {"reference_review": copy.deepcopy(approved["reference_review"])}}
+    assessed["quality"].update(status="NEEDS_REVIEW", is_current=True, baseline_eligible=False, current_id=20, history=[record])
+    revoked = copy.deepcopy(assessed)
+    revoked["review_version"] += 1
+    revoked["reference_review"]["history"][0]["is_current"] = False
+    revoked["reference_review"].update(approved=False, can_revoke=False)
+    revoked["reference_review"]["history"].insert(0, {"id": 11, "decision": "REVOKED", "is_current": True, "revoked_review_id": 10})
+    revoked["quality"].update(status="NOT_EVALUATED", is_current=False, input_sha256="revoked", current_id=None)
+    reassessed = copy.deepcopy(revoked)
+    reassessed["quality"].update(status="NEEDS_REVIEW", is_current=True, current_id=21)
+    reassessed["quality"]["history"].insert(0, {"id": 21, "reasons": [{"code": "REFERENCE_REVOKED"}, {"code": "NON_MODEL_CAPTURE"}]})
+    frames = []
+
+    def frame(name, value=None, status=200):
+        frames.append([name, status, copy.deepcopy(value or {})])
+
+    frame("initial", original)
+    frame("reference_csrf", status=403)
+    frame("partial", status=409)
+    frame("no_partial_write", original)
+    frame("approved", approved)
+    frame("approval_retry", approved)
+    frame("stale_approval", status=409)
+    frame("case_csrf", status=403)
+    for index, value in enumerate(cases):
+        frame(f"case_{index}", value)
+        frame(f"case_retry_{index}", value)
+    frame("stale_quality", status=409)
+    frame("quality_csrf", status=403)
+    frame("assessed", assessed)
+    frame("quality_retry", assessed)
+    frame("baseline_csrf", status=403)
+    frame("baseline_rejected", status=409)
+    frame("baseline_unchanged", assessed)
+    frame("revoked", revoked)
+    frame("old_approval_retry", revoked)
+    frame("old_quality", status=409)
+    frame("reassessed", reassessed)
+    frame("persisted", reassessed)
+    frame("original_run", rag_run)
+    return rag_run, actor, frames
+
+
+def review_request(frames):
+    return Mock(side_effect=[(status, json.dumps(value).encode(), {"Cache-Control": "no-store"}) for _, status, value in frames])
+
+
+def test_review_smoke_verifies_explicit_writes_and_keeps_synthetic_provenance(review_exchange):
+    run, actor, frames = review_exchange
+    request = review_request(frames)
+    evidence = smoke.verify_rag_review_lifecycle(request, run, actor)
+    assert request.call_count == len(frames)
+    assert evidence["evidence_kind"] == "automated-isolated-review-check-not-human-review"
+    assert evidence["synthetic_baseline_rejected"] and evidence["revocation_preserved"]
+    assert evidence["reference_approved"] is False and evidence["final_quality_status"] == "NEEDS_REVIEW"
+    assert evidence["new_model_calls"] == 0
+    assert evidence["case_review_count"] == 3 and evidence["assessment_count"] == 2
+    csrf_calls = [call for call in request.call_args_list if call.kwargs.get("csrf") is False]
+    assert {call.args[0].rsplit("/", 1)[-1] for call in csrf_calls} == {"rag-reviews", "rag-reference-review", "rag-quality", "rag-baseline"}
+    assert all(call.args[0].startswith("/api/v1/ops/evaluations/test-run") for call in request.call_args_list)
+
+
+@pytest.mark.parametrize("frame_name,mutate", [
+    ("initial", lambda v: v.update(review_version=1)),
+    ("initial", lambda v: v["baseline"].update(run_id="existing-baseline")),
+    ("approved", lambda v: v["reference_review"]["history"][0].update(reviewed_by="wrong-account")),
+    ("approval_retry", lambda v: v.update(review_version=2)),
+    ("assessed", lambda v: v["quality"].update(status="PASS")),
+    ("assessed", lambda v: v["quality"].update(baseline_eligible=True)),
+    ("assessed", lambda v: v["quality"]["history"][0].update(reasons=[])),
+    ("revoked", lambda v: v["reference_review"]["history"][0].update(revoked_review_id=99)),
+    ("revoked", lambda v: v["quality"].update(is_current=True)),
+    ("old_approval_retry", lambda v: v["reference_review"].update(approved=True)),
+    ("reassessed", lambda v: v["quality"].update(history=v["quality"]["history"][:1])),
+    ("reassessed", lambda v: v["material"].update(reference_source="human-reviewed")),
+    ("persisted", lambda v: v["reference_review"]["history"][0].update(id=999)),
+    ("original_run", lambda v: v.update(model_api_calls=1)),
+    ("original_run", lambda v: v.update(prefect_flow_run_id="new-unexpected-flow")),
+])
+def test_review_smoke_rejects_false_success_and_changed_history(review_exchange, frame_name, mutate):
+    run, actor, frames = review_exchange
+    mutate(next(value for name, _, value in frames if name == frame_name))
+    with pytest.raises(AssertionError):
+        smoke.verify_rag_review_lifecycle(review_request(frames), run, actor)
+
+
+@pytest.mark.parametrize("frame_name", ["reference_csrf", "partial", "case_csrf", "stale_quality", "quality_csrf", "baseline_csrf", "baseline_rejected", "old_quality"])
+def test_review_smoke_rejects_unprotected_writes(review_exchange, frame_name):
+    run, actor, frames = review_exchange
+    frame = next(item for item in frames if item[0] == frame_name)
+    frame[1] = 200
+    with pytest.raises(AssertionError):
+        smoke.verify_rag_review_lifecycle(review_request(frames), run, actor)
+
+
+@pytest.mark.parametrize("mode,enabled", [(False, False), (False, True), (True, False)])
+def test_review_write_cli_requires_isolated_environment_and_synthetic_mode(monkeypatch, tmp_path, mode, enabled):
+    monkeypatch.setattr("sys.argv", ["ops_smoke.py", "--rag-review-check", "--output", str(tmp_path / "result.json"), *(["--rag-replay"] if mode else [])])
+    monkeypatch.delenv("LLMOPS_ISOLATED_REVIEW_TEST", raising=False)
+    if enabled:
+        monkeypatch.setenv("LLMOPS_ISOLATED_REVIEW_TEST", "1")
+    client = Mock()
+    monkeypatch.setattr(smoke, "build_opener", client)
+    with pytest.raises(SystemExit) as error:
+        smoke.main()
+    assert error.value.code == 2
+    client.assert_not_called()
