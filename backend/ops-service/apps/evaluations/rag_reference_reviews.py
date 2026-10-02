@@ -90,7 +90,10 @@ def save_reference_review(
         "execution_spec_sha256": run.execution_spec_sha256,
         "reviewed_by_id": user.pk,
     }
+    from .rag_baselines import invalidate, lock_existing
+
     with transaction.atomic():
+        baseline = lock_existing(run.dataset_id)
         locked = locked_run(run)
         retry = locked.rag_reference_reviews.filter(version=review_version + 1).first()
         if retry:
@@ -107,9 +110,11 @@ def save_reference_review(
             revoked_id = previous.pk
         locked.review_version += 1
         locked.save(update_fields=["review_version"])
-        return RagReferenceReview.objects.create(
+        record = RagReferenceReview.objects.create(
             run=locked,
             version=locked.review_version,
             revoked_review_id=revoked_id,
             **values,
         )
+        invalidate(baseline, locked, user, "참조 자료 검토 변경으로 기준 해제")
+        return record

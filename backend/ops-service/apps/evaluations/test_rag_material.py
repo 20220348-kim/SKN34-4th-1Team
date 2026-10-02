@@ -212,3 +212,63 @@ class RagMaterialTests(SimpleTestCase):
                 self.assertEqual(response.json(), {"code": "RESULTS_UNAVAILABLE"})
             lookup.side_effect = Http404
             self.assertEqual(client.get(url).status_code, 404)
+
+    def test_reviewed_run_reference_reads_pinned_snapshot_and_rejects_tampering(self):
+        self.run.reference_capture_id = "run:" + str(uuid4())
+        self.run.reference_config = {"run_id": self.run.reference_capture_id[4:]}
+        with patch(
+            "apps.evaluations.artifact_store.read_artifact",
+            return_value=self.sources[self.capture_path],
+        ) as reader:
+            self.assertEqual(
+                self.read()["cases"][0]["reference"]["answer"],
+                self.capture["cases"][0]["answer"]["response"]["answer"],
+            )
+            reader.assert_called_once_with(self.run.pk, "reference-capture.json")
+        with patch(
+            "apps.evaluations.artifact_store.read_artifact",
+            return_value=self.sources[self.capture_path] + b" ",
+        ):
+            with self.assertRaises(ResultsUnavailable):
+                self.read()
+
+    def test_service_result_accepts_only_valid_pinned_baseline_reference(self):
+        from .services import read_result
+
+        self.run.reference_capture_id = "run:" + str(uuid4())
+        config = {
+            "run_id": self.run.reference_capture_id[4:],
+            "capture_sha256": self.run.execution_spec["candidate_sha256"],
+            "fixture_sha256": self.run.execution_spec["dataset"]["fixture_sha256"],
+            "assessment_id": 7,
+            "assessment_input_sha256": "a" * 64,
+        }
+        self.run.reference_config = config
+        self.run.execution_spec["reference_config"] = deepcopy(config)
+        raw = self.sources[self.capture_path]
+        artifacts = {
+            "evaluation/manifest.json": json.dumps(
+                {"reference_capture_sha256": config["capture_sha256"]}
+            ).encode(),
+            "evaluation/comparison.json": b"{}",
+            "evaluation/report.html": b"report",
+            "reference-capture.json": raw,
+        }
+        with (
+            patch("apps.evaluations.services.read_request", return_value={}),
+            patch(
+                "apps.evaluations.services.read_artifact",
+                side_effect=lambda _, path: artifacts[path],
+            ),
+            patch("apps.evaluations.rag_replay.read_result", return_value="verified") as verify,
+        ):
+            self.assertEqual(read_result(self.run), "verified")
+            verify.assert_called_once()
+            artifacts["reference-capture.json"] = raw + b" "
+            with self.assertRaises(ResultsUnavailable):
+                read_result(self.run)
+            artifacts["reference-capture.json"] = raw
+            config["assessment_input_sha256"] = "b" * 64
+            with self.assertRaises(ResultsUnavailable):
+                read_result(self.run)
+            self.assertEqual(verify.call_count, 1)

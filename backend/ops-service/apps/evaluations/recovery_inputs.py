@@ -58,7 +58,6 @@ def read_recovery_inputs(
             or spec["evaluation_scope"] != RAG_SCOPE
             or mode == "live"
             or marker.get("live_config")
-            or marker.get("reference_config")
             or manifest.get("scope") != RAG_SCOPE
             or manifest.get("stage") not in {"report", "publish", "completed"}
         ):

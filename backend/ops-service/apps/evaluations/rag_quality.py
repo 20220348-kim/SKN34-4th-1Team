@@ -16,6 +16,7 @@ REASONS = {
     "REFERENCE_REVOKED": "원문·참조 조건의 승인이 철회됐습니다. 다시 검토해야 합니다.",
     "REFERENCE_CHANGES_REQUESTED": "원문·참조 조건에 수정 요청이 있어 승인되지 않았습니다.",
     "PASS_POLICY_PENDING": "참조 자료는 승인됐으며 품질 합격 정책은 아직 활성화되지 않았습니다.",
+    "EMPTY_CASES": "검토할 사례가 없어 합격할 수 없습니다.",
     "NON_MODEL_CAPTURE": "합성·무료 대역 캡처는 현재 모델 품질이나 비교 기준의 근거가 아닙니다.",
     "SOURCE_EXECUTION_FAILED": (
         "원본 실행 실패가 있습니다. 미측정 항목을 품질 부적합으로 대체하지 않습니다."
@@ -108,7 +109,7 @@ def quality_state(run, state):
         "current_id": current.pk if current else None,
         "input_sha256": fingerprint,
         "policy": inputs["policy"],
-        "baseline_eligible": False,
+        "baseline_eligible": bool(current and current.status == "PASS"),
         "history": [assessment_data(row) for row in history],
     }
 

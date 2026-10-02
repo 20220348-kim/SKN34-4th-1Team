@@ -24,7 +24,7 @@ export function RagComparisonResult({ comparison }: { comparison: RagComparison 
         return <tr key={key}><th className="p-2">{metricLabels[key]}</th><td>{measure(before.value)} ({before.measuredCaseCount} / {before.eligibleCaseCount})</td><td>{measure(after.value)} ({after.measuredCaseCount} / {after.eligibleCaseCount})</td><td>{before.value === null || after.value === null ? '비교 불가' : measure(after.value - before.value)}</td></tr>
       })}
     </tbody></table></div>
-    <p className="text-xs">평균은 측정된 사례 기준입니다. 실패 수와 대상 수를 함께 확인하세요. 인용 재현율만으로 의미 정확성이나 과잉 인용을 판단할 수 없습니다. 이 결과는 품질 기준으로 지정할 수 없습니다.</p>
+    <p className="text-xs">평균은 측정된 사례 기준입니다. 실패 수와 대상 수를 함께 확인하세요. 인용 재현율만으로 의미 정확성이나 과잉 인용을 판단할 수 없습니다. 비교 기준 지정에는 실제 모델 기록과 별도의 사람 검토·품질 합격이 필요합니다.</p>
     <div className="grid gap-3 md:grid-cols-2">{([['기준', comparison.reference], ['후보', current]] as const).map(([label, report]) => <div key={label} className="rounded-xl bg-[#f3f7f5] p-3 text-xs break-all">
       <strong>{label} 기록</strong><p>{origins[report.measurementKind]}</p>
       <p>답변 모델: {report.execution.model ?? '실행 없음'}</p><p>임베딩 모델: {report.execution.embeddingModel ?? '실행 없음'}</p>

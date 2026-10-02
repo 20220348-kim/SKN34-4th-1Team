@@ -339,14 +339,19 @@ def clear_baseline(run, user, baseline_version, reason):
 
 
 def baseline_choices():
+    from .rag_baselines import baseline_choices as rag_choices
+
     return {
-        item.dataset_id: {
-            "id": f"run:{item.review.run_id}",
-            "label": f"검토 기준 · {str(item.review.run_id)[:8]}",
-            "version": item.version,
-        }
-        for item in EvaluationBaseline.objects.select_related("review__run").filter(
-            review__isnull=False
-        )
-        if current_approval(item.review, item.review.run) and quality_pass(item.review.run)
+        **rag_choices(),
+        **{
+            item.dataset_id: {
+                "id": f"run:{item.review.run_id}",
+                "label": f"검토 기준 · {str(item.review.run_id)[:8]}",
+                "version": item.version,
+            }
+            for item in EvaluationBaseline.objects.select_related("review__run").filter(
+                review__isnull=False
+            )
+            if current_approval(item.review, item.review.run) and quality_pass(item.review.run)
+        },
     }

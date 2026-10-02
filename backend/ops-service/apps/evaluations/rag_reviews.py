@@ -76,44 +76,52 @@ def review_state(run, user):
     material = read_material(run)
     with transaction.atomic():
         locked = locked_run(run)
-        rows = list(locked.rag_case_reviews.select_related("reviewed_by"))
-        latest = {}
-        for row in rows:
-            latest.setdefault(row.case_id, row.pk)
-        state = {
-            "material": material,
-            "reviewer_id": user.get_username(),
-            "review_version": locked.review_version,
-            "rubric": RUBRIC,
-            "case_reviews": [
-                {
-                    "id": row.pk,
-                    "case_id": row.case_id,
-                    "version": row.version,
-                    **{field: getattr(row, field) for field in DECISION_FIELDS},
-                    "comment": row.comment,
-                    "material_sha256": row.material_sha256,
-                    "fixture_sha256": row.fixture_sha256,
-                    "candidate_capture_sha256": row.candidate_capture_sha256,
-                    "reference_capture_sha256": row.reference_capture_sha256,
-                    "execution_spec_sha256": row.execution_spec_sha256,
-                    "rubric_version": row.rubric_version,
-                    "is_current": latest[row.case_id] == row.pk
-                    and row.material_sha256 == material["material_sha256"]
-                    and row.rubric_version == RUBRIC["version"]
-                    and row.execution_spec_sha256 == locked.execution_spec_sha256,
-                    "reviewed_by": row.reviewed_by.email or row.reviewed_by.get_username(),
-                    "created_at": row.created_at,
-                }
-                for row in rows
-            ],
-        }
-        from .rag_quality import quality_state
-        from .rag_reference_reviews import reference_state
+        return state_for_material(locked, material, user)
 
-        state["reference_review"] = reference_state(locked, material)
-        state["quality"] = quality_state(locked, state)
-        return state
+
+def state_for_material(locked, material, user):
+    # 호출자가 실행 행을 잠그고 파일 검증이 끝난 자료를 전달한다.
+    rows = list(locked.rag_case_reviews.select_related("reviewed_by"))
+    latest = {}
+    for row in rows:
+        latest.setdefault(row.case_id, row.pk)
+    state = {
+        "material": material,
+        "reviewer_id": user.get_username(),
+        "review_version": locked.review_version,
+        "rubric": RUBRIC,
+        "case_reviews": [
+            {
+                "id": row.pk,
+                "case_id": row.case_id,
+                "version": row.version,
+                **{field: getattr(row, field) for field in DECISION_FIELDS},
+                "comment": row.comment,
+                "material_sha256": row.material_sha256,
+                "fixture_sha256": row.fixture_sha256,
+                "candidate_capture_sha256": row.candidate_capture_sha256,
+                "reference_capture_sha256": row.reference_capture_sha256,
+                "execution_spec_sha256": row.execution_spec_sha256,
+                "rubric_version": row.rubric_version,
+                "is_current": latest[row.case_id] == row.pk
+                and row.material_sha256 == material["material_sha256"]
+                and row.rubric_version == RUBRIC["version"]
+                and row.execution_spec_sha256 == locked.execution_spec_sha256,
+                "reviewed_by": row.reviewed_by.email or row.reviewed_by.get_username(),
+                "created_at": row.created_at,
+            }
+            for row in rows
+        ],
+    }
+    from .rag_quality import quality_state
+    from .rag_reference_reviews import reference_state
+
+    state["reference_review"] = reference_state(locked, material)
+    state["quality"] = quality_state(locked, state)
+    from .rag_baselines import baseline_state
+
+    state["baseline"] = baseline_state(locked, state["quality"])
+    return state
 
 
 def save_review(
@@ -156,7 +164,10 @@ def save_review(
         },
         "reviewed_by_id": user.pk,
     }
+    from .rag_baselines import invalidate, lock_existing
+
     with transaction.atomic():
+        baseline = lock_existing(run.dataset_id)
         locked = locked_run(run)
         previous = locked.rag_case_reviews.filter(version=review_version + 1).first()
         if previous is not None:
@@ -168,4 +179,6 @@ def save_review(
             raise RequestConflict
         locked.review_version += 1
         locked.save(update_fields=["review_version"])
-        return RagCaseReview.objects.create(run=locked, version=locked.review_version, **values)
+        record = RagCaseReview.objects.create(run=locked, version=locked.review_version, **values)
+        invalidate(baseline, locked, user, "사례 검토 변경으로 기준 해제")
+        return record

@@ -224,8 +224,17 @@ class EvaluationBaseline(models.Model):
     dataset_id = models.CharField(max_length=100, primary_key=True)
     version = models.PositiveIntegerField(default=0)
     review = models.ForeignKey(EvaluationReview, null=True, on_delete=models.PROTECT)
+    rag_assessment = models.ForeignKey("QualityAssessment", null=True, on_delete=models.PROTECT)
     selected_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.PROTECT)
     selected_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(review__isnull=True) | models.Q(rag_assessment__isnull=True),
+                name="baseline_one_review_type",
+            )
+        ]
 
 
 class EvaluationBaselineChange(models.Model):
@@ -239,6 +248,18 @@ class EvaluationBaselineChange(models.Model):
     review = models.ForeignKey(
         EvaluationReview, null=True, on_delete=models.PROTECT, related_name="baseline_selections"
     )
+    previous_rag_assessment = models.ForeignKey(
+        "QualityAssessment",
+        null=True,
+        on_delete=models.PROTECT,
+        related_name="baseline_replacements",
+    )
+    rag_assessment = models.ForeignKey(
+        "QualityAssessment",
+        null=True,
+        on_delete=models.PROTECT,
+        related_name="baseline_selections",
+    )
     changed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
     reason = models.TextField()
     fixture_sha256 = models.CharField(max_length=64, blank=True)
@@ -247,7 +268,16 @@ class EvaluationBaselineChange(models.Model):
     class Meta:
         ordering = ["-version"]
         constraints = [
-            models.UniqueConstraint(fields=["baseline", "version"], name="unique_baseline_version")
+            models.UniqueConstraint(fields=["baseline", "version"], name="unique_baseline_version"),
+            models.CheckConstraint(
+                condition=models.Q(review__isnull=True) | models.Q(rag_assessment__isnull=True),
+                name="baseline_change_one_review_type",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(previous_review__isnull=True)
+                | models.Q(previous_rag_assessment__isnull=True),
+                name="baseline_previous_one_review_type",
+            ),
         ]
 
 

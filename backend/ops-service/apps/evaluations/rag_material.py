@@ -178,11 +178,15 @@ def read_material(run):
                 run.execution_spec["dataset"]["fixture_sha256"],
             ),
             (candidate["path"], "capture/capture.json", run.execution_spec["candidate_sha256"]),
-            (reference["path"], "reference-capture.json", run.execution_spec["reference_sha256"]),
+            (
+                reference.get("path"),
+                "reference-capture.json",
+                run.execution_spec["reference_sha256"],
+            ),
         ):
             raw = (
                 read_artifact(run.pk, recovery_path)
-                if run.execution_mode == "recovery"
+                if run.execution_mode == "recovery" or path is None
                 else read_evidence(path)
             )
             require(sha256(raw).hexdigest() == expected)

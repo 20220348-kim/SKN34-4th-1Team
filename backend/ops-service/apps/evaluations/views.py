@@ -336,6 +336,38 @@ class RagQualityRequestSerializer(serializers.Serializer):
     input_sha256 = serializers.RegexField(r"^[a-f0-9]{64}$")
 
 
+class RagBaselineRequestSerializer(RagQualityRequestSerializer):
+    assessment_id = serializers.IntegerField(min_value=1)
+    baseline_version = serializers.IntegerField(min_value=0)
+    reason = serializers.CharField(max_length=3000, allow_blank=False)
+
+
+class RagBaselineClearSerializer(serializers.Serializer):
+    baseline_version = serializers.IntegerField(min_value=0)
+    reason = serializers.CharField(max_length=3000, allow_blank=False)
+
+
+@never_cache
+@api_view(["POST", "DELETE"])
+@permission_classes([IsAuthenticated])
+def api_rag_baseline(request, run_id):
+    from .rag_baselines import clear_baseline, select_baseline
+
+    run = get_object_or_404(EvaluationRun, pk=run_id)
+    serializer = (
+        RagBaselineClearSerializer if request.method == "DELETE" else RagBaselineRequestSerializer
+    )(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    try:
+        action = clear_baseline if request.method == "DELETE" else select_baseline
+        action(run, request.user, **serializer.validated_data)
+        return Response(rag_review_state(run, request.user))
+    except RequestConflict:
+        return Response({"code": "REVIEW_CONFLICT"}, status=409)
+    except ResultsUnavailable:
+        return Response({"code": "RESULTS_UNAVAILABLE"}, status=503)
+
+
 @never_cache
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
