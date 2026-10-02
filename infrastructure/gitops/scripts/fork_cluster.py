@@ -557,9 +557,12 @@ def main():
     parser.add_argument("--core-port", type=int, help="web only: Core loopback port (default: 18080)")
     parser.add_argument("--ops-port", type=int, help="web only: Ops loopback port (default: 18001)")
     parser.add_argument("--json", dest="json_output", action="store_true", help="status only: read-only deployment snapshot; exit 1 on rollout, baseline, node, PVC or local disk issues")
+    parser.add_argument("--image-details", action="store_true", help="status --json only: inspect kind image IDs and compare declared revisions with this checkout; requires Docker")
     args = parser.parse_args()
     if args.json_output and args.action != "status":
         parser.error("--json is only supported by status")
+    if args.image_details and not (args.action == "status" and args.json_output):
+        parser.error("--image-details requires status --json")
     if args.action != "web" and (args.core_port is not None or args.ops_port is not None):
         parser.error("--core-port and --ops-port are only supported by web")
     core_port = 18080 if args.core_port is None else args.core_port
@@ -612,8 +615,14 @@ def main():
             elif args.json_output:
                 from cluster_status import snapshot
                 report = snapshot(state, settings, kube, nk, ak)
+                image_checks_ok = True
+                if args.image_details:
+                    from image_status import audit
+                    report["image_details"] = audit(settings, report)
+                    image_checks_ok = (report["image_details"]["runtime_images_match"]
+                                       and not report["image_details"]["source_review_required"])
                 print(json.dumps(report, indent=2))
-                if not all(report[key] for key in (
+                if not image_checks_ok or not all(report[key] for key in (
                     "workloads_ready", "baseline_matches", "nodes_healthy", "storage_ready", "local_storage_ok"
                 )):
                     parser.exit(1)

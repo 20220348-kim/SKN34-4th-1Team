@@ -61,25 +61,53 @@ class WebCommandTests(unittest.TestCase):
             patch.object(cluster, "commands", return_value=(["kube"], ["namespaced"], ["argo"])),
             patch.object(cluster, "verify_context") as verify,
             patch("cluster_status.snapshot", return_value=report) as snapshot,
+            patch("image_status.audit") as audit,
             patch("sys.stdout", new_callable=io.StringIO) as output,
         ):
             snapshot.side_effect = lambda *args: verify.assert_called_once_with(["kube"], {}, timeout=15) or report
             cluster.main()
         self.assertEqual(json.loads(output.getvalue()), report)
+        audit.assert_not_called()
+
+    def test_image_details_exit_code_and_report_follow_identity_and_source_checks(self):
+        for matches, review in ((True, False), (False, False), (True, True)):
+            report = dict.fromkeys(("workloads_ready", "baseline_matches", "nodes_healthy", "storage_ready", "local_storage_ok"), True)
+            details = {"runtime_images_match": matches, "source_review_required": review}
+            with (
+                self.subTest(matches=matches, review=review),
+                patch("sys.argv", ["fork_cluster.py", "status", "--json", "--image-details"]),
+                patch.object(cluster, "os", SimpleNamespace(name="posix")),
+                patch.object(cluster, "load_settings", return_value={}),
+                patch.object(cluster, "commands", return_value=(["kube"], ["ns"], ["argo"])),
+                patch.object(cluster, "verify_context") as verify,
+                patch("cluster_status.snapshot", return_value=report),
+                patch("image_status.audit") as audit,
+                patch("sys.stdout", new_callable=io.StringIO) as output,
+            ):
+                audit.side_effect = lambda *args: verify.assert_called_once_with(["kube"], {}, timeout=15) or details
+                if matches and not review:
+                    cluster.main()
+                else:
+                    with self.assertRaises(SystemExit) as stopped:
+                        cluster.main()
+                    self.assertEqual(stopped.exception.code, 1)
+            self.assertEqual(json.loads(output.getvalue())["image_details"], details)
 
     def test_status_json_does_not_inspect_unowned_cluster(self):
         with (
-            patch("sys.argv", ["fork_cluster.py", "status", "--json"]),
+            patch("sys.argv", ["fork_cluster.py", "status", "--json", "--image-details"]),
             patch.object(cluster, "os", SimpleNamespace(name="posix")),
             patch.object(cluster, "load_settings", return_value={}),
             patch.object(cluster, "commands", return_value=(["kube"], ["namespaced"], ["argo"])),
             patch.object(cluster, "verify_context", side_effect=ValueError("ownership")),
             patch("cluster_status.snapshot") as snapshot,
+            patch("image_status.audit") as audit,
             patch("sys.stderr", new_callable=io.StringIO),
             self.assertRaises(SystemExit),
         ):
             cluster.main()
         snapshot.assert_not_called()
+        audit.assert_not_called()
 
     def test_dev_ownership_and_argo_reads_have_short_timeouts(self):
         with (
@@ -121,7 +149,8 @@ class WebCommandTests(unittest.TestCase):
     def test_invalid_or_misplaced_options_fail_before_reading_state(self):
         for args in (["web", "--ops-port", "0"], ["web", "--core-port", "65536"],
                      ["web", "--ops-port", "18080"], ["status", "--ops-port", "28001"],
-                     ["up", "--core-port", "28080"], ["web", "--json"]):
+                     ["up", "--core-port", "28080"], ["web", "--json"],
+                     ["status", "--image-details"], ["up", "--image-details"]):
             with (
                 self.subTest(args=args),
                 patch("sys.argv", ["fork_cluster.py", *args]),

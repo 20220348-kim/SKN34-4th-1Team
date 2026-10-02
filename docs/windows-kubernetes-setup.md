@@ -270,6 +270,10 @@ python -B infrastructure/gitops/scripts/fork_cluster.py status
 
 Pod가 준비되면 6절의 port-forward와 웹 명령을 다시 실행합니다.
 초기화된 환경에서는 매번 이미지를 재빌드하거나 `up`을 다시 실행할 필요가 없습니다.
+현재 checkout의 코드가 반영됐는지 살펴보려면
+[`status --json --image-details`](local-fork-development.md#실행-이미지와-현재-서비스-코드-비교)로
+실행 이미지 ID와 기록된 소스 커밋을 비교합니다. Pod가 Ready여도 코드 비교는 `CHANGED`나
+`UNKNOWN`일 수 있으므로, 정상 실행을 최신 코드 배포 완료로 판단하지 않습니다.
 `kind delete cluster`, `docker volume prune`, `docker compose down -v`는 재시작 명령이 아닙니다.
 
 ## 자주 막히는 지점

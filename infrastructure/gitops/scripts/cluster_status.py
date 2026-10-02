@@ -90,6 +90,7 @@ def service_status(service, deployment, pods, expected_image):
             {
                 "name": pod["metadata"]["name"],
                 "uid": pod["metadata"]["uid"],
+                "node": pod["spec"].get("nodeName"),
                 "phase": pod.get("status", {}).get("phase", "Unknown"),
                 "terminating": bool(pod["metadata"].get("deletionTimestamp")),
                 "ready": any(
