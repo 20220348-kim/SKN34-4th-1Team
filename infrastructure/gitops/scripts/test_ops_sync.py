@@ -1,6 +1,7 @@
 """Offline Ops sync placement, configuration guards and paired image recovery."""
 
 import copy
+import io
 import json
 import shutil
 import subprocess
@@ -254,7 +255,8 @@ class OpsSyncDevTests(unittest.TestCase):
         }
         self.original = "ghcr.io/alice/ops@sha256:" + "1" * 64
         self.containers = [
-            {"name": name, "image": self.original, "imagePullPolicy": "IfNotPresent"}
+            {"name": name, "image": self.original, "imagePullPolicy": "IfNotPresent",
+             "env": [{"name": "PREFECT_API_URL", "value": "http://disabled-prefect.invalid/api"}]}
             for name in ("ops-service", "ops-sync")
         ]
         self.calls = []
@@ -272,6 +274,8 @@ class OpsSyncDevTests(unittest.TestCase):
     def execute(self, command, **kwargs):
         command = [str(item) for item in command]
         self.calls.append(command)
+        if command[:2] == ["docker", "version"]:
+            return "linux/amd64"
         if command[0] in {"docker", "kind"}:
             return ""
         if "get" in command:
@@ -300,6 +304,54 @@ class OpsSyncDevTests(unittest.TestCase):
 
     def sync(self):
         return dev.sync_service(self.state, self.state, self.settings, "ops-service")
+
+    def test_connected_runtime_cannot_build_or_restore_through_watcher(self):
+        self.sync()
+        before = (self.state / "dev-images.json").read_text()
+        self.containers[0]["env"][0]["value"] = "http://ops-compose-prefect:4200/api"
+        self.calls.clear()
+        with self.assertRaisesRegex(ValueError, "ops_runtime.py"):
+            self.sync()  # Even the unchanged-source shortcut must not bypass this guard.
+        with self.assertRaisesRegex(ValueError, "ops_runtime.py"):
+            dev.restore(self.state, self.settings, ("ops-service",))
+        self.assertEqual((self.state / "dev-images.json").read_text(), before)
+        self.assertFalse(any("build" in call or "set" in call for call in self.calls))
+
+    def test_activation_record_blocks_even_if_prefect_appears_disabled(self):
+        (self.state / "ops-activation.json").write_text("{}")
+        with self.assertRaisesRegex(ValueError, "ops_runtime.py"):
+            self.sync()
+        self.assertFalse(any("build" in call or "set" in call for call in self.calls))
+        self.assertFalse((self.state / "dev-images.json").exists())
+
+    def test_connection_enabled_during_build_stops_before_image_change_or_ledger(self):
+        def activated(state):
+            self.containers[1]["env"][0]["value"] = "http://ops-compose-prefect:4200/api"
+            return self.settings
+
+        with patch("dev.load_settings", side_effect=activated), self.assertRaisesRegex(ValueError, "ops_runtime.py"):
+            self.sync()
+        self.assertFalse(any("set" in call for call in self.calls))
+        self.assertEqual({item["image"] for item in self.containers}, {self.original})
+        self.assertFalse((self.state / "dev-images.json").exists())
+
+    def test_watch_all_rejects_connected_ops_before_updating_other_services(self):
+        self.containers[0]["env"][0]["value"] = "http://ops-compose-prefect:4200/api"
+        with patch("dev.sync_service") as sync, self.assertRaisesRegex(ValueError, "ops_runtime.py"):
+            dev.watch(self.state, self.state, self.settings, ("core-service", "ops-service"))
+        sync.assert_not_called()
+
+    def test_once_all_rejects_connected_ops_before_updating_other_services(self):
+        self.containers[0]["env"][0]["value"] = "http://ops-compose-prefect:4200/api"
+        with (
+            patch("sys.argv", ["dev.py", "--once", "--state-dir", str(self.state)]),
+            patch("dev.sys.platform", "linux"),
+            patch("sys.stderr", new_callable=io.StringIO) as output,
+            patch("dev.sync_service") as sync,
+        ):
+            self.assertEqual(dev.main(), 1)
+        self.assertIn("ops_runtime.py", output.getvalue())
+        sync.assert_not_called()
 
     def test_update_and_restore_change_both_images_in_one_mutation(self):
         self.assertTrue(self.sync())

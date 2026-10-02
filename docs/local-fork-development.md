@@ -184,6 +184,19 @@ python -B infrastructure/gitops/scripts/dev.py --watch --service ai-service
 python -B infrastructure/gitops/scripts/dev.py --once --service core-service
 ```
 
+**Compose 실행기에 연결한 Ops는 전용 갱신 경로를 사용합니다.** `ops-activation.json`이 있거나
+실제 Ops 컨테이너의 `PREFECT_API_URL`이 명시적인 초기화용 비활성 주소가 아니면 `dev.py`의
+Ops 빌드·교체·복원을 차단합니다. URL 누락·Secret 참조·중복 설정도 연결 상태 미확인으로 차단합니다.
+`--once --service all`과 `--watch --service all`은 다른 서비스를 갱신하기 전에 이 조건을 확인합니다.
+이 환경에서 Core·Catalog·AI를 개발할 때는 해당 `--service`를 명시합니다.
+
+초기화용 `fork_cluster.py up`도 활성화 기록 또는 기존 Deployment의 연결 상태를 확인해 같은 우회를
+막습니다. 기록 파일을 삭제해도 실제 연결 설정이 남아 있으면 허용하지 않습니다. 연결된 Ops의 갱신은
+[Ops 갱신 절차](../infrastructure/gitops/docs/ops-runtime.md)에 따라 `ops_runtime.py --preflight`와
+명시적인 `--ops-image` 경로로 진행합니다. 이 경로에서 실행기 release 일치·진행 중 작업·migration·
+실행 후 런타임 상태를 확인합니다. 기존 `dev-images.json`에 Ops 복원 기록이 남은 상태에서 연결이
+활성화됐다면 자동 복원하지 말고 현재 이미지·연결·스키마를 먼저 확인해야 합니다.
+
 처음에는 선택한 서비스의 **현재 작업 파일**로 이미지를 빌드합니다. 그다음부터 기본 2초 간격으로
 파일 내용의 변화를 확인하고, 변경된 서비스만 순서대로 다시 빌드합니다. 빌드 중 여러 번 저장한 내용은
 다음 검사에서 최신 상태로 모아 반영합니다. Java 컴파일·의존성 설치에는 수 분이 걸릴 수 있으므로
