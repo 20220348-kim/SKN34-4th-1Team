@@ -24,7 +24,7 @@ import uuid
 
 import yaml
 
-from check_msa import ROOT, REPOSITORY_ROOT, SERVICES, NAMESPACE, CHART_PATH, policy_errors
+from check_msa import ROOT, REPOSITORY_ROOT, SERVICES, NAMESPACE, policy_errors
 from check_portfolio import free_runtime_errors
 from gitops_msa import ARGO_INSTALL, ARGO_INSTALL_SHA256
 from portfolio_cluster import RUNTIME_SECRETS, read_token, pull_secret, runtime_secrets, run
@@ -80,16 +80,16 @@ def commands(state, settings):
     return kube, kube + ["-n", NAMESPACE], kube + ["-n", "argocd"]
 
 
-def verify_context(kube, settings, *, owner=True):
-    config = json.loads(run(kube + ["config", "view", "--minify", "-o", "json"], capture=True))
+def verify_context(kube, settings, *, owner=True, timeout=600):
+    config = json.loads(run(kube + ["config", "view", "--minify", "-o", "json"], capture=True, timeout=timeout))
     server = config["clusters"][0]["cluster"]["server"]
     if not re.fullmatch(r"https://127\.0\.0\.1:[0-9]+", server):
         raise ValueError("Only a dedicated loopback kind cluster is allowed")
-    nodes = json.loads(run(kube + ["get", "nodes", "-o", "json"], capture=True))["items"]
+    nodes = json.loads(run(kube + ["get", "nodes", "-o", "json"], capture=True, timeout=timeout))["items"]
     if [item["metadata"]["name"] for item in nodes] != [settings["cluster"] + "-control-plane"]:
         raise ValueError("Unexpected cluster nodes: refusing credentials and mutations")
     if owner:
-        marker = json.loads(run(kube + ["-n", "kube-system", "get", "configmap", "govbiz-owner", "-o", "json"], capture=True))
+        marker = json.loads(run(kube + ["-n", "kube-system", "get", "configmap", "govbiz-owner", "-o", "json"], capture=True, timeout=timeout))
         if marker.get("data") != {"repository": settings["repository"], "stateId": settings["stateId"]}:
             raise ValueError("Cluster ownership marker does not match this checkout's initialized state")
 
@@ -186,10 +186,10 @@ def doctor(args, settings):
     for executable in ("docker", "kubectl", args.kind, args.helm):
         if not shutil.which(executable):
             raise ValueError("Missing tool: " + executable)
-    docker_platform = run(["docker", "version", "--format", "{{.Server.Os}}/{{.Server.Arch}}"], capture=True).strip()
+    docker_platform = run(["docker", "version", "--format", "{{.Server.Os}}/{{.Server.Arch}}"], capture=True, timeout=15).strip()
     if docker_platform != settings["platform"]:
         raise ValueError("Current published/tested images require Docker linux/amd64; ARM emulation is not silently enabled")
-    if "v0.33.0" not in run([args.kind, "version"], capture=True):
+    if "v0.33.0" not in run([args.kind, "version"], capture=True, timeout=15):
         raise ValueError("Use kind v0.33.0 (pinned node image in kind/local.yaml)")
     print("PASS: tools and Docker linux/amd64; registry authentication and Windows runtime still need actual verification")
 
@@ -556,7 +556,10 @@ def main():
     parser.add_argument("--helm", default="helm")
     parser.add_argument("--core-port", type=int, help="web only: Core loopback port (default: 18080)")
     parser.add_argument("--ops-port", type=int, help="web only: Ops loopback port (default: 18001)")
+    parser.add_argument("--json", dest="json_output", action="store_true", help="status only: read-only deployment snapshot; exit 1 if rollout or image alignment is incomplete")
     args = parser.parse_args()
+    if args.json_output and args.action != "status":
+        parser.error("--json is only supported by status")
     if args.action != "web" and (args.core_port is not None or args.ops_port is not None):
         parser.error("--core-port and --ops-port are only supported by web")
     core_port = 18080 if args.core_port is None else args.core_port
@@ -599,10 +602,19 @@ def main():
             credentials(args, state, settings)
         else:
             kube, nk, ak = commands(state, settings)
-            verify_context(kube, settings)
+            if args.action == "status":
+                verify_context(kube, settings, timeout=15)
+            else:
+                verify_context(kube, settings)
             if args.action == "web":
                 from fork_web import serve
                 serve(nk, core_port=core_port, ops_port=ops_port)
+            elif args.json_output:
+                from cluster_status import snapshot
+                report = snapshot(state, settings, kube, nk, ak)
+                print(json.dumps(report, indent=2))
+                if not report["workloads_ready"] or not report["baseline_matches"]:
+                    parser.exit(1)
             else:
                 print("Mode: " + settings["mode"] + "; repository: " + settings["repository"])
                 run(nk + ["get", "pods"])
@@ -611,6 +623,8 @@ def main():
                     print(app["metadata"]["name"], status.get("sync", {}).get("status", "Unknown"), status.get("health", {}).get("status", "Unknown"))
     except KeyboardInterrupt:
         print("Stopped local command; services and data were preserved.")
+    except subprocess.TimeoutExpired:
+        parser.exit(1, "Local tool timed out; inspect Docker/Kubernetes connectivity and current state before retrying.\n")
     except URLError:
         parser.exit(1, "Bootstrap stopped: registry/GitHub connection or authentication failed; no token value is logged.\n")
     except (ValueError, FileNotFoundError, KeyError, subprocess.CalledProcessError) as error:

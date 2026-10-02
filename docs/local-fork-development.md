@@ -92,6 +92,32 @@ python -B infrastructure/gitops/scripts/fork_cluster.py status
 CI·receipt 검증, Helm 검사, 실제 pull 권한 확인, Ops migration이 실패하면 후속 실행을 중단합니다.
 성공한 소스 SHA·발행 run·이미지는 로컬 `baseline.json`에 기록합니다. 이 초기화가 Argo 자동 배포를 켜지는 않습니다.
 
+### 실제 배포 이미지와 준비 상태 확인
+
+`status --json`은 전용 kubeconfig의 소유권을 확인한 뒤 Deployment·Pod·PVC·Argo 상태를 읽습니다.
+Docker·GHCR·모델 API는 호출하지 않으므로 Docker daemon 진단과 별도로 사용할 수 있습니다.
+
+```bash
+python -B infrastructure/gitops/scripts/fork_cluster.py status --json \
+  --state-dir /실제/개인/state/경로
+```
+
+- `services`에 등록 이미지, Deployment 이미지, Pod의 실제 `image_id`·재시작 횟수를 표시합니다.
+  관측 generation·updated/available replica·Pod Ready·컨테이너 Ready를 함께 검사합니다.
+- `workloads_ready`와 `baseline_matches`를 구분합니다. Pod 누락·갱신 중·API/sync 이미지 차이 또는
+  baseline 누락은 성공으로 처리하지 않으며 JSON 출력 후 종료 코드 1을 반환합니다.
+- `checkout_sha`는 **진단 도구를 실행한 checkout**의 커밋입니다. WSL state가 다른 폴더에 있어도
+  그 폴더의 커밋이나 이미지 빌드 소스로 바꿔 표시하지 않습니다. `checkout_dirty=null`은 Git 조회
+  실패·시간 초과로 미확인이라는 뜻이며 깨끗한 작업 폴더가 아닙니다.
+- 이미지 문자열 일치는 소스 증명이 아닙니다. `image_source_verified`, `application_paths_verified`,
+  `backup_verified`는 false입니다. 최신 기능 반영·로그인·업무 처리·백업 복원은 별도 확인합니다.
+- Secret 값·컨테이너 환경변수·kubeconfig 인증값은 출력하지 않습니다. 자료나 리소스를 수정하지 않으며,
+  `argocd.application_crd_present=false`는 Argo Application을 조회할 수 없는 환경임을 표시합니다.
+
+이 보고서는 수집 시점의 상태입니다. 배포 중 여러 조회 사이에 상태가 바뀔 수 있으므로 배포 승인서로
+사용하지 않습니다. Kubernetes 조회는 명령당 15초, Git 조회는 10초로 제한하며 실패를 정상으로 숨기지 않습니다.
+`doctor`도 Docker·kind 조회를 각각 15초로 제한합니다. Docker timeout이 Kubernetes 중단을 뜻하지는 않습니다.
+
 GHCR 없이 로컬 이미지로만 검증하려면 [로컬 이미지 빌드 도구](../infrastructure/scripts/build-msa-images.py)의
 새 이미지 manifest를 `up --local-images /절대경로/images.json`으로 전달할 수 있습니다.
 이 경로의 성공을 비공개 GHCR 인증·pull 성공이라고 보지는 않습니다.
