@@ -3,6 +3,7 @@
 import copy
 import importlib.util
 import json
+from hashlib import sha256
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -114,6 +115,37 @@ def test_rag_smoke_preserves_provenance_and_eligible_case_denominators(rag_run):
     assert evidence["coverage"]["answerCaseCount"] == 3
     assert evidence["reference_source"] == "ai-authored-not-human-reviewed"
     assert evidence["baseline_eligible"] is False and evidence["live_execution_performed"] is False
+
+
+def test_rag_material_http_smoke_checks_source_hashes_and_failure_contract(rag_run):
+    rag_run["id"] = "test-run"
+    report = rag_run["summary"]
+    row = report["cases"][0]
+    saved = {"answer": "stored answer", "failure": None, "trace_id": None,
+             "retrieved_chunk_ids": row["retrievedChunkIds"], "cited_chunk_ids": row["citedChunkIds"]}
+    material = {
+        "evaluation_scope": report["scope"], "baseline_eligible": False,
+        "reference_source": report["referenceSource"], "fixture_sha256": report["fixtureSha256"],
+        **{f"{name}_{field}": report[key] for name in ("candidate", "reference")
+           for field, key in (("capture_sha256", "captureSha256"), ("measurement_kind", "measurementKind"))},
+        "cases": [{"case_id": case["caseId"], "content": "고정 원문", "content_sha256": sha256("고정 원문".encode()).hexdigest(),
+                   **{name: {**saved, "retrieved_chunk_ids": case["retrievedChunkIds"], "cited_chunk_ids": case["citedChunkIds"]}
+                      for name in ("candidate", "reference")}} for case in report["cases"]],
+    }
+    def request_for(value, status=200):
+        stamp = sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        return Mock(return_value=(status, json.dumps({**value, "material_sha256": stamp}).encode(), {"Cache-Control": "no-store"}))
+    request = request_for(material)
+    assert smoke.verify_rag_material(request, rag_run)["case_count"] == 3
+    request.assert_called_once_with("/api/v1/ops/evaluations/test-run/rag-material")
+    for key, value in (("candidate_capture_sha256", "0" * 64), ("baseline_eligible", True), ("reference_source", "human-reviewed")):
+        with pytest.raises(AssertionError):
+            smoke.verify_rag_material(request_for({**material, key: value}), rag_run)
+    with pytest.raises(AssertionError):
+        smoke.verify_rag_material(request_for(material, 503), rag_run)
+    material["cases"][0]["candidate"]["answer"] = None
+    with pytest.raises(AssertionError):
+        smoke.verify_rag_material(request_for(material), rag_run)
 
 
 @pytest.mark.parametrize("field,value", [

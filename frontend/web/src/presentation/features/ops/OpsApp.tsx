@@ -9,6 +9,7 @@ import { readPendingEvaluation, storePendingEvaluation, clearPendingEvaluation }
 import type { EvaluationPage, EvaluationRun, OpsSession, EvaluationSubmission } from '../../../data/ops/opsApi'
 import { workspacePageStyles as styles, workspaceTagClassName } from '../../shared/workspace/WorkspacePage.styles'
 import { RagComparisonResult } from './RagComparisonResult'
+import { RagMaterialPanel } from './RagMaterialPanel'
 import { EvaluationReviewPanel } from './EvaluationReviewPanel'
 import { BudgetOverview, RunBudgetPanel } from './BudgetPanel'
 import { WorkspacePageHeader } from '../../shared/workspace/WorkspacePageHeader'
@@ -359,6 +360,7 @@ function EvaluationDetail({ onExpired, onReviewChanged }: { onExpired: () => voi
         ].map(([label, value]) => <div className="rounded-xl bg-[#f3f7f5] p-4" key={label}><p className="text-xs text-sample-muted">{label}</p><strong className="mt-3 block text-2xl">{value}</strong></div>)}</div><p className="text-xs leading-5 text-sample-muted">점수 범위는 0–1입니다. AI 작성 참조 자료에 대한 평가이며 의미 충실도는 미측정입니다. 완료 상태는 품질 합격을 뜻하지 않습니다.</p></section>}
         {run.status === 'COMPLETED' && (run.comparison ? <ComparisonResult comparison={run.comparison} /> : <p className="text-sm text-sample-muted">이전 실행에는 비교 상세가 없습니다. 새 평가를 실행하면 기준·후보 차이를 확인할 수 있습니다.</p>)}
         {run.status === 'COMPLETED' && run.evaluation_scope === 'fixed-answer-context-only' && <EvaluationReviewPanel runId={run.id} onExpired={onExpired} onChanged={onReviewChanged} />}
+        {run.status === 'COMPLETED' && run.evaluation_scope === 'source-chunks-retrieval-answer' && <RagMaterialPanel runId={run.id} onExpired={onExpired} />}
         <section className={styles.card}><h2 className={styles.cardTitle}>상세 기록과 보고서</h2><div className="flex flex-wrap gap-3">
           {run.report_url && <a className={styles.primaryButton} href={run.report_url} target="_blank" rel="noopener noreferrer">Evidently 보고서</a>}
           {run.trace_links.map((trace) => <a key={trace.case_id} className={styles.secondaryButton} href={trace.url} target="_blank" rel="noopener noreferrer">Langfuse {trace.case_id} 추적·점수</a>)}

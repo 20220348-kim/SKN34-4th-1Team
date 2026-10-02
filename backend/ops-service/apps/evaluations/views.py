@@ -20,6 +20,7 @@ from .budget import BudgetUnavailable
 from .catalog import DATASETS, public_datasets, selection
 from .models import EvaluationRun
 from .quality import assess, save_fixture_review
+from .rag_material import read_material as read_rag_material
 from .recovery import recovery_state, submit_recovery
 from .reviews import (
     baseline_choices,
@@ -254,6 +255,17 @@ def api_run_detail(request, run_id):
     run = get_object_or_404(EvaluationRun.objects.select_related("requested_by"), pk=run_id)
     sync_run(run)
     return Response({**run_data(run, request.user.pk), "postprocessing": recovery_state(run)})
+
+
+@never_cache
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def api_rag_material(request, run_id):
+    run = get_object_or_404(EvaluationRun, pk=run_id)
+    try:
+        return Response(read_rag_material(run))
+    except ResultsUnavailable:
+        return Response({"code": "RESULTS_UNAVAILABLE"}, status=503)
 
 
 @never_cache

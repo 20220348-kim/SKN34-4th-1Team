@@ -102,7 +102,6 @@ def score_payloads(value, spec, settings):
                 "value": float(measured),
                 "data_type": "NUMERIC",
                 "environment": settings.environment,
-                "session_id": value["evaluation_run_id"],
                 "metadata": {
                     "scope": rag_replay.SCOPE,
                     "evaluation_run_id": value["evaluation_run_id"],
@@ -118,6 +117,9 @@ def score_payloads(value, spec, settings):
             }
             if case["traceId"]:
                 payload["trace_id"] = case["traceId"]
+            else:
+                # Langfuse 점수는 trace 또는 session 중 한 대상에만 연결한다.
+                payload["session_id"] = value["evaluation_run_id"]
             payloads.append(payload)
     return payloads
 

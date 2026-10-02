@@ -689,6 +689,12 @@ LLMOps CI는 같은 checkout의 v1 9사례·v2 1사례를 등록한 뒤 이미�
 `integration-stub-replay`, `baselineEligible=false`, 의미적 사실성 미측정, 신규 모델 호출 0 상태를 유지합니다.
 현재 모델의 품질 평가, RAG live 접수·Prefect 예산 연결, 사람 검토·기준 지정 완료를 뜻하지 않습니다.
 
+RAG 점수는 원본 trace가 있으면 `trace_id`만, 없으면 재평가 실행 ID의 `session_id`만 지정합니다.
+두 대상을 함께 전송하면 Langfuse가 HTTP 400으로 거절하므로 동시에 보내지 않습니다. 평가 실행 ID는
+양쪽 모두 metadata에 보존합니다. 이 수정은 실행기 해시와 release에도 반영했으며 기존 점수 ID 계산은 유지합니다.
+완료된 실행은 [RAG 사례 검토 자료](../../backend/ops-service/README.md#rag-사례-검토-자료-조회)에서
+원문·검색·인용·후보/비교 답변을 읽을 수 있습니다. 조회만으로 사람 검토 기록이나 품질 판정이 생기지 않습니다.
+
 ## 공식 HTML 전체 경로 재실행
 
 [Core 통합 테스트](../../backend/core-service/src/test/kotlin/ai/govbiz/core/supportprogram/service/evidence/SupportProgramEvidenceIntegrationTest.kt)는

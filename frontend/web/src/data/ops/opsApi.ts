@@ -60,6 +60,28 @@ const ragComparisonSchema = z.object({
   current: ragReportSchema, reference: ragReportSchema,
 })
 export type RagComparison = z.infer<typeof ragComparisonSchema>
+const ragMaterialObservationSchema = z.object({
+  answer: z.string().nullable(), answer_status: z.enum(['ANSWERED', 'INSUFFICIENT_EVIDENCE']).nullable(),
+  retrieved_chunk_ids: z.array(z.string()).nullable(), context_chunk_ids: z.array(z.string()).nullable(),
+  cited_chunk_ids: z.array(z.string()).nullable(), trace_id: z.string().nullable(),
+  failure: ragReportSchema.shape.cases.element.shape.failure,
+})
+const ragMaterialSchema = z.object({
+  schema_version: z.literal(1), evaluation_scope: z.literal('source-chunks-retrieval-answer'),
+  reference_source: z.literal('ai-authored-not-human-reviewed'), baseline_eligible: z.literal(false),
+  material_sha256: z.string().regex(/^[a-f0-9]{64}$/), fixture_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  candidate_capture_sha256: z.string().regex(/^[a-f0-9]{64}$/), reference_capture_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  candidate_measurement_kind: ragReportSchema.shape.measurementKind, reference_measurement_kind: ragReportSchema.shape.measurementKind,
+  cases: z.array(z.object({
+    case_id: z.string(), question: z.string(), document_id: z.string(), source_url: z.string(), content: z.string(),
+    content_sha256: z.string().regex(/^[a-f0-9]{64}$/), chunk_version: z.string(),
+    chunks: z.array(z.object({ id: z.string(), order: z.number().int().nonnegative(), text: z.string() })),
+    expected_status: z.enum(['ANSWERED', 'INSUFFICIENT_EVIDENCE']),
+    expected_evidence: z.array(z.object({ chunk_id: z.string(), quote: z.string() })),
+    candidate: ragMaterialObservationSchema, reference: ragMaterialObservationSchema,
+  })).min(1),
+})
+export type RagMaterial = z.infer<typeof ragMaterialSchema>
 const comparisonSchema = z.discriminatedUnion('schema_version', [fixedComparisonSchema, ragComparisonSchema])
 const runSchema = z.object({
   evaluation_scope: z.string().nullable().default(null),
@@ -303,6 +325,7 @@ async function request<T>(path: string, schema: z.ZodType<T>, options: RequestIn
       ? '누적 평가 한도가 부족하거나 설정되지 않아 접수하지 않았습니다. 운영자에게 예약·미확인 사용량과 한도를 확인해 주세요.'
       : error?.code === 'CANCEL_FORBIDDEN' ? '평가를 요청한 계정만 취소할 수 있습니다.'
       : error?.code === 'CANCEL_CONFLICT' ? '이미 종료된 평가입니다. 상태를 다시 확인하세요.'
+      : error?.code === 'RESULTS_UNAVAILABLE' ? '저장된 검토 자료와 평가 결과의 무결성을 확인할 수 없습니다. 운영자에게 확인해 주세요.'
       : response.status === 401 ? '로그인이 만료되었습니다.'
       : response.status === 403 ? '관리자 계정만 운영 화면을 이용할 수 있습니다.'
       : response.status === 503 ? '관리자 인증 또는 운영 서버에 연결할 수 없습니다.'
@@ -336,6 +359,7 @@ async function post<T>(path: string, data: unknown, schema: z.ZodType<T>, dispat
 export const listEvaluations = (page: number, signal?: AbortSignal) => request(`/evaluations?page=${page}`, pageSchema, { signal })
 export const getEvaluation = (id: string, signal?: AbortSignal) => request(`/evaluations/${encodeURIComponent(id)}`, runSchema, { signal })
 export const getEvaluationReview = (id: string, signal?: AbortSignal) => request(`/evaluations/${encodeURIComponent(id)}/review`, reviewSchema, { signal })
+export const getRagMaterial = (id: string, signal?: AbortSignal) => request(`/evaluations/${encodeURIComponent(id)}/rag-material`, ragMaterialSchema, { signal })
 export const assessEvaluationQuality = (id: string, inputSha256: string) => post(`/evaluations/${encodeURIComponent(id)}/quality`, { input_sha256: inputSha256 }, reviewSchema)
 export const saveFixtureReview = (id: string, data: { decision: 'APPROVED' | 'CHANGES_REQUESTED' | 'DEFERRED'; comment: string; fixture_sha256: string; case_ids: string[]; rubric_version: string; fixture_version: number }) => post(`/evaluations/${encodeURIComponent(id)}/fixture-review`, data, reviewSchema)
 export const saveEvaluationReview = (id: string, decision: 'APPROVED' | 'CHANGES_REQUESTED', comment: string, stamp: ReviewStamp) => post(`/evaluations/${encodeURIComponent(id)}/review`, { decision, comment, ...stamp }, reviewSchema)

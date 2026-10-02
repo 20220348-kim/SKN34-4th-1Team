@@ -1,4 +1,4 @@
-# LLMOps 개발 현황과 후속 전략 — Core 캡처의 저장 재평가 등록
+# LLMOps 개발 현황과 후속 전략 — RAG 검토 자료 조회와 점수 등록 회귀 수정
 
 [문서 목록](README.md) · [도입·구현 이력](langfuse-adoption-strategy.md) · [Ops API](../backend/ops-service/README.md) · [실행 안내](../infrastructure/llmops/README.md)
 
@@ -23,12 +23,56 @@
 | 영역 | 코드 기준 진행 상태 | 아직 완료로 판단할 수 없는 범위 |
 |---|---|---|
 | React·Django 운영 기능 | 기존 Core 관리자 로그인, 고정 근거 및 RAG 저장 캡처 접수·조회·비교·동기화·후처리 복구, 실제 Core 캡처의 배포 목록 등록 구현 | 신규 등록 자료의 최신 SHA 서버 CI·개인 환경 적용, RAG live·사람 검토·품질 정책 연결은 후속 |
-| 자료·응답 검토와 품질 정책 | 고정 근거의 사람 검토, 판정 이력, 기준 지정·철회·오래된 합격 차단 구현 | 현재 모델의 유효한 사람 검토 기준은 이번 점검에서 미확인; 전체 RAG 정책 없음 |
+| 자료·응답 검토와 품질 정책 | 고정 근거의 사람 검토·판정·기준 관리, RAG 원문·검색·인용·후보/비교 답변의 읽기 전용 검토 자료 구현 | RAG 검토 저장·품질 정책·기준 지정 없음; 현재 모델의 유효한 사람 검토 기준은 미확인 |
 | 예산·취소 | 고정 근거 live의 누적 장부·입력 계산, 혼합 예약·AI HTTP 가드·증거 보정 및 실제 Core 캡처의 Ops HTTP+MySQL 테스트 예약 구현 | RAG 운영 접수·Prefect 연결·변경 SHA의 새 Core 수집부터 전체 CI·금액/기간 한도·runner→Kubernetes 검증 |
 | 관측·인프라 복구 | Core→AI 상세 RAG 추적, Prefect·sync·artifact·컨테이너 교체·보고서 변조 검증 구현 | 최신 SHA의 전체 통합 CI, 개인/운영 환경 적용·복원 완료는 별도 증거 필요 |
 | RAG 오프라인 평가 | v1 계산기·v2 대역 출처와 Core 다중 청크 수집 10사례·예산 준비 명세, 합성 및 실제 Core 저장 캡처의 등록·기존 재평가 경로 연결 | 최신 SHA의 Core→Ops→Prefect CI, 공식 HTML 수집 연결, 사람 검토 계약과 Ops 품질·기준 지정 |
 
-### 이번 후속 구현 — 실제 Core 캡처의 배포 목록 등록·무료 재평가
+### 이번 후속 구현 — RAG 검토 자료 조회·점수 연결 대상 수정
+
+`skn-117 / e77c48a` 이후에는 다음 두 문제를 처리했다.
+
+1. RAG 상세 화면의 지표·청크 ID만으로 원문과 답변을 검토하기 어려워, 관리자 전용 읽기 API와
+   React **검토 자료 보기**를 추가했다. 접수 당시 원본 해시와 완료 보고서를 검증한 뒤 원문·청크·
+   후보/비교 답변·검색 순서·답변 입력·인용·원본 실패·AI 작성 참조 조건을 제공한다.
+   미확인과 실제 빈 인용을 구분하며 다른 실행으로 이동하면 이전 요청과 자료를 폐기한다.
+2. 직전 SHA는 GovBiz·Ops·Catalog·Infra CI가 성공했지만
+   [LLMOps CI](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/36987597223)는
+   실제 Core 재평가에서 `FAILED / EVALUATION_FAILED`로 종료됐다. 조사 중 trace가 있는 RAG 점수에도
+   `session_id`를 함께 보내는 결함을 확인했고, 로컬 Langfuse에서도 이 요청의 HTTP 400을 재현했다.
+   trace가 있으면 trace만, 없으면 session만 지정하도록 수정하고 실행기 release를 갱신했다.
+   이는 [Langfuse 점수 대상 규약](https://github.com/langfuse/langfuse/issues/12812)의 상호 배타 조건을 따른다.
+
+조회 호출 흐름은 **React → Core 관리자 세션 검증 → Django 완료 결과·접수 명세 검증 →
+고정 자료/복구 artifact → React 사례 대조**다. 조회에는 Prefect·모델 호출·검토 이력 쓰기가 없다.
+새 migration·서비스·production 의존성도 없다. `material_sha256`은 표시 자료의 무결성 정보이며
+승인으로 사용하지 않는다. RAG 사람 검토 저장·품질 합격·기준 지정은 아직 구현하지 않았다.
+
+로컬 검증:
+
+- Ops 조회·인증·변조 차단·복구 입력과 기존 범위 회귀 **14건**.
+- 실제 RAG 계산기/실행기·점수 대상·smoke·등록 회귀 **68건**.
+- Web 기존 Ops 화면 **57건**, 신규 자료 화면 **6건**, 타입 검사와 변경 파일 Oxlint.
+- Python 3.12의 기존 `.venv/bin/python`과 `.venv/bin/ruff`를 사용했다. `uv`는 PATH에 없고
+  로컬 Ops 환경에 MySQLdb가 없어 위 14건은 DB 접근을 금지하는 `SimpleTestCase`를 dummy DB backend로 실행했다.
+  MySQL 통합 검증 통과로 간주하지 않는다. Node 24.19.0·pnpm 11.22.0에서 루트 frozen-lockfile 설치를
+  확인했으며, sandbox의 global virtual store 설정 차이는 실행 옵션으로 기존 설치 값 `false`에 맞췄다.
+- 수정된 실제 등록 함수로 로컬 Langfuse의 trace/session 임시 점수 각 1건을 저장·재조회했다.
+  모델 호출은 0회이며 비동기 삭제 후 재조회로 임시 점수 잔여 **0건**을 확인했다.
+  새 실제 모델 평가나 현재 품질 측정이 아니다.
+- 과거 `skn-112` Core 수집 artifact도 현재 계산기와 새 조회 변환으로 확인했다. v1 9사례의 원본 실패 4건·
+  답변 5건, v2 1사례의 답변 1건이 보존됐다. 원본 파일·운영 DB를 변경하거나 새 모델을 호출하지 않았다.
+
+CI의 기존 합성/Core 재평가 smoke는 새 검토 자료 HTTP 응답·해시·원본 실패와 로그아웃 후 접근 거절도
+검사한다. Ops CI는 전체 Django/MySQL 테스트, GovBiz CI는 평가 도구·Web 전체 검증을 수행한다.
+이번 수정의 새 SHA 전체 CI, 관리자 브라우저부터 이어지는 실제 새 API 경로, 개인 환경의 Ops/Web 갱신은
+아직 검증하지 않았다. 직전 실패의 해소 완료는 새 필수 CI가 실제 통과한 뒤 판단한다.
+
+다음 순서는 **수정 SHA 필수 CI 확인 → RAG 검토 저장 계약(자료 해시·검토자·근거·버전 충돌)
+→ RAG 전용 품질 정책 → 승인 자료·예산 안에서 실제 모델 기준 확보**다. 무료 대역·합성 결과를
+현재 모델의 검토된 기준으로 승격하지 않으며, 유료 RAG live와 정기 실행도 계속 후속 범위다.
+
+### 이전 구현 — skn-117 실제 Core 캡처의 배포 목록 등록·무료 재평가
 
 `skn-115 / 1c5f1ae` 이후에는 검증된 Core 수집을 기존 저장 캡처 접수에 등록하는 명령을 추가했다.
 `register_core_rag.py`는 서버가 사용하지 않는 배포 준비 checkout에 원본을 바이트 그대로 복사하고,
