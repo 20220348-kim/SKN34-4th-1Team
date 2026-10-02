@@ -56,6 +56,9 @@ def test_register_preserves_bytes_and_existing_catalog_and_pins_free_replay(
     assert catalog[:-1] == before
     entry = catalog[-1]
     assert entry["id"] == receipt["dataset_id"]
+    assert entry["fixture"] == f"runs/{entry['id']}/source/fixture.json"
+    assert entry["captures"][0]["path"] == f"runs/{entry['id']}/source/capture.json"
+    assert not (repository / execution_spec.OPS / ".core-rag-registration.lock").exists()
     for name in ("fixture", "capture", "wire"):
         assert (receipt_path.parent / "source" / f"{name}.json").read_bytes() == (
             completed_capture / f"{name}.json"
@@ -87,6 +90,8 @@ def test_failed_registration_preserves_catalog_release_and_no_partial_bundle(
         repository / execution_spec.OPS / name
         for name in ("capture_catalog.json", "execution_release.json")
     ]
+    runs = repository / execution_spec.EVIDENCE / "runs"
+    original_bundles = {path: path.read_bytes() for path in runs.rglob("*") if path.is_file()}
     if failure == "partial":
         path = completed_capture.parent / "integration.json"
         data = json.loads(path.read_bytes())
@@ -125,7 +130,9 @@ def test_failed_registration_preserves_catalog_release_and_no_partial_bundle(
     with pytest.raises((ValueError, OSError)):
         registration.register(completed_capture, repository)
     assert [p.read_bytes() for p in paths] == before
-    assert list((repository / execution_spec.EVIDENCE / "runs").glob("core-rag-*")) == []
+    assert {
+        path: path.read_bytes() for path in runs.rglob("*") if path.is_file()
+    } == original_bundles
     assert not (repository / execution_spec.OPS / ".core-rag-registration.lock").exists()
 
 

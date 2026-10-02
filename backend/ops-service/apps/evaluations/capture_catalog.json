@@ -59,5 +59,47 @@
         "path": "rag-synthetic-capture.json"
       }
     ]
+  },
+  {
+    "id": "core-rag-20261002-v1",
+    "label": "전체 RAG · Core HTTP 대역 수집 · v1 9건",
+    "evaluation_scope": "source-chunks-retrieval-answer",
+    "fixture": "runs/core-rag-20261002/v1/fixture.json",
+    "fixture_sha256": "7ffe0db246720e6abcf0dc040ca3eede6ed83f7ab0320557102b4618043bcccf",
+    "case_ids": [
+      "ok",
+      "hit",
+      "miss",
+      "citation-miss",
+      "insufficient",
+      "fail",
+      "timeout",
+      "invalid-citation",
+      "search-fail"
+    ],
+    "captures": [
+      {
+        "id": "core-rag-capture-20261002-v1",
+        "label": "Core 통합 대역 · 2026-10-02 · v1",
+        "path": "runs/core-rag-20261002/v1/capture.json"
+      }
+    ]
+  },
+  {
+    "id": "core-rag-20261002-v2",
+    "label": "전체 RAG · Core HTTP 대역 수집 · v2 1건",
+    "evaluation_scope": "source-chunks-retrieval-answer",
+    "fixture": "runs/core-rag-20261002/v2/fixture.json",
+    "fixture_sha256": "6658af9ce46fc56afb319d161c64b8e5416685ab241bf0f8faebb16d4e20e465",
+    "case_ids": [
+      "ok"
+    ],
+    "captures": [
+      {
+        "id": "core-rag-capture-20261002-v2",
+        "label": "Core 통합 대역 · 2026-10-02 · v2",
+        "path": "runs/core-rag-20261002/v2/capture.json"
+      }
+    ]
   }
 ]

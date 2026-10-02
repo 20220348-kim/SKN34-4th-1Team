@@ -76,6 +76,11 @@ LLMOps CI는 기존 관리자 인증 smoke와 같은 환경에서 `ops_smoke.py 
 `ops_smoke.py --core-rag-replay <registration.json>`으로 기존 관리자·Prefect·artifact·sync 경로를 대조합니다.
 로컬 무료 보고서 검증과 최신 SHA의 실제 서버 CI를 구분하며, 개인 PC의 현재 목록·DB는 자동 변경하지 않습니다.
 
+실제 Core CI에서 저장한 **전체 RAG · Core HTTP 대역 수집 · v1 9건 / v2 1건**도 등록했습니다.
+`ops_smoke.py --core-snapshot-replay v1` 또는 `v2`로 기존 Prefect·artifact HTTP 경로를 확인합니다.
+v1의 원본 실패 4건을 보존하며 유료 예약·품질 기준 지정은 허용하지 않습니다.
+[출처·실행 방법](../../evaluation/support-program-evidence/README.md#등록된-core-캡처의-ops-재평가)을 따릅니다.
+
 ### 내부 혼합 RAG 예산 세션
 
 runner 빌드에는 `serve_flow.py`, `embedding_budget.py`, `rag_budget.py`를 함께 포함합니다.

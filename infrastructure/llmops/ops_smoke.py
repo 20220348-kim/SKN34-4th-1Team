@@ -122,6 +122,61 @@ def verify_core_rag_replay(run, registration):
     }
 
 
+def verify_core_snapshot_replay(run, version):
+    """재평가 완료와 원본 대역 실행의 실패를 구분하고 등록된 분모를 확인한다."""
+    assert version in {"v1", "v2"}
+    cases = (["ok", "hit", "miss", "citation-miss", "insufficient", "fail", "timeout",
+              "invalid-citation", "search-fail"] if version == "v1" else ["ok"])
+    failures = ({"fail": "answer", "timeout": "answer", "invalid-citation": "answer",
+                 "search-fail": "search"} if version == "v1" else {})
+    coverage = ({"retrievalCaseCount": 8, "answerCaseCount": 5, "traceCaseCount": 9,
+                 "failedCaseCount": 4} if version == "v1" else
+                {"retrievalCaseCount": 1, "answerCaseCount": 1, "traceCaseCount": 1,
+                 "failedCaseCount": 0})
+    metrics = ((6 / 7, 7, 8), (0.625, 4, 8), (1, 5, 9)) if version == "v1" else ((1, 1, 1),) * 3
+    comparison, summary, spec = run["comparison"], run["summary"], run["execution_spec"]
+    assert run["dataset_id"] == f"core-rag-20261002-{version}"
+    assert run["status"] == "COMPLETED" and run["execution_mode"] == "replay"
+    assert type(run["model_api_calls"]) is int and run["model_api_calls"] == 0
+    assert comparison["schema_version"] == 3 and comparison["comparison"] == "self-replay"
+    assert comparison["baseline_eligible"] is False
+    assert comparison["case_ids"] == spec["dataset"]["case_ids"] == cases
+    assert spec["evaluation_scope"] == comparison["scope"] == "source-chunks-retrieval-answer"
+    assert spec["model_operations"] == [] and spec["generation"] is None and not spec["live_config"]
+    assert summary == comparison["current"] == comparison["reference"]
+    assert summary["schemaVersion"] == "support-program-rag-report-v2"
+    assert summary["scope"] == spec["evaluation_scope"] and summary["caseCount"] == len(cases)
+    assert summary["fixtureSha256"] == spec["dataset"]["fixture_sha256"]
+    assert summary["captureSha256"] == spec["candidate_sha256"] == spec["reference_sha256"]
+    assert summary["measurementKind"] == "integration-stub-replay"
+    assert summary["execution"]["kind"] == "integration-stub"
+    assert type(summary["execution"]["paidModelApiCalls"]) is int
+    assert summary["execution"]["paidModelApiCalls"] == 0
+    assert summary["referenceSource"] == "ai-authored-not-human-reviewed"
+    assert summary["baselineEligible"] is False and summary["liveExecutionPerformed"] is False
+    assert summary["semanticFaithfulness"] is None and summary["semanticReviewRequired"] is True
+    assert summary["completed"] is (version == "v2") and summary["coverage"] == coverage
+    assert [case["caseId"] for case in summary["cases"]] == cases
+    for name, (value, measured, eligible) in zip(
+        ("retrievalRecallAtK", "answerCitationRecall", "answerStatusAccuracy"), metrics, strict=True
+    ):
+        assert summary["metrics"][name] == {
+            "value": value, "measuredCaseCount": measured, "eligibleCaseCount": eligible,
+        }
+    assert [link["case_id"] for link in run["trace_links"]] == cases
+    for case, link in zip(summary["cases"], run["trace_links"], strict=True):
+        expected = failures.get(case["caseId"])
+        assert case["failure"] == ({"stage": expected, "code": "EVIDENCE_UNAVAILABLE"} if expected else None)
+        assert case["traceId"] and link["url"].endswith("/traces/" + case["traceId"])
+    return {
+        "scope": summary["scope"], "measurement_kind": summary["measurementKind"],
+        "baseline_eligible": False, "live_execution_performed": False,
+        "reference_source": summary["referenceSource"], "case_ids": cases,
+        "coverage": coverage, "source_completed": summary["completed"],
+        "fixture_sha256": summary["fixtureSha256"], "capture_sha256": summary["captureSha256"],
+    }
+
+
 def verify_rag_material(request, run):
     status, raw, headers = request(f'/api/v1/ops/evaluations/{run["id"]}/rag-material')
     assert status == 200 and "no-store" in headers["Cache-Control"]
@@ -156,11 +211,12 @@ def main():
     mode.add_argument("--recover-source", type=UUID, help="무료 fixture가 만든 실패 실행을 복구")
     mode.add_argument("--rag-replay", action="store_true", help="합성 RAG 캡처 재계산과 출처·분모 확인")
     mode.add_argument("--core-rag-replay", type=Path, help="등록 명세 registration.json과 실제 Core 재평가 결과 대조")
+    mode.add_argument("--core-snapshot-replay", choices=["v1", "v2"], help="고정 저장 Core 캡처의 실패·출처·분모 확인")
     parser.add_argument("--storage-transport", choices=["filesystem", "http"], default="filesystem")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     registration = json.loads(args.core_rag_replay.read_bytes()) if args.core_rag_replay else None
-    is_rag = args.rag_replay or registration is not None
+    is_rag = args.rag_replay or registration is not None or args.core_snapshot_replay is not None
     base = args.base_url.rstrip("/")
     if urlsplit(base).hostname not in {"localhost", "127.0.0.1"}:
         parser.error("This smoke test requires a loopback web endpoint")
@@ -228,6 +284,11 @@ def main():
         payload.update(dataset_id="rag-synthetic-multichunk-v1",
                        candidate_capture_id="rag-synthetic-capture-v1",
                        reference_capture_id="rag-synthetic-capture-v1")
+    if args.core_snapshot_replay:
+        version = args.core_snapshot_replay
+        payload.update(dataset_id=f"core-rag-20261002-{version}",
+                       candidate_capture_id=f"core-rag-capture-20261002-{version}",
+                       reference_capture_id=f"core-rag-capture-20261002-{version}")
     if registration is not None:
         payload.update(dataset_id=registration["dataset_id"],
                        candidate_capture_id=registration["capture_id"],
@@ -266,6 +327,7 @@ def main():
         assert run["prefect_flow_run_id"] != source["prefect_flow_run_id"]
         assert wait_for_list_state(request, source_id, "FAILED")["prefect_flow_run_id"] == source["prefect_flow_run_id"]
     expected_count = (registration["report"]["caseCount"] if registration is not None
+                      else (9 if args.core_snapshot_replay == "v1" else 1) if args.core_snapshot_replay
                       else 3 if args.rag_replay else 1 if args.compare_captures else 6)
     assert run["summary"]["caseCount"] == expected_count
     comparison = run["comparison"]
@@ -280,6 +342,7 @@ def main():
         assert request("/api/v1/ops/evaluations", {**payload, "reference_capture_id": payload["candidate_capture_id"]})[0] == 409
     if is_rag:
         rag_evidence = (verify_core_rag_replay(run, registration) if registration is not None
+                        else verify_core_snapshot_replay(run, args.core_snapshot_replay) if args.core_snapshot_replay
                         else verify_rag_replay(run))
         rag_evidence["review_material"] = verify_rag_material(request, run)
     else:

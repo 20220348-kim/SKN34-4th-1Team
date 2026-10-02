@@ -120,6 +120,40 @@
       "capture_kinds": {
         "rag-synthetic-capture-v1": "synthetic"
       }
+    },
+    "core-rag-20261002-v1": {
+      "fixture_sha256": "7ffe0db246720e6abcf0dc040ca3eede6ed83f7ab0320557102b4618043bcccf",
+      "case_ids": [
+        "ok",
+        "hit",
+        "miss",
+        "citation-miss",
+        "insufficient",
+        "fail",
+        "timeout",
+        "invalid-citation",
+        "search-fail"
+      ],
+      "captures": {
+        "core-rag-capture-20261002-v1": "2db60bbfb44da990b42ec1a8def6f29fbd85e9646c4f73cc55f62b78710bb8c5"
+      },
+      "evaluation_scope": "source-chunks-retrieval-answer",
+      "capture_kinds": {
+        "core-rag-capture-20261002-v1": "integration-stub"
+      }
+    },
+    "core-rag-20261002-v2": {
+      "fixture_sha256": "6658af9ce46fc56afb319d161c64b8e5416685ab241bf0f8faebb16d4e20e465",
+      "case_ids": [
+        "ok"
+      ],
+      "captures": {
+        "core-rag-capture-20261002-v2": "2e81f9ac4cf5f89853242a43e221264d87f2fa45465f82b541e302b952e40a2d"
+      },
+      "evaluation_scope": "source-chunks-retrieval-answer",
+      "capture_kinds": {
+        "core-rag-capture-20261002-v2": "integration-stub"
+      }
     }
   }
 }

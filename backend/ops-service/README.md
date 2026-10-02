@@ -543,6 +543,12 @@ Ops는 결과의 명세·평가기·선택 사례·입력 해시를 확인한 �
 
 ### 평가 범위 계약
 
+`core-rag-20261002-v1`(9사례), `core-rag-20261002-v2`(1사례)를 저장 캡처 카탈로그에 등록했습니다.
+출처는 실제 Core CI의 모델 HTTP 대역이며 `integration-stub`로 명세에 고정합니다. 기존 관리자 화면의
+자료 선택과 Prefect 재평가를 사용하며 v1의 원본 실패 4건은 재평가 완료 후에도 유지합니다.
+유료 호출·예산 예약·live 프로필·품질 기준 지정은 허용하지 않습니다. 입력 해시·이미지 갱신·CI 확인은
+[등록 Core 캡처 안내](../../evaluation/support-program-evidence/README.md#등록된-core-캡처의-ops-재평가)를 따릅니다.
+
 새 실행 명세는 `schema_version=2`이며 자료별 `evaluation_scope`를 프로필 해시에 포함합니다.
 session의 `datasets[].evaluation_scope`와 실행 응답의 `evaluation_scope`로 접수 전후 범위를
 확인합니다. 고정 근거 답변은 `fixed-answer-context-only`, 위 무료 RAG 재평가는

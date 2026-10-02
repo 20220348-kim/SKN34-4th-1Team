@@ -20,16 +20,16 @@ DATASET = "rag-synthetic-multichunk-v1"
 CAPTURE = "rag-synthetic-capture-v1"
 
 
-def parameters(mode="replay", recovery=None):
+def parameters(mode="replay", recovery=None, *, dataset=DATASET, capture=CAPTURE):
     spec = make_spec(
-        read_release(), DATASET, mode, {}, CAPTURE, CAPTURE, recovery_config=recovery
+        read_release(), dataset, mode, {}, capture, capture, recovery_config=recovery
     )
     return {
         "request_id": str(uuid4()),
-        "dataset_id": DATASET,
+        "dataset_id": dataset,
         "execution_mode": mode,
-        "candidate_capture_id": CAPTURE,
-        "reference_capture_id": CAPTURE,
+        "candidate_capture_id": capture,
+        "reference_capture_id": capture,
         "execution_spec": spec,
         "execution_spec_sha256": digest(spec),
         "recovery_config": recovery,
@@ -169,6 +169,55 @@ def test_catalog_and_runner_reject_live_and_unpinned_rag_before_spending(runner)
     params.update(execution_spec=None, execution_spec_sha256=None)
     with pytest.raises(ValueError):
         ops_flow.evaluate_saved_capture.fn(**params)
+
+
+@pytest.mark.parametrize("version,failed,cases", [("v1", 4, 9), ("v2", 0, 1)])
+def test_registered_core_capture_replays_original_failures_and_trace_scores(
+    runner, version, failed, cases
+):
+    root, scores = runner
+    params = parameters(
+        dataset=f"core-rag-20261002-{version}",
+        capture=f"core-rag-capture-20261002-{version}",
+    )
+    manifest = ops_flow.evaluate_saved_capture.fn(**params)
+    folder = root / params["request_id"] / "evaluation"
+    result = rag_replay.read_result(
+        params["execution_spec"], params["execution_spec_sha256"], manifest,
+        (folder / "comparison.json").read_bytes(), (folder / "report.html").read_bytes(),
+    )
+    report = result[1]
+    assert manifest["status"] == "completed" and manifest["model_api_calls"] == 0
+    assert report["measurementKind"] == "integration-stub-replay"
+    assert report["coverage"]["failedCaseCount"] == failed
+    assert report["completed"] is (failed == 0)
+    assert report["caseCount"] == report["coverage"]["traceCaseCount"] == cases
+    assert report["baselineEligible"] is False and report["semanticFaithfulness"] is None
+    by_case = {case["caseId"]: case for case in report["cases"]}
+    for score in scores:
+        case = by_case[score["metadata"]["case_id"]]
+        assert score["trace_id"] == case["traceId"]
+        assert score["metadata"]["source_completed"] is (failed == 0)
+        assert score["metadata"]["measurement_kind"] == "integration-stub-replay"
+        assert score["metadata"]["model_api_calls"] == 0
+        if score["name"] == "ragSourceCaseFailed":
+            assert score["value"] == float(case["failure"] is not None)
+        elif case["failure"] is not None and score["name"] != "ragRetrievalRecallAtK":
+            pytest.fail("Unmeasured answers must not receive a quality score")
+    assert sum(s["value"] for s in scores if s["name"] == "ragSourceCaseFailed") == failed
+    assert len({s["id"] for s in scores}) == len(scores)
+
+
+def test_registered_core_snapshots_keep_original_ci_bytes():
+    folder = Path(ops_flow.__file__).parent / "runs/core-rag-20261002"
+    source = json.loads((folder / "provenance.json").read_bytes())
+    assert source["commit"] == "461e79e13c9d8a87d7aa1fa5d59da64833762600"
+    assert source["paidModelApiCalls"] == 0 and source["baselineEligible"] is False
+    assert set(source["files"]) == {
+        f"{v}/{name}.json" for v in ("v1", "v2") for name in ("fixture", "capture")
+    }
+    for name, expected in source["files"].items():
+        assert sha256((folder / name).read_bytes()).hexdigest() == expected
 
 
 @pytest.mark.parametrize("failure", ["report", "publish"])

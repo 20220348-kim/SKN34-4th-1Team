@@ -174,6 +174,37 @@ Qdrant·Langfuse 수집은 필수 LLMOps CI에 연결했습니다. 이후 추가
 [Core 캡처의 Ops 예약·정산 연결](#core-캡처의-ops-예약정산-연결)을 따릅니다.
 Prefect 실행·캡처 등록까지 한 번에 연결하는 작업은 후속입니다.
 
+## 등록된 Core 캡처의 Ops 재평가
+
+`runs/core-rag-20261002`의 실제 Core CI 수집 파일을 원본 바이트로 등록했습니다. 모델 HTTP는 대역이며
+자료 출처·원본 SHA·사례별 실패는 [저장 기록](runs/core-rag-20261002/README.md)을 따릅니다.
+관리 화면에서 **전체 RAG · Core HTTP 대역 수집 · v1 9건** 또는 **v2 1건**을 선택해 무료로 재평가합니다.
+
+흐름은 `관리자 접수 → Ops 명세 고정 → 기존 Prefect saved-capture → RAG 재계산·Evidently 보고서·
+Langfuse 점수 → artifact HTTP → Ops 동기화·관리 화면`입니다. 실행 명세·카탈로그와 네 입력 파일을
+runner 이미지에 포함합니다. Ops·artifact 서버·runner를 같은 소스로 갱신해야 하며 새 migration은 없습니다.
+
+- v1은 검색 8건·답변 5건을 측정했고 원본 실패 4건을 유지합니다. 재평가 상태가 `COMPLETED`여도
+  원본의 `completed=false`와 실패 단계·코드를 그대로 반환합니다.
+- `integration-stub-replay`, 사람 미검토, 의미 충실도 미측정, 기준 지정 불가를 유지합니다.
+  새 모델 호출·유료 예산 예약·live 접수는 없습니다. v1·v2는 원문이 달라 각각 자기 캡처를 재평가합니다.
+- 출처의 trace ID를 보존합니다. 이전 CI 프로젝트가 현재 Langfuse에 남아 있다는 의미는 아닙니다.
+- 기존 명세 검증이 자료 변조·코드 버전 불일치를 실행 전에 차단합니다. 새 자료를 추가할 때는 기존
+  캡처를 덮어쓰지 않고 새 디렉터리·자료 ID와 실행 명세를 검토합니다.
+
+필수 LLMOps CI는 기존 무료 Ops 통합 환경에서 두 버전을 접수하고 Prefect·보고서·sync·artifact HTTP를
+검사해 `ops-core-snapshot-v1.json`, `ops-core-snapshot-v2.json`을 보존합니다. 현재 checkout에서 새로 수집한 캡처의
+자동 등록과 별도로, 출처가 고정된 저장 자료도 재평가합니다. 새 수집 검증은 기존
+`--core-rag-replay <registration.json>`과 `ops-core-rag-*.json` 결과를 유지합니다.
+
+```bash
+# 격리된 Ops 통합 환경과 기존 CORE_ADMIN_EMAIL/CORE_ADMIN_PASSWORD가 필요합니다.
+python infrastructure/llmops/ops_smoke.py --core-snapshot-replay v1 --base-url http://localhost:5173 \
+  --storage-transport http --output work/ops-core-snapshot-v1.json
+python infrastructure/llmops/ops_smoke.py --core-snapshot-replay v2 --base-url http://localhost:5173 \
+  --storage-transport http --output work/ops-core-snapshot-v2.json
+```
+
 ## Ops 평가 범위 고정 — 2026-09-30
 
 고정 근거 평가기의 fixture·capture v1은 `scope`를 지정할 경우 `fixed-answer-context-only`만

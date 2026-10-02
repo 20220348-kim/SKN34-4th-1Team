@@ -121,9 +121,12 @@ jobs:
           docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops --env-file infrastructure/llmops/.env.artifacts -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml -f infrastructure/llmops/compose.artifacts.yaml -f infrastructure/llmops/compose.auth-test.yaml --profile evaluation run --rm --no-deps evaluation-runner .venv/bin/python -c '
           from pathlib import Path
           bundles = list(Path("/app/evaluation/support-program-evidence/runs").glob("core-rag-*"))
-          assert len(bundles) >= 2
+          assert len(bundles) >= 3
+          assert any(bundle.name == "core-rag-20261002" for bundle in bundles)
           for bundle in bundles:
-              assert {str(p.relative_to(bundle)) for p in bundle.rglob("*") if p.is_file()} == {"source/fixture.json", "source/capture.json"}
+              expected = ({f"{version}/{name}.json" for version in ("v1", "v2") for name in ("fixture", "capture")}
+                          if bundle.name == "core-rag-20261002" else {"source/fixture.json", "source/capture.json"})
+              assert {str(p.relative_to(bundle)) for p in bundle.rglob("*") if p.is_file()} == expected
           '
       - name: Reject mismatched Ops and runner releases before model calls
         run: python3 infrastructure/llmops/spec_mismatch_smoke.py --output work/llmops-spec-mismatch.json
@@ -157,6 +160,9 @@ jobs:
           for version in v1 v2; do
             python infrastructure/llmops/ops_smoke.py --core-rag-replay "work/llmops-ci/core-registration-$version.json" --base-url http://localhost:5173 --storage-transport http --output "work/llmops-ci/ops-core-rag-$version.json"
           done
+          for version in v1 v2; do
+            python infrastructure/llmops/ops_smoke.py --core-snapshot-replay "$version" --base-url http://localhost:5173 --storage-transport http --output "work/llmops-ci/ops-core-snapshot-$version.json"
+          done
       - name: Preserve RAG replay evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -166,6 +172,7 @@ jobs:
             work/llmops-ci/ops-rag-replay.json
             work/llmops-ci/core-registration-*.json
             work/llmops-ci/ops-core-rag-*.json
+            work/llmops-ci/ops-core-snapshot-*.json
           if-no-files-found: warn
           retention-days: 7
       - name: Verify failed publication recovery through Ops and Prefect without model calls

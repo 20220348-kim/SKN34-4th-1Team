@@ -187,3 +187,59 @@ def test_rag_smoke_rejects_failed_cases_or_changed_measurements(rag_run, mutatio
     rag_run["comparison"]["current"] = copy.deepcopy(rag_run["summary"])
     with pytest.raises(AssertionError):
         smoke.verify_rag_replay(rag_run)
+
+
+@pytest.fixture(params=["v1", "v2"])
+def core_rag_run(request):
+    version = request.param
+    root = Path(__file__).resolve().parents[2] / "evaluation/support-program-evidence"
+    module_spec = importlib.util.spec_from_file_location("core_smoke_evaluator", root / "rag_evaluate.py")
+    evaluator = importlib.util.module_from_spec(module_spec)
+    module_spec.loader.exec_module(evaluator)
+    folder = root / f"runs/core-rag-20261002/{version}"
+    report = evaluator.evaluate(folder / "fixture.json", folder / "capture.json")
+    cases = [case["caseId"] for case in report["cases"]]
+    return version, {
+        "dataset_id": f"core-rag-20261002-{version}", "execution_mode": "replay",
+        "status": "COMPLETED", "model_api_calls": 0, "summary": report,
+        "trace_links": [{"case_id": c["caseId"], "url": "https://traces.invalid/traces/" + c["traceId"]}
+                        for c in report["cases"]],
+        "execution_spec": {
+            "evaluation_scope": report["scope"], "model_operations": [], "generation": None,
+            "live_config": {}, "dataset": {"case_ids": cases, "fixture_sha256": report["fixtureSha256"]},
+            "candidate_sha256": report["captureSha256"], "reference_sha256": report["captureSha256"],
+        },
+        "comparison": {
+            "schema_version": 3, "scope": report["scope"], "baseline_eligible": False,
+            "comparison": "self-replay", "case_ids": cases,
+            "current": copy.deepcopy(report), "reference": copy.deepcopy(report),
+        },
+    }
+
+
+def test_core_rag_smoke_preserves_saved_failures_and_provenance(core_rag_run):
+    version, run = core_rag_run
+    evidence = smoke.verify_core_snapshot_replay(run, version)
+    assert evidence["source_completed"] is (version == "v2")
+    assert evidence["coverage"]["failedCaseCount"] == (4 if version == "v1" else 0)
+    assert evidence["measurement_kind"] == "integration-stub-replay"
+
+
+@pytest.mark.parametrize("mutation", [
+    lambda run: run.update(status="FAILED"),
+    lambda run: run.update(model_api_calls=1),
+    lambda run: run.update(trace_links=[]),
+    lambda run: run["summary"].update(completed=not run["summary"]["completed"]),
+    lambda run: run["summary"].update(baselineEligible=True),
+    lambda run: run["summary"]["execution"].update(kind="recorded", paidModelApiCalls=1),
+    lambda run: run["summary"]["metrics"]["retrievalRecallAtK"].update(eligibleCaseCount=99),
+    lambda run: run["summary"].update(fixtureSha256="0" * 64),
+])
+def test_core_rag_smoke_rejects_success_promotion_or_lost_evidence(core_rag_run, mutation):
+    version, run = core_rag_run
+    mutation(run)
+    # Keep self-replay equality; semantic checks must reject internally consistent forgery too.
+    run["comparison"]["current"] = copy.deepcopy(run["summary"])
+    run["comparison"]["reference"] = copy.deepcopy(run["summary"])
+    with pytest.raises(AssertionError):
+        smoke.verify_core_snapshot_replay(run, version)
