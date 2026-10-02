@@ -67,6 +67,11 @@ Pandera → Evidently·Langfuse → sync → React`를 연결했다. 검색 재�
 이번 변경은 로컬 선택 테스트와 별도로 **skn-106 최종 푸시 SHA**의 전체 CI·실제 MySQL·
 Langfuse/Prefect/인증 smoke 결과로 판단한다. 개인 PC Kubernetes + Compose는 변경하지 않았다.
 
+후속으로 기존 Kubernetes E2E에도 합성 RAG 재평가를 연결했다. 최초 실행과 Compose 교체 후 새 실행의
+Kubernetes DB·Prefect 단일 실행을 대조하고, Pod 재시작·컨테이너 교체 후 최초 보고서 해시를 확인한다.
+기존 고정 근거 검증은 유지한다. 이는 검증 코드 확장이며 최신 변경의 실제 클러스터 CI 통과와 개인 PC
+적용은 별도다. [검증 범위와 보고서](../infrastructure/gitops/docs/ops-runtime.md)를 따른다.
+
 다음은 **실제 RAG 실행 경로에 임베딩·답변 예산 연결 및 무료 HTTP 대역 통합 검증 →
 실제 캡처 등록과 사람 검토·품질 정책 → 승인된 자료·호출 예산의 live 평가** 순서다.
 정기 평가·품질/비용 알림은 해당 실행·검토 계약 이후에 연결한다.

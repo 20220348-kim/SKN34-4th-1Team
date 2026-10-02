@@ -149,7 +149,7 @@ def set_admission(nk, action, version):
     return result
 
 
-def free_evaluation(output, password, web_env, *, seed=False):
+def free_evaluation(output, password, web_env, *, seed=False, rag_replay=False):
     env = {
         **web_env,
         "CORE_ADMIN_EMAIL": "admin@govbiz.local",
@@ -160,6 +160,7 @@ def free_evaluation(output, password, web_env, *, seed=False):
             sys.executable,
             REPOSITORY_ROOT / "infrastructure/llmops/ops_smoke.py",
             *(["--seed-dev-accounts"] if seed else []),
+            *(["--rag-replay"] if rag_replay else []),
             "--base-url",
             BASE,
             "--storage-transport",
@@ -172,7 +173,51 @@ def free_evaluation(output, password, web_env, *, seed=False):
     )
     result = json.loads(output.read_text())
     assert result["status"] == "COMPLETED" and result["model_api_calls"] == 0
+    if rag_replay:
+        assert result["case_count"] == 3 and result["comparison"] == "self-replay"
+        assert result["rag_replay"]["scope"] == "source-chunks-retrieval-answer"
+        assert result["rag_replay"]["measurement_kind"] == "synthetic-contract-check"
+        assert result["rag_replay"]["baseline_eligible"] is False
+        assert result["rag_replay"]["live_execution_performed"] is False
     return result
+
+
+def verify_execution_record(nk, result):
+    record = database_record(nk, result["request_id"])
+    assert record["run"]["id"] == result["request_id"]
+    for key in (
+        "status",
+        "prefect_flow_run_id",
+        "execution_spec_sha256",
+        "model_api_calls",
+    ):
+        assert record["run"][key] == result[key]
+    flows = smoke_ops_sync_recovery.prefect_runs(nk, result["request_id"])
+    assert len(flows) == 1 and flows[0]["state"] == "COMPLETED"
+    assert flows[0]["id"] == result["prefect_flow_run_id"]
+    assert flows[0]["spec"] == result["execution_spec_sha256"]
+    return record
+
+
+def rag_evaluation(nk, output, password, web_env):
+    result = free_evaluation(output, password, web_env, rag_replay=True)
+    evidence = {"evaluation": result}
+    evidence["kubernetes_database"] = verify_execution_record(nk, result)
+    evidence["request_flow_count"] = 1
+    evidence["report_sha256"] = smoke_ops_artifacts.read_completed_report(
+        password, result["request_id"]
+    )
+    return evidence
+
+
+def check_rag_preserved(nk, password, evidence):
+    assert (
+        database_record(nk, evidence["evaluation"]["request_id"])
+        == evidence["kubernetes_database"]
+    )
+    return smoke_ops_artifacts.check_access(
+        password, evidence["kubernetes_database"]["run"], evidence["report_sha256"]
+    )
 
 
 def verify(state, settings, compose, compose_env, ops_image, kind, helm, report):
@@ -182,6 +227,7 @@ def verify(state, settings, compose, compose_env, ops_image, kind, helm, report)
     image_loaded = False
     password = secrets.token_urlsafe(32)
     report["evaluation_status"] = "FAIL"
+    report["rag_replay"] = {"status": "FAIL"}
     report["evaluation_phase"] = "compose_preflight"
     try:
         # Validate the actual merged configuration before starting any evaluation runner.
@@ -386,6 +432,11 @@ def verify(state, settings, compose, compose_env, ops_image, kind, helm, report)
                 original_report = smoke_ops_artifacts.read_completed_report(
                     password, result["request_id"]
                 )
+                report["evaluation_phase"] = "authenticated_rag_replay"
+                rag_before = rag_evaluation(
+                    nk, state / "rag-evaluation.json", password, web_env
+                )
+                report["rag_replay"]["initial"] = rag_before
             finally:
                 web.terminate()
                 try:
@@ -458,6 +509,11 @@ def verify(state, settings, compose, compose_env, ops_image, kind, helm, report)
                                 raise
                             time.sleep(1)
                     assert restored_report == original_report
+                    report["rag_replay"]["pod_restart"] = check_rag_preserved(
+                        nk,
+                        password,
+                        rag_before,
+                    )
                 smoke_ops_artifacts.verify(
                     nk,
                     compose,
@@ -497,6 +553,16 @@ def verify(state, settings, compose, compose_env, ops_image, kind, helm, report)
                     fresh = free_evaluation(
                         state / "replacement-evaluation.json", password, web_env
                     )
+                    report["evaluation_phase"] = "rag_replay_after_replacement"
+                    rag_after = rag_evaluation(
+                        nk, state / "replacement-rag-evaluation.json", password, web_env
+                    )
+                    report["rag_replay"]["after_replacement"] = rag_after
+                    report["rag_replay"]["endpoint_replacement"] = check_rag_preserved(
+                        nk,
+                        password,
+                        rag_before,
+                    )
                 assert fresh["request_id"] not in {
                     result["request_id"],
                     recovered["id"],
@@ -505,23 +571,36 @@ def verify(state, settings, compose, compose_env, ops_image, kind, helm, report)
                     result["prefect_flow_run_id"],
                     recovered["prefect_flow_run_id"],
                 }
-                fresh_db = database_record(nk, fresh["request_id"])
-                assert fresh_db["run"]["id"] == fresh["request_id"]
-                for key in (
-                    "status",
-                    "prefect_flow_run_id",
-                    "execution_spec_sha256",
-                    "model_api_calls",
-                ):
-                    assert fresh_db["run"][key] == fresh[key]
-                flows = smoke_ops_sync_recovery.prefect_runs(nk, fresh["request_id"])
-                assert len(flows) == 1 and flows[0]["state"] == "COMPLETED"
-                assert flows[0]["id"] == fresh["prefect_flow_run_id"]
-                assert flows[0]["spec"] == fresh["execution_spec_sha256"]
+                fresh_db = verify_execution_record(nk, fresh)
+                requests = [
+                    result,
+                    fresh,
+                    rag_before["evaluation"],
+                    rag_after["evaluation"],
+                ]
+                assert (
+                    len({item["request_id"] for item in requests} | {recovered["id"]})
+                    == 5
+                )
+                assert (
+                    len(
+                        {item["prefect_flow_run_id"] for item in requests}
+                        | {recovered["prefect_flow_run_id"]}
+                    )
+                    == 5
+                )
+                assert (
+                    rag_before["evaluation"]["execution_spec_sha256"]
+                    == rag_after["evaluation"]["execution_spec_sha256"]
+                )
+                assert (
+                    database_record(nk, rag_before["evaluation"]["request_id"])
+                    == rag_before["kubernetes_database"]
+                )
                 assert database_record(nk, recovered["id"]) == recovered_db
                 assert database_record(nk, result["request_id"]) == before
                 report["runtime_check_after_replacement"] = ops_runtime.check_runtime(
-                    state, settings, fresh["request_id"]
+                    state, settings, rag_after["evaluation"]["request_id"]
                 )
                 report["replacement_recovery"].update(
                     status="PASS",
@@ -529,6 +608,7 @@ def verify(state, settings, compose, compose_env, ops_image, kind, helm, report)
                     kubernetes_database=fresh_db,
                     new_request_flow_count=1,
                 )
+                report["rag_replay"]["status"] = "PASS"
             finally:
                 web.terminate()
                 try:
