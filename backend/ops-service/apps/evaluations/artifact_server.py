@@ -5,7 +5,14 @@ import json
 import os
 from pathlib import Path
 
-from .artifact_files import EVIDENCE_FILES, read_file, result_name, validate_token
+from .artifact_files import (
+    EVIDENCE_FILES,
+    MAX_RECEIPT_BYTES,
+    read_file,
+    receipt_name,
+    result_name,
+    validate_token,
+)
 
 
 def create_app():
@@ -34,6 +41,13 @@ def application(results, evidence, token):
                     with os.scandir(results) as entries:
                         next(entries, None)
                     raw = json.dumps({"schema_version": 1, "results_readable": True}).encode()
+                elif path.startswith("/v1/usage-receipts/"):
+                    run_id, sequence = path.removeprefix("/v1/usage-receipts/").split("/", 1)
+                    if sequence != str(int(sequence)):
+                        raise ValueError("Noncanonical receipt sequence")
+                    raw = read_file(
+                        results, receipt_name(run_id, int(sequence)), max_bytes=MAX_RECEIPT_BYTES
+                    )
                 elif path.startswith("/v1/results/"):
                     run_id, name = path.removeprefix("/v1/results/").split("/", 1)
                     raw = read_file(results, result_name(run_id, name))

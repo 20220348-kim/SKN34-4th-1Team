@@ -20,10 +20,14 @@ from django.test import TransactionTestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
+from .admission import change_admission
+from .artifact_server import application
 from .budget import reserve, worker_action
 from .budget_reporting import budget_summary
 from .execution_spec import digest
 from .models import EvaluationBudget, EvaluationRun, EvaluationUsageCorrection
+from .test_artifact_store import TOKEN as ARTIFACT_TOKEN
+from .test_artifact_store import ArtifactServerMixin
 from .test_budget import TOKEN
 from .test_embedding_budget import mixed_spec
 from .test_usage_correction import _runner
@@ -39,12 +43,12 @@ def signed(payload, version=2):
 
 
 @override_settings(LLMOPS_LIVE_ENABLED=True, LLMOPS_BUDGET_TOKEN=TOKEN)
-class EmbeddingReceiptTests(TransactionTestCase):
+class EmbeddingReceiptTests(ArtifactServerMixin, TransactionTestCase):
     def setUp(self):
         folder = TemporaryDirectory()
         self.addCleanup(folder.cleanup)
         self.root = Path(folder.name)
-        override = override_settings(LLMOPS_RESULTS_DIR=self.root)
+        override = override_settings(LLMOPS_RESULTS_DIR=self.root, LLMOPS_ARTIFACT_URL="")
         override.enable()
         self.addCleanup(override.disable)
         self.user = get_user_model().objects.create_user("embedding-receipt")
@@ -158,6 +162,45 @@ class EmbeddingReceiptTests(TransactionTestCase):
             self.budget.allocated_input_tokens,
             self.budget.allocated_output_tokens,
         )
+
+    def test_remote_embedding_correction_while_paused_returns_only_confirmed_difference(self):
+        change_admission(
+            accepting=False,
+            expected_version=0,
+            request_id=uuid4(),
+            actor="operator",
+            reason="기존 임베딩 사용량 확인",
+        )
+        url = self.serve(application(self.root, self.root, ARTIFACT_TOKEN))
+        with override_settings(
+            LLMOPS_ARTIFACT_URL=url,
+            LLMOPS_ARTIFACT_TOKEN=ARTIFACT_TOKEN,
+            LLMOPS_RESULTS_DIR=self.root / "not-mounted-results",
+        ):
+            original = json.loads(self.raw)["payload"]
+            changed = signed({**original, "input_sha256": "b" * 64})
+            self.path.write_bytes(changed)
+            with self.assertRaises(CorrectionUnavailable):
+                correct_usage(
+                    **{**self.request, "evidence_sha256": hashlib.sha256(changed).hexdigest()},
+                    apply=True,
+                )
+            self.assertEqual(self.amounts(), (1, 500, 0))
+            self.path.write_bytes(self.raw)
+            preview = correct_usage(**self.request)
+            self.assertFalse(preview["applied"])
+            correct_usage(**self.request, apply=True)
+            self.assertEqual(self.amounts(), (1, 100, 0))
+            self.assertIsNone(self.run.budget_reservation.calls.get().input_tokens)
+            self.assertEqual(
+                EvaluationUsageCorrection.objects.get().evidence_raw.encode(), self.raw
+            )
+            self.path.unlink()
+            self.assertTrue(correct_usage(**self.request, apply=True)["replayed"])
+            with self.assertRaises(CorrectionUnavailable):
+                correct_usage(**{**self.request, "request_id": uuid4()}, apply=True)
+            self.assertEqual(EvaluationUsageCorrection.objects.count(), 1)
+            self.assertEqual(self.amounts(), (1, 100, 0))
 
     def test_preview_apply_retry_and_public_ledger_preserve_original(self):
         output = StringIO()

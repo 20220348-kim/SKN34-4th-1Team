@@ -141,6 +141,13 @@ dc_artifacts exec -T ops-service python manage.py check_evaluation_runtime
 `.env.artifacts`는 Git에서 제외된다. 결과 서버에는 DB·Core·OpenAI 인증정보를 주입하지 않고 호스트 포트도
 공개하지 않는다. 토큰이 없으면 서버 시작 또는 조회가 실패한다. HTTP 장애를 로컬 파일로 대체하지 않는다.
 보고서·비교·검토·후처리 복구에는 기존 무결성 검증이 그대로 적용되며 파일당 최대 크기는 8 MiB다.
+사용량 보정 CLI도 같은 HTTP 저장소를 사용한다. 전용
+`GET /v1/usage-receipts/{run UUID}/{sequence}`는 답변 v1·임베딩 v2 증거를 8 KiB까지만 전달하고,
+Ops가 기존 서명·승인 명세·미리보기 해시를 검증한다. 인증 토큰은 `LLMOPS_ARTIFACT_TOKEN`,
+서명 검증 키는 `LLMOPS_BUDGET_TOKEN`이며 artifact 서버에는 서명 키를 주입하지 않는다.
+artifact 서버와 Ops를 함께 갱신해야 하며 기존 로컬 증거 파일의 이동·재서명은 필요 없다.
+조회 실패 시 기존 미확정 예약을 유지한다. [미리보기·적용 절차](../../backend/ops-service/README.md#증거-기반-미확인-사용량-보정)를 따른다.
+이 연결 추가로 위 무료 평가 overlay의 live 비활성화 설정을 변경하지 않는다.
 `check_evaluation_runtime`의 `storage_transport=http`는 HTTP 경로 사용을 뜻하며 새 평가 성공을 뜻하지 않는다.
 Kubernetes의 개인 kind 개발 환경에는 [전용 내부 네트워크와 서비스 경로](../gitops/docs/ops-runtime.md#로컬-kind와-compose의-전용-통신-경로)를
 선택적으로 구성할 수 있다. `compose.kind.yaml`을 추가하고 `ops_bridge.py`로 소유권을 확인해 연결한다.

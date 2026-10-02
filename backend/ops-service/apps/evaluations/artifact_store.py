@@ -12,7 +12,9 @@ from django.conf import settings
 from .artifact_files import (
     EVIDENCE_FILES,
     MAX_FILE_BYTES,
+    MAX_RECEIPT_BYTES,
     read_file,
+    receipt_name,
     result_name,
     validate_token,
 )
@@ -27,7 +29,7 @@ class NoArtifactRedirect(HTTPRedirectHandler):
         return None
 
 
-def remote_read(path):
+def remote_read(path, *, max_bytes=MAX_FILE_BYTES):
     try:
         endpoint = settings.LLMOPS_ARTIFACT_URL
         parsed = urlsplit(endpoint)
@@ -54,8 +56,8 @@ def remote_read(path):
         ) as response:
             if response.status != 200 or response.headers.get("Content-Encoding"):
                 raise ValueError("Invalid artifact response")
-            raw = response.read(MAX_FILE_BYTES + 1)
-            if len(raw) > MAX_FILE_BYTES or int(response.headers["Content-Length"]) != len(raw):
+            raw = response.read(max_bytes + 1)
+            if len(raw) > max_bytes or int(response.headers["Content-Length"]) != len(raw):
                 raise ValueError("Incomplete or oversized artifact")
             return raw
     except HTTPError as exc:
@@ -72,6 +74,18 @@ def read_artifact(run_id, name):
             return remote_read("/v1/results/" + name)
         return read_file(settings.LLMOPS_RESULTS_DIR, name)
     except (OSError, ValueError) as exc:
+        raise ResultsUnavailable from exc
+
+
+def read_usage_receipt(run_id, sequence):
+    try:
+        name = receipt_name(run_id, sequence)
+        if settings.LLMOPS_ARTIFACT_URL:
+            return remote_read(
+                f"/v1/usage-receipts/{run_id}/{sequence}", max_bytes=MAX_RECEIPT_BYTES
+            )
+        return read_file(settings.LLMOPS_RESULTS_DIR, name, max_bytes=MAX_RECEIPT_BYTES)
+    except (OSError, ValueError, TypeError, AttributeError) as exc:
         raise ResultsUnavailable from exc
 
 
