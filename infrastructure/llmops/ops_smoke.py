@@ -84,6 +84,43 @@ def verify_rag_replay(run):
     }
 
 
+def verify_core_rag_replay(run, registration):
+    """등록 직전 계산한 원본과 실제 Ops의 재평가 결과·실패 사례·추적을 대조한다."""
+    expected = registration["report"]
+    spec, comparison = run["execution_spec"], run["comparison"]
+    assert registration["schema_version"] == 1
+    assert run["dataset_id"] == registration["dataset_id"]
+    assert run["candidate_capture_id"] == run["reference_capture_id"] == registration["capture_id"]
+    assert run["execution_mode"] == "replay" and type(run["model_api_calls"]) is int
+    assert run["model_api_calls"] == 0
+    assert comparison["schema_version"] == 3 and comparison["comparison"] == "self-replay"
+    assert comparison["scope"] == spec["evaluation_scope"] == "source-chunks-retrieval-answer"
+    assert comparison["baseline_eligible"] is False
+    assert spec["generation"] is None and spec["model_operations"] == [] and not spec["live_config"]
+    assert spec["dataset"]["fixture_sha256"] == registration["source_sha256"]["fixture"]
+    assert spec["candidate_sha256"] == spec["reference_sha256"] == registration["source_sha256"]["capture"]
+    assert run["summary"] == comparison["current"] == comparison["reference"] == expected
+    assert expected["measurementKind"] == "integration-stub-replay"
+    assert expected["execution"]["kind"] == "integration-stub"
+    assert type(expected["execution"]["paidModelApiCalls"]) is int
+    assert expected["execution"]["paidModelApiCalls"] == 0
+    assert expected["baselineEligible"] is False and expected["liveExecutionPerformed"] is False
+    assert expected["semanticFaithfulness"] is None and expected["semanticReviewRequired"] is True
+    assert expected["referenceSource"] == "ai-authored-not-human-reviewed"
+    assert comparison["case_ids"] == spec["dataset"]["case_ids"] == [c["caseId"] for c in expected["cases"]]
+    assert {link["case_id"]: urlsplit(link["url"]).path.rsplit("/", 1)[-1] for link in run["trace_links"]} == {
+        case["caseId"]: case["traceId"] for case in expected["cases"]
+    }
+    assert len(run["trace_links"]) == expected["caseCount"]
+    return {
+        "scope": expected["scope"], "measurement_kind": expected["measurementKind"],
+        "baseline_eligible": False, "live_execution_performed": False,
+        "source_completed": expected["completed"], "coverage": expected["coverage"],
+        "source_sha256": registration["source_sha256"],
+        "case_ids": comparison["case_ids"], "reference_source": expected["referenceSource"],
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", default="http://localhost:5173")
@@ -92,9 +129,12 @@ def main():
     mode.add_argument("--compare-captures", action="store_true", help="기존 프롬프트 실행의 공통 E01 비교")
     mode.add_argument("--recover-source", type=UUID, help="무료 fixture가 만든 실패 실행을 복구")
     mode.add_argument("--rag-replay", action="store_true", help="합성 RAG 캡처 재계산과 출처·분모 확인")
+    mode.add_argument("--core-rag-replay", type=Path, help="등록 명세 registration.json과 실제 Core 재평가 결과 대조")
     parser.add_argument("--storage-transport", choices=["filesystem", "http"], default="filesystem")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    registration = json.loads(args.core_rag_replay.read_bytes()) if args.core_rag_replay else None
+    is_rag = args.rag_replay or registration is not None
     base = args.base_url.rstrip("/")
     if urlsplit(base).hostname not in {"localhost", "127.0.0.1"}:
         parser.error("This smoke test requires a loopback web endpoint")
@@ -162,6 +202,11 @@ def main():
         payload.update(dataset_id="rag-synthetic-multichunk-v1",
                        candidate_capture_id="rag-synthetic-capture-v1",
                        reference_capture_id="rag-synthetic-capture-v1")
+    if registration is not None:
+        payload.update(dataset_id=registration["dataset_id"],
+                       candidate_capture_id=registration["capture_id"],
+                       reference_capture_id=registration["capture_id"])
+    if is_rag:
         assert datasets[payload["dataset_id"]]["live_config"] is None
         assert datasets[payload["dataset_id"]]["execution_profiles"]["live"] is None
     if not args.recover_source:
@@ -194,7 +239,8 @@ def main():
         assert run["model_api_calls"] == 0
         assert run["prefect_flow_run_id"] != source["prefect_flow_run_id"]
         assert wait_for_list_state(request, source_id, "FAILED")["prefect_flow_run_id"] == source["prefect_flow_run_id"]
-    expected_count = 3 if args.rag_replay else 1 if args.compare_captures else 6
+    expected_count = (registration["report"]["caseCount"] if registration is not None
+                      else 3 if args.rag_replay else 1 if args.compare_captures else 6)
     assert run["summary"]["caseCount"] == expected_count
     comparison = run["comparison"]
     assert comparison["comparison"] == ("candidate-reference" if args.compare_captures else "self-replay")
@@ -206,8 +252,9 @@ def main():
         tokens = next(item for item in comparison["metrics"] if item["key"] == "meanOutputTokens")
         assert tokens["candidate"] is None and tokens["delta"] is None
         assert request("/api/v1/ops/evaluations", {**payload, "reference_capture_id": payload["candidate_capture_id"]})[0] == 409
-    if args.rag_replay:
-        rag_evidence = verify_rag_replay(run)
+    if is_rag:
+        rag_evidence = (verify_core_rag_replay(run, registration) if registration is not None
+                        else verify_rag_replay(run))
     else:
         assert run["summary"]["statusAccuracy"] == 1
         assert run["summary"]["referenceCitationRecall"] == 1
@@ -226,7 +273,7 @@ def main():
         "evaluation_run_id": run["evaluation_run_id"], "status": run["status"],
         "execution_spec_sha256": run["execution_spec_sha256"],
         "case_count": expected_count, "comparison": comparison["comparison"],
-        "metrics": run["summary"]["metrics"] if args.rag_replay else comparison["metrics"],
+        "metrics": run["summary"]["metrics"] if is_rag else comparison["metrics"],
         "duplicate_request_same_flow": True, "csrf_enforced": True,
         "core_admin_login": True, "core_logout_revokes_ops": True,
         "deployment_runtime_checks": runtime,
@@ -234,7 +281,7 @@ def main():
         "report_http_status": status, "model_api_calls": 0,
         "detail_url": base + run["detail_url"],
     }
-    if args.rag_replay:
+    if is_rag:
         summary["rag_replay"] = rag_evidence
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(summary, indent=2) + "\n")
