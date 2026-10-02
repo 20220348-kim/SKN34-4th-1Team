@@ -100,9 +100,9 @@ def restore_volume(image, source, kind, expected):
                 "--security-opt",
                 "no-new-privileges:true",
                 "--memory",
-                "256m",
+                "768m" if kind == "prefect" else "256m",
                 "--pids-limit",
-                "32",
+                "64" if kind == "prefect" else "32",
                 "--tmpfs",
                 "/tmp:rw,noexec,nosuid,size=128m,mode=1777",
                 "--mount",
@@ -150,6 +150,19 @@ def restore_volume(image, source, kind, expected):
             or (kind == "prefect" and result.get("sqlite_integrity") is not True)
         ):
             raise ValueError("Incomplete restored execution evidence")
+        if kind == "prefect":
+            api = result.get("api", {})
+            if (
+                not isinstance(api, dict)
+                or api.get("status") != "PASS"
+                or type(api.get("matched_executions")) is not int
+                or api["matched_executions"] != len(expected)
+                or api.get("database_unchanged") is not True
+                or api.get("server_stopped") is not True
+                or api.get("scheduling_disabled") is not True
+                or api.get("automatic_migrations") is not False
+            ):
+                raise ValueError("Incomplete restored Prefect API evidence")
     finally:
         # Attempt both removals even if one fails; never target a source volume.
         try:
@@ -170,10 +183,10 @@ def restore_volume(image, source, kind, expected):
 def verify(state, settings, compose, env, expected, report):
     evidence = report["volume_restore"] = {
         "status": "FAIL",
-        "scope": "disposable_results_and_prefect_sqlite",
+        "scope": "disposable_results_and_prefect_api",
         "backup_verified": False,
         "personal_environment_verified": False,
-        "prefect_server_started": False,
+        "prefect_server_started": None,
         "model_api_calls": 0,
     }
     expected = probe.expected_runs(expected)
@@ -245,8 +258,13 @@ def verify(state, settings, compose, env, expected, report):
         image, project + "_ops-results", "results", expected
     )
     evidence["prefect"] = restore_volume(
-        image, project + "_prefect-data", "prefect", expected
+        containers["prefect"]["Image"], project + "_prefect-data", "prefect", expected
     )
-    evidence.update(status="PASS", network_isolated=True, cleanup_complete=True)
+    evidence.update(
+        status="PASS",
+        network_isolated=True,
+        cleanup_complete=True,
+        prefect_server_started=True,
+    )
     # Preserve the already verified runner identity before the caller's cleanup.
     return containers["evaluation-runner"]["Image"]
