@@ -250,7 +250,8 @@ class RagBudget:
         endpoint = str(request.url)
         body = json.loads(request.content)
         if endpoint == "https://api.openai.com/v1/responses/input_tokens":
-            require(self.count_payload is not None and body == self.count_payload)
+            expected, self.count_payload = self.count_payload, None
+            require(expected is not None and body == expected)
             return
         if endpoint == "https://api.openai.com/v1/embeddings":
             require(self.phase in {"chunks", "search"})
@@ -309,6 +310,7 @@ class RagBudget:
                 "stream",
             }
             and body.get("model") == operation["model"]
+            and type(body.get("max_output_tokens")) is int
             and body.get("max_output_tokens") == 2000
             and body.get("store") is False
             and body.get("stream", False) is False
@@ -384,6 +386,9 @@ class RagBudget:
         usage = body.get("usage") if isinstance(body, dict) else None
         valid = (
             response.status_code == 200
+            and isinstance(body, dict)
+            and body.get("model") == item["model"]
+            and body.get("status") in {"completed", "incomplete", "failed", "cancelled"}
             and isinstance(usage, dict)
             and all(
                 type(usage.get(key)) is int and usage[key] >= 0
@@ -412,4 +417,4 @@ class RagBudget:
             },
             operation_id=item["id"],
         )
-        self.embeddings.stopped = False
+        self.embeddings.stopped = body["status"] != "completed"
