@@ -3,10 +3,10 @@
 import json
 from copy import deepcopy
 from hashlib import sha256
-from pathlib import Path
 from unittest.mock import patch
 from uuid import uuid4
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.http import Http404
 from django.test import SimpleTestCase
@@ -21,7 +21,6 @@ from .services import ResultsUnavailable
 
 DATASET = "rag-synthetic-multichunk-v1"
 CAPTURE = "rag-synthetic-capture-v1"
-HERE = Path(__file__).resolve().parents[4] / "evaluation/support-program-evidence"
 
 
 class RagMaterialTests(SimpleTestCase):
@@ -39,7 +38,8 @@ class RagMaterialTests(SimpleTestCase):
         )
         dataset, candidate, _ = selection(DATASET, CAPTURE, CAPTURE)
         self.sources = {
-            path: (HERE / path).read_bytes() for path in (dataset["fixture"], candidate["path"])
+            path: (settings.LLMOPS_EVIDENCE_DIR / path).read_bytes()
+            for path in (dataset["fixture"], candidate["path"])
         }
         self.fixture_path, self.capture_path = dataset["fixture"], candidate["path"]
         self.fixture = json.loads(self.sources[self.fixture_path])

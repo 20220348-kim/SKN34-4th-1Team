@@ -130,6 +130,51 @@ class EvaluationCaseReview(models.Model):
         ]
 
 
+class RagCaseReview(models.Model):
+    class Decision(models.TextChoices):
+        SUITABLE = "SUITABLE", "적합"
+        UNSUITABLE = "UNSUITABLE", "부적합"
+        DEFERRED = "DEFERRED", "판단 보류"
+
+    run = models.ForeignKey(
+        EvaluationRun, on_delete=models.PROTECT, related_name="rag_case_reviews"
+    )
+    case_id = models.CharField(max_length=100)
+    version = models.PositiveIntegerField()
+    retrieval_decision = models.CharField(max_length=20, choices=Decision.choices)
+    answer_decision = models.CharField(max_length=20, choices=Decision.choices)
+    citation_decision = models.CharField(max_length=20, choices=Decision.choices)
+    comment = models.TextField()
+    material_sha256 = models.CharField(max_length=64)
+    fixture_sha256 = models.CharField(max_length=64)
+    candidate_capture_sha256 = models.CharField(max_length=64)
+    reference_capture_sha256 = models.CharField(max_length=64)
+    execution_spec_sha256 = models.CharField(max_length=64)
+    rubric_version = models.CharField(max_length=40)
+    reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-version"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["run", "version"], name="unique_rag_case_review_version"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(version__gte=1), name="rag_review_version_positive"
+            ),
+            *[
+                models.CheckConstraint(
+                    condition=models.Q(
+                        **{f"{field}_decision__in": ["SUITABLE", "UNSUITABLE", "DEFERRED"]}
+                    ),
+                    name=f"rag_review_{field}_decision",
+                )
+                for field in ("retrieval", "answer", "citation")
+            ],
+        ]
+
+
 class EvaluationBaseline(models.Model):
     # 해제 뒤에도 행과 버전을 유지해 최초 지정·교체·접수의 잠금 대상으로 사용한다.
     dataset_id = models.CharField(max_length=100, primary_key=True)

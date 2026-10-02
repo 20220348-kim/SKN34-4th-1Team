@@ -82,6 +82,27 @@ const ragMaterialSchema = z.object({
   })).min(1),
 })
 export type RagMaterial = z.infer<typeof ragMaterialSchema>
+const ragDecisionSchema = z.enum(['SUITABLE', 'UNSUITABLE', 'DEFERRED'])
+const ragReviewStateSchema = z.object({
+  material: ragMaterialSchema, reviewer_id: z.string().min(1), review_version: z.number().int().nonnegative(),
+  rubric: z.object({ version: z.literal('rag-case-review-v1'), criteria: z.array(z.object({
+    key: z.enum(['retrieval', 'answer', 'citation']), label: z.string(), description: z.string(),
+  })).length(3).refine((values) => new Set(values.map((value) => value.key)).size === 3) }),
+  case_reviews: z.array(z.object({
+    id: z.number().int().positive(), case_id: z.string(), version: z.number().int().positive(),
+    retrieval_decision: ragDecisionSchema, answer_decision: ragDecisionSchema, citation_decision: ragDecisionSchema,
+    comment: z.string(), material_sha256: z.string(), fixture_sha256: z.string(),
+    candidate_capture_sha256: z.string(), reference_capture_sha256: z.string(), execution_spec_sha256: z.string(),
+    rubric_version: z.string(), is_current: z.boolean(), reviewed_by: z.string(), created_at: z.string(),
+  })),
+})
+export type RagReviewState = z.infer<typeof ragReviewStateSchema>
+export type RagCaseReviewInput = {
+  case_id: string; retrieval_decision: z.infer<typeof ragDecisionSchema>; answer_decision: z.infer<typeof ragDecisionSchema>;
+  citation_decision: z.infer<typeof ragDecisionSchema>; comment: string;
+  material_sha256: string; rubric_version: string; review_version: number;
+}
+
 const comparisonSchema = z.discriminatedUnion('schema_version', [fixedComparisonSchema, ragComparisonSchema])
 const runSchema = z.object({
   evaluation_scope: z.string().nullable().default(null),
@@ -323,6 +344,7 @@ async function request<T>(path: string, schema: z.ZodType<T>, options: RequestIn
     const error = body
     const message = response.status === 400 && error?.code === 'LIVE_BUDGET_UNAVAILABLE'
       ? '누적 평가 한도가 부족하거나 설정되지 않아 접수하지 않았습니다. 운영자에게 예약·미확인 사용량과 한도를 확인해 주세요.'
+      : error?.code === 'INVALID_RAG_REVIEW' ? '검토 항목과 의견을 확인하세요. 미측정 항목은 판단 보류만 저장할 수 있습니다.'
       : error?.code === 'CANCEL_FORBIDDEN' ? '평가를 요청한 계정만 취소할 수 있습니다.'
       : error?.code === 'CANCEL_CONFLICT' ? '이미 종료된 평가입니다. 상태를 다시 확인하세요.'
       : error?.code === 'RESULTS_UNAVAILABLE' ? '저장된 검토 자료와 평가 결과의 무결성을 확인할 수 없습니다. 운영자에게 확인해 주세요.'
@@ -360,6 +382,8 @@ export const listEvaluations = (page: number, signal?: AbortSignal) => request(`
 export const getEvaluation = (id: string, signal?: AbortSignal) => request(`/evaluations/${encodeURIComponent(id)}`, runSchema, { signal })
 export const getEvaluationReview = (id: string, signal?: AbortSignal) => request(`/evaluations/${encodeURIComponent(id)}/review`, reviewSchema, { signal })
 export const getRagMaterial = (id: string, signal?: AbortSignal) => request(`/evaluations/${encodeURIComponent(id)}/rag-material`, ragMaterialSchema, { signal })
+export const getRagReviews = (id: string, signal?: AbortSignal) => request(`/evaluations/${encodeURIComponent(id)}/rag-reviews`, ragReviewStateSchema, { signal })
+export const saveRagCaseReview = (id: string, data: RagCaseReviewInput, reviewerId: string) => post(`/evaluations/${encodeURIComponent(id)}/rag-reviews`, data, ragReviewStateSchema, false, reviewerId)
 export const assessEvaluationQuality = (id: string, inputSha256: string) => post(`/evaluations/${encodeURIComponent(id)}/quality`, { input_sha256: inputSha256 }, reviewSchema)
 export const saveFixtureReview = (id: string, data: { decision: 'APPROVED' | 'CHANGES_REQUESTED' | 'DEFERRED'; comment: string; fixture_sha256: string; case_ids: string[]; rubric_version: string; fixture_version: number }) => post(`/evaluations/${encodeURIComponent(id)}/fixture-review`, data, reviewSchema)
 export const saveEvaluationReview = (id: string, decision: 'APPROVED' | 'CHANGES_REQUESTED', comment: string, stamp: ReviewStamp) => post(`/evaluations/${encodeURIComponent(id)}/review`, { decision, comment, ...stamp }, reviewSchema)
