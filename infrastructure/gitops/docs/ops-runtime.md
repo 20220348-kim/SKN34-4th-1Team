@@ -213,6 +213,9 @@ migration → API+sync 적용 → rollout → 읽기 전용 런타임 진단 순
 운영자가 접수를 중지한 뒤 지원 여부·중지 상태·버전을 모두 확인해야 통과한다. 접수 제어가 없는
 구버전은 남은 작업이 없어도 `admission_control_unsupported`로 차단하며 현재 자동 갱신 대상이 아니다.
 Prefect 직접 접수 통제·일관된 백업은 별도이며 [갱신 절차와 검사 범위](../../../docs/ops-upgrade-runbook.md)를 따른다.
+무료 CI 통합 검증은 일회용 Ops 전체 DB를 네트워크가 없는 별도 MySQL 8.4에 복원하고
+스키마·행·migration·외래 키 제약과 원본 보존을 확인한다. 보고서의 `database_restore`는
+이 DB 훈련 범위이며 개인 환경이나 결과 볼륨·Prefect 복원 완료를 의미하지 않는다.
 
 `main`을 갱신해도 이미 실행 중인 이미지가 자동으로 바뀌지는 않는다. 기존 개인 환경을 다시 사용할 때는
 다음 읽기 전용 점검으로 현재 체크아웃과 실행 환경을 대조한다. WSL2/Linux에서 실행하며 artifact env 파일은 필요 없다.
