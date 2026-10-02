@@ -78,7 +78,10 @@ runner 빌드에는 `serve_flow.py`, `embedding_budget.py`, `rag_budget.py`를 �
 기본 `ops_flow.py` 실행이나 공개 RAG live 접수를 활성화하지 않습니다. 명세 인자·격리 Qdrant·
 증거 경로 및 무료 대역 검증 범위는
 [혼합 RAG 예산 세션](../../evaluation/support-program-evidence/README.md#혼합-rag-예산-세션)을 따릅니다.
-실제 Ops HTTP+MySQL 및 Core/Prefect의 혼합 실행은 후속 통합 검증 대상입니다.
+실제 Ops HTTP+MySQL 혼합 검사는 별도 AI 프로세스와 격리 MySQL 8.4를 사용하는
+`rag_budget_http_checks.py`로 필수 Ops CI에 연결했습니다. 모델 호출은 무료 대역이며 실행법과
+검증 경계는 [통합 검사 안내](../../evaluation/support-program-evidence/README.md#실제-ops-httpmysql-혼합-예산-검증)를
+따릅니다. Core/Prefect 및 실제 Kubernetes 환경의 혼합 실행은 후속 통합 검증 대상입니다.
 
 ### Compose 시작
 
