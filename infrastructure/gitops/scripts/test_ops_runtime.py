@@ -33,13 +33,36 @@ SECRET = {
 
 
 class ConnectionTests(unittest.TestCase):
+    def test_only_explicit_disabled_prefect_can_use_bootstrap_without_activation(self):
+        disabled = {"name": "PREFECT_API_URL", "value": "http://disabled-prefect.invalid/api"}
+        with tempfile.TemporaryDirectory() as temporary:
+            state = Path(temporary)
+            runtime.require_bootstrap_ops(state)
+            runtime.require_bootstrap_ops(state, [{"env": [disabled]}, {"env": [disabled]}])
+            for containers in (
+                [],
+                [{}],
+                [{"envFrom": [{"secretRef": {"name": "private"}}]}],
+                [{"env": [{"name": "PREFECT_API_URL", "value": "http://DO-NOT-PRINT/api"}]}],
+                [{"env": [{"name": "PREFECT_API_URL", "valueFrom": {"secretKeyRef": {"name": "private"}}}]}],
+                [{"env": [disabled, disabled]}],
+                [{"env": [disabled]}, {}],
+            ):
+                with self.subTest(containers=containers), self.assertRaisesRegex(ValueError, "ops_runtime.py") as raised:
+                    runtime.require_bootstrap_ops(state, containers)
+                self.assertNotIn("DO-NOT-PRINT", str(raised.exception))
+            (state / runtime.PROFILE).write_text("not even valid JSON")
+            with self.assertRaisesRegex(ValueError, "ops_runtime.py"):
+                runtime.require_bootstrap_ops(state, [{"env": [disabled]}])
+
     def test_connection_is_bound_and_overlay_never_contains_token(self):
         with tempfile.TemporaryDirectory() as temporary:
             state = Path(temporary)
-            self.assertEqual(runtime.load_overlay(state, SETTINGS), {})
             record = runtime.connection(SETTINGS, "fixture")
-            (state / runtime.PROFILE).write_text(json.dumps(record))
-            overlay = runtime.load_overlay(state, SETTINGS)["ops-service"]
+            path = state / runtime.PROFILE
+            path.write_text(json.dumps(record))
+            self.assertEqual(runtime.read_connection(path, SETTINGS), record)
+            overlay = ops_bridge.values()
             self.assertEqual(overlay["env"]["CORE_API_URL"], "http://core-service:8080")
             self.assertEqual(overlay["env"]["LLMOPS_LIVE_ENABLED"], "false")
             self.assertNotIn(TOKEN, json.dumps(overlay))
@@ -48,7 +71,7 @@ class ConnectionTests(unittest.TestCase):
                     self.subTest(key=key),
                     self.assertRaisesRegex(ValueError, "another"),
                 ):
-                    runtime.load_overlay(state, {**SETTINGS, key: "other"})
+                    runtime.read_connection(path, {**SETTINGS, key: "other"})
 
     def test_published_bootstrap_rejects_active_connection_before_release_lookup(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -59,21 +82,21 @@ class ConnectionTests(unittest.TestCase):
             with (
                 patch.object(fork_cluster, "doctor"),
                 patch.object(fork_cluster, "published_bundle") as release,
-                self.assertRaisesRegex(ValueError, "tracked runtime"),
+                self.assertRaisesRegex(ValueError, "ops_runtime.py"),
             ):
                 fork_cluster._up(
                     SimpleNamespace(local_images=None, helm="helm"), state, SETTINGS
                 )
             release.assert_not_called()
 
-    def test_local_bootstrap_retains_active_ops_overlay_during_render(self):
+    def test_local_bootstrap_cannot_bypass_connected_upgrade_checks(self):
         with tempfile.TemporaryDirectory() as temporary:
             state = Path(temporary)
             (state / runtime.PROFILE).write_text(
                 json.dumps(runtime.connection(SETTINGS, "fixture"))
             )
             with (
-                patch.object(fork_cluster, "doctor"),
+                patch.object(fork_cluster, "doctor") as doctor,
                 patch.object(
                     fork_cluster, "local_images", return_value={"ops-service": IMAGE}
                 ),
@@ -82,16 +105,44 @@ class ConnectionTests(unittest.TestCase):
                     "render_services",
                     side_effect=ValueError("stop at preflight"),
                 ) as render,
-                self.assertRaisesRegex(ValueError, "preflight"),
+                patch.object(fork_cluster, "run") as run,
+                self.assertRaisesRegex(ValueError, "ops_runtime.py"),
             ):
                 fork_cluster._up(
                     SimpleNamespace(local_images="fixture", helm="helm"),
                     state,
                     SETTINGS,
                 )
-            self.assertEqual(
-                render.call_args.kwargs["overlay"]["ops-service"], ops_bridge.values()
-            )
+            doctor.assert_not_called()
+            render.assert_not_called()
+            run.assert_not_called()
+
+    def test_missing_activation_record_does_not_allow_up_to_replace_live_connection(self):
+        for env in (
+            [],
+            [{"name": "PREFECT_API_URL", "value": "http://ops-compose-prefect:4200/api"}],
+        ):
+            with tempfile.TemporaryDirectory() as temporary:
+                state = Path(temporary)
+                (state / "kubeconfig").touch()
+                resource = {"spec": {"template": {"spec": {"containers": [{"name": "ops-service", "env": env}]}}}}
+                with (
+                    self.subTest(env=env),
+                    patch.object(fork_cluster, "doctor"),
+                    patch.object(fork_cluster, "local_images", return_value={"ops-service": IMAGE}),
+                    patch.object(fork_cluster, "render_services", return_value={}),
+                    patch.object(fork_cluster, "require_dev") as owned,
+                    patch.object(fork_cluster, "run", side_effect=[SETTINGS["cluster"], json.dumps(resource)]) as run,
+                    patch.object(fork_cluster, "apply") as apply,
+                    patch.object(fork_cluster, "load_image") as load,
+                    self.assertRaisesRegex(ValueError, "ops_runtime.py"),
+                ):
+                    fork_cluster._up(SimpleNamespace(local_images="fixture", helm="helm", kind="kind"), state, SETTINGS)
+                owned.assert_called_once_with(state, SETTINGS)
+                self.assertEqual(run.call_count, 2)
+                self.assertEqual(run.call_args.kwargs["timeout"], 15)
+                apply.assert_not_called()
+                load.assert_not_called()
 
     def test_only_literal_single_token_is_accepted(self):
         with tempfile.TemporaryDirectory() as temporary:

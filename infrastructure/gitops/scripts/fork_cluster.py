@@ -346,17 +346,17 @@ def _up(args, state, settings):
         raise ValueError("Local development images exist; dev.py --restore must finish before up changes the baseline")
     if settings["mode"] != "dev":
         raise ValueError("up is development initialization only; GitOps mode must use status/dev")
+    from ops_runtime import require_bootstrap_ops
+    require_bootstrap_ops(state)
     doctor(args, settings)
     images = local_images(args.local_images) if args.local_images else None
     from connected_runtime import load_profile, overrides
     profile = load_profile(state, settings)
-    from ops_runtime import check_connection, load_overlay
-    ops_overlay = load_overlay(state, settings)
     record = None
     if images:
-        rendered_services = render_services(args.helm, images, overlay={**overrides(profile), **ops_overlay})
+        rendered_services = render_services(args.helm, images, overlay=overrides(profile))
     else:
-        if profile or ops_overlay:
+        if profile:
             raise ValueError("Published images require tracked runtime settings; use local images for local integration overrides")
         record, snapshot, _ = published_bundle(settings, args.helm)
         rendered_services = {service: yaml.safe_dump_all(json.loads(snapshot[
@@ -368,10 +368,12 @@ def _up(args, state, settings):
         if not (state / "kubeconfig").is_file():
             raise ValueError("Named cluster already exists without this state kubeconfig; refusing adoption")
         require_dev(state, settings)
+        existing_ops = run(nk + ["get", "deployment", "ops-service", "--ignore-not-found", "-o", "json"],
+                           capture=True, timeout=15).strip()
+        if existing_ops:
+            require_bootstrap_ops(state, json.loads(existing_ops)["spec"]["template"]["spec"]["containers"])
     elif (state / "kubeconfig").exists():
         raise ValueError("Stale kubeconfig: inspect it manually before creating a replacement cluster")
-    if ops_overlay:
-        check_connection(state, settings)
     credential = None
     if not images:
         if record.get("visibility", "private") == "public":

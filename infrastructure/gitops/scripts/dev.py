@@ -185,8 +185,12 @@ def deployment_containers(nk, service):
     return containers
 
 
-def deployment(nk, service):
-    return deployment_containers(nk, service)[0]["image"]
+def deployment(nk, service, state):
+    containers = deployment_containers(nk, service)
+    if service == "ops-service":
+        from ops_runtime import require_bootstrap_ops
+        require_bootstrap_ops(state, containers)
+    return containers[0]["image"]
 
 
 def set_image(nk, service, image):
@@ -204,11 +208,13 @@ def restore(state, settings, services):
     require_dev(state, settings)
     _, nk, _ = commands(state, settings)
     ledger = read_ledger(state, settings)
+    if "ops-service" in services and "ops-service" in ledger["images"]:
+        deployment(nk, "ops-service", state)
     for service in services:
         entry = ledger["images"].get(service)
         if entry is None:
             continue
-        current = deployment(nk, service)
+        current = deployment(nk, service, state)
         if current not in {entry["image"], entry["previousImage"]}:
             raise ValueError("Deployment changed outside this watcher; inspect before restoring " + service)
         set_image(nk, service, entry["previousImage"])
@@ -223,7 +229,7 @@ def restore(state, settings, services):
 def sync_service(root, state, settings, service, expected=None, kind="kind"):
     require_dev(state, settings)
     _, nk, _ = commands(state, settings)
-    previous = deployment(nk, service)
+    previous = deployment(nk, service, state)
     ledger = read_ledger(state, settings)
     entry = ledger["images"].get(service)
     fingerprint = expected or snapshot(root, service)
@@ -248,7 +254,7 @@ def sync_service(root, state, settings, service, expected=None, kind="kind"):
     if latest != settings:
         raise ValueError("Fork settings changed during build; no Deployment was modified")
     require_dev(state, settings)
-    if deployment(nk, service) != previous:
+    if deployment(nk, service, state) != previous:
         raise ValueError("Deployment changed during build; no Deployment was modified")
     # Record recovery information before the mutation, including on interruption.
     original = entry["previousImage"] if entry else previous
@@ -259,7 +265,7 @@ def sync_service(root, state, settings, service, expected=None, kind="kind"):
         rollout(nk, service)
     except (subprocess.SubprocessError, OSError, KeyboardInterrupt):
         # Roll back only our own current image, never a concurrently replaced one.
-        if deployment(nk, service) == image:
+        if deployment(nk, service, state) == image:
             print("Rollout failed; restoring the previous image for " + service, file=sys.stderr, flush=True)
             set_image(nk, service, previous)
             rollout(nk, service)
@@ -276,6 +282,8 @@ def sync_service(root, state, settings, service, expected=None, kind="kind"):
 def watch(root, state, settings, services, interval=2.0, kind="kind"):
     failed = {}
     while True:
+        if "ops-service" in services:
+            deployment(commands(state, settings)[1], "ops-service", state)
         for service in services:
             fingerprint = snapshot(root, service)
             if failed.get(service) == fingerprint:
@@ -320,6 +328,8 @@ def main():
             elif args.watch:
                 watch(REPOSITORY_ROOT, state, settings, services, args.interval, args.kind)
             else:
+                if "ops-service" in services:
+                    deployment(commands(state, settings)[1], "ops-service", state)
                 for service in services:
                     sync_service(REPOSITORY_ROOT, state, settings, service, kind=args.kind)
     except KeyboardInterrupt:

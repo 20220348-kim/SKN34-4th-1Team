@@ -35,6 +35,26 @@ PROFILE = "ops-activation.json"
 BRIDGE = "ops-bridge.json"
 
 
+def require_bootstrap_ops(state, containers=None):
+    """Keep connected Ops upgrades on the migration/release/drain checked path."""
+    profile = Path(state) / PROFILE
+    connected = profile.exists() or profile.is_symlink()
+    if containers is not None:
+        # Missing, indirect, duplicate or image-default URLs cannot prove this is
+        # the disabled bootstrap runtime. Explicit env takes precedence over envFrom.
+        connected = connected or not containers or any(
+            [item for item in container.get("env", []) if item.get("name") == "PREFECT_API_URL"]
+            != [{"name": "PREFECT_API_URL", "value": "http://disabled-prefect.invalid/api"}]
+            for container in containers
+        )
+    if connected:
+        raise ValueError(
+            "Ops is connected or its connection state is unverified; use ops_runtime.py "
+            "--preflight and the explicit --ops-image upgrade path instead of up/dev.py. "
+            "Do not delete activation records to bypass this check."
+        )
+
+
 def connection(settings, project):
     return {
         "schemaVersion": 1,
@@ -59,19 +79,6 @@ def read_connection(path, settings):
             "Ops connection belongs to another repository, state or namespace"
         )
     return record
-
-
-def load_overlay(state, settings):
-    path = Path(state) / PROFILE
-    if not path.exists() and not path.is_symlink():
-        return {}
-    read_connection(path, settings)
-    return {"ops-service": ops_bridge.values()}
-
-
-def check_connection(state, settings):
-    record = read_connection(Path(state) / PROFILE, settings)
-    ops_bridge.connect(state, settings, record["composeProject"], check=True)
 
 
 def upgrade_preflight(state, settings):
