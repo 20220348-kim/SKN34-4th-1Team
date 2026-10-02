@@ -1,6 +1,8 @@
 """실제 AI HTTP·Service·Agent·SDK·메모리 Qdrant와 무료 예산/모델 대역의 혼합 실행."""
 
 import asyncio
+import hashlib
+import hmac
 import json
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -54,6 +56,8 @@ def session(tmp_path, monkeypatch, request):
             assert self.headers["Authorization"] == "Bearer " + TOKEN
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             action = self.path.rsplit("/", 1)[1]
+            if action == "settle" and body["usage"] is not None:
+                assert (output / f"usage-{body['sequence']}.json").is_file()
             actions.append((action, body))
             events.append((action, body.get("sequence")))
             if (
@@ -111,11 +115,17 @@ def session(tmp_path, monkeypatch, request):
                 await asyncio.to_thread(fault["release"].wait, 2)
             if fault["kind"] == "count":
                 return httpx2.Response(503, json={"error": {"message": "PRIVATE"}})
+            if fault["kind"] == "count-timeout":
+                raise httpx2.ReadTimeout("PRIVATE", request=request)
             return httpx2.Response(
                 200,
                 json={
                     "object": "response.input_tokens",
-                    "input_tokens": 32769 if fault["kind"] == "input-cap" else 100,
+                    "input_tokens": {
+                        "input-cap": 32769,
+                        "count-unknown": None,
+                        "count-bool": True,
+                    }.get(fault["kind"], 100),
                 },
             )
         attempts.append(body)
@@ -144,14 +154,22 @@ def session(tmp_path, monkeypatch, request):
             "answerStatus": "ANSWERED",
             "citationChunkIndexes": [999 if fault["kind"] == "citation" else 0],
         }
+        usage = {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120}
+        if fault["kind"] == "usage-over":
+            usage = {"input_tokens": 32769, "output_tokens": 20, "total_tokens": 32789}
         return httpx2.Response(
             200,
             json={
                 "id": f"resp_{len(attempts)}",
                 "object": "response",
                 "created_at": 0,
-                "model": body["model"],
-                "status": "completed",
+                "model": "different"
+                if fault["kind"] == "response-model"
+                else body["model"],
+                "status": {
+                    "incomplete": "incomplete",
+                    "response-status": "unexpected",
+                }.get(fault["kind"], "completed"),
                 "error": None,
                 "incomplete_details": None,
                 "parallel_tool_calls": False,
@@ -172,9 +190,7 @@ def session(tmp_path, monkeypatch, request):
                         ],
                     }
                 ],
-                "usage": None
-                if fault["kind"] == "unknown"
-                else {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120},
+                "usage": None if fault["kind"] == "unknown" else usage,
             },
         )
 
@@ -322,6 +338,9 @@ def test_concurrent_request_stops_answer_even_while_awaiting_count_or_approval(
     "kind,expected_calls,has_answer_receipt",
     [
         ("count", 2, False),
+        ("count-unknown", 2, False),
+        ("count-bool", 2, False),
+        ("count-timeout", 2, False),
         ("input-cap", 2, False),
         ("approval", 2, False),
         ("cancel", 2, False),
@@ -329,6 +348,11 @@ def test_concurrent_request_stops_answer_even_while_awaiting_count_or_approval(
         ("answer-settle", 3, True),
         ("timeout", 3, False),
         ("unknown", 3, False),
+        ("usage-over", 3, False),
+        ("response-model", 3, False),
+        ("response-status", 3, False),
+        ("incomplete", 3, True),
+        ("receipt-write", 3, False),
         ("citation", 3, True),
     ],
 )
@@ -337,6 +361,10 @@ def test_failure_never_retries_or_advances_and_preserves_observed_usage(
 ):
     app, guard, spec, _, attempts, actions, fault, output = session
     fault["kind"] = kind
+    if kind == "receipt-write":
+        guard.client.record_usage_receipt = Mock(
+            side_effect=BudgetUnavailable("disk full")
+        )
     with TestClient(app, raise_server_exceptions=False) as client:
         assert execute_case(client, spec["rag_cases"][0]).status_code == 503
         assert (
@@ -353,12 +381,123 @@ def test_failure_never_retries_or_advances_and_preserves_observed_usage(
         output / "usage-0.json"
     ).exists()  # Settlement failure retains the durable embedding receipt.
     assert guard.stopped
-    if kind == "unknown":
+    if kind in {"unknown", "usage-over", "response-model", "response-status"}:
         assert [body for action, body in actions if action == "settle"][-1][
             "usage"
         ] is None
-    if kind == "timeout":
+    if kind in {"timeout", "receipt-write"}:
         assert len([action for action, _ in actions if action == "settle"]) == 2
+
+
+def test_signed_mixed_receipts_survive_answer_settlement_loss(session):
+    app, guard, spec, _, _, _, fault, output = session
+    fault["kind"] = "answer-settle"
+    with TestClient(app) as client:
+        assert execute_case(client, spec["rag_cases"][0]).status_code == 503
+        assert execute_case(client, spec["rag_cases"][1]).status_code == 503
+    assert guard.stopped
+    for sequence, version in ((0, 2), (1, 2), (2, 1)):
+        path = output / f"usage-{sequence}.json"
+        raw = path.read_text(encoding="utf-8")
+        receipt = json.loads(raw)
+        payload = receipt["payload"]
+        assert payload["sequence"] == sequence and payload["version"] == version
+        assert payload["run_id"] == guard.client.run_id
+        assert payload["worker_id"] == guard.client.identity["worker_id"]
+        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        expected = hmac.new(
+            TOKEN.encode(),
+            f"govbiz-budget-usage-v{version}\n".encode() + canonical,
+            hashlib.sha256,
+        ).hexdigest()
+        assert hmac.compare_digest(receipt["signature"], expected)
+        assert path.stat().st_mode & 0o777 == 0o600
+        assert spec["rag_cases"][0]["question"] not in raw and TOKEN not in raw
+    assert not (output / "usage-3.json").exists()
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "question",
+        "text",
+        "index",
+        "duplicate",
+        "prompt",
+        "model",
+        "tools",
+        "tokens",
+        "schema",
+        "endpoint",
+        "unrequested-count",
+    ],
+)
+def test_modified_answer_sdk_payload_is_rejected_before_count_or_approval(
+    session, monkeypatch, change
+):
+    app, guard, spec, events, attempts, actions, _, _ = session
+    original = guard.before_request
+
+    async def tamper(request):
+        if request.url.path != "/v1/responses":
+            return await original(request)
+        body = json.loads(request.content)
+        url = str(request.url)
+        if change in {"question", "text", "index", "duplicate"}:
+            payload = json.loads(body["input"][1]["content"])
+            if change == "question":
+                payload["question"] = "unapproved"
+            elif change == "duplicate":
+                payload["chunks"][1] = {**payload["chunks"][0], "index": 1}
+            else:
+                payload["chunks"][0][change] = (
+                    True if change == "index" else "unapproved"
+                )
+            body["input"][1]["content"] = json.dumps(payload, ensure_ascii=False)
+        elif change == "prompt":
+            body["input"][0]["content"] = "unapproved instruction"
+        elif change == "model":
+            body["model"] = "other"
+        elif change == "tools":
+            body["tools"] = []
+        elif change == "tokens":
+            body["max_output_tokens"] = 2000.0
+        elif change == "schema":
+            body["text"] = {"format": {"type": "json_object"}}
+        elif change == "endpoint":
+            url = "https://unapproved.invalid/v1/responses"
+        else:
+            url += "/input_tokens"
+        await original(httpx2.Request(request.method, url, json=body))
+
+    monkeypatch.setattr(guard, "before_request", tamper)
+    with TestClient(app) as client:
+        assert execute_case(client, spec["rag_cases"][0]).status_code == 503
+        assert client.get("/health").json()["stopped"]
+    assert len(attempts) == 2
+    assert not any(event[0] == "count" for event in events)
+    assert [body["sequence"] for action, body in actions if action == "authorize"] == [
+        0,
+        1,
+    ]
+
+
+def test_count_request_cannot_be_reused_for_a_second_transmission(session):
+    _, guard, _, _, _, _, _, _ = session
+    guard.busy = True
+    guard.count_payload = {"model": "test", "input": []}
+    request = httpx2.Request(
+        "POST",
+        "https://api.openai.com/v1/responses/input_tokens",
+        json=guard.count_payload,
+    )
+
+    async def run():
+        await guard.before_request(request)
+        with pytest.raises(BudgetUnavailable):
+            await guard.before_request(request)
+
+    asyncio.run(run())
 
 
 @pytest.mark.parametrize("kind", ["claim", "close"])
