@@ -235,7 +235,12 @@ uv run --locked python manage.py set_evaluation_budget \
   미확인 호출은 입력 예약을 유지합니다. [보정 계약](#증거-기반-미확인-사용량-보정)을 따릅니다.
 
 실제 SDK 전송 검증은 [평가 실행기 임베딩 가드](../../evaluation/support-program-evidence/README.md#임베딩-배치-예산-연결-내부-실행기)를 따릅니다.
-전체 RAG live의 접수·manifest·실행기 예산 연결, runner→Kubernetes Ops 왕복 검증, 금액·기간 한도는 남아 있습니다.
+기존 AI 색인·검색·답변을 같은 예약으로 실행하는
+[혼합 RAG 예산 세션](../../evaluation/support-program-evidence/README.md#혼합-rag-예산-세션)도 추가했습니다.
+이미 예약된 내부 명세를 받으며 claim/close, 실제 검색 근거 대조, 답변 입력 계산·승인·정산을 수행합니다.
+로컬 검증의 예산 HTTP는 대역이므로 실제 Ops HTTP+MySQL 왕복 완료와 구분합니다.
+전체 RAG live의 공개 접수·manifest·Prefect 실행 연결, runner→Kubernetes Ops 왕복 검증,
+금액·기간 한도는 남아 있습니다.
 
 ## 예산 조회와 한도 변경 감사
 

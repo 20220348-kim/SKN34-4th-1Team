@@ -71,6 +71,15 @@ LLMOps CI는 기존 관리자 인증 smoke와 같은 환경에서 `ops_smoke.py 
 [입력·결과·실패 복구 계약](../../backend/ops-service/README.md#전체-rag-저장-캡처-재평가)에
 출처·미측정 값·원본 실패와 재계산 작업 상태의 구분을 설명합니다.
 
+### 내부 혼합 RAG 예산 세션
+
+runner 빌드에는 `serve_flow.py`, `embedding_budget.py`, `rag_budget.py`를 함께 포함합니다.
+이미 승인·예약된 내부 실행에 AI 색인·검색·답변과 Ops claim/승인/정산/close를 연결하는 CLI이며,
+기본 `ops_flow.py` 실행이나 공개 RAG live 접수를 활성화하지 않습니다. 명세 인자·격리 Qdrant·
+증거 경로 및 무료 대역 검증 범위는
+[혼합 RAG 예산 세션](../../evaluation/support-program-evidence/README.md#혼합-rag-예산-세션)을 따릅니다.
+실제 Ops HTTP+MySQL 및 Core/Prefect의 혼합 실행은 후속 통합 검증 대상입니다.
+
 ### Compose 시작
 
 저장소 루트에서 실행한다. Docker에는 약 8GB의 메모리를 확보하고, 13000·14200 포트가 비어 있는지 확인한다.
