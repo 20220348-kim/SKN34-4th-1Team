@@ -92,6 +92,24 @@ def test_reordered_cases_block_even_when_all_cases_are_present(runner):
         ops_flow.evaluate_saved_capture.fn(**parameters())
 
 
+@pytest.mark.parametrize("version", ["v1", "v2"])
+@pytest.mark.parametrize("name", ["fixture.json", "capture.json"])
+def test_registered_core_bytes_are_pinned_before_replay(runner, monkeypatch, version, name):
+    root, results = runner
+    dataset, capture = f"core-rag-20261002-{version}", f"core-rag-capture-20261002-{version}"
+    spec = make_spec(read_release(), dataset, "replay", {}, capture, capture)
+    params = dict(request_id=str(uuid4()), dataset_id=dataset, execution_mode="replay",
+                  candidate_capture_id=capture, reference_capture_id=capture,
+                  execution_spec=spec, execution_spec_sha256=digest(spec))
+    path = root / EVIDENCE / f"runs/core-rag-20261002/{version}/{name}"
+    path.write_bytes(path.read_bytes() + b"\n")
+    monkeypatch.setattr(ops_flow, "evaluate_rag_capture", lambda *a, **k: pytest.fail("Replay started"))
+    with pytest.raises(ExecutionSpecMismatch):
+        ops_flow.evaluate_saved_capture.fn(**params)
+    preflight = json.loads((results / params["request_id"] / "preflight.json").read_text())
+    assert preflight["model_api_calls"] == 0
+
+
 def test_generation_change_does_not_prevent_free_replay(runner, monkeypatch):
     root, _ = runner
     params = parameters("replay")

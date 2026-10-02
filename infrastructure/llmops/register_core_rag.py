@@ -37,7 +37,7 @@ def register(directory, repository):
     release_path = repository / OPS / "execution_release.json"
     # Concurrent registrations must not overwrite each other's catalog or release.
     lock = repository / OPS / ".core-rag-registration.lock"
-    with lock.open("x"):
+    with lock.open("x") as registration_lock:
         try:
             original_catalog, original_release = (
                 catalog_path.read_bytes(),
@@ -85,14 +85,14 @@ def register(directory, repository):
                     "id": identifier,
                     "label": f"전체 RAG · Core 무료 대역 캡처 {report['caseCount']}건 · 미검토",
                     "evaluation_scope": "source-chunks-retrieval-answer",
-                    "fixture": str(relative / "source/fixture.json"),
+                    "fixture": (relative / "source/fixture.json").as_posix(),
                     "fixture_sha256": plan["sourceSha256"]["fixture"],
                     "case_ids": [case["caseId"] for case in report["cases"]],
                     "captures": [
                         {
                             "id": identifier,
                             "label": "Core 통합 대역 · 실패 사례 포함 · 실제 모델 품질 아님",
-                            "path": str(relative / "source/capture.json"),
+                            "path": (relative / "source/capture.json").as_posix(),
                         }
                     ],
                 }
@@ -113,6 +113,7 @@ def register(directory, repository):
                 raise
             return destination / "registration.json"
         finally:
+            registration_lock.close()
             lock.unlink()
 
 

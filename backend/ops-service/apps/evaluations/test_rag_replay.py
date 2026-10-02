@@ -17,6 +17,27 @@ CAPTURE = "rag-synthetic-capture-v1"
 
 
 class RagProfileTests(SimpleTestCase):
+    def test_registered_core_versions_advertise_only_pinned_free_replay(self):
+        for version, count in (("v1", 9), ("v2", 1)):
+            dataset = f"core-rag-20261002-{version}"
+            capture = f"core-rag-capture-20261002-{version}"
+            with self.subTest(version=version):
+                item = next(item for item in public_datasets() if item["id"] == dataset)
+                self.assertEqual(len(item["case_ids"]), count)
+                self.assertIsNone(item["live_config"])
+                self.assertIsNone(item["execution_profiles"]["live"])
+                spec = make_spec(read_release(), dataset, "replay", {}, capture, capture)
+                self.assertEqual(spec["dataset"]["capture_kinds"][capture], "integration-stub")
+                self.assertEqual(spec["model_operations"], [])
+                self.assertFalse(spec["quality_policy"]["definition"]["baseline_eligible"])
+                for mode, candidate, reference in (
+                    ("live", "new-model-response", capture),
+                    ("replay", capture, "run:" + str(uuid4())),
+                    ("replay", capture, CAPTURE),
+                ):
+                    with self.assertRaises(ValueError):
+                        validate_execution(dataset, candidate, reference, mode, {})
+
     def test_only_free_replay_profile_is_advertised_and_live_is_rejected(self):
         item = next(item for item in public_datasets() if item["id"] == DATASET)
         self.assertIsNone(item["live_config"])
@@ -53,6 +74,33 @@ class RagSubmissionTests(TestCase):
 
     def post(self, payload=None):
         return self.client.post("/api/v1/ops/evaluations", payload or self.payload, format="json")
+
+    @patch("apps.evaluations.prefect_client.create_run", side_effect=lambda _: uuid4())
+    def test_core_replay_pins_original_kind_and_reuses_flow_without_paid_reservation(self, create):
+        for version in ("v1", "v2"):
+            dataset = f"core-rag-20261002-{version}"
+            capture = f"core-rag-capture-20261002-{version}"
+            item = next(item for item in public_datasets() if item["id"] == dataset)
+            payload = {
+                "request_id": str(uuid4()),
+                "dataset_id": dataset,
+                "candidate_capture_id": capture,
+                "reference_capture_id": capture,
+                "execution_profile": item["execution_profiles"]["replay"],
+            }
+            with self.subTest(version=version):
+                first, replay = self.post(payload), self.post(payload)
+                self.assertEqual((first.status_code, replay.status_code), (202, 200))
+                self.assertEqual(
+                    first.data["prefect_flow_run_id"], replay.data["prefect_flow_run_id"]
+                )
+                stored = EvaluationRun.objects.get(pk=payload["request_id"]).execution_spec
+                self.assertEqual(stored["dataset"]["capture_kinds"][capture], "integration-stub")
+                self.assertEqual(stored["model_operations"], [])
+                self.assertEqual(first.data["model_api_calls"], 0)
+        self.assertEqual(create.call_count, 2)
+        self.assertEqual(EvaluationRun.objects.count(), 2)
+        self.assertFalse(EvaluationBudgetReservation.objects.exists())
 
     @patch("apps.evaluations.prefect_client.create_run", return_value=uuid4())
     def test_replay_reuses_request_and_flow_without_a_paid_reservation(self, create):

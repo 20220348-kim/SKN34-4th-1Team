@@ -1,4 +1,4 @@
-# LLMOps 개발 현황과 후속 전략 — RAG 검토 자료 조회와 점수 등록 회귀 수정
+# LLMOps 개발 현황과 후속 전략 — Core 고정 캡처 등록과 무료 재평가
 
 [문서 목록](README.md) · [도입·구현 이력](langfuse-adoption-strategy.md) · [Ops API](../backend/ops-service/README.md) · [실행 안내](../infrastructure/llmops/README.md)
 
@@ -28,7 +28,40 @@
 | 관측·인프라 복구 | Core→AI 상세 RAG 추적, Prefect·sync·artifact·컨테이너 교체·보고서 변조 검증 구현 | 최신 SHA의 전체 통합 CI, 개인/운영 환경 적용·복원 완료는 별도 증거 필요 |
 | RAG 오프라인 평가 | v1 계산기·v2 대역 출처와 Core 다중 청크 수집 10사례·예산 준비 명세, 합성 및 실제 Core 저장 캡처의 등록·기존 재평가 경로 연결 | 최신 SHA의 Core→Ops→Prefect CI, 공식 HTML 수집 연결, 사람 검토 계약과 Ops 품질·기준 지정 |
 
-### 이번 후속 구현 — RAG 검토 자료 조회·점수 연결 대상 수정
+### 현재 후속 구현 — skn-119 — 실제 Core 저장 캡처의 Ops·Prefect 재평가 등록
+
+`skn-116 / bdd8681` 이후 실제 Core CI가 보존한 v1 9사례·v2 1사례의 fixture·capture를 원본 바이트로
+저장했다. `capture_catalog.json`과 `execution_release.json`에 자료 ID·사례·입력 해시·`integration-stub`
+출처를 등록하고 runner의 허용 파일에 추가했다. 기존 관리자 선택·접수·Prefect·보고서·artifact HTTP·sync를
+사용하며 새 production 의존성·서비스·migration·공개 API 형식은 추가하지 않았다.
+
+- 원본은 `461e79e`의 성공한 LLMOps CI 수집 산출물이다. 출처와 SHA는 저장 폴더의 `provenance.json`에 보존한다.
+- v1의 실패 4건과 검색/답변 측정 분모를 유지한다. 재평가 작업이 완료돼도 원본 완료 여부를 바꾸지 않는다.
+- 유료 예약·live 프로필·품질 기준 지정은 차단한다. trace ID는 과거 수집 출처이며 현재 프로젝트 존재를 보장하지 않는다.
+- 필수 LLMOps CI에 두 버전의 관리자 접수→Prefect→보고서·sync→HTTP 조회를 추가했다. 기존 합성 검증도 유지한다.
+- 최신 `main / f907e83`의 새 Core 캡처 자동 등록·검토 자료 조회·점수 대상 수정도 유지한다.
+  새 수집은 기존 `--core-rag-replay <registration.json>`, 고정 자료는 `--core-snapshot-replay v1|v2`로
+  같은 접수·Prefect·자료 조회 경로를 검증하고 결과 파일은 각각 구분한다.
+
+로컬 Python 3.12에서 실제 재계산·Pandera·Evidently 보고서, 원본 실패와 점수 출처, 파일 변조 차단,
+통합 smoke의 잘못된 완료 판정 거절 등 관련 **91건**을 통과했다. Prefect 함수 본문과 점수 전송 대역을
+사용한 검증이며 실제 Prefect 서버 왕복은 변경 SHA의 CI에서 확인한다. Ops 공개 프로필·유료 실행 거절·
+실행 명세 정합성도 DB 없이 확인했다.
+
+`f907e83` 리베이스 후 실행기·명세·smoke 회귀 107건과 신규 등록 회귀 9건, **총 116건**을 통과했다.
+신규 등록 회귀에서 최신 main의 Windows 잠금 파일 삭제 오류를 재현해 핸들을 닫은 뒤 정리하도록 수정했다.
+등록 경로는 Linux 이미지에서도 읽도록 `/`로 저장하고, 등록 실패 시 기존 고정 캡처의 바이트까지
+보존하는지 확인했다. Ops Ruff·포맷, 인프라 오류 검사·등록 파일 100열 포맷, 실행 명세와 CI 구문도 확인했다.
+
+최초 테스트는 C: 공간 부족으로 중단됐고 작업용 pytest 출력 정리 후 다시 통과했다. 로컬 WSL·Docker가
+응답하지 않아 새 MySQL 접수 테스트는 기동하지 못했다. 해당 테스트는 필수 Ops CI에 포함되며 통과로 표시하지 않는다.
+기존 개발 서비스를 재시작하거나 운영 DB를 변경하지 않았다. 선행 `bdd8681`은 GovBiz·Ops·Infra·Catalog CI가
+통과했고 확인 시점 LLMOps는 실행 중이다. 리베이스한 변경 SHA의 전체 CI·개인 환경 배포는 별도 대기다.
+
+다음은 **등록 자료의 사람 검토·RAG 품질 정책 → 승인 자료·예산의 실제 모델 기준 → 실제 모델 RAG live·정기 실행 연결**이다.
+실행 절차와 한계는 [등록 Core 캡처 안내](../evaluation/support-program-evidence/README.md#등록된-core-캡처의-ops-재평가)를 따른다.
+
+### 이전 구현 — skn-118 RAG 검토 자료 조회·점수 연결 대상 수정
 
 `skn-117 / e77c48a` 이후에는 다음 두 문제를 처리했다.
 
