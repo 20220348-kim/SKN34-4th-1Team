@@ -76,7 +76,7 @@ C01 문서의 수동 조건 입력 UI와 개발 전략의 최초 UI 계획은 �
 | 문서 | 확인할 내용 |
 |---|---|
 | [기획 정합성·국내 경쟁 전략·개발 백로그](development-strategy-20260907.md) | 기획서 요구별 현재 차이, 국내 경쟁군 근거, P0/P1 작업·선행 조건·완료 기준·출시 게이트 |
-| [LLMOps 후속 개발 전략](llmops-next-development-plan.md) | RAG 세 항목의 사례 검토·이력 저장, CI 경로 회귀 수정과 품질 정책·환경 적용의 후속 조건 |
+| [LLMOps 후속 개발 전략](llmops-next-development-plan.md) | RAG 검색·답변·인용의 검토 기반 품질 점검과 판정 이력, 참조 자료 승인·합격 정책의 후속 조건 |
 | [Langfuse 기반 LLMOps 도입·구현 이력](langfuse-adoption-strategy.md) | 다섯 평가 도구의 최초 설계와 커밋별 구현·검증 기록 |
 | [신청 문서 작성 도우미 설계](application-preparation-design.md) | skn-89 최초 검수 기준과 skn-96 기업마당 공고 기반 공식 첨부·문항 발견, 작성 보조 계약 |
 | [중복 지원·수혜 검토 설계](duplicate-support-review-design.md) | skn-59 입력·실행 API, 공식 첨부 수집·파싱·단일 Agent·원문/결과 보존과 검증·한계 |

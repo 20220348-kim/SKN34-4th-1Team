@@ -14,7 +14,7 @@
 Ops의 `fixed-answer-context-only` 접수·명세·품질 정책은 유지합니다. 아래 합성 3사례를
 `rag-synthetic-multichunk-v1`로 등록해 무료 재평가·보고서·점수 등록·결과 조회까지 연결했습니다.
 [Ops RAG 재평가 계약](../../backend/ops-service/README.md#전체-rag-저장-캡처-재평가)을 따르며
-RAG 사례 검토 저장은 Ops에서 별도로 제공하며, RAG live·품질 합격·비교 기준 지정은 제공하지 않습니다.
+RAG 사례 검토·검토 기반 품질 점검은 Ops에서 별도로 제공하며, RAG live·품질 합격·비교 기준 지정은 제공하지 않습니다.
 
 ```bash
 # 저장소 루트: 자료 검증만 수행. 모든 품질 지표는 null
@@ -726,6 +726,8 @@ RAG 점수는 원본 trace가 있으면 `trace_id`만, 없으면 재평가 실�
 완료된 실행은 [RAG 사례 검토 자료](../../backend/ops-service/README.md#rag-사례-검토-자료-조회)에서
 원문·검색·인용·후보/비교 답변을 읽고 검색·답변·인용의 사람 판단과 근거를 별도로 저장할 수 있습니다.
 조회만으로 검토 기록이 생기지 않으며 검토 저장도 품질 합격·기준 승격을 수행하지 않습니다.
+[검토 기반 품질 점검](../../backend/ops-service/README.md#rag-품질-점검판정-이력)은 검색·답변·인용의
+사람 판단과 원본 실패·미측정을 분리해 명시적으로 저장합니다. AI 참조 조건 승인 전에는 합격을 부여하지 않습니다.
 검토 API와 `0021` migration은 [Ops 검토 저장 계약](../../backend/ops-service/README.md#rag-사례-검토-저장이력)을 따릅니다.
 
 ## 공식 HTML 전체 경로 재실행

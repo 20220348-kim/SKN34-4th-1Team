@@ -21,6 +21,7 @@ from .catalog import DATASETS, public_datasets, selection
 from .models import EvaluationRun
 from .quality import assess, save_fixture_review
 from .rag_material import read_material as read_rag_material
+from .rag_quality import assess as assess_rag_quality
 from .rag_reviews import review_state as rag_review_state
 from .rag_reviews import save_review as save_rag_review
 from .recovery import recovery_state, submit_recovery
@@ -298,6 +299,26 @@ def api_rag_reviews(request, run_id):
         return Response({"code": "RESULTS_UNAVAILABLE"}, status=503)
     except ValueError:
         return Response({"code": "INVALID_RAG_REVIEW"}, status=400)
+
+
+class RagQualityRequestSerializer(serializers.Serializer):
+    input_sha256 = serializers.RegexField(r"^[a-f0-9]{64}$")
+
+
+@never_cache
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def api_rag_quality(request, run_id):
+    run = get_object_or_404(EvaluationRun, pk=run_id)
+    serializer = RagQualityRequestSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    try:
+        assess_rag_quality(run, request.user, serializer.validated_data["input_sha256"])
+        return Response(rag_review_state(run, request.user))
+    except RequestConflict:
+        return Response({"code": "REVIEW_CONFLICT"}, status=409)
+    except ResultsUnavailable:
+        return Response({"code": "RESULTS_UNAVAILABLE"}, status=503)
 
 
 @never_cache

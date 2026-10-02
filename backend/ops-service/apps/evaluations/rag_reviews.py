@@ -77,37 +77,41 @@ def review_state(run, user):
     with transaction.atomic():
         locked = locked_run(run)
         rows = list(locked.rag_case_reviews.select_related("reviewed_by"))
-    latest = {}
-    for row in rows:
-        latest.setdefault(row.case_id, row.pk)
-    return {
-        "material": material,
-        "reviewer_id": user.get_username(),
-        "review_version": locked.review_version,
-        "rubric": RUBRIC,
-        "case_reviews": [
-            {
-                "id": row.pk,
-                "case_id": row.case_id,
-                "version": row.version,
-                **{field: getattr(row, field) for field in DECISION_FIELDS},
-                "comment": row.comment,
-                "material_sha256": row.material_sha256,
-                "fixture_sha256": row.fixture_sha256,
-                "candidate_capture_sha256": row.candidate_capture_sha256,
-                "reference_capture_sha256": row.reference_capture_sha256,
-                "execution_spec_sha256": row.execution_spec_sha256,
-                "rubric_version": row.rubric_version,
-                "is_current": latest[row.case_id] == row.pk
-                and row.material_sha256 == material["material_sha256"]
-                and row.rubric_version == RUBRIC["version"]
-                and row.execution_spec_sha256 == locked.execution_spec_sha256,
-                "reviewed_by": row.reviewed_by.email or row.reviewed_by.get_username(),
-                "created_at": row.created_at,
-            }
-            for row in rows
-        ],
-    }
+        latest = {}
+        for row in rows:
+            latest.setdefault(row.case_id, row.pk)
+        state = {
+            "material": material,
+            "reviewer_id": user.get_username(),
+            "review_version": locked.review_version,
+            "rubric": RUBRIC,
+            "case_reviews": [
+                {
+                    "id": row.pk,
+                    "case_id": row.case_id,
+                    "version": row.version,
+                    **{field: getattr(row, field) for field in DECISION_FIELDS},
+                    "comment": row.comment,
+                    "material_sha256": row.material_sha256,
+                    "fixture_sha256": row.fixture_sha256,
+                    "candidate_capture_sha256": row.candidate_capture_sha256,
+                    "reference_capture_sha256": row.reference_capture_sha256,
+                    "execution_spec_sha256": row.execution_spec_sha256,
+                    "rubric_version": row.rubric_version,
+                    "is_current": latest[row.case_id] == row.pk
+                    and row.material_sha256 == material["material_sha256"]
+                    and row.rubric_version == RUBRIC["version"]
+                    and row.execution_spec_sha256 == locked.execution_spec_sha256,
+                    "reviewed_by": row.reviewed_by.email or row.reviewed_by.get_username(),
+                    "created_at": row.created_at,
+                }
+                for row in rows
+            ],
+        }
+        from .rag_quality import quality_state
+
+        state["quality"] = quality_state(locked, state)
+        return state
 
 
 def save_review(

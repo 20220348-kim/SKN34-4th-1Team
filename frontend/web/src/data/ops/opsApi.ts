@@ -83,8 +83,23 @@ const ragMaterialSchema = z.object({
 })
 export type RagMaterial = z.infer<typeof ragMaterialSchema>
 const ragDecisionSchema = z.enum(['SUITABLE', 'UNSUITABLE', 'DEFERRED'])
+const ragQualityPolicySchema = z.object({
+  definition: z.object({ version: z.string(), scope: z.literal('source-chunks-retrieval-answer'),
+    pass_enabled: z.literal(false), baseline_eligible: z.literal(false), reference_review_supported: z.literal(false) }),
+  code_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+})
+const ragQualitySchema = z.object({
+  status: z.enum(['NOT_EVALUATED', 'NEEDS_REVIEW', 'FAIL']), is_current: z.boolean(), current_id: z.number().int().positive().nullable(),
+  input_sha256: z.string().regex(/^[a-f0-9]{64}$/), policy: ragQualityPolicySchema, baseline_eligible: z.literal(false),
+  history: z.array(z.object({
+    id: z.number().int().positive(), status: z.enum(['NEEDS_REVIEW', 'FAIL']), policy: ragQualityPolicySchema,
+    policy_sha256: z.string(), input_sha256: z.string(), inputs: z.record(z.string(), z.unknown()),
+    reasons: z.array(z.object({ code: z.string(), message: z.string(), case_id: z.string().nullable(), dimension: z.enum(['retrieval', 'answer', 'citation']).nullable() })),
+    assessed_by: z.string(), created_at: z.string(),
+  })),
+})
 const ragReviewStateSchema = z.object({
-  material: ragMaterialSchema, reviewer_id: z.string().min(1), review_version: z.number().int().nonnegative(),
+  quality: ragQualitySchema, material: ragMaterialSchema, reviewer_id: z.string().min(1), review_version: z.number().int().nonnegative(),
   rubric: z.object({ version: z.literal('rag-case-review-v1'), criteria: z.array(z.object({
     key: z.enum(['retrieval', 'answer', 'citation']), label: z.string(), description: z.string(),
   })).length(3).refine((values) => new Set(values.map((value) => value.key)).size === 3) }),
@@ -383,6 +398,7 @@ export const getEvaluation = (id: string, signal?: AbortSignal) => request(`/eva
 export const getEvaluationReview = (id: string, signal?: AbortSignal) => request(`/evaluations/${encodeURIComponent(id)}/review`, reviewSchema, { signal })
 export const getRagMaterial = (id: string, signal?: AbortSignal) => request(`/evaluations/${encodeURIComponent(id)}/rag-material`, ragMaterialSchema, { signal })
 export const getRagReviews = (id: string, signal?: AbortSignal) => request(`/evaluations/${encodeURIComponent(id)}/rag-reviews`, ragReviewStateSchema, { signal })
+export const assessRagQuality = (id: string, inputSha256: string, reviewerId: string) => post(`/evaluations/${encodeURIComponent(id)}/rag-quality`, { input_sha256: inputSha256 }, ragReviewStateSchema, false, reviewerId)
 export const saveRagCaseReview = (id: string, data: RagCaseReviewInput, reviewerId: string) => post(`/evaluations/${encodeURIComponent(id)}/rag-reviews`, data, ragReviewStateSchema, false, reviewerId)
 export const assessEvaluationQuality = (id: string, inputSha256: string) => post(`/evaluations/${encodeURIComponent(id)}/quality`, { input_sha256: inputSha256 }, reviewSchema)
 export const saveFixtureReview = (id: string, data: { decision: 'APPROVED' | 'CHANGES_REQUESTED' | 'DEFERRED'; comment: string; fixture_sha256: string; case_ids: string[]; rubric_version: string; fixture_version: number }) => post(`/evaluations/${encodeURIComponent(id)}/fixture-review`, data, reviewSchema)
