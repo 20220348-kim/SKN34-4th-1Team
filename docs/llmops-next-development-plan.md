@@ -1,4 +1,4 @@
-# LLMOps 개발 현황과 후속 전략 — Core 캡처의 실제 Ops 테스트 예약·정산
+# LLMOps 개발 현황과 후속 전략 — Core 캡처의 저장 재평가 등록
 
 [문서 목록](README.md) · [도입·구현 이력](langfuse-adoption-strategy.md) · [Ops API](../backend/ops-service/README.md) · [실행 안내](../infrastructure/llmops/README.md)
 
@@ -22,13 +22,52 @@
 
 | 영역 | 코드 기준 진행 상태 | 아직 완료로 판단할 수 없는 범위 |
 |---|---|---|
-| React·Django 운영 기능 | 기존 Core 관리자 로그인, 고정 근거 및 RAG 저장 캡처 접수·조회·비교·동기화·후처리 복구 구현 | RAG live·사람 검토·품질 정책 연결은 후속 |
+| React·Django 운영 기능 | 기존 Core 관리자 로그인, 고정 근거 및 RAG 저장 캡처 접수·조회·비교·동기화·후처리 복구, 실제 Core 캡처의 배포 목록 등록 구현 | 신규 등록 자료의 최신 SHA 서버 CI·개인 환경 적용, RAG live·사람 검토·품질 정책 연결은 후속 |
 | 자료·응답 검토와 품질 정책 | 고정 근거의 사람 검토, 판정 이력, 기준 지정·철회·오래된 합격 차단 구현 | 현재 모델의 유효한 사람 검토 기준은 이번 점검에서 미확인; 전체 RAG 정책 없음 |
 | 예산·취소 | 고정 근거 live의 누적 장부·입력 계산, 혼합 예약·AI HTTP 가드·증거 보정 및 실제 Core 캡처의 Ops HTTP+MySQL 테스트 예약 구현 | RAG 운영 접수·Prefect 연결·변경 SHA의 새 Core 수집부터 전체 CI·금액/기간 한도·runner→Kubernetes 검증 |
 | 관측·인프라 복구 | Core→AI 상세 RAG 추적, Prefect·sync·artifact·컨테이너 교체·보고서 변조 검증 구현 | 최신 SHA의 전체 통합 CI, 개인/운영 환경 적용·복원 완료는 별도 증거 필요 |
-| RAG 오프라인 평가 | v1 계산기·v2 대역 출처와 Core 다중 청크 수집 10사례·예산 준비 명세, Ops 합성 3사례 재평가 연결 | 공식 HTML 수집 연결, 실제 캡처 등록, 사람 검토 계약과 Ops 품질·기준 지정 |
+| RAG 오프라인 평가 | v1 계산기·v2 대역 출처와 Core 다중 청크 수집 10사례·예산 준비 명세, 합성 및 실제 Core 저장 캡처의 등록·기존 재평가 경로 연결 | 최신 SHA의 Core→Ops→Prefect CI, 공식 HTML 수집 연결, 사람 검토 계약과 Ops 품질·기준 지정 |
 
-### skn-116 후속 검증 — 실제 전송 작업과 예약·정산 보고서 대조
+### 이번 후속 구현 — 실제 Core 캡처의 배포 목록 등록·무료 재평가
+
+`skn-115 / 1c5f1ae` 이후에는 검증된 Core 수집을 기존 저장 캡처 접수에 등록하는 명령을 추가했다.
+`register_core_rag.py`는 서버가 사용하지 않는 배포 준비 checkout에 원본을 바이트 그대로 복사하고,
+허용 목록과 release를 함께 갱신한다. 새 공개 API·migration·서비스·production 의존성은 없다.
+원본 해시로 자료 ID를 고정하며 오래된 release·평가기 불일치·부분 수집·중복/동시 등록·복사 중 변경을
+거절한다. 등록 도중 예외에는 기존 메타데이터를 복원하고 이번 묶음을 정리한다.
+
+호출 흐름은 **Core 저장 캡처 검증 → 등록 목록·release 고정 → 기존 관리자 접수 → Prefect 재평가
+→ Pandera·Evidently·Langfuse → ops-sync → React 조회**다. 실제 생성 호출·예산 세션 연결과는 별개다.
+실행 시 원본 바이트가 바뀌면 기존 명세 검증에서 보고서·점수 생성 전에 차단한다.
+CI는 같은 checkout에서 수집한 v1 9건·v2 1건을 이미지 빌드 전에 등록하고 실제 관리자·HTTP·Prefect
+검사를 추가한다. 원본 계산값 전체·실패·trace·해시를 대조하며 기존 필수 종합 판정을 유지한다.
+
+로컬은 Python 3.12의 기존 가상환경에서 신규 등록/실행 검사 9건, 기존 smoke 31건,
+RAG 실행기 회귀 12건, 필수 CI 정책 15건으로 **서로 다른 검사 67건**을 통과했다.
+`uv`가 PATH에 없어 `.venv/bin/python -B -m pytest`와 `.venv/bin/ruff`를 사용했다.
+새 Python 파일 Ruff·포맷, workflow 구문·등록/빌드 순서·release 정합성과 공백을 확인했다.
+임시 `FROM scratch` Docker 빌드에서 디렉터리 허용 규칙이 원시 기록도 포함하는 문제를 재현했고,
+Core 묶음의 기본 제외 후 fixture·capture만 허용하도록 수정해 실제 export 결과를 확인했다.
+같은 파일 포함 검사를 CI의 runner 이미지에도 추가했다. 임시 빌드 파일은 검사 후 삭제했다.
+
+`skn-117`은 최신 `main / 4af3b93`에 리베이스했고, `skn-116`의 전송 증거·예산 보고서와
+양쪽 문서 이력을 보존했다. 병합 후 등록·실행 검사 9건과 필수 CI 정책 15건, **24건을 다시 통과**했다.
+Ruff·포맷, 통합 workflow의 예산 보고서 보존·등록/빌드 순서·필수 판정 및 release 정합성도 확인했다.
+실제 MySQL·전체 서버 검증은 새 푸시 SHA의 필수 CI에서 확인한다.
+
+별도로 과거 성공한 `skn-112 / 15baddb`의 실제 Core 수집 artifact를 임시 파일 트리에 등록하고
+현재 실행기의 함수 경로로 보고서를 생성했다. v1은 검색 측정 8건·답변 측정 5건·실패 4건·trace 9건,
+v2는 검색/답변/trace 각 1건·실패 0건을 보존했다. 두 재평가는 완료됐고 신규 모델 호출은 0회다.
+이 검증은 실제 Pandera·Evidently와 결과 계약을 사용했지만 Prefect 서버·Langfuse 전송은 대역이다.
+기존 운영 DB·등록 목록·컨테이너를 변경하지 않았으며 임시 파일 트리는 제거했다.
+
+현재 변경의 실제 관리자→Prefect→artifact→sync 전체 CI와 개인 PC 반영은 아직 검증 대기다.
+기준 `1c5f1ae`의 GovBiz·Ops·Catalog·Infra CI는 성공했고, 확인 시점 LLMOps CI는 실행 중이다.
+등록 방법과 배포 대상을 [Core 캡처의 Ops 저장 재평가 등록](../evaluation/support-program-evidence/README.md#core-캡처의-ops-저장-재평가-등록)에 기록했다.
+다음은 **이번 연결의 필수 CI 확인 → RAG 사람 검토 계약·품질 정책 → 승인 자료·예산의 실제 모델 기준 확보**다.
+`integration-stub-replay`·미검토·기준 지정 불가 상태를 유지하고 유료 RAG live·정기 실행을 활성화하지 않는다.
+
+### 이전 구현 — skn-116 실제 전송 작업과 예약·정산 보고서 대조
 
 최신 `main / 144ffdf`에 병합된 `skn-115`의 Core 예약·정산 검사를 유지하면서 이번 검증을 통합했다.
 기존 Core 전용 검사·MySQL CI 서비스를 그대로 사용하며 중복 검사 모듈이나 합성 Core 입력 경로는 추가하지 않는다.

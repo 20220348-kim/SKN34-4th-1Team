@@ -645,6 +645,50 @@ CI는 `core-budget.json`을 원본 Core 산출물과 함께 보존합니다. 이
 과거 실패 응답의 성공 처리나 실제 모델 품질·비용 측정이 아닙니다.
 
 
+### Core 캡처의 Ops 저장 재평가 등록
+
+`register_core_rag.py`는 완료된 무료 Core 수집을 기존 저장 캡처 허용 목록에 추가합니다.
+DB나 서버에 접속하지 않으며 **서버가 사용하지 않는 배포 준비 checkout**을 명시해야 합니다.
+실행 중인 서비스의 소스나 데이터 볼륨을 직접 수정하는 명령으로 사용하지 않습니다.
+
+```bash
+# 잠금 평가 환경이 설치된 저장소 루트. v1·v2는 각각 등록합니다.
+backend/ai-service/.venv/bin/python infrastructure/llmops/register_core_rag.py \
+  work/core-rag-new/v1 --repository "$PWD"
+backend/ai-service/.venv/bin/python infrastructure/llmops/register_core_rag.py \
+  work/core-rag-new/v2 --repository "$PWD"
+backend/ai-service/.venv/bin/python backend/ops-service/apps/evaluations/execution_spec.py
+```
+
+원본 `fixture.json`, `capture.json`, `wire.json`, 상위 `integration.json`을 예산 준비와 같은 검증기로
+대조합니다. 전체 수집 성공·유료 호출 0·실제 Core 청커 해시·관측 재구성이 맞아야 등록하며,
+`budget-plan.json`의 과거 예약이나 사용량을 가져오지는 않습니다. 캡처에 포함된 실패 사례는 보존합니다.
+
+- 원본 해시로 `core-rag-<SHA256>` 자료 ID를 만들고 원본 바이트를
+  `runs/<자료 ID>/source/`에 복사합니다. 상위 통합 기록과 `registration.json`도 같은 묶음에 보존합니다.
+- 기존 `capture_catalog.json`에 자료를 추가하고 `execution_release.json`을 함께 재생성합니다.
+  복사 중 변경·오래된 release·다른 평가 코드·중복 등록·동시 등록을 거절합니다. 등록 중 예외에는 기존
+  목록/release를 복원하고 이번 임시 묶음을 정리합니다. 강제 종료 뒤에는 배포 전에 release 검사와 diff로
+  파일 정합성을 확인합니다. 실행 명세 검사 실패 상태로 배포하지 않습니다.
+- 위 두 메타데이터와 새 자료 묶음을 함께 검토·배포합니다. Ops·ops-sync·artifact 서버·runner를 같은
+  등록 목록으로 갱신해야 합니다. runner 이미지는 새 경로의 fixture·capture만 포함하며 원시 wire는 제외합니다.
+- 기존 React 자료 목록에 **전체 RAG · Core 무료 대역 캡처 N건 · 미검토**가 표시됩니다.
+  새 API·서비스·migration·production 의존성은 없습니다. 새 모델 생성·검색은 수행하지 않습니다.
+
+```text
+Core 저장 캡처 검증 → 배포 자료 등록·release 고정 → 기존 관리자 접수
+→ Prefect의 저장 캡처 재평가 → Pandera·Evidently·Langfuse → ops-sync → React 조회
+```
+
+LLMOps CI는 같은 checkout의 v1 9사례·v2 1사례를 등록한 뒤 이미지를 만들고, 기존 `ops_smoke.py`의
+`--core-rag-replay <registration.json>`으로 관리자 인증·CSRF·동일 요청 재전송·보고서 HTTP·배경 동기화를
+검증합니다. 등록 시점의 원본 계산과 실제 결과 전체, 원본 해시·trace ID·실패 사례·미검토 출처를 대조합니다.
+증거는 `llmops-rag-replay-<SHA>` artifact의 `core-registration-*.json`, `ops-core-rag-*.json`입니다.
+
+원본 v1의 실패 4건은 재평가가 `COMPLETED`여도 `summary.completed=false`로 남습니다.
+`integration-stub-replay`, `baselineEligible=false`, 의미적 사실성 미측정, 신규 모델 호출 0 상태를 유지합니다.
+현재 모델의 품질 평가, RAG live 접수·Prefect 예산 연결, 사람 검토·기준 지정 완료를 뜻하지 않습니다.
+
 ## 공식 HTML 전체 경로 재실행
 
 [Core 통합 테스트](../../backend/core-service/src/test/kotlin/ai/govbiz/core/supportprogram/service/evidence/SupportProgramEvidenceIntegrationTest.kt)는

@@ -71,6 +71,11 @@ LLMOps CI는 기존 관리자 인증 smoke와 같은 환경에서 `ops_smoke.py 
 [입력·결과·실패 복구 계약](../../backend/ops-service/README.md#전체-rag-저장-캡처-재평가)에
 출처·미측정 값·원본 실패와 재계산 작업 상태의 구분을 설명합니다.
 
+실제 Core 수집의 v1·v2는 [등록 명령](../../evaluation/support-program-evidence/README.md#core-캡처의-ops-저장-재평가-등록)으로
+배포 준비 checkout의 목록·release에 추가합니다. LLMOps CI는 수집·예산 검사 뒤 이 자료를 등록하고,
+`ops_smoke.py --core-rag-replay <registration.json>`으로 기존 관리자·Prefect·artifact·sync 경로를 대조합니다.
+로컬 무료 보고서 검증과 최신 SHA의 실제 서버 CI를 구분하며, 개인 PC의 현재 목록·DB는 자동 변경하지 않습니다.
+
 ### 내부 혼합 RAG 예산 세션
 
 runner 빌드에는 `serve_flow.py`, `embedding_budget.py`, `rag_budget.py`를 함께 포함합니다.

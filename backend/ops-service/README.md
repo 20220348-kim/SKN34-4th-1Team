@@ -98,6 +98,11 @@ Django HTTP 요청 안에서는 평가하지 않으며 Django에 평가 SDK 전�
 LLMOps CI의 `ops_smoke.py --rag-replay`는 기존 관리자 인증·CSRF·중복 UUID·보고서 접근·공유 로그아웃
 경로에서 검색 0.5, 인용 0.25, 신규 모델 호출 0회와 출처 표시를 확인합니다.
 
+실제 Core 무료 수집도 [저장 재평가 등록 명령](../../evaluation/support-program-evidence/README.md#core-캡처의-ops-저장-재평가-등록)으로
+동일한 접수·Prefect 경로에 추가할 수 있습니다. 등록 목록·release·원본 자료를 함께 배포한 뒤 기존 React
+목록에서 선택합니다. CI는 v1 9건·v2 1건의 원본 실패·trace·해시·보고서를 대조합니다. 이 기능은
+무료 저장 캡처의 재계산이며, RAG live 접수·사람 검토·품질 기준 지정은 계속 비활성 상태입니다.
+
 ## 갱신 중 새 평가 접수 중지
 
 `0020_evaluation_admission`은 접수 상태와 변경 기록 테이블을 추가하며 기존 평가·예산 행을 변경하지 않습니다.

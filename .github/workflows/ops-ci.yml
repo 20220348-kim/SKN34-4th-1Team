@@ -93,6 +93,8 @@ jobs:
           uv run --locked ruff check ../../infrastructure/llmops/core_rag_budget.py ../../infrastructure/llmops/test_core_rag_budget.py
           uv run --locked ruff format --check ../../infrastructure/llmops/core_rag_budget.py ../../infrastructure/llmops/test_core_rag_budget.py
           uv run --locked ruff check ../../infrastructure/llmops/core_rag_budget_http_checks.py
+          uv run --locked ruff check ../../infrastructure/llmops/register_core_rag.py ../../infrastructure/llmops/test_register_core_rag.py
+          uv run --locked ruff format --check ../../infrastructure/llmops/register_core_rag.py ../../infrastructure/llmops/test_register_core_rag.py
           uv run --locked ruff format --check ../../infrastructure/llmops/core_rag_budget_http_checks.py
       - name: Test real Ops HTTP and MySQL with offline RAG worker
         env:
