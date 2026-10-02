@@ -1,6 +1,6 @@
 import hashlib
+import io
 import json
-import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -180,6 +180,33 @@ class DevTests(unittest.TestCase):
         self.assertEqual(self.current, self.initial)
         self.assertFalse(any("set" in c for c in self.calls))
         self.assertFalse((self.state / "dev-images.json").exists())
+
+    def test_image_query_timeout_never_builds_or_changes_deployment(self):
+        def execute(command, **kwargs):
+            if command[:3] == ["docker", "image", "ls"]:
+                self.assertEqual(kwargs["timeout"], 15)
+                raise subprocess.TimeoutExpired(command, 15)
+            return self.fake_run(command, **kwargs)
+
+        with patch("dev.run", side_effect=execute), self.assertRaises(subprocess.TimeoutExpired):
+            self.sync()
+        self.assertEqual(self.current, self.initial)
+        self.assertFalse(any(c[:2] == ["docker", "build"] or "set" in c for c in self.calls))
+        self.assertFalse((self.state / "dev-images.json").exists())
+
+    def test_cli_docker_timeout_exits_without_building_or_exposing_tool_output(self):
+        with (
+            patch("sys.argv", ["dev.py", "--once", "--service", "ai-service"]),
+            patch("dev.sys.platform", "linux"),
+            patch("dev.run", side_effect=subprocess.TimeoutExpired("docker", 15, output="PRIVATE")) as run,
+            patch("sys.stderr", new_callable=io.StringIO) as output,
+        ):
+            result = dev.main()
+        self.assertEqual(result, 1)
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(run.call_args.kwargs["timeout"], 15)
+        self.assertNotIn("PRIVATE", output.getvalue())
+        self.assertEqual(self.current, self.initial)
 
     def test_failed_rollout_restores_previous_image_and_reports_failure(self):
         self.fail_rollouts = 1
