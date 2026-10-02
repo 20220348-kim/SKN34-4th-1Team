@@ -5,6 +5,7 @@ import json
 import os
 import signal
 import sys
+from hashlib import sha256
 from pathlib import Path
 from urllib.request import Request, urlopen
 from uuid import UUID
@@ -127,9 +128,45 @@ def install_http_double(run_id):
     BudgetClient.settle = settle
 
 
+def install_publish_gate(run_id):
+    import rag_replay_flow
+
+    original = rag_replay_flow.publish_payloads
+
+    def publish(payloads, settings):
+        # 실제 보고서·manifest 작성이 끝난 점수 등록 경계에서만 장애를 주입한다.
+        barrier(run_id, "before_rag_publish")
+        return original(payloads, settings)
+
+    rag_replay_flow.publish_payloads = publish
+
+
+def artifact_fingerprints(run_id):
+    folder = RESULTS / str(UUID(run_id))
+    paths = [
+        "request.json",
+        "capture/capture.json",
+        "recovery-fixture.json",
+        "reference-capture.json",
+        "evaluation/manifest.json",
+        "evaluation/comparison.json",
+        "evaluation/report.html",
+    ]
+    paths += [
+        path.relative_to(folder).as_posix() for path in (folder / "capture").glob("usage-*.json")
+    ]
+    return {
+        name: sha256((folder / name).read_bytes()).hexdigest()
+        for name in sorted(paths)
+        if (folder / name).is_file()
+    }
+
+
 def process_command():
     if sys.argv[1] == "alive":
         print(json.dumps(alive(marker_path(sys.argv[2]))))
+    elif sys.argv[1] == "artifacts":
+        print(json.dumps(artifact_fingerprints(sys.argv[2])))
     elif sys.argv[1] == "signal-parent":
         if not alive(PARENT)["alive"]:
             raise RuntimeError("Runner parent identity changed")
@@ -174,6 +211,7 @@ def cancellation_evaluation(
 
     marker_path(request_id).write_text(json.dumps(process_info(os.getpid())))
     install_http_double(request_id)
+    install_publish_gate(request_id)
     return evaluate_saved_capture.fn(
         request_id,
         dataset_id,

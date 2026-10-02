@@ -36,6 +36,8 @@ SCENARIOS = (
     "rag_cancel_after_embedding",
     "rag_embedding_response_lost",
     "rag_answer_response_lost",
+    "rag_publish_failure",
+    "rag_publish_recovery",
 )
 
 
@@ -229,6 +231,59 @@ def verify_correction(record, before, after, *, events_before, events_after):
     assert record["after"]["unknown_calls"] == 0
     assert record["after"]["global_output_tokens"] == after["allocated"][1]
     assert record["before"]["global_output_tokens"] == before["allocated"][1]
+
+
+def verify_rag_recovery(source, recovered, before, after, files, *, events):
+    """무료 복구의 입력 보존·예산 불변·전송 없음·출처를 함께 확인한다."""
+    assert source["status"] == "FAILED" and source["model_api_calls"] == 9
+    assert recovered["status"] == "COMPLETED" and recovered["execution_mode"] == "recovery"
+    assert recovered["source_run_id"] == source["id"]
+    assert recovered["prefect_flow_run_id"] != source["prefect_flow_run_id"]
+    assert recovered["model_api_calls"] == 0
+    assert after["execution_mode"] == "recovery" and after["source_run_id"] == source["id"]
+    assert after["reservation_exists"] is False
+    assert before["allocated"] == after["allocated"]
+    assert before["allocated_input"] == after["allocated_input"]
+    assert files["source_before"] == files["source_after"], "Original evidence changed"
+    config = recovered["execution_spec"]["recovery_config"]
+    assert recovered["execution_spec"]["model_operations"] == []
+    assert recovered["execution_spec"]["generation"] is None
+    assert (
+        files["recovered"]["capture/capture.json"]
+        == files["source_before"]["capture/capture.json"]
+        == config["capture_sha256"]
+    )
+    assert files["source_before"]["request.json"] == config["source_request_sha256"]
+    assert files["recovered"]["recovery-fixture.json"] == config["fixture_sha256"]
+    assert files["recovered"]["reference-capture.json"] == config["reference_capture_sha256"]
+    report = recovered["comparison"]["current"]
+    assert report["captureSha256"] == config["capture_sha256"]
+    assert report["execution"] == config["recorded_execution"]
+    assert report["measurementKind"] == "recorded-capture-replay" and report["completed"]
+    assert report["liveExecutionPerformed"] is False and report["baselineEligible"] is False
+    assert not any(
+        event["stage"]
+        in {
+            "claim",
+            "authorize",
+            "settle",
+            "close",
+            "embedding_sent",
+            "model_sent",
+            "barrier_timeout",
+        }
+        for event in events
+    )
+    assert sum(event["stage"] == "before_rag_publish" for event in events) == 1
+    return {
+        "model_sends": 0,
+        "paid_model_calls": 0,
+        "retained_delta": [0, 0],
+        "retained_input_delta": 0,
+        "reservation_created": False,
+        "original_evidence_preserved": True,
+        "evidence_kind": "integration-stub-not-quality-evidence",
+    }
 
 
 class Smoke:
@@ -730,6 +785,89 @@ class Smoke:
             self.start(name, dataset=self.rag_dataset, fault=fault)
             self.terminal("FAILED")
             self.finish(calls=calls, output=output, sent=calls, rag=True, unknown_calls=1)
+        self.run_rag_recovery()
+
+    def run_rag_recovery(self):
+        self.start("rag_publish_failure", dataset=self.rag_dataset, fault="publish_error")
+        source = self.terminal("FAILED")
+        assert source["model_api_calls"] == 9
+        assert source["postprocessing"]["inputs_ready"] and source["postprocessing"]["can_recover"]
+        assert source["postprocessing"]["stage"] == "publish"
+        assert sum(e["stage"] == "publish_rejected" for e in self.control("state")["events"]) == 1
+        self.finish(calls=9, output=150, sent=9, rag=True)
+        source_files = json.loads(self.runner("artifacts", source["id"]))
+        source_budget = self.db(source["id"])
+        source_events = self.records[-1]["events"]
+        self.active = {
+            "scenario": "rag_publish_recovery",
+            "request_id": str(uuid4()),
+            "source_run_id": source["id"],
+            "before": self.db(),
+            "states": [],
+        }
+        self.control("configure", {"hold": "before_rag_publish"})
+        path = f"/api/v1/ops/evaluations/{source['id']}/recover"
+        payload = {"request_id": self.active["request_id"]}
+        status, first = self.api(path, payload)
+        assert status == 202
+        self.observe(first)
+        self.stage("before_rag_publish")
+        status, repeated = self.api(path, payload)
+        assert status == 200 and repeated["prefect_flow_run_id"] == first["prefect_flow_run_id"]
+        status, rejected = self.api(path, {"request_id": str(uuid4())})
+        assert status == 409 and rejected["code"] == "RECOVERY_CONFLICT"
+        self.active["duplicate_request_status"] = 200
+        self.active["concurrent_recovery_status"] = 409
+        self.control("release", {})
+        recovered = self.terminal("COMPLETED")
+        stopped = wait_for(self.process, lambda p: not p["alive"], label="Recovery child exit")
+        after, events = self.db(self.active["request_id"]), self.control("state")["events"]
+        files = {
+            "source_before": source_files,
+            "source_after": json.loads(self.runner("artifacts", source["id"])),
+            "recovered": json.loads(self.runner("artifacts", recovered["id"])),
+        }
+        counts = verify_rag_recovery(
+            source, recovered, self.active["before"], after, files, events=events
+        )
+        assert self.db(source["id"]) == source_budget
+        status, state = self.request(f"{self.probe}/control/{source['id']}/state")
+        assert status == 200 and state["events"] == source_events
+        status, original = self.api(f"/api/v1/ops/evaluations/{source['id']}")
+        assert status == 200 and original["status"] == "FAILED"
+        assert original["postprocessing"]["attempts"] == [
+            {
+                "id": recovered["id"],
+                "status": "COMPLETED",
+                "status_label": recovered["status_label"],
+            }
+        ]
+        status, reviews = self.api(f"/api/v1/ops/evaluations/{recovered['id']}/rag-reviews")
+        assert status == 200 and reviews["quality"]["status"] == "NOT_EVALUATED"
+        assert not reviews["reference_review"]["approved"] and reviews["case_reviews"] == []
+        assert reviews["quality"]["baseline_eligible"] is False
+        status, flows = self.request(
+            self.prefect + "/flow_runs/filter",
+            {
+                "flow_runs": {"idempotency_key": {"any_": ["ops-" + recovered["id"]]}},
+            },
+        )
+        assert status == 200 and len(flows) == 1 and flows[0]["id"] == self.active["flow_id"]
+        assert self.db() == self.active["before"]
+        self.records.append(
+            self.active
+            | {
+                "after": after,
+                "events": events,
+                "process": stopped,
+                "counts": counts,
+                "artifact_sha256": files,
+                "prefect_state": flows[0]["state_type"],
+                "passed": True,
+            }
+        )
+        print("Passed cancellation scenario: rag_publish_recovery", flush=True)
+        self.active = None
 
 
 def isolated_environment():

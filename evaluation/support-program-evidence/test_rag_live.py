@@ -124,6 +124,46 @@ def test_live_runs_new_embeddings_search_answers_and_free_recovery(runner):
     assert len(calls) == 9
 
 
+@pytest.mark.parametrize("stage", ["report", "publish"])
+def test_failed_postprocessing_recovers_exact_bytes_without_new_model_or_budget(runner, monkeypatch, stage):
+    root, calls, actions, _ = runner
+    params = parameters()
+    target = "render" if stage == "report" else "publish_payloads"
+    original = getattr(rag_replay_flow, target)
+
+    def fail(*args, **kwargs):
+        raise ValueError("offline postprocessing failure")
+
+    monkeypatch.setattr(rag_replay_flow, target, fail)
+    with pytest.raises(ValueError, match="offline postprocessing failure"):
+        ops_flow.evaluate_saved_capture.fn(**params)
+    source = root / params["request_id"]
+    source_files = {p.relative_to(source): p.read_bytes() for p in source.rglob("*") if p.is_file()}
+    manifest = json.loads(source_files[Path("evaluation/manifest.json")])
+    assert manifest["status"] == "failed" and manifest["stage"] == stage
+    assert len(calls) == 9 and actions[-1][0] == "close"
+    original_actions = deepcopy(actions)
+    _, recovery, inputs = read_recovery_inputs(root, HERE, params["request_id"])
+    monkeypatch.setattr(rag_replay_flow, target, original)
+    monkeypatch.setattr(rag_live, "execute", lambda *a, **k: pytest.fail("Recovery called the model runner"))
+    spec = make_spec(read_release(), DATASET, "recovery", {}, "new-model-response", CAPTURE, recovery_config=recovery)
+    recovered_id = str(uuid4())
+    result = ops_flow.evaluate_saved_capture.fn(**{
+        **params, "request_id": recovered_id, "execution_mode": "recovery", "live_config": {},
+        "recovery_config": recovery, "execution_spec": spec, "execution_spec_sha256": digest(spec),
+    })
+    recovered = root / recovered_id
+    assert result["status"] == "completed" and len(calls) == 9 and actions == original_actions
+    assert (recovered / "capture/capture.json").read_bytes() == inputs["capture"]
+    assert (recovered / "reference-capture.json").read_bytes() == inputs["reference_capture"]
+    assert (recovered / "recovery-fixture.json").read_bytes() == inputs["fixture"]
+    assert {p.relative_to(source): p.read_bytes() for p in source.rglob("*") if p.is_file()} == source_files
+    report = json.loads((recovered / "evaluation/comparison.json").read_bytes())["current"]
+    assert report["measurementKind"] == "recorded-capture-replay"
+    assert report["liveExecutionPerformed"] is False and report["baselineEligible"] is False
+    assert not (recovered / "capture/usage-summary.json").exists()
+
+
 @pytest.mark.parametrize("kind,expected", [("count", 2), ("approval", 2), ("timeout", 3), ("unknown", 3), ("settle", 3)])
 def test_partial_failure_preserves_usage_and_stops_remaining_cases(runner, kind, expected):
     root, calls, actions, fault = runner

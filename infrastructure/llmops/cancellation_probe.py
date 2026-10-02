@@ -246,6 +246,14 @@ def handler(probe):
                 return 200, {"accepted": True}
             if len(parts) == 3 and parts[0] == "barrier":
                 probe.gate(parts[1], parts[2])
+                with probe.lock:
+                    fail_publish = (
+                        parts[2] == "before_rag_publish"
+                        and probe.runs[parts[1]]["config"].get("fault") == "publish_error"
+                    )
+                if fail_publish:
+                    probe.event(parts[1], "publish_rejected", status=503)
+                    return 503, {"code": "TEST_PUBLISH_FAILURE"}
                 return 200, {"accepted": True}
             if len(parts) == 2 and parts[0] == "model":
                 run_id = str(UUID(parts[1]))
@@ -312,12 +320,19 @@ def database_snapshot(run_id):
     }
     if run_id:
         run = EvaluationRun.objects.get(pk=UUID(run_id))
-        reservation = run.budget_reservation
         result.update(
             status=run.status,
             flow_id=str(run.prefect_flow_run_id),
-            worker_id=str(reservation.worker_id) if reservation.worker_id else None,
             spec_hash=run.execution_spec_sha256,
+            execution_mode=run.execution_mode,
+            source_run_id=str(run.source_run_id) if run.source_run_id else None,
+            reservation_exists=hasattr(run, "budget_reservation"),
+        )
+        if not result["reservation_exists"]:
+            return result
+        reservation = run.budget_reservation
+        result.update(
+            worker_id=str(reservation.worker_id) if reservation.worker_id else None,
             closed=reservation.closed_at is not None,
             reserved_calls=reservation.max_calls,
             reserved_input_tokens=reservation.reserved_input_tokens,
