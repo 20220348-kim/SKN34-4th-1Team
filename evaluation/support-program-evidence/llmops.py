@@ -238,8 +238,12 @@ def score_payloads(result: dict, settings: LangfuseSettings) -> list[dict]:
 
 
 def publish_scores(result: dict, settings: LangfuseSettings) -> list[str]:
+    return publish_payloads(score_payloads(result, settings), settings)
+
+
+def publish_payloads(payloads: list[dict], settings: LangfuseSettings) -> list[str]:
+    """범위별 검증을 마친 점수를 등록하고 실제 서버 저장을 재조회한다."""
     evaluate.require(settings.enabled, "Langfuse must be explicitly enabled for publication")
-    payloads = score_payloads(result, settings)
     options = {"max_retries": 0, "timeout_in_seconds": 5}
     # REST 등록에는 추적 SDK의 공용 background worker를 생성·종료하지 않는다.
     with httpx.Client(timeout=5) as transport:
@@ -251,9 +255,12 @@ def publish_scores(result: dict, settings: LangfuseSettings) -> list[str]:
         # v4 서버 저장 여부를 확인한다. write 응답이나 SDK flush만으로 완료하지 않는다.
         deadline = time.monotonic() + 45
         while True:
-            found = client.scores_v3.get_many_v3(id=",".join(expected), limit=100,
+            actual = {}
+            identifiers = list(expected)
+            for start in range(0, len(identifiers), 100):
+                found = client.scores_v3.get_many_v3(id=",".join(identifiers[start:start + 100]), limit=100,
                                                     fields="details,subject", request_options=options)
-            actual = {score.id: score for score in found.data}
+                actual.update({score.id: score for score in found.data})
             if all(identifier in actual and actual[identifier].value == payload["value"]
                    and actual[identifier].name == payload["name"] for identifier, payload in expected.items()):
                 return list(expected)

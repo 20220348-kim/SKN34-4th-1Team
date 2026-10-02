@@ -25,6 +25,8 @@ from apps.evaluations.recovery_inputs import read_recovery_inputs
 from apps.evaluations.execution_spec import (
     ExecutionSpecMismatch, build_release, file_digest, verify_spec,
 )
+from apps.evaluations.catalog import RAG_SCOPE, evaluation_scope
+from rag_replay_flow import evaluate_rag_capture
 
 DATASET_ID = LEGACY_DATASET_ID
 
@@ -110,7 +112,7 @@ def evaluate_saved_capture(
                         dataset_id=dataset_id, mode=execution_mode, config=config,
                         candidate_id=candidate_capture_id, reference_id=reference_capture_id,
                         reference_config=reference_config, recovery_config=recovery_config)
-        elif execution_mode == "live" or execution_spec_sha256:
+        elif execution_mode == "live" or execution_spec_sha256 or evaluation_scope(dataset_id) == RAG_SCOPE:
             raise ExecutionSpecMismatch("Live execution requires a pinned specification")
         if execution_mode == "recovery":
             evaluate.require(not config and bool(recovery_config), "Recovery must not generate responses")
@@ -176,6 +178,10 @@ def evaluate_saved_capture(
             # 모델 전송이 끝난 뒤에만 미전송 몫을 반환한다. 미확인 전송은 예약을 유지한다.
             budget.close()
         evaluate.require(capture["completed"], "Live capture incomplete; partial capture preserved")
+    if evaluation_scope(dataset_id) == RAG_SCOPE:
+        return evaluate_rag_capture(str(fixture_path), str(capture_path), str(reference_path),
+                                    str(output / "evaluation"), execution_spec=execution_spec,
+                                    execution_spec_sha256=execution_spec_sha256)
     return evaluate_capture(str(fixture_path), str(capture_path), str(reference_path),
                             str(output / "evaluation"), case_ids=dataset["case_ids"],
                             **({"execution_spec_sha256": execution_spec_sha256} if execution_spec else {}))

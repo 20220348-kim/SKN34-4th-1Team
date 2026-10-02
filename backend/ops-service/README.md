@@ -71,6 +71,33 @@ Django 사용자 행은 `core:{회원 ID}`와 이메일로 실행 요청자를 �
 Django HTTP 요청 안에서는 평가하지 않으며 Django에 평가 SDK 전체를 설치하지 않습니다.
 별도 Celery·Airflow·LLM provider는 추가하지 않았습니다. 저장 응답 재평가는 모델 호출 0회이며, 새 응답 생성은 아래 승인 계약을 따릅니다.
 
+## 전체 RAG 저장 캡처 재평가
+
+`rag-synthetic-multichunk-v1` 자료와 `rag-synthetic-capture-v1` 캡처를 선택하면 원문·청크·저장 검색
+결과·저장 답변의 계약을 검증하고 검색 재현율·답변 인용 재현율·답변 상태 일치율을 재계산합니다.
+등록 자료는 AI 작성 가상 공고·수동 분할 청크·합성 응답 3사례입니다. 실제 Core 청커나 모델의
+실행 결과가 아니며 새 수집·검색·색인·임베딩·답변 생성은 수행하지 않습니다.
+
+호출 흐름: `React → Django 명세 고정 → Prefect → rag_evaluate → Pandera → Evidently·Langfuse
+점수 등록/재조회 → ops-sync → React 결과 조회`.
+
+- 범위는 `source-chunks-retrieval-answer`, 접수 모드는 `replay`입니다. session의 `live_config`와
+  `execution_profiles.live`는 `null`이며 서버도 live·다른 범위 자료·검토된 실행 기준(`run:`)을 거절합니다.
+- release의 `rag_evaluation`이 평가기·API 모델·결과 계약·잠금 의존성을 별도로 고정합니다.
+  접수 명세에는 fixture·후보·비교 캡처 해시와 출처를 포함하며 기존 고정 근거 결과 형식은 유지합니다.
+- 비교 결과 v3는 지표 값과 측정/대상 사례 수, 원본 실패 단계, 출처를 보존합니다.
+  `summary.completed`는 **원본 답변의 완료 여부**입니다. Ops `COMPLETED`는 재계산·보고서·점수
+  등록과 재조회 성공을 뜻하며 품질 합격이나 실제 RAG 실행 성공을 뜻하지 않습니다.
+- 계약에 맞는 원본 실패·미실행 사례도 재평가할 수 있습니다. 손상된 입력·보고서 생성 실패·점수
+  등록 실패는 작업 실패로 남깁니다. 후처리 복구는 같은 평가기와 고정 입력을 검증한 새 요청으로
+  실행하며 원본 이력과 점수 ID를 유지합니다. 추가 모델 호출은 0회입니다.
+- 합성 캡처에는 모델·프롬프트·trace를 만들지 않습니다. `baselineEligible=false`를 유지하며
+  의미적 사실성은 미측정입니다. RAG 사람 검토·품질 합격·비교 기준 지정은 후속 범위입니다.
+
+새 migration·의존성·서비스는 없습니다. Ops·실행기·Web을 같은 소스로 갱신해야 합니다.
+LLMOps CI의 `ops_smoke.py --rag-replay`는 기존 관리자 인증·CSRF·중복 UUID·보고서 접근·공유 로그아웃
+경로에서 검색 0.5, 인용 0.25, 신규 모델 호출 0회와 출처 표시를 확인합니다.
+
 ## 갱신 중 새 평가 접수 중지
 
 `0020_evaluation_admission`은 접수 상태와 변경 기록 테이블을 추가하며 기존 평가·예산 행을 변경하지 않습니다.
@@ -190,7 +217,7 @@ uv run --locked python manage.py set_evaluation_budget \
 ### 임베딩 배치별 예산: 내부 실행 계약
 
 `source-chunks-retrieval-answer`의 내부 작업 명세에 문서 임베딩·질문 임베딩·답변을 구분했습니다.
-공개 카탈로그·접수·Prefect 실행기는 여전히 고정 근거 평가만 지원합니다. 이 계약만으로 RAG live를
+공개 카탈로그·접수·Prefect 실행기는 고정 근거 평가와 무료 RAG 저장 캡처 재평가를 지원합니다. 이 계약만으로 RAG live를
 접수하거나 품질 판정을 할 수 없으며, 일반 서비스의 임베딩 호출에도 자동 적용되지 않습니다.
 
 - 예약은 작업별 입력·출력 상한의 **합계**입니다. 임베딩 출력 상한은 0이고 누적 입력 한도 설정이 필수입니다.
@@ -208,7 +235,7 @@ uv run --locked python manage.py set_evaluation_budget \
   미확인 호출은 입력 예약을 유지합니다. [보정 계약](#증거-기반-미확인-사용량-보정)을 따릅니다.
 
 실제 SDK 전송 검증은 [평가 실행기 임베딩 가드](../../evaluation/support-program-evidence/README.md#임베딩-배치-예산-연결-내부-실행기)를 따릅니다.
-전체 RAG 접수·manifest·실행기 연결, runner→Kubernetes Ops 왕복 검증, 금액·기간 한도는 남아 있습니다.
+전체 RAG live의 접수·manifest·실행기 예산 연결, runner→Kubernetes Ops 왕복 검증, 금액·기간 한도는 남아 있습니다.
 
 ## 예산 조회와 한도 변경 감사
 
@@ -398,7 +425,7 @@ uv run --locked python manage.py correct_evaluation_usage \
 추가 모델 전송 0회 확인을 연결했습니다. 전체 서버 실행은 해당 변경의 CI에서 확인해야 합니다.
 임베딩은 `apps.evaluations.test_embedding_receipts`에서 실제 실행기 v2 파일·질문/문서 배치·
 서명/상한/시각 오류·중복/동시 보정·DB 식별자 제약·rollback·API 비밀 비노출을 검증합니다.
-SDK 무료 검증과 MySQL 검증은 분리되어 있으며 전체 RAG/Prefect 실행 연결은 후속 범위입니다.
+SDK 무료 검증과 MySQL 검증은 분리되어 있으며 전체 RAG live/Prefect 예산 연결은 후속 범위입니다.
 
 ## 평가 취소
 
@@ -465,12 +492,13 @@ Ops는 결과의 명세·평가기·선택 사례·입력 해시를 확인한 �
 
 ### 평가 범위 계약
 
-새 실행 명세는 `schema_version=2`이며 `evaluation_scope=fixed-answer-context-only`를
-프로필 해시에 포함합니다. session의 `datasets[].evaluation_scope`와 실행 응답의
-`evaluation_scope`로 접수 전후 범위를 확인합니다. 현재 지원 범위는 **고정 근거 답변**뿐입니다.
-원문 수집·청킹·색인·검색은 실행하지 않으며 인용 재현율을 검색 재현율로 해석하지 않습니다.
+새 실행 명세는 `schema_version=2`이며 자료별 `evaluation_scope`를 프로필 해시에 포함합니다.
+session의 `datasets[].evaluation_scope`와 실행 응답의 `evaluation_scope`로 접수 전후 범위를
+확인합니다. 고정 근거 답변은 `fixed-answer-context-only`, 위 무료 RAG 재평가는
+`source-chunks-retrieval-answer`입니다. 두 경로 모두 새 원문 수집·청킹·색인·검색을 실행하지 않습니다.
+고정 근거의 인용 재현율을 검색 재현율로 해석하지 않습니다.
 
-실행기는 새 캡처·manifest·비교 보고서에 `scope`를 기록하고 비교·Langfuse 점수에는
+고정 근거 실행기는 새 캡처·manifest·비교 보고서에 `scope`를 기록하고 비교·Langfuse 점수에는
 `retrieval_evaluated=false`를 기록합니다. 다른 범위의 입력·캡처, 서로 다른 범위의 비교,
 명세·보고서의 범위 불일치는 거절합니다. 새 명세에 필요한 범위나 검색 미측정 표시가 누락돼도
 완료로 인정하지 않습니다. 자료 범위와 품질 정책 범위가 다르면 품질 판정·기준 지정도 차단합니다.
@@ -483,7 +511,8 @@ Ops는 결과의 명세·평가기·선택 사례·입력 해시를 확인한 �
 실행 명세 해시를 재생성했으므로 Ops와 실행기를 같은 소스로 배포해야 합니다. 기존 요청·캡처·검토
 이력은 소급 갱신하지 않습니다. 품질 입력 해시에는 범위도 포함되므로 이전 품질 판정은 그대로
 보존하고 현재 판정으로 쓰려면 명시적으로 재판정합니다. 자동 승인이나 새 모델 호출은 없습니다.
-전체 RAG 접수·품질 판정과 실제 실행 경로의 예산 연결은 후속 구현입니다. 내부 임베딩 예약 계약과 오프라인 검색 지표 계산기를 공개 RAG 실행으로 해석하지 않습니다.
+전체 RAG live 접수·사람 검토·품질 판정과 실제 실행 경로의 예산 연결은 후속 구현입니다.
+무료 저장 캡처 재평가 성공을 실제 RAG 생성·검색이나 현재 모델 품질 검증으로 해석하지 않습니다.
 
 ## 응답 검토와 비교 기준
 

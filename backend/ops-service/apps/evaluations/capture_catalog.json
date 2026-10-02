@@ -40,5 +40,24 @@
       }
     ],
     "fixture_sha256": "b61b3cb702d20e33cd797aa3d1b413210646b5f2fec87d42c87c77cd9aaf8621"
+  },
+  {
+    "id": "rag-synthetic-multichunk-v1",
+    "label": "전체 RAG · 합성 다중 청크 캡처 재계산",
+    "evaluation_scope": "source-chunks-retrieval-answer",
+    "fixture": "rag-fixture.json",
+    "fixture_sha256": "712b6b3b9d8bbdfc85c4212a1d4b076055e0fed3139d0b17871b2130d9b75596",
+    "case_ids": [
+      "R01",
+      "R02",
+      "R03"
+    ],
+    "captures": [
+      {
+        "id": "rag-synthetic-capture-v1",
+        "label": "합성 RAG 캡처 · 모델 실행 없음",
+        "path": "rag-synthetic-capture.json"
+      }
+    ]
   }
 ]

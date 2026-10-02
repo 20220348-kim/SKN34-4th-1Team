@@ -40,6 +40,15 @@ PIPELINE_FILES = (
     OPS + "execution_spec.py",
     OPS + "quality_policy.py",
 )
+RAG_FILES = (
+    EVIDENCE + "rag_evaluate.py",
+    EVIDENCE + "rag_replay_flow.py",
+    EVIDENCE + "llmops.py",
+    OPS + "rag_replay.py",
+    AI + "app/support_program_evidence/models.py",
+    AI + "app/support_program_identity.py",
+    *DEPENDENCIES,
+)
 
 
 class ExecutionSpecMismatch(ValueError):
@@ -158,6 +167,16 @@ def build_release(root):
                 for capture in item["captures"]
             },
         }
+        if "evaluation_scope" in item:
+            datasets[item["id"]]["evaluation_scope"] = item["evaluation_scope"]
+            datasets[item["id"]]["capture_kinds"] = {
+                capture["id"]: json.loads((root / EVIDENCE / capture["path"]).read_bytes())[
+                    "execution"
+                ]["kind"]
+                for capture in item["captures"]
+            }
+    rag_evaluation = fingerprint(RAG_FILES)
+    rag_evaluation.update(version=rag_evaluation["sha256"], scope="source-chunks-retrieval-answer")
     return {
         "schema_version": 1,
         "quality_policy": {
@@ -171,6 +190,7 @@ def build_release(root):
             "code_sha256": file_digest(root / (OPS + "quality_policy.py")),
         },
         "evaluation": evaluation,
+        "rag_evaluation": rag_evaluation,
         "generation": {
             **fingerprint(GENERATION_FILES),
             "prompt_sha256": sha256(prompt_text.encode()).hexdigest(),
@@ -186,14 +206,28 @@ def read_release():
 
 
 def profile(release, dataset_id, mode, config):
+    rag = (
+        release["datasets"][dataset_id].get("evaluation_scope") == "source-chunks-retrieval-answer"
+    )
+    if rag:
+        from .rag_replay import POLICY
+
+        if mode not in {"replay", "recovery"} or config:
+            raise ValueError("RAG supports saved capture replay only")
+    evaluation = release["rag_evaluation"] if rag else release["evaluation"]
     return {
         "schema_version": 2,
-        "evaluation_scope": release["evaluation"]["scope"],
-        "quality_policy": release["quality_policy"],
+        "evaluation_scope": evaluation["scope"],
+        "quality_policy": {
+            "definition": POLICY,
+            "code_sha256": evaluation["files"][OPS + "rag_replay.py"],
+        }
+        if rag
+        else release["quality_policy"],
         "dataset_id": dataset_id,
         "dataset": release["datasets"][dataset_id],
         "execution_mode": mode,
-        "evaluation": release["evaluation"],
+        "evaluation": evaluation,
         "pipeline": release["pipeline"],
         "generation": release["generation"] if mode == "live" else None,
         "live_config": config if mode == "live" else {},

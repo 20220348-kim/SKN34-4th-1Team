@@ -57,6 +57,22 @@ Core부터 이어지는 전체 RAG 추적과 Ops 평가 연동, 운영 배포다
 
 ## 개발 서버
 
+### 전체 RAG 무료 재평가 확인
+
+관리 화면에서 **전체 RAG · 합성 다중 청크 캡처 재계산**을 선택하면 등록된 합성 3사례를
+재계산합니다. 실제 모델·검색 실행 기록이 아니며 신규 모델 호출은 0회입니다. 실행 명세를
+재생성했으므로 Ops·실행기·Web을 같은 소스로 갱신합니다. 새 migration은 없습니다.
+
+LLMOps CI는 기존 관리자 인증 smoke와 같은 환경에서 `ops_smoke.py --rag-replay`도 실행합니다.
+접수→Prefect→보고서·Langfuse 점수 재조회→sync→인증된 결과 조회를 확인하고 요약을
+`llmops-rag-replay-<SHA>` artifact에 남깁니다. 옵션·연결 인자는 `python3 infrastructure/llmops/ops_smoke.py --help`와
+`.github/workflows/llmops-ci.yml`을 참고합니다. CI 성공을 개인 PC 환경 적용으로 해석하지 않습니다.
+
+[입력·결과·실패 복구 계약](../../backend/ops-service/README.md#전체-rag-저장-캡처-재평가)에
+출처·미측정 값·원본 실패와 재계산 작업 상태의 구분을 설명합니다.
+
+### Compose 시작
+
 저장소 루트에서 실행한다. Docker에는 약 8GB의 메모리를 확보하고, 13000·14200 포트가 비어 있는지 확인한다.
 Langfuse Web·Worker, PostgreSQL, ClickHouse, Redis, MinIO와 Prefect를 별도 Compose 프로젝트에 둔다.
 이미지는 digest로 고정하며 업무 서비스의 데이터베이스·볼륨을 공유하지 않는다.

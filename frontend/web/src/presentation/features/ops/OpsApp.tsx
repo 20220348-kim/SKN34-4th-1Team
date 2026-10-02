@@ -8,6 +8,7 @@ import { loginPathFor } from '../../shared/auth/returnPath'
 import { readPendingEvaluation, storePendingEvaluation, clearPendingEvaluation } from '../../../data/ops/pendingEvaluation'
 import type { EvaluationPage, EvaluationRun, OpsSession, EvaluationSubmission } from '../../../data/ops/opsApi'
 import { workspacePageStyles as styles, workspaceTagClassName } from '../../shared/workspace/WorkspacePage.styles'
+import { RagComparisonResult } from './RagComparisonResult'
 import { EvaluationReviewPanel } from './EvaluationReviewPanel'
 import { BudgetOverview, RunBudgetPanel } from './BudgetPanel'
 import { WorkspacePageHeader } from '../../shared/workspace/WorkspacePageHeader'
@@ -106,10 +107,13 @@ function EvaluationList({ owner, datasets, liveEnabled, onExpired }: { owner: st
   const [approved, setApproved] = useState(!!restored.pending?.live_config)
   const [dataset, setDataset] = useState(restored.pending?.dataset_id ?? datasets[0]?.id ?? '')
   const selected = datasets.find((item) => item.id === dataset)
+  const supported = selected?.evaluation_scope === 'fixed-answer-context-only' || selected?.evaluation_scope === 'source-chunks-retrieval-answer'
+  const canGenerate = selected?.evaluation_scope === 'fixed-answer-context-only' && !!selected.live_config && !!selected.execution_profiles.live
   const [reference, setReference] = useState(restored.pending?.reference_capture_id ?? datasets[0]?.baseline?.id ?? datasets[0]?.captures[0]?.id ?? '')
   const [candidate, setCandidate] = useState(restored.pending?.candidate_capture_id ?? datasets[0]?.captures.at(-1)?.id ?? '')
   const changeDataset = (id: string) => {
     const value = datasets.find((item) => item.id === id)
+    if (!value?.live_config) setMode('replay')
     setApproved(false); setDataset(id); setReference(value?.baseline?.id ?? value?.captures[0]?.id ?? ''); setCandidate(value?.captures.at(-1)?.id ?? '')
   }
   const requestId = useRef<string | null>(restored.pending?.request_id ?? null)
@@ -158,8 +162,8 @@ function EvaluationList({ owner, datasets, liveEnabled, onExpired }: { owner: st
     return () => controller.abort()
   }, [restored, finish])
   const submit = async () => {
-    if (submitting.current || busy || storageError || (!pending && mode === 'live' && (!approved || !liveEnabled || !selected))) return
-    if (!pending && selected?.evaluation_scope !== 'fixed-answer-context-only') return
+    if (submitting.current || busy || storageError || (!pending && mode === 'live' && (!approved || !liveEnabled || !canGenerate))) return
+    if (!pending && (!supported || !selected?.execution_profiles[mode])) return
     submitting.current = true; setBusy(true); setSubmitError(''); setRejected(false)
     try {
       let request = pending ?? readPendingEvaluation(owner)
@@ -167,7 +171,7 @@ function EvaluationList({ owner, datasets, liveEnabled, onExpired }: { owner: st
       if (!request) {
         request = {
           request_id: crypto.randomUUID(), dataset_id: dataset,
-          execution_profile: selected!.execution_profiles[mode],
+          execution_profile: selected!.execution_profiles[mode]!,
           candidate_capture_id: mode === 'live' ? 'new-model-response' : candidate,
           reference_capture_id: reference, live_config: mode === 'live' ? selected!.live_config : null,
           baseline_version: reference === selected?.baseline?.id ? selected.baseline.version : null,
@@ -205,12 +209,12 @@ function EvaluationList({ owner, datasets, liveEnabled, onExpired }: { owner: st
         <p className="text-sm leading-6 text-sample-muted">{mode === 'live' ? liveNotice : notice}</p>
         {selected && <p className="text-sm" role="status">평가 범위: {scopeLabel(selected.evaluation_scope)}. {scopeNotice(selected.evaluation_scope)}</p>}
         <form className="flex flex-wrap items-end gap-3" onSubmit={(event) => { event.preventDefault(); void submit() }}>
-          <label className="grid w-full gap-2 text-sm font-semibold">실행 방식<select className={field} value={mode} disabled={busy || requestId.current !== null} onChange={(event) => { setMode(event.target.value as 'replay' | 'live'); setApproved(false) }}><option value="replay">저장 응답 재평가 · API 호출 없음</option><option value="live">새 응답 생성 · 유료 모델 호출</option></select></label>
+          <label className="grid w-full gap-2 text-sm font-semibold">실행 방식<select className={field} value={mode} disabled={busy || requestId.current !== null} onChange={(event) => { setMode(event.target.value as 'replay' | 'live'); setApproved(false) }}><option value="replay">저장 응답 재평가 · API 호출 없음</option><option value="live" disabled={!canGenerate}>새 응답 생성 · 유료 모델 호출</option></select></label>
           <label className="grid min-w-0 flex-1 gap-2 text-sm font-semibold">평가 자료<select className={field} value={dataset} disabled={busy || requestId.current !== null} onChange={(event) => changeDataset(event.target.value)}>{datasets.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
           <label className="grid min-w-56 flex-1 gap-2 text-sm font-semibold">기준 실행<select className={field} value={reference} disabled={busy || requestId.current !== null} onChange={(event) => setReference(event.target.value)}>{selected?.baseline && <option value={selected.baseline.id}>{selected.baseline.label}</option>}{selected?.captures.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
           {mode === 'replay' && <label className="grid min-w-56 flex-1 gap-2 text-sm font-semibold">후보 실행<select className={field} value={candidate} disabled={busy || requestId.current !== null} onChange={(event) => setCandidate(event.target.value)}>{selected?.captures.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>}
-          <button className={styles.primaryButton} disabled={busy || !!storageError || rejected || (!pending && (selected?.evaluation_scope !== 'fixed-answer-context-only' || !dataset || !reference || !candidate || (mode === 'live' && (!approved || !liveEnabled))))}>{busy ? '접수 중…' : pending ? '같은 요청으로 재시도' : mode === 'live' ? '새 응답 생성 및 평가' : '평가 실행'}</button>
-          {mode === 'live' && selected && <div className="w-full rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6">
+          <button className={styles.primaryButton} disabled={busy || !!storageError || rejected || (!pending && (!supported || !dataset || !reference || !candidate || (mode === 'live' && (!approved || !liveEnabled || !canGenerate))))}>{busy ? '접수 중…' : pending ? '같은 요청으로 재시도' : mode === 'live' ? '새 응답 생성 및 평가' : '평가 실행'}</button>
+          {mode === 'live' && selected?.live_config && <div className="w-full rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6">
             <p>모델: <strong>{selected.live_config.model}</strong> · 최대 {selected.live_config.max_model_calls}회 · 호출당 출력 최대 {selected.live_config.max_output_tokens.toLocaleString()}토큰 · 호출당 입력 최대 {selected.live_config.max_input_tokens?.toLocaleString() ?? '기록 없음'}토큰 · 자동 재호출 없음</p>
             <p>각 답변 생성 전에 같은 입력과 응답 형식을 OpenAI 입력 토큰 계산 API로 전송합니다. 계산 실패 또는 입력 상한 초과 시 생성을 중단합니다.</p>
             <p>전송 자료: {selected.fixture}의 {selected.case_ids.join(', ')} 질문과 고정 근거 청크. 시스템 답변 지침을 함께 전송합니다. 평가용 가상 자료이며 실제 회원 대화는 사용하지 않습니다.</p>
@@ -349,12 +353,12 @@ function EvaluationDetail({ onExpired, onReviewChanged }: { onExpired: () => voi
             : (run.status !== 'COMPLETED' || !run.postprocessing.inputs_ready) && <p className="text-sm text-sample-muted">{run.postprocessing.blocked_reason}</p>}
           {run.postprocessing.attempts.length > 0 && <ul className="space-y-2 text-sm">{run.postprocessing.attempts.map((attempt) => <li key={attempt.id}><Link className="text-brand-primary underline" to={`${listPath}/${attempt.id}`}>복구 실행 {attempt.id.slice(0, 8)} · {attempt.status_label}</Link></li>)}</ul>}
         </section>}
-        {run.status === 'COMPLETED' && <section className={styles.card} aria-label="평가 결과"><h2 className={styles.cardTitle}>평가 결과</h2><p className="text-sm">{scopeNotice(run.evaluation_scope)}</p><div className="grid grid-cols-2 gap-3 md:grid-cols-4">{[
+        {run.status === 'COMPLETED' && run.evaluation_scope !== 'source-chunks-retrieval-answer' && <section className={styles.card} aria-label="평가 결과"><h2 className={styles.cardTitle}>평가 결과</h2><p className="text-sm">{scopeNotice(run.evaluation_scope)}</p><div className="grid grid-cols-2 gap-3 md:grid-cols-4">{[
           ['처리 사례', `${run.summary.observedCaseCount ?? '—'} / ${run.summary.caseCount ?? '—'}`], ['상태 일치율', run.summary.statusAccuracy?.toFixed(2) ?? '미측정'],
           ['인용 재현율', run.summary.referenceCitationRecall?.toFixed(2) ?? '미측정'], ['모델 API 호출', run.model_api_calls === null ? '미확인' : `${run.model_api_calls}회`],
         ].map(([label, value]) => <div className="rounded-xl bg-[#f3f7f5] p-4" key={label}><p className="text-xs text-sample-muted">{label}</p><strong className="mt-3 block text-2xl">{value}</strong></div>)}</div><p className="text-xs leading-5 text-sample-muted">점수 범위는 0–1입니다. AI 작성 참조 자료에 대한 평가이며 의미 충실도는 미측정입니다. 완료 상태는 품질 합격을 뜻하지 않습니다.</p></section>}
         {run.status === 'COMPLETED' && (run.comparison ? <ComparisonResult comparison={run.comparison} /> : <p className="text-sm text-sample-muted">이전 실행에는 비교 상세가 없습니다. 새 평가를 실행하면 기준·후보 차이를 확인할 수 있습니다.</p>)}
-        {run.status === 'COMPLETED' && <EvaluationReviewPanel runId={run.id} onExpired={onExpired} onChanged={onReviewChanged} />}
+        {run.status === 'COMPLETED' && run.evaluation_scope === 'fixed-answer-context-only' && <EvaluationReviewPanel runId={run.id} onExpired={onExpired} onChanged={onReviewChanged} />}
         <section className={styles.card}><h2 className={styles.cardTitle}>상세 기록과 보고서</h2><div className="flex flex-wrap gap-3">
           {run.report_url && <a className={styles.primaryButton} href={run.report_url} target="_blank" rel="noopener noreferrer">Evidently 보고서</a>}
           {run.trace_links.map((trace) => <a key={trace.case_id} className={styles.secondaryButton} href={trace.url} target="_blank" rel="noopener noreferrer">Langfuse {trace.case_id} 추적·점수</a>)}
@@ -371,12 +375,13 @@ const metricLabels = {
   statusAccuracy: '상태 일치율', referenceCitationRecall: '인용 재현율', failureRate: '실패율', missingRate: '누락률',
   meanLatencyMs: '평균 지연 (ms)', meanInputTokens: '평균 입력 토큰', meanOutputTokens: '평균 출력 토큰', semanticFaithfulness: '의미 충실도',
 }
-const scopeLabel = (scope: string | null) => scope === 'fixed-answer-context-only' ? '고정 근거 답변' : '미확인 또는 지원하지 않는 범위'
+const scopeLabel = (scope: string | null) => scope === 'fixed-answer-context-only' ? '고정 근거 답변' : scope === 'source-chunks-retrieval-answer' ? '전체 RAG 저장 캡처' : '미확인 또는 지원하지 않는 범위'
 const scopeNotice = (scope: string | null) => scope === 'fixed-answer-context-only'
   ? '원문 수집·청킹·색인·검색을 실행하지 않습니다. 검색 품질은 미측정이며 인용 재현율은 답변이 선택한 인용만 평가합니다.'
-  : '기록된 범위를 확인할 수 없어 전체 RAG 평가로 해석할 수 없습니다.'
+  : scope === 'source-chunks-retrieval-answer' ? '저장된 검색·답변 기록의 지표를 재계산합니다. 새 검색·임베딩·답변 생성은 없으며 합성 자료는 실제 모델 품질 측정이 아닙니다.' : '기록된 범위를 확인할 수 없어 전체 RAG 평가로 해석할 수 없습니다.'
 const measurement = (value: number | null) => value === null ? '미측정' : value.toLocaleString('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 function ComparisonResult({ comparison }: { comparison: NonNullable<EvaluationRun['comparison']> }) {
+  if (comparison.schema_version === 3) return <RagComparisonResult comparison={comparison} />
   return <section className={styles.card} aria-label="기준·후보 비교">
     <h2 className={styles.cardTitle}>기준·후보 비교</h2>
     <p className="text-sm">비교 평가 범위: {scopeLabel(comparison.scope)}. {scopeNotice(comparison.scope)}</p>

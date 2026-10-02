@@ -13,10 +13,17 @@ DATASETS = {
 LEGACY_DATASET_ID = "target-coverage-20260907-v1"
 LIVE_CAPTURE_ID = "new-model-response"
 MAX_INPUT_TOKENS = 32768
+RAG_SCOPE = "source-chunks-retrieval-answer"
+
+
+def evaluation_scope(dataset_id):
+    return DATASETS[dataset_id].get("evaluation_scope", "fixed-answer-context-only")
 
 
 def live_config(dataset_id):
     dataset = DATASETS[dataset_id]
+    if evaluation_scope(dataset_id) == RAG_SCOPE:
+        return None
     return {
         "model": os.environ.get("LLMOPS_LIVE_MODEL", "gpt-6-luna"),
         "fixture_sha256": dataset["fixture_sha256"],
@@ -28,6 +35,10 @@ def live_config(dataset_id):
 
 def validate_execution(dataset_id, candidate_id, reference_id, execution_mode, config):
     selected = selection(dataset_id, candidate_id, reference_id)
+    if evaluation_scope(dataset_id) == RAG_SCOPE and (
+        execution_mode != "replay" or config or reference_id.startswith("run:")
+    ):
+        raise ValueError("RAG 자료는 저장 캡처 재평가만 지원하며 품질 기준으로 사용할 수 없습니다.")
     if execution_mode == "live":
         if (
             candidate_id != LIVE_CAPTURE_ID
@@ -95,12 +106,16 @@ def public_datasets():
         {
             "id": item["id"],
             "label": item["label"],
-            "evaluation_scope": release["evaluation"]["scope"],
+            "evaluation_scope": evaluation_scope(item["id"]),
             "case_ids": item["case_ids"],
             "fixture": item["fixture"],
             "live_config": live_config(item["id"]),
             "execution_profiles": {
-                mode: digest(profile(release, item["id"], mode, live_config(item["id"])))
+                mode: (
+                    None
+                    if mode == "live" and evaluation_scope(item["id"]) == RAG_SCOPE
+                    else digest(profile(release, item["id"], mode, live_config(item["id"])))
+                )
                 for mode in ("replay", "live")
             },
             "captures": [

@@ -299,6 +299,26 @@ def read_result(run):
         dataset = run.execution_spec.get("dataset", dataset)
         manifest = json.loads(read_artifact(run.id, "evaluation/manifest.json"))
         comparison_raw = read_artifact(run.id, "evaluation/comparison.json")
+        if dataset.get("evaluation_scope") == "source-chunks-retrieval-answer":
+            from .rag_replay import read_result as read_rag_result
+
+            if run.execution_mode not in {"replay", "recovery"} or run.reference_config:
+                raise ResultsUnavailable
+            if run.execution_mode == "recovery":
+                for name, expected in (
+                    ("capture/capture.json", run.execution_spec["candidate_sha256"]),
+                    ("reference-capture.json", run.execution_spec["reference_sha256"]),
+                    ("recovery-fixture.json", run.execution_spec["dataset"]["fixture_sha256"]),
+                ):
+                    if sha256(read_artifact(run.id, name)).hexdigest() != expected:
+                        raise ResultsUnavailable
+            return read_rag_result(
+                run.execution_spec,
+                run.execution_spec_sha256,
+                manifest,
+                comparison_raw,
+                read_artifact(run.id, "evaluation/report.html"),
+            )
         comparison = json.loads(comparison_raw)
         if not isinstance(manifest, dict) or not isinstance(comparison, dict):
             raise ResultsUnavailable
