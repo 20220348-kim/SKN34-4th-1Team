@@ -155,6 +155,9 @@ python -B infrastructure/gitops/scripts/dev.py --once --service core-service
 파일 내용의 변화를 확인하고, 변경된 서비스만 순서대로 다시 빌드합니다. 빌드 중 여러 번 저장한 내용은
 다음 검사에서 최신 상태로 모아 반영합니다. Java 컴파일·의존성 설치에는 수 분이 걸릴 수 있으므로
 즉시 hot reload가 아니라 **자동 이미지 재빌드·배포**입니다.
+Docker 플랫폼·이미지 조회, Git 입력 목록, Deployment 조회는 명령당 15초로 제한합니다.
+조회 오류나 시간 초과는 빌드를 허용하는 조건이 아니며, 이미지 조회 실패 시 빌드·이미지 교체·
+복원 기록 갱신을 시작하지 않습니다. 초기 연결 확인 실패는 종료 코드 1로 반환합니다.
 
 `Dockerfile`, `.dockerignore`, 잠금 파일과 해당 Dockerfile의 소스 입력을 감시합니다.
 Git에 아직 추가하지 않은 새 소스도 반영하지만 Git ignore 대상, `.env*`, 캐시, 로그, 개인 키 파일은

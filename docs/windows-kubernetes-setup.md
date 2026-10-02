@@ -148,6 +148,11 @@ python infrastructure/scripts/build-msa-images.py \
 다음 `up` 단계는 이 중 서비스 4개와 Elasticsearch만 사용하며 스텁을 실행하지 않습니다.
 첫 빌드는 JDK·Python·문서 인식 라이브러리 설치 때문에 수십 분 걸릴 수 있습니다.
 별도의 호스트 JDK 설치는 필요하지 않습니다.
+빌드 전 이미지 태그 조회가 **성공하고 비어 있을 때만** 새 태그로 빌드를 진행합니다.
+Docker 연결 오류·시간 초과를 이미지가 없다는 뜻으로 취급하지 않습니다. Docker·Git 조회는
+명령당 15초, 각 이미지 빌드는 60분으로 제한합니다. 모든 빌드와 이미지 ID 검증이 성공해야
+`images.json`을 기록합니다. 중간 실패로 이미 만들어진 이미지는 자동 삭제하지 않으므로,
+재시도 전 Docker 상태와 해당 태그를 확인하고 새로운 고유 태그를 사용합니다.
 
 빌드가 성공하여 JSON이 생성됐을 때만 보관합니다.
 
@@ -303,6 +308,21 @@ Docker 명령이 응답하지 않으면 PowerShell의 `Get-PSDrive -Name C`로 W
 여유를 보고하지만 Docker 데이터 파일이 있는 다른 드라이브까지 검사하지는 않습니다.
 호스트 공간이 부족한 상태에서는 새 이미지 빌드·백업 파일 생성을 먼저 진행하지 않습니다.
 정리할 캐시·파일의 위치와 용도를 확인하고, 기존 PVC·Docker 볼륨을 공간 확보 대상으로 삭제하지 않습니다.
+
+Docker Desktop 재시작은 Kubernetes·Compose 연결을 끊으므로 사용 중인 작업을 확인한 뒤 수행합니다.
+일반 재시작은 PowerShell에서 `docker desktop restart --timeout 60`으로 요청할 수 있습니다.
+기동 로그에 `dockerInference`나 `engine.sock`의 `The file cannot be accessed by the system`이
+나오면 전체 데이터 초기화 대신 해당 런타임 소켓을 확인합니다. Docker 종료 후 **소켓만 들어 있는
+폴더인지 확인한 대상만** 보관용 이름으로 이동해 재생성할 수 있습니다. 인증 설정·데이터 디스크·볼륨은
+이 대상이 아닙니다. [Docker 공식 문제 해결 안내](https://docs.docker.com/desktop/troubleshoot-and-support/troubleshoot/)도 참고합니다.
+
+재시작 후에는 기존 PVC 식별자·배포 이미지를 확인하고 포트포워딩을 다시 시작합니다. Compose 서비스는
+재시작 정책에 따라 자동 복구되지 않을 수 있으며, 이전부터 중지된 서비스를 일괄 시작하지 않습니다.
+`ops_bridge.py check`가 IP 변경을 보고하면 같은 state·Compose 프로젝트로 `connect` 후 다시 검사합니다.
+Ops 런타임의 `evidence`만 실패한다면 근거 자료 서버의 `/evaluation-data` bind mount가 비었는지 확인합니다.
+호스트 원본이 존재하면 기존 Compose 설정·이미지·환경값·결과 볼륨을 비교한 뒤 `ops-artifacts`만
+`--no-deps --no-build --pull never --force-recreate`로 재생성하고 브리지·런타임을 재검증합니다.
+복구 성공과 최신 소스 배포·새 평가 실행·백업 복원 성공은 별개입니다.
 
 ## 실제 확인한 범위
 

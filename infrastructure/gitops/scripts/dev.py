@@ -106,7 +106,7 @@ def source_files(root, service):
     check_dockerfile((context / "Dockerfile").read_text(), INPUTS[service])
     ignore_text = (context / ".dockerignore").read_text()
     listed = run(["git", "-C", root, "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--",
-                  str(context.relative_to(root))], capture=True)
+                  str(context.relative_to(root))], capture=True, timeout=15)
     selected = {"Dockerfile", ".dockerignore"}
     for item in listed.split("\0"):
         if not item:
@@ -169,7 +169,7 @@ def write_ledger(state, ledger):
 
 
 def deployment_containers(nk, service):
-    resource = json.loads(run(nk + ["get", "deployment", service, "-o", "json"], capture=True))
+    resource = json.loads(run(nk + ["get", "deployment", service, "-o", "json"], capture=True, timeout=15))
     metadata = resource.get("metadata", {})
     for field in ("annotations", "labels"):
         if any(key.startswith("argocd.argoproj.io/") for key in metadata.get(field, {})):
@@ -232,7 +232,7 @@ def sync_service(root, state, settings, service, expected=None, kind="kind"):
     if entry and previous not in {entry["image"], entry["previousImage"]}:
         raise ValueError("Deployment changed outside this watcher; inspect before updating " + service)
     image = settings["cluster"] + "/" + service + ":dev-" + uuid.uuid4().hex
-    existing = run(["docker", "image", "ls", "--quiet", "--filter", "reference=" + image], capture=True)
+    existing = run(["docker", "image", "ls", "--quiet", "--filter", "reference=" + image], capture=True, timeout=15)
     if existing.strip():
         raise ValueError("Generated image tag already exists; refusing overwrite")
     print("Building local " + service + " (no image upload)", flush=True)
@@ -310,7 +310,7 @@ def main():
     try:
         settings = load_settings(state)
         require_dev(state, settings)
-        platform = run(["docker", "version", "--format", "{{.Server.Os}}/{{.Server.Arch}}"], capture=True).strip()
+        platform = run(["docker", "version", "--format", "{{.Server.Os}}/{{.Server.Arch}}"], capture=True, timeout=15).strip()
         if platform != settings["platform"] or platform != "linux/amd64":
             raise ValueError("This image/toolchain path is verified only for linux/amd64 Docker; ARM emulation is not silently enabled")
         services = tuple(INPUTS) if args.service == "all" else (args.service,)
