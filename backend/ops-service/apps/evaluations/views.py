@@ -21,6 +21,8 @@ from .catalog import DATASETS, public_datasets, selection
 from .models import EvaluationRun
 from .quality import assess, save_fixture_review
 from .rag_material import read_material as read_rag_material
+from .rag_reviews import review_state as rag_review_state
+from .rag_reviews import save_review as save_rag_review
 from .recovery import recovery_state, submit_recovery
 from .reviews import (
     baseline_choices,
@@ -266,6 +268,36 @@ def api_rag_material(request, run_id):
         return Response(read_rag_material(run))
     except ResultsUnavailable:
         return Response({"code": "RESULTS_UNAVAILABLE"}, status=503)
+
+
+class RagReviewRequestSerializer(serializers.Serializer):
+    case_id = serializers.CharField(max_length=100)
+    retrieval_decision = serializers.ChoiceField(choices=["SUITABLE", "UNSUITABLE", "DEFERRED"])
+    answer_decision = serializers.ChoiceField(choices=["SUITABLE", "UNSUITABLE", "DEFERRED"])
+    citation_decision = serializers.ChoiceField(choices=["SUITABLE", "UNSUITABLE", "DEFERRED"])
+    comment = serializers.CharField(max_length=3000, allow_blank=False)
+    material_sha256 = serializers.RegexField(r"^[a-f0-9]{64}$")
+    rubric_version = serializers.CharField(max_length=40)
+    review_version = serializers.IntegerField(min_value=0)
+
+
+@never_cache
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
+def api_rag_reviews(request, run_id):
+    run = get_object_or_404(EvaluationRun, pk=run_id)
+    try:
+        if request.method == "POST":
+            serializer = RagReviewRequestSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            save_rag_review(run, request.user, **serializer.validated_data)
+        return Response(rag_review_state(run, request.user))
+    except RequestConflict:
+        return Response({"code": "REVIEW_CONFLICT"}, status=409)
+    except ResultsUnavailable:
+        return Response({"code": "RESULTS_UNAVAILABLE"}, status=503)
+    except ValueError:
+        return Response({"code": "INVALID_RAG_REVIEW"}, status=400)
 
 
 @never_cache
