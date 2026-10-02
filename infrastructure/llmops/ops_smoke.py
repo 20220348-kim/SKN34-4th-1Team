@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import time
+from hashlib import sha256
 from http.cookiejar import CookieJar
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -119,6 +120,31 @@ def verify_core_rag_replay(run, registration):
         "source_sha256": registration["source_sha256"],
         "case_ids": comparison["case_ids"], "reference_source": expected["referenceSource"],
     }
+
+
+def verify_rag_material(request, run):
+    status, raw, headers = request(f'/api/v1/ops/evaluations/{run["id"]}/rag-material')
+    assert status == 200 and "no-store" in headers["Cache-Control"]
+    material = json.loads(raw)
+    fingerprint = material.pop("material_sha256")
+    assert fingerprint == sha256(json.dumps(material, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    assert material["evaluation_scope"] == "source-chunks-retrieval-answer"
+    assert material["baseline_eligible"] is False
+    assert material["reference_source"] == "ai-authored-not-human-reviewed"
+    assert [case["case_id"] for case in material["cases"]] == run["comparison"]["case_ids"]
+    for name, key in (("candidate", "current"), ("reference", "reference")):
+        report = run["comparison"][key]
+        assert material["fixture_sha256"] == report["fixtureSha256"]
+        assert material[f"{name}_capture_sha256"] == report["captureSha256"]
+        assert material[f"{name}_measurement_kind"] == report["measurementKind"]
+        for case, measured in zip(material["cases"], report["cases"], strict=True):
+            saved = case[name]
+            assert saved["failure"] == measured["failure"] and saved["trace_id"] == measured["traceId"]
+            assert saved["retrieved_chunk_ids"] == measured["retrievedChunkIds"]
+            assert saved["cited_chunk_ids"] == measured["citedChunkIds"]
+            assert (saved["answer"] is not None) == measured["answerMeasured"]
+            assert sha256(case["content"].encode()).hexdigest() == case["content_sha256"]
+    return {"material_sha256": fingerprint, "case_count": len(material["cases"]), "baseline_eligible": False}
 
 
 def main():
@@ -255,6 +281,7 @@ def main():
     if is_rag:
         rag_evidence = (verify_core_rag_replay(run, registration) if registration is not None
                         else verify_rag_replay(run))
+        rag_evidence["review_material"] = verify_rag_material(request, run)
     else:
         assert run["summary"]["statusAccuracy"] == 1
         assert run["summary"]["referenceCitationRecall"] == 1
@@ -268,6 +295,8 @@ def main():
     assert request(run["report_url"])[0] == 401
     assert request("/api/v1/ops/evaluations")[0] == 401
     assert request("/api/v1/ops/runtime")[0] == 401
+    if is_rag:
+        assert request(f'/api/v1/ops/evaluations/{run["id"]}/rag-material')[0] == 401
     summary = {
         "request_id": run["id"], "prefect_flow_run_id": run["prefect_flow_run_id"],
         "evaluation_run_id": run["evaluation_run_id"], "status": run["status"],

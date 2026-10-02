@@ -11,6 +11,7 @@ urlpatterns = [
     path("internal/llmops/evaluations/<uuid:run_id>/budget/<str:action>", budget_views.api_budget),
     path("api/v1/ops/evaluations/<uuid:run_id>/fixture-review", views.api_fixture_review),
     path("api/v1/ops/evaluations/<uuid:run_id>/quality", views.api_quality),
+    path("api/v1/ops/evaluations/<uuid:run_id>/rag-material", views.api_rag_material),
     path("", views.web_redirect),
     path("ops/login", views.web_redirect),
     path("ops/evaluations", views.web_redirect),

@@ -1035,6 +1035,8 @@ describe('전체 RAG 저장 캡처 재평가', () => {
     expect(screen.getByText('검색 실패 · timeout')).toBeTruthy()
     expect(screen.getAllByText('0.00 (1 / 2)').length).toBeGreaterThan(0)
     expect(screen.getByText(/이 결과는 품질 기준으로 지정할 수 없습니다/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: '검토 자료 보기' })).toBeTruthy()
+    expect(fetchMock.mock.calls.some(([path]) => path.endsWith('/rag-material'))).toBe(false)
     expect(fetchMock.mock.calls.some(([path]) => path.endsWith('/review'))).toBe(false)
     expect(screen.queryByRole('button', { name: /기준으로 지정/ })).toBeNull()
   })

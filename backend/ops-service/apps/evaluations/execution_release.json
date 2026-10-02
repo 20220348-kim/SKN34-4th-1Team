@@ -26,10 +26,10 @@
     "scope": "fixed-answer-context-only"
   },
   "rag_evaluation": {
-    "sha256": "ae3c6b3add3299a9f11bd53a7171142fc4d866d1043df64e7ecc674ef33224ce",
+    "sha256": "28f6f2b0374a1f44165c4b1473c6c1e128c397d55947678f4972301720f13c68",
     "files": {
       "evaluation/support-program-evidence/rag_evaluate.py": "24f0f1988a63db96175309490969f909659291d4356c293ca9b71c9d643e81ba",
-      "evaluation/support-program-evidence/rag_replay_flow.py": "69a220d2624a041007be78fcb2405e48060943d2078832c38f180f789ff07af4",
+      "evaluation/support-program-evidence/rag_replay_flow.py": "bbff4484a99ef4984b84707e318f26e13639250ea928576379e76bdc91ee9c76",
       "evaluation/support-program-evidence/llmops.py": "3ff41d71316465d996e4b78f8cd4bfb7e718a8f74c0539cc0fc8b1b297a76b6d",
       "backend/ops-service/apps/evaluations/rag_replay.py": "0264e0545d83426b6b3150592a1a59948d32ac09c3e8eb57f739cb3e2749e320",
       "backend/ai-service/app/support_program_evidence/models.py": "01e8da480d9ede6a976220a1a3bb6607ec8329783455d6c25c84a245a64b29b6",
@@ -37,7 +37,7 @@
       "backend/ai-service/pyproject.toml": "50ef0fc8c53c9af3e1bb31fafed5200732725ea43691be538d90840d2168037c",
       "backend/ai-service/uv.lock": "349ecdd9152eb2f5479a3db41d39e9d1bf7a8f5a16103426c2cd78207add1fe3"
     },
-    "version": "ae3c6b3add3299a9f11bd53a7171142fc4d866d1043df64e7ecc674ef33224ce",
+    "version": "28f6f2b0374a1f44165c4b1473c6c1e128c397d55947678f4972301720f13c68",
     "scope": "source-chunks-retrieval-answer"
   },
   "generation": {

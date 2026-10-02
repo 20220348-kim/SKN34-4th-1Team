@@ -13,6 +13,7 @@ import rag_replay_flow
 from apps.evaluations import rag_replay
 from apps.evaluations.catalog import public_datasets, validate_execution
 from apps.evaluations.execution_spec import digest, make_spec, read_release
+from apps.evaluations.rag_material import material_from_sources
 from apps.evaluations.recovery_inputs import read_recovery_inputs
 
 DATASET = "rag-synthetic-multichunk-v1"
@@ -93,9 +94,68 @@ def test_ops_entrypoint_replays_three_cases_with_real_report_and_distinct_metric
         p["session_id"] == result[0] and p["metadata"]["scope"] == rag_replay.SCOPE
         for p in scores
     )
+    here = Path(__file__).parent
+    fixture = json.loads((here / "rag-fixture.json").read_bytes())
+    capture = json.loads((here / "rag-synthetic-capture.json").read_bytes())
+    material = material_from_sources(fixture, capture, capture, result[3])
+    assert material["cases"][0]["candidate"]["answer"] == capture["cases"][0]["answer"]["response"]["answer"]
+    assert material["cases"][0]["content"] == fixture["documents"][0]["content"]
+    assert material["cases"][2]["candidate"]["cited_chunk_ids"] == []
+    assert material["baseline_eligible"] is False
     with pytest.raises(FileExistsError):
         ops_flow.evaluate_saved_capture.fn(**params)
     assert len(scores) == 10
+
+
+@pytest.mark.parametrize("kind", ["synthetic", "integration-stub"])
+@pytest.mark.parametrize("stage", [None, "not_started", "source", "chunk", "index", "search", "answer"])
+def test_review_material_preserves_real_evaluator_stage_contract(tmp_path, kind, stage):
+    from test_rag_evaluate import fail_at
+
+    here = Path(__file__).parent
+    fixture = json.loads((here / "rag-fixture.json").read_bytes())
+    candidate = json.loads((here / "rag-synthetic-capture.json").read_bytes())
+    reference = deepcopy(candidate)
+    if kind == "integration-stub":
+        candidate["schemaVersion"] = "support-program-rag-capture-v2"
+        candidate["execution"] = {
+            "kind": kind, "model": "offline-model", "embeddingModel": "offline-embedding",
+            "promptSha256": "a" * 64, "recorderSha256": "b" * 64, "paidModelApiCalls": 0,
+        }
+        candidate["cases"][0]["traceId"] = "1" * 32
+    if stage is not None:
+        fail_at(candidate["cases"][0], stage)
+    saved = tmp_path / "capture.json"
+    saved.write_text(json.dumps(candidate, ensure_ascii=False))
+    current = rag_replay_flow.rag_evaluate.evaluate(here / "rag-fixture.json", saved)
+    before = rag_replay_flow.rag_evaluate.evaluate(here / "rag-fixture.json", here / "rag-synthetic-capture.json")
+    comparison = {"scope": rag_replay.SCOPE, "case_ids": [c["id"] for c in fixture["cases"]], "current": current, "reference": before}
+    material = material_from_sources(fixture, candidate, reference, comparison)
+    first = material["cases"][0]
+    assert first["reference"]["answer"] == reference["cases"][0]["answer"]["response"]["answer"]
+    assert first["candidate"]["failure"] == candidate["cases"][0]["failure"]
+    assert first["candidate"]["trace_id"] == candidate["cases"][0]["traceId"]
+    assert (first["candidate"]["answer"] is None) == (stage is not None)
+    assert (first["candidate"]["context_chunk_ids"] is None) == (stage not in (None, "answer"))
+    assert material["candidate_measurement_kind"] == current["measurementKind"]
+    assert material["reference_measurement_kind"] == "synthetic-contract-check"
+
+
+def test_scores_target_either_original_trace_or_replay_session():
+    here = Path(__file__).parent
+    report = rag_replay_flow.rag_evaluate.evaluate(here / "rag-fixture.json", here / "rag-synthetic-capture.json")
+    report["cases"][0]["traceId"] = "1" * 32
+    value = {"current": report, "evaluation_run_id": "2" * 32}
+    spec = {"evaluation": {"version": "test"}}
+    scores = rag_replay_flow.score_payloads(value, spec, SimpleNamespace(environment="test"))
+    for score in scores:
+        assert ("trace_id" in score) != ("session_id" in score)
+        if score["metadata"]["case_id"] == "R01":
+            assert score["trace_id"] == "1" * 32
+        else:
+            assert score["session_id"] == value["evaluation_run_id"]
+        assert score["metadata"]["evaluation_run_id"] == value["evaluation_run_id"]
+    assert scores == rag_replay_flow.score_payloads(value, spec, SimpleNamespace(environment="test"))
 
 
 def test_catalog_and_runner_reject_live_and_unpinned_rag_before_spending(runner):
