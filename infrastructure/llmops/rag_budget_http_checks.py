@@ -52,7 +52,7 @@ class QuietHandler(WSGIRequestHandler):
     LLMOPS_BUDGET_TOKEN=TOKEN,
     ALLOWED_HOSTS=["127.0.0.1", "testserver"],
 )
-class RagBudgetHttpTests(ArtifactServerMixin, TransactionTestCase):
+class RagBudgetHttpTestCase(ArtifactServerMixin, TransactionTestCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
@@ -177,22 +177,25 @@ class RagBudgetHttpTests(ArtifactServerMixin, TransactionTestCase):
         self.ops_url = f"http://127.0.0.1:{server.server_port}"
 
     def new_run(self, scenario="success"):
-        self.run = EvaluationRun.objects.create(
-            requested_by=self.user,
-            status="RUNNING",
-            execution_mode="live",
-            execution_spec=self.spec,
-            execution_spec_sha256=digest(self.spec),
-            live_config=self.spec["live_config"],
-            prefect_flow_run_id=uuid4(),
-        )
         with transaction.atomic():
+            self.run = EvaluationRun.objects.create(
+                requested_by=self.user,
+                status="RUNNING",
+                execution_mode="live",
+                execution_spec=self.spec,
+                execution_spec_sha256=digest(self.spec),
+                live_config=self.spec["live_config"],
+                prefect_flow_run_id=uuid4(),
+            )
             reserve(self.run)
         self.faults[str(self.run.pk)] = {"scenario": scenario}
         return self.run
 
     def execute(self, scenario="success"):
         self.new_run(scenario)
+        return self.run_reserved(scenario)
+
+    def run_reserved(self, scenario="success", *, core_capture_directory=None):
         result = self.worker(
             "run",
             {
@@ -203,6 +206,11 @@ class RagBudgetHttpTests(ArtifactServerMixin, TransactionTestCase):
                 "flow_id": str(self.run.prefect_flow_run_id),
                 "spec": self.spec,
                 "spec_hash": self.run.execution_spec_sha256,
+                **(
+                    {"core_capture_directory": str(core_capture_directory)}
+                    if core_capture_directory is not None
+                    else {}
+                ),
             },
         )
         # reserve() cached the reverse relation before the HTTP worker changed it.
@@ -246,6 +254,8 @@ class RagBudgetHttpTests(ArtifactServerMixin, TransactionTestCase):
             with error:
                 return error.code
 
+
+class RagBudgetHttpTests(RagBudgetHttpTestCase):
     def test_mixed_execution_cache_and_http_close_match_real_ledger(self):
         result = self.execute()
         self.assertEqual(result["statuses"], [200] * 6)

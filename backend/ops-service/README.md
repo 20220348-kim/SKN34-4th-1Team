@@ -242,6 +242,9 @@ uv run --locked python manage.py set_evaluation_budget \
 [실제 Ops HTTP·MySQL 통합 검사](../../evaluation/support-program-evidence/README.md#실제-ops-httpmysql-혼합-예산-검증)는
 격리 MySQL 8.4와 별도 AI 프로세스로 정상·캐시·취소·동시 승인·정산 전후 응답 유실·증거 보정을
 검증하며 필수 Ops CI에 연결했습니다. 이 검사에서도 모델은 무료 전송 대역입니다.
+추가로 [Core 캡처의 Ops 예약·정산 검사](../../evaluation/support-program-evidence/README.md#core-캡처의-ops-예약정산-연결)는
+실제 Core 준비 명세로 테스트 DB의 실행·예약을 만들고 같은 명세의 HTTP 승인·정산을 대조합니다.
+예산 부족 시 실행·예약 롤백, 입력 변경 차단과 미확정 사용량 유지도 검사하며 필수 LLMOps CI에 연결했습니다.
 전체 RAG live의 공개 접수·manifest·Prefect 실행 연결, runner→Kubernetes Ops 왕복 검증,
 금액·기간 한도는 남아 있습니다.
 
