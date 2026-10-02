@@ -98,6 +98,28 @@ DB와 파일을 서로 다른 시점에 복사한 뒤 일관된 백업이라고 
 재전송하지 않는다. 키 누락·원본 파일 누락·장부 불일치는 중단 조건이다.
 원본 DB 위에 복원하거나 기존 볼륨을 삭제하는 명령은 이 절차에 포함하지 않는다.
 
+### CI에서 수행하는 Ops 전체 DB 복원 검증
+
+`smoke_ops_bridge.py --evaluate`의 마지막 단계는 일회용 Kubernetes Ops DB 전체를 덤프하고,
+외부 네트워크·공개 포트·공유 볼륨이 없는 별도 MySQL 8.4 컨테이너에 복원한다.
+개인 state나 일반 클러스터를 대상으로 호출하면 거부한다. CI가 생성한 환경에서만 접수를 중지하고
+미완료 작업 검사를 통과한 뒤 API·sync Pod 종료를 확인한다. 이 클러스터는 훈련 후 정리한다.
+
+- 실제 무료 평가 이력에 한글·이모지·따옴표·JSON·NULL·검토/예산 감사 fixture를 추가한다.
+- 전체 테이블별 행 수, migration 건수, 스키마·행을 포함한 정렬된 덤프를 원본과 대조한다.
+- 복원 DB의 잘못된 외래 키 참조가 거절되는지와 데이터 변조가 감지되는지 확인한다.
+- 마지막에 원본 덤프가 그대로인지 확인하고 생성한 복원 컨테이너만 삭제한다.
+  가져오기·비교·컨테이너 정리 중 하나라도 실패하면 성공으로 기록하지 않는다.
+
+덤프 옵션은 [MySQL 8.4 mysqldump 문서](https://dev.mysql.com/doc/refman/8.4/en/mysqldump.html)를
+기준으로 `--single-transaction`, `--hex-blob`, `--order-by-primary`와 routine/event/trigger 포함을 사용한다.
+원본·복원 서버의 MySQL 버전이 다르면 중단하며 복원 서버의 event scheduler는 비활성화한다.
+SQL 원문은 메모리에서만 전달하고 CI artifact에는 건수·SHA-256·검증 결과만 보존한다.
+
+보고서의 `database_restore.scope=disposable_ops_mysql_only`와 `status=PASS`는 이 CI DB 훈련만 뜻한다.
+`backup_verified`, `personal_environment_verified`, `artifacts_restored`, `prefect_restored`는 모두 `false`다.
+개인 환경 전체 백업·파일/Prefect 복원·키 복구·구버전 전환 검증은 별도로 수행해야 한다.
+
 ## 3. 같은 소스에서 빌드하고 갱신
 
 기존 [dc_bridge 함수](../infrastructure/gitops/docs/ops-runtime.md#로컬-kind와-compose의-전용-통신-경로)를

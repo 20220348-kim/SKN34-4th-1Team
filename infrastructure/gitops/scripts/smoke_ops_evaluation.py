@@ -18,6 +18,7 @@ import fork_cluster
 import fork_web
 import ops_runtime
 import smoke_ops_artifacts
+import smoke_ops_backup
 import smoke_ops_replacement
 import smoke_ops_sync_recovery
 import yaml
@@ -632,6 +633,11 @@ def verify(state, settings, compose, compose_env, ops_image, kind, helm, report)
                 except subprocess.TimeoutExpired:
                     web.kill()
                     web.wait(timeout=5)
+        report["evaluation_phase"] = "database_restore_rehearsal"
+        report["backup_admission_pause"] = set_admission(
+            nk, "pause", report["admission_resume"]["version"]
+        )
+        smoke_ops_backup.verify(state, settings, report)
         report.update(
             evaluation_status="PASS",
             evaluation_phase="complete",

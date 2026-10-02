@@ -235,8 +235,8 @@ jobs:
           mv linux-amd64/helm .
           test "$(./helm version --template '{{.Version}}')" = v4.3.0
           echo "$tool_dir" >> "$GITHUB_PATH"
-      - name: Verify Kubernetes fixed-context and RAG replay, artifact, sync and endpoint recovery
-        timeout-minutes: 25
+      - name: Verify Kubernetes evaluation, endpoint recovery and full Ops DB restore
+        timeout-minutes: 30
         run: backend/ai-service/.venv/bin/python -B infrastructure/gitops/scripts/smoke_ops_bridge.py --evaluate --report work/llmops-ci/ops-bridge.json
       - name: Preserve isolated Compose bridge evidence
         if: always()
