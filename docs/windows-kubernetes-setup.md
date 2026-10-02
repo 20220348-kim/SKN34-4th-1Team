@@ -297,6 +297,12 @@ Core에 설정한 허용 Origin과 다를 수 있으므로, 화면이 열려도 
 
 Kubernetes 관리 프로세스와 독립 DB가 함께 실행되므로 단순 Compose보다 자원이 더 필요합니다.
 이미지·빌드 캐시의 디스크 용량과 실행 중인 컨테이너의 RAM 사용량은 다릅니다.
+Docker 명령이 응답하지 않으면 PowerShell의 `Get-PSDrive -Name C`로 Windows 호스트 여유를 먼저
+확인합니다. WSL의 `df -h` 또는 Kubernetes 노드의 `DiskPressure=False`만으로 호스트 여유가
+충분하다고 판단하지 않습니다. `status --json`은 실행한 checkout·state 파일시스템의 1GiB 미만
+여유를 보고하지만 Docker 데이터 파일이 있는 다른 드라이브까지 검사하지는 않습니다.
+호스트 공간이 부족한 상태에서는 새 이미지 빌드·백업 파일 생성을 먼저 진행하지 않습니다.
+정리할 캐시·파일의 위치와 용도를 확인하고, 기존 PVC·Docker 볼륨을 공간 확보 대상으로 삭제하지 않습니다.
 
 ## 실제 확인한 범위
 

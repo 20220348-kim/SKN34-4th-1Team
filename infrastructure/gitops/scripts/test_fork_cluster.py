@@ -16,11 +16,12 @@ from repository import Fork
 
 
 class WebCommandTests(unittest.TestCase):
-    def test_status_json_returns_failure_with_report_for_unready_or_drifted_workload(self):
-        for ready, aligned in ((False, True), (True, False)):
-            report = {"workloads_ready": ready, "baseline_matches": aligned}
+    def test_status_json_returns_failure_with_report_for_each_failed_check(self):
+        checks = ("workloads_ready", "baseline_matches", "nodes_healthy", "storage_ready", "local_storage_ok")
+        for failed in checks:
+            report = {key: key != failed for key in checks}
             with (
-                self.subTest(ready=ready, aligned=aligned),
+                self.subTest(failed=failed),
                 patch("sys.argv", ["fork_cluster.py", "status", "--json"]),
                 patch.object(cluster, "os", SimpleNamespace(name="posix")),
                 patch.object(cluster, "load_settings", return_value={}),
@@ -52,7 +53,7 @@ class WebCommandTests(unittest.TestCase):
         self.assertNotIn("PRIVATE", output.getvalue())
 
     def test_status_json_verifies_ownership_before_reading_workloads(self):
-        report = {"workloads_ready": True, "baseline_matches": True}
+        report = dict.fromkeys(("workloads_ready", "baseline_matches", "nodes_healthy", "storage_ready", "local_storage_ok"), True)
         with (
             patch("sys.argv", ["fork_cluster.py", "status", "--json"]),
             patch.object(cluster, "os", SimpleNamespace(name="posix")),
@@ -79,6 +80,16 @@ class WebCommandTests(unittest.TestCase):
         ):
             cluster.main()
         snapshot.assert_not_called()
+
+    def test_dev_ownership_and_argo_reads_have_short_timeouts(self):
+        with (
+            patch.object(cluster, "commands", return_value=(["kube"], ["ns"], ["argo"])),
+            patch.object(cluster, "verify_context") as verify,
+            patch.object(cluster, "run", return_value="") as run,
+        ):
+            cluster.require_dev(Path("state"), {"mode": "dev"})
+        verify.assert_called_once_with(["kube"], {"mode": "dev"}, timeout=15)
+        self.assertEqual(run.call_args.kwargs["timeout"], 15)
 
     def test_web_passes_ports_only_after_verifying_cluster_ownership(self):
         with (

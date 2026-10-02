@@ -94,7 +94,8 @@ CI·receipt 검증, Helm 검사, 실제 pull 권한 확인, Ops migration이 실
 
 ### 실제 배포 이미지와 준비 상태 확인
 
-`status --json`은 전용 kubeconfig의 소유권을 확인한 뒤 Deployment·Pod·PVC·Argo 상태를 읽습니다.
+`status --json`은 전용 kubeconfig의 소유권을 확인한 뒤 Deployment·Pod·Node·PVC·Argo 상태와
+진단을 실행한 파일시스템의 여유 공간을 읽습니다.
 Docker·GHCR·모델 API는 호출하지 않으므로 Docker daemon 진단과 별도로 사용할 수 있습니다.
 
 ```bash
@@ -106,6 +107,17 @@ python -B infrastructure/gitops/scripts/fork_cluster.py status --json \
   관측 generation·updated/available replica·Pod Ready·컨테이너 Ready를 함께 검사합니다.
 - `workloads_ready`와 `baseline_matches`를 구분합니다. Pod 누락·갱신 중·API/sync 이미지 차이 또는
   baseline 누락은 성공으로 처리하지 않으며 JSON 출력 후 종료 코드 1을 반환합니다.
+- `schema_version=2`부터 `nodes_healthy`, `storage_ready`, `local_storage_ok`도 종료 코드에 반영합니다.
+  노드 Ready, Memory/Disk/PID Pressure, 명시된 NetworkUnavailable, 스케줄링 중지 여부를 확인합니다.
+  필수 노드 condition이 누락되거나 Unknown이면 정상으로 처리하지 않습니다.
+- `storage_ready`는 PVC가 하나 이상 존재하고 모두 Bound·볼륨 할당·삭제 중 아님을 확인합니다.
+  실행 중이거나 대기 중인 Pod가 참조하는 PVC 누락도 실패입니다. DB 연결·볼륨 여유·백업 복구를
+  검증한 결과는 아니므로 해당 확인은 별도로 필요합니다.
+- `local_filesystems`는 checkout과 state 경로별 `free_bytes`를 표시합니다. 각 경로에 최소 1GiB가
+  남아 있어야 `local_storage_ok=true`입니다. 이는 진단용 최소 기준이며 이미지 빌드에 충분하다는
+  보장은 아닙니다. 조회 실패는 `DISK_USAGE_UNAVAILABLE`로 표시합니다.
+  WSL 내부에서 실행하면 Windows 드라이브와 Docker 데이터 위치가 자동으로 모두 검사되지는 않습니다.
+  `nodes_healthy=true`도 Windows 호스트의 디스크 여유를 보장하지 않습니다.
 - `checkout_sha`는 **진단 도구를 실행한 checkout**의 커밋입니다. WSL state가 다른 폴더에 있어도
   그 폴더의 커밋이나 이미지 빌드 소스로 바꿔 표시하지 않습니다. `checkout_dirty=null`은 Git 조회
   실패·시간 초과로 미확인이라는 뜻이며 깨끗한 작업 폴더가 아닙니다.
@@ -117,6 +129,7 @@ python -B infrastructure/gitops/scripts/fork_cluster.py status --json \
 이 보고서는 수집 시점의 상태입니다. 배포 중 여러 조회 사이에 상태가 바뀔 수 있으므로 배포 승인서로
 사용하지 않습니다. Kubernetes 조회는 명령당 15초, Git 조회는 10초로 제한하며 실패를 정상으로 숨기지 않습니다.
 `doctor`도 Docker·kind 조회를 각각 15초로 제한합니다. Docker timeout이 Kubernetes 중단을 뜻하지는 않습니다.
+노드 condition 의미는 [Kubernetes 공식 문서](https://kubernetes.io/docs/concepts/architecture/nodes/#condition)를 따릅니다.
 
 GHCR 없이 로컬 이미지로만 검증하려면 [로컬 이미지 빌드 도구](../infrastructure/scripts/build-msa-images.py)의
 새 이미지 manifest를 `up --local-images /절대경로/images.json`으로 전달할 수 있습니다.

@@ -5,10 +5,73 @@ import json
 from pathlib import Path
 import subprocess
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 import cluster_status as status
+
+
+def node():
+    return {
+        "metadata": {"name": "owned-control-plane"},
+        "spec": {},
+        "status": {
+            "conditions": [
+                {"type": name, "status": value}
+                for name, value in (
+                    ("Ready", "True"),
+                    ("MemoryPressure", "False"),
+                    ("DiskPressure", "False"),
+                    ("PIDPressure", "False"),
+                )
+            ]
+        },
+    }
+
+
+def claim():
+    return {
+        "kind": "PersistentVolumeClaim",
+        "metadata": {"name": "data"},
+        "spec": {"volumeName": "pv-data"},
+        "status": {"phase": "Bound"},
+    }
+
+
+class InfrastructureStatusTests(unittest.TestCase):
+    def test_missing_unknown_and_unhealthy_node_conditions_fail(self):
+        self.assertTrue(status.node_status(node())["healthy"])
+        for condition in ("Ready", "MemoryPressure", "DiskPressure", "PIDPressure"):
+            for value in (None, "Unknown", "False" if condition == "Ready" else "True"):
+                item = node()
+                item["status"]["conditions"] = [
+                    c for c in item["status"]["conditions"] if c["type"] != condition
+                ]
+                if value is not None:
+                    item["status"]["conditions"].append({"type": condition, "status": value})
+                with self.subTest(condition=condition, value=value):
+                    self.assertFalse(status.node_status(item)["healthy"])
+        item = node()
+        item["spec"]["unschedulable"] = True
+        self.assertFalse(status.node_status(item)["healthy"])
+        item = node()
+        item["status"]["conditions"].append({"type": "NetworkUnavailable", "status": "True"})
+        self.assertFalse(status.node_status(item)["healthy"])
+
+    def test_virtual_state_disk_does_not_hide_full_checkout_drive(self):
+        with patch.object(
+            status.shutil,
+            "disk_usage",
+            side_effect=[SimpleNamespace(free=255 * 1024**2), SimpleNamespace(free=100 * 1024**3)],
+        ):
+            result = status.local_filesystems(Path("state"))
+        self.assertEqual([item["ok"] for item in result], [False, True])
+        self.assertEqual(result[0]["issue"], "LOW_FREE_SPACE")
+        with patch.object(status.shutil, "disk_usage", side_effect=OSError("PRIVATE")):
+            result = status.local_filesystems(Path("state"))
+        self.assertTrue(all(item["free_bytes"] is None and not item["ok"] for item in result))
+        self.assertNotIn("PRIVATE", json.dumps(result))
 
 
 def workload(name="core-service"):
@@ -102,7 +165,7 @@ class ServiceStatusTests(unittest.TestCase):
 
 class SnapshotTests(unittest.TestCase):
     def test_report_is_read_only_and_does_not_expose_environment_or_claim_source_proof(self):
-        resources, images = [], {}
+        resources, images = [claim()], {}
         for name in status.SERVICES:
             deployment, pod, image = workload(name)
             deployment["spec"]["template"]["spec"]["containers"][0]["env"] = [
@@ -120,15 +183,30 @@ class SnapshotTests(unittest.TestCase):
             state = Path(directory)
             baseline = json.dumps({"source": "local", "images": images, "private": "DO-NOT-PRINT"})
             (state / "baseline.json").write_text(baseline)
-            with patch.object(
-                status,
-                "run",
-                side_effect=[json.dumps({"items": resources}), "", "b" * 40, " M changed"],
-            ) as run:
+            with (
+                patch.object(
+                    status,
+                    "run",
+                    side_effect=[
+                        json.dumps({"items": resources}),
+                        json.dumps({"items": [node()]}),
+                        "",
+                        "b" * 40,
+                        " M changed",
+                    ],
+                ) as run,
+                patch.object(
+                    status.shutil, "disk_usage", return_value=SimpleNamespace(free=2 * 1024**3)
+                ),
+            ):
                 result = status.snapshot(state, settings, ["kube"], ["namespaced"], ["argo"])
             self.assertEqual((state / "baseline.json").read_text(), baseline)
             self.assertEqual(list(state.iterdir()), [state / "baseline.json"])
         self.assertTrue(result["workloads_ready"] and result["baseline_matches"])
+        self.assertEqual(result["schema_version"], 2)
+        self.assertTrue(
+            result["nodes_healthy"] and result["storage_ready"] and result["local_storage_ok"]
+        )
         self.assertTrue(result["checkout_dirty"])
         self.assertFalse(result["argocd"]["application_crd_present"])
         for key in ("image_source_verified", "application_paths_verified", "backup_verified"):
@@ -145,6 +223,53 @@ class SnapshotTests(unittest.TestCase):
         with patch.object(status, "run", side_effect=subprocess.TimeoutExpired("kube", 15)):
             with self.assertRaises(subprocess.TimeoutExpired):
                 status.snapshot(Path("unused"), {}, ["kube"], ["namespaced"], ["argo"])
+
+    def test_unbound_terminating_missing_claims_or_nodes_are_not_healthy(self):
+        deployment, pod, _ = workload()
+        pod["spec"]["volumes"] = [{"persistentVolumeClaim": {"claimName": "data"}}]
+        for phase, volume, deleting, missing in (
+            ("Pending", "", False, False),
+            ("Lost", "pv-data", False, False),
+            ("Bound", "", False, False),
+            ("Bound", "pv-data", True, False),
+            ("Bound", "pv-data", False, True),
+        ):
+            pvc = claim()
+            pvc["status"]["phase"] = phase
+            pvc["spec"]["volumeName"] = volume
+            if deleting:
+                pvc["metadata"]["deletionTimestamp"] = "2026-10-02T00:00:00Z"
+            resources = [deployment, pod] + ([] if missing else [pvc])
+            with (
+                tempfile.TemporaryDirectory() as directory,
+                patch.object(
+                    status,
+                    "run",
+                    side_effect=[
+                        json.dumps({"items": resources}),
+                        '{"items": []}',
+                        "",
+                        "b" * 40,
+                        "",
+                    ],
+                ),
+            ):
+                result = status.snapshot(
+                    Path(directory),
+                    {
+                        "repository": "alice/project",
+                        "namespace": "govbiz-msa",
+                        "cluster": "owned",
+                        "mode": "dev",
+                    },
+                    ["kube"],
+                    ["ns"],
+                    ["argo"],
+                )
+            with self.subTest(phase=phase, deleting=deleting, missing=missing):
+                self.assertFalse(result["storage_ready"])
+                self.assertFalse(result["nodes_healthy"])
+                self.assertEqual(result["missing_claims"], ["data"] if missing else [])
 
 
 if __name__ == "__main__":
