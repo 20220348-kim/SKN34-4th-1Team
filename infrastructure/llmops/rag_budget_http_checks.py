@@ -204,7 +204,7 @@ class RagBudgetHttpTestCase(ArtifactServerMixin, TransactionTestCase):
                 "results": str(self.root),
                 "run_id": str(self.run.pk),
                 "flow_id": str(self.run.prefect_flow_run_id),
-                "spec": self.spec,
+                "spec": self.run.execution_spec,
                 "spec_hash": self.run.execution_spec_sha256,
                 **(
                     {"core_capture_directory": str(core_capture_directory)}
@@ -216,7 +216,7 @@ class RagBudgetHttpTestCase(ArtifactServerMixin, TransactionTestCase):
         # reserve() cached the reverse relation before the HTTP worker changed it.
         self.run.refresh_from_db()
         for call in self.run.budget_reservation.calls.all():
-            operation = self.spec["model_operations"][call.sequence]
+            operation = self.run.execution_spec["model_operations"][call.sequence]
             self.assertEqual(call.operation_id, operation["id"])
             self.assertEqual(call.max_input_tokens, operation["max_input_tokens"])
             self.assertEqual(call.max_output_tokens, operation["max_output_tokens"])
