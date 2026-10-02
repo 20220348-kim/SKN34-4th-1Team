@@ -283,6 +283,18 @@ Pod가 준비되면 6절의 port-forward와 웹 명령을 다시 실행합니다
 | Pod가 준비되지 않음 | 해당 Pod의 `describe` Events와 `logs` 확인. 데이터 삭제로 해결하지 않음 |
 | CPU·메모리·디스크 부족 | 기존 스택 중복 실행, `docker stats`, WSL `free -h`, Windows 드라이브 여유 확인 |
 
+Windows 기본 `kubectl config get-contexts`가 비어 있어도 WSL의 전용 클러스터는 실행 중일 수 있습니다.
+실제 WSL 작업 사본의 `infrastructure/gitops/.local/fork`를 `--state-dir`로 지정해
+[`status --json`](local-fork-development.md#실제-배포-이미지와-준비-상태-확인)을 확인합니다.
+다른 checkout으로 개발한다고 기존 state·kubeconfig·baseline을 복사하거나 새 클러스터를 만들지 않습니다.
+
+웹이 연결 거부를 반환하고 클러스터는 정상이라면 6절의 두 프로세스(port-forward·Vite)를 확인합니다.
+이미지를 다시 빌드하거나 DB를 초기화할 필요는 없습니다. 개인 Core에 개발 로그인을 명시적으로 활성화한
+경우에만 PowerShell에서 `$env:K8S_DEV_LOGIN = 'true'`를 설정한 뒤 `dev:k8s`를 실행합니다.
+이 웹 설정만으로 Core의 관리자 인증이나 개발 로그인이 활성화되지는 않습니다.
+브라우저 주소는 이 문서의 `http://localhost:5173`을 사용합니다. Vite가 출력하는 `127.0.0.1` 주소는
+Core에 설정한 허용 Origin과 다를 수 있으므로, 화면이 열려도 로그인 요청은 403으로 거절될 수 있습니다.
+
 Kubernetes 관리 프로세스와 독립 DB가 함께 실행되므로 단순 Compose보다 자원이 더 필요합니다.
 이미지·빌드 캐시의 디스크 용량과 실행 중인 컨테이너의 RAM 사용량은 다릅니다.
 

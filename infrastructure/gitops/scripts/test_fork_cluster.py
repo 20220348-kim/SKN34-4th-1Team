@@ -1,5 +1,4 @@
 """Offline ownership, authentication and dev/GitOps separation checks."""
-import copy
 import io
 import json
 from pathlib import Path
@@ -17,6 +16,70 @@ from repository import Fork
 
 
 class WebCommandTests(unittest.TestCase):
+    def test_status_json_returns_failure_with_report_for_unready_or_drifted_workload(self):
+        for ready, aligned in ((False, True), (True, False)):
+            report = {"workloads_ready": ready, "baseline_matches": aligned}
+            with (
+                self.subTest(ready=ready, aligned=aligned),
+                patch("sys.argv", ["fork_cluster.py", "status", "--json"]),
+                patch.object(cluster, "os", SimpleNamespace(name="posix")),
+                patch.object(cluster, "load_settings", return_value={}),
+                patch.object(cluster, "commands", return_value=(["kube"], ["namespaced"], ["argo"])),
+                patch.object(cluster, "verify_context"),
+                patch("cluster_status.snapshot", return_value=report),
+                patch("sys.stdout", new_callable=io.StringIO) as output,
+                self.assertRaises(SystemExit) as stopped,
+            ):
+                cluster.main()
+            self.assertEqual(stopped.exception.code, 1)
+            self.assertEqual(json.loads(output.getvalue()), report)
+
+    def test_doctor_timeout_is_bounded_and_does_not_dump_subprocess_output(self):
+        with (
+            patch("sys.argv", ["fork_cluster.py", "doctor"]),
+            patch.object(cluster, "os", SimpleNamespace(name="posix")),
+            patch.object(cluster, "load_settings", return_value={"platform": "linux/amd64"}),
+            patch.object(cluster.platform, "system", return_value="Linux"),
+            patch.object(cluster.shutil, "which", return_value="tool"),
+            patch.object(cluster, "run", side_effect=subprocess.TimeoutExpired("docker", 15, output="PRIVATE")) as run,
+            patch("sys.stderr", new_callable=io.StringIO) as output,
+            self.assertRaises(SystemExit) as stopped,
+        ):
+            cluster.main()
+        self.assertEqual(stopped.exception.code, 1)
+        self.assertEqual(run.call_args.kwargs["timeout"], 15)
+        self.assertIn("timed out", output.getvalue())
+        self.assertNotIn("PRIVATE", output.getvalue())
+
+    def test_status_json_verifies_ownership_before_reading_workloads(self):
+        report = {"workloads_ready": True, "baseline_matches": True}
+        with (
+            patch("sys.argv", ["fork_cluster.py", "status", "--json"]),
+            patch.object(cluster, "os", SimpleNamespace(name="posix")),
+            patch.object(cluster, "load_settings", return_value={}),
+            patch.object(cluster, "commands", return_value=(["kube"], ["namespaced"], ["argo"])),
+            patch.object(cluster, "verify_context") as verify,
+            patch("cluster_status.snapshot", return_value=report) as snapshot,
+            patch("sys.stdout", new_callable=io.StringIO) as output,
+        ):
+            snapshot.side_effect = lambda *args: verify.assert_called_once_with(["kube"], {}, timeout=15) or report
+            cluster.main()
+        self.assertEqual(json.loads(output.getvalue()), report)
+
+    def test_status_json_does_not_inspect_unowned_cluster(self):
+        with (
+            patch("sys.argv", ["fork_cluster.py", "status", "--json"]),
+            patch.object(cluster, "os", SimpleNamespace(name="posix")),
+            patch.object(cluster, "load_settings", return_value={}),
+            patch.object(cluster, "commands", return_value=(["kube"], ["namespaced"], ["argo"])),
+            patch.object(cluster, "verify_context", side_effect=ValueError("ownership")),
+            patch("cluster_status.snapshot") as snapshot,
+            patch("sys.stderr", new_callable=io.StringIO),
+            self.assertRaises(SystemExit),
+        ):
+            cluster.main()
+        snapshot.assert_not_called()
+
     def test_web_passes_ports_only_after_verifying_cluster_ownership(self):
         with (
             patch("sys.argv", ["fork_cluster.py", "web", "--core-port", "28080", "--ops-port", "28001"]),
@@ -47,7 +110,7 @@ class WebCommandTests(unittest.TestCase):
     def test_invalid_or_misplaced_options_fail_before_reading_state(self):
         for args in (["web", "--ops-port", "0"], ["web", "--core-port", "65536"],
                      ["web", "--ops-port", "18080"], ["status", "--ops-port", "28001"],
-                     ["up", "--core-port", "28080"]):
+                     ["up", "--core-port", "28080"], ["web", "--json"]):
             with (
                 self.subTest(args=args),
                 patch("sys.argv", ["fork_cluster.py", *args]),
