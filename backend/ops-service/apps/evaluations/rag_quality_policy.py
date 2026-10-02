@@ -1,19 +1,31 @@
-"""저장 RAG의 사람 검토와 측정 여부를 판정한다. 참조 자료 승인 전 합격은 금지한다."""
+"""저장 RAG의 사람 검토와 측정 여부를 판정한다. 합격 정책은 아직 활성화하지 않는다."""
 
 POLICY = {
-    "version": "rag-review-quality-v1",
+    "version": "rag-review-quality-v2",
     "scope": "source-chunks-retrieval-answer",
     "dimensions": ["retrieval", "answer", "citation"],
     "semantic_measurement": "human-case-review",
-    "reference_review_supported": False,
+    "reference_review_supported": True,
     "pass_enabled": False,
     "baseline_eligible": False,
 }
 
 
 def judge(inputs):
-    # 현재 RAG 계약에는 원문/AI 참조 조건을 승인하는 별도 사람 검토가 없다.
-    reasons = [{"code": "REFERENCE_REVIEW_REQUIRED", "case_id": None, "dimension": None}]
+    reference = inputs["reference_review"]
+    current = next(
+        (row for row in reference["history"] if row["id"] == reference["current_id"]), None
+    )
+    code = (
+        "PASS_POLICY_PENDING"
+        if reference["approved"]
+        else "REFERENCE_REVOKED"
+        if current and current["decision"] == "REVOKED"
+        else "REFERENCE_CHANGES_REQUESTED"
+        if current and current["decision"] == "CHANGES_REQUESTED"
+        else "REFERENCE_REVIEW_REQUIRED"
+    )
+    reasons = [{"code": code, "case_id": None, "dimension": None}]
     if inputs["measurement_kind"] != "recorded-capture-replay":
         reasons.append({"code": "NON_MODEL_CAPTURE", "case_id": None, "dimension": None})
     failed = False

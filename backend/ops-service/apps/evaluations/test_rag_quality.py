@@ -23,6 +23,7 @@ class RagQualityPolicyTests(SimpleTestCase):
     def inputs(self):
         return {
             "measurement_kind": "recorded-capture-replay",
+            "reference_review": {"approved": False, "current_id": None, "history": []},
             "cases": [
                 {
                     "case_id": "R01",
@@ -58,6 +59,19 @@ class RagQualityPolicyTests(SimpleTestCase):
             status, reasons = rag_quality_policy.judge(inputs)
             self.assertEqual(status, "FAIL")
             self.assertIn({"code": "HUMAN_UNSUITABLE", "case_id": "R01", "dimension": key}, reasons)
+
+    def test_approved_reference_and_all_suitable_cases_still_require_pass_policy(self):
+        inputs = self.inputs()
+        inputs["reference_review"] = {
+            "approved": True,
+            "current_id": 1,
+            "history": [{"id": 1, "decision": "APPROVED"}],
+        }
+        status, reasons = rag_quality_policy.judge(inputs)
+        self.assertEqual(status, "NEEDS_REVIEW")
+        self.assertEqual(
+            reasons, [{"code": "PASS_POLICY_PENDING", "case_id": None, "dimension": None}]
+        )
 
     def test_unmeasured_and_original_failure_are_not_false_quality_failures(self):
         inputs = self.inputs()
