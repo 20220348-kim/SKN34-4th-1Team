@@ -43,6 +43,9 @@ jobs:
         run: uv sync --locked --extra dev --group evaluation
       - name: Verify execution release
         run: backend/ai-service/.venv/bin/python backend/ops-service/apps/evaluations/execution_spec.py
+      - name: Test offline runner preparation checks
+        working-directory: backend/ai-service
+        run: uv run --locked --extra dev --group evaluation python -m pytest ../../infrastructure/llmops/test_check_runner_runtime.py -q
       - name: Test smoke assertions and offline HTTP model fixtures
         working-directory: backend/ai-service
         run: uv run --locked --extra dev --group evaluation python -m pytest ../../infrastructure/llmops/test_ops_smoke.py ../../infrastructure/llmops/test_cancellation_smoke.py ../../infrastructure/llmops/test_search_trace_smoke.py ../../infrastructure/llmops/test_core_search_trace.py ../../infrastructure/llmops/test_core_assistant_trace.py ../../infrastructure/llmops/test_core_evidence_trace.py ../../infrastructure/llmops/test_core_rag_capture.py ../../infrastructure/llmops/test_core_rag_budget.py ../../infrastructure/llmops/test_register_core_rag.py ../../infrastructure/scripts/test_catalog_separation_config.py -q
@@ -130,6 +133,16 @@ jobs:
           '
       - name: Reject mismatched Ops and runner releases before model calls
         run: python3 infrastructure/llmops/spec_mismatch_smoke.py --output work/llmops-spec-mismatch.json
+      - name: Verify built runner tokenizer and RAG plans without a network
+        timeout-minutes: 3
+        run: |
+          set -euo pipefail
+          image_id=$(docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops --env-file infrastructure/llmops/.env.artifacts -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml -f infrastructure/llmops/compose.artifacts.yaml -f infrastructure/llmops/compose.auth-test.yaml --profile evaluation images -q evaluation-runner)
+          test -n "$image_id"
+          docker run --rm --interactive --network none --read-only --memory 768m --pids-limit 64 \
+            --tmpfs /tmp:rw,noexec,nosuid,size=64m,mode=1777 \
+            --entrypoint .venv/bin/python "$image_id" -B - --root /app \
+            < infrastructure/llmops/check_runner_runtime.py
       - name: Start background Ops status synchronization after migrations
         run: docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops --env-file infrastructure/llmops/.env.artifacts -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml -f infrastructure/llmops/compose.artifacts.yaml -f infrastructure/llmops/compose.auth-test.yaml --profile evaluation up -d --build ops-sync
       - name: Set up pnpm and Node.js
