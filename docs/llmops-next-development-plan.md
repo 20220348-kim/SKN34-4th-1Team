@@ -1,4 +1,4 @@
-# LLMOps 개발 현황과 후속 전략 — 실제 HTTP·MySQL의 혼합 RAG 예산 검증
+# LLMOps 개발 현황과 후속 전략 — Core 캡처와 혼합 RAG 예산 명세 연결
 
 [문서 목록](README.md) · [도입·구현 이력](langfuse-adoption-strategy.md) · [Ops API](../backend/ops-service/README.md) · [실행 안내](../infrastructure/llmops/README.md)
 
@@ -24,11 +24,41 @@
 |---|---|---|
 | React·Django 운영 기능 | 기존 Core 관리자 로그인, 고정 근거 및 RAG 저장 캡처 접수·조회·비교·동기화·후처리 복구 구현 | RAG live·사람 검토·품질 정책 연결은 후속 |
 | 자료·응답 검토와 품질 정책 | 고정 근거의 사람 검토, 판정 이력, 기준 지정·철회·오래된 합격 차단 구현 | 현재 모델의 유효한 사람 검토 기준은 이번 점검에서 미확인; 전체 RAG 정책 없음 |
-| 예산·취소 | 고정 근거 live의 누적 장부·입력 계산, 혼합 예약·AI HTTP 가드·증거 보정과 실제 Ops HTTP+MySQL 통합 검사 구현 | RAG 접수/Core·Prefect 연결·변경 SHA CI·금액/기간 한도·runner→Kubernetes 검증 |
+| 예산·취소 | 고정 근거 live의 누적 장부·입력 계산, 혼합 예약·AI HTTP 가드·증거 보정과 실제 Ops HTTP+MySQL 통합 검사 구현 | RAG 접수/Core 준비 명세의 실제 예약·Prefect 연결·변경 SHA CI·금액/기간 한도·runner→Kubernetes 검증 |
 | 관측·인프라 복구 | Core→AI 상세 RAG 추적, Prefect·sync·artifact·컨테이너 교체·보고서 변조 검증 구현 | 최신 SHA의 전체 통합 CI, 개인/운영 환경 적용·복원 완료는 별도 증거 필요 |
-| RAG 오프라인 평가 | v1 계산기·v2 대역 출처와 Core 다중 청크 수집 10사례 서버 검증, Ops 합성 3사례 재평가 연결 | 공식 HTML 수집 연결, 실제 캡처 등록, 사람 검토 계약과 Ops 품질·기준 지정 |
+| RAG 오프라인 평가 | v1 계산기·v2 대역 출처와 Core 다중 청크 수집 10사례·예산 준비 명세, Ops 합성 3사례 재평가 연결 | 공식 HTML 수집 연결, 실제 캡처 등록, 사람 검토 계약과 Ops 품질·기준 지정 |
 
-### 이번 후속 구현 — 실제 Ops HTTP·MySQL 혼합 예산 검사
+### 이번 후속 구현 — Core 캡처의 예산 명세 준비
+
+`skn-112 / 15baddb` 이후에는 실제 Core 수집 산출물을 기존 혼합 예산 명세로 연결했다.
+`core_rag_budget.py`는 완료된 무료 수집의 fixture·capture·wire·integration을 대조하고,
+원문·질문·청크·사례 순서와 현행 Core 청커가 일치할 때 `budget-plan.json`을 생성한다.
+`core_rag_capture.py`는 전체 수집 성공 뒤 v1 9사례·v2 1사례 각각의 준비 파일을 만든다.
+실패 사례도 보존하며 미완료 수집을 정상 실행으로 바꾸지 않는다.
+
+- 원시 HTTP 기록에서 관측값을 다시 구성하고 인용 URL·trace·사례 누락과 순서를 검사한다.
+- 원본 파일 바이트, 준비 코드, Core 청커, 현행 AI 실행 코드·모델·작업 상한의 해시를 묶는다.
+  원본 캡처의 모델 정보는 새 실행의 모델 품질 증거로 사용하지 않는다.
+- 기존 준비 파일 덮어쓰기와 오래되거나 변조된 파일 사용을 거절한다. JSON 중복 키와 타입도 구분한다.
+- 무료 HTTP 검사 worker에 `core-spec`을 추가했다. `run`의 `core_capture_directory`가 있으면
+  Ops 연결 전에 원본과 예약 명세를 재검증한다.
+- 준비는 DB 예약·실행 승인·사후 정산을 만들지 않는다. 사람 미검토·기준 불가·유료 호출 0 상태를 유지한다.
+  새 production 의존성·서비스·migration 및 UI 변경은 없다.
+
+호출 흐름과 명령은 [Core 캡처의 예산 명세 준비](../evaluation/support-program-evidence/README.md#core-캡처에서-혼합-예산-명세-준비)를 따른다.
+로컬 Python 3.12에서 새 준비·소비 검증 17건과 기존 Core 캡처 12건, **총 29건**을 통과했다.
+`uv`가 PATH에 없어 기존 `.venv/bin/python -B -m pytest`를 사용했다. 실제 모델·기존 DB는 호출하지 않았고,
+로컬 Core HTTP·wire 대역과 실제 AI/SDK·메모리 Qdrant의 검증 범위를 구분한다.
+실제 JVM/Core·MySQL·Qdrant·Langfuse 수집에서 준비 파일을 생성하는 검증은 필수 LLMOps CI에,
+신규 소스 Ruff·포맷은 기존 Ops CI에 추가했다. 이번 미커밋 변경의 전체 CI는 검증 대기다.
+기준 `15baddb`의 GovBiz·Ops·Infra·Catalog CI 성공을 확인했으며, 확인 시점 LLMOps는 실행 중이다.
+
+다음은 **Core 준비 파일을 실제 Ops 예약에 연결 → 무료 실행·원본 캡처의 Ops 등록 및 Prefect 재평가 →
+사람 검토·RAG 품질 정책 → 승인된 자료·예산의 실제 모델 기준 확보** 순서다.
+이번 작업만으로 Core→Ops 장부→Prefect를 한 실행에서 검증했다고 판단하지 않는다.
+공개 RAG live와 정기 유료 실행은 아직 활성화하지 않는다.
+
+### 이전 구현 — skn-112 실제 Ops HTTP·MySQL 혼합 예산 검사
 
 `rag_budget_http_checks.py`와 테스트 전용 AI 프로세스 `rag_budget_http_worker.py`를 추가했다.
 모델 응답만 전송 대역을 사용하고 기존 AI 앱·Service·Agent·SDK, BudgetClient, 실제 Django WSGI

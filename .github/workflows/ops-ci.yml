@@ -90,6 +90,8 @@ jobs:
         run: |
           uv run --locked ruff check ../../infrastructure/llmops/rag_budget_http_checks.py ../../infrastructure/llmops/rag_budget_http_worker.py
           uv run --locked ruff format --check ../../infrastructure/llmops/rag_budget_http_checks.py ../../infrastructure/llmops/rag_budget_http_worker.py
+          uv run --locked ruff check ../../infrastructure/llmops/core_rag_budget.py ../../infrastructure/llmops/test_core_rag_budget.py
+          uv run --locked ruff format --check ../../infrastructure/llmops/core_rag_budget.py ../../infrastructure/llmops/test_core_rag_budget.py
       - name: Test real Ops HTTP and MySQL with offline RAG worker
         env:
           PYTHONPATH: ${{ github.workspace }}/infrastructure/llmops

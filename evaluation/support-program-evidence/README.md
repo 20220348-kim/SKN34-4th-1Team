@@ -130,6 +130,49 @@ Core 단위 테스트와 통합 검사가 같은 [가상 원문](../../backend/c
 해당 SHA의 전체 CI는 설정 검사 의존성과 이후 취소 접수 503 문제로 실패했습니다. RAG 단계 통과와
 전체 workflow 성공을 구별하며, 후속 수정의 결과는 새 SHA에서 다시 확인해야 합니다.
 
+### Core 캡처에서 혼합 예산 명세 준비
+
+전체 Core 수집 검증이 성공하면 각 버전에 `budget-plan.json`을 추가합니다.
+[준비 도구](../../infrastructure/llmops/core_rag_budget.py)는 실제 수집된 원문·청크·질문을
+`make_rag_spec`에 전달하며 별도로 청킹하지 않습니다. 사례 순서와 실패 사례도 그대로 유지합니다.
+현재 수집기의 v1은 9사례·최대 27작업, v2는 1사례·최대 3작업입니다. 캐시로 생략될 호출도
+예약 전 상한에 포함하므로 이 수치를 실제 호출 수나 비용으로 해석하지 않습니다.
+
+```text
+Core 수집 완료 → fixture/capture/wire/integration 대조
+→ 현재 Core 청커 해시·원문·질문·순서 검증 → 혼합 예산 명세 + 원본 파일 해시
+→ budget-plan.json → 소비 시 원본·준비 코드·AI 실행 코드 재검증
+```
+
+- 원시 HTTP 기록에서 관측값을 재구성해 캡처와 비교합니다. 인용 URL, trace 연결, 사례 누락·순서도 검사합니다.
+- `sourceSha256`은 원본 4개 파일의 바이트를, `preparationSha256`은 준비·수집·평가 코드와 Core 청커를 고정합니다.
+  `executionSpec`은 현재 AI 모델·런타임 코드·질문·청크·작업 상한을 고정하고 `executionSpecSha256`으로 식별합니다.
+- 부분·실패 수집, 바뀐 Core 청커, 변경된 원문·질문·wire는 거절합니다. 기존 준비 파일은 덮어쓰지 않습니다.
+- 사용 시 파일과 현재 코드를 다시 대조합니다. 해시만 다시 쓴 명세 변조, JSON 중복 키와 타입 변경도 거절합니다.
+- 이 도구는 완료된 **무료 통합 캡처의 다음 실행 입력을 준비**합니다. 이전 호출의 사후 승인·정산이나
+  새 Ops 예약을 만들지 않습니다. `reservationCreated=false`, `paidModelApiCalls=0`, `baselineEligible=false`입니다.
+  원본 캡처의 모델 정보와 앞으로 실행할 현행 모델 명세는 별개이며, 사람 검토나 실제 모델 품질로 승격하지 않습니다.
+  파일 해시는 일관성 검사이며 임의 파일을 실제 Core 실행으로 인증하는 서명은 아닙니다.
+
+```bash
+# 저장소 루트, 모델·Ops·DB 호출 없이 이미 생성된 준비 파일 확인
+backend/ai-service/.venv/bin/python infrastructure/llmops/core_rag_budget.py check work/core-rag-new/v1
+# 과거 완료 캡처에 준비 파일이 없을 때만 생성; 현행 Core 청커와 계약이 일치해야 합니다.
+backend/ai-service/.venv/bin/python infrastructure/llmops/core_rag_budget.py prepare work/core-rag-old/v1
+```
+
+토큰 상한 계산에는 기존 tiktoken 인코딩 데이터를 사용합니다. 완전한 오프라인 실행은 캐시가 준비되어
+있어야 하며, 빈 환경에서는 최초에 공개 인코딩 파일을 내려받을 수 있습니다. 자료를 모델에 전송하지는 않습니다.
+
+무료 검사 worker의 `core-spec`은 stdin의 `{"directory":"/absolute/capture/v1"}`에서 준비 파일을 읽어
+검증된 `executionSpec`을 반환합니다. `run`에 `core_capture_directory`를 지정하면 Ops 연결 전에
+원본과 준비 파일을 재검증하고 예약 명세·해시를 대조합니다. 이 worker는 항상 모델 전송 대역만 사용합니다.
+
+로컬에서는 준비·변조 거절 17건과 기존 Core 캡처 12건, 총 29건을 확인했습니다. 로컬 Core HTTP·wire는
+테스트 대역이며 실제 AI/SDK·메모리 Qdrant를 사용한 검증과 구분합니다. 현재 변경의 실제 JVM/Core·MySQL·
+Qdrant·Langfuse 수집은 필수 LLMOps CI에 연결했고 아직 새 SHA의 결과는 없습니다. Core 준비 파일을 실제
+Ops 예약·Prefect 실행·캡처 등록까지 한 번에 연결하는 작업은 후속입니다.
+
 ## Ops 평가 범위 고정 — 2026-09-30
 
 고정 근거 평가기의 fixture·capture v1은 `scope`를 지정할 경우 `fixed-answer-context-only`만

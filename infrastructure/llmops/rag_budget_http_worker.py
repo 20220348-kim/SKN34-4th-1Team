@@ -35,8 +35,17 @@ def run_session(config):
     from budget_client import BudgetClient, BudgetUnavailable
     from fastapi.testclient import TestClient
     from qdrant_client import AsyncQdrantClient
-    from rag_budget import RagBudget
+    from rag_budget import RagBudget, digest
 
+    if "core_capture_directory" in config:
+        from core_rag_budget import load_plan
+
+        plan = load_plan(config["core_capture_directory"])
+        if (
+            digest(config["spec"]) != plan["executionSpecSha256"]
+            or config["spec_hash"] != plan["executionSpecSha256"]
+        ):
+            raise ValueError("Core budget plan differs from the reserved execution")
     parsed = urlsplit(config["ops_url"])
     if parsed.scheme != "http" or parsed.hostname != "127.0.0.1" or not parsed.port:
         raise ValueError("Only the isolated loopback Ops test server is allowed")
@@ -215,7 +224,11 @@ if __name__ == "__main__":
         from rag_budget import make_rag_spec
 
         print(json.dumps(make_rag_spec(synthetic_cases())))
+    elif sys.argv[1:] == ["core-spec"]:
+        from core_rag_budget import load_plan
+
+        print(json.dumps(load_plan(json.load(sys.stdin)["directory"])["executionSpec"]))
     elif sys.argv[1:] == ["run"]:
         print(json.dumps(run_session(json.load(sys.stdin))))
     else:
-        raise SystemExit("Expected spec or run")
+        raise SystemExit("Expected spec, core-spec or run")

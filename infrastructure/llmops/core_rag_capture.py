@@ -417,6 +417,13 @@ def verify_rag_capture(
             write(directory / "wire.json", record)
             print("PASS: actual Core multichunk RAG capture " + version, flush=True)
         report["status"] = "passed"
+        # Only a complete Core run can become a preparation input. Failed cases remain
+        # explicit; the plan never grants approval or implies a human-reviewed baseline.
+        write(output / "integration.json", report)
+        from core_rag_budget import prepare
+
+        for record in report["versions"]:
+            prepare(output / record["version"])
     except BaseException:
         report["status"] = "failed"
         for record in report["versions"]:
