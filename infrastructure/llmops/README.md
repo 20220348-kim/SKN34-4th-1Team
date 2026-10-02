@@ -893,6 +893,8 @@ backend/ai-service/.venv/bin/python -B infrastructure/scripts/verify-catalog-sep
 # 수집한 파일은 서버·모델 호출 없이 다시 계산할 수 있습니다.
 backend/ai-service/.venv/bin/python evaluation/support-program-evidence/rag_evaluate.py \
   --fixture work/core-rag-new/v1/fixture.json --capture work/core-rag-new/v1/capture.json
+# 전체 수집 성공 후 생성된 예산 준비 파일을 모델·Ops 호출 없이 대조합니다.
+backend/ai-service/.venv/bin/python infrastructure/llmops/core_rag_budget.py check work/core-rag-new/v1
 ```
 
 새 출력 폴더를 지정해야 하며 다른 추적 출력과 겹칠 수 없습니다. `--evidence-traces-output`과
@@ -905,6 +907,11 @@ production 이미지·서버 진입점·Ops 카탈로그는 변경하지 않습�
 두 번째 원문은 청크 ID 전환과 같은 질문 임베딩 재사용을 확인합니다. 정상 검색/인용 재현율 1/1,
 검색 누락 0/0, 인용 누락 1/0.5는 대역으로 의도한 결과이며 실제 모델 정확도가 아닙니다.
 `integration-stub` 출처, 미검토·기준 지정 불가 상태를 유지합니다.
+
+전체 수집 성공 후 버전별 `budget-plan.json`도 생성합니다. 실제 청크·질문·사례 순서를 기존 혼합
+예산 명세로 변환하고 원본 파일·Core 청커·실행 코드 해시를 고정합니다. 부분 수집에서는 생성하지 않으며
+실패 사례도 삭제하지 않습니다. 이 파일은 다음 실행의 준비 자료이며 Ops 예약·실행 승인·과거 호출 정산을
+만들지 않습니다. [검증 항목과 CLI](../../evaluation/support-program-evidence/README.md#core-캡처에서-혼합-예산-명세-준비)를 따릅니다.
 
 CI는 `work/llmops-ci/core-rag/`의 전체/버전별 진행 상태·원시 기록·평가 입력·보고서를 실패 시에도 보존합니다.
 Core trace와 실제 Langfuse 관측 연결이 깨지면 통합 검사도 실패합니다. 로컬의 실제 Core 청커 단위 테스트,

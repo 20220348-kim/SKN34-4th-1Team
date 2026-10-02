@@ -429,8 +429,20 @@ def verify_driver_replays_actual_ai_records(monkeypatch, tmp_path, nonce, replay
             assert (
                 json.loads((output / "v1/wire.json").read_bytes())["status"] == "failed"
             )
+            assert not (output / "v1/budget-plan.json").exists()
         else:
             capture.verify_rag_capture(**args)
+            from core_rag_budget import load_plan
+
+            for version, count in (("v1", 9), ("v2", 1)):
+                plan = load_plan(output / version)
+                assert len(plan["executionSpec"]["rag_cases"]) == count
+                assert len(plan["executionSpec"]["model_operations"]) == count * 3
+                assert not plan["reservationCreated"] and not plan["baselineEligible"]
+            assert (
+                load_plan(output / "v1")["executionSpec"]["rag_cases"][0]["chunks"]
+                != load_plan(output / "v2")["executionSpec"]["rag_cases"][0]["chunks"]
+            )
             aggregate = json.loads((output / "integration.json").read_bytes())
             assert aggregate["status"] == "passed" and len(aggregate["versions"]) == 2
             assert (
