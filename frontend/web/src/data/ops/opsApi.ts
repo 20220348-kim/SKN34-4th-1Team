@@ -85,7 +85,7 @@ export type RagMaterial = z.infer<typeof ragMaterialSchema>
 const ragDecisionSchema = z.enum(['SUITABLE', 'UNSUITABLE', 'DEFERRED'])
 const ragQualityPolicySchema = z.object({
   definition: z.object({ version: z.string(), scope: z.literal('source-chunks-retrieval-answer'),
-    pass_enabled: z.literal(false), baseline_eligible: z.literal(false), reference_review_supported: z.literal(false) }),
+    pass_enabled: z.literal(false), baseline_eligible: z.literal(false), reference_review_supported: z.boolean() }),
   code_sha256: z.string().regex(/^[a-f0-9]{64}$/),
 })
 const ragQualitySchema = z.object({
@@ -98,7 +98,20 @@ const ragQualitySchema = z.object({
     assessed_by: z.string(), created_at: z.string(),
   })),
 })
+const ragReferenceDecisionSchema = z.enum(['APPROVED', 'CHANGES_REQUESTED', 'DEFERRED', 'REVOKED'])
+const ragReferenceReviewSchema = z.object({
+  rubric: z.object({ version: z.literal('rag-reference-review-v1'), scope: z.literal('this-run-all-cases'), description: z.string() }),
+  fixture_sha256: z.string().regex(/^[a-f0-9]{64}$/), case_ids: z.array(z.string()).min(1),
+  approved: z.boolean(), current_id: z.number().int().positive().nullable(), can_revoke: z.boolean(),
+  history: z.array(z.object({
+    id: z.number().int().positive(), version: z.number().int().positive(), decision: ragReferenceDecisionSchema,
+    comment: z.string(), fixture_sha256: z.string(), case_ids: z.array(z.string()), rubric_version: z.string(),
+    execution_spec_sha256: z.string(), revoked_review_id: z.number().int().positive().nullable(),
+    reviewed_by: z.string(), created_at: z.string(), is_current: z.boolean(),
+  })),
+})
 const ragReviewStateSchema = z.object({
+  reference_review: ragReferenceReviewSchema,
   quality: ragQualitySchema, material: ragMaterialSchema, reviewer_id: z.string().min(1), review_version: z.number().int().nonnegative(),
   rubric: z.object({ version: z.literal('rag-case-review-v1'), criteria: z.array(z.object({
     key: z.enum(['retrieval', 'answer', 'citation']), label: z.string(), description: z.string(),
@@ -112,6 +125,10 @@ const ragReviewStateSchema = z.object({
   })),
 })
 export type RagReviewState = z.infer<typeof ragReviewStateSchema>
+export type RagReferenceReviewInput = {
+  decision: z.infer<typeof ragReferenceDecisionSchema>; comment: string; fixture_sha256: string;
+  case_ids: string[]; rubric_version: string; review_version: number; confirmed_all_cases: boolean;
+}
 export type RagCaseReviewInput = {
   case_id: string; retrieval_decision: z.infer<typeof ragDecisionSchema>; answer_decision: z.infer<typeof ragDecisionSchema>;
   citation_decision: z.infer<typeof ragDecisionSchema>; comment: string;
@@ -360,6 +377,7 @@ async function request<T>(path: string, schema: z.ZodType<T>, options: RequestIn
     const message = response.status === 400 && error?.code === 'LIVE_BUDGET_UNAVAILABLE'
       ? '누적 평가 한도가 부족하거나 설정되지 않아 접수하지 않았습니다. 운영자에게 예약·미확인 사용량과 한도를 확인해 주세요.'
       : error?.code === 'INVALID_RAG_REVIEW' ? '검토 항목과 의견을 확인하세요. 미측정 항목은 판단 보류만 저장할 수 있습니다.'
+      : error?.code === 'INVALID_RAG_REFERENCE_REVIEW' ? '전체 대상 자료의 확인과 참조 검토 근거를 입력하세요.'
       : error?.code === 'CANCEL_FORBIDDEN' ? '평가를 요청한 계정만 취소할 수 있습니다.'
       : error?.code === 'CANCEL_CONFLICT' ? '이미 종료된 평가입니다. 상태를 다시 확인하세요.'
       : error?.code === 'RESULTS_UNAVAILABLE' ? '저장된 검토 자료와 평가 결과의 무결성을 확인할 수 없습니다. 운영자에게 확인해 주세요.'
@@ -400,6 +418,7 @@ export const getRagMaterial = (id: string, signal?: AbortSignal) => request(`/ev
 export const getRagReviews = (id: string, signal?: AbortSignal) => request(`/evaluations/${encodeURIComponent(id)}/rag-reviews`, ragReviewStateSchema, { signal })
 export const assessRagQuality = (id: string, inputSha256: string, reviewerId: string) => post(`/evaluations/${encodeURIComponent(id)}/rag-quality`, { input_sha256: inputSha256 }, ragReviewStateSchema, false, reviewerId)
 export const saveRagCaseReview = (id: string, data: RagCaseReviewInput, reviewerId: string) => post(`/evaluations/${encodeURIComponent(id)}/rag-reviews`, data, ragReviewStateSchema, false, reviewerId)
+export const saveRagReferenceReview = (id: string, data: RagReferenceReviewInput, reviewerId: string) => post(`/evaluations/${encodeURIComponent(id)}/rag-reference-review`, data, ragReviewStateSchema, false, reviewerId)
 export const assessEvaluationQuality = (id: string, inputSha256: string) => post(`/evaluations/${encodeURIComponent(id)}/quality`, { input_sha256: inputSha256 }, reviewSchema)
 export const saveFixtureReview = (id: string, data: { decision: 'APPROVED' | 'CHANGES_REQUESTED' | 'DEFERRED'; comment: string; fixture_sha256: string; case_ids: string[]; rubric_version: string; fixture_version: number }) => post(`/evaluations/${encodeURIComponent(id)}/fixture-review`, data, reviewSchema)
 export const saveEvaluationReview = (id: string, decision: 'APPROVED' | 'CHANGES_REQUESTED', comment: string, stamp: ReviewStamp) => post(`/evaluations/${encodeURIComponent(id)}/review`, { decision, comment, ...stamp }, reviewSchema)

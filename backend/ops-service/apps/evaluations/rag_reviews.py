@@ -109,7 +109,9 @@ def review_state(run, user):
             ],
         }
         from .rag_quality import quality_state
+        from .rag_reference_reviews import reference_state
 
+        state["reference_review"] = reference_state(locked, material)
         state["quality"] = quality_state(locked, state)
         return state
 

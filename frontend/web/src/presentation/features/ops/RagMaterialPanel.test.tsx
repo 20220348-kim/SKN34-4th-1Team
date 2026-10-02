@@ -21,8 +21,10 @@ const material: RagMaterial = {
 }
 const reviewState = (source = material): RagReviewState => ({
   material: source, reviewer_id: 'core:91', review_version: 0,
+  reference_review: { rubric: { version: 'rag-reference-review-v1', scope: 'this-run-all-cases', description: '전체 사례의 원문과 기대 조건을 검토합니다.' }, fixture_sha256: source.fixture_sha256,
+    case_ids: source.cases.map((item) => item.case_id), approved: false, current_id: null, can_revoke: false, history: [] },
   quality: { status: 'NOT_EVALUATED', is_current: false, current_id: null, input_sha256: '1'.repeat(64), baseline_eligible: false,
-    policy: { definition: { version: 'rag-review-quality-v1', scope: 'source-chunks-retrieval-answer', pass_enabled: false, baseline_eligible: false, reference_review_supported: false }, code_sha256: '2'.repeat(64) }, history: [] },
+    policy: { definition: { version: 'rag-review-quality-v2', scope: 'source-chunks-retrieval-answer', pass_enabled: false, baseline_eligible: false, reference_review_supported: true }, code_sha256: '2'.repeat(64) }, history: [] },
   rubric: { version: 'rag-case-review-v1', criteria: [
     { key: 'retrieval', label: '검색 적합성', description: '질문에 맞는 근거 검색' },
     { key: 'answer', label: '답변 정확성', description: '원문과 일치하는 답변' },
@@ -50,7 +52,7 @@ it('버튼을 누른 뒤에만 GET으로 고정 자료를 읽고 실패·미확�
   expect(candidate.getByText(/인용 근거:/).closest('p')?.textContent).toContain('미실행 또는 미확인')
   expect(reference.getByText(/인용 근거:/).closest('p')?.textContent).toBe('인용 근거: 없음')
   expect(screen.getByText(/후보: 검색됨 \/ 인용 미확인 · 비교: 검색됨 \/ 인용되지 않음/)).toBeTruthy()
-  expect(screen.getByText('AI 작성 참조 조건 · 사람 검토 전')).toBeTruthy()
+  expect(screen.getByText('AI 작성 참조 조건')).toBeTruthy()
   expect(container.querySelector('script, img, a[href^="javascript:"]')).toBeNull()
   expect(screen.queryByRole('button', { name: /승인|판정|기준 지정/ })).toBeNull()
 })
@@ -352,4 +354,159 @@ it('현재 RAG 정책에 없는 합격 응답은 거절한다', async () => {
   fireEvent.click(screen.getByRole('button', { name: '검토 자료 보기' }))
   expect((await screen.findByRole('alert')).textContent).toContain('운영 서버 응답을 확인할 수 없습니다.')
   expect(screen.queryByRole('region', { name: 'RAG 품질 점검' })).toBeNull()
+})
+
+function referenceState(decision: 'APPROVED' | 'REVOKED' = 'APPROVED', source = material): RagReviewState {
+  const state = reviewState(source)
+  const approved = decision === 'APPROVED'
+  state.review_version = approved ? 1 : 2
+  const first = { id: 41, version: 1, decision: 'APPROVED' as const, comment: '전체 원문과 기대 조건 대조 완료', fixture_sha256: source.fixture_sha256,
+    case_ids: state.reference_review.case_ids, rubric_version: state.reference_review.rubric.version, execution_spec_sha256: 'e'.repeat(64),
+    revoked_review_id: null, reviewed_by: 'reviewer@example.com', created_at: '2026-10-02T03:00:00Z', is_current: approved }
+  state.reference_review = { ...state.reference_review, approved, can_revoke: approved, current_id: approved ? 41 : 42,
+    history: approved ? [first] : [{ ...first, id: 42, version: 2, decision: 'REVOKED', revoked_review_id: 41, comment: '기대 인용 오류 발견', is_current: true }, first] }
+  state.quality.input_sha256 = (approved ? '6' : '7').repeat(64)
+  return state
+}
+const referenceConfirmation = '전체 대상의 원문·청크·질문·기대 상태·기대 인용을 확인했습니다.'
+function fillReference(decision = 'APPROVED') {
+  fireEvent.change(screen.getByLabelText('참조 자료 판단'), { target: { value: decision } })
+  fireEvent.change(screen.getByLabelText('참조 검토 근거'), { target: { value: '전체 원문과 기대 조건 대조 완료' } })
+  fireEvent.click(screen.getByRole('checkbox', { name: referenceConfirmation }))
+}
+
+it('참조 초안은 사례 전환을 허용하고 전체 확인·근거 뒤에만 최신 관리자 CSRF로 저장한다', async () => {
+  const source = { ...material, cases: [...material.cases, { ...material.cases[0], case_id: 'R02', question: '두 번째 질문' }] }
+  let resolve!: (value: Response) => void
+  const fetcher = vi.fn().mockResolvedValueOnce(json(reviewState(source))).mockResolvedValueOnce(json(session)).mockImplementationOnce(() => new Promise<Response>((done) => { resolve = done }))
+  vi.stubGlobal('fetch', fetcher)
+  render(<RagMaterialPanel runId="run-a" onExpired={vi.fn()} />)
+  fireEvent.click(screen.getByRole('button', { name: '검토 자료 보기' }))
+  const save = await screen.findByRole('button', { name: '참조 검토 저장' })
+  expect(save).toHaveProperty('disabled', true)
+  expect(screen.queryByRole('option', { name: '승인 철회' })).toBeNull()
+  fireEvent.change(screen.getByLabelText('참조 자료 판단'), { target: { value: 'APPROVED' } })
+  fireEvent.change(screen.getByLabelText('참조 검토 근거'), { target: { value: '전체 원문과 기대 조건 대조 완료' } })
+  expect(save).toHaveProperty('disabled', true)
+  expect(screen.getByLabelText('검색 적합성')).toHaveProperty('disabled', true)
+  expect(screen.getByRole('button', { name: '현재 검토로 품질 점검 저장' })).toHaveProperty('disabled', true)
+  expect(screen.getByRole('button', { name: '검토 자료 새로고침' })).toHaveProperty('disabled', true)
+  expect(screen.getByLabelText('검토 사례')).toHaveProperty('disabled', false)
+  fireEvent.change(screen.getByLabelText('검토 사례'), { target: { value: '1' } })
+  expect(screen.getByLabelText('참조 검토 근거')).toHaveProperty('value', '전체 원문과 기대 조건 대조 완료')
+  fireEvent.click(screen.getByRole('checkbox', { name: referenceConfirmation }))
+  fireEvent.click(save)
+  fireEvent.submit(screen.getByLabelText('참조 검토 근거').closest('form')!)
+  await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(3))
+  expect(screen.getByLabelText('검토 사례')).toHaveProperty('disabled', true)
+  expect(fetcher.mock.calls[2][0]).toBe('/api/v1/ops/evaluations/run-a/rag-reference-review')
+  expect(fetcher.mock.calls[2][1].headers['X-CSRFToken']).toBe('current-token')
+  expect(JSON.parse(fetcher.mock.calls[2][1].body)).toEqual({ decision: 'APPROVED', comment: '전체 원문과 기대 조건 대조 완료', confirmed_all_cases: true,
+    case_ids: ['R01', 'R02'], fixture_sha256: source.fixture_sha256, rubric_version: 'rag-reference-review-v1', review_version: 0 })
+  await act(async () => { resolve(json(referenceState('APPROVED', source))) })
+  expect(screen.getByText('원문·참조 자료 검토 · 참조 자료 승인')).toBeTruthy()
+  expect(screen.getByLabelText('참조 검토 근거')).toHaveProperty('value', '')
+  expect(screen.getByRole('option', { name: '승인 철회' })).toBeTruthy()
+  expect(screen.getByRole('button', { name: '검토 자료 새로고침' })).toHaveProperty('disabled', false)
+  expect(screen.getByLabelText('검토 사례')).toHaveProperty('value', '1')
+})
+
+it('후보 검토나 품질 저장 중 참조 판단을 바꿀 수 없다', async () => {
+  let resolve!: (value: Response) => void
+  const fetcher = vi.fn().mockResolvedValueOnce(json(reviewState())).mockResolvedValueOnce(json(session)).mockImplementationOnce(() => new Promise<Response>((done) => { resolve = done }))
+  vi.stubGlobal('fetch', fetcher)
+  render(<RagMaterialPanel runId="run-a" onExpired={vi.fn()} />)
+  fireEvent.click(screen.getByRole('button', { name: '검토 자료 보기' }))
+  await screen.findByLabelText('검토 사례'); fillReview()
+  expect(screen.getByLabelText('참조 자료 판단')).toHaveProperty('disabled', true)
+  fireEvent.click(screen.getByRole('button', { name: '입력 취소' }))
+  expect(screen.getByLabelText('참조 자료 판단')).toHaveProperty('disabled', false)
+  fireEvent.click(screen.getByRole('button', { name: '현재 검토로 품질 점검 저장' }))
+  await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(3))
+  expect(screen.getByLabelText('참조 자료 판단')).toHaveProperty('disabled', true)
+  await act(async () => { resolve(json(assessedState())) })
+  expect(screen.getByLabelText('참조 자료 판단')).toHaveProperty('disabled', false)
+})
+
+it('참조 철회 이력·대상과 이전 v1 품질 이력을 보존하며 현재 판정은 미판정으로 표시한다', async () => {
+  const before = referenceState()
+  const legacy = assessedState().quality
+  legacy.policy.definition = { ...legacy.policy.definition, version: 'rag-review-quality-v1', reference_review_supported: false }
+  const after = referenceState('REVOKED')
+  after.quality.history = legacy.history
+  const fetcher = vi.fn().mockResolvedValueOnce(json(before)).mockResolvedValueOnce(json(session)).mockResolvedValueOnce(json(after))
+  vi.stubGlobal('fetch', fetcher)
+  render(<RagMaterialPanel runId="run-a" onExpired={vi.fn()} />)
+  fireEvent.click(screen.getByRole('button', { name: '검토 자료 보기' }))
+  await screen.findByLabelText('참조 자료 판단'); fillReference('REVOKED')
+  fireEvent.click(screen.getByRole('button', { name: '참조 검토 저장' }))
+  await screen.findByText('원문·참조 자료 검토 · 승인 철회')
+  expect(JSON.parse(fetcher.mock.calls[2][1].body)).toMatchObject({ decision: 'REVOKED', review_version: 1 })
+  const history = screen.getByRole('region', { name: 'RAG 참조 자료 검토' }).querySelector('details')!
+  fireEvent.click(within(history).getByText('참조 검토 이력 · 2건'))
+  expect(within(history).getByText('철회 대상 기록: #41')).toBeTruthy()
+  expect(screen.getByRole('article', { name: '참조 검토 이력 1' })).toBeTruthy()
+  expect(screen.getByText('RAG 품질 점검 · 미판정')).toBeTruthy()
+  expect(screen.getByText(/자료·정책·검토가 변경되어 다시 점검/)).toBeTruthy()
+  expect(screen.getByText('RAG 품질 점검 이력 · 1건')).toBeTruthy()
+  expect(screen.queryByRole('option', { name: '승인 철회' })).toBeNull()
+})
+
+it('참조 저장 충돌 시 입력을 유지하고 취소·새로고침 전 자동 재전송하지 않는다', async () => {
+  const fetcher = vi.fn().mockResolvedValueOnce(json(reviewState())).mockResolvedValueOnce(json(session)).mockResolvedValueOnce(json({ code: 'REVIEW_CONFLICT' }, 409)).mockResolvedValueOnce(json(referenceState()))
+  vi.stubGlobal('fetch', fetcher)
+  render(<RagMaterialPanel runId="run-a" onExpired={vi.fn()} />)
+  fireEvent.click(screen.getByRole('button', { name: '검토 자료 보기' }))
+  await screen.findByLabelText('참조 자료 판단'); fillReference()
+  fireEvent.click(screen.getByRole('button', { name: '참조 검토 저장' }))
+  await screen.findByRole('alert')
+  expect(screen.getByLabelText('참조 검토 근거')).toHaveProperty('value', '전체 원문과 기대 조건 대조 완료')
+  expect(screen.getByRole('button', { name: '참조 검토 저장' })).toHaveProperty('disabled', true)
+  expect(fetcher).toHaveBeenCalledTimes(3)
+  fireEvent.click(screen.getByRole('button', { name: '참조 입력 취소' }))
+  expect(screen.getByLabelText('참조 자료 판단')).toHaveProperty('disabled', true)
+  fireEvent.click(screen.getByRole('button', { name: '검토 자료 새로고침' }))
+  expect(await screen.findByLabelText('참조 자료 판단')).toHaveProperty('disabled', false)
+  expect(fetcher.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(1)
+})
+
+it('참조 저장 응답 유실 후 동일 본문·버전으로 재시도한다', async () => {
+  const fetcher = vi.fn().mockResolvedValueOnce(json(reviewState())).mockResolvedValueOnce(json(session)).mockRejectedValueOnce(new Error('lost')).mockResolvedValueOnce(json(session)).mockResolvedValueOnce(json(referenceState()))
+  vi.stubGlobal('fetch', fetcher)
+  render(<RagMaterialPanel runId="run-a" onExpired={vi.fn()} />)
+  fireEvent.click(screen.getByRole('button', { name: '검토 자료 보기' }))
+  await screen.findByLabelText('참조 자료 판단'); fillReference()
+  fireEvent.click(screen.getByRole('button', { name: '참조 검토 저장' }))
+  await screen.findByRole('alert')
+  fireEvent.click(screen.getByRole('button', { name: '참조 검토 저장' }))
+  await screen.findByText('원문·참조 자료 검토 · 참조 자료 승인')
+  expect(fetcher.mock.calls[2][1].body).toBe(fetcher.mock.calls[4][1].body)
+})
+
+it('참조 저장 전 계정 변경은 POST를 차단한다', async () => {
+  const fetcher = vi.fn().mockResolvedValueOnce(json(reviewState())).mockResolvedValueOnce(json({ ...session, user: { id: 'core:92', username: 'other@example.com' } }))
+  vi.stubGlobal('fetch', fetcher)
+  const onExpired = vi.fn()
+  render(<RagMaterialPanel runId="run-a" onExpired={onExpired} />)
+  fireEvent.click(screen.getByRole('button', { name: '검토 자료 보기' }))
+  await screen.findByLabelText('참조 자료 판단'); fillReference()
+  fireEvent.click(screen.getByRole('button', { name: '참조 검토 저장' }))
+  await waitFor(() => expect(onExpired).toHaveBeenCalledOnce())
+  expect(fetcher.mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false)
+})
+
+it('다른 실행으로 이동하면 늦은 참조 저장 응답을 무시한다', async () => {
+  let resolve!: (value: Response) => void
+  const fetcher = vi.fn().mockResolvedValueOnce(json(reviewState())).mockResolvedValueOnce(json(session)).mockImplementationOnce(() => new Promise<Response>((done) => { resolve = done }))
+  vi.stubGlobal('fetch', fetcher)
+  const onExpired = vi.fn()
+  const view = render(<RagMaterialPanel runId="run-a" onExpired={onExpired} />)
+  fireEvent.click(screen.getByRole('button', { name: '검토 자료 보기' }))
+  await screen.findByLabelText('참조 자료 판단'); fillReference()
+  fireEvent.click(screen.getByRole('button', { name: '참조 검토 저장' }))
+  await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(3))
+  view.rerender(<RagMaterialPanel runId="run-b" onExpired={onExpired} />)
+  await act(async () => { resolve(json(referenceState())) })
+  expect(screen.queryByRole('region', { name: 'RAG 참조 자료 검토' })).toBeNull()
+  expect(screen.getByRole('button', { name: '검토 자료 보기' })).toHaveProperty('disabled', false)
 })

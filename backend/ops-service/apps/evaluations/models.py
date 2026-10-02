@@ -175,6 +175,50 @@ class RagCaseReview(models.Model):
         ]
 
 
+class RagReferenceReview(models.Model):
+    """한 실행의 고정 원문·참조 조건 전체에 대한 사람 검토 이력."""
+
+    class Decision(models.TextChoices):
+        APPROVED = "APPROVED", "참조 자료 승인"
+        CHANGES_REQUESTED = "CHANGES_REQUESTED", "수정 필요"
+        DEFERRED = "DEFERRED", "판단 보류"
+        REVOKED = "REVOKED", "승인 철회"
+
+    run = models.ForeignKey(
+        EvaluationRun, on_delete=models.PROTECT, related_name="rag_reference_reviews"
+    )
+    version = models.PositiveIntegerField()
+    decision = models.CharField(max_length=20, choices=Decision.choices)
+    comment = models.TextField()
+    fixture_sha256 = models.CharField(max_length=64)
+    case_ids = models.JSONField()
+    rubric_version = models.CharField(max_length=40)
+    execution_spec_sha256 = models.CharField(max_length=64)
+    reviewed_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    created_at = models.DateTimeField(auto_now_add=True)
+    revoked_review = models.ForeignKey("self", null=True, on_delete=models.PROTECT)
+
+    class Meta:
+        ordering = ["-version"]
+        constraints = [
+            models.UniqueConstraint(fields=["run", "version"], name="unique_rag_reference_version"),
+            models.CheckConstraint(
+                condition=models.Q(version__gte=1), name="rag_reference_version_positive"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    decision__in=["APPROVED", "CHANGES_REQUESTED", "DEFERRED", "REVOKED"]
+                ),
+                name="rag_reference_decision",
+            ),
+            models.CheckConstraint(
+                condition=(models.Q(decision="REVOKED", revoked_review__isnull=False))
+                | (~models.Q(decision="REVOKED") & models.Q(revoked_review__isnull=True)),
+                name="rag_reference_revocation_target",
+            ),
+        ]
+
+
 class EvaluationBaseline(models.Model):
     # 해제 뒤에도 행과 버전을 유지해 최초 지정·교체·접수의 잠금 대상으로 사용한다.
     dataset_id = models.CharField(max_length=100, primary_key=True)

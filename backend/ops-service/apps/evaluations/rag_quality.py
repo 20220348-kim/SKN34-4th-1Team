@@ -12,9 +12,10 @@ from .rag_reviews import locked_run, review_state
 from .services import RequestConflict
 
 REASONS = {
-    "REFERENCE_REVIEW_REQUIRED": (
-        "RAG 원문·참조 조건의 사람 검토 승인 절차가 필요해 합격은 보류됩니다."
-    ),
+    "REFERENCE_REVIEW_REQUIRED": ("현재 원문·참조 조건 전체에 대한 사람 검토 승인이 필요합니다."),
+    "REFERENCE_REVOKED": "원문·참조 조건의 승인이 철회됐습니다. 다시 검토해야 합니다.",
+    "REFERENCE_CHANGES_REQUESTED": "원문·참조 조건에 수정 요청이 있어 승인되지 않았습니다.",
+    "PASS_POLICY_PENDING": "참조 자료는 승인됐으며 품질 합격 정책은 아직 활성화되지 않았습니다.",
     "NON_MODEL_CAPTURE": "합성·무료 대역 캡처는 현재 모델 품질이나 비교 기준의 근거가 아닙니다.",
     "SOURCE_EXECUTION_FAILED": (
         "원본 실행 실패가 있습니다. 미측정 항목을 품질 부적합으로 대체하지 않습니다."
@@ -70,6 +71,7 @@ def assessment_inputs(run, state):
             )
         },
         "reference_source": material["reference_source"],
+        "reference_review": state["reference_review"],
         "measurement_kind": material["candidate_measurement_kind"],
         "review_version": state["review_version"],
         "rubric": state["rubric"],

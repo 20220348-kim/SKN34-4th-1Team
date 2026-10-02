@@ -40,7 +40,7 @@ export function RagQualityPanel({ runId, state, disabled, onBusy, onSaved, onExp
   return <section className="space-y-3 rounded-xl border border-sample-border p-4" aria-label="RAG 품질 점검" aria-busy={busy}>
     <h3 className="font-semibold">RAG 품질 점검 · {labels[quality.status]}</h3>
     <p className="text-sm">현재 저장된 검토로 검색·답변·인용의 부적합과 검토 필요 사유를 기록합니다. 원본 실행 실패와 미측정은 별도로 표시합니다.</p>
-    <p className="text-sm">원문·AI 참조 조건의 승인 절차가 없어 현재 정책은 합격을 부여하지 않습니다. 합성·무료 대역 기록은 현재 모델의 품질이나 비교 기준을 증명하지 않습니다.</p>
+    <p className="text-sm">참조 자료의 사람 검토 승인과 별도로 품질 합격 정책은 아직 활성화되지 않았습니다. 합성·무료 대역 기록은 현재 모델의 품질이나 비교 기준을 증명하지 않습니다.</p>
     <p className="text-xs">정책: {quality.policy.definition.version} · 모델 호출 없음</p>
     {!quality.is_current && quality.history.length > 0 && <p className="text-sm text-amber-800">자료·정책·검토가 변경되어 다시 점검해야 합니다. 이전 판정은 이력으로 보존됩니다.</p>}
     {current && <div role="status" className="space-y-2 text-sm"><p>현재 판정: {labels[current.status]} · {current.assessed_by}</p>{reasons(current)}</div>}
