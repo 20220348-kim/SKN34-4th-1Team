@@ -20,6 +20,25 @@ beforeEach(() => {
 })
 afterEach(() => { cleanup(); appContainer.register({ applicationPreparationUseCase: asValue(original) }); vi.restoreAllMocks() })
 
+it('announces loading for screen readers, draws three bars after a short delay and styles a failure as an alert', async () => {
+  let resolve!: (value: typeof guide) => void
+  load.mockReturnValueOnce(new Promise<typeof guide>((done) => { resolve = done })).mockRejectedValueOnce(new Error('안내를 잠시 불러올 수 없습니다.'))
+  const { rerender } = render(<ApplicationOnlineInputGuide preparationId={30} inputRevision={1} defaultOpen />)
+  const status = screen.getByRole('status')
+  expect(status.textContent).toBe('입력 안내를 불러오는 중입니다.')
+  expect(status.className).toBe('sr-only')
+  expect(document.querySelector('[aria-hidden="true"] [class*="animate-pulse"]')).toBeNull()
+  await waitFor(() => expect(document.querySelectorAll('[aria-hidden="true"] [class*="animate-pulse"]')).toHaveLength(3))
+  resolve(guide)
+  expect(await screen.findByText('준비된 답변 5 / 8')).toBeTruthy()
+  expect(document.querySelector('[aria-hidden="true"] [class*="animate-pulse"]')).toBeNull()
+
+  rerender(<ApplicationOnlineInputGuide preparationId={31} inputRevision={1} defaultOpen />)
+  const alert = await screen.findByRole('alert')
+  expect(alert.textContent).toContain('안내를 잠시 불러올 수 없습니다.')
+  expect(alert.className).toContain('bg-danger-soft')
+  expect(screen.getByRole('button', { name: '입력 안내 다시 불러오기' })).toBeTruthy()
+})
 it('renders ready answers independently of unverified external mapping', async () => {
   render(<ApplicationOnlineInputGuide preparationId={30} inputRevision={1} />)
   expect(await screen.findByText('준비된 답변 5 / 8')).toBeTruthy()

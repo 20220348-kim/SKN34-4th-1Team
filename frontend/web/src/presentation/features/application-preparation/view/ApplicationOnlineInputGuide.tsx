@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
 import { appContainer } from '../../../../app/appContainer'
 import { formatSavedApplicationAnswers, type ApplicationOnlineInputGuide as Guide } from '@govbiz/shared/domain/entities/ApplicationOnlineInputGuide'
-import { applicationPreparationStyles as s } from './ApplicationPreparation.styles'
+import { useDelayedFlag } from '../../../shared/workspace/useDelayedFlag'
+import { applicationPreparationStyles as s, newPreparationStyles as n } from './ApplicationPreparation.styles'
+import { GuideSkeleton } from './ApplicationPreparationSkeletons'
 
 const labels = { READY: '준비 완료', NEEDS_REVIEW: '확인 필요', MISSING: '답변 필요', DIRECT_INPUT: '직접 처리 필요' }
 const inputModes = { UNKNOWN: '입력 형태 미확인', SHORT_TEXT: '짧은 답변', LONG_TEXT: '긴 답변',
@@ -17,6 +19,8 @@ export function ApplicationOnlineInputGuide({ preparationId, inputRevision, defa
   const [error, setError] = useState('')
   const [feedback, setFeedback] = useState('')
   const [retry, setRetry] = useState(0)
+  const loading = !guide && !error
+  const showSkeleton = useDelayedFlag(loading)
   useEffect(() => {
     const controller = new AbortController()
     setGuide(null); setError(''); setFeedback('')
@@ -59,8 +63,12 @@ export function ApplicationOnlineInputGuide({ preparationId, inputRevision, defa
     {guide && !guide.externalMappingVerified && <p className={s.notice}>{guide.officialApplicationUrl
       ? '실제 Google Form 질문을 확인했지만 일부 문항의 대응 관계는 검토가 필요합니다. 답변을 확인하고 직접 입력해주세요.'
       : '외부 신청 폼의 입력 방식과 문항 위치는 아직 확인되지 않았습니다. 준비된 답변을 복사해 해당 문항에 직접 입력해주세요.'}</p>}
-    {error && <div role="alert"><p>{error}</p><button className={s.button} onClick={() => setRetry((value) => value + 1)}>입력 안내 다시 불러오기</button></div>}
-    {!guide && !error && <p role="status">입력 안내를 불러오는 중입니다.</p>}
+    {error && <div className={`${n.alert} ${n.alertDanger}`} role="alert">
+      <div className={n.alertText}><p>{error}</p></div>
+      <button type="button" className={n.secondarySm} onClick={() => setRetry((value) => value + 1)}>입력 안내 다시 불러오기</button>
+    </div>}
+    {loading && <p className="sr-only" role="status">입력 안내를 불러오는 중입니다.</p>}
+    {showSkeleton && <GuideSkeleton />}
     {feedback && <p role="status">{feedback}</p>}
     {guide && <>
       <p>준비된 답변 {guide.readyCount} / {guide.totalCount}</p>

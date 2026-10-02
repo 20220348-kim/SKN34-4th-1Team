@@ -9,8 +9,10 @@ import { SelectField } from '../../../shared/workspace/SelectField'
 import { WorkspacePageHeader } from '../../../shared/workspace/WorkspacePageHeader'
 import { WorkspaceToast } from '../../../shared/workspace/WorkspaceToast'
 import { workspacePageStyles } from '../../../shared/workspace/WorkspacePage.styles'
+import { useDelayedFlag } from '../../../shared/workspace/useDelayedFlag'
 import { useApplicationPreparationNewViewModel, type SelectableSupportProgram } from '../viewmodel/useApplicationPreparationNewViewModel'
 import { applicationPreparationStyles as s, newPreparationStyles as n } from './ApplicationPreparation.styles'
+import { ButtonSpinner } from './ApplicationPreparationSkeletons'
 import { ProgramBadges, ProgramPickerPanel } from './ProgramPickerPanel'
 
 type NewViewModel = ReturnType<typeof useApplicationPreparationNewViewModel>
@@ -111,13 +113,16 @@ function ProgramSection({ vm, openPicker, pickButtonRef, changeButtonRef }: {
   changeButtonRef: RefObject<HTMLButtonElement | null>
 }) {
   const program = vm.program
+  const loading = vm.programLoad.status === 'loading' && !program
+  // 300ms 안에 끝나면 막대를 보이지 않습니다. 자리는 미리 잡아 두어 카드 높이가 흔들리지 않습니다.
+  const showSkeleton = useDelayedFlag(loading)
   return <section className={n.section} aria-labelledby="new-program-heading">
     <SectionHeading id="new-program-heading" number={1} title="공고" />
     <div className={n.card}>
-      {vm.programLoad.status === 'loading' && !program
+      {loading
         ? <>
           <p className="sr-only" role="status">공고를 불러오는 중입니다.</p>
-          <div className="flex flex-col gap-2.5 py-1" aria-hidden="true">
+          <div className={`flex flex-col gap-2.5 py-1 ${showSkeleton ? '' : 'invisible'}`} aria-hidden="true">
             <span className={`${n.skeletonLine} w-2/5`} /><span className={`${n.skeletonLine} h-5 w-4/5`} /><span className={`${n.skeletonLine} w-3/5`} />
           </div>
         </>
@@ -195,11 +200,41 @@ function FormChoice({ vm }: { vm: NewViewModel }) {
       {vm.discoveryWarnings.length > 0 && <ul className={n.warningList}>{vm.discoveryWarnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>}
       <p className={n.reanalysis}>
         양식이 원문과 달라 보이면
-        <button type="button" className={n.secondarySm} disabled={vm.submitting} onClick={vm.discoverForms}><AiIcon />입력칸별로 다시 분석</button>
+        <button type="button" className={n.secondarySm} disabled={vm.submitting || vm.analysisBlocked} onClick={vm.discoverForms}><AiIcon />입력칸별로 다시 분석</button>
         <span className={n.cost}>유료 AI · 계정당 동시에 3건</span>
       </p>
     </section>
   </section>
+}
+
+/**
+ * 이 공고에서 가장 최근에 한 분석이 결과 확인 중이거나 실패했을 때의 안내입니다. 목록의 분석 카드나 [이어서 보기]로 들어와도
+ * 무슨 일이 있었는지 여기서 알 수 있습니다. 결과 확인 중에는 다시 분석할 수 없으므로 [다시 확인]만 두고, 실패는 아래 카드에서 다시 분석합니다.
+ */
+function LastAnalysisNotice({ vm }: { vm: NewViewModel }) {
+  const last = vm.lastAnalysis
+  if (!last) return null
+  const started = readableTime(last.startedAt)
+  if (last.kind === 'unknown') return <div className={`${n.alert} ${n.alertWarning}`} role="status" aria-label="지난 분석 상태">
+    <div className={n.alertText}>
+      <strong className={n.alertTitle}>분석 결과를 확인하고 있어요</strong>
+      <p>{started}에 시작한 분석이 끝났는지 확인하지 못했어요. 결과가 확인되면 양식이 여기에 나타나고, 늦어도 30분 안에 정리돼요. 그동안에는 이 공고를 다시 분석할 수 없어요.</p>
+    </div>
+    <button type="button" className={n.secondarySm} onClick={vm.retryAvailability}>다시 확인</button>
+  </div>
+  // 작성할 양식을 얻지 못한 분석은 실제로 양식이 없는 공고일 수 있어 실패(빨강)로 알리지 않고 원문을 참고하게 합니다.
+  if (last.kind === 'source') return <div className={`${n.alert} ${n.alertNeutral}`} role="status" aria-label="지난 분석 상태">
+    <div className={n.alertText}>
+      <strong className={n.alertTitle}>원문을 참고해 주세요</strong>
+      <p>{started}에 분석했어요 · {last.reason} {vm.forms.length > 0 ? '저장된 양식은 그대로 쓸 수 있어요.' : '공고 원문에서 신청 방법을 확인해 주세요.'}</p>
+    </div>
+  </div>
+  return <div className={`${n.alert} ${n.alertDanger}`} role="status" aria-label="지난 분석 상태">
+    <div className={n.alertText}>
+      <strong className={n.alertTitle}>지난 분석이 실패했어요</strong>
+      <p>{started}에 시작한 분석 · {last.reason} {vm.forms.length > 0 ? '저장된 양식은 그대로 쓸 수 있어요.' : '아래에서 다시 분석할 수 있어요.'}</p>
+    </div>
+  </div>
 }
 
 /** ② 양식 · 분야의 내용입니다. 저장된 양식 조회 중 · 실패 · 분석 진행 · 양식 카드 · 양식 없음 중 하나를 보여 줍니다. */
@@ -209,12 +244,15 @@ function FormSectionBody({ vm }: { vm: NewViewModel }) {
   const discoveryError = vm.discoveryError
   const officialOnly = discoveryError instanceof ApplicationPreparationError
     && ['APPLICATION_FORM_NO_FORM', 'APPLICATION_FORM_SOURCE_UNSUPPORTED'].includes(discoveryError.code)
+  const lookupLoading = !lookup || lookup.status === 'loading'
+  const showSkeleton = useDelayedFlag(lookupLoading)
   if (!lookup || lookup.status === 'loading') return <div className={n.card}>
     <p className="sr-only" role="status">저장된 신청 양식을 확인하고 있어요.</p>
-    <div className="flex flex-col gap-2 py-1" aria-hidden="true"><span className={`${n.skeletonLine} w-2/5`} /><span className={`${n.skeletonLine} w-4/5`} /><span className={`${n.skeletonLine} w-3/5`} /></div>
+    <div className={`flex flex-col gap-2 py-1 ${showSkeleton ? '' : 'invisible'}`} aria-hidden="true"><span className={`${n.skeletonLine} w-2/5`} /><span className={`${n.skeletonLine} w-4/5`} /><span className={`${n.skeletonLine} w-3/5`} /></div>
   </div>
   if (lookup.status === 'failed') return <DangerAlert title="저장된 신청 양식을 확인하지 못했어요" message={lookup.error.message} onRetry={vm.retryAvailability} />
   return <>
+    <LastAnalysisNotice vm={vm} />
     {vm.discovery
       ? <section className={n.progress} role="status" aria-live="polite" aria-label="양식 분석 진행">
         <div className={n.progressHead}>
@@ -223,7 +261,7 @@ function FormSectionBody({ vm }: { vm: NewViewModel }) {
           <span className={n.progressTime}>{elapsedLabel(vm.elapsedSeconds)}</span>
         </div>
         <p className={n.muted}>{vm.discovery.resumed ? '이전에 시작한 분석을 이어서 보여 드려요. ' : ''}양식 크기에 따라 몇 분 걸릴 수 있어요.</p>
-        <p className={n.progressNote}>화면을 나가도 계속돼요. 끝나면 알려 드려요.</p>
+        <p className={n.progressNote}>화면을 나가도 계속돼요. 신청 문서 목록에서 이어서 볼 수 있어요.</p>
       </section>
       : vm.selectedForm
         ? <FormChoice vm={vm} />
@@ -231,7 +269,7 @@ function FormSectionBody({ vm }: { vm: NewViewModel }) {
           <h3 className={n.cardTitle} id="new-no-form-title">저장된 양식이 없어요</h3>
           {vm.noFormReason && <p className={n.muted}>{vm.noFormReason}</p>}
           <div className={n.centeredAction}>
-            <button type="button" className={n.secondary} disabled={vm.submitting} onClick={vm.discoverForms}><AiIcon />입력칸별로 분석</button>
+            <button type="button" className={n.secondary} disabled={vm.submitting || vm.analysisBlocked} onClick={vm.discoverForms}><AiIcon />{vm.lastAnalysis && vm.lastAnalysis.kind !== 'unknown' ? '입력칸별로 다시 분석' : '입력칸별로 분석'}</button>
             <p className={n.muted}>AI가 공식 첨부를 읽어 문항을 뽑아요. 유료 AI 호출이며 계정당 동시에 3건까지 할 수 있어요.</p>
             {program && <SourceLink href={program.sourceUrl} title={program.title} />}
           </div>
@@ -252,6 +290,7 @@ function startBlockedReason(vm: NewViewModel): string | null {
   if (vm.selectedForm && !vm.discovery) return null
   if (vm.discovery) return '분석이 끝나면 시작할 수 있어요'
   if (vm.availability?.status === 'failed') return '저장된 양식을 확인하면 시작할 수 있어요'
+  if (vm.analysisBlocked) return '분석 결과가 확인되면 시작할 수 있어요'
   if (vm.availability?.status === 'ready') return '양식을 분석하면 시작할 수 있어요'
   return null
 }
@@ -320,8 +359,8 @@ function NewPreparation({ addressSourceCode, addressProgramId, onProgramChosen }
         {formOpen && <div className={n.actions}>
           {blockedReason && <p className={n.actionsReason} id={reasonId}>{blockedReason}</p>}
           <Link className={n.ghost} to={appPaths.applicationPreparations}>취소</Link>
-          <button type="button" className={n.primary} disabled={!vm.selectedForm || vm.discovery !== null || vm.submitting}
-            aria-describedby={blockedReason ? reasonId : undefined} onClick={() => { void vm.create() }}>{vm.submitting ? '만드는 중…' : '작성 시작'}</button>
+          <button type="button" className={n.primary} disabled={!vm.selectedForm || vm.discovery !== null || vm.submitting} aria-busy={vm.submitting}
+            aria-describedby={blockedReason ? reasonId : undefined} onClick={() => { void vm.create() }}>{vm.submitting && <ButtonSpinner />}{vm.submitting ? '만드는 중…' : '작성 시작'}</button>
         </div>}
       </div>
     </main>

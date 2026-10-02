@@ -14,6 +14,7 @@ import { appPaths } from '../../../shared/routes/appPaths'
 import { defaultProgramSelectionFilters, joinFilterValues, splitFilterValues } from '../../../shared/support-program/catalogSearchParams'
 import { useSavedSupportProgramChoices } from '../../../shared/support-program/useSavedSupportProgramChoices'
 import type { WorkspaceToastNotice } from '../../../shared/workspace/WorkspaceToast'
+import { formAnalysisNeedsSource, formAnalysisState } from './useApplicationPreparationListViewModel'
 
 /** 신청 준비가 공고 선택에 쓰는 필드입니다. 검색 결과·관심 공고·상세 조회 어느 쪽에서 골라도 같습니다. */
 export type SelectableSupportProgram = Omit<SupportProgram, 'matchedReasons' | 'recommendationScore' | 'eligibilityReview'>
@@ -62,14 +63,41 @@ function availabilityReason(code: string): string {
 }
 
 /**
- * 저장된 양식이 없는 이유입니다. 아직 분석하지 않았거나(PENDING) 원문이 바뀐 경우(STALE)는 그 사실을, 그 밖에는 지난 분석이
- * 남긴 이유를 알립니다.
+ * 분석 작업이 남긴 실패 코드를 사용자 문장으로 바꿉니다. 작업 코드는 조회 상태의 이유 코드에 `APPLICATION_FORM_`이 붙었거나
+ * 작업에만 있는 코드(대기 만료 · 결과 불명 등)입니다.
  */
-function noFormReason(result: ApplicationFormAvailability): string | null {
+export function formAnalysisFailureReason(code: string | null): string {
+  if (code === 'RUN_OUTCOME_UNKNOWN') return '분석을 시작한 뒤 결과를 확인하지 못했습니다.'
+  if (code === 'RUN_OUTCOME_UNKNOWN_EXPIRED') return '분석 결과를 끝내 확인하지 못해 작업을 닫았습니다.'
+  if (code === 'QUEUE_EXPIRED') return '대기 시간이 길어져 분석을 시작하지 못했습니다.'
+  if (code === 'ACCOUNT_INACTIVE') return '계정을 사용할 수 없는 상태여서 분석을 시작하지 못했습니다.'
+  if (code === 'DISCOVERY_FAILED') return '분석을 시작하기 전에 문제가 생겼습니다.'
+  return availabilityReason((code ?? 'AI_INVALID_RESPONSE').replace(/^APPLICATION_FORM_/, ''))
+}
+
+/**
+ * 이 공고에서 가장 최근에 끝난(또는 결과를 확인 중인) 분석입니다. ②에서 양식 조회 결과와 함께 보여 줍니다.
+ * unknown은 서버가 결과를 확인 중이라 그 공고를 다시 분석할 수 없는 상태, failed는 실패 이유와 함께 다시 분석할 수 있는 상태,
+ * source는 작성할 양식을 얻지 못해(실제로 양식이 없는 공고일 수 있음) 실패가 아니라 원문 참고로 알리는 상태입니다.
+ */
+export type LastFormAnalysis = { kind: 'unknown' | 'failed' | 'source'; startedAt: string; reason: string }
+
+function lastFormAnalysisOf(job: ApplicationFormDiscoveryJob | undefined): LastFormAnalysis | null {
+  const state = job ? formAnalysisState(job) : null
+  if (!job || (state !== 'unknown' && state !== 'failed' && state !== 'source')) return null
+  return { kind: state, startedAt: job.createdAt, reason: formAnalysisFailureReason(job.failureCode) }
+}
+
+/**
+ * 저장된 양식이 없는 이유입니다. 아직 분석하지 않았거나(PENDING) 원문이 바뀐 경우(STALE)는 그 사실을, 그 밖에는 지난 분석이
+ * 남긴 이유를 알립니다. 이 계정의 지난 분석을 따로 알리는 중이면 같은 이야기를 두 번 하지 않도록 원문이 바뀐 경우만 남깁니다.
+ */
+function noFormReason(result: ApplicationFormAvailability, lastAnalysisShown: boolean): string | null {
   const { status, reasonCode, nextRetryAt } = result.state
   if (status === 'AVAILABLE') return null
-  if (status === 'PENDING') return '이 공고는 아직 신청 양식을 분석한 적이 없어요.'
   if (status === 'STALE') return '공고나 공식 첨부가 바뀌어 양식을 다시 분석해야 해요.'
+  if (lastAnalysisShown) return null
+  if (status === 'PENDING') return '이 공고는 아직 신청 양식을 분석한 적이 없어요.'
   return `최근 분석: ${availabilityReason(reasonCode)}${nextRetryAt ? ` 다음 확인 ${nextRetryAt.replace('T', ' ')}` : ''}`
 }
 
@@ -98,6 +126,7 @@ export function useApplicationPreparationNewViewModel(addressSourceCode: string,
   const [discoveryError, setDiscoveryError] = useState<Error | null>(null)
   const [capacityJobs, setCapacityJobs] = useState<ApplicationFormDiscoveryJob[] | null>(null)
   const [discoveryWarnings, setDiscoveryWarnings] = useState<string[]>([])
+  const [lastAnalysis, setLastAnalysis] = useState<LastFormAnalysis | null>(null)
   const [toast, setToast] = useState<WorkspaceToastNotice | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [createError, setCreateError] = useState<Error | null>(null)
@@ -137,7 +166,10 @@ export function useApplicationPreparationNewViewModel(addressSourceCode: string,
     return () => clearInterval(timer)
   }, [discovery])
 
-  /** 분석 작업을 시작(또는 이어받아)하고 끝날 때까지 2초마다 확인합니다. 끝나면 ②를 양식 카드로 바꾸고 토스트로 알립니다. */
+  /**
+   * 분석 작업을 시작(또는 이어받아)하고 끝날 때까지 2초마다 확인합니다. 끝나면 ②를 양식 카드로 바꾸고 토스트로 알립니다.
+   * 결과 불명으로 끝나면 실패가 아니라 "결과 확인 중"으로, 작성할 양식을 얻지 못하고 끝나면 "원문 참고"로 남깁니다.
+   */
   const track = useCallback(async (start: (signal: AbortSignal) => Promise<ApplicationFormDiscoveryJob>, progress: DiscoveryProgress) => {
     if (discoveryController.current) return
     const controller = new AbortController()
@@ -145,6 +177,7 @@ export function useApplicationPreparationNewViewModel(addressSourceCode: string,
     setDiscovery(progress)
     setDiscoveryError(null)
     setCapacityJobs(null)
+    setLastAnalysis(null)
     try {
       let job = await start(controller.signal)
       const deadline = Date.now() + 720_000
@@ -159,7 +192,8 @@ export function useApplicationPreparationNewViewModel(addressSourceCode: string,
         job = await useCase.discoveryJob(job.id, controller.signal)
       }
       if (controller.signal.aborted) return
-      if (job.status !== 'SUCCEEDED' || !job.result) throw new Error(availabilityReason(job.failureCode ?? 'AI_INVALID_RESPONSE'))
+      if (job.status === 'UNKNOWN' || (job.status === 'FAILED' && formAnalysisNeedsSource(job.failureCode))) { setLastAnalysis(lastFormAnalysisOf(job)); return }
+      if (job.status !== 'SUCCEEDED' || !job.result) throw new Error(formAnalysisFailureReason(job.failureCode))
       if (job.result.items.length === 0) throw new Error('공식 원본에서 작성할 양식을 찾지 못했습니다.')
       applyForms(job.result.items)
       setDiscoveryWarnings(job.result.warnings)
@@ -179,7 +213,9 @@ export function useApplicationPreparationNewViewModel(addressSourceCode: string,
   }, [applyForms, useCase])
 
   /**
-   * 공고의 저장된 양식을 조회하고, 그 공고로 이미 시작한 분석 작업이 있으면 이어받습니다(모두 GET · AI 호출 없음).
+   * 공고의 저장된 양식을 조회하고, 그 공고에서 이 계정이 가장 최근에 한 분석을 이어받습니다(모두 GET · AI 호출 없음).
+   * 대기·분석 중이면 진행 카드로 이어 보고, 결과 확인 중이거나 하루 안에 실패했으면 그 사실을 ②에 알립니다. 완료했거나
+   * 결과가 확인된 분석은 조회한 양식이 곧 결과이므로 따로 알리지 않습니다.
    * 공고 고르기 패널에서 이미 조회한 결과가 있으면 그 결과를 그대로 씁니다.
    */
   const lookup = useCallback((target: SelectableSupportProgram, known?: ApplicationFormAvailability) => {
@@ -188,6 +224,7 @@ export function useApplicationPreparationNewViewModel(addressSourceCode: string,
     availabilityController.current = controller
     setAvailability(known ? { status: 'ready', result: known } : { status: 'loading' })
     applyForms(known ? storedForms(known) : [])
+    setLastAnalysis(null)
     void (async () => {
       try {
         const [result, jobs] = await Promise.all([
@@ -196,10 +233,12 @@ export function useApplicationPreparationNewViewModel(addressSourceCode: string,
         ])
         if (controller.signal.aborted) return
         if (!known) { setAvailability({ status: 'ready', result }); applyForms(storedForms(result)) }
-        const active = jobs.find((job) => job.sourceCode === target.sourceCode && job.sourceProgramId === target.id
-          && (job.status === 'QUEUED' || job.status === 'RUNNING'))
+        const own = jobs.filter((job) => job.sourceCode === target.sourceCode && job.sourceProgramId === target.id)
+        const active = own.find((job) => job.status === 'QUEUED' || job.status === 'RUNNING')
         if (active) {
           void track(async () => active, { reanalysis: storedForms(result).length > 0, resumed: true, startedAt: Date.parse(active.createdAt) || Date.now() })
+        } else {
+          setLastAnalysis(lastFormAnalysisOf(own.reduce<ApplicationFormDiscoveryJob | undefined>((newest, job) => !newest || newest.id < job.id ? job : newest, undefined)))
         }
       } catch (caught) {
         if (!controller.signal.aborted) setAvailability({ status: 'failed', error: asError(caught) })
@@ -253,13 +292,14 @@ export function useApplicationPreparationNewViewModel(addressSourceCode: string,
   const retryProgramLoad = useCallback(() => setProgramLoadVersion((version) => version + 1), [])
   const retryAvailability = useCallback(() => { if (program) lookup(program) }, [lookup, program])
 
-  /** 유료 분석은 이 클릭에서만 시작합니다. 이미 양식이 있으면 입력칸별 재분석입니다. */
+  /** 유료 분석은 이 클릭에서만 시작합니다. 이미 양식이 있으면 입력칸별 재분석입니다. 결과 확인 중인 분석이 있으면 시작하지 않습니다. */
+  const analysisBlocked = lastAnalysis?.kind === 'unknown'
   const discoverForms = useCallback(() => {
-    if (!program || submittingGuard.current) return
+    if (!program || submittingGuard.current || analysisBlocked) return
     const target = program
     void track((signal) => useCase.discover(target.sourceCode, target.id, signal, crypto.randomUUID()),
       { reanalysis: forms.length > 0, resumed: false, startedAt: Date.now() })
-  }, [forms.length, program, track, useCase])
+  }, [analysisBlocked, forms.length, program, track, useCase])
 
   const selectForm = useCallback((formVersionId: string) => {
     const form = forms.find((candidate) => candidate.formVersionId === formVersionId)
@@ -305,7 +345,9 @@ export function useApplicationPreparationNewViewModel(addressSourceCode: string,
     activeJobs: hasAddressProgram ? [] : activeJobs,
     programLoad,
     availability,
-    noFormReason: availability?.status === 'ready' ? noFormReason(availability.result) : null,
+    noFormReason: availability?.status === 'ready' ? noFormReason(availability.result, lastAnalysis !== null) : null,
+    lastAnalysis,
+    analysisBlocked,
     forms,
     selectedForm,
     selectedFormVersionId,
@@ -366,7 +408,8 @@ export function useProgramPickerViewModel(current: SelectableSupportProgram | nu
     searchController.current?.abort()
     const controller = new AbortController()
     searchController.current = controller
-    if (!append) { setFilters(next); setDraft(next); setKeyword(next.keyword); setResults([]); setCatalog(null) }
+    // 다시 검색할 때 기존 결과는 남겨 둡니다. 패널이 흐리게 보여 주다가 새 결과로 바꿉니다.
+    if (!append) { setFilters(next); setDraft(next); setKeyword(next.keyword) }
     setSearch({ status: append ? 'more' : 'loading' })
     try {
       const result = await catalogUseCase.execute({ ...next, keyword: next.keyword.trim() }, controller.signal)
@@ -379,7 +422,10 @@ export function useProgramPickerViewModel(current: SelectableSupportProgram | nu
       })
       setSearch({ status: 'ready' })
     } catch (caught) {
-      if (!controller.signal.aborted) setSearch({ status: 'failed', error: asError(caught), append })
+      if (controller.signal.aborted) return
+      // 새 조건의 검색에 실패하면 이전 조건의 결과를 지금 조건의 결과처럼 남기지 않습니다. 더 보기 실패는 읽은 결과를 둡니다.
+      if (!append) { setResults([]); setCatalog(null) }
+      setSearch({ status: 'failed', error: asError(caught), append })
     } finally {
       if (searchController.current === controller) searchController.current = null
     }

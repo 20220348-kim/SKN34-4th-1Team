@@ -16,13 +16,16 @@ import { WorkspaceModal } from '../../../shared/workspace/WorkspaceModal'
 import { WorkspaceToast } from '../../../shared/workspace/WorkspaceToast'
 import { workspacePageStyles } from '../../../shared/workspace/WorkspacePage.styles'
 import { workspaceToastActionClassName } from '../../../shared/workspace/WorkspaceToast.styles'
+import { useDelayedFlag } from '../../../shared/workspace/useDelayedFlag'
 import { useFloatingPopover } from '../../../shared/workspace/useFloatingPopover'
 import { useMediaQuery } from '../../../shared/workspace/useMediaQuery'
 import { answerMaxLength, undecidedAnswer, useApplicationPreparationEditorViewModel } from '../viewmodel/useApplicationPreparationEditorViewModel'
-import { useApplicationPreparationListViewModel } from '../viewmodel/useApplicationPreparationListViewModel'
-import { answerEditorStyles as e, applicationPreparationStyles as s } from './ApplicationPreparation.styles'
+import { useApplicationPreparationListViewModel, type FormAnalysisRow } from '../viewmodel/useApplicationPreparationListViewModel'
+import { formAnalysisFailureReason } from '../viewmodel/useApplicationPreparationNewViewModel'
+import { answerEditorStyles as e, applicationPreparationStyles as s, loadingStyles as k } from './ApplicationPreparation.styles'
 import { ApplicationOnlineInputGuide } from './ApplicationOnlineInputGuide'
 import { ApplicationPreparationLede } from './ApplicationPreparationLede'
+import { AnswerEditorSkeleton, ButtonSpinner, ListCardSkeleton } from './ApplicationPreparationSkeletons'
 
 const listTitle = '신청 문서 작성'
 /** 사이드바 항목과 같은 이름입니다. 답변 입력 화면의 상위 경로에 씁니다. */
@@ -596,9 +599,60 @@ function PreparationMenu({ item, returnTo, disabled, onDelete }: { item: Applica
   </div>
 }
 
+/**
+ * 분석 상태별 배지 · 한 줄 설명 · 버튼입니다. 버튼은 그 공고의 새 문서 화면으로 가고, 거기서 할 일을 이름으로 알립니다:
+ * 분석 중은 진행 카드, 결과 확인 중은 확인 안내, 완료·결과 확인됨은 조회한 양식입니다. 실패는 이유를 카드에 바로 적고 [다시 분석]을
+ * 둡니다(새 문서 화면에서 누를 때만 시작). 작성할 양식을 얻지 못한 분석은 실패가 아니라 "원문 참고"로 보이고 공식 원문(`sourceUrl`, 새 창)을 엽니다.
+ */
+function analysisCardView({ job, state }: FormAnalysisRow): { badge: string; tone: string; note: string; action: string; sourceUrl?: string } {
+  if (state === 'active') return job.status === 'QUEUED'
+    ? { badge: '분석 대기', tone: s.badgeProgress, note: '차례를 기다리고 있어요. 곧 분석을 시작해요', action: '이어서 보기' }
+    : { badge: '분석 중', tone: s.badgeProgress, note: '공식 첨부에서 신청 양식을 분석하고 있어요', action: '이어서 보기' }
+  if (state === 'unknown') return { badge: '결과 확인 중', tone: s.badgeProgress, note: '분석 결과를 확인하고 있어요. 늦어도 30분 안에 정리돼요', action: '상태 보기' }
+  if (state === 'done') return { badge: '분석 완료', tone: s.badgeDone, note: '양식을 확인하고 작성을 시작할 수 있어요', action: '양식 보기' }
+  if (state === 'settled') return { badge: '결과 확인됨', tone: s.badgeDeadline, note: '분석 결과가 확인됐어요. 양식이 있는지 확인해 주세요', action: '결과 보기' }
+  if (state === 'source') {
+    const view = { badge: '원문 참고', tone: s.badgeDeadline, note: formAnalysisFailureReason(job.failureCode) }
+    return job.programSourceUrl ? { ...view, action: '원문 보기 ↗', sourceUrl: job.programSourceUrl } : { ...view, action: '자세히 보기' }
+  }
+  return { badge: '분석 실패', tone: s.badgeUrgent, note: formAnalysisFailureReason(job.failureCode), action: '다시 분석' }
+}
+
+/**
+ * 목록 안의 양식 분석 카드입니다. 새 문서에서 시작한 분석은 아직 신청 문서가 아니므로 "양식 분석" 배지로 구분하고,
+ * 신청 문서 카드와 같은 틀에 공고명 · 상태 · 분석한 날을 둡니다. 누르면 그 공고의 새 문서 화면으로 가서 양식을 확인하고 작성을 시작합니다.
+ */
+function FormAnalysisCard({ row }: { row: FormAnalysisRow }) {
+  const { job } = row
+  const view = analysisCardView(row)
+  const to = `${appPaths.applicationPreparationNew}?${new URLSearchParams({ sourceCode: job.sourceCode, sourceProgramId: job.sourceProgramId })}`
+  return <li className={s.listCard}>
+    <div className={s.badgeRow}>
+      <span className={s.badgeAnalysis}>양식 분석</span>
+      <span className={view.tone}>{view.badge}</span>
+    </div>
+    <Link className={`${s.listLink} min-w-0`} to={to}>
+      <strong className={s.listTitle}>{job.programTitle}</strong>
+      <span className={s.listMeta}>{view.note}</span>
+    </Link>
+    <div className={s.cardFooter}>
+      <span className={s.cardStamp}>{shortDate(job.createdAt)} 분석</span>
+      <div className={s.cardActions}>
+        {view.sourceUrl
+          ? <a className={s.secondarySm} href={view.sourceUrl} target="_blank" rel="noreferrer">{view.action}<span className="sr-only">: {job.programTitle} (새 창)</span></a>
+          : <Link className={s.secondarySm} to={to}>{view.action}<span className="sr-only">: {job.programTitle}</span></Link>}
+      </div>
+    </div>
+  </li>
+}
+
 function ApplicationPreparationList() {
   const vm = useApplicationPreparationListViewModel()
   const [confirming, setConfirming] = useState<ApplicationPreparationSummary | null>(null)
+  // 스켈레톤은 보여 줄 목록이 아직 없을 때(처음 들어왔을 때)만, 300ms가 넘으면 띄웁니다.
+  // 필터를 바꿨을 때는 기존 카드를 흐리게 둔 채 새 결과로 바로 바꿉니다. 화면이 한 번만 바뀌고, 탭에는 따로 표시를 붙이지 않습니다.
+  const refreshing = vm.isInitialLoading && vm.page !== null
+  const showSkeleton = useDelayedFlag(vm.isInitialLoading && vm.page === null)
   const items = vm.page?.items ?? []
   // 공고 상세에서 돌아올 때 보던 필터를 유지합니다.
   const returnTo = vm.status ? `${appPaths.applicationPreparations}?status=${vm.status}` : appPaths.applicationPreparations
@@ -613,15 +667,17 @@ function ApplicationPreparationList() {
     />
     <main className={workspacePageStyles.content}>
       {vm.error && <ErrorNotice message={vm.error.message} retryLabel="목록 다시 불러오기" onRetry={vm.retry} />}
-      {vm.isInitialLoading && <>
-        <p className={s.status} role="status" aria-live="polite">신청 준비 목록을 불러오는 중입니다.</p>
-        <div className={s.cardGrid} aria-hidden="true">{[0, 1, 2, 3, 4, 5].map((index) => <div className={s.skeleton} key={index} />)}</div>
-      </>}
-      {vm.page && items.length === 0 && !vm.isInitialLoading && <section className={s.card} aria-labelledby="empty-preparations-title">
+      {vm.isInitialLoading && <p className="sr-only" role="status" aria-live="polite">신청 준비 목록을 불러오는 중입니다.</p>}
+      {showSkeleton && <div className={s.cardGrid} aria-hidden="true">
+        {[0, 1, 2, 3, 4, 5].map((index) => <div className={s.listCard} key={index}><ListCardSkeleton /></div>)}
+      </div>}
+      {vm.page && items.length === 0 && vm.analyses.length === 0 && !vm.isInitialLoading && <section className={s.card} aria-labelledby="empty-preparations-title">
         <h2 className={s.cardTitle} id="empty-preparations-title">{vm.status === undefined ? '아직 시작한 신청 문서가 없습니다.' : vm.status === 'done' ? '완료한 신청 문서가 없습니다.' : '진행 중인 신청 문서가 없습니다.'}</h2>
         <p className={s.muted}>새 문서에서 공식 양식과 지원 분야를 확인한 뒤 시작해 주세요.</p>
       </section>}
-      {items.length > 0 && <ul className={s.cardGrid} aria-label="신청 준비 목록">
+      {items.length + vm.analyses.length > 0 && <ul className={`${s.cardGrid} ${refreshing ? k.stale : ''}`} aria-label="신청 준비 목록" aria-busy={refreshing || vm.isLoadingMore}>
+        {/* 양식만 분석해 둔 공고는 신청 문서 카드 앞에 "양식 분석" 카드로 둡니다. */}
+        {vm.analyses.map((row) => <FormAnalysisCard key={`analysis-${row.job.id}`} row={row} />)}
         {items.map((item) => {
           const deadline = deadlineBadge(item)
           const done = item.hasCurrentDocument === true
@@ -649,23 +705,25 @@ function ApplicationPreparationList() {
             </div>
           </li>
         })}
+        {/* 더 불러오는 동안 목록 끝에 카드 자리를 덧붙입니다. */}
+        {vm.isLoadingMore && [0, 1, 2].map((index) => <li className={s.listCard} key={`more-${index}`} aria-hidden="true"><ListCardSkeleton /></li>)}
       </ul>}
-      {vm.page && vm.page.nextBeforeId !== null && !vm.error && <div className={s.moreActions}>
-        <button className={s.button} disabled={vm.isLoadingMore} type="button" onClick={() => { vm.loadMore() }}>
-          {vm.isLoadingMore ? '이전 작업 불러오는 중…' : '이전 작업 더 보기'}
+      {vm.page && vm.page.nextBeforeId !== null && !vm.error && !vm.isInitialLoading && <div className={s.moreActions}>
+        <button className={s.button} disabled={vm.isLoadingMore} aria-busy={vm.isLoadingMore} type="button" onClick={() => { vm.loadMore() }}>
+          {vm.isLoadingMore && <ButtonSpinner />}{vm.isLoadingMore ? '이전 작업 불러오는 중…' : '이전 작업 더 보기'}
         </button>
         <span className={s.muted}>{items.length}건 표시</span>
-        {vm.isLoadingMore && <p className={s.status} role="status" aria-live="polite">이전 신청 준비를 불러오는 중입니다.</p>}
+        {vm.isLoadingMore && <p className="sr-only" role="status" aria-live="polite">이전 신청 준비를 불러오는 중입니다.</p>}
       </div>}
     </main>
     <WorkspaceModal isOpen={confirming !== null} title="신청 문서를 삭제할까요?" tone="danger" onClose={() => setConfirming(null)}
       description={confirming ? `${confirming.programTitle}의 답변${confirming.answeredRequired !== undefined ? ` ${confirming.answeredRequired}개` : ''}와 AI 실행 기록이 모두 지워져요. 되돌릴 수 없어요.` : undefined}>
       <div className="flex flex-wrap justify-end gap-2">
         <button className={s.button} disabled={vm.deletingId !== null} type="button" onClick={() => setConfirming(null)}>취소</button>
-        <button className={s.dangerSolid} disabled={vm.deletingId !== null} type="button" onClick={() => {
+        <button className={s.dangerSolid} disabled={vm.deletingId !== null} aria-busy={vm.deletingId !== null} type="button" onClick={() => {
           if (confirming === null) return
           void vm.deletePreparation(confirming.id).then((deleted) => { if (deleted) setConfirming(null) })
-        }}>{vm.deletingId !== null ? '삭제 중…' : '삭제'}</button>
+        }}>{vm.deletingId !== null && <ButtonSpinner />}{vm.deletingId !== null ? '삭제 중…' : '삭제'}</button>
       </div>
     </WorkspaceModal>
     <WorkspaceToast notice={vm.toast} onClose={vm.dismissToast} />
@@ -688,14 +746,17 @@ export function ApplicationPreparationEditorPage() {
 
 function ApplicationPreparationEditor({ id }: { id: number }) {
   const vm = useApplicationPreparationEditorViewModel(id)
+  // 300ms 안에 끝나면 스켈레톤을 띄우지 않고, 더 걸리면 실제 배치(왼쪽 항목 목록 + 질문 카드)와 같은 틀을 먼저 그립니다.
+  const showSkeleton = useDelayedFlag(vm.loading && !vm.preparation)
   // 답변 입력은 머리글부터 화면 전체를 자기 배치로 그립니다. 불러오는 중·실패는 아래 공용 틀로 보여 줍니다.
   if (vm.preparation) return <AnswerEditor key={vm.preparation.id} vm={vm} />
   return <>
     <WorkspacePageHeader parent={{ to: appPaths.applicationPreparations, label: featureTitle }} title="답변 입력" />
     <main className={workspacePageStyles.content}>
-      {vm.loading && <>
+      {vm.loading && <p className="sr-only" role="status" aria-live="polite">신청 문서 정보를 불러오는 중입니다.</p>}
+      {showSkeleton && <>
         <ApplicationPreparationLede preparation={null} />
-        <p className={s.status} role="status" aria-live="polite">신청 문서 정보를 불러오는 중입니다.</p>
+        <AnswerEditorSkeleton />
       </>}
       {vm.error && <ErrorNotice message={vm.error.message} onRetry={vm.load} />}
     </main>

@@ -16,7 +16,7 @@ export const applicationPreparationStyles = {
   muted: 'text-sm leading-6 text-slate-600',
   label: 'text-sm font-bold text-app-ink',
   input: 'block min-h-11 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm focus-visible:border-emerald-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#087f46] disabled:cursor-not-allowed disabled:bg-slate-100',
-  button: 'inline-flex min-h-10 items-center justify-center rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#087f46]',
+  button: 'inline-flex min-h-10 items-center justify-center gap-1.5 rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#087f46]',
   primary: 'inline-flex min-h-11 items-center justify-center self-start rounded-full bg-brand-primary px-5 py-2 text-sm font-semibold text-white hover:bg-[#066538] disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#087f46]',
   danger: 'inline-flex min-h-10 items-center justify-center rounded-full border border-red-300 bg-white px-4 py-2 text-sm font-semibold text-red-800 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-700',
   steps: 'grid grid-cols-2 overflow-hidden rounded-2xl border border-slate-200 bg-white text-sm font-semibold text-slate-500',
@@ -56,6 +56,8 @@ export const applicationPreparationStyles = {
   badgeProgress: 'rounded-full bg-info-soft px-2.5 py-0.5 text-info',
   badgeDeadline: 'rounded-full bg-slate-100 px-2.5 py-0.5 text-slate-700',
   badgeUrgent: 'rounded-full bg-amber-100 px-2.5 py-0.5 text-amber-900',
+  // 신청 문서가 아니라 양식만 분석해 둔 공고의 카드임을 알리는 테두리 배지입니다.
+  badgeAnalysis: 'rounded-full border border-line-strong bg-white px-2.5 py-px text-ink-muted',
   progressTrack: 'h-1.5 w-full overflow-hidden rounded-full bg-slate-100',
   progressFill: 'h-full rounded-full bg-emerald-600',
   cardFooter: 'mt-auto flex items-center justify-between gap-3',
@@ -64,9 +66,18 @@ export const applicationPreparationStyles = {
   secondarySm: `inline-flex min-h-8 items-center justify-center rounded-full border border-slate-300 bg-white px-3 text-[0.8125rem] font-semibold text-app-ink no-underline hover:bg-slate-50 ${focus}`,
   menuButton: `grid size-8 shrink-0 cursor-pointer place-items-center rounded-full border border-line-strong bg-white text-base leading-none text-ink-muted hover:text-app-ink ${focus}`,
   menuItemDanger: 'text-red-800 hover:bg-red-50',
-  dangerSolid: `inline-flex min-h-10 items-center justify-center rounded-full bg-[#9a3947] px-4 py-2 text-sm font-semibold text-white hover:bg-[#7f2d39] disabled:cursor-not-allowed disabled:opacity-50 ${focus}`,
+  dangerSolid: `inline-flex min-h-10 items-center justify-center gap-1.5 rounded-full bg-[#9a3947] px-4 py-2 text-sm font-semibold text-white hover:bg-[#7f2d39] disabled:cursor-not-allowed disabled:opacity-50 ${focus}`,
   stepBar: 'sticky bottom-0 flex flex-wrap items-center justify-end gap-2 rounded-2xl border border-slate-200 bg-white/95 p-3 shadow-[0_-4px_16px_rgba(15,23,42,0.06)] backdrop-blur',
-  skeleton: 'min-h-44 animate-pulse rounded-[1.4rem] border border-slate-100 bg-slate-100',
+} as const
+
+/**
+ * 불러오는 동안의 표시입니다. 처음 불러올 때는 실제 카드 틀 안을 막대로 채우고(ApplicationPreparationSkeletons),
+ * 다시 불러올 때는 기존 내용을 흐리게 둔 채 누르지 못하게 합니다.
+ */
+export const loadingStyles = {
+  bar: 'block rounded-md bg-surface-muted motion-safe:animate-pulse',
+  // 300ms 안에 새 내용으로 바뀌므로 서서히 흐려지지 않고 바로 흐려집니다.
+  stale: 'pointer-events-none opacity-50',
 } as const
 
 /**
@@ -343,7 +354,8 @@ export const programPickerStyles = {
   availOk: 'm-0 flex items-center gap-1.5 pl-[26px] text-[0.78rem] font-bold text-brand-primary',
   availNone: 'm-0 flex items-center gap-1.5 pl-[26px] text-[0.78rem] font-bold text-ink-muted',
   availError: 'ml-[26px] flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-xl border border-danger-line bg-danger-soft px-3 py-2 text-[0.75rem] text-app-ink',
-  rowSkeleton: 'h-[76px] rounded-2xl bg-surface-muted motion-safe:animate-pulse',
+  // 고른 행의 저장된 양식을 조회하는 동안 결과 한 줄 자리(18px)를 막대로 채웁니다.
+  availLoading: 'm-0 flex h-[18px] items-center pl-[26px]',
   state: 'flex flex-col items-center gap-3 rounded-2xl border border-dashed border-line-strong px-4 py-8 text-center text-[0.8125rem] text-ink-muted',
   footer: 'flex items-center gap-2 border-t border-line px-5 pt-3 pb-4 max-[599px]:px-4 max-[599px]:pb-[calc(1rem+env(safe-area-inset-bottom))] [&>*:last-child]:flex-1 max-[599px]:[&>*:first-child]:flex-1 max-[599px]:[&>*:last-child]:flex-[2] max-[599px]:[&>button]:h-11',
 } as const
