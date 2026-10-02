@@ -35,6 +35,7 @@ class DailyReportService(
     private val mail: DailyReportMailClient, private val properties: DailyReportProperties,
     private val admission: SupportProgramRequestAdmissionService,
     @param:Qualifier("seoulClock") private val clock: Clock,
+    private val push: DailyReportPushService,
 ) {
     private val generating = AtomicBoolean(false)
     private val log = LoggerFactory.getLogger(javaClass)
@@ -43,6 +44,9 @@ class DailyReportService(
         repository.expireStaleWork()
         return repository.latest(account.id)
     }
+
+    fun byId(account: Account, id: Long): DailyReport = repository.owned(account.id, id)
+        ?: throw org.springframework.web.server.ResponseStatusException(org.springframework.http.HttpStatus.NOT_FOUND)
 
     fun preview(account: Account): DailyReport = admission.execute("daily-report:${account.id}") { generate(account) }
 
@@ -95,9 +99,10 @@ class DailyReportService(
             try {
                 val account = accounts.findById(report.accountId)
                 val subscription = repository.subscription(report.accountId)
+                val emailSubscribed = subscription?.enabled == true && subscription.confirmedEmail == account?.email &&
+                    subscription.confirmedAt != null && subscription.consentAt != null
                 if (account == null || account.isSuspended || report.reportDate != LocalDate.now(clock) ||
-                    subscription?.enabled != true || subscription.confirmedEmail != account.email ||
-                    subscription.confirmedAt == null || subscription.consentAt == null ||
+                    (!emailSubscribed && !push.hasSubscriber(report.accountId)) ||
                     companies.findByAccountId(report.accountId) == null) {
                     repository.finishGenerationJob(jobId, report, null, skipped = true)
                     return true

@@ -64,7 +64,7 @@ class DailyReportSchedulerTest {
     @Test
     fun disabledQueueNeverFallsBackToSynchronousAiGeneration() {
         DailyReportScheduler(reports, repository, accounts, mail, DailyReportProperties(enabled = true),
-            Clock.fixed(Instant.parse("2026-09-09T00:00:00Z"), ZoneId.of("Asia/Seoul")), DailyReportQueueProperties(false)).run()
+            Clock.fixed(Instant.parse("2026-09-09T00:00:00Z"), ZoneId.of("Asia/Seoul")), DailyReportQueueProperties(false), mock(DailyReportPushService::class.java)).run()
         verifyNoInteractions(reports, accounts, mail)
     }
 
@@ -75,12 +75,23 @@ class DailyReportSchedulerTest {
         doReturn(first).`when`(accounts).findById(1)
         doReturn(report).`when`(reports).enqueueScheduled(first)
         DailyReportScheduler(reports, repository, accounts, mail, DailyReportProperties(enabled = true),
-            Clock.fixed(Instant.parse("2026-09-09T00:00:00Z"), ZoneId.of("Asia/Seoul")), DailyReportQueueProperties(true, true)).run()
+            Clock.fixed(Instant.parse("2026-09-09T00:00:00Z"), ZoneId.of("Asia/Seoul")), DailyReportQueueProperties(true, true), mock(DailyReportPushService::class.java)).run()
         verify(repository).enqueueDelivery(report.id)
         verify(reports, never()).deliver(AccountTestHelper.anyValue())
     }
 
-    private fun scheduler(clock: Clock) = DailyReportScheduler(reports, repository, accounts, mail, DailyReportProperties(enabled = true), clock, DailyReportQueueProperties(true))
+    private fun scheduler(clock: Clock) = DailyReportScheduler(reports, repository, accounts, mail, DailyReportProperties(enabled = true), clock, DailyReportQueueProperties(true), mock(DailyReportPushService::class.java))
+    @Test
+    fun pushOnlyAccountIsEnqueuedEvenWithoutSmtp() {
+        val push = mock(DailyReportPushService::class.java)
+        doReturn(listOf(1L)).`when`(push).dueAccounts(date, 21)
+        doReturn(first).`when`(accounts).findById(1)
+        doReturn(report).`when`(reports).enqueueScheduled(first)
+        DailyReportScheduler(reports, repository, accounts, mail, DailyReportProperties(enabled = true),
+            Clock.fixed(Instant.parse("2026-09-09T00:00:00Z"), ZoneId.of("Asia/Seoul")), DailyReportQueueProperties(true), push).run()
+        verify(reports).enqueueScheduled(first)
+        verify(repository, never()).dueAccountIds(date, 21)
+    }
     private class MutableClock(var current: Instant) : Clock() {
         override fun instant(): Instant = current
         override fun getZone(): ZoneId = ZoneId.of("Asia/Seoul")

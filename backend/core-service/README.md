@@ -1,5 +1,9 @@
 # GovBiz Core Service
 
+맞춤 리포트 앱 푸시는 기존 생성 큐와 별도 MyBatis 발송 기록을 사용합니다. 서버 공통 시각 이후 READY 리포트를
+Expo Push Service로 보내고 FCM/APNs receipt를 확인합니다. `DAILY_REPORT_PUSH_ENABLED`는 기본 꺼짐입니다.
+설정·HTTP 계약·세션 경계는 [모바일 리포트 푸시](../../docs/mobile-report-push.md)에 정리했습니다.
+
 소스 디렉터리와 Compose 서비스·내부 DNS는 `core-service`, ECR 이미지 경로는 `govbiz/core-service`입니다.
 Gradle·Spring 애플리케이션 이름과 health 응답은 `govbiz-core-service`로 통일했습니다.
 현재 운영 환경은 없으며, 이전 런타임 이름으로의 별칭은 제공하지 않습니다.

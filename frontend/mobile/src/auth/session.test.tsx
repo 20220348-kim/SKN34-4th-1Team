@@ -66,6 +66,17 @@ test('sign-in writes only token and expiry to device-only storage', async () => 
   expect(jest.mocked(SecureStore.setItemAsync).mock.calls[0][2]).toEqual({ keychainAccessible: 'device-only' })
 })
 
+test('changing account revokes the previous session and its push association before publishing the new login', async () => {
+  jest.mocked(apiRequest).mockResolvedValue(response())
+  mount()
+  await waitFor(() => expect(current.status).toBe('signedOut'))
+  await act(async () => current.signIn('first@example.com', 'password123'))
+  jest.mocked(apiRequest).mockResolvedValue({ ...response(), accessToken: 'second-token', account: { ...account, email: 'second@example.com' } })
+  await act(async () => current.signIn('second@example.com', 'password123'))
+  expect(apiRequest).toHaveBeenCalledWith('/api/v1/auth/mobile/logout', { method: 'POST', accessToken: 'test-token' })
+  expect(current.session?.account.email).toBe('second@example.com')
+})
+
 test('a late sign-in response cannot sign a user back in after logout', async () => {
   const request = deferred<unknown>()
   jest.mocked(apiRequest).mockReturnValue(request.promise)

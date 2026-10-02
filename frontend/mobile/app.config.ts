@@ -8,8 +8,10 @@ const config: ExpoConfig = {
   orientation: 'portrait',
   userInterfaceStyle: 'light',
   ios: { supportsTablet: true, bundleIdentifier: 'ai.govbiz.mobile' },
-  android: { package: 'ai.govbiz.mobile' },
-  plugins: ['expo-router', 'expo-secure-store', 'expo-web-browser'],
+  android: { package: 'ai.govbiz.mobile',
+    ...(process.env.GOOGLE_SERVICES_JSON ? { googleServicesFile: process.env.GOOGLE_SERVICES_JSON } : {}) },
+  extra: { eas: { projectId: process.env.EXPO_PUBLIC_EAS_PROJECT_ID } },
+  plugins: ['expo-router', 'expo-secure-store', 'expo-web-browser', 'expo-notifications'],
 }
 
 export default config

@@ -2,3 +2,5 @@
 ios/
 android/
 expo-env.d.ts
+google-services.json
+*firebase-adminsdk*.json

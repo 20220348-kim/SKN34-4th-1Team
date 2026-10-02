@@ -67,6 +67,9 @@
     <select id="findLatest" resultMap="report">
         SELECT <include refid="reportColumns" /> FROM daily_report WHERE account_id = #{accountId} ORDER BY report_date DESC LIMIT 1
     </select>
+    <select id="findOwned" resultMap="report">
+        SELECT <include refid="reportColumns" /> FROM daily_report WHERE id = #{id} AND account_id = #{accountId}
+    </select>
     <select id="findDay" resultMap="report">
         SELECT <include refid="reportColumns" /> FROM daily_report WHERE account_id = #{accountId} AND report_date = #{date}
     </select>
