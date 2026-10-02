@@ -10,7 +10,9 @@ from copy import deepcopy
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Event, Thread
+from types import SimpleNamespace
 from unittest.mock import Mock
+from urllib.error import HTTPError
 from uuid import UUID, uuid4
 
 import pytest
@@ -75,6 +77,58 @@ def test_barrier_waits_for_explicit_release(server):
     finally:
         state.release(run_id)
         thread.join(timeout=2)
+
+
+@pytest.mark.parametrize("fault", [None, "publish_error"])
+def test_publish_gate_fails_only_at_rag_publication_before_sending_scores(
+    server, monkeypatch, fault
+):
+    state, base = server
+    run_id = str(uuid4())
+    state.configure(run_id, {"fault": fault})
+    publish = Mock(return_value=["score-id"])
+    module = SimpleNamespace(publish_payloads=publish)
+    monkeypatch.setitem(sys.modules, "rag_replay_flow", module)
+    runner = load_runner()
+    monkeypatch.setattr(runner, "PROBE", base)
+    runner.install_publish_gate(run_id)
+    # 같은 장애 설정도 모델/예산 경계는 먼저 통과할 수 있어야 한다.
+    runner.barrier(run_id, "after_settle_8")
+    if fault:
+        with pytest.raises(HTTPError) as error:
+            module.publish_payloads([{"id": "score-id"}], "settings")
+        assert error.value.code == 503
+        publish.assert_not_called()
+        assert state.snapshot(run_id)["events"][-1] == {"stage": "publish_rejected", "status": 503}
+    else:
+        assert module.publish_payloads([{"id": "score-id"}], "settings") == ["score-id"]
+        publish.assert_called_once_with([{"id": "score-id"}], "settings")
+    assert [event["stage"] for event in state.snapshot(run_id)["events"]][:2] == [
+        "after_settle_8",
+        "before_rag_publish",
+    ]
+
+
+def test_artifact_fingerprints_preserve_bytes_and_only_expose_hashes(tmp_path, monkeypatch):
+    from hashlib import sha256
+
+    runner = load_runner()
+    monkeypatch.setattr(runner, "RESULTS", tmp_path)
+    run_id = str(uuid4())
+    folder = tmp_path / run_id
+    (folder / "capture").mkdir(parents=True)
+    raw = ' {"answer": "한글 응답"}\n'.encode()
+    (folder / "capture/capture.json").write_bytes(raw)
+    (folder / "capture/usage-0.json").write_text("signed receipt")
+    (folder / "private.env").write_text("unrelated secret")
+    result = runner.artifact_fingerprints(run_id)
+    assert result == {
+        "capture/capture.json": sha256(raw).hexdigest(),
+        "capture/usage-0.json": sha256(b"signed receipt").hexdigest(),
+    }
+    assert (folder / "capture/capture.json").read_bytes() == raw
+    with pytest.raises(ValueError):
+        runner.artifact_fingerprints("../other")
 
 
 def test_lost_reply_forwards_once_but_never_returns_success(monkeypatch):
@@ -594,6 +648,118 @@ def test_rag_accounting_preserves_unknown_embedding_even_with_zero_output(false_
             before, after, calls=1, output=0, sent=1, events=events, unknown_calls=1
         )
         assert result["retained_input_delta"] == 243 and result["unknown_calls"] == 1
+
+
+def recovery_evidence():
+    source = {
+        "id": "source",
+        "status": "FAILED",
+        "model_api_calls": 9,
+        "prefect_flow_run_id": "flow-source",
+    }
+    config = {
+        "capture_sha256": "a" * 64,
+        "fixture_sha256": "b" * 64,
+        "source_request_sha256": "c" * 64,
+        "reference_capture_sha256": "d" * 64,
+        "recorded_execution": {"kind": "recorded"},
+    }
+    run = {
+        "status": "COMPLETED",
+        "execution_mode": "recovery",
+        "source_run_id": "source",
+        "model_api_calls": 0,
+        "prefect_flow_run_id": "flow-recovered",
+        "execution_spec": {"recovery_config": config, "model_operations": [], "generation": None},
+        "comparison": {
+            "current": {
+                "captureSha256": "a" * 64,
+                "execution": {"kind": "recorded"},
+                "measurementKind": "recorded-capture-replay",
+                "completed": True,
+                "liveExecutionPerformed": False,
+                "baselineEligible": False,
+            }
+        },
+    }
+    before = {"allocated": [9, 150], "allocated_input": 330}
+    after = {
+        **deepcopy(before),
+        "execution_mode": "recovery",
+        "source_run_id": "source",
+        "reservation_exists": False,
+    }
+    original = {
+        "capture/capture.json": "a" * 64,
+        "request.json": "c" * 64,
+        "capture/usage-0.json": "e" * 64,
+    }
+    files = {
+        "source_before": original,
+        "source_after": deepcopy(original),
+        "recovered": {
+            "capture/capture.json": "a" * 64,
+            "recovery-fixture.json": "b" * 64,
+            "reference-capture.json": "d" * 64,
+        },
+    }
+    return source, run, before, after, files
+
+
+@pytest.mark.parametrize(
+    "defect",
+    [
+        None,
+        "model_call",
+        "budget_call",
+        "reservation",
+        "input_delta",
+        "output_delta",
+        "source_receipt",
+        "copied_capture",
+        "reference",
+        "source_request",
+        "live_report",
+        "approved",
+        "same_flow",
+        "missing_publish",
+    ],
+)
+def test_recovery_checker_rejects_regeneration_mutation_and_false_quality(defect):
+    source, run, before, after, files = recovery_evidence()
+    events = [{"stage": "before_rag_publish"}]
+    if defect == "model_call":
+        events.append({"stage": "embedding_sent"})
+    elif defect == "budget_call":
+        events.append({"stage": "claim", "status": 200})
+    elif defect == "reservation":
+        after["reservation_exists"] = True
+    elif defect == "input_delta":
+        after["allocated_input"] += 1
+    elif defect == "output_delta":
+        after["allocated"][1] += 1
+    elif defect == "source_receipt":
+        files["source_after"]["capture/usage-0.json"] = "f" * 64
+    elif defect == "copied_capture":
+        files["recovered"]["capture/capture.json"] = "f" * 64
+    elif defect == "reference":
+        files["recovered"]["reference-capture.json"] = "f" * 64
+    elif defect == "source_request":
+        run["execution_spec"]["recovery_config"]["source_request_sha256"] = "f" * 64
+    elif defect == "live_report":
+        run["comparison"]["current"]["liveExecutionPerformed"] = True
+    elif defect == "approved":
+        run["comparison"]["current"]["baselineEligible"] = True
+    elif defect == "same_flow":
+        run["prefect_flow_run_id"] = source["prefect_flow_run_id"]
+    elif defect == "missing_publish":
+        events.clear()
+    if defect:
+        with pytest.raises(AssertionError):
+            smoke.verify_rag_recovery(source, run, before, after, files, events=events)
+    else:
+        result = smoke.verify_rag_recovery(source, run, before, after, files, events=events)
+        assert result["original_evidence_preserved"] and result["model_sends"] == 0
 
 
 def test_readiness_checks_real_langfuse_endpoint_without_model_calls(server, monkeypatch):

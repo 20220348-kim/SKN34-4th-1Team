@@ -1,4 +1,4 @@
-# LLMOps 개발 현황과 후속 전략 — 새 RAG 실행과 예산·취소 통합 검증
+# LLMOps 개발 현황과 후속 전략 — RAG 후처리 실패와 무료 복구 검증
 
 [문서 목록](README.md) · [도입·구현 이력](langfuse-adoption-strategy.md) · [Ops API](../backend/ops-service/README.md) · [실행 안내](../infrastructure/llmops/README.md)
 
@@ -29,7 +29,46 @@ Core 원문 재수집·재청킹, 운영 색인 성능 측정, 실제 사람 검
 | 관측·인프라 복구 | Core→AI 상세 RAG 추적, Prefect·sync·artifact·컨테이너 교체·보고서 변조 검증 구현 | 최신 SHA의 전체 통합 CI, 개인/운영 환경 적용·복원 완료는 별도 증거 필요 |
 | RAG 오프라인 평가 | v1 계산기·v2 대역 출처와 Core 다중 청크 수집 10사례·예산 준비 명세, 캡처 등록·재평가 및 검토된 실행을 비교 기준으로 사용하는 경로 구현 | 최신 SHA의 Core→Ops→Prefect CI, 공식 HTML 수집 연결, 검토·기준의 환경 적용 |
 
-### 이번 후속 구현 — 새 RAG 실행의 무료 통합 검사와 CI 회귀 수정
+### 이번 후속 구현 — RAG 후처리 실패와 무료 복구 검증
+
+`skn-135 / 67859d2`의 RAG 실행·취소·응답 유실 검사에 후처리 실패와 무료 복구를 추가했다.
+완료된 임베딩·답변을 다시 생성하지 않고 보고서·점수만 복구하는 기존 기능을 실제 서버 경로로 검증한다.
+새 production 의존성·서비스·DB migration·관리자 검토 기록은 추가하지 않는다.
+
+- 실제 Service·Agent·SDK의 무료 대역 실행 9회와 보고서 작성 뒤, 점수 등록 직전 테스트 경계에서만
+  503을 반환한다. FAILED와 `publish` 단계, 완료 캡처·복구 가능 상태·정산 사용량을 확인한다.
+- `POST .../{source_id}/recover → Ops → Prefect → 저장 응답 복사 → 보고서·Langfuse 점수 등록`을 거친다.
+  동일 복구 UUID 재전송은 같은 flow를 반환하고, 진행 중인 별도 복구 요청은 `409`로 거절해야 한다.
+- 복구에는 모델·claim/authorize/settle/close 전송과 새 예산 예약이 없어야 한다. 입력·출력·호출 장부,
+  원본 예약·호출 행·전송 이벤트, 요청·캡처·영수증·실패 manifest 바이트를 보존한다.
+- 원본은 FAILED를 유지하고 복구 실행만 COMPLETED로 연결한다. 복구 출처는
+  `recorded-capture-replay`, 새 실행 여부는 false, 검토·판정은 미완료이며 자동 기준 지정은 없다.
+
+격리 서버 검사에는 2개를 추가해 고정 근거 13개 + RAG 6개 = **19개 시나리오**다.
+실제 서버 검증은 기존 LLMOps CI에 연결하며, 검사기 대역 테스트와 실제 서버 통과를 구분한다.
+로컬 검증(2026-10-03):
+
+- Python 3.12 `test_cancellation_smoke.py` **95개** 통과. 실제 localhost HTTP 장애 경계,
+  원본 바이트 해시, 복구 중 전송·장부 변경·출처 위반을 탐지하는 검사와 기존 회귀를 포함한다.
+- `test_rag_live.py` **22개** 통과. 실제 Service·Agent·SDK·메모리 Qdrant를 거치는 무료 대역으로
+  `report`·`publish` 실패 후 원본 바이트 재사용과 모델/예산 호출 증가 없음을 검증했다.
+  로컬에서는 Ops 응답·모델·점수 등록과 HTML 렌더링을 대역으로 사용하며 전체 서버 검증이 아니다.
+- CI 종합 판정 의존성 검사 **1개**, 실행 release 정합성, 변경 Python Ruff 및 취소 검사 파일 포맷,
+  문서 링크·`git diff --check`를 확인했다. PATH에 `uv`가 없어 기존 Python 3.12 venv를 사용했다.
+  전체 DB/컨테이너 검증은 기존 CI에 맡기며 사용자 개발 서버·DB·볼륨은 변경하지 않았다.
+
+명령은 저장소 루트에서 `backend/ai-service/.venv/bin/python -m pytest` 뒤에 각각
+`infrastructure/llmops/test_cancellation_smoke.py -q`,
+`evaluation/support-program-evidence/test_rag_live.py -q`를 붙여 실행했다.
+CI는 기존 LLMOps 검사기 테스트 및 GovBiz의 전체 평가 도구 테스트가 두 파일을 포함한다.
+
+선행 `67859d2`의 GovBiz·Ops·Catalog·Infra CI는 성공했고,
+[LLMOps CI](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/37023938084)는 확인 시점 실행 중이다.
+이 결과를 이번 미커밋 변경의 CI 통과로 재사용하지 않는다. **19개 실제 서버 시나리오는 새 SHA 검증 대기**다.
+다음 순서는 변경 SHA 필수 CI → 백업·복원과 버전 일치 확인 후 환경 적용 → 승인된 자료·예산의 실제 평가
+→ 사람 검토·비교 기준 지정이다. 이번 작업에서 유료 모델 호출·사람 검토·배포는 수행하지 않았다.
+
+### 이전 구현 — skn-135 새 RAG 실행의 무료 통합 검사와 CI 회귀 수정
 
 새 RAG 실행기는 구현했지만 SDK·Service 테스트와 Ops 접수·예산 DB 테스트가 나뉘어 있었다.
 기존 `cancellation_smoke.py`의 일회용 MySQL·Django·Prefect·Langfuse 환경에 다음 4개 검사를 추가했다.
