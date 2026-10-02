@@ -13,6 +13,7 @@ urlpatterns = [
     path("api/v1/ops/evaluations/<uuid:run_id>/quality", views.api_quality),
     path("api/v1/ops/evaluations/<uuid:run_id>/rag-material", views.api_rag_material),
     path("api/v1/ops/evaluations/<uuid:run_id>/rag-reviews", views.api_rag_reviews),
+    path("api/v1/ops/evaluations/<uuid:run_id>/rag-quality", views.api_rag_quality),
     path("", views.web_redirect),
     path("ops/login", views.web_redirect),
     path("ops/evaluations", views.web_redirect),
