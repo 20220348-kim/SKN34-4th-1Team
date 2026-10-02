@@ -16,14 +16,19 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.core.management.base import CommandError
-from django.db import DatabaseError, close_old_connections, transaction
+from django.db import DatabaseError, close_old_connections, connection, transaction
 from django.test import SimpleTestCase, TransactionTestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
+from . import artifact_store
+from .admission import change_admission
+from .artifact_server import application
 from .budget import BudgetUnavailable, reserve, worker_action
 from .execution_spec import digest
 from .models import EvaluationBudget, EvaluationRun, EvaluationUsageCorrection
+from .test_artifact_store import TOKEN as ARTIFACT_TOKEN
+from .test_artifact_store import ArtifactServerMixin
 from .test_budget import TOKEN, USAGE
 from .usage_correction import CorrectionUnavailable, correct_usage, read_receipt
 
@@ -59,7 +64,7 @@ class UsageReceiptTests(SimpleTestCase):
         folder = TemporaryDirectory()
         self.addCleanup(folder.cleanup)
         self.root = Path(folder.name)
-        override = override_settings(LLMOPS_RESULTS_DIR=self.root)
+        override = override_settings(LLMOPS_RESULTS_DIR=self.root, LLMOPS_ARTIFACT_URL="")
         override.enable()
         self.addCleanup(override.disable)
         self.run_id = uuid4()
@@ -138,12 +143,12 @@ class UsageReceiptTests(SimpleTestCase):
 
 
 @override_settings(LLMOPS_LIVE_ENABLED=True, LLMOPS_BUDGET_TOKEN=TOKEN)
-class UsageCorrectionTests(TransactionTestCase):
+class UsageCorrectionTests(ArtifactServerMixin, TransactionTestCase):
     def setUp(self):
         folder = TemporaryDirectory()
         self.addCleanup(folder.cleanup)
         self.root = Path(folder.name)
-        override = override_settings(LLMOPS_RESULTS_DIR=self.root)
+        override = override_settings(LLMOPS_RESULTS_DIR=self.root, LLMOPS_ARTIFACT_URL="")
         override.enable()
         self.addCleanup(override.disable)
         self.user = get_user_model().objects.create_user("correction-operator")
@@ -211,6 +216,52 @@ class UsageCorrectionTests(TransactionTestCase):
     def amounts(self):
         self.budget.refresh_from_db()
         return self.budget.allocated_calls, self.budget.allocated_output_tokens
+
+    def test_remote_correction_while_paused_preserves_unknown_until_verified(self):
+        change_admission(
+            accepting=False,
+            expected_version=0,
+            request_id=uuid4(),
+            actor="operator",
+            reason="갱신 중 기존 미확인 사용량 보정",
+        )
+        url = self.serve(application(self.root, self.root, ARTIFACT_TOKEN))
+        remote_read = artifact_store.remote_read
+
+        def read_without_transaction(*args, **kwargs):
+            self.assertFalse(connection.in_atomic_block)
+            return remote_read(*args, **kwargs)
+
+        with (
+            override_settings(
+                LLMOPS_ARTIFACT_URL=url,
+                LLMOPS_ARTIFACT_TOKEN=ARTIFACT_TOKEN,
+                LLMOPS_RESULTS_DIR=self.root / "not-mounted-results",
+            ),
+            patch.object(artifact_store, "remote_read", side_effect=read_without_transaction),
+        ):
+            with override_settings(LLMOPS_ARTIFACT_TOKEN="wrong"):
+                with self.assertRaises(CorrectionUnavailable):
+                    self.apply()
+            self.assertEqual(self.amounts(), (1, 2000))
+            self.assertFalse(EvaluationUsageCorrection.objects.exists())
+            preview = correct_usage(**self.request)
+            self.assertFalse(preview["applied"])
+            self.path.write_bytes(self.raw + b"\n")
+            with self.assertRaises(CorrectionUnavailable):
+                self.apply()
+            self.assertEqual(self.amounts(), (1, 2000))
+            self.path.write_bytes(self.raw)
+            self.apply()
+            self.assertEqual(self.amounts(), (1, 50))
+            self.assertEqual(
+                EvaluationUsageCorrection.objects.get().evidence_raw.encode(), self.raw
+            )
+            self.assertIsNone(self.run.budget_reservation.calls.get().settled_at)
+            with patch.object(artifact_store, "build_opener") as build:
+                self.assertTrue(self.apply()["replayed"])
+                build.assert_not_called()
+            self.assertEqual(EvaluationUsageCorrection.objects.count(), 1)
 
     def test_preview_and_cli_default_never_change_budget_or_calls(self):
         output = StringIO()

@@ -11,6 +11,7 @@ from django.db import transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 
+from .artifact_store import ResultsUnavailable, read_usage_receipt
 from .budget import BudgetUnavailable, call_limits, operation_plan, validate_usage
 from .budget_reporting import ledger_totals, reservation_data
 from .execution_spec import digest
@@ -36,20 +37,9 @@ def _unique_object(pairs):
 
 
 def read_receipt(run_id, sequence):
-    """고정 결과 경로만 읽는다. 업로드/원격 조회·모델 호출·임의 파일 경로를 허용하지 않는다."""
+    """구성된 저장소의 고정 증거만 읽고 전송 방식과 무관하게 동일한 서명·계약을 검증한다."""
     try:
-        root = settings.LLMOPS_RESULTS_DIR.resolve(strict=True)
-        path = root
-        for part in (str(run_id), "capture", f"usage-{sequence}.json"):
-            path = path / part
-            if path.is_symlink():
-                raise ValueError
-        if not path.resolve(strict=True).is_relative_to(root):
-            raise ValueError
-        with path.open("rb") as stream:
-            raw = stream.read(8193)
-        if len(raw) > 8192:
-            raise ValueError
+        raw = read_usage_receipt(run_id, sequence)
         envelope = json.loads(raw, object_pairs_hook=_unique_object)
         if set(envelope) != {"payload", "signature"} or len(settings.LLMOPS_BUDGET_TOKEN) < 32:
             raise ValueError
@@ -138,7 +128,15 @@ def read_receipt(run_id, sequence):
             payload["usage"], payload["max_output_tokens"], payload.get("max_input_tokens")
         )
         return raw.decode("utf-8"), hashlib.sha256(raw).hexdigest(), payload, stamp
-    except (OSError, ValueError, TypeError, KeyError, AttributeError, BudgetUnavailable):
+    except (
+        OSError,
+        ValueError,
+        TypeError,
+        KeyError,
+        AttributeError,
+        BudgetUnavailable,
+        ResultsUnavailable,
+    ):
         raise CorrectionUnavailable("사용량 증거의 파일·서명·계약을 확인할 수 없습니다.") from None
 
 
@@ -201,7 +199,7 @@ def correct_usage(
     previous = _existing(request_id, run_id, sequence, actor, reason, evidence_sha256)
     if previous:
         return {"applied": True, "replayed": True, **correction_data(previous)}
-    # File I/O and signature verification never hold database locks.
+    # Storage I/O (including HTTP) and signature verification never hold database locks.
     raw, evidence_hash, evidence, observed_at = read_receipt(run_id, sequence)
     if evidence_sha256 is not None and evidence_sha256 != evidence_hash:
         raise CorrectionUnavailable("미리보기 이후 사용량 증거가 변경됐습니다.")

@@ -10,6 +10,7 @@ from uuid import UUID
 from .catalog import DATASETS
 
 MAX_FILE_BYTES = 8 * 1024 * 1024
+MAX_RECEIPT_BYTES = 8 * 1024
 RESULT_FILES = frozenset(
     {
         "request.json",
@@ -41,7 +42,14 @@ def result_name(run_id, name):
     return f"{identifier}/{name}"
 
 
-def read_file(root, name):
+def receipt_name(run_id, sequence):
+    identifier = str(run_id)
+    if str(UUID(identifier)) != identifier or type(sequence) is not int or not 0 <= sequence <= 511:
+        raise ValueError("Invalid usage receipt selection")
+    return f"{identifier}/capture/usage-{sequence}.json"
+
+
+def read_file(root, name, *, max_bytes=MAX_FILE_BYTES):
     if (
         not name
         or "\\" in name
@@ -72,9 +80,9 @@ def read_file(root, name):
                 raise ValueError("Artifact is not a regular file")
             source = stack.enter_context(path.open("rb"))
         info = os.fstat(source.fileno())
-        if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_FILE_BYTES:
+        if not stat.S_ISREG(info.st_mode) or info.st_size > max_bytes:
             raise ValueError("Artifact is not a bounded regular file")
-        raw = source.read(MAX_FILE_BYTES + 1)
-    if len(raw) > MAX_FILE_BYTES:
+        raw = source.read(max_bytes + 1)
+    if len(raw) > max_bytes:
         raise ValueError("Artifact is too large")
     return raw

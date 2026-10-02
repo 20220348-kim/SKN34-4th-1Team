@@ -351,7 +351,8 @@ LLMOps CI에서 검증합니다. 해당 CI 성공 전에는 실제 서버 통합
 모델 응답을 받았지만 `settle` 전송이 실패한 경우 `correct_evaluation_usage`를 사용합니다.
 새 production 의존성은 없습니다. 기존 worker 정산 API에서 닫힌 예약을 다시 여는 기능도 아닙니다.
 호출 흐름은 `모델 응답 → 실행기 서명 기록 저장 → 기존 settle 시도`이며, 실패 후에는
-`운영자 CLI → 로컬 증거 검증 → Django/MySQL 보정 이력 → 관리자 GET → React`입니다.
+`운영자 CLI → 구성된 로컬/내부 HTTP 증거 조회 → 서명·승인 명세 검증 → Django/MySQL 보정 이력
+→ 관리자 GET → React`입니다. 증거 조회와 서명 검증은 DB 잠금을 잡기 전에 끝냅니다.
 
 ### 증거와 신뢰 범위
 
@@ -372,8 +373,14 @@ LLMOps CI에서 검증합니다. 해당 CI 성공 전에는 실제 서버 통합
   `req_` 접두사를 요구하거나 `resp_` ID를 만들어 넣지 않습니다. 제공자 형식 변경 시 이 계약을 검토해야 합니다.
   ID가 없거나 허용 형식이 아니면 증거 없이 일반 정산만 시도합니다. 정산까지 실패하면 입력 예약을 유지합니다.
   응답 유실·사용량 누락·이 기능 도입 전 기록에는 과거 증거를 소급 생성하지 않습니다.
-- Ops는 서버가 구성한 고정 경로의 8 KiB 이하 파일만 읽습니다. symlink·중복 JSON 키·잘못된 서명·
+- Ops는 서버가 구성한 저장소에서 고정 경로의 8 KiB 이하 파일만 읽습니다. symlink·중복 JSON 키·잘못된 서명·
   다른 실행/명세/소유자·승인 이전 또는 종료 이후 관측·출력 상한 초과는 거절합니다.
+- `LLMOPS_ARTIFACT_URL`을 설정하면 별도 `LLMOPS_ARTIFACT_TOKEN`으로
+  `GET /v1/usage-receipts/{run UUID}/{sequence}`를 조회합니다. 호출 번호는 0~511이며
+  임의 경로·업로드·목록 조회는 제공하지 않습니다. 서버와 클라이언트 모두 8 KiB를 제한하고,
+  리다이렉트·압축·부분/불완전 응답·인증 실패·시간 초과는 보정을 중단합니다.
+  원격 장애 시 로컬 파일을 읽거나 미확정 사용량을 0으로 처리하지 않습니다.
+  artifact 서버는 서명 키를 받지 않으며 최종 v1/v2 서명 검증은 Ops가 기존 예산 키로 수행합니다.
 - 임베딩 v2는 승인된 문서/질문 배치의 ID·종류·모델·차원·입력 해시·개별 입력/출력 상한까지
   일치해야 합니다. 출력은 0이며 답변 호출을 임베딩 증거로 보정할 수 없습니다.
 - 최초 적용은 현재 토큰으로 검증합니다. 토큰 교체 후 이전 키의 미적용 증거는 거절하며
@@ -412,6 +419,9 @@ uv run --locked python manage.py correct_evaluation_usage \
 동일 요청 UUID·실행·번호·담당자·사유·증거 해시는 기존 결과를 반환하며 파일 삭제/키 교체 후에도
 이미 적용된 결과를 다시 반환합니다. 다른 요청 UUID로 같은 호출을 보정하거나 이미 정산된 값을
 변경하는 작업은 거절합니다. 미리보기 후 파일이 달라지면 재검토해야 합니다.
+접수 중지 상태에서도 기존 닫힌 예약의 보정은 허용합니다. HTTP 조회 실패·증거 변경·서명 검증
+실패는 장부와 감사 이력을 바꾸지 않습니다. 적용된 동일 요청은 저장된 이력을 반환하므로
+artifact 서버 장애 중에도 재전송할 수 있습니다.
 
 예산 총계와 예약 목록의 확정 사용량에는 보정을 포함합니다. 상세 `calls`는 원래 정산 값을 유지하고,
 새 `corrections` 배열과 React 이력에 보정값·출처·증거 해시·담당자/사유·차액을 표시합니다.
@@ -426,6 +436,9 @@ uv run --locked python manage.py correct_evaluation_usage \
 임베딩은 `apps.evaluations.test_embedding_receipts`에서 실제 실행기 v2 파일·질문/문서 배치·
 서명/상한/시각 오류·중복/동시 보정·DB 식별자 제약·rollback·API 비밀 비노출을 검증합니다.
 SDK 무료 검증과 MySQL 검증은 분리되어 있으며 전체 RAG live/Prefect 예산 연결은 후속 범위입니다.
+`apps.evaluations.test_receipt_transport`는 실제 내부 HTTP 서버와 실행기 v1/v2 증거를 사용해
+로컬 마운트 없는 조회·인증·크기·경로·변조·리다이렉트·장애 시 대체 금지를 DB 없이 검증합니다.
+위 두 MySQL 테스트 모듈에는 HTTP 보정·접수 중지·미리보기 이후 변경·단발성 차액 반환도 포함됩니다.
 
 ## 평가 취소
 
@@ -934,7 +947,7 @@ Argo CD가 이 서비스의 Deployment를 동기화했습니다. 교육기관 �
 ### 내부 HTTP 평가 저장소
 
 `LLMOPS_ARTIFACT_URL`이 비어 있으면 기존 파일 저장소를 사용한다. URL과 별도
-`LLMOPS_ARTIFACT_TOKEN`을 지정하면 결과와 평가 자료를 모두 인증된 내부 HTTP로 읽는다.
+`LLMOPS_ARTIFACT_TOKEN`을 지정하면 결과·평가 자료·사용량 증거를 인증된 내부 HTTP로 읽는다.
 호출 흐름은 `Ops API·동기화 → 결과 HTTP 서버 → Compose 결과 볼륨·평가 자료`다.
 보고서·비교·검토·복구 입력의 기존 무결성 검증은 유지하며 원격 장애 시 파일 방식으로 대체하지 않는다.
 결과 서버는 같은 이미지에서 `gunicorn 'apps.evaluations.artifact_server:create_app()'`로 실행하고,
@@ -943,4 +956,9 @@ Django 설정·DB·평가 SDK·모델 키를 필요로 하지 않는다. 호스�
 [Compose 실행 방법](../../infrastructure/llmops/README.md#내부-http로-결과-조회)과
 [Kubernetes 연결 조건](../../infrastructure/gitops/docs/ops-runtime.md)을 참고한다.
 진단 응답의 `storage_transport`로 실제 선택한 방식을 확인한다. `results_directory`는 호환성을 위해
-HTTP 모드에서도 유지하며 인증된 원격 저장소 상태를 검사한다. 파일당 8 MiB를 넘거나 변조된 결과는 거절한다.
+HTTP 모드에서도 유지하며 인증된 원격 저장소 상태를 검사한다. 일반 결과는 파일당 8 MiB,
+사용량 증거는 별도 `/v1/usage-receipts/{run UUID}/{sequence}` 경로에서 8 KiB로 제한한다.
+일반 `/v1/results` 경로로 사용량 증거를 조회할 수 없다. 서명 원본은 내부 CLI 소비자만 읽고
+관리자 API·브라우저에는 기존 보정 요약만 제공한다.
+HTTP 보정을 사용하려면 artifact 서버와 Ops 소비자를 함께 갱신한다. 서버를 먼저 갱신해도
+기존 결과 API는 유지되며, 구형 서버의 404는 정상 보정으로 처리하지 않는다.
