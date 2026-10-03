@@ -79,13 +79,17 @@ from apps.evaluations.models import (
     EvaluationAdmission, EvaluationRun, EvaluationReview, EvaluationBudget,
     EvaluationBudgetReservation, EvaluationBudgetChange,
 )
+from apps.evaluations.catalog import DATASETS
 assert settings.DATABASES["default"]["HOST"] == "ops-mysql"
 assert settings.DATABASES["default"]["NAME"] == "govbiz_ops"
 assert EvaluationAdmission.objects.get(pk=1).accepting is False
 with transaction.atomic():
     user = get_user_model().objects.create_user("backup-rehearsal-fixture")
+    dataset = next(iter(DATASETS.values()))
+    capture = dataset["captures"][0]["id"]
     run = EvaluationRun.objects.create(
-        requested_by=user, dataset_id="backup-rehearsal-fixture", status="COMPLETED",
+        requested_by=user, dataset_id=dataset["id"], status="CANCELLED",
+        candidate_capture_id=capture, reference_capture_id=capture,
         summary={"한글": ["따옴표 ' \\\"", "줄바꿈\\n복원 🧪", None]},
         finished_at=timezone.now(), model_api_calls=0,
     )
@@ -95,7 +99,7 @@ with transaction.atomic():
     )
     budget, _ = EvaluationBudget.objects.get_or_create(pk=1)
     EvaluationBudgetReservation.objects.create(
-        run=run, budget=budget, max_calls=0, max_output_tokens=0,
+        run=run, budget=budget, max_calls=1, max_output_tokens=0,
         closed_at=timezone.now(),
     )
     EvaluationBudgetChange.objects.create(
@@ -108,7 +112,8 @@ print("backup-fixtures-ready")
 """
 FIXTURE_REVIEW = (
     " WHERE run_id IN (SELECT id FROM evaluations_evaluationrun "
-    "WHERE dataset_id='backup-rehearsal-fixture');"
+    "WHERE requested_by_id IN (SELECT id FROM auth_user "
+    "WHERE username='backup-rehearsal-fixture'));"
 )
 
 
@@ -148,7 +153,7 @@ def application_read(target, database_id, image_id, expected, release_sha256, ev
         target + MYSQL,
         data=(
             "CREATE USER 'ops_restore_reader'@'%' IDENTIFIED BY '" + password + "';\n"
-            "GRANT SELECT ON govbiz_ops.* TO 'ops_restore_reader'@'%';"
+            "GRANT SELECT, LOCK TABLES ON govbiz_ops.* TO 'ops_restore_reader'@'%';"
         ),
     )
     identity = None
@@ -212,7 +217,8 @@ def application_read(target, database_id, image_id, expected, release_sha256, ev
             or any(
                 result.get(key) is not True
                 for key in (
-                    "select_only_grants",
+                    "read_only_grants",
+                    "budget_lock_verified",
                     "write_rejected",
                     "response_serialization_verified",
                     "relational_fixture_verified",

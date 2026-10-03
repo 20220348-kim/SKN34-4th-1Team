@@ -95,7 +95,8 @@ class ReaderContainerTests(unittest.TestCase):
             "readiness": "UP",
             "evaluation_count": 3,
             "execution_release_sha256": RELEASE,
-            "select_only_grants": True,
+            "read_only_grants": True,
+            "budget_lock_verified": True,
             "write_rejected": True,
             "response_serialization_verified": True,
             "relational_fixture_verified": True,
@@ -155,7 +156,8 @@ class ReaderContainerTests(unittest.TestCase):
         self.assertNotEqual(password, "original")
         self.assertNotIn(password, " ".join(create))
         grant = self.events[0][1]
-        self.assertIn("GRANT SELECT ON govbiz_ops.*", grant)
+        self.assertIn("GRANT SELECT, LOCK TABLES ON govbiz_ops.*", grant)
+        self.assertNotIn("GRANT UPDATE", grant)
         self.assertIn(password, grant)
         program = next(
             data
@@ -199,7 +201,8 @@ class ReaderContainerTests(unittest.TestCase):
             {"core_admin_auth_verified": True},
             {"execution_release_sha256": "f" * 64},
             {"model_api_calls": 1},
-            {"select_only_grants": None},
+            {"read_only_grants": None},
+            {"budget_lock_verified": False},
             {"http_server_started": True},
         ):
             self.proof = valid | change

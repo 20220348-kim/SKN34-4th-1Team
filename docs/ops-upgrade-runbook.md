@@ -110,7 +110,7 @@ DB와 파일을 서로 다른 시점에 복사한 뒤 일관된 백업이라고 
 - 배포한 Ops 이미지의 로컬 ID를 고정하고 별도 UID/GID 10001 조회 컨테이너를 실행한다.
   이 컨테이너는 외부 연결이 없는 복원 MySQL의 네트워크 공간만 공유하며 원본 DB·볼륨에 연결하지 않는다.
   파일시스템은 읽기 전용이며 capability를 제거하고 새 DB 조회 계정과 임시 Django 키만 사용한다.
-- 복원 DB에만 `SELECT` 권한을 가진 계정을 생성한다. 실제 권한과 UPDATE 거절을 확인한 뒤,
+- 복원 DB에만 `SELECT, LOCK TABLES` 권한을 가진 계정을 생성한다. 실제 권한과 UPDATE 거절을 확인한 뒤,
   Django test client로 실제 readiness URL의 migration·컬럼 검사를 실행한다. migration은 적용하지 않는다.
 - 원본 실행 release 해시와 완료 평가 3건의 요청/flow ID·실행 명세 해시를 비교하고,
   실제 `run_data`와 DRF JSON renderer로 응답 생성·날짜 직렬화를 확인한다.
@@ -159,19 +159,38 @@ Prefect를 중지한다. 컨테이너 ID·이미지·Compose 소유권·볼륨 �
   405를 검증한다. 응답 크기·캐시 금지 헤더를 검사하며 프록시·redirect는 허용하지 않는다.
   파일 읽기 권한 오류·기동 시간 초과·비정상 종료·검사 중 파일 변경·도우미 정리 실패는 전체 실패다.
 - 이어서 복원 DB의 격리된 네트워크 공간에 별도 Ops HTTP 검사 컨테이너를 연결한다.
-  같은 Ops 이미지·UID/GID 10001·SELECT 계정을 사용하고, 복원 결과 볼륨만 읽기 전용으로 연결한다.
+  같은 Ops 이미지·UID/GID 10001·조회/잠금 계정을 사용하고, 복원 결과 볼륨만 읽기 전용으로 연결한다.
   외부 통신·호스트 포트·원본 볼륨 연결은 없으며 기존 모델/API 자격 증명을 전달하지 않는다.
 - 실제 Gunicorn Ops API와 결과 서버를 내부 loopback에서 실행한다. `Ops HTTP → 복원 MySQL 조회 →
   결과 서버 HTTP → 복원 보고서` 경로로 완료 평가 3건의 SHA-256·캐시 금지·CSP를 확인한다.
   Ops의 로컬 결과 경로는 빈 디렉터리로 두므로 HTTP 저장소를 실제로 거쳐야 성공한다.
 - 같은 시험 클러스터의 Core Pod도 종료하고 Core DB 전체를 격리 MySQL의 별도 `govbiz_core` DB로
   복사한다. 가져오기 직후 덤프를 대조한 다음 배포에 사용한 실제 Core 이미지로 실행한다.
-  Core에는 이 DB에만 쓰기 가능한 별도 계정을 주며, Ops는 계속 `govbiz_ops`의 SELECT 계정만 쓴다.
+  Core에는 이 DB에만 쓰기 가능한 별도 계정을 주며, Ops는 계속 `govbiz_ops`의 조회/잠금 계정만 쓴다.
   Core의 자동 migration·외부 동기화·문서 생성 작업은 끄고 새 JWT 서명 키를 사용한다.
 - `Core 비밀번호 로그인 → 실제 세션 쿠키 → Ops CoreSessionAuthentication → Core 관리자 확인 →
   복원 보고서 조회`를 수행한다. Core가 확인한 관리자 ID·이메일·역할이 복원 Ops 요청자와 같아야 한다.
   무인증·잘못된 쿠키는 401, 개발 로그인으로 만든 일반 회원의 실제 세션은 403이어야 한다.
   `auth_contract=restored_core_password_login`, `core_admin_auth_verified=true`로 기록한다.
+- 관리자 화면이 사용하는 세션·전체 실행 목록·완료 3건의 상세·예산 조회를 실제 HTTP로 호출한다.
+  목록의 전체 건수를 복원 DB와 대조하고, 페이지 누락·중복·외부 페이지 링크를 거절한다.
+  완료 실행의 ID·flow·실행 명세·상태·보고서 경로와 목록/상세 응답의 일치를 검사한다.
+  모든 조회 경로에서 잘못된 쿠키·일반 회원을 차단하고 공개 세션 응답에는 계정·자료가 없어야 한다.
+- 예산 GET은 장부의 일관된 조회를 위해 `SELECT ... FOR UPDATE`를 사용한다.
+  [MySQL 잠금 조회 권한](https://dev.mysql.com/doc/refman/8.4/en/innodb-locking-reads.html)에 따라
+  복원 DB에만 `LOCK TABLES`를 허용하고 INSERT·UPDATE·DELETE 권한은 부여하지 않는다.
+  실제 예산 행 잠금 성공과 접수/예산 테이블의 UPDATE 거절을 확인하며,
+  `database_restore.application.read_only_grants`와 `budget_lock_verified`로 기록한다.
+- DB 관계 검증용 추가 실행은 등록된 자료·캡처 ID를 가진 취소 이력으로 만든다. 검증용 사용자 이름으로
+  이 행을 식별하며 한글·JSON·NULL·리뷰·예산 관계 검사는 유지한다. 등록되지 않은 자료 ID를 넣어
+  실제 목록 조회를 실패시키거나, 검사를 위해 복원 DB에서 해당 행을 삭제하지 않는다.
+  연결된 예산 예약도 양수 호출 한도를 가진 미사용·종료 예약으로 구성해 웹의 예산 계약을 지키며,
+  실제 호출 수와 사용량은 0으로 유지한다.
+- 수집한 응답에서 CSRF 토큰을 제거한 사본을 임시 파일로 전달하고, 저장소의 Node 24로
+  `check_ops_restore_ui.mjs`를 실행한다. 웹의 실제 `getOpsSession`, `listEvaluations`, `getEvaluation`,
+  예산 조회 함수와 Zod 파서가 응답을 처리해야 통과한다. 새 의존성 없이 기존 루트 잠금 파일을 사용한다.
+  이 단계의 fetch는 이미 확인한 HTTP 응답을 재생하며 실제 브라우저·Vite 프록시·화면 렌더링 검사는 아니다.
+  원문 응답은 최종 보고서에 저장하지 않고, 임시 파일도 정리한다. 웹 파서 실패는 전체 실패다.
 - 실제 Core 로그아웃 후 같은 세션으로 보고서를 요청하면 401이어야 한다. 다시 비밀번호로 로그인한 뒤
   결과 서버를 종료하면 보고서 요청은 404여야 한다. 종료 실패·결과 파일 변경·Ops DB 덤프 변경은
   전체 실패다. Core 사본에는 로그인·로그아웃에 따른 세션 쓰기를 허용하고 원본 Core 덤프는 보존한다.
@@ -196,10 +215,12 @@ Prefect를 중지한다. 컨테이너 ID·이미지·Compose 소유권·볼륨 �
 `results.ops_http`에 실제 Core 인증·세션 폐기·Ops 보고서·결과 서버 장애 거절·파일/Ops DB 무변경 결과를,
 `prefect.api`에 API 대조·DB 무변경·정상 종료 결과를 남긴다.
 별도 `core_auth_restore`에는 Core 이미지 ID·복사 직후 덤프 일치·원본 보존·정리 결과를 남긴다.
+`results.ops_http.management_http`에는 관리 API의 세션·목록·상세·예산·권한 검사 결과를,
+`management_web_contract`에는 웹 소비자 파서 통과 결과를 기록한다. 두 항목 모두 `browser_rendered=false`다.
 성공 시 `results_server_started=true`, `prefect_server_started=true`이며,
 증거가 완성되지 않은 실패에서는 `null`로 미확인을 표시한다.
 검사 토큰을 새로 생성하므로 기존 Secret/서명 키 복구는 검증하지 않는다.
-실행기 재개·새 평가 실행·관리자 화면·Langfuse 저장소 복원은 별도다.
+실행기 재개·새 평가 실행·관리자 화면의 브라우저 렌더링·Langfuse 저장소 복원은 별도다.
 Core 인증 검증은 새 키로 발급한 세션만 대상으로 하며 기존 세션의 연속성이나 기존 서명 키 복구를 뜻하지 않는다.
 `backup_verified`, `personal_environment_verified`는 계속 `false`다.
 개인 환경 갱신 승인이나 전체 저장소의 동일 시점 백업 증거로 사용하지 않는다.

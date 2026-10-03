@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -26,6 +27,16 @@ DATABASE = {
     "password": "fresh-read-only-password",
     "core_password": "fixture-admin-password",
 }
+MANAGEMENT = {
+    "status": "PASS",
+    "session_verified": True,
+    "listed_run_count": 4,
+    "matched_details": 3,
+    "pagination_complete": True,
+    "budget_reads_verified": True,
+    "unauthorized_reads_rejected": True,
+    "browser_rendered": False,
+}
 
 
 class HttpTests(unittest.TestCase):
@@ -36,6 +47,7 @@ class HttpTests(unittest.TestCase):
         self.defect = None
         self.user = SimpleNamespace(username="core:1", email="fixture@example.invalid")
         runs = Mock()
+        runs.objects.count.return_value = 4
         runs.objects.select_related.return_value.get.return_value.requested_by = (
             self.user
         )
@@ -111,6 +123,11 @@ class HttpTests(unittest.TestCase):
                 side_effect=[{"file": 1}, {"file": 2 if self.defect == "files" else 1}],
             ),
             patch.object(probe, "core_login", side_effect=self.login),
+            patch.object(
+                probe,
+                "check_management",
+                return_value={"evidence": MANAGEMENT, "responses": {}},
+            ),
             patch.object(probe, "response", side_effect=self.response),
             patch.object(probe, "build_opener", return_value=client),
             patch.object(
@@ -136,6 +153,7 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(result["auth_contract"], "restored_core_password_login")
         self.assertTrue(result["artifact_outage_rejected"])
         self.assertTrue(result["revoked_session_rejected"])
+        self.assertEqual(result["management_http"], MANAGEMENT)
         self.assertTrue(self.artifact.terminate.called)
         self.assertTrue(self.ops.terminate.called)
 
@@ -165,6 +183,12 @@ class ContainerTests(unittest.TestCase):
     def setUp(self):
         self.events = []
         self.fail = None
+        self.web_proof = {
+            "status": "PASS",
+            "matched_details": 3,
+            "listed_run_count": 4,
+            "browser_rendered": False,
+        }
         self.proof = {
             "status": "PASS",
             "matched_reports": 3,
@@ -178,12 +202,20 @@ class ContainerTests(unittest.TestCase):
             "servers_stopped": True,
             "runtime_uid": 10001,
             "model_api_calls": 0,
+            "management_http": MANAGEMENT.copy(),
+            "management_responses": {},
         }
 
     def execute(self, command, **kwargs):
         self.events.append((command, kwargs))
         if command[1] == self.fail:
             raise subprocess.CalledProcessError(1, command)
+        if command[0] == "node":
+            value = json.loads(Path(command[-1]).read_text(encoding="utf-8"))
+            self.assertEqual(value["total_runs"], 4)
+            self.assertEqual(value["expected"], RUNS)
+            self.assertNotIn(DATABASE["core_password"], json.dumps(value))
+            return json.dumps(self.web_proof)
         if command[1] == "create":
             return "e" * 64
         if command[1] == "start":
@@ -199,6 +231,8 @@ class ContainerTests(unittest.TestCase):
     def test_only_restored_volume_and_database_are_connected(self):
         result = self.run_probe()
         self.assertTrue(result["cleanup_complete"])
+        self.assertNotIn("management_responses", result)
+        self.assertEqual(result["management_web_contract"]["status"], "PASS")
         command, options = self.events[0]
         self.assertEqual(
             command[command.index("--network") + 1], "container:" + IDENTITY
@@ -216,7 +250,7 @@ class ContainerTests(unittest.TestCase):
         self.assertNotIn(DATABASE["core_password"], " ".join(command))
 
     def test_probe_and_cleanup_failures_propagate(self):
-        for stage in ("start", "rm"):
+        for stage in ("start", "rm", "--experimental-transform-types"):
             self.fail = stage
             with (
                 self.subTest(stage=stage),
@@ -225,12 +259,37 @@ class ContainerTests(unittest.TestCase):
                 self.run_probe()
             self.assertEqual(self.events[-1][0][1], "rm")
 
+    def test_web_contract_failure_cannot_pass_and_removes_private_snapshot(self):
+        for key, value in (
+            ("status", "FAIL"),
+            ("matched_details", 2),
+            ("browser_rendered", True),
+        ):
+            original = self.web_proof[key]
+            self.web_proof[key] = value
+            with (
+                self.subTest(key=key),
+                self.assertRaisesRegex(ValueError, "web contract"),
+            ):
+                self.run_probe()
+            contract = next(
+                command[-1]
+                for command, _ in reversed(self.events)
+                if command[0] == "node"
+            )
+            self.assertFalse(Path(contract).exists())
+            self.assertEqual(self.events[-1][0][1], "rm")
+            self.web_proof[key] = original
+
     def test_incomplete_or_overclaimed_proof_is_rejected(self):
         for key, value in (
             ("matched_reports", 2),
             ("servers_stopped", False),
             ("core_admin_auth_verified", False),
             ("model_api_calls", 1),
+            ("management_http", {**MANAGEMENT, "browser_rendered": True}),
+            ("management_http", {**MANAGEMENT, "pagination_complete": False}),
+            ("management_http", {**MANAGEMENT, "matched_details": 2}),
         ):
             original = self.proof[key]
             self.proof[key] = value
