@@ -11,7 +11,7 @@ import { createAppStore } from './app/store'
 import { supportProgramDetails, supportPrograms } from './data/fixtures/supportPrograms'
 import type { Account } from './domain/entities/Account'
 import type { SavedSupportProgram } from './domain/entities/SavedSupportProgram'
-import { savedSupportProgramMessages } from './presentation/features/saved-support-program/viewmodel/useSavedSupportProgramsViewModel'
+import { savedSupportProgramMessages } from './presentation/features/saved-programs/viewmodel/useSavedProgramCalendarViewModel'
 import { sessionRestored } from './presentation/shared/auth/state/authSlice'
 import { searchStarted, searchSucceeded } from './presentation/features/chat/state/chatSlice'
 

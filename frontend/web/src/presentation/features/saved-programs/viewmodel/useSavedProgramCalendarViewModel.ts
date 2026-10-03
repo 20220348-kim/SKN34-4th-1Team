@@ -28,6 +28,13 @@ export type SavedProgramsSaveUseCases = {
 /** 목록·달력에서 뺀 뒤의 안내입니다. [되돌리기]로 다시 담을 수 있습니다. */
 export type SavedProgramRemovalNotice = { id: number; text: string; program: CalendarProgram | null }
 
+/** 관심 공고함을 불러오는 중 · 실패 · 비어 있음 안내입니다. 버튼 이름은 공고 상세의 [관심 공고에 담기]와 같게 씁니다. */
+export const savedSupportProgramMessages = {
+  empty: '아직 담은 공고가 없어요. 공고 상세에서 [관심 공고에 담기]를 누르면 여기에 모여요.',
+  loading: '관심 공고를 불러오는 중이에요.',
+  failed: '관심 공고를 불러오지 못했어요. 잠시 후 다시 시도해 주세요.',
+} as const
+
 const savedProgramListPageSize = 8
 
 type LoadState =

@@ -5,7 +5,7 @@ import { selectCurrentAccount, signedOut } from '../../../shared/auth/state/auth
 import { appPaths, combinationReviewRunResultPath, supportProgramDetailPath } from '../../../shared/routes/appPaths'
 import { reviewProgramKey, supportsAutomaticReview, type ReviewListItem, type RunSummary } from '../../../../domain/entities/CombinationReview'
 import { useReviewListViewModel } from '../viewmodel/useReviewListViewModel'
-import { useReviewEditorViewModel } from '../viewmodel/useReviewEditorViewModel'
+import { useReviewEditorViewModel, type InitialReviewProgram } from '../viewmodel/useReviewEditorViewModel'
 import { ReviewParticipation } from './ReviewParticipation'
 import { ReviewRunResult } from './ReviewRunResult'
 import { SavedSupportProgramPickerDialog } from '../../../shared/support-program/SavedSupportProgramPickerDialog'
@@ -171,13 +171,24 @@ function ReviewList({ account }: { account: string }) {
   </>
 }
 
+/** 새 검토 주소의 `sourceCode`·`sourceProgramId`로 미리 고를 공고입니다. 형식이 맞지 않으면 고르지 않고, 서버가 저장할 때 다시 검증합니다. */
+function addressProgram(params: URLSearchParams): InitialReviewProgram | null {
+  const sourceCode = params.get('sourceCode') ?? ''
+  const sourceProgramId = (params.get('sourceProgramId') ?? '').trim()
+  return /^[A-Z][A-Z0-9_]{0,63}$/.test(sourceCode) && sourceProgramId ? { sourceCode, sourceProgramId } : null
+}
+
 export function CombinationReviewEditorPage({ create = false }: { create?: boolean }) {
   const account = useAppSelector(selectCurrentAccount)
   const { reviewId } = useParams()
+  const [searchParams] = useSearchParams()
   const id = create ? null : Number(reviewId)
   if (!account) return null
   if (!create && (!Number.isSafeInteger(id) || id! <= 0)) return <><WorkspacePageHeader parent={{ to: appPaths.combinationReviews, label: listTitle }} title="검토" /><main className={workspacePageStyles.content}><p role="alert">올바른 검토 주소가 아닙니다.</p><Link className={workspacePageStyles.quietLink} to={appPaths.combinationReviews}>목록으로</Link></main></>
-  return <ReviewEditor key={`${sessionKey(account)}:${id ?? 'new'}`} id={id} account={account.email} />
+  // 공고 상세의 [중복 지원·수혜 검토]로 열면 그 공고를 사업 1로 골라 둡니다. 고른 공고가 바뀌면 새로 시작합니다.
+  const initialProgram = create ? addressProgram(searchParams) : null
+  const editorKey = id ?? `new:${initialProgram ? reviewProgramKey(initialProgram) : ''}`
+  return <ReviewEditor key={`${sessionKey(account)}:${editorKey}`} id={id} account={account.email} initialProgram={initialProgram} />
 }
 
 export function CombinationReviewRunResultPage() {
@@ -226,12 +237,12 @@ function RunResultPage({ reviewId, runId, account }: { reviewId: number; runId: 
   </main></>
 }
 
-function ReviewEditor({ id, account }: { id: number | null; account: string }) {
+function ReviewEditor({ id, account, initialProgram = null }: { id: number | null; account: string; initialProgram?: InitialReviewProgram | null }) {
   const location = useLocation()
   const suppliedFacts = (location.state as { additionalFacts?: unknown } | null)?.additionalFacts
   const initialFacts = typeof suppliedFacts === 'string' ? suppliedFacts : ''
   const [savedProgramsOpen, setSavedProgramsOpen] = useState(false)
-  const vm = useReviewEditorViewModel(id, account, savedProgramsOpen, null, initialFacts)
+  const vm = useReviewEditorViewModel(id, account, savedProgramsOpen, null, initialFacts, initialProgram)
   // 단계는 주소(?step=)가 정합니다. 새로고침 · 뒤로 가기 · 링크로 들어와도 같은 단계를 봅니다. 저장 전인 새 검토는 1단계뿐입니다.
   const [searchParams, setSearchParams] = useSearchParams()
   const requestedStep = searchParams.get('step')

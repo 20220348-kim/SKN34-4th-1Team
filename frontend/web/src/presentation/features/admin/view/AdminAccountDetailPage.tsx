@@ -3,6 +3,7 @@ import { WorkspaceModal } from '../../../shared/workspace/WorkspaceModal'
 import { workspaceModalStyles } from '../../../shared/workspace/WorkspaceModal.styles'
 import { workspacePageStyles, workspaceTagClassName } from '../../../shared/workspace/WorkspacePage.styles'
 import { WorkspacePageHeader } from '../../../shared/workspace/WorkspacePageHeader'
+import { adminAccessMessages } from '../viewmodel/adminAccountAccess'
 import { useAdminAccountDetailViewModel } from '../viewmodel/useAdminAccountDetailViewModel'
 import { adminAccountsPageStyles as styles } from './AdminAccountsPage.styles'
 
@@ -14,9 +15,9 @@ export function AdminAccountDetailPage() {
 
   return (
     <>
-      {/* 파트너 모집글 상세처럼 "계정 관리 > 계정 상세" 이동 경로로 목록에 돌아갑니다. */}
+      {/* 파트너 모집글 상세처럼 "회원 관리 > 계정 상세" 이동 경로로 목록에 돌아갑니다. 상위 이름은 사이드바 메뉴·목록 제목과 같습니다. */}
       <WorkspacePageHeader
-        parent={{ to: vm.listPath, label: '계정 관리' }}
+        parent={{ to: vm.listPath, label: '회원 관리' }}
         title="계정 상세"
       />
 
@@ -28,7 +29,9 @@ export function AdminAccountDetailPage() {
           </p>
         ) : null}
 
-        {vm.phase === 'missing' ? (
+        {vm.phase === 'forbidden' ? (
+          <p className={workspacePageStyles.emptyNote} role="alert">{adminAccessMessages.forbidden}</p>
+        ) : vm.phase === 'missing' ? (
           <p className={workspacePageStyles.emptyNote}>계정을 찾을 수 없습니다. 삭제됐거나 주소가 잘못되었습니다.</p>
         ) : vm.phase === 'failed' ? (
           <p className={workspacePageStyles.emptyNote}>

@@ -166,7 +166,7 @@ export function AppSidebar({ onClose, onNewChat, closeLabel, onNavigate, history
   const detailFromPreparations = detailReturnTo !== null && isApplicationPreparationsReturnTo(detailReturnTo)
   const detailFromReports = detailReturnTo !== null && isReportsReturnTo(detailReturnTo)
   const isSearchPage = pathname === appPaths.chat || (isDetailPage && !detailFromSavedPrograms && !detailFromPreparations && !detailFromReports)
-  // 계정 카드를 누르면 내 프로필·로그아웃과 관리자 전용 회원·기업 메뉴가 열립니다.
+  // 계정 카드를 누르면 내 프로필·로그아웃과 관리자 전용 회원 관리 메뉴가 열립니다.
   // 화면을 옮기거나 Esc·바깥 클릭이면 닫힙니다.
   const accountMenuId = useId()
   const accountRef = useRef<HTMLDivElement>(null)
@@ -321,7 +321,7 @@ export function AppSidebar({ onClose, onNewChat, closeLabel, onNavigate, history
                   aria-current={pathname.startsWith(appPaths.admin) ? 'page' : undefined}
                 >
                   <MenuIconGraphic name="shield" />
-                  <span>회원·기업</span>
+                  <span>회원 관리</span>
                 </Link>
               ) : null}
               <button className={appSidebarStyles.accountMenuButton} type="button" onClick={signOutToLanding}>

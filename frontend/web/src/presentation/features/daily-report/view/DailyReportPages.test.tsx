@@ -85,7 +85,9 @@ describe('기업 맞춤 리포트 화면', () => {
     expect(channels.getByText('report@example.test')).toBeTruthy()
     expect(channels.getByRole('button', { name: '확인 메일 보내기' })).toBeTruthy()
     expect(channels.getByText('앱 푸시')).toBeTruthy()
-    expect(channels.getByText('준비 중')).toBeTruthy()
+    // 앱 푸시는 모바일 앱이 보내므로 준비 중이 아니라 켜는 곳을 안내합니다.
+    expect(channels.getByText('모바일 앱의 전체 › 리포트 수신 설정에서 기기마다 켜요.')).toBeTruthy()
+    expect(channels.queryByText('준비 중')).toBeNull()
     expect(within(screen.getByRole('region', { name: '추천 기준' })).getByText('AI 제품 개발')).toBeTruthy()
     expect(screen.queryByRole('switch')).toBeNull()
     expect(screen.queryByRole('button', { name: '저장' })).toBeNull()

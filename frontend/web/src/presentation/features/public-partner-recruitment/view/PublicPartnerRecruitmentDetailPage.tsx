@@ -45,7 +45,7 @@ export function PublicPartnerRecruitmentDetailPage() {
         <Link className={styles.backLink} to={publicPaths.partners}>← 파트너 모집 목록</Link>
         <h1 className={styles.detailTitle}>{phase === 'failed' ? '모집글을 불러오지 못했습니다' : '모집글을 찾을 수 없습니다'}</h1>
         <p className={styles.description}>
-          {phase === 'failed' ? '잠시 후 다시 시도해 주세요.' : '요청한 모집글이 없거나 내려갔습니다. 다른 모집글로 대신 표시하지 않습니다.'}
+          {phase === 'failed' ? '잠시 후 다시 시도해 주세요.' : '삭제되었거나 주소가 잘못되었을 수 있어요.'}
         </p>
       </main>
     )

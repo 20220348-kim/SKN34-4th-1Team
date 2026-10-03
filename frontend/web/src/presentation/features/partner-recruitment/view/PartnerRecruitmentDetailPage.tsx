@@ -79,7 +79,7 @@ export function PartnerRecruitmentDetailPage() {
   if (!recruitment) {
     return <div className={workspacePageStyles.content}>
       <h1 className={workspacePageStyles.title}>모집글을 찾을 수 없습니다</h1>
-      <p className={workspacePageStyles.emptyNote}>요청한 모집글이 없거나 내려갔습니다. 다른 모집글로 대신 표시하지 않습니다.</p>
+      <p className={workspacePageStyles.emptyNote}>삭제되었거나 주소가 잘못되었을 수 있어요.</p>
       <Link className={workspacePageStyles.secondaryButton} to={appPaths.partners}>파트너 모집 목록</Link>
     </div>
   }

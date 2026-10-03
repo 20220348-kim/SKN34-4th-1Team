@@ -2,6 +2,7 @@ import { type FormEvent, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router'
 
 import { appContainer } from '../../../../app/appContainer'
+import { useAppDispatch } from '../../../../app/hooks'
 import type { AccountTier } from '../../../../domain/entities/Account'
 import {
   adminAccountActionLabels,
@@ -14,7 +15,9 @@ import {
   type AdminAccountDetail,
 } from '../../../../domain/entities/AdminAccount'
 import type { GetAdminAccountDetailUseCase, TakeAdminAccountActionUseCase } from '../../../../domain/usecases/AdminAccountUseCases'
+import { signedOut } from '../../../shared/auth/state/authSlice'
 import { appPaths } from '../../../shared/routes/appPaths'
+import { adminAccessFailure, adminAccessMessages } from './adminAccountAccess'
 import { formatAdminDate, formatAdminDateTime, formatBusinessNumber } from './adminAccountFormat'
 
 type DetailUseCases = {
@@ -63,7 +66,7 @@ const actionCopy: Record<AdminAccountActionKind, {
 
 const tierLabels: Record<AccountTier, string> = { MEMBER: '회원', COMPANY: '기업 회원', ADMIN: '관리자' }
 
-type DetailState = { id: number | null; phase: 'loading' | 'ready' | 'missing' | 'failed'; detail: AdminAccountDetail | null }
+type DetailState = { id: number | null; phase: 'loading' | 'ready' | 'missing' | 'failed' | 'forbidden'; detail: AdminAccountDetail | null }
 type ModalState = { kind: AdminAccountActionKind; reason: string; error: string | null; isSubmitting: boolean }
 
 /** `?accountId=`가 하나뿐이고 양의 정수일 때만 상세를 찾습니다. */
@@ -76,12 +79,15 @@ export function readAdminAccountId(values: string[]): number | null {
 /**
  * 관리자 계정 상세의 대표 ViewModel입니다. 상세를 읽고, 조치 모달(사유 입력·전송·결과 안내)을 소유합니다.
  * 조치에 성공하면 서버가 돌려준 최신 상세로 바꾸고, 다른 관리자가 먼저 바꿨으면 다시 읽습니다.
+ * 세션이 끝났으면(401) 로그인 상태를 비워 `RequireAuth`가 이 주소로 돌아오는 로그인(`loginPathFor`)으로 보내고,
+ * 관리자 권한이 없으면(403) 다시 시도 대신 권한 안내를 보여 줍니다.
  */
 export function useAdminAccountDetailViewModel(useCases: Partial<DetailUseCases> = {}) {
   const [resolved] = useState<DetailUseCases>(() => ({
     getDetail: useCases.getDetail ?? appContainer.resolve('getAdminAccountDetailUseCase'),
     takeAction: useCases.takeAction ?? appContainer.resolve('takeAdminAccountActionUseCase'),
   }))
+  const dispatch = useAppDispatch()
   const [searchParams] = useSearchParams()
   const accountId = readAdminAccountId(searchParams.getAll('accountId'))
   const [version, setVersion] = useState(0)
@@ -106,9 +112,17 @@ export function useAdminAccountDetailViewModel(useCases: Partial<DetailUseCases>
       .then((detail) => {
         if (!controller.signal.aborted) setState({ id: accountId, phase: detail === null ? 'missing' : 'ready', detail })
       })
-      .catch(() => { if (!controller.signal.aborted) setState((previous) => ({ ...previous, id: accountId, phase: 'failed' })) })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return
+        const access = adminAccessFailure(error)
+        if (access === 'signed-out') {
+          dispatch(signedOut())
+          return
+        }
+        setState((previous) => ({ ...previous, id: accountId, phase: access === 'forbidden' ? 'forbidden' : 'failed' }))
+      })
     return () => controller.abort()
-  }, [accountId, version, resolved])
+  }, [accountId, version, resolved, dispatch])
 
   const current = state.id === accountId ? state : { id: accountId, phase: 'loading' as const, detail: null }
   const detail = current.detail
@@ -145,8 +159,16 @@ export function useAdminAccountDetailViewModel(useCases: Partial<DetailUseCases>
       }
       const error = result.outcome === 'self-action' ? adminAccountDetailMessages.selfAction : adminAccountDetailMessages.protectedTarget
       setModal((value) => value && { ...value, isSubmitting: false, error })
-    } catch {
-      if (isMounted.current) setModal((value) => value && { ...value, isSubmitting: false, error: adminAccountDetailMessages.requestFailed })
+    } catch (error) {
+      if (!isMounted.current) return
+      const access = adminAccessFailure(error)
+      if (access === 'signed-out') {
+        setModal(null)
+        dispatch(signedOut())
+        return
+      }
+      const message = access === 'forbidden' ? adminAccessMessages.forbidden : adminAccountDetailMessages.requestFailed
+      setModal((value) => value && { ...value, isSubmitting: false, error: message })
     }
   }
 
