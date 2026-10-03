@@ -12,6 +12,7 @@ from .models import (
     EvaluationBudgetCall,
     EvaluationBudgetChange,
     EvaluationBudgetReservation,
+    EvaluationLegacyUsage,
     EvaluationRun,
 )
 
@@ -101,6 +102,42 @@ def ledger_totals(reservations):
     return counts
 
 
+def legacy_usage_data(record):
+    return {
+        "request_id": str(record.request_id),
+        "run_id": str(record.run_id),
+        "source": "SAVED_CAPTURE",
+        "provider_receipt_verified": False,
+        "actor": record.actor,
+        "reason": record.reason,
+        "capture_sha256": record.capture_sha256,
+        "evidence_sha256": record.evidence_sha256,
+        "usage": {
+            "calls": record.calls,
+            "input_tokens": record.input_tokens,
+            "output_tokens": record.output_tokens,
+        },
+        "before": record.before,
+        "after": record.after,
+        "created_at": record.created_at.isoformat(),
+    }
+
+
+def budget_totals(budget):
+    """예약 장부와 별도로 검토해 반영한 과거 사용량을 합산한다."""
+    totals = ledger_totals(EvaluationBudgetReservation.objects.filter(budget=budget))
+    legacy = EvaluationLegacyUsage.objects.filter(budget=budget).aggregate(
+        calls=Sum("calls", default=0),
+        input_tokens=Sum("input_tokens", default=0),
+        output_tokens=Sum("output_tokens", default=0),
+    )
+    if legacy["calls"]:
+        for key, value in legacy.items():
+            totals["legacy_" + key] = value
+            totals["allocated_" + key] += value
+    return totals
+
+
 def change_data(change):
     return {
         "request_id": str(change.request_id),
@@ -127,23 +164,24 @@ def budget_summary(budget):
     """호출자가 budget 행을 잠근다. 같은 응답의 상세도 잠금 안에서 계산한다."""
     # All reserve/authorize/settle/close/limit writes take this same budget lock first.
     missing = EvaluationRun.objects.filter(
-        execution_mode="live", budget_reservation__isnull=True
+        execution_mode="live", budget_reservation__isnull=True, legacy_usage__isnull=True
     ).count()
     if budget is None:
         return {
             "state": "unconfigured",
-            "input_state": "unconfigured",
+            "input_state": "legacy_unknown" if missing else "unconfigured",
             "limits": None,
             "allocated": None,
             "remaining": None,
             "breakdown": None,
             "reservation_count": 0,
             "legacy_live_run_count": missing,
+            "legacy_accounted_run_count": EvaluationLegacyUsage.objects.count(),
             "change_count": 0,
             "recent_changes": [],
         }
     reservations = EvaluationBudgetReservation.objects.filter(budget=budget)
-    totals = ledger_totals(reservations)
+    totals = budget_totals(budget)
     consistent = (
         all(value >= 0 for value in totals.values())
         and totals["allocated_input_tokens"] == budget.allocated_input_tokens
@@ -190,6 +228,7 @@ def budget_summary(budget):
         "breakdown": totals,
         "reservation_count": reservations.count(),
         "legacy_live_run_count": missing,
+        "legacy_accounted_run_count": EvaluationLegacyUsage.objects.count(),
         "change_count": changes.count(),
         "recent_changes": [change_data(change) for change in changes[:10]],
     }
@@ -294,12 +333,12 @@ def change_limits(*, calls, output_tokens, actor, reason, request_id, input_toke
     if budget.input_token_limit is not None and input_tokens is None:
         raise ValueError("활성화한 입력 한도를 생략하거나 해제할 수 없습니다.")
     if input_tokens is not None:
-        totals = ledger_totals(EvaluationBudgetReservation.objects.filter(budget=budget))
+        totals = budget_totals(budget)
         if (
             totals["unbounded_input_calls"]
             or totals["unbounded_input_reservations"]
             or EvaluationRun.objects.filter(
-                execution_mode="live", budget_reservation__isnull=True
+                execution_mode="live", budget_reservation__isnull=True, legacy_usage__isnull=True
             ).exists()
         ):
             raise ValueError(

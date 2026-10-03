@@ -189,6 +189,9 @@ const runSchema = z.object({
 const pageSchema = z.object({ count: z.number(), next: z.string().nullable(), previous: z.string().nullable(), results: z.array(runSchema) })
 const budgetAmountsSchema = z.object({ input_tokens: z.number().int().nonnegative().nullable().optional(), calls: z.number().int().nonnegative(), output_tokens: z.number().int().nonnegative() })
 const budgetBreakdownSchema = z.object({
+  legacy_calls: z.number().int().nonnegative().optional(),
+  legacy_input_tokens: z.number().int().nonnegative().optional(),
+  legacy_output_tokens: z.number().int().nonnegative().optional(),
   unknown_input_tokens: z.number().int().optional(), unapproved_input_tokens: z.number().int().optional(),
   pending_release_input_tokens: z.number().int().optional(), allocated_input_tokens: z.number().int().optional(),
   unbounded_input_calls: z.number().int().nonnegative().optional(), unbounded_input_reservations: z.number().int().nonnegative().optional(),
@@ -196,13 +199,15 @@ const budgetBreakdownSchema = z.object({
   unknown_calls: z.number().int(), unknown_output_tokens: z.number().int(),
   unapproved_calls: z.number().int(), unapproved_output_tokens: z.number().int(),
   pending_release_output_tokens: z.number().int(), allocated_calls: z.number().int(), allocated_output_tokens: z.number().int(),
-})
+}).refine((data) => [data.legacy_calls, data.legacy_input_tokens, data.legacy_output_tokens].every((value) => value === undefined)
+  || [data.legacy_calls, data.legacy_input_tokens, data.legacy_output_tokens].every((value) => value !== undefined))
 const budgetSummarySchema = z.object({
   input_state: z.enum(['enforced', 'unconfigured', 'legacy_unknown']).optional(),
   state: z.enum(['consistent', 'inconsistent', 'unconfigured']),
   limits: budgetAmountsSchema.nullable(), allocated: budgetAmountsSchema.nullable(), remaining: budgetAmountsSchema.nullable(),
   breakdown: budgetBreakdownSchema.nullable(), reservation_count: z.number().int().nonnegative(),
   legacy_live_run_count: z.number().int().nonnegative(), change_count: z.number().int().nonnegative(),
+  legacy_accounted_run_count: z.number().int().nonnegative().optional(),
   recent_changes: z.array(z.object({
     request_id: z.uuid(), actor: z.string(), source: z.literal('CLI'), reason: z.string(),
     previous_limits: budgetAmountsSchema.nullable(), limits: budgetAmountsSchema, created_at: z.string(),
@@ -262,8 +267,20 @@ const usageCorrectionSchema = z.object({
   && before.reservation_calls === after.reservation_calls && before.unknown_calls - after.unknown_calls === 1
   && before.global_output_tokens >= after.global_output_tokens
   && before.global_output_tokens - after.global_output_tokens === before.reservation_output_tokens - after.reservation_output_tokens)
+const legacyAmountsSchema = z.object({
+  calls: z.number().int().nonnegative(), input_tokens: z.number().int().nonnegative(), output_tokens: z.number().int().nonnegative(),
+})
+const legacyUsageSchema = z.object({
+  request_id: z.uuid(), run_id: z.uuid(), source: z.literal('SAVED_CAPTURE'), provider_receipt_verified: z.literal(false),
+  actor: z.string().trim().min(1), reason: z.string().trim().min(1),
+  capture_sha256: z.string().regex(/^[a-f0-9]{64}$/), evidence_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  usage: legacyAmountsSchema.extend({ calls: z.number().int().positive() }),
+  before: legacyAmountsSchema, after: legacyAmountsSchema, created_at: z.string().datetime({ offset: true }),
+}).refine(({ before, after, usage }) => (['calls', 'input_tokens', 'output_tokens'] as const)
+  .every((key) => after[key] - before[key] === usage[key]))
 const runBudgetSchema = z.object({
-  as_of: z.string(), state: z.enum(['recorded', 'missing', 'not_applicable']), reservation: budgetReservationSchema.nullable(),
+  as_of: z.string(), state: z.enum(['recorded', 'legacy_recorded', 'missing', 'not_applicable']), reservation: budgetReservationSchema.nullable(),
+  legacy_usage: legacyUsageSchema.nullable().optional(),
   cleanup: budgetCleanupSchema.nullable().optional(),
   corrections: z.array(usageCorrectionSchema).optional(),
   calls: z.array(z.object({
@@ -277,6 +294,9 @@ const runBudgetSchema = z.object({
     ? call.input_tokens === null && call.output_tokens === null
     : call.input_tokens !== null && call.output_tokens !== null)),
 }).refine((data) => data.state === 'recorded' ? data.reservation !== null : data.reservation === null && data.calls.length === 0)
+  .refine((data) => data.state === 'legacy_recorded'
+    ? Boolean(data.legacy_usage) && !data.cleanup && !data.corrections?.length
+    : !data.legacy_usage)
   .refine((data) => !data.cleanup || Boolean(data.reservation?.closed_at && data.cleanup.evidence.run_id === data.reservation.run_id))
   .refine((data) => {
     const corrections = data.corrections ?? []
@@ -410,7 +430,8 @@ async function request<T>(path: string, schema: z.ZodType<T>, options: RequestIn
 export const getOpsSession = (signal?: AbortSignal) => request('/session', sessionSchema, { signal })
 export const getBudgetSummary = (signal?: AbortSignal) => request('/budget', budgetSummarySchema.extend({ as_of: z.string() }), { signal })
 export const getBudgetReservations = (page: number, signal?: AbortSignal) => request(`/budget/reservations?page=${page}`, budgetPageSchema, { signal })
-export const getRunBudget = (id: string, signal?: AbortSignal) => request(`/evaluations/${encodeURIComponent(id)}/budget`, runBudgetSchema, { signal })
+export const getRunBudget = (id: string, signal?: AbortSignal) => request(`/evaluations/${encodeURIComponent(id)}/budget`,
+  runBudgetSchema.refine((data) => !data.legacy_usage || data.legacy_usage.run_id === id), { signal })
 
 async function post<T>(path: string, data: unknown, schema: z.ZodType<T>, dispatch = false, owner?: string, method = 'POST') {
   // 쓰기 전 Core 관리자 세션과 최신 CSRF 토큰을 확인한다. 토큰·비밀번호는 저장하지 않는다.

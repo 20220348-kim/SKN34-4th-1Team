@@ -58,6 +58,21 @@ jobs:
         run: |
           docker compose --env-file infrastructure/llmops/.env -f infrastructure/llmops/compose.yaml --profile evaluation config --quiet
           docker compose --env-file infrastructure/llmops/.env -f infrastructure/llmops/compose.yaml --profile evaluation up -d --quiet-pull
+      - name: Verify running ClickHouse memory limits before pipeline checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          dc() { docker compose --env-file infrastructure/llmops/.env -f infrastructure/llmops/compose.yaml "$@"; }
+          container=$(dc ps -q clickhouse)
+          test -n "$container"
+          test "$(docker inspect --format '{{.HostConfig.Memory}}' "$container")" = 3221225472
+          dc exec -T clickhouse sh -eu -c 'clickhouse-client --user "$CLICKHOUSE_USER" --password "$CLICKHOUSE_PASSWORD" --query "
+            SELECT throwIf(count() != 3, '\''ClickHouse memory settings were not applied'\'')
+            FROM system.server_settings
+            WHERE (name = '\''max_server_memory_usage'\'' AND value = '\''2147483648'\'')
+               OR (name = '\''mark_cache_size'\'' AND value = '\''134217728'\'')
+               OR (name = '\''memory_worker_correct_memory_tracker'\'' AND value = '\''1'\'')
+          "'
       - name: Verify tracing, score persistence, replay and flow failures without model calls
         shell: bash
         run: |

@@ -145,6 +145,14 @@ class BudgetCleanupTests(TransactionTestCase):
         self.assertIsNone(EvaluationBudgetReservation.objects.get(pk=self.run.pk).closed_at)
         self.assertFalse(EvaluationBudgetCleanup.objects.exists())
 
+    def test_cleanup_preserves_independently_accounted_legacy_usage(self):
+        from .test_legacy_usage import seed_legacy_usage
+
+        seed_legacy_usage(self.budget, self.user)
+        self.apply()
+        self.assertEqual(self.amounts(), (1, 1))
+        self.assertEqual(self.budget.allocated_input_tokens, 1)
+
     def test_cleanup_preserves_unknown_and_records_audit_without_new_execution(self):
         self.action("claim")
         self.authorize()

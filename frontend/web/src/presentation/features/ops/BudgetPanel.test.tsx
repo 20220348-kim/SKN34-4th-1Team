@@ -51,9 +51,61 @@ const correctedDetail = {
   } },
 }
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
+const legacyDetail = {
+  as_of: time, state: 'legacy_recorded', reservation: null, calls: [], cleanup: null, corrections: [],
+  legacy_usage: {
+    request_id: id, run_id: id, source: 'SAVED_CAPTURE', provider_receipt_verified: false,
+    actor: '과거 기록 담당자', reason: '전체 응답 사용량 검토', created_at: time,
+    capture_sha256: 'a'.repeat(64), evidence_sha256: 'b'.repeat(64),
+    usage: { calls: 6, input_tokens: 6834, output_tokens: 689 },
+    before: { calls: 1, input_tokens: 1067, output_tokens: 87 },
+    after: { calls: 7, input_tokens: 7901, output_tokens: 776 },
+  },
+}
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 describe('관리자 예산 장부', () => {
+  it('과거 사용량은 예약·서명 영수증·품질 승인으로 표시하지 않고 출처를 보여준다', async () => {
+    const fetch = vi.fn().mockResolvedValue(json(legacyDetail))
+    vi.stubGlobal('fetch', fetch)
+    render(<MemoryRouter><RunBudgetPanel runId={id} onExpired={vi.fn()} refreshKey={0} /></MemoryRouter>)
+    const audit = await screen.findByRole('region', { name: '과거 사용량 반영 이력' })
+    expect(within(audit).getByText(/저장 응답 사용량: 6회 · 입력 6,834 \/ 출력 689토큰/)).toBeTruthy()
+    expect(within(audit).getByText(/당시 예약·서명 영수증·제공자 청구 확인이 아닙니다/)).toBeTruthy()
+    expect(within(audit).getByText(/답변 품질 승인과도 별개/)).toBeTruthy()
+    expect(screen.queryByText(/예약 상태:/)).toBeNull()
+    expect(screen.queryByText(/사용량을 0으로 판단/)).toBeNull()
+    expect(fetch.mock.calls.every(([, options]) => !options.method || options.method === 'GET')).toBe(true)
+  })
+
+  it.each([
+    { legacy_usage: undefined },
+    { state: 'missing' },
+    { reservation },
+    { calls: detail.calls },
+    { legacy_usage: { ...legacyDetail.legacy_usage, provider_receipt_verified: true } },
+    { legacy_usage: { ...legacyDetail.legacy_usage, source: 'WORKER_RESPONSE' } },
+    { legacy_usage: { ...legacyDetail.legacy_usage, run_id: '20000000-0000-4000-8000-000000000002' } },
+    { legacy_usage: { ...legacyDetail.legacy_usage, after: { calls: 6, input_tokens: 7901, output_tokens: 776 } } },
+    { legacy_usage: { ...legacyDetail.legacy_usage, usage: { calls: 6, input_tokens: null, output_tokens: 689 } } },
+    { legacy_usage: { ...legacyDetail.legacy_usage, capture_sha256: '' } },
+  ])('불완전하거나 모순된 과거 사용량 응답을 거절한다: %j', async (changes) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ ...legacyDetail, ...changes })))
+    await expect(getRunBudget(id)).rejects.toThrow()
+  })
+
+  it('전체 장부에 과거 저장 응답 몫을 별도 행으로 표시한다', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ ...page, summary: { ...page.summary,
+      legacy_accounted_run_count: 2, legacy_live_run_count: 0,
+      breakdown: { ...breakdown, legacy_calls: 7, legacy_input_tokens: 7901, legacy_output_tokens: 776 },
+    } })))
+    render(<MemoryRouter><BudgetOverview onExpired={vi.fn()} refreshKey={0} /></MemoryRouter>)
+    const table = await screen.findByRole('table', { name: '예산 할당량 구성' })
+    expect(within(table).getByRole('row', { name: '과거 저장 응답 반영 7 776 7,901토큰' })).toBeTruthy()
+    expect(screen.getByText(/과거 실행 2건의 사용량을 합산/)).toBeTruthy()
+    expect(screen.queryByText(/예약 기록이 없는 과거 모델 실행/)).toBeNull()
+  })
+
   it('새 호출의 답변 작업을 표시하고 과거 호출의 사례를 추정하지 않는다', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json({ ...detail, calls: [
       { ...detail.calls[0], operation_id: 'answer:TC01' },
@@ -100,7 +152,7 @@ describe('관리자 예산 장부', () => {
     fireEvent.click(await screen.findByRole('button', { name: '예약 다음' }))
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2))
     expect(fetch.mock.calls[1][0]).toBe('/api/v1/ops/budget/reservations?page=2')
-    expect(await screen.findByText(/총계는 전체 예약 기준/)).toBeTruthy()
+    expect(await screen.findByText(/총계는 전체 예약과 검토 후 반영한 과거 사용량 기준/)).toBeTruthy()
     expect(screen.getByRole('button', { name: '예약 다음' })).toHaveProperty('disabled', true)
   })
 
