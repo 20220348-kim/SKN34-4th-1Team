@@ -158,6 +158,9 @@ tag로 대체 이미지를 받거나 다른 아키텍처 이미지로 자동 교
 - 동일 백업·동일 폴더로 재실행하면 데이터를 쓰지 않고 검증 후 ALREADY_RESTORED를 반환한다.
   대상 데이터 변경, 다른 백업, 중간 실패의 폴더는 덮어쓰지 않는다. 별도 새 폴더로 재시도하고
   실패 프로젝트는 확인 후 정리한다. 중간 실패를 자동 삭제하거나 부분 덮어쓰기로 이어가지 않는다.
+  검증 후 복원 MySQL을 중지했다면 해당 복원 폴더의 compose.json으로
+  `docker compose -f /absolute/private/ops-restored-e01/compose.json up -d ops-mysql`을 실행하고
+  DB가 준비된 뒤 같은 restore 명령을 다시 실행한다. 이때 API는 시작하지 않는다.
 - 복원한 compose.json에는 새 DB 자격증명과 기존 사용량 영수증 검증 키가 들어 있어
   폴더 0700·파일 0600으로 보관한다. 키·백업·복원 폴더는 Git에 넣지 않는다.
 - **Ops API·sync·runner는 자동 시작하지 않는다.** 유료/정기 실행은 false이며 Core·Prefect·
@@ -175,6 +178,8 @@ tag로 대체 이미지를 받거나 다른 아키텍처 이미지로 자동 교
 가상 데이터**의 실제 MySQL 8.4 복원과 Django ORM 읽기이며 기존 환경을 선택하지 않는다.
 둘째 명령은 --ops-image 옵션으로 로컬 이미지를 지정할 수 있고 생략하면 checkout에서 빌드한다.
 두 검증은 ops-ci.yml에 연결되어 있다. 실제 E01 백업/복원·관리자 브라우저 연결 검증과 구분한다.
+2026-10-04에 실제 검토된 E01의 암호화 백업·격리 복원·SELECT 전용 조회·반복 복원 검증을
+완료했다. 범위와 남은 인증 연결은 [후속 개발 기록](llmops-next-development-plan.md)에 정리했다.
 
     python3 -B -m unittest discover -s infrastructure/llmops -p test_ops_snapshot.py
     python3 -B infrastructure/llmops/check_ops_snapshot.py

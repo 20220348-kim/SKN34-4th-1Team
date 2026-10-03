@@ -35,10 +35,10 @@ NOW = datetime(2026, 10, 3, 0, 0, tzinfo=UTC)  # 서울 09:00
 
 class ScheduleFixture(ReviewFixture):
     def setUp(self):
-        super().setUp()
         clock = patch("django.utils.timezone.now", return_value=NOW)
         self.now = clock.start()
         self.addCleanup(clock.stop)
+        super().setUp()
         dispatch = patch(
             "apps.evaluations.prefect_client.create_run", side_effect=lambda _: uuid4()
         )
@@ -58,6 +58,8 @@ class ScheduleFixture(ReviewFixture):
             reserved_input_tokens=0,
             reserved_output_tokens=0,
             closed_at=NOW,
+            # 모델의 default=timezone.now는 import 때 함수를 보관하므로 patch를 따르지 않는다.
+            created_at=NOW,
         )
         self.daily = EvaluationDailyBudget.objects.create(
             budget=self.budget,
@@ -132,6 +134,17 @@ class ScheduleTests(ScheduleFixture, TestCase):
                 response = self.client.post(URL, self.payload(**changes), format="json")
                 self.assertEqual(response.status_code, 400, response.json())
         self.assertFalse(EvaluationSchedule.objects.exists())
+
+    def test_future_reservation_blocks_schedule_without_dispatch(self):
+        EvaluationBudgetReservation.objects.filter(run=self.run).update(
+            created_at=NOW + timedelta(days=1)
+        )
+        response = self.client.post(URL, self.payload(), format="json")
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["code"], "SCHEDULE_BUDGET_UNAVAILABLE")
+        self.assertFalse(EvaluationSchedule.objects.exists())
+        self.assertFalse(EvaluationScheduleOccurrence.objects.exists())
+        self.dispatch.assert_not_called()
 
     def test_disabled_missing_baseline_or_daily_budget_prevents_creation(self):
         with override_settings(LLMOPS_SCHEDULES_ENABLED=False):

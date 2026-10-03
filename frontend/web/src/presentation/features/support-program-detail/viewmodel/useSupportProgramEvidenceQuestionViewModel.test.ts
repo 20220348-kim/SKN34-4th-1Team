@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
+import { useLayoutEffect, useRef } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { supportPrograms } from '../../../../data/fixtures/supportPrograms'
@@ -23,6 +24,22 @@ afterEach(() => {
 })
 
 describe('useSupportProgramEvidenceQuestionViewModel', () => {
+  it('preserves a question selected immediately after the panel mounts without sending it', () => {
+    const execute = vi.fn()
+    const useCase = createEvidenceQuestionUseCase(execute)
+    const { result } = renderHook(() => {
+      const model = useSupportProgramEvidenceQuestionViewModel(getIdentity(), useCase)
+      const selectInitialQuestion = useRef(model.updateQuestion)
+      // 첫 화면의 입력이 반영된 뒤 늦은 mount effect가 실행되는 순서를 재현합니다.
+      useLayoutEffect(() => { selectInitialQuestion.current('지원 대상이 어떻게 되나요?') }, [])
+      return model
+    })
+
+    expect(result.current.question).toBe('지원 대상이 어떻게 되나요?')
+    expect(result.current.canSubmit).toBe(true)
+    expect(execute).not.toHaveBeenCalled()
+  })
+
   it('times out a stalled question, preserves its input, and ignores the old answer after a manual retry', async () => {
     vi.useFakeTimers()
     const pending = deferredEvidenceResult()
@@ -208,7 +225,10 @@ describe('useSupportProgramEvidenceQuestionViewModel', () => {
     expect(result.current.state.status).toBe('answered')
   })
 
-  it('aborts a question when the selected program changes and ignores the stale response', async () => {
+  it.each([
+    { sourceCode: supportPrograms[0].sourceCode, sourceProgramId: 'another-program' },
+    { sourceCode: 'KSTARTUP', sourceProgramId: supportPrograms[0].id },
+  ])('aborts when the program changes to %j and ignores the stale response', async (nextIdentity) => {
     const pending = deferredEvidenceResult()
     let requestSignal: AbortSignal | undefined
     const execute = vi.fn((_command: unknown, signal?: AbortSignal) => {
@@ -230,12 +250,11 @@ describe('useSupportProgramEvidenceQuestionViewModel', () => {
     })
     await waitFor(() => expect(execute).toHaveBeenCalledOnce())
 
-    rerender({
-      identity: {
-        sourceCode: supportPrograms[1].sourceCode,
-        sourceProgramId: supportPrograms[1].id,
-      },
-    })
+    rerender({ identity: { ...getIdentity() } })
+    expect(requestSignal?.aborted).toBe(false)
+    expect(result.current.question).toBe('신청 대상은 누구인가요?')
+
+    rerender({ identity: nextIdentity })
     expect(requestSignal?.aborted).toBe(true)
 
     pending.resolve(answerResult())
