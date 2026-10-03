@@ -16,6 +16,8 @@ export type ReviewPage<T> = { items: T[]; nextBeforeId: number | null }
 export type RunRequest = { expectedRevision: number; requestKey: string; additionalFacts: string }
 export type RunStatus = 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'INTERRUPTED' | 'UNKNOWN'
 export type RunSummary = { id: number; inputRevision: number; status: RunStatus; failureCode: string | null; startedAt: string; finishedAt: string | null }
+/** 목록 행입니다. latestRun은 가장 최근에 접수한 실행이며 실행 전이면 null입니다. */
+export type ReviewListItem = ReviewSummary & { latestRun: RunSummary | null }
 export type ReviewRun = RunSummary & {
   reviewId: number; requestKey: string
   input: ReviewDraft & { additionalFacts: string; asOfDate: string }

@@ -25,6 +25,7 @@ import {
   helpAnswer,
   isAnswerEditorScreen,
   isAssistantHiddenOn,
+  isReviewStepScreen,
   isComposerScreen,
   loginBenefitsAnswer,
   loginPromptAnswer,
@@ -267,7 +268,7 @@ export function useAssistantViewModel(
 
   return {
     isHidden: isAssistantHiddenOn(pathname),
-    isLifted: isComposerScreen(pathname),
+    isLifted: isComposerScreen(pathname) || isReviewStepScreen(pathname),
     /** 답변 입력 화면: 600px 미만에서만 아래 이동 바 위로 올리고, 항목 목록 시트 · 문서 메뉴가 열린 동안 숨깁니다. */
     isAnswerEditor: isAnswerEditorScreen(pathname),
     isOpen,

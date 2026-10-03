@@ -1,7 +1,7 @@
-import type { CombinationReview, ReviewDraft, ReviewPage, ReviewSummary, ReviewRun, RunRequest, RunSummary } from '../entities/CombinationReview'
+import type { CombinationReview, ReviewDraft, ReviewListItem, ReviewPage, ReviewRun, RunRequest, RunSummary } from '../entities/CombinationReview'
 
 export interface CombinationReviewRepository {
-  list(beforeId?: number, signal?: AbortSignal): Promise<ReviewPage<ReviewSummary>>
+  list(beforeId?: number, signal?: AbortSignal): Promise<ReviewPage<ReviewListItem>>
   get(id: number, signal?: AbortSignal): Promise<CombinationReview>
   create(draft: ReviewDraft, signal?: AbortSignal): Promise<CombinationReview>
   delete(id: number, signal?: AbortSignal): Promise<void>

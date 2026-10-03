@@ -15,9 +15,11 @@ export const reviewProgramSchema = z.object({
 const programs = z.array(reviewProgramSchema).min(2).max(3)
 export const reviewSummarySchema = z.object({ id, title: z.string(), inputRevision: id, createdAt: time, updatedAt: time })
 export const reviewSchema = reviewSummarySchema.extend({ programs })
-export const reviewPageSchema = z.object({ items: z.array(reviewSummarySchema).max(50), nextBeforeId: id.nullable() })
 export const runRequestSchema = z.object({ expectedRevision: id, requestKey: z.string().regex(/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/), additionalFacts: z.string().max(8000) })
 export const runSummarySchema = z.object({ id, inputRevision: id, status: z.enum(['QUEUED', 'RUNNING', 'SUCCEEDED', 'FAILED', 'INTERRUPTED', 'UNKNOWN']), failureCode: z.string().nullable(), startedAt: time, finishedAt: time.nullable() })
+// 목록 행에는 가장 최근 실행 요약이 붙는다. 실행 전이면 null이며, 이 필드가 없던 서버 응답도 실행 정보 없음으로 읽는다.
+export const reviewListItemSchema = reviewSummarySchema.extend({ latestRun: runSummarySchema.nullable().optional().transform((run) => run ?? null) })
+export const reviewPageSchema = z.object({ items: z.array(reviewListItemSchema).max(50), nextBeforeId: id.nullable() })
 export const runPageSchema = z.object({ items: z.array(runSummarySchema).max(50), nextBeforeId: id.nullable() })
 export const runSchema = runSummarySchema.extend({
   reviewId: id, requestKey: runRequestSchema.shape.requestKey,

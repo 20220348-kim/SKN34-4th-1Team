@@ -19,7 +19,7 @@ interface CombinationReviewMapper {
         @Param("ownerAccountId") ownerAccountId: Long,
         @Param("beforeId") beforeId: Long?,
         @Param("limit") limit: Int,
-    ): List<CombinationReviewDbRow>
+    ): List<CombinationReviewListDbRow>
 
     fun findPrograms(
         @Param("ownerAccountId") ownerAccountId: Long,
