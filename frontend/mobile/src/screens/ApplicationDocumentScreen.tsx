@@ -4,7 +4,7 @@ import { useFocusEffect } from 'expo-router'
 import * as Clipboard from 'expo-clipboard'
 import * as Crypto from 'expo-crypto'
 import type { ApplicationPreparation, ApplicationDocument, ApplicationDocumentGenerationJob } from '@govbiz/shared/domain/entities/ApplicationPreparation'
-import { generationStages, generationFailureTitle, failureGroupOf } from '@govbiz/shared/domain/entities/ApplicationDocumentGeneration'
+import { generationStages, generationFailureTitle, failureGroupOf, isWritableApplicationAnswer } from '@govbiz/shared/domain/entities/ApplicationDocumentGeneration'
 import { ApplicationPreparationError } from '@govbiz/shared/domain/errors/ApplicationPreparationError'
 import { useAuth } from '../auth/session'
 import { applicationPreparationUseCase } from '../api/applicationPreparation'
@@ -37,10 +37,22 @@ function OwnedDocuments({ id, jobId, token, email, onEditor, onReanalyze, onOnli
   const [migrationOpen, setMigrationOpen] = useState(false)
   const [approved, setApproved] = useState(false)
   const action = useRef<AbortController | null>(null)
+  const downloadWork = useRef<AbortController | null>(null)
+  const focused = useRef(false)
   const mounted = useRef(true)
   const locked = useRef(false)
   const base = getApiBaseUrl(), owner = `${base}:${email}`
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; action.current?.abort() } }, [])
+  useFocusEffect(useCallback(() => {
+    focused.current = true
+    return () => {
+      focused.current = false
+      if (downloadWork.current) {
+        downloadWork.current.abort(); downloadWork.current = null
+        locked.current = false; setBusy(null)
+      }
+    }
+  }, []))
   const reportError = useCallback((cause: unknown) => {
     if (cause instanceof ApplicationPreparationError && cause.status === 401) void invalidateSession().catch(() => undefined)
     setError(cause instanceof Error ? cause.message : '문서 결과를 확인하지 못했어요.')
@@ -71,20 +83,25 @@ function OwnedDocuments({ id, jobId, token, email, onEditor, onReanalyze, onOnli
     return () => { controller.abort(); clearTimeout(timer) }
   }, [id, jobId, revision, useCase, base, email, reportError]))
   async function download(file: ApplicationDocument | null, targetRevision?: number, mode: 'save' | 'share' = 'share') {
-    if (locked.current || !preparation) return
+    if (locked.current || !preparation || !focused.current) return
     locked.current = true; setBusy(file ? String(file.id) : 'archive'); setError(null)
-    const controller = new AbortController(); action.current = controller
+    const controller = new AbortController(); downloadWork.current = controller
     try {
       const blob = file ? await useCase.downloadDocument(id, file.id, controller.signal) : await useCase.downloadDocumentArchive(id, targetRevision!, controller.signal)
       if (file && blob.size !== file.size) throw new Error('문서 크기가 저장된 결과와 다릅니다. 다시 확인해 주세요.')
-      if (controller.signal.aborted || !mounted.current) return
+      if (controller.signal.aborted || !mounted.current || !focused.current) return
       const extensions: Record<string, string> = { 'application/pdf': 'pdf', 'application/x-hwp': 'hwp', 'application/hwp+zip': 'hwpx', 'application/zip': 'zip',
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx' }
       const extension = extensions[blob.type.split(';')[0]]
       if (!file && !extension) throw new Error('묶음 내려받기의 파일 형식을 확인하지 못했어요.')
-      await shareApplicationFile(owner, blob, file?.fileName ?? `신청문서-${id}-답변${targetRevision}.${extension}`, () => mounted.current && !controller.signal.aborted, controller.signal, mode)
+      await shareApplicationFile(owner, blob, file?.fileName ?? `신청문서-${id}-답변${targetRevision}.${extension}`, () => mounted.current && focused.current && !controller.signal.aborted, controller.signal, mode)
     } catch (cause) { if (!controller.signal.aborted) reportError(cause) }
-    finally { locked.current = false; if (!controller.signal.aborted && mounted.current) setBusy(null) }
+    finally {
+      if (downloadWork.current === controller) {
+        downloadWork.current = null; locked.current = false
+        if (!controller.signal.aborted && mounted.current) setBusy(null)
+      }
+    }
   }
   async function generate() {
     if (locked.current || !preparation || job && (running(job) || job.status === 'UNKNOWN')) return
@@ -124,10 +141,12 @@ function OwnedDocuments({ id, jobId, token, email, onEditor, onReanalyze, onOnli
   const isRunning = Boolean(job && running(job)), unknown = job?.status === 'UNKNOWN'
   const group = job ? failureGroupOf(job) : null
   const missingRequired = preparation.form.sections.flatMap(section => section.fields.filter(field => field.required && field.documentWritable !== false && !section.facts.some(fact => fact.fieldKey === field.key)))
-  const writableAnswers = preparation.form.sections.reduce((count, section) => count + section.facts.filter(fact => section.fields.some(field => field.key === fact.fieldKey && field.documentWritable !== false)).length, 0)
-  const canGenerate = !loading && !busy && !isRunning && !unknown && !currentFiles.length &&
-    !missingRequired.length && writableAnswers > 0 &&
-    (!job || job.expectedRevision !== preparation.inputRevision || approved || job.status === 'FAILED' && group === 'temporary' || Boolean(pending))
+  const writableAnswers = preparation.form.sections.reduce((count, section) => count + section.fields.filter(field =>
+    isWritableApplicationAnswer(field, section.facts.find(fact => fact.fieldKey === field.key && fact.status === 'PROVIDED')?.value)).length, 0)
+  const recoveringRequest = pending?.kind === 'document' && pending.preparationId === id
+  const canGenerate = !loading && !busy && !isRunning && !unknown && (recoveringRequest ||
+    !currentFiles.length && !missingRequired.length && writableAnswers > 0 &&
+    (!job || job.expectedRevision !== preparation.inputRevision || approved || job.status === 'FAILED' && group === 'temporary'))
   const renderFile = (file: ApplicationDocument) => <Card key={file.id}><Text style={styles.heading}>{file.fileName}</Text><Text style={styles.muted}>{Math.ceil(file.size / 1024)} KB · 답변 버전 {file.inputRevision}</Text>
     {file.filledAnswerCount !== null && <Text style={styles.muted}>자동 기입 {file.filledAnswerCount}개 · 직접 작성 필요 {file.unfilledAnswerCount}개</Text>}
     {(file.remainingExampleCount ?? 0) > 0 && <Notice>직접 작성할 칸 {file.remainingExampleCount}곳에 예시 문구가 남아 있어요. 제출 전에 지워 주세요.</Notice>}

@@ -5,6 +5,7 @@ import { usePreventRemove } from 'expo-router/react-navigation'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import * as Crypto from 'expo-crypto'
 import { ApplicationPreparationError } from '@govbiz/shared/domain/errors/ApplicationPreparationError'
+import { isWritableApplicationAnswer } from '@govbiz/shared/domain/entities/ApplicationDocumentGeneration'
 import { useAuth } from '../auth/session'
 import { readPendingPreparation, savePendingPreparation, clearPendingPreparation } from '../auth/preparationPending'
 import { applicationPreparationUseCase } from '../api/applicationPreparation'
@@ -43,7 +44,7 @@ function OwnedEditor({ token, email, id, reviewing, initialQuestion, onReview, o
     void vm.flush().then(saved => { if (saved) navigation.dispatch(data.action); else Alert.alert('답변을 먼저 저장해 주세요', '입력한 내용은 이 화면에 남아 있어요. 저장 상태를 확인한 뒤 다시 이동해 주세요.') })
   })
   const missing = questions.filter(question => question.field.required && question.field.documentWritable !== false && !vm.value(question.section, question.field.key).trim())
-  const writableAnswers = questions.filter(question => question.field.documentWritable !== false && vm.value(question.section, question.field.key).trim()).length
+  const writableAnswers = questions.filter(question => isWritableApplicationAnswer(question.field, vm.value(question.section, question.field.key))).length
   const unknown = questions.filter(question => vm.value(question.section, question.field.key).trim() === '미정').length
   async function move(target: number | 'review') {
     if (!await vm.flush()) return
@@ -94,7 +95,7 @@ function OwnedEditor({ token, email, id, reviewing, initialQuestion, onReview, o
       {actionError && <Notice error>{actionError}</Notice>}
       {reviewing ? <>
         <Text style={styles.title}>답변을 마지막으로 확인해 주세요</Text>
-        <Notice>{missing.length ? `필수 답변 ${missing.length}개가 비어 있어요.` : `필수 답변을 저장했어요. 미정인 답변 ${unknown}개는 문서에도 미정으로 표시돼요.`}</Notice>
+        <Notice>{missing.length ? `필수 답변 ${missing.length}개가 비어 있어요.` : `필수 답변을 저장했어요. 미정인 답변 ${unknown}개는 자동으로 기입하지 않아요.`}</Notice>
         {questions.map(question => <Card key={question.key}><Text style={styles.heading}>{question.field.label}</Text><Text style={styles.muted}>{vm.value(question.section, question.field.key) || '아직 답변하지 않았어요.'}</Text>
           {question.field.documentWritable === false && <Notice>이 답변은 원본 파일에서 직접 작성해야 해요.</Notice>}
           <Button label="수정" accessibilityLabel={`${question.field.label} 수정`} variant="ghost" disabled={blocked} onPress={() => { void vm.flush().then(saved => { if (saved) onEditor(question.key) }) }} /></Card>)}

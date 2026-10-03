@@ -111,6 +111,29 @@ test('unknown generation offers a read-only recovery and never automatic paid re
   expect(screen.queryByLabelText('초안 만들기')).toBeNull()
 })
 
+test('undecided saved facts do not enable document generation', async () => {
+  const undecided = { ...documentPreparation, form: { ...documentForm, sections: documentForm.sections.map(section => ({ ...section,
+    facts: section.facts.map(fact => ({ ...fact, status: 'UNKNOWN', value: null })),
+  })) } }
+  api.get.mockResolvedValue(undecided); api.documents.mockResolvedValue([]); api.documentJobs.mockResolvedValue([])
+  render(<ApplicationDocumentScreen {...docProps} />)
+  await screen.findByText('초안을 만들기 전에 작성할 답변을 저장하고 필수 항목을 확인해 주세요.')
+  expect(screen.queryByLabelText('초안 만들기')).toBeNull()
+  expect(api.submitDocumentJob).not.toHaveBeenCalled()
+})
+
+test('undecided current answers still allow confirming the same previously stored request', async () => {
+  const requestKey = '11111111-1111-4111-8111-111111111111'
+  jest.mocked(readPendingPreparation).mockResolvedValue({ kind: 'document', preparationId: 9, expectedRevision: 1, requestKey })
+  api.get.mockResolvedValue({ ...documentPreparation, inputRevision: 2, form: { ...documentForm, sections: documentForm.sections.map(section => ({ ...section,
+    facts: section.facts.map(fact => ({ ...fact, status: 'UNKNOWN', value: null })),
+  })) } })
+  api.documents.mockResolvedValue([]); api.documentJobs.mockResolvedValue([]); api.submitDocumentJob.mockResolvedValue(documentJob)
+  render(<ApplicationDocumentScreen {...docProps} />)
+  fireEvent.press(await screen.findByLabelText('같은 생성 요청으로 확인'))
+  await waitFor(() => expect(api.submitDocumentJob).toHaveBeenCalledWith(9, 1, expect.any(AbortSignal), requestKey))
+})
+
 test('current generated documents retain overflow guidance and remaining examples for manual completion', async () => {
   api.documents.mockResolvedValue([{ ...documentFile, filledAnswerCount: 1, unfilledAnswerCount: 1, remainingExampleCount: 2,
     unfilledAnswers: [{ fieldId: 'company:goal', fieldLabel: '추진 목표', value: '길어서 들어가지 않은 목표', reason: 'OVERFLOW', capacity: 12 }] }])
