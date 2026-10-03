@@ -4,6 +4,9 @@ import { partnerProposalBoxDtoSchema, partnerProposalDtoSchema,
   toPartnerProposal, toPartnerProposalBoxPage } from '@govbiz/shared/data/models/PartnerProposalDto'
 import type { PartnerRecruitmentQuery } from '@govbiz/shared/domain/entities/PartnerRecruitmentQuery'
 import { partnerRecruitmentPageSize } from '@govbiz/shared/domain/entities/PartnerRecruitmentQuery'
+import type { PartnerRecruitmentInput } from '@govbiz/shared/domain/entities/PartnerRecruitment'
+import type { CreatePartnerRecruitmentResult } from '@govbiz/shared/domain/repositories/PartnerRecruitmentRepository'
+import { CreatePartnerRecruitmentUseCase } from '@govbiz/shared/domain/usecases/PartnerRecruitmentUseCases'
 import type { PartnerProposalBox, PartnerProposalInput } from '@govbiz/shared/domain/entities/PartnerProposal'
 import type { PartnerProposalAction } from '@govbiz/shared/domain/repositories/PartnerProposalRepository'
 import { apiRequest, ApiError, errorMessage } from './client'
@@ -28,6 +31,32 @@ export async function getRecruitment(id: number, token?: string, signal?: AbortS
   return toPartnerRecruitment(partnerRecruitmentDtoSchema.parse(
     await apiRequest(`${recruitments}/${id}`, { accessToken: token, signal }),
   ))
+}
+
+/** Shared input rules run before the Bearer request; DTO mapping and API failures stay at this boundary. */
+export function createRecruitment(input: PartnerRecruitmentInput, token: string, signal?: AbortSignal) {
+  const useCase = new CreatePartnerRecruitmentUseCase({
+    async create(value, requestSignal): Promise<CreatePartnerRecruitmentResult> {
+      try {
+        const recruitment = toPartnerRecruitment(partnerRecruitmentDtoSchema.parse(
+          await apiRequest(recruitments, { method: 'POST', body: value, accessToken: token, signal: requestSignal }),
+        ))
+        if (recruitment.program.sourceCode !== value.sourceCode || recruitment.program.sourceProgramId !== value.sourceProgramId
+          || !recruitment.isMine) throw new Error('작성한 모집글과 응답이 다릅니다.')
+        return { outcome: 'created', recruitment }
+      } catch (cause) {
+        if (cause instanceof ApiError) {
+          if (cause.code === 'COMPANY_REQUIRED' || cause.code === 'ACTIVE_BUSINESS_REQUIRED') return { outcome: 'company-required' }
+          if (cause.code === 'RECRUITMENT_PROGRAM_NOT_FOUND') return { outcome: 'program-not-found' }
+          if (cause.code === 'RECRUITMENT_PROGRAM_CLOSED') return { outcome: 'program-closed' }
+          if (cause.code === 'RECRUITMENT_DEADLINE_NOT_ALLOWED') return { outcome: 'deadline-not-allowed', latestAllowedDeadline: null }
+          if (cause.code === 'RECRUITMENT_ALREADY_EXISTS') return { outcome: 'already-exists' }
+        }
+        throw cause
+      }
+    },
+  })
+  return useCase.execute(input, signal)
 }
 
 export async function closeRecruitment(id: number, token: string, signal?: AbortSignal) {

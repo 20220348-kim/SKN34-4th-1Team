@@ -1,7 +1,6 @@
 import { useLoginFlow } from '../../../src/auth/loginFlow'
-import { Alert, Linking, Pressable } from 'react-native'
+import { Pressable } from 'react-native'
 import { useLocalSearchParams, useRouter } from 'expo-router'
-import { getPartnerWebUrl, partnerErrorMessage } from '../../../src/api/partners'
 import { useAuth } from '../../../src/auth/session'
 import { AppIcon } from '../../../src/components/AppIcon'
 import { CollaborationScreen } from '../../../src/screens/CollaborationScreen'
@@ -23,14 +22,17 @@ export default function CollaborationRoute() {
 export function CollaborationHeaderAction() {
   const router = useRouter()
   const requestLogin = useLoginFlow()
-  const { session } = useAuth()
-  async function openCreate() {
-    if (!session) { requestLogin({ message: '로그인하고 기업 정보를 확인한 뒤 모집글을 작성할 수 있어요.' }); return }
-    if (session.account.company?.businessStatusCode !== '01') { router.push('/(tabs)/all/company'); return }
-    try { await Linking.openURL(getPartnerWebUrl('/app/partners/new')) }
-    catch (cause) { Alert.alert('모집글 작성 화면을 열지 못했습니다', partnerErrorMessage(cause)) }
+  const { status } = useAuth()
+  function openCreate() {
+    requestLogin({ message: '로그인하고 기업 정보를 확인한 뒤 모집글을 작성할 수 있어요.',
+      onAuthenticated: (verified) => {
+        if (verified.account.company?.businessStatusCode !== '01') { router.push('/(tabs)/all/company'); return }
+        router.push('/partner/new')
+      } })
   }
-  return <Pressable accessibilityRole="button" accessibilityLabel="모집글 작성" onPress={() => void openCreate()}
+  return <Pressable accessibilityRole="button" accessibilityLabel="모집글 작성" onPress={openCreate}
+    disabled={status === 'loading' || status === 'unavailable'}
+    accessibilityState={{ disabled: status === 'loading' || status === 'unavailable' }}
     style={{ minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' }}>
     <AppIcon name="pencil" color={colors.secondaryText} size={20} />
   </Pressable>

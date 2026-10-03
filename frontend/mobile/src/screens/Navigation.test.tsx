@@ -31,6 +31,7 @@ import PreparationEditorRoute from '../../app/(tabs)/all/preparation/[id]'
 import PreparationReviewRoute from '../../app/(tabs)/all/preparation/[id]/review'
 import PreparationDocumentRoute from '../../app/(tabs)/all/preparation/[id]/documents'
 import PreparationOnlineRoute from '../../app/(tabs)/all/preparation/[id]/online'
+import RecruitmentCreateRoute from '../../app/partner/new'
 
 jest.mock('../auth/session', () => ({ useAuth: jest.fn() }))
 jest.mock('../api/client', () => ({ ...jest.requireActual('../api/client'), programClient: jest.fn() }))
@@ -55,6 +56,7 @@ const routes = {
   '(tabs)/all/preparation/[id]/review': PreparationReviewRoute, '(tabs)/all/preparation/[id]/documents': PreparationDocumentRoute,
   '(tabs)/all/preparation/[id]/online': PreparationOnlineRoute,
   '(tabs)/all/reviews/index': ReviewListRoute, '(tabs)/all/reviews/new': NewReviewRoute, '(tabs)/all/reviews/[id]': ReviewRoute,
+  'partner/new': RecruitmentCreateRoute,
 }
 
 beforeEach(() => {
@@ -82,6 +84,28 @@ test('the root introduction mounts the actual navigator only after choosing publ
 const tabLabels = () => screen.getAllByLabelText(/^(검색|협업|관심함|리포트|전체)$/).map(tab => tab.props.accessibilityLabel)
 const memberAuth = { status: 'signedIn', session: { accessToken: 'owner', account: { email: 'member@example.com', company: null } },
   restoreError: null, invalidateSession: jest.fn().mockResolvedValue(undefined) } as unknown as ReturnType<typeof useAuth>
+
+test.each(['recruitments', 'box'])('the existing collaboration pencil opens the native form from %s and returns to the same view', async (viewMode) => {
+  jest.mocked(useAuth).mockReturnValue({ ...memberAuth, session: { ...memberAuth.session!, account: {
+    ...memberAuth.session!.account, company: { companyName: '등록 기업', businessNumber: '1234567890', businessStatusCode: '01' },
+  } } })
+  const view = renderRouter(routes, { initialUrl: `/all/collab?view=${viewMode}&box=sent` })
+  await screen.findByLabelText('모집글 작성')
+  fireEvent.press(screen.getByLabelText('모집글 작성'))
+  await screen.findByLabelText('모집글 제목 *')
+  expect(view.getPathname()).toBe('/partner/new')
+  fireEvent.press(screen.getByLabelText('취소'))
+  await waitFor(() => expect(view.getPathname()).toBe('/all/collab'))
+  expect(view.getSearchParams()).toMatchObject({ view: viewMode, box: 'sent' })
+})
+
+test('the collaboration pencil requires company registration before opening the native creation form', async () => {
+  jest.mocked(useAuth).mockReturnValue(memberAuth)
+  const view = renderRouter(routes, { initialUrl: '/all/collab' })
+  fireEvent.press(await screen.findByLabelText('모집글 작성'))
+  await waitFor(() => expect(view.getPathname()).toBe('/all/company'))
+  expect(screen.queryByLabelText('모집글 제목 *')).toBeNull()
+})
 
 test('guests have exactly search, collaboration and All and browse public recruitment without private calls', async () => {
   const view = renderRouter(routes, { initialUrl: '/' })
