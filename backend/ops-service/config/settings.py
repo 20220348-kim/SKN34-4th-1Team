@@ -69,6 +69,7 @@ LLMOPS_ARTIFACT_TOKEN = env("LLMOPS_ARTIFACT_TOKEN", default="")
 LLMOPS_BUDGET_TOKEN = env("LLMOPS_BUDGET_TOKEN", default="")
 LLMOPS_LIVE_ENABLED = env.bool("LLMOPS_LIVE_ENABLED", default=False)
 LLMOPS_RAG_LIVE_ENABLED = env.bool("LLMOPS_RAG_LIVE_ENABLED", default=False)
+LLMOPS_SCHEDULES_ENABLED = env.bool("LLMOPS_SCHEDULES_ENABLED", default=False)
 LLMOPS_RESULTS_DIR = Path(
     env("LLMOPS_RESULTS_DIR", default=str(BASE_DIR.parent.parent / "work/llmops-ops"))
 ).resolve()

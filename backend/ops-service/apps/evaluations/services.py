@@ -49,6 +49,7 @@ def submit_run(
     confirm_paid_run=False,
     baseline_version=None,
     execution_profile=None,
+    schedule_occurrence_id=None,
 ):
     config = live_config or {}
 
@@ -99,6 +100,25 @@ def submit_run(
                 raise ResultsUnavailable
 
     with transaction.atomic():
+        occurrence = None
+        if schedule_occurrence_id is not None:
+            from .schedules import lock_occurrence
+
+            occurrence = lock_occurrence(
+                schedule_occurrence_id,
+                user,
+                request_id,
+                {
+                    "dataset_id": dataset_id,
+                    "candidate_capture_id": candidate_capture_id,
+                    "reference_capture_id": reference_capture_id,
+                    "execution_mode": execution_mode,
+                    "live_config": config,
+                    "confirm_paid_run": confirm_paid_run,
+                    "baseline_version": baseline_version,
+                    "execution_profile": execution_profile,
+                },
+            )
         baseline = lock_baseline(dataset_id)
         existing = EvaluationRun.objects.filter(pk=request_id).first()
         if existing:
@@ -180,6 +200,15 @@ def submit_run(
             # Acquire only after reference/artifact checks. Pause must not wait
             # for their HTTP reads; committing a new row still holds this lock.
             require_open(lock_admission())
+            if occurrence is not None:
+                from .schedules import (
+                    require_budget,
+                    require_previous_finished,
+                    required_capacity,
+                )
+
+                require_previous_finished(dataset_id)
+                require_budget(required_capacity(occurrence.schedule.request))
             run, created = EvaluationRun.objects.get_or_create(
                 id=request_id,
                 defaults={
@@ -198,7 +227,11 @@ def submit_run(
                 },
             )
             check_request(run)
-            reserve(run)
+            reserve(run, scheduled_on=occurrence.scheduled_on if occurrence else None)
+            if occurrence is not None:
+                occurrence.run = run
+                occurrence.status = "SUBMITTED"
+                occurrence.save(update_fields=["run", "status", "updated_at"])
     # 외부 전송은 기준 검증과 접수를 커밋한 다음 수행한다.
     return dispatch_run(run), created
 

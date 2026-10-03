@@ -84,6 +84,87 @@ class EvaluationRun(models.Model):
         ordering = ["-created_at"]
 
 
+class EvaluationSchedule(models.Model):
+    """관리자가 승인한 유한 기간의 일별 계획. 조건 변경은 새 계획으로 남긴다."""
+
+    id = models.UUIDField(primary_key=True, editable=False)
+    dataset_id = models.CharField(max_length=100)
+    active_dataset = models.CharField(max_length=100, null=True, unique=True)
+    requested_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    request = models.JSONField()
+    max_usage = models.JSONField()
+    daily_at = models.TimeField()
+    starts_on = models.DateField()
+    ends_on = models.DateField()
+    reason = models.CharField(max_length=500)
+    created_at = models.DateTimeField(auto_now_add=True)
+    paused_at = models.DateTimeField(null=True)
+    paused_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, related_name="+", on_delete=models.PROTECT
+    )
+    pause_request_id = models.UUIDField(null=True, unique=True)
+    pause_reason = models.CharField(max_length=500, blank=True)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(ends_on__gte=models.F("starts_on")),
+                name="schedule_valid_dates",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        active_dataset=models.F("dataset_id"),
+                        active_dataset__isnull=False,
+                        paused_at__isnull=True,
+                        paused_by__isnull=True,
+                        pause_request_id__isnull=True,
+                        pause_reason="",
+                    )
+                    | (
+                        models.Q(
+                            active_dataset__isnull=True,
+                            paused_at__isnull=False,
+                            paused_by__isnull=False,
+                            pause_request_id__isnull=False,
+                        )
+                        & ~models.Q(pause_reason="")
+                    )
+                ),
+                name="schedule_pause_audit",
+            ),
+        ]
+
+
+class EvaluationScheduleOccurrence(models.Model):
+    # 일정 ID + 서울 날짜로 만든 UUID를 평가 요청 ID로도 사용한다.
+    id = models.UUIDField(primary_key=True, editable=False)
+    schedule = models.ForeignKey(
+        EvaluationSchedule, related_name="occurrences", on_delete=models.PROTECT
+    )
+    scheduled_on = models.DateField()
+    status = models.CharField(max_length=10, default="PENDING")
+    reason_code = models.CharField(max_length=64, blank=True)
+    run = models.OneToOneField(EvaluationRun, null=True, on_delete=models.PROTECT)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["schedule", "scheduled_on"], name="schedule_one_occurrence_per_day"
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(status="SUBMITTED", run__isnull=False, reason_code="")
+                    | models.Q(status="PENDING", run__isnull=True, reason_code="")
+                    | (models.Q(status="BLOCKED", run__isnull=True) & ~models.Q(reason_code=""))
+                ),
+                name="schedule_occurrence_state",
+            ),
+        ]
+
+
 class EvaluationReview(models.Model):
     class Decision(models.TextChoices):
         APPROVED = "APPROVED", "검토 승인"

@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict'
-import { readdir } from 'node:fs/promises'
+import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
 import test from 'node:test'
 import { getOpsSession, listEvaluations } from '../../../frontend/web/src/data/ops/opsApi.ts'
@@ -8,6 +12,29 @@ import { withRestoreProxy } from './ops_restore_proxy.mjs'
 const session = { user: { id: 'core:1', username: 'fixture@example.invalid' }, csrf_token: 'redacted', live_enabled: false, datasets: [] }
 const responses = () => ({ '/api/v1/ops/session': structuredClone(session) })
 const caches = async () => (await readdir(tmpdir())).filter((name) => name.startsWith(`govbiz-restore-proxy-${process.pid}-`)).sort()
+
+test('failed restore subprocess reports a stable stage without exposing captured content', async () => {
+  const folder = await mkdtemp(join(tmpdir(), 'restore-diagnostic-'))
+  const secret = 'private-fixture-value-not-for-logs'
+  try {
+    const path = join(folder, 'responses.json')
+    for (const [body, stage] of [
+      [secret, 'INPUT'],
+      [JSON.stringify({ responses: { '/api/v1/ops/session': { user: secret } }, expected: {}, reports: {}, total_runs: 0 }), 'SESSION'],
+    ]) {
+      await writeFile(path, body)
+      await assert.rejects(promisify(execFile)(process.execPath, [
+        '--experimental-transform-types', fileURLToPath(new URL('./check_ops_restore_ui.mjs', import.meta.url)), path,
+      ], { timeout: 30000 }), (error) => {
+        assert.equal(error.code, 1)
+        assert.ok(error.stderr.includes(`BRIDGE_RESTORE_WEB_${stage}`))
+        assert.ok(!error.stderr.includes(secret))
+        assert.equal(error.stdout, '')
+        return true
+      })
+    }
+  } finally { await rm(folder, { recursive: true, force: true }) }
+})
 
 test('actual Vite proxies queries, cookies, Origin and denials, then closes every listener', async () => {
   const nativeFetch = globalThis.fetch

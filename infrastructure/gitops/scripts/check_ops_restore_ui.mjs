@@ -2,7 +2,7 @@
 // Real Vite and an isolated browser consume captured restore responses.
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
-import { getOpsSession, listEvaluations, getEvaluation, getBudgetReservations, getRunBudget, getEvaluationReview } from '../../../frontend/web/src/data/ops/opsApi.ts'
+import { getOpsSession, listEvaluations, getEvaluation, getBudgetReservations, getRunBudget, getEvaluationReview, getEvaluationSchedules } from '../../../frontend/web/src/data/ops/opsApi.ts'
 
 import { withRestoreProxy } from './ops_restore_proxy.mjs'
 import { checkRestoreBrowser } from './ops_restore_browser.mjs'
@@ -17,6 +17,8 @@ try {
     assert.ok(session.user)
     assert.equal(session.live_enabled, false)
     assert.equal(session.rag_live_enabled, false)
+    stage = 'SCHEDULES'
+    assert.equal((await getEvaluationSchedules()).enabled, false)
     const runs = new Map()
     stage = 'LIST'
     for (let page = 1; page <= Math.ceil(totalRuns / 25); page++) {

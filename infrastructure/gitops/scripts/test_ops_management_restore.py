@@ -48,6 +48,9 @@ class ManagementTests(unittest.TestCase):
         ]
         self.rows.append({"id": "fixture-cancelled"})
         self.routes = {
+            "/api/v1/ops/schedules?page=1": {
+                "enabled": False, "timezone": "Asia/Seoul", "page": 1, "total": 0, "results": []
+            },
             "/api/v1/ops/session": {
                 "user": {"id": "core:1", "username": self.principal["email"]},
                 "csrf_token": "live-test-csrf",
@@ -121,7 +124,7 @@ class ManagementTests(unittest.TestCase):
         self.assertEqual(result["evidence"]["matched_details"], 3)
         self.assertFalse(result["evidence"]["browser_rendered"])
         self.assertNotIn("live-test-csrf", json.dumps(result))
-        self.assertEqual(len(result["responses"]), 12)
+        self.assertEqual(len(result["responses"]), 13)
         for row in self.rows[:3]:
             route = "/api/v1/ops/evaluations/" + row["id"] + "/review"
             self.assertIn((route, "member-token"), self.calls)

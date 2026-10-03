@@ -165,7 +165,7 @@ def reservation_limits(reservation):
     )
 
 
-def reserve(run):
+def reserve(run, *, scheduled_on=None):
     """접수 transaction 안에서 호출한다. DB 한도 잠금은 모든 데이터셋이 공유한다."""
     if run.execution_mode != "live":
         return
@@ -197,9 +197,11 @@ def reserve(run):
         )
     ):
         raise BudgetUnavailable
-    from .daily_budget import require_daily_budget
+    from .daily_budget import day_bounds, require_daily_budget
 
     admitted_at = timezone.now()
+    if scheduled_on is not None and day_bounds(admitted_at)[0].date() != scheduled_on:
+        raise BudgetUnavailable
     require_daily_budget(
         budget,
         run,

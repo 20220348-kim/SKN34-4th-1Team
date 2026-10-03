@@ -6,11 +6,12 @@ from threading import Event
 from django.core.management.base import BaseCommand, CommandError
 from django.db import DatabaseError, close_old_connections
 
+from apps.evaluations.schedules import dispatch_due_schedules
 from apps.evaluations.services import sync_pending_runs
 
 
 class Command(BaseCommand):
-    help = "기존 평가 실행 상태를 동기화합니다. 새 모델 실행을 접수하지 않습니다."
+    help = "평가 상태 동기화. SCHEDULES_ENABLED인 경우 승인된 일별 계획도 접수합니다."
 
     def add_arguments(self, parser):
         parser.add_argument("--watch", action="store_true")
@@ -31,12 +32,15 @@ class Command(BaseCommand):
                 close_old_connections()
                 try:
                     count = sync_pending_runs(batch_size=batch_size, interval_seconds=interval)
+                    scheduled = dispatch_due_schedules()
                 except DatabaseError:
                     raise CommandError("상태 동기화 DB 연결·migration을 확인하세요.") from None
                 finally:
                     close_old_connections()
                 if count or not options["watch"]:
                     self.stdout.write(f"평가 상태 {count}건 확인")
+                if scheduled:
+                    self.stdout.write(f"정기 평가 {scheduled}건 접수 또는 차단")
                 if not options["watch"]:
                     break
                 stopped.wait(interval)

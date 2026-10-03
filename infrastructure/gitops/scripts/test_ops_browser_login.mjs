@@ -93,6 +93,7 @@ async function fixture(defect, verify, count = 1) {
     }
     else if (row) send(reply, 200, row)
     else if (budget) send(reply, 200, { as_of: at, state: 'not_applicable', reservation: null, calls: [] })
+    else if (request.url === '/api/v1/ops/schedules?page=1') send(reply, 200, { enabled: false, timezone: 'Asia/Seoul', page: 1, total: 0, results: [] })
     else if (request.url === '/api/v1/ops/budget/reservations?page=1') send(reply, 200, { as_of: at, count: 0, next: null, previous: null, results: [],
       summary: { state: 'unconfigured', limits: null, allocated: null, remaining: null, breakdown: null, reservation_count: 0, legacy_live_run_count: 0, change_count: 0, recent_changes: [] } })
     else if (report) reply.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'private, no-store', 'Content-Security-Policy': "sandbox allow-scripts; default-src 'none'" }).end(body)

@@ -46,6 +46,7 @@ beforeEach(() => {
   vi.spyOn(crypto, 'randomUUID').mockReturnValue(id)
   fetchMock = vi.fn(async (path: string, _options?: RequestInit) => {
     if (path === '/api/v1/ops/session') return json(session())
+    if (path.startsWith('/api/v1/ops/schedules?')) return json({ enabled: false, timezone: 'Asia/Seoul', page: 1, total: 0, results: [] })
     if (path.startsWith('/api/v1/ops/budget/reservations')) return json({
       as_of: '2026-09-29T00:00:00Z', count: 0, next: null, previous: null, results: [],
       summary: { state: 'unconfigured', limits: null, allocated: null, remaining: null, breakdown: null,
