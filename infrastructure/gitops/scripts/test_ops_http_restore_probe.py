@@ -188,6 +188,18 @@ class ContainerTests(unittest.TestCase):
             "matched_details": 3,
             "listed_run_count": 4,
             "browser_rendered": False,
+            "proxy_http": {
+                "status": "PASS",
+                "mode": "portfolio",
+                "response_source": "captured_restore_http",
+                "routes_verified": True,
+                "credentials_forwarded": True,
+                "unauthorized_status_preserved": True,
+                "outage_rejected": True,
+                "document_served": True,
+                "servers_stopped": True,
+                "browser_rendered": False,
+            },
         }
         self.proof = {
             "status": "PASS",
@@ -264,6 +276,10 @@ class ContainerTests(unittest.TestCase):
             ("status", "FAIL"),
             ("matched_details", 2),
             ("browser_rendered", True),
+            ("proxy_http", None),
+            ("proxy_http", {**self.web_proof["proxy_http"], "servers_stopped": False}),
+            ("proxy_http", {**self.web_proof["proxy_http"], "response_source": "live"}),
+            ("proxy_http", {**self.web_proof["proxy_http"], "outage_rejected": False}),
         ):
             original = self.web_proof[key]
             self.web_proof[key] = value

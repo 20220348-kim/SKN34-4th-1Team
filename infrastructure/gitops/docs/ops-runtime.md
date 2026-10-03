@@ -236,10 +236,15 @@ SQLite WAL·무결성·이력 및 정리 성공을 확인한다. 복원된 결�
 예산 조회에 필요한 행 잠금은 허용하지만 데이터 수정 권한은 주지 않는다. 실제 잠금 성공과
 접수/예산 테이블 UPDATE 거절을 검사하고, 조회 전후 Ops 덤프가 같아야 통과한다.
 DB 관계 검증용 취소 이력에도 등록된 자료·캡처를 사용해 목록 조회가 실패하지 않도록 한다.
-CSRF 토큰을 제거한 실제 응답을 웹의 기존 API 함수·Zod 파서에 재생해 소비자 계약을 검증하고,
-`results.ops_http.management_http`와 `management_web_contract`에 결과를 기록한다.
-응답 임시 파일은 정리하며 최종 보고서에 원문을 넣지 않는다. 실제 브라우저 렌더링·프록시 연결·
-기존 서명 키 복구·기존 세션 연속성은 포함하지 않으며 `browser_rendered=false`로 구분한다.
+CSRF 토큰을 제거한 실제 응답을 loopback 재생 서버에 넣고, 실제 Vite portfolio 프록시를 거쳐
+웹의 기존 API 함수·Zod 파서로 소비자 계약을 검증한다. Core/Ops 경로·Host·Origin·검사용 쿠키 전달과
+401/403·no-store 보존, Ops 재생 서버 종료 시 502 오류를 확인한다. 기존 5173 포트를 사용하지 않으며
+프로세스 종료 전에 자신이 시작한 서버·임시 캐시·응답 파일을 정리한다.
+`results.ops_http.management_http`와 `management_web_contract`에 결과를 기록하고,
+후자의 `proxy_http.response_source=captured_restore_http`로 응답 재생 범위를 명시한다.
+HTML 진입 문서 제공은 확인하지만 실제 브라우저 렌더링·개인 Kubernetes까지의 전체 연결·
+기존 서명 키 복구·기존 세션 연속성은 포함하지 않는다. `browser_rendered=false`를 유지하며,
+실제 인증·DB·보고서 검사는 앞선 격리 Core/Ops HTTP 검증 결과로 구분한다. 최종 보고서에는 응답 원문을 넣지 않는다.
 같은 이미지의 Prefect API도 격리 기동해
 실행·배포·상태 이력을 재조회하고 종료 후 DB 무변경을 대조한다. 스케줄러·migration·실행기는 시작하지 않는다.
 개인 환경 백업·키 복구·업그레이드 완료를 증명하지 않는다. 세부 범위는 위 갱신 절차의 복원 검증 절을 따른다.
