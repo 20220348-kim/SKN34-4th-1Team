@@ -84,12 +84,12 @@ class ApplicationPreparationServiceOnlineFormTest {
         `when`(forms.requireVersion(manifest.formVersionId)).thenReturn(manifest)
         val reference = ApplicationOnlineFormSourceReference("https://docs.google.com/forms/d/e/public-id/viewform", "GOOGLE_FORMS")
         val response = mapOf(
-            "contractVersion" to "google-public-form-reader-v1", "parserVersion" to "semantic-dom-v1",
+            "contractVersion" to "google-public-form-reader-v2", "parserVersion" to "fb-public-load-data-v1",
             "sourceUrl" to reference.sourceUrl, "finalUrl" to reference.sourceUrl,
             "formTitle" to "합성 신청서", "semanticFingerprint" to "a".repeat(64),
-            "questions" to listOf(mapOf("order" to 1, "controlId" to "gpub-v1:1:abcd",
-                "label" to "업체명", "required" to true, "kind" to "SHORT_TEXT",
-                "options" to emptyList<String>(), "supported" to true, "unsupportedReason" to null)),
+            "questions" to listOf(mapOf("order" to 1, "controlId" to "gpub-v1:1:abcd", "entryId" to "101",
+                "label" to "업체명", "description" to "", "required" to true, "kind" to "SHORT_TEXT",
+                "options" to emptyList<String>(), "allowsOther" to false, "supported" to true, "unsupportedReason" to null)),
         )
         http.expect(requestTo("http://ai.test/internal/v1/application-preparations/online-form/inspect"))
             .andRespond(withSuccess(json.writeValueAsString(response), MediaType.APPLICATION_JSON))
@@ -131,12 +131,12 @@ class ApplicationPreparationServiceOnlineFormTest {
             ConfirmedApplicationFact(10, field.first, field.second.key, ApplicationFactStatus.PROVIDED,
                 "합성기업", "synthetic user input", 1, now)))
         val response = mapOf(
-            "contractVersion" to "google-public-form-reader-v1", "parserVersion" to "semantic-dom-v1",
+            "contractVersion" to "google-public-form-reader-v2", "parserVersion" to "fb-public-load-data-v1",
             "sourceUrl" to url, "finalUrl" to url, "formTitle" to "공개 신청서",
             "semanticFingerprint" to "a".repeat(64),
-            "questions" to listOf(mapOf("order" to 1, "controlId" to "gpub-v1:1:abcd",
-                "label" to "업체명", "required" to true, "kind" to "SHORT_TEXT",
-                "options" to emptyList<String>(), "supported" to true, "unsupportedReason" to null)),
+            "questions" to listOf(mapOf("order" to 1, "controlId" to "gpub-v1:1:abcd", "entryId" to "101",
+                "label" to "업체명", "description" to "", "required" to true, "kind" to "SHORT_TEXT",
+                "options" to emptyList<String>(), "allowsOther" to false, "supported" to true, "unsupportedReason" to null)),
         )
         http.expect(requestTo("http://ai.test/internal/v1/application-preparations/online-form/inspect"))
             .andRespond(withSuccess(json.writeValueAsString(response), MediaType.APPLICATION_JSON))

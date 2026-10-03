@@ -13,6 +13,7 @@ import { useDelayedFlag } from '../../../shared/workspace/useDelayedFlag'
 import { useApplicationPreparationNewViewModel, type SelectableSupportProgram } from '../viewmodel/useApplicationPreparationNewViewModel'
 import { applicationPreparationStyles as s, newPreparationStyles as n } from './ApplicationPreparation.styles'
 import { ButtonSpinner } from './ApplicationPreparationSkeletons'
+import { GoogleFormPrefill } from './GoogleFormPrefill'
 import { ProgramBadges, ProgramPickerPanel } from './ProgramPickerPanel'
 
 type NewViewModel = ReturnType<typeof useApplicationPreparationNewViewModel>
@@ -237,7 +238,7 @@ function LastAnalysisNotice({ vm }: { vm: NewViewModel }) {
   </div>
 }
 
-/** ② 양식 · 분야의 내용입니다. 저장된 양식 조회 중 · 실패 · 분석 진행 · 양식 카드 · 양식 없음 중 하나를 보여 줍니다. */
+/** ② 양식 · 분야의 내용입니다. 구글 설문 미리 채우기 · 저장된 양식 조회 중 · 실패 · 분석 진행 · 양식 카드 · 양식 없음 중 하나를 보여 줍니다. */
 function FormSectionBody({ vm }: { vm: NewViewModel }) {
   const program = vm.program
   const lookup = vm.availability
@@ -246,6 +247,7 @@ function FormSectionBody({ vm }: { vm: NewViewModel }) {
     && ['APPLICATION_FORM_NO_FORM', 'APPLICATION_FORM_SOURCE_UNSUPPORTED'].includes(discoveryError.code)
   const lookupLoading = !lookup || lookup.status === 'loading'
   const showSkeleton = useDelayedFlag(lookupLoading)
+  if (vm.googleFormUrl && program) return <GoogleFormPrefill sourceCode={program.sourceCode} sourceProgramId={program.id} formUrl={vm.googleFormUrl} programTitle={program.title} />
   if (!lookup || lookup.status === 'loading') return <div className={n.card}>
     <p className="sr-only" role="status">저장된 신청 양식을 확인하고 있어요.</p>
     <div className={`flex flex-col gap-2 py-1 ${showSkeleton ? '' : 'invisible'}`} aria-hidden="true"><span className={`${n.skeletonLine} w-2/5`} /><span className={`${n.skeletonLine} w-4/5`} /><span className={`${n.skeletonLine} w-3/5`} /></div>
@@ -287,6 +289,7 @@ function FormSectionBody({ vm }: { vm: NewViewModel }) {
 
 /** [작성 시작]을 아직 누를 수 없는 이유입니다. 조회 중에는 ②의 스켈레톤이 알리므로 따로 적지 않습니다. */
 function startBlockedReason(vm: NewViewModel): string | null {
+  if (vm.googleFormUrl) return '구글 설문에서 직접 신청해요'
   if (vm.selectedForm && !vm.discovery) return null
   if (vm.discovery) return '분석이 끝나면 시작할 수 있어요'
   if (vm.availability?.status === 'failed') return '저장된 양식을 확인하면 시작할 수 있어요'

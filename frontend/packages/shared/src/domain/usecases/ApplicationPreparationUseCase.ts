@@ -16,6 +16,10 @@ export class ApplicationPreparationUseCase {
     if (!id) throw new Error('올바른 공고 ID를 입력해 주세요.')
     return this.repository.availability(sourceCode || 'BIZINFO', id, signal)
   }
+  googleForm(sourceCode: string, sourceProgramId: string, signal?: AbortSignal) {
+    if (!sourceCode.trim() || !sourceProgramId.trim()) throw new Error('올바른 공고 ID를 입력해 주세요.')
+    return this.repository.googleForm(sourceCode, sourceProgramId, signal)
+  }
   onlineInputGuide(id: number, signal?: AbortSignal) {
     if (!Number.isSafeInteger(id) || id <= 0) throw new Error('올바른 신청 준비 주소가 아닙니다.')
     return this.repository.onlineInputGuide(id, signal)

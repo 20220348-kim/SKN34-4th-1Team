@@ -4,6 +4,7 @@ import ai.govbiz.catalog.supportprogram.client.kstartup.dto.KStartupProgramPaylo
 import ai.govbiz.catalog.supportprogram.client.kstartup.exception.KStartupClientException
 import ai.govbiz.catalog.supportprogram.domain.CatalogSupportProgram
 import ai.govbiz.catalog.supportprogram.domain.SupportProgram
+import ai.govbiz.catalog.supportprogram.domain.SupportProgramApplicationRoute
 import ai.govbiz.catalog.supportprogram.domain.SupportProgramStartupDetails
 import ai.govbiz.catalog.supportprogram.domain.SupportProgramStatusResolver
 import java.net.URI
@@ -46,6 +47,7 @@ internal object KStartupProgramMapper {
             val organization = plainText(payload.organization).ifBlank { "정보 없음" }
             val summary = plainText(payload.summaryHtml).ifBlank { "정보 없음" }
             val sourceUrl = officialSourceUrl(payload.sourceUrl, id)
+            val applicationRoute = applicationRoute(payload)
             // 색인하기 전에 MySQL 저장 한도를 검사하여 유료 색인 후의 저장 실패를 방지합니다.
             requireCharacterLimit(title, 500, "title")
             requireCharacterLimit(organization, 255, "organization")
@@ -64,12 +66,34 @@ internal object KStartupProgramMapper {
                     status = SupportProgramStatusResolver.resolve(period, start, end, today),
                     sourceName = "K-Startup", sourceUrl = sourceUrl,
                     matchedReasons = emptyList(),
+                    applicationRoute = applicationRoute,
                 ),
                 // 이 API에는 게시일이 없으므로 실제로 제공된 접수 시작일만 정렬에 사용합니다.
                 sortTimestamp = start?.toString().orEmpty(),
                 startupDetails = details,
             )
         })
+    }
+
+    /**
+     * 공식 신청 방법 필드로 신청 경로를 만듭니다. 온라인 접수 값이 https 주소 하나면 신청 주소로 쓰고, 나머지 접수처는
+     * "이메일 접수: …"처럼 이어 붙여 신청 방법 문장으로 남깁니다. 경로 종류는 기업마당과 같은 규칙으로 정합니다.
+     */
+    private fun applicationRoute(payload: KStartupProgramPayload): SupportProgramApplicationRoute {
+        val online = plainText(payload.onlineApplication)
+        val onlineUrl = online.takeIf { HTTPS_URL.matches(it) }
+        val method = buildList {
+            if (online.isNotBlank()) add(if (onlineUrl != null) "온라인 접수" else "온라인 접수: $online")
+            listOf(
+                "이메일 접수" to payload.emailApplication, "방문 접수" to payload.visitApplication,
+                "우편 접수" to payload.postalApplication, "팩스 접수" to payload.faxApplication, "기타" to payload.otherApplication,
+            ).forEach { (label, value) -> plainText(value).takeIf(String::isNotBlank)?.let { add("$label: $it") } }
+        }.joinToString(" / ").ifBlank { null }
+        return try {
+            SupportProgramApplicationRoute.fromOfficialFields(method, onlineUrl)
+        } catch (_: IllegalArgumentException) {
+            invalid("K-Startup API returned an oversized application method")
+        }
     }
 
     private fun date(raw: String?): LocalDate? {
@@ -129,6 +153,7 @@ internal object KStartupProgramMapper {
 
     private fun invalid(message: String): Nothing = throw KStartupClientException.invalidResponse(message)
     private val PROGRAM_ID = Regex("[1-9][0-9]{0,254}")
+    private val HTTPS_URL = Regex("https://\\S+", RegexOption.IGNORE_CASE)
     private val REGION_ALIASES = mapOf(
         "서울특별시" to "서울", "부산광역시" to "부산", "대구광역시" to "대구", "인천광역시" to "인천",
         "광주광역시" to "광주", "대전광역시" to "대전", "울산광역시" to "울산", "세종특별자치시" to "세종",

@@ -309,6 +309,26 @@ describe('application preparation HTTP boundary', () => {
     })
   })
 
+  it('reads the public Google Form of a program and explains a sign-in-only form', async () => {
+    const form = { responderUrl: 'https://docs.google.com/forms/d/e/public-id/viewform', title: '특강 신청', questions: [
+      { entryId: '11', label: '기업명', description: '', required: true, kind: 'SHORT_TEXT', options: [], allowsOther: false },
+    ] }
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(Response.json(form))
+      .mockResolvedValueOnce(Response.json({ ...form, responderUrl: 'https://evil.example/forms/d/e/public-id/viewform' }))
+      .mockResolvedValueOnce(Response.json({ code: 'APPLICATION_ONLINE_FORM_LOGIN_REQUIRED' }, { status: 422 }))
+    vi.stubGlobal('fetch', fetch)
+    const repository = new ApplicationPreparationRepositoryImpl()
+
+    await expect(repository.googleForm('KSTARTUP', '179183')).resolves.toEqual(form)
+    expect(String(fetch.mock.calls[0][0])).toContain('/api/v1/application-preparations/google-form?sourceCode=KSTARTUP&sourceProgramId=179183')
+    expect(fetch.mock.calls[0][1]).toMatchObject({ method: 'GET', credentials: 'include', cache: 'no-store' })
+    await expect(repository.googleForm('KSTARTUP', '179183')).rejects.toMatchObject({ code: 'INVALID_RESPONSE' })
+    await expect(repository.googleForm('KSTARTUP', '179183')).rejects.toMatchObject({
+      status: 422, code: 'APPLICATION_ONLINE_FORM_LOGIN_REQUIRED', message: expect.stringContaining('로그인해야 열리는 설문'),
+    })
+  })
+
   it('distinguishes an unavailable feature endpoint from a missing owned preparation', async () => {
     vi.stubGlobal('fetch', vi.fn()
       .mockResolvedValueOnce(new Response('Not Found', { status: 404 }))

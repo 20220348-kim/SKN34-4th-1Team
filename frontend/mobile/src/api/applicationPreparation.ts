@@ -10,6 +10,7 @@ import { applicationPreparationSchema, applicationPreparationPageSchema, applica
   applicationInterpretationSchema } from '@govbiz/shared/data/models/ApplicationPreparationDto'
 import { applicationDocumentsSchema, applicationDocumentMigrationConfirmationSchema } from '@govbiz/shared/data/models/ApplicationDocumentDto'
 import { applicationOnlineInputGuideSchema } from '@govbiz/shared/data/models/ApplicationOnlineInputGuideDto'
+import { applicationGoogleFormSchema } from '@govbiz/shared/data/models/ApplicationGoogleFormDto'
 import { ApiError, createApiFetch, getApiBaseUrl } from './client'
 
 const base = '/api/v1/application-preparations'
@@ -77,6 +78,9 @@ class MobileApplicationPreparationRepository implements ApplicationPreparationRe
     return result
   }
   async forms(signal?: AbortSignal) { return (await this.request('/forms', supportedApplicationFormsSchema, 'GET', undefined, signal)).items }
+  googleForm(sourceCode: string, sourceProgramId: string, signal?: AbortSignal) {
+    return this.request(`/google-form?${new URLSearchParams({ sourceCode, sourceProgramId })}`, applicationGoogleFormSchema, 'GET', undefined, signal)
+  }
   list(query: ApplicationPreparationListQuery = {}, signal?: AbortSignal) {
     const params = new URLSearchParams({ size: '20', ...(query.status ? { status: query.status } : {}), ...(query.beforeId ? { beforeId: String(query.beforeId) } : {}) })
     return this.request(`?${params}`, applicationPreparationPageSchema, 'GET', undefined, signal)

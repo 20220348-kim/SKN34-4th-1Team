@@ -23,6 +23,8 @@ export type ReplaceApplicationPreparationInputsOptions = { keepalive?: boolean }
 export interface ApplicationPreparationRepository {
   onlineInputGuide(id: number, signal?: AbortSignal): Promise<import('../entities/ApplicationOnlineInputGuide').ApplicationOnlineInputGuide>
   availability(sourceCode: string, sourceProgramId: string, signal?: AbortSignal): Promise<import('../entities/ApplicationPreparation').ApplicationFormAvailability>
+  /** 구글 설문으로 신청하는 공고의 공개 설문 문항입니다(AI 호출 없음). 로그인해야 열리는 설문은 읽지 못해 오류입니다. */
+  googleForm(sourceCode: string, sourceProgramId: string, signal?: AbortSignal): Promise<import('../entities/ApplicationGoogleForm').ApplicationGoogleForm>
   documents(id: number, signal?: AbortSignal): Promise<ApplicationDocument[]>
   /** 문서 생성 작업을 접수한다. 같은 requestKey는 같은 작업을 돌려주고, 진행 중인 작업이 있으면 409다. */
   submitDocumentJob(id: number, expectedRevision: number, signal?: AbortSignal, requestKey?: string): Promise<ApplicationDocumentGenerationJob>
