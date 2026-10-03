@@ -38,6 +38,7 @@ export function useSupportProgramEvidenceQuestionViewModel(
   ),
 ) {
   const { sourceCode, sourceProgramId } = identity
+  const previousIdentity = useRef({ sourceCode, sourceProgramId })
   const [question, setQuestion] = useState('')
   const [state, setState] = useState<SupportProgramEvidenceQuestionState>({ status: 'idle' })
   const activeRequest = useRef<{
@@ -54,8 +55,13 @@ export function useSupportProgramEvidenceQuestionViewModel(
     && questionLength <= maximumSupportProgramEvidenceQuestionLength
 
   useEffect(() => {
-    setQuestion('')
-    setState({ status: 'idle' })
+    // 최초 표시 뒤 늦게 실행된 effect가 이미 입력한 질문을 지우지 않도록 합니다.
+    if (previousIdentity.current.sourceCode !== sourceCode
+      || previousIdentity.current.sourceProgramId !== sourceProgramId) {
+      previousIdentity.current = { sourceCode, sourceProgramId }
+      setQuestion('')
+      setState({ status: 'idle' })
+    }
 
     return () => {
       const currentRequest = activeRequest.current
