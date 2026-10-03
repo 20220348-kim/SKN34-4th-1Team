@@ -21,6 +21,8 @@ from .budget_reporting import (
     reservation_data,
 )
 from .catalog import DATASETS
+from .daily_budget import change_daily_limits
+from .daily_budget import change_data as daily_change_data
 from .legacy_usage import LegacyUsageUnavailable, reconcile_legacy_usage
 from .models import (
     EvaluationBudget,
@@ -46,14 +48,38 @@ class LegacyUsageRequest(serializers.Serializer):
     reason = serializers.CharField(max_length=1000, allow_blank=False)
 
 
+class DailyBudgetLimitsRequest(serializers.Serializer):
+    request_id = serializers.UUIDField()
+    expected_revision = serializers.RegexField(r"^[a-f0-9]{64}$")
+    disable = serializers.BooleanField()
+    calls = serializers.IntegerField(min_value=0, max_value=2**53 - 1, allow_null=True)
+    input_tokens = serializers.IntegerField(min_value=0, max_value=2**53 - 1, allow_null=True)
+    output_tokens = serializers.IntegerField(min_value=0, max_value=2**53 - 1, allow_null=True)
+    reason = serializers.CharField(max_length=1000, allow_blank=False)
+
+    def validate(self, attrs):
+        values = [attrs[key] for key in ("calls", "input_tokens", "output_tokens")]
+        if (attrs["disable"] and any(value is not None for value in values)) or (
+            not attrs["disable"] and any(value is None for value in values)
+        ):
+            raise serializers.ValidationError(
+                "적용 시 세 한도를 입력하고, 해제 시 모두 null로 보내세요."
+            )
+        return attrs
+
+
 def _write_payload(request, schema):
     serializer = schema(data=request.data)
     if not isinstance(request.data, dict) or set(request.data) - set(serializer.fields):
         raise serializers.ValidationError("허용된 변경 항목만 전달하세요.")
     for key in ("calls", "output_tokens", "input_tokens"):
-        if key in request.data and not (key == "input_tokens" and request.data[key] is None):
+        if key in request.data and not (
+            serializer.fields[key].allow_null and request.data[key] is None
+        ):
             if type(request.data[key]) is not int:
                 raise serializers.ValidationError("한도는 정수로 전달하세요.")
+    if "disable" in serializer.fields and type(request.data.get("disable")) is not bool:
+        raise serializers.ValidationError("해제 여부는 boolean으로 전달하세요.")
     if not isinstance(request.data.get("reason"), str):
         raise serializers.ValidationError("검토 사유를 입력하세요.")
     serializer.is_valid(raise_exception=True)
@@ -71,6 +97,19 @@ def api_change_limits(request):
     except ValueError as error:
         return Response({"code": "BUDGET_CHANGE_CONFLICT", "detail": str(error)}, status=409)
     return Response({"change": change_data(change)})
+
+
+@never_cache
+@api_view(["POST"])
+def api_change_daily_limits(request):
+    payload = _write_payload(request, DailyBudgetLimitsRequest)
+    try:
+        change = change_daily_limits(
+            **payload, actor=request.user.get_username(), authenticated_actor=request.user
+        )
+    except ValueError as error:
+        return Response({"code": "DAILY_BUDGET_CHANGE_CONFLICT", "detail": str(error)}, status=409)
+    return Response({"change": daily_change_data(change)})
 
 
 @never_cache

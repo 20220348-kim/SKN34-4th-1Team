@@ -73,7 +73,7 @@ function open(path = '/ops/evaluations') {
 }
 
 describe('React LLMOps 운영 화면', () => {
-  it.each([['limits', false], ['legacy', false], ['limits', true]] as const)('%s 저장 후 이전 사전 점검을 지우며 늦은 조회=%s도 무시한다', async (kind, delayed) => {
+  it.each([['limits', false], ['legacy', false], ['limits', true], ['daily', false], ['daily', true]] as const)('%s 저장 후 이전 사전 점검을 지우며 늦은 조회=%s도 무시한다', async (kind, delayed) => {
     const at = '2026-10-03T01:00:00Z'
     const readiness = {
       as_of: at, dataset_id: dataset.id, execution_profile: executionProfiles.live,
@@ -93,6 +93,7 @@ describe('React LLMOps 운영 화면', () => {
           state: 'consistent', limits_revision: 'a'.repeat(64), limits: readiness.remaining,
           allocated: zero, remaining: readiness.remaining, breakdown: null,
           reservation_count: 0, legacy_live_run_count: 1, change_count: 0, recent_changes: [],
+          daily: { limits_revision: 'b'.repeat(64), state: 'disabled', timezone: 'Asia/Seoul', period_start: '2026-10-03T00:00:00+09:00', period_end: '2026-10-04T00:00:00+09:00', limits: null, current_day: null, carried: null, allocated: null, remaining: null, recent_changes: [] },
         },
       })
       if (path.includes('/unaccounted-runs')) return json({ as_of: at, count: 1, next: null, previous: null,
@@ -108,6 +109,11 @@ describe('React LLMOps 운영 화면', () => {
         return json({ change: { request_id: value.request_id, actor: 'core:99', source: 'CORE_ADMIN', reason: value.reason,
           previous_limits: readiness.remaining, limits: { calls: value.calls, input_tokens: value.input_tokens, output_tokens: value.output_tokens }, created_at: at } })
       }
+      if (path.endsWith('/budget/daily-limits')) {
+        const value = JSON.parse(options!.body as string)
+        return json({ change: { request_id: value.request_id, expected_revision: value.expected_revision, actor: 'core:99', source: 'CORE_ADMIN', reason: value.reason,
+          previous: null, policy: { enabled: true, limits: { calls: value.calls, input_tokens: value.input_tokens, output_tokens: value.output_tokens } }, created_at: at } })
+      }
       return original(path, options)
     })
     open()
@@ -120,6 +126,15 @@ describe('React LLMOps 운영 화면', () => {
       fireEvent.click(screen.getByRole('button', { name: '변경 내용 확인' }))
       fireEvent.click(screen.getByRole('button', { name: '확인한 한도 저장' }))
       await screen.findByText('누적 한도 변경 이력을 저장했습니다.')
+    } else if (kind === 'daily') {
+      fireEvent.click(await screen.findByRole('button', { name: '일별 한도 설정' }))
+      fireEvent.change(screen.getByLabelText('일별 호출 한도'), { target: { value: '12' } })
+      fireEvent.change(screen.getByLabelText('일별 입력 토큰 한도'), { target: { value: '400000' } })
+      fireEvent.change(screen.getByLabelText('일별 출력 토큰 한도'), { target: { value: '24000' } })
+      fireEvent.change(screen.getByLabelText('일별 한도 변경 사유'), { target: { value: '일별 한도 확인' } })
+      fireEvent.click(screen.getByRole('button', { name: '일별 변경 내용 확인' }))
+      fireEvent.click(screen.getByRole('button', { name: '확인한 일별 정책 저장' }))
+      await screen.findByText('일별 정책 변경 이력을 저장했습니다.')
     } else {
       fireEvent.click(await screen.findByRole('button', { name: '미반영 실행 목록 확인' }))
       fireEvent.click(await screen.findByRole('button', { name: `사용량 확인 ${id}` }))

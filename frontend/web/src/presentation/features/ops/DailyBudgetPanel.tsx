@@ -19,14 +19,14 @@ export function DailyBudgetPanel({ value }: { value: DailyBudget | undefined }) 
         <p>접수 날짜 기준의 예약량입니다. 이전 날짜의 미확정 호출·미승인 예약·종료 전 반환 대기는 이월하며, 이미 확정된 이전 날짜 사용량은 누적 장부에 남습니다. 자정을 넘긴 예약은 새 호출을 승인하지 않습니다.</p>
       </>}
       {value.recent_changes.length > 0 && <details><summary className="cursor-pointer">일별 정책 변경 이력 · 최근 {value.recent_changes.length}건</summary>
-        <p>CLI 변경자는 운영자가 입력한 식별자이며 로그인으로 인증한 신원은 아닙니다.</p>
+        <p>CLI는 운영자가 입력한 식별자이고, CORE_ADMIN은 기존 관리자 세션으로 인증한 변경자입니다.</p>
         <ol className="space-y-2">{value.recent_changes.map((change) => <li key={change.request_id}>
-          <p>{new Date(change.created_at).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })} · {change.actor} · CLI</p>
+          <p>{new Date(change.created_at).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })} · {change.actor} · {change.source}</p>
           <p>{change.policy.enabled ? '적용' : '해제'} · 호출 {change.policy.limits.calls.toLocaleString()} / 입력 {change.policy.limits.input_tokens.toLocaleString()} / 출력 {change.policy.limits.output_tokens.toLocaleString()}</p>
           <p>사유: {change.reason}</p>
         </li>)}</ol>
       </details>}
     </>}
-    <p className="text-xs text-sample-muted">일별 정책 변경은 운영 명령으로 기록합니다. 월별 한도·금액 한도와 정기 실행 활성화는 별도입니다.</p>
+    <p className="text-xs text-sample-muted">일별 정책 변경은 관리자 설정 화면 또는 운영 명령으로 기록합니다. 월별 한도·금액 한도와 정기 실행 활성화는 별도입니다.</p>
   </section>
 }

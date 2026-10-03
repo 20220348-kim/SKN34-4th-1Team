@@ -5,6 +5,7 @@ import { workspacePageStyles as styles } from '../../shared/workspace/WorkspaceP
 import { UnaccountedRunsPanel } from './UnaccountedRunsPanel'
 import { BudgetLimitsForm } from './BudgetLimitsForm'
 import { DailyBudgetPanel } from './DailyBudgetPanel'
+import { DailyBudgetLimitsForm } from './DailyBudgetLimitsForm'
 
 const date = (value: string) => new Date(value).toLocaleString('ko-KR')
 const count = (value: number) => value.toLocaleString('ko-KR')
@@ -86,6 +87,7 @@ export function BudgetOverview({ onExpired, refreshKey, operatorId, onBudgetChan
       })}</dl>}
       {summary.breakdown && <Breakdown value={summary.breakdown} />}
       <DailyBudgetPanel value={summary.daily} />
+      {operatorId && summary.limits && <DailyBudgetLimitsForm daily={summary.daily} owner={operatorId} onExpired={onExpired} onSaved={() => { setSaved('일별 정책 변경 이력을 저장했습니다.'); setRefresh((value) => value + 1); onBudgetChanged?.() }} />}
       <p className="text-xs leading-5 text-sample-muted">응답을 정산해도 실행의 예약을 닫기 전까지 입력·출력 차액은 반환 대기로 남습니다. 승인 기록만으로 모델 전송 완료나 실제 비용을 확정할 수 없습니다.</p>
       <details><summary className="cursor-pointer text-sm font-semibold">실행별 예약 · {count(data.count)}건</summary>
         {!data.results.length ? <p className="py-3 text-sm">예약 기록이 없습니다.</p> : <div className="overflow-x-auto"><table className="mt-3 w-full text-left text-sm">
