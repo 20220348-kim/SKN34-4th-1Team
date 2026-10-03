@@ -537,14 +537,32 @@ def verify(image, volume, expected, database):
                         Path(__file__).with_name("check_ops_restore_ui.mjs"),
                         contract,
                     ],
-                    timeout=60,
+                    timeout=180,
                 )
             )
-        if result["management_web_contract"] != {
+        web = result["management_web_contract"]
+        browser = web.get("browser_ui", {}) if isinstance(web, dict) else {}
+        version = browser.get("browser_version") if isinstance(browser, dict) else None
+        if not isinstance(version, str) or not re.fullmatch(
+            r"[0-9]+(?:\.[0-9]+){3}", version
+        ):
+            raise ValueError("Incomplete restored management browser version")
+        expected_web = {
             "status": "PASS",
             "matched_details": len(expected),
             "listed_run_count": management["listed_run_count"],
-            "browser_rendered": False,
+            "browser_rendered": True,
+            "browser_ui": {
+                "status": "PASS",
+                "response_source": "captured_restore_http",
+                "browser_version": version,
+                "listed_run_count": management["listed_run_count"],
+                "pages_verified": (management["listed_run_count"] + 24) // 25,
+                "budget_view_verified": True,
+                "denied_view_verified": True,
+                "browser_rendered": True,
+                "browser_closed": True,
+            },
             "proxy_http": {
                 "status": "PASS",
                 "mode": "portfolio",
@@ -557,7 +575,9 @@ def verify(image, volume, expected, database):
                 "servers_stopped": True,
                 "browser_rendered": False,
             },
-        }:
+        }
+        # JSON distinguishes booleans from integers, unlike Python dict equality.
+        if json.dumps(web, sort_keys=True) != json.dumps(expected_web, sort_keys=True):
             raise ValueError("Incomplete restored management web contract evidence")
     finally:
         if identity is not None:

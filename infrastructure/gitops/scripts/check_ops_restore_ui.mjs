@@ -1,13 +1,14 @@
 // Validate captured real HTTP responses with the web's production parsers.
-// Real Vite proxies isolated replay servers; this does not render a browser.
+// Real Vite and an isolated browser consume captured restore responses.
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { getOpsSession, listEvaluations, getEvaluation, getBudgetReservations, getRunBudget } from '../../../frontend/web/src/data/ops/opsApi.ts'
 
 import { withRestoreProxy } from './ops_restore_proxy.mjs'
+import { checkRestoreBrowser } from './ops_restore_browser.mjs'
 
 const { responses, expected, total_runs: totalRuns } = JSON.parse(await readFile(process.argv[2], 'utf8'))
-const proof = await withRestoreProxy(responses, async () => {
+const proof = await withRestoreProxy(responses, async (origin) => {
   const session = await getOpsSession()
   assert.ok(session.user)
   assert.equal(session.live_enabled, false)
@@ -35,6 +36,7 @@ const proof = await withRestoreProxy(responses, async () => {
     assert.deepEqual({ ...detail, postprocessing: null }, { ...runs.get(id), postprocessing: null })
     assert.equal((await getRunBudget(id)).state, 'not_applicable')
   }
-  return { status: 'PASS', matched_details: Object.keys(expected).length, listed_run_count: totalRuns, browser_rendered: false }
+  const browser = await checkRestoreBrowser(origin, responses)
+  return { status: 'PASS', matched_details: Object.keys(expected).length, listed_run_count: totalRuns, browser_rendered: true, browser_ui: browser }
 })
 process.stdout.write(JSON.stringify(proof))

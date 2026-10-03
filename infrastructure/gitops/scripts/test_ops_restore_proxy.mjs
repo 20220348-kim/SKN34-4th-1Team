@@ -7,7 +7,7 @@ import { withRestoreProxy } from './ops_restore_proxy.mjs'
 
 const session = { user: { id: 'core:1', username: 'fixture@example.invalid' }, csrf_token: 'redacted', live_enabled: false, datasets: [] }
 const responses = () => ({ '/api/v1/ops/session': structuredClone(session) })
-const caches = async () => (await readdir(tmpdir())).filter((name) => name.startsWith('govbiz-restore-proxy-')).sort()
+const caches = async () => (await readdir(tmpdir())).filter((name) => name.startsWith(`govbiz-restore-proxy-${process.pid}-`)).sort()
 
 test('actual Vite proxies queries, cookies, Origin and denials, then closes every listener', async () => {
   const nativeFetch = globalThis.fetch
@@ -73,4 +73,18 @@ test('unrecorded routes and mutations never reach a backend', async () => {
     await getOpsSession()
     return {}
   })
+})
+
+test('dropping the explicit HTTP probe Origin cannot pass as a browser GET', async () => {
+  const original = globalThis.fetch
+  globalThis.fetch = (url, options) => {
+    const headers = { ...options.headers }
+    if (new URL(url).pathname.startsWith('/api/v1/ops')) delete headers.Origin
+    return original(url, { ...options, headers })
+  }
+  try {
+    await assert.rejects(withRestoreProxy(responses(), async () => { await getOpsSession() }))
+  } finally {
+    globalThis.fetch = original
+  }
 })

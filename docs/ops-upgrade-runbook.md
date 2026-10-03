@@ -188,17 +188,24 @@ Prefect를 중지한다. 컨테이너 ID·이미지·Compose 소유권·볼륨 �
   실제 호출 수와 사용량은 0으로 유지한다.
 - 수집한 응답에서 CSRF 토큰을 제거한 사본을 임시 파일로 전달하고, 저장소의 Node 24로
   `check_ops_restore_ui.mjs`를 실행한다. 웹의 실제 `getOpsSession`, `listEvaluations`, `getEvaluation`,
-  예산 조회 함수와 Zod 파서가 응답을 처리해야 통과한다. 새 의존성 없이 기존 루트 잠금 파일을 사용한다.
+  예산 조회 함수와 Zod 파서가 응답을 처리해야 통과한다. 의존성은 기존 루트 잠금 파일로 관리한다.
   `ops_restore_proxy.mjs`가 기존 `vite.config.ts`의 portfolio 모드로 실제 Vite를 시작하고,
   두 loopback HTTP 서버로 Core 경로와 수집한 Ops 응답을 재생한다. 개인 5173 포트나 기존 전달을
-  재사용하지 않고 OS가 할당한 임시 포트만 사용한다. 새 의존성·브라우저 패키지는 설치하지 않는다.
+  재사용하지 않고 OS가 할당한 임시 포트만 사용한다. Core 응답은 경로 분리 확인용 검증 데이터다.
   `/api`·`/api/v1/ops`의 분리, Ops Host·Origin·검사용 쿠키 전달, 401/403·no-store 보존을 확인한다.
   모든 수집 응답이 실제 프록시를 거쳐 기존 웹 API 함수에서 파싱되어야 한다.
   Ops 재생 서버를 종료하면 웹 API 함수가 502 오류를 반환하고 Core 경로는 유지되어야 한다.
-  `/ops/evaluations`의 HTML 진입 문서도 확인하지만 JS 실행·React 렌더링·브라우저 쿠키 정책 검사는 아니다.
+  이어서 테스트 전용 `playwright-core`로 별도 headless 브라우저·새 컨텍스트를 만든다.
+  실제 `/ops/evaluations`의 JS·React·CSS를 로드하고 관리자 표시, 전체 이력의 페이지 이동·행 수·요청 ID,
+  예산 영역의 조회 완료를 확인한다. 일반 회원 검사용 쿠키로 다시 열면 403 안내가 나오고 이력이 없어야 한다.
+  브라우저는 이 Vite origin의 GET만 허용하며 다른 주소·쓰기 요청·예상하지 않은 JS 오류는 실패다.
+  브라우저의 동일 출처 GET은 Origin이 없을 수 있으므로 Sec-Fetch-Site도 확인한다. 기존 HTTP 검사의
+  명시적 Origin이 유실된 경우를 브라우저 GET으로 잘못 통과시키지는 않는다.
+  검사용 HttpOnly 쿠키를 주입하므로 실제 Core 로그인·세션 발급·브라우저 로그인 흐름 검증은 아니다.
   이 프록시의 백엔드는 복원 서버 자체가 아닌 수집 응답 재생 서버이며 기존 클러스터에는 연결하지 않는다.
-  원문 응답은 최종 보고서에 저장하지 않는다. 임시 응답 파일·Vite 캐시·서버를 정리하고 fetch와
-  K8S 환경변수를 복원한다. 웹 파서·라우팅·장애 검사·정리 실패는 전체 실패다.
+  상세 화면·보고서 iframe·접수 버튼은 브라우저로 조작하지 않는다. 이 경로의 API·보고서 검사는 앞 단계와 구분한다.
+  원문 응답·쿠키·브라우저 프로필은 최종 보고서에 저장하지 않는다. 임시 브라우저·응답 파일·Vite 캐시·
+  서버를 정리하고 fetch와 K8S 환경변수를 복원한다. 렌더링·파서·라우팅·장애 검사·정리 실패는 전체 실패다.
 - 실제 Core 로그아웃 후 같은 세션으로 보고서를 요청하면 401이어야 한다. 다시 비밀번호로 로그인한 뒤
   결과 서버를 종료하면 보고서 요청은 404여야 한다. 종료 실패·결과 파일 변경·Ops DB 덤프 변경은
   전체 실패다. Core 사본에는 로그인·로그아웃에 따른 세션 쓰기를 허용하고 원본 Core 덤프는 보존한다.
@@ -226,18 +233,30 @@ Prefect를 중지한다. 컨테이너 ID·이미지·Compose 소유권·볼륨 �
 `results.ops_http.management_http`에는 관리 API의 세션·목록·상세·예산·권한 검사 결과를,
 `management_web_contract`에는 웹 소비자 파서 통과 결과를 기록한다.
 그 아래 `proxy_http`는 `mode=portfolio`, `response_source=captured_restore_http`와 실제 프록시·HTML
-전달·장애·정리 결과를 기록한다. 모든 항목의 `browser_rendered`는 계속 `false`다.
-무료 프록시 회귀 테스트는 LLMOps CI에서 루트 잠금 의존성 설치 후 실행하고, Kubernetes 복원 단계에서는
-실제 복원 HTTP에서 수집한 응답으로 같은 프록시 검증을 다시 수행한다. 로컬 빠른 검증 명령은 다음과 같다.
+전달·장애·정리 결과를 기록하며 자체 `browser_rendered=false`를 유지한다.
+별도 `browser_ui`는 실제 브라우저 버전·목록 건수·페이지 수·예산·권한 화면·정리 결과와
+`browser_rendered=true`를 기록한다. 이 증거가 있어야 `management_web_contract.browser_rendered=true`가 된다.
+무료 프록시·브라우저 회귀 테스트는 LLMOps CI에서 잠금 의존성 및 대응 Chromium headless shell 설치 후
+필수 실행한다. Kubernetes 복원 단계에서는 실제 복원 HTTP에서 수집한 응답으로 다시 수행한다.
+로컬은 설치된 Chrome/Edge를 명시해 다운로드 없이 확인할 수 있다. 다음은 Bash/WSL 명령이며,
+Windows PowerShell에서는 `$env:RESTORE_BROWSER_CHANNEL = 'chrome'`을 설정한 뒤 Node 명령을 실행하고 해제한다.
 
 ```bash
 node --experimental-transform-types --test infrastructure/gitops/scripts/test_ops_restore_proxy.mjs
+RESTORE_BROWSER_CHANNEL=chrome node --experimental-transform-types --test infrastructure/gitops/scripts/test_ops_restore_browser.mjs
+```
+
+브라우저가 없는 CI/Linux 환경은 먼저 다음 명령으로 잠금 버전에 대응하는 Chromium만 설치한다.
+`RESTORE_BROWSER_CHANNEL`을 생략하면 이 브라우저를 사용하며, 명시한 채널이 없을 때 자동 대체하지 않는다.
+
+```bash
+pnpm --dir frontend/web exec playwright-core install --with-deps --only-shell chromium
 ```
 
 성공 시 `results_server_started=true`, `prefect_server_started=true`이며,
 증거가 완성되지 않은 실패에서는 `null`로 미확인을 표시한다.
 검사 토큰을 새로 생성하므로 기존 Secret/서명 키 복구는 검증하지 않는다.
-실행기 재개·새 평가 실행·관리자 화면의 브라우저 렌더링·Langfuse 저장소 복원은 별도다.
+실행기 재개·새 평가 실행·실제 Core 로그인부터 복원 서버까지의 브라우저 연결·Langfuse 저장소 복원은 별도다.
 Core 인증 검증은 새 키로 발급한 세션만 대상으로 하며 기존 세션의 연속성이나 기존 서명 키 복구를 뜻하지 않는다.
 `backup_verified`, `personal_environment_verified`는 계속 `false`다.
 개인 환경 갱신 승인이나 전체 저장소의 동일 시점 백업 증거로 사용하지 않는다.

@@ -43,7 +43,11 @@ export async function withRestoreProxy(responses, verify) {
     response.end(JSON.stringify({ service: 'restore-proxy-core-fixture' }))
   })
   const ops = createServer((request, response) => {
-    if (request.method !== 'GET' || request.headers.host !== new URL(origin).host || request.headers.origin !== origin) {
+    // Browsers omit Origin on same-origin GETs. Node's explicit Origin probe
+    // must still fail if the proxy drops it; it has no Sec-Fetch-Site header.
+    const sameOrigin = request.headers.origin === origin
+      || (request.headers.origin === undefined && request.headers['sec-fetch-site'] === 'same-origin')
+    if (request.method !== 'GET' || request.headers.host !== new URL(origin).host || !sameOrigin) {
       violations.push('Ops method, Host or Origin differs')
       response.writeHead(400).end()
       return
@@ -67,17 +71,21 @@ export async function withRestoreProxy(responses, verify) {
     process.env.K8S_CORE_PORT = String(corePort)
     process.env.K8S_OPS_PORT = String(opsPort)
     process.env.K8S_DEV_LOGIN = 'false'
-    cache = await mkdtemp(resolve(tmpdir(), 'govbiz-restore-proxy-'))
+    cache = await mkdtemp(resolve(tmpdir(), `govbiz-restore-proxy-${process.pid}-`))
     vite = await createViteServer({
       root, configFile: resolve(root, 'vite.config.ts'), configLoader: 'native',
       mode: 'portfolio', logLevel: 'silent', cacheDir: cache,
-      optimizeDeps: { noDiscovery: true, include: [] },
       server: { host: '127.0.0.1', port: 0, strictPort: true, hmr: false, watch: null, preTransformRequests: false },
     })
     assert.equal(vite.config.server.proxy['/api'].target, `http://127.0.0.1:${corePort}`)
     assert.equal(vite.config.server.proxy['/api/v1/ops'].target, `http://127.0.0.1:${opsPort}`)
     assert.equal(vite.config.envDir, false)
     await vite.listen()
+    // Finish startup optimization before a fast failing HTTP check can close
+    // Vite. A scan that starts a bundle during close can recreate deleted cache.
+    const optimizer = vite.environments.client.depsOptimizer
+    await optimizer?.scanProcessing
+    await Promise.all(Object.values(optimizer?.metadata.discovered ?? {}).map((dependency) => dependency.processing))
     origin = `http://127.0.0.1:${vite.httpServer.address().port}`
     const request = (path, session = cookie) => originalFetch(origin + path, {
       headers: { Origin: origin, ...(session ? { Cookie: session } : {}) },
@@ -105,7 +113,7 @@ export async function withRestoreProxy(responses, verify) {
       if (response.ok) assert.equal(response.headers.get('cache-control'), 'private, no-store')
       return response
     }
-    result = await verify()
+    result = await verify(origin)
     assert.equal(read.size, Object.keys(responses).length, 'Some captured responses were never proxied')
     await close(ops)
     await assert.rejects(() => getOpsSession(), (error) => error instanceof OpsApiError && error.status === 502)
