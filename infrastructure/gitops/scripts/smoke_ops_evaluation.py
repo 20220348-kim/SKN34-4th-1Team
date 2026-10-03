@@ -638,7 +638,20 @@ def verify(state, settings, compose, compose_env, ops_image, kind, helm, report)
         report["backup_admission_pause"] = set_admission(
             nk, "pause", report["admission_resume"]["version"]
         )
-        smoke_ops_backup.verify(state, settings, report)
+        smoke_ops_backup.verify(
+            state,
+            settings,
+            report,
+            ops_image=ops_image,
+            expected={
+                item["request_id"]: {
+                    "flow_id": item["prefect_flow_run_id"],
+                    "execution_spec_sha256": item["execution_spec_sha256"],
+                }
+                for item in (result, rag_before["evaluation"], rag_after["evaluation"])
+            },
+            release_sha256=before["execution_release_sha256"],
+        )
         report["evaluation_phase"] = "volume_restore_rehearsal"
         expected_restores = {
             result["request_id"]: {

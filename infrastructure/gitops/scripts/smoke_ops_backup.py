@@ -11,9 +11,11 @@ import re
 import secrets
 import subprocess
 import time
+from pathlib import Path
 from uuid import uuid4
 
 import fork_cluster
+import ops_database_restore_probe
 import ops_runtime
 from smoke_ops_bridge import execute
 
@@ -134,10 +136,102 @@ def same_dump(expected, actual):
         raise ValueError("Ops database dump comparison failed")
 
 
-def verify(state, settings, report):
+def application_read(target, database_id, image_id, expected, release_sha256, evidence):
+    application = evidence["application"] = {
+        "status": "FAIL",
+        "cleanup_complete": False,
+    }
+    password = secrets.token_hex(32)
+    execute(
+        target + MYSQL,
+        data=(
+            "CREATE USER 'ops_restore_reader'@'%' IDENTIFIED BY '" + password + "';\n"
+            "GRANT SELECT ON govbiz_ops.* TO 'ops_restore_reader'@'%';"
+        ),
+    )
+    identity = None
+    try:
+        identity = execute(
+            [
+                "docker",
+                "create",
+                "-i",
+                "--name",
+                "govbiz-ops-reader-" + uuid4().hex,
+                "--network",
+                "container:" + database_id,
+                "--user",
+                "10001:10001",
+                "--read-only",
+                "--cap-drop",
+                "ALL",
+                "--security-opt",
+                "no-new-privileges:true",
+                "--memory",
+                "256m",
+                "--pids-limit",
+                "64",
+                "--tmpfs",
+                "/tmp:rw,nosuid,size=32m",
+                "--env",
+                "DB_PASSWORD",
+                "--entrypoint",
+                "python",
+                image_id,
+                "-B",
+                "-",
+            ],
+            env={**os.environ, "DB_PASSWORD": password},
+        ).strip()
+        if not re.fullmatch(r"[a-f0-9]{64}", identity):
+            identity = None
+            raise ValueError("Invalid restore reader identity")
+        probe = Path(ops_database_restore_probe.__file__).read_text(encoding="utf-8")
+        program = probe + (
+            "\nprint(json.dumps(inspect_database("
+            + repr(expected)
+            + ", "
+            + repr(release_sha256)
+            + ")))\n"
+        )
+        result = json.loads(
+            execute(
+                ["docker", "start", "--attach", "--interactive", identity],
+                data=program,
+                timeout=120,
+            )
+        )
+        if (
+            result.get("status") != "PASS"
+            or result.get("evaluation_count") != len(expected)
+            or result.get("execution_release_sha256") != release_sha256
+            or result.get("readiness") != "UP"
+            or result.get("model_api_calls") != 0
+            or any(
+                result.get(key) is not True
+                for key in (
+                    "select_only_grants",
+                    "write_rejected",
+                    "response_serialization_verified",
+                    "relational_fixture_verified",
+                )
+            )
+            or result.get("core_admin_auth_verified") is not False
+            or result.get("http_server_started") is not False
+        ):
+            raise ValueError("Incomplete restored Ops application evidence")
+        application.update(result, status="FAIL", image_id=image_id)
+    finally:
+        if identity is not None:
+            execute(["docker", "rm", "--force", "--volumes", identity], timeout=60)
+            application["cleanup_complete"] = True
+    application["status"] = "PASS"
+
+
+def verify(state, settings, report, *, ops_image, expected, release_sha256):
     evidence = report["database_restore"] = {
         "status": "FAIL",
-        "scope": "disposable_ops_mysql_only",
+        "scope": "disposable_ops_mysql_application_read",
         "backup_verified": False,
         "artifacts_restored": False,
         "prefect_restored": False,
@@ -153,8 +247,20 @@ def verify(state, settings, report):
         or settings.get("namespace") != "govbiz-msa"
     ):
         raise ValueError("DB restore rehearsal requires the disposable bridge smoke")
+    ops_database_restore_probe.validate_expected(expected, release_sha256)
     fork_cluster.require_dev(state, settings)
     _, nk, _ = fork_cluster.commands(state, settings)
+    deployment = json.loads(
+        execute(nk + ["get", "deployment", "ops-service", "-o", "json"])
+    )
+    deployed = deployment["spec"]["template"]["spec"]["containers"]
+    if not deployed or any(item["image"] != ops_image for item in deployed):
+        raise ValueError("Restore reader image differs from the deployed Ops image")
+    image_id = execute(
+        ["docker", "image", "inspect", ops_image, "--format", "{{.Id}}"]
+    ).strip()
+    if not re.fullmatch(r"sha256:[a-f0-9]{64}", image_id):
+        raise ValueError("Invalid Ops restore image identity")
     pod = json.loads(execute(nk + ["get", "pod", "ops-mysql-0", "-o", "json"]))
     containers = pod["spec"]["containers"]
     if (
@@ -263,6 +369,9 @@ def verify(state, settings, report):
         if inventory(target) != counts:
             raise ValueError("Ops restore table or row counts differ")
         same_dump(dump, execute(target + DUMP))
+        application_read(target, identity, image_id, expected, release_sha256, evidence)
+        same_dump(dump, execute(target + DUMP))
+        evidence["application"]["database_unchanged"] = True
         # MySQL dump import disables FK checks temporarily; verify enforcement
         # again in a new connection using the dedicated synthetic review.
         try:
