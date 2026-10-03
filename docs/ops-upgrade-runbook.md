@@ -107,6 +107,15 @@ DB와 파일을 서로 다른 시점에 복사한 뒤 일관된 백업이라고 
 
 - 실제 무료 평가 이력에 한글·이모지·따옴표·JSON·NULL·검토/예산 감사 fixture를 추가한다.
 - 전체 테이블별 행 수, migration 건수, 스키마·행을 포함한 정렬된 덤프를 원본과 대조한다.
+- 배포한 Ops 이미지의 로컬 ID를 고정하고 별도 UID/GID 10001 조회 컨테이너를 실행한다.
+  이 컨테이너는 외부 연결이 없는 복원 MySQL의 네트워크 공간만 공유하며 원본 DB·볼륨에 연결하지 않는다.
+  파일시스템은 읽기 전용이며 capability를 제거하고 새 DB 조회 계정과 임시 Django 키만 사용한다.
+- 복원 DB에만 `SELECT` 권한을 가진 계정을 생성한다. 실제 권한과 UPDATE 거절을 확인한 뒤,
+  Django test client로 실제 readiness URL의 migration·컬럼 검사를 실행한다. migration은 적용하지 않는다.
+- 원본 실행 release 해시와 완료 평가 3건의 요청/flow ID·실행 명세 해시를 비교하고,
+  실제 `run_data`와 DRF JSON renderer로 응답 생성·날짜 직렬화를 확인한다.
+  한글·JSON·NULL fixture와 사용자·검토·예산 관계도 ORM으로 확인한다.
+  검사 후 전체 덤프를 다시 대조해 애플리케이션이 schema·행을 바꾸지 않았음을 확인한다.
 - 복원 DB의 잘못된 외래 키 참조가 거절되는지와 데이터 변조가 감지되는지 확인한다.
 - 마지막에 원본 덤프가 그대로인지 확인하고 생성한 복원 컨테이너만 삭제한다.
   가져오기·비교·컨테이너 정리 중 하나라도 실패하면 성공으로 기록하지 않는다.
@@ -116,7 +125,10 @@ DB와 파일을 서로 다른 시점에 복사한 뒤 일관된 백업이라고 
 원본·복원 서버의 MySQL 버전이 다르면 중단하며 복원 서버의 event scheduler는 비활성화한다.
 SQL 원문은 메모리에서만 전달하고 CI artifact에는 건수·SHA-256·검증 결과만 보존한다.
 
-보고서의 `database_restore.scope=disposable_ops_mysql_only`와 `status=PASS`는 이 CI DB 훈련만 뜻한다.
+보고서의 `database_restore.scope=disposable_ops_mysql_application_read`와 `status=PASS`는
+이 CI DB 복원·애플리케이션 조회 훈련만 뜻한다. `application`에 이미지 ID·readiness·응답 생성·
+권한 거절·DB 무변경·컨테이너 정리 결과를 남긴다. readiness는 프로세스 내부의 test client로 호출하며
+HTTP 서버·Core 관리자 인증·관리자 화면을 검증한 것으로 기록하지 않는다.
 `backup_verified`, `personal_environment_verified`, `artifacts_restored`, `prefect_restored`는 모두 `false`다.
 개인 환경 전체 백업·파일/Prefect 복원·키 복구·구버전 전환 검증은 별도로 수행해야 한다.
 
@@ -125,6 +137,9 @@ SQL 원문은 메모리에서만 전달하고 CI artifact에는 건수·SHA-256�
 DB 복원 검증을 통과하고 Ops API·sync Pod가 종료된 상태에서 같은 시험 프로젝트의 실행기·결과 서버·
 Prefect를 중지한다. 컨테이너 ID·이미지·Compose 소유권·볼륨 사용자와 정상 종료를 확인하며,
 다른 컨테이너가 볼륨을 사용하면 중단한다. 개인 환경의 컨테이너는 중지 대상으로 허용하지 않는다.
+실행기는 종료 중 Prefect API로 deployment를 정리하므로 실행기 → 결과 서버 → Prefect 순서로 종료한다.
+각 서비스의 정상 종료를 확인한 뒤 다음 서비스를 중지하고, 종료 코드·OOM 여부를
+`volume_restore.source_shutdown`에 남긴다. 비정상 종료는 계속 복원 중단 조건이다.
 
 - `ops-results`와 `prefect-data`를 각각 읽기 전용 원본으로 연결하고 새 임시 볼륨에 복원한다.
   파일 복사는 Python 표준 라이브러리를 사용하며 도우미에는 네트워크·공개 포트가 없다.
@@ -161,7 +176,8 @@ Prefect를 중지한다. 컨테이너 ID·이미지·Compose 소유권·볼륨 �
 성공 시 `results_server_started=true`, `prefect_server_started=true`이며,
 증거가 완성되지 않은 실패에서는 `null`로 미확인을 표시한다.
 검사 토큰을 새로 생성하므로 기존 Secret/서명 키 복구는 검증하지 않는다.
-실행기 재개·새 평가 실행·복원 DB를 사용하는 Ops API·관리자 화면·Langfuse 저장소 복원도 별도다.
+DB 복원 단계의 Ops 조회·직렬화 검사와 별개로, 실행기 재개·새 평가 실행·복원 DB와 결과 서버를
+함께 사용하는 Ops HTTP API·Core 관리자 인증·관리자 화면·Langfuse 저장소 복원도 별도다.
 `backup_verified`, `personal_environment_verified`는 계속 `false`다.
 개인 환경 갱신 승인이나 전체 저장소의 동일 시점 백업 증거로 사용하지 않는다.
 CI에 연결된 코드가 있어도 최신 SHA의 실제 통합 작업이 이 단계까지 통과해야 실행 완료로 기록한다.

@@ -65,7 +65,15 @@ def main():
         else:
             raise AssertionError("Concurrent migration was not rejected")
     finally:
-        contender.close()
+        # Socket close can return before MySQL releases this session's lock.
+        # Confirm release before testing a fresh migration's immediate GET_LOCK.
+        try:
+            with contender.cursor() as cursor:
+                cursor.execute("SELECT RELEASE_LOCK(%s)", [lock])
+                if cursor.fetchone() != (1,):
+                    raise AssertionError("Could not release fixture lock")
+        finally:
+            contender.close()
     call_command("migrate_deployment")
     # Applied migration history alone cannot conceal a physically missing column.
     table = connection.ops.quote_name(user._meta.db_table)
