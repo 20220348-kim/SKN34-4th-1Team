@@ -9,22 +9,31 @@ import subprocess
 import sys
 import tempfile
 import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.cookies import SimpleCookie
 from pathlib import Path
-from threading import Thread
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 
-def response(path, token=None):
+def response(path, token=None, *, port=8000, payload=None, method="GET"):
     class NoRedirect(HTTPRedirectHandler):
         def redirect_request(self, *args, **kwargs):
             return None
 
     client = build_opener(ProxyHandler({}), NoRedirect())
     request = Request(
-        "http://127.0.0.1:8000" + path,
-        headers={} if token is None else {"Cookie": "govbiz_session=" + token},
+        f"http://127.0.0.1:{port}" + path,
+        headers={
+            "Content-Type": "application/json",
+            **(
+                {"Origin": "http://127.0.0.1:8080"}
+                if port == 8080 and method == "POST"
+                else {}
+            ),
+            **({} if token is None else {"Cookie": "govbiz_session=" + token}),
+        },
+        data=None if payload is None else json.dumps(payload).encode(),
+        method=method,
     )
     try:
         reply = client.open(request, timeout=5)
@@ -32,41 +41,53 @@ def response(path, token=None):
         reply = error
     with reply:
         raw = reply.read(8 * 1024 * 1024 + 1)
-        if len(raw) > 8 * 1024 * 1024 or reply.headers.get("Content-Length") != str(
-            len(raw)
+        if len(raw) > 8 * 1024 * 1024 or (
+            port == 8000 and reply.headers.get("Content-Length") != str(len(raw))
         ):
             raise ValueError("Unexpected restored Ops response size")
         return reply.status, reply.headers, raw
 
 
-def core_fixture(principal, token, calls):
-    """Synthetic Core session contract only; never claims real Core login."""
-
-    class Handler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            cookie = self.headers.get("Cookie", "")
-            if self.path != "/api/v1/admin/session":
-                status, data = 404, {}
-            elif cookie == "govbiz_session=" + token:
-                status, data = 200, principal
-                calls["admin"] += 1
-            elif cookie == "govbiz_session=non-admin-fixture":
-                status, data = 403, {}
-                calls["forbidden"] += 1
-            else:
-                status, data = 401, {}
-                calls["invalid"] += 1
-            raw = json.dumps(data).encode()
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(raw)))
-            self.end_headers()
-            self.wfile.write(raw)
-
-        def log_message(self, *args):
-            pass
-
-    return HTTPServer(("127.0.0.1", 0), Handler)
+def core_login(principal, password):
+    """Log into the actual Core image; never synthesize or sign a session token."""
+    deadline = time.monotonic() + 90
+    while True:
+        try:
+            if response("/api/v1/health", port=8080)[0] != 200:
+                raise ValueError("Restored Core is not healthy")
+            break
+        except (URLError, TimeoutError):
+            if time.monotonic() >= deadline:
+                raise ValueError("Restored Core startup timed out") from None
+            time.sleep(1)
+    tokens = []
+    for route, payload in (
+        ("/login", {"email": principal["email"], "password": password}),
+        ("/dev-login", {"role": "USER"}),
+    ):
+        status, headers, raw = response(
+            "/api/v1/auth" + route, port=8080, payload=payload, method="POST"
+        )
+        cookies = SimpleCookie()
+        cookies.load(headers.get("Set-Cookie", ""))
+        cookie = cookies.get("govbiz_session")
+        if (
+            status != 200
+            or cookie is None
+            or not cookie["httponly"]
+            or not re.fullmatch(r"[A-Za-z0-9_.-]{1,4096}", cookie.value)
+        ):
+            raise ValueError("Restored Core did not issue a login session")
+        tokens.append(cookie.value)
+    status, _, raw = response("/api/v1/admin/session", tokens[0], port=8080)
+    if status != 200 or json.loads(raw) != principal:
+        raise ValueError("Restored Core administrator differs from the Ops requester")
+    if (
+        tokens[0] == tokens[1]
+        or response("/api/v1/admin/session", tokens[1], port=8080)[0] != 403
+    ):
+        raise ValueError("Restored Core did not reject the member session")
+    return tokens
 
 
 def stop(server):
@@ -89,7 +110,8 @@ def check_http(expected):
         raise ValueError("Restored Ops HTTP requires runtime UID/GID 10001")
     before = tree(Path("/restore"))
     password, path = os.environ["DB_PASSWORD"], os.environ["PATH"]
-    token, artifact_token = secrets.token_hex(32), secrets.token_hex(32)
+    core_password = os.environ["CORE_LOGIN_PASSWORD"]
+    artifact_token = secrets.token_hex(32)
     with tempfile.TemporaryDirectory(prefix="ops-http-restore-") as home:
         empty = Path(home) / "empty"
         empty.mkdir()
@@ -111,6 +133,7 @@ def check_http(expected):
             "LLMOPS_ARTIFACT_TOKEN": artifact_token,
             "LLMOPS_RESULTS_DIR": str(empty),
             "LLMOPS_EVIDENCE_DIR": str(empty),
+            "CORE_API_URL": "http://127.0.0.1:8080",
         }
         os.environ.clear()
         os.environ.update(env)
@@ -133,13 +156,7 @@ def check_http(expected):
             "role": "ADMIN",
         }
         connection.close()
-        calls = {"admin": 0, "invalid": 0, "forbidden": 0}
-        core = core_fixture(principal, token, calls)
-        thread = Thread(
-            target=core.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True
-        )
-        thread.start()
-        env["CORE_API_URL"] = f"http://127.0.0.1:{core.server_port}"
+        token, member_token = core_login(principal, core_password)
         servers = []
         try:
             for app, port, server_env in (
@@ -217,7 +234,7 @@ def check_http(expected):
                 for cookie, code in (
                     (None, 401),
                     ("invalid-fixture", 401),
-                    ("non-admin-fixture", 403),
+                    (member_token, 403),
                 ):
                     if response(route, cookie)[0] != code:
                         raise ValueError(
@@ -233,20 +250,18 @@ def check_http(expected):
                     not in headers.get("Content-Security-Policy", "")
                 ):
                     raise ValueError("Restored Ops report or response headers differ")
-            if calls != {
-                "admin": len(expected),
-                "invalid": len(expected),
-                "forbidden": len(expected),
-            }:
-                raise ValueError("Restored Ops did not verify every Core session")
+            # Revoke a real persisted session, then prove Ops cannot reuse it.
+            if (
+                response("/api/v1/auth/logout", token, port=8080, method="POST")[0]
+                != 204
+            ):
+                raise ValueError("Restored Core logout failed")
+            if response(route, token)[0] != 401:
+                raise ValueError("Restored Ops accepted a revoked Core session")
+            token, _ = core_login(principal, core_password)
             stop(servers.pop(0))
             if response(route, token)[0] != 404:
                 raise ValueError("Restored Ops concealed the artifact server outage")
-            core.shutdown()
-            thread.join(timeout=5)
-            core.server_close()
-            if response(route, token)[0] != 503:
-                raise ValueError("Restored Ops concealed the Core session outage")
         finally:
             errors = []
             for server in reversed(servers):
@@ -254,9 +269,6 @@ def check_http(expected):
                     stop(server)
                 except (ValueError, OSError, subprocess.SubprocessError) as error:
                     errors.append(error)
-            core.shutdown()
-            thread.join(timeout=5)
-            core.server_close()
             if errors:
                 raise errors[0]
     if tree(Path("/restore")) != before:
@@ -265,11 +277,11 @@ def check_http(expected):
         "status": "PASS",
         "matched_reports": len(expected),
         "readiness": "UP",
-        "auth_contract": "synthetic_core_session",
-        "core_admin_auth_verified": False,
+        "auth_contract": "restored_core_password_login",
+        "core_admin_auth_verified": True,
         "unauthorized_rejected": True,
         "artifact_outage_rejected": True,
-        "core_outage_rejected": True,
+        "revoked_session_rejected": True,
         "files_unchanged": True,
         "servers_stopped": True,
         "runtime_uid": 10001,
@@ -309,13 +321,19 @@ def verify(image, volume, expected, database):
                 "type=volume,source=" + volume + ",target=/restore,readonly",
                 "--env",
                 "DB_PASSWORD",
+                "--env",
+                "CORE_LOGIN_PASSWORD",
                 "--entrypoint",
                 "python",
                 image,
                 "-B",
                 "-",
             ],
-            env={**os.environ, "DB_PASSWORD": database["password"]},
+            env={
+                **os.environ,
+                "DB_PASSWORD": database["password"],
+                "CORE_LOGIN_PASSWORD": database["core_password"],
+            },
         ).strip()
         if not re.fullmatch(r"[a-f0-9]{64}", identity):
             identity = None
@@ -335,18 +353,18 @@ def verify(image, volume, expected, database):
             execute(
                 ["docker", "start", "--attach", "--interactive", identity],
                 data=program,
-                timeout=120,
+                timeout=240,
             )
         )
         required = {
             "status": "PASS",
             "matched_reports": len(expected),
             "readiness": "UP",
-            "auth_contract": "synthetic_core_session",
-            "core_admin_auth_verified": False,
+            "auth_contract": "restored_core_password_login",
+            "core_admin_auth_verified": True,
             "unauthorized_rejected": True,
             "artifact_outage_rejected": True,
-            "core_outage_rejected": True,
+            "revoked_session_rejected": True,
             "files_unchanged": True,
             "servers_stopped": True,
             "runtime_uid": 10001,

@@ -20,15 +20,19 @@ RUNS = {
     key: {**row, "report_sha256": hashlib.sha256(REPORT).hexdigest()}
     for key, row in EXPECTED.items()
 }
-DATABASE = {"id": IDENTITY, "image": IMAGE_ID, "password": "fresh-read-only-password"}
+DATABASE = {
+    "id": IDENTITY,
+    "image": IMAGE_ID,
+    "password": "fresh-read-only-password",
+    "core_password": "fixture-admin-password",
+}
 
 
 class HttpTests(unittest.TestCase):
     def setUp(self):
         self.artifact = Mock(poll=Mock(return_value=None), wait=Mock(return_value=0))
         self.ops = Mock(poll=Mock(return_value=None), wait=Mock(return_value=0))
-        self.core = Mock(server_port=18080)
-        self.calls = None
+        self.revoked = False
         self.defect = None
         self.user = SimpleNamespace(username="core:1", email="fixture@example.invalid")
         runs = Mock()
@@ -41,14 +45,19 @@ class HttpTests(unittest.TestCase):
             "apps.evaluations.models": SimpleNamespace(EvaluationRun=runs),
         }
 
-    def fixture(self, principal, token, calls):
+    def login(self, principal, password):
         self.assertEqual(
             principal, {"accountId": 1, "email": self.user.email, "role": "ADMIN"}
         )
-        self.calls = calls
-        return self.core
+        self.assertEqual(password, DATABASE["core_password"])
+        self.revoked = False
+        return "real-admin-token", "real-member-token"
 
-    def response(self, path, token=None):
+    def response(self, path, token=None, **kwargs):
+        if path.endswith("/logout"):
+            self.assertEqual(kwargs, {"port": 8080, "method": "POST"})
+            self.revoked = True
+            return 204, {}, b""
         if path.endswith("/ready"):
             return (
                 (503 if self.defect == "readiness" else 200),
@@ -60,17 +69,14 @@ class HttpTests(unittest.TestCase):
                     }
                 ).encode(),
             )
-        if self.core.server_close.called:
-            return (200 if self.defect == "core_outage" else 503), {}, b"{}"
+        if self.revoked:
+            return (200 if self.defect == "revoked" else 401), {}, b"{}"
         if token is None:
             return (200 if self.defect == "auth" else 401), {}, b"{}"
         if token == "invalid-fixture":
-            self.calls["invalid"] += 1
             return 401, {}, b"{}"
-        if token == "non-admin-fixture":
-            self.calls["forbidden"] += 1
+        if token == "real-member-token":
             return 403, {}, b"{}"
-        self.calls["admin"] += 1
         if self.artifact.terminate.called:
             return (200 if self.defect == "artifact_outage" else 404), {}, b"{}"
         return (
@@ -93,6 +99,7 @@ class HttpTests(unittest.TestCase):
                 {
                     "PATH": "/app/.venv/bin",
                     "DB_PASSWORD": DATABASE["password"],
+                    "CORE_LOGIN_PASSWORD": DATABASE["core_password"],
                     "OPENAI_API_KEY": "never-forward",
                 },
             ),
@@ -103,8 +110,7 @@ class HttpTests(unittest.TestCase):
                 "tree",
                 side_effect=[{"file": 1}, {"file": 2 if self.defect == "files" else 1}],
             ),
-            patch.object(probe, "core_fixture", side_effect=self.fixture),
-            patch.object(probe, "Thread"),
+            patch.object(probe, "core_login", side_effect=self.login),
             patch.object(probe, "response", side_effect=self.response),
             patch.object(probe, "build_opener", return_value=client),
             patch.object(
@@ -116,18 +122,20 @@ class HttpTests(unittest.TestCase):
             ops_env = start.call_args_list[1].kwargs["env"]
             self.assertNotIn("DB_PASSWORD", artifact_env)
             self.assertNotIn("OPENAI_API_KEY", ops_env)
+            self.assertNotIn("CORE_LOGIN_PASSWORD", ops_env)
+            self.assertEqual(ops_env["CORE_API_URL"], "http://127.0.0.1:8080")
             self.assertEqual(artifact_env["LLMOPS_RESULTS_DIR"], "/restore")
             self.assertNotEqual(ops_env["LLMOPS_RESULTS_DIR"], "/restore")
             self.assertEqual(ops_env["DB_USER"], "ops_restore_reader")
             return result
 
-    def test_reports_auth_outages_and_cleanup_without_real_core_claim(self):
+    def test_reports_real_auth_revocation_outage_and_cleanup(self):
         result = self.run_probe()
         self.assertEqual(result["matched_reports"], 3)
-        self.assertFalse(result["core_admin_auth_verified"])
-        self.assertEqual(result["auth_contract"], "synthetic_core_session")
+        self.assertTrue(result["core_admin_auth_verified"])
+        self.assertEqual(result["auth_contract"], "restored_core_password_login")
         self.assertTrue(result["artifact_outage_rejected"])
-        self.assertTrue(result["core_outage_rejected"])
+        self.assertTrue(result["revoked_session_rejected"])
         self.assertTrue(self.artifact.terminate.called)
         self.assertTrue(self.ops.terminate.called)
 
@@ -137,7 +145,7 @@ class HttpTests(unittest.TestCase):
             "auth",
             "report",
             "artifact_outage",
-            "core_outage",
+            "revoked",
             "files",
         ):
             self.setUp()
@@ -161,11 +169,11 @@ class ContainerTests(unittest.TestCase):
             "status": "PASS",
             "matched_reports": 3,
             "readiness": "UP",
-            "auth_contract": "synthetic_core_session",
-            "core_admin_auth_verified": False,
+            "auth_contract": "restored_core_password_login",
+            "core_admin_auth_verified": True,
             "unauthorized_rejected": True,
             "artifact_outage_rejected": True,
-            "core_outage_rejected": True,
+            "revoked_session_rejected": True,
             "files_unchanged": True,
             "servers_stopped": True,
             "runtime_uid": 10001,
@@ -202,6 +210,10 @@ class ContainerTests(unittest.TestCase):
         self.assertNotIn("--publish", command)
         self.assertEqual(options["env"]["DB_PASSWORD"], DATABASE["password"])
         self.assertNotIn(DATABASE["password"], " ".join(command))
+        self.assertEqual(
+            options["env"]["CORE_LOGIN_PASSWORD"], DATABASE["core_password"]
+        )
+        self.assertNotIn(DATABASE["core_password"], " ".join(command))
 
     def test_probe_and_cleanup_failures_propagate(self):
         for stage in ("start", "rm"):
@@ -217,7 +229,7 @@ class ContainerTests(unittest.TestCase):
         for key, value in (
             ("matched_reports", 2),
             ("servers_stopped", False),
-            ("core_admin_auth_verified", True),
+            ("core_admin_auth_verified", False),
             ("model_api_calls", 1),
         ):
             original = self.proof[key]
@@ -225,6 +237,67 @@ class ContainerTests(unittest.TestCase):
             with self.subTest(key=key), self.assertRaisesRegex(ValueError, "evidence"):
                 self.run_probe()
             self.proof[key] = original
+
+
+class CoreLoginTests(unittest.TestCase):
+    principal = {"accountId": 2, "email": "admin@example.invalid", "role": "ADMIN"}
+
+    def replies(self):
+        return [
+            (200, {}, b"{}"),
+            (200, {"Set-Cookie": "govbiz_session=admin.jwt; HttpOnly; Path=/"}, b"{}"),
+            (200, {"Set-Cookie": "govbiz_session=member.jwt; HttpOnly; Path=/"}, b"{}"),
+            (200, {}, json.dumps(self.principal).encode()),
+            (403, {}, b"{}"),
+        ]
+
+    def test_core_cookie_write_uses_the_explicit_fixture_origin(self):
+        reply = io.BytesIO(b"")
+        reply.status, reply.headers = 204, {}
+        client = Mock()
+        client.open.return_value = reply
+        with patch.object(probe, "build_opener", return_value=client):
+            self.assertEqual(
+                probe.response(
+                    "/api/v1/auth/logout", "real.jwt", port=8080, method="POST"
+                )[0],
+                204,
+            )
+        request = client.open.call_args.args[0]
+        self.assertEqual(request.get_header("Origin"), "http://127.0.0.1:8080")
+        self.assertEqual(request.get_header("Cookie"), "govbiz_session=real.jwt")
+
+    def test_real_password_login_and_member_session_contract(self):
+        with patch.object(probe, "response", side_effect=self.replies()) as response:
+            self.assertEqual(
+                probe.core_login(self.principal, "fresh-password"),
+                ["admin.jwt", "member.jwt"],
+            )
+        self.assertEqual(response.call_args_list[1].args, ("/api/v1/auth/login",))
+        self.assertEqual(
+            response.call_args_list[1].kwargs["payload"],
+            {"email": self.principal["email"], "password": "fresh-password"},
+        )
+        self.assertTrue(
+            all(call.kwargs["port"] == 8080 for call in response.call_args_list)
+        )
+
+    def test_bad_login_cookie_identity_and_role_are_rejected(self):
+        for index, reply in (
+            (0, (503, {}, b"{}")),
+            (1, (401, {}, b"{}")),
+            (1, (200, {"Set-Cookie": "govbiz_session=admin.jwt"}, b"{}")),
+            (3, (200, {}, json.dumps({**self.principal, "accountId": 99}).encode())),
+            (4, (200, {}, b"{}")),
+        ):
+            replies = self.replies()
+            replies[index] = reply
+            with (
+                self.subTest(index=index, reply=reply),
+                patch.object(probe, "response", side_effect=replies),
+                self.assertRaises(ValueError),
+            ):
+                probe.core_login(self.principal, "fresh-password")
 
 
 if __name__ == "__main__":

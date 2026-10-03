@@ -642,6 +642,8 @@ def verify(state, settings, compose, compose_env, ops_image, kind, helm, report)
             settings,
             report,
             ops_image=ops_image,
+            core_image=core_image,
+            core_password=password,
             compose=compose,
             compose_env=compose_env,
             expected={
