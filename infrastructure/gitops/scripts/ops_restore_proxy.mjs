@@ -26,10 +26,21 @@ async function close(server) {
   await stopped
 }
 
-export async function withRestoreProxy(responses, verify) {
+export async function withRestoreProxy(responses, verify, reports = {}) {
+  for (const [path, report] of Object.entries(reports)) {
+    assert.match(path, /^\/api\/v1\/ops\/evaluations\/[a-f0-9-]{36}\/report$/)
+    assert.equal(responses[path.slice(0, -7)]?.report_url, path)
+    assert.equal(typeof report.body, 'string')
+    assert.ok(Buffer.byteLength(report.body) > 0 && Buffer.byteLength(report.body) <= 8 * 1024 * 1024)
+    assert.equal(report.headers['content-type'], 'text/html; charset=utf-8')
+    assert.equal(report.headers['cache-control'], 'private, no-store, max-age=0, no-cache, must-revalidate')
+    assert.equal(report.headers['content-security-policy'], "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'")
+    assert.deepEqual(Object.keys(report.headers).sort(), ['cache-control', 'content-security-policy', 'content-type'])
+  }
   const originalFetch = globalThis.fetch
   const originalEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]))
   const read = new Set()
+  const reportReads = new Set()
   const violations = []
   const coreReads = []
   let origin, vite, cache, result
@@ -57,6 +68,9 @@ export async function withRestoreProxy(responses, verify) {
     response.setHeader('Cache-Control', 'private, no-store')
     if (code !== 200) {
       response.writeHead(code).end('{}')
+    } else if (Object.hasOwn(reports, request.url)) {
+      reportReads.add(request.url)
+      response.writeHead(200, reports[request.url].headers).end(reports[request.url].body)
     } else if (!Object.hasOwn(responses, request.url)) {
       violations.push('Uncaptured Ops route requested')
       response.writeHead(404).end('{}')
@@ -115,6 +129,7 @@ export async function withRestoreProxy(responses, verify) {
     }
     result = await verify(origin)
     assert.equal(read.size, Object.keys(responses).length, 'Some captured responses were never proxied')
+    assert.equal(reportReads.size, Object.keys(reports).length, 'Some captured reports were never proxied')
     await close(ops)
     await assert.rejects(() => getOpsSession(), (error) => error instanceof OpsApiError && error.status === 502)
     const stillCore = await request('/api/v1/health')
@@ -139,5 +154,6 @@ export async function withRestoreProxy(responses, verify) {
     status: 'PASS', mode: 'portfolio', response_source: 'captured_restore_http',
     routes_verified: true, credentials_forwarded: true, unauthorized_status_preserved: true,
     outage_rejected: true, document_served: true, servers_stopped: true, browser_rendered: false,
+    report_documents_verified: reportReads.size,
   } }
 }

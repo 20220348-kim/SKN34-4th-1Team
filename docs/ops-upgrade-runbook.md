@@ -193,18 +193,26 @@ Prefect를 중지한다. 컨테이너 ID·이미지·Compose 소유권·볼륨 �
   두 loopback HTTP 서버로 Core 경로와 수집한 Ops 응답을 재생한다. 개인 5173 포트나 기존 전달을
   재사용하지 않고 OS가 할당한 임시 포트만 사용한다. Core 응답은 경로 분리 확인용 검증 데이터다.
   `/api`·`/api/v1/ops`의 분리, Ops Host·Origin·검사용 쿠키 전달, 401/403·no-store 보존을 확인한다.
-  모든 수집 응답이 실제 프록시를 거쳐 기존 웹 API 함수에서 파싱되어야 한다.
+  모든 수집 JSON 응답이 실제 프록시를 거쳐 기존 웹 API 함수에서 파싱되어야 한다.
+  고정 답변 평가의 상세 화면이 자동 조회하는 검토 자료도 수집해 권한·no-store·웹 파서를 확인한다.
   Ops 재생 서버를 종료하면 웹 API 함수가 502 오류를 반환하고 Core 경로는 유지되어야 한다.
   이어서 테스트 전용 `playwright-core`로 별도 headless 브라우저·새 컨텍스트를 만든다.
   실제 `/ops/evaluations`의 JS·React·CSS를 로드하고 관리자 표시, 전체 이력의 페이지 이동·행 수·요청 ID,
-  예산 영역의 조회 완료를 확인한다. 일반 회원 검사용 쿠키로 다시 열면 403 안내가 나오고 이력이 없어야 한다.
+  예산 영역의 조회 완료를 확인한다. 복원 대상 3건은 목록 링크를 클릭해 상세 화면의 요청 ID·명세 ID와
+  실행 예산 장부도 확인한다. 고정 답변 평가의 검토 자료가 로드되고 화면 오류가 없어야 한다.
+  상세 화면의 Evidently 보고서 링크는 `noopener noreferrer`가 있는 새 탭으로 열려야 한다.
+  복원 HTTP에서 수집한 HTML 원문·Content-Type·Cache-Control·CSP를 그대로 재생하고,
+  브라우저가 받은 본문의 SHA-256을 복원 기대값과 대조한다. 본문 표시와 새 탭의 opener 차단,
+  sandbox에 의한 쿠키·localStorage 접근 거절을 확인한다. 개별 차트·지표의 의미나 시각 품질 판정은 아니다.
+  일반 회원 검사용 쿠키로 다시 열면 403 안내가 나오고 이력·보고서 링크가 없어야 한다.
+  같은 브라우저에서 보고서 경로를 GET해 3건 모두 403·no-store이며 HTML이 노출되지 않는지도 확인한다.
   브라우저는 이 Vite origin의 GET만 허용하며 다른 주소·쓰기 요청·예상하지 않은 JS 오류는 실패다.
   브라우저의 동일 출처 GET은 Origin이 없을 수 있으므로 Sec-Fetch-Site도 확인한다. 기존 HTTP 검사의
   명시적 Origin이 유실된 경우를 브라우저 GET으로 잘못 통과시키지는 않는다.
   검사용 HttpOnly 쿠키를 주입하므로 실제 Core 로그인·세션 발급·브라우저 로그인 흐름 검증은 아니다.
   이 프록시의 백엔드는 복원 서버 자체가 아닌 수집 응답 재생 서버이며 기존 클러스터에는 연결하지 않는다.
-  상세 화면·보고서 iframe·접수 버튼은 브라우저로 조작하지 않는다. 이 경로의 API·보고서 검사는 앞 단계와 구분한다.
-  원문 응답·쿠키·브라우저 프로필은 최종 보고서에 저장하지 않는다. 임시 브라우저·응답 파일·Vite 캐시·
+  접수·검토 저장·기준 지정 버튼은 조작하지 않는다. 실제 API 인증·보고서 검사는 앞 단계와 구분한다.
+  JSON·보고서 HTML 원문·쿠키·브라우저 프로필은 최종 증거에 저장하지 않는다. 임시 브라우저·응답 파일·Vite 캐시·
   서버를 정리하고 fetch와 K8S 환경변수를 복원한다. 렌더링·파서·라우팅·장애 검사·정리 실패는 전체 실패다.
 - 실제 Core 로그아웃 후 같은 세션으로 보고서를 요청하면 401이어야 한다. 다시 비밀번호로 로그인한 뒤
   결과 서버를 종료하면 보고서 요청은 404여야 한다. 종료 실패·결과 파일 변경·Ops DB 덤프 변경은
@@ -234,8 +242,12 @@ Prefect를 중지한다. 컨테이너 ID·이미지·Compose 소유권·볼륨 �
 `management_web_contract`에는 웹 소비자 파서 통과 결과를 기록한다.
 그 아래 `proxy_http`는 `mode=portfolio`, `response_source=captured_restore_http`와 실제 프록시·HTML
 전달·장애·정리 결과를 기록하며 자체 `browser_rendered=false`를 유지한다.
-별도 `browser_ui`는 실제 브라우저 버전·목록 건수·페이지 수·예산·권한 화면·정리 결과와
+별도 `browser_ui`는 실제 브라우저 버전·목록 건수·페이지 수·예산·권한 화면·정리 결과,
+`details_verified`, `report_documents_verified`, `report_sandbox_verified`, `report_denials_verified`와
 `browser_rendered=true`를 기록한다. 이 증거가 있어야 `management_web_contract.browser_rendered=true`가 된다.
+로컬 브라우저 회귀 테스트는 합성 목록 26건과 상세·보고서 3건을 사용한다. 보고서는 스크립트로 본문을
+표시하는 검증용 HTML이며 실제 Evidently 차트의 검증으로 보고하지 않는다. 변조된 HTML·누락 보고서·
+약화된 CSP·캐시 허용·추가 쿠키 헤더는 성공 처리하지 않는다.
 무료 프록시·브라우저 회귀 테스트는 LLMOps CI에서 잠금 의존성 및 대응 Chromium headless shell 설치 후
 필수 실행한다. Kubernetes 복원 단계에서는 실제 복원 HTTP에서 수집한 응답으로 다시 수행한다.
 로컬은 설치된 Chrome/Edge를 명시해 다운로드 없이 확인할 수 있다. 다음은 Bash/WSL 명령이며,

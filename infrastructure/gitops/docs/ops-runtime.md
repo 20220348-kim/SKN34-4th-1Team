@@ -243,12 +243,16 @@ CSRF 토큰을 제거한 실제 응답을 loopback 재생 서버에 넣고, 실�
 `results.ops_http.management_http`와 `management_web_contract`에 결과를 기록하고,
 후자의 `proxy_http.response_source=captured_restore_http`로 응답 재생 범위를 명시한다.
 이후 테스트 전용 Playwright와 새 브라우저 컨텍스트에서 실제 React 목록·페이지 이동·예산 표시를
-확인하고, 일반 회원 응답의 권한 오류 화면과 이력 미노출도 확인한다. 브라우저 버전·검사 건수·종료 결과를
+확인하고, 복원 대상 3건의 목록 링크에서 상세 화면·실행 예산·고정 답변 평가의 검토 자료 조회를 확인한다.
+보고서는 iframe이 아닌 새 탭으로 열리며 수집한 HTML·보안 헤더를 재생한다. 본문 해시·본문 표시·opener 차단과
+쿠키/localStorage 접근 거절을 확인한다. 일반 회원 응답의 권한 오류 화면·이력/보고서 링크 미노출 및
+브라우저의 보고서 GET 403도 확인한다. 브라우저 버전·상세/보고서 검사 건수·격리·권한 거절·종료 결과를
 `management_web_contract.browser_ui`에 기록하고, 이 검사를 통과한 경우에만 해당 계약의
 `browser_rendered=true`를 기록한다. HTTP/프록시 자체 증거의 같은 필드는 false를 유지한다.
 검사용 HttpOnly 쿠키를 주입하며 브라우저는 격리 Vite의 GET만 허용한다. 개인 Kubernetes까지의 전체 연결·
-실제 브라우저 로그인·상세 화면·보고서 iframe·기존 서명 키 복구·기존 세션 연속성은 포함하지 않는다.
-실제 인증·DB·보고서 검사는 앞선 격리 Core/Ops HTTP 검증 결과로 구분한다. 최종 보고서에는 응답 원문·
+실제 브라우저 로그인·보고서 개별 차트의 시각/의미 검증·기존 서명 키 복구·기존 세션 연속성은 포함하지 않는다.
+로컬 무료 테스트는 합성 보고서이며 실제 복원 보고서는 CI의 복원 단계에서 확인한다.
+실제 인증·DB·보고서 검사는 앞선 격리 Core/Ops HTTP 검증 결과로 구분한다. 최종 증거에는 JSON/HTML 원문·
 쿠키·브라우저 프로필을 넣지 않으며 임시 브라우저도 정리한다. Chromium 설치·로컬 Chrome 사용 명령은
 [복원 절차](../../../docs/ops-upgrade-runbook.md)를 따른다.
 같은 이미지의 Prefect API도 격리 기동해

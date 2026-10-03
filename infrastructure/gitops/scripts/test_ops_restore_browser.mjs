@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
+import { readdir } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import test from 'node:test'
 import { withRestoreProxy } from './ops_restore_proxy.mjs'
 import { checkRestoreBrowser } from './ops_restore_browser.mjs'
@@ -32,18 +35,81 @@ const responses = {
       reservation_count: 0, legacy_live_run_count: 0, change_count: 0, recent_changes: [] },
   },
 }
+const reports = {}, expected = {}
+for (const index of [0, 24, 25]) {
+  const row = runs[index]
+  const path = `/api/v1/ops/evaluations/${row.id}`
+  row.report_url = path + '/report'
+  row.execution_spec_sha256 = String(index).padStart(64, 'a')
+  row.evaluation_scope = index === 25 ? 'source-chunks-retrieval-answer' : 'fixed-answer-context-only'
+  responses[path] = { ...row }
+  responses[path + '/budget'] = { as_of: at, state: 'not_applicable', reservation: null, calls: [] }
+  if (index !== 25) responses[path + '/review'] = {
+    is_baseline: false, material_error: '', baseline_version: 0, review_version: 0,
+    can_approve: false, approval_current: false, baseline_requires_review: false,
+    rubric: { version: 'fixture', criteria: [] }, case_reviews: [], baseline_history: [], reviews: [], material: null,
+  }
+  const body = `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>복원 검증 보고서</title></head><body><script>document.body.appendChild(Object.assign(document.createElement('h1'), {textContent: '복원 보고서 ${index}'}))</script></body></html>`
+  reports[path + '/report'] = { body, headers: {
+    'content-type': 'text/html; charset=utf-8',
+    'cache-control': 'private, no-store, max-age=0, no-cache, must-revalidate',
+    'content-security-policy': "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'",
+  } }
+  expected[row.id] = { report_sha256: createHash('sha256').update(body).digest('hex'), execution_spec_sha256: row.execution_spec_sha256 }
+}
 
-test('real browser renders both list pages and budget, then hides rows for a member', { timeout: 120000 }, async (context) => {
-  const result = await withRestoreProxy(responses, async (origin) => ({ browser_ui: await checkRestoreBrowser(origin, responses) }))
+test('real browser opens details and sandboxed report tabs across both list pages, then denies a member', { timeout: 120000 }, async (context) => {
+  const result = await withRestoreProxy(responses, async (origin) => ({ browser_ui: await checkRestoreBrowser(origin, responses, expected, reports) }), reports)
   assert.equal(result.browser_ui.listed_run_count, 26)
   assert.equal(result.browser_ui.pages_verified, 2)
   assert.equal(result.browser_ui.budget_view_verified, true)
   assert.equal(result.browser_ui.denied_view_verified, true)
   assert.equal(result.browser_ui.browser_rendered, true)
   assert.equal(result.browser_ui.browser_closed, true)
+  assert.equal(result.browser_ui.details_verified, 3)
+  assert.equal(result.browser_ui.report_documents_verified, 3)
+  assert.equal(result.browser_ui.report_sandbox_verified, true)
+  assert.equal(result.browser_ui.report_denials_verified, 3)
+  assert.equal(result.proxy_http.report_documents_verified, 3)
   assert.equal(result.proxy_http.servers_stopped, true)
   assert.match(result.browser_ui.browser_version, /^[0-9]+(?:\.[0-9]+){3}$/)
   context.diagnostic('Browser version: ' + result.browser_ui.browser_version)
+})
+
+test('tampered report bytes or missing reports cannot launch the browser', async () => {
+  const bad = structuredClone(reports)
+  Object.values(bad)[0].body += 'tampered'
+  await assert.rejects(checkRestoreBrowser('http://127.0.0.1:1', responses, expected, bad), /hash differs/)
+  await assert.rejects(checkRestoreBrowser('http://127.0.0.1:1', responses, expected, {}))
+})
+
+test('unsafe or cacheable report headers cannot start the replay proxy', async () => {
+  for (const [header, value] of [
+    ['content-security-policy', "sandbox allow-scripts allow-same-origin; default-src 'none'"],
+    ['cache-control', 'public, max-age=3600'], ['content-type', 'application/json'], ['set-cookie', 'unexpected=1'],
+  ]) {
+    const bad = structuredClone(reports)
+    Object.values(bad)[0].headers[header] = value
+    await assert.rejects(withRestoreProxy(responses, async () => assert.fail('Unsafe replay started'), bad))
+  }
+})
+
+test('report script errors fail verification and still remove owned listeners and cache', { timeout: 120000 }, async () => {
+  const broken = structuredClone(reports), hashes = structuredClone(expected)
+  const id = Object.keys(hashes)[0], path = `/api/v1/ops/evaluations/${id}/report`
+  broken[path].body = broken[path].body.replace('</script>', ";throw new Error('synthetic report failure')</script>")
+  hashes[id].report_sha256 = createHash('sha256').update(broken[path].body).digest('hex')
+  const nativeFetch = globalThis.fetch
+  const caches = async () => (await readdir(tmpdir())).filter((name) => name.startsWith(`govbiz-restore-proxy-${process.pid}-`)).sort()
+  const before = await caches()
+  let origin
+  await assert.rejects(withRestoreProxy(responses, async (owned) => {
+    origin = owned
+    return checkRestoreBrowser(origin, responses, hashes, broken)
+  }, broken), /Application or report JavaScript failed/)
+  assert.equal(globalThis.fetch, nativeFetch)
+  assert.deepEqual(await caches(), before)
+  await assert.rejects(nativeFetch(origin, { signal: AbortSignal.timeout(1000) }))
 })
 
 test('browser inspection rejects a non-owned origin before launching', async () => {

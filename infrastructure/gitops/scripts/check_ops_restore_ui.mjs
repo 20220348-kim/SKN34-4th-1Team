@@ -2,12 +2,12 @@
 // Real Vite and an isolated browser consume captured restore responses.
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
-import { getOpsSession, listEvaluations, getEvaluation, getBudgetReservations, getRunBudget } from '../../../frontend/web/src/data/ops/opsApi.ts'
+import { getOpsSession, listEvaluations, getEvaluation, getBudgetReservations, getRunBudget, getEvaluationReview } from '../../../frontend/web/src/data/ops/opsApi.ts'
 
 import { withRestoreProxy } from './ops_restore_proxy.mjs'
 import { checkRestoreBrowser } from './ops_restore_browser.mjs'
 
-const { responses, expected, total_runs: totalRuns } = JSON.parse(await readFile(process.argv[2], 'utf8'))
+const { responses, reports, expected, total_runs: totalRuns } = JSON.parse(await readFile(process.argv[2], 'utf8'))
 const proof = await withRestoreProxy(responses, async (origin) => {
   const session = await getOpsSession()
   assert.ok(session.user)
@@ -35,8 +35,9 @@ const proof = await withRestoreProxy(responses, async (origin) => {
     assert.equal(detail.model_api_calls, 0)
     assert.deepEqual({ ...detail, postprocessing: null }, { ...runs.get(id), postprocessing: null })
     assert.equal((await getRunBudget(id)).state, 'not_applicable')
+    if (detail.evaluation_scope === 'fixed-answer-context-only') await getEvaluationReview(id)
   }
-  const browser = await checkRestoreBrowser(origin, responses)
+  const browser = await checkRestoreBrowser(origin, responses, expected, reports)
   return { status: 'PASS', matched_details: Object.keys(expected).length, listed_run_count: totalRuns, browser_rendered: true, browser_ui: browser }
-})
+}, reports)
 process.stdout.write(JSON.stringify(proof))
