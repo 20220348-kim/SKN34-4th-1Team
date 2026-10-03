@@ -3,9 +3,11 @@ import { clearEvaluationBaseline, getEvaluationReview, OpsApiError, promoteEvalu
 import type { CaseReviewDecision, EvaluationReview } from '../../../data/ops/opsApi'
 import { workspacePageStyles as styles, workspaceTagClassName } from '../../shared/workspace/WorkspacePage.styles'
 import { QualityReviewPanel } from './QualityReviewPanel'
+import { EvaluationReviewProgress } from './EvaluationReviewProgress'
 
 export function EvaluationReviewPanel({ runId, onExpired, onChanged }: { runId: string; onExpired: () => void; onChanged: () => void }) {
   const [data, setData] = useState<EvaluationReview | null>(null)
+  const [loading, setLoading] = useState(true)
   const [comment, setComment] = useState('')
   const [confirmed, setConfirmed] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -17,13 +19,14 @@ export function EvaluationReviewPanel({ runId, onExpired, onChanged }: { runId: 
   const inFlight = useRef(false)
   useEffect(() => {
     const controller = new AbortController()
+    setLoading(true)
     getEvaluationReview(runId, controller.signal).then((value) => {
       if (!controller.signal.aborted) { setData(value); setError(''); setConfirmed(false); setCaseDrafts({}) }
     }).catch((reason) => {
       if (controller.signal.aborted) return
       if (reason instanceof OpsApiError && [401, 403].includes(reason.status)) expiry.current()
       else setError(reason instanceof Error ? reason.message : '검토 자료를 불러오지 못했습니다.')
-    })
+    }).finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => controller.abort()
   }, [runId, refresh])
   const latest = data?.reviews[0]
@@ -67,6 +70,11 @@ export function EvaluationReviewPanel({ runId, onExpired, onChanged }: { runId: 
     {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
     {notice && <p role="status" className="text-sm text-brand-primary">{notice}</p>}
     {!data ? <p role="status">검토 자료를 불러오고 있습니다.</p> : <>
+      <EvaluationReviewProgress data={data} hasDrafts={hasDrafts} disabled={busy || loading || !!error} onNavigate={(target) => {
+        const element = document.getElementById(target)
+        if (element instanceof HTMLDetailsElement) element.open = true
+        element?.focus(); element?.scrollIntoView({ block: 'start' })
+      }} />
       <QualityReviewPanel runId={runId} data={data} busy={busy || hasDrafts} onBusy={setBusy} onExpired={onExpired} onSaved={(value) => { setData(value); setConfirmed(false); onChanged() }} />
       <p><span className={workspaceTagClassName(data.approval_current ? 'ok' : 'info')}>{data.approval_current ? '검토 승인' : latest?.decision === 'APPROVED' ? '이전 승인 · 사례별 재검토 필요' : latest ? '수정 필요' : '미검토'}</span>{data.is_baseline && <span className="ml-3 text-sm font-semibold text-brand-primary">현재 데이터셋의 비교 기준</span>}</p>
       {data.baseline_requires_review && <p className="rounded-xl bg-amber-50 p-3 text-sm">검토 또는 품질 재판정이 필요한 기존 기준입니다. 유효한 품질 합격과 전체 승인을 완료하기 전에는 새 평가의 기준으로 사용할 수 없습니다. 과거 평가 기록은 유지됩니다.</p>}
@@ -77,7 +85,7 @@ export function EvaluationReviewPanel({ runId, onExpired, onChanged }: { runId: 
         const current = history[0]
         const valid = current?.capture_sha256 === data.material?.capture_sha256 && current?.fixture_sha256 === data.material?.fixture_sha256 && current?.rubric_version === data.rubric.version
         const draft = caseDrafts[item.case_id] ?? { decision: valid ? current.decision : '', comment: valid ? current.comment : '' }
-        return <article key={item.case_id} className="grid gap-4 rounded-xl border border-sample-border p-4">
+        return <article id={`case-review-${item.case_id}`} tabIndex={-1} key={item.case_id} style={{ scrollMarginTop: 'calc(var(--workspace-header-h, 0px) + 1rem)' }} className="grid gap-4 rounded-xl border border-sample-border p-4">
         <h3 className="font-bold">{item.case_id} · {item.question}</h3>
         <p className="text-xs text-sample-muted">{item.document_title}</p>
         <div className="grid gap-4 md:grid-cols-2"><div className="rounded-xl bg-[#f3f7f5] p-4"><h4 className="mb-2 text-sm font-bold">후보 답변</h4><p className="whitespace-pre-wrap text-sm leading-7">{item.answer}</p><p className="mt-3 text-xs">상태: {item.answer_status} · 인용 청크: {item.cited_orders.join(', ') || '없음'}</p></div><div className="rounded-xl bg-slate-50 p-4"><h4 className="mb-2 text-sm font-bold">기존 기준 답변</h4><p className="whitespace-pre-wrap text-sm leading-7">{item.reference_answer}</p></div></div>
@@ -90,7 +98,7 @@ export function EvaluationReviewPanel({ runId, onExpired, onChanged }: { runId: 
           {!!history.length && <details><summary className="cursor-pointer text-sm">{item.case_id} 검토 이력 · {history.length}건</summary><ol className="mt-2 space-y-2">{history.map((review) => <li key={review.id} className="rounded-xl bg-slate-50 p-3 text-sm"><p>{caseLabel(review.decision)} · {review.reviewed_by} · {new Date(review.created_at).toLocaleString('ko-KR')}</p><p className="whitespace-pre-wrap">{review.comment}</p></li>)}</ol></details>}
         </div>
       </article>})}
-      {(data.material || data.is_baseline) && <div className="grid gap-3">
+      {(data.material || data.is_baseline) && <div id="overall-review" tabIndex={-1} style={{ scrollMarginTop: 'calc(var(--workspace-header-h, 0px) + 1rem)' }} className="grid gap-3">
         <label className="grid gap-2 text-sm font-semibold">검토 의견<textarea rows={3} maxLength={3000} className="w-full rounded-xl border border-sample-border p-3 font-normal" value={comment} disabled={busy} onChange={(event) => setComment(event.target.value)} placeholder="근거와 답변을 대조한 판단과 남은 문제를 기록하세요." /></label>
         {data.material && <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmed} disabled={busy} onChange={(event) => setConfirmed(event.target.checked)} />위 모든 사례의 질문·근거·후보 답변을 검토했습니다.</label>}
         {hasDrafts && <p className="text-sm text-amber-800">저장하지 않은 사례 판단이 있습니다. 먼저 사례 검토를 저장하세요.</p>}

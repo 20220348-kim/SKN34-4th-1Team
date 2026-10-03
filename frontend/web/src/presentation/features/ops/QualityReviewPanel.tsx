@@ -37,7 +37,7 @@ export function QualityReviewPanel({ runId, data, busy, onBusy, onSaved, onExpir
       else setError(reason instanceof Error ? reason.message : '품질 판정을 저장하지 못했습니다.')
     } finally { active.current = false; onBusy(false) }
   }
-  return <section aria-label="품질 판정" className="grid gap-4 rounded-xl border border-sample-border p-4">
+  return <section id="quality-review" tabIndex={-1} aria-label="품질 판정" style={{ scrollMarginTop: 'calc(var(--workspace-header-h, 0px) + 1rem)' }} className="grid gap-4 rounded-xl border border-sample-border p-4">
     <h3 className="font-bold">품질 판정 · <span className={workspaceTagClassName(quality.status === 'PASS' ? 'ok' : quality.status === 'FAIL' ? 'danger' : 'info')}>{labels[quality.status]}</span></h3>
     <p className="text-sm leading-6">실행 완료와 품질 판정은 별개입니다. 합격은 표시된 사례와 정책의 범위에만 적용되며, 전체 모델의 정확도를 보장하지 않습니다.</p>
     <p className="text-xs text-sample-muted">정책: {quality.policy?.definition.version ?? '확인 불가'} · 자동 의미 충실도: 미측정 · 의미 판단: 사례별 사람 검토</p>
@@ -46,7 +46,7 @@ export function QualityReviewPanel({ runId, data, busy, onBusy, onSaved, onExpir
     {quality.blocked_reason && <p role="alert" className="text-sm text-amber-800">{quality.blocked_reason}</p>}
     {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
     <button className={`${styles.secondaryButton} justify-self-start`} disabled={busy || !data.material || !quality.input_sha256} onClick={() => void save(false)}>현재 근거로 품질 판정 저장</button>
-    <details className="grid gap-3"><summary className="cursor-pointer text-sm font-semibold">평가 기준 자료 검토 · {quality.fixture_reviews[0] ? fixtureLabels[quality.fixture_reviews[0].decision] : '미검토'}</summary>
+    <details id="fixture-review" tabIndex={-1} style={{ scrollMarginTop: 'calc(var(--workspace-header-h, 0px) + 1rem)' }} className="grid gap-3"><summary className="cursor-pointer text-sm font-semibold">평가 기준 자료 검토 · {quality.fixture_reviews[0] ? fixtureLabels[quality.fixture_reviews[0].decision] : '미검토'}</summary>
       <div className="mt-3 grid gap-3 text-sm">
         <p>아래 각 사례의 AI 작성 참조 조건을 원문 근거와 대조합니다. 기대 상태·기대 인용·포함할 사실·금지 주장을 모두 확인하세요. 이 기록은 후보 답변 검토와 별개이며 AI 작성 출처는 유지됩니다.</p>
         <p>대상 사례: {data.material?.cases.map((item) => item.case_id).join(', ') ?? '자료 확인 불가'}</p>
