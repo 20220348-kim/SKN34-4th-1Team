@@ -17,6 +17,7 @@ urlpatterns = [
         budget_admin_views.api_apply_legacy_usage,
     ),
     path("api/v1/ops/runtime", runtime_views.runtime_status),
+    path("api/v1/ops/evaluations/live-readiness", runtime_views.live_readiness),
     path("api/v1/ops/evaluations/<uuid:run_id>/cancel", views.api_cancel, name="evaluation-cancel"),
     path("internal/llmops/evaluations/<uuid:run_id>/budget/<str:action>", budget_views.api_budget),
     path("api/v1/ops/evaluations/<uuid:run_id>/fixture-review", views.api_fixture_review),

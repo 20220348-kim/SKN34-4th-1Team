@@ -321,6 +321,29 @@ Ops 응답의 `model_api_calls`는 새 응답 생성 단계의 `capture.modelApi
 완료 판정에는 기존 보고서 검증 외에 새 캡처 해시·모델·자료·사례·예산 확인이 필요합니다.
 `trace_links`는 사례별 Langfuse 추적/점수 링크이며 과거 캡처는 기존 점수 목록 링크를 사용합니다.
 
+### 실행 전 설정·예산 점검
+
+React에서 **새 응답 생성 → 실행 설정·예산 점검**을 누르면
+`GET /api/v1/ops/evaluations/live-readiness?dataset_id=...&execution_profile=...`로
+선택한 자료의 실행 계획과 현재 장부를 읽습니다. `execution_profile`은 session 응답의
+`execution_profiles.live`이며 서버 설정이 바뀌었으면 `409`로 새로고침을 요청합니다.
+
+- 고정 근거는 답변 작업, 고정 원문 RAG는 문서·질문 임베딩과 답변 작업을 합산합니다.
+  접수 때 사용하는 `profile`·`operation_plan`을 재사용하며 임베딩 출력은 0으로 계산합니다.
+- `required`는 최대 예약량, `remaining`은 조회 시점의 잔여 호출·입력·출력 토큰입니다.
+  금액 견적이나 실제 사용량이 아닙니다. 한도 미설정·장부 불일치 시 잔여량은 `null`이며
+  입력 미확인도 0으로 채우지 않습니다.
+- live/RAG 활성화, 새 접수 중지, 실행기 예산 인증 설정, 한도와 장부 일치·잔여량을 확인합니다.
+  누적 입력 한도 미설정은 기존 정책대로 고정 근거에서 주의, RAG에서 차단입니다.
+- `state=checked`는 이 점검 범위에서 차단 사유가 없다는 뜻입니다. `blockers`와 `warnings`를
+  구분하며 API 키 유효성·실행기 가동·선택한 비교 기준·자료 승인·품질 합격은 확인하지 않습니다.
+- 흐름은 `React → Core 관리자 세션 확인 → Django 실행 계획·MySQL 장부 조회 → React`입니다.
+  GET은 접수 제어 행도 새로 만들지 않으며 모델·Prefect 호출, 예약·한도·감사 기록 저장이 없습니다.
+  실제 접수 시 기존 승인·명세·기준·예산 검증을 다시 수행합니다.
+
+관련 MySQL 테스트는 `apps.evaluations.test_live_readiness`입니다. API와 Web을 함께 반영해야 하며
+이번 기능에 추가 의존성이나 migration은 없습니다.
+
 ## 누적 호출·출력 토큰 한도
 
 Ops로 접수한 새 응답 생성은 `EvaluationBudget`의 **DB 전체 누적 호출 수·입력·출력 토큰 한도**를
@@ -1020,6 +1043,7 @@ Kubernetes liveness/readiness와 분리되어 있으며, 결과에는 검사 범
 | `GET /api/v1/health` | `200`, `status: UP` | DB를 호출하지 않음 |
 | `GET /api/v1/health/ready` | `200`, `database: UP, schema: UP` | DB 실패는 `database: DOWN`, 미적용 migration·이력 불일치·실제 테이블/컬럼 누락은 `schema: DOWN`으로 `503`; 내부 정보 비노출 |
 | `GET /api/v1/ops/runtime` | `200`, 설정 검사 PASS와 검증 범위 | 구성·자료·Prefect·선택한 결과 검증 실패 `503`; 잘못된 run_id `400`; 관리자 인증 필수 |
+| `GET /api/v1/ops/evaluations/live-readiness` | `200`, 선택 자료의 최대 예약량·잔여 한도·차단/주의 사유 | `dataset_id`, `execution_profile` 필수; 입력 오류 `400`, 미인증 `401`, 비관리자 `403`, 설정 변경 `409`, 계획 확인 실패 `503`; 조회만 수행 |
 | `GET /api/v1/ops/session` | `200`, `user`(쿠키가 없으면 null), `csrf_token`, 허용 자료 목록, `search_traces_url` | 만료 `401`, 비관리자 `403`, Core 장애 `503` |
 | `GET /api/v1/ops/evaluations/{UUID}/report` | `200`, CSP sandbox가 적용된 HTML | 미인증 `401`, 비관리자 `403`, Core 장애 `503`, 없거나 훼손된 보고서 `404` |
 | `POST /api/v1/ops/evaluations` | 최초 `202`, 재전송 `200`; 실행 메타데이터 | 자료/UUID 오류 `400`, 미인증 `401`, 권한·CSRF `403`, 요청 충돌 `409`, 인증 서버 장애·접수 미확인 `503` |

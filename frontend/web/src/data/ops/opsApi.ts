@@ -400,6 +400,28 @@ const reviewSchema = z.object({
   }).nullable(),
 })
 
+const readinessAmountsSchema = z.object({
+  calls: z.number().int().nonnegative(), input_tokens: z.number().int().nonnegative(), output_tokens: z.number().int().nonnegative(),
+})
+const readinessIssueSchema = z.object({ code: z.string().min(1), message: z.string().min(1) })
+const liveReadinessSchema = z.object({
+  as_of: z.iso.datetime({ offset: true }), dataset_id: z.string(), execution_profile: z.string().regex(/^[a-f0-9]{64}$/),
+  evaluation_scope: z.enum(['fixed-answer-context-only', 'source-chunks-retrieval-answer']), model: z.string().min(1),
+  state: z.enum(['blocked', 'checked']),
+  required: readinessAmountsSchema.extend({ calls: z.number().int().positive(), input_tokens: z.number().int().positive(), output_tokens: z.number().int().positive() }),
+  remaining: readinessAmountsSchema.extend({ input_tokens: z.number().int().nonnegative().nullable() }).nullable(),
+  blockers: z.array(readinessIssueSchema), warnings: z.array(readinessIssueSchema),
+}).refine((value) => {
+  if ((value.state === 'blocked') !== (value.blockers.length > 0)) return false
+  if (value.state === 'blocked') return true
+  const left = value.remaining
+  return left !== null && left.calls >= value.required.calls && left.output_tokens >= value.required.output_tokens
+    && (left.input_tokens === null
+      ? value.evaluation_scope === 'fixed-answer-context-only' && value.warnings.length > 0
+      : left.input_tokens >= value.required.input_tokens)
+}, '실행 설정·예산 점검 결과가 일치하지 않습니다.')
+
+export type LiveReadiness = z.infer<typeof liveReadinessSchema>
 export type OpsSession = z.infer<typeof sessionSchema>
 export type EvaluationRun = z.infer<typeof runSchema>
 export type EvaluationPage = z.infer<typeof pageSchema>
@@ -466,6 +488,10 @@ async function request<T>(path: string, schema: z.ZodType<T>, options: RequestIn
 
 export const getOpsSession = (signal?: AbortSignal) => request('/session', sessionSchema, { signal })
 export const getBudgetSummary = (signal?: AbortSignal) => request('/budget', budgetSummarySchema.extend({ as_of: z.string() }), { signal })
+export const getLiveReadiness = (datasetId: string, executionProfile: string, signal?: AbortSignal) => request(
+  `/evaluations/live-readiness?${new URLSearchParams({ dataset_id: datasetId, execution_profile: executionProfile })}`,
+  liveReadinessSchema.refine((value) => value.dataset_id === datasetId && value.execution_profile === executionProfile, '선택한 실행 설정과 점검 결과가 다릅니다.'), { signal },
+)
 export const getBudgetReservations = (page: number, signal?: AbortSignal) => request(`/budget/reservations?page=${page}`, budgetPageSchema, { signal })
 export const getUnaccountedRuns = (page: number, signal?: AbortSignal) => request(`/budget/unaccounted-runs?page=${page}`, unaccountedRunsSchema, { signal })
 export const getLegacyUsagePreview = (id: string, signal?: AbortSignal) => request(`/evaluations/${encodeURIComponent(id)}/legacy-usage-preview`,

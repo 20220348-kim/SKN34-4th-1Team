@@ -73,6 +73,29 @@ function open(path = '/ops/evaluations') {
 }
 
 describe('React LLMOps 운영 화면', () => {
+  it('선택한 새 모델 평가의 설정·예산만 점검하고 전송 승인을 대신하지 않는다', async () => {
+    const original = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation((path, options) => path.includes('/live-readiness?') ? Promise.resolve(json({
+      as_of: '2026-10-03T01:00:00Z', dataset_id: dataset.id, execution_profile: executionProfiles.live,
+      evaluation_scope: dataset.evaluation_scope, model: liveConfig.model, state: 'checked',
+      required: { calls: 6, input_tokens: 196608, output_tokens: 12000 },
+      remaining: { calls: 12, input_tokens: 400000, output_tokens: 24000 }, blockers: [], warnings: [],
+    })) : original(path, options))
+    open()
+    const mode = await screen.findByLabelText('실행 방식')
+    expect(screen.queryByRole('button', { name: '실행 설정·예산 점검' })).toBeNull()
+    fireEvent.change(mode, { target: { value: 'live' } })
+    expect(fetchMock.mock.calls.some(([path]) => path.includes('/live-readiness?'))).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: '실행 설정·예산 점검' }))
+    await screen.findByText('조회 시점의 설정·예산에서 차단 사유가 없습니다.')
+    expect((screen.getByRole('button', { name: '새 응답 생성 및 평가' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(fetchMock.mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false)
+    expect(readPendingEvaluation('core:99')).toBeNull()
+    fireEvent.change(screen.getByLabelText('평가 자료'), { target: { value: comparisonDataset.id } })
+    expect(screen.queryByText('조회 시점의 설정·예산에서 차단 사유가 없습니다.')).toBeNull()
+    expect(fetchMock.mock.calls.filter(([path]) => path.includes('/live-readiness?'))).toHaveLength(1)
+  })
+
   it('고정 근거 답변의 인용 지표를 검색 품질과 구분한다', async () => {
     open(`/ops/evaluations/${id}`)
     expect(await screen.findByText('고정 근거 답변')).toBeTruthy()
