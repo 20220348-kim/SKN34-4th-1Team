@@ -15,6 +15,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import fork_cluster
+import ops_core_restore_fixture
 import ops_database_restore_probe
 import ops_runtime
 import smoke_ops_volumes
@@ -236,6 +237,8 @@ def verify(
     report,
     *,
     ops_image,
+    core_image,
+    core_password,
     expected,
     release_sha256,
     compose,
@@ -391,15 +394,23 @@ def verify(
         # is read through the real Ops HTTP server. No credential enters report.
         evidence["restored_database_ready"] = True
         report["evaluation_phase"] = "volume_restore_rehearsal"
-        runner_image_id = smoke_ops_volumes.verify(
-            state,
-            settings,
-            compose,
-            compose_env,
-            expected,
-            report,
-            database={"id": identity, "image": image_id, "password": password},
-        )
+        with ops_core_restore_fixture.restored_core(
+            nk, target, identity, core_image, report
+        ):
+            runner_image_id = smoke_ops_volumes.verify(
+                state,
+                settings,
+                compose,
+                compose_env,
+                expected,
+                report,
+                database={
+                    "id": identity,
+                    "image": image_id,
+                    "password": password,
+                    "core_password": core_password,
+                },
+            )
         same_dump(dump, execute(target + DUMP))
         report["volume_restore"]["results"]["ops_http"]["database_unchanged"] = True
         # MySQL dump import disables FK checks temporarily; verify enforcement

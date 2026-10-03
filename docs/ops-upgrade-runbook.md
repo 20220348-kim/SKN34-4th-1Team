@@ -164,12 +164,18 @@ Prefect를 중지한다. 컨테이너 ID·이미지·Compose 소유권·볼륨 �
 - 실제 Gunicorn Ops API와 결과 서버를 내부 loopback에서 실행한다. `Ops HTTP → 복원 MySQL 조회 →
   결과 서버 HTTP → 복원 보고서` 경로로 완료 평가 3건의 SHA-256·캐시 금지·CSP를 확인한다.
   Ops의 로컬 결과 경로는 빈 디렉터리로 두므로 HTTP 저장소를 실제로 거쳐야 성공한다.
-- Core의 세션 응답만 로컬 테스트 서버로 재현하며 실제 `CoreSessionAuthentication`은 그대로 사용한다.
-  복원 DB에 있는 요청자의 계정 ID·이메일과 새 검사 쿠키를 사용하고, 무인증·잘못된 쿠키의 401 및
-  일반 사용자 응답의 403을 확인한다. `auth_contract=synthetic_core_session`으로 기록하며
-  실제 Core 로그인·비밀번호·세션 저장소 복원을 검증한 것으로 표시하지 않는다.
-- 결과 서버 종료 후 보고서 요청이 404, 테스트 인증 서버 종료 후 503으로 실패하는지 확인한다.
-  종료 실패·결과 파일 변경·DB 덤프 변경은 전체 실패다. 검사 토큰·DB 비밀번호는 보고서에 넣지 않는다.
+- 같은 시험 클러스터의 Core Pod도 종료하고 Core DB 전체를 격리 MySQL의 별도 `govbiz_core` DB로
+  복사한다. 가져오기 직후 덤프를 대조한 다음 배포에 사용한 실제 Core 이미지로 실행한다.
+  Core에는 이 DB에만 쓰기 가능한 별도 계정을 주며, Ops는 계속 `govbiz_ops`의 SELECT 계정만 쓴다.
+  Core의 자동 migration·외부 동기화·문서 생성 작업은 끄고 새 JWT 서명 키를 사용한다.
+- `Core 비밀번호 로그인 → 실제 세션 쿠키 → Ops CoreSessionAuthentication → Core 관리자 확인 →
+  복원 보고서 조회`를 수행한다. Core가 확인한 관리자 ID·이메일·역할이 복원 Ops 요청자와 같아야 한다.
+  무인증·잘못된 쿠키는 401, 개발 로그인으로 만든 일반 회원의 실제 세션은 403이어야 한다.
+  `auth_contract=restored_core_password_login`, `core_admin_auth_verified=true`로 기록한다.
+- 실제 Core 로그아웃 후 같은 세션으로 보고서를 요청하면 401이어야 한다. 다시 비밀번호로 로그인한 뒤
+  결과 서버를 종료하면 보고서 요청은 404여야 한다. 종료 실패·결과 파일 변경·Ops DB 덤프 변경은
+  전체 실패다. Core 사본에는 로그인·로그아웃에 따른 세션 쓰기를 허용하고 원본 Core 덤프는 보존한다.
+  검사 토큰·로그인 비밀번호·DB 비밀번호·서명 키는 보고서에 넣지 않는다.
 - 결과 파일 보존 확인과 별도로 Prefect 저장소를 검사한다.
   Prefect SQLite의 무결성·외래 키·migration과 해당 3건의 deployment·완료 상태 이력·request/flow ID를 확인한다.
   진행 중 실행이나 활성 스케줄이 있으면 성공 처리하지 않는다.
@@ -187,12 +193,14 @@ Prefect를 중지한다. 컨테이너 ID·이미지·Compose 소유권·볼륨 �
 `ops-bridge.json`의 `volume_restore.scope=disposable_ops_report_http_and_prefect_api`와 `status=PASS`는
 이 파일·Ops/결과 HTTP·SQLite·Prefect API 검증의 성공만 뜻한다. `results`와 `prefect`에 대조 건수·해시·정리 결과를,
 `results.api`에 인증·쓰기 거절·파일 무변경·일반 사용자 실행·정상 종료 결과를,
-`results.ops_http`에 Ops 보고서·테스트 세션 계약·장애 거절·파일/DB 무변경 결과를,
+`results.ops_http`에 실제 Core 인증·세션 폐기·Ops 보고서·결과 서버 장애 거절·파일/Ops DB 무변경 결과를,
 `prefect.api`에 API 대조·DB 무변경·정상 종료 결과를 남긴다.
+별도 `core_auth_restore`에는 Core 이미지 ID·복사 직후 덤프 일치·원본 보존·정리 결과를 남긴다.
 성공 시 `results_server_started=true`, `prefect_server_started=true`이며,
 증거가 완성되지 않은 실패에서는 `null`로 미확인을 표시한다.
 검사 토큰을 새로 생성하므로 기존 Secret/서명 키 복구는 검증하지 않는다.
-실행기 재개·새 평가 실행·실제 Core 관리자 로그인·관리자 화면·Langfuse 저장소 복원은 별도다.
+실행기 재개·새 평가 실행·관리자 화면·Langfuse 저장소 복원은 별도다.
+Core 인증 검증은 새 키로 발급한 세션만 대상으로 하며 기존 세션의 연속성이나 기존 서명 키 복구를 뜻하지 않는다.
 `backup_verified`, `personal_environment_verified`는 계속 `false`다.
 개인 환경 갱신 승인이나 전체 저장소의 동일 시점 백업 증거로 사용하지 않는다.
 CI에 연결된 코드가 있어도 최신 SHA의 실제 통합 작업이 이 단계까지 통과해야 실행 완료로 기록한다.

@@ -56,6 +56,7 @@ class RestoreTests(unittest.TestCase):
             ),
             (smoke, "execute", {"side_effect": self.execute}),
             (smoke, "application_read", {"side_effect": self.application_read}),
+            (smoke.ops_core_restore_fixture, "restored_core", {}),
             (smoke.smoke_ops_volumes, "verify", {"side_effect": self.volume_read}),
             (smoke.time, "sleep", {}),
         ):
@@ -141,6 +142,7 @@ class RestoreTests(unittest.TestCase):
                 "id": IDENTITY,
                 "image": IMAGE_ID,
                 "password": "temporary-reader-password",
+                "core_password": "fixture-admin-password",
             },
         )
         self.assertEqual(report["database_restore"]["status"], "FAIL")
@@ -156,6 +158,8 @@ class RestoreTests(unittest.TestCase):
             SETTINGS,
             self.report,
             ops_image=IMAGE,
+            core_image="fixture-core-image",
+            core_password="fixture-admin-password",
             expected=EXPECTED,
             release_sha256=RELEASE,
             compose=["compose"],
@@ -229,6 +233,8 @@ class RestoreTests(unittest.TestCase):
                     SETTINGS | change,
                     self.report,
                     ops_image=IMAGE,
+                    core_image="fixture-core-image",
+                    core_password="fixture-admin-password",
                     expected=EXPECTED,
                     release_sha256=RELEASE,
                     compose=["compose"],
@@ -397,6 +403,8 @@ class RestoreTests(unittest.TestCase):
                 SETTINGS,
                 self.report,
                 ops_image="another-image",
+                core_image="fixture-core-image",
+                core_password="fixture-admin-password",
                 expected=EXPECTED,
                 release_sha256=RELEASE,
                 compose=["compose"],
@@ -407,6 +415,17 @@ class RestoreTests(unittest.TestCase):
                 "scale" in command or data == smoke.FIXTURES
                 for command, data, _ in self.events
             )
+        )
+
+    def test_core_cleanup_failure_cannot_pass_and_still_removes_mysql(self):
+        with patch.object(smoke.ops_core_restore_fixture, "restored_core") as core:
+            core.return_value.__exit__.side_effect = ValueError("Core cleanup failed")
+            with self.assertRaisesRegex(ValueError, "Core cleanup"):
+                self.verify()
+        self.assertEqual(self.report["database_restore"]["status"], "FAIL")
+        self.assertTrue(self.report["database_restore"]["cleanup_complete"])
+        self.assertEqual(
+            self.removed(), [["docker", "rm", "--force", "--volumes", IDENTITY]]
         )
 
     def test_http_or_volume_failure_still_cleans_mysql(self):
