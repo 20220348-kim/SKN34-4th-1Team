@@ -65,6 +65,21 @@ const legacyDetail = {
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 describe('관리자 예산 장부', () => {
+  it('미반영 목록은 버튼으로 연 뒤에만 조회하고 닫을 수 있다', async () => {
+    const fetch = vi.fn(async (url: string) => json(url.includes('unaccounted-runs')
+      ? { as_of: time, count: 1, next: null, previous: null, results: [
+        { run_id: id, dataset_id: 'legacy', dataset_label: '과거 자료', status: 'COMPLETED', status_label: '완료', created_at: time },
+      ] } : page))
+    vi.stubGlobal('fetch', fetch)
+    render(<MemoryRouter><BudgetOverview onExpired={vi.fn()} refreshKey={0} /></MemoryRouter>)
+    const button = await screen.findByRole('button', { name: '미반영 실행 목록 확인' })
+    expect(fetch.mock.calls.some(([url]) => url.includes('unaccounted-runs'))).toBe(false)
+    fireEvent.click(button)
+    expect(await screen.findByRole('link', { name: '과거 자료 · 10000000' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '미반영 실행 목록 닫기' }))
+    expect(screen.queryByRole('region', { name: '미반영 실행 검토' })).toBeNull()
+  })
+
   it('과거 사용량은 예약·서명 영수증·품질 승인으로 표시하지 않고 출처를 보여준다', async () => {
     const fetch = vi.fn().mockResolvedValue(json(legacyDetail))
     vi.stubGlobal('fetch', fetch)
