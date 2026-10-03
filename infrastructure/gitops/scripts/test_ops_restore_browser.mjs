@@ -26,6 +26,7 @@ const runs = Array.from({ length: 26 }, (_, index) => ({
   trace_links: [], prefect_flow_run_id: null, prefect_url: null, langfuse_url: null, report_url: null,
 }))
 const responses = {
+  '/api/v1/ops/schedules?page=1': { enabled: false, timezone: 'Asia/Seoul', page: 1, total: 0, results: [] },
   '/api/v1/ops/session': {
     user: { id: 'core:1', username: 'fixture@example.invalid' }, csrf_token: 'redacted',
     live_enabled: false, rag_live_enabled: false, datasets: [dataset],

@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 const base = '/api/v1/ops'
+const scheduleUsageSchema = z.object({ calls: z.number().int().positive(), input_tokens: z.number().int().positive(), output_tokens: z.number().int().positive() })
 const liveConfigSchema = z.object({
   max_input_tokens: z.number().int().positive().optional(),
   embedding_model: z.string().optional(), embedding_dimensions: z.number().int().positive().optional(),
@@ -456,6 +457,26 @@ const liveReadinessSchema = z.object({
 
 export type LiveReadiness = z.infer<typeof liveReadinessSchema>
 export type OpsSession = z.infer<typeof sessionSchema>
+const scheduleSchema = z.object({
+  id: z.uuid(), dataset_id: z.string(), requested_by: z.string(),
+  request: z.object({
+    dataset_id: z.string(), reference_capture_id: z.string(), baseline_version: z.number().int().positive(),
+    execution_profile: z.string().regex(/^[a-f0-9]{64}$/), live_config: liveConfigSchema,
+    confirm_paid_run: z.literal(true), execution_mode: z.literal('live'), candidate_capture_id: z.literal('new-model-response'),
+  }),
+  max_usage: scheduleUsageSchema, daily_at: z.string().regex(/^\d{2}:\d{2}$/),
+  starts_on: z.iso.date(), ends_on: z.iso.date(), reason: z.string(), created_at: z.string(),
+  state: z.enum(['active', 'paused', 'expired']), paused_at: z.string().nullable(), paused_by: z.string().nullable(), pause_reason: z.string(),
+  occurrences: z.array(z.object({
+    id: z.uuid(), scheduled_on: z.iso.date(), status: z.enum(['PENDING', 'SUBMITTED', 'BLOCKED']),
+    reason_code: z.string(), run_id: z.uuid().nullable(), run_status: z.string().nullable(),
+  })),
+})
+const schedulesPageSchema = z.object({ enabled: z.boolean(), timezone: z.literal('Asia/Seoul'), page: z.number().int().positive(), total: z.number().int().nonnegative(), results: z.array(scheduleSchema) })
+export type EvaluationSchedule = z.infer<typeof scheduleSchema>
+export type SchedulesPage = z.infer<typeof schedulesPageSchema>
+export type ScheduleInput = Pick<EvaluationSchedule, 'daily_at' | 'starts_on' | 'ends_on' | 'reason'>
+  & Omit<EvaluationSchedule['request'], 'execution_mode' | 'candidate_capture_id'> & { request_id: string }
 export type EvaluationRun = z.infer<typeof runSchema>
 export type EvaluationPage = z.infer<typeof pageSchema>
 export type BudgetBreakdown = z.infer<typeof budgetBreakdownSchema>
@@ -503,7 +524,7 @@ async function request<T>(path: string, schema: z.ZodType<T>, options: RequestIn
     const error = body
     const message = response.status === 400 && error?.code === 'LIVE_BUDGET_UNAVAILABLE'
       ? '누적 평가 한도가 부족하거나 설정되지 않아 접수하지 않았습니다. 운영자에게 예약·미확인 사용량과 한도를 확인해 주세요.'
-      : ['BUDGET_CHANGE_CONFLICT', 'DAILY_BUDGET_CHANGE_CONFLICT', 'LEGACY_USAGE_CONFLICT'].includes(error?.code) && typeof error?.detail === 'string'
+      : ['BUDGET_CHANGE_CONFLICT', 'DAILY_BUDGET_CHANGE_CONFLICT', 'LEGACY_USAGE_CONFLICT', 'SCHEDULE_DISABLED', 'SCHEDULE_BUDGET_UNAVAILABLE', 'EXECUTION_PROFILE_CHANGED', 'REVIEWED_BASELINE_REQUIRED', 'ACTIVE_SCHEDULE_EXISTS'].includes(error?.code) && typeof error?.detail === 'string'
         ? error.detail
       : error?.code === 'INVALID_RAG_REVIEW' ? '검토 항목과 의견을 확인하세요. 미측정 항목은 판단 보류만 저장할 수 있습니다.'
       : error?.code === 'INVALID_RAG_REFERENCE_REVIEW' ? '전체 대상 자료의 확인과 참조 검토 근거를 입력하세요.'
@@ -525,6 +546,15 @@ async function request<T>(path: string, schema: z.ZodType<T>, options: RequestIn
 }
 
 export const getOpsSession = (signal?: AbortSignal) => request('/session', sessionSchema, { signal })
+export const getEvaluationSchedules = (page = 1, signal?: AbortSignal) => request(`/schedules?page=${page}`, schedulesPageSchema, { signal })
+export const createEvaluationSchedule = (data: ScheduleInput, owner: string) => post('/schedules', data,
+  scheduleSchema.refine((value) => value.id === data.request_id && value.requested_by === owner
+    && value.daily_at === data.daily_at && value.starts_on === data.starts_on && value.ends_on === data.ends_on
+    && value.reason === data.reason && value.request.execution_profile === data.execution_profile
+    && value.request.reference_capture_id === data.reference_capture_id && value.request.baseline_version === data.baseline_version
+    && value.dataset_id === data.dataset_id), false, owner)
+export const pauseEvaluationSchedule = (id: string, data: { request_id: string; reason: string }, owner: string) => post(`/schedules/${encodeURIComponent(id)}/pause`, data,
+  scheduleSchema.refine((value) => value.id === id && value.state === 'paused' && value.paused_by === owner && value.pause_reason === data.reason), false, owner)
 export const getBudgetSummary = (signal?: AbortSignal) => request('/budget', budgetSummarySchema.extend({ as_of: z.string() }), { signal })
 export const getLiveReadiness = (datasetId: string, executionProfile: string, signal?: AbortSignal) => request(
   `/evaluations/live-readiness?${new URLSearchParams({ dataset_id: datasetId, execution_profile: executionProfile })}`,

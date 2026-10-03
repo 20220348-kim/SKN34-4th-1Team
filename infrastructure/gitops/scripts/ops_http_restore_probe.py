@@ -261,6 +261,9 @@ def check_management(expected, principal, token, member_token, total_runs):
     if len(rows) != total_runs or not set(expected).issubset(rows):
         raise ValueError("Restored management omitted evaluations")
     budget = get("/api/v1/ops/budget/reservations?page=1")
+    schedules = get("/api/v1/ops/schedules?page=1")
+    if schedules.get("enabled") is not False or not isinstance(schedules.get("results"), list):
+        raise ValueError("Restored management schedules must remain disabled")
     if (
         not isinstance(budget.get("results"), list)
         or budget.get("summary", {}).get("state") != "consistent"

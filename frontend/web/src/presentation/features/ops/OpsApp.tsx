@@ -13,6 +13,7 @@ import { RagMaterialPanel } from './RagMaterialPanel'
 import { EvaluationReviewPanel } from './EvaluationReviewPanel'
 import { BudgetOverview, RunBudgetPanel } from './BudgetPanel'
 import { LiveReadinessPanel } from './LiveReadinessPanel'
+import { EvaluationSchedulesPanel } from './EvaluationSchedulesPanel'
 import { WorkspacePageHeader } from '../../shared/workspace/WorkspacePageHeader'
 
 const listPath = '/ops/evaluations'
@@ -209,6 +210,7 @@ function EvaluationList({ owner, datasets, liveEnabled: allLiveEnabled, ragLiveE
     <WorkspacePageHeader title="평가 실행 관리" actions={<button className={styles.secondaryButton} onClick={() => setRefresh((value) => value + 1)}>목록 새로고침</button>} />
     <div className={styles.content}>
       <BudgetOverview onExpired={onExpired} refreshKey={refresh} operatorId={owner} onBudgetChanged={() => setBudgetRevision((value) => value + 1)} />
+      <EvaluationSchedulesPanel owner={owner} datasets={datasets} onExpired={onExpired} refreshKey={refresh + budgetRevision} />
       <section className={styles.card} aria-label="평가 실행">
         <p className={styles.sectionEyebrow}>LLMOps 평가</p><h2 className={styles.cardTitle}>지원 대상 근거 답변 평가</h2>
         <p className="text-sm leading-6 text-sample-muted">{ragLive ? ragLiveNotice : mode === 'live' ? liveNotice : notice}</p>

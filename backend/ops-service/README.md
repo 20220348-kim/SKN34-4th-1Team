@@ -602,7 +602,8 @@ POST는 `request_id`, `evidence_sha256`, `reason`만 받으며 검토한 자료�
 `unbounded_input_calls`/`unbounded_input_reservations`가 있으면 전체 입력 사용량이 아닙니다. 이 실행의 사용량을 0으로 만들지 않습니다.
 replay/recovery 자체에는 새 모델 예약이 없어 `not_applicable`이며 원본 비용은 원본 장부를 확인합니다.
 
-최신 예산 API 배포 전 migration **`0027_admin_daily_budget_writes`까지** 적용해야 합니다.
+최신 Ops API 배포 전 migration **`0028_daily_evaluation_schedules`까지** 적용해야 합니다.
+`0028`은 종료일이 있는 정기 계획과 날짜별 접수 이력 테이블을 추가합니다. 기존 평가·예산 행은 수정하지 않습니다.
 `0027`은 일별 정책 변경의 인증된 변경자 FK·조회 버전·출처 제약을 추가하며 기존 CLI 기록을 보존합니다.
 `0025`는 인증된 변경자 FK·한도 조회 버전·출처 제약을 추가하며 기존 CLI 기록을 그대로 보존합니다.
 `0013_budget_change_audit`는 한도 변경 감사를, `0014`는 종료 예약 정리 감사를,
@@ -981,12 +982,48 @@ Migration `0007_baseline_versions`는 해제해도 남는 데이터셋 기준 �
 ## 실행 상태의 백그라운드 확인
 
 `python manage.py sync_evaluations --watch`는 화면 방문과 독립적으로 미완료 실행을 확인합니다.
+`LLMOPS_SCHEDULES_ENABLED=true`일 때만 아래의 승인된 정기 계획도 같은 루프에서 접수합니다.
+기본값 `false`에서는 기존 상태 동기화만 수행합니다.
 기본 대기 간격은 10초, 배치 크기는 25건이며 `--interval`(2~300초), `--batch-size`(1~100)로 조절합니다.
 옵션 없이 실행하면 한 배치만 처리합니다. LLMOps Compose의 `ops-sync`가 같은 Django 이미지 구성으로 실행합니다.
 단독 Ops/루트 Compose에는 Prefect가 없으므로 자동 실행하지 않습니다. 별도 실행 시 DB·Prefect·결과 경로를 동일하게 지정합니다.
 Kubernetes는 연결 설정을 갖춘 뒤 `opsSync.enabled=true`를 선택하면 API와 같은 Pod에 동기화 컨테이너를 추가합니다.
 이미지·DB·Secret을 API와 공유하며 기본값은 비활성화입니다. Prefect·실행기·결과 저장소는 Compose에 유지합니다.
 [활성화 조건과 실제 연결 검증](../../infrastructure/gitops/docs/ops-runtime.md#kubernetes-ops-상태-동기화)을 참고하세요.
+
+### 종료일이 있는 일별 정기 평가
+
+React `/ops/evaluations`의 **정기 평가 계획**에서 기존 Core 관리자 세션으로 등록·조회·중지합니다.
+흐름은 `React 승인 → Django 계획 저장 → ops-sync 시각 확인 → 기존 submit_run의 검토·명세·예산 검사
+→ Prefect → 평가 실행기 → 결과/점수 → Ops 상태 동기화`입니다. 추가 실행 서비스는 없습니다.
+
+- `GET /api/v1/ops/schedules?page=1`: 25개씩 조회하며 각 계획의 최대 31개 날짜 기록과 실행 링크를 반환합니다.
+- `POST /api/v1/ops/schedules`: 요청 UUID, 자료, 검토 기준 ID·버전, live 설정·profile 해시,
+  `confirm_paid_run=true`, 서울 `daily_at=HH:MM`, `starts_on`, `ends_on`, 승인 사유가 필요합니다.
+  오늘부터 30일 안에 시작하며 양 끝 날짜를 포함해 최대 31일입니다. 계획 저장은 모델을 호출하거나 예산을 예약하지 않습니다.
+- `POST /api/v1/ops/schedules/{id}/pause`: UUID와 사유로 새 접수를 중지하고 인증된 중지자를 기록합니다.
+  이미 접수된 실행은 별도로 취소합니다. 중지한 계획은 재개하지 않으며 변경 조건은 새 계획으로 승인합니다.
+  자료별 미중지 계획은 DB에서 한 개로 제한하므로 기간이 끝난 계획도 중지 후 교체합니다.
+
+전제는 `LLMOPS_SCHEDULES_ENABLED`, `LLMOPS_LIVE_ENABLED`와 RAG인 경우 `LLMOPS_RAG_LIVE_ENABLED`,
+사람 검토·품질 판정을 통과한 현재 기준, 유효한 누적 입력 한도와 일별 한도입니다. 등록 시 현재 한도로
+한 번의 최대 호출량을 수용할 수 있는지 확인하고, 각 날짜 접수에서도 다시 검사·예약합니다.
+계획 전체 금액이나 기간 전체 토큰을 선결제·예약하는 기능이 아닙니다. 화면은 기간 전체 최대 호출·토큰도 표시합니다.
+승인 당시의 모델·자료·기준 버전을 고정하며 변경된 모델이나 새 기준을 자동으로 따라가지 않습니다.
+
+서울 날짜와 계획 UUID로 평가 요청 UUID를 정해 DB의 날짜별 unique 제약과 Prefect 멱등 키를 함께 사용합니다.
+예정 시각 후 당일에 한 번 접수하며, 과거 날짜를 몰아서 실행하지 않습니다. 접수 전 재시작은 같은 당일 요청을
+복구하고, 지난 날짜의 미완료 접수는 `MISSED_SCHEDULE_DAY`로 차단합니다. 자정 사이에 검증·예약이 걸쳐도
+예약 시각이 승인 날짜와 다르면 전체 접수를 롤백합니다. Prefect 응답 유실 후에는 기존 요청 상태 동기화가 복구합니다.
+
+기준 철회·설정 변경·예산 부족·이전 실행 미완료·사용량 미확정은 `BLOCKED`와 안정적인 사유 코드로 남기며,
+차단된 당일 계획을 자동 재시도하지 않습니다. 일별 한도 해제도 정기 접수를 차단하지만 기존 사용량을 지우지 않습니다.
+계획은 등록 당시 관리자가 승인한 유한 기간의 작업이며, 매번 브라우저 세션을 재사용하지 않습니다.
+등록자의 Django 계정 비활성화도 신규 접수를 차단합니다. Core 역할 변경을 예약에 실시간 전파하는 기능은 없으므로
+권한 회수 시 해당 계획을 함께 중지해야 합니다.
+
+이번 구현의 기본 상태는 정기 접수 비활성·계획 0건입니다. 외부 알림, 월별/금액 한도,
+자동 품질 합격·기준 승격, 유료 정기 실행의 운영 검증은 포함하지 않습니다.
 
 - Migration `0006_evaluationrun_sync_attempted_at`을 먼저 적용합니다. 기존 행·결과 파일은 유지합니다.
 - 목록·상세 응답의 `synced_at`은 마지막 성공 확인, `sync_attempted_at`은 마지막 시도입니다.

@@ -1,8 +1,10 @@
 from django.urls import path
 
-from . import budget_admin_views, budget_views, runtime_views, views
+from . import budget_admin_views, budget_views, runtime_views, schedule_views, views
 
 urlpatterns = [
+    path("api/v1/ops/schedules", schedule_views.api_schedules),
+    path("api/v1/ops/schedules/<uuid:schedule_id>/pause", schedule_views.api_pause_schedule),
     path("api/v1/ops/budget", budget_admin_views.api_summary),
     path("api/v1/ops/budget/limits", budget_admin_views.api_change_limits),
     path("api/v1/ops/budget/daily-limits", budget_admin_views.api_change_daily_limits),
