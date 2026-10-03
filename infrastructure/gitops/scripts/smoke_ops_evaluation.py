@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import re
 import runpy
 import secrets
 import socket
@@ -180,6 +181,47 @@ def free_evaluation(output, password, web_env, *, seed=False, rag_replay=False):
         assert result["rag_replay"]["measurement_kind"] == "synthetic-contract-check"
         assert result["rag_replay"]["baseline_eligible"] is False
         assert result["rag_replay"]["live_execution_performed"] is False
+    return result
+
+
+def browser_login(password, expected, web_env):
+    """Use only the Vite and forwards owned by this disposable smoke."""
+    result = json.loads(
+        execute(
+            ["node", Path(__file__).with_name("ops_browser_login.mjs")],
+            data=json.dumps(
+                {
+                    "origin": BASE,
+                    "email": "admin@govbiz.local",
+                    "password": password,
+                    "expected": expected,
+                }
+            ),
+            env=web_env,
+            timeout=180,
+        )
+    )
+    version = result.get("browser_version") if isinstance(result, dict) else None
+    if not isinstance(version, str) or not re.fullmatch(
+        r"[0-9]+(?:\.[0-9]+){3}", version
+    ):
+        raise ValueError("Missing Kubernetes browser version evidence")
+    required = {
+        "status": "PASS",
+        "response_source": "core_ops_http",
+        "browser_version": version,
+        "password_login_verified": True,
+        "httponly_cookie_received": True,
+        "core_ops_identity_verified": True,
+        "reload_verified": True,
+        "details_verified": len(expected),
+        "reports_verified": len(expected),
+        "logout_verified": True,
+        "unauthorized_after_logout": True,
+        "browser_closed": True,
+    }
+    if json.dumps(result, sort_keys=True) != json.dumps(required, sort_keys=True):
+        raise ValueError("Incomplete Kubernetes browser login evidence")
     return result
 
 
@@ -403,6 +445,9 @@ def verify(state, settings, compose, compose_env, ops_image, kind, helm, report)
             for key, value in os.environ.items()
             if not key.startswith("VITE_")
         }
+        web_env.update(
+            K8S_CORE_PORT="18080", K8S_OPS_PORT="18001", K8S_DEV_LOGIN="false"
+        )
         with tempfile.TemporaryFile(mode="w+t") as log, fork_web.forwards(nk):
             web = subprocess.Popen(
                 [
@@ -454,6 +499,27 @@ def verify(state, settings, compose, compose_env, ops_image, kind, helm, report)
                     nk, state / "rag-evaluation.json", password, web_env
                 )
                 report["rag_replay"]["initial"] = rag_before
+                report["evaluation_phase"] = "kubernetes_browser_login"
+                report["browser_login"] = browser_login(
+                    password,
+                    {
+                        item["request_id"]: {
+                            "execution_spec_sha256": item["execution_spec_sha256"],
+                            "report_sha256": report_hash,
+                        }
+                        for item, report_hash in (
+                            (result, original_report),
+                            (rag_before["evaluation"], rag_before["report_sha256"]),
+                        )
+                    },
+                    web_env,
+                )
+                if (
+                    database_record(nk, result["request_id"]) != before
+                    or database_record(nk, rag_before["evaluation"]["request_id"])
+                    != rag_before["kubernetes_database"]
+                ):
+                    raise ValueError("Browser verification changed evaluation records")
             finally:
                 web.terminate()
                 try:

@@ -135,6 +135,40 @@ HTTP 서버·Core 관리자 인증·관리자 화면을 검증한 것으로 기�
 `backup_verified`, `personal_environment_verified`, `artifacts_restored`, `prefect_restored`는 모두 `false`다.
 개인 환경 전체 백업·파일/Prefect 복원·키 복구·구버전 전환 검증은 별도로 수행해야 한다.
 
+### CI에서 수행하는 Kubernetes 브라우저 로그인 검증
+
+`smoke_ops_bridge.py --evaluate`는 최초 무료 고정 답변 평가와 RAG 재평가가 완료된 뒤,
+자신이 시작한 Vite portfolio 서버와 Core/Ops port-forward를 유지한 상태에서
+`ops_browser_login.mjs`를 실행한다. 이 경로는 응답 재생이나 쿠키 주입을 사용하지 않는다.
+
+- 새 브라우저에서 Ops 진입 → 로그인 화면 이동 → 이메일/비밀번호 입력 → Core 로그인 POST를 수행한다.
+- 서버가 발급한 HttpOnly·SameSite=Lax 쿠키, Core 관리자 ID와 Ops 사용자 ID의 일치,
+  페이지 새로고침 후 세션 유지 및 기존 완료 평가 2건의 상세·실행 예산 표시를 확인한다.
+- 브라우저가 실제 Ops 보고서를 GET한 본문 해시를 사전에 검증한 보고서 해시와 대조한다.
+  이 검사 자체는 보고서 차트 렌더링 검증이 아니다.
+- 화면의 로그아웃 버튼으로 Core 204·쿠키 제거를 확인하고, 같은 브라우저의 Core 관리자 세션·Ops 목록·
+  보고서 재요청이 401인지 확인한다. 쿠키를 다시 주입해 폐기된 세션을 재사용하는 검사는 별도다.
+- 로그인·로그아웃 외 쓰기와 외부 origin 요청은 차단한다. 평가 재접수·검토 저장·유료 호출은 하지 않는다.
+  기존 두 평가의 DB 식별자·상태·실행 명세·모델 호출 수가 검사 전후 같아야 한다.
+- 중간 실패에도 발급된 검사 세션을 로그아웃하고 브라우저를 종료한다. 실패/정리 오류를 성공으로 바꾸지 않는다.
+
+CI가 생성한 일회용 비밀번호는 Python에서 Node의 표준입력으로 직접 전달하며 명령행 인자·파일·로그·
+증거에 남기지 않는다. CLI 오류도 입력값이 포함될 수 있는 브라우저 진단 대신 고정 오류 코드만 출력한다.
+개인 Kubernetes Secret을 추출하는 절차가 아니며 개인 계정의 세션이나 기존 브라우저를 재사용하지 않는다.
+
+`ops-bridge.json`의 최상위 `browser_login`에 `response_source=core_ops_http`, 브라우저 버전,
+로그인·ID 연결·새로고침·상세/보고서 건수·로그아웃 이후 접근 거절·종료 결과를 기록한다.
+이는 복원 전 일회용 Kubernetes의 실제 연결 증거다. 아래의 복원 응답 재생 검사와 구분하며,
+실제 복원 서버까지 이어지는 브라우저 로그인이나 개인 환경의 백업·복구를 증명하지 않는다.
+
+로컬 무료 회귀는 실제 React/Vite/Chrome과 임시 HTTP 인증 대역을 사용한다.
+쿠키 누락·다른 Core 사용자 연결·로그아웃 이후 보고서 노출을 실패로 처리하고, Python에서 누락되거나
+재생 방식으로 잘못 기록된 증거를 거절한다. 이 회귀 통과만으로 실제 Kubernetes 연결 성공을 보고하지 않는다.
+
+```bash
+RESTORE_BROWSER_CHANNEL=chrome node --test infrastructure/gitops/scripts/test_ops_browser_login.mjs
+```
+
 ### CI에서 수행하는 결과·Prefect 볼륨 복원 검증
 
 복원 DB의 조회 검증을 통과하고 Ops API·sync Pod가 종료된 상태에서 같은 시험 프로젝트의 실행기·결과 서버·
