@@ -117,20 +117,39 @@ def _eligible(run):
         raise LegacyUsageUnavailable("예약·실행 명세 도입 전 완료된 원본 live 실행만 대상입니다.")
 
 
-def _previous(request_id, run_id, actor, reason, evidence_sha256):
+def _previous(request_id, run_id, actor, reason, evidence_sha256, authenticated_actor_id):
     record = EvaluationLegacyUsage.objects.filter(request_id=request_id).first()
-    if record and (record.run_id, record.actor, record.reason, record.evidence_sha256) != (
+    if record and (
+        record.run_id,
+        record.actor,
+        record.reason,
+        record.evidence_sha256,
+        record.authenticated_actor_id,
+    ) != (
         run_id,
         actor,
         reason,
         evidence_sha256,
+        authenticated_actor_id,
     ):
         raise LegacyUsageUnavailable("같은 요청 ID의 실행·담당자·사유·증거를 바꿀 수 없습니다.")
     return record
 
 
-def reconcile_legacy_usage(*, run_id, actor, reason, request_id, evidence_sha256=None, apply=False):
+def reconcile_legacy_usage(
+    *,
+    run_id,
+    actor,
+    reason,
+    request_id,
+    evidence_sha256=None,
+    apply=False,
+    authenticated_actor=None,
+):
     run_id, request_id = UUID(str(run_id)), UUID(str(request_id))
+    if authenticated_actor is not None:
+        actor = authenticated_actor.get_username()
+    actor_id = authenticated_actor.pk if authenticated_actor is not None else None
     if (
         not isinstance(actor, str)
         or not isinstance(reason, str)
@@ -148,7 +167,7 @@ def reconcile_legacy_usage(*, run_id, actor, reason, request_id, evidence_sha256
     ):
         raise LegacyUsageUnavailable("담당자·사유와 적용할 미리보기 증거 해시를 확인하세요.")
     actor, reason = actor.strip(), reason.strip()
-    previous = _previous(request_id, run_id, actor, reason, evidence_sha256)
+    previous = _previous(request_id, run_id, actor, reason, evidence_sha256, actor_id)
     if previous:
         return {"applied": True, "replayed": True, **legacy_usage_data(previous)}
     run = EvaluationRun.objects.filter(pk=run_id).first()
@@ -182,7 +201,7 @@ def reconcile_legacy_usage(*, run_id, actor, reason, request_id, evidence_sha256
     with transaction.atomic():
         locked = EvaluationRun.objects.select_for_update().get(pk=run_id)
         budget = EvaluationBudget.objects.select_for_update().filter(pk=1).first()
-        previous = _previous(request_id, run_id, actor, reason, evidence_sha256)
+        previous = _previous(request_id, run_id, actor, reason, evidence_sha256, actor_id)
         if previous:
             return {"applied": True, "replayed": True, **legacy_usage_data(previous)}
         _eligible(locked)
@@ -239,6 +258,8 @@ def reconcile_legacy_usage(*, run_id, actor, reason, request_id, evidence_sha256
             budget=budget,
             request_id=request_id,
             actor=actor,
+            actor_source="CORE_ADMIN" if authenticated_actor is not None else "CLI",
+            authenticated_actor=authenticated_actor,
             reason=reason,
             capture_sha256=verified_hash,
             evidence_sha256=fingerprint,

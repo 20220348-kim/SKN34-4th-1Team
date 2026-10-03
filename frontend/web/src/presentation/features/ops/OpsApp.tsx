@@ -206,7 +206,7 @@ function EvaluationList({ owner, datasets, liveEnabled: allLiveEnabled, ragLiveE
   return <>
     <WorkspacePageHeader title="평가 실행 관리" actions={<button className={styles.secondaryButton} onClick={() => setRefresh((value) => value + 1)}>목록 새로고침</button>} />
     <div className={styles.content}>
-      <BudgetOverview onExpired={onExpired} refreshKey={refresh} />
+      <BudgetOverview onExpired={onExpired} refreshKey={refresh} operatorId={owner} />
       <section className={styles.card} aria-label="평가 실행">
         <p className={styles.sectionEyebrow}>LLMOps 평가</p><h2 className={styles.cardTitle}>지원 대상 근거 답변 평가</h2>
         <p className="text-sm leading-6 text-sample-muted">{ragLive ? ragLiveNotice : mode === 'live' ? liveNotice : notice}</p>
