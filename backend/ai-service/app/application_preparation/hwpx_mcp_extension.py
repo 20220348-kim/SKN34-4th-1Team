@@ -12,6 +12,103 @@ from pathlib import Path
 
 NAMESPACE = "http://www.hancom.co.kr/hwpml/2011/paragraph"
 EMPTY_STRUCTURE = {"tc", "subList", "p", "run", "t", "linesegarray", "lineseg", "cellAddr", "cellSpan", "cellSz", "cellMargin"}
+# Colored or decorated charPr id -> plain black clone, and the answers being written, set by prepare_answer_styles
+# for this session's edits.
+ANSWER_STYLES: dict[str, str] = {}
+ANSWER_TEXTS: set[str] = set()
+
+
+def is_example_color(color: str) -> bool:
+    """Writing-example text colors: blue, or a gray lighter than body text (the same rule as Core's HWP check)."""
+    match = re.fullmatch(r"#([0-9A-Fa-f]{2})([0-9A-Fa-f]{2})([0-9A-Fa-f]{2})", color or "")
+    if not match:
+        return False
+    red, green, blue = (int(part, 16) for part in match.groups())
+    is_blue = blue >= 128 and blue > red + 40 and blue > green + 40
+    return is_blue or max(red, green, blue) - min(red, green, blue) <= 24 and 110 <= (red + green + blue) // 3 <= 210
+
+
+def example_char_prs(header: str) -> set[str]:
+    return {attrs["id"] for match in re.finditer(r"<hh:charPr\b([^>]*)>", header)
+            if "id" in (attrs := dict(re.findall(r'(\w+)="([^"]*)"', match.group(1))))
+            and is_example_color(attrs.get("textColor", ""))}
+
+
+def paragraph_example_text(block: str, example_ids: set[str]) -> str:
+    """Text of the runs drawn in an example style, rendered like the engine's paragraph text (child tags dropped)."""
+    parts = []
+    for run in re.finditer(r"<hp:run\b([^>]*?)(?:/>|>(.*?)</hp:run>)", block, re.S):
+        reference = re.search(r'charPrIDRef="([^"]*)"', run.group(1))
+        if reference and reference.group(1) in example_ids and run.group(2):
+            raw = "".join(re.findall(r"<hp:t>(.*?)</hp:t>", run.group(2), re.S))
+            parts.append(re.sub(r"<[^>]*>", "", raw).replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">"))
+    return "".join(parts)
+
+
+def is_plain_black(charpr: str) -> bool:
+    return ('textColor="#000000"' in charpr and not re.search(r"<hh:(?:italic|bold)\s*/>", charpr)
+            and not re.search(r'<hh:underline\b[^>]*?\btype="(?!NONE")', charpr)
+            and not re.search(r'<hh:strikeout\b[^>]*?\bshape="(?!NONE")', charpr)
+            and not re.search(r'<hh:outline\b[^>]*?\btype="(?!NONE")', charpr))
+
+
+def prepare_answer_styles(path: str, out_path: str, answers: list[str] | None = None) -> dict:
+    """Copy the package with a plain black clone of every colored or decorated charPr, so an answer written into a
+    blue/gray/red example or a bold label's run does not keep that look (Core writes HWP answers the same way).
+    The clones are only referenced by runs that hold one of [answers] alone."""
+    import zipfile
+    source, target = Path(path), Path(out_path)
+    ANSWER_STYLES.clear()
+    ANSWER_TEXTS.clear()
+    if source.is_symlink() or source.resolve().parent != target.resolve().parent:
+        return {"count": 0, "reason": "PATH"}
+    ANSWER_TEXTS.update(answer.strip() for answer in answers or () if answer.strip())
+    with zipfile.ZipFile(source) as archive:
+        header = archive.read("Contents/header.xml").decode("utf-8")
+        charprs = list(re.finditer(r"<hh:charPr\b[^>]*?(?:/>|>.*?</hh:charPr>)", header, re.S))
+        if all(is_plain_black(match.group(0)) for match in charprs):
+            return {"count": 0}
+        next_id = max(int(value) for value in re.findall(r'<hh:charPr\b[^>]*\bid="(\d+)"', header)) + 1
+        clones = []
+        for match in charprs:
+            charpr = match.group(0)
+            old_id = re.search(r'\bid="(\d+)"', charpr).group(1)
+            if is_plain_black(charpr):
+                continue
+            clone = re.sub(r'\bid="\d+"', f'id="{next_id}"', charpr, count=1)
+            clone = re.sub(r'textColor="#[0-9A-Fa-f]{6}"', 'textColor="#000000"', clone, count=1)
+            clone = re.sub(r"<hh:(?:italic|bold)\s*/>", "", clone)
+            clone = re.sub(r'(<hh:underline\b[^>]*?\btype=")[^"]*"', r'\1NONE"', clone)
+            clone = re.sub(r'(<hh:strikeout\b[^>]*?\bshape=")[^"]*"', r'\1NONE"', clone)
+            clone = re.sub(r'(<hh:outline\b[^>]*?\btype=")[^"]*"', r'\1NONE"', clone)
+            clones.append(clone)
+            ANSWER_STYLES[old_id] = str(next_id)
+            next_id += 1
+        closing = header.rindex("</hh:charProperties>")
+        header = header[:closing] + "".join(clones) + header[closing:]
+        header = re.sub(r'(<hh:charProperties\b[^>]*\bitemCnt=")(\d+)(")',
+                        lambda m: f"{m.group(1)}{int(m.group(2)) + len(clones)}{m.group(3)}", header, count=1)
+        with zipfile.ZipFile(target, "w") as output:
+            for info in archive.infolist():
+                data = header.encode("utf-8") if info.filename == "Contents/header.xml" else archive.read(info)
+                output.writestr(info, data, compress_type=info.compress_type)
+    return {"count": len(clones)}
+
+
+def _answer_run_style(xml: str, node: int) -> str:
+    """Point the run holding text node [node] at the plain clone of its example style, if there is one."""
+    matches = list(re.finditer(r"<hp:t>([^<]*)</hp:t>", xml))
+    if not ANSWER_STYLES or node >= len(matches):
+        return xml
+    start = xml.rfind("<hp:run", 0, matches[node].start())
+    end = xml.find(">", start)
+    if start < 0 or end < 0:
+        return xml
+    tag = xml[start:end]
+    reference = re.search(r'charPrIDRef="([^"]*)"', tag)
+    if not reference or reference.group(1) not in ANSWER_STYLES:
+        return xml
+    return xml[:start] + tag.replace(reference.group(0), f'charPrIDRef="{ANSWER_STYLES[reference.group(1)]}"') + xml[end:]
 
 
 def fill_empty_run(xml: str, value: str) -> str | None:
@@ -29,10 +126,10 @@ def fill_empty_run(xml: str, value: str) -> str | None:
     text = escape(value)
     empty_text = re.search(r"<hp:t\s*/>", xml)
     if empty_text:
-        return xml[:empty_text.start()] + f"<hp:t>{text}</hp:t>" + xml[empty_text.end():]
+        return _answer_run_style(xml[:empty_text.start()] + f"<hp:t>{text}</hp:t>" + xml[empty_text.end():], 0)
     run = re.search(r"<hp:run\b([^<>]*?)/>", xml)
     if run:
-        return xml[:run.start()] + f"<hp:run{run.group(1)}><hp:t>{text}</hp:t></hp:run>" + xml[run.end():]
+        return _answer_run_style(xml[:run.start()] + f"<hp:run{run.group(1)}><hp:t>{text}</hp:t></hp:run>" + xml[run.end():], 0)
     return None
 
 
@@ -82,6 +179,11 @@ def replace_plain_text_runs(xml: str, value: str) -> str | None:
     for match, old_text, new_text in reversed(list(zip(matches, texts, revised))):
         if old_text != new_text:
             result = result[:match.start(1)] + escape(new_text) + result[match.end(1):]
+    written = revised[insertion_node].strip()
+    if written and (written == inserted.strip() or written in ANSWER_TEXTS):
+        # The run now holds only the answer ("단독/공동/각자대표" -> "단독" keeps two of its letters):
+        # do not keep an example's or label's look on it.
+        result = _answer_run_style(result, insertion_node)
     return result
 
 
@@ -120,6 +222,43 @@ def verify_edits(source_path: str, output_path: str, expected_targets: list[dict
     if remaining and addressed.verify_targets(output, remaining)["verified"] is not True:
         return {"verified": False, "reason": "CELL_TEXT_MISMATCH"}
     return {"verified": True, "counts": {"requested": len(expected_targets), "verified": len(expected_targets), "failed": 0}}
+
+CELL_MARGIN_X = 280  # left+right inner cell margin, as hangeul_core.formfit assumes
+CELL_MARGIN_Y = 282  # top+bottom inner cell margin (2 x 0.5 mm)
+
+
+def fit_cells(path: str, values: dict[str, str]) -> dict:
+    """Estimate the lines each filled cell needs once Hancom wraps it; flag only a gross row balloon.
+
+    Hancom grows a row to fit wrapped text, so a long answer is not an error by itself. Following python-hwpx
+    FormFit (calibrated on Hancom-saved forms), a cell overflows only when its text needs more than twice the
+    lines its authored height holds at the tightest pitch. Merged rows and cells without a usable height wrap
+    freely and never overflow here. capacity is the approximate number of full-width characters that fit.
+    """
+    from hangeul_core.analyze import analyze
+    from hangeul_core.formfit import font_height
+    from hangeul_core.owpml import HwpxPackage
+    from hwpx.form_fit.measure import (DEFAULT_SAFETY, GROSS_ROW_GROWTH_FACTOR, MIN_LINE_SPACING_RATIO,
+                                       MIN_LINE_WIDTH, MIN_ROW_GROWTH_LINES, TextStyle, estimate_lines)
+    cells = {cell.field_id: cell for cell in analyze(path).all_cells()}
+    header = HwpxPackage.open(path).read("Contents/header.xml").decode("utf-8")
+    result = {}
+    for target, text in values.items():
+        cell = cells.get(target)
+        if cell is None or not cell.width:
+            continue
+        em = font_height(header, cell.char_pr)
+        width = max(cell.width - CELL_MARGIN_X, MIN_LINE_WIDTH) * DEFAULT_SAFETY
+        lines = estimate_lines(text, width, em / 100, TextStyle(spacing=cell.char_spacing or 0))
+        allowed = None
+        inner = max((cell.height or 0) - CELL_MARGIN_Y, 0) * DEFAULT_SAFETY
+        if cell.row_span <= 1 and inner >= em * MIN_LINE_SPACING_RATIO:
+            budget = int(inner // (em * MIN_LINE_SPACING_RATIO))
+            allowed = max(int(budget * GROSS_ROW_GROWTH_FACTOR), budget + MIN_ROW_GROWTH_LINES - 1)
+        result[target] = {"lines": lines, "allowedLines": allowed, "overflow": allowed is not None and lines > allowed,
+                          "capacity": None if allowed is None else allowed * max(int(width // em), 1)}
+    return {"cells": result, "checked": len(result)}
+
 
 TAG = re.compile(r"<(/?)([A-Za-z][\w:.\-]*)([^>]*?)(/?)>")  # identical to the pinned engine's fill._TAG
 CELL_ADDRESS = re.compile(r'(\w+)="(-?\d+)"')
@@ -251,7 +390,31 @@ def install_addressed_patches():
             if replace_plain_text_runs(item["block"], item["text"]) is None and fill_empty_run(item["block"], item["text"]) is None:
                 region["editable"] = False
                 region["reason"] = "UNSUPPORTED_BODY_STRUCTURE"
+        mark_example_text(path, package, result["regions"], blocks)
         return result
+
+    def mark_example_text(path, package, regions, blocks):
+        """Add exampleText (the text drawn in a blue/gray example style) to body and cell paragraphs."""
+        example_ids = example_char_prs(package.read("Contents/header.xml").decode("utf-8"))
+        if not example_ids:
+            return
+        cells = {cell.field_id: cell for cell in addressed.analyze(path).all_cells()}
+        for region in regions:
+            if region["kind"] == "body_para":
+                region["exampleText"] = paragraph_example_text(blocks[int(region["target"][1:]) - 1]["block"], example_ids)
+                continue
+            cell = cells.get(region["target"])
+            if region["kind"] != "cell" or cell is None:
+                continue
+            section = package.read(cell.section).decode("utf-8")
+            span = addressed._find_cell_span(section, cell.table_in_section, cell.row, cell.col)
+            if span is None:
+                continue
+            items = addressed._paragraph_blocks(section[span[0]:span[1]])
+            if [item["text"] for item in items] != [item["text"] for item in region.get("paragraphs", [])]:
+                continue  # the cell does not match the inspected paragraphs; offer no example ranges
+            for paragraph, item in zip(region["paragraphs"], items):
+                paragraph["exampleText"] = paragraph_example_text(item["block"], example_ids)
 
     addressed._body_paragraphs_in_section = paragraphs
     addressed.body_field_index = body_index
@@ -265,6 +428,8 @@ def main():
     from hangeul_mcp.server import main as serve
     from hangeul_mcp.server import mcp
     mcp.tool(name="govbiz_verify_hwpx_edits")(verify_edits)
+    mcp.tool(name="govbiz_hwpx_fit")(fit_cells)
+    mcp.tool(name="govbiz_hwpx_prepare_answer_styles")(prepare_answer_styles)
     serve()
 
 

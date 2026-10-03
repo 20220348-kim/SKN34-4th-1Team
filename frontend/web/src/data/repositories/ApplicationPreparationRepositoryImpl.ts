@@ -35,8 +35,10 @@ const documentsSchema = z.array(z.object({
   unfilledAnswerCount: z.number().int().nonnegative().max(200).nullable(),
   unfilledAnswers: z.array(z.object({
     fieldId: z.string().min(1).max(129), fieldLabel: z.string().min(1).max(210), value: z.string().min(1).max(2000),
-    reason: z.enum(['INPUT_LOCATION_NOT_FOUND', 'AUTO_FILL_UNSUPPORTED']),
+    reason: z.enum(['INPUT_LOCATION_NOT_FOUND', 'AUTO_FILL_UNSUPPORTED', 'OVERFLOW', 'AMBIGUOUS_SLOT', 'SLOT_MISMATCH']),
+    capacity: z.number().int().nonnegative().max(100000).nullable().optional(),
   })).max(200),
+  remainingExampleCount: z.number().int().nonnegative().max(3000).optional(),
 }).superRefine((file, context) => {
   if ((file.filledAnswerCount === null) !== (file.unfilledAnswerCount === null)
     || (file.unfilledAnswerCount !== null && file.unfilledAnswerCount !== file.unfilledAnswers.length)

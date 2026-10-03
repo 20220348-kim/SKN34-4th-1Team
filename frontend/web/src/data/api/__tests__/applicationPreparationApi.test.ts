@@ -108,6 +108,30 @@ it('downloads the native document with credentials and validates binary content'
   await expect(repository.downloadDocument(1, 8)).rejects.toThrow('응답 형식')
 })
 
+it('reads answers left out of a draft with their reason and, for an overflowing cell, its capacity', async () => {
+  const unfilledAnswers = [
+    { fieldId: 'plan:summary', fieldLabel: '사업 계획 / 요약', value: '긴 요약', reason: 'OVERFLOW', capacity: 40 },
+    { fieldId: 'company:site', fieldLabel: '기업 개요 / 사업장', value: '전세', reason: 'SLOT_MISMATCH', capacity: null },
+  ]
+  const file = { id: 8, inputRevision: 3, fileName: '신청서.hwpx', mediaType: 'application/hwp+zip', size: 4,
+    filledAnswerCount: 1, unfilledAnswerCount: 2, unfilledAnswers }
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(Response.json([file]))
+    .mockResolvedValueOnce(Response.json([{ ...file, unfilledAnswers: [{ ...unfilledAnswers[0], reason: 'TRUNCATED' }, unfilledAnswers[1]] }])))
+  const repository = new ApplicationPreparationRepositoryImpl()
+  expect(await repository.documents(1)).toEqual([file])
+  await expect(repository.documents(1)).rejects.toThrow()
+})
+
+it('reads how many cells still hold a writing example and rejects an impossible count', async () => {
+  const file = { id: 8, inputRevision: 3, fileName: '신청서.hwpx', mediaType: 'application/hwp+zip', size: 4,
+    filledAnswerCount: 1, unfilledAnswerCount: 0, unfilledAnswers: [], remainingExampleCount: 2 }
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(Response.json([file]))
+    .mockResolvedValueOnce(Response.json([{ ...file, remainingExampleCount: -1 }])))
+  const repository = new ApplicationPreparationRepositoryImpl()
+  expect(await repository.documents(1)).toEqual([file])
+  await expect(repository.documents(1)).rejects.toThrow()
+})
+
 it.each([
   ['DOCX', '신청서.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
   ['XLSX', '신청서.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],

@@ -7,7 +7,7 @@ HWP는 Core API 컨테이너의 `kr.dogfoot:hwplib:1.1.11`로 읽고 수정한�
 | 형식 | 실행 위치 | 편집 도구 |
 |---|---|---|
 | HWP | Core JVM | hwplib 1.1.11 |
-| HWPX | AI의 격리 Python 환경 | Hangeul-mcp 0.6.0 + 구간 편집 확장 |
+| HWPX | AI의 격리 Python 환경 | Hangeul-mcp 0.6.0 + 구간 편집 확장, 칸 넘침 추정 python-hwpx 6.6.0(Apache-2.0, lxml) |
 | PDF | AI MCP → Core JVM | FFDetr 입력칸 탐지 + pdf-edit-mcp 0.2.0 / engine 0.2.0 → PDFBox |
 | HWPX/PDF 읽기 보조 | AI Node 프로세스 | 고정 kordoc checkout |
 

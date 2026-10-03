@@ -35,7 +35,7 @@ class ApplicationDocumentMcpClient(
         return client.post().uri(path).header("Authorization", "Bearer $token").contentType(MediaType.APPLICATION_JSON).body(request).retrieve()
             .onStatus({ it.value() != 200 }, { _, response ->
                 val code = runCatching { json.readTree(response.body.readNBytes(8192)).path("detail").path("code").asString() }.getOrNull()
-                val allowed = setOf("INPUT_REQUIRED", "UNSUPPORTED", "MAPPING_FAILED", "FORM_REANALYSIS_REQUIRED", "UNMAPPED_INPUT", "SOURCE_CHANGED", "MCP_NOT_READY", "MCP_FAILED", "PLAN_FAILED", "PLAN_TIMEOUT", "RUN_CONFLICT", "VALIDATION_FAILED", "OVERFLOW", "OUTCOME_UNKNOWN", "LIMIT_EXCEEDED").map { "APPLICATION_DOCUMENT_$it" }
+                val allowed = setOf("INPUT_REQUIRED", "UNSUPPORTED", "MAPPING_FAILED", "FORM_REANALYSIS_REQUIRED", "UNMAPPED_INPUT", "SOURCE_CHANGED", "MCP_NOT_READY", "MCP_FAILED", "PLAN_FAILED", "PLAN_TIMEOUT", "RUN_CONFLICT", "VALIDATION_FAILED", "OVERFLOW", "OUTCOME_UNKNOWN", "LIMIT_EXCEEDED", "NO_WRITABLE_INPUT").map { "APPLICATION_DOCUMENT_$it" }
                 throw ApplicationDocumentMcpException(code?.takeIf { it in allowed } ?: "APPLICATION_DOCUMENT_MCP_FAILED", "문서 편집을 완료하지 못했습니다. 오류 상태를 확인해 주세요.")
             })
     }

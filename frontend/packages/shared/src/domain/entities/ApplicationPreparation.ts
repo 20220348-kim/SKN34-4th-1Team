@@ -136,11 +136,14 @@ export type ApplicationContentVersion = {
   confirmedAt: string | null
 }
 
+/** OVERFLOW: 칸보다 길어 넣지 않은 답(capacity: 그 칸에 들어가는 대략의 글자 수), AMBIGUOUS_SLOT: 한 칸에 빈칸이 여럿이라
+ * 위치를 정하지 못한 답, SLOT_MISMATCH: 인쇄된 선택지·날짜와 맞지 않는 답 */
 export type ApplicationDocumentUnfilledAnswer = {
   fieldId: string
   fieldLabel: string
   value: string
-  reason: 'INPUT_LOCATION_NOT_FOUND' | 'AUTO_FILL_UNSUPPORTED'
+  reason: 'INPUT_LOCATION_NOT_FOUND' | 'AUTO_FILL_UNSUPPORTED' | 'OVERFLOW' | 'AMBIGUOUS_SLOT' | 'SLOT_MISMATCH'
+  capacity?: number | null
 }
 export type ApplicationDocument = {
   id: number
@@ -151,6 +154,8 @@ export type ApplicationDocument = {
   filledAnswerCount: number | null
   unfilledAnswerCount: number | null
   unfilledAnswers: ApplicationDocumentUnfilledAnswer[]
+  /** 답을 쓰지 않은 칸에 작성 예시(파란·회색 글씨)가 남아 있는 칸 수. 이전 초안은 0입니다. */
+  remainingExampleCount?: number
 }
 export type ApplicationDocumentMappingChange = {
   fieldLabel: string

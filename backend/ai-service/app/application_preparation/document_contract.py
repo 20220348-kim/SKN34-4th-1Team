@@ -9,17 +9,18 @@ from typing import Literal
 
 from pydantic import Field, model_validator
 
+from app.application_preparation.answer_slots import answer_slots
 from app.application_preparation.models import Contract
 from app.application_preparation.document import DocumentBox, DocumentFact, DocumentTarget, DocumentPlacement
 
 logger = logging.getLogger(__name__)
 
 CONTRACT = "application-document-mcp-v1"
-MAP_VERSION = "native-map-v15-pdf-field-scope-options"
-PLAN_VERSION = "confirmed-facts-bound-v6-native-pdf-field-plan"
+MAP_VERSION = "native-map-v16-pdf-reading-order-choice-lines"
+PLAN_VERSION = "confirmed-facts-bound-v8-printed-slots-example-cleanup"
 ENGINES = {
     "hwp": "kr.dogfoot/hwplib@1.1.11+govbiz-ranges-v1",
-    "hwpx": "pblsketch/Hangeul-mcp@b6fef153714e0cc9ce566df0da4082fc57c4fda4+govbiz-ranges-v4-body-positions",
+    "hwpx": "pblsketch/Hangeul-mcp@b6fef153714e0cc9ce566df0da4082fc57c4fda4+govbiz-ranges-v4-body-positions+answer-style-v1+python-hwpx@6.6.0-fit",
     "pdf": "AryanBV/pdf-edit-mcp@d4527e62b59433ad02f31a0511db218a2eeec1d3+govbiz-deletion-proof-v4+FFDetr@56f4e4235e28dcb2953513dc020bb191a2f54cfe+pdfbox-v6",
     "docx": "govbiz/ooxml-native@2",
     "xlsx": "govbiz/xlsx-native@2+openpyxl-3.1.5",
@@ -123,6 +124,9 @@ class EditOperation(Contract):
     box: DocumentBox | None
     reason: str = Field(min_length=1, max_length=1000)
     stylePolicy: Literal["preserve"] = "preserve"
+    # The exact text written when it differs from the answer: spacing around a printed blank, a choice mark
+    # (■, √, ○) or one part of a split date. Only the server's slot rules set it, and validate_plan re-derives it.
+    literal: str | None = Field(default=None, max_length=2100)
 
 
 class PlanSelection(Contract):
@@ -131,11 +135,21 @@ class PlanSelection(Contract):
     scopeTargetIds: list[str] = Field(max_length=3000)
 
 
+class SkippedFact(Contract):
+    """A supplied answer deliberately left out of the document; the rest is still written and Core lists this one."""
+
+    factId: str
+    targetId: str = ""
+    reason: Literal["OVERFLOW", "AMBIGUOUS_SLOT", "SLOT_MISMATCH", "UNRESOLVED"]
+    capacity: int | None = Field(default=None, ge=0)
+
+
 class WritePlan(PlanSelection):
     sourceSha256: str
     mapVersion: str
     answerRevision: int
     planHash: str
+    skippedFacts: list[SkippedFact] = Field(default_factory=list, max_length=200)
 
 
 class PdfFieldInfo(Contract):
@@ -280,15 +294,29 @@ def validate_mapping(request: MapDocumentRequest, document: DocumentMap, selecti
         raise DocumentError("MAPPING_FAILED", reason="MAPPING_PARENT_CHILD_CONFLICT")
 
 
-def validate_plan(request: GenerateDocumentRequest, document: DocumentMap, selection: PlanSelection) -> WritePlan:
+def validate_plan(request: GenerateDocumentRequest, document: DocumentMap, selection: PlanSelection,
+                  skipped: list[SkippedFact] = ()) -> WritePlan:
+    """Checks the plan against the native map and saved bindings. Answers the planner could not place
+    (unresolvedTargets, or [skipped] by the slot rules and the fit check) are left out of the document and
+    reported instead of failing it, as long as at least one answer is written."""
     if document.sourceSha256 != request.sourceSha256 or document.format != request.format:
         raise DocumentError("SOURCE_CHANGED")
-    if selection.unresolvedTargets:
-        raise DocumentError("MAPPING_FAILED", reason="UNRESOLVED_TARGETS")
     targets = {t.targetId: t for t in document.targets}
     if len(targets) != len(document.targets):
         raise DocumentError("VALIDATION_FAILED")
     facts = {f.id: f.value for f in request.facts}
+    bound = {b.factId: b.targetId for b in request.bindings}
+    skipped = [*skipped, *(SkippedFact(factId=fact_id, targetId=bound.get(fact_id, ""), reason="UNRESOLVED")
+                           for fact_id in selection.unresolvedTargets)]
+    skipped_ids = {item.factId for item in skipped}
+    if len(skipped_ids) != len(skipped) or not skipped_ids <= facts.keys():
+        raise DocumentError("MAPPING_FAILED", reason="INVALID_SKIPPED_FACTS")
+    if skipped_ids & {op.valueRef for op in selection.operations}:
+        raise DocumentError("MAPPING_FAILED", reason="SKIPPED_FACT_ALSO_PLANNED")
+    if not selection.operations:
+        if skipped and all(item.reason == "OVERFLOW" for item in skipped):
+            raise DocumentError("OVERFLOW", reason="ALL_FACTS_OVERFLOW")
+        raise DocumentError("NO_WRITABLE_INPUT", reason="ALL_FACTS_SKIPPED")
     scope = set(selection.scopeTargetIds)
     if not scope <= targets.keys() or len(scope) != len(selection.scopeTargetIds):
         raise DocumentError("MAPPING_FAILED", reason="INVALID_SCOPE_IDS")
@@ -348,10 +376,19 @@ def validate_plan(request: GenerateDocumentRequest, document: DocumentMap, selec
             elif max(op.start, previous.start) < min(op.end, previous.end) or op.start == previous.start or op.operation.startswith("set_") or previous.operation.startswith("set_"):
                 raise DocumentError("MAPPING_FAILED", reason="OVERLAPPING_OPERATIONS")
         seen.setdefault(op.targetId, []).append(op)
+    labels = {f.id: f.label for f in request.facts}
+    for target_id, fact_id in {(op.targetId, op.valueRef) for op in selection.operations if op.literal is not None}:
+        # A derived text is accepted only where the slot rules produce exactly these edits for this answer.
+        ops = [op for op in selection.operations if op.targetId == target_id and op.valueRef == fact_id]
+        expected_slots = answer_slots(targets[target_id].currentText, facts[fact_id], labels[fact_id])
+        if (isinstance(expected_slots, str) or any(op.operation != "replace_range" for op in ops) or
+                sorted((op.start, op.end, facts[fact_id] if op.literal is None else op.literal) for op in ops)
+                != sorted((slot.start, slot.end, slot.text) for slot in expected_slots)):
+            raise DocumentError("MAPPING_FAILED", reason="LITERAL_NOT_DERIVED")
     if request.bindings:
         def identity(field, target, box):
             return (field, target, None if box is None else (box.x, box.y, box.width, box.height))
-        expected = {identity(b.factId, b.targetId, b.box) for b in request.bindings if b.factId in facts}
+        expected = {identity(b.factId, b.targetId, b.box) for b in request.bindings if b.factId in facts and b.factId not in skipped_ids}
         applied = {identity(op.valueRef, op.targetId, op.box) for op in selection.operations if op.valueRef is not None}
         if applied != expected:
             raise DocumentError("MAPPING_FAILED", reason="BOUND_FACTS_NOT_COVERED")
@@ -366,21 +403,22 @@ def validate_plan(request: GenerateDocumentRequest, document: DocumentMap, selec
                     raise DocumentError("MAPPING_FAILED", reason="INCOMPLETE_CHECK_GROUP")
                 groups.add(group)
     # A fact can legitimately appear in several official input fields.
-    if used != facts.keys():
+    if used | skipped_ids != facts.keys():
         raise DocumentError("MAPPING_FAILED", reason="FACTS_NOT_COVERED")
     for target_id in seen:
         parent = targets[target_id].nativeLocator.get("parent")
         if parent in seen:
             raise DocumentError("MAPPING_FAILED", reason="PARENT_CHILD_CONFLICT")
-    payload = {**selection.model_dump(), "sourceSha256": request.sourceSha256,
-               "mapVersion": document.mapVersion, "answerRevision": request.answerRevision}
+    # Core applies the plan; it learns about unplaced answers only from skippedFacts.
+    payload = {**selection.model_dump(), "unresolvedTargets": [], "skippedFacts": [item.model_dump() for item in skipped],
+               "sourceSha256": request.sourceSha256, "mapVersion": document.mapVersion, "answerRevision": request.answerRevision}
     return WritePlan(**payload, planHash=object_hash(payload))
 
 
 def edited_text(target: NativeTarget, operations: list[EditOperation], facts: dict[str, str]) -> str:
     text = target.currentText
     for op in sorted(operations, key=lambda item: item.start, reverse=True):
-        value = "" if op.operation == "delete_range" else facts[op.valueRef]
+        value = "" if op.operation == "delete_range" else facts[op.valueRef] if op.literal is None else op.literal
         if op.operation == "set_field":
             text = value
         else:

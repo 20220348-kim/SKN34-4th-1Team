@@ -306,6 +306,7 @@ export const documentResultStyles = {
   fileActions: 'flex shrink-0 flex-wrap items-center justify-end gap-1.5',
   fill: 'flex flex-col gap-1.5',
   fillLabel: 'm-0 text-[0.75rem] font-semibold text-ink-muted tabular-nums',
+  remainingExamples: 'm-0 rounded-xl border border-warning-line bg-warning-soft px-3 py-2 text-[0.78rem] leading-[1.6] text-app-ink',
   unfilled: 'rounded-xl border border-warning-line bg-warning-soft px-3 py-2 text-[0.78rem] leading-[1.6] text-app-ink [&_ul]:m-0 [&_ul]:mt-1.5 [&_ul]:flex [&_ul]:list-none [&_ul]:flex-col [&_ul]:gap-1 [&_ul]:p-0',
   unfilledSummary: `cursor-pointer rounded font-bold text-warning ${focus}`,
   older: 'flex flex-col gap-3',

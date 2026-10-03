@@ -20,12 +20,12 @@ class ApplicationDocumentRepository(private val mapper: ApplicationDocumentMappe
     fun findFingerprint(ownerId: Long, preparationId: Long, revision: Long, fingerprint: String) = mapper.findFingerprint(ownerId, preparationId, revision, fingerprint)?.toDomain()
 
     @Transactional
-    fun save(ownerId: Long, preparationId: Long, revision: Long, fileName: String, mediaType: String, bytes: ByteArray, sourceSha256: String, placements: List<ApplicationDocumentPlacement>, clearExampleTargetIds: List<String> = emptyList(), fingerprint: String? = null, evidence: Map<String, Any?> = emptyMap(), filledAnswerCount: Int? = null, unfilledAnswers: List<ApplicationDocumentUnfilledAnswer> = emptyList()): ApplicationDocumentFile {
+    fun save(ownerId: Long, preparationId: Long, revision: Long, fileName: String, mediaType: String, bytes: ByteArray, sourceSha256: String, placements: List<ApplicationDocumentPlacement>, clearExampleTargetIds: List<String> = emptyList(), fingerprint: String? = null, evidence: Map<String, Any?> = emptyMap(), filledAnswerCount: Int? = null, unfilledAnswers: List<ApplicationDocumentUnfilledAnswer> = emptyList(), remainingExampleCount: Int = 0): ApplicationDocumentFile {
         val current = inputs.lockOwnedRevision(ownerId, preparationId) ?: throw ApplicationPreparationNotFoundException()
         if (current != revision) throw ApplicationPreparationRevisionConflictException()
         (if (fingerprint == null) findRevision(ownerId, preparationId, revision) else findFingerprint(ownerId, preparationId, revision, fingerprint))?.let { return it }
         val metadata = mutableMapOf<String, Any?>("placements" to placements, "clearExampleTargetIds" to clearExampleTargetIds, "mcp" to evidence)
-        if (filledAnswerCount != null) metadata["answerSummary"] = mapOf("filledAnswerCount" to filledAnswerCount, "unfilledAnswers" to unfilledAnswers)
+        if (filledAnswerCount != null) metadata["answerSummary"] = mapOf("filledAnswerCount" to filledAnswerCount, "unfilledAnswers" to unfilledAnswers, "remainingExampleCount" to remainingExampleCount)
         val row = ApplicationDocumentDbRow(preparationId = preparationId, inputRevision = revision, fileName = fileName, mediaType = mediaType, fileBytes = bytes, sourceSha256 = sourceSha256, placementsJson = json.writeValueAsString(metadata), generatorVersion = if (fingerprint == null) 5 else 6, generationFingerprint = fingerprint ?: "")
         check(mapper.insert(row) == 1)
         return row.toDomain()
@@ -38,6 +38,7 @@ class ApplicationDocumentRepository(private val mapper: ApplicationDocumentMappe
         summary.path("unfilledAnswers").forEach { node ->
             unfilled += json.treeToValue(node, ApplicationDocumentUnfilledAnswer::class.java)
         }
-        return ApplicationDocumentFile(id, inputRevision, fileName, mediaType, fileBytes, summary.path("filledAnswerCount").asInt(), unfilled)
+        return ApplicationDocumentFile(id, inputRevision, fileName, mediaType, fileBytes, summary.path("filledAnswerCount").asInt(), unfilled,
+            summary.path("remainingExampleCount").asInt(0))
     }
 }
