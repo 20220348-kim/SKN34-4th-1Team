@@ -896,6 +896,83 @@ def test_transport_failure_never_becomes_http_success():
         smoke.Smoke(compose).api("/session")
 
 
+@pytest.mark.parametrize("method", ["GET", "POST"])
+def test_timeout_records_bounded_metadata_without_retry_or_secrets(monkeypatch, method):
+    compose = Mock(
+        return_value=subprocess.CompletedProcess([], 0, stdout='{"transport_error":"TimeoutError"}')
+    )
+    clock = iter((10.0, 30.125))
+    monkeypatch.setattr(smoke.time, "monotonic", lambda: next(clock))
+    client = smoke.Smoke(compose)
+    with pytest.raises(smoke.URLError):
+        client.request(
+            client.ops + "/private-path?token=secret-query",
+            {"private": "secret-body"} if method == "POST" else None,
+            headers={"Cookie": "secret-cookie"},
+        )
+    assert compose.call_count == 1
+    assert list(client.recent_requests) == [
+        {
+            "service": "ops",
+            "method": method,
+            "status": None,
+            "transport_error": "TimeoutError",
+            "error": "URLError",
+            "elapsed_ms": 20125,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("reply", "error", "status"),
+    [
+        ('{"transport_error":"private network exception"}', "URLError", None),
+        ('{"status":502,"response_error":"private HTTP body"}', "ValueError", 502),
+        ("private invalid json", "JSONDecodeError", None),
+        (subprocess.TimeoutExpired(["private-command"], 120), "TimeoutExpired", None),
+        (
+            subprocess.CalledProcessError(1, ["private-command"], output="private stdout"),
+            "CalledProcessError",
+            None,
+        ),
+    ],
+)
+def test_request_diagnostics_preserve_failure_type_without_private_content(reply, error, status):
+    compose = (
+        Mock(side_effect=reply)
+        if isinstance(reply, Exception)
+        else Mock(return_value=subprocess.CompletedProcess([], 0, stdout=reply))
+    )
+    client = smoke.Smoke(compose)
+    with pytest.raises(Exception) as failure:
+        client.request("http://private-host/private-path")
+    assert type(failure.value).__name__ == error
+    record = client.recent_requests[-1]
+    assert record["error"] == error and record["status"] == status
+    assert record["service"] == "unknown" and record["elapsed_ms"] >= 0
+    assert "private" not in json.dumps(record)
+    assert compose.call_count == 1
+
+
+def test_recent_request_diagnostics_keep_only_last_32_outcomes():
+    replies = [
+        subprocess.CompletedProcess(
+            [],
+            0,
+            stdout=json.dumps({"status": status, "cookies": {}, "body": "private body"}),
+        )
+        for status in range(200, 233)
+    ]
+    client = smoke.Smoke(Mock(side_effect=replies))
+    for _ in replies:
+        client.request(client.prefect + "/private-path")
+    assert len(client.recent_requests) == 32
+    assert [item["status"] for item in client.recent_requests] == list(range(201, 233))
+    assert all(item["service"] == "prefect" for item in client.recent_requests)
+    assert all("error" not in item for item in client.recent_requests)
+    assert "private" not in json.dumps(list(client.recent_requests))
+
+
 def isolated_config():
     return {
         "networks": {"default": {"internal": True}},
@@ -967,6 +1044,39 @@ def test_startup_failure_records_safe_diagnostics_and_cleans_only_own_project(
 def test_diagnostic_collection_failure_does_not_hide_primary_failure():
     states = smoke.service_states(Mock(side_effect=RuntimeError("private detail")))
     assert states == {"unavailable": "RuntimeError"}
+
+
+def test_scenario_timeout_is_saved_before_cleanup_without_becoming_success(monkeypatch, tmp_path):
+    output = tmp_path / "timeout.json"
+    monkeypatch.setattr(sys, "argv", ["cancellation_smoke", "--output", str(output)])
+    monkeypatch.setattr(smoke.Smoke, "ready", lambda self: None)
+    monkeypatch.setattr(smoke.Smoke, "run", lambda self: self.api("/private-path"))
+    commands = []
+
+    def run(command, **kwargs):
+        parts = command[command.index("evaluation") + 1 :]
+        commands.append(parts)
+        if parts[0] == "config":
+            result = json.dumps(isolated_config())
+        elif parts[-1] == "request":
+            result = '{"transport_error":"TimeoutError"}'
+        elif parts[0] == "ps":
+            result = "[]"
+        else:
+            result = ""
+        return subprocess.CompletedProcess(command, 0, stdout=result)
+
+    monkeypatch.setattr(smoke.subprocess, "run", run)
+    with pytest.raises(smoke.URLError):
+        smoke.main()
+    report = json.loads(output.read_text())
+    assert report["passed"] is False and report["failure"] == "URLError"
+    assert report["diagnostics"]["phase"] == "scenarios"
+    record = report["diagnostics"]["recent_requests"][-1]
+    assert record["service"] == "ops" and record["transport_error"] == "TimeoutError"
+    assert record["status"] is None
+    assert "private" not in output.read_text()
+    assert commands[-1] == ["down", "--volumes", "--remove-orphans", "--timeout", "5"]
 
 
 def test_smoke_budget_setup_passes_required_audit_metadata(monkeypatch, tmp_path):

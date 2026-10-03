@@ -1579,6 +1579,12 @@ C1의 `skn-56 / 4fc3db7` 실제 서버 검증은 성공했으며, 이번 C2 확�
 서비스 상태·health·종료 코드·게시 포트를 `diagnostics`에 보관한다. 컨테이너 환경변수·명령·
 healthcheck 원문과 HTTP 응답 stdout은 제외한다. 진단 조회 실패가 최초 오류를 가리지 않으며,
 진행 중이던 실행의 관찰 기록도 남긴다. 인증값과 질문·답변 원문은 이 파일에 저장하지 않는다.
+`diagnostics.recent_requests`는 실패 직전 최대 32개 요청의 서비스 구분(`ops`/`probe`/`prefect`),
+HTTP 메서드·응답 코드·오류 종류·`elapsed_ms`를 담는다. 전송 타임아웃은 HTTP 응답 코드 없이
+`transport_error=TimeoutError`로 남고, Docker 명령 자체의 시간 초과는 `error=TimeoutExpired`로
+구분된다. 소요 시간에는 Docker exec 비용도 포함되므로 서버 처리 시간으로 해석하지 않는다.
+URL·헤더·쿠키·요청/응답 본문·오류 메시지는 기록하지 않는다. 이 진단은 제한 시간이나
+재시도 정책을 바꾸지 않으며, 진단 수집용 추가 요청 전에 실패 당시 기록을 복사한다.
 CI는 파일을 7일간 artifact로 보존하며, 이 단계가 실패하면 기존 이미지 발행·승격 gate도 통과하지 못한다.
 로컬 Docker 엔진이 실행되지 않은 환경에서는 무료 테스트와 Compose 렌더링만 확인할 수 있다.
 최신 SHA의 실제 CI가 통과하기 전에는 통합 검증 완료로 판단하지 않는다.
