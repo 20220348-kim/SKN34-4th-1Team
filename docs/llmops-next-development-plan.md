@@ -1,4 +1,4 @@
-# LLMOps 개발 현황과 후속 전략 — RAG 실행기 오프라인 초기화 수정
+# LLMOps 개발 현황과 후속 전략 — RAG 재검증과 실패 요청 진단
 
 [문서 목록](README.md) · [도입·구현 이력](langfuse-adoption-strategy.md) · [Ops API](../backend/ops-service/README.md) · [실행 안내](../infrastructure/llmops/README.md)
 
@@ -25,11 +25,57 @@ Core 원문 재수집·재청킹, 운영 색인 성능 측정, 실제 사람 검
 |---|---|---|
 | React·Django 운영 기능 | 기존 Core 관리자 로그인, 고정 근거·RAG replay 및 호출 계획이 있는 고정 자료의 RAG live 접수·조회·후처리 복구 구현 | 최신 SHA 전체 CI·개인 환경 적용·실제 관리자 실행 확인 |
 | 자료·응답 검토와 품질 정책 | RAG 참조 승인·철회, 검색·답변·인용 검토, v4 합격 정책, 명시적 기준 지정·해제와 검토 변경 시 무효화 구현 | 현재 모델의 유효한 사람 검토 기준은 미확인; 무료 테스트를 실제 품질로 해석하지 않음 |
-| 예산·취소 | 고정 원문 RAG live까지 혼합 예약·전송 직전 승인·정산 연결, 미확인 사용량 보존·취소 구현 | 추가한 RAG 정상/취소/응답 유실 실제 서버 CI, 금액/기간 한도·runner→Kubernetes live 검증 |
+| 예산·취소 | 고정 원문 RAG live까지 혼합 예약·전송 직전 승인·정산 연결, 미확인 사용량 보존·취소 구현; RAG 6개 격리 서버 시나리오 로컬 통과 | 최신 SHA 전체 서버 CI, 금액/기간 한도·runner→Kubernetes live 검증 |
 | 관측·인프라 복구 | Core→AI 상세 RAG 추적, Prefect·sync·artifact·컨테이너 교체·보고서 변조 검증 구현 | 최신 SHA의 전체 통합 CI, 개인/운영 환경 적용·복원 완료는 별도 증거 필요 |
 | RAG 오프라인 평가 | v1 계산기·v2 대역 출처와 Core 다중 청크 수집 10사례·예산 준비 명세, 캡처 등록·재평가 및 검토된 실행을 비교 기준으로 사용하는 경로 구현 | 최신 SHA의 Core→Ops→Prefect CI, 공식 HTML 수집 연결, 검토·기준의 환경 적용 |
 
-### 이번 후속 수정 — RAG 토크나이저 캐시 누락
+### 이번 후속 작업 — 상태 조회 재검증과 실패 요청 진단
+
+`skn-139 / 9c04865`에는 토크나이저 캐시 수정이 이미 반영됐다. 이전 로컬 실행은 모델 대역
+9회 전송·정산 뒤 상태 조회가 시간 초과됐지만, 당시 실패 산출물에는 `URLError`만 남아
+HTTP 요청의 시간 초과와 Docker 명령 지연을 구분하기 어려웠다.
+
+`cancellation_smoke.py`는 실패 산출물의 `diagnostics.recent_requests`에 최근 요청 최대 32개의
+서비스 구분·HTTP 메서드·응답 코드·소요 시간·오류 종류를 보관한다. 전송 오류의
+`TimeoutError`와 Docker 명령의 `TimeoutExpired`를 구분하며 URL·인증 정보·본문·오류 메시지는
+남기지 않는다. 시간에는 Docker exec 비용이 포함된다. 기존 제한 시간·재시도·성공 판정은
+그대로 유지하고, 실패 후 진단 조회가 추가되기 전에 요청 기록을 복사한다.
+
+로컬 실제 서버 재검증(2026-10-03):
+
+- `9c04865`의 기존 RAG 6개 시나리오만 일회용 Compose에서 선택 실행해 **6개 모두 통과**했다.
+  실제 Django·MySQL 8.4·Prefect·실행기·Langfuse를 거쳤으며 모델 응답은 무료 HTTP 대역이다.
+  검사 중 추가한 요청 진단 코드는 아래 별도 검사기 테스트로 검증했다.
+- 정상 완료는 임베딩 6회·답변 3회, 입력 317·출력 150토큰 정산과 보고서·검토 자료 조회를
+  확인했다. 취소는 첫 임베딩 1회 뒤 추가 전송 없이 종료됐다.
+- 임베딩 응답 유실은 입력 상한 243토큰·출력 0을 유지했고, 답변 응답 유실은 정산된 임베딩을
+  포함해 입력 32,775·출력 2,000토큰을 유지했다. 미확정 사용량을 0으로 바꾸지 않았다.
+- publish 실패 후 복구는 새 모델/예산 호출·예약 없이 완료됐다. 원본 자료 해시·호출 행·장부
+  보존, 동일 UUID 재사용·진행 중 별도 복구 거절, 원본 FAILED/복구 COMPLETED도 확인했다.
+- 결과는 로컬 `work/llmops-ci/rag-timeout-reproduction-9c04865.json`에 보관했다.
+  `verification_scope=six-rag-scenarios-only-not-full-ci`이며 고정 근거 13개와 Kubernetes 검사는
+  이번 실행에 포함하지 않는다. 일회용 컨테이너·네트워크·볼륨이 제거된 것을 확인했다.
+
+이전 상태 조회 타임아웃은 이번에 재현되지 않았다. 느린 Ops GET의 최대 관측 시간은 Docker
+exec를 포함해 6.11초였으며, 이 결과만으로 이전 원인이나 재발 방지를 확정하지 않는다.
+기존 개발 서버·DB는 변경하지 않았고 유료 모델 호출·사람 검토·품질 기준 지정도 수행하지 않았다.
+
+로컬 검사기 검증(2026-10-03):
+
+- Python 3.12로 `infrastructure/llmops/test_cancellation_smoke.py` **104개** 통과.
+  GET/POST 타임아웃의 재전송 금지, Docker 명령 실패·비정상 JSON 분류, 민감한 문자열 제외,
+  최근 32개 제한, 실패 보고서 저장·일회용 환경 정리를 포함한다.
+- 변경 Python 파일의 Ruff 검사·포맷 확인 통과. PATH에 `uv`가 없어 기존
+  `backend/ai-service/.venv/bin/python`으로 실행했다.
+- 기존 LLMOps CI는 push/PR에 검사기 테스트와 19개 서버 시나리오를 수행하고 실패 산출물도
+  보존한다. 위 로컬 검증은 전체 CI 통과를 뜻하지 않으며, 커밋·푸시 후 해당 SHA의 결과를 확인한다.
+
+다음 순서는 **변경 SHA의 전체 필수 CI 확인 → 기존 개발 환경과의 버전 차이 및 갱신·복구 검증 →
+관리자 화면 확인과 승인 범위의 실제 품질 기준 확보**다. 확인 시점 `9c04865`의 Infra·Ops·Catalog
+CI는 성공했고 GovBiz·[LLMOps CI](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/37030529665)는
+진행 중이다. RAG 6개 로컬 통과를 전체 19개·Kubernetes 통과나 실제 모델 품질 측정으로 확대 해석하지 않는다.
+
+### 이전 수정 — RAG 토크나이저 캐시 누락
 
 선행 `67859d2`의 [LLMOps CI](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/37023938084)는
 고정 근거 13개 시나리오를 통과한 뒤 첫 `rag_completed`에서

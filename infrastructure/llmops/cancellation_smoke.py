@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections import deque
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, build_opener
@@ -296,30 +297,75 @@ class Smoke:
         self.csrf = None
         self.records = []
         self.active = None
+        self.recent_requests = deque(maxlen=32)
 
     def dc(self, *args):
         result = self.compose(*args, capture=True)
         return result.stdout.strip()
 
     def request(self, url, data=None, *, headers=None):
-        result = self.compose(
-            "exec",
-            "-T",
-            "cancellation-probe",
-            "python",
-            "/test/cancellation_probe.py",
-            "request",
-            capture=True,
-            input=json.dumps({"url": url, "data": data, "headers": headers or {}}),
-        )
-        reply = json.loads(result.stdout)
-        if "transport_error" in reply:
-            raise URLError(reply["transport_error"])
-        if "response_error" in reply:
-            raise ValueError(f"Invalid JSON response: HTTP {reply['status']}")
-        if url.startswith(self.ops + "/"):
-            self.cookies.update(reply["cookies"])
-        return reply["status"], reply["body"]
+        # Keep bounded metadata, never URLs, headers, cookies, bodies or exception messages.
+        # Duration includes Docker exec: it is not the server's HTTP processing time.
+        observation = {
+            "service": next(
+                (
+                    name
+                    for name, base in (
+                        ("ops", self.ops),
+                        ("probe", self.probe),
+                        ("prefect", self.prefect),
+                    )
+                    if url.startswith(base + "/")
+                ),
+                "unknown",
+            ),
+            "method": "GET" if data is None else "POST",
+            "status": None,
+        }
+        started = time.monotonic()
+        try:
+            result = self.compose(
+                "exec",
+                "-T",
+                "cancellation-probe",
+                "python",
+                "/test/cancellation_probe.py",
+                "request",
+                capture=True,
+                input=json.dumps({"url": url, "data": data, "headers": headers or {}}),
+            )
+            reply = json.loads(result.stdout)
+            status = reply.get("status")
+            if type(status) is int and 100 <= status <= 599:
+                observation["status"] = status
+            if "transport_error" in reply:
+                reason = reply["transport_error"]
+                observation["transport_error"] = (
+                    reason
+                    if reason
+                    in {
+                        "URLError",
+                        "OSError",
+                        "TimeoutError",
+                        "ConnectionResetError",
+                        "ConnectionRefusedError",
+                        "RemoteDisconnected",
+                        "BrokenPipeError",
+                    }
+                    else "unknown"
+                )
+                raise URLError(reason)
+            if "response_error" in reply:
+                raise ValueError(f"Invalid JSON response: HTTP {reply['status']}")
+            if url.startswith(self.ops + "/"):
+                self.cookies.update(reply["cookies"])
+            return reply["status"], reply["body"]
+        except Exception as error:
+            observation["error"] = type(error).__name__
+            raise
+        finally:
+            observation["elapsed_ms"] = round((time.monotonic() - started) * 1000)
+            self.recent_requests.append(observation)
 
     def ready(self):
         def langfuse():
@@ -1057,6 +1103,7 @@ def main():
                     "phase": phase,
                     "error": detail,
                     "services": service_states(compose),
+                    "recent_requests": list(smoke.recent_requests) if smoke else [],
                 }
             if smoke and smoke.active:
                 unfinished = {k: v for k, v in smoke.active.items() if k != "payload"}
