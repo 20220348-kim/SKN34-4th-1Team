@@ -186,6 +186,20 @@ class EmbeddingBudgetTests(TestCase):
         )
 
     def test_exact_mixed_capacity_and_unknown_embedding_are_preserved(self):
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        from .daily_budget import change_daily_limits, daily_summary
+
+        change_daily_limits(
+            calls=6,
+            input_tokens=33318,
+            output_tokens=4000,
+            actor="operator",
+            reason="임베딩 이월",
+            request_id=uuid4(),
+        )
         self.budget.refresh_from_db()
         self.assertEqual(
             (self.budget.allocated_input_tokens, self.budget.allocated_output_tokens), (33318, 2000)
@@ -209,6 +223,8 @@ class EmbeddingBudgetTests(TestCase):
         summary = budget_summary(self.budget)
         self.assertEqual(summary["state"], "consistent")
         self.assertEqual(summary["breakdown"]["unknown_input_tokens"], 500)
+        carried = daily_summary(self.budget, at=timezone.now() + timedelta(days=1))["carried"]
+        self.assertEqual(carried, {"calls": 1, "input_tokens": 500, "output_tokens": 0})
         self.run.budget_reservation.refresh_from_db()
         self.assertEqual(
             summary["breakdown"], reservation_data(self.run.budget_reservation)["breakdown"]

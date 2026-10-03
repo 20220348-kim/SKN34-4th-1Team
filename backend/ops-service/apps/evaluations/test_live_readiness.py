@@ -7,6 +7,7 @@ from rest_framework.exceptions import PermissionDenied
 from rest_framework.test import APIClient
 
 from .catalog import public_datasets
+from .daily_budget import change_daily_limits
 from .models import (
     EvaluationAdmission,
     EvaluationBudget,
@@ -79,6 +80,14 @@ class LiveReadinessTests(TestCase):
         self.assertNotIn(TOKEN, str(data))
 
     def test_rag_preview_matches_real_reservation_without_counting_embedding_as_output(self):
+        change_daily_limits(
+            calls=100,
+            input_tokens=1000000,
+            output_tokens=200000,
+            actor="operator",
+            reason="RAG 일별 예약 검증",
+            request_id=uuid4(),
+        )
         data = self.read(RAG)
         self.assertEqual(data["state"], "checked")
         self.assertEqual(data["required"]["calls"], 9)
@@ -118,6 +127,33 @@ class LiveReadinessTests(TestCase):
             self.assertEqual(
                 fresh["remaining"][key], data["remaining"][key] - data["required"][key]
             )
+            self.assertEqual(fresh["daily"]["remaining"][key], fresh["remaining"][key])
+
+    def test_daily_shortage_blocks_readiness_even_with_large_cumulative_budget(self):
+        change_daily_limits(
+            calls=5,
+            input_tokens=196607,
+            output_tokens=11999,
+            actor="operator",
+            reason="일별 한도",
+            request_id=uuid4(),
+        )
+        data = self.read()
+        self.assertEqual(data["state"], "blocked")
+        self.assertEqual(
+            {issue["code"] for issue in data["blockers"]},
+            {
+                "DAILY_INSUFFICIENT_CALLS",
+                "DAILY_INSUFFICIENT_INPUT_TOKENS",
+                "DAILY_INSUFFICIENT_OUTPUT_TOKENS",
+            },
+        )
+        EvaluationRun.objects.create(
+            requested_by=self.user, execution_mode="live", dataset_id=FIXED
+        )
+        data = self.read()
+        self.assertEqual(data["daily"]["state"], "unknown")
+        self.assertIn("DAILY_BUDGET_UNAVAILABLE", {issue["code"] for issue in data["blockers"]})
 
     def test_reports_disabled_paused_and_worker_auth_without_exposing_secrets(self):
         EvaluationAdmission.objects.create(accepting=False)

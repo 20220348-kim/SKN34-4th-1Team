@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { getLiveReadiness, OpsApiError, type LiveReadiness } from '../../../data/ops/opsApi'
 import { workspacePageStyles as styles } from '../../shared/workspace/WorkspacePage.styles'
+import { DailyBudgetPanel } from './DailyBudgetPanel'
 
 const budgetIssues = new Set([
   'BUDGET_UNCONFIGURED', 'BUDGET_INCONSISTENT', 'INPUT_BUDGET_UNCONFIGURED', 'INPUT_BUDGET_UNKNOWN',
   'INSUFFICIENT_CALLS', 'INSUFFICIENT_INPUT_TOKENS', 'INSUFFICIENT_OUTPUT_TOKENS',
+  'DAILY_BUDGET_UNAVAILABLE', 'DAILY_INSUFFICIENT_CALLS', 'DAILY_INSUFFICIENT_INPUT_TOKENS', 'DAILY_INSUFFICIENT_OUTPUT_TOKENS',
 ])
 
 // Selection or a successful budget write remounts the panel and aborts old queries.
@@ -48,6 +50,7 @@ export function LiveReadinessPanel({ datasetId, executionProfile, onExpired }: {
           <th scope="row">{label}</th><td>{result.required[key].toLocaleString()}</td><td>{result.remaining?.[key]?.toLocaleString() ?? '확인 불가·미설정'}</td>
         </tr>)}</tbody>
       </table>
+      <DailyBudgetPanel value={result.daily} />
       {result.blockers.length > 0 && <ul className="list-disc space-y-1 pl-5 text-red-700" aria-label="점검 차단 사유">{result.blockers.map((issue) => <li key={issue.code}>{issue.message}</li>)}</ul>}
       {result.warnings.length > 0 && <ul className="list-disc space-y-1 pl-5 text-amber-800" aria-label="점검 주의 사항">{result.warnings.map((issue) => <li key={issue.code}>{issue.message}</li>)}</ul>}
       {[...result.blockers, ...result.warnings].some((issue) => budgetIssues.has(issue.code)) && <p>
