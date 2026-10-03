@@ -21,7 +21,6 @@ import smoke_ops_artifacts
 import smoke_ops_backup
 import smoke_ops_replacement
 import smoke_ops_sync_recovery
-import smoke_ops_volumes
 import yaml
 from check_msa import NAMESPACE, REPOSITORY_ROOT, ROOT
 from ops_migration import run_migration
@@ -638,36 +637,26 @@ def verify(state, settings, compose, compose_env, ops_image, kind, helm, report)
         report["backup_admission_pause"] = set_admission(
             nk, "pause", report["admission_resume"]["version"]
         )
-        smoke_ops_backup.verify(
+        runner_image_id = smoke_ops_backup.verify(
             state,
             settings,
             report,
             ops_image=ops_image,
+            compose=compose,
+            compose_env=compose_env,
             expected={
                 item["request_id"]: {
                     "flow_id": item["prefect_flow_run_id"],
                     "execution_spec_sha256": item["execution_spec_sha256"],
+                    "report_sha256": report_hash,
                 }
-                for item in (result, rag_before["evaluation"], rag_after["evaluation"])
+                for item, report_hash in (
+                    (result, original_report),
+                    (rag_before["evaluation"], rag_before["report_sha256"]),
+                    (rag_after["evaluation"], rag_after["report_sha256"]),
+                )
             },
             release_sha256=before["execution_release_sha256"],
-        )
-        report["evaluation_phase"] = "volume_restore_rehearsal"
-        expected_restores = {
-            result["request_id"]: {
-                "flow_id": result["prefect_flow_run_id"],
-                "report_sha256": original_report,
-            },
-            **{
-                item["evaluation"]["request_id"]: {
-                    "flow_id": item["evaluation"]["prefect_flow_run_id"],
-                    "report_sha256": item["report_sha256"],
-                }
-                for item in (rag_before, rag_after)
-            },
-        }
-        runner_image_id = smoke_ops_volumes.verify(
-            state, settings, compose, compose_env, expected_restores, report
         )
         report.update(
             evaluation_status="PASS",

@@ -7,6 +7,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import fork_cluster
+import ops_http_restore_probe
 import ops_volume_restore_probe as probe
 from smoke_ops_artifacts import require_disposable
 from smoke_ops_bridge import execute
@@ -62,7 +63,7 @@ def unused_volumes(sources, containers):
             raise ValueError("Unexpected container uses the source volume")
 
 
-def restore_volume(image, source, kind, expected):
+def restore_volume(image, source, kind, expected, *, database=None):
     name = "govbiz-volume-restore-" + uuid4().hex
     label = "govbiz.restore=" + name
     helpers = []
@@ -229,6 +230,10 @@ def restore_volume(image, source, kind, expected):
             ):
                 raise ValueError("Incomplete restored results API evidence")
             result["api"] = api
+            if database is not None:
+                result["ops_http"] = ops_http_restore_probe.verify(
+                    image, name, expected, database
+                )
     finally:
         # Attempt both removals even if one fails; never target a source volume.
         try:
@@ -252,10 +257,10 @@ def restore_volume(image, source, kind, expected):
     return {**result, "cleanup_complete": True}
 
 
-def verify(state, settings, compose, env, expected, report):
+def verify(state, settings, compose, env, expected, report, *, database):
     evidence = report["volume_restore"] = {
         "status": "FAIL",
-        "scope": "disposable_results_http_and_prefect_api",
+        "scope": "disposable_ops_report_http_and_prefect_api",
         "backup_verified": False,
         "personal_environment_verified": False,
         "prefect_server_started": None,
@@ -271,12 +276,16 @@ def verify(state, settings, compose, env, expected, report):
     _, nk, _ = fork_cluster.commands(state, settings)
     project = report["compose_project"]
     require_disposable(nk, compose, env, project)
-    database = report.get("database_restore", {})
+    db_evidence = report.get("database_restore", {})
     if (
-        database.get("status") != "PASS"
-        or database.get("source_writers_stopped") is not True
+        db_evidence.get("restored_database_ready") is not True
+        or db_evidence.get("source_writers_stopped") is not True
+        or db_evidence.get("application", {}).get("database_unchanged") is not True
+        or db_evidence.get("cleanup_complete") is not False
     ):
-        raise ValueError("Complete the isolated DB rehearsal before volume restore")
+        raise ValueError(
+            "Keep the verified isolated DB rehearsal alive for volume restore"
+        )
     if json.loads(
         execute(
             nk
@@ -328,7 +337,7 @@ def verify(state, settings, compose, env, expected, report):
     evidence["writers_stopped"] = True
     image = containers["ops-artifacts"]["Image"]
     evidence["results"] = restore_volume(
-        image, project + "_ops-results", "results", expected
+        image, project + "_ops-results", "results", expected, database=database
     )
     evidence["prefect"] = restore_volume(
         containers["prefect"]["Image"], project + "_prefect-data", "prefect", expected

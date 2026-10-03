@@ -15,6 +15,7 @@ PREFECT_IMAGE = "sha256:" + "b" * 64
 HELPER = "f" * 64
 READER = "e" * 64
 IDS = {name: str(index) * 64 for index, name in enumerate(smoke.SERVICES, 1)}
+DATABASE = {"id": "d" * 64, "image": IMAGE, "password": "temporary-reader"}
 
 
 class VolumeSmokeTests(unittest.TestCase):
@@ -37,13 +38,19 @@ class VolumeSmokeTests(unittest.TestCase):
         self.expected_kind = None
         self.report = {
             "compose_project": PROJECT,
-            "database_restore": {"status": "PASS", "source_writers_stopped": True},
+            "database_restore": {
+                "restored_database_ready": True,
+                "source_writers_stopped": True,
+                "application": {"database_unchanged": True},
+                "cleanup_complete": False,
+            },
         }
         for owner, name, options in (
             (smoke.fork_cluster, "require_dev", {}),
             (smoke.fork_cluster, "commands", {"return_value": ([], ["kubectl"], [])}),
             (smoke, "require_disposable", {}),
             (smoke, "execute", {"side_effect": self.execute}),
+            (smoke.ops_http_restore_probe, "verify", {"side_effect": self.ops_http}),
         ):
             mocker = patch.object(owner, name, **options)
             mocker.start()
@@ -177,9 +184,22 @@ class VolumeSmokeTests(unittest.TestCase):
             raise subprocess.CalledProcessError(1, command)
         return ""
 
+    def ops_http(self, image, volume, expected, database):
+        self.assertEqual(image, IMAGE)
+        self.assertIn(volume, self.volumes)
+        self.assertEqual(database, DATABASE)
+        self.assertEqual(expected, EXPECTED)
+        return {"status": "PASS"}
+
     def verify(self):
         return smoke.verify(
-            "/temporary", SETTINGS, ["compose"], {}, EXPECTED, self.report
+            "/temporary",
+            SETTINGS,
+            ["compose"],
+            {},
+            EXPECTED,
+            self.report,
+            database=DATABASE,
         )
 
     def commands(self, prefix):
@@ -195,7 +215,10 @@ class VolumeSmokeTests(unittest.TestCase):
         self.assertFalse(evidence["personal_environment_verified"])
         self.assertTrue(evidence["prefect_server_started"])
         self.assertTrue(evidence["results_server_started"])
-        self.assertEqual(evidence["scope"], "disposable_results_http_and_prefect_api")
+        self.assertEqual(
+            evidence["scope"], "disposable_ops_report_http_and_prefect_api"
+        )
+        self.assertEqual(evidence["results"]["ops_http"]["status"], "PASS")
         self.assertEqual(
             self.commands(["docker", "stop"]),
             [
@@ -242,14 +265,24 @@ class VolumeSmokeTests(unittest.TestCase):
                 {},
                 EXPECTED,
                 self.report,
+                database=DATABASE,
             )
         self.assertEqual(self.events, [])
 
     def test_failed_database_rehearsal_cannot_stop_compose(self):
-        self.report["database_restore"]["status"] = "FAIL"
+        self.report["database_restore"]["restored_database_ready"] = False
         with self.assertRaisesRegex(ValueError, "DB rehearsal"):
             self.verify()
         self.assertEqual(self.commands(["docker", "stop"]), [])
+
+    def test_ops_http_failure_cleans_restored_volume_and_cannot_pass(self):
+        with patch.object(
+            smoke.ops_http_restore_probe, "verify", side_effect=ValueError("HTTP")
+        ):
+            with self.assertRaisesRegex(ValueError, "HTTP"):
+                self.verify()
+        self.assertEqual(self.report["volume_restore"]["status"], "FAIL")
+        self.assertEqual(len(self.commands(["docker", "volume", "rm"])), 1)
 
     def test_foreign_container_or_additional_volume_user_blocks_stop(self):
         for field in ("unsafe_owner", "extra_user"):
