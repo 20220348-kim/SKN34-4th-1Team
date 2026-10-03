@@ -40,6 +40,7 @@ describe('실행 설정·예산 점검', () => {
     await screen.findByText('누적 예산 한도를 설정하세요.')
     expect(screen.getAllByText('확인 불가·미설정')).toHaveLength(3)
     expect(screen.getByRole('list', { name: '점검 주의 사항' }).textContent).toContain('미확인 과거 입력')
+    expect(screen.getByRole('link', { name: '누적 예산 관리로 이동' }).getAttribute('href')).toBe('#evaluation-budget')
     expect(screen.queryByText('조회 시점의 설정·예산에서 차단 사유가 없습니다.')).toBeNull()
   })
 
@@ -92,5 +93,13 @@ describe('실행 설정·예산 점검', () => {
     expect(await screen.findByText('입력 한도 미설정')).toBeTruthy()
     expect(screen.getByRole('status').textContent).toContain('차단 사유가 없습니다')
     expect(screen.getByText('확인 불가·미설정')).toBeTruthy()
+    expect(screen.getByRole('link', { name: '누적 예산 관리로 이동' })).toBeTruthy()
+  })
+
+  it('모델 비활성화만 있으면 예산 설정으로 해결할 수 있다고 안내하지 않는다', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => json({ ...checked, state: 'blocked', blockers: [{ code: 'LIVE_DISABLED', message: '모델 평가 비활성화' }] })))
+    mount(); fireEvent.click(screen.getByRole('button'))
+    await screen.findByText('모델 평가 비활성화')
+    expect(screen.queryByRole('link', { name: '누적 예산 관리로 이동' })).toBeNull()
   })
 })

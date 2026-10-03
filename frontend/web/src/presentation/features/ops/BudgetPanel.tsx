@@ -27,7 +27,9 @@ function Breakdown({ value }: { value: BudgetBreakdown }) {
   </table><p className="mt-3 text-xs text-sample-muted">입력 상한 기록이 없는 과거 예약의 미확인 몫은 0으로 환산하지 않습니다.</p></div>
 }
 
-export function BudgetOverview({ onExpired, refreshKey, operatorId }: { onExpired: () => void; refreshKey: number; operatorId?: string }) {
+export function BudgetOverview({ onExpired, refreshKey, operatorId, onBudgetChanged }: {
+  onExpired: () => void; refreshKey: number; operatorId?: string; onBudgetChanged?: () => void
+}) {
   const [page, setPage] = useState(1)
   const [data, setData] = useState<BudgetPage | null>(null)
   const [error, setError] = useState('')
@@ -57,7 +59,7 @@ export function BudgetOverview({ onExpired, refreshKey, operatorId }: { onExpire
     return () => { controller.abort(); clearTimeout(timer) }
   }, [page, refresh, refreshKey])
   const summary = data?.summary
-  return <section className={styles.card} aria-label="누적 평가 예산">
+  return <section id="evaluation-budget" tabIndex={-1} className={styles.card} aria-label="누적 평가 예산">
     <div className="flex flex-wrap items-center justify-between gap-3"><h2 className={styles.cardTitle}>누적 평가 예산</h2><button className={styles.secondaryButton} onClick={() => setRefresh((value) => value + 1)}>예산 새로고침</button></div>
     <p className={styles.cardDescription}>모든 평가 자료가 공유하는 호출·입력·출력 토큰 장부입니다. 금액 한도가 아니며, 사용량 미확인 호출은 기록된 최대 입력·출력 예약을 유지합니다.</p>
     {error && <p role="alert" className="text-sm text-red-700">{error} 표시된 값이 있으면 마지막 조회 기록입니다.</p>}
@@ -72,8 +74,8 @@ export function BudgetOverview({ onExpired, refreshKey, operatorId }: { onExpire
       {summary.state === 'inconsistent' && <p role="alert" className="text-sm text-red-700">저장된 할당량과 상세 장부가 일치하지 않습니다. 잔여 한도를 확정할 수 없어 표시하지 않습니다.</p>}
       {summary.legacy_live_run_count > 0 && <p className="text-sm text-amber-800">예약 기록이 없는 과거 모델 실행 {count(summary.legacy_live_run_count)}건이 있습니다. 해당 실행의 사용량은 이 장부에서 확인할 수 없습니다.</p>}
       {(summary.legacy_live_run_count > 0 || showUnaccounted) && <button className={styles.secondaryButton} aria-expanded={showUnaccounted} onClick={() => setShowUnaccounted((value) => !value)}>{showUnaccounted ? '미반영 실행 목록 닫기' : '미반영 실행 목록 확인'}</button>}
-      {showUnaccounted && <UnaccountedRunsPanel onExpired={onExpired} refreshKey={refreshKey + refresh} operatorId={operatorId} onApplied={() => { setSaved('검토한 과거 사용량을 장부에 반영했습니다.'); setRefresh((value) => value + 1) }} />}
-      {operatorId && <BudgetLimitsForm summary={summary} owner={operatorId} onExpired={onExpired} onSaved={() => { setSaved('누적 한도 변경 이력을 저장했습니다.'); setRefresh((value) => value + 1) }} />}
+      {showUnaccounted && <UnaccountedRunsPanel onExpired={onExpired} refreshKey={refreshKey + refresh} operatorId={operatorId} onApplied={() => { setSaved('검토한 과거 사용량을 장부에 반영했습니다.'); setRefresh((value) => value + 1); onBudgetChanged?.() }} />}
+      {operatorId && <BudgetLimitsForm summary={summary} owner={operatorId} onExpired={onExpired} onSaved={() => { setSaved('누적 한도 변경 이력을 저장했습니다.'); setRefresh((value) => value + 1); onBudgetChanged?.() }} />}
       {Boolean(summary.legacy_accounted_run_count) && <p className="text-sm">저장 응답을 검토해 과거 실행 {count(summary.legacy_accounted_run_count!)}건의 사용량을 합산했습니다. 당시 예약이나 제공자의 청구 확인을 뜻하지 않습니다.</p>}
       {summary.limits && <dl className="grid gap-3 text-sm sm:grid-cols-3">{[
         ['전체 한도', summary.limits], ['저장된 할당량', summary.allocated], ['잔여 한도', summary.state === 'consistent' ? summary.remaining : null],
