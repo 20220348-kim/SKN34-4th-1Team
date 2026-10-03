@@ -197,6 +197,8 @@ def check_management(expected, principal, token, member_token, total_runs):
             or run_budget.get("calls") != []
         ):
             raise ValueError("Restored replay unexpectedly has a paid budget")
+        if detail.get("evaluation_scope") == "fixed-answer-context-only":
+            get(route + "/review")
     return {
         "evidence": {
             "status": "PASS",
@@ -343,6 +345,7 @@ def check_http(expected):
             management = check_management(
                 expected, principal, token, member_token, total_runs
             )
+            reports = {}
             for request, row in expected.items():
                 route = "/api/v1/ops/evaluations/" + request + "/report"
                 for cookie, code in (
@@ -362,8 +365,20 @@ def check_http(expected):
                     != "private, no-store, max-age=0, no-cache, must-revalidate"
                     or "sandbox allow-scripts;"
                     not in headers.get("Content-Security-Policy", "")
+                    or not headers.get("Content-Type", "").startswith("text/html")
                 ):
                     raise ValueError("Restored Ops report or response headers differ")
+                reports[route] = {
+                    "body": raw.decode("utf-8"),
+                    "headers": {
+                        key.lower(): headers[key]
+                        for key in (
+                            "Content-Type",
+                            "Cache-Control",
+                            "Content-Security-Policy",
+                        )
+                    },
+                }
             # Revoke a real persisted session, then prove Ops cannot reuse it.
             if (
                 response("/api/v1/auth/logout", token, port=8080, method="POST")[0]
@@ -402,6 +417,7 @@ def check_http(expected):
         "model_api_calls": 0,
         "management_http": management["evidence"],
         "management_responses": management["responses"],
+        "report_responses": reports,
     }
 
 
@@ -517,12 +533,14 @@ def verify(image, volume, expected, database):
         ):
             raise ValueError("Incomplete restored management HTTP evidence")
         snapshots = result.pop("management_responses")
+        reports = result.pop("report_responses")
         with tempfile.TemporaryDirectory(prefix="ops-restore-contract-") as folder:
             contract = Path(folder) / "responses.json"
             contract.write_text(
                 json.dumps(
                     {
                         "responses": snapshots,
+                        "reports": reports,
                         "expected": expected,
                         "total_runs": management["listed_run_count"],
                     }
@@ -559,6 +577,10 @@ def verify(image, volume, expected, database):
                 "listed_run_count": management["listed_run_count"],
                 "pages_verified": (management["listed_run_count"] + 24) // 25,
                 "budget_view_verified": True,
+                "details_verified": len(expected),
+                "report_documents_verified": len(expected),
+                "report_sandbox_verified": True,
+                "report_denials_verified": len(expected),
                 "denied_view_verified": True,
                 "browser_rendered": True,
                 "browser_closed": True,
@@ -572,6 +594,7 @@ def verify(image, volume, expected, database):
                 "unauthorized_status_preserved": True,
                 "outage_rejected": True,
                 "document_served": True,
+                "report_documents_verified": len(expected),
                 "servers_stopped": True,
                 "browser_rendered": False,
             },

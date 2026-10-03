@@ -38,6 +38,7 @@ class ManagementTests(unittest.TestCase):
                 "execution_spec": spec,
                 "status": "COMPLETED",
                 "model_api_calls": 0,
+                "evaluation_scope": "fixed-answer-context-only",
                 "requested_by_id": "core:1",
                 "finished_at": "2026-10-03T00:00:00Z",
                 "summary": {"caseCount": 1},
@@ -67,6 +68,7 @@ class ManagementTests(unittest.TestCase):
                 "reservation": None,
                 "calls": [],
             }
+            self.routes[route + "/review"] = {"material": None, "reviews": []}
         self.calls = []
         self.fail_status = None
         self.cache = "private, no-store"
@@ -119,7 +121,19 @@ class ManagementTests(unittest.TestCase):
         self.assertEqual(result["evidence"]["matched_details"], 3)
         self.assertFalse(result["evidence"]["browser_rendered"])
         self.assertNotIn("live-test-csrf", json.dumps(result))
-        self.assertEqual(len(result["responses"]), 9)
+        self.assertEqual(len(result["responses"]), 12)
+        for row in self.rows[:3]:
+            route = "/api/v1/ops/evaluations/" + row["id"] + "/review"
+            self.assertIn((route, "member-token"), self.calls)
+            self.assertIn(route, result["responses"])
+
+    def test_rag_detail_does_not_fetch_the_fixed_context_review_panel(self):
+        row = self.rows[0]
+        route = "/api/v1/ops/evaluations/" + row["id"]
+        row["evaluation_scope"] = "source-chunks-retrieval-answer"
+        self.routes[route]["evaluation_scope"] = row["evaluation_scope"]
+        result = self.verify()
+        self.assertNotIn(route + "/review", result["responses"])
 
     def test_follows_only_bounded_local_pages_and_counts_every_row(self):
         self.rows.extend({"id": f"row-{index}"} for index in range(25))

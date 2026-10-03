@@ -17,6 +17,11 @@ import smoke_ops_bridge
 from test_smoke_ops_backup import EXPECTED, IDENTITY, IMAGE_ID
 
 REPORT = "<html>복원 보고서</html>".encode()
+REPORT_HEADERS = {
+    "content-type": "text/html; charset=utf-8",
+    "cache-control": "private, no-store, max-age=0, no-cache, must-revalidate",
+    "content-security-policy": "sandbox allow-scripts; default-src 'none'",
+}
 RUNS = {
     key: {**row, "report_sha256": hashlib.sha256(REPORT).hexdigest()}
     for key, row in EXPECTED.items()
@@ -94,6 +99,7 @@ class HttpTests(unittest.TestCase):
         return (
             200,
             {
+                "Content-Type": "text/html; charset=utf-8",
                 "Cache-Control": "private, no-store, max-age=0, no-cache, must-revalidate",
                 "Content-Security-Policy": "sandbox allow-scripts; default-src 'none'",
             },
@@ -154,6 +160,13 @@ class HttpTests(unittest.TestCase):
         self.assertTrue(result["artifact_outage_rejected"])
         self.assertTrue(result["revoked_session_rejected"])
         self.assertEqual(result["management_http"], MANAGEMENT)
+        for request in RUNS:
+            self.assertEqual(
+                result["report_responses"][
+                    "/api/v1/ops/evaluations/" + request + "/report"
+                ],
+                {"body": REPORT.decode(), "headers": REPORT_HEADERS},
+            )
         self.assertTrue(self.artifact.terminate.called)
         self.assertTrue(self.ops.terminate.called)
 
@@ -195,6 +208,10 @@ class ContainerTests(unittest.TestCase):
                 "listed_run_count": 4,
                 "pages_verified": 1,
                 "budget_view_verified": True,
+                "details_verified": 3,
+                "report_documents_verified": 3,
+                "report_sandbox_verified": True,
+                "report_denials_verified": 3,
                 "denied_view_verified": True,
                 "browser_rendered": True,
                 "browser_closed": True,
@@ -208,6 +225,7 @@ class ContainerTests(unittest.TestCase):
                 "unauthorized_status_preserved": True,
                 "outage_rejected": True,
                 "document_served": True,
+                "report_documents_verified": 3,
                 "servers_stopped": True,
                 "browser_rendered": False,
             },
@@ -227,6 +245,13 @@ class ContainerTests(unittest.TestCase):
             "model_api_calls": 0,
             "management_http": MANAGEMENT.copy(),
             "management_responses": {},
+            "report_responses": {
+                "/api/v1/ops/evaluations/" + request + "/report": {
+                    "body": REPORT.decode(),
+                    "headers": REPORT_HEADERS,
+                }
+                for request in RUNS
+            },
         }
 
     def execute(self, command, **kwargs):
@@ -237,6 +262,7 @@ class ContainerTests(unittest.TestCase):
             value = json.loads(Path(command[-1]).read_text(encoding="utf-8"))
             self.assertEqual(value["total_runs"], 4)
             self.assertEqual(value["expected"], RUNS)
+            self.assertEqual(value["reports"], self.proof["report_responses"])
             self.assertNotIn(DATABASE["core_password"], json.dumps(value))
             return json.dumps(self.web_proof)
         if command[1] == "create":
@@ -255,6 +281,8 @@ class ContainerTests(unittest.TestCase):
         result = self.run_probe()
         self.assertTrue(result["cleanup_complete"])
         self.assertNotIn("management_responses", result)
+        self.assertNotIn("report_responses", result)
+        self.assertNotIn(REPORT.decode(), json.dumps(result, ensure_ascii=False))
         self.assertEqual(result["management_web_contract"]["status"], "PASS")
         command, options = self.events[0]
         self.assertEqual(
@@ -295,6 +323,19 @@ class ContainerTests(unittest.TestCase):
             ),
             ("browser_ui", {**self.web_proof["browser_ui"], "browser_closed": False}),
             ("browser_ui", {**self.web_proof["browser_ui"], "response_source": "live"}),
+            ("browser_ui", {**self.web_proof["browser_ui"], "details_verified": 2}),
+            (
+                "browser_ui",
+                {**self.web_proof["browser_ui"], "report_documents_verified": 2},
+            ),
+            (
+                "browser_ui",
+                {**self.web_proof["browser_ui"], "report_sandbox_verified": False},
+            ),
+            (
+                "browser_ui",
+                {**self.web_proof["browser_ui"], "report_denials_verified": 0},
+            ),
             ("proxy_http", None),
             ("proxy_http", {**self.web_proof["proxy_http"], "servers_stopped": False}),
             ("proxy_http", {**self.web_proof["proxy_http"], "response_source": "live"}),
