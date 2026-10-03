@@ -98,6 +98,87 @@ DB와 파일을 서로 다른 시점에 복사한 뒤 일관된 백업이라고 
 재전송하지 않는다. 키 누락·원본 파일 누락·장부 불일치는 중단 조건이다.
 원본 DB 위에 복원하거나 기존 볼륨을 삭제하는 명령은 이 절차에 포함하지 않는다.
 
+### Compose Ops 검토 기록을 새 환경에 재사용
+
+동일한 평가 원본에 대한 사람 검토를 새 DB에서 반복할 필요는 없다.
+[ops_snapshot.py](../infrastructure/llmops/ops_snapshot.py)는 **Ops 전체 DB와 /results,
+/evaluation-data 파일을 암호화 백업하고 별도의 새 Compose DB·볼륨에 복원**한다.
+검토 사유·승인자 FK·버전·시각·품질 판정·비교 기준·예산을 그대로 보존한다.
+승인 API를 다시 호출하거나 새로운 답변을 자동 승인하지 않는다.
+
+지원 범위는 **로컬 파일 저장소를 사용하는 Compose Ops + MySQL 8.4**다.
+Python 3.12 이상과 기존 Docker Compose·OpenSSL CLI를 사용하며 새 Python 의존성은 없다.
+DB 덤프와 파일은 메모리에서 처리한다. AES-256-CBC/PBKDF2 암호화 뒤 별도 HMAC으로 인증하고
+복호화 전에 인증을 검사한다. DB와 파일 각각 128 MiB, 파일 10,000개까지 지원한다.
+링크·특수 파일·경로 이탈·파일 해시 불일치는 거절한다.
+
+**백업 준비와 실행**
+
+1. 모든 source writer의 live/RAG live/정기 실행 플래그를 끈다. 진행 중 평가·열린 예약이 없어야 하며
+   미중지 정기 계획도 없어야 한다. 다른 직접 DB/파일 쓰기 작업도 유지보수 중에는 중지한다.
+2. 저장소 밖에 권한 0700의 백업 폴더를 만든다. 키는 init-key로 한 번 생성한 뒤 별도로 보관한다.
+   키를 잃으면 복원할 수 없다. 기존 키·백업 파일은 덮어쓰지 않는다.
+3. 아래 명령을 저장소 루트에서 실행한다. 실제 컨테이너 이름과 경로는 대상에 맞춘다.
+   --stop-writers는 해당 Compose의 실행 중인 Ops API·sync·runner만 잠시 중지한다.
+   성공·실패 모두 원래 실행 중이던 컨테이너를 다시 시작하며 MySQL은 중지하지 않는다.
+   백업 중에는 Ops 화면이 일시적으로 연결되지 않을 수 있다.
+
+~~~bash
+python3 infrastructure/llmops/ops_snapshot.py init-key \
+  --key-file /absolute/private/ops-backups/recovery.key
+
+python3 infrastructure/llmops/ops_snapshot.py backup \
+  --ops-container govbiz-llmops-ops-service-1 \
+  --mysql-container govbiz-llmops-ops-mysql-1 \
+  --key-file /absolute/private/ops-backups/recovery.key \
+  --output /absolute/private/ops-backups/reviewed-e01.enc \
+  --stop-writers
+~~~
+
+기본값은 서비스를 중지하지 않으며 writer가 실행 중이면 실패한다.
+이미 중지한 환경에서는 --stop-writers를 생략한다. 백업 전후 DB 덤프와 파일을 비교해
+변경이 발견되면 백업을 발행하지 않는다. 프로세스 강제 종료나 Docker 장애는 재시작을
+보장할 수 없으므로 source 상태를 확인하고 원래 실행 중이던 서비스만 재시작한다.
+BACKED_UP은 암호화 왕복 확인까지이며 **새 환경 복원 검증 완료를 뜻하지 않는다**.
+
+**새 환경 복원과 재실행**
+
+같은 Ops·MySQL 이미지 ID가 대상 Docker에도 있어야 한다. 다른 PC에서는 source 이미지를
+docker image save로 보관하고 대상에서 docker image load로 먼저 가져온다. 도구는 변경 가능한
+tag로 대체 이미지를 받거나 다른 아키텍처 이미지로 자동 교체하지 않는다.
+키·암호화 백업·이 도구를 준비한 뒤 아직 존재하지 않는 대상 폴더를 지정한다.
+
+    python3 infrastructure/llmops/ops_snapshot.py restore \
+      --archive /absolute/private/ops-backups/reviewed-e01.enc \
+      --key-file /absolute/private/ops-backups/recovery.key \
+      --directory /absolute/private/ops-restored-e01
+
+- 별도 Compose 프로젝트·내부 전용 네트워크·MySQL·결과/평가 자료 볼륨을 만든다.
+  기존 DB를 지정하는 옵션은 없다. 빈 대상에만 복원하고 DB 덤프 및 파일 내용·해시·권한·소유자를 비교한다.
+- 동일 백업·동일 폴더로 재실행하면 데이터를 쓰지 않고 검증 후 ALREADY_RESTORED를 반환한다.
+  대상 데이터 변경, 다른 백업, 중간 실패의 폴더는 덮어쓰지 않는다. 별도 새 폴더로 재시도하고
+  실패 프로젝트는 확인 후 정리한다. 중간 실패를 자동 삭제하거나 부분 덮어쓰기로 이어가지 않는다.
+- 복원한 compose.json에는 새 DB 자격증명과 기존 사용량 영수증 검증 키가 들어 있어
+  폴더 0700·파일 0600으로 보관한다. 키·백업·복원 폴더는 Git에 넣지 않는다.
+- **Ops API·sync·runner는 자동 시작하지 않는다.** 유료/정기 실행은 false이며 Core·Prefect·
+  Langfuse 주소는 연결할 수 없는 기본값이다. MySQL event scheduler도 OFF이며 모델을 호출하지 않는다.
+- Core 계정 DB/인증 영역도 보존하거나 같은 계정임을 확인해야 한다. core:42 같은 숫자 ID가
+  새 Core DB에서 다른 사람에게 배정될 수 있으므로 이메일만 보고 기존 감사 주체를 바꾸지 않는다.
+  검증한 Core 연결과 네트워크 설정을 적용한 뒤 수동으로 API를 연다. 생성된 API는 manual-api
+  profile, 기본 포트 127.0.0.1:18002이며 실제 로그인 연결은 별도 단계다.
+- Prefect·Langfuse 자체 DB/실행·trace 기록, Core DB, HTTP artifact store, Kubernetes PVC는
+  이 도구의 백업 범위가 아니다. 해당 이력까지 옮기려면 위 전체 백업 절차를 함께 수행한다.
+- 원본과 복원본 양쪽에서 유료 실행을 켜면 예산 장부가 갈라진다. 운영 전환 때는 하나의 장부만
+  활성화한다. 과거 승인은 보존되지만 정책·자료·모델 변경 후 새 결과의 승인을 대신하지 않는다.
+
+무료 검증은 아래 두 명령이다. 첫 명령은 암호화·경로·재실행 경계 검사다. 둘째는 **도구가 만든
+가상 데이터**의 실제 MySQL 8.4 복원과 Django ORM 읽기이며 기존 환경을 선택하지 않는다.
+둘째 명령은 --ops-image 옵션으로 로컬 이미지를 지정할 수 있고 생략하면 checkout에서 빌드한다.
+두 검증은 ops-ci.yml에 연결되어 있다. 실제 E01 백업/복원·관리자 브라우저 연결 검증과 구분한다.
+
+    python3 -B -m unittest discover -s infrastructure/llmops -p test_ops_snapshot.py
+    python3 -B infrastructure/llmops/check_ops_snapshot.py
+
 ### CI에서 수행하는 Ops 전체 DB 복원 검증
 
 `smoke_ops_bridge.py --evaluate`의 복원 검증은 먼저 일회용 Kubernetes Ops DB 전체를 덤프하고,
