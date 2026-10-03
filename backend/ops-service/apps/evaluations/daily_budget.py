@@ -1,5 +1,6 @@
 """서울 날짜별 예약 한도. 누적 장부를 초기화하지 않고 미확정 몫을 이월한다."""
 
+import re
 from datetime import timedelta
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -8,6 +9,7 @@ from django.db import transaction
 from django.db.models import Sum
 from django.utils import timezone
 
+from .execution_spec import digest
 from .models import (
     EvaluationBudget,
     EvaluationBudgetReservation,
@@ -36,6 +38,30 @@ def policy_data(policy):
             "input_tokens": policy.input_token_limit,
             "output_tokens": policy.output_token_limit,
         },
+    }
+
+
+def limits_revision(policy):
+    return digest(
+        {
+            "policy": policy_data(policy),
+            "last_change": EvaluationDailyBudgetChange.objects.filter(policy=policy)
+            .values_list("id", flat=True)
+            .first(),
+        }
+    )
+
+
+def change_data(change):
+    return {
+        "request_id": str(change.request_id),
+        "source": change.source,
+        "actor": change.actor,
+        "expected_revision": change.expected_revision,
+        "reason": change.reason,
+        "previous": change.previous,
+        "policy": change.policy_snapshot,
+        "created_at": change.created_at.isoformat(),
     }
 
 
@@ -87,6 +113,7 @@ def daily_summary(budget, *, at=None, exclude_run_id=None):
     changes = EvaluationDailyBudgetChange.objects.filter(policy=policy)
     result = {
         "state": "disabled",
+        "limits_revision": limits_revision(policy),
         "timezone": "Asia/Seoul",
         "period_start": start.isoformat(),
         "period_end": end.isoformat(),
@@ -95,18 +122,7 @@ def daily_summary(budget, *, at=None, exclude_run_id=None):
         "carried": None,
         "allocated": None,
         "remaining": None,
-        "recent_changes": [
-            {
-                "request_id": str(change.request_id),
-                "source": "CLI",
-                "actor": change.actor,
-                "reason": change.reason,
-                "previous": change.previous,
-                "policy": change.policy_snapshot,
-                "created_at": change.created_at.isoformat(),
-            }
-            for change in changes[:10]
-        ],
+        "recent_changes": [change_data(change) for change in changes[:10]],
     }
     if policy is None or not policy.enabled:
         return result
@@ -150,9 +166,28 @@ def require_reservation_day(reservation):
 
 @transaction.atomic
 def change_daily_limits(
-    *, calls=None, input_tokens=None, output_tokens=None, disable=False, actor, reason, request_id
+    *,
+    calls=None,
+    input_tokens=None,
+    output_tokens=None,
+    disable=False,
+    actor,
+    reason,
+    request_id,
+    authenticated_actor=None,
+    expected_revision=None,
 ):
     """누적 한도와 같은 잠금으로 정책 저장·검증·감사 기록을 직렬화한다."""
+    if authenticated_actor is not None:
+        actor = authenticated_actor.get_username()
+        if not isinstance(expected_revision, str) or not re.fullmatch(
+            r"[a-f0-9]{64}", expected_revision
+        ):
+            raise ValueError("조회한 일별 한도 버전을 확인하세요.")
+    elif expected_revision is not None:
+        raise ValueError("CLI 요청에는 관리자 한도 버전을 지정할 수 없습니다.")
+    source = "CORE_ADMIN" if authenticated_actor is not None else "CLI"
+    actor_id = authenticated_actor.pk if authenticated_actor is not None else None
     if type(disable) is not bool or not isinstance(actor, str) or not isinstance(reason, str):
         raise ValueError("정책, 변경자와 사유를 확인하세요.")
     actor, reason = actor.strip(), reason.strip()
@@ -172,6 +207,9 @@ def change_daily_limits(
     if existing:
         if (
             existing.actor != actor
+            or existing.source != source
+            or existing.authenticated_actor_id != actor_id
+            or existing.expected_revision != expected_revision
             or existing.reason != reason
             or existing.policy_snapshot["enabled"] == disable
             or (not disable and existing.policy_snapshot["limits"] != values)
@@ -179,6 +217,10 @@ def change_daily_limits(
             raise ValueError("같은 요청 ID의 정책·변경자·사유가 다릅니다.")
         return existing
     policy = EvaluationDailyBudget.objects.filter(budget=budget).first()
+    if authenticated_actor is not None and expected_revision != limits_revision(policy):
+        raise ValueError(
+            "조회 이후 일별 한도가 변경됐습니다. 최신 한도를 조회하고 다시 검토하세요."
+        )
     previous = policy_data(policy)
     if disable and policy is None:
         raise ValueError("해제할 일별 정책이 없습니다.")
@@ -201,6 +243,9 @@ def change_daily_limits(
         request_id=request_id,
         policy=policy,
         actor=actor,
+        source=source,
+        authenticated_actor=authenticated_actor,
+        expected_revision=expected_revision,
         reason=reason,
         previous=previous,
         policy_snapshot=policy_data(policy),

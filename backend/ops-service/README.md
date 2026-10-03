@@ -387,7 +387,24 @@ uv run --locked python manage.py set_daily_evaluation_budget --disable \
 `GET /api/v1/ops/budget`, `/budget/reservations`, `/evaluations/live-readiness`는 `daily`에
 기간·상태(`disabled/enforced/unknown/exceeded`)·한도·오늘 몫·이월·잔여·최근 정책 이력을 반환합니다.
 React 예산 화면과 실행 전 점검에서 이를 조회하며 일별 부족도 접수 차단 사유로 표시합니다.
-일별 정책의 관리자 웹 편집은 아직 없으며 위 CLI로만 변경합니다.
+`0027_admin_daily_budget_writes`부터 관리자 웹에서도 **일별 한도 설정 → 일별 변경 내용 확인 →
+확인한 일별 정책 저장**으로 설정·변경·해제할 수 있습니다. 호출 흐름은
+`React 확인 화면 → Core 관리자 세션·CSRF 검증 → 일별 정책 Service → 누적 예산 행 잠금 → 정책·감사 저장`입니다.
+누적 예산이 먼저 설정되어 있어야 하며 일별 한도·기본 정책을 자동 생성하지 않습니다.
+
+`POST /api/v1/ops/budget/daily-limits`는 `request_id`, `daily.limits_revision`을 담은
+`expected_revision`, `disable`, `calls`, `input_tokens`, `output_tokens`, `reason`을 받습니다.
+적용은 `disable=false`와 세 정수 한도를, 해제는 `disable=true`와 세 한도 모두 `null`을 전달합니다.
+서버가 인증된 변경자를 기록하므로 클라이언트의 변경자·출처 지정은 거절합니다.
+CLI 이력은 `source=CLI`, 인증된 관리자 이력은 `source=CORE_ADMIN`으로 구분합니다.
+
+조회 이후 CLI나 다른 관리자가 정책을 바꾸면 409로 거절합니다. 이전 값으로 되돌린 변경도 감지하며,
+잠금 안에서 오늘 할당량·이월량·장부 일치를 다시 검사합니다. 같은 관리자·UUID·버전·내용의 재전송은
+이전 기록만 반환하고 이후 정책을 덮어쓰지 않습니다. 화면은 통신 응답 유실 시 동일 요청을 재확인하고,
+409에서는 입력을 보존한 채 재전송을 막아 예산 재조회·재작성을 요구합니다.
+저장 성공 시 이전 실행 전 점검 결과를 지웁니다. 페이지 이탈 이후 요청 복원 기능은 없습니다.
+일별 제한 해제 후에도 누적 한도·사용량·예약·감사 이력을 유지하며 live/정기 실행을 활성화하지 않습니다.
+`daily.limits_revision`이 없는 이전 API에서는 웹 설정 버튼을 숨기므로 Ops API와 Web을 함께 갱신해야 합니다.
 
 ## 누적 호출·출력 토큰 한도
 
@@ -521,6 +538,7 @@ Core 원문 재수집·재청킹, runner→Kubernetes Ops 왕복 검증, 금액�
 | `GET /api/v1/ops/budget/unaccounted-runs?page=1` | 예약·과거 사용량 반영 기록이 없는 live 실행을 25건씩 조회. 미완료·새 명세 실행도 누락 없이 표시 |
 | `GET /api/v1/ops/evaluations/{run_id}/legacy-usage-preview` | 기존 과거 사용량 검증기로 저장 자료 무결성·전체 사용량·현재 한도 대비 반영 조건을 읽기 전용 확인 |
 | `POST /api/v1/ops/budget/limits` | 조회한 한도 버전·요청 UUID·사유와 호출/입력/출력 누적 한도를 검증하고 변경 감사 저장 |
+| `POST /api/v1/ops/budget/daily-limits` | 일별 정책 버전·요청 UUID·사유를 확인하고 일별 세 한도 설정·변경·해제와 감사 저장 |
 | `POST /api/v1/ops/evaluations/{run_id}/legacy-usage` | 검토한 증거 해시·요청 UUID·사유로 과거 저장 응답 사용량을 재검증·반영 |
 
 React 평가 목록에는 전체 요약·실행별 예약·최근 한도 변경을, 실행 상세에는 예약과 호출별
@@ -554,7 +572,7 @@ POST는 `request_id`, `evidence_sha256`, `reason`만 받으며 검토한 자료�
 잠금 안에서 다시 확인합니다. CLI의 `reconcile_legacy_evaluation_usage --apply`도 유지합니다.
 조회나 장부 반영은 답변 품질 승인이 아니며 저장 응답 사용량은 제공자의 청구 확인과 구분합니다.
 
-두 쓰기 API는 변경자·출처를 클라이언트에서 받지 않습니다. 인증된 Core 사용자와
+위 쓰기 API는 변경자·출처를 클라이언트에서 받지 않습니다. 인증된 Core 사용자와
 `CORE_ADMIN` 출처를 기록하며, 기존 CLI 이력의 자기 기입 변경자와 `CLI` 출처를 보존합니다.
 동일 요청 UUID·동일 관리자·동일 입력의 재전송은 이전 이력만 반환합니다. 다른 요청 내용이나
 관리자로 UUID를 재사용하면 409입니다. 화면은 응답 유실 후 같은 UUID로 재확인하며
@@ -584,7 +602,8 @@ POST는 `request_id`, `evidence_sha256`, `reason`만 받으며 검토한 자료�
 `unbounded_input_calls`/`unbounded_input_reservations`가 있으면 전체 입력 사용량이 아닙니다. 이 실행의 사용량을 0으로 만들지 않습니다.
 replay/recovery 자체에는 새 모델 예약이 없어 `not_applicable`이며 원본 비용은 원본 장부를 확인합니다.
 
-최신 예산 API 배포 전 migration **`0026_daily_evaluation_budget`까지** 적용해야 합니다.
+최신 예산 API 배포 전 migration **`0027_admin_daily_budget_writes`까지** 적용해야 합니다.
+`0027`은 일별 정책 변경의 인증된 변경자 FK·조회 버전·출처 제약을 추가하며 기존 CLI 기록을 보존합니다.
 `0025`는 인증된 변경자 FK·한도 조회 버전·출처 제약을 추가하며 기존 CLI 기록을 그대로 보존합니다.
 `0013_budget_change_audit`는 한도 변경 감사를, `0014`는 종료 예약 정리 감사를,
 `0015_usage_correction`은 사용량 보정과 원본 증거를, `0016`은 새 호출의 작업 ID를 저장합니다.

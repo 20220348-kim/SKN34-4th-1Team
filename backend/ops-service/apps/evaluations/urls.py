@@ -5,6 +5,7 @@ from . import budget_admin_views, budget_views, runtime_views, views
 urlpatterns = [
     path("api/v1/ops/budget", budget_admin_views.api_summary),
     path("api/v1/ops/budget/limits", budget_admin_views.api_change_limits),
+    path("api/v1/ops/budget/daily-limits", budget_admin_views.api_change_daily_limits),
     path("api/v1/ops/budget/reservations", budget_admin_views.api_reservations),
     path("api/v1/ops/budget/unaccounted-runs", budget_admin_views.api_unaccounted_runs),
     path(

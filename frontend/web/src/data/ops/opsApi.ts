@@ -207,15 +207,18 @@ const budgetChangeSchema = z.object({
 })
 const dailyAmountsSchema = z.object({ calls: z.number().int().nonnegative(), input_tokens: z.number().int().nonnegative(), output_tokens: z.number().int().nonnegative() })
 const dailyPolicySchema = z.object({ enabled: z.boolean(), limits: dailyAmountsSchema })
+const dailyBudgetChangeSchema = z.object({
+  request_id: z.uuid(), source: z.enum(['CLI', 'CORE_ADMIN']), actor: z.string(), reason: z.string(),
+  expected_revision: z.string().regex(/^[a-f0-9]{64}$/).nullable().optional(),
+  previous: dailyPolicySchema.nullable(), policy: dailyPolicySchema, created_at: z.iso.datetime({ offset: true }),
+}).refine((value) => value.source === 'CLI' ? value.expected_revision == null : value.expected_revision != null)
 const dailyBudgetSchema = z.object({
+  limits_revision: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   state: z.enum(['disabled', 'enforced', 'unknown', 'exceeded']), timezone: z.literal('Asia/Seoul'),
   period_start: z.iso.datetime({ offset: true }), period_end: z.iso.datetime({ offset: true }),
   limits: dailyAmountsSchema.nullable(), current_day: dailyAmountsSchema.nullable(), carried: dailyAmountsSchema.nullable(),
   allocated: dailyAmountsSchema.nullable(), remaining: dailyAmountsSchema.nullable(),
-  recent_changes: z.array(z.object({
-    request_id: z.uuid(), source: z.literal('CLI'), actor: z.string(), reason: z.string(),
-    previous: dailyPolicySchema.nullable(), policy: dailyPolicySchema, created_at: z.iso.datetime({ offset: true }),
-  })),
+  recent_changes: z.array(dailyBudgetChangeSchema),
 }).refine((value) => {
   if (Date.parse(value.period_end) - Date.parse(value.period_start) !== 86_400_000) return false
   if (value.state === 'disabled' || value.state === 'unknown') return value.remaining === null
@@ -458,6 +461,10 @@ export type EvaluationPage = z.infer<typeof pageSchema>
 export type BudgetBreakdown = z.infer<typeof budgetBreakdownSchema>
 export type BudgetSummary = z.infer<typeof budgetSummarySchema>
 export type DailyBudget = z.infer<typeof dailyBudgetSchema>
+export type DailyBudgetLimitsInput = { request_id: string; expected_revision: string; reason: string } & (
+  { disable: false; calls: number; input_tokens: number; output_tokens: number }
+  | { disable: true; calls: null; input_tokens: null; output_tokens: null }
+)
 export type BudgetLimitsInput = { request_id: string; expected_revision: string; calls: number; input_tokens: number | null; output_tokens: number; reason: string }
 export type LegacyUsageInput = { request_id: string; evidence_sha256: string; reason: string }
 export type BudgetPage = z.infer<typeof budgetPageSchema>
@@ -496,7 +503,7 @@ async function request<T>(path: string, schema: z.ZodType<T>, options: RequestIn
     const error = body
     const message = response.status === 400 && error?.code === 'LIVE_BUDGET_UNAVAILABLE'
       ? '누적 평가 한도가 부족하거나 설정되지 않아 접수하지 않았습니다. 운영자에게 예약·미확인 사용량과 한도를 확인해 주세요.'
-      : ['BUDGET_CHANGE_CONFLICT', 'LEGACY_USAGE_CONFLICT'].includes(error?.code) && typeof error?.detail === 'string'
+      : ['BUDGET_CHANGE_CONFLICT', 'DAILY_BUDGET_CHANGE_CONFLICT', 'LEGACY_USAGE_CONFLICT'].includes(error?.code) && typeof error?.detail === 'string'
         ? error.detail
       : error?.code === 'INVALID_RAG_REVIEW' ? '검토 항목과 의견을 확인하세요. 미측정 항목은 판단 보류만 저장할 수 있습니다.'
       : error?.code === 'INVALID_RAG_REFERENCE_REVIEW' ? '전체 대상 자료의 확인과 참조 검토 근거를 입력하세요.'
@@ -535,6 +542,13 @@ export const setBudgetLimits = (data: BudgetLimitsInput, owner: string) => post(
     && change.actor === owner && change.request_id === data.request_id && change.reason === data.reason
     && change.limits.calls === data.calls && change.limits.output_tokens === data.output_tokens
     && change.limits.input_tokens === data.input_tokens), false, owner)
+export const setDailyBudgetLimits = (data: DailyBudgetLimitsInput, owner: string) => post('/budget/daily-limits', data,
+  z.object({ change: dailyBudgetChangeSchema }).refine(({ change }) => change.source === 'CORE_ADMIN'
+    && change.actor === owner && change.request_id === data.request_id && change.reason === data.reason
+    && change.expected_revision === data.expected_revision && change.policy.enabled === !data.disable
+    && (data.disable
+      ? change.previous !== null && (['calls', 'input_tokens', 'output_tokens'] as const).every((key) => change.policy.limits[key] === change.previous!.limits[key])
+      : change.policy.limits.calls === data.calls && change.policy.limits.input_tokens === data.input_tokens && change.policy.limits.output_tokens === data.output_tokens)), false, owner)
 export const applyLegacyUsage = (runId: string, data: LegacyUsageInput, owner: string) => post(
   `/evaluations/${encodeURIComponent(runId)}/legacy-usage`, data,
   z.object({ applied: z.literal(true), replayed: z.boolean(), record: legacyUsageSchema }).refine(({ record }) =>

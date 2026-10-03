@@ -389,11 +389,16 @@ class EvaluationDailyBudget(models.Model):
 
 
 class EvaluationDailyBudgetChange(models.Model):
-    """CLI 일별 정책 변경 이력. 변경자는 운영자가 입력한 식별자다."""
+    """CLI 또는 인증된 관리자의 일별 정책 변경 이력."""
 
     request_id = models.UUIDField(unique=True)
     policy = models.ForeignKey(EvaluationDailyBudget, on_delete=models.PROTECT)
     actor = models.CharField(max_length=150)
+    source = models.CharField(max_length=10, default="CLI", editable=False)
+    authenticated_actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, on_delete=models.PROTECT, related_name="+"
+    )
+    expected_revision = models.CharField(max_length=64, null=True)
     reason = models.CharField(max_length=1000)
     previous = models.JSONField(null=True)
     policy_snapshot = models.JSONField()
@@ -405,6 +410,17 @@ class EvaluationDailyBudgetChange(models.Model):
             models.CheckConstraint(
                 condition=~models.Q(actor="") & ~models.Q(reason=""),
                 name="daily_budget_change_attribution",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    source="CLI", authenticated_actor__isnull=True, expected_revision__isnull=True
+                )
+                | models.Q(
+                    source="CORE_ADMIN",
+                    authenticated_actor__isnull=False,
+                    expected_revision__isnull=False,
+                ),
+                name="daily_budget_change_actor_source",
             ),
         ]
 
