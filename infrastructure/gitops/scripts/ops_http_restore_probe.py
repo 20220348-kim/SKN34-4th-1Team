@@ -545,6 +545,18 @@ def verify(image, volume, expected, database):
             "matched_details": len(expected),
             "listed_run_count": management["listed_run_count"],
             "browser_rendered": False,
+            "proxy_http": {
+                "status": "PASS",
+                "mode": "portfolio",
+                "response_source": "captured_restore_http",
+                "routes_verified": True,
+                "credentials_forwarded": True,
+                "unauthorized_status_preserved": True,
+                "outage_rejected": True,
+                "document_served": True,
+                "servers_stopped": True,
+                "browser_rendered": False,
+            },
         }:
             raise ValueError("Incomplete restored management web contract evidence")
     finally:

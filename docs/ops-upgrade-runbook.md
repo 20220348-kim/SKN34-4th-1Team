@@ -189,8 +189,16 @@ Prefect를 중지한다. 컨테이너 ID·이미지·Compose 소유권·볼륨 �
 - 수집한 응답에서 CSRF 토큰을 제거한 사본을 임시 파일로 전달하고, 저장소의 Node 24로
   `check_ops_restore_ui.mjs`를 실행한다. 웹의 실제 `getOpsSession`, `listEvaluations`, `getEvaluation`,
   예산 조회 함수와 Zod 파서가 응답을 처리해야 통과한다. 새 의존성 없이 기존 루트 잠금 파일을 사용한다.
-  이 단계의 fetch는 이미 확인한 HTTP 응답을 재생하며 실제 브라우저·Vite 프록시·화면 렌더링 검사는 아니다.
-  원문 응답은 최종 보고서에 저장하지 않고, 임시 파일도 정리한다. 웹 파서 실패는 전체 실패다.
+  `ops_restore_proxy.mjs`가 기존 `vite.config.ts`의 portfolio 모드로 실제 Vite를 시작하고,
+  두 loopback HTTP 서버로 Core 경로와 수집한 Ops 응답을 재생한다. 개인 5173 포트나 기존 전달을
+  재사용하지 않고 OS가 할당한 임시 포트만 사용한다. 새 의존성·브라우저 패키지는 설치하지 않는다.
+  `/api`·`/api/v1/ops`의 분리, Ops Host·Origin·검사용 쿠키 전달, 401/403·no-store 보존을 확인한다.
+  모든 수집 응답이 실제 프록시를 거쳐 기존 웹 API 함수에서 파싱되어야 한다.
+  Ops 재생 서버를 종료하면 웹 API 함수가 502 오류를 반환하고 Core 경로는 유지되어야 한다.
+  `/ops/evaluations`의 HTML 진입 문서도 확인하지만 JS 실행·React 렌더링·브라우저 쿠키 정책 검사는 아니다.
+  이 프록시의 백엔드는 복원 서버 자체가 아닌 수집 응답 재생 서버이며 기존 클러스터에는 연결하지 않는다.
+  원문 응답은 최종 보고서에 저장하지 않는다. 임시 응답 파일·Vite 캐시·서버를 정리하고 fetch와
+  K8S 환경변수를 복원한다. 웹 파서·라우팅·장애 검사·정리 실패는 전체 실패다.
 - 실제 Core 로그아웃 후 같은 세션으로 보고서를 요청하면 401이어야 한다. 다시 비밀번호로 로그인한 뒤
   결과 서버를 종료하면 보고서 요청은 404여야 한다. 종료 실패·결과 파일 변경·Ops DB 덤프 변경은
   전체 실패다. Core 사본에는 로그인·로그아웃에 따른 세션 쓰기를 허용하고 원본 Core 덤프는 보존한다.
@@ -216,7 +224,16 @@ Prefect를 중지한다. 컨테이너 ID·이미지·Compose 소유권·볼륨 �
 `prefect.api`에 API 대조·DB 무변경·정상 종료 결과를 남긴다.
 별도 `core_auth_restore`에는 Core 이미지 ID·복사 직후 덤프 일치·원본 보존·정리 결과를 남긴다.
 `results.ops_http.management_http`에는 관리 API의 세션·목록·상세·예산·권한 검사 결과를,
-`management_web_contract`에는 웹 소비자 파서 통과 결과를 기록한다. 두 항목 모두 `browser_rendered=false`다.
+`management_web_contract`에는 웹 소비자 파서 통과 결과를 기록한다.
+그 아래 `proxy_http`는 `mode=portfolio`, `response_source=captured_restore_http`와 실제 프록시·HTML
+전달·장애·정리 결과를 기록한다. 모든 항목의 `browser_rendered`는 계속 `false`다.
+무료 프록시 회귀 테스트는 LLMOps CI에서 루트 잠금 의존성 설치 후 실행하고, Kubernetes 복원 단계에서는
+실제 복원 HTTP에서 수집한 응답으로 같은 프록시 검증을 다시 수행한다. 로컬 빠른 검증 명령은 다음과 같다.
+
+```bash
+node --experimental-transform-types --test infrastructure/gitops/scripts/test_ops_restore_proxy.mjs
+```
+
 성공 시 `results_server_started=true`, `prefect_server_started=true`이며,
 증거가 완성되지 않은 실패에서는 `null`로 미확인을 표시한다.
 검사 토큰을 새로 생성하므로 기존 Secret/서명 키 복구는 검증하지 않는다.
