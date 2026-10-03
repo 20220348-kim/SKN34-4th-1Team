@@ -206,6 +206,9 @@ def browser_login(password, expected, web_env):
         r"[0-9]+(?:\.[0-9]+){3}", version
     ):
         raise ValueError("Missing Kubernetes browser version evidence")
+    count = result.get("listed_run_count")
+    if type(count) is not int or not len(expected) <= count <= 1000:
+        raise ValueError("Incomplete Kubernetes browser pagination evidence")
     required = {
         "status": "PASS",
         "response_source": "core_ops_http",
@@ -213,11 +216,15 @@ def browser_login(password, expected, web_env):
         "password_login_verified": True,
         "httponly_cookie_received": True,
         "core_ops_identity_verified": True,
+        "listed_run_count": count,
+        "pages_verified": (count + 24) // 25,
+        "pagination_complete": True,
         "reload_verified": True,
         "details_verified": len(expected),
         "reports_verified": len(expected),
         "logout_verified": True,
         "unauthorized_after_logout": True,
+        "revoked_session_rejected": True,
         "browser_closed": True,
     }
     if json.dumps(result, sort_keys=True) != json.dumps(required, sort_keys=True):

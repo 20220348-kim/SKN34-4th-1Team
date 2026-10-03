@@ -20,11 +20,15 @@ PROOF = {
     "password_login_verified": True,
     "httponly_cookie_received": True,
     "core_ops_identity_verified": True,
+    "listed_run_count": 26,
+    "pages_verified": 2,
+    "pagination_complete": True,
     "reload_verified": True,
     "details_verified": 1,
     "reports_verified": 1,
     "logout_verified": True,
     "unauthorized_after_logout": True,
+    "revoked_session_rejected": True,
     "browser_closed": True,
 }
 
@@ -57,7 +61,16 @@ class BrowserEvidenceTests(unittest.TestCase):
             ("reload_verified", False),
             ("details_verified", 0),
             ("reports_verified", 0),
+            ("listed_run_count", True),
+            ("listed_run_count", 0),
+            ("listed_run_count", 1001),
+            ("pages_verified", 1),
+            ("pages_verified", True),
+            ("pagination_complete", False),
+            ("pagination_complete", 1),
             ("unauthorized_after_logout", False),
+            ("revoked_session_rejected", False),
+            ("revoked_session_rejected", 1),
             ("browser_closed", False),
         ):
             with (
@@ -84,6 +97,21 @@ class BrowserEvidenceTests(unittest.TestCase):
             with (
                 patch.object(smoke, "execute", return_value=json.dumps(proof)),
                 self.assertRaises(ValueError),
+            ):
+                smoke.browser_login("private-test-password", EXPECTED, {})
+
+    def test_previous_proof_without_pagination_or_revocation_cannot_pass(self):
+        for missing in (
+            "listed_run_count",
+            "pages_verified",
+            "pagination_complete",
+            "revoked_session_rejected",
+        ):
+            proof = {key: value for key, value in PROOF.items() if key != missing}
+            with (
+                self.subTest(missing=missing),
+                patch.object(smoke, "execute", return_value=json.dumps(proof)),
+                self.assertRaisesRegex(ValueError, "Incomplete"),
             ):
                 smoke.browser_login("private-test-password", EXPECTED, {})
 
