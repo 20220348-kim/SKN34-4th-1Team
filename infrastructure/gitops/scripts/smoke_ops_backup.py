@@ -17,6 +17,7 @@ from uuid import uuid4
 import fork_cluster
 import ops_database_restore_probe
 import ops_runtime
+import smoke_ops_volumes
 from smoke_ops_bridge import execute
 
 DATABASE = "govbiz_ops"
@@ -226,9 +227,20 @@ def application_read(target, database_id, image_id, expected, release_sha256, ev
             execute(["docker", "rm", "--force", "--volumes", identity], timeout=60)
             application["cleanup_complete"] = True
     application["status"] = "PASS"
+    return password
 
 
-def verify(state, settings, report, *, ops_image, expected, release_sha256):
+def verify(
+    state,
+    settings,
+    report,
+    *,
+    ops_image,
+    expected,
+    release_sha256,
+    compose,
+    compose_env,
+):
     evidence = report["database_restore"] = {
         "status": "FAIL",
         "scope": "disposable_ops_mysql_application_read",
@@ -248,6 +260,7 @@ def verify(state, settings, report, *, ops_image, expected, release_sha256):
     ):
         raise ValueError("DB restore rehearsal requires the disposable bridge smoke")
     ops_database_restore_probe.validate_expected(expected, release_sha256)
+    smoke_ops_volumes.probe.expected_runs(expected)
     fork_cluster.require_dev(state, settings)
     _, nk, _ = fork_cluster.commands(state, settings)
     deployment = json.loads(
@@ -369,9 +382,26 @@ def verify(state, settings, report, *, ops_image, expected, release_sha256):
         if inventory(target) != counts:
             raise ValueError("Ops restore table or row counts differ")
         same_dump(dump, execute(target + DUMP))
-        application_read(target, identity, image_id, expected, release_sha256, evidence)
+        password = application_read(
+            target, identity, image_id, expected, release_sha256, evidence
+        )
         same_dump(dump, execute(target + DUMP))
         evidence["application"]["database_unchanged"] = True
+        # Keep the verified disposable DB alive while the restored result volume
+        # is read through the real Ops HTTP server. No credential enters report.
+        evidence["restored_database_ready"] = True
+        report["evaluation_phase"] = "volume_restore_rehearsal"
+        runner_image_id = smoke_ops_volumes.verify(
+            state,
+            settings,
+            compose,
+            compose_env,
+            expected,
+            report,
+            database={"id": identity, "image": image_id, "password": password},
+        )
+        same_dump(dump, execute(target + DUMP))
+        report["volume_restore"]["results"]["ops_http"]["database_unchanged"] = True
         # MySQL dump import disables FK checks temporarily; verify enforcement
         # again in a new connection using the dedicated synthetic review.
         try:
@@ -419,3 +449,4 @@ def verify(state, settings, report, *, ops_image, expected, release_sha256):
             execute(["docker", "rm", "--force", "--volumes", identity], timeout=60)
             evidence["cleanup_complete"] = True
     evidence["status"] = "PASS"
+    return runner_image_id

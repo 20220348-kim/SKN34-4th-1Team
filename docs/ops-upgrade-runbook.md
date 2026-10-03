@@ -116,6 +116,9 @@ DB와 파일을 서로 다른 시점에 복사한 뒤 일관된 백업이라고 
   실제 `run_data`와 DRF JSON renderer로 응답 생성·날짜 직렬화를 확인한다.
   한글·JSON·NULL fixture와 사용자·검토·예산 관계도 ORM으로 확인한다.
   검사 후 전체 덤프를 다시 대조해 애플리케이션이 schema·행을 바꾸지 않았음을 확인한다.
+- 검증된 복원 DB는 결과 볼륨의 Ops HTTP 검사까지 유지한다. 이 시점에는
+  `restored_database_ready=true`이며 DB 전체 검증의 `status`는 정리가 끝날 때까지 `FAIL`이다.
+  HTTP 검사가 끝난 뒤 덤프를 다시 대조하며, 중간 실패에도 복원 DB를 정리한다.
 - 복원 DB의 잘못된 외래 키 참조가 거절되는지와 데이터 변조가 감지되는지 확인한다.
 - 마지막에 원본 덤프가 그대로인지 확인하고 생성한 복원 컨테이너만 삭제한다.
   가져오기·비교·컨테이너 정리 중 하나라도 실패하면 성공으로 기록하지 않는다.
@@ -134,7 +137,7 @@ HTTP 서버·Core 관리자 인증·관리자 화면을 검증한 것으로 기�
 
 ### CI에서 수행하는 결과·Prefect 볼륨 복원 검증
 
-DB 복원 검증을 통과하고 Ops API·sync Pod가 종료된 상태에서 같은 시험 프로젝트의 실행기·결과 서버·
+복원 DB의 조회 검증을 통과하고 Ops API·sync Pod가 종료된 상태에서 같은 시험 프로젝트의 실행기·결과 서버·
 Prefect를 중지한다. 컨테이너 ID·이미지·Compose 소유권·볼륨 사용자와 정상 종료를 확인하며,
 다른 컨테이너가 볼륨을 사용하면 중단한다. 개인 환경의 컨테이너는 중지 대상으로 허용하지 않는다.
 실행기는 종료 중 Prefect API로 deployment를 정리하므로 실행기 → 결과 서버 → Prefect 순서로 종료한다.
@@ -155,6 +158,18 @@ Prefect를 중지한다. 컨테이너 ID·이미지·Compose 소유권·볼륨 �
   인증된 상태 조회와 3건의 보고서 GET·SHA-256, 무인증/잘못된 토큰의 401, POST/PUT/DELETE의
   405를 검증한다. 응답 크기·캐시 금지 헤더를 검사하며 프록시·redirect는 허용하지 않는다.
   파일 읽기 권한 오류·기동 시간 초과·비정상 종료·검사 중 파일 변경·도우미 정리 실패는 전체 실패다.
+- 이어서 복원 DB의 격리된 네트워크 공간에 별도 Ops HTTP 검사 컨테이너를 연결한다.
+  같은 Ops 이미지·UID/GID 10001·SELECT 계정을 사용하고, 복원 결과 볼륨만 읽기 전용으로 연결한다.
+  외부 통신·호스트 포트·원본 볼륨 연결은 없으며 기존 모델/API 자격 증명을 전달하지 않는다.
+- 실제 Gunicorn Ops API와 결과 서버를 내부 loopback에서 실행한다. `Ops HTTP → 복원 MySQL 조회 →
+  결과 서버 HTTP → 복원 보고서` 경로로 완료 평가 3건의 SHA-256·캐시 금지·CSP를 확인한다.
+  Ops의 로컬 결과 경로는 빈 디렉터리로 두므로 HTTP 저장소를 실제로 거쳐야 성공한다.
+- Core의 세션 응답만 로컬 테스트 서버로 재현하며 실제 `CoreSessionAuthentication`은 그대로 사용한다.
+  복원 DB에 있는 요청자의 계정 ID·이메일과 새 검사 쿠키를 사용하고, 무인증·잘못된 쿠키의 401 및
+  일반 사용자 응답의 403을 확인한다. `auth_contract=synthetic_core_session`으로 기록하며
+  실제 Core 로그인·비밀번호·세션 저장소 복원을 검증한 것으로 표시하지 않는다.
+- 결과 서버 종료 후 보고서 요청이 404, 테스트 인증 서버 종료 후 503으로 실패하는지 확인한다.
+  종료 실패·결과 파일 변경·DB 덤프 변경은 전체 실패다. 검사 토큰·DB 비밀번호는 보고서에 넣지 않는다.
 - 결과 파일 보존 확인과 별도로 Prefect 저장소를 검사한다.
   Prefect SQLite의 무결성·외래 키·migration과 해당 3건의 deployment·완료 상태 이력·request/flow ID를 확인한다.
   진행 중 실행이나 활성 스케줄이 있으면 성공 처리하지 않는다.
@@ -169,15 +184,15 @@ Prefect를 중지한다. 컨테이너 ID·이미지·Compose 소유권·볼륨 �
 - 검사 전후 원본 보존을 확인하고 이번에 만든 도우미와 복원 볼륨만 삭제한다.
   실패·정리 오류는 전체 실패로 남기며 정지한 시험 프로젝트는 최상위 정리 단계에서 제거한다.
 
-`ops-bridge.json`의 `volume_restore.scope=disposable_results_http_and_prefect_api`와 `status=PASS`는
-이 파일·결과 HTTP·SQLite·Prefect API 검증의 성공만 뜻한다. `results`와 `prefect`에 대조 건수·해시·정리 결과를,
+`ops-bridge.json`의 `volume_restore.scope=disposable_ops_report_http_and_prefect_api`와 `status=PASS`는
+이 파일·Ops/결과 HTTP·SQLite·Prefect API 검증의 성공만 뜻한다. `results`와 `prefect`에 대조 건수·해시·정리 결과를,
 `results.api`에 인증·쓰기 거절·파일 무변경·일반 사용자 실행·정상 종료 결과를,
+`results.ops_http`에 Ops 보고서·테스트 세션 계약·장애 거절·파일/DB 무변경 결과를,
 `prefect.api`에 API 대조·DB 무변경·정상 종료 결과를 남긴다.
 성공 시 `results_server_started=true`, `prefect_server_started=true`이며,
 증거가 완성되지 않은 실패에서는 `null`로 미확인을 표시한다.
 검사 토큰을 새로 생성하므로 기존 Secret/서명 키 복구는 검증하지 않는다.
-DB 복원 단계의 Ops 조회·직렬화 검사와 별개로, 실행기 재개·새 평가 실행·복원 DB와 결과 서버를
-함께 사용하는 Ops HTTP API·Core 관리자 인증·관리자 화면·Langfuse 저장소 복원도 별도다.
+실행기 재개·새 평가 실행·실제 Core 관리자 로그인·관리자 화면·Langfuse 저장소 복원은 별도다.
 `backup_verified`, `personal_environment_verified`는 계속 `false`다.
 개인 환경 갱신 승인이나 전체 저장소의 동일 시점 백업 증거로 사용하지 않는다.
 CI에 연결된 코드가 있어도 최신 SHA의 실제 통합 작업이 이 단계까지 통과해야 실행 완료로 기록한다.
