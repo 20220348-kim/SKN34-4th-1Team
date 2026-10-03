@@ -2,6 +2,7 @@ package ai.govbiz.core.applicationpreparation.client.ai.dto
 
 import ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentFact
 import ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentPlacement
+import ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentSkippedFact
 import ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentTarget
 
 data class AiDocumentConfigurationPayload(val contractVersion: String, val pipelineVersion: String,
@@ -35,6 +36,10 @@ data class AiDocumentGenerationPayload(
     val placements: List<ApplicationDocumentPlacement>,
     val documentMap: Map<String, Any?>,
     val writePlan: Map<String, Any?>,
+    /** 문서에 넣지 않고 남긴 답(칸 넘침, 빈칸을 정할 수 없음, 인쇄된 선택지·날짜와 다름, 위치 미확인)입니다. */
+    val skippedFacts: List<ApplicationDocumentSkippedFact> = emptyList(),
+    /** 답을 쓰지 않은 표·칸에 남겨 둔 작성 예시(파란·회색 글씨)가 있는 칸 수입니다. 사용자가 제출 전에 지워야 합니다. */
+    val remainingExampleCount: Int = 0,
 )
 
 data class AiDocumentFieldReference(val id: String, val label: String, val guidance: String, val required: Boolean, val options: List<String>)

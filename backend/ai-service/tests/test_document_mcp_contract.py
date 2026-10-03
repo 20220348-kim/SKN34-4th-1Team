@@ -10,7 +10,7 @@ from mcp_types import CallToolResult
 
 from app.application_preparation.document_contract import (
     DocumentError, DocumentMap, EditOperation, GenerateDocumentRequest, NativeTarget,
-    PlanSelection, digest, edited_text, validate_plan,
+    PlanSelection, SkippedFact, digest, edited_text, validate_plan,
 )
 from app.application_preparation.document_mcp import DocumentMcpSession
 
@@ -116,6 +116,36 @@ def test_transport_success_does_not_hide_business_failure(payload):
     session = DocumentMcpSession("pdf", Session(), {"pdf_get_text": {}})
     with pytest.raises(DocumentError):
         asyncio.run(session.call("pdf_get_text", {}))
+
+
+@pytest.mark.parametrize("text,code,reason", [
+    ("Error executing tool govbiz_pdf_text_regions: PDF_GEOMETRY_PAGE_LIMIT", "APPLICATION_DOCUMENT_LIMIT_EXCEEDED", "PDF_GEOMETRY_PAGE_LIMIT"),
+    ("Error executing tool govbiz_pdf_text_regions: PDF_GEOMETRY_ROTATION", "APPLICATION_DOCUMENT_MCP_FAILED", "pdf:govbiz_pdf_text_regions:REMOTE_TOOL_ERROR:PDF_GEOMETRY_ROTATION"),
+    ("Traceback ... secret/path/applicant.pdf", "APPLICATION_DOCUMENT_MCP_FAILED", "pdf:govbiz_pdf_text_regions:REMOTE_TOOL_ERROR"),
+])
+def test_own_pdf_tool_failure_codes_reach_the_caller_but_other_tool_text_does_not(text, code, reason):
+    from mcp_types import TextContent
+
+    class Session:
+        async def call_tool(self, *args):
+            return CallToolResult(is_error=True, content=[TextContent(type="text", text=text)])
+    session = DocumentMcpSession("pdf", Session(), {"govbiz_pdf_text_regions": {}})
+    with pytest.raises(DocumentError) as raised:
+        asyncio.run(session.call("govbiz_pdf_text_regions", {}))
+    assert (raised.value.code, raised.value.reason) == (code, reason)
+
+
+def test_pdf_rules_drawn_twice_count_once_and_still_bound_cells():
+    from app.application_preparation.pdf_mcp_extension import pdf_blank_regions
+    single = [(x, .1, x, .5) for x in [.1, .4, .9]] + [(.1, y, .9, y) for y in [.1, .3, .5]]
+    # Thin filled rectangles give every rule a second edge half a point away.
+    doubled = single + [(a + .0005, b, c + .0005, d) if a == c else (a, b + .0005, c, d + .0005) for a, b, c, d in single]
+    words = [{"text": "기업명", "box": {"x": .2, "y": .17, "width": .08, "height": .025}}]
+    assert [r["labels"] for r in pdf_blank_regions(doubled, words, 1000, 1000)] == \
+        [r["labels"] for r in pdf_blank_regions(single, words, 1000, 1000)]
+    many_rows = [(.1, y / 1000, .9, y / 1000) for y in range(100, 900, 4)] * 2
+    with pytest.raises(ValueError, match="PDF_TABLE_GEOMETRY_LIMIT"):
+        pdf_blank_regions(many_rows + [(x, .1, x, .9) for x in [.1, .9]], [], 1000, 1000)
 
 
 def test_generate_endpoint_requires_internal_auth(monkeypatch):
@@ -337,7 +367,8 @@ def test_rejected_write_plan_logs_reason_without_answers(monkeypatch, caplog):
                                headers={"Authorization": "Bearer " + "t" * 32})
     assert response.status_code == 503
     assert response.json() == {"detail": {"code": "APPLICATION_DOCUMENT_MAPPING_FAILED"}}
-    assert "mode=generate" in caplog.text and "reason=UNRESOLVED_TARGETS" in caplog.text
+    # unresolvedTargets must name supplied facts; a target ID there is rejected, not silently skipped.
+    assert "mode=generate" in caplog.text and "reason=INVALID_SKIPPED_FACTS" in caplog.text
     assert req.facts[0].value not in caplog.text
 
 
@@ -1514,7 +1545,8 @@ def test_hwpx_fit_failure_stops_before_writing_a_file(monkeypatch, tmp_path):
     plan = WritePlan(sourceSha256=req.sourceSha256, mapVersion=doc.mapVersion, answerRevision=3, planHash="test",
         operations=[EditOperation(targetId=cell.targetId, operation="input", expectedText="", start=0, end=0,
                                   valueRef="company:name", box=None, reason="확인된 빈칸")], unresolvedTargets=[], scopeTargetIds=[cell.targetId])
-    session = SimpleNamespace(call=AsyncMock(return_value={"checked": 1, "warnings": [{"overflow": True}]}))
+    session = SimpleNamespace(call=AsyncMock(return_value={"checked": 1, "cells": {cell.targetId: {
+        "lines": 9, "allowedLines": 4, "overflow": True, "capacity": 40}}}))
     @asynccontextmanager
     async def open_session(*_args, **_kwargs):
         yield session
@@ -1524,9 +1556,101 @@ def test_hwpx_fit_failure_stops_before_writing_a_file(monkeypatch, tmp_path):
     with pytest.raises(DocumentError) as error:
         asyncio.run(adapter.apply(tmp_path / "source.hwpx", doc, plan, {"company:name": "매우 긴 답변"}))
     assert error.value.code == "APPLICATION_DOCUMENT_OVERFLOW"
-    assert session.call.await_args.args[0] == "analyze_formfit"
+    assert session.call.await_args.args == ("govbiz_hwpx_fit", {"path": str(tmp_path / "source.hwpx"), "values": {cell.targetId: "매우 긴 답변"}})
     assert session.call.await_count == 1
     assert not (tmp_path / "completed.hwpx").exists()
+
+
+def hwpx_fit_session(monkeypatch, verdicts):
+    from contextlib import asynccontextmanager
+    from unittest.mock import AsyncMock
+    from app.application_preparation import document_adapters
+    session = SimpleNamespace(call=AsyncMock(return_value={"checked": len(verdicts), "cells": verdicts}))
+
+    @asynccontextmanager
+    async def open_session(*_args, **_kwargs):
+        yield session
+    monkeypatch.setattr(document_adapters, "document_session", open_session)
+    return session
+
+
+def test_hwpx_fit_leaves_out_only_answers_whose_cell_balloons(monkeypatch, tmp_path):
+    from app.application_preparation.document_adapters import HwpxDocumentAdapter
+    facts = {"company:name": "가상기업", "plan:summary": "긴 사업 개요 " * 30, "company:ceo": "홍길동"}
+    paragraphs = [NativeTarget(targetId=f"t1.r3.c2.p{i}", nativeLocator={"target": f"t1.r3.c2.p{i}", "parent": "t1.r3.c2"},
+                               kind="paragraph", currentText=text) for i, text in ((1, ""), (2, "※ 작성 요령"))]
+    targets = [target("t1.r1.c2"), target("t1.r2.c2"), target("t1.r3.c2", "\n※ 작성 요령"), *paragraphs, target("t1.r4.c2")]
+    doc = DocumentMap(sourceSha256=request().sourceSha256, format="hwpx", engineVersion="test", targets=targets)
+    selection = PlanSelection(operations=[
+        operation("t1.r1.c2"), operation("t1.r2.c2", valueRef="plan:summary"),
+        operation("t1.r3.c2.p1", valueRef="company:ceo"), operation("t1.r4.c2", valueRef="plan:summary")],
+        unresolvedTargets=[], scopeTargetIds=["t1.r1.c2", "t1.r2.c2", "t1.r3.c2.p1", "t1.r4.c2"])
+    session = hwpx_fit_session(monkeypatch, {
+        "t1.r1.c2": {"lines": 1, "allowedLines": 4, "overflow": False, "capacity": 40},
+        "t1.r2.c2": {"lines": 30, "allowedLines": 4, "overflow": True, "capacity": 40},
+        "t1.r3.c2": {"lines": 2, "allowedLines": None, "overflow": False, "capacity": None},
+        "t1.r4.c2": {"lines": 12, "allowedLines": None, "overflow": False, "capacity": None}})
+    kept, skipped = asyncio.run(HwpxDocumentAdapter().fit(tmp_path / "source.hwpx", doc, selection, facts))
+    values = session.call.await_args.args[1]["values"]
+    # A cell is measured with all of its paragraphs, edited and untouched.
+    assert values["t1.r3.c2"] == "홍길동\n※ 작성 요령"
+    assert [item.model_dump() for item in skipped] == [
+        {"factId": "plan:summary", "targetId": "t1.r2.c2", "reason": "OVERFLOW", "capacity": 40}]
+    # The overflowing answer is dropped from every field it was bound to; the other answers stay.
+    assert [(op.targetId, op.valueRef) for op in kept.operations] == [("t1.r1.c2", "company:name"), ("t1.r3.c2.p1", "company:ceo")]
+
+
+def test_skipped_answers_are_reported_and_the_rest_is_still_written():
+    req = request(facts=[{"id": "company:name", "label": "회사명", "value": "가상기업"},
+                         {"id": "plan:summary", "label": "사업 개요", "value": "긴 답변"}])
+    doc = DocumentMap(sourceSha256=req.sourceSha256, format="hwpx", engineVersion="test", targets=[target(), target("t2.r1.c1")])
+    plan = validate_plan(req, doc, PlanSelection(operations=[operation()], unresolvedTargets=[], scopeTargetIds=[target().targetId]),
+                         [SkippedFact(factId="plan:summary", targetId="t2.r1.c1", reason="OVERFLOW", capacity=40)])
+    assert [item.model_dump() for item in plan.skippedFacts] == [
+        {"factId": "plan:summary", "targetId": "t2.r1.c1", "reason": "OVERFLOW", "capacity": 40}]
+    assert plan.unresolvedTargets == []
+
+
+def test_model_unresolved_facts_become_skipped_instead_of_failing_the_document():
+    req = request(facts=[{"id": "company:name", "label": "회사명", "value": "가상기업"},
+                         {"id": "company:ceo", "label": "대표자", "value": "홍길동"}])
+    doc = DocumentMap(sourceSha256=req.sourceSha256, format="hwpx", engineVersion="test", targets=[target()])
+    plan = validate_plan(req, doc, PlanSelection(operations=[operation()], unresolvedTargets=["company:ceo"], scopeTargetIds=[target().targetId]))
+    assert [(item.factId, item.reason) for item in plan.skippedFacts] == [("company:ceo", "UNRESOLVED")]
+
+
+@pytest.mark.parametrize("reasons,code", [(["OVERFLOW"], "APPLICATION_DOCUMENT_OVERFLOW"),
+                                          (["OVERFLOW", "AMBIGUOUS_SLOT"], "APPLICATION_DOCUMENT_NO_WRITABLE_INPUT")])
+def test_a_document_with_no_answer_left_to_write_fails(reasons, code):
+    facts = [{"id": f"q:{i}", "label": f"문항{i}", "value": "답"} for i in range(len(reasons))]
+    req = request(facts=facts)
+    doc = DocumentMap(sourceSha256=req.sourceSha256, format="hwpx", engineVersion="test", targets=[target()])
+    with pytest.raises(DocumentError) as error:
+        validate_plan(req, doc, PlanSelection(operations=[], unresolvedTargets=[], scopeTargetIds=[]),
+                      [SkippedFact(factId=fact["id"], reason=reason) for fact, reason in zip(facts, reasons)])
+    assert error.value.code == code
+
+
+def test_a_skipped_answer_cannot_also_be_written():
+    req = request()
+    doc = DocumentMap(sourceSha256=req.sourceSha256, format="hwpx", engineVersion="test", targets=[target()])
+    with pytest.raises(DocumentError) as error:
+        validate_plan(req, doc, PlanSelection(operations=[operation()], unresolvedTargets=[], scopeTargetIds=[target().targetId]),
+                      [SkippedFact(factId="company:name", reason="OVERFLOW")])
+    assert error.value.reason == "SKIPPED_FACT_ALSO_PLANNED"
+
+
+def test_derived_text_is_accepted_only_where_the_slot_rules_produce_it():
+    req = request(facts=[{"id": "staff:count", "label": "상시종업원", "value": "12"}])
+    text = "상시종업원(   명)"
+    doc = DocumentMap(sourceSha256=req.sourceSha256, format="hwpx", engineVersion="test", targets=[target(text=text)])
+    derived = operation(operation="replace_range", expectedText=text, start=6, end=9, valueRef="staff:count", literal="12 ")
+    plan = validate_plan(req, doc, PlanSelection(operations=[derived], unresolvedTargets=[], scopeTargetIds=[target().targetId]))
+    assert edited_text(doc.targets[0], plan.operations, {"staff:count": "12"}) == "상시종업원(12 명)"
+    for tampered in (derived.model_copy(update={"literal": "1200 "}), derived.model_copy(update={"start": 0, "end": 11})):
+        with pytest.raises(DocumentError) as error:
+            validate_plan(req, doc, PlanSelection(operations=[tampered], unresolvedTargets=[], scopeTargetIds=[target().targetId]))
+        assert error.value.reason == "LITERAL_NOT_DERIVED"
 
 
 def test_hwp_mapping_answer_omits_scope_and_server_derives_it_from_bound_tables(monkeypatch):
@@ -1560,3 +1684,68 @@ def test_hwp_mapping_answer_omits_scope_and_server_derives_it_from_bound_tables(
     assert [b.factId for b in selection.bindings] == ["company:name", "consent"]
     # 바인딩된 표 전체(편집 가능한 것만) + 체크박스 그룹 전원. 제목 문단과 다른 표는 제외.
     assert selection.scopeTargetIds == ["s0-p1-t0-r0-c0-p0", "s0-p1-t0-r0-c1-p0", "s0-p1-t0-r1-c1-p0", "s0-p2-f0", "s0-p2-f1"]
+
+
+HEADER = ('<hh:head xmlns:hh="h"><hh:refList><hh:charProperties itemCnt="4">'
+          '<hh:charPr id="0" height="1000" textColor="#000000"><hh:underline type="NONE" shape="SOLID" color="#000000"/></hh:charPr>'
+          '<hh:charPr id="1" height="1000" textColor="#0000FF"><hh:italic/><hh:bold/>'
+          '<hh:underline type="BOTTOM" shape="SOLID" color="#0000FF"/><hh:strikeout shape="CONTINUOUS" color="#000000"/></hh:charPr>'
+          '<hh:charPr id="2" height="1000" textColor="#808080"/>'
+          '<hh:charPr id="3" height="1000" textColor="#FF0000"><hh:bold/></hh:charPr>'
+          '</hh:charProperties></hh:refList></hh:head>')
+
+
+def test_answer_styles_are_plain_black_copies_of_every_colored_or_decorated_style(tmp_path):
+    import zipfile
+    from app.application_preparation.hwpx_mcp_extension import ANSWER_STYLES, ANSWER_TEXTS, prepare_answer_styles
+    source = tmp_path / "source.hwpx"
+    with zipfile.ZipFile(source, "w") as archive:
+        archive.writestr("mimetype", "application/hwp+zip", compress_type=zipfile.ZIP_STORED)
+        archive.writestr("Contents/header.xml", HEADER, compress_type=zipfile.ZIP_DEFLATED)
+        archive.writestr("Contents/section0.xml", "<hs:sec/>", compress_type=zipfile.ZIP_DEFLATED)
+    try:
+        assert prepare_answer_styles(str(source), str(tmp_path / "prepared.hwpx")) == {"count": 3}
+        assert ANSWER_STYLES == {"1": "4", "2": "5", "3": "6"} and ANSWER_TEXTS == set()
+        with zipfile.ZipFile(tmp_path / "prepared.hwpx") as prepared:
+            assert [(info.filename, info.compress_type) for info in prepared.infolist()][0] == ("mimetype", zipfile.ZIP_STORED)
+            assert prepared.read("Contents/section0.xml") == b"<hs:sec/>"
+            header = prepared.read("Contents/header.xml").decode()
+        original = HEADER.replace('itemCnt="4"', 'itemCnt="7"')
+        assert header.startswith(original[:original.index("</hh:charProperties>")])
+        assert ('<hh:charPr id="4" height="1000" textColor="#000000"><hh:underline type="NONE" shape="SOLID" color="#0000FF"/>'
+                '<hh:strikeout shape="NONE" color="#000000"/></hh:charPr>') in header
+        assert '<hh:charPr id="5" height="1000" textColor="#000000"/>' in header
+        assert '<hh:charPr id="6" height="1000" textColor="#000000"></hh:charPr>' in header
+        assert prepare_answer_styles(str(source), str(tmp_path / "again.hwpx"), [" 단독 ", ""]) == {"count": 3}
+        assert ANSWER_TEXTS == {"단독"}
+        assert prepare_answer_styles(str(source), str(tmp_path.parent / "elsewhere.hwpx")) == {"count": 0, "reason": "PATH"}
+        assert ANSWER_STYLES == {} and ANSWER_TEXTS == set()
+    finally:
+        ANSWER_STYLES.clear()
+        ANSWER_TEXTS.clear()
+
+
+def test_an_answer_alone_in_its_run_takes_the_plain_style_but_a_kept_label_keeps_the_example_style(monkeypatch):
+    from app.application_preparation import hwpx_mcp_extension as extension
+    monkeypatch.setattr(extension, "ANSWER_STYLES", {"2": "9"})
+    replaced = '<hp:p><hp:run charPrIDRef="1"><hp:t>기업명: </hp:t></hp:run><hp:run charPrIDRef="2"><hp:t>예시 회사</hp:t></hp:run></hp:p>'
+    assert extension.replace_plain_text_runs(replaced, "기업명: 가상기업") == replaced.replace(
+        '<hp:run charPrIDRef="2"><hp:t>예시 회사</hp:t>', '<hp:run charPrIDRef="9"><hp:t>가상기업</hp:t>')
+    monkeypatch.setattr(extension, "ANSWER_TEXTS", {"단독"})
+    kept_letters = '<hp:p><hp:run charPrIDRef="2"><hp:t>단독/공동/각자대표</hp:t></hp:run></hp:p>'
+    assert extension.replace_plain_text_runs(kept_letters, "단독") == '<hp:p><hp:run charPrIDRef="9"><hp:t>단독</hp:t></hp:run></hp:p>'
+    assert 'charPrIDRef="2"><hp:t>단독/공동</hp:t>' in extension.replace_plain_text_runs(kept_letters, "단독/공동")
+    appended = '<hp:p><hp:run charPrIDRef="2"><hp:t>예) </hp:t></hp:run></hp:p>'
+    assert 'charPrIDRef="2"><hp:t>예) 가상기업</hp:t>' in extension.replace_plain_text_runs(appended, "예) 가상기업")
+    assert 'charPrIDRef="9"' in extension.fill_empty_run('<hp:p><hp:run charPrIDRef="2"/></hp:p>', "가상기업")
+    assert 'charPrIDRef="1"' in extension.fill_empty_run('<hp:p><hp:run charPrIDRef="1"/></hp:p>', "가상기업")
+
+
+def test_example_text_is_the_text_of_blue_or_gray_runs():
+    from app.application_preparation.hwpx_mcp_extension import example_char_prs, is_example_color, paragraph_example_text
+    assert example_char_prs(HEADER) == {"1", "2"}
+    assert [is_example_color(color) for color in ("#0000FF", "#3366CC", "#808080", "#000000", "#FF0000", "#555555", "")] == [
+        True, True, True, False, False, False, False]
+    block = ('<hp:p><hp:run charPrIDRef="0"><hp:t>성명 </hp:t></hp:run><hp:run charPrIDRef="1"><hp:t>홍&amp;길<hp:tab/>동</hp:t></hp:run>'
+             '<hp:run charPrIDRef="2"/></hp:p>')
+    assert paragraph_example_text(block, {"1", "2"}) == "홍&길동"

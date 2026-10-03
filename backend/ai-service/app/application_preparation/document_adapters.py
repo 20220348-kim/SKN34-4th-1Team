@@ -12,7 +12,7 @@ from xml.etree import ElementTree
 
 from app.application_preparation.document_contract import (
     DOCUMENT_TARGET_LIMIT, DocumentError, DocumentMap, ENGINES, GenerateDocumentRequest, MAX_BYTES,
-    NativeTarget, NativeTargetAnalysis, WritePlan, digest, edited_text,
+    NativeTarget, NativeTargetAnalysis, PlanSelection, SkippedFact, WritePlan, digest, edited_text,
 )
 from app.application_preparation.document_mcp import DEFAULT_SESSION_TIMEOUT_SECONDS, document_session
 from app.application_preparation.hwpx_form_analysis import analyze_cells
@@ -62,6 +62,9 @@ def validate_hwpx(path: Path):
                 ElementTree.fromstring(data)
 
 
+CHOICE_MARKS = {"■", "√", "○"}  # a marked printed option keeps the printed look
+
+
 class HwpxDocumentAdapter:
     async def inspect(self, path: Path, fields=(), *, analyze=True) -> DocumentMap:
         validate_hwpx(path)
@@ -94,12 +97,16 @@ class HwpxDocumentAdapter:
                 tableClassificationEvidence=source_context.get("tableClassificationEvidence", []) if source_context else [],
                 reviewRequired=source_context.get("tableClassificationReviewRequired", False) if source_context else False,
             )
+            if item.get("exampleText"):
+                locator["exampleText"] = item["exampleText"]
             targets.append(NativeTarget(targetId=item["target"], nativeLocator=locator, kind=item["kind"],
                                         currentText=item["text"], context=context[:1000], editable=item["editable"],
                                         unsupportedReason=item.get("reason"), analysis=analysis))
             input_paragraph = _explicit_hwpx_input_paragraph(item, source_context)
             for paragraph in item.get("paragraphs", []):
                 paragraph_locator = {**locator, "target": paragraph["target"], "kind": "paragraph", "parent": item["target"]}
+                if paragraph.get("exampleText"):
+                    paragraph_locator["exampleText"] = paragraph["exampleText"]
                 if input_paragraph and paragraph["target"] != input_paragraph:
                     # The only printed input slot is a sibling. Keep the native edit address,
                     # but do not offer this empty layout paragraph as a Mapping binding.
@@ -136,16 +143,18 @@ class HwpxDocumentAdapter:
                 edit.update(target=children[0].targetId, kind="paragraph", expected_text=children[0].currentText)
         output = path.parent / "completed.hwpx"
         async with document_session("hwpx", path.parent) as session:
-            # This tool estimates cell width; it is not a Hancom page renderer.
-            fit_values = {}
-            for edit in edits:
-                cell = targets[edit["target"]].nativeLocator.get("parent", edit["target"])
-                if cell.startswith("t"):
-                    fit_values[cell] = edit["value"]
-            fit = await session.call("analyze_formfit", {"path": str(path), "values": fit_values})
-            if any(warning.get("overflow") for warning in fit["warnings"]):
-                raise DocumentError("OVERFLOW", reason="HWPX_CELL_WIDTH_EXCEEDED")
-            preview = await session.call("preview_addressed_edits", {"path": str(path), "edits": edits})
+            # fit() already left out overflowing answers; this re-check guards the plan actually written.
+            filled = _filled_cells(fresh.targets, plan.operations, facts)
+            fit = await session.call("govbiz_hwpx_fit", {"path": str(path), "values": {cell: text for cell, (text, _) in filled.items()}})
+            if any(verdict["overflow"] for verdict in fit["cells"].values()):
+                raise DocumentError("OVERFLOW", reason="HWPX_CELL_ROW_BALLOON")
+            # An answer alone in a colored or decorated run (an example, a bold label) gets a plain black copy of that style.
+            prepared = path.parent / "prepared.hwpx"
+            answers = sorted({facts[op.valueRef] if op.literal is None else op.literal for op in plan.operations
+                              if op.valueRef is not None and (op.literal or "").strip() not in CHOICE_MARKS})
+            styles = await session.call("govbiz_hwpx_prepare_answer_styles", {"path": str(path), "out_path": str(prepared), "answers": answers})
+            source = prepared if styles.get("count") else path
+            preview = await session.call("preview_addressed_edits", {"path": str(source), "edits": edits})
             counts = preview["counts"]
             if counts["requested"] != len(edits) or counts["resolved"] != len(edits) or counts["unresolved"] != 0 or preview["unresolved"]:
                 raise DocumentError("MAPPING_FAILED")
@@ -156,7 +165,7 @@ class HwpxDocumentAdapter:
             expected = []
             for edit in preview["edits"]:
                 expected.extend(edit.get("verify_expansion") or [{"target": edit["target"], "expected_text": edit["after_text"]}])
-            verified = await session.call("govbiz_verify_hwpx_edits", {"source_path": str(path), "output_path": str(output), "expected_targets": expected})
+            verified = await session.call("govbiz_verify_hwpx_edits", {"source_path": str(source), "output_path": str(output), "expected_targets": expected})
             if verified["verified"] is not True or verified["counts"]["verified"] != len(expected):
                 raise DocumentError("VALIDATION_FAILED")
         data = read_output(output, path.parent)
@@ -164,7 +173,51 @@ class HwpxDocumentAdapter:
         if digest(path.read_bytes()) != document.sourceSha256:
             raise DocumentError("SOURCE_CHANGED")
         return data, {"requested": len(edits), "resolved": len(edits), "applied": len(edits), "verified": len(expected), "unresolved": 0,
-                      "xml": "PASSED", "fitChecked": fit["checked"], "fitPolicy": "ESTIMATE_ONLY", "render": "NOT_RUN", "hancom": "NOT_RUN"}
+                      "xml": "PASSED", "fitChecked": fit["checked"], "fitPolicy": "WRAP_ESTIMATE_GROSS_ROW_GROWTH",
+                      "render": "NOT_RUN", "hancom": "NOT_RUN"}
+
+    async def fit(self, path: Path, document: DocumentMap, selection: PlanSelection,
+                  facts: dict[str, str]) -> tuple[PlanSelection, list[SkippedFact]]:
+        """Leave out the answers whose cell would balloon after wrapping, keeping every other answer."""
+        filled = _filled_cells(document.targets, selection.operations, facts)
+        if not filled:
+            return selection, []
+        async with document_session("hwpx", path.parent) as session:
+            fit = await session.call("govbiz_hwpx_fit", {"path": str(path), "values": {cell: text for cell, (text, _) in filled.items()}})
+        skipped: dict[str, SkippedFact] = {}
+        for cell, verdict in sorted(fit["cells"].items()):
+            if verdict["overflow"] and cell in filled:
+                for fact_id in sorted(filled[cell][1]):
+                    skipped.setdefault(fact_id, SkippedFact(factId=fact_id, targetId=cell, reason="OVERFLOW", capacity=verdict["capacity"]))
+        if not skipped:
+            return selection, []
+        # A repeated answer is left out everywhere, so the document never shows it in only some of its fields.
+        operations = [op for op in selection.operations if op.valueRef not in skipped]
+        return selection.model_copy(update={"operations": operations}), list(skipped.values())
+
+
+def _filled_cells(targets: list[NativeTarget], operations: list, facts: dict[str, str]) -> dict[str, tuple[str, set[str]]]:
+    """The whole text of each table cell an edit touches (edited and untouched paragraphs) and the answers written there."""
+    by_id = {target.targetId: target for target in targets}
+    grouped: dict[str, list] = {}
+    for operation in operations:
+        grouped.setdefault(operation.targetId, []).append(operation)
+    written: dict[str, set[str]] = {}
+    for target_id, edits in grouped.items():
+        cell = by_id[target_id].nativeLocator.get("parent") or target_id
+        fact_ids = {op.valueRef for op in edits if op.valueRef is not None}
+        # A cell where only an example is deleted is not fit-checked: removing text never grows a row.
+        if fact_ids and cell.startswith("t") and cell in by_id:
+            written.setdefault(cell, set()).update(fact_ids)
+    filled = {}
+    for cell, fact_ids in written.items():
+        children = [target for target in targets if target.nativeLocator.get("parent") == cell]
+        if cell in grouped or not children:
+            text = edited_text(by_id[cell], grouped.get(cell, []), facts)
+        else:
+            text = "\n".join(edited_text(child, grouped.get(child.targetId, []), facts) for child in children)
+        filled[cell] = (text, fact_ids)
+    return filled
 
 
 def pdf_session_timeout_seconds(page_count: int) -> float:
@@ -241,6 +294,9 @@ class PdfDocumentAdapter:
                                                 nativeLocator={"page": page, "bbox": paragraph["bbox"], "fontName": paragraph["font_name"],
                                                                "fontSize": paragraph["font_size"], "geometryVerified": False},
                                                 context=f"PDF page {page + 1}; native paragraph; use image for visual bounds"))
+        if len(targets) > DOCUMENT_TARGET_LIMIT:
+            # Same explicit limit as HWPX instead of a schema error from the map below.
+            raise DocumentError("LIMIT_EXCEEDED", reason="PDF_TARGET_COUNT")
         return DocumentMap(sourceSha256=digest(path.read_bytes()), format="pdf", engineVersion=ENGINES["pdf"], targets=targets)
 
     async def apply(self, path: Path, document: DocumentMap, plan: WritePlan, facts: dict[str, str]) -> tuple[bytes, dict]:
@@ -298,7 +354,7 @@ class HwpDocumentAdapter:
         if not request.hwpTargets or len({t.id for t in request.hwpTargets}) != len(request.hwpTargets):
             raise DocumentError("MAPPING_FAILED")
         return DocumentMap(sourceSha256=request.sourceSha256, format="hwp", engineVersion=ENGINES["hwp"], targets=[
-            NativeTarget(targetId=t.id, nativeLocator={"paragraph": t.id, "group": t.groupId},
+            NativeTarget(targetId=t.id, nativeLocator={"paragraph": t.id, "group": t.groupId, "exampleText": t.exampleText},
                          kind="CHECKBOX" if t.kind == "CHECKBOX" else "paragraph", label=t.text if t.kind == "CHECKBOX" else "",
                          currentText=t.text, context=t.context, editable=t.editable, unsupportedReason=t.unsupportedReason)
             for t in request.hwpTargets
@@ -306,8 +362,10 @@ class HwpDocumentAdapter:
 
     def stage(self, source: bytes, plan: WritePlan) -> tuple[bytes, dict]:
         # No binary edits in Python. Core independently validates and applies these exact ranges.
+        # A split date or a marked choice writes one answer in several ranges of the same paragraph: one placement.
+        placed = dict.fromkeys((op.valueRef, op.targetId) for op in plan.operations if op.valueRef is not None)
         return source, {"stage": "HWPLIB_REQUIRED", "render": "NOT_RUN", "placements": [
-            {"factId": op.valueRef, "targetId": op.targetId, "box": None} for op in plan.operations if op.valueRef is not None
+            {"factId": fact_id, "targetId": target_id, "box": None} for fact_id, target_id in placed
         ]}
 
 

@@ -60,6 +60,7 @@ class ApplicationDocumentController(private val service: ApplicationDocumentServ
     private fun response(files: List<ApplicationDocumentFile>) = ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(files.map {
         ApplicationDocumentResponse(it.id, it.inputRevision, it.fileName, it.mediaType, it.bytes.size,
             it.filledAnswerCount, it.filledAnswerCount?.let { _ -> it.unfilledAnswers.size },
-            it.unfilledAnswers.map { answer -> ApplicationDocumentUnfilledAnswerResponse(answer.fieldId, answer.fieldLabel, answer.value, answer.reason) })
+            it.unfilledAnswers.map { answer -> ApplicationDocumentUnfilledAnswerResponse(answer.fieldId, answer.fieldLabel, answer.value, answer.reason, answer.capacity) },
+            it.remainingExampleCount)
     })
 }

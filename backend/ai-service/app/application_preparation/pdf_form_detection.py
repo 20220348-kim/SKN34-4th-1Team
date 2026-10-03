@@ -42,8 +42,26 @@ def detect_inputs(image_paths: list[str]) -> dict:
 
 
 def checked_regions(detections: list[dict], words: list[dict], ruled_regions: list[dict], *, page: int | None = None) -> list[dict]:
+    # Imported here: the PDF tool process loads this module for detect_inputs without the app package.
+    from app.application_preparation.pdf_mcp_extension import reading_order
+
     def bounds(box):
         return (box["x"], box["y"], box["x"] + box["width"], box["y"] + box["height"])
+
+    def syllable(word):
+        text = word["text"].strip()
+        return len(text) == 1 and "가" <= text <= "힣"
+
+    def inside_spaced_label(box):
+        """A gap between two single Hangul syllables on one line, as in '상   호', is letter spacing, not an input."""
+        middle = (box[1] + box[3]) / 2
+        row = [word for word in words if bounds(word["box"])[1] <= middle <= bounds(word["box"])[3]]
+        left = max((w for w in row if bounds(w["box"])[2] <= box[0] + .002), key=lambda w: bounds(w["box"])[2], default=None)
+        right = min((w for w in row if bounds(w["box"])[0] >= box[2] - .002), key=lambda w: bounds(w["box"])[0], default=None)
+        if left is None or right is None or not (syllable(left) and syllable(right)):
+            return False
+        # A syllable is about as wide as it is tall, so three syllable widths bound the letter spacing.
+        return bounds(right["box"])[0] - bounds(left["box"])[2] <= 3 * max(left["box"]["width"], right["box"]["width"])
 
     def intersection(a, b):
         return (max(a[0], b[0]), max(a[1], b[1]), min(a[2], b[2]), min(a[3], b[3]))
@@ -65,17 +83,19 @@ def checked_regions(detections: list[dict], words: list[dict], ruled_regions: li
         parts = [(bounds(region["box"]), region["labels"]) for region in ruled_regions
                  if area(intersection(box, bounds(region["box"]))) >= .65 * area(bounds(region["box"]))]
         if not parts:
+            if inside_spaced_label(box):
+                continue
             left = [word for word in words if box[0]-.25 <= bounds(word["box"])[2] <= box[0]+.002
                     and min(box[3], bounds(word["box"])[3])-max(box[1], bounds(word["box"])[1]) > .5*word["box"]["height"]]
             if left:
                 nearest = max(bounds(word["box"])[2] for word in left)
                 left = [word for word in left if bounds(word["box"])[2] >= nearest-.15]
-                labels = [" ".join(word["text"] for word in sorted(left, key=lambda w: (w["box"]["y"], w["box"]["x"])))]
+                labels = [" ".join(word["text"] for word in reading_order(left))]
             else:
                 above = [word for word in words if 0 <= box[1]-bounds(word["box"])[3] <= .04
                          and min(box[2], bounds(word["box"])[2]) > max(box[0], bounds(word["box"])[0])]
                 nearest = max((bounds(word["box"])[3] for word in above), default=0)
-                labels = [" ".join(word["text"] for word in sorted(above, key=lambda w: w["box"]["x"])
+                labels = [" ".join(word["text"] for word in reading_order(above)
                                    if bounds(word["box"])[3] >= nearest-.006)] if above else []
             parts = [(box, labels)]
         for region, labels in parts:

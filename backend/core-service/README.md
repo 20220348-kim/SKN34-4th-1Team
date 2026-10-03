@@ -188,7 +188,7 @@ V33은 생성기 버전을 고유키에 추가합니다. 다른 생성기 버전
 
 현재 생성기 버전은 5입니다. 이전 버전의 파일을 재사용하지 않고 새로 생성하며 기존 다운로드는 유지합니다. HWP의 실제 체크박스/라디오 컨트롤을 `CHECKBOX` 대상으로 읽고, 값과 유일하게 일치하는 선택지는 Core가 직접 연결합니다. 나머지 위치는 AI가 선택합니다. 같은 선택 그룹의 기존 체크를 해제하고 해당 옵션만 선택하며, 서로 다른 답변을 같은 문단에 합치지 않습니다. HWP/HWPX의 밑줄 빈칸은 제자리 치환하고, 빈 문단·콜론으로 끝나는 항목명 외의 검은 본문에는 답변을 덧붙이지 않습니다.
 HWP에서 표가 있는 섹션의 표 밖 빈 문단은 기입 후보에서 제외합니다. 예시 삭제 후 표 밖 문단이 비어도 답변 기입을 거절하며, 표 안의 빈 문단과 표가 없는 섹션의 입력란은 유지합니다.
-HWP는 답변의 기울임·취소선·자간·장평을 정리하고, 글자 폭과 셀 너비로 줄 배치 레코드를 재작성합니다. 셀 높이가 부족하면 같은 행과 이를 걸치는 셀 높이를 함께 늘립니다. 이는 한글의 전체 페이지 조판 엔진을 대체하지 않으므로 복잡한 개체·페이지 배치는 실제 한글에서 확인해야 합니다. `UNKNOWN`과 미입력 값은 임의 칸에 ‘미정’으로 쓰지 않고 결과 화면에서 미기입 항목으로 안내합니다.
+HWP는 답변을 앞 글자의 글꼴·크기·장평·자간에 검은색·꾸밈 없음으로 쓰고(선택 표시 `■`·`√`·`○`는 인쇄된 모양 유지), 원본 문단에 저장된 줄 높이·간격으로 줄 배치 레코드를 재작성합니다. 셀은 답으로 늘어난 줄만큼만 같은 행과 이를 걸치는 셀 높이를 함께 늘립니다(한 줄 답은 행 높이 유지). 이는 한글의 전체 페이지 조판 엔진을 대체하지 않으므로 복잡한 개체·페이지 배치는 실제 한글에서 확인해야 합니다. `UNKNOWN`과 미입력 값은 임의 칸에 ‘미정’으로 쓰지 않고 결과 화면에서 미기입 항목으로 안내합니다.
 
 V31는 기존 텍스트 초안 실행과 작성본 버전을 저장합니다. 상세 응답 `contents`는 최신 ID부터 모든 작성본의 내용·종류·입력 revision·
 생성 시간·사용자 확인 시간·`stale`을 반환합니다. 같은 요청 키의 성공한 초안 실행은 다시 호출하지 않고 현재 상세를 반환하며,
@@ -1068,6 +1068,10 @@ Repository의 행 잠금·실행권 갱신 transaction과 공개 오류 계약�
 `ApplicationFormManifest.fieldMappings(snapshot)`은 공식 `sectionKey:fieldKey` 문항과 FILE binding에서
 `ApplicationFieldMapping`을 계산한다. `ApplicationDocumentService`는 이 업무 projection의 writable로
 기입/미기입 답변을 분리하며 필수 binding 누락은 기존 `APPLICATION_DOCUMENT_MAPPING_FAILED`로 중단한다.
+AI Service가 칸 규칙·넘침 검사로 남긴 답(`skippedFacts`)과 PDF 상자에 들어가지 않아 `fillPdfFitting`이 뺀 답은 나머지 답으로 만든
+초안과 함께 미기입 답변(`reason`: `OVERFLOW`·`AMBIGUOUS_SLOT`·`SLOT_MISMATCH`·`INPUT_LOCATION_NOT_FOUND`, 넘침이면 `capacity`)으로
+저장·응답하고, HWP는 `applyHwpPlan`이 계획의 `skippedFacts`·`literal`을 함께 검증합니다. AI Service가 답이 없는 표·칸에 남긴
+작성 예시의 칸 수(`remainingExampleCount`, 0..3000)는 파일 메타데이터 `answerSummary`에 저장해 문서 목록 응답으로 돌려주며, 이전 초안은 0입니다.
 label/required/status와 targetId/box 참조만 전달하며 raw native 지도·버전·scope는 복제하거나 저장하지 않는다.
 `DocumentMap`은 FILE native map이고 상위 업무 mapping과 동일한 계약이 아니다. FILE write authority는 기존
 DocumentMap/bindings/scope/WritePlan에 있으며 이관 비교·승인 흐름과 DB 스키마는 유지한다.

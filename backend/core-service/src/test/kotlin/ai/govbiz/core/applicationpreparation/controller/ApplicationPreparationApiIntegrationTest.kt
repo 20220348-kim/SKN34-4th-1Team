@@ -74,6 +74,7 @@ import ai.govbiz.core.applicationpreparation.domain.exception.ApplicationPrepara
 import ai.govbiz.core.applicationpreparation.domain.ApplicationFormManifest
 import ai.govbiz.core.applicationpreparation.domain.ApplicationFormDiscoveryConfiguration
 import ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentPlacement
+import ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentSkippedFact
 import ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentMapSnapshot
 import ai.govbiz.core.applicationpreparation.service.ApplicationDocumentMappingService
 import ai.govbiz.core.applicationpreparation.repository.ApplicationDocumentRepository
@@ -1389,6 +1390,64 @@ class ApplicationPreparationApiIntegrationTest {
             String::class.java, fixture.preparationId))
         assertEquals("TEST-COMPANY", jdbc.queryForObject(
             "SELECT value_text FROM application_preparation_fact WHERE preparation_id=?", String::class.java, fixture.preparationId))
+    }
+
+    @Test
+    fun listsAnswersTheDocumentServiceLeftOutWithTheirReasonAndCapacity() {
+        val original = requireNotNull(javaClass.getResourceAsStream("/combinationreview/general.hwpx")).readBytes()
+        val blanks = documentEditor.inspect(original, "HWPX").targets.filter { it.text.isBlank() }.take(2)
+        `when`(bizInfoAttachments.collect("BIZINFO", DISCOVERY_PROGRAM_ID)).thenReturn(SupportProgramAttachments("동적 지원사업", listOf(
+            SupportProgramAttachment("https://www.bizinfo.go.kr/file", "신청양식.hwpx", "HWPX", original),
+        ), emptyList()))
+        `when`(documentParser.parse(original, "HWPX")).thenReturn(listOf(SupportProgramDocumentBlock(DISCOVERY_LOCATOR, DISCOVERY_BLOCK_TEXT)))
+        val discovered = json.readValue(resource("discovery-contract-response.json"), AiApplicationFormDiscoveryPayload::class.java)
+        val overview = discovered.forms.single().sections.single().fields.single().copy(required = true)
+        val summary = overview.copy(fieldKey = "summary", label = "사업 요약", guidance = "사업을 요약합니다.", required = false, evidenceQuote = "지원 대상")
+        `when`(ai.discover(any(AiApplicationFormDiscoveryRequest::class.java) ?: fallbackDiscoveryRequest())).thenReturn(discovered.copy(forms = listOf(
+            discovered.forms.single().copy(sections = listOf(discovered.forms.single().sections.single().copy(fields = listOf(overview, summary))))
+        )))
+        val placements = listOf(ApplicationDocumentPlacement("business-plan:business-overview", blanks[0].id), ApplicationDocumentPlacement("business-plan:summary", blanks[1].id))
+        val mappingFallback = AiDocumentMappingRequest(sourceBase64 = "", sourceSha256 = "", format = "hwpx", scope = "test", fields = emptyList())
+        `when`(documentMcp.map(any(AiDocumentMappingRequest::class.java) ?: mappingFallback)).thenAnswer { invocation ->
+            val request = invocation.getArgument<AiDocumentMappingRequest>(0)
+            AiDocumentMappingPayload("application-document-mcp-v1", "b".repeat(64), request.sourceSha256, "native-map-v2", "test-stub",
+                placements, blanks.map { it.id }, mapOf("sourceSha256" to request.sourceSha256,
+                    "targets" to blanks.map { mapOf("targetId" to it.id, "editable" to true, "currentText" to "") }, "unmappedFieldIds" to emptyList<String>()))
+        }
+        val generationFallback = AiDocumentGenerationRequest(sourceBase64 = "", sourceSha256 = "", format = "hwpx", answerRevision = 1, facts = emptyList(), scope = "test")
+        `when`(documentMcp.generate(any(AiDocumentGenerationRequest::class.java) ?: generationFallback)).thenAnswer { invocation ->
+            val request = invocation.getArgument<AiDocumentGenerationRequest>(0)
+            val written = placements.take(1)
+            val bytes = documentEditor.fill(original, "HWPX", request.facts.filter { it.id == written.single().factId }, written)
+            val hash = java.security.MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+            AiDocumentGenerationPayload("application-document-mcp-v1", "b".repeat(64), request.sourceSha256, request.answerRevision,
+                java.util.Base64.getEncoder().encodeToString(bytes), hash, "c".repeat(64), "native-map-v2", "test-stub",
+                mapOf("verified" to 1, "unresolved" to 0), written, emptyMap(), mapOf("answerRevision" to request.answerRevision),
+                skippedFacts = listOf(ApplicationDocumentSkippedFact("business-plan:summary", blanks[1].id, "OVERFLOW", 40)),
+                remainingExampleCount = 3)
+        }
+
+        val discoveryResponse = mvc.perform(post("$BASE/forms/discover").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN).contentType(MediaType.APPLICATION_JSON)
+            .content("""{"sourceCode":"BIZINFO","sourceProgramId":"$DISCOVERY_PROGRAM_ID"}""")).andExpect(status().isOk()).andReturn().response
+        val version = json.readTree(discoveryResponse.contentAsString).path("items").path(0).path("formVersionId").asString()
+        activateStored(version)
+        val created = mvc.perform(post(BASE).cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN).contentType(MediaType.APPLICATION_JSON)
+            .content("""{"sourceCode":"BIZINFO","sourceProgramId":"$DISCOVERY_PROGRAM_ID","formVersionId":"$version","serviceField":"GENERAL"}"""))
+            .andExpect(status().isCreated()).andReturn().response
+        val id = json.readTree(created.contentAsString).path("id").asLong()
+        mvc.perform(put("$BASE/$id/sections/business-plan/inputs").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN).contentType(MediaType.APPLICATION_JSON)
+            .content(json.writeValueAsString(mapOf("expectedRevision" to 1, "facts" to listOf(
+                mapOf("fieldKey" to "business-overview", "status" to "PROVIDED", "value" to "가상기업 홍보 계획", "sourceText" to "가상기업 홍보 계획"),
+                mapOf("fieldKey" to "summary", "status" to "PROVIDED", "value" to "아주 긴 사업 요약", "sourceText" to "아주 긴 사업 요약"))))))
+            .andExpect(status().isOk())
+        mvc.perform(post("$BASE/$id/documents").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN).contentType(MediaType.APPLICATION_JSON)
+            .content("""{"expectedRevision":2}""")).andExpect(status().isOk())
+            .andExpect(jsonPath("$[0].filledAnswerCount").value(1))
+            .andExpect(jsonPath("$[0].unfilledAnswerCount").value(1))
+            .andExpect(jsonPath("$[0].unfilledAnswers[0].fieldId").value("business-plan:summary"))
+            .andExpect(jsonPath("$[0].unfilledAnswers[0].reason").value("OVERFLOW"))
+            .andExpect(jsonPath("$[0].unfilledAnswers[0].capacity").value(40))
+            .andExpect(jsonPath("$[0].remainingExampleCount").value(3))
     }
 
     @Test

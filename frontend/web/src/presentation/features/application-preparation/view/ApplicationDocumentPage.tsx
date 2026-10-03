@@ -120,7 +120,12 @@ function DocumentResults({ id }: { id: number }) {
   const reanalyzeTo = preparation
     ? `${appPaths.applicationPreparationNew}?${new URLSearchParams({ sourceCode: preparation.form.sourceCode, sourceProgramId: preparation.form.sourceProgramId })}`
     : appPaths.applicationPreparationNew
-  const reasonLabel = (reason: ApplicationDocument['unfilledAnswers'][number]['reason']) => reason === 'AUTO_FILL_UNSUPPORTED' ? '자동 기입 미지원' : '입력 위치 확인 불가'
+  const reasonLabel = ({ reason, capacity }: ApplicationDocument['unfilledAnswers'][number]) => {
+    if (reason === 'OVERFLOW') return capacity ? `칸보다 길어 넣지 못함 · 약 ${capacity}자 이내` : '칸보다 길어 넣지 못함'
+    if (reason === 'AMBIGUOUS_SLOT') return '빈칸이 여러 개라 위치 확인 불가'
+    if (reason === 'SLOT_MISMATCH') return '인쇄된 선택지·날짜와 달라 원본에서 직접 작성'
+    return reason === 'AUTO_FILL_UNSUPPORTED' ? '자동 기입 미지원' : '입력 위치 확인 불가'
+  }
   const changeTypeLabel: Record<ApplicationDocumentMigrationNotice['changes'][number]['changeType'], string> = {
     TARGET_ADDED: '새 입력칸', TARGET_REMOVED: '입력칸 사라짐', TARGET_CHANGED: '입력칸 변경',
     BOX_CHANGED: '입력 영역 변경', KIND_CHANGED: '입력 방식 변경', SCOPE_CHANGED: '편집 범위 변경',
@@ -335,10 +340,13 @@ function DocumentResults({ id }: { id: number }) {
           {filled === total ? `질문 ${total}개 모두 기입` : `질문 ${total}개 중 ${filled}개 기입`}{unfilled > 0 ? ` · 자동 기입 못한 답변 ${unfilled}개` : ''}
         </p>
       </div>}
+      {(file.remainingExampleCount ?? 0) > 0 && <p className={d.remainingExamples}>
+        직접 작성할 칸 {file.remainingExampleCount}곳에 예시 문구가 남아 있어요. 제출 전에 지워 주세요.
+      </p>}
       {file.unfilledAnswers.length > 0 && <details className={d.unfilled}>
         <summary className={d.unfilledSummary}>자동 기입 못한 답변 보기 ({file.unfilledAnswers.length})</summary>
         <div aria-label="자동 기입하지 못한 답변">
-          <ul>{file.unfilledAnswers.map((answer) => <li key={answer.fieldId}><strong>{answer.fieldLabel}</strong>: {answer.value} — {reasonLabel(answer.reason)}</li>)}</ul>
+          <ul>{file.unfilledAnswers.map((answer) => <li key={answer.fieldId}><strong>{answer.fieldLabel}</strong>: {answer.value} — {reasonLabel(answer)}</li>)}</ul>
         </div>
       </details>}
     </article>

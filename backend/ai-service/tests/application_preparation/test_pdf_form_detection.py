@@ -84,3 +84,29 @@ def test_pdf_inspection_does_not_load_multiple_models_concurrently(monkeypatch):
         assert await asyncio.gather(*(adapter.inspect(i, None) for i in range(3))) == [0, 1, 2]
         assert peak == 1
     asyncio.run(run())
+
+
+def test_labels_follow_printed_order_whatever_order_the_words_arrive_in():
+    detection = {"kind": 0, "confidence": .8, "box": box(.5, .2, .3, .03)}
+    words = [{"text": "명", "box": box(.44, .205, .02, .02)},
+             {"text": "기", "box": box(.36, .205, .02, .02)},
+             {"text": "업", "box": box(.40, .206, .02, .02)}]
+    for ordering in (words, list(reversed(words)), words[1:] + words[:1]):
+        assert checked_regions([detection], ordering, [])[0]["labels"] == ["기 업 명"]
+
+
+def test_letter_gap_inside_a_spaced_label_is_not_an_input_but_a_wide_blank_is():
+    words = [{"text": "상", "box": box(.10, .30, .02, .02)}, {"text": "호", "box": box(.16, .30, .02, .02)},
+             {"text": "성", "box": box(.10, .40, .02, .02)}, {"text": "명", "box": box(.40, .40, .02, .02)}]
+    gap = {"kind": 0, "confidence": .8, "box": box(.122, .298, .036, .024)}
+    wide = {"kind": 0, "confidence": .8, "box": box(.13, .398, .25, .024)}
+    result = checked_regions([gap, wide], words, [])
+    assert [region["box"]["y"] for region in result] == [pytest.approx(.398)]
+
+
+def test_ruled_words_and_regions_come_back_in_reading_order():
+    from app.application_preparation.pdf_mcp_extension import reading_order
+    words = [{"text": t, "box": box(x, y, .02, .02)} for t, x, y in
+             [("금", .3, .101), ("자", .1, .1), ("본", .2, .099), ("둘째", .1, .2)]]
+    assert [w["text"] for w in reading_order(words)] == ["자", "본", "금", "둘째"]
+    assert [w["text"] for w in reading_order(list(reversed(words)))] == ["자", "본", "금", "둘째"]

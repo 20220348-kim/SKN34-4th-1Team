@@ -263,16 +263,18 @@ class ApplicationPreparationRepositoryIntegrationTest {
         val preparation = repository.create(ownerId, draft())
         val omitted = ApplicationDocumentUnfilledAnswer("company:consent", "기업 개요 / 개인정보 동의", "동의함", "INPUT_LOCATION_NOT_FOUND")
         val file = documents.save(ownerId, preparation.id, 1, "부분초안.pdf", "application/pdf", byteArrayOf(1), "a".repeat(64), emptyList(),
-            fingerprint = "4".repeat(64), filledAnswerCount = 1, unfilledAnswers = listOf(omitted))
+            fingerprint = "4".repeat(64), filledAnswerCount = 1, unfilledAnswers = listOf(omitted), remainingExampleCount = 2)
         val restored = documents.findOwned(ownerId, preparation.id, file.id)!!
         assertEquals(1, restored.filledAnswerCount)
         assertEquals(listOf(omitted), restored.unfilledAnswers)
+        assertEquals(2, restored.remainingExampleCount)
         assertEquals(listOf(file.id), documents.listOwned(ownerId, preparation.id).map { it.id })
         assertEquals(emptyList<Long>(), documents.listOwned(otherId, preparation.id).map { it.id })
 
         val legacy = documents.save(ownerId, preparation.id, 1, "이전.pdf", "application/pdf", byteArrayOf(2), "a".repeat(64), emptyList())
         assertNull(documents.findOwned(ownerId, preparation.id, legacy.id)!!.filledAnswerCount)
         assertEquals(emptyList<ApplicationDocumentUnfilledAnswer>(), documents.findOwned(ownerId, preparation.id, legacy.id)!!.unfilledAnswers)
+        assertEquals(0, documents.findOwned(ownerId, preparation.id, legacy.id)!!.remainingExampleCount)
     }
 
     @Test

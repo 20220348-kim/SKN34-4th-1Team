@@ -5,6 +5,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import re
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -15,9 +16,11 @@ from jsonschema import validate, ValidationError as SchemaValidationError
 from app.application_preparation.document_contract import DocumentError
 
 logger = logging.getLogger(__name__)
+# Fixed failure codes raised by pdf_mcp_extension / pdf_form_detection (ValueError messages we own).
+GOVBIZ_PDF_ERROR = re.compile(r"\bPDF_(?:GEOMETRY|TABLE_GEOMETRY|DETECTION)_[A-Z_]+\b")
 ALLOWED = {
-    "hwpx": frozenset({"inspect_editable_regions", "analyze_form", "get_table_map", "find_cell_by_label", "analyze_formfit",
-                       "preview_addressed_edits", "apply_addressed_edits", "verify_targets", "govbiz_verify_hwpx_edits"}),
+    "hwpx": frozenset({"inspect_editable_regions", "analyze_form", "get_table_map", "find_cell_by_label", "govbiz_hwpx_fit",
+                       "govbiz_hwpx_prepare_answer_styles", "preview_addressed_edits", "apply_addressed_edits", "verify_targets", "govbiz_verify_hwpx_edits"}),
     "pdf": frozenset({"pdf_get_text", "pdf_get_text_layout", "pdf_detect_paragraphs", "pdf_find_text", "pdf_replace_single", "pdf_extract_bbox_text", "govbiz_verify_pdf_deletion", "govbiz_pdf_text_regions", "govbiz_pdf_detect_inputs"}),
     "kordoc": frozenset({"parse_document"}),
 }
@@ -49,7 +52,12 @@ class DocumentMcpSession:
         if result.is_error:
             if self.kind == "hwpx" and any(c.type == "text" and "GOVBIZ_UNSUPPORTED_STYLE_RANGE" in c.text for c in result.content):
                 raise DocumentError("UNSUPPORTED")
-            raise self._failure(name, "REMOTE_TOOL_ERROR")
+            # Our own PDF tool extensions fail with fixed codes; pass only those on so the cause is not lost.
+            code = next((match.group(0) for c in result.content if c.type == "text"
+                         for match in [GOVBIZ_PDF_ERROR.search(c.text)] if match), None)
+            if code and code.endswith("_LIMIT"):
+                raise DocumentError("LIMIT_EXCEEDED", reason=code)
+            raise self._failure(name, f"REMOTE_TOOL_ERROR:{code}" if code else "REMOTE_TOOL_ERROR")
         payload = result.structured_content
         if payload is None:
             text = "\n".join(c.text for c in result.content if c.type == "text")

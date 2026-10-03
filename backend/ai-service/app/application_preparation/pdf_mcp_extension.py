@@ -8,6 +8,23 @@ import hashlib
 from pathlib import Path
 
 
+def reading_order(words: list) -> list:
+    """Printed words in line-then-x order.
+
+    pdfminer groups text boxes with id()-based tie breaks, so its output order can change between runs and
+    put the letters of a spaced label out of order ('업 기 명'). Labels and payloads must not depend on it.
+    """
+    def middle(word):
+        return word['box']['y'] + word['box']['height'] / 2
+    lines = []
+    for word in sorted(words, key=lambda w: (middle(w), w['box']['x'], w['text'])):
+        if lines and abs(middle(word) - lines[-1][0]) <= max(word['box']['height'], lines[-1][1]) / 2:
+            lines[-1][2].append(word)
+        else:
+            lines.append([middle(word), word['box']['height'], [word]])
+    return [word for _, _, line in lines for word in sorted(line, key=lambda w: (w['box']['x'], w['text']))]
+
+
 def pdf_blank_regions(segments: list, words: list, width: float, height: float) -> list:
     """Identify bounded empty table cells/bands from real ruled edges and printed words."""
     from itertools import combinations
@@ -17,6 +34,18 @@ def pdf_blank_regions(segments: list, words: list, width: float, height: float) 
             horizontal.setdefault(round(y0, 6), []).append(sorted((x0, x1)))
         elif abs(x0-x1) < 0.01/width and abs(y0-y1) > 3/height:
             vertical.setdefault(round(x0, 6), []).append(sorted((y0, y1)))
+    def snap(lines, tolerance):
+        # Thin filled rectangles and doubled rules draw one visible line two or more times a fraction of a point
+        # apart; counting each copy would push ordinary tables over the limit below.
+        merged = {}
+        for key in sorted(lines):
+            anchor = next(reversed(merged), None)
+            if anchor is not None and key - anchor <= tolerance:
+                merged[anchor].extend(lines[key])
+            else:
+                merged[key] = list(lines[key])
+        return merged
+    horizontal, vertical = snap(horizontal, 1.5/height), snap(vertical, 1.5/width)
     if len(horizontal) > 150 or len(vertical) > 100:
         raise ValueError("PDF_TABLE_GEOMETRY_LIMIT")
     def covered(intervals, start, end, tolerance):
@@ -48,14 +77,14 @@ def pdf_blank_regions(segments: list, words: list, width: float, height: float) 
         candidates = []
         if not contents:
             neighbors = [ws for (a,b,c,d),ws in cells if abs(c-left)<1/width and abs(b-top)<1/height and abs(d-bottom)<1/height]
-            labels = [' '.join(w['text'] for w in ws) for ws in neighbors if ws]
+            labels = [' '.join(w['text'] for w in reading_order(ws)) for ws in neighbors if ws]
             if not labels:
                 above = [w for w in words if top-24/height <= bounds(w)[3] <= top and left <= (bounds(w)[0]+bounds(w)[2])/2 <= right]
-                labels = [' '.join(w['text'] for w in sorted(above, key=lambda w:(round(bounds(w)[1],2),bounds(w)[0])))] if above else []
+                labels = [' '.join(w['text'] for w in reading_order(above))] if above else []
             candidates.append(((left+2/width, top+.5/height, right-2/width, bottom-.5/height), labels))
         else:
             lines = []
-            for word in sorted(contents, key=lambda w:(bounds(w)[1],bounds(w)[0])):
+            for word in reading_order(contents):
                 box = bounds(word)
                 row = next((r for r in lines if abs(bounds(r[0])[1]-box[1]) < 3/height), None)
                 if row is None: lines.append([word])
@@ -130,6 +159,8 @@ def read_pdf_text_regions(pdf_path: str) -> dict:
                     append(word); word = []
                 word.append(char)
             append(word)
+        # The regions also reach the model as printedTextRegions; a fixed order keeps the request stable.
+        regions = reading_order(regions)
         count += len(regions)
         if count > 10000:
             raise ValueError("PDF_GEOMETRY_REGION_LIMIT")
@@ -142,8 +173,15 @@ def read_pdf_text_regions(pdf_path: str) -> dict:
                     segments.append(((a-left)/(right-left),(top-b)/(top-bottom),(c-left)/(right-left),(top-d)/(top-bottom)))
             for child in getattr(node, '_objs', []): curves(child)
         curves(layout)
-        result.append({"page": index, "regions": regions,
-            "blankRegions": pdf_blank_regions(segments, regions, right-left, top-bottom)})
+        try:
+            blank = pdf_blank_regions(segments, regions, right-left, top-bottom)
+        except ValueError as error:
+            if str(error) != "PDF_TABLE_GEOMETRY_LIMIT":
+                raise
+            # Hundreds of rules on one page are charts or decoration, not a fillable table. Only the ruled-cell
+            # refinement is skipped for this page; the detector still proposes inputs and other pages are read.
+            blank = []
+        result.append({"page": index, "regions": regions, "blankRegions": blank})
     if len(result) != len(pages):
         raise ValueError("PDF_GEOMETRY_PAGE_MISMATCH")
     return {"page_count": len(pages), "pages": result}

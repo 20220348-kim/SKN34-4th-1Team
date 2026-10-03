@@ -3,6 +3,7 @@ package ai.govbiz.core.applicationpreparation.service
 import ai.govbiz.core.account.domain.Account
 import ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentFact
 import ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentFile
+import ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentSkippedFact
 import ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentUnfilledAnswer
 import ai.govbiz.core.applicationpreparation.domain.ApplicationFormManifest
 import ai.govbiz.core.applicationpreparation.domain.ApplicationFieldMappingStatus
@@ -232,6 +233,13 @@ class ApplicationDocumentService(
         if (original.format.equals("xlsx", true) && (result.verification["formulas"] != "PASSED" ||
                 result.verification["dataValidation"] != "PASSED" || result.verification["unchangedParts"] != "PASSED"))
             throw ApplicationDocumentException("APPLICATION_DOCUMENT_VALIDATION_FAILED", "XLSX 수식·검증 규칙 보존 결과를 확인하지 못했습니다.")
+        // 칸에 맞지 않거나 쓸 빈칸을 정할 수 없어 남긴 답은 나머지 답으로 만든 초안과 함께 미기입 목록으로 알립니다.
+        val skipped = result.skippedFacts.toMutableList()
+        if (skipped.map { it.factId }.distinct().size != skipped.size || skipped.size >= writableFacts.size ||
+            skipped.any { it.factId !in writableFactIds || it.reason !in ApplicationDocumentSkippedFact.REASONS })
+            throw ApplicationDocumentException("APPLICATION_DOCUMENT_VALIDATION_FAILED", "문서 결과의 미기입 답변 목록을 확인하지 못했습니다.")
+        if (result.remainingExampleCount !in 0..3000)
+            throw ApplicationDocumentException("APPLICATION_DOCUMENT_VALIDATION_FAILED", "문서 결과의 남은 예시 칸 수를 확인하지 못했습니다.")
         val bytes = if (original.format.equals("hwp", true)) {
             if (result.verification["stage"] != "HWPLIB_REQUIRED" || !output.contentEquals(original.bytes))
                 throw ApplicationDocumentException("APPLICATION_DOCUMENT_VALIDATION_FAILED", "HWP 원본과 편집 처리 순서가 일치하지 않습니다.")
@@ -244,14 +252,23 @@ class ApplicationDocumentService(
             }
             if (plan.sourceSha256 != manifest.attachmentSha256 || plan.answerRevision != expectedRevision ||
                 plan.mapVersion != result.mapVersion || plan.mapVersion != binding.mapVersion || plan.planHash != result.planHash ||
+                plan.skippedFacts.toSet() != skipped.toSet() ||
                 result.placements.toSet() != plan.operations.filter { it.valueRef != null }.map { ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentPlacement(it.valueRef!!, it.targetId) }.toSet() ||
                 sha256(json.writeValueAsBytes(canonical(result.writePlan.filterKeys { it != "planHash" }))) != result.planHash)
                 throw ApplicationDocumentException("APPLICATION_DOCUMENT_VALIDATION_FAILED", "HWP 편집 계획의 원본·버전·해시가 일치하지 않습니다.")
             editor.applyHwpPlan(original.bytes, writableFacts, plan, writableBindings, binding.scopeTargetIds)
         } else if (original.format.equals("pdf", true)) {
             if (result.verification["stage"] != "PDFBOX_REQUIRED") throw ApplicationDocumentException("APPLICATION_DOCUMENT_VALIDATION_FAILED", "PDF 처리 순서가 일치하지 않습니다.")
-            editor.fill(output, "pdf", writableFacts, result.placements)
+            val skippedIds = skipped.map { it.factId }.toSet()
+            val (filled, overflow) = editor.fillPdfFitting(output, writableFacts.filter { it.id !in skippedIds }, result.placements)
+            overflow.forEach { (factId, capacity) -> skipped += ApplicationDocumentSkippedFact(factId, reason = "OVERFLOW", capacity = capacity) }
+            filled
         } else output
+        val unfilled = unfilledAnswers + skipped.map { item ->
+            val fact = writableFacts.single { it.id == item.factId }
+            ApplicationDocumentUnfilledAnswer(fact.id, fact.label, fact.value,
+                if (item.reason == "UNRESOLVED") "INPUT_LOCATION_NOT_FOUND" else item.reason, item.capacity)
+        }
         val format = original.format.lowercase()
         val fileName = draftFileName(manifest.attachmentFileName, expectedRevision, format)
         val mediaType = draftMediaType(format)
@@ -260,8 +277,8 @@ class ApplicationDocumentService(
         return listOf(files.save(account.id, id, expectedRevision, fileName, mediaType, bytes, manifest.attachmentSha256, result.placements,
             fingerprint = fingerprint,
             evidence = mapOf("documentMap" to result.documentMap, "writePlan" to result.writePlan, "verification" to verification, "pipelineVersion" to result.pipelineVersion),
-            filledAnswerCount = writableFacts.size,
-            unfilledAnswers = unfilledAnswers))
+            filledAnswerCount = writableFacts.size - skipped.size,
+            unfilledAnswers = unfilled, remainingExampleCount = result.remainingExampleCount))
         } catch (error: ApplicationDocumentException) {
             if (error.code == "APPLICATION_DOCUMENT_OUTCOME_UNKNOWN") {
                 // 결과를 확인하지 못한 실행은 사람이 확인할 시간만 잠그고, 영구 잠금으로 남기지 않는다.
