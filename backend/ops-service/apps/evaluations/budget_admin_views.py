@@ -1,4 +1,4 @@
-"""Core 관리자 세션으로 읽는 장부. 실행기 전용 예산 쓰기 API와 인증을 공유하지 않는다."""
+"""Core 관리자 세션의 예산 검토·변경. 실행기 전용 인증과 분리한다."""
 
 from uuid import uuid4
 
@@ -6,13 +6,20 @@ from django.db import transaction
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.views.decorators.cache import never_cache
+from rest_framework import serializers
 from rest_framework.decorators import api_view
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 
 from .budget import call_limits
 from .budget_cleanup import cleanup_data
-from .budget_reporting import budget_summary, legacy_usage_data, reservation_data
+from .budget_reporting import (
+    budget_summary,
+    change_data,
+    change_limits,
+    legacy_usage_data,
+    reservation_data,
+)
 from .catalog import DATASETS
 from .legacy_usage import LegacyUsageUnavailable, reconcile_legacy_usage
 from .models import (
@@ -22,6 +29,67 @@ from .models import (
     EvaluationRun,
 )
 from .usage_correction import correction_data
+
+
+class BudgetLimitsRequest(serializers.Serializer):
+    request_id = serializers.UUIDField()
+    expected_revision = serializers.RegexField(r"^[a-f0-9]{64}$")
+    calls = serializers.IntegerField(min_value=0, max_value=2**53 - 1)
+    output_tokens = serializers.IntegerField(min_value=0, max_value=2**53 - 1)
+    input_tokens = serializers.IntegerField(min_value=0, max_value=2**53 - 1, allow_null=True)
+    reason = serializers.CharField(max_length=1000, allow_blank=False)
+
+
+class LegacyUsageRequest(serializers.Serializer):
+    request_id = serializers.UUIDField()
+    evidence_sha256 = serializers.RegexField(r"^[a-f0-9]{64}$")
+    reason = serializers.CharField(max_length=1000, allow_blank=False)
+
+
+def _write_payload(request, schema):
+    serializer = schema(data=request.data)
+    if not isinstance(request.data, dict) or set(request.data) - set(serializer.fields):
+        raise serializers.ValidationError("허용된 변경 항목만 전달하세요.")
+    for key in ("calls", "output_tokens", "input_tokens"):
+        if key in request.data and not (key == "input_tokens" and request.data[key] is None):
+            if type(request.data[key]) is not int:
+                raise serializers.ValidationError("한도는 정수로 전달하세요.")
+    if not isinstance(request.data.get("reason"), str):
+        raise serializers.ValidationError("검토 사유를 입력하세요.")
+    serializer.is_valid(raise_exception=True)
+    return serializer.validated_data
+
+
+@never_cache
+@api_view(["POST"])
+def api_change_limits(request):
+    payload = _write_payload(request, BudgetLimitsRequest)
+    try:
+        change = change_limits(
+            **payload, actor=request.user.get_username(), authenticated_actor=request.user
+        )
+    except ValueError as error:
+        return Response({"code": "BUDGET_CHANGE_CONFLICT", "detail": str(error)}, status=409)
+    return Response({"change": change_data(change)})
+
+
+@never_cache
+@api_view(["POST"])
+def api_apply_legacy_usage(request, run_id):
+    get_object_or_404(EvaluationRun, pk=run_id)
+    payload = _write_payload(request, LegacyUsageRequest)
+    try:
+        result = reconcile_legacy_usage(
+            **payload,
+            run_id=run_id,
+            actor=request.user.get_username(),
+            authenticated_actor=request.user,
+            apply=True,
+        )
+    except LegacyUsageUnavailable as error:
+        return Response({"code": "LEGACY_USAGE_CONFLICT", "detail": str(error)}, status=409)
+    applied, replayed = result.pop("applied"), result.pop("replayed")
+    return Response({"applied": applied, "replayed": replayed, "record": result})
 
 
 @never_cache

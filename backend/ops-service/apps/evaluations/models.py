@@ -376,12 +376,16 @@ class EvaluationBudgetReservation(models.Model):
 
 
 class EvaluationBudgetChange(models.Model):
-    """CLI가 기록하는 한도 변경 원장. 기존 한도의 출처를 소급해서 만들지 않는다."""
+    """CLI 또는 인증된 관리자의 한도 변경 원장. 기존 출처는 보존한다."""
 
     request_id = models.UUIDField(unique=True)
     budget = models.ForeignKey(EvaluationBudget, on_delete=models.PROTECT)
     actor = models.CharField(max_length=150)
     source = models.CharField(max_length=10, default="CLI", editable=False)
+    authenticated_actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, on_delete=models.PROTECT, related_name="+"
+    )
+    expected_revision = models.CharField(max_length=64, null=True)
     reason = models.CharField(max_length=1000)
     previous_call_limit = models.PositiveBigIntegerField(null=True)
     previous_output_token_limit = models.PositiveBigIntegerField(null=True)
@@ -395,7 +399,15 @@ class EvaluationBudgetChange(models.Model):
         ordering = ["-id"]
         constraints = [
             models.CheckConstraint(
-                condition=models.Q(source="CLI"), name="budget_change_cli_source"
+                condition=models.Q(
+                    source="CLI", authenticated_actor__isnull=True, expected_revision__isnull=True
+                )
+                | models.Q(
+                    source="CORE_ADMIN",
+                    authenticated_actor__isnull=False,
+                    expected_revision__isnull=False,
+                ),
+                name="budget_change_actor_source",
             ),
             models.CheckConstraint(
                 condition=~models.Q(actor="") & ~models.Q(reason=""),
@@ -411,6 +423,10 @@ class EvaluationLegacyUsage(models.Model):
     budget = models.ForeignKey(EvaluationBudget, on_delete=models.PROTECT)
     request_id = models.UUIDField(unique=True)
     actor = models.CharField(max_length=150)
+    actor_source = models.CharField(max_length=10, default="CLI", editable=False)
+    authenticated_actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, on_delete=models.PROTECT, related_name="+"
+    )
     reason = models.CharField(max_length=1000)
     capture_sha256 = models.CharField(max_length=64, unique=True)
     evidence_sha256 = models.CharField(max_length=64)
@@ -425,6 +441,11 @@ class EvaluationLegacyUsage(models.Model):
     class Meta:
         ordering = ["-id"]
         constraints = [
+            models.CheckConstraint(
+                condition=models.Q(actor_source="CLI", authenticated_actor__isnull=True)
+                | models.Q(actor_source="CORE_ADMIN", authenticated_actor__isnull=False),
+                name="legacy_usage_actor_source",
+            ),
             models.CheckConstraint(condition=models.Q(calls__gt=0), name="legacy_usage_calls"),
             models.CheckConstraint(
                 condition=~models.Q(actor="") & ~models.Q(reason=""),

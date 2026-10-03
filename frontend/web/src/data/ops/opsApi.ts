@@ -201,17 +201,19 @@ const budgetBreakdownSchema = z.object({
   pending_release_output_tokens: z.number().int(), allocated_calls: z.number().int(), allocated_output_tokens: z.number().int(),
 }).refine((data) => [data.legacy_calls, data.legacy_input_tokens, data.legacy_output_tokens].every((value) => value === undefined)
   || [data.legacy_calls, data.legacy_input_tokens, data.legacy_output_tokens].every((value) => value !== undefined))
+const budgetChangeSchema = z.object({
+  request_id: z.uuid(), actor: z.string(), source: z.enum(['CLI', 'CORE_ADMIN']), reason: z.string(),
+  previous_limits: budgetAmountsSchema.nullable(), limits: budgetAmountsSchema, created_at: z.string(),
+})
 const budgetSummarySchema = z.object({
+  limits_revision: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   input_state: z.enum(['enforced', 'unconfigured', 'legacy_unknown']).optional(),
   state: z.enum(['consistent', 'inconsistent', 'unconfigured']),
   limits: budgetAmountsSchema.nullable(), allocated: budgetAmountsSchema.nullable(), remaining: budgetAmountsSchema.nullable(),
   breakdown: budgetBreakdownSchema.nullable(), reservation_count: z.number().int().nonnegative(),
   legacy_live_run_count: z.number().int().nonnegative(), change_count: z.number().int().nonnegative(),
   legacy_accounted_run_count: z.number().int().nonnegative().optional(),
-  recent_changes: z.array(z.object({
-    request_id: z.uuid(), actor: z.string(), source: z.literal('CLI'), reason: z.string(),
-    previous_limits: budgetAmountsSchema.nullable(), limits: budgetAmountsSchema, created_at: z.string(),
-  })),
+  recent_changes: z.array(budgetChangeSchema),
 })
 const budgetReservationSchema = z.object({
   max_input_tokens: z.number().int().positive().nullable().optional(),
@@ -298,6 +300,7 @@ const legacyPreviewSchema = z.discriminatedUnion('state', [
     : data.after !== null && (['calls', 'input_tokens', 'output_tokens'] as const)
       .every((key) => data.after![key] - data.before![key] === data.usage[key])))
 const legacyUsageSchema = z.object({
+  actor_source: z.enum(['CLI', 'CORE_ADMIN']).optional(),
   request_id: z.uuid(), run_id: z.uuid(), source: z.literal('SAVED_CAPTURE'), provider_receipt_verified: z.literal(false),
   actor: z.string().trim().min(1), reason: z.string().trim().min(1),
   capture_sha256: z.string().regex(/^[a-f0-9]{64}$/), evidence_sha256: z.string().regex(/^[a-f0-9]{64}$/),
@@ -401,6 +404,9 @@ export type OpsSession = z.infer<typeof sessionSchema>
 export type EvaluationRun = z.infer<typeof runSchema>
 export type EvaluationPage = z.infer<typeof pageSchema>
 export type BudgetBreakdown = z.infer<typeof budgetBreakdownSchema>
+export type BudgetSummary = z.infer<typeof budgetSummarySchema>
+export type BudgetLimitsInput = { request_id: string; expected_revision: string; calls: number; input_tokens: number | null; output_tokens: number; reason: string }
+export type LegacyUsageInput = { request_id: string; evidence_sha256: string; reason: string }
 export type BudgetPage = z.infer<typeof budgetPageSchema>
 export type RunBudget = z.infer<typeof runBudgetSchema>
 export type UnaccountedRuns = z.infer<typeof unaccountedRunsSchema>
@@ -437,6 +443,8 @@ async function request<T>(path: string, schema: z.ZodType<T>, options: RequestIn
     const error = body
     const message = response.status === 400 && error?.code === 'LIVE_BUDGET_UNAVAILABLE'
       ? '누적 평가 한도가 부족하거나 설정되지 않아 접수하지 않았습니다. 운영자에게 예약·미확인 사용량과 한도를 확인해 주세요.'
+      : ['BUDGET_CHANGE_CONFLICT', 'LEGACY_USAGE_CONFLICT'].includes(error?.code) && typeof error?.detail === 'string'
+        ? error.detail
       : error?.code === 'INVALID_RAG_REVIEW' ? '검토 항목과 의견을 확인하세요. 미측정 항목은 판단 보류만 저장할 수 있습니다.'
       : error?.code === 'INVALID_RAG_REFERENCE_REVIEW' ? '전체 대상 자료의 확인과 참조 검토 근거를 입력하세요.'
       : error?.code === 'CANCEL_FORBIDDEN' ? '평가를 요청한 계정만 취소할 수 있습니다.'
@@ -464,6 +472,18 @@ export const getLegacyUsagePreview = (id: string, signal?: AbortSignal) => reque
   legacyPreviewSchema.refine((data) => data.run_id === id), { signal })
 export const getRunBudget = (id: string, signal?: AbortSignal) => request(`/evaluations/${encodeURIComponent(id)}/budget`,
   runBudgetSchema.refine((data) => !data.legacy_usage || data.legacy_usage.run_id === id), { signal })
+
+export const setBudgetLimits = (data: BudgetLimitsInput, owner: string) => post('/budget/limits', data,
+  z.object({ change: budgetChangeSchema }).refine(({ change }) => change.source === 'CORE_ADMIN'
+    && change.actor === owner && change.request_id === data.request_id && change.reason === data.reason
+    && change.limits.calls === data.calls && change.limits.output_tokens === data.output_tokens
+    && change.limits.input_tokens === data.input_tokens), false, owner)
+export const applyLegacyUsage = (runId: string, data: LegacyUsageInput, owner: string) => post(
+  `/evaluations/${encodeURIComponent(runId)}/legacy-usage`, data,
+  z.object({ applied: z.literal(true), replayed: z.boolean(), record: legacyUsageSchema }).refine(({ record }) =>
+    record.actor_source === 'CORE_ADMIN' && record.actor === owner && record.run_id === runId
+    && record.request_id === data.request_id && record.reason === data.reason
+    && record.evidence_sha256 === data.evidence_sha256), false, owner)
 
 async function post<T>(path: string, data: unknown, schema: z.ZodType<T>, dispatch = false, owner?: string, method = 'POST') {
   // 쓰기 전 Core 관리자 세션과 최신 CSRF 토큰을 확인한다. 토큰·비밀번호는 저장하지 않는다.

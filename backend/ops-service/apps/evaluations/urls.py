@@ -4,6 +4,7 @@ from . import budget_admin_views, budget_views, runtime_views, views
 
 urlpatterns = [
     path("api/v1/ops/budget", budget_admin_views.api_summary),
+    path("api/v1/ops/budget/limits", budget_admin_views.api_change_limits),
     path("api/v1/ops/budget/reservations", budget_admin_views.api_reservations),
     path("api/v1/ops/budget/unaccounted-runs", budget_admin_views.api_unaccounted_runs),
     path(
@@ -11,6 +12,10 @@ urlpatterns = [
         budget_admin_views.api_legacy_usage_preview,
     ),
     path("api/v1/ops/evaluations/<uuid:run_id>/budget", budget_admin_views.api_run_budget),
+    path(
+        "api/v1/ops/evaluations/<uuid:run_id>/legacy-usage",
+        budget_admin_views.api_apply_legacy_usage,
+    ),
     path("api/v1/ops/runtime", runtime_views.runtime_status),
     path("api/v1/ops/evaluations/<uuid:run_id>/cancel", views.api_cancel, name="evaluation-cancel"),
     path("internal/llmops/evaluations/<uuid:run_id>/budget/<str:action>", budget_views.api_budget),

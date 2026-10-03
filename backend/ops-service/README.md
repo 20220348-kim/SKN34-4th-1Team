@@ -440,8 +440,9 @@ Core 원문 재수집·재청킹, runner→Kubernetes Ops 왕복 검증, 금액�
 ## 예산 조회와 한도 변경 감사
 
 호출 흐름은 `React → Core 관리자 세션을 확인하는 Django Ops API → MySQL 장부`입니다.
-추가 production 의존성과 모델 호출은 없습니다. 아래 API는 GET만 허용하고 기존 관리자
-로그인을 재사용합니다. 내부 실행기 Bearer 토큰이나 이전 Django 세션으로는 조회할 수 없습니다.
+추가 production 의존성과 모델 호출은 없습니다. 아래 API는 기존 관리자 로그인을 재사용합니다.
+내부 실행기 Bearer 토큰이나 이전 Django 세션으로는 접근할 수 없습니다.
+쓰기는 Core 관리자 재검증과 CSRF·Origin 검사를 거칩니다.
 관리자는 다른 요청자의 장부도 볼 수 있지만, 평가 취소는 계속 요청자만 가능합니다.
 
 | API | 응답 |
@@ -451,10 +452,20 @@ Core 원문 재수집·재청킹, runner→Kubernetes Ops 왕복 검증, 금액�
 | `GET /api/v1/ops/evaluations/{run_id}/budget` | 해당 실행의 예약·호출별 작업 ID(과거 null)·승인 시각·확정 사용량·정산 시각 |
 | `GET /api/v1/ops/budget/unaccounted-runs?page=1` | 예약·과거 사용량 반영 기록이 없는 live 실행을 25건씩 조회. 미완료·새 명세 실행도 누락 없이 표시 |
 | `GET /api/v1/ops/evaluations/{run_id}/legacy-usage-preview` | 기존 과거 사용량 검증기로 저장 자료 무결성·전체 사용량·현재 한도 대비 반영 조건을 읽기 전용 확인 |
+| `POST /api/v1/ops/budget/limits` | 조회한 한도 버전·요청 UUID·사유와 호출/입력/출력 누적 한도를 검증하고 변경 감사 저장 |
+| `POST /api/v1/ops/evaluations/{run_id}/legacy-usage` | 검토한 증거 해시·요청 UUID·사유로 과거 저장 응답 사용량을 재검증·반영 |
 
 React 평가 목록에는 전체 요약·실행별 예약·최근 한도 변경을, 실행 상세에는 예약과 호출별
 승인·정산을 표시합니다. 15초 간격으로 조회하며 실패 시 마지막 조회 시각과 오류를 함께 유지합니다.
-자동 환급·한도 수정 버튼은 없습니다. 전체 변경 이력은 DB에 보존하며 첫 화면은 최근 10건만 표시합니다.
+**누적 한도 설정 → 변경 내용 확인 → 확인한 한도 저장**으로 누적 한도를 변경합니다.
+자동 환급은 하지 않습니다. 전체 변경 이력은 DB에 보존하며 첫 화면은 최근 10건만 표시합니다.
+
+한도 POST에는 `request_id`, GET 요약의 `limits_revision`을 담은 `expected_revision`,
+`calls`, `input_tokens`, `output_tokens`, `reason`을 전달합니다. 입력 한도 최초 미설정은
+명시적인 `null`이며 활성화한 입력 한도를 다시 해제할 수 없습니다. 조회 후 한도가 변경되면
+409로 재검토를 요구합니다. 이전 값으로 되돌아온 변경도 감지하며, 저장 시 잠금 안에서 최신
+할당량과 장부 일치를 재검증합니다. 기존 할당량 아래로 낮추거나 미확인 과거 입력을 남긴 채
+입력 한도를 활성화할 수 없습니다. 금액·기간별 예산이나 모델 실행 활성화 설정은 아닙니다.
 
 **미반영 실행 목록 확인 → 대상의 사용량 확인**으로 검토 대상을 찾을 수 있습니다.
 목록은 사용량 반영 가능성을 보장하지 않으며 파일을 읽지 않습니다. 개별 확인에서만
@@ -469,10 +480,17 @@ React 평가 목록에는 전체 요약·실행별 예약·최근 한도 변경�
 `as_of`는 검증 완료 시각이며 예상 반영 후 합계는 실제 반영 결과가 아닙니다.
 화면은 다른 실행 선택·페이지 이동·새로고침 때 이전 결과를 제거하고 지연 응답을 무시합니다.
 
-과거 사용량은 `0024_legacy_usage`의 별도 감사 테이블에 기록합니다. 실제 반영은
-`reconcile_legacy_evaluation_usage`의 담당자·사유·요청 UUID·미리보기 증거 해시 및 `--apply`를
-사용하는 기존 운영 절차를 따릅니다. 조회에서 반영 권한이나 품질 승인을 대신하지 않으며,
-저장 응답 사용량은 제공자의 청구 확인과도 구분합니다. 이번 조회 API에 새 migration은 없습니다.
+과거 사용량은 `0024_legacy_usage`의 별도 감사 테이블에 기록합니다. 화면에서는 반영 조건을
+충족한 미리보기에 검토 사유·사용량/출처 확인을 입력하고 **검토한 사용량 반영**을 누릅니다.
+POST는 `request_id`, `evidence_sha256`, `reason`만 받으며 검토한 자료·전체 사용량·한도를
+잠금 안에서 다시 확인합니다. CLI의 `reconcile_legacy_evaluation_usage --apply`도 유지합니다.
+조회나 장부 반영은 답변 품질 승인이 아니며 저장 응답 사용량은 제공자의 청구 확인과 구분합니다.
+
+두 쓰기 API는 변경자·출처를 클라이언트에서 받지 않습니다. 인증된 Core 사용자와
+`CORE_ADMIN` 출처를 기록하며, 기존 CLI 이력의 자기 기입 변경자와 `CLI` 출처를 보존합니다.
+동일 요청 UUID·동일 관리자·동일 입력의 재전송은 이전 이력만 반환합니다. 다른 요청 내용이나
+관리자로 UUID를 재사용하면 409입니다. 화면은 응답 유실 후 같은 UUID로 재확인하며
+한도·사용량 저장으로 새 모델 호출, 예약 생성 또는 사람 검토 승인을 수행하지 않습니다.
 
 예산 구성은 다음과 같습니다. 호출 한도는 호출 횟수, 출력 한도는 토큰 수이며 금액이 아닙니다.
 
@@ -498,7 +516,8 @@ React 평가 목록에는 전체 요약·실행별 예약·최근 한도 변경�
 `unbounded_input_calls`/`unbounded_input_reservations`가 있으면 전체 입력 사용량이 아닙니다. 이 실행의 사용량을 0으로 만들지 않습니다.
 replay/recovery 자체에는 새 모델 예약이 없어 `not_applicable`이며 원본 비용은 원본 장부를 확인합니다.
 
-최신 예산 상세 API 배포 전 migration **`0024_legacy_usage`까지** 적용해야 합니다.
+최신 예산 API 배포 전 migration **`0025_admin_budget_writes`까지** 적용해야 합니다.
+`0025`는 인증된 변경자 FK·한도 조회 버전·출처 제약을 추가하며 기존 CLI 기록을 그대로 보존합니다.
 `0013_budget_change_audit`는 한도 변경 감사를, `0014`는 종료 예약 정리 감사를,
 `0015_usage_correction`은 사용량 보정과 원본 증거를, `0016`은 새 호출의 작업 ID를 저장합니다.
 `0017`은 입력 한도·할당량·예약 상한·생성 전 계산값을 추가하고 확인된 과거 입력만 합산합니다.
@@ -511,8 +530,9 @@ replay/recovery 자체에는 새 모델 예약이 없어 `not_applicable`이며 
 현재 한도 변경과 감사 행 저장은 같은 transaction입니다. 감사 저장 실패 시 한도 변경도 롤백합니다.
 이전/새 한도·CLI 출처·변경자·사유·시각을 저장하며 기존 한도에 가짜 과거 이력을 소급 생성하지 않습니다.
 
-관련 검증은 `apps.evaluations.test_budget_reporting`, `test_budget`, `test_cancellation`과 Web의
-`BudgetPanel.test.tsx`, `App.ops.test.tsx`입니다. MySQL 동시 조회/정산·최초 한도 설정 경합·
+관련 검증은 `apps.evaluations.test_admin_budget_writes`, `test_budget_reporting`, `test_budget`,
+`test_legacy_usage`, `test_legacy_usage_views`, `test_cancellation`과 Web의 `BudgetLimitsForm.test.tsx`,
+`UnaccountedRunsPanel.test.tsx`, `BudgetPanel.test.tsx`, `App.ops.test.tsx`입니다. MySQL 동시 조회/정산·최초 한도 설정 경합·
 감사 실패 롤백, API 권한·페이지 경계, 화면의 미확인/0토큰 구분을 포함합니다.
 전체 Ops/MySQL·Web 빌드·실제 취소 서버 검증은 기존 필수 CI에서 계속 실행합니다.
 

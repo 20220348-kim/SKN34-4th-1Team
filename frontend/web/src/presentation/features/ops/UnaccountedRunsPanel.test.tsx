@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getLegacyUsagePreview } from '../../../data/ops/opsApi'
+import { applyLegacyUsage, getLegacyUsagePreview, type LegacyUsageInput } from '../../../data/ops/opsApi'
 import { UnaccountedRunsPanel } from './UnaccountedRunsPanel'
 
 const first = '10000000-0000-4000-8000-000000000001'
@@ -23,6 +23,93 @@ const mount = (onExpired = vi.fn()) => render(<MemoryRouter><UnaccountedRunsPane
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 describe('미반영 실행 사용량 확인', () => {
+  const owner = 'core:81'
+  const session = { user: { id: owner, username: '관리자' }, csrf_token: 'csrf-test', live_enabled: false, datasets: [] }
+  const applied = (data: LegacyUsageInput) => ({ applied: true, replayed: false, record: {
+    request_id: data.request_id, run_id: first, source: 'SAVED_CAPTURE', provider_receipt_verified: false,
+    actor: owner, actor_source: 'CORE_ADMIN', reason: data.reason, created_at: at,
+    evidence_sha256: data.evidence_sha256, capture_sha256: verified.capture_sha256,
+    usage: verified.usage, before: verified.before, after: verified.after,
+  } })
+  const review = async () => {
+    fireEvent.click(await screen.findByRole('button', { name: `사용량 확인 ${first}` }))
+    const reason = await screen.findByLabelText('사용량 검토 사유')
+    fireEvent.change(reason, { target: { value: '전체 저장 응답 검토' } })
+    fireEvent.click(screen.getByRole('checkbox'))
+  }
+
+  it('사용량·출처를 확인하고 사유를 작성한 뒤에만 검토한 증거를 반영한다', async () => {
+    let saved = false
+    const fetch = vi.fn(async (url: string, options?: RequestInit) => {
+      if (url.endsWith('/session')) return json(session)
+      if (options?.method === 'POST') { saved = true; return json(applied(JSON.parse(options.body as string))) }
+      return json(url.includes('unaccounted-runs') ? (saved ? { ...listing, count: 0, results: [] } : listing) : verified)
+    })
+    vi.stubGlobal('fetch', fetch)
+    const onApplied = vi.fn()
+    render(<MemoryRouter><UnaccountedRunsPanel onExpired={vi.fn()} refreshKey={0} operatorId={owner} onApplied={onApplied} /></MemoryRouter>)
+    fireEvent.click(await screen.findByRole('button', { name: `사용량 확인 ${first}` }))
+    const button = await screen.findByRole('button', { name: '검토한 사용량 반영' })
+    expect((button as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.change(screen.getByLabelText('사용량 검토 사유'), { target: { value: ' 전체 저장 응답 검토 ' } })
+    expect((button as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(screen.getByRole('checkbox'))
+    expect(fetch.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(0)
+    fireEvent.click(button)
+    await waitFor(() => expect(onApplied).toHaveBeenCalledTimes(1))
+    const [url, options] = fetch.mock.calls.find(([, options]) => options?.method === 'POST')!
+    expect(url).toBe(`/api/v1/ops/evaluations/${first}/legacy-usage`)
+    expect(options?.headers).toMatchObject({ 'X-CSRFToken': 'csrf-test' })
+    expect(JSON.parse(options!.body as string)).toMatchObject({ evidence_sha256: verified.evidence_sha256, reason: '전체 저장 응답 검토' })
+    expect(await screen.findByText('미반영 실행이 없습니다.')).toBeTruthy()
+    expect(screen.queryByRole('form', { name: '과거 사용량 반영' })).toBeNull()
+  })
+
+  it('응답 유실 시 검토 내용과 요청 ID를 유지한 재시도로 결과를 확인한다', async () => {
+    const writes: LegacyUsageInput[] = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, options?: RequestInit) => {
+      if (url.endsWith('/session')) return json(session)
+      if (options?.method === 'POST') {
+        const data = JSON.parse(options.body as string) as LegacyUsageInput
+        writes.push(data)
+        if (writes.length === 1) throw new TypeError('응답 유실')
+        return json({ ...applied(data), replayed: true })
+      }
+      return json(url.includes('unaccounted-runs') ? listing : verified)
+    }))
+    const onApplied = vi.fn()
+    render(<MemoryRouter><UnaccountedRunsPanel onExpired={vi.fn()} refreshKey={0} operatorId={owner} onApplied={onApplied} /></MemoryRouter>)
+    await review()
+    fireEvent.click(screen.getByRole('button', { name: '검토한 사용량 반영' }))
+    await screen.findByRole('alert')
+    expect((screen.getByLabelText('사용량 검토 사유') as HTMLTextAreaElement).disabled).toBe(true)
+    expect(onApplied).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '같은 반영 요청 재확인' }))
+    await waitFor(() => expect(onApplied).toHaveBeenCalledTimes(1))
+    expect(writes).toHaveLength(2)
+    expect(writes[1]).toEqual(writes[0])
+  })
+
+  it.each([401, 403, 409])('반영 거절 %i는 성공으로 처리하지 않는다', async (status) => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string, options?: RequestInit) => {
+      if (url.endsWith('/session')) return json(session)
+      if (options?.method === 'POST') return json({ code: 'LEGACY_USAGE_CONFLICT', detail: '검토 이후 증거가 변경됐습니다.' }, status)
+      return json(url.includes('unaccounted-runs') ? listing : verified)
+    }))
+    const onApplied = vi.fn(), onExpired = vi.fn()
+    render(<MemoryRouter><UnaccountedRunsPanel onExpired={onExpired} refreshKey={0} operatorId={owner} onApplied={onApplied} /></MemoryRouter>)
+    await review(); fireEvent.click(screen.getByRole('button', { name: '검토한 사용량 반영' }))
+    await screen.findByRole('alert')
+    expect(onApplied).not.toHaveBeenCalled()
+    expect(onExpired).toHaveBeenCalledTimes(status === 409 ? 0 : 1)
+  })
+
+  it.each([{ actor_source: 'CLI' }, { actor: 'core:82' }, { run_id: second }, { evidence_sha256: 'c'.repeat(64) }, { request_id: second }])('다른 실행·검토 근거·인증의 응답을 반영 성공으로 표시하지 않는다: %j', async (changes) => {
+    const data = { request_id: first, evidence_sha256: verified.evidence_sha256, reason: '검토' }
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => json(url.endsWith('/session') ? session : { ...applied(data), record: { ...applied(data).record, ...changes } })))
+    await expect(applyLegacyUsage(first, data, owner)).rejects.toThrow()
+  })
+
   it('목록에서 선택한 실행만 검증하고 GET 조회로 예상 사용량과 출처를 표시한다', async () => {
     const fetch = vi.fn(async (url: string) => json(url.includes('unaccounted-runs') ? listing : verified))
     vi.stubGlobal('fetch', fetch)
