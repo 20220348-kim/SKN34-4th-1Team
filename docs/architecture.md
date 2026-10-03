@@ -138,8 +138,21 @@ Nginx 한 IP의 전달 헤더만 신뢰하고 기존 계정·Origin 검증을 �
 `ApplicationFormDiscoveryOutboxScheduler → QueueClient → RabbitMQ → ApplicationFormDiscoveryJobConsumer → JobService`
 가 공유 실행 슬롯·DB 실행권을 선점한 뒤, 기존 세션 Account가 명시적으로 요청한 네 제공처 공고를
 `ApplicationFormDiscoveryService → 제공처별 AttachmentClient → 공식 첨부 → SupportProgramDocumentParser →
-AiApplicationPreparationFacade → AI Service`로 분석합니다. 파싱한 첨부는 파일명 규칙(`ApplicationAttachmentRole`)으로 위원용·공고문 같은
-비신청 문서를 AI 호출 전에 제외하고(남는 문서가 없으면 전부 분석) 신청서로 보이는 문서부터 최대 3개씩 동시에 추출합니다.
+AiApplicationPreparationFacade → AI Service`로 분석합니다. 파싱한 첨부는 같은 파일이거나 같은 서식을 형식만 바꿔 올린 사본이면
+`_common/helper/AttachmentCopyHelper`로 읽힌 사본 중 한 형식(HWPX > HWP > DOCX > XLSX > PDF)만 남기고(우선 형식을 읽지 못하면 다음 사본),
+파일명 규칙(`ApplicationAttachmentRole`)으로 위원용·공고문 같은 비신청 문서를 AI 호출 전에 제외합니다(남는 문서가 없으면 전부 분석).
+이름이 신청서·양식(`(양식)`, `서식`, 조사서·명세서·확인서, 신청내역, application 등)이 아니고 본문에 서식 신호(별지·서식 번호, 신청서·계획서, 서명·날인 칸(`(인)`·`(서명)`·`서명 또는 인`),
+빈 날짜 줄(`년  월  일`, `20  .  .  .`), 업체명·대표자·연락처 같은 라벨만 있는 줄이 5개 이상인 입력 표, 동의·서약서, 영문 서식의 서명 칸)도 없는 첨부는 유료 분석을 보내지 않습니다. 공고문으로 이름 붙은 첨부는 "신청서 제출" 같은 언급만으로는
+서식으로 보지 않고 구조 신호를 봅니다. 남는 문서가 없으면 AI 호출 없이 `NO_FORM`으로 닫고, 신청서로 보이는 문서부터 공고당 최대 8개를
+3개씩 동시에 추출합니다.
+분석이 남긴 사용자 안내(받지 못한 첨부, 서식 신호가 없어 건너뛴 첨부, 입력 위치를 확인하지 못해 제외한 양식, 신청자가 직접 체크해야
+하는 동의 항목)는 성공·실패 모두 V48 `application_form_availability.analysis_warnings`(JSON, 최대 20개·500자)에 저장해
+`GET /forms/availability`의 `state.warnings`로 보여 주고, 공고가 바뀌어 상태가 무효가 되면 비웁니다.
+기업마당 첨부는 상세 페이지의 '본문출력파일' 구역(공고 본문에 넣은 파일)을 개수 상한에서 빼고, 같은 파일이 두 구역에 걸리면
+한 번만 받으며, 같은 서식의 형식별 사본은 한 문서로 세어 8개를 넘으면 실패하지 않고 앞의 8개만 받은 뒤 나머지를 안내합니다. 각 문서의
+우선 사본을 먼저 받고 다른 형식 사본은 남는 크기 한도 안에서 받아 두어, 우선 사본이 크기 제한에 걸리거나 읽히지 않아도 다른 사본으로
+분석합니다(발행기관 중기부 HWPX가 있으면 기업마당 변환본은 받지 않음). 수집 단계에서 실패해도 그때까지의 안내를 `state.warnings`로 남깁니다.
+받을 수 있는 첨부가 지원하지 않는 형식뿐인 공고(기업마당 ZIP 등)와 K-Startup 첨부가 자동 분석 한도를 넘는 공고도 받지 않은 첨부와 이유를 안내에 남깁니다.
 AI Service가 HWPX native 입력 대상 한도(3,000개) 초과를 413으로 확정한 첨부는 재시도·검토 잠금 없이 그 첨부만 제외하고
 (`자동 분석 제외 첨부(NATIVE_TARGET_LIMIT)` 경고) 남는 문서가 없으면 `TOO_LARGE`로 닫습니다.
 양식은 찾았으나 입력칸 매핑만 실패한 경우는 `RETRY_WAITING`으로 두어 3회까지 다시 시도하며, AI Service는 매핑 응답이 스키마

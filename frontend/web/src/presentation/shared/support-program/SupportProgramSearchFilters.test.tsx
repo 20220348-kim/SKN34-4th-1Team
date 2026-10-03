@@ -31,7 +31,7 @@ describe.each([
     if (url.includes('/discovery-jobs')) return Response.json([])
     const query = new URL(url).searchParams
     return Response.json({ state: { sourceCode: query.get('sourceCode'), sourceProgramId: query.get('sourceProgramId'), status: 'NO_FORM',
-      reasonCode: 'NO_FORM', nextRetryAt: null, attemptCount: 1 }, forms: { items: [] } })
+      reasonCode: 'NO_FORM', nextRetryAt: null, attemptCount: 1, warnings: [] }, forms: { items: [] } })
   }
   const catalogCalls = (fetcher: { mock: { calls: [string, ...unknown[]][] } }) => fetcher.mock.calls.filter(([url]) => !isFormLookup(url))
 

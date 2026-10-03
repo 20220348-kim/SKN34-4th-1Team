@@ -100,8 +100,8 @@ function AvailabilitySummary({ vm }: { vm: NewViewModel }) {
     </div>
     : <div className={`${n.alert} ${n.alertNeutral}`} role="status">
       <div className={n.alertText}>
-        <strong className={n.alertTitle}>저장된 신청 양식이 없어요</strong>
-        <p>아래 ②에서 입력칸별로 분석할 수 있어요.</p>
+        <strong className={n.alertTitle}>{vm.noForm?.title ?? '저장된 신청 양식이 없어요'}</strong>
+        <p>아래 ②에서 이유를 확인하고 입력칸별로 분석할 수 있어요.</p>
       </div>
     </div>
 }
@@ -268,8 +268,10 @@ function FormSectionBody({ vm }: { vm: NewViewModel }) {
       : vm.selectedForm
         ? <FormChoice vm={vm} />
         : <section className={n.card} aria-labelledby="new-no-form-title">
-          <h3 className={n.cardTitle} id="new-no-form-title">저장된 양식이 없어요</h3>
-          {vm.noFormReason && <p className={n.muted}>{vm.noFormReason}</p>}
+          <h3 className={n.cardTitle} id="new-no-form-title">{vm.noForm?.title ?? '저장된 양식이 없어요'}</h3>
+          {vm.noForm?.message && <p className={n.muted}>{vm.noForm.message}</p>}
+          {vm.noForm?.detail && <p className={n.muted}>{vm.noForm.detail}</p>}
+          {vm.discoveryWarnings.length > 0 && <ul className={n.warningList}>{vm.discoveryWarnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>}
           <div className={n.centeredAction}>
             <button type="button" className={n.secondary} disabled={vm.submitting || vm.analysisBlocked} onClick={vm.discoverForms}><AiIcon />{vm.lastAnalysis && vm.lastAnalysis.kind !== 'unknown' ? '입력칸별로 다시 분석' : '입력칸별로 분석'}</button>
             <p className={n.muted}>AI가 공식 첨부를 읽어 문항을 뽑아요. 유료 AI 호출이며 계정당 동시에 3건까지 할 수 있어요.</p>

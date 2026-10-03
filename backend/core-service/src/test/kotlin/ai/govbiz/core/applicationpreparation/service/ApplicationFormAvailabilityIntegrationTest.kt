@@ -187,6 +187,8 @@ class ApplicationFormAvailabilityIntegrationTest {
         assertTrue(worker.runNext())
         assertEquals(ApplicationFormAvailabilityStatus.AVAILABLE, state().status)
         assertEquals("계획서.hwpx", availability.activeForms("BIZINFO", id).single().attachmentFileName)
+        // 다른 양식이 저장돼도 빠진 양식은 화면에 알린다.
+        assertTrue(state().warnings.any { it.contains("「신청서」 양식은 입력 위치를 확인하지 못해 제외했어요") })
     }
     @Test fun secondCandidateMappingFailurePreservesFirstSuccess() {
         configureFiles(two=true)
@@ -196,6 +198,27 @@ class ApplicationFormAvailabilityIntegrationTest {
         assertTrue(worker.runNext())
         assertEquals(ApplicationFormAvailabilityStatus.AVAILABLE, state().status)
         assertEquals("신청서.hwpx", availability.activeForms("BIZINFO", id).single().attachmentFileName)
+        assertTrue(state().warnings.any { it.contains("「계획서」 양식은 입력 위치를 확인하지 못해 제외했어요") })
+    }
+    @Test fun noFormKeepsCollectionWarningsUntilTheCatalogChanges() {
+        `when`(attachments.collect("BIZINFO", id)).thenReturn(SupportProgramAttachments(program.title,
+            listOf(SupportProgramAttachment(url, "신청서.hwpx", "HWPX", bytes)), listOf("미수집 첨부(지원 형식 PDF/HWP/HWPX/DOCX/XLSX 이외): 신청서식 & 양식.zip")))
+        `when`(ai.discover(any(AiApplicationFormDiscoveryRequest::class.java) ?: AiApplicationFormDiscoveryRequest("application-form-discovery-v1", "BIZINFO", id, program.title, emptyList()))).thenReturn(payload().copy(forms=emptyList()))
+        availability.register("BIZINFO", id, "a".repeat(64)); worker.runNext()
+        assertEquals(ApplicationFormAvailabilityStatus.NO_FORM, state().status)
+        assertEquals(listOf("미수집 첨부(지원 형식 PDF/HWP/HWPX/DOCX/XLSX 이외): 신청서식 & 양식.zip"), state().warnings)
+        availability.register("BIZINFO", id, "b".repeat(64))
+        assertEquals(ApplicationFormAvailabilityStatus.STALE, state().status)
+        assertEquals(emptyList<String>(), state().warnings)
+    }
+    @Test fun noticeWithoutAnyFormSignalIsNotSentToTheModel() {
+        `when`(attachments.collect("BIZINFO", id)).thenReturn(SupportProgramAttachments(program.title,
+            listOf(SupportProgramAttachment(url, "모집 공고문.hwpx", "HWPX", bytes)), emptyList()))
+        `when`(parser.parse(any(ByteArray::class.java) ?: bytes, anyString())).thenReturn(listOf(SupportProgramDocumentBlock("문단 1", "지원 대상과 신청 기간 안내")))
+        availability.register("BIZINFO", id, "a".repeat(64)); worker.runNext()
+        assertEquals(ApplicationFormAvailabilityStatus.NO_FORM, state().status)
+        assertTrue(state().warnings.any { it.contains("작성할 서식이 보이지 않아 분석하지 않은 첨부: 모집 공고문.hwpx") })
+        verify(ai, never()).discover(any(AiApplicationFormDiscoveryRequest::class.java) ?: AiApplicationFormDiscoveryRequest("application-form-discovery-v1", "BIZINFO", id, program.title, emptyList()))
     }
     @Test fun invalidChoicesInOneCandidateDoNotHideAnotherForm() {
         configureFiles(two=true)

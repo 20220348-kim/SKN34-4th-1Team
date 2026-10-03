@@ -1,6 +1,7 @@
 package ai.govbiz.core.applicationpreparation.service
 
 import ai.govbiz.core._common.exception.AiServiceCallException
+import ai.govbiz.core._common.helper.AttachmentCopyHelper
 import ai.govbiz.core.account.domain.Account
 import ai.govbiz.core.applicationpreparation.client.ai.exception.AiApplicationFormTooLargeException
 import ai.govbiz.core.applicationpreparation.client.ai.exception.AiApplicationFormValidationException
@@ -58,6 +59,11 @@ class ApplicationFormDiscoveryService(
         const val DISCOVERY_CONCURRENCY = 3
         /** 양식 추출은 성공했으나 입력칸 매핑에서 난 실패입니다. 모델 결과가 일정하지 않아 재시도로 풀릴 수 있습니다. */
         val RETRYABLE_DOCUMENT_FAILURES = setOf("APPLICATION_DOCUMENT_PLAN_FAILED", "APPLICATION_DOCUMENT_MAPPING_FAILED", "APPLICATION_DOCUMENT_PLAN_TIMEOUT")
+        /** 한 공고에서 AI 양식 분석을 보내는 첨부 수 상한입니다. 화면의 양식 목록 상한과 같습니다. */
+        const val MAX_DISCOVERY_DOCUMENTS = 8
+
+        /** 화면 계약(경고 20개·각 500자)에 맞춘 사용자 안내입니다. */
+        fun forUser(warnings: List<String>): List<String> = warnings.distinct().map { it.take(500) }.take(20)
 
         private class CandidateOutcome(
             val candidates: List<ExtractedApplicationForm> = emptyList(),
@@ -124,8 +130,8 @@ class ApplicationFormDiscoveryService(
                 program.sourceUrl,
                 configuration,
                 { beforeAi(); if (lease != null) availability.beforeAi(lease) },
-                persist = if (lease == null) null else { forms, metadata ->
-                    transactions.executeWithoutResult { availability.available(lease, forms, metadata) }
+                persist = if (lease == null) null else { forms, metadata, warnings ->
+                    transactions.executeWithoutResult { availability.available(lease, forms, metadata, warnings) }
                 },
             )
         } catch (error: Exception) {
@@ -139,7 +145,8 @@ class ApplicationFormDiscoveryService(
                 }
                 val (status, retryable) = queuedFailureStatus(error)
                 availability.finish(lease, status, reason, retryable = retryable, cacheResult = false,
-                    timeoutStage = (error as? ai.govbiz.core.applicationpreparation.client.ai.exception.ApplicationFormTimeoutException)?.stage)
+                    timeoutStage = (error as? ai.govbiz.core.applicationpreparation.client.ai.exception.ApplicationFormTimeoutException)?.stage,
+                    warnings = (error as? ApplicationFormDiscoveryException)?.warnings.orEmpty())
             }
             throw error
         }
@@ -171,7 +178,7 @@ class ApplicationFormDiscoveryService(
         configuration: ai.govbiz.core.applicationpreparation.domain.ApplicationFormDiscoveryConfiguration,
         observe: (ApplicationFormAnalysisMetadata) -> Unit,
         beforeAi: () -> Unit,
-        persist: (List<ApplicationFormManifest>, ApplicationFormAnalysisMetadata) -> Unit,
+        persist: (List<ApplicationFormManifest>, ApplicationFormAnalysisMetadata, List<String>) -> Unit,
     ): ApplicationFormDiscoveryResult {
         validateIdentity(sourceCode, sourceProgramId)
         val program = details.get(sourceCode, sourceProgramId)
@@ -188,7 +195,7 @@ class ApplicationFormDiscoveryService(
         configuration: ai.govbiz.core.applicationpreparation.domain.ApplicationFormDiscoveryConfiguration,
         beforeAi: () -> Unit,
         observe: (ApplicationFormAnalysisMetadata) -> Unit = {},
-        persist: ((List<ApplicationFormManifest>, ApplicationFormAnalysisMetadata) -> Unit)? = null,
+        persist: ((List<ApplicationFormManifest>, ApplicationFormAnalysisMetadata, List<String>) -> Unit)? = null,
     ): ApplicationFormDiscoveryResult {
         return try {
             val collected = when (sourceCode) {
@@ -210,15 +217,16 @@ class ApplicationFormDiscoveryService(
             )
                 .takeIf { it.isNotEmpty() }?.let { cached ->
                     val bound = bindDocumentMaps(cached, collected.files)
-                    persist?.invoke(bound, metadata)
+                    persist?.invoke(bound, metadata, forUser(warnings))
                     return ApplicationFormDiscoveryResult(
                         bound,
-                        warnings + "동일한 공식 첨부에서 이전에 추출한 양식을 재사용했습니다.",
+                        forUser(warnings + "동일한 공식 첨부에서 이전에 추출한 양식을 재사용했습니다."),
                         true,
                     )
                 }
             var excludedReason = Reason.SOURCE_UNSUPPORTED
             var hasExcludedDocument = false
+            val excluded = mutableListOf<Pair<String, String>>()
             val documents = collected.files.mapIndexedNotNull { documentIndex, file ->
                 val blocks = try {
                     parser.parse(file.bytes, file.format)
@@ -231,7 +239,7 @@ class ApplicationFormDiscoveryService(
                         )) throw error
                     hasExcludedDocument = true
                     if (error.reason == SupportProgramDocumentException.Reason.TOO_LARGE) excludedReason = Reason.SOURCE_TOO_LARGE
-                    warnings.add("자동 분석 제외 첨부(SOURCE_${error.reason.name}): ${file.fileName.take(250)}")
+                    excluded += file.fileName to "자동 분석 제외 첨부(SOURCE_${error.reason.name}): ${file.fileName.take(250)}"
                     return@mapIndexedNotNull null
                 }
                 logger.info("application_form_candidate sourceCode={} sourceProgramId={} candidateIndex={} attachmentId={} filename={} format={} mimeType={} fileSize={} stage=PARSED blockCount={} sourceLength={}",
@@ -257,22 +265,50 @@ class ApplicationFormDiscoveryService(
                     excludedReason = Reason.SOURCE_TOO_LARGE
                     logger.warn("application_form_candidate sourceCode={} sourceProgramId={} candidateIndex={} attachmentId={} filename={} format={} fileSize={} stage=SOURCE_LIMIT sourceLength={} limit={} errorCode=SOURCE_TOO_LARGE",
                         sourceCode, sourceProgramId, document.documentIndex, attachmentId(document.sourceUrl), document.fileName.take(250), document.format, document.bytes, length, sourceLimit)
-                    warnings.add("자동 분석 제외 첨부(SOURCE_TOO_LARGE): ${document.fileName.take(250)}")
+                    excluded += document.fileName to "자동 분석 제외 첨부(SOURCE_TOO_LARGE): ${document.fileName.take(250)}"
                     false
                 } else true
             }
+            // 같은 파일이 두 번 걸렸거나 같은 서식을 형식만 바꿔 올린 첨부는 읽힌 사본 중 표 구조가 남는 형식 하나만 분석합니다(유료 호출 절감).
+            // 우선 형식을 읽지 못했어도 다른 형식 사본이 읽혔으면 그 사본을 쓰므로, 읽지 못한 쪽은 따로 알리지 않습니다.
+            val singleFormat = AttachmentCopyHelper.withoutFormatCopies(sizedDocuments.distinctBy { it.sha256 }) { it.fileName }
+            val analyzedTitles = singleFormat.mapNotNull { AttachmentCopyHelper.titleKey(it.fileName) }.toSet()
+            excluded.filter { (fileName, _) -> AttachmentCopyHelper.titleKey(fileName) !in analyzedTitles }.forEach { warnings.add(it.second) }
+            val copies = sizedDocuments.filter { it !in singleFormat }.map { it.fileName }.distinct()
+            if (copies.isNotEmpty()) {
+                warnings.add("같은 서식을 다른 형식으로도 올린 첨부 ${copies.size}개는 한 형식만 분석했어요: ${copies.joinToString(", ").take(300)}")
+            }
             // 파일명이 위원용·공고문처럼 신청자가 채우지 않는 문서를 가리키면 유료 분석 전에 제외하고, 신청서로 보이는 문서를 먼저 분석합니다.
             // 판정으로 남는 문서가 없으면 판정을 무시하고 전부 분석합니다. 결과 없음은 NO_FORM이지 수집 실패가 아닙니다.
-            val roles = sizedDocuments.associate { it.documentIndex to ApplicationAttachmentRole.classify(it.fileName) }
-            val eligibleDocuments = sizedDocuments.filter { roles[it.documentIndex] != ApplicationAttachmentRole.NON_APPLICANT }
-                .ifEmpty { sizedDocuments }
+            val roles = singleFormat.associate { it.documentIndex to ApplicationAttachmentRole.classify(it.fileName) }
+            // 이름이 신청서·양식이 아니고 본문에도 서식 신호가 전혀 없는 첨부는 작성할 서식이 없는 안내 문서로 보고 AI를 부르지 않습니다.
+            // 공고문처럼 이름 붙은 첨부는 "신청서를 제출" 같은 언급만으로는 서식으로 보지 않고 별지 번호·서명 칸 같은 구조 신호를 봅니다.
+            val signaled = singleFormat.filter { document ->
+                val role = roles.getValue(document.documentIndex)
+                role == ApplicationAttachmentRole.APPLICANT || ApplicationAttachmentRole.hasFormName(document.fileName) ||
+                    ApplicationAttachmentRole.hasFormSignal(document.blocks.joinToString("\n") { it.text },
+                        structureOnly = role == ApplicationAttachmentRole.NON_APPLICANT)
+            }
+            singleFormat.filter { it !in signaled }.forEach { document ->
+                logger.info("application_form_candidate sourceCode={} sourceProgramId={} candidateIndex={} attachmentId={} filename={} stage=FORM_SIGNAL_FILTER",
+                    sourceCode, sourceProgramId, document.documentIndex, attachmentId(document.sourceUrl), document.fileName.take(250))
+                warnings.add("작성할 서식이 보이지 않아 분석하지 않은 첨부: ${document.fileName.take(250)}")
+            }
+            val preferred = signaled.filter { roles[it.documentIndex] != ApplicationAttachmentRole.NON_APPLICANT }
+                .ifEmpty { signaled }
                 .sortedBy { if (roles[it.documentIndex] == ApplicationAttachmentRole.APPLICANT) 0 else 1 }
-            sizedDocuments.filter { it !in eligibleDocuments }.forEach { document ->
+            val eligibleDocuments = preferred.take(MAX_DISCOVERY_DOCUMENTS)
+            signaled.filter { it !in preferred }.forEach { document ->
                 logger.info("application_form_candidate sourceCode={} sourceProgramId={} candidateIndex={} attachmentId={} filename={} stage=ROLE_FILTER role=NON_APPLICANT",
                     sourceCode, sourceProgramId, document.documentIndex, attachmentId(document.sourceUrl), document.fileName.take(250))
                 warnings.add("자동 분석 제외 첨부(NON_APPLICANT_ROLE): ${document.fileName.take(250)}")
             }
-            if (eligibleDocuments.isEmpty()) throw ApplicationFormDiscoveryException(excludedReason)
+            preferred.drop(MAX_DISCOVERY_DOCUMENTS).forEach { document ->
+                warnings.add("분석할 첨부가 ${MAX_DISCOVERY_DOCUMENTS}개를 넘어 분석하지 않은 첨부: ${document.fileName.take(250)}")
+            }
+            if (eligibleDocuments.isEmpty()) {
+                throw ApplicationFormDiscoveryException(if (singleFormat.isEmpty()) excludedReason else Reason.NO_FORM, warnings = forUser(warnings))
+            }
             val input = ApplicationFormDiscoveryInput(
                 sourceCode,
                 sourceProgramId,
@@ -312,7 +348,8 @@ class ApplicationFormDiscoveryService(
             }
             candidateFailure = outcomes.firstNotNullOfOrNull { it.failure }
             val extracted = outcomes.flatMap { it.candidates }
-            if (extracted.isEmpty()) throw candidateFailure ?: ApplicationFormDiscoveryException(if (hasExcludedDocument) excludedReason else Reason.NO_FORM)
+            if (extracted.isEmpty()) throw candidateFailure
+                ?: ApplicationFormDiscoveryException(if (hasExcludedDocument) excludedReason else Reason.NO_FORM, warnings = forUser(warnings))
             val forms = extracted.mapNotNull { candidate ->
                 try {
                     val document = requireNotNull(documents.find { it.documentIndex == candidate.documentIndex })
@@ -351,6 +388,7 @@ class ApplicationFormDiscoveryService(
                     val document = documents.find { it.documentIndex == candidate.documentIndex }
                     val failure = AiServiceCallException.invalidResponse("Application form discovery output could not form a safe manifest", error)
                     if (candidateFailure == null) candidateFailure = failure
+                    warnings.add("「${document?.fileName?.take(200)}」에서 찾은 문항을 확인하지 못해 이 양식은 제외했어요. 원본에서 직접 작성해 주세요.")
                     val optionDiagnostics = candidate.sections.flatMap { section -> section.fields.mapNotNull { field ->
                         field.options.takeIf { it.isNotEmpty() }?.let { options ->
                             "${section.key}:${field.key} count=${options.size} distinct=${options.distinct().size} " +
@@ -369,6 +407,8 @@ class ApplicationFormDiscoveryService(
                     val root = generateSequence(error as Throwable) { it.cause }.last()
                     // 양식을 찾고도 매핑에서 실패한 사실이 다른 문서의 추출 검증 실패보다 우선입니다. 재시도 가능 여부가 여기서 갈립니다.
                     if (candidateFailure == null || isRetryableDocumentFailure(error)) candidateFailure = error
+                    // 다른 양식이 성공해 결과가 저장되더라도 이 양식이 빠진 사실은 사용자에게 알립니다.
+                    warnings.add("「${form.formTitle.take(200)}」 양식은 입력 위치를 확인하지 못해 제외했어요. 원본에서 직접 작성해 주세요.")
                     val original = collected.files.find { sha256(it.bytes) == form.attachmentSha256 }
                     logger.error("application_form_candidate sourceCode={} sourceProgramId={} candidateIndex={} attachmentId={} filename={} sourceSha256={} fileSize={} stage=DOCUMENT_MAPPING errorCode={} rootException={} rootMessage={}",
                         sourceCode, sourceProgramId, documents.find { it.sha256 == form.attachmentSha256 }?.documentIndex,
@@ -377,11 +417,18 @@ class ApplicationFormDiscoveryService(
                     null
                 }
             }
-            if (bound.isEmpty()) throw candidateFailure ?: ApplicationFormDiscoveryException(if (hasExcludedDocument) excludedReason else Reason.NO_FORM)
-            if (persist != null) persist(bound, metadata)
+            if (bound.isEmpty()) throw candidateFailure
+                ?: ApplicationFormDiscoveryException(if (hasExcludedDocument) excludedReason else Reason.NO_FORM, warnings = forUser(warnings))
+            bound.forEach { form ->
+                val document = documents.firstOrNull { it.sha256 == form.attachmentSha256 } ?: return@forEach
+                if (ApplicationAttachmentRole.hasConsentCheck(document.blocks.joinToString("\n") { it.text })) {
+                    warnings.add("「${form.formTitle.take(200)}」에는 신청자가 직접 체크해야 하는 동의 항목이 있어요. 제출 전 원본에서 확인해 주세요.")
+                }
+            }
+            if (persist != null) persist(bound, metadata, forUser(warnings))
             else snapshots.save(bound, sourceFingerprint, SupportProgramDocumentParser.VERSION, configuration)
             val storedForms = bound.map { form -> requireNotNull(snapshots.findByVersion(form.formVersionId)) }
-            ApplicationFormDiscoveryResult(storedForms, warnings.distinct(), false)
+            ApplicationFormDiscoveryResult(storedForms, forUser(warnings), false)
         } catch (error: AiApplicationFormValidationException) {
             throw ApplicationFormDiscoveryException(Reason.AI_INVALID_RESPONSE, error)
         } catch (error: ApplicationFormDiscoveryException) {
@@ -396,6 +443,8 @@ class ApplicationFormDiscoveryService(
                     SupportProgramDocumentException.Reason.TOO_LARGE -> Reason.SOURCE_TOO_LARGE
                 },
                 error,
+                // 수집 단계에서 실패해도 받지 못한 첨부 같은 안내는 사용자에게 남깁니다.
+                warnings = forUser(error.warnings),
             )
         } catch (error: AiServiceCallException) {
             throw error

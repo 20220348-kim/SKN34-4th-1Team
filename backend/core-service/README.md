@@ -146,7 +146,7 @@ HWPX discovery 요청에는 원본 `sourceBase64`·`sourceSha256`을 내부 AI �
 | 신청 준비 API | 동작 |
 |---|---|
 | `GET /api/v1/application-preparations/forms` | DB에서 AVAILABLE 공고의 양식·분야·문항 조회. AI 호출 없음 |
-| `GET /api/v1/application-preparations/forms/availability?sourceCode=...&sourceProgramId=...` | 공고별 분석 상태·사유와 활성 snapshot 전체 조회. 현재 작성 화면의 시작 경로 |
+| `GET /api/v1/application-preparations/forms/availability?sourceCode=...&sourceProgramId=...` | 공고별 분석 상태·사유·마지막 분석 안내(`state.warnings`)와 활성 snapshot 전체 조회. 현재 작성 화면의 시작 경로 |
 | `GET /api/v1/application-preparations/google-form?sourceCode=...&sourceProgramId=...` | 신청 경로가 구글 설문인 공고의 공개 설문 응답 주소와 문항(`entryId`·유형·원문 선택지·기타 허용). 화면이 답을 담은 미리 채운 링크를 만들며 답은 받지 않음. 로그인 전용·마감·문항 없음·비구글 경로는 422(`APPLICATION_ONLINE_FORM_LOGIN_REQUIRED`·`_CLOSED`·`_NO_QUESTIONS`·`_UNSUPPORTED`), 읽기 서비스 장애는 503. AI 호출 없음 |
 | `POST /api/v1/application-preparations/forms/discovery-jobs` | UUID requestKey·공고 식별자로 V26 계정별 수동 작업 접수. 기존 API이며 현재 작성 화면에서는 호출하지 않음 |
 | `GET /api/v1/application-preparations/forms/discovery-jobs` | 본인의 최근 20개 분석 작업을 공고명·공식 원문 URL과 함께 요약 |
@@ -233,8 +233,13 @@ worker도 기존 검색·AI 기능의 공유 동시 실행 슬롯을 사용합�
 두 기능이 함께 쓰는 공식 첨부 수집·파싱은 제공처별 `BizInfoAttachmentClient`·`MsitAttachmentClient`·
 `KStartupAttachmentClient`·`CnTradeNoticeAttachmentClient`와
 `supportprogram/client/document/SupportProgramDocumentParser`에 두고, AI DTO 변환은 `AiCombinationReviewMapper`가 담당합니다.
-신청 양식 발견은 파싱한 첨부를 `applicationpreparation/domain/ApplicationAttachmentRole`의 파일명 규칙으로 걸러 위원용·공고문 같은
-비신청 문서를 AI 호출 전에 제외하고(남는 문서가 없으면 전부 분석), 신청서로 보이는 문서부터 최대 3개씩 동시에 추출합니다.
+신청 양식 발견은 같은 서식의 형식별 사본 중 읽힌 사본 하나를 `_common/helper/AttachmentCopyHelper`로 남기고, 파싱한 첨부를
+`applicationpreparation/domain/ApplicationAttachmentRole`의 파일명 규칙으로 걸러 위원용·공고문 같은 비신청 문서를 AI 호출 전에
+제외합니다(남는 문서가 없으면 전부 분석). 이름이 신청서·양식이 아니고 본문에 서식 신호도 없는 첨부는 유료 분석을 보내지 않으며
+(공고문 이름의 첨부는 서식명 언급이 아니라 별지 번호·서명 칸 같은 구조 신호가 필요), 신청서로 보이는 문서부터 공고당 최대 8개를
+3개씩 동시에 추출합니다. 기업마당 수집은 형식별 사본을 한 문서로 세고 다른 형식 사본도 받아 두어, 우선 사본이 크기 제한에 걸리거나
+읽히지 않으면 다음 사본을 씁니다. 분석 안내는 수집 실패를 포함해 V48 `analysis_warnings`에 저장하고 `forms/availability` 응답의
+`state.warnings`로 보여 줍니다.
 양식은 찾았으나 입력칸 매핑만 실패하면 `RETRY_WAITING`으로 두어 3회까지 다시 시도합니다.
 AI Service가 HWPX native 입력 대상 한도 초과를 413(`APPLICATION_DOCUMENT_LIMIT_EXCEEDED`)으로 확정하면 그 첨부만 제외하고, 남는 문서가 없으면 `TOO_LARGE`로 닫습니다.
 업무 실패는 `domain/exception`, 외부 시스템 실패는 `client/exception`에 두어 Repository·Client가 Service에 역으로 의존하지 않습니다.

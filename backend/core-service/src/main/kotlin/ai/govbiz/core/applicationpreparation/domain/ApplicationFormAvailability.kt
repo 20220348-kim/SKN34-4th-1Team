@@ -8,6 +8,8 @@ data class ApplicationFormAvailability(
     val reasonCode: String, val sourceFingerprint: String?, val parserVersion: String?,
     val extractionModel: String?, val extractionPromptVersion: String?, val activeFormVersionId: String?,
     val verifiedAt: LocalDateTime?, val nextRetryAt: LocalDateTime?, val attemptCount: Int, val durationMs: Long? = null, val timeoutStage: String? = null,
+    /** 받지 못한 첨부·제외한 양식·직접 체크할 동의 항목처럼 사용자에게 알려야 하는 마지막 분석 안내입니다. */
+    val warnings: List<String> = emptyList(),
 )
 data class ApplicationFormAnalysisLease(val sourceCode: String, val sourceProgramId: String, val generation: Long, val token: String, val attemptCount: Int, val startedNanos: Long = System.nanoTime())
 data class ApplicationFormAnalysisMetadata(val sourceFingerprint: String, val configuration: ApplicationFormDiscoveryConfiguration, val parserVersion: String)

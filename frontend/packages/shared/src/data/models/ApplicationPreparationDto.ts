@@ -62,6 +62,8 @@ export const applicationFormAvailabilitySchema = z.object({
   state: z.object({ sourceCode: z.string(), sourceProgramId: z.string(),
     status: z.enum(['PENDING', 'AVAILABLE', 'NO_FORM', 'DOCUMENT_UNAVAILABLE', 'TOO_LARGE', 'RETRY_WAITING', 'STALE', 'REVIEW_REQUIRED']),
     reasonCode: z.string(), nextRetryAt: z.string().nullable(), attemptCount: z.number().int().nonnegative(),
+    // 이전 Core는 안내를 내려주지 않습니다.
+    warnings: z.array(z.string().min(1).max(500)).max(20).default([]),
   }), forms: z.object({ items: z.array(applicationFormSchema) }),
 })
 
@@ -72,7 +74,7 @@ export const supportedApplicationFormsSchema = z.object({
   ),
 })
 export const discoveredApplicationFormsSchema = z.object({
-  items: z.array(applicationFormSchema).min(1).max(4).refine(
+  items: z.array(applicationFormSchema).min(1).max(8).refine(
     (forms) => new Set(forms.map(({ formVersionId }) => formVersionId)).size === forms.length,
     { message: '발견한 양식 버전 식별자가 중복되었습니다.' },
   ),

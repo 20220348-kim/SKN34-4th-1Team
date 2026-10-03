@@ -75,6 +75,102 @@ class BizInfoAttachmentClientTest {
         server.verify()
     }
 
+    private fun sectionedPage(attachments: List<Pair<String, String>>, bodyExports: List<Pair<String, String>> = emptyList()): String {
+        fun items(files: List<Pair<String, String>>) = files.joinToString("") { (name, url) ->
+            "<li><div class=\"file_name\">$name</div><div class=\"right_btn\"><a href=\"$url\">다운로드</a></div></li>"
+        }
+        return """<div class="support_project_detail"><div class="title_area"><span class="title">검증 공고</span></div>
+            <div class="attached_file_list"><ul><h3>첨부파일</h3>${items(attachments)}<h3>본문출력파일</h3>${items(bodyExports)}</ul></div></div>"""
+    }
+
+    @Test
+    fun bodyExportDoesNotCountTowardTheAttachmentCapAndTheSameFileIsKeptOnce() {
+        val attachments = (0 until 8).map { "붙임$it 서식.hwp" to download(it) }
+        val bodyExport = "공고 본문.hwp" to download(8)
+        stubPage(sectionedPage(attachments, listOf(bodyExport)))
+        attachments.forEachIndexed { index, (_, url) ->
+            server.expect(requestTo(url)).andRespond(withSuccess(byteArrayOf(index.toByte()), MediaType.APPLICATION_OCTET_STREAM))
+        }
+        // 본문출력파일이 첨부 0과 같은 파일이면 한 번만 남깁니다.
+        server.expect(requestTo(bodyExport.second)).andRespond(withSuccess(byteArrayOf(0), MediaType.APPLICATION_OCTET_STREAM))
+
+        val result = client.collect("BIZINFO", sourceProgramId)
+
+        assertEquals(attachments.map { it.second }, result.files.map { it.sourceUrl })
+        assertTrue(result.warnings.any { it.contains("같은 파일이 두 번 연결되어") && it.contains("공고 본문.hwp") })
+        server.verify()
+    }
+
+    @Test
+    fun attachmentsBeyondTheCapAreSkippedWithAWarningInsteadOfFailing() {
+        val attachments = (0 until 9).map { "붙임$it 서식.hwp" to download(it) }
+        stubPage(sectionedPage(attachments))
+        attachments.take(8).forEachIndexed { index, (_, url) ->
+            server.expect(requestTo(url)).andRespond(withSuccess(byteArrayOf(index.toByte()), MediaType.APPLICATION_OCTET_STREAM))
+        }
+
+        val result = client.collect("BIZINFO", sourceProgramId)
+
+        assertEquals(8, result.files.size)
+        assertTrue(result.warnings.any { it.contains("8개를 넘어 받지 않은 첨부") && it.contains("붙임8 서식.hwp") })
+        server.verify()
+    }
+
+    @Test
+    fun sameTitleInAnotherFormatCountsOnceTowardTheCapAndIsKeptAsAFallbackCopy() {
+        val attachments = listOf("신청서.pdf" to download(0), "신청서.hwp [52 KB]" to download(1)) +
+            (2 until 9).map { "붙임$it 서식.hwp" to download(it) }
+        stubPage(sectionedPage(attachments))
+        // 각 문서의 우선 사본(HWP)을 먼저 받고, 다른 형식 사본은 그 뒤에 받습니다.
+        server.expect(requestTo(download(1))).andRespond(withSuccess(byteArrayOf(1), MediaType.APPLICATION_OCTET_STREAM))
+        (2 until 9).forEach { server.expect(requestTo(download(it))).andRespond(withSuccess(byteArrayOf(it.toByte()), MediaType.APPLICATION_OCTET_STREAM)) }
+        server.expect(requestTo(download(0))).andRespond(withSuccess(byteArrayOf(0), MediaType.APPLICATION_PDF))
+
+        val result = client.collect("BIZINFO", sourceProgramId)
+
+        assertEquals(listOf("신청서.hwp") + (2 until 9).map { "붙임$it 서식.hwp" } + "신청서.pdf", result.files.map { it.fileName })
+        assertFalse(result.warnings.any { it.contains("넘어 받지 않은") })
+        server.verify()
+    }
+
+    @Test
+    fun anOversizedPreferredCopyFallsBackToTheOtherFormat() {
+        stubPage(sectionedPage(listOf("신청서.hwp" to download(0), "신청서.pdf" to download(1))))
+        server.expect(requestTo(download(0))).andRespond(withSuccess(byteArrayOf(0), MediaType.APPLICATION_OCTET_STREAM)
+            .header(HttpHeaders.CONTENT_LENGTH, (MAX_SUPPORT_PROGRAM_ATTACHMENT_BYTES + 1).toString()))
+        server.expect(requestTo(download(1))).andRespond(withSuccess(byteArrayOf(1), MediaType.APPLICATION_PDF))
+
+        val result = client.collect("BIZINFO", sourceProgramId)
+
+        assertEquals(listOf("신청서.pdf"), result.files.map { it.fileName })
+        assertFalse(result.warnings.any { it.contains("미수집 첨부") })
+        server.verify()
+    }
+
+    @Test
+    fun aProgramWithOnlyUnsupportedAttachmentsExplainsWhatWasNotCollected() {
+        stubPage(sectionedPage(listOf("신청서식 모음.zip" to download(0))))
+
+        val error = assertThrows(SupportProgramDocumentException::class.java) { client.collect("BIZINFO", sourceProgramId) }
+
+        assertEquals(Reason.UNSUPPORTED, error.reason)
+        assertTrue(error.warnings.any { it.contains("신청서식 모음.zip") })
+    }
+
+    @Test
+    fun aCollectionFailureKeepsTheWarningsGatheredSoFar() {
+        stubPage(sectionedPage(listOf("신청서.hwp" to download(0), "안내.zip" to "https://www.bizinfo.go.kr/cmm/fms/fileDown.do?atchFileId=FILE_9&fileSn=9")))
+        server.expect(requestTo(download(0))).andRespond(withSuccess(byteArrayOf(0), MediaType.APPLICATION_OCTET_STREAM)
+            .header(HttpHeaders.CONTENT_LENGTH, (MAX_SUPPORT_PROGRAM_ATTACHMENT_BYTES + 1).toString()))
+
+        val error = assertThrows(SupportProgramDocumentException::class.java) { client.collect("BIZINFO", sourceProgramId) }
+
+        assertEquals(Reason.TOO_LARGE, error.reason)
+        assertTrue(error.warnings.any { it.contains("미수집 첨부(파일 크기 제한 초과)") && it.contains("신청서.hwp") })
+        assertTrue(error.warnings.any { it.contains("안내.zip") })
+        server.verify()
+    }
+
     @Test
     fun rejectsNonOfficialUrlsEncodedTraversalAndDuplicateParameters() {
         for (url in listOf(
@@ -154,11 +250,11 @@ class BizInfoAttachmentClientTest {
             page(downloads = twoDownloads),
             page(downloads = threeDownloads),
         )
-        twoDownloads.forEach { url ->
-            server.expect(requestTo(url)).andRespond(withSuccess(ByteArray(MAX_SUPPORT_PROGRAM_ATTACHMENT_BYTES), MediaType.APPLICATION_PDF))
-        }
-        twoDownloads.forEach { url ->
-            server.expect(requestTo(url)).andRespond(withSuccess(ByteArray(MAX_SUPPORT_PROGRAM_ATTACHMENT_BYTES), MediaType.APPLICATION_PDF))
+        // 서로 다른 파일이어야 같은 파일 중복 제거에 걸리지 않습니다.
+        repeat(2) {
+            twoDownloads.forEachIndexed { index, url ->
+                server.expect(requestTo(url)).andRespond(withSuccess(ByteArray(MAX_SUPPORT_PROGRAM_ATTACHMENT_BYTES) { index.toByte() }, MediaType.APPLICATION_PDF))
+            }
         }
         server.expect(requestTo(download(2))).andRespond(withSuccess(byteArrayOf(1), MediaType.APPLICATION_PDF))
         assertEquals(MAX_SUPPORT_PROGRAM_ATTACHMENTS_TOTAL_BYTES, client.collect("BIZINFO", sourceProgramId).files.sumOf { it.bytes.size })
