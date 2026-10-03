@@ -205,7 +205,32 @@ const budgetChangeSchema = z.object({
   request_id: z.uuid(), actor: z.string(), source: z.enum(['CLI', 'CORE_ADMIN']), reason: z.string(),
   previous_limits: budgetAmountsSchema.nullable(), limits: budgetAmountsSchema, created_at: z.string(),
 })
+const dailyAmountsSchema = z.object({ calls: z.number().int().nonnegative(), input_tokens: z.number().int().nonnegative(), output_tokens: z.number().int().nonnegative() })
+const dailyPolicySchema = z.object({ enabled: z.boolean(), limits: dailyAmountsSchema })
+const dailyBudgetSchema = z.object({
+  state: z.enum(['disabled', 'enforced', 'unknown', 'exceeded']), timezone: z.literal('Asia/Seoul'),
+  period_start: z.iso.datetime({ offset: true }), period_end: z.iso.datetime({ offset: true }),
+  limits: dailyAmountsSchema.nullable(), current_day: dailyAmountsSchema.nullable(), carried: dailyAmountsSchema.nullable(),
+  allocated: dailyAmountsSchema.nullable(), remaining: dailyAmountsSchema.nullable(),
+  recent_changes: z.array(z.object({
+    request_id: z.uuid(), source: z.literal('CLI'), actor: z.string(), reason: z.string(),
+    previous: dailyPolicySchema.nullable(), policy: dailyPolicySchema, created_at: z.iso.datetime({ offset: true }),
+  })),
+}).refine((value) => {
+  if (Date.parse(value.period_end) - Date.parse(value.period_start) !== 86_400_000) return false
+  if (value.state === 'disabled' || value.state === 'unknown') return value.remaining === null
+    && value.allocated === null && value.current_day === null && value.carried === null
+    && (value.state === 'disabled' || value.limits !== null)
+  const { limits, current_day: today, carried, allocated, remaining } = value
+  if (!limits || !today || !carried || !allocated) return false
+  const keys = ['calls', 'input_tokens', 'output_tokens'] as const
+  if (!keys.every((key) => allocated[key] === today[key] + carried[key])) return false
+  return value.state === 'exceeded'
+    ? remaining === null && keys.some((key) => allocated[key] > limits[key])
+    : remaining !== null && keys.every((key) => limits[key] - allocated[key] === remaining[key])
+}, '일별 예산 장부가 일치하지 않습니다.')
 const budgetSummarySchema = z.object({
+  daily: dailyBudgetSchema.optional(),
   limits_revision: z.string().regex(/^[a-f0-9]{64}$/).optional(),
   input_state: z.enum(['enforced', 'unconfigured', 'legacy_unknown']).optional(),
   state: z.enum(['consistent', 'inconsistent', 'unconfigured']),
@@ -405,6 +430,7 @@ const readinessAmountsSchema = z.object({
 })
 const readinessIssueSchema = z.object({ code: z.string().min(1), message: z.string().min(1) })
 const liveReadinessSchema = z.object({
+  daily: dailyBudgetSchema.optional(),
   as_of: z.iso.datetime({ offset: true }), dataset_id: z.string(), execution_profile: z.string().regex(/^[a-f0-9]{64}$/),
   evaluation_scope: z.enum(['fixed-answer-context-only', 'source-chunks-retrieval-answer']), model: z.string().min(1),
   state: z.enum(['blocked', 'checked']),
@@ -414,6 +440,10 @@ const liveReadinessSchema = z.object({
 }).refine((value) => {
   if ((value.state === 'blocked') !== (value.blockers.length > 0)) return false
   if (value.state === 'blocked') return true
+  if (value.daily && value.daily.state !== 'disabled') {
+    if (value.daily.state !== 'enforced' || !value.daily.remaining) return false
+    if ((['calls', 'input_tokens', 'output_tokens'] as const).some((key) => value.daily!.remaining![key] < value.required[key])) return false
+  }
   const left = value.remaining
   return left !== null && left.calls >= value.required.calls && left.output_tokens >= value.required.output_tokens
     && (left.input_tokens === null
@@ -427,6 +457,7 @@ export type EvaluationRun = z.infer<typeof runSchema>
 export type EvaluationPage = z.infer<typeof pageSchema>
 export type BudgetBreakdown = z.infer<typeof budgetBreakdownSchema>
 export type BudgetSummary = z.infer<typeof budgetSummarySchema>
+export type DailyBudget = z.infer<typeof dailyBudgetSchema>
 export type BudgetLimitsInput = { request_id: string; expected_revision: string; calls: number; input_tokens: number | null; output_tokens: number; reason: string }
 export type LegacyUsageInput = { request_id: string; evidence_sha256: string; reason: string }
 export type BudgetPage = z.infer<typeof budgetPageSchema>

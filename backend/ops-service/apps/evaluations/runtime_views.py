@@ -133,6 +133,27 @@ def live_readiness(request):
                         "message": f"잔여 {label} 한도가 이번 실행의 최대 예약량보다 작습니다.",
                     }
                 )
+    daily = summary["daily"]
+    if daily["state"] in {"unknown", "exceeded"}:
+        blockers.append(
+            {
+                "code": "DAILY_BUDGET_UNAVAILABLE",
+                "message": "일별 장부가 미확인이거나 일별 한도를 초과했습니다.",
+            }
+        )
+    elif daily["state"] == "enforced":
+        for key, label in (
+            ("calls", "호출"),
+            ("input_tokens", "입력 토큰"),
+            ("output_tokens", "출력 토큰"),
+        ):
+            if required[key] > daily["remaining"][key]:
+                blockers.append(
+                    {
+                        "code": f"DAILY_INSUFFICIENT_{key.upper()}",
+                        "message": f"일별 잔여 {label} 한도가 이번 최대 예약량보다 작습니다.",
+                    }
+                )
     return Response(
         {
             "as_of": as_of,
@@ -143,6 +164,7 @@ def live_readiness(request):
             "state": "blocked" if blockers else "checked",
             "required": required,
             "remaining": remaining,
+            "daily": daily,
             "blockers": blockers,
             "warnings": warnings,
         }

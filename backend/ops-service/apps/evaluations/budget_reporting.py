@@ -8,6 +8,7 @@ from django.db.models import BigIntegerField, Count, F, Q, Sum
 from django.db.models.functions import Coalesce
 
 from .budget import call_limits, reservation_limits
+from .daily_budget import daily_summary
 from .execution_spec import digest
 from .models import (
     EvaluationBudget,
@@ -191,6 +192,7 @@ def budget_summary(budget):
     ).count()
     if budget is None:
         return {
+            "daily": daily_summary(budget),
             "state": "unconfigured",
             "limits_revision": limits_revision(budget),
             "input_state": "legacy_unknown" if missing else "unconfigured",
@@ -224,6 +226,7 @@ def budget_summary(budget):
     consistent = consistent and (budget.input_token_limit is None or not input_unknown)
     changes = EvaluationBudgetChange.objects.filter(budget=budget)
     return {
+        "daily": daily_summary(budget),
         "state": "consistent" if consistent else "inconsistent",
         "limits_revision": limits_revision(budget),
         "input_state": "legacy_unknown"

@@ -2,6 +2,7 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
+from datetime import timedelta
 from threading import Barrier
 from uuid import uuid4
 
@@ -81,10 +82,20 @@ class InputBudgetTests(TestCase):
         from unittest.mock import patch
 
         from .budget_cleanup import cleanup_reservation
+        from .daily_budget import change_daily_limits, daily_summary
         from .test_budget_cleanup import terminal
         from .test_usage_correction import _runner, signed
         from .usage_correction import CorrectionUnavailable, correct_usage
 
+        change_daily_limits(
+            calls=6,
+            input_tokens=196608,
+            output_tokens=12000,
+            actor="operator",
+            reason="일별 이월 보정 검증",
+            request_id=uuid4(),
+        )
+        next_day = timezone.now() + timedelta(days=1)
         self.authorize()
         with TemporaryDirectory() as folder, override_settings(LLMOPS_RESULTS_DIR=Path(folder)):
             directory = Path(folder) / str(self.run.pk) / "capture"
@@ -114,6 +125,15 @@ class InputBudgetTests(TestCase):
                 result = cleanup_reservation(**cleanup_request, apply=True)
                 self.assertEqual(result["after"]["reservation_input_tokens"], 32768)
                 self.assertEqual(preview["after"], result["after"])
+                self.budget.refresh_from_db()
+                self.assertEqual(
+                    daily_summary(self.budget, at=next_day)["carried"],
+                    {
+                        "calls": 1,
+                        "input_tokens": 32768,
+                        "output_tokens": 2000,
+                    },
+                )
             request = dict(
                 run_id=self.run.pk,
                 sequence=0,
@@ -140,6 +160,14 @@ class InputBudgetTests(TestCase):
             self.assertEqual(result["before"]["global_input_tokens"], 32768)
             self.assertIsNone(EvaluationBudgetCall.objects.get().settled_at)
             self.assertEqual(budget_summary(self.budget)["state"], "consistent")
+            self.assertEqual(
+                daily_summary(self.budget, at=next_day)["carried"],
+                {
+                    "calls": 0,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                },
+            )
 
     def test_input_limit_alone_blocks_new_run_and_missing_or_invalid_count_blocks_approval(self):
         with self.assertRaises(BudgetUnavailable):

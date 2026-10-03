@@ -197,6 +197,15 @@ def reserve(run):
         )
     ):
         raise BudgetUnavailable
+    from .daily_budget import require_daily_budget
+
+    admitted_at = timezone.now()
+    require_daily_budget(
+        budget,
+        run,
+        {"calls": calls, "input_tokens": input_total, "output_tokens": output_total},
+        admitted_at,
+    )
     EvaluationBudgetReservation.objects.create(
         run=run,
         budget=budget,
@@ -205,6 +214,7 @@ def reserve(run):
         max_input_tokens=max_input,
         reserved_input_tokens=input_total,
         reserved_output_tokens=output_total,
+        created_at=admitted_at,
     )
     budget.allocated_calls += calls
     budget.allocated_output_tokens += output_total
@@ -266,6 +276,9 @@ def worker_action(
     ):
         raise BudgetUnavailable
     if action in {"claim", "authorize"}:
+        from .daily_budget import require_reservation_day
+
+        require_reservation_day(reservation)
         if (
             run.execution_spec.get("evaluation_scope") == "source-chunks-retrieval-answer"
             and "dataset_id" in run.execution_spec

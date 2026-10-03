@@ -4,6 +4,7 @@ import { getBudgetReservations, getRunBudget, OpsApiError, type BudgetBreakdown,
 import { workspacePageStyles as styles } from '../../shared/workspace/WorkspacePage.styles'
 import { UnaccountedRunsPanel } from './UnaccountedRunsPanel'
 import { BudgetLimitsForm } from './BudgetLimitsForm'
+import { DailyBudgetPanel } from './DailyBudgetPanel'
 
 const date = (value: string) => new Date(value).toLocaleString('ko-KR')
 const count = (value: number) => value.toLocaleString('ko-KR')
@@ -84,6 +85,7 @@ export function BudgetOverview({ onExpired, refreshKey, operatorId, onBudgetChan
         return <div className="rounded-xl bg-[#f3f7f5] p-4" key={String(label)}><dt className="text-sample-muted">{String(label)}</dt><dd className="mt-2 font-semibold">{value ? `${count(value.calls)}회 · 출력 ${count(value.output_tokens)}토큰 · 입력 ${inputCount(value.input_tokens)}` : '확인 불가'}</dd></div>
       })}</dl>}
       {summary.breakdown && <Breakdown value={summary.breakdown} />}
+      <DailyBudgetPanel value={summary.daily} />
       <p className="text-xs leading-5 text-sample-muted">응답을 정산해도 실행의 예약을 닫기 전까지 입력·출력 차액은 반환 대기로 남습니다. 승인 기록만으로 모델 전송 완료나 실제 비용을 확정할 수 없습니다.</p>
       <details><summary className="cursor-pointer text-sm font-semibold">실행별 예약 · {count(data.count)}건</summary>
         {!data.results.length ? <p className="py-3 text-sm">예약 기록이 없습니다.</p> : <div className="overflow-x-auto"><table className="mt-3 w-full text-left text-sm">

@@ -344,6 +344,51 @@ React에서 **새 응답 생성 → 실행 설정·예산 점검**을 누르면
 관련 MySQL 테스트는 `apps.evaluations.test_live_readiness`입니다. API와 Web을 함께 반영해야 하며
 이번 기능에 추가 의존성이나 migration은 없습니다.
 
+## 일별 호출·입력·출력 토큰 한도
+
+`0026_daily_evaluation_budget`부터 선택적인 **서울 시간(Asia/Seoul) 00:00~다음 날 00:00**
+한도를 지원합니다. 정책이 없거나 해제돼 있으면 누적 한도만 적용합니다. migration은 정책이나
+기본 한도를 만들지 않으며, 누적 사용량을 초기화하지 않습니다.
+
+호출 흐름은 `관리자 접수 → 누적 예산 행 잠금 → 누적·일별 한도 검사 → 예약 → Prefect →
+claim/호출별 authorize의 예약 날짜 검사 → 정산·종료`입니다. 고정 근거와 Ops RAG의 임베딩·답변
+작업에 같은 검사를 적용합니다. 동일 접수 재전송은 기존 예약을 반환하지만 일별 정책이 적용 중이면
+전날 예약의 새 claim/authorize는 거절합니다. 기존 호출의 정산·예약 종료·취소·증거 보정은 허용합니다.
+
+일별 할당량은 **오늘 접수한 예약의 할당량 + 이전 날짜에서 남은 미확정 호출·미승인 예약·반환 대기량**입니다.
+입력·출력 상한을 알 수 없거나 누락·불일치 장부가 있으면 잔여량은 `null`이고 신규 예약을 차단합니다.
+확정된 이전 날짜 사용량은 누적 장부에 유지하며 오늘 한도에 다시 합산하지 않습니다.
+과거 저장 응답 반영분은 반영 날짜가 아닌 원래 실행의 접수 날짜로 집계합니다.
+늦은 정산·서명된 사용량 보정·취소 후 실제로 해제된 몫만 이월량에서 빠집니다.
+
+일별 정책과 신규 예약은 같은 MySQL 누적 예산 행을 잠그므로 여러 API/실행기의 동시 접수도 같은
+한도를 검사합니다. 일별 카운터 초기화 작업이나 별도 스케줄러는 없습니다.
+이 정책의 날짜는 **예약 접수일**이며, 자정 직전 승인 후 자정을 지나 외부 API에 전송될 수 있으므로
+제공자의 실제 청구일 기준 지출 상한으로 해석하지 않습니다. 월별·금액 한도는 지원하지 않습니다.
+
+실제 적용 값은 운영자가 별도로 승인한 뒤 다음 명령으로 설정합니다. 누적 한도도 충분해야 합니다.
+
+```bash
+uv run --locked python manage.py set_daily_evaluation_budget \
+  --calls "$APPROVED_DAILY_CALL_LIMIT" --input-tokens "$APPROVED_DAILY_INPUT_LIMIT" \
+  --output-tokens "$APPROVED_DAILY_OUTPUT_LIMIT" \
+  --actor "$BUDGET_OPERATOR" --reason "$BUDGET_CHANGE_REASON" --request-id "$BUDGET_CHANGE_REQUEST_ID"
+
+# 일별 제한만 해제. 누적 한도·기존 예약·감사 이력은 유지합니다.
+uv run --locked python manage.py set_daily_evaluation_budget --disable \
+  --actor "$BUDGET_OPERATOR" --reason "$BUDGET_CHANGE_REASON" --request-id "$BUDGET_CHANGE_REQUEST_ID"
+```
+
+적용에는 호출·입력·출력 세 한도가 모두 필요하며, 현재 일별 할당량보다 낮은 값은 거절합니다.
+동일 UUID·내용의 재전송은 기존 기록을 반환하고 나중 정책을 되돌리지 않습니다. 새 변경은 새 UUID를
+사용합니다. 변경 전후 정책·변경자·사유를 저장하며 CLI 변경자는 운영자가 입력한 식별자입니다.
+이 명령은 새 모델 실행·정기 실행을 활성화하지 않습니다.
+
+`GET /api/v1/ops/budget`, `/budget/reservations`, `/evaluations/live-readiness`는 `daily`에
+기간·상태(`disabled/enforced/unknown/exceeded`)·한도·오늘 몫·이월·잔여·최근 정책 이력을 반환합니다.
+React 예산 화면과 실행 전 점검에서 이를 조회하며 일별 부족도 접수 차단 사유로 표시합니다.
+일별 정책의 관리자 웹 편집은 아직 없으며 위 CLI로만 변경합니다.
+
 ## 누적 호출·출력 토큰 한도
 
 Ops로 접수한 새 응답 생성은 `EvaluationBudget`의 **DB 전체 누적 호출 수·입력·출력 토큰 한도**를
@@ -458,7 +503,7 @@ uv run --locked python manage.py set_evaluation_budget \
 실제 Core 준비 명세로 테스트 DB의 실행·예약을 만들고 같은 명세의 HTTP 승인·정산을 대조합니다.
 예산 부족 시 실행·예약 롤백, 입력 변경 차단과 미확정 사용량 유지도 검사하며 필수 LLMOps CI에 연결했습니다.
 고정 원문·청크 RAG의 공개 접수·manifest·Prefect 연결은 위 신규 실행 경로에 구현했습니다.
-Core 원문 재수집·재청킹, runner→Kubernetes Ops 왕복 검증, 금액·기간 한도는 별도 범위입니다.
+Core 원문 재수집·재청킹, runner→Kubernetes Ops 왕복 검증, 금액·월별 한도는 별도 범위입니다.
 
 ## 예산 조회와 한도 변경 감사
 
@@ -539,7 +584,7 @@ POST는 `request_id`, `evidence_sha256`, `reason`만 받으며 검토한 자료�
 `unbounded_input_calls`/`unbounded_input_reservations`가 있으면 전체 입력 사용량이 아닙니다. 이 실행의 사용량을 0으로 만들지 않습니다.
 replay/recovery 자체에는 새 모델 예약이 없어 `not_applicable`이며 원본 비용은 원본 장부를 확인합니다.
 
-최신 예산 API 배포 전 migration **`0025_admin_budget_writes`까지** 적용해야 합니다.
+최신 예산 API 배포 전 migration **`0026_daily_evaluation_budget`까지** 적용해야 합니다.
 `0025`는 인증된 변경자 FK·한도 조회 버전·출처 제약을 추가하며 기존 CLI 기록을 그대로 보존합니다.
 `0013_budget_change_audit`는 한도 변경 감사를, `0014`는 종료 예약 정리 감사를,
 `0015_usage_correction`은 사용량 보정과 원본 증거를, `0016`은 새 호출의 작업 ID를 저장합니다.

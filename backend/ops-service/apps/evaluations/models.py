@@ -2,6 +2,7 @@ import uuid
 
 from django.conf import settings
 from django.db import models
+from django.utils import timezone
 
 
 class EvaluationAdmission(models.Model):
@@ -372,7 +373,40 @@ class EvaluationBudgetReservation(models.Model):
     reserved_output_tokens = models.PositiveBigIntegerField(null=True)
     worker_id = models.UUIDField(null=True)
     closed_at = models.DateTimeField(null=True)
+    # 일별 접수 검사와 같은 시각을 저장한다. 자정 경계에서 날짜가 달라지지 않는다.
+    created_at = models.DateTimeField(default=timezone.now, editable=False)
+
+
+class EvaluationDailyBudget(models.Model):
+    """서울 날짜별 접수 한도. 사용량은 기존 예약 원장에서 계산한다."""
+
+    budget = models.OneToOneField(EvaluationBudget, primary_key=True, on_delete=models.PROTECT)
+    enabled = models.BooleanField(default=False)
+    call_limit = models.PositiveBigIntegerField()
+    input_token_limit = models.PositiveBigIntegerField()
+    output_token_limit = models.PositiveBigIntegerField()
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class EvaluationDailyBudgetChange(models.Model):
+    """CLI 일별 정책 변경 이력. 변경자는 운영자가 입력한 식별자다."""
+
+    request_id = models.UUIDField(unique=True)
+    policy = models.ForeignKey(EvaluationDailyBudget, on_delete=models.PROTECT)
+    actor = models.CharField(max_length=150)
+    reason = models.CharField(max_length=1000)
+    previous = models.JSONField(null=True)
+    policy_snapshot = models.JSONField()
     created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-id"]
+        constraints = [
+            models.CheckConstraint(
+                condition=~models.Q(actor="") & ~models.Q(reason=""),
+                name="daily_budget_change_attribution",
+            ),
+        ]
 
 
 class EvaluationBudgetChange(models.Model):
