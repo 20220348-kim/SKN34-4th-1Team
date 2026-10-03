@@ -20,7 +20,7 @@ IDS = {name: str(index) * 64 for index, name in enumerate(smoke.SERVICES, 1)}
 class VolumeSmokeTests(unittest.TestCase):
     def setUp(self):
         self.events = []
-        self.stopped = False
+        self.stopped = set()
         self.extra_user = False
         self.unsafe_owner = False
         self.stop_exit = 0
@@ -81,7 +81,7 @@ class VolumeSmokeTests(unittest.TestCase):
                         "com.docker.compose.service": service,
                     },
                     "State": {
-                        "Running": not self.stopped,
+                        "Running": service not in self.stopped,
                         "ExitCode": self.stop_exit,
                         "OOMKilled": False,
                     },
@@ -116,7 +116,10 @@ class VolumeSmokeTests(unittest.TestCase):
                 + (["unexpected"] if self.extra_user else [])
             )
         if command[:2] == ["docker", "stop"]:
-            self.stopped = True
+            service = next(
+                name for name, identity in IDS.items() if identity == command[-1]
+            )
+            self.stopped.add(service)
         if command[:2] == ["docker", "create"]:
             self.expected_kind = json.loads(command[-1])["kind"]
             if json.loads(command[-1]).get("phase") == "results-api":
@@ -193,7 +196,14 @@ class VolumeSmokeTests(unittest.TestCase):
         self.assertTrue(evidence["prefect_server_started"])
         self.assertTrue(evidence["results_server_started"])
         self.assertEqual(evidence["scope"], "disposable_results_http_and_prefect_api")
-        self.assertEqual(len(self.commands(["docker", "stop"])), 1)
+        self.assertEqual(
+            self.commands(["docker", "stop"]),
+            [
+                ["docker", "stop", "--time", "30", IDS[name]]
+                for name in ("evaluation-runner", "ops-artifacts", "prefect")
+            ],
+        )
+        self.assertEqual(list(evidence["source_shutdown"]), list(smoke.SERVICES))
         helpers = self.commands(["docker", "create"])
         self.assertEqual(len(helpers), 3)
         self.assertEqual(helpers[0][-4], IMAGE)
@@ -254,6 +264,38 @@ class VolumeSmokeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "stop cleanly"):
             self.verify()
         self.assertEqual(self.commands(["docker", "create"]), [])
+        self.assertEqual(len(self.commands(["docker", "stop"])), 1)
+        self.assertEqual(
+            self.report["volume_restore"]["source_shutdown"],
+            {
+                "evaluation-runner": {
+                    "running": False,
+                    "oom_killed": False,
+                    "exit_code": 137,
+                    "image_unchanged": True,
+                }
+            },
+        )
+
+    def test_prefect_is_available_until_runner_shutdown_is_verified(self):
+        original = self.execute
+
+        def ordered(command, **kwargs):
+            if command[:2] == ["docker", "stop"]:
+                if command[-1] == IDS["prefect"]:
+                    self.assertEqual(
+                        self.stopped, {"evaluation-runner", "ops-artifacts"}
+                    )
+                    self.assertEqual(
+                        list(self.report["volume_restore"]["source_shutdown"]),
+                        ["evaluation-runner", "ops-artifacts"],
+                    )
+                else:
+                    self.assertNotIn("prefect", self.stopped)
+            return original(command, **kwargs)
+
+        with patch.object(smoke, "execute", side_effect=ordered):
+            self.verify()
 
     def test_existing_target_name_is_not_adopted(self):
         self.name_collision = True
@@ -274,7 +316,7 @@ class VolumeSmokeTests(unittest.TestCase):
 
     def test_nonzero_helper_exit_or_incomplete_success_cannot_pass(self):
         for field, value in (("helper_exit", 1), ("missing_evidence", True)):
-            self.stopped = False
+            self.stopped = set()
             setattr(self, field, value)
             with self.subTest(field=field), self.assertRaises(ValueError):
                 self.verify()
@@ -298,7 +340,7 @@ class VolumeSmokeTests(unittest.TestCase):
             ("scheduling_disabled", False),
             ("automatic_migrations", True),
         ):
-            self.stopped = False
+            self.stopped = set()
             self.events.clear()
             self.api_defect = (key, value)
             with (
@@ -321,7 +363,7 @@ class VolumeSmokeTests(unittest.TestCase):
             ("server_stopped", False),
             ("runtime_uid", 0),
         ):
-            self.stopped = False
+            self.stopped = set()
             self.events.clear()
             self.results_api_defect = (key, value)
             with (
@@ -336,7 +378,7 @@ class VolumeSmokeTests(unittest.TestCase):
 
     def test_reader_timeout_or_bad_exit_cleans_both_helpers(self):
         for field in ("reader_failure", "reader_exit"):
-            self.stopped = False
+            self.stopped = set()
             self.events.clear()
             setattr(self, field, True if field == "reader_failure" else 137)
             with (

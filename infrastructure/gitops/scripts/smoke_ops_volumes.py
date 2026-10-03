@@ -305,25 +305,25 @@ def verify(state, settings, compose, env, expected, report):
         ):
             raise ValueError("Source volume does not belong to this smoke")
     unused_volumes(sources, containers)
-    execute(
-        [
-            "docker",
-            "stop",
-            "--time",
-            "30",
-            *[item["Id"] for item in containers.values()],
-        ],
-        timeout=120,
-    )
+    # Runner shutdown pauses deployments through the Prefect API. Keep that API
+    # alive until the runner exits; a concurrent stop races its cleanup request.
+    evidence["source_shutdown"] = {}
     for service, before in containers.items():
+        execute(["docker", "stop", "--time", "30", before["Id"]], timeout=60)
         after = container(before["Id"], project, service)
+        evidence["source_shutdown"][service] = {
+            "running": after["State"]["Running"],
+            "oom_killed": after["State"]["OOMKilled"],
+            "exit_code": after["State"]["ExitCode"],
+            "image_unchanged": after["Image"] == before["Image"],
+        }
         if (
             after["Image"] != before["Image"]
             or after["State"]["Running"]
             or after["State"]["OOMKilled"]
             or after["State"]["ExitCode"] not in (0, 143)
         ):
-            raise ValueError("Source writer did not stop cleanly")
+            raise ValueError(f"Source writer did not stop cleanly: {service}")
     unused_volumes(sources, containers)
     evidence["writers_stopped"] = True
     image = containers["ops-artifacts"]["Image"]
