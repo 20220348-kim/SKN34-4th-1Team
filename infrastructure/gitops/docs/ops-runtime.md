@@ -242,14 +242,21 @@ CSRF 토큰을 제거한 실제 응답을 loopback 재생 서버에 넣고, 실�
 프로세스 종료 전에 자신이 시작한 서버·임시 캐시·응답 파일을 정리한다.
 `results.ops_http.management_http`와 `management_web_contract`에 결과를 기록하고,
 후자의 `proxy_http.response_source=captured_restore_http`로 응답 재생 범위를 명시한다.
+복원 Core/Ops가 실행 중일 때는 `results.ops_http.browser_login`도 검사한다. 별도 Vite·브라우저에서
+로그인·전체 목록·복원 평가 3건의 상세/보고서 해시·로그아웃·폐기된 세션 거절을 확인한다.
+DB의 외부 네트워크/공개 포트 차단을 유지하고 Docker attach 표준입출력 통로로 실제 HTTP를 호출한다.
+`response_source=restored_core_ops_http`, `transport=docker_attached_stdio`이며 응답 재생이 아니다.
+CI가 소유한 5173 포트만 사용하고 기존 서버가 있으면 실패한다. 임시 서버·캐시·브라우저·보조 프로세스
+정리와 정상 종료, 이후 Ops 덤프/결과 파일 무변경 검증을 모두 통과해야 한다. 이 증거는 개인 환경이나
+운영 Ingress/TLS·기존 세션 복구를 포함하지 않는다. [복원 서버 로그인 절차](../../../docs/ops-upgrade-runbook.md#ci에서-수행하는-복원-서버-브라우저-로그인-검증)를 따른다.
 복원 전 Kubernetes 통합 검사에는 별도 `browser_login` 증거도 있다. 기존 평가가 완료된 일회용 클러스터의
 Core/Ops port-forward와 Vite를 통해 브라우저에서 이메일 로그인·실제 쿠키 발급·Core/Ops ID 일치·
 새로고침·전체 목록 페이지·완료 평가 2건의 상세/보고서 조회·로그아웃 후 401을 확인한다.
 로그아웃 후 익명 요청과 검사 중 발급받은 쿠키의 재사용을 각각 검사해 서버의 세션 폐기도 확인한다.
 목록은 최대 1,000건까지 건수·누락·중복 및 화면의 페이지 이동을 대조한다. 로그인과 로그아웃 외 쓰기는
 차단하며 비밀번호는 표준입력으로만 전달하고 재사용한 쿠키는 메모리에서만 다룬다.
-이 단계는 응답 재생을 사용하지 않지만 개인 환경의 연결이나
-복원 후 전체 브라우저 경로를 증명하지는 않는다. 검사 전후 평가 DB 식별자·상태·호출 수를 대조한다.
+이 단계는 복원 전 연결에 대한 증거이며 복원 후 경로는 앞의 별도 `results.ops_http.browser_login`으로
+구분한다. 검사 전후 평가 DB 식별자·상태·호출 수를 대조한다.
 세부 범위와 로컬 HTTP 대역 테스트는 [브라우저 로그인 절차](../../../docs/ops-upgrade-runbook.md#ci에서-수행하는-kubernetes-브라우저-로그인-검증)를 따른다.
 
 복원 응답 재생 검사는 테스트 전용 Playwright와 새 브라우저 컨텍스트에서 실제 React 목록·페이지 이동·예산 표시를

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { chromium } from '../../../frontend/web/node_modules/playwright-core/index.mjs'
 
-export async function checkRestoreBrowser(origin, responses, expected, reports) {
+export async function checkRestoreBrowser(origin, responses, expected, reports, onStage = () => {}) {
   assert.match(origin, /^http:\/\/127\.0\.0\.1:[0-9]+$/)
   const channel = process.env.RESTORE_BROWSER_CHANNEL
   assert.ok(channel === undefined || ['chrome', 'msedge'].includes(channel), 'Use bundled Chromium or an installed Chrome/Edge channel')
@@ -24,6 +24,7 @@ export async function checkRestoreBrowser(origin, responses, expected, reports) 
     assert.equal(createHash('sha256').update(reports[route + '/report'].body).digest('hex'), expected[id].report_sha256, 'Captured report hash differs')
   }
   const failures = []
+  onStage('LAUNCH')
   const browser = await chromium.launch({ headless: true, ...(channel ? { channel } : {}) })
   const version = browser.version()
   try {
@@ -55,6 +56,7 @@ export async function checkRestoreBrowser(origin, responses, expected, reports) 
     await page.goto(origin + '/ops/evaluations', { waitUntil: 'domcontentloaded' })
     await page.getByRole('navigation', { name: '운영 메뉴' }).getByText(session.user.username, { exact: true }).waitFor()
     const history = page.getByRole('region', { name: '평가 실행 이력' })
+    onStage('LIST')
     for (let number = 1; number <= pages; number++) {
       const rows = responses[`/api/v1/ops/evaluations?page=${number}`].results
       for (const row of rows) {
@@ -67,12 +69,14 @@ export async function checkRestoreBrowser(origin, responses, expected, reports) 
       if (number < pages) await history.getByRole('button', { name: '다음', exact: true }).click()
     }
     assert.equal(seen.size, count)
+    onStage('BUDGET')
     await page.locator('#evaluation-budget').getByText('조회 시각:', { exact: false }).waitFor()
     assert.equal(await page.getByRole('alert').count(), 0, 'Management view contains an error')
     assert.equal(await history.getByRole('button', { name: '다음', exact: true }).isDisabled(), true)
     assert.equal(await page.title(), 'GovBiz · LLMOps 운영')
     assert.equal((await context.cookies(origin)).find((item) => item.name === 'govbiz_session')?.httpOnly, true)
     for (const id of ids) {
+      onStage('DETAIL')
       assert.ok(locations.has(id), 'Expected detail is missing from the browser listing')
       await page.goto(origin + '/ops/evaluations', { waitUntil: 'domcontentloaded' })
       for (let number = 1; number < locations.get(id); number++) {
@@ -91,6 +95,7 @@ export async function checkRestoreBrowser(origin, responses, expected, reports) 
       }
       assert.equal(await page.getByRole('alert').count(), 0, 'Detail view contains an error')
       const link = page.getByRole('link', { name: 'Evidently 보고서', exact: true })
+      onStage('REPORT')
       assert.equal(await link.getAttribute('href'), route + '/report')
       assert.equal(await link.getAttribute('target'), '_blank')
       assert.deepEqual((await link.getAttribute('rel')).split(' ').sort(), ['noopener', 'noreferrer'])
@@ -119,6 +124,7 @@ export async function checkRestoreBrowser(origin, responses, expected, reports) 
     }
     // Reuse only this isolated context with a fixture member cookie. This checks
     // the UI response to HTTP 403, not real Core login or role verification.
+    onStage('MEMBER')
     await context.clearCookies()
     await context.addCookies([{ name: 'govbiz_session', value: 'member-fixture', url: origin, httpOnly: true, sameSite: 'Lax' }])
     await page.reload({ waitUntil: 'domcontentloaded' })

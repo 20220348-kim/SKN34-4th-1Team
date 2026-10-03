@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { readdir } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
+import { resolve, sep } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import { withRestoreProxy } from './ops_restore_proxy.mjs'
 import { checkRestoreBrowser } from './ops_restore_browser.mjs'
@@ -59,7 +62,9 @@ for (const index of [0, 24, 25]) {
 }
 
 test('real browser opens details and sandboxed report tabs across both list pages, then denies a member', { timeout: 120000 }, async (context) => {
-  const result = await withRestoreProxy(responses, async (origin) => ({ browser_ui: await checkRestoreBrowser(origin, responses, expected, reports) }), reports)
+  const stages = []
+  const result = await withRestoreProxy(responses, async (origin) => ({ browser_ui: await checkRestoreBrowser(origin, responses, expected, reports, (stage) => stages.push(stage)) }), reports)
+  assert.deepEqual(stages, ['LAUNCH', 'LIST', 'BUDGET', 'DETAIL', 'REPORT', 'DETAIL', 'REPORT', 'DETAIL', 'REPORT', 'MEMBER'])
   assert.equal(result.browser_ui.listed_run_count, 26)
   assert.equal(result.browser_ui.pages_verified, 2)
   assert.equal(result.browser_ui.budget_view_verified, true)
@@ -115,4 +120,42 @@ test('report script errors fail verification and still remove owned listeners an
 test('browser inspection rejects a non-owned origin before launching', async () => {
   await assert.rejects(checkRestoreBrowser('https://external.invalid', responses))
   await assert.rejects(checkRestoreBrowser('http://localhost:5173', responses))
+})
+
+test('locked Evidently standalone report renders under the real report sandbox', { timeout: 120000 }, async () => {
+  const directory = await mkdtemp(resolve(tmpdir(), 'govbiz-evidently-browser-'))
+  try {
+    const root = fileURLToPath(new URL('../../../', import.meta.url))
+    const python = resolve(root, 'backend/ai-service/.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python')
+    const reportPath = resolve(directory, 'report.html')
+    const generated = spawnSync(python, ['-c', [
+      'import sys', 'import pandas as pd', 'from evidently import Report', 'from evidently.metrics import RowCount',
+      'Report([RowCount()], include_tests=False).run(current_data=pd.DataFrame({"value":[1,2]})).save_html(sys.argv[1])',
+    ].join('\n'), reportPath], { env: { ...process.env, DO_NOT_TRACK: '1' }, encoding: 'utf8', timeout: 60000, windowsHide: true })
+    assert.equal(generated.status, 0, 'Locked evaluation Python must generate an offline report')
+    const id = Object.keys(expected)[0], path = `/api/v1/ops/evaluations/${id}`
+    const body = await readFile(reportPath, 'utf8')
+    const report = { [path + '/report']: { ...reports[path + '/report'], body } }
+    const hashes = { [id]: { ...expected[id], report_sha256: createHash('sha256').update(body).digest('hex') } }
+    const snapshot = Object.fromEntries(Object.entries(responses).filter(([key]) => !key.startsWith('/api/v1/ops/evaluations/') || key.startsWith(path)))
+    await withRestoreProxy(snapshot, (origin) => checkRestoreBrowser(origin, snapshot, hashes, report), report)
+  } finally {
+    assert.ok(directory.startsWith(resolve(tmpdir()) + sep + 'govbiz-evidently-browser-'))
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('restore contract CLI records only a fixed failure phase', async () => {
+  const directory = await mkdtemp(resolve(tmpdir(), 'govbiz-restore-diagnostic-'))
+  try {
+    const input = resolve(directory, 'responses.json')
+    await writeFile(input, 'private-fixture-not-json')
+    const result = spawnSync(process.execPath, ['--disable-warning=ExperimentalWarning', '--experimental-transform-types', fileURLToPath(new URL('./check_ops_restore_ui.mjs', import.meta.url)), input], { encoding: 'utf8', timeout: 20000, windowsHide: true })
+    assert.equal(result.status, 1)
+    assert.equal(result.stdout, '')
+    assert.equal(result.stderr, 'BRIDGE_RESTORE_WEB_INPUT\n')
+  } finally {
+    assert.ok(directory.startsWith(resolve(tmpdir()) + sep + 'govbiz-restore-diagnostic-'))
+    await rm(directory, { recursive: true, force: true })
+  }
 })

@@ -1,5 +1,6 @@
 """Exercise real Ops/report HTTP against disposable restored DB and result files."""
 
+import base64
 import hashlib
 import json
 import os
@@ -14,8 +15,10 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
+BROWSER_ORIGIN = "http://127.0.0.1:5173"
 
-def response(path, token=None, *, port=8000, payload=None, method="GET"):
+
+def response(path, token=None, *, port=8000, payload=None, method="GET", headers=None):
     class NoRedirect(HTTPRedirectHandler):
         def redirect_request(self, *args, **kwargs):
             return None
@@ -25,12 +28,9 @@ def response(path, token=None, *, port=8000, payload=None, method="GET"):
         f"http://127.0.0.1:{port}" + path,
         headers={
             "Content-Type": "application/json",
-            **(
-                {"Origin": "http://127.0.0.1:8080"}
-                if port == 8080 and method == "POST"
-                else {}
-            ),
+            **({"Origin": BROWSER_ORIGIN} if port == 8080 and method == "POST" else {}),
             **({} if token is None else {"Cookie": "govbiz_session=" + token}),
+            **(headers or {}),
         },
         data=None if payload is None else json.dumps(payload).encode(),
         method=method,
@@ -46,6 +46,94 @@ def response(path, token=None, *, port=8000, payload=None, method="GET"):
         ):
             raise ValueError("Unexpected restored Ops response size")
         return reply.status, reply.headers, raw
+
+
+def browser_requests(principal, routes):
+    """Relay only this restored fixture's HTTP routes over its attached stdin/stdout."""
+    print(
+        json.dumps({"phase": "browser_ready", "email": principal["email"]}), flush=True
+    )
+    while True:
+        line = sys.stdin.readline(32769)
+        if not line or len(line) > 32768 or not line.endswith("\n"):
+            raise ValueError("Restored browser transport input is incomplete")
+        value = json.loads(line)
+        if value == {"phase": "browser_done"}:
+            return
+        if not isinstance(value, dict) or set(value) != {
+            "port",
+            "path",
+            "method",
+            "cookie",
+            "origin",
+            "payload",
+        }:
+            raise ValueError("Unexpected restored browser request")
+        port, route, method = value["port"], value["path"], value["method"]
+        core_read = (
+            port == 8080 and method == "GET" and route == "/api/v1/admin/session"
+        )
+        core_write = (
+            port == 8080
+            and method == "POST"
+            and route in {"/api/v1/auth/login", "/api/v1/auth/logout"}
+        )
+        ops_read = port == 8000 and method == "GET" and route in routes
+        if type(port) is not int or not (core_read or core_write or ops_read):
+            raise ValueError("Restored browser route or method is forbidden")
+        cookie, origin, payload = value["cookie"], value["origin"], value["payload"]
+        if (
+            not isinstance(cookie, str)
+            or len(cookie) > 8192
+            or any(c in cookie for c in "\r\n")
+        ):
+            raise ValueError("Invalid restored browser cookie header")
+        if origin not in (None, BROWSER_ORIGIN) or (
+            core_write and origin != BROWSER_ORIGIN
+        ):
+            raise ValueError("Unexpected restored browser origin")
+        if route == "/api/v1/auth/login":
+            if (
+                not isinstance(payload, dict)
+                or set(payload) != {"email", "password", "rememberMe"}
+                or payload["email"] != principal["email"]
+                or not isinstance(payload["password"], str)
+                or not 1 <= len(payload["password"]) <= 4096
+                or payload["rememberMe"] is not False
+            ):
+                raise ValueError("Invalid restored browser login request")
+        elif payload is not None:
+            raise ValueError("Unexpected restored browser request body")
+        status, headers, raw = response(
+            route,
+            port=port,
+            method=method,
+            payload=payload,
+            headers={
+                "Host": "127.0.0.1:5173" if port == 8000 else "127.0.0.1:8080",
+                **({"Cookie": cookie} if cookie else {}),
+                **({"Origin": origin} if origin else {}),
+            },
+        )
+        forwarded = {
+            key.lower(): headers[key]
+            for key in ("Content-Type", "Cache-Control", "Content-Security-Policy")
+            if key in headers
+        }
+        cookies = headers.get_all("Set-Cookie", [])
+        if cookies:
+            forwarded["set-cookie"] = cookies
+        print(
+            json.dumps(
+                {
+                    "phase": "browser_response",
+                    "status": status,
+                    "headers": forwarded,
+                    "body": base64.b64encode(raw).decode("ascii"),
+                }
+            ),
+            flush=True,
+        )
 
 
 def core_login(principal, password):
@@ -379,6 +467,7 @@ def check_http(expected):
                         )
                     },
                 }
+            browser_requests(principal, set(management["responses"]) | set(reports))
             # Revoke a real persisted session, then prove Ops cannot reuse it.
             if (
                 response("/api/v1/auth/logout", token, port=8080, method="POST")[0]
@@ -460,7 +549,9 @@ def verify(image, volume, expected, database):
                 "python",
                 image,
                 "-B",
-                "-",
+                "-u",
+                "-c",
+                "import sys,json; exec(json.loads(sys.stdin.readline()))",
             ],
             env={
                 **os.environ,
@@ -483,15 +574,22 @@ def verify(image, volume, expected, database):
             )
             + ", module.__dict__)\nsys.modules[module.__name__]=module\n"
             + Path(__file__).read_text(encoding="utf-8")
-            + "\nprint(json.dumps(check_http("
+            + "\nprint(json.dumps({'phase':'complete','result':check_http("
             + repr(expected)
-            + ")))\n"
+            + ")}),flush=True)\n"
         )
         result = json.loads(
             execute(
-                ["docker", "start", "--attach", "--interactive", identity],
-                data=program,
-                timeout=240,
+                ["node", Path(__file__).with_name("ops_restore_live_browser.mjs")],
+                data=json.dumps(
+                    {
+                        "identity": identity,
+                        "program": program,
+                        "password": database["core_password"],
+                        "expected": expected,
+                    }
+                ),
+                timeout=360,
             )
         )
         required = {
@@ -532,6 +630,37 @@ def verify(image, volume, expected, database):
             )
         ):
             raise ValueError("Incomplete restored management HTTP evidence")
+        browser = result.get("browser_login", {})
+        version = browser.get("browser_version") if isinstance(browser, dict) else None
+        if not isinstance(version, str) or not re.fullmatch(
+            r"[0-9]+(?:\.[0-9]+){3}", version
+        ):
+            raise ValueError("Incomplete restored live browser version")
+        required_browser = {
+            "status": "PASS",
+            "response_source": "restored_core_ops_http",
+            "transport": "docker_attached_stdio",
+            "browser_version": version,
+            "password_login_verified": True,
+            "httponly_cookie_received": True,
+            "core_ops_identity_verified": True,
+            "reload_verified": True,
+            "listed_run_count": management["listed_run_count"],
+            "pages_verified": (management["listed_run_count"] + 24) // 25,
+            "pagination_complete": True,
+            "details_verified": len(expected),
+            "reports_verified": len(expected),
+            "logout_verified": True,
+            "unauthorized_after_logout": True,
+            "revoked_session_rejected": True,
+            "browser_closed": True,
+            "proxy_stopped": True,
+            "helper_exited": True,
+        }
+        if json.dumps(browser, sort_keys=True) != json.dumps(
+            required_browser, sort_keys=True
+        ):
+            raise ValueError("Incomplete restored live browser evidence")
         snapshots = result.pop("management_responses")
         reports = result.pop("report_responses")
         with tempfile.TemporaryDirectory(prefix="ops-restore-contract-") as folder:

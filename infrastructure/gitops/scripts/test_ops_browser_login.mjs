@@ -1,9 +1,9 @@
 // Real React/Vite/Chromium with disposable HTTP auth fixtures, not Kubernetes proof.
 import assert from 'node:assert/strict'
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { once } from 'node:events'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readdir, rm } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import { createServer as createViteServer } from '../../../frontend/web/node_modules/vite/dist/node/index.js'
 import { checkBrowserLogin } from './ops_browser_login.mjs'
+import { runLiveRestore } from './ops_restore_live_browser.mjs'
 
 const email = 'admin@example.invalid', password = 'disposable-test-password'
 const id = '10000000-0000-4000-8000-000000000001'
@@ -199,4 +200,80 @@ test('CLI failures redact login input and emit only the fixed error code', () =>
   assert.equal(result.status, 1)
   assert.equal(result.stdout, '')
   assert.equal(result.stderr, 'KUBERNETES_BROWSER_LOGIN_FAILED\n')
+})
+
+// A child process forwards each RPC to the live disposable HTTP fixtures above.
+// It replaces Docker only; Vite, browser, cookies and HTTP responses remain real.
+const relayProgram = String.raw`
+const readline = require('node:readline')
+const reader = readline.createInterface({input: process.stdin})
+let settings, publicOrigin
+const send = value => process.stdout.write(JSON.stringify(value) + '\n')
+;(async () => {
+  for await (const line of reader) {
+    const value = JSON.parse(line)
+    if (!settings) {
+      settings = JSON.parse(value)
+      send({phase: 'browser_ready', email: settings.email})
+    } else if (value.phase === 'browser_done') {
+      send({phase: 'complete', result: {status: 'PASS', test_origin: publicOrigin}})
+      process.exitCode = settings.failExit ? 1 : 0
+      break
+    } else {
+      if (value.origin) publicOrigin = value.origin
+      const reply = await fetch(settings.origin + value.path, {
+        method: value.method, redirect: 'manual',
+        headers: {'Content-Type': 'application/json', ...(value.cookie ? {Cookie: value.cookie} : {}), ...(value.origin ? {Origin: settings.origin} : {})},
+        ...(value.payload === null ? {} : {body: JSON.stringify(value.payload)}),
+      })
+      const headers = Object.fromEntries(['content-type', 'cache-control', 'content-security-policy'].filter(key => reply.headers.has(key)).map(key => [key, reply.headers.get(key)]))
+      if (reply.headers.getSetCookie().length) headers['set-cookie'] = reply.headers.getSetCookie()
+      send({phase: 'browser_response', status: reply.status, headers, body: Buffer.from(await reply.arrayBuffer()).toString('base64')})
+    }
+  }
+  reader.close()
+  process.stdin.destroy()
+})().catch(() => { process.exitCode = 1; reader.close(); process.stdin.destroy() })
+`
+
+for (const failExit of [false, true]) {
+  test(`restored browser relay verifies real HTTP and rejects helper exit failure: ${failExit}`, { timeout: 120000 }, async () => {
+    await fixture(null, async (input) => {
+      const caches = async () => (await readdir(tmpdir())).filter((name) => name.startsWith('govbiz-restored-live-')).sort()
+      const before = await caches()
+      const envBefore = ['K8S_CORE_PORT', 'K8S_OPS_PORT', 'K8S_DEV_LOGIN'].map((key) => process.env[key])
+      const child = spawn(process.execPath, ['-e', relayProgram], { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true })
+      const options = { ...input, program: JSON.stringify({ origin: input.origin, email, failExit }) }
+      if (failExit) await assert.rejects(runLiveRestore(options, child, 0), /did not exit cleanly/)
+      else {
+        const result = await runLiveRestore(options, child, 0)
+        const proof = result.browser_login
+        await assert.rejects(fetch(result.test_origin, { signal: AbortSignal.timeout(1000) }))
+        assert.equal(proof.response_source, 'restored_core_ops_http')
+        assert.equal(proof.transport, 'docker_attached_stdio')
+        assert.equal(proof.revoked_session_rejected, true)
+        assert.equal(proof.proxy_stopped, true)
+        assert.equal(proof.helper_exited, true)
+        assert.ok(!JSON.stringify(proof).includes(password) && !JSON.stringify(proof).includes(email))
+      }
+      assert.ok(child.exitCode !== null || child.signalCode !== null)
+      assert.deepEqual(await caches(), before)
+      assert.deepEqual(['K8S_CORE_PORT', 'K8S_OPS_PORT', 'K8S_DEV_LOGIN'].map((key) => process.env[key]), envBefore)
+    })
+  })
+}
+
+test('restored browser rejects malformed helper output and closes its process', { timeout: 20000 }, async () => {
+  const child = spawn(process.execPath, ['-e', "process.stdin.once('data',()=>{process.stdout.write('not-json\\n');process.stdin.destroy()})"], { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true })
+  await assert.rejects(runLiveRestore({ program: 'fixture', password, expected }, child, 0), /transport failed/)
+  assert.ok(child.exitCode !== null || child.signalCode !== null)
+})
+
+test('restored browser CLI redacts malformed input', () => {
+  const result = spawnSync(process.execPath, [fileURLToPath(new URL('./ops_restore_live_browser.mjs', import.meta.url))], {
+    input: JSON.stringify({ identity: 'invalid', password }), encoding: 'utf8', timeout: 10000,
+  })
+  assert.equal(result.status, 1)
+  assert.equal(result.stdout, '')
+  assert.equal(result.stderr, 'BRIDGE_RESTORE_LIVE_BROWSER_FAILED\n')
 })
