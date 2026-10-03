@@ -5,12 +5,13 @@ import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/
 import { ApiError, errorMessage } from '../api/client'
 import { listReviewSavedPrograms } from '../api/combinationReviews'
 import { useAuth } from '../auth/session'
-import { ProgramCard } from './ProgramCard'
+import { ProgramCard, type ProgramSelectionLabels } from './ProgramCard'
 import { Button, Notice, Page, colors, styles } from '../ui'
 
-export function ReviewSavedPrograms({ token, keys, disabled, onToggle, onOpen, header }: {
+export function ReviewSavedPrograms({ token, keys, disabled, onToggle, onOpen, header, maximum = 2, labels }: {
   token: string; keys: string[]; disabled: boolean; onToggle(program: SupportProgram): void; onOpen(identity: SupportProgramIdentity): void
   header?: ReactNode
+  maximum?: number; labels?: ProgramSelectionLabels
 }) {
   const { invalidateSession } = useAuth()
   const [programs, setPrograms] = useState<SupportProgram[] | null>(null)
@@ -36,7 +37,7 @@ export function ReviewSavedPrograms({ token, keys, disabled, onToggle, onOpen, h
     {programs?.map(program => {
       const selected = keys.includes(`${program.sourceCode}:${program.id}`)
       return <ProgramCard key={`${program.sourceCode}:${program.id}`} program={program} onOpen={onOpen}
-        selection={{ selected, disabled: disabled || (!selected && keys.length >= 2), onToggle: () => onToggle(program) }} />
+        selection={{ selected, labels, disabled: disabled || (!selected && keys.length >= maximum), onToggle: () => onToggle(program) }} />
     })}
   </Page>
 }

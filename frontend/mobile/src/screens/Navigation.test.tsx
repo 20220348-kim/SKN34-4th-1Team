@@ -26,6 +26,11 @@ import { LoginFlowProvider } from '../auth/loginFlow'
 import { AppEntryGate } from '../auth/AppEntryGate'
 import { completeIntroduction, readIntroductionCompleted } from '../auth/introductionStorage'
 import { useAuth } from '../auth/session'
+import NewPreparationRoute from '../../app/(tabs)/all/preparation/new'
+import PreparationEditorRoute from '../../app/(tabs)/all/preparation/[id]'
+import PreparationReviewRoute from '../../app/(tabs)/all/preparation/[id]/review'
+import PreparationDocumentRoute from '../../app/(tabs)/all/preparation/[id]/documents'
+import PreparationOnlineRoute from '../../app/(tabs)/all/preparation/[id]/online'
 
 jest.mock('../auth/session', () => ({ useAuth: jest.fn() }))
 jest.mock('../api/client', () => ({ ...jest.requireActual('../api/client'), programClient: jest.fn() }))
@@ -46,6 +51,9 @@ const routes = {
   '(tabs)/all/_layout': AllLayout, '(tabs)/all/index': MenuRoute, '(tabs)/all/account': AccountRoute,
   '(tabs)/all/collab': CollaborationRoute, '(tabs)/all/company': CompanyRoute,
   '(tabs)/all/settings': SettingsRoute, '(tabs)/all/preparation': PreparationRoute, company: LegacyCompanyRoute,
+  '(tabs)/all/preparation/new': NewPreparationRoute, '(tabs)/all/preparation/[id]': PreparationEditorRoute,
+  '(tabs)/all/preparation/[id]/review': PreparationReviewRoute, '(tabs)/all/preparation/[id]/documents': PreparationDocumentRoute,
+  '(tabs)/all/preparation/[id]/online': PreparationOnlineRoute,
   '(tabs)/all/reviews/index': ReviewListRoute, '(tabs)/all/reviews/new': NewReviewRoute, '(tabs)/all/reviews/[id]': ReviewRoute,
 }
 
@@ -163,7 +171,7 @@ test.each([
 
 test.each([
   ['리포트 수신 설정', '/all/settings', '로그인하면 리포트 수신 설정을 변경할 수 있어요.'],
-  ['신청 문서', '/all/preparation', '로그인하면 신청 문서와 중복 검토를 확인할 수 있어요.'],
+  ['신청 문서', '/all/preparation', '로그인하면 작성한 답변과 신청문서를 웹과 앱에서 함께 확인할 수 있어요.'],
   ['중복 검토', '/all/reviews', '로그인하면 본인의 검토와 참여 이력을 관리할 수 있어요. 기업 등록 없이 직접 입력할 수 있습니다.'],
   ['받은 제안', '/all/collab', '제안함은 로그인 후 확인할 수 있어요.'],
   ['보낸 제안', '/all/collab', '제안함은 로그인 후 확인할 수 있어요.'],
@@ -174,7 +182,7 @@ test.each([
   await screen.findByText(notice)
   expect(view.getPathname()).toBe(pathname)
   expect(screen.getByLabelText('전체').props.accessibilityState.selected).toBe(true)
-  fireEvent.press(screen.getByLabelText(label === '중복 검토' ? '로그인하고 시작' : '로그인하기'))
+  fireEvent.press(screen.getByLabelText(label === '중복 검토' ? '로그인하고 시작' : label === '신청 문서' ? '로그인하고 시작하기' : '로그인하기'))
   if (label !== '리포트 수신 설정') {
     await screen.findByText('로그인이 필요해요')
     fireEvent.press(screen.getByLabelText('로그인'))

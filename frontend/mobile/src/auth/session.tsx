@@ -9,6 +9,7 @@ import { apiRequest, ApiError, getApiBaseUrl } from '../api/client'
 import { openOAuthLogin, type MobileOAuthProvider } from './oauth'
 import { clearStoredSession, readStoredSession, saveStoredSession, type StoredSession } from './storage'
 import { clearPendingReview } from './reviewPending'
+import { clearApplicationFiles } from '../api/applicationDocumentFiles'
 
 const mobileSessionSchema = z.object({
   accessToken: z.string().min(1),
@@ -58,6 +59,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setRestoreError(null)
     try {
       await Promise.all([clearStoredSession(baseUrl), previousEmail ? clearPendingReview(baseUrl, previousEmail) : Promise.resolve()])
+      if (previousEmail) clearApplicationFiles(`${baseUrl}:${previousEmail}`)
     } catch {
       setRestoreError('기기에 저장된 로그인 정보를 지우지 못했습니다. 앱을 닫기 전에 로그아웃을 다시 시도해 주세요.')
       throw new Error('기기의 로그인 정보를 지우지 못했습니다. 다시 시도해 주세요.')

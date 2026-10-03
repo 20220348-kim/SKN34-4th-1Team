@@ -28,7 +28,8 @@ export function PreparationRow({ item }: { item: ApplicationPreparationSummary }
   const total = item.requiredTotal
   const answered = item.answeredRequired
   return <Pressable accessibilityRole="button" accessibilityLabel={`${item.formTitle} · ${applicationServiceFieldLabels[item.serviceField]} 열기`}
-    onPress={() => void openPreparationWeb(`/app/application-preparations/${item.id}${completed ? '/documents' : ''}`)} style={local.row}>
+    onPress={() => router.push(completed ? { pathname: '/all/preparation/[id]/documents', params: { id: String(item.id) } }
+      : { pathname: '/all/preparation/[id]', params: { id: String(item.id) } })} style={local.row}>
     <View style={local.icon}><AppIcon name="document" color={colors.primary} size={18} /></View>
     <View style={local.text}><Text style={local.rowTitle}>{item.formTitle} · {applicationServiceFieldLabels[item.serviceField]}</Text>
       <Text style={local.small}>{completed ? `${item.programTitle} · 입력 버전 ${item.inputRevision}`
@@ -125,7 +126,7 @@ export function ProgramPreparationSection({ identity, token }: { identity: Suppo
     {reviews.map((item) => <ReviewRow key={item.review.id} item={item} />)}
     {!workspace.loading && workspace.preparations !== null && workspace.reviews !== null && !items.length && !reviews.length
       && <Text style={styles.muted}>아직 준비 중인 작업이 없어요.</Text>}
-    <View style={local.buttons}><Button label="+ 새 문서" variant="secondary" onPress={() => void openPreparationWeb('/app/application-preparations/new', identity)} />
+    <View style={local.buttons}><Button label="+ 새 문서" variant="secondary" onPress={() => router.push({ pathname: '/all/preparation/new', params: identity })} />
       <Button label="중복 검토 요청" variant="secondary" onPress={() => router.push({ pathname: '/all/reviews/new', params: identity })} /></View>
     {stageOpen && <ProgressStageSheet items={items} token={token} onClose={() => setStageOpen(false)} onSaved={workspace.refresh} />}
   </View>

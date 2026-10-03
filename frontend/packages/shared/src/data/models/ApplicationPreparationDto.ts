@@ -58,6 +58,13 @@ export const applicationFormSchema = z.object({
   message: '작성 항목 식별자가 중복되었습니다.',
 })
 
+export const applicationFormAvailabilitySchema = z.object({
+  state: z.object({ sourceCode: z.string(), sourceProgramId: z.string(),
+    status: z.enum(['PENDING', 'AVAILABLE', 'NO_FORM', 'DOCUMENT_UNAVAILABLE', 'TOO_LARGE', 'RETRY_WAITING', 'STALE', 'REVIEW_REQUIRED']),
+    reasonCode: z.string(), nextRetryAt: z.string().nullable(), attemptCount: z.number().int().nonnegative(),
+  }), forms: z.object({ items: z.array(applicationFormSchema) }),
+})
+
 export const supportedApplicationFormsSchema = z.object({
   items: z.array(applicationFormSchema).min(1).refine(
     (forms) => new Set(forms.map(({ formVersionId }) => formVersionId)).size === forms.length,

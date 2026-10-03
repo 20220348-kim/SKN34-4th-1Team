@@ -5,8 +5,9 @@ import { Button, Card, StatusBadge, colors, styles } from '../ui'
 
 export const statusLabels = { OPEN: '접수 중', UPCOMING: '접수 예정', CLOSED: '마감', UNKNOWN: '상태 미확인' }
 
+export type ProgramSelectionLabels = { selected: string; select: string }
 export function ProgramCard({ program, onOpen, selection }: { program: SupportProgram; onOpen: (identity: SupportProgramIdentity) => void
-  selection?: { selected: boolean; disabled: boolean; onToggle(): void }
+  selection?: { selected: boolean; disabled: boolean; onToggle(): void; labels?: ProgramSelectionLabels }
 }) {
   const open = () => onOpen({ sourceCode: program.sourceCode, sourceProgramId: program.id })
   const body = <>
@@ -22,10 +23,10 @@ export function ProgramCard({ program, onOpen, selection }: { program: SupportPr
     </>
   if (!selection) return <Pressable accessibilityRole="button" accessibilityLabel={`${program.title}, 상세 보기`} onPress={open}><Card>{body}</Card></Pressable>
   return <View testID={`review-program-${program.sourceCode}-${program.id}`} style={[styles.card, local.selectable, selection.selected && local.selected]}>
-    {selection.selected && <Text style={local.selectedLabel}>✓ 비교 대상 선택됨</Text>}
+    {selection.selected && <Text style={local.selectedLabel}>{selection.labels?.selected ?? '✓ 비교 대상 선택됨'}</Text>}
     <Pressable accessibilityRole="button" accessibilityLabel={`${program.title}, 상세 보기`} onPress={open} style={{ gap: 9 }}>{body}</Pressable>
     <View style={{ borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 12 }}>
-      <Button label={selection.selected ? '✓ 선택됨 · 해제' : '비교할 공고로 선택'} accessibilityLabel={`${program.title} ${selection.selected ? '선택 해제' : '선택'}`} variant={selection.selected ? 'primary' : 'secondary'}
+      <Button label={selection.selected ? '✓ 선택됨 · 해제' : selection.labels?.select ?? '비교할 공고로 선택'} accessibilityLabel={`${program.title} ${selection.selected ? '선택 해제' : '선택'}`} variant={selection.selected ? 'primary' : 'secondary'}
         disabled={selection.disabled} onPress={selection.onToggle} />
     </View>
   </View>
