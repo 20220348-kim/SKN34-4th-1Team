@@ -72,10 +72,16 @@ services:
   clickhouse:
     image: clickhouse/clickhouse-server:25.12@sha256:8a790dd3468db22b1d4e7b18a176f378ff5ff6053b9c48dd4ea1fa71a24c5ba6
     user: "101:101"
+    # 8 GiB 개발 VM에서 쿼리/캐시가 다른 서비스의 메모리를 잠식하지 않도록 제한한다.
+    # 서버 내부 한도는 config.d에서 2 GiB로 낮춰 컨테이너 한도까지 여유를 남긴다.
+    mem_limit: 3g
+    restart: "on-failure:3"
     environment:
       CLICKHOUSE_USER: langfuse
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?Run init_env.py}
-    volumes: ["clickhouse-data:/var/lib/clickhouse"]
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ./clickhouse-memory.xml:/etc/clickhouse-server/config.d/memory.xml:ro
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
       interval: 5s

@@ -16,6 +16,7 @@ function Breakdown({ value }: { value: BudgetBreakdown }) {
     <thead className="border-b border-sample-border text-xs text-sample-muted"><tr><th className="py-3">구분</th><th>호출 수</th><th>출력 토큰</th><th>입력 토큰</th></tr></thead>
     <tbody>{[
       ['확정 사용량', count(value.settled_calls), count(value.confirmed_output_tokens), inputCount(value.confirmed_input_tokens)],
+      ...(value.legacy_calls ? [['과거 저장 응답 반영', count(value.legacy_calls), count(value.legacy_output_tokens!), inputCount(value.legacy_input_tokens)]] : []),
       ['승인 후 사용량 미확인', count(value.unknown_calls), count(value.unknown_output_tokens), inputCount(boundedCalls ? value.unknown_input_tokens : null)],
       ['아직 승인하지 않은 예약', count(value.unapproved_calls), count(value.unapproved_output_tokens), inputCount(boundedReservations ? value.unapproved_input_tokens : null)],
       ['종료 전 반환 대기', '—', count(value.pending_release_output_tokens), inputCount(boundedReservations ? value.pending_release_input_tokens : null)],
@@ -58,13 +59,14 @@ export function BudgetOverview({ onExpired, refreshKey }: { onExpired: () => voi
     {error && <p role="alert" className="text-sm text-red-700">{error} 표시된 값이 있으면 마지막 조회 기록입니다.</p>}
     {!data && !error && <p role="status">예산 장부를 불러오고 있습니다.</p>}
     {data && summary && <>
-      <p className="text-xs text-sample-muted">조회 시각: {date(data.as_of)} · 15초마다 갱신 · 총계는 전체 예약 기준입니다.</p>
+      <p className="text-xs text-sample-muted">조회 시각: {date(data.as_of)} · 15초마다 갱신 · 총계는 전체 예약과 검토 후 반영한 과거 사용량 기준입니다.</p>
       {summary.input_state === 'enforced' ? <p className="text-sm">누적 입력 토큰 한도 적용 중</p>
         : summary.input_state === 'legacy_unknown' ? <p className="text-sm text-amber-800">과거 입력 미확인: 누적 입력 사용량을 확정할 수 없습니다. 입력 한도 활성화 전에 과거 기록을 확인해야 합니다.</p>
         : <p className="text-sm text-amber-800">누적 입력 한도 미설정: 호출·출력 한도만 적용됩니다.</p>}
       {summary.state === 'unconfigured'  && <p role="status">누적 한도가 설정되지 않았습니다. 잔여 예산을 계산할 수 없습니다.</p>}
       {summary.state === 'inconsistent' && <p role="alert" className="text-sm text-red-700">저장된 할당량과 상세 장부가 일치하지 않습니다. 잔여 한도를 확정할 수 없어 표시하지 않습니다.</p>}
       {summary.legacy_live_run_count > 0 && <p className="text-sm text-amber-800">예약 기록이 없는 과거 모델 실행 {count(summary.legacy_live_run_count)}건이 있습니다. 해당 실행의 사용량은 이 장부에서 확인할 수 없습니다.</p>}
+      {Boolean(summary.legacy_accounted_run_count) && <p className="text-sm">저장 응답을 검토해 과거 실행 {count(summary.legacy_accounted_run_count!)}건의 사용량을 합산했습니다. 당시 예약이나 제공자의 청구 확인을 뜻하지 않습니다.</p>}
       {summary.limits && <dl className="grid gap-3 text-sm sm:grid-cols-3">{[
         ['전체 한도', summary.limits], ['저장된 할당량', summary.allocated], ['잔여 한도', summary.state === 'consistent' ? summary.remaining : null],
       ].map(([label, amount]) => {
@@ -126,6 +128,17 @@ export function RunBudgetPanel({ runId, onExpired, refreshKey }: { runId: string
       <p className="text-xs text-sample-muted">조회 시각: {date(data.as_of)}</p>
       {data.state === 'missing' && <p className="text-sm text-amber-800">이 모델 실행에는 예약 기록이 없습니다. 사용량을 0으로 판단할 수 없습니다.</p>}
       {data.state === 'not_applicable' && <p className="text-sm">새 모델 호출을 예약하는 실행이 아닙니다. 원본 실행의 비용은 원본 장부에서 확인하세요.</p>}
+      {data.legacy_usage && <section aria-label="과거 사용량 반영 이력" className="space-y-2 rounded-xl bg-[#f3f7f5] p-4 text-sm">
+        <h3 className="font-semibold">과거 사용량 반영 이력</h3>
+        <p>{date(data.legacy_usage.created_at)} · {data.legacy_usage.actor} · CLI</p>
+        <p>사유: {data.legacy_usage.reason}</p>
+        <p>저장 응답 사용량: {count(data.legacy_usage.usage.calls)}회 · 입력 {count(data.legacy_usage.usage.input_tokens)} / 출력 {count(data.legacy_usage.usage.output_tokens)}토큰</p>
+        <p>전체 할당량: {count(data.legacy_usage.before.calls)} → {count(data.legacy_usage.after.calls)}회 · 입력 {count(data.legacy_usage.before.input_tokens)} → {count(data.legacy_usage.after.input_tokens)}토큰 · 출력 {count(data.legacy_usage.before.output_tokens)} → {count(data.legacy_usage.after.output_tokens)}토큰</p>
+        <p className="break-all text-xs text-sample-muted">원본 SHA-256: {data.legacy_usage.capture_sha256}</p>
+        <p className="break-all text-xs text-sample-muted">검토 증거 SHA-256: {data.legacy_usage.evidence_sha256} · 요청: {data.legacy_usage.request_id}</p>
+        <p>저장 응답을 검토한 기록이며 당시 예약·서명 영수증·제공자 청구 확인이 아닙니다. 답변 품질 승인과도 별개입니다.</p>
+        <p className="text-xs text-sample-muted">검토자는 CLI 운영자가 입력한 값이며 Core 로그인으로 인증한 신원은 아닙니다.</p>
+      </section>}
       {data.reservation && <>
         <p className="text-sm">예약 상태: {data.reservation.closed_at ? `닫힘 · ${date(data.reservation.closed_at)}` : '열림'} · 실행의 완료·취소 상태와 별도로 관리합니다.</p>
         <p className="text-sm">실행 내 입력 상한 최댓값: {inputCount(data.reservation.max_input_tokens)}</p>

@@ -13,7 +13,7 @@ from django.utils.dateparse import parse_datetime
 
 from .artifact_store import ResultsUnavailable, read_usage_receipt
 from .budget import BudgetUnavailable, call_limits, operation_plan, validate_usage
-from .budget_reporting import ledger_totals, reservation_data
+from .budget_reporting import budget_totals, reservation_data
 from .execution_spec import digest
 from .models import (
     EvaluationBudget,
@@ -288,7 +288,7 @@ def correct_usage(
             raise CorrectionUnavailable("이미 다른 호출에 반영한 응답 증거입니다.")
         if EvaluationUsageCorrection.objects.filter(evidence_sha256=evidence_hash).exists():
             raise CorrectionUnavailable("이미 반영한 사용량 증거입니다.")
-        totals = ledger_totals(EvaluationBudgetReservation.objects.filter(budget=budget))
+        totals = budget_totals(budget)
         if (
             any(value < 0 for value in totals.values())
             or totals["allocated_calls"] != budget.allocated_calls

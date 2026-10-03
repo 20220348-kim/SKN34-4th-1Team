@@ -8,7 +8,7 @@ from django.utils.dateparse import parse_datetime
 
 from . import prefect_client
 from .budget import BudgetUnavailable, _close_reservation, call_limits, operation_plan
-from .budget_reporting import ledger_totals, reservation_data
+from .budget_reporting import budget_totals, reservation_data
 from .execution_spec import digest
 from .models import (
     EvaluationBudget,
@@ -122,7 +122,7 @@ def cleanup_reservation(*, run_id, actor, reason, request_id, apply=False):
             != digest(prefect_client.run_parameters(run))
         ):
             raise CleanupUnavailable("조회 중 실행·소유자·예약이 변경됐습니다. 다시 확인하세요.")
-        totals = ledger_totals(EvaluationBudgetReservation.objects.filter(budget=budget))
+        totals = budget_totals(budget)
         if (
             any(value < 0 for value in totals.values())
             or totals["allocated_calls"] != budget.allocated_calls

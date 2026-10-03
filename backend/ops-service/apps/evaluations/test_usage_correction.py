@@ -279,6 +279,14 @@ class UsageCorrectionTests(ArtifactServerMixin, TransactionTestCase):
                 stdout=StringIO(),
             )
 
+    def test_usage_correction_preserves_independently_accounted_legacy_usage(self):
+        from .test_legacy_usage import seed_legacy_usage
+
+        seed_legacy_usage(self.budget, self.user)
+        self.apply()
+        self.assertEqual(self.amounts(), (2, 51))
+        self.assertEqual(self.budget.allocated_input_tokens, 101)
+
     def test_apply_preserves_original_call_raw_evidence_and_ledger_consistency(self):
         with patch("apps.evaluations.prefect_client.create_run") as create:
             result = self.apply()

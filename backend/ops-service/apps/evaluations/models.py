@@ -404,6 +404,35 @@ class EvaluationBudgetChange(models.Model):
         ]
 
 
+class EvaluationLegacyUsage(models.Model):
+    """예약 도입 전 저장 응답을 운영자가 검토해 반영한 사용량. 과거 승인을 만들지 않는다."""
+
+    run = models.OneToOneField(EvaluationRun, on_delete=models.PROTECT, related_name="legacy_usage")
+    budget = models.ForeignKey(EvaluationBudget, on_delete=models.PROTECT)
+    request_id = models.UUIDField(unique=True)
+    actor = models.CharField(max_length=150)
+    reason = models.CharField(max_length=1000)
+    capture_sha256 = models.CharField(max_length=64, unique=True)
+    evidence_sha256 = models.CharField(max_length=64)
+    evidence = models.JSONField()
+    calls = models.PositiveIntegerField()
+    input_tokens = models.PositiveBigIntegerField()
+    output_tokens = models.PositiveBigIntegerField()
+    before = models.JSONField()
+    after = models.JSONField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-id"]
+        constraints = [
+            models.CheckConstraint(condition=models.Q(calls__gt=0), name="legacy_usage_calls"),
+            models.CheckConstraint(
+                condition=~models.Q(actor="") & ~models.Q(reason=""),
+                name="legacy_usage_attribution",
+            ),
+        ]
+
+
 class EvaluationBudgetCall(models.Model):
     reservation = models.ForeignKey(
         EvaluationBudgetReservation, on_delete=models.PROTECT, related_name="calls"

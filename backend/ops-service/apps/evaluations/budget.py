@@ -6,7 +6,12 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-from .models import EvaluationBudget, EvaluationBudgetCall, EvaluationBudgetReservation
+from .models import (
+    EvaluationBudget,
+    EvaluationBudgetCall,
+    EvaluationBudgetReservation,
+    EvaluationLegacyUsage,
+)
 
 
 class BudgetUnavailable(Exception):
@@ -170,6 +175,8 @@ def reserve(run):
     output_total = sum(item["max_output_tokens"] for item in plan) if plan else None
     budget = EvaluationBudget.objects.select_for_update().filter(pk=1).first()
     if budget is None or len(settings.LLMOPS_BUDGET_TOKEN) < 32:
+        raise BudgetUnavailable
+    if EvaluationLegacyUsage.objects.filter(run=run).exists():
         raise BudgetUnavailable
     if EvaluationBudgetReservation.objects.filter(run=run).exists():
         return

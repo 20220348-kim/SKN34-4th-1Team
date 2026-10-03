@@ -10,8 +10,13 @@ from rest_framework.response import Response
 
 from .budget import call_limits
 from .budget_cleanup import cleanup_data
-from .budget_reporting import budget_summary, reservation_data
-from .models import EvaluationBudget, EvaluationBudgetReservation, EvaluationRun
+from .budget_reporting import budget_summary, legacy_usage_data, reservation_data
+from .models import (
+    EvaluationBudget,
+    EvaluationBudgetReservation,
+    EvaluationLegacyUsage,
+    EvaluationRun,
+)
 from .usage_correction import correction_data
 
 
@@ -59,6 +64,19 @@ def api_run_budget(request, run_id):
         .first()
     )
     if reservation is None:
+        legacy = EvaluationLegacyUsage.objects.filter(run=run).first()
+        if legacy is not None:
+            return Response(
+                {
+                    "as_of": as_of,
+                    "state": "legacy_recorded",
+                    "reservation": None,
+                    "calls": [],
+                    "cleanup": None,
+                    "corrections": [],
+                    "legacy_usage": legacy_usage_data(legacy),
+                }
+            )
         return Response(
             {
                 "as_of": as_of,
