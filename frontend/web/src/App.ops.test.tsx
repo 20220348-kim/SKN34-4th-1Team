@@ -642,6 +642,24 @@ const qualityState: NonNullable<EvaluationReview['quality']> = {
   blocked_reason: '', history: [],
 }
 
+it('검토 진행 안내에서 닫힌 자료 검토를 열고 초점을 이동하되 승인 요청을 보내지 않는다', async () => {
+  const original = fetchMock.getMockImplementation()!
+  fetchMock.mockImplementation((path, options) => path.endsWith('/review')
+    ? Promise.resolve(json({ ...reviewDefaults, quality: qualityState, material: reviewMaterial, material_error: '', is_baseline: false, baseline_version: 0, baseline_history: [], reviews: [] }))
+    : original(path, options))
+  const scroll = vi.fn()
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: scroll })
+  open(`/ops/evaluations/${id}`)
+  fireEvent.click(await screen.findByRole('button', { name: '기준 자료 검토로 이동' }))
+  const target = document.getElementById('fixture-review')
+  expect(target).toHaveProperty('open', true)
+  expect(document.activeElement).toBe(target)
+  expect(scroll).toHaveBeenCalledOnce()
+  expect(screen.getByRole('button', { name: '평가 기준 자료 검토 저장' })).toHaveProperty('disabled', true)
+  expect(fetchMock.mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false)
+  delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView
+})
+
 it('완료 실행도 미판정으로 표시하고 현재 근거 해시로만 품질 판정을 저장한다', async () => {
   const original = fetchMock.getMockImplementation()!
   let state: EvaluationReview = { ...reviewDefaults, can_promote: false, quality: qualityState, material: reviewMaterial, material_error: '', is_baseline: false, baseline_version: 0, baseline_history: [], reviews: [] }
@@ -658,10 +676,10 @@ it('완료 실행도 미판정으로 표시하고 현재 근거 해시로만 품
     return original(path, options)
   })
   open(`/ops/evaluations/${id}`)
-  expect(await screen.findByText('미판정')).toBeTruthy()
+  expect(await screen.findByRole('heading', { name: '품질 판정 · 미판정' })).toBeTruthy()
   expect(screen.getByText('완료')).toBeTruthy()
   fireEvent.click(screen.getByRole('button', { name: '현재 근거로 품질 판정 저장' }))
-  expect(await screen.findByText('검토 필요')).toBeTruthy()
+  expect(await screen.findByRole('heading', { name: '품질 판정 · 검토 필요' })).toBeTruthy()
   expect(screen.getByRole('button', { name: '비교 기준으로 지정' })).toHaveProperty('disabled', true)
   expect(fetchMock.mock.calls.some(([path, options]) => path === '/api/v1/ops/evaluations' && options?.method === 'POST')).toBe(false)
 })
