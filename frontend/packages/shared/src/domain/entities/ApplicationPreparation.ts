@@ -230,6 +230,8 @@ export type ApplicationFormAvailability = {
     sourceCode: string; sourceProgramId: string;
     status: 'PENDING' | 'AVAILABLE' | 'NO_FORM' | 'DOCUMENT_UNAVAILABLE' | 'TOO_LARGE' | 'RETRY_WAITING' | 'STALE' | 'REVIEW_REQUIRED';
     reasonCode: string; nextRetryAt: string | null; attemptCount: number;
+    /** 받지 못한 첨부·제외한 양식·직접 체크할 동의 항목처럼 마지막 분석이 남긴 안내입니다. */
+    warnings: string[];
   };
   forms: { items: ApplicationForm[] };
 }

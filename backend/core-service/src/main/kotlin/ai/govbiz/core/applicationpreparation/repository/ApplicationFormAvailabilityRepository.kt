@@ -9,6 +9,7 @@ import org.springframework.beans.factory.annotation.Qualifier
 import java.time.Clock
 import java.time.LocalDateTime
 import java.util.UUID
+import tools.jackson.databind.ObjectMapper
 
 /** 공고별 상태 행이 시스템 Outbox와 실행권을 함께 소유한다. 외부 I/O는 이 Repository 밖에서 수행한다. */
 @Repository
@@ -17,6 +18,7 @@ class ApplicationFormAvailabilityRepository(
     private val snapshots: ApplicationFormSnapshotRepository,
     private val timeouts: ai.govbiz.core._common.ai_config.AiServiceClientProperties,
     @param:Qualifier("seoulClock") private val clock: Clock,
+    private val json: ObjectMapper,
 ) {
     @Transactional(readOnly = true)
     fun listActiveForms(): List<ApplicationFormManifest> = mapper.listAvailable().flatMap { activeForms(it.sourceCode, it.sourceProgramId) }
@@ -45,7 +47,7 @@ class ApplicationFormAvailabilityRepository(
     private fun invalidate(row: ApplicationFormAvailabilityDbRow, reason: String) {
         row.status = "STALE"; row.reasonCode = reason; row.activeFormVersionId = null
         row.generation++; row.leaseToken = null; row.leaseUntil = null
-        row.aiStarted = false; row.attemptCount = 0; row.nextRetryAt = now()
+        row.aiStarted = false; row.attemptCount = 0; row.nextRetryAt = now(); row.analysisWarnings = null
     }
 
     @Transactional
@@ -120,7 +122,7 @@ class ApplicationFormAvailabilityRepository(
 
     /** 스냅샷 저장과 활성 포인터 전환은 반드시 같은 짧은 transaction에서 수행한다. */
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
-    fun available(lease: ApplicationFormAnalysisLease, forms: List<ApplicationFormManifest>, metadata: ApplicationFormAnalysisMetadata) {
+    fun available(lease: ApplicationFormAnalysisLease, forms: List<ApplicationFormManifest>, metadata: ApplicationFormAnalysisMetadata, warnings: List<String> = emptyList()) {
         val row = owned(lease)
         require(forms.isNotEmpty() && forms.all { it.sourceCode == lease.sourceCode && it.sourceProgramId == lease.sourceProgramId })
         snapshots.save(forms, metadata.sourceFingerprint, metadata.parserVersion, metadata.configuration)
@@ -128,14 +130,14 @@ class ApplicationFormAvailabilityRepository(
         row.status = "AVAILABLE"; row.reasonCode = "FORM_FOUND"; row.activeFormVersionId = forms.first().formVersionId
         row.sourceFingerprint = metadata.sourceFingerprint; row.parserVersion = metadata.parserVersion
         row.extractionModel = metadata.configuration.model; row.extractionPromptVersion = metadata.configuration.promptVersion
-        row.verifiedAt = now(); row.nextRetryAt = now().plusDays(1)
+        row.verifiedAt = now(); row.nextRetryAt = now().plusDays(1); row.analysisWarnings = encode(warnings)
         release(row); mapper.update(row)
         org.slf4j.LoggerFactory.getLogger(javaClass).info("application_form_analysis sourceCode={} sourceProgramId={} status={} reasonCode={} durationMs={} timeoutStage={}",
             row.sourceCode, row.sourceProgramId, row.status, row.reasonCode, row.durationMs, row.timeoutStage)
     }
 
     @Transactional
-    fun finish(lease: ApplicationFormAnalysisLease, status: ApplicationFormAvailabilityStatus, reason: String, retryable: Boolean = false, timeoutStage: String? = null, cacheResult: Boolean = true, failureConfiguration: ApplicationFormDiscoveryConfiguration? = null) {
+    fun finish(lease: ApplicationFormAnalysisLease, status: ApplicationFormAvailabilityStatus, reason: String, retryable: Boolean = false, timeoutStage: String? = null, cacheResult: Boolean = true, failureConfiguration: ApplicationFormDiscoveryConfiguration? = null, warnings: List<String> = emptyList()) {
         val row = owned(lease)
         row.durationMs = (System.nanoTime() - lease.startedNanos) / 1_000_000; row.timeoutStage = timeoutStage
         if (row.sourceFingerprint == null && failureConfiguration != null) {
@@ -146,7 +148,7 @@ class ApplicationFormAvailabilityRepository(
         row.status = if (retryable && row.attemptCount >= 3) "REVIEW_REQUIRED" else status.name
         row.reasonCode = if (retryable && row.attemptCount >= 3) "RETRY_EXHAUSTED:$reason" else reason
         if (cacheResult && row.status in setOf("NO_FORM", "DOCUMENT_UNAVAILABLE", "TOO_LARGE", "REVIEW_REQUIRED")) { row.lastCompletedStatus = row.status; row.lastCompletedReasonCode = row.reasonCode }
-        row.activeFormVersionId = null; row.verifiedAt = now()
+        row.activeFormVersionId = null; row.verifiedAt = now(); row.analysisWarnings = encode(warnings)
         row.nextRetryAt = when {
             retryable && row.attemptCount < 3 -> now().plusMinutes(if (row.attemptCount == 1) 5 else 30)
             status == ApplicationFormAvailabilityStatus.STALE || status == ApplicationFormAvailabilityStatus.PENDING -> now()
@@ -181,9 +183,11 @@ class ApplicationFormAvailabilityRepository(
         }
     private fun release(row: ApplicationFormAvailabilityDbRow) { row.leaseToken = null; row.leaseUntil = null; row.aiStarted = false }
     private fun now() = LocalDateTime.now(clock)
+    private fun encode(warnings: List<String>): String? = warnings.takeIf { it.isNotEmpty() }?.let { json.writeValueAsString(it) }
+    private fun decode(value: String?): List<String> = value?.let { json.readValue(it, Array<String>::class.java).toList() }.orEmpty()
     private fun ApplicationFormAvailabilityDbRow.toDomain() = ApplicationFormAvailability(sourceCode, sourceProgramId,
         ApplicationFormAvailabilityStatus.valueOf(status), reasonCode, sourceFingerprint, parserVersion, extractionModel,
-        extractionPromptVersion, activeFormVersionId, verifiedAt, nextRetryAt, attemptCount, durationMs, timeoutStage)
+        extractionPromptVersion, activeFormVersionId, verifiedAt, nextRetryAt, attemptCount, durationMs, timeoutStage, decode(analysisWarnings))
 }
 
 /** Result of reserving a manual analysis; business errors belong to the calling Service. */

@@ -857,7 +857,7 @@ beforeEach(() => {
   repository.markDocumentJobsSeen.mockResolvedValue(undefined)
   repository.markDiscoveryJobsSeen.mockResolvedValue(undefined)
   repository.availability.mockResolvedValue({ state: { sourceCode: 'BIZINFO', sourceProgramId: 'PBLN_1', status: 'AVAILABLE',
-    reasonCode: 'FORM_FOUND', nextRetryAt: null, attemptCount: 1 }, forms: { items: [structuredClone(firstForm)] } })
+    reasonCode: 'FORM_FOUND', nextRetryAt: null, attemptCount: 1, warnings: [] }, forms: { items: [structuredClone(firstForm)] } })
   repository.forms.mockResolvedValue([structuredClone(firstForm)])
   repository.discover.mockResolvedValue(completedDiscovery({ items: [structuredClone(firstForm)], warnings: ['원문 대조 필요'], cached: false }))
   repository.list.mockResolvedValue({ items: [], nextBeforeId: null })
@@ -1475,8 +1475,8 @@ describe('application preparation list', () => {
 
 describe('application preparation creation and detail', () => {
   const newPath = '/app/application-preparations/new?sourceCode=BIZINFO&sourceProgramId=PBLN_1'
-  const availabilityOf = (status: string, reasonCode: string, items: ApplicationForm[] = []) => ({ state: { sourceCode: 'BIZINFO',
-    sourceProgramId: 'PBLN_1', status, reasonCode, nextRetryAt: null, attemptCount: 1 }, forms: { items } })
+  const availabilityOf = (status: string, reasonCode: string, items: ApplicationForm[] = [], warnings: string[] = []) => ({ state: { sourceCode: 'BIZINFO',
+    sourceProgramId: 'PBLN_1', status, reasonCode, nextRetryAt: null, attemptCount: 1, warnings }, forms: { items } })
   const startButton = () => screen.getByRole('button', { name: '작성 시작' }) as HTMLButtonElement
   /** ① 공고 · ② 양식 · 분야 섹션입니다. 번호는 화면 낭독에서 빼고 제목만 이름으로 씁니다. */
   const programSection = () => screen.getByRole('region', { name: '공고' })
@@ -1779,29 +1779,40 @@ describe('application preparation creation and detail', () => {
   })
 
   it.each([
-    ['NO_FORM', 'NO_FORM', '최근 분석: 분석한 공식 첨부에서 작성할 신청 양식을 찾지 못했습니다.'],
-    ['DOCUMENT_UNAVAILABLE', 'SOURCE_NOT_FOUND', '최근 분석: 공식 공고 또는 첨부가 없어졌거나 변경되었습니다.'],
-    ['TOO_LARGE', 'SOURCE_TOO_LARGE', '최근 분석: 첨부 파일의 크기나 문서 분량이 분석 제한을 초과했습니다.'],
-    ['RETRY_WAITING', 'AI_UNAVAILABLE', '최근 분석: AI 분석 서비스에 연결하지 못했습니다.'],
-    ['REVIEW_REQUIRED', 'RETRY_EXHAUSTED:AI_UNAVAILABLE', '최근 분석: AI 분석 서비스에 연결하지 못했습니다. 자동 재시도 한도에 도달하여 관리자 확인이 필요합니다.'],
-    ['PENDING', 'NOT_ANALYZED', '이 공고는 아직 신청 양식을 분석한 적이 없어요.'],
-    ['STALE', 'SOURCE_CHANGED', '공고나 공식 첨부가 바뀌어 양식을 다시 분석해야 해요.'],
-  ])('offers analysis of a %s / %s program as a button in ② and keeps writing closed with a reason', async (_status, reasonCode, reason) => {
+    ['NO_FORM', 'NO_FORM', '작성할 신청 양식이 없어요', '공고의 신청 방법(온라인 접수 등)을 확인해 주세요.', '최근 분석: 분석한 공식 첨부에서 작성할 신청 양식을 찾지 못했습니다.'],
+    ['DOCUMENT_UNAVAILABLE', 'SOURCE_NOT_FOUND', '첨부를 읽지 못했어요', '원문에서 내려받아 직접 작성해 주세요.', '최근 분석: 공식 공고 또는 첨부가 없어졌거나 변경되었습니다.'],
+    ['TOO_LARGE', 'SOURCE_TOO_LARGE', '첨부를 읽지 못했어요', '신청 양식이 있을 수 있지만', '최근 분석: 첨부 파일의 크기나 문서 분량이 분석 제한을 초과했습니다.'],
+    ['RETRY_WAITING', 'AI_UNAVAILABLE', '잠시 후 다시 확인해요', '자동으로 다시 확인해요.', '최근 분석: AI 분석 서비스에 연결하지 못했습니다.'],
+    ['REVIEW_REQUIRED', 'RETRY_EXHAUSTED:AI_UNAVAILABLE', '양식을 확인하지 못했어요', '확인이 필요해요.', '최근 분석: AI 분석 서비스에 연결하지 못했습니다. 자동 재시도 한도에 도달하여 관리자 확인이 필요합니다.'],
+    ['PENDING', 'NOT_ANALYZED', '아직 분석하지 않은 공고예요', '이 공고는 아직 신청 양식을 분석한 적이 없어요.', null],
+    ['STALE', 'SOURCE_CHANGED', '공고가 바뀌어 다시 분석해야 해요', '공고나 공식 첨부가 바뀌어 양식을 다시 분석해야 해요.', null],
+  ])('offers analysis of a %s / %s program as a button in ② and keeps writing closed with a reason', async (_status, reasonCode, title, message, detail) => {
     repository.availability.mockResolvedValue(availabilityOf(_status, reasonCode))
     mount(newPath)
-    const notice = await screen.findByText('저장된 신청 양식이 없어요')
-    expect(notice.parentElement?.textContent).toContain('아래 ②에서 입력칸별로 분석할 수 있어요.')
-    const card = within(formSection()).getByRole('region', { name: '저장된 양식이 없어요' })
+    const card = await screen.findByRole('region', { name: title })
+    const notice = within(programSection()).getByText(title)
+    expect(notice.parentElement?.textContent).toContain('아래 ②에서 이유를 확인하고 입력칸별로 분석할 수 있어요.')
+    expect(card.textContent).toContain(message)
+    if (detail) expect(card.textContent).toContain(detail)
+    else expect(card.textContent).not.toContain('최근 분석:')
     // 분석은 텍스트 링크가 아니라 가운데 보조 버튼이고, 유료 AI와 한도를 바로 아래에 적습니다.
     expect(within(card).getByRole('button', { name: '입력칸별로 분석' }).tagName).toBe('BUTTON')
     expect(within(card).queryByRole('link', { name: '입력칸별로 분석' })).toBeNull()
     expect(within(card).getByText('AI가 공식 첨부를 읽어 문항을 뽑아요. 유료 AI 호출이며 계정당 동시에 3건까지 할 수 있어요.')).toBeTruthy()
-    expect(card.textContent).toContain(reason)
     expect(startButton().disabled).toBe(true)
     expect(startReason()).toBe('양식을 분석하면 시작할 수 있어요')
     expect(follows(card, startButton())).toBe(true)
     expect(repository.discover).not.toHaveBeenCalled()
     expect(repository.create).not.toHaveBeenCalled()
+  })
+
+  it('shows what the last analysis left out, such as an uncollected ZIP form, next to the no-form card', async () => {
+    repository.availability.mockResolvedValue(availabilityOf('NO_FORM', 'NO_FORM', [],
+      ['미수집 첨부(지원 형식 PDF/HWP/HWPX/DOCX/XLSX 이외): 신청서식.zip', '작성할 서식이 보이지 않아 분석하지 않은 첨부: 공고문.hwp']))
+    mount(newPath)
+    const card = await screen.findByRole('region', { name: '작성할 신청 양식이 없어요' })
+    expect(within(card).getByText('미수집 첨부(지원 형식 PDF/HWP/HWPX/DOCX/XLSX 이외): 신청서식.zip')).toBeTruthy()
+    expect(within(card).getByText('작성할 서식이 보이지 않아 분석하지 않은 첨부: 공고문.hwp')).toBeTruthy()
   })
 
   it('prefills a Google Form program from company data and opens the filled form without analyzing application forms', async () => {
@@ -1870,7 +1881,7 @@ describe('application preparation creation and detail', () => {
     const started = deferred<ReturnType<typeof completedDiscovery>>()
     repository.discover.mockReturnValueOnce(started.promise)
     mount(newPath)
-    await screen.findByText('저장된 신청 양식이 없어요')
+    await screen.findByRole('region', { name: '아직 분석하지 않은 공고예요' })
     fireEvent.click(within(formSection()).getByRole('button', { name: '입력칸별로 분석' }))
     const progress = await within(formSection()).findByRole('status', { name: '양식 분석 진행' })
     expect(progress.textContent).toContain('공식 첨부에서 신청 양식을 분석하고 있어요')
@@ -1993,7 +2004,7 @@ describe('application preparation creation and detail', () => {
     repository.discover.mockResolvedValue({ ...completedDiscovery({ items: [structuredClone(firstForm)], warnings: [], cached: false }), status: 'FAILED' as const,
       result: null, failureCode: 'APPLICATION_FORM_NO_FORM', createdAt: new Date().toISOString() })
     mount(newPath)
-    await screen.findByText('저장된 신청 양식이 없어요')
+    await screen.findByRole('region', { name: '아직 분석하지 않은 공고예요' })
     fireEvent.click(within(formSection()).getByRole('button', { name: '입력칸별로 분석' }))
     const notice = await within(formSection()).findByRole('status', { name: '지난 분석 상태' })
     expect(notice.textContent).toContain('원문을 참고해 주세요')
@@ -2009,7 +2020,7 @@ describe('application preparation creation and detail', () => {
     repository.discover.mockResolvedValue({ ...completedDiscovery({ items: [structuredClone(firstForm)], warnings: [], cached: false }), status: 'UNKNOWN' as const,
       result: null, failureCode: 'RUN_OUTCOME_UNKNOWN', createdAt: new Date().toISOString() })
     mount(newPath)
-    await screen.findByText('저장된 신청 양식이 없어요')
+    await screen.findByRole('region', { name: '아직 분석하지 않은 공고예요' })
     fireEvent.click(within(formSection()).getByRole('button', { name: '입력칸별로 분석' }))
     const notice = await screen.findByRole('status', { name: '지난 분석 상태' })
     expect(notice.textContent).toContain('분석 결과를 확인하고 있어요')
@@ -2032,7 +2043,7 @@ describe('application preparation creation and detail', () => {
     repository.discoveryJobs.mockResolvedValue([{ ...finished, seen: true }])
     repository.availability.mockResolvedValue(availabilityOf('PENDING', 'NOT_ANALYZED'))
     mount(newPath)
-    await screen.findByText('저장된 신청 양식이 없어요')
+    await screen.findByRole('region', { name: '아직 분석하지 않은 공고예요' })
     expect(repository.markDiscoveryJobsSeen).toHaveBeenCalledTimes(1)
     fireEvent.click(within(formSection()).getByRole('button', { name: '입력칸별로 분석' }))
     expect(await screen.findByText('양식을 분석했어요')).toBeTruthy()
@@ -2049,7 +2060,7 @@ describe('application preparation creation and detail', () => {
     ])
     repository.discover.mockRejectedValue(new ApplicationPreparationError(429, 'APPLICATION_FORM_JOB_CAPACITY'))
     mount(newPath)
-    await screen.findByText('저장된 신청 양식이 없어요')
+    await screen.findByRole('region', { name: '작성할 신청 양식이 없어요' })
     fireEvent.click(within(formSection()).getByRole('button', { name: '입력칸별로 분석' }))
     const alert = await within(formSection()).findByRole('alert')
     expect(alert.textContent).toContain('진행 중이거나 확인이 필요한 분석이 3건입니다')
@@ -2067,7 +2078,7 @@ describe('application preparation creation and detail', () => {
     repository.availability.mockResolvedValue(availabilityOf('PENDING', 'NOT_ANALYZED'))
     repository.discover.mockRejectedValue(new ApplicationPreparationError(503, 'AI_UNAVAILABLE'))
     mount(newPath)
-    await screen.findByText('저장된 신청 양식이 없어요')
+    await screen.findByRole('region', { name: '아직 분석하지 않은 공고예요' })
     fireEvent.click(within(formSection()).getByRole('button', { name: '입력칸별로 분석' }))
     const alert = await screen.findByRole('alert')
     expect(alert.textContent).toContain('양식을 분석하지 못했어요')

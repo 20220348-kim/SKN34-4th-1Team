@@ -1,5 +1,6 @@
 package ai.govbiz.core.supportprogram.client.bizinfo
 
+import ai.govbiz.core._common.helper.AttachmentCopyHelper
 import ai.govbiz.core.supportprogram.client.document.SupportProgramDocumentException
 import ai.govbiz.core.supportprogram.client.document.SupportProgramDocumentException.Reason
 import ai.govbiz.core.supportprogram.client.document.MAX_SUPPORT_PROGRAM_ATTACHMENT_BYTES
@@ -10,6 +11,7 @@ import java.net.URI
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import org.jsoup.Jsoup
+import org.jsoup.nodes.Element
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.http.MediaType
 import org.springframework.stereotype.Component
@@ -30,10 +32,14 @@ class BizInfoAttachmentClient(
             val title = detail.selectFirst(".title_area .title")?.text()?.trim().orEmpty()
             if (title.isBlank()) fail(Reason.NOT_FOUND)
             val links = linkedMapOf<String, Pair<String, String>>()
+            val bodyExports = mutableSetOf<String>()
             val warnings = mutableListOf("공식 페이지가 직접 연결한 PDF/HWP/HWPX/DOCX/XLSX만 수집했습니다. 추출 문항은 사용자가 원문과 대조해야 합니다.")
             detail.select(".file_name").forEach { name ->
                 val anchor = name.parent()?.selectFirst("a[href*='/cmm/fms/fileDown.do']")
-                if (anchor != null) addLink(links, warnings, anchor.absUrl("href"), name.text())
+                if (anchor != null) {
+                    addLink(links, warnings, anchor.absUrl("href"), name.text())
+                    if (sectionOf(name) == BODY_EXPORT_SECTION) bodyExports.add(URI(anchor.absUrl("href")).toString())
+                }
             }
             val mssPages = detail.select("a[href]").mapNotNull { anchor ->
                 runCatching { URI(anchor.absUrl("href")) }.getOrNull()?.takeIf(::isMssPage)
@@ -48,39 +54,65 @@ class BizInfoAttachmentClient(
                     addLink(links, warnings, anchor.absUrl("href"), label)
                 }
             }
-            val primaryNames = links.filter { (link, descriptor) ->
-                URI(link).host in setOf("mss.go.kr", "www.mss.go.kr") && descriptor.second == "HWPX"
-            }.values.map { normalizedTitle(it.first) }.toSet()
-            val selected = links.filter { (link, descriptor) ->
-                val mirrored = URI(link).host in setOf("bizinfo.go.kr", "www.bizinfo.go.kr") &&
-                    normalizedTitle(descriptor.first) in primaryNames
-                if (mirrored) warnings.add("동일 표제의 기업마당 변환본 대신 발행기관 중기부 HWPX를 사용했습니다: ${descriptor.first.take(200)}")
-                !mirrored
+            // 받을 수 있는 첨부가 없어도(ZIP만 있는 공고 등) 어떤 첨부를 왜 받지 못했는지는 안내로 남깁니다.
+            if (links.isEmpty()) throw SupportProgramDocumentException(Reason.UNSUPPORTED, warnings = warnings.distinct())
+            if (warnings.distinct().size > 12) throw SupportProgramDocumentException(Reason.TOO_LARGE, warnings = warnings.distinct())
+            // 같은 표제를 형식만 바꿔 함께 올린 사본은 한 문서로 묶어 개수 상한에 한 번만 셉니다. 같은 형식이면 발행기관(중기부)
+            // 게시판 파일을 앞에 둡니다. 분석은 묶음에서 읽히는 첫 사본을 쓰므로, 우선 사본을 받거나 읽지 못해도 다른 사본으로 이어갑니다.
+            val order = links.keys.withIndex().associate { it.value to it.index }
+            val candidates = links.entries.sortedBy { if (isMss(URI(it.key))) 0 else 1 }
+            val groups = AttachmentCopyHelper.copyGroups(candidates) { it.value.first }.sortedBy { order.getValue(it.first().key) }
+                .map { group ->
+                    // 기업마당 사본은 발행기관(중기부) HWPX를 변환한 같은 문서라 받지 않습니다.
+                    val publisher = group.first()
+                    if (!isMss(URI(publisher.key)) || publisher.value.second != "HWPX" || group.all { isMss(URI(it.key)) }) group
+                    else group.filter { isMss(URI(it.key)) }.also {
+                        warnings.add("동일 표제의 기업마당 변환본 대신 발행기관 중기부 HWPX를 사용했습니다: ${publisher.value.first.take(200)}")
+                    }
+                }
+            // 본문출력파일은 공고 본문에 넣은 파일이라 개수 상한에 넣지 않습니다. 첨부가 상한을 넘으면 앞의 것만 받고 나머지는 알립니다.
+            val attachments = groups.filter { group -> group.none { it.key in bodyExports } }
+            val selected = attachments.take(MAX_ATTACHMENTS) + groups.filter { group -> group.any { it.key in bodyExports } }
+            attachments.drop(MAX_ATTACHMENTS).forEach { group ->
+                warnings.add("첨부가 ${MAX_ATTACHMENTS}개를 넘어 받지 않은 첨부: ${group.first().value.first.take(200)}")
             }
-            if (selected.isEmpty()) fail(Reason.UNSUPPORTED)
-            if (selected.size > 4 || warnings.distinct().size > 12) fail(Reason.TOO_LARGE)
             val files = mutableListOf<SupportProgramAttachment>()
             var totalBytes = 0
-            var skippedForSize = false
-            selected.forEach { (link, descriptor) ->
+            val sizeFailures = mutableMapOf<List<Map.Entry<String, Pair<String, String>>>, String>()
+            fun receive(group: List<Map.Entry<String, Pair<String, String>>>, entry: Map.Entry<String, Pair<String, String>>): Boolean {
+                val (link, descriptor) = entry.key to entry.value
                 var mimeType: String? = null
                 val bytes = try {
                     download(URI(link), MAX_SUPPORT_PROGRAM_ATTACHMENT_BYTES) { mimeType = it }
                 } catch (error: SupportProgramDocumentException) {
                     if (error.reason != Reason.TOO_LARGE) throw error
-                    skippedForSize = true
-                    warnings.add("미수집 첨부(파일 크기 제한 초과): ${descriptor.first.take(250)}")
-                    return@forEach
+                    sizeFailures.putIfAbsent(group, "파일 크기 제한 초과")
+                    return false
                 }
                 if (totalBytes + bytes.size > MAX_SUPPORT_PROGRAM_ATTACHMENTS_TOTAL_BYTES) {
-                    skippedForSize = true
-                    warnings.add("미수집 첨부(공고별 전체 크기 제한 초과): ${descriptor.first.take(250)}")
-                    return@forEach
+                    sizeFailures.putIfAbsent(group, "공고별 전체 크기 제한 초과")
+                    return false
+                }
+                if (files.any { it.bytes.contentEquals(bytes) }) {
+                    // 첨부파일과 본문출력파일 구역에 같은 파일이 함께 걸린 경우입니다.
+                    if (group.size == 1) warnings.add("같은 파일이 두 번 연결되어 한 번만 받았습니다: ${descriptor.first.take(200)}")
+                    return true
                 }
                 files.add(SupportProgramAttachment(link, descriptor.first.take(300), descriptor.second, bytes, mimeType))
                 totalBytes += bytes.size
+                return true
             }
-            if (files.isEmpty()) fail(if (skippedForSize) Reason.TOO_LARGE else Reason.UNSUPPORTED)
+            // 각 문서의 우선 사본을 먼저 받아, 다른 형식 사본이 전체 크기 한도를 먼저 차지하지 않게 합니다.
+            val received = selected.filter { group -> receive(group, group.first()) }.toMutableSet()
+            selected.forEach { group ->
+                group.drop(1).forEach { entry -> if (receive(group, entry)) received += group }
+            }
+            selected.filter { it !in received }.forEach { group ->
+                warnings.add("미수집 첨부(${sizeFailures[group] ?: "파일 크기 제한 초과"}): ${group.first().value.first.take(250)}")
+            }
+            if (files.isEmpty()) {
+                throw SupportProgramDocumentException(if (sizeFailures.isNotEmpty()) Reason.TOO_LARGE else Reason.UNSUPPORTED, warnings = warnings.distinct())
+            }
             return SupportProgramAttachments(title, files, warnings.distinct(), url)
         } catch (error: SupportProgramDocumentException) {
             throw error
@@ -104,11 +136,15 @@ class BizInfoAttachmentClient(
         }
         val uri = URI(url)
         requireTrustedUri(uri)
-        links[uri.toString()] = name to format
+        links[uri.toString()] = AttachmentCopyHelper.withoutSizeSuffix(name) to format
     }
 
-    private fun normalizedTitle(name: String): String = name.replace(Regex("(?i)\\.(hwpx|hwp|pdf|docx|xlsx).*"), "")
-        .replace(Regex("[^\\p{L}\\p{N}]"), "").lowercase()
+    /** 상세 페이지의 첨부 목록은 같은 목록 안의 h3(첨부파일·본문출력파일)로 구역을 나눕니다. */
+    private fun sectionOf(name: Element): String? =
+        generateSequence((name.closest("li") ?: name.parent())?.previousElementSibling()) { it.previousElementSibling() }
+            .firstOrNull { it.tagName() == "h3" }?.text()?.trim()
+
+    private fun isMss(uri: URI): Boolean = uri.host in setOf("mss.go.kr", "www.mss.go.kr")
 
     private fun download(uri: URI, limit: Int, observeMimeType: (String?) -> Unit = {}): ByteArray {
         requireTrustedUri(uri)
@@ -149,4 +185,10 @@ class BizInfoAttachmentClient(
         ?.let { URLDecoder.decode(it, StandardCharsets.UTF_8) }.orEmpty()
 
     private fun fail(reason: Reason): Nothing = throw SupportProgramDocumentException(reason)
+
+    private companion object {
+        /** 다른 제공처와 같은 공고당 첨부 상한입니다. 본문출력파일은 세지 않습니다. */
+        const val MAX_ATTACHMENTS = 8
+        const val BODY_EXPORT_SECTION = "본문출력파일"
+    }
 }

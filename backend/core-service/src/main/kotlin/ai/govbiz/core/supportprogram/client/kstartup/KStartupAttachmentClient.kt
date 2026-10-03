@@ -54,8 +54,13 @@ class KStartupAttachmentClient(
                     fail(Reason.INVALID)
                 }
             }
-            if (candidates.isEmpty()) fail(Reason.UNSUPPORTED)
-            if (candidates.size > MAX_FILES || warnings.distinct().size > MAX_WARNINGS) fail(Reason.TOO_LARGE)
+            // 수집이 실패해도 받지 못한 첨부와 이유는 사용자 안내로 남깁니다.
+            if (candidates.isEmpty()) fail(Reason.UNSUPPORTED, warnings)
+            if (candidates.size > MAX_FILES) {
+                warnings.add("첨부가 ${candidates.size}개로 자동 분석 한도(${MAX_FILES}개)를 넘어 받지 않았습니다. 원문에서 신청 서식을 확인해 주세요.")
+                fail(Reason.TOO_LARGE, warnings)
+            }
+            if (warnings.distinct().size > MAX_WARNINGS) fail(Reason.TOO_LARGE, warnings)
             val files = downloadWithinLimits(candidates.values, detailUri, warnings)
             SupportProgramAttachments(title, files, warnings.distinct(), detailUri.toString())
         } catch (error: SupportProgramDocumentException) {
@@ -90,7 +95,7 @@ class KStartupAttachmentClient(
             files.add(SupportProgramAttachment(candidate.uri.toString(), candidate.fileName, candidate.format, bytes))
             totalBytes += bytes.size
         }
-        if (files.isEmpty()) fail(if (skippedForSize) Reason.TOO_LARGE else Reason.UNSUPPORTED)
+        if (files.isEmpty()) fail(if (skippedForSize) Reason.TOO_LARGE else Reason.UNSUPPORTED, warnings)
         return files
     }
 
@@ -145,7 +150,8 @@ class KStartupAttachmentClient(
         else -> null
     }
 
-    private fun fail(reason: Reason): Nothing = throw SupportProgramDocumentException(reason)
+    private fun fail(reason: Reason, warnings: List<String> = emptyList()): Nothing =
+        throw SupportProgramDocumentException(reason, warnings = warnings.distinct())
     private data class Candidate(val uri: URI, val fileName: String, val format: String)
 
     private companion object {

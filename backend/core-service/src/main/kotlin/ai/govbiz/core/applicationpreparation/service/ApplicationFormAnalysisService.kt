@@ -20,8 +20,8 @@ class ApplicationFormAnalysisService(
         val lease = availability.claim() ?: return false
         var observed = false
         var configuration: ApplicationFormDiscoveryConfiguration? = null
-        fun finish(status: ApplicationFormAvailabilityStatus, reason: String, retry: Boolean = false, stage: String? = null) {
-            availability.finish(lease, status, reason, retry, timeoutStage=stage, cacheResult=observed, failureConfiguration=configuration)
+        fun finish(status: ApplicationFormAvailabilityStatus, reason: String, retry: Boolean = false, stage: String? = null, warnings: List<String> = emptyList()) {
+            availability.finish(lease, status, reason, retry, timeoutStage=stage, cacheResult=observed, failureConfiguration=configuration, warnings=warnings)
         }
         try {
             val currentConfiguration = ai.discoveryConfiguration()
@@ -29,18 +29,18 @@ class ApplicationFormAnalysisService(
             discovery.analyzeSystem(lease.sourceCode, lease.sourceProgramId, currentConfiguration,
                 { metadata -> observed = true; if (!availability.observe(lease, metadata)) throw CompletedAnalysis() },
                 { availability.beforeAi(lease) },
-                { forms, metadata -> transactions.executeWithoutResult { availability.available(lease, forms, metadata) } })
+                { forms, metadata, warnings -> transactions.executeWithoutResult { availability.available(lease, forms, metadata, warnings) } })
         } catch (_: CompletedAnalysis) {
             // observe가 완료된 동일 분석을 재사용하고 실행권을 반납했다.
         } catch (error: ApplicationFormDiscoveryException) {
             val reason = error.reason.name
             when (reason) {
-                "NO_FORM" -> finish(ApplicationFormAvailabilityStatus.NO_FORM, reason)
+                "NO_FORM" -> finish(ApplicationFormAvailabilityStatus.NO_FORM, reason, warnings = error.warnings)
                 "SOURCE_CHANGED" -> finish(ApplicationFormAvailabilityStatus.STALE, reason)
-                "SOURCE_TOO_LARGE" -> finish(ApplicationFormAvailabilityStatus.TOO_LARGE, reason)
+                "SOURCE_TOO_LARGE" -> finish(ApplicationFormAvailabilityStatus.TOO_LARGE, reason, warnings = error.warnings)
                 "SOURCE_UNAVAILABLE" -> finish(ApplicationFormAvailabilityStatus.RETRY_WAITING, reason, true,
                     if (generateSequence(error as Throwable?) { it.cause }.any { it is java.net.SocketTimeoutException || it is java.net.http.HttpTimeoutException }) "SOURCE_DOWNLOAD" else null)
-                "SOURCE_NOT_FOUND", "SOURCE_UNSUPPORTED", "SOURCE_INVALID" -> finish(ApplicationFormAvailabilityStatus.DOCUMENT_UNAVAILABLE, reason)
+                "SOURCE_NOT_FOUND", "SOURCE_UNSUPPORTED", "SOURCE_INVALID" -> finish(ApplicationFormAvailabilityStatus.DOCUMENT_UNAVAILABLE, reason, warnings = error.warnings)
                 else -> finish(ApplicationFormAvailabilityStatus.REVIEW_REQUIRED, reason)
             }
         } catch (error: ai.govbiz.core.applicationpreparation.client.ai.exception.ApplicationFormTimeoutException) {

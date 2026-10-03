@@ -24,4 +24,6 @@ data class ApplicationFormAvailabilityDbRow(
     var leaseToken: String? = null,
     var leaseUntil: LocalDateTime? = null,
     var aiStarted: Boolean = false,
+    /** 사용자 안내 목록의 JSON 배열입니다. 없으면 null입니다. */
+    var analysisWarnings: String? = null,
 )

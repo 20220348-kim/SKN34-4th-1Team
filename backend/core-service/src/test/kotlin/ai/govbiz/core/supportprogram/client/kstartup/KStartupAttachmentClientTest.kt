@@ -68,9 +68,25 @@ class KStartupAttachmentClientTest {
         assertEquals(Reason.UNAVAILABLE, assertThrows(SupportProgramDocumentException::class.java) {
             client.collect("KSTARTUP", id, current)
         }.reason)
-        assertEquals(Reason.UNSUPPORTED, assertThrows(SupportProgramDocumentException::class.java) {
-            client.collect("KSTARTUP", id, current)
-        }.reason)
+        val unsupported = assertThrows(SupportProgramDocumentException::class.java) { client.collect("KSTARTUP", id, current) }
+        assertEquals(Reason.UNSUPPORTED, unsupported.reason)
+        // 받을 수 있는 첨부가 없어도 어떤 첨부를 왜 받지 못했는지는 안내로 남깁니다.
+        assertTrue(unsupported.warnings.any { it.contains("이미지.jpg") })
+        server.verify()
+    }
+
+    @Test
+    fun tooManyAttachmentsFailWithAnExplanationInsteadOfSilently() {
+        val items = (1..9).joinToString("") { i ->
+            "<li><a class='file_bg'>서식$i.hwp</a><a href='/afile/fileDownload/file$i' class='btn_down' name='downloadBtn'>다운로드</a></li>"
+        }
+        server.expect(requestTo(current)).andRespond(withSuccess(
+            "<div id='scrTitle'><h3>공고</h3></div><div class='board_file'><ul>$items</ul></div>", MediaType.TEXT_HTML))
+
+        val error = assertThrows(SupportProgramDocumentException::class.java) { client.collect("KSTARTUP", id, current) }
+
+        assertEquals(Reason.TOO_LARGE, error.reason)
+        assertTrue(error.warnings.any { it.contains("9개") && it.contains("8개") })
         server.verify()
     }
 
