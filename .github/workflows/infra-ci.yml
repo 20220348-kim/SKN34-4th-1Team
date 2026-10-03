@@ -139,6 +139,7 @@ jobs:
           python -B -m unittest discover -s scripts -p 'test_ops_upgrade_probe.py'
           python -B -m unittest discover -s scripts -p 'test_smoke_ops_backup.py'
           python -B -m unittest discover -s scripts -p 'test_ops_*restore*.py'
+          python -B -m unittest discover -s scripts -p 'test_ops_browser_login.py'
           python -B -m unittest discover -s scripts -p 'test_smoke_ops_volumes.py'
           python -B -m unittest discover -s scripts -p 'test_fork_web.py'
           python -B -m unittest discover -s scripts -p 'test_dev.py'
