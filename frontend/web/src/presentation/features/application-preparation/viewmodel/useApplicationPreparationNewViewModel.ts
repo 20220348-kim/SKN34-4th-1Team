@@ -11,6 +11,7 @@ import type { SupportProgram } from '../../../../domain/entities/SupportProgram'
 import type { SupportProgramCatalog, SupportProgramCatalogFilters } from '../../../../domain/entities/SupportProgramCatalog'
 import { ApplicationPreparationError } from '../../../../domain/errors/ApplicationPreparationError'
 import { appPaths } from '../../../shared/routes/appPaths'
+import { usePreparationJobActions } from '../../../shared/preparation-jobs/usePreparationJobs'
 import { defaultProgramSelectionFilters, joinFilterValues, splitFilterValues } from '../../../shared/support-program/catalogSearchParams'
 import { useSavedSupportProgramChoices } from '../../../shared/support-program/useSavedSupportProgramChoices'
 import type { WorkspaceToastNotice } from '../../../shared/workspace/WorkspaceToast'
@@ -111,6 +112,8 @@ export function useApplicationPreparationNewViewModel(addressSourceCode: string,
   const useCase = appContainer.resolve('applicationPreparationUseCase')
   const programDetailUseCase = appContainer.resolve('getSupportProgramDetailUseCase')
   const navigate = useNavigate()
+  // 분석을 시작하면 사이드바·목록이 따라가게 작업 목록을 다시 읽게 하고, 끝난 결과를 이 화면에서 봤으면 확인한 것으로 표시합니다.
+  const { refresh: refreshJobs, markAnalysisSeen } = usePreparationJobActions()
   const hasAddressProgram = Boolean(addressSourceCode && addressProgramId)
   const [program, setProgram] = useState<SelectableSupportProgram | null>(null)
   const [programLoad, setProgramLoad] = useState<{ status: 'idle' | 'loading' } | { status: 'failed'; error: Error }>(
@@ -180,6 +183,7 @@ export function useApplicationPreparationNewViewModel(addressSourceCode: string,
     setLastAnalysis(null)
     try {
       let job = await start(controller.signal)
+      if (!progress.resumed) refreshJobs()
       const deadline = Date.now() + 720_000
       while (job.status === 'QUEUED' || job.status === 'RUNNING') {
         if (Date.now() >= deadline) throw new Error('양식 분석이 아직 진행 중입니다. 잠시 후 이 공고를 다시 열어 확인해 주세요.')
@@ -192,6 +196,9 @@ export function useApplicationPreparationNewViewModel(addressSourceCode: string,
         job = await useCase.discoveryJob(job.id, controller.signal)
       }
       if (controller.signal.aborted) return
+      // 결과 불명은 아직 끝난 것이 아니므로 작업 목록만 다시 읽게 하고, 끝난 결과는 지금 보고 있으므로 확인한 것으로 표시합니다.
+      if (job.status === 'UNKNOWN') refreshJobs()
+      else markAnalysisSeen(job.sourceCode, job.sourceProgramId)
       if (job.status === 'UNKNOWN' || (job.status === 'FAILED' && formAnalysisNeedsSource(job.failureCode))) { setLastAnalysis(lastFormAnalysisOf(job)); return }
       if (job.status !== 'SUCCEEDED' || !job.result) throw new Error(formAnalysisFailureReason(job.failureCode))
       if (job.result.items.length === 0) throw new Error('공식 원본에서 작성할 양식을 찾지 못했습니다.')
@@ -210,7 +217,7 @@ export function useApplicationPreparationNewViewModel(addressSourceCode: string,
     } finally {
       if (discoveryController.current === controller) { discoveryController.current = null; setDiscovery(null) }
     }
-  }, [applyForms, useCase])
+  }, [applyForms, markAnalysisSeen, refreshJobs, useCase])
 
   /**
    * 공고의 저장된 양식을 조회하고, 그 공고에서 이 계정이 가장 최근에 한 분석을 이어받습니다(모두 GET · AI 호출 없음).
@@ -234,6 +241,9 @@ export function useApplicationPreparationNewViewModel(addressSourceCode: string,
         if (controller.signal.aborted) return
         if (!known) { setAvailability({ status: 'ready', result }); applyForms(storedForms(result)) }
         const own = jobs.filter((job) => job.sourceCode === target.sourceCode && job.sourceProgramId === target.id)
+        // 서버에 확인 전 결과가 있으면 확인한 것으로 표시하고, 없으면 작업 목록만 다시 읽습니다(다른 탭·기기에서 이미 확인한 표시가 이 탭에 남지 않게).
+        if (own.some((job) => (job.status === 'SUCCEEDED' || job.status === 'FAILED') && job.seen === false)) markAnalysisSeen(target.sourceCode, target.id)
+        else refreshJobs()
         const active = own.find((job) => job.status === 'QUEUED' || job.status === 'RUNNING')
         if (active) {
           void track(async () => active, { reanalysis: storedForms(result).length > 0, resumed: true, startedAt: Date.parse(active.createdAt) || Date.now() })
@@ -246,7 +256,7 @@ export function useApplicationPreparationNewViewModel(addressSourceCode: string,
         if (availabilityController.current === controller) availabilityController.current = null
       }
     })()
-  }, [applyForms, track, useCase])
+  }, [applyForms, markAnalysisSeen, refreshJobs, track, useCase])
 
   /** 공고를 정합니다. 다른 공고의 분석 확인은 멈추지만(서버 작업은 계속), 그 공고를 다시 고르면 이어받습니다. */
   const choose = useCallback((next: SelectableSupportProgram, known?: ApplicationFormAvailability) => {
@@ -271,13 +281,18 @@ export function useApplicationPreparationNewViewModel(addressSourceCode: string,
     programDetailUseCase.execute({ sourceCode: addressSourceCode, sourceProgramId: addressProgramId }, controller.signal)
       .then((found) => {
         if (controller.signal.aborted) return
-        if (!found) { setProgramLoad({ status: 'failed', error: new Error('공고를 찾지 못했습니다. 공고를 다시 골라 주세요.') }); return }
+        if (!found) {
+          // 공고가 목록에서 빠져 결과를 보여 줄 수 없어도, 그 공고의 확인 전 표시가 계속 남지 않게 확인한 것으로 돌립니다.
+          markAnalysisSeen(addressSourceCode, addressProgramId)
+          setProgramLoad({ status: 'failed', error: new Error('공고를 찾지 못했습니다. 공고를 다시 골라 주세요.') })
+          return
+        }
         setProgramLoad({ status: 'idle' })
         choose(found)
       })
       .catch((caught: unknown) => { if (!controller.signal.aborted) setProgramLoad({ status: 'failed', error: asError(caught) }) })
     return () => controller.abort()
-  }, [addressProgramId, addressSourceCode, choose, hasAddressProgram, programDetailUseCase, programLoadVersion])
+  }, [addressProgramId, addressSourceCode, choose, hasAddressProgram, markAnalysisSeen, programDetailUseCase, programLoadVersion])
 
   // 공고 없이 들어오면 계정의 진행 중인 분석을 찾아 [이어서 보기]로 돌아갈 수 있게 합니다(GET · AI 호출 없음).
   useEffect(() => {

@@ -10,6 +10,7 @@ import { getSupportProgramSearchReturnTo, isApplicationPreparationsReturnTo, isR
 import { useAuthSession } from '../auth/hooks/useAuthSession'
 import { ChatActivityDot } from '../chat-activity/ChatActivityDot'
 import { usePendingReceivedProposalCount } from '../partner-proposal/useReceivedProposals'
+import { useUnseenPreparationResultCount } from '../preparation-jobs/usePreparationJobs'
 import { appPaths, publicPaths } from '../routes/appPaths'
 import { useFloatingPopover } from '../workspace/useFloatingPopover'
 import { appSidebarStyles, sidebarMenuItemClassName } from './AppSidebar.styles'
@@ -155,6 +156,7 @@ export function AppSidebar({ onClose, onNewChat, closeLabel, onNavigate, history
   const { account, logOut } = useAuthSession()
   const navigate = useNavigate()
   const pendingProposalCount = usePendingReceivedProposalCount()
+  const unseenPreparationResultCount = useUnseenPreparationResultCount()
   // 해당 대화 기록 항목의 점은 조건 해석·검색 진행 중과 아직 보지 않은 결과를 모두 표시합니다.
   const chatActivity = useAppSelector(selectChatActivity)
   // 공고 상세·원문 질문은 연 곳을 따라갑니다. 관심 공고함 · 신청 문서 목록 · 기업 맞춤 리포트에서 열었으면 그 항목이, 검색에서 열었으면 새검색이 켜집니다.
@@ -209,9 +211,13 @@ export function AppSidebar({ onClose, onNewChat, closeLabel, onNavigate, history
     return item.matches?.(pathname) ?? false
   }
 
-  /** 파트너 관리는 받은 제안 대기 건수를 배지로 보여 줍니다. 나머지 메뉴는 고정 문구를 씁니다. */
+  /**
+   * 파트너 관리는 받은 제안 대기 건수를, 신청 문서 작성은 끝났지만 아직 확인하지 않은 분석·초안 결과 수를 배지로 보여 줍니다.
+   * 나머지 메뉴는 고정 문구를 씁니다.
+   */
   function badgeFor(item: MenuItem): string | undefined {
     if (item.to === appPaths.partners) return pendingProposalCount === null || pendingProposalCount === 0 ? undefined : String(pendingProposalCount)
+    if (item.to === appPaths.applicationPreparations) return unseenPreparationResultCount === 0 ? undefined : String(unseenPreparationResultCount)
     return item.badge
   }
 

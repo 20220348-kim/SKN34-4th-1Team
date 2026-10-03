@@ -1,6 +1,7 @@
 import { Link, Outlet } from 'react-router'
 
 import { chatActivityMessages } from '../chat-activity/chatActivityMessages'
+import { PreparationJobsSync } from '../preparation-jobs/PreparationJobsSync'
 import { appPaths } from '../routes/appPaths'
 import { WorkspaceModal } from '../workspace/WorkspaceModal'
 import { workspaceModalStyles } from '../workspace/WorkspaceModal.styles'
@@ -23,6 +24,7 @@ export function WorkspaceLayout() {
 
   return (
     <div className={appSidebarStyles.layout}>
+      <PreparationJobsSync />
       {vm.isMobile ? <dialog ref={vm.dialogRef} aria-label="작업 메뉴" onClose={vm.closeMenu}
         onClick={(event) => { if (event.target === event.currentTarget) vm.closeSidebar() }}
         className={appSidebarStyles.mobileDialog}>

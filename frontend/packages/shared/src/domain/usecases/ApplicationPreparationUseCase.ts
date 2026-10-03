@@ -31,6 +31,11 @@ export class ApplicationPreparationUseCase {
     return this.repository.documentJob(id, jobId, signal)
   }
   documentJobs(id: number, signal?: AbortSignal) { return this.repository.documentJobs(id, signal) }
+  recentDocumentJobs(signal?: AbortSignal) { return this.repository.recentDocumentJobs(signal) }
+  markDocumentJobsSeen(id: number, signal?: AbortSignal) { return this.repository.markDocumentJobsSeen(id, signal) }
+  markDiscoveryJobsSeen(sourceCode: string, sourceProgramId: string, signal?: AbortSignal) {
+    return this.repository.markDiscoveryJobsSeen(sourceCode, sourceProgramId, signal)
+  }
   confirmDocumentMappingMigration(id: number, revision: number, token: string, signal?: AbortSignal) {
     if (!Number.isSafeInteger(id) || id <= 0 || !Number.isSafeInteger(revision) || revision <= 0 ||
       !/^[0-9a-f-]{36}$/.test(token)) throw new Error('입력 위치 확인 요청이 올바르지 않습니다.')

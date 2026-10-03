@@ -88,6 +88,15 @@ export class ApplicationPreparationRepositoryImpl implements ApplicationPreparat
   documentJobs(id: number, signal?: AbortSignal) {
     return request(`/${id}/documents/jobs`, z.array(applicationDocumentGenerationJobSchema).max(5), 'GET', undefined, signal, 'preparation')
   }
+  recentDocumentJobs(signal?: AbortSignal) {
+    return request('/documents/jobs', z.array(applicationDocumentGenerationJobSchema).max(20), 'GET', undefined, signal)
+  }
+  markDocumentJobsSeen(id: number, signal?: AbortSignal) {
+    return request(`/${id}/documents/jobs/seen`, z.undefined(), 'POST', undefined, signal, 'preparation')
+  }
+  markDiscoveryJobsSeen(sourceCode: string, sourceProgramId: string, signal?: AbortSignal) {
+    return request('/forms/discovery-jobs/seen', z.undefined(), 'POST', { sourceCode, sourceProgramId }, signal)
+  }
   async confirmDocumentMappingMigration(id: number, expectedRevision: number, approvalToken: string, signal?: AbortSignal) {
     const result = await request(`/${id}/documents/mapping-migration/confirm`, migrationConfirmationSchema,
       'POST', { expectedRevision, approvalToken }, signal, 'preparation')

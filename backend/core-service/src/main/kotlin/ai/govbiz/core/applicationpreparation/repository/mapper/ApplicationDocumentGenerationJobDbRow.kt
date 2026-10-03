@@ -16,4 +16,5 @@ data class ApplicationDocumentGenerationJobDbRow(
     var failureDetailJson: String? = null,
     var createdAt: LocalDateTime? = null,
     var finishedAt: LocalDateTime? = null,
+    var seenAt: LocalDateTime? = null,
 )

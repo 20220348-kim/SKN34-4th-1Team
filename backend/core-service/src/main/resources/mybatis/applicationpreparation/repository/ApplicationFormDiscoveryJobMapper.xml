@@ -13,6 +13,7 @@
         <result column="result_json" property="resultJson" />
         <result column="failure_code" property="failureCode" />
         <result column="created_at" property="createdAt" />
+        <result column="seen_at" property="seenAt" />
     </resultMap>
     <sql id="summary">
         id, owner_account_id, request_key, source_code, source_program_id,
@@ -25,7 +26,7 @@
         (SELECT p.source_url FROM support_program p
          WHERE p.source_code = application_form_discovery_job.source_code
            AND p.source_program_id = application_form_discovery_job.source_program_id) AS program_source_url,
-        status, failure_code, created_at
+        status, failure_code, created_at, seen_at
     </sql>
     <select id="lockActiveAccount" resultType="long">
         SELECT id FROM account WHERE id = #{ownerId} AND deleted_at IS NULL AND suspended_at IS NULL FOR UPDATE
@@ -54,6 +55,12 @@
     <select id="listOwned" resultMap="job">
         SELECT <include refid="summary" /> FROM application_form_discovery_job WHERE owner_account_id = #{ownerId} ORDER BY id DESC LIMIT 20
     </select>
+    <!-- 그 공고에서 이 계정이 끝낸 분석 결과를 확인한 것으로 표시한다. 진행 중·결과 불명 작업은 건드리지 않는다. -->
+    <update id="markSeen">
+        UPDATE application_form_discovery_job SET seen_at = #{now}
+        WHERE owner_account_id = #{ownerId} AND source_code = #{sourceCode} AND source_program_id = #{sourceProgramId}
+          AND status IN ('SUCCEEDED', 'FAILED') AND seen_at IS NULL
+    </update>
     <update id="claim">
         UPDATE application_form_discovery_job j INNER JOIN account a ON a.id = j.owner_account_id
         SET j.status = 'RUNNING', j.started_at = #{now}

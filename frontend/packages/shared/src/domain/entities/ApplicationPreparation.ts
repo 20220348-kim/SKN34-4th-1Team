@@ -208,6 +208,8 @@ export type ApplicationFormDiscoveryJob = {
   result: DiscoveredApplicationForms | null
   failureCode: string | null
   createdAt: string
+  /** 끝난 결과를 사용자가 확인했는지입니다. 이 값을 주지 않는 서버 응답에는 없습니다. */
+  seen?: boolean
 }
 
 export function validateNewApplicationPreparation(input: NewApplicationPreparation): NewApplicationPreparation {
@@ -240,4 +242,6 @@ export type ApplicationDocumentGenerationJob = {
   mappingMigration: ApplicationDocumentMigrationNotice | null
   createdAt: string
   finishedAt: string | null
+  /** 끝난 결과를 사용자가 확인했는지입니다. 이 값을 주지 않는 서버 응답에는 없습니다. */
+  seen?: boolean
 }

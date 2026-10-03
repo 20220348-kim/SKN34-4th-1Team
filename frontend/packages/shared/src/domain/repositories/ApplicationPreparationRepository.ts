@@ -28,6 +28,12 @@ export interface ApplicationPreparationRepository {
   submitDocumentJob(id: number, expectedRevision: number, signal?: AbortSignal, requestKey?: string): Promise<ApplicationDocumentGenerationJob>
   documentJob(id: number, jobId: number, signal?: AbortSignal): Promise<ApplicationDocumentGenerationJob>
   documentJobs(id: number, signal?: AbortSignal): Promise<ApplicationDocumentGenerationJob[]>
+  /** 계정의 최근 문서 생성 작업(준비 건 구분 없음)입니다. 목록이 초안을 만드는 중인 준비 건을 표시할 때 읽습니다. */
+  recentDocumentJobs(signal?: AbortSignal): Promise<ApplicationDocumentGenerationJob[]>
+  /** 그 준비 건의 끝난 문서 생성 결과를 확인한 것으로 표시합니다. 초안 화면을 열 때 부릅니다. */
+  markDocumentJobsSeen(id: number, signal?: AbortSignal): Promise<void>
+  /** 그 공고의 끝난 양식 분석 결과를 확인한 것으로 표시합니다. 그 공고의 새 문서 화면을 열 때 부릅니다. */
+  markDiscoveryJobsSeen(sourceCode: string, sourceProgramId: string, signal?: AbortSignal): Promise<void>
   confirmDocumentMappingMigration(id: number, expectedRevision: number, approvalToken: string,
     signal?: AbortSignal): Promise<ApplicationDocumentMigrationConfirmation>
   downloadDocument(id: number, fileId: number, signal?: AbortSignal): Promise<Blob>

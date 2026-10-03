@@ -38,6 +38,29 @@ it('reads a job by id and lists the recent jobs of a preparation', async () => {
   expect(fetcher.mock.calls[2][0]).toContain('/1/documents/jobs')
 })
 
+it('lists the recent jobs of the account without naming a preparation', async () => {
+  const done = { ...queuedJob, status: 'SUCCEEDED', stage: 'SAVING', fileIds: [8], finishedAt: '2026-09-30T10:01:00+09:00' }
+  const other = { ...queuedJob, id: 502, preparationId: 2 }
+  const fetcher = vi.fn().mockResolvedValueOnce(Response.json([other, done]))
+  vi.stubGlobal('fetch', fetcher)
+  expect(await new ApplicationPreparationRepositoryImpl().recentDocumentJobs()).toEqual([other, done])
+  expect(String(fetcher.mock.calls[0][0])).toMatch(/\/application-preparations\/documents\/jobs$/)
+  expect(fetcher.mock.calls[0][1].credentials).toBe('include')
+})
+
+it('marks finished results as seen with POST requests that return no body', async () => {
+  const fetcher = vi.fn().mockImplementation(async () => new Response(null, { status: 204 }))
+  vi.stubGlobal('fetch', fetcher)
+  const repository = new ApplicationPreparationRepositoryImpl()
+  await expect(repository.markDocumentJobsSeen(7)).resolves.toBeUndefined()
+  expect(String(fetcher.mock.calls[0][0])).toMatch(/\/application-preparations\/7\/documents\/jobs\/seen$/)
+  expect(fetcher.mock.calls[0][1].method).toBe('POST')
+  expect(fetcher.mock.calls[0][1].body).toBeUndefined()
+  await expect(repository.markDiscoveryJobsSeen('BIZINFO', 'PBLN_1')).resolves.toBeUndefined()
+  expect(String(fetcher.mock.calls[1][0])).toMatch(/\/forms\/discovery-jobs\/seen$/)
+  expect(JSON.parse(fetcher.mock.calls[1][1].body)).toEqual({ sourceCode: 'BIZINFO', sourceProgramId: 'PBLN_1' })
+})
+
 it('rejects job responses whose state and result disagree or belong elsewhere', async () => {
   vi.stubGlobal('fetch', vi.fn()
     .mockResolvedValueOnce(Response.json({ ...queuedJob, status: 'SUCCEEDED', fileIds: [], finishedAt: '2026-09-30T10:01:00+09:00' }))

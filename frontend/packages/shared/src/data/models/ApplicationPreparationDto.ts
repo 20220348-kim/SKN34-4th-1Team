@@ -101,6 +101,7 @@ export const applicationFormDiscoveryJobSchema = z.object({
   result: discoveredApplicationFormsSchema.nullable(),
   failureCode: z.string().min(1).max(64).nullable(),
   createdAt: time,
+  seen: z.boolean().optional(),
 }).superRefine((job, context) => {
   if (job.programSourceUrl !== null && !isOfficialSupportProgramSourceUrl(job.sourceCode, job.programSourceUrl)) {
     context.addIssue({ code: 'custom', path: ['programSourceUrl'], message: '분석 작업의 공식 공고 URL이 올바르지 않습니다.' })
@@ -193,6 +194,7 @@ export const applicationDocumentGenerationJobSchema = z.object({
   mappingMigration: applicationDocumentMigrationNoticeSchema.nullable().optional().transform((value) => value ?? null),
   createdAt: time,
   finishedAt: time.nullable(),
+  seen: z.boolean().optional(),
 }).superRefine((job, context) => {
   const terminal = ['SUCCEEDED', 'FAILED', 'UNKNOWN'].includes(job.status)
   if ((job.status === 'SUCCEEDED') !== (job.fileIds.length > 0)

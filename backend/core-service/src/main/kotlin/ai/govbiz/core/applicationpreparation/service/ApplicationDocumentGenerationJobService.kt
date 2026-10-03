@@ -50,6 +50,15 @@ class ApplicationDocumentGenerationJobService(
         return repository.listOwned(account.id, preparationId)
     }
 
+    /** 계정의 최근 작업 20건. 신청 문서 목록이 어느 준비 건의 초안이 만들어지는 중인지 한 번에 읽는다. */
+    fun listRecent(account: Account): List<ApplicationDocumentGenerationJob> = repository.listRecentOwned(account.id)
+
+    /** 그 준비 건에서 끝난 생성 결과를 확인한 것으로 표시한다. 사용자가 초안 화면을 열었을 때 부른다. */
+    fun markSeen(account: Account, preparationId: Long) {
+        preparations.findOwned(account, preparationId)
+        repository.markSeen(account.id, preparationId)
+    }
+
     /** 실패한 작업의 입력 위치 변경 안내. 소유자만 읽을 수 있고 승인 토큰은 기존 confirm API로 쓴다. */
     fun mappingMigration(account: Account, preparationId: Long, id: Long): ApplicationDocumentMigrationNoticeResult? =
         repository.failureDetail(account.id, preparationId, id, ApplicationDocumentMigrationNoticeResult::class.java)

@@ -48,6 +48,7 @@ class ApplicationFormDiscoveryJobRepository(
 
     fun findOwned(ownerId: Long, id: Long) = mapper.findOwned(ownerId, id)?.toDomain()
     fun listOwned(ownerId: Long) = mapper.listOwned(ownerId).map { it.toDomain() }
+    fun markSeen(ownerId: Long, sourceCode: String, programId: String) { mapper.markSeen(ownerId, sourceCode, programId, now()) }
     @Transactional
     fun claim(id: Long): ApplicationFormDiscoveryJob? =
         if (mapper.claim(id, now()) == 1) requireNotNull(mapper.find(id)).toDomain() else null
@@ -76,6 +77,6 @@ class ApplicationFormDiscoveryJobRepository(
     private fun ApplicationFormDiscoveryJobDbRow.toDomain() = ApplicationFormDiscoveryJob(
         id, ownerAccountId, requestKey, sourceCode, sourceProgramId, programTitle, programSourceUrl,
         ApplicationFormDiscoveryJobStatus.valueOf(status),
-        resultJson?.let { json.readValue(it, ApplicationFormDiscoveryResult::class.java) }, failureCode, requireNotNull(createdAt),
+        resultJson?.let { json.readValue(it, ApplicationFormDiscoveryResult::class.java) }, failureCode, requireNotNull(createdAt), seenAt,
     )
 }

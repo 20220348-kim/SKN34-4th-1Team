@@ -1,18 +1,31 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router'
 import { appContainer } from '../../../../app/appContainer'
-import type { ApplicationFormDiscoveryJob, ApplicationPreparationListStatus, ApplicationPreparationPage } from '../../../../domain/entities/ApplicationPreparation'
+import type {
+  ApplicationDocumentGenerationJob,
+  ApplicationFormDiscoveryJob,
+  ApplicationPreparationListStatus,
+  ApplicationPreparationPage,
+  ApplicationPreparationSummary,
+} from '../../../../domain/entities/ApplicationPreparation'
+import {
+  finishedAnalysisWindowMs,
+  isPendingJob as pending,
+  isRunningJob as running,
+  preparationJobPollMs,
+  preparationJobSettlePollMs,
+  preparationProgramKey,
+  usePreparationJobActions,
+  usePreparationJobs,
+} from '../../../shared/preparation-jobs/usePreparationJobs'
 import type { WorkspaceToastNotice } from '../../../shared/workspace/WorkspaceToast'
 
 type FailedRequest = { kind: 'list'; beforeId?: number } | { kind: 'delete'; id: number }
 
-/** 끝난 분석을 목록 위 안내에 남겨 두는 시간입니다. 진행 중인 분석은 시간과 무관하게 보여 줍니다. */
-export const formAnalysisWindowMs = 24 * 60 * 60 * 1000
-/** 진행 중인 분석이 있을 때 상태를 다시 읽는 간격입니다. */
-export const formAnalysisPollMs = 5_000
-
-/** 결과 확인 중인 분석만 남았을 때 상태를 다시 읽는 간격입니다. 서버가 결과를 확정하거나 늦어도 30분 뒤에 닫습니다. */
-export const formAnalysisSettlePollMs = 30_000
+/** 끝난 분석을 목록에 남겨 두는 시간과 작업을 다시 읽는 간격입니다. 값은 사이드바 배지와 함께 쓰는 공용 작업 목록의 것입니다. */
+export const formAnalysisWindowMs = finishedAnalysisWindowMs
+export const formAnalysisPollMs = preparationJobPollMs
+export const formAnalysisSettlePollMs = preparationJobSettlePollMs
 
 /**
  * 분석 작업 하나를 화면에서 다루는 상태입니다. active는 대기·분석 중, unknown은 시작한 뒤 결과를 확인하지 못해 서버가 확인 중인 작업,
@@ -23,9 +36,6 @@ export type FormAnalysisState = 'active' | 'unknown' | 'done' | 'settled' | 'sou
 export type FormAnalysisRow = { job: ApplicationFormDiscoveryJob; state: FormAnalysisState }
 /** 목록에 한 번에 보이는 분석 카드 수입니다. 신청 문서 카드가 밀려 내려가지 않게 두 줄(3열 기준)까지만 둡니다. */
 export const maxFormAnalysisCards = 6
-
-const running = (job: ApplicationFormDiscoveryJob) => job.status === 'QUEUED' || job.status === 'RUNNING'
-const pending = (job: ApplicationFormDiscoveryJob) => running(job) || job.status === 'UNKNOWN'
 
 /**
  * 작성할 양식을 얻지 못한 채 끝난 분석입니다(양식이 없거나, 분석할 수 없는 첨부이거나, 공고·첨부가 없어진 경우).
@@ -74,6 +84,29 @@ function finishedAnalysisNotice(job: ApplicationFormDiscoveryJob): string {
     ? `작성할 양식을 찾지 못했어요. 원문을 참고해 주세요 · ${job.programTitle}`
     : `양식을 분석하지 못했어요 · ${job.programTitle}`
 }
+
+/**
+ * 목록 카드에 입히는 초안 만들기 상태입니다. active는 대기·만드는 중, unknown은 결과 확인 중, failed는 지금 답변 버전의 초안을
+ * 만들지 못한 경우입니다. 실패는 답변을 고치거나(버전이 바뀜) 다시 만들어 초안이 생기면 사라집니다.
+ */
+export type DocumentJobState = { kind: 'active' | 'unknown' | 'failed'; job: ApplicationDocumentGenerationJob }
+
+/** 그 준비 건의 가장 최근 문서 생성 작업으로 카드 상태를 정합니다. 끝난 작업(성공)은 목록의 완료 표시가 맡습니다. */
+export function documentJobState(item: ApplicationPreparationSummary, jobs: readonly ApplicationDocumentGenerationJob[]): DocumentJobState | null {
+  const latest = jobs.filter((job) => job.preparationId === item.id)
+    .reduce<ApplicationDocumentGenerationJob | undefined>((newest, job) => !newest || newest.id < job.id ? job : newest, undefined)
+  if (!latest) return null
+  if (running(latest)) return { kind: 'active', job: latest }
+  if (latest.status === 'UNKNOWN') return { kind: 'unknown', job: latest }
+  return latest.status === 'FAILED' && latest.expectedRevision === item.inputRevision && item.hasCurrentDocument !== true
+    ? { kind: 'failed', job: latest } : null
+}
+
+/** 앞서 본 작업 목록과 견주어, 그사이 끝난(대기·진행·결과 확인 중이 아니게 된) 작업을 돌려줍니다. */
+function finishedSince<Job extends { id: number; status: 'QUEUED' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'UNKNOWN' }>(before: readonly Job[], now: readonly Job[]): Job[] {
+  return now.filter((job) => !pending(job) && before.some((known) => known.id === job.id && pending(known)))
+}
+
 type ListBusyState = 'initial' | 'more' | null
 
 function asError(value: unknown): Error {
@@ -95,8 +128,9 @@ export function useApplicationPreparationListViewModel() {
   const [error, setError] = useState<Error | null>(null)
   const [failedRequest, setFailedRequest] = useState<FailedRequest | null>(null)
   const [deletingId, setDeletingId] = useState<number | null>(null)
-  const [analysisJobs, setAnalysisJobs] = useState<ApplicationFormDiscoveryJob[]>([])
-  const knownAnalysisJobs = useRef<ApplicationFormDiscoveryJob[]>([])
+  /** 작업이 끝났을 때 공고명을 알리려고 지금 목록을 들고 있습니다. */
+  const pageRef = useRef<ApplicationPreparationPage | null>(null)
+  useEffect(() => { pageRef.current = page }, [page])
   const activeController = useRef<AbortController | null>(null)
   const deleteController = useRef<AbortController | null>(null)
   const deleteGuard = useRef<number | null>(null)
@@ -149,22 +183,44 @@ export function useApplicationPreparationListViewModel() {
     }
   }, [load])
 
-  // 계정의 최근 양식 분석을 읽습니다(GET · AI 호출 없음). 진행 중인 분석이 있으면 끝날 때까지, 결과 확인 중인 분석만 남으면 느리게 다시 읽고,
-  // 이 화면에 있는 동안 끝나면(완료·실패·결과 확인됨) 토스트로 알립니다. 안내를 못 읽어도 목록은 그대로 쓸 수 있으므로 실패는 알리지 않습니다.
-  const analysisPollMs = analysisJobs.some(running) ? formAnalysisPollMs : analysisJobs.some(pending) ? formAnalysisSettlePollMs : null
+  // 계정의 최근 양식 분석과 문서 생성 작업입니다. 읽기는 작업 화면 틀의 PreparationJobsSync가 맡고(사이드바 배지와 같은 사본),
+  // 이 화면에 있는 동안 지켜보던 작업이 끝나면 토스트로 알리며 초안이 만들어진 카드는 완료로 바꿉니다.
+  const { analysisJobs, documentJobs, readAt: analysesReadAt, unseen } = usePreparationJobs()
+  const { refresh: refreshJobs, markDocumentJobsSeen } = usePreparationJobActions()
+  // 답변을 고쳐 버전이 달라진 문서의 예전 실패는 카드에서 더 알리지 않으므로, 확인 전 표시가 남지 않게 확인한 것으로 돌립니다.
+  const obsoleteFailuresMarked = useRef(new Set<number>())
   useEffect(() => {
-    const controller = new AbortController()
-    const read = () => useCase.discoveryJobs(controller.signal).then((jobs) => {
-      if (controller.signal.aborted) return
-      const finished = jobs.find((job) => !pending(job) && knownAnalysisJobs.current.some((known) => known.id === job.id && pending(known)))
-      knownAnalysisJobs.current = jobs
-      setAnalysisJobs(jobs)
-      if (finished) setToast({ id: Date.now(), text: finishedAnalysisNotice(finished) })
-    }).catch(() => undefined)
-    if (analysisPollMs === null) { void read(); return () => controller.abort() }
-    const timer = setInterval(() => { void read() }, analysisPollMs)
-    return () => { clearInterval(timer); controller.abort() }
-  }, [analysisPollMs, useCase])
+    for (const item of page?.items ?? []) {
+      if (!unseen.preparationIds.includes(item.id) || obsoleteFailuresMarked.current.has(item.id)) continue
+      const latest = documentJobs.filter((job) => job.preparationId === item.id).reduce<ApplicationDocumentGenerationJob | undefined>(
+        (newest, job) => !newest || newest.id < job.id ? job : newest, undefined)
+      if (latest?.status === 'FAILED' && latest.expectedRevision !== item.inputRevision) {
+        obsoleteFailuresMarked.current.add(item.id)
+        markDocumentJobsSeen(item.id)
+      }
+    }
+  }, [documentJobs, markDocumentJobsSeen, page, unseen])
+  const knownAnalysisJobs = useRef(analysisJobs)
+  const knownDocumentJobs = useRef(documentJobs)
+  useEffect(() => {
+    const finished = finishedSince(knownAnalysisJobs.current, analysisJobs)
+    knownAnalysisJobs.current = analysisJobs
+    finished.forEach((job) => setToast({ id: Date.now(), text: finishedAnalysisNotice(job) }))
+  }, [analysisJobs])
+  useEffect(() => {
+    const finished = finishedSince(knownDocumentJobs.current, documentJobs)
+    knownDocumentJobs.current = documentJobs
+    finished.forEach((job) => {
+      const title = pageRef.current?.items.find((item) => item.id === job.preparationId)?.programTitle
+      if (job.status === 'SUCCEEDED') {
+        setPage((current) => current ? {
+          ...current,
+          items: current.items.map((item) => item.id === job.preparationId && item.inputRevision === job.expectedRevision ? { ...item, hasCurrentDocument: true } : item),
+        } : current)
+      }
+      setToast({ id: Date.now(), text: `${job.status === 'SUCCEEDED' ? '초안을 만들었어요' : '초안을 만들지 못했어요'}${title ? ` · ${title}` : ''}` })
+    })
+  }, [documentJobs])
 
   const deletePreparation = useCallback(async (id: number): Promise<boolean> => {
     if (deleteGuard.current !== null) return false
@@ -177,6 +233,8 @@ export function useApplicationPreparationListViewModel() {
     setFailedRequest(null)
     try {
       await useCase.delete(id, controller.signal)
+      // 지운 문서의 작업이 사이드바의 확인 전 수에 남지 않게 작업 목록을 다시 읽습니다.
+      refreshJobs()
       if (controller.signal.aborted || deleteController.current !== controller) return false
       setPage((current) => current ? { ...current, items: current.items.filter((item) => item.id !== id) } : current)
       setToast({ id: Date.now(), text: '삭제했어요.' })
@@ -194,7 +252,7 @@ export function useApplicationPreparationListViewModel() {
         setDeletingId(null)
       }
     }
-  }, [useCase])
+  }, [refreshJobs, useCase])
 
   const retry = useCallback(() => {
     if (failedRequest?.kind === 'list') load(failedRequest.beforeId)
@@ -209,12 +267,24 @@ export function useApplicationPreparationListViewModel() {
     page,
     /**
      * 목록 맨 앞에 카드로 보일 양식 분석입니다. 전체 탭에서 목록을 읽은 뒤에만 보이고, 끝난 분석은 그 공고의 신청 문서가
-     * 이미 목록에 있으면 뺍니다(같은 공고가 두 카드로 보이지 않게). 진행 중·결과 확인 중인 분석은 그대로 둡니다.
+     * 이미 목록에 있으면 뺍니다(같은 공고가 두 카드로 보이지 않게). 진행 중·결과 확인 중인 분석과 아직 확인하지 않은 결과는 그대로 둡니다.
      */
     analyses: status === undefined && page !== null
-      ? recentFormAnalyses(analysisJobs).filter(({ job, state }) => state === 'active' || state === 'unknown'
-        || !page.items.some((item) => item.sourceCode === job.sourceCode && item.sourceProgramId === job.sourceProgramId)).slice(0, maxFormAnalysisCards)
+      // "하루 안"은 사이드바 배지와 같은 시각(마지막으로 읽은 때)으로 판정하고, 확인 전 결과는 다른 끝난 분석보다 앞에 두어 카드 수 한도에 밀리지 않게 합니다.
+      ? recentFormAnalyses(analysisJobs, analysesReadAt).filter(({ job, state }) => state === 'active' || state === 'unknown'
+        || unseen.programKeys.includes(preparationProgramKey(job))
+        || !page.items.some((item) => item.sourceCode === job.sourceCode && item.sourceProgramId === job.sourceProgramId))
+        .map((row, index) => ({ row, index, rank: row.state === 'active' ? 0 : row.state === 'unknown' ? 1 : unseen.programKeys.includes(preparationProgramKey(row.job)) ? 2 : 3 }))
+        .sort((left, right) => left.rank - right.rank || left.index - right.index)
+        .map(({ row }) => row).slice(0, maxFormAnalysisCards)
       : [],
+    /** 분석 작업을 마지막으로 읽은 시각입니다. 분석 카드의 경과 시간을 이 시각 기준으로 그립니다. */
+    analysesReadAt,
+    /** 끝났지만 아직 결과 화면을 열지 않은 분석·초안입니다. 카드에 "새 결과"를 붙이고, 그 화면을 열면 사라집니다. */
+    isAnalysisUnseen: (job: ApplicationFormDiscoveryJob) => unseen.programKeys.includes(preparationProgramKey(job)),
+    isDocumentResultUnseen: (item: ApplicationPreparationSummary) => unseen.preparationIds.includes(item.id),
+    /** 카드에 입힐 초안 만들기 상태입니다(만드는 중 · 결과 확인 중 · 실패). 해당 없으면 null입니다. */
+    documentJobStateOf: (item: ApplicationPreparationSummary) => documentJobState(item, documentJobs),
     status,
     setStatus,
     toast,

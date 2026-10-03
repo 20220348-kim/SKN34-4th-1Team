@@ -44,7 +44,7 @@ function messageFor(code: string, status: number): string {
   if (code === 'APPLICATION_PREPARATION_RUN_CONFLICT') return '이전 AI 요청이 진행 중이거나 같은 요청을 다시 사용할 수 없습니다. 최신 내용을 불러온 뒤 다시 시도해 주세요.'
   if (code === 'AI_SERVICE_TIMEOUT') return 'AI 처리 시간이 초과되었습니다. 저장된 답변과 작성본을 확인한 뒤 다시 시도해 주세요.'
   if (code === 'AI_SERVICE_UNAVAILABLE' || code === 'AI_SERVICE_INVALID_RESPONSE') return 'AI가 답변을 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.'
-  if (code === 'APPLICATION_DOCUMENT_INPUT_REQUIRED') return '필수 답변을 모두 저장한 뒤 문서를 생성해 주세요. 모르는 내용은 미정으로 저장할 수 있습니다.'
+  if (code === 'APPLICATION_DOCUMENT_INPUT_REQUIRED') return '문서에 기입할 답변을 확인하지 못했습니다. 답변을 확인한 뒤 다시 생성해 주세요.'
   if (code === 'APPLICATION_DOCUMENT_SOURCE_CHANGED') return '공식 첨부가 변경되었거나 없어졌습니다. 양식을 다시 찾아 새 작성을 시작해 주세요.'
   if (code === 'APPLICATION_DOCUMENT_MAPPING_FAILED') return '공식 양식의 입력 위치를 확인하지 못해 작업을 중단했습니다. 양식 분석 결과를 확인해 주세요.'
   if (code === 'APPLICATION_DOCUMENT_MCP_NOT_READY') return '문서 생성 서비스를 사용할 수 없습니다. 관리자에게 문의해 주세요.'

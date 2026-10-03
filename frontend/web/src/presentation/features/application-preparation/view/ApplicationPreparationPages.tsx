@@ -20,9 +20,10 @@ import { useDelayedFlag } from '../../../shared/workspace/useDelayedFlag'
 import { useFloatingPopover } from '../../../shared/workspace/useFloatingPopover'
 import { useMediaQuery } from '../../../shared/workspace/useMediaQuery'
 import { answerMaxLength, undecidedAnswer, useApplicationPreparationEditorViewModel } from '../viewmodel/useApplicationPreparationEditorViewModel'
-import { useApplicationPreparationListViewModel, type FormAnalysisRow } from '../viewmodel/useApplicationPreparationListViewModel'
+import { useApplicationPreparationListViewModel, type DocumentJobState, type FormAnalysisRow } from '../viewmodel/useApplicationPreparationListViewModel'
 import { formAnalysisFailureReason } from '../viewmodel/useApplicationPreparationNewViewModel'
 import { answerEditorStyles as e, applicationPreparationStyles as s, loadingStyles as k } from './ApplicationPreparation.styles'
+import { generationFailureTitle, generationStages } from './documentGeneration'
 import { ApplicationOnlineInputGuide } from './ApplicationOnlineInputGuide'
 import { ApplicationPreparationLede } from './ApplicationPreparationLede'
 import { AnswerEditorSkeleton, ButtonSpinner, ListCardSkeleton } from './ApplicationPreparationSkeletons'
@@ -34,6 +35,12 @@ const featureTitle = '신청 문서 작성'
 function shortDate(value: string) {
   const date = new Date(value)
   return `${String(date.getMonth() + 1).padStart(2, '0')}.${String(date.getDate()).padStart(2, '0')}`
+}
+
+/** 작업을 시작한 시각. "14:03"처럼 시·분만 보여 준다. */
+function clockTime(value: string) {
+  const date = new Date(value)
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
 }
 
 function ErrorNotice({ message, retryLabel, onRetry }: {
@@ -194,7 +201,6 @@ function AnswerEditor({ vm }: { vm: EditorViewModel }) {
   const headingRef = useRef<HTMLHeadingElement>(null)
   const mainRef = useRef<HTMLElement>(null)
   const cardRef = useRef<HTMLDivElement>(null)
-  const summaryRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const sheetRef = useRef<HTMLDivElement>(null)
   const listButtonRef = useRef<HTMLButtonElement>(null)
@@ -210,6 +216,15 @@ function AnswerEditor({ vm }: { vm: EditorViewModel }) {
   const requiredMissing = missingRequired.length
   const missingOptional = questions.filter(({ section, field }) => !field.required && writable(field) && !valueOf(section, field).trim())
   const optionalMissing = missingOptional.length
+  /**
+   * 저장된 답변 수와, 그중 문서에 기입될 수 있는 답변 수입니다. "미정"으로 둔 질문은 기입하지 않으므로 세지 않습니다.
+   * 서버는 저장된 답변이 하나도 없을 때만 공식 양식 그대로 저장하므로, 기입할 수 없는 칸의 답변만 있는 경우를 따로 구분합니다.
+   */
+  const answered = questions.filter(({ section, field }) => {
+    const value = valueOf(section, field).trim()
+    return value !== '' && value !== undecidedAnswer
+  })
+  const fillableAnswers = answered.filter(({ field }) => writable(field)).length
   const fieldError = current && vm.fieldError?.key === current.key ? vm.fieldError.message : null
   // 지금 질문의 칸 오류는 칸 아래에만 보여 줍니다. 같은 문구를 위쪽 실패 알림으로 겹쳐 띄우지 않습니다.
   const failed = vm.autosave.status === 'failed' && !fieldError ? vm.autosave : null
@@ -343,16 +358,11 @@ function AnswerEditor({ vm }: { vm: EditorViewModel }) {
     else goNext()
   }
   /**
-   * 검토의 [초안 만들기]입니다. 비어 있는 필수 질문이 있으면 작업을 보내지 않고 위 요약으로 포커스를 옮깁니다(버튼은 비활성화하지 않음).
-   * 모두 채웠으면 입력 중인 답변을 먼저 저장하고 그 입력 버전으로 초안 화면에 갑니다.
+   * 검토의 [초안 만들기]입니다. 비어 있는 질문이 있어도(아무것도 입력하지 않았어도) 막지 않습니다. 비어 있는 필수 질문은 위 요약이 알리고,
+   * 초안에는 저장된 답변만 기입됩니다. 입력 중인 답변을 먼저 저장하고 그 입력 버전으로 초안 화면에 갑니다.
    */
   async function createDraft() {
     if (Date.now() - reviewShownAt.current < swappedButtonGuardMs) return
-    if (requiredMissing > 0) {
-      revealCard()
-      summaryRef.current?.focus({ preventScroll: true })
-      return
-    }
     if (!(await vm.flushAutosave())) return
     const revision = vm.latestRevision()
     if (revision !== null) navigate(`${appPaths.applicationPreparations}/${preparation.id}/documents?generate=${revision}`)
@@ -389,8 +399,9 @@ function AnswerEditor({ vm }: { vm: EditorViewModel }) {
     <p className={e.questionEyebrow}>검토 · 질문 {questions.length}개를 모두 지났어요</p>
     <h3 className={e.questionTitle} id="answer-review-title" ref={headingRef} tabIndex={-1}>초안을 만들기 전에 확인해 주세요</h3>
     {requiredMissing > 0
-      ? <div ref={summaryRef} className={e.errorSummary} role="alert" tabIndex={-1} aria-labelledby="answer-review-missing">
+      ? <div className={e.errorSummary} role="alert" aria-labelledby="answer-review-missing">
         <p className={e.errorSummaryTitle} id="answer-review-missing">필수 질문 {requiredMissing}개가 비어 있어요</p>
+        <p className="m-0">비워 둔 채로도 초안을 만들 수 있어요. 비운 질문은 문서에 빈칸으로 남아요.</p>
         <ul className={e.errorList}>
           {missingRequired.map((question) => <li key={question.key}>
             <Link className={e.errorLink} to={`?question=${encodeURIComponent(question.field.key)}`}
@@ -424,7 +435,11 @@ function AnswerEditor({ vm }: { vm: EditorViewModel }) {
       선택 질문 {optionalMissing}개는 비워 두면 문서에 빈칸으로 남아요.
       {requiredMissing === 0 && <> <button type="button" className={e.retryButton} onClick={() => move(questions.indexOf(missingOptional[0]))}>첫 빈 선택 질문으로</button></>}
     </p>}
-    {requiredMissing === 0 && <p className={e.reviewNote}>AI가 공식 양식에 답변을 기입해요 · 보통 1~3분</p>}
+    <p className={e.reviewNote}>{fillableAnswers > 0
+      ? 'AI가 공식 양식에 답변을 기입해요 · 보통 1~3분'
+      : answered.length > 0
+        ? '저장된 답변 중 양식에 자동으로 기입할 수 있는 것이 없어 초안을 만들지 못할 수 있어요. 원문 양식에 직접 옮겨 적어 주세요.'
+        : '입력한 답변이 없어요. 지금 초안을 만들면 답변을 기입하지 않은 공식 양식 그대로 저장돼요.'}</p>
     {!narrow && moveButtons}
   </section>
 
@@ -607,8 +622,8 @@ function PreparationMenu({ item, returnTo, disabled, onDelete }: { item: Applica
 function analysisCardView({ job, state }: FormAnalysisRow): { badge: string; tone: string; note: string; action: string; sourceUrl?: string } {
   if (state === 'active') return job.status === 'QUEUED'
     ? { badge: '분석 대기', tone: s.badgeProgress, note: '차례를 기다리고 있어요. 곧 분석을 시작해요', action: '이어서 보기' }
-    : { badge: '분석 중', tone: s.badgeProgress, note: '공식 첨부에서 신청 양식을 분석하고 있어요', action: '이어서 보기' }
-  if (state === 'unknown') return { badge: '결과 확인 중', tone: s.badgeProgress, note: '분석 결과를 확인하고 있어요. 늦어도 30분 안에 정리돼요', action: '상태 보기' }
+    : { badge: '분석 중', tone: s.badgeWorking, note: '공식 첨부에서 신청 양식을 분석하고 있어요', action: '이어서 보기' }
+  if (state === 'unknown') return { badge: '결과 확인 중', tone: s.badgeChecking, note: '분석 결과를 확인하고 있어요. 늦어도 30분 안에 정리돼요', action: '상태 보기' }
   if (state === 'done') return { badge: '분석 완료', tone: s.badgeDone, note: '양식을 확인하고 작성을 시작할 수 있어요', action: '양식 보기' }
   if (state === 'settled') return { badge: '결과 확인됨', tone: s.badgeDeadline, note: '분석 결과가 확인됐어요. 양식이 있는지 확인해 주세요', action: '결과 보기' }
   if (state === 'source') {
@@ -619,24 +634,53 @@ function analysisCardView({ job, state }: FormAnalysisRow): { badge: string; ton
 }
 
 /**
+ * 초안 만들기 상태를 입힌 문서 카드의 배지 · 진행 줄 · 버튼 이름입니다. 버튼은 모두 초안 화면으로 가서 진행·확인·실패 안내를 봅니다.
+ * 만드는 중은 서버가 기록한 단계(4단계)를 그대로 보여 주고, 실패는 결과 화면의 실패 카드와 같은 제목을 씁니다.
+ */
+function documentJobView({ kind, job }: DocumentJobState): { badge: string; tone: string; line: string; step: number | null; action: string } {
+  if (kind === 'unknown') return { badge: '결과 확인 중', tone: s.badgeChecking, line: '초안 결과를 확인하고 있어요. 확인이 끝나면 자동으로 풀려요', step: null, action: '상태 보기' }
+  if (kind === 'failed') return { badge: '초안 실패', tone: s.badgeFailed, line: generationFailureTitle(job), step: null, action: '자세히 보기' }
+  if (job.status === 'QUEUED') return { badge: '초안 대기', tone: s.badgeProgress, line: '차례를 기다리고 있어요', step: 0, action: '진행 보기' }
+  const index = generationStages.findIndex(([stage]) => stage === job.stage)
+  return {
+    badge: '초안 만드는 중', tone: s.badgeWorking, step: index + 1, action: '진행 보기',
+    line: index >= 0 ? `${index + 1} / ${generationStages.length} 단계 · ${generationStages[index][1]}` : '곧 시작해요',
+  }
+}
+
+/**
  * 목록 안의 양식 분석 카드입니다. 새 문서에서 시작한 분석은 아직 신청 문서가 아니므로 "양식 분석" 배지로 구분하고,
  * 신청 문서 카드와 같은 틀에 공고명 · 상태 · 분석한 날을 둡니다. 누르면 그 공고의 새 문서 화면으로 가서 양식을 확인하고 작성을 시작합니다.
  */
-function FormAnalysisCard({ row }: { row: FormAnalysisRow }) {
-  const { job } = row
+/** 끝났지만 아직 결과 화면을 열지 않은 카드의 표시입니다. 배지 줄 오른쪽 끝에 둡니다. */
+function NewResultMark() {
+  return <span className={s.newResult}><span className={s.newResultDot} aria-hidden="true" />새 결과</span>
+}
+
+function FormAnalysisCard({ row, readAt, unseen }: { row: FormAnalysisRow; readAt: number; unseen: boolean }) {
+  const { job, state } = row
   const view = analysisCardView(row)
   const to = `${appPaths.applicationPreparationNew}?${new URLSearchParams({ sourceCode: job.sourceCode, sourceProgramId: job.sourceProgramId })}`
-  return <li className={s.listCard}>
+  // 작업 중인 카드는 테두리 색 · 배지 스피너 · 진행 줄로 다른 카드와 구분합니다. 분석은 서버가 단계를 알려 주지 않아 경과 시간만 보입니다.
+  const analyzing = state === 'active' && job.status === 'RUNNING'
+  const minutes = Math.max(0, Math.floor((readAt - Date.parse(job.createdAt)) / 60_000))
+  const frame = state === 'active' ? s.listCardWorking : state === 'unknown' ? s.listCardChecking : unseen ? s.listCardUnseen : ''
+  return <li className={`${s.listCard} ${frame}`}>
     <div className={s.badgeRow}>
       <span className={s.badgeAnalysis}>양식 분석</span>
-      <span className={view.tone}>{view.badge}</span>
+      <span className={view.tone}>{analyzing && <ButtonSpinner />}{view.badge}</span>
+      {unseen && <NewResultMark />}
     </div>
     <Link className={`${s.listLink} min-w-0`} to={to}>
       <strong className={s.listTitle}>{job.programTitle}</strong>
       <span className={s.listMeta}>{view.note}</span>
     </Link>
+    {analyzing && <div className="flex flex-col gap-1">
+      <span className={s.cardStamp}>{Number.isNaN(minutes) || minutes < 1 ? '방금 시작했어요' : `${minutes}분 지남`} · 보통 1~3분</span>
+      <div className={s.workTrack} aria-hidden="true"><div className={s.workSweep} /></div>
+    </div>}
     <div className={s.cardFooter}>
-      <span className={s.cardStamp}>{shortDate(job.createdAt)} 분석</span>
+      <span className={s.cardStamp}>{state === 'active' || state === 'unknown' ? `${clockTime(job.createdAt)} 시작` : `${shortDate(job.createdAt)} 분석`}</span>
       <div className={s.cardActions}>
         {view.sourceUrl
           ? <a className={s.secondarySm} href={view.sourceUrl} target="_blank" rel="noreferrer">{view.action}<span className="sr-only">: {job.programTitle} (새 창)</span></a>
@@ -677,30 +721,50 @@ function ApplicationPreparationList() {
       </section>}
       {items.length + vm.analyses.length > 0 && <ul className={`${s.cardGrid} ${refreshing ? k.stale : ''}`} aria-label="신청 준비 목록" aria-busy={refreshing || vm.isLoadingMore}>
         {/* 양식만 분석해 둔 공고는 신청 문서 카드 앞에 "양식 분석" 카드로 둡니다. */}
-        {vm.analyses.map((row) => <FormAnalysisCard key={`analysis-${row.job.id}`} row={row} />)}
+        {vm.analyses.map((row) => <FormAnalysisCard key={`analysis-${row.job.id}`} row={row} readAt={vm.analysesReadAt} unseen={vm.isAnalysisUnseen(row.job)} />)}
         {items.map((item) => {
           const deadline = deadlineBadge(item)
           const done = item.hasCurrentDocument === true
           const progress = item.requiredTotal !== undefined && item.answeredRequired !== undefined ? { answered: item.answeredRequired, total: item.requiredTotal } : null
-          const to = done ? `${appPaths.applicationPreparations}/${item.id}/documents` : `${appPaths.applicationPreparations}/${item.id}`
-          return <li className={s.listCard} key={item.id}>
+          // 초안을 만드는 중 · 결과 확인 중 · 실패한 문서는 카드에서 바로 알 수 있게 하고, 누르면 초안 화면으로 갑니다.
+          const jobState = vm.documentJobStateOf(item)
+          const job = jobState ? documentJobView(jobState) : null
+          const working = jobState?.kind === 'active'
+          const making = working && jobState.job.status === 'RUNNING'
+          // 끝났지만 아직 열어 보지 않은 결과는 "새 결과"로 알리고, 초안 화면을 열면(거기서 확인 처리) 사라집니다.
+          const unseen = vm.isDocumentResultUnseen(item)
+          const to = done || jobState || unseen ? `${appPaths.applicationPreparations}/${item.id}/documents` : `${appPaths.applicationPreparations}/${item.id}`
+          const frame = working ? s.listCardWorking : jobState?.kind === 'unknown' ? s.listCardChecking : unseen ? s.listCardUnseen : ''
+          return <li className={`${s.listCard} ${frame}`} key={item.id}>
             <div className={s.badgeRow}>
-              <span className={done ? s.badgeDone : s.badgeProgress}>{done ? '완료' : '진행 중'}</span>
+              {job
+                ? <span className={job.tone}>{making && <ButtonSpinner />}{job.badge}</span>
+                : <span className={done ? s.badgeDone : s.badgeProgress}>{done ? '완료' : '작성 중'}</span>}
               {deadline && <span className={deadline.className}>{deadline.label}</span>}
+              {unseen && <NewResultMark />}
             </div>
             <Link className={`${s.listLink} min-w-0`} to={to}>
               <strong className={s.listTitle}>{item.programTitle}</strong>
-              <span className={s.listMeta}>{item.formTitle} · {applicationServiceFieldLabels[item.serviceField]}</span>
+              <span className={s.listMeta}>{unseen && done && !job ? '초안을 만들었어요. 열어서 확인해 주세요' : `${item.formTitle} · ${applicationServiceFieldLabels[item.serviceField]}`}</span>
             </Link>
-            {progress && <div className="flex flex-col gap-1" aria-label={`필수 답변 ${progress.answered} / ${progress.total}`}>
+            {job
+              ? <div className="flex flex-col gap-1">
+                <span className={s.cardStamp}>{job.line}</span>
+                {job.step !== null && <div className={s.workSteps} aria-hidden="true">
+                  {generationStages.map(([stage], index) => <span key={stage} className={index < (job.step ?? 0) ? s.workStepOn : s.workStep} />)}
+                </div>}
+              </div>
+              : progress && <div className="flex flex-col gap-1" aria-label={`필수 답변 ${progress.answered} / ${progress.total}`}>
               <span className={s.cardStamp}>필수 답변 {progress.answered} / {progress.total}</span>
               <div className={s.progressTrack}><div className={s.progressFill} style={{ width: `${progress.total === 0 ? 0 : Math.min(100, Math.round(progress.answered / progress.total * 100))}%` }} /></div>
             </div>}
             <div className={s.cardFooter}>
-              <span className={s.cardStamp}>{done ? `초안 있음 · ${shortDate(item.updatedAt)}` : `${shortDate(item.updatedAt)} 수정`}</span>
+              <span className={s.cardStamp}>{jobState && jobState.kind !== 'failed' ? `${clockTime(jobState.job.createdAt)} 시작`
+                : done ? `초안 있음 · ${shortDate(item.updatedAt)}` : `${shortDate(item.updatedAt)} 수정`}</span>
               <div className={s.cardActions}>
-                <PreparationMenu item={item} returnTo={returnTo} disabled={vm.deletingId !== null} onDelete={() => setConfirming(item)} />
-                <Link className={s.secondarySm} to={to}>{done ? '문서 보기' : '이어서 작성'}</Link>
+                {/* 초안을 만드는 중이거나 결과를 확인하는 중에는 삭제를 막습니다. 끝나면 다시 지울 수 있습니다. */}
+                <PreparationMenu item={item} returnTo={returnTo} disabled={vm.deletingId !== null || working || jobState?.kind === 'unknown'} onDelete={() => setConfirming(item)} />
+                <Link className={s.secondarySm} to={to}>{job ? job.action : done ? '문서 보기' : unseen ? '결과 보기' : '이어서 작성'}{job && <span className="sr-only">: {item.programTitle}</span>}</Link>
               </div>
             </div>
           </li>
