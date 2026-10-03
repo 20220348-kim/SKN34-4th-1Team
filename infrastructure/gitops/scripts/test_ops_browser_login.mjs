@@ -28,15 +28,22 @@ const run = {
   report_url: `/api/v1/ops/evaluations/${id}/report`, execution_spec_sha256: expected[id].execution_spec_sha256,
 }
 
-async function fixture(defect, verify) {
+async function fixture(defect, verify, count = 1) {
   let origin, vite, loggedIn = false, logouts = 0
-  const token = randomUUID(), requests = [], violations = []
+  const token = randomUUID(), requests = [], violations = [], revokedReads = []
+  const rows = Array.from({ length: count }, (_, index) => {
+    const rowId = '10000000-0000-4000-8000-' + String(index + 1).padStart(12, '0')
+    return { ...run, id: rowId, report_url: `/api/v1/ops/evaluations/${rowId}/report` }
+  })
+  const required = Object.fromEntries([rows[0], rows.at(-1)].map((row) => [row.id, expected[id]]))
   const originalEnv = Object.fromEntries(['K8S_CORE_PORT', 'K8S_OPS_PORT', 'K8S_DEV_LOGIN'].map((key) => [key, process.env[key]]))
   const cache = await mkdtemp(resolve(tmpdir(), 'govbiz-browser-login-'))
   const send = (reply, status, data) => { reply.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'private, no-store' }).end(JSON.stringify(data)) }
-  const authorized = (request) => loggedIn && request.headers.cookie?.includes('govbiz_session=' + token)
+  const hasCookie = (request) => request.headers.cookie?.includes('govbiz_session=' + token)
+  const authorized = (request) => loggedIn && hasCookie(request)
   const core = createServer(async (request, reply) => {
     requests.push([request.method, request.url])
+    if (!loggedIn && hasCookie(request)) revokedReads.push(request.url)
     if (request.method === 'POST' && request.headers.origin !== origin) violations.push('Core Origin differs')
     if (request.url === '/api/v1/auth/login' && request.method === 'POST') {
       let raw = ''
@@ -50,7 +57,7 @@ async function fixture(defect, verify) {
       loggedIn = false
       reply.writeHead(204, { 'Set-Cookie': 'govbiz_session=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax' }).end()
     } else if (request.url === '/api/v1/admin/session') {
-      send(reply, authorized(request) ? 200 : 401, { accountId: 1, email, role: 'ADMIN' })
+      send(reply, authorized(request) || defect === 'revoked_core' && hasCookie(request) ? 200 : 401, { accountId: 1, email, role: 'ADMIN' })
     } else {
       violations.push('Unexpected Core route')
       send(reply, 404, {})
@@ -58,17 +65,36 @@ async function fixture(defect, verify) {
   })
   const ops = createServer((request, reply) => {
     requests.push([request.method, request.url])
+    if (!loggedIn && hasCookie(request)) revokedReads.push(request.url)
     if (request.method !== 'GET' || request.headers.host !== new URL(origin).host) violations.push('Ops method or Host differs')
+    const url = new URL(request.url, origin)
+    const row = rows.find((item) => request.url === `/api/v1/ops/evaluations/${item.id}`)
+    const report = rows.some((item) => request.url === item.report_url)
+    const budget = rows.some((item) => request.url === `/api/v1/ops/evaluations/${item.id}/budget`)
+    const invalidSessionAccepted = hasCookie(request) && (
+      defect === 'revoked_list' && url.pathname === '/api/v1/ops/evaluations' ||
+      defect === 'revoked_detail' && row || defect === 'revoked_budget' && budget || defect === 'revoked_report' && report
+    )
     if (request.url === '/api/v1/ops/session') {
       send(reply, 200, { user: authorized(request) ? { id: defect === 'wrong_principal' ? 'core:99' : 'core:1', username: email } : null,
         csrf_token: 'test-csrf', live_enabled: false, rag_live_enabled: false, datasets: authorized(request) ? [dataset] : [] })
-    } else if (!authorized(request) && !(defect === 'logout_bypass' && request.url === run.report_url)) send(reply, 401, {})
-    else if (request.url === '/api/v1/ops/evaluations?page=1') send(reply, 200, { count: 1, next: null, previous: null, results: [run] })
-    else if (request.url === `/api/v1/ops/evaluations/${id}`) send(reply, 200, run)
-    else if (request.url === `/api/v1/ops/evaluations/${id}/budget`) send(reply, 200, { as_of: at, state: 'not_applicable', reservation: null, calls: [] })
+    } else if (!authorized(request) && !invalidSessionAccepted && !(defect === 'logout_bypass' && report)) send(reply, 401, {})
+    else if (url.pathname === '/api/v1/ops/evaluations') {
+      const page = Number(url.searchParams.get('page'))
+      const values = rows.slice((page - 1) * 25, page * 25)
+      if (page === 2 && defect === 'duplicate_row') values[0] = rows[0]
+      if (page === 2 && defect === 'missing_row') values.pop()
+      send(reply, 200, {
+        count: page === 2 && defect === 'changed_count' ? count + 1 : count,
+        next: page * 25 < count ? (defect === 'external_next' ? 'https://external.invalid' : origin) + `/api/v1/ops/evaluations?page=${page + 1}` : null,
+        previous: page > 1 ? origin + `/api/v1/ops/evaluations?page=${page - 1}` : null, results: values,
+      })
+    }
+    else if (row) send(reply, 200, row)
+    else if (budget) send(reply, 200, { as_of: at, state: 'not_applicable', reservation: null, calls: [] })
     else if (request.url === '/api/v1/ops/budget/reservations?page=1') send(reply, 200, { as_of: at, count: 0, next: null, previous: null, results: [],
       summary: { state: 'unconfigured', limits: null, allocated: null, remaining: null, breakdown: null, reservation_count: 0, legacy_live_run_count: 0, change_count: 0, recent_changes: [] } })
-    else if (request.url === run.report_url) reply.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'private, no-store', 'Content-Security-Policy': "sandbox allow-scripts; default-src 'none'" }).end(body)
+    else if (report) reply.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'private, no-store', 'Content-Security-Policy': "sandbox allow-scripts; default-src 'none'" }).end(body)
     else { violations.push('Unexpected Ops route'); send(reply, 404, {}) }
   })
   try {
@@ -84,10 +110,17 @@ async function fixture(defect, verify) {
     await optimizer?.scanProcessing
     await Promise.all(Object.values(optimizer?.metadata.discovered ?? {}).map((item) => item.processing))
     origin = 'http://127.0.0.1:' + vite.httpServer.address().port
-    await verify({ origin, email, password, expected })
+    await verify({ origin, email, password, expected: required })
     assert.deepEqual(violations, [])
     if (defect !== 'missing_cookie') assert.equal(logouts, 1, 'Issued session was not cleaned up')
     assert.ok(requests.every(([method, path]) => method === 'GET' || ['/api/v1/auth/login', '/api/v1/auth/logout'].includes(path)))
+    if (!defect) {
+      assert.deepEqual(new Set(revokedReads), new Set([
+        '/api/v1/admin/session',
+        ...Array.from({ length: Math.ceil(count / 25) }, (_, index) => `/api/v1/ops/evaluations?page=${index + 1}`),
+        ...Object.keys(required).flatMap((key) => ['', '/budget', '/report'].map((suffix) => `/api/v1/ops/evaluations/${key}${suffix}`)),
+      ]), 'Revocation checks must actually send the issued cookie')
+    }
   } finally {
     for (const [key, value] of Object.entries(originalEnv)) {
       if (value === undefined) delete process.env[key]
@@ -112,9 +145,40 @@ test('browser uses the real login form, server-issued cookie, Ops detail, refres
     assert.equal(proof.reports_verified, 1)
     assert.equal(proof.browser_closed, true)
     assert.equal(proof.unauthorized_after_logout, true)
+    assert.equal(proof.revoked_session_rejected, true)
+    assert.equal(proof.pagination_complete, true)
+    assert.equal(proof.listed_run_count, 1)
+    assert.equal(proof.pages_verified, 1)
     assert.ok(!JSON.stringify(proof).includes(password) && !JSON.stringify(proof).includes(email))
   })
 })
+
+test('browser traverses two pages and opens expected details from both pages', { timeout: 120000 }, async () => {
+  await fixture(null, async (input) => {
+    const proof = await checkBrowserLogin(input)
+    assert.equal(proof.listed_run_count, 26)
+    assert.equal(proof.pages_verified, 2)
+    assert.equal(proof.pagination_complete, true)
+    assert.equal(proof.details_verified, 2)
+    assert.equal(proof.reports_verified, 2)
+    assert.equal(proof.revoked_session_rejected, true)
+  }, 26)
+})
+
+for (const [defect, message] of [
+  ['duplicate_row', /repeated a row/], ['missing_row', /page is incomplete/],
+  ['changed_count', /count changed/], ['external_next', /pagination link differs/],
+]) {
+  test(`browser rejects ${defect} during pagination and cleans up`, { timeout: 120000 }, async () => {
+    await fixture(defect, async (input) => { await assert.rejects(checkBrowserLogin(input), message) }, 26)
+  })
+}
+
+for (const defect of ['revoked_core', 'revoked_list', 'revoked_detail', 'revoked_budget', 'revoked_report']) {
+  test(`browser rejects ${defect} even when anonymous reads return 401`, { timeout: 120000 }, async () => {
+    await fixture(defect, async (input) => { await assert.rejects(checkBrowserLogin(input), /Revoked session remained usable/) })
+  })
+}
 
 for (const [defect, message] of [['missing_cookie', /cookie is missing/], ['wrong_principal', /Core principal/], ['logout_bypass', /remained available/]]) {
   test(`browser rejects ${defect} and cleans up`, { timeout: 120000 }, async () => {

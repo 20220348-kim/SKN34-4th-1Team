@@ -20,6 +20,7 @@ export async function checkBrowserLogin({ origin, email, password, expected }) {
   const browser = await chromium.launch({ headless: true, ...(channel ? { channel } : {}) })
   const version = browser.version()
   let context
+  let listedRunCount, pagesVerified = 0
   const failures = []
   const writes = []
   try {
@@ -76,12 +77,42 @@ export async function checkBrowserLogin({ origin, email, password, expected }) {
     await page.reload({ waitUntil: 'domcontentloaded' })
     await page.getByRole('navigation', { name: '운영 메뉴' }).getByText(email, { exact: true }).waitFor()
     const history = page.getByRole('region', { name: '평가 실행 이력' })
-    const listed = await read('/api/v1/ops/evaluations?page=1')
-    assert.equal(listed.status, 200)
-    // The disposable smoke creates only a small first page; never silently omit a requested run.
-    for (const id of ids) assert.ok(listed.body.results.some((row) => row.id === id && row.status === 'COMPLETED' && row.execution_spec_sha256 === expected[id].execution_spec_sha256), 'Expected Kubernetes evaluation is absent')
+    const locations = new Map(), listings = []
+    for (let number = 1; ; number++) {
+      const listed = await read(`/api/v1/ops/evaluations?page=${number}`)
+      assert.equal(listed.status, 200, 'Evaluation page is unavailable')
+      if (number === 1) {
+        listedRunCount = listed.body.count
+        assert.ok(Number.isInteger(listedRunCount) && listedRunCount >= ids.length && listedRunCount <= 1000, 'Invalid evaluation count')
+      }
+      assert.equal(listed.body.count, listedRunCount, 'Evaluation count changed during pagination')
+      const pages = Math.ceil(listedRunCount / 25), rows = listed.body.results
+      assert.ok(Array.isArray(rows) && rows.length === Math.min(25, listedRunCount - (number - 1) * 25), 'Evaluation page is incomplete')
+      // Validate links but construct the route ourselves; never follow arbitrary API URLs.
+      assert.ok(listed.body.next === (number < pages ? origin + `/api/v1/ops/evaluations?page=${number + 1}` : null), 'Evaluation pagination link differs')
+      for (const row of rows) {
+        assert.match(row.id, /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/)
+        assert.ok(!locations.has(row.id), 'Evaluation pagination repeated a row')
+        locations.set(row.id, number)
+        if (ids.includes(row.id)) assert.ok(row.status === 'COMPLETED' && row.execution_spec_sha256 === expected[row.id].execution_spec_sha256, 'Expected evaluation differs')
+        await history.locator(`a[href="/ops/evaluations/${row.id}"]`).waitFor()
+      }
+      assert.equal(await history.locator('tbody tr').count(), rows.length, 'Rendered evaluation page differs')
+      listings.push(rows)
+      pagesVerified++
+      const next = history.getByRole('button', { name: '다음', exact: true })
+      assert.equal(await next.isDisabled(), number === pages, 'Evaluation next button differs')
+      if (number === pages) break
+      await next.click()
+    }
+    assert.equal(locations.size, listedRunCount)
+    for (const id of ids) assert.ok(locations.has(id), 'Expected evaluation is absent')
     for (const id of ids) {
       await page.goto(origin + '/ops/evaluations', { waitUntil: 'domcontentloaded' })
+      for (let number = 1; number < locations.get(id); number++) {
+        await history.locator(`a[href="/ops/evaluations/${listings[number - 1][0].id}"]`).waitFor()
+        await history.getByRole('button', { name: '다음', exact: true }).click()
+      }
       await history.locator(`a[href="/ops/evaluations/${id}"]`).click()
       await page.getByRole('heading', { name: '평가 실행 상세', exact: true }).waitFor()
       await page.locator('dd').getByText(id, { exact: true }).waitFor()
@@ -106,12 +137,23 @@ export async function checkBrowserLogin({ origin, email, password, expected }) {
     assert.equal(logout.status(), 204, 'Core logout failed')
     await form.waitFor()
     assert.ok(!(await context.cookies(origin)).some((item) => item.name === 'govbiz_session'), 'Core session cookie survived logout')
-    for (const path of ['/api/v1/admin/session', '/api/v1/ops/evaluations?page=1', ...ids.map((id) => `/api/v1/ops/evaluations/${id}/report`)]) {
-      assert.equal(await page.evaluate(async (target) => (await fetch(target, { credentials: 'same-origin', cache: 'no-store' })).status, path), 401, 'Protected read remained available after logout')
-    }
+    const protectedPaths = [
+      '/api/v1/admin/session',
+      ...listings.map((_, index) => `/api/v1/ops/evaluations?page=${index + 1}`),
+      ...ids.flatMap((id) => ['', '/budget', '/report'].map((suffix) => `/api/v1/ops/evaluations/${id}${suffix}`)),
+    ]
+    const status = (path) => page.evaluate(async (target) => (await fetch(target, { credentials: 'same-origin', cache: 'no-store' })).status, path)
+    for (const path of protectedPaths) assert.equal(await status(path), 401, 'Protected read remained available after logout')
     await page.goto(origin + '/ops/evaluations', { waitUntil: 'domcontentloaded' })
     await form.waitFor()
     assert.equal(await history.count(), 0)
+    // Reuse only this test's server-issued cookie, in memory, after logout.
+    // Anonymous 401 alone does not prove that the server revoked the session.
+    try {
+      await context.addCookies([cookie])
+      assert.ok((await context.cookies(origin)).some((item) => item.name === cookie.name && item.value === cookie.value), 'Revoked test cookie was not attached')
+      for (const path of protectedPaths) assert.equal(await status(path), 401, 'Revoked session remained usable after logout')
+    } finally { await context.clearCookies() }
     assert.deepEqual(writes, ['/api/v1/auth/login', '/api/v1/auth/logout'])
     assert.deepEqual(failures, [])
   } finally {
@@ -127,8 +169,9 @@ export async function checkBrowserLogin({ origin, email, password, expected }) {
   return {
     status: 'PASS', response_source: 'core_ops_http', browser_version: version,
     password_login_verified: true, httponly_cookie_received: true, core_ops_identity_verified: true,
+    listed_run_count: listedRunCount, pages_verified: pagesVerified, pagination_complete: true,
     reload_verified: true, details_verified: ids.length, reports_verified: ids.length,
-    logout_verified: true, unauthorized_after_logout: true, browser_closed: true,
+    logout_verified: true, unauthorized_after_logout: true, revoked_session_rejected: true, browser_closed: true,
   }
 }
 
