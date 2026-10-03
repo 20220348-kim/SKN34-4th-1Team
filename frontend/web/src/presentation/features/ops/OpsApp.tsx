@@ -104,6 +104,7 @@ function EvaluationList({ owner, datasets, liveEnabled: allLiveEnabled, ragLiveE
   const [rejected, setRejected] = useState(false)
   const [submitError, setSubmitError] = useState('')
   const [refresh, setRefresh] = useState(0)
+  const [budgetRevision, setBudgetRevision] = useState(0)
   const [busy, setBusy] = useState(false)
   const [mode, setMode] = useState<'replay' | 'live'>(restored.pending?.live_config ? 'live' : 'replay')
   const [approved, setApproved] = useState(!!restored.pending?.live_config)
@@ -207,7 +208,7 @@ function EvaluationList({ owner, datasets, liveEnabled: allLiveEnabled, ragLiveE
   return <>
     <WorkspacePageHeader title="평가 실행 관리" actions={<button className={styles.secondaryButton} onClick={() => setRefresh((value) => value + 1)}>목록 새로고침</button>} />
     <div className={styles.content}>
-      <BudgetOverview onExpired={onExpired} refreshKey={refresh} operatorId={owner} />
+      <BudgetOverview onExpired={onExpired} refreshKey={refresh} operatorId={owner} onBudgetChanged={() => setBudgetRevision((value) => value + 1)} />
       <section className={styles.card} aria-label="평가 실행">
         <p className={styles.sectionEyebrow}>LLMOps 평가</p><h2 className={styles.cardTitle}>지원 대상 근거 답변 평가</h2>
         <p className="text-sm leading-6 text-sample-muted">{ragLive ? ragLiveNotice : mode === 'live' ? liveNotice : notice}</p>
@@ -226,7 +227,7 @@ function EvaluationList({ owner, datasets, liveEnabled: allLiveEnabled, ragLiveE
             {!liveEnabled && <p role="status" className="font-semibold">새 모델 평가가 비활성화되어 있습니다. 실행기의 API 키와 서버 설정을 준비해야 합니다.</p>}
             <label className="mt-3 flex items-start gap-2"><input type="checkbox" className="mt-1" checked={approved} disabled={!liveEnabled || busy || requestId.current !== null} onChange={(event) => setApproved(event.target.checked)} />위 자료의 OpenAI 전송과 최대 호출 예산을 확인했습니다.</label>
           </div>}
-          {mode === 'live' && !pending && selected?.execution_profiles.live && <LiveReadinessPanel key={`${dataset}:${selected.execution_profiles.live}`} datasetId={dataset} executionProfile={selected.execution_profiles.live} onExpired={onExpired} />}
+          {mode === 'live' && !pending && selected?.execution_profiles.live && <LiveReadinessPanel key={`${dataset}:${selected.execution_profiles.live}:${budgetRevision}`} datasetId={dataset} executionProfile={selected.execution_profiles.live} onExpired={onExpired} />}
         </form>
         {selected && <p className="text-xs leading-5 text-sample-muted">비교 범위: {selected.case_ids.join(', ')} · {selected.case_ids.length}건. {mode === 'live' ? '현재 모델의 새 응답과 선택한 기준 응답을 비교합니다.' : reference === candidate ? '같은 저장 결과의 재현 검증입니다.' : '두 실행의 위 사례만 비교합니다. 원본의 다른 사례는 평가 범위에 포함하지 않습니다.'}</p>}
         {pending && <div className="rounded-xl bg-amber-50 p-3 text-sm" role="status"><p>보관한 요청: {pending.request_id}</p><p>{pending.dataset_id} · 기준 {pending.reference_capture_id}{pending.baseline_version ? ` · 기준 버전 ${pending.baseline_version}` : ''} · {pending.live_config ? `${pending.live_config.model} · 최대 ${pending.live_config.max_model_calls}회 · 출력 ${pending.live_config.max_output_tokens}토큰/회 · 입력 ${pending.live_config.max_input_tokens ?? '기록 없음'}토큰/회` : '저장 응답 재평가'}</p><p>새로고침·재로그인 뒤에도 이 탭에서 같은 요청을 확인합니다. 탭을 닫기 전 실행 이력에서 접수 여부를 확인하세요.</p></div>}

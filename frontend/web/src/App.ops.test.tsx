@@ -73,6 +73,69 @@ function open(path = '/ops/evaluations') {
 }
 
 describe('React LLMOps 운영 화면', () => {
+  it.each([['limits', false], ['legacy', false], ['limits', true]] as const)('%s 저장 후 이전 사전 점검을 지우며 늦은 조회=%s도 무시한다', async (kind, delayed) => {
+    const at = '2026-10-03T01:00:00Z'
+    const readiness = {
+      as_of: at, dataset_id: dataset.id, execution_profile: executionProfiles.live,
+      evaluation_scope: dataset.evaluation_scope, model: liveConfig.model, state: 'checked',
+      required: { calls: 6, input_tokens: 196608, output_tokens: 12000 },
+      remaining: { calls: 12, input_tokens: 400000, output_tokens: 24000 }, blockers: [], warnings: [],
+    }
+    const usage = { calls: 1, input_tokens: 100, output_tokens: 50 }
+    const zero = { calls: 0, input_tokens: 0, output_tokens: 0 }
+    let resolve!: (response: Response) => void
+    const pending = new Promise<Response>((done) => { resolve = done })
+    const original = fetchMock.getMockImplementation()!
+    fetchMock.mockImplementation(async (path, options) => {
+      if (path.includes('/live-readiness?')) return delayed ? pending : json(readiness)
+      if (path.startsWith('/api/v1/ops/budget/reservations')) return json({
+        as_of: at, count: 0, next: null, previous: null, results: [], summary: {
+          state: 'consistent', limits_revision: 'a'.repeat(64), limits: readiness.remaining,
+          allocated: zero, remaining: readiness.remaining, breakdown: null,
+          reservation_count: 0, legacy_live_run_count: 1, change_count: 0, recent_changes: [],
+        },
+      })
+      if (path.includes('/unaccounted-runs')) return json({ as_of: at, count: 1, next: null, previous: null,
+        results: [{ run_id: id, dataset_id: dataset.id, dataset_label: '과거 평가', status: 'COMPLETED', status_label: '완료', created_at: at }] })
+      if (path.endsWith('/legacy-usage-preview')) return json({ as_of: at, run_id: id, applied: false, state: 'verified', can_apply: true, blockers: [],
+        source: 'SAVED_CAPTURE', provider_receipt_verified: false, capture_sha256: 'b'.repeat(64), evidence_sha256: 'c'.repeat(64), usage, before: zero, after: usage })
+      if (path.endsWith('/legacy-usage')) return json({ applied: true, replayed: false, record: {
+        ...JSON.parse(options!.body as string), run_id: id, actor: 'core:99', actor_source: 'CORE_ADMIN', created_at: at,
+        source: 'SAVED_CAPTURE', provider_receipt_verified: false, capture_sha256: 'b'.repeat(64), usage, before: zero, after: usage,
+      } })
+      if (path.endsWith('/budget/limits')) {
+        const value = JSON.parse(options!.body as string)
+        return json({ change: { request_id: value.request_id, actor: 'core:99', source: 'CORE_ADMIN', reason: value.reason,
+          previous_limits: readiness.remaining, limits: { calls: value.calls, input_tokens: value.input_tokens, output_tokens: value.output_tokens }, created_at: at } })
+      }
+      return original(path, options)
+    })
+    open()
+    fireEvent.change(await screen.findByLabelText('실행 방식'), { target: { value: 'live' } })
+    fireEvent.click(screen.getByRole('button', { name: '실행 설정·예산 점검' }))
+    if (!delayed) await screen.findByText('조회 시점의 설정·예산에서 차단 사유가 없습니다.')
+    if (kind === 'limits') {
+      fireEvent.click(await screen.findByRole('button', { name: '누적 한도 설정' }))
+      fireEvent.change(screen.getByLabelText('한도 변경 사유'), { target: { value: '실행 준비 한도 검토' } })
+      fireEvent.click(screen.getByRole('button', { name: '변경 내용 확인' }))
+      fireEvent.click(screen.getByRole('button', { name: '확인한 한도 저장' }))
+      await screen.findByText('누적 한도 변경 이력을 저장했습니다.')
+    } else {
+      fireEvent.click(await screen.findByRole('button', { name: '미반영 실행 목록 확인' }))
+      fireEvent.click(await screen.findByRole('button', { name: `사용량 확인 ${id}` }))
+      fireEvent.change(await screen.findByLabelText('사용량 검토 사유'), { target: { value: '전체 응답 검토' } })
+      fireEvent.click(screen.getByRole('checkbox', { name: /위 사용량과 출처를 확인/ }))
+      fireEvent.click(screen.getByRole('button', { name: '검토한 사용량 반영' }))
+      await screen.findByText('검토한 과거 사용량을 장부에 반영했습니다.')
+    }
+    if (delayed) await act(async () => { resolve(json(readiness)); await pending })
+    expect(screen.queryByText('조회 시점의 설정·예산에서 차단 사유가 없습니다.')).toBeNull()
+    expect(screen.getByRole('button', { name: '실행 설정·예산 점검' })).toHaveProperty('disabled', false)
+    expect(fetchMock.mock.calls.filter(([path]) => path.includes('/live-readiness?'))).toHaveLength(1)
+    expect(fetchMock.mock.calls.some(([path, options]) => path === '/api/v1/ops/evaluations' && options?.method === 'POST')).toBe(false)
+    expect(screen.getByRole('region', { name: '누적 평가 예산' }).id).toBe('evaluation-budget')
+  })
+
   it('선택한 새 모델 평가의 설정·예산만 점검하고 전송 승인을 대신하지 않는다', async () => {
     const original = fetchMock.getMockImplementation()!
     fetchMock.mockImplementation((path, options) => path.includes('/live-readiness?') ? Promise.resolve(json({
