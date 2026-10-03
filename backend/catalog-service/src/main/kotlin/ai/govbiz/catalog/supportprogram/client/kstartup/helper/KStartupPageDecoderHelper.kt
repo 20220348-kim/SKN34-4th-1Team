@@ -23,6 +23,12 @@ internal object KStartupPageDecoderHelper {
                     founderAges = text(item, "biz_trgt_age"), category = text(item, "supt_biz_clsfc"),
                     region = text(item, "supt_regin"), applicationStartDate = text(item, "pbanc_rcpt_bgng_dt"),
                     applicationEndDate = text(item, "pbanc_rcpt_end_dt"), sourceUrl = text(item, "detl_pg_url"),
+                    onlineApplication = text(item, "aply_mthd_onli_rcpt_istc"),
+                    emailApplication = text(item, "aply_mthd_eml_rcpt_istc"),
+                    visitApplication = text(item, "aply_mthd_vst_rcpt_istc"),
+                    postalApplication = text(item, "aply_mthd_pssr_rcpt_istc"),
+                    faxApplication = text(item, "aply_mthd_fax_rcpt_istc", allowInteger = true),
+                    otherApplication = text(item, "aply_mthd_etc_istc"),
                 )
             },
         )

@@ -2,6 +2,7 @@ package ai.govbiz.core.applicationpreparation.client.ai
 
 import ai.govbiz.core.applicationpreparation.client.ai.exception.ApplicationOnlineFormMcpException
 import ai.govbiz.core.applicationpreparation.client.ai.mapper.ApplicationOnlineFormMcpMapper
+import ai.govbiz.core.applicationpreparation.domain.ApplicationGoogleFormQuestionKind
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import org.springframework.http.HttpStatus
@@ -24,12 +25,12 @@ class ApplicationOnlineFormMcpClientTest {
     private val url = "https://docs.google.com/forms/d/e/public-id/viewform"
 
     private fun question(id: String = "gpub-v1:1:abcd", kind: String = "SHORT_TEXT", supported: Boolean = true) =
-        mapOf("order" to 1, "controlId" to id, "label" to "업체명", "required" to true,
-            "kind" to kind, "options" to emptyList<String>(), "supported" to supported,
-            "unsupportedReason" to if (supported) null else "UNRECOGNIZED_CONTROL")
+        mapOf("order" to 1, "controlId" to id, "entryId" to if (supported) "101" else null, "label" to "업체명",
+            "description" to "", "required" to true, "kind" to kind, "options" to emptyList<String>(), "allowsOther" to false,
+            "supported" to supported, "unsupportedReason" to if (supported) null else "DATE")
 
     private fun payload(questions: List<Map<String, Any?>> = listOf(question())): Map<String, Any> = mapOf(
-        "contractVersion" to "google-public-form-reader-v1", "parserVersion" to "semantic-dom-v1",
+        "contractVersion" to "google-public-form-reader-v2", "parserVersion" to "fb-public-load-data-v1",
         "sourceUrl" to url, "finalUrl" to url, "formTitle" to "공개 신청서",
         "semanticFingerprint" to "a".repeat(64), "questions" to questions,
     )
@@ -80,6 +81,9 @@ class ApplicationOnlineFormMcpClientTest {
             base + ("questions" to emptyList<Map<String, Any?>>()),
             base + ("questions" to tooMany),
             base + ("semanticFingerprint" to "bad"),
+            // 지원하는 문항은 미리 채울 entry 번호가 반드시 있어야 한다.
+            base + ("questions" to listOf(question() + ("entryId" to null))),
+            base + ("questions" to listOf(question(kind = "UNKNOWN", supported = false) + ("entryId" to "7"))),
         )
         cases.forEach(::expectOk)
         cases.forEach {
@@ -93,6 +97,35 @@ class ApplicationOnlineFormMcpClientTest {
         expectOk(payload(listOf(question(kind = "UNKNOWN", supported = false))))
         assertEquals("APPLICATION_ONLINE_FORM_UNSUPPORTED",
             assertThrows(ApplicationOnlineFormMcpException::class.java) { client.inspect(url) }.code)
+        server.verify()
+    }
+
+    @Test fun googleFormKeepsEntriesExactOptionsAndUnsupportedQuestions() {
+        val radio = question("gpub-v1:2:abcd", "SINGLE_CHOICE") + mapOf("order" to 2, "entryId" to "102",
+            "options" to listOf("09.17  [TIPS]", "09.22"), "allowsOther" to true)
+        val date = question("gpub-v1:3:abcd", "UNKNOWN", supported = false) + ("order" to 3)
+        expectOk(payload(listOf(question(), radio, date)))
+        val form = client.readGoogleForm(url)
+        assertEquals(url, form.responderUrl)
+        assertEquals(listOf("101", "102", null), form.questions.map { it.entryId })
+        assertEquals(listOf("09.17  [TIPS]", "09.22"), form.questions[1].options)
+        assertTrue(form.questions[1].allowsOther)
+        assertEquals(ApplicationGoogleFormQuestionKind.UNSUPPORTED, form.questions[2].kind)
+        server.verify()
+    }
+
+    @Test fun signInOnlyFormIsReportedWithItsOwnCode() {
+        server.expect(requestTo(path)).andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE)
+            .contentType(MediaType.APPLICATION_JSON).body("""{"detail":{"code":"APPLICATION_ONLINE_FORM_LOGIN_REQUIRED"}}"""))
+        assertEquals("APPLICATION_ONLINE_FORM_LOGIN_REQUIRED",
+            assertThrows(ApplicationOnlineFormMcpException::class.java) { client.readGoogleForm(url) }.code)
+        server.verify()
+    }
+
+    @Test fun nonResponderAddressFailsDomainValidation() {
+        expectOk(payload() + ("finalUrl" to "https://docs.google.com/forms/d/e/public-id/closedform"))
+        assertEquals("APPLICATION_ONLINE_FORM_SOURCE_CHANGED",
+            assertThrows(ApplicationOnlineFormMcpException::class.java) { client.readGoogleForm(url) }.code)
         server.verify()
     }
 }

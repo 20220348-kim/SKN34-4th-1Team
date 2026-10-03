@@ -269,6 +269,20 @@ export const newPreparationStyles = {
   // 버튼을 전체 폭 1 : 2 격자로 나눕니다(글자 폭과 무관하게 정확히 1 : 2, 높이 44px).
   actions: 'flex flex-wrap items-center justify-end gap-2 pt-1 max-[599px]:grid max-[599px]:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] max-[599px]:[&>a]:h-11 max-[599px]:[&>button]:h-11',
   actionsReason: 'm-0 mr-auto text-[0.78rem] text-ink-muted max-[599px]:col-span-2 max-[599px]:mr-0',
+  // ② 구글 설문 미리 채우기: 문항 목록 · 입력칸 · "기업 정보" 표시 · 아래 [채워서 열기] 줄입니다.
+  formList: 'm-0 flex list-none flex-col gap-4 p-0',
+  formQuestion: 'm-0 flex min-w-0 flex-col gap-1.5 border-0 p-0',
+  formLabel: 'flex flex-wrap items-center gap-x-1.5 gap-y-1 p-0 text-[0.85rem] leading-[1.5] font-bold text-app-ink [overflow-wrap:anywhere]',
+  formRequired: 'text-danger',
+  formHelp: 'm-0 text-[0.78rem] leading-[1.6] text-ink-muted [overflow-wrap:anywhere]',
+  formInput: 'h-10 w-full min-w-0 rounded-xl border border-line-strong bg-white px-3 text-[0.8125rem] text-app-ink focus-visible:outline-2 focus-visible:outline-brand-primary',
+  formTextarea: 'min-h-20 w-full min-w-0 resize-y rounded-xl border border-line-strong bg-white px-3 py-2 text-[0.8125rem] leading-[1.6] text-app-ink focus-visible:outline-2 focus-visible:outline-brand-primary',
+  formOptions: 'flex flex-col gap-1.5',
+  formOption: 'flex cursor-pointer items-start gap-2 text-[0.8125rem] leading-[1.5] text-app-ink [overflow-wrap:anywhere]',
+  formCheck: 'mt-[3px] size-4 shrink-0 accent-brand-primary',
+  formBadge: 'inline-flex h-5 items-center rounded-md border border-brand-line bg-brand-soft px-1.5 text-[0.7rem] font-bold whitespace-nowrap text-brand-primary',
+  formDirect: 'm-0 rounded-xl bg-surface-muted px-3 py-2 text-[0.78rem] text-ink-muted',
+  formFoot: 'flex flex-wrap items-center justify-between gap-3 border-t border-line pt-3 max-[599px]:flex-col max-[599px]:items-stretch',
 } as const
 
 /**

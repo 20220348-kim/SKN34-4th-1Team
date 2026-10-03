@@ -138,6 +138,46 @@ describe('상세 오류 복구와 검색 화면 복귀', () => {
   })
 })
 
+describe('공식 신청 경로 링크', () => {
+  it('구글 설문으로 신청하는 공고는 신청 문서 작성 대신 설문 답변 미리 채우기로 보내고 설문 링크도 둔다', async () => {
+    vi.spyOn(appContainer.resolve('getSupportProgramDetailUseCase'), 'execute').mockResolvedValue({
+      ...supportProgramDetails[0],
+      applicationRoute: { method: null, url: 'https://forms.gle/abcDEF123', type: 'GOOGLE_FORMS' },
+    })
+    renderDetail()
+    await screen.findByRole('heading', { name: supportPrograms[0].title })
+    // 비로그인이라 로그인 뒤 미리 채우기 화면으로 이어집니다.
+    expect(screen.getByRole('link', { name: '로그인하고 구글 설문 답변 미리 채우기' }).getAttribute('href')).toContain(encodeURIComponent('/app/application-preparations/new?'))
+    const form = screen.getByRole('link', { name: '구글 설문 열기 ↗' })
+    expect(form.getAttribute('href')).toBe('https://forms.gle/abcDEF123')
+    expect(form.getAttribute('target')).toBe('_blank')
+    expect(screen.queryByRole('link', { name: /신청 문서 작성/ })).toBeNull()
+    expect(screen.queryByRole('link', { name: /신청 사이트 열기/ })).toBeNull()
+  })
+
+  it('온라인 접수 공고는 공식 신청 사이트를 새 창 링크로 열고 신청 문서 작성은 그대로 둔다', async () => {
+    vi.spyOn(appContainer.resolve('getSupportProgramDetailUseCase'), 'execute').mockResolvedValue({
+      ...supportProgramDetails[0],
+      applicationRoute: { method: '온라인 접수 후 사업계획서 제출', url: 'https://apply.example.go.kr/form', type: 'OTHER_ONLINE_FORM' },
+    })
+    renderDetail(null, undefined, memberAccount)
+    await screen.findByRole('heading', { name: supportPrograms[0].title })
+    const apply = screen.getByRole('link', { name: '신청 사이트 열기 ↗' })
+    expect(apply.getAttribute('href')).toBe('https://apply.example.go.kr/form')
+    expect(apply.getAttribute('target')).toBe('_blank')
+    expect(screen.getByRole('link', { name: '이 공고로 신청 문서 작성' })).toBeTruthy()
+    expect(screen.queryByRole('link', { name: /구글 설문/ })).toBeNull()
+  })
+
+  it('신청 주소가 없으면 신청 링크 없이 원문 링크만 둔다', async () => {
+    vi.spyOn(appContainer.resolve('getSupportProgramDetailUseCase'), 'execute').mockResolvedValue(supportProgramDetails[0])
+    renderDetail()
+    await screen.findByRole('heading', { name: supportPrograms[0].title })
+    expect(screen.queryByRole('link', { name: /신청 사이트 열기|구글 설문 열기/ })).toBeNull()
+    expect(screen.getByRole('link', { name: `${supportProgramDetails[0].sourceName} 원문 보기 ↗` })).toBeTruthy()
+  })
+})
+
 const memberAccount: Account = { email: 'member@govbiz.local', role: 'USER', tier: 'MEMBER', emailVerified: true, hasPassword: true, accountType: null, onboarded: true, company: null }
 
 function renderDetail(

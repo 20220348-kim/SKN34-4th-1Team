@@ -40,6 +40,7 @@ import ai.govbiz.core.applicationpreparation.domain.exception.ApplicationPrepara
 import ai.govbiz.core.applicationpreparation.domain.exception.ApplicationPreparationSectionNotFoundException
 import ai.govbiz.core.applicationpreparation.service.exception.ApplicationFormNotSupportedException
 import ai.govbiz.core.applicationpreparation.service.exception.ApplicationFormDiscoveryException
+import ai.govbiz.core.applicationpreparation.client.ai.exception.ApplicationOnlineFormMcpException
 import ai.govbiz.core.combinationreview.domain.exception.CombinationReviewNotFoundException
 import ai.govbiz.core.combinationreview.domain.exception.CombinationReviewRevisionConflictException
 import ai.govbiz.core.combinationreview.controller.exception.InvalidCombinationReviewInputException
@@ -154,6 +155,26 @@ class ApiExceptionHandler {
             ),
             request,
         )
+
+    /** 공개 구글 설문을 읽지 못한 이유입니다. 로그인 전용·마감·지원하지 않는 설문은 다시 시도해도 같아 422로 구분합니다. */
+    @ExceptionHandler(ApplicationOnlineFormMcpException::class)
+    fun handleApplicationOnlineFormMcp(
+        exception: ApplicationOnlineFormMcpException,
+        request: HttpServletRequest,
+    ): ResponseEntity<ProblemDetail> {
+        val temporary = exception.code in setOf("APPLICATION_ONLINE_FORM_SOURCE_UNAVAILABLE",
+            "APPLICATION_ONLINE_FORM_MCP_NOT_READY", "APPLICATION_ONLINE_FORM_MCP_FAILED")
+        return problemResponse(
+            ProblemDefinition(
+                if (temporary) HttpStatus.SERVICE_UNAVAILABLE else HttpStatus.UNPROCESSABLE_CONTENT,
+                URI.create("urn:govbiz:problem:${exception.code.lowercase().replace('_', '-')}"),
+                "Online Application Form Unavailable",
+                "The public online application form could not be read.",
+                exception.code,
+            ),
+            request,
+        )
+    }
 
     @ExceptionHandler(InvalidApplicationPreparationInputException::class)
     fun handleInvalidApplicationPreparationInput(request: HttpServletRequest): ResponseEntity<ProblemDetail> =

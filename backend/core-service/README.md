@@ -147,6 +147,7 @@ HWPX discovery 요청에는 원본 `sourceBase64`·`sourceSha256`을 내부 AI �
 |---|---|
 | `GET /api/v1/application-preparations/forms` | DB에서 AVAILABLE 공고의 양식·분야·문항 조회. AI 호출 없음 |
 | `GET /api/v1/application-preparations/forms/availability?sourceCode=...&sourceProgramId=...` | 공고별 분석 상태·사유와 활성 snapshot 전체 조회. 현재 작성 화면의 시작 경로 |
+| `GET /api/v1/application-preparations/google-form?sourceCode=...&sourceProgramId=...` | 신청 경로가 구글 설문인 공고의 공개 설문 응답 주소와 문항(`entryId`·유형·원문 선택지·기타 허용). 화면이 답을 담은 미리 채운 링크를 만들며 답은 받지 않음. 로그인 전용·마감·문항 없음·비구글 경로는 422(`APPLICATION_ONLINE_FORM_LOGIN_REQUIRED`·`_CLOSED`·`_NO_QUESTIONS`·`_UNSUPPORTED`), 읽기 서비스 장애는 503. AI 호출 없음 |
 | `POST /api/v1/application-preparations/forms/discovery-jobs` | UUID requestKey·공고 식별자로 V26 계정별 수동 작업 접수. 기존 API이며 현재 작성 화면에서는 호출하지 않음 |
 | `GET /api/v1/application-preparations/forms/discovery-jobs` | 본인의 최근 20개 분석 작업을 공고명·공식 원문 URL과 함께 요약 |
 | `GET /api/v1/application-preparations/forms/discovery-jobs/{id}` | 본인 작업의 공고명·공식 원문 URL·상태·결과 조회 |
@@ -1198,4 +1199,4 @@ Manifest 순서의 PROVIDED Fact 중 공식 선택지와 일치하는 값만 포
 웹 계약은 반환된 링크에 http/https만 허용한다. 기존 FILE 5포맷과 ONLINE_FORM 계약, DB schema는 유지한다.
 
 
-공개 Google Form 질문 조회는 `skn-31`의 내부 읽기 전용 경로입니다. 별도 단기 stdio MCP를 사용하며 `DOCUMENT_INTERNAL_TOKEN`으로 Core ↔ AI 인증을 재사용합니다. 자세한 경계와 제한은 [아키텍처 문서](../../docs/architecture.md)를 참고합니다. `PUBLIC_READ_SUPPORTED`는 공개 reader 시도 대상이라는 사전 판정이며 실제 공개 Form 여부는 inspection 결과로 확인합니다. `/edit` URL은 `REQUIRES_AUTH`입니다.
+공개 Google Form 질문 조회는 `skn-31`의 내부 읽기 전용 경로이며, 구글 설문 답변 미리 채우기(`GET /api/v1/application-preparations/google-form`)도 같은 reader를 씁니다. 별도 단기 stdio MCP를 사용하며 `DOCUMENT_INTERNAL_TOKEN`으로 Core ↔ AI 인증을 재사용합니다. 자세한 경계와 제한은 [아키텍처 문서](../../docs/architecture.md)를 참고합니다. `PUBLIC_READ_SUPPORTED`는 공개 reader 시도 대상이라는 사전 판정이며 실제 공개 Form 여부는 inspection 결과로 확인합니다. `/edit` URL은 `REQUIRES_AUTH`입니다.

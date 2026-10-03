@@ -2,6 +2,7 @@ package ai.govbiz.catalog.supportprogram.client.kstartup.mapper
 
 import ai.govbiz.catalog.supportprogram.client.kstartup.dto.KStartupProgramPayload
 import ai.govbiz.catalog.supportprogram.client.kstartup.exception.KStartupClientException
+import ai.govbiz.catalog.supportprogram.domain.SupportProgramApplicationRouteType
 import ai.govbiz.catalog.supportprogram.domain.SupportProgramStatus
 import java.time.LocalDate
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -185,6 +186,46 @@ class KStartupProgramMapperTest {
         assertThrows(UnsupportedOperationException::class.java) { (output as MutableList).clear() }
         assertThrows(UnsupportedOperationException::class.java) { (output[0].program.categories as MutableList).clear() }
         assertThrows(UnsupportedOperationException::class.java) { (output[0].startupDetails!!.startupStages as MutableList).clear() }
+    }
+
+    @Test
+    fun usesTheOnlineFormAddressAsTheApplicationUrlAndKeepsOtherChannelsInTheMethod() {
+        val route = map(payload().copy(onlineApplication = " https://forms.gle/X54ELaS8grkbgGwK7 ", emailApplication = "apply@example.kr"))
+            .program.applicationRoute
+
+        assertEquals(SupportProgramApplicationRouteType.GOOGLE_FORMS, route.type)
+        assertEquals("https://forms.gle/X54ELaS8grkbgGwK7", route.url)
+        assertEquals("온라인 접수 / 이메일 접수: apply@example.kr", route.method)
+    }
+
+    @Test
+    fun classifiesEmailAndVisitOnlyApplicationsAsFileSubmissionAndStripsHtml() {
+        val route = map(payload().copy(
+            emailApplication = "apply@example.kr", visitApplication = "서울 강북구 1층",
+            otherApplication = "<p class='txt'>담당자 <b>유선</b> 문의</p>",
+        )).program.applicationRoute
+
+        assertEquals(SupportProgramApplicationRouteType.FILE, route.type)
+        assertNull(route.url)
+        assertEquals("이메일 접수: apply@example.kr / 방문 접수: 서울 강북구 1층 / 기타: 담당자 유선 문의", route.method)
+    }
+
+    @Test
+    fun keepsANonHttpsOnlineValueAsTextWithoutTreatingItAsAnApplicationUrl() {
+        val route = map(payload().copy(onlineApplication = "http://apply.example.kr 에서 신청")).program.applicationRoute
+
+        assertEquals(SupportProgramApplicationRouteType.UNKNOWN, route.type)
+        assertNull(route.url)
+        assertEquals("온라인 접수: http://apply.example.kr 에서 신청", route.method)
+    }
+
+    @Test
+    fun leavesTheRouteUnknownWhenNoApplicationFieldIsProvided() {
+        val route = map(payload()).program.applicationRoute
+
+        assertEquals(SupportProgramApplicationRouteType.UNKNOWN, route.type)
+        assertNull(route.method)
+        assertNull(route.url)
     }
 
     private fun invalid(payload: KStartupProgramPayload): KStartupClientException {

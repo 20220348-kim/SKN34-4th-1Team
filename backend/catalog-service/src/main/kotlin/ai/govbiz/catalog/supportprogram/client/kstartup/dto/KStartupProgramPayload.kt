@@ -16,4 +16,11 @@ data class KStartupProgramPayload(
     val applicationStartDate: String?,
     val applicationEndDate: String?,
     val sourceUrl: String?,
+    /** 신청 방법 필드입니다. 온라인 접수는 접수 주소나 설명, 나머지는 이메일·주소·번호 같은 접수처입니다. */
+    val onlineApplication: String? = null,
+    val emailApplication: String? = null,
+    val visitApplication: String? = null,
+    val postalApplication: String? = null,
+    val faxApplication: String? = null,
+    val otherApplication: String? = null,
 )

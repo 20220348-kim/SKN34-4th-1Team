@@ -110,6 +110,9 @@ class KStartupClientTest {
             "supt_biz_clsfc":"멘토링ㆍ컨설팅ㆍ교육","supt_regin":"전국",
             "pbanc_rcpt_bgng_dt":"20260908","pbanc_rcpt_end_dt":"20260911",
             "detl_pg_url":"https://www.k-startup.go.kr/detail?pbancSn=179197",
+            "aply_mthd_onli_rcpt_istc":"https://forms.gle/abc","aply_mthd_eml_rcpt_istc":"apply@example.kr",
+            "aply_mthd_vst_rcpt_istc":"서울 강북구 1층","aply_mthd_pssr_rcpt_istc":null,"aply_mthd_fax_rcpt_istc":"0212345678",
+            "aply_mthd_etc_istc":"<p>담당자 문의</p>",
             "ignored_future_field":{"extra":true}
         }""")))
 
@@ -126,6 +129,12 @@ class KStartupClientTest {
         assertEquals("20260908", item.applicationStartDate)
         assertEquals("20260911", item.applicationEndDate)
         assertEquals("https://www.k-startup.go.kr/detail?pbancSn=179197", item.sourceUrl)
+        assertEquals("https://forms.gle/abc", item.onlineApplication)
+        assertEquals("apply@example.kr", item.emailApplication)
+        assertEquals("서울 강북구 1층", item.visitApplication)
+        assertEquals(null, item.postalApplication)
+        assertEquals("0212345678", item.faxApplication)
+        assertEquals("<p>담당자 문의</p>", item.otherApplication)
     }
 
     @Test

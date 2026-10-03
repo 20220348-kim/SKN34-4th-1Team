@@ -73,7 +73,7 @@ const detail = {
   updatedAt: '2026-09-11T01:00:00+09:00',
   form: structuredClone(firstForm),
 }
-const repository = { onlineInputGuide: vi.fn(), documents: vi.fn(), submitDocumentJob: vi.fn(), documentJob: vi.fn(), documentJobs: vi.fn(), recentDocumentJobs: vi.fn(), markDocumentJobsSeen: vi.fn(), markDiscoveryJobsSeen: vi.fn(), confirmDocumentMappingMigration: vi.fn(), downloadDocument: vi.fn(), downloadDocumentArchive: vi.fn(), generateDraft: vi.fn(), saveContent: vi.fn(), confirmContent: vi.fn(), discoveryJobs: vi.fn(), discoveryJob: vi.fn(), availability: vi.fn(), forms: vi.fn(), discover: vi.fn(), list: vi.fn(), delete: vi.fn(), get: vi.fn(), create: vi.fn(), interpret: vi.fn(), replaceInputs: vi.fn(), updateProgress: vi.fn() }
+const repository = { onlineInputGuide: vi.fn(), googleForm: vi.fn(), documents: vi.fn(), submitDocumentJob: vi.fn(), documentJob: vi.fn(), documentJobs: vi.fn(), recentDocumentJobs: vi.fn(), markDocumentJobsSeen: vi.fn(), markDiscoveryJobsSeen: vi.fn(), confirmDocumentMappingMigration: vi.fn(), downloadDocument: vi.fn(), downloadDocumentArchive: vi.fn(), generateDraft: vi.fn(), saveContent: vi.fn(), confirmContent: vi.fn(), discoveryJobs: vi.fn(), discoveryJob: vi.fn(), availability: vi.fn(), forms: vi.fn(), discover: vi.fn(), list: vi.fn(), delete: vi.fn(), get: vi.fn(), create: vi.fn(), interpret: vi.fn(), replaceInputs: vi.fn(), updateProgress: vi.fn() }
 
 function completedDiscovery(result: { items: ApplicationForm[]; warnings: string[]; cached: boolean }) {
   return { id: 77, sourceCode: result.items[0].sourceCode, sourceProgramId: result.items[0].sourceProgramId,
@@ -1621,7 +1621,8 @@ describe('application preparation creation and detail', () => {
     expect(startButton().disabled).toBe(false)
     // 고른 공고를 주소에 적어 새로고침·재방문 때 같은 공고(와 진행 중인 분석)로 돌아옵니다. 다시 불러오지는 않습니다.
     expect(screen.getByTestId('location').textContent).toBe(`/app/application-preparations/new?sourceCode=${supportPrograms[0].sourceCode}&sourceProgramId=${supportPrograms[0].id}`)
-    expect(getProgramDetail).not.toHaveBeenCalled()
+    // 공고를 다시 불러오지 않고, 신청 경로(구글 설문 여부) 확인을 위해 상세를 한 번만 읽습니다.
+    expect(getProgramDetail).toHaveBeenCalledTimes(1)
     // 패널에서 조회한 결과를 그대로 씁니다(두 번 조회했지만 모두 행을 고를 때뿐).
     expect(repository.availability).toHaveBeenCalledTimes(2)
     expect(repository.discover).not.toHaveBeenCalled()
@@ -1801,6 +1802,67 @@ describe('application preparation creation and detail', () => {
     expect(follows(card, startButton())).toBe(true)
     expect(repository.discover).not.toHaveBeenCalled()
     expect(repository.create).not.toHaveBeenCalled()
+  })
+
+  it('prefills a Google Form program from company data and opens the filled form without analyzing application forms', async () => {
+    repository.availability.mockResolvedValue(availabilityOf('PENDING', 'NOT_ANALYZED'))
+    getProgramDetail.mockImplementation(async (identity: { sourceCode: string; sourceProgramId: string }) => ({
+      ...structuredClone(supportProgramDetails[0]), sourceCode: identity.sourceCode, id: identity.sourceProgramId,
+      applicationRoute: { method: '구글 설문으로 신청', url: 'https://forms.gle/abcDEF123', type: 'GOOGLE_FORMS' as const },
+    }))
+    repository.googleForm.mockResolvedValue({
+      responderUrl: 'https://docs.google.com/forms/d/e/public-id/viewform', title: '특강 신청',
+      questions: [
+        { entryId: '11', label: '기업명', description: '', required: true, kind: 'SHORT_TEXT', options: [], allowsOther: false },
+        { entryId: '12', label: '참석자 성함\n\n수료증에 쓰는 이름이에요', description: '실명으로 적어 주세요', required: true, kind: 'LONG_TEXT', options: [], allowsOther: false },
+        { entryId: '13', label: '참석 일정', description: '', required: true, kind: 'MULTI_CHOICE', options: ['09.17  [TIPS]', '09.22'], allowsOther: true },
+        { entryId: null, label: '사업자등록증', description: '', required: false, kind: 'UNSUPPORTED', options: [], allowsOther: false },
+      ],
+    })
+    vi.spyOn(appContainer.resolve('getMyCompanyUseCase'), 'execute').mockResolvedValue({
+      businessNumber: '1248100998', companyName: '합성테크', businessStatus: '계속사업자', businessStatusCode: '01', region: '서울특별시',
+      industry: '정보통신업', foundedYear: 2021, homepageUrl: null, businessVerifiedAt: '2026-09-01T00:00:00', updatedAt: '2026-09-01T00:00:00',
+    })
+    mount(newPath)
+    const card = await screen.findByRole('region', { name: '구글 설문으로 신청하는 공고예요' })
+    expect(formSection().contains(card)).toBe(true)
+    expect(repository.googleForm).toHaveBeenCalledWith('BIZINFO', 'PBLN_1', expect.anything())
+    const company = await within(card).findByRole('textbox', { name: /기업명/ }) as HTMLInputElement
+    expect(company.value).toBe('합성테크')
+    expect(within(card).getByText('기업 정보')).toBeTruthy()
+    const attendee = within(card).getByRole('textbox', { name: /참석자 성함/ })
+    // 여러 줄 제목은 첫 줄만 이름이 되고 나머지 줄은 설명으로 이어 읽힙니다.
+    expect(document.getElementById(attendee.getAttribute('aria-describedby') ?? '')?.textContent).toBe('수료증에 쓰는 이름이에요\n\n실명으로 적어 주세요')
+    fireEvent.change(attendee, { target: { value: '홍길동' } })
+    fireEvent.click(within(card).getByRole('checkbox', { name: '09.17 [TIPS]' }))
+    expect(within(card).getByText(/미리 채울 수 없는 문항이에요/)).toBeTruthy()
+    const link = within(card).getByRole('link', { name: /답변 채워서 구글 설문 열기/ })
+    const url = new URL(link.getAttribute('href') ?? '')
+    expect(url.origin + url.pathname).toBe('https://docs.google.com/forms/d/e/public-id/viewform')
+    expect(url.searchParams.get('entry.11')).toBe('합성테크')
+    expect(url.searchParams.get('entry.12')).toBe('홍길동')
+    expect(url.searchParams.getAll('entry.13')).toEqual(['09.17  [TIPS]'])
+    expect(link.getAttribute('target')).toBe('_blank')
+    expect(within(card).getByText(/3\/3개 문항을 채워서 열어요/)).toBeTruthy()
+    expect(within(formSection()).queryByRole('button', { name: '입력칸별로 분석' })).toBeNull()
+    expect(startButton().disabled).toBe(true)
+    expect(startReason()).toBe('구글 설문에서 직접 신청해요')
+    expect(repository.discover).not.toHaveBeenCalled()
+    expect(repository.create).not.toHaveBeenCalled()
+  })
+
+  it('explains a sign-in-only Google Form and keeps a plain link to it', async () => {
+    getProgramDetail.mockImplementation(async (identity: { sourceCode: string; sourceProgramId: string }) => ({
+      ...structuredClone(supportProgramDetails[0]), sourceCode: identity.sourceCode, id: identity.sourceProgramId,
+      applicationRoute: { method: null, url: 'https://forms.gle/abcDEF123', type: 'GOOGLE_FORMS' as const },
+    }))
+    repository.googleForm.mockRejectedValue(new ApplicationPreparationError(422, 'APPLICATION_ONLINE_FORM_LOGIN_REQUIRED'))
+    mount(newPath)
+    const card = await screen.findByRole('region', { name: '구글 설문으로 신청하는 공고예요' })
+    expect(await within(card).findByText(/구글 계정으로 로그인해야 열리는 설문/)).toBeTruthy()
+    expect(within(card).getByRole('link', { name: /구글 설문 열기/ }).getAttribute('href')).toBe('https://forms.gle/abcDEF123')
+    expect(within(card).queryByRole('link', { name: /답변 채워서/ })).toBeNull()
+    expect(within(card).queryByRole('button', { name: '문항 다시 불러오기' })).toBeNull()
   })
 
   it('analyzes a program without a stored form only on click, shows progress in ② and opens the form with a toast', async () => {

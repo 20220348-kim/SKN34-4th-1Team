@@ -23,8 +23,9 @@ Core의 계정·세션·신청서·원문 캐시 코드 또는 Gradle 프로젝�
 독립 Flyway `V1__create_catalog.sql`은 `support_program`, `support_program_sync_generation`,
 `support_program_sync_status`, `catalog_instance`, `catalog_source_revision`만 생성합니다.
 `V2__add_support_program_application_route.sql`은 공식 신청방법·신청 URL·경로 분류 열을 추가합니다.
-기업마당 공식 API의 `reqstMthPapersCn`과 `rceptEngnHmpgUrl`만 신청 경로 근거로 사용하며,
-공고 상세 `sourceUrl`을 신청 URL로 대체하지 않습니다.
+기업마당 공식 API의 `reqstMthPapersCn`·`rceptEngnHmpgUrl`과 K-Startup 공식 API의 `aply_mthd_*` 신청방법 필드만
+신청 경로 근거로 사용하며, 공고 상세 `sourceUrl`이나 K-Startup 안내 페이지(`biz_gdnc_url`)를 신청 URL로 대체하지 않습니다.
+K-Startup 온라인 접수 값은 https 주소 하나일 때만 신청 URL이 되고, 그 밖의 접수처는 신청방법 문장으로 남습니다.
 기존 Core migration은 수정하거나 실행하지 않습니다. 제공처 원본 ID의 복합 고유키,
 MySQL 8.4 `utf8mb4_0900_ai_ci` 정렬과 JSON 표현을 유지합니다.
 

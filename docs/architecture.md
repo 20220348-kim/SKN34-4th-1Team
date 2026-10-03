@@ -88,7 +88,7 @@ Core의 `AdminPrincipalArgumentResolver → AccountSessionService`가 세션·�
 
 루트 `compose.yaml`은 `infrastructure/compose.catalog.yaml`을 포함해 공고 카탈로그 분리를 기본 적용합니다.
 Catalog는 별도 프로세스·DB로 네 제공처 수집, 정규화, 검색 색인과 공개 snapshot을 소유합니다.
-기업마당 공식 API의 사업신청방법·사업신청URL은 Catalog의 신청 경로로 정규화해 저장합니다.
+기업마당 공식 API의 사업신청방법·사업신청URL과 K-Startup 공식 API의 신청방법 필드는 Catalog의 신청 경로로 정규화해 저장합니다.
 `sourceUrl`은 공고 상세 주소로 유지하며 신청 URL이 없을 때 대체하지 않습니다. Catalog 내부 snapshot이
 신청 경로를 Core projection에 전달하고 Core 상세 응답의 `applicationRoute`가 이를 노출합니다.
 신청 준비의 온라인 입력 안내는 소유권과 공고의 `applicationRoute`를 확인합니다. 공식 경로가
@@ -96,9 +96,25 @@ Catalog는 별도 프로세스·DB로 네 제공처 수집, 정규화, 검색 �
 실제 질문을 읽고, 검증된 payload를 Client의 Mapper에서 내부 Source로 변환합니다. 고정 Manifest의
 결정적 review와 저장된 확정 Fact로 실제 질문 순서의 복사 안내를 만들며, MCP 외부 호출은 DB transaction 밖에서 수행합니다.
 다른 경로는 기존 Manifest 기반 안내를 유지합니다. 답변 입력과 제출은 공식 신청 화면에서 사용자가 직접 수행합니다.
-K-Startup·MSIT·충남 공고는 이번 작업에서 신청 URL 응답 필드의 이름과 의미를 검증하지 못해
-`UNKNOWN`으로 둡니다. K-Startup 공식 데이터 소개에는 신청방법이 언급되지만 현재 사용하는
-공고 응답에서 대응 필드를 확인하기 전까지 임의로 매핑하지 않습니다.
+웹의 새 신청 문서 화면은 공식 경로가 `GOOGLE_FORMS`인 공고를 양식 조회·입력칸 분석(유료 AI) 없이 ②에서 구글 설문 답변
+미리 채우기로 보여 줍니다. 호출 흐름은 `ApplicationGoogleFormController → ApplicationGoogleFormService →
+ApplicationOnlineFormMcpClient → AI 공개 Form Reader MCP`이며 설문 주소는 요청이 아니라 공고의 공식 신청 경로에서만 가져옵니다.
+화면은 응답 주소와 문항(`entry` 번호·유형·선택지)을 받아 기업 정보(기업명·사업자등록번호·소재지·업종·설립연도·홈페이지)와
+계정 이메일로 채울 수 있는 단답·장문 칸을 먼저 채우고, 사용자가 고친 답으로 구글 설문의 미리 채워진 링크
+(`viewform?usp=pp_url&entry.{번호}=값`)를 브라우저에서 만들어 새 창으로 엽니다. 답은 Core로 보내거나 저장하지 않으며 제출은
+사용자가 구글 설문에서 직접 합니다. 날짜·파일 업로드처럼 링크로 채울 수 없는 문항은 구글 설문에서 직접 답하도록 표시합니다.
+2026-10-01 접수 중(상시 포함) 구글 설문 공고 78건 기준 문항을 읽어 미리 채울 수 있는 설문은 35건(여러 페이지 설문 포함)이고,
+35건 모두 테스트 답을 담은 링크를 구글이 그대로 받아들였습니다(제출 없이 응답 화면의 `partialResponse`로 확인).
+구글 로그인이 필요해 익명으로 읽을 수 없는 설문은 38건, 마감 3건, 문항 없는 안내만 남은 설문 1건이었습니다.
+읽지 못하면 이유와 함께 설문을 그대로 여는 링크만 둡니다.
+공고 상세의 신청 문서 작성 줄은 구글 설문 공고에서 "구글 설문 답변 미리 채우기"로 바뀌고 설문 링크도 함께 둡니다.
+공식 신청 주소가 있는 다른 공고는 원문 링크 옆에 "신청 사이트 열기" 링크를 둡니다.
+이미 만든 신청 준비의 온라인 입력 안내와 확정 답변 TXT는 그대로 둡니다.
+K-Startup은 2026-10-01 실제 공고 응답 200건으로 신청방법 필드(`aply_mthd_onli_rcpt_istc` 온라인,
+`aply_mthd_eml_rcpt_istc` 이메일, `aply_mthd_vst_rcpt_istc` 방문, `aply_mthd_pssr_rcpt_istc` 우편,
+`aply_mthd_fax_rcpt_istc` 팩스, `aply_mthd_etc_istc` 기타)를 확인했습니다. 온라인 값이 https 주소 하나면 신청 URL로,
+나머지는 "이메일 접수: …"처럼 신청방법 문장으로 남기고 경로 분류는 기업마당과 같은 규칙을 씁니다. 안내 페이지인
+`biz_gdnc_url`과 상세 `detl_pg_url`은 신청 URL로 쓰지 않습니다. MSIT·충남 공고는 대응 필드를 검증하지 못해 `UNKNOWN`입니다.
 신청 경로는 검색 문서·임베딩에 넣지 않으며 URL 분류 중 외부 접속을 하지 않습니다.
 Core는 `CatalogProjectionScheduler → Service → 인증된 HTTP Client → Catalog`로 완전한 응답을 받은 뒤,
 Service가 짧은 transaction을 시작한 뒤 `CatalogProjectionRepository → MyBatis → Core MySQL`로
@@ -1236,10 +1252,10 @@ Manifest 순서의 PROVIDED Fact 중 공식 선택지와 일치하는 값만 포
 
 ## 공개 Google Form 질문 조회 (`skn-31`)
 
-이미 확보된 공개 Google Forms responder URL의 읽기 전용 검사 경로는 `ApplicationPreparationService.inspectPublicOnlineForm → ApplicationOnlineFormMcpClient → AI Service /internal/v1/application-preparations/online-form/inspect → 별도 단기 stdio Google Public Form Reader MCP → 익명 GET → ApplicationOnlineFormSource → 기존 reviewOnlineForm`이다. 공개 Controller는 추가하지 않는다. Document MCP와 FILE 형식은 그대로다. `DOCUMENT_INTERNAL_TOKEN`으로 기존 Core ↔ AI 내부 인증을 재사용한다. Form 검사 과정에서 OpenAI를 호출하거나 DB에 snapshot을 쓰지 않는다.
+이미 확보된 공개 Google Forms responder URL의 읽기 전용 검사 경로는 `ApplicationPreparationService.inspectPublicOnlineForm → ApplicationOnlineFormMcpClient → AI Service /internal/v1/application-preparations/online-form/inspect → 별도 단기 stdio Google Public Form Reader MCP → 익명 GET → ApplicationOnlineFormSource → 기존 reviewOnlineForm`이다. 이 Manifest 매핑 경로에는 공개 Controller를 두지 않고, 구글 설문 답변 미리 채우기는 `ApplicationGoogleFormController`가 같은 reader를 쓴다. Document MCP와 FILE 형식은 그대로다. `DOCUMENT_INTERNAL_TOKEN`으로 기존 Core ↔ AI 내부 인증을 재사용한다. Form 검사 과정에서 OpenAI를 호출하거나 DB에 snapshot을 쓰지 않는다.
 
-Reader는 `docs.google.com/forms/.../viewform`과 `forms.gle`만 허용하고 각 redirect와 DNS 결과를 검사한다. TLS 검증을 유지한 채 확인한 공인 IP로 연결하며 GET만 보낸다. Cookie, OAuth, 사용자 브라우저 세션은 전달하지 않는다. HTML 응답은 4 MiB, redirect는 최대 3회다. 질문은 공개 HTML의 `role=listitem`, `role=heading`, 입력 요소, `aria-required`, radio/checkbox/listbox의 접근성 표시에서만 읽는다. 복수 페이지는 현재 화면에 없는 질문을 완전한 양식으로 오인하지 않도록 거절한다.
+Reader는 `docs.google.com/forms/.../viewform`과 `forms.gle`만 허용하고 각 redirect와 DNS 결과를 검사한다. TLS 검증을 유지한 채 확인한 공인 IP로 연결하며 GET만 보낸다. Cookie, OAuth, 사용자 브라우저 세션은 전달하지 않는다. HTML 응답은 4 MiB, redirect는 최대 3회다. Google 로그인으로 보내거나 401이면 `LOGIN_REQUIRED`, `/closedform`으로 보내면 `CLOSED`, 안내 문구만 남고 답할 문항이 없으면 `NO_QUESTIONS`다. 검증한 공인 주소 중 IPv4부터 순서대로 연결해 IPv6 경로가 없는 컨테이너에서도 읽는다. 질문은 응답 화면 HTML에 들어 있는 `FB_PUBLIC_LOAD_DATA_` JSON에서 읽는다(계약 `google-public-form-reader-v2`, parser `fb-public-load-data-v1`). 이 데이터에는 여러 페이지의 모든 문항과 미리 채운 링크에 쓰는 `entry` 번호가 있어 복수 페이지 설문도 읽는다. 안내 문구·페이지 나눔·이미지·동영상은 문항이 아니며, 선택지 문구는 미리 채운 링크가 정확히 일치해야 체크되므로 공백까지 원문 그대로 둔다. 2026-10-01 이전의 DOM 접근성 표시 파싱(`semantic-dom-v1`)과 Phase 5-5의 "비공식 parsing·entry ID 사용 금지" 판단은 이 변경으로 대체했다. 공식 Forms API·Apps Script 경로가 막힌 상태는 그대로이며, 공개 응답 화면이 이미 내려주는 데이터만 읽고 제출은 하지 않는다.
 
 Capability의 `PUBLIC_READ_SUPPORTED`는 URL/provider가 공개 reader 시도 대상이라는 뜻이며 실제 조회 성공을 보장하지 않는다. `/edit`는 `REQUIRES_AUTH`, Google 외 URL은 `UNSUPPORTED_PROVIDER`다. `forms.gle` redirect의 최종 목적지는 MCP inspection에서 검증한다.
 
-`controlId`는 질문 순서와 정규화한 label/type/options의 hash로 만든 snapshot 내부 식별자다. Google 발급 questionId나 제출용 entry ID가 아니다. `semanticFingerprint`는 제목과 질문 순서·label·required·type·options를 정규화한 값이며 HTML nonce와 무관하다. 지원 근거가 없는 질문은 `UNKNOWN`으로 반환하고 Core 매핑 경로는 실패시켜 부분 매핑을 막는다. 이 HTML은 공식 Forms API 계약이 아니므로 Google의 DOM 변경 시 명시적 오류가 발생할 수 있다. 로그인 필요, 조건부 분기, 자동입력·제출은 지원하지 않는다.
+`controlId`는 질문 순서와 label/type/options의 hash로 만든 snapshot 내부 식별자이며, 미리 채우기에는 별도 필드 `entryId`를 쓴다. `semanticFingerprint`는 제목과 질문 순서·label·required·type·options를 정규화한 값이며 HTML nonce와 무관하다. 날짜·시간·파일 업로드·표 형식·척도처럼 지원하지 않는 질문은 `UNKNOWN`(사유 포함)으로 반환한다. Manifest 매핑 경로는 이 경우 실패시켜 부분 매핑을 막고, 미리 채우기 경로는 그 문항만 `UNSUPPORTED`로 남겨 사용자가 직접 답하게 한다. 이 JSON은 공식 Forms API 계약이 아니므로 구조가 바뀌면 `SOURCE_CHANGED`·`PARSER_FAILED`로 명시적으로 실패한다. 로그인 필요 설문과 자동 제출은 지원하지 않는다.
