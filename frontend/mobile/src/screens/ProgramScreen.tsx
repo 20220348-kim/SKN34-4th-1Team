@@ -4,8 +4,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import type { SupportProgramDetail } from '@govbiz/shared/domain/entities/SupportProgram'
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
 import type { SupportProgramEvidenceAnswer } from '@govbiz/shared/domain/entities/SupportProgramEvidenceAnswer'
-import { savedSupportProgramDtoSchema, savedSupportProgramStatusDtoSchema } from '@govbiz/shared/data/models/SavedSupportProgramDto'
-import { ApiError, apiRequest, errorMessage, programClient } from '../api/client'
+import { ApiError, errorMessage, programClient } from '../api/client'
+import { getSavedProgramStatus, removeSavedProgram, saveProgram } from '../api/savedPrograms'
 import { useAuth } from '../auth/session'
 import { statusLabels } from '../components/ProgramCard'
 import { AppIcon } from '../components/AppIcon'
@@ -41,7 +41,6 @@ export function ProgramScreen({ identity, onLogin, resumeAction, onResumed }: {
   const [saveNotice, setSaveNotice] = useState<string | null>(null)
   const sourceCode = identity.sourceCode
   const sourceProgramId = identity.sourceProgramId
-  const params = new URLSearchParams({ sourceCode, sourceProgramId }).toString()
 
   useEffect(() => {
     let active = true
@@ -60,15 +59,15 @@ export function ProgramScreen({ identity, onLogin, resumeAction, onResumed }: {
     work.current?.abort(); saveWork.current?.abort()
     setAnswer(null); setAnswerError(null); setQuestion(''); setAnswering(false)
     setSaved(null); setSaveError(null); setSaving(false)
-    if (token) apiRequest(`/api/v1/me/saved-programs/status?${params}`, { accessToken: token, signal: controller.signal })
-      .then((value) => { if (active) setSaved(savedSupportProgramStatusDtoSchema.parse(value).saved) })
+    if (token) getSavedProgramStatus(token, { sourceCode, sourceProgramId }, controller.signal)
+      .then((value) => { if (active) setSaved(value) })
       .catch((cause: unknown) => {
         if (!active) return
         if (cause instanceof ApiError && cause.status === 401) void invalidateSession().catch(() => undefined)
         setSaveError(errorMessage(cause))
       })
     return () => { active = false; controller.abort(); work.current?.abort(); saveWork.current?.abort() }
-  }, [token, params, retry, invalidateSession])
+  }, [token, sourceCode, sourceProgramId, retry, invalidateSession])
 
   async function toggleSave() {
     if (!token) { onLogin('save'); return }
@@ -76,8 +75,8 @@ export function ProgramScreen({ identity, onLogin, resumeAction, onResumed }: {
     const controller = new AbortController(); saveWork.current = controller
     setSaving(true); setSaveError(null)
     try {
-      if (saved) await apiRequest(`/api/v1/me/saved-programs?${params}`, { method: 'DELETE', accessToken: token, signal: controller.signal })
-      else savedSupportProgramDtoSchema.parse(await apiRequest('/api/v1/me/saved-programs', { method: 'POST', body: { sourceCode, sourceProgramId }, accessToken: token, signal: controller.signal }))
+      if (saved) await removeSavedProgram(token, { sourceCode, sourceProgramId }, controller.signal)
+      else await saveProgram(token, { sourceCode, sourceProgramId }, controller.signal)
       if (!controller.signal.aborted) { setSaved(!saved); setSaveNotice(saved ? null : '관심 공고함에 담았어요.') }
     } catch (cause) {
       if (!controller.signal.aborted) {

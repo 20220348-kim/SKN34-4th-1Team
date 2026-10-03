@@ -1,15 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { ActivityIndicator, Text, View } from 'react-native'
-import { z } from 'zod'
+import type { SignupEmailVerification } from '@govbiz/shared/domain/entities/Account'
 import { isEmailAddress, normalizeEmail } from '@govbiz/shared/domain/entities/EmailAddress'
 import { signUpPasswordIssue } from '@govbiz/shared/domain/usecases/SignUpUseCase'
-import { apiRequest } from '../api/client'
+import { sendSignupEmailCode, verifySignupEmailCode } from '../api/account'
 import { useAuth } from '../auth/session'
 import { authErrorMessage } from '../auth/errors'
 import { supportsNativeOAuth } from '../auth/oauth'
 import { Page, Button, Field, Notice, Card, colors } from '../ui'
-
-const emailPassSchema = z.object({ passToken: z.string().regex(/^[A-Za-z0-9_-]{43}$/), expiresAt: z.string().datetime({ offset: true }) })
 
 export function AccountScreen({ onCompany, onSettings, initialMode = 'login', authOnly = false, onBusyChange, showSocialOptions = true }: {
   onCompany(): void; onSettings?(): void; initialMode?: 'login' | 'signup'; authOnly?: boolean; onBusyChange?(busy: boolean): void
@@ -22,7 +20,7 @@ export function AccountScreen({ onCompany, onSettings, initialMode = 'login', au
   const [confirmation, setConfirmation] = useState('')
   const [code, setCode] = useState('')
   const [codeSent, setCodeSent] = useState(false)
-  const [emailPass, setEmailPass] = useState<{ passToken: string; expiresAt: string } | null>(null)
+  const [emailPass, setEmailPass] = useState<SignupEmailVerification | null>(null)
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -55,13 +53,13 @@ export function AccountScreen({ onCompany, onSettings, initialMode = 'login', au
     return normalized
   }
   const sendCode = () => run(async (signal) => {
-    await apiRequest('/api/v1/auth/signup/email-code', { method: 'POST', body: { email: validEmail() }, signal })
+    await sendSignupEmailCode(validEmail(), signal)
     if (signal.aborted) return
     setCodeSent(true); setEmailPass(null); setNotice('메일로 보낸 6자리 인증번호를 입력해 주세요.')
   })
   const verifyCode = () => run(async (signal) => {
     if (!/^\d{6}$/.test(code)) throw new Error('6자리 인증번호를 입력해 주세요.')
-    const pass = emailPassSchema.parse(await apiRequest('/api/v1/auth/signup/email-code/verify', { method: 'POST', body: { email: validEmail(), code }, signal }))
+    const pass = await verifySignupEmailCode(validEmail(), code, signal)
     if (signal.aborted) return
     setEmailPass(pass); setNotice('이메일 인증을 완료했습니다.')
   })

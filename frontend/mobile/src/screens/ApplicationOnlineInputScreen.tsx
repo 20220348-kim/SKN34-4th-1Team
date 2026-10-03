@@ -26,8 +26,16 @@ function OwnedOnline({ id, token, email, onEditor }: { id: number; token: string
   const [revision, setRevision] = useState(0)
   const [busy, setBusy] = useState(false)
   const request = useRef<AbortController | null>(null)
+  const focused = useRef(false)
   const mounted = useRef(true)
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; request.current?.abort() } }, [])
+  useFocusEffect(useCallback(() => {
+    focused.current = true
+    return () => {
+      focused.current = false
+      request.current?.abort(); request.current = null; setBusy(false)
+    }
+  }, []))
   useFocusEffect(useCallback(() => {
     const controller = new AbortController(); setGuide(null); setError(null)
     void Promise.all([useCase.onlineInputGuide(id, controller.signal), useCase.get(id, controller.signal)]).then(([result, detail]) => {
@@ -45,12 +53,17 @@ function OwnedOnline({ id, token, email, onEditor }: { id: number; token: string
     catch { if (mounted.current) setError('답변을 복사하지 못했어요. 다시 시도해 주세요.') }
   }
   async function saveTxt() {
-    if (!guide || busy) return
+    if (!guide || busy || !focused.current) return
     const controller = new AbortController(); request.current = controller; setBusy(true); setError(null)
     try {
-      await shareApplicationFile(`${getApiBaseUrl()}:${email}`, new Blob(['\uFEFF', formatSavedApplicationAnswers(guide)], { type: 'text/plain;charset=utf-8' }), `신청답변-${id}.txt`, () => mounted.current && !controller.signal.aborted, controller.signal)
+      await shareApplicationFile(`${getApiBaseUrl()}:${email}`, new Blob(['\uFEFF', formatSavedApplicationAnswers(guide)], { type: 'text/plain;charset=utf-8' }), `신청답변-${id}.txt`, () => mounted.current && focused.current && !controller.signal.aborted, controller.signal)
     } catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : '답변 파일을 저장하지 못했어요.') }
-    finally { if (mounted.current && !controller.signal.aborted) setBusy(false) }
+    finally {
+      if (request.current === controller) {
+        request.current = null
+        if (mounted.current && !controller.signal.aborted) setBusy(false)
+      }
+    }
   }
   const statuses = { READY: '준비 완료', NEEDS_REVIEW: '확인 필요', MISSING: '답변 필요', DIRECT_INPUT: '직접 처리 필요' }
   return <Page><Text style={styles.title}>온라인 신청을 준비하세요</Text><Notice>저장 답변을 복사해 공식 신청 화면에 직접 입력해요. 자동 입력이나 최종 제출은 하지 않습니다.</Notice>

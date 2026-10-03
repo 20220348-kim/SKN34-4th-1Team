@@ -36,3 +36,17 @@ test('save requires the OS-selected directory and never silently overwrites its 
   expect(Directory.pickDirectoryAsync).toHaveBeenCalled()
   expect(cache.copy).not.toHaveBeenCalled()
 })
+
+test('leaving the screen while the folder picker is open prevents the later copy', async () => {
+  let finish!: (directory: typeof destination) => void
+  Directory.pickDirectoryAsync = jest.fn().mockReturnValue(new Promise(resolve => { finish = resolve }))
+  let current = true
+  const controller = new AbortController()
+  const saving = shareApplicationFile('owner', blob, '사업계획서.hwpx', () => current, controller.signal, 'save')
+  await new Promise(resolve => setTimeout(resolve, 0))
+  expect(Directory.pickDirectoryAsync).toHaveBeenCalled()
+  current = false; controller.abort(); finish(destination)
+  await saving
+  expect(cache.copy).not.toHaveBeenCalled()
+  expect(Sharing.shareAsync).not.toHaveBeenCalled()
+})

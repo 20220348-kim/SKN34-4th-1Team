@@ -1,15 +1,14 @@
 import type { z } from 'zod'
 import { reviewPageSchema, reviewProblemSchema, reviewSchema, runPageSchema, runSchema } from '@govbiz/shared/data/models/CombinationReviewDto'
-import { savedSupportProgramListDtoSchema, toSavedSupportProgram } from '@govbiz/shared/data/models/SavedSupportProgramDto'
 import type { SupportProgram } from '@govbiz/shared/domain/entities/SupportProgram'
 import { CombinationReviewError } from '@govbiz/shared/domain/errors/CombinationReviewError'
 import type { ReviewDraft, RunRequest } from '@govbiz/shared/domain/entities/CombinationReview'
 import type { CombinationReviewRepository } from '@govbiz/shared/domain/repositories/CombinationReviewRepository'
-import { ApiError, apiRequest, createApiFetch, getApiBaseUrl } from './client'
+import { ApiError, createApiFetch, getApiBaseUrl } from './client'
+import { listSavedPrograms } from './savedPrograms'
 
 export async function listReviewSavedPrograms(token: string, signal?: AbortSignal): Promise<SupportProgram[]> {
-  const payload = await apiRequest('/api/v1/me/saved-programs', { accessToken: token, signal })
-  return savedSupportProgramListDtoSchema.parse(payload).programs.map(toSavedSupportProgram).map(item => item.program)
+  return (await listSavedPrograms(token, signal)).map(item => item.program)
 }
 
 /** Native transport for the existing review contract; reads never submit analysis. */

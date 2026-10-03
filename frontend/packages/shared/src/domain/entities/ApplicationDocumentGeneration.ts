@@ -1,4 +1,10 @@
-import type { ApplicationDocumentGenerationJob } from '../../domain/entities/ApplicationPreparation'
+import type { ApplicationDocumentGenerationJob, ApplicationFormField } from './ApplicationPreparation'
+
+/** UNKNOWN으로 저장되는 미정과 비어 있는 답변은 실제 문서 기입 대상이 아닙니다. */
+export function isWritableApplicationAnswer(field: Pick<ApplicationFormField, 'documentWritable'>, value: string | null | undefined): boolean {
+  const answer = value?.trim() ?? ''
+  return field.documentWritable !== false && answer !== '' && answer !== '미정'
+}
 
 /** 서버 작업 표가 기록하는 단계 순서입니다. 화면은 단계를 추측하지 않고 이 값만 표시합니다. */
 export const generationStages = [

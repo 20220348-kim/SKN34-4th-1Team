@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router'
+import { isWritableApplicationAnswer } from '@govbiz/shared/domain/entities/ApplicationDocumentGeneration'
 import { appContainer } from '../../../../app/appContainer'
 import { useAppSelector } from '../../../../app/hooks'
 import type { ApplicationDocument, ApplicationDocumentGenerationJob, ApplicationDocumentMigrationNotice, ApplicationPreparation } from '../../../../domain/entities/ApplicationPreparation'
@@ -112,7 +113,7 @@ function DocumentResults({ id }: { id: number }) {
   const canRegenerate = !busy && preparation !== null && failedJob === null && files.length > 0
     && !files.some((file) => file.inputRevision === preparation.inputRevision)
   const unanswered = preparation?.form.sections.flatMap((section) => section.fields
-    .filter((field) => field.documentWritable !== false && !section.facts.some((fact) => fact.fieldKey === field.key && fact.status === 'PROVIDED'))
+    .filter((field) => field.documentWritable !== false && !isWritableApplicationAnswer(field, section.facts.find((fact) => fact.fieldKey === field.key && fact.status === 'PROVIDED')?.value))
     .map((field) => ({ key: field.key, label: `${section.title} · ${field.label}` }))) ?? []
   // 기입 막대의 분모입니다. 답변한 수가 아니라 이 양식에서 자동 기입할 수 있는 질문 수를 기준으로 삼습니다.
   const writableQuestionCount = preparation?.form.sections.reduce(

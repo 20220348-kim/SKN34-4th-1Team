@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import { ActivityIndicator, Pressable, Text, View } from 'react-native'
-import { businessLookupDtoSchema, companyDtoSchema, toBusinessLookup, toCompany } from '@govbiz/shared/data/models/CompanyDto'
 import {
   type BusinessLookup, type Company, type CompanyProfileInput, companyRegions, companyIndustries,
   companyProfileLimits, formatBusinessNumber, formatBusinessNumberInput, isValidBusinessNumber,
   normalizeBusinessNumber, normalizeHomepageUrl, isValidHomepageUrl,
 } from '@govbiz/shared/domain/entities/Company'
-import { apiRequest, ApiError, errorMessage } from '../api/client'
+import { ApiError, errorMessage } from '../api/client'
+import { getCompany, lookupCompanyBusiness, saveCompanyProfile } from '../api/company'
 import { useAuth } from '../auth/session'
 import { Page, Button, Field, Notice, Card, Title, colors, styles } from '../ui'
 
@@ -40,8 +40,7 @@ export function CompanyScreen({ onLogin }: { onLogin?(): void } = {}) {
     mutation.current?.abort()
     setState({ token, company: null, loading: true, loadError: null })
     populate(null); setError(null); setNotice(null); setBusy(false)
-    if (token) void apiRequest('/api/v1/me/company', { accessToken: token, signal: controller.signal }).then((payload) => {
-      const company = toCompany(companyDtoSchema.parse(payload))
+    if (token) void getCompany(token, controller.signal).then((company) => {
       if (controller.signal.aborted) return
       populate(company)
       setState({ token, company, loading: false, loadError: null })
@@ -73,8 +72,7 @@ export function CompanyScreen({ onLogin }: { onLogin?(): void } = {}) {
   const lookupBusiness = () => run(async (signal) => {
     if (!isValidBusinessNumber(businessNumber)) throw new Error('사업자등록번호 10자리를 입력해 주세요.')
     setLookup(null)
-    const query = new URLSearchParams({ businessNumber: normalizeBusinessNumber(businessNumber) })
-    const result = toBusinessLookup(businessLookupDtoSchema.parse(await apiRequest(`/api/v1/me/company/lookup?${query}`, { accessToken: token!, signal })))
+    const result = await lookupCompanyBusiness(token!, normalizeBusinessNumber(businessNumber), signal)
     if (signal.aborted) return
     setLookup(result)
     if (!result.isActive) setError('현재 영업 중인 사업자만 등록할 수 있습니다.')
@@ -90,8 +88,7 @@ export function CompanyScreen({ onLogin }: { onLogin?(): void } = {}) {
     const normalizedHomepage = normalizeHomepageUrl(homepage)
     if (normalizedHomepage && !isValidHomepageUrl(normalizedHomepage)) throw new Error('올바른 홈페이지 주소를 입력해 주세요.')
     const profile: CompanyProfileInput = { region, industry, foundedYear: year, homepageUrl: normalizedHomepage || null }
-    const body = company ? profile : { businessNumber: lookup!.businessNumber, ...profile }
-    const saved = toCompany(companyDtoSchema.parse(await apiRequest('/api/v1/me/company', { method: company ? 'PUT' : 'POST', accessToken: token!, body, signal })))
+    const saved = await saveCompanyProfile(token!, profile, company ? undefined : lookup!.businessNumber, signal)
     if (signal.aborted) return
     populate(saved)
     setState({ token, company: saved, loading: false, loadError: null })

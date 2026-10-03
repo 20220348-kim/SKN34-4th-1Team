@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useFocusEffect } from 'expo-router'
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native'
-import { savedSupportProgramDtoSchema, savedSupportProgramListDtoSchema, toSavedSupportProgram } from '@govbiz/shared/data/models/SavedSupportProgramDto'
 import type { SavedSupportProgram } from '@govbiz/shared/domain/entities/SavedSupportProgram'
 import type { ApplicationProgressStage } from '@govbiz/shared/domain/entities/ApplicationPreparation'
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
-import { apiRequest, ApiError, errorMessage } from '../api/client'
+import { ApiError, errorMessage } from '../api/client'
+import { listSavedPrograms, removeSavedProgram, saveProgram } from '../api/savedPrograms'
 import { useAuth } from '../auth/session'
 import { Page, Button, Notice, Card, StatusBadge, colors, styles } from '../ui'
 import { AppIcon } from '../components/AppIcon'
@@ -39,8 +39,7 @@ export function SavedProgramsScreen({ onOpenProgram, onCountChange, onLogin }: {
     const controller = new AbortController()
     mutation.current?.abort(); setRemoving(null); setUndo(null)
     setState((current) => current.token === token ? { ...current, loading: true, error: null } : { token, programs: [], loading: true, error: null })
-    if (token) void apiRequest('/api/v1/me/saved-programs', { accessToken: token, signal: controller.signal }).then((payload) => {
-      const programs = savedSupportProgramListDtoSchema.parse(payload).programs.map(toSavedSupportProgram)
+    if (token) void listSavedPrograms(token, controller.signal).then((programs) => {
       if (!controller.signal.aborted) setState({ token, programs, loading: false, error: null })
     }).catch((cause: unknown) => {
       if (controller.signal.aborted) return
@@ -59,7 +58,7 @@ export function SavedProgramsScreen({ onOpenProgram, onCountChange, onLogin }: {
     const controller = new AbortController(); mutation.current = controller
     setRemoving(preparationKey(identity)); setState((current) => ({ ...current, error: null }))
     try {
-      await apiRequest(`/api/v1/me/saved-programs?${new URLSearchParams(identity)}`, { method: 'DELETE', accessToken: token, signal: controller.signal })
+      await removeSavedProgram(token, identity, controller.signal)
       if (controller.signal.aborted) return
       setUndo({ owner: token, item, index: visible.programs.indexOf(item) })
       setState((current) => current.token !== token ? current : { ...current, programs: current.programs.filter(({ program }) => program.sourceCode !== identity.sourceCode || program.id !== identity.sourceProgramId) })
@@ -74,10 +73,7 @@ export function SavedProgramsScreen({ onOpenProgram, onCountChange, onLogin }: {
     const identity = { sourceCode: undo.item.program.sourceCode, sourceProgramId: undo.item.program.id }
     const controller = new AbortController(); mutation.current = controller; setRemoving(preparationKey(identity))
     try {
-      const restored = toSavedSupportProgram(savedSupportProgramDtoSchema.parse(await apiRequest('/api/v1/me/saved-programs', {
-        method: 'POST', accessToken: token, signal: controller.signal, body: identity,
-      })))
-      if (restored.program.sourceCode !== identity.sourceCode || restored.program.id !== identity.sourceProgramId) throw new Error('저장한 공고와 응답이 다릅니다.')
+      const restored = await saveProgram(token, identity, controller.signal)
       if (controller.signal.aborted) return
       setState((current) => {
         if (current.token !== token) return current

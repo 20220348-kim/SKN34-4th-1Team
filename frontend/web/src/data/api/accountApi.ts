@@ -1,6 +1,5 @@
 import type { AccountRole } from '../../domain/entities/Account'
 import type { OAuthProviderId } from '../../domain/entities/OAuthProvider'
-import { z } from 'zod'
 
 import type { AccountLogIn, AccountSignUp } from '../../domain/repositories/AccountRepository'
 import { getCoreApiBaseUrl } from './coreApiConfig'
@@ -9,8 +8,10 @@ import {
   accountDtoSchema,
   authSessionResponseDtoSchema,
   currentAccountResponseDtoSchema,
+  signupEmailPassDtoSchema,
   type AccountDto,
   type AuthSessionResponseDto,
+  type SignupEmailPassDto,
 } from '../models/AccountDto'
 
 const SIGNUP_PATH = '/api/v1/auth/signup'
@@ -213,9 +214,7 @@ export async function sendSignupEmailCodeApi(email: string, signal?: AbortSignal
   await rejectFailedResponse(response)
 }
 
-export type SignupEmailPassDto = { passToken: string; expiresAt: string }
-
-const signupEmailPassDtoSchema = z.object({ passToken: z.string().regex(/^[A-Za-z0-9_-]{43}$/), expiresAt: z.string() })
+export type { SignupEmailPassDto } from '../models/AccountDto'
 
 /** 인증번호를 확인하고 가입 요청에 실을 통행 토큰을 받습니다. 틀리면 422 `EMAIL_CODE_INVALID`, 만료·시도 초과면 422 `EMAIL_CODE_EXPIRED`입니다. */
 export async function verifySignupEmailCodeApi(email: string, code: string, signal?: AbortSignal): Promise<SignupEmailPassDto> {

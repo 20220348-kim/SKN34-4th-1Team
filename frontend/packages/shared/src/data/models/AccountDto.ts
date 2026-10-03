@@ -4,6 +4,12 @@ import type { Account } from '../../domain/entities/Account'
 import type { AccountDeletionPreview } from '../../domain/entities/AccountDeletionPreview'
 import type { AuthSession } from '../../domain/entities/AuthSession'
 
+export const signupEmailPassDtoSchema = z.object({
+  passToken: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+  expiresAt: z.string().datetime({ offset: true }),
+})
+export type SignupEmailPassDto = z.infer<typeof signupEmailPassDtoSchema>
+
 export const accountRoleSchema = z.enum(['USER', 'ADMIN'])
 export const accountTierSchema = z.enum(['MEMBER', 'COMPANY', 'ADMIN'])
 export const accountTypeSchema = z.enum(['INDIVIDUAL', 'BUSINESS'])

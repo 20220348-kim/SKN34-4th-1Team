@@ -1,5 +1,6 @@
 import { type KeyboardEvent as ReactKeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
+import { isWritableApplicationAnswer } from '@govbiz/shared/domain/entities/ApplicationDocumentGeneration'
 import { useAppSelector } from '../../../../app/hooks'
 import {
   applicationDeadlineDays,
@@ -224,7 +225,7 @@ function AnswerEditor({ vm }: { vm: EditorViewModel }) {
     const value = valueOf(section, field).trim()
     return value !== '' && value !== undecidedAnswer
   })
-  const fillableAnswers = answered.filter(({ field }) => writable(field)).length
+  const fillableAnswers = questions.filter(({ section, field }) => isWritableApplicationAnswer(field, valueOf(section, field))).length
   const fieldError = current && vm.fieldError?.key === current.key ? vm.fieldError.message : null
   // 지금 질문의 칸 오류는 칸 아래에만 보여 줍니다. 같은 문구를 위쪽 실패 알림으로 겹쳐 띄우지 않습니다.
   const failed = vm.autosave.status === 'failed' && !fieldError ? vm.autosave : null
