@@ -136,6 +136,30 @@ class CombinationReviewRunIntegrationTest {
     }
 
     @Test
+    fun listShowsOnlyTheLatestRunOfEachOwnedReview() {
+        val untouched = reviews.create(ownerId, draft).id
+        val first = id(submit().andExpect(status().isAccepted()))
+        service.executeQueued(first)
+        val latest = id(submit().andExpect(status().isAccepted()))
+        mvc.perform(get("/api/v1/combination-reviews").cookie(owner))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.items[0].id").value(untouched))
+            .andExpect(jsonPath("$.items[0].latestRun").isEmpty())
+            .andExpect(jsonPath("$.items[1].id").value(reviewId))
+            .andExpect(jsonPath("$.items[1].latestRun.id").value(latest))
+            .andExpect(jsonPath("$.items[1].latestRun.status").value("QUEUED"))
+            .andExpect(jsonPath("$.items[1].latestRun.inputRevision").value(1))
+            .andExpect(jsonPath("$.items[1].latestRun.finishedAt").isEmpty())
+        service.executeQueued(latest)
+        mvc.perform(get("/api/v1/combination-reviews").cookie(owner))
+            .andExpect(jsonPath("$.items[1].latestRun.id").value(latest))
+            .andExpect(jsonPath("$.items[1].latestRun.status").value("SUCCEEDED"))
+            .andExpect(jsonPath("$.items[1].latestRun.finishedAt").isNotEmpty())
+        mvc.perform(get("/api/v1/combination-reviews").cookie(other))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.items").isEmpty())
+    }
+
+    @Test
     fun acceptsWithoutCallingSourcesAndReplaysTheSameQueuedSnapshot() {
         val key = UUID.randomUUID().toString()
         val submitted = submit(key).andExpect(status().isAccepted())

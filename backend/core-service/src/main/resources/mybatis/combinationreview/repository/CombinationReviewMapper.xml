@@ -40,14 +40,33 @@
         FROM combination_review
         WHERE id = #{reviewId} AND owner_account_id = #{ownerAccountId}
     </select>
-    <select id="listReviews" resultMap="reviewRow">
-        SELECT id, owner_account_id, title, input_revision, created_at, updated_at
-        FROM combination_review
-        WHERE owner_account_id = #{ownerAccountId}
+    <resultMap id="listRow" type="ai.govbiz.core.combinationreview.repository.mapper.CombinationReviewListDbRow">
+        <id column="id" property="id" />
+        <result column="title" property="title" />
+        <result column="input_revision" property="inputRevision" />
+        <result column="created_at" property="createdAt" />
+        <result column="updated_at" property="updatedAt" />
+        <result column="latest_run_id" property="latestRunId" />
+        <result column="latest_run_input_revision" property="latestRunInputRevision" />
+        <result column="latest_run_status" property="latestRunStatus" />
+        <result column="latest_run_failure_code" property="latestRunFailureCode" />
+        <result column="latest_run_started_at" property="latestRunStartedAt" />
+        <result column="latest_run_finished_at" property="latestRunFinishedAt" />
+    </resultMap>
+    <!-- 최근 실행은 검토마다 가장 큰 실행 ID 하나다. idx_combination_run_review_id(review_id, id)로 찾는다. -->
+    <select id="listReviews" resultMap="listRow">
+        SELECT c.id, c.title, c.input_revision, c.created_at, c.updated_at,
+               r.id AS latest_run_id, r.input_revision AS latest_run_input_revision, r.status AS latest_run_status,
+               r.failure_code AS latest_run_failure_code, r.started_at AS latest_run_started_at, r.finished_at AS latest_run_finished_at
+        FROM combination_review c
+        LEFT JOIN combination_review_run r ON r.id = (
+            SELECT MAX(x.id) FROM combination_review_run x WHERE x.review_id = c.id
+        )
+        WHERE c.owner_account_id = #{ownerAccountId}
         <if test="beforeId != null">
-            AND id &lt; #{beforeId}
+            AND c.id &lt; #{beforeId}
         </if>
-        ORDER BY id DESC
+        ORDER BY c.id DESC
         LIMIT #{limit}
     </select>
     <select id="findPrograms" resultMap="programRow">

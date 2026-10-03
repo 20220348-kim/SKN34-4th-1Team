@@ -59,12 +59,14 @@ data class CombinationReviewSummaryResponse(
     val inputRevision: Long,
     val createdAt: OffsetDateTime,
     val updatedAt: OffsetDateTime,
+    val latestRun: CombinationReviewRunSummaryResponse?,
 ) {
     companion object {
         fun from(review: CombinationReviewSummary) = CombinationReviewSummaryResponse(
             review.id, review.title, review.inputRevision,
             review.createdAt.atZone(SEOUL).toOffsetDateTime(),
             review.updatedAt.atZone(SEOUL).toOffsetDateTime(),
+            review.latestRun?.let(CombinationReviewRunSummaryResponse::from),
         )
     }
 }

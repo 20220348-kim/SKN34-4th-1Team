@@ -7,6 +7,8 @@ import ai.govbiz.core.combinationreview.domain.ParticipationAnswer
 import ai.govbiz.core.combinationreview.domain.ProgramExecutionStatus
 import ai.govbiz.core.combinationreview.domain.ProgramParticipation
 import ai.govbiz.core.combinationreview.domain.ReviewProgramIdentity
+import ai.govbiz.core.combinationreview.domain.ReviewRunStatus
+import ai.govbiz.core.combinationreview.domain.ReviewRunSummary
 import ai.govbiz.core.combinationreview.domain.SelectedReviewProgram
 import ai.govbiz.core.combinationreview.domain.StoredCombinationReview
 import ai.govbiz.core.combinationreview.repository.mapper.CombinationReviewDbRow
@@ -64,13 +66,19 @@ class CombinationReviewRepository(
         )
     }
 
-    /** 생성 ID 내림차순 커서 조회. 수정해도 목록 위치가 바뀌지 않는다. */
+    /** 생성 ID 내림차순 커서 조회. 수정해도 목록 위치가 바뀌지 않는다. 각 검토의 가장 최근 실행 요약을 함께 읽는다. */
     @Transactional(readOnly = true)
     fun listOwned(ownerAccountId: Long, beforeId: Long?, limit: Int): List<CombinationReviewSummary> {
         require(ownerAccountId > 0 && (beforeId == null || beforeId > 0) && limit in 1..51)
         return mapper.listReviews(ownerAccountId, beforeId, limit).map { row ->
             CombinationReviewSummary(
                 row.id, row.title, row.inputRevision, requireNotNull(row.createdAt), requireNotNull(row.updatedAt),
+                row.latestRunId?.let { runId ->
+                    ReviewRunSummary(
+                        runId, requireNotNull(row.latestRunInputRevision), ReviewRunStatus.valueOf(requireNotNull(row.latestRunStatus)),
+                        row.latestRunFailureCode, requireNotNull(row.latestRunStartedAt), row.latestRunFinishedAt,
+                    )
+                },
             )
         }
     }

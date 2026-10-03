@@ -170,6 +170,7 @@ class CombinationReviewApiIntegrationTest {
             .andExpect(jsonPath("$.nextBeforeId").value(middle))
             .andExpect(jsonPath("$.items[0].programs").doesNotExist())
             .andExpect(jsonPath("$.items[0].ownerAccountId").doesNotExist())
+            .andExpect(jsonPath("$.items[0].latestRun").isEmpty())
         create()
         write(put("$BASE/$oldest/inputs"), replacement()).andExpect(status().isNoContent())
         mvc.perform(get(BASE).cookie(owner).param("size", "2").param("beforeId", middle.toString()))

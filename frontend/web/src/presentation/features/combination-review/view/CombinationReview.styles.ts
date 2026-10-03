@@ -1,3 +1,5 @@
+const focus = 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary'
+
 export const reviewStyles = {
   card: 'rounded-2xl border border-slate-200 bg-white p-5 shadow-sm',
   muted: 'text-sm leading-6 text-slate-600',
@@ -6,4 +8,52 @@ export const reviewStyles = {
   danger: 'inline-flex items-center justify-center rounded-lg bg-red-700 px-4 py-2 text-sm font-semibold text-white hover:bg-red-800 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-red-700',
   input: 'mt-1 block w-full rounded-lg border border-sample-border bg-white p-2.5 text-sm focus:border-brand-primary focus:outline-brand-primary',
   warning: 'rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950',
+  info: 'rounded-xl border border-info-line bg-info-soft p-4 text-sm leading-6 text-app-ink',
+  // 목록 카드 · 단계 이동 바 · 결과 카드 (화면 통일안 27–29)
+  secondarySm: `inline-flex h-8 shrink-0 cursor-pointer items-center justify-center gap-1 rounded-full border border-line-strong bg-white px-3 text-[0.8125rem] font-bold text-app-ink no-underline hover:border-brand-primary hover:text-brand-primary disabled:cursor-not-allowed disabled:opacity-50 ${focus}`,
+  menuButton: `grid size-8 shrink-0 cursor-pointer place-items-center rounded-full border border-line-strong bg-white text-base leading-none text-ink-muted hover:text-app-ink ${focus}`,
+  menu: 'z-30 flex min-w-[180px] flex-col gap-0.5 rounded-xl border border-line bg-white p-1.5 shadow-[0_12px_32px_rgb(32_33_36_/_12%)]',
+  menuItem: `flex w-full cursor-pointer items-center gap-3 rounded-lg border-0 bg-transparent px-3 py-2 text-left text-[0.8125rem] font-semibold text-app-ink no-underline hover:bg-surface-muted disabled:cursor-not-allowed disabled:opacity-50 ${focus}`,
+  menuItemDanger: 'text-red-800 hover:bg-red-50',
+  dangerSolid: `inline-flex min-h-10 items-center justify-center gap-1.5 rounded-full bg-[#9a3947] px-4 py-2 text-sm font-semibold text-white hover:bg-[#7f2d39] disabled:cursor-not-allowed disabled:opacity-50 ${focus}`,
+  // 내용 위에 떠 있는 흰 바입니다. 회색 띠는 아래 카드와 구분이 약해 흰 바탕 · 테두리 · 그림자로 경계를 만듭니다.
+  stepBar: 'sticky bottom-[calc(0.75rem+env(safe-area-inset-bottom))] z-[2] flex flex-wrap items-center gap-3 rounded-2xl border border-line bg-white px-4 py-3 shadow-[0_8px_28px_rgb(32_33_36_/_14%)] max-[599px]:px-3',
+  stepBarNote: 'text-xs text-ink-muted max-[599px]:hidden',
+  // 주 버튼을 아직 누를 수 없는 이유입니다. 600px 미만에서도 보입니다(신청 문서 [작성 시작]과 같은 방식).
+  stepBarReason: 'text-xs font-semibold text-ink-muted max-[599px]:basis-full max-[599px]:order-first',
+  buttonSpinner: 'size-3 shrink-0 rounded-full border-[1.5px] border-current border-t-transparent motion-safe:animate-spin',
+  primaryPill: `inline-flex min-h-10 cursor-pointer items-center justify-center gap-1.5 rounded-full bg-brand-primary px-5 py-2 text-sm font-bold text-white no-underline hover:bg-[#066538] disabled:cursor-not-allowed disabled:opacity-50 ${focus}`,
+  secondaryPill: `inline-flex min-h-10 cursor-pointer items-center justify-center gap-1.5 rounded-full border border-line-strong bg-white px-4 py-2 text-sm font-semibold text-app-ink no-underline hover:border-brand-primary hover:text-brand-primary disabled:cursor-not-allowed disabled:opacity-50 ${focus}`,
+  // 진행 카드 · 최근 실행 안내 (신청 문서의 분석 · 초안 진행 카드와 같은 틀)
+  progress: 'flex flex-col gap-3 rounded-2xl border border-brand-line bg-white p-5 shadow-[0_8px_24px_rgb(32_33_36_/_6%)] max-[599px]:p-4',
+  progressHead: 'flex items-start gap-2.5',
+  spinner: 'mt-0.5 size-[18px] shrink-0 rounded-full border-2 border-brand-line border-t-brand-primary motion-safe:animate-spin',
+  progressTitle: 'min-w-0 flex-1 text-[0.95rem] leading-[1.4] font-bold text-app-ink',
+  progressTime: 'text-[0.78rem] whitespace-nowrap text-ink-muted tabular-nums',
+  progressNote: 'm-0 border-t border-line pt-2.5 text-[0.78rem] text-ink-muted',
+  progressSteps: 'grid gap-2 text-xs sm:grid-cols-2',
+  progressStep: 'rounded-lg bg-surface-muted px-3 py-2 text-ink-muted',
+  progressStepDone: 'rounded-lg bg-brand-soft px-3 py-2 font-semibold text-brand-primary',
+  progressStepNow: 'rounded-lg border border-brand-primary/30 bg-white px-3 py-2 font-semibold text-app-ink',
+  resultCard: 'flex flex-wrap items-center gap-3 rounded-2xl border p-4',
+  resultCardDone: 'border-brand-primary/30 bg-brand-soft',
+  resultCardFailed: 'border-danger/30 bg-danger-soft',
+  resultCardText: 'flex min-w-0 flex-1 flex-col gap-0.5 text-sm',
+  // 목록 카드
+  listCard: 'flex flex-col gap-2.5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm',
+  listCardWorking: '!border-info/50',
+  listCardChecking: '!border-warning/50',
+  listTitle: 'text-[0.95rem] font-bold text-app-ink',
+  listMeta: 'text-sm text-slate-600',
+  listFooter: 'flex flex-wrap items-center justify-between gap-3 border-t border-line pt-3',
+  listStamp: 'text-xs text-ink-muted tabular-nums',
+  workTrack: 'relative h-1.5 w-full overflow-hidden rounded-full bg-slate-100',
+  workSweep: 'absolute inset-y-0 left-0 w-1/3 rounded-full bg-info motion-safe:animate-[chat-loading-sweep_1.6s_ease-in-out_infinite]',
+  badge: 'inline-flex h-[22px] items-center gap-1 rounded-md px-[7px] text-[0.72rem] font-bold whitespace-nowrap',
+  badgeWarn: 'bg-warning-soft text-warning',
+  badgeOk: 'bg-brand-soft text-brand-primary',
+  badgeInfo: 'bg-info-soft text-info',
+  badgeNeutral: 'bg-surface-muted text-ink-muted',
+  badgeDanger: 'bg-danger-soft text-danger',
+  textLink: `inline-flex items-center gap-1 text-xs font-bold text-brand-primary no-underline hover:underline disabled:cursor-not-allowed disabled:opacity-50 ${focus}`,
 } as const

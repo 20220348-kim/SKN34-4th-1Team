@@ -17,7 +17,7 @@ function isEarlierState(current: RunSummary, next: RunSummary) {
   )
 }
 
-export function useReviewEditorViewModel(id: number | null, account: string, autoStart = false, loadSavedPrograms = false, resultRunId: number | null = null, initialFacts = '') {
+export function useReviewEditorViewModel(id: number | null, account: string, loadSavedPrograms = false, resultRunId: number | null = null, initialFacts = '') {
   const useCase = appContainer.resolve('combinationReviewUseCase')
   const catalogUseCase = appContainer.resolve('browseSupportProgramsUseCase')
   const detailUseCase = appContainer.resolve('getSupportProgramDetailUseCase')
@@ -38,7 +38,6 @@ export function useReviewEditorViewModel(id: number | null, account: string, aut
   const [journalReady, setJournalReady] = useState(false)
   const [notice, setNotice] = useState('')
   const [pollingPaused, setPollingPaused] = useState(false)
-  const autoStartAttempted = useRef(false)
   const autoSelectedRunId = useRef<number | null>(null)
   const { setError, busy, error } = scope
 
@@ -136,50 +135,23 @@ export function useReviewEditorViewModel(id: number | null, account: string, aut
       setNotice(['QUEUED', 'RUNNING'].includes(value.status) ? '분석 요청이 접수되었습니다. 상태는 자동으로 갱신되며, 다른 화면으로 이동해도 작업은 유지됩니다.' : '저장된 실행을 확인했습니다. 새 분석은 자동으로 시작하지 않습니다.')
     })
   }, [id, review, journalReady, busy, pending, dirty, runs, facts, journal, account, setError, perform, useCase, acceptRun])
-  const saveAndStart = (showAnalysis: () => void) => {
-    if (pending || busy.includes('save') || busy.includes('analysis')) return
-    if (id) {
-      try { if (journal.read(account, id)) return }
-      catch { setError({ message: '요청 상태를 안전하게 확인할 수 없습니다. 브라우저 저장소 설정을 확인해 주세요.' }); return }
-    }
+  // 단계를 넘길 때 입력을 저장한다. 새 검토는 이때 만들고(참여 상태는 모름), 기존 검토는 바뀐 경우에만 입력 버전을 확인해 덮어쓴다.
+  // 유료 분석은 여기서 시작하지 않는다 — 3단계 [검토 실행](start)에서만 보낸다.
+  const saveInput = (next: () => void) => {
+    if (busy.includes('save') || busy.includes('load')) return
     let input: ReviewDraft
     try { input = validateReviewDraft(draft) } catch (e) { setError({ message: (e as Error).message }); return }
-    if (!input.programs.every(supportsAutomaticReview)) return
-    const launch = (saved: CombinationReview) => {
-      const request = { expectedRevision: saved.inputRevision, requestKey: crypto.randomUUID(), additionalFacts: facts }
-      try { journal.write(account, saved.id, request) }
-      catch { setError({ message: '요청 키를 안전하게 보관할 수 없어 분석을 시작하지 않았습니다. 브라우저 저장소 설정을 확인해 주세요.' }); return }
-      setPending(request)
-      setRun(null)
-      showAnalysis()
-      void perform('analysis', (signal) => useCase.start(saved.id, request, signal), (value) => {
-        acceptRun(value)
-        journal.remove(account, saved.id); setPending(null); setPollingPaused(false)
-        setNotice(['QUEUED', 'RUNNING'].includes(value.status) ? '분석 요청이 접수되었습니다. 상태는 자동으로 갱신되며, 완료되면 결과가 표시됩니다.' : '분석이 완료되어 저장된 결과를 표시합니다.')
-      })
-    }
-    if (id && review) {
-      const unchanged = JSON.stringify(input) === JSON.stringify({ title: review.title, programs: review.programs })
-      if (unchanged) { launch(review); return }
-      const saved = { ...review, ...input, inputRevision: review.inputRevision + 1 }
-      void perform('save', (signal) => useCase.replace(id, review.inputRevision, input, signal), () => {
-        setReview(saved); setDraft(input); setNotice('입력을 저장하고 분석을 시작합니다.'); launch(saved)
-      })
+    if (!id) {
+      void perform('save', (signal) => useCase.create(input, signal), (saved) => navigate(`${appPaths.combinationReviews}/${saved.id}?step=participation`, { replace: true }))
       return
     }
-    void perform('save', (signal) => useCase.create(input, signal), (saved) => {
-      const request = { expectedRevision: saved.inputRevision, requestKey: crypto.randomUUID(), additionalFacts: facts }
-      try { journal.write(account, saved.id, request) }
-      catch { navigate(`${appPaths.combinationReviews}/${saved.id}?step=analysis`, { replace: true }); return }
-      navigate(`${appPaths.combinationReviews}/${saved.id}?step=analysis&start=1`, { replace: true })
-    })
+    if (!review) return
+    if (JSON.stringify(input) === JSON.stringify({ title: review.title, programs: review.programs })) { setError(null); next(); return }
+    // 확인하지 못한 분석 요청은 접수 당시 입력 버전을 쓰므로, 그 요청을 확인하기 전에는 입력을 바꾸지 않는다.
+    if (pending) { setError({ message: '확인하지 못한 분석 요청이 있어 입력을 저장하지 않았습니다. 공고 분석 단계에서 요청을 먼저 확인해 주세요.' }); return }
+    const saved: CombinationReview = { ...review, ...input, inputRevision: review.inputRevision + 1 }
+    void perform('save', (signal) => useCase.replace(id, review.inputRevision, input, signal), () => { setReview(saved); setDraft(input); next() })
   }
-  useEffect(() => {
-    if (!autoStart || autoStartAttempted.current || !id || !review || !journalReady || !pending) return
-    autoStartAttempted.current = true
-    navigate(`${appPaths.combinationReviews}/${id}?step=analysis`, { replace: true })
-    start(true)
-  }, [autoStart, id, review, journalReady, pending, navigate, start])
   const download = (documentIndex: number) => {
     if (!id || !run) return
     const selectedRun = run
@@ -190,5 +162,5 @@ export function useReviewEditorViewModel(id: number | null, account: string, aut
     })
   }
   return { ...scope, review, draft, setDraft, catalog, savedProgramChoices, catalogFilters, setCatalogFilters, appliedCatalogFilters, names, runs, run, facts, setFacts,
-    pending, notice, dirty, pollingPaused, rejectedRevision, clearRejectedRequest, load, search, toggle, saveAndStart, history, selectRun, start, download }
+    pending, notice, dirty, pollingPaused, rejectedRevision, clearRejectedRequest, load, search, toggle, saveInput, history, selectRun, start, download }
 }

@@ -14,14 +14,14 @@ export function ReviewParticipation({ program, index, name, onChange, onRemove }
     <legend className="px-2 font-semibold">사업 {index + 1} · {name ?? '공고 정보 확인 중'}</legend>
     <div className="mt-4 space-y-4">
       <div>
-        <label htmlFor={`${prefix}-status`} className="block text-sm font-semibold">현재 이 지원사업은 어디까지 진행되었나요?</label>
+        <label htmlFor={`${prefix}-status`} className="block text-sm font-semibold">지금 어디까지 진행했나요?</label>
         <SelectField id={`${prefix}-status`} label={`사업 ${index + 1} 현재 진행 상태`} className={s.input} value={status}
           options={Object.entries(currentStatusLabels).map(([value, label]) => ({ value, label }))}
           onChange={(value) => { const next = value as CurrentStatus; setChosenStatus(next); onChange?.(currentStatusToParticipation(next, program.participation)) }} />
         {status === 'UNKNOWN' && <p className={s.muted}>저장된 개별 사실이 하나의 진행 상태로 표현되지 않을 수 있습니다. 직접 상태를 바꾸기 전에는 저장된 사실을 유지합니다.</p>}
       </div>
       {showFundingQuestion(status, program.participation) && <div>
-        <label htmlFor={`${prefix}-funding`} className="block text-sm font-semibold">지원금 또는 보조금을 실제로 지급받았나요?</label>
+        <label htmlFor={`${prefix}-funding`} className="block text-sm font-semibold">지원금을 실제로 받았나요?</label>
         {onChange ? <SelectField id={`${prefix}-funding`} label={`사업 ${index + 1} 지원금 교부 여부`} className={s.input} value={program.participation.fundingReceived}
           options={[{ value: 'UNKNOWN', label: '잘 모르겠음' }, { value: 'YES', label: '예' }, { value: 'NO', label: '아니오' }]}
           onChange={(value) => onChange({ ...program.participation, fundingReceived: value as Participation['fundingReceived'] })} />
