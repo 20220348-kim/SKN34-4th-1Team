@@ -102,6 +102,116 @@ def stop(server):
         raise ValueError("Restored HTTP server did not exit cleanly")
 
 
+def check_management(expected, principal, token, member_token, total_runs):
+    from apps.evaluations.execution_spec import digest
+    from ops_database_restore_probe import verify_response
+
+    if type(total_runs) is not int or not len(expected) <= total_runs <= 1000:
+        raise ValueError("Unexpected restored management row count")
+    snapshots = {}
+
+    def get(route):
+        for cookie, code in (("invalid-fixture", 401), (member_token, 403)):
+            if response(route, cookie)[0] != code:
+                raise ValueError("Restored management accepted an unauthorized read")
+        if route != "/api/v1/ops/session" and response(route)[0] != 401:
+            raise ValueError("Restored management accepted an anonymous read")
+        status, headers, raw = response(route, token)
+        if (
+            status != 200
+            or "no-store" not in headers.get("Cache-Control", "")
+            or not headers.get("Content-Type", "").startswith("application/json")
+        ):
+            raise ValueError(
+                f"Restored management JSON is unavailable or cacheable: {route} (HTTP {status})"
+            )
+        value = json.loads(raw)
+        snapshots[route] = value
+        return value
+
+    status, _, raw = response("/api/v1/ops/session")
+    anonymous = json.loads(raw)
+    if (
+        status != 200
+        or anonymous.get("user") is not None
+        or anonymous.get("datasets") != []
+    ):
+        raise ValueError("Restored management disclosed an anonymous session")
+    session = get("/api/v1/ops/session")
+    if (
+        session.get("user")
+        != {"id": "core:" + str(principal["accountId"]), "username": principal["email"]}
+        or not isinstance(session.get("csrf_token"), str)
+        or not session["csrf_token"]
+        or not session.get("datasets")
+        or session.get("live_enabled") is not False
+        or session.get("rag_live_enabled") is not False
+    ):
+        raise ValueError("Restored management session differs")
+    # The consumer only needs the field's shape; never export a live CSRF token.
+    session["csrf_token"] = "redacted-restore-csrf"
+    rows = {}
+    pages = (total_runs + 24) // 25
+    for page in range(1, pages + 1):
+        result = get(f"/api/v1/ops/evaluations?page={page}")
+        following = (
+            f"http://127.0.0.1:8000/api/v1/ops/evaluations?page={page + 1}"
+            if page < pages
+            else None
+        )
+        if (
+            type(result.get("count")) is not int
+            or result["count"] != total_runs
+            or result.get("next") != following
+            or not result.get("results")
+        ):
+            raise ValueError("Restored management pagination differs")
+        for row in result["results"]:
+            if row["id"] in rows:
+                raise ValueError("Restored management repeated an evaluation")
+            rows[row["id"]] = row
+    if len(rows) != total_runs or not set(expected).issubset(rows):
+        raise ValueError("Restored management omitted evaluations")
+    budget = get("/api/v1/ops/budget/reservations?page=1")
+    if (
+        not isinstance(budget.get("results"), list)
+        or budget.get("summary", {}).get("state") != "consistent"
+    ):
+        raise ValueError("Restored management budget is inconsistent")
+    for request, row in expected.items():
+        verify_response(rows[request], request, row, digest)
+        route = "/api/v1/ops/evaluations/" + request
+        detail = get(route)
+        if {
+            key: value for key, value in detail.items() if key != "postprocessing"
+        } != rows[request] or detail.get("postprocessing", {}).get(
+            "can_recover"
+        ) is not False:
+            raise ValueError("Restored management detail differs from its listing")
+        if detail["report_url"] != route + "/report":
+            raise ValueError("Restored management report route differs")
+        run_budget = get(route + "/budget")
+        if (
+            run_budget.get("state") != "not_applicable"
+            or run_budget.get("reservation") is not None
+            or run_budget.get("calls") != []
+        ):
+            raise ValueError("Restored replay unexpectedly has a paid budget")
+    return {
+        "evidence": {
+            "status": "PASS",
+            "session_verified": True,
+            "listed_run_count": total_runs,
+            "matched_details": len(expected),
+            "pagination_complete": True,
+            "budget_reads_verified": True,
+            "unauthorized_reads_rejected": True,
+            "browser_rendered": False,
+        },
+        "responses": snapshots,
+    }
+
+
 def check_http(expected):
     from ops_volume_restore_probe import expected_runs, tree
 
@@ -155,6 +265,7 @@ def check_http(expected):
             "email": user.email,
             "role": "ADMIN",
         }
+        total_runs = EvaluationRun.objects.count()
         connection.close()
         token, member_token = core_login(principal, core_password)
         servers = []
@@ -229,6 +340,9 @@ def check_http(expected):
                     if time.monotonic() >= deadline:
                         raise ValueError("Restored HTTP startup timed out") from None
                     time.sleep(1)
+            management = check_management(
+                expected, principal, token, member_token, total_runs
+            )
             for request, row in expected.items():
                 route = "/api/v1/ops/evaluations/" + request + "/report"
                 for cookie, code in (
@@ -286,10 +400,13 @@ def check_http(expected):
         "servers_stopped": True,
         "runtime_uid": 10001,
         "model_api_calls": 0,
+        "management_http": management["evidence"],
+        "management_responses": management["responses"],
     }
 
 
 def verify(image, volume, expected, database):
+    import ops_database_restore_probe
     import ops_volume_restore_probe
     from smoke_ops_bridge import execute
 
@@ -344,6 +461,11 @@ def verify(image, volume, expected, database):
             + repr(Path(ops_volume_restore_probe.__file__).read_text(encoding="utf-8"))
             + ", module.__dict__)\n"
             + "sys.modules[module.__name__]=module\n"
+            + "module=types.ModuleType('ops_database_restore_probe')\nexec("
+            + repr(
+                Path(ops_database_restore_probe.__file__).read_text(encoding="utf-8")
+            )
+            + ", module.__dict__)\nsys.modules[module.__name__]=module\n"
             + Path(__file__).read_text(encoding="utf-8")
             + "\nprint(json.dumps(check_http("
             + repr(expected)
@@ -375,6 +497,56 @@ def verify(image, volume, expected, database):
             for key, value in required.items()
         ):
             raise ValueError("Incomplete restored Ops HTTP evidence")
+        management = result.get("management_http", {})
+        if (
+            management.get("status") != "PASS"
+            or type(management.get("listed_run_count")) is not int
+            or not len(expected) <= management["listed_run_count"] <= 1000
+            or type(management.get("matched_details")) is not int
+            or management["matched_details"] != len(expected)
+            or management.get("browser_rendered") is not False
+            or any(
+                management.get(key) is not True
+                for key in (
+                    "session_verified",
+                    "pagination_complete",
+                    "budget_reads_verified",
+                    "unauthorized_reads_rejected",
+                )
+            )
+        ):
+            raise ValueError("Incomplete restored management HTTP evidence")
+        snapshots = result.pop("management_responses")
+        with tempfile.TemporaryDirectory(prefix="ops-restore-contract-") as folder:
+            contract = Path(folder) / "responses.json"
+            contract.write_text(
+                json.dumps(
+                    {
+                        "responses": snapshots,
+                        "expected": expected,
+                        "total_runs": management["listed_run_count"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            result["management_web_contract"] = json.loads(
+                execute(
+                    [
+                        "node",
+                        "--experimental-transform-types",
+                        Path(__file__).with_name("check_ops_restore_ui.mjs"),
+                        contract,
+                    ],
+                    timeout=60,
+                )
+            )
+        if result["management_web_contract"] != {
+            "status": "PASS",
+            "matched_details": len(expected),
+            "listed_run_count": management["listed_run_count"],
+            "browser_rendered": False,
+        }:
+            raise ValueError("Incomplete restored management web contract evidence")
     finally:
         if identity is not None:
             execute(["docker", "rm", "--force", "--volumes", identity], timeout=30)

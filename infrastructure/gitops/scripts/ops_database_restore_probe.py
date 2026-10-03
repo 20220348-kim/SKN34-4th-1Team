@@ -70,7 +70,7 @@ def inspect_database(expected, release_sha256):
         EvaluationRun,
     )
     from apps.evaluations.views import run_data
-    from django.db import DatabaseError, connection
+    from django.db import DatabaseError, connection, transaction
     from django.test import Client
     from rest_framework.renderers import JSONRenderer
 
@@ -80,18 +80,32 @@ def inspect_database(expected, release_sha256):
         cursor.execute("SHOW GRANTS FOR CURRENT_USER")
         if {row[0] for row in cursor.fetchall()} != {
             "GRANT USAGE ON *.* TO `ops_restore_reader`@`%`",
-            "GRANT SELECT ON `govbiz_ops`.* TO `ops_restore_reader`@`%`",
+            "GRANT SELECT, LOCK TABLES ON `govbiz_ops`.* TO `ops_restore_reader`@`%`",
         }:
-            raise ValueError("Restore reader must have SELECT-only database grants")
-        try:
-            cursor.execute(
-                "UPDATE evaluations_evaluationadmission SET version=version WHERE id=1"
+            raise ValueError(
+                "Restore reader must have only SELECT and LOCK TABLES grants"
             )
-        except DatabaseError as error:
-            if not error.args or error.args[0] != 1142:
-                raise ValueError("Unexpected restore reader write failure") from None
-        else:
-            raise ValueError("Restore reader accepted a database write")
+        for statement in (
+            "UPDATE evaluations_evaluationadmission SET version=version WHERE id=1",
+            "UPDATE evaluations_evaluationbudget SET allocated_calls=allocated_calls WHERE id=1",
+        ):
+            try:
+                cursor.execute(statement)
+            except DatabaseError as error:
+                if not error.args or error.args[0] != 1142:
+                    raise ValueError(
+                        "Unexpected restore reader write failure"
+                    ) from None
+            else:
+                raise ValueError("Restore reader accepted a database write")
+    # Budget GETs hold this lock for a consistent ledger snapshot. LOCK TABLES
+    # permits FOR UPDATE in MySQL without granting any data-changing privilege.
+    with transaction.atomic(), connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT id FROM evaluations_evaluationbudget WHERE id=1 FOR UPDATE"
+        )
+        if cursor.fetchone() != (1,):
+            raise ValueError("Restored budget lock target is missing")
     # Exercise the real URL, view and migration/column checks, without a web server
     # or authentication bypass on a running service. No migration is applied.
     response = Client(HTTP_HOST="127.0.0.1").get("/api/v1/health/ready")
@@ -108,7 +122,7 @@ def inspect_database(expected, release_sha256):
         verify_response(row, request, expected_row, digest)
 
     fixture = EvaluationRun.objects.select_related("requested_by").get(
-        dataset_id="backup-rehearsal-fixture"
+        requested_by__username="backup-rehearsal-fixture"
     )
     review = EvaluationReview.objects.select_related("reviewed_by").get(run=fixture)
     reservation = EvaluationBudgetReservation.objects.select_related("budget").get(
@@ -116,6 +130,7 @@ def inspect_database(expected, release_sha256):
     )
     if (
         fixture.requested_by.username != "backup-rehearsal-fixture"
+        or fixture.status != "CANCELLED"
         or fixture.summary != {"한글": ["따옴표 ' \"", "줄바꿈\n복원 🧪", None]}
         or fixture.started_at is not None
         or fixture.finished_at is None
@@ -123,7 +138,7 @@ def inspect_database(expected, release_sha256):
         or review.comment != "격리 복원 검증 🧪"
         or review.decision != "APPROVED"
         or reservation.closed_at is None
-        or reservation.max_calls != 0
+        or reservation.max_calls != 1
         or reservation.max_output_tokens != 0
         or not EvaluationBudgetChange.objects.filter(
             budget=reservation.budget,
@@ -139,7 +154,8 @@ def inspect_database(expected, release_sha256):
         "readiness": "UP",
         "evaluation_count": len(expected),
         "execution_release_sha256": release_sha256,
-        "select_only_grants": True,
+        "read_only_grants": True,
+        "budget_lock_verified": True,
         "write_rejected": True,
         "response_serialization_verified": True,
         "relational_fixture_verified": True,
