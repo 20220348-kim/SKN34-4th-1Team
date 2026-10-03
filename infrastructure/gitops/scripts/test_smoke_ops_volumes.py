@@ -13,6 +13,7 @@ SETTINGS = {"repository": "bridge-smoke/local", "cluster": PROJECT}
 IMAGE = "sha256:" + "a" * 64
 PREFECT_IMAGE = "sha256:" + "b" * 64
 HELPER = "f" * 64
+READER = "e" * 64
 IDS = {name: str(index) * 64 for index, name in enumerate(smoke.SERVICES, 1)}
 
 
@@ -27,6 +28,9 @@ class VolumeSmokeTests(unittest.TestCase):
         self.helper_failure = False
         self.missing_evidence = False
         self.api_defect = None
+        self.results_api_defect = None
+        self.reader_failure = False
+        self.reader_exit = 0
         self.cleanup_failure = False
         self.name_collision = False
         self.volumes = {}
@@ -52,9 +56,15 @@ class VolumeSmokeTests(unittest.TestCase):
         if command[:2] == ["compose", "ps"]:
             return IDS[command[-1]]
         if command[:2] == ["docker", "inspect"]:
-            if command[-1] == HELPER:
+            if command[-1] in {HELPER, READER}:
                 return json.dumps(
-                    {"Running": False, "ExitCode": self.helper_exit, "OOMKilled": False}
+                    {
+                        "Running": False,
+                        "ExitCode": self.reader_exit
+                        if command[-1] == READER
+                        else self.helper_exit,
+                        "OOMKilled": False,
+                    }
                 )
             service = next(
                 name for name, identity in IDS.items() if identity == command[-1]
@@ -109,11 +119,30 @@ class VolumeSmokeTests(unittest.TestCase):
             self.stopped = True
         if command[:2] == ["docker", "create"]:
             self.expected_kind = json.loads(command[-1])["kind"]
+            if json.loads(command[-1]).get("phase") == "results-api":
+                return READER
             return HELPER
         if command[:2] == ["docker", "start"]:
             if self.helper_failure:
                 raise subprocess.CalledProcessError(1, command)
             compile(data, "restore-probe", "exec")
+            if command[-1] == READER:
+                if self.reader_failure:
+                    raise subprocess.TimeoutExpired(command, 90)
+                api = {
+                    "status": "PASS",
+                    "matched_reports": 1,
+                    "unauthenticated_rejected": True,
+                    "invalid_token_rejected": True,
+                    "writes_rejected": True,
+                    "files_unchanged": True,
+                    "server_stopped": True,
+                    "runtime_uid": 10001,
+                }
+                if self.results_api_defect is not None:
+                    key, value = self.results_api_defect
+                    api[key] = value
+                return json.dumps(api)
             if self.missing_evidence:
                 return '{"status":"PASS"}'
             api = {
@@ -162,21 +191,32 @@ class VolumeSmokeTests(unittest.TestCase):
         self.assertFalse(evidence["backup_verified"])
         self.assertFalse(evidence["personal_environment_verified"])
         self.assertTrue(evidence["prefect_server_started"])
+        self.assertTrue(evidence["results_server_started"])
+        self.assertEqual(evidence["scope"], "disposable_results_http_and_prefect_api")
         self.assertEqual(len(self.commands(["docker", "stop"])), 1)
         helpers = self.commands(["docker", "create"])
-        self.assertEqual(len(helpers), 2)
+        self.assertEqual(len(helpers), 3)
         self.assertEqual(helpers[0][-4], IMAGE)
-        self.assertEqual(helpers[1][-4], PREFECT_IMAGE)
+        self.assertEqual(helpers[1][-4], IMAGE)
+        self.assertEqual(helpers[2][-4], PREFECT_IMAGE)
         for command in helpers:
             self.assertEqual(command[command.index("--network") + 1], "none")
             self.assertEqual(command[command.index("--entrypoint") + 1], "python")
             mounts = [
                 command[i + 1] for i, part in enumerate(command) if part == "--mount"
             ]
-            self.assertTrue(mounts[0].endswith("target=/source,readonly"))
-            self.assertTrue(
-                mounts[1].startswith("type=volume,source=govbiz-volume-restore-")
-            )
+            if json.loads(command[-1]).get("phase") == "results-api":
+                self.assertEqual(command[command.index("--user") + 1], "10001:10001")
+                self.assertEqual(len(mounts), 1)
+                self.assertTrue(mounts[0].endswith("target=/restore,readonly"))
+                self.assertNotIn("--cap-add", command)
+                self.assertNotIn("--env", command)
+                self.assertNotIn(PROJECT, mounts[0])
+            else:
+                self.assertTrue(mounts[0].endswith("target=/source,readonly"))
+                self.assertTrue(
+                    mounts[1].startswith("type=volume,source=govbiz-volume-restore-")
+                )
             self.assertNotIn("--publish", command)
         removed = self.commands(["docker", "volume", "rm"])
         self.assertEqual(len(removed), 2)
@@ -230,6 +270,7 @@ class VolumeSmokeTests(unittest.TestCase):
         self.assertEqual(len(self.commands(["docker", "volume", "rm"])), 1)
         self.assertEqual(self.report["volume_restore"]["status"], "FAIL")
         self.assertIsNone(self.report["volume_restore"]["prefect_server_started"])
+        self.assertIsNone(self.report["volume_restore"]["results_server_started"])
 
     def test_nonzero_helper_exit_or_incomplete_success_cannot_pass(self):
         for field, value in (("helper_exit", 1), ("missing_evidence", True)):
@@ -267,6 +308,55 @@ class VolumeSmokeTests(unittest.TestCase):
                 self.verify()
             self.assertEqual(self.report["volume_restore"]["status"], "FAIL")
             self.assertEqual(len(self.commands(["docker", "volume", "rm"])), 2)
+
+    def test_results_api_requires_complete_evidence(self):
+        for key, value in (
+            ("status", "FAIL"),
+            ("matched_reports", True),
+            ("matched_reports", 0),
+            ("unauthenticated_rejected", False),
+            ("invalid_token_rejected", False),
+            ("writes_rejected", False),
+            ("files_unchanged", False),
+            ("server_stopped", False),
+            ("runtime_uid", 0),
+        ):
+            self.stopped = False
+            self.events.clear()
+            self.results_api_defect = (key, value)
+            with (
+                self.subTest(key=key),
+                self.assertRaisesRegex(ValueError, "results API evidence"),
+            ):
+                self.verify()
+            self.assertEqual(self.report["volume_restore"]["status"], "FAIL")
+            self.assertIsNone(self.report["volume_restore"]["results_server_started"])
+            self.assertEqual(len(self.commands(["docker", "rm"])), 2)
+            self.assertEqual(len(self.commands(["docker", "volume", "rm"])), 1)
+
+    def test_reader_timeout_or_bad_exit_cleans_both_helpers(self):
+        for field in ("reader_failure", "reader_exit"):
+            self.stopped = False
+            self.events.clear()
+            setattr(self, field, True if field == "reader_failure" else 137)
+            with (
+                self.subTest(field=field),
+                self.assertRaises((subprocess.TimeoutExpired, ValueError)),
+            ):
+                self.verify()
+            self.assertEqual(len(self.commands(["docker", "rm"])), 2)
+            self.assertEqual(len(self.commands(["docker", "volume", "rm"])), 1)
+            setattr(self, field, False if field == "reader_failure" else 0)
+
+    def test_reader_cleanup_error_still_removes_copy_helper(self):
+        self.cleanup_failure = True
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.verify()
+        self.assertEqual(
+            [command[-1] for command in self.commands(["docker", "rm"])],
+            [READER, HELPER],
+        )
+        self.assertEqual(self.report["volume_restore"]["status"], "FAIL")
 
 
 if __name__ == "__main__":

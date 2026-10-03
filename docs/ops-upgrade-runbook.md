@@ -133,6 +133,14 @@ Prefect를 중지한다. 컨테이너 ID·이미지·Compose 소유권·볼륨 �
   대조한다. 기존 대상 덮어쓰기, 심볼릭/하드 링크, 특수 파일·권한을 거절한다.
   볼륨당 64 MiB·10,000개 항목을 넘으면 실패하며 개인 데이터용 범용 백업 도구로 사용하지 않는다.
 - 최초 고정 근거 평가 1건과 교체 전후 RAG 평가 2건의 인증 보고서 SHA-256을 복원 파일과 대조한다.
+- 파일 복원 후 같은 결과 서버 이미지의 별도 컨테이너를 UID/GID 10001로 시작한다. 복원 사본만
+  읽기 전용으로 연결하고 원본 볼륨·기존 환경변수·DB/모델 자격 증명은 전달하지 않는다.
+  모든 capability를 제거하고 네트워크·호스트 포트를 차단한다.
+- 이 컨테이너의 Gunicorn 결과 서버는 내부 `127.0.0.1:8010`에서만 실행하며 매번 새 검사 토큰을 쓴다.
+  인증된 상태 조회와 3건의 보고서 GET·SHA-256, 무인증/잘못된 토큰의 401, POST/PUT/DELETE의
+  405를 검증한다. 응답 크기·캐시 금지 헤더를 검사하며 프록시·redirect는 허용하지 않는다.
+  파일 읽기 권한 오류·기동 시간 초과·비정상 종료·검사 중 파일 변경·도우미 정리 실패는 전체 실패다.
+- 결과 파일 보존 확인과 별도로 Prefect 저장소를 검사한다.
   Prefect SQLite의 무결성·외래 키·migration과 해당 3건의 deployment·완료 상태 이력·request/flow ID를 확인한다.
   진행 중 실행이나 활성 스케줄이 있으면 성공 처리하지 않는다.
 - SQLite의 `prefect.db`뿐 아니라 남아 있는 WAL·SHM도 함께 복사한다.
@@ -146,14 +154,22 @@ Prefect를 중지한다. 컨테이너 ID·이미지·Compose 소유권·볼륨 �
 - 검사 전후 원본 보존을 확인하고 이번에 만든 도우미와 복원 볼륨만 삭제한다.
   실패·정리 오류는 전체 실패로 남기며 정지한 시험 프로젝트는 최상위 정리 단계에서 제거한다.
 
-`ops-bridge.json`의 `volume_restore.scope=disposable_results_and_prefect_api`와 `status=PASS`는
-이 파일·SQLite·Prefect API 검증의 성공만 뜻한다. `results`와 `prefect`에 대조 건수·해시·정리 결과를,
-`prefect.api`에 API 대조·DB 무변경·정상 종료 결과를 남긴다. 성공 시 `prefect_server_started=true`이며,
+`ops-bridge.json`의 `volume_restore.scope=disposable_results_http_and_prefect_api`와 `status=PASS`는
+이 파일·결과 HTTP·SQLite·Prefect API 검증의 성공만 뜻한다. `results`와 `prefect`에 대조 건수·해시·정리 결과를,
+`results.api`에 인증·쓰기 거절·파일 무변경·일반 사용자 실행·정상 종료 결과를,
+`prefect.api`에 API 대조·DB 무변경·정상 종료 결과를 남긴다.
+성공 시 `results_server_started=true`, `prefect_server_started=true`이며,
 증거가 완성되지 않은 실패에서는 `null`로 미확인을 표시한다.
-실행기 재개·새 평가 실행·Secret/서명 키 복구·Langfuse 저장소 복원은 검증하지 않는다.
+검사 토큰을 새로 생성하므로 기존 Secret/서명 키 복구는 검증하지 않는다.
+실행기 재개·새 평가 실행·복원 DB를 사용하는 Ops API·관리자 화면·Langfuse 저장소 복원도 별도다.
 `backup_verified`, `personal_environment_verified`는 계속 `false`다.
 개인 환경 갱신 승인이나 전체 저장소의 동일 시점 백업 증거로 사용하지 않는다.
 CI에 연결된 코드가 있어도 최신 SHA의 실제 통합 작업이 이 단계까지 통과해야 실행 완료로 기록한다.
+
+선행 `skn-140 / f718ea0`의 필수 CI 5개와
+[LLMOps 실제 서버 검사](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/37031288852)는 통과했다.
+그 실행의 증거는 DB 27개 테이블·166개 행, 결과 보고서 3건과 Prefect API 복원을 포함하며,
+이번에 추가한 복원 결과 서버 HTTP 검사는 포함하지 않는다. 새 변경 SHA에서 별도로 검증한다.
 
 ## 3. 같은 소스에서 빌드하고 갱신
 

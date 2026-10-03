@@ -2,6 +2,7 @@
 
 import json
 import re
+import subprocess
 from pathlib import Path
 from uuid import uuid4
 
@@ -64,7 +65,7 @@ def unused_volumes(sources, containers):
 def restore_volume(image, source, kind, expected):
     name = "govbiz-volume-restore-" + uuid4().hex
     label = "govbiz.restore=" + name
-    identity = None
+    helpers = []
     created = False
     result = None
     if execute(
@@ -118,8 +119,8 @@ def restore_volume(image, source, kind, expected):
             ]
         ).strip()
         if not re.fullmatch(r"[a-f0-9]{64}", identity):
-            identity = None
             raise ValueError("Invalid restore helper identity")
+        helpers.append(identity)
         raw = execute(
             ["docker", "start", "--attach", "--interactive", identity],
             data=Path(probe.__file__).read_text(encoding="utf-8"),
@@ -163,11 +164,82 @@ def restore_volume(image, source, kind, expected):
                 or api.get("automatic_migrations") is not False
             ):
                 raise ValueError("Incomplete restored Prefect API evidence")
+        else:
+            # The copy helper needs ownership privileges; the HTTP reader does not.
+            # It sees only the restored copy, mounted read-only, as the runtime user.
+            reader = execute(
+                [
+                    "docker",
+                    "create",
+                    "--interactive",
+                    "--network",
+                    "none",
+                    "--read-only",
+                    "--user",
+                    "10001:10001",
+                    "--cap-drop",
+                    "ALL",
+                    "--security-opt",
+                    "no-new-privileges:true",
+                    "--memory",
+                    "256m",
+                    "--pids-limit",
+                    "64",
+                    "--tmpfs",
+                    "/tmp:rw,noexec,nosuid,size=32m,mode=1777",
+                    "--mount",
+                    "type=volume,source=" + name + ",target=/restore,readonly",
+                    "--entrypoint",
+                    "python",
+                    image,
+                    "-B",
+                    "-",
+                    json.dumps(
+                        {"kind": kind, "expected": expected, "phase": "results-api"}
+                    ),
+                ]
+            ).strip()
+            if not re.fullmatch(r"[a-f0-9]{64}", reader):
+                raise ValueError("Invalid restored results reader identity")
+            helpers.append(reader)
+            raw = execute(
+                ["docker", "start", "--attach", "--interactive", reader],
+                data=Path(probe.__file__).read_text(encoding="utf-8"),
+                timeout=90,
+            )
+            state = json.loads(
+                execute(["docker", "inspect", "--format", "{{json .State}}", reader])
+            )
+            if state["Running"] or state["ExitCode"] != 0 or state["OOMKilled"]:
+                raise ValueError("Restored results reader did not exit successfully")
+            api = json.loads(raw)
+            required_api = {
+                "status": "PASS",
+                "matched_reports": len(expected),
+                "unauthenticated_rejected": True,
+                "invalid_token_rejected": True,
+                "writes_rejected": True,
+                "files_unchanged": True,
+                "server_stopped": True,
+                "runtime_uid": 10001,
+            }
+            if not isinstance(api, dict) or any(
+                type(api.get(key)) is not type(value) or api[key] != value
+                for key, value in required_api.items()
+            ):
+                raise ValueError("Incomplete restored results API evidence")
+            result["api"] = api
     finally:
         # Attempt both removals even if one fails; never target a source volume.
         try:
-            if identity is not None:
-                execute(["docker", "rm", "--force", identity], timeout=30)
+            errors = []
+            for identity in reversed(helpers):
+                try:
+                    execute(["docker", "rm", "--force", identity], timeout=30)
+                except (OSError, subprocess.SubprocessError) as error:
+                    errors.append(error)
+            if errors:
+                raise errors[0]
         finally:
             if created:
                 info = json.loads(execute(["docker", "volume", "inspect", name]))[0]
@@ -183,10 +255,11 @@ def restore_volume(image, source, kind, expected):
 def verify(state, settings, compose, env, expected, report):
     evidence = report["volume_restore"] = {
         "status": "FAIL",
-        "scope": "disposable_results_and_prefect_api",
+        "scope": "disposable_results_http_and_prefect_api",
         "backup_verified": False,
         "personal_environment_verified": False,
         "prefect_server_started": None,
+        "results_server_started": None,
         "model_api_calls": 0,
     }
     expected = probe.expected_runs(expected)
@@ -265,6 +338,7 @@ def verify(state, settings, compose, env, expected, report):
         network_isolated=True,
         cleanup_complete=True,
         prefect_server_started=True,
+        results_server_started=True,
     )
     # Preserve the already verified runner identity before the caller's cleanup.
     return containers["evaluation-runner"]["Image"]

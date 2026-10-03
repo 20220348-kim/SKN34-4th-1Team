@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import shutil
 import sqlite3
 import stat
@@ -13,8 +14,8 @@ import tarfile
 import tempfile
 import time
 from pathlib import Path
-from urllib.error import URLError
-from urllib.request import HTTPRedirectHandler, ProxyHandler, build_opener
+from urllib.error import HTTPError, URLError
+from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 from uuid import UUID
 
 MAX_BYTES = 64 * 1024 * 1024
@@ -301,6 +302,149 @@ def check_prefect_api(root, expected):
     }
 
 
+def results_response(path, token=None, *, method="GET"):
+    class NoRedirect(HTTPRedirectHandler):
+        def redirect_request(self, *args, **kwargs):
+            return None
+
+    client = build_opener(ProxyHandler({}), NoRedirect())
+    request = Request(
+        "http://127.0.0.1:8010" + path,
+        headers={} if token is None else {"Authorization": "Bearer " + token},
+        method=method,
+    )
+    try:
+        response = client.open(request, timeout=3)
+    except HTTPError as error:
+        response = error
+    with response:
+        raw = response.read(8 * 1024 * 1024 + 1)
+        if (
+            len(raw) > 8 * 1024 * 1024
+            or response.headers.get("Content-Length") != str(len(raw))
+            or response.headers.get("Cache-Control") != "no-store"
+            or response.headers.get("X-Content-Type-Options") != "nosniff"
+        ):
+            raise ValueError("Unexpected restored results HTTP response")
+        return response.status, response.headers, raw
+
+
+def check_results_api(root, expected):
+    """Read restored reports as the image's runtime user with a fresh test token."""
+    expected = expected_runs(expected)
+    if os.getuid() != 10001 or os.getgid() != 10001:
+        raise ValueError("Restored results API requires runtime UID/GID 10001")
+    before = tree(root)
+    token = secrets.token_hex(32)
+    with tempfile.TemporaryDirectory(prefix="results-restore-") as home:
+        evidence = Path(home) / "empty-evidence"
+        evidence.mkdir()
+        # Only the restored results are available. Never inherit DB/model credentials,
+        # the original storage token, proxy settings or the original evidence mount.
+        env = {
+            "PATH": os.environ["PATH"],
+            "HOME": home,
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "LLMOPS_RESULTS_DIR": str(root),
+            "LLMOPS_EVIDENCE_DIR": str(evidence),
+            "LLMOPS_ARTIFACT_TOKEN": token,
+        }
+        server = subprocess.Popen(
+            [
+                sys.executable,
+                "-B",
+                "-m",
+                "gunicorn",
+                "apps.evaluations.artifact_server:create_app()",
+                "--bind",
+                "127.0.0.1:8010",
+                "--workers",
+                "1",
+                "--timeout",
+                "15",
+                "--graceful-timeout",
+                "5",
+                "--worker-tmp-dir",
+                home,
+            ],
+            env=env,
+            cwd="/app",
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        try:
+            deadline = time.monotonic() + 30
+            while True:
+                if server.poll() is not None:
+                    raise ValueError(
+                        "Restored results server exited before verification"
+                    )
+                try:
+                    status, _, raw = results_response("/v1/status", token)
+                    if status != 200 or json.loads(raw) != {
+                        "schema_version": 1,
+                        "results_readable": True,
+                    }:
+                        raise ValueError("Invalid restored results health response")
+                    break
+                except (URLError, TimeoutError):
+                    if time.monotonic() >= deadline:
+                        raise ValueError(
+                            "Restored results API startup timed out"
+                        ) from None
+                    time.sleep(1)
+            for request, row in expected.items():
+                path = "/v1/results/" + request + "/evaluation/report.html"
+                for credential in (None, "invalid-restore-token"):
+                    status, _, raw = results_response(path, credential)
+                    if status != 401 or json.loads(raw) != {
+                        "code": "ARTIFACT_AUTH_REQUIRED"
+                    }:
+                        raise ValueError(
+                            "Restored results API accepted invalid credentials"
+                        )
+                for method in ("POST", "PUT", "DELETE"):
+                    status, headers, raw = results_response(path, token, method=method)
+                    if (
+                        status != 405
+                        or headers.get("Allow") != "GET"
+                        or json.loads(raw) != {"code": "READ_ONLY"}
+                    ):
+                        raise ValueError("Restored results API accepted a write method")
+                status, _, raw = results_response(path, token)
+                if (
+                    status != 200
+                    or hashlib.sha256(raw).hexdigest() != row["report_sha256"]
+                ):
+                    raise ValueError("Restored results HTTP report digest differs")
+            if server.poll() is not None:
+                raise ValueError("Restored results server exited during verification")
+        finally:
+            server.terminate()
+            try:
+                code = server.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                server.kill()
+                server.wait(timeout=5)
+                raise ValueError(
+                    "Restored results server did not stop cleanly"
+                ) from None
+            if code not in (0, -15, 143):
+                raise ValueError("Restored results server exit was unsuccessful")
+    if tree(root) != before:
+        raise ValueError("Restored results API changed files")
+    return {
+        "status": "PASS",
+        "matched_reports": len(expected),
+        "unauthenticated_rejected": True,
+        "invalid_token_rejected": True,
+        "writes_rejected": True,
+        "files_unchanged": True,
+        "server_stopped": True,
+        "runtime_uid": 10001,
+    }
+
+
 def verify(source, target, kind, expected, *, api=False):
     expected = expected_runs(expected)
     if kind not in {"results", "prefect"}:
@@ -334,14 +478,16 @@ def verify(source, target, kind, expected, *, api=False):
 if __name__ == "__main__":
     # Arguments contain only fixture execution identities and report hashes.
     value = json.loads(sys.argv[1])
-    print(
-        json.dumps(
-            verify(
-                Path("/source"),
-                Path("/restore"),
-                value["kind"],
-                value["expected"],
-                api=value["kind"] == "prefect",
-            )
+    if value.get("phase") == "results-api" and value["kind"] == "results":
+        result = check_results_api(Path("/restore"), value["expected"])
+    elif "phase" not in value:
+        result = verify(
+            Path("/source"),
+            Path("/restore"),
+            value["kind"],
+            value["expected"],
+            api=value["kind"] == "prefect",
         )
-    )
+    else:
+        raise ValueError("Unsupported restore verification phase")
+    print(json.dumps(result))
