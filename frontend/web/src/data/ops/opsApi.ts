@@ -270,6 +270,33 @@ const usageCorrectionSchema = z.object({
 const legacyAmountsSchema = z.object({
   calls: z.number().int().nonnegative(), input_tokens: z.number().int().nonnegative(), output_tokens: z.number().int().nonnegative(),
 })
+const unaccountedRunsSchema = z.object({
+  as_of: z.string().datetime({ offset: true }), count: z.number().int().nonnegative(),
+  next: z.string().nullable(), previous: z.string().nullable(),
+  results: z.array(z.object({
+    run_id: z.uuid(), dataset_id: z.string(), dataset_label: z.string(),
+    status: z.enum(['REQUESTED', 'QUEUED', 'RUNNING', 'CANCELLING', 'COMPLETED', 'FAILED', 'CANCELLED', 'CRASHED', 'RESULT_ERROR']),
+    status_label: z.string(), created_at: z.string().datetime({ offset: true }),
+  })),
+})
+const legacyPreviewBase = z.object({
+  as_of: z.string().datetime({ offset: true }), run_id: z.uuid(), applied: z.literal(false),
+})
+const legacyPreviewSchema = z.discriminatedUnion('state', [
+  legacyPreviewBase.extend({
+    state: z.literal('unavailable'), blockers: z.array(z.string().min(1)).min(1),
+  }),
+  legacyPreviewBase.extend({
+    state: z.literal('verified'), can_apply: z.boolean(), blockers: z.array(z.string().min(1)),
+    source: z.literal('SAVED_CAPTURE'), provider_receipt_verified: z.literal(false),
+    evidence_sha256: z.string().regex(/^[a-f0-9]{64}$/), capture_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+    usage: legacyAmountsSchema.extend({ calls: z.number().int().positive() }),
+    before: legacyAmountsSchema.nullable(), after: legacyAmountsSchema.nullable(),
+  }),
+]).refine((data) => data.state === 'unavailable' || data.can_apply === (data.blockers.length === 0)
+  && (data.before === null ? data.after === null && !data.can_apply
+    : data.after !== null && (['calls', 'input_tokens', 'output_tokens'] as const)
+      .every((key) => data.after![key] - data.before![key] === data.usage[key])))
 const legacyUsageSchema = z.object({
   request_id: z.uuid(), run_id: z.uuid(), source: z.literal('SAVED_CAPTURE'), provider_receipt_verified: z.literal(false),
   actor: z.string().trim().min(1), reason: z.string().trim().min(1),
@@ -376,6 +403,8 @@ export type EvaluationPage = z.infer<typeof pageSchema>
 export type BudgetBreakdown = z.infer<typeof budgetBreakdownSchema>
 export type BudgetPage = z.infer<typeof budgetPageSchema>
 export type RunBudget = z.infer<typeof runBudgetSchema>
+export type UnaccountedRuns = z.infer<typeof unaccountedRunsSchema>
+export type LegacyUsagePreview = z.infer<typeof legacyPreviewSchema>
 export type EvaluationReview = z.infer<typeof reviewSchema>
 export type CaseReviewDecision = EvaluationReview['case_reviews'][number]['decision']
 export type ReviewStamp = { capture_sha256: string; fixture_sha256: string; rubric_version: string; review_version: number }
@@ -430,6 +459,9 @@ async function request<T>(path: string, schema: z.ZodType<T>, options: RequestIn
 export const getOpsSession = (signal?: AbortSignal) => request('/session', sessionSchema, { signal })
 export const getBudgetSummary = (signal?: AbortSignal) => request('/budget', budgetSummarySchema.extend({ as_of: z.string() }), { signal })
 export const getBudgetReservations = (page: number, signal?: AbortSignal) => request(`/budget/reservations?page=${page}`, budgetPageSchema, { signal })
+export const getUnaccountedRuns = (page: number, signal?: AbortSignal) => request(`/budget/unaccounted-runs?page=${page}`, unaccountedRunsSchema, { signal })
+export const getLegacyUsagePreview = (id: string, signal?: AbortSignal) => request(`/evaluations/${encodeURIComponent(id)}/legacy-usage-preview`,
+  legacyPreviewSchema.refine((data) => data.run_id === id), { signal })
 export const getRunBudget = (id: string, signal?: AbortSignal) => request(`/evaluations/${encodeURIComponent(id)}/budget`,
   runBudgetSchema.refine((data) => !data.legacy_usage || data.legacy_usage.run_id === id), { signal })
 

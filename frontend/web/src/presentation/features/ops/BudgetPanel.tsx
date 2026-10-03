@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router'
 import { getBudgetReservations, getRunBudget, OpsApiError, type BudgetBreakdown, type BudgetPage, type RunBudget } from '../../../data/ops/opsApi'
 import { workspacePageStyles as styles } from '../../shared/workspace/WorkspacePage.styles'
+import { UnaccountedRunsPanel } from './UnaccountedRunsPanel'
 
 const date = (value: string) => new Date(value).toLocaleString('ko-KR')
 const count = (value: number) => value.toLocaleString('ko-KR')
@@ -30,6 +31,7 @@ export function BudgetOverview({ onExpired, refreshKey }: { onExpired: () => voi
   const [data, setData] = useState<BudgetPage | null>(null)
   const [error, setError] = useState('')
   const [refresh, setRefresh] = useState(0)
+  const [showUnaccounted, setShowUnaccounted] = useState(false)
   const expiry = useRef(onExpired); expiry.current = onExpired
   useEffect(() => {
     const controller = new AbortController()
@@ -66,6 +68,8 @@ export function BudgetOverview({ onExpired, refreshKey }: { onExpired: () => voi
       {summary.state === 'unconfigured'  && <p role="status">누적 한도가 설정되지 않았습니다. 잔여 예산을 계산할 수 없습니다.</p>}
       {summary.state === 'inconsistent' && <p role="alert" className="text-sm text-red-700">저장된 할당량과 상세 장부가 일치하지 않습니다. 잔여 한도를 확정할 수 없어 표시하지 않습니다.</p>}
       {summary.legacy_live_run_count > 0 && <p className="text-sm text-amber-800">예약 기록이 없는 과거 모델 실행 {count(summary.legacy_live_run_count)}건이 있습니다. 해당 실행의 사용량은 이 장부에서 확인할 수 없습니다.</p>}
+      {(summary.legacy_live_run_count > 0 || showUnaccounted) && <button className={styles.secondaryButton} aria-expanded={showUnaccounted} onClick={() => setShowUnaccounted((value) => !value)}>{showUnaccounted ? '미반영 실행 목록 닫기' : '미반영 실행 목록 확인'}</button>}
+      {showUnaccounted && <UnaccountedRunsPanel onExpired={onExpired} refreshKey={refreshKey + refresh} />}
       {Boolean(summary.legacy_accounted_run_count) && <p className="text-sm">저장 응답을 검토해 과거 실행 {count(summary.legacy_accounted_run_count!)}건의 사용량을 합산했습니다. 당시 예약이나 제공자의 청구 확인을 뜻하지 않습니다.</p>}
       {summary.limits && <dl className="grid gap-3 text-sm sm:grid-cols-3">{[
         ['전체 한도', summary.limits], ['저장된 할당량', summary.allocated], ['잔여 한도', summary.state === 'consistent' ? summary.remaining : null],

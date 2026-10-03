@@ -1,5 +1,7 @@
 """Core 관리자 세션으로 읽는 장부. 실행기 전용 예산 쓰기 API와 인증을 공유하지 않는다."""
 
+from uuid import uuid4
+
 from django.db import transaction
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -11,6 +13,8 @@ from rest_framework.response import Response
 from .budget import call_limits
 from .budget_cleanup import cleanup_data
 from .budget_reporting import budget_summary, legacy_usage_data, reservation_data
+from .catalog import DATASETS
+from .legacy_usage import LegacyUsageUnavailable, reconcile_legacy_usage
 from .models import (
     EvaluationBudget,
     EvaluationBudgetReservation,
@@ -48,6 +52,71 @@ def api_reservations(request):
     # Full ledger totals and this page are materialized before releasing the common budget lock.
     response.data.update({"as_of": as_of, "summary": budget_summary(budget)})
     return response
+
+
+@never_cache
+@api_view(["GET"])
+def api_unaccounted_runs(request):
+    # Include incomplete/new runs too: missing accounting is not proof of eligible legacy usage.
+    rows = EvaluationRun.objects.filter(
+        execution_mode="live", budget_reservation__isnull=True, legacy_usage__isnull=True
+    ).order_by("-created_at", "-id")
+    paginator = PageNumberPagination()
+    paginator.page_size = 25
+    page = paginator.paginate_queryset(rows, request)
+    response = paginator.get_paginated_response(
+        [
+            {
+                "run_id": str(run.pk),
+                "dataset_id": run.dataset_id,
+                "dataset_label": DATASETS.get(run.dataset_id, {}).get("label", run.dataset_id),
+                "status": run.status,
+                "status_label": run.get_status_display(),
+                "created_at": run.created_at.isoformat(),
+            }
+            for run in page
+        ]
+    )
+    response.data["as_of"] = timezone.now().isoformat()
+    return response
+
+
+@never_cache
+@api_view(["GET"])
+def api_legacy_usage_preview(request, run_id):
+    get_object_or_404(EvaluationRun, pk=run_id)
+    base = {"run_id": str(run_id), "applied": False}
+    try:
+        # Reuse the CLI's integrity/budget checks in preview mode only. No audit is written.
+        preview = reconcile_legacy_usage(
+            run_id=run_id,
+            request_id=uuid4(),
+            actor=request.user.get_username(),
+            reason="관리자 화면의 과거 사용량 읽기 전용 확인",
+            apply=False,
+        )
+    except LegacyUsageUnavailable as error:
+        result = {**base, "state": "unavailable", "blockers": [str(error)]}
+    else:
+        result = {
+            **base,
+            "state": "verified",
+            **{
+                key: preview[key]
+                for key in (
+                    "can_apply",
+                    "blockers",
+                    "usage",
+                    "before",
+                    "after",
+                    "evidence_sha256",
+                    "source",
+                    "provider_receipt_verified",
+                )
+            },
+            "capture_sha256": preview["evidence"]["capture_sha256"],
+        }
+    return Response({"as_of": timezone.now().isoformat(), **result})
 
 
 @never_cache
