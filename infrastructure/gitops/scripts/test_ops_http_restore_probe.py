@@ -187,7 +187,18 @@ class ContainerTests(unittest.TestCase):
             "status": "PASS",
             "matched_details": 3,
             "listed_run_count": 4,
-            "browser_rendered": False,
+            "browser_rendered": True,
+            "browser_ui": {
+                "status": "PASS",
+                "response_source": "captured_restore_http",
+                "browser_version": "149.0.0.0",
+                "listed_run_count": 4,
+                "pages_verified": 1,
+                "budget_view_verified": True,
+                "denied_view_verified": True,
+                "browser_rendered": True,
+                "browser_closed": True,
+            },
             "proxy_http": {
                 "status": "PASS",
                 "mode": "portfolio",
@@ -275,7 +286,15 @@ class ContainerTests(unittest.TestCase):
         for key, value in (
             ("status", "FAIL"),
             ("matched_details", 2),
-            ("browser_rendered", True),
+            ("browser_rendered", False),
+            ("browser_rendered", 1),
+            ("browser_ui", {**self.web_proof["browser_ui"], "pages_verified": 0}),
+            (
+                "browser_ui",
+                {**self.web_proof["browser_ui"], "denied_view_verified": False},
+            ),
+            ("browser_ui", {**self.web_proof["browser_ui"], "browser_closed": False}),
+            ("browser_ui", {**self.web_proof["browser_ui"], "response_source": "live"}),
             ("proxy_http", None),
             ("proxy_http", {**self.web_proof["proxy_http"], "servers_stopped": False}),
             ("proxy_http", {**self.web_proof["proxy_http"], "response_source": "live"}),
@@ -296,6 +315,16 @@ class ContainerTests(unittest.TestCase):
             self.assertFalse(Path(contract).exists())
             self.assertEqual(self.events[-1][0][1], "rm")
             self.web_proof[key] = original
+
+    def test_missing_or_invalid_browser_version_cannot_pass(self):
+        for value in (None, {}, {"browser_version": ""}, {"browser_version": 149}):
+            self.web_proof["browser_ui"] = value
+            with (
+                self.subTest(value=value),
+                self.assertRaisesRegex(ValueError, "browser version"),
+            ):
+                self.run_probe()
+            self.assertEqual(self.events[-1][0][1], "rm")
 
     def test_incomplete_or_overclaimed_proof_is_rejected(self):
         for key, value in (

@@ -173,6 +173,11 @@ jobs:
         run: |
           pnpm install --frozen-lockfile
           node --experimental-transform-types --test infrastructure/gitops/scripts/test_ops_restore_proxy.mjs
+      - name: Install Chromium and render the isolated restore management view
+        timeout-minutes: 8
+        run: |
+          pnpm --dir frontend/web exec playwright-core install --with-deps --only-shell chromium
+          node --experimental-transform-types --test infrastructure/gitops/scripts/test_ops_restore_browser.mjs
       - name: Start React development proxy
         run: |
           (cd frontend/web && VITE_DEV_PROXY_TARGET=http://127.0.0.1:18082 VITE_CORE_API_BASE_URL=/ exec node node_modules/vite/bin/vite.js --host 127.0.0.1) > /tmp/govbiz-ops-web.log 2>&1 &

@@ -242,9 +242,15 @@ CSRF 토큰을 제거한 실제 응답을 loopback 재생 서버에 넣고, 실�
 프로세스 종료 전에 자신이 시작한 서버·임시 캐시·응답 파일을 정리한다.
 `results.ops_http.management_http`와 `management_web_contract`에 결과를 기록하고,
 후자의 `proxy_http.response_source=captured_restore_http`로 응답 재생 범위를 명시한다.
-HTML 진입 문서 제공은 확인하지만 실제 브라우저 렌더링·개인 Kubernetes까지의 전체 연결·
-기존 서명 키 복구·기존 세션 연속성은 포함하지 않는다. `browser_rendered=false`를 유지하며,
-실제 인증·DB·보고서 검사는 앞선 격리 Core/Ops HTTP 검증 결과로 구분한다. 최종 보고서에는 응답 원문을 넣지 않는다.
+이후 테스트 전용 Playwright와 새 브라우저 컨텍스트에서 실제 React 목록·페이지 이동·예산 표시를
+확인하고, 일반 회원 응답의 권한 오류 화면과 이력 미노출도 확인한다. 브라우저 버전·검사 건수·종료 결과를
+`management_web_contract.browser_ui`에 기록하고, 이 검사를 통과한 경우에만 해당 계약의
+`browser_rendered=true`를 기록한다. HTTP/프록시 자체 증거의 같은 필드는 false를 유지한다.
+검사용 HttpOnly 쿠키를 주입하며 브라우저는 격리 Vite의 GET만 허용한다. 개인 Kubernetes까지의 전체 연결·
+실제 브라우저 로그인·상세 화면·보고서 iframe·기존 서명 키 복구·기존 세션 연속성은 포함하지 않는다.
+실제 인증·DB·보고서 검사는 앞선 격리 Core/Ops HTTP 검증 결과로 구분한다. 최종 보고서에는 응답 원문·
+쿠키·브라우저 프로필을 넣지 않으며 임시 브라우저도 정리한다. Chromium 설치·로컬 Chrome 사용 명령은
+[복원 절차](../../../docs/ops-upgrade-runbook.md)를 따른다.
 같은 이미지의 Prefect API도 격리 기동해
 실행·배포·상태 이력을 재조회하고 종료 후 DB 무변경을 대조한다. 스케줄러·migration·실행기는 시작하지 않는다.
 개인 환경 백업·키 복구·업그레이드 완료를 증명하지 않는다. 세부 범위는 위 갱신 절차의 복원 검증 절을 따른다.
