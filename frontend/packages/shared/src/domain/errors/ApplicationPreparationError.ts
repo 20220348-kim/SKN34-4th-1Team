@@ -62,6 +62,7 @@ function messageFor(code: string, status: number): string {
   if (code === 'REQUEST_VALIDATION_FAILED' || status === 400) return '선택한 공식 양식과 지원 분야를 다시 확인해 주세요.'
   if (code === 'INVALID_RESPONSE') return '신청 준비 응답 형식을 확인하지 못했습니다.'
   if (code === 'REQUEST_TIMEOUT') return '신청 준비 요청 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.'
-  if (code === 'REQUEST_FAILED' || status === 0) return 'Core API에 연결하지 못했습니다. 연결 상태를 확인한 뒤 다시 시도해 주세요.'
+  if (status === 0) return 'Core API에 연결하지 못했습니다. 연결 상태를 확인한 뒤 다시 시도해 주세요.'
+  if (code === 'REQUEST_FAILED') return '서버에서 신청문서 요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.'
   return '신청 준비 정보를 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.'
 }

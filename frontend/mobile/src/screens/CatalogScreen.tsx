@@ -8,7 +8,7 @@ import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/
 import type { SupportProgram } from '@govbiz/shared/domain/entities/SupportProgram'
 import { errorMessage, programClient } from '../api/client'
 import { ChoiceField } from '../components/ChoiceField'
-import { ProgramCard } from '../components/ProgramCard'
+import { ProgramCard, type ProgramSelectionLabels } from '../components/ProgramCard'
 import { Button, Card, Field, Notice, Page, Subtitle, Title, colors, styles } from '../ui'
 
 export const initialFilters: SupportProgramCatalogFilters = {
@@ -21,7 +21,7 @@ const options = (values: readonly string[]) => [{ value: '', label: '전체' }, 
 export function CatalogScreen({ onOpenProgram, keyboardOffset = 0, selection, header }: {
   onOpenProgram: (identity: SupportProgramIdentity) => void; keyboardOffset?: number
   header?: ReactNode
-  selection?: { keys: string[]; disabled?: boolean; onToggle(program: SupportProgram): void }
+  selection?: { keys: string[]; disabled?: boolean; maximum?: number; labels?: ProgramSelectionLabels; onToggle(program: SupportProgram): void }
 }) {
   const defaults = { ...initialFilters, status: selection ? 'ALL' as const : initialFilters.status }
   const [draft, setDraft] = useState(defaults)
@@ -77,7 +77,7 @@ export function CatalogScreen({ onOpenProgram, keyboardOffset = 0, selection, he
       </>}
       <Button label="공고 검색" onPress={() => { setApplied({ ...draft, page: 1 }); setExpanded(false) }} />
       <Button label="조건 초기화" variant="ghost" onPress={() => { setDraft(defaults); setApplied({ ...defaults }) }} />
-      {selection && <Text style={styles.muted}>마감 공고도 이력 검토에 사용할 수 있어요. 공고 상세 조회와 비교 대상 선택은 별도 동작입니다.</Text>}
+      {selection && <Text style={styles.muted}>{selection.maximum === 1 ? '공고 상세 조회와 작성 대상 선택은 별도 동작입니다.' : '마감 공고도 이력 검토에 사용할 수 있어요. 공고 상세 조회와 비교 대상 선택은 별도 동작입니다.'}</Text>}
     </Card>
     {loading && <ActivityIndicator accessibilityLabel="공고를 불러오는 중" color={colors.primary} />}
     {error && <><Notice error>{error}</Notice><Button label="다시 불러오기" onPress={() => setRetry((value) => value + 1)} /></>}
@@ -87,7 +87,7 @@ export function CatalogScreen({ onOpenProgram, keyboardOffset = 0, selection, he
       {catalog.programs.map((program) => {
         const selected = selection?.keys.includes(`${program.sourceCode}:${program.id}`) ?? false
         return <ProgramCard key={JSON.stringify([program.sourceCode, program.id])} program={program} onOpen={onOpenProgram}
-          selection={selection ? { selected, disabled: Boolean(selection.disabled || (!selected && selection.keys.length >= 2)), onToggle: () => selection.onToggle(program) } : undefined} />
+          selection={selection ? { selected, labels: selection.labels, disabled: Boolean(selection.disabled || (!selected && selection.keys.length >= (selection.maximum ?? 2))), onToggle: () => selection.onToggle(program) } : undefined} />
       })}
       {catalog.totalPages > 0 && <View style={styles.row}>
         <Button label="이전" variant="secondary" disabled={applied.page <= 1} onPress={() => setApplied((value) => ({ ...value, page: value.page - 1 }))} />

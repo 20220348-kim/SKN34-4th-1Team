@@ -1035,6 +1035,10 @@ Discovery 전용 timeout은 model 210초 < AI run 240초 < Core read 270초 < Wo
 
 ## 신청 문서 MCP 파이프라인
 
+모바일 신청문서는 Expo의 전체 메뉴 Stack 안에서 목록·공고/양식 선택·문항별 입력·검토·생성 결과·온라인 입력 안내를 제공합니다.
+중복 검토의 카탈로그·관심 공고·공고 카드와 shared 업무 계약을 재사용하고, 기존 Core API에 Bearer 인증으로 연결합니다.
+기기 저장·공유와 입력 이탈 방지는 모바일에서 처리합니다. [모바일 신청문서 경계·실행 안내](mobile-application-documents.md)를 참고하세요.
+
 DOCX 경로는 `Core 공식 첨부 Client → ZIP/XML 문항 추출 → AI Service DocumentMap → 기존 Mapping·WritePlan → OOXML native edit → 재열기 검증 → Core 저장·다운로드`입니다. 문단·표 셀·명시적 내용 컨트롤 중 안전한 주소만 쓰고, 세로 병합·불명확한 다중 문단 셀·혼합 스타일 영역은 미지원으로 표시합니다. 단순 가로 gridSpan은 원본 셀 구조를 유지한 채 단일 주소로 편집합니다.
 기존 세 포맷의 `mapVersion`·공통 `pipelineVersion`은 DOCX 추가만으로 변경하지 않습니다. DOCX는 설정 응답의 형식별 `engineVersion`으로 저장 지도와 생성 fingerprint를 구분합니다. Core는 DOCX 엔진 버전이나 원본 hash가 달라지면 재매핑하고, binding 또는 scope가 바뀌면 기존 migration 확인 흐름을 사용합니다.
 

@@ -1,3 +1,4 @@
+import { applicationDocumentsSchema, applicationDocumentMigrationConfirmationSchema } from '@govbiz/shared/data/models/ApplicationDocumentDto'
 import { z } from 'zod'
 import type {
   InterpretApplicationPreparation,
@@ -15,7 +16,7 @@ import { applicationPreparationRequest as request, downloadApplicationDocument, 
 import {
   applicationPreparationPageSchema,
   applicationPreparationSchema,
-  applicationFormSchema,
+  applicationFormAvailabilitySchema,
   supportedApplicationFormsSchema,
   applicationInterpretationSchema,
   applicationFormDiscoveryJobSchema,
@@ -26,33 +27,6 @@ import { applicationOnlineInputGuideSchema } from '@govbiz/shared/data/models/Ap
 
 const cursor = (query: ApplicationPreparationListQuery = {}) =>
   `?size=20${query.beforeId === undefined ? '' : `&beforeId=${query.beforeId}`}${query.status === undefined ? '' : `&status=${query.status}`}`
-const documentsSchema = z.array(z.object({
-  id: z.number().int().positive(), inputRevision: z.number().int().positive(),
-  fileName: z.string().min(1).max(500).regex(/^[^\\/]+\.(hwp|hwpx|pdf|docx|xlsx)$/i).refine((name) => [...name].every((character) => character.charCodeAt(0) >= 32)),
-  mediaType: z.enum(['application/pdf', 'application/x-hwp', 'application/hwp+zip', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']),
-  size: z.number().int().positive().max(32 * 1024 * 1024),
-  filledAnswerCount: z.number().int().nonnegative().max(200).nullable(),
-  unfilledAnswerCount: z.number().int().nonnegative().max(200).nullable(),
-  unfilledAnswers: z.array(z.object({
-    fieldId: z.string().min(1).max(129), fieldLabel: z.string().min(1).max(210), value: z.string().min(1).max(2000),
-    reason: z.enum(['INPUT_LOCATION_NOT_FOUND', 'AUTO_FILL_UNSUPPORTED', 'OVERFLOW', 'AMBIGUOUS_SLOT', 'SLOT_MISMATCH']),
-    capacity: z.number().int().nonnegative().max(100000).nullable().optional(),
-  })).max(200),
-  remainingExampleCount: z.number().int().nonnegative().max(3000).optional(),
-}).superRefine((file, context) => {
-  if ((file.filledAnswerCount === null) !== (file.unfilledAnswerCount === null)
-    || (file.unfilledAnswerCount !== null && file.unfilledAnswerCount !== file.unfilledAnswers.length)
-    || (file.filledAnswerCount === null && file.unfilledAnswers.length > 0)
-    || new Set(file.unfilledAnswers.map((answer) => answer.fieldId)).size !== file.unfilledAnswers.length) {
-    context.addIssue({ code: 'custom', message: '문서 답변 집계가 일치하지 않습니다.' })
-  }
-})).max(20)
-const migrationConfirmationSchema = z.object({
-  status: z.literal('REGENERATION_REQUIRED'),
-  preparationId: z.number().int().positive(),
-  inputRevision: z.number().int().positive(),
-  formVersionId: z.string().regex(/^[a-z0-9][a-z0-9-]{0,159}$/),
-})
 
 export class ApplicationPreparationRepositoryImpl implements ApplicationPreparationRepository {
   async onlineInputGuide(id: number, signal?: AbortSignal) {
@@ -62,13 +36,7 @@ export class ApplicationPreparationRepositoryImpl implements ApplicationPreparat
   }
 
   async availability(sourceCode: string, sourceProgramId: string, signal?: AbortSignal) {
-    const schema = z.object({
-      state: z.object({ sourceCode: z.string(), sourceProgramId: z.string(),
-        status: z.enum(['PENDING', 'AVAILABLE', 'NO_FORM', 'DOCUMENT_UNAVAILABLE', 'TOO_LARGE', 'RETRY_WAITING', 'STALE', 'REVIEW_REQUIRED']),
-        reasonCode: z.string(), nextRetryAt: z.string().nullable(), attemptCount: z.number().int().nonnegative(),
-      }), forms: z.object({ items: z.array(applicationFormSchema) }),
-    })
-    const result = await request(`/forms/availability?${new URLSearchParams({ sourceCode, sourceProgramId })}`, schema, 'GET', undefined, signal)
+    const result = await request(`/forms/availability?${new URLSearchParams({ sourceCode, sourceProgramId })}`, applicationFormAvailabilitySchema, 'GET', undefined, signal)
     if (result.state.sourceCode !== sourceCode || result.state.sourceProgramId !== sourceProgramId ||
         (result.state.status === 'AVAILABLE') !== (result.forms.items.length > 0) ||
         new Set(result.forms.items.map((form) => form.formVersionId)).size !== result.forms.items.length ||
@@ -76,7 +44,7 @@ export class ApplicationPreparationRepositoryImpl implements ApplicationPreparat
     return result
   }
 
-  documents(id: number, signal?: AbortSignal) { return request(`/${id}/documents`, documentsSchema, 'GET', undefined, signal, 'preparation') }
+  documents(id: number, signal?: AbortSignal) { return request(`/${id}/documents`, applicationDocumentsSchema, 'GET', undefined, signal, 'preparation') }
   async submitDocumentJob(id: number, expectedRevision: number, signal?: AbortSignal, requestKey = crypto.randomUUID()) {
     const job = await request(`/${id}/documents/jobs`, applicationDocumentGenerationJobSchema, 'POST', { requestKey, expectedRevision }, signal, 'preparation')
     if (job.preparationId !== id || job.expectedRevision !== expectedRevision) throw new ApplicationPreparationError(502, 'INVALID_RESPONSE')
@@ -100,7 +68,7 @@ export class ApplicationPreparationRepositoryImpl implements ApplicationPreparat
     return request('/forms/discovery-jobs/seen', z.undefined(), 'POST', { sourceCode, sourceProgramId }, signal)
   }
   async confirmDocumentMappingMigration(id: number, expectedRevision: number, approvalToken: string, signal?: AbortSignal) {
-    const result = await request(`/${id}/documents/mapping-migration/confirm`, migrationConfirmationSchema,
+    const result = await request(`/${id}/documents/mapping-migration/confirm`, applicationDocumentMigrationConfirmationSchema,
       'POST', { expectedRevision, approvalToken }, signal, 'preparation')
     if (result.preparationId !== id || result.inputRevision !== expectedRevision) throw new ApplicationPreparationError(502, 'INVALID_RESPONSE')
     return result
