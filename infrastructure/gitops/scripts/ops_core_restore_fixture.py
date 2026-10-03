@@ -92,7 +92,7 @@ def restored_core(nk, target, database_id, image, report):
         "ACCOUNT_OAUTH_UNLINK_ENABLED": "false",
         "APPLICATION_DOCUMENT_JOBS_ENABLED": "false",
         "SERVER_ADDRESS": "127.0.0.1",
-        "APP_CORS_ALLOWED_ORIGIN": "http://127.0.0.1:8080",
+        "APP_CORS_ALLOWED_ORIGIN": "http://127.0.0.1:5173",
     }
     identity = None
     try:

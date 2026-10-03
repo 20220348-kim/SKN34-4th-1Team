@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import unittest
+from email.message import Message
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -14,6 +15,7 @@ from unittest.mock import Mock, patch
 import ops_http_restore_probe as probe
 import ops_volume_restore_probe
 import smoke_ops_bridge
+from test_ops_browser_login import PROOF
 from test_smoke_ops_backup import EXPECTED, IDENTITY, IMAGE_ID
 
 REPORT = "<html>복원 보고서</html>".encode()
@@ -131,6 +133,11 @@ class HttpTests(unittest.TestCase):
             patch.object(probe, "core_login", side_effect=self.login),
             patch.object(
                 probe,
+                "browser_requests",
+                side_effect=ValueError("browser") if self.defect == "browser" else None,
+            ) as browser,
+            patch.object(
+                probe,
                 "check_management",
                 return_value={"evidence": MANAGEMENT, "responses": {}},
             ),
@@ -150,6 +157,8 @@ class HttpTests(unittest.TestCase):
             self.assertEqual(artifact_env["LLMOPS_RESULTS_DIR"], "/restore")
             self.assertNotEqual(ops_env["LLMOPS_RESULTS_DIR"], "/restore")
             self.assertEqual(ops_env["DB_USER"], "ops_restore_reader")
+            self.assertEqual(browser.call_args.args[0]["email"], self.user.email)
+            self.assertEqual(browser.call_args.args[1], set(result["report_responses"]))
             return result
 
     def test_reports_real_auth_revocation_outage_and_cleanup(self):
@@ -178,6 +187,7 @@ class HttpTests(unittest.TestCase):
             "artifact_outage",
             "revoked",
             "files",
+            "browser",
         ):
             self.setUp()
             self.defect = defect
@@ -243,6 +253,17 @@ class ContainerTests(unittest.TestCase):
             "servers_stopped": True,
             "runtime_uid": 10001,
             "model_api_calls": 0,
+            "browser_login": {
+                **PROOF,
+                "response_source": "restored_core_ops_http",
+                "transport": "docker_attached_stdio",
+                "listed_run_count": 4,
+                "pages_verified": 1,
+                "details_verified": 3,
+                "reports_verified": 3,
+                "proxy_stopped": True,
+                "helper_exited": True,
+            },
             "management_http": MANAGEMENT.copy(),
             "management_responses": {},
             "report_responses": {
@@ -256,9 +277,23 @@ class ContainerTests(unittest.TestCase):
 
     def execute(self, command, **kwargs):
         self.events.append((command, kwargs))
-        if command[1] == self.fail:
+        if (
+            command[1] == self.fail
+            or self.fail == "live"
+            and command[0] == "node"
+            and isinstance(command[1], Path)
+        ):
             raise subprocess.CalledProcessError(1, command)
         if command[0] == "node":
+            if isinstance(command[1], Path):
+                self.assertEqual(command[1].name, "ops_restore_live_browser.mjs")
+                value = json.loads(kwargs["data"])
+                compile(value["program"], "restored-http", "exec")
+                self.assertEqual(value["identity"], "e" * 64)
+                self.assertEqual(value["password"], DATABASE["core_password"])
+                self.assertNotIn(DATABASE["core_password"], value["program"])
+                self.assertEqual(value["expected"], RUNS)
+                return json.dumps(self.proof)
             value = json.loads(Path(command[-1]).read_text(encoding="utf-8"))
             self.assertEqual(value["total_runs"], 4)
             self.assertEqual(value["expected"], RUNS)
@@ -267,10 +302,6 @@ class ContainerTests(unittest.TestCase):
             return json.dumps(self.web_proof)
         if command[1] == "create":
             return "e" * 64
-        if command[1] == "start":
-            compile(kwargs["data"], "restored-http", "exec")
-            self.assertNotIn(DATABASE["password"], kwargs["data"])
-            return json.dumps(self.proof)
         return ""
 
     def run_probe(self):
@@ -301,7 +332,7 @@ class ContainerTests(unittest.TestCase):
         self.assertNotIn(DATABASE["core_password"], " ".join(command))
 
     def test_probe_and_cleanup_failures_propagate(self):
-        for stage in ("start", "rm", "--experimental-transform-types"):
+        for stage in ("live", "rm", "--experimental-transform-types"):
             self.fail = stage
             with (
                 self.subTest(stage=stage),
@@ -357,6 +388,29 @@ class ContainerTests(unittest.TestCase):
             self.assertEqual(self.events[-1][0][1], "rm")
             self.web_proof[key] = original
 
+    def test_live_browser_failure_or_replay_evidence_cannot_pass(self):
+        original = self.proof["browser_login"]
+        for key, value in (
+            ("response_source", "captured_restore_http"),
+            ("transport", "http_replay"),
+            ("listed_run_count", 3),
+            ("details_verified", 2),
+            ("revoked_session_rejected", False),
+            ("proxy_stopped", False),
+            ("helper_exited", 1),
+            ("cookie", "must-not-export"),
+        ):
+            self.proof["browser_login"] = {**original, key: value}
+            with (
+                self.subTest(key=key),
+                self.assertRaisesRegex(ValueError, "live browser evidence"),
+            ):
+                self.run_probe()
+            self.assertEqual(self.events[-1][0][1], "rm")
+        self.proof["browser_login"] = {}
+        with self.assertRaisesRegex(ValueError, "live browser version"):
+            self.run_probe()
+
     def test_missing_or_invalid_browser_version_cannot_pass(self):
         for value in (None, {}, {"browser_version": ""}, {"browser_version": 149}):
             self.web_proof["browser_ui"] = value
@@ -409,7 +463,7 @@ class CoreLoginTests(unittest.TestCase):
                 204,
             )
         request = client.open.call_args.args[0]
-        self.assertEqual(request.get_header("Origin"), "http://127.0.0.1:8080")
+        self.assertEqual(request.get_header("Origin"), probe.BROWSER_ORIGIN)
         self.assertEqual(request.get_header("Cookie"), "govbiz_session=real.jwt")
 
     def test_real_password_login_and_member_session_contract(self):
@@ -443,6 +497,106 @@ class CoreLoginTests(unittest.TestCase):
                 self.assertRaises(ValueError),
             ):
                 probe.core_login(self.principal, "fresh-password")
+
+
+class BrowserTransportTests(unittest.TestCase):
+    principal = {"email": "admin@example.invalid"}
+    route = "/api/v1/ops/evaluations?page=1"
+
+    def run_transport(self, requests, reply=(200, Message(), b"{}")):
+        output = io.StringIO()
+        with (
+            patch.object(
+                sys,
+                "stdin",
+                io.StringIO("".join(json.dumps(value) + "\n" for value in requests)),
+            ),
+            patch.object(sys, "stdout", output),
+            patch.object(probe, "response", return_value=reply) as request,
+        ):
+            probe.browser_requests(self.principal, {self.route})
+        return request, [json.loads(line) for line in output.getvalue().splitlines()]
+
+    def test_forwards_actual_status_bytes_cookie_and_origin(self):
+        headers = Message()
+        headers["Content-Type"] = "application/json"
+        headers["Set-Cookie"] = "govbiz_session=issued-fixture; HttpOnly; Path=/"
+        headers["Connection"] = "close"
+        payload = {
+            "email": self.principal["email"],
+            "password": "test-only",
+            "rememberMe": False,
+        }
+        request, frames = self.run_transport(
+            [
+                {
+                    "port": 8080,
+                    "method": "POST",
+                    "path": "/api/v1/auth/login",
+                    "cookie": "",
+                    "origin": probe.BROWSER_ORIGIN,
+                    "payload": payload,
+                },
+                {"phase": "browser_done"},
+            ],
+            (200, headers, "한글 응답".encode()),
+        )
+        self.assertEqual(request.call_args.kwargs["payload"], payload)
+        self.assertEqual(
+            request.call_args.kwargs["headers"]["Origin"], probe.BROWSER_ORIGIN
+        )
+        self.assertEqual(frames[0]["phase"], "browser_ready")
+        self.assertEqual(frames[1]["headers"]["set-cookie"], [headers["Set-Cookie"]])
+        self.assertNotIn("connection", frames[1]["headers"])
+        self.assertEqual(
+            probe.base64.b64decode(frames[1]["body"]), "한글 응답".encode()
+        )
+
+    def test_denied_http_status_is_preserved_and_ops_host_matches_browser(self):
+        request, frames = self.run_transport(
+            [
+                {
+                    "port": 8000,
+                    "method": "GET",
+                    "path": self.route,
+                    "cookie": "govbiz_session=revoked",
+                    "origin": None,
+                    "payload": None,
+                },
+                {"phase": "browser_done"},
+            ],
+            (401, Message(), b"{}"),
+        )
+        self.assertEqual(frames[1]["status"], 401)
+        self.assertEqual(
+            request.call_args.kwargs["headers"],
+            {"Host": "127.0.0.1:5173", "Cookie": "govbiz_session=revoked"},
+        )
+
+    def test_external_routes_writes_headers_and_incomplete_transport_are_rejected(self):
+        valid = {
+            "port": 8000,
+            "method": "GET",
+            "path": self.route,
+            "cookie": "",
+            "origin": None,
+            "payload": None,
+        }
+        for key, value in (
+            ("port", True),
+            ("port", 8010),
+            ("method", "POST"),
+            ("path", "http://external.invalid"),
+            ("path", "/api/v1/ops/unknown"),
+            ("cookie", "bad\r\nHost: external.invalid"),
+            ("origin", "http://external.invalid"),
+            ("payload", {"run": "new"}),
+        ):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                self.run_transport([{**valid, key: value}])
+        for requests in ([], [{"phase": "browser_abort"}], [valid]):
+            with self.subTest(requests=requests), self.assertRaises(ValueError):
+                self.run_transport(requests)
 
 
 if __name__ == "__main__":

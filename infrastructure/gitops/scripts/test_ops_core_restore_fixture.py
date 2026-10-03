@@ -82,6 +82,7 @@ class CoreRestoreTests(unittest.TestCase):
         self.assertEqual(env["SPRING_FLYWAY_ENABLED"], "false")
         self.assertEqual(env["SPRING_DATASOURCE_USERNAME"], "core_restore_fixture")
         self.assertEqual(env["APPLICATION_DOCUMENT_JOBS_ENABLED"], "false")
+        self.assertEqual(env["APP_CORS_ALLOWED_ORIGIN"], "http://127.0.0.1:5173")
         for key in (
             "SPRING_DATASOURCE_PASSWORD",
             "ACCOUNT_JWT_SECRET",

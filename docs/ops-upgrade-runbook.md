@@ -165,8 +165,8 @@ CI가 생성한 일회용 비밀번호는 Python에서 Node의 표준입력으�
 로그인·ID 연결·새로고침·전체 목록/페이지 수·상세/보고서 건수·로그아웃 이후 접근 거절·종료 결과를 기록한다.
 `pagination_complete=true`와 `revoked_session_rejected=true`가 모두 있어야 성공으로 인정하며,
 Python 호출부에서도 목록 건수와 페이지 수의 정합성 및 결과 타입을 검사한다.
-이는 복원 전 일회용 Kubernetes의 실제 연결 증거다. 아래의 복원 응답 재생 검사와 구분하며,
-실제 복원 서버까지 이어지는 브라우저 로그인이나 개인 환경의 백업·복구를 증명하지 않는다.
+이는 복원 전 일회용 Kubernetes의 실제 연결 증거다. 아래의 복원 서버 로그인 및 응답 재생 검사와
+구분하며 개인 환경의 백업·복구를 증명하지 않는다.
 
 로컬 무료 회귀는 실제 React/Vite/Chrome과 임시 HTTP 인증 대역을 사용한다.
 쿠키 누락·다른 Core 사용자 연결·로그아웃 이후 보고서 노출·폐기된 쿠키의 재사용 허용을 실패로 처리한다.
@@ -177,6 +177,37 @@ Python에서 누락되거나 재생 방식으로 잘못 기록된 증거를 거�
 ```bash
 RESTORE_BROWSER_CHANNEL=chrome node --test infrastructure/gitops/scripts/test_ops_browser_login.mjs
 ```
+
+### CI에서 수행하는 복원 서버 브라우저 로그인 검증
+
+복원된 Core·Ops·결과 HTTP 서버가 실행 중일 때 `ops_restore_live_browser.mjs`가 새 브라우저를 연다.
+로그인 폼 → 실제 Core 세션 발급 → Ops 목록 전체 페이지 → 복원 평가 3건의 상세·보고서 해시 →
+로그아웃 → 익명 및 폐기된 쿠키의 401을 같은 브라우저 검사로 확인한다. 응답을 재생하지 않는다.
+
+복원 DB는 `--network none`을 유지하고 공개 포트도 추가하지 않는다. CI가 소유한 Vite의
+`http://127.0.0.1:5173` 요청을 Docker attach 표준입출력 통로로 전달하며, 컨테이너 안에서
+실제 loopback Core/Ops HTTP를 호출한다. 5173 포트가 이미 사용 중이면 다른 서버를 재사용하지 않고 실패한다.
+Core는 이 Vite Origin만 허용하며, Ops Host는 같은 Origin의 호스트로 전달해 페이지 링크를 보존한다.
+
+- 통로는 Core 관리자 세션 조회·로그인·로그아웃과 앞서 검증한 Ops 조회 경로만 허용한다.
+- 외부 주소·임의 포트·Ops 쓰기·다른 Origin·헤더 개행·과도한 요청/응답은 거절한다.
+- HTTP 상태, Set-Cookie, 보고서 보안 헤더와 본문 바이트를 전달한다. 비밀번호·쿠키·HTML은
+  프로세스 메모리/파이프로만 다루며 CI 증거에 포함하지 않는다.
+- 브라우저 종료 후 기존 세션 폐기·결과 서버 장애 검사와 파일 무변경 검사를 계속 수행한다.
+  이후 Ops 전체 덤프 대조도 유지한다. Core 사본의 테스트 세션 쓰기만 허용된다.
+- 임시 Vite·통로 서버·캐시·보조 프로세스의 정리 및 정상 종료가 확인돼야 성공한다.
+  전송 중단·잘못된 메시지·실패 종료를 정상 응답으로 처리하지 않는다.
+
+`volume_restore.results.ops_http.browser_login`의 `response_source=restored_core_ops_http`,
+`transport=docker_attached_stdio`로 범위를 표시한다. 이는 일회용 복원 서버의 인증·조회 경로이며
+개인 Kubernetes, 운영 Ingress/TLS, 기존 서명 키·세션 연속성 또는 전체 백업 복구 성공의 증거는 아니다.
+보고서 차트/샌드박스 렌더링은 기존 응답 재생 검사에서 별도로 수행한다.
+
+로컬은 실제 React/Vite/Chrome·임시 HTTP 인증 서버·별도 통신 프로세스로 연결과 실패 정리를 확인한다.
+Docker·MySQL·복원 Core/Ops 이미지의 통합 검증은 CI에서 수행한다.
+잠긴 Evidently 버전으로 생성한 무료 합성 보고서의 브라우저 렌더링 검사도 CI에 포함한다.
+복원 화면 실패는 `BRIDGE_RESTORE_WEB_*`, 실제 연결 실패는 `BRIDGE_RESTORE_LIVE_BROWSER_FAILED`로
+기록한다. 원문·쿠키를 공개하지 않고 `ops-bridge.json`의 `probe_errors`에서 실패 단계를 확인한다.
 
 ### CI에서 수행하는 결과·Prefect 볼륨 복원 검증
 
