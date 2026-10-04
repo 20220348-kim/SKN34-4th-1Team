@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""고정 가상 근거의 답변 평가. 기본 실행은 모델 호출 없는 입력 검증이다."""
+"""고정 근거의 답변 평가. 기본 실행은 모델 호출 없는 입력 검증이다."""
 
 import argparse
 import asyncio
@@ -15,6 +15,7 @@ from time import perf_counter
 MAX_INPUT_TOKENS = 32768
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parents[1] / "backend/ai-service"))
 
 from app.config import (  # noqa: E402
@@ -46,9 +47,13 @@ def load_fixture(path: Path) -> tuple[dict, list[tuple[dict, SupportProgramEvide
     raw = path.read_bytes()
     fixture = json.loads(raw)
     require(isinstance(fixture, dict), "fixture must be an object")
-    require(fixture.get("schemaVersion") == "support-program-evidence-eval-v1", "unsupported fixture schema")
+    official = fixture.get("schemaVersion") == "support-program-evidence-eval-v2"
+    require(official or fixture.get("schemaVersion") == "support-program-evidence-eval-v1", "unsupported fixture schema")
     require(fixture.get("scope", "fixed-answer-context-only") == "fixed-answer-context-only", "unsupported fixture scope")
-    require(fixture.get("dataType") == "synthetic", "this fixture must be explicitly synthetic")
+    require(fixture.get("dataType") == ("official-html-snapshot" if official else "synthetic"), "fixture source type differs")
+    if official:
+        from official_snapshot import validate_fixture
+        validate_fixture(fixture)
     require(fixture.get("referenceSource") == "ai-authored", "reference source must be disclosed")
     documents = fixture.get("documents")
     cases = fixture.get("cases")
@@ -69,7 +74,7 @@ def load_fixture(path: Path) -> tuple[dict, list[tuple[dict, SupportProgramEvide
             text = chunk.get("text")
             require(isinstance(text, str), "chunk text required")
             # These are manually fixed evaluation contexts, not a reimplementation of Core's chunker.
-            chunk_id = digest(f"evidence-eval-v1\0{document_id}\0{order}\0{text}".encode())
+            chunk_id = chunk["id"] if official else digest(f"evidence-eval-v1\0{document_id}\0{order}\0{text}".encode())
             prepared.append(SupportProgramEvidenceAnswerChunk.model_validate({
                 "id": chunk_id, "documentId": document_id, "order": order, "text": text,
             }).model_dump(by_alias=True))
@@ -136,7 +141,13 @@ def report(fixture: dict, prepared: list, fixture_hash: str, capture: dict | Non
         result["maxApiCallsOnExecute"] = len(prepared)
         return result
     require(isinstance(capture, dict), "capture must be an object")
-    require(capture.get("schemaVersion") == "support-program-evidence-capture-v1", "unsupported capture schema")
+    historical = capture.get("schemaVersion") == "support-program-evidence-capture-v2"
+    require(historical or capture.get("schemaVersion") == "support-program-evidence-capture-v1", "unsupported capture schema")
+    if historical:
+        from official_snapshot import validate_projection
+        validate_projection(fixture, capture)
+        result["measurementKind"] = "historical-answer-projection"
+        result["provenance"] = capture["provenance"]
     # v1 historical captures predate the explicit field; other scopes are never relabeled.
     require(capture.get("scope", "fixed-answer-context-only") == "fixed-answer-context-only", "unsupported capture scope")
     require(capture.get("fixtureSha256") == fixture_hash, "capture fixture hash differs")
@@ -146,7 +157,8 @@ def report(fixture: dict, prepared: list, fixture_hash: str, capture: dict | Non
                 "capture execution hashes required")
     require(isinstance(capture.get("model"), str) and bool(capture["model"].strip()), "capture model required")
     for field in ("modelTimeoutSeconds", "runTimeoutSeconds"):
-        require(type(capture.get(field)) in (int, float) and 0 < capture[field] < float("inf"), "invalid timeout")
+        require(capture.get(field) is None if historical else
+                type(capture.get(field)) in (int, float) and 0 < capture[field] < float("inf"), "invalid timeout")
     result["execution"] = {field: capture[field] for field in (
         "model", "promptSha256", "runnerSha256", "modelTimeoutSeconds", "runTimeoutSeconds",
     )}

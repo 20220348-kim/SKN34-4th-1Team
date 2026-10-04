@@ -101,5 +101,26 @@
         "path": "runs/core-rag-20261002/v2/capture.json"
       }
     ]
+  },
+  {
+    "id": "official-answer-20260907-v2",
+    "label": "실제 공고 고정 근거 · 과거 응답 6건 · 사람 검토 필요",
+    "fixture": "runs/official-answer-20260907-v2/fixture.json",
+    "fixture_sha256": "a88dc262cbe99acfc8dfa62168c702d8eae9b0c741150c3d482904df75b275df",
+    "case_ids": [
+      "H01",
+      "H02",
+      "H03",
+      "H04",
+      "H05",
+      "H06"
+    ],
+    "captures": [
+      {
+        "id": "official-answer-20260907-v2",
+        "label": "공식 HTML 과거 답변 · gpt-5.6-luna · 2026-09-07",
+        "path": "runs/official-answer-20260907-v2/capture.json"
+      }
+    ]
   }
 ]

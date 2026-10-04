@@ -71,6 +71,21 @@ Django 사용자 행은 `core:{회원 ID}`와 이메일로 실행 요청자를 �
 Django HTTP 요청 안에서는 평가하지 않으며 Django에 평가 SDK 전체를 설치하지 않습니다.
 별도 Celery·Airflow·LLM provider는 추가하지 않았습니다. 저장 응답 재평가는 모델 호출 0회이며, 새 응답 생성은 아래 승인 계약을 따릅니다.
 
+## 실제 공고의 과거 답변 검토
+
+`official-answer-20260907-v2`를 등록했다. 실제 기업마당 공고 2개·질문 6개를 고정 근거 범위로
+재평가하며, 과거 `gpt-5.6-luna` 응답을 현재 모델 결과로 표시하지 않는다. 기존 `replay` 접수·검토·
+품질 판정·기준 API를 사용한다. 새 DB migration·의존성·모델 호출은 필요 없다.
+
+`GET .../{id}/review`의 material에 선택 필드 `data_type`, `candidate_origin`, `recorded_model`,
+`recorded_at`을 추가했다. 사례의 `source`는 공식 URL·수집 시각·HTML/본문 해시·수집 범위를 담으며
+가상 자료는 null이다. React는 이를 출처 링크·과거 응답 안내로 표시한다. 기존 API 응답도 계속 읽는다.
+실제 공고 fixture v2의 원래 Core 청크 ID를 보존하고, 기존 가상 fixture v1의 ID 계약은 유지한다.
+
+원본 참조는 AI 작성이다. 같은 `FixtureReview`와 사례별 검토·품질 정책을 적용하므로 사람 검토 없는
+자동 합격·기준 지정은 허용하지 않는다. 새 자료를 파일에 등록해도 검토/평가 DB 행은 생성되지 않는다.
+자료 형식·무료 검증·한계는 [평가 안내](../../evaluation/support-program-evidence/README.md#실제-공고의-과거-답변을-검토-자료로-사용)를 따른다.
+
 ## 고정 원문·청크의 새 RAG 실행
 
 Ops에서 호출 계획이 등록된 RAG 자료를 고르고 **새 응답 생성**을 선택할 수 있습니다.

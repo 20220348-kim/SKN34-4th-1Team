@@ -545,7 +545,8 @@ def read_candidate(run):
         capture_hash = sha256(raw).hexdigest()
         if (
             capture_hash != comparison["candidate_execution"]["capture_sha256"]
-            or capture.get("schemaVersion") != "support-program-evidence-capture-v1"
+            or capture.get("schemaVersion")
+            not in {"support-program-evidence-capture-v1", "support-program-evidence-capture-v2"}
             or capture.get("scope", EVALUATION_SCOPE) != EVALUATION_SCOPE
             or capture["completed"] is not True
             or capture["fixtureSha256"] != dataset["fixture_sha256"]

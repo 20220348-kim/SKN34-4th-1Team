@@ -419,8 +419,16 @@ const reviewSchema = z.object({
   })),
   material: z.object({
     capture_sha256: z.string(), fixture_sha256: z.string(),
+    data_type: z.enum(['synthetic', 'official-html-snapshot']).optional(),
+    candidate_origin: z.enum(['recorded-answer', 'historical-answer-projection']).optional(),
+    recorded_model: z.string().optional(), recorded_at: z.string().nullable().optional(),
     cases: z.array(z.object({
       case_id: z.string(), question: z.string(), document_title: z.string(),
+      source: z.object({
+        url: z.url().refine((value) => value.startsWith('https://www.bizinfo.go.kr/')),
+        collected_at: z.iso.datetime({ offset: true }), html_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+        content_sha256: z.string().regex(/^[a-f0-9]{64}$/), scope: z.literal('frozen-title-and-body-html-no-attachments'),
+      }).nullable().optional(),
       evidence: z.array(z.object({ order: z.number().int(), text: z.string() })),
       answer: z.string(), answer_status: z.string(), cited_orders: z.array(z.number().int()),
       reference_answer: z.string(), expected_status: z.string(), expected_citation_orders: z.array(z.number().int()),

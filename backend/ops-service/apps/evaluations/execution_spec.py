@@ -14,6 +14,8 @@ EVALUATION_SCOPE = "fixed-answer-context-only"
 DEPENDENCIES = (AI + "pyproject.toml", AI + "uv.lock")
 EVALUATION_FILES = (
     EVIDENCE + "evaluate.py",
+    EVIDENCE + "official_snapshot.py",
+    EVIDENCE + "verify_flow.py",
     EVIDENCE + "llmops.py",
     AI + "app/support_program_evidence/models.py",
     AI + "app/support_program_identity.py",
@@ -21,6 +23,8 @@ EVALUATION_FILES = (
 )
 GENERATION_FILES = (
     EVIDENCE + "evaluate.py",
+    EVIDENCE + "official_snapshot.py",
+    EVIDENCE + "verify_flow.py",
     AI + "app/config.py",
     AI + "app/support_program_evidence/prompt.py",
     AI + "app/support_program_evidence/agent.py",

@@ -150,7 +150,8 @@ def create_report(current: dict, reference: dict, output: Path) -> dict:
                 "case_ids": current["frame"].case_id.tolist(), "evaluation_run_id": current["run_id"], "reference_run_id": reference["run_id"],
                 "evaluator_version": EVALUATOR_VERSION, "scope": current["summary"]["scope"],
                 "retrieval_evaluated": False,
-                "reference_source": "ai-authored", "semantic_faithfulness": "unmeasured",
+                "reference_source": current["summary"]["referenceSource"], "semantic_faithfulness": "unmeasured",
+                "data_type": current["summary"]["dataType"],
                 "comparison": "self-replay" if current["run_id"] == reference["run_id"] else "candidate-reference"}
     snapshot = Report([RowCount(), *[MeanValue(column=name) for name in columns]],
                       metadata=metadata, include_tests=False).run(
@@ -168,7 +169,9 @@ def create_report(current: dict, reference: dict, output: Path) -> dict:
                 "runner_sha256": result["capture"]["runnerSha256"],
                 "capture_sha256": result["capture_sha256"],
                 "started_at": result["capture"].get("startedAt"),
-                "source_case_ids": result["source_case_ids"]}
+                "source_case_ids": result["source_case_ids"],
+                "measurement_kind": result["summary"].get("measurementKind", "recorded-answer"),
+                "provenance": result["summary"].get("provenance")}
 
     metrics = []
     for key, column, summary_key in [
