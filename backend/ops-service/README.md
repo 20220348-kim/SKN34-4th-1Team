@@ -1253,6 +1253,16 @@ GitHub Actions는 모노레포 루트의
 평가 코드·SDK를 추가하지 않으며 이번 실행의 임시 컨테이너와 이미지 태그만 정리합니다.
 실제 GitHub CI 실행은 파일을 원격 저장소에 올린 뒤 확인할 수 있습니다.
 
+`scripts/check-schema.py --legacy-evaluations`는 CI의 별도 빈 MySQL 8.4 DB에서
+`0017_input_token_budget` 스키마와 합성 이력을 만든 뒤 최신 migration까지 전진 적용합니다.
+10개 모델의 기존 컬럼·11개 행, 한글·JSON·NULL·검토/예산 감사 관계를 대조하고 readiness의
+실패→성공, 접수 중지 후 새 평가 거절, migration·동일 UUID의 중지 요청 재실행을 검증합니다.
+`GITHUB_ACTIONS=true`와 `OPS_SCHEMA_TEST_ONLY=true`가 모두 필요하며, 기존 테이블이 있는 DB나
+역방향 migration은 거부합니다. 기존 빈 DB→최신 배포 검사도 계속 별도로 수행합니다.
+이 명령은 개인 DB 갱신 도구가 아닙니다. Core 인증은 주입하고 Prefect 호출은 대역으로 확인하므로
+실제 로그인·새 평가 성공·개인 백업 복원을 증명하지 않습니다. 최초 전환의 쓰기 중지와 접수 제어
+경계는 [Ops 갱신 절차](../../docs/ops-upgrade-runbook.md)를 따릅니다.
+
 ## 디렉터리
 
 ```text
