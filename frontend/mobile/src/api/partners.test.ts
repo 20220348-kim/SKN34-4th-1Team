@@ -1,5 +1,5 @@
 import { apiRequest, ApiError } from './client'
-import { browseProposals, browseRecruitments, createRecruitment, getPartnerWebUrl } from './partners'
+import { browseProposals, browseRecruitments, createRecruitment, getPartnerWebUrl, updateRecruitment } from './partners'
 import { defaultPartnerRecruitmentQuery } from '@govbiz/shared/domain/entities/PartnerRecruitmentQuery'
 
 jest.mock('./client', () => ({ ...jest.requireActual('./client'), apiRequest: jest.fn() }))
@@ -78,4 +78,40 @@ test('creation does not turn authentication or unexpected network failures into 
   const unavailable = new ApiError(503, '서버 오류')
   jest.mocked(apiRequest).mockRejectedValueOnce(unavailable)
   await expect(createRecruitment(createInput, 'owner')).rejects.toBe(unavailable)
+})
+
+test('editing normalizes shared content and sends an owned Bearer PUT without changing the linked program', async () => {
+  jest.mocked(apiRequest).mockResolvedValue(createdDto)
+  const { sourceCode: _source, sourceProgramId: _id, ...content } = createInput
+  const signal = new AbortController().signal
+  const result = await updateRecruitment(9, content, 'owner-token', signal)
+  expect(apiRequest).toHaveBeenCalledWith('/api/v1/partners/recruitments/9', { method: 'PUT', accessToken: 'owner-token', signal,
+    body: { ...content, title: '협업 모집', body: '공동 연구 파트너를 찾습니다.', capabilities: ['AI 분석'] } })
+  expect(jest.mocked(apiRequest).mock.calls[0][1]?.body).not.toHaveProperty('sourceCode')
+  expect(jest.mocked(apiRequest).mock.calls[0][1]?.body).not.toHaveProperty('sourceProgramId')
+  expect(result).toMatchObject({ outcome: 'updated', recruitment: { id: 9, isMine: true } })
+})
+
+test('editing rejects invalid input and responses for another recruitment or owner', async () => {
+  expect(() => updateRecruitment(0, createInput, 'owner')).toThrow()
+  expect(() => updateRecruitment(9, { ...createInput, body: '' }, 'owner')).toThrow('body')
+  expect(apiRequest).not.toHaveBeenCalled()
+  jest.mocked(apiRequest).mockResolvedValueOnce({ id: 9 })
+  await expect(updateRecruitment(9, createInput, 'owner')).rejects.toThrow()
+  jest.mocked(apiRequest).mockResolvedValueOnce({ ...createdDto, id: 10 })
+  await expect(updateRecruitment(9, createInput, 'owner')).rejects.toThrow('수정한 모집글과 응답이 다릅니다.')
+  jest.mocked(apiRequest).mockResolvedValueOnce({ ...createdDto, isMine: false })
+  await expect(updateRecruitment(9, createInput, 'owner')).rejects.toThrow('수정한 모집글과 응답이 다릅니다.')
+})
+
+test.each([['RECRUITMENT_NOT_FOUND', 'not-found'], ['RECRUITMENT_ACTION_FORBIDDEN', 'forbidden'],
+  ['RECRUITMENT_CLOSED', 'closed'], ['RECRUITMENT_DEADLINE_NOT_ALLOWED', 'deadline-not-allowed']])('editing preserves the %s rejection', async (code, outcome) => {
+  jest.mocked(apiRequest).mockRejectedValueOnce(new ApiError(409, '실패', code))
+  await expect(updateRecruitment(9, createInput, 'owner')).resolves.toMatchObject({ outcome })
+})
+
+test.each([401, 503])('editing never treats HTTP %s as a successful update', async (status) => {
+  const failure = new ApiError(status, '실패')
+  jest.mocked(apiRequest).mockRejectedValueOnce(failure)
+  await expect(updateRecruitment(9, createInput, 'owner')).rejects.toBe(failure)
 })

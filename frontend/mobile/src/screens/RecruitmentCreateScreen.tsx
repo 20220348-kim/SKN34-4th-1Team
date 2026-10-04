@@ -5,12 +5,13 @@ import { usePreventRemove } from 'expo-router/react-navigation'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { companyAgeYearsRange, ownPartnerRoles, partnerRoleLabels, recruitmentBodyMaxLength,
   recruitmentCapabilityMaxCount, recruitmentCapabilityMaxLength, recruitmentTitleMaxLength, seekingCountRange,
-  seekingPartnerRoles, type PartnerRecruitmentInput, type PartnerRole } from '@govbiz/shared/domain/entities/PartnerRecruitment'
+  seekingPartnerRoles, type PartnerRecruitment, type PartnerRecruitmentContentInput, type PartnerRecruitmentInput, type PartnerRole } from '@govbiz/shared/domain/entities/PartnerRecruitment'
+import { catalogSourceLabels } from '@govbiz/shared/domain/entities/SupportProgramCatalog'
 import { regionNamesNationwideFirst } from '@govbiz/shared/domain/entities/Region'
 import type { SupportProgram } from '@govbiz/shared/domain/entities/SupportProgram'
-import { validatePartnerRecruitmentInput } from '@govbiz/shared/domain/usecases/PartnerRecruitmentUseCases'
+import { validatePartnerRecruitmentContent } from '@govbiz/shared/domain/usecases/PartnerRecruitmentUseCases'
 import { ApiError } from '../api/client'
-import { createRecruitment, partnerErrorMessage } from '../api/partners'
+import { createRecruitment, getRecruitment, partnerErrorMessage, updateRecruitment } from '../api/partners'
 import { listSavedPrograms } from '../api/savedPrograms'
 import { useAuth } from '../auth/session'
 import { ChoiceField } from '../components/ChoiceField'
@@ -18,9 +19,9 @@ import { PartnerSheet } from '../components/PartnerSheet'
 import { partnerDeadlineDay, partnerFullDate } from '../components/PartnerDates'
 import { Button, Card, Field, Notice, Page, StatusBadge, colors, styles } from '../ui'
 
-type Props = { onLogin(): void; onCompany(): void; onSavedPrograms(): void; onCreated(id: number): void; onCancel(): void }
+type Props = { recruitmentId?: number; onLogin(): void; onCompany(): void; onSavedPrograms(): void; onCreated(id: number): void; onCancel(): void }
 const seoulToday = () => new Date(Date.now() + 9 * 3_600_000).toISOString().slice(0, 10)
-const latestDeadline = (program: SupportProgram | null) => program?.applicationEndDate
+const latestDeadline = (program: Pick<SupportProgram, 'applicationEndDate'> | null) => program?.applicationEndDate
   ? new Date(Date.parse(`${program.applicationEndDate}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10) : null
 function programBlocker(program: SupportProgram) {
   if (program.status !== 'OPEN') return '접수 중 아님'
@@ -37,25 +38,32 @@ const fieldMessages: Record<string, string> = {
   recruitmentDeadline: '모집 마감일을 선택해 주세요.',
 }
 
-/** The existing collaboration pencil opens this native form; no web session is used. */
+/** 작성과 수정은 같은 네이티브 입력 폼을 사용하며, 수정에서는 연결된 공고를 고정한다. */
 export function RecruitmentCreateScreen(props: Props) {
   const { status, session } = useAuth()
   if (status === 'loading') return <Page><ActivityIndicator accessibilityLabel="로그인 상태 확인 중" /></Page>
   if (status === 'unavailable') return <Page><Notice error>로그인 상태를 확인하지 못했습니다.</Notice></Page>
-  if (status !== 'signedIn' || !session) return <Page><Notice>로그인하고 기업을 등록한 뒤 모집글을 작성할 수 있어요.</Notice>
+  if (status !== 'signedIn' || !session) return <Page><Notice>{props.recruitmentId === undefined ? '로그인하고 기업을 등록한 뒤 모집글을 작성할 수 있어요.' : '로그인하고 기업 정보를 확인한 뒤 내 모집글을 수정할 수 있어요.'}</Notice>
     <Button label="로그인하기" onPress={props.onLogin} /></Page>
   if (session.account.company?.businessStatusCode !== '01') return <Page>
-    <Notice>모집글 작성은 등록된 계속사업자만 할 수 있어요. 기업 정보를 확인해 주세요.</Notice>
+    <Notice>{props.recruitmentId === undefined ? '모집글 작성은 등록된 계속사업자만 할 수 있어요. 기업 정보를 확인해 주세요.' : '모집글 수정은 등록된 계속사업자만 할 수 있어요. 기업 정보를 확인해 주세요.'}</Notice>
     <Button label="기업 정보 확인" onPress={props.onCompany} /></Page>
-  return <OwnedCreate key={session.accessToken} token={session.accessToken}
+  return <OwnedCreate key={`${session.accessToken}:${props.recruitmentId ?? 'new'}`} token={session.accessToken}
     companyName={session.account.company.companyName} {...props} />
 }
 
-function OwnedCreate({ token, companyName, onCreated, onCancel, onSavedPrograms, onCompany }: Props & { token: string; companyName: string }) {
+function OwnedCreate({ token, companyName, recruitmentId, onCreated, onCancel, onSavedPrograms, onCompany }: Props & { token: string; companyName: string }) {
   const { invalidateSession } = useAuth()
   const insets = useSafeAreaInsets()
   const navigation = useNavigation()
   const [program, setProgram] = useState<SupportProgram | null>(null)
+  const [editingRecruitment, setEditingRecruitment] = useState<PartnerRecruitment | null>(null)
+  const [editLoading, setEditLoading] = useState(recruitmentId !== undefined)
+  const [editError, setEditError] = useState<string | null>(null)
+  const [editBlock, setEditBlock] = useState<string | null>(null)
+  const [editRevision, setEditRevision] = useState(0)
+  const [saveBlocked, setSaveBlocked] = useState(false)
+  const originalInputs = useRef('')
   const [ownRole, setOwnRole] = useState<PartnerRole>('LEAD')
   const [seekingRole, setSeekingRole] = useState<PartnerRole>('PARTICIPANT')
   const [count, setCount] = useState(1)
@@ -78,17 +86,45 @@ function OwnedCreate({ token, companyName, onCreated, onCancel, onSavedPrograms,
   const request = useRef<AbortController | null>(null)
   const submitting = useRef(false)
   const exitApproved = useRef(false)
-  const maximumDeadline = latestDeadline(program)
-  const dirty = Boolean(program || title || body || age || capabilityDraft || capabilities.length || deadline
-    || ownRole !== 'LEAD' || seekingRole !== 'PARTICIPANT' || count !== 1 || region !== '전국')
+  const editing = recruitmentId !== undefined
+  const programInfo = editingRecruitment ? { ...editingRecruitment.program,
+    sourceName: catalogSourceLabels[editingRecruitment.program.sourceCode as keyof typeof catalogSourceLabels] ?? editingRecruitment.program.sourceCode } : program
+  const maximumDeadline = latestDeadline(programInfo)
+  const dirty = editing ? editingRecruitment !== null && originalInputs.current !== JSON.stringify({ ownRole, seekingRole, count, region, capabilities, capabilityDraft, deadline, age, title, body })
+    : Boolean(program || title || body || age || capabilityDraft || capabilities.length || deadline
+      || ownRole !== 'LEAD' || seekingRole !== 'PARTICIPANT' || count !== 1 || region !== '전국')
+
+  useEffect(() => {
+    if (recruitmentId === undefined) return
+    const controller = new AbortController()
+    setEditLoading(true); setEditError(null); setEditBlock(null)
+    void getRecruitment(recruitmentId, token, controller.signal).then(detail => {
+      if (controller.signal.aborted) return
+      if (detail.id !== recruitmentId) throw new Error('요청한 모집글과 응답이 다릅니다.')
+      if (!detail.isMine) { setEditBlock('내가 쓴 모집글만 수정할 수 있어요.'); return }
+      if (detail.status !== 'OPEN') { setEditBlock('마감된 모집글은 수정할 수 없어요.'); return }
+      const savedAge = detail.minimumCompanyAgeYears === null ? '' : String(detail.minimumCompanyAgeYears)
+      originalInputs.current = JSON.stringify({ ownRole: detail.ownRole, seekingRole: detail.seekingRole, count: detail.seekingCount,
+        region: detail.region, capabilities: detail.capabilities, capabilityDraft: '', deadline: detail.recruitmentDeadline,
+        age: savedAge, title: detail.title, body: detail.body })
+      setOwnRole(detail.ownRole); setSeekingRole(detail.seekingRole); setCount(detail.seekingCount); setRegion(detail.region)
+      setCapabilities(detail.capabilities); setCapabilityDraft(''); setDeadline(detail.recruitmentDeadline)
+      setAge(savedAge); setTitle(detail.title); setBody(detail.body); setEditingRecruitment(detail)
+    }).catch(cause => {
+      if (controller.signal.aborted) return
+      if (cause instanceof ApiError && cause.status === 401) void invalidateSession().catch(() => undefined)
+      setEditError(partnerErrorMessage(cause))
+    }).finally(() => { if (!controller.signal.aborted) setEditLoading(false) })
+    return () => controller.abort()
+  }, [recruitmentId, token, editRevision, invalidateSession])
 
   function confirmExit(exit: () => void) {
     if (submitting.current) {
-      Alert.alert('모집글 등록을 확인 중이에요', '등록 결과를 확인한 뒤 이동해 주세요. 작성한 내용은 이 화면에 남아 있어요.')
+      Alert.alert(editing ? '모집글 저장을 확인 중이에요' : '모집글 등록을 확인 중이에요', '처리 결과를 확인한 뒤 이동해 주세요. 입력한 내용은 이 화면에 남아 있어요.')
       return
     }
     if (!dirty || exitApproved.current) { exit(); return }
-    Alert.alert('작성 중인 모집글을 나갈까요?', '저장하지 않은 내용은 사라질 수 있어요.', [
+    Alert.alert(editing ? '수정 중인 모집글을 나갈까요?' : '작성 중인 모집글을 나갈까요?', '저장하지 않은 내용은 사라질 수 있어요.', [
       { text: '계속 작성', style: 'cancel' },
       { text: '나가기', style: 'destructive', onPress: () => { exitApproved.current = true; exit() } },
     ])
@@ -130,16 +166,17 @@ function OwnedCreate({ token, companyName, onCreated, onCancel, onSavedPrograms,
     setCapabilityDraft(''); setError(null)
   }
   async function submit() {
-    if (submitting.current) return
-    if (!program) { setError(fieldMessages.program); return }
-    if (programBlocker(program)) { setError('선택한 공고는 모집글을 작성할 수 없어요. 다른 관심 공고를 선택해 주세요.'); return }
+    if (submitting.current || saveBlocked || editLoading) return
+    if (editing && !editingRecruitment) return
+    if (!editing && !program) { setError(fieldMessages.program); return }
+    if (!editing && program && programBlocker(program)) { setError('선택한 공고는 모집글을 작성할 수 없어요. 다른 관심 공고를 선택해 주세요.'); return }
     const value = capabilityDraft.trim()
     const includedCapabilities = [...new Set([...capabilities, ...(value ? [value] : [])])]
-    const input: PartnerRecruitmentInput = { sourceCode: program.sourceCode, sourceProgramId: program.id,
+    const content: PartnerRecruitmentContentInput = {
       ownRole, seekingRole, seekingCount: count, region, capabilities: includedCapabilities,
       minimumCompanyAgeYears: age.trim() ? Number(age) : null, recruitmentDeadline: deadline,
       title: title.trim(), body: body.trim() }
-    const problem = validatePartnerRecruitmentInput(input)
+    const problem = validatePartnerRecruitmentContent(content)
     if (problem) { setError(fieldMessages[problem] ?? '입력한 모집 조건을 확인해 주세요.'); return }
     const day = partnerDeadlineDay(deadline)
     if (day === null || day < 0) { setError('모집 마감일을 오늘 이후의 날짜로 선택해 주세요.'); return }
@@ -149,6 +186,21 @@ function OwnedCreate({ token, companyName, onCreated, onCancel, onSavedPrograms,
     submitting.current = true; setBusy(true); setError(null); setCompanyRequired(false)
     const controller = new AbortController(); request.current = controller
     try {
+      if (recruitmentId !== undefined && editingRecruitment) {
+        const result = await updateRecruitment(recruitmentId, content, token, controller.signal)
+        if (controller.signal.aborted) return
+        switch (result.outcome) {
+          case 'updated':
+            if (result.recruitment.program.sourceCode !== editingRecruitment.program.sourceCode
+              || result.recruitment.program.sourceProgramId !== editingRecruitment.program.sourceProgramId) throw new Error('수정한 모집글의 연결 공고가 다릅니다.')
+            submitting.current = false; exitApproved.current = true; onCreated(result.recruitment.id); return
+          case 'not-found': setSaveBlocked(true); setError('모집글을 더 이상 찾을 수 없어요. 입력은 유지되며 상세 화면에서 다시 확인해 주세요.'); return
+          case 'forbidden': setSaveBlocked(true); setError('이 모집글을 수정할 권한이 없어요. 입력은 유지되며 상세 화면에서 다시 확인해 주세요.'); return
+          case 'closed': setSaveBlocked(true); setError('모집이 마감되어 수정할 수 없어요. 입력은 이 화면에 남아 있어요.'); return
+          case 'deadline-not-allowed': setError('모집 마감일이 허용되지 않아요. 공고 접수 마감 전날까지의 날짜인지 확인해 주세요.'); return
+        }
+      }
+      const input: PartnerRecruitmentInput = { ...content, sourceCode: program!.sourceCode, sourceProgramId: program!.id }
       const result = await createRecruitment(input, token, controller.signal)
       if (controller.signal.aborted) return
       switch (result.outcome) {
@@ -162,23 +214,31 @@ function OwnedCreate({ token, companyName, onCreated, onCancel, onSavedPrograms,
     } catch (cause) {
       if (controller.signal.aborted) return
       if (cause instanceof ApiError && cause.status === 401) void invalidateSession().catch(() => undefined)
+      if (cause instanceof ApiError && (cause.code === 'COMPANY_REQUIRED' || cause.code === 'ACTIVE_BUSINESS_REQUIRED')) setCompanyRequired(true)
       setError(partnerErrorMessage(cause))
     } finally {
       if (request.current === controller) { submitting.current = false; setBusy(false); request.current = null }
     }
   }
 
+  if (editing && editLoading) return <Page><ActivityIndicator accessibilityLabel="수정할 모집글 불러오는 중" color={colors.primary} /></Page>
+  if (editing && (editError || editBlock || !editingRecruitment)) return <Page>
+    <Notice error>{editError ?? editBlock ?? '수정할 모집글을 확인하지 못했어요.'}</Notice>
+    {editError && <Button label="모집글 다시 불러오기" onPress={() => setEditRevision(current => current + 1)} />}
+    <Button label="모집글 상세로 돌아가기" variant="secondary" onPress={onCancel} />
+  </Page>
+
   return <View style={local.page}>
     <Page>
-      <Text style={styles.subtitle}>함께 지원사업을 준비할 기업을 모집해요.</Text>
+      <Text style={styles.subtitle}>{editing ? '연결된 공고를 유지하고 모집 조건과 소개를 수정해요.' : '함께 지원사업을 준비할 기업을 모집해요.'}</Text>
       <Card><Text style={styles.heading}>1. 연결할 공고</Text>
-        <Text style={styles.muted}>작성 기업: {companyName}</Text>
-        {program ? <View style={{ gap: 8 }}><View style={styles.row}><StatusBadge label={program.sourceName} />
-          <Text style={styles.muted}>{program.applicationEndDate ? `공고 마감 ${partnerFullDate(program.applicationEndDate)}` : '공고 마감일 미정'}</Text></View>
-          <Text style={styles.heading}>{program.title}</Text><Text style={styles.muted}>{program.organization}</Text>
-          <Button label="공고 변경" variant="secondary" disabled={busy} onPress={() => setPickerOpen(true)} /></View>
+        <Text style={styles.muted}>작성 기업: {editingRecruitment?.company.companyName ?? companyName}</Text>
+        {programInfo ? <View style={{ gap: 8 }}><View style={styles.row}><StatusBadge label={programInfo.sourceName} />
+          <Text style={styles.muted}>{programInfo.applicationEndDate ? `공고 마감 ${partnerFullDate(programInfo.applicationEndDate)}` : '공고 마감일 미정'}</Text></View>
+          <Text style={styles.heading}>{programInfo.title}</Text><Text style={styles.muted}>{programInfo.organization}</Text>
+          {!editing && <Button label="공고 변경" variant="secondary" disabled={busy} onPress={() => setPickerOpen(true)} />}</View>
           : <Button label="관심 공고함에서 선택" variant="secondary" disabled={busy} onPress={() => setPickerOpen(true)} />}
-        <Text style={styles.muted}>관심 공고함에 담은 접수 중 공고 한 개를 선택해 주세요.</Text>
+        <Text style={styles.muted}>{editing ? '수정할 때 연결된 공고는 바꿀 수 없어요.' : '관심 공고함에 담은 접수 중 공고 한 개를 선택해 주세요.'}</Text>
       </Card>
       <Card><Text style={styles.heading}>2. 역할과 조건</Text>
         <Text style={local.label}>우리 기업의 역할</Text>
@@ -190,7 +250,7 @@ function OwnedCreate({ token, companyName, onCreated, onCancel, onSavedPrograms,
           <Text style={styles.body}>{count}곳</Text>
           <Button label="+" accessibilityLabel="찾는 기업 수 늘리기" variant="secondary" disabled={busy || count >= seekingCountRange.max} onPress={() => setCount(current => Math.min(seekingCountRange.max, current + 1))} /></View></View>
         <ChoiceField label="희망 지역" value={region} disabled={busy} options={regionNamesNationwideFirst.map(value => ({ value, label: value }))} onChange={setRegion} />
-        {program?.targetDescription ? <Text style={styles.muted}>공고 지원대상: {program.targetDescription}</Text> : null}
+        {programInfo?.targetDescription ? <Text style={styles.muted}>공고 지원대상: {programInfo.targetDescription}</Text> : null}
         <Text style={local.label}>필요 역량 <Text style={styles.muted}>선택 · 최대 {recruitmentCapabilityMaxCount}개</Text></Text>
         <View style={local.chips}>{capabilities.map(value => <Pressable key={value} accessibilityRole="button" accessibilityLabel={`${value} 삭제`}
           disabled={busy} onPress={() => setCapabilities(current => current.filter(item => item !== value))} style={local.chip}>
@@ -201,7 +261,7 @@ function OwnedCreate({ token, companyName, onCreated, onCancel, onSavedPrograms,
           <Button label="추가" variant="secondary" disabled={busy || !capabilityDraft.trim()} onPress={addCapability} /></View>
         <Text style={local.label}>모집 마감일 *</Text>
         <Button label={deadline ? partnerFullDate(deadline) : '모집 마감일 선택'} accessibilityLabel="모집 마감일 선택"
-          variant="secondary" disabled={busy || !program} onPress={() => setCalendarOpen(true)} />
+          variant="secondary" disabled={busy || !programInfo} onPress={() => setCalendarOpen(true)} />
         <Text style={styles.muted}>{maximumDeadline ? `${partnerFullDate(maximumDeadline)}까지 선택할 수 있어요.` : '오늘 이후 날짜를 선택해 주세요.'}
           {'\n'}공고가 먼저 마감되면 모집도 자동 종료돼요.</Text>
         <Field label="희망 최소 업력 (선택)" value={age} onChangeText={setAge} editable={!busy} keyboardType="number-pad"
@@ -222,8 +282,9 @@ function OwnedCreate({ token, companyName, onCreated, onCancel, onSavedPrograms,
     <View style={[local.footer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
       {error && <Notice error>{error}</Notice>}
       {companyRequired && <Button label="기업 정보 확인" variant="secondary" onPress={onCompany} />}
+      {saveBlocked && <Button label="모집글 상세 다시 확인" variant="secondary" onPress={() => confirmExit(onCancel)} />}
       <View style={local.footerButtons}><Button label="취소" variant="secondary" disabled={busy} onPress={() => confirmExit(onCancel)} />
-        <Button label="모집글 등록" busy={busy} disabled={busy} style={{ flex: 1 }} onPress={() => void submit()} /></View>
+        <Button label={editing ? '수정 내용 저장' : '모집글 등록'} busy={busy} disabled={busy || saveBlocked || editing && !dirty} style={{ flex: 1 }} onPress={() => void submit()} /></View>
     </View>
     <PartnerSheet visible={pickerOpen} title="관심 공고 선택" onClose={() => setPickerOpen(false)}
       actions={<Button label="닫기" variant="secondary" onPress={() => setPickerOpen(false)} />}>

@@ -28,6 +28,7 @@ export default function RootLayout() {
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       <Stack.Screen name="program" options={{ title: '공고 상세' }} />
       <Stack.Screen name="partner/new" options={{ title: '모집글 작성' }} />
+      <Stack.Screen name="partner/edit" options={{ title: '모집글 수정' }} />
       <Stack.Screen name="partner/[id]" options={{ title: '모집글 상세' }} />
       <Stack.Screen name="company" options={{ title: '기업 프로필' }} />
       <Stack.Screen name="oauth/complete" options={{ title: '로그인' }} />

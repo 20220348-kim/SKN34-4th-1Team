@@ -30,7 +30,7 @@ const recruitment = {
 const company = { businessNumber: '1234567890', companyName: '넥스트웨이브', businessStatus: '계속사업자',
   businessStatusCode: '01', region: '경기', industry: '제조업', foundedYear: 2019, homepageUrl: null,
   businessVerifiedAt: '2026-09-28T10:00:00+09:00', updatedAt: '2026-09-28T10:00:00+09:00' }
-const callbacks = { onLogin: jest.fn(), onCompany: jest.fn(), onProgram: jest.fn(), onInbox: jest.fn() }
+const callbacks = { onLogin: jest.fn(), onCompany: jest.fn(), onProgram: jest.fn(), onInbox: jest.fn(), onEdit: jest.fn() }
 
 beforeEach(() => {
   Object.values(callbacks).forEach((callback) => callback.mockClear())
@@ -69,6 +69,22 @@ test('connected program uses its current API status and shows the full future de
   await screen.findByText('접수 중')
   expect(screen.getByText('접수 마감일 2027.06.30')).toBeTruthy()
   expect(screen.queryByText('접수 마감 06.30')).toBeNull()
+})
+
+test('the owner edits inside the app without a configured web origin', async () => {
+  jest.mocked(getRecruitment).mockResolvedValue({ ...recruitment, isMine: true })
+  render(<RecruitmentDetailScreen id={9} {...callbacks} />)
+  fireEvent.press(await screen.findByLabelText('수정'))
+  expect(callbacks.onEdit).toHaveBeenCalledTimes(1)
+  expect(screen.queryByText(/웹 주소가 설정되지/)).toBeNull()
+})
+
+test.each([{ isMine: false, status: 'OPEN' as const }, { isMine: true, status: 'CLOSED' as const }])('other members and closed recruitments do not offer editing: %j', async (state) => {
+  jest.mocked(getRecruitment).mockResolvedValue({ ...recruitment, ...state })
+  render(<RecruitmentDetailScreen id={9} {...callbacks} />)
+  await screen.findByText('협업 소개')
+  expect(screen.queryByLabelText('수정')).toBeNull()
+  expect(callbacks.onEdit).not.toHaveBeenCalled()
 })
 
 test('proposal requires an explicit message and keeps the checked company profile independent of contact release', async () => {
