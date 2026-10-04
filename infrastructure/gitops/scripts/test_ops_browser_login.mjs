@@ -215,6 +215,7 @@ const send = value => process.stdout.write(JSON.stringify(value) + '\n')
     const value = JSON.parse(line)
     if (!settings) {
       settings = JSON.parse(value)
+      send({phase: 'progress', step: 'CORE_LOGIN'})
       send({phase: 'browser_ready', email: settings.email})
     } else if (value.phase === 'browser_done') {
       send({phase: 'complete', result: {status: 'PASS', test_origin: publicOrigin}})
@@ -247,7 +248,11 @@ for (const failExit of [false, true]) {
       const options = { ...input, program: JSON.stringify({ origin: input.origin, email, failExit }) }
       if (failExit) await assert.rejects(runLiveRestore(options, child, 0), /did not exit cleanly/)
       else {
-        const result = await runLiveRestore(options, child, 0)
+        const phases = []
+        const result = await runLiveRestore(options, child, 0, (value) => phases.push(value))
+        assert.ok(phases.includes('HELPER_CORE_LOGIN'))
+        assert.ok(phases.includes('BROWSER_PASSWORD_LOGIN'))
+        assert.ok(phases.includes('BROWSER_REVOKED_SESSION'))
         const proof = result.browser_login
         await assert.rejects(fetch(result.test_origin, { signal: AbortSignal.timeout(1000) }))
         assert.equal(proof.response_source, 'restored_core_ops_http')
@@ -276,5 +281,18 @@ test('restored browser CLI redacts malformed input', () => {
   })
   assert.equal(result.status, 1)
   assert.equal(result.stdout, '')
-  assert.equal(result.stderr, 'BRIDGE_RESTORE_LIVE_BROWSER_FAILED\n')
+  assert.equal(result.stderr, 'BRIDGE_RESTORE_LIVE_INPUT\n')
+})
+
+
+test('restored helper progress exposes only fixed phases, never private exception output', { timeout: 20000 }, async () => {
+  for (const step of ['MANAGEMENT', 'private-password-cookie']) {
+    const phases = []
+    const child = spawn(process.execPath, ['-e', `process.stdin.once('data', () => {
+      process.stdout.write(JSON.stringify({phase:'progress',step:${JSON.stringify(step)}}) + '\\n');
+      process.stdout.end('private-error-not-json\\n'); process.stdin.destroy();
+    })`], { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true })
+    await assert.rejects(runLiveRestore({ program: 'fixture', password, expected }, child, 0, (value) => phases.push(value)), /transport failed/)
+    assert.deepEqual(phases, step === 'MANAGEMENT' ? ['HELPER', 'HELPER_MANAGEMENT'] : ['HELPER'])
+  }
 })

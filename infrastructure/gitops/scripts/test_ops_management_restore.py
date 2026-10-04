@@ -71,7 +71,9 @@ class ManagementTests(unittest.TestCase):
                 "reservation": None,
                 "calls": [],
             }
-            self.routes[route + "/review"] = {"material": None, "reviews": []}
+            self.routes[route + "/review"] = {
+                "material": {"cases": []}, "material_error": "", "reviews": [],
+            }
         self.calls = []
         self.fail_status = None
         self.cache = "private, no-store"
@@ -137,6 +139,16 @@ class ManagementTests(unittest.TestCase):
         self.routes[route]["evaluation_scope"] = row["evaluation_scope"]
         result = self.verify()
         self.assertNotIn(route + "/review", result["responses"])
+
+    def test_http_200_with_missing_review_inputs_cannot_pass(self):
+        route = "/api/v1/ops/evaluations/" + self.rows[0]["id"] + "/review"
+        for value in (
+            {"material": None, "material_error": "검토 자료 누락"},
+            {"material": {"cases": []}, "material_error": "자료 무결성 오류"},
+        ):
+            self.routes[route] = value
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "review inputs"):
+                self.verify()
 
     def test_follows_only_bounded_local_pages_and_counts_every_row(self):
         self.rows.extend({"id": f"row-{index}"} for index in range(25))

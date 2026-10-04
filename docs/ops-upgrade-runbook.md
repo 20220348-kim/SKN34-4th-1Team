@@ -270,6 +270,16 @@ RESTORE_BROWSER_CHANNEL=chrome node --test infrastructure/gitops/scripts/test_op
 로그인 폼 → 실제 Core 세션 발급 → Ops 목록 전체 페이지 → 복원 평가 3건의 상세·보고서 해시 →
 로그아웃 → 익명 및 폐기된 쿠키의 401을 같은 브라우저 검사로 확인한다. 응답을 재생하지 않는다.
 
+검토 화면에는 결과 볼륨 외에 평가 원문과 저장 캡처도 필요하다. CI 도구는 저장소의
+`evaluation/support-program-evidence`를 `/evidence`에 읽기 전용으로 연결하며, 실제 검토 API가
+원문·캡처 해시를 검사한다. 자료를 읽을 수 없으면 HTTP 200이어도 성공으로 처리하지 않는다.
+이는 버전 관리되는 평가 입력을 재사용하는 검사다. 이 마운트만으로 입력 파일의 백업·복원이나
+새 환경에서 모든 외부 자료가 보존됐다고 판단하지 않는다.
+
+실패 시 `BRIDGE_RESTORE_LIVE_HELPER_*`는 컨테이너 내부 준비/HTTP 검사,
+`BRIDGE_RESTORE_LIVE_BROWSER_*`는 로그인 폼·세션·목록·상세·보고서·세션 폐기 단계를 가리킨다.
+고정 단계 코드만 출력하며 응답·쿠키·비밀번호·브라우저 예외 원문은 로그에 남기지 않는다.
+
 복원 DB는 `--network none`을 유지하고 공개 포트도 추가하지 않는다. CI가 소유한 Vite의
 `http://127.0.0.1:5173` 요청을 Docker attach 표준입출력 통로로 전달하며, 컨테이너 안에서
 실제 loopback Core/Ops HTTP를 호출한다. 5173 포트가 이미 사용 중이면 다른 서버를 재사용하지 않고 실패한다.

@@ -124,23 +124,7 @@ def source_project(directory, image, mysql_image):
     snapshot.exclusive(directory / "compose.json", json.dumps(config).encode())
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--ops-image")
-    args = parser.parse_args()
-    image = args.ops_image or "govbiz-ops-snapshot-test:" + uuid4().hex[:12]
-    built = not args.ops_image
-    if built:
-        snapshot.run(
-            [
-                "docker",
-                "build",
-                "-t",
-                image,
-                str(Path(__file__).resolve().parents[2] / "backend/ops-service"),
-            ],
-            timeout=600,
-        )
+def rehearse(image):
     image = json.loads(snapshot.run(["docker", "image", "inspect", image]))[0]["Id"]
     mysql_image = json.loads(snapshot.run(["docker", "image", "inspect", "mysql:8.4"]))[0]["Id"]
     with tempfile.TemporaryDirectory(prefix="govbiz-snapshot-test-") as temporary:
@@ -216,10 +200,6 @@ def main():
                 == b"9"
             )
             assert snapshot.dump(mysql, "snapshot_test") == before
-            print(
-                "PASS: encrypted MySQL 8.4 + files + Django review/baseline/budget restore; "
-                "replay/drift/source preservation; no model calls"
-            )
         finally:
             # Clean up only paths/resources allocated by this invocation.
             for directory in (target, source):
@@ -248,8 +228,36 @@ def main():
                         stderr=subprocess.DEVNULL,
                         check=False,
                     )
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--ops-image")
+    args = parser.parse_args()
+    image = args.ops_image or "govbiz-ops-snapshot-test:" + uuid4().hex[:12]
+    built = not args.ops_image
     if built:
-        snapshot.run(["docker", "image", "rm", image])
+        snapshot.run(
+            [
+                "docker",
+                "build",
+                "-t",
+                image,
+                str(Path(__file__).resolve().parents[2] / "backend/ops-service"),
+            ],
+            timeout=600,
+        )
+    try:
+        rehearse(image)
+    finally:
+        if built:
+            # A cached build can share its ID with another test or user's tag.
+            # Delete only our unique tag, never the shared image ID or supplied image.
+            snapshot.run(["docker", "image", "rm", image])
+    print(
+        "PASS: encrypted MySQL 8.4 + files + Django review/baseline/budget restore; "
+        "replay/drift/source preservation and cleanup; no model calls"
+    )
 
 
 if __name__ == "__main__":
