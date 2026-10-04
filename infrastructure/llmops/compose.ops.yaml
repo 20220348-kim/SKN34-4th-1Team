@@ -81,7 +81,8 @@ services:
     volumes: ["ops-results:/results"]
     depends_on:
       prefect: {condition: service_healthy}
-      langfuse-web: {condition: service_started}
+      langfuse-web: {condition: service_healthy}
+      langfuse-worker: {condition: service_healthy}
     restart: unless-stopped
 
 volumes:
