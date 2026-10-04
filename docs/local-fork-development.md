@@ -131,6 +131,36 @@ python -B infrastructure/gitops/scripts/fork_cluster.py status --json \
 `doctor`도 Docker·kind 조회를 각각 15초로 제한합니다. Docker timeout이 Kubernetes 중단을 뜻하지는 않습니다.
 노드 condition 의미는 [Kubernetes 공식 문서](https://kubernetes.io/docs/concepts/architecture/nodes/#condition)를 따릅니다.
 
+### Kubernetes와 Compose의 Ops 연결 상태 확인
+
+Ops를 Compose 평가 실행기와 연결한 환경에서는 Pod Ready 외에 Prefect·결과 서버·실행기와
+브리지도 확인합니다. Docker가 실행 중일 때 다음 읽기 전용 옵션을 사용합니다.
+
+```bash
+python -B infrastructure/gitops/scripts/fork_cluster.py status --json --ops-details \
+  --state-dir /실제/개인/state/경로
+```
+
+- `ops_details.containers`는 연결 기록의 Compose 프로젝트에서 `prefect`, `ops-artifacts`,
+  `evaluation-runner`를 각각 조회합니다. 중지·누락·중복·일시 정지·재시작 중·불량 health 상태와
+  Docker 조회 실패를 구분합니다. 과거 `restart_count`가 양수라는 이유만으로 실패시키지는 않습니다.
+- `ops_details.bridge_verified`는 세 컨테이너가 준비된 뒤 기존 브리지 검사로 소유권·내부망·노드
+  연결·Kubernetes Service/EndpointSlice와 실제 컨테이너 주소 일치를 확인한 경우에만 true입니다.
+  검사 전후 컨테이너가 교체되거나 재시작 횟수가 바뀌면 실패합니다.
+- `status=FAIL`은 컨테이너 또는 브리지 검사 실패, `UNKNOWN`은 연결 기록 누락·불일치 또는
+  개발 모드가 아님을 뜻합니다. 둘 다 기본 Kubernetes 결과와 함께 JSON을 출력하고 종료 코드 1을
+  반환합니다. 개인 Ops 연결을 아직 구성하지 않았다면 이 옵션을 사용하지 않습니다.
+- healthcheck가 없는 컨테이너는 `health=null`로 표시합니다. `PASS`도 프로세스와 브리지 관측 결과이며
+  HTTP 인증·DB 연결·실제 평가 성공을 보장하지 않습니다. `application_paths_verified=false`와
+  `evaluation_executed=false`를 유지하며 업무 경로는 `ops_runtime.py --check`와 무료 평가로 별도 확인합니다.
+- Secret·환경변수·명령 인자·health 로그는 수집하지 않고 subprocess 오류 원문도 출력하지 않습니다.
+  컨테이너 시작·중지·재생성, 브리지 갱신, 평가 접수 또는 state 변경을 수행하지 않습니다.
+
+`COMPOSE_NOT_READY`이면 표시된 서비스와 해당 의존성부터 확인합니다. 컨테이너가 모두 정상인데
+`BRIDGE_CHECK_FAILED`이면 `ops_bridge.py check`로 원인을 확인한 뒤 필요한 경우에만 기존
+[브리지 연결 절차](../infrastructure/gitops/docs/ops-runtime.md)를 따릅니다.
+기본 `status --json`은 계속 Docker 없이 동작하고 `--image-details`와 함께 사용할 수도 있습니다.
+
 ### 실행 이미지와 현재 서비스 코드 비교
 
 Docker가 정상일 때 `--image-details`를 추가하면 전용 kind 노드의 이미지 메타데이터도 읽습니다.

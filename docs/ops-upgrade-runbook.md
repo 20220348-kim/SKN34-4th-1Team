@@ -479,6 +479,10 @@ CI에 연결된 코드가 있어도 최신 SHA의 실제 통합 작업이 이 �
 
 ## 3. 같은 소스에서 빌드하고 갱신
 
+기존 연결을 조사할 때는 `fork_cluster.py status --json --ops-details --state-dir "$OPS_STATE_DIR"`로
+Pod 상태와 Compose 컨테이너·브리지 상태를 함께 확인한다. Prefect·실행기가 중지돼 있으면 Pod Ready만으로
+갱신 준비가 됐다고 판단하지 않는다. 이 조회는 접수 중지·백업·업무 검증을 대신하지 않는다.
+
 기존 [dc_bridge 함수](../infrastructure/gitops/docs/ops-runtime.md#로컬-kind와-compose의-전용-통신-경로)를
 실제 프로젝트·state 경로로 정의한다. 병합된 Compose 설정은 검사기에 전달하며 화면이나 보고서에 덤프하지 않는다.
 새 이미지는 이전 이미지와 다른 태그를 사용하고 이전 이미지 ID와 설정을 보존한다.

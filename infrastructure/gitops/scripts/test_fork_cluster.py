@@ -95,19 +95,44 @@ class WebCommandTests(unittest.TestCase):
 
     def test_status_json_does_not_inspect_unowned_cluster(self):
         with (
-            patch("sys.argv", ["fork_cluster.py", "status", "--json", "--image-details"]),
+            patch("sys.argv", ["fork_cluster.py", "status", "--json", "--image-details", "--ops-details"]),
             patch.object(cluster, "os", SimpleNamespace(name="posix")),
             patch.object(cluster, "load_settings", return_value={}),
             patch.object(cluster, "commands", return_value=(["kube"], ["namespaced"], ["argo"])),
             patch.object(cluster, "verify_context", side_effect=ValueError("ownership")),
             patch("cluster_status.snapshot") as snapshot,
             patch("image_status.audit") as audit,
+            patch("ops_status.snapshot") as ops_snapshot,
             patch("sys.stderr", new_callable=io.StringIO),
             self.assertRaises(SystemExit),
         ):
             cluster.main()
         snapshot.assert_not_called()
         audit.assert_not_called()
+        ops_snapshot.assert_not_called()
+
+    def test_ops_details_exit_code_requires_pass_after_ownership_check(self):
+        for result in ("PASS", "FAIL", "UNKNOWN"):
+            report = dict.fromkeys(("workloads_ready", "baseline_matches", "nodes_healthy", "storage_ready", "local_storage_ok"), True)
+            with (
+                self.subTest(result=result),
+                patch("sys.argv", ["fork_cluster.py", "status", "--json", "--ops-details"]),
+                patch.object(cluster, "os", SimpleNamespace(name="posix")),
+                patch.object(cluster, "load_settings", return_value={}),
+                patch.object(cluster, "commands", return_value=(["kube"], ["ns"], ["argo"])),
+                patch.object(cluster, "verify_context") as verify,
+                patch("cluster_status.snapshot", return_value=report),
+                patch("ops_status.snapshot") as snapshot,
+                patch("sys.stdout", new_callable=io.StringIO) as output,
+            ):
+                snapshot.side_effect = lambda *args: verify.assert_called_once_with(["kube"], {}, timeout=15) or {"status": result}
+                if result == "PASS":
+                    cluster.main()
+                else:
+                    with self.assertRaises(SystemExit) as stopped:
+                        cluster.main()
+                    self.assertEqual(stopped.exception.code, 1)
+            self.assertEqual(json.loads(output.getvalue())["ops_details"]["status"], result)
 
     def test_dev_ownership_and_argo_reads_have_short_timeouts(self):
         with (
@@ -150,7 +175,8 @@ class WebCommandTests(unittest.TestCase):
         for args in (["web", "--ops-port", "0"], ["web", "--core-port", "65536"],
                      ["web", "--ops-port", "18080"], ["status", "--ops-port", "28001"],
                      ["up", "--core-port", "28080"], ["web", "--json"],
-                     ["status", "--image-details"], ["up", "--image-details"]):
+                     ["status", "--image-details"], ["up", "--image-details"],
+                     ["status", "--ops-details"], ["up", "--ops-details"]):
             with (
                 self.subTest(args=args),
                 patch("sys.argv", ["fork_cluster.py", *args]),
