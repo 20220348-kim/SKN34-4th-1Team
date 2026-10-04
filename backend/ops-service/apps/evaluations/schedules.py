@@ -158,22 +158,28 @@ def pause_schedule(schedule_id, user, *, request_id, reason):
                 reason,
             ):
                 raise RequestConflict
-            return schedule
-        if EvaluationSchedule.objects.filter(pause_request_id=request_id).exists():
-            raise RequestConflict
-        schedule.active_dataset = None
-        schedule.paused_at = timezone.now()
-        schedule.paused_by = user
-        schedule.pause_request_id = request_id
-        schedule.pause_reason = reason
-        schedule.save(
-            update_fields=[
-                "active_dataset",
-                "paused_at",
-                "paused_by",
-                "pause_request_id",
-                "pause_reason",
-            ]
+        else:
+            if EvaluationSchedule.objects.filter(pause_request_id=request_id).exists():
+                raise RequestConflict
+            schedule.active_dataset = None
+            schedule.paused_at = timezone.now()
+            schedule.paused_by = user
+            schedule.pause_request_id = request_id
+            schedule.pause_reason = reason
+            schedule.save(
+                update_fields=[
+                    "active_dataset",
+                    "paused_at",
+                    "paused_by",
+                    "pause_request_id",
+                    "pause_reason",
+                ]
+            )
+        # submit_run also locks the schedule before its occurrence. Close only
+        # unsubmitted slots in the same transaction as the authenticated pause.
+        # A matching retry can repair slots left pending by an older app version.
+        schedule.occurrences.filter(status="PENDING", run__isnull=True).update(
+            status="BLOCKED", reason_code="SCHEDULE_CLOSED", updated_at=timezone.now()
         )
         return schedule
 

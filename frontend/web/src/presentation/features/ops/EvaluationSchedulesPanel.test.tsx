@@ -99,6 +99,25 @@ describe('일별 정기 평가 계획', () => {
     expect((screen.getByRole('checkbox') as HTMLInputElement).checked).toBe(false)
     expect(fetch.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(0)
   })
+  it('계획 중지 후 대기 기록은 중지 사유를 표시하고 접수된 실행 링크는 유지한다', async () => {
+    const row = result(initial)
+    row.occurrences = [{ id, scheduled_on: '2026-10-03', status: 'PENDING', reason_code: '', run_id: null, run_status: null },
+      { id: '20000000-0000-4000-8000-000000000002', scheduled_on: '2026-10-04', status: 'SUBMITTED', reason_code: '', run_id: id, run_status: 'QUEUED' }]
+    const rows = [row]
+    setup({ rows, write: async (input) => {
+      rows[0] = { ...row, state: 'paused', paused_at: at, paused_by: owner, pause_reason: input.reason,
+        occurrences: [{ ...row.occurrences[0], status: 'BLOCKED', reason_code: 'SCHEDULE_CLOSED' }, row.occurrences[1]] }
+      return json(rows[0])
+    } })
+    mount()
+    await screen.findByText(/접수 확인 중/)
+    fireEvent.change(screen.getByLabelText('공통 E01 계획 중지 사유'), { target: { value: '배포 전 중지' } })
+    fireEvent.click(screen.getByRole('button', { name: '계획 중지 내용 확인' }))
+    fireEvent.click(screen.getByRole('button', { name: '확인한 계획 중지' }))
+    await screen.findByText(/접수 차단: 계획이 중지되었거나 승인 기간이 끝났습니다/)
+    expect(screen.queryByText(/접수 확인 중/)).toBeNull()
+    expect(screen.getByRole('link', { name: '실행 보기 · QUEUED' }).getAttribute('href')).toBe(`/ops/evaluations/${id}`)
+  })
   it('차단 사유와 접수된 실행 링크를 함께 보여준다', async () => {
     const row = result(initial)
     row.occurrences = [{ id, scheduled_on: '2026-10-03', status: 'BLOCKED', reason_code: 'PREVIOUS_RUN_UNFINISHED', run_id: null, run_status: null },
