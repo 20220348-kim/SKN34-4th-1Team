@@ -181,6 +181,7 @@ jobs:
           export RESTORE_DOCKER_IMAGE=$(docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops --env-file infrastructure/llmops/.env.artifacts -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml -f infrastructure/llmops/compose.artifacts.yaml -f infrastructure/llmops/compose.auth-test.yaml --profile evaluation images -q ops-service)
           test -n "$RESTORE_DOCKER_IMAGE"
           node --test infrastructure/gitops/scripts/test_ops_browser_login.mjs
+          OPS_STATUS_DOCKER_IMAGE="$RESTORE_DOCKER_IMAGE" PYTHONPATH=infrastructure/gitops/scripts backend/ai-service/.venv/bin/python -B -m unittest test_ops_status.DockerInspectionTests
       - name: Start React development proxy
         run: |
           (cd frontend/web && VITE_DEV_PROXY_TARGET=http://127.0.0.1:18082 VITE_CORE_API_BASE_URL=/ exec node node_modules/vite/bin/vite.js --host 127.0.0.1) > /tmp/govbiz-ops-web.log 2>&1 &
