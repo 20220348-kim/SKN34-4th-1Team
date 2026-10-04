@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium } from '../../../frontend/web/node_modules/playwright-core/index.mjs'
+import { checkRagMaterial } from './ops_restore_rag_browser.mjs'
 
 export async function checkBrowserLogin({ origin, email, password, expected }, progress = () => {}) {
   assert.ok(typeof origin === 'string' && /^http:\/\/(127\.0\.0\.1|localhost):[0-9]{4,5}$/.test(origin), 'Use an owned loopback Vite server')
@@ -83,7 +84,7 @@ export async function checkBrowserLogin({ origin, email, password, expected }, p
     await page.reload({ waitUntil: 'domcontentloaded' })
     await page.getByRole('navigation', { name: '운영 메뉴' }).getByText(email, { exact: true }).waitFor()
     const history = page.getByRole('region', { name: '평가 실행 이력' })
-    const locations = new Map(), listings = []
+    const locations = new Map(), listings = [], ragPaths = []
     progress('LIST')
     for (let number = 1; ; number++) {
       const listed = await read(`/api/v1/ops/evaluations?page=${number}`)
@@ -126,6 +127,12 @@ export async function checkBrowserLogin({ origin, email, password, expected }, p
       await page.locator('dd').getByText(id, { exact: true }).waitFor()
       await page.locator('dd').getByText(expected[id].execution_spec_sha256, { exact: true }).waitFor()
       await page.getByRole('region', { name: '실행 예산 장부' }).getByText('새 모델 호출을 예약하는 실행이 아닙니다.', { exact: false }).waitFor()
+      const detail = listings.flat().find((row) => row.id === id)
+      if (detail.evaluation_scope === 'source-chunks-retrieval-answer') {
+        progress('RAG_MATERIAL')
+        await checkRagMaterial(page, detail)
+        ragPaths.push(`/api/v1/ops/evaluations/${id}/rag-reviews`)
+      }
       const reportPath = `/api/v1/ops/evaluations/${id}/report`
       assert.equal(await page.getByRole('link', { name: 'Evidently 보고서', exact: true }).getAttribute('href'), reportPath)
       progress('REPORT')
@@ -151,6 +158,7 @@ export async function checkBrowserLogin({ origin, email, password, expected }, p
       '/api/v1/admin/session',
       ...listings.map((_, index) => `/api/v1/ops/evaluations?page=${index + 1}`),
       ...ids.flatMap((id) => ['', '/budget', '/report'].map((suffix) => `/api/v1/ops/evaluations/${id}${suffix}`)),
+      ...ragPaths,
     ]
     const status = (path) => page.evaluate(async (target) => (await fetch(target, { credentials: 'same-origin', cache: 'no-store' })).status, path)
     progress('ANONYMOUS')

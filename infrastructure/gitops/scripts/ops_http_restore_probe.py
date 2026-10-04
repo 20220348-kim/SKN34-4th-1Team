@@ -363,6 +363,22 @@ def check_management(expected, principal, token, member_token, total_runs):
                 != detail["execution_spec"]["dataset"]["case_ids"]
             ):
                 raise ValueError("Restored management review material is unavailable")
+        elif detail.get("evaluation_scope") == "source-chunks-retrieval-answer":
+            review = get(route + "/rag-reviews")
+            material = review.get("material")
+            spec = detail["execution_spec"]
+            if (
+                not isinstance(material, dict)
+                or material.get("evaluation_scope") != detail["evaluation_scope"]
+                or material.get("fixture_sha256") != spec["dataset"]["fixture_sha256"]
+                or material.get("candidate_capture_sha256") != spec["candidate_sha256"]
+                or material.get("reference_capture_sha256") != spec["reference_sha256"]
+                or [case["case_id"] for case in material.get("cases", [])]
+                != spec["dataset"]["case_ids"]
+                or material.get("material_sha256")
+                != digest({k: v for k, v in material.items() if k != "material_sha256"})
+            ):
+                raise ValueError("Restored RAG review material differs from its inputs")
     return {
         "evidence": {
             "status": "PASS",

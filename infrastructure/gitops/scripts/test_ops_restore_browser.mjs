@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import { withRestoreProxy } from './ops_restore_proxy.mjs'
 import { checkRestoreBrowser } from './ops_restore_browser.mjs'
+import { ragFixture } from './ops_restore_rag_fixture.mjs'
 
 const at = '2026-10-03T00:00:00Z'
 const dataset = {
@@ -46,6 +47,11 @@ for (const index of [0, 24, 25]) {
   row.report_url = path + '/report'
   row.execution_spec_sha256 = String(index).padStart(64, 'a')
   row.evaluation_scope = index === 25 ? 'source-chunks-retrieval-answer' : 'fixed-answer-context-only'
+  if (index === 25) {
+    const rag = ragFixture()
+    row.execution_spec = rag.spec
+    responses[path + '/rag-reviews'] = rag.state
+  }
   responses[path] = { ...row }
   responses[path + '/budget'] = { as_of: at, state: 'not_applicable', reservation: null, calls: [] }
   if (index !== 25) responses[path + '/review'] = {
@@ -65,7 +71,7 @@ for (const index of [0, 24, 25]) {
 test('real browser opens details and sandboxed report tabs across both list pages, then denies a member', { timeout: 120000 }, async (context) => {
   const stages = []
   const result = await withRestoreProxy(responses, async (origin) => ({ browser_ui: await checkRestoreBrowser(origin, responses, expected, reports, (stage) => stages.push(stage)) }), reports)
-  assert.deepEqual(stages, ['LAUNCH', 'LIST', 'BUDGET', 'DETAIL', 'REPORT', 'DETAIL', 'REPORT', 'DETAIL', 'REPORT', 'MEMBER'])
+  assert.deepEqual(stages, ['LAUNCH', 'LIST', 'BUDGET', 'DETAIL', 'REPORT', 'DETAIL', 'REPORT', 'DETAIL', 'RAG_MATERIAL', 'REPORT', 'MEMBER'])
   assert.equal(result.browser_ui.listed_run_count, 26)
   assert.equal(result.browser_ui.pages_verified, 2)
   assert.equal(result.browser_ui.budget_view_verified, true)

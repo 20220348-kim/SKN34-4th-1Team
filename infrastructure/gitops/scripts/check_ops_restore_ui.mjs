@@ -2,7 +2,7 @@
 // Real Vite and an isolated browser consume captured restore responses.
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
-import { getOpsSession, listEvaluations, getEvaluation, getBudgetReservations, getRunBudget, getEvaluationReview, getEvaluationSchedules } from '../../../frontend/web/src/data/ops/opsApi.ts'
+import { getOpsSession, listEvaluations, getEvaluation, getBudgetReservations, getRunBudget, getEvaluationReview, getEvaluationSchedules, getRagReviews } from '../../../frontend/web/src/data/ops/opsApi.ts'
 
 import { withRestoreProxy } from './ops_restore_proxy.mjs'
 import { checkRestoreBrowser } from './ops_restore_browser.mjs'
@@ -47,6 +47,7 @@ try {
       assert.equal((await getRunBudget(id)).state, 'not_applicable')
       stage = 'REVIEW'
       if (detail.evaluation_scope === 'fixed-answer-context-only') await getEvaluationReview(id)
+      if (detail.evaluation_scope === 'source-chunks-retrieval-answer') await getRagReviews(id)
     }
     stage = 'BROWSER_INPUT'
     const browser = await checkRestoreBrowser(origin, responses, expected, reports, (value) => { stage = 'BROWSER_' + value })

@@ -13,6 +13,7 @@ import test from 'node:test'
 import { createServer as createViteServer } from '../../../frontend/web/node_modules/vite/dist/node/index.js'
 import { checkBrowserLogin } from './ops_browser_login.mjs'
 import { runLiveRestore } from './ops_restore_live_browser.mjs'
+import { ragFixture } from './ops_restore_rag_fixture.mjs'
 
 const email = 'admin@example.invalid', password = 'disposable-test-password'
 const id = '10000000-0000-4000-8000-000000000001'
@@ -30,12 +31,13 @@ const run = {
   report_url: `/api/v1/ops/evaluations/${id}/report`, execution_spec_sha256: expected[id].execution_spec_sha256,
 }
 
-async function fixture(defect, verify, count = 1) {
+async function fixture(defect, verify, count = 1, rag = null) {
   let origin, vite, loggedIn = false, logouts = 0
   const token = randomUUID(), requests = [], violations = [], revokedReads = []
   const rows = Array.from({ length: count }, (_, index) => {
     const rowId = '10000000-0000-4000-8000-' + String(index + 1).padStart(12, '0')
-    return { ...run, id: rowId, report_url: `/api/v1/ops/evaluations/${rowId}/report` }
+    return { ...run, id: rowId, report_url: `/api/v1/ops/evaluations/${rowId}/report`,
+      ...(rag ? { evaluation_scope: 'source-chunks-retrieval-answer', execution_spec: rag.spec } : {}) }
   })
   const required = Object.fromEntries([rows[0], rows.at(-1)].map((row) => [row.id, expected[id]]))
   const originalEnv = Object.fromEntries(['K8S_CORE_PORT', 'K8S_OPS_PORT', 'K8S_DEV_LOGIN'].map((key) => [key, process.env[key]]))
@@ -73,9 +75,10 @@ async function fixture(defect, verify, count = 1) {
     const row = rows.find((item) => request.url === `/api/v1/ops/evaluations/${item.id}`)
     const report = rows.some((item) => request.url === item.report_url)
     const budget = rows.some((item) => request.url === `/api/v1/ops/evaluations/${item.id}/budget`)
+    const review = rag && rows.some((item) => request.url === `/api/v1/ops/evaluations/${item.id}/rag-reviews`)
     const invalidSessionAccepted = hasCookie(request) && (
       defect === 'revoked_list' && url.pathname === '/api/v1/ops/evaluations' ||
-      defect === 'revoked_detail' && row || defect === 'revoked_budget' && budget || defect === 'revoked_report' && report
+      defect === 'revoked_detail' && row || defect === 'revoked_budget' && budget || defect === 'revoked_report' && report || defect === 'revoked_rag' && review
     )
     if (request.url === '/api/v1/ops/session') {
       send(reply, 200, { user: authorized(request) ? { id: defect === 'wrong_principal' ? 'core:99' : 'core:1', username: email } : null,
@@ -94,6 +97,7 @@ async function fixture(defect, verify, count = 1) {
     }
     else if (row) send(reply, 200, row)
     else if (budget) send(reply, 200, { as_of: at, state: 'not_applicable', reservation: null, calls: [] })
+    else if (review) send(reply, defect === 'missing_rag' ? 503 : 200, rag.state)
     else if (request.url === '/api/v1/ops/schedules?page=1') send(reply, 200, { enabled: false, timezone: 'Asia/Seoul', page: 1, total: 0, results: [] })
     else if (request.url === '/api/v1/ops/budget/reservations?page=1') send(reply, 200, { as_of: at, count: 0, next: null, previous: null, results: [],
       summary: { state: 'unconfigured', limits: null, allocated: null, remaining: null, breakdown: null, reservation_count: 0, legacy_live_run_count: 0, change_count: 0, recent_changes: [] } })
@@ -122,6 +126,7 @@ async function fixture(defect, verify, count = 1) {
         '/api/v1/admin/session',
         ...Array.from({ length: Math.ceil(count / 25) }, (_, index) => `/api/v1/ops/evaluations?page=${index + 1}`),
         ...Object.keys(required).flatMap((key) => ['', '/budget', '/report'].map((suffix) => `/api/v1/ops/evaluations/${key}${suffix}`)),
+        ...(rag ? Object.keys(required).map((key) => `/api/v1/ops/evaluations/${key}/rag-reviews`) : []),
       ]), 'Revocation checks must actually send the issued cookie')
     }
   } finally {
@@ -169,6 +174,26 @@ test('browser traverses two pages and opens expected details from both pages', {
     assert.equal(proof.revoked_session_rejected, true)
   }, 26)
 })
+
+test('browser opens all RAG cases, sources and chunks without saving a review, then revokes access', { timeout: 120000 }, async () => {
+  await fixture(null, async (input) => {
+    const stages = []
+    assert.equal((await checkBrowserLogin(input, (stage) => stages.push(stage))).status, 'PASS')
+    assert.ok(stages.includes('RAG_MATERIAL'))
+  }, 1, ragFixture())
+})
+
+for (const [defect, message] of [
+  ['missing_rag', /RAG review material is unavailable/], ['revoked_rag', /Revoked session remained usable/],
+  ['wrong_rag_hash', /RAG candidate hash differs/], ['invalid_rag_contract', /RAG review contract was rejected/],
+]) {
+  test(`browser rejects ${defect} and cleans up the login session`, { timeout: 120000 }, async () => {
+    const rag = ragFixture()
+    if (defect === 'wrong_rag_hash') rag.state.material.candidate_capture_sha256 = 'f'.repeat(64)
+    if (defect === 'invalid_rag_contract') rag.state.material.cases[0].candidate.answer_status = 'INVALID'
+    await fixture(defect, async (input) => { await assert.rejects(checkBrowserLogin(input), message) }, 1, rag)
+  })
+}
 
 for (const [defect, message] of [
   ['duplicate_row', /repeated a row/], ['missing_row', /page is incomplete/],
@@ -255,6 +280,7 @@ for (const failExit of [false, true]) {
         const result = await runLiveRestore(options, child, 0, (value) => phases.push(value))
         assert.ok(phases.includes('HELPER_CORE_LOGIN'))
         assert.ok(phases.includes('BROWSER_PASSWORD_LOGIN'))
+        assert.ok(phases.includes('BROWSER_RAG_MATERIAL'))
         assert.ok(phases.includes('BROWSER_REVOKED_SESSION'))
         const proof = result.browser_login
         await assert.rejects(fetch(result.test_origin, { signal: AbortSignal.timeout(1000) }))
@@ -268,7 +294,7 @@ for (const failExit of [false, true]) {
       assert.ok(child.exitCode !== null || child.signalCode !== null)
       assert.deepEqual(await caches(), before)
       assert.deepEqual(['K8S_CORE_PORT', 'K8S_OPS_PORT', 'K8S_DEV_LOGIN'].map((key) => process.env[key]), envBefore)
-    })
+    }, 1, failExit ? null : ragFixture())
   })
 }
 
