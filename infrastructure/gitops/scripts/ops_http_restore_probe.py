@@ -289,7 +289,9 @@ def check_management(expected, principal, token, member_token, total_runs):
         ):
             raise ValueError("Restored replay unexpectedly has a paid budget")
         if detail.get("evaluation_scope") == "fixed-answer-context-only":
-            get(route + "/review")
+            review = get(route + "/review")
+            if not isinstance(review.get("material"), dict) or review.get("material_error"):
+                raise ValueError("Restored review inputs are unavailable")
     return {
         "evidence": {
             "status": "PASS",
@@ -305,7 +307,8 @@ def check_management(expected, principal, token, member_token, total_runs):
     }
 
 
-def check_http(expected):
+def check_http(expected, progress=lambda phase: None):
+    progress("SETUP")
     from ops_volume_restore_probe import expected_runs, tree
 
     expected_runs(expected)
@@ -335,7 +338,7 @@ def check_http(expected):
             "LLMOPS_ARTIFACT_URL": "http://127.0.0.1:8010",
             "LLMOPS_ARTIFACT_TOKEN": artifact_token,
             "LLMOPS_RESULTS_DIR": str(empty),
-            "LLMOPS_EVIDENCE_DIR": str(empty),
+            "LLMOPS_EVIDENCE_DIR": "/evidence",
             "CORE_API_URL": "http://127.0.0.1:8080",
         }
         os.environ.clear()
@@ -360,9 +363,11 @@ def check_http(expected):
         }
         total_runs = EvaluationRun.objects.count()
         connection.close()
+        progress("CORE_LOGIN")
         token, member_token = core_login(principal, core_password)
         servers = []
         try:
+            progress("SERVERS")
             for app, port, server_env in (
                 (
                     "apps.evaluations.artifact_server:create_app()",
@@ -372,7 +377,7 @@ def check_http(expected):
                         "HOME": home,
                         "PYTHONDONTWRITEBYTECODE": "1",
                         "LLMOPS_RESULTS_DIR": "/restore",
-                        "LLMOPS_EVIDENCE_DIR": str(empty),
+                        "LLMOPS_EVIDENCE_DIR": "/evidence",
                         "LLMOPS_ARTIFACT_TOKEN": artifact_token,
                     },
                 ),
@@ -433,9 +438,11 @@ def check_http(expected):
                     if time.monotonic() >= deadline:
                         raise ValueError("Restored HTTP startup timed out") from None
                     time.sleep(1)
+            progress("MANAGEMENT")
             management = check_management(
                 expected, principal, token, member_token, total_runs
             )
+            progress("REPORTS")
             reports = {}
             for request, row in expected.items():
                 route = "/api/v1/ops/evaluations/" + request + "/report"
@@ -470,7 +477,9 @@ def check_http(expected):
                         )
                     },
                 }
+            progress("BROWSER")
             browser_requests(principal, set(management["responses"]) | set(reports))
+            progress("REVOCATION")
             # Revoke a real persisted session, then prove Ops cannot reuse it.
             if (
                 response("/api/v1/auth/logout", token, port=8080, method="POST")[0]
@@ -492,6 +501,7 @@ def check_http(expected):
                     errors.append(error)
             if errors:
                 raise errors[0]
+    progress("FILES")
     if tree(Path("/restore")) != before:
         raise ValueError("Restored Ops HTTP changed result files")
     return {
@@ -544,6 +554,12 @@ def verify(image, volume, expected, database):
                 "/tmp:rw,nosuid,size=32m",
                 "--mount",
                 "type=volume,source=" + volume + ",target=/restore,readonly",
+                # Versioned fixture/capture inputs are not in the restored results volume.
+                # The real review reader checks their hashes; this is not an evidence backup.
+                "--mount",
+                "type=bind,source="
+                + str(Path(__file__).resolve().parents[3] / "evaluation/support-program-evidence")
+                + ",target=/evidence,readonly",
                 "--env",
                 "DB_PASSWORD",
                 "--env",
@@ -579,7 +595,8 @@ def verify(image, volume, expected, database):
             + Path(__file__).read_text(encoding="utf-8")
             + "\nprint(json.dumps({'phase':'complete','result':check_http("
             + repr(expected)
-            + ")}),flush=True)\n"
+            + ",lambda phase: print(json.dumps({'phase':'progress','step':phase}),"
+            + "flush=True))}),flush=True)\n"
         )
         result = json.loads(
             execute(

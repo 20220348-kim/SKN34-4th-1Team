@@ -10,8 +10,54 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import check_ops_snapshot as rehearsal
 import ops_snapshot as snapshot
 import ops_snapshot_files as storage
+
+
+class RehearsalCleanupTests(unittest.TestCase):
+    def test_built_tag_is_removed_on_success_and_failure(self):
+        for error in (None, ValueError("restore failed")):
+            with (
+                self.subTest(error=error),
+                patch("sys.argv", ["check_ops_snapshot.py"]),
+                patch.object(snapshot, "run") as run,
+                patch.object(rehearsal, "rehearse", side_effect=error) as check,
+                patch("builtins.print") as output,
+            ):
+                if error:
+                    with self.assertRaisesRegex(ValueError, "restore failed"):
+                        rehearsal.main()
+                    output.assert_not_called()
+                else:
+                    rehearsal.main()
+                    output.assert_called_once()
+                tag = run.call_args_list[0].args[0][3]
+                self.assertTrue(tag.startswith("govbiz-ops-snapshot-test:"))
+                check.assert_called_once_with(tag)
+                self.assertEqual(run.call_args_list[-1].args[0], ["docker", "image", "rm", tag])
+
+    def test_supplied_image_is_not_built_or_removed(self):
+        with (
+            patch("sys.argv", ["check_ops_snapshot.py", "--ops-image", "existing:tag"]),
+            patch.object(snapshot, "run") as run,
+            patch.object(rehearsal, "rehearse") as check,
+            patch("builtins.print"),
+        ):
+            rehearsal.main()
+            check.assert_called_once_with("existing:tag")
+            run.assert_not_called()
+
+    def test_cleanup_failure_cannot_print_pass(self):
+        with (
+            patch("sys.argv", ["check_ops_snapshot.py"]),
+            patch.object(snapshot, "run", side_effect=[b"", ValueError("cleanup failed")]),
+            patch.object(rehearsal, "rehearse"),
+            patch("builtins.print") as output,
+        ):
+            with self.assertRaisesRegex(ValueError, "cleanup failed"):
+                rehearsal.main()
+            output.assert_not_called()
 
 
 def example_files():

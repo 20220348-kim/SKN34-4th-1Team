@@ -11,13 +11,15 @@ import { createServer as createViteServer } from '../../../frontend/web/node_mod
 import { checkBrowserLogin } from './ops_browser_login.mjs'
 
 const root = fileURLToPath(new URL('../../../frontend/web/', import.meta.url))
+const helperSteps = new Set(['SETUP', 'CORE_LOGIN', 'SERVERS', 'MANAGEMENT', 'REPORTS', 'BROWSER', 'REVOCATION', 'FILES'])
 const bounded = async (promise, milliseconds) => {
   let timer
   try { return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Restored browser transport timed out')), milliseconds) })]) }
   finally { clearTimeout(timer) }
 }
 
-export async function runLiveRestore({ program, password, expected }, child, port = 5173) {
+export async function runLiveRestore({ program, password, expected }, child, port = 5173, progress = () => {}) {
+  progress('HELPER')
   let buffer = '', failure, receiver, origin, vite, cache, proof, result
   const frames = [], servers = [], failures = []
   const originalEnv = Object.fromEntries(['K8S_CORE_PORT', 'K8S_OPS_PORT', 'K8S_DEV_LOGIN'].map((key) => [key, process.env[key]]))
@@ -39,6 +41,11 @@ export async function runLiveRestore({ program, password, expected }, child, por
       buffer = buffer.slice(end + 1)
       try {
         const value = JSON.parse(line)
+        if (value.phase === 'progress') {
+          assert.ok(helperSteps.has(value.step))
+          progress('HELPER_' + value.step)
+          continue
+        }
         if (receiver) { receiver.resolve(value); receiver = undefined }
         else if (frames.length < 2) frames.push(value)
         else fail()
@@ -63,6 +70,7 @@ export async function runLiveRestore({ program, password, expected }, child, por
     const ready = await read(150000)
     assert.equal(ready.phase, 'browser_ready')
     assert.ok(typeof ready.email === 'string' && ready.email.includes('@'))
+    progress('PROXY')
     for (const target of [8080, 8000]) {
       const server = createServer(async (request, reply) => {
         try {
@@ -105,12 +113,15 @@ export async function runLiveRestore({ program, password, expected }, child, por
     await optimizer?.scanProcessing
     await Promise.all(Object.values(optimizer?.metadata.discovered ?? {}).map((item) => item.processing))
     origin = 'http://127.0.0.1:' + vite.httpServer.address().port
-    proof = await checkBrowserLogin({ origin, email: ready.email, password, expected })
+    progress('BROWSER')
+    proof = await checkBrowserLogin({ origin, email: ready.email, password, expected }, (value) => progress('BROWSER_' + value))
     assert.deepEqual(failures, [])
+    progress('COMPLETE')
     const completed = await exchange({ phase: 'browser_done' }, 90000)
     assert.equal(completed.phase, 'complete')
     result = completed.result
     child.stdin.end()
+    progress('EXIT')
     assert.deepEqual(await bounded(exited, 20000), { code: 0, signal: null }, 'Restored HTTP helper did not exit cleanly')
   } finally {
     try {
@@ -141,6 +152,7 @@ export async function runLiveRestore({ program, password, expected }, child, por
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  let phase = 'INPUT'
   try {
     let input = ''
     for await (const chunk of process.stdin) { input += chunk; assert.ok(Buffer.byteLength(input) <= 1024 * 1024) }
@@ -148,9 +160,10 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     assert.match(value.identity, /^[a-f0-9]{64}$/)
     assert.ok(typeof value.program === 'string' && value.program.length < 512 * 1024)
     const child = spawn('docker', ['start', '--attach', '--interactive', value.identity], { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true })
-    process.stdout.write(JSON.stringify(await runLiveRestore(value, child)))
+    process.stdout.write(JSON.stringify(await runLiveRestore(value, child, 5173, (value) => { phase = value })))
   } catch {
-    process.stderr.write('BRIDGE_RESTORE_LIVE_BROWSER_FAILED\n')
+    // Never print helper output, Playwright exceptions, form values or cookies.
+    process.stderr.write('BRIDGE_RESTORE_LIVE_' + phase + '\n')
     process.exitCode = 1
   }
 }

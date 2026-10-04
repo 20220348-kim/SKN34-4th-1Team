@@ -48,6 +48,7 @@ MANAGEMENT = {
 
 class HttpTests(unittest.TestCase):
     def setUp(self):
+        self.phases = []
         self.artifact = Mock(poll=Mock(return_value=None), wait=Mock(return_value=0))
         self.ops = Mock(poll=Mock(return_value=None), wait=Mock(return_value=0))
         self.revoked = False
@@ -147,7 +148,7 @@ class HttpTests(unittest.TestCase):
                 probe.subprocess, "Popen", side_effect=[self.artifact, self.ops]
             ) as start,
         ):
-            result = probe.check_http(RUNS)
+            result = probe.check_http(RUNS, self.phases.append)
             artifact_env = start.call_args_list[0].kwargs["env"]
             ops_env = start.call_args_list[1].kwargs["env"]
             self.assertNotIn("DB_PASSWORD", artifact_env)
@@ -155,6 +156,7 @@ class HttpTests(unittest.TestCase):
             self.assertNotIn("CORE_LOGIN_PASSWORD", ops_env)
             self.assertEqual(ops_env["CORE_API_URL"], "http://127.0.0.1:8080")
             self.assertEqual(artifact_env["LLMOPS_RESULTS_DIR"], "/restore")
+            self.assertEqual(artifact_env["LLMOPS_EVIDENCE_DIR"], "/evidence")
             self.assertNotEqual(ops_env["LLMOPS_RESULTS_DIR"], "/restore")
             self.assertEqual(ops_env["DB_USER"], "ops_restore_reader")
             self.assertEqual(browser.call_args.args[0]["email"], self.user.email)
@@ -163,6 +165,13 @@ class HttpTests(unittest.TestCase):
 
     def test_reports_real_auth_revocation_outage_and_cleanup(self):
         result = self.run_probe()
+        self.assertEqual(
+            self.phases,
+            [
+                "SETUP", "CORE_LOGIN", "SERVERS", "MANAGEMENT",
+                "REPORTS", "BROWSER", "REVOCATION", "FILES",
+            ],
+        )
         self.assertEqual(result["matched_reports"], 3)
         self.assertTrue(result["core_admin_auth_verified"])
         self.assertEqual(result["auth_contract"], "restored_core_password_login")
@@ -322,6 +331,12 @@ class ContainerTests(unittest.TestCase):
         self.assertEqual(
             command[command.index("--mount") + 1],
             "type=volume,source=owned-restore-volume,target=/restore,readonly",
+        )
+        self.assertEqual(
+            [command[index + 1] for index, value in enumerate(command) if value == "--mount"][1],
+            "type=bind,source="
+            + str(Path(probe.__file__).resolve().parents[3] / "evaluation/support-program-evidence")
+            + ",target=/evidence,readonly",
         )
         self.assertNotIn("--publish", command)
         self.assertEqual(options["env"]["DB_PASSWORD"], DATABASE["password"])
@@ -503,7 +518,9 @@ class BrowserTransportTests(unittest.TestCase):
     principal = {"email": "admin@example.invalid"}
     route = "/api/v1/ops/evaluations?page=1"
 
-    def run_transport(self, requests, reply=(200, Message(), b"{}")):
+    def run_transport(self, requests, reply=None):
+        if reply is None:
+            reply = (200, Message(), b"{}")
         output = io.StringIO()
         with (
             patch.object(

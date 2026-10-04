@@ -4,7 +4,7 @@ import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium } from '../../../frontend/web/node_modules/playwright-core/index.mjs'
 
-export async function checkBrowserLogin({ origin, email, password, expected }) {
+export async function checkBrowserLogin({ origin, email, password, expected }, progress = () => {}) {
   assert.ok(typeof origin === 'string' && /^http:\/\/(127\.0\.0\.1|localhost):[0-9]{4,5}$/.test(origin), 'Use an owned loopback Vite server')
   assert.ok(Number(new URL(origin).port) >= 1024 && Number(new URL(origin).port) <= 65535)
   assert.ok(typeof email === 'string' && email.length <= 254 && email.includes('@'), 'Missing test login identity')
@@ -47,6 +47,7 @@ export async function checkBrowserLogin({ origin, email, password, expected }) {
       }
     })
     assert.equal((await context.cookies()).length, 0)
+    progress('LOGIN_FORM')
     const page = await context.newPage()
     await page.goto(origin + '/ops/evaluations', { waitUntil: 'domcontentloaded' })
     const form = page.getByRole('form', { name: '로그인', exact: true })
@@ -54,6 +55,7 @@ export async function checkBrowserLogin({ origin, email, password, expected }) {
     assert.equal(new URL(page.url()).searchParams.get('next'), '/ops/evaluations')
     await form.getByLabel('이메일', { exact: true }).fill(email)
     await form.getByLabel('비밀번호', { exact: true }).fill(password)
+    progress('PASSWORD_LOGIN')
     const [login] = await Promise.all([
       page.waitForResponse((reply) => reply.url() === origin + '/api/v1/auth/login' && reply.request().method() === 'POST'),
       form.getByRole('button', { name: '이메일로 로그인', exact: true }).click(),
@@ -64,6 +66,7 @@ export async function checkBrowserLogin({ origin, email, password, expected }) {
     const cookie = (await context.cookies(origin)).find((item) => item.name === 'govbiz_session')
     assert.ok(cookie?.httpOnly && cookie.path === '/' && cookie.sameSite === 'Lax', 'Core session cookie is missing or unsafe')
     assert.ok((await login.headerValue('set-cookie'))?.includes('govbiz_session='), 'Login did not issue a session cookie')
+    progress('SESSION')
     await page.getByRole('navigation', { name: '운영 메뉴' }).getByText(email, { exact: true }).waitFor()
     const read = (path) => page.evaluate(async (target) => {
       const reply = await fetch(target, { credentials: 'same-origin', cache: 'no-store' })
@@ -77,6 +80,7 @@ export async function checkBrowserLogin({ origin, email, password, expected }) {
     await page.reload({ waitUntil: 'domcontentloaded' })
     await page.getByRole('navigation', { name: '운영 메뉴' }).getByText(email, { exact: true }).waitFor()
     const history = page.getByRole('region', { name: '평가 실행 이력' })
+    progress('LIST')
     const locations = new Map(), listings = []
     for (let number = 1; ; number++) {
       const listed = await read(`/api/v1/ops/evaluations?page=${number}`)
@@ -108,6 +112,7 @@ export async function checkBrowserLogin({ origin, email, password, expected }) {
     assert.equal(locations.size, listedRunCount)
     for (const id of ids) assert.ok(locations.has(id), 'Expected evaluation is absent')
     for (const id of ids) {
+      progress('DETAIL')
       await page.goto(origin + '/ops/evaluations', { waitUntil: 'domcontentloaded' })
       for (let number = 1; number < locations.get(id); number++) {
         await history.locator(`a[href="/ops/evaluations/${listings[number - 1][0].id}"]`).waitFor()
@@ -119,6 +124,7 @@ export async function checkBrowserLogin({ origin, email, password, expected }) {
       await page.locator('dd').getByText(expected[id].execution_spec_sha256, { exact: true }).waitFor()
       await page.getByRole('region', { name: '실행 예산 장부' }).getByText('새 모델 호출을 예약하는 실행이 아닙니다.', { exact: false }).waitFor()
       const reportPath = `/api/v1/ops/evaluations/${id}/report`
+      progress('REPORT')
       assert.equal(await page.getByRole('link', { name: 'Evidently 보고서', exact: true }).getAttribute('href'), reportPath)
       const report = await page.evaluate(async (path) => {
         const reply = await fetch(path, { credentials: 'same-origin', cache: 'no-store' })
@@ -130,6 +136,7 @@ export async function checkBrowserLogin({ origin, email, password, expected }) {
       assert.ok(report.csp?.includes('sandbox allow-scripts;') && report.cache?.includes('no-store'), 'Actual report security headers differ')
       assert.equal(await page.getByRole('alert').count(), 0, 'Management detail contains an error')
     }
+    progress('LOGOUT')
     const [logout] = await Promise.all([
       page.waitForResponse((reply) => reply.url() === origin + '/api/v1/auth/logout' && reply.request().method() === 'POST'),
       page.getByRole('navigation', { name: '운영 메뉴' }).getByRole('button', { name: '로그아웃', exact: true }).click(),
@@ -150,6 +157,7 @@ export async function checkBrowserLogin({ origin, email, password, expected }) {
     // Reuse only this test's server-issued cookie, in memory, after logout.
     // Anonymous 401 alone does not prove that the server revoked the session.
     try {
+      progress('REVOKED_SESSION')
       await context.addCookies([cookie])
       assert.ok((await context.cookies(origin)).some((item) => item.name === cookie.name && item.value === cookie.value), 'Revoked test cookie was not attached')
       for (const path of protectedPaths) assert.equal(await status(path), 401, 'Revoked session remained usable after logout')
