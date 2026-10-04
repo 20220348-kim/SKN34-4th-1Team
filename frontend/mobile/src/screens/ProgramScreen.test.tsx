@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react-native'
+import { Linking } from 'react-native'
 import { ApiError, apiRequest, programClient } from '../api/client'
 import { useAuth } from '../auth/session'
 import { ProgramScreen } from './ProgramScreen'
@@ -21,6 +22,32 @@ beforeEach(() => {
   jest.mocked(apiRequest).mockReset().mockImplementation(respond)
   answer.mockReset().mockResolvedValue({ answerStatus: 'ANSWERED', answer: '공고 원문 답변', citations: [] })
   jest.mocked(programClient).mockReturnValue({ getDetail: jest.fn().mockResolvedValue(programDetail), answerEvidenceQuestion: answer } as unknown as ReturnType<typeof programClient>)
+})
+afterEach(() => jest.restoreAllMocks())
+
+test.each(['signedOut', 'signedIn'] as const)('unsupported evidence offers an official source to %s without login or an AI request', async (status) => {
+  if (status === 'signedOut') jest.mocked(useAuth).mockReturnValue({ status, session: null, invalidateSession } as unknown as ReturnType<typeof useAuth>)
+  const open = jest.spyOn(Linking, 'openURL').mockResolvedValue(true)
+  const login = jest.fn()
+  jest.mocked(programClient).mockReturnValue({ getDetail: jest.fn().mockResolvedValue({ ...programDetail, sourceCode: 'KSTARTUP', evidenceQuestionSupported: false }), answerEvidenceQuestion: answer } as unknown as ReturnType<typeof programClient>)
+  render(<ProgramScreen identity={{ sourceCode: 'KSTARTUP', sourceProgramId: identity.sourceProgramId }} onLogin={login} />)
+  await screen.findByLabelText('공식 원문 확인')
+  expect(screen.queryByLabelText('원문에 질문하기')).toBeNull()
+  expect(screen.getByText(/이 제공처 공고는 아직 원문 근거 답변을 지원하지 않습니다/)).toBeTruthy()
+  fireEvent.press(screen.getByLabelText('공식 원문 확인'))
+  expect(open).toHaveBeenCalledWith(programDetail.sourceUrl)
+  expect(login).not.toHaveBeenCalled()
+  expect(answer).not.toHaveBeenCalled()
+})
+
+test('a resumed question for newly unsupported evidence cannot reopen the question sheet', async () => {
+  const resumed = jest.fn()
+  jest.mocked(programClient).mockReturnValue({ getDetail: jest.fn().mockResolvedValue({ ...programDetail, evidenceQuestionSupported: false }), answerEvidenceQuestion: answer } as unknown as ReturnType<typeof programClient>)
+  render(<ProgramScreen identity={identity} onLogin={jest.fn()} resumeAction={{ action: 'question', token: 'owner' }} onResumed={resumed} />)
+  await screen.findByLabelText('공식 원문 확인')
+  expect(resumed).toHaveBeenCalledTimes(1)
+  expect(screen.queryByLabelText('공고에 대해 궁금한 점')).toBeNull()
+  expect(answer).not.toHaveBeenCalled()
 })
 test('saved program preparation changes only the selected document with its stored progress revision', async () => {
   let updated = false

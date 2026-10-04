@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native'
+import { Alert } from 'react-native'
 import type { SupportProgram } from '@govbiz/shared/domain/entities/SupportProgram'
 import type { PartnerRecruitment } from '@govbiz/shared/domain/entities/PartnerRecruitment'
 import { ApiError } from '../api/client'
@@ -7,10 +8,11 @@ import { listSavedPrograms } from '../api/savedPrograms'
 import { useAuth } from '../auth/session'
 import { RecruitmentCreateScreen } from './RecruitmentCreateScreen'
 
-jest.mock('expo-router', () => ({ useFocusEffect: (effect: () => (() => void) | undefined) => {
+jest.mock('expo-router', () => ({ useNavigation: () => ({ dispatch: jest.fn() }), useFocusEffect: (effect: () => (() => void) | undefined) => {
   const React = jest.requireActual<typeof import('react')>('react')
   React.useEffect(effect, [effect])
 } }))
+jest.mock('expo-router/react-navigation', () => ({ usePreventRemove: jest.fn() }))
 jest.mock('../auth/session', () => ({ useAuth: jest.fn() }))
 jest.mock('../api/partners', () => ({ ...jest.requireActual('../api/partners'), createRecruitment: jest.fn() }))
 jest.mock('../api/savedPrograms', () => ({ listSavedPrograms: jest.fn() }))
@@ -33,6 +35,31 @@ beforeEach(() => {
   jest.mocked(useAuth).mockReturnValue(auth)
   jest.mocked(listSavedPrograms).mockReset().mockResolvedValue([{ savedAt: '', program }])
   jest.mocked(createRecruitment).mockReset().mockResolvedValue({ outcome: 'created', recruitment: { id: 19 } as PartnerRecruitment })
+})
+afterEach(() => jest.restoreAllMocks())
+
+test('cancelling a populated draft preserves its inputs until the user confirms leaving', () => {
+  const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined)
+  render(<RecruitmentCreateScreen {...callbacks} />)
+  fireEvent.changeText(screen.getByLabelText('모집글 제목 *'), '작성 중인 모집글')
+  fireEvent.changeText(screen.getByLabelText('협업 소개 *'), '입력한 협업 소개')
+  fireEvent.press(screen.getByLabelText('취소'))
+  expect(callbacks.onCancel).not.toHaveBeenCalled()
+  expect(alert).toHaveBeenCalledWith('작성 중인 모집글을 나갈까요?', expect.any(String), expect.any(Array))
+  act(() => alert.mock.calls[0][2]?.find(button => button.style === 'cancel')?.onPress?.())
+  expect(screen.getByLabelText('모집글 제목 *').props.value).toBe('작성 중인 모집글')
+  expect(screen.getByLabelText('협업 소개 *').props.value).toBe('입력한 협업 소개')
+  fireEvent.press(screen.getByLabelText('취소'))
+  act(() => alert.mock.calls[1][2]?.find(button => button.text === '나가기')?.onPress?.())
+  expect(callbacks.onCancel).toHaveBeenCalledTimes(1)
+})
+
+test('an untouched draft cancels without a discard confirmation', () => {
+  const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined)
+  render(<RecruitmentCreateScreen {...callbacks} />)
+  fireEvent.press(screen.getByLabelText('취소'))
+  expect(callbacks.onCancel).toHaveBeenCalledTimes(1)
+  expect(alert).not.toHaveBeenCalled()
 })
 
 async function chooseProgram(label = '공고 선택: 기업마당 공동 제조 과제') {
