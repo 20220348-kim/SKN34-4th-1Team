@@ -270,16 +270,6 @@ RESTORE_BROWSER_CHANNEL=chrome node --test infrastructure/gitops/scripts/test_op
 로그인 폼 → 실제 Core 세션 발급 → Ops 목록 전체 페이지 → 복원 평가 3건의 상세·보고서 해시 →
 로그아웃 → 익명 및 폐기된 쿠키의 401을 같은 브라우저 검사로 확인한다. 응답을 재생하지 않는다.
 
-검토 화면에는 결과 볼륨 외에 평가 원문과 저장 캡처도 필요하다. CI 도구는 저장소의
-`evaluation/support-program-evidence`를 `/evidence`에 읽기 전용으로 연결하며, 실제 검토 API가
-원문·캡처 해시를 검사한다. 자료를 읽을 수 없으면 HTTP 200이어도 성공으로 처리하지 않는다.
-이는 버전 관리되는 평가 입력을 재사용하는 검사다. 이 마운트만으로 입력 파일의 백업·복원이나
-새 환경에서 모든 외부 자료가 보존됐다고 판단하지 않는다.
-
-실패 시 `BRIDGE_RESTORE_LIVE_HELPER_*`는 컨테이너 내부 준비/HTTP 검사,
-`BRIDGE_RESTORE_LIVE_BROWSER_*`는 로그인 폼·세션·목록·상세·보고서·세션 폐기 단계를 가리킨다.
-고정 단계 코드만 출력하며 응답·쿠키·비밀번호·브라우저 예외 원문은 로그에 남기지 않는다.
-
 복원 DB는 `--network none`을 유지하고 공개 포트도 추가하지 않는다. CI가 소유한 Vite의
 `http://127.0.0.1:5173` 요청을 Docker attach 표준입출력 통로로 전달하며, 컨테이너 안에서
 실제 loopback Core/Ops HTTP를 호출한다. 5173 포트가 이미 사용 중이면 다른 서버를 재사용하지 않고 실패한다.
@@ -302,8 +292,35 @@ Core는 이 Vite Origin만 허용하며, Ops Host는 같은 Origin의 호스트�
 로컬은 실제 React/Vite/Chrome·임시 HTTP 인증 서버·별도 통신 프로세스로 연결과 실패 정리를 확인한다.
 Docker·MySQL·복원 Core/Ops 이미지의 통합 검증은 CI에서 수행한다.
 잠긴 Evidently 버전으로 생성한 무료 합성 보고서의 브라우저 렌더링 검사도 CI에 포함한다.
-복원 화면 실패는 `BRIDGE_RESTORE_WEB_*`, 실제 연결 실패는 `BRIDGE_RESTORE_LIVE_BROWSER_FAILED`로
+복원 화면 실패는 `BRIDGE_RESTORE_WEB_*`, 실제 연결 실패는 `BRIDGE_RESTORE_LIVE_<단계>`로
 기록한다. 원문·쿠키를 공개하지 않고 `ops-bridge.json`의 `probe_errors`에서 실패 단계를 확인한다.
+실제 연결 단계는 `HELPER_CORE_LOGIN`, `HELPER_MANAGEMENT`, `BROWSER_PASSWORD_LOGIN`, `BROWSER_DETAIL`,
+`BROWSER_LOGOUT`, `EXIT`, `CLEANUP` 등 고정된 값만 허용한다. helper의 알 수 없는 단계나
+잘못된 JSON 뒤에 정상 프레임이 도착해도 전송 실패를 취소하지 않는다.
+
+긴 Kubernetes 검사 전에 기존 CI에서 빌드한 Ops 이미지로 Docker attach 회귀를 실행한다.
+별도 `--network none`·읽기 전용 컨테이너의 Python HTTP 테스트 서버에 새 브라우저로 연결해
+실제 요청 검증기, 쿠키 발급·폐기, 응답 전달과 컨테이너 정리를 확인한다.
+`RESTORE_DOCKER_IMAGE`를 지정한 `test_ops_browser_login.mjs`가 이 검사를 수행하며 CI는 이미지가
+없으면 실패한다. 이 빠른 검사는 MySQL·실제 Core/Ops 복원 통합 검증을 대체하지 않는다.
+
+복원 서버는 결과 볼륨 외에 카탈로그가 지정한 fixture·저장 캡처 JSON도 필요하다.
+`verify()`는 현재 checkout에서 허용 목록의 파일만 임시 디렉터리에 복사하고 `/evidence`에
+읽기 전용으로 연결한다. 복원 이미지의 `execution_release.json`에 고정된 해시와 모두 일치해야
+HTTP 검증을 시작한다. 자료 누락·변경은 중단 사유이며, Ops가 원본 checkout을 직접 읽거나
+HTTP 실패 시 로컬 파일로 대체하지 않는다. 검사 후 결과 파일과 입력 자료의 무변경 및 정리를 확인한다.
+이는 버전 관리되는 평가 입력을 다시 제공하는 절차이며, 해당 디렉터리를 결과 볼륨에서 복원했다고
+해석하면 안 된다. 다른 릴리스의 이미지에는 그 이미지와 일치하는 입력 자료가 필요하다.
+
+`skn-164`·`4456327`의 복원 경로는 Artifact 서버의 `LLMOPS_EVIDENCE_DIR`도 빈 디렉터리로
+지정했다. 따라서 보고서 HTTP 200·SHA 검증과 로그인은 성공해도 `/review`는 HTTP 200 안에
+`material=null`, `material_error`, `quality.blocked_reason`을 반환했고 상세 화면에 오류가 표시됐다.
+격리 MySQL 8.4·실제 Core/Ops·저장 캡처로 생성한 Evidently 보고서로 이 실패를 재현했다.
+같은 입력을 Artifact 서버에 연결하면 상세·보고서 렌더링·로그아웃·세션 폐기 검증이 통과했다.
+HTTP 검사도 검토 자료·fixture 해시·전체 사례 목록과 품질 판정 준비 상태를 확인하여 이 결함을
+브라우저 실행 전 차단한다. 사람 검토나 품질 합격을 요구하거나 자동 승인하는 검사는 아니다.
+이 로컬 재현은 고정 근거 답변 자료와 기존 로컬 Core 이미지로 수행했으며, 최신 이미지의 전체
+Kubernetes·RAG·Prefect 복원 검증 완료는 수정 커밋의 CI 결과로 판단한다.
 
 ### CI에서 수행하는 결과·Prefect 볼륨 복원 검증
 

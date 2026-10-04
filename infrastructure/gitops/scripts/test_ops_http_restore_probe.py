@@ -9,7 +9,9 @@ import sys
 import unittest
 from email.message import Message
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
+from typing import ClassVar
 from unittest.mock import Mock, patch
 
 import ops_http_restore_probe as probe
@@ -48,11 +50,11 @@ MANAGEMENT = {
 
 class HttpTests(unittest.TestCase):
     def setUp(self):
-        self.phases = []
         self.artifact = Mock(poll=Mock(return_value=None), wait=Mock(return_value=0))
         self.ops = Mock(poll=Mock(return_value=None), wait=Mock(return_value=0))
         self.revoked = False
         self.defect = None
+        self.stages = []
         self.user = SimpleNamespace(username="core:1", email="fixture@example.invalid")
         runs = Mock()
         runs.objects.count.return_value = 4
@@ -129,8 +131,14 @@ class HttpTests(unittest.TestCase):
             patch.object(
                 ops_volume_restore_probe,
                 "tree",
-                side_effect=[{"file": 1}, {"file": 2 if self.defect == "files" else 1}],
+                side_effect=[
+                    {"file": 1},
+                    {"evidence": 1},
+                    {"file": 2 if self.defect == "files" else 1},
+                    {"evidence": 2 if self.defect == "evidence_files" else 1},
+                ],
             ),
+            patch.object(probe, "verify_evidence") as evidence,
             patch.object(probe, "core_login", side_effect=self.login),
             patch.object(
                 probe,
@@ -148,7 +156,7 @@ class HttpTests(unittest.TestCase):
                 probe.subprocess, "Popen", side_effect=[self.artifact, self.ops]
             ) as start,
         ):
-            result = probe.check_http(RUNS, self.phases.append)
+            result = probe.check_http(RUNS, self.stages.append)
             artifact_env = start.call_args_list[0].kwargs["env"]
             ops_env = start.call_args_list[1].kwargs["env"]
             self.assertNotIn("DB_PASSWORD", artifact_env)
@@ -157,6 +165,8 @@ class HttpTests(unittest.TestCase):
             self.assertEqual(ops_env["CORE_API_URL"], "http://127.0.0.1:8080")
             self.assertEqual(artifact_env["LLMOPS_RESULTS_DIR"], "/restore")
             self.assertEqual(artifact_env["LLMOPS_EVIDENCE_DIR"], "/evidence")
+            self.assertNotEqual(ops_env["LLMOPS_EVIDENCE_DIR"], "/evidence")
+            evidence.assert_called_once_with(Path("/evidence"))
             self.assertNotEqual(ops_env["LLMOPS_RESULTS_DIR"], "/restore")
             self.assertEqual(ops_env["DB_USER"], "ops_restore_reader")
             self.assertEqual(browser.call_args.args[0]["email"], self.user.email)
@@ -166,10 +176,17 @@ class HttpTests(unittest.TestCase):
     def test_reports_real_auth_revocation_outage_and_cleanup(self):
         result = self.run_probe()
         self.assertEqual(
-            self.phases,
+            self.stages,
             [
-                "SETUP", "CORE_LOGIN", "SERVERS", "MANAGEMENT",
-                "REPORTS", "BROWSER", "REVOCATION", "FILES",
+                "SETUP",
+                "CORE_LOGIN",
+                "SERVERS",
+                "MANAGEMENT",
+                "REPORTS",
+                "BROWSER",
+                "REVOCATION",
+                "ARTIFACT_OUTAGE",
+                "FILES",
             ],
         )
         self.assertEqual(result["matched_reports"], 3)
@@ -196,6 +213,7 @@ class HttpTests(unittest.TestCase):
             "artifact_outage",
             "revoked",
             "files",
+            "evidence_files",
             "browser",
         ):
             self.setUp()
@@ -204,6 +222,19 @@ class HttpTests(unittest.TestCase):
                 self.run_probe()
             self.assertTrue(self.ops.terminate.called)
             self.assertTrue(self.artifact.terminate.called)
+            self.assertEqual(
+                self.stages[-1],
+                {
+                    "readiness": "SERVERS",
+                    "auth": "REPORTS",
+                    "report": "REPORTS",
+                    "artifact_outage": "ARTIFACT_OUTAGE",
+                    "revoked": "REVOCATION",
+                    "files": "FILES",
+                    "evidence_files": "FILES",
+                    "browser": "BROWSER",
+                }[defect],
+            )
 
     def test_bad_server_exit_cannot_pass(self):
         self.ops.wait.return_value = 1
@@ -332,13 +363,12 @@ class ContainerTests(unittest.TestCase):
             command[command.index("--mount") + 1],
             "type=volume,source=owned-restore-volume,target=/restore,readonly",
         )
-        self.assertEqual(
-            [command[index + 1] for index, value in enumerate(command) if value == "--mount"][1],
-            "type=bind,source="
-            + str(Path(probe.__file__).resolve().parents[3] / "evaluation/support-program-evidence")
-            + ",target=/evidence,readonly",
-        )
         self.assertNotIn("--publish", command)
+        mount = next(value for value in command if value.startswith("type=bind,"))
+        self.assertTrue(mount.endswith(",target=/evidence,readonly"))
+        self.assertFalse(
+            Path(mount.split("source=", 1)[1].split(",target=", 1)[0]).exists()
+        )
         self.assertEqual(options["env"]["DB_PASSWORD"], DATABASE["password"])
         self.assertNotIn(DATABASE["password"], " ".join(command))
         self.assertEqual(
@@ -453,8 +483,126 @@ class ContainerTests(unittest.TestCase):
             self.proof[key] = original
 
 
+class EvidenceTests(unittest.TestCase):
+    def test_snapshot_contains_only_catalog_inputs_and_is_readable_by_runtime(self):
+        with TemporaryDirectory() as directory:
+            repository = Path(directory)
+            catalog = (
+                repository / "backend/ops-service/apps/evaluations/capture_catalog.json"
+            )
+            source = repository / "evaluation/support-program-evidence"
+            target = repository / "snapshot"
+            catalog.parent.mkdir(parents=True)
+            (source / "runs").mkdir(parents=True)
+            target.mkdir(mode=0o700)
+            catalog.write_text(
+                json.dumps(
+                    [
+                        {
+                            "fixture": "fixture.json",
+                            "captures": [{"path": "runs/capture.json"}],
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (source / "fixture.json").write_bytes(b'{"fixture":1}')
+            (source / "runs/capture.json").write_bytes(b'{"capture":1}')
+            (source / "unrelated.env").write_text("never-copy", encoding="utf-8")
+            with patch.object(
+                probe,
+                "__file__",
+                str(repository / "infrastructure/gitops/scripts/probe.py"),
+            ):
+                probe.copy_evidence(target)
+                self.assertEqual(
+                    {
+                        path.relative_to(target).as_posix()
+                        for path in target.rglob("*")
+                        if path.is_file()
+                    },
+                    {"fixture.json", "runs/capture.json"},
+                )
+                self.assertEqual(
+                    (target / "fixture.json").read_bytes(), b'{"fixture":1}'
+                )
+                if os.name != "nt":
+                    self.assertEqual(target.stat().st_mode & 0o777, 0o755)
+                    self.assertEqual((target / "runs").stat().st_mode & 0o777, 0o755)
+                    self.assertEqual(
+                        (target / "fixture.json").stat().st_mode & 0o777, 0o644
+                    )
+                for name in (
+                    "../../outside.json",
+                    "/outside.json",
+                    "runs\\capture.json",
+                ):
+                    catalog.write_text(
+                        json.dumps([{"fixture": name, "captures": []}]),
+                        encoding="utf-8",
+                    )
+                    with (
+                        self.subTest(name=name),
+                        self.assertRaisesRegex(ValueError, "evidence path"),
+                    ):
+                        probe.copy_evidence(target)
+
+    def test_missing_or_changed_fixture_and_capture_fail_against_image_release(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            values = {"fixture.json": b"fixture", "capture.json": b"capture"}
+            dataset = {
+                "id": "test",
+                "fixture": "fixture.json",
+                "captures": [{"id": "saved", "path": "capture.json"}],
+            }
+            release = {
+                "datasets": {
+                    "test": {
+                        "fixture_sha256": hashlib.sha256(
+                            values["fixture.json"]
+                        ).hexdigest(),
+                        "captures": {
+                            "saved": hashlib.sha256(values["capture.json"]).hexdigest()
+                        },
+                    }
+                }
+            }
+            modules = {
+                "apps.evaluations.artifact_files": SimpleNamespace(
+                    read_file=lambda folder, name: (folder / name).read_bytes()
+                ),
+                "apps.evaluations.catalog": SimpleNamespace(DATASETS={"test": dataset}),
+                "apps.evaluations.execution_spec": SimpleNamespace(
+                    read_release=lambda: release
+                ),
+            }
+            for name, raw in values.items():
+                (root / name).write_bytes(raw)
+            with patch.dict(sys.modules, modules):
+                probe.verify_evidence(root)
+                for name, raw in values.items():
+                    (root / name).write_bytes(b"tampered")
+                    with (
+                        self.subTest(name=name),
+                        self.assertRaisesRegex(ValueError, "execution release"),
+                    ):
+                        probe.verify_evidence(root)
+                    (root / name).unlink()
+                    with (
+                        self.subTest(missing=name),
+                        self.assertRaises(FileNotFoundError),
+                    ):
+                        probe.verify_evidence(root)
+                    (root / name).write_bytes(raw)
+
+
 class CoreLoginTests(unittest.TestCase):
-    principal = {"accountId": 2, "email": "admin@example.invalid", "role": "ADMIN"}
+    principal: ClassVar = {
+        "accountId": 2,
+        "email": "admin@example.invalid",
+        "role": "ADMIN",
+    }
 
     def replies(self):
         return [
@@ -515,7 +663,7 @@ class CoreLoginTests(unittest.TestCase):
 
 
 class BrowserTransportTests(unittest.TestCase):
-    principal = {"email": "admin@example.invalid"}
+    principal: ClassVar = {"email": "admin@example.invalid"}
     route = "/api/v1/ops/evaluations?page=1"
 
     def run_transport(self, requests, reply=None):

@@ -178,6 +178,8 @@ jobs:
         run: |
           pnpm --dir frontend/web exec playwright-core install --with-deps --only-shell chromium
           node --experimental-transform-types --test infrastructure/gitops/scripts/test_ops_restore_browser.mjs
+          export RESTORE_DOCKER_IMAGE=$(docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops --env-file infrastructure/llmops/.env.artifacts -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml -f infrastructure/llmops/compose.artifacts.yaml -f infrastructure/llmops/compose.auth-test.yaml --profile evaluation images -q ops-service)
+          test -n "$RESTORE_DOCKER_IMAGE"
           node --test infrastructure/gitops/scripts/test_ops_browser_login.mjs
       - name: Start React development proxy
         run: |

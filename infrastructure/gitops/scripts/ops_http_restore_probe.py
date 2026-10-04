@@ -18,6 +18,66 @@ from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_ope
 BROWSER_ORIGIN = "http://127.0.0.1:5173"
 
 
+def copy_evidence(target):
+    """Copy only versioned catalog inputs, never the surrounding evaluation tree."""
+    repository = Path(__file__).resolve().parents[3]
+    source = repository / "evaluation/support-program-evidence"
+    catalog = json.loads(
+        (
+            repository / "backend/ops-service/apps/evaluations/capture_catalog.json"
+        ).read_text(encoding="utf-8")
+    )
+    names = {
+        name
+        for dataset in catalog
+        for name in [
+            dataset["fixture"],
+            *[item["path"] for item in dataset["captures"]],
+        ]
+    }
+    total = 0
+    for name in sorted(names):
+        path = source / name
+        if (
+            not name
+            or "\\" in name
+            or Path(name).is_absolute()
+            or any(part in {"", ".", ".."} for part in name.split("/"))
+            or not path.resolve(strict=True).is_relative_to(source.resolve())
+            or path.is_symlink()
+        ):
+            raise ValueError("Invalid restored evidence path")
+        with path.open("rb") as stream:
+            raw = stream.read(8 * 1024 * 1024 + 1)
+        total += len(raw)
+        if len(raw) > 8 * 1024 * 1024 or total > 64 * 1024 * 1024:
+            raise ValueError("Restored evidence exceeds the size limit")
+        output = target / name
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_bytes(raw)
+    # TemporaryDirectory is 0700 on Linux; the container's UID 10001 must read it.
+    for path in [target, *target.rglob("*")]:
+        path.chmod(0o755 if path.is_dir() else 0o644)
+
+
+def verify_evidence(root):
+    """The restored image, not the host checkout, pins accepted input bytes."""
+    from apps.evaluations.artifact_files import read_file
+    from apps.evaluations.catalog import DATASETS
+    from apps.evaluations.execution_spec import read_release
+
+    release = read_release()
+    for dataset in DATASETS.values():
+        pinned = release["datasets"][dataset["id"]]
+        files = [(dataset["fixture"], pinned["fixture_sha256"])] + [
+            (item["path"], pinned["captures"][item["id"]])
+            for item in dataset["captures"]
+        ]
+        for name, expected in files:
+            if hashlib.sha256(read_file(root, name)).hexdigest() != expected:
+                raise ValueError("Restored evidence differs from the execution release")
+
+
 def response(path, token=None, *, port=8000, payload=None, method="GET", headers=None):
     class NoRedirect(HTTPRedirectHandler):
         def redirect_request(self, *args, **kwargs):
@@ -262,7 +322,9 @@ def check_management(expected, principal, token, member_token, total_runs):
         raise ValueError("Restored management omitted evaluations")
     budget = get("/api/v1/ops/budget/reservations?page=1")
     schedules = get("/api/v1/ops/schedules?page=1")
-    if schedules.get("enabled") is not False or not isinstance(schedules.get("results"), list):
+    if schedules.get("enabled") is not False or not isinstance(
+        schedules.get("results"), list
+    ):
         raise ValueError("Restored management schedules must remain disabled")
     if (
         not isinstance(budget.get("results"), list)
@@ -290,8 +352,17 @@ def check_management(expected, principal, token, member_token, total_runs):
             raise ValueError("Restored replay unexpectedly has a paid budget")
         if detail.get("evaluation_scope") == "fixed-answer-context-only":
             review = get(route + "/review")
-            if not isinstance(review.get("material"), dict) or review.get("material_error"):
-                raise ValueError("Restored review inputs are unavailable")
+            material = review.get("material")
+            if (
+                not isinstance(material, dict)
+                or review.get("material_error") != ""
+                or review.get("quality", {}).get("blocked_reason") != ""
+                or material.get("fixture_sha256")
+                != detail["execution_spec"]["dataset"]["fixture_sha256"]
+                or [case["case_id"] for case in material.get("cases", [])]
+                != detail["execution_spec"]["dataset"]["case_ids"]
+            ):
+                raise ValueError("Restored management review material is unavailable")
     return {
         "evidence": {
             "status": "PASS",
@@ -307,14 +378,15 @@ def check_management(expected, principal, token, member_token, total_runs):
     }
 
 
-def check_http(expected, progress=lambda phase: None):
-    progress("SETUP")
+def check_http(expected, progress=lambda _: None):
     from ops_volume_restore_probe import expected_runs, tree
 
+    progress("SETUP")
     expected_runs(expected)
     if os.getuid() != 10001 or os.getgid() != 10001:
         raise ValueError("Restored Ops HTTP requires runtime UID/GID 10001")
     before = tree(Path("/restore"))
+    evidence_before = tree(Path("/evidence"))
     password, path = os.environ["DB_PASSWORD"], os.environ["PATH"]
     core_password = os.environ["CORE_LOGIN_PASSWORD"]
     artifact_token = secrets.token_hex(32)
@@ -338,7 +410,7 @@ def check_http(expected, progress=lambda phase: None):
             "LLMOPS_ARTIFACT_URL": "http://127.0.0.1:8010",
             "LLMOPS_ARTIFACT_TOKEN": artifact_token,
             "LLMOPS_RESULTS_DIR": str(empty),
-            "LLMOPS_EVIDENCE_DIR": "/evidence",
+            "LLMOPS_EVIDENCE_DIR": str(empty),
             "CORE_API_URL": "http://127.0.0.1:8080",
         }
         os.environ.clear()
@@ -346,6 +418,7 @@ def check_http(expected, progress=lambda phase: None):
         import django
 
         django.setup()
+        verify_evidence(Path("/evidence"))
         from apps.evaluations.models import EvaluationRun
         from django.db import connection
 
@@ -488,6 +561,7 @@ def check_http(expected, progress=lambda phase: None):
                 raise ValueError("Restored Core logout failed")
             if response(route, token)[0] != 401:
                 raise ValueError("Restored Ops accepted a revoked Core session")
+            progress("ARTIFACT_OUTAGE")
             token, _ = core_login(principal, core_password)
             stop(servers.pop(0))
             if response(route, token)[0] != 404:
@@ -502,7 +576,7 @@ def check_http(expected, progress=lambda phase: None):
             if errors:
                 raise errors[0]
     progress("FILES")
-    if tree(Path("/restore")) != before:
+    if tree(Path("/restore")) != before or tree(Path("/evidence")) != evidence_before:
         raise ValueError("Restored Ops HTTP changed result files")
     return {
         "status": "PASS",
@@ -531,7 +605,9 @@ def verify(image, volume, expected, database):
     if not re.fullmatch(r"[a-f0-9]{64}", database["id"]) or image != database["image"]:
         raise ValueError("Unexpected restored Ops database or image")
     identity = None
+    evidence = tempfile.TemporaryDirectory(prefix="ops-restore-evidence-")
     try:
+        copy_evidence(Path(evidence.name))
         identity = execute(
             [
                 "docker",
@@ -554,12 +630,8 @@ def verify(image, volume, expected, database):
                 "/tmp:rw,nosuid,size=32m",
                 "--mount",
                 "type=volume,source=" + volume + ",target=/restore,readonly",
-                # Versioned fixture/capture inputs are not in the restored results volume.
-                # The real review reader checks their hashes; this is not an evidence backup.
                 "--mount",
-                "type=bind,source="
-                + str(Path(__file__).resolve().parents[3] / "evaluation/support-program-evidence")
-                + ",target=/evidence,readonly",
+                "type=bind,source=" + evidence.name + ",target=/evidence,readonly",
                 "--env",
                 "DB_PASSWORD",
                 "--env",
@@ -593,10 +665,10 @@ def verify(image, volume, expected, database):
             )
             + ", module.__dict__)\nsys.modules[module.__name__]=module\n"
             + Path(__file__).read_text(encoding="utf-8")
+            + "\ndef stage(value): print(json.dumps({'phase':'progress','step':value}),flush=True)\n"
             + "\nprint(json.dumps({'phase':'complete','result':check_http("
             + repr(expected)
-            + ",lambda phase: print(json.dumps({'phase':'progress','step':phase}),"
-            + "flush=True))}),flush=True)\n"
+            + ",stage)}),flush=True)\n"
         )
         result = json.loads(
             execute(
@@ -752,6 +824,9 @@ def verify(image, volume, expected, database):
         if json.dumps(web, sort_keys=True) != json.dumps(expected_web, sort_keys=True):
             raise ValueError("Incomplete restored management web contract evidence")
     finally:
-        if identity is not None:
-            execute(["docker", "rm", "--force", "--volumes", identity], timeout=30)
+        try:
+            if identity is not None:
+                execute(["docker", "rm", "--force", "--volumes", identity], timeout=30)
+        finally:
+            evidence.cleanup()
     return {**result, "cleanup_complete": True}
