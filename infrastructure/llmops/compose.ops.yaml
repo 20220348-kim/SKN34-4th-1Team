@@ -55,7 +55,7 @@ services:
     restart: unless-stopped
     depends_on:
       ops-mysql: {condition: service_healthy}
-      prefect: {condition: service_started}
+      prefect: {condition: service_healthy}
 
   evaluation-runner:
     build:
@@ -80,7 +80,7 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     volumes: ["ops-results:/results"]
     depends_on:
-      prefect: {condition: service_started}
+      prefect: {condition: service_healthy}
       langfuse-web: {condition: service_started}
     restart: unless-stopped
 

@@ -161,6 +161,16 @@ python -B infrastructure/gitops/scripts/fork_cluster.py status --json --ops-deta
 [브리지 연결 절차](../infrastructure/gitops/docs/ops-runtime.md)를 따릅니다.
 기본 `status --json`은 계속 Docker 없이 동작하고 `--image-details`와 함께 사용할 수도 있습니다.
 
+Docker Desktop 복귀 후 프로세스·브리지 진단이 통과해도 `check_evaluation_runtime`의 `evidence`가
+실패할 수 있습니다. 결과 서버의 `/evaluation-data`가 비어 있다면 먼저 원래 호스트 자료 경로와
+배포된 Ops release의 파일 SHA-256을 대조합니다. 원본이 정상인데 컨테이너에서만 비어 있으면
+진행 중 평가가 없는지 확인하고 소유권을 확인한 **결과 서버 하나만** 재시작해 마운트를 다시 확인합니다.
+자료가 없거나 해시가 다르면 파일을 임의로 생성·교체하지 않고 갱신 절차로 원인을 조사합니다.
+재시작 후 브리지 주소를 재검사하고 기존 완료 UUID로 `check_evaluation_runtime --run-id <UUID>`를
+실행해 자료·저장소·Prefect와 기존 보고서를 확인합니다. 이 점검은 새 평가 성공을 뜻하지 않습니다.
+Prefect 재시작 정책과 준비 상태 대기는 [Compose 시작 안내](../infrastructure/llmops/README.md#compose-시작)를
+따릅니다. 이 구성의 PostgreSQL은 Langfuse용이며 Prefect는 자체 SQLite 볼륨을 사용합니다.
+
 ### 실행 이미지와 현재 서비스 코드 비교
 
 Docker가 정상일 때 `--image-details`를 추가하면 전용 kind 노드의 이미지 메타데이터도 읽습니다.

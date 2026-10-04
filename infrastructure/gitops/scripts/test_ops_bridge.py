@@ -423,6 +423,15 @@ class ComposeBridgeTests(unittest.TestCase):
         spec.loader.exec_module(module)
         module.check(config)
         for mutate in (
+            lambda data: data["services"]["prefect"].update(restart="no"),
+            lambda data: data["services"]["prefect"].pop("healthcheck"),
+            lambda data: data["services"]["prefect"]["healthcheck"].update(disable=True),
+            lambda data: data["services"]["evaluation-runner"]["depends_on"]["prefect"].update(
+                condition="service_started"
+            ),
+            lambda data: data["services"]["ops-sync"]["depends_on"]["prefect"].update(
+                condition="service_started"
+            ),
             lambda data: data["networks"]["ops-bridge"].update(internal=False),
             lambda data: data["services"]["evaluation-runner"]["networks"].update(
                 {"ops-bridge": {}}
