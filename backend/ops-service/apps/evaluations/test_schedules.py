@@ -24,7 +24,7 @@ from .models import (
     EvaluationSchedule,
     EvaluationScheduleOccurrence,
 )
-from .schedules import dispatch_due_schedules
+from .schedules import dispatch_due_schedules, pause_schedule
 from .test_budget import TOKEN
 from .test_rag_baselines import BaselineFixture
 from .test_reviews import ReviewFixture
@@ -342,6 +342,121 @@ class ScheduleTests(ScheduleFixture, TestCase):
         self.assertEqual(schedule.occurrences.get().reason_code, "SCHEDULE_CLOSED")
         self.dispatch.assert_not_called()
 
+    def test_pause_closes_pending_days_and_preserves_submitted_and_blocked_history(self):
+        schedule, _ = self.create()
+        dispatch_due_schedules()
+        submitted = schedule.occurrences.get()
+        run_before = EvaluationRun.objects.values().get(pk=submitted.run_id)
+        reservation_before = list(EvaluationBudgetReservation.objects.values())
+        blocked = EvaluationScheduleOccurrence.objects.create(
+            id=uuid4(),
+            schedule=schedule,
+            scheduled_on=NOW.date() + timedelta(days=1),
+            status="BLOCKED",
+            reason_code="LIVE_BUDGET_UNAVAILABLE",
+        )
+        blocked_before = blocked.updated_at
+        pending = EvaluationScheduleOccurrence.objects.create(
+            id=uuid4(),
+            schedule=schedule,
+            scheduled_on=NOW.date() + timedelta(days=2),
+        )
+        self.now.return_value += timedelta(minutes=1)
+        payload = {"request_id": str(uuid4()), "reason": "배포 전 계획 중지"}
+        url = f"{URL}/{schedule.pk}/pause"
+        response = self.client.post(url, payload, format="json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["state"], "paused")
+        closed = next(row for row in response.json()["occurrences"] if row["id"] == str(pending.pk))
+        self.assertEqual(
+            (closed["status"], closed["reason_code"], closed["run_id"]),
+            ("BLOCKED", "SCHEDULE_CLOSED", None),
+        )
+        pending.refresh_from_db()
+        self.assertEqual(pending.updated_at, self.now.return_value)
+        submitted.refresh_from_db()
+        self.assertEqual((submitted.status, submitted.run_id), ("SUBMITTED", submitted.pk))
+        blocked.refresh_from_db()
+        self.assertEqual(
+            (blocked.reason_code, blocked.updated_at), ("LIVE_BUDGET_UNAVAILABLE", blocked_before)
+        )
+        self.assertEqual(EvaluationRun.objects.values().get(pk=submitted.run_id), run_before)
+        self.assertEqual(list(EvaluationBudgetReservation.objects.values()), reservation_before)
+        self.now.return_value += timedelta(minutes=1)
+        self.assertEqual(self.client.post(url, payload, format="json").status_code, 200)
+        pending.refresh_from_db()
+        self.assertEqual(pending.updated_at, NOW + timedelta(minutes=1))
+        self.dispatch.assert_called_once()
+
+    def test_matching_pause_retry_closes_legacy_pending_without_changing_audit(self):
+        schedule, _ = self.create()
+        payload = {"request_id": str(uuid4()), "reason": "기존 중지 요청"}
+        url = f"{URL}/{schedule.pk}/pause"
+        self.assertEqual(self.client.post(url, payload, format="json").status_code, 200)
+        schedule.refresh_from_db()
+        audit = (
+            schedule.paused_at,
+            schedule.paused_by_id,
+            schedule.pause_request_id,
+            schedule.pause_reason,
+        )
+        # Reproduce an old app's persisted pause with an unsubmitted slot.
+        pending = EvaluationScheduleOccurrence.objects.create(
+            id=uuid4(),
+            schedule=schedule,
+            scheduled_on=NOW.date(),
+        )
+        for changes in ({"reason": "다른 사유"}, {"request_id": str(uuid4())}):
+            self.assertEqual(
+                self.client.post(url, {**payload, **changes}, format="json").status_code, 409
+            )
+            pending.refresh_from_db()
+            self.assertEqual(pending.status, "PENDING")
+        self.now.return_value += timedelta(minutes=1)
+        self.assertEqual(self.client.post(url, payload, format="json").status_code, 200)
+        pending.refresh_from_db()
+        self.assertEqual((pending.status, pending.reason_code), ("BLOCKED", "SCHEDULE_CLOSED"))
+        schedule.refresh_from_db()
+        self.assertEqual(
+            (
+                schedule.paused_at,
+                schedule.paused_by_id,
+                schedule.pause_request_id,
+                schedule.pause_reason,
+            ),
+            audit,
+        )
+        self.assertEqual(EvaluationRun.objects.count(), 1)
+        self.dispatch.assert_not_called()
+
+    def test_pause_and_pending_close_roll_back_together(self):
+        schedule, _ = self.create()
+        pending = EvaluationScheduleOccurrence.objects.create(
+            id=uuid4(),
+            schedule=schedule,
+            scheduled_on=NOW.date(),
+        )
+        from django.db.models.query import QuerySet
+
+        original = QuerySet.update
+
+        def fail_occurrence_close(query, **values):
+            if query.model is EvaluationScheduleOccurrence:
+                raise IntegrityError("synthetic occurrence update failure")
+            return original(query, **values)
+
+        with (
+            patch.object(QuerySet, "update", fail_occurrence_close),
+            self.assertRaises(IntegrityError),
+        ):
+            pause_schedule(schedule.pk, self.user, request_id=uuid4(), reason="중지 원자성 검사")
+        schedule.refresh_from_db()
+        pending.refresh_from_db()
+        self.assertIsNone(schedule.paused_at)
+        self.assertEqual(schedule.active_dataset, schedule.dataset_id)
+        self.assertEqual(pending.status, "PENDING")
+        self.dispatch.assert_not_called()
+
     def test_worker_default_off_does_not_touch_schedule_tables(self):
         with (
             override_settings(LLMOPS_SCHEDULES_ENABLED=False),
@@ -379,6 +494,42 @@ class ScheduleTests(ScheduleFixture, TestCase):
     LLMOPS_SCHEDULES_ENABLED=True, LLMOPS_LIVE_ENABLED=True, LLMOPS_BUDGET_TOKEN=TOKEN
 )
 class ConcurrentScheduleTests(ScheduleFixture, TransactionTestCase):
+    def test_pause_racing_dispatch_leaves_no_pending_or_cancelled_submitted_run(self):
+        schedule, _ = self.create()
+        barrier = Barrier(2)
+
+        def perform(pause):
+            close_old_connections()
+            try:
+                barrier.wait(timeout=10)
+                if pause:
+                    pause_schedule(
+                        schedule.pk, self.user, request_id=uuid4(), reason="접수 경합 중지"
+                    )
+                else:
+                    dispatch_due_schedules()
+            finally:
+                close_old_connections()
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            list(pool.map(perform, (False, True)))
+        schedule.refresh_from_db()
+        self.assertIsNotNone(schedule.paused_at)
+        self.assertFalse(schedule.occurrences.filter(status="PENDING").exists())
+        submitted = schedule.occurrences.filter(status="SUBMITTED").count()
+        self.assertIn(submitted, (0, 1))
+        self.assertEqual(EvaluationRun.objects.count(), 1 + submitted)
+        self.assertEqual(EvaluationBudgetReservation.objects.count(), 1 + submitted)
+        self.assertEqual(self.dispatch.call_count, submitted)
+        for occurrence in schedule.occurrences.all():
+            if occurrence.status == "SUBMITTED":
+                self.assertEqual(occurrence.run.status, "QUEUED")
+                self.assertIsNone(occurrence.run.cancel_requested_at)
+            else:
+                self.assertEqual(
+                    (occurrence.status, occurrence.reason_code), ("BLOCKED", "SCHEDULE_CLOSED")
+                )
+
     def test_two_dispatchers_reserve_and_dispatch_only_once(self):
         schedule, _ = self.create()
         barrier = Barrier(2)
