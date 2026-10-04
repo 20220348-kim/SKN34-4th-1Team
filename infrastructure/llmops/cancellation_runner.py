@@ -20,7 +20,9 @@ def process_info(pid):
     try:
         fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
         return {"pid": pid, "birth": fields[19], "alive": fields[0] != "Z"}
-    except FileNotFoundError:
+    except (FileNotFoundError, ProcessLookupError):
+        # /proc 파일을 연 뒤 프로세스가 종료되면 read()가 ESRCH를 반환할 수도 있다.
+        # 권한·I/O 오류는 종료 증거가 아니므로 그대로 실패시킨다.
         return {"pid": pid, "birth": None, "alive": False}
 
 

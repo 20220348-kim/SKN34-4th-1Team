@@ -1,6 +1,7 @@
 """서버 없이 실행 가능한 실패 판정과 실제 SDK→HTTP 모델 대역 계약 검증."""
 
 import asyncio
+import errno
 import importlib.util
 import json
 import socket
@@ -354,6 +355,61 @@ def test_pid_reuse_is_not_a_live_evaluation(monkeypatch, tmp_path):
         runner, "process_info", lambda pid: {"pid": pid, "birth": "200", "alive": True}
     )
     assert runner.alive(marker) == {"started": True, "pid": 123, "alive": False}
+
+
+@pytest.mark.parametrize(
+    "error", [FileNotFoundError(errno.ENOENT, "gone"), ProcessLookupError(errno.ESRCH, "exited")]
+)
+def test_process_disappearing_during_stat_read_is_stopped(monkeypatch, error):
+    runner = load_runner()
+    read = Mock(side_effect=error)
+    monkeypatch.setattr(Path, "read_text", read)
+    assert runner.process_info(123) == {"pid": 123, "birth": None, "alive": False}
+    read.assert_called_once_with()
+
+
+@pytest.mark.parametrize(
+    "error", [PermissionError(errno.EACCES, "denied"), OSError(errno.EIO, "io error")]
+)
+def test_process_stat_failure_is_not_reported_as_exit(monkeypatch, error):
+    runner = load_runner()
+    monkeypatch.setattr(Path, "read_text", Mock(side_effect=error))
+    with pytest.raises(type(error)) as caught:
+        runner.process_info(123)
+    assert caught.value is error
+
+
+@pytest.mark.parametrize("state,expected_alive", [("R", True), ("Z", False)])
+def test_process_stat_keeps_birth_and_zombie_detection(monkeypatch, state, expected_alive):
+    runner = load_runner()
+    stat = "123 (worker (test)) " + " ".join([state, *(["0"] * 18), "100", "0"])
+    monkeypatch.setattr(Path, "read_text", Mock(return_value=stat))
+    assert runner.process_info(123) == {"pid": 123, "birth": "100", "alive": expected_alive}
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux /proc open/read exit race")
+def test_process_exits_after_proc_stat_open(monkeypatch, tmp_path):
+    runner = load_runner()
+    original_open = Path.open
+    with subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"]) as child:
+        try:
+            marker = tmp_path / "process.json"
+            marker.write_text(json.dumps(runner.process_info(child.pid)))
+            stat_path = Path(f"/proc/{child.pid}/stat")
+
+            def open_then_exit(path, *args, **kwargs):
+                stream = original_open(path, *args, **kwargs)
+                if path == stat_path:
+                    child.terminate()
+                    child.wait(timeout=5)
+                return stream
+
+            monkeypatch.setattr(Path, "open", open_then_exit)
+            assert runner.alive(marker) == {"started": True, "pid": child.pid, "alive": False}
+        finally:
+            if child.poll() is None:
+                child.kill()
+            child.wait(timeout=5)
 
 
 def test_real_sdk_and_evaluator_accept_http_double(monkeypatch, tmp_path, server):
