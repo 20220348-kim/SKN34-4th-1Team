@@ -8,6 +8,7 @@
     "pnpm": "11.22.x"
   },
   "scripts": {
+    "dev:ops": "python3 infrastructure/llmops/start_local_ops.py",
     "dev:web": "pnpm --filter govbiz-web dev",
     "dev:mobile": "pnpm --filter @govbiz/mobile start",
     "test": "pnpm --recursive --if-present test",

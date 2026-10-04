@@ -358,6 +358,22 @@ class EvaluationTests(TestCase):
         self.assertEqual(user.email, "renamed@example.com")
         self.assertEqual(get_user_model().objects.filter(username="core:2").count(), 1)
 
+    @override_settings(CORE_ACCOUNT_NAMESPACE="a" * 32)
+    def test_local_restore_does_not_reassign_original_reviewer(self):
+        run = self.queued_run()
+        self.auth.return_value["email"] = "teammate@example.com"
+        response = self.client.get("/api/v1/ops/session")
+        self.assertEqual(response.status_code, 200)
+        local = get_user_model().objects.get(username="core-local:" + "a" * 32 + ":1")
+        self.assertNotEqual(local.pk, self.operator.pk)
+        self.assertFalse(local.has_usable_password())
+        self.operator.refresh_from_db()
+        run.refresh_from_db()
+        self.assertEqual(self.operator.email, "operator@example.com")
+        self.assertEqual(run.requested_by_id, self.operator.pk)
+        self.client.get("/api/v1/ops/session")
+        self.assertEqual(get_user_model().objects.filter(pk=local.pk).count(), 1)
+
     @override_settings(OPS_WEB_URL="http://localhost:5173")
     def test_old_page_bookmarks_redirect_to_react(self):
         run = self.queued_run()

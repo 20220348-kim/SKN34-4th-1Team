@@ -66,8 +66,10 @@ class CoreSessionAuthentication(BaseAuthentication):
         # 모든 요청에서 확인한다. Django 세션이나 로컬 is_staff 값을 인증 근거로 삼지 않는다.
         principal = read_core_admin(token)
         SessionAuthentication().enforce_csrf(request)
+        namespace = settings.CORE_ACCOUNT_NAMESPACE
+        prefix = f"core-local:{namespace}:" if namespace else "core:"
         user, _ = get_user_model().objects.get_or_create(
-            username=f"core:{principal['accountId']}",
+            username=f"{prefix}{principal['accountId']}",
             defaults={"email": principal["email"], "password": "!", "is_staff": True},
         )
         if user.email != principal["email"]:

@@ -406,10 +406,66 @@ def verify_restore(directory, state, payload):
     }
 
 
-def restore(archive, key_file, directory):
+def require_local_image(image):
+    """Old runtimes must not silently ignore account separation in a copied database."""
+    if not re.fullmatch(r"sha256:[a-f0-9]{64}", image):
+        raise SnapshotError("Local runtime must be an exact Docker image")
+    probe = """
+import django
+from types import SimpleNamespace
+from unittest.mock import patch
+django.setup()
+from apps.evaluations.authentication import CoreSessionAuthentication
+principal = {'accountId': 42, 'email': 'probe@example.invalid', 'role': 'ADMIN'}
+with patch('apps.evaluations.authentication.read_core_admin', return_value=principal), \\
+     patch('apps.evaluations.authentication.get_user_model') as users, \\
+     patch('apps.evaluations.authentication.SessionAuthentication.enforce_csrf'):
+    users.return_value.objects.get_or_create.return_value = (
+        SimpleNamespace(email=principal['email']), True,
+    )
+    CoreSessionAuthentication().authenticate(SimpleNamespace(COOKIES={'govbiz_session': 'probe'}))
+    assert users.return_value.objects.get_or_create.call_args.kwargs['username'] == (
+        'core-local:' + 'a' * 32 + ':42'
+    )
+"""
+    run(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--network",
+            "none",
+            "-e",
+            "DJANGO_SECRET_KEY=local-restore-capability-check",
+            "-e",
+            "DB_PASSWORD=unused-no-database-connection",
+            "-e",
+            "DJANGO_SETTINGS_MODULE=config.settings",
+            "-e",
+            "CORE_ACCOUNT_NAMESPACE=" + "a" * 32,
+            "--entrypoint",
+            "python",
+            image,
+            "-c",
+            probe,
+        ]
+    )
+
+
+def restore(archive, key_file, directory, *, local_ops_image=None, core_port=None, api_port=18002):
     with archive.open("rb") as source:
         raw = source.read(MAX_BYTES * 4 + 1)
     payload = unseal(raw, key_bytes(key_file))
+    # A local test copy may use a reviewed newer runtime. SQL and evidence stay byte-identical.
+    # Only that mode connects a different Core, with a fresh account namespace.
+    if (local_ops_image is None) != (core_port is None):
+        raise SnapshotError("Local restore requires both an exact Ops image and a Core port")
+    if core_port is not None:
+        if not 1024 <= core_port <= 65535 or not 1024 <= api_port <= 65535:
+            raise SnapshotError("Local ports must be between 1024 and 65535")
+        if core_port == api_port:
+            raise SnapshotError("Core and Ops must use different ports")
+        payload["ops_image"] = local_ops_image
     digest = hashlib.sha256(raw).hexdigest()
     if directory.exists():
         marker = directory / "snapshot-state.json"
@@ -420,6 +476,12 @@ def restore(archive, key_file, directory):
             raise SnapshotError(
                 "Target belongs to another or incomplete restore; use a NEW directory"
             )
+        if state.get("local") != (
+            {"ops_image": local_ops_image, "core_port": core_port, "api_port": api_port}
+            if core_port is not None
+            else None
+        ):
+            raise SnapshotError("Restore mode or local connection changed; use a NEW directory")
         result = verify_restore(directory, state, payload)
         result["status"] = "ALREADY_RESTORED"
         return result
@@ -436,6 +498,15 @@ def restore(archive, key_file, directory):
         "results": project + "-results",
         "evidence": project + "-evidence",
     }
+    if core_port is not None:
+        state["local"] = {
+            "ops_image": local_ops_image,
+            "core_port": core_port,
+            "api_port": api_port,
+        }
+        state["account_namespace"] = uuid4().hex
+        # Fail before creating a DB if an old image would ignore the account namespace.
+        require_local_image(local_ops_image)
     directory.mkdir(mode=0o700)
     # Never recreate historical reviews through the approval API. Import the DB byte-for-byte.
     password = secrets.token_hex(32)
@@ -471,6 +542,12 @@ def restore(archive, key_file, directory):
         "PREFECT_API_URL": "http://unconfigured-prefect.invalid/api",
         "LANGFUSE_PROJECT_URL": "http://unconfigured-langfuse.invalid",
     }
+    if core_port is not None:
+        api_env.update(
+            CORE_API_URL=f"http://host.docker.internal:{core_port}",
+            CORE_ACCOUNT_NAMESPACE=state["account_namespace"],
+            DJANGO_COOKIE_SECURE="false",
+        )
     config = {
         "name": project,
         "services": {
@@ -481,7 +558,7 @@ def restore(archive, key_file, directory):
                 "profiles": ["manual-api"],
                 "environment": api_env,
                 "volumes": ["results:/results:ro", "evidence:/evaluation-data:ro"],
-                "ports": ["127.0.0.1:18002:8000"],
+                "ports": [f"127.0.0.1:{api_port}:8000"],
             },
         },
         "networks": {"default": {"internal": True}},
@@ -490,6 +567,13 @@ def restore(archive, key_file, directory):
             **{name: {"name": state[name], "external": True} for name in ("results", "evidence")},
         },
     }
+    if core_port is not None:
+        # Only the API can reach the teammate's local Core. MySQL remains on an internal network.
+        config["networks"]["local-core"] = {}
+        config["services"]["ops-service"].update(
+            networks=["default", "local-core"],
+            extra_hosts=["host.docker.internal:host-gateway"],
+        )
     exclusive(directory / "compose.json", json.dumps(config, indent=2).encode())
     exclusive(directory / "snapshot-state.json", json.dumps(state, indent=2).encode())
     compose(directory, "up", "-d", "ops-mysql")
@@ -515,6 +599,21 @@ def restore(archive, key_file, directory):
         json.dumps(payload["files"]).encode(),
     )
     sql(state["mysql_id"], payload["database"], payload["sql"])
+    if core_port is not None:
+        # Never migrate a teammate's copied evidence implicitly or start an incompatible runtime.
+        compose(
+            directory,
+            "run",
+            "--rm",
+            "--no-deps",
+            "-T",
+            "--entrypoint",
+            "python",
+            "ops-service",
+            "manage.py",
+            "migrate",
+            "--check",
+        )
     result = verify_restore(directory, state, payload)
     state["complete"] = True
     temporary = directory / "snapshot-state.complete.json"

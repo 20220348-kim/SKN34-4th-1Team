@@ -83,7 +83,13 @@ jobs:
           uv run --locked ruff format --config pyproject.toml --check ../../infrastructure/gitops/scripts/ops_db_snapshot.py ../../infrastructure/gitops/scripts/test_ops_db_snapshot.py
           uv run --locked ruff check --config pyproject.toml ../../infrastructure/llmops/ops_snapshot.py ../../infrastructure/llmops/ops_snapshot_files.py ../../infrastructure/llmops/test_ops_snapshot.py ../../infrastructure/llmops/check_ops_snapshot.py
           uv run --locked ruff format --config pyproject.toml --check ../../infrastructure/llmops/ops_snapshot.py ../../infrastructure/llmops/ops_snapshot_files.py ../../infrastructure/llmops/test_ops_snapshot.py ../../infrastructure/llmops/check_ops_snapshot.py
-          uv run --locked python -B -m unittest discover -s ../../infrastructure/llmops -p test_ops_snapshot.py
+          uv run --locked ruff check --config pyproject.toml ../../infrastructure/llmops/ops_snapshot_share.py ../../infrastructure/llmops/test_ops_snapshot_share.py
+          uv run --locked ruff format --config pyproject.toml --check ../../infrastructure/llmops/ops_snapshot_share.py ../../infrastructure/llmops/test_ops_snapshot_share.py
+          uv run --locked python -B -m unittest discover -s ../../infrastructure/llmops -p 'test_ops_snapshot*.py'
+      - name: Check Git review bootstrap tools
+        run: |
+          uv run --locked ruff check --config pyproject.toml ../../infrastructure/llmops/start_local_ops.py ../../infrastructure/llmops/check_local_review_seed.py
+          uv run --locked ruff format --config pyproject.toml --check ../../infrastructure/llmops/start_local_ops.py ../../infrastructure/llmops/check_local_review_seed.py
       - name: Check Django configuration
         run: uv run --locked python manage.py check
       - name: Check migrations
@@ -152,6 +158,8 @@ jobs:
         run: |
           docker pull mysql:8.4
           python3 -B infrastructure/llmops/check_ops_snapshot.py
+      - name: Verify first-start Git review import and preservation of local edits
+        run: python3 -B infrastructure/llmops/check_local_review_seed.py
 
   merge-readiness:
     name: Required CI / Ops

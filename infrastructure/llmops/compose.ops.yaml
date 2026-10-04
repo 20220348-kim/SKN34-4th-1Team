@@ -19,7 +19,7 @@ services:
     build: ../../backend/ops-service
     init: true
     ports: ["127.0.0.1:18001:8000"]
-    environment:
+    environment: &ops-environment
       DJANGO_SECRET_KEY: ${OPS_DJANGO_SECRET_KEY:?Run init_ops_env.py}
       DJANGO_DEBUG: "false"
       DJANGO_COOKIE_SECURE: "false" # loopback HTTP 개발 전용
@@ -47,6 +47,21 @@ services:
       - "host.docker.internal:host-gateway"
     depends_on:
       ops-mysql: {condition: service_healthy}
+      ops-bootstrap: {condition: service_completed_successfully}
+
+  # 최초의 빈 DB만 Git의 공유 검토 기록으로 초기화한다. 기존 이력은 그대로 둔다.
+  ops-bootstrap:
+    <<: *ops-service
+    ports: []
+    environment:
+      <<: *ops-environment
+      LLMOPS_LOCAL_SEED_ENABLED: "true"
+    command: ["python", "manage.py", "bootstrap_local_reviews"]
+    volumes:
+      - ops-results:/results
+      - ../../evaluation/support-program-evidence:/evaluation-data:ro
+    depends_on:
+      ops-mysql: {condition: service_healthy}
 
   ops-sync:
     <<: *ops-service
@@ -56,6 +71,7 @@ services:
     depends_on:
       ops-mysql: {condition: service_healthy}
       prefect: {condition: service_healthy}
+      ops-bootstrap: {condition: service_completed_successfully}
 
   evaluation-runner:
     build:
@@ -83,6 +99,7 @@ services:
       prefect: {condition: service_healthy}
       langfuse-web: {condition: service_healthy}
       langfuse-worker: {condition: service_healthy}
+      ops-bootstrap: {condition: service_completed_successfully}
     restart: unless-stopped
 
 volumes:
