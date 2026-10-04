@@ -233,7 +233,7 @@ class UpgradePreflightTests(unittest.TestCase):
             json.dumps(runtime.connection(SETTINGS, "fixture"))
         )
         self.result = {
-            "schemaVersion": 3,
+            "schemaVersion": 4,
             "scope": "ops_upgrade_preflight",
             "status": "PASS",
             "admission_blocked": True,
@@ -246,6 +246,8 @@ class UpgradePreflightTests(unittest.TestCase):
                 "open_reservations": 0,
                 "unfinished_flows": 0,
                 "active_schedules": 0,
+                "unpaused_ops_schedules": 0,
+                "unsettled_schedule_occurrences": 0,
                 "inspected_flows": 7,
                 "open_admission": 0,
             },
@@ -304,9 +306,29 @@ class UpgradePreflightTests(unittest.TestCase):
                 self.check()
 
     def test_legacy_probe_contract_is_rejected(self):
-        self.result["schemaVersion"] = 2
-        with self.assertRaisesRegex(ValueError, "preflight response"):
-            self.check()
+        for version in (2, 3):
+            self.result["schemaVersion"] = version
+            with (
+                self.subTest(version=version),
+                self.assertRaisesRegex(ValueError, "preflight response"),
+            ):
+                self.check()
+
+    def test_missing_or_nonzero_ops_schedules_cannot_claim_success(self):
+        original = dict(self.result["checks"])
+        for name in ("unpaused_ops_schedules", "unsettled_schedule_occurrences"):
+            for value in (1, -1, None, False, "0"):
+                self.result["checks"] = {**original, name: value}
+                with (
+                    self.subTest(name=name, value=value),
+                    self.assertRaises(ValueError),
+                ):
+                    self.check()
+            self.result["checks"] = {
+                key: value for key, value in original.items() if key != name
+            }
+            with self.assertRaises(ValueError):
+                self.check()
 
     def test_unsupported_admission_preserves_blocked_reason(self):
         self.result.update(

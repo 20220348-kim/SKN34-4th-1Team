@@ -81,8 +81,11 @@ def verify_upgrade_probe_database(nk):
         "from django.contrib.auth import get_user_model\n"
         "from django.db import transaction\n"
         "from django.utils import timezone\n"
+        "from datetime import time, timedelta\n"
         "from uuid import uuid4\n"
         "from apps.evaluations.models import EvaluationRun, EvaluationBudget, EvaluationBudgetReservation\n"
+        "from apps.evaluations.models import EvaluationSchedule, EvaluationScheduleOccurrence\n"
+        "from apps.evaluations.schedules import pause_schedule\n"
         "before=snapshot()\n"
         "with transaction.atomic():\n"
         "    user=get_user_model().objects.create_user('upgrade-probe-'+uuid4().hex)\n"
@@ -98,6 +101,27 @@ def verify_upgrade_probe_database(nk):
         "    assert snapshot()['open_reservations']==before['open_reservations']+1\n"
         "    reservation.closed_at=timezone.now(); reservation.save(update_fields=['closed_at'])\n"
         "    assert snapshot()['open_reservations']==before['open_reservations']\n"
+        "    for offset in (-3, 3):\n"
+        "        day=timezone.now().date()+timedelta(days=offset)\n"
+        "        schedule=EvaluationSchedule.objects.create(\n"
+        "            id=uuid4(),dataset_id='probe-schedule',active_dataset='probe-schedule',\n"
+        "            requested_by=user,request={},max_usage={},daily_at=time(9),\n"
+        "            starts_on=day,ends_on=day,reason='synthetic upgrade probe')\n"
+        "        assert snapshot()['unpaused_ops_schedules']==before['unpaused_ops_schedules']+1\n"
+        "        occurrence=EvaluationScheduleOccurrence.objects.create(\n"
+        "            id=uuid4(),schedule=schedule,scheduled_on=day)\n"
+        "        assert snapshot()['unsettled_schedule_occurrences']==before['unsettled_schedule_occurrences']+1\n"
+        "        pause_schedule(schedule.pk,user,request_id=uuid4(),reason='synthetic pause')\n"
+        "        assert snapshot()['unpaused_ops_schedules']==before['unpaused_ops_schedules']\n"
+        "        assert snapshot()['unsettled_schedule_occurrences']==before['unsettled_schedule_occurrences']+1\n"
+        "        occurrence.status='BLOCKED'; occurrence.reason_code='SYNTHETIC_UPGRADE_CHECK'\n"
+        "        occurrence.save(update_fields=['status','reason_code'])\n"
+        "        assert snapshot()['unsettled_schedule_occurrences']==before['unsettled_schedule_occurrences']\n"
+        "        EvaluationScheduleOccurrence.objects.create(\n"
+        "            id=uuid4(),schedule=schedule,scheduled_on=day+timedelta(days=1),\n"
+        "            status='SUBMITTED',run=run)\n"
+        "        assert snapshot()['unsettled_schedule_occurrences']==before['unsettled_schedule_occurrences']\n"
+        "        run=EvaluationRun.objects.get(requested_by=user,status='CANCELLED')\n"
         "    transaction.set_rollback(True)\n"
         "assert snapshot()==before\n"
         "print('PASS')\n"
@@ -432,7 +456,7 @@ def verify(state, settings, compose, compose_env, ops_image, kind, helm, report)
             state, settings
         )
         paused_preflight = report["upgrade_preflight_before_evaluation"]
-        assert paused_preflight["schemaVersion"] == 3
+        assert paused_preflight["schemaVersion"] == 4
         assert paused_preflight["status"] == "PASS"
         assert paused_preflight["admission_supported"] is True
         assert paused_preflight["admission_blocked"] is True
@@ -441,6 +465,8 @@ def verify(state, settings, compose, compose_env, ops_image, kind, helm, report)
             == report["admission_pause"]["version"]
         )
         assert paused_preflight["checks"]["open_admission"] == 0
+        assert paused_preflight["checks"]["unpaused_ops_schedules"] == 0
+        assert paused_preflight["checks"]["unsettled_schedule_occurrences"] == 0
         report["admission_resume"] = set_admission(nk, "resume", 1)
         report["runtime_check_before_evaluation"] = ops_runtime.check_runtime(
             state, settings

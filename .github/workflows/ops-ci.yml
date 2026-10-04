@@ -73,6 +73,8 @@ jobs:
         run: uv run --locked ruff check .
       - name: Check formatting
         run: uv run --locked ruff format --check .
+      - name: Test CI schema tooling guards without a database
+        run: uv run --locked python -B -m unittest discover -s scripts -p 'test_*.py'
       - name: Check encrypted Ops snapshot tools
         run: |
           uv run --locked ruff check --config pyproject.toml ../../infrastructure/llmops/ops_snapshot.py ../../infrastructure/llmops/ops_snapshot_files.py ../../infrastructure/llmops/test_ops_snapshot.py ../../infrastructure/llmops/check_ops_snapshot.py

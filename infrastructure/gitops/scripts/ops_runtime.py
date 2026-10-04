@@ -108,7 +108,7 @@ def upgrade_preflight(state, settings):
     if (
         not isinstance(result, dict)
         or type(result.get("schemaVersion")) is not int
-        or result.get("schemaVersion") != 3
+        or result.get("schemaVersion") != 4
         or result.get("scope") != "ops_upgrade_preflight"
         or result.get("status") not in {"PASS", "BLOCKED", "UNKNOWN"}
         or type(result.get("admission_blocked")) is not bool
@@ -124,6 +124,8 @@ def upgrade_preflight(state, settings):
             "open_reservations",
             "unfinished_flows",
             "active_schedules",
+            "unpaused_ops_schedules",
+            "unsettled_schedule_occurrences",
             "inspected_flows",
             "open_admission",
         }
