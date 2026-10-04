@@ -7,6 +7,21 @@ import sys
 
 def check(config):
     services = config["services"]
+    prefect = services["prefect"]
+    assert prefect.get("restart") == "unless-stopped", (
+        "Prefect must recover after Docker restarts while respecting manual stops"
+    )
+    health = prefect.get("healthcheck", {})
+    assert (
+        health.get("test")
+        and health["test"][0] in {"CMD", "CMD-SHELL"}
+        and not health.get("disable")
+    ), "Prefect readiness healthcheck required"
+    for name in ("evaluation-runner", "ops-sync"):
+        assert (
+            services[name].get("depends_on", {}).get("prefect", {}).get("condition")
+            == "service_healthy"
+        ), "Ops workers must wait for Prefect readiness"
     gateway = services["ops-artifacts"]
     assert not gateway.get("ports"), "Artifact service must not publish host ports"
     assert gateway.get("read_only") is True, "Artifact image must remain read-only"

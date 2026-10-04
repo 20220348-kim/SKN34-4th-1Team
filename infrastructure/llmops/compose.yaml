@@ -117,6 +117,7 @@ services:
   prefect:
     image: prefecthq/prefect:3.8.6-python3.12@sha256:ec9e58deaf30002dd65ebb755ca3d9eb5f169902882abf18c79261a4aa95bfe3
     profiles: [evaluation]
+    restart: unless-stopped
     command: ["prefect", "server", "start", "--host", "0.0.0.0"]
     ports: ["127.0.0.1:14200:4200"]
     environment:
@@ -124,6 +125,12 @@ services:
       PREFECT_UI_API_URL: http://localhost:14200/api
       PREFECT_HOME: /var/lib/prefect
     volumes: ["prefect-data:/var/lib/prefect"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; response = urllib.request.urlopen('http://127.0.0.1:4200/api/health', timeout=2); assert response.status == 200"]
+      interval: 5s
+      timeout: 3s
+      start_period: 30s
+      retries: 30
 
 volumes:
   postgres-data:

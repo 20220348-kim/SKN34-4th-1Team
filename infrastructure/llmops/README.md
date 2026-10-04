@@ -145,6 +145,20 @@ Langfuse는 [localhost:13000](http://localhost:13000), Prefect는 [localhost:142
 Langfuse 이메일은 `llmops@localhost.test`, 비밀번호는 생성한 파일의 `LANGFUSE_ADMIN_PASSWORD`다.
 두 UI는 loopback에만 공개한다. Prefect의 이 개발 구성에는 별도 인증을 설정하지 않는다.
 
+Prefect는 자체 `prefect-data` 볼륨의 SQLite를 사용하며 위 PostgreSQL은 Langfuse 저장소다.
+Prefect의 `restart: unless-stopped`는 Docker 재시작 후 서버 복귀를 지원하고 명시적인 수동 중지는
+유지한다. `/api/health` 검사 성공 후 평가 실행기와 Ops sync를 시작하도록 Compose 의존성을 설정했다.
+이 대기는 Compose 시작 시 적용되며 Docker 엔진 재시작 때 의존 순서를 보장하거나 실행 중인
+작업의 성공을 보장하지 않는다. 자세한 의미는 Docker의
+[재시작 정책](https://docs.docker.com/engine/containers/start-containers-automatically/)과
+[시작 순서](https://docs.docker.com/compose/how-tos/startup-order/)를 따른다.
+
+이미 만들어진 컨테이너에 YAML 수정이 자동 반영되지는 않는다. 기존 환경을 복구할 때는
+정확한 Compose 프로젝트와 볼륨·이미지를 확인한 뒤 해당 Prefect 컨테이너만 `docker start`한다.
+`docker update --restart unless-stopped <확인한-Prefect-컨테이너-ID>`는 재생성 없이 재시작 정책만
+반영한다. healthcheck와 의존성 변경은 다음 계획된 Compose 갱신 때 적용하며, 연결된 Kubernetes
+환경은 [갱신·복구 절차](../../docs/ops-upgrade-runbook.md)에 따라 브리지와 업무 경로도 다시 확인한다.
+
 개발 데이터는 named volume에 남는다. **7일 자동 삭제 정책은 아직 설정하지 않았다.**
 운영 배포·보존 정책·외부 접근 인증은 별도 운영 작업이다.
 종료할 때 다음 명령은 컨테이너만 정리하며 기록 볼륨은 유지한다.
