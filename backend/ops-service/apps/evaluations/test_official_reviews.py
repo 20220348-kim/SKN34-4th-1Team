@@ -7,7 +7,7 @@ from django.conf import settings
 from django.test import SimpleTestCase, TestCase
 
 from .catalog import DATASETS, public_datasets
-from .models import EvaluationBaseline
+from .models import EvaluationBaseline, FixtureReview
 from .reviews import review_material
 from .services import ResultsUnavailable
 from .test_reviews import ReviewFixture
@@ -60,22 +60,26 @@ class OfficialMaterialTests(SimpleTestCase):
 class OfficialReviewGateTests(ReviewFixture, TestCase):
     """MySQL CI에서 실제 새 데이터셋의 조회·미검토 승인 차단을 확인한다."""
 
+    dataset_id = DATASET
+
     def completed_run(self):
-        self.dataset = self.capture_id = DATASET
+        self.dataset = self.capture_id = self.dataset_id
         run = super().completed_run()
         # Reuse only the test artifact builder, then restore the exact historical bytes.
-        source = DATASETS[DATASET]["captures"][0]["path"]
+        source = DATASETS[self.dataset_id]["captures"][0]["path"]
         raw = (settings.LLMOPS_EVIDENCE_DIR / source).read_bytes()
         capture_hash = sha256(raw).hexdigest()
         folder = self.root / str(run.id)
         run.execution_mode = "replay"
         run.live_config = {}
-        run.candidate_capture_id = DATASET
+        run.candidate_capture_id = self.dataset_id
         run.save()
         (folder / "capture/capture.json").write_bytes(raw)
         request_path = folder / "request.json"
         request = json.loads(request_path.read_bytes())
-        request.update(execution_mode="replay", live_config={}, candidate_capture_id=DATASET)
+        request.update(
+            execution_mode="replay", live_config={}, candidate_capture_id=self.dataset_id
+        )
         request_path.write_text(json.dumps(request))
         comparison_path = folder / "evaluation/comparison.json"
         comparison = json.loads(comparison_path.read_bytes())
@@ -90,7 +94,9 @@ class OfficialReviewGateTests(ReviewFixture, TestCase):
         # Legacy replay requests without a specification are only allowed for the first dataset.
         from .execution_spec import digest, make_spec, read_release
 
-        run.execution_spec = make_spec(read_release(), DATASET, "replay", {}, DATASET, DATASET)
+        run.execution_spec = make_spec(
+            read_release(), self.dataset_id, "replay", {}, self.dataset_id, self.dataset_id
+        )
         run.execution_spec_sha256 = digest(run.execution_spec)
         run.save()
         manifest.update(
@@ -131,5 +137,46 @@ class OfficialReviewGateTests(ReviewFixture, TestCase):
         )
         self.assertEqual(approval.status_code, 409)
         self.assertFalse(
-            EvaluationBaseline.objects.filter(dataset_id=DATASET, review__isnull=False).exists()
+            EvaluationBaseline.objects.filter(
+                dataset_id=self.dataset_id, review__isnull=False
+            ).exists()
         )
+
+
+class RevisedOfficialReviewGateTests(OfficialReviewGateTests):
+    dataset_id = "official-answer-20260907-v3"
+
+    def test_previous_reference_approval_is_preserved_but_not_inherited(self):
+        from .quality_policy import FIXTURE_RUBRIC
+
+        previous = DATASETS[DATASET]
+        review = FixtureReview.objects.create(
+            dataset_id=DATASET,
+            version=1,
+            fixture_sha256=previous["fixture_sha256"],
+            case_ids=previous["case_ids"],
+            rubric_version=FIXTURE_RUBRIC,
+            decision="APPROVED",
+            comment="격리 테스트의 이전 자료 승인",
+            reviewed_by=self.user,
+        )
+        response = self.client.get(self.url + "/review")
+        self.assertEqual(response.status_code, 200)
+        state = response.json()
+        revision = state["material"]["reference_revision"]
+        self.assertEqual(revision["previous_dataset_id"], DATASET)
+        self.assertEqual(revision["previous_fixture_sha256"], previous["fixture_sha256"])
+        self.assertEqual(revision["changed_case_ids"], ["H01"])
+        self.assertIn("중소ㆍ중견 제조기업", revision["source_quote"])
+        self.assertIn("중소·중견 제조기업", state["material"]["cases"][0]["reference_facts"][0])
+        self.assertEqual(state["quality"]["fixture_reviews"], [])
+        self.assertEqual(state["quality"]["fixture_version"], 0)
+        self.assertFalse(state["approval_current"])
+        self.assertFalse(state["can_promote"])
+        result = self.client.post(
+            self.url + "/quality", {"input_sha256": state["quality"]["input_sha256"]}, format="json"
+        )
+        self.assertEqual(result.status_code, 200)
+        self.assertEqual(result.json()["quality"]["status"], "NEEDS_REVIEW")
+        self.assertTrue(FixtureReview.objects.filter(pk=review.pk, decision="APPROVED").exists())
+        self.assertFalse(FixtureReview.objects.filter(dataset_id=self.dataset_id).exists())

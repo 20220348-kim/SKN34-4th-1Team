@@ -85,6 +85,18 @@ def source_project(directory, image, mysql_image):
     (directory / "results/evaluation").mkdir(mode=0o755)
     (directory / "results/evaluation/report.html").write_text("가상 보고서 🧪")
     (directory / "evidence/fixture.json").write_text('{"synthetic":true}')
+    # Hold only this disposable DB's temporary socket-only server for a deterministic check.
+    (directory / "hold-init.sh").write_text(
+        "#!/bin/sh\n"
+        "set -eu\n"
+        "touch /tmp/snapshot-init-waiting\n"
+        "for i in $(seq 1 120); do\n"
+        "  [ ! -f /tmp/snapshot-init-release ] || break\n"
+        "  sleep 1\n"
+        "done\n"
+        "[ -f /tmp/snapshot-init-release ] || exit 1\n"
+    )
+    (directory / "hold-init.sh").chmod(0o755)
     env = {
         "DJANGO_SECRET_KEY": "snapshot-isolated-fixture-only",
         "DB_HOST": "ops-mysql",
@@ -107,7 +119,10 @@ def source_project(directory, image, mysql_image):
                     "MYSQL_USER": "govbiz",
                     "MYSQL_PASSWORD": password,
                 },
-                "volumes": ["database:/var/lib/mysql"],
+                "volumes": [
+                    "database:/var/lib/mysql",
+                    f"{directory / 'hold-init.sh'}:/docker-entrypoint-initdb.d/hold-init.sh:ro",
+                ],
             },
             "ops-service": {
                 "image": image,
@@ -124,6 +139,34 @@ def source_project(directory, image, mysql_image):
     snapshot.exclusive(directory / "compose.json", json.dumps(config).encode())
 
 
+def reject_initializing_database(mysql):
+    deadline = time.monotonic() + 90
+    try:
+        while True:
+            try:
+                snapshot.run(["docker", "exec", mysql, "test", "-f", "/tmp/snapshot-init-waiting"])
+                break
+            except snapshot.SnapshotError:
+                if time.monotonic() >= deadline:
+                    raise snapshot.SnapshotError(
+                        "Disposable MySQL init marker did not appear"
+                    ) from None
+                time.sleep(1)
+        temporary = snapshot.run(
+            ["docker", "exec", "-i", mysql, *snapshot.AUTH, "mysql", "-uroot", "-N", "-B"],
+            data=b"SELECT @@GLOBAL.skip_networking;",
+        )
+        assert temporary.strip() == b"1", "Fixture must hold the temporary socket-only server"
+        try:
+            snapshot.sql(mysql, "snapshot_test", "SELECT 1;")
+        except snapshot.SnapshotError:
+            pass
+        else:
+            raise AssertionError("Temporary initialization server was accepted as ready")
+    finally:
+        snapshot.run(["docker", "exec", mysql, "touch", "/tmp/snapshot-init-release"])
+
+
 def rehearse(image):
     image = json.loads(snapshot.run(["docker", "image", "inspect", image]))[0]["Id"]
     mysql_image = json.loads(snapshot.run(["docker", "image", "inspect", "mysql:8.4"]))[0]["Id"]
@@ -135,6 +178,7 @@ def rehearse(image):
             source_project(source, image, mysql_image)
             snapshot.compose(source, "up", "-d", "ops-mysql")
             mysql = snapshot.compose(source, "ps", "-q", "ops-mysql").decode().strip()
+            reject_initializing_database(mysql)
             deadline = time.monotonic() + 90
             while True:
                 try:

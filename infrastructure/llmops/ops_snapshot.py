@@ -159,6 +159,12 @@ def sql(mysql, database, query):
             mysql,
             *AUTH,
             "mysql",
+            # The image's initialization server accepts sockets but has --skip-networking.
+            # Readiness and import must wait for the final server, not that temporary one.
+            "--protocol=TCP",
+            "--host=127.0.0.1",
+            "--port=3306",
+            "--connect-timeout=5",
             "-u",
             "root",
             "--default-character-set=utf8mb4",

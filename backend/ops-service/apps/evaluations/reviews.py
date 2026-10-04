@@ -76,6 +76,15 @@ def review_material(run):
             "candidate_origin": capture.get("measurementKind", "recorded-answer"),
             "recorded_model": capture["model"],
             "recorded_at": capture.get("startedAt"),
+            "reference_revision": {
+                "previous_dataset_id": fixture["referenceRevision"]["previousDatasetId"],
+                "previous_fixture_sha256": fixture["referenceRevision"]["previousFixtureSha256"],
+                "changed_case_ids": fixture["referenceRevision"]["changedCaseIds"],
+                "reason": fixture["referenceRevision"]["reason"],
+                "source_quote": fixture["referenceRevision"]["sourceQuote"],
+            }
+            if fixture.get("referenceRevision")
+            else None,
             "capture_sha256": capture_hash,
             "fixture_sha256": dataset["fixture_sha256"],
             "cases": [

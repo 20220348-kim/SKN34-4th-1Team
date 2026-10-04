@@ -8,6 +8,21 @@
 
 ## 실제 공고의 과거 답변을 검토 자료로 사용
 
+**참조 보완 v3:** `official-answer-20260907-v3`는 아래 v2의 H01 참조 조건에
+원문의 **중소·중견 제조기업** 범위를 추가한 별도 데이터셋이다. 기존 v2는 수정하지 않았으며
+원문·질문·청크·답변·당시 모델·사용량도 그대로다. 변경 사유·원문 인용·이전 자료 해시는
+`referenceRevision`에 보존하고 Ops 상세의 **참조 조건 변경 내용**에 표시한다.
+이는 AI 작성 참조의 보완이며 사람 승인이나 현재 모델 평가가 아니다. v2의 검토·기준을
+승계하지 않으므로 v3의 기준 자료와 모든 사례를 별도로 검토해야 한다.
+
+```bash
+uv run --project backend/ai-service --locked --group evaluation python evaluation/support-program-evidence/revise_official_reference.py
+```
+
+위 명령은 저장한 v3를 재생성 결과와 대조한다. `--write`는 v3 파일만 작성하며 DB나 모델 API를
+호출하지 않는다. 기존 v2의 바이트가 변경되면 변환을 거절한다. v3의 등록도 아래와 같이
+Ops·실행기의 일치하는 release 반영을 필요로 한다.
+
 `official-answer-20260907-v2`는 저장해 둔 기업마당 **실제 공고 2개·질문 6개**의 고정 근거 자료다.
 [원본 실행](runs/official-flow-20260907-v2/README.md)을 먼저 검증한 뒤 당시 답변 요청의 청크 ID·본문과
 응답을 그대로 보존했다. RAG 전체 결과를 고정 근거 답변 범위로 투영한 것으로, 검색 품질은 평가하지 않는다.

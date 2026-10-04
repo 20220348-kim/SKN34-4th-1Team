@@ -93,6 +93,13 @@ export function EvaluationReviewPanel({ runId, onExpired, onChanged }: { runId: 
     {!data ? loading && <p role="status">검토 자료를 불러오고 있습니다.</p> : <>
       {data.material?.data_type === 'official-html-snapshot' && <p className="rounded-xl bg-amber-50 p-3 text-sm">실제 공고에서 저장한 HTML 근거입니다. 수집 당시 본문만 포함하며 첨부파일과 현재 공고의 변경 내용은 포함하지 않습니다. 참조 조건은 AI 작성 자료이므로 원문을 대조한 사람 검토가 필요합니다.</p>}
       {data.material?.candidate_origin === 'historical-answer-projection' && <p className="rounded-xl bg-slate-50 p-3 text-sm">과거 저장 응답 · {data.material.recorded_model} · {data.material.recorded_at ? new Date(data.material.recorded_at).toLocaleString('ko-KR') : '시각 미기록'}. 이번에 생성한 응답이나 현재 모델의 성능 측정이 아닙니다. 검색 품질은 이 평가에 포함하지 않습니다.</p>}
+      {data.material?.reference_revision && <section aria-label="참조 조건 변경 내용" className="grid gap-2 rounded-xl bg-amber-50 p-4 text-sm">
+        <h3 className="font-bold">참조 조건을 보완한 새 평가 자료</h3>
+        <p>{data.material.reference_revision.reason}</p>
+        <p>변경 사례: {data.material.reference_revision.changed_case_ids.join(', ')} · 이전 자료: {data.material.reference_revision.previous_dataset_id}</p>
+        <blockquote className="border-l-2 border-amber-400 pl-3">{data.material.reference_revision.source_quote}</blockquote>
+        <p>공고 원문과 과거 답변은 유지했습니다. 이전 자료의 승인·비교 기준은 이 버전에 승계되지 않으므로 기준 자료와 사례를 다시 검토하세요.</p>
+      </section>}
       <EvaluationReviewProgress data={data} hasDrafts={hasDrafts} disabled={locked || !!error} onNavigate={(target) => {
         const element = document.getElementById(target)
         if (element instanceof HTMLDetailsElement) element.open = true
