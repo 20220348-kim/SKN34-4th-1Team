@@ -189,6 +189,7 @@ jobs:
           test -n "$RESTORE_DOCKER_IMAGE"
           node --test infrastructure/gitops/scripts/test_ops_browser_login.mjs
           OPS_STATUS_DOCKER_IMAGE="$RESTORE_DOCKER_IMAGE" PYTHONPATH=infrastructure/gitops/scripts backend/ai-service/.venv/bin/python -B -m unittest test_ops_status.DockerInspectionTests
+          OPS_VOLUME_SNAPSHOT_TEST_IMAGE="$RESTORE_DOCKER_IMAGE" PYTHONPATH=infrastructure/gitops/scripts backend/ai-service/.venv/bin/python -B -m unittest test_ops_state_snapshot
       - name: Start React development proxy
         run: |
           (cd frontend/web && VITE_DEV_PROXY_TARGET=http://127.0.0.1:18082 VITE_CORE_API_BASE_URL=/ exec node node_modules/vite/bin/vite.js --host 127.0.0.1) > /tmp/govbiz-ops-web.log 2>&1 &
