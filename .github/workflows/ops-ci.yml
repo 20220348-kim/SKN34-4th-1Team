@@ -88,6 +88,20 @@ jobs:
         run: uv run --locked python scripts/check-schema.py
       - name: Test against MySQL 8.4
         run: uv run --locked python manage.py test --noinput
+      - name: Rehearse legacy Ops schema upgrade and paused admission on separate MySQL database
+        env:
+          OPS_SCHEMA_TEST_ONLY: "true"
+          DB_NAME: govbiz_ops_legacy_upgrade_ci
+        run: |
+          uv run --locked python - <<'PY'
+          import os
+          import MySQLdb
+          connection = MySQLdb.connect(host=os.environ["DB_HOST"], port=int(os.environ["DB_PORT"]), user=os.environ["DB_USER"], passwd=os.environ["DB_PASSWORD"])
+          with connection.cursor() as cursor:
+              cursor.execute("CREATE DATABASE govbiz_ops_legacy_upgrade_ci CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")
+          connection.close()
+          PY
+          uv run --locked python scripts/check-schema.py --legacy-evaluations
       - name: Install locked AI environment for mixed RAG HTTP checks
         working-directory: backend/ai-service
         run: uv sync --locked --extra dev --group evaluation

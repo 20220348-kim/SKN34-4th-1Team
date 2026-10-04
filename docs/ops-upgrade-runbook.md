@@ -78,6 +78,31 @@ python3 -B infrastructure/gitops/scripts/ops_runtime.py --preflight \
 변경 전에 중단한다. 연결 기록이 없어도 현재 Ops에 Prefect URL이 설정돼 있으면 검사한다.
 Prefect가 비활성인 최초 bootstrap은 이 검사 대상이 아니며 journal의 `upgradePreflight`가 `null`이다.
 
+### 구버전 전환을 위한 격리 MySQL 회귀 검증
+
+[`ops-ci.yml`](../.github/workflows/ops-ci.yml)은 기존 빈 DB 배포 검사와 별도로
+`govbiz_ops_legacy_upgrade_ci`를 새로 만들고
+`scripts/check-schema.py --legacy-evaluations`를 실행한다. 기존 DB를 초기화하거나 과거로 되돌리지
+않고, 빈 MySQL 8.4에 `0017_input_token_budget`까지 전진 적용해 합성 이력을 만든다.
+CI 전용 플래그 두 개가 모두 설정돼야 하며 기존 테이블이 있거나 역방향 migration 계획이면 거부한다.
+개인 DB에 연결하거나 이 검사를 실행하려고 운영 DB를 비우지 않는다.
+
+- 현재 앱의 readiness가 구버전 스키마를 거부하고, `migrate_deployment`로 최신 migration까지
+  적용한 뒤 정상으로 바뀌는지 확인한다. 현재 대상은 `0028_daily_evaluation_schedules`다.
+- 사용자·평가·검토·기준·예산·예약·사용량·감사 등 10개 모델의 기존 컬럼과 11개 합성 행을 대조한다.
+  한글·이모지·따옴표·JSON·NULL·관계 식별자·시각을 보존하고, 과거 호출의 알 수 없는 토큰 상한은
+  NULL로 유지해야 한다. 합성 검토 이력은 실제 사람의 승인이나 품질 평가 결과가 아니다.
+- migration 직후 접수가 기본 허용임을 확인한 뒤 기존 `evaluation_admission pause` 명령으로
+  닫는다. 새 평가 요청은 `503 / EVALUATION_ADMISSION_PAUSED`이고 Prefect 호출이 없어야 한다.
+  migration과 동일 UUID의 pause를 재실행해도 차단·버전이 유지되고 감사 행이 중복되지 않아야 한다.
+
+이 검사는 실제 MySQL을 사용하는 전환 회귀이며 원본 덤프의 복원 검증은 아니다. 인증은 테스트
+클라이언트로 주입하고 Prefect 접수는 대역으로 검사하므로 Core 로그인·실행기·새 평가 완료를
+증명하지 않는다. 외부 모델 API는 호출하지 않는다.
+검증 성공으로 기존 `admission_control_unsupported` 차단을 해제하지 않는다. 실제 최초 전환에서는
+접수 경로와 구버전 API·sync·실행기의 쓰기를 중지하고 일관된 백업·복원 검증을 먼저 확보해야 한다.
+새 스키마만 적용하면 접수는 자동 중지되지 않으며, 구버전 앱은 새 접수 제어를 읽지 못한다.
+
 ## 2. 일관된 백업과 복원 가능성 확인
 
 진행 중 작업이 없고 신규 접수가 차단된 상태에서 쓰기 프로세스를 중지한다.
