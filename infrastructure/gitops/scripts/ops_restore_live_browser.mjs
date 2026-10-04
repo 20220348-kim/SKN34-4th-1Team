@@ -12,7 +12,7 @@ import { checkBrowserLogin } from './ops_browser_login.mjs'
 
 const root = fileURLToPath(new URL('../../../frontend/web/', import.meta.url))
 const helperStages = ['SETUP', 'CORE_LOGIN', 'SERVERS', 'MANAGEMENT', 'REPORTS', 'BROWSER', 'REVOCATION', 'ARTIFACT_OUTAGE', 'FILES']
-const browserStages = ['LAUNCH', 'LOGIN_FORM', 'PASSWORD_LOGIN', 'SESSION', 'IDENTITY', 'RELOAD', 'LIST', 'DETAIL', 'REPORT', 'LOGOUT', 'ANONYMOUS', 'REVOKED_SESSION']
+const browserStages = ['LAUNCH', 'LOGIN_FORM', 'PASSWORD_LOGIN', 'SESSION', 'IDENTITY', 'RELOAD', 'LIST', 'DETAIL', 'RAG_MATERIAL', 'REPORT', 'LOGOUT', 'ANONYMOUS', 'REVOKED_SESSION']
 const stages = new Set(['INPUT', 'HELPER', 'PROXY', 'COMPLETE', 'EXIT', 'CLEANUP',
   ...helperStages.map((value) => 'HELPER_' + value), ...browserStages.map((value) => 'BROWSER_' + value)])
 const bounded = async (promise, milliseconds) => {

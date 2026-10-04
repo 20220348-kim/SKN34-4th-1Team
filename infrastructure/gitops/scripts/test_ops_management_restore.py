@@ -142,13 +142,86 @@ class ManagementTests(unittest.TestCase):
             self.assertIn((route, "member-token"), self.calls)
             self.assertIn(route, result["responses"])
 
-    def test_rag_detail_does_not_fetch_the_fixed_context_review_panel(self):
+    def rag_review(self):
         row = self.rows[0]
         route = "/api/v1/ops/evaluations/" + row["id"]
         row["evaluation_scope"] = "source-chunks-retrieval-answer"
-        self.routes[route]["evaluation_scope"] = row["evaluation_scope"]
+        row["execution_spec"] = {
+            **row["execution_spec"],
+            "candidate_sha256": "b" * 64,
+            "reference_sha256": "c" * 64,
+        }
+        row["execution_spec_sha256"] = digest(row["execution_spec"])
+        self.expected[row["id"]]["execution_spec_sha256"] = row["execution_spec_sha256"]
+        self.routes[route].update(row)
+        material = {
+            "evaluation_scope": row["evaluation_scope"],
+            "fixture_sha256": "a" * 64,
+            "candidate_capture_sha256": "b" * 64,
+            "reference_capture_sha256": "c" * 64,
+            "cases": [{"case_id": "test", "content": "복원된 원문"}],
+        }
+        material["material_sha256"] = digest(material)
+        review_route = route + "/rag-reviews"
+        self.routes[review_route] = {
+            "material": material,
+            "quality": {"status": "NOT_EVALUATED"},
+        }
+        return review_route
+
+    def test_rag_reads_pinned_material_and_rejects_unauthorized_access_without_approval(
+        self,
+    ):
+        route = self.rag_review()
         result = self.verify()
-        self.assertNotIn(route + "/review", result["responses"])
+        self.assertNotIn(
+            route.removesuffix("/rag-reviews") + "/review", result["responses"]
+        )
+        self.assertIn(route, result["responses"])
+        for token in (None, "member-token", "invalid-fixture", "admin-token"):
+            self.assertIn((route, token), self.calls)
+
+    def test_rag_http_200_cannot_hide_missing_changed_or_wrong_material(self):
+        route = self.rag_review()
+        original = copy.deepcopy(self.routes[route]["material"])
+        for key, value in (
+            ("evaluation_scope", "fixed-answer-context-only"),
+            ("fixture_sha256", "d" * 64),
+            ("candidate_capture_sha256", "d" * 64),
+            ("reference_capture_sha256", "d" * 64),
+            ("cases", [{"case_id": "other", "content": "복원된 원문"}]),
+            ("cases", []),
+            ("cases", [{"case_id": "test", "content": "변조된 원문"}]),
+            ("material_sha256", "d" * 64),
+            (None, None),
+        ):
+            material = {**original, key: value} if key else None
+            if key and key not in {"material_sha256", "cases"}:
+                # A self-consistent digest must not hide different pinned inputs.
+                material["material_sha256"] = digest(
+                    {k: v for k, v in material.items() if k != "material_sha256"}
+                )
+            self.routes[route]["material"] = material
+            with (
+                self.subTest(key=key, value=value),
+                self.assertRaisesRegex(ValueError, "RAG review material"),
+            ):
+                self.verify()
+
+    def test_rag_material_http_failure_or_member_bypass_cannot_pass(self):
+        route = self.rag_review()
+        for defect in ("unavailable", "member"):
+
+            def broken(path, token=None, defect=defect):
+                if path == route:
+                    if defect == "unavailable" and token == "admin-token":
+                        return 503, {}, b"{}"
+                    if defect == "member" and token == "member-token":
+                        token = "admin-token"
+                return self.response(path, token)
+
+            with self.subTest(defect=defect), self.assertRaises(ValueError):
+                self.verify(broken)
 
     def test_http_200_with_missing_or_wrong_review_material_cannot_pass(self):
         route = "/api/v1/ops/evaluations/" + self.rows[0]["id"] + "/review"

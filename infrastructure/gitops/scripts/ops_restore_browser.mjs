@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { chromium } from '../../../frontend/web/node_modules/playwright-core/index.mjs'
+import { checkRagMaterial } from './ops_restore_rag_browser.mjs'
 
 export async function checkRestoreBrowser(origin, responses, expected, reports, onStage = () => {}) {
   assert.match(origin, /^http:\/\/127\.0\.0\.1:[0-9]+$/)
@@ -92,6 +93,10 @@ export async function checkRestoreBrowser(origin, responses, expected, reports, 
       const route = `/api/v1/ops/evaluations/${id}`
       if (responses[route].evaluation_scope === 'fixed-answer-context-only') {
         await page.getByRole('region', { name: '응답 검토와 기준 지정' }).getByRole('region', { name: '검토 진행 안내' }).waitFor()
+      }
+      if (responses[route].evaluation_scope === 'source-chunks-retrieval-answer') {
+        onStage('RAG_MATERIAL')
+        await checkRagMaterial(page, responses[route])
       }
       assert.equal(await page.getByRole('alert').count(), 0, 'Detail view contains an error')
       const link = page.getByRole('link', { name: 'Evidently 보고서', exact: true })
