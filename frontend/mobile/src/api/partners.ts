@@ -4,9 +4,9 @@ import { partnerProposalBoxDtoSchema, partnerProposalDtoSchema,
   toPartnerProposal, toPartnerProposalBoxPage } from '@govbiz/shared/data/models/PartnerProposalDto'
 import type { PartnerRecruitmentQuery } from '@govbiz/shared/domain/entities/PartnerRecruitmentQuery'
 import { partnerRecruitmentPageSize } from '@govbiz/shared/domain/entities/PartnerRecruitmentQuery'
-import type { PartnerRecruitmentInput } from '@govbiz/shared/domain/entities/PartnerRecruitment'
-import type { CreatePartnerRecruitmentResult } from '@govbiz/shared/domain/repositories/PartnerRecruitmentRepository'
-import { CreatePartnerRecruitmentUseCase } from '@govbiz/shared/domain/usecases/PartnerRecruitmentUseCases'
+import type { PartnerRecruitmentContentInput, PartnerRecruitmentInput } from '@govbiz/shared/domain/entities/PartnerRecruitment'
+import type { CreatePartnerRecruitmentResult, UpdatePartnerRecruitmentResult } from '@govbiz/shared/domain/repositories/PartnerRecruitmentRepository'
+import { CreatePartnerRecruitmentUseCase, UpdatePartnerRecruitmentUseCase } from '@govbiz/shared/domain/usecases/PartnerRecruitmentUseCases'
 import type { PartnerProposalBox, PartnerProposalInput } from '@govbiz/shared/domain/entities/PartnerProposal'
 import type { PartnerProposalAction } from '@govbiz/shared/domain/repositories/PartnerProposalRepository'
 import { apiRequest, ApiError, errorMessage } from './client'
@@ -57,6 +57,32 @@ export function createRecruitment(input: PartnerRecruitmentInput, token: string,
     },
   })
   return useCase.execute(input, signal)
+}
+
+/** 수정 입력에는 연결 공고를 넣지 않는다. 기존 shared 규칙과 DTO 변환을 앱의 Bearer 요청에서 사용한다. */
+export function updateRecruitment(id: number, input: PartnerRecruitmentContentInput, token: string, signal?: AbortSignal) {
+  return new UpdatePartnerRecruitmentUseCase({
+    async update(recruitmentId, value, requestSignal): Promise<UpdatePartnerRecruitmentResult> {
+      try {
+        const body: PartnerRecruitmentContentInput = { title: value.title, body: value.body, ownRole: value.ownRole,
+          seekingRole: value.seekingRole, seekingCount: value.seekingCount, region: value.region,
+          minimumCompanyAgeYears: value.minimumCompanyAgeYears, capabilities: value.capabilities, recruitmentDeadline: value.recruitmentDeadline }
+        const recruitment = toPartnerRecruitment(partnerRecruitmentDtoSchema.parse(
+          await apiRequest(`${recruitments}/${recruitmentId}`, { method: 'PUT', body, accessToken: token, signal: requestSignal }),
+        ))
+        if (recruitment.id !== recruitmentId || !recruitment.isMine) throw new Error('수정한 모집글과 응답이 다릅니다.')
+        return { outcome: 'updated', recruitment }
+      } catch (cause) {
+        if (cause instanceof ApiError) {
+          if (cause.code === 'RECRUITMENT_NOT_FOUND') return { outcome: 'not-found' }
+          if (cause.code === 'RECRUITMENT_ACTION_FORBIDDEN') return { outcome: 'forbidden' }
+          if (cause.code === 'RECRUITMENT_CLOSED') return { outcome: 'closed' }
+          if (cause.code === 'RECRUITMENT_DEADLINE_NOT_ALLOWED') return { outcome: 'deadline-not-allowed', latestAllowedDeadline: null }
+        }
+        throw cause
+      }
+    },
+  }).execute(id, input, signal)
 }
 
 export async function closeRecruitment(id: number, token: string, signal?: AbortSignal) {
@@ -111,7 +137,7 @@ export function getPartnerWebUrl(path: '/app/partners/new' | '/app/partners/edit
 export function partnerErrorMessage(cause: unknown) {
   if (cause instanceof Error && cause.message.startsWith('웹 주소')) return cause.message
   if (cause instanceof ApiError) {
-    if (cause.code === 'COMPANY_REQUIRED') return '제안·모집글 작성은 등록된 계속사업자만 할 수 있습니다.'
+    if (cause.code === 'COMPANY_REQUIRED' || cause.code === 'ACTIVE_BUSINESS_REQUIRED') return '제안·모집글 작성과 수정은 등록된 계속사업자만 할 수 있습니다.'
     if (cause.code === 'PROPOSAL_ALREADY_SENT') return '이 모집글에는 이미 제안을 보냈습니다.'
     if (cause.code === 'RECRUITMENT_CLOSED') return '모집이 마감되었습니다. 목록을 새로고침해 주세요.'
     if (cause.code === 'RECRUITMENT_NOT_FOUND') return '모집글을 찾을 수 없습니다.'

@@ -24,6 +24,11 @@
 협업 머리글의 연필은 모바일 `/partner/new`로 연결합니다. 작성은 `RecruitmentCreateScreen → mobile api/partners의 createRecruitment
 → shared CreatePartnerRecruitmentUseCase → 모바일 Bearer HTTP 요청 → 기존 Core 모집글 API`로 이어집니다.
 API 경계에서 shared DTO 검증·Mapper를 사용하고, 등록 결과의 공고 복합 식별자·본인 글 여부를 확인한 뒤 기존 상세 화면으로 이동합니다.
+본인 모집 중인 글의 수정은 `/partner/edit?id={id}`에서 같은 네이티브 폼을 사용합니다.
+`RecruitmentCreateScreen(수정 모드) → mobile api/partners의 updateRecruitment → shared UpdatePartnerRecruitmentUseCase
+→ 모바일 Bearer PUT /api/v1/partners/recruitments/{id} → 기존 Core PartnerRecruitmentController → PartnerRecruitmentService → Repository`
+로 이어집니다. API 경계에서 DTO를 내부 모델로 변환하며 화면은 연결 공고를 고정하고 작성자·모집 상태를 확인합니다.
+저장 성공·취소 후 앱 상세로 복귀하며 공개 HTTP·DB 계약은 변경하지 않습니다.
 관심 공고 선택 시트는 기존 관심 공고 API를 사용하며, 접수 상태와 서울 기준 마감일은 작성 시 다시 확인합니다.
 기존 웹의 domain/model 파일은 공통 구현을 재수출하므로 두 구현이 따로 변경되지 않습니다.
 모바일 기업·관심 공고·가입 이메일 인증의 HTTP 호출·응답 검증·DTO 변환은 `src/api` 경계가 담당하며 화면은 내부 모델을 받습니다. 문서의 실제 기입 가능 답변 판단은 shared `isWritableApplicationAnswer`를 웹·앱에서 재사용합니다.

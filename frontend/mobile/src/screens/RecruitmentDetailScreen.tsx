@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ActivityIndicator, Alert, Linking, Pressable, StyleSheet, Text, TextInput, View } from 'react-native'
+import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native'
 import * as Clipboard from 'expo-clipboard'
 import { useFocusEffect } from 'expo-router'
 import { companyDtoSchema, toCompany } from '@govbiz/shared/data/models/CompanyDto'
@@ -20,8 +20,8 @@ import { Button, Card, Notice, Page, StatusBadge, colors, styles } from '../ui'
 type DetailState = { token: string | null; detail: PartnerRecruitment | null; loading: boolean; error: string | null }
 const blank = (token: string | null): DetailState => ({ token, detail: null, loading: true, error: null })
 
-export function RecruitmentDetailScreen({ id, onLogin, onCompany, onProgram, onInbox }: {
-  id: number; onLogin(): void; onCompany(): void; onProgram(identity: SupportProgramIdentity): void; onInbox(): void
+export function RecruitmentDetailScreen({ id, onLogin, onCompany, onProgram, onInbox, onEdit }: {
+  id: number; onLogin(): void; onCompany(): void; onProgram(identity: SupportProgramIdentity): void; onInbox(): void; onEdit(): void
 }) {
   const { session, status, invalidateSession } = useAuth()
   const token = status === 'signedIn' ? session?.accessToken ?? null : null
@@ -118,11 +118,6 @@ export function RecruitmentDetailScreen({ id, onLogin, onCompany, onProgram, onI
     } catch (cause) { setActionError(partnerErrorMessage(cause)) }
   }
 
-  async function openEdit() {
-    try { await Linking.openURL(getPartnerWebUrl('/app/partners/edit', id)) }
-    catch (cause) { setActionError(partnerErrorMessage(cause)) }
-  }
-
   function confirmClose() {
     if (!token || busy) return
     Alert.alert('모집을 마감할까요?', '마감 후 대기 중인 제안도 종료됩니다.', [
@@ -181,7 +176,7 @@ export function RecruitmentDetailScreen({ id, onLogin, onCompany, onProgram, onI
       </Pressable>
       <Text style={styles.heading}>협업 소개</Text><Text style={styles.body}>{detail.body}</Text>
       {detail.isMine && detail.status === 'OPEN' && <View style={local.row}>
-        <Button label="수정" variant="secondary" onPress={() => void openEdit()} />
+        <Button label="수정" variant="secondary" onPress={onEdit} />
         <Button label="모집 마감" variant="danger" disabled={busy} onPress={confirmClose} /></View>}
       {detail.myProposal && <Notice>보낸 제안: {partnerProposalStatusLabels[detail.myProposal.status]}</Notice>}
       {visible.error && <Notice error>{visible.error}</Notice>}
