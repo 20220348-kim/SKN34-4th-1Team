@@ -29,3 +29,11 @@ export const savePendingPreparation = (base: string, email: string, pending: Pen
   await SecureStore.setItemAsync(key(base, email), JSON.stringify(schema.parse(pending)), { keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY })
 })
 export const clearPendingPreparation = (base: string, email: string) => serial(() => SecureStore.deleteItemAsync(key(base, email)))
+
+/** 서버 확인 사이에 새 요청이 보관됐다면 그 기록을 지우지 않는다. */
+export const clearPendingPreparationIfUnchanged = (base: string, email: string, expected: PendingPreparationRequest, signal?: AbortSignal) => serial(async () => {
+  const current = await read(base, email)
+  if (signal?.aborted || !current || JSON.stringify(current) !== JSON.stringify(schema.parse(expected))) return false
+  await SecureStore.deleteItemAsync(key(base, email))
+  return true
+})

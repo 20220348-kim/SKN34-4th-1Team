@@ -44,7 +44,7 @@ export async function shareApplicationFile(owner: string, blob: Blob, fileName: 
       if (signal?.aborted || !isCurrent()) return
       const saved = new File(destination, name)
       if (saved.exists) { duplicate = true; throw new Error('Existing document file') }
-      file.copy(saved)
+      await file.copy(saved)
     } else await Sharing.shareAsync(file.uri, { dialogTitle: fileName, mimeType: blob.type, UTI: 'public.data' })
   }
   catch { throw new Error(duplicate ? '선택한 폴더에 같은 이름의 파일이 있어요. 다른 폴더를 선택해 주세요.' : '파일 저장·공유 화면을 열지 못했어요. 다시 시도해 주세요.') }

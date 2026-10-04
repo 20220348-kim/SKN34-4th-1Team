@@ -4,6 +4,7 @@ import type { ApplicationPreparationSummary } from '@govbiz/shared/domain/entiti
 import { listPreparations, listPreparationReviews, type PreparationReview } from '../api/preparation'
 import { ApiError, errorMessage } from '../api/client'
 import { useAuth } from '../auth/session'
+import { useAppForeground } from './useAppForeground'
 
 type Workspace = { owner: string | null; preparations: ApplicationPreparationSummary[] | null; reviews: PreparationReview[] | null;
   preparationError: string | null; reviewError: string | null; loading: boolean }
@@ -15,9 +16,11 @@ export function usePreparationWorkspace(token: string | null, enabled = true) {
   const [state, setState] = useState<Workspace>(() => empty(token))
   const [revision, setRevision] = useState(0)
   const refresh = useCallback(() => setRevision((value) => value + 1), [])
+  const foreground = useAppForeground()
   useFocusEffect(useCallback(() => {
-    if (!token || !enabled) return
+    if (!token || !enabled || !foreground) return
     const controller = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | undefined
     setState((current) => current.owner === token ? { ...current, loading: true, preparationError: null, reviewError: null } : empty(token))
     const handleError = (cause: unknown) => {
       if (cause instanceof ApiError && cause.status === 401) void invalidateSession().catch(() => undefined)
@@ -25,21 +28,17 @@ export function usePreparationWorkspace(token: string | null, enabled = true) {
     }
     void Promise.allSettled([listPreparations(token, controller.signal), listPreparationReviews(token, controller.signal)]).then(([preparations, reviews]) => {
       if (controller.signal.aborted) return
-      setState({ owner: token, loading: false,
+      const next = { owner: token, loading: false,
         preparations: preparations.status === 'fulfilled' ? preparations.value : null,
         reviews: reviews.status === 'fulfilled' ? reviews.value : null,
         preparationError: preparations.status === 'rejected' ? handleError(preparations.reason) : null,
-        reviewError: reviews.status === 'rejected' ? handleError(reviews.reason) : null })
+        reviewError: reviews.status === 'rejected' ? handleError(reviews.reason) : null }
+      setState(next)
+      if (!next.preparationError && !next.reviewError && next.reviews?.some(({ review, latestRun }) => latestRun?.inputRevision === review.inputRevision
+        && (latestRun.status === 'QUEUED' || latestRun.status === 'RUNNING'))) timer = setTimeout(refresh, 10_000)
     })
-    return () => controller.abort()
-  }, [token, enabled, revision, invalidateSession]))
+    return () => { controller.abort(); clearTimeout(timer) }
+  }, [token, enabled, foreground, revision, invalidateSession, refresh]))
   const visible = state.owner === token ? state : empty(token)
-  const running = visible.reviews?.some(({ review, latestRun }) => latestRun?.inputRevision === review.inputRevision
-    && (latestRun.status === 'QUEUED' || latestRun.status === 'RUNNING')) ?? false
-  useFocusEffect(useCallback(() => {
-    if (!token || !enabled || !running) return
-    const timer = setInterval(refresh, 10_000)
-    return () => clearInterval(timer)
-  }, [token, enabled, running, refresh]))
   return { ...visible, refresh }
 }

@@ -5,11 +5,12 @@ import type { ApplicationPreparationSummary, ApplicationPreparationListStatus, A
 import { ApplicationPreparationError } from '@govbiz/shared/domain/errors/ApplicationPreparationError'
 import { generationFailureTitle } from '@govbiz/shared/domain/entities/ApplicationDocumentGeneration'
 import { useAuth } from '../auth/session'
-import { applicationPreparationUseCase } from '../api/applicationPreparation'
+import { applicationPreparationUseCase, discardDeletedPendingPreparation } from '../api/applicationPreparation'
 import { getApiBaseUrl } from '../api/client'
 import { readPendingPreparation, type PendingPreparationRequest } from '../auth/preparationPending'
 import { PreparationAccess } from '../components/ApplicationPreparationUi'
 import { SegmentedControl } from '../components/SegmentedControl'
+import { useAppForeground } from '../components/useAppForeground'
 import { Button, Card, Notice, Page, StatusBadge, colors, styles } from '../ui'
 
 type Props = { onLogin(): void; onNew(identity?: { sourceCode: string; sourceProgramId: string }): void; onOpen(id: number, documents: boolean): void }
@@ -32,14 +33,18 @@ function OwnedList({ token, email, onNew, onOpen }: Props & { token: string; ema
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [deleting, setDeleting] = useState<number | null>(null)
+  const [checkingPending, setCheckingPending] = useState(false)
+  const [notice, setNotice] = useState<string | null>(null)
   const [revision, setRevision] = useState(0)
   const mutation = useRef<AbortController | null>(null)
+  const foreground = useAppForeground()
   const refresh = () => setRevision(value => value + 1)
   const reportError = useCallback((cause: unknown) => {
     if (cause instanceof ApplicationPreparationError && cause.status === 401) void invalidateSession().catch(() => undefined)
     setError(cause instanceof Error ? cause.message : '신청문서를 확인하지 못했어요.')
   }, [invalidateSession])
   useFocusEffect(useCallback(() => {
+    if (!foreground) return
     const controller = new AbortController()
     setLoading(true); setError(null); setItems(null); setCursor(null)
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -53,10 +58,23 @@ function OwnedList({ token, email, onNew, onOpen }: Props & { token: string; ema
     void Promise.all([useCase.list(filter === 'all' ? {} : { status: filter }, controller.signal), readJobs(), readPendingPreparation(getApiBaseUrl(), email)]).then(([page, , record]) => {
       if (!controller.signal.aborted) { setItems(page.items); setCursor(page.nextBeforeId); setPending(record) }
     }).catch(cause => { if (!controller.signal.aborted) reportError(cause) }).finally(() => { if (!controller.signal.aborted) setLoading(false) })
-    return () => { controller.abort(); mutation.current?.abort(); clearTimeout(timer) }
-  }, [filter, revision, reportError, useCase, email]))
+    return () => {
+      controller.abort(); mutation.current?.abort(); mutation.current = null
+      setDeleting(null); setCheckingPending(false); clearTimeout(timer)
+    }
+  }, [foreground, filter, revision, reportError, useCase, email]))
+  async function checkPending() {
+    if (!pending || checkingPending || deleting !== null) return
+    const controller = new AbortController(); mutation.current = controller
+    setCheckingPending(true); setError(null); setNotice(null)
+    try {
+      await discardDeletedPendingPreparation(token, email, pending, controller.signal)
+      if (!controller.signal.aborted) { setPending(null); setNotice('대상 문서가 없어 보관 요청을 정리했어요. 새 신청문서를 작성할 수 있어요.'); refresh() }
+    } catch (cause) { if (!controller.signal.aborted) reportError(cause) }
+    finally { if (mutation.current === controller) { mutation.current = null; setCheckingPending(false) } }
+  }
   async function more() {
-    if (!cursor || loading || deleting) return
+    if (!cursor || loading || deleting || checkingPending) return
     const controller = new AbortController(); mutation.current = controller
     setLoading(true); setError(null)
     try {
@@ -68,12 +86,12 @@ function OwnedList({ token, email, onNew, onOpen }: Props & { token: string; ema
   function remove(item: ApplicationPreparationSummary) {
     Alert.alert('이 신청문서를 삭제할까요?', `${item.formTitle}\n${item.programTitle}\n\n이 문서의 저장 답변과 생성 파일이 함께 삭제돼요. 관심 공고와 다른 신청 문서는 유지돼요.`, [
       { text: '취소', style: 'cancel' }, { text: '문서 삭제', style: 'destructive', onPress: () => { void (async () => {
-        if (deleting) return
+        if (deleting || checkingPending) return
         const controller = new AbortController(); mutation.current = controller
         setDeleting(item.id); setError(null)
         try { await useCase.delete(item.id, controller.signal); if (!controller.signal.aborted) { setItems(previous => previous?.filter(row => row.id !== item.id) ?? null); refresh() } }
         catch (cause) { if (!controller.signal.aborted) reportError(cause) }
-        finally { if (!controller.signal.aborted) setDeleting(null) }
+        finally { if (mutation.current === controller) { mutation.current = null; setDeleting(null) } }
       })() } },
     ])
   }
@@ -84,10 +102,12 @@ function OwnedList({ token, email, onNew, onOpen }: Props & { token: string; ema
       { value: 'all', label: '전체' }, { value: 'in_progress', label: '작성 중' }, { value: 'done', label: '초안 완료' },
     ]} />
     {management && <Notice>각 문서의 삭제 버튼을 누르면 삭제 전에 한 번 더 확인해요.</Notice>}
+    {notice && <Notice>{notice}</Notice>}
     {error && <><Notice error>{error}</Notice><Button label="다시 확인" variant="secondary" onPress={refresh} /></>}
     {loading && items === null && <ActivityIndicator accessibilityLabel="신청문서 불러오는 중" color={colors.primary} />}
     {pending && <Card><Text style={styles.heading}>이전 요청 결과를 확인해 주세요</Text><Text style={styles.muted}>접수 여부를 확인하지 못한 요청을 기기에 보관했어요. 같은 요청으로 확인하면 중복 실행을 방지할 수 있어요.</Text>
-      <Button label="미확인 요청 이어서 확인" variant="secondary" onPress={() => pending.kind === 'document' ? onOpen(pending.preparationId, true) : onNew({ sourceCode: pending.sourceCode, sourceProgramId: pending.sourceProgramId })} /></Card>}
+      <Button label="미확인 요청 이어서 확인" variant="secondary" disabled={checkingPending} onPress={() => pending.kind === 'document' ? onOpen(pending.preparationId, true) : onNew({ sourceCode: pending.sourceCode, sourceProgramId: pending.sourceProgramId })} />
+      {pending.kind === 'document' && <Button label="보관 요청 대상 확인" variant="ghost" busy={checkingPending} disabled={deleting !== null} onPress={() => void checkPending()} />}</Card>}
     {analysis.filter(job => active(job.status) || job.seen === false && Date.now() - Date.parse(job.createdAt) < 86_400_000).map(job => <Card key={`analysis-${job.id}`}>
       <View style={styles.row}><StatusBadge label={job.status === 'UNKNOWN' ? '결과 확인 필요' : job.status === 'FAILED' ? '분석 실패' : job.status === 'SUCCEEDED' ? '분석 결과 확인' : '양식 분석 중'} tone="info" /></View>
       <Text style={styles.heading}>{job.programTitle}</Text><Button label="양식 분석 이어서 확인" variant="secondary" onPress={() => onNew({ sourceCode: job.sourceCode, sourceProgramId: job.sourceProgramId })} />
@@ -104,7 +124,7 @@ function OwnedList({ token, email, onNew, onOpen }: Props & { token: string; ema
         {job?.status === 'FAILED' && <Text style={styles.muted}>{generationFailureTitle(job)}</Text>}
         {job?.seen === false && !working && <View style={styles.row}><StatusBadge label="확인하지 않은 결과" tone="info" /></View>}
         <Button label={working || job?.seen === false ? '생성 결과 확인' : completed ? '문서 보기' : '이어서 작성'} variant="secondary" onPress={() => onOpen(item.id, Boolean(working || job?.seen === false || completed))} />
-        {management && <Button label="삭제" accessibilityLabel={`${item.formTitle} 삭제`} variant="danger" disabled={deleting !== null || Boolean(working) || loading || Boolean(error)} busy={deleting === item.id} onPress={() => remove(item)} />}
+        {management && <Button label="삭제" accessibilityLabel={`${item.formTitle} 삭제`} variant="danger" disabled={deleting !== null || checkingPending || Boolean(working) || loading || Boolean(error)} busy={deleting === item.id} onPress={() => remove(item)} />}
       </Card>
     })}
     {!loading && !error && items?.length === 0 && <Card><Text style={styles.heading}>아직 신청문서가 없어요</Text><Text style={styles.muted}>지원할 공고를 고르면 작성할 양식을 확인할 수 있어요.</Text></Card>}

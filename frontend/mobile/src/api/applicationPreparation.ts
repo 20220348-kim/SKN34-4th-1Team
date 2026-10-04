@@ -12,6 +12,7 @@ import { applicationDocumentsSchema, applicationDocumentMigrationConfirmationSch
 import { applicationOnlineInputGuideSchema } from '@govbiz/shared/data/models/ApplicationOnlineInputGuideDto'
 import { applicationGoogleFormSchema } from '@govbiz/shared/data/models/ApplicationGoogleFormDto'
 import { ApiError, createApiFetch, getApiBaseUrl } from './client'
+import { clearPendingPreparationIfUnchanged, type PendingPreparationRequest } from '../auth/preparationPending'
 
 const base = '/api/v1/application-preparations'
 
@@ -159,6 +160,19 @@ class MobileApplicationPreparationRepository implements ApplicationPreparationRe
 }
 
 export const applicationPreparationUseCase = (token: string) => new ApplicationPreparationUseCase(new MobileApplicationPreparationRepository(token))
+
+/** 정확한 소유 문서 없음 응답만 정리 근거로 사용한다. 조회 장애와 오래된 서버의 404는 유지한다. */
+export async function discardDeletedPendingPreparation(token: string, email: string, pending: PendingPreparationRequest, signal?: AbortSignal) {
+  if (pending.kind !== 'document') throw new Error('양식 분석 요청은 같은 요청으로 결과를 확인해 주세요.')
+  try {
+    await applicationPreparationUseCase(token).get(pending.preparationId, signal)
+  } catch (cause) {
+    if (signal?.aborted || !(cause instanceof ApplicationPreparationError) || cause.status !== 404 || cause.code !== 'APPLICATION_PREPARATION_NOT_FOUND') throw cause
+    if (!await clearPendingPreparationIfUnchanged(getApiBaseUrl(), email, pending, signal)) throw new Error('보관 요청이 변경됐어요. 목록에서 현재 요청을 다시 확인해 주세요.')
+    return
+  }
+  throw new Error('요청 대상 문서가 남아 있어요. 같은 요청으로 결과를 먼저 확인해 주세요.')
+}
 export function parsePreparationId(value: unknown): number | null {
   if (typeof value !== 'string' || !/^[1-9][0-9]*$/.test(value) || !Number.isSafeInteger(Number(value))) return null
   return Number(value)
