@@ -612,6 +612,20 @@
       "captures": {
         "official-answer-20260907-v2": "1ca19a920508f05edfec2c493781a3170bc3fa4f044027b0b3452a1a2c73e1e4"
       }
+    },
+    "official-answer-20260907-v3": {
+      "fixture_sha256": "3ad897836a10af6bf71672d33d1a4e5374181b0157068aa4196e622fb12ab971",
+      "case_ids": [
+        "H01",
+        "H02",
+        "H03",
+        "H04",
+        "H05",
+        "H06"
+      ],
+      "captures": {
+        "official-answer-20260907-v3": "1f1b49c21249b2da29daceec650f789c53a19b9d346d171c4524bdd4fb05e523"
+      }
     }
   }
 }

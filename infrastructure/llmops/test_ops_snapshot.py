@@ -15,6 +15,19 @@ import ops_snapshot as snapshot
 import ops_snapshot_files as storage
 
 
+class SqlTransportTests(unittest.TestCase):
+    def test_sql_waits_for_tcp_and_keeps_credentials_and_queries_out_of_argv(self):
+        with patch.object(snapshot, "run", return_value=b"1\n") as command:
+            self.assertEqual(snapshot.sql("isolated-mysql", "snapshot_test", "SELECT 1;"), b"1\n")
+        args = command.call_args.args[0]
+        self.assertIn("--protocol=TCP", args)
+        self.assertIn("--host=127.0.0.1", args)
+        self.assertIn("--port=3306", args)
+        self.assertIn("--connect-timeout=5", args)
+        self.assertNotIn("SELECT 1;", args)
+        self.assertEqual(command.call_args.kwargs["data"], b"SELECT 1;")
+
+
 class RehearsalCleanupTests(unittest.TestCase):
     def test_built_tag_is_removed_on_success_and_failure(self):
         for error in (None, ValueError("restore failed")):

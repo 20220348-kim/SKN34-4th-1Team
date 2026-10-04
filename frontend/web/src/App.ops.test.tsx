@@ -1339,12 +1339,17 @@ it('RAG 새 실행을 무료 재계산으로 표시하지 않는다', async () =
 })
 
 
-it('실제 공고의 과거 응답은 출처와 당시 모델을 보여주고 미검토 승인·기준 지정을 막는다', async () => {
+it.each([false, true])('실제 공고는 출처와 과거 모델·참조 보완(%s)을 표시하고 미검토 승격을 막는다', async (revised) => {
   const original = fetchMock.getMockImplementation()!
   const state: EvaluationReview = { ...reviewDefaults, can_promote: false, quality: qualityState,
     material_error: '', is_baseline: false, baseline_version: 0, baseline_history: [], reviews: [],
     material: { ...reviewMaterial, data_type: 'official-html-snapshot', candidate_origin: 'historical-answer-projection',
       recorded_model: 'gpt-5.6-luna', recorded_at: '2026-09-06T16:10:50Z',
+      reference_revision: revised ? {
+        previous_dataset_id: 'official-answer-20260907-v2', previous_fixture_sha256: 'c'.repeat(64),
+        changed_case_ids: ['H01'], reason: '중소·중견 제조기업 범위 보완 · 사람 검토 필요',
+        source_quote: '☞ 중소ㆍ중견 제조기업의 자발적인 스마트공장 구축 및 고도화',
+      } : null,
       cases: [{ ...reviewMaterial.cases[0], source: {
         url: 'https://www.bizinfo.go.kr/sii/siia/selectSIIA200Detail.do?pblancId=PBLN_000000000116004',
         collected_at: '2026-09-06T15:13:00Z', html_sha256: 'a'.repeat(64), content_sha256: 'b'.repeat(64),
@@ -1357,6 +1362,12 @@ it('실제 공고의 과거 응답은 출처와 당시 모델을 보여주고 �
   expect(await screen.findByText(/과거 저장 응답 · gpt-5.6-luna/)).toBeTruthy()
   expect(screen.getByText(/첨부파일과 현재 공고의 변경 내용은 포함하지 않습니다/)).toBeTruthy()
   expect(screen.getByRole('link', { name: '공고 출처 보기' }).getAttribute('href')).toBe(state.material!.cases[0].source!.url)
+  if (revised) {
+    const revision = screen.getByRole('region', { name: '참조 조건 변경 내용' })
+    expect(revision.textContent).toContain('H01')
+    expect(revision.textContent).toContain('중소·중견 제조기업 범위 보완')
+    expect(revision.textContent).toContain('이전 자료의 승인·비교 기준은 이 버전에 승계되지 않으므로')
+  } else expect(screen.queryByRole('region', { name: '참조 조건 변경 내용' })).toBeNull()
   expect(screen.getByRole('button', { name: '검토 승인 저장' })).toHaveProperty('disabled', true)
   expect(screen.getByRole('button', { name: '비교 기준으로 지정' })).toHaveProperty('disabled', true)
   expect(fetchMock.mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false)

@@ -40,6 +40,13 @@ Django 사용자 행은 `core:{회원 ID}`와 이메일로 실행 요청자를 �
 
 ## LLMOps 운영 화면
 
+실제 공고의 과거 답변 자료 `official-answer-20260907-v3`는 v2의 H01 참조에서 빠진
+중소·중견 제조기업 범위를 보완한 별도 자료입니다. `/review`의 `material.reference_revision`은
+이전 자료 ID·해시, 변경 사례, 사유, 원문 인용을 반환하며 React 상세에 표시합니다.
+기존 버전에는 이 필드가 null이고 이전 API에서 필드가 없어도 화면은 동작합니다.
+모델 응답은 과거 자료 그대로이며 이전 버전의 사람 승인·비교 기준을 승계하지 않습니다.
+[자료 생성·검증 방법](../../evaluation/support-program-evidence/README.md#실제-공고의-과거-답변을-검토-자료로-사용)을 참고하세요.
+
 첫 전체 실행은 [LLMOps 개발 환경](../../infrastructure/llmops/README.md#django-운영-화면)을 따르세요.
 화면은 `frontend/web`의 React가 [localhost:5173/ops/evaluations](http://localhost:5173/ops/evaluations)에서
 제공하고 Django는 18001 포트의 `/api/v1/ops` API를 담당합니다. 기존 Django 화면 주소는

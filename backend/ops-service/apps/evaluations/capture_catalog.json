@@ -122,5 +122,26 @@
         "path": "runs/official-answer-20260907-v2/capture.json"
       }
     ]
+  },
+  {
+    "id": "official-answer-20260907-v3",
+    "label": "실제 공고 고정 근거 · 참조 보완 v3 · 과거 응답 6건 · 사람 검토 필요",
+    "fixture": "runs/official-answer-20260907-v3/fixture.json",
+    "fixture_sha256": "3ad897836a10af6bf71672d33d1a4e5374181b0157068aa4196e622fb12ab971",
+    "case_ids": [
+      "H01",
+      "H02",
+      "H03",
+      "H04",
+      "H05",
+      "H06"
+    ],
+    "captures": [
+      {
+        "id": "official-answer-20260907-v3",
+        "label": "공식 HTML 과거 답변 · 참조 보완 v3 · gpt-5.6-luna · 2026-09-07",
+        "path": "runs/official-answer-20260907-v3/capture.json"
+      }
+    ]
   }
 ]

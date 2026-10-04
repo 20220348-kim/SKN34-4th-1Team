@@ -422,6 +422,10 @@ const reviewSchema = z.object({
     data_type: z.enum(['synthetic', 'official-html-snapshot']).optional(),
     candidate_origin: z.enum(['recorded-answer', 'historical-answer-projection']).optional(),
     recorded_model: z.string().optional(), recorded_at: z.string().nullable().optional(),
+    reference_revision: z.object({
+      previous_dataset_id: z.string(), previous_fixture_sha256: z.string().regex(/^[a-f0-9]{64}$/),
+      changed_case_ids: z.array(z.string()), reason: z.string(), source_quote: z.string(),
+    }).nullable().optional(),
     cases: z.array(z.object({
       case_id: z.string(), question: z.string(), document_title: z.string(),
       source: z.object({
