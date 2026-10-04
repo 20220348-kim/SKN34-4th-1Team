@@ -422,6 +422,20 @@ class ComposeBridgeTests(unittest.TestCase):
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         module.check(config)
+        for name in ("langfuse-web", "langfuse-worker"):
+            for failure in ("missing_healthcheck", "disabled_healthcheck", "process_only", "missing_dependency"):
+                with self.subTest(service=name, failure=failure):
+                    bad = copy.deepcopy(config)
+                    if failure == "missing_healthcheck":
+                        bad["services"][name].pop("healthcheck")
+                    elif failure == "disabled_healthcheck":
+                        bad["services"][name]["healthcheck"].update(disable=True)
+                    elif failure == "process_only":
+                        bad["services"]["evaluation-runner"]["depends_on"][name]["condition"] = "service_started"
+                    else:
+                        bad["services"]["evaluation-runner"]["depends_on"].pop(name)
+                    with self.assertRaises(AssertionError):
+                        module.check(bad)
         for mutate in (
             lambda data: data["services"]["prefect"].update(restart="no"),
             lambda data: data["services"]["prefect"].pop("healthcheck"),

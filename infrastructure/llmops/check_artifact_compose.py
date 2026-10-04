@@ -22,6 +22,20 @@ def check(config):
             services[name].get("depends_on", {}).get("prefect", {}).get("condition")
             == "service_healthy"
         ), "Ops workers must wait for Prefect readiness"
+    for name in ("langfuse-web", "langfuse-worker"):
+        health = services[name].get("healthcheck", {})
+        assert (
+            health.get("test")
+            and health["test"][0] in {"CMD", "CMD-SHELL"}
+            and not health.get("disable")
+        ), "Langfuse web and worker healthchecks required"
+        assert (
+            services["evaluation-runner"]
+            .get("depends_on", {})
+            .get(name, {})
+            .get("condition")
+            == "service_healthy"
+        ), "Evaluation runner must wait for Langfuse web and worker health"
     gateway = services["ops-artifacts"]
     assert not gateway.get("ports"), "Artifact service must not publish host ports"
     assert gateway.get("read_only") is True, "Artifact image must remain read-only"

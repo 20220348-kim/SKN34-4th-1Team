@@ -4,6 +4,12 @@ name: govbiz-llmops
 services:
   langfuse-worker:
     image: docker.langfuse.com/langfuse/langfuse-worker:4.46.0@sha256:3568d2d1eb5dd570f4087b37972ddffa3f6ae4f872553e0b0e2eedf4896a29e9
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://' + require('os').hostname() + ':3030/api/health', {signal: AbortSignal.timeout(2000)}).then(r => process.exit(r.status === 200 ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      start_period: 60s
+      retries: 30
     depends_on: &dependencies
       postgres: {condition: service_healthy}
       clickhouse: {condition: service_healthy}
@@ -41,6 +47,13 @@ services:
 
   langfuse-web:
     image: docker.langfuse.com/langfuse/langfuse:4.46.0@sha256:755b821ba8f73a20d43d90e68f2b75d2f597dd164c55890f67a05f5a8d0f0e24
+    healthcheck:
+      # Next.js may bind to the container hostname instead of the loopback address.
+      test: ["CMD", "node", "-e", "fetch('http://' + require('os').hostname() + ':3000/api/public/health?failIfDatabaseUnavailable=true', {signal: AbortSignal.timeout(2000)}).then(r => process.exit(r.status === 200 ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      start_period: 60s
+      retries: 30
     depends_on: *dependencies
     ports: ["127.0.0.1:13000:3000"]
     environment:

@@ -159,6 +159,23 @@ Prefect의 `restart: unless-stopped`는 Docker 재시작 후 서버 복귀를 �
 반영한다. healthcheck와 의존성 변경은 다음 계획된 Compose 갱신 때 적용하며, 연결된 Kubernetes
 환경은 [갱신·복구 절차](../../docs/ops-upgrade-runbook.md)에 따라 브리지와 업무 경로도 다시 확인한다.
 
+Langfuse Web과 Worker에도 healthcheck를 두며 평가 실행기는 **두 서비스 모두 healthy**가 된 뒤
+시작한다. Web은 `/api/public/health?failIfDatabaseUnavailable=true`로 DB 연결까지 확인하고,
+Worker는 3030 포트의 `/api/health`를 확인한다. 이미지가 loopback 대신 컨테이너 hostname에
+바인딩할 수 있으므로 각 검사도 자기 컨테이너 hostname을 사용한다. 별도 포트를 공개하지 않는다.
+[Langfuse 공식 health 설명](https://langfuse.com/self-hosting/configuration/health-readiness-endpoints)을 따른다.
+healthcheck 성공은 trace·점수의 저장·재조회나 평가 완료를 증명하지 않는다.
+
+기존 Langfuse 복구는 소유권·이미지·볼륨을 확인한 뒤 PostgreSQL·ClickHouse·Redis·MinIO부터
+시작하고 저장소 네 개의 health를 확인한 후 Web·Worker를 시작한다. 오래된 ClickHouse는 실제
+컨테이너의 3 GiB 한도와 `clickhouse-memory.xml`의 서버 2 GiB·mark cache 128 MiB 설정이
+적용됐는지도 확인한다. YAML만 수정한 것으로 기존 컨테이너에 반영됐다고 판단하지 않는다.
+기존 컨테이너에 설정 파일을 복사해 복구했다면 그 파일은 named volume 백업 범위 밖이다.
+다음 재생성 때 Compose의 읽기 전용 설정 마운트가 적용됐는지 재검사한다.
+ClickHouse의 `on-failure:3`과 다른 Langfuse 구성 요소의 현재 정책은 Docker 재시작 후 전체 스택의
+자동 복구를 보장하지 않는다. 복구 후에는 Web·Worker HTTP 확인과 무료 합성 trace·점수 재조회를
+구분해 기록하고, 기존 데이터·키·볼륨을 초기화하지 않는다.
+
 개발 데이터는 named volume에 남는다. **7일 자동 삭제 정책은 아직 설정하지 않았다.**
 운영 배포·보존 정책·외부 접근 인증은 별도 운영 작업이다.
 종료할 때 다음 명령은 컨테이너만 정리하며 기록 볼륨은 유지한다.
