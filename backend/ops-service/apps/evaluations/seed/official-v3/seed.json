@@ -1,0 +1,795 @@
+{
+  "schema_version": 1,
+  "seed_id": "human-reviewed-official-v3-20261005",
+  "source_run_id": "ec068da7-8d59-46fb-a8e4-2ab42dc39efe",
+  "provenance": "원본 개발 환경에서 사람이 직접 저장한 검토 이력의 공유 사본. 검토자 개인정보만 제외했으며 새로운 검토·판정을 생성하지 않음.",
+  "reviewer": "공유 검토 기록 · 원본 검토자 A",
+  "records": [
+    {
+      "model": "evaluations.evaluationrun",
+      "pk": "ec068da7-8d59-46fb-a8e4-2ab42dc39efe",
+      "fields": {
+        "dataset_id": "official-answer-20260907-v3",
+        "candidate_capture_id": "official-answer-20260907-v3",
+        "reference_capture_id": "official-answer-20260907-v3",
+        "reference_config": {},
+        "baseline_version": null,
+        "baseline_review": null,
+        "review_version": 7,
+        "comparison": {
+          "cases": [
+            {
+              "case_id": "H01",
+              "candidate": {
+                "outcome": "success",
+                "trace_id": null,
+                "status_match": 1.0,
+                "citation_recall": 1.0
+              },
+              "reference": {
+                "outcome": "success",
+                "status_match": 1.0,
+                "citation_recall": 1.0
+              }
+            },
+            {
+              "case_id": "H02",
+              "candidate": {
+                "outcome": "success",
+                "trace_id": null,
+                "status_match": 1.0,
+                "citation_recall": null
+              },
+              "reference": {
+                "outcome": "success",
+                "status_match": 1.0,
+                "citation_recall": null
+              }
+            },
+            {
+              "case_id": "H03",
+              "candidate": {
+                "outcome": "success",
+                "trace_id": null,
+                "status_match": 1.0,
+                "citation_recall": null
+              },
+              "reference": {
+                "outcome": "success",
+                "status_match": 1.0,
+                "citation_recall": null
+              }
+            },
+            {
+              "case_id": "H04",
+              "candidate": {
+                "outcome": "success",
+                "trace_id": null,
+                "status_match": 1.0,
+                "citation_recall": 1.0
+              },
+              "reference": {
+                "outcome": "success",
+                "status_match": 1.0,
+                "citation_recall": 1.0
+              }
+            },
+            {
+              "case_id": "H05",
+              "candidate": {
+                "outcome": "success",
+                "trace_id": null,
+                "status_match": 1.0,
+                "citation_recall": null
+              },
+              "reference": {
+                "outcome": "success",
+                "status_match": 1.0,
+                "citation_recall": null
+              }
+            },
+            {
+              "case_id": "H06",
+              "candidate": {
+                "outcome": "success",
+                "trace_id": null,
+                "status_match": 1.0,
+                "citation_recall": null
+              },
+              "reference": {
+                "outcome": "success",
+                "status_match": 1.0,
+                "citation_recall": null
+              }
+            }
+          ],
+          "scope": "fixed-answer-context-only",
+          "current": {
+            "caseCount": 6,
+            "completed": true,
+            "statusAccuracy": 1.0,
+            "observedCaseCount": 6,
+            "semanticFaithfulness": null,
+            "referenceCitationRecall": 1.0
+          },
+          "metrics": [
+            {
+              "key": "statusAccuracy",
+              "delta": 0.0,
+              "candidate": 1.0,
+              "reference": 1.0
+            },
+            {
+              "key": "referenceCitationRecall",
+              "delta": 0.0,
+              "candidate": 1.0,
+              "reference": 1.0
+            },
+            {
+              "key": "failureRate",
+              "delta": 0.0,
+              "candidate": 0.0,
+              "reference": 0.0
+            },
+            {
+              "key": "missingRate",
+              "delta": 0.0,
+              "candidate": 0.0,
+              "reference": 0.0
+            },
+            {
+              "key": "meanLatencyMs",
+              "delta": null,
+              "candidate": null,
+              "reference": null
+            },
+            {
+              "key": "meanInputTokens",
+              "delta": 0.0,
+              "candidate": 1241.0,
+              "reference": 1241.0
+            },
+            {
+              "key": "meanOutputTokens",
+              "delta": 0.0,
+              "candidate": 82.33333333333333,
+              "reference": 82.33333333333333
+            },
+            {
+              "key": "semanticFaithfulness",
+              "delta": null,
+              "candidate": null,
+              "reference": null
+            }
+          ],
+          "case_ids": [
+            "H01",
+            "H02",
+            "H03",
+            "H04",
+            "H05",
+            "H06"
+          ],
+          "data_type": "official-html-snapshot",
+          "reference": {
+            "caseCount": 6,
+            "completed": true,
+            "statusAccuracy": 1.0,
+            "observedCaseCount": 6,
+            "semanticFaithfulness": null,
+            "referenceCitationRecall": 1.0
+          },
+          "comparison": "self-replay",
+          "fixture_sha256": "3ad897836a10af6bf71672d33d1a4e5374181b0157068aa4196e622fb12ab971",
+          "schema_version": 2,
+          "artifact_sha256": {
+            "report.html": "48143001a1521d4b3e1166bb129bf295182c01a54d90124b454099df97e2d948",
+            "evidently.json": "04a2341b1a26e28a384b51d13bc7addb2cab205abcde2531c6ebfc566cca4629"
+          },
+          "reference_run_id": "dac006f12c108145cbf5f33adef152b6",
+          "reference_source": "ai-authored",
+          "reported_columns": [
+            "failed",
+            "missing",
+            "status_match",
+            "citation_recall",
+            "input_tokens",
+            "output_tokens"
+          ],
+          "evaluation_run_id": "dac006f12c108145cbf5f33adef152b6",
+          "evaluator_version": "efdd5f45689dada97ce581ccaa2b1e8215fcbb3a75e490b578834f5203523ab0",
+          "candidate_execution": {
+            "model": "gpt-5.6-luna",
+            "run_id": "dac006f12c108145cbf5f33adef152b6",
+            "provenance": {
+              "scope": "answers-only-from-frozen-official-flow",
+              "apiCaptureSha256": "a7f5192e8f4de13692bab2eba2382b4a3dfe35c9581fe546adbd44ce6f58b331",
+              "coreCaptureSha256": "06ad07498fc48e8e9d4c1bb66133568f58325fb982f3616aa29bcf239b1810aa",
+              "sourceFixtureSha256": "b98c66ab967b899b0af9d7af9fdbef65cdc6d696ccaf31b9240004c751838f65",
+              "sourceRecorderSha256": "ca9c67b40f653f23849a5fca9bc2848cc9dc96f36104f8e78991af706b095f11",
+              "previousProjectionSha256": "1ca19a920508f05edfec2c493781a3170bc3fa4f044027b0b3452a1a2c73e1e4"
+            },
+            "started_at": "2026-09-06T16:10:50.414569Z",
+            "prompt_sha256": "560ad134d3ce657561e6dfa67793078c7526c5b5f1ebb691e6e972b27924655c",
+            "runner_sha256": "547e16df3fa9b5ca75f6254b4a3c6c33774f5cf68adb5dfba78759d2d724e7fe",
+            "capture_sha256": "1f1b49c21249b2da29daceec650f789c53a19b9d346d171c4524bdd4fb05e523",
+            "source_case_ids": [
+              "H01",
+              "H02",
+              "H03",
+              "H04",
+              "H05",
+              "H06"
+            ],
+            "measurement_kind": "historical-answer-projection"
+          },
+          "reference_execution": {
+            "model": "gpt-5.6-luna",
+            "run_id": "dac006f12c108145cbf5f33adef152b6",
+            "provenance": {
+              "scope": "answers-only-from-frozen-official-flow",
+              "apiCaptureSha256": "a7f5192e8f4de13692bab2eba2382b4a3dfe35c9581fe546adbd44ce6f58b331",
+              "coreCaptureSha256": "06ad07498fc48e8e9d4c1bb66133568f58325fb982f3616aa29bcf239b1810aa",
+              "sourceFixtureSha256": "b98c66ab967b899b0af9d7af9fdbef65cdc6d696ccaf31b9240004c751838f65",
+              "sourceRecorderSha256": "ca9c67b40f653f23849a5fca9bc2848cc9dc96f36104f8e78991af706b095f11",
+              "previousProjectionSha256": "1ca19a920508f05edfec2c493781a3170bc3fa4f044027b0b3452a1a2c73e1e4"
+            },
+            "started_at": "2026-09-06T16:10:50.414569Z",
+            "prompt_sha256": "560ad134d3ce657561e6dfa67793078c7526c5b5f1ebb691e6e972b27924655c",
+            "runner_sha256": "547e16df3fa9b5ca75f6254b4a3c6c33774f5cf68adb5dfba78759d2d724e7fe",
+            "capture_sha256": "1f1b49c21249b2da29daceec650f789c53a19b9d346d171c4524bdd4fb05e523",
+            "source_case_ids": [
+              "H01",
+              "H02",
+              "H03",
+              "H04",
+              "H05",
+              "H06"
+            ],
+            "measurement_kind": "historical-answer-projection"
+          },
+          "retrieval_evaluated": false,
+          "semantic_faithfulness": "unmeasured"
+        },
+        "execution_mode": "replay",
+        "live_config": {},
+        "execution_spec": {
+          "dataset": {
+            "captures": {
+              "official-answer-20260907-v3": "1f1b49c21249b2da29daceec650f789c53a19b9d346d171c4524bdd4fb05e523"
+            },
+            "case_ids": [
+              "H01",
+              "H02",
+              "H03",
+              "H04",
+              "H05",
+              "H06"
+            ],
+            "fixture_sha256": "3ad897836a10af6bf71672d33d1a4e5374181b0157068aa4196e622fb12ab971"
+          },
+          "pipeline": {
+            "files": {
+              "backend/ops-service/apps/evaluations/catalog.py": "2ae3cf31c7bae75045e4e8a5c7a193baad7e9ca8abaa24753890544f93d06e77",
+              "evaluation/support-program-evidence/ops_flow.py": "1f5e3bf39a8db7dbd6755ca9c921e408dd3d1ee6a65c751b570f5767ec78e4a3",
+              "evaluation/support-program-evidence/budget_client.py": "5fb2ba03088467201693f94ec2c2b074ab15998f4e2ea6724c0c67cdef6613f9",
+              "backend/ops-service/apps/evaluations/execution_spec.py": "83fa5ff53967a903c4102421e5ac5086fe4d51fd6f5795e15c1395cb279d71b4",
+              "backend/ops-service/apps/evaluations/quality_policy.py": "b2715707819f120f677aba684790f3f68d6c27c17c1613db455d162d89823b84",
+              "backend/ops-service/apps/evaluations/recovery_inputs.py": "0070dfdda076bf3cda0eb2202f6a175a5eef02c02b6e02a6d21c4d434250a3bb"
+            },
+            "sha256": "0890924d2b95d6a66f19a6a99a40c8bd89c8eda83a52c5ffdc67c7720946af1e"
+          },
+          "dataset_id": "official-answer-20260907-v3",
+          "evaluation": {
+            "files": {
+              "backend/ai-service/uv.lock": "349ecdd9152eb2f5479a3db41d39e9d1bf7a8f5a16103426c2cd78207add1fe3",
+              "backend/ai-service/pyproject.toml": "50ef0fc8c53c9af3e1bb31fafed5200732725ea43691be538d90840d2168037c",
+              "evaluation/support-program-evidence/llmops.py": "b3aa0bb235b4aaaa1dc17a1dbd69e315d3bdbf40cd423b0f43722f5374b60839",
+              "evaluation/support-program-evidence/evaluate.py": "0430f08ad1f51c9a8fd22119e0b4d0badac9f89ab8e254e963a4944bd79ed514",
+              "backend/ai-service/app/support_program_identity.py": "aa706697f294fd4846263e73cd281c4a9d660a7939feb7e2e4e3d60fd5393fb1",
+              "evaluation/support-program-evidence/verify_flow.py": "828ff0faa4c2871dd6a880742184e5700a754a5d5307f7fc95a3c45212ade0ed",
+              "evaluation/support-program-evidence/official_snapshot.py": "1b97e2d2aa15ca02b50e2a999203c7f685de08afc735bb8456b880041c37abf4",
+              "backend/ai-service/app/support_program_evidence/models.py": "01e8da480d9ede6a976220a1a3bb6607ec8329783455d6c25c84a245a64b29b6"
+            },
+            "scope": "fixed-answer-context-only",
+            "sha256": "efdd5f45689dada97ce581ccaa2b1e8215fcbb3a75e490b578834f5203523ab0",
+            "version": "efdd5f45689dada97ce581ccaa2b1e8215fcbb3a75e490b578834f5203523ab0"
+          },
+          "generation": null,
+          "live_config": {},
+          "execution_mode": "replay",
+          "profile_sha256": "cf531ea9dcbb172207ab2c54b9e3ae72330b0d11fa2d955c9d2f7d1a391291fd",
+          "quality_policy": {
+            "definition": {
+              "scope": "fixed-answer-context-only",
+              "version": "fixed-evidence-quality-v1",
+              "semantic_measurement": "human-case-review",
+              "require_fixture_review": true,
+              "require_expected_status": true,
+              "require_all_cases_suitable": true,
+              "require_expected_citations": true
+            },
+            "code_sha256": "b2715707819f120f677aba684790f3f68d6c27c17c1613db455d162d89823b84"
+          },
+          "schema_version": 2,
+          "recovery_config": {},
+          "baseline_version": null,
+          "candidate_sha256": "1f1b49c21249b2da29daceec650f789c53a19b9d346d171c4524bdd4fb05e523",
+          "evaluation_scope": "fixed-answer-context-only",
+          "model_operations": [],
+          "reference_config": {},
+          "reference_sha256": "1f1b49c21249b2da29daceec650f789c53a19b9d346d171c4524bdd4fb05e523",
+          "baseline_review_id": null,
+          "candidate_capture_id": "official-answer-20260907-v3",
+          "reference_capture_id": "official-answer-20260907-v3"
+        },
+        "execution_spec_sha256": "4983af3ab4563302452be5f607869522870655ac0f3d9a8331b37d297d11a1cf",
+        "source_run": null,
+        "recovery_config": {},
+        "model_api_calls": 0,
+        "requested_by": [
+          "공유 검토 기록 · 원본 검토자 A"
+        ],
+        "cancel_requested_at": null,
+        "cancel_requested_by": null,
+        "status": "COMPLETED",
+        "prefect_flow_run_id": "68bc9452-95e1-4235-9b88-67313c675481",
+        "evaluation_run_id": "dac006f12c108145cbf5f33adef152b6",
+        "created_at": "2026-10-04T10:53:43.848039+00:00",
+        "started_at": "2026-10-04T10:54:15.017163+00:00",
+        "finished_at": "2026-10-04T10:54:30.498074+00:00",
+        "synced_at": "2026-10-04T10:54:31.339022+00:00",
+        "sync_attempted_at": "2026-10-04T10:54:31.320946+00:00",
+        "error_code": "",
+        "summary": {
+          "caseCount": 6,
+          "completed": true,
+          "statusAccuracy": 1.0,
+          "observedCaseCount": 6,
+          "semanticFaithfulness": null,
+          "referenceCitationRecall": 1.0
+        }
+      }
+    },
+    {
+      "model": "evaluations.evaluationcasereview",
+      "pk": 3,
+      "fields": {
+        "run": "ec068da7-8d59-46fb-a8e4-2ab42dc39efe",
+        "case_id": "H01",
+        "version": 1,
+        "decision": "SUITABLE",
+        "comment": "원문에 있는 중소·중견 제조기업 범위와 정부 지원사업 미참여 조건이 답변에 반영되어 있고, 인용 청크 0에서 해당 내용을 확인했다.",
+        "capture_sha256": "1f1b49c21249b2da29daceec650f789c53a19b9d346d171c4524bdd4fb05e523",
+        "fixture_sha256": "3ad897836a10af6bf71672d33d1a4e5374181b0157068aa4196e622fb12ab971",
+        "rubric_version": "evidence-review-v1",
+        "reviewed_by": [
+          "공유 검토 기록 · 원본 검토자 A"
+        ],
+        "created_at": "2026-10-04T14:27:48.973243+00:00"
+      }
+    },
+    {
+      "model": "evaluations.evaluationcasereview",
+      "pk": 4,
+      "fields": {
+        "run": "ec068da7-8d59-46fb-a8e4-2ab42dc39efe",
+        "case_id": "H02",
+        "version": 2,
+        "decision": "SUITABLE",
+        "comment": "제출 서류 목록이 원문에 없음을 정확하게 설명하고, 첨부 통합공고문 15페이지의 해당 사업을 안내했다. 다만 원문의 ‘3번’ 표기가 빠져 있어, ‘15페이지 3번 스마트공장 수준확인 사업’으로 안내하면 더 명확하다.",
+        "capture_sha256": "1f1b49c21249b2da29daceec650f789c53a19b9d346d171c4524bdd4fb05e523",
+        "fixture_sha256": "3ad897836a10af6bf71672d33d1a4e5374181b0157068aa4196e622fb12ab971",
+        "rubric_version": "evidence-review-v1",
+        "reviewed_by": [
+          "공유 검토 기록 · 원본 검토자 A"
+        ],
+        "created_at": "2026-10-04T18:32:27.852885+00:00"
+      }
+    },
+    {
+      "model": "evaluations.evaluationcasereview",
+      "pk": 5,
+      "fields": {
+        "run": "ec068da7-8d59-46fb-a8e4-2ab42dc39efe",
+        "case_id": "H03",
+        "version": 3,
+        "decision": "SUITABLE",
+        "comment": "원문의 ‘수준확인 비용 전액지원’을 정확하게 반영했다. 원 단위의 금액이나 한도는 저장된 원문에 없으므로 확인되지 않는다고 답했으며, 임의의 금액을 제시하지 않았다.",
+        "capture_sha256": "1f1b49c21249b2da29daceec650f789c53a19b9d346d171c4524bdd4fb05e523",
+        "fixture_sha256": "3ad897836a10af6bf71672d33d1a4e5374181b0157068aa4196e622fb12ab971",
+        "rubric_version": "evidence-review-v1",
+        "reviewed_by": [
+          "공유 검토 기록 · 원본 검토자 A"
+        ],
+        "created_at": "2026-10-04T18:34:25.542832+00:00"
+      }
+    },
+    {
+      "model": "evaluations.evaluationcasereview",
+      "pk": 6,
+      "fields": {
+        "run": "ec068da7-8d59-46fb-a8e4-2ab42dc39efe",
+        "case_id": "H04",
+        "version": 4,
+        "decision": "SUITABLE",
+        "comment": "원문의 지원 대상인 ‘강원 글로벌 IP 스타기업’과 해외 출원 중 중간사건(OA)에 대한 일부 비용 지원 조건을 정확하게 반영했다. 지원 대상을 모든 중소기업으로 확대하지 않았다.",
+        "capture_sha256": "1f1b49c21249b2da29daceec650f789c53a19b9d346d171c4524bdd4fb05e523",
+        "fixture_sha256": "3ad897836a10af6bf71672d33d1a4e5374181b0157068aa4196e622fb12ab971",
+        "rubric_version": "evidence-review-v1",
+        "reviewed_by": [
+          "공유 검토 기록 · 원본 검토자 A"
+        ],
+        "created_at": "2026-10-04T18:40:44.062200+00:00"
+      }
+    },
+    {
+      "model": "evaluations.evaluationcasereview",
+      "pk": 7,
+      "fields": {
+        "run": "ec068da7-8d59-46fb-a8e4-2ab42dc39efe",
+        "case_id": "H05",
+        "version": 5,
+        "decision": "SUITABLE",
+        "comment": "저장된 원문에 필수 제출 서류 목록이 없음을 정확하게 설명했다. 원문에 있는 온라인 접수 방법과 문의처를 안내했으며, 확인되지 않은 서류를 필수라고 제시하지 않았다.",
+        "capture_sha256": "1f1b49c21249b2da29daceec650f789c53a19b9d346d171c4524bdd4fb05e523",
+        "fixture_sha256": "3ad897836a10af6bf71672d33d1a4e5374181b0157068aa4196e622fb12ab971",
+        "rubric_version": "evidence-review-v1",
+        "reviewed_by": [
+          "공유 검토 기록 · 원본 검토자 A"
+        ],
+        "created_at": "2026-10-04T18:42:56.886156+00:00"
+      }
+    },
+    {
+      "model": "evaluations.evaluationcasereview",
+      "pk": 8,
+      "fields": {
+        "run": "ec068da7-8d59-46fb-a8e4-2ab42dc39efe",
+        "case_id": "H06",
+        "version": 6,
+        "decision": "SUITABLE",
+        "comment": "저장된 원문에 건당 최대 지원 금액과 기업 부담률이 명시되어 있지 않음을 정확하게 설명했다. 확인되지 않은 금액이나 비율을 임의로 제시하지 않았다.",
+        "capture_sha256": "1f1b49c21249b2da29daceec650f789c53a19b9d346d171c4524bdd4fb05e523",
+        "fixture_sha256": "3ad897836a10af6bf71672d33d1a4e5374181b0157068aa4196e622fb12ab971",
+        "rubric_version": "evidence-review-v1",
+        "reviewed_by": [
+          "공유 검토 기록 · 원본 검토자 A"
+        ],
+        "created_at": "2026-10-04T18:43:44.625983+00:00"
+      }
+    },
+    {
+      "model": "evaluations.evaluationreview",
+      "pk": 2,
+      "fields": {
+        "run": "ec068da7-8d59-46fb-a8e4-2ab42dc39efe",
+        "decision": "APPROVED",
+        "comment": "H01~H06의 근거와 후보 답변을 대조하여 모두 적합으로 판단했다. H02는 안내 위치에 ‘3번’을 추가하면 더 명확하다는 개선 의견을 남겼다.",
+        "capture_sha256": "1f1b49c21249b2da29daceec650f789c53a19b9d346d171c4524bdd4fb05e523",
+        "fixture_sha256": "3ad897836a10af6bf71672d33d1a4e5374181b0157068aa4196e622fb12ab971",
+        "rubric_version": "evidence-review-v1",
+        "version": 7,
+        "reviewed_by": [
+          "공유 검토 기록 · 원본 검토자 A"
+        ],
+        "created_at": "2026-10-04T18:51:39.242451+00:00",
+        "case_reviews": [
+          8,
+          7,
+          6,
+          5,
+          4,
+          3
+        ]
+      }
+    },
+    {
+      "model": "evaluations.fixturereview",
+      "pk": 2,
+      "fields": {
+        "dataset_id": "official-answer-20260907-v3",
+        "version": 1,
+        "fixture_sha256": "3ad897836a10af6bf71672d33d1a4e5374181b0157068aa4196e622fb12ab971",
+        "case_ids": [
+          "H01",
+          "H02",
+          "H03",
+          "H04",
+          "H05",
+          "H06"
+        ],
+        "rubric_version": "fixture-reference-review-v1",
+        "decision": "APPROVED",
+        "comment": "H01~H06의 예상 상태, 인용 근거, 포함할 사실과 금지 주장을 저장된 원문과 대조했다. 지원 대상 조건이 원문과 일치하며, 원문에 없는 제출 서류·정확한 지원 금액·부담률을 추측하지 않도록 구성되어 있음을 확인했다.",
+        "reviewed_by": [
+          "공유 검토 기록 · 원본 검토자 A"
+        ],
+        "created_at": "2026-10-04T18:49:43.502041+00:00"
+      }
+    },
+    {
+      "model": "evaluations.fixturereview",
+      "pk": 3,
+      "fields": {
+        "dataset_id": "official-answer-20260907-v3",
+        "version": 2,
+        "fixture_sha256": "3ad897836a10af6bf71672d33d1a4e5374181b0157068aa4196e622fb12ab971",
+        "case_ids": [
+          "H01",
+          "H02",
+          "H03",
+          "H04",
+          "H05",
+          "H06"
+        ],
+        "rubric_version": "fixture-reference-review-v1",
+        "decision": "APPROVED",
+        "comment": "H01~H06의 예상 상태, 인용 근거, 포함할 사실과 금지 주장을 저장된 원문과 대조했다. 지원 대상 조건이 원문과 일치하며, 원문에 없는 제출 서류·정확한 지원 금액·부담률을 추측하지 않도록 구성되어 있음을 확인했다.",
+        "reviewed_by": [
+          "공유 검토 기록 · 원본 검토자 A"
+        ],
+        "created_at": "2026-10-04T18:50:36.278928+00:00"
+      }
+    },
+    {
+      "model": "evaluations.qualityassessment",
+      "pk": 3,
+      "fields": {
+        "run": "ec068da7-8d59-46fb-a8e4-2ab42dc39efe",
+        "policy": {
+          "definition": {
+            "scope": "fixed-answer-context-only",
+            "version": "fixed-evidence-quality-v1",
+            "semantic_measurement": "human-case-review",
+            "require_fixture_review": true,
+            "require_expected_status": true,
+            "require_all_cases_suitable": true,
+            "require_expected_citations": true
+          },
+          "code_sha256": "b2715707819f120f677aba684790f3f68d6c27c17c1613db455d162d89823b84"
+        },
+        "policy_sha256": "dece7761ed8b21d39928eccc72ed4ab19091c69c9648d5fe3a97e3b9ff6ce8e3",
+        "inputs": {
+          "cases": [
+            {
+              "review": "SUITABLE",
+              "case_id": "H01",
+              "review_id": 3,
+              "status_match": true,
+              "citation_recall": 1.0
+            },
+            {
+              "review": "SUITABLE",
+              "case_id": "H02",
+              "review_id": 4,
+              "status_match": true,
+              "citation_recall": null
+            },
+            {
+              "review": "SUITABLE",
+              "case_id": "H03",
+              "review_id": 5,
+              "status_match": true,
+              "citation_recall": null
+            },
+            {
+              "review": "SUITABLE",
+              "case_id": "H04",
+              "review_id": 6,
+              "status_match": true,
+              "citation_recall": 1.0
+            },
+            {
+              "review": "SUITABLE",
+              "case_id": "H05",
+              "review_id": 7,
+              "status_match": true,
+              "citation_recall": null
+            },
+            {
+              "review": "SUITABLE",
+              "case_id": "H06",
+              "review_id": 8,
+              "status_match": true,
+              "citation_recall": null
+            }
+          ],
+          "policy": {
+            "definition": {
+              "scope": "fixed-answer-context-only",
+              "version": "fixed-evidence-quality-v1",
+              "semantic_measurement": "human-case-review",
+              "require_fixture_review": true,
+              "require_expected_status": true,
+              "require_all_cases_suitable": true,
+              "require_expected_citations": true
+            },
+            "code_sha256": "b2715707819f120f677aba684790f3f68d6c27c17c1613db455d162d89823b84"
+          },
+          "capture_sha256": "1f1b49c21249b2da29daceec650f789c53a19b9d346d171c4524bdd4fb05e523",
+          "fixture_sha256": "3ad897836a10af6bf71672d33d1a4e5374181b0157068aa4196e622fb12ab971",
+          "rubric_version": "evidence-review-v1",
+          "evaluation_scope": "fixed-answer-context-only",
+          "fixture_approved": true,
+          "comparison_sha256": "2ace1bb1385d3c580120d94f577f61df545969df2c55662b1b7a055a0ea7233d",
+          "fixture_review_id": 2,
+          "execution_spec_sha256": "4983af3ab4563302452be5f607869522870655ac0f3d9a8331b37d297d11a1cf",
+          "accepted_policy_sha256": "dece7761ed8b21d39928eccc72ed4ab19091c69c9648d5fe3a97e3b9ff6ce8e3",
+          "assessment_code_sha256": "56ddf9a5d7c05f579ac55dc40257b7a4c0f9821f9a9ca4c992b78f573ca3b202"
+        },
+        "input_sha256": "88ca73dcb185163979c44ec02b0ac621ac77f4dde84952f18ea75f9e572313c9",
+        "status": "PASS",
+        "reasons": [],
+        "assessed_by": [
+          "공유 검토 기록 · 원본 검토자 A"
+        ],
+        "created_at": "2026-10-04T18:49:59.346146+00:00"
+      }
+    },
+    {
+      "model": "evaluations.qualityassessment",
+      "pk": 4,
+      "fields": {
+        "run": "ec068da7-8d59-46fb-a8e4-2ab42dc39efe",
+        "policy": {
+          "definition": {
+            "scope": "fixed-answer-context-only",
+            "version": "fixed-evidence-quality-v1",
+            "semantic_measurement": "human-case-review",
+            "require_fixture_review": true,
+            "require_expected_status": true,
+            "require_all_cases_suitable": true,
+            "require_expected_citations": true
+          },
+          "code_sha256": "b2715707819f120f677aba684790f3f68d6c27c17c1613db455d162d89823b84"
+        },
+        "policy_sha256": "dece7761ed8b21d39928eccc72ed4ab19091c69c9648d5fe3a97e3b9ff6ce8e3",
+        "inputs": {
+          "cases": [
+            {
+              "review": "SUITABLE",
+              "case_id": "H01",
+              "review_id": 3,
+              "status_match": true,
+              "citation_recall": 1.0
+            },
+            {
+              "review": "SUITABLE",
+              "case_id": "H02",
+              "review_id": 4,
+              "status_match": true,
+              "citation_recall": null
+            },
+            {
+              "review": "SUITABLE",
+              "case_id": "H03",
+              "review_id": 5,
+              "status_match": true,
+              "citation_recall": null
+            },
+            {
+              "review": "SUITABLE",
+              "case_id": "H04",
+              "review_id": 6,
+              "status_match": true,
+              "citation_recall": 1.0
+            },
+            {
+              "review": "SUITABLE",
+              "case_id": "H05",
+              "review_id": 7,
+              "status_match": true,
+              "citation_recall": null
+            },
+            {
+              "review": "SUITABLE",
+              "case_id": "H06",
+              "review_id": 8,
+              "status_match": true,
+              "citation_recall": null
+            }
+          ],
+          "policy": {
+            "definition": {
+              "scope": "fixed-answer-context-only",
+              "version": "fixed-evidence-quality-v1",
+              "semantic_measurement": "human-case-review",
+              "require_fixture_review": true,
+              "require_expected_status": true,
+              "require_all_cases_suitable": true,
+              "require_expected_citations": true
+            },
+            "code_sha256": "b2715707819f120f677aba684790f3f68d6c27c17c1613db455d162d89823b84"
+          },
+          "capture_sha256": "1f1b49c21249b2da29daceec650f789c53a19b9d346d171c4524bdd4fb05e523",
+          "fixture_sha256": "3ad897836a10af6bf71672d33d1a4e5374181b0157068aa4196e622fb12ab971",
+          "rubric_version": "evidence-review-v1",
+          "evaluation_scope": "fixed-answer-context-only",
+          "fixture_approved": true,
+          "comparison_sha256": "2ace1bb1385d3c580120d94f577f61df545969df2c55662b1b7a055a0ea7233d",
+          "fixture_review_id": 3,
+          "execution_spec_sha256": "4983af3ab4563302452be5f607869522870655ac0f3d9a8331b37d297d11a1cf",
+          "accepted_policy_sha256": "dece7761ed8b21d39928eccc72ed4ab19091c69c9648d5fe3a97e3b9ff6ce8e3",
+          "assessment_code_sha256": "56ddf9a5d7c05f579ac55dc40257b7a4c0f9821f9a9ca4c992b78f573ca3b202"
+        },
+        "input_sha256": "c53bdec08e732f6d9287cfdf3fbc6ca66dba4f36e08dfc16b03fbff38b8e10ba",
+        "status": "PASS",
+        "reasons": [],
+        "assessed_by": [
+          "공유 검토 기록 · 원본 검토자 A"
+        ],
+        "created_at": "2026-10-04T18:52:16.745323+00:00"
+      }
+    },
+    {
+      "model": "evaluations.evaluationbaseline",
+      "pk": "official-answer-20260907-v3",
+      "fields": {
+        "version": 1,
+        "review": 2,
+        "rag_assessment": null,
+        "selected_by": [
+          "공유 검토 기록 · 원본 검토자 A"
+        ],
+        "selected_at": "2026-10-04T18:52:47.737160+00:00"
+      }
+    },
+    {
+      "model": "evaluations.evaluationbaselinechange",
+      "pk": 2,
+      "fields": {
+        "baseline": "official-answer-20260907-v3",
+        "version": 1,
+        "previous_review": null,
+        "review": 2,
+        "previous_rag_assessment": null,
+        "rag_assessment": null,
+        "changed_by": [
+          "공유 검토 기록 · 원본 검토자 A"
+        ],
+        "reason": "H01~H06의 근거와 후보 답변을 대조하여 모두 적합으로 판단했다. H02는 안내 위치에 ‘3번’을 추가하면 더 명확하다는 개선 의견을 남겼다.",
+        "fixture_sha256": "3ad897836a10af6bf71672d33d1a4e5374181b0157068aa4196e622fb12ab971",
+        "created_at": "2026-10-04T18:52:47.744434+00:00"
+      }
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "evaluation/comparison.json",
+      "file": "evaluation/comparison.json",
+      "sha256": "2ace1bb1385d3c580120d94f577f61df545969df2c55662b1b7a055a0ea7233d",
+      "size": 6468
+    },
+    {
+      "path": "evaluation/evidently.json",
+      "file": "evaluation/evidently.json",
+      "sha256": "04a2341b1a26e28a384b51d13bc7addb2cab205abcde2531c6ebfc566cca4629",
+      "size": 1284
+    },
+    {
+      "path": "evaluation/manifest.json",
+      "file": "evaluation/manifest.json",
+      "sha256": "b98b87e1cf9c5e56122b9aa88e903b6ed492c924adadf358ee5cf3f63aedb4d1",
+      "size": 2646
+    },
+    {
+      "path": "evaluation/report.html",
+      "file": "evaluation/report.html.gz",
+      "sha256": "48143001a1521d4b3e1166bb129bf295182c01a54d90124b454099df97e2d948",
+      "size": 3709617
+    },
+    {
+      "path": "evaluation/results.json",
+      "file": "evaluation/results.json",
+      "sha256": "8ef39de2a10c4241bb26e7ea3eae01ed62b1dcc146e204ebd78d6c370bda7e9f",
+      "size": 1315
+    },
+    {
+      "path": "request.json",
+      "file": "request.json",
+      "sha256": "2718ed88a81852960315d7e157db73560dd64fd0381d3c3166e1fa84fd3912e0",
+      "size": 4249
+    }
+  ]
+}

@@ -1,8 +1,10 @@
 """Ops 전용 계정과 평가 실행 이력을 관리하는 Django 설정."""
 
+import re
 from pathlib import Path
 
 import environ
+from django.core.exceptions import ImproperlyConfigured
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 env = environ.Env()
@@ -45,6 +47,11 @@ TEMPLATES = [
 ]
 OPS_WEB_URL = env("OPS_WEB_URL", default="http://localhost:5173").rstrip("/")
 CORE_API_URL = env("CORE_API_URL", default="http://127.0.0.1:8080").rstrip("/")
+# 로컬 복제본은 원본 core:<id> 검토자와 새 Core의 같은 숫자 ID를 구별한다.
+# 생성 후 변경하지 않는다. 원본 환경은 빈 값으로 기존 계정 연결을 유지한다.
+CORE_ACCOUNT_NAMESPACE = env("CORE_ACCOUNT_NAMESPACE", default="")
+if CORE_ACCOUNT_NAMESPACE and not re.fullmatch(r"[a-f0-9]{32}", CORE_ACCOUNT_NAMESPACE):
+    raise ImproperlyConfigured("CORE_ACCOUNT_NAMESPACE must be empty or 32 lowercase hex digits")
 # 같은 origin 프록시가 Host를 보존하면 추가 설정 없이 Origin을 검증한다.
 CSRF_TRUSTED_ORIGINS = env.list("DJANGO_CSRF_TRUSTED_ORIGINS", default=[])
 SESSION_COOKIE_NAME = "govbiz_ops_session"
@@ -68,6 +75,7 @@ LLMOPS_ARTIFACT_URL = env("LLMOPS_ARTIFACT_URL", default="").rstrip("/")
 LLMOPS_ARTIFACT_TOKEN = env("LLMOPS_ARTIFACT_TOKEN", default="")
 LLMOPS_BUDGET_TOKEN = env("LLMOPS_BUDGET_TOKEN", default="")
 LLMOPS_LIVE_ENABLED = env.bool("LLMOPS_LIVE_ENABLED", default=False)
+LLMOPS_LOCAL_SEED_ENABLED = env.bool("LLMOPS_LOCAL_SEED_ENABLED", default=False)
 LLMOPS_RAG_LIVE_ENABLED = env.bool("LLMOPS_RAG_LIVE_ENABLED", default=False)
 LLMOPS_SCHEDULES_ENABLED = env.bool("LLMOPS_SCHEDULES_ENABLED", default=False)
 LLMOPS_RESULTS_DIR = Path(

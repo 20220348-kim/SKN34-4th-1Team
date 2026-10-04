@@ -264,6 +264,11 @@ OPS_VOLUME_SNAPSHOT_TEST_IMAGE='sha256:<로컬 Ops 이미지 ID>' \
 
 ### Compose Ops 검토 기록을 새 환경에 재사용
 
+팀원이 사람 검토 자료를 재사용하려면 [Git 초기 데이터 실행 절차](ops-local-review-copy.md)를
+사용한다. 새 로컬 DB에는 자동 적재하며 별도 백업·키 전달이나 서버 배포가 필요 없다.
+모든 로컬 이력까지 복제해야 할 때는 같은 문서의 선택 사항인 전체 암호화 복원을 사용한다.
+아래 기본 복원은 원본 DB를 그대로 검증하는 재해 복구 경로다.
+
 동일한 평가 원본에 대한 사람 검토를 새 DB에서 반복할 필요는 없다.
 [ops_snapshot.py](../infrastructure/llmops/ops_snapshot.py)는 **Ops 전체 DB와 /results,
 /evaluation-data 파일을 암호화 백업하고 별도의 새 Compose DB·볼륨에 복원**한다.

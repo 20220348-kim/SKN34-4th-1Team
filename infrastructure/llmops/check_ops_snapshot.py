@@ -76,6 +76,33 @@ assert not settings.LLMOPS_SCHEDULES_ENABLED
 print('application-verified')
 """
 
+VERIFY_LOCAL = r"""
+from unittest.mock import patch
+from django.conf import settings
+from django.contrib.auth import get_user_model
+from django.test import RequestFactory
+from apps.evaluations.authentication import CoreSessionAuthentication
+from apps.evaluations.models import EvaluationRun
+assert len(settings.CORE_ACCOUNT_NAMESPACE) == 32
+request = RequestFactory().get('/api/v1/ops/session')
+request.COOKIES['govbiz_session'] = 'synthetic-session'
+with patch('apps.evaluations.authentication.read_core_admin', return_value={
+    'accountId': 42, 'email': 'different-teammate@example.invalid', 'role': 'ADMIN',
+}):
+    first, _ = CoreSessionAuthentication().authenticate(request)
+    second, _ = CoreSessionAuthentication().authenticate(request)
+    assert first.pk == second.pk
+original = get_user_model().objects.get(username='core:42')
+local_name = 'core-local:' + settings.CORE_ACCOUNT_NAMESPACE + ':42'
+local = get_user_model().objects.get(username=local_name)
+assert original.pk != local.pk and not local.has_usable_password()
+assert original.email == 'synthetic-reviewer@example.invalid'
+run = EvaluationRun.objects.get(pk='11111111-1111-4111-8111-111111111111')
+assert run.reviews.get().reviewed_by_id == original.pk
+assert run.case_reviews.get().reviewed_by_id == original.pk
+print('local-identity-verified')
+"""
+
 
 def source_project(directory, image, mysql_image):
     project = "govbiz-snapshot-test-" + uuid4().hex[:12]
@@ -172,7 +199,7 @@ def rehearse(image):
     mysql_image = json.loads(snapshot.run(["docker", "image", "inspect", "mysql:8.4"]))[0]["Id"]
     with tempfile.TemporaryDirectory(prefix="govbiz-snapshot-test-") as temporary:
         root = Path(temporary)
-        source, target = root / "source", root / "target"
+        source, target, local_target = root / "source", root / "target", root / "local-target"
         source.mkdir()
         try:
             source_project(source, image, mysql_image)
@@ -244,9 +271,30 @@ def rehearse(image):
                 == b"9"
             )
             assert snapshot.dump(mysql, "snapshot_test") == before
+            local_result = snapshot.restore(
+                archive, key, local_target, local_ops_image=image, core_port=8080
+            )
+            assert local_result["status"] == "RESTORED"
+            assert b"local-identity-verified" in snapshot.compose(
+                local_target, *base, "manage.py", "shell", "-c", VERIFY_LOCAL
+            )
+            assert b"application-verified" in snapshot.compose(
+                local_target, *base, "manage.py", "shell", "-c", VERIFY
+            )
+            # New local account creation cannot alter the source or get erased by restore replay.
+            local_state = json.loads((local_target / "snapshot-state.json").read_text())
+            local_before = snapshot.dump(local_state["mysql_id"], "snapshot_test")
+            try:
+                snapshot.restore(archive, key, local_target, local_ops_image=image, core_port=8080)
+            except ValueError as error:
+                assert "differs" in str(error)
+            else:
+                raise AssertionError("Local login history was overwritten")
+            assert snapshot.dump(local_state["mysql_id"], "snapshot_test") == local_before
+            assert snapshot.dump(mysql, "snapshot_test") == before
         finally:
             # Clean up only paths/resources allocated by this invocation.
-            for directory in (target, source):
+            for directory in (local_target, target, source):
                 if (directory / "compose.json").is_file():
                     subprocess.run(
                         [
@@ -262,16 +310,17 @@ def rehearse(image):
                         stderr=subprocess.DEVNULL,
                         check=True,
                     )
-            marker = target / "snapshot-state.json"
-            if marker.exists():
-                state = json.loads(marker.read_text())
-                for label in ("results", "evidence"):
-                    subprocess.run(
-                        ["docker", "volume", "rm", state[label]],
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                        check=False,
-                    )
+            for restored in (target, local_target):
+                marker = restored / "snapshot-state.json"
+                if marker.exists():
+                    state = json.loads(marker.read_text())
+                    for label in ("results", "evidence"):
+                        subprocess.run(
+                            ["docker", "volume", "rm", state[label]],
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                            check=False,
+                        )
 
 
 def main():
