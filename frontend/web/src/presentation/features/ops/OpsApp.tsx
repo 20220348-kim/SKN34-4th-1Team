@@ -18,7 +18,7 @@ import { WorkspacePageHeader } from '../../shared/workspace/WorkspacePageHeader'
 
 const listPath = '/ops/evaluations'
 const notice = '저장된 과거 평가 결과를 비교합니다. 새 모델 호출은 없으며 현재 모델의 품질 측정이 아닙니다.'
-const liveNotice = '선택한 가상 공고의 질문·고정 근거 청크와 답변 지침을 OpenAI에 전송해 새 응답을 생성합니다. 검색·임베딩은 실행하지 않으며 API 비용이 발생합니다.'
+const liveNotice = '선택한 평가 자료의 질문·고정 근거 청크와 답변 지침을 OpenAI에 전송해 새 응답을 생성합니다. 검색·임베딩은 실행하지 않으며 API 비용이 발생합니다.'
 const recoveryNotice = '이미 생성된 응답으로 보고서와 평가 점수 등록만 다시 처리합니다. 추가 모델 호출은 0회이며 원본 실행 기록은 보존됩니다.'
 const modeLabel = (run: EvaluationRun) => run.execution_mode === 'recovery' ? '후처리 복구' : run.execution_mode === 'live' ? '새 모델 응답 생성' : '저장 응답 재평가'
 const field = 'min-h-11 w-full rounded-xl border border-sample-border bg-white px-3 text-sm focus:outline-2 focus:outline-brand-primary'
@@ -225,7 +225,7 @@ function EvaluationList({ owner, datasets, liveEnabled: allLiveEnabled, ragLiveE
             <p>모델: <strong>{selected.live_config.model}</strong> · 최대 {selected.live_config.max_model_calls}회 · 호출당 출력 최대 {selected.live_config.max_output_tokens.toLocaleString()}토큰 · 호출당 입력 최대 {selected.live_config.max_input_tokens?.toLocaleString() ?? '기록 없음'}토큰 · 자동 재호출 없음</p>
             {ragLive && <p>임베딩: {selected.live_config.embedding_model} · {selected.live_config.embedding_dimensions}차원. 최대 호출 수에는 문서·질문 임베딩과 답변이 포함됩니다. 전체 입력 예약 {selected.live_config.max_total_input_tokens?.toLocaleString()}토큰 · 전체 출력 예약 {selected.live_config.max_total_output_tokens?.toLocaleString()}토큰.</p>}
             <p>각 답변 생성 전에 같은 입력과 응답 형식을 OpenAI 입력 토큰 계산 API로 전송합니다. 계산 실패 또는 입력 상한 초과 시 생성을 중단합니다.</p>
-            <p>전송 자료: {selected.fixture}의 {selected.case_ids.join(', ')} 질문과 고정 근거 청크. 시스템 답변 지침을 함께 전송합니다. 평가용 가상 자료이며 실제 회원 대화는 사용하지 않습니다.</p>
+            <p>전송 자료: {selected.fixture}의 {selected.case_ids.join(', ')} 질문과 고정 근거 청크. 시스템 답변 지침을 함께 전송합니다. 자료에 따라 실제 공고의 저장 본문 또는 가상 근거를 사용하며, 실제 회원 대화는 사용하지 않습니다.</p>
             {!liveEnabled && <p role="status" className="font-semibold">새 모델 평가가 비활성화되어 있습니다. 실행기의 API 키와 서버 설정을 준비해야 합니다.</p>}
             <label className="mt-3 flex items-start gap-2"><input type="checkbox" className="mt-1" checked={approved} disabled={!liveEnabled || busy || requestId.current !== null} onChange={(event) => setApproved(event.target.checked)} />위 자료의 OpenAI 전송과 최대 호출 예산을 확인했습니다.</label>
           </div>}
