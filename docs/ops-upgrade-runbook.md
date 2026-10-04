@@ -136,6 +136,78 @@ DB와 파일을 서로 다른 시점에 복사한 뒤 일관된 백업이라고 
 재전송하지 않는다. 키 누락·원본 파일 누락·장부 불일치는 중단 조건이다.
 원본 DB 위에 복원하거나 기존 볼륨을 삭제하는 명령은 이 절차에 포함하지 않는다.
 
+### 개인 Kubernetes Ops DB 암호화 백업과 격리 복원 확인
+
+[`ops_db_snapshot.py`](../infrastructure/gitops/scripts/ops_db_snapshot.py)는 WSL/Linux에서
+기존 개인 kind의 `govbiz_ops` DB를 암호화 파일로 보관하고, 새 임시 MySQL에 복원해 확인한다.
+기존 Compose 백업 도구의 인증·암호화 형식을 재사용하지만 payload의 범위는
+`kubernetes_ops_database`로 구분한다. Compose DB+파일 백업과 서로 대체할 수 없다.
+SQL과 비밀번호를 출력하거나 평문 임시 파일로 저장하지 않는다.
+
+먼저 위 절차에 따라 진행 중 작업과 접수를 정리하고, 운영자가 Kubernetes `ops-service`
+Deployment의 API·sync와 해당 Compose 프로젝트의 실행기·Prefect를 중지해야 한다.
+실행기가 Prefect에 종료 상태를 전달할 수 있도록 실행기를 먼저 종료한다.
+이 명령은 서비스를 중지하거나 재개하지 않는다. 다른 수동 DB 쓰기·외부 접수 경로도 운영자가
+차단해야 하며 검사 대상 밖의 작성자까지 잠근다는 뜻은 아니다.
+
+- 전용 state·cluster 소유권, 연결 기록, Ops의 DB 설정, MySQL StatefulSet·Pod·PVC·서비스
+  연결을 확인한다. Ops Pod가 남아 있거나 HPA가 있으면 백업하지 않는다.
+- 알려진 Compose 작성자와 Prefect가 정지했는지 확인한다. 미완료 평가·열린 예산 예약,
+  미중지 Ops 일정·미완료 일정 이력·활성 MySQL 이벤트도 차단한다. 일정 테이블이 없는
+  구버전 DB는 지원하지만 일부만 존재하는 스키마는 거절한다.
+- 쓰기 중지 상태와 저장소 식별자, 테이블별 행 수, 전체 SQL 덤프를 반복 대조한 뒤 파일을
+  생성한다. 검사 중 변경되거나 출력 파일이 이미 있으면 덮어쓰지 않고 실패한다.
+- 원본 Pod의 공식 MySQL digest와 정확한 `8.4.x` 버전을 보존한다. 해당 digest의 이미지가
+  로컬 Docker에 미리 있어야 한다. 태그로 대체하거나 도구가 자동 다운로드하지 않는다.
+
+원본 digest는 다음 읽기 전용 명령으로 확인한다. 로컬에 없으면 조회한 공식 MySQL digest를
+확인하고 `docker pull mysql@sha256:<조회한 digest>`로 준비한다. 현재 `mysql:8.4` 태그가
+과거 원본 Pod와 같은 이미지라고 가정하지 않는다.
+
+```bash
+kubectl --kubeconfig "$OPS_STATE_DIR/kubeconfig" --namespace govbiz-msa \
+  get pod ops-mysql-0 -o 'jsonpath={.status.containerStatuses[0].imageID}'
+```
+
+다음은 저장소 루트에서 실행하는 Bash/WSL 명령이다. 디렉터리는 WSL 파일시스템 안에 두고,
+기존 키를 사용한다면 `init-key`를 다시 실행하지 않는다. 키는 백업과 별도로 안전하게 보관한다.
+
+```bash
+umask 077
+OPS_DB_BACKUP_DIR="$HOME/.local/share/govbiz-backups/ops-db"
+install -d -m 700 "$OPS_DB_BACKUP_DIR"
+OPS_DB_BACKUP_KEY="$OPS_DB_BACKUP_DIR/snapshot.key"
+python3 -B infrastructure/llmops/ops_snapshot.py init-key --key-file "$OPS_DB_BACKUP_KEY"
+OPS_DB_BACKUP_FILE="$OPS_DB_BACKUP_DIR/ops-$(date -u +%Y%m%dT%H%M%SZ).enc"
+python3 -B infrastructure/gitops/scripts/ops_db_snapshot.py backup \
+  --state-dir "$OPS_STATE_DIR" --key-file "$OPS_DB_BACKUP_KEY" --output "$OPS_DB_BACKUP_FILE"
+python3 -B infrastructure/gitops/scripts/ops_db_snapshot.py verify \
+  --key-file "$OPS_DB_BACKUP_KEY" --archive "$OPS_DB_BACKUP_FILE"
+```
+
+출력은 상태·암호화 파일 SHA-256·테이블/행 수만 포함한다. `BACKED_UP`은 파일 생성만 뜻한다.
+`VERIFIED`는 파일 인증·정확한 버전의 빈 MySQL 복원·행 수/전체 덤프 일치·임시 컨테이너 정리가
+모두 성공한 경우에만 반환한다. 복원 DB는 외부 네트워크·공유 볼륨·공개 포트 없이 생성하며
+이벤트 스케줄러를 끈다. 앱·실행기·migration은 시작하지 않고 원본 DB에 SQL을 쓰지 않는다.
+SQL은 최대 128 MiB, 임시 DB는 tmpfs 384 MiB와 메모리 512 MiB로 제한한다.
+자원 부족이나 정리 실패도 실패로 남기며 자동으로 제한을 완화하지 않는다.
+
+`restore_verified=true`여도 `full_backup_verified=false`다. 결과 파일·Prefect·Core 인증 DB·
+Langfuse·Secret/서명 키·이미지 보관·앱 동작 복원은 이 파일에 포함하지 않는다.
+키 복구와 위 표의 나머지 저장소 검증을 별도로 완료해야 한다. 구버전 자동 갱신의
+`admission_control_unsupported` 차단을 해제하거나 migration을 승인하는 증거로 사용하지 않는다.
+
+무료 단위 검증은 Infra CI, 실제 MySQL 암호화·복원 검증은 LLMOps CI에서 수행한다.
+실제 검증은 별도의 합성 원본 DB를 만들고 한글·JSON·NULL·외래 키를 포함한 덤프와 복원 덤프를
+대조하며 원본이 유지되는지 확인한다. 개인 Kubernetes의 실제 백업 실행을 대신하지 않는다.
+
+```bash
+python3 -B -m unittest discover -s infrastructure/gitops/scripts -p 'test_ops_db_snapshot.py'
+# 이미 로컬에 있는 공식 MySQL 8.4 digest를 명시할 때만 격리 DB 통합 테스트를 실행한다.
+OPS_DB_SNAPSHOT_MYSQL_IMAGE='mysql@sha256:<로컬 이미지 digest>' \
+  python3 -B -m unittest discover -s infrastructure/gitops/scripts -p 'test_ops_db_snapshot.py'
+```
+
 ### Compose Ops 검토 기록을 새 환경에 재사용
 
 동일한 평가 원본에 대한 사람 검토를 새 DB에서 반복할 필요는 없다.

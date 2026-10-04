@@ -132,14 +132,19 @@ def seal(payload, key):
     return MAGIC + hmac.digest(mac_key, MAGIC + ciphertext, "sha256") + ciphertext
 
 
-def unseal(raw, key):
+def open_payload(raw, key):
+    """Authenticate and decrypt; callers must validate their own payload contract."""
     if len(raw) > MAX_BYTES * 4 or not raw.startswith(MAGIC):
         raise SnapshotError("Unsupported or oversized snapshot")
     tag, ciphertext = raw[len(MAGIC) : len(MAGIC) + 32], raw[len(MAGIC) + 32 :]
     mac_key = hmac.digest(key, b"govbiz-ops-snapshot-authentication-v1", "sha256")
     if not hmac.compare_digest(tag, hmac.digest(mac_key, MAGIC + ciphertext, "sha256")):
         raise SnapshotError("Snapshot authentication failed; wrong key or modified backup")
-    payload = json.loads(crypt(ciphertext, key, decrypt=True))
+    return json.loads(crypt(ciphertext, key, decrypt=True))
+
+
+def unseal(raw, key):
+    payload = open_payload(raw, key)
     if payload["version"] != 1:
         raise SnapshotError("Unsupported snapshot version")
     validate(payload["files"])

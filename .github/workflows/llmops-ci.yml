@@ -43,6 +43,13 @@ jobs:
         run: uv sync --locked --extra dev --group evaluation
       - name: Verify execution release
         run: backend/ai-service/.venv/bin/python backend/ops-service/apps/evaluations/execution_spec.py
+      - name: Verify Kubernetes Ops DB archive guards and isolated MySQL restore
+        shell: bash
+        run: |
+          set -euo pipefail
+          snapshot_mysql_image=$(docker image inspect mysql:8.4 --format '{{index .RepoDigests 0}}')
+          test -n "$snapshot_mysql_image"
+          OPS_DB_SNAPSHOT_MYSQL_IMAGE="$snapshot_mysql_image" PYTHONPATH=infrastructure/gitops/scripts backend/ai-service/.venv/bin/python -B -m unittest test_ops_db_snapshot
       - name: Test offline runner preparation checks
         working-directory: backend/ai-service
         run: uv run --locked --extra dev --group evaluation python -m pytest ../../infrastructure/llmops/test_check_runner_runtime.py -q
