@@ -44,6 +44,7 @@ function OwnedNew({ token, email, initialProgram, onOpenProgram, onCreated, onLi
   const [jobs, setJobs] = useState<ApplicationFormDiscoveryJob[]>([])
   const [pending, setPending] = useState<PendingPreparationRequest | null>(null)
   const [pendingReady, setPendingReady] = useState(false)
+  const [pendingError, setPendingError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -66,9 +67,11 @@ function OwnedNew({ token, email, initialProgram, onOpenProgram, onCreated, onLi
   }
   useEffect(() => {
     let active = true
-    void readPendingPreparation(base, email).then(value => { if (active) { setPending(value); setPendingReady(true) } }).catch(cause => { if (active) reportError(cause) })
+    setPendingReady(false); setPendingError(null)
+    void readPendingPreparation(base, email).then(value => { if (active) { setPending(value); setPendingReady(true) } })
+      .catch(cause => { if (active) setPendingError(cause instanceof Error ? cause.message : '기기에 보관한 요청을 확인하지 못했어요.') })
     return () => { active = false; request.current?.abort() }
-  }, [base, email, reportError])
+  }, [base, email, revision])
   useEffect(() => {
     if (!initialProgram) return
     const controller = new AbortController()
@@ -141,7 +144,8 @@ function OwnedNew({ token, email, initialProgram, onOpenProgram, onCreated, onLi
     {program ? <View style={preparationUi.selected}><Text style={[styles.muted, { flex: 1 }]}>{program.title}</Text><Button label="해제" variant="ghost" disabled={busy} onPress={() => setProgram(null)} /></View>
       : <Text style={styles.muted}>신청문서를 작성할 공고 한 건을 선택해 주세요.</Text>}</Card>
     <SegmentedControl label="공고 선택 방법" value={method} options={[{ value: 'filter', label: '필터 검색' }, { value: 'saved', label: '관심 공고함' }]}
-      onChange={value => { setMethod(value); if (value === 'saved') setSavedVisited(true) }} />{error && <Notice error>{error}</Notice>}</View>
+      onChange={value => { setMethod(value); if (value === 'saved') setSavedVisited(true) }} />{error && <Notice error>{error}</Notice>}
+    {pendingError && <><Notice error>{pendingError}</Notice><Button label="보관 요청 다시 확인" variant="secondary" disabled={busy} onPress={() => setRevision(value => value + 1)} /></>}</View>
   return <View style={{ flex: 1 }}>
     <View style={[{ flex: 1 }, step !== 'selection' && { display: 'none' }]} accessibilityElementsHidden={step !== 'selection'} importantForAccessibility={step === 'selection' ? 'auto' : 'no-hide-descendants'} pointerEvents={step === 'selection' ? 'auto' : 'none'}>
       <View style={[{ flex: 1 }, method !== 'filter' && { display: 'none' }]} accessibilityElementsHidden={method !== 'filter'} importantForAccessibility={method === 'filter' ? 'auto' : 'no-hide-descendants'} pointerEvents={method === 'filter' ? 'auto' : 'none'}>
@@ -151,6 +155,7 @@ function OwnedNew({ token, email, initialProgram, onOpenProgram, onCreated, onLi
     </View>{step === 'form' && <Page><PreparationSteps active={0} />{program && <Card><Text style={styles.heading}>{program.title}</Text><Text style={styles.muted}>{program.organization}</Text><Button label="공고 바꾸기" variant="ghost" disabled={busy} onPress={() => setStep('selection')} />
       <Button label="공식 공고 원문" variant="ghost" onPress={() => void Linking.openURL(program.sourceUrl).catch(() => setError('공식 공고 원문을 열지 못했어요.'))} /></Card>}
       {error && <><Notice error>{error}</Notice><Button label="양식·작업 다시 확인" variant="secondary" disabled={busy} onPress={() => setRevision(value => value + 1)} /></>}
+      {pendingError && <><Notice error>{pendingError}</Notice><Button label="보관 요청 다시 확인" variant="secondary" disabled={busy} onPress={() => setRevision(value => value + 1)} /></>}
       {loading && <ActivityIndicator color={colors.primary} accessibilityLabel="양식 확인 중" />}
       {pending?.kind === 'document' && <><Notice>결과를 확인하지 못한 문서 생성 요청이 있어요. 새 유료 분석 전에 해당 요청을 확인해 주세요.</Notice><Button label="미확인 생성 문서 열기" variant="secondary" onPress={() => onPendingDocument(pending.preparationId)} /></>}
       {job && <Card><View style={styles.row}><StatusBadge label={job.status === 'QUEUED' ? '분석 대기' : job.status === 'RUNNING' ? '양식 분석 중' : job.status === 'UNKNOWN' ? '결과 확인 필요' : job.status === 'FAILED' ? '분석 실패' : '분석 완료'} tone="info" /></View>

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from 'react-native'
-import { useFocusEffect } from 'expo-router'
+import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native'
+import { useFocusEffect, useNavigation } from 'expo-router'
+import { usePreventRemove } from 'expo-router/react-navigation'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { companyAgeYearsRange, ownPartnerRoles, partnerRoleLabels, recruitmentBodyMaxLength,
   recruitmentCapabilityMaxCount, recruitmentCapabilityMaxLength, recruitmentTitleMaxLength, seekingCountRange,
@@ -53,6 +54,7 @@ export function RecruitmentCreateScreen(props: Props) {
 function OwnedCreate({ token, companyName, onCreated, onCancel, onSavedPrograms, onCompany }: Props & { token: string; companyName: string }) {
   const { invalidateSession } = useAuth()
   const insets = useSafeAreaInsets()
+  const navigation = useNavigation()
   const [program, setProgram] = useState<SupportProgram | null>(null)
   const [ownRole, setOwnRole] = useState<PartnerRole>('LEAD')
   const [seekingRole, setSeekingRole] = useState<PartnerRole>('PARTICIPANT')
@@ -75,9 +77,28 @@ function OwnedCreate({ token, companyName, onCreated, onCancel, onSavedPrograms,
   const [revision, setRevision] = useState(0)
   const request = useRef<AbortController | null>(null)
   const submitting = useRef(false)
+  const exitApproved = useRef(false)
   const maximumDeadline = latestDeadline(program)
+  const dirty = Boolean(program || title || body || age || capabilityDraft || capabilities.length || deadline
+    || ownRole !== 'LEAD' || seekingRole !== 'PARTICIPANT' || count !== 1 || region !== '전국')
 
-  useFocusEffect(useCallback(() => () => { request.current?.abort() }, []))
+  function confirmExit(exit: () => void) {
+    if (submitting.current) {
+      Alert.alert('모집글 등록을 확인 중이에요', '등록 결과를 확인한 뒤 이동해 주세요. 작성한 내용은 이 화면에 남아 있어요.')
+      return
+    }
+    if (!dirty || exitApproved.current) { exit(); return }
+    Alert.alert('작성 중인 모집글을 나갈까요?', '저장하지 않은 내용은 사라질 수 있어요.', [
+      { text: '계속 작성', style: 'cancel' },
+      { text: '나가기', style: 'destructive', onPress: () => { exitApproved.current = true; exit() } },
+    ])
+  }
+  usePreventRemove(dirty || busy, ({ data }) => confirmExit(() => navigation.dispatch(data.action)))
+
+  useFocusEffect(useCallback(() => {
+    exitApproved.current = false
+    return () => { request.current?.abort() }
+  }, []))
   useFocusEffect(useCallback(() => {
     if (!pickerOpen) return
     const controller = new AbortController()
@@ -131,7 +152,7 @@ function OwnedCreate({ token, companyName, onCreated, onCancel, onSavedPrograms,
       const result = await createRecruitment(input, token, controller.signal)
       if (controller.signal.aborted) return
       switch (result.outcome) {
-        case 'created': onCreated(result.recruitment.id); return
+        case 'created': submitting.current = false; exitApproved.current = true; onCreated(result.recruitment.id); return
         case 'company-required': setCompanyRequired(true); setError('등록된 계속사업자만 모집글을 작성할 수 있어요. 기업 정보를 다시 확인해 주세요.'); return
         case 'program-not-found': setError('선택한 공고를 더 이상 찾을 수 없어요. 관심 공고함에서 다시 선택해 주세요.'); return
         case 'program-closed': setError('선택한 공고의 접수가 마감됐어요. 다른 관심 공고를 선택해 주세요.'); return
@@ -201,7 +222,7 @@ function OwnedCreate({ token, companyName, onCreated, onCancel, onSavedPrograms,
     <View style={[local.footer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
       {error && <Notice error>{error}</Notice>}
       {companyRequired && <Button label="기업 정보 확인" variant="secondary" onPress={onCompany} />}
-      <View style={local.footerButtons}><Button label="취소" variant="secondary" disabled={busy} onPress={onCancel} />
+      <View style={local.footerButtons}><Button label="취소" variant="secondary" disabled={busy} onPress={() => confirmExit(onCancel)} />
         <Button label="모집글 등록" busy={busy} disabled={busy} style={{ flex: 1 }} onPress={() => void submit()} /></View>
     </View>
     <PartnerSheet visible={pickerOpen} title="관심 공고 선택" onClose={() => setPickerOpen(false)}

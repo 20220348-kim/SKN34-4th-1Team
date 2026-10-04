@@ -90,12 +90,13 @@ export function ProgramScreen({ identity, onLogin, resumeAction, onResumed }: {
     if (!resumeAction || resumed.current || resumeAction.token !== token || !program) return
     if (resumeAction.action === 'save' && saved === null) return
     resumed.current = true; onResumed?.()
-    if (resumeAction.action === 'question') setQuestionOpen(true)
+    if (resumeAction.action === 'question') { if (program.evidenceQuestionSupported) setQuestionOpen(true) }
     else if (!saved) void toggleSave()
     else setSaveNotice('이미 관심 공고함에 담은 공고예요.')
   }, [resumeAction, token, program, saved])
 
   async function ask() {
+    if (!program?.evidenceQuestionSupported) return
     if (!token) { onLogin('question'); return }
     if (!question.trim() || answering) return
     const controller = new AbortController(); work.current = controller
@@ -134,6 +135,7 @@ export function ProgramScreen({ identity, onLogin, resumeAction, onResumed }: {
       {token && saved && <ProgramPreparationSection key={`${token}:${sourceCode}:${sourceProgramId}`} identity={identity} token={token} />}
       {saveError && <><Notice error>{saveError}</Notice><Button variant="ghost" label="저장 상태 다시 확인" onPress={() => setRetry((value) => value + 1)} /></>}
       {saveNotice && <Notice>{saveNotice}</Notice>}
+      {!program.evidenceQuestionSupported && <Notice>이 제공처 공고는 아직 원문 근거 답변을 지원하지 않습니다. 공식 공고 원문에서 확인해 주세요.</Notice>}
       {expanded && <><Subtitle>{program.organization}</Subtitle><Card>
         <Text style={styles.heading}>지원 대상</Text><Text style={styles.body}>{program.targetDescription || '원문을 확인해 주세요.'}</Text>
         <Text style={styles.muted}>{program.regions.join(' · ')} / {program.categories.join(' · ')}</Text>
@@ -150,12 +152,12 @@ export function ProgramScreen({ identity, onLogin, resumeAction, onResumed }: {
         onPress={() => void toggleSave()} style={local.bookmark}>{saving ? <ActivityIndicator color={colors.primary} />
           : <AppIcon name="bookmark" color={colors.primary} selected={!!saved} size={21} />}</Pressable>
       <Button label={expanded ? '접기' : '더 보기'} variant="secondary" onPress={() => setExpanded(!expanded)} />
-      <View style={{ flex: 1 }}><Button label="원문에 질문하기" disabled={status === 'loading' || status === 'unavailable'} onPress={() => {
-        if (!token && program.evidenceQuestionSupported) onLogin('question')
+      <View style={{ flex: 1 }}>{program.evidenceQuestionSupported ? <Button label="원문에 질문하기" disabled={status === 'loading' || status === 'unavailable'} onPress={() => {
+        if (!token) onLogin('question')
         else setQuestionOpen(true)
-      }} /></View>
+      }} /> : <Button label={program.sourceCode === 'CNTRADE_NOTICE' ? '공식 공지 목록 확인' : '공식 원문 확인'} onPress={() => void openSource(program.sourceUrl)} />}</View>
     </View>}
-    <PartnerSheet visible={questionOpen} title="원문에 질문하기" onClose={closeQuestion} actions={<Button label="닫기" variant="secondary" onPress={closeQuestion} />}>
+    <PartnerSheet visible={questionOpen && Boolean(program?.evidenceQuestionSupported)} title="원문에 질문하기" onClose={closeQuestion} actions={<Button label="닫기" variant="secondary" onPress={closeQuestion} />}>
       {program && <>
         {!program.evidenceQuestionSupported ? <Notice>이 제공처 공고는 아직 원문 근거 답변을 지원하지 않습니다. 공식 공고 원문에서 확인해 주세요.</Notice>
         : <>

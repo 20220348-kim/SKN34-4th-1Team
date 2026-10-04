@@ -2,12 +2,13 @@ import { useCallback, useRef, useState } from 'react'
 import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, View } from 'react-native'
 import { useFocusEffect } from 'expo-router'
 import { companyDtoSchema, toCompany } from '@govbiz/shared/data/models/CompanyDto'
-import { savedSupportProgramDtoSchema, savedSupportProgramListDtoSchema } from '@govbiz/shared/data/models/SavedSupportProgramDto'
+import { savedSupportProgramDtoSchema } from '@govbiz/shared/data/models/SavedSupportProgramDto'
 import type { Company } from '@govbiz/shared/domain/entities/Company'
 import type { DailyReport, DailyReportItem, DailyReportSettings } from '@govbiz/shared/domain/entities/DailyReport'
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
 import { AppIcon } from '../components/AppIcon'
 import { ApiError, apiRequest, errorMessage } from '../api/client'
+import { listSavedPrograms } from '../api/savedPrograms'
 import { dailyReportErrorMessage, getDailyReportSettings, getLatestDailyReport,
   requestDailyReportEmailVerification, saveDailyReportSettings, getDailyReport } from '../api/dailyReport'
 import { DailyReportPushSettings } from '../notifications/DailyReportPushSettings'
@@ -18,10 +19,10 @@ import { Button, Card, Field, Notice, Page, StatusBadge, colors, styles } from '
 
 type ReportState = {
   token: string | null; reportId?: string; settings: DailyReportSettings | null; company: Company | null
-  report: DailyReport | null; saved: Set<string>; loading: boolean; error: string | null
+  report: DailyReport | null; saved: Set<string> | null; savedError: string | null; loading: boolean; error: string | null
 }
 const emptyState = (token: string | null, reportId?: string): ReportState => ({
-  token, reportId, settings: null, company: null, report: null, saved: new Set(), loading: true, error: null,
+  token, reportId, settings: null, company: null, report: null, saved: null, savedError: null, loading: true, error: null,
 })
 const programKey = (identity: SupportProgramIdentity) => JSON.stringify([identity.sourceCode, identity.sourceProgramId])
 
@@ -117,6 +118,19 @@ export function DailyReportScreen({ onLogin, onCompany, onSearch, onOpenProgram,
   const [actionError, setActionError] = useState<string | null>(null)
   const request = useRef<AbortController | null>(null)
 
+  const loadSavedPrograms = useCallback(async (owner: string, signal: AbortSignal) => {
+    setState(current => current.token === owner && current.reportId === reportId ? { ...current, saved: null, savedError: null } : current)
+    try {
+      const saved = new Set((await listSavedPrograms(owner, signal))
+        .map(({ program }) => programKey({ sourceCode: program.sourceCode, sourceProgramId: program.id })))
+      if (!signal.aborted) setState(current => current.token === owner && current.reportId === reportId ? { ...current, saved, savedError: null } : current)
+    } catch (cause) {
+      if (signal.aborted) return
+      if (cause instanceof ApiError && cause.status === 401) void invalidateSession().catch(() => undefined)
+      setState(current => current.token === owner && current.reportId === reportId ? { ...current, saved: null, savedError: errorMessage(cause) } : current)
+    }
+  }, [reportId, invalidateSession])
+
   useFocusEffect(useCallback(() => {
     const controller = new AbortController()
     request.current?.abort(); request.current = controller
@@ -136,13 +150,11 @@ export function DailyReportScreen({ onLogin, onCompany, onSearch, onOpenProgram,
             }),
           settingsOnly ? Promise.resolve(null) : reportId ? getDailyReport(token, reportId, controller.signal) : getLatestDailyReport(token, controller.signal),
         ])
-        const saved = report?.programs.length ? new Set(savedSupportProgramListDtoSchema.parse(
-          await apiRequest('/api/v1/me/saved-programs', { accessToken: token, signal: controller.signal }),
-        ).programs.map(({ program }) => programKey({ sourceCode: program.sourceCode, sourceProgramId: program.id }))) : new Set<string>()
         if (!controller.signal.aborted) {
-          setState({ token, reportId, settings, company, report, saved, loading: false, error: null })
+          setState({ token, reportId, settings, company, report, saved: report?.programs.length ? null : new Set(), savedError: null, loading: false, error: null })
           setPurpose(settings.supportPurpose); setEnabled(settings.enabled); setConsent(false)
           setRefreshing(false)
+          if (report?.programs.length) await loadSavedPrograms(token, controller.signal)
         }
       } catch (cause) {
         if (controller.signal.aborted) return
@@ -154,12 +166,18 @@ export function DailyReportScreen({ onLogin, onCompany, onSearch, onOpenProgram,
       }
     })()
     return () => { controller.abort(); request.current?.abort() }
-  }, [token, revision, invalidateSession, settingsOnly, reportId]))
+  }, [token, revision, invalidateSession, settingsOnly, reportId, loadSavedPrograms]))
 
   const visible = state.token === token && state.reportId === reportId ? state : emptyState(token, reportId)
   const settings = visible.settings
   const canSave = Boolean(token && settings && !busy)
   const refresh = () => { if (!busy) setRevision((value) => value + 1) }
+
+  async function retrySavedPrograms() {
+    if (!token || busy || refreshing) return
+    const controller = new AbortController(); request.current?.abort(); request.current = controller
+    await loadSavedPrograms(token, controller.signal)
+  }
 
   async function saveSettings() {
     if (!token || !settings || busy) return
@@ -199,7 +217,7 @@ export function DailyReportScreen({ onLogin, onCompany, onSearch, onOpenProgram,
   }
 
   async function toggleSaved(item: DailyReportItem) {
-    if (!token || busy) return
+    if (!token || busy || visible.saved === null) return
     const identity = { sourceCode: item.sourceCode, sourceProgramId: item.sourceProgramId }
     const key = programKey(identity)
     const controller = new AbortController(); request.current = controller
@@ -213,7 +231,7 @@ export function DailyReportScreen({ onLogin, onCompany, onSearch, onOpenProgram,
       }))
       if (controller.signal.aborted) return
       setState((current) => {
-        if (current.token !== token) return current
+        if (current.token !== token || current.saved === null) return current
         const saved = new Set(current.saved)
         if (saved.has(key)) saved.delete(key); else saved.add(key)
         return { ...current, saved }
@@ -254,8 +272,11 @@ export function DailyReportScreen({ onLogin, onCompany, onSearch, onOpenProgram,
       {report.status === 'GENERATING' && <Notice>리포트를 생성 중이에요. 잠시 후 화면을 당겨 상태를 확인해 주세요.</Notice>}
       {report.status === 'FAILED' && <Notice error>리포트를 생성하지 못했어요. 검색 결과가 없다는 뜻은 아니에요. 잠시 후 상태를 확인해 주세요.</Notice>}
       {ready && report.programs.length === 0 && <Notice>이번 리포트에서 추천할 공고를 찾지 못했어요. 전체 공고가 없다는 뜻은 아니에요.</Notice>}
+      {ready && report.programs.length > 0 && visible.saved === null && !visible.savedError && <ActivityIndicator accessibilityLabel="관심 공고 저장 상태 확인 중" color={colors.primary} />}
+      {visible.savedError && <><Notice error>관심 공고 저장 상태를 확인하지 못했어요. {visible.savedError}</Notice>
+        <Button label="저장 상태 다시 확인" variant="secondary" disabled={Boolean(busy) || refreshing} onPress={() => void retrySavedPrograms()} /></>}
       {ready && report.programs.map((item) => <ReportProgramCard key={programKey({ sourceCode: item.sourceCode, sourceProgramId: item.sourceProgramId })}
-        item={item} saved={visible.saved.has(programKey({ sourceCode: item.sourceCode, sourceProgramId: item.sourceProgramId }))}
+        item={item} saved={visible.saved === null ? null : visible.saved.has(programKey({ sourceCode: item.sourceCode, sourceProgramId: item.sourceProgramId }))}
         busy={Boolean(busy)} onOpen={() => onOpenProgram({ sourceCode: item.sourceCode, sourceProgramId: item.sourceProgramId })}
         onSource={() => void openSource(item.sourceUrl)} onToggle={() => void toggleSaved(item)} />)}
     </> : <>
@@ -304,7 +325,7 @@ export function DailyReportScreen({ onLogin, onCompany, onSearch, onOpenProgram,
 }
 
 function ReportProgramCard({ item, saved, busy, onOpen, onSource, onToggle }: {
-  item: DailyReportItem; saved: boolean; busy: boolean; onOpen(): void; onSource(): void; onToggle(): void
+  item: DailyReportItem; saved: boolean | null; busy: boolean; onOpen(): void; onSource(): void; onToggle(): void
 }) {
   const period = periodLabel(item.applicationPeriod)
   return <Card>
@@ -322,9 +343,9 @@ function ReportProgramCard({ item, saved, busy, onOpen, onSource, onToggle }: {
       <Pressable accessibilityRole="link" accessibilityLabel={`${item.title} 공식 원문 보기`} onPress={onSource}>
         <Text style={styles.muted}>원문 보기 ↗</Text></Pressable>
       <View style={{ flex: 1 }} />
-      <Pressable accessibilityRole="button" accessibilityLabel={saved ? `${item.title} 관심 공고에서 빼기` : `${item.title} 관심 공고에 저장`}
-        accessibilityState={{ disabled: busy, selected: saved }} disabled={busy} onPress={onToggle} style={local.bookmark}>
-        <AppIcon name="bookmark" color={colors.primary} selected={saved} size={20} /></Pressable>
+      <Pressable accessibilityRole="button" accessibilityLabel={saved === null ? `${item.title} 저장 상태 확인 필요` : saved ? `${item.title} 관심 공고에서 빼기` : `${item.title} 관심 공고에 저장`}
+        accessibilityState={{ disabled: busy || saved === null, ...(saved === null ? {} : { selected: saved }) }} disabled={busy || saved === null} onPress={onToggle} style={local.bookmark}>
+        <AppIcon name="bookmark" color={saved === null ? colors.muted : colors.primary} selected={saved === true} size={20} /></Pressable>
       <Button label="상세 보기" size="small" variant="secondary" onPress={onOpen} />
     </View>
   </Card>

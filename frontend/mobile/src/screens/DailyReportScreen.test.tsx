@@ -1,9 +1,10 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react-native'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native'
 import { RefreshControl } from 'react-native'
 import { ApiError, apiRequest } from '../api/client'
 import { useAuth } from '../auth/session'
 import { DailyReportScreen } from './DailyReportScreen'
 import { useDailyReportPush } from '../notifications/DailyReportPushProvider'
+import { documentProgram } from '../test/applicationDocumentFixtures'
 
 jest.mock('expo-router', () => ({ useFocusEffect: (effect: () => () => void) => {
   const React = jest.requireActual<typeof import('react')>('react')
@@ -36,7 +37,7 @@ const report = {
   }],
 }
 const callbacks = { onLogin: jest.fn(), onCompany: jest.fn(), onSearch: jest.fn(), onOpenProgram: jest.fn() }
-const invalidateSession = jest.fn()
+const invalidateSession = jest.fn().mockResolvedValue(undefined)
 const refreshSession = jest.fn()
 
 function signedIn(token = 'first-account') {
@@ -88,6 +89,77 @@ test('loads the latest owned report and retains its source identity for the deta
   fireEvent.press(screen.getByText('상세 보기'))
   expect(callbacks.onOpenProgram).toHaveBeenCalledWith({ sourceCode: 'BIZINFO', sourceProgramId: 'PBLN_123' })
   expect(jest.mocked(apiRequest).mock.calls.some(([path]) => path.endsWith('/preview'))).toBe(false)
+})
+
+test('a saved-list failure keeps the report readable and only a saved-state retry enables bookmarks', async () => {
+  let savedReads = 0
+  jest.mocked(apiRequest).mockImplementation((path, options) => {
+    if (options?.method === 'DELETE') return Promise.resolve(undefined)
+    if (path.endsWith('/latest')) return Promise.resolve({ report })
+    if (path === '/api/v1/me/saved-programs') {
+      savedReads += 1
+      return savedReads === 1 ? Promise.reject(new ApiError(503, '관심 공고 조회 실패'))
+        : Promise.resolve({ programs: [{ program: documentProgram, savedAt: '2026-10-04T09:00:00+09:00' }] })
+    }
+    return respond(path)
+  })
+  render(<DailyReportScreen {...callbacks} />)
+  await screen.findByLabelText('저장 상태 다시 확인')
+  expect(screen.getByText('스마트공장 고도화 지원')).toBeTruthy()
+  const unknown = screen.getByLabelText('스마트공장 고도화 지원 저장 상태 확인 필요')
+  expect(unknown.props.accessibilityState.disabled).toBe(true)
+  expect(unknown.props.accessibilityState.selected).toBeUndefined()
+  fireEvent.press(unknown)
+  expect(jest.mocked(apiRequest).mock.calls.some(([, options]) => options?.method === 'POST' || options?.method === 'DELETE')).toBe(false)
+  fireEvent.press(screen.getByLabelText('상세 보기'))
+  expect(callbacks.onOpenProgram).toHaveBeenCalledWith({ sourceCode: 'BIZINFO', sourceProgramId: 'PBLN_123' })
+  fireEvent.press(screen.getByLabelText('저장 상태 다시 확인'))
+  await waitFor(() => expect(screen.getByLabelText('스마트공장 고도화 지원 관심 공고에서 빼기').props.accessibilityState.disabled).toBe(false))
+  expect(screen.getByLabelText('스마트공장 고도화 지원 관심 공고에서 빼기').props.accessibilityState.selected).toBe(true)
+  expect(savedReads).toBe(2)
+  expect(jest.mocked(apiRequest).mock.calls.filter(([path]) => path.endsWith('/latest')).length).toBe(1)
+  expect(screen.queryByLabelText('저장 상태 다시 확인')).toBeNull()
+  fireEvent.press(screen.getByLabelText('스마트공장 고도화 지원 관심 공고에서 빼기'))
+  await waitFor(() => expect(apiRequest).toHaveBeenCalledWith('/api/v1/me/saved-programs?sourceCode=BIZINFO&sourceProgramId=PBLN_123',
+    expect.objectContaining({ method: 'DELETE', accessToken: 'first-account' })))
+  await screen.findByLabelText('스마트공장 고도화 지원 관심 공고에 저장')
+})
+
+test('a pending saved-list response cannot hide the loaded report or leak after switching accounts', async () => {
+  let finish!: (value: unknown) => void
+  jest.mocked(apiRequest).mockImplementation((path, options) => {
+    if (path.endsWith('/latest') && options?.accessToken === 'first-account') return Promise.resolve({ report })
+    if (path === '/api/v1/me/saved-programs' && options?.accessToken === 'first-account') return new Promise(resolve => { finish = resolve })
+    return respond(path, options)
+  })
+  const view = render(<DailyReportScreen {...callbacks} />)
+  await screen.findByText('스마트공장 고도화 지원')
+  expect(screen.getByLabelText('관심 공고 저장 상태 확인 중')).toBeTruthy()
+  expect(screen.getByLabelText('스마트공장 고도화 지원 저장 상태 확인 필요').props.accessibilityState.disabled).toBe(true)
+  signedIn('second-account')
+  view.rerender(<DailyReportScreen {...callbacks} />)
+  await screen.findByText('수신 설정을 켜면 정기 리포트를 받을 수 있어요.')
+  await act(async () => finish({ programs: [] }))
+  expect(screen.queryByText('스마트공장 고도화 지원')).toBeNull()
+  expect(screen.queryByLabelText('저장 상태 다시 확인')).toBeNull()
+})
+
+test('an invalid saved-list response is an explicit partial error and a saved-state 401 still invalidates the session', async () => {
+  let savedReads = 0
+  jest.mocked(apiRequest).mockImplementation((path) => {
+    if (path.endsWith('/latest')) return Promise.resolve({ report })
+    if (path === '/api/v1/me/saved-programs') {
+      savedReads += 1
+      return savedReads === 1 ? Promise.resolve({ programs: 'invalid' }) : Promise.reject(new ApiError(401, '로그인 만료'))
+    }
+    return respond(path)
+  })
+  render(<DailyReportScreen {...callbacks} />)
+  await screen.findByLabelText('저장 상태 다시 확인')
+  expect(screen.getByText('스마트공장 고도화 지원')).toBeTruthy()
+  fireEvent.press(screen.getByLabelText('저장 상태 다시 확인'))
+  await waitFor(() => expect(invalidateSession).toHaveBeenCalledTimes(1))
+  expect(screen.getByLabelText('스마트공장 고도화 지원 저장 상태 확인 필요').props.accessibilityState.disabled).toBe(true)
 })
 
 test.each(['예산 소진 시까지', '예산소진시까지', '상시 접수', '상시'])('shows rolling period %s as open without an invented deadline', async (applicationPeriod) => {
