@@ -3,7 +3,8 @@
 import copy
 import json
 import unittest
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import ops_upgrade_probe as probe
@@ -16,6 +17,8 @@ class PreflightTests(unittest.TestCase):
         self.database = {
             "states": {"COMPLETED": 2},
             "open_reservations": 0,
+            "unpaused_ops_schedules": 0,
+            "unsettled_schedule_occurrences": 0,
             "admission": {"accepting": False, "version": 1},
         }
         self.deployment = {
@@ -66,7 +69,7 @@ class PreflightTests(unittest.TestCase):
         self.rows = [self.row(state) for state in probe.TERMINAL]
         before = copy.deepcopy((self.rows, self.database, self.deployment))
         result = self.inspect()
-        self.assertEqual(result["schemaVersion"], 3)
+        self.assertEqual(result["schemaVersion"], 4)
         self.assertEqual(result["status"], "PASS")
         self.assertEqual(result["checks"]["inspected_flows"], 4)
         self.assertTrue(result["admission_supported"])
@@ -82,6 +85,8 @@ class PreflightTests(unittest.TestCase):
             self.database = {
                 "states": {"COMPLETED": 2},
                 "open_reservations": 0,
+                "unpaused_ops_schedules": 0,
+                "unsettled_schedule_occurrences": 0,
                 **admission,
             }
             with self.subTest(admission=admission):
@@ -116,6 +121,32 @@ class PreflightTests(unittest.TestCase):
     def test_open_reservation_blocks_even_after_terminal_evaluation(self):
         self.database["open_reservations"] = 1
         self.assertEqual(self.inspect()["status"], "BLOCKED")
+
+    def test_ops_schedules_and_unsettled_occurrences_block_without_prefect_work(self):
+        for name in ("unpaused_ops_schedules", "unsettled_schedule_occurrences"):
+            with self.subTest(name=name):
+                self.database[name] = 1
+                result = self.inspect()
+                self.assertEqual(result["status"], "BLOCKED")
+                self.assertEqual(result["checks"][name], 1)
+                self.assertEqual(result["checks"]["active_schedules"], 0)
+                self.assertTrue(result["admission_blocked"])
+                self.database[name] = 0
+
+    def test_missing_invalid_or_changing_ops_schedule_evidence_is_unknown(self):
+        original = copy.deepcopy(self.database)
+        for name in ("unpaused_ops_schedules", "unsettled_schedule_occurrences"):
+            for value in (None, False, -1, "0", 0.0):
+                self.database = {**original, name: value}
+                with self.subTest(name=name, value=value):
+                    self.assertEqual(self.inspect()["status"], "UNKNOWN")
+            self.database = {
+                key: value for key, value in original.items() if key != name
+            }
+            self.assertEqual(self.inspect()["status"], "UNKNOWN")
+            self.read_database.side_effect = [original, {**original, name: 1}]
+            self.assertEqual(self.inspect()["status"], "UNKNOWN")
+            self.read_database.side_effect = lambda: self.database
 
     def test_supported_admission_must_be_paused_and_version_is_recorded(self):
         self.database["admission"] = {"accepting": True, "version": 0}
@@ -238,6 +269,50 @@ class PreflightTests(unittest.TestCase):
         result = probe.inspect_upgrade(unavailable, NAME)
         self.assertEqual(result["status"], "UNKNOWN")
         self.assertNotIn("private", json.dumps(result))
+
+
+class ScheduleSnapshotTests(unittest.TestCase):
+    def test_old_models_require_both_schedule_tables_to_be_absent(self):
+        connection = MagicMock()
+        connection.introspection.table_names.return_value = [
+            "evaluations_evaluationrun"
+        ]
+        self.assertEqual(
+            probe.schedule_snapshot(SimpleNamespace(), connection),
+            {"unpaused_ops_schedules": 0, "unsettled_schedule_occurrences": 0},
+        )
+        for table in (
+            "evaluations_evaluationschedule",
+            "evaluations_evaluationscheduleoccurrence",
+        ):
+            connection.introspection.table_names.return_value = [table]
+            with (
+                self.subTest(table=table),
+                self.assertRaisesRegex(ValueError, "incomplete"),
+            ):
+                probe.schedule_snapshot(SimpleNamespace(), connection)
+
+    def test_incomplete_models_and_database_errors_cannot_become_zero(self):
+        connection = MagicMock()
+        connection.introspection.table_names.return_value = []
+        for name in ("EvaluationSchedule", "EvaluationScheduleOccurrence"):
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                probe.schedule_snapshot(
+                    SimpleNamespace(**{name: MagicMock()}), connection
+                )
+        connection.introspection.table_names.side_effect = RuntimeError(
+            "database failure"
+        )
+        with self.assertRaises(RuntimeError):
+            probe.schedule_snapshot(SimpleNamespace(), connection)
+        models = SimpleNamespace(
+            EvaluationSchedule=MagicMock(), EvaluationScheduleOccurrence=MagicMock()
+        )
+        models.EvaluationSchedule.objects.filter.side_effect = RuntimeError(
+            "missing table"
+        )
+        with self.assertRaises(RuntimeError):
+            probe.schedule_snapshot(models, connection)
 
 
 if __name__ == "__main__":

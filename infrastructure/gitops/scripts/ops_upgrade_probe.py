@@ -16,9 +16,40 @@ PAGE_SIZE = 100
 MAX_PAGES = 20
 
 
+def schedule_snapshot(models, connection):
+    schedule = getattr(models, "EvaluationSchedule", None)
+    occurrence = getattr(models, "EvaluationScheduleOccurrence", None)
+    if schedule is None or occurrence is None:
+        # An old image may safely report no schedules only when the database also
+        # predates them. Never hide a newer schema behind missing Python models.
+        tables = set(connection.introspection.table_names())
+        if (
+            schedule is not None
+            or occurrence is not None
+            or tables.intersection(
+                {
+                    "evaluations_evaluationschedule",
+                    "evaluations_evaluationscheduleoccurrence",
+                }
+            )
+        ):
+            raise ValueError("Schedule model/schema evidence is incomplete")
+        return {"unpaused_ops_schedules": 0, "unsettled_schedule_occurrences": 0}
+    return {
+        # Future/expired plans and a disabled dispatcher still require an explicit pause.
+        "unpaused_ops_schedules": schedule.objects.filter(
+            paused_at__isnull=True
+        ).count(),
+        "unsettled_schedule_occurrences": occurrence.objects.exclude(
+            status__in=("SUBMITTED", "BLOCKED")
+        ).count(),
+    }
+
+
 def database_snapshot():
     from apps.evaluations import models
     from apps.evaluations.models import EvaluationBudgetReservation, EvaluationRun
+    from django.db import connection
     from django.db.models import Count
 
     states = dict(
@@ -41,6 +72,7 @@ def database_snapshot():
         "open_reservations": EvaluationBudgetReservation.objects.filter(
             closed_at__isnull=True
         ).count(),
+        **schedule_snapshot(models, connection),
     }
 
 
@@ -116,7 +148,7 @@ def prefect_snapshot(request, name):
 
 def inspect_upgrade(request, deployment_name):
     report = {
-        "schemaVersion": 3,
+        "schemaVersion": 4,
         "scope": "ops_upgrade_preflight",
         "status": "UNKNOWN",
         "started_at": datetime.now(timezone.utc).isoformat(),
@@ -128,6 +160,9 @@ def inspect_upgrade(request, deployment_name):
     }
     try:
         before = database_snapshot()
+        for name in ("unpaused_ops_schedules", "unsettled_schedule_occurrences"):
+            if type(before[name]) is not int or before[name] < 0:
+                raise ValueError("Invalid Ops schedule evidence")
         admission = before.get("admission")
         if admission is not None:
             if (
@@ -149,6 +184,8 @@ def inspect_upgrade(request, deployment_name):
                 if state not in TERMINAL
             ),
             open_reservations=before["open_reservations"],
+            unpaused_ops_schedules=before["unpaused_ops_schedules"],
+            unsettled_schedule_occurrences=before["unsettled_schedule_occurrences"],
         )
         report["checks"].update(prefect_snapshot(request, deployment_name))
         if database_snapshot() != before:

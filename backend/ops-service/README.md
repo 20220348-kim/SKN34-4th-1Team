@@ -1259,6 +1259,9 @@ GitHub Actions는 모노레포 루트의
 실패→성공, 접수 중지 후 새 평가 거절, migration·동일 UUID의 중지 요청 재실행을 검증합니다.
 `GITHUB_ACTIONS=true`와 `OPS_SCHEMA_TEST_ONLY=true`가 모두 필요하며, 기존 테이블이 있는 DB나
 역방향 migration은 거부합니다. 기존 빈 DB→최신 배포 검사도 계속 별도로 수행합니다.
+실행 보호 테스트는 `scripts/test_check_schema.py`에 두고 CI에서
+`python -B -m unittest discover -s scripts -p 'test_*.py'`로 별도 실행합니다.
+런타임 이미지에 포함되지 않는 CI 스크립트를 앱 테스트에서 참조하지 않습니다.
 이 명령은 개인 DB 갱신 도구가 아닙니다. Core 인증은 주입하고 Prefect 호출은 대역으로 확인하므로
 실제 로그인·새 평가 성공·개인 백업 복원을 증명하지 않습니다. 최초 전환의 쓰기 중지와 접수 제어
 경계는 [Ops 갱신 절차](../../docs/ops-upgrade-runbook.md)를 따릅니다.

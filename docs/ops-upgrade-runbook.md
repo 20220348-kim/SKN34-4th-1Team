@@ -53,15 +53,24 @@ python3 -B infrastructure/gitops/scripts/ops_runtime.py --preflight \
 
 `--preflight`는 기존 Pod의 Django 모델과 Prefect 조회 API를 사용한다. 새 명령 설치나 migration 없이
 미완료 평가(`RESULT_ERROR`와 알 수 없는 상태 포함), 종료되지 않은 예산 예약, 같은 Prefect flow의
-이전 deployment를 포함한 미완료 실행·현재 deployment의 활성 스케줄을 검사한다.
+이전 deployment를 포함한 미완료 실행·현재 deployment의 활성 스케줄, Ops DB의 미중지 일별 계획과
+처리 미완료 일별 접수 이력을 검사한다. 일별 계획은 관리 화면의 중지 기능으로 먼저 중지한다.
+종료일이 지났거나 시작일이 미래인 계획, 실행 기능 플래그가 꺼진 계획도 명시적으로 중지해야 한다.
+일별 접수 이력의 `PENDING` 및 알 수 없는 상태는 차단한다. 계획 중지만으로 기존 대기 이력을
+완료 처리하지 않으며, 동기화·접수 처리 결과를 확인한다. 검사 통과를 위해 SQL로 강제 정리하지 않는다.
 중지된 deployment에 활성 스케줄이 남아 있어도 차단한다. 자동 취소·정산·환급은 하지 않는다.
 
 - `PASS`: 접수 제어 지원·중지 상태·양의 정수 버전을 확인했고 검사한 범위에서 남은 작업 없음.
 - `BLOCKED`: 접수 제어 미지원, 접수 중지 전 또는 남은 작업 존재. 사유에 맞게 조치한 뒤 재검사한다.
 - `UNKNOWN`: DB/Prefect 조회 실패, 불완전 응답, 점검 중 변경 등으로 확인 불가. 장애를 해결한 뒤 재검사.
   기존 이력을 보존하며 한 flow의 이력이 2,000개 이상이면 전체 검사 범위를 확장·검증하기 전까지 중단한다.
-- 보고서는 `schemaVersion=3`이다. `PASS`에는 `admission_supported=true`, `admission_blocked=true`,
+- 보고서는 `schemaVersion=4`이다. `PASS`에는 `admission_supported=true`, `admission_blocked=true`,
   `admission_version>=1`과 `checks.open_admission=0`이 필요하며 활성화 도구도 이를 검증한다.
+  `checks.active_schedules`는 Prefect 일정, `checks.unpaused_ops_schedules`는 Ops의 미중지 계획,
+  `checks.unsettled_schedule_occurrences`는 `SUBMITTED`·`BLOCKED` 이외의 일별 접수 이력이다.
+  세 항목 모두 0이어야 하며 누락·잘못된 형식·이전 버전 보고서는 성공 증거로 인정하지 않는다.
+  구버전 이미지에 일정 모델이 없다면 실제 DB에도 두 일정 테이블이 없는지 확인한다.
+  모델·테이블 일부만 존재하거나 조회 실패·점검 전후 건수 변경이 있으면 `UNKNOWN`으로 중단한다.
   접수가 열려 있으면 `reason=admission_open`으로 차단한다. 점검 중 접수 상태 버전이 바뀌거나
   중지 상태의 버전이 누락·잘못된 값이면 `UNKNOWN`으로 중단한다.
 - `0020` 이전 이미지에는 접수 제어가 없어 `admission_supported=false`, `admission_blocked=false`다.
