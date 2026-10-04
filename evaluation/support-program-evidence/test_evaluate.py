@@ -393,7 +393,7 @@ def test_capture_write_failure_preserves_previous_record_and_closes_client(loade
 def test_shared_run_reports_recalculate_without_api(capture_path):
     capture = json.loads(capture_path.read_text(encoding="utf-8"))
     fixtures = [evaluate.load_fixture(HERE / name) for name in (
-        "fixture.json", "target-coverage-fixture.json",
+        "fixture.json", "target-coverage-fixture.json", "runs/official-answer-20260907-v2/fixture.json",
     )]
     matching = [loaded for loaded in fixtures if loaded[2] == capture["fixtureSha256"]]
     assert len(matching) == 1, "shared capture must match exactly one known fixture"

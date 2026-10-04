@@ -1337,3 +1337,27 @@ it('RAG 새 실행을 무료 재계산으로 표시하지 않는다', async () =
   expect(await screen.findByText(/새 모델 실행 결과입니다/)).toBeTruthy()
   expect(screen.queryByText(/이번 재계산의 모델 API 호출은 0회/)).toBeNull()
 })
+
+
+it('실제 공고의 과거 응답은 출처와 당시 모델을 보여주고 미검토 승인·기준 지정을 막는다', async () => {
+  const original = fetchMock.getMockImplementation()!
+  const state: EvaluationReview = { ...reviewDefaults, can_promote: false, quality: qualityState,
+    material_error: '', is_baseline: false, baseline_version: 0, baseline_history: [], reviews: [],
+    material: { ...reviewMaterial, data_type: 'official-html-snapshot', candidate_origin: 'historical-answer-projection',
+      recorded_model: 'gpt-5.6-luna', recorded_at: '2026-09-06T16:10:50Z',
+      cases: [{ ...reviewMaterial.cases[0], source: {
+        url: 'https://www.bizinfo.go.kr/sii/siia/selectSIIA200Detail.do?pblancId=PBLN_000000000116004',
+        collected_at: '2026-09-06T15:13:00Z', html_sha256: 'a'.repeat(64), content_sha256: 'b'.repeat(64),
+        scope: 'frozen-title-and-body-html-no-attachments',
+      } }],
+    },
+  }
+  fetchMock.mockImplementation(async (path, options) => path.endsWith('/review') ? json(state) : original(path, options))
+  open(`/ops/evaluations/${id}`)
+  expect(await screen.findByText(/과거 저장 응답 · gpt-5.6-luna/)).toBeTruthy()
+  expect(screen.getByText(/첨부파일과 현재 공고의 변경 내용은 포함하지 않습니다/)).toBeTruthy()
+  expect(screen.getByRole('link', { name: '공고 출처 보기' }).getAttribute('href')).toBe(state.material!.cases[0].source!.url)
+  expect(screen.getByRole('button', { name: '검토 승인 저장' })).toHaveProperty('disabled', true)
+  expect(screen.getByRole('button', { name: '비교 기준으로 지정' })).toHaveProperty('disabled', true)
+  expect(fetchMock.mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false)
+})

@@ -44,7 +44,8 @@ def review_material(run):
         reference_capture = json.loads(reference_raw)
         if (
             sha256(reference_raw).hexdigest() != comparison["reference_execution"]["capture_sha256"]
-            or reference_capture.get("schemaVersion") != "support-program-evidence-capture-v1"
+            or reference_capture.get("schemaVersion")
+            not in {"support-program-evidence-capture-v1", "support-program-evidence-capture-v2"}
             or reference_capture.get("scope", "fixed-answer-context-only") != comparison["scope"]
             or reference_capture["fixtureSha256"] != dataset["fixture_sha256"]
             or reference_capture["completed"] is not True
@@ -52,19 +53,29 @@ def review_material(run):
             raise ResultsUnavailable
         results = {item["caseId"]: item["response"] for item in capture["cases"]}
         references = {item["caseId"]: item["response"] for item in reference_capture["cases"]}
+        official = fixture.get("schemaVersion") == "support-program-evidence-eval-v2"
+        # 실제 공고 v2는 캡처 당시 Core 청크 ID를 보존한다. v1의 식별 계약도 유지한다.
         # fixture v1의 청크 식별 계약. 평가 SDK 없이 원본 인용 ID를 화면의 순번으로 해석한다.
         cited_orders = {}
         for case_id in dataset["case_ids"]:
             document = documents[cases[case_id]["documentId"]]
             by_id = {
-                sha256(
-                    f"evidence-eval-v1\0{document['id']}\0{chunk['order']}\0{chunk['text']}".encode()
-                ).hexdigest(): chunk["order"]
+                (
+                    chunk["id"]
+                    if official
+                    else sha256(
+                        f"evidence-eval-v1\0{document['id']}\0{chunk['order']}\0{chunk['text']}".encode()
+                    ).hexdigest()
+                ): chunk["order"]
                 for chunk in document["chunks"]
             }
             cited_orders[case_id] = [by_id[value] for value in results[case_id]["citationChunkIds"]]
         return {
             "evaluation_scope": comparison["scope"],
+            "data_type": fixture.get("dataType", "synthetic"),
+            "candidate_origin": capture.get("measurementKind", "recorded-answer"),
+            "recorded_model": capture["model"],
+            "recorded_at": capture.get("startedAt"),
             "capture_sha256": capture_hash,
             "fixture_sha256": dataset["fixture_sha256"],
             "cases": [
@@ -73,6 +84,21 @@ def review_material(run):
                     "question": cases[case_id]["question"],
                     "document_title": documents[cases[case_id]["documentId"]]["title"],
                     "evidence": documents[cases[case_id]["documentId"]]["chunks"],
+                    "source": {
+                        "url": documents[cases[case_id]["documentId"]]["source"]["sourceUrl"],
+                        "collected_at": documents[cases[case_id]["documentId"]]["source"][
+                            "collectedAt"
+                        ],
+                        "html_sha256": documents[cases[case_id]["documentId"]]["source"][
+                            "htmlSha256"
+                        ],
+                        "content_sha256": documents[cases[case_id]["documentId"]]["source"][
+                            "contentSha256"
+                        ],
+                        "scope": documents[cases[case_id]["documentId"]]["source"]["scope"],
+                    }
+                    if official
+                    else None,
                     "answer": results[case_id]["answer"],
                     "answer_status": results[case_id]["answerStatus"],
                     "cited_orders": cited_orders[case_id],
