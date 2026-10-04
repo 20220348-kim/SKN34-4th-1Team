@@ -17,6 +17,7 @@ export async function checkBrowserLogin({ origin, email, password, expected }, p
   }
   const channel = process.env.RESTORE_BROWSER_CHANNEL
   assert.ok(channel === undefined || ['chrome', 'msedge'].includes(channel))
+  progress('LAUNCH')
   const browser = await chromium.launch({ headless: true, ...(channel ? { channel } : {}) })
   const version = browser.version()
   let context
@@ -47,8 +48,8 @@ export async function checkBrowserLogin({ origin, email, password, expected }, p
       }
     })
     assert.equal((await context.cookies()).length, 0)
-    progress('LOGIN_FORM')
     const page = await context.newPage()
+    progress('LOGIN_FORM')
     await page.goto(origin + '/ops/evaluations', { waitUntil: 'domcontentloaded' })
     const form = page.getByRole('form', { name: '로그인', exact: true })
     await form.waitFor()
@@ -72,16 +73,18 @@ export async function checkBrowserLogin({ origin, email, password, expected }, p
       const reply = await fetch(target, { credentials: 'same-origin', cache: 'no-store' })
       return { status: reply.status, body: await reply.json() }
     }, path)
+    progress('IDENTITY')
     const core = await read('/api/v1/admin/session')
     const ops = await read('/api/v1/ops/session')
     assert.ok(core.status === 200 && core.body.email === email && core.body.role === 'ADMIN' && Number.isInteger(core.body.accountId), 'Core admin session differs')
     assert.ok(ops.status === 200 && ops.body.user?.id === 'core:' + core.body.accountId && ops.body.user.username === email, 'Ops did not authenticate the Core principal')
     assert.ok(ops.body.live_enabled === false && ops.body.rag_live_enabled === false, 'Browser verification requires disabled paid evaluation')
+    progress('RELOAD')
     await page.reload({ waitUntil: 'domcontentloaded' })
     await page.getByRole('navigation', { name: '운영 메뉴' }).getByText(email, { exact: true }).waitFor()
     const history = page.getByRole('region', { name: '평가 실행 이력' })
-    progress('LIST')
     const locations = new Map(), listings = []
+    progress('LIST')
     for (let number = 1; ; number++) {
       const listed = await read(`/api/v1/ops/evaluations?page=${number}`)
       assert.equal(listed.status, 200, 'Evaluation page is unavailable')
@@ -124,8 +127,8 @@ export async function checkBrowserLogin({ origin, email, password, expected }, p
       await page.locator('dd').getByText(expected[id].execution_spec_sha256, { exact: true }).waitFor()
       await page.getByRole('region', { name: '실행 예산 장부' }).getByText('새 모델 호출을 예약하는 실행이 아닙니다.', { exact: false }).waitFor()
       const reportPath = `/api/v1/ops/evaluations/${id}/report`
-      progress('REPORT')
       assert.equal(await page.getByRole('link', { name: 'Evidently 보고서', exact: true }).getAttribute('href'), reportPath)
+      progress('REPORT')
       const report = await page.evaluate(async (path) => {
         const reply = await fetch(path, { credentials: 'same-origin', cache: 'no-store' })
         const bytes = await reply.arrayBuffer()
@@ -150,14 +153,15 @@ export async function checkBrowserLogin({ origin, email, password, expected }, p
       ...ids.flatMap((id) => ['', '/budget', '/report'].map((suffix) => `/api/v1/ops/evaluations/${id}${suffix}`)),
     ]
     const status = (path) => page.evaluate(async (target) => (await fetch(target, { credentials: 'same-origin', cache: 'no-store' })).status, path)
+    progress('ANONYMOUS')
     for (const path of protectedPaths) assert.equal(await status(path), 401, 'Protected read remained available after logout')
     await page.goto(origin + '/ops/evaluations', { waitUntil: 'domcontentloaded' })
     await form.waitFor()
     assert.equal(await history.count(), 0)
     // Reuse only this test's server-issued cookie, in memory, after logout.
     // Anonymous 401 alone does not prove that the server revoked the session.
+    progress('REVOKED_SESSION')
     try {
-      progress('REVOKED_SESSION')
       await context.addCookies([cookie])
       assert.ok((await context.cookies(origin)).some((item) => item.name === cookie.name && item.value === cookie.value), 'Revoked test cookie was not attached')
       for (const path of protectedPaths) assert.equal(await status(path), 401, 'Revoked session remained usable after logout')

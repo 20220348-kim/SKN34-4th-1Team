@@ -25,7 +25,7 @@ class ManagementTests(unittest.TestCase):
             "email": "fixture@example.invalid",
             "role": "ADMIN",
         }
-        spec = {"dataset": {"case_ids": ["test"]}}
+        spec = {"dataset": {"case_ids": ["test"], "fixture_sha256": "a" * 64}}
         self.expected = {
             key: {**row, "execution_spec_sha256": digest(spec)}
             for key, row in EXPECTED.items()
@@ -49,7 +49,11 @@ class ManagementTests(unittest.TestCase):
         self.rows.append({"id": "fixture-cancelled"})
         self.routes = {
             "/api/v1/ops/schedules?page=1": {
-                "enabled": False, "timezone": "Asia/Seoul", "page": 1, "total": 0, "results": []
+                "enabled": False,
+                "timezone": "Asia/Seoul",
+                "page": 1,
+                "total": 0,
+                "results": [],
             },
             "/api/v1/ops/session": {
                 "user": {"id": "core:1", "username": self.principal["email"]},
@@ -72,7 +76,13 @@ class ManagementTests(unittest.TestCase):
                 "calls": [],
             }
             self.routes[route + "/review"] = {
-                "material": {"cases": []}, "material_error": "", "reviews": [],
+                "material": {
+                    "fixture_sha256": "a" * 64,
+                    "cases": [{"case_id": "test"}],
+                },
+                "material_error": "",
+                "quality": {"blocked_reason": ""},
+                "reviews": [],
             }
         self.calls = []
         self.fail_status = None
@@ -140,14 +150,25 @@ class ManagementTests(unittest.TestCase):
         result = self.verify()
         self.assertNotIn(route + "/review", result["responses"])
 
-    def test_http_200_with_missing_review_inputs_cannot_pass(self):
+    def test_http_200_with_missing_or_wrong_review_material_cannot_pass(self):
         route = "/api/v1/ops/evaluations/" + self.rows[0]["id"] + "/review"
-        for value in (
-            {"material": None, "material_error": "검토 자료 누락"},
-            {"material": {"cases": []}, "material_error": "자료 무결성 오류"},
+        original = copy.deepcopy(self.routes[route])
+        for change in (
+            {"material": None},
+            {"material_error": "검토 자료를 확인할 수 없습니다."},
+            {
+                "quality": {
+                    "blocked_reason": "완료 자료 또는 정책 명세를 확인할 수 없습니다."
+                }
+            },
+            {"material": {"fixture_sha256": "b" * 64, "cases": [{"case_id": "test"}]}},
+            {"material": {"fixture_sha256": "a" * 64, "cases": []}},
         ):
-            self.routes[route] = value
-            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "review inputs"):
+            self.routes[route] = {**original, **change}
+            with (
+                self.subTest(change=change),
+                self.assertRaisesRegex(ValueError, "review material"),
+            ):
                 self.verify()
 
     def test_follows_only_bounded_local_pages_and_counts_every_row(self):

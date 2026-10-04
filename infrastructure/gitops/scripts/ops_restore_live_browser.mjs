@@ -11,7 +11,10 @@ import { createServer as createViteServer } from '../../../frontend/web/node_mod
 import { checkBrowserLogin } from './ops_browser_login.mjs'
 
 const root = fileURLToPath(new URL('../../../frontend/web/', import.meta.url))
-const helperSteps = new Set(['SETUP', 'CORE_LOGIN', 'SERVERS', 'MANAGEMENT', 'REPORTS', 'BROWSER', 'REVOCATION', 'FILES'])
+const helperStages = ['SETUP', 'CORE_LOGIN', 'SERVERS', 'MANAGEMENT', 'REPORTS', 'BROWSER', 'REVOCATION', 'ARTIFACT_OUTAGE', 'FILES']
+const browserStages = ['LAUNCH', 'LOGIN_FORM', 'PASSWORD_LOGIN', 'SESSION', 'IDENTITY', 'RELOAD', 'LIST', 'DETAIL', 'REPORT', 'LOGOUT', 'ANONYMOUS', 'REVOKED_SESSION']
+const stages = new Set(['INPUT', 'HELPER', 'PROXY', 'COMPLETE', 'EXIT', 'CLEANUP',
+  ...helperStages.map((value) => 'HELPER_' + value), ...browserStages.map((value) => 'BROWSER_' + value)])
 const bounded = async (promise, milliseconds) => {
   let timer
   try { return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Restored browser transport timed out')), milliseconds) })]) }
@@ -19,12 +22,14 @@ const bounded = async (promise, milliseconds) => {
 }
 
 export async function runLiveRestore({ program, password, expected }, child, port = 5173, progress = () => {}) {
-  progress('HELPER')
-  let buffer = '', failure, receiver, origin, vite, cache, proof, result
+  let buffer = '', failure, receiver, origin, vite, cache, proof, result, ended = false, stage = 'HELPER'
+  const updateStage = (value) => { stage = value; progress(value) }
+  updateStage('HELPER')
   const frames = [], servers = [], failures = []
   const originalEnv = Object.fromEntries(['K8S_CORE_PORT', 'K8S_OPS_PORT', 'K8S_DEV_LOGIN'].map((key) => [key, process.env[key]]))
   const fail = () => {
     failure = new Error('Restored browser helper transport failed')
+    frames.length = 0
     receiver?.reject(failure)
     receiver = undefined
   }
@@ -33,17 +38,18 @@ export async function runLiveRestore({ program, password, expected }, child, por
   child.stdin.on('error', fail)
   child.stdout.on('error', fail)
   child.stdout.setEncoding('utf8').on('data', (chunk) => {
+    if (failure) return
     buffer += chunk
     if (Buffer.byteLength(buffer) > 40 * 1024 * 1024) { fail(); return }
     let end
-    while ((end = buffer.indexOf('\n')) !== -1) {
+    while (!failure && (end = buffer.indexOf('\n')) !== -1) {
       const line = buffer.slice(0, end)
       buffer = buffer.slice(end + 1)
       try {
         const value = JSON.parse(line)
         if (value.phase === 'progress') {
-          assert.ok(helperSteps.has(value.step))
-          progress('HELPER_' + value.step)
+          assert.ok(Object.keys(value).length === 2 && helperStages.includes(value.step))
+          updateStage('HELPER_' + value.step)
           continue
         }
         if (receiver) { receiver.resolve(value); receiver = undefined }
@@ -51,10 +57,14 @@ export async function runLiveRestore({ program, password, expected }, child, por
         else fail()
       } catch { fail() }
     }
-  }).on('end', fail)
+  }).on('end', () => {
+    ended = true
+    if (buffer || receiver) fail()
+  })
   const read = (timeout = 20000) => bounded(new Promise((resolveFrame, reject) => {
-    if (frames.length) resolveFrame(frames.shift())
-    else if (failure) reject(failure)
+    if (failure) reject(failure)
+    else if (frames.length) resolveFrame(frames.shift())
+    else if (ended) reject(new Error('Restored browser helper output ended early'))
     else receiver = { resolve: resolveFrame, reject }
   }), timeout)
   const write = (value) => new Promise((done, reject) => child.stdin.write(JSON.stringify(value) + '\n', (error) => error ? reject(new Error('Restored browser helper input failed')) : done()))
@@ -70,7 +80,7 @@ export async function runLiveRestore({ program, password, expected }, child, por
     const ready = await read(150000)
     assert.equal(ready.phase, 'browser_ready')
     assert.ok(typeof ready.email === 'string' && ready.email.includes('@'))
-    progress('PROXY')
+    updateStage('PROXY')
     for (const target of [8080, 8000]) {
       const server = createServer(async (request, reply) => {
         try {
@@ -113,46 +123,53 @@ export async function runLiveRestore({ program, password, expected }, child, por
     await optimizer?.scanProcessing
     await Promise.all(Object.values(optimizer?.metadata.discovered ?? {}).map((item) => item.processing))
     origin = 'http://127.0.0.1:' + vite.httpServer.address().port
-    progress('BROWSER')
-    proof = await checkBrowserLogin({ origin, email: ready.email, password, expected }, (value) => progress('BROWSER_' + value))
+    proof = await checkBrowserLogin({ origin, email: ready.email, password, expected }, (value) => {
+      assert.ok(browserStages.includes(value))
+      updateStage('BROWSER_' + value)
+    })
     assert.deepEqual(failures, [])
-    progress('COMPLETE')
+    updateStage('COMPLETE')
     const completed = await exchange({ phase: 'browser_done' }, 90000)
     assert.equal(completed.phase, 'complete')
     result = completed.result
+    updateStage('EXIT')
     child.stdin.end()
-    progress('EXIT')
     assert.deepEqual(await bounded(exited, 20000), { code: 0, signal: null }, 'Restored HTTP helper did not exit cleanly')
+    updateStage('CLEANUP')
+  } catch (error) {
+    error.restoreStage = stage
+    throw error
   } finally {
-    try {
-      const stopped = await Promise.allSettled([vite?.close(), ...servers.map(async (server) => {
-        if (!server.listening) return
-        const closed = new Promise((done, reject) => server.close((error) => error ? reject(error) : done()))
-        server.closeAllConnections()
-        await closed
-      })])
-      if (cache) {
-        assert.ok(cache.startsWith(resolve(tmpdir()) + sep + 'govbiz-restored-live-'))
-        await rm(cache, { recursive: true, force: true })
+    await (async () => {
+      try {
+        const stopped = await Promise.allSettled([vite?.close(), ...servers.map(async (server) => {
+          if (!server.listening) return
+          const closed = new Promise((done, reject) => server.close((error) => error ? reject(error) : done()))
+          server.closeAllConnections()
+          await closed
+        })])
+        if (cache) {
+          assert.ok(cache.startsWith(resolve(tmpdir()) + sep + 'govbiz-restored-live-'))
+          await rm(cache, { recursive: true, force: true })
+        }
+        assert.ok(stopped.every((item) => item.status === 'fulfilled'), 'Restored browser proxy cleanup failed')
+      } finally {
+        for (const [key, value] of Object.entries(originalEnv)) {
+          if (value === undefined) delete process.env[key]
+          else process.env[key] = value
+        }
+        if (child.exitCode === null && child.signalCode === null) {
+          child.stdin.destroy()
+          child.kill()
+          await bounded(exited, 10000)
+        }
       }
-      assert.ok(stopped.every((item) => item.status === 'fulfilled'), 'Restored browser proxy cleanup failed')
-    } finally {
-      for (const [key, value] of Object.entries(originalEnv)) {
-        if (value === undefined) delete process.env[key]
-        else process.env[key] = value
-      }
-      if (child.exitCode === null && child.signalCode === null) {
-        child.stdin.destroy()
-        child.kill()
-        await bounded(exited, 10000)
-      }
-    }
+    })().catch((error) => { error.restoreStage = 'CLEANUP'; throw error })
   }
   return { ...result, browser_login: { ...proof, response_source: 'restored_core_ops_http', transport: 'docker_attached_stdio', proxy_stopped: true, helper_exited: true } }
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  let phase = 'INPUT'
   try {
     let input = ''
     for await (const chunk of process.stdin) { input += chunk; assert.ok(Buffer.byteLength(input) <= 1024 * 1024) }
@@ -160,10 +177,10 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     assert.match(value.identity, /^[a-f0-9]{64}$/)
     assert.ok(typeof value.program === 'string' && value.program.length < 512 * 1024)
     const child = spawn('docker', ['start', '--attach', '--interactive', value.identity], { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true })
-    process.stdout.write(JSON.stringify(await runLiveRestore(value, child, 5173, (value) => { phase = value })))
-  } catch {
-    // Never print helper output, Playwright exceptions, form values or cookies.
-    process.stderr.write('BRIDGE_RESTORE_LIVE_' + phase + '\n')
+    process.stdout.write(JSON.stringify(await runLiveRestore(value, child)))
+  } catch (error) {
+    const stage = stages.has(error.restoreStage) ? error.restoreStage : 'INPUT'
+    process.stderr.write('BRIDGE_RESTORE_LIVE_' + stage + '\n')
     process.exitCode = 1
   }
 }

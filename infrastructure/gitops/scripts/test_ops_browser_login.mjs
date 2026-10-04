@@ -2,11 +2,12 @@
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { once } from 'node:events'
-import { mkdtemp, readdir, rm } from 'node:fs/promises'
+import { EventEmitter, once } from 'node:events'
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
+import { PassThrough, Writable } from 'node:stream'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import { createServer as createViteServer } from '../../../frontend/web/node_modules/vite/dist/node/index.js'
@@ -49,7 +50,7 @@ async function fixture(defect, verify, count = 1) {
     if (request.url === '/api/v1/auth/login' && request.method === 'POST') {
       let raw = ''
       for await (const chunk of request) raw += chunk
-      if (raw !== JSON.stringify({ email, password, rememberMe: false })) { send(reply, 401, {}); return }
+      if (JSON.stringify(JSON.parse(raw)) !== JSON.stringify({ email, password, rememberMe: false })) { send(reply, 401, {}); return }
       loggedIn = true
       if (defect !== 'missing_cookie') reply.setHeader('Set-Cookie', `govbiz_session=${token}; HttpOnly; SameSite=Lax; Path=/`)
       send(reply, 200, { expiresAt: '2027-01-01T00:00:00Z', account: { email, role: 'ADMIN', tier: 'MEMBER', emailVerified: true, onboarded: true, company: null } })
@@ -140,7 +141,9 @@ async function fixture(defect, verify, count = 1) {
 
 test('browser uses the real login form, server-issued cookie, Ops detail, refresh and logout with HTTP fixtures', { timeout: 120000 }, async () => {
   await fixture(null, async (input) => {
-    const proof = await checkBrowserLogin(input)
+    const stages = []
+    const proof = await checkBrowserLogin(input, (stage) => stages.push(stage))
+    assert.deepEqual(stages, ['LAUNCH', 'LOGIN_FORM', 'PASSWORD_LOGIN', 'SESSION', 'IDENTITY', 'RELOAD', 'LIST', 'DETAIL', 'REPORT', 'LOGOUT', 'ANONYMOUS', 'REVOKED_SESSION'])
     assert.equal(proof.status, 'PASS')
     assert.equal(proof.response_source, 'core_ops_http')
     assert.equal(proof.details_verified, 1)
@@ -246,7 +249,7 @@ for (const failExit of [false, true]) {
       const envBefore = ['K8S_CORE_PORT', 'K8S_OPS_PORT', 'K8S_DEV_LOGIN'].map((key) => process.env[key])
       const child = spawn(process.execPath, ['-e', relayProgram], { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true })
       const options = { ...input, program: JSON.stringify({ origin: input.origin, email, failExit }) }
-      if (failExit) await assert.rejects(runLiveRestore(options, child, 0), /did not exit cleanly/)
+      if (failExit) await assert.rejects(runLiveRestore(options, child, 0), { restoreStage: 'EXIT' })
       else {
         const phases = []
         const result = await runLiveRestore(options, child, 0, (value) => phases.push(value))
@@ -271,8 +274,65 @@ for (const failExit of [false, true]) {
 
 test('restored browser rejects malformed helper output and closes its process', { timeout: 20000 }, async () => {
   const child = spawn(process.execPath, ['-e', "process.stdin.once('data',()=>{process.stdout.write('not-json\\n');process.stdin.destroy()})"], { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true })
-  await assert.rejects(runLiveRestore({ program: 'fixture', password, expected }, child, 0), /transport failed/)
+  await assert.rejects(runLiveRestore({ program: 'fixture', password, expected }, child, 0), { restoreStage: 'HELPER' })
   assert.ok(child.exitCode !== null || child.signalCode !== null)
+})
+
+for (const helperStage of ['MANAGEMENT', 'private-untrusted-value']) {
+  test(`restored browser accepts only fixed helper diagnostics: ${helperStage}`, { timeout: 20000 }, async () => {
+    const code = `process.stdin.once('data',()=>{process.stdout.write(JSON.stringify({phase:'progress',step:${JSON.stringify(helperStage)}})+'\\n');process.stdin.destroy()})`
+    const child = spawn(process.execPath, ['-e', code], { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true })
+    await assert.rejects(runLiveRestore({ program: 'fixture', password, expected }, child, 0), {
+      restoreStage: helperStage === 'MANAGEMENT' ? 'HELPER_MANAGEMENT' : 'HELPER',
+    })
+  })
+}
+
+test('malformed helper frames cannot be hidden by a queued ready frame', { timeout: 20000 }, async () => {
+  // Deliver both frames before write's callback, so read() sees the queued data.
+  const child = new EventEmitter()
+  child.exitCode = child.signalCode = null
+  child.stdout = new PassThrough()
+  child.stdin = new Writable({ write(_chunk, _encoding, done) {
+    child.stdout.write('not-json\n' + JSON.stringify({ phase: 'browser_ready', email }) + '\n')
+    done()
+  } })
+  child.kill = () => {
+    child.signalCode = 'SIGTERM'
+    child.stdout.end()
+    child.emit('close', null, 'SIGTERM')
+  }
+  await assert.rejects(runLiveRestore({ program: 'fixture', password, expected }, child, 0), { restoreStage: 'HELPER' })
+  assert.equal(child.signalCode, 'SIGTERM')
+})
+
+test('restored browser uses the Python request validator over attached stdio', { timeout: 120000 }, async () => {
+  await fixture(null, async (input) => {
+    const reservation = createServer()
+    reservation.listen(0, '127.0.0.1')
+    await once(reservation, 'listening')
+    const port = reservation.address().port
+    await new Promise((done) => reservation.close(done))
+    const source = await readFile(new URL('./ops_http_restore_probe.py', import.meta.url), 'utf8')
+    const routes = ['/api/v1/ops/session', '/api/v1/ops/evaluations?page=1', '/api/v1/ops/budget/reservations?page=1', '/api/v1/ops/schedules?page=1',
+      ...Object.keys(input.expected).flatMap((key) => ['', '/budget', '/report'].map((suffix) => `/api/v1/ops/evaluations/${key}${suffix}`))]
+    const program = source + '\n' + [
+      `BROWSER_ORIGIN = ${JSON.stringify('http://127.0.0.1:' + port)}`,
+      '_http_response = response',
+      'def response(path, **options):',
+      `    options['port'] = ${new URL(input.origin).port}`,
+      `    options['headers']['Host'] = ${JSON.stringify(new URL(input.origin).host)}`,
+      `    if 'Origin' in options['headers']: options['headers']['Origin'] = ${JSON.stringify(input.origin)}`,
+      '    return _http_response(path, **options)',
+      `browser_requests({'email': ${JSON.stringify(email)}}, set(${JSON.stringify(routes)}))`,
+      "print(json.dumps({'phase':'complete','result':{'status':'PASS'}}), flush=True)",
+    ].join('\n')
+    const python = fileURLToPath(new URL(process.platform === 'win32' ? '../../../backend/ops-service/.venv/Scripts/python.exe' : '../../../backend/ops-service/.venv/bin/python', import.meta.url))
+    const child = spawn(python, ['-B', '-u', '-c', 'import sys,json; exec(json.loads(sys.stdin.readline()))'], { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true })
+    const result = await runLiveRestore({ ...input, program }, child, port)
+    assert.equal(result.browser_login.revoked_session_rejected, true)
+    assert.equal(result.browser_login.helper_exited, true)
+  })
 })
 
 test('restored browser CLI redacts malformed input', () => {
@@ -284,15 +344,86 @@ test('restored browser CLI redacts malformed input', () => {
   assert.equal(result.stderr, 'BRIDGE_RESTORE_LIVE_INPUT\n')
 })
 
-
-test('restored helper progress exposes only fixed phases, never private exception output', { timeout: 20000 }, async () => {
-  for (const step of ['MANAGEMENT', 'private-password-cookie']) {
-    const phases = []
-    const child = spawn(process.execPath, ['-e', `process.stdin.once('data', () => {
-      process.stdout.write(JSON.stringify({phase:'progress',step:${JSON.stringify(step)}}) + '\\n');
-      process.stdout.end('private-error-not-json\\n'); process.stdin.destroy();
-    })`], { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true })
-    await assert.rejects(runLiveRestore({ program: 'fixture', password, expected }, child, 0, (value) => phases.push(value)), /transport failed/)
-    assert.deepEqual(phases, step === 'MANAGEMENT' ? ['HELPER', 'HELPER_MANAGEMENT'] : ['HELPER'])
+test('isolated Docker attach carries real Python HTTP and browser sessions', {
+  timeout: 120000, skip: !process.env.RESTORE_DOCKER_IMAGE,
+}, async () => {
+  const reservation = createServer()
+  reservation.listen(0, '127.0.0.1')
+  await once(reservation, 'listening')
+  const port = reservation.address().port
+  await new Promise((done) => reservation.close(done))
+  const source = await readFile(new URL('./ops_http_restore_probe.py', import.meta.url), 'utf8')
+  const path = `/api/v1/ops/evaluations/${id}`
+  const settings = { origin: 'http://127.0.0.1:' + port, email, password, report: body, routes: {
+    '/api/v1/ops/session': { user: { id: 'core:1', username: email }, csrf_token: 'fixture-csrf', live_enabled: false, rag_live_enabled: false, datasets: [dataset] },
+    '/api/v1/ops/evaluations?page=1': { count: 1, next: null, previous: null, results: [run] },
+    '/api/v1/ops/schedules?page=1': { enabled: false, timezone: 'Asia/Seoul', page: 1, total: 0, results: [] },
+    '/api/v1/ops/budget/reservations?page=1': { as_of: at, count: 0, next: null, previous: null, results: [],
+      summary: { state: 'unconfigured', limits: null, allocated: null, remaining: null, breakdown: null, reservation_count: 0, legacy_live_run_count: 0, change_count: 0, recent_changes: [] } },
+    [path]: run, [path + '/budget']: { as_of: at, state: 'not_applicable', reservation: null, calls: [] },
+  } }
+  const program = source + '\nsettings=json.loads(' + JSON.stringify(JSON.stringify(settings)) + ')\n' + String.raw`
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from threading import Thread
+BROWSER_ORIGIN = settings['origin']
+token = secrets.token_hex(32)
+active = False
+report_path = next(key for key in settings['routes'] if key.endswith('/budget'))[:-7] + '/report'
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *args): pass
+    def send(self, code, value, headers=None):
+        raw = value.encode() if isinstance(value, str) else json.dumps(value).encode()
+        self.send_response(code)
+        for key, item in {'Content-Type':'application/json', 'Cache-Control':'private, no-store', **(headers or {})}.items(): self.send_header(key, item)
+        self.send_header('Content-Length', str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+    def do_GET(self):
+        authorized = active and ('govbiz_session=' + token) in self.headers.get('Cookie', '')
+        if self.path == '/api/v1/ops/session' and not authorized:
+            self.send(200, {**settings['routes'][self.path], 'user':None, 'datasets':[]}); return
+        if not authorized: self.send(401, {}); return
+        if self.path == '/api/v1/admin/session':
+            self.send(200, {'accountId':1, 'email':settings['email'], 'role':'ADMIN'})
+        elif self.path == report_path:
+            self.send(200, settings['report'], {'Content-Type':'text/html', 'Content-Security-Policy':"sandbox allow-scripts; default-src 'none'"})
+        else: self.send(200 if self.path in settings['routes'] else 404, settings['routes'].get(self.path, {}))
+    def do_POST(self):
+        global active
+        if self.headers.get('Origin') != BROWSER_ORIGIN: self.send(403, {}); return
+        if self.path == '/api/v1/auth/login':
+            payload = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+            if payload != {'email':settings['email'], 'password':settings['password'], 'rememberMe':False}: self.send(401, {}); return
+            active = True
+            self.send(200, {'expiresAt':'2027-01-01T00:00:00Z', 'account':{'email':settings['email'], 'role':'ADMIN', 'tier':'MEMBER', 'emailVerified':True, 'onboarded':True, 'company':None}}, {'Set-Cookie':'govbiz_session=' + token + '; HttpOnly; SameSite=Lax; Path=/'})
+        elif self.path == '/api/v1/auth/logout':
+            active = False
+            self.send(204, '', {'Set-Cookie':'govbiz_session=; Max-Age=0; HttpOnly; SameSite=Lax; Path=/'})
+        else: self.send(404, {})
+servers = [ThreadingHTTPServer(('127.0.0.1', port), Handler) for port in (8080, 8000)]
+threads = [Thread(target=server.serve_forever) for server in servers]
+for thread in threads: thread.start()
+try:
+    browser_requests({'email':settings['email']}, set(settings['routes']) | {report_path})
+finally:
+    for server in servers: server.shutdown(); server.server_close()
+    for thread in threads: thread.join()
+print(json.dumps({'phase':'complete','result':{'status':'PASS'}}), flush=True)
+`
+  const created = spawnSync('docker', ['create', '--interactive', '--network', 'none', '--read-only', '--user', '10001:10001',
+    '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges:true', '--memory', '128m', '--pids-limit', '32',
+    '--entrypoint', 'python', process.env.RESTORE_DOCKER_IMAGE, '-B', '-u', '-c', 'import sys,json; exec(json.loads(sys.stdin.readline()))'],
+  { encoding: 'utf8', timeout: 30000, windowsHide: true })
+  assert.equal(created.status, 0, 'Disposable Docker helper creation failed')
+  const identity = created.stdout.trim()
+  assert.match(identity, /^[a-f0-9]{64}$/)
+  try {
+    const child = spawn('docker', ['start', '--attach', '--interactive', identity], { stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true })
+    const result = await runLiveRestore({ program, password, expected }, child, port)
+    assert.equal(result.browser_login.revoked_session_rejected, true)
+    assert.equal(result.browser_login.helper_exited, true)
+  } finally {
+    const removed = spawnSync('docker', ['rm', '--force', '--volumes', identity], { encoding: 'utf8', timeout: 30000, windowsHide: true })
+    assert.equal(removed.status, 0, 'Disposable Docker helper cleanup failed')
   }
 })
