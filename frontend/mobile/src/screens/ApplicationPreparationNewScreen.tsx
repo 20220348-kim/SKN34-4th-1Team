@@ -16,6 +16,7 @@ import { PreparationAccess, PreparationSteps, preparationUi } from '../component
 import { SegmentedControl } from '../components/SegmentedControl'
 import { ReviewSavedPrograms } from '../components/ReviewSavedPrograms'
 import { ChoiceField } from '../components/ChoiceField'
+import { useAppForeground } from '../components/useAppForeground'
 import { CatalogScreen } from './CatalogScreen'
 import { Button, Card, Notice, Page, StatusBadge, colors, styles } from '../ui'
 
@@ -49,12 +50,20 @@ function OwnedNew({ token, email, initialProgram, onOpenProgram, onCreated, onLi
   const [revision, setRevision] = useState(0)
   const request = useRef<AbortController | null>(null)
   const guard = useRef(false)
+  const formSource = useRef<string | null>(null)
+  const formChoice = useRef({ formId, field })
+  formChoice.current = { formId, field }
   const base = getApiBaseUrl()
+  const foreground = useAppForeground()
   const reportError = useCallback((cause: unknown) => {
     if (cause instanceof ApplicationPreparationError && cause.status === 401) void invalidateSession().catch(() => undefined)
     setError(cause instanceof Error ? cause.message : '신청 양식을 확인하지 못했어요.')
   }, [invalidateSession])
-  const applyForms = (items: ApplicationForm[]) => { setForms(items); setFormId(items[0]?.formVersionId ?? ''); setField(items[0]?.supportedServiceFields[0] ?? 'GENERAL') }
+  const applyForms = (items: ApplicationForm[]) => {
+    const selected = items.find(candidate => candidate.formVersionId === formChoice.current.formId) ?? items[0]
+    setForms(items); setFormId(selected?.formVersionId ?? '')
+    setField(selected?.supportedServiceFields.includes(formChoice.current.field) ? formChoice.current.field : selected?.supportedServiceFields[0] ?? 'GENERAL')
+  }
   useEffect(() => {
     let active = true
     void readPendingPreparation(base, email).then(value => { if (active) { setPending(value); setPendingReady(true) } }).catch(cause => { if (active) reportError(cause) })
@@ -72,10 +81,12 @@ function OwnedNew({ token, email, initialProgram, onOpenProgram, onCreated, onLi
   }, [initialProgram?.sourceCode, initialProgram?.sourceProgramId, reportError, token])
   const source = program?.sourceCode, sourceId = program?.id
   useFocusEffect(useCallback(() => {
-    if (step !== 'form' || !source || !sourceId) return
+    if (!foreground || step !== 'form' || !source || !sourceId) return
     const controller = new AbortController(); request.current?.abort(); request.current = controller
     let timer: ReturnType<typeof setTimeout> | undefined
-    setLoading(true); setError(null); setJob(null); setAvailability(null); applyForms([])
+    setLoading(true); setError(null); setJob(null); setAvailability(null)
+    const identity = JSON.stringify([source, sourceId])
+    if (formSource.current !== identity) { formSource.current = identity; applyForms([]) }
     const follow = async (candidate: ApplicationFormDiscoveryJob) => {
       if (controller.signal.aborted) return
       setJob(candidate)
@@ -91,7 +102,7 @@ function OwnedNew({ token, email, initialProgram, onOpenProgram, onCreated, onLi
       await useCase.markDiscoveryJobsSeen(source, sourceId, controller.signal)
     })().catch(cause => { if (!controller.signal.aborted) reportError(cause) }).finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => { controller.abort(); clearTimeout(timer) }
-  }, [step, source, sourceId, revision, reportError, useCase]))
+  }, [foreground, step, source, sourceId, revision, reportError, useCase]))
   function toggle(next: SupportProgram) { if (busy) return; setProgram(previous => previous?.sourceCode === next.sourceCode && previous.id === next.id ? null : next) }
   async function analyze() {
     if (!program || !pendingReady || guard.current || loading || job && !terminal(job)) return

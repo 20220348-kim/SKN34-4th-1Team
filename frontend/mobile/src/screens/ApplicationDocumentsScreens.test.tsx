@@ -1,7 +1,8 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native'
-import { Alert } from 'react-native'
+import { Alert, AppState, type AppStateStatus } from 'react-native'
 import { useAuth } from '../auth/session'
-import { applicationPreparationUseCase } from '../api/applicationPreparation'
+import { applicationPreparationUseCase, discardDeletedPendingPreparation } from '../api/applicationPreparation'
+import { ApplicationPreparationError } from '@govbiz/shared/domain/errors/ApplicationPreparationError'
 import { programClient } from '../api/client'
 import { listReviewSavedPrograms } from '../api/combinationReviews'
 import { shareApplicationFile } from '../api/applicationDocumentFiles'
@@ -15,7 +16,7 @@ jest.mock('expo-router', () => ({ useFocusEffect: (callback: () => () => void) =
   const React = jest.requireActual<typeof import('react')>('react'); React.useEffect(callback, [callback])
 } }))
 jest.mock('../auth/session', () => ({ useAuth: jest.fn() }))
-jest.mock('../api/applicationPreparation', () => ({ applicationPreparationUseCase: jest.fn() }))
+jest.mock('../api/applicationPreparation', () => ({ applicationPreparationUseCase: jest.fn(), discardDeletedPendingPreparation: jest.fn() }))
 jest.mock('../api/client', () => ({ ...jest.requireActual('../api/client'), programClient: jest.fn() }))
 jest.mock('../api/combinationReviews', () => ({ listReviewSavedPrograms: jest.fn() }))
 jest.mock('../api/applicationDocumentFiles', () => ({ shareApplicationFile: jest.fn() }))
@@ -29,6 +30,14 @@ const auth = { status: 'signedIn', session: { accessToken: 'owned-token', accoun
 const listProps = { onLogin: jest.fn(), onNew: jest.fn(), onOpen: jest.fn() }
 const newProps = { onLogin: jest.fn(), onOpenProgram: jest.fn(), onCreated: jest.fn(), onList: jest.fn(), onPendingDocument: jest.fn() }
 const docProps = { id: 9, onLogin: jest.fn(), onEditor: jest.fn(), onReanalyze: jest.fn(), onOnline: jest.fn(), onList: jest.fn(), onOpenPending: jest.fn() }
+function captureTimeouts() {
+  const original = globalThis.setTimeout
+  const calls: Parameters<typeof setTimeout>[] = [], results: ReturnType<typeof setTimeout>[] = []
+  globalThis.setTimeout = ((...args: Parameters<typeof setTimeout>) => {
+    calls.push(args); const timer = original(...args); results.push(timer); return timer
+  }) as typeof setTimeout
+  return { calls, results, restore: () => { globalThis.setTimeout = original } }
+}
 beforeEach(() => {
   process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.example.test'
   jest.mocked(useAuth).mockReturnValue(auth as unknown as ReturnType<typeof useAuth>)
@@ -36,6 +45,7 @@ beforeEach(() => {
   Object.values(listProps).forEach(fn => fn.mockClear()); Object.values(newProps).forEach(fn => fn.mockClear())
   jest.mocked(applicationPreparationUseCase).mockReturnValue(api as unknown as ReturnType<typeof applicationPreparationUseCase>)
   jest.mocked(readPendingPreparation).mockResolvedValue(null)
+  jest.mocked(discardDeletedPendingPreparation).mockReset().mockResolvedValue(undefined)
   api.list.mockResolvedValue({ items: [documentSummary], nextBeforeId: null }); api.recentDocumentJobs.mockResolvedValue([]); api.discoveryJobs.mockResolvedValue([]); api.delete.mockResolvedValue(undefined)
   api.availability.mockResolvedValue({ state: { status: 'AVAILABLE' }, forms: { items: [documentForm] } }); api.markDiscoveryJobsSeen.mockResolvedValue(undefined); api.create.mockResolvedValue(documentPreparation)
   api.get.mockResolvedValue(documentPreparation); api.documents.mockResolvedValue([documentFile]); api.documentJobs.mockResolvedValue([documentJob]); api.documentJob.mockResolvedValue(documentJob); api.markDocumentJobsSeen.mockResolvedValue(undefined)
@@ -142,4 +152,101 @@ test('current generated documents retain overflow guidance and remaining example
   expect(screen.getByText('추진 목표: 칸보다 길어 넣지 못했어요. 약 12자 이내로 줄여 주세요.')).toBeTruthy()
   expect(screen.getByText('길어서 들어가지 않은 목표')).toBeTruthy()
   expect(api.submitDocumentJob).not.toHaveBeenCalled()
+})
+
+test('changing a filter cancels deletion and immediately releases its lock', async () => {
+  let finish!: () => void
+  api.delete.mockReturnValue(new Promise<void>(resolve => { finish = resolve }))
+  const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined)
+  render(<ApplicationDocumentsListScreen {...listProps} />)
+  await screen.findByText('사업계획서')
+  fireEvent.press(screen.getByText('문서 관리')); fireEvent.press(screen.getByLabelText('사업계획서 삭제'))
+  await act(async () => { alert.mock.calls[0][2]!.find(button => button.style === 'destructive')!.onPress!() })
+  const signal = api.delete.mock.calls[0][1] as AbortSignal
+  fireEvent.press(screen.getByRole('tab', { name: '작성 중' }))
+  await waitFor(() => expect(api.list).toHaveBeenCalledWith({ status: 'in_progress' }, expect.any(AbortSignal)))
+  await screen.findByText('사업계획서')
+  expect(signal.aborted).toBe(true)
+  expect(screen.getByLabelText('사업계획서 삭제').props.accessibilityState.disabled).toBe(false)
+  await act(async () => finish())
+  expect(screen.getByLabelText('사업계획서 삭제').props.accessibilityState.busy).toBe(false)
+})
+
+test('missing result documents retain the recovery action and return to the list after clearing', async () => {
+  const pending = { kind: 'document' as const, preparationId: 9, expectedRevision: 1, requestKey: '11111111-1111-4111-8111-111111111111' }
+  jest.mocked(readPendingPreparation).mockResolvedValue(pending)
+  api.get.mockRejectedValue(new ApplicationPreparationError(404, 'APPLICATION_PREPARATION_NOT_FOUND'))
+  render(<ApplicationDocumentScreen {...docProps} />)
+  fireEvent.press(await screen.findByLabelText('보관 요청 대상 확인'))
+  await screen.findByText('대상 문서가 없어 보관 요청을 정리했어요. 목록에서 새 신청문서를 작성할 수 있어요.')
+  expect(discardDeletedPendingPreparation).toHaveBeenCalledWith('owned-token', 'first@test.com', pending, expect.any(AbortSignal))
+  expect(api.submitDocumentJob).not.toHaveBeenCalled()
+  expect(screen.queryByLabelText('보관 요청 대상 확인')).toBeNull()
+  fireEvent.press(screen.getByLabelText('목록으로 돌아가기'))
+  expect(docProps.onList).toHaveBeenCalled()
+})
+
+test('list recovery preserves a failed check and clears only after confirmed success', async () => {
+  const pending = { kind: 'document' as const, preparationId: 9, expectedRevision: 1, requestKey: '11111111-1111-4111-8111-111111111111' }
+  jest.mocked(readPendingPreparation).mockResolvedValue(pending)
+  jest.mocked(discardDeletedPendingPreparation).mockRejectedValueOnce(new ApplicationPreparationError(503, 'REQUEST_FAILED'))
+  render(<ApplicationDocumentsListScreen {...listProps} />)
+  fireEvent.press(await screen.findByLabelText('보관 요청 대상 확인'))
+  await screen.findByText('서버에서 신청문서 요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.')
+  expect(screen.getByLabelText('미확인 요청 이어서 확인')).toBeTruthy()
+  jest.mocked(readPendingPreparation).mockResolvedValue(null)
+  fireEvent.press(screen.getByLabelText('보관 요청 대상 확인'))
+  await screen.findByText('대상 문서가 없어 보관 요청을 정리했어요. 새 신청문서를 작성할 수 있어요.')
+  await waitFor(() => expect(screen.queryByLabelText('미확인 요청 이어서 확인')).toBeNull())
+  expect(api.submitDocumentJob).not.toHaveBeenCalled(); expect(api.discover).not.toHaveBeenCalled()
+})
+
+test.each(['documents', 'list', 'discovery'] as const)('%s polling waits for foreground, aborts on background and resumes with reads', async mode => {
+  const previous = AppState.currentState; AppState.currentState = 'background'
+  let change!: (state: AppStateStatus) => void
+  jest.spyOn(AppState, 'addEventListener').mockImplementation((_event, listener) => { change = listener; return { remove: jest.fn() } })
+  const timers = captureTimeouts()
+  const cancel = jest.spyOn(globalThis, 'clearTimeout')
+  const runningJob = { ...documentJob, status: 'RUNNING', fileIds: [], finishedAt: null }
+  api.documentJobs.mockResolvedValue([runningJob]); api.documentJob.mockResolvedValue(runningJob)
+  api.recentDocumentJobs.mockResolvedValue([runningJob])
+  const discovery = { id: 5, sourceCode: 'BIZINFO', sourceProgramId: 'PBLN_123', status: 'RUNNING', result: null }
+  if (mode === 'discovery') {
+    api.discoveryJobs.mockResolvedValue([discovery])
+    jest.mocked(programClient).mockReturnValue({ getDetail: jest.fn().mockResolvedValue(documentProgram), browseCatalog: jest.fn().mockResolvedValue({ programs: [], total: 0, totalPages: 0 }) } as unknown as ReturnType<typeof programClient>)
+  }
+  try {
+    const view = render(mode === 'documents' ? <ApplicationDocumentScreen {...docProps} /> : mode === 'list' ? <ApplicationDocumentsListScreen {...listProps} />
+      : <ApplicationPreparationNewScreen {...newProps} initialProgram={{ sourceCode: 'BIZINFO', sourceProgramId: 'PBLN_123' }} />)
+    await act(async () => { await Promise.resolve() })
+    const read = mode === 'documents' ? api.documentJob : mode === 'list' ? api.recentDocumentJobs : api.availability
+    expect(read).not.toHaveBeenCalled()
+    await act(async () => change('active'))
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(1))
+    const delay = mode === 'list' ? 5000 : 2000
+    await waitFor(() => expect(timers.calls.some(call => call[1] === delay)).toBe(true))
+    const timerIndex = timers.calls.findIndex(call => call[1] === delay)
+    const signal = read.mock.calls[0].at(-1) as AbortSignal
+    await act(async () => change('background'))
+    expect(signal.aborted).toBe(true)
+    expect(cancel).toHaveBeenCalledWith(timers.results[timerIndex])
+    await act(async () => change('active'))
+    await waitFor(() => expect(read).toHaveBeenCalledTimes(2))
+    expect(api.submitDocumentJob).not.toHaveBeenCalled(); expect(api.discover).not.toHaveBeenCalled()
+    view.unmount()
+  } finally { AppState.currentState = previous; timers.restore() }
+})
+
+test('foreground refresh preserves the selected form for the same program', async () => {
+  let change!: (state: AppStateStatus) => void
+  jest.spyOn(AppState, 'addEventListener').mockImplementation((_event, listener) => { change = listener; return { remove: jest.fn() } })
+  api.availability.mockResolvedValue({ state: { status: 'AVAILABLE' }, forms: { items: [documentForm, { ...documentForm, formVersionId: 'second-form', formTitle: '다른 양식', attachmentFileName: '다른양식.hwpx' }] } })
+  jest.mocked(programClient).mockReturnValue({ getDetail: jest.fn().mockResolvedValue(documentProgram), browseCatalog: jest.fn().mockResolvedValue({ programs: [], total: 0, totalPages: 0 }) } as unknown as ReturnType<typeof programClient>)
+  render(<ApplicationPreparationNewScreen {...newProps} initialProgram={{ sourceCode: 'BIZINFO', sourceProgramId: 'PBLN_123' }} />)
+  fireEvent.press(await screen.findByLabelText('이 양식 선택'))
+  await act(async () => change('background'))
+  await act(async () => change('active'))
+  await waitFor(() => expect(api.availability).toHaveBeenCalledTimes(2))
+  fireEvent.press(screen.getByLabelText('이 양식으로 작성 시작'))
+  await waitFor(() => expect(api.create).toHaveBeenCalledWith(expect.objectContaining({ formVersionId: 'second-form' }), expect.any(AbortSignal)))
 })

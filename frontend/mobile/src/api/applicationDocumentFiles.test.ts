@@ -8,7 +8,7 @@ const reader = globalThis.FileReader
 const cache = { uri: 'file:///app/cache/application-documents/file.hwpx', exists: false, create: jest.fn(), write: jest.fn(), delete: jest.fn(), copy: jest.fn() }
 const destination = { uri: 'content://user-selected-folder' }
 beforeEach(() => {
-  clearApplicationFiles('owner'); Object.values(cache).forEach(value => { if (typeof value === 'function') value.mockClear() }); cache.exists = false
+  clearApplicationFiles('owner'); Object.values(cache).forEach(value => { if (typeof value === 'function') value.mockReset() }); cache.exists = false
   cache.create.mockImplementation(() => { cache.exists = true })
   jest.mocked(Directory).mockImplementation(() => ({ create: jest.fn() }) as unknown as Directory)
   Directory.pickDirectoryAsync = jest.fn().mockResolvedValue(destination)
@@ -49,4 +49,21 @@ test('leaving the screen while the folder picker is open prevents the later copy
   await saving
   expect(cache.copy).not.toHaveBeenCalled()
   expect(Sharing.shareAsync).not.toHaveBeenCalled()
+})
+
+test('saving waits for the native copy and reports an asynchronous copy failure', async () => {
+  const target = { exists: false }
+  jest.mocked(File).mockReturnValueOnce(cache as unknown as File).mockReturnValueOnce(target as File)
+  let finish!: () => void
+  cache.copy.mockReturnValueOnce(new Promise<void>(resolve => { finish = resolve }))
+  let settled = false
+  const saving = shareApplicationFile('owner', blob, '사업계획서.hwpx', () => true, undefined, 'save').then(() => { settled = true })
+  await new Promise(resolve => setTimeout(resolve, 0))
+  expect(cache.copy).toHaveBeenCalledWith(target)
+  expect(settled).toBe(false)
+  finish(); await saving
+  expect(settled).toBe(true)
+  jest.mocked(File).mockReturnValueOnce(cache as unknown as File).mockReturnValueOnce(target as File)
+  cache.copy.mockRejectedValueOnce(new Error('Permission denied'))
+  await expect(shareApplicationFile('owner', blob, '사업계획서.hwpx', () => true, undefined, 'save')).rejects.toThrow('파일 저장·공유 화면을 열지 못했어요')
 })

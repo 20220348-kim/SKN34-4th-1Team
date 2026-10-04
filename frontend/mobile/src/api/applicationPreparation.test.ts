@@ -1,12 +1,14 @@
 import { ApiError, createApiFetch } from './client'
-import { applicationPreparationUseCase, parsePreparationId } from './applicationPreparation'
+import { applicationPreparationUseCase, discardDeletedPendingPreparation, parsePreparationId } from './applicationPreparation'
+import { clearPendingPreparationIfUnchanged } from '../auth/preparationPending'
 import { documentPreparation, documentForm, documentFile, documentJob } from '../test/applicationDocumentFixtures'
 import { ApplicationPreparationError } from '@govbiz/shared/domain/errors/ApplicationPreparationError'
 
 jest.mock('./client', () => ({ ...jest.requireActual('./client'), getApiBaseUrl: () => 'https://api.example.test', createApiFetch: jest.fn() }))
+jest.mock('../auth/preparationPending', () => ({ clearPendingPreparationIfUnchanged: jest.fn() }))
 const fetchApi = jest.fn()
 const response = (data: unknown, status = 200) => ({ ok: status >= 200 && status < 300, status, json: async () => data }) as Response
-beforeEach(() => { fetchApi.mockReset(); jest.mocked(createApiFetch).mockReturnValue(fetchApi) })
+beforeEach(() => { fetchApi.mockReset(); jest.mocked(createApiFetch).mockReturnValue(fetchApi); jest.mocked(clearPendingPreparationIfUnchanged).mockReset().mockResolvedValue(true) })
 test('uses authenticated mobile transport and rejects another preparation identity', async () => {
   fetchApi.mockResolvedValue(response(documentPreparation))
   const api = applicationPreparationUseCase('owned-session')
@@ -62,4 +64,38 @@ test('current producer document metadata reaches the mobile consumer without los
     unfilledAnswers: [{ fieldId: 'company:goal', fieldLabel: '추진 목표', value: '생산 개선', reason: 'OVERFLOW', capacity: 12 }] }
   fetchApi.mockResolvedValue(response([file]))
   await expect(applicationPreparationUseCase('owned').documents(9)).resolves.toEqual([file])
+})
+
+const pending = { kind: 'document' as const, preparationId: 9, expectedRevision: 1, requestKey: '11111111-1111-4111-8111-111111111111' }
+test('pending recovery reads the owned target and only clears a coded missing document', async () => {
+  fetchApi.mockResolvedValue(response({ code: 'APPLICATION_PREPARATION_NOT_FOUND' }, 404))
+  await discardDeletedPendingPreparation('owned-session', 'owner@test.com', pending)
+  expect(fetchApi).toHaveBeenCalledTimes(1)
+  expect(fetchApi).toHaveBeenCalledWith('https://api.example.test/api/v1/application-preparations/9', expect.objectContaining({ method: 'GET' }))
+  expect(clearPendingPreparationIfUnchanged).toHaveBeenCalledWith('https://api.example.test', 'owner@test.com', pending, undefined)
+})
+test.each([
+  [404, {}], [404, { code: 'APPLICATION_DOCUMENT_NOT_FOUND' }], [503, { code: 'REQUEST_FAILED' }], [401, { code: 'AUTHENTICATION_REQUIRED' }],
+])('pending recovery retains its key on %s unless the document itself is confirmed missing', async (status, payload) => {
+  fetchApi.mockResolvedValue(response(payload, status))
+  await expect(discardDeletedPendingPreparation('owned', 'owner@test.com', pending)).rejects.toBeInstanceOf(ApplicationPreparationError)
+  expect(clearPendingPreparationIfUnchanged).not.toHaveBeenCalled()
+})
+test('existing targets, network failures and changed storage cannot discard a pending request', async () => {
+  fetchApi.mockResolvedValueOnce(response(documentPreparation)).mockRejectedValueOnce(new TypeError('offline'))
+  await expect(discardDeletedPendingPreparation('owned', 'owner@test.com', pending)).rejects.toThrow('문서가 남아')
+  await expect(discardDeletedPendingPreparation('owned', 'owner@test.com', pending)).rejects.toMatchObject({ status: 0 })
+  expect(clearPendingPreparationIfUnchanged).not.toHaveBeenCalled()
+  fetchApi.mockResolvedValue(response({ code: 'APPLICATION_PREPARATION_NOT_FOUND' }, 404))
+  jest.mocked(clearPendingPreparationIfUnchanged).mockResolvedValue(false)
+  await expect(discardDeletedPendingPreparation('owned', 'owner@test.com', pending)).rejects.toThrow('보관 요청이 변경')
+})
+test('a late missing-target response after cancellation never clears the stored key', async () => {
+  let finish!: (value: Response) => void
+  fetchApi.mockReturnValue(new Promise<Response>(resolve => { finish = resolve }))
+  const controller = new AbortController()
+  const checking = discardDeletedPendingPreparation('owned', 'owner@test.com', pending, controller.signal)
+  controller.abort(); finish(response({ code: 'APPLICATION_PREPARATION_NOT_FOUND' }, 404))
+  await expect(checking).rejects.toBeDefined()
+  expect(clearPendingPreparationIfUnchanged).not.toHaveBeenCalled()
 })

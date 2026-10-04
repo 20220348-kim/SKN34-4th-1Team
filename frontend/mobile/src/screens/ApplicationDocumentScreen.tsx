@@ -7,12 +7,13 @@ import type { ApplicationPreparation, ApplicationDocument, ApplicationDocumentGe
 import { generationStages, generationFailureTitle, failureGroupOf, isWritableApplicationAnswer } from '@govbiz/shared/domain/entities/ApplicationDocumentGeneration'
 import { ApplicationPreparationError } from '@govbiz/shared/domain/errors/ApplicationPreparationError'
 import { useAuth } from '../auth/session'
-import { applicationPreparationUseCase } from '../api/applicationPreparation'
+import { applicationPreparationUseCase, discardDeletedPendingPreparation } from '../api/applicationPreparation'
 import { getApiBaseUrl } from '../api/client'
 import { shareApplicationFile } from '../api/applicationDocumentFiles'
 import { clearPendingPreparation, readPendingPreparation, savePendingPreparation, type PendingPreparationRequest } from '../auth/preparationPending'
 import { PartnerSheet } from '../components/PartnerSheet'
 import { PreparationAccess } from '../components/ApplicationPreparationUi'
+import { useAppForeground } from '../components/useAppForeground'
 import { Button, Card, Notice, Page, StatusBadge, colors, styles } from '../ui'
 
 type Props = { id: number; jobId?: number; onLogin(): void; onEditor(): void; onReanalyze(identity: { sourceCode: string; sourceProgramId: string }): void; onOnline(): void; onList(): void; onOpenPending(id: number): void }
@@ -42,6 +43,7 @@ function OwnedDocuments({ id, jobId, token, email, onEditor, onReanalyze, onOnli
   const mounted = useRef(true)
   const locked = useRef(false)
   const base = getApiBaseUrl(), owner = `${base}:${email}`
+  const foreground = useAppForeground()
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; action.current?.abort() } }, [])
   useFocusEffect(useCallback(() => {
     focused.current = true
@@ -58,6 +60,7 @@ function OwnedDocuments({ id, jobId, token, email, onEditor, onReanalyze, onOnli
     setError(cause instanceof Error ? cause.message : '문서 결과를 확인하지 못했어요.')
   }, [invalidateSession])
   useFocusEffect(useCallback(() => {
+    if (!foreground) return
     const controller = new AbortController()
     let timer: ReturnType<typeof setTimeout> | undefined
     setLoading(true); setError(null)
@@ -73,7 +76,10 @@ function OwnedDocuments({ id, jobId, token, email, onEditor, onReanalyze, onOnli
       }
     }
     void (async () => {
-      const [detail, stored, recent, record] = await Promise.all([useCase.get(id, controller.signal), useCase.documents(id, controller.signal), useCase.documentJobs(id, controller.signal), readPendingPreparation(base, email)])
+      const record = await readPendingPreparation(base, email)
+      if (controller.signal.aborted) return
+      setPending(record)
+      const [detail, stored, recent] = await Promise.all([useCase.get(id, controller.signal), useCase.documents(id, controller.signal), useCase.documentJobs(id, controller.signal)])
       if (controller.signal.aborted) return
       setPreparation(detail); setFiles(stored); setPending(record); setJob(null)
       const latest = recent.find(candidate => running(candidate)) ?? recent.slice().sort((a, b) => b.id - a.id)[0]
@@ -81,7 +87,17 @@ function OwnedDocuments({ id, jobId, token, email, onEditor, onReanalyze, onOnli
       if (selected) await follow(await useCase.documentJob(id, selected, controller.signal))
     })().catch(cause => { if (!controller.signal.aborted) reportError(cause) }).finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => { controller.abort(); clearTimeout(timer) }
-  }, [id, jobId, revision, useCase, base, email, reportError]))
+  }, [foreground, id, jobId, revision, useCase, base, email, reportError]))
+  async function checkPending() {
+    if (!pending || locked.current) return
+    locked.current = true; setBusy('pending'); setError(null)
+    const controller = new AbortController(); action.current = controller
+    try {
+      await discardDeletedPendingPreparation(token, email, pending, controller.signal)
+      if (!controller.signal.aborted) { setPending(null); setNotice('대상 문서가 없어 보관 요청을 정리했어요. 목록에서 새 신청문서를 작성할 수 있어요.') }
+    } catch (cause) { if (!controller.signal.aborted) reportError(cause) }
+    finally { locked.current = false; if (!controller.signal.aborted && mounted.current) setBusy(null) }
+  }
   async function download(file: ApplicationDocument | null, targetRevision?: number, mode: 'save' | 'share' = 'share') {
     if (locked.current || !preparation || !focused.current) return
     locked.current = true; setBusy(file ? String(file.id) : 'archive'); setError(null)
@@ -135,7 +151,11 @@ function OwnedDocuments({ id, jobId, token, email, onEditor, onReanalyze, onOnli
     finally { locked.current = false; if (!controller.signal.aborted) setBusy(null) }
   }
   if (loading && !preparation) return <Page><ActivityIndicator accessibilityLabel="생성 결과 불러오는 중" color={colors.primary} /></Page>
-  if (!preparation) return <Page><Notice error>{error ?? '신청문서를 확인하지 못했어요.'}</Notice><Button label="다시 확인" onPress={() => setRevision(value => value + 1)} /></Page>
+  if (!preparation) return <Page><Notice error>{error ?? '신청문서를 확인하지 못했어요.'}</Notice>
+    {notice && <Notice>{notice}</Notice>}
+    {pending?.kind === 'document' && <Button label="보관 요청 대상 확인" variant="secondary" busy={busy === 'pending'} onPress={() => void checkPending()} />}
+    <Button label="다시 확인" disabled={busy !== null} onPress={() => setRevision(value => value + 1)} />
+    <Button label="목록으로 돌아가기" variant="ghost" disabled={busy !== null} onPress={onList} /></Page>
   const currentFiles = files.filter(file => file.inputRevision === preparation.inputRevision)
   const previousFiles = files.filter(file => file.inputRevision !== preparation.inputRevision)
   const isRunning = Boolean(job && running(job)), unknown = job?.status === 'UNKNOWN'
@@ -164,6 +184,7 @@ function OwnedDocuments({ id, jobId, token, email, onEditor, onReanalyze, onOnli
     {error && <><Notice error>{error}</Notice><Button label="생성 결과 다시 확인" variant="secondary" onPress={() => setRevision(value => value + 1)} /></>}
     {notice && <Notice>{notice}</Notice>}
     {pending && <Notice>결과를 확인하지 못한 보관 요청이 있어요. 같은 요청으로 확인하면 중복 유료 생성을 방지할 수 있어요.</Notice>}
+    {pending?.kind === 'document' && <Button label="보관 요청 대상 확인" variant="ghost" busy={busy === 'pending'} disabled={busy !== null} onPress={() => void checkPending()} />}
     {pending?.kind === 'document' && pending.preparationId !== id && <Button label="보관 요청의 문서 열기" variant="secondary" onPress={() => onOpenPending(pending.preparationId)} />}
     {isRunning && <Card><View style={styles.row}><StatusBadge label={job!.status === 'QUEUED' ? '초안 생성 대기' : '초안 만드는 중'} tone="info" /></View><Text style={styles.heading}>공식 양식에 답변을 담고 있어요</Text>
       <Text style={styles.muted}>화면을 떠나도 작업은 이어져요. 기존 작업을 조회하며 새로 시작하지 않아요.</Text>
