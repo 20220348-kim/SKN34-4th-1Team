@@ -208,6 +208,60 @@ OPS_DB_SNAPSHOT_MYSQL_IMAGE='mysql@sha256:<로컬 이미지 digest>' \
   python3 -B -m unittest discover -s infrastructure/gitops/scripts -p 'test_ops_db_snapshot.py'
 ```
 
+### DB·결과 파일·Prefect를 같은 중지 상태에서 묶기
+
+[`ops_state_snapshot.py`](../infrastructure/gitops/scripts/ops_state_snapshot.py)는 위 DB 백업에
+동일 프로젝트의 `ops-results`와 `prefect-data`를 추가한 암호화 파일을 만든다.
+**DB 백업 이후 API·sync·실행기·Prefect를 재개하지 않은 상태**에서 실행한다.
+DB 백업에 기록한 쓰기 중지 상태·클러스터 식별자와 현재 상태가 다르거나 현재 SQL 덤프가
+달라졌다면 묶지 않는다. 같은 중지 상태에서 DB 백업부터 새로 수행해야 한다.
+
+```bash
+OPS_STATE_BACKUP_FILE="$OPS_DB_BACKUP_DIR/ops-state-$(date -u +%Y%m%dT%H%M%SZ).enc"
+python3 -B infrastructure/gitops/scripts/ops_state_snapshot.py backup \
+  --state-dir "$OPS_STATE_DIR" --db-archive "$OPS_DB_BACKUP_FILE" \
+  --key-file "$OPS_DB_BACKUP_KEY" --output "$OPS_STATE_BACKUP_FILE"
+python3 -B infrastructure/gitops/scripts/ops_state_snapshot.py verify \
+  --key-file "$OPS_DB_BACKUP_KEY" --archive "$OPS_STATE_BACKUP_FILE"
+```
+
+- 원본 DB 백업과 같은 키를 사용하며 원본 파일을 수정하지 않는다. 출력은 새 파일만 허용한다.
+- 프로젝트 소유의 기본 local Docker volume만 지원한다. bind/NFS 등 driver 옵션이 있는
+  볼륨, 알 수 없는 소비 컨테이너, 실행 중인 쓰기 컨테이너는 거절한다.
+  `ops-artifacts`만 읽기 전용 마운트 상태로 계속 실행할 수 있다.
+- 각 볼륨을 읽기 전용으로 수집하고 두 번 대조한다. 마지막에 DB 덤프·볼륨 식별자·쓰기 중지
+  상태를 다시 확인한 뒤에만 암호화 파일을 생성한다. 다른 수동 작성자까지 잠그는 기능은 아니다.
+- 파일뿐 아니라 빈 디렉터리, 소유 UID/GID, 권한, 수정 시각을 보존한다. 링크·특수 파일·
+  특수 권한·잘못된 경로는 거절하며 볼륨마다 최대 64 MiB·10,000개 항목을 지원한다.
+  각 볼륨에는 최소 한 파일이 있어야 한다.
+- Prefect는 기본 `/var/lib/prefect/prefect.db` SQLite 구성을 지원한다. 외부 DB 연결 설정,
+  별도 프로필 경로 또는 `profiles.toml`이 있는 구성은 임의로 해석하지 않고 거절한다.
+- 복원은 DB 검사에 쓰는 새 MySQL과, 외부 네트워크·공개 포트가 없는 임시 컨테이너의
+  tmpfs에서 수행한다. 기존 볼륨은 복원 대상으로 받지 않는다. 파일 헬퍼는 로그 저장을 끄고
+  파일 원문을 인자나 일반 보고서에 출력하지 않는다. 원본 이미지는 immutable ID로 고정하며
+  로컬에 없으면 다운로드하거나 대체하지 않는다.
+- 파일·디렉터리 내용과 메타데이터를 먼저 대조한다. Prefect는 복원 사본의 WAL을 포함해
+  SQLite 무결성·외래 키·migration 이력을 확인하고 활성 일정·미완료 실행이 있으면 실패한다.
+  Prefect 서버·실행기·migration은 시작하지 않는다. 정리 실패도 성공으로 처리하지 않는다.
+
+이 파일의 `scope`는 `kubernetes_ops_db_results_prefect`다. `VERIFIED`는 이 세 저장소의 복원
+검사가 모두 끝났다는 뜻이며 `cross_store_business_links_verified=false`와
+`full_backup_verified=false`를 유지한다. DB 평가 이력과 보고서·Prefect 실행의 업무 연결,
+실제 앱·API 재기동, Core 인증 DB, Langfuse, Secret·서명 키 복구는 별도다.
+구버전 갱신 차단을 해제하거나 전체 복구 완료로 기록하지 않는다.
+
+Infra CI에서 파일·SQLite·중지 상태·오류 처리 단위 검증을 실행한다. LLMOps CI에서는 빌드한
+Ops 이미지로 새 결과/Prefect Docker 볼륨을 만들어 암호화·격리 복원·원본 보존을 검사한다.
+DB의 실제 MySQL 검증은 같은 워크플로의 DB 백업 검사 단계에서 수행한다.
+개인 저장소를 중지하거나 실제 백업을 생성하는 검증은 아니다.
+
+```bash
+python3 -B -m unittest discover -s infrastructure/gitops/scripts -p 'test_ops_state_snapshot.py'
+# 이미 로컬에 있는 Ops 이미지 ID를 지정하면 합성 Docker 볼륨 검증도 실행한다.
+OPS_VOLUME_SNAPSHOT_TEST_IMAGE='sha256:<로컬 Ops 이미지 ID>' \
+  python3 -B -m unittest discover -s infrastructure/gitops/scripts -p 'test_ops_state_snapshot.py'
+```
+
 ### Compose Ops 검토 기록을 새 환경에 재사용
 
 동일한 평가 원본에 대한 사람 검토를 새 DB에서 반복할 필요는 없다.

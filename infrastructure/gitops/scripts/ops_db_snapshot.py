@@ -373,8 +373,8 @@ def backup(state, key_file, output):
     }
 
 
-def verify(archive, key_file):
-    key = storage.key_bytes(key_file)
+def read_archive(archive):
+    """Read bounded private ciphertext; each caller authenticates its own contract."""
     with os.fdopen(os.open(archive, os.O_RDONLY | os.O_NOFOLLOW), "rb") as source:
         info = os.fstat(source.fileno())
         if (
@@ -384,8 +384,12 @@ def verify(archive, key_file):
             or info.st_uid != os.getuid()
         ):
             raise ValueError("Use a private regular encrypted archive")
-        raw = source.read(storage.MAX_BYTES * 4 + 1)
-    payload = validate(storage.open_payload(raw, key))
+        return source.read(storage.MAX_BYTES * 4 + 1)
+
+
+def restore_database(payload):
+    """Verify one DB payload in a new disposable MySQL; never use a source connection."""
+    payload = validate(payload)
     storage.run(["docker", "image", "inspect", payload["mysql_image"]])
     identity = None
     try:
@@ -442,7 +446,6 @@ def verify(archive, key_file):
     return {
         "status": "VERIFIED",
         "scope": SCOPE,
-        "sha256": hashlib.sha256(raw).hexdigest(),
         "tables": len(payload["table_counts"]),
         "rows": sum(payload["table_counts"].values()),
         "restore_verified": True,
@@ -451,6 +454,13 @@ def verify(archive, key_file):
         "application_started": False,
         "model_api_calls": 0,
     }
+
+
+def verify(archive, key_file):
+    key = storage.key_bytes(key_file)
+    raw = read_archive(archive)
+    result = restore_database(storage.open_payload(raw, key))
+    return {**result, "sha256": hashlib.sha256(raw).hexdigest()}
 
 
 def main():

@@ -77,6 +77,8 @@ jobs:
         run: uv run --locked python -B -m unittest discover -s scripts -p 'test_*.py'
       - name: Check encrypted Ops snapshot tools
         run: |
+          uv run --locked ruff check --config pyproject.toml ../../infrastructure/gitops/scripts/ops_state_snapshot.py ../../infrastructure/gitops/scripts/ops_volume_snapshot_files.py ../../infrastructure/gitops/scripts/test_ops_state_snapshot.py
+          uv run --locked ruff format --config pyproject.toml --check ../../infrastructure/gitops/scripts/ops_state_snapshot.py ../../infrastructure/gitops/scripts/ops_volume_snapshot_files.py ../../infrastructure/gitops/scripts/test_ops_state_snapshot.py
           uv run --locked ruff check --config pyproject.toml ../../infrastructure/gitops/scripts/ops_db_snapshot.py ../../infrastructure/gitops/scripts/test_ops_db_snapshot.py
           uv run --locked ruff format --config pyproject.toml --check ../../infrastructure/gitops/scripts/ops_db_snapshot.py ../../infrastructure/gitops/scripts/test_ops_db_snapshot.py
           uv run --locked ruff check --config pyproject.toml ../../infrastructure/llmops/ops_snapshot.py ../../infrastructure/llmops/ops_snapshot_files.py ../../infrastructure/llmops/test_ops_snapshot.py ../../infrastructure/llmops/check_ops_snapshot.py
