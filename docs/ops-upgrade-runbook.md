@@ -222,7 +222,7 @@ python3 -B infrastructure/gitops/scripts/ops_state_snapshot.py backup \
   --state-dir "$OPS_STATE_DIR" --db-archive "$OPS_DB_BACKUP_FILE" \
   --key-file "$OPS_DB_BACKUP_KEY" --output "$OPS_STATE_BACKUP_FILE"
 python3 -B infrastructure/gitops/scripts/ops_state_snapshot.py verify \
-  --key-file "$OPS_DB_BACKUP_KEY" --archive "$OPS_STATE_BACKUP_FILE"
+  --key-file "$OPS_DB_BACKUP_KEY" --archive "$OPS_STATE_BACKUP_FILE" --completed-links
 ```
 
 - 원본 DB 백업과 같은 키를 사용하며 원본 파일을 수정하지 않는다. 출력은 새 파일만 허용한다.
@@ -244,22 +244,37 @@ python3 -B infrastructure/gitops/scripts/ops_state_snapshot.py verify \
   SQLite 무결성·외래 키·migration 이력을 확인하고 활성 일정·미완료 실행이 있으면 실패한다.
   Prefect 서버·실행기·migration은 시작하지 않는다. 정리 실패도 성공으로 처리하지 않는다.
 
-이 파일의 `scope`는 `kubernetes_ops_db_results_prefect`다. `VERIFIED`는 이 세 저장소의 복원
-검사가 모두 끝났다는 뜻이며 `cross_store_business_links_verified=false`와
-`full_backup_verified=false`를 유지한다. DB 평가 이력과 보고서·Prefect 실행의 업무 연결,
-실제 앱·API 재기동, Core 인증 DB, Langfuse, Secret·서명 키 복구는 별도다.
+이 파일의 `scope`는 `kubernetes_ops_db_results_prefect`다. `--completed-links`를 지정하면
+복원한 MySQL에서 **모든 COMPLETED 평가**를 읽고 DB의 요청/flow ID·실행 명세와 해시·평가 ID·요약을
+`request.json`, manifest, comparison, HTML 보고서와 대조한다. 복원한 Prefect SQLite에서도
+같은 flow의 완료 상태·요청 ID·deployment·완료 이력을 확인한다. 검사에 쓰는 ID나 파일 본문을
+보고서에 출력하지 않고 `matched_completed_evaluations` 건수만 남긴다.
+
+완료 평가가 없거나 10,000건을 초과하는 경우, 실행 명세가 없는 구형 완료 기록, 누락·불일치가
+있으면 이 옵션은 실패한다. 특정 평가만 골라 성공시키지 않는다. 성공 시
+`cross_store_business_links_verified=true`, `cross_store_scope=completed_evaluations`다.
+옵션을 생략하면 기존 저장소 복원 검사만 수행하고 해당 플래그는 `false`다.
+실패·취소 평가의 업무 관계, 평가 품질·서명 검증, 실제 앱·API 재기동, Core 인증 DB,
+Langfuse, Secret·서명 키 복구는 별도이며 `full_backup_verified=false`를 유지한다.
 구버전 갱신 차단을 해제하거나 전체 복구 완료로 기록하지 않는다.
 
 Infra CI에서 파일·SQLite·중지 상태·오류 처리 단위 검증을 실행한다. LLMOps CI에서는 빌드한
 Ops 이미지로 새 결과/Prefect Docker 볼륨을 만들어 암호화·격리 복원·원본 보존을 검사한다.
-DB의 실제 MySQL 검증은 같은 워크플로의 DB 백업 검사 단계에서 수행한다.
+DB의 실제 MySQL 검증은 같은 워크플로의 DB 백업 검사 단계에서 수행한다. 별도 연결 검사 단계는
+합성 MySQL 평가 기록·결과 파일·Prefect SQLite를 하나의 암호화 파일로 만든 뒤 세 저장소를
+실제 임시 컨테이너로 복원하고 연결·원본 보존·정리를 함께 검사한다.
 개인 저장소를 중지하거나 실제 백업을 생성하는 검증은 아니다.
 
 ```bash
 python3 -B -m unittest discover -s infrastructure/gitops/scripts -p 'test_ops_state_snapshot.py'
+python3 -B -m unittest discover -s infrastructure/gitops/scripts -p 'test_ops_state_links.py'
 # 이미 로컬에 있는 Ops 이미지 ID를 지정하면 합성 Docker 볼륨 검증도 실행한다.
 OPS_VOLUME_SNAPSHOT_TEST_IMAGE='sha256:<로컬 Ops 이미지 ID>' \
   python3 -B -m unittest discover -s infrastructure/gitops/scripts -p 'test_ops_state_snapshot.py'
+# 두 이미지가 모두 있으면 MySQL·결과·Prefect 연결 통합 검사도 실행한다.
+OPS_DB_SNAPSHOT_MYSQL_IMAGE='mysql@sha256:<로컬 MySQL 8.4 digest>' \
+OPS_VOLUME_SNAPSHOT_TEST_IMAGE='sha256:<로컬 Ops 이미지 ID>' \
+  python3 -B -m unittest discover -s infrastructure/gitops/scripts -p 'test_ops_state_links.py'
 ```
 
 ### Compose Ops 검토 기록을 새 환경에 재사용

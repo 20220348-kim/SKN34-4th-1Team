@@ -226,8 +226,9 @@ DB 검증 성공은 결과·Prefect·키를 포함하는 전체 백업이나 구
 같은 쓰기 중지 상태의 DB 백업에 결과·Prefect 볼륨을 추가하려면
 `scripts/ops_state_snapshot.py backup --db-archive ...`와 `verify`를 사용한다.
 [세 저장소를 묶는 절차](../../../docs/ops-upgrade-runbook.md#db결과-파일prefect를-같은-중지-상태에서-묶기)에서
-기본 SQLite·볼륨 구성, 크기 제한과 미검증 범위를 확인한다. 이 검사도 키 복구·앱 재기동과
-저장소 사이의 업무 이력 연결을 검증하지 않으며 기존 갱신 차단을 해제하지 않는다.
+기본 SQLite·볼륨 구성, 크기 제한과 미검증 범위를 확인한다. `verify --completed-links`는
+복원 DB의 모든 완료 평가와 요청·보고서·Prefect 실행 이력을 대조한다. 완료 평가 건수와 검사 범위를
+보고하며 키 복구·앱 재기동·실패/취소 평가의 업무 연결은 별도다. 기존 갱신 차단을 해제하지 않는다.
 무료 CI 통합 검증은 일회용 Ops 전체 DB를 네트워크가 없는 별도 MySQL 8.4에 복원하고
 스키마·행·migration·외래 키 제약과 원본 보존을 확인한다. 보고서의 `database_restore`는
 이 DB 훈련 범위이며 개인 환경이나 결과 볼륨·Prefect 복원 완료를 의미하지 않는다.

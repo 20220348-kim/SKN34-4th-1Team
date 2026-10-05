@@ -16,6 +16,7 @@ from uuid import uuid4
 import ops_db_snapshot as database
 import ops_volume_restore_probe as probe
 import ops_volume_snapshot_files as files
+from ops_state_links import completed_evidence
 
 storage = database.storage
 SCOPE = "kubernetes_ops_db_results_prefect"
@@ -130,7 +131,7 @@ def volume_sources(source):
     return result
 
 
-def volume_helper(image, kind, *, source=None, entries=None):
+def volume_helper(image, kind, *, source=None, entries=None, expected=None):
     if kind not in STORES or (source is None) == (entries is None):
         raise ValueError("Select one source read or disposable restore")
     if not re.fullmatch(r"sha256:[a-f0-9]{64}", image):
@@ -139,6 +140,10 @@ def volume_helper(image, kind, *, source=None, entries=None):
         files.validate(entries)
     elif not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,80}", source):
         raise ValueError("Invalid named source volume")
+    if expected is not None:
+        if source is not None:
+            raise ValueError("Link verification only reads a restored store")
+        probe.expected_runs(expected)
     storage.run(["docker", "image", "inspect", image])
     # Mounting a missing named volume would create it; require it to exist first.
     if source is not None:
@@ -184,7 +189,9 @@ def volume_helper(image, kind, *, source=None, entries=None):
             raise ValueError("Invalid helper identity")
         raw = storage.run(
             ["docker", "start", "--attach", "--interactive", identity],
-            data=None if entries is None else json.dumps(entries).encode(),
+            data=None
+            if entries is None
+            else json.dumps({"entries": entries, "expected": expected}).encode(),
         )
         state = database.read_json(["docker", "inspect", "--format", "{{json .State}}", identity])
         if state["Running"] or state["ExitCode"] != 0 or state["OOMKilled"]:
@@ -203,6 +210,13 @@ def volume_helper(image, kind, *, source=None, entries=None):
             or result.get("tree_sha256")
             != hashlib.sha256(json.dumps(entries, sort_keys=True).encode()).hexdigest()
             or (kind == "prefect" and result.get("sqlite_integrity") is not True)
+            or (
+                expected is not None
+                and (
+                    type(result.get("matched_executions")) is not int
+                    or result["matched_executions"] != len(expected)
+                )
+            )
         ):
             raise ValueError("Incomplete volume restore evidence")
     finally:
@@ -294,13 +308,19 @@ def backup(state, db_archive, key_file, output):
     }
 
 
-def verify(archive, key_file):
+def verify(archive, key_file, *, completed_links=False):
     key = storage.key_bytes(key_file)
     raw = database.read_archive(archive)
     payload = validate(storage.open_payload(raw, key))
-    result = database.restore_database(payload["database"])
+    expected = None
+    if completed_links:
+        with database.restored_database(payload["database"]) as command:
+            expected = completed_evidence(command, payload["stores"]["results"]["entries"])
+        result = database.restore_report(payload["database"])
+    else:
+        result = database.restore_database(payload["database"])
     stores = {
-        kind: volume_helper(store["image"], kind, entries=store["entries"])
+        kind: volume_helper(store["image"], kind, entries=store["entries"], expected=expected)
         for kind, store in payload["stores"].items()
     }
     return {
@@ -313,7 +333,9 @@ def verify(archive, key_file):
         "cleanup_complete": True,
         "full_backup_verified": False,
         "application_started": False,
-        "cross_store_business_links_verified": False,
+        "cross_store_business_links_verified": completed_links,
+        "cross_store_scope": "completed_evaluations" if completed_links else None,
+        "matched_completed_evaluations": len(expected) if expected is not None else 0,
         "model_api_calls": 0,
     }
 
@@ -329,6 +351,7 @@ def main():
     check = actions.add_parser("verify")
     check.add_argument("--archive", type=Path, required=True)
     check.add_argument("--key-file", type=Path, required=True)
+    check.add_argument("--completed-links", action="store_true")
     args = parser.parse_args()
     if os.name != "posix":
         parser.error("Run this command inside WSL/Linux")
@@ -337,7 +360,7 @@ def main():
         result = (
             backup(args.state_dir, args.db_archive, args.key_file, args.output)
             if args.action == "backup"
-            else verify(args.archive, args.key_file)
+            else verify(args.archive, args.key_file, completed_links=args.completed_links)
         )
         print(json.dumps(result, sort_keys=True))
     except (ValueError, KeyError, TypeError, OSError):

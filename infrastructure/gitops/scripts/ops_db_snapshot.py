@@ -13,6 +13,7 @@ import secrets
 import stat
 import sys
 import time
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -387,8 +388,9 @@ def read_archive(archive):
         return source.read(storage.MAX_BYTES * 4 + 1)
 
 
-def restore_database(payload):
-    """Verify one DB payload in a new disposable MySQL; never use a source connection."""
+@contextmanager
+def restored_database(payload):
+    """Keep a verified disposable DB open for storage or cross-store inspection."""
     payload = validate(payload)
     storage.run(["docker", "image", "inspect", payload["mysql_image"]])
     identity = None
@@ -440,9 +442,14 @@ def restore_database(payload):
         query(command, payload["sql"])
         if inventory(command) != payload["table_counts"] or dump(command) != payload["sql"]:
             raise ValueError("Restored database differs from encrypted backup")
+        yield command
     finally:
         if identity is not None:
             storage.run(["docker", "rm", "--force", "--volumes", identity])
+
+
+def restore_report(payload):
+    """Only emit after the disposable database has been verified and removed."""
     return {
         "status": "VERIFIED",
         "scope": SCOPE,
@@ -454,6 +461,13 @@ def restore_database(payload):
         "application_started": False,
         "model_api_calls": 0,
     }
+
+
+def restore_database(payload):
+    """Verify one DB payload in a new disposable MySQL; never use a source connection."""
+    with restored_database(payload):
+        pass
+    return restore_report(payload)
 
 
 def verify(archive, key_file):

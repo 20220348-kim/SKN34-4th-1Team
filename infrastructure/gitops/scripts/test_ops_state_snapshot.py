@@ -7,7 +7,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from unittest.mock import patch
 from uuid import uuid4
@@ -464,6 +464,54 @@ class ArchiveTests(unittest.TestCase):
             snapshot.verify(self.output, self.key)
         run.assert_not_called()
 
+    def test_completed_link_failures_and_database_cleanup_cannot_report_success(self):
+        with self.mocks():
+            self.backup()
+        expected = {"private-request-id": {"flow_id": "private-flow-id"}}
+        for failure in (None, "links", "db-cleanup", "prefect"):
+            events = []
+
+            @contextmanager
+            def restored(_, events=events, failure=failure):
+                try:
+                    yield ["restored-db"]
+                finally:
+                    events.append("db-cleanup")
+                    if failure == "db-cleanup":
+                        raise ValueError("cleanup failed")
+
+            def volume(image, kind, events=events, failure=failure, **kwargs):
+                self.assertEqual(events, ["db-cleanup"])
+                self.assertEqual(kwargs["expected"], expected)
+                if failure == "prefect" and kind == "prefect":
+                    raise ValueError("missing completed history")
+                return {"matched_executions": 1}
+
+            with (
+                self.subTest(failure=failure),
+                patch.object(snapshot.database, "restored_database", side_effect=restored),
+                patch.object(
+                    snapshot,
+                    "completed_evidence",
+                    return_value=expected,
+                    side_effect=ValueError("links") if failure == "links" else None,
+                ),
+                patch.object(snapshot, "volume_helper", side_effect=volume) as helper,
+            ):
+                if failure:
+                    with self.assertRaises(ValueError):
+                        snapshot.verify(self.output, self.key, completed_links=True)
+                    if failure in {"links", "db-cleanup"}:
+                        helper.assert_not_called()
+                else:
+                    result = snapshot.verify(self.output, self.key, completed_links=True)
+                    self.assertTrue(result["cross_store_business_links_verified"])
+                    self.assertEqual(result["matched_completed_evaluations"], 1)
+                    self.assertEqual(result["cross_store_scope"], "completed_evaluations")
+                    self.assertFalse(result["full_backup_verified"])
+                    self.assertNotIn("private-request-id", json.dumps(result))
+            self.assertEqual(events, ["db-cleanup"])
+
     def test_custom_prefect_profile_is_not_mistaken_for_the_default_database(self):
         (self.root / "prefect" / "profiles.toml").write_text("[profiles.custom]\n")
         self.stores["prefect"]["entries"] = files.collect(self.root / "prefect")
@@ -504,7 +552,7 @@ class DockerVolumeTests(unittest.TestCase):
                 identity = None
                 try:
                     program = (
-                        "from pathlib import Path\nimport sqlite3\nroot=Path('/fixture')\n"
+                        "from pathlib import Path\nimport os, sqlite3\nroot=Path('/fixture')\n"
                         + (
                             "(root/'빈 디렉터리').mkdir()\n"
                             "(root/'report.html').write_text('한글 🧪')\n"
@@ -513,6 +561,7 @@ class DockerVolumeTests(unittest.TestCase):
                             + repr(SQLITE)
                             + ")\ndb.close()\n"
                         )
+                        + "for path in [*root.rglob('*'), root]: os.chown(path, 10001, 10001)\n"
                     )
                     identity = (
                         snapshot.storage.run(
@@ -543,6 +592,7 @@ class DockerVolumeTests(unittest.TestCase):
                     )
                     self.assertEqual(state["ExitCode"], 0)
                     before = snapshot.volume_helper(image, kind, source=volume)
+                    self.assertTrue(all(row["uid"] == 10001 for row in before.values()))
                     key = b"a" * 64
                     restored = snapshot.storage.open_payload(
                         snapshot.storage.seal({"entries": before}, key), key
