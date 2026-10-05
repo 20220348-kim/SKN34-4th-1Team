@@ -55,25 +55,10 @@ type CompanyUseCases = {
   updateCompany: Pick<UpdateCompanyUseCase, 'execute'>
 }
 
-/** 프로필 화면의 알림 설정입니다. 서버 저장 API가 생기면 그 응답으로 초기화합니다. */
-export type NotificationSettings = {
-  savedProgramDeadline: boolean
-  partnerProposal: boolean
-  newMatchingProgram: boolean
-}
-
-export type NotificationKey = keyof NotificationSettings
-
-export const defaultNotificationSettings: NotificationSettings = {
-  savedProgramDeadline: true,
-  partnerProposal: true,
-  newMatchingProgram: false,
-}
-
 /**
  * 기업 프로필의 대표 ViewModel입니다. 기업 기본정보는 API에서 읽어 등록·수정 폼과 완성도를 계산하고,
  * 협업·파트너 설정은 [useCompanyPartnerProfileViewModel]이 맡으며 완성도에는 저장 여부만 씁니다.
- * 사업자번호 조회와 폼 검증은 온보딩 2단계와 같은 shared/company 부품을 씁니다. 알림 설정은 발송 기능이 없어 화면 상태로만 유지합니다.
+ * 사업자번호 조회와 폼 검증은 온보딩 2단계와 같은 shared/company 부품을 씁니다. 알림 설정은 useNotificationSettingsViewModel이 맡습니다.
  */
 export function useCompanyProfileViewModel(useCases: Partial<CompanyUseCases> = {}) {
   const resolved: CompanyUseCases = {
@@ -96,8 +81,6 @@ export function useCompanyProfileViewModel(useCases: Partial<CompanyUseCases> = 
   const [isEditing, setIsEditing] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
-  // 알림 발송 기능이 아직 없어 설정은 화면 상태로만 두고, 화면을 나가면 초기값으로 돌아갑니다.
-  const [notifications, setNotifications] = useState<NotificationSettings>(defaultNotificationSettings)
 
   // 협업·파트너 설정은 기업이 등록된 뒤에만 읽고, 완성도 계산에 저장 여부만 씁니다.
   const partnerProfile = useCompanyPartnerProfileViewModel(companyState.status === 'registered')
@@ -225,10 +208,6 @@ export function useCompanyProfileViewModel(useCases: Partial<CompanyUseCases> = 
     (checklist.filter((item) => item.isDone).length / checklist.length) * 100,
   )
 
-  function toggleNotification(key: NotificationKey) {
-    setNotifications({ ...notifications, [key]: !notifications[key] })
-  }
-
   const { lookup } = businessLookup
   return {
     account,
@@ -236,8 +215,6 @@ export function useCompanyProfileViewModel(useCases: Partial<CompanyUseCases> = 
     company,
     partnerProfile,
     notice,
-    notifications,
-    toggleNotification,
     summaryTags: company === null ? [] : [company.region, company.industry, company.businessStatus],
     completionPercent,
     checklist,

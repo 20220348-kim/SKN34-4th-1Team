@@ -331,7 +331,7 @@ function ReportSettings({ vm }: { vm: ViewModel }) {
         <div className={s.channelHead}>
           <span className={s.channelText}>
             <span className={s.channelTitle}>앱 푸시</span>
-            <span className={s.channelDescription}>모바일 앱의 전체 › 리포트 수신 설정에서 기기마다 켜요.</span>
+            <span className={s.channelDescription}>모바일 앱의 전체 › 알림 설정에서 기기마다 켜요.</span>
           </span>
           <span className={workspaceTagClassName('muted')}>앱에서 설정</span>
         </div>

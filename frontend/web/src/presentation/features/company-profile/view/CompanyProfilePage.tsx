@@ -6,16 +6,17 @@ import {
 } from '../../../shared/workspace/WorkspacePage.styles'
 import { HelpTip } from '../../../shared/workspace/HelpTip'
 import { companyInitial } from '../../../shared/partner-recruitment/partnerRecruitmentLabels'
-import { WorkspaceToggle } from '../../../shared/workspace/WorkspaceToggle'
 import { WorkspacePageHeader } from '../../../shared/workspace/WorkspacePageHeader'
 import { BusinessLookupResult } from '../../../shared/company/BusinessLookupResult'
 import { BusinessNumberField } from '../../../shared/company/BusinessNumberField'
 import { CompanyProfileFields } from '../../../shared/company/CompanyProfileFields'
 import { useAccountSecurityViewModel } from '../viewmodel/useAccountSecurityViewModel'
-import { useCompanyProfileViewModel, type NotificationKey } from '../viewmodel/useCompanyProfileViewModel'
+import { useCompanyProfileViewModel } from '../viewmodel/useCompanyProfileViewModel'
+import { useNotificationSettingsViewModel } from '../viewmodel/useNotificationSettingsViewModel'
 import { ChangePasswordModal, DeleteAccountModal } from './AccountSecurityModals'
 import { CompanyPartnerProfileSection } from './CompanyPartnerProfileSection'
 import { companyProfileStyles } from './CompanyProfilePage.styles'
+import { NotificationSettingsRows } from './NotificationSettingsRows'
 
 const usageIcons: Record<'target' | 'users' | 'shield', ReactNode> = {
   target: (
@@ -36,22 +37,16 @@ const usageIcons: Record<'target' | 'users' | 'shield', ReactNode> = {
   shield: <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />,
 }
 
-/** 계정과 알림 카드의 알림 스위치 목록입니다. 발송 기능이 붙기 전까지 화면 상태로만 켜고 끕니다. */
-const notificationRows: { key: NotificationKey; label: string }[] = [
-  { key: 'savedProgramDeadline', label: '관심 공고 마감 3일 전 알림' },
-  { key: 'partnerProposal', label: '파트너 제안·메시지 알림' },
-  { key: 'newMatchingProgram', label: '프로필 조건에 맞는 새 공고 알림' },
-]
-
 /**
  * 기업 프로필 화면입니다. 기업 기본정보는 사업자등록번호 조회로 등록·수정하고, 협업·파트너 설정은 모집글 상세와
  * 기업 프로필 보기에 나갑니다. 담당자 연락처는 제안을 수락한 뒤에만 공개되며 GovBiz는 역량·실적을 검증하지 않습니다.
- * 알림 설정은 발송 기능이 없어 아직 화면 상태로만 유지합니다.
+ * 알림은 관심 공고 마감 알림만 서버에 저장해 실제로 보내고, 파트너 제안·새 공고 알림은 준비 중으로 표시합니다.
  * 완성도와 체크리스트는 맨 위 요약 카드에, "이 정보가 쓰이는 곳"·"공개 범위"는 해당 카드 제목 옆 `?` 도움말에 둡니다.
  */
 export function CompanyProfilePage() {
   const vm = useCompanyProfileViewModel()
   const security = useAccountSecurityViewModel()
+  const notifications = useNotificationSettingsViewModel()
   const {
     companyState,
     company,
@@ -333,16 +328,7 @@ export function CompanyProfilePage() {
                   <p className={companyProfileStyles.notice} role="status">{security.password.notice}</p>
                 ) : null}
 
-                {notificationRows.map((row) => (
-                  <div className={companyProfileStyles.settingRow} key={row.key}>
-                    <span className={companyProfileStyles.accountValue}>{row.label}</span>
-                    <WorkspaceToggle
-                      label={row.label}
-                      isOn={vm.notifications[row.key]}
-                      onToggle={() => vm.toggleNotification(row.key)}
-                    />
-                  </div>
-                ))}
+                <NotificationSettingsRows vm={notifications} />
               </div>
               <div className={companyProfileStyles.dangerRow}>
                 <button className={workspacePageStyles.dangerLink} type="button" onClick={security.deletion.open}>

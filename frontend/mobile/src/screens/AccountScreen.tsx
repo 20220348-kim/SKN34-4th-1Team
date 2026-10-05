@@ -90,7 +90,7 @@ export function AccountScreen({ onCompany, onSettings, initialMode = 'login', au
     <Card><Text style={{ color: colors.text, fontSize: 18 }}>{auth.session.account.email}</Text><Text style={{ color: colors.muted, marginTop: 8 }}>{auth.session.account.company?.companyName ?? '기업 정보를 등록하면 맞춤 서비스를 이용할 수 있습니다.'}</Text></Card>
     {auth.restoreError && <Notice error>{auth.restoreError}</Notice>}
     <Button label={auth.session.account.company ? '기업 프로필 관리' : '기업 프로필 등록'} onPress={onCompany} />
-    {onSettings && <Button label="리포트 수신 설정" variant="secondary" onPress={onSettings} />}
+    {onSettings && <Button label="알림 설정" variant="secondary" onPress={onSettings} />}
     <Button label="로그아웃" variant="secondary" busy={busy} onPress={() => void run(() => auth.signOut())} />
     {error && <Notice error>{error}</Notice>}
   </Page>

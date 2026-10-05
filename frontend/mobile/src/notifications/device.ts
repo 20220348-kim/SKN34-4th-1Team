@@ -31,9 +31,15 @@ export async function getExpoPushToken(requestPermission: boolean): Promise<stri
   const notifications = await notificationModule()
   const projectId = Constants.expoConfig?.extra?.eas?.projectId
   if (typeof projectId !== 'string' || !projectId) throw new Error('앱 알림 연결 설정이 준비되지 않았어요.')
-  if (Platform.OS === 'android') await notifications.setNotificationChannelAsync('daily-reports', {
-    name: '맞춤 리포트', importance: notifications.AndroidImportance.DEFAULT,
-  })
+  if (Platform.OS === 'android') {
+    await notifications.setNotificationChannelAsync('daily-reports', {
+      name: '맞춤 리포트', importance: notifications.AndroidImportance.DEFAULT,
+    })
+    // 서버가 마감 알림을 이 채널로 보냅니다. 채널이 없으면 Android가 알림을 표시하지 않습니다.
+    await notifications.setNotificationChannelAsync('deadline-reminders', {
+      name: '관심 공고 마감 알림', importance: notifications.AndroidImportance.DEFAULT,
+    })
+  }
   let permission = await notifications.getPermissionsAsync()
   if (requestPermission && !permission.granted) permission = await notifications.requestPermissionsAsync()
   if (!permission.granted) throw new Error('기기 설정에서 GovBiz 알림을 허용해 주세요.')

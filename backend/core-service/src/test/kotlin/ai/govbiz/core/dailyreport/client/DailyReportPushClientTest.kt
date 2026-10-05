@@ -33,6 +33,26 @@ class DailyReportPushClientTest {
     }
 
     @Test
+    fun deadlineReminderSendsOnlyTitleDeadlineAndProgramIdentityOnItsOwnChannel() {
+        server.expect(requestTo("https://exp.host/--/api/v2/push/send"))
+            .andExpect(jsonPath("$.to").value("ExpoPushToken[test]"))
+            .andExpect(jsonPath("$.title").value("관심 공고 마감 D-3"))
+            .andExpect(jsonPath("$.body").value("AI 바우처 지원사업 · 10월 5일 마감"))
+            .andExpect(jsonPath("$.channelId").value("deadline-reminders"))
+            .andExpect(jsonPath("$.data.type").value("deadline-reminder"))
+            .andExpect(jsonPath("$.data.sourceCode").value("BIZINFO"))
+            .andExpect(jsonPath("$.data.sourceProgramId").value("PBLN_1"))
+            .andExpect(jsonPath("$.data.dueDate").value("2026-10-05"))
+            .andExpect(jsonPath("$.data.url").doesNotExist())
+            .andExpect(jsonPath("$.data.accountId").doesNotExist())
+            .andRespond(withSuccess("""{"data":{"status":"error","details":{"error":"DeviceNotRegistered"}}}""", MediaType.APPLICATION_JSON))
+        val result = client.sendDeadlineReminder("ExpoPushToken[test]", "AI 바우처\n지원사업", "BIZINFO", "PBLN_1", LocalDate.of(2026, 10, 5), 3)
+        assertEquals("FAILED", result.status)
+        assertEquals("DeviceNotRegistered", result.errorCode)
+        server.verify()
+    }
+
+    @Test
     fun invalidResponseIsAnExplicitFailureAndCannotAppearDelivered() {
         server.expect(requestTo("https://exp.host/--/api/v2/push/send"))
             .andRespond(withSuccess("""{"data":{"status":"ok"}}""", MediaType.APPLICATION_JSON))

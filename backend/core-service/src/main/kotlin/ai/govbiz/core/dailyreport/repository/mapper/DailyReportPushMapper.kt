@@ -10,6 +10,8 @@ data class DailyReportPushDbRow(
     var reportDate: LocalDate? = null, var ticketId: String? = null,
 )
 
+data class DailyReportPushDeviceDbRow(var deviceId: String = "", var expoToken: String = "")
+
 @Mapper
 interface DailyReportPushMapper {
     fun register(@Param("deviceId") deviceId: String, @Param("accountId") accountId: Long,
@@ -20,6 +22,8 @@ interface DailyReportPushMapper {
         @Param("now") now: LocalDateTime, @Param("idleBefore") idleBefore: LocalDateTime): Boolean
     fun hasSubscriber(@Param("accountId") accountId: Long, @Param("now") now: LocalDateTime,
         @Param("idleBefore") idleBefore: LocalDateTime): Boolean
+    fun activeDevices(@Param("accountId") accountId: Long, @Param("now") now: LocalDateTime,
+        @Param("idleBefore") idleBefore: LocalDateTime): List<DailyReportPushDeviceDbRow>
     fun dueAccounts(@Param("date") date: LocalDate, @Param("now") now: LocalDateTime,
         @Param("idleBefore") idleBefore: LocalDateTime, @Param("limit") limit: Int): List<Long>
     fun reserveDeliveries(@Param("date") date: LocalDate, @Param("now") now: LocalDateTime,

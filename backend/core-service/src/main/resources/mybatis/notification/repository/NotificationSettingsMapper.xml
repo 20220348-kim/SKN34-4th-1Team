@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="ai.govbiz.core.notification.repository.mapper.NotificationSettingsMapper">
+    <resultMap id="setting" type="ai.govbiz.core.notification.repository.mapper.NotificationSettingsDbRow">
+        <id property="accountId" column="account_id" />
+        <result property="deadlineReminderEnabled" column="deadline_reminder_enabled" />
+        <result property="deadlineReminderDaysBefore" column="deadline_reminder_days_before" />
+        <result property="deadlineReminderEmail" column="deadline_reminder_email" />
+        <result property="deadlineReminderPush" column="deadline_reminder_push" />
+    </resultMap>
+
+    <select id="find" resultMap="setting">
+        SELECT account_id, deadline_reminder_enabled, deadline_reminder_days_before, deadline_reminder_email, deadline_reminder_push
+        FROM account_notification_setting
+        WHERE account_id = #{accountId}
+    </select>
+
+    <!-- 이메일을 계속 고른 동안은 처음 고른 시각을 유지하고, 이메일 선택을 끄면 비웁니다. -->
+    <insert id="upsert">
+        INSERT INTO account_notification_setting
+            (account_id, deadline_reminder_enabled, deadline_reminder_days_before, deadline_reminder_email,
+             deadline_reminder_push, email_consented_at, created_at, updated_at)
+        VALUES (#{accountId}, #{enabled}, #{daysBefore}, #{email}, #{push},
+                CASE WHEN #{email} THEN #{now} ELSE NULL END, #{now}, #{now})
+        ON DUPLICATE KEY UPDATE
+            email_consented_at = CASE WHEN #{email} THEN COALESCE(email_consented_at, #{now}) ELSE NULL END,
+            deadline_reminder_enabled = #{enabled},
+            deadline_reminder_days_before = #{daysBefore},
+            deadline_reminder_email = #{email},
+            deadline_reminder_push = #{push},
+            updated_at = #{now}
+    </insert>
+</mapper>

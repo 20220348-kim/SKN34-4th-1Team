@@ -12,6 +12,7 @@ import { listSavedPrograms } from '../api/savedPrograms'
 import { dailyReportErrorMessage, getDailyReportSettings, getLatestDailyReport,
   requestDailyReportEmailVerification, saveDailyReportSettings, getDailyReport } from '../api/dailyReport'
 import { DailyReportPushSettings } from '../notifications/DailyReportPushSettings'
+import { DeadlineReminderSettings } from '../notifications/DeadlineReminderSettings'
 import { useDailyReportPush } from '../notifications/DailyReportPushProvider'
 import { useAuth } from '../auth/session'
 import { GuestFeatureNotice } from '../components/GuestFeatureNotice'
@@ -251,8 +252,8 @@ export function DailyReportScreen({ onLogin, onCompany, onSearch, onOpenProgram,
   if (status === 'loading') return <Page><ActivityIndicator accessibilityLabel="로그인 상태 확인 중" color={colors.primary} /></Page>
   if (status === 'unavailable') return <Page><Notice error>로그인 상태를 확인하지 못했습니다.</Notice>
     <Button label="다시 확인" onPress={() => void refreshSession()} /></Page>
-  if (!token) return <Page><GuestFeatureNotice title={settingsOnly ? '리포트 수신 설정' : '우리 기업에 맞는 기회를 받아보세요'} icon="report"
-    description={settingsOnly ? '로그인하면 리포트 수신 설정을 변경할 수 있어요.' : '로그인하면 기업 조건에 맞춘 리포트를 확인할 수 있어요.'}
+  if (!token) return <Page><GuestFeatureNotice title={settingsOnly ? '알림 설정' : '우리 기업에 맞는 기회를 받아보세요'} icon="report"
+    description={settingsOnly ? '로그인하면 관심 공고 마감 알림과 리포트 수신 설정을 바꿀 수 있어요.' : '로그인하면 기업 조건에 맞춘 리포트를 확인할 수 있어요.'}
     onLogin={onLogin} /></Page>
   if (visible.loading) return <Page><ActivityIndicator accessibilityLabel="맞춤 리포트 불러오는 중" color={colors.primary} /></Page>
   if (visible.error && !visible.settings) return <Page><Notice error>{visible.error}</Notice><Button label="다시 시도" onPress={refresh} /></Page>
@@ -294,6 +295,7 @@ export function DailyReportScreen({ onLogin, onCompany, onSearch, onOpenProgram,
       <Card><View style={local.dateLine}><Text style={styles.heading}>수신 설정 · 이메일 {settings.enabled ? '켬' : '끔'} · 앱 알림 {push.settings?.enabled ? '켬' : '끔'}</Text>
         <Text style={styles.muted}>{expanded ? '▴' : '▾'}</Text></View></Card>
     </Pressable>}
+    {settingsOnly && <DeadlineReminderSettings />}
     {settingsOnly && !visible.company && <Card><Text style={styles.body}>기업 정보를 등록하면 정기 리포트를 받을 수 있어요.</Text>
       <Button label="기업 등록하기" variant="secondary" onPress={onCompany} /></Card>}
     {(settingsOnly || expanded) && <Card>

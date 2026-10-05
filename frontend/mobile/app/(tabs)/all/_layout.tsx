@@ -9,7 +9,7 @@ export default function AllLayout() {
     <Stack.Screen name="index" options={{ headerShown: false }} />
     <Stack.Screen name="account" options={{ title: '내 정보' }} />
     <Stack.Screen name="company" options={{ title: '기업 정보' }} />
-    <Stack.Screen name="settings" options={{ title: '리포트 수신 설정' }} />
+    <Stack.Screen name="settings" options={{ title: '알림 설정' }} />
     <Stack.Screen name="preparation" options={{ title: '신청 준비' }} />
     <Stack.Screen name="preparation/new" options={{ title: '공고·양식 선택' }} />
     <Stack.Screen name="preparation/[id]" options={{ title: '답변 작성' }} />

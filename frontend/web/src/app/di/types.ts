@@ -88,6 +88,8 @@ export type AppCradle = {
   applicationPreparationUseCase: ApplicationPreparationUseCase
   dailyReportRepository: import('../../domain/repositories/DailyReportRepository').DailyReportRepository
   dailyReportUseCase: import('../../domain/usecases/DailyReportUseCase').DailyReportUseCase
+  notificationSettingsRepository: import('@govbiz/shared/domain/repositories/NotificationSettingsRepository').NotificationSettingsRepository
+  notificationSettingsUseCase: import('@govbiz/shared/domain/usecases/NotificationSettingsUseCase').NotificationSettingsUseCase
   combinationReviewRepository: import('../../domain/repositories/CombinationReviewRepository').CombinationReviewRepository
   combinationReviewUseCase: import('../../domain/usecases/CombinationReviewUseCase').CombinationReviewUseCase
   reviewRequestJournal: typeof import('../../data/storage/reviewRequestJournal').reviewRequestJournal

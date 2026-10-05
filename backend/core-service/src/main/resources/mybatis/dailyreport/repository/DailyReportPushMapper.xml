@@ -25,6 +25,14 @@
         SELECT EXISTS(SELECT 1 FROM daily_report_push_device d JOIN account_session s ON s.id = d.session_id
             JOIN account a ON a.id = d.account_id WHERE d.account_id = #{accountId} AND <include refid="active" />)
     </select>
+    <resultMap id="device" type="ai.govbiz.core.dailyreport.repository.mapper.DailyReportPushDeviceDbRow">
+        <id property="deviceId" column="device_id" /><result property="expoToken" column="expo_token" />
+    </resultMap>
+    <select id="activeDevices" resultMap="device">
+        SELECT d.device_id, d.expo_token FROM daily_report_push_device d JOIN account_session s ON s.id = d.session_id
+            JOIN account a ON a.id = d.account_id WHERE d.account_id = #{accountId} AND <include refid="active" />
+        ORDER BY d.device_id
+    </select>
     <select id="dueAccounts" resultType="long">
         SELECT DISTINCT d.account_id FROM daily_report_push_device d JOIN account_session s ON s.id = d.session_id
             JOIN account a ON a.id = d.account_id JOIN company c ON c.account_id = d.account_id
