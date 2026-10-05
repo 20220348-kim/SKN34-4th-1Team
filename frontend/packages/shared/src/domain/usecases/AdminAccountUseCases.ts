@@ -45,7 +45,7 @@ export class GetAdminAccountDetailUseCase {
   }
 }
 
-/** 사유는 앞뒤 공백을 지운 1~500자만 보냅니다. 서버가 대상 규칙(자기 계정·관리자 계정·현재 상태)을 다시 확인합니다. */
+/** 사유는 앞뒤 공백을 지운 1~500자만 보냅니다. 서버가 대상 규칙(자기 계정·관리자 계정·현재 상태·마지막 관리자)을 다시 확인합니다. */
 export class TakeAdminAccountActionUseCase {
   private readonly repository: Pick<AdminAccountRepository, 'act'>
 

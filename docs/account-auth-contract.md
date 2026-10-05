@@ -41,7 +41,7 @@ Browser
 | (익명) | 세션 없음 | 공개 화면: 검색·상세·원문 질문·요금제·파트너 모집 읽기(`/`, `/pricing`, `/partners`), 로그인·회원가입 |
 | `MEMBER` | 로그인 | 사이드바 작업 화면(`/app/chat` `/app/pricing` `/app/partners` `/app/profile` …) |
 | `COMPANY` | 사업자등록번호 조회(Bizno)로 확인한 기업 등록 | 파트너 모집글 작성. 이메일 인증 조건은 인증 기능이 생길 때 더함 |
-| `ADMIN` | `account.role = ADMIN` | 위 전부 + `/app/admin/*`(계정 관리). 서버는 `/api/v1/admin/*`마다 역할을 다시 확인 |
+| `ADMIN` | `account.role = ADMIN` | 위 전부 + `/app/admin/*`(회원 관리·감사 기록). 서버는 `/api/v1/admin/*`마다 역할을 다시 확인 |
 
 ## 세션 쿠키
 
@@ -565,12 +565,21 @@ client secret과 nonce로 막습니다.
 | `POST /{id}/suspend` | 정지. 모든 세션을 지워 바로 로그아웃 | 200 상세 |
 | `POST /{id}/unsuspend` | 정지 해제. 지운 세션은 돌아오지 않음 | 200 상세 |
 | `POST /{id}/sessions/revoke` | 강제 로그아웃. 계정은 그대로 | 200 상세 |
+| `POST /{id}/role` | 관리자 권한 부여·해제. 본문 `{ "role": "ADMIN"\|"USER", "reason": "..." }` | 200 상세 |
+
+감사 기록은 `GET /api/v1/admin/audit-logs`입니다. `actorAccountId` `targetAccountId` `action` `from`·`to`(서울 기준
+`yyyy-MM-dd`, 끝 날 포함) `before`(앞 쪽 마지막 ID) `limit`(1~50, 기본 50)을 받고, 최신순 `records[]`(`id` `action`
+`actorAccountId` `actorEmail` `targetAccountId` `requestSummary` `clientIp` `userAgent` `createdAt`)와 `nextCursor`를
+`Cache-Control: no-store`로 돌려줍니다. 목록·상세 조회, 모든 조치, 감사 기록 조회는 요청마다 이 기록에 한 줄씩 남고,
+남기지 못하면 503 `ADMIN_ACCESS_LOG_UNAVAILABLE`로 조회 결과를 내주지 않고 조치를 되돌립니다.
 
 조치 본문은 `{ "reason": "스팸 제안 반복" }`이고 사유는 앞뒤 공백을 뺀 1~500자입니다. 조치는 대상 계정 행을 잠근 한
 transaction에서 상태를 바꾸고 `account_admin_action`(대상·관리자·종류·사유·시각)에 남깁니다. 자기 계정은 422
 `ADMIN_SELF_ACTION`, 다른 관리자 계정은 422 `ADMIN_TARGET_PROTECTED`, 이미 그 상태면 409 `ADMIN_ACCOUNT_STATE_CONFLICT`입니다.
 그래서 정지로 관리자가 모두 사라지지 않고, 활성 관리자가 한 명뿐이면 그 관리자의 탈퇴(`DELETE /api/v1/me`)도 422
-`LAST_ADMIN_DELETION`입니다.
+`LAST_ADMIN_DELETION`입니다. 권한 변경은 `ADMIN_GRANT`·`ADMIN_REVOKE`로 남고, 자기 권한은 바꿀 수 없으며(422
+`ADMIN_SELF_ACTION`) 정지된 계정은 관리자로 올리지 않습니다(409). 처리자와 대상 행을 함께 잠가 처리자가 아직 활성 관리자인지
+다시 확인하므로(아니면 403) 마지막 활성 관리자는 내려가지 않습니다(422 `ADMIN_LAST_ACTIVE_ADMIN`).
 
 목록 한 줄은 `id` `email` `role` `tier` `status` `emailVerified` `hasPassword` `loginMethods[]`(비밀번호가 있으면 EMAIL, 연결된
 소셜 공급자) `company`(`companyName` `businessNumber` 또는 null) `createdAt` `lastLoginAt` `suspendedAt`입니다. 시각은 서울 기준
@@ -619,9 +628,11 @@ ISO 로컬 시각(`2026-09-11T17:49:09.591286`, 초 아래 자리는 있을 때�
 | 활성 관리자가 한 명뿐인데 그 관리자가 탈퇴 | 422 | `LAST_ADMIN_DELETION` |
 | 관리자가 아닌 계정의 관리자 API 호출 | 403 | `ADMIN_ACCESS_DENIED` |
 | 관리자 API의 대상 계정이 없거나 삭제됨 | 404 | `ADMIN_ACCOUNT_NOT_FOUND` |
-| 관리자가 자기 계정을 정지·강제 로그아웃 | 422 | `ADMIN_SELF_ACTION` |
+| 관리자가 자기 계정을 정지·강제 로그아웃하거나 자기 권한을 변경 | 422 | `ADMIN_SELF_ACTION` |
 | 다른 관리자 계정을 정지·강제 로그아웃 | 422 | `ADMIN_TARGET_PROTECTED` |
-| 이미 정지된 계정 정지, 정지되지 않은 계정 정지 해제 | 409 | `ADMIN_ACCOUNT_STATE_CONFLICT` |
+| 이미 정지된 계정 정지, 정지되지 않은 계정 정지 해제, 같은 역할로 변경, 정지된 계정을 관리자로 변경 | 409 | `ADMIN_ACCOUNT_STATE_CONFLICT` |
+| 정지되지 않은 마지막 관리자의 권한 해제 | 422 | `ADMIN_LAST_ACTIVE_ADMIN` |
+| 관리자 접속기록을 남기지 못함(조회 결과 미반환·조치 되돌림) | 503 | `ADMIN_ACCESS_LOG_UNAVAILABLE` |
 | 세션 쿠키가 붙은 상태 변경 요청의 Origin이 없거나 허용 목록에 없음 | 403 | `SESSION_ORIGIN_REJECTED` |
 | 로그인·회원가입 시도 한도 초과 | 429 | `LOGIN_RATE_LIMITED` (`Retry-After`, `retryAfterSeconds`) |
 

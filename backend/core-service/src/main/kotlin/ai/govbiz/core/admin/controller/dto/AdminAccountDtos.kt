@@ -14,12 +14,22 @@ import ai.govbiz.core.admin.domain.AdminAccountStatus
 import ai.govbiz.core.admin.domain.AdminAccountSummary
 import ai.govbiz.core.admin.service.AdminAccountService
 import jakarta.validation.constraints.NotBlank
+import jakarta.validation.constraints.NotNull
 import jakarta.validation.constraints.Size
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 
 /** 정지·정지 해제·강제 로그아웃에 함께 보내는 사유입니다. 조치 기록에 남습니다. */
 class AdminAccountActionRequest(
+    @field:NotBlank
+    @field:Size(max = AdminAccountService.MAX_REASON_LENGTH)
+    val reason: String = "",
+)
+
+/** 권한 변경입니다. 새 역할(`ADMIN`·`USER`)과 사유가 모두 필요하며 사유는 조치 기록에 남습니다. */
+class AdminAccountRoleChangeRequest(
+    @field:NotNull
+    val role: AccountRole? = null,
     @field:NotBlank
     @field:Size(max = AdminAccountService.MAX_REASON_LENGTH)
     val reason: String = "",

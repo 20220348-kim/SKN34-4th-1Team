@@ -31,10 +31,13 @@ export const adminAccountDetailMessages = {
     suspend: '계정을 정지했습니다. 이 계정의 모든 세션이 종료되었습니다.',
     unsuspend: '정지를 해제했습니다. 회원은 다시 로그인하면 됩니다.',
     'revoke-sessions': '모든 기기에서 로그아웃시켰습니다.',
+    'grant-admin': '관리자 권한을 부여했어요.',
+    'revoke-admin': '관리자 권한을 해제했어요.',
   } satisfies Record<AdminAccountActionKind, string>,
   conflict: '다른 관리자가 먼저 상태를 바꿨습니다. 최신 상태를 다시 불러왔습니다.',
   selfAction: '내 계정에는 조치할 수 없습니다.',
   protectedTarget: '관리자 계정은 정지하거나 강제 로그아웃할 수 없습니다.',
+  lastAdmin: '정지되지 않은 마지막 관리자라 권한을 해제할 수 없어요.',
   requestFailed: '요청을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.',
 } as const
 
@@ -60,6 +63,18 @@ const actionCopy: Record<AdminAccountActionKind, {
     buttonLabel: '강제 로그아웃',
     title: '모든 기기에서 로그아웃할까요?',
     description: (email) => `${email} 계정의 모든 세션을 끝냅니다. 계정은 그대로라 다시 로그인할 수 있습니다.`,
+    tone: 'danger',
+  },
+  'grant-admin': {
+    buttonLabel: '관리자 권한 부여',
+    title: '관리자 권한을 부여할까요?',
+    description: (email) => `${email} 계정이 회원 정보를 보고 계정을 조치할 수 있게 돼요.`,
+    tone: 'default',
+  },
+  'revoke-admin': {
+    buttonLabel: '관리자 권한 해제',
+    title: '관리자 권한을 해제할까요?',
+    description: (email) => `${email} 계정은 다음 요청부터 관리자 화면을 쓸 수 없어요.`,
     tone: 'danger',
   },
 }
@@ -157,7 +172,9 @@ export function useAdminAccountDetailViewModel(useCases: Partial<DetailUseCases>
         setState({ id: accountId, phase: 'missing', detail: null })
         return
       }
-      const error = result.outcome === 'self-action' ? adminAccountDetailMessages.selfAction : adminAccountDetailMessages.protectedTarget
+      const error = result.outcome === 'self-action' ? adminAccountDetailMessages.selfAction
+        : result.outcome === 'last-admin' ? adminAccountDetailMessages.lastAdmin
+          : adminAccountDetailMessages.protectedTarget
       setModal((value) => value && { ...value, isSubmitting: false, error })
     } catch (error) {
       if (!isMounted.current) return

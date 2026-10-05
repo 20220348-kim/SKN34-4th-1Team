@@ -2,7 +2,7 @@ package ai.govbiz.core.account.domain
 
 import java.time.LocalDateTime
 
-/** 관리자는 SQL이나 개발용 로그인으로만 지정하며 가입 시에는 항상 USER입니다. */
+/** 가입 시에는 항상 USER입니다. 관리자는 SQL·개발용 시드나 다른 관리자의 권한 변경(사유·접속기록을 남김)으로 지정합니다. */
 enum class AccountRole {
     USER,
     ADMIN,

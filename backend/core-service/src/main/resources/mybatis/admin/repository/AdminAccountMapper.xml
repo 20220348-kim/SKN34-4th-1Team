@@ -234,6 +234,13 @@
           AND deleted_at IS NULL
     </update>
 
+    <update id="updateRole">
+        UPDATE account
+        SET role = #{role}
+        WHERE id = #{accountId}
+          AND deleted_at IS NULL
+    </update>
+
     <insert id="insertAction"
             parameterType="ai.govbiz.core.admin.repository.mapper.AdminAccountActionDbRow"
             useGeneratedKeys="true"

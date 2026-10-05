@@ -315,14 +315,25 @@ export function AppSidebar({ onClose, onNewChat, closeLabel, onNavigate, history
                 <span>내 프로필</span>
               </Link>
               {account.tier === 'ADMIN' ? (
-                <Link
-                  className={sidebarMenuItemClassName(pathname.startsWith(appPaths.admin) ? 'active' : 'inactive')}
-                  to={appPaths.adminAccounts}
-                  aria-current={pathname.startsWith(appPaths.admin) ? 'page' : undefined}
-                >
-                  <MenuIconGraphic name="shield" />
-                  <span>회원 관리</span>
-                </Link>
+                <>
+                  <Link
+                    className={sidebarMenuItemClassName(pathname.startsWith(appPaths.adminAccounts) ? 'active' : 'inactive')}
+                    to={appPaths.adminAccounts}
+                    aria-current={pathname.startsWith(appPaths.adminAccounts) ? 'page' : undefined}
+                  >
+                    <MenuIconGraphic name="shield" />
+                    <span>회원 관리</span>
+                  </Link>
+                  {/* 회원 정보 조회·계정 조치·권한 변경 기록은 회원 관리 바로 아래에서 엽니다. */}
+                  <Link
+                    className={sidebarMenuItemClassName(pathname.startsWith(appPaths.adminAuditLogs) ? 'active' : 'inactive')}
+                    to={appPaths.adminAuditLogs}
+                    aria-current={pathname.startsWith(appPaths.adminAuditLogs) ? 'page' : undefined}
+                  >
+                    <MenuIconGraphic name="document" />
+                    <span>감사 기록</span>
+                  </Link>
+                </>
               ) : null}
               <button className={appSidebarStyles.accountMenuButton} type="button" onClick={signOutToLanding}>
                 <MenuIconGraphic name="logout" />

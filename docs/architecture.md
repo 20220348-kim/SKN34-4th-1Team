@@ -962,6 +962,16 @@ Hook 로컬 상태로 두는 것이 규칙입니다.
 로그인한 사용자를 공개 URL에서 같은 내용의 `/app` 화면으로, `GuestOnly`는 로그인·회원가입에서 복귀 경로로, `RequireAuth`는
 비로그인 사용자를 `/login?next=`로 보냅니다. 경로 상수와 공개↔내부 대응은 `presentation/shared/routes/appPaths.ts`가 소유합니다.
 
+### 관리자 감사 기록
+
+관리자 API는 `AdminPrincipal`이 세션 계정·관리자 역할과 함께 접속 주소(`remoteAddr`)·User-Agent를 담아
+`AdminAccountController · AdminAuditLogController → AdminAccountService · AdminAccessLogService → AdminAccessLogRepository
+→ AdminAccessLogMapper → Mapper XML → MySQL(admin_access_log, V49)`로 접속기록을 남깁니다. 회원 목록·상세 조회는 결과를
+돌려주기 전에, 정지·정지 해제·강제 로그아웃·권한 변경은 상태 변경·사유 기록(`account_admin_action`)과 같은 transaction에서
+기록하며, 기록하지 못하면 503으로 조회 결과를 내주지 않고 조치를 되돌립니다. 기록은 추가만 하고 계정 ID에 외래 키를 걸지 않아
+계정 행이 사라져도 남습니다. 권한 변경은 처리자·대상 행을 ID 순서로 잠가 마지막 활성 관리자가 사라지지 않게 합니다.
+웹의 `/app/admin/audit-logs`는 같은 API를 최신순 커서로 쪽 단위 이동하며, 이 조회도 기록됩니다.
+
 ## 오류 경계
 
 AI 검색은 Core의 `search.total → database_fetch/eligibility_prepare/retrieval/ranking`과

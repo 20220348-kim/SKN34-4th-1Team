@@ -19,7 +19,7 @@ import java.time.LocalDateTime
 import org.springframework.stereotype.Repository
 import org.springframework.transaction.annotation.Transactional
 
-/** 관리자 계정 관리의 조회와 정지 상태·조치 기록 쓰기를 MySQL에서 처리합니다. 세션 삭제는 account Repository가 맡습니다. */
+/** 관리자 계정 관리의 조회와 정지 상태·역할·조치 기록 쓰기를 MySQL에서 처리합니다. 세션 삭제는 account Repository가 맡습니다. */
 @Repository
 class AdminAccountRepository(
     private val mapper: AdminAccountMapper,
@@ -97,23 +97,28 @@ class AdminAccountRepository(
     }
 
     @Transactional
+    fun updateRole(accountId: Long, role: AccountRole) {
+        check(mapper.updateRole(accountId, role.name) == 1) { "account role was not updated" }
+    }
+
+    /** 조치 기록을 남기고 그 ID를 돌려줍니다. 접속기록은 사유 대신 이 ID를 가리킵니다. */
+    @Transactional
     fun recordAction(
         targetAccountId: Long,
         adminAccountId: Long,
         action: AdminAccountActionType,
         reason: String,
         createdAt: LocalDateTime,
-    ) {
-        val inserted = mapper.insertAction(
-            AdminAccountActionDbRow(
-                targetAccountId = targetAccountId,
-                adminAccountId = adminAccountId,
-                action = action.name,
-                reason = reason,
-                createdAt = createdAt,
-            ),
+    ): Long {
+        val row = AdminAccountActionDbRow(
+            targetAccountId = targetAccountId,
+            adminAccountId = adminAccountId,
+            action = action.name,
+            reason = reason,
+            createdAt = createdAt,
         )
-        check(inserted == 1) { "admin action row was not created" }
+        check(mapper.insertAction(row) == 1) { "admin action row was not created" }
+        return row.id
     }
 
     private fun AdminAccountDbRow.toSummary(): AdminAccountSummary =

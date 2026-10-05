@@ -47,10 +47,11 @@ describe('AdminAccountUseCases', () => {
     expect(() => new GetAdminAccountDetailUseCase({ getDetail: vi.fn() }).execute(1.5)).toThrow(RangeError)
   })
 
-  it('offers suspension for active members, only unsuspension for suspended ones, and nothing for admins or yourself', () => {
-    expect(availableAdminAccountActions(detail)).toEqual(['suspend', 'revoke-sessions'])
+  it('offers suspension and admin grants for active members, only unsuspension for suspended ones, only revocation for admins, and nothing for yourself', () => {
+    expect(availableAdminAccountActions(detail)).toEqual(['suspend', 'revoke-sessions', 'grant-admin'])
     expect(availableAdminAccountActions({ ...detail, account: { ...detail.account, status: 'SUSPENDED' } })).toEqual(['unsuspend'])
-    expect(availableAdminAccountActions({ ...detail, account: { ...detail.account, role: 'ADMIN', tier: 'ADMIN' } })).toEqual([])
+    expect(availableAdminAccountActions({ ...detail, account: { ...detail.account, role: 'ADMIN', tier: 'ADMIN' } })).toEqual(['revoke-admin'])
     expect(availableAdminAccountActions({ ...detail, isSelf: true })).toEqual([])
+    expect(availableAdminAccountActions({ ...detail, isSelf: true, account: { ...detail.account, role: 'ADMIN', tier: 'ADMIN' } })).toEqual([])
   })
 })

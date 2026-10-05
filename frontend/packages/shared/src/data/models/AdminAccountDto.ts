@@ -62,7 +62,7 @@ export const adminAccountDetailDtoSchema = z.object({
   }),
   actions: z.array(z.object({
     id: z.number().int().positive(),
-    action: z.enum(['SUSPEND', 'UNSUSPEND', 'SESSIONS_REVOKE']),
+    action: z.enum(['SUSPEND', 'UNSUSPEND', 'SESSIONS_REVOKE', 'ADMIN_GRANT', 'ADMIN_REVOKE']),
     reason: z.string().min(1),
     adminEmail: z.string().min(1),
     createdAt: dateTimeSchema,

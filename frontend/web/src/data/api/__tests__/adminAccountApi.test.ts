@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AccountApiError } from '../accountApi'
 import { AdminAccountRepositoryImpl } from '../../repositories/AdminAccountRepositoryImpl'
 import { browseAdminAccountsApi, getAdminAccountStatsApi } from '../adminAccountApi'
+import { adminAccountDetailDtoSchema } from '../../models/AdminAccountDto'
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -88,6 +89,34 @@ describe('adminAccountApi', () => {
     await expect(repository.act(11, 'suspend', '테스트')).resolves.toEqual({ outcome: 'conflict' })
     await expect(repository.act(99, 'suspend', '테스트')).resolves.toEqual({ outcome: 'not-found' })
     await expect(repository.act(11, 'suspend', '테스트')).rejects.toBeInstanceOf(AccountApiError)
+  })
+
+  it('posts the new role with the reason for admin grants and revokes and maps the last-admin refusal', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(detailDto))
+      .mockResolvedValueOnce(jsonResponse({ code: 'ADMIN_LAST_ACTIVE_ADMIN' }, 422))
+    vi.stubGlobal('fetch', fetchMock)
+    const repository = new AdminAccountRepositoryImpl()
+
+    await expect(repository.act(11, 'grant-admin', '운영 담당 추가')).resolves.toMatchObject({ outcome: 'done' })
+    await expect(repository.act(2, 'revoke-admin', '퇴사')).resolves.toEqual({ outcome: 'last-admin' })
+    const calls = fetchMock.mock.calls as [string, RequestInit][]
+    expect(new URL(calls[0]![0]).pathname).toBe('/api/v1/admin/accounts/11/role')
+    expect(calls[0]![1].method).toBe('POST')
+    expect(JSON.parse(String(calls[0]![1].body))).toEqual({ role: 'ADMIN', reason: '운영 담당 추가' })
+    expect(new URL(calls[1]![0]).pathname).toBe('/api/v1/admin/accounts/2/role')
+    expect(JSON.parse(String(calls[1]![1].body))).toEqual({ role: 'USER', reason: '퇴사' })
+  })
+
+  it('reads role change records in the action history', () => {
+    const parsed = adminAccountDetailDtoSchema.parse({
+      ...detailDto,
+      actions: [
+        { id: 4, action: 'ADMIN_GRANT', reason: '운영 담당 추가', adminEmail: 'admin@govbiz.local', createdAt: '2026-09-11T09:00:00' },
+        { id: 5, action: 'ADMIN_REVOKE', reason: '퇴사', adminEmail: 'admin@govbiz.local', createdAt: '2026-09-12T09:00:00' },
+      ],
+    })
+    expect(parsed.actions.map((action) => action.action)).toEqual(['ADMIN_GRANT', 'ADMIN_REVOKE'])
   })
 
   it('reads a missing account as null', async () => {

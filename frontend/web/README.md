@@ -317,7 +317,8 @@ Core의 도구 에이전트(`ASSISTANT_AGENT_ENABLED`)가 켜져 있으면 같�
 | `/app/support-programs/detail`, `/app/support-programs/detail/question` | 검색 결과·관심 공고함 | 작업 화면의 공고 상세·원문 질문. `WorkspaceSearchDetailLayout`이 연 곳(`searchReturnTo`)을 이어받아 검색에서 열었으면 `/app/chat`과 같은 검색 탭 줄을 위에 두고(같은 탭은 조건 복원, 다른 탭은 그 검색의 처음) 사이드바는 새검색을, 관심 공고함에서 열었으면 관심 공고함 머리글과 같은 높이의 줄에 [관심 공고함으로 돌아가기] 알약만 두고 사이드바는 관심 공고함을 켬 |
 | `/app/profile` | 사이드바 계정 카드 메뉴 | 사업자등록번호 조회로 기업 등록(기업명·소재지·업종·설립연도·홈페이지)·기본정보 수정. 완성도와 체크리스트는 맨 위 요약 카드, 이 정보가 쓰이는 곳·공개 범위는 카드 제목 옆 `?` 도움말(한 칸 배치). 나머지 섹션은 준비 중 |
 | `/app/admin/accounts` | 사이드바 계정 카드 메뉴(관리자) | 하단 관리자 아이디를 눌러 연 메뉴의 `회원 관리`(화면 제목과 같은 이름)로 이동. 요약 수치, 검색(이메일·기업명·사업자등록번호)과 상태·권한·로그인 방법 필터·정렬, "검색 결과 N건". 조건은 주소에 남아 상세에서 돌아와도 유지. 쓰는 도중 세션이 끝나면(401) 지금 주소로 돌아오는 로그인으로, 관리자 권한이 없으면(403) 다시 시도 대신 권한 안내 |
-| `/app/admin/accounts/detail?accountId=...` | 계정 목록 | 머리글 `회원 관리 > 계정 상세`로 목록에 돌아감. 계정·기업·활동·조치 기록과 정지·정지 해제·강제 로그아웃(사유 필수). 내 계정·다른 관리자 계정은 조치 버튼 대신 까닭을 표시. 401·403은 목록과 같게 처리 |
+| `/app/admin/accounts/detail?accountId=...` | 계정 목록 | 머리글 `회원 관리 > 계정 상세`로 목록에 돌아감. 계정·기업·활동·조치 기록과 정지·정지 해제·강제 로그아웃·관리자 권한 부여(회원)·해제(다른 관리자) 모달(사유 필수). 내 계정은 조치 버튼 대신 까닭을 표시하고, 마지막 활성 관리자 해제 거절은 모달 안에서 안내. 401·403은 목록과 같게 처리 |
+| `/app/admin/audit-logs` | 사이드바 계정 카드 메뉴(관리자) | `회원 관리` 아래 `감사 기록`. 회원 정보 조회·계정 조치·권한 변경·이 화면 조회의 접속기록(시각·작업·처리한 관리자·대상 회원·요청 내용·접속 주소)을 최신순으로 보여 줌. 기간·작업·관리자 ID·대상 ID는 조회를 눌러 적용하고 주소에 남기며, 표는 이전·다음 쪽 이동. 대상 ID는 계정 상세로 연결. 401·403은 회원 관리와 같게 처리 |
 
 `/login`은 실제 Core API 세션에 연결됩니다. 로그인하면 HttpOnly 쿠키 세션이 생기고 새로고침 뒤에도 복원되며,
 잘못된 비밀번호·정지 계정·시도 제한(429)을 구분해 안내합니다. 개발 빌드의 헤더에는 `개발 로그인 · 관리자`와
@@ -626,7 +627,7 @@ src/
 ├── presentation/features/public-partner-recruitment/ # 로그인 전 공개 모집 목록·상세 View와 ViewModel
 ├── presentation/features/partner-proposal/ # 제안함(받은·보낸 제안, 수락·거절·철회) View와 ViewModel
 ├── presentation/features/company-profile/ # 기업 등록·기본정보 수정(사업자번호 자동 하이픈·연도 선택기·홈페이지 정규화), 협업·파트너 설정, 계정 보안 모달의 View·ViewModel
-├── presentation/features/admin/ # 관리자 계정 관리 목록·상세 View와 ViewModel
+├── presentation/features/admin/ # 관리자 회원 관리 목록·상세·감사 기록 View와 ViewModel
 ├── presentation/shared/        # 앱 공용 헤더, 작업 사이드바, 로그인 상태(auth slice·훅·라우트 보호), 경로 상수(routes), 기업 등록 공용 부품(company: 사업자번호 조회 훅·결과 카드·기본정보 칸·검증), 파트너 모집 조회 훅·표시 helper, 받은 제안함 slice·훅과 보낸 제안함 훅, 작업 화면 공용 스타일, Core API 상태 표시, 지원사업 공통 오류 안내
 ├── domain/                      # Entity, Repository 계약, UseCase
 └── data/                        # Fetch, Zod DTO 검증, Repository 구현, 테스트 fixture

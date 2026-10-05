@@ -112,6 +112,36 @@ class FlywayMigrationIntegrationTest {
     }
 
     @Test
+    fun adminAccessLogAndRoleActionsKeepExistingAdminRecords() = withDatabase { mysql, jdbc ->
+        migration(mysql, "48").migrate()
+        jdbc.update("""INSERT INTO account (email, password_hash, role, terms_agreed_at)
+            VALUES ('admin@govbiz.local', 'test', 'ADMIN', NOW()), ('member@govbiz.local', 'test', 'USER', NOW())""")
+        val adminId = jdbc.queryForObject("SELECT id FROM account WHERE email = 'admin@govbiz.local'", Long::class.java)!!
+        val memberId = jdbc.queryForObject("SELECT id FROM account WHERE email = 'member@govbiz.local'", Long::class.java)!!
+        val insertAction = """INSERT INTO account_admin_action (target_account_id, admin_account_id, action, reason, created_at)
+            VALUES (?, ?, ?, '스팸 제안 반복 😀', NOW(6))"""
+        jdbc.update(insertAction, memberId, adminId, "SUSPEND")
+        assertThrows(org.springframework.dao.DataAccessException::class.java) { jdbc.update(insertAction, memberId, adminId, "ADMIN_GRANT") }
+        val actions = "SELECT id, target_account_id, admin_account_id, action, reason, created_at FROM account_admin_action ORDER BY id"
+        val before = jdbc.queryForList(actions)
+
+        val flyway = migration(mysql, "49")
+        assertEquals(1, flyway.migrate().migrationsExecuted)
+        assertEquals(before, jdbc.queryForList(actions))
+        jdbc.update(insertAction, memberId, adminId, "ADMIN_GRANT")
+        jdbc.update(insertAction, memberId, adminId, "ADMIN_REVOKE")
+        assertThrows(org.springframework.dao.DataAccessException::class.java) { jdbc.update(insertAction, memberId, adminId, "ROLE_CHANGE") }
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM admin_access_log", Int::class.java))
+        // 접속기록은 계정에 외래 키를 걸지 않아 계정 행을 지워도 함께 지워지지 않습니다.
+        assertEquals(0, jdbc.queryForObject(
+            "SELECT COUNT(*) FROM information_schema.referential_constraints WHERE constraint_schema = DATABASE() AND table_name = 'admin_access_log'",
+            Int::class.java,
+        ))
+        assertEquals(0, flyway.migrate().migrationsExecuted)
+        assertTrue(flyway.validateWithResult().validationSuccessful)
+    }
+
+    @Test
     fun freshDatabaseAppliesUniqueVersionsAndRepeatedStartupChangesNothing() = withDatabase { mysql, jdbc ->
         val flyway = migration(mysql, "21")
         assertEquals(21, flyway.migrate().migrationsExecuted)

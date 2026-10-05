@@ -31,6 +31,8 @@ export const appPaths = {
   admin: `${APP_PREFIX}/admin`,
   adminAccounts: `${APP_PREFIX}/admin/accounts`,
   adminAccountDetail: `${APP_PREFIX}/admin/accounts/detail`,
+  /** 관리자 감사 기록(회원 정보 조회·계정 조치·권한 변경 접속기록)입니다. */
+  adminAuditLogs: `${APP_PREFIX}/admin/audit-logs`,
   supportProgramDetail: `${APP_PREFIX}/support-programs/detail`,
   supportProgramQuestion: `${APP_PREFIX}/support-programs/detail/question`,
 } as const

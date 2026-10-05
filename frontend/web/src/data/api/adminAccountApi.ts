@@ -16,11 +16,13 @@ import { getCoreApiBaseUrl } from './coreApiConfig'
 
 const ADMIN_ACCOUNTS_PATH = '/api/v1/admin/accounts'
 
-/** 조치별 서버 경로입니다. */
-const actionPaths: Record<AdminAccountActionKind, string> = {
-  suspend: 'suspend',
-  unsuspend: 'unsuspend',
-  'revoke-sessions': 'sessions/revoke',
+/** 조치별 서버 경로와 사유 외에 함께 보낼 본문입니다. 권한 부여·해제는 같은 경로에 새 역할을 보냅니다. */
+const actionRequests: Record<AdminAccountActionKind, { path: string; body: Record<string, string> }> = {
+  suspend: { path: 'suspend', body: {} },
+  unsuspend: { path: 'unsuspend', body: {} },
+  'revoke-sessions': { path: 'sessions/revoke', body: {} },
+  'grant-admin': { path: 'role', body: { role: 'ADMIN' } },
+  'revoke-admin': { path: 'role', body: { role: 'USER' } },
 }
 
 /** 관리자 API는 세션 쿠키로 관리자인지 확인합니다. */
@@ -74,17 +76,18 @@ export async function getAdminAccountApi(id: number, signal?: AbortSignal): Prom
   return adminAccountDetailDtoSchema.parse(await response.json())
 }
 
-/** 정지·정지 해제·강제 로그아웃입니다. 사유를 함께 보내고 바뀐 상세를 돌려받습니다. */
+/** 정지·정지 해제·강제 로그아웃·관리자 권한 부여·해제입니다. 사유를 함께 보내고 바뀐 상세를 돌려받습니다. */
 export async function takeAdminAccountActionApi(
   id: number,
   kind: AdminAccountActionKind,
   reason: string,
   signal?: AbortSignal,
 ): Promise<AdminAccountDetailDto> {
-  const response = await fetch(`${getCoreApiBaseUrl()}${ADMIN_ACCOUNTS_PATH}/${id}/${actionPaths[kind]}`, {
+  const request = actionRequests[kind]
+  const response = await fetch(`${getCoreApiBaseUrl()}${ADMIN_ACCOUNTS_PATH}/${id}/${request.path}`, {
     method: 'POST',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ reason }),
+    body: JSON.stringify({ ...request.body, reason }),
     credentials: withSessionCookie,
     signal,
   })
@@ -93,8 +96,8 @@ export async function takeAdminAccountActionApi(
   return adminAccountDetailDtoSchema.parse(await response.json())
 }
 
-/** 실패 응답의 HTTP 상태와 ProblemDetail `code`를 Repository가 업무 결과로 바꿀 수 있게 합니다. */
-async function rejectFailedResponse(response: Response): Promise<void> {
+/** 실패 응답의 HTTP 상태와 ProblemDetail `code`를 Repository가 업무 결과로 바꿀 수 있게 합니다. 관리자 API가 함께 씁니다. */
+export async function rejectFailedResponse(response: Response): Promise<void> {
   if (response.ok) return
 
   let code: string | null = null
