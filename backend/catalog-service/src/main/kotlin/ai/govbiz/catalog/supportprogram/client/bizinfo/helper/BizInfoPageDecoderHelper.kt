@@ -115,6 +115,7 @@ internal object BizInfoPageDecoderHelper {
             hashtags = text(node, "hashtags"),
             applicationMethod = text(node, "reqstMthPapersCn"),
             applicationUrl = text(node, "rceptEngnHmpgUrl"),
+            contact = text(node, "refrncNm"),
         )
     }
 

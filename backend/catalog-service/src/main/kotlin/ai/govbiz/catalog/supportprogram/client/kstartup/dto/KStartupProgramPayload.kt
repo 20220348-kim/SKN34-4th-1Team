@@ -23,4 +23,10 @@ data class KStartupProgramPayload(
     val postalApplication: String? = null,
     val faxApplication: String? = null,
     val otherApplication: String? = null,
+    /** 문의처 필드입니다. 담당 부서명(`biz_prch_dprt_nm`)과 하이픈 없는 숫자 전화번호(`prch_cnpl_no`)입니다. */
+    val contactDepartment: String? = null,
+    val contactPhoneNumber: String? = null,
+    /** 우대 사항(`prfn_matr`)과 주관 기관 유형(`sprv_inst`)입니다. */
+    val preference: String? = null,
+    val supervisingInstitutionType: String? = null,
 )

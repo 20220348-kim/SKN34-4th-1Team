@@ -4,6 +4,7 @@ import ai.govbiz.catalog.supportprogram.client.bizinfo.dto.BizInfoProgramPayload
 import ai.govbiz.catalog.supportprogram.client.bizinfo.exception.BizInfoClientException
 import ai.govbiz.catalog.supportprogram.domain.SupportProgramStatus
 import ai.govbiz.catalog.supportprogram.domain.SupportProgramApplicationRouteType
+import ai.govbiz.catalog.supportprogram.domain.SupportProgramContact
 import java.time.LocalDate
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -56,6 +57,28 @@ class BizInfoProgramMapperTest {
         assertEquals(SupportProgramApplicationRouteType.FILE, programs[2].applicationRoute.type)
         assertNull(programs[2].applicationRoute.url)
         assertEquals(payload(id = "PBLN_3").sourceUrl, programs[2].sourceUrl)
+    }
+
+    @Test
+    fun keepsTheOfficialContactLineAsTextAndLeavesKStartupOnlyFieldsEmpty() {
+        val programs = BizInfoProgramMapper.mapValidated(listOf(
+            payload(id = "PBLN_1").copy(contact = "<p>부천산업진흥원&nbsp;기업육성팀 032-716-6488, yjh@bizbc.or.kr</p>"),
+            payload(id = "PBLN_2").copy(contact = " <p> </p> "),
+            payload(id = "PBLN_3"),
+        ), TODAY).map { it.program }
+
+        assertEquals(SupportProgramContact(text = "부천산업진흥원 기업육성팀 032-716-6488, yjh@bizbc.or.kr"), programs[0].contact)
+        assertNull(programs[0].preferenceDescription)
+        assertNull(programs[0].supervisingInstitutionType)
+        assertNull(programs[1].contact)
+        assertNull(programs[2].contact)
+    }
+
+    @Test
+    fun rejectsAContactLineThatCannotBeStoredBeforeIndexing() {
+        assertInvalidResponse(listOf(payload().copy(contact = "가".repeat(21_846))))
+        assertEquals(21_845, BizInfoProgramMapper.mapValidated(listOf(payload().copy(contact = "가".repeat(21_845))), TODAY)
+            .single().program.contact?.text?.length)
     }
 
     @Test

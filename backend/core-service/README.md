@@ -18,6 +18,10 @@ writer는 조립되지 않습니다. 직접 실행 시 기본값 false는 기존
 
 아래 기존 수집 설명은 embedded 모드 기준입니다. 새로운 코드·DB·실행 경계, V41 migration,
 격리 검증과 아직 수행하지 않은 운영 이전은 [Catalog 서비스 분리](../../docs/catalog-service-extraction.md)를 따릅니다.
+V51은 Catalog snapshot의 공식 문의처(`contact_department`·`contact_phone_number`·`contact_text`), K-Startup 우대 사항
+(`preference_description`)·주관 기관 유형(`supervising_institution_type`) 열을 추가합니다. 이 값은 projection 해시에
+들어가므로 V51은 checkpoint `revision`만 0으로 되돌려 다음 수신 때 같은 snapshot을 한 번 다시 UPSERT하게 합니다.
+embedded 수집기는 이 필드를 채우지 않아 해당 모드의 상세 응답에서는 null입니다.
 계정·기업·신청·리포트 등의 업무는 이번 단계에서 다른 서비스로 이동하지 않습니다.
 
 AWS 초기 운영 설정은 [별도 Compose 및 배포 안내](../../docs/deployment-aws-vercel.md)에 있습니다.
@@ -385,7 +389,7 @@ Controller의 `SupportProgramRequestAdmissionService.execute`가 공개 요청 �
 | `POST /api/v1/support-programs/search/results` | 로그인 후 기존 검색 결과와 조건 복원(검색·모델 재호출 없음) |
 | `POST /api/v1/support-programs/conversation/interpret` | 현재 발화로 조건 변경 초안을 만들며 사용자 확인 전에는 검색하지 않음 |
 | `POST /api/v1/assistant/messages` | 도우미 자유 질문 한 건의 의도 분류·답변. 비로그인 허용, 세션이 있으면 관심 공고함·받은 제안함·기업 상태로 답함. 프런트 `VITE_ASSISTANT_AI_ENABLED=true`일 때만 호출됨 |
-| `GET /api/v1/support-programs/detail` | 제공처 코드와 원본 ID로 현재 공고 상세 조회. `sourceUrl`은 공고 상세, `applicationRoute`는 공식 신청방법·URL·경로 분류를 반환 |
+| `GET /api/v1/support-programs/detail` | 제공처 코드와 원본 ID로 현재 공고 상세 조회. `sourceUrl`은 공고 상세, `applicationRoute`는 공식 신청방법·URL·경로 분류, `contact`(담당 부서·제공처 원문 전화번호·문의처 원문, 없으면 null)·`preferenceDescription`·`supervisingInstitutionType`은 공식 API 값을 반환 |
 | `POST /api/v1/support-programs/detail/answers` | 특정 공고의 공식 원문 근거 질문·답변 |
 | `POST /api/v1/sample-items/prepare` | 계층 연결 학습용 예제 |
 | `POST /api/v1/auth/signup` | 이메일·비밀번호 회원가입(201). 계정을 만들고 바로 브라우저 세션 쿠키 발급, 중복 이메일은 409 |

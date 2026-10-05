@@ -4,6 +4,7 @@ import ai.govbiz.core.supportprogram.domain.CatalogSupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgramApplicationRoute
 import ai.govbiz.core.supportprogram.domain.SupportProgramApplicationRouteType
+import ai.govbiz.core.supportprogram.domain.SupportProgramContact
 import ai.govbiz.core.supportprogram.domain.SupportProgramSourceDocument
 import ai.govbiz.core.supportprogram.domain.SupportProgramStartupDetails
 import ai.govbiz.core.supportprogram.domain.SupportProgramStatusResolver
@@ -244,6 +245,11 @@ class SupportProgramRepository(
             applicationMethod = supportProgram.applicationRoute.method,
             applicationUrl = supportProgram.applicationRoute.url,
             applicationRouteType = supportProgram.applicationRoute.type.name,
+            contactDepartment = supportProgram.contact?.department,
+            contactPhoneNumber = supportProgram.contact?.phoneNumber,
+            contactText = supportProgram.contact?.text,
+            preferenceDescription = supportProgram.preferenceDescription,
+            supervisingInstitutionType = supportProgram.supervisingInstitutionType,
             sourceSortTimestamp = sortTimestamp.takeIf(String::isNotBlank),
             startupDetailsJson = startupDetails?.let(objectMapper::writeValueAsString),
         )
@@ -283,6 +289,9 @@ class SupportProgramRepository(
                     url = applicationUrl,
                     type = SupportProgramApplicationRouteType.valueOf(applicationRouteType),
                 ),
+                contact = SupportProgramContact.of(contactDepartment, contactPhoneNumber, contactText),
+                preferenceDescription = preferenceDescription,
+                supervisingInstitutionType = supervisingInstitutionType,
                 matchedReasons = emptyList(),
                 recommendationScore = null,
             ),

@@ -17,6 +17,7 @@ import ai.govbiz.core.supportprogram.domain.SupportProgramEligibilityStatus
 import ai.govbiz.core.supportprogram.domain.SupportProgramStatus
 import ai.govbiz.core.supportprogram.domain.SupportProgramApplicationRoute
 import ai.govbiz.core.supportprogram.domain.SupportProgramApplicationRouteType
+import ai.govbiz.core.supportprogram.domain.SupportProgramContact
 import ai.govbiz.core.supportprogram.facade.AiSupportProgramRetrievalFacade
 import ai.govbiz.core.supportprogram.facade.SupportProgramRankingFacade
 import ai.govbiz.core.supportprogram.repository.SupportProgramRepository
@@ -247,6 +248,10 @@ class SupportProgramControllerTest {
             .andExpect(jsonPath("$.applicationRoute.method").value("온라인 접수"))
             .andExpect(jsonPath("$.applicationRoute.url").value("https://forms.gle/abc123"))
             .andExpect(jsonPath("$.evidenceQuestionSupported").value(true))
+            // 공식 문의처 등이 없는 공고도 키는 내고 값만 비웁니다.
+            .andExpect(jsonPath("$.contact").value(nullValue()))
+            .andExpect(jsonPath("$.preferenceDescription").value(nullValue()))
+            .andExpect(jsonPath("$.supervisingInstitutionType").value(nullValue()))
             // 상세는 검색 결과가 아니므로 관련도·추천 이유·자격 판정 필드를 내지 않는다.
             .andExpect(jsonPath("$.matchedReasons").doesNotExist())
             .andExpect(jsonPath("$.recommendationScore").doesNotExist())
@@ -257,7 +262,9 @@ class SupportProgramControllerTest {
     fun marksEvidenceQuestionsUnsupportedForOtherSources() {
         val program = catalogProgram()
         Mockito.doReturn(program.copy(program = program.program.copy(sourceCode = "KSTARTUP", sourceName = "K-Startup",
-            sourceUrl = "https://www.k-startup.go.kr/web/contents/bizpbanc-ongoing.do?pbancSn=177911")))
+            sourceUrl = "https://www.k-startup.go.kr/web/contents/bizpbanc-ongoing.do?pbancSn=177911",
+            contact = SupportProgramContact(department = "창업보육센터", phoneNumber = "0312508269"),
+            preferenceDescription = "1인창조, 재창업", supervisingInstitutionType = "공공기관")))
             .`when`(supportProgramRepository).findPresentBySourceAndProgramId("KSTARTUP", "PBLN_TEST")
 
         mockMvc.perform(
@@ -268,6 +275,11 @@ class SupportProgramControllerTest {
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.sourceCode").value("KSTARTUP"))
             .andExpect(jsonPath("$.evidenceQuestionSupported").value(false))
+            .andExpect(jsonPath("$.contact.department").value("창업보육센터"))
+            .andExpect(jsonPath("$.contact.phoneNumber").value("0312508269"))
+            .andExpect(jsonPath("$.contact.text").value(nullValue()))
+            .andExpect(jsonPath("$.preferenceDescription").value("1인창조, 재창업"))
+            .andExpect(jsonPath("$.supervisingInstitutionType").value("공공기관"))
     }
 
     @Test

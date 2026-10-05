@@ -122,6 +122,53 @@ test('question entry preserves the existing explicit AI request and visible prog
   await screen.findByText('공고 원문 답변')
   expect(answer).toHaveBeenCalledWith({ ...identity, question: '신청 서류는?' }, expect.anything())
 })
+test('details show the official application route and split K-Startup exclusions without a placeholder support amount', async () => {
+  jest.mocked(programClient).mockReturnValue({ getDetail: jest.fn().mockResolvedValue({
+    ...programDetail, sourceCode: 'KSTARTUP', targetDescription: '지원 대상: 창업 3년 이내 기업\n제외 대상: 휴·폐업 중인 기업',
+    applicationRoute: { method: '구글 설문으로 신청', url: 'https://forms.gle/abc', type: 'GOOGLE_FORMS' },
+  }), answerEvidenceQuestion: answer } as unknown as ReturnType<typeof programClient>)
+  const open = jest.spyOn(Linking, 'openURL').mockResolvedValue(true)
+  render(<ProgramScreen identity={identity} onLogin={jest.fn()} />)
+  await screen.findByText('테스트 지원사업')
+  expect(screen.getByText('온라인 신청 (구글 설문)')).toBeTruthy()
+  expect(screen.queryByText('지원 규모')).toBeNull()
+  expect(screen.queryByText('문의처')).toBeNull()
+  // 지원·제외 대상과 신청 방법은 접지 않고 처음부터 보입니다.
+  expect(screen.getByText('창업 3년 이내 기업')).toBeTruthy()
+  expect(screen.getByText('제외 대상')).toBeTruthy()
+  expect(screen.getByText('휴·폐업 중인 기업')).toBeTruthy()
+  expect(screen.getByText('구글 설문으로 신청')).toBeTruthy()
+  fireEvent.press(screen.getByText('구글 설문 신청서 열기'))
+  expect(open).toHaveBeenCalledWith('https://forms.gle/abc')
+  open.mockRestore()
+})
+test('an unknown application route asks to check the notice and shows no apply button', async () => {
+  render(<ProgramScreen identity={identity} onLogin={jest.fn()} />)
+  await screen.findByText('테스트 지원사업')
+  expect(screen.getByText('공고 원문에서 확인해 주세요')).toBeTruthy()
+  // 한눈에 보기의 이름만 있고 공식 신청 방법 문장 카드는 없습니다.
+  expect(screen.getAllByText('신청 방법')).toHaveLength(1)
+  expect(screen.queryByText(/신청 사이트 열기|구글 설문 신청서 열기/)).toBeNull()
+  expect(screen.queryByText('우대 사항')).toBeNull()
+})
+test('official contact, institution type and preferences come from the catalog and the phone opens the dialer', async () => {
+  jest.mocked(programClient).mockReturnValue({ getDetail: jest.fn().mockResolvedValue({
+    ...programDetail, sourceCode: 'KSTARTUP', contact: { department: '창업보육센터', phoneNumber: '0312508269', text: null },
+    preferenceDescription: '1인창조, 재창업', supervisingInstitutionType: '공공기관',
+  }), answerEvidenceQuestion: answer } as unknown as ReturnType<typeof programClient>)
+  const open = jest.spyOn(Linking, 'openURL').mockResolvedValue(true)
+  render(<ProgramScreen identity={identity} onLogin={jest.fn()} />)
+  await screen.findByText('테스트 지원사업')
+  expect(screen.getByText('문의처')).toBeTruthy()
+  expect(screen.getByText('창업보육센터')).toBeTruthy()
+  expect(screen.getByText('주관 기관 유형')).toBeTruthy()
+  expect(screen.getByText('공공기관')).toBeTruthy()
+  fireEvent.press(screen.getByLabelText('031-250-8269 전화 걸기'))
+  expect(open).toHaveBeenCalledWith('tel:0312508269')
+  expect(screen.getByText('우대 사항')).toBeTruthy()
+  expect(screen.getByText('1인창조, 재창업')).toBeTruthy()
+  open.mockRestore()
+})
 test('guests do not request a private preparation workspace', async () => {
   jest.mocked(useAuth).mockReturnValue({ status: 'signedOut', session: null, invalidateSession } as unknown as ReturnType<typeof useAuth>)
   const login = jest.fn()

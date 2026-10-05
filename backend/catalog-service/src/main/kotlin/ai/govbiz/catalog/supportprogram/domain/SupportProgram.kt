@@ -21,6 +21,12 @@ data class SupportProgram(
     val recommendationScore: Int? = null,
     val eligibilityReview: SupportProgramEligibilityReview? = null,
     val applicationRoute: SupportProgramApplicationRoute = SupportProgramApplicationRoute(),
+    /** 공식 API의 문의처입니다. 제공처가 주지 않으면 null입니다. */
+    val contact: SupportProgramContact? = null,
+    /** K-Startup 공식 우대 사항(`prfn_matr`)입니다. */
+    val preferenceDescription: String? = null,
+    /** K-Startup 주관 기관 유형(`sprv_inst`: 공공기관·민간·교육기관·지자체 등)입니다. 기관 이름이 아닙니다. */
+    val supervisingInstitutionType: String? = null,
 ) {
     init {
         require(SOURCE_CODE_PATTERN.matches(sourceCode)) {

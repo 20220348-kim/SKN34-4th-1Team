@@ -4,6 +4,7 @@ import ai.govbiz.core.supportprogram.client.catalog.config.CatalogClientProperti
 import ai.govbiz.core.supportprogram.client.catalog.exception.CatalogServiceCallException
 import ai.govbiz.core.supportprogram.client.catalog.exception.CatalogServiceCallException.Failure
 import ai.govbiz.core.supportprogram.domain.SupportProgramApplicationRouteType
+import ai.govbiz.core.supportprogram.domain.SupportProgramContact
 import java.net.URI
 import java.net.SocketTimeoutException
 import org.junit.jupiter.api.AfterEach
@@ -88,6 +89,35 @@ class CatalogSnapshotClientTest {
         assertEquals("온라인 접수", route.method)
         assertEquals("https://forms.gle/abc123", route.url)
         assertEquals(SupportProgramApplicationRouteType.GOOGLE_FORMS, route.type)
+    }
+
+    @Test
+    fun mapsOfficialContactPreferenceAndInstitutionTypeAndAcceptsSnapshotsThatPredateThem() {
+        val program = """{"program":{"id":"179197","sourceCode":"KSTARTUP","title":"창업 지원","organization":"기관",
+          "summary":"본문","categories":[],"regions":[],"targetDescription":"창업기업",
+          "applicationPeriod":"상시","applicationStartDate":null,"applicationEndDate":null,
+          "status":"UNKNOWN","sourceName":"K-Startup","sourceUrl":"https://www.k-startup.go.kr/",
+          "contact":{"department":"창업보육센터","phoneNumber":"0312508269","text":null},
+          "preferenceDescription":"1인창조, 재창업","supervisingInstitutionType":"공공기관"},
+          "sortTimestamp":"","startupDetails":null}"""
+        val body = snapshot().replace("BIZINFO", "KSTARTUP").replace("\"programs\":[]", "\"programs\":[$program]")
+            .replace("\"publishedProgramCount\":0", "\"publishedProgramCount\":1")
+        val legacy = body.replace(
+            Regex(""",\s*"contact":\{[^}]*},\s*"preferenceDescription":"[^"]*","supervisingInstitutionType":"[^"]*""""), "",
+        )
+        assertFalse(legacy.contains("contact"))
+        val blank = body.replace("\"department\":\"창업보육센터\",\"phoneNumber\":\"0312508269\"", "\"department\":\" \",\"phoneNumber\":null")
+        listOf(body, legacy, blank).forEach { server.expect(anything()).andRespond(withSuccess(it, MediaType.APPLICATION_JSON)) }
+
+        val detailed = client.fetch("KSTARTUP").programs.single().program
+        assertEquals(SupportProgramContact(department = "창업보육센터", phoneNumber = "0312508269"), detailed.contact)
+        assertEquals("1인창조, 재창업", detailed.preferenceDescription)
+        assertEquals("공공기관", detailed.supervisingInstitutionType)
+        val predating = client.fetch("KSTARTUP").programs.single().program
+        assertNull(predating.contact)
+        assertNull(predating.preferenceDescription)
+        assertNull(predating.supervisingInstitutionType)
+        assertNull(client.fetch("KSTARTUP").programs.single().program.contact)
     }
 
     @Test

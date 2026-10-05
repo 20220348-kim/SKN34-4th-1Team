@@ -88,6 +88,8 @@ GET /api/v1/support-programs/catalog?keyword=수출&region=서울&category=수�
 요청 도중 동기화되어도 두 조회의 세대가 어긋나지 않습니다.
 
 각 공고는 AI를 통과하지 않았으므로 `matchedReasons: []`, `recommendationScore: null`, `eligibilityReview: null`입니다.
+공식 문의처(`contact`)·우대 사항(`preferenceDescription`)·주관 기관 유형(`supervisingInstitutionType`)은 상세 조회
+`GET /api/v1/support-programs/detail`에만 있고 이 목록 응답에는 넣지 않습니다.
 API/DB 장애를 정상 0건 응답으로 바꾸지 않습니다.
 
 ## 프론트엔드 선택지 표시

@@ -53,12 +53,22 @@ data class CatalogProgramPayload(
     val sourceName: String,
     val sourceUrl: String,
     val applicationRoute: CatalogApplicationRoutePayload? = null,
+    // 공식 문의처·우대 사항·주관 기관 유형은 이 필드를 보내기 전 Catalog와도 projection이 이어지도록 생략을 허용합니다.
+    val contact: CatalogContactPayload? = null,
+    val preferenceDescription: String? = null,
+    val supervisingInstitutionType: String? = null,
 )
 
 data class CatalogApplicationRoutePayload(
     val method: String?,
     val url: String?,
     val type: String,
+)
+
+data class CatalogContactPayload(
+    val department: String?,
+    val phoneNumber: String?,
+    val text: String?,
 )
 
 data class CatalogStartupDetailsPayload(

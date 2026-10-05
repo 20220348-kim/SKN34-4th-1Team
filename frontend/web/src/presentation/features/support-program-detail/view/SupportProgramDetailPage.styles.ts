@@ -54,6 +54,8 @@ export const supportProgramDetailStyles = {
   glanceValue: 'm-0 text-[0.9375rem] leading-[1.6] text-app-ink',
   glanceValueStrong: 'font-medium tabular-nums',
   glanceValueMuted: 'text-ink-muted',
+  // 문의처의 전화번호입니다. 눌러서 전화 앱으로 겁니다.
+  contactLink: 'font-medium text-brand-primary underline underline-offset-2 hover:text-brand-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary',
   tagList: 'm-0 flex list-none flex-wrap gap-1.5 p-0',
   tag: 'rounded-md bg-surface-muted px-[9px] py-1 text-[0.8125rem] font-medium text-ink-muted',
   emptyValue: 'text-ink-muted',

@@ -123,6 +123,11 @@ K-Startup은 2026-10-01 실제 공고 응답 200건으로 신청방법 필드(`a
 나머지는 "이메일 접수: …"처럼 신청방법 문장으로 남기고 경로 분류는 기업마당과 같은 규칙을 씁니다. 안내 페이지인
 `biz_gdnc_url`과 상세 `detl_pg_url`은 신청 URL로 쓰지 않습니다. MSIT·충남 공고는 대응 필드를 검증하지 못해 `UNKNOWN`입니다.
 신청 경로는 검색 문서·임베딩에 넣지 않으며 URL 분류 중 외부 접속을 하지 않습니다.
+같은 경로로 공식 문의처(K-Startup `biz_prch_dprt_nm`·`prch_cnpl_no`, 기업마당 `refrncNm`)와 K-Startup 우대 사항(`prfn_matr`)·
+주관 기관 유형(`sprv_inst`)을 Catalog V3 → snapshot → Core V51 → 상세 응답의 `contact`·`preferenceDescription`·
+`supervisingInstitutionType`으로 전달합니다. 2026-10-04 실제 응답 표본에서 전화번호는 하이픈 없는 숫자, `sprv_inst`는
+공공기관·민간·교육기관·지자체 분류였고 `prfn_matr`는 최근 공고에서 비어 있었습니다. 전화번호 표시 형식과 `tel:` 연결은
+화면의 shared 규칙이 정하며, 이 필드도 검색 문서·임베딩·공개 지문에 넣지 않습니다.
 Core는 `CatalogProjectionScheduler → Service → 인증된 HTTP Client → Catalog`로 완전한 응답을 받은 뒤,
 Service가 짧은 transaction을 시작한 뒤 `CatalogProjectionRepository → MyBatis → Core MySQL`로
 조회용 복제본·신청서 분석 등록·checkpoint를 함께 갱신합니다. HTTP 수신은 transaction 밖입니다.

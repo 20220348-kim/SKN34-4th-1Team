@@ -4,6 +4,7 @@ import ai.govbiz.catalog.supportprogram.domain.CatalogSnapshot
 import ai.govbiz.catalog.supportprogram.domain.CatalogSupportProgram
 import ai.govbiz.catalog.supportprogram.domain.SupportProgram
 import ai.govbiz.catalog.supportprogram.domain.SupportProgramApplicationRoute
+import ai.govbiz.catalog.supportprogram.domain.SupportProgramContact
 import ai.govbiz.catalog.supportprogram.domain.SupportProgramStartupDetails
 import ai.govbiz.catalog.supportprogram.domain.SupportProgramSyncStatus
 import java.time.LocalDate
@@ -73,6 +74,9 @@ data class CatalogProgramDetailsResponse(
     val sourceName: String,
     val sourceUrl: String,
     val applicationRoute: CatalogApplicationRouteResponse = CatalogApplicationRouteResponse(null, null, "UNKNOWN"),
+    val contact: CatalogContactResponse? = null,
+    val preferenceDescription: String? = null,
+    val supervisingInstitutionType: String? = null,
 ) {
     companion object {
         fun from(program: SupportProgram) = CatalogProgramDetailsResponse(
@@ -80,7 +84,20 @@ data class CatalogProgramDetailsResponse(
             program.categories, program.regions, program.targetDescription, program.applicationPeriod,
             program.applicationStartDate, program.applicationEndDate, program.status.name,
             program.sourceName, program.sourceUrl, CatalogApplicationRouteResponse.from(program.applicationRoute),
+            program.contact?.let(CatalogContactResponse::from), program.preferenceDescription,
+            program.supervisingInstitutionType,
         )
+    }
+}
+
+/** 공식 문의처입니다. 전화번호는 제공처 값 그대로이며 표시 형식은 화면이 정합니다. */
+data class CatalogContactResponse(
+    val department: String?,
+    val phoneNumber: String?,
+    val text: String?,
+) {
+    companion object {
+        fun from(contact: SupportProgramContact) = CatalogContactResponse(contact.department, contact.phoneNumber, contact.text)
     }
 }
 

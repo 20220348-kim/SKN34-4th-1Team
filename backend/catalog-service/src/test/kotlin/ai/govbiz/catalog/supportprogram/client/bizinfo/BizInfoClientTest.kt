@@ -97,6 +97,19 @@ class BizInfoClientTest {
     }
 
     @Test
+    fun decodesTheOfficialContactLine() {
+        server.expect(requestTo(expectedUrl(1))).andRespond(withSuccess(
+            wrappedPage(1, "PBLN_1").replace(
+                "\"hashtags\": \"기술,서울\"",
+                "\"hashtags\": \"기술,서울\", \"refrncNm\": \" 부천산업진흥원 기업육성팀 032-716-6488, yjh@bizbc.or.kr \"",
+            ),
+            MediaType.APPLICATION_JSON,
+        ))
+
+        assertEquals("부천산업진흥원 기업육성팀 032-716-6488, yjh@bizbc.or.kr", client.fetchAll().single().contact)
+    }
+
+    @Test
     fun rejectsAProtocolLevelFailureWithoutExposingItsMessage() {
         server.expect(requestTo(expectedUrl(1)))
             .andRespond(
@@ -202,7 +215,7 @@ class BizInfoClientTest {
     @Test
     fun ignoresUnusedSourceFieldsWithoutRejectingAnOtherwiseValidCatalog() {
         val sourceItem = item("PBLN_1").trim().dropLast(1) +
-            """, "refrncNm": {"unexpected": "unused source data"}}"""
+            """, "printFlpthNm": {"unexpected": "unused source data"}}"""
         server.expect(requestTo(expectedUrl(1)))
             .andRespond(
                 withSuccess(
@@ -218,6 +231,16 @@ class BizInfoClientTest {
     fun rejectsStructuredOfficialApplicationMethod() {
         val sourceItem = item("PBLN_1").trim().dropLast(1) +
             """, "reqstMthPapersCn": {"unexpected": "not text"}}"""
+        server.expect(requestTo(expectedUrl(1)))
+            .andRespond(withSuccess(pageWithItems(1, "[$sourceItem]"), MediaType.APPLICATION_JSON))
+
+        assertFailure(BizInfoClientException.Failure.INVALID_RESPONSE)
+    }
+
+    @Test
+    fun rejectsAStructuredOfficialContact() {
+        val sourceItem = item("PBLN_1").trim().dropLast(1) +
+            """, "refrncNm": {"unexpected": "not text"}}"""
         server.expect(requestTo(expectedUrl(1)))
             .andRespond(withSuccess(pageWithItems(1, "[$sourceItem]"), MediaType.APPLICATION_JSON))
 

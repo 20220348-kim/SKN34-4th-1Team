@@ -124,8 +124,48 @@ class SupportProgramRepositoryIntegrationTest {
             )
         """.trimIndent())
 
-        val route = repository.findPresentBySourceAndProgramId("BIZINFO", "legacy")?.program?.applicationRoute
-        assertEquals(SupportProgramApplicationRoute(), route)
+        val legacy = repository.findPresentBySourceAndProgramId("BIZINFO", "legacy")?.program
+        assertEquals(SupportProgramApplicationRoute(), legacy?.applicationRoute)
+        assertNull(legacy?.contact)
+        assertNull(legacy?.preferenceDescription)
+        assertNull(legacy?.supervisingInstitutionType)
+    }
+
+    @Test
+    fun roundTripsOfficialDetailsAndReplacesOrClearsThemWithoutChangingTheSearchFingerprint() {
+        val bizInfo = program("문의-🚀", "BIZINFO").let {
+            it.copy(program = it.program.copy(contact = SupportProgramContact(
+                text = "한국에너지기술평가원 \"GENIE\" 운영팀 02-3469-8813~4 / (시스템 문의) 1357, help@ketep.re.kr",
+            )))
+        }
+        val startup = program("179197", "KSTARTUP").let {
+            it.copy(program = it.program.copy(
+                contact = SupportProgramContact(department = "(서울)RISE사업단 캠퍼스타운센터 🚀", phoneNumber = "0312508269"),
+                preferenceDescription = "1인창조, 재창업, 여성(예비)창업자, 장애인", supervisingInstitutionType = "공공기관",
+            ))
+        }
+        publish("BIZINFO", listOf(bizInfo))
+        publish("KSTARTUP", listOf(startup))
+        assertEquals(bizInfo, repository.findSnapshot("BIZINFO")?.programs?.single())
+        assertEquals(startup, repository.findSnapshot("KSTARTUP")?.programs?.single())
+        val fingerprint = repository.findSyncStatus("KSTARTUP")?.publishedCatalogFingerprint
+
+        val changed = startup.copy(program = startup.program.copy(
+            contact = SupportProgramContact(phoneNumber = "1357"), preferenceDescription = null, supervisingInstitutionType = "민간",
+        ))
+        publish("KSTARTUP", listOf(changed))
+        assertEquals(changed, repository.findPresentBySourceAndProgramId("KSTARTUP", "179197"))
+        val cleared = changed.copy(program = changed.program.copy(contact = null, supervisingInstitutionType = null))
+        publish("KSTARTUP", listOf(cleared))
+        assertEquals(cleared, repository.findSnapshot("KSTARTUP")?.programs?.single())
+        assertEquals(mapOf("contact_department" to null, "contact_phone_number" to null, "contact_text" to null,
+            "preference_description" to null, "supervising_institution_type" to null), jdbc.queryForMap("""
+                SELECT contact_department, contact_phone_number, contact_text, preference_description, supervising_institution_type
+                FROM support_program WHERE source_code = 'KSTARTUP' AND source_program_id = '179197'
+            """.trimIndent()))
+        // 표시용 필드만 바뀐 공개는 검색 문서가 같아 지문도 그대로입니다.
+        assertEquals(fingerprint, repository.findSyncStatus("KSTARTUP")?.publishedCatalogFingerprint)
+        assertEquals(bizInfo, repository.findSnapshot("BIZINFO")?.programs?.single())
     }
 
     @Test
@@ -225,13 +265,20 @@ class SupportProgramRepositoryIntegrationTest {
         repository.recordSyncFailureIfCurrent("BIZINFO", repository.startSyncGeneration("BIZINFO"))
         mvc.perform(get("/internal/v1/catalog/snapshots/BIZINFO").header("Authorization", "Bearer $TOKEN"))
             .andExpect(status().isServiceUnavailable)
-        publish("BIZINFO", listOf(program("one", "BIZINFO")))
+        publish("BIZINFO", listOf(program("one", "BIZINFO").let {
+            it.copy(program = it.program.copy(contact = SupportProgramContact(text = "수행기관 02-123-4567")))
+        }))
         mvc.perform(get("/internal/v1/catalog/snapshots/BIZINFO").header("Authorization", "Bearer $TOKEN"))
             .andExpect(status().isOk).andExpect(header().string("Cache-Control", "no-store"))
             .andExpect(jsonPath("$.schemaVersion").value(1))
             .andExpect(jsonPath("$.status.sourceCode").value("BIZINFO"))
             .andExpect(jsonPath("$.status.publishedProgramCount").value(1))
             .andExpect(jsonPath("$.programs[0].program.id").value("one"))
+            .andExpect(jsonPath("$.programs[0].program.contact.text").value("수행기관 02-123-4567"))
+            .andExpect(jsonPath("$.programs[0].program.contact.department").isEmpty)
+            .andExpect(jsonPath("$.programs[0].program.contact.phoneNumber").isEmpty)
+            .andExpect(jsonPath("$.programs[0].program.preferenceDescription").isEmpty)
+            .andExpect(jsonPath("$.programs[0].program.supervisingInstitutionType").isEmpty)
             .andExpect(jsonPath("$.programs[0].sortTimestamp").exists())
             .andExpect(jsonPath("$.programs[0].program.sourceQualifiedId").doesNotExist())
             .andExpect(jsonPath("$.programs[0].program.matchedReasons").doesNotExist())

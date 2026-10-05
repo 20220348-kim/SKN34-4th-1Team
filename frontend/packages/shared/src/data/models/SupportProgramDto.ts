@@ -153,6 +153,14 @@ export const supportProgramDetailDtoSchema = z.object({
     }).nullable(),
     type: z.enum(['GOOGLE_FORMS', 'OTHER_ONLINE_FORM', 'FILE', 'UNKNOWN']),
   }),
+  // 공식 문의처·우대 사항·주관 기관 유형은 이 필드를 보내기 전 서버와도 상세가 열리도록 누락을 값 없음으로 받습니다.
+  contact: z.object({
+    department: z.string().nullable(),
+    phoneNumber: z.string().nullable(),
+    text: z.string().nullable(),
+  }).nullable().default(null),
+  preferenceDescription: z.string().nullable().default(null),
+  supervisingInstitutionType: z.string().nullable().default(null),
 }).superRefine(requireOfficialSourceUrl)
 
 export type SupportProgramDto = z.infer<typeof supportProgramDtoSchema>
@@ -213,5 +221,8 @@ export function toSupportProgramDetail(dto: SupportProgramDetailDto): SupportPro
     sourceUrl: dto.sourceUrl,
     evidenceQuestionSupported: dto.evidenceQuestionSupported,
     applicationRoute: { ...dto.applicationRoute },
+    contact: dto.contact ? { ...dto.contact } : null,
+    preferenceDescription: dto.preferenceDescription,
+    supervisingInstitutionType: dto.supervisingInstitutionType,
   }
 }

@@ -190,7 +190,88 @@ describe('공식 신청 경로 링크', () => {
     expect(screen.queryByRole('link', { name: /신청 사이트 열기|구글 설문 열기/ })).toBeNull()
     expect(screen.getByRole('link', { name: `${supportProgramDetails[0].sourceName} 원문 보기 ↗` })).toBeTruthy()
   })
+
+  it('신청 방법을 분류해 보여 주고 공식 신청 방법 문장을 공고 내용에 둔다', async () => {
+    vi.spyOn(appContainer.resolve('getSupportProgramDetailUseCase'), 'execute').mockResolvedValue({
+      ...supportProgramDetails[0],
+      applicationRoute: { method: '온라인 접수 후 사업계획서 제출', url: 'https://apply.example.go.kr/form', type: 'OTHER_ONLINE_FORM' },
+    })
+    renderDetail()
+    await screen.findByRole('heading', { name: supportPrograms[0].title })
+    expect(glanceValue('신청 방법')).toBe('온라인 신청 (접수 사이트)')
+    expect(screen.getByRole('heading', { name: '신청 방법' })).toBeTruthy()
+    expect(screen.getByText('온라인 접수 후 사업계획서 제출')).toBeTruthy()
+    // 공식 API가 주지 않는 지원 규모는 자리표시 줄로도 두지 않습니다.
+    expect(screen.queryByText('지원 규모')).toBeNull()
+  })
+
+  it('신청 경로를 모르면 원문 확인을 안내하고 신청 방법 절과 신청 링크를 두지 않는다', async () => {
+    vi.spyOn(appContainer.resolve('getSupportProgramDetailUseCase'), 'execute').mockResolvedValue(supportProgramDetails[0])
+    renderDetail()
+    await screen.findByRole('heading', { name: supportPrograms[0].title })
+    expect(glanceValue('신청 방법')).toBe('공고 원문에서 확인해 주세요')
+    expect(screen.queryByRole('heading', { name: '신청 방법' })).toBeNull()
+    expect(screen.queryByRole('link', { name: /신청 사이트 열기|구글 설문 열기/ })).toBeNull()
+    expect(screen.queryByText('지원 규모')).toBeNull()
+  })
+
+  it('K-Startup 공고는 지원 대상과 제외 대상을 나눠 보여 준다', async () => {
+    vi.spyOn(appContainer.resolve('getSupportProgramDetailUseCase'), 'execute').mockResolvedValue({
+      ...supportProgramDetails[0], sourceCode: 'KSTARTUP', evidenceQuestionSupported: false,
+      targetDescription: '지원 대상: 창업 3년 이내 기업\n제외 대상: 휴·폐업 중인 기업',
+    })
+    renderDetail()
+    await screen.findByRole('heading', { name: supportPrograms[0].title })
+    expect(screen.getByText('창업 3년 이내 기업')).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '제외 대상' })).toBeTruthy()
+    expect(screen.getByText('휴·폐업 중인 기업')).toBeTruthy()
+    expect(screen.queryByText(/지원 대상: 창업/)).toBeNull()
+  })
 })
+
+describe('공식 문의처·우대 사항·주관 기관 유형', () => {
+  it('K-Startup 담당 부서와 전화번호를 전화 링크로 보여 주고 우대 사항과 주관 기관 유형을 둔다', async () => {
+    vi.spyOn(appContainer.resolve('getSupportProgramDetailUseCase'), 'execute').mockResolvedValue({
+      ...supportProgramDetails[0], sourceCode: 'KSTARTUP', evidenceQuestionSupported: false,
+      contact: { department: '창업보육센터', phoneNumber: '0312508269', text: null },
+      preferenceDescription: '1인창조, 재창업, 여성(예비)창업자', supervisingInstitutionType: '공공기관',
+    })
+    renderDetail()
+    await screen.findByRole('heading', { name: supportPrograms[0].title })
+    expect(glanceValue('문의처')).toBe('창업보육센터 · 031-250-8269')
+    expect(screen.getByRole('link', { name: '031-250-8269' }).getAttribute('href')).toBe('tel:0312508269')
+    expect(glanceValue('주관 기관 유형')).toBe('공공기관')
+    expect(screen.getByRole('heading', { name: '우대 사항' })).toBeTruthy()
+    expect(screen.getByText('1인창조, 재창업, 여성(예비)창업자')).toBeTruthy()
+  })
+
+  it('기업마당 문의처 원문은 그대로 보여 주고 그 안의 전화번호만 전화 링크로 둔다', async () => {
+    vi.spyOn(appContainer.resolve('getSupportProgramDetailUseCase'), 'execute').mockResolvedValue({
+      ...supportProgramDetails[0],
+      contact: { department: null, phoneNumber: null, text: '부천산업진흥원 기업육성팀 032-716-6488, yjh@bizbc.or.kr' },
+    })
+    renderDetail()
+    await screen.findByRole('heading', { name: supportPrograms[0].title })
+    expect(glanceValue('문의처')).toBe('부천산업진흥원 기업육성팀 032-716-6488, yjh@bizbc.or.kr')
+    expect(screen.getByRole('link', { name: '032-716-6488' }).getAttribute('href')).toBe('tel:0327166488')
+    expect(screen.queryByText('주관 기관 유형')).toBeNull()
+    expect(screen.queryByRole('heading', { name: '우대 사항' })).toBeNull()
+  })
+
+  it('공식 문의처를 주지 않는 공고는 문의처 줄을 두지 않는다', async () => {
+    vi.spyOn(appContainer.resolve('getSupportProgramDetailUseCase'), 'execute').mockResolvedValue(supportProgramDetails[0])
+    renderDetail()
+    await screen.findByRole('heading', { name: supportPrograms[0].title })
+    expect(screen.queryByText('문의처')).toBeNull()
+    expect(screen.queryByRole('link', { name: /^0\d/ })).toBeNull()
+  })
+})
+
+/** "한눈에 보기"에서 이름이 `label`인 줄의 값 글자입니다. */
+function glanceValue(label: string): string | null | undefined {
+  const glance = screen.getByRole('region', { name: '한눈에 보기' })
+  return within(glance).getByText(label, { selector: 'dt' }).nextElementSibling?.textContent
+}
 
 const memberAccount: Account = { email: 'member@govbiz.local', role: 'USER', tier: 'MEMBER', emailVerified: true, hasPassword: true, accountType: null, onboarded: true, company: null }
 

@@ -21,6 +21,11 @@
         <result column="application_method" property="applicationMethod" />
         <result column="application_url" property="applicationUrl" />
         <result column="application_route_type" property="applicationRouteType" />
+        <result column="contact_department" property="contactDepartment" />
+        <result column="contact_phone_number" property="contactPhoneNumber" />
+        <result column="contact_text" property="contactText" />
+        <result column="preference_description" property="preferenceDescription" />
+        <result column="supervising_institution_type" property="supervisingInstitutionType" />
         <result column="source_sort_timestamp" property="sourceSortTimestamp" />
         <result column="startup_details" property="startupDetailsJson" />
     </resultMap>
@@ -55,6 +60,11 @@
             application_method,
             application_url,
             application_route_type,
+            contact_department,
+            contact_phone_number,
+            contact_text,
+            preference_description,
+            supervising_institution_type,
             source_sort_timestamp,
             startup_details,
             is_source_present
@@ -74,6 +84,11 @@
             #{applicationMethod,jdbcType=VARCHAR},
             #{applicationUrl,jdbcType=VARCHAR},
             #{applicationRouteType},
+            #{contactDepartment,jdbcType=VARCHAR},
+            #{contactPhoneNumber,jdbcType=VARCHAR},
+            #{contactText,jdbcType=VARCHAR},
+            #{preferenceDescription,jdbcType=VARCHAR},
+            #{supervisingInstitutionType,jdbcType=VARCHAR},
             #{sourceSortTimestamp,jdbcType=VARCHAR},
             #{startupDetailsJson,jdbcType=VARCHAR},
             TRUE
@@ -93,6 +108,11 @@
             application_method = #{applicationMethod,jdbcType=VARCHAR},
             application_url = #{applicationUrl,jdbcType=VARCHAR},
             application_route_type = #{applicationRouteType},
+            contact_department = #{contactDepartment,jdbcType=VARCHAR},
+            contact_phone_number = #{contactPhoneNumber,jdbcType=VARCHAR},
+            contact_text = #{contactText,jdbcType=VARCHAR},
+            preference_description = #{preferenceDescription,jdbcType=VARCHAR},
+            supervising_institution_type = #{supervisingInstitutionType,jdbcType=VARCHAR},
             source_sort_timestamp = #{sourceSortTimestamp,jdbcType=VARCHAR},
             startup_details = #{startupDetailsJson,jdbcType=VARCHAR},
             is_source_present = TRUE,
@@ -105,6 +125,8 @@
             categories, regions, target_description, application_period_raw,
             application_start_date, application_end_date, source_url,
             application_method, application_url, application_route_type,
+            contact_department, contact_phone_number, contact_text,
+            preference_description, supervising_institution_type,
             source_sort_timestamp, startup_details, is_source_present
         ) VALUES
         <foreach collection="rows" item="row" separator=",">
@@ -116,6 +138,9 @@
                 #{row.applicationStartDate,jdbcType=DATE}, #{row.applicationEndDate,jdbcType=DATE},
                 #{row.sourceUrl}, #{row.applicationMethod,jdbcType=VARCHAR},
                 #{row.applicationUrl,jdbcType=VARCHAR}, #{row.applicationRouteType},
+                #{row.contactDepartment,jdbcType=VARCHAR}, #{row.contactPhoneNumber,jdbcType=VARCHAR},
+                #{row.contactText,jdbcType=VARCHAR}, #{row.preferenceDescription,jdbcType=VARCHAR},
+                #{row.supervisingInstitutionType,jdbcType=VARCHAR},
                 #{row.sourceSortTimestamp,jdbcType=VARCHAR},
                 #{row.startupDetailsJson,jdbcType=VARCHAR}, TRUE
             )
@@ -136,6 +161,11 @@
             application_method = incoming.application_method,
             application_url = incoming.application_url,
             application_route_type = incoming.application_route_type,
+            contact_department = incoming.contact_department,
+            contact_phone_number = incoming.contact_phone_number,
+            contact_text = incoming.contact_text,
+            preference_description = incoming.preference_description,
+            supervising_institution_type = incoming.supervising_institution_type,
             source_sort_timestamp = incoming.source_sort_timestamp,
             startup_details = incoming.startup_details,
             is_source_present = TRUE,
@@ -166,6 +196,11 @@
             application_method,
             application_url,
             application_route_type,
+            contact_department,
+            contact_phone_number,
+            contact_text,
+            preference_description,
+            supervising_institution_type,
             source_sort_timestamp,
             startup_details
         FROM support_program
@@ -191,6 +226,11 @@
             application_method,
             application_url,
             application_route_type,
+            contact_department,
+            contact_phone_number,
+            contact_text,
+            preference_description,
+            supervising_institution_type,
             source_sort_timestamp,
             startup_details
         FROM support_program
@@ -215,6 +255,11 @@
             program.application_method,
             program.application_url,
             program.application_route_type,
+            program.contact_department,
+            program.contact_phone_number,
+            program.contact_text,
+            program.preference_description,
+            program.supervising_institution_type,
             program.source_sort_timestamp,
             program.startup_details
         FROM support_program program
@@ -246,6 +291,8 @@
         SELECT source_code, source_program_id, title, organization, summary, categories, regions,
                target_description, application_period_raw, application_start_date, application_end_date,
                source_url, application_method, application_url, application_route_type,
+               contact_department, contact_phone_number, contact_text,
+               preference_description, supervising_institution_type,
                source_sort_timestamp, startup_details
         FROM support_program
         WHERE source_code = #{sourceCode} AND is_source_present = TRUE

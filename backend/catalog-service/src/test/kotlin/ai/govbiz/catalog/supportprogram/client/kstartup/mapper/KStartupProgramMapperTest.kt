@@ -3,6 +3,7 @@ package ai.govbiz.catalog.supportprogram.client.kstartup.mapper
 import ai.govbiz.catalog.supportprogram.client.kstartup.dto.KStartupProgramPayload
 import ai.govbiz.catalog.supportprogram.client.kstartup.exception.KStartupClientException
 import ai.govbiz.catalog.supportprogram.domain.SupportProgramApplicationRouteType
+import ai.govbiz.catalog.supportprogram.domain.SupportProgramContact
 import ai.govbiz.catalog.supportprogram.domain.SupportProgramStatus
 import java.time.LocalDate
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -226,6 +227,43 @@ class KStartupProgramMapperTest {
         assertEquals(SupportProgramApplicationRouteType.UNKNOWN, route.type)
         assertNull(route.method)
         assertNull(route.url)
+    }
+
+    @Test
+    fun keepsTheOfficialContactPreferenceAndInstitutionTypeAsPlainText() {
+        val program = map(payload().copy(
+            contactDepartment = " &#40;서울&#41;RISE사업단 <b>캠퍼스타운센터</b> ", contactPhoneNumber = "0312508269",
+            preference = "1인창조,재창업, 여성(예비)창업자,,장애인", supervisingInstitutionType = " 공공기관 ",
+        )).program
+
+        assertEquals(SupportProgramContact(department = "(서울)RISE사업단 캠퍼스타운센터", phoneNumber = "0312508269"), program.contact)
+        assertEquals("1인창조, 재창업, 여성(예비)창업자, 장애인", program.preferenceDescription)
+        assertEquals("공공기관", program.supervisingInstitutionType)
+    }
+
+    @Test
+    fun keepsAPhoneOnlyContactAndLeavesMissingOrBlankFieldsEmpty() {
+        assertEquals(SupportProgramContact(phoneNumber = "1357"), map(payload().copy(contactPhoneNumber = "1357")).program.contact)
+
+        val blank = map(payload().copy(
+            contactDepartment = " <p> </p> ", contactPhoneNumber = "", preference = " , ", supervisingInstitutionType = " ",
+        )).program
+        assertNull(blank.contact)
+        assertNull(blank.preferenceDescription)
+        assertNull(blank.supervisingInstitutionType)
+        val missing = map(payload()).program
+        assertNull(missing.contact)
+        assertNull(missing.preferenceDescription)
+        assertNull(missing.supervisingInstitutionType)
+    }
+
+    @Test
+    fun rejectsOversizedOfficialDetailsBeforeIndexing() {
+        invalid(payload().copy(contactDepartment = "가".repeat(256)))
+        invalid(payload().copy(contactPhoneNumber = "1".repeat(65)))
+        invalid(payload().copy(preference = "가".repeat(21_846)))
+        invalid(payload().copy(supervisingInstitutionType = "가".repeat(65)))
+        assertEquals("가".repeat(255), map(payload().copy(contactDepartment = "가".repeat(255))).program.contact?.department)
     }
 
     private fun invalid(payload: KStartupProgramPayload): KStartupClientException {
