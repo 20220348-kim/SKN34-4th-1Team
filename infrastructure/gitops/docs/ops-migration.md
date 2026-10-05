@@ -26,6 +26,15 @@ Ops migration 성공 뒤에만 앱을 적용한다.
 - PreSync 실패는 해당 Ops Application의 Sync를 막는다. 다른 세 Application의 rollout까지
   원자적으로 막거나 이미 실행 중인 구버전 Ops를 중지시키는 장치는 아니다.
 
+구버전 최초 전환용 `migrate_deployment`에는 `--pause-request-id`, `--pause-actor`,
+`--pause-reason`을 함께 지정할 수 있다. 배포 잠금을 유지한 채 schema와 최초 접수 중지를 모두
+확인해야 성공하며, 같은 요청은 version 1 중지 상태가 유지될 때만 재시도할 수 있다.
+입력 오류·부분 접수 schema·다른 변경 이력은 migration 전에 거절한다. migration 또는 접수 중지가
+실패하면 성공으로 출력하지 않는다. MySQL DDL의 rollback이나 서비스 자동 복구는 수행하지 않는다.
+일반 Helm Job은 기존 옵션 없는 명령을 유지하며 이 옵션을 자동 사용하지 않는다.
+실제 최초 전환은 [쓰기 중지·백업·승인 절차](../../../docs/ops-upgrade-runbook.md#최초-migration과-접수-중지를-함께-확인하기)가
+갖춰진 별도 실행 경로에서 연결해야 한다.
+
 Argo의 [hook 실행 순서와 삭제 정책](https://argo-cd.readthedocs.io/en/stable/user-guide/sync-waves/),
 [Kubernetes Job 실행 특성](https://kubernetes.io/docs/concepts/workloads/controllers/job/),
 [MySQL 세션 잠금](https://dev.mysql.com/doc/refman/8.4/en/locking-functions.html)을 기준으로 구성했다.

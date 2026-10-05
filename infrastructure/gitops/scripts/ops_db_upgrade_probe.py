@@ -123,7 +123,7 @@ def exercise(expected):
     from django.db import connection, transaction
     from django.db.migrations.executor import MigrationExecutor
 
-    from apps.evaluations.admission import AdmissionPaused, lock_admission, require_open, status
+    from apps.evaluations.admission import AdmissionPaused, lock_admission, require_open
     from apps.evaluations.models import EvaluationAdmissionChange, EvaluationBudgetCall
     from apps.health.schema import schema_is_ready
 
@@ -159,27 +159,18 @@ def exercise(expected):
         )
         if cursor.fetchone() != (0,):
             raise ValueError("Unsettled restored reservations")
-    call_command("migrate_deployment", verbosity=0)
-    initial = status()
-    if initial["initialized"] or not initial["accepting"] or initial["version"] != 0:
-        raise ValueError("Unexpected admission bootstrap state")
     arguments = (
-        "evaluation_admission",
-        "pause",
-        "--expected-version",
-        "0",
-        "--request-id",
+        "migrate_deployment",
+        "--pause-request-id",
         str(uuid4()),
-        "--actor",
+        "--pause-actor",
         "격리 DB 전환 검증",
-        "--reason",
+        "--pause-reason",
         "복원본 전환 후 신규 접수 중지",
     )
     for repeat in (False, True):
-        if repeat:
-            call_command("migrate_deployment", verbosity=0)
         output = io.StringIO()
-        call_command(*arguments, stdout=output)
+        call_command(*arguments, stdout=output, verbosity=0)
         paused = json.loads(output.getvalue())
         if paused["accepting"] or paused["version"] != 1 or paused["replayed"] is not repeat:
             raise ValueError("Admission pause is not repeatable")

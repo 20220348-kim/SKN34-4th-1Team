@@ -130,7 +130,6 @@ def verify_legacy_upgrade(fixture):
     from django.core.management import call_command
     from rest_framework.test import APIClient
 
-    from apps.evaluations.admission import status
     from apps.evaluations.catalog import LEGACY_DATASET_ID, public_datasets
     from apps.evaluations.models import EvaluationAdmissionChange, EvaluationBudgetCall
 
@@ -141,26 +140,20 @@ def verify_legacy_upgrade(fixture):
                 raise AssertionError("Legacy rows changed: " + model._meta.label)
 
     preserved()
-    # Migration does not pause admission by itself. The rehearsal has no API,
-    # sync or runner process; the real cutover requires external writer shutdown.
-    initial = status()
-    if initial["initialized"] or not initial["accepting"] or initial["version"] != 0:
-        raise AssertionError("Unexpected admission bootstrap state")
+    # One command verifies schema and pause under the migration lock. API/sync/
+    # runner shutdown remains an external prerequisite, including in real cutover.
     request_id = str(uuid4())
     arguments = (
-        "evaluation_admission",
-        "pause",
-        "--expected-version",
-        "0",
-        "--request-id",
+        "migrate_deployment",
+        "--pause-request-id",
         request_id,
-        "--actor",
+        "--pause-actor",
         "CI 전환 검증",
-        "--reason",
+        "--pause-reason",
         "가상 구버전 DB 전환",
     )
     output = io.StringIO()
-    call_command(*arguments, stdout=output)
+    call_command(*arguments, stdout=output, verbosity=0)
     paused = json.loads(output.getvalue())
     if paused["accepting"] or paused["version"] != 1 or paused["replayed"]:
         raise AssertionError("Legacy upgrade did not close admission")
@@ -183,7 +176,7 @@ def verify_legacy_upgrade(fixture):
         dispatch.assert_not_called()
     call_command("migrate_deployment")
     output = io.StringIO()
-    call_command(*arguments, stdout=output)
+    call_command(*arguments, stdout=output, verbosity=0)
     replayed = json.loads(output.getvalue())
     if not replayed["replayed"] or replayed["accepting"] or replayed["version"] != 1:
         raise AssertionError("Repeated migration or pause reopened admission")
@@ -231,11 +224,13 @@ def main():
     fixture = prepare_legacy_fixture(connection) if args.legacy_evaluations else None
     if fixture and readiness(request).status_code != 503:
         raise AssertionError("The legacy schema must not pass current application readiness")
-    call_command("migrate_deployment")
+    if fixture:
+        verify_legacy_upgrade(fixture)
+    else:
+        call_command("migrate_deployment")
     if readiness(request).status_code != 200:
         raise AssertionError("Migrated schema must be ready")
     if fixture:
-        verify_legacy_upgrade(fixture)
         return
     user = get_user_model().objects.create_user(username="ci-schema-preservation")
     call_command("migrate_deployment")
