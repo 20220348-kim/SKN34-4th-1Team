@@ -14,6 +14,7 @@ from uuid import uuid4
 
 import ops_state_snapshot as snapshot
 from test_ops_db_snapshot import payload as db_payload
+from test_ops_runtime_keys import payload as key_payload
 
 files = snapshot.files
 IMAGE = "sha256:" + "a" * 64
@@ -518,6 +519,63 @@ class ArchiveTests(unittest.TestCase):
         with self.mocks(), self.assertRaises(ValueError):
             self.backup()
         self.assertFalse(self.output.exists())
+
+    def test_runtime_keys_are_optional_encrypted_and_verified_without_exposing_values(self):
+        value = key_payload()
+        with (
+            self.mocks(),
+            patch.object(snapshot.runtime_keys, "capture", return_value=value) as capture,
+            patch.object(snapshot.runtime_keys, "run_probe", return_value={"synthetic": True}),
+        ):
+            result = snapshot.backup(
+                self.root, self.db_archive, self.key, self.output, include_runtime_keys=True
+            )
+        self.assertTrue(result["runtime_keys_included"])
+        self.assertEqual(capture.call_count, 2)
+        for key in value["keys"].values():
+            self.assertNotIn(key.encode(), self.output.read_bytes())
+        with (
+            patch.object(
+                snapshot.database, "restore_database", return_value={"status": "VERIFIED"}
+            ),
+            patch.object(snapshot, "volume_helper", return_value={"status": "VERIFIED"}),
+            patch.object(
+                snapshot.runtime_keys, "run_probe", return_value={"status": "VERIFIED"}
+            ) as probe,
+        ):
+            result = snapshot.verify(self.output, self.key, verify_runtime_keys=True)
+        self.assertTrue(result["runtime_keys_verified"])
+        self.assertEqual(probe.call_args.args[1], "verify")
+        self.assertFalse(result["runtime_key_checks"]["usage_receipt_signatures_verified"])
+        self.assertFalse(result["runtime_key_checks"]["database_login_verified"])
+        self.assertFalse(result["full_backup_verified"])
+        for key in value["keys"].values():
+            self.assertNotIn(key, json.dumps(result))
+
+    def test_key_rotation_during_capture_prevents_archive_and_missing_keys_fail_before_restore(
+        self,
+    ):
+        value = key_payload()
+        with (
+            self.mocks(),
+            patch.object(
+                snapshot.runtime_keys, "capture", side_effect=[value, value | {"changed": True}]
+            ),
+            patch.object(snapshot.runtime_keys, "run_probe", return_value={}),
+            self.assertRaises(ValueError),
+        ):
+            snapshot.backup(
+                self.root, self.db_archive, self.key, self.output, include_runtime_keys=True
+            )
+        self.assertFalse(self.output.exists())
+        with self.mocks():
+            self.backup()
+        with (
+            patch.object(snapshot.database, "restore_database") as restore,
+            self.assertRaises(ValueError),
+        ):
+            snapshot.verify(self.output, self.key, verify_runtime_keys=True)
+        restore.assert_not_called()
 
     def test_cli_redacts_failure_and_prints_no_success(self):
         with (

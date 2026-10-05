@@ -1,6 +1,6 @@
 """Bundle a frozen Kubernetes Ops DB archive with its results and Prefect SQLite.
 
-WSL/Linux only. No service stop/start, existing-store restore, migration or key export.
+WSL/Linux only. No service stop/start, existing-store restore, migration or plaintext key export.
 This is a storage backup, not proof of application recovery or upgrade approval.
 """
 
@@ -14,6 +14,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import ops_db_snapshot as database
+import ops_runtime_keys as runtime_keys
 import ops_volume_restore_probe as probe
 import ops_volume_snapshot_files as files
 from ops_state_links import completed_evidence
@@ -234,6 +235,8 @@ def validate(payload):
     ):
         raise ValueError("Unsupported Ops storage archive")
     database.validate(payload["database"])
+    if "runtime_keys" in payload:
+        runtime_keys.validate(payload["runtime_keys"])
     if not isinstance(payload["stores"], dict) or set(payload["stores"]) != set(STORES):
         raise ValueError("Missing source store")
     for kind, store in payload["stores"].items():
@@ -252,7 +255,7 @@ def validate(payload):
     return payload
 
 
-def backup(state, db_archive, key_file, output):
+def backup(state, db_archive, key_file, output, *, include_runtime_keys=False):
     key = storage.key_bytes(key_file)
     output = database.private_parent(output)
     if output.exists() or output.is_symlink():
@@ -267,6 +270,8 @@ def backup(state, db_archive, key_file, output):
     if database.dump(command) != db["sql"]:
         raise ValueError("Source DB has changed since its archive")
     sources = volume_sources(before)
+    key_data = runtime_keys.capture(namespaced, before, sources) if include_runtime_keys else None
+    key_proof = runtime_keys.run_probe(key_data, "capture") if key_data is not None else None
     stores = {
         kind: {
             "image": source["image"],
@@ -283,6 +288,11 @@ def backup(state, db_archive, key_file, output):
         or database.frozen_source(state, settings)[1] != before
     ):
         raise ValueError("Source stores or writers changed during capture")
+    if key_data is not None:
+        if runtime_keys.capture(namespaced, before, sources) != key_data:
+            raise ValueError("Runtime keys changed during capture")
+        if database.frozen_source(state, settings)[1] != before:
+            raise ValueError("Source writers changed after the final key read")
     payload = validate(
         {
             "schema_version": 1,
@@ -292,6 +302,7 @@ def backup(state, db_archive, key_file, output):
             "created_at": datetime.now(UTC).isoformat(),
             "sources": sources,
             "stores": stores,
+            **({"runtime_keys": {**key_data, "proof": key_proof}} if key_data is not None else {}),
         }
     )
     encrypted = storage.seal(payload, key)
@@ -305,13 +316,16 @@ def backup(state, db_archive, key_file, output):
         "restore_verified": False,
         "full_backup_verified": False,
         "services_changed": False,
+        "runtime_keys_included": key_data is not None,
     }
 
 
-def verify(archive, key_file, *, completed_links=False):
+def verify(archive, key_file, *, completed_links=False, verify_runtime_keys=False):
     key = storage.key_bytes(key_file)
     raw = database.read_archive(archive)
     payload = validate(storage.open_payload(raw, key))
+    if verify_runtime_keys and "runtime_keys" not in payload:
+        raise ValueError("This archive has no runtime recovery keys")
     expected = None
     if completed_links:
         with database.restored_database(payload["database"]) as command:
@@ -323,6 +337,20 @@ def verify(archive, key_file, *, completed_links=False):
         kind: volume_helper(store["image"], kind, entries=store["entries"], expected=expected)
         for kind, store in payload["stores"].items()
     }
+    key_checks = None
+    if verify_runtime_keys:
+        key_data = payload["runtime_keys"]
+        key_checks = runtime_keys.run_probe(key_data, "verify")
+        count = runtime_keys.receipt_signatures(
+            payload["stores"]["results"]["entries"], key_data["keys"]["budget"]
+        )
+        key_checks.update(
+            signed_usage_receipts=count,
+            usage_receipt_signatures_verified=count > 0,
+            ops_budget_configured=key_data["ops_budget_configured"],
+            database_login_verified=False,
+            core_authentication_verified=False,
+        )
     return {
         "status": "VERIFIED",
         "scope": SCOPE,
@@ -336,6 +364,8 @@ def verify(archive, key_file, *, completed_links=False):
         "cross_store_business_links_verified": completed_links,
         "cross_store_scope": "completed_evaluations" if completed_links else None,
         "matched_completed_evaluations": len(expected) if expected is not None else 0,
+        "runtime_keys_verified": verify_runtime_keys,
+        "runtime_key_checks": key_checks,
         "model_api_calls": 0,
     }
 
@@ -348,19 +378,32 @@ def main():
     create.add_argument("--db-archive", type=Path, required=True)
     create.add_argument("--output", type=Path, required=True)
     create.add_argument("--key-file", type=Path, required=True)
+    create.add_argument("--runtime-keys", action="store_true")
     check = actions.add_parser("verify")
     check.add_argument("--archive", type=Path, required=True)
     check.add_argument("--key-file", type=Path, required=True)
     check.add_argument("--completed-links", action="store_true")
+    check.add_argument("--runtime-keys", action="store_true")
     args = parser.parse_args()
     if os.name != "posix":
         parser.error("Run this command inside WSL/Linux")
     os.umask(0o077)
     try:
         result = (
-            backup(args.state_dir, args.db_archive, args.key_file, args.output)
+            backup(
+                args.state_dir,
+                args.db_archive,
+                args.key_file,
+                args.output,
+                include_runtime_keys=args.runtime_keys,
+            )
             if args.action == "backup"
-            else verify(args.archive, args.key_file, completed_links=args.completed_links)
+            else verify(
+                args.archive,
+                args.key_file,
+                completed_links=args.completed_links,
+                verify_runtime_keys=args.runtime_keys,
+            )
         )
         print(json.dumps(result, sort_keys=True))
     except (ValueError, KeyError, TypeError, OSError):
