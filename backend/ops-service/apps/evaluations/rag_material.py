@@ -77,7 +77,12 @@ def observation(case, document, saved, measured):
 
 
 def material_from_sources(fixture, candidate, reference, comparison):
-    require(fixture["schemaVersion"] == "support-program-rag-fixture-v1")
+    require(
+        fixture["schemaVersion"]
+        in {"support-program-rag-fixture-v1", "support-program-rag-fixture-v2"}
+    )
+    official = fixture["schemaVersion"] == "support-program-rag-fixture-v2"
+    require(fixture["dataType"] == ("official-html-snapshot" if official else "synthetic"))
     require(fixture["scope"] == comparison["scope"] == RAG_SCOPE)
     require(fixture["referenceSource"] == "ai-authored-not-human-reviewed")
     case_ids = comparison["case_ids"]
@@ -124,6 +129,7 @@ def material_from_sources(fixture, candidate, reference, comparison):
                 "content": document["content"],
                 "content_sha256": document["contentHash"],
                 "chunk_version": document["chunkVersion"],
+                **({"source_collected_at": document["source"]["collectedAt"]} if official else {}),
                 "chunks": [
                     {key: chunk[key] for key in ("id", "order", "text")}
                     for chunk in document["chunks"]
@@ -146,6 +152,7 @@ def material_from_sources(fixture, candidate, reference, comparison):
         )
     return {
         "schema_version": 1,
+        **({"data_type": fixture["dataType"]} if official else {}),
         "evaluation_scope": RAG_SCOPE,
         "reference_source": fixture["referenceSource"],
         "baseline_eligible": False,

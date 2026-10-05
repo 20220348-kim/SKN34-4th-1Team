@@ -36,6 +36,26 @@ const session = { user: { id: 'core:91', username: 'reviewer@example.com' }, csr
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status })
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
+it('실제 공고 출처와 미실행 비교 기록을 구분하고 기존 승인을 승계하지 않는다고 안내한다', async () => {
+  const official = structuredClone(material)
+  official.data_type = 'official-html-snapshot'
+  official.cases[0].source_collected_at = '2026-09-06T15:13:00Z'
+  official.cases[0].reference = {
+    answer: null, answer_status: null, retrieved_chunk_ids: null, context_chunk_ids: null,
+    cited_chunk_ids: null, trace_id: null, failure: { stage: 'not_started', code: 'NOT_STARTED' },
+  }
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json(reviewState(official))))
+  render(<RagMaterialPanel runId="official-rag" onExpired={vi.fn()} />)
+  fireEvent.click(screen.getByRole('button', { name: '검토 자료 보기' }))
+  await screen.findByLabelText('검토 사례')
+  expect(screen.getByText(/실제 공고의 저장된 HTML 본문입니다/).textContent).toContain('검토 승인은 이 RAG 결과에 적용되지 않습니다')
+  expect(screen.getByText('원문 수집 시각: 2026-09-06T15:13:00Z')).toBeTruthy()
+  const reference = within(screen.getByRole('article', { name: '비교 답변과 근거' }))
+  expect(reference.getByText('아직 실행하지 않은 기록 · 품질 비교 기준 아님')).toBeTruthy()
+  expect(reference.getByText('저장된 답변 없음')).toBeTruthy()
+  expect(screen.queryByText('미실행 실패 · NOT_STARTED')).toBeNull()
+})
+
 it('버튼을 누른 뒤에만 GET으로 고정 자료를 읽고 실패·미확인·빈 인용을 구분한다', async () => {
   const fetcher = vi.fn().mockResolvedValue(json(reviewState()))
   vi.stubGlobal('fetch', fetcher)

@@ -143,5 +143,20 @@
         "path": "runs/official-answer-20260907-v3/capture.json"
       }
     ]
+  },
+  {
+    "id": "official-rag-20261006-v1",
+    "label": "실제 공고 RAG · H01~H06 · 문단 검색 · 신규 검토 필요",
+    "evaluation_scope": "source-chunks-retrieval-answer",
+    "fixture": "runs/official-rag-20261006-v1/fixture.json",
+    "fixture_sha256": "2ee506f59b9282d7863b3d0c3de238ade85c89d6462b5dffa822c7fb45a6a795",
+    "case_ids": ["H01", "H02", "H03", "H04", "H05", "H06"],
+    "captures": [
+      {
+        "id": "official-rag-not-started-v1",
+        "label": "미실행 비교용 빈 기록 · 답변·검색 측정 없음",
+        "path": "runs/official-rag-20261006-v1/not-started.json"
+      }
+    ]
   }
 ]
