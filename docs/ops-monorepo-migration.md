@@ -54,6 +54,14 @@ docker compose --env-file .env.compose up -d --build
 Python 패키지·health 응답은 `govbiz-ops-service`, 통합·단독 Compose 서비스는 `ops-service`, `ops-mysql`이다. DB 스키마·사용자는 변경하지 않는다.
 Ops만 단독 개발하려면 `backend/ops-service/README.md`를 따른다.
 
+루트 Compose는 `ops-mysql → ops-bootstrap → ops-service` 순서로 시작한다.
+빈 DB에는 migration과 Git의 공유 검토 기록을 자동 적재하므로 별도 `pnpm dev:ops`나
+적재 명령이 필요 없다. 검토 데이터와 보고서는 전용 `ops-mysql-data`·`ops-results` 볼륨에 남는다.
+이미 기록이 있으면 덮어쓰지 않으며, 기존 DB의 오래된 스키마는 [업그레이드 절차](ops-upgrade-runbook.md)를
+먼저 따른다. [공유 범위와 팀원 사용 안내](ops-local-review-copy.md)를 참고한다.
+이전 루트 환경에서 컨테이너 내부의 기본 결과 경로나 사용자 지정 경로에 보고서를 저장했다면
+새 결과 볼륨으로 자동 이전하지 않는다. 해당 환경을 교체하기 전에 기존 결과 파일도 백업·이전한다.
+
 ## 기존 컨테이너·데이터 이전
 
 새 기본 실행은 이전 컨테이너 이름 별칭을 만들지 않는다. 단독 Ops 프로젝트는 `govbiz-ops`로 변경되었으며 새 기본 볼륨은 `govbiz-ops_mysql-data`다.
@@ -99,7 +107,9 @@ git diff --check
 ```
 
 `--smoke`는 무작위 프로젝트·임시 환경 파일·전용 볼륨으로 Ops/MySQL만 빌드·실행한다.
-실제 MySQL 테스트, HTTP readiness, 컨테이너 DNS를 검사하고 검증용 리소스만 정리한다.
+자동 최초 적재·재시작 시 기존 검토 보존, 실제 MySQL 테스트, HTTP readiness, 컨테이너 DNS를 검사하고
+검증용 리소스만 정리한다. 로컬에서 초기화 변경만 확인할 때는 `--smoke --bootstrap-only`로 범위를
+좁힐 수 있다. CI의 `--smoke`는 계속 전체 MySQL 테스트를 수행한다.
 기존 개발 DB·실제 비밀키·외부 AI 호출은 사용하지 않는다.
 기존 웹·Core·AI의 전체 업무 검증 또는 Ops 운영 배포 검증을 의미하지 않는다.
 

@@ -13,10 +13,12 @@ ROOT = Path(__file__).resolve().parents[2]
 VERIFY_AND_REVOKE = """
 from apps.evaluations.models import EvaluationBaseline, EvaluationCaseReview, EvaluationRun
 from apps.evaluations.quality import quality_pass
-run = EvaluationRun.objects.get()
-assert str(run.pk) == 'ec068da7-8d59-46fb-a8e4-2ab42dc39efe'
-assert EvaluationCaseReview.objects.count() == 6 and quality_pass(run)
+run = EvaluationRun.objects.get(pk='628ae52a-f417-4b53-b400-d90405e6a7d8')
+assert run.execution_mode == 'live' and run.model_api_calls == 6
+assert EvaluationRun.objects.count() == 2
+assert EvaluationCaseReview.objects.count() == 12 and quality_pass(run)
 baseline = EvaluationBaseline.objects.get()
+assert baseline.version == 2 and baseline.review.run_id == run.pk
 baseline.review = None
 baseline.version += 1
 baseline.save()
@@ -24,7 +26,7 @@ print('Shared human review imported; isolated test baseline revoked.')
 """
 VERIFY_PRESERVED = """
 from apps.evaluations.models import EvaluationBaseline, EvaluationCaseReview, EvaluationRun
-assert EvaluationRun.objects.count() == 1 and EvaluationCaseReview.objects.count() == 6
+assert EvaluationRun.objects.count() == 2 and EvaluationCaseReview.objects.count() == 12
 assert EvaluationBaseline.objects.get().review_id is None
 print('Local changes survived restart; no review approval was recreated.')
 """
