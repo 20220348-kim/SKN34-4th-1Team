@@ -945,6 +945,11 @@ def isolated_environment():
 
 
 def verify_isolation(config):
+    bootstrap = config.get("services", {}).get("ops-bootstrap", {})
+    if bootstrap.get("environment", {}).get("LLMOPS_LOCAL_SEED_ENABLED") != "false":
+        raise ValueError("Cancellation smoke must disable shared review seed before startup")
+    if bootstrap.get("command") != ["python", "manage.py", "migrate", "--noinput"]:
+        raise ValueError("Cancellation smoke bootstrap must only apply migrations")
     networks = config.get("networks", {})
     if set(networks) != {"default"} or networks["default"].get("internal") is not True:
         raise ValueError("Cancellation smoke requires only an internal network")

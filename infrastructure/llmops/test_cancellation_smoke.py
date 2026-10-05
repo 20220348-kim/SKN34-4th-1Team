@@ -1032,8 +1032,39 @@ def test_recent_request_diagnostics_keep_only_last_32_outcomes():
 def isolated_config():
     return {
         "networks": {"default": {"internal": True}},
-        "services": {"ops-service": {"networks": {"default": None}}},
+        "services": {
+            "ops-service": {"networks": {"default": None}},
+            "ops-bootstrap": {
+                "networks": {"default": None},
+                "environment": {"LLMOPS_LOCAL_SEED_ENABLED": "false"},
+                "command": ["python", "manage.py", "migrate", "--noinput"],
+            },
+        },
     }
+
+
+@pytest.mark.parametrize("seed_enabled", ["true", None])
+def test_shared_review_seed_is_rejected_before_budget_setup(seed_enabled):
+    config = isolated_config()
+    if seed_enabled is None:
+        del config["services"]["ops-bootstrap"]["environment"]["LLMOPS_LOCAL_SEED_ENABLED"]
+    else:
+        config["services"]["ops-bootstrap"]["environment"]["LLMOPS_LOCAL_SEED_ENABLED"] = (
+            seed_enabled
+        )
+    with pytest.raises(ValueError, match="disable shared review seed"):
+        smoke.verify_isolation(config)
+
+
+def test_bootstrap_must_migrate_without_importing_shared_reviews():
+    config = isolated_config()
+    config["services"]["ops-bootstrap"]["command"] = [
+        "python",
+        "manage.py",
+        "bootstrap_local_reviews",
+    ]
+    with pytest.raises(ValueError, match="only apply migrations"):
+        smoke.verify_isolation(config)
 
 
 @pytest.mark.parametrize("defect", ["egress", "extra_network", "host", "port"])
