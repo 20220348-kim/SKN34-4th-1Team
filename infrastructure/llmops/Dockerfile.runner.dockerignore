@@ -45,6 +45,11 @@ evaluation/support-program-evidence/runs/core-rag-*/**
 !evaluation/support-program-evidence/runs/official-rag-*/
 !evaluation/support-program-evidence/runs/official-rag-*/fixture.json
 !evaluation/support-program-evidence/runs/official-rag-*/not-started.json
+!evaluation/support-program-evidence/runs/core-official-*/
+!evaluation/support-program-evidence/runs/core-official-*/core-http-*/
+evaluation/support-program-evidence/runs/core-official-*/**
+!evaluation/support-program-evidence/runs/core-official-*/fixture.json
+!evaluation/support-program-evidence/runs/core-official-*/core-http-*/capture.json
 !backend/ops-service/
 !backend/ops-service/apps/
 !backend/ops-service/apps/evaluations/

@@ -75,7 +75,7 @@
     }
   },
   "rag_generation": {
-    "sha256": "c95db6909b274c945fc90bb6217fce0cb7cf8ff4fba6cc93ffa0928a17605393",
+    "sha256": "b89c56c54fbbff4362cf86955104f128d1416d6aeae539989d20f881720be813",
     "files": {
       "evaluation/support-program-evidence/evaluate.py": "0430f08ad1f51c9a8fd22119e0b4d0badac9f89ab8e254e963a4944bd79ed514",
       "evaluation/support-program-evidence/official_snapshot.py": "1b97e2d2aa15ca02b50e2a999203c7f685de08afc735bb8456b880041c37abf4",
@@ -91,7 +91,7 @@
       "backend/ai-service/app/support_program_identity.py": "aa706697f294fd4846263e73cd281c4a9d660a7939feb7e2e4e3d60fd5393fb1",
       "backend/ai-service/pyproject.toml": "50ef0fc8c53c9af3e1bb31fafed5200732725ea43691be538d90840d2168037c",
       "backend/ai-service/uv.lock": "349ecdd9152eb2f5479a3db41d39e9d1bf7a8f5a16103426c2cd78207add1fe3",
-      "evaluation/support-program-evidence/rag_live.py": "2d70e28a17fd2d8b127897f4a08e1e8dfa500ac7c5c52b22d26b60cafe2191d6",
+      "evaluation/support-program-evidence/rag_live.py": "c640c3635c4dc26dbb9de35def77618931122d93d7279939b2c807775c6ea34e",
       "evaluation/support-program-evidence/rag_budget.py": "b83c0fc8c2739580189394ac5167e7b290a6d0d407d8a633cf1ca105ba2dea8c",
       "evaluation/support-program-evidence/embedding_budget.py": "79449cc479a04efd0397621b48a0bb0258ed97690b40c90081d36ac8f2bee635",
       "evaluation/support-program-evidence/budget_client.py": "5fb2ba03088467201693f94ec2c2b074ab15998f4e2ea6724c0c67cdef6613f9",
@@ -119,13 +119,13 @@
     "index_storage": "isolated-in-memory"
   },
   "pipeline": {
-    "sha256": "0890924d2b95d6a66f19a6a99a40c8bd89c8eda83a52c5ffdc67c7720946af1e",
+    "sha256": "08b5a8ddf220fc9582ed9ae813e3b03acfd4bdf7be1a17b04b3c4a47806b6c65",
     "files": {
       "evaluation/support-program-evidence/ops_flow.py": "1f5e3bf39a8db7dbd6755ca9c921e408dd3d1ee6a65c751b570f5767ec78e4a3",
       "evaluation/support-program-evidence/budget_client.py": "5fb2ba03088467201693f94ec2c2b074ab15998f4e2ea6724c0c67cdef6613f9",
       "backend/ops-service/apps/evaluations/catalog.py": "2ae3cf31c7bae75045e4e8a5c7a193baad7e9ca8abaa24753890544f93d06e77",
       "backend/ops-service/apps/evaluations/recovery_inputs.py": "0070dfdda076bf3cda0eb2202f6a175a5eef02c02b6e02a6d21c4d434250a3bb",
-      "backend/ops-service/apps/evaluations/execution_spec.py": "83fa5ff53967a903c4102421e5ac5086fe4d51fd6f5795e15c1395cb279d71b4",
+      "backend/ops-service/apps/evaluations/execution_spec.py": "3da677b92bddcacd8e9bb7aeedfb60d4768b7b264e7b81b7ed779ec74ef135bc",
       "backend/ops-service/apps/evaluations/quality_policy.py": "b2715707819f120f677aba684790f3f68d6c27c17c1613db455d162d89823b84"
     }
   },
@@ -1015,6 +1015,26 @@
       },
       "capture_kinds": {
         "official-rag-not-started-v2": "synthetic"
+      }
+    },
+    "core-official-640f14b8cf87bd9e5d3f2319": {
+      "fixture_sha256": "640f14b8cf87bd9e5d3f231968b349a67a367d148b015a45b2b9b514c05ff31c",
+      "case_ids": [
+        "H01",
+        "H02",
+        "H03",
+        "H04",
+        "H05",
+        "H06"
+      ],
+      "captures": {
+        "core-http-3a402dc91def8b8b2c740160": "dd523f159def51b04b6ce9546e26eff94f054bd67bfd0e52cd7eae15f8cac10f",
+        "core-http-880affc7bd7dce634e7697f0": "429c3e25379b4dec5a97744cfdf2386ce2ba8a9c5943b08ec98e45e37d2a814a"
+      },
+      "evaluation_scope": "source-chunks-retrieval-answer",
+      "capture_kinds": {
+        "core-http-3a402dc91def8b8b2c740160": "recorded",
+        "core-http-880affc7bd7dce634e7697f0": "synthetic"
       }
     }
   }

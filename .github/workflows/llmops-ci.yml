@@ -153,6 +153,10 @@ jobs:
               expected = ({f"{version}/{name}.json" for version in ("v1", "v2") for name in ("fixture", "capture")}
                           if bundle.name == "core-rag-20261002" else {"source/fixture.json", "source/capture.json"})
               assert {str(p.relative_to(bundle)) for p in bundle.rglob("*") if p.is_file()} == expected
+          for bundle in Path("/app/evaluation/support-program-evidence/runs").glob("core-official-*"):
+              expected = {"fixture.json"} | {str(p.relative_to(bundle)) for p in bundle.glob("core-http-*/capture.json")}
+              assert len(expected) >= 2
+              assert {str(p.relative_to(bundle)) for p in bundle.rglob("*") if p.is_file()} == expected
           '
       - name: Reject mismatched Ops and runner releases before model calls
         run: python3 infrastructure/llmops/spec_mismatch_smoke.py --output work/llmops-spec-mismatch.json

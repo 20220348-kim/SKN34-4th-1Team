@@ -150,7 +150,14 @@
     "evaluation_scope": "source-chunks-retrieval-answer",
     "fixture": "runs/official-rag-20261006-v1/fixture.json",
     "fixture_sha256": "2ee506f59b9282d7863b3d0c3de238ade85c89d6462b5dffa822c7fb45a6a795",
-    "case_ids": ["H01", "H02", "H03", "H04", "H05", "H06"],
+    "case_ids": [
+      "H01",
+      "H02",
+      "H03",
+      "H04",
+      "H05",
+      "H06"
+    ],
     "captures": [
       {
         "id": "official-rag-not-started-v1",
@@ -165,12 +172,47 @@
     "evaluation_scope": "source-chunks-retrieval-answer",
     "fixture": "runs/official-rag-20261006-v2/fixture.json",
     "fixture_sha256": "2de68ac5855cc084aceb38bff815c4e18df6217e1cf76ba51726b18a262399b7",
-    "case_ids": ["H01", "H02", "H03", "H04", "H05", "H06"],
+    "case_ids": [
+      "H01",
+      "H02",
+      "H03",
+      "H04",
+      "H05",
+      "H06"
+    ],
     "captures": [
       {
         "id": "official-rag-not-started-v2",
         "label": "미실행 비교용 빈 기록 · 답변·검색 측정 없음",
         "path": "runs/official-rag-20261006-v2/not-started.json"
+      }
+    ]
+  },
+  {
+    "id": "core-official-640f14b8cf87bd9e5d3f2319",
+    "label": "Core HTTP · 공식 공고 H01~H06 · 저장 기록 · 원문당 1청크",
+    "evaluation_scope": "source-chunks-retrieval-answer",
+    "replay_only": true,
+    "fixture": "runs/core-official-640f14b8cf87bd9e5d3f2319/fixture.json",
+    "fixture_sha256": "640f14b8cf87bd9e5d3f231968b349a67a367d148b015a45b2b9b514c05ff31c",
+    "case_ids": [
+      "H01",
+      "H02",
+      "H03",
+      "H04",
+      "H05",
+      "H06"
+    ],
+    "captures": [
+      {
+        "id": "core-http-3a402dc91def8b8b2c740160",
+        "label": "Core HTTP 저장 응답 · gpt-5.6-luna · 2026-09-06 · 새 호출 없음",
+        "path": "runs/core-official-640f14b8cf87bd9e5d3f2319/core-http-3a402dc91def8b8b2c740160/capture.json"
+      },
+      {
+        "id": "core-http-880affc7bd7dce634e7697f0",
+        "label": "Core HTTP 무료 대역 · 실제 모델 품질 아님",
+        "path": "runs/core-official-640f14b8cf87bd9e5d3f2319/core-http-880affc7bd7dce634e7697f0/capture.json"
       }
     ]
   }

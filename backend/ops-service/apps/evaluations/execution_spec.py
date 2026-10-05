@@ -193,6 +193,8 @@ def build_release(root):
         if "evaluation_scope" in item:
             datasets[item["id"]]["evaluation_scope"] = item["evaluation_scope"]
             plan = rag_plans.get(item["id"])
+            if item.get("replay_only") and plan is not None:
+                raise ValueError("Replay-only Core captures cannot have a direct AI live plan")
             if plan is not None:
                 if plan["fixture_sha256"] != fixture_hash or plan["case_ids"] != item["case_ids"]:
                     raise ValueError("RAG call plan input differs")
