@@ -71,6 +71,7 @@ def validate(model, project):
             "rabbitmq",
             "demo-seed",
             "ops-service",
+            "ops-bootstrap",
             "ops-mysql",
         }
         <= services.keys(),
@@ -81,8 +82,20 @@ def validate(model, project):
         "A retired runtime service name leaked into the model."
     )
     require(
-        set(services["ops-service"]["depends_on"]) == {"ops-mysql"},
-        "Django must depend only on its own database.",
+        set(services["ops-service"]["depends_on"]) == {"ops-mysql", "ops-bootstrap"}
+        and services["ops-service"]["depends_on"]["ops-bootstrap"]["condition"]
+        == "service_completed_successfully",
+        "Django must wait for its database and local review bootstrap.",
+    )
+    bootstrap = services["ops-bootstrap"]
+    require(
+        bootstrap["command"] == ["python", "manage.py", "bootstrap_local_reviews"]
+        and bootstrap["environment"]["LLMOPS_LOCAL_SEED_ENABLED"] == "true"
+        and set(bootstrap["depends_on"]) == {"ops-mysql"}
+        and bootstrap["depends_on"]["ops-mysql"]["condition"] == "service_healthy"
+        and not bootstrap.get("ports")
+        and not bootstrap.get("profiles"),
+        "Default Compose must initialize reviews without a separate command or public port.",
     )
     require(
         services["ops-service"]["environment"]["DB_HOST"] == "ops-mysql",
@@ -117,6 +130,11 @@ def validate(model, project):
         "Django did not receive its selected environment file.",
     )
     require(
+        bootstrap["environment"]["DB_PASSWORD"] == "django-user-fixture"
+        and bootstrap["environment"]["CORE_API_URL"] == "http://core-service:8080",
+        "Bootstrap must inherit the same database and Core environment as Ops.",
+    )
+    require(
         services["core-service"]["environment"]["SPRING_DATASOURCE_PASSWORD"]
         == "app-user-fixture",
         "The Core API did not receive its selected environment file.",
@@ -146,6 +164,7 @@ def validate(model, project):
         "ai-service": APP / "backend/ai-service",
         "elasticsearch": APP / "infrastructure/elasticsearch",
         "ops-service": DJANGO,
+        "ops-bootstrap": DJANGO,
     }.items():
         build = services[name]["build"]
         require(
@@ -192,6 +211,15 @@ def validate(model, project):
         "Django source mount points outside backend/ops-service.",
     )
     evidence_mount = django_mounts.get("/evaluation-data", {})
+    for name in ("ops-service", "ops-bootstrap"):
+        results_mount = next(v for v in services[name]["volumes"] if v["target"] == "/results")
+        require(
+            services[name]["environment"]["LLMOPS_RESULTS_DIR"] == "/results"
+            and results_mount["type"] == "volume"
+            and results_mount["source"] == "ops-results"
+            and bool(results_mount.get("read_only")) == (name == "ops-service"),
+            "Only the bootstrap may populate the shared result volume.",
+        )
     require(
         services["ops-service"]["environment"].get("LLMOPS_EVIDENCE_DIR")
         == "/evaluation-data"
@@ -237,7 +265,13 @@ def main():
     parser.add_argument(
         "--smoke", action="store_true", help="Build and test only Django/MySQL."
     )
+    parser.add_argument(
+        "--bootstrap-only", action="store_true",
+        help="With --smoke, verify automatic bootstrap/restart without repeating the full test suite.",
+    )
     args = parser.parse_args()
+    if args.bootstrap_only and not args.smoke:
+        parser.error("--bootstrap-only requires --smoke")
     require(
         (APP / "infrastructure/compose.yaml").is_file()
         and (DJANGO / "compose.yaml").is_file(),
@@ -364,13 +398,10 @@ def main():
         if not args.smoke:
             return
 
-        run(base + ["build", "ops-service"], environment)
+        run(base + ["build", "ops-service", "ops-bootstrap"], environment)
         started = False
         try:
             started = True
-            run(base + ["up", "--detach", "--wait", "--wait-timeout", "180", "ops-mysql"], environment)
-            run(base + ["run", "--rm", "--no-deps", "ops-service",
-                        "python", "manage.py", "migrate_deployment"], environment)
             run(
                 base
                 + [
@@ -399,14 +430,52 @@ def main():
                     base + ["exec", "-T", "ops-service", "python", "manage.py"] + arguments,
                     environment,
                 )
-            # The /app layout is not a repository checkout. Reuse the validated,
-            # read-only source mount only for the producer/consumer contract tests.
-            run(
-                base + ["exec", "-T", "--env",
-                        "OPS_TEST_BUDGET_CLIENT_PATH=/evaluation-data/budget_client.py",
-                        "ops-service", "python", "manage.py", "test", "--noinput"],
-                environment,
-            )
+            # Run on the first normal `up`; no manual migration or bootstrap command before it.
+            verify_seed = """
+from apps.evaluations.models import EvaluationBaseline, EvaluationCaseReview, EvaluationRun
+from apps.evaluations.quality import quality_pass
+from apps.evaluations.review_eligibility import current_approval
+from apps.evaluations.reviews import review_material
+baseline = EvaluationBaseline.objects.select_related('review__run').get()
+run = baseline.review.run
+assert str(run.pk) == '628ae52a-f417-4b53-b400-d90405e6a7d8'
+assert EvaluationRun.objects.count() == 2 and EvaluationCaseReview.objects.count() == 12
+assert current_approval(baseline.review, run) and quality_pass(run)
+assert len(review_material(run)['cases']) == 6
+baseline.review = None
+baseline.version += 1
+baseline.save()
+print('PASS: ordinary Compose startup imported the current reviewed baseline.')
+"""
+            run(base + ["exec", "-T", "ops-service", "python", "manage.py", "shell",
+                        "-c", verify_seed], environment)
+            # Recreate only disposable API/bootstrap containers; retain the same DB/result volumes.
+            run(base + ["up", "--detach", "--no-build", "--force-recreate", "--wait",
+                        "--wait-timeout", "180", "ops-bootstrap", "ops-service"], environment)
+            bootstrap_log = run(base + ["logs", "--no-color", "ops-bootstrap"],
+                                environment, capture=True).stdout
+            require("EXISTING_DATA_PRESERVED" in bootstrap_log,
+                    "Normal restart must preserve existing Ops history.")
+            verify_preserved = """
+from apps.evaluations.models import EvaluationBaseline, EvaluationRun
+from apps.evaluations.services import read_result
+assert EvaluationRun.objects.count() == 2
+assert EvaluationBaseline.objects.get().review_id is None
+for run in EvaluationRun.objects.all():
+    read_result(run)
+print('PASS: ordinary Compose restart preserved local revocation and result files.')
+"""
+            run(base + ["exec", "-T", "ops-service", "python", "manage.py", "shell",
+                        "-c", verify_preserved], environment)
+            if not args.bootstrap_only:
+                # The /app layout is not a repository checkout. Reuse the validated,
+                # read-only source mount only for the producer/consumer contract tests.
+                run(
+                    base + ["exec", "-T", "--env",
+                            "OPS_TEST_BUDGET_CLIENT_PATH=/evaluation-data/budget_client.py",
+                            "ops-service", "python", "manage.py", "test", "--noinput"],
+                    environment,
+                )
             probe = (
                 "import json,urllib.request; "
                 "r=urllib.request.urlopen('http://ops-service:8000/api/v1/health/ready',timeout=10); "
@@ -424,7 +493,8 @@ def main():
                 # External-volume overrides are never used for runtime tests.
                 run(base + ["down", "--volumes"], environment)
         print(
-            "PASS: isolated Docker build, real MySQL tests, HTTP and service DNS.",
+            "PASS: isolated Compose bootstrap/restart, HTTP and service DNS; "
+            + ("full test suite deferred to CI." if args.bootstrap_only else "full MySQL tests."),
             flush=True,
         )
 

@@ -49,7 +49,7 @@ ARTIFACTS = {
 
 def load_seed(directory=SEED_DIR):
     seed = json.loads((directory / "seed.json").read_text())
-    if seed["schema_version"] != 1 or str(UUID(seed["source_run_id"])) != seed["source_run_id"]:
+    if seed["schema_version"] != 2 or str(UUID(seed["source_run_id"])) != seed["source_run_id"]:
         raise CommandError("Unsupported local review seed")
     if not seed["reviewer"].startswith("공유 검토 기록 · "):
         raise CommandError("Shared reviewer provenance is required")
@@ -60,15 +60,35 @@ def load_seed(directory=SEED_DIR):
             if record["fields"][field] not in (None, [seed["reviewer"]]):
                 raise CommandError("Seed must not reassign history to a local account")
     runs = [record for record in seed["records"] if record["model"] == "evaluations.evaluationrun"]
-    if (
-        len(runs) != 1
-        or runs[0]["pk"] != seed["source_run_id"]
-        or runs[0]["fields"]["status"] != "COMPLETED"
-        or runs[0]["fields"]["execution_mode"] != "replay"
-        or runs[0]["fields"]["model_api_calls"] != 0
-    ):
-        raise CommandError("Shared seed must contain one completed historical replay")
-    if {item["path"] for item in seed["artifacts"]} != ARTIFACTS:
+    run_ids = {record["pk"] for record in runs}
+    if len(run_ids) != len(runs) or seed["source_run_id"] not in run_ids:
+        raise CommandError("Shared seed must contain its baseline run without duplicates")
+    expected_paths = set()
+    for record in runs:
+        run_id, fields = record["pk"], record["fields"]
+        mode, calls = fields["execution_mode"], fields["model_api_calls"]
+        if (
+            str(UUID(run_id)) != run_id
+            or fields["status"] != "COMPLETED"
+            or fields["execution_spec"].get("evaluation_scope", "fixed-answer-context-only")
+            != "fixed-answer-context-only"
+            or mode not in {"replay", "live"}
+            or type(calls) is not int
+            or (mode == "replay" and calls != 0)
+            or (mode == "live" and calls <= 0)
+        ):
+            raise CommandError("Shared seed requires completed fixed-context replay/live history")
+        paths = set(ARTIFACTS)
+        if mode == "live":
+            paths.add("capture/capture.json")
+        if fields["reference_config"]:
+            if fields["reference_config"]["run_id"] not in run_ids:
+                raise CommandError("Shared seed must preserve the referenced baseline run")
+            paths.add("reference-capture.json")
+        expected_paths.update(f"{run_id}/{name}" for name in paths)
+    if {item["path"] for item in seed["artifacts"]} != expected_paths or len(
+        seed["artifacts"]
+    ) != len(expected_paths):
         raise CommandError("Missing or unexpected review artifacts")
     files = {}
     for item in seed["artifacts"]:
@@ -89,10 +109,10 @@ def load_seed(directory=SEED_DIR):
     return seed, files
 
 
-def copy_artifacts(seed, files):
+def copy_artifacts(files):
     root = settings.LLMOPS_RESULTS_DIR
     for name, raw in files.items():
-        target = root / seed["source_run_id"] / PurePosixPath(name)
+        target = root / PurePosixPath(name)
         if target.is_symlink() or not target.resolve().is_relative_to(root.resolve()):
             raise CommandError("Invalid local review artifact destination")
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -129,15 +149,21 @@ def import_seed():
             is_active=False,
             is_staff=False,
         )
-        copy_artifacts(seed, files)
+        copy_artifacts(files)
         for item in serializers.deserialize("json", json.dumps(seed["records"])):
             item.save()
+        for imported in EvaluationRun.objects.all():
+            read_result(imported)
         run = EvaluationRun.objects.get(pk=seed["source_run_id"])
         baseline = EvaluationBaseline.objects.select_related("review").get(
             dataset_id=run.dataset_id
         )
-        read_result(run)
-        if not current_approval(baseline.review, run) or not quality_pass(run):
+        if (
+            baseline.review is None
+            or baseline.review.run_id != run.pk
+            or not current_approval(baseline.review, run)
+            or not quality_pass(run)
+        ):
             raise CommandError("Shared approval is incompatible with current evidence or policy")
     return "SHARED_REVIEWS_IMPORTED"
 

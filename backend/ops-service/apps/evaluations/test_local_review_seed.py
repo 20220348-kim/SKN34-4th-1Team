@@ -16,6 +16,7 @@ from .authentication import CoreSessionAuthentication
 from .management.commands import bootstrap_local_reviews as seed
 from .models import (
     EvaluationBaseline,
+    EvaluationBaselineChange,
     EvaluationBudget,
     EvaluationCaseReview,
     EvaluationRun,
@@ -25,15 +26,20 @@ from .models import (
 from .quality import quality_pass
 from .review_eligibility import current_approval
 from .reviews import review_material
-from .services import read_result
+from .services import ResultsUnavailable, read_result
+
+CURRENT_RUN = "628ae52a-f417-4b53-b400-d90405e6a7d8"
+PREVIOUS_RUN = "ec068da7-8d59-46fb-a8e4-2ab42dc39efe"
 
 
 class SeedFileTests(SimpleTestCase):
     def test_git_seed_has_only_review_history_and_no_personal_account(self):
         document, files = seed.load_seed()
-        self.assertEqual(len(document["records"]), 14)
-        self.assertEqual(set(files), seed.ARTIFACTS)
-        self.assertEqual(document["source_run_id"], "ec068da7-8d59-46fb-a8e4-2ab42dc39efe")
+        self.assertEqual(len(document["records"]), 24)
+        self.assertEqual(len(files), 14)
+        self.assertEqual(document["source_run_id"], CURRENT_RUN)
+        self.assertIn(f"{CURRENT_RUN}/capture/capture.json", files)
+        self.assertIn(f"{CURRENT_RUN}/reference-capture.json", files)
         for record in document["records"]:
             self.assertIn(record["model"], seed.MODELS)
             self.assertFalse({"password", "email", "session_key"} & record["fields"].keys())
@@ -66,6 +72,31 @@ class SeedFileTests(SimpleTestCase):
             with self.assertRaisesMessage(CommandError, "artifact path"):
                 seed.load_seed()
 
+    def test_incomplete_live_history_and_missing_reference_are_rejected(self):
+        document, _ = seed.load_seed()
+        for field, value in (
+            ("status", "RUNNING"),
+            ("model_api_calls", 0),
+            ("reference_config", {"run_id": "unknown"}),
+        ):
+            with self.subTest(field=field):
+                invalid = deepcopy(document)
+                run = next(item for item in invalid["records"] if item["pk"] == CURRENT_RUN)
+                run["fields"][field] = value
+                with patch.object(seed.json, "loads", return_value=invalid):
+                    with self.assertRaises(CommandError):
+                        seed.load_seed()
+        for change in ("missing", "duplicate"):
+            with self.subTest(change=change):
+                invalid = deepcopy(document)
+                if change == "missing":
+                    invalid["artifacts"].pop(0)
+                else:
+                    invalid["artifacts"].append(invalid["artifacts"][0])
+                with patch.object(seed.json, "loads", return_value=invalid):
+                    with self.assertRaisesMessage(CommandError, "review artifacts"):
+                        seed.load_seed()
+
     @override_settings(LLMOPS_LOCAL_SEED_ENABLED=False)
     def test_not_enabled_in_other_environments(self):
         with self.assertRaisesMessage(CommandError, "explicitly enabled"):
@@ -85,11 +116,12 @@ class LocalReviewSeedTests(TestCase):
 
     def test_import_preserves_human_decisions_hashes_and_timestamps(self):
         self.assertEqual(seed.import_seed(), "SHARED_REVIEWS_IMPORTED")
-        run = EvaluationRun.objects.get()
+        run = EvaluationRun.objects.get(pk=CURRENT_RUN)
         self.assertEqual(str(run.pk), self.document["source_run_id"])
-        self.assertEqual(EvaluationCaseReview.objects.count(), 6)
+        self.assertEqual(EvaluationRun.objects.count(), 2)
+        self.assertEqual(EvaluationCaseReview.objects.count(), 12)
         self.assertEqual(FixtureReview.objects.count(), 2)
-        self.assertEqual(QualityAssessment.objects.count(), 2)
+        self.assertEqual(QualityAssessment.objects.count(), 3)
         for record in self.document["records"]:
             if record["model"] != "evaluations.evaluationcasereview":
                 continue
@@ -97,6 +129,16 @@ class LocalReviewSeedTests(TestCase):
             self.assertEqual(saved.comment, record["fields"]["comment"])
             self.assertEqual(saved.created_at, parse_datetime(record["fields"]["created_at"]))
         baseline = EvaluationBaseline.objects.get()
+        self.assertEqual(baseline.version, 2)
+        self.assertEqual(baseline.review.run_id, run.pk)
+        self.assertEqual(run.execution_mode, "live")
+        self.assertEqual(run.model_api_calls, 6)
+        self.assertEqual(str(run.baseline_review.run_id), PREVIOUS_RUN)
+        self.assertEqual(run.baseline_version, 1)
+        self.assertEqual(EvaluationBaselineChange.objects.count(), 2)
+        change = EvaluationBaselineChange.objects.get(version=2)
+        self.assertEqual(str(change.previous_review.run_id), PREVIOUS_RUN)
+        self.assertEqual(change.review_id, baseline.review_id)
         self.assertTrue(current_approval(baseline.review, run))
         self.assertTrue(quality_pass(run))
         self.assertEqual(
@@ -104,6 +146,16 @@ class LocalReviewSeedTests(TestCase):
             ["H01", "H02", "H03", "H04", "H05", "H06"],
         )
         read_result(run)
+        material = review_material(run)
+        self.assertEqual(material["recorded_model"], "gpt-6-luna")
+        self.assertEqual(
+            material["capture_sha256"],
+            "beeabad9669554ab643a7cbd0e0682d977823c9fa06623a0a6c8c9b3e7b2d2e1",
+        )
+        previous = EvaluationRun.objects.get(pk=PREVIOUS_RUN)
+        read_result(previous)
+        self.assertTrue(current_approval(previous.reviews.first(), previous))
+        self.assertTrue(quality_pass(previous))
         reviewer = get_user_model().objects.get(username=self.document["reviewer"])
         self.assertFalse(reviewer.is_active or reviewer.is_staff or reviewer.has_usable_password())
         self.assertEqual(reviewer.email, "")
@@ -125,7 +177,7 @@ class LocalReviewSeedTests(TestCase):
         baseline.refresh_from_db()
         self.assertIsNone(baseline.review)
         self.assertEqual(path.read_bytes(), b"local-change")
-        self.assertEqual(EvaluationRun.objects.count(), 1)
+        self.assertEqual(EvaluationRun.objects.count(), 2)
 
     def test_existing_budget_only_is_also_preserved(self):
         EvaluationBudget.objects.create(id=1, call_limit=8)
@@ -152,7 +204,7 @@ class LocalReviewSeedTests(TestCase):
             EvaluationCaseReview.objects.filter(
                 reviewed_by__username=self.document["reviewer"],
             ).count(),
-            6,
+            12,
         )
 
     def test_incompatible_policy_rolls_back_all_rows_and_identical_files_can_retry(self):
@@ -172,3 +224,20 @@ class LocalReviewSeedTests(TestCase):
         self.assertEqual(path.read_bytes(), b"existing")
         self.assertFalse(EvaluationRun.objects.exists())
         self.assertFalse(get_user_model().objects.exists())
+
+    def test_invalid_live_evidence_rolls_back_without_recreating_approval(self):
+        files = dict(self.files)
+        files[f"{CURRENT_RUN}/capture/capture.json"] = b"{}"
+        with patch.object(seed, "load_seed", return_value=(self.document, files)):
+            with self.assertRaises(ResultsUnavailable):
+                seed.import_seed()
+        self.assertFalse(EvaluationRun.objects.exists())
+        self.assertFalse(get_user_model().objects.exists())
+
+    def test_seed_must_select_the_declared_current_run(self):
+        document = deepcopy(self.document)
+        document["source_run_id"] = PREVIOUS_RUN
+        with patch.object(seed, "load_seed", return_value=(document, self.files)):
+            with self.assertRaisesMessage(CommandError, "incompatible"):
+                seed.import_seed()
+        self.assertFalse(EvaluationBaseline.objects.exists())
