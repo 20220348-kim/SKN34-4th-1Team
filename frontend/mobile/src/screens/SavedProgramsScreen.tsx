@@ -1,24 +1,34 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useFocusEffect } from 'expo-router'
+import { router, useFocusEffect } from 'expo-router'
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native'
 import type { SavedSupportProgram } from '@govbiz/shared/domain/entities/SavedSupportProgram'
-import type { ApplicationProgressStage } from '@govbiz/shared/domain/entities/ApplicationPreparation'
+import type { ApplicationPreparationSummary, ApplicationProgressStage } from '@govbiz/shared/domain/entities/ApplicationPreparation'
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
 import { ApiError, errorMessage } from '../api/client'
 import { listSavedPrograms, removeSavedProgram, saveProgram } from '../api/savedPrograms'
 import { useAuth } from '../auth/session'
-import { Page, Button, Notice, Card, StatusBadge, colors, styles } from '../ui'
+import { Page, Button, Field, Notice, Card, StatusBadge, colors, styles } from '../ui'
 import { AppIcon } from '../components/AppIcon'
 import { SegmentedControl } from '../components/SegmentedControl'
 import { partnerDeadlineDay } from '../components/PartnerDates'
-import { preparationDate, preparationKey, preparationStageLabels, PreparationRow, ReviewRow } from '../components/PreparationRows'
+import { preparationDate, preparationKey, preparationStageLabels, PreparationRow, ReviewRow, ProgressStageSheet } from '../components/PreparationRows'
 import { usePreparationWorkspace } from '../components/usePreparationWorkspace'
 import { statusLabels } from '../components/ProgramCard'
 import { GuestFeatureNotice } from '../components/GuestFeatureNotice'
+import { MultiSelectField } from '../components/MultiSelectField'
+import { PartnerSheet } from '../components/PartnerSheet'
+import { SavedProgramCalendar } from '../components/SavedProgramCalendar'
+import { SavedProgramPipeline } from '../components/SavedProgramPipeline'
+import { emptySavedProgramFilters, filterSavedPrograms, savedCalendarMonth, savedCalendarToday, savedProgramTargetOptions, sortSavedProgramsByDeadline,
+  type SavedProgramFilters, type SavedProgramStageFilter } from '../components/savedProgramPresentation'
+import { regionNames } from '@govbiz/shared/domain/entities/Region'
+import { supportProgramCategories } from '@govbiz/shared/domain/entities/SupportProgramCategory'
 
 type SavedState = { token: string | null; programs: SavedSupportProgram[]; loading: boolean; error: string | null }
-type Filter = 'all' | 'interest' | ApplicationProgressStage
+type Filter = SavedProgramStageFilter
 type Undo = { owner: string; item: SavedSupportProgram; index: number }
+type SavedView = 'list' | 'calendar' | 'pipeline'
+type StageTarget = { owner: string; identity: SupportProgramIdentity; items: ApplicationPreparationSummary[] }
 const filters: { value: Filter; label: string }[] = [{ value: 'all', label: '전체' }, { value: 'interest', label: '관심' },
   ...Object.entries(preparationStageLabels).map(([value, label]) => ({ value: value as ApplicationProgressStage, label }))]
 
@@ -31,6 +41,11 @@ export function SavedProgramsScreen({ onOpenProgram, onCountChange, onLogin }: {
   const [revision, setRevision] = useState(0)
   const [view, setView] = useState<'saved' | 'preparation'>('saved')
   const [filter, setFilter] = useState<Filter>('all')
+  const [savedView, setSavedView] = useState<SavedView>('list')
+  const [search, setSearch] = useState<{ owner: string | null; filters: SavedProgramFilters }>({ owner: null, filters: emptySavedProgramFilters() })
+  const today = savedCalendarToday()
+  const [month, setMonth] = useState(() => savedCalendarMonth(today))
+  const [stageTarget, setStageTarget] = useState<StageTarget | null>(null)
   const [removing, setRemoving] = useState<string | null>(null)
   const [undo, setUndo] = useState<Undo | null>(null)
   const mutation = useRef<AbortController | null>(null)
@@ -51,6 +66,22 @@ export function SavedProgramsScreen({ onOpenProgram, onCountChange, onLogin }: {
   const visible: SavedState = state.token === token ? state : { token, programs: [], loading: true, error: null }
   useEffect(() => { onCountChange?.(token ? visible.programs.length : 0) }, [token, visible.programs.length, onCountChange])
   useEffect(() => { if (!undo) return; const timer = setTimeout(() => setUndo(null), 7_000); return () => clearTimeout(timer) }, [undo])
+  useEffect(() => { setFilter('all'); setSavedView('list'); setMonth(savedCalendarMonth(savedCalendarToday())); setStageTarget(null) }, [token])
+  const criteria = search.owner === token ? search.filters : emptySavedProgramFilters()
+  function changeCriteria(update: (value: SavedProgramFilters) => SavedProgramFilters) {
+    setSearch(current => ({ owner: token, filters: update(current.owner === token ? current.filters : emptySavedProgramFilters()) }))
+  }
+  function toggleCriterion(key: 'region' | 'category' | 'target', value: string) {
+    changeCriteria(current => ({ ...current, [key]: current[key].includes(value) ? current[key].filter(item => item !== value) : [...current[key], value] }))
+  }
+  function resetFilters() { changeCriteria(emptySavedProgramFilters); setFilter('all') }
+  function newDocument(identity?: SupportProgramIdentity) { router.push(identity ? { pathname: '/all/preparation/new', params: identity } : '/all/preparation/new') }
+  function openStage(identity: SupportProgramIdentity, preferredId?: number) {
+    if (!token || workspace.preparations === null || workspace.loading || workspace.preparationError) return
+    const items = workspace.preparations.filter(item => preparationKey(item) === preparationKey(identity))
+    const preferred = items.find(item => item.id === preferredId)
+    setStageTarget({ owner: token, identity, items: preferred ? [preferred, ...items.filter(item => item.id !== preferred.id)] : items })
+  }
   function refresh() { setRevision((value) => value + 1); workspace.refresh() }
   async function removeProgram(item: SavedSupportProgram) {
     if (!token || removing) return
@@ -89,7 +120,15 @@ export function SavedProgramsScreen({ onOpenProgram, onCountChange, onLogin }: {
   }
   const latestPreparation = (identity: SupportProgramIdentity) => workspace.preparations?.find((item) => preparationKey(item) === preparationKey(identity))
   const stageOf = (saved: SavedSupportProgram) => latestPreparation({ sourceCode: saved.program.sourceCode, sourceProgramId: saved.program.id })?.progressStage ?? 'interest'
-  const shown = filter === 'all' ? visible.programs : workspace.preparations === null ? [] : visible.programs.filter((item) => stageOf(item) === filter)
+  const matching = sortSavedProgramsByDeadline(filterSavedPrograms(visible.programs, criteria))
+  const shown = savedView !== 'list' || filter === 'all' ? matching : workspace.preparations === null ? [] : matching.filter(item => stageOf(item) === filter)
+  const options = (values: readonly string[]) => [...new Set(values)].sort((left, right) => left.localeCompare(right, 'ko-KR'))
+  const activeCriteria = [
+    ...(criteria.keyword.trim() ? [{ key: 'keyword' as const, value: criteria.keyword, label: `검색 · ${criteria.keyword.trim()}` }] : []),
+    ...(['region', 'category', 'target'] as const).flatMap(key => criteria[key].map(value => ({ key, value, label: `${{ region: '지역', category: '분야', target: '대상' }[key]} · ${value}` }))),
+  ]
+  const listStageReady = savedView !== 'list' || filter === 'all' || workspace.preparations !== null
+  const stageBusy = workspace.loading || workspace.preparations === null || Boolean(workspace.preparationError)
   const workCount = workspace.preparations !== null && workspace.reviews !== null ? workspace.preparations.length + workspace.reviews.length : null
   if (status === 'loading') return <Page><ActivityIndicator accessibilityLabel="로그인 상태 확인 중" /></Page>
   if (status === 'unavailable') return <Page><Notice error>로그인 상태를 확인하지 못했습니다.</Notice><Button label="다시 확인" onPress={() => void refreshSession()} /></Page>
@@ -98,20 +137,47 @@ export function SavedProgramsScreen({ onOpenProgram, onCountChange, onLogin }: {
   return <View style={local.page}>
     <View style={local.header}><SegmentedControl<'saved' | 'preparation'> label="관심함 보기" value={view} onChange={setView} options={[
       { value: 'saved', label: '담은 공고' }, { value: 'preparation', label: `준비 중인 작업${workCount === null ? '' : ` ${workCount}`}` }]} /></View>
-    <ScrollView contentContainerStyle={local.list} refreshControl={<RefreshControl refreshing={visible.loading || workspace.loading} onRefresh={refresh} tintColor={colors.primary} />}>
+    <ScrollView contentContainerStyle={local.list} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag"
+      refreshControl={<RefreshControl refreshing={visible.loading || workspace.loading} onRefresh={refresh} tintColor={colors.primary} />}>
       {workspace.preparationError && <Notice error>신청 문서 조회 실패: {workspace.preparationError}</Notice>}
       {workspace.reviewError && <Notice error>중복 검토 조회 실패: {workspace.reviewError}</Notice>}
       {(visible.error || workspace.preparationError || workspace.reviewError) && <Button label="다시 확인" variant="secondary" onPress={refresh} />}
       {view === 'saved' ? <>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={local.filters}>{filters.map(({ value, label }) =>
+        <SegmentedControl<SavedView> label="담은 공고 보기 방식" value={savedView} onChange={setSavedView} options={[
+          { value: 'list', label: '목록' }, { value: 'calendar', label: '달력' }, { value: 'pipeline', label: '진행 관리' }]} />
+        <Field label="담은 공고 검색" placeholder="공고명 또는 기관명" value={criteria.keyword} maxLength={100}
+          onChangeText={keyword => changeCriteria(current => ({ ...current, keyword }))} />
+        <View style={styles.row}>
+          <MultiSelectField key={`region:${token}`} label="지역" selected={criteria.region} options={options([...regionNames, ...criteria.region, ...visible.programs.flatMap(item => item.program.regions)])}
+            onToggle={value => toggleCriterion('region', value)} onClear={() => changeCriteria(current => ({ ...current, region: [] }))} />
+          <MultiSelectField key={`category:${token}`} label="분야" selected={criteria.category} options={options([...supportProgramCategories, ...criteria.category, ...visible.programs.flatMap(item => item.program.categories)])}
+            onToggle={value => toggleCriterion('category', value)} onClear={() => changeCriteria(current => ({ ...current, category: [] }))} />
+          <MultiSelectField key={`target:${token}`} label="대상" selected={criteria.target} options={savedProgramTargetOptions}
+            onToggle={value => toggleCriterion('target', value)} onClear={() => changeCriteria(current => ({ ...current, target: [] }))} />
+        </View>
+        {(activeCriteria.length > 0 || savedView === 'list' && filter !== 'all') && <View style={local.applied}>
+          {activeCriteria.map(item => <Button key={`${item.key}:${item.value}`} size="small" variant="secondary" label={`${item.label} ×`}
+            accessibilityLabel={`${item.label} 조건 해제`} onPress={() => item.key === 'keyword' ? changeCriteria(current => ({ ...current, keyword: '' })) : toggleCriterion(item.key, item.value)} />)}
+          {savedView === 'list' && filter !== 'all' && <Button size="small" variant="secondary" label={`진행 · ${filters.find(item => item.value === filter)?.label} ×`} onPress={() => setFilter('all')} />}
+          <Button label="필터 초기화" size="small" variant="ghost" onPress={resetFilters} />
+        </View>}
+        {savedView === 'list' && <ScrollView horizontal keyboardShouldPersistTaps="handled" showsHorizontalScrollIndicator={false} contentContainerStyle={local.filters}>{filters.map(({ value, label }) =>
           <Pressable key={value} accessibilityRole="button" accessibilityLabel={`${label} 공고 필터`} accessibilityState={{ selected: filter === value }}
             onPress={() => setFilter(value)} style={[local.chip, value === filter && local.activeChip]}><Text style={[local.chipText, value === filter && { color: colors.surface }]}>
-              {label} {value === 'all' ? visible.programs.length : workspace.preparations === null ? '—' : visible.programs.filter((item) => stageOf(item) === value).length}</Text></Pressable>)}</ScrollView>
+              {label} {value === 'all' ? matching.length : workspace.preparations === null ? '—' : matching.filter((item) => stageOf(item) === value).length}</Text></Pressable>)}</ScrollView>}
+        {!visible.loading && !visible.error && listStageReady && <Text accessibilityLiveRegion="polite" style={styles.muted}>조건에 맞는 공고 {shown.length}건 / 담은 공고 {visible.programs.length}건{savedView === 'list' ? ' · 마감 임박순' : ''}</Text>}
         {visible.loading && !visible.programs.length && <ActivityIndicator accessibilityLabel="관심 공고 불러오는 중" color={colors.primary} />}
         {visible.error && <Notice error>{visible.error}</Notice>}
-        {!visible.loading && !visible.error && !visible.programs.length && <Notice>아직 관심 공고가 없습니다. 공고 상세 화면에서 저장해 보세요.</Notice>}
-        {!visible.loading && visible.programs.length > 0 && !shown.length && workspace.preparations !== null && <Notice>이 단계의 관심 공고가 없습니다.</Notice>}
-        {shown.map((item) => {
+        {!visible.loading && !visible.error && !visible.programs.length && <><Notice>아직 관심 공고가 없습니다. 공고 상세 화면에서 저장해 보세요.</Notice>
+          <Button label="공고 찾기" variant="secondary" onPress={() => router.navigate({ pathname: '/', params: { mode: 'filter' } })} /></>}
+        {!visible.loading && !visible.error && visible.programs.length > 0 && !shown.length && listStageReady && <Notice>조건에 맞는 관심 공고가 없습니다.</Notice>}
+        {savedView === 'calendar' && visible.programs.length > 0 && <SavedProgramCalendar key={token} items={shown} month={month} today={today}
+          ready={!visible.error} loading={visible.loading} onMonthChange={setMonth} onOpenProgram={onOpenProgram} />}
+        {savedView === 'pipeline' && visible.programs.length > 0 && (workspace.preparations !== null && !workspace.preparationError
+          ? <SavedProgramPipeline items={shown} preparations={workspace.preparations} busy={stageBusy} onOpenProgram={onOpenProgram} onOpenStage={openStage} onNewDocument={newDocument} />
+          : workspace.loading ? <ActivityIndicator accessibilityLabel="진행 관리 불러오는 중" color={colors.primary} />
+            : <Notice>신청 준비를 확인하지 못해 진행 단계를 표시할 수 없어요. 다시 확인해 주세요.</Notice>)}
+        {savedView === 'list' && shown.map((item) => {
           const { program, savedAt } = item
           const identity = { sourceCode: program.sourceCode, sourceProgramId: program.id }
           const prep = latestPreparation(identity)
@@ -122,7 +188,9 @@ export function SavedProgramsScreen({ onOpenProgram, onCountChange, onLogin }: {
             <View style={local.meta}><View style={[local.dot, { backgroundColor: program.status === 'OPEN' ? colors.primary : colors.muted }]} />
               <Text style={[local.status, { color: program.status === 'OPEN' ? colors.primary : colors.muted }]}>{statusLabels[program.status]}</Text>
               {days !== null && <StatusBadge label={days < 0 ? '마감' : days === 0 ? 'D-day' : `D-${days}`} tone={days >= 0 && days <= 3 ? 'warning' : 'neutral'} />}
-              <View style={{ flex: 1 }} /><StatusBadge label={workspace.preparations === null ? '단계 미확인' : prep ? preparationStageLabels[prep.progressStage] : '관심'} tone={prep ? 'info' : 'neutral'} /></View>
+              <View style={{ flex: 1 }} /><Pressable accessibilityRole="button" accessibilityLabel={`${program.title} 진행 단계 바꾸기`}
+                accessibilityState={{ disabled: stageBusy }} disabled={stageBusy} onPress={() => openStage(identity)} style={local.stageButton}>
+                <StatusBadge label={workspace.preparations === null ? '단계 미확인' : prep ? preparationStageLabels[prep.progressStage] : '관심'} tone={prep ? 'info' : 'neutral'} /></Pressable></View>
             <Text style={styles.heading}>{program.title}</Text>
             <Text style={styles.muted}>{[program.organization, program.regions.join(' · '), program.applicationEndDate ? `${preparationDate(program.applicationEndDate)} 마감` : program.applicationPeriod].filter(Boolean).join(' · ')}</Text>
             {((docs?.length ?? 0) > 0 || (reviews?.length ?? 0) > 0) && <View style={local.summary}>
@@ -139,12 +207,18 @@ export function SavedProgramsScreen({ onOpenProgram, onCountChange, onLogin }: {
         {workspace.loading && <ActivityIndicator accessibilityLabel="준비 중인 작업 불러오는 중" color={colors.primary} />}
         <Text style={local.groupTitle}>신청 문서 {workspace.preparations?.length ?? '—'}</Text>
         {workspace.preparations?.map((item) => <PreparationRow key={item.id} item={item} />)}
-        {!workspace.loading && workspace.preparations?.length === 0 && <Text style={styles.muted}>아직 신청 문서가 없습니다.</Text>}
+        {!workspace.loading && workspace.preparations?.length === 0 && <><Text style={styles.muted}>아직 신청 문서가 없습니다.</Text><Button label="새 신청문서" variant="secondary" onPress={() => newDocument()} /></>}
         <Text style={local.groupTitle}>중복 검토 {workspace.reviews?.length ?? '—'}</Text>
         {workspace.reviews?.map((item) => <ReviewRow key={item.review.id} item={item} />)}
-        {!workspace.loading && workspace.reviews?.length === 0 && <Text style={styles.muted}>아직 중복 검토가 없습니다.</Text>}
+        {!workspace.loading && workspace.reviews?.length === 0 && <><Text style={styles.muted}>아직 중복 검토가 없습니다.</Text><Button label="새 검토" variant="secondary" onPress={() => router.push('/all/reviews/new')} /></>}
       </>}
     </ScrollView>
+    {stageTarget?.owner === token && (stageTarget.items.length > 0
+      ? <ProgressStageSheet key={`${token}:${preparationKey(stageTarget.identity)}`} items={stageTarget.items} token={token} onClose={() => setStageTarget(null)} onSaved={workspace.refresh} />
+      : <PartnerSheet visible title="신청 준비 시작" onClose={() => setStageTarget(null)} actions={<Button label="닫기" variant="secondary" onPress={() => setStageTarget(null)} />}>
+        <Notice>신청 문서를 만들면 준비 중·지원 완료·심사 중·결과 단계를 관리할 수 있어요.</Notice>
+        <Button label="이 공고로 신청 문서 작성" onPress={() => { const identity = stageTarget.identity; setStageTarget(null); newDocument(identity) }} />
+      </PartnerSheet>)}
     {undo?.owner === token && <View accessibilityLiveRegion="polite" style={local.toast}><Text style={local.toastText}>관심 공고에서 뺐어요</Text>
       <Pressable accessibilityRole="button" accessibilityLabel="되돌리기" disabled={removing !== null} onPress={() => void undoRemove()} style={local.undo}><Text style={local.undoText}>되돌리기</Text></Pressable></View>}
   </View>
@@ -153,6 +227,7 @@ export function SavedProgramsScreen({ onOpenProgram, onCountChange, onLogin }: {
 const local = StyleSheet.create({
   page: { flex: 1, backgroundColor: colors.background }, header: { paddingHorizontal: 16, paddingTop: 6, paddingBottom: 12, backgroundColor: colors.surface },
   list: { padding: 16, gap: 10, paddingBottom: 100 }, filters: { gap: 6, paddingBottom: 2 },
+  applied: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 }, stageButton: { minHeight: 44, justifyContent: 'center' },
   chip: { minHeight: 36, paddingHorizontal: 11, borderRadius: 999, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, justifyContent: 'center' },
   activeChip: { backgroundColor: colors.text, borderColor: colors.text }, chipText: { color: colors.secondaryText, fontSize: 12 },
   meta: { flexDirection: 'row', alignItems: 'center', gap: 6 }, dot: { width: 5, height: 5, borderRadius: 3 }, status: { fontSize: 12, fontWeight: '600' },
