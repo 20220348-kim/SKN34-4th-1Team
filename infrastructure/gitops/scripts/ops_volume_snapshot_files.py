@@ -7,7 +7,7 @@ import os
 import sys
 from pathlib import Path, PurePosixPath
 
-from ops_volume_restore_probe import MAX_BYTES, MAX_ENTRIES, check_prefect, tree
+from ops_volume_restore_probe import MAX_BYTES, MAX_ENTRIES, check_prefect, expected_runs, tree
 
 
 def validate(entries):
@@ -67,8 +67,10 @@ def collect(root):
     return entries
 
 
-def restore(root, entries, kind):
+def restore(root, entries, kind, expected=None):
     validate(entries)
+    if expected is not None:
+        expected_runs(expected)
     if kind not in {"results", "prefect"}:
         raise ValueError("Unsupported store")
     if root.is_symlink() or not root.is_dir() or any(root.iterdir()):
@@ -85,9 +87,11 @@ def restore(root, entries, kind):
     for name in reversed(order):
         row = entries[name]
         target = root / name
-        os.chown(target, row["uid"], row["gid"])
         target.chmod(row["mode"])
         os.utime(target, ns=(row["mtime_ns"], row["mtime_ns"]))
+        # After chown the helper no longer owns a non-root file. Preserve mode/time
+        # first so restoration works with CHOWN and DAC_OVERRIDE, without FOWNER.
+        os.chown(target, row["uid"], row["gid"])
     if collect(root) != entries:
         raise ValueError("Restored volume differs from the archive")
     result = {
@@ -100,7 +104,13 @@ def restore(root, entries, kind):
     if kind == "prefect":
         # Inspect the writable disposable copy. Read-only SQLite still needs WAL/SHM;
         # immutable=1 would silently omit committed WAL data. No server is started.
-        result.update(check_prefect(root, {}))
+        result.update(check_prefect(root, expected or {}))
+    elif expected is not None:
+        for request, evidence in expected.items():
+            report = entries.get(request + "/evaluation/report.html", {})
+            if report.get("sha256") != evidence["report_sha256"]:
+                raise ValueError("Restored completed report differs from the DB-linked artifact")
+        result["matched_executions"] = len(expected)
     return result
 
 
@@ -108,6 +118,11 @@ if __name__ == "__main__":
     if sys.argv[1] == "collect":
         print(json.dumps(collect(Path("/source")), sort_keys=True))
     elif sys.argv[1] == "restore":
-        print(json.dumps(restore(Path("/restore"), json.load(sys.stdin), sys.argv[2])))
+        value = json.load(sys.stdin)
+        print(
+            json.dumps(
+                restore(Path("/restore"), value["entries"], sys.argv[2], value.get("expected"))
+            )
+        )
     else:
         raise ValueError("Unsupported volume action")

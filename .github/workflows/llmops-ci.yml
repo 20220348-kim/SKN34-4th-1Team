@@ -187,9 +187,20 @@ jobs:
           node --experimental-transform-types --test infrastructure/gitops/scripts/test_ops_restore_browser.mjs
           export RESTORE_DOCKER_IMAGE=$(docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops --env-file infrastructure/llmops/.env.artifacts -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml -f infrastructure/llmops/compose.artifacts.yaml -f infrastructure/llmops/compose.auth-test.yaml --profile evaluation images -q ops-service)
           test -n "$RESTORE_DOCKER_IMAGE"
+          RESTORE_DOCKER_IMAGE=$(docker image inspect "$RESTORE_DOCKER_IMAGE" --format '{{.Id}}')
           node --test infrastructure/gitops/scripts/test_ops_browser_login.mjs
           OPS_STATUS_DOCKER_IMAGE="$RESTORE_DOCKER_IMAGE" PYTHONPATH=infrastructure/gitops/scripts backend/ai-service/.venv/bin/python -B -m unittest test_ops_status.DockerInspectionTests
           OPS_VOLUME_SNAPSHOT_TEST_IMAGE="$RESTORE_DOCKER_IMAGE" PYTHONPATH=infrastructure/gitops/scripts backend/ai-service/.venv/bin/python -B -m unittest test_ops_state_snapshot
+      - name: Verify encrypted Ops DB-result-Prefect completed evaluation links
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          snapshot_mysql_image=$(docker image inspect mysql:8.4 --format '{{index .RepoDigests 0}}')
+          snapshot_ops_image=$(docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops --env-file infrastructure/llmops/.env.artifacts -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml -f infrastructure/llmops/compose.artifacts.yaml -f infrastructure/llmops/compose.auth-test.yaml --profile evaluation images -q ops-service)
+          test -n "$snapshot_mysql_image" && test -n "$snapshot_ops_image"
+          snapshot_ops_image=$(docker image inspect "$snapshot_ops_image" --format '{{.Id}}')
+          OPS_DB_SNAPSHOT_MYSQL_IMAGE="$snapshot_mysql_image" OPS_VOLUME_SNAPSHOT_TEST_IMAGE="$snapshot_ops_image" PYTHONPATH=infrastructure/gitops/scripts backend/ai-service/.venv/bin/python -B -m unittest test_ops_state_links
       - name: Start React development proxy
         run: |
           (cd frontend/web && VITE_DEV_PROXY_TARGET=http://127.0.0.1:18082 VITE_CORE_API_BASE_URL=/ exec node node_modules/vite/bin/vite.js --host 127.0.0.1) > /tmp/govbiz-ops-web.log 2>&1 &

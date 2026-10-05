@@ -394,7 +394,16 @@ class ArchiveTests(unittest.TestCase):
 
     def test_verify_uses_new_isolated_database_and_cleans_up_on_failure(self):
         snapshot.storage.exclusive(self.archive, b"mock-encrypted")
-        for failure in (None, "version", "nonempty", "counts", "dump", "import", "cleanup"):
+        for failure in (
+            None,
+            "version",
+            "nonempty",
+            "counts",
+            "dump",
+            "import",
+            "cleanup",
+            "links",
+        ):
             events = []
 
             def run(args, events=events, failure=failure, **kwargs):
@@ -429,7 +438,11 @@ class ArchiveTests(unittest.TestCase):
             ):
                 if failure:
                     with self.assertRaises(ValueError):
-                        snapshot.verify(self.archive, self.key)
+                        if failure == "links":
+                            with snapshot.restored_database(payload()):
+                                raise ValueError("mismatched completed evaluation")
+                        else:
+                            snapshot.verify(self.archive, self.key)
                 else:
                     result = snapshot.verify(self.archive, self.key)
                     self.assertTrue(result["restore_verified"])
