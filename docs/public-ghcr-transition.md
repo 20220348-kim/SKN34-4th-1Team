@@ -13,6 +13,7 @@
 - 공개 이미지의 v2 receipt에 `visibility: public`을 기록합니다. 네 receipt의 공개 범위가 모두 같아야 승격합니다.
 - 승격 도구가 네 Helm values의 `imagePullSecrets`를 빈 배열로 만들고 배포 기록에도 공개 범위를 저장합니다.
 - 현재 검증된 발행으로 초기화하는 `fork_cluster.py up`은 공개 기록에 한해 PAT 없이 네 digest의 익명 pull을 확인합니다. 인증·네트워크 오류나 digest 불일치를 성공으로 숨기지 않습니다. 새 Argo 전환 경로는 아직 제공하지 않습니다.
+- 기존 환경을 유지한 채 발행 증거만 확인하려면 [공개 이미지 검증 명령](../infrastructure/gitops/docs/image-promotion.md#클러스터-적용-없이-공개-이미지-검증)을 사용합니다. CI·receipt·Helm 정책과 익명 manifest 접근을 확인하며 이미지 레이어 다운로드나 클러스터 적용은 수행하지 않습니다.
 - DB 비밀번호, JWT 키, 내부 서비스 토큰은 계속 Kubernetes Secret으로 주입합니다. 공개 이미지에 넣지 않습니다.
 - 기존 v1 receipt와 `visibility`가 없는 배포 기록은 비공개로 해석합니다. 기존 클러스터의 읽기 Secret이나 GitHub 토큰은 자동 삭제하지 않습니다.
 

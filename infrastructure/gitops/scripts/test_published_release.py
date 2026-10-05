@@ -1,5 +1,6 @@
 """Published GHCR initialization without a deployment branch, PR or cluster access."""
 
+import contextlib
 import copy
 import io
 import json
@@ -15,6 +16,7 @@ import deployment as deploy
 import deployment_candidate as bundle
 import fork_cluster as cluster
 from test_deployment import FORK, SourceFixture
+from test_fork_cluster import Response
 from test_sync_images import FORK as FIXTURE_FORK
 from test_sync_images import SHA, ci_results, run
 
@@ -122,7 +124,11 @@ class PublishedReleaseTests(SourceFixture):
         dirty = self.root / "untracked-settings.yaml"
         dirty.write_text("env: {OPENAI_ALLOW_LIVE_CALLS: 'true'}\n")
         before = bundle.git_bytes(self.root, "status", "--porcelain")
-        record, files, revision = deploy.verified_release(self.root, FORK, get=self.get)
+        with patch.object(cluster, "verify_pull_rights") as manifests:
+            record, files, revision = deploy.verified_release(
+                self.root, FORK, get=self.get, verify_public_manifests=True
+            )
+        manifests.assert_called_once_with(None, None, record)
         self.assertEqual(revision, self.sha)
         self.assertEqual(record["verifiedRevision"], self.sha)
         self.assertEqual(record["visibility"], "public")
@@ -165,6 +171,141 @@ class PublishedReleaseTests(SourceFixture):
                 files[bundle.PREFIX + f"environments/fork/{service}.yaml"]
             )
             self.assertEqual(values["imagePullSecrets"], [{"name": "ghcr-pull"}])
+
+    def test_public_check_reads_all_four_manifests_without_personal_credentials(self):
+        requests = []
+
+        def respond(request, timeout):
+            requests.append(request)
+            if "/token?" in request.full_url:
+                return Response({"token": "anonymous-scoped-token"})
+            return Response(
+                {}, {"Docker-Content-Digest": request.full_url.rsplit("/", 1)[1]}
+            )
+
+        with (
+            self.mocked_renderer(),
+            patch.object(cluster, "urlopen", side_effect=respond),
+            patch.object(cluster, "authenticate") as auth,
+            patch.object(cluster, "run") as command,
+            patch.object(cluster, "apply") as apply,
+        ):
+            record, _, _ = deploy.verified_release(
+                self.root, FORK, get=self.get, verify_public_manifests=True
+            )
+        self.assertEqual(len(requests), 8)
+        tokens = [r for r in requests if "/token?" in r.full_url]
+        self.assertEqual(len(tokens), 4)
+        self.assertTrue(all("Authorization" not in r.headers for r in tokens))
+        manifests = [r for r in requests if r.get_method() == "HEAD"]
+        self.assertEqual(
+            {r.full_url for r in manifests},
+            {
+                "https://ghcr.io/v2/"
+                + image.removeprefix("ghcr.io/").replace("@", "/manifests/")
+                for image in record["images"].values()
+            },
+        )
+        auth.assert_not_called()
+        command.assert_not_called()
+        apply.assert_not_called()
+
+    def test_public_check_rejects_private_and_legacy_receipts_before_registry_access(
+        self,
+    ):
+        for legacy in (False, True):
+            receipts = [r | {"visibility": "private"} for r in self.receipts]
+            if legacy:
+                for receipt in receipts:
+                    receipt["schemaVersion"] = 1
+                    receipt.pop("visibility")
+            self.make_artifacts(receipts)
+            with (
+                self.subTest(legacy=legacy),
+                self.mocked_renderer(),
+                patch.object(cluster, "verify_pull_rights") as manifests,
+                self.assertRaisesRegex(ValueError, "Public receipts are required"),
+            ):
+                deploy.verified_release(
+                    self.root, FORK, get=self.get, verify_public_manifests=True
+                )
+            manifests.assert_not_called()
+
+    def test_failed_ci_or_receipt_never_reaches_public_registry(self):
+        for failure in ("ci", "receipt"):
+            self.setUp()
+            if failure == "ci":
+                self.ci_state[0] = "failure"
+            else:
+                self.payloads[1000] += b"tampered"
+            with (
+                self.subTest(failure=failure),
+                patch.object(cluster, "verify_pull_rights") as manifests,
+                self.assertRaises(ValueError),
+            ):
+                deploy.verified_release(
+                    self.root, FORK, get=self.get, verify_public_manifests=True
+                )
+            manifests.assert_not_called()
+
+    def test_registry_digest_mismatch_or_denial_never_returns_verified_release(self):
+        for responses in (
+            [
+                Response({"token": "anonymous"}),
+                Response({}, {"Docker-Content-Digest": "wrong"}),
+            ],
+            OSError("registry unavailable"),
+        ):
+            with (
+                self.subTest(responses=type(responses).__name__),
+                self.mocked_renderer(),
+                patch.object(cluster, "urlopen", side_effect=responses),
+                self.assertRaises((ValueError, OSError)),
+            ):
+                deploy.verified_release(
+                    self.root, FORK, get=self.get, verify_public_manifests=True
+                )
+
+    def test_source_ci_publisher_and_artifact_changes_during_registry_access_are_rejected(
+        self,
+    ):
+        def change_source():
+            self.current_sha = "e" * 40
+
+        def change_ci():
+            self.ci_attempt = 2
+
+        def change_publisher():
+            self.publisher["run_attempt"] = 2
+
+        def change_artifact():
+            self.artifacts[0]["id"] += 10
+
+        def change_checksum():
+            self.artifacts[0]["digest"] = "sha256:" + "e" * 64
+
+        for change in (
+            change_source,
+            change_ci,
+            change_publisher,
+            change_artifact,
+            change_checksum,
+        ):
+            self.setUp()
+            with (
+                self.subTest(change=change.__name__),
+                self.mocked_renderer(),
+                patch.object(
+                    cluster,
+                    "verify_pull_rights",
+                    side_effect=lambda *args, change=change: change(),
+                ) as manifests,
+                self.assertRaisesRegex(ValueError, "advanced|changed"),
+            ):
+                deploy.verified_release(
+                    self.root, FORK, get=self.get, verify_public_manifests=True
+                )
+            manifests.assert_called_once()
 
     def test_incomplete_publication_or_invalid_attempt_never_reaches_rendering(self):
         for change in (
@@ -241,6 +382,112 @@ class PublishedReleaseTests(SourceFixture):
             self.assertRaisesRegex(ValueError, "invalid runtime policy"),
         ):
             deploy.verified_release(self.root, FORK, get=self.get)
+
+
+class PublicVerificationCliTests(unittest.TestCase):
+    def test_success_reports_publication_evidence_without_claiming_deployment(self):
+        record = {
+            "runId": 900,
+            "visibility": "public",
+            "images": {
+                s: FORK.image(s) + "@sha256:" + "d" * 64 for s in bundle.SERVICES
+            },
+        }
+        output = io.StringIO()
+        with (
+            patch(
+                "sys.argv",
+                [
+                    "deployment.py",
+                    "verify-public",
+                    "--branch",
+                    "main",
+                    "--helm",
+                    "/tools/helm",
+                ],
+            ),
+            patch.object(deploy, "from_origin", return_value=FORK) as origin,
+            patch.object(
+                deploy, "verified_release", return_value=(record, {}, SHA)
+            ) as verify,
+            patch.object(cluster, "load_settings") as settings,
+            patch.object(cluster, "authenticate") as auth,
+            patch.object(cluster, "apply") as apply,
+            patch.object(cluster, "run") as command,
+            contextlib.redirect_stdout(output),
+        ):
+            self.assertEqual(deploy.main(), 0)
+        root = Path(deploy.__file__).resolve().parents[3]
+        origin.assert_called_once_with(root, branch="main")
+        verify.assert_called_once_with(
+            root, FORK, "/tools/helm", verify_public_manifests=True
+        )
+        self.assertEqual(
+            json.loads(output.getvalue()),
+            {
+                "schema": "msa-publication-check-v1",
+                "status": "PASS",
+                "repository": FORK.repository,
+                "branch": FORK.branch,
+                "sourceSha": SHA,
+                "publisherRunId": 900,
+                "visibility": "public",
+                "images": record["images"],
+                "receiptsVerified": True,
+                "helmPolicyVerified": True,
+                "registryManifestsVerified": True,
+                "clusterVerified": False,
+                "layersDownloaded": False,
+            },
+        )
+        for mutation in (settings, auth, apply, command):
+            mutation.assert_not_called()
+
+    def test_failure_returns_nonzero_with_safe_reason_and_no_partial_success(self):
+        for message, reason in (
+            ("No complete verified publication", "publication_not_available"),
+            ("Source advanced", "source_not_current"),
+            ("Deployment source blocked: test", "required_source_checks_not_verified"),
+            ("Public receipts are required", "public_receipts_required"),
+            ("Publisher or image receipts changed", "publication_changed"),
+            ("Required CI evidence changed", "ci_evidence_changed"),
+            ("secret fixture-bearer-token", "verification_failed"),
+        ):
+            output = io.StringIO()
+            with (
+                self.subTest(reason=reason),
+                patch("sys.argv", ["deployment.py", "verify-public"]),
+                patch.object(deploy, "from_origin", return_value=FORK),
+                patch.object(
+                    deploy, "verified_release", side_effect=ValueError(message)
+                ),
+                contextlib.redirect_stdout(output),
+            ):
+                self.assertEqual(deploy.main(), 1)
+            report = json.loads(output.getvalue())
+            self.assertEqual(report["status"], "BLOCKED")
+            self.assertEqual(report["reason"], reason)
+            self.assertEqual(report["errorType"], "ValueError")
+            self.assertFalse(report["clusterVerified"])
+            self.assertFalse(report["layersDownloaded"])
+            self.assertNotIn("images", report)
+            self.assertNotIn("registryManifestsVerified", report)
+            self.assertNotIn("fixture-bearer-token", output.getvalue())
+
+    def test_invalid_origin_is_blocked_before_publication_queries(self):
+        output = io.StringIO()
+        with (
+            patch("sys.argv", ["deployment.py", "verify-public"]),
+            patch.object(
+                deploy, "from_origin", side_effect=ValueError("credential-in-origin")
+            ),
+            patch.object(deploy, "verified_release") as verify,
+            contextlib.redirect_stdout(output),
+        ):
+            self.assertEqual(deploy.main(), 1)
+        verify.assert_not_called()
+        self.assertEqual(json.loads(output.getvalue())["status"], "BLOCKED")
+        self.assertNotIn("credential-in-origin", output.getvalue())
 
 
 class PublishedBootstrapTests(unittest.TestCase):

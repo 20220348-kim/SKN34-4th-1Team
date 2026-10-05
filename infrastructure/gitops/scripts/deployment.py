@@ -1,8 +1,10 @@
 """Verify published images for local startup and read historical deployment snapshots."""
 
+import argparse
 import json
 import os
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from urllib.parse import quote
@@ -23,6 +25,7 @@ from deployment_candidate import (
     write_files,
 )
 from gate import WORKFLOWS, api, blocked_reason, valid_sha
+from repository import from_origin
 from sync_images import api as release_api
 from sync_images import checked_receipts, select_release
 
@@ -239,7 +242,9 @@ def public_api(path):
         return json.load(response)
 
 
-def verified_release(root, fork, helm="helm", get=release_api):
+def verified_release(
+    root, fork, helm="helm", get=release_api, *, verify_public_manifests=False
+):
     """Resolve a current tested publication without branches, PRs or checkout writes."""
     fork.require_personal_publish()
     release = select_release(fork, get)
@@ -255,6 +260,17 @@ def verified_release(root, fork, helm="helm", get=release_api):
     receipts = checked_receipts(sha, release, fork, get)
     ensure_revision(root, sha)
     files = release_files(root, fork, sha, run["id"], receipts, helm)
+    record = json.loads(files[PREFIX + "environments/fork/release.json"])
+    if verify_public_manifests:
+        if record.get("visibility") != "public":
+            raise ValueError(
+                "Public receipts are required for anonymous manifest verification"
+            )
+        from fork_cluster import verify_pull_rights
+
+        verify_pull_rights(None, None, record)
+    # Recheck after registry access as well: new runs/receipts/CI must not inherit
+    # the earlier verification even when the old registry digests still exist.
     confirmed = select_release(fork, get)
     if (
         confirmed is None
@@ -277,7 +293,6 @@ def verified_release(root, fork, helm="helm", get=release_api):
         raise ValueError("Publisher or image receipts changed during validation; retry")
     if source_checks(fork, sha, get) != checks:
         raise ValueError("Required CI evidence changed during validation; retry")
-    record = json.loads(files[PREFIX + "environments/fork/release.json"])
     return record, files, sha
 
 
@@ -300,12 +315,61 @@ def approved_release(root, fork, helm="helm", get=public_api):
 
 
 def main():
-    raise SystemExit(
-        "Separate deployment branches and deployment PR automation were removed. "
-        "Use the normal development PR into the source default branch. "
-        "Automatic deployment is not configured; no remote changes were made."
+    if len(sys.argv) < 2 or sys.argv[1] not in {"verify-public", "--help", "-h"}:
+        raise SystemExit(
+            "Separate deployment branches and deployment PR automation were removed. "
+            "Use verify-public for read-only publication checks. "
+            "Automatic deployment is not configured; no remote changes were made."
+        )
+    parser = argparse.ArgumentParser(
+        description="Verify current public image receipts, Helm policy and anonymous manifests; never apply to a cluster."
     )
+    parser.add_argument("action", choices=("verify-public",))
+    parser.add_argument("--branch", help="Origin's default branch when omitted")
+    parser.add_argument("--helm", default="helm", help="Pinned Helm executable")
+    args = parser.parse_args()
+    report = {
+        "schema": "msa-publication-check-v1",
+        "status": "BLOCKED",
+        "clusterVerified": False,
+        "layersDownloaded": False,
+    }
+    try:
+        root = Path(__file__).resolve().parents[3]
+        fork = from_origin(root, branch=args.branch).require_personal_publish()
+        report.update(repository=fork.repository, branch=fork.branch)
+        record, _, sha = verified_release(
+            root, fork, args.helm, verify_public_manifests=True
+        )
+        report.update(
+            status="PASS",
+            sourceSha=sha,
+            publisherRunId=record["runId"],
+            visibility=record["visibility"],
+            images=record["images"],
+            receiptsVerified=True,
+            helmPolicyVerified=True,
+            registryManifestsVerified=True,
+        )
+    except Exception as error:  # noqa: BLE001 - do not print registry bearer or subprocess details
+        reasons = {
+            "No complete verified publication": "publication_not_available",
+            "Source advanced": "source_not_current",
+            "Deployment source blocked": "required_source_checks_not_verified",
+            "Public receipts are required": "public_receipts_required",
+            "Publisher or image receipts changed": "publication_changed",
+            "Required CI evidence changed": "ci_evidence_changed",
+        }
+        reason = next(
+            (code for prefix, code in reasons.items() if str(error).startswith(prefix)),
+            "verification_failed",
+        )
+        report.update(reason=reason, errorType=type(error).__name__)
+        print(json.dumps(report, sort_keys=True))
+        return 1
+    print(json.dumps(report, sort_keys=True))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
