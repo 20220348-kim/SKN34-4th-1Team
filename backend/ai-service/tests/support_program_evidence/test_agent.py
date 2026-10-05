@@ -92,6 +92,18 @@ def test_prompt_requires_target_scope_and_preserves_condition_relationships() ->
     assert "'모두 충족'과 '중 하나'의 관계를 유지" in instructions
     assert "최종 신청 가능 여부를 확정하지" in instructions
     assert "각 조건을 뒷받침하는 청크를 함께 인용" in instructions
+    assert "첫 문장에 확인된 대상 범위" in instructions
+
+
+def test_prompt_distinguishes_related_facts_from_requested_information() -> None:
+    # This protects the prompt contract; model compliance requires a fresh evaluation.
+    instructions = SUPPORT_PROGRAM_EVIDENCE_ANSWER_INSTRUCTIONS
+    assert "질문이 요구하는 핵심 정보와 정밀도" in instructions
+    assert "일부 관련 사실을 설명할 수 있어도\n   INSUFFICIENT_EVIDENCE" in instructions
+    assert "지원 방식만\n   묻고 그 방식이 명시되어 있으면 ANSWERED" in instructions
+    assert "문서명·페이지·항목 번호를 있는 그대로 보존" in instructions
+    assert "해당 자료를 읽었다거나 세부 내용을 확인했다고 말하지" in instructions
+    assert "예시의 사실을 실제 답변에 사용하지" in instructions
 
 
 @pytest.mark.anyio
