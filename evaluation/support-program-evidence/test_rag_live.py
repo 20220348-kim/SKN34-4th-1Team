@@ -23,11 +23,11 @@ CAPTURE = "rag-synthetic-capture-v1"
 HERE = Path(__file__).parent
 
 
-def parameters():
-    config = live_config(DATASET)
-    spec = make_spec(read_release(), DATASET, "live", config, "new-model-response", CAPTURE)
-    return dict(request_id=str(uuid4()), dataset_id=DATASET, execution_mode="live", live_config=config,
-                candidate_capture_id="new-model-response", reference_capture_id=CAPTURE,
+def parameters(dataset=DATASET, capture=CAPTURE):
+    config = live_config(dataset)
+    spec = make_spec(read_release(), dataset, "live", config, "new-model-response", capture)
+    return dict(request_id=str(uuid4()), dataset_id=dataset, execution_mode="live", live_config=config,
+                candidate_capture_id="new-model-response", reference_capture_id=capture,
                 execution_spec=spec, execution_spec_sha256=digest(spec))
 
 
@@ -122,6 +122,34 @@ def test_live_runs_new_embeddings_search_answers_and_free_recovery(runner):
     with pytest.raises(FileExistsError):
         ops_flow.evaluate_saved_capture.fn(**params)
     assert len(calls) == 9
+
+
+def test_official_paragraph_rag_uses_guarded_search_and_keeps_reference_unmeasured(runner):
+    root, calls, actions, _ = runner
+    params = parameters("official-rag-20261006-v1", "official-rag-not-started-v1")
+    manifest = ops_flow.evaluate_saved_capture.fn(**params)
+    folder = root / params["request_id"]
+    capture = json.loads((folder / "capture/capture.json").read_text())
+    usage = json.loads((folder / "capture/usage-summary.json").read_text())
+    assert usage["completed"] and usage["model_api_calls"] == len(calls) == 18
+    assert usage["input_token_count_requests"] == 6
+    assert [body["sequence"] for action, body in actions if action == "authorize"] == list(range(18))
+    assert actions[-1][0] == "close"
+    validate_live_capture(capture, usage, params["execution_spec"], params["execution_spec_sha256"])
+    result = read_result(params["execution_spec"], params["execution_spec_sha256"], manifest,
+                         (folder / "evaluation/comparison.json").read_bytes(),
+                         (folder / "evaluation/report.html").read_bytes())
+    assert result[3]["reference"]["completed"] is False
+    assert all(m["value"] is None for m in result[3]["reference"]["metrics"].values())
+    assert all(len(c["search"]["response"]["matches"]) == 5 for c in capture["cases"])
+    assert all(len(c["answer"]["request"]["chunks"]) == 5 for c in capture["cases"])
+    material = material_from_sources(
+        json.loads((HERE / "runs/official-rag-20261006-v1/fixture.json").read_text()),
+        capture, json.loads((HERE / "runs/official-rag-20261006-v1/not-started.json").read_text()), result[3],
+    )
+    assert material["data_type"] == "official-html-snapshot"
+    assert material["reference_source"] == "ai-authored-not-human-reviewed"
+    assert material["baseline_eligible"] is False
 
 
 @pytest.mark.parametrize("stage", ["report", "publish"])

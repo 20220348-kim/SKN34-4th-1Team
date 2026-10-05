@@ -73,6 +73,7 @@ const ragMaterialObservationSchema = z.object({
 })
 const ragMaterialSchema = z.object({
   schema_version: z.literal(1), evaluation_scope: z.literal('source-chunks-retrieval-answer'),
+  data_type: z.literal('official-html-snapshot').optional(),
   reference_source: z.literal('ai-authored-not-human-reviewed'), baseline_eligible: z.literal(false),
   material_sha256: z.string().regex(/^[a-f0-9]{64}$/), fixture_sha256: z.string().regex(/^[a-f0-9]{64}$/),
   candidate_capture_sha256: z.string().regex(/^[a-f0-9]{64}$/), reference_capture_sha256: z.string().regex(/^[a-f0-9]{64}$/),
@@ -80,6 +81,7 @@ const ragMaterialSchema = z.object({
   cases: z.array(z.object({
     case_id: z.string(), question: z.string(), document_id: z.string(), source_url: z.string(), content: z.string(),
     content_sha256: z.string().regex(/^[a-f0-9]{64}$/), chunk_version: z.string(),
+    source_collected_at: z.string().optional(),
     chunks: z.array(z.object({ id: z.string(), order: z.number().int().nonnegative(), text: z.string() })),
     expected_status: z.enum(['ANSWERED', 'INSUFFICIENT_EVIDENCE']),
     expected_evidence: z.array(z.object({ chunk_id: z.string(), quote: z.string() })),

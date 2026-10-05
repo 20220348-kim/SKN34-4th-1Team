@@ -5,6 +5,7 @@ import argparse
 import json
 import re
 import sys
+from datetime import datetime
 from hashlib import sha256
 from pathlib import Path
 
@@ -97,15 +98,17 @@ def validate_fixture(fixture):
         "schemaVersion scope datasetVersion dataType referenceSource documents cases",
     )
     require(
-        fixture["schemaVersion"] == "support-program-rag-fixture-v1"
+        fixture["schemaVersion"]
+        in ("support-program-rag-fixture-v1", "support-program-rag-fixture-v2")
         and fixture["scope"] == SCOPE,
         "unsupported RAG fixture or scope",
     )
     require(text(fixture["datasetVersion"]), "dataset version required")
+    official = fixture["schemaVersion"] == "support-program-rag-fixture-v2"
     require(
-        fixture["dataType"] == "synthetic"
+        fixture["dataType"] == ("official-html-snapshot" if official else "synthetic")
         and fixture["referenceSource"] == "ai-authored-not-human-reviewed",
-        "v1 requires explicitly synthetic, unreviewed references",
+        "fixture version requires matching source type and unreviewed references",
     )
     require(
         isinstance(fixture["documents"], list) and 1 <= len(fixture["documents"]) <= 50,
@@ -113,7 +116,35 @@ def validate_fixture(fixture):
     )
     documents = {}
     for document in fixture["documents"]:
-        fields(document, "documentId sourceUrl content contentHash chunkVersion chunks")
+        fields(
+            document,
+            "documentId sourceUrl content contentHash chunkVersion chunks"
+            + (" source" if official else ""),
+        )
+        if official:
+            source = document["source"]
+            fields(source, "sourceCode sourceProgramId collectedAt htmlSha256 scope")
+            program = source["sourceProgramId"]
+            require(
+                source["sourceCode"] == "BIZINFO"
+                and isinstance(program, str)
+                and re.fullmatch(r"PBLN_[0-9]+", program)
+                and document["documentId"] == f"BIZINFO:{program}"
+                and document["sourceUrl"]
+                == (
+                    "https://www.bizinfo.go.kr/sii/siia/selectSIIA200Detail.do?pblancId="
+                    + program
+                )
+                and source["scope"] == "frozen-title-and-body-html-no-attachments"
+                and hash_value(source["htmlSha256"]),
+                "official source provenance differs",
+            )
+            require(text(source["collectedAt"]), "collection time required")
+            require(
+                datetime.fromisoformat(source["collectedAt"].replace("Z", "+00:00")).tzinfo
+                is not None,
+                "collection time with timezone required",
+            )
         require(
             text(document["documentId"]) and document["documentId"] not in documents,
             "duplicate document",

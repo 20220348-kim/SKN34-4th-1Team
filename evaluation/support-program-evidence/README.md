@@ -6,6 +6,50 @@
 검증하며, 이 전환으로 새 유료 평가나 의미 품질 측정을 수행한 것은 아닙니다. `runs/`의 과거 코드·
 캡처·보고서는 당시 구현과 설정에 대한 기록으로 유지합니다.
 
+## 실제 공고 문단 검색 RAG 준비
+
+`official-rag-20261006-v1`은 기존 `official-answer-20260907-v3`의 **저장된 공식 공고 2개와
+H01~H06 질문**을 재사용하는 별도 RAG 자료입니다. 원문·출처·수집 시각을 보존하며 본문을 각각
+25개·18개 문단 청크로 나눕니다. 각 질문은 해당 공고의 청크 중 상위 5개만 답변에 전달합니다.
+공고 전체를 하나의 청크로 전달하던 고정 근거 평가와 달리 검색 근거 누락을 측정할 수 있습니다.
+
+흐름은 `React 자료 선택 → Django 호출·토큰 예약 → Prefect → 문서 임베딩 → 질문 임베딩 →
+메모리 Qdrant 검색 → 기존 Answer Service/Agent → OpenAI → 캡처·보고서 → Ops 사람 검토`입니다.
+새 실행 계층·의존성·DB migration은 없습니다. Ops와 실행기 이미지는 같은 변경 소스로 갱신해야
+새 자료를 선택할 수 있습니다. 자료 추가만으로 현재 실행 컨테이너나 유료 설정을 변경하지 않습니다.
+
+- 원문은 실제 공고의 저장 HTML 본문이며 **첨부파일은 없습니다**. `evaluation-paragraph-split-v1-not-core-chunker`
+  청크는 평가용 문단 분할입니다. 현재 Core 청킹·원문 재수집·전체 공고 검색·운영 색인은 평가하지 않습니다.
+- fixture v2는 실제 출처를 구분하고 공식 URL·공고 식별자·수집 시각·본문 해시를 확인합니다.
+  원본 HTML 해시도 보존하며 준비 도구가 저장 HTML의 해시와 본문 추출을 다시 검증합니다.
+  기존 가상 fixture v1과 과거 결과는 유지합니다.
+- 기대 상태는 기존 질문에서 복사하되 **새 청크의 검색 참조는 AI 초안**입니다. H01은 4개, H04는 2개
+  참조 청크를 사용합니다. 나머지 4개는 근거 부족 사례입니다. 검색·인용 재현율의 대상은 2건,
+  답변 상태 일치율의 대상은 6건이며 자동 의미 충실도는 미측정입니다.
+- 첫 비교 자료 `official-rag-not-started-v1`은 모든 사례가 `NOT_STARTED`인 합성 빈 기록입니다.
+  실제 검색·답변·모델 이름·trace를 만들지 않으며 지표는 모두 null입니다. 품질 비교 기준으로
+  승인된 실행이 아니며, 이를 무료 재계산해도 실제 RAG 품질 검증 완료로 해석하지 않습니다.
+- 기존 `628ae52a…`의 고정 근거 사람 승인과 기준 버전 2를 변경하거나 승계하지 않습니다.
+  RAG 실행 후 원문·검색 참조 승인과 검색·답변·인용의 사례 검토가 별도로 필요합니다.
+
+무료 준비 검사:
+
+```bash
+cd backend/ai-service
+uv run --locked --extra dev --group evaluation python ../../evaluation/support-program-evidence/official_rag.py
+uv run --locked --extra dev --group evaluation python ../../evaluation/support-program-evidence/rag_live.py
+uv run --locked python ../ops-service/apps/evaluations/execution_spec.py
+```
+
+자료를 의도적으로 수정할 때만 `official_rag.py --write` → `rag_live.py --write-plans` →
+`execution_spec.py --write` 순서로 생성하고 차이를 검토합니다. 기존 고정 근거 자료와 공유 seed는 수정하지 않습니다.
+
+실제 평가 1회 상한은 **18회**(문서 임베딩 6 + 질문 임베딩 6 + 답변 생성 6),
+입력 합계 **200,362토큰**, 출력 합계 **12,000토큰**입니다. 답변 입력 토큰 계산 요청은
+별도 최대 6회이고 자동 재시도는 없습니다. 모델은 `gpt-6-luna`, 임베딩은 `text-embedding-3-small`
+(1536차원)입니다. 토큰 상한은 비용 견적이 아닙니다. 실제 전송과 한도 변경은 별도 승인 후
+기존 예산 절차로 수행하며 이 준비 작업은 모델 API를 호출하지 않습니다.
+
 ## 실제 공고의 과거 답변을 검토 자료로 사용
 
 **참조 보완 v3:** `official-answer-20260907-v3`는 아래 v2의 H01 참조 조건에

@@ -107,6 +107,21 @@ def test_ops_entrypoint_replays_three_cases_with_real_report_and_distinct_metric
     assert len(scores) == 10
 
 
+def test_official_preparation_can_render_unmeasured_report_without_model_calls(runner):
+    root, scores = runner
+    params = parameters(dataset="official-rag-20261006-v1", capture="official-rag-not-started-v1")
+    manifest = ops_flow.evaluate_saved_capture.fn(**params)
+    folder = root / params["request_id"] / "evaluation"
+    result = rag_replay.read_result(
+        params["execution_spec"], params["execution_spec_sha256"], manifest,
+        (folder / "comparison.json").read_bytes(), (folder / "report.html").read_bytes(),
+    )
+    assert manifest["status"] == "completed" and manifest["model_api_calls"] == 0
+    assert not result[1]["completed"] and not result[1]["baselineEligible"]
+    assert all(m["value"] is None for m in result[1]["metrics"].values())
+    assert all(p["name"] == "ragSourceCaseFailed" for p in scores)
+
+
 @pytest.mark.parametrize("kind", ["synthetic", "integration-stub", "recorded"])
 @pytest.mark.parametrize("stage", [None, "not_started", "source", "chunk", "index", "search", "answer"])
 def test_review_material_preserves_real_evaluator_stage_contract(tmp_path, kind, stage):

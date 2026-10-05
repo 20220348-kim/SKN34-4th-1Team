@@ -23,7 +23,7 @@ function Observation({ label, value, item }: { label: string; value: Case['candi
   }
   return <article className="min-w-0 rounded-xl border border-sample-border p-4" aria-label={`${label} 답변과 근거`}>
     <h3 className="font-semibold">{label}</h3>
-    <p className="text-sm">{value.failure ? `${stages[value.failure.stage]} 실패 · ${value.failure.code}` : '답변 도달'}</p>
+    <p className="text-sm">{value.failure?.stage === 'not_started' ? '아직 실행하지 않은 기록 · 품질 비교 기준 아님' : value.failure ? `${stages[value.failure.stage]} 실패 · ${value.failure.code}` : '답변 도달'}</p>
     <p className="text-sm">답변 상태: {value.answer_status ? statuses[value.answer_status] : '미실행 또는 미확인'}</p>
     <p className="my-3 whitespace-pre-wrap break-words">{value.answer ?? '저장된 답변 없음'}</p>
     {([
@@ -70,6 +70,7 @@ function Material({ runId, onExpired, onReviewChanged }: Props) {
     <button type="button" className={styles.secondaryButton} disabled={busy || locked || qualityBusy || referenceDirty || referenceBusy} onClick={() => void read()}>{busy ? '불러오는 중…' : material ? '검토 자료 새로고침' : '검토 자료 보기'}</button>
     {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
     {state && material && item && <div className="space-y-4">
+      {material.data_type === 'official-html-snapshot' && <p className="text-sm">실제 공고의 저장된 HTML 본문입니다. 첨부파일은 포함하지 않습니다. 문단 단위로 나눈 평가용 청크이며, 기존 고정 근거 답변의 검토 승인은 이 RAG 결과에 적용되지 않습니다.</p>}
       <RagQualityPanel key={`${runId}:${state.quality.input_sha256}`} runId={runId} state={state} disabled={locked || busy || referenceDirty || referenceBusy} onBusy={setQualityBusy} onSaved={(value) => { setState(value); setQualityBusy(false); setSaved(false); onReviewChanged?.() }} onExpired={onExpired} />
       <RagReferenceReviewPanel key={`${runId}:${state.review_version}:${material.fixture_sha256}`} runId={runId} state={state} disabled={locked || qualityBusy} onDirty={setReferenceDirty} onBusy={setReferenceBusy} onSaved={(value) => { setState(value); setReferenceDirty(false); setReferenceBusy(false); setSaved(false); onReviewChanged?.() }} onExpired={onExpired} />
       <p className="text-sm">후보: {origins[material.candidate_measurement_kind]} · 비교: {origins[material.reference_measurement_kind]}</p>
@@ -81,6 +82,7 @@ function Material({ runId, onExpired, onReviewChanged }: Props) {
       <p className="font-semibold whitespace-pre-wrap">{item.question}</p>
       <div className="grid gap-3 lg:grid-cols-2"><Observation label="후보" value={item.candidate} item={item} /><Observation label="비교" value={item.reference} item={item} /></div>
       <details><summary className="cursor-pointer font-semibold">고정 원문 · {item.document_id}</summary>
+        {item.source_collected_at && <p className="text-sm">원문 수집 시각: {item.source_collected_at}</p>}
         <p className="break-all text-xs">원본 주소: {item.source_url}</p>
         <p className="break-all text-xs">원문 SHA-256: {item.content_sha256}</p>
         <pre className="max-h-96 overflow-y-auto whitespace-pre-wrap break-words p-3 text-sm">{item.content}</pre>
