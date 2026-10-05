@@ -207,11 +207,65 @@ python3 -B infrastructure/gitops/scripts/ops_initial_migration.py \
 확인하고 수정된 전진 작업 또는 검증된 복구를 선택한다. 이전 앱을 자동으로 켜거나 원본 DB를
 덮어쓰지 않는다. `MIGRATED_PAUSED` 뒤에도 쓰기는 중지 상태로 유지해야 한다. 일치하는 API/sync·
 실행기·결과 서버로 교체하고 연결·기존 이력·관리자 화면·무료 평가를 확인한 뒤 접수를 재개하는
-런타임 전환은 후속 단계다. 기존 `ops_runtime.py`의 접수 제어 미지원 차단은 그대로 유지한다.
+런타임 전환은 아래 별도 단계로 수행한다. 기존 `ops_runtime.py`의 접수 제어 미지원 차단은 그대로 유지한다.
 
 Infra CI는 전용 명령의 오프라인 Helm·중지/백업/CI 차단·실패 기록 테스트를 자동 탐색한다.
 LLMOps CI의 실제 MySQL 업그레이드 테스트는 원본 DB 접수 중지를 확인하는 SQL도 격리 DB에서
 검증한다. 이 검증은 개인 클러스터에서 Job을 실행했다는 증거가 아니다.
+
+### 최초 migration 뒤 접수 중지를 유지한 런타임 전환
+
+[`ops_initial_runtime.py`](../infrastructure/gitops/scripts/ops_initial_runtime.py)는 개인 WSL/kind의
+`MIGRATED_PAUSED` 기록과 실제 중지 상태를 함께 확인한 뒤 동일 소스의 앱으로 전환한다.
+호출 흐름은 `최초 migration 증거 확인 → 기존 Prefect 시작 → 결과 서버·실행기 교체 → 브리지 갱신
+→ Kubernetes API/sync 전환 → 접수 중지·런타임 진단 → baseline 기록`이다.
+이 단계는 원본 migration을 다시 실행하거나 접수를 재개하지 않는다.
+
+선행 migration과 동일한 깨끗한 checkout·원격 브랜치 SHA·필수 CI 성공이 필요하다. 성공한 Job,
+kind에 적재한 Ops 이미지 ID, 원래 Deployment spec, MySQL Pod·PVC·Service, 중지한 writer의
+식별자가 기록과 같아야 한다. 접수 중지는 같은 요청 UUID·변경자·사유의 version 1이어야 한다.
+불완전하거나 이전 형식이라 원본 식별자가 없는 migration 기록을 수작업으로 보충해 통과시키지 않는다.
+
+runner는 같은 소스에서 미리 빌드한 로컬 이미지의 immutable ID로 지정한다. Ops 이미지의 소스
+지문과 두 이미지의 execution release를 네트워크 없는 임시 컨테이너로 검사한다. 기본 실행도
+이 검사용 컨테이너를 만들지만 기존 서비스·DB·baseline은 변경하지 않는다.
+
+```bash
+OPS_RUNNER_IMAGE_ID=$(docker image inspect "$OPS_RUNNER_IMAGE" --format '{{.Id}}')
+python3 -B infrastructure/gitops/scripts/ops_initial_runtime.py \
+  --state-dir "$OPS_STATE_DIR" \
+  --migration-request-id "$OPS_PAUSE_REQUEST_ID" \
+  --runner-image "$OPS_RUNNER_IMAGE_ID"
+# 서비스 재개·이미지 전환 승인을 받은 경우에만 같은 인자에 --execute를 추가한다.
+```
+
+기본 성공은 `VERIFIED_FOR_ROLLOUT`이며 실제 적용 시 모든 조건을 다시 확인한다.
+
+- 기존 Prefect 컨테이너를 그대로 시작하고 healthy를 기다린다. Prefect 이미지·저장소는 교체하지 않는다.
+- 결과 서버와 실행기 두 서비스만 현재 설정에서 재구성한다. 기존 결과 볼륨과 네트워크는 external로
+  참조하고 `--no-deps --no-build --pull never`로 교체한다. 기존 중지 Compose Ops API/sync는 켜지 않는다.
+- 결과는 실행기만 쓰며 결과 서버는 읽기 전용이다. 데이터 bind mount는 현재 checkout의 평가 디렉터리로
+  제한한다. Docker Desktop의 변환 경로는 저장소 경로만 연결한 임시 컨테이너와 기존 컨테이너의
+  장치·inode가 같아야 허용한다. 변환 경로라는 이유만으로 임의의 호스트 경로를 허용하지 않는다.
+- 환경변수는 메모리·표준입력으로 전달한다. Compose의 `$` 보간으로 인증 값이 달라지지 않는지 검사하고
+  비밀 값이나 병합 설정을 파일·로그에 저장하지 않는다. 유료/RAG/스케줄 실행은 비활성으로 유지한다.
+- 컨테이너 교체 후 새 주소로 브리지를 갱신하고 결과 서버 인증 및 runner release를 확인한다.
+- Kubernetes Deployment의 UID·resourceVersion·replicas 0을 JSON patch로 비교한 뒤 두 앱 이미지와
+  replicas만 바꾼다. DB·Secret·환경변수 참조를 바꾸지 않는다. 동시 변경은 거절한다.
+- rollout·런타임·갱신 사전 검사·같은 접수 중지가 모두 확인된 뒤에만 baseline의 Ops 이미지를 갱신한다.
+
+첫 변경 전에 `ops-initial-rollouts/<migration 요청 UUID>.json`을 생성한다. 각 단계의 시작·완료와
+이미지 ID를 기록하며 성공 상태는 `ROLLED_OUT_PAUSED`다. 중간 실패·중단 시 실행 환경이 일부 바뀌었을
+수 있으므로 실제 Prefect·컨테이너·Deployment와 마지막 단계를 대조한다. 같은 기록으로 자동 재시도하지
+않으며 이미지 rollback·DB 복원·접수 재개를 자동 수행하지 않는다. 기록을 지워 성공으로 만들지 않는다.
+
+`ROLLED_OUT_PAUSED`도 관리자 인증·기존 결과의 전체 대조·새 무료 평가 완료를 뜻하지 않는다.
+`evaluation_executed=false`, `admin_auth_verified=false`, `admission_resumed=false`를 유지하며
+[업무 검증 후 접수 재개](#5-업무-검증-후-접수-재개)를 별도로 수행한다.
+
+Infra CI가 증거 불일치·기본 실행 무변경·실패 기록·Deployment 비교 조건을 검증한다. LLMOps CI는
+실제 빌드 이미지와 Compose 컨테이너의 합성 `$` 환경변수 전달을 검사한다. 이 검사만으로
+개인 클러스터의 실제 전환이 완료됐다고 판단하지 않는다.
 
 ### 구버전 전환을 위한 격리 MySQL 회귀 검증
 
@@ -1014,7 +1068,8 @@ API·sync를 함께 교체한다. `0015` 등 과거 번호에서 임의로 멈�
 `full_backup_verified=false`, `application_started=false`는 유지한다. 원본 서비스 재개와
 격리 복원 앱 기동 검증을 혼동하지 않는다.
 
-**다음 단계는 구버전 최초 전환 절차의 구현·검증이다.** 실제 전환 시에는 당시의 쓰기 중지 상태와
+**최초 migration과 접수 중지를 유지한 런타임 전환 도구를 구현했다. 실제 개인 환경 적용은 남아 있다.**
+실제 전환 시에는 당시의 쓰기 중지 상태와
 새 백업을 다시 확보하고, 최신 대상 소스·이미지·필수 CI 및 실패 복구 절차를 확인해야 한다.
 그 뒤 원본 migration과 API/sync·실행기·결과 서버 전환 범위를 별도로 승인받는다.
 이번에는 원본 migration이나 이미지 교체를 하지 않았으므로 `admission_control_unsupported`

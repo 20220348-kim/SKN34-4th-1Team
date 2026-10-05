@@ -309,7 +309,7 @@ def verify_release(image, project):
     return {"imageId": identity, "runnerId": runner["Id"], "releaseSha256": image_hash}
 
 
-def check_runtime(state, settings, run_id=None):
+def check_runtime(state, settings, run_id=None, *, expected_image=None):
     """Read source/runtime releases and readiness without applying or executing work."""
     require_dev(state, settings)
     state = Path(state)
@@ -326,7 +326,8 @@ def check_runtime(state, settings, run_id=None):
     baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
     if baseline.get("source") != "local":
         raise ValueError("This runtime check requires a local-image baseline")
-    image = baseline["images"]["ops-service"]
+    # A paused first rollout verifies its image before updating the saved baseline.
+    image = baseline["images"]["ops-service"] if expected_image is None else expected_image
     if not re.fullmatch(
         r"govbiz-ops-service:[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}", image
     ) or image.endswith(":latest"):

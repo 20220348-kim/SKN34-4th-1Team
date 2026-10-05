@@ -1043,6 +1043,17 @@ class ReadOnlyRuntimeTests(unittest.TestCase):
     def check(self, run_id=None):
         return runtime.check_runtime(self.state, SETTINGS, run_id)
 
+    def test_first_rollout_checks_target_without_rewriting_previous_baseline(self):
+        previous = {"source": "local", "images": {"ops-service": "govbiz-ops-service:old"}}
+        baseline_path = self.state / "baseline.json"
+        baseline_path.write_text(json.dumps(previous))
+        with self.assertRaisesRegex(ValueError, "baseline"):
+            self.check()
+        self.deployment_reads = 0
+        result = runtime.check_runtime(self.state, SETTINGS, expected_image=IMAGE)
+        self.assertEqual(result["status"], "PASS")
+        self.assertEqual(json.loads(baseline_path.read_text()), previous)
+
     def test_matching_runtime_reads_all_components_without_mutations_or_artifact_env(
         self,
     ):

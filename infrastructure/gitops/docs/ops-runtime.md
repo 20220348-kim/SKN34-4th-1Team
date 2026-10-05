@@ -224,6 +224,11 @@ migration → API+sync 적용 → rollout → 읽기 전용 런타임 진단 순
 이전 보고서나 일정 건수가 누락된 응답으로 활성화를 통과시키지 않는다.
 운영자가 접수를 중지한 뒤 지원 여부·중지 상태·버전을 모두 확인해야 통과한다. 접수 제어가 없는
 구버전은 남은 작업이 없어도 `admission_control_unsupported`로 차단하며 현재 자동 갱신 대상이 아니다.
+개인 환경의 최초 전환은 승인된 쓰기 중지·새 백업 이후 `ops_initial_migration.py`로 원본 migration과
+접수 중지를 확인하고, `ops_initial_runtime.py`로 Prefect·결과 서버·실행기·API/sync를 연결한다.
+후자는 기본 검증만 수행하며 `--execute` 성공도 `ROLLED_OUT_PAUSED`로 접수를 계속 중지한다.
+완료 migration 기록·원본 식별자·동일 SHA의 CI·이미지·브리지·실제 접수 상태가 모두 일치해야 한다.
+[최초 전환 명령·실패 처리·미검증 범위](../../../docs/ops-upgrade-runbook.md#최초-migration-뒤-접수-중지를-유지한-런타임-전환)를 따른다.
 Prefect 직접 접수 통제·일관된 백업은 별도이며 [갱신 절차와 검사 범위](../../../docs/ops-upgrade-runbook.md)를 따른다.
 실제 중지 전 `scripts/ops_maintenance_plan.py --state-dir ...`로 중지할 현재 실행 대상과 원래 상태로
 돌릴 순서, MySQL 복원 이미지 준비 여부를 읽기 전용 확인할 수 있다.
