@@ -1131,3 +1131,39 @@ Git 제외 경로 `work/ops-transition-4b238ac/`에 `prepared-images.json`,
 원본 DB 최초 전환, 관리자 인증·새 평가 실행, Argo 동기화는 완료하지 않았다.
 실제 전환 전에는 대상 SHA의 필수 CI·이미지를 재확인하고, 승인된 쓰기 중지 시점의 새 상태
 백업과 복원 검증을 확보한 뒤 원본 migration·런타임 교체를 수행한다.
+
+### 원격 소스 checkout과 통합 CI 확인 — 2026-10-06
+
+준비 시점의 `main`인 `be514838dd0f0b0abbe618e36a1c1298fc6011a5`를 별도의 깨끗한
+Git checkout으로 확보하고 다음 로컬 이미지를 빌드했다. OCI revision과 소스 지문,
+non-root 실행 계정, 두 이미지의 실행 명세 일치를 네트워크 없는 일회용 컨테이너에서 확인했다.
+
+| 대상 | 로컬 이미지 | immutable ID |
+|---|---|---|
+| Ops API·sync·결과 서버 | `govbiz-ops-service:msa-be51483-20261006` | `sha256:e210c5f06ae8a90b0110313547de82342c38ac2782d64d5cc7551e9efdb93c97` |
+| 평가 실행기 | `govbiz-evaluation-runner:msa-be51483-20261006` | `sha256:794f6beed43715b763e35c4c5522f08b17a4cc8cffc6135267de825c41b8ee5c` |
+
+실행 명세 SHA-256은 `a032c956b0266b5bdf5dc48f4868bf67c8023924f57fe7a655c684b424e20a6c`다.
+같은 SHA의 GovBiz·Catalog·Ops·Infra·LLMOps CI 5개가 모두 성공한 것을 확인했다.
+[LLMOps 실행 37343461574](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/37343461574)의
+실제 통합 작업과 필수 요약 작업도 성공했으며, 내려받은 보고서에서 다음 결과를 확인했다.
+
+- 취소 시나리오 19개 통과, Kubernetes 평가·브리지 통합 `PASS`.
+- 관리자 브라우저 로그인, DB·Core 인증 DB·결과 및 Prefect 볼륨 복원 `PASS`.
+- 모델 API 호출 0회, 정리 오류 0건.
+- `ops-bridge.json` SHA-256: `1c5e65af02ab355ffea0459680afa187b36398815c2f1122aa1ab9eac5e607cc`.
+
+이 결과는 CI의 임시 환경에서 얻은 증거다. 개인 환경에서는 중지·재개 계획만 다시 계산해
+`PLANNED`, 계획 차단 항목 0건을 확인했다. 실제 서비스 중지·원본 migration·이미지 교체는
+수행하지 않았으며, 기존 접수 제어 검사는 여전히 `admission_control_unsupported`로 차단된다.
+Ops와 migration 도구의 Git tree가 앞선 `4b238ac` 리허설과 같음을 확인했지만,
+새 쓰기 중지 상태의 백업·복원이나 격리 migration을 이번 준비에서 재실행하지는 않았다.
+
+로컬 Ubuntu의 일반 사용자·root 명령이 모두 시간 초과로 실패해 전체 소스 승인 검사 실행은
+완료하지 못했다. Ubuntu 재시작 승인을 요청한 상태이며, 승인 전 재시작이나 원본 전환은
+수행하지 않는다. Git 제외 경로 `work/ops-transition-be51483/`에 이미지·계획·CI 보고서를
+보관하고, 백업·키·인증 정보는 커밋하지 않는다.
+
+확인 중 원격 `main`은 `0f9d661f9f82cd9b9f7a0bfc66ad5b947dea6e66`로 진행했다.
+따라서 위 CI 성공은 `be51483`에만 해당하며, 실제 전환 시점의 원격 SHA·필수 CI·이미지는
+다시 확인해야 한다. 공개 GHCR receipt와 개인 환경 적용은 미확인·미실행 상태다.
