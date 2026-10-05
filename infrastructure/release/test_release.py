@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 
 import gate
 import publish
@@ -316,6 +316,104 @@ class PublicationTests(unittest.TestCase):
                                        "owner": {"login": FORK.owner}, "visibility": "public"}).encode())
         with patch.object(publish, "urlopen", return_value=stream), self.assertRaises(ValueError):
             publish.package_exists("ai-service", "fixture-token", FORK)
+
+    def test_package_policy_diagnostics_distinguish_every_failed_field_without_raw_values(self):
+        private = {"repository": {"full_name": FORK.repository},
+                   "owner": {"login": FORK.owner}, "visibility": "private"}
+        cases = (
+            ({"repository": None}, {"repository": "missing"}),
+            ({"repository": {"full_name": "private-repo-sensitive"}}, {"repository": "mismatch"}),
+            ({"owner": {"login": "private-owner-sensitive"}}, {"owner": "mismatch"}),
+            ({"visibility": "public"}, {"visibility": "mismatch"}),
+            ({"repository": None, "owner": None, "visibility": "public"},
+             {"repository": "missing", "owner": "missing", "visibility": "mismatch"}),
+            ({"visibility": "private-visibility-sensitive"}, {"visibility": "mismatch"}),
+        )
+        for changes, failed in cases:
+            with self.subTest(changes=changes):
+                result = {}
+                stream = io.BytesIO(json.dumps(private | changes).encode())
+                with patch.object(publish, "urlopen", return_value=stream), self.assertRaises(ValueError) as error:
+                    publish.package_exists("ai-service", "fixture-token", FORK, result=result)
+                check = result["packageCheck"]
+                self.assertEqual(check["state"], "rejected")
+                self.assertEqual(check["reason"], "policy_mismatch")
+                self.assertEqual(check["expectedVisibility"], "private")
+                self.assertEqual(check["checks"], dict.fromkeys(private, "matched") | failed)
+                for name, status in failed.items():
+                    self.assertIn(name + ":" + status, str(error.exception))
+                if changes.get("visibility", "private") in ("private", "public"):
+                    self.assertEqual(check["actualVisibility"], changes.get("visibility", "private"))
+                else:
+                    self.assertNotIn("actualVisibility", check)
+                rendered = json.dumps(result) + str(error.exception)
+                self.assertNotIn("sensitive", rendered)
+                self.assertNotIn("fixture-token", rendered)
+
+    def test_malformed_package_fields_fail_closed_with_safe_diagnostics(self):
+        private = {"repository": {"full_name": FORK.repository},
+                   "owner": {"login": FORK.owner}, "visibility": "private"}
+        for field, key in (("repository", "full_name"), ("owner", "login"), ("visibility", None)):
+            for value, expected in ((None, "missing"), ({}, "missing" if key else "invalid"),
+                                    ([], "invalid"), (7, "invalid"), (True, "invalid")):
+                with self.subTest(field=field, value=value):
+                    result = {}
+                    stream = io.BytesIO(json.dumps(private | {field: value}).encode())
+                    with patch.object(publish, "urlopen", return_value=stream), self.assertRaises(ValueError):
+                        publish.package_exists("ai-service", "fixture-token", FORK, result=result)
+                    self.assertEqual(result["packageCheck"]["checks"][field], expected)
+            if key:
+                for value in ({key: []}, "sensitive-field"):
+                    stream = io.BytesIO(json.dumps(private | {field: value}).encode())
+                    with patch.object(publish, "urlopen", return_value=stream), self.assertRaises(ValueError):
+                        publish.package_exists("ai-service", "fixture-token", FORK, result=result)
+                    self.assertEqual(result["packageCheck"]["checks"][field], "invalid")
+
+    def test_package_access_failures_are_diagnostic_not_policy_mismatches(self):
+        for status, reason in ((401, "authentication_failed"), (403, "access_denied"),
+                               (404, "missing_or_inaccessible"), (429, "rate_limited"), (500, "http_error")):
+            with self.subTest(status=status):
+                result = {}
+                failure = HTTPError("https://private-sensitive", status, "sensitive-response", {}, None)
+                with patch.object(publish, "urlopen", side_effect=failure):
+                    if status == 404:
+                        self.assertFalse(publish.package_exists("ai-service", "fixture-token", FORK, result=result))
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, reason) as error:
+                            publish.package_exists("ai-service", "fixture-token", FORK, result=result)
+                        self.assertNotIn("sensitive", str(error.exception))
+                self.assertEqual(result["packageCheck"], {"state": "unavailable", "reason": reason,
+                                 "expectedVisibility": "private", "httpStatus": status})
+
+    def test_package_network_or_malformed_response_does_not_expose_payload(self):
+        cases = ((URLError("sensitive-network"), "network_error", RuntimeError),
+                 (TimeoutError("sensitive-timeout"), "network_error", RuntimeError),
+                 (b"sensitive-not-json", "invalid_response", ValueError),
+                 (b"\xff", "invalid_response", ValueError),
+                 (b"[]", "invalid_response", ValueError),
+                 (b"null", "invalid_response", ValueError),
+                 (b'"sensitive-string"', "invalid_response", ValueError))
+        for response, reason, exception in cases:
+            with self.subTest(response=response):
+                result = {}
+                mock = {"return_value": io.BytesIO(response)} if isinstance(response, bytes) else {"side_effect": response}
+                with patch.object(publish, "urlopen", **mock), self.assertRaisesRegex(exception, reason) as error:
+                    publish.package_exists("ai-service", "fixture-token", FORK, result=result)
+                self.assertEqual(result["packageCheck"], {"state": "unavailable", "reason": reason,
+                                                         "expectedVisibility": "private"})
+                self.assertNotIn("sensitive", json.dumps(result) + str(error.exception))
+
+    def test_verified_package_records_only_known_metadata_and_case_insensitive_identity(self):
+        for visibility in ("private", "public"):
+            result = {"packageCheck": {"state": "rejected", "reason": "stale-check"}}
+            package = {"repository": {"full_name": FORK.repository.upper()},
+                       "owner": {"login": FORK.owner.upper()}, "visibility": visibility,
+                       "description": "sensitive-description"}
+            with patch.object(publish, "urlopen", return_value=io.BytesIO(json.dumps(package).encode())):
+                self.assertTrue(publish.package_exists("ai-service", "fixture-token", FORK, visibility, result=result))
+            self.assertEqual(result["packageCheck"], {"state": "verified", "reason": "policy_matched",
+                             "expectedVisibility": visibility, "actualVisibility": visibility,
+                             "checks": dict.fromkeys(("repository", "owner", "visibility"), "matched")})
 
     def test_public_requires_explicit_policy_and_matching_owner_repository(self):
         public = {"repository": {"full_name": FORK.repository},

@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from urllib.error import HTTPError
 
 import gate
 import outcome
@@ -299,6 +300,140 @@ class OutcomeTests(unittest.TestCase):
             self.assertIn("reason=gate_error", text)
             self.assertIn("source_sha=" + SHA, text)
             self.assertNotIn("private error details", text)
+
+    def test_real_package_rejection_reaches_cli_report_and_summary_without_upload(self):
+        cases = (
+            (
+                {
+                    "repository": None,
+                    "owner": {"login": "sensitive-owner"},
+                    "visibility": "public",
+                },
+                "policy_mismatch",
+                ValueError,
+            ),
+            (["sensitive-payload"], "invalid_response", ValueError),
+            (
+                HTTPError("https://private", 403, "sensitive-message", {}, None),
+                "access_denied",
+                RuntimeError,
+            ),
+            (
+                HTTPError("https://private", 404, "sensitive-message", {}, None),
+                "missing_or_inaccessible",
+                ValueError,
+            ),
+        )
+        for response, reason, exception in cases:
+            with (
+                self.subTest(reason=reason),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                root = Path(directory)
+                report, receipt, summary = (
+                    root / "report.json",
+                    root / "receipt.json",
+                    root / "summary.md",
+                )
+                output = io.StringIO()
+                mock = (
+                    {"side_effect": response}
+                    if isinstance(response, HTTPError)
+                    else {"return_value": io.BytesIO(json.dumps(response).encode())}
+                )
+                with (
+                    patch.dict(
+                        os.environ,
+                        ENV
+                        | {
+                            "GITHUB_ACTOR": "alice",
+                            "GH_TOKEN": "fixture-token",
+                            "GITHUB_STEP_SUMMARY": str(summary),
+                        },
+                        clear=True,
+                    ),
+                    patch(
+                        "sys.argv",
+                        [
+                            "publish.py",
+                            "--service",
+                            "ai-service",
+                            "--sha",
+                            SHA,
+                            "--output",
+                            str(receipt),
+                            "--report",
+                            str(report),
+                        ],
+                    ),
+                    patch.object(publish, "git", return_value=SHA),
+                    patch.object(publish, "eligible", return_value=True),
+                    patch.object(publish, "urlopen", **mock),
+                    patch.object(publish, "run") as command,
+                    patch.object(publish.subprocess, "run") as process,
+                    contextlib.redirect_stdout(output),
+                    self.assertRaises(exception),
+                ):
+                    publish.main()
+                saved = json.loads(report.read_text(encoding="utf-8"))
+                self.assertEqual(saved["packageCheck"]["reason"], reason)
+                self.assertEqual(saved["state"], "failed")
+                self.assertEqual(saved["upload"], "not_attempted")
+                self.assertFalse(saved["receiptWritten"])
+                self.assertFalse(saved["clusterVerified"])
+                self.assertFalse(receipt.exists())
+                command.assert_not_called()
+                process.assert_not_called()
+                for text in (
+                    report.read_text(encoding="utf-8"),
+                    summary.read_text(encoding="utf-8"),
+                    output.getvalue(),
+                ):
+                    self.assertIn(reason, text)
+                    self.assertNotIn("sensitive", text)
+                    self.assertNotIn("fixture-token", text)
+
+    def test_post_upload_policy_change_preserves_upload_fact_and_last_failed_check(
+        self,
+    ):
+        private = {
+            "repository": {"full_name": "alice/Example"},
+            "owner": {"login": "alice"},
+            "visibility": "private",
+        }
+        responses = [
+            io.BytesIO(json.dumps(value).encode())
+            for value in (private, private, private | {"repository": None})
+        ]
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(publish, "git", side_effect=[SHA, "b" * 40, "c" * 40]),
+            patch.object(publish, "eligible", return_value=True),
+            patch.object(publish, "urlopen", side_effect=responses),
+            patch.object(publish, "lookup", return_value=None),
+            patch.object(publish.tarfile, "open"),
+            patch.object(publish, "run") as command,
+            patch.object(publish.subprocess, "run"),
+        ):
+            result = {}
+            receipt = Path(directory) / "receipt.json"
+            with self.assertRaisesRegex(ValueError, "repository:missing"):
+                publish.publish(
+                    "ai-service",
+                    SHA,
+                    receipt,
+                    "alice",
+                    "fixture-token",
+                    Fork("alice/Example"),
+                    result=result,
+                )
+            self.assertEqual(result["upload"], "confirmed")
+            self.assertEqual(result["state"], "failed")
+            self.assertFalse(result["receiptWritten"])
+            self.assertFalse(receipt.exists())
+            self.assertEqual(result["packageCheck"]["state"], "rejected")
+            self.assertEqual(result["packageCheck"]["checks"]["repository"], "missing")
+            self.assertEqual(command.call_args.args[:2], ("docker", "push"))
 
     def test_report_cannot_overwrite_image_receipt(self):
         with tempfile.TemporaryDirectory() as directory:

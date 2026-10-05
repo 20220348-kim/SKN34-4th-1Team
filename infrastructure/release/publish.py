@@ -4,12 +4,12 @@ import argparse
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
 import subprocess
 import tarfile
 import tempfile
-from urllib.error import HTTPError
+from pathlib import Path
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from gate import eligible, valid_sha
@@ -42,10 +42,15 @@ def input_key(tree, publisher_tree):
     return hashlib.sha256(f"v1\n{PLATFORM}\n{tree}\n{publisher_tree}\n".encode()).hexdigest()
 
 
-def package_exists(service, token, fork, visibility="private"):
+def package_exists(service, token, fork, visibility="private", *, result=None):
     if visibility not in ("private", "public"):
         raise ValueError("Package visibility must be private or public")
     repository(service, fork)
+    # Only fixed status codes enter public logs/artifacts; never copy API payloads,
+    # headers, credentials or arbitrary owner/repository names into diagnostics.
+    check = {"state": "pending", "expectedVisibility": visibility}
+    if result is not None:
+        result["packageCheck"] = check
     request = Request(f"https://api.github.com/users/{fork.owner}/packages/container/{fork.name.lower()}-{service}",
                       headers={"Authorization": "Bearer " + token,
                                "Accept": "application/vnd.github+json",
@@ -54,15 +59,47 @@ def package_exists(service, token, fork, visibility="private"):
         with urlopen(request, timeout=30) as response:
             package = json.load(response)
     except HTTPError as error:
+        reason = {401: "authentication_failed", 403: "access_denied",
+                  404: "missing_or_inaccessible", 429: "rate_limited"}.get(error.code, "http_error")
+        check.update(state="unavailable", reason=reason, httpStatus=error.code)
         if error.code == 404:
             # Missing and inaccessible packages are never permission to create one.
             # GITHUB_TOKEN can make a new package inherit a public repository's visibility.
             return False
-        raise RuntimeError("Cannot verify GitHub package ownership/access") from None
-    if (package.get("repository", {}).get("full_name", "").lower() != fork.repository.lower()
-            or package.get("owner", {}).get("login", "").lower() != fork.owner.lower()
-            or package.get("visibility") != visibility):
-        raise ValueError(f"Package must be {visibility}, owned by this user and linked to this exact fork")
+        raise RuntimeError(f"Cannot verify GitHub package ownership/access: {reason} (HTTP {error.code})") from None
+    except (URLError, OSError):
+        check.update(state="unavailable", reason="network_error")
+        raise RuntimeError("Cannot verify GitHub package ownership/access: network_error") from None
+    except (json.JSONDecodeError, UnicodeError):
+        check.update(state="unavailable", reason="invalid_response")
+        raise ValueError("Cannot verify GitHub package policy: invalid_response") from None
+    if not isinstance(package, dict):
+        check.update(state="unavailable", reason="invalid_response")
+        raise ValueError("Cannot verify GitHub package policy: invalid_response")  # noqa: TRY004 - malformed API data
+    checks = {}
+    for name, key, expected in (("repository", "full_name", fork.repository),
+                                ("owner", "login", fork.owner), ("visibility", None, visibility)):
+        value = package.get(name)
+        if key and isinstance(value, dict):
+            value = value.get(key)
+        if value is None or value == "":
+            checks[name] = "missing"
+        elif not isinstance(value, str) or (key and not isinstance(package.get(name), dict)):
+            checks[name] = "invalid"
+        elif (value.lower() if key else value) == (expected.lower() if key else expected):
+            checks[name] = "matched"
+        else:
+            checks[name] = "mismatch"
+    check["checks"] = checks
+    actual_visibility = package.get("visibility")
+    if isinstance(actual_visibility, str) and actual_visibility in ("private", "public", "internal"):
+        check["actualVisibility"] = actual_visibility
+    failed = [name + ":" + status for name, status in checks.items() if status != "matched"]
+    if failed:
+        check.update(state="rejected", reason="policy_mismatch")
+        raise ValueError(f"Package must be {visibility}, owned by this user and linked to this exact fork; "
+                         "failed checks: " + ", ".join(failed))
+    check.update(state="verified", reason="policy_matched")
     return True
 
 
@@ -105,7 +142,7 @@ def publish(service, sha, output, actor, token, fork, visibility="private", *, r
         raise ValueError("Receipt must be a new file in an existing directory")
     if git("rev-parse", "HEAD") != sha or not eligible(sha, fork):
         raise ValueError("Checkout must be the successfully tested default-branch source")
-    if not package_exists(service, token, fork, visibility):
+    if not package_exists(service, token, fork, visibility, result=result):
         raise ValueError(f"A pre-created {visibility} package linked to this exact fork is required; "
                          "automatic package creation is disabled and no image was uploaded")
     tree = git("rev-parse", f"{sha}:backend/{service}")
@@ -134,19 +171,19 @@ def publish(service, sha, output, actor, token, fork, visibility="private", *, r
                     str(temporary / "source/backend" / service), env=docker_env)
                 if not eligible(sha, fork):
                     raise ValueError("Source superseded or checks changed during build; refusing upload")
-                if not package_exists(service, token, fork, visibility):
+                if not package_exists(service, token, fork, visibility, result=result):
                     raise ValueError("Package disappeared or became inaccessible during build; "
                                      "refusing upload instead of creating a new package")
                 result["upload"] = "attempted"
                 run("docker", "push", reference, env=docker_env)
                 result["upload"] = "confirmed"
                 # Recheck after upload as well; an unverified image gets no receipt.
-                if not package_exists(service, token, fork, visibility):
+                if not package_exists(service, token, fork, visibility, result=result):
                     raise RuntimeError("Published package visibility/ownership could not be verified")
                 digest = lookup(uri, tag, key, docker_env, fork)
                 if digest is None:
                     raise RuntimeError("Pushed image was not found in GHCR")
-            elif not package_exists(service, token, fork, visibility):
+            elif not package_exists(service, token, fork, visibility, result=result):
                 raise ValueError("Reused package visibility/ownership could not be verified")
         finally:
             subprocess.run(["docker", "logout", "ghcr.io"], capture_output=True, env=docker_env)
