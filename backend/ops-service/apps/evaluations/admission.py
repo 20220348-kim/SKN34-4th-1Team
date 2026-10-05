@@ -42,7 +42,8 @@ def status():
     }
 
 
-def change_admission(*, accepting, expected_version, request_id, actor, reason):
+def validate_change(*, accepting, expected_version, request_id, actor, reason):
+    """Validate operator input before either admission writes or deployment DDL."""
     try:
         request_id = UUID(str(request_id))
     except (ValueError, TypeError, AttributeError) as error:
@@ -58,7 +59,24 @@ def change_admission(*, accepting, expected_version, request_id, actor, reason):
         or any(ord(char) < 32 or ord(char) == 127 for char in actor + reason)
     ):
         raise ValueError("버전과 변경자·사유를 확인하세요.")
-    actor, reason = actor.strip(), reason.strip()
+    return {
+        "accepting": accepting,
+        "expected_version": expected_version,
+        "request_id": request_id,
+        "actor": actor.strip(),
+        "reason": reason.strip(),
+    }
+
+
+def change_admission(*, accepting, expected_version, request_id, actor, reason):
+    validated = validate_change(
+        accepting=accepting,
+        expected_version=expected_version,
+        request_id=request_id,
+        actor=actor,
+        reason=reason,
+    )
+    request_id, actor, reason = (validated[key] for key in ("request_id", "actor", "reason"))
     with transaction.atomic():
         state = lock_admission()
         previous = EvaluationAdmissionChange.objects.filter(pk=request_id).first()

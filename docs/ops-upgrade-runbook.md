@@ -133,6 +133,36 @@ python3 -B infrastructure/gitops/scripts/ops_maintenance_plan.py --state-dir "$O
 이 계획 도구는 중지·재개를 자동 실행하지 않는다. 원본에 migration을 적용하는 절차와도 별개다.
 관련 무료 테스트는 Infra CI의 `test_*.py` 검색에 포함되고 Ops CI에서 정적 검사를 수행한다.
 
+### 최초 migration과 접수 중지를 함께 확인하기
+
+최신 `migrate_deployment`의 최초 중지 옵션은 schema가 준비된 것만으로 성공하지 않고,
+새 평가 접수가 중지된 것까지 확인한다. **실제 원본에서 실행하기 전에는** 외부 접수·API·sync·
+실행기 쓰기를 중지하고 같은 중지 상태의 백업·복원 검증, 대상 이미지·필수 CI와 전환 승인을 확보한다.
+이 명령 자체는 쓰기 중지나 백업을 증명하지 않으며 기존 활성화의 구버전 차단을 우회하지 않는다.
+
+```bash
+# 승인된 최초 전환의 migration 실행 환경 또는 새 격리 DB에서 사용한다.
+# 요청 UUID·변경자·사유는 실행 전에 기록하고 응답 유실 시 같은 값으로 재시도한다.
+python manage.py migrate_deployment --verbosity 0 \
+  --pause-request-id "$OPS_PAUSE_REQUEST_ID" \
+  --pause-actor "$OPS_OPERATOR" \
+  --pause-reason "최초 전환 후 검증 전 신규 접수 중지"
+```
+
+- 옵션은 모두 지정하거나 모두 생략한다. UUID·변경자·사유는 배포 잠금과 migration 전에 검증한다.
+- MySQL 배포 잠금 아래에서 접수 테이블이 아직 없거나 접수 version이 0인 상태를 허용한다.
+  부분 테이블·이미 변경된 상태는 거절한다. 같은 요청의 재시도는 UUID·변경자·사유가 일치하고
+  최초 중지 version 1이 그대로 유지될 때만 허용한다.
+- 전진 migration과 schema 확인 후 기존 감사·접수 제어 함수를 사용해 version 0에서 중지한다.
+  중지 확인·배포 잠금 해제까지 성공해야 현재 접수 상태 JSON을 반환한다. 옵션이 없는 명령의
+  기본 동작은 유지하며 일반 migration이 기존 접수 상태를 자동 중지·재개하지 않는다.
+- 나중에 운영자가 접수를 재개하거나 다른 중지 이력을 만들었다면 이전 배포 요청을 재사용할 수 없다.
+  실패 후에도 API·sync·실행기의 중지 상태를 유지한다. DDL이 일부 적용됐을 수 있으므로
+  오류가 났다는 이유로 구버전 앱을 자동 재개하거나 DB를 역방향 migration하지 않는다.
+
+현재 Helm Job과 `ops_runtime.py`는 이 옵션을 자동 연결하지 않는다. 검증된 동작을 최초 전환
+실행 경로에 연결하고, 원본을 변경하기 전에 대상·실패 후 상태·복구 절차를 별도로 확인해야 한다.
+
 ### 구버전 전환을 위한 격리 MySQL 회귀 검증
 
 [`ops-ci.yml`](../.github/workflows/ops-ci.yml)은 기존 빈 DB 배포 검사와 별도로
@@ -147,9 +177,9 @@ CI 전용 플래그 두 개가 모두 설정돼야 하며 기존 테이블이 �
 - 사용자·평가·검토·기준·예산·예약·사용량·감사 등 10개 모델의 기존 컬럼과 11개 합성 행을 대조한다.
   한글·이모지·따옴표·JSON·NULL·관계 식별자·시각을 보존하고, 과거 호출의 알 수 없는 토큰 상한은
   NULL로 유지해야 한다. 합성 검토 이력은 실제 사람의 승인이나 품질 평가 결과가 아니다.
-- migration 직후 접수가 기본 허용임을 확인한 뒤 기존 `evaluation_admission pause` 명령으로
-  닫는다. 새 평가 요청은 `503 / EVALUATION_ADMISSION_PAUSED`이고 Prefect 호출이 없어야 한다.
-  migration과 동일 UUID의 pause를 재실행해도 차단·버전이 유지되고 감사 행이 중복되지 않아야 한다.
+- `migrate_deployment`의 최초 중지 옵션으로 schema와 접수 중지를 함께 확인한다.
+  새 평가 요청은 `503 / EVALUATION_ADMISSION_PAUSED`이고 Prefect 호출이 없어야 한다.
+  같은 UUID의 배포 명령을 재실행해도 차단·버전이 유지되고 감사 행이 중복되지 않아야 한다.
 
 이 검사는 실제 MySQL을 사용하는 전환 회귀이며 원본 덤프의 복원 검증은 아니다. 인증은 테스트
 클라이언트로 주입하고 Prefect 접수는 대역으로 검사하므로 Core 로그인·실행기·새 평가 완료를
@@ -181,8 +211,8 @@ python3 -B infrastructure/gitops/scripts/ops_db_upgrade.py \
 - 기존 모든 테이블의 기본 키·원래 컬럼을 기준으로 기존 행의 값을 대조한다. migration 이력·
   content type·permission 테이블에는 신규 행 추가만 허용하고, 기존 업무 테이블의 추가·삭제·변경은
   거절한다. 새 컬럼은 이 비교 대상에서 제외하며 알 수 없던 기존 토큰 상한은 별도로 NULL 보존을 확인한다.
-- migration 직후 `evaluation_admission pause`를 실행하고 실제 접수 차단 함수를 확인한다.
-  migration과 같은 UUID의 pause를 반복해도 접수가 열리거나 감사 기록이 중복되면 실패한다.
+- 최초 접수 중지 옵션을 지정한 `migrate_deployment`를 실행하고 실제 접수 차단 함수를 확인한다.
+  같은 UUID의 명령을 반복해도 접수가 열리거나 감사 기록이 중복되면 실패한다.
   HTTP 요청·Core 인증·Prefect 실행을 검사한 것으로 기록하지 않는다.
 - 검사 컨테이너는 복원 MySQL의 격리된 네트워크만 공유한다. 원본 볼륨·외부 포트·모델 API는
   사용하지 않으며 읽기 전용 파일시스템과 임시 디렉터리로 실행한다. 새 DB의 임시 비밀번호는

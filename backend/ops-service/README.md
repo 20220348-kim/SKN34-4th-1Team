@@ -324,6 +324,16 @@ Ops/Web 동시 갱신이 필요하며 production 의존성·모델 호출은 추
 이 제어는 Prefect 직접 호출·스케줄을 중지하거나 백업 일관성을 보장하지 않습니다.
 실제 명령과 최초 적용·재개 절차는 [갱신 runbook](../../docs/ops-upgrade-runbook.md)을 따릅니다.
 
+최초 전환에는 `migrate_deployment --pause-request-id <UUID> --pause-actor <변경자>
+--pause-reason <사유>`로 migration과 최초 접수 중지를 한 명령에서 확인할 수 있습니다.
+세 옵션은 함께 지정하며 입력은 DB 변경 전에 검증합니다. 실행 흐름은
+`입력 검증 → MySQL 배포 잠금 → 최초 접수 상태 확인 → 전진 migration → schema 확인 → 접수 중지 → 잠금 해제`입니다.
+아직 변경하지 않은 접수 상태 또는 같은 UUID·변경자·사유의 version 1 중지만 허용합니다.
+같은 요청의 반복 실행은 감사 행을 중복 생성하지 않으며, 이후 재개·추가 중지가 있었다면 재사용을 거절합니다.
+옵션이 없을 때의 migration 동작은 그대로이며 이미 사용하는 접수 상태를 자동 변경하지 않습니다.
+이 명령은 서비스 중지·백업·배포 승인을 대신하지 않습니다. 외부 접수와 API·sync·실행기를 먼저 중지해야 하며,
+DDL 이후 실패하면 DB 일부가 변경됐을 수 있으므로 중지 상태를 유지하고 확인해야 합니다.
+
 ## 새 응답 생성 API
 
 설정은 [LLMOps 실행 문서](../../infrastructure/llmops/README.md#ops에서-새-모델-평가)를 따릅니다.
