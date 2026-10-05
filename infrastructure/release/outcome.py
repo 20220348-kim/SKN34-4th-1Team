@@ -9,7 +9,7 @@ from gate import valid_sha
 from repository import SERVICES, from_ci
 
 # Informational artifacts are never receipts or authorization evidence.
-PUBLICATION_REPORTS = {"msa-publication-result"} | {
+PUBLICATION_REPORTS = {"msa-publication-result", "msa-package-preflight"} | {
     "msa-publication-" + s for s in SERVICES
 }
 
@@ -76,13 +76,31 @@ def workflow_report(stage, needs, event, env):
         reason = outputs.get("reason") or "job_" + result
     if stage == "publication":
         published = needs.get("publish", {}).get("result", "unknown")
+        preflight = needs.get("package-preflight")
+        preflight_result = (
+            preflight.get("result", "unknown")
+            if preflight is not None
+            else "not_recorded"
+        )
+        # Historical runs had no separate preflight job; current workflow always
+        # supplies this dependency. A present but failed/missing result blocks.
+        packages_ready = preflight is None or preflight_result == "success"
         ready = (
             result == "success" and outputs.get("ready") == "true" and valid_sha(source)
         )
-        verified = bool(personal and enabled and ready and published == "success")
+        verified = bool(
+            personal and enabled and ready and packages_ready and published == "success"
+        )
         state = "blocked"
         if verified:
             state, reason = "verified", "verified_receipts"
+        elif personal and enabled and not packages_ready:
+            state = (
+                preflight_result
+                if preflight_result in {"failure", "cancelled", "unknown"}
+                else "blocked"
+            )
+            reason = "package_preflight_" + preflight_result
         elif published in {"failure", "cancelled", "unknown"}:
             state = published
             if ready:
@@ -91,6 +109,7 @@ def workflow_report(stage, needs, event, env):
             state, reason = "unverified", "missing_gate_evidence"
         report.update(
             gateResult=result,
+            packagePreflightResult=preflight_result,
             publicationResult=published,
             imagesVerified=verified,
             state=state,

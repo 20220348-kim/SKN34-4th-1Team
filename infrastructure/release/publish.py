@@ -103,6 +103,28 @@ def package_exists(service, token, fork, visibility="private", *, result=None):
     return True
 
 
+def check_packages(token, fork, visibility, *, result):
+    """Read all four package policies without CI gating, Docker or image receipts."""
+    fork.require_personal_publish()
+    if visibility not in ("private", "public") or not token:
+        raise ValueError("Package preflight requires a token and private/public visibility")
+    result.update(packages={}, packagePolicyVerified=False)
+    for service in SERVICES:
+        item = {}
+        try:
+            package_exists(service, token, fork, visibility, result=item)
+        except (ValueError, RuntimeError):
+            # Expected API/policy failures already contain a sanitized diagnostic.
+            # Unexpected failures propagate instead of pretending all checks ran.
+            if "packageCheck" not in item or item["packageCheck"]["state"] == "pending":
+                raise
+        result["packages"][service] = item["packageCheck"]
+    verified = all(item["state"] == "verified" for item in result["packages"].values())
+    result.update(state="verified" if verified else "failed", packagePolicyVerified=verified)
+    if not verified:
+        raise ValueError("Package preflight failed; inspect the per-service package checks")
+
+
 def lookup(uri, tag, key, docker_env, fork):
     reference = uri + ":" + tag
     result = subprocess.run(["docker", "buildx", "imagetools", "inspect", reference,
@@ -201,14 +223,21 @@ def publish(service, sha, output, actor, token, fork, visibility="private", *, r
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--service", choices=SERVICES, required=True)
-    parser.add_argument("--sha", required=True)
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--check-packages", action="store_true", help="Read package policies only; never build or upload")
+    parser.add_argument("--service", choices=SERVICES)
+    parser.add_argument("--sha")
+    parser.add_argument("--output", type=Path)
     parser.add_argument("--report", type=Path)
     args = parser.parse_args()
-    if args.report and args.report.resolve() == args.output.resolve():
+    if args.check_packages:
+        if args.service or args.sha or args.output or not args.report:
+            parser.error("--check-packages requires --report and cannot use --service, --sha or --output")
+    elif not all((args.service, args.sha, args.output)):
+        parser.error("Publication requires --service, --sha and --output")
+    if args.report and args.output and args.report.resolve() == args.output.resolve():
         parser.error("Report and image receipt must use different paths")
-    result = {"stage": "publication-service", "sourceSha": args.sha if valid_sha(args.sha) else None,
+    result = {"stage": "package-preflight" if args.check_packages else "publication-service",
+              "sourceSha": args.sha if valid_sha(args.sha) else None,
               "service": args.service, "state": "failed", "upload": "not_attempted",
               "reused": False, "receiptWritten": False, "clusterVerified": False}
     try:
@@ -216,8 +245,12 @@ def main():
             raise ValueError("Image publication is disabled")
         fork = from_ci().require_personal_publish()
         result["repository"] = fork.repository
-        publish(args.service, args.sha, args.output, os.environ["GITHUB_ACTOR"], os.environ["GH_TOKEN"], fork,
-                os.environ.get("MSA_PACKAGE_VISIBILITY", "private"), result=result)
+        visibility = os.environ.get("MSA_PACKAGE_VISIBILITY", "private")
+        if args.check_packages:
+            check_packages(os.environ["GH_TOKEN"], fork, visibility, result=result)
+        else:
+            publish(args.service, args.sha, args.output, os.environ["GITHUB_ACTOR"], os.environ["GH_TOKEN"], fork,
+                    visibility, result=result)
     except Exception as exc:
         result["errorType"] = type(exc).__name__
         raise
