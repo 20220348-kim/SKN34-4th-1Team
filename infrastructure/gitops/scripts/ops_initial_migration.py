@@ -2,6 +2,7 @@
 
 Personal WSL/kind only. No stop/start, application rollout, admission resume or DB restore.
 Execution requires a separate operator-approved outage and original-DB migration.
+Use --check-source to verify source and CI before stopping any writers.
 """
 
 import argparse
@@ -67,6 +68,27 @@ def source_evidence(settings, sha, branch):
     if gate.api(reference)["object"]["sha"] != sha:
         raise ValueError("Remote source changed during CI verification")
     return evidence
+
+
+def check_source(args):
+    """Read only local identity, Git and GitHub; no cluster, archive or lock access."""
+    settings = database.load_settings(args.state_dir)
+    if settings["stateId"] != args.expected_state_id:
+        raise ValueError("Personal state identity differs from the selected target")
+    evidence = source_evidence(settings, args.source_sha, args.source_branch)
+    return {
+        "schema_version": 1,
+        "scope": "ops_initial_source",
+        "status": "SOURCE_VERIFIED",
+        "state_id": settings["stateId"],
+        "source_sha": args.source_sha,
+        "source_branch": args.source_branch,
+        "ci": evidence,
+        "services_changed": False,
+        "original_database_migration_attempted": False,
+        "backup_verified": False,
+        "runtime_verified": False,
+    }
 
 
 def initial_job(image, pause, deployment, helm):
@@ -321,35 +343,107 @@ def migrate(args):
     return report
 
 
-def main():
+def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--state-dir", type=Path, default=database.STATE)
     parser.add_argument("--expected-state-id", required=True)
-    parser.add_argument("--archive", type=Path, required=True)
-    parser.add_argument("--key-file", type=Path, required=True)
+    parser.add_argument("--archive", type=Path)
+    parser.add_argument("--key-file", type=Path)
     parser.add_argument("--source-sha", required=True)
     parser.add_argument("--source-branch", required=True)
-    parser.add_argument("--ops-image", required=True)
-    parser.add_argument("--pause-request-id", required=True)
-    parser.add_argument("--pause-actor", required=True)
-    parser.add_argument("--pause-reason", required=True)
+    parser.add_argument("--ops-image")
+    parser.add_argument("--pause-request-id")
+    parser.add_argument("--pause-actor")
+    parser.add_argument("--pause-reason")
     parser.add_argument("--helm", default="helm")
     parser.add_argument("--kind", default="kind")
-    parser.add_argument(
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument(
+        "--check-source",
+        action="store_true",
+        help="Read only source identity and required CI before stopping services",
+    )
+    modes.add_argument(
         "--execute",
         action="store_true",
         help="Apply approved original-DB migration and keep all writers stopped",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+    migration_options = (
+        "archive",
+        "key_file",
+        "ops_image",
+        "pause_request_id",
+        "pause_actor",
+        "pause_reason",
+    )
+    if args.check_source:
+        if any(getattr(args, name) is not None for name in migration_options):
+            parser.error(
+                "--check-source cannot be combined with backup, image or pause options"
+            )
+    else:
+        missing = [
+            "--" + name.replace("_", "-")
+            for name in migration_options
+            if getattr(args, name) is None
+        ]
+        if missing:
+            parser.error("migration requires " + ", ".join(missing))
     if os.name != "posix":
         parser.error("Run inside WSL/Linux")
-    os.umask(0o077)
     try:
-        with cluster.locked(args.state_dir):
-            report = migrate(args)
+        if args.check_source:
+            report = check_source(args)
+        else:
+            os.umask(0o077)
+            with cluster.locked(args.state_dir):
+                report = migrate(args)
         print(json.dumps(report, sort_keys=True))
         return 0
-    except Exception:  # noqa: BLE001 - archive, subprocess and DB errors may contain secrets
+    except Exception as error:  # noqa: BLE001 - never expose archive or subprocess details
+        if args.check_source:
+            reasons = {
+                "Personal state identity differs from the selected target": "state_identity_mismatch",
+                "Source repository or SHA differs from the personal state": "source_identity_mismatch",
+                "Use the exact committed clean checkout": "checkout_not_exact_or_clean",
+                "Selected source is not the current remote branch head": "source_not_current",
+                "Remote source changed during CI verification": "source_changed",
+            }
+            detail = {"reason": reasons.get(str(error), "source_verification_failed")}
+            prefix = "Source CI is not fully successful: "
+            if str(error).startswith(prefix):
+                reason, _, workflow = str(error).removeprefix(prefix).partition(":")
+                if (
+                    reason
+                    in {
+                        "ci_run_missing",
+                        "ci_run_not_successful_or_untrusted",
+                        "ci_jobs_not_successful_or_incomplete",
+                        "ci_run_changed",
+                    }
+                    and workflow in gate.WORKFLOWS
+                ):
+                    detail = {"reason": reason, "workflow": workflow}
+            print(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "scope": "ops_initial_source",
+                        "status": "BLOCKED",
+                        **detail,
+                        "services_changed": False,
+                        "original_database_migration_attempted": False,
+                    },
+                    sort_keys=True,
+                )
+            )
+            print(
+                "Source verification failed; no services or database were changed "
+                "(private details withheld)",
+                file=sys.stderr,
+            )
+            return 1
         print(
             "Initial Ops migration stopped; inspect the journal and keep writers stopped if migration was attempted (private details withheld)",
             file=sys.stderr,

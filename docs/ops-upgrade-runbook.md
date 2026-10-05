@@ -168,7 +168,28 @@ python manage.py migrate_deployment --verbosity 0 \
 [`ops_initial_migration.py`](../infrastructure/gitops/scripts/ops_initial_migration.py)는 원본 DB의
 최초 migration 단계만 담당한다. 서비스를 중지하거나 재개하지 않고, 앱 이미지·Secret·브리지·
 baseline을 바꾸지 않는다. 원본 DB 적용은 별도 승인된 전환 작업에서만 `--execute`로 요청한다.
-현재 실행 중인 환경에서는 먼저 차단되며, 과거에 서비스 재개까지 마친 백업은 사용할 수 없다.
+migration 검증·실행은 현재 쓰기가 실행 중인 환경에서 먼저 차단되며, 과거에 서비스 재개까지
+마친 백업은 사용할 수 없다.
+
+서비스 중단 전에는 `--check-source`로 로컬 state ID·저장소·깨끗한 checkout·원격 HEAD와
+해당 SHA의 필수 CI만 확인한다. Git과 GitHub를 조회하며 Kubernetes·Docker·백업·키에
+접근하지 않고 state 잠금이나 migration 기록도 만들지 않는다. Linux용 `git`·`gh`와
+GitHub 읽기 인증이 필요하다. WSL에서 Windows용 `gh.exe`를 호출하는 대신 Linux용 `gh`를
+사용하면 Windows interop 장애와 이 조회 경로를 분리할 수 있다.
+
+```bash
+python3 -B infrastructure/gitops/scripts/ops_initial_migration.py \
+  --check-source \
+  --state-dir "$OPS_STATE_DIR" --expected-state-id "$OPS_STATE_ID" \
+  --source-sha "$OPS_SOURCE_SHA" --source-branch "$OPS_SOURCE_BRANCH"
+```
+
+성공 시 `SOURCE_VERIFIED`와 CI 실행 ID를 반환한다. 오류·진행 중 CI는 종료 코드 1과
+`BLOCKED`로 보고한다. checkout·원격 소스·state 불일치와 알려진 CI 차단 코드는 구분하고,
+CI workflow 이름은 기존 필수 목록에 있는 값만 출력한다. 외부 오류 본문은 출력하지 않는다.
+`--execute` 또는 백업·이미지·접수 중지
+인자를 함께 전달하면 인자 오류로 거부한다. **이 결과는 백업·런타임 검증이나 전환 승인이 아니다.**
+실제 migration·런타임 전환 단계에서 소스·CI 검증을 다시 수행한다.
 
 1. 대상의 state ID와 원격 저장소, 깨끗한 체크아웃의 전체 SHA, 원격 브랜치 HEAD가 일치해야 한다.
    해당 SHA의 push CI 5개와 각 필수 작업이 모두 성공했는지 GitHub에서 읽는다. 발행 정책의
@@ -209,7 +230,7 @@ python3 -B infrastructure/gitops/scripts/ops_initial_migration.py \
 실행기·결과 서버로 교체하고 연결·기존 이력·관리자 화면·무료 평가를 확인한 뒤 접수를 재개하는
 런타임 전환은 아래 별도 단계로 수행한다. 기존 `ops_runtime.py`의 접수 제어 미지원 차단은 그대로 유지한다.
 
-Infra CI는 전용 명령의 오프라인 Helm·중지/백업/CI 차단·실패 기록 테스트를 자동 탐색한다.
+Infra CI는 전용 명령의 소스 사전 점검·오프라인 Helm·중지/백업/CI 차단·실패 기록 테스트를 자동 탐색한다.
 LLMOps CI의 실제 MySQL 업그레이드 테스트는 원본 DB 접수 중지를 확인하는 SQL도 격리 DB에서
 검증한다. 이 검증은 개인 클러스터에서 Job을 실행했다는 증거가 아니다.
 
@@ -1167,3 +1188,8 @@ Ops와 migration 도구의 Git tree가 앞선 `4b238ac` 리허설과 같음을 �
 확인 중 원격 `main`은 `0f9d661f9f82cd9b9f7a0bfc66ad5b947dea6e66`로 진행했다.
 따라서 위 CI 성공은 `be51483`에만 해당하며, 실제 전환 시점의 원격 SHA·필수 CI·이미지는
 다시 확인해야 한다. 공개 GHCR receipt와 개인 환경 적용은 미확인·미실행 상태다.
+
+같은 날 후속 확인에서는 Ubuntu 일반 사용자·root 명령과 Linux용 `gh`가 재시작 없이 정상
+응답했다. 웹·Core health·Ops readiness도 모두 HTTP 200이었다. 후속 `main`인 `a4166d9`의
+깨끗한 checkout에서 실제 소스 검증을 실행했으며, 당시 `ci.yml`이 진행 중이라 차단됐다.
+WSL 조회 경로는 복구됐지만 원본 DB migration과 서비스 교체는 수행하지 않았다.
