@@ -241,7 +241,12 @@ python3 -B infrastructure/gitops/scripts/ops_initial_runtime.py \
 
 기본 성공은 `VERIFIED_FOR_ROLLOUT`이며 실제 적용 시 모든 조건을 다시 확인한다.
 
-- 기존 Prefect 컨테이너를 그대로 시작하고 healthy를 기다린다. Prefect 이미지·저장소는 교체하지 않는다.
+- 기존 Prefect 컨테이너를 그대로 시작한 뒤 컨테이너 내부의 `127.0.0.1:4200/api/health`가 200인지
+  확인한다. Docker healthcheck가 없는 구버전도 이 API 검사를 반드시 통과해야 한다. healthcheck가
+  설정돼 있다면 그 상태도 healthy여야 한다. 검사 중 컨테이너 중지·일시 정지·재시작이나 시작 시각 변경은
+  거절한다. 최대 120초 동안 대기하며 개별 Docker 명령은 최대 5초, HTTP 연결은 2초로 제한한다.
+  환경변수의 프록시와 HTTP 리디렉션을 사용하지 않고 응답 본문·인증값을 출력하지 않는다.
+  Prefect 이미지·컨테이너 설정·저장소는 교체하지 않는다.
 - 결과 서버와 실행기 두 서비스만 현재 설정에서 재구성한다. 기존 결과 볼륨과 네트워크는 external로
   참조하고 `--no-deps --no-build --pull never`로 교체한다. 기존 중지 Compose Ops API/sync는 켜지 않는다.
 - 결과는 실행기만 쓰며 결과 서버는 읽기 전용이다. 데이터 bind mount는 현재 checkout의 평가 디렉터리로
@@ -264,7 +269,9 @@ python3 -B infrastructure/gitops/scripts/ops_initial_runtime.py \
 [업무 검증 후 접수 재개](#5-업무-검증-후-접수-재개)를 별도로 수행한다.
 
 Infra CI가 증거 불일치·기본 실행 무변경·실패 기록·Deployment 비교 조건을 검증한다. LLMOps CI는
-실제 빌드 이미지와 Compose 컨테이너의 합성 `$` 환경변수 전달을 검사한다. 이 검사만으로
+실제 빌드 이미지와 Compose 컨테이너의 합성 `$` 환경변수 전달을 검사한다. Docker healthcheck가 없는
+격리 HTTP 서버에서도 200 응답·리디렉션 거절·시간 제한·원래 컨테이너 유지 조건을 검증한다. 이 검사는
+실제 Prefect 업무나 평가 완료를 대신하지 않는다. 이 검사만으로
 개인 클러스터의 실제 전환이 완료됐다고 판단하지 않는다.
 
 ### 구버전 전환을 위한 격리 MySQL 회귀 검증

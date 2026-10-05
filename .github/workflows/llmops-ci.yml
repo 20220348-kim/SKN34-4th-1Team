@@ -218,7 +218,7 @@ jobs:
           set -euo pipefail
           snapshot_mysql_image=$(docker image inspect mysql:8.4 --format '{{index .RepoDigests 0}}')
           OPS_DB_UPGRADE_TEST_IMAGE="$RESTORE_DOCKER_IMAGE" OPS_DB_SNAPSHOT_MYSQL_IMAGE="$snapshot_mysql_image" PYTHONPATH=infrastructure/gitops/scripts backend/ai-service/.venv/bin/python -B -m unittest test_ops_db_upgrade
-      - name: Verify first-rollout images and literal Compose inputs without network calls
+      - name: Verify first-rollout images, Compose inputs and legacy Prefect readiness
         timeout-minutes: 3
         # Runtime image and literal-input checks must also run when the unit suite
         # skips its opt-in Docker cases; these use the already-built CI images.

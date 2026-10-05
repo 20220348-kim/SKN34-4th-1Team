@@ -27,6 +27,17 @@ database = initial.database
 cluster = initial.cluster
 storage = database.storage
 SERVICES = ("ops-artifacts", "evaluation-runner")
+PREFECT_HEALTH_PROBE = """import http.client
+connection = http.client.HTTPConnection('127.0.0.1', 4200, timeout=2)
+try:
+    connection.request('GET', '/api/health')
+    ready = connection.getresponse().status == 200
+except (OSError, http.client.HTTPException):
+    ready = False
+finally:
+    connection.close()
+print('READY' if ready else 'NOT_READY')
+"""
 
 
 def read_migration(state, request_id, settings):
@@ -461,18 +472,75 @@ def service_container(project, service):
     return storage.inspect(ids[0])
 
 
-def wait_healthy(identity):
-    deadline = time.monotonic() + 120
-    while True:
-        item = storage.inspect(identity)
+def wait_prefect_ready(identity, *, timeout_seconds=120):
+    """Check the pinned server's loopback API, including legacy containers without healthchecks."""
+    if not re.fullmatch(r"[a-f0-9]{64}", identity) or timeout_seconds <= 0:
+        raise ValueError(
+            "Use a pinned Prefect container and a positive readiness timeout"
+        )
+    deadline = time.monotonic() + timeout_seconds
+
+    def observation():
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ValueError("Prefect API did not become ready before the deadline")
+        item = json.loads(
+            storage.run(
+                ["docker", "inspect", identity],
+                timeout=min(5, remaining),
+            )
+        )[0]
+        state = item["State"]
         if (
-            item["State"].get("Running")
-            and item["State"].get("Health", {}).get("Status") == "healthy"
+            item["Id"] != identity
+            or state.get("Status") != "running"
+            or state.get("Running") is not True
+            or state.get("Paused")
+            or state.get("Restarting")
+            or state.get("Dead")
         ):
-            return
-        if time.monotonic() >= deadline:
-            raise ValueError("Prefect did not become healthy")
-        time.sleep(2)
+            raise ValueError("Pinned Prefect container is not stably running")
+        check = item["Config"].get("Healthcheck") or {}
+        configured = bool(check.get("Test") and check["Test"] != ["NONE"])
+        health = (state.get("Health") or {}).get("Status")
+        healthy = health == "healthy" or (not configured and health is None)
+        return (state["StartedAt"], item["RestartCount"]), healthy
+
+    started, _ = observation()
+    while True:
+        before, healthy = observation()
+        if before != started:
+            raise ValueError("Prefect restarted during readiness verification")
+        if healthy:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ValueError("Prefect API did not become ready before the deadline")
+            # http.client ignores proxy environment and does not follow redirects.
+            # Probe only the fixed local API; never print headers, body or credentials.
+            result = storage.run(
+                [
+                    "docker",
+                    "exec",
+                    identity,
+                    "python",
+                    "-I",
+                    "-B",
+                    "-c",
+                    PREFECT_HEALTH_PROBE,
+                ],
+                timeout=min(5, remaining),
+            ).strip()
+            after, still_healthy = observation()
+            if after != started:
+                raise ValueError("Prefect restarted during readiness verification")
+            if result not in {b"READY", b"NOT_READY"}:
+                raise ValueError("Unexpected Prefect readiness response")
+            if result == b"READY" and still_healthy:
+                return
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise ValueError("Prefect API did not become ready before the deadline")
+        time.sleep(min(2, remaining))
 
 
 def rollout(args):
@@ -616,7 +684,7 @@ def rollout(args):
     try:
         verify_frozen()
         stage("prefect_start", lambda: storage.run(["docker", "start", prefect_id]))
-        stage("prefect_health", lambda: wait_healthy(prefect_id))
+        stage("prefect_health", lambda: wait_prefect_ready(prefect_id))
         for service in SERVICES:
             stage(
                 service + "_replace",

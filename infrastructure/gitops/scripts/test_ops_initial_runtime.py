@@ -3,11 +3,12 @@
 import base64
 import copy
 import hashlib
+import io
 import json
 import os
 import tempfile
 import unittest
-from contextlib import ExitStack
+from contextlib import ExitStack, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -369,6 +370,143 @@ class EvidenceTests(unittest.TestCase):
                     rollout.require_loaded_image(state, SETTINGS, record)
 
 
+class PrefectReadinessTests(unittest.TestCase):
+    def setUp(self):
+        self.stack = ExitStack()
+        self.addCleanup(self.stack.close)
+        self.clock = 0
+        self.identity = "a" * 64
+        self.item = {
+            "Id": self.identity,
+            "Config": {},
+            "RestartCount": 0,
+            "State": {
+                "Status": "running",
+                "Running": True,
+                "Paused": False,
+                "Restarting": False,
+                "StartedAt": "unchanged",
+            },
+        }
+        self.responses = [b"READY"]
+        self.commands = []
+        self.stack.enter_context(
+            patch.object(rollout.time, "monotonic", side_effect=lambda: self.clock)
+        )
+        self.stack.enter_context(
+            patch.object(rollout.time, "sleep", side_effect=self.advance)
+        )
+        self.stack.enter_context(
+            patch.object(rollout.storage, "run", side_effect=self.execute)
+        )
+
+    def advance(self, duration):
+        self.clock += duration
+
+    def execute(self, command, **kwargs):
+        self.commands.append(command)
+        self.assertGreater(kwargs["timeout"], 0)
+        self.assertLessEqual(kwargs["timeout"], 5)
+        if command[1] == "inspect":
+            return json.dumps([self.item]).encode()
+        self.assertEqual(
+            command[:7], ["docker", "exec", self.identity, "python", "-I", "-B", "-c"]
+        )
+        result = self.responses.pop(0)
+        return result() if callable(result) else result
+
+    def wait(self, timeout=6):
+        return rollout.wait_prefect_ready(self.identity, timeout_seconds=timeout)
+
+    def test_legacy_container_requires_successful_loopback_api(self):
+        self.responses = [b"NOT_READY", b"READY"]
+        self.wait()
+        self.assertEqual(sum(command[1] == "exec" for command in self.commands), 2)
+        self.assertGreater(self.clock, 0)
+
+    def test_healthy_docker_state_still_requires_api_success(self):
+        self.item["Config"]["Healthcheck"] = {"Test": ["CMD", "probe"]}
+        self.item["State"]["Health"] = {"Status": "healthy"}
+        self.responses = [b"NOT_READY"]
+        with self.assertRaisesRegex(ValueError, "deadline"):
+            self.wait(timeout=1)
+
+    def test_configured_starting_unhealthy_or_missing_health_never_bypasses_check(self):
+        self.item["Config"]["Healthcheck"] = {"Test": ["CMD", "probe"]}
+        for health in (None, {"Status": "starting"}, {"Status": "unhealthy"}, {}):
+            self.clock = 0
+            self.commands.clear()
+            self.item["State"]["Health"] = health
+            with (
+                self.subTest(health=health),
+                self.assertRaisesRegex(ValueError, "deadline"),
+            ):
+                self.wait(timeout=1)
+            self.assertFalse(any(command[1] == "exec" for command in self.commands))
+
+    def test_stopped_paused_restarting_and_wrong_identity_are_rejected(self):
+        for change in (
+            lambda item: item["State"].update(Running=False),
+            lambda item: item["State"].update(Paused=True),
+            lambda item: item["State"].update(Restarting=True),
+            lambda item: item["State"].update(Status="exited"),
+            lambda item: item.update(Id="b" * 64),
+        ):
+            original = copy.deepcopy(self.item)
+            change(self.item)
+            with self.assertRaisesRegex(ValueError, "stably running"):
+                self.wait()
+            self.item = original
+        self.assertFalse(any(command[1] == "exec" for command in self.commands))
+
+    def test_restart_during_successful_request_is_rejected(self):
+        def restart():
+            self.item["RestartCount"] += 1
+            return b"READY"
+
+        self.responses = [restart]
+        with self.assertRaisesRegex(ValueError, "restarted"):
+            self.wait()
+
+    def test_unknown_probe_output_is_rejected_without_echoing_it(self):
+        self.responses = [b"unexpected-private-output"]
+        with self.assertRaisesRegex(
+            ValueError, "Unexpected Prefect readiness response"
+        ) as result:
+            self.wait()
+        self.assertNotIn("private", str(result.exception))
+
+    def test_probe_uses_fixed_loopback_and_never_prints_response_body(self):
+        for status in (200, 302, 401, 503):
+            with (
+                self.subTest(status=status),
+                patch("http.client.HTTPConnection") as connection,
+            ):
+                connection.return_value.getresponse.return_value.status = status
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    exec(rollout.PREFECT_HEALTH_PROBE, {})  # noqa: S102 - fixed repository probe
+                connection.assert_called_once_with("127.0.0.1", 4200, timeout=2)
+                connection.return_value.request.assert_called_once_with(
+                    "GET", "/api/health"
+                )
+                connection.return_value.close.assert_called_once()
+                connection.return_value.getresponse.return_value.read.assert_not_called()
+                self.assertEqual(
+                    output.getvalue().strip(), "READY" if status == 200 else "NOT_READY"
+                )
+
+    def test_probe_handles_refused_and_timed_out_api_without_private_errors(self):
+        for error in (ConnectionRefusedError("private"), TimeoutError("private")):
+            with patch("http.client.HTTPConnection") as connection:
+                connection.return_value.request.side_effect = error
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    exec(rollout.PREFECT_HEALTH_PROBE, {})  # noqa: S102 - fixed repository probe
+                self.assertEqual(output.getvalue(), "NOT_READY\n")
+                connection.return_value.close.assert_called_once()
+
+
 class RolloutTests(unittest.TestCase):
     def setUp(self):
         self.stack = ExitStack()
@@ -462,7 +600,7 @@ class RolloutTests(unittest.TestCase):
         }
         mock(rollout, "compose_definition", return_value=self.definition)
         mock(rollout, "verify_compose_input")
-        mock(rollout, "wait_healthy")
+        mock(rollout, "wait_prefect_ready")
         mock(rollout.runtime.ops_bridge, "connect")
         mock(rollout.runtime, "verify_artifact_token")
         mock(rollout.runtime, "verify_release", return_value={"imageId": IMAGE})
@@ -545,7 +683,7 @@ class RolloutTests(unittest.TestCase):
 
     def test_every_partial_failure_preserves_original_baseline_and_records_stage(self):
         self.args.execute = True
-        self.mocks["wait_healthy"].side_effect = ValueError("private-credential")
+        self.mocks["wait_prefect_ready"].side_effect = ValueError("private-credential")
         with self.assertRaises(ValueError):
             rollout.rollout(self.args)
         result = json.loads(self.journal().read_text())
@@ -628,6 +766,72 @@ class RolloutTests(unittest.TestCase):
     "Explicit immutable local fixture images required",
 )
 class DockerTests(unittest.TestCase):
+    def test_legacy_readiness_uses_api_and_does_not_follow_redirects(self):
+        program = """import http.server,json
+class Handler(http.server.BaseHTTPRequestHandler):
+    requests = 0
+    def log_message(self, *args):
+        pass
+    def do_GET(self):
+        type(self).requests += 1
+        print(json.dumps({'path': self.path}), flush=True)
+        self.send_response(200 if self.requests == 1 else 302)
+        self.send_header('Location', 'http://127.0.0.1:4200/must-not-follow')
+        self.end_headers()
+http.server.HTTPServer(('127.0.0.1', 4200), Handler).serve_forever()
+"""
+        identity = (
+            rollout.storage.run(
+                [
+                    "docker",
+                    "run",
+                    "-d",
+                    "--name",
+                    "ops-prefect-readiness-" + uuid4().hex[:12],
+                    "--pull=never",
+                    "--network=none",
+                    "--read-only",
+                    "--cap-drop=ALL",
+                    "--security-opt=no-new-privileges:true",
+                    "--no-healthcheck",
+                    "--memory=128m",
+                    "--pids-limit=32",
+                    "--env",
+                    "HTTP_PROXY=http://unreachable.invalid:1",
+                    "--entrypoint",
+                    "python",
+                    os.environ["OPS_INITIAL_RUNTIME_OPS_IMAGE"],
+                    "-I",
+                    "-B",
+                    "-c",
+                    program,
+                ]
+            )
+            .decode()
+            .strip()
+        )
+        try:
+            original = rollout.storage.inspect(identity)
+            self.assertNotIn("Health", original["State"])
+            rollout.wait_prefect_ready(identity, timeout_seconds=10)
+            with self.assertRaisesRegex(ValueError, "deadline"):
+                rollout.wait_prefect_ready(identity, timeout_seconds=1)
+            after = rollout.storage.inspect(identity)
+            self.assertEqual(
+                after["State"]["StartedAt"], original["State"]["StartedAt"]
+            )
+            self.assertEqual(after["RestartCount"], original["RestartCount"])
+            requests = [
+                json.loads(row)
+                for row in rollout.storage.run(
+                    ["docker", "logs", identity]
+                ).splitlines()
+            ]
+            self.assertGreaterEqual(len(requests), 2)
+            self.assertTrue(all(row == {"path": "/api/health"} for row in requests))
+        finally:
+            rollout.storage.run(["docker", "rm", "--force", identity])
+
     def test_images_match_source_and_compose_preserves_literal_credentials(self):
         ops = rollout.image_release(os.environ["OPS_INITIAL_RUNTIME_OPS_IMAGE"])
         runner = rollout.image_release(
