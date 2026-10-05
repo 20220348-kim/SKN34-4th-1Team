@@ -169,6 +169,20 @@ describe('공식 신청 경로 링크', () => {
     expect(screen.queryByRole('link', { name: /구글 설문/ })).toBeNull()
   })
 
+  it('중복 지원·수혜 검토는 이 공고를 미리 고른 새 검토로 열고, 비로그인은 로그인 뒤 그 화면으로 이어진다', async () => {
+    const program = supportProgramDetails[0]!
+    vi.spyOn(appContainer.resolve('getSupportProgramDetailUseCase'), 'execute').mockResolvedValue(program)
+    const reviewPath = `/app/combination-reviews/new?${new URLSearchParams({ sourceCode: program.sourceCode, sourceProgramId: program.id })}`
+    renderDetail(null, undefined, memberAccount)
+    await screen.findByRole('heading', { name: program.title })
+    expect(screen.getByRole('link', { name: '중복 지원·수혜 검토' }).getAttribute('href')).toBe(reviewPath)
+
+    cleanup()
+    renderDetail()
+    await screen.findByRole('heading', { name: program.title })
+    expect(screen.getByRole('link', { name: '중복 지원·수혜 검토' }).getAttribute('href')).toBe(`/login?next=${encodeURIComponent(reviewPath)}`)
+  })
+
   it('신청 주소가 없으면 신청 링크 없이 원문 링크만 둔다', async () => {
     vi.spyOn(appContainer.resolve('getSupportProgramDetailUseCase'), 'execute').mockResolvedValue(supportProgramDetails[0])
     renderDetail()

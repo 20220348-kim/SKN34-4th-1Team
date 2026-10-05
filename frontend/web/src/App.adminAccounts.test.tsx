@@ -2,14 +2,16 @@
 
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { Provider } from 'react-redux'
-import { MemoryRouter } from 'react-router'
+import { MemoryRouter, useLocation } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import App from './App'
 import { appContainer } from './app/appContainer'
 import { createAppStore } from './app/store'
+import { AccountApiError } from './data/api/accountApi'
 import type { Account } from './domain/entities/Account'
 import type { AdminAccountDetail, AdminAccountPage, AdminAccountStats, AdminAccountSummary } from './domain/entities/AdminAccount'
+import { adminAccessMessages } from './presentation/features/admin/viewmodel/adminAccountAccess'
 import { adminAccountDetailMessages } from './presentation/features/admin/viewmodel/useAdminAccountDetailViewModel'
 import { sessionRestored } from './presentation/shared/auth/state/authSlice'
 import { chooseOption, selectedValue } from './test/selectField'
@@ -139,8 +141,8 @@ describe('관리자 계정 관리', () => {
 
     const info = await screen.findByRole('region', { name: '계정 정보' })
     expect(within(info).getByRole('heading', { name: 'member@company.co.kr' })).toBeTruthy()
-    // 머리글의 상위 화면 이름(계정 관리)을 누르면 목록으로 돌아갑니다.
-    expect(within(screen.getByRole('navigation', { name: '상위 화면' })).getByRole('link', { name: '계정 관리' }).getAttribute('href')).toBe('/app/admin/accounts')
+    // 머리글의 상위 화면 이름(회원 관리, 사이드바 메뉴와 같은 이름)을 누르면 목록으로 돌아갑니다.
+    expect(within(screen.getByRole('navigation', { name: '상위 화면' })).getByRole('link', { name: '회원 관리' }).getAttribute('href')).toBe('/app/admin/accounts')
     expect(within(screen.getByRole('region', { name: '기업 정보' })).getByText('124-81-00998')).toBeTruthy()
     expect(within(screen.getByRole('region', { name: '활동' })).getByText('2건 (모집 중 1건)')).toBeTruthy()
     expect(within(screen.getByRole('region', { name: '조치 기록' })).getByText('조치 기록이 없습니다.')).toBeTruthy()
@@ -197,14 +199,65 @@ describe('관리자 계정 관리', () => {
   })
 })
 
+describe('관리자 세션·권한이 도중에 바뀐 경우', () => {
+  it('목록에서 세션이 끝났으면(401) 지금 주소로 돌아오는 로그인으로 보낸다', async () => {
+    vi.spyOn(appContainer.resolve('browseAdminAccountsUseCase'), 'execute').mockRejectedValue(new AccountApiError(401, null))
+    const { store } = renderApp('/app/admin/accounts?status=SUSPENDED')
+
+    expect(await screen.findByRole('form', { name: '로그인' })).toBeTruthy()
+    expect(screen.getByTestId('location').textContent).toBe(`/login?next=${encodeURIComponent('/app/admin/accounts?status=SUSPENDED')}`)
+    expect(store.getState().auth.status).toBe('anonymous')
+    expect(screen.queryByText('계정 목록을 불러오지 못했습니다.')).toBeNull()
+  })
+
+  it('목록에서 관리자 권한이 없으면(403) 다시 시도 대신 권한 안내를 보여 준다', async () => {
+    vi.spyOn(appContainer.resolve('browseAdminAccountsUseCase'), 'execute').mockRejectedValue(new AccountApiError(403, 'ADMIN_ACCESS_DENIED'))
+    renderApp('/app/admin/accounts')
+
+    expect((await screen.findByText(adminAccessMessages.forbidden)).getAttribute('role')).toBe('alert')
+    expect(screen.queryByText(/계정 목록을 불러오지 못했습니다/)).toBeNull()
+    expect(screen.queryByRole('button', { name: '다시 시도' })).toBeNull()
+  })
+
+  it('상세에서 관리자 권한이 없으면(403) 권한 안내를 보여 준다', async () => {
+    vi.spyOn(appContainer.resolve('getAdminAccountDetailUseCase'), 'execute').mockRejectedValue(new AccountApiError(403, 'ADMIN_ACCESS_DENIED'))
+    renderApp('/app/admin/accounts/detail?accountId=11')
+
+    expect((await screen.findByText(adminAccessMessages.forbidden)).getAttribute('role')).toBe('alert')
+    expect(screen.queryByText(/계정을 불러오지 못했습니다/)).toBeNull()
+  })
+
+  it('상세 조치 중 세션이 끝났으면(401) 모달을 닫고 로그인으로 보낸다', async () => {
+    vi.spyOn(appContainer.resolve('getAdminAccountDetailUseCase'), 'execute').mockResolvedValue(detailOf(member))
+    vi.spyOn(appContainer.resolve('takeAdminAccountActionUseCase'), 'execute').mockRejectedValue(new AccountApiError(401, null))
+    renderApp('/app/admin/accounts/detail?accountId=11')
+
+    fireEvent.click(within(await screen.findByRole('region', { name: '계정 정보' })).getByRole('button', { name: '정지' }))
+    const dialog = screen.getByRole('dialog', { name: '계정을 정지할까요?' })
+    fireEvent.change(within(dialog).getByLabelText('사유 (조치 기록에 남습니다)'), { target: { value: '스팸 제안 반복' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: '정지' }))
+
+    expect(await screen.findByRole('form', { name: '로그인' })).toBeTruthy()
+    expect(screen.getByTestId('location').textContent).toBe(`/login?next=${encodeURIComponent('/app/admin/accounts/detail?accountId=11')}`)
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+})
+
+function LocationProbe() {
+  const location = useLocation()
+  return <output data-testid="location">{`${location.pathname}${location.search}`}</output>
+}
+
 function renderApp(initialEntry: string, account: Account = adminAccount) {
   const store = createAppStore()
   store.dispatch(sessionRestored(account))
-  return render(
+  const rendered = render(
     <Provider store={store}>
       <MemoryRouter initialEntries={[initialEntry]}>
         <App />
+        <LocationProbe />
       </MemoryRouter>
     </Provider>,
   )
+  return { store, ...rendered }
 }

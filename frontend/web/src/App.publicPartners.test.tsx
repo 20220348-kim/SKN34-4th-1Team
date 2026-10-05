@@ -165,6 +165,8 @@ describe('공개 파트너 모집', () => {
     renderApp(`/partners/detail?recruitmentId=${id}`, null)
 
     expect(await screen.findByRole('heading', { name: '모집글을 찾을 수 없습니다' })).toBeTruthy()
+    expect(screen.getByText('삭제되었거나 주소가 잘못되었을 수 있어요.')).toBeTruthy()
+    expect(screen.queryByText(/대신 표시하지 않습니다/)).toBeNull()
     expect(screen.getByRole('link', { name: '← 파트너 모집 목록' }).getAttribute('href')).toBe('/partners')
   })
 

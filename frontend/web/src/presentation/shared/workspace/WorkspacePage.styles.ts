@@ -88,16 +88,10 @@ export const workspacePageStyles = {
   ),
   activeChip: 'border-[#b4ddc7] bg-[#e7f6ed] font-bold text-[#087f46]',
   inactiveChip: 'border-sample-border bg-white text-sample-muted',
-  keyValueRow:
-    'flex items-center justify-between gap-3 rounded-[0.85rem] bg-[#f6f7f8] px-3 py-[0.6rem] text-[0.78rem] text-app-ink',
-  keyValueLabel: 'text-[0.75rem] font-bold text-sample-muted',
   table: 'w-full border-separate border-spacing-0 overflow-hidden rounded-[1.4rem] border border-sample-border text-[0.75rem]',
   tableHeadCell:
     'bg-[#f6f7f8] px-3 py-[0.6rem] text-left text-[0.7rem] font-bold whitespace-nowrap text-app-ink',
   tableCell: 'border-t border-sample-border px-3 py-[0.6rem] align-middle text-sample-muted',
-  tableStrongCell: 'font-bold text-app-ink',
-  tableActionCell: 'flex flex-wrap items-center gap-2',
-  warnRow: 'bg-[#fffaf0]',
   dangerRow: 'bg-[#fff5f6]',
   pagination: 'flex items-center justify-between gap-3 text-[0.75rem] text-sample-muted',
   emptyNote: 'm-0 text-[0.78rem] leading-[1.6] text-sample-muted',

@@ -8,13 +8,13 @@ import { supportProgramCategories } from '../../../../domain/entities/SupportPro
 import { appPaths, readSavedProgramsViewMode, savedProgramsPath, supportProgramDetailPath, type SavedProgramsViewMode } from '../../../shared/routes/appPaths'
 import { workspacePageStyles, workspaceTagClassName } from '../../../shared/workspace/WorkspacePage.styles'
 import { WorkspacePageHeader } from '../../../shared/workspace/WorkspacePageHeader'
-import { savedSupportProgramMessages } from '../../saved-support-program/viewmodel/useSavedSupportProgramsViewModel'
 import {
   applicationPipelineStages,
   type ApplicationPipelineListUseCase,
   useApplicationPipelineViewModel,
 } from '../viewmodel/useApplicationPipelineViewModel'
 import {
+  savedSupportProgramMessages,
   type SavedProgramsBrowseUseCase,
   type SavedProgramsSaveUseCases,
   useSavedProgramCalendarViewModel,

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { appContainer } from '../../../../app/appContainer'
 import { appPaths } from '../../../shared/routes/appPaths'
-import { reviewProgramKey, supportsAutomaticReview, unknownParticipation, validateReviewDraft, type CombinationReview, type ReviewDraft, type ReviewPage, type ReviewRun, type RunRequest, type RunSummary } from '../../../../domain/entities/CombinationReview'
+import { reviewProgramKey, supportsAutomaticReview, unknownParticipation, validateReviewDraft, type CombinationReview, type ReviewDraft, type ReviewPage, type ReviewProgram, type ReviewRun, type RunRequest, type RunSummary } from '../../../../domain/entities/CombinationReview'
 import type { SupportProgram } from '../../../../domain/entities/SupportProgram'
 import type { SupportProgramCatalog, SupportProgramCatalogFilters } from '../../../../domain/entities/SupportProgramCatalog'
 import { useReviewScope } from './useReviewScope'
@@ -17,7 +17,10 @@ function isEarlierState(current: RunSummary, next: RunSummary) {
   )
 }
 
-export function useReviewEditorViewModel(id: number | null, account: string, loadSavedPrograms = false, resultRunId: number | null = null, initialFacts = '') {
+/** 새 검토에 미리 골라 둘 공고입니다. 공고 상세의 [중복 지원·수혜 검토]가 주소에 실어 보냅니다. */
+export type InitialReviewProgram = Pick<ReviewProgram, 'sourceCode' | 'sourceProgramId'>
+
+export function useReviewEditorViewModel(id: number | null, account: string, loadSavedPrograms = false, resultRunId: number | null = null, initialFacts = '', initialProgram: InitialReviewProgram | null = null) {
   const useCase = appContainer.resolve('combinationReviewUseCase')
   const catalogUseCase = appContainer.resolve('browseSupportProgramsUseCase')
   const detailUseCase = appContainer.resolve('getSupportProgramDetailUseCase')
@@ -26,7 +29,12 @@ export function useReviewEditorViewModel(id: number | null, account: string, loa
   const savedProgramChoices = useSavedSupportProgramChoices(loadSavedPrograms)
   const { perform, ...scope } = useReviewScope()
   const [review, setReview] = useState<CombinationReview | null>(null)
-  const [draft, setDraft] = useState<ReviewDraft>({ title: '', programs: [] })
+  // 새 검토만 미리 고른 공고를 사업 1로 둡니다. 참여 상태는 다른 공고처럼 모름에서 시작합니다.
+  const [preselected] = useState(() => (id === null ? initialProgram : null))
+  const [draft, setDraft] = useState<ReviewDraft>(() => ({
+    title: '',
+    programs: preselected ? [{ sourceCode: preselected.sourceCode, sourceProgramId: preselected.sourceProgramId, subProgramId: null, participation: unknownParticipation() }] : [],
+  }))
   const [catalog, setCatalog] = useState<SupportProgramCatalog | null>(null)
   const [catalogFilters, setCatalogFilters] = useState(defaultProgramSelectionFilters)
   const [appliedCatalogFilters, setAppliedCatalogFilters] = useState(defaultProgramSelectionFilters)
@@ -59,6 +67,16 @@ export function useReviewEditorViewModel(id: number | null, account: string, loa
     }, ({ saved, detail, history, labels }) => { setReview(detail); setDraft({ title: detail.title, programs: detail.programs }); setNames(labels); setRuns(history); setPending(saved); setJournalReady(true) })
   }, [id, account, journal, useCase, detailUseCase, perform])
   useEffect(() => { load() }, [load])
+  // 미리 고른 공고의 이름은 상세 조회로 채웁니다. 조회만 하고 저장·분석은 보내지 않으며, 못 읽어도 선택은 그대로 둡니다.
+  useEffect(() => {
+    if (!preselected) return
+    const controller = new AbortController()
+    const key = reviewProgramKey(preselected)
+    void detailUseCase.execute(preselected, controller.signal)
+      .then((found) => (found ? `${found.title} · ${found.organization}` : '공고 정보를 찾을 수 없음'), () => '공고 정보를 불러오지 못함')
+      .then((label) => { if (!controller.signal.aborted) setNames((current) => ({ [key]: label, ...current })) })
+    return () => controller.abort()
+  }, [preselected, detailUseCase])
   const search = (page = 1, filters: SupportProgramCatalogFilters = catalogFilters) => {
     if (busy.includes('catalog')) return
     const query = { ...filters, keyword: filters.keyword.trim(), page }

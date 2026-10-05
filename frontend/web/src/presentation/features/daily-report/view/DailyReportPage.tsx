@@ -326,14 +326,14 @@ function ReportSettings({ vm }: { vm: ViewModel }) {
         </label>}
         {editing && fieldError('consent')}
       </div>
-      {/* 앱 푸시는 아직 보내는 기능이 없어 켤 수 없고, 자리와 상태만 알립니다. */}
+      {/* 앱 푸시는 기기마다 모바일 앱에서 켜고 끕니다. 웹은 기기별 상태를 알 수 없어 켜는 곳만 안내합니다. */}
       <div className={s.channel}>
         <div className={s.channelHead}>
           <span className={s.channelText}>
             <span className={s.channelTitle}>앱 푸시</span>
-            <span className={s.channelDescription}>모바일 앱 알림은 준비 중이에요.</span>
+            <span className={s.channelDescription}>모바일 앱의 전체 › 리포트 수신 설정에서 기기마다 켜요.</span>
           </span>
-          <span className={workspaceTagClassName('muted')}>준비 중</span>
+          <span className={workspaceTagClassName('muted')}>앱에서 설정</span>
         </div>
       </div>
     </section>

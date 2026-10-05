@@ -163,6 +163,8 @@ function SupportProgramDetail({ program, searchReturnTo, fromPipeline }: {
   const needsRemoveConfirm = fromPipeline && save.isSaved === true
   const identity = { sourceCode: program.sourceCode, sourceProgramId: program.id }
   const applicationPreparationPath = `${appPaths.applicationPreparationNew}?${new URLSearchParams(identity)}`
+  // 중복 검토도 이 공고를 사업 1로 골라 둔 새 검토로 엽니다.
+  const combinationReviewPath = `${appPaths.combinationReviewNew}?${new URLSearchParams(identity)}`
   // 구글 설문으로 신청하는 공고는 신청 문서 작성 대신 설문 답변 미리 채우기로 보냅니다.
   const googleFormUrl = program.applicationRoute.type === 'GOOGLE_FORMS' ? program.applicationRoute.url : null
   // 원문 질문은 상세를 떠나지 않고 위에 겹치는 옆 패널(좁은 화면은 아래 시트)로 엽니다. 열림은 `?ask=1`로 주소에 남겨 뒤로가기·새로고침이 그대로 됩니다.
@@ -320,7 +322,7 @@ function SupportProgramDetail({ program, searchReturnTo, fromPipeline }: {
                   <span className={s.rowIcon}><Icon name="document" /></span><span className={s.rowLabel}>{googleFormUrl ? '로그인하고 구글 설문 답변 미리 채우기' : '로그인하고 이 공고로 신청 문서 작성'}</span>
                 </Link>
               )}
-              <Link className={s.row} to={save.isAuthenticated ? appPaths.combinationReviewNew : loginPathFor(appPaths.combinationReviewNew)}>
+              <Link className={s.row} to={save.isAuthenticated ? combinationReviewPath : loginPathFor(combinationReviewPath)}>
                 <span className={s.rowIcon}><Icon name="shield" /></span><span className={s.rowLabel}>중복 지원·수혜 검토</span>
               </Link>
             </nav>

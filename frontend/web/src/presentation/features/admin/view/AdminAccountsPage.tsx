@@ -3,6 +3,7 @@ import { Link } from 'react-router'
 import { workspacePageStyles, workspaceTagClassName } from '../../../shared/workspace/WorkspacePage.styles'
 import { SelectField } from '../../../shared/workspace/SelectField'
 import { WorkspacePageHeader } from '../../../shared/workspace/WorkspacePageHeader'
+import { adminAccessMessages } from '../viewmodel/adminAccountAccess'
 import { useAdminAccountListViewModel } from '../viewmodel/useAdminAccountListViewModel'
 import { adminAccountsPageStyles as styles, adminStatValueClassName } from './AdminAccountsPage.styles'
 
@@ -18,7 +19,7 @@ export function AdminAccountsPage() {
 
   return (
     <>
-      <WorkspacePageHeader title="계정 관리" actions={<Link className={workspacePageStyles.secondaryButton} to="/ops/evaluations">LLMOps 운영</Link>} />
+      <WorkspacePageHeader title="회원 관리" actions={<Link className={workspacePageStyles.secondaryButton} to="/ops/evaluations">LLMOps 운영</Link>} />
 
       <div className={workspacePageStyles.content}>
         {vm.stats ? (
@@ -90,7 +91,9 @@ export function AdminAccountsPage() {
             </div>
           </div>
 
-          {vm.phase === 'failed' ? (
+          {vm.phase === 'forbidden' ? (
+            <p className={workspacePageStyles.emptyNote} role="alert">{adminAccessMessages.forbidden}</p>
+          ) : vm.phase === 'failed' ? (
             <p className={workspacePageStyles.emptyNote}>
               계정 목록을 불러오지 못했습니다.{' '}
               <button className={workspacePageStyles.quietLink} type="button" onClick={vm.retry}>다시 시도</button>

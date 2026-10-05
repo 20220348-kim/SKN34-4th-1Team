@@ -177,6 +177,38 @@ describe('review screens and execution safety', () => {
     expect(screen.queryByRole('dialog', { name: '관심 공고함에서 선택' })).toBeNull()
   })
 
+  it('starts a review opened from a program detail with that program already chosen as program 1', async () => {
+    const other = { ...structuredClone(supportPrograms[1]!), id: 'saved-2' }
+    browseSavedPrograms.mockResolvedValueOnce([{ savedAt: '2026-09-12T10:00:00+09:00', program: other }])
+    repository.create.mockResolvedValue(structuredClone(reviewFixture))
+    mount('/app/combination-reviews/new?sourceCode=BIZINFO&sourceProgramId=PBLN_100')
+
+    const selected = within(screen.getByLabelText('현재 선택한 공고'))
+    expect(await selected.findByText(`사업 1 · 청년창업 사업화 지원 공고 · ${supportPrograms[0]!.organization}`)).toBeTruthy()
+    expect(screen.getByText('1/2 선택')).toBeTruthy()
+    // 미리 고르기는 공고 이름만 조회하고 검토를 만들거나 분석을 보내지 않습니다.
+    expect(repository.create).not.toHaveBeenCalled()
+    expect(repository.start).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: '관심 공고함에서 선택' }))
+    const dialog = await screen.findByRole('dialog', { name: '관심 공고함에서 선택' })
+    fireEvent.click(await within(dialog).findByRole('button', { name: `${other.title} 관심 공고 선택` }))
+    fireEvent.click(within(dialog).getByRole('button', { name: '선택 완료' }))
+    fireEvent.change(screen.getByLabelText('검토 제목'), { target: { value: '상세에서 시작한 검토' } })
+    fireEvent.click(screen.getByRole('button', { name: '다음 →' }))
+
+    await waitFor(() => expect(repository.create).toHaveBeenCalledOnce())
+    expect(repository.create.mock.calls[0][0].programs.map((program: { sourceCode: string; sourceProgramId: string }) => `${program.sourceCode}:${program.sourceProgramId}`))
+      .toEqual(['BIZINFO:PBLN_100', `${other.sourceCode}:saved-2`])
+  })
+
+  it.each(['?sourceCode=bizinfo&sourceProgramId=PBLN_100', '?sourceCode=BIZINFO&sourceProgramId=%20', '?sourceProgramId=PBLN_100'])(
+    'starts a new review without a preselected program for an invalid address %s', (search) => {
+      mount(`/app/combination-reviews/new${search}`)
+      expect(screen.getByText('선택한 공고가 없습니다.')).toBeTruthy()
+      expect(screen.getByText('0/2 선택')).toBeTruthy()
+    })
+
   it('shows an explicit empty message only after opening the saved-program picker', async () => {
     mount('/app/combination-reviews/new')
     expect(screen.queryByText('관심 공고함에 담은 공고가 없습니다.')).toBeNull()

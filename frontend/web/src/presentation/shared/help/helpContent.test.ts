@@ -47,7 +47,7 @@ describe('도움말 항목', () => {
   it('준비 중 기능을 다루는 항목은 무엇이 안 되는지 함께 적는다', () => {
     const preparing = findHelpEntry('feature-status-preparing')
     expect(preparing?.limitation).not.toBeNull()
-    expect(preparing?.body.some((paragraph) => paragraph.includes('저장되지 않습니다'))).toBe(true)
+    expect(preparing?.body.some((paragraph) => paragraph.includes('저장되지 않아요'))).toBe(true)
     // 관심 공고함은 정식 기능이므로 준비 중이라고 안내하지 않는다.
     expect(preparing?.body.some((paragraph) => paragraph.includes('관심 공고함은 아직'))).toBe(false)
   })

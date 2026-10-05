@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router'
 
 import { appContainer } from '../../../../app/appContainer'
+import { useAppDispatch } from '../../../../app/hooks'
 import type { AccountRole } from '../../../../domain/entities/Account'
 import {
   adminAccountLoginMethodLabels,
@@ -17,8 +18,10 @@ import {
   type AdminAccountStatus,
 } from '../../../../domain/entities/AdminAccount'
 import type { BrowseAdminAccountsUseCase, GetAdminAccountStatsUseCase } from '../../../../domain/usecases/AdminAccountUseCases'
+import { signedOut } from '../../../shared/auth/state/authSlice'
 import { appPaths } from '../../../shared/routes/appPaths'
 import type { AdminStatTone } from '../view/AdminAccountsPage.styles'
+import { adminAccessFailure } from './adminAccountAccess'
 import { formatAdminDate, formatAdminDateTime } from './adminAccountFormat'
 
 type ListUseCases = {
@@ -60,11 +63,15 @@ function toSearchParams(query: AdminAccountQuery): URLSearchParams {
   return params
 }
 
-type PageState = { key: string; phase: 'loading' | 'ready' | 'failed'; page: AdminAccountPage | null }
+type PageState = { key: string; phase: 'loading' | 'ready' | 'failed' | 'forbidden'; page: AdminAccountPage | null }
 
-/** 조건이 바뀌면 이전 요청을 취소하고 다시 읽습니다. 실패하면 마지막 결과를 둔 채 실패로 표시합니다. */
+/**
+ * 조건이 바뀌면 이전 요청을 취소하고 다시 읽습니다. 실패하면 마지막 결과를 둔 채 실패로 표시하고, 관리자 권한이 없으면(403) 권한 안내로 바꿉니다.
+ * 세션이 끝났으면(401) 로그인 상태를 비웁니다. 관리자 화면을 감싼 `RequireAuth`가 지금 주소를 `loginPathFor`로 담아 로그인으로 보냅니다.
+ */
 function useAdminAccountPage(query: AdminAccountQuery, useCase: ListUseCases['browse']) {
   const key = JSON.stringify(query)
+  const dispatch = useAppDispatch()
   const [version, setVersion] = useState(0)
   const [state, setState] = useState<PageState>({ key, phase: 'loading', page: null })
 
@@ -74,9 +81,17 @@ function useAdminAccountPage(query: AdminAccountQuery, useCase: ListUseCases['br
     void Promise.resolve()
       .then(() => useCase.execute(JSON.parse(key) as AdminAccountQuery, controller.signal))
       .then((page) => { if (!controller.signal.aborted) setState({ key, phase: 'ready', page }) })
-      .catch(() => { if (!controller.signal.aborted) setState((previous) => ({ ...previous, key, phase: 'failed' })) })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return
+        const access = adminAccessFailure(error)
+        if (access === 'signed-out') {
+          dispatch(signedOut())
+          return
+        }
+        setState((previous) => ({ ...previous, key, phase: access === 'forbidden' ? 'forbidden' : 'failed' }))
+      })
     return () => controller.abort()
-  }, [key, version, useCase])
+  }, [key, version, useCase, dispatch])
 
   return {
     phase: state.key === key ? state.phase : 'loading',

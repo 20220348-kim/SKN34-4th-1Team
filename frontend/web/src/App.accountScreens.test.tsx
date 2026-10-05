@@ -497,12 +497,12 @@ describe('계정 화면', () => {
     renderApp('/app/admin/accounts', account)
     // 회원은 관리자 화면 대신 작업 채팅으로 돌아가고 메뉴도 보지 못합니다.
     const sidebar = screen.getByRole('complementary', { name: '작업 사이드바' })
-    expect(within(sidebar).queryByRole('link', { name: '회원·기업' })).toBeNull()
-    expect(screen.queryByRole('heading', { name: '계정 관리' })).toBeNull()
+    expect(within(sidebar).queryByRole('link', { name: '회원 관리' })).toBeNull()
+    expect(screen.queryByRole('heading', { name: '회원 관리' })).toBeNull()
     fireEvent.click(within(sidebar).getByRole('button', { name: `계정 메뉴 · ${account.email}` }))
     expect(within(sidebar).getByRole('link', { name: '내 프로필' })).toBeTruthy()
     expect(within(sidebar).getByRole('button', { name: '로그아웃' })).toBeTruthy()
-    expect(within(sidebar).queryByRole('link', { name: '회원·기업' })).toBeNull()
+    expect(within(sidebar).queryByRole('link', { name: '회원 관리' })).toBeNull()
   })
 })
 
@@ -535,7 +535,7 @@ describe('작업 화면 사이드바', () => {
     expect(search.classList.contains('bg-[#e6f5ed]')).toBe(false)
   })
 
-  it('사이드바에서 파트너 모집을 열고 관리자 계정 메뉴에서 회원·기업으로 이동한다', () => {
+  it('사이드바에서 파트너 모집을 열고 관리자 계정 메뉴에서 회원 관리으로 이동한다', () => {
     renderApp('/app/chat', adminAccount)
 
     const sidebar = screen.getByRole('complementary', { name: '작업 사이드바' })
@@ -552,44 +552,45 @@ describe('작업 화면 사이드바', () => {
     expect(within(sidebar).getByRole('link', { name: /파트너 관리/ }).getAttribute('aria-current')).toBe('page')
 
     expect(within(sidebar).queryByRole('navigation', { name: '관리자' })).toBeNull()
-    expect(within(sidebar).queryByRole('link', { name: '회원·기업' })).toBeNull()
+    expect(within(sidebar).queryByRole('link', { name: '회원 관리' })).toBeNull()
     const accountButton = within(sidebar).getByRole('button', { name: `계정 메뉴 · ${adminAccount.email}` })
     fireEvent.click(accountButton)
     expect(accountButton.getAttribute('aria-expanded')).toBe('true')
     const accountMenu = document.getElementById(accountButton.getAttribute('aria-controls')!)!
     expect(within(accountMenu).getByRole('link', { name: '내 프로필' })).toBeTruthy()
     expect(within(accountMenu).getByRole('button', { name: '로그아웃' })).toBeTruthy()
-    const adminLink = within(accountMenu).getByRole('link', { name: '회원·기업' })
+    const adminLink = within(accountMenu).getByRole('link', { name: '회원 관리' })
     expect(adminLink.getAttribute('href')).toBe('/app/admin/accounts')
     expect(adminLink.getAttribute('aria-current')).toBeNull()
-    expect(within(sidebar).getAllByRole('link', { name: '회원·기업' })).toHaveLength(1)
+    expect(within(sidebar).getAllByRole('link', { name: '회원 관리' })).toHaveLength(1)
     fireEvent.click(adminLink)
-    expect(screen.getByRole('heading', { name: '계정 관리' })).toBeTruthy()
+    // 사이드바 메뉴 이름과 화면 제목이 같습니다.
+    expect(screen.getByRole('heading', { level: 1, name: '회원 관리' })).toBeTruthy()
     expect(accountButton.getAttribute('aria-expanded')).toBe('false')
-    expect(within(sidebar).queryByRole('link', { name: '회원·기업' })).toBeNull()
+    expect(within(sidebar).queryByRole('link', { name: '회원 관리' })).toBeNull()
 
     fireEvent.click(accountButton)
-    const activeAdminLink = within(sidebar).getByRole('link', { name: '회원·기업' })
+    const activeAdminLink = within(sidebar).getByRole('link', { name: '회원 관리' })
     expect(activeAdminLink.getAttribute('aria-current')).toBe('page')
     expect(activeAdminLink.classList.contains('bg-[#e6f5ed]')).toBe(true)
   })
 
-  it('관리자 계정 메뉴를 Escape나 바깥 클릭으로 닫으면 회원·기업 링크도 숨긴다', () => {
+  it('관리자 계정 메뉴를 Escape나 바깥 클릭으로 닫으면 회원 관리 링크도 숨긴다', () => {
     renderApp('/app/chat', adminAccount)
     const sidebar = screen.getByRole('complementary', { name: '작업 사이드바' })
     const accountButton = within(sidebar).getByRole('button', { name: `계정 메뉴 · ${adminAccount.email}` })
 
     fireEvent.click(accountButton)
-    expect(within(sidebar).getByRole('link', { name: '회원·기업' })).toBeTruthy()
+    expect(within(sidebar).getByRole('link', { name: '회원 관리' })).toBeTruthy()
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(accountButton.getAttribute('aria-expanded')).toBe('false')
-    expect(within(sidebar).queryByRole('link', { name: '회원·기업' })).toBeNull()
+    expect(within(sidebar).queryByRole('link', { name: '회원 관리' })).toBeNull()
 
     fireEvent.click(accountButton)
-    expect(within(sidebar).getByRole('link', { name: '회원·기업' })).toBeTruthy()
+    expect(within(sidebar).getByRole('link', { name: '회원 관리' })).toBeTruthy()
     fireEvent.mouseDown(document.body)
     expect(accountButton.getAttribute('aria-expanded')).toBe('false')
-    expect(within(sidebar).queryByRole('link', { name: '회원·기업' })).toBeNull()
+    expect(within(sidebar).queryByRole('link', { name: '회원 관리' })).toBeNull()
   })
 
   it('모든 메뉴가 화면을 가져 준비 중 표시가 없다', () => {
@@ -1441,6 +1442,9 @@ describe('파트너 모집 화면', () => {
   it.each(['999', '', 'abc', '101&recruitmentId=999'])('없거나 잘못된 상세 식별자는 다른 글로 대체하지 않는다: %s', async (id) => {
     renderApp(`/app/partners/detail?recruitmentId=${id}`)
     expect(await screen.findByRole('heading', { name: '모집글을 찾을 수 없습니다' })).toBeTruthy()
+    // 안내는 사용자가 알 수 있는 이유만 말하고 구현 설명(다른 글로 대신 표시하지 않음)은 하지 않습니다.
+    expect(screen.getByText('삭제되었거나 주소가 잘못되었을 수 있어요.')).toBeTruthy()
+    expect(screen.queryByText(/대신 표시하지 않습니다/)).toBeNull()
     expect(screen.queryByRole('form', { name: '참여 제안' })).toBeNull()
     expect(fetch).not.toHaveBeenCalled()
   })
