@@ -32,8 +32,11 @@ Ops migration 성공 뒤에만 앱을 적용한다.
 입력 오류·부분 접수 schema·다른 변경 이력은 migration 전에 거절한다. migration 또는 접수 중지가
 실패하면 성공으로 출력하지 않는다. MySQL DDL의 rollback이나 서비스 자동 복구는 수행하지 않는다.
 일반 Helm Job은 기존 옵션 없는 명령을 유지하며 이 옵션을 자동 사용하지 않는다.
-실제 최초 전환은 [쓰기 중지·백업·승인 절차](../../../docs/ops-upgrade-runbook.md#최초-migration과-접수-중지를-함께-확인하기)가
-갖춰진 별도 실행 경로에서 연결해야 한다.
+개인 WSL/kind의 [`ops_initial_migration.py`](../scripts/ops_initial_migration.py)는 검증된 Helm
+Job에 이 옵션을 연결한다. 깨끗한 대상 SHA의 필수 CI, 같은 중지 시점의 암호화 state 백업,
+실제 격리 복원·전환 검증을 요구하고 기본 실행은 검증만 수행한다. 원본 DB 변경은 별도 승인 후
+`--execute`로 요청하며 성공·실패 Job과 실행 기록을 남긴다. API/sync·Compose 재개와 이미지 교체는
+수행하지 않는다. [최초 전환 실행 절차](../../../docs/ops-upgrade-runbook.md#쓰기가-중지된-개인-환경의-최초-migration-실행-경로)를 따른다.
 
 Argo의 [hook 실행 순서와 삭제 정책](https://argo-cd.readthedocs.io/en/stable/user-guide/sync-waves/),
 [Kubernetes Job 실행 특성](https://kubernetes.io/docs/concepts/workloads/controllers/job/),

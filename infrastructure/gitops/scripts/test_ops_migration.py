@@ -135,6 +135,20 @@ class OpsMigrationTests(unittest.TestCase):
                 self.assertNotIn("kind: Deployment", call.kwargs.get("data", ""))
             self.assertFalse((state / "baseline.json").exists())
 
+    def test_initial_migration_retains_completed_job_for_inspection(self):
+        execute = Mock(return_value="")
+        run_migration(
+            self.job,
+            ["kubectl"],
+            ["kubectl", "-n", "govbiz-msa"],
+            execute,
+            retain_completed=True,
+        )
+        self.assertEqual(execute.call_count, 3)
+        self.assertFalse(
+            any("delete" in call.args[0] for call in execute.call_args_list)
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

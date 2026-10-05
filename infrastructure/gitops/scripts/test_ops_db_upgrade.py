@@ -18,6 +18,7 @@ from uuid import uuid4
 
 import ops_db_upgrade as upgrade
 import ops_db_upgrade_probe as probe
+import ops_initial_migration as initial
 from test_ops_db_snapshot import payload as db_payload
 
 IMAGE = "sha256:" + "a" * 64
@@ -338,7 +339,24 @@ class DockerUpgradeTests(unittest.TestCase):
                 key = secrets.token_hex(32).encode()
                 storage.exclusive(root / "key", key)
                 storage.exclusive(root / "archive", storage.seal(value, key))
-                report = upgrade.rehearse(root / "archive", root / "key", image)
+                execute_upgrade = upgrade.run_upgrade
+
+                def verify_initial_pause(command, image, payload):
+                    result = execute_upgrade(command, image, payload)
+                    request = database.query(
+                        command,
+                        "SELECT request_id FROM evaluations_evaluationadmissionchange;",
+                    )
+                    pause = initial.pause_arguments(
+                        request, "격리 DB 전환 검증", "복원본 전환 후 신규 접수 중지"
+                    )
+                    initial.verify_pause(command, pause)
+                    with self.assertRaises(ValueError):
+                        initial.verify_pause(command, {**pause, "actor": "다른 운영자"})
+                    return result
+
+                with patch.object(upgrade, "run_upgrade", side_effect=verify_initial_pause):
+                    report = upgrade.rehearse(root / "archive", root / "key", image)
                 self.assertEqual(report["to_evaluations"], "0028_daily_evaluation_schedules")
                 self.assertTrue(report["original_rows_preserved"])
                 self.assertTrue(report["admission_paused"])
