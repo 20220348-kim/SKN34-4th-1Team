@@ -354,6 +354,13 @@ class BridgeConnectTests(unittest.TestCase):
 
 
 class ComposeBridgeTests(unittest.TestCase):
+    def setUp(self):
+        path = REPOSITORY_ROOT / "infrastructure/llmops/check_artifact_compose.py"
+        spec = importlib.util.spec_from_file_location("artifact_compose", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self.check_compose = module.check
+
     def test_smoke_does_not_inherit_real_credentials_or_compose_overrides(self):
         with patch.dict(
             os.environ,
@@ -373,14 +380,15 @@ class ComposeBridgeTests(unittest.TestCase):
             result, {"PATH": "tool-path", "DOCKER_CONTEXT": "fixture-context"}
         )
 
-    def test_real_compose_merge_keeps_only_two_endpoints_on_private_bridge(self):
+    def render_compose(self, with_bridge):
         directory = REPOSITORY_ROOT / "infrastructure/llmops"
         names = (
             "compose.yaml",
             "compose.ops.yaml",
             "compose.artifacts.yaml",
-            "compose.kind.yaml",
         )
+        if with_bridge:
+            names += ("compose.kind.yaml",)
         keys = set(
             re.findall(
                 r"\$\{([A-Z][A-Z0-9_]*)",
@@ -416,12 +424,11 @@ class ComposeBridgeTests(unittest.TestCase):
                     env=smoke_ops_bridge.compose_environment(keys),
                 )
             )
-        spec = importlib.util.spec_from_file_location(
-            "artifact_compose", directory / "check_artifact_compose.py"
-        )
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        module.check(config)
+        return config
+
+    def test_real_compose_merge_keeps_only_two_endpoints_on_private_bridge(self):
+        config = self.render_compose(with_bridge=True)
+        self.check_compose(config)
         for name in ("langfuse-web", "langfuse-worker"):
             for failure in ("missing_healthcheck", "disabled_healthcheck", "process_only", "missing_dependency"):
                 with self.subTest(service=name, failure=failure):
@@ -435,7 +442,7 @@ class ComposeBridgeTests(unittest.TestCase):
                     else:
                         bad["services"]["evaluation-runner"]["depends_on"].pop(name)
                     with self.assertRaises(AssertionError):
-                        module.check(bad)
+                        self.check_compose(bad)
         for mutate in (
             lambda data: data["services"]["prefect"].update(restart="no"),
             lambda data: data["services"]["prefect"].pop("healthcheck"),
@@ -457,7 +464,47 @@ class ComposeBridgeTests(unittest.TestCase):
             bad = copy.deepcopy(config)
             mutate(bad)
             with self.assertRaises(AssertionError):
-                module.check(bad)
+                self.check_compose(bad)
+
+    def test_kind_runner_does_not_start_local_ops_bootstrap_or_database(self):
+        config = self.render_compose(with_bridge=True)
+        self.assertEqual(
+            set(config["services"]["evaluation-runner"]["depends_on"]),
+            {"prefect", "langfuse-web", "langfuse-worker"},
+        )
+        self.check_compose(config)
+
+    def test_local_compose_retains_review_bootstrap_before_workers_start(self):
+        config = self.render_compose(with_bridge=False)
+        services = config["services"]
+        for name in ("ops-service", "ops-sync", "evaluation-runner"):
+            with self.subTest(service=name):
+                self.assertEqual(
+                    services[name]["depends_on"]["ops-bootstrap"]["condition"],
+                    "service_completed_successfully",
+                )
+        self.assertEqual(
+            services["ops-bootstrap"]["depends_on"]["ops-mysql"]["condition"],
+            "service_healthy",
+        )
+        self.assertEqual(
+            services["ops-bootstrap"]["environment"]["LLMOPS_LOCAL_SEED_ENABLED"], "true"
+        )
+        self.check_compose(config)
+
+    def test_kind_preflight_rejects_direct_and_transitive_local_ops_dependencies(self):
+        config = self.render_compose(with_bridge=True)
+        for parent in ("evaluation-runner", "prefect", "langfuse-worker", "ops-artifacts"):
+            for dependency in (
+                "ops-bootstrap", "ops-mysql", "ops-service", "ops-sync", "auth-core", "auth-mysql"
+            ):
+                with self.subTest(parent=parent, dependency=dependency):
+                    bad = copy.deepcopy(config)
+                    bad["services"][parent].setdefault("depends_on", {})[dependency] = {
+                        "condition": "service_started"
+                    }
+                    with self.assertRaisesRegex(AssertionError, "must not start local Ops"):
+                        self.check_compose(bad)
 
 
 if __name__ == "__main__":

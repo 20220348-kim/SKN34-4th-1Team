@@ -140,6 +140,13 @@ Compose를 연결한다. WSL2/Linux·Intel Mac의 `dev` 모드용이며 Argo가 
 기존 `fork_cluster.py init/up`으로 준비된 상태·kubeconfig·클러스터 소유권 표시가 필요하다.
 Docker의 `network connect --gw-priority`를 지원하는 Engine을 사용한다(검증 기준 29.6.2).
 
+이 구성에서는 Ops와 DB가 Kubernetes에서 실행되므로 `compose.kind.yaml`이 평가 실행기의
+`ops-bootstrap` 의존성만 제거한다. Prefect·Langfuse의 준비 대기는 유지하며, 일반 Compose의
+Git 검토 기록 자동 초기화에는 영향을 주지 않는다. `check_artifact_compose.py`는 최종 병합된
+설정에서 실행기·결과 서버의 직접·간접 의존성을 검사해 로컬 Ops·DB가 함께 시작되는 구성을
+실행기 시작 전에 거절한다. 로컬 검증은 실제 Compose 설정 병합으로 수행하고, Kubernetes 실행·
+복원까지 포함한 통합 검증은 LLMOps CI에서 별도로 확인한다.
+
 연결 흐름은 `Ops Pod → ClusterIP 서비스 → EndpointSlice → Docker 내부 네트워크 → Compose HTTP 서버`다.
 [Docker 내부 네트워크](https://docs.docker.com/reference/compose-file/networks/#internal)에는 Prefect,
 `ops-artifacts`, 해당 kind 노드만 참가한다. 다른 kind 클러스터가 공유하는 기본 네트워크를 통신 경로로 쓰거나

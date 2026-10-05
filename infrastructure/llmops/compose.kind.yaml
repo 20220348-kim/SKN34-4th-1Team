@@ -8,6 +8,11 @@ services:
     networks:
       default: {}
       ops-bridge: {}
+  evaluation-runner:
+    # Ops and its DB run in Kubernetes. Keep Prefect/Langfuse readiness dependencies,
+    # but do not initialize or start a second Ops database through the local seed job.
+    depends_on:
+      ops-bootstrap: !reset null
 
 networks:
   ops-bridge:

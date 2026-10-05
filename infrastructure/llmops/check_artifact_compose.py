@@ -117,6 +117,20 @@ def check(config):
             port.get("host_ip") == "127.0.0.1"
             for port in services["prefect"].get("ports", [])
         ), "Prefect must remain loopback-only"
+        # Traverse the merged graph, including indirect dependencies, before runner startup.
+        # A completed bootstrap job can start MySQL even though it never appears as running.
+        local_ops = {
+            "ops-bootstrap", "ops-service", "ops-sync", "ops-mysql", "auth-core", "auth-mysql"
+        }
+        pending = {"evaluation-runner", "ops-artifacts"}
+        visited = set()
+        while pending:
+            name = pending.pop()
+            assert name not in local_ops, f"Kubernetes bridge must not start local Ops: {name}"
+            if name in visited:
+                continue
+            visited.add(name)
+            pending.update(services[name].get("depends_on", {}))
 
 
 if __name__ == "__main__":
