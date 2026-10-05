@@ -107,7 +107,7 @@ export function AccountScreen({ onCompany, onSettings, initialMode = 'login', au
       {codeSent && !emailPass && <><Field label="인증번호" value={code} onChangeText={(value) => setCode(value.replace(/\D/g, '').slice(0, 6))} keyboardType="number-pad" autoComplete="one-time-code" maxLength={6} editable={!busy} /><Button label="인증번호 확인" onPress={() => void verifyCode()} disabled={busy} /></>}
     </>}
     <Field label="비밀번호" value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" autoCorrect={false} autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} maxLength={72} editable={!busy} />
-    {mode === 'signup' && <><Field label="비밀번호 확인" value={confirmation} onChangeText={setConfirmation} secureTextEntry autoCapitalize="none" autoCorrect={false} autoComplete="new-password" maxLength={72} editable={!busy} /><Text style={{ color: colors.muted }}>비밀번호는 8~72자, UTF-8 72바이트 이하로 입력하세요. 한글은 보통 한 글자에 3바이트입니다. 가입하면 이용약관과 개인정보 처리방침에 동의한 것으로 봅니다.</Text></>}
+    {mode === 'signup' && <><Field label="비밀번호 확인" value={confirmation} onChangeText={setConfirmation} secureTextEntry autoCapitalize="none" autoCorrect={false} autoComplete="new-password" maxLength={72} editable={!busy} /><Text style={{ color: colors.muted }}>비밀번호는 영문·숫자·특수문자만 사용할 수 있으며, 8~72자로 입력해 주세요. 가입하면 이용약관과 개인정보 처리방침에 동의한 것으로 봅니다.</Text></>}
     {notice && <Notice>{notice}</Notice>}
     {error && <Notice error>{error}</Notice>}
     {auth.restoreError && <Notice error>{auth.restoreError}</Notice>}
