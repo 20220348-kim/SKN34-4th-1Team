@@ -86,3 +86,19 @@ tasks.named('test') {
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
 }
+
+// 실제 Core 청커만 호출하는 무료 평가 준비. Spring/DB/HTTP/모델 실행은 없다.
+tasks.register('preflightEvidenceEvaluation', JavaExec) {
+    group = 'verification'
+    description = 'Inspect an official RAG fixture with the production Core chunker.'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'ai.govbiz.core.supportprogram.service.evaluation.SupportProgramEvidenceEvaluationPreflight'
+    javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(21) }
+    doFirst {
+        if (!project.hasProperty('evidenceFixture') || !project.hasProperty('evidenceReport')) {
+            throw new GradleException('Specify -PevidenceFixture=<input.json> -PevidenceReport=<new-report.json>')
+        }
+        args project.file(project.property('evidenceFixture')).absolutePath,
+             project.file(project.property('evidenceReport')).absolutePath
+    }
+}
