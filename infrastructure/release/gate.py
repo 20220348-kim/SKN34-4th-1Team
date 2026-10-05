@@ -100,6 +100,13 @@ def blocked_reason(sha, fork, get=api, *, evidence=None):
         return "source_not_current"
     if not upstream_merged(sha, fork, get):
         return "upstream_not_merged"
+    return ci_blocked_reason(sha, fork, get, evidence=evidence)
+
+
+def ci_blocked_reason(sha, fork, get=api, *, evidence=None):
+    """Check exact push jobs; callers separately enforce source/branch authority."""
+    if not valid_sha(sha):
+        raise ValueError("A full source SHA is required")
     for filename, required_jobs in WORKFLOWS.items():
         response = get(f"repos/{fork.repository}/actions/workflows/{filename}/runs"
                        f"?head_sha={sha}&branch={quote(fork.branch, safe='')}&event=push&per_page=100")

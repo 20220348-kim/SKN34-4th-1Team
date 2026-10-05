@@ -95,6 +95,16 @@ class ReleaseGateTests(unittest.TestCase):
         self.assertFalse(gate.eligible(SHA, FORK, self.responses([])))
         self.assertFalse(gate.eligible(SHA, FORK, self.responses([run_record(path=".github/workflows/fake.yml")])))
 
+    def test_ci_only_gate_preserves_all_job_checks_without_publication_authority(self):
+        with patch.object(gate, "upstream_merged") as merged:
+            evidence = []
+            self.assertIsNone(gate.ci_blocked_reason(SHA, FORK, self.responses(), evidence=evidence))
+            self.assertEqual(len(evidence), len(gate.WORKFLOWS))
+            self.assertIsNotNone(gate.ci_blocked_reason(SHA, FORK, self.responses([])))
+            merged.assert_not_called()
+        with self.assertRaises(ValueError):
+            gate.ci_blocked_reason("invalid", FORK, self.responses())
+
     def test_new_failed_or_pending_run_overrides_old_success(self):
         for changes in ({"id": 11, "conclusion": "failure"},
                         {"id": 11, "status": "in_progress", "conclusion": None},

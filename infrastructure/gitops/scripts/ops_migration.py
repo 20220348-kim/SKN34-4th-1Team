@@ -3,7 +3,7 @@
 import yaml
 
 
-def run_migration(job, kube, namespaced, execute):
+def run_migration(job, kube, namespaced, execute, *, retain_completed=False):
     name = "ops-service-migrate"
     if job.get("kind") != "Job" or job.get("metadata", {}).get("name") != name:
         raise ValueError("Expected the reviewed Ops migration Job")
@@ -21,4 +21,5 @@ def run_migration(job, kube, namespaced, execute):
         namespaced
         + ["wait", "--for=condition=complete", "job/" + name, "--timeout=360s"]
     )
-    execute(namespaced + ["delete", "job", name, "--wait=true"])
+    if not retain_completed:
+        execute(namespaced + ["delete", "job", name, "--wait=true"])
