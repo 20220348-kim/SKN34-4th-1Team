@@ -12,9 +12,10 @@ SALT = "govbiz-ops-runtime-key-recovery-v1"
 
 
 def exercise(action, keys, proof=None):
-    from apps.evaluations.artifact_server import application
     from django.conf import settings
     from django.core import signing
+
+    from apps.evaluations.artifact_server import application
 
     # Never inherit model credentials, database routes or Django fallback keys.
     os.environ.clear()

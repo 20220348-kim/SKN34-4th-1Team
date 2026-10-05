@@ -32,6 +32,8 @@ def validate(value):
             raise ValueError("Invalid runtime key")
         if name in {"artifact", "budget"} and not re.fullmatch(r"[A-Za-z0-9_-]{32,256}", key):
             raise ValueError("Invalid service token")
+    if "database_accounts" in value:
+        database.validate_accounts(value["database_accounts"])
     return value
 
 
@@ -79,6 +81,8 @@ def capture(namespaced, source, volumes):
         mapping = {row["name"]: row for row in env}
         if container.get("envFrom") or len(mapping) != len(env):
             raise ValueError("Indirect or repeated runtime environment")
+        if mapping.get("DB_USER") != {"name": "DB_USER", "value": "govbiz_ops"}:
+            raise ValueError("Only the dedicated govbiz_ops database account is supported")
         required = {"DJANGO_SECRET_KEY", "DB_PASSWORD", "LLMOPS_ARTIFACT_TOKEN"}
         if ops.get("LLMOPS_BUDGET_TOKEN"):
             required.add("LLMOPS_BUDGET_TOKEN")
@@ -109,6 +113,8 @@ def capture(namespaced, source, volumes):
     mysql_env = mysql_containers[0]["env"]
     if len({row["name"] for row in mysql_env}) != len(mysql_env):
         raise ValueError("Repeated MySQL environment")
+    if {"name": "MYSQL_USER", "value": "govbiz_ops"} not in mysql_env:
+        raise ValueError("Unexpected source MySQL application user")
     for key in ("MYSQL_PASSWORD", "MYSQL_ROOT_PASSWORD"):
         if {
             "name": key,
@@ -154,6 +160,9 @@ def capture(namespaced, source, volumes):
             "schema_version": 1,
             "image": images.pop(),
             "sources": versions,
+            "database_accounts": database.read_accounts(
+                [*namespaced, "exec", "-i", "ops-mysql-0", "-c", "mysql", "--", *storage.AUTH]
+            ),
             "ops_budget_configured": bool(ops.get("LLMOPS_BUDGET_TOKEN")),
             "keys": {
                 "django": ops["DJANGO_SECRET_KEY"],

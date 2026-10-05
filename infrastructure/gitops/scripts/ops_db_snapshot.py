@@ -11,6 +11,7 @@ import os
 import re
 import secrets
 import stat
+import subprocess
 import sys
 import time
 from contextlib import contextmanager
@@ -33,6 +34,16 @@ REQUIRED_TABLES = {
     "auth_user",
 }
 WRITERS = storage.WRITERS | {"prefect"}
+RESTORE_LABEL = "ai.govbiz.ops-db-restore"
+ACCOUNT_IDENTITIES = {("root", "localhost"), ("govbiz_ops", "%")}
+ACCOUNTS = """
+SELECT JSON_OBJECT('user', User, 'host', Host, 'plugin', plugin,
+  'authentication_hex', HEX(authentication_string), 'locked', account_locked,
+  'expired', password_expired, 'ssl', ssl_type,
+  'simple_auth', IF(User_attributes IS NULL OR JSON_LENGTH(User_attributes)=0, 1, 0))
+FROM mysql.user WHERE (User='root' AND Host='localhost') OR (User='govbiz_ops' AND Host='%')
+ORDER BY User, Host;
+"""
 TABLES = (
     "SELECT TABLE_NAME FROM information_schema.TABLES "
     "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_TYPE='BASE TABLE' ORDER BY TABLE_NAME;"
@@ -225,6 +236,179 @@ def query(command, text):
     return storage.run([*command, *MYSQL], data=text.encode()).decode("utf-8").strip()
 
 
+def validate_accounts(value):
+    """Only the two supported original MySQL authentication records, never grants."""
+    if (
+        not isinstance(value, dict)
+        or type(value.get("schema_version")) is not int
+        or value["schema_version"] != 1
+        or not isinstance(value.get("accounts"), list)
+        or len(value["accounts"]) != 2
+    ):
+        raise ValueError("Missing source MySQL authentication evidence")
+    identities = set()
+    for row in value["accounts"]:
+        if (
+            not isinstance(row, dict)
+            or set(row)
+            != {
+                "user",
+                "host",
+                "plugin",
+                "authentication_hex",
+                "locked",
+                "expired",
+                "ssl",
+                "simple_auth",
+            }
+            or row["plugin"] != "caching_sha2_password"
+            or row["locked"] != "N"
+            or row["expired"] != "N"
+            or row["ssl"] != ""
+            or type(row["simple_auth"]) is not int
+            or row["simple_auth"] != 1
+            or not isinstance(row["authentication_hex"], str)
+            or not re.fullmatch(r"(?:[0-9A-F]{2}){1,512}", row["authentication_hex"])
+        ):
+            raise ValueError("Unsupported source MySQL authentication policy")
+        identities.add((row["user"], row["host"]))
+    if identities != ACCOUNT_IDENTITIES:
+        raise ValueError("Unexpected source MySQL accounts")
+    return value
+
+
+def read_accounts(command):
+    return validate_accounts(
+        {
+            "schema_version": 1,
+            "accounts": [json.loads(line) for line in query(command, ACCOUNTS).splitlines()],
+        }
+    )
+
+
+def credential_query(identity, user, password, sql, *, denied=False):
+    """Private stdin transports the password and SQL; authentication errors stay private."""
+    if (
+        not re.fullmatch(r"[a-f0-9]{64}", identity)
+        or user not in {"root", "govbiz_ops"}
+        or not isinstance(password, str)
+        or not 16 <= len(password) <= 4096
+        or any(char in password for char in "\x00\r\n")
+    ):
+        raise ValueError("Unsupported DB credential probe")
+    client = [arg if arg != "--user=root" else "--user=" + user for arg in MYSQL[1:]]
+    if user == "root":
+        # Select root@localhost explicitly; Docker images can also create root@%.
+        client = [
+            "--protocol=SOCKET" if arg == "--protocol=TCP" else arg
+            for arg in client
+            if arg != "--host=127.0.0.1"
+        ]
+    args = [
+        "docker",
+        "exec",
+        "-i",
+        identity,
+        "sh",
+        "-c",
+        'IFS= read -r MYSQL_PWD || exit 90; export MYSQL_PWD; exec "$@"',
+        "sh",
+        "mysql",
+        "--no-defaults",
+        *client,
+    ]
+    try:
+        result = subprocess.run(
+            args,
+            input=(password + "\n" + sql).encode(),
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        raise ValueError("DB credential probe did not complete") from None
+    if denied:
+        if result.returncode != 1 or result.stdout or b"ERROR 1045 (28000):" not in result.stderr:
+            raise ValueError("Wrong password was not rejected by MySQL authentication")
+        return None
+    if result.returncode:
+        raise ValueError("Recovered DB credential cannot authenticate")
+    return result.stdout.decode("utf-8").strip()
+
+
+def verify_database_login(command, accounts, keys, counts):
+    """Restore hashes in the disposable DB last: its old root command then expires."""
+    accounts = validate_accounts(accounts)
+    if (
+        len(command) != 4 + len(storage.AUTH)
+        or command[:3] != ["docker", "exec", "-i"]
+        or command[4:] != storage.AUTH
+    ):
+        raise ValueError("Authentication restore needs the owned disposable database")
+    identity = command[3]
+    if not re.fullmatch(r"[a-f0-9]{64}", identity):
+        raise ValueError("Invalid disposable database identity")
+    container = storage.inspect(identity)
+    if (
+        container["Id"] != identity
+        or not re.fullmatch(r"/govbiz-ops-db-verify-[a-f0-9]{32}", container["Name"])
+        or (container["Config"].get("Labels") or {}).get(RESTORE_LABEL) != "1"
+        or container["HostConfig"]["NetworkMode"] != "none"
+        or "/var/lib/mysql" not in (container["HostConfig"].get("Tmpfs") or {})
+        or any(mount["Type"] != "tmpfs" for mount in container.get("Mounts", []))
+        or not container["State"]["Running"]
+    ):
+        raise ValueError("Refuse authentication changes outside the disposable restore")
+    for name in ("database", "mysql_root"):
+        password = keys[name]
+        if (
+            not isinstance(password, str)
+            or not 16 <= len(password) <= 4096
+            or any(char in password for char in "\x00\r\n")
+        ):
+            raise ValueError("Unsupported recovered DB password")
+    if query(command, "SELECT COUNT(*) FROM mysql.user WHERE User='govbiz_ops';") != "0":
+        raise ValueError("The disposable application account must not already exist")
+    # Restore the independent source hashes, not IDENTIFIED BY the tested passwords.
+    # QUOTE handles binary salt bytes; fix sql_mode so backslash quoting is unambiguous.
+    statements = ["SET SESSION sql_mode='';"]
+    for row in sorted(accounts["accounts"], key=lambda row: row["user"]):
+        verb = "ALTER" if row["user"] == "root" else "CREATE"
+        account = "''" + row["user"] + "''@''" + row["host"] + "''"
+        statements.append(
+            "SET @ops_auth_sql=CONCAT('"
+            + verb
+            + " USER "
+            + account
+            + " IDENTIFIED WITH caching_sha2_password AS ',QUOTE(UNHEX('"
+            + row["authentication_hex"]
+            + "')));"
+            "PREPARE ops_auth_stmt FROM @ops_auth_sql; EXECUTE ops_auth_stmt; "
+            "DEALLOCATE PREPARE ops_auth_stmt;"
+        )
+    statements.append("GRANT SELECT ON govbiz_ops.* TO 'govbiz_ops'@'%';")
+    query(command, "\n".join(statements))
+    total = counts["evaluations_evaluationrun"]
+    sql = "SELECT CURRENT_USER(),DATABASE(); SELECT COUNT(*) FROM evaluations_evaluationrun;"
+    for user, host, name in (("root", "localhost", "mysql_root"), ("govbiz_ops", "%", "database")):
+        if (
+            credential_query(identity, user, keys[name], sql)
+            != f"{user}@{host}\t{DATABASE}\n{total}"
+        ):
+            raise ValueError("Recovered DB identity or evaluation count differs")
+        credential_query(identity, user, secrets.token_hex(32), "SELECT 1;", denied=True)
+    return {
+        "database_login_verified": True,
+        "source_authentication_hashes_restored": True,
+        "root_login_verified": True,
+        "application_login_verified": True,
+        "wrong_passwords_rejected": True,
+        "evaluation_rows": total,
+        "source_grants_restored": False,
+        "application_permissions": "SELECT on govbiz_ops only",
+    }
+
+
 def inventory(command):
     names = query(command, TABLES).splitlines()
     if (
@@ -404,6 +588,8 @@ def restored_database(payload):
                     "--name",
                     "govbiz-ops-db-verify-" + uuid4().hex,
                     "--network=none",
+                    "--log-driver=none",
+                    "--label=" + RESTORE_LABEL + "=1",
                     "--memory=512m",
                     "--pids-limit=128",
                     "--tmpfs=/var/lib/mysql:rw,nosuid,size=384m",
