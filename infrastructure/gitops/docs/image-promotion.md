@@ -9,6 +9,47 @@
 이미지 발행 후 Argo 자동 배포를 연결하는 대체 기능은 아직 없다.
 자세한 적용 상태는 [배포 PR 제거 기록](deployment-candidates.md)을 참고한다.
 
+## 클러스터 적용 없이 공개 이미지 검증
+
+기존 개발 환경을 유지한 채 공개 이미지의 발행 증거만 확인하려면 저장소 루트에서 실행한다.
+Python 3.13·Git·Helm 4.3.0과 [GitOps Python 의존성](../scripts/requirements.txt),
+해당 포크의 CI·Actions artifact를 읽을 수 있는 `gh` 로그인이 필요하다.
+Docker·kind·kubectl·kubeconfig나 `fork_cluster.py init`은 필요하지 않다.
+
+```bash
+gh auth status
+python -B infrastructure/gitops/scripts/deployment.py verify-public
+```
+
+검증 대상은 `origin`의 기본 브랜치이며 현재 작업 브랜치의 로컬 수정은 사용하지 않는다.
+기본 브랜치를 별도로 지정해야 할 때는 `--branch main`을 사용한다.
+Helm이 PATH에 없다면 실행 위치에 영향을 받지 않도록 `--helm`에 실행 파일의 **절대 경로**를 전달한다.
+렌더링 대상 Chart·values는 임시 디렉터리에 추출한 검증된 소스만 사용한다.
+
+검증 순서는 `현재 소스·필수 CI → 네 receipt와 Git tree → 동일 소스 Helm 정책
+→ 네 digest의 익명 manifest HEAD → 소스·CI·발행 run·artifact 재확인`이다.
+공개 receipt만 허용하며, 비공개·v1 receipt는 PAT 입력으로 우회하지 않는다.
+GHCR에서는 익명 scoped token으로 manifest를 조회하므로 개인 PAT나 Kubernetes Secret을 읽지 않는다.
+
+성공 시 종료 코드 `0`과 `msa-publication-check-v1` JSON을 출력한다.
+`sourceSha`, `publisherRunId`, `images`에 검증한 대상을 기록하고,
+`receiptsVerified`, `helmPolicyVerified`, `registryManifestsVerified`를 `true`로 표시한다.
+이미지 레이어 다운로드·실행·내용 검사는 하지 않으므로 `layersDownloaded: false`,
+실제 배포나 서비스 상태를 확인하지 않으므로 `clusterVerified: false`를 유지한다.
+manifest 조회 성공만으로 전체 pull·서비스 기동·Argo 동기화 완료로 판단하지 않는다.
+
+검증 실패 시 종료 코드 `1`, `status: BLOCKED`와 안전한 `reason`만 출력한다.
+`publication_not_available`은 완전한 발행 증거가 아직 없다는 뜻이며,
+`required_source_checks_not_verified`는 필수 소스 검증이 충족되지 않았다는 뜻이다.
+검증 중 변경이 감지되면 `source_not_current`, `publication_changed`, `ci_evidence_changed`로 중단한다.
+기타 오류는 `verification_failed`이며 원본 예외·인증 정보는 JSON에 넣지 않는다.
+최신 발행이 실행 중이거나 실패한 경우 과거의 성공 이미지를 대신 사용하지 않는다.
+
+클러스터·DB·Secret·원격 Git·작업 파일·index·브랜치를 변경하지 않는다.
+로컬에 소스 Git 객체가 없으면 `origin`에서 해당 SHA만 fetch할 수 있다.
+검증 결과는 실행 시점의 증거이며 이후 배포를 승인하거나 미래의 상태를 보장하지 않는다.
+예전 `bootstrap`, `prepare`, `propose`, `check` 배포 PR 명령은 계속 비활성 상태다.
+
 ## 배포 PR 없이 GHCR 이미지로 로컬 초기화
 
 `fork_cluster.py up`은 개인 포크 기본 브랜치의 현재 SHA에 대해 다음을 직접 검증한다.
@@ -27,7 +68,8 @@
 
 Python 3.13·Git·Helm·kind 외에 GitHub CLI `gh`와 해당 포크의 CI·Actions artifact를 읽을 수 있는
 로그인이 필요하다. `gh`의 GitHub 조회 인증과 이미지 pull용 `read:packages` 인증은 별개다.
-기존 [비공개 패키지 준비](../../../docs/private-ghcr-setup.md)를 마친 뒤 저장소 루트에서 실행한다.
+[공개 패키지 준비](../../../docs/public-ghcr-transition.md) 또는
+[비공개 패키지 준비](../../../docs/private-ghcr-setup.md)를 마친 뒤 저장소 루트에서 실행한다.
 
 ```bash
 gh auth status
