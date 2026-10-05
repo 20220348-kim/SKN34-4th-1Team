@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { ScrollView } from 'react-native'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react-native'
 import { programClient } from '../api/client'
 import { useAuth } from '../auth/session'
 import { SearchScreen, type SearchMode } from './SearchScreen'
@@ -41,15 +41,22 @@ test('switching search modes retains inputs and results without querying an unvi
   fireEvent.press(screen.getByRole('tab', { name: '필터 검색' }))
   await screen.findByText('검색 결과 0건')
   expect(screen.queryByText('이 조건으로 검색할까요?')).toBeNull()
+  fireEvent.changeText(screen.getByLabelText('공고명·기관명'), '적용할 필터')
+  fireEvent.press(screen.getByRole('button', { name: '공고 검색' }))
+  await waitFor(() => expect(client.browseCatalog).toHaveBeenCalledTimes(2))
+  await screen.findByText('적용된 검색 조건')
   fireEvent.changeText(screen.getByLabelText('공고명·기관명'), '입력 중인 필터')
   fireEvent.press(screen.getByRole('tab', { name: 'AI 검색' }))
   expect(screen.getByDisplayValue('이어서 작성 중')).toBeTruthy()
   expect(screen.getByText('이 조건으로 검색할까요?')).toBeTruthy()
   expect(screen.queryByLabelText('공고명·기관명')).toBeNull()
+  expect(screen.queryByTestId('catalog-condition-summary')).toBeNull()
   expect(screen.getByRole('tab', { name: 'AI 검색' })).toBeSelected()
   fireEvent.press(screen.getByRole('tab', { name: '필터 검색' }))
   expect(screen.getByDisplayValue('입력 중인 필터')).toBeTruthy()
-  expect(client.browseCatalog).toHaveBeenCalledTimes(1)
+  expect(within(screen.getByTestId('catalog-condition-summary')).getByText('검색어: 적용할 필터')).toBeTruthy()
+  expect(screen.getByText('변경한 조건은 아직 적용되지 않았어요. 공고 검색을 눌러 적용해 주세요.')).toBeTruthy()
+  expect(client.browseCatalog).toHaveBeenCalledTimes(2)
   expect(client.search).not.toHaveBeenCalled()
 }, 15_000)
 
