@@ -334,6 +334,30 @@ AI-only·혼합·사람 검토 방식으로 `relevantIds`와 판정 출처를 �
 fixture와 순서·내용까지 같아야 합니다. 내보내기는 빈 적격 카탈로그, 누락된 정렬 시각, 중복 검색 문서 ID 등
 검증에 실패하면 기존 출력 파일을 바꾸지 않으며, 모든 검증이 끝난 결과만 원자적으로 교체합니다.
 
+### 상세 공고 RAG의 실제 청킹 사전 점검
+
+`preflightEvidenceEvaluation`은 저장된 공식 RAG fixture의 원문을 **실제
+SupportProgramEvidenceChunker**에 전달하고 기존 참조 구절이 어느 청크에 포함되는지 기록합니다.
+Spring 서버·DB·원문 수집·AI Service·OpenAI는 시작하지 않습니다. 검색 상한도 실제 Facade의
+값을 사용하며 청킹 알고리즘을 평가 도구에 복제하지 않습니다.
+
+```bash
+cd backend/core-service
+mkdir -p build/reports
+./gradlew preflightEvidenceEvaluation --no-daemon \
+  -PevidenceFixture=../../evaluation/support-program-evidence/runs/official-rag-20261006-v2/fixture.json \
+  -PevidenceReport=build/reports/core-evidence-preflight.json
+```
+
+출력 폴더는 미리 준비하며 기존 파일은 덮어쓰지 않습니다. 보고서에는 입력 파일·청커 class의
+SHA-256, 실제 청크·원문 참조, 질문별 참조 매핑, 검색 상한보다 많은 후보가 있는 사례 수를 저장합니다.
+원문 해시 불일치·중복 ID·알 수 없는 공고 참조는 오류입니다. 구절이 청킹 후 없거나 여러 청크에
+중복되면 `referenceRemappingRequired=true`로 기록하며 새 정답을 만들지 않습니다.
+
+`rankingSelectionCoverage=INSUFFICIENT`는 후보가 적어 **순위로 근거를 고르는 능력을 측정할
+자료가 부족하다**는 뜻입니다. `AVAILABLE`도 검색 성공·모델 품질 합격이 아닙니다. 실제 Core HTTP,
+원문 재수집·첨부·모델 실행 및 사람 검토는 별도이며 `baselineEligible=false`를 유지합니다.
+
 ### 실제 검색 흐름 캡처
 
 fixture와 같은 질문 묶음을 준비한 뒤에는 공개 API를 반복 호출하지 않고

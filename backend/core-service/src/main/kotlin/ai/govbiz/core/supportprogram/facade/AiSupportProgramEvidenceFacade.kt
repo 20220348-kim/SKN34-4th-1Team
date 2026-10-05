@@ -175,9 +175,9 @@ class AiSupportProgramEvidenceFacade(
             text = chunk.text,
         )
 
-    private companion object {
-        const val MAX_CHUNKS = 50
-        const val MAX_RETRIEVED_CHUNKS = 5
-        const val MAX_ANSWER_CODE_POINTS = 1_200
+    companion object {
+        private const val MAX_CHUNKS = 50
+        internal const val MAX_RETRIEVED_CHUNKS = 5
+        private const val MAX_ANSWER_CODE_POINTS = 1_200
     }
 }

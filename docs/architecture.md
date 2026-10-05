@@ -645,6 +645,13 @@ K-Startup 공식 URL 표시 허용은 원문 수집·RAG 지원과 별개입니�
 
 ## 검색 품질 평가 fixture 내보내기와 캡처
 
+상세 공고의 고정 원문은 별도의 무료 `preflightEvidenceEvaluation` 명령으로 먼저 점검합니다.
+`공식 RAG fixture → 실제 Core 청커 → 실제 검색 상한과 비교 → 참조 구절 매핑·후보 범위 보고서`
+흐름이며, Spring·DB·HTTP·모델 호출 없이 동작합니다. 입력 해시와 청커 class 지문을 남기고 사람
+검토를 승계하지 않습니다. 후보 청크가 검색 상한 이하면 검색 순위 판별을 측정할 자료로 집계하지
+않습니다. 이 준비 결과를 아래 실제 검색 캡처나 서비스 전체 품질 검증 결과로 취급하지 않습니다.
+[명령·출력 계약](../backend/core-service/README.md#상세-공고-rag의-실제-청킹-사전-점검)을 따릅니다.
+
 ```text
 evaluation-fixture-export profile (비웹 실행)
   → findSearchablePresent로 준비된 제공처의 공개 공고 조회 → 지정한 referenceDate 기준 OPEN 공고만 선정
