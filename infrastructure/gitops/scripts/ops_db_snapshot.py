@@ -336,9 +336,8 @@ def credential_query(identity, user, password, sql, *, denied=False):
     return result.stdout.decode("utf-8").strip()
 
 
-def verify_database_login(command, accounts, keys, counts):
-    """Restore hashes in the disposable DB last: its old root command then expires."""
-    accounts = validate_accounts(accounts)
+def require_disposable_database(command):
+    """Return metadata only for this tool's isolated, temporary restore target."""
     if (
         len(command) != 4 + len(storage.AUTH)
         or command[:3] != ["docker", "exec", "-i"]
@@ -359,6 +358,13 @@ def verify_database_login(command, accounts, keys, counts):
         or not container["State"]["Running"]
     ):
         raise ValueError("Refuse authentication changes outside the disposable restore")
+    return container
+
+
+def verify_database_login(command, accounts, keys, counts):
+    """Restore hashes in the disposable DB last: its old root command then expires."""
+    accounts = validate_accounts(accounts)
+    identity = require_disposable_database(command)["Id"]
     for name in ("database", "mysql_root"):
         password = keys[name]
         if (
