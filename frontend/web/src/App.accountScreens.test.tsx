@@ -503,6 +503,7 @@ describe('계정 화면', () => {
     expect(within(sidebar).getByRole('link', { name: '내 프로필' })).toBeTruthy()
     expect(within(sidebar).getByRole('button', { name: '로그아웃' })).toBeTruthy()
     expect(within(sidebar).queryByRole('link', { name: '회원 관리' })).toBeNull()
+    expect(within(sidebar).queryByRole('link', { name: '감사 기록' })).toBeNull()
   })
 })
 
@@ -573,6 +574,15 @@ describe('작업 화면 사이드바', () => {
     const activeAdminLink = within(sidebar).getByRole('link', { name: '회원 관리' })
     expect(activeAdminLink.getAttribute('aria-current')).toBe('page')
     expect(activeAdminLink.classList.contains('bg-[#e6f5ed]')).toBe(true)
+    // 감사 기록은 회원 관리 바로 아래에 있고, 열면 그 메뉴만 선택됩니다.
+    const auditLink = within(sidebar).getByRole('link', { name: '감사 기록' })
+    expect(auditLink.getAttribute('href')).toBe('/app/admin/audit-logs')
+    expect(auditLink.getAttribute('aria-current')).toBeNull()
+    fireEvent.click(auditLink)
+    expect(screen.getByRole('heading', { level: 1, name: '감사 기록' })).toBeTruthy()
+    fireEvent.click(accountButton)
+    expect(within(sidebar).getByRole('link', { name: '감사 기록' }).getAttribute('aria-current')).toBe('page')
+    expect(within(sidebar).getByRole('link', { name: '회원 관리' }).getAttribute('aria-current')).toBeNull()
   })
 
   it('관리자 계정 메뉴를 Escape나 바깥 클릭으로 닫으면 회원 관리 링크도 숨긴다', () => {

@@ -44,6 +44,7 @@ export class AdminAccountRepositoryImpl implements AdminAccountRepository {
         if (error.code === 'ADMIN_SELF_ACTION') return { outcome: 'self-action' }
         if (error.code === 'ADMIN_TARGET_PROTECTED') return { outcome: 'protected' }
         if (error.code === 'ADMIN_ACCOUNT_STATE_CONFLICT') return { outcome: 'conflict' }
+        if (error.code === 'ADMIN_LAST_ACTIVE_ADMIN') return { outcome: 'last-admin' }
       }
       throw error
     }

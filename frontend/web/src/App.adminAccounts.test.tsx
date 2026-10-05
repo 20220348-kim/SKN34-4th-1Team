@@ -243,6 +243,50 @@ describe('관리자 세션·권한이 도중에 바뀐 경우', () => {
   })
 })
 
+describe('관리자 권한 변경', () => {
+  it('회원에게 사유를 받아 관리자 권한을 부여하면 해제 버튼과 조치 기록으로 바뀐다', async () => {
+    vi.spyOn(appContainer.resolve('getAdminAccountDetailUseCase'), 'execute').mockResolvedValue(detailOf(member))
+    const promoted = detailOf({ ...member, role: 'ADMIN', tier: 'ADMIN' }, {
+      actions: [{ id: 5, action: 'ADMIN_GRANT', reason: '운영 담당 추가', adminEmail: 'admin@govbiz.local', createdAt: '2026-09-11T09:30:00' }],
+    })
+    const act = vi.spyOn(appContainer.resolve('takeAdminAccountActionUseCase'), 'execute').mockResolvedValue({ outcome: 'done', detail: promoted })
+    renderApp('/app/admin/accounts/detail?accountId=11')
+
+    const info = await screen.findByRole('region', { name: '계정 정보' })
+    fireEvent.click(within(info).getByRole('button', { name: '관리자 권한 부여' }))
+    const dialog = screen.getByRole('dialog', { name: '관리자 권한을 부여할까요?' })
+    const confirm = within(dialog).getByRole('button', { name: '관리자 권한 부여' }) as HTMLButtonElement
+    expect(confirm.disabled).toBe(true)
+    fireEvent.change(within(dialog).getByLabelText('사유 (조치 기록에 남습니다)'), { target: { value: ' 운영 담당 추가 ' } })
+    fireEvent.click(confirm)
+
+    await waitFor(() => expect(act).toHaveBeenCalledWith(11, 'grant-admin', '운영 담당 추가'))
+    expect(await screen.findByText(adminAccountDetailMessages.done['grant-admin'])).toBeTruthy()
+    const updated = screen.getByRole('region', { name: '계정 정보' })
+    // 관리자가 된 계정은 정지·강제 로그아웃 대신 권한 해제만 할 수 있습니다.
+    expect(within(updated).getByRole('button', { name: '관리자 권한 해제' })).toBeTruthy()
+    expect(within(updated).queryByRole('button', { name: '정지' })).toBeNull()
+    expect(within(screen.getByRole('region', { name: '조치 기록' })).getByText('관리자 권한 부여')).toBeTruthy()
+  })
+
+  it('마지막 활성 관리자의 권한 해제는 모달 안에서 까닭을 알린다', async () => {
+    const otherAdmin: AdminAccountSummary = { ...member, id: 2, email: 'second@govbiz.local', role: 'ADMIN', tier: 'ADMIN', company: null }
+    vi.spyOn(appContainer.resolve('getAdminAccountDetailUseCase'), 'execute').mockResolvedValue(detailOf(otherAdmin))
+    vi.spyOn(appContainer.resolve('takeAdminAccountActionUseCase'), 'execute').mockResolvedValue({ outcome: 'last-admin' })
+    renderApp('/app/admin/accounts/detail?accountId=2')
+
+    const info = await screen.findByRole('region', { name: '계정 정보' })
+    expect(within(info).queryByRole('button', { name: '관리자 권한 부여' })).toBeNull()
+    fireEvent.click(within(info).getByRole('button', { name: '관리자 권한 해제' }))
+    const dialog = screen.getByRole('dialog', { name: '관리자 권한을 해제할까요?' })
+    fireEvent.change(within(dialog).getByLabelText('사유 (조치 기록에 남습니다)'), { target: { value: '퇴사' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: '관리자 권한 해제' }))
+
+    expect((await within(dialog).findByText(adminAccountDetailMessages.lastAdmin)).getAttribute('role')).toBe('alert')
+    expect(screen.getByRole('dialog', { name: '관리자 권한을 해제할까요?' })).toBeTruthy()
+  })
+})
+
 function LocationProbe() {
   const location = useLocation()
   return <output data-testid="location">{`${location.pathname}${location.search}`}</output>

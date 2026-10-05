@@ -83,6 +83,26 @@ V20에 맞추고 미적용 대화용 V19를 한 번만 out-of-order로 적용하
 적용 시각은 보존해야 하며 이 저장소가 다른 DB의 이력을 자동 수정하지 않습니다. 무조건적인 `repair`, 이력 삭제,
 `validate-on-migrate=false`, 볼륨 초기화로 충돌을 숨기지 마세요.
 
+## 관리자 접속기록과 권한 변경
+
+개인정보의 안전성 확보조치 기준 제8조(접속기록)·제5조(권한 부여·변경·말소 기록)를 위해 `V49__create_admin_access_log.sql`이
+`admin_access_log`를 만들고 `account_admin_action`의 조치 종류에 `ADMIN_GRANT`·`ADMIN_REVOKE`를 더합니다.
+
+- **남기는 요청:** 회원 목록·상세 조회, 정지·정지 해제·강제 로그아웃·권한 변경, 감사 기록 조회가 요청 하나에 한 행입니다.
+  요약 수치·큐 운영·`/admin/session`과 없는 계정(404)·거절된 조치는 개인정보를 돌려주지 않아 남기지 않습니다.
+- **칸:** 처리자 계정 ID, 수행업무(`action`), 처리한 회원 ID(목록은 null), 요청 요약, 접속 주소, User-Agent(255자), 시각(서울).
+  요약에는 검색어 원문을 넣지 않고 `keywordLength=…, status=…, returned=…`처럼 조건 이름·건수·조치 기록 번호만 넣습니다.
+- **접속 주소:** 다른 기능의 요청 제한과 같은 `HttpServletRequest.remoteAddr`입니다. 운영에서는 Tomcat이 Compose의 Nginx 한 주소만
+  신뢰해 반영한 값이고, 클라이언트가 보낸 전달 헤더를 따로 읽지 않습니다.
+- **흐름:** 조회는 `Controller → Service → Repository(조회) → AdminAccessLogService → AdminAccessLogRepository → MyBatis → MySQL`
+  순서로 결과를 돌려주기 전에 기록하고, 조치는 상태 변경·사유 기록과 같은 transaction에서 기록합니다. 기록하지 못하면
+  503 `ADMIN_ACCESS_LOG_UNAVAILABLE`이며 조회 결과를 내주지 않고 조치도 되돌립니다(기록되지 않은 개인정보 처리 금지).
+- **보존·변경 방지:** 계정 ID에 외래 키를 걸지 않아 계정 행을 지워도 기록이 지워지거나(CASCADE) 대상이 비워지지(SET NULL)
+  않습니다. Mapper에는 INSERT·SELECT만 있어 보존 기간(접속기록 2년·권한 기록 3년)보다 오래 남으며, 기간이 지난 기록의 파기
+  작업은 아직 없습니다. DB 계정 권한 분리·별도 백업 같은 운영 보호와 월 1회 점검은 배포 환경에서 정합니다.
+- **권한 변경:** `POST /api/v1/admin/accounts/{id}/role`은 처리자와 대상 계정 행을 ID 순서로 잠근 뒤 처리자가 아직 활성
+  관리자인지 다시 확인하므로, 두 관리자가 서로의 권한을 동시에 내려도 관리자가 모두 사라지지 않습니다.
+
 ## 실행
 
 기업 맞춤 리포트는 `ai.govbiz.core.dailyreport`에서 저장된 기업 조건·지원 목적을 기존 검색과 HTML 근거 답변에
@@ -370,8 +390,10 @@ Controller의 `SupportProgramRequestAdmissionService.execute`가 공개 요청 �
 | `POST /api/v1/auth/dev-login` | `ACCOUNT_DEV_LOGIN_ENABLED=true`일 때만 등록되는 개발용 시드 로그인 |
 | `GET /api/v1/admin/session` | 기존 `AdminPrincipal`로 세션·현재 관리자 권한을 검증. `accountId`, `email`, `role`만 반환하고 `Cache-Control: no-store` 적용. Django Ops가 `govbiz_session` 쿠키를 전달해 사용. 미인증·만료 401, 비관리자·정지 403 |
 | `GET /api/v1/admin/accounts/summary`, `GET /api/v1/admin/accounts` | 관리자 전용(`AdminPrincipal`: 세션 없으면 401, 관리자가 아니면 403). 요약 수치와 계정 목록(검색·상태·역할·로그인 방법·정렬·페이지). 삭제된 계정 제외 |
-| `GET /api/v1/admin/accounts/{id}` | 관리자 전용. 계정·기업·활동 수·최근 조치 기록 20건 |
-| `POST /api/v1/admin/accounts/{id}/suspend` `/unsuspend` `/sessions/revoke` | 관리자 전용. 사유(1~500자) 필수. 정지는 모든 세션 삭제, 자기 계정 422 `ADMIN_SELF_ACTION`, 다른 관리자 422 `ADMIN_TARGET_PROTECTED`, 이미 그 상태면 409. `account_admin_action`에 기록 |
+| `GET /api/v1/admin/accounts/{id}` | 관리자 전용. 계정·기업·활동 수·최근 조치 기록 20건. 목록·상세는 응답 전에 `admin_access_log`에 기록하고, 기록하지 못하면 503 `ADMIN_ACCESS_LOG_UNAVAILABLE` |
+| `POST /api/v1/admin/accounts/{id}/suspend` `/unsuspend` `/sessions/revoke` | 관리자 전용. 사유(1~500자) 필수. 정지는 모든 세션 삭제, 자기 계정 422 `ADMIN_SELF_ACTION`, 다른 관리자 422 `ADMIN_TARGET_PROTECTED`, 이미 그 상태면 409. `account_admin_action`과 접속기록을 같은 transaction에 기록 |
+| `POST /api/v1/admin/accounts/{id}/role` | 관리자 전용. `{ "role": "ADMIN"\|"USER", "reason" }`. 자기 계정 422 `ADMIN_SELF_ACTION`, 같은 역할·정지 계정 승격 409, 마지막 활성 관리자 해제 422 `ADMIN_LAST_ACTIVE_ADMIN`, 처리자 권한이 먼저 내려갔으면 403. `ADMIN_GRANT`·`ADMIN_REVOKE` 조치 기록과 접속기록을 함께 남김 |
+| `GET /api/v1/admin/audit-logs` | 관리자 전용 감사 기록. `actorAccountId` `targetAccountId` `action` `from`·`to`(서울 날짜, 끝 날 포함) `before`(커서) `limit`(1~50, 기본 50). 최신순 `records[]`(처리자 ID·이메일, 대상 ID, 요청 요약, 접속 주소, User-Agent, 시각)와 `nextCursor`, `no-store`. 이 조회도 기록 |
 | `GET /api/v1/me/company/lookup` | 로그인한 회원이 사업자등록번호로 국세청 등록 여부·상호·사업자 상태를 미리 보기(Bizno) |
 | `GET` `POST` `PUT /api/v1/me/company` | 내 기업 조회·등록(계속·휴업자만, 폐업자는 422, 201)·담당자 입력 항목 수정. 파트너 모집글·제안 쓰기는 계속사업자만(403 `ACTIVE_BUSINESS_REQUIRED`) |
 | `GET` `POST` `DELETE /api/v1/me/saved-programs`, `GET …/status` | 관심 공고함. 로그인 회원이 현재 노출 중인 공고를 담고(같은 공고는 한 번) 빼며 최근 순서로 읽음. 없거나 숨겨진 공고는 404 `SUPPORT_PROGRAM_NOT_FOUND` |

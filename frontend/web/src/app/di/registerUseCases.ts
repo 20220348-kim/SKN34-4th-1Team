@@ -31,6 +31,7 @@ import {
   GetAdminAccountStatsUseCase,
   TakeAdminAccountActionUseCase,
 } from '../../domain/usecases/AdminAccountUseCases'
+import { BrowseAdminAuditLogsUseCase } from '../../domain/usecases/AdminAuditLogUseCases'
 import {
   BrowseSavedSupportProgramsUseCase,
   CheckSavedSupportProgramUseCase,
@@ -117,6 +118,9 @@ export function registerUseCases(container: AppContainer) {
     ).singleton(),
     takeAdminAccountActionUseCase: asFunction(
       ({ adminAccountRepository }: Pick<AppCradle, 'adminAccountRepository'>) => new TakeAdminAccountActionUseCase(adminAccountRepository),
+    ).singleton(),
+    browseAdminAuditLogsUseCase: asFunction(
+      ({ adminAuditLogRepository }: Pick<AppCradle, 'adminAuditLogRepository'>) => new BrowseAdminAuditLogsUseCase(adminAuditLogRepository),
     ).singleton(),
     browseSavedSupportProgramsUseCase: asFunction(
       ({ savedSupportProgramRepository }: Pick<AppCradle, 'savedSupportProgramRepository'>) => new BrowseSavedSupportProgramsUseCase(savedSupportProgramRepository),

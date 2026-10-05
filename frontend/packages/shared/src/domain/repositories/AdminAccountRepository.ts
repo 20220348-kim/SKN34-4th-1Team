@@ -13,6 +13,7 @@ export type AdminAccountActionResult =
   | { outcome: 'self-action' }
   | { outcome: 'protected' }
   | { outcome: 'conflict' }
+  | { outcome: 'last-admin' }
 
 /** 관리자 계정 관리 기능이 Data Layer의 HTTP 세부사항과 분리되도록 하는 Domain 포트입니다. 관리자 세션이 있어야 합니다. */
 export interface AdminAccountRepository {
@@ -20,6 +21,6 @@ export interface AdminAccountRepository {
   browse(query: AdminAccountQuery, signal?: AbortSignal): Promise<AdminAccountPage>
   /** 없거나 삭제된 계정은 null입니다. */
   getDetail(id: number, signal?: AbortSignal): Promise<AdminAccountDetail | null>
-  /** 정지·정지 해제·강제 로그아웃입니다. 사유는 조치 기록에 남습니다. */
+  /** 정지·정지 해제·강제 로그아웃·관리자 권한 부여·해제입니다. 사유는 조치 기록에 남습니다. */
   act(id: number, kind: AdminAccountActionKind, reason: string, signal?: AbortSignal): Promise<AdminAccountActionResult>
 }

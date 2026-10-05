@@ -9,11 +9,11 @@ export type AdminAccountLoginMethod = 'EMAIL' | 'KAKAO' | 'GOOGLE'
 /** 목록 정렬입니다. 최근 로그인순은 로그인한 적 없는 계정을 뒤에 둡니다. */
 export type AdminAccountSort = 'RECENT' | 'OLDEST' | 'LAST_LOGIN'
 
-/** 관리자 조치 기록의 종류입니다. */
-export type AdminAccountActionType = 'SUSPEND' | 'UNSUSPEND' | 'SESSIONS_REVOKE'
+/** 관리자 조치 기록의 종류입니다. 권한 부여·해제는 회원↔관리자 역할 변경입니다. */
+export type AdminAccountActionType = 'SUSPEND' | 'UNSUSPEND' | 'SESSIONS_REVOKE' | 'ADMIN_GRANT' | 'ADMIN_REVOKE'
 
-/** 화면에서 고르는 조치입니다. 서버 경로와 기록 종류로 바꾸는 일은 Data Layer가 맡습니다. */
-export type AdminAccountActionKind = 'suspend' | 'unsuspend' | 'revoke-sessions'
+/** 화면에서 고르는 조치입니다. 서버 경로·본문과 기록 종류로 바꾸는 일은 Data Layer가 맡습니다. */
+export type AdminAccountActionKind = 'suspend' | 'unsuspend' | 'revoke-sessions' | 'grant-admin' | 'revoke-admin'
 
 /** 관리자 목록 한 줄입니다. 비밀번호·토큰은 없고 비밀번호가 있는지만 압니다. 시각은 서울 기준 `yyyy-MM-ddTHH:mm:ss`입니다. */
 export type AdminAccountSummary = {
@@ -129,10 +129,16 @@ export const adminAccountActionLabels: Record<AdminAccountActionType, string> = 
   SUSPEND: '정지',
   UNSUSPEND: '정지 해제',
   SESSIONS_REVOKE: '강제 로그아웃',
+  ADMIN_GRANT: '관리자 권한 부여',
+  ADMIN_REVOKE: '관리자 권한 해제',
 }
 
-/** 조치할 수 있는 계정인지입니다. 자기 계정과 다른 관리자 계정에는 서버도 조치를 거절합니다. */
+/**
+ * 조치할 수 있는 계정인지입니다. 서버도 같은 규칙으로 거절합니다. 자기 계정에는 아무 조치도 못 하고,
+ * 다른 관리자 계정은 권한 해제만 할 수 있으며, 정지된 계정은 정지 해제만 할 수 있습니다(관리자로 올리려면 정지를 먼저 풉니다).
+ */
 export function availableAdminAccountActions(detail: AdminAccountDetail): AdminAccountActionKind[] {
-  if (detail.isSelf || detail.account.role === 'ADMIN') return []
-  return detail.account.status === 'SUSPENDED' ? ['unsuspend'] : ['suspend', 'revoke-sessions']
+  if (detail.isSelf) return []
+  if (detail.account.role === 'ADMIN') return ['revoke-admin']
+  return detail.account.status === 'SUSPENDED' ? ['unsuspend'] : ['suspend', 'revoke-sessions', 'grant-admin']
 }

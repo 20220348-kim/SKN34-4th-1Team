@@ -16,8 +16,10 @@ import ai.govbiz.core.account.service.exception.CompanyProfileInvalidException
 import ai.govbiz.core.account.service.exception.CurrentPasswordMismatchException
 import ai.govbiz.core.account.service.exception.LastAdminDeletionException
 import ai.govbiz.core.admin.service.exception.AdminAccessDeniedException
+import ai.govbiz.core.admin.service.exception.AdminAccessLogUnavailableException
 import ai.govbiz.core.admin.service.exception.AdminAccountNotFoundException
 import ai.govbiz.core.admin.service.exception.AdminAccountStateConflictException
+import ai.govbiz.core.admin.service.exception.AdminLastActiveAdminException
 import ai.govbiz.core.admin.service.exception.AdminSelfActionException
 import ai.govbiz.core.admin.service.exception.AdminTargetProtectedException
 import ai.govbiz.core.account.service.exception.EmailCodeExpiredException
@@ -543,6 +545,33 @@ class ApiExceptionHandler {
                 "Account State Conflict",
                 "The account is already in the requested state.",
                 "ADMIN_ACCOUNT_STATE_CONFLICT",
+            ),
+            request,
+        )
+
+    @ExceptionHandler(AdminLastActiveAdminException::class)
+    fun handleAdminLastActiveAdminException(request: HttpServletRequest): ResponseEntity<ProblemDetail> =
+        problemResponse(
+            ProblemDefinition(
+                HttpStatus.UNPROCESSABLE_CONTENT,
+                URI.create("urn:govbiz:problem:admin-last-active-admin"),
+                "Last Active Admin",
+                "The last active admin cannot lose the admin role.",
+                "ADMIN_LAST_ACTIVE_ADMIN",
+            ),
+            request,
+        )
+
+    /** 접속기록을 남기지 못하면 조회 결과를 내주지 않고 조치도 되돌렸으므로 다시 시도할 수 있는 503입니다. */
+    @ExceptionHandler(AdminAccessLogUnavailableException::class)
+    fun handleAdminAccessLogUnavailableException(request: HttpServletRequest): ResponseEntity<ProblemDetail> =
+        problemResponse(
+            ProblemDefinition(
+                HttpStatus.SERVICE_UNAVAILABLE,
+                URI.create("urn:govbiz:problem:admin-access-log-unavailable"),
+                "Admin Access Log Unavailable",
+                "The admin access record could not be written, so the request was not processed. Please try again later.",
+                "ADMIN_ACCESS_LOG_UNAVAILABLE",
             ),
             request,
         )

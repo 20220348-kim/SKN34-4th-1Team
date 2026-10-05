@@ -25,11 +25,13 @@ enum class AdminAccountSort {
     LAST_LOGIN,
 }
 
-/** 관리자 조치 종류입니다. DB CHECK 제약과 같은 값입니다. */
+/** 관리자 조치 종류입니다. DB CHECK 제약과 같은 값입니다. 권한 부여·해제는 USER↔ADMIN 변경입니다. */
 enum class AdminAccountActionType {
     SUSPEND,
     UNSUSPEND,
     SESSIONS_REVOKE,
+    ADMIN_GRANT,
+    ADMIN_REVOKE,
 }
 
 /** 관리자 계정 목록을 좁히는 조건입니다. 상태·역할·로그인 방법이 null이면 전체입니다. */
@@ -53,6 +55,19 @@ data class AdminAccountQuery(
 
     val offset: Int
         get() = (page - 1) * pageSize
+
+    /** 목록 조회를 접속기록에 남길 때의 요약입니다. 검색어는 이메일 같은 개인정보일 수 있어 글자 수만 남깁니다. */
+    fun accessSummary(returned: Int): String =
+        accessSummaryOf(
+            "keywordLength" to keyword.length.takeIf { it > 0 },
+            "status" to status,
+            "role" to role,
+            "loginMethod" to loginMethod,
+            "sort" to sort,
+            "page" to page,
+            "pageSize" to pageSize,
+            "returned" to returned,
+        )
 
     companion object {
         const val MAX_KEYWORD_LENGTH = 100
@@ -150,9 +165,13 @@ data class AdminAccountDetail(
     val actions: List<AdminAccountAction>,
 )
 
-/** 조치 transaction 안에서 잠가 읽은 대상 계정의 상태입니다. */
+/** 조치 transaction 안에서 잠가 읽은 계정의 역할·정지 상태입니다. 대상 계정과, 권한 변경에서는 처리한 관리자도 이렇게 읽습니다. */
 data class AdminAccountTarget(
     val id: Long,
     val role: AccountRole,
     val suspendedAt: LocalDateTime?,
-)
+) {
+    /** 정지되지 않은 관리자입니다. 삭제된 계정은 잠가 읽을 때 이미 빠집니다. */
+    val isActiveAdmin: Boolean
+        get() = role == AccountRole.ADMIN && suspendedAt == null
+}

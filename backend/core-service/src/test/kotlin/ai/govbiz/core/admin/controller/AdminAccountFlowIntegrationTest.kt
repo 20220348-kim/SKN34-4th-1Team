@@ -7,6 +7,7 @@ import jakarta.servlet.http.Cookie
 import java.util.concurrent.atomic.AtomicInteger
 import org.hamcrest.Matchers.containsInAnyOrder
 import org.hamcrest.Matchers.hasSize
+import org.hamcrest.Matchers.nullValue
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -22,12 +23,13 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.header
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 
 /**
  * 관리자 계정 관리 API를 실제 MySQL 8.4에서 확인합니다. 관리자는 가입한 계정의 역할을 SQL로 올려 만들고,
- * 정지·강제 로그아웃이 세션과 로그인에 바로 반영되는지와 조치 기록이 남는지를 봅니다.
+ * 정지·강제 로그아웃·권한 변경이 세션과 로그인에 바로 반영되는지와 조치 기록·접속기록(감사 기록)이 남는지를 봅니다.
  */
 @SpringBootTest(
     properties = [
@@ -52,6 +54,8 @@ class AdminAccountFlowIntegrationTest {
 
     @BeforeEach
     fun resetAccounts() {
+        // 애플리케이션은 접속기록을 지우지 않지만, 격리된 테스트 DB에서는 테스트끼리 섞이지 않도록 비웁니다.
+        jdbcTemplate.update("DELETE FROM admin_access_log")
         jdbcTemplate.update("DELETE FROM account_admin_action")
         jdbcTemplate.update("DELETE FROM partner_proposal")
         jdbcTemplate.update("DELETE FROM partner_recruitment")
@@ -243,6 +247,120 @@ class AdminAccountFlowIntegrationTest {
     }
 
     @Test
+    fun roleChangesApplyOnTheNextRequestAndEveryPersonalDataAccessIsRecordedWithItsOrigin() {
+        val admin = signUpAdmin("admin@govbiz.local")
+        val member = signUp("member@company.co.kr")
+        val adminId = idOf("admin@govbiz.local")
+        val memberId = idOf("member@company.co.kr")
+        val memberPath = "$ACCOUNTS/$memberId"
+
+        mockMvc.perform(get(ACCOUNTS).cookie(admin).param("keyword", "member@company").fromAdminDesk())
+            .andExpect(status().isOk())
+        mockMvc.perform(get(memberPath).cookie(admin).fromAdminDesk()).andExpect(status().isOk())
+        // 요약 수치와 없는 계정은 개인정보를 돌려주지 않으므로 남기지 않습니다.
+        mockMvc.perform(get("$ACCOUNTS/summary").cookie(admin).fromAdminDesk()).andExpect(status().isOk())
+        mockMvc.perform(get("$ACCOUNTS/999999").cookie(admin).fromAdminDesk()).andExpect(status().isNotFound())
+
+        mockMvc.perform(post("$ACCOUNTS/$adminId/role").cookie(admin).origin().fromAdminDesk().json("""{"role":"USER","reason":"테스트"}"""))
+            .andExpect(status().isUnprocessableContent())
+            .andExpect(jsonPath("$.code").value("ADMIN_SELF_ACTION"))
+        mockMvc.perform(post("$memberPath/role").cookie(admin).origin().fromAdminDesk().json("""{"role":"ROOT","reason":"테스트"}"""))
+            .andExpect(status().isBadRequest())
+        mockMvc.perform(post("$memberPath/role").cookie(admin).origin().fromAdminDesk().json("""{"role":"ADMIN","reason":" 운영 담당 추가 "}"""))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.account.role").value("ADMIN"))
+            .andExpect(jsonPath("$.actions[0].action").value("ADMIN_GRANT"))
+            .andExpect(jsonPath("$.actions[0].reason").value("운영 담당 추가"))
+            .andExpect(jsonPath("$.actions[0].adminEmail").value("admin@govbiz.local"))
+        mockMvc.perform(post("$memberPath/role").cookie(admin).origin().fromAdminDesk().json("""{"role":"ADMIN","reason":"다시"}"""))
+            .andExpect(status().isConflict())
+            .andExpect(jsonPath("$.code").value("ADMIN_ACCOUNT_STATE_CONFLICT"))
+        // 역할은 요청마다 다시 읽으므로 새 관리자는 쓰던 세션으로 바로 관리자 API를 열고, 첫 관리자의 권한을 내릴 수 있습니다.
+        mockMvc.perform(get("/api/v1/admin/session").cookie(member)).andExpect(status().isOk())
+        mockMvc.perform(post("$ACCOUNTS/$adminId/role").cookie(member).origin().json("""{"role":"USER","reason":"권한 이관"}"""))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.account.role").value("USER"))
+            .andExpect(jsonPath("$.actions[0].action").value("ADMIN_REVOKE"))
+        mockMvc.perform(post("$memberPath/role").cookie(admin).origin().json("""{"role":"USER","reason":"되돌리기"}"""))
+            .andExpect(status().isForbidden())
+        // 이제 유일한 활성 관리자는 자기 권한을 내릴 수 없어 관리자가 사라지지 않습니다.
+        mockMvc.perform(post("$memberPath/role").cookie(member).origin().json("""{"role":"USER","reason":"테스트"}"""))
+            .andExpect(jsonPath("$.code").value("ADMIN_SELF_ACTION"))
+        assertEquals(1, count("SELECT COUNT(*) FROM account WHERE role = 'ADMIN' AND deleted_at IS NULL"))
+
+        assertEquals(
+            listOf(
+                "ACCOUNT_LIST|null|keywordLength=14, sort=RECENT, page=1, pageSize=20, returned=1",
+                "ACCOUNT_DETAIL|$memberId|null",
+                "ACCOUNT_ADMIN_GRANT|$memberId|role=USER->ADMIN, adminActionId=${actionIdOf(memberId, "ADMIN_GRANT")}",
+                "ACCOUNT_ADMIN_REVOKE|$adminId|role=ADMIN->USER, adminActionId=${actionIdOf(adminId, "ADMIN_REVOKE")}",
+            ),
+            jdbcTemplate.queryForList(
+                "SELECT CONCAT(action, '|', IFNULL(target_account_id, 'null'), '|', IFNULL(request_summary, 'null')) FROM admin_access_log ORDER BY id",
+                String::class.java,
+            ),
+        )
+        assertEquals(
+            listOf("$adminId|$DESK_ADDRESS|$DESK_AGENT", "$adminId|$DESK_ADDRESS|$DESK_AGENT", "$adminId|$DESK_ADDRESS|$DESK_AGENT"),
+            jdbcTemplate.queryForList(
+                "SELECT CONCAT(actor_account_id, '|', client_ip, '|', user_agent) FROM admin_access_log WHERE actor_account_id = ? ORDER BY id",
+                String::class.java,
+                adminId,
+            ),
+        )
+
+        // 감사 기록은 최신순 커서로 읽고, 이 조회도 남습니다.
+        val firstPage = mockMvc.perform(get(AUDIT_LOGS).cookie(member).param("targetAccountId", "$memberId").param("limit", "1"))
+            .andExpect(status().isOk())
+            .andExpect(header().string(HttpHeaders.CACHE_CONTROL, "no-store"))
+            .andExpect(jsonPath("$.records[0].action").value("ACCOUNT_ADMIN_GRANT"))
+            .andExpect(jsonPath("$.records[0].actorAccountId").value(adminId))
+            .andExpect(jsonPath("$.records[0].actorEmail").value("admin@govbiz.local"))
+            .andExpect(jsonPath("$.records[0].clientIp").value(DESK_ADDRESS))
+            .andExpect(jsonPath("$.records[0].userAgent").value(DESK_AGENT))
+            .andExpect(jsonPath("$.nextCursor").isNumber())
+            .andReturn().response.contentAsString
+        val cursor = Regex("\"nextCursor\":(\\d+)").find(firstPage)!!.groupValues[1]
+        mockMvc.perform(get(AUDIT_LOGS).cookie(member).param("targetAccountId", "$memberId").param("limit", "1").param("before", cursor))
+            .andExpect(jsonPath("$.records[0].action").value("ACCOUNT_DETAIL"))
+            .andExpect(jsonPath("$.nextCursor").value(nullValue()))
+        mockMvc.perform(get(AUDIT_LOGS).cookie(member).param("action", "AUDIT_LOG_LIST"))
+            .andExpect(jsonPath("$.records", hasSize<Any>(2)))
+            .andExpect(jsonPath("$.records[1].requestSummary").value("targetAccountId=$memberId, limit=1, returned=1"))
+        mockMvc.perform(get(AUDIT_LOGS).cookie(admin)).andExpect(status().isForbidden())
+    }
+
+    @Test
+    fun anUnwritableAccessLogFailsTheRequestAndRollsTheActionBack() {
+        val admin = signUpAdmin("admin@govbiz.local")
+        signUp("member@company.co.kr")
+        val memberPath = "$ACCOUNTS/${idOf("member@company.co.kr")}"
+
+        // 격리된 테스트 DB에서만 기록 테이블 이름을 잠시 바꿔 쓰기 실패를 만듭니다.
+        jdbcTemplate.execute("RENAME TABLE admin_access_log TO admin_access_log_unavailable")
+        try {
+            mockMvc.perform(get(ACCOUNTS).cookie(admin))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.code").value("ADMIN_ACCESS_LOG_UNAVAILABLE"))
+                .andExpect(jsonPath("$.accounts").doesNotExist())
+            mockMvc.perform(get(memberPath).cookie(admin))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.account").doesNotExist())
+            mockMvc.perform(post("$memberPath/suspend").cookie(admin).origin().json("""{"reason":"스팸 제안 반복"}"""))
+                .andExpect(status().isServiceUnavailable())
+            mockMvc.perform(post("$memberPath/role").cookie(admin).origin().json("""{"role":"ADMIN","reason":"운영 담당 추가"}"""))
+                .andExpect(status().isServiceUnavailable())
+        } finally {
+            jdbcTemplate.execute("RENAME TABLE admin_access_log_unavailable TO admin_access_log")
+        }
+
+        // 조치와 사유 기록은 접속기록과 같은 transaction이라 함께 되돌려졌습니다.
+        assertEquals(0, count("SELECT COUNT(*) FROM account WHERE email = 'member@company.co.kr' AND (suspended_at IS NOT NULL OR role = 'ADMIN')"))
+        assertEquals(0, count("SELECT COUNT(*) FROM account_admin_action"))
+        assertEquals(1, count("SELECT COUNT(*) FROM account_session WHERE account_id = ${idOf("member@company.co.kr")}"))
+    }
+
+    @Test
     fun theOnlyActiveAdminCannotDeleteTheirOwnAccount() {
         val admin = signUpAdmin("admin@govbiz.local")
         mockMvc.perform(delete("/api/v1/me").cookie(admin).origin().json("""{"password":"password1"}"""))
@@ -311,6 +429,20 @@ class AdminAccountFlowIntegrationTest {
     private fun idOf(email: String): Long =
         requireNotNull(jdbcTemplate.queryForObject("SELECT id FROM account WHERE email = ?", Long::class.java, email))
 
+    private fun actionIdOf(targetAccountId: Long, action: String): Long =
+        requireNotNull(
+            jdbcTemplate.queryForObject(
+                "SELECT id FROM account_admin_action WHERE target_account_id = ? AND action = ?",
+                Long::class.java,
+                targetAccountId,
+                action,
+            ),
+        )
+
+    /** 관리자 PC 한 대에서 보낸 요청처럼 접속 주소와 User-Agent를 정합니다. 접속기록에 그대로 남는지 봅니다. */
+    private fun MockHttpServletRequestBuilder.fromAdminDesk() =
+        header(HttpHeaders.USER_AGENT, DESK_AGENT).with { request -> request.remoteAddr = DESK_ADDRESS; request }
+
     private fun count(sql: String): Int =
         requireNotNull(jdbcTemplate.queryForObject(sql, Int::class.java))
 
@@ -320,6 +452,9 @@ class AdminAccountFlowIntegrationTest {
 
     private companion object {
         const val ACCOUNTS = "/api/v1/admin/accounts"
+        const val AUDIT_LOGS = "/api/v1/admin/audit-logs"
+        const val DESK_ADDRESS = "203.0.113.9"
+        const val DESK_AGENT = "GovBiz-Admin-Test/1.0"
         val nextAddress = AtomicInteger(0)
     }
 }

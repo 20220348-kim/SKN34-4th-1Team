@@ -11,6 +11,11 @@ export function formatAdminDateTime(dateTime: string): string {
   return dateTime.slice(0, 16).replace('T', ' ')
 }
 
+/** 감사 기록 시각입니다. 화면 날짜 기준(`2026.09.10`)에 초까지 붙입니다. `2026-09-10T14:05:09.5` → `2026.09.10 14:05:09` */
+export function formatAdminTimestamp(dateTime: string): string {
+  return `${dateTime.slice(0, 10).replaceAll('-', '.')} ${dateTime.slice(11, 19)}`
+}
+
 /** `1248100998` → `124-81-00998` */
 export function formatBusinessNumber(businessNumber: string): string {
   return /^\d{10}$/.test(businessNumber)

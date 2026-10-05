@@ -61,5 +61,10 @@ interface AdminAccountMapper {
         @Param("suspendedAt") suspendedAt: LocalDateTime?,
     ): Int
 
+    fun updateRole(
+        @Param("accountId") accountId: Long,
+        @Param("role") role: String,
+    ): Int
+
     fun insertAction(row: AdminAccountActionDbRow): Int
 }
