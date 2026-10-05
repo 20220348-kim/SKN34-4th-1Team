@@ -3,7 +3,7 @@ import { Text } from 'react-native'
 import { Stack, router } from 'expo-router'
 import { renderRouter, screen } from 'expo-router/testing-library'
 import { applicationPreparationUseCase } from '../api/applicationPreparation'
-import { shareApplicationFile } from '../api/applicationDocumentFiles'
+import { shareApplicationFile, type ApplicationFileResult } from '../api/applicationDocumentFiles'
 import { useAuth } from '../auth/session'
 import { ApplicationDocumentScreen } from './ApplicationDocumentScreen'
 import { ApplicationOnlineInputScreen } from './ApplicationOnlineInputScreen'
@@ -35,7 +35,7 @@ const blob = () => new Blob(['data'], { type: 'application/hwp+zip' })
 beforeEach(() => {
   process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.example.test'
   Object.values(api).forEach(fn => fn.mockReset())
-  jest.mocked(shareApplicationFile).mockReset().mockResolvedValue(undefined)
+  jest.mocked(shareApplicationFile).mockReset().mockResolvedValue({ status: 'shareClosed' })
   jest.mocked(applicationPreparationUseCase).mockReturnValue(api as unknown as ReturnType<typeof applicationPreparationUseCase>)
   jest.mocked(useAuth).mockReturnValue({ status: 'signedIn', session: { accessToken: 'owned', account: { email: 'owner@test.com' } },
     invalidateSession: jest.fn() } as unknown as ReturnType<typeof useAuth>)
@@ -66,8 +66,25 @@ test('Stack navigation aborts a pending download and a late response cannot open
   expect(api.submitDocumentJob).not.toHaveBeenCalled()
 })
 
+test('leaving during native saving prevents a late saved notice and blocks repeated taps', async () => {
+  const saving = deferred<ApplicationFileResult>()
+  jest.mocked(shareApplicationFile).mockReturnValueOnce(saving.promise)
+  renderRouter(routes, { initialUrl: '/documents' })
+  await screen.findByText('초안 완료')
+  const save = screen.getByLabelText('사업계획서.hwpx 기기에 저장')
+  fireEvent.press(save); fireEvent.press(save)
+  await waitFor(() => expect(shareApplicationFile).toHaveBeenCalledTimes(1))
+  expect(api.downloadDocument).toHaveBeenCalledTimes(1)
+  fireEvent.press(screen.getByLabelText('온라인 신청 입력 도우미'))
+  await screen.findByText('온라인 신청을 준비하세요')
+  await act(async () => { saving.resolve({ status: 'saved', fileName: '사업계획서.hwpx', renamed: false }); router.back() })
+  await screen.findByText('초안 완료')
+  expect(screen.queryByText(/파일을 저장했어요/)).toBeNull()
+  expect(api.submitDocumentJob).not.toHaveBeenCalled()
+})
+
 test('TXT sharing loses its permission on blur and a new attempt is available after returning', async () => {
-  const sharing = deferred<void>()
+  const sharing = deferred<ApplicationFileResult>()
   jest.mocked(shareApplicationFile).mockReturnValueOnce(sharing.promise)
   renderRouter(routes, { initialUrl: '/online' })
   await screen.findByText('준비된 답변 1 / 1')
@@ -79,10 +96,13 @@ test('TXT sharing loses its permission on blur and a new attempt is available af
   await screen.findByText('다른 화면')
   expect(signal!.aborted).toBe(true)
   expect(isCurrent()).toBe(false)
-  await act(async () => { sharing.resolve(undefined); router.back() })
+  await act(async () => { sharing.resolve({ status: 'shareClosed' }); router.back() })
   await screen.findByText('준비된 답변 1 / 1')
+  expect(screen.queryByText('공유 화면을 닫았어요.')).toBeNull()
   fireEvent.press(screen.getByLabelText('TXT로 내려받기·공유'))
   await waitFor(() => expect(shareApplicationFile).toHaveBeenCalledTimes(2))
+  await screen.findByText('공유 화면을 닫았어요.')
+  expect(screen.queryByText(/파일을 저장했어요/)).toBeNull()
 })
 
 test('the review cannot submit generation when every saved answer is undecided', async () => {

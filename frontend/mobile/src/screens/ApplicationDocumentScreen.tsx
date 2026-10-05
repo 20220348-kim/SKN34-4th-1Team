@@ -100,7 +100,7 @@ function OwnedDocuments({ id, jobId, token, email, onEditor, onReanalyze, onOnli
   }
   async function download(file: ApplicationDocument | null, targetRevision?: number, mode: 'save' | 'share' = 'share') {
     if (locked.current || !preparation || !focused.current) return
-    locked.current = true; setBusy(file ? String(file.id) : 'archive'); setError(null)
+    locked.current = true; setBusy(`${mode}:${file ? file.id : 'archive'}`); setError(null); setNotice(null)
     const controller = new AbortController(); downloadWork.current = controller
     try {
       const blob = file ? await useCase.downloadDocument(id, file.id, controller.signal) : await useCase.downloadDocumentArchive(id, targetRevision!, controller.signal)
@@ -110,7 +110,10 @@ function OwnedDocuments({ id, jobId, token, email, onEditor, onReanalyze, onOnli
         'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx' }
       const extension = extensions[blob.type.split(';')[0]]
       if (!file && !extension) throw new Error('묶음 내려받기의 파일 형식을 확인하지 못했어요.')
-      await shareApplicationFile(owner, blob, file?.fileName ?? `신청문서-${id}-답변${targetRevision}.${extension}`, () => mounted.current && focused.current && !controller.signal.aborted, controller.signal, mode)
+      const result = await shareApplicationFile(owner, blob, file?.fileName ?? `신청문서-${id}-답변${targetRevision}.${extension}`, () => mounted.current && focused.current && !controller.signal.aborted, controller.signal, mode)
+      if (controller.signal.aborted || !mounted.current || !focused.current || downloadWork.current !== controller) return
+      if (result.status === 'saved') setNotice(`${result.fileName} 파일을 저장했어요.${result.renamed ? ' 같은 이름의 파일이 있어 번호를 붙였어요.' : ''}`)
+      else if (result.status === 'shareClosed') setNotice('공유 화면을 닫았어요.')
     } catch (cause) { if (!controller.signal.aborted) reportError(cause) }
     finally {
       if (downloadWork.current === controller) {
@@ -176,8 +179,8 @@ function OwnedDocuments({ id, jobId, token, email, onEditor, onReanalyze, onOnli
         : answer.reason === 'SLOT_MISMATCH' ? '인쇄된 선택지·날짜와 달라요. 원본 파일에서 직접 작성해 주세요.'
           : '원본 파일에서 직접 작성해 주세요.'}</Notice><Text style={styles.body}>{answer.value}</Text>
       <Button label="답변 복사" accessibilityLabel={`${answer.fieldLabel} 답변 복사`} variant="ghost" onPress={() => void Clipboard.setStringAsync(answer.value).then(() => setNotice('답변을 복사했어요.')).catch(() => setError('답변을 복사하지 못했어요.'))} /></View>)}
-    <Button label="기기에 저장" accessibilityLabel={`${file.fileName} 기기에 저장`} variant="secondary" disabled={busy !== null} busy={busy === String(file.id)} onPress={() => void download(file, undefined, 'save')} />
-    <Button label="다른 앱으로 공유" accessibilityLabel={`${file.fileName} 공유`} variant="ghost" disabled={busy !== null} onPress={() => void download(file)} />
+    <Button label="기기에 저장" accessibilityLabel={`${file.fileName} 기기에 저장`} variant="secondary" disabled={busy !== null} busy={busy === `save:${file.id}`} onPress={() => void download(file, undefined, 'save')} />
+    <Button label="다른 앱으로 공유" accessibilityLabel={`${file.fileName} 공유`} variant="ghost" disabled={busy !== null} busy={busy === `share:${file.id}`} onPress={() => void download(file)} />
   </Card>
   return <Page refreshing={loading} onRefresh={() => setRevision(value => value + 1)}>
     <Card><Text style={styles.heading}>{preparation.form.programTitle}</Text><Text style={styles.muted}>{preparation.form.formTitle}</Text></Card>
@@ -197,7 +200,11 @@ function OwnedDocuments({ id, jobId, token, email, onEditor, onReanalyze, onOnli
     </Card>}
     {currentFiles.length > 0 && <View style={styles.row}><StatusBadge label="초안 완료" tone="success" /></View>}
     {currentFiles.map(renderFile)}
-    {currentFiles.length > 1 && <Button label="현재 답변 파일 전체 내려받기" disabled={busy !== null} busy={busy === 'archive'} onPress={() => void download(null, preparation.inputRevision)} />}
+    {currentFiles.length > 1 && <View style={{ gap: 8 }}>
+      <Text style={styles.muted}>현재 답변 파일 {currentFiles.length}개를 ZIP으로 묶어 내보냅니다.</Text>
+      <Button label="전체 기기에 저장" accessibilityLabel="현재 답변 파일 ZIP 기기에 저장" variant="secondary" disabled={busy !== null} busy={busy === 'save:archive'} onPress={() => void download(null, preparation.inputRevision, 'save')} />
+      <Button label="전체 공유" accessibilityLabel="현재 답변 파일 ZIP 공유" variant="ghost" disabled={busy !== null} busy={busy === 'share:archive'} onPress={() => void download(null, preparation.inputRevision)} />
+    </View>}
     {previousFiles.length > 0 && <><Text style={styles.heading}>이전 파일</Text><Notice>답변이 바뀌었어요. 이전 파일은 해당 답변 버전으로 만들어진 초안입니다.</Notice>{previousFiles.map(renderFile)}</>}
     {!isRunning && !currentFiles.length && (missingRequired.length > 0 || writableAnswers === 0) && <Notice>초안을 만들기 전에 작성할 답변을 저장하고 필수 항목을 확인해 주세요.</Notice>}
     {canGenerate && <><Text style={styles.muted}>초안 생성은 유료 AI를 사용해요.</Text><Button label={pending ? '같은 생성 요청으로 확인' : previousFiles.length ? '수정 답변으로 다시 만들기' : job?.status === 'FAILED' ? '초안 생성 다시 시도' : '초안 만들기'} busy={busy === 'generate'} onPress={() => void generate()} /></>}
