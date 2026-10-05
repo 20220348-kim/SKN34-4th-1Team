@@ -1081,3 +1081,53 @@ API·sync를 함께 교체한다. `0015` 등 과거 번호에서 임의로 멈�
 그 뒤 원본 migration과 API/sync·실행기·결과 서버 전환 범위를 별도로 승인받는다.
 이번에는 원본 migration이나 이미지 교체를 하지 않았으므로 `admission_control_unsupported`
 차단은 그대로다. 백업 성공을 이유로 기존 활성화 검사를 우회하지 않는다.
+
+### 동일 소스 이미지 준비와 최신 코드의 격리 전환 검증 — 2026-10-06
+
+`4b238ac1f1a9886fa99830b1eda04a3185c83d51`의 Git 추적 파일만 아카이브해 Ops와 평가 실행기
+이미지를 빌드했다. 로컬 환경 파일·작업 파일을 빌드 입력에 포함하지 않았다.
+검증 도구도 같은 커밋의 소스 아카이브에서 실행해 Windows checkout의 줄바꿈과 분리했다.
+이 소스 아카이브는 리허설용이며, 실제 최초 전환에는 선택한 원격 SHA와 일치하는 깨끗한
+Git checkout과 해당 SHA의 필수 CI 성공을 다시 요구한다.
+
+| 대상 | 준비한 이미지 |
+|---|---|
+| Ops API·sync·결과 서버 | `govbiz-ops-service:msa-4b238ac-20261006` |
+| 평가 실행기 | `govbiz-evaluation-runner:msa-4b238ac-20261006` |
+
+- Ops immutable ID: `sha256:df3662b9248abf78a776329630b318f92c5c0f33d573ded1043a1bc49aa3c40a`
+- 실행기 immutable ID: `sha256:28a9d142bf79d20491ccace4b0cb42051f422253583ea2020c3018e9c39da2bd`
+- 두 이미지의 실행 명세 SHA-256: `a032c956b0266b5bdf5dc48f4868bf67c8023924f57fe7a655c684b424e20a6c`
+
+`ops_initial_runtime.image_release`로 네트워크가 없는 일회용 컨테이너에서 Ops 소스 지문과
+실행기의 execution release 파일 검증을 수행했다. 두 이미지의 non-root 실행 계정과
+동일한 실행 명세를 확인했으며 기존 컨테이너는 교체하지 않았다.
+
+같은 Ops 이미지로 `ops_db_upgrade.rehearse`를 실행했다. 2026-10-05의 `database.enc`를
+새 격리 MySQL에 복원했으며, 이 과거 백업을 현재 원본 DB 변경의 입력으로 사용하지 않았다.
+
+| 검사 | 결과 |
+|---|---|
+| 스키마 전환 | `0017_input_token_budget → 0028_daily_evaluation_schedules`, migration 11개 적용 |
+| 기존 데이터 | 23개 테이블·126개 행의 원래 값 보존 |
+| 접수 제어 | 접수 중지와 신규 접수 거절 확인 |
+| 반복 실행 | 같은 migration·중지 요청의 반복 실행 및 기존 토큰 상한 NULL 보존 확인 |
+| 정리 | 검증 컨테이너 정리 완료, `status: REHEARSED` |
+| 원본 재확인 | 개인 Kubernetes Ops DB는 `0017` 유지 |
+| 전환 계획 | 현재 실행 대상의 중지·재개 순서 조회 `PLANNED`, 실제 중지·재개 없음 |
+| 비용·적용 | 모델 호출 0회, 원본 migration·서비스 교체·GHCR 업로드 없음 |
+
+Git 제외 경로 `work/ops-transition-4b238ac/`에 `prepared-images.json`,
+`runtime-image-verification.json`, `upgrade-rehearsal.json`, `maintenance-plan.json`,
+`source-archive.json`, `source-comparison.json`을 남겼다. 암호화 백업과 키는 기존 개인 경로에
+유지하며 이 기록이나 Git에 포함하지 않았다.
+
+검증 중 기본 브랜치가 모바일 변경을 포함한 `62a61a09af32b8cd6c58e9afd445b5d81b43fb35`로
+진행했다. Ops·AI·평가 코드·LLMOps·GitOps·발행 도구의 여섯 Git tree가 빌드 시점과 같은 것을
+확인했다. 이는 같은 실행 입력의 재사용 근거이며 **새 기본 브랜치의 CI 성공이나 배포 승인으로
+대체하지 않는다.** `latest_ci_verified=false`, `deployment_authorized=false`를 기록했다.
+
+이번 결과는 로컬 전환 이미지와 격리 migration의 검증이다. 최신 공개 GHCR receipt 발급,
+원본 DB 최초 전환, 관리자 인증·새 평가 실행, Argo 동기화는 완료하지 않았다.
+실제 전환 전에는 대상 SHA의 필수 CI·이미지를 재확인하고, 승인된 쓰기 중지 시점의 새 상태
+백업과 복원 검증을 확보한 뒤 원본 migration·런타임 교체를 수행한다.
