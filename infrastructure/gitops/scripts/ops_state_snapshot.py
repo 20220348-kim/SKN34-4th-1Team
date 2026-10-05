@@ -320,16 +320,31 @@ def backup(state, db_archive, key_file, output, *, include_runtime_keys=False):
     }
 
 
-def verify(archive, key_file, *, completed_links=False, verify_runtime_keys=False):
+def verify(
+    archive, key_file, *, completed_links=False, verify_runtime_keys=False, database_login=False
+):
+    if database_login and not verify_runtime_keys:
+        raise ValueError("Database login verification requires runtime key verification")
     key = storage.key_bytes(key_file)
     raw = database.read_archive(archive)
     payload = validate(storage.open_payload(raw, key))
     if verify_runtime_keys and "runtime_keys" not in payload:
         raise ValueError("This archive has no runtime recovery keys")
+    if database_login:
+        database.validate_accounts(payload["runtime_keys"].get("database_accounts"))
     expected = None
-    if completed_links:
+    login_checks = None
+    if completed_links or database_login:
         with database.restored_database(payload["database"]) as command:
-            expected = completed_evidence(command, payload["stores"]["results"]["entries"])
+            if completed_links:
+                expected = completed_evidence(command, payload["stores"]["results"]["entries"])
+            if database_login:
+                login_checks = database.verify_database_login(
+                    command,
+                    payload["runtime_keys"]["database_accounts"],
+                    payload["runtime_keys"]["keys"],
+                    payload["database"]["table_counts"],
+                )
         result = database.restore_report(payload["database"])
     else:
         result = database.restore_database(payload["database"])
@@ -348,7 +363,8 @@ def verify(archive, key_file, *, completed_links=False, verify_runtime_keys=Fals
             signed_usage_receipts=count,
             usage_receipt_signatures_verified=count > 0,
             ops_budget_configured=key_data["ops_budget_configured"],
-            database_login_verified=False,
+            database_login_verified=database_login,
+            database_login_checks=login_checks,
             core_authentication_verified=False,
         )
     return {
@@ -384,6 +400,7 @@ def main():
     check.add_argument("--key-file", type=Path, required=True)
     check.add_argument("--completed-links", action="store_true")
     check.add_argument("--runtime-keys", action="store_true")
+    check.add_argument("--database-login", action="store_true")
     args = parser.parse_args()
     if os.name != "posix":
         parser.error("Run this command inside WSL/Linux")
@@ -403,6 +420,7 @@ def main():
                 args.key_file,
                 completed_links=args.completed_links,
                 verify_runtime_keys=args.runtime_keys,
+                database_login=args.database_login,
             )
         )
         print(json.dumps(result, sort_keys=True))

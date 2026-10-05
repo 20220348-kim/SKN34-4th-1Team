@@ -284,6 +284,7 @@ OPS_VOLUME_SNAPSHOT_TEST_IMAGE='sha256:<로컬 Ops 이미지 ID>' \
 
 - Kubernetes `ops-runtime`의 Django 키·DB 비밀번호·결과 서버 토큰
 - Kubernetes `ops-mysql-runtime`의 앱·root DB 비밀번호(앱 비밀번호는 Ops 값과 일치해야 함)
+- 원본 MySQL의 `root@localhost`, `govbiz_ops@%` 인증 해시와 지원 여부를 확인할 계정 속성
 - 해당 Compose 실행기의 예산 토큰. Ops에도 설정돼 있다면 같은 값인지 확인한다.
 
 ```bash
@@ -294,7 +295,7 @@ python3 -B infrastructure/gitops/scripts/ops_state_snapshot.py backup \
   --key-file "$OPS_DB_BACKUP_KEY" --output "$OPS_KEY_STATE_BACKUP_FILE" --runtime-keys
 python3 -B infrastructure/gitops/scripts/ops_state_snapshot.py verify \
   --key-file "$OPS_DB_BACKUP_KEY" --archive "$OPS_KEY_STATE_BACKUP_FILE" \
-  --completed-links --runtime-keys
+  --completed-links --runtime-keys --database-login
 ```
 
 키 원문은 파일·CLI 인자·일반 보고서에 기록하지 않는다. `kubectl`과 Docker 조회 응답은 도구의
@@ -310,7 +311,19 @@ Ops API·sync와 MySQL의 Secret 참조, Secret UID·버전, DB 비밀번호, Co
 원본 키로 만든 일회용 서명 증거를 암호화 파일에 함께 저장한다. 검증은 별도 Ops 컨테이너에서
 복원한 키로 Django 서명을 읽고, 다른 키는 거절하는지 확인한다. 실제 결과 서버 WSGI 코드도
 정상 토큰은 허용하고 잘못된 토큰은 거절해야 한다. 이는 HTTP 배포·Core 관리자 로그인 검증이 아니다.
-DB 비밀번호는 같은 값의 복구 여부를 대조하며 실제 DB 로그인은 별도다.
+`--database-login`을 생략하면 DB 비밀번호는 같은 값의 복구 여부만 대조한다.
+
+`verify --runtime-keys --database-login`은 SQL·행 수·완료 평가 연결 검사가 끝난 격리 MySQL에
+**원본 인증 해시**를 복원한다. 검사할 비밀번호로 새 인증 해시를 만들지 않으므로, Secret 값과
+실제 DB 비밀번호가 다르면 로그인이 실패한다. root는 `root@localhost`를 선택하도록 컨테이너
+내부 소켓으로, 앱 계정은 TCP로 접속한다. 두 계정의 실제 사용자·DB·평가 행 수를 대조하고
+잘못된 비밀번호가 인증 오류로 거절되는지 확인한다. 연결 장애를 비밀번호 거절로 취급하지 않는다.
+
+대상은 이 도구가 만든 이름·라벨과 네트워크 격리·tmpfs를 갖춘 새 MySQL로 제한하며 기존 DB와
+볼륨에 인증 정보를 적용하지 않는다. 지원 범위는 `caching_sha2_password`를 사용하는 잠기지 않고
+만료되지 않은 두 계정이며, 별도 SSL 요구나 추가 인증 속성이 있으면 거절한다. Ops의 `DB_USER`와
+MySQL의 `MYSQL_USER`도 `govbiz_ops`여야 한다. 원본 권한은 복원하지 않으며 앱에는 검증용
+`SELECT ON govbiz_ops.*`만 부여한다. 따라서 쓰기 권한·원본 인증 정책 전체·앱 재기동은 검증 범위가 아니다.
 
 보관된 `capture/usage-<sequence>.json` 전체의 v1/v2 HMAC 서명·요청 ID·순번을 복원한 예산
 토큰으로 검사한다. `usage-summary.json`은 서명 영수증이 아니므로 제외한다. 누락된 증거의 존재,
@@ -319,13 +332,21 @@ DB 비밀번호는 같은 값의 복구 여부를 대조하며 실제 DB 로그�
 
 성공 시 `runtime_keys_verified=true`와 검사 결과·건수만 남긴다. 구버전 Ops에 예산 토큰이
 없고 실행기에만 있으면 `ops_budget_configured=false`로 표시하며 API 연결 성공으로 해석하지 않는다.
-`database_login_verified`, `core_authentication_verified`, `full_backup_verified`는 계속 `false`다.
+DB 로그인 옵션까지 성공하면 `database_login_verified=true`와 계정별 검증 결과를 보고한다.
+옵션을 생략하면 `database_login_verified=false`다. `core_authentication_verified`,
+`full_backup_verified`는 계속 `false`이며 `source_grants_restored=false`로 권한 복원 범위를 명시한다.
 키 없는 이전 묶음은 저장소 복원 검사를 계속 지원하지만 `verify --runtime-keys`는 거절한다.
+원본 인증 해시가 없는 이전 키 묶음은 키 복원 검사만 지원한다. DB 로그인 검사를 위해서는 쓰기 중지
+상태에서 새 묶음을 생성해야 하며, 누락된 원본 해시를 저장된 비밀번호로 만들어 대체하지 않는다.
 이 검사도 구버전 갱신 차단을 해제하지 않는다.
 
 무료 회귀는 `test_ops_runtime_keys.py`에서 수행한다. LLMOps CI는 빌드된 Ops 이미지로 실제
 Django·WSGI 코드의 암호화 키 복원을 검사한다. 로컬에서는 `OPS_RUNTIME_KEY_TEST_IMAGE`에
 기존 Ops 이미지 ID를 명시하면 같은 격리 검사를 실행하며, 개인 Secret을 읽는 검사는 아니다.
+`test_ops_database_login.py`는 계정 범위·비밀 stdin 전송·기존 DB 변경 방지·인증 오류 판별을 검사한다.
+`test_ops_state_links.py`의 실제 MySQL 8.4 검사는 암호화 묶음의 DB·결과·Prefect 연결에 더해
+복원된 root·앱 비밀번호 로그인과 각각의 잘못된 복구 비밀번호 실패를 확인한다. 한글·따옴표·역슬래시가
+포함된 합성 비밀번호를 사용하며 원본 DB·계정과 결과 파일이 변하지 않았는지도 대조한다.
 
 ### Compose Ops 검토 기록을 새 환경에 재사용
 

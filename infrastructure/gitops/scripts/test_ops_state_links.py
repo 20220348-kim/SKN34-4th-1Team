@@ -16,6 +16,7 @@ from uuid import uuid4
 import ops_state_links as links
 import ops_state_snapshot as snapshot
 from test_ops_db_snapshot import payload as db_payload
+from test_ops_runtime_keys import payload as key_payload
 
 REQUEST = "12345678-1234-4234-8234-123456789abc"
 FLOW = "23456789-1234-4234-8234-123456789abc"
@@ -210,6 +211,8 @@ class DockerLinkTests(unittest.TestCase):
         database = snapshot.database
         image = os.environ["OPS_DB_SNAPSHOT_MYSQL_IMAGE"]
         helper = os.environ["OPS_VOLUME_SNAPSHOT_TEST_IMAGE"]
+        root_password = secrets.token_hex(32)
+        app_password = "synthetic_복원_'_\\_$_password_1234567890"
         identity = (
             database.storage.run(
                 [
@@ -230,7 +233,7 @@ class DockerLinkTests(unittest.TestCase):
                     "--innodb-buffer-pool-size=64M",
                     "--skip-log-bin",
                 ],
-                env={**os.environ, "MYSQL_ROOT_PASSWORD": secrets.token_hex(32)},
+                env={**os.environ, "MYSQL_ROOT_PASSWORD": root_password},
             )
             .decode()
             .strip()
@@ -248,6 +251,15 @@ class DockerLinkTests(unittest.TestCase):
                     if time.monotonic() >= deadline:
                         raise
                     time.sleep(1)
+            database.query(
+                command,
+                "SET SESSION sql_mode=''; SET @create_account=CONCAT("
+                "'CREATE USER ''govbiz_ops''@''%'' IDENTIFIED WITH caching_sha2_password BY ',"
+                "QUOTE(UNHEX('" + app_password.encode().hex() + "')));"
+                "PREPARE create_account FROM @create_account; EXECUTE create_account;"
+                "DEALLOCATE PREPARE create_account;",
+            )
+            authentication = database.read_accounts(command)
             database.query(
                 command,
                 """
@@ -305,22 +317,56 @@ CREATE TABLE evaluations_evaluationbudgetreservation (id int PRIMARY KEY, closed
                     "database": data,
                     "stores": stores,
                 }
+                runtime = key_payload() | {"image": helper, "database_accounts": authentication}
+                runtime["keys"].update(database=app_password, mysql_root=root_password)
+                runtime["proof"] = snapshot.runtime_keys.run_probe(runtime, "capture")
+                payload["runtime_keys"] = runtime
                 key = secrets.token_hex(32).encode()
                 database.storage.exclusive(root / "key", key)
                 database.storage.exclusive(root / "state.enc", database.storage.seal(payload, key))
-                result = snapshot.verify(root / "state.enc", root / "key", completed_links=True)
+                result = snapshot.verify(
+                    root / "state.enc",
+                    root / "key",
+                    completed_links=True,
+                    verify_runtime_keys=True,
+                    database_login=True,
+                )
                 self.assertTrue(result["cross_store_business_links_verified"])
                 self.assertEqual(result["matched_completed_evaluations"], 1)
                 self.assertTrue(result["cleanup_complete"])
                 self.assertFalse(result["full_backup_verified"])
                 self.assertFalse(result["application_started"])
+                login = result["runtime_key_checks"]["database_login_checks"]
+                self.assertTrue(result["runtime_key_checks"]["database_login_verified"])
+                self.assertTrue(login["source_authentication_hashes_restored"])
+                self.assertTrue(login["root_login_verified"])
+                self.assertTrue(login["application_login_verified"])
+                self.assertTrue(login["wrong_passwords_rejected"])
+                self.assertFalse(login["source_grants_restored"])
                 for store in result["stores"].values():
                     self.assertEqual(store["matched_executions"], 1)
                 self.assertNotIn(REQUEST, json.dumps(result))
                 self.assertNotIn(SPEC_HASH, json.dumps(result))
+                for password in (root_password, app_password):
+                    self.assertNotIn(password, json.dumps(result))
+                for account in authentication["accounts"]:
+                    self.assertNotIn(account["authentication_hex"], json.dumps(result))
+                for field in ("database", "mysql_root"):
+                    broken = copy.deepcopy(payload)
+                    broken["runtime_keys"]["keys"][field] = secrets.token_hex(32)
+                    bad_archive = root / (field + ".enc")
+                    database.storage.exclusive(bad_archive, database.storage.seal(broken, key))
+                    with (
+                        self.subTest(field=field),
+                        self.assertRaisesRegex(ValueError, "cannot authenticate"),
+                    ):
+                        snapshot.verify(
+                            bad_archive, root / "key", verify_runtime_keys=True, database_login=True
+                        )
                 for kind, store in stores.items():
                     self.assertEqual(snapshot.files.collect(root / kind), store["entries"])
             self.assertEqual(database.dump(command), sql)
+            self.assertEqual(database.read_accounts(command), authentication)
         finally:
             database.storage.run(["docker", "rm", "--force", "--volumes", identity])
 

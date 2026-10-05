@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import ops_runtime_keys as keys
+from test_ops_database_login import accounts
 
 IMAGE = "sha256:" + "a" * 64
 ARTIFACT = "b" * 64
@@ -100,7 +101,8 @@ class CaptureTests(unittest.TestCase):
                                 "env": [
                                     reference(key, "ops-runtime")
                                     for key in self.secrets["ops-runtime"]["data"]
-                                ],
+                                ]
+                                + [{"name": "DB_USER", "value": "govbiz_ops"}],
                             }
                             for name in ("ops-service", "ops-sync")
                         ]
@@ -117,7 +119,8 @@ class CaptureTests(unittest.TestCase):
                         "env": [
                             reference(key, "ops-mysql-runtime")
                             for key in self.secrets["ops-mysql-runtime"]["data"]
-                        ],
+                        ]
+                        + [{"name": "MYSQL_USER", "value": "govbiz_ops"}],
                     }
                 ]
             },
@@ -159,14 +162,47 @@ class CaptureTests(unittest.TestCase):
             patch.object(
                 keys.storage, "inspect", side_effect=lambda identity: self.containers[identity]
             ),
+            patch.object(keys.database, "read_accounts", return_value=accounts()) as authentication,
         ):
-            return keys.capture(["kubectl", "scoped"], self.source, self.volumes)
+            result = keys.capture(["kubectl", "scoped"], self.source, self.volumes)
+        authentication.assert_called_once_with(
+            [
+                "kubectl",
+                "scoped",
+                "exec",
+                "-i",
+                "ops-mysql-0",
+                "-c",
+                "mysql",
+                "--",
+                *keys.storage.AUTH,
+            ]
+        )
+        return result
 
     def test_only_declared_ops_keys_and_consistent_consumers_are_captured(self):
         result = self.capture()
         self.assertEqual(result["keys"], self.value["keys"])
         self.assertTrue(result["ops_budget_configured"])
         self.assertEqual(set(result["sources"]), {"ops-runtime", "ops-mysql-runtime"})
+        self.assertEqual(result["database_accounts"], accounts())
+
+    def test_nonstandard_application_database_users_are_rejected(self):
+        for container, name in (
+            *[
+                (item, "DB_USER")
+                for item in self.deployment["spec"]["template"]["spec"]["containers"]
+            ],
+            (self.pod["spec"]["containers"][0], "MYSQL_USER"),
+        ):
+            row = next(row for row in container["env"] if row["name"] == name)
+            row["value"] = "root"
+            with (
+                self.subTest(name=name, container=container["name"]),
+                self.assertRaises(ValueError),
+            ):
+                self.capture()
+            row["value"] = "govbiz_ops"
 
     def test_legacy_missing_ops_budget_is_recorded_without_claiming_api_configuration(self):
         del self.secrets["ops-runtime"]["data"]["LLMOPS_BUDGET_TOKEN"]

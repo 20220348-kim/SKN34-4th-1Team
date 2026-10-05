@@ -13,6 +13,7 @@ from unittest.mock import patch
 from uuid import uuid4
 
 import ops_state_snapshot as snapshot
+from test_ops_database_login import accounts
 from test_ops_db_snapshot import payload as db_payload
 from test_ops_runtime_keys import payload as key_payload
 
@@ -576,6 +577,92 @@ class ArchiveTests(unittest.TestCase):
         ):
             snapshot.verify(self.output, self.key, verify_runtime_keys=True)
         restore.assert_not_called()
+
+    def test_database_login_requires_keys_and_original_hashes_before_restore(self):
+        with (
+            patch.object(snapshot.storage, "key_bytes") as key,
+            self.assertRaisesRegex(ValueError, "requires runtime key"),
+        ):
+            snapshot.verify(self.output, self.key, database_login=True)
+        key.assert_not_called()
+        # Previous archives remain usable for key-only verification, not DB login.
+        value = {
+            "schema_version": 1,
+            "scope": snapshot.SCOPE,
+            "database": self.db,
+            "stores": self.stores,
+            "runtime_keys": key_payload(),
+        }
+        snapshot.storage.exclusive(self.output, snapshot.storage.seal(value, self.key_bytes))
+        with (
+            patch.object(snapshot.database, "restored_database") as restore,
+            self.assertRaisesRegex(ValueError, "Missing source MySQL"),
+        ):
+            snapshot.verify(self.output, self.key, verify_runtime_keys=True, database_login=True)
+        restore.assert_not_called()
+
+    def test_database_login_runs_after_link_reads_and_requires_successful_cleanup(self):
+        value = {
+            "schema_version": 1,
+            "scope": snapshot.SCOPE,
+            "database": self.db,
+            "stores": self.stores,
+            "runtime_keys": key_payload() | {"database_accounts": accounts()},
+        }
+        snapshot.storage.exclusive(self.output, snapshot.storage.seal(value, self.key_bytes))
+        for failure in (None, "login", "cleanup"):
+            events = []
+
+            @contextmanager
+            def restored(_, events=events, failure=failure):
+                try:
+                    yield ["restored-db"]
+                finally:
+                    events.append("cleanup")
+                    if failure == "cleanup":
+                        raise ValueError("cleanup failed")
+
+            def links(*args, events=events):
+                events.append("links")
+                return {}
+
+            def login(*args, events=events, failure=failure):
+                events.append("login")
+                if failure == "login":
+                    raise ValueError("login failed")
+                return {"database_login_verified": True}
+
+            with (
+                self.subTest(failure=failure),
+                patch.object(snapshot.database, "restored_database", side_effect=restored),
+                patch.object(snapshot, "completed_evidence", side_effect=links),
+                patch.object(snapshot.database, "verify_database_login", side_effect=login),
+                patch.object(snapshot, "volume_helper", return_value={}) as helper,
+                patch.object(snapshot.runtime_keys, "run_probe", return_value={}) as probe,
+            ):
+                if failure:
+                    with self.assertRaises(ValueError):
+                        snapshot.verify(
+                            self.output,
+                            self.key,
+                            completed_links=True,
+                            verify_runtime_keys=True,
+                            database_login=True,
+                        )
+                    helper.assert_not_called()
+                    probe.assert_not_called()
+                else:
+                    result = snapshot.verify(
+                        self.output,
+                        self.key,
+                        completed_links=True,
+                        verify_runtime_keys=True,
+                        database_login=True,
+                    )
+                    self.assertTrue(result["runtime_key_checks"]["database_login_verified"])
+                    self.assertFalse(result["runtime_key_checks"]["core_authentication_verified"])
+                    self.assertFalse(result["full_backup_verified"])
+            self.assertEqual(events, ["links", "login", "cleanup"])
 
     def test_cli_redacts_failure_and_prints_no_success(self):
         with (
