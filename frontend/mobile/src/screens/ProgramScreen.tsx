@@ -32,7 +32,6 @@ export function ProgramScreen({ identity, onLogin, resumeAction, onResumed }: {
   const [answer, setAnswer] = useState<SupportProgramEvidenceAnswer | null>(null)
   const [answerError, setAnswerError] = useState<string | null>(null)
   const [answering, setAnswering] = useState(false)
-  const [expanded, setExpanded] = useState(false)
   const [questionOpen, setQuestionOpen] = useState(false)
   const insets = useSafeAreaInsets()
   const work = useRef<AbortController | null>(null)
@@ -130,20 +129,20 @@ export function ProgramScreen({ identity, onLogin, resumeAction, onResumed }: {
         {deadline !== null && <StatusBadge label={deadline < 0 ? '마감' : deadline === 0 ? 'D-day' : `D-${deadline}`} tone={deadline >= 0 && deadline <= 3 ? 'warning' : 'neutral'} />}
         <View style={{ flex: 1 }} /><Text style={styles.muted}>{program.sourceName}</Text></View>
       <Title>{program.title}</Title>
+      <Subtitle>{program.organization}</Subtitle>
       <View style={local.glance}><View style={local.fact}><Text style={styles.muted}>접수 기간</Text><Text style={[styles.body, local.factValue]}>{program.applicationPeriod}</Text></View>
         <View style={local.fact}><Text style={styles.muted}>지원 규모</Text><Text style={[styles.muted, local.factValue]}>공고문에서 확인해 주세요</Text></View></View>
       {token && saved && <ProgramPreparationSection key={`${token}:${sourceCode}:${sourceProgramId}`} identity={identity} token={token} />}
       {saveError && <><Notice error>{saveError}</Notice><Button variant="ghost" label="저장 상태 다시 확인" onPress={() => setRetry((value) => value + 1)} /></>}
       {saveNotice && <Notice>{saveNotice}</Notice>}
       {!program.evidenceQuestionSupported && <Notice>이 제공처 공고는 아직 원문 근거 답변을 지원하지 않습니다. 공식 공고 원문에서 확인해 주세요.</Notice>}
-      {expanded && <><Subtitle>{program.organization}</Subtitle><Card>
+      <Card>
         <Text style={styles.heading}>지원 대상</Text><Text style={styles.body}>{program.targetDescription || '원문을 확인해 주세요.'}</Text>
         <Text style={styles.muted}>{program.regions.join(' · ')} / {program.categories.join(' · ')}</Text>
       </Card>
       <Card><Text style={styles.heading}>사업 내용</Text><Text selectable style={styles.body}>{program.summary || '공고 원문에서 확인해 주세요.'}</Text></Card>
       <Notice>공고 정보는 신청 자격의 확정 판정이 아닙니다. 제출 전 공식 공고의 요건과 마감일을 확인해 주세요.</Notice>
       <Button label={program.sourceCode === 'CNTRADE_NOTICE' ? '공식 공지 목록 열기' : '공식 공고 원문 열기'} onPress={() => void openSource(program.sourceUrl)} />
-      </>}
     </>}
   </Page>
     {program && <View style={[local.footer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
@@ -151,7 +150,6 @@ export function ProgramScreen({ identity, onLogin, resumeAction, onResumed }: {
         accessibilityState={{ selected: !!saved, disabled: saving || Boolean(token) && saved === null || status === 'loading' || status === 'unavailable' }} disabled={saving || Boolean(token) && saved === null || status === 'loading' || status === 'unavailable'}
         onPress={() => void toggleSave()} style={local.bookmark}>{saving ? <ActivityIndicator color={colors.primary} />
           : <AppIcon name="bookmark" color={colors.primary} selected={!!saved} size={21} />}</Pressable>
-      <Button label={expanded ? '접기' : '더 보기'} variant="secondary" onPress={() => setExpanded(!expanded)} />
       <View style={{ flex: 1 }}>{program.evidenceQuestionSupported ? <Button label="원문에 질문하기" disabled={status === 'loading' || status === 'unavailable'} onPress={() => {
         if (!token) onLogin('question')
         else setQuestionOpen(true)
