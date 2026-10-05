@@ -49,12 +49,73 @@ beforeEach(() => {
   api.list.mockResolvedValue({ items: [documentSummary], nextBeforeId: null }); api.recentDocumentJobs.mockResolvedValue([]); api.discoveryJobs.mockResolvedValue([]); api.delete.mockResolvedValue(undefined)
   api.availability.mockResolvedValue({ state: { status: 'AVAILABLE' }, forms: { items: [documentForm] } }); api.markDiscoveryJobsSeen.mockResolvedValue(undefined); api.create.mockResolvedValue(documentPreparation)
   api.get.mockResolvedValue(documentPreparation); api.documents.mockResolvedValue([documentFile]); api.documentJobs.mockResolvedValue([documentJob]); api.documentJob.mockResolvedValue(documentJob); api.markDocumentJobsSeen.mockResolvedValue(undefined)
-  api.downloadDocument.mockResolvedValue(new Blob(['data'], { type: 'application/hwp+zip' })); jest.mocked(shareApplicationFile).mockResolvedValue(undefined)
+  api.downloadDocument.mockResolvedValue(new Blob(['data'], { type: 'application/hwp+zip' })); jest.mocked(shareApplicationFile).mockReset().mockResolvedValue({ status: 'shareClosed' })
   jest.mocked(listReviewSavedPrograms).mockResolvedValue([documentProgram])
   jest.mocked(programClient).mockReturnValue({ browseCatalog: jest.fn().mockResolvedValue({ programs: [documentProgram], total: 1, page: 1, pageSize: 12, totalPages: 1,
     regions: ['서울'], categories: ['기술'], startupStages: [], applicantTypes: [], founderAges: [] }) } as unknown as ReturnType<typeof programClient>)
 })
 afterEach(() => { delete process.env.EXPO_PUBLIC_API_BASE_URL; jest.restoreAllMocks() })
+
+test('saving reports the final numbered filename after copying finishes', async () => {
+  jest.mocked(shareApplicationFile).mockResolvedValueOnce({ status: 'saved', fileName: '사업계획서 (2).hwpx', renamed: true })
+  render(<ApplicationDocumentScreen {...docProps} />)
+  await screen.findByText('초안 완료')
+  fireEvent.press(screen.getByLabelText('사업계획서.hwpx 기기에 저장'))
+  await screen.findByText('사업계획서 (2).hwpx 파일을 저장했어요. 같은 이름의 파일이 있어 번호를 붙였어요.')
+  expect(shareApplicationFile).toHaveBeenCalledWith('https://api.example.test:first@test.com', expect.any(Blob), documentFile.fileName, expect.any(Function), expect.any(AbortSignal), 'save')
+  expect(api.submitDocumentJob).not.toHaveBeenCalled()
+})
+
+test('a cancelled retry removes the previous saved notice without showing an error or new success', async () => {
+  jest.mocked(shareApplicationFile).mockResolvedValueOnce({ status: 'saved', fileName: documentFile.fileName, renamed: false })
+    .mockResolvedValueOnce({ status: 'cancelled' })
+  render(<ApplicationDocumentScreen {...docProps} />)
+  await screen.findByText('초안 완료')
+  fireEvent.press(screen.getByLabelText('사업계획서.hwpx 기기에 저장'))
+  await screen.findByText('사업계획서.hwpx 파일을 저장했어요.')
+  fireEvent.press(screen.getByLabelText('사업계획서.hwpx 기기에 저장'))
+  await waitFor(() => expect(shareApplicationFile).toHaveBeenCalledTimes(2))
+  await waitFor(() => expect(screen.getByLabelText('사업계획서.hwpx 기기에 저장').props.accessibilityState.disabled).toBe(false))
+  expect(screen.queryByText(/파일을 저장했어요/)).toBeNull()
+  expect(screen.queryByText(/저장할 폴더를 열지 못했어요/)).toBeNull()
+})
+
+test('copy failure shows its error and never shows a saved notice', async () => {
+  jest.mocked(shareApplicationFile).mockRejectedValueOnce(new Error('파일을 저장하지 못했어요. 선택한 폴더의 접근 권한과 저장 공간을 확인해 주세요.'))
+  render(<ApplicationDocumentScreen {...docProps} />)
+  await screen.findByText('초안 완료')
+  fireEvent.press(screen.getByLabelText('사업계획서.hwpx 기기에 저장'))
+  await screen.findByText(/파일을 저장하지 못했어요/)
+  expect(screen.queryByText(/파일을 저장했어요/)).toBeNull()
+  expect(api.submitDocumentJob).not.toHaveBeenCalled()
+})
+
+test('sharing reports only share sheet closure without a saved notice', async () => {
+  render(<ApplicationDocumentScreen {...docProps} />)
+  await screen.findByText('초안 완료')
+  fireEvent.press(screen.getByLabelText('사업계획서.hwpx 공유'))
+  await screen.findByText('공유 화면을 닫았어요.')
+  expect(screen.queryByText(/파일을 저장했어요/)).toBeNull()
+})
+
+test('archive saving and sharing use the same current revision ZIP download without regenerating it', async () => {
+  api.documents.mockResolvedValue([documentFile, { ...documentFile, id: 82, fileName: '별첨.pdf', mediaType: 'application/pdf' }])
+  api.downloadDocumentArchive.mockResolvedValue(new Blob(['zip'], { type: 'application/zip' }))
+  const name = `신청문서-9-답변${documentPreparation.inputRevision}.zip`
+  jest.mocked(shareApplicationFile).mockResolvedValueOnce({ status: 'saved', fileName: name, renamed: false })
+    .mockResolvedValueOnce({ status: 'shareClosed' })
+  render(<ApplicationDocumentScreen {...docProps} />)
+  await screen.findByLabelText('현재 답변 파일 ZIP 기기에 저장')
+  fireEvent.press(screen.getByLabelText('현재 답변 파일 ZIP 기기에 저장'))
+  await screen.findByText(`${name} 파일을 저장했어요.`)
+  expect(api.downloadDocumentArchive).toHaveBeenCalledWith(9, documentPreparation.inputRevision, expect.any(AbortSignal))
+  expect(shareApplicationFile).toHaveBeenNthCalledWith(1, 'https://api.example.test:first@test.com', expect.any(Blob), name, expect.any(Function), expect.any(AbortSignal), 'save')
+  fireEvent.press(screen.getByLabelText('현재 답변 파일 ZIP 공유'))
+  await screen.findByText('공유 화면을 닫았어요.')
+  expect(shareApplicationFile).toHaveBeenNthCalledWith(2, 'https://api.example.test:first@test.com', expect.any(Blob), name, expect.any(Function), expect.any(AbortSignal), 'share')
+  expect(api.downloadDocument).not.toHaveBeenCalled()
+  expect(api.submitDocumentJob).not.toHaveBeenCalled()
+})
 
 test('list management identifies its deletion target and does not delete before confirmation', async () => {
   const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined)

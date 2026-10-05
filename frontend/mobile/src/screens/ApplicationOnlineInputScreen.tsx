@@ -53,10 +53,11 @@ function OwnedOnline({ id, token, email, onEditor }: { id: number; token: string
     catch { if (mounted.current) setError('답변을 복사하지 못했어요. 다시 시도해 주세요.') }
   }
   async function saveTxt() {
-    if (!guide || busy || !focused.current) return
-    const controller = new AbortController(); request.current = controller; setBusy(true); setError(null)
+    if (!guide || busy || request.current || !focused.current) return
+    const controller = new AbortController(); request.current = controller; setBusy(true); setError(null); setNotice(null)
     try {
-      await shareApplicationFile(`${getApiBaseUrl()}:${email}`, new Blob(['\uFEFF', formatSavedApplicationAnswers(guide)], { type: 'text/plain;charset=utf-8' }), `신청답변-${id}.txt`, () => mounted.current && focused.current && !controller.signal.aborted, controller.signal)
+      const result = await shareApplicationFile(`${getApiBaseUrl()}:${email}`, new Blob(['\uFEFF', formatSavedApplicationAnswers(guide)], { type: 'text/plain;charset=utf-8' }), `신청답변-${id}.txt`, () => mounted.current && focused.current && !controller.signal.aborted, controller.signal)
+      if (!controller.signal.aborted && mounted.current && focused.current && request.current === controller && result.status === 'shareClosed') setNotice('공유 화면을 닫았어요.')
     } catch (cause) { if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : '답변 파일을 저장하지 못했어요.') }
     finally {
       if (request.current === controller) {
