@@ -32,7 +32,7 @@ export function MenuScreen({ onOpen }: { onOpen(destination: MenuDestination): v
     { title: '내 정보', items: [
       { destination: 'account', label: '내 계정', description: '이메일 · 로그인 관리', icon: 'account' },
       { destination: 'company', label: account?.company ? '기업 정보' : '기업 정보 등록', description: '지역 · 업종 · 설립연도', icon: 'building' },
-      { destination: 'settings', label: '리포트 수신 설정', description: '정기 이메일 수신', icon: 'bell' },
+      { destination: 'settings', label: '알림 설정', description: '마감 알림 · 리포트 수신', icon: 'bell' },
     ] },
     { title: '지원사업 찾기', items: [
       { destination: 'filter', label: '공고 검색', description: '조건으로 찾기', icon: 'search' },

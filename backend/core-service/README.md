@@ -103,6 +103,20 @@ V20에 맞추고 미적용 대화용 V19를 한 번만 out-of-order로 적용하
 - **권한 변경:** `POST /api/v1/admin/accounts/{id}/role`은 처리자와 대상 계정 행을 ID 순서로 잠근 뒤 처리자가 아직 활성
   관리자인지 다시 확인하므로, 두 관리자가 서로의 권한을 동시에 내려도 관리자가 모두 사라지지 않습니다.
 
+## 관심 공고 마감 알림
+
+`ai.govbiz.core.notification`은 로그인 회원의 알림 설정과 관심 공고 마감 알림을 담당합니다. V50이
+`account_notification_setting`과 고유 키 `(account_id, source_code, source_program_id, kind, due_date)`의
+`deadline_reminder` 발송 기록을 추가합니다. 메일·앱 알림은 맞춤 리포트의 `DailyReportMailClient`·`DailyReportPushClient`와
+기기 등록을 그대로 쓰며 새 큐·외부 서비스는 없습니다. 스케줄러 `DEADLINE_REMINDER_ENABLED`는 기본 꺼짐이고,
+`DEADLINE_REMINDER_SEND_HOUR`(기본 9) 이후 마감 N일 전 공고를 예약해 채널별로 한 번만 보냅니다.
+[조건·상태·설정·검증](../../docs/deadline-reminders.md)을 참고하세요.
+
+| 알림 설정 API | 동작 |
+|---|---|
+| `GET /api/v1/me/notification-settings` | 본인 마감 알림 설정(`enabled`, `daysBefore`, `email`, `push`)과 수신 주소 확인·발송 가능·기기 등록·스케줄러 상태. no-store |
+| `PUT /api/v1/me/notification-settings` | `{deadlineReminder: {...}}` 저장. 범위 밖·채널 없음 400, 수신 주소 미확인 409, 발송 미설정 503 |
+
 ## 실행
 
 기업 맞춤 리포트는 `ai.govbiz.core.dailyreport`에서 저장된 기업 조건·지원 목적을 기존 검색과 HTML 근거 답변에

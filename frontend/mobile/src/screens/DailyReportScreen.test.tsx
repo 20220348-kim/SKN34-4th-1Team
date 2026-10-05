@@ -36,6 +36,11 @@ const report = {
     eligibilityStatus: 'MATCH', eligibilityNote: '', evidenceStatus: 'UNSUPPORTED', evidenceAnswer: null, citations: [],
   }],
 }
+const notificationSettings = {
+  deadlineReminder: { enabled: false, daysBefore: 3, email: false, push: false },
+  emailConfirmed: false, emailDeliveryAvailable: true, pushDeliveryAvailable: true,
+  pushDeviceRegistered: false, schedulerEnabled: true, sendHour: 9,
+}
 const callbacks = { onLogin: jest.fn(), onCompany: jest.fn(), onSearch: jest.fn(), onOpenProgram: jest.fn() }
 const invalidateSession = jest.fn().mockResolvedValue(undefined)
 const refreshSession = jest.fn()
@@ -50,6 +55,7 @@ function respond(path: string, options?: { accessToken?: string }) {
   if (path.endsWith('/latest')) return Promise.resolve({ report: null })
   if (path === '/api/v1/me/company') return Promise.resolve(company)
   if (path === '/api/v1/me/saved-programs') return Promise.resolve({ programs: [] })
+  if (path === '/api/v1/me/notification-settings') return Promise.resolve(notificationSettings)
   throw new Error(`Unexpected request: ${path}, ${options?.accessToken}`)
 }
 
@@ -314,6 +320,7 @@ test('All settings opens the form directly and saves through the existing API wi
     ? Promise.resolve({ ...settings, supportPurpose: '제품 개발' }) : respond(path))
   render(<DailyReportScreen {...callbacks} settingsOnly />)
   await screen.findByLabelText('지원 목적 (선택, 최대 100자)')
+  expect(await screen.findByLabelText('관심 공고 마감 알림')).toBeTruthy()
   expect(screen.queryByLabelText('수신 설정')).toBeNull()
   expect(jest.mocked(apiRequest).mock.calls.some(([path]) => path.endsWith('/latest') || path.endsWith('/preview') || path.includes('/saved-programs'))).toBe(false)
   fireEvent.changeText(screen.getByLabelText('지원 목적 (선택, 최대 100자)'), '제품 개발')

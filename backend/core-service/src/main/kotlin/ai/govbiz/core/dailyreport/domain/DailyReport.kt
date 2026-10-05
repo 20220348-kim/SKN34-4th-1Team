@@ -28,4 +28,7 @@ data class DailyReportReservation(val report: DailyReport, val acquired: Boolean
 data class DailyReportSubscription(
     val accountId: Long, val supportPurpose: String, val enabled: Boolean,
     val confirmedEmail: String?, val confirmedAt: LocalDateTime?, val consentAt: LocalDateTime?,
-)
+) {
+    /** 리포트 화면에서 확인을 마친 주소가 지금 계정 이메일과 같은지입니다. 관심 공고 마감 알림 이메일도 이 확인을 씁니다. */
+    fun isEmailConfirmedFor(email: String): Boolean = confirmedAt != null && confirmedEmail == email
+}

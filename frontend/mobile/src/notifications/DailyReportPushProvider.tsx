@@ -2,7 +2,9 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 import { AppState } from 'react-native'
 import { useRootNavigationState, useRouter } from 'expo-router'
 import { dailyReportNotificationSchema } from '@govbiz/shared/data/models/DailyReportPushDto'
+import { deadlineReminderNotificationSchema } from '@govbiz/shared/data/models/NotificationSettingsDto'
 import type { DailyReportPushSettings } from '@govbiz/shared/domain/entities/DailyReportPush'
+import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
 import { useAuth } from '../auth/session'
 import { ApiError } from '../api/client'
 import { disablePush, getPushSettings, registerPush } from '../api/dailyReportPush'
@@ -19,6 +21,7 @@ export function DailyReportPushProvider({ children }: { children: ReactNode }) {
     { settings: null, busy: false, error: null })
   const [revision, setRevision] = useState(0)
   const [pendingReport, setPendingReport] = useState<string | null>(null)
+  const [pendingProgram, setPendingProgram] = useState<SupportProgramIdentity | null>(null)
   const controller = useRef<AbortController | null>(null)
   const activeToken = useRef(accessToken)
   const changingSetting = useRef(false)
@@ -75,8 +78,12 @@ export function DailyReportPushProvider({ children }: { children: ReactNode }) {
         shouldShowBanner: true, shouldShowList: true, shouldPlaySound: true, shouldSetBadge: false,
       }) })
       const receive = (data: unknown) => {
-        const parsed = dailyReportNotificationSchema.safeParse(data)
-        if (!disposed && parsed.success) setPendingReport(parsed.data.reportId)
+        if (disposed) return
+        const report = dailyReportNotificationSchema.safeParse(data)
+        if (report.success) { setPendingReport(report.data.reportId); return }
+        // 마감 알림은 공고 식별자만 받아 공개 공고 상세를 엽니다. 임의 URL은 열지 않습니다.
+        const reminder = deadlineReminderNotificationSchema.safeParse(data)
+        if (reminder.success) setPendingProgram({ sourceCode: reminder.data.sourceCode, sourceProgramId: reminder.data.sourceProgramId })
       }
       const listener = native.addNotificationResponseReceivedListener((response) => {
         receive(response.notification.request.content.data)
@@ -102,6 +109,12 @@ export function DailyReportPushProvider({ children }: { children: ReactNode }) {
       setPendingReport(null)
     } else if (status === 'signedOut') router.navigate('/(tabs)/all/account')
   }, [navigation?.key, pendingReport, router, status])
+
+  useEffect(() => {
+    if (!navigation?.key || !pendingProgram) return
+    router.push({ pathname: '/program', params: pendingProgram })
+    setPendingProgram(null)
+  }, [navigation?.key, pendingProgram, router])
 
   async function toggle() {
     if (!accessToken || state.busy || state.token !== accessToken || !state.settings) return

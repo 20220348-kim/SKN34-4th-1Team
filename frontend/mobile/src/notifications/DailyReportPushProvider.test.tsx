@@ -6,7 +6,8 @@ import { getExpoPushToken, getPushDeviceId, notificationModule } from './device'
 import { DailyReportPushProvider, useDailyReportPush } from './DailyReportPushProvider'
 
 const mockNavigate = jest.fn()
-jest.mock('expo-router', () => ({ useRouter: () => ({ navigate: mockNavigate }), useRootNavigationState: () => ({ key: 'root' }) }))
+const mockPush = jest.fn()
+jest.mock('expo-router', () => ({ useRouter: () => ({ navigate: mockNavigate, push: mockPush }), useRootNavigationState: () => ({ key: 'root' }) }))
 jest.mock('../auth/session', () => ({ useAuth: jest.fn() }))
 jest.mock('../api/dailyReportPush', () => ({ getPushSettings: jest.fn(), registerPush: jest.fn(), disablePush: jest.fn() }))
 jest.mock('./device', () => ({ getExpoPushToken: jest.fn(), getPushDeviceId: jest.fn(), notificationModule: jest.fn(), supportsPushNotifications: () => true }))
@@ -25,7 +26,7 @@ function signedIn(token = 'first') {
 function Probe() { push = useDailyReportPush(); return <Text>{push.error ?? (push.settings?.enabled ? 'enabled' : 'disabled')}</Text> }
 const app = () => <DailyReportPushProvider><Probe /></DailyReportPushProvider>
 beforeEach(() => {
-  signedIn(); notification = undefined; mockNavigate.mockClear()
+  signedIn(); notification = undefined; mockNavigate.mockClear(); mockPush.mockClear()
   jest.mocked(getPushDeviceId).mockResolvedValue('a4a15267-866c-4df0-bb91-55d7c14d7a72')
   jest.mocked(getPushSettings).mockReset().mockResolvedValue(base)
   jest.mocked(registerPush).mockReset().mockResolvedValue(undefined)
@@ -75,6 +76,21 @@ test('notification opens only the validated report after authentication', async 
   expect(mockNavigate).toHaveBeenCalledWith('/(tabs)/all/account')
   signedIn(); view.rerender(app())
   await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith({ pathname: '/(tabs)/report', params: { reportId: '42' } }))
+})
+
+test('deadline reminder opens only the validated public program detail and never a URL', async () => {
+  render(app())
+  await waitFor(() => expect(notification).toBeDefined())
+  await act(async () => notification?.({ notification: { request: { content: { data: { url: 'https://attacker.test' } } } } }))
+  await act(async () => notification?.({ notification: { request: { content: { data: {
+    type: 'deadline-reminder', sourceCode: 'BIZINFO', sourceProgramId: 'https://attacker.test ', dueDate: '2026-10-07',
+  } } } } }))
+  expect(mockPush).not.toHaveBeenCalled()
+  await act(async () => notification?.({ notification: { request: { content: { data: {
+    type: 'deadline-reminder', sourceCode: 'BIZINFO', sourceProgramId: 'PBLN_1', dueDate: '2026-10-07', url: 'https://attacker.test',
+  } } } } }))
+  await waitFor(() => expect(mockPush).toHaveBeenCalledWith({ pathname: '/program', params: { sourceCode: 'BIZINFO', sourceProgramId: 'PBLN_1' } }))
+  expect(mockNavigate).not.toHaveBeenCalled()
 })
 
 test('late token result after account change is discarded before registration', async () => {

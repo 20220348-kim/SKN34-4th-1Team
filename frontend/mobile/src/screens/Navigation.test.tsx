@@ -194,7 +194,7 @@ test.each([
 })
 
 test.each([
-  ['리포트 수신 설정', '/all/settings', '로그인하면 리포트 수신 설정을 변경할 수 있어요.'],
+  ['알림 설정', '/all/settings', '로그인하면 관심 공고 마감 알림과 리포트 수신 설정을 바꿀 수 있어요.'],
   ['신청 문서', '/all/preparation', '로그인하면 작성한 답변과 신청문서를 웹과 앱에서 함께 확인할 수 있어요.'],
   ['중복 검토', '/all/reviews', '로그인하면 본인의 검토와 참여 이력을 관리할 수 있어요. 기업 등록 없이 직접 입력할 수 있습니다.'],
   ['받은 제안', '/all/collab', '제안함은 로그인 후 확인할 수 있어요.'],
@@ -207,7 +207,7 @@ test.each([
   expect(view.getPathname()).toBe(pathname)
   expect(screen.getByLabelText('전체').props.accessibilityState.selected).toBe(true)
   fireEvent.press(screen.getByLabelText(label === '중복 검토' ? '로그인하고 시작' : label === '신청 문서' ? '로그인하고 시작하기' : '로그인하기'))
-  if (label !== '리포트 수신 설정') {
+  if (label !== '알림 설정') {
     await screen.findByText('로그인이 필요해요')
     fireEvent.press(screen.getByLabelText('로그인'))
   }

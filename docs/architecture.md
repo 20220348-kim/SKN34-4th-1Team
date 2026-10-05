@@ -19,7 +19,7 @@
 웹은 기존 쿠키 설정을 유지하고 앱의 세션 저장·네비게이션은 모바일 쪽에서 담당합니다.
 모바일 비로그인 하단은 검색·협업·전체 3탭이며 공개 검색과 모집글 조회를 허용합니다. 전체 메뉴는 모든 기능을 노출하되
 개인 기능은 로그인 안내를 먼저 열고 확인된 인증 뒤 해당 라우트로 이동합니다. 확인된 로그인 뒤에는
-검색·관심함·리포트·전체 4탭과 `app/(tabs)/all`의 기존 계정·기업·수신 설정·신청 준비·협업 화면으로 연결합니다.
+검색·관심함·리포트·전체 4탭과 `app/(tabs)/all`의 기존 계정·기업·알림 설정·신청 준비·협업 화면으로 연결합니다.
 협업 탭에서 로그인하면 기존 All Stack으로 이동하며 선택한 view·box·mine을 보존합니다. 메뉴는 기존 화면·Bearer API·공통 DTO를 재사용하며 서버 계약은 바꾸지 않습니다.
 협업 머리글의 연필은 모바일 `/partner/new`로 연결합니다. 작성은 `RecruitmentCreateScreen → mobile api/partners의 createRecruitment
 → shared CreatePartnerRecruitmentUseCase → 모바일 Bearer HTTP 요청 → 기존 Core 모집글 API`로 이어집니다.
@@ -338,6 +338,15 @@ Core 내부 전용 소비자가 기존 검색·근거 답변을 재사용하며 
 프런트엔드는 본인 리포트·설정과 명시적 이메일 확인·해지 화면을 제공합니다. 점수는 검색 관련도이며 선정 확률이 아닙니다.
 [리포트 API·수신 동의·중복/비용 제한·운영 설정](daily-reports.md)에 상세 경계를 정리합니다.
 [RabbitMQ 적용 상세](rabbitmq-daily-report-generation.md)는 예약/발행 transaction, 실패·중복·`UNKNOWN`, 운영 한계를 설명합니다.
+
+## 관심 공고 마감 알림
+
+웹 프로필과 모바일 알림 설정은 `NotificationSettingsController → NotificationSettingsService → NotificationSettingsRepository → MyBatis Mapper → XML → MySQL`로
+본인 설정을 저장합니다. 스케줄러는 `DeadlineReminderScheduler → DeadlineReminderService → DeadlineReminderRepository → MyBatis Mapper → XML → MySQL`
+에서 마감 N일 전 관심 공고를 고유 키로 한 번만 예약하고 채널별 발송권을 선점한 뒤,
+`DailyReportMailClient → SMTP`와 `DailyReportPushClient → Expo Push Service → FCM/APNs`로 transaction 밖에서 보냅니다.
+발송 직전에 계정·설정·관심 공고·접수 상태·수신 주소·기기를 다시 확인하고 보낼 수 없으면 이유 코드와 함께 SKIPPED로 끝냅니다.
+[조건·상태·설정](deadline-reminders.md)을 참고하세요.
 
 ## 검색·상세 조회·원문 근거 질문
 

@@ -71,6 +71,23 @@ class DailyReportMailClientTest {
     }
 
     @Test
+    fun deadlineReminderIsShortPlaintextWithDeadlineAndEncodedProgramLink() {
+        doReturn(message).`when`(sender).createMimeMessage()
+        client().sendDeadlineReminder("member@example.org", "AI 바우처\r\nBcc: other@example.org 지원사업", "BIZINFO", "PBLN 1&x=2",
+            LocalDate.of(2026, 10, 5), 3)
+        message.saveChanges()
+        assertTrue(message.isMimeType("text/plain"))
+        assertEquals("member@example.org", message.allRecipients.single().toString())
+        assertFalse(message.subject.contains('\n'))
+        assertTrue(message.subject.startsWith("[GovBiz] 관심 공고 마감 D-3: AI 바우처"))
+        val body = message.content.toString()
+        assertTrue(body.contains("마감일: 2026년 10월 5일 (D-3)"))
+        assertTrue(body.contains("https://govbiz.example/support-programs/detail?sourceCode=BIZINFO&sourceProgramId=PBLN+1%26x%3D2"))
+        assertTrue(body.contains("https://govbiz.example/app/profile"))
+        assertFalse(body.contains("\nBcc:"))
+    }
+
+    @Test
     fun recipientAndTokenCannotInjectHeadersOrAdditionalRecipients() {
         assertThrows(DailyReportMailException::class.java) {
             client().sendVerification("member@example.org\r\nBcc:other@example.org", token)

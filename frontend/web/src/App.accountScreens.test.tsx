@@ -697,22 +697,20 @@ describe('기업 프로필 화면', () => {
     expect(screen.getByText('기업 미등록')).toBeTruthy()
   })
 
-  it('계정과 알림 카드의 알림 스위치는 화면 상태로 켜고 끈다', async () => {
+  it('계정과 알림 카드는 관심 공고 마감 알림만 서버 설정으로 켜고 나머지 알림은 스위치 없이 준비 중으로 표시한다', async () => {
+    vi.spyOn(appContainer.resolve('notificationSettingsUseCase'), 'settings').mockResolvedValue({
+      deadlineReminder: { enabled: true, daysBefore: 3, email: true, push: false },
+      emailConfirmed: true, emailDeliveryAvailable: true, pushDeliveryAvailable: false,
+      pushDeviceRegistered: false, schedulerEnabled: true, sendHour: 9,
+    })
     renderApp('/app/profile')
     const account = await screen.findByRole('region', { name: '계정과 알림' })
-    const switches = within(account).getAllByRole('switch')
-    expect(switches.map((node) => node.getAttribute('aria-label'))).toEqual([
-      '관심 공고 마감 3일 전 알림',
-      '파트너 제안·메시지 알림',
-      '프로필 조건에 맞는 새 공고 알림',
-    ])
-    expect(switches.map((node) => node.getAttribute('aria-checked'))).toEqual(['true', 'true', 'false'])
-
-    fireEvent.click(switches[2]!)
-    expect(switches[2]!.getAttribute('aria-checked')).toBe('true')
-    fireEvent.click(switches[0]!)
-    expect(switches[0]!.getAttribute('aria-checked')).toBe('false')
-    expect(switches[1]!.getAttribute('aria-checked')).toBe('true')
+    const reminder = await within(account).findByRole('switch', { name: '관심 공고 마감 알림' })
+    expect(reminder.getAttribute('aria-checked')).toBe('true')
+    expect(within(account).getAllByRole('switch')).toHaveLength(1)
+    expect(within(account).getByText('파트너 제안·메시지 알림')).toBeTruthy()
+    expect(within(account).getByText('프로필 조건에 맞는 새 공고 알림')).toBeTruthy()
+    expect(within(account).getAllByText('준비 중')).toHaveLength(2)
   })
 
   it('조회 결과로 상호·상태를 채우고 소재지·업종·설립연도를 입력해 등록하면 기업 회원이 된다', async () => {

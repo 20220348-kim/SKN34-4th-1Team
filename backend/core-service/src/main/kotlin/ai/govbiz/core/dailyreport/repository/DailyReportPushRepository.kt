@@ -2,6 +2,7 @@ package ai.govbiz.core.dailyreport.repository
 
 import ai.govbiz.core.account.config.AccountSessionProperties
 import ai.govbiz.core.dailyreport.domain.DailyReportPushDelivery
+import ai.govbiz.core.dailyreport.domain.DailyReportPushDevice
 import ai.govbiz.core.dailyreport.domain.DailyReportPushOutcome
 import ai.govbiz.core.dailyreport.repository.mapper.DailyReportPushMapper
 import java.time.Clock
@@ -23,6 +24,11 @@ class DailyReportPushRepository(private val mapper: DailyReportPushMapper, priva
     fun disable(deviceId: String, accountId: Long) { mapper.disable(deviceId, accountId) }
     fun enabled(deviceId: String, accountId: Long) = mapper.enabled(deviceId, accountId, now(), idleBefore())
     fun hasSubscriber(accountId: Long) = mapper.hasSubscriber(accountId, now(), idleBefore())
+    /** 관심 공고 마감 알림처럼 리포트와 무관한 알림이 같은 기기 수신 설정·세션 경계를 따르도록 현재 유효한 기기만 돌려준다. */
+    fun activeDevices(accountId: Long): List<DailyReportPushDevice> =
+        mapper.activeDevices(accountId, now(), idleBefore()).map { DailyReportPushDevice(it.deviceId, it.expoToken) }
+    /** 발송 결과가 DeviceNotRegistered인 토큰은 다음 알림부터 쓰지 않는다. 토큰이 바뀐 기기는 건드리지 않는다. */
+    fun invalidateToken(device: DailyReportPushDevice) { mapper.invalidateToken(device.deviceId, device.expoToken) }
     fun dueAccounts(date: LocalDate, limit: Int) = mapper.dueAccounts(date, now(), idleBefore(), limit)
     fun reserveDeliveries(date: LocalDate) { mapper.reserveDeliveries(date, now(), idleBefore()) }
     fun pending(): List<DailyReportPushDelivery> = mapper.pending(now(), idleBefore()).map {

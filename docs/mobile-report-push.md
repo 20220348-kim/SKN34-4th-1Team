@@ -53,7 +53,8 @@ ACCEPTED는 Expo 접수, DELIVERED는 FCM/APNs 접수이며 사용자 기기 표
    Expo enhanced push security를 쓰면 `DAILY_REPORT_PUSH_ACCESS_TOKEN`을 서버 secret에만 넣는다.
 6. 루트에서 `pnpm install --frozen-lockfile`, `frontend/mobile`에서 `pnpm android`로 네이티브 개발 앱을 설치한다.
    JDK 21·Android SDK 경로가 필요하다. Android Expo Go는 원격 푸시를 지원하지 않는다.
-7. 로그인·기업 등록 뒤 `전체 → 리포트 수신 설정 → 이 기기 앱 알림 켜기`를 누르고 OS 권한을 허용한다.
+7. 로그인·기업 등록 뒤 `전체 → 알림 설정 → 이 기기 앱 알림 켜기`를 누르고 OS 권한을 허용한다.
+   같은 기기 등록으로 [관심 공고 마감 알림](deadline-reminders.md)의 앱 알림도 받는다(Android 채널 `deadline-reminders`).
    로그인만으로 권한을 요구하지 않는다. OS 권한 해제 시 앱 활성화에서 서버 수신도 끈다.
 
 Expo/Firebase 프로젝트·인증이 없으면 자동 테스트와 JS export까지 확인할 수 있지만 실제 토큰 발급·푸시 수신은 확인할 수 없다.

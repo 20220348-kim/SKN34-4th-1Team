@@ -34,6 +34,16 @@ export const companyProfileStyles = {
   settingRow: 'flex items-center justify-between gap-4 rounded-[0.85rem] bg-[#f6f7f8] px-4 py-[0.85rem]',
   settingTitle: 'block text-[0.85rem] font-bold text-app-ink',
   settingDescription: 'mt-[0.1rem] block text-[0.74rem] leading-[1.5] text-sample-muted',
+  // 관심 공고 마감 알림 줄입니다. 켜면 알림 시점과 받는 방법을 같은 상자 안에 펼칩니다.
+  reminderBox: 'flex flex-col gap-3 rounded-[0.85rem] bg-[#f6f7f8] px-4 py-[0.85rem]',
+  reminderHeader: 'flex items-center justify-between gap-4',
+  reminderOptions: 'flex flex-col gap-[0.65rem] border-t border-sample-border pt-3',
+  reminderDays: 'flex flex-wrap items-center gap-2',
+  reminderLabel: 'text-[0.78rem] font-bold text-sample-muted',
+  reminderSelect:
+    'min-h-9 rounded-[0.6rem] border border-sample-border bg-white px-2 text-[0.8rem] text-app-ink disabled:opacity-60',
+  reminderChannel: 'flex items-start gap-2 text-[0.8rem] [&>input]:mt-[0.2rem]',
+  reminderNote: 'm-0 text-[0.74rem] leading-[1.5] text-sample-muted',
   choiceColumns: 'grid grid-cols-1 gap-4 @min-[32rem]/column:grid-cols-2',
   choiceGroup: 'flex flex-col gap-2',
   choiceLabel: 'text-[0.78rem] font-bold text-sample-muted',
