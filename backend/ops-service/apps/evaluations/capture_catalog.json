@@ -158,5 +158,20 @@
         "path": "runs/official-rag-20261006-v1/not-started.json"
       }
     ]
+  },
+  {
+    "id": "official-rag-20261006-v2",
+    "label": "실제 공고 RAG · H01~H06 · 연속 목록 보존 v2 · 신규 검토 필요",
+    "evaluation_scope": "source-chunks-retrieval-answer",
+    "fixture": "runs/official-rag-20261006-v2/fixture.json",
+    "fixture_sha256": "2de68ac5855cc084aceb38bff815c4e18df6217e1cf76ba51726b18a262399b7",
+    "case_ids": ["H01", "H02", "H03", "H04", "H05", "H06"],
+    "captures": [
+      {
+        "id": "official-rag-not-started-v2",
+        "label": "미실행 비교용 빈 기록 · 답변·검색 측정 없음",
+        "path": "runs/official-rag-20261006-v2/not-started.json"
+      }
+    ]
   }
 ]

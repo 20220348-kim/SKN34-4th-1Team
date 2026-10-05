@@ -11,6 +11,8 @@ HERE = Path(__file__).resolve().parent
 SOURCE = HERE / "runs/official-answer-20260907-v3/fixture.json"
 OUTPUT = HERE / "runs/official-rag-20261006-v1"
 DATASET = "official-rag-20261006-v1"
+GROUPED_DATASET = "official-rag-20261006-v2"
+GROUPED_OUTPUT = HERE / "runs" / GROUPED_DATASET
 # 새 청크의 검색 참조는 AI 초안이다. 기존 답변 검토 승인을 승계하지 않는다.
 QUOTES = {
     "H01": [
@@ -30,16 +32,30 @@ def encoded(value):
     return (json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False) + "\n").encode()
 
 
-def build():
+def paragraphs(content, *, grouped_lists=False):
+    """연속된 목록은 원문 순서대로 묶는다. 질문·참조 정답은 분할에 사용하지 않는다."""
+    chunks = []
+    previous_is_list = False
+    for paragraph in content.split("\n\n"):
+        paragraph = paragraph.strip()
+        rag.require(bool(paragraph), "empty source paragraph")
+        is_list = paragraph.startswith(("☞", "- "))
+        if grouped_lists and is_list and previous_is_list:
+            chunks[-1] += "\n\n" + paragraph
+        else:
+            chunks.append(paragraph)
+        previous_is_list = is_list
+    return chunks
+
+
+def build(*, grouped_lists=False):
     original, _ = rag.read_json(SOURCE)
     official_snapshot.validate_fixture(original)
     documents = []
     for doc in original["documents"]:
         source = doc["source"]
         chunks = []
-        for order, paragraph in enumerate(source["content"].split("\n\n")):
-            paragraph = paragraph.strip()
-            rag.require(bool(paragraph), "empty source paragraph")
+        for order, paragraph in enumerate(paragraphs(source["content"], grouped_lists=grouped_lists)):
             chunks.append({
                 "id": rag.digest(f"{doc['id']}\0{source['contentSha256']}\0{order}"),
                 "documentId": doc["id"], "order": order, "text": paragraph,
@@ -48,7 +64,10 @@ def build():
         documents.append({
             "documentId": doc["id"], "sourceUrl": source["sourceUrl"],
             "content": source["content"], "contentHash": source["contentSha256"],
-            "chunkVersion": "evaluation-paragraph-split-v1-not-core-chunker",
+            "chunkVersion": (
+                "evaluation-list-preserving-v2-not-core-chunker"
+                if grouped_lists else "evaluation-paragraph-split-v1-not-core-chunker"
+            ),
             "chunks": chunks,
             "source": {key: source[key] for key in (
                 "sourceCode", "sourceProgramId", "collectedAt", "htmlSha256", "scope"
@@ -57,18 +76,26 @@ def build():
     by_id = {doc["documentId"]: doc for doc in documents}
     cases = []
     for case in original["cases"]:
-        evidence = []
+        by_chunk = {}
         for quote in QUOTES.get(case["id"], []):
             matches = [c for c in by_id[case["documentId"]]["chunks"] if quote in c["text"]]
             rag.require(len(matches) == 1, "reference quote must match exactly one chunk")
-            evidence.append({"chunkId": matches[0]["id"], "quote": quote})
+            chunk = matches[0]
+            by_chunk.setdefault(chunk["id"], {"text": chunk["text"], "quotes": []})["quotes"].append(quote)
+        evidence = []
+        for chunk_id, item in by_chunk.items():
+            # 같은 청크에 합쳐진 참조 사실을 모두 포함하는 원문의 연속 구간을 보존한다.
+            start = min(item["text"].index(quote) for quote in item["quotes"])
+            end = max(item["text"].index(quote) + len(quote) for quote in item["quotes"])
+            evidence.append({"chunkId": chunk_id, "quote": item["text"][start:end]})
         cases.append({
             **{key: case[key] for key in ("id", "documentId", "question", "expectedStatus")},
             "expectedEvidence": evidence,
         })
     fixture = {
         "schemaVersion": "support-program-rag-fixture-v2", "scope": rag.SCOPE,
-        "datasetVersion": DATASET, "dataType": "official-html-snapshot",
+        "datasetVersion": GROUPED_DATASET if grouped_lists else DATASET,
+        "dataType": "official-html-snapshot",
         "referenceSource": "ai-authored-not-human-reviewed", "documents": documents, "cases": cases,
     }
     rag.validate_fixture(fixture)
@@ -90,10 +117,12 @@ def build():
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--write", action="store_true")
+    parser.add_argument("--grouped-lists", action="store_true", help="연속 목록을 보존하는 별도 v2 자료")
     args = parser.parse_args()
-    fixture, pending = build()
+    fixture, pending = build(grouped_lists=args.grouped_lists)
+    output = GROUPED_OUTPUT if args.grouped_lists else OUTPUT
     for name, value in (("fixture.json", fixture), ("not-started.json", pending)):
-        path = OUTPUT / name
+        path = output / name
         if args.write:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(encoded(value))

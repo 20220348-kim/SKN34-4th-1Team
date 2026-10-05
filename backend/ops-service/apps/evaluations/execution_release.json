@@ -821,6 +821,201 @@
       "capture_kinds": {
         "official-rag-not-started-v1": "synthetic"
       }
+    },
+    "official-rag-20261006-v2": {
+      "fixture_sha256": "2de68ac5855cc084aceb38bff815c4e18df6217e1cf76ba51726b18a262399b7",
+      "case_ids": [
+        "H01",
+        "H02",
+        "H03",
+        "H04",
+        "H05",
+        "H06"
+      ],
+      "captures": {
+        "official-rag-not-started-v2": "aa122b813c7161c371eb1e1d08c2d0ded75b75f30825c31bdda5e68c85cd3d59"
+      },
+      "evaluation_scope": "source-chunks-retrieval-answer",
+      "live_plan": {
+        "fixture_sha256": "2de68ac5855cc084aceb38bff815c4e18df6217e1cf76ba51726b18a262399b7",
+        "case_ids": [
+          "H01",
+          "H02",
+          "H03",
+          "H04",
+          "H05",
+          "H06"
+        ],
+        "live_config": {
+          "model": "gpt-6-luna",
+          "embedding_model": "text-embedding-3-small",
+          "embedding_dimensions": 1536,
+          "max_model_calls": 18,
+          "max_input_tokens": 32768,
+          "max_output_tokens": 2000
+        },
+        "model_operations": [
+          {
+            "id": "document_embedding:H01:0",
+            "kind": "document_embedding",
+            "model": "text-embedding-3-small",
+            "dimensions": 1536,
+            "max_input_tokens": 718,
+            "max_output_tokens": 0,
+            "input_sha256": "6dfd8b25c80c361bbb4c64b26f2fd3e3c7bc5f0cb1de21a0d164c99ad5a9c76e"
+          },
+          {
+            "id": "query_embedding:H01:0",
+            "kind": "query_embedding",
+            "model": "text-embedding-3-small",
+            "dimensions": 1536,
+            "max_input_tokens": 27,
+            "max_output_tokens": 0,
+            "input_sha256": "ecf06bebe0e26bc72c8f208d67640e685b1e3873f29d43d8dbc54a375f9eb830"
+          },
+          {
+            "id": "answer:H01",
+            "kind": "answer",
+            "case_id": "H01",
+            "model": "gpt-6-luna",
+            "max_input_tokens": 32768,
+            "max_output_tokens": 2000
+          },
+          {
+            "id": "document_embedding:H02:0",
+            "kind": "document_embedding",
+            "model": "text-embedding-3-small",
+            "dimensions": 1536,
+            "max_input_tokens": 718,
+            "max_output_tokens": 0,
+            "input_sha256": "6dfd8b25c80c361bbb4c64b26f2fd3e3c7bc5f0cb1de21a0d164c99ad5a9c76e"
+          },
+          {
+            "id": "query_embedding:H02:0",
+            "kind": "query_embedding",
+            "model": "text-embedding-3-small",
+            "dimensions": 1536,
+            "max_input_tokens": 32,
+            "max_output_tokens": 0,
+            "input_sha256": "7dc1bb2b25d41a93e0cca4a972fd18dc11b75c19547d4ad2f9c211e189fedcb4"
+          },
+          {
+            "id": "answer:H02",
+            "kind": "answer",
+            "case_id": "H02",
+            "model": "gpt-6-luna",
+            "max_input_tokens": 32768,
+            "max_output_tokens": 2000
+          },
+          {
+            "id": "document_embedding:H03:0",
+            "kind": "document_embedding",
+            "model": "text-embedding-3-small",
+            "dimensions": 1536,
+            "max_input_tokens": 718,
+            "max_output_tokens": 0,
+            "input_sha256": "6dfd8b25c80c361bbb4c64b26f2fd3e3c7bc5f0cb1de21a0d164c99ad5a9c76e"
+          },
+          {
+            "id": "query_embedding:H03:0",
+            "kind": "query_embedding",
+            "model": "text-embedding-3-small",
+            "dimensions": 1536,
+            "max_input_tokens": 33,
+            "max_output_tokens": 0,
+            "input_sha256": "3c59aaccdcb7262459d47e44fb1ddd1a62da6853523ea0d20c88f631bc61680d"
+          },
+          {
+            "id": "answer:H03",
+            "kind": "answer",
+            "case_id": "H03",
+            "model": "gpt-6-luna",
+            "max_input_tokens": 32768,
+            "max_output_tokens": 2000
+          },
+          {
+            "id": "document_embedding:H04:0",
+            "kind": "document_embedding",
+            "model": "text-embedding-3-small",
+            "dimensions": 1536,
+            "max_input_tokens": 471,
+            "max_output_tokens": 0,
+            "input_sha256": "021dc447569d8ecff93337c8e772f52af7e8ecfd1476f055cae7b29b5ada22d0"
+          },
+          {
+            "id": "query_embedding:H04:0",
+            "kind": "query_embedding",
+            "model": "text-embedding-3-small",
+            "dimensions": 1536,
+            "max_input_tokens": 28,
+            "max_output_tokens": 0,
+            "input_sha256": "af4a470def96882dd1a1ab464e5a475a76761fad912516dda4c5ec40e83de5d0"
+          },
+          {
+            "id": "answer:H04",
+            "kind": "answer",
+            "case_id": "H04",
+            "model": "gpt-6-luna",
+            "max_input_tokens": 32768,
+            "max_output_tokens": 2000
+          },
+          {
+            "id": "document_embedding:H05:0",
+            "kind": "document_embedding",
+            "model": "text-embedding-3-small",
+            "dimensions": 1536,
+            "max_input_tokens": 471,
+            "max_output_tokens": 0,
+            "input_sha256": "021dc447569d8ecff93337c8e772f52af7e8ecfd1476f055cae7b29b5ada22d0"
+          },
+          {
+            "id": "query_embedding:H05:0",
+            "kind": "query_embedding",
+            "model": "text-embedding-3-small",
+            "dimensions": 1536,
+            "max_input_tokens": 35,
+            "max_output_tokens": 0,
+            "input_sha256": "d04ba2928155d1d394c29e0ba7a0e88dbc57e946e9341b2ae28ee126bfccc532"
+          },
+          {
+            "id": "answer:H05",
+            "kind": "answer",
+            "case_id": "H05",
+            "model": "gpt-6-luna",
+            "max_input_tokens": 32768,
+            "max_output_tokens": 2000
+          },
+          {
+            "id": "document_embedding:H06:0",
+            "kind": "document_embedding",
+            "model": "text-embedding-3-small",
+            "dimensions": 1536,
+            "max_input_tokens": 471,
+            "max_output_tokens": 0,
+            "input_sha256": "021dc447569d8ecff93337c8e772f52af7e8ecfd1476f055cae7b29b5ada22d0"
+          },
+          {
+            "id": "query_embedding:H06:0",
+            "kind": "query_embedding",
+            "model": "text-embedding-3-small",
+            "dimensions": 1536,
+            "max_input_tokens": 44,
+            "max_output_tokens": 0,
+            "input_sha256": "9b0f7548278d5b6eca97bece9cbea593b3013f6cacceca9ea13617df64d1a4d4"
+          },
+          {
+            "id": "answer:H06",
+            "kind": "answer",
+            "case_id": "H06",
+            "model": "gpt-6-luna",
+            "max_input_tokens": 32768,
+            "max_output_tokens": 2000
+          }
+        ]
+      },
+      "capture_kinds": {
+        "official-rag-not-started-v2": "synthetic"
+      }
     }
   }
 }
