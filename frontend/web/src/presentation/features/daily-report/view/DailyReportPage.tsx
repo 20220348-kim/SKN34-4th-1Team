@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, type ReactNode } from 'react'
 import { Link } from 'react-router'
+import { sendHourLabel } from '@govbiz/shared/domain/entities/DailyReport'
 import type { DailyReport, DailyReportItem } from '../../../../domain/entities/DailyReport'
 import { appPaths, supportProgramDetailPath } from '../../../shared/routes/appPaths'
 import { supportProgramSaveMessages, supportProgramSaveNoticeDurationMs, useSupportProgramSaveViewModel } from '../../../shared/support-program/useSupportProgramSaveViewModel'
@@ -14,11 +15,6 @@ import { useDailyReportViewModel } from '../viewmodel/useDailyReportViewModel'
 import { dailyReportStyles as s } from './DailyReportPage.styles'
 
 type ViewModel = ReturnType<typeof useDailyReportViewModel>
-
-/** "오전 8시"처럼 발송 시작 시각을 읽기 쉽게 적습니다. */
-function hourLabel(hour: number): string {
-  return hour < 12 ? `오전 ${hour}시` : `오후 ${hour === 12 ? 12 : hour - 12}시`
-}
 
 function reportDateLabel(date: string): string {
   const [, month, day] = date.split('-')
@@ -289,7 +285,7 @@ function ReportSettings({ vm }: { vm: ViewModel }) {
   const settings = vm.settings!
   const busy = vm.busy !== null
   const editing = vm.editing
-  const schedule = `매일 ${hourLabel(settings.sendHour)} 이후`
+  const schedule = `매일 ${sendHourLabel(settings.sendHour)} 이후`
   // 끄는 것은 언제든 되고, 켜는 것은 주소 확인 · 이메일 발송 준비 · 기업 정보가 모두 있어야 합니다.
   const enableBlocker = !settings.emailDeliveryAvailable ? null
     : !settings.emailConfirmed ? '수신 주소를 확인하면 켤 수 있어요.'

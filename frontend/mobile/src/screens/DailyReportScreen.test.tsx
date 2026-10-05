@@ -74,9 +74,20 @@ test('push-only subscription shows next report timing without requiring email ve
   jest.mocked(useDailyReportPush).mockReturnValue({ settings: { enabled: true, available: true, schedulerEnabled: true, sendHour: 8 },
     busy: false, error: null, refresh: jest.fn(), toggle: jest.fn() })
   render(<DailyReportScreen {...callbacks} />)
-  await screen.findByText('다음 리포트는 서울 시간 8시 이후 생성될 예정이에요.')
+  await screen.findByText('다음 리포트는 서울 시간 오전 8시 이후 생성될 예정이에요.')
   fireEvent.press(screen.getByLabelText('수신 설정'))
   expect(screen.getByText('이 기기 앱 알림 끄기')).toBeTruthy()
+  expect(screen.getByText('서울 시간 오전 8시 이후 생성되는 리포트를 알려드려요.')).toBeTruthy()
+})
+
+test('an afternoon send hour reads as 오후 in the next report message and the email delivery switch', async () => {
+  const subscribed = { ...settings, enabled: true, emailConfirmed: true, sendHour: 13 }
+  jest.mocked(apiRequest).mockImplementation((path) => path.endsWith('/settings') ? Promise.resolve(subscribed) : respond(path))
+  render(<DailyReportScreen {...callbacks} />)
+  await screen.findByText('다음 리포트는 서울 시간 오후 1시 이후 생성될 예정이에요.')
+  fireEvent.press(screen.getByLabelText('수신 설정'))
+  expect(screen.getByText('매일 오후 1시 이후 정기 이메일 받기')).toBeTruthy()
+  expect(screen.queryByText(/오전 13시|매일 13시/)).toBeNull()
 })
 
 test('loads the latest owned report and retains its source identity for the detail action', async () => {

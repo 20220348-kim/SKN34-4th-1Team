@@ -4,7 +4,7 @@ import { useFocusEffect } from 'expo-router'
 import { companyDtoSchema, toCompany } from '@govbiz/shared/data/models/CompanyDto'
 import { savedSupportProgramDtoSchema } from '@govbiz/shared/data/models/SavedSupportProgramDto'
 import type { Company } from '@govbiz/shared/domain/entities/Company'
-import type { DailyReport, DailyReportItem, DailyReportSettings } from '@govbiz/shared/domain/entities/DailyReport'
+import { sendHourLabel, type DailyReport, type DailyReportItem, type DailyReportSettings } from '@govbiz/shared/domain/entities/DailyReport'
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
 import { AppIcon } from '../components/AppIcon'
 import { ApiError, apiRequest, errorMessage } from '../api/client'
@@ -60,11 +60,12 @@ function reportNotices(warnings: string[]) {
 
 function nextReportMessage(settings: DailyReportSettings, hasCompany: boolean, pushEnabled: boolean) {
   if (!hasCompany) return '기업 정보를 등록하면 지역·업종 조건으로 리포트를 받을 수 있어요.'
-  if (pushEnabled && settings.schedulerEnabled) return `다음 리포트는 서울 시간 ${settings.sendHour}시 이후 생성될 예정이에요.`
+  const nextReport = `다음 리포트는 서울 시간 ${sendHourLabel(settings.sendHour)} 이후 생성될 예정이에요.`
+  if (pushEnabled && settings.schedulerEnabled) return nextReport
   if (!settings.enabled) return '수신 설정을 켜면 정기 리포트를 받을 수 있어요.'
   if (!settings.emailConfirmed) return '수신 주소를 확인하면 정기 리포트를 받을 수 있어요.'
   if (!settings.emailDeliveryAvailable || !settings.schedulerEnabled) return '정기 발송이 현재 준비되지 않았어요. 설정 상태를 확인해 주세요.'
-  return `다음 리포트는 서울 시간 오전 ${settings.sendHour}시 이후 생성될 예정이에요.`
+  return nextReport
 }
 
 function completeness(company: Company | null, purpose: string) {
@@ -307,7 +308,7 @@ export function DailyReportScreen({ onLogin, onCompany, onSearch, onOpenProgram,
       <Pressable accessibilityRole="switch" accessibilityLabel="정기 이메일 수신"
         accessibilityState={{ checked: enabled, disabled: Boolean(busy) }} disabled={Boolean(busy)}
         onPress={() => { setEnabled(!enabled); setConsent(false) }} style={local.option}>
-        <Text style={styles.body}>매일 {settings.sendHour}시 이후 정기 이메일 받기</Text>
+        <Text style={styles.body}>매일 {sendHourLabel(settings.sendHour)} 이후 정기 이메일 받기</Text>
         <Text style={local.check}>{enabled ? '●' : '○'}</Text>
       </Pressable>
       {enabled && <Pressable accessibilityRole="checkbox" accessibilityLabel="정기 이메일 수신 동의"

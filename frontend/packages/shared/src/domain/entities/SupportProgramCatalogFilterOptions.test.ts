@@ -1,8 +1,26 @@
 import { describe, expect, it } from 'vitest'
 
-import { defaultCatalogCategories, defaultCatalogRegions, mergeCatalogFilterOptions } from './catalogFilterOptions'
+import {
+  defaultCatalogApplicantTypes, defaultCatalogCategories, defaultCatalogFounderAges,
+  defaultCatalogRegions, defaultCatalogStartupStages, mergeCatalogFilterOptions,
+} from './SupportProgramCatalogFilterOptions'
 
 describe('공고 필터 기본 선택지', () => {
+  it('K-Startup 창업 업력은 2년미만을 포함한 공식 분류 7개를 짧은 업력부터 제공한다', () => {
+    expect(defaultCatalogStartupStages).toEqual([
+      '예비창업자', '1년미만', '2년미만', '3년미만', '5년미만', '7년미만', '10년미만',
+    ])
+  })
+
+  it('K-Startup 신청 대상과 대표자 연령은 공식 분류를 그대로 제공한다', () => {
+    expect(defaultCatalogApplicantTypes).toEqual([
+      '청소년', '대학생', '일반인', '대학', '연구기관', '일반기업', '1인 창조기업',
+    ])
+    expect(defaultCatalogFounderAges).toEqual([
+      '만 20세 미만', '만 20세 이상 ~ 만 39세 이하', '만 40세 이상',
+    ])
+  })
+
   it('지역은 서버 정규값 18개를 기존 가나다순으로 제공한다', () => {
     expect(defaultCatalogRegions).toEqual([
       '강원', '경기', '경남', '경북', '광주', '대구', '대전', '부산', '서울',

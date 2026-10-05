@@ -24,7 +24,8 @@ export function PartnerSheet({ visible, title, onClose, children, actions }: Pro
 }
 
 const local = StyleSheet.create({
-  overlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(25,31,40,0.45)' },
+  // 본문 글자색(colors.text)을 45% 불투명도(#…73)로 덮습니다.
+  overlay: { flex: 1, justifyContent: 'flex-end', backgroundColor: `${colors.text}73` },
   sheet: { maxHeight: '86%', minHeight: '60%', borderTopLeftRadius: 22, borderTopRightRadius: 22, backgroundColor: colors.surface },
   grab: { width: 40, height: 5, borderRadius: 99, backgroundColor: colors.fieldBorder, alignSelf: 'center', marginTop: 10 },
   header: { minHeight: 56, paddingLeft: 20, paddingRight: 8, flexDirection: 'row', alignItems: 'center' },

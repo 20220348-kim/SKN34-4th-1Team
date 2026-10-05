@@ -2,8 +2,10 @@ import { useEffect, useState, type ReactNode } from 'react'
 import { ActivityIndicator, Text, View } from 'react-native'
 import { BrowseSupportProgramsUseCase } from '@govbiz/shared/domain/usecases/BrowseSupportProgramsUseCase'
 import { catalogSourceCodes, catalogSourceLabels, type SupportProgramCatalog, type SupportProgramCatalogFilters } from '@govbiz/shared/domain/entities/SupportProgramCatalog'
-import { regionNames } from '@govbiz/shared/domain/entities/Region'
-import { supportProgramCategories } from '@govbiz/shared/domain/entities/SupportProgramCategory'
+import {
+  defaultCatalogApplicantTypes, defaultCatalogCategories, defaultCatalogFounderAges,
+  defaultCatalogRegions, defaultCatalogStartupStages, mergeCatalogFilterOptions,
+} from '@govbiz/shared/domain/entities/SupportProgramCatalogFilterOptions'
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
 import type { SupportProgram } from '@govbiz/shared/domain/entities/SupportProgram'
 import { errorMessage, programClient } from '../api/client'
@@ -16,7 +18,9 @@ export const initialFilters: SupportProgramCatalogFilters = {
   status: 'OPEN', sort: 'RECENT', page: 1, pageSize: 12,
 }
 
-const options = (values: readonly string[]) => [{ value: '', label: '전체' }, ...[...new Set(values)].map((value) => ({ value, label: value }))]
+/** 웹과 같은 기본 선택지를 먼저 두고 서버가 보낸 추가 분류만 뒤에 붙입니다. */
+const options = (defaults: readonly string[], available?: readonly string[]) =>
+  [{ value: '', label: '전체' }, ...mergeCatalogFilterOptions(defaults, available).map((value) => ({ value, label: value }))]
 const statusOptions = [
   { value: 'ALL', label: '전체' }, { value: 'OPEN', label: '접수 중' }, { value: 'UPCOMING', label: '접수 예정' },
   { value: 'CLOSED', label: '마감' }, { value: 'UNKNOWN', label: '상태 미확인' },
@@ -82,17 +86,17 @@ export function CatalogScreen({ onOpenProgram, keyboardOffset = 0, selection, he
         placeholder="예: 창업, 수출, 연구개발" returnKeyType="search" onSubmitEditing={() => applyFilters({ ...draft, page: 1 })} />
       <Button label={expanded ? '상세 조건 접기' : '지역·분야·접수 조건'} variant="ghost" onPress={() => setExpanded(!expanded)} />
       {expanded && <>
-        <ChoiceField label="지역" value={draft.region} options={options([...regionNames, ...(catalog?.regions ?? [])])} onChange={(value) => change('region', value)} />
-        <ChoiceField label="분야" value={draft.category} options={options([...supportProgramCategories, ...(catalog?.categories ?? [])])} onChange={(value) => change('category', value)} />
+        <ChoiceField label="지역" value={draft.region} options={options(defaultCatalogRegions, catalog?.regions)} onChange={(value) => change('region', value)} />
+        <ChoiceField label="분야" value={draft.category} options={options(defaultCatalogCategories, catalog?.categories)} onChange={(value) => change('category', value)} />
         <ChoiceField label="출처" value={draft.sourceCode} options={catalogSourceCodes.map((value) => ({ value, label: catalogSourceLabels[value] }))}
           onChange={(value) => change('sourceCode', value as SupportProgramCatalogFilters['sourceCode'])} />
         <ChoiceField label="접수 상태" value={draft.status} options={statusOptions} onChange={(value) => change('status', value as SupportProgramCatalogFilters['status'])} />
         <ChoiceField label="정렬" value={draft.sort} options={sortOptions}
           onChange={(value) => change('sort', value as SupportProgramCatalogFilters['sort'])} />
         {draft.sourceCode === 'KSTARTUP' && <>
-          <ChoiceField label="창업 업력" value={draft.startupStage} options={options(catalog?.startupStages.length ? catalog.startupStages : ['예비창업자', '1년미만', '3년미만', '5년미만', '7년미만', '10년미만'])} onChange={(value) => change('startupStage', value)} />
-          <ChoiceField label="신청 대상" value={draft.applicantType} options={options(catalog?.applicantTypes.length ? catalog.applicantTypes : ['청소년', '대학생', '일반인', '대학', '연구기관', '일반기업', '1인 창조기업'])} onChange={(value) => change('applicantType', value)} />
-          <ChoiceField label="대표자 연령" value={draft.founderAge} options={options(catalog?.founderAges.length ? catalog.founderAges : ['만 20세 미만', '만 20세 이상 ~ 만 39세 이하', '만 40세 이상'])} onChange={(value) => change('founderAge', value)} />
+          <ChoiceField label="창업 업력" value={draft.startupStage} options={options(defaultCatalogStartupStages, catalog?.startupStages)} onChange={(value) => change('startupStage', value)} />
+          <ChoiceField label="신청 대상" value={draft.applicantType} options={options(defaultCatalogApplicantTypes, catalog?.applicantTypes)} onChange={(value) => change('applicantType', value)} />
+          <ChoiceField label="대표자 연령" value={draft.founderAge} options={options(defaultCatalogFounderAges, catalog?.founderAges)} onChange={(value) => change('founderAge', value)} />
         </>}
         <Text style={styles.muted}>필터는 제공처의 공고 분류입니다. 실제 신청 자격은 공고 원문에서 확인해 주세요.</Text>
       </>}

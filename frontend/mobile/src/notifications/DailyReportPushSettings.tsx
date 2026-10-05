@@ -1,4 +1,5 @@
 import { Text } from 'react-native'
+import { sendHourLabel } from '@govbiz/shared/domain/entities/DailyReport'
 import { Button, Notice, styles } from '../ui'
 import { useDailyReportPush } from './DailyReportPushProvider'
 
@@ -13,7 +14,7 @@ export function DailyReportPushSettings({ hasCompany }: { hasCompany: boolean })
     {settings && !settings.available && <Notice>앱 알림 발송을 준비 중이에요.</Notice>}
     {settings && !settings.schedulerEnabled && <Notice>정기 리포트 예약이 꺼져 있어요.</Notice>}
     {settings && !hasCompany && <Notice>기업 정보를 등록하면 앱 알림을 켤 수 있어요.</Notice>}
-    {settings?.enabled && <Text style={styles.muted}>서울 시간 {settings.sendHour}시 이후 생성되는 리포트를 알려드려요.</Text>}
+    {settings?.enabled && <Text style={styles.muted}>서울 시간 {sendHourLabel(settings.sendHour)} 이후 생성되는 리포트를 알려드려요.</Text>}
     {error && <Notice error>{error}</Notice>}
     {(!settings || error) && <Button label="앱 알림 설정 다시 확인" variant="ghost" busy={busy} onPress={refresh} />}
   </>

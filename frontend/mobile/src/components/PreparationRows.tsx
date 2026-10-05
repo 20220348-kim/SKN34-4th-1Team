@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { ActivityIndicator, Alert, Linking, Pressable, StyleSheet, Text, View } from 'react-native'
+import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native'
 import { router } from 'expo-router'
 import { applicationProgressStages, applicationServiceFieldLabels, type ApplicationPreparationSummary, type ApplicationProgressStage } from '@govbiz/shared/domain/entities/ApplicationPreparation'
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
 import { ApiError, errorMessage } from '../api/client'
-import { getPreparationWebUrl, updatePreparationProgress, type PreparationReview } from '../api/preparation'
+import { updatePreparationProgress, type PreparationReview } from '../api/preparation'
 import { Button, colors, Notice, StatusBadge, styles } from '../ui'
 import { AppIcon } from './AppIcon'
 import { PartnerSheet } from './PartnerSheet'
@@ -17,11 +17,6 @@ export const preparationKey = (identity: SupportProgramIdentity) => JSON.stringi
 export const preparationDate = (date: string) => date.slice(5, 10).replace('-', '.')
 const reviewDateFormatter = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', month: '2-digit', day: '2-digit' })
 const reviewRowDate = (date: string) => reviewDateFormatter.formatToParts(new Date(date)).filter(part => part.type === 'month' || part.type === 'day').map(part => part.value).join('.')
-
-export async function openPreparationWeb(path: string, identity?: SupportProgramIdentity) {
-  try { await Linking.openURL(getPreparationWebUrl(path, identity)) }
-  catch (cause) { Alert.alert('준비 화면을 열지 못했습니다', cause instanceof Error && cause.message.startsWith('웹 주소') ? cause.message : errorMessage(cause)) }
-}
 
 export function PreparationRow({ item }: { item: ApplicationPreparationSummary }) {
   const completed = item.hasCurrentDocument === true

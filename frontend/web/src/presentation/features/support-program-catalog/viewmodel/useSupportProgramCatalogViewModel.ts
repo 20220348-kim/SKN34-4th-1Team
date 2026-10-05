@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react'
+import {
+  defaultCatalogApplicantTypes, defaultCatalogCategories, defaultCatalogFounderAges,
+  defaultCatalogRegions, defaultCatalogStartupStages, mergeCatalogFilterOptions,
+} from '@govbiz/shared/domain/entities/SupportProgramCatalogFilterOptions'
 
 import { appContainer } from '../../../../app/appContainer'
 import type { SupportProgramCatalog, SupportProgramCatalogFilters } from '../../../../domain/entities/SupportProgramCatalog'
 import type { BrowseSupportProgramsUseCase } from '../../../../domain/usecases/BrowseSupportProgramsUseCase'
-import {
-  defaultCatalogApplicantTypes, defaultCatalogCategories, defaultCatalogFounderAges,
-  defaultCatalogRegions, defaultCatalogStartupStages, mergeCatalogFilterOptions,
-} from './catalogFilterOptions'
 
 type CatalogState = { key: string; phase: 'loading' | 'ready' | 'failed'; data: SupportProgramCatalog | null }
 

@@ -3,15 +3,15 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import { Provider } from 'react-redux'
 import { MemoryRouter, useLocation, useNavigate } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  defaultCatalogApplicantTypes, defaultCatalogCategories, defaultCatalogFounderAges,
+  defaultCatalogRegions, defaultCatalogStartupStages,
+} from '@govbiz/shared/domain/entities/SupportProgramCatalogFilterOptions'
 
 import App from './App'
 import { createAppStore } from './app/store'
 import { supportPrograms, toSupportProgramDetailFixture } from './data/fixtures/supportPrograms'
 import { getSupportProgramSearchReturnTo } from './presentation/features/support-program-detail/view/supportProgramNavigation'
-import {
-  defaultCatalogApplicantTypes, defaultCatalogCategories, defaultCatalogFounderAges,
-  defaultCatalogRegions, defaultCatalogStartupStages,
-} from './presentation/features/support-program-catalog/viewmodel/catalogFilterOptions'
 import { sessionRestored } from './presentation/shared/auth/state/authSlice'
 import { chooseOption, optionLabels, optionValues, selectedValue } from './test/selectField'
 

@@ -1,4 +1,5 @@
 import { type FormEvent, useEffect, useRef, useState } from 'react'
+import { canRegisterBusiness } from '@govbiz/shared/domain/entities/CompanyRegistration'
 
 import { appContainer } from '../../../../app/appContainer'
 import { useAppDispatch } from '../../../../app/hooks'
@@ -22,7 +23,6 @@ import {
   type CompanyFormField,
   type CompanyFormValues,
   accountWithCompany,
-  canRegisterBusiness,
   companyFormMessages,
   emptyCompanyForm,
   homepagePreviewFor,
