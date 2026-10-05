@@ -3,7 +3,7 @@ import { ActivityIndicator, Alert, AppState, StyleSheet, Text, View } from 'reac
 import { useFocusEffect, useRouter } from 'expo-router'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { currentStatusLabels, currentStatusToParticipation, participationToCurrentStatus, showFundingQuestion, type CurrentStatus } from '@govbiz/shared/domain/entities/CombinationReviewParticipation'
-import { reviewProgramKey, supportsAutomaticReview, unknownParticipation, validateReviewDraft, type ReviewProgram } from '@govbiz/shared/domain/entities/CombinationReview'
+import { reviewProgramKey, supportsAutomaticReview, unknownParticipation, type ReviewProgram } from '@govbiz/shared/domain/entities/CombinationReview'
 import type { SupportProgram } from '@govbiz/shared/domain/entities/SupportProgram'
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
 import { useAuth } from '../auth/session'
@@ -72,28 +72,30 @@ function OwnedReviewList({ token, onNew }: { token: string; onNew(): void }) {
   </Page>
 }
 
-export function CombinationReviewEditorScreen({ id, runId, initialProgram, onLogin, onOpenProgram, onList }: {
-  id: number | null; runId?: number; initialProgram?: SupportProgramIdentity; onLogin(): void
-  onOpenProgram(identity: SupportProgramIdentity): void; onList(): void
+export type CombinationReviewStep = 'selection' | 'participation' | 'confirm' | 'analysis'
+
+export function CombinationReviewEditorScreen({ id, runId, initialProgram, initialStep, onStepChange, onLogin, onOpenProgram, onList }: {
+  id: number | null; runId?: number; initialProgram?: SupportProgramIdentity; initialStep?: CombinationReviewStep; onLogin(): void
+  onStepChange?(id: number, step: CombinationReviewStep): void; onOpenProgram(identity: SupportProgramIdentity): void; onList(): void
 }) {
   const auth = useAuth()
   if (auth.status !== 'signedIn' || !auth.session) return <ReviewLogin onLogin={onLogin} />
   return <OwnedReviewEditor key={`${auth.session.accessToken}:${id ?? 'new'}:${runId ?? 'latest'}:${initialProgram?.sourceCode ?? ''}:${initialProgram?.sourceProgramId ?? ''}`} id={id} runId={runId} initialProgram={initialProgram}
-    token={auth.session.accessToken} email={auth.session.account.email} onOpenProgram={onOpenProgram} onList={onList} />
+    initialStep={initialStep} onStepChange={onStepChange} token={auth.session.accessToken} email={auth.session.account.email} onOpenProgram={onOpenProgram} onList={onList} />
 }
 
-function OwnedReviewEditor({ id, runId, initialProgram, token, email, onOpenProgram, onList }: {
-  id: number | null; runId?: number; initialProgram?: SupportProgramIdentity; token: string; email: string
-  onOpenProgram(identity: SupportProgramIdentity): void; onList(): void
+function OwnedReviewEditor({ id, runId, initialProgram, initialStep, onStepChange, token, email, onOpenProgram, onList }: {
+  id: number | null; runId?: number; initialProgram?: SupportProgramIdentity; initialStep?: CombinationReviewStep; token: string; email: string
+  onStepChange?(id: number, step: CombinationReviewStep): void; onOpenProgram(identity: SupportProgramIdentity): void; onList(): void
 }) {
   const vm = useCombinationReview(token, email, id, runId)
   const { invalidateSession } = useAuth()
   const router = useRouter()
   const insets = useSafeAreaInsets()
-  const [step, setStep] = useState<'selection' | 'participation' | 'confirm' | 'analysis'>(id ? 'analysis' : 'selection')
+  const [step, setStep] = useState<CombinationReviewStep>(initialStep ?? (id ? 'analysis' : 'selection'))
   const [method, setMethod] = useState<'filter' | 'saved'>('filter')
   const [savedVisited, setSavedVisited] = useState(false)
-  const [selectionVisited, setSelectionVisited] = useState(!id)
+  const [selectionVisited, setSelectionVisited] = useState(!id || initialStep === 'selection')
   const [names, setNames] = useState<Record<string, string>>({})
   const [nameError, setNameError] = useState<string | null>(null)
   const [nameRevision, setNameRevision] = useState(0)
@@ -105,6 +107,11 @@ function OwnedReviewEditor({ id, runId, initialProgram, token, email, onOpenProg
   const initialSourceCode = initialProgram?.sourceCode
   const initialSourceProgramId = initialProgram?.sourceProgramId
   const locked = vm.busy || Boolean(vm.pending)
+  useEffect(() => {
+    if (!initialStep) return
+    setStep(initialStep)
+    if (initialStep === 'selection') setSelectionVisited(true)
+  }, [initialStep])
   useEffect(() => {
     const controller = new AbortController()
     setNameError(null)
@@ -146,22 +153,27 @@ function OwnedReviewEditor({ id, runId, initialProgram, token, email, onOpenProg
       ? previous.programs.filter(item => reviewProgramKey(item) !== key)
       : previous.programs.length < 2 ? [...previous.programs, { ...identity, participation: unknownParticipation() }] : previous.programs }))
   }
-  function changeStep(next: typeof step) { vm.setError(null); if (next === 'selection') setSelectionVisited(true); setStep(next) }
-  function next() {
-    try { validateReviewDraft(vm.draft); changeStep('participation') }
-    catch (cause) { vm.setError(cause instanceof Error ? cause.message : '입력을 확인해 주세요.') }
+  function changeStep(next: CombinationReviewStep, savedId = vm.review?.id) {
+    vm.setError(null); if (next === 'selection') setSelectionVisited(true); setStep(next)
+    if (savedId) onStepChange?.(savedId, next)
+  }
+  async function saveStep(next: CombinationReviewStep) {
+    const saved = await vm.saveInputs()
+    if (saved) changeStep(next, saved.id)
   }
   function reload() {
     Alert.alert('최신 저장 입력을 사용할까요?', '현재 작성 중인 내용은 저장된 입력으로 바뀝니다.', [
-      { text: '취소', style: 'cancel' }, { text: '불러오기', onPress: () => { vm.reloadInputs(); setStep('participation') } },
+      { text: '취소', style: 'cancel' }, { text: '불러오기', onPress: () => { vm.reloadInputs(); changeStep('participation') } },
     ])
   }
-  async function start(same = false) { if (await vm.start(same)) setStep('analysis') }
+  async function start(same = false) { if (await vm.start(same)) changeStep('analysis') }
   function supplement() { if (vm.run) vm.setFacts(vm.run.input.additionalFacts); changeStep('participation') }
   const unsupported = vm.draft.programs.some(program => !supportsAutomaticReview(program))
   const progress = <View style={local.steps}>{['공고 선택', '참여 상태', '분석 확인'].map((label, index) => <Text key={label}
     style={[styles.muted, ['selection', 'participation', 'confirm'][index] === step && local.current]}>{index + 1}. {label}</Text>)}</View>
-  const selectionHeader = <View style={local.selectionHeader}>{progress}<Field label="검토 제목" value={vm.draft.title} maxLength={200} editable={!locked}
+  const saveHint = <Text accessibilityLiveRegion="polite" style={styles.muted}>{vm.saving ? '저장 중…' : vm.saveError ? '저장하지 못했어요. 입력은 이 화면에 유지됩니다.'
+    : vm.review && !vm.dirty ? '제목·공고·참여 상태 저장됨' : '다음 단계로 넘어가면 입력이 저장돼요.'}</Text>
+  const selectionHeader = <View style={local.selectionHeader}>{progress}{saveHint}<Field label="검토 제목" value={vm.draft.title} maxLength={200} editable={!locked}
     placeholder="예: 창업·기술개발 사업 함께 지원하기" onChangeText={title => vm.setDraft(previous => ({ ...previous, title }))} />
     <Card><View style={styles.row}><Text style={styles.label}>비교할 공고</Text><StatusBadge label={vm.draft.programs.length > 2 ? `기존 공고 ${vm.draft.programs.length}개` : `${vm.draft.programs.length} / 2 선택`} /></View>
       {vm.draft.programs.length > 2 && <Notice>기존 결과는 볼 수 있지만 새 분석은 공고를 2개로 줄여야 해요.</Notice>}
@@ -186,7 +198,7 @@ function OwnedReviewEditor({ id, runId, initialProgram, token, email, onOpenProg
       {savedVisited && <View style={[local.panel, method !== 'saved' && local.hidden]} accessibilityElementsHidden={method !== 'saved'} importantForAccessibility={method === 'saved' ? 'auto' : 'no-hide-descendants'} pointerEvents={method === 'saved' ? 'auto' : 'none'}>
         <ReviewSavedPrograms header={selectionHeader} token={token} keys={vm.selectedKeys} disabled={locked} onToggle={toggle} onOpen={onOpenProgram} /></View>}
     </View>}
-    {step === 'participation' && <Page key="participation">{progress}<Title>현재 참여 상태를 알려주세요</Title><Text style={styles.muted}>모르는 항목은 미확인으로 남겨도 돼요. 실제 지급 여부는 참여 상태와 따로 입력합니다.</Text>
+    {step === 'participation' && <Page key="participation">{progress}{saveHint}<Title>현재 참여 상태를 알려주세요</Title><Text style={styles.muted}>모르는 항목은 미확인으로 남겨도 돼요. 실제 지급 여부는 참여 상태와 따로 입력합니다.</Text>
       {vm.draft.programs.map((program, index) => {
         const status = participationToCurrentStatus(program.participation)
         return <Card key={reviewProgramKey(program)}><Text style={styles.heading}>{name(program, index)}</Text>
@@ -199,12 +211,13 @@ function OwnedReviewEditor({ id, runId, initialProgram, token, email, onOpenProg
       })}
       <Field label="추가로 알려줄 내용 (선택)" multiline value={vm.facts} onChangeText={vm.setFacts} editable={!locked} maxLength={8000}
         placeholder="예: 두 사업에서 같은 인건비를 사용하려고 해요." style={{ minHeight: 110, textAlignVertical: 'top' }} />
-      <Text style={styles.muted}>{vm.facts.length} / 8000 · 이 분석 실행에만 보관됩니다.</Text>
+      <Text style={styles.muted}>{vm.facts.length} / 8000 · 추가 설명은 검토 실행을 요청할 때 이 실행에만 저장돼요.</Text>
     </Page>}
-    {step === 'confirm' && <Page key="confirm">{progress}<Title>이 내용으로 검토할까요?</Title>
+    {step === 'confirm' && <Page key="confirm">{progress}{saveHint}<Title>이 내용으로 검토할까요?</Title>
       {vm.draft.programs.map((program, index) => <Card key={reviewProgramKey(program)}><Text style={styles.heading}>{name(program, index)}</Text>
         <Text style={styles.body}>{currentStatusLabels[participationToCurrentStatus(program.participation)]}</Text><Text style={styles.muted}>실제 지원금 지급 · {{ YES: '예', NO: '아니오', UNKNOWN: '미확인' }[program.participation.fundingReceived]}</Text></Card>)}
       <Text style={styles.body}>{vm.facts || '추가 설명이 없어요.'}</Text>
+      <Text style={styles.muted}>추가 설명은 검토 실행을 요청할 때 이 실행에만 저장돼요.</Text>
       {unsupported && <Notice error>선택한 공고는 현재 자동 분석을 지원하지 않아요. 다른 공고를 선택하거나 공식 원문을 확인해 주세요.</Notice>}
       <Notice>공식 원문을 바탕으로 AI가 분석하며 사용 비용이 발생할 수 있어요. 접수된 분석은 앱을 닫아도 이어집니다. 결과는 신청 자격이나 동시 수혜를 보장하지 않습니다.</Notice>
     </Page>}
@@ -219,10 +232,10 @@ function OwnedReviewEditor({ id, runId, initialProgram, token, email, onOpenProg
       {!vm.pending && <Button label="입력 수정하기" variant="secondary" disabled={vm.busy} onPress={supplement} />}
     </Page>}
     <View style={[local.actions, { paddingBottom: 12 + insets.bottom }]}>
-      {step === 'selection' && <Button style={local.action} label="다음 · 참여 상태 입력" disabled={locked || vm.loading || vm.draft.programs.length !== 2} onPress={next} />}
-      {step === 'participation' && <><Button style={local.action} label="공고 선택으로" variant="secondary" disabled={locked} onPress={() => changeStep('selection')} /><Button style={local.action} label="다음 · 분석 확인" disabled={locked} onPress={() => changeStep('confirm')} /></>}
-      {step === 'confirm' && <><Button style={local.action} label="입력 수정" variant="secondary" disabled={locked} onPress={() => changeStep('participation')} /><Button style={local.action} label="저장하고 분석 요청"
-        busy={vm.busy} disabled={Boolean(vm.pending) || vm.active || !vm.storageReady || unsupported || vm.draft.programs.length !== 2} onPress={() => void start()} /></>}
+      {step === 'selection' && <Button style={local.action} label="다음 · 참여 상태 입력" busy={vm.saving} disabled={locked || vm.loading || !vm.draft.title.trim() || vm.draft.programs.length !== 2} onPress={() => void saveStep('participation')} />}
+      {step === 'participation' && <><Button style={local.action} label="공고 선택으로" variant="secondary" disabled={locked || vm.loading} onPress={() => void saveStep('selection')} /><Button style={local.action} label="다음 · 분석 확인" busy={vm.saving} disabled={locked || vm.loading} onPress={() => void saveStep('confirm')} /></>}
+      {step === 'confirm' && <><Button style={local.action} label="입력 수정" variant="secondary" disabled={locked} onPress={() => changeStep('participation')} /><Button style={local.action} label="검토 실행"
+        busy={vm.busy} disabled={vm.loading || Boolean(vm.pending) || vm.active || !vm.storageReady || !vm.review || vm.dirty || unsupported || vm.draft.programs.length !== 2} onPress={() => void start()} /></>}
       {step === 'analysis' && <Button style={local.action} label="검토 목록으로" variant="secondary" onPress={onList} />}
     </View>
   </View>

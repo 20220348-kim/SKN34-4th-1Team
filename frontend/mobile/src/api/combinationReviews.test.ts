@@ -18,6 +18,33 @@ test('reads use native bearer auth and never submit an analysis request', async 
   }
 })
 
+test('step input saves use separate authenticated create and versioned replace contracts without an analysis key or facts', async () => {
+  const draft = { title: '단계 저장 검토', programs: mobileReview.programs }
+  const changed = { ...draft, title: '수정한 검토' }
+  const saved = { ...mobileReview, ...draft }
+  const updated = { ...saved, ...changed, inputRevision: 2 }
+  jest.mocked(fetch).mockResolvedValueOnce(response(saved, 201)).mockResolvedValueOnce(response(undefined, 204)).mockResolvedValueOnce(response(updated))
+  const repository = new MobileCombinationReviewRepository('owner-token')
+  await repository.create(draft)
+  await repository.replace(5, 1, changed)
+  await expect(repository.get(5)).resolves.toMatchObject(updated)
+  const calls = jest.mocked(fetch).mock.calls
+  expect(calls[0][0]).toBe('https://api.example.test/api/v1/combination-reviews')
+  expect(calls[0][1]?.method).toBe('POST')
+  expect(JSON.parse(String(calls[0][1]?.body))).toEqual(draft)
+  expect(calls[1][0]).toBe('https://api.example.test/api/v1/combination-reviews/5/inputs')
+  expect(calls[1][1]?.method).toBe('PUT')
+  expect(JSON.parse(String(calls[1][1]?.body))).toEqual({ ...changed, expectedRevision: 1 })
+  for (const [url, init] of calls) {
+    expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer owner-token')
+    expect(String(url)).not.toContain('/runs')
+    if (init?.body) {
+      expect(JSON.parse(String(init.body))).not.toHaveProperty('requestKey')
+      expect(JSON.parse(String(init.body))).not.toHaveProperty('additionalFacts')
+    }
+  }
+})
+
 test('202 admission preserves the submitted key, input revision and additional facts', async () => {
   const request = { expectedRevision: 1, requestKey: reviewRequestKey, additionalFacts: '동일 비용' }
   const run = reviewRunFixture()

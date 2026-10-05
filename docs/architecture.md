@@ -1029,6 +1029,10 @@ PDF·첨부·다른 제공처 확장은 후속 범위입니다.
 `현재 참여 상태 → 독립 사실` 변환은 shared `CombinationReviewParticipation`이 소유하며 웹의 `currentStatus`는 재수출한다.
 호출은 `모바일 화면 → useCombinationReview → shared CombinationReviewUseCase → MobileCombinationReviewRepository → Core API`이며
 공개 계약·응답 검증은 shared DTO, 인증·15초 HTTP 대기는 모바일 API 경계가 담당한다. Core 공개 HTTP 계약은 변경하지 않는다.
+모바일의 공고 선택 다음 버튼은 `create`, 참여 상태 다음·이전 버튼은 변경된 경우 `replace → get`으로
+입력을 저장한 뒤 이동한다. 최초 저장 이후 검토 ID와 `?step=`를 주소에 보존한다. 저장 실패는 현재 단계와
+입력을 유지하고, `검토 실행`은 저장된 검토의 입력 버전과 추가 설명으로 `start`만 호출한다.
+단계 저장은 유료 분석·분석 요청 키 보관을 실행하지 않는다.
 분석 전에 API origin·계정별 SecureStore에 요청 키·버전·추가 설명을 보관하고 유실 응답은 같은 요청으로만 수동 확인한다.
 화면·앱 활성 상태에서만 선택 실행을 3초 간격으로 읽으며 로그인·화면 진입·상태 조회만으로 분석 POST를 실행하지 않는다.
 계정 변경에는 화면 상태와 늦은 응답을 차단하고 로그아웃에는 보관 요청을 삭제한다. UNKNOWN과 기술 실패는 허용 판단으로 대체하지 않는다.
