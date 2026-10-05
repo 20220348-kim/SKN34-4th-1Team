@@ -1067,6 +1067,30 @@ def test_bootstrap_must_migrate_without_importing_shared_reviews():
         smoke.verify_isolation(config)
 
 
+def test_missing_bootstrap_is_rejected_before_startup():
+    config = isolated_config()
+    del config["services"]["ops-bootstrap"]
+    with pytest.raises(ValueError, match="disable shared review seed"):
+        smoke.verify_isolation(config)
+
+
+def test_review_seed_configuration_failure_never_starts_containers(monkeypatch, tmp_path):
+    output = tmp_path / "configuration.json"
+    monkeypatch.setattr(sys, "argv", ["cancellation_smoke", "--output", str(output)])
+    config = isolated_config()
+    config["services"]["ops-bootstrap"]["environment"]["LLMOPS_LOCAL_SEED_ENABLED"] = "true"
+    run = Mock(return_value=subprocess.CompletedProcess([], 0, stdout=json.dumps(config)))
+    monkeypatch.setattr(smoke.subprocess, "run", run)
+    with pytest.raises(ValueError, match="disable shared review seed"):
+        smoke.main()
+    commands = [call.args[0] for call in run.call_args_list]
+    operations = [command[command.index("evaluation") + 1] for command in commands]
+    assert operations == ["config", "ps", "down"]
+    report = json.loads(output.read_text())
+    assert report["passed"] is False and report["scenarios"] == []
+    assert report["diagnostics"]["phase"] == "configuration"
+
+
 @pytest.mark.parametrize("defect", ["egress", "extra_network", "host", "port"])
 def test_network_regression_is_rejected_before_startup(defect):
     config = isolated_config()
