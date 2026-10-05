@@ -6,6 +6,7 @@ import ai.govbiz.core.supportprogram.domain.CatalogSupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgramApplicationRoute
 import ai.govbiz.core.supportprogram.domain.SupportProgramApplicationRouteType
+import ai.govbiz.core.supportprogram.domain.SupportProgramContact
 import ai.govbiz.core.supportprogram.domain.SupportProgramStartupDetails
 import ai.govbiz.core.supportprogram.domain.SupportProgramStatus
 import ai.govbiz.core.supportprogram.domain.SupportProgramSyncOutcome
@@ -37,6 +38,11 @@ object CatalogSnapshotMapper {
                                 route.method, route.url, SupportProgramApplicationRouteType.valueOf(route.type),
                             )
                         } ?: SupportProgramApplicationRoute(),
+                        contact = it.contact?.let { contact ->
+                            SupportProgramContact.of(contact.department, contact.phoneNumber, contact.text)
+                        },
+                        preferenceDescription = it.preferenceDescription?.trim()?.ifEmpty { null },
+                        supervisingInstitutionType = it.supervisingInstitutionType?.trim()?.ifEmpty { null },
                     )
                 },
                 sortTimestamp = item.sortTimestamp,

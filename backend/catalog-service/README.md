@@ -26,6 +26,11 @@ Core의 계정·세션·신청서·원문 캐시 코드 또는 Gradle 프로젝�
 기업마당 공식 API의 `reqstMthPapersCn`·`rceptEngnHmpgUrl`과 K-Startup 공식 API의 `aply_mthd_*` 신청방법 필드만
 신청 경로 근거로 사용하며, 공고 상세 `sourceUrl`이나 K-Startup 안내 페이지(`biz_gdnc_url`)를 신청 URL로 대체하지 않습니다.
 K-Startup 온라인 접수 값은 https 주소 하나일 때만 신청 URL이 되고, 그 밖의 접수처는 신청방법 문장으로 남습니다.
+`V3__add_support_program_official_details.sql`은 상세 표시용 공식 필드 열을 추가합니다. K-Startup은 담당 부서
+`biz_prch_dprt_nm`과 하이픈 없는 숫자 전화번호 `prch_cnpl_no`(원문 그대로 보관), 우대 사항 `prfn_matr`(쉼표 뒤 공백만 정리),
+주관 기관 유형 `sprv_inst`(공공기관·민간·교육기관·지자체 같은 분류이며 기관 이름이 아님)를, 기업마당은 문의처 원문 `refrncNm`을
+저장합니다. 통합공고 필드(`intg_pbanc_yn`·`intg_pbanc_biz_nm`)는 사용하지 않습니다. 이 필드는 검색 문서·임베딩·공개 지문에
+넣지 않으므로 처음 채워지는 동기화에서도 유료 재색인이 없고, 기존 행은 다음 정상 동기화의 UPSERT로 채워집니다.
 기존 Core migration은 수정하거나 실행하지 않습니다. 제공처 원본 ID의 복합 고유키,
 MySQL 8.4 `utf8mb4_0900_ai_ci` 정렬과 JSON 표현을 유지합니다.
 
@@ -63,7 +68,8 @@ DB 초기화 때 한 번 생성한 UUID `catalogId`는 프로세스 재시작에
 ```
 
 `programs`는 `program`, `sortTimestamp`, `startupDetails` 구조의 명시적인 HTTP DTO입니다.
-`program`에는 원본 식별자·제목·기관·요약·분류·지역·지원대상·신청기간/날짜·접수상태·출처를 담고,
+`program`에는 원본 식별자·제목·기관·요약·분류·지역·지원대상·신청기간/날짜·접수상태·출처·공식 신청 경로와
+`contact`(`department`·`phoneNumber`·`text`, 없으면 null)·`preferenceDescription`·`supervisingInstitutionType`을 담고,
 `sourceQualifiedId`, 추천 이유/점수, 자격 판정처럼 Core 내부에서 계산하는 속성은 전달하지 않습니다.
 revision을 먼저 읽어 고정한 같은 DB 시점에서 상태와 공고를 읽습니다. 최대 20,000개이며
 공개 건수·지문이 실제 공고와 맞아야 응답합니다. 아직 공개한 적이 없는 제공처, 불완전한

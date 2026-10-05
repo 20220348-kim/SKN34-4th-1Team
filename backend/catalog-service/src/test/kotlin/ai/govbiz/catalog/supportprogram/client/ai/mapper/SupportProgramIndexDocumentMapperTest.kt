@@ -1,7 +1,9 @@
 package ai.govbiz.catalog.supportprogram.client.ai.mapper
 
+import ai.govbiz.catalog.supportprogram.domain.SupportProgramContact
 import ai.govbiz.catalog.supportprogram.domain.SupportProgramStatus
 import ai.govbiz.catalog.supportprogram.domain.SupportProgramStartupDetails
+import ai.govbiz.catalog.supportprogram.helper.SupportProgramCatalogFingerprintHelper
 import ai.govbiz.catalog.supportprogram.helper.SupportProgramTestHelper.catalogProgram
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
@@ -113,6 +115,21 @@ class SupportProgramIndexDocumentMapperTest {
         val candidate = catalogProgram("one")
         val changed = candidate.copy(program = candidate.program.copy(status = SupportProgramStatus.CLOSED), sortTimestamp = "newer")
         assertEquals(SupportProgramIndexDocumentMapper.fromCatalog(candidate), SupportProgramIndexDocumentMapper.fromCatalog(changed))
+    }
+
+    @Test
+    fun displayOnlyOfficialDetailsDoNotChangeTheIndexedTextHashOrCatalogFingerprint() {
+        // 문의처·우대 사항·주관 기관 유형은 상세 표시용이라, 처음 채워져도 유료 재임베딩과 공개 지문 변경이 없어야 합니다.
+        val candidate = catalogProgram("one")
+        val detailed = candidate.copy(program = candidate.program.copy(
+            contact = SupportProgramContact("창업보육센터", "0312508269", "문의 02-123-4567"),
+            preferenceDescription = "1인창조, 재창업", supervisingInstitutionType = "공공기관",
+        ))
+        assertEquals(SupportProgramIndexDocumentMapper.fromCatalog(candidate), SupportProgramIndexDocumentMapper.fromCatalog(detailed))
+        assertEquals(
+            SupportProgramCatalogFingerprintHelper.calculate(listOf(candidate)),
+            SupportProgramCatalogFingerprintHelper.calculate(listOf(detailed)),
+        )
     }
 
     @Test

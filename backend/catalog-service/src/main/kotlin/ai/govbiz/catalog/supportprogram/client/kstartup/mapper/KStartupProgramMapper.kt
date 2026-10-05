@@ -5,6 +5,7 @@ import ai.govbiz.catalog.supportprogram.client.kstartup.exception.KStartupClient
 import ai.govbiz.catalog.supportprogram.domain.CatalogSupportProgram
 import ai.govbiz.catalog.supportprogram.domain.SupportProgram
 import ai.govbiz.catalog.supportprogram.domain.SupportProgramApplicationRoute
+import ai.govbiz.catalog.supportprogram.domain.SupportProgramContact
 import ai.govbiz.catalog.supportprogram.domain.SupportProgramStartupDetails
 import ai.govbiz.catalog.supportprogram.domain.SupportProgramStatusResolver
 import java.net.URI
@@ -48,6 +49,11 @@ internal object KStartupProgramMapper {
             val summary = plainText(payload.summaryHtml).ifBlank { "정보 없음" }
             val sourceUrl = officialSourceUrl(payload.sourceUrl, id)
             val applicationRoute = applicationRoute(payload)
+            val contact = SupportProgramContact.of(
+                department = plainText(payload.contactDepartment), phoneNumber = plainText(payload.contactPhoneNumber), text = null,
+            )
+            val preference = preference(payload.preference)
+            val supervisingInstitutionType = plainText(payload.supervisingInstitutionType).ifBlank { null }
             // 색인하기 전에 MySQL 저장 한도를 검사하여 유료 색인 후의 저장 실패를 방지합니다.
             requireCharacterLimit(title, 500, "title")
             requireCharacterLimit(organization, 255, "organization")
@@ -55,6 +61,10 @@ internal object KStartupProgramMapper {
             requireTextLimit(summary, "summary")
             requireTextLimit(target, "target description")
             requireTextLimit(period, "application period")
+            contact?.department?.let { requireCharacterLimit(it, 255, "contact department") }
+            contact?.phoneNumber?.let { requireCharacterLimit(it, 64, "contact phone number") }
+            preference?.let { requireTextLimit(it, "preference") }
+            supervisingInstitutionType?.let { requireCharacterLimit(it, 64, "supervising institution type") }
             CatalogSupportProgram(
                 program = SupportProgram(
                     id = id, sourceCode = "KSTARTUP", title = title,
@@ -67,6 +77,9 @@ internal object KStartupProgramMapper {
                     sourceName = "K-Startup", sourceUrl = sourceUrl,
                     matchedReasons = emptyList(),
                     applicationRoute = applicationRoute,
+                    contact = contact,
+                    preferenceDescription = preference,
+                    supervisingInstitutionType = supervisingInstitutionType,
                 ),
                 // 이 API에는 게시일이 없으므로 실제로 제공된 접수 시작일만 정렬에 사용합니다.
                 sortTimestamp = start?.toString().orEmpty(),
@@ -95,6 +108,10 @@ internal object KStartupProgramMapper {
             invalid("K-Startup API returned an oversized application method")
         }
     }
+
+    /** 우대 사항은 "1인창조,재창업"처럼 쉼표로 이어 오므로 쉼표 뒤에 공백을 두어 읽기 쉬운 한 줄로 맞춥니다. */
+    private fun preference(value: String?): String? =
+        plainText(value).split(',').map(String::trim).filter(String::isNotEmpty).joinToString(", ").ifEmpty { null }
 
     private fun date(raw: String?): LocalDate? {
         val value = raw?.trim() ?: return null

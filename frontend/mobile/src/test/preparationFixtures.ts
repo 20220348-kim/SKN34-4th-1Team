@@ -28,4 +28,5 @@ export const programDetail: SupportProgramDetail = {
   targetDescription: '중소기업', applicationPeriod: '상시', applicationStartDate: null, applicationEndDate: null, status: 'OPEN',
   sourceName: '기업마당', sourceUrl: 'https://www.bizinfo.go.kr/program', evidenceQuestionSupported: true,
   applicationRoute: { method: null, url: null, type: 'UNKNOWN' },
+  contact: null, preferenceDescription: null, supervisingInstitutionType: null,
 }

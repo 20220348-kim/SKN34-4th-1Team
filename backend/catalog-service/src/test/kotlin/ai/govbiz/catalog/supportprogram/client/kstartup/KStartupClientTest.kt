@@ -113,6 +113,8 @@ class KStartupClientTest {
             "aply_mthd_onli_rcpt_istc":"https://forms.gle/abc","aply_mthd_eml_rcpt_istc":"apply@example.kr",
             "aply_mthd_vst_rcpt_istc":"서울 강북구 1층","aply_mthd_pssr_rcpt_istc":null,"aply_mthd_fax_rcpt_istc":"0212345678",
             "aply_mthd_etc_istc":"<p>담당자 문의</p>",
+            "biz_prch_dprt_nm":"창업보육센터","prch_cnpl_no":"0312508269","prfn_matr":"1인창조,재창업",
+            "sprv_inst":"공공기관","intg_pbanc_yn":"N","intg_pbanc_biz_nm":"통합공고 사업명",
             "ignored_future_field":{"extra":true}
         }""")))
 
@@ -135,6 +137,19 @@ class KStartupClientTest {
         assertEquals(null, item.postalApplication)
         assertEquals("0212345678", item.faxApplication)
         assertEquals("<p>담당자 문의</p>", item.otherApplication)
+        assertEquals("창업보육센터", item.contactDepartment)
+        assertEquals("0312508269", item.contactPhoneNumber)
+        assertEquals("1인창조,재창업", item.preference)
+        assertEquals("공공기관", item.supervisingInstitutionType)
+    }
+
+    @Test
+    fun acceptsANumericContactPhoneNumberAndRejectsAStructuredContact() {
+        expectPage(1, page(listOf("""{"pbanc_sn":179197,"biz_pbanc_nm":"법률지원","prch_cnpl_no":1357}""")))
+        expectPage(1, page(listOf("""{"pbanc_sn":179197,"biz_pbanc_nm":"법률지원","biz_prch_dprt_nm":{"name":"부서"}}""")))
+
+        assertEquals("1357", client.fetchAll().single().contactPhoneNumber)
+        assertFailure(KStartupClientException.Failure.INVALID_RESPONSE)
     }
 
     @Test

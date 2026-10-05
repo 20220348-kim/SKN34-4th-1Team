@@ -19,6 +19,11 @@ data class SupportProgramDbRow(
     var applicationMethod: String? = null,
     var applicationUrl: String? = null,
     var applicationRouteType: String = "UNKNOWN",
+    var contactDepartment: String? = null,
+    var contactPhoneNumber: String? = null,
+    var contactText: String? = null,
+    var preferenceDescription: String? = null,
+    var supervisingInstitutionType: String? = null,
     var sourceSortTimestamp: String? = null,
     var startupDetailsJson: String? = null,
 )

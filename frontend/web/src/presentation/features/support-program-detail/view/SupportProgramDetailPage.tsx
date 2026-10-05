@@ -6,6 +6,9 @@ import { appPaths, isAppPath, supportProgramQuestionPath } from '../../../shared
 import { workspacePageStyles } from '../../../shared/workspace/WorkspacePage.styles'
 
 import type { SupportProgramDetail } from '../../../../domain/entities/SupportProgram'
+import {
+  splitSupportProgramTarget, supportProgramApplicationRouteLabel, supportProgramContactParts, type SupportProgramContactPart,
+} from '../../../../domain/entities/SupportProgramSections'
 import type { SupportProgramIdentity } from '../../../../domain/repositories/SupportProgramRepository'
 import { useSupportProgramDetailViewModel } from '../viewmodel/useSupportProgramDetailViewModel'
 import { supportProgramSaveMessages, supportProgramSaveNoticeDurationMs, useSupportProgramSaveViewModel } from '../../../shared/support-program/useSupportProgramSaveViewModel'
@@ -143,8 +146,10 @@ function TopBar({ searchReturnTo }: { searchReturnTo: SupportProgramSearchReturn
 
 
 /**
- * 공고 상세 본문입니다. 웹 화면 v2의 공고 상세 보드를 따릅니다. 왼쪽은 접수 상태·D-day·출처, 제목, 요약, "한눈에 보기",
+ * 공고 상세 본문입니다. 웹 화면 v2의 공고 상세 보드를 따릅니다. 왼쪽은 접수 상태·D-day·출처, 제목, 요약, "한눈에 보기"
+ * (접수 기간·신청 방법·문의처·지역·분야·주관 기관 유형), 공고 내용(지원 내용·지원 대상·제외 대상·우대 사항·신청 방법)과
  * 자격 미평가 안내이고 오른쪽은 이 공고로 할 일(원문에 질문하기, 관심 공고, 신청 문서 작성, 중복 검토, 원문 보기)입니다.
+ * 모두 공식 API 값만 보여 주며, 제공처가 주지 않은 줄은 그리지 않습니다.
  * 좁은 화면은 할 일 카드가 아래 고정 동작 바가 되고 나머지 줄은 [더 보기]로 펼칩니다.
  */
 function SupportProgramDetail({ program, searchReturnTo, fromPipeline }: {
@@ -182,6 +187,9 @@ function SupportProgramDetail({ program, searchReturnTo, fromPipeline }: {
   const status = supportProgramStatusLabel(program.status)
   const deadline = supportProgramDeadlineChip(program.status, program.applicationEndDate)
   const isOfficialNoticeList = program.sourceCode === 'CNTRADE_NOTICE'
+  const target = splitSupportProgramTarget(program.sourceCode, program.targetDescription)
+  const routeLabel = supportProgramApplicationRouteLabel(program.applicationRoute)
+  const contactParts = program.contact ? supportProgramContactParts(program.contact) : []
   const statusTone = { open: s.statusOpen, upcoming: s.statusUpcoming, closed: s.statusClosed, unknown: s.statusUnknown }[status.tone]
   const dotTone = { open: s.statusDotOpen, upcoming: s.statusDotUpcoming, closed: s.statusDotClosed, unknown: s.statusDotUnknown }[status.tone]
 
@@ -264,10 +272,17 @@ function SupportProgramDetail({ program, searchReturnTo, fromPipeline }: {
           <section className={s.glance} aria-labelledby="support-program-glance">
             <h2 id="support-program-glance" className={s.glanceTitle}>한눈에 보기</h2>
             <dl className={s.glanceList}>
-              <GlanceRow label="지원 규모"><span className={s.glanceValueMuted}>공고문에서 확인해 주세요</span></GlanceRow>
+              {/* 지원 규모는 공식 API가 주지 않아 두지 않습니다. 신청 방법은 공식 신청 필드로 분류한 경로입니다. */}
               <GlanceRow label="접수 기간"><span className={s.glanceValueStrong}>{program.applicationPeriod}</span></GlanceRow>
+              <GlanceRow label="신청 방법">
+                {routeLabel ? <span className={s.glanceValueStrong}>{routeLabel}</span> : <span className={s.glanceValueMuted}>공고 원문에서 확인해 주세요</span>}
+              </GlanceRow>
+              {contactParts.length ? <GlanceRow label="문의처"><ContactLine parts={contactParts} /></GlanceRow> : null}
               <GlanceRow label="지역" tight><TagList values={program.regions} emptyLabel="지역 정보 없음" /></GlanceRow>
               <GlanceRow label="분야" tight><TagList values={program.categories} emptyLabel="분야 정보 없음" /></GlanceRow>
+              {program.supervisingInstitutionType ? (
+                <GlanceRow label="주관 기관 유형"><span>{program.supervisingInstitutionType}</span></GlanceRow>
+              ) : null}
             </dl>
           </section>
 
@@ -279,8 +294,26 @@ function SupportProgramDetail({ program, searchReturnTo, fromPipeline }: {
             </section>
             <section className={s.proseSection}>
               <h3 className={s.proseTitle}>지원 대상</h3>
-              <p className={s.summary}>{program.targetDescription}</p>
+              <p className={s.summary}>{target.target || '정보 없음'}</p>
             </section>
+            {target.excluded ? (
+              <section className={s.proseSection}>
+                <h3 className={s.proseTitle}>제외 대상</h3>
+                <p className={s.summary}>{target.excluded}</p>
+              </section>
+            ) : null}
+            {program.preferenceDescription ? (
+              <section className={s.proseSection}>
+                <h3 className={s.proseTitle}>우대 사항</h3>
+                <p className={s.summary}>{program.preferenceDescription}</p>
+              </section>
+            ) : null}
+            {program.applicationRoute.method ? (
+              <section className={s.proseSection}>
+                <h3 className={s.proseTitle}>신청 방법</h3>
+                <p className={s.summary}>{program.applicationRoute.method}</p>
+              </section>
+            ) : null}
             <p className={s.note} role="note">
               <span className={s.notePill}>자격 미평가</span>
               <span>상세 화면은 기업 조건으로 자격을 다시 평가하지 않아요. 지역·분야 태그만으로 신청 자격을 판단하지 마세요. 최종 조건은 원문 공고에서 확인해 주세요.</span>
@@ -386,6 +419,17 @@ function GlanceRow({ label, tight = false, children }: { label: string; tight?: 
       <dt className={s.glanceLabel}>{label}</dt>
       <dd className={s.glanceValue}>{children}</dd>
     </div>
+  )
+}
+
+/** 문의처 한 줄입니다. 전화번호 조각은 전화 앱으로 거는 링크로 둡니다. */
+function ContactLine({ parts }: { parts: SupportProgramContactPart[] }) {
+  return (
+    <span>
+      {parts.map((part, index) => part.tel
+        ? <a key={index} className={s.contactLink} href={`tel:${part.tel}`}>{part.text}</a>
+        : <span key={index}>{part.text}</span>)}
+    </span>
   )
 }
 

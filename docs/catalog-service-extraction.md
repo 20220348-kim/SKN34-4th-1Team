@@ -59,7 +59,8 @@ Catalog의 DB 숫자 ID는 다른 서비스에 전달하지 않고 `(source_code
 - `programs`: 해당 source의 완전한 현재 공고 목록. 최대 20,000개
 
 양쪽 HTTP DTO는 Domain과 별도로 정의한다. `programs[].program`에는 식별자·제목·기관·본문·
-분류·지역·대상·신청 기간·날짜·접수 상태·출처 이름·공고 상세 URL·공식 신청 경로를 명시적으로 담고,
+분류·지역·대상·신청 기간·날짜·접수 상태·출처 이름·공고 상세 URL·공식 신청 경로와 공식 문의처(`contact`)·
+우대 사항(`preferenceDescription`)·주관 기관 유형(`supervisingInstitutionType`)을 명시적으로 담고,
 `sortTimestamp`와 `startupDetails`를 함께 전송한다. 검색 추천 이유·점수·자격 검토와
 계산 getter는 이 계약에 포함하지 않는다. Core의 Client Mapper에서 업무 모델로 변환한다.
 
@@ -72,7 +73,8 @@ Core는 프로토콜 버전·source·건수·중복·지문·UUID·revision을 �
 공개 generation 역전, 다른 Catalog UUID는 거절한다. 날짜가 지나며 계산되는 접수 상태는
 고정하지 않으며 기존처럼 서울 날짜와 신청 기간으로 다시 계산한다.
 nullable 필드도 응답의 키는 필수다. 명시적인 `null`과 키 누락을 구분하고, 숫자·boolean 필드의
-누락이나 `null`을 기본값으로 바꾸어 수용하지 않는다.
+누락이나 `null`을 기본값으로 바꾸어 수용하지 않는다. 예외로 나중에 추가한 공식 신청 경로·문의처·우대 사항·주관 기관 유형은
+새 필드를 보내기 전 Catalog와 순서 없이 배포할 수 있도록 키 누락을 값 없음으로 받는다.
 
 revision은 generation과 다르다. 같은 공개 공고에서 `indexReady` 또는 최근 실패 상태만
 바뀌어도 반영해야 하므로 수집 generation만으로 중복 수신을 판단하지 않는다.

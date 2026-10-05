@@ -3,6 +3,7 @@ package ai.govbiz.core.supportprogram.controller.dto
 import ai.govbiz.core.supportprogram.domain.SupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgramStatus
 import ai.govbiz.core.supportprogram.domain.SupportProgramApplicationRoute
+import ai.govbiz.core.supportprogram.domain.SupportProgramContact
 import ai.govbiz.core.supportprogram.service.evidence.SupportProgramEvidenceService
 
 /**
@@ -25,6 +26,12 @@ data class SupportProgramDetailResponse(
     val sourceName: String,
     val sourceUrl: String,
     val applicationRoute: SupportProgramApplicationRouteResponse,
+    /** 공식 문의처입니다. 제공처가 주지 않으면 null입니다. */
+    val contact: SupportProgramContactResponse?,
+    /** K-Startup 공식 우대 사항입니다. */
+    val preferenceDescription: String?,
+    /** K-Startup 주관 기관 유형(공공기관·민간·교육기관·지자체 등)입니다. */
+    val supervisingInstitutionType: String?,
     val evidenceQuestionSupported: Boolean,
 ) {
     companion object {
@@ -45,8 +52,23 @@ data class SupportProgramDetailResponse(
                 sourceName = program.sourceName,
                 sourceUrl = program.sourceUrl,
                 applicationRoute = SupportProgramApplicationRouteResponse.from(program.applicationRoute),
+                contact = program.contact?.let(SupportProgramContactResponse::from),
+                preferenceDescription = program.preferenceDescription,
+                supervisingInstitutionType = program.supervisingInstitutionType,
                 evidenceQuestionSupported = program.sourceCode == SupportProgramEvidenceService.BIZINFO_SOURCE_CODE,
             )
+    }
+}
+
+/** 공식 문의처입니다. 전화번호는 제공처 값 그대로이며 표시 형식과 전화 연결은 화면이 정합니다. */
+data class SupportProgramContactResponse(
+    val department: String?,
+    val phoneNumber: String?,
+    val text: String?,
+) {
+    companion object {
+        fun from(contact: SupportProgramContact) =
+            SupportProgramContactResponse(contact.department, contact.phoneNumber, contact.text)
     }
 }
 

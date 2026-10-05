@@ -2,8 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import type { SupportProgramDetail } from '@govbiz/shared/domain/entities/SupportProgram'
+import { splitSupportProgramTarget, supportProgramApplicationRouteLabel, supportProgramContactParts } from '@govbiz/shared/domain/entities/SupportProgramSections'
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
 import type { SupportProgramEvidenceAnswer } from '@govbiz/shared/domain/entities/SupportProgramEvidenceAnswer'
+import { toSupportProgramDetail } from '@govbiz/shared/data/models/SupportProgramDto'
 import { ApiError, errorMessage, programClient } from '../api/client'
 import { getSavedProgramStatus, removeSavedProgram, saveProgram } from '../api/savedPrograms'
 import { useAuth } from '../auth/session'
@@ -46,7 +48,7 @@ export function ProgramScreen({ identity, onLogin, resumeAction, onResumed }: {
     const controller = new AbortController()
     setLoading(true); setError(null); setProgram(null)
     client.getDetail({ sourceCode, sourceProgramId }, controller.signal)
-      .then((value) => { if (active) setProgram(value) })
+      .then((value) => { if (active) setProgram(value ? toSupportProgramDetail(value) : null) })
       .catch((cause: unknown) => { if (active) setError(errorMessage(cause)) })
       .finally(() => { if (active) setLoading(false) })
     return () => { active = false; controller.abort() }
@@ -115,8 +117,17 @@ export function ProgramScreen({ identity, onLogin, resumeAction, onResumed }: {
     try { await Linking.openURL(url) } catch { setError('원문 링크를 열지 못했습니다. 다시 시도해 주세요.') }
   }
 
+  async function call(tel: string) {
+    try { await Linking.openURL(`tel:${tel}`) } catch { setError('전화 앱을 열지 못했어요. 번호를 직접 입력해 주세요.') }
+  }
+
   const deadline = program?.applicationEndDate ? partnerDeadlineDay(program.applicationEndDate) : null
   const statusColor = program?.status === 'OPEN' ? colors.primary : program?.status === 'UPCOMING' ? colors.info : colors.muted
+  // 공식 API 값만 보여 줍니다. K-Startup은 지원·제외 대상을 나누고, 신청 방법은 공식 신청 필드로 분류한 경로입니다.
+  const target = program ? splitSupportProgramTarget(program.sourceCode, program.targetDescription) : null
+  const routeLabel = program ? supportProgramApplicationRouteLabel(program.applicationRoute) : null
+  const applicationUrl = program?.applicationRoute.url ?? null
+  const contactParts = program?.contact ? supportProgramContactParts(program.contact) : []
   function closeQuestion() { work.current?.abort(); setAnswering(false); setQuestionOpen(false) }
   return <View style={local.page}><Page backgroundColor={colors.surface}>
     {status === 'unavailable' && <><Notice error>로그인 상태를 확인한 뒤 저장과 원문 질문을 이용할 수 있어요.</Notice>
@@ -131,16 +142,27 @@ export function ProgramScreen({ identity, onLogin, resumeAction, onResumed }: {
       <Title>{program.title}</Title>
       <Subtitle>{program.organization}</Subtitle>
       <View style={local.glance}><View style={local.fact}><Text style={styles.muted}>접수 기간</Text><Text style={[styles.body, local.factValue]}>{program.applicationPeriod}</Text></View>
-        <View style={local.fact}><Text style={styles.muted}>지원 규모</Text><Text style={[styles.muted, local.factValue]}>공고문에서 확인해 주세요</Text></View></View>
+        <View style={local.fact}><Text style={styles.muted}>신청 방법</Text><Text style={[routeLabel ? styles.body : styles.muted, local.factValue]}>{routeLabel ?? '공고 원문에서 확인해 주세요'}</Text></View>
+        {program.supervisingInstitutionType ? <View style={local.fact}><Text style={styles.muted}>주관 기관 유형</Text><Text style={[styles.body, local.factValue]}>{program.supervisingInstitutionType}</Text></View> : null}
+        {contactParts.length > 0 && <View style={local.factStacked}><Text style={styles.muted}>문의처</Text><Text selectable style={styles.body}>
+          {contactParts.map(({ text, tel }, index) => tel
+            ? <Text key={index} style={local.phone} accessibilityRole="link" accessibilityLabel={`${text} 전화 걸기`} onPress={() => void call(tel)}>{text}</Text>
+            : <Text key={index}>{text}</Text>)}
+        </Text></View>}</View>
       {token && saved && <ProgramPreparationSection key={`${token}:${sourceCode}:${sourceProgramId}`} identity={identity} token={token} />}
       {saveError && <><Notice error>{saveError}</Notice><Button variant="ghost" label="저장 상태 다시 확인" onPress={() => setRetry((value) => value + 1)} /></>}
       {saveNotice && <Notice>{saveNotice}</Notice>}
       {!program.evidenceQuestionSupported && <Notice>이 제공처 공고는 아직 원문 근거 답변을 지원하지 않습니다. 공식 공고 원문에서 확인해 주세요.</Notice>}
       <Card>
-        <Text style={styles.heading}>지원 대상</Text><Text style={styles.body}>{program.targetDescription || '원문을 확인해 주세요.'}</Text>
+        <Text style={styles.heading}>지원 대상</Text><Text style={styles.body}>{target?.target || '원문을 확인해 주세요.'}</Text>
+        {target?.excluded ? <><Text style={styles.heading}>제외 대상</Text><Text style={styles.body}>{target.excluded}</Text></> : null}
+        {program.preferenceDescription ? <><Text style={styles.heading}>우대 사항</Text><Text style={styles.body}>{program.preferenceDescription}</Text></> : null}
         <Text style={styles.muted}>{program.regions.join(' · ')} / {program.categories.join(' · ')}</Text>
       </Card>
       <Card><Text style={styles.heading}>사업 내용</Text><Text selectable style={styles.body}>{program.summary || '공고 원문에서 확인해 주세요.'}</Text></Card>
+      {program.applicationRoute.method ? <Card><Text style={styles.heading}>신청 방법</Text><Text selectable style={styles.body}>{program.applicationRoute.method}</Text></Card> : null}
+      {applicationUrl ? <Button variant="secondary" label={program.applicationRoute.type === 'GOOGLE_FORMS' ? '구글 설문 신청서 열기' : '신청 사이트 열기'}
+        onPress={() => void openSource(applicationUrl)} /> : null}
       <Notice>공고 정보는 신청 자격의 확정 판정이 아닙니다. 제출 전 공식 공고의 요건과 마감일을 확인해 주세요.</Notice>
       <Button label={program.sourceCode === 'CNTRADE_NOTICE' ? '공식 공지 목록 열기' : '공식 공고 원문 열기'} onPress={() => void openSource(program.sourceUrl)} />
     </>}
@@ -188,6 +210,9 @@ const local = StyleSheet.create({
   glance: { backgroundColor: colors.background, borderRadius: 12, paddingHorizontal: 12 },
   fact: { minHeight: 48, flexDirection: 'row', alignItems: 'center', gap: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
   factValue: { flex: 1, textAlign: 'right' },
+  // 문의처는 기업마당 원문처럼 길 수 있어 이름 아래에 왼쪽 정렬로 둡니다.
+  factStacked: { paddingVertical: 12, gap: 4, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.border },
+  phone: { color: colors.primary, fontWeight: '600', textDecorationLine: 'underline' },
   footer: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 12, backgroundColor: colors.surface,
     borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
   bookmark: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.soft, alignItems: 'center', justifyContent: 'center' },

@@ -29,6 +29,10 @@ internal object KStartupPageDecoderHelper {
                     postalApplication = text(item, "aply_mthd_pssr_rcpt_istc"),
                     faxApplication = text(item, "aply_mthd_fax_rcpt_istc", allowInteger = true),
                     otherApplication = text(item, "aply_mthd_etc_istc"),
+                    contactDepartment = text(item, "biz_prch_dprt_nm"),
+                    contactPhoneNumber = text(item, "prch_cnpl_no", allowInteger = true),
+                    preference = text(item, "prfn_matr"),
+                    supervisingInstitutionType = text(item, "sprv_inst"),
                 )
             },
         )

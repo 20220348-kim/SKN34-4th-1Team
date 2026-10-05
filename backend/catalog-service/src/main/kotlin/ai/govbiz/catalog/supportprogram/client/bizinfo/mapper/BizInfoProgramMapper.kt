@@ -4,6 +4,7 @@ import ai.govbiz.catalog.supportprogram.client.bizinfo.dto.BizInfoProgramPayload
 import ai.govbiz.catalog.supportprogram.client.bizinfo.exception.BizInfoClientException
 import ai.govbiz.catalog.supportprogram.domain.SupportProgram
 import ai.govbiz.catalog.supportprogram.domain.SupportProgramApplicationRoute
+import ai.govbiz.catalog.supportprogram.domain.SupportProgramContact
 import ai.govbiz.catalog.supportprogram.domain.CatalogSupportProgram
 import ai.govbiz.catalog.supportprogram.domain.SupportProgramStatusResolver
 import java.net.URI
@@ -110,6 +111,11 @@ internal object BizInfoProgramMapper {
             requiredPayload.jurisdictionOrganization,
             "정보 없음",
         )
+        val contact = SupportProgramContact.of(department = null, phoneNumber = null, text = plainText(requiredPayload.contact))
+        // 색인 뒤 MySQL TEXT 한도로 공개가 실패하지 않도록 문의처 원문 길이를 먼저 확인합니다.
+        if ((contact?.text?.toByteArray(StandardCharsets.UTF_8)?.size ?: 0) > MAX_TEXT_BYTES) {
+            throw BizInfoClientException.invalidResponse("BizInfo API returned an oversized contact", null)
+        }
 
         return CatalogSupportProgram(
             program = SupportProgram(
@@ -133,6 +139,7 @@ internal object BizInfoProgramMapper {
                 sourceName = "기업마당",
                 sourceUrl = sourceUrl,
                 applicationRoute = applicationRoute,
+                contact = contact,
                 matchedReasons = emptyList(),
             ),
             sortTimestamp = firstPresent(requiredPayload.updatedAt, requiredPayload.createdAt, ""),
@@ -274,4 +281,5 @@ internal object BizInfoProgramMapper {
     private const val BIZINFO_SOURCE_CODE = "BIZINFO"
     private const val PBLANC_ID_QUERY_PARAMETER = "pblancId"
     private const val HTTPS_DEFAULT_PORT = 443
+    private const val MAX_TEXT_BYTES = 65_535
 }

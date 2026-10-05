@@ -7,6 +7,7 @@ import ai.govbiz.core.supportprogram.domain.CatalogSupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgramApplicationRoute
 import ai.govbiz.core.supportprogram.domain.SupportProgramApplicationRouteType
+import ai.govbiz.core.supportprogram.domain.SupportProgramContact
 import ai.govbiz.core.supportprogram.domain.SupportProgramStatus
 import ai.govbiz.core.supportprogram.domain.SupportProgramSyncOutcome
 import ai.govbiz.core.supportprogram.domain.SupportProgramSyncStatus
@@ -119,6 +120,54 @@ class CatalogProjectionRepositoryIntegrationTest {
     }
 
     @Test
+    fun newerPublishedOfficialDetailsReplaceAndThenClearThePreviousValues() {
+        val original = program("one", source = "KSTARTUP").let { item ->
+            item.copy(program = item.program.copy(
+                contact = SupportProgramContact(department = "(서울)RISE사업단 \"캠퍼스타운\" 🚀", phoneNumber = "0312508269"),
+                preferenceDescription = "1인창조, 재창업, 여성(예비)창업자", supervisingInstitutionType = "공공기관",
+            ))
+        }
+        fun stored() = requireNotNull(programs.findPresentBySourceAndProgramId("KSTARTUP", "one")).program.let {
+            Triple(it.contact, it.preferenceDescription, it.supervisingInstitutionType)
+        }
+        fun expected(item: CatalogSupportProgram) =
+            Triple(item.program.contact, item.program.preferenceDescription, item.program.supervisingInstitutionType)
+        assertTrue(projection.apply(snapshot(listOf(original), source = "KSTARTUP", revision = 1, generation = 1)))
+        assertEquals(expected(original), stored())
+
+        val changed = original.copy(program = original.program.copy(
+            contact = SupportProgramContact(text = "중소기업통합콜센터 1357 / help@example.kr"), preferenceDescription = null,
+        ))
+        assertTrue(projection.apply(snapshot(listOf(changed), source = "KSTARTUP", revision = 2, generation = 2)))
+        assertEquals(expected(changed), stored())
+
+        val cleared = changed.copy(program = changed.program.copy(contact = null, supervisingInstitutionType = null))
+        assertTrue(projection.apply(snapshot(listOf(cleared), source = "KSTARTUP", revision = 3, generation = 3)))
+        assertEquals(Triple(null, null, null), stored())
+    }
+
+    @Test
+    fun v51CheckpointResetReappliesTheSameSnapshotOnceInsteadOfRejectingTheNewHashFormat() {
+        val incoming = snapshot(listOf(program("one")), revision = 4, generation = 3)
+        assertTrue(projection.apply(incoming))
+        val programId = jdbc.queryForObject("SELECT id FROM support_program", Long::class.java)
+        val analysis = jdbc.queryForMap("SELECT catalog_fingerprint, generation, status FROM application_form_availability")
+        // V51 이전 코드가 저장한 해시는 새 필드를 포함한 현재 계산과 다릅니다. 되돌리지 않으면 같은 revision을 거절합니다.
+        jdbc.update("UPDATE catalog_projection_checkpoint SET payload_hash = REPEAT('a', 64), programs_hash = REPEAT('b', 64)")
+        assertThrows(IllegalStateException::class.java) { projection.apply(incoming) }
+
+        jdbc.update("UPDATE catalog_projection_checkpoint SET revision = 0 WHERE revision > 0")
+        assertTrue(projection.apply(incoming))
+        assertFalse(projection.apply(incoming))
+        assertEquals(4L, revision())
+        assertEquals(programId, jdbc.queryForObject("SELECT id FROM support_program", Long::class.java))
+        assertEquals(analysis, jdbc.queryForMap("SELECT catalog_fingerprint, generation, status FROM application_form_availability"))
+        assertThrows(IllegalStateException::class.java) {
+            projection.apply(incoming.copy(revision = 5, status = incoming.status.copy(publishedGeneration = 2)))
+        }
+    }
+
+    @Test
     fun rejectsSameRevisionPayloadChangesIncludingFieldsOutsideSearchFingerprint() {
         val incoming = snapshot(listOf(program("one")))
         projection.apply(incoming)
@@ -126,9 +175,13 @@ class CatalogProjectionRepositoryIntegrationTest {
         val changedRoute = incoming.copy(programs = incoming.programs.map { it.copy(program = it.program.copy(
             applicationRoute = SupportProgramApplicationRoute("온라인 접수", "https://apply.example.go.kr", SupportProgramApplicationRouteType.OTHER_ONLINE_FORM),
         )) })
+        val changedContact = incoming.copy(programs = incoming.programs.map { it.copy(program = it.program.copy(
+            contact = SupportProgramContact(text = "문의 02-123-4567"),
+        )) })
 
         assertThrows(IllegalStateException::class.java) { projection.apply(changedUrl) }
         assertThrows(IllegalStateException::class.java) { projection.apply(changedRoute) }
+        assertThrows(IllegalStateException::class.java) { projection.apply(changedContact) }
         assertThrows(IllegalStateException::class.java) { projection.apply(incoming.copy(status = incoming.status.copy(indexReady = false))) }
 
         assertEquals("https://example.com/one", programs.findPresentBySourceAndProgramId("BIZINFO", "one")?.program?.sourceUrl)
