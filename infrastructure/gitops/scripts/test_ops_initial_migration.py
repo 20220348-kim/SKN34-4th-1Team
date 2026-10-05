@@ -2,13 +2,20 @@
 
 import copy
 import hashlib
+import io
 import json
 import tempfile
 import unittest
-from contextlib import ExitStack, contextmanager
+from contextlib import (
+    ExitStack,
+    contextmanager,
+    nullcontext,
+    redirect_stderr,
+    redirect_stdout,
+)
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from uuid import UUID
 
 import ops_initial_migration as migration
@@ -98,6 +105,24 @@ class JobTests(unittest.TestCase):
 
 
 class SourceTests(unittest.TestCase):
+    def test_remote_head_changed_during_ci_verification_is_rejected(self):
+        with (
+            patch.object(
+                migration, "from_origin", return_value=Fork("alice/project", "topic")
+            ),
+            patch.object(
+                migration.database.storage, "run", side_effect=[SHA.encode(), b""]
+            ),
+            patch.object(
+                migration.gate,
+                "api",
+                side_effect=[{"object": {"sha": SHA}}, {"object": {"sha": "d" * 40}}],
+            ),
+            patch.object(migration.gate, "ci_blocked_reason", return_value=None),
+            self.assertRaisesRegex(ValueError, "Remote source changed"),
+        ):
+            migration.source_evidence(SETTINGS, SHA, "topic")
+
     def test_exact_clean_head_remote_branch_and_every_ci_job_are_required(self):
         with (
             patch.object(
@@ -226,6 +251,175 @@ class SourceTests(unittest.TestCase):
                         )[1],
                         SOURCE,
                     )
+
+
+class SourceCliTests(unittest.TestCase):
+    def setUp(self):
+        self.stack = ExitStack()
+        self.addCleanup(self.stack.close)
+        self.stdout = self.stack.enter_context(redirect_stdout(io.StringIO()))
+        self.stderr = self.stack.enter_context(redirect_stderr(io.StringIO()))
+        self.stack.enter_context(
+            patch.object(migration, "os", SimpleNamespace(name="posix", umask=Mock()))
+        )
+        self.stack.enter_context(
+            patch.object(migration.database, "load_settings", return_value=SETTINGS)
+        )
+        self.evidence = [{"workflow": "ops-ci.yml", "runId": 7, "runAttempt": 1}]
+        self.source = self.stack.enter_context(
+            patch.object(migration, "source_evidence", return_value=self.evidence)
+        )
+        self.migrate = self.stack.enter_context(patch.object(migration, "migrate"))
+        self.lock = self.stack.enter_context(
+            patch.object(migration.cluster, "locked", return_value=nullcontext())
+        )
+        self.forbidden = [
+            self.stack.enter_context(patch.object(owner, name))
+            for owner, name in (
+                (migration.database, "frozen_source"),
+                (migration.database, "read_archive"),
+                (migration.cluster, "require_dev"),
+                (migration.cluster, "write_json"),
+                (migration, "run_migration"),
+            )
+        ]
+        self.arguments = [
+            "--expected-state-id",
+            SETTINGS["stateId"],
+            "--source-sha",
+            SHA,
+            "--source-branch",
+            "topic",
+        ]
+        self.migration_arguments = {
+            "--archive": "state.enc",
+            "--key-file": "key",
+            "--ops-image": TAG,
+            "--pause-request-id": REQUEST,
+            "--pause-actor": "운영자",
+            "--pause-reason": "전환",
+        }
+
+    def assert_read_only(self):
+        self.migrate.assert_not_called()
+        self.lock.assert_not_called()
+        migration.os.umask.assert_not_called()
+        for mocked in self.forbidden:
+            mocked.assert_not_called()
+
+    def test_source_only_checks_without_backup_or_cluster_and_never_migrates(self):
+        self.assertEqual(migration.main([*self.arguments, "--check-source"]), 0)
+        report = json.loads(self.stdout.getvalue())
+        self.assertEqual(report["status"], "SOURCE_VERIFIED")
+        self.assertEqual(report["source_sha"], SHA)
+        self.assertEqual(report["ci"], self.evidence)
+        for field in (
+            "services_changed",
+            "original_database_migration_attempted",
+            "backup_verified",
+            "runtime_verified",
+        ):
+            self.assertFalse(report[field])
+        self.source.assert_called_once_with(SETTINGS, SHA, "topic")
+        self.assert_read_only()
+
+    def test_wrong_state_is_rejected_before_remote_or_runtime_access(self):
+        arguments = [
+            "different-state" if arg == SETTINGS["stateId"] else arg
+            for arg in self.arguments
+        ]
+        self.assertEqual(migration.main([*arguments, "--check-source"]), 1)
+        report = json.loads(self.stdout.getvalue())
+        self.assertEqual(report["status"], "BLOCKED")
+        self.assertEqual(report["reason"], "state_identity_mismatch")
+        self.source.assert_not_called()
+        self.assert_read_only()
+
+    def test_source_failure_is_nonzero_and_never_discloses_external_error(self):
+        self.source.side_effect = ValueError("private token and response")
+        self.assertEqual(migration.main([*self.arguments, "--check-source"]), 1)
+        self.assertEqual(json.loads(self.stdout.getvalue())["status"], "BLOCKED")
+        self.assertNotIn(
+            "private token and response",
+            self.stdout.getvalue() + self.stderr.getvalue(),
+        )
+        self.assert_read_only()
+
+    def test_only_known_ci_reasons_and_workflows_are_reported(self):
+        for failure, reason, workflow in (
+            (
+                "ci_run_not_successful_or_untrusted:ci.yml",
+                "ci_run_not_successful_or_untrusted",
+                "ci.yml",
+            ),
+            (
+                "ci_jobs_not_successful_or_incomplete:ops-ci.yml",
+                "ci_jobs_not_successful_or_incomplete",
+                "ops-ci.yml",
+            ),
+            ("ci_run_missing:private-response", "source_verification_failed", None),
+            ("private-response:ci.yml", "source_verification_failed", None),
+        ):
+            with self.subTest(failure=failure):
+                self.stdout.seek(0)
+                self.stdout.truncate()
+                self.source.side_effect = ValueError(
+                    "Source CI is not fully successful: " + failure
+                )
+                self.assertEqual(migration.main([*self.arguments, "--check-source"]), 1)
+                report = json.loads(self.stdout.getvalue())
+                self.assertEqual(report["reason"], reason)
+                self.assertEqual(report.get("workflow"), workflow)
+                self.assertNotIn(
+                    "private-response", self.stdout.getvalue() + self.stderr.getvalue()
+                )
+        self.assert_read_only()
+
+    def test_source_mode_rejects_execution_and_unused_migration_arguments(self):
+        for extra in (
+            ["--execute"],
+            *([key, value] for key, value in self.migration_arguments.items()),
+        ):
+            with self.subTest(extra=extra), self.assertRaises(SystemExit) as error:
+                migration.main([*self.arguments, "--check-source", *extra])
+            self.assertEqual(error.exception.code, 2)
+        self.source.assert_not_called()
+        self.assert_read_only()
+
+    def test_migration_still_requires_every_backup_image_and_pause_argument(self):
+        for missing in self.migration_arguments:
+            arguments = [
+                part
+                for key, value in self.migration_arguments.items()
+                if key != missing
+                for part in (key, value)
+            ]
+            with self.subTest(missing=missing), self.assertRaises(SystemExit) as error:
+                migration.main([*self.arguments, *arguments])
+            self.assertEqual(error.exception.code, 2)
+        self.assert_read_only()
+
+    def test_existing_verification_and_execution_paths_keep_the_lock_and_migration(
+        self,
+    ):
+        arguments = [part for item in self.migration_arguments.items() for part in item]
+        self.migrate.return_value = {"status": "fixture"}
+        for execute in (False, True):
+            with self.subTest(execute=execute):
+                self.assertEqual(
+                    migration.main(
+                        [
+                            *self.arguments,
+                            *arguments,
+                            *(["--execute"] if execute else []),
+                        ]
+                    ),
+                    0,
+                )
+                self.assertEqual(self.migrate.call_args.args[0].execute, execute)
+        self.assertEqual(self.lock.call_count, 2)
+        self.assertEqual(self.migrate.call_count, 2)
+        self.source.assert_not_called()
 
 
 class ExecutionTests(unittest.TestCase):
