@@ -899,4 +899,43 @@ API·sync를 함께 교체한다. `0015` 등 과거 번호에서 임의로 멈�
 
 이후 순서는 Compose→Kubernetes 예산 HTTP 대역 왕복, 실제 전체 백업·복원 훈련, GHCR 동일 SHA/digest,
 별도 배포 브랜치 없는 Argo A→B→A 검증, 관리 화면 상태 표시, 외부 공개 전 접근·통신 보호다.
-이번 클라우드에는 개인 PC 연결 정보가 없으므로 실제 갱신·migration·백업·복원·새 평가를 실행하지 않았다.
+
+### 개인 환경 백업·격리 복원 실행 기록 — 2026-10-05
+
+`skn-203 / 51fe273` 도구로 사용자 승인 후 개인 Kubernetes와 연결된 Compose의 실제 백업을 수행했다.
+이 기록은 해당 시점의 Ops 저장소 복원 증거이며, 전체 시스템 복구나 개인 환경 갱신 완료를 뜻하지 않는다.
+
+| 확인 범위 | 실제 결과 |
+|---|---|
+| 중지·재개 | Kubernetes Ops API/sync와 실행 중인 Compose 실행기·Prefect만 중지 후 재개. 기존 중지 컨테이너는 그대로 유지 |
+| DB 암호화 백업 | 실제 MySQL의 23개 테이블·126개 행 캡처 |
+| 상태 묶음 | 같은 중지 상태의 DB·결과 파일·Prefect SQLite·실행 키 5개를 암호화 |
+| 격리 DB 복원 | 원본과 동일한 MySQL digest의 새 임시 DB에서 덤프·행 수 대조 통과 |
+| 완료 평가 연결 | 기존 완료 평가 2건과 결과 파일·Prefect 실행 이력 일치 |
+| 파일 복원 | 결과 파일 18개·Prefect 파일 4개의 내용·권한, SQLite 무결성 확인 |
+| 키·DB 로그인 | Django 서명·결과 서버 WSGI 인증, 원본 인증 해시를 사용한 root/앱 로그인 및 잘못된 비밀번호 거절 확인 |
+| 격리 갱신 | `0017_input_token_budget → 0028_daily_evaluation_schedules`, migration 11개 적용 및 기존 23개 테이블·126개 행의 원래 값 보존 |
+| 갱신 반복 | 반복 migration·같은 UUID의 접수 중지 요청 유지, 신규 접수 차단 및 과거 토큰 상한 NULL 보존 확인 |
+| 원본 상태 | `0017`·평가 2건 유지. Deployment spec·DB 식별자·Compose 이미지와 원래 실행 상태 보존, 브리지 검사 통과 |
+| HTTP 연결 | 웹 `localhost:5173`, Core/Ops health, Ops readiness 200. Vite 경유 비인증 Ops 관리 API 401 |
+| 정리·비용 | 격리 검증 컨테이너 정리 완료. 모델 API 호출 0회 |
+
+백업은 개인 WSL의 저장소 밖 `0700` 디렉터리에서 보관한다. 암호화 파일·키·보고서는 `0600`이다.
+실행 묶음 ID는 `20261005T095835Z`이며 `maintenance.json`, `restore-verification.json`,
+`upgrade-verification.json`, `source-after.json`에 캡처·복원·갱신·원본 재확인 결과를 남겼다.
+키와 원본 데이터는 Git에 넣지 않는다.
+
+- DB 암호화 파일 SHA-256: `211b4ea00d5e710783281e57048e942901d0b9e3a4dd0a2f2d452e7d0ad16fbe`
+- 상태 묶음 SHA-256: `34bba453e471d662ceef7ef4a0c4e2d73252fb20b5ecf65851025a89e43e7044`
+
+서명된 사용량 증거는 0건이므로 그 서명의 실제 표본 검증은 미실시다. 앱 계정의 원본 권한은
+복원하지 않고 격리 DB 조회 권한으로만 확인했다. Core 인증 DB·기존 로그인 세션·전체 Langfuse
+저장소 복원, 복원된 앱의 관리자 브라우저 로그인과 새 평가 실행은 이번 검증 범위 밖이다.
+`full_backup_verified=false`, `application_started=false`는 유지한다. 원본 서비스 재개와
+격리 복원 앱 기동 검증을 혼동하지 않는다.
+
+**다음 단계는 구버전 최초 전환 절차의 구현·검증이다.** 실제 전환 시에는 당시의 쓰기 중지 상태와
+새 백업을 다시 확보하고, 최신 대상 소스·이미지·필수 CI 및 실패 복구 절차를 확인해야 한다.
+그 뒤 원본 migration과 API/sync·실행기·결과 서버 전환 범위를 별도로 승인받는다.
+이번에는 원본 migration이나 이미지 교체를 하지 않았으므로 `admission_control_unsupported`
+차단은 그대로다. 백업 성공을 이유로 기존 활성화 검사를 우회하지 않는다.
