@@ -90,6 +90,37 @@ git push origin main
 확인하고, 새 태그를 업로드할 때는 push 직전과 직후에도 재검사합니다. 패키지가 없거나 접근할 수 없으면
 새로 만들지 않고 중단합니다. 검사 실패 시 배포 후보 receipt를 발급하지 않습니다.
 
+### 패키지 검사에서 발행이 중단된 경우
+
+서비스별 `msa-publication-<서비스>` artifact와 해당 job의 Summary에서 `packageCheck`를 확인합니다.
+API 응답 원문이나 토큰을 출력하지 않고, 마지막으로 시도한 패키지 검사의 원인과 항목별 상태를 기록합니다.
+`expectedVisibility`는 발행 정책이며, `actualVisibility`는 API가 `private`·`public`·`internal` 중 하나를
+반환했을 때만 기록합니다. 패키지 공개 범위나 권한을 자동으로 바꾸지 않습니다.
+
+| 기록 | 의미와 다음 확인 |
+| --- | --- |
+| `checks.repository: missing` | 연결 저장소를 확인하지 못함. 패키지의 Connect repository와 정확한 개인 포크 연결 확인 |
+| `checks.repository: mismatch` | 다른 저장소 연결. 현재 포크와의 연결을 확인한 뒤 재검증 |
+| `checks.owner: missing/mismatch` | 패키지 소유자를 확인하지 못했거나 개인 포크 소유자와 다름 |
+| `checks.visibility: missing/mismatch` | 공개 범위를 확인하지 못했거나 설정한 기대 범위와 다름. 의도한 정책을 먼저 확인 |
+| 항목의 `invalid` 또는 `reason: invalid_response` | 응답 형식 오류. 정상 패키지로 간주하지 않고 중단 |
+| `reason: authentication_failed` / HTTP 401 | 사용 중인 인증 확인 |
+| `reason: access_denied` / HTTP 403 | 사용 중인 토큰의 패키지 접근 권한 확인. 403만으로 누락된 특정 권한을 단정하지 않음 |
+| `reason: missing_or_inaccessible` / HTTP 404 | 패키지 없음과 접근 불가를 구분할 수 없음. 자동 생성하지 않고 최초 준비·접근 설정 확인 |
+| `reason: rate_limited`, `http_error`, `network_error` | API 제한·HTTP 오류·연결 오류. 패키지 정책 불일치와 구분해 확인 |
+
+한 번에 여러 항목이 실패하면 모두 기록하며, 통과한 항목은 `matched`입니다. 발행 시작·업로드 직전·직후와
+기존 이미지 재사용 시 같은 검사를 수행합니다. 업로드 후 검사 실패는 `upload: confirmed`와
+`receiptWritten: false`를 함께 기록하므로 업로드 사실을 없던 것으로 표시하지 않습니다.
+`packageCheck.state: verified`는 패키지 메타데이터 검증만 뜻합니다. 이미지 발행은 receipt와 서비스별
+결과를, 배포는 실제 클러스터 상태를 별도로 확인합니다.
+
+Actions의 `GITHUB_TOKEN`과 로컬 `gh` 인증은 별개입니다. 로컬에서 `read:packages` 부족 오류가 나도
+Actions 토큰의 같은 권한 부족을 입증하지는 않습니다. 비공개 패키지는
+[최초 준비 안내](private-ghcr-setup.md)의 저장소 연결과 Actions Write 설정을 확인합니다.
+검사 실패를 없애기 위해 `MSA_PACKAGE_VISIBILITY=public`으로 바꾸지 않습니다. 공개 발행이 필요한 경우에만
+[명시적인 공개 전환 절차](public-ghcr-transition.md)를 따릅니다.
+
 ## 발행과 로컬 개발의 차이
 
 비공개 패키지 준비·검증과 발행 활성화가 완료된 뒤에는
