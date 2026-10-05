@@ -218,6 +218,10 @@ migration → API+sync 적용 → rollout → 읽기 전용 런타임 진단 순
 운영자가 접수를 중지한 뒤 지원 여부·중지 상태·버전을 모두 확인해야 통과한다. 접수 제어가 없는
 구버전은 남은 작업이 없어도 `admission_control_unsupported`로 차단하며 현재 자동 갱신 대상이 아니다.
 Prefect 직접 접수 통제·일관된 백업은 별도이며 [갱신 절차와 검사 범위](../../../docs/ops-upgrade-runbook.md)를 따른다.
+실제 중지 전 `scripts/ops_maintenance_plan.py --state-dir ...`로 중지할 현재 실행 대상과 원래 상태로
+돌릴 순서, MySQL 복원 이미지 준비 여부를 읽기 전용 확인할 수 있다.
+[중지 대상과 복구 순서 확인](../../../docs/ops-upgrade-runbook.md#실제-중지-전에-대상과-복구-순서-확인하기)을 따른다.
+`PLANNED`는 조회 결과이며 백업 완료·서비스 중지·갱신 승인을 뜻하지 않는다.
 정지한 개인 Kubernetes Ops DB는 `scripts/ops_db_snapshot.py backup`으로 암호화하고
 `verify`로 새 격리 MySQL에 복원해 대조할 수 있다.
 [DB 백업 명령과 전제](../../../docs/ops-upgrade-runbook.md#개인-kubernetes-ops-db-암호화-백업과-격리-복원-확인)를 따른다.
