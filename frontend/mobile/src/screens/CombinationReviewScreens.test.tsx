@@ -113,7 +113,7 @@ test('existing search cards retain summary/detail behavior and selections across
   expect(screen.getAllByText('✓ 비교 대상 선택됨')).toHaveLength(1)
 })
 
-test('explicit confirmation saves independent participation/funding then admits a queued run once', async () => {
+test('steps save the review and independent participation before explicit analysis admission', async () => {
   render(editor())
   await prepare()
   fireEvent.press(screen.getByLabelText('사업 1 현재 참여 상태: 잘 모르겠음'))
@@ -122,14 +122,18 @@ test('explicit confirmation saves independent participation/funding then admits 
   fireEvent.press(screen.getByRole('radio', { name: '아니오' }))
   fireEvent.changeText(screen.getByLabelText('추가로 알려줄 내용 (선택)'), '같은 비용')
   fireEvent.press(screen.getByText('다음 · 분석 확인'))
+  await screen.findByText('이 내용으로 검토할까요?')
   expect(mockRepository.start).not.toHaveBeenCalled()
-  fireEvent.press(screen.getByText('저장하고 분석 요청'))
+  expect(mockRepository.create).toHaveBeenCalledTimes(1)
+  expect(mockRepository.replace).toHaveBeenCalledTimes(1)
+  const input = mockRepository.replace.mock.calls[0][2]
+  expect(input.programs[0].participation).toMatchObject({ executionStatus: 'IN_PROGRESS', fundingReceived: 'NO', selected: 'UNKNOWN' })
+  expect(input).not.toHaveProperty('additionalFacts')
+  fireEvent.press(screen.getByText('검토 실행'))
   await screen.findByText('검토 요청이 접수됐어요')
   expect(mockRepository.create).toHaveBeenCalledTimes(1)
-  const input = mockRepository.create.mock.calls[0][0]
-  expect(input.programs[0].participation).toMatchObject({ executionStatus: 'IN_PROGRESS', fundingReceived: 'NO', selected: 'UNKNOWN' })
   expect(mockRepository.start).toHaveBeenCalledTimes(1)
-  expect(mockRepository.start.mock.calls[0][1]).toEqual({ expectedRevision: 1, requestKey: reviewRequestKey, additionalFacts: '같은 비용' })
+  expect(mockRepository.start.mock.calls[0][1]).toEqual({ expectedRevision: 2, requestKey: reviewRequestKey, additionalFacts: '같은 비용' })
   expect(entries.size).toBe(0)
 })
 
@@ -137,7 +141,7 @@ test('lost admission responses retain the exact key and facts for an explicit sa
   mockRepository.start.mockRejectedValueOnce(new Error('network interrupted'))
   render(editor())
   await confirm()
-  fireEvent.press(screen.getByText('저장하고 분석 요청'))
+  fireEvent.press(screen.getByText('검토 실행'))
   await screen.findByText('같은 요청으로 확인')
   const first = mockRepository.start.mock.calls[0][1]
   expect([...entries.values()].some(value => value.includes(first.requestKey))).toBe(true)
@@ -151,7 +155,7 @@ test('failure to journal a request prevents an AI POST', async () => {
   render(editor())
   await confirm()
   jest.mocked(SecureStore.setItemAsync).mockRejectedValueOnce(new Error('device unavailable'))
-  fireEvent.press(screen.getByText('저장하고 분석 요청'))
+  fireEvent.press(screen.getByText('검토 실행'))
   await screen.findByText('분석 요청을 안전하게 보관하지 못해 분석을 시작하지 않았어요. 보관 상태를 다시 확인해 주세요.')
   expect(mockRepository.start).not.toHaveBeenCalled()
 })
@@ -164,7 +168,8 @@ test('an UNKNOWN execution blocks new analysis without treating it as success or
   await screen.findByText(/분석 완료 여부를 확인하지 못했어요/)
   fireEvent.press(screen.getByText('입력 수정하기'))
   fireEvent.press(screen.getByText('다음 · 분석 확인'))
-  expect(screen.getByText('저장하고 분석 요청')).toBeDisabled()
+  await screen.findByText('이 내용으로 검토할까요?')
+  expect(screen.getByText('검토 실행')).toBeDisabled()
   expect(mockRepository.start).not.toHaveBeenCalled()
 })
 
@@ -178,11 +183,50 @@ test('revision conflicts preserve edited inputs and never start analysis', async
   fireEvent.press(screen.getByRole('radio', { name: '신청 전' }))
   fireEvent.changeText(screen.getByLabelText('추가로 알려줄 내용 (선택)'), '유지할 설명')
   fireEvent.press(screen.getByText('다음 · 분석 확인'))
-  fireEvent.press(screen.getByText('저장하고 분석 요청'))
   await screen.findByText(/저장된 입력이나 분석 요청이 변경됐어요/)
-  expect(screen.getByText('유지할 설명')).toBeTruthy()
+  expect(screen.getByDisplayValue('유지할 설명')).toBeTruthy()
+  expect(screen.getByText('현재 참여 상태를 알려주세요')).toBeTruthy()
+  expect(screen.queryByText('이 내용으로 검토할까요?')).toBeNull()
   expect(mockRepository.replace).toHaveBeenCalledWith(5, 1, expect.anything(), expect.anything())
   expect(mockRepository.start).not.toHaveBeenCalled()
+})
+
+test('a failed first step save keeps title and program choices and a retry creates the review once', async () => {
+  mockRepository.create.mockRejectedValueOnce(new CombinationReviewError(503, 'REQUEST_FAILED'))
+  render(editor())
+  await screen.findByText('검색 결과 3건')
+  fireEvent.changeText(screen.getByLabelText('검토 제목'), '저장 실패에도 유지할 제목')
+  fireEvent.press(screen.getByLabelText('검토 사업 1 선택'))
+  fireEvent.press(screen.getByLabelText('검토 사업 2 선택'))
+  fireEvent.press(screen.getByText('다음 · 참여 상태 입력'))
+  await screen.findByText('저장하지 못했어요. 입력은 이 화면에 유지됩니다.')
+  expect(screen.getByDisplayValue('저장 실패에도 유지할 제목')).toBeTruthy()
+  expect(screen.getByText('2 / 2 선택')).toBeTruthy()
+  expect(screen.queryByText('현재 참여 상태를 알려주세요')).toBeNull()
+  expect(mockRepository.start).not.toHaveBeenCalled()
+  fireEvent.press(screen.getByText('다음 · 참여 상태 입력'))
+  await screen.findByText('현재 참여 상태를 알려주세요')
+  expect(mockRepository.create).toHaveBeenCalledTimes(2)
+  expect(screen.getByText('제목·공고·참여 상태 저장됨')).toBeTruthy()
+})
+
+test('saving on the previous step preserves participation and extra facts without analysis', async () => {
+  render(editor())
+  await prepare()
+  fireEvent.press(screen.getByLabelText('사업 1 현재 참여 상태: 잘 모르겠음'))
+  fireEvent.press(screen.getByRole('radio', { name: '신청 전' }))
+  fireEvent.changeText(screen.getByLabelText('추가로 알려줄 내용 (선택)'), '실행할 때만 저장할 설명')
+  fireEvent.press(screen.getByText('공고 선택으로'))
+  await screen.findByLabelText('검토 제목')
+  expect(mockRepository.replace).toHaveBeenCalledTimes(1)
+  fireEvent.press(screen.getByText('다음 · 참여 상태 입력'))
+  await screen.findByText('현재 참여 상태를 알려주세요')
+  expect(mockRepository.create).toHaveBeenCalledTimes(1)
+  expect(mockRepository.replace).toHaveBeenCalledTimes(1)
+  expect(screen.getByDisplayValue('실행할 때만 저장할 설명')).toBeTruthy()
+  expect(screen.getByText(/추가 설명은 검토 실행을 요청할 때/)).toBeTruthy()
+  expect(mockRepository.start).not.toHaveBeenCalled()
+  expect(entries.size).toBe(0)
 })
 
 test('a late previous account response cannot render another account draft', async () => {
@@ -197,6 +241,28 @@ test('a late previous account response cannot render another account draft', asy
   await screen.findByText('두 번째 계정의 검토')
   await act(async () => finish({ ...mobileReview, title: '첫 번째 계정 비공개 입력' }))
   expect(screen.queryByText('첫 번째 계정 비공개 입력')).toBeNull()
+  expect(mockRepository.start).not.toHaveBeenCalled()
+})
+
+test('a late first-step save from a previous account cannot move the new account to the saved route', async () => {
+  let finish!: (value: CombinationReview) => void
+  mockRepository.create.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+  const onStepChange = jest.fn()
+  const props = { id: null, onStepChange, onLogin: jest.fn(), onList: jest.fn(), onOpenProgram: onOpen }
+  const view = render(<CombinationReviewEditorScreen {...props} />)
+  await screen.findByText('검색 결과 3건')
+  fireEvent.changeText(screen.getByLabelText('검토 제목'), '첫 계정의 새 검토')
+  fireEvent.press(screen.getByLabelText('검토 사업 1 선택'))
+  fireEvent.press(screen.getByLabelText('검토 사업 2 선택'))
+  fireEvent.press(screen.getByText('다음 · 참여 상태 입력'))
+  const signal = mockRepository.create.mock.calls[0][1] as AbortSignal
+  mockAuth = { ...mockAuth, session: { accessToken: 'second-token', account: { email: 'second@example.test' } } }
+  view.rerender(<CombinationReviewEditorScreen {...props} />)
+  await screen.findByLabelText('검토 제목')
+  expect(signal.aborted).toBe(true)
+  await act(async () => finish({ ...mobileReview, title: '첫 계정의 새 검토' }))
+  expect(onStepChange).not.toHaveBeenCalled()
+  expect(screen.queryByDisplayValue('첫 계정의 새 검토')).toBeNull()
   expect(mockRepository.start).not.toHaveBeenCalled()
 })
 

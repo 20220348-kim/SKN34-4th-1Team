@@ -132,6 +132,12 @@ AI 검색은 로그인 전후 같은 G01 형태의 가운데 소개·사용자 �
 
 호출은 `화면 → useCombinationReview → shared CombinationReviewUseCase → MobileCombinationReviewRepository → Core API`이며,
 모바일 Bearer 인증과 shared DTO 검증을 사용합니다. 입력 저장과 분석 POST는 사용자 확인 버튼으로만 실행합니다.
+공고 선택의 다음 버튼에서 검토를 생성하고 `/all/reviews/:id?step=participation`으로 이동합니다.
+참여 상태의 다음·이전 버튼은 변경한 입력을 같은 ID·입력 버전으로 저장한 뒤 단계만 바꿉니다.
+저장 실패·버전 충돌 시 현재 단계와 입력을 유지하며 분석을 요청하지 않습니다. 이미 저장한 입력은
+다시 저장하지 않고, 마지막 `검토 실행`만 분석 POST를 보냅니다. 제목·공고·참여 상태의 저장 안내와
+추가 설명의 실행 시 저장 안내를 구분합니다. `step=selection|participation|confirm|analysis`는 단계 복원을
+위한 앱 주소이며 단계가 없는 기존 검토·실행 링크는 기존 결과 화면으로 진입합니다.
 접수 HTTP 대기는 15초로 제한하며 서버 작업 취소를 보장하지 않습니다. 접수 전 API origin·계정 이메일별 SecureStore에
 검토 ID·요청 키·입력 버전·추가 설명을 보관합니다. 저장소 확인·쓰기 실패는 새 분석을 막습니다.
 전송 결과가 불명확하면 같은 내용·키로만 수동 확인하며, 명시적인 4xx 거절 또는 확인된 접수 뒤 기록을 지웁니다.
