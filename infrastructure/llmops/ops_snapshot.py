@@ -22,7 +22,7 @@ from ops_snapshot_files import MAX_BYTES, validate
 
 MAGIC = b"GOVBIZ-OPS-SNAPSHOT-1\n"
 LABEL = "ai.govbiz.ops-snapshot"
-WRITERS = {"ops-service", "ops-sync", "runner", "evaluation-runner"}
+WRITERS = {"ops-service", "ops-sync", "ops-bootstrap", "runner", "evaluation-runner"}
 FLAGS = ("LLMOPS_LIVE_ENABLED", "LLMOPS_RAG_LIVE_ENABLED", "LLMOPS_SCHEDULES_ENABLED")
 HELPER = Path(__file__).with_name("ops_snapshot_files.py").read_text()
 AUTH = ["sh", "-c", 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec "$@"', "sh"]

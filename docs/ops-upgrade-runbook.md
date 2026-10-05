@@ -255,7 +255,8 @@ python3 -B infrastructure/gitops/scripts/ops_state_snapshot.py verify \
 `cross_store_business_links_verified=true`, `cross_store_scope=completed_evaluations`다.
 옵션을 생략하면 기존 저장소 복원 검사만 수행하고 해당 플래그는 `false`다.
 실패·취소 평가의 업무 관계, 평가 품질·서명 검증, 실제 앱·API 재기동, Core 인증 DB,
-Langfuse, Secret·서명 키 복구는 별도이며 `full_backup_verified=false`를 유지한다.
+Langfuse는 별도이며 `full_backup_verified=false`를 유지한다. Ops 실행 키는 아래 선택 검사를
+추가할 수 있으며 Core 로그인 키·기존 사용자 세션의 복구와는 구분한다.
 구버전 갱신 차단을 해제하거나 전체 복구 완료로 기록하지 않는다.
 
 Infra CI에서 파일·SQLite·중지 상태·오류 처리 단위 검증을 실행한다. LLMOps CI에서는 빌드한
@@ -276,6 +277,55 @@ OPS_DB_SNAPSHOT_MYSQL_IMAGE='mysql@sha256:<로컬 MySQL 8.4 digest>' \
 OPS_VOLUME_SNAPSHOT_TEST_IMAGE='sha256:<로컬 Ops 이미지 ID>' \
   python3 -B -m unittest discover -s infrastructure/gitops/scripts -p 'test_ops_state_links.py'
 ```
+
+### Ops 실행 키를 암호화 백업에 포함하고 검증하기
+
+`backup --runtime-keys`는 같은 쓰기 중지 상태의 저장소 묶음에 다음 값만 암호화해 포함한다.
+
+- Kubernetes `ops-runtime`의 Django 키·DB 비밀번호·결과 서버 토큰
+- Kubernetes `ops-mysql-runtime`의 앱·root DB 비밀번호(앱 비밀번호는 Ops 값과 일치해야 함)
+- 해당 Compose 실행기의 예산 토큰. Ops에도 설정돼 있다면 같은 값인지 확인한다.
+
+```bash
+# 앞선 백업과 다른 새 파일 이름을 사용한다. 중지 상태를 계속 유지한다.
+OPS_KEY_STATE_BACKUP_FILE="$OPS_DB_BACKUP_DIR/ops-state-keys-$(date -u +%Y%m%dT%H%M%SZ).enc"
+python3 -B infrastructure/gitops/scripts/ops_state_snapshot.py backup \
+  --state-dir "$OPS_STATE_DIR" --db-archive "$OPS_DB_BACKUP_FILE" \
+  --key-file "$OPS_DB_BACKUP_KEY" --output "$OPS_KEY_STATE_BACKUP_FILE" --runtime-keys
+python3 -B infrastructure/gitops/scripts/ops_state_snapshot.py verify \
+  --key-file "$OPS_DB_BACKUP_KEY" --archive "$OPS_KEY_STATE_BACKUP_FILE" \
+  --completed-links --runtime-keys
+```
+
+키 원문은 파일·CLI 인자·일반 보고서에 기록하지 않는다. `kubectl`과 Docker 조회 응답은 도구의
+메모리 안에서만 처리하고 암호화 파일에 보관한다. 검사 컨테이너에는 stdin으로만 전달하며
+로그 저장·외부 네트워크·포트 공개를 사용하지 않는다. 개인 관리자 비밀번호, Core JWT 키,
+Langfuse 키와 OpenAI 키는 수집하지 않는다. 복원한 키를 기존 Secret이나 서비스에 적용하지 않는다.
+
+Ops API·sync와 MySQL의 Secret 참조, Secret UID·버전, DB 비밀번호, Compose 소비자와 토큰을
+확인한다. Ops와 결과 서버의 로컬 immutable 이미지가 같아야 한다. 알 수 없는 Secret 키·간접
+환경 주입·불일치·수집 중 변경은 거절한다. 백업 전에 새 `ops-bootstrap`도 종료돼 있어야 한다.
+초기 데이터를 적재하는 이 서비스 역시 DB와 결과 볼륨의 작성자다.
+
+원본 키로 만든 일회용 서명 증거를 암호화 파일에 함께 저장한다. 검증은 별도 Ops 컨테이너에서
+복원한 키로 Django 서명을 읽고, 다른 키는 거절하는지 확인한다. 실제 결과 서버 WSGI 코드도
+정상 토큰은 허용하고 잘못된 토큰은 거절해야 한다. 이는 HTTP 배포·Core 관리자 로그인 검증이 아니다.
+DB 비밀번호는 같은 값의 복구 여부를 대조하며 실제 DB 로그인은 별도다.
+
+보관된 `capture/usage-<sequence>.json` 전체의 v1/v2 HMAC 서명·요청 ID·순번을 복원한 예산
+토큰으로 검사한다. `usage-summary.json`은 서명 영수증이 아니므로 제외한다. 누락된 증거의 존재,
+예산 DB와의 관계·정산·사용량 계약 전체를 증명하지 않는다. 증거가 0건이면
+`usage_receipt_signatures_verified=false`를 유지하며 통과했다고 기록하지 않는다.
+
+성공 시 `runtime_keys_verified=true`와 검사 결과·건수만 남긴다. 구버전 Ops에 예산 토큰이
+없고 실행기에만 있으면 `ops_budget_configured=false`로 표시하며 API 연결 성공으로 해석하지 않는다.
+`database_login_verified`, `core_authentication_verified`, `full_backup_verified`는 계속 `false`다.
+키 없는 이전 묶음은 저장소 복원 검사를 계속 지원하지만 `verify --runtime-keys`는 거절한다.
+이 검사도 구버전 갱신 차단을 해제하지 않는다.
+
+무료 회귀는 `test_ops_runtime_keys.py`에서 수행한다. LLMOps CI는 빌드된 Ops 이미지로 실제
+Django·WSGI 코드의 암호화 키 복원을 검사한다. 로컬에서는 `OPS_RUNTIME_KEY_TEST_IMAGE`에
+기존 Ops 이미지 ID를 명시하면 같은 격리 검사를 실행하며, 개인 Secret을 읽는 검사는 아니다.
 
 ### Compose Ops 검토 기록을 새 환경에 재사용
 
