@@ -236,6 +236,10 @@ DB 검증 성공은 결과·Prefect·키를 포함하는 전체 백업이나 구
 Core 로그인·기존 세션·개인 클러스터 복구는 별도이며
 [검사 범위](../../../docs/ops-upgrade-runbook.md#ops-실행-키를-암호화-백업에-포함하고-검증하기)를 따른다.
 기존 갱신 차단을 해제하지 않는다.
+암호화한 `0017` DB 백업은 `scripts/ops_db_upgrade.py --archive ... --key-file ... --ops-image sha256:...`로
+새 격리 MySQL에 복원해 최신 Ops migration·원래 컬럼/행 보존·접수 중지·반복 실행을 검증할 수 있다.
+이미지의 Ops 소스는 현재 checkout과 일치해야 하며 개인 환경의 DB·workload는 변경하지 않는다.
+[구버전 DB 갱신 사전 검증](../../../docs/ops-upgrade-runbook.md#암호화한-구버전-db로-갱신을-미리-검증하기)을 따른다.
 무료 CI 통합 검증은 일회용 Ops 전체 DB를 네트워크가 없는 별도 MySQL 8.4에 복원하고
 스키마·행·migration·외래 키 제약과 원본 보존을 확인한다. 보고서의 `database_restore`는
 이 DB 훈련 범위이며 개인 환경이나 결과 볼륨·Prefect 복원 완료를 의미하지 않는다.

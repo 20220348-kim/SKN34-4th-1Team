@@ -77,6 +77,8 @@ jobs:
         run: uv run --locked python -B -m unittest discover -s scripts -p 'test_*.py'
       - name: Check encrypted Ops snapshot tools
         run: |
+          uv run --locked ruff check --config pyproject.toml ../../infrastructure/gitops/scripts/ops_db_upgrade.py ../../infrastructure/gitops/scripts/ops_db_upgrade_probe.py ../../infrastructure/gitops/scripts/test_ops_db_upgrade.py
+          uv run --locked ruff format --config pyproject.toml --check ../../infrastructure/gitops/scripts/ops_db_upgrade.py ../../infrastructure/gitops/scripts/ops_db_upgrade_probe.py ../../infrastructure/gitops/scripts/test_ops_db_upgrade.py
           uv run --locked ruff check --config pyproject.toml ../../infrastructure/gitops/scripts/ops_runtime_keys.py ../../infrastructure/gitops/scripts/ops_key_restore_probe.py ../../infrastructure/gitops/scripts/test_ops_runtime_keys.py
           uv run --locked ruff format --config pyproject.toml --check ../../infrastructure/gitops/scripts/ops_runtime_keys.py ../../infrastructure/gitops/scripts/ops_key_restore_probe.py ../../infrastructure/gitops/scripts/test_ops_runtime_keys.py
           uv run --locked ruff check --config pyproject.toml ../../infrastructure/gitops/scripts/ops_state_links.py ../../infrastructure/gitops/scripts/test_ops_state_links.py

@@ -116,6 +116,48 @@ CI 전용 플래그 두 개가 모두 설정돼야 하며 기존 테이블이 �
 접수 경로와 구버전 API·sync·실행기의 쓰기를 중지하고 일관된 백업·복원 검증을 먼저 확보해야 한다.
 새 스키마만 적용하면 접수는 자동 중지되지 않으며, 구버전 앱은 새 접수 제어를 읽지 못한다.
 
+### 암호화한 구버전 DB로 갱신을 미리 검증하기
+
+[`ops_db_upgrade.py`](../infrastructure/gitops/scripts/ops_db_upgrade.py)는 아래 DB 백업 절차로 만든
+암호화 파일을 **새 격리 MySQL에 복원한 뒤** 최신 Ops 코드의 migration을 적용한다.
+개인 DB·Kubernetes·Compose 접속 옵션은 없으며 기존 환경을 갱신하거나 서비스를 중지하지 않는다.
+현재 지원하는 출발점은 `0017_input_token_budget`이며 다른 migration 이력은 거절한다.
+
+```bash
+# 현재 checkout으로 검증용 이미지를 만든다. 실행 중인 서비스에는 적용하지 않는다.
+docker build --tag govbiz-ops-upgrade:local backend/ops-service
+OPS_UPGRADE_IMAGE=$(docker image inspect --format '{{.Id}}' govbiz-ops-upgrade:local)
+python3 -B infrastructure/gitops/scripts/ops_db_upgrade.py \
+  --archive "$OPS_DB_BACKUP_FILE" --key-file "$OPS_DB_BACKUP_KEY" \
+  --ops-image "$OPS_UPGRADE_IMAGE"
+```
+
+- 먼저 백업의 SQL·테이블 행 수가 복원본과 같은지 확인한다. Ops 이미지 ID를 고정하고 이미지의
+  `manage.py`·`apps`·`config` Python/JSON 파일 해시가 현재 checkout과 일치해야 진행한다.
+- 실제 Django `migrate_deployment`로 전진 migration만 적용한다. 구버전 스키마가 readiness 검사에서
+  거절되고 갱신 후 준비 상태로 바뀌는지 확인한다. 미완료 평가나 열린 예약이 있으면 중단한다.
+- 기존 모든 테이블의 기본 키·원래 컬럼을 기준으로 기존 행의 값을 대조한다. migration 이력·
+  content type·permission 테이블에는 신규 행 추가만 허용하고, 기존 업무 테이블의 추가·삭제·변경은
+  거절한다. 새 컬럼은 이 비교 대상에서 제외하며 알 수 없던 기존 토큰 상한은 별도로 NULL 보존을 확인한다.
+- migration 직후 `evaluation_admission pause`를 실행하고 실제 접수 차단 함수를 확인한다.
+  migration과 같은 UUID의 pause를 반복해도 접수가 열리거나 감사 기록이 중복되면 실패한다.
+  HTTP 요청·Core 인증·Prefect 실행을 검사한 것으로 기록하지 않는다.
+- 검사 컨테이너는 복원 MySQL의 격리된 네트워크만 공유한다. 원본 볼륨·외부 포트·모델 API는
+  사용하지 않으며 읽기 전용 파일시스템과 임시 디렉터리로 실행한다. 새 DB의 임시 비밀번호는
+  stdin으로 전달하며 데이터·키·SQL·상세 오류는 보고서에 넣지 않는다.
+- 기존 행 대조·접수 중지·반복 실행·컨테이너 정리가 모두 성공해야 `status=REHEARSED`를 반환한다.
+  `scope=disposable_ops_database_upgrade`이고 `personal_environment_verified=false`,
+  `full_backup_verified=false`, `application_started=false`를 유지한다.
+
+이 명령은 DB 백업 파일을 입력받는다. DB·결과·Prefect·실행 키 묶음과 로그인 복원은 아래의
+`ops_state_snapshot.py verify --completed-links --runtime-keys --database-login`으로 따로 검증한다.
+검증 성공은 기존 `admission_control_unsupported` 차단을 해제하거나 개인 환경의 전환을 승인하지 않는다.
+
+무료 단위 검사는 `test_ops_db_upgrade.py`에서 수행한다. LLMOps CI는 현재 Ops 이미지와 실제
+MySQL 8.4로 합성 구버전 DB를 암호화한 뒤 새 DB에서 갱신하고, 원본이 변하지 않았는지 확인한다.
+로컬에서 같은 통합 검사를 실행할 때는 `OPS_DB_UPGRADE_TEST_IMAGE`에 Ops 이미지 ID와
+`OPS_DB_SNAPSHOT_MYSQL_IMAGE`에 로컬 MySQL digest를 명시한다. 개인 DB는 사용하지 않는다.
+
 ## 2. 일관된 백업과 복원 가능성 확인
 
 진행 중 작업이 없고 신규 접수가 차단된 상태에서 쓰기 프로세스를 중지한다.

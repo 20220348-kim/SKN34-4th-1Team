@@ -211,6 +211,13 @@ jobs:
           snapshot_ops_image=$(docker image inspect "$snapshot_ops_image" --format '{{.Id}}')
           OPS_DB_SNAPSHOT_MYSQL_IMAGE="$snapshot_mysql_image" OPS_VOLUME_SNAPSHOT_TEST_IMAGE="$snapshot_ops_image" PYTHONPATH=infrastructure/gitops/scripts backend/ai-service/.venv/bin/python -B -m unittest test_ops_state_links
           OPS_RUNTIME_KEY_TEST_IMAGE="$snapshot_ops_image" PYTHONPATH=infrastructure/gitops/scripts backend/ai-service/.venv/bin/python -B -m unittest test_ops_runtime_keys test_ops_database_login
+      - name: Rehearse encrypted legacy Ops DB upgrade without changing its source
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          snapshot_mysql_image=$(docker image inspect mysql:8.4 --format '{{index .RepoDigests 0}}')
+          OPS_DB_UPGRADE_TEST_IMAGE="$RESTORE_DOCKER_IMAGE" OPS_DB_SNAPSHOT_MYSQL_IMAGE="$snapshot_mysql_image" PYTHONPATH=infrastructure/gitops/scripts backend/ai-service/.venv/bin/python -B -m unittest test_ops_db_upgrade
       - name: Start React development proxy
         run: |
           (cd frontend/web && VITE_DEV_PROXY_TARGET=http://127.0.0.1:18082 VITE_CORE_API_BASE_URL=/ exec node node_modules/vite/bin/vite.js --host 127.0.0.1) > /tmp/govbiz-ops-web.log 2>&1 &
