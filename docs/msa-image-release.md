@@ -92,6 +92,24 @@ git push origin main
 
 ### 패키지 검사에서 발행이 중단된 경우
 
+`MSA image candidates`의 `package-preflight` job은 전체 CI 성공을 기다리지 않고 `gate`와 병렬로
+네 서비스 패키지를 읽기 전용으로 조회합니다. 기존의 개인 포크·발행 활성화 조건을 지키고, 항상
+기본 브랜치의 코드를 사용합니다. job 권한은 `contents: read`, `packages: read`이며 Docker 로그인·
+빌드·push·클러스터 변경은 수행하지 않습니다. 한 패키지의 정책/API 검사가 실패해도 나머지 패키지를
+조회하고, 하나라도 검증되지 않으면 job을 실패 처리합니다.
+
+해당 job의 Summary와 `msa-package-preflight` artifact에서 `packages.<서비스>`를 확인합니다.
+`packagePolicyVerified: true`는 네 패키지의 메타데이터가 맞는다는 뜻이며, Actions 쓰기 권한·소스 CI·
+이미지 발행·배포 성공을 입증하지 않습니다. 사전 점검 보고서는 이미지 receipt로 사용하지 않습니다.
+보고서 CLI는 `publish.py --check-packages --report <경로>`이며 Actions가 필요한 인증 환경을 주입합니다.
+이 모드는 `--service`, `--sha`, `--output` 발행 인자를 함께 받을 수 없습니다.
+
+실제 `publish` job은 `package-preflight` 성공과 `gate`의 동일 SHA 필수 CI 검증을 모두 요구합니다.
+발행기 내부의 패키지 재검사도 유지합니다. 전체 결과의 `packagePreflightResult`와
+`reason: package_preflight_failure` 등으로 사전 점검 실패를 구분합니다. 이 job이 없던 과거 실행은
+`packagePreflightResult: not_recorded`로 표시합니다.
+워크플로 수동 실행에서도 사전 점검을 수행하며, **기존 발행 조건까지 모두 충족하면 실제 발행도 진행**합니다.
+
 서비스별 `msa-publication-<서비스>` artifact와 해당 job의 Summary에서 `packageCheck`를 확인합니다.
 API 응답 원문이나 토큰을 출력하지 않고, 마지막으로 시도한 패키지 검사의 원인과 항목별 상태를 기록합니다.
 `expectedVisibility`는 발행 정책이며, `actualVisibility`는 API가 `private`·`public`·`internal` 중 하나를

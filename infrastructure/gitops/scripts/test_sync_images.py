@@ -390,7 +390,7 @@ class WorkflowContractTests(unittest.TestCase):
                 self.assertCountEqual(names, required)
 
     def test_results_always_run_read_only_and_selection_controls_writes(self):
-        for filename, dependencies in (("msa-images.yml", ["gate", "publish"]),):
+        for filename, dependencies in (("msa-images.yml", ["gate", "package-preflight", "publish"]),):
             job = self.workflow(filename)["jobs"]["outcome"]
             self.assertEqual(job["needs"], dependencies)
             self.assertIn("always()", job["if"])

@@ -88,6 +88,57 @@ class OutcomeTests(unittest.TestCase):
         self.assertEqual(report["state"], "unverified")
         self.assertEqual(report["reason"], "missing_gate_evidence")
 
+    def test_package_preflight_cannot_replace_ci_or_publication_evidence(self):
+        for preflight in ("success", "failure", "cancelled", "skipped", "unknown"):
+            for ready in (True, False):
+                for publication in ("success", "skipped"):
+                    with self.subTest(
+                        preflight=preflight, ready=ready, publication=publication
+                    ):
+                        report = outcome.workflow_report(
+                            "publication",
+                            {
+                                "gate": {
+                                    "result": "success",
+                                    "outputs": {
+                                        "ready": str(ready).lower(),
+                                        "source_sha": SHA,
+                                    },
+                                },
+                                "package-preflight": {"result": preflight},
+                                "publish": {"result": publication},
+                            },
+                            EVENT,
+                            ENV,
+                        )
+                        self.assertEqual(report["packagePreflightResult"], preflight)
+                        self.assertEqual(
+                            report["imagesVerified"],
+                            preflight == "success"
+                            and ready
+                            and publication == "success",
+                        )
+                        self.assertFalse(report["clusterVerified"])
+                        if preflight != "success":
+                            self.assertEqual(
+                                report["reason"], "package_preflight_" + preflight
+                            )
+        report = outcome.workflow_report(
+            "publication",
+            {
+                "gate": {
+                    "result": "success",
+                    "outputs": {"ready": "true", "source_sha": SHA},
+                },
+                "package-preflight": {},
+                "publish": {"result": "success"},
+            },
+            EVENT,
+            ENV,
+        )
+        self.assertFalse(report["imagesVerified"])
+        self.assertEqual(report["reason"], "package_preflight_unknown")
+
     def test_disabled_skipped_job_keeps_trigger_sha_without_inventing_source(self):
         report = self.report(
             "publication",
@@ -462,6 +513,201 @@ class OutcomeTests(unittest.TestCase):
             self.assertEqual(error.exception.code, 2)
             operation.assert_not_called()
             self.assertEqual(path.read_text(encoding="utf-8"), "existing receipt")
+
+    def test_read_only_preflight_checks_all_services_even_after_failure(self):
+        private = {
+            "repository": {"full_name": "alice/Example"},
+            "owner": {"login": "alice"},
+            "visibility": "private",
+        }
+        responses = [
+            io.BytesIO(json.dumps(private | {"visibility": "public"}).encode()),
+            HTTPError("https://api.github.com", 403, "sensitive-error", {}, None),
+            HTTPError("https://api.github.com", 404, "sensitive-error", {}, None),
+            io.BytesIO(json.dumps(private).encode()),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            report = Path(directory) / "report.json"
+            stdout = io.StringIO()
+            with (
+                patch.dict(os.environ, ENV | {"GH_TOKEN": "fixture-token"}, clear=True),
+                patch(
+                    "sys.argv",
+                    ["publish.py", "--check-packages", "--report", str(report)],
+                ),
+                patch.object(publish, "urlopen", side_effect=responses) as fetch,
+                patch.object(publish, "publish") as publish_image,
+                patch.object(publish, "eligible") as ci,
+                patch.object(publish, "git") as git,
+                patch.object(publish, "run") as command,
+                patch.object(publish.subprocess, "run") as process,
+                contextlib.redirect_stdout(stdout),
+                self.assertRaisesRegex(ValueError, "Package preflight failed"),
+            ):
+                publish.main()
+            saved = json.loads(report.read_text(encoding="utf-8"))
+            self.assertEqual(saved["stage"], "package-preflight")
+            self.assertEqual(saved["state"], "failed")
+            self.assertFalse(saved["packagePolicyVerified"])
+            self.assertEqual(list(saved["packages"]), list(publish.SERVICES))
+            self.assertEqual(
+                [item["reason"] for item in saved["packages"].values()],
+                [
+                    "policy_mismatch",
+                    "access_denied",
+                    "missing_or_inaccessible",
+                    "policy_matched",
+                ],
+            )
+            self.assertEqual(fetch.call_count, 4)
+            for service, call in zip(
+                publish.SERVICES, fetch.call_args_list, strict=True
+            ):
+                self.assertEqual(
+                    call.args[0].full_url,
+                    "https://api.github.com/users/alice/packages/container/example-"
+                    + service,
+                )
+                self.assertEqual(call.args[0].get_method(), "GET")
+            self.assertEqual(saved["upload"], "not_attempted")
+            self.assertIsNone(saved["sourceSha"])
+            self.assertFalse(saved["receiptWritten"])
+            self.assertFalse(saved["clusterVerified"])
+            self.assertEqual(list(Path(directory).iterdir()), [report])
+            for operation in (publish_image, ci, git, command, process):
+                operation.assert_not_called()
+            self.assertNotIn("fixture-token", stdout.getvalue())
+            self.assertNotIn("sensitive", stdout.getvalue())
+
+    def test_read_only_preflight_success_is_not_image_or_source_verification(self):
+        for visibility in ("private", "public"):
+            metadata = {
+                "repository": {"full_name": "alice/Example"},
+                "owner": {"login": "alice"},
+                "visibility": visibility,
+            }
+            with (
+                self.subTest(visibility=visibility),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                report = Path(directory) / "report.json"
+                with (
+                    patch.dict(
+                        os.environ,
+                        ENV
+                        | {
+                            "GH_TOKEN": "fixture-token",
+                            "MSA_PACKAGE_VISIBILITY": visibility,
+                        },
+                        clear=True,
+                    ),
+                    patch(
+                        "sys.argv",
+                        ["publish.py", "--check-packages", "--report", str(report)],
+                    ),
+                    patch.object(
+                        publish,
+                        "urlopen",
+                        side_effect=lambda *a, _metadata=metadata, **kw: io.BytesIO(
+                            json.dumps(_metadata).encode()
+                        ),
+                    ),
+                    patch.object(publish, "publish") as publish_image,
+                    patch.object(publish, "eligible") as ci,
+                    patch.object(publish, "run") as command,
+                    patch.object(publish.subprocess, "run") as process,
+                    contextlib.redirect_stdout(io.StringIO()),
+                ):
+                    publish.main()
+                saved = json.loads(report.read_text(encoding="utf-8"))
+                self.assertEqual(saved["state"], "verified")
+                self.assertTrue(saved["packagePolicyVerified"])
+                self.assertEqual(len(saved["packages"]), 4)
+                self.assertIsNone(saved["sourceSha"])
+                self.assertEqual(saved["upload"], "not_attempted")
+                self.assertFalse(saved["receiptWritten"])
+                self.assertFalse(saved["clusterVerified"])
+                for operation in (publish_image, ci, command, process):
+                    operation.assert_not_called()
+
+    def test_preflight_rejects_publication_flags_and_requires_report(self):
+        variants = (
+            ["--check-packages"],
+            ["--check-packages", "--service", "ai-service"],
+            ["--check-packages", "--sha", SHA],
+            ["--check-packages", "--output", "receipt.json"],
+            ["--report", "unused.json"],
+        )
+        for arguments in variants:
+            with (
+                self.subTest(arguments=arguments),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                path = Path(directory) / "report.json"
+                argv = ["publish.py", *arguments]
+                if len(arguments) > 1 and arguments[0] == "--check-packages":
+                    argv.extend(["--report", str(path)])
+                with (
+                    patch("sys.argv", argv),
+                    patch.object(publish, "urlopen") as fetch,
+                    patch.object(publish, "publish") as operation,
+                    contextlib.redirect_stderr(io.StringIO()),
+                    self.assertRaises(SystemExit) as error,
+                ):
+                    publish.main()
+                self.assertEqual(error.exception.code, 2)
+                self.assertFalse(path.exists())
+                fetch.assert_not_called()
+                operation.assert_not_called()
+
+    def test_preflight_keeps_opt_in_personal_repository_and_valid_policy_boundaries(
+        self,
+    ):
+        for changes in (
+            {"MSA_RELEASE_ENABLED": "false"},
+            {"GITHUB_REPOSITORY": "SKNETWORKS-FAMILY-AICAMP/Example"},
+            {"MSA_PACKAGE_VISIBILITY": "internal"},
+            {"GH_TOKEN": ""},
+        ):
+            with (
+                self.subTest(changes=changes),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                report = Path(directory) / "report.json"
+                with (
+                    patch.dict(
+                        os.environ,
+                        ENV | {"GH_TOKEN": "fixture-token"} | changes,
+                        clear=True,
+                    ),
+                    patch(
+                        "sys.argv",
+                        ["publish.py", "--check-packages", "--report", str(report)],
+                    ),
+                    patch.object(publish, "urlopen") as fetch,
+                    patch.object(publish, "publish") as operation,
+                    contextlib.redirect_stdout(io.StringIO()),
+                    self.assertRaises(ValueError),
+                ):
+                    publish.main()
+                saved = json.loads(report.read_text(encoding="utf-8"))
+                self.assertEqual(saved["state"], "failed")
+                self.assertNotIn("packages", saved)
+                fetch.assert_not_called()
+                operation.assert_not_called()
+
+    def test_preflight_unexpected_error_is_not_silently_reclassified_or_verified(self):
+        for error in (ValueError("unexpected-error"), RuntimeError("unexpected-error")):
+            result = {}
+            with (
+                patch.object(publish, "urlopen", side_effect=error) as fetch,
+                self.assertRaisesRegex(type(error), "unexpected-error"),
+            ):
+                publish.check_packages(
+                    "fixture-token", Fork("alice/Example"), "private", result=result
+                )
+            fetch.assert_called_once()
+            self.assertFalse(result["packagePolicyVerified"])
 
     def test_reuse_does_not_claim_new_upload(self):
         with (
