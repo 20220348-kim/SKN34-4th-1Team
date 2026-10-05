@@ -91,6 +91,48 @@ python3 -B infrastructure/gitops/scripts/ops_runtime.py --preflight \
 변경 전에 중단한다. 연결 기록이 없어도 현재 Ops에 Prefect URL이 설정돼 있으면 검사한다.
 Prefect가 비활성인 최초 bootstrap은 이 검사 대상이 아니며 journal의 `upgradePreflight`가 `null`이다.
 
+### 실제 중지 전에 대상과 복구 순서 확인하기
+
+[`ops_maintenance_plan.py`](../infrastructure/gitops/scripts/ops_maintenance_plan.py)는 개인 dev 환경의
+현재 상태를 읽어 백업용 중지 범위와 원래 실행 상태로 돌아갈 순서를 JSON으로 출력한다.
+WSL에서 개인 state 경로를 지정하며 서비스·DB·Secret을 변경하지 않는다.
+
+```bash
+python3 -B infrastructure/gitops/scripts/ops_maintenance_plan.py --state-dir "$OPS_STATE_DIR"
+```
+
+- 접수 제어가 없는 구버전은 `admission_control_unsupported`이고 나머지 미완료 작업·예약·일정
+  수가 모두 0일 때만 계획할 수 있다. 접수 제어를 지원하는 버전은 접수를 중지한 `PASS`가 필요하다.
+  이 예외는 대상 조회에만 적용한다. 기존 갱신 도구의 차단 조건은 그대로 유지한다.
+- Deployment UID·resourceVersion·spec 해시·원래 replicas, MySQL Pod·StatefulSet·PVC·Service
+  식별자와 이미지 digest, Compose 쓰기 컨테이너의 ID·이미지·실행 상태를 기록한다.
+  개인 dev의 안정된 Ops API/sync 1개 replica만 지원하며 Argo 관리·HPA·재시작 중 상태는 거절한다.
+  점검 전후 대상이 바뀌어도 중단한다. 환경변수 값과 자격 증명은 출력하지 않는다.
+- `stop_order`는 Kubernetes Ops API/sync와 현재 실행 중인 Compose 쓰기 컨테이너만 포함한다.
+  Prefect는 쓰기 실행기 다음에 중지하고 먼저 재개한다. `resume_order`는 원래 실행 중이던 대상만
+  되살리는 순서다. `leave_stopped`에 있는 기존 중지 컨테이너는 시작하지 않는다.
+  MySQL·결과 조회 서버와 관련 없는 Langfuse 구성 요소는 중지 대상에서 제외한다.
+- 복원용으로 원본과 정확히 같은 MySQL digest가 Docker에 있어야 `status=PLANNED`를 반환한다.
+  이미지가 없거나 확인할 수 없으면 `BLOCKED`와 종료 코드 1을 반환하며 자동 pull하지 않는다.
+  `PLANNED`도 관찰 결과일 뿐 백업·갱신 승인이나 중지 완료가 아니다.
+  `services_changed=false`, `backup_verified=false`, `upgrade_allowed=false`를 유지한다.
+
+실제 중지에는 관리 화면·평가 접수 중단 시간이 생긴다. 중지 범위를 확인한 뒤 다음 순서로 진행한다.
+
+1. 중지 직전에 계획과 미완료 작업을 다시 확인한다. 직접 Prefect 접수·외부 DB/파일 쓰기도 통제한다.
+   Deployment 변경은 UID·resourceVersion·replicas 전제조건을 확인하고, Compose는 기록한 정확한
+   컨테이너 ID를 사용한다. 이름이 같아도 재생성된 컨테이너에 이전 계획을 적용하지 않는다.
+2. `stop_order`대로 중지하고 Kubernetes Ops Pod가 사라지고 쓰기 컨테이너가 완전히 종료됐는지
+   확인한다. 아래 DB·상태 백업 도구가 중지 상태와 남은 작업을 다시 검사해야 한다.
+3. 같은 중지 상태에서 DB 암호화 백업과 `--runtime-keys` 상태 묶음을 만든다. 서비스 재개 전까지
+   캡처를 완료하고, 격리 복원·완료 평가 연결·키·DB 로그인·구버전 migration 검증은 별도로 기록한다.
+4. 성공·실패 모두 실제로 중지한 대상만 `resume_order`에 따라 원래 상태로 복구한다. 중간 실패 시
+   아직 중지하지 않은 서비스에는 재시작을 걸지 않는다. 재개 뒤 rollout·브리지·기존 HTTP 연결을
+   확인한다. Compose 주소가 바뀌었으면 기존 브리지 도구로 연결을 갱신하고 다시 검사한다.
+
+이 계획 도구는 중지·재개를 자동 실행하지 않는다. 원본에 migration을 적용하는 절차와도 별개다.
+관련 무료 테스트는 Infra CI의 `test_*.py` 검색에 포함되고 Ops CI에서 정적 검사를 수행한다.
+
 ### 구버전 전환을 위한 격리 MySQL 회귀 검증
 
 [`ops-ci.yml`](../.github/workflows/ops-ci.yml)은 기존 빈 DB 배포 검사와 별도로
