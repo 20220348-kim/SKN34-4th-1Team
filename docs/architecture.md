@@ -32,6 +32,9 @@ API 경계에서 shared DTO 검증·Mapper를 사용하고, 등록 결과의 공
 관심 공고 선택 시트는 기존 관심 공고 API를 사용하며, 접수 상태와 서울 기준 마감일은 작성 시 다시 확인합니다.
 기존 웹의 domain/model 파일은 공통 구현을 재수출하므로 두 구현이 따로 변경되지 않습니다.
 모바일 기업·관심 공고·가입 이메일 인증의 HTTP 호출·응답 검증·DTO 변환은 `src/api` 경계가 담당하며 화면은 내부 모델을 받습니다. 문서의 실제 기입 가능 답변 판단은 shared `isWritableApplicationAnswer`를 웹·앱에서 재사용합니다.
+모바일 관심함의 검색·다중 필터·정렬·달력은 검증된 관심 공고 모델을 로컬 화면에서 처리합니다.
+목록·진행 관리의 단계 변경은 기존 `ProgressStageSheet → updatePreparationProgress → Core progress-stage API`를
+사용하며 문서별 진행 revision과 복합 공고 식별자를 검증합니다. 웹·공개 HTTP 계약과 shared DTO는 변경하지 않습니다.
 
 모바일의 `auth/AppEntryGate`는 세션 복원과 기기 소개 기록을 확인하고 첫 실행 소개 또는 기존 화면으로 연결합니다.
 기기 저장은 `auth/introductionStorage.ts`, 로그인 안내·폼·선택한 작업의 재개는 `auth/loginFlow.tsx`의 `LoginFlowProvider`가 소유합니다.
