@@ -3,6 +3,10 @@
 2026-09-21, Intel Mac / Docker `linux/amd64`에서 `ilil1/SKN34-4th-1Team` 포크로 확인한 기록입니다.
 다른 팀원의 권한 설정이나 실제 Windows/WSL2 실행까지 완료했다는 의미는 아닙니다.
 
+아래 Mac 검증은 당시 구성의 이력입니다. 현재는 필수 CI가 다섯 개이고 배포 PR·digest 자동 커밋은
+제거됐으므로, 이 문서의 과거 Argo 성공을 현재 Windows 환경의 배포 완료 근거로 사용하지 않습니다.
+현재 연결 범위는 [이미지 발행과 배포의 경계](../infrastructure/gitops/docs/image-promotion.md)를 따릅니다.
+
 ## 실제 확인한 경로
 
 1. 앱 코드 없는 빈 패키지 네 개를 일회용 `write:packages` PAT로 처음부터 Private로 생성했습니다.
@@ -45,6 +49,46 @@
 - Windows/WSL2 실기기, ARM, 클라우드 상시 운영·고가용성·부하·유료 AI 품질은 이 기록의 검증 대상이 아닙니다.
 - 다른 팀원도 [자기 비공개 패키지 최초 준비](private-ghcr-setup.md)와 자기 PC의 읽기 인증이 필요합니다.
 
-이후 흐름은 **원본 PR 병합 → 자기 포크 원격 기본 브랜치 동기화 → 네 CI 통과 → 비공개 이미지 발행 →
+당시 흐름은 **원본 PR 병합 → 자기 포크 원격 기본 브랜치 동기화 → 네 CI 통과 → 비공개 이미지 발행 →
 digest 자동 커밋 → 실행 중인 Argo CD 배포**입니다. 로컬 `git pull`만으로 원격 CI를 시작하지 않으며,
 이미 GitOps 모드인 Argo의 원격 Git 감지에는 PC 작업 트리의 `git pull`이 필요하지 않습니다.
+
+## GHCR 발행 차단 원인 재확인 — 2026-10-05
+
+기본 브랜치 `117fb9dcc1c6fe7a69429d44c4c2a2c3cd1eaac5`의
+[사전 점검 실행 37327000880](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/37327000880)에서
+`msa-package-preflight` 보고서를 내려받아 네 서비스의 실제 GitHub 패키지 메타데이터를 확인했습니다.
+
+| 서비스 | 저장소 연결 | 소유자 | 실제 공개 범위 | 기대 공개 범위 | 결과 |
+| --- | --- | --- | --- | --- | --- |
+| Core | 일치 | 일치 | public | private | 정책 불일치 |
+| Catalog | 일치 | 일치 | public | private | 정책 불일치 |
+| AI | 일치 | 일치 | public | private | 정책 불일치 |
+| Ops | 일치 | 일치 | public | private | 정책 불일치 |
+
+조회 당시 포크의 `MSA_PACKAGE_VISIBILITY` 저장소 변수는 없고 `msa-release` 환경 변수에도
+재정의가 없어 기본값 `private`이 적용됐습니다. `MSA_RELEASE_ENABLED=true`,
+`MSA_PROMOTION_ENABLED=false`였습니다. 패키지 사전 점검 실패로 발행 job은 건너뛰었고,
+보고서의 `upload: not_attempted`, `receiptWritten: false`, `clusterVerified: false`를 확인했습니다.
+
+이 실행의 차단 원인은 공개 범위 정책 불일치입니다. 로컬 GitHub CLI의 `read:packages` 부족과
+Actions의 실제 검사 결과를 혼동하지 않습니다. 공개 패키지를 언제 누가 변경했는지는 이 조회로
+확인하지 않았으며, Actions의 실제 업로드 권한이나 새 이미지 발행 성공도 아직 입증하지 않았습니다.
+후속 조치는 [이미 공개된 패키지의 정책 정합성 확인](public-ghcr-transition.md)을 따릅니다.
+
+### 공개 발행 정책 적용 및 재검증
+
+사용자가 공개 이미지 발행을 선택한 뒤, 같은 포크의 저장소 변수
+`MSA_PACKAGE_VISIBILITY=public`을 적용하고 GitHub API로 저장된 값을 재확인했습니다.
+기존 `MSA_RELEASE_ENABLED=true`, `MSA_PROMOTION_ENABLED=false`는 유지했습니다.
+패키지 공개 범위 자체나 접근 권한·토큰·클러스터는 변경하지 않았습니다.
+
+같은 기본 브랜치 SHA에서 [재검증 실행 37327996428](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/37327996428)을
+수동 실행한 결과, 네 패키지의 소유자·저장소 연결·공개 범위가 모두 일치하고
+`packagePolicyVerified: true`, `packagePreflightResult: success`를 확인했습니다.
+따라서 이 실행에서는 공개 범위 불일치 차단이 해소됐습니다.
+
+이때 전체 결과는 `state: blocked`, `publicationResult: skipped`,
+`reason: ci_run_not_successful_or_untrusted:ci.yml`이었습니다. 같은 SHA의 필수 CI가 진행 중이어서
+기존 CI gate가 실제 발행을 막았으며 `imagesVerified: false`, `clusterVerified: false`를 유지했습니다.
+사전 점검 성공을 네 이미지의 실제 업로드·receipt 발급·배포 성공으로 기록하지 않습니다.
