@@ -141,10 +141,11 @@ jobs:
           docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops --env-file infrastructure/llmops/.env.artifacts -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml -f infrastructure/llmops/compose.artifacts.yaml -f infrastructure/llmops/compose.auth-test.yaml --profile evaluation up -d --build auth-core ops-artifacts ops-service evaluation-runner
       - name: Apply isolated Ops migrations
         run: docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops --env-file infrastructure/llmops/.env.artifacts -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml -f infrastructure/llmops/compose.artifacts.yaml -f infrastructure/llmops/compose.auth-test.yaml --profile evaluation exec -T ops-service python manage.py migrate_deployment
-      - name: Verify Core replay image excludes raw capture evidence
+      - name: Verify evaluation image excludes raw capture evidence
         run: |
           docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops --env-file infrastructure/llmops/.env.artifacts -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml -f infrastructure/llmops/compose.artifacts.yaml -f infrastructure/llmops/compose.auth-test.yaml --profile evaluation run --rm --no-deps evaluation-runner .venv/bin/python -c '
           from pathlib import Path
+          assert not list(Path("/app/evaluation/support-program-evidence/runs").glob("official-flow-*"))
           bundles = list(Path("/app/evaluation/support-program-evidence/runs").glob("core-rag-*"))
           assert len(bundles) >= 3
           assert any(bundle.name == "core-rag-20261002" for bundle in bundles)

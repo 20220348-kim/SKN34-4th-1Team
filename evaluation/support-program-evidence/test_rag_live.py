@@ -52,9 +52,15 @@ def runner(tmp_path, monkeypatch):
         if fault["kind"] == "cancelled":
             raise asyncio.CancelledError()
         if path.endswith("/embeddings"):
+            # 목록을 선택하는 통제된 벡터다. 실제 OpenAI 검색 품질 측정으로 사용하지 않는다.
+            vectors = [
+                [(-1.0 if fault.get("rank_lists") and len(body["input"]) > 1
+                  and not text.startswith("☞") else 1.0)] + [0.0] * 1535
+                for text in body["input"]
+            ]
             return httpx2.Response(200, headers={"x-request-id": f"req_{len(calls)}"}, json={
                 "model": body["model"], "usage": {"prompt_tokens": len(body["input"]), "total_tokens": len(body["input"])},
-                "data": [{"index": i, "embedding": [1.0] + [0.0] * 1535} for i in range(len(body["input"]))],
+                "data": [{"index": i, "embedding": vector} for i, vector in enumerate(vectors)],
             })
         assert path == "/v1/responses"
         if fault["kind"] == "timeout":
@@ -124,9 +130,11 @@ def test_live_runs_new_embeddings_search_answers_and_free_recovery(runner):
     assert len(calls) == 9
 
 
-def test_official_paragraph_rag_uses_guarded_search_and_keeps_reference_unmeasured(runner):
-    root, calls, actions, _ = runner
-    params = parameters("official-rag-20261006-v1", "official-rag-not-started-v1")
+@pytest.mark.parametrize("version", ["v1", "v2"])
+def test_official_paragraph_rag_uses_guarded_search_and_keeps_reference_unmeasured(runner, version):
+    root, calls, actions, fault = runner
+    fault["rank_lists"] = version == "v2"
+    params = parameters(f"official-rag-20261006-{version}", f"official-rag-not-started-{version}")
     manifest = ops_flow.evaluate_saved_capture.fn(**params)
     folder = root / params["request_id"]
     capture = json.loads((folder / "capture/capture.json").read_text())
@@ -144,12 +152,21 @@ def test_official_paragraph_rag_uses_guarded_search_and_keeps_reference_unmeasur
     assert all(len(c["search"]["response"]["matches"]) == 5 for c in capture["cases"])
     assert all(len(c["answer"]["request"]["chunks"]) == 5 for c in capture["cases"])
     material = material_from_sources(
-        json.loads((HERE / "runs/official-rag-20261006-v1/fixture.json").read_text()),
-        capture, json.loads((HERE / "runs/official-rag-20261006-v1/not-started.json").read_text()), result[3],
+        json.loads((HERE / f"runs/official-rag-20261006-{version}/fixture.json").read_text()),
+        capture, json.loads((HERE / f"runs/official-rag-20261006-{version}/not-started.json").read_text()), result[3],
     )
     assert material["data_type"] == "official-html-snapshot"
     assert material["reference_source"] == "ai-authored-not-human-reviewed"
     assert material["baseline_eligible"] is False
+    if version == "v2":
+        import official_rag
+
+        for record in capture["cases"]:
+            quotes = official_rag.QUOTES.get(record["caseId"], [])
+            if quotes:
+                # 검색된 목록 청크에 모든 조건이 함께 있어 실제 답변 요청에서도 분리되지 않는다.
+                assert any(all(quote in chunk["text"] for quote in quotes)
+                           for chunk in record["answer"]["request"]["chunks"])
 
 
 @pytest.mark.parametrize("stage", ["report", "publish"])

@@ -107,9 +107,10 @@ def test_ops_entrypoint_replays_three_cases_with_real_report_and_distinct_metric
     assert len(scores) == 10
 
 
-def test_official_preparation_can_render_unmeasured_report_without_model_calls(runner):
+@pytest.mark.parametrize("version", ["v1", "v2"])
+def test_official_preparation_can_render_unmeasured_report_without_model_calls(runner, version):
     root, scores = runner
-    params = parameters(dataset="official-rag-20261006-v1", capture="official-rag-not-started-v1")
+    params = parameters(dataset=f"official-rag-20261006-{version}", capture=f"official-rag-not-started-{version}")
     manifest = ops_flow.evaluate_saved_capture.fn(**params)
     folder = root / params["request_id"] / "evaluation"
     result = rag_replay.read_result(

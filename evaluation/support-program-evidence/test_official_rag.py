@@ -111,3 +111,75 @@ def test_catalog_prepares_separate_embedding_and_answer_budget():
     selected = next(d for d in public_datasets() if d["id"] == official_rag.DATASET)
     assert selected["evaluation_scope"] == rag.SCOPE
     assert selected["captures"][0]["id"] == "official-rag-not-started-v1"
+
+
+def test_grouped_lists_keep_every_reference_fact_without_changing_old_material():
+    original, original_pending = official_rag.build()
+    fixture, pending = official_rag.build(grouped_lists=True)
+    assert fixture["datasetVersion"] == official_rag.GROUPED_DATASET
+    assert fixture["referenceSource"] == "ai-authored-not-human-reviewed"
+    assert [len(d["chunks"]) for d in fixture["documents"]] == [21, 17]
+    assert (official_rag.GROUPED_OUTPUT / "fixture.json").read_bytes() == official_rag.encoded(fixture)
+    assert (official_rag.GROUPED_OUTPUT / "not-started.json").read_bytes() == official_rag.encoded(pending)
+    assert (official_rag.OUTPUT / "fixture.json").read_bytes() == official_rag.encoded(original)
+    assert (official_rag.OUTPUT / "not-started.json").read_bytes() == official_rag.encoded(original_pending)
+    for before, after in zip(original["documents"], fixture["documents"], strict=True):
+        assert all(before[key] == after[key] for key in ("documentId", "content", "contentHash", "source", "sourceUrl"))
+        assert "\n\n".join(c["text"] for c in after["chunks"]) == after["content"]
+        assert "not-core-chunker" in after["chunkVersion"]
+    for before, after in zip(original["cases"], fixture["cases"], strict=True):
+        assert all(before[key] == after[key] for key in ("id", "documentId", "question", "expectedStatus"))
+        quotes = official_rag.QUOTES.get(after["id"], [])
+        assert len(after["expectedEvidence"]) == bool(quotes)
+        if quotes:
+            assert all(quote in after["expectedEvidence"][0]["quote"] for quote in quotes)
+    # v1의 4개/2개 청크 지표를 v2의 1개/1개 청크로 재계산해 개선으로 표시하지 않는다.
+    with pytest.raises(ValueError, match="fixture"):
+        rag.evaluate(official_rag.GROUPED_OUTPUT / "fixture.json", official_rag.OUTPUT / "not-started.json")
+
+
+def test_grouped_lists_stop_at_non_list_boundaries_and_preserve_unrelated_paragraphs():
+    content = "제목\n\n☞ 지원 대상\n\n- 첫 조건\n\n- 둘째 조건\n\n☞ 지원 내용\n\n※ 주의\n\n- 별도 목록\n\n신청 방법\n\n온라인"
+    assert official_rag.paragraphs(content, grouped_lists=True) == [
+        "제목", "☞ 지원 대상\n\n- 첫 조건\n\n- 둘째 조건\n\n☞ 지원 내용",
+        "※ 주의", "- 별도 목록", "신청 방법", "온라인",
+    ]
+    assert official_rag.paragraphs(content) == content.split("\n\n")
+
+
+def test_chunking_does_not_consult_questions_or_expected_facts(monkeypatch):
+    before, _ = official_rag.build(grouped_lists=True)
+    monkeypatch.setitem(official_rag.QUOTES, "H01", [official_rag.QUOTES["H01"][1]])
+    after, _ = official_rag.build(grouped_lists=True)
+    assert before["documents"] == after["documents"]
+
+
+def test_oversized_list_fails_instead_of_silently_losing_a_condition(monkeypatch):
+    fixture = json.loads(official_rag.SOURCE.read_bytes())
+    source = fixture["documents"][0]["source"]
+    source["content"] = "☞ " + "가" * 7000 + "\n\n- " + "나" * 7000
+    source["contentSha256"] = rag.digest(source["content"])
+    monkeypatch.setattr(official_rag.official_snapshot, "validate_fixture", lambda _: None)
+    monkeypatch.setattr(official_rag.rag, "read_json", lambda _: (fixture, "unused"))
+    monkeypatch.setattr(official_rag, "QUOTES", {})
+    # 문서 분할 자체는 보존되지만 API 청크 크기를 넘으면 준비 단계에서 거절한다.
+    with pytest.raises(ValueError, match="12000"):
+        official_rag.build(grouped_lists=True)
+
+
+def test_grouped_catalog_requires_its_own_unmeasured_inputs_and_budget():
+    fixture, pending = official_rag.build(grouped_lists=True)
+    result = rag.evaluate(official_rag.GROUPED_OUTPUT / "fixture.json", official_rag.GROUPED_OUTPUT / "not-started.json")
+    assert not result["completed"] and not result["baselineEligible"]
+    assert all(m["value"] is None and m["measuredCaseCount"] == 0 for m in result["metrics"].values())
+    material = material_from_sources(fixture, pending, pending, {
+        "scope": rag.SCOPE, "case_ids": [c["id"] for c in fixture["cases"]],
+        "current": result, "reference": result,
+    })
+    assert material["reference_source"] == "ai-authored-not-human-reviewed"
+    config = live_config(official_rag.GROUPED_DATASET)
+    assert config["fixture_sha256"] != live_config(official_rag.DATASET)["fixture_sha256"]
+    assert config["max_model_calls"] == 18 and config["max_total_output_tokens"] == 12000
+    assert config["max_total_input_tokens"] > 196608
+    selected = next(d for d in public_datasets() if d["id"] == official_rag.GROUPED_DATASET)
+    assert selected["captures"][0]["id"] == "official-rag-not-started-v2"
