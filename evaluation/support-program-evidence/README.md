@@ -990,3 +990,41 @@ HTTP API·원문 수집·DB·청킹·임베딩·Qdrant를 생략하므로 `scope
 청크 1개뿐이므로 이 결과로 다수 청크 중 검색 성능이나 일반적인 RAG 정확도를 주장하지 않습니다.
 
 첨부파일·PDF/OCR 확장과 새로운 제공처 추가는 이번 검수에 포함하지 않습니다.
+
+## Core HTTP 기록을 Ops RAG 평가에 연결
+
+`core_flow_rag.py`는 위 Core 통합 실행기의 **공개 요청·응답 → 저장 원문 → 실제 색인·검색·답변 wire**를
+대조하고 Ops의 저장 응답 재평가 목록에 등록합니다. 원본 캡처를 수정하거나 새 모델을 호출하지 않습니다.
+완료되지 않은 실행, 다른 질문·원문·검색 청크, 공개 인용과 내부 답변의 불일치는 등록을 거절하며
+원본 실패 기록은 남습니다. 현재 변환 계약은 고정 공식 공고 2개·H01~H06·원문당 1청크입니다.
+
+```bash
+# 저장소 루트: 무료 Core HTTP 테스트 산출물 등록
+backend/ai-service/.venv/bin/python evaluation/support-program-evidence/core_flow_rag.py \
+  --core-capture backend/core-service/build/reports/evidence-flow/capture.json --register
+
+# 이미 저장된 실제 API 실행 기록 등록; 이 명령 자체의 모델 호출은 0회
+backend/ai-service/.venv/bin/python evaluation/support-program-evidence/core_flow_rag.py \
+  --core-capture evaluation/support-program-evidence/runs/official-flow-20260907-v2/core/capture.json \
+  --api-capture evaluation/support-program-evidence/runs/official-flow-20260907-v2/api/api-capture.json \
+  --register
+```
+
+`--register`를 빼면 검증 결과만 출력합니다. 등록은 DB에 접속하지 않고 `capture_catalog.json`,
+`execution_release.json`과 `runs/core-official-*/`를 함께 갱신합니다. 같은 원본의 재등록은 중복을
+만들지 않으며 원본·파생 자료가 바뀌었으면 거절합니다. 갱신한 Ops·runner·sync 이미지를 적용한 뒤
+React Ops의 **Core HTTP · 공식 공고 H01~H06 · 저장 기록 · 원문당 1청크**를 선택합니다.
+
+- `Core HTTP 무료 대역`은 실제 Core HTTP·MySQL 흐름과 테스트용 AI 응답입니다. 모델 품질 측정이 아닙니다.
+- `Core HTTP 저장 응답`은 기록 당시의 모델명과 UTC 실행일을 표시합니다. 현재 모델의 새 실행이 아닙니다.
+- 원본 API 사용량은 `provenance.json`에 보존하며 미확정 값은 `null`로 유지합니다. 가져오기만으로 예산
+  장부에 다시 정산하지 않습니다. 없는 trace ID나 사람 검토 승인을 생성하지 않습니다.
+- 이 자료는 `replay_only`이므로 직접 AI 실행 계획을 만들지 않습니다. Core 경로를 생략한 새 답변을
+  Core HTTP 평가로 오인하지 않도록 API에서도 유료 실행 명세 생성을 차단합니다.
+- 저장 원본은 Git에서 검토·재사용하고, runner 이미지에는 재평가용 `fixture.json`·`capture.json`만
+  넣습니다. Core/API 원본과 출처 보고서는 이미지에서 제외합니다.
+
+2026-10-06 로컬 검증에서 Core HTTP·실제 MySQL 8.4·무료 AI HTTP 대역으로 H01~H06을 실행해
+18개 내부 요청을 확인했습니다. 변환·등록·중복 방지·변조 거절·Ops 보고서·점수 계약과 기존 실행
+회귀 테스트를 확인했습니다. 검색 후보가 문서당 1개이므로 다중 후보 순위 품질 및 첨부파일 품질은
+이 검증의 범위에 포함되지 않습니다. 최신 코드의 전체 CI 완료는 커밋·푸시 후 별도로 확인합니다.

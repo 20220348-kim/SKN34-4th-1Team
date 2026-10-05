@@ -41,7 +41,7 @@ def catalog_plans():
     catalog = json.loads((PLANS.parent / "capture_catalog.json").read_text())
     result = {}
     for dataset in catalog:
-        if dataset.get("evaluation_scope") != rag.SCOPE:
+        if dataset.get("evaluation_scope") != rag.SCOPE or dataset.get("replay_only"):
             continue
         _, fingerprint, plan = prepare(
             ROOT / "evaluation/support-program-evidence" / dataset["fixture"],
@@ -60,27 +60,27 @@ def catalog_plans():
 async def execute(fixture_path, output_dir, *, budget, execution_spec):
     """실행마다 격리된 메모리 색인을 사용한다. 외부 Core 원문 수집·재청킹은 수행하지 않는다."""
     import httpx2
-    from langchain_openai import ChatOpenAI
-    from openai import AsyncOpenAI
-    from qdrant_client import AsyncQdrantClient
     from app.config import LangfuseSettings
-    from app.tracing import LLMTracing
     from app.support_program_evidence.agent import SupportProgramEvidenceAnswerAgent
     from app.support_program_evidence.answer_service import (
         SupportProgramEvidenceAnswerService,
     )
-    from app.support_program_evidence.service import SupportProgramEvidenceService
     from app.support_program_evidence.models import (
+        SupportProgramEvidenceAnswerRequest,
         SupportProgramEvidenceBatchRequest,
         SupportProgramEvidenceSearchRequest,
-        SupportProgramEvidenceAnswerRequest,
     )
+    from app.support_program_evidence.service import SupportProgramEvidenceService
+    from app.tracing import LLMTracing
     from evaluate import (
         DEFAULT_LLM_MODEL_TIMEOUT_SECONDS,
         DEFAULT_LLM_RUN_TIMEOUT_SECONDS,
         SUPPORT_PROGRAM_EVIDENCE_ANSWER_INSTRUCTIONS,
     )
+    from langchain_openai import ChatOpenAI
     from llmops import write_json
+    from openai import AsyncOpenAI
+    from qdrant_client import AsyncQdrantClient
 
     config = execution_spec["live_config"]
     fixture, fingerprint, plan = prepare(fixture_path, model=config["model"])
