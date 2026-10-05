@@ -218,6 +218,16 @@ jobs:
           set -euo pipefail
           snapshot_mysql_image=$(docker image inspect mysql:8.4 --format '{{index .RepoDigests 0}}')
           OPS_DB_UPGRADE_TEST_IMAGE="$RESTORE_DOCKER_IMAGE" OPS_DB_SNAPSHOT_MYSQL_IMAGE="$snapshot_mysql_image" PYTHONPATH=infrastructure/gitops/scripts backend/ai-service/.venv/bin/python -B -m unittest test_ops_db_upgrade
+      - name: Verify first-rollout images and literal Compose inputs without network calls
+        timeout-minutes: 3
+        # Runtime image and literal-input checks must also run when the unit suite
+        # skips its opt-in Docker cases; these use the already-built CI images.
+        run: |
+          set -euo pipefail
+          runner_image=$(docker compose --env-file infrastructure/llmops/.env --env-file infrastructure/llmops/.env.ops --env-file infrastructure/llmops/.env.artifacts -f infrastructure/llmops/compose.yaml -f infrastructure/llmops/compose.ops.yaml -f infrastructure/llmops/compose.artifacts.yaml -f infrastructure/llmops/compose.auth-test.yaml --profile evaluation images -q evaluation-runner)
+          test -n "$runner_image"
+          runner_image=$(docker image inspect "$runner_image" --format '{{.Id}}')
+          OPS_INITIAL_RUNTIME_OPS_IMAGE="$RESTORE_DOCKER_IMAGE" OPS_INITIAL_RUNTIME_RUNNER_IMAGE="$runner_image" PYTHONPATH=infrastructure/gitops/scripts backend/ai-service/.venv/bin/python -B -m unittest test_ops_initial_runtime.DockerTests
       - name: Start React development proxy
         run: |
           (cd frontend/web && VITE_DEV_PROXY_TARGET=http://127.0.0.1:18082 VITE_CORE_API_BASE_URL=/ exec node node_modules/vite/bin/vite.js --host 127.0.0.1) > /tmp/govbiz-ops-web.log 2>&1 &

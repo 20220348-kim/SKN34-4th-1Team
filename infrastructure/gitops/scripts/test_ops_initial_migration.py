@@ -279,7 +279,7 @@ class ExecutionTests(unittest.TestCase):
         def read_json(arguments):
             if arguments[0] == "docker":
                 return [{"Id": IMAGE}]
-            return {"metadata": {"resourceVersion": "1"}}
+            return {"metadata": {"resourceVersion": "1"}, "spec": {"replicas": 0}}
 
         mock(migration.database, "read_json", side_effect=read_json)
         mock(migration, "initial_job", return_value=self.job)
@@ -424,7 +424,7 @@ class ExecutionTests(unittest.TestCase):
     def test_changed_image_after_rehearsal_is_rejected_before_load_or_job(self):
         self.args.execute = True
         self.mocks["read_json"].side_effect = [
-            {"metadata": {"resourceVersion": "1"}},
+            {"metadata": {"resourceVersion": "1"}, "spec": {"replicas": 0}},
             [{"Id": IMAGE}],
             [{"Id": "sha256:" + "d" * 64}],
         ]

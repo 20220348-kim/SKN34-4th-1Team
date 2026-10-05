@@ -231,6 +231,10 @@ def migrate(args):
         "source_sha": args.source_sha,
         "source_branch": args.source_branch,
         "state_id": settings["stateId"],
+        "frozen_source": source,
+        "deployment_spec_sha256": hashlib.sha256(
+            json.dumps(deployment["spec"], sort_keys=True).encode()
+        ).hexdigest(),
         "database_pvc_uid": source["pvc_uid"],
         "database_pod_uid": source["pod_uid"],
         "archive_sha256": restored["sha256"],
