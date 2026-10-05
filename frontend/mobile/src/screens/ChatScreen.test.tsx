@@ -1,4 +1,5 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react-native'
+import { ScrollView } from 'react-native'
 import { ChatScreen } from './ChatScreen'
 import { programClient } from '../api/client'
 import { useAuth } from '../auth/session'
@@ -127,4 +128,195 @@ test.each(['signedOut', 'signedIn'] as const)('G01 uses the same introduction an
   fireEvent.changeText(screen.getByLabelText('회사 상황이나 궁금한 점'), '입력 중')
   expect(client.interpretConversation).not.toHaveBeenCalled()
   expect(client.search).not.toHaveBeenCalled()
+})
+
+describe('mobile AI timeline scrolling', () => {
+  let scrollTo: jest.SpyInstance
+  let frames: Map<number, FrameRequestCallback>
+  let nextFrame: number
+  const ready = { status: 'READY', proposedContext: context, answer: '조건을 확인해 주세요.', clarificationQuestion: null, changedFields: [] }
+
+  beforeEach(() => {
+    frames = new Map(); nextFrame = 0
+    scrollTo = jest.spyOn(ScrollView.prototype, 'scrollTo')
+    jest.spyOn(globalThis, 'requestAnimationFrame').mockImplementation(callback => { const id = ++nextFrame; frames.set(id, callback); return id })
+    jest.spyOn(globalThis, 'cancelAnimationFrame').mockImplementation(id => { if (id != null) frames.delete(id) })
+  })
+  afterEach(() => { cleanup(); jest.restoreAllMocks() })
+
+  function flushFrame() {
+    act(() => { const callbacks = [...frames.values()]; frames.clear(); callbacks.forEach(callback => callback(0)) })
+  }
+  function layout(testID: string, y: number, height: number, width = 360) {
+    fireEvent(screen.getByTestId(testID), 'layout', { nativeEvent: { layout: { x: 0, y, width, height } } })
+  }
+  function timelineSize(content = 4_000, viewport = 600) {
+    layout('ai-search-timeline', 0, viewport)
+    fireEvent(screen.getByTestId('ai-search-timeline'), 'contentSizeChange', 360, content)
+  }
+  function clientWith(interpretConversation = jest.fn().mockResolvedValue(ready), search = jest.fn().mockResolvedValue(full)) {
+    const client = { interpretConversation, search,
+      getSearchReadiness: jest.fn().mockResolvedValue({ indexReady: true, searchState: 'SEARCHABLE' }) }
+    jest.mocked(programClient).mockReturnValue(client as unknown as ReturnType<typeof programClient>)
+    return client
+  }
+  async function send(text = '사업화 지원') {
+    fireEvent.changeText(screen.getByLabelText('회사 상황이나 궁금한 점'), text)
+    await act(async () => { fireEvent.press(screen.getByLabelText('AI에게 보내기')) })
+    expect(screen.queryByTestId('ai-search-pending-message')).toBeNull()
+  }
+
+  test('scrolls to the sent message, conditions, loading and the start of long results after layout', async () => {
+    let resolveInterpret!: (value: typeof ready) => void
+    let resolveSearch!: (value: typeof full) => void
+    const client = clientWith(jest.fn(() => new Promise(resolve => { resolveInterpret = resolve })),
+      jest.fn(() => new Promise(resolve => { resolveSearch = resolve })))
+    const props = { onOpenProgram: jest.fn(), onLogin: jest.fn() }
+    const view = render(<ChatScreen {...props} />)
+    timelineSize(); flushFrame()
+    fireEvent.changeText(screen.getByLabelText('회사 상황이나 궁금한 점'), '사업화 지원')
+    expect(scrollTo).not.toHaveBeenCalled()
+    expect(client.interpretConversation).not.toHaveBeenCalled()
+    fireEvent.press(screen.getByLabelText('AI에게 보내기'))
+    flushFrame(); expect(scrollTo).not.toHaveBeenCalled()
+    layout('ai-search-pending-message', 720, 80)
+    layout('ai-search-waiting', 816, 48)
+    expect(scrollTo).not.toHaveBeenCalled()
+    flushFrame(); expect(scrollTo).toHaveBeenLastCalledWith({ y: 704, animated: true })
+
+    await act(async () => resolveInterpret(ready))
+    layout('ai-search-proposal', 1_100, 200)
+    flushFrame(); expect(scrollTo).toHaveBeenLastCalledWith({ y: 1_084, animated: true })
+    expect(client.search).not.toHaveBeenCalled()
+    fireEvent.press(screen.getByLabelText('이 조건으로 검색'))
+    await waitFor(() => expect(client.search).toHaveBeenCalledTimes(1))
+    layout('ai-search-waiting', 960, 48)
+    flushFrame(); expect(scrollTo).toHaveBeenLastCalledWith({ y: 944, animated: true })
+
+    await act(async () => resolveSearch(full))
+    // The old content is too short: wait for its new size before moving.
+    fireEvent(screen.getByTestId('ai-search-timeline'), 'contentSizeChange', 360, 1_500)
+    layout('ai-search-results', 1_200, 2_500)
+    flushFrame(); expect(scrollTo).toHaveBeenCalledTimes(3)
+    timelineSize(5_000)
+    flushFrame(); expect(scrollTo).toHaveBeenLastCalledWith({ y: 1_184, animated: true })
+    expect(scrollTo).toHaveBeenCalledTimes(4)
+    fireEvent.press(screen.getByLabelText('추천 사업 0, 상세 보기'))
+    expect(props.onOpenProgram).toHaveBeenCalledWith({ sourceCode: programs[0].sourceCode, sourceProgramId: programs[0].id })
+
+    fireEvent.changeText(screen.getByLabelText('회사 상황이나 궁금한 점'), '다음 질문 작성 중')
+    view.rerender(<ChatScreen {...props} />)
+    layout('ai-search-results', 1_280, 2_500)
+    timelineSize(5_100, 400); flushFrame()
+    expect(scrollTo).toHaveBeenCalledTimes(4)
+    expect(client.interpretConversation).toHaveBeenCalledTimes(1)
+    expect(client.search).toHaveBeenCalledTimes(1)
+  })
+
+  test('a new equal-sized proposal remains the target while previous results are still displayed', async () => {
+    clientWith()
+    render(<ChatScreen onOpenProgram={jest.fn()} onLogin={jest.fn()} />)
+    timelineSize()
+    await send()
+    const firstProposal = screen.getByTestId('ai-search-proposal')
+    const staleProposalLayout = firstProposal.props.onLayout
+    layout('ai-search-proposal', 800, 200); flushFrame()
+    await act(async () => { fireEvent.press(screen.getByLabelText('이 조건으로 검색')) })
+    expect(screen.getByText('추천 사업 4')).toBeTruthy()
+    layout('ai-search-results', 1_100, 1_500); flushFrame()
+    scrollTo.mockClear()
+    await send('서울 지원도 찾아줘')
+    expect(screen.getByTestId('ai-search-proposal')).not.toBe(firstProposal)
+    expect(screen.getByText('추천 사업 4')).toBeTruthy()
+    act(() => staleProposalLayout({ nativeEvent: { layout: { x: 0, y: 800, width: 360, height: 200 } } }))
+    layout('ai-search-results', 1_300, 1_500); flushFrame()
+    expect(scrollTo).not.toHaveBeenCalled()
+    layout('ai-search-proposal', 800, 200); flushFrame()
+    expect(scrollTo).toHaveBeenCalledTimes(1)
+    expect(scrollTo).toHaveBeenCalledWith({ y: 784, animated: true })
+    fireEvent.press(screen.getByLabelText('조건 바꾸기'))
+    layout('ai-search-proposal', 820, 230); timelineSize(); flushFrame()
+    expect(scrollTo).toHaveBeenCalledTimes(1)
+  })
+
+  test.each(['CLARIFICATION_REQUIRED', 'ANSWERED'] as const)('shows repeated %s replies even when their size and the bounded history length stay unchanged', async (status) => {
+    const client = clientWith(jest.fn().mockResolvedValue({ ...ready, status, answer: '새 답변', clarificationQuestion: '어느 지역인가요?' }))
+    render(<ChatScreen onOpenProgram={jest.fn()} onLogin={jest.fn()} />)
+    timelineSize()
+    let previousAnswer: unknown
+    for (let turn = 0; turn < 7; turn += 1) {
+      await send('같은 질문')
+      const answer = screen.getByTestId('ai-search-latest-answer')
+      expect(answer).not.toBe(previousAnswer)
+      previousAnswer = answer
+      layout('ai-search-latest-answer', 800, 120); flushFrame()
+    }
+    expect(scrollTo).toHaveBeenCalledTimes(7)
+    expect(scrollTo).toHaveBeenLastCalledWith({ y: 784, animated: true })
+    expect(client.search).not.toHaveBeenCalled()
+  })
+
+  test.each(['interpretation', 'search', 'readiness'] as const)('shows a new %s failure without jumping to old results', async (failure) => {
+    const client = clientWith(failure === 'interpretation' ? jest.fn().mockRejectedValue(new Error('failed')) : undefined,
+      failure === 'search' ? jest.fn().mockRejectedValue(new Error('failed')) : undefined)
+    if (failure === 'readiness') client.getSearchReadiness.mockResolvedValue({ indexReady: false, searchState: 'PREPARING' })
+    render(<ChatScreen onOpenProgram={jest.fn()} onLogin={jest.fn()} />)
+    timelineSize()
+    await send()
+    if (failure !== 'interpretation') {
+      await act(async () => { fireEvent.press(screen.getByLabelText('이 조건으로 검색')) })
+      expect(screen.getByTestId('ai-search-notice')).toBeTruthy()
+    }
+    layout('ai-search-notice', 900, 120); flushFrame()
+    expect(scrollTo).toHaveBeenLastCalledWith({ y: 884, animated: true })
+    if (failure === 'readiness') expect(client.search).not.toHaveBeenCalled()
+  })
+
+  test('zero results scroll to their result explanation and short content stays at the top', async () => {
+    clientWith(undefined, jest.fn().mockResolvedValue({ ...full, totalCount: 0, programs: [] }))
+    render(<ChatScreen onOpenProgram={jest.fn()} onLogin={jest.fn()} />)
+    timelineSize(500)
+    await send()
+    await act(async () => { fireEvent.press(screen.getByLabelText('이 조건으로 검색')) })
+    expect(screen.getByText('조건에 맞는 공고가 없습니다. 필요한 지원이나 회사 조건을 바꿔 보세요.')).toBeTruthy()
+    layout('ai-search-results', 280, 160); flushFrame()
+    expect(scrollTo).toHaveBeenCalledWith({ y: 0, animated: true })
+  })
+
+  test('login result restoration shows its loading and result start without another paid search', async () => {
+    let resolveRestore!: (value: typeof full) => void
+    const { client, view, props } = await guestSearch(jest.fn(() => new Promise(resolve => { resolveRestore = resolve })))
+    timelineSize()
+    signIn(); view.rerender(<ChatScreen {...props} />)
+    await screen.findByText('로그인 전 검색 결과를 불러오는 중이에요.')
+    layout('ai-search-waiting', 16, 50); flushFrame()
+    expect(scrollTo).toHaveBeenLastCalledWith({ y: 0, animated: true })
+    await act(async () => resolveRestore(full))
+    layout('ai-search-results', 700, 2_000); flushFrame()
+    expect(scrollTo).toHaveBeenLastCalledWith({ y: 684, animated: true })
+    expect(client.search).toHaveBeenCalledTimes(1)
+    expect(client.interpretConversation).toHaveBeenCalledTimes(1)
+  })
+
+  test.each(['cancel', 'new conversation', 'account change', 'unmount'] as const)('%s discards queued layout and late response scrolling', async (action) => {
+    let resolveOld!: (value: typeof ready) => void
+    clientWith(jest.fn().mockResolvedValueOnce(ready).mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve })))
+    const props = { onOpenProgram: jest.fn(), onLogin: jest.fn() }
+    const view = render(<ChatScreen {...props} />)
+    timelineSize()
+    await send()
+    fireEvent.changeText(screen.getByLabelText('회사 상황이나 궁금한 점'), '취소할 질문')
+    fireEvent.press(screen.getByLabelText('AI에게 보내기'))
+    const staleLayout = screen.getByTestId('ai-search-pending-message').props.onLayout
+    layout('ai-search-pending-message', 800, 100)
+    if (action === 'cancel') fireEvent.press(screen.getByLabelText('요청 취소'))
+    else if (action === 'new conversation') fireEvent.press(screen.getByLabelText('새 대화'))
+    else if (action === 'account change') { signIn(); view.rerender(<ChatScreen {...props} />) }
+    else view.unmount()
+    act(() => staleLayout({ nativeEvent: { layout: { x: 0, y: 800, width: 360, height: 100 } } }))
+    await act(async () => resolveOld(ready))
+    flushFrame()
+    expect(scrollTo).not.toHaveBeenCalled()
+    if (action !== 'unmount') { timelineSize(); flushFrame(); expect(scrollTo).not.toHaveBeenCalled() }
+  })
 })

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
+import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type LayoutChangeEvent } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import type { SupportProgramConversationContext, SupportProgramInterpretation, SupportProgramPendingClarification } from '@govbiz/shared/domain/entities/SupportProgramConversation'
 import type { SupportProgramSearchResult } from '@govbiz/shared/domain/entities/SupportProgramSearchResult'
@@ -21,13 +21,21 @@ const emptyContext: SupportProgramConversationContext = {
   companyConditions: { region: null, industry: null, establishedOn: null, foundedYear: null, supportPurpose: null },
 }
 
+type TimelineTarget = 'message' | 'waiting' | 'answer' | 'proposal' | 'results' | 'notice'
 
-export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0 }: {
-  onOpenProgram: (identity: SupportProgramIdentity) => void; onLogin: (request?: LoginRequest) => void; keyboardOffset?: number
+export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active = true }: {
+  onOpenProgram: (identity: SupportProgramIdentity) => void; onLogin: (request?: LoginRequest) => void; keyboardOffset?: number; active?: boolean
 }) {
   const { session, status, invalidateSession } = useAuth()
   const insets = useSafeAreaInsets()
   const composerInput = useRef<TextInput>(null)
+  const timeline = useRef<ScrollView>(null)
+  const scrollRevision = useRef(0)
+  const scrollFrame = useRef<number | null>(null)
+  const timelineActive = useRef(active)
+  const timelineSize = useRef({ viewport: 0, content: 0 })
+  const pendingScroll = useRef<{ id: number; target: TimelineTarget; layout?: { y: number; height: number } } | null>(null)
+  const [timelineVersions, setTimelineVersions] = useState({ message: 0, waiting: 0, answer: 0, proposal: 0, results: 0, notice: 0 })
   const token = status === 'signedIn' ? session?.accessToken : undefined
   const client = useMemo(() => programClient(token), [token])
   const [message, setMessage] = useState('')
@@ -46,7 +54,52 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0 }: {
   const retryRestore = useRef<typeof pendingRestore.current>(null)
   const [restoreFailure, setRestoreFailure] = useState<'expired' | 'unavailable' | null>(null)
 
+  function cancelScrollFrame() {
+    if (scrollFrame.current !== null) cancelAnimationFrame(scrollFrame.current)
+    scrollFrame.current = null
+  }
+
+  function clearTimelineScroll() { cancelScrollFrame(); pendingScroll.current = null }
+
+  function requestTimelineScroll(target: TimelineTarget) {
+    cancelScrollFrame()
+    const id = ++scrollRevision.current
+    pendingScroll.current = { id, target }
+    // Remount only the new target so equal-sized replies also report their current layout.
+    setTimelineVersions(previous => ({ ...previous, [target]: id }))
+  }
+
+  function scrollPendingTimeline() {
+    const pending = pendingScroll.current
+    if (!timelineActive.current || !pending?.layout || timelineSize.current.viewport <= 0
+      || timelineSize.current.content < pending.layout.y + pending.layout.height || scrollFrame.current !== null) return
+    scrollFrame.current = requestAnimationFrame(() => {
+      scrollFrame.current = null
+      const current = pendingScroll.current
+      if (!timelineActive.current || current?.id !== pending.id || !current.layout || !timeline.current) return
+      if (timelineSize.current.viewport <= 0 || timelineSize.current.content < current.layout.y + current.layout.height) return
+      const y = Math.max(0, Math.min(current.layout.y - 16, timelineSize.current.content - timelineSize.current.viewport))
+      timeline.current.scrollTo({ y, animated: true })
+      pendingScroll.current = null
+    })
+  }
+
+  function recordTimelineTarget(target: TimelineTarget, id: number, event: LayoutChangeEvent) {
+    const pending = pendingScroll.current
+    const { y, width, height } = event.nativeEvent.layout
+    if (pending?.target !== target || pending.id !== id || width <= 0 || height <= 0) return
+    pending.layout = { y, height }
+    scrollPendingTimeline()
+  }
+
   useEffect(() => {
+    timelineActive.current = active
+    if (active) scrollPendingTimeline()
+    return cancelScrollFrame
+  }, [active])
+
+  useEffect(() => {
+    clearTimelineScroll()
     const selected = !previousToken.current && token ? pendingRestore.current : null
     previousToken.current = token; pendingRestore.current = null; retryRestore.current = null
     generation.current += 1
@@ -56,19 +109,21 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0 }: {
     setRestoreFailure(null)
     if (token) setSessionNotice(null)
     if (selected && token) void restore(selected, token)
-    return () => { generation.current += 1; request.current?.abort() }
+    return () => { generation.current += 1; request.current?.abort(); clearTimelineScroll() }
   }, [token])
 
   async function restore(selected: NonNullable<typeof pendingRestore.current>, accessToken: string) {
     const controller = new AbortController(); request.current = controller
     const revision = ++generation.current
     setBusy('restore'); setError(null); setRestoreFailure(null); retryRestore.current = selected
+    requestTimelineScroll('waiting')
     try {
       const restored = await new RestoreSupportProgramSearchUseCase({
         restoreSearch: (resultToken, signal) => restoreSearchResults(accessToken, resultToken, signal),
       }).execute(selected.resultToken, controller.signal)
       if (controller.signal.aborted || generation.current !== revision) return
       setContext(restored.context); setResult(restored); setHistory(selected.history); retryRestore.current = null
+      requestTimelineScroll('results')
     } catch (cause) {
       if (controller.signal.aborted || generation.current !== revision) return
       if (cause instanceof SupportProgramSearchRestoreError && cause.reason === 'unauthorized') {
@@ -79,10 +134,11 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0 }: {
       }
       setError(cause instanceof SupportProgramSearchRestoreError && cause.reason === 'unauthorized' ? null
         : cause instanceof SupportProgramSearchRestoreError ? cause.message : '검색 결과를 불러오지 못했습니다. 다시 시도해 주세요.')
+      requestTimelineScroll('notice')
     } finally { if (generation.current === revision) setBusy(null) }
   }
 
-  function cancel() { generation.current += 1; request.current?.abort(); setBusy(null) }
+  function cancel() { generation.current += 1; request.current?.abort(); setBusy(null); clearTimelineScroll() }
 
   async function interpret() {
     if (!message.trim() || busy) return
@@ -90,6 +146,7 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0 }: {
     const revision = ++generation.current
     const text = message.trim()
     setBusy('interpret'); setError(null)
+    requestTimelineScroll('message')
     pendingRestore.current = null; retryRestore.current = null; setRestoreFailure(null)
     setSessionNotice(null)
     try {
@@ -103,10 +160,12 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0 }: {
         ? { question: next.clarificationQuestion, draftContext: next.proposedContext } : null)
       setHistory((previous) => [...previous.slice(-8), { role: 'user', text },
         { role: 'assistant', text: next.answer ?? next.clarificationQuestion ?? '아래 검색 조건을 확인해 주세요.' }])
+      requestTimelineScroll(next.status === 'READY' ? 'proposal' : 'answer')
     } catch (cause) {
       if (!controller.signal.aborted && generation.current === revision) {
         if (cause instanceof ApiError && cause.status === 401) void invalidateSession().catch(() => undefined)
         setError(errorMessage(cause))
+        requestTimelineScroll('notice')
       }
     } finally { if (generation.current === revision) setBusy(null) }
   }
@@ -117,11 +176,13 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0 }: {
     const revision = ++generation.current
     const nextContext = proposal.proposedContext
     setBusy('search'); setError(null)
+    requestTimelineScroll('waiting')
     try {
       const readiness = await client.getSearchReadiness(controller.signal)
       if (controller.signal.aborted || generation.current !== revision) return
       if (!readiness.indexReady || !['SEARCHABLE', 'SEARCHABLE_WITH_SYNC_FAILURE', 'SEARCHABLE_WITH_PARTIAL_SOURCES'].includes(readiness.searchState)) {
         setError('검색 데이터를 준비 중입니다. 잠시 후 다시 검색해 주세요.')
+        requestTimelineScroll('notice')
         return
       }
       const conditions = Object.fromEntries(Object.entries(nextContext.companyConditions).filter(([, value]) => value != null))
@@ -134,10 +195,12 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0 }: {
       if (controller.signal.aborted || generation.current !== revision) return
       setContext(nextContext); setResult(next); setProposal(null); setClarification(null)
       setHistory((previous) => [...previous.slice(-9), { role: 'assistant', text: `관련 공고 ${next.totalCount}건을 찾았습니다.` }])
+      requestTimelineScroll('results')
     } catch (cause) {
       if (!controller.signal.aborted && generation.current === revision) {
         if (cause instanceof ApiError && cause.status === 401) void invalidateSession().catch(() => undefined)
         setError(errorMessage(cause))
+        requestTimelineScroll('notice')
       }
     } finally { if (generation.current === revision) setBusy(null) }
   }
@@ -145,7 +208,9 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0 }: {
   const introductory = history.length === 0 && !proposal && !result && !busy
   return <KeyboardAvoidingView style={local.page} behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     keyboardVerticalOffset={keyboardOffset + insets.top + 56}>
-    <ScrollView style={local.scroll} contentContainerStyle={[local.timeline, introductory && { flexGrow: 1 }]}
+    <ScrollView ref={timeline} testID="ai-search-timeline" style={local.scroll} contentContainerStyle={[local.timeline, introductory && { flexGrow: 1 }]}
+      onLayout={event => { timelineSize.current.viewport = event.nativeEvent.layout.height; scrollPendingTimeline() }}
+      onContentSizeChange={(_width, height) => { timelineSize.current.content = height; scrollPendingTimeline() }}
       keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
       {introductory ? <View style={local.intro}>
         <View style={local.brandMark}><Text style={local.brandLetter}>G</Text></View>
@@ -155,27 +220,38 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0 }: {
       </View> : null}
       {history.map((item, index) => item.role === 'user'
         ? <View key={index} style={local.userBubble}><Text selectable style={styles.body}>{item.text}</Text></View>
-        : <View key={index} style={local.assistant}><View style={local.assistantName}><Text style={local.miniMark}>G</Text><Text style={local.name}>GovBiz AI</Text></View>
+        : <View key={index === history.length - 1 ? `answer-${index}-${timelineVersions.answer}` : index} style={local.assistant}
+          testID={index === history.length - 1 ? 'ai-search-latest-answer' : undefined}
+          onLayout={index === history.length - 1 ? event => recordTimelineTarget('answer', timelineVersions.answer, event) : undefined}>
+          <View style={local.assistantName}><Text style={local.miniMark}>G</Text><Text style={local.name}>GovBiz AI</Text></View>
           <Text selectable style={local.answer}>{item.text}</Text></View>)}
-      {busy === 'interpret' && <View style={local.userBubble}><Text style={styles.body}>{message}</Text></View>}
-      {busy && <View accessibilityLiveRegion="polite" style={local.waiting}><ActivityIndicator color={colors.primary} />
+      {busy === 'interpret' && <View key={`message-${timelineVersions.message}`} testID="ai-search-pending-message" style={local.userBubble}
+        onLayout={event => recordTimelineTarget('message', timelineVersions.message, event)}><Text style={styles.body}>{message}</Text></View>}
+      {busy && <View key={`waiting-${timelineVersions.waiting}`} testID="ai-search-waiting" accessibilityLiveRegion="polite" style={local.waiting}
+        onLayout={event => recordTimelineTarget('waiting', timelineVersions.waiting, event)}><ActivityIndicator color={colors.primary} />
         <Text style={styles.body}>{busy === 'interpret' ? '검색 조건을 정리하는 중이에요.' : busy === 'restore' ? '로그인 전 검색 결과를 불러오는 중이에요.' : '공고를 찾는 중이에요.'}</Text></View>}
-      {proposal?.status === 'READY' && <>
+      {proposal?.status === 'READY' && <View key={`proposal-${timelineVersions.proposal}`} testID="ai-search-proposal" style={local.contentGroup}
+        onLayout={event => recordTimelineTarget('proposal', timelineVersions.proposal, event)}>
         {message.trim() && <Notice>입력한 내용을 먼저 AI에게 보내 조건을 갱신해 주세요.</Notice>}
         <SearchConditionCard context={proposal.proposedContext} busy={Boolean(busy)} disabled={Boolean(busy) || Boolean(message.trim())}
           onConfirm={() => void search()} onEdit={() => { setMessage(proposal.proposedContext.query ?? ''); composerInput.current?.focus() }} />
-      </>}
-      {error && <Notice error>{error}</Notice>}
-      {sessionNotice && <><Notice error>{sessionNotice}</Notice><Button label="다시 로그인" onPress={() => onLogin({ direct: true })} /></>}
-      {restoreFailure === 'unavailable' && token && <Button label="검색 결과 다시 불러오기" disabled={Boolean(busy)}
-        onPress={() => { if (retryRestore.current) void restore(retryRestore.current, token) }} />}
-      {restoreFailure === 'expired' && <Button label="같은 조건으로 다시 검색" onPress={() => {
-        const selected = retryRestore.current
-        if (!selected) return
-        setProposal({ status: 'READY', proposedContext: selected.context, clarificationQuestion: null, changedFields: [] })
-        setMessage(''); setError(null); setRestoreFailure(null); retryRestore.current = null
-      }} />}
-      {result && <>
+      </View>}
+      {(error || sessionNotice || restoreFailure) && <View key={`notice-${timelineVersions.notice}`} testID="ai-search-notice" style={local.contentGroup}
+        onLayout={event => recordTimelineTarget('notice', timelineVersions.notice, event)}>
+        {error && <Notice error>{error}</Notice>}
+        {sessionNotice && <><Notice error>{sessionNotice}</Notice><Button label="다시 로그인" onPress={() => onLogin({ direct: true })} /></>}
+        {restoreFailure === 'unavailable' && token && <Button label="검색 결과 다시 불러오기" disabled={Boolean(busy)}
+          onPress={() => { if (retryRestore.current) void restore(retryRestore.current, token) }} />}
+        {restoreFailure === 'expired' && <Button label="같은 조건으로 다시 검색" onPress={() => {
+          const selected = retryRestore.current
+          if (!selected) return
+          setProposal({ status: 'READY', proposedContext: selected.context, clarificationQuestion: null, changedFields: [] })
+          setMessage(''); setError(null); setRestoreFailure(null); retryRestore.current = null
+          requestTimelineScroll('proposal')
+        }} />}
+      </View>}
+      {result && <View key={`results-${timelineVersions.results}`} testID="ai-search-results" style={local.contentGroup}
+        onLayout={event => recordTimelineTarget('results', timelineVersions.results, event)}>
         <View style={styles.row}><Text style={styles.heading}>추천 공고</Text><Text style={styles.muted}>{result.totalCount}건</Text></View>
         {result.totalCount === 0 && <Notice>조건에 맞는 공고가 없습니다. 필요한 지원이나 회사 조건을 바꿔 보세요.</Notice>}
         {result.programs.map(program => <SearchProgramCard key={JSON.stringify([program.sourceCode, program.id])} program={program} onOpen={onOpenProgram} />)}
@@ -190,7 +266,7 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0 }: {
             <View style={local.lockLine} /><Text style={styles.muted}>로그인 후 확인할 수 있는 지원사업</Text>
           </View>
         </View>}
-      </>}
+      </View>}
       {(history.length > 0 || result) && <Button label="새 대화" variant="ghost" onPress={() => {
         cancel(); pendingRestore.current = null; retryRestore.current = null; setRestoreFailure(null); setSessionNotice(null)
         setHistory([]); setContext(emptyContext); setProposal(null); setClarification(null); setResult(null); setError(null); setMessage('')
@@ -217,6 +293,7 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0 }: {
 const local = StyleSheet.create({
   page: { flex: 1, backgroundColor: colors.surface }, scroll: { flex: 1 },
   timeline: { padding: 16, paddingBottom: 20, gap: 16, width: '100%', maxWidth: 720, alignSelf: 'center' },
+  contentGroup: { gap: 16 },
   intro: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingVertical: 32 },
   brandMark: { width: 54, height: 54, borderRadius: 17, backgroundColor: colors.soft, alignItems: 'center', justifyContent: 'center', marginBottom: 18 },
   brandLetter: { color: colors.primary, fontSize: 30, fontWeight: '700' },

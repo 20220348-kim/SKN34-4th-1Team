@@ -28,7 +28,7 @@ export function SearchScreen({ mode, onModeChange, onOpenProgram, onLogin }: {
       testID={`search-panel-${value}`} accessibilityLabel={label}
       accessibilityElementsHidden={mode !== value} importantForAccessibility={mode === value ? 'auto' : 'no-hide-descendants'}
       pointerEvents={mode === value ? 'auto' : 'none'} style={[local.panel, mode !== value && local.hidden]}>
-      {value === 'ai' ? <ChatScreen onOpenProgram={onOpenProgram} onLogin={onLogin} keyboardOffset={controlHeight} />
+      {value === 'ai' ? <ChatScreen onOpenProgram={onOpenProgram} onLogin={onLogin} keyboardOffset={controlHeight} active={mode === 'ai'} />
         : <CatalogScreen onOpenProgram={onOpenProgram} keyboardOffset={controlHeight} />}
     </View>)}
   </View>
