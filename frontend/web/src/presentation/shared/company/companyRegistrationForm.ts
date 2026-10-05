@@ -1,6 +1,7 @@
+import { companyRegistrationMessages } from '@govbiz/shared/domain/entities/CompanyRegistration'
+
 import type { Account } from '../../../domain/entities/Account'
 import {
-  type BusinessLookup,
   type BusinessStatusCode,
   type Company,
   type CompanyProfileInput,
@@ -13,6 +14,7 @@ import type { RegisterCompanyUseCase } from '../../../domain/usecases/CompanyUse
 /**
  * 기업 등록 폼의 값·검증·문구입니다. 프로필의 등록·수정 폼과 온보딩 2단계가 같은 규칙을 씁니다.
  * 상호·사업자 상태는 조회 결과라 여기 없고, 담당자가 적는 네 항목만 다룹니다.
+ * 등록 가능 여부 규칙과 사업자 조회·등록 문구는 모바일과 함께 쓰는 shared `CompanyRegistration`에 있습니다.
  */
 export type CompanyFormValues = {
   region: string
@@ -29,14 +31,9 @@ export type CompanyFormErrors = Partial<Record<CompanyFormField | 'form', string
 export const emptyCompanyForm: CompanyFormValues = { region: '', industry: '', foundedYear: '', homepageUrl: '' }
 
 export const companyFormMessages = {
-  businessNumberInvalid: '사업자등록번호는 숫자 10자리로 입력해 주세요.',
+  ...companyRegistrationMessages,
   businessNumberHint: '숫자만 입력해도 하이픈이 자동으로 붙습니다. 10자리를 채우면 조회할 수 있습니다.',
-  businessNotFound: '국세청에 등록되지 않은 번호예요. 숫자 10자리를 다시 확인해 주세요.',
-  businessClosed: (status: string | null) =>
-    status === null ? '폐업한 사업자는 등록할 수 없어요.' : `${status} 상태의 사업자는 등록할 수 없어요.`,
   lookupUnavailable: '지금은 조회가 되지 않아요. 잠시 후 다시 시도해 주세요.',
-  lookupRequired: '사업자등록번호를 먼저 조회해 주세요.',
-  businessNumberTaken: '이 사업자는 다른 계정에 등록돼 있어요. 담당자가 바뀌었다면 알려 주세요.',
   alreadyRegistered: '이 계정에는 이미 기업이 등록되어 있습니다. 화면을 새로고침해 주세요.',
   regionRequired: '소재지를 선택해 주세요.',
   industryRequired: '업종을 선택해 주세요.',
@@ -48,13 +45,6 @@ export const companyFormMessages = {
   homepagePreview: (url: string) => `${url} 로 저장됩니다.`,
   saveFailed: '저장하지 못했습니다. 잠시 후 다시 시도해 주세요.',
 } as const
-
-/** 조회 결과 카드에 붙는 상태별 안내입니다. 내부 코드 대신 무엇을 할 수 있는지로 말합니다. */
-export const businessStatusNotes: Record<BusinessStatusCode, string> = {
-  '01': '국세청 등록 정보로 확인했어요. 상호는 바꿀 수 없고, 아래 정보만 적어 주세요.',
-  '02': '등록은 할 수 있어요. 파트너 모집글과 제안은 사업을 다시 시작한 뒤 쓸 수 있어요.',
-  '03': '폐업한 사업자는 등록할 수 없어요. 다른 번호를 조회하거나 개인 회원으로 이용해 주세요.',
-}
 
 /** 상태 배지 색입니다. 계속은 녹색, 휴업은 주의, 폐업은 위험. */
 export function businessStatusTone(code: BusinessStatusCode): 'ok' | 'warn' | 'danger' {
@@ -130,9 +120,4 @@ export function accountWithCompany(account: Account, company: Company): Account 
     tier: account.tier === 'ADMIN' ? 'ADMIN' : 'COMPANY',
     company: { companyName: company.companyName, businessNumber: company.businessNumber, businessStatusCode: company.businessStatusCode },
   }
-}
-
-/** 조회한 사업자를 등록할 수 있는지입니다. 계속·휴업은 되고 폐업은 안 됩니다. */
-export function canRegisterBusiness(business: BusinessLookup): boolean {
-  return business.canRegister
 }

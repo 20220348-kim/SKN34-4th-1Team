@@ -1,10 +1,20 @@
 import { fireEvent, render, screen } from '@testing-library/react-native'
 import { router } from 'expo-router'
-import { ProgramPreparationSection, ReviewRow } from './PreparationRows'
+import { PreparationRow, ProgramPreparationSection, ReviewRow } from './PreparationRows'
+import { preparation } from '../test/preparationFixtures'
 import { mobileReview, reviewRunFixture } from '../test/reviewFixtures'
 
 jest.mock('expo-router', () => ({ router: { push: jest.fn() } }))
 jest.mock('./usePreparationWorkspace', () => ({ usePreparationWorkspace: () => ({ loading: false, preparations: [], reviews: [], preparationError: null, reviewError: null, refresh: jest.fn() }) }))
+
+test('a preparation row opens its native editor, or the generated documents once a current document exists', () => {
+  const view = render(<PreparationRow item={preparation} />)
+  fireEvent.press(screen.getByLabelText('사업계획서 · 일반 신청 열기'))
+  expect(router.push).toHaveBeenLastCalledWith({ pathname: '/all/preparation/[id]', params: { id: '9' } })
+  view.rerender(<PreparationRow item={{ ...preparation, hasCurrentDocument: true }} />)
+  fireEvent.press(screen.getByLabelText('사업계획서 · 일반 신청 열기'))
+  expect(router.push).toHaveBeenLastCalledWith({ pathname: '/all/preparation/[id]/documents', params: { id: '9' } })
+})
 
 test('current execution summaries open the native owned run and format UTC timestamps in Seoul', () => {
   const run = { ...reviewRunFixture('SUCCEEDED'), startedAt: '2026-09-30T15:30:00Z' }

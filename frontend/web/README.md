@@ -335,7 +335,8 @@ Core의 도구 에이전트(`ASSISTANT_AGENT_ENABLED`)가 켜져 있으면 같�
 홈페이지(선택)만 입력합니다. 조회 결과 카드는 상태별로 안내가 다릅니다. 계속사업자는 그대로 등록, 휴업자는 등록은 되지만 파트너
 모집글·제안은 잠긴다고 알리고, 폐업자는 등록할 수 없다고 알리며 [기업 등록] 버튼을 잠급니다. 등록에 성공하면 세션 계정을
 `tier=COMPANY`로 갱신해 사이드바가 상호를 보여 줍니다. 사업자번호 입력·조회 훅(`useBusinessLookup`)·조회 결과 카드·기본정보 네 칸과
-검증·문구(`companyRegistrationForm`)는 온보딩 2단계와 함께 쓰려고 `presentation/shared/company`에 둡니다. 협업·파트너
+검증·문구(`companyRegistrationForm`)는 온보딩 2단계와 함께 쓰려고 `presentation/shared/company`에 둡니다. 등록 가능 여부 규칙과
+사업자 조회·등록 문구·상태별 안내는 모바일과 함께 쓰려고 shared `domain/entities/CompanyRegistration`에 둡니다. 협업·파트너
 설정은 `/api/v1/me/company/partner-profile`에 저장되고, 계정과 알림 카드의 비밀번호 변경·계정 삭제는 확인 모달로 처리합니다. 소셜 로그인으로만 가입한 계정(`hasPassword=false`)은
 비밀번호 항목을 숨기고 계정 삭제에 비밀번호를 묻지 않습니다.
 알림 스위치는 발송 기능이 없어 아직 화면 상태로만 켜고 끕니다.

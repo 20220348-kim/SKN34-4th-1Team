@@ -2,7 +2,6 @@ import { applicationPreparationPageSchema, applicationPreparationSchema } from '
 import { reviewPageSchema, reviewSchema, runPageSchema } from '@govbiz/shared/data/models/CombinationReviewDto'
 import type { ApplicationPreparationSummary, ApplicationProgressStage } from '@govbiz/shared/domain/entities/ApplicationPreparation'
 import type { CombinationReview, RunSummary } from '@govbiz/shared/domain/entities/CombinationReview'
-import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
 import { apiRequest } from './client'
 
 export type PreparationReview = { review: CombinationReview; latestRun: RunSummary | null }
@@ -54,18 +53,4 @@ export async function updatePreparationProgress(item: ApplicationPreparationSumm
     throw new Error('진행 단계 저장 응답이 요청과 다릅니다.')
   }
   return result
-}
-
-export function getPreparationWebUrl(path: string, identity?: SupportProgramIdentity) {
-  if (!/^\/app\/(application-preparations|combination-reviews)\/(new|[1-9]\d*(\/documents|\/runs\/[1-9]\d*)?)$/.test(path)) throw new Error('지원하지 않는 준비 화면입니다.')
-  const configured = process.env.EXPO_PUBLIC_WEB_BASE_URL?.trim()
-  if (!configured) throw new Error('웹 주소가 설정되지 않았습니다. 앱의 공개 웹 주소 설정을 확인해 주세요.')
-  let origin: URL
-  try { origin = new URL(configured) } catch { throw new Error('웹 주소 설정을 확인해 주세요.') }
-  const localHost = /^(localhost|127\.0\.0\.1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)$/.test(origin.hostname)
-  if (origin.username || origin.password || origin.search || origin.hash || origin.pathname !== '/'
-    || (origin.protocol !== 'https:' && !(__DEV__ && origin.protocol === 'http:' && localHost))) throw new Error('웹 주소는 HTTPS origin이어야 합니다. 개발 중에는 로컬 HTTP 주소를 사용할 수 있습니다.')
-  const url = new URL(path, origin.origin)
-  if (identity) { url.searchParams.set('sourceCode', identity.sourceCode); url.searchParams.set('sourceProgramId', identity.sourceProgramId) }
-  return url.href
 }

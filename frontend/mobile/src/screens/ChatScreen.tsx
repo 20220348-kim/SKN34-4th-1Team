@@ -300,7 +300,7 @@ const local = StyleSheet.create({
   introTitle: { color: colors.text, fontSize: 26, fontWeight: '700', lineHeight: 38, textAlign: 'center' },
   introDescription: { color: colors.secondaryText, fontSize: 15, lineHeight: 25, textAlign: 'center', marginTop: 14 },
   guestHint: { backgroundColor: colors.soft, borderRadius: 14, padding: 14 }, hintText: { color: colors.primaryText, fontSize: 13, lineHeight: 22 },
-  userBubble: { alignSelf: 'flex-end', maxWidth: '86%', backgroundColor: '#F1F3F2', borderRadius: 22, paddingHorizontal: 16, paddingVertical: 12 },
+  userBubble: { alignSelf: 'flex-end', maxWidth: '86%', backgroundColor: colors.divider, borderRadius: 22, paddingHorizontal: 16, paddingVertical: 12 },
   assistant: { gap: 10 }, assistantName: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   miniMark: { overflow: 'hidden', backgroundColor: colors.primary, color: colors.surface, fontSize: 12, fontWeight: '700', paddingHorizontal: 6, paddingVertical: 3, borderRadius: 6 },
   name: { color: colors.text, fontSize: 14, fontWeight: '600' }, answer: { color: colors.text, fontSize: 15, lineHeight: 26 },

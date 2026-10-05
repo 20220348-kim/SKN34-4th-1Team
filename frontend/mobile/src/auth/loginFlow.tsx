@@ -101,7 +101,8 @@ const local = StyleSheet.create({
   signupRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center', gap: 6 },
   signupLink: { minHeight: 44, justifyContent: 'center' }, signupText: { color: colors.primaryText, fontSize: 14, fontWeight: '600' },
   grab: { alignSelf: 'center', width: 40, height: 4, borderRadius: 99, backgroundColor: colors.fieldBorder },
-  overlay: { flex: 1, backgroundColor: 'rgba(25,31,40,0.45)', justifyContent: 'flex-end' },
+  // 본문 글자색(colors.text)을 45% 불투명도(#…73)로 덮습니다.
+  overlay: { flex: 1, backgroundColor: `${colors.text}73`, justifyContent: 'flex-end' },
   prompt: { backgroundColor: colors.surface, borderTopLeftRadius: 24, borderTopRightRadius: 24, padding: 24, gap: 14 },
   title: { color: colors.text, fontSize: 22, lineHeight: 31, fontWeight: '700' },
   description: { color: colors.secondaryText, fontSize: 15, lineHeight: 24 },

@@ -1,11 +1,13 @@
-import { regionNames } from '../../../../domain/entities/Region'
-import { supportProgramCategories } from '../../../../domain/entities/SupportProgramCategory'
+import { regionNames } from './Region'
+import { supportProgramCategories } from './SupportProgramCategory'
 
-// Core의 지역 정규값(domain/entities/Region)과 현재 제공처의 분야명을 사용합니다. 공고 유무와 무관하게 먼저 표시합니다.
+// 웹과 모바일의 공고 필터가 같은 기본 선택지를 씁니다. 공고 유무와 무관하게 먼저 표시합니다.
+// 지역은 Core의 지역 정규값(Region), 분야는 현재 제공처의 분야명을 사용합니다.
 export const defaultCatalogRegions: readonly string[] = regionNames
 
 export const defaultCatalogCategories: readonly string[] = supportProgramCategories
 
+// K-Startup을 고르면 보이는 추가 조건입니다. 제공처의 공식 분류 이름을 그대로 씁니다.
 export const defaultCatalogStartupStages: readonly string[] = [
   '예비창업자', '1년미만', '2년미만', '3년미만', '5년미만', '7년미만', '10년미만',
 ]

@@ -5,6 +5,7 @@ import {
   companyProfileLimits, formatBusinessNumber, formatBusinessNumberInput, isValidBusinessNumber,
   normalizeBusinessNumber, normalizeHomepageUrl, isValidHomepageUrl,
 } from '@govbiz/shared/domain/entities/Company'
+import { businessStatusNotes, canRegisterBusiness, companyRegistrationMessages } from '@govbiz/shared/domain/entities/CompanyRegistration'
 import { ApiError, errorMessage } from '../api/client'
 import { getCompany, lookupCompanyBusiness, saveCompanyProfile } from '../api/company'
 import { useAuth } from '../auth/session'
@@ -70,17 +71,20 @@ export function CompanyScreen({ onLogin }: { onLogin?(): void } = {}) {
   }
 
   const lookupBusiness = () => run(async (signal) => {
-    if (!isValidBusinessNumber(businessNumber)) throw new Error('사업자등록번호 10자리를 입력해 주세요.')
+    if (!isValidBusinessNumber(businessNumber)) throw new Error(companyRegistrationMessages.businessNumberInvalid)
     setLookup(null)
     const result = await lookupCompanyBusiness(token!, normalizeBusinessNumber(businessNumber), signal)
     if (signal.aborted) return
     setLookup(result)
-    if (!result.isActive) setError('현재 영업 중인 사업자만 등록할 수 있습니다.')
+    if (!canRegisterBusiness(result)) setError(companyRegistrationMessages.businessClosed(result.businessStatus))
   })
 
   const saveCompany = () => run(async (signal) => {
     const company = state.company
-    if (!company && (!lookup?.isActive || lookup.businessNumber !== normalizeBusinessNumber(businessNumber))) throw new Error('사업자등록번호 조회를 먼저 완료해 주세요.')
+    if (!company) {
+      if (!lookup || lookup.businessNumber !== normalizeBusinessNumber(businessNumber)) throw new Error(companyRegistrationMessages.lookupRequired)
+      if (!canRegisterBusiness(lookup)) throw new Error(companyRegistrationMessages.businessClosed(lookup.businessStatus))
+    }
     if (!companyRegions.some((value) => value === region)) throw new Error('기업 소재지를 선택해 주세요.')
     if (!companyIndustries.some((value) => value === industry)) throw new Error('기업 업종을 선택해 주세요.')
     const year = Number(foundedYear)
@@ -107,7 +111,8 @@ export function CompanyScreen({ onLogin }: { onLogin?(): void } = {}) {
     {state.company ? <Card><Text style={styles.heading}>{state.company.companyName}</Text><Text style={styles.body}>{formatBusinessNumber(state.company.businessNumber)} · {state.company.businessStatus}</Text></Card> : <>
       <Field label="사업자등록번호" value={businessNumber} onChangeText={(value) => { setBusinessNumber(formatBusinessNumberInput(value)); setLookup(null); setError(null) }} keyboardType="number-pad" maxLength={12} editable={!busy} />
       <Button label="사업자 정보 조회" onPress={() => void lookupBusiness()} busy={busy} variant="secondary" />
-      {lookup && <Card><Text style={styles.heading}>{lookup.companyName}</Text><Text style={styles.body}>{lookup.businessStatus}</Text></Card>}
+      {lookup && <Card><Text style={styles.heading}>{lookup.companyName}</Text><Text style={styles.body}>{lookup.businessStatus}</Text>
+        {canRegisterBusiness(lookup) && <Text style={styles.muted}>{businessStatusNotes[lookup.businessStatusCode]}</Text>}</Card>}
     </>}
     <Text style={styles.label}>소재지</Text>
     <Button label={region || '소재지를 선택해 주세요'} variant="secondary" disabled={busy} onPress={() => setSelection(selection === 'region' ? null : 'region')} />
@@ -119,7 +124,8 @@ export function CompanyScreen({ onLogin }: { onLogin?(): void } = {}) {
     <Field label="홈페이지 (선택)" value={homepage} onChangeText={setHomepage} keyboardType="url" autoCapitalize="none" autoCorrect={false} maxLength={companyProfileLimits.homepageMaxLength} editable={!busy} placeholder="https://example.com" />
     {error && <Notice error>{error}</Notice>}
     {notice && <Notice>{notice}</Notice>}
-    <Button label={state.company ? '기업 정보 저장' : '기업 등록'} onPress={() => void saveCompany()} busy={busy} disabled={!state.company && !lookup?.isActive} />
+    <Button label={state.company ? '기업 정보 저장' : '기업 등록'} onPress={() => void saveCompany()} busy={busy}
+      disabled={!state.company && !(lookup && canRegisterBusiness(lookup))} />
   </Page>
 }
 
@@ -128,8 +134,11 @@ function Choices({ values, selected, onSelect }: { values: readonly string[]; se
 }
 
 function companyError(error: ApiError): string {
+  if (error.code === 'BUSINESS_NOT_FOUND') return companyRegistrationMessages.businessNotFound
+  if (error.code === 'BUSINESS_NUMBER_ALREADY_REGISTERED') return companyRegistrationMessages.businessNumberTaken
+  if (error.code === 'BUSINESS_NOT_ACTIVE') return companyRegistrationMessages.businessClosed(null)
   if (error.status === 409) return '이미 등록된 기업 정보가 있습니다. 프로필을 다시 불러와 주세요.'
-  if (error.status === 422) return '사업자 정보 또는 입력값을 확인해 주세요. 영업 중인 사업자만 등록할 수 있습니다.'
+  if (error.status === 422) return '사업자 정보 또는 입력값을 확인해 주세요.'
   if (error.status === 503) return '사업자 정보 조회 서비스를 이용할 수 없습니다. 잠시 뒤 다시 시도해 주세요.'
   return error.message
 }

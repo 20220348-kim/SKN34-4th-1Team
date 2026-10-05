@@ -1,7 +1,8 @@
+import { businessStatusNotes } from '@govbiz/shared/domain/entities/CompanyRegistration'
 import { type BusinessLookup, formatBusinessNumber } from '../../../domain/entities/Company'
 import { workspaceTagClassName } from '../workspace/WorkspacePage.styles'
 import { companyFormStyles } from './CompanyForm.styles'
-import { businessStatusNotes, businessStatusTone } from './companyRegistrationForm'
+import { businessStatusTone } from './companyRegistrationForm'
 
 const iconPaths = {
   ok: 'm5 12 5 5L20 7',

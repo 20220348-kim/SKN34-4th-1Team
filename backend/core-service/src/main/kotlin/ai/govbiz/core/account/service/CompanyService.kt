@@ -20,7 +20,7 @@ import org.springframework.dao.DuplicateKeyException
 import org.springframework.stereotype.Service
 
 /**
- * 회원의 기업 등록·조회·수정입니다. 사업자등록번호는 [BusinessLookupService]의 사업자등록번호 조회로 확인하고 계속사업자만 등록합니다.
+ * 회원의 기업 등록·조회·수정입니다. 사업자등록번호는 [BusinessLookupService]의 사업자등록번호 조회로 확인하고 계속·휴업 사업자를 등록하며 폐업자는 거절합니다.
  * 소재지·업종·설립연도·홈페이지는 조회 결과에 없으므로 담당자 입력을 그대로 저장합니다.
  */
 @Service

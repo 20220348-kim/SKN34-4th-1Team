@@ -1,10 +1,9 @@
 import { apiRequest } from './client'
-import { getPreparationWebUrl, listPreparations, listPreparationReviews, updatePreparationProgress } from './preparation'
+import { listPreparations, listPreparationReviews, updatePreparationProgress } from './preparation'
 import { preparation, preparationDetail, review, run } from '../test/preparationFixtures'
 
 jest.mock('./client', () => ({ apiRequest: jest.fn() }))
-beforeEach(() => { jest.mocked(apiRequest).mockReset(); delete process.env.EXPO_PUBLIC_WEB_BASE_URL })
-afterEach(() => { delete process.env.EXPO_PUBLIC_WEB_BASE_URL })
+beforeEach(() => { jest.mocked(apiRequest).mockReset() })
 
 test('all preparation pages retain bearer authentication and composite program identities', async () => {
   jest.mocked(apiRequest).mockResolvedValueOnce({ items: [preparation], nextBeforeId: 9 })
@@ -32,11 +31,4 @@ test('progress updates use the stored revision and reject a mismatched response'
   }))
   jest.mocked(apiRequest).mockResolvedValue({ ...preparationDetail, id: 7, progressStage: 'APPLIED', progressRevision: 2 })
   await expect(updatePreparationProgress(preparation, 'APPLIED', 'owner')).rejects.toThrow('응답이 요청과 다릅니다')
-})
-test('deferred web screens require a configured origin and preserve a preparation source identity', () => {
-  expect(() => getPreparationWebUrl('/app/application-preparations/new')).toThrow('웹 주소가 설정되지')
-  process.env.EXPO_PUBLIC_WEB_BASE_URL = 'https://example.test/'
-  const url = new URL(getPreparationWebUrl('/app/application-preparations/new', { sourceCode: 'BIZINFO', sourceProgramId: 'P/123' }))
-  expect(url.searchParams.get('sourceProgramId')).toBe('P/123')
-  expect(() => getPreparationWebUrl('/unrelated')).toThrow('지원하지 않는')
 })
