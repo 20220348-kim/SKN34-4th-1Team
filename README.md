@@ -1,9 +1,6 @@
 # 🏛️ GovBiz
 
-**LLM 기반 정부지원사업 탐색·신청 관리 플랫폼**
-
-공고를 찾고, 공식 근거를 확인하고, 신청을 준비하는 과정을 웹·모바일에서 연결합니다.
-관리자는 LLMOps 화면에서 AI 답변을 평가하고 사람이 검토한 결과를 다음 비교 기준으로 관리합니다.
+**Ai Agent 정부지원 사업 탐색·신청 관리 플랫폼**
 
 <a id="프로젝트-개요"></a>
 
@@ -25,13 +22,6 @@ GovBiz는 여러 기관에 흩어진 정부지원사업 공고를 모아 기업�
 | 공고 탐색 이후 문서·일정·협업을 따로 관리해야 함 | 관심함·달력·신청 문서·진행 관리·협업 기능을 연결 |
 | 모델이나 프롬프트 변경의 영향을 확인하기 어려움 | 같은 평가 자료로 결과를 비교하고 검토·사용량·실패 이력을 보존 |
 
-### 4차 프로젝트에서 확장한 부분
-
-- **웹과 모바일:** 같은 계정·업무 API와 공통 TypeScript 계약을 사용하는 React 웹·Expo 앱 구성
-- **서비스 분리:** Core 사용자 업무, Catalog 공고 수집, AI 처리, Django Ops 평가 운영의 책임 분리
-- **LLMOps:** 평가 실행부터 보고서·사람 검토·비교 기준·예산·취소·복구까지 관리자 기능 연결
-- **개발·검증 환경:** 모노레포, 통합 Compose, 서비스별 CI, 로컬 Kubernetes 실행·이미지 검증 경로 정리
-
 <a id="팀-소개"></a>
 
 ## 2. 팀 소개
@@ -42,7 +32,7 @@ GovBiz는 여러 기관에 흩어진 정부지원사업 공고를 모아 기업�
   <tr>
     <td align="center">
       <img src="https://github.com/ilil1.png" alt="김건우 GitHub 프로필" width="100" height="100"/><br>
-      <b>김건우</b><br>
+      <b>김건우(PM)</b><br>
       <a href="https://github.com/ilil1">
         <img src="https://img.shields.io/badge/GitHub-ilil1-181717?style=flat&logo=github"/>
       </a>
@@ -192,6 +182,21 @@ flowchart LR
 
 서비스 사이의 인증과 자료 전달은 API로 연결합니다. 예를 들어 Ops는 Core에 관리자 세션을 확인하며,
 회원 DB를 복제하거나 비밀번호를 별도로 관리하지 않습니다.
+
+### 4차 프로젝트에서 확장한 부분
+
+- **웹과 모바일:** 같은 계정·업무 API와 공통 TypeScript 계약을 사용하는 React 웹·Expo 앱 구성
+- **서비스 분리:** Core 사용자 업무, Catalog 공고 수집, AI 처리, Django Ops 평가 운영의 책임 분리
+- **LLMOps:** 평가 실행부터 보고서·사람 검토·비교 기준·예산·취소·복구까지 관리자 기능 연결
+- **개발·검증 환경:** 모노레포, 통합 Compose, 서비스별 CI, 로컬 Kubernetes 실행·이미지 검증 경로 정리
+
+<a id="로컬-시작"></a>
+
+### 로컬 실행
+
+루트 `compose.yaml`이 Core·Catalog·AI·Ops와 웹·저장소를 연결합니다.
+웹·모바일은 같은 백엔드 API를 사용하며, 필요에 따라 프런트엔드를 별도 개발 서버로 실행할 수 있습니다.
+환경 파일 준비, 실행 명령, 접속 주소와 모바일 연결 방법은 [로컬 시작 가이드](docs/local-start.md)에 정리했습니다.
 
 <a id="데이터-준비"></a>
 
@@ -484,64 +489,14 @@ SKN34-4th-1Team/
 └─ compose.yaml              로컬 통합 개발 진입점
 ```
 
-<a id="로컬-시작"></a>
-
-## 11. 로컬 시작
-
-### 통합 Compose
-
-루트 `compose.yaml`이 Core·Catalog·AI·Ops와 웹·저장소를 연결합니다.
-`infrastructure/compose.yaml`만 단독 실행하는 방식은 기존 embedded 수집 호환 경로입니다.
-처음 구성할 때는 [통합 개발 안내](docs/ops-monorepo-migration.md#로컬-개발-시작)를 따릅니다.
-
-| 환경 파일 | 용도 |
-|---|---|
-| `.env` | 웹·Core·Catalog·AI 설정. `OPENAI_API_KEY`, 서버 간 공유할 32자 이상 `CATALOG_INTERNAL_TOKEN`과 필요한 제공처·문서·메일 설정 |
-| `backend/ops-service/.env` | Ops DB·Django 전용 설정 |
-| `.env.compose` | 위 두 환경 파일의 위치와 Compose 프로젝트명 |
-
-각 예시 파일(`.env.example`, `backend/ops-service/.env.example`, `.env.compose.example`)을
-**해당 파일이 없을 때만** 복사하고 로컬 값을 입력합니다. 설정을 준비한 뒤 저장소 루트에서 실행합니다.
-
-```bash
-python3 infrastructure/scripts/check-compose.py
-docker compose --env-file .env.compose config --quiet
-docker compose --env-file .env.compose up -d --build
-```
-
-기본 웹 주소는 [localhost:5173](http://localhost:5173), Core API는 `http://localhost:8080`입니다.
-공고 자동 수집·색인·AI 기능은 활성화한 설정에 따라 외부 API를 호출합니다.
-기존 데이터가 있으면 먼저 [Catalog 전환](docs/catalog-service-extraction.md)과
-[기존 볼륨 연결](docs/ops-monorepo-migration.md#기존-컨테이너데이터-이전)을 확인합니다.
-
-### 웹·모바일 개발
-
-Node **24.x**·pnpm **11.22.x**를 사용하며 의존성은 루트에서 한 번 설치합니다.
-백엔드를 실행한 뒤 필요한 앱을 선택합니다. Compose의 웹을 실행 중이라면 호스트 웹과 포트가 겹치지 않게 구성합니다.
-
-```bash
-pnpm install --frozen-lockfile
-pnpm dev:web
-# 모바일을 개발할 때 별도 터미널에서 실행
-pnpm dev:mobile
-```
-
-모바일은 `frontend/mobile/.env.example`에 따라 `EXPO_PUBLIC_API_BASE_URL`을 설정합니다.
-iOS 시뮬레이터의 `localhost:8080`, Android 에뮬레이터의 `10.0.2.2:8080`, 실기기의 PC LAN 주소를 구분합니다.
-푸시·소셜 로그인은 플랫폼 인증과 네이티브 빌드가 추가로 필요합니다.
-[모바일 실행 안내](frontend/mobile/README.md) · [공통 코드 관리](docs/mobile-monorepo.md)
-
-Core·Catalog를 직접 개발할 때는 JDK 21, AI·Ops는 Python 3.12를 사용합니다.
-Kubernetes 도구의 Python 3.13 환경은 애플리케이션 Python 환경과 별도입니다.
-
 <a id="문서-안내"></a>
 
-## 12. 문서 안내
+## 11. 문서 안내
 
 | 보고 싶은 내용 | 문서 |
 |---|---|
 | 전체 문서·이전 프로젝트 결과 | [문서 목록](docs/README.md) · [기술 README](docs/technical-readme.md) · [3차 프로젝트 README](docs/third-project/README.md) |
-| 실행·데이터 이전 | [통합 Compose](docs/ops-monorepo-migration.md) · [Catalog 분리](docs/catalog-service-extraction.md) · [모노레포 통합 배경](docs/repository-integration.md) |
+| 실행·데이터 이전 | [로컬 시작](docs/local-start.md) · [통합 Compose](docs/ops-monorepo-migration.md) · [Catalog 분리](docs/catalog-service-extraction.md) · [모노레포 통합 배경](docs/repository-integration.md) |
 | 서비스 설계·호출 흐름 | [계층·책임](docs/architecture/README.md) · [호출·데이터 흐름](docs/architecture.md) · [기술·저장소 상세](docs/technology.md) |
 | 웹·모바일 | [웹](frontend/web/README.md) · [모바일](frontend/mobile/README.md) · [공통 코드](docs/mobile-monorepo.md) · [앱 푸시](docs/mobile-report-push.md) |
 | 백엔드 | [Core](backend/core-service/README.md) · [Catalog](backend/catalog-service/README.md) · [AI](backend/ai-service/README.md) · [Ops](backend/ops-service/README.md) |
