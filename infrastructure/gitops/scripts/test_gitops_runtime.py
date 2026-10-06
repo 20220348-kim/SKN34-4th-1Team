@@ -1169,10 +1169,14 @@ class RuntimePlanCliTests(unittest.TestCase):
                 "verified_release",
                 side_effect=ValueError("No complete verified publication"),
             ) as publication,
+            patch.object(
+                deployment, "publication_blocker", return_value={"status": "UNKNOWN"}
+            ) as diagnosis,
             redirect_stdout(output),
         ):
             self.assertEqual(deployment.main(), 1)
         check.assert_called_once_with(Path("fixture-state"), FORK, "/custom/helm")
+        self.assertEqual(diagnosis.called, publication.called)
         return json.loads(output.getvalue()), output.getvalue(), publication
 
     def test_local_conflicts_block_before_publication_queries(self):

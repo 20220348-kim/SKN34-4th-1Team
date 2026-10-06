@@ -246,6 +246,52 @@ def public_api(path):
         return json.load(response)
 
 
+def publication_blocker(fork, get=release_api):
+    """Explain a missing publication from current source checks; never authorize it."""
+    unknown = {
+        "status": "UNKNOWN",
+        "stage": "unknown",
+        "reason": "diagnostic_unavailable",
+        "advisoryOnly": True,
+    }
+    try:
+        sha = head(fork, fork.branch, get)
+        reason = blocked_reason(sha, fork, get)
+        if head(fork, fork.branch, get) != sha or reason == "source_not_current":
+            return {**unknown, "stage": "source", "reason": "source_changed"}
+        details = {}
+        if reason is None:
+            stage, code = "publication", "verified_publication_missing"
+        elif reason == "upstream_not_merged":
+            stage, code = "upstream", "upstream_not_merged"
+        else:
+            code, separator, workflow = reason.partition(":")
+            if (
+                separator != ":"
+                or workflow not in WORKFLOWS
+                or code
+                not in {
+                    "ci_run_missing",
+                    "ci_run_not_successful_or_untrusted",
+                    "ci_jobs_not_successful_or_incomplete",
+                    "ci_run_changed",
+                }
+            ):
+                return unknown
+            stage = "required_ci"
+            details["workflow"] = workflow
+        return {
+            "status": "BLOCKED",
+            "stage": stage,
+            "reason": code,
+            "observedSourceSha": sha,
+            "advisoryOnly": True,
+            **details,
+        }
+    except Exception:  # noqa: BLE001 - diagnostics must not expose API/subprocess data
+        return unknown
+
+
 def verified_release(
     root, fork, helm="helm", get=release_api, *, verify_public_manifests=False
 ):
@@ -411,6 +457,7 @@ def main():
         "clusterVerified": False,
         "layersDownloaded": False,
     }
+    fork = None
     try:
         root = Path(__file__).resolve().parents[3]
         fork = from_origin(root, branch=args.branch).require_personal_publish()
@@ -489,6 +536,12 @@ def main():
             "verification_failed",
         )
         report.update(reason=reason, errorType=type(error).__name__)
+        if fork is not None and reason in {
+            "publication_not_available",
+            "source_not_current",
+            "required_source_checks_not_verified",
+        }:
+            report["publicationBlocker"] = publication_blocker(fork)
         print(json.dumps(report, sort_keys=True))
         return 1
     print(json.dumps(report, sort_keys=True))

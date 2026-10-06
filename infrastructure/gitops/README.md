@@ -21,6 +21,8 @@ LLMOps 개발 순서는 [후속 개발 전략](../../docs/llmops-next-developmen
 `MSA_PROMOTION_ENABLED=false`를 유지합니다. GHCR `up`은 별도 배포 브랜치 없이
 [현재 발행 검증 경로](docs/image-promotion.md)로 초기화합니다. 새 Argo `gitops` 전환은 아직 연결하지 않았습니다.
 `plan-gitops`는 자동 동기화를 끈 검토용 구성을 출력하며, 개인 환경 호환성 확인이나 실제 배포를 수행하지 않습니다.
+공개 발행본이 없거나 소스·CI 검증에 막히면 `publicationBlocker`에 현재 기본 브랜치의 원본 병합·필수 CI·
+발행 단계 진단을 표시합니다. 진단 결과는 배포 승인이 아니며 기존 차단과 종료 코드 1을 유지합니다.
 `--state-dir ... --review-preservation`은 기존 환경변수·Ops sync의 Helm 재현 가능성을 임시 렌더링으로
 비교합니다. 설정값은 출력하지 않으며 전환 차단을 해제하지 않습니다. [검사 범위와 사용법](docs/image-promotion.md#현재-연결-설정을-helm으로-재현해-보기)을 확인하세요.
 `--state-dir`을 지정하면 먼저 개인 연동 설정·네 서비스의 Deployment·Service·연결된 Ops·sync 구성을 읽어 충돌을 차단합니다.
