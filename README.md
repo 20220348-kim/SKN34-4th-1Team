@@ -54,32 +54,9 @@ GovBiz는 여러 기관에 흩어진 정부지원사업 공고를 모아 기업�
 | 공고 탐색 이후 문서·일정·협업을 따로 관리해야 함 | 관심함·달력·신청 문서·진행 관리·협업 기능을 연결 |
 | 모델이나 프롬프트 변경의 영향을 확인하기 어려움 | 같은 평가 자료로 결과를 비교하고 검토·사용량·실패 이력을 보존 |
 
-<a id="기술-스택"></a>
-
-## 3. 기술 스택
-
-| 영역 | 적용 기술 |
-|---|---|
-| 구현 언어 | Kotlin, Python 3.12, TypeScript 6 |
-| 웹 프론트엔드 | React 19, Vite 8, Tailwind CSS 4, React Router, Redux Toolkit, Zod |
-| 모바일 | React Native, Expo, Expo Router |
-| 업무·수집 API | Spring Boot, JDK 21, MyBatis, Flyway |
-| AI API·Agent | FastAPI, OpenAI, LangChain, LangGraph, OpenAI Agents SDK |
-| 평가 운영 API | Django, Django REST Framework |
-| 데이터 저장·검색 | MySQL 8.4, Elasticsearch(Nori/BM25), Qdrant |
-| 캐시·비동기 처리 | Redis, RabbitMQ |
-| LLMOps | Langfuse, Prefect, Pandera, Evidently, pandas |
-| 로컬 실행·컨테이너 | Docker Compose, Kubernetes(kind), Helm |
-| 검증·이미지 관리 | GitHub Actions, GitHub Container Registry(GHCR) |
-| 모노레포·공통 계약 | pnpm workspace, 웹·앱 공통 TypeScript 계약 |
-
-버전 기준은 [루트 설정](package.json), [웹](frontend/web/package.json), [모바일](frontend/mobile/package.json),
-[AI](backend/ai-service/pyproject.toml), [Ops](backend/ops-service/pyproject.toml)과 각 잠금 파일입니다.
-서비스별 역할은 아래 [시스템 아키텍처](#서비스-구성), 실제 배포 범위는 [평가·검증·배포](#검증배포-범위)에 정리했습니다.
-
 <a id="주요-기능"></a>
 
-## 4. 주요 기능과 사용 흐름
+## 3. 주요 기능과 사용 흐름
 
 | 기능 | 현재 구현 |
 |---|---|
@@ -120,6 +97,29 @@ flowchart LR
 ```
 
 웹·앱은 같은 계정과 데이터를 사용합니다. 관리자는 웹의 별도 LLMOps 화면에서 아래 평가·검토 흐름을 이용합니다.
+
+<a id="기술-스택"></a>
+
+## 4. 기술 스택
+
+| 영역 | 적용 기술 |
+|---|---|
+| 구현 언어 | Kotlin, Python 3.12, TypeScript 6 |
+| 웹 프론트엔드 | React 19, Vite 8, Tailwind CSS 4, React Router, Redux Toolkit, Zod |
+| 모바일 | React Native, Expo, Expo Router |
+| 업무·수집 API | Spring Boot, JDK 21, MyBatis, Flyway |
+| AI API·Agent | FastAPI, OpenAI, LangChain, LangGraph, OpenAI Agents SDK |
+| 평가 운영 API | Django, Django REST Framework |
+| 데이터 저장·검색 | MySQL 8.4, Elasticsearch(Nori/BM25), Qdrant |
+| 캐시·비동기 처리 | Redis, RabbitMQ |
+| LLMOps | Langfuse, Prefect, Pandera, Evidently, pandas |
+| 로컬 실행·컨테이너 | Docker Compose, Kubernetes(kind), Helm |
+| 검증·이미지 관리 | GitHub Actions, GitHub Container Registry(GHCR) |
+| 모노레포·공통 계약 | pnpm workspace, 웹·앱 공통 TypeScript 계약 |
+
+버전 기준은 [루트 설정](package.json), [웹](frontend/web/package.json), [모바일](frontend/mobile/package.json),
+[AI](backend/ai-service/pyproject.toml), [Ops](backend/ops-service/pyproject.toml)과 각 잠금 파일입니다.
+서비스별 역할은 아래 [시스템 아키텍처](#서비스-구성), 실제 배포 범위는 [평가·검증·배포](#검증배포-범위)에 정리했습니다.
 
 <a id="서비스-구성"></a>
 
