@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type LayoutChangeEvent } from 'react-native'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import type { SupportProgramConversationContext, SupportProgramInterpretation, SupportProgramPendingClarification } from '@govbiz/shared/domain/entities/SupportProgramConversation'
 import type { SupportProgramSearchResult } from '@govbiz/shared/domain/entities/SupportProgramSearchResult'
 import { RestoreSupportProgramSearchUseCase } from '@govbiz/shared/domain/usecases/RestoreSupportProgramSearchUseCase'
@@ -27,7 +26,6 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active 
   onOpenProgram: (identity: SupportProgramIdentity) => void; onLogin: (request?: LoginRequest) => void; keyboardOffset?: number; active?: boolean
 }) {
   const { session, status, invalidateSession } = useAuth()
-  const insets = useSafeAreaInsets()
   const composerInput = useRef<TextInput>(null)
   const timeline = useRef<ScrollView>(null)
   const scrollRevision = useRef(0)
@@ -206,8 +204,8 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active 
   }
 
   const introductory = history.length === 0 && !proposal && !result && !busy
-  return <KeyboardAvoidingView style={local.page} behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    keyboardVerticalOffset={keyboardOffset + insets.top + 56}>
+  return <KeyboardAvoidingView testID="ai-search-keyboard-container" style={local.page}
+    behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={keyboardOffset} enabled={active}>
     <ScrollView ref={timeline} testID="ai-search-timeline" style={local.scroll} contentContainerStyle={[local.timeline, introductory && { flexGrow: 1 }]}
       onLayout={event => { timelineSize.current.viewport = event.nativeEvent.layout.height; scrollPendingTimeline() }}
       onContentSizeChange={(_width, height) => { timelineSize.current.content = height; scrollPendingTimeline() }}
