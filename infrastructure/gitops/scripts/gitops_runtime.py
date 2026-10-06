@@ -11,6 +11,7 @@ from pathlib import Path
 
 import connected_runtime
 import fork_cluster as cluster
+from gitops_service import service_review
 import ops_runtime
 import yaml
 
@@ -30,6 +31,7 @@ def chart_inputs():
 def rendered_defaults(helm, references, chart):
     """Render the captured local inputs, without credentials or cluster access."""
     deployments = {}
+    services = {}
     with tempfile.TemporaryDirectory(prefix="govbiz-runtime-review-") as directory:
         root = Path(directory)
         for name, payload in chart.items():
@@ -54,12 +56,15 @@ def rendered_defaults(helm, references, chart):
                 check=True,
                 timeout=30,
             )
+            documents = list(yaml.safe_load_all(result.stdout))
             candidates = [
-                item
-                for item in yaml.safe_load_all(result.stdout)
-                if item and item.get("kind") == "Deployment"
+                item for item in documents if item and item.get("kind") == "Deployment"
             ]
-            if len(candidates) != 1 or candidates[0]["metadata"]["name"] != service:
+            if (
+                len(candidates) != 1
+                or candidates[0]["metadata"]["name"] != service
+                or candidates[0]["metadata"].get("namespace") != cluster.NAMESPACE
+            ):
                 raise ValueError("Unexpected local reference Deployment")
             deployment = candidates[0]
             containers = deployment["spec"]["template"]["spec"]["containers"]
@@ -68,7 +73,17 @@ def rendered_defaults(helm, references, chart):
             ):
                 raise ValueError("Local reference environment differs from Helm")
             deployments[service] = deployment
-    return deployments
+            candidates = [
+                item for item in documents if item and item.get("kind") == "Service"
+            ]
+            if (
+                len(candidates) != 1
+                or candidates[0]["metadata"].get("name") != service
+                or candidates[0]["metadata"].get("namespace") != cluster.NAMESPACE
+            ):
+                raise ValueError("Unexpected local reference Service")
+            services[service] = candidates[0]
+    return deployments, services
 
 
 def named_entries(rows):
@@ -390,24 +405,30 @@ def preflight(state, fork, helm="helm"):
     inputs = local_inputs(state, settings)
     _, namespaced, _ = cluster.commands(state, settings)
 
-    def read_deployment(service):
-        command = namespaced + ["get", "deployment", service, "-o", "json"]
-        deployment = json.loads(cluster.run(command, capture=True, timeout=15))
-        meta = deployment["metadata"]
+    def read_resource(kind, service):
+        command = namespaced + ["get", kind.lower(), service, "-o", "json"]
+        resource = json.loads(cluster.run(command, capture=True, timeout=15))
+        meta = resource["metadata"]
         if (
-            meta.get("name") != service
+            resource.get("kind") != kind
+            or meta.get("name") != service
             or meta.get("namespace") != settings["namespace"]
             or not meta.get("uid")
             or not meta.get("resourceVersion")
             or meta.get("deletionTimestamp")
         ):
-            raise ValueError("Missing or unstable service Deployment identity")
-        return deployment
+            raise ValueError("Missing or unstable runtime resource identity")
+        return resource
 
-    deployments = {service: read_deployment(service) for service in cluster.SERVICES}
+    deployments = {
+        service: read_resource("Deployment", service) for service in cluster.SERVICES
+    }
+    services = {
+        service: read_resource("Service", service) for service in cluster.SERVICES
+    }
     references = {service: portfolio_defaults(service) for service in cluster.SERVICES}
     chart = chart_inputs()
-    expected = rendered_defaults(helm, references, chart)
+    expected, expected_services = rendered_defaults(helm, references, chart)
     containers = deployments["ops-service"]["spec"]["template"]["spec"]["containers"]
     preservation = preservation_review(inputs, deployments, references)
     preservation["runtimeReviews"] = {
@@ -416,6 +437,15 @@ def preflight(state, fork, helm="helm"):
     }
     preservation["policyReviews"] = {
         service: policy_review(deployments[service], expected[service])
+        for service in cluster.SERVICES
+    }
+    preservation["networkReviews"] = {
+        service: service_review(
+            services[service],
+            expected_services[service],
+            deployments[service],
+            expected[service],
+        )
         for service in cluster.SERVICES
     }
     preservation["chartSha256"] = hashlib.sha256(
@@ -465,17 +495,22 @@ def preflight(state, fork, helm="helm"):
         review["changedFields"] for review in preservation["policyReviews"].values()
     ):
         blockers.append("service_runtime_policy_differs")
+    if any(any(review.values()) for review in preservation["networkReviews"].values()):
+        blockers.append("service_routing_differs")
     # A result describes only a stable observation, never a reusable approval.
-    for service, deployment in deployments.items():
-        current = read_deployment(service)
-        if (
-            any(
-                current["metadata"][key] != deployment["metadata"][key]
-                for key in ("uid", "resourceVersion")
-            )
-            or current.get("spec") != deployment["spec"]
-            or portfolio_defaults(service) != references[service]
-        ):
+    for kind, resources in (("Deployment", deployments), ("Service", services)):
+        for service, resource in resources.items():
+            current = read_resource(kind, service)
+            if (
+                any(
+                    current["metadata"][key] != resource["metadata"][key]
+                    for key in ("uid", "resourceVersion")
+                )
+                or current.get("spec") != resource["spec"]
+            ):
+                raise ValueError("Local runtime changed during preflight")
+    for service in cluster.SERVICES:
+        if portfolio_defaults(service) != references[service]:
             raise ValueError("Local runtime changed during preflight")
     if (
         cluster.load_settings(state) != settings
