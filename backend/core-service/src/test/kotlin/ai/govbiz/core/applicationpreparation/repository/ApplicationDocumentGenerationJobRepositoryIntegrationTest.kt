@@ -13,6 +13,11 @@ import ai.govbiz.core.applicationpreparation.service.dto.ApplicationDocumentMapp
 import ai.govbiz.core.applicationpreparation.service.dto.ApplicationDocumentMigrationNoticeResult
 import java.time.LocalDateTime
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
@@ -20,11 +25,15 @@ import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.context.annotation.Import
 import org.springframework.dao.DataAccessException
 import org.springframework.jdbc.core.JdbcTemplate
+import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.support.TransactionTemplate
 
 /** 실제 MySQL 8.4에서 생성 작업의 접수 규칙(요청 키 재사용·준비 건당 하나·계정당 3개)과 상태 전이를 확인한다. */
 @SpringBootTest(properties = [
@@ -40,6 +49,7 @@ class ApplicationDocumentGenerationJobRepositoryIntegrationTest {
     @Autowired private lateinit var preparations: ApplicationPreparationRepository
     @Autowired private lateinit var accounts: AccountRepository
     @Autowired private lateinit var jdbc: JdbcTemplate
+    @Autowired private lateinit var transactions: PlatformTransactionManager
     private var ownerId = 0L
     private var otherId = 0L
 
@@ -149,6 +159,117 @@ class ApplicationDocumentGenerationJobRepositoryIntegrationTest {
         // 준비 건을 지우면 작업 기록도 함께 사라진다.
         jdbc.update("DELETE FROM application_preparation WHERE id = ?", queued)
         assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM application_document_generation_job WHERE preparation_id = ?", Int::class.java, queued))
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["QUEUED", "RUNNING", "UNKNOWN"])
+    fun deletionPreservesPreparationAndActiveJob(status: String) {
+        val preparation = preparations.create(ownerId, draft())
+        val job = requireNotNull(jobs.reserve(ownerId, UUID.randomUUID().toString(), preparation.id, 1).job)
+        if (status != "QUEUED") requireNotNull(jobs.claim(job.id))
+        if (status == "UNKNOWN") jobs.fail(job.id, "RUN_OUTCOME_UNKNOWN", "결과 불명", unknown = true)
+        assertFalse(preparations.deleteOwned(otherId, preparation.id))
+        assertThrows(ApplicationPreparationRunConflictException::class.java) { preparations.deleteOwned(ownerId, preparation.id) }
+        assertEquals(preparation, preparations.findOwned(ownerId, preparation.id))
+        assertEquals(ApplicationDocumentGenerationJobStatus.valueOf(status), requireNotNull(jobs.findOwned(ownerId, preparation.id, job.id)).status)
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["SUCCEEDED", "FAILED"])
+    fun deletionCascadesOnlyFinishedJobs(status: String) {
+        val preparation = preparations.create(ownerId, draft()).id
+        val job = requireNotNull(jobs.reserve(ownerId, UUID.randomUUID().toString(), preparation, 1).job)
+        requireNotNull(jobs.claim(job.id))
+        if (status == "SUCCEEDED") jobs.succeed(job.id, emptyList()) else jobs.fail(job.id, "GENERATION_FAILED", "생성 실패")
+        assertTrue(preparations.deleteOwned(ownerId, preparation))
+        assertNull(preparations.findOwned(ownerId, preparation))
+        assertNull(jobs.findOwned(ownerId, preparation, job.id))
+    }
+
+    @Test
+    fun reservationCommittingFirstPreventsConcurrentDeletion() {
+        val preparation = preparations.create(ownerId, draft()).id
+        val reserved = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val deleting = CountDownLatch(1)
+        val pool = Executors.newFixedThreadPool(2)
+        try {
+            val reservation = pool.submit<Long> {
+                TransactionTemplate(transactions).execute {
+                    val job = requireNotNull(jobs.reserve(ownerId, UUID.randomUUID().toString(), preparation, 1).job)
+                    reserved.countDown()
+                    check(release.await(10, TimeUnit.SECONDS))
+                    job.id
+                }!!
+            }
+            assertTrue(reserved.await(10, TimeUnit.SECONDS))
+            val deletion = pool.submit<Boolean> { deleting.countDown(); preparations.deleteOwned(ownerId, preparation) }
+            assertTrue(deleting.await(10, TimeUnit.SECONDS))
+            assertThrows(TimeoutException::class.java) { deletion.get(200, TimeUnit.MILLISECONDS) }
+            release.countDown()
+            val jobId = reservation.get(10, TimeUnit.SECONDS)
+            val failure = assertThrows(ExecutionException::class.java) { deletion.get(10, TimeUnit.SECONDS) }
+            assertTrue(failure.cause is ApplicationPreparationRunConflictException)
+            assertTrue(preparations.findOwned(ownerId, preparation) != null)
+            assertEquals(ApplicationDocumentGenerationJobStatus.QUEUED, requireNotNull(jobs.findOwned(ownerId, preparation, jobId)).status)
+        } finally {
+            release.countDown()
+            pool.shutdownNow()
+        }
+    }
+
+    @Test
+    fun deletionCommittingFirstMakesConcurrentReservationNotFound() {
+        val preparation = preparations.create(ownerId, draft()).id
+        val deleted = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val reserving = CountDownLatch(1)
+        val pool = Executors.newFixedThreadPool(2)
+        try {
+            val deletion = pool.submit<Boolean> {
+                TransactionTemplate(transactions).execute {
+                    val result = preparations.deleteOwned(ownerId, preparation)
+                    deleted.countDown()
+                    check(release.await(10, TimeUnit.SECONDS))
+                    result
+                }!!
+            }
+            assertTrue(deleted.await(10, TimeUnit.SECONDS))
+            val reservation = pool.submit<Long> {
+                reserving.countDown()
+                requireNotNull(jobs.reserve(ownerId, UUID.randomUUID().toString(), preparation, 1).job).id
+            }
+            assertTrue(reserving.await(10, TimeUnit.SECONDS))
+            assertThrows(TimeoutException::class.java) { reservation.get(200, TimeUnit.MILLISECONDS) }
+            release.countDown()
+            assertTrue(deletion.get(10, TimeUnit.SECONDS))
+            val failure = assertThrows(ExecutionException::class.java) { reservation.get(10, TimeUnit.SECONDS) }
+            assertTrue(failure.cause is ApplicationPreparationNotFoundException)
+            assertNull(preparations.findOwned(ownerId, preparation))
+            assertTrue(jobs.listOwned(ownerId, preparation).isEmpty())
+        } finally {
+            release.countDown()
+            pool.shutdownNow()
+        }
+    }
+
+    @Test
+    fun deletionReadsTheLatestJobEvenWithAnOlderRepeatableReadSnapshot() {
+        val preparation = preparations.create(ownerId, draft()).id
+        val pool = Executors.newSingleThreadExecutor()
+        try {
+            assertThrows(ApplicationPreparationRunConflictException::class.java) {
+                TransactionTemplate(transactions).execute {
+                    // 먼저 일반 조회로 작업이 없던 시점의 MySQL REPEATABLE READ snapshot을 만든다.
+                    assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM application_document_generation_job WHERE preparation_id = ?", Int::class.java, preparation))
+                    pool.submit<Long> { requireNotNull(jobs.reserve(ownerId, UUID.randomUUID().toString(), preparation, 1).job).id }
+                        .get(10, TimeUnit.SECONDS)
+                    preparations.deleteOwned(ownerId, preparation)
+                }
+            }
+            assertTrue(preparations.findOwned(ownerId, preparation) != null)
+            assertEquals(1, jobs.listOwned(ownerId, preparation).size)
+        } finally { pool.shutdownNow() }
     }
 
     private fun createAccount(): Long = accounts.createAccount(

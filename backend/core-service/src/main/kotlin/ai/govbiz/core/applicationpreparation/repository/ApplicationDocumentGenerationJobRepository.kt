@@ -7,6 +7,7 @@ import ai.govbiz.core.applicationpreparation.domain.exception.ApplicationPrepara
 import ai.govbiz.core.applicationpreparation.domain.exception.ApplicationPreparationRunConflictException
 import ai.govbiz.core.applicationpreparation.repository.mapper.ApplicationDocumentGenerationJobDbRow
 import ai.govbiz.core.applicationpreparation.repository.mapper.ApplicationDocumentGenerationJobMapper
+import ai.govbiz.core.applicationpreparation.repository.mapper.ApplicationPreparationMapper
 import java.time.Clock
 import java.time.LocalDateTime
 import java.time.temporal.ChronoUnit
@@ -18,6 +19,7 @@ import tools.jackson.databind.ObjectMapper
 @Repository
 class ApplicationDocumentGenerationJobRepository(
     private val mapper: ApplicationDocumentGenerationJobMapper,
+    private val preparations: ApplicationPreparationMapper,
     private val json: ObjectMapper,
     @param:Qualifier("seoulClock") private val clock: Clock,
 ) {
@@ -27,6 +29,8 @@ class ApplicationDocumentGenerationJobRepository(
     @Transactional
     fun reserve(ownerId: Long, key: String, preparationId: Long, expectedRevision: Long): Reservation {
         mapper.lockActiveAccount(ownerId) ?: throw ApplicationPreparationNotFoundException()
+        // 삭제가 먼저 끝났으면 404로 종료하고, 접수가 먼저 잠갔으면 삭제가 활성 작업을 확인하게 한다.
+        preparations.findOwnedForUpdate(ownerId, preparationId) ?: throw ApplicationPreparationNotFoundException()
         mapper.findRequest(ownerId, key)?.let {
             if (it.preparationId != preparationId || it.expectedRevision != expectedRevision) throw ApplicationPreparationRunConflictException()
             return Reservation(it.toDomain(), false)

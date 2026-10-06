@@ -193,7 +193,7 @@ HWPX discovery 요청에는 원본 `sourceBase64`·`sourceSha256`을 내부 AI �
 | `GET /api/v1/application-preparations?size=20&beforeId=123&status=in_progress` | 본인 준비 건 목록을 생성 ID 내림차순으로 조회. 각 항목에 필수 문항 중 저장된 답변 수(`answeredRequired`/`requiredTotal`), 현재 입력 버전의 문서 유무(`hasCurrentDocument`), 카탈로그의 접수 기간·마감일(`applicationPeriod`/`applicationEndDate`, 공고가 없으면 null)을 더한다. `status=in_progress|done`은 현재 버전 문서 유무로 서버에서 거르고, 다른 값은 400 |
 | `GET /api/v1/application-preparations/{id}` | 본인 준비 건과 선택한 버전의 양식 문항 조회. 타인 건과 없는 건은 같은 404 |
 | `PUT /api/v1/application-preparations/{id}/progress-stage` | 본인 준비 건의 진행 단계 변경. 독립된 진행 revision 충돌은 409 |
-| `DELETE /api/v1/application-preparations/{id}` | 본인 준비 건 삭제. 확인 사실·AI 실행 기록은 FK cascade 삭제하고 공용 양식 스냅샷은 유지 |
+| `DELETE /api/v1/application-preparations/{id}` | 본인 준비 건 삭제. QUEUED·RUNNING·UNKNOWN 문서 생성 작업이 있으면 409 `APPLICATION_PREPARATION_RUN_CONFLICT`로 삭제를 차단하고 준비 건·작업 기록을 보존. 활성 작업이 없으면 확인 사실·AI 실행 기록은 FK cascade 삭제하고 공용 양식 스냅샷은 유지 |
 | `POST /api/v1/application-preparations/{id}/sections/{sectionKey}/messages` | 현재 입력 revision과 요청 키로 사용자 답변을 AI가 해석해 확인 전 사실·미정 제안 반환 |
 | `PUT /api/v1/application-preparations/{id}/sections/{sectionKey}/inputs` | 사용자가 확인한 문항 사실 전체 스냅샷 저장. revision 충돌은 409 |
 | `POST /api/v1/application-preparations/{id}/sections/{sectionKey}/drafts` | 필수 답변 확인 후 문항 초안 생성. `expectedRevision`, nullable `expectedVersionId`, UUID `requestKey` |

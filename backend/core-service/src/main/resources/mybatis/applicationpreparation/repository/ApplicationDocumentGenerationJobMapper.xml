@@ -31,6 +31,7 @@
     <select id="findActive" resultMap="job">
         SELECT <include refid="columns" /> FROM application_document_generation_job
         WHERE preparation_id = #{preparationId} AND active_slot = 1
+        FOR UPDATE
     </select>
     <select id="countPending" resultType="int">
         SELECT COUNT(*) FROM application_document_generation_job WHERE owner_account_id = #{ownerId} AND active_slot = 1
