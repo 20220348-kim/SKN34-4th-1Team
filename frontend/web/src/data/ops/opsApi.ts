@@ -24,6 +24,18 @@ const dashboardSchema = z.object({
 export type PerformanceDashboard = z.infer<typeof dashboardSchema>
 export type PerformanceSeries = PerformanceDashboard['series'][number]
 export type PerformancePoint = PerformanceSeries['points'][number]
+const dashboardReviewStatusSchema = z.object({
+  run_id: z.uuid(), checked_at: z.iso.datetime({ offset: true }),
+  review: z.object({
+    cases: z.object({ total: z.number().int().positive(), suitable: z.number().int().nonnegative(), unsuitable: z.number().int().nonnegative(), deferred: z.number().int().nonnegative(), unreviewed: z.number().int().nonnegative(), stale: z.number().int().nonnegative() })
+      .refine((value) => value.total === value.suitable + value.unsuitable + value.deferred + value.unreviewed + value.stale),
+    reference_approved: z.boolean(), approval: z.enum(['approved', 'pending', 'not_required']),
+    quality: z.enum(['PASS', 'FAIL', 'NEEDS_REVIEW', 'NOT_EVALUATED', 'STALE', 'UNAVAILABLE']),
+  }),
+  baseline: z.object({ status: z.enum(['active', 'needs_review', 'none', 'unavailable']), run_id: z.uuid().nullable(), version: z.number().int().nonnegative() })
+    .refine((value) => value.status === 'none' ? value.run_id === null : value.run_id !== null),
+})
+export type DashboardReviewStatus = z.infer<typeof dashboardReviewStatusSchema>
 const scheduleUsageSchema = z.object({ calls: z.number().int().positive(), input_tokens: z.number().int().positive(), output_tokens: z.number().int().positive() })
 const liveConfigSchema = z.object({
   max_input_tokens: z.number().int().positive().optional(),
@@ -636,6 +648,11 @@ async function post<T>(path: string, data: unknown, schema: z.ZodType<T>, dispat
 
 export const listEvaluations = (page: number, signal?: AbortSignal) => request(`/evaluations?page=${page}`, pageSchema, { signal })
 export const getPerformanceDashboard = (signal?: AbortSignal) => request('/dashboard', dashboardSchema, { signal })
+export async function getDashboardReviewStatus(runId: string, signal?: AbortSignal) {
+  const result = await request(`/dashboard/runs/${encodeURIComponent(runId)}/review-status`, dashboardReviewStatusSchema, { signal })
+  if (result.run_id !== runId) throw new OpsApiError('선택한 평가의 검토 상태를 확인할 수 없습니다.', 502)
+  return result
+}
 export const getEvaluation = (id: string, signal?: AbortSignal) => request(`/evaluations/${encodeURIComponent(id)}`, runSchema, { signal })
 export const getEvaluationReview = (id: string, signal?: AbortSignal) => request(`/evaluations/${encodeURIComponent(id)}/review`, reviewSchema, { signal })
 export const getRagMaterial = (id: string, signal?: AbortSignal) => request(`/evaluations/${encodeURIComponent(id)}/rag-material`, ragMaterialSchema, { signal })

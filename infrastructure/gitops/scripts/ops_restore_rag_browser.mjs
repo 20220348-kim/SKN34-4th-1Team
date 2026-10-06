@@ -10,7 +10,8 @@ export async function checkRagMaterial(page, detail) {
   ])
   assert.equal(reply.status(), 200, 'RAG review material is unavailable')
   assert.ok((await reply.headerValue('cache-control'))?.includes('no-store'), 'RAG review material is cacheable')
-  const { material } = await reply.json()
+  const state = await reply.json()
+  const { material } = state
   assert.ok(material && Array.isArray(material.cases) && material.cases.length > 0, 'RAG review material is empty')
   const spec = detail.execution_spec
   assert.equal(material.fixture_sha256, spec.dataset.fixture_sha256, 'RAG fixture hash differs')
@@ -21,7 +22,11 @@ export async function checkRagMaterial(page, detail) {
   assert.equal(await panel.getByRole('alert').count(), 0, 'RAG review contract was rejected by the application')
   const select = panel.getByRole('combobox', { name: /^검토 사례/ })
   await select.waitFor()
-  assert.deepEqual(await select.locator('option').allTextContents(), material.cases.map((item) => `${item.case_id} · ${item.question}`))
+  assert.deepEqual(await select.locator('option').allTextContents(), material.cases.map((item) => {
+    const reviewed = state.case_reviews.some((row) => row.case_id === item.case_id && row.is_current
+      && row.material_sha256 === material.material_sha256 && row.rubric_version === state.rubric.version)
+    return `${item.case_id} · ${reviewed ? '검토 저장됨' : '미검토'} · ${item.question}`
+  }))
   for (const [index, item] of material.cases.entries()) {
     await select.selectOption(String(index))
     await panel.locator('p.font-semibold').getByText(item.question, { exact: true }).waitFor()
