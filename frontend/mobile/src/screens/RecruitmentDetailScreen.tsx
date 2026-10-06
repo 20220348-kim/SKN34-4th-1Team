@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, TextInput, View } from 'react-native'
 import * as Clipboard from 'expo-clipboard'
 import { useFocusEffect } from 'expo-router'
-import { companyDtoSchema, toCompany } from '@govbiz/shared/data/models/CompanyDto'
 import { catalogSourceLabels } from '@govbiz/shared/domain/entities/SupportProgramCatalog'
 import { partnerRoleLabels, type PartnerRecruitment } from '@govbiz/shared/domain/entities/PartnerRecruitment'
 import { partnerProposalStatusLabels } from '@govbiz/shared/domain/entities/PartnerProposal'
@@ -10,7 +9,8 @@ import type { Company } from '@govbiz/shared/domain/entities/Company'
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
 import type { SupportProgramStatus } from '@govbiz/shared/domain/entities/SupportProgram'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { ApiError, apiRequest, programClient } from '../api/client'
+import { ApiError, programClient } from '../api/client'
+import { getCompany } from '../api/company'
 import { closeRecruitment, getPartnerWebUrl, getRecruitment, partnerErrorMessage, sendProposal } from '../api/partners'
 import { useAuth } from '../auth/session'
 import { PartnerSheet } from '../components/PartnerSheet'
@@ -76,7 +76,7 @@ export function RecruitmentDetailScreen({ id, onLogin, onCompany, onProgram, onI
     setProposalOpen(true); setActionError(null); setCompanyLoading(true); setCompany(null)
     const controller = new AbortController(); request.current = controller
     try {
-      const result = toCompany(companyDtoSchema.parse(await apiRequest('/api/v1/me/company', { accessToken: token, signal: controller.signal })))
+      const result = await getCompany(token, controller.signal)
       if (!controller.signal.aborted) setCompany(result)
     } catch (cause) {
       if (controller.signal.aborted) return

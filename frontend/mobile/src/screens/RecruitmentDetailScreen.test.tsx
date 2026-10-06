@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react-native'
 import * as Clipboard from 'expo-clipboard'
-import { apiRequest, programClient } from '../api/client'
+import { ApiError, apiRequest, programClient } from '../api/client'
 import { closeRecruitment, getRecruitment, sendProposal } from '../api/partners'
 import { useAuth } from '../auth/session'
 import { RecruitmentDetailScreen } from './RecruitmentDetailScreen'
@@ -31,12 +31,14 @@ const company = { businessNumber: '1234567890', companyName: '넥스트웨이브
   businessStatusCode: '01', region: '경기', industry: '제조업', foundedYear: 2019, homepageUrl: null,
   businessVerifiedAt: '2026-09-28T10:00:00+09:00', updatedAt: '2026-09-28T10:00:00+09:00' }
 const callbacks = { onLogin: jest.fn(), onCompany: jest.fn(), onProgram: jest.fn(), onInbox: jest.fn(), onEdit: jest.fn() }
+const invalidateSession = jest.fn().mockResolvedValue(undefined)
 
 beforeEach(() => {
   Object.values(callbacks).forEach((callback) => callback.mockClear())
+  invalidateSession.mockClear()
   jest.mocked(useAuth).mockReturnValue({ status: 'signedIn', session: {
     accessToken: 'my-token', account: { company: { businessStatusCode: '01' } },
-  }, invalidateSession: jest.fn() } as unknown as ReturnType<typeof useAuth>)
+  }, invalidateSession } as unknown as ReturnType<typeof useAuth>)
   jest.mocked(getRecruitment).mockReset().mockResolvedValue(recruitment)
   jest.mocked(apiRequest).mockReset().mockResolvedValue(company)
   jest.mocked(programClient).mockReset().mockReturnValue({ getDetail: jest.fn().mockResolvedValue({ status: 'OPEN' })
@@ -101,4 +103,26 @@ test('proposal requires an explicit message and keeps the checked company profil
   await waitFor(() => expect(sendProposal).toHaveBeenCalledWith(9,
     { message: '제조 현장 실증에 참여하겠습니다.', shareProfile: false }, 'my-token', expect.anything()))
   await screen.findByText('제안을 보냈어요')
+})
+
+test('an invalid company response cannot populate the proposal profile or enable submission', async () => {
+  jest.mocked(apiRequest).mockResolvedValue({ ...company, foundedYear: '2019' })
+  render(<RecruitmentDetailScreen id={9} {...callbacks} />)
+  fireEvent.press(await screen.findByText('제안 보내기'))
+  await screen.findByText('연결하지 못했거나 응답을 확인할 수 없습니다. 잠시 후 다시 시도해 주세요.')
+  fireEvent.changeText(screen.getByLabelText('제안 메시지'), '제조 현장 실증에 참여하겠습니다.')
+  expect(screen.getByLabelText('보내기').props.accessibilityState.disabled).toBe(true)
+  expect(screen.queryByText(/넥스트웨이브 · 경기 · 제조업 · 2019년 설립/)).toBeNull()
+  expect(sendProposal).not.toHaveBeenCalled()
+})
+
+test('a company lookup 401 invalidates the session and keeps proposal submission blocked', async () => {
+  jest.mocked(apiRequest).mockRejectedValue(new ApiError(401, '로그인 만료'))
+  render(<RecruitmentDetailScreen id={9} {...callbacks} />)
+  fireEvent.press(await screen.findByText('제안 보내기'))
+  await screen.findByText('로그인 만료')
+  fireEvent.changeText(screen.getByLabelText('제안 메시지'), '제조 현장 실증에 참여하겠습니다.')
+  expect(screen.getByLabelText('보내기').props.accessibilityState.disabled).toBe(true)
+  expect(invalidateSession).toHaveBeenCalledTimes(1)
+  expect(sendProposal).not.toHaveBeenCalled()
 })
