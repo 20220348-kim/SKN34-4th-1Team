@@ -1,4 +1,4 @@
-import { Text } from 'react-native'
+import { Alert, Text } from 'react-native'
 import { useState } from 'react'
 import { Stack, router, useLocalSearchParams } from 'expo-router'
 import { act, fireEvent, renderRouter, screen, waitFor } from 'expo-router/testing-library'
@@ -11,7 +11,7 @@ import ReportRoute from '../../app/(tabs)/report'
 import SavedRoute from '../../app/(tabs)/saved'
 import LegacyAccountRoute from '../../app/(tabs)/account'
 import AccountRoute from '../../app/(tabs)/all/account'
-import AllLayout from '../../app/(tabs)/all/_layout'
+import * as AllLayout from '../../app/(tabs)/all/_layout'
 import MenuRoute from '../../app/(tabs)/all/index'
 import CompanyRoute from '../../app/(tabs)/all/company'
 import LegacyCompanyRoute from '../../app/company'
@@ -32,6 +32,9 @@ import PreparationReviewRoute from '../../app/(tabs)/all/preparation/[id]/review
 import PreparationDocumentRoute from '../../app/(tabs)/all/preparation/[id]/documents'
 import PreparationOnlineRoute from '../../app/(tabs)/all/preparation/[id]/online'
 import RecruitmentCreateRoute from '../../app/partner/new'
+import { applicationPreparationUseCase } from '../api/applicationPreparation'
+import { ApplicationPreparationError } from '@govbiz/shared/domain/errors/ApplicationPreparationError'
+import { documentPreparation } from '../test/applicationDocumentFixtures'
 
 jest.mock('../auth/session', () => ({ useAuth: jest.fn() }))
 jest.mock('../api/client', () => ({ ...jest.requireActual('../api/client'), programClient: jest.fn() }))
@@ -39,6 +42,10 @@ jest.mock('../auth/oauth', () => ({ supportsNativeOAuth: () => false }))
 jest.mock('../auth/introductionStorage', () => ({ completeIntroduction: jest.fn(), readIntroductionCompleted: jest.fn() }))
 jest.mock('../api/partners', () => ({ ...jest.requireActual('../api/partners'), browseRecruitments: jest.fn(), browseProposals: jest.fn() }))
 jest.mock('../notifications/DailyReportPushProvider', () => ({ useDailyReportPush: () => ({ settings: null, busy: false, error: null }) }))
+jest.mock('../api/applicationPreparation', () => ({ ...jest.requireActual('../api/applicationPreparation'), applicationPreparationUseCase: jest.fn() }))
+
+const preparationApi = { get: jest.fn(), replaceInputs: jest.fn() }
+const originalApiBaseUrl = process.env.EXPO_PUBLIC_API_BASE_URL
 
 function ProgramDestination() {
   const params = useLocalSearchParams()
@@ -60,6 +67,9 @@ const routes = {
 }
 
 beforeEach(() => {
+  preparationApi.get.mockReset().mockResolvedValue(documentPreparation)
+  preparationApi.replaceInputs.mockReset()
+  jest.mocked(applicationPreparationUseCase).mockReturnValue(preparationApi as unknown as ReturnType<typeof applicationPreparationUseCase>)
   jest.mocked(useAuth).mockReturnValue({ status: 'signedOut', session: null, restoreError: null } as ReturnType<typeof useAuth>)
   jest.mocked(browseProposals).mockResolvedValue({ box: 'received', proposals: [], pendingCount: 0 })
   jest.mocked(readIntroductionCompleted).mockResolvedValue(false)
@@ -69,6 +79,12 @@ beforeEach(() => {
     programs: [], total: 0, page: 1, pageSize: 12, totalPages: 0, regions: [], categories: [],
     startupStages: [], applicantTypes: [], founderAges: [],
   }) } as unknown as ReturnType<typeof programClient>)
+})
+
+afterEach(() => {
+  if (originalApiBaseUrl === undefined) delete process.env.EXPO_PUBLIC_API_BASE_URL
+  else process.env.EXPO_PUBLIC_API_BASE_URL = originalApiBaseUrl
+  jest.restoreAllMocks()
 })
 
 test('the root introduction mounts the actual navigator only after choosing public entry and preserves the incoming search mode', async () => {
@@ -84,6 +100,131 @@ test('the root introduction mounts the actual navigator only after choosing publ
 const tabLabels = () => screen.getAllByLabelText(/^(검색|협업|관심함|리포트|전체)$/).map(tab => tab.props.accessibilityLabel)
 const memberAuth = { status: 'signedIn', session: { accessToken: 'owner', account: { email: 'member@example.com', company: null } },
   restoreError: null, invalidateSession: jest.fn().mockResolvedValue(undefined) } as unknown as ReturnType<typeof useAuth>
+
+const allMenuRoutes = {
+  ...routes,
+  '(tabs)/all/company': () => <Text>기업 정보 화면</Text>,
+  '(tabs)/all/settings': () => <Text>알림 설정 화면</Text>,
+  '(tabs)/all/preparation': () => <Text>신청 문서 목록</Text>,
+  '(tabs)/all/reviews/index': () => <Text>중복 검토 목록</Text>,
+  '(tabs)/all/collab': () => <Text>협업 화면</Text>,
+}
+
+test.each([
+  ['내 계정', '/all/account'], ['기업 정보 등록', '/all/company'], ['알림 설정', '/all/settings'],
+  ['신청 문서', '/all/preparation'], ['중복 검토', '/all/reviews'], ['모집글', '/all/collab'],
+  ['받은 제안', '/all/collab'], ['보낸 제안', '/all/collab'], ['내 모집글', '/all/collab'],
+])('pressing All returns from %s to the menu and allows opening another feature', async (label, pathname) => {
+  jest.mocked(useAuth).mockReturnValue(memberAuth)
+  const view = renderRouter(allMenuRoutes, { initialUrl: '/all' })
+  fireEvent.press(await screen.findByLabelText(label))
+  await waitFor(() => expect(view.getPathname()).toBe(pathname))
+  fireEvent.press(screen.getByLabelText('전체'))
+  await screen.findByLabelText('메뉴 검색')
+  expect(view.getPathname()).toBe('/all')
+  expect(router.canDismiss()).toBe(false)
+  fireEvent.press(screen.getByLabelText('알림 설정'))
+  await screen.findByText('알림 설정 화면')
+  expect(view.getPathname()).toBe('/all/settings')
+})
+
+test('pressing All from another tab returns to the menu without changing the search draft', async () => {
+  jest.mocked(useAuth).mockReturnValue(memberAuth)
+  const view = renderRouter(allMenuRoutes, { initialUrl: '/?mode=filter' })
+  fireEvent.changeText(await screen.findByLabelText('공고명·기관명'), '유지할 검색 조건')
+  fireEvent.press(screen.getByLabelText('전체'))
+  fireEvent.press(await screen.findByLabelText('내 계정'))
+  await waitFor(() => expect(view.getPathname()).toBe('/all/account'))
+  fireEvent.press(screen.getByLabelText('검색'))
+  await screen.findByDisplayValue('유지할 검색 조건')
+  fireEvent.press(screen.getByLabelText('전체'))
+  await screen.findByLabelText('메뉴 검색')
+  expect(view.getPathname()).toBe('/all')
+  fireEvent.press(screen.getByLabelText('검색'))
+  await screen.findByDisplayValue('유지할 검색 조건')
+  expect(view.getSearchParams()).toMatchObject({ mode: 'filter' })
+})
+
+test.each(['/all/account', '/all/company', '/all/settings', '/all/preparation', '/all/reviews', '/all/collab?view=box&box=sent'])(
+  'a direct link to %s has a menu to return to', async (initialUrl) => {
+    const view = renderRouter(allMenuRoutes, { initialUrl })
+    await waitFor(() => expect(router.canGoBack()).toBe(true))
+    await act(async () => router.back())
+    await screen.findByLabelText('메뉴 검색')
+    expect(view.getPathname()).toBe('/all')
+    expect(screen.getByLabelText('전체').props.accessibilityState.selected).toBe(true)
+  })
+
+test('pressing All from a direct link and pressing it again keeps one menu screen', async () => {
+  const view = renderRouter(allMenuRoutes, { initialUrl: '/all/company' })
+  await screen.findByText('기업 정보 화면')
+  fireEvent.press(screen.getByLabelText('전체'))
+  await screen.findByLabelText('메뉴 검색')
+  fireEvent.press(screen.getByLabelText('전체'))
+  await waitFor(() => expect(view.getPathname()).toBe('/all'))
+  expect(router.canDismiss()).toBe(false)
+})
+
+test('pressing All recovers a stack that was opened without a menu underneath', async () => {
+  const view = renderRouter({ ...allMenuRoutes, '(tabs)/all/_layout': {
+    default: AllLayout.default, unstable_settings: { anchor: 'company' },
+  } }, { initialUrl: '/all/company' })
+  await screen.findByText('기업 정보 화면')
+  expect(screen.queryByLabelText('메뉴 검색')).toBeNull()
+  expect(router.canDismiss()).toBe(false)
+  fireEvent.press(screen.getByLabelText('전체'))
+  await screen.findByLabelText('메뉴 검색')
+  expect(view.getPathname()).toBe('/all')
+  expect(router.canDismiss()).toBe(false)
+})
+
+test('pressing All from a nested account screen returns to the menu instead of the first feature', async () => {
+  jest.mocked(useAuth).mockReturnValue(memberAuth)
+  const view = renderRouter(allMenuRoutes, { initialUrl: '/all' })
+  fireEvent.press(await screen.findByLabelText('내 계정'))
+  fireEvent.press(await screen.findByLabelText('기업 프로필 등록'))
+  await screen.findByText('기업 정보 화면')
+  fireEvent.press(screen.getByLabelText('전체'))
+  await screen.findByLabelText('메뉴 검색')
+  expect(view.getPathname()).toBe('/all')
+  expect(router.canDismiss()).toBe(false)
+})
+
+test('pressing All saves a pending document answer before removing its editor', async () => {
+  process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.example.test'
+  jest.mocked(useAuth).mockReturnValue(memberAuth)
+  let finish!: (value: unknown) => void
+  preparationApi.replaceInputs.mockImplementation(() => new Promise(resolve => { finish = resolve }))
+  const view = renderRouter(allMenuRoutes, { initialUrl: '/all' })
+  await act(async () => router.push('/all/preparation/9'))
+  await screen.findByDisplayValue('테스트 기업')
+  fireEvent.changeText(screen.getByLabelText('내 답변'), '전체로 돌아가기 전에 저장할 기업')
+  fireEvent.press(screen.getByLabelText('전체'))
+  await waitFor(() => expect(preparationApi.replaceInputs).toHaveBeenCalledTimes(1))
+  expect(view.getPathname()).toBe('/all/preparation/9')
+  expect(preparationApi.replaceInputs).toHaveBeenCalledWith(9, 'company', expect.objectContaining({
+    expectedRevision: 1, facts: expect.arrayContaining([expect.objectContaining({ fieldKey: 'name', value: '전체로 돌아가기 전에 저장할 기업' })]),
+  }), expect.any(AbortSignal))
+  await act(async () => finish({ ...documentPreparation, inputRevision: 2 }))
+  await screen.findByLabelText('메뉴 검색')
+  expect(view.getPathname()).toBe('/all')
+})
+
+test('a failed document save prevents All from discarding the answer or leaving its editor', async () => {
+  process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.example.test'
+  jest.mocked(useAuth).mockReturnValue(memberAuth)
+  const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined)
+  preparationApi.replaceInputs.mockRejectedValue(new ApplicationPreparationError(503, 'REQUEST_FAILED'))
+  const view = renderRouter(allMenuRoutes, { initialUrl: '/all' })
+  await act(async () => router.push('/all/preparation/9'))
+  await screen.findByDisplayValue('테스트 기업')
+  fireEvent.changeText(screen.getByLabelText('내 답변'), '저장 실패에도 유지할 기업')
+  fireEvent.press(screen.getByLabelText('전체'))
+  await waitFor(() => expect(alert).toHaveBeenCalledWith('답변을 먼저 저장해 주세요', expect.any(String)))
+  expect(view.getPathname()).toBe('/all/preparation/9')
+  expect(screen.getByLabelText('내 답변').props.value).toBe('저장 실패에도 유지할 기업')
+  expect(screen.queryByLabelText('메뉴 검색')).toBeNull()
+})
 
 test.each(['recruitments', 'box'])('the existing collaboration pencil opens the native form from %s and returns to the same view', async (viewMode) => {
   jest.mocked(useAuth).mockReturnValue({ ...memberAuth, session: { ...memberAuth.session!, account: {

@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { Tabs, usePathname, useRouter } from 'expo-router'
+import { StackActions, type NavigationState } from 'expo-router/react-navigation'
 import { AppIcon } from '../../src/components/AppIcon'
 import { ReportHeaderAction } from './report'
 import { colors } from '../../src/ui'
@@ -23,7 +24,20 @@ export default function TabLayout() {
     <Tabs.Screen name="saved" options={{ href: signedIn ? undefined : null, title: '관심함', tabBarAccessibilityLabel: '관심함', headerTitle: '관심 공고함', tabBarIcon: ({ color, focused }) => <AppIcon name="bookmark" color={color} selected={focused} /> }} />
     <Tabs.Screen name="report" options={{ href: signedIn ? undefined : null, title: '리포트', tabBarAccessibilityLabel: '리포트', headerTitle: '맞춤 리포트',
       headerRight: () => <ReportHeaderAction />, tabBarIcon: ({ color, focused }) => <AppIcon name="report" color={color} selected={focused} /> }} />
-    <Tabs.Screen name="all" options={{ title: '전체', tabBarAccessibilityLabel: '전체', headerShown: false,
+    <Tabs.Screen name="all" listeners={({ navigation, route }) => ({ tabPress: (event) => {
+      const stack = (navigation.getState() as NavigationState).routes.find(item => item.key === route.key)?.state
+      if (stack?.type !== 'stack' || !stack.key) {
+        // 직접 진입한 화면은 탭 상태에 Stack 키가 아직 반영되지 않을 수 있다.
+        if (navigation.isFocused()) { event.preventDefault(); router.dismissTo('/(tabs)/all') }
+        return
+      }
+      const source = stack.routes[stack.index ?? stack.routes.length - 1]?.key
+      if (!source) return
+      // 항상 메뉴로 돌아가되, 하위 화면의 미저장 입력 이탈 방지는 그대로 거친다.
+      event.preventDefault()
+      navigation.dispatch({ ...StackActions.popTo('index'), source, target: stack.key })
+      if (!navigation.isFocused()) navigation.navigate(route.name)
+    } })} options={{ title: '전체', tabBarAccessibilityLabel: '전체', headerShown: false,
       tabBarIcon: ({ color }) => <AppIcon name="menu" color={color} /> }} />
     <Tabs.Screen name="account" options={{ href: null }} />
     <Tabs.Screen name="chat" options={{ href: null }} />
