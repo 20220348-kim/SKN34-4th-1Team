@@ -152,9 +152,15 @@ export function RecruitmentDetailScreen({ id, onLogin, onCompany, onProgram, onI
 
   return <View style={local.page}>
     <Page>
-      <View style={local.row}><StatusBadge label={`${sourceName} 공고`} tone="info" />
-        <StatusBadge label={recruitmentDeadlineLabel(detail.recruitmentDeadline)}
-          tone={recruitmentDeadlineTone(detail.recruitmentDeadline)} /></View>
+      <View style={local.header}>
+        <View style={local.row}><StatusBadge label={`${sourceName} 공고`} tone="info" />
+          <StatusBadge label={recruitmentDeadlineLabel(detail.recruitmentDeadline)}
+            tone={recruitmentDeadlineTone(detail.recruitmentDeadline)} /></View>
+        {detail.isMine && detail.status === 'OPEN' && <View style={local.ownerActions}>
+          <Button label="수정" variant="secondary" size="small" onPress={onEdit} />
+          <Button label="모집 마감" variant="danger" size="small" disabled={busy} onPress={confirmClose} />
+        </View>}
+      </View>
       <Text style={styles.title}>{detail.title}</Text>
       <View style={local.author}><Text style={local.avatar}>{detail.company.companyName.slice(0, 1)}</Text>
         <View><Text style={styles.body}>{detail.company.companyName}</Text><Text style={styles.muted}>{detail.company.region} · {detail.company.industry}</Text></View></View>
@@ -173,9 +179,6 @@ export function RecruitmentDetailScreen({ id, onLogin, onCompany, onProgram, onI
           </View></Card>
       </Pressable>
       <Text style={styles.heading}>협업 소개</Text><Text style={styles.body}>{detail.body}</Text>
-      {detail.isMine && detail.status === 'OPEN' && <View style={local.row}>
-        <Button label="수정" variant="secondary" onPress={onEdit} />
-        <Button label="모집 마감" variant="danger" disabled={busy} onPress={confirmClose} /></View>}
       {detail.myProposal && <Notice>보낸 제안: {partnerProposalStatusLabels[detail.myProposal.status]}</Notice>}
       {visible.error && <Notice error>{visible.error}</Notice>}
       {actionError && !proposalOpen && <Notice error>{actionError}</Notice>}
@@ -221,6 +224,8 @@ function Fact({ label, value }: { label: string; value: string }) {
 
 const local = StyleSheet.create({
   page: { flex: 1, backgroundColor: colors.surface },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 },
+  ownerActions: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', flexWrap: 'wrap', gap: 8, marginLeft: 'auto' },
   row: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 8 },
   author: { backgroundColor: colors.background, borderRadius: 10, padding: 10, flexDirection: 'row', alignItems: 'center', gap: 10 },
   avatar: { width: 34, height: 34, borderRadius: 17, backgroundColor: colors.soft, color: colors.primary,
