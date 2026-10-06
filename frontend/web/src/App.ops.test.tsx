@@ -1372,3 +1372,69 @@ it.each([false, true])('실제 공고는 출처와 과거 모델·참조 보완(
   expect(screen.getByRole('button', { name: '비교 기준으로 지정' })).toHaveProperty('disabled', true)
   expect(fetchMock.mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false)
 })
+
+it('평가 목록을 운영 설정보다 먼저 제공하고 바로가기에서 각 작업 위치를 찾는다', async () => {
+  open()
+  const history = await screen.findByRole('region', { name: '평가 실행 이력' })
+  const budget = screen.getByRole('region', { name: '누적 평가 예산' })
+  expect(history.compareDocumentPosition(budget) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  for (const [name, target] of [['답변 검토하기', 'evaluation-history'], ['새 평가 준비', 'new-evaluation'], ['예산 관리', 'evaluation-budget'], ['정기 실행 관리', 'evaluation-schedules']]) {
+    expect(screen.getByRole('link', { name }).getAttribute('href')).toBe(`#${target}`)
+    expect(document.getElementById(target)).toBeTruthy()
+  }
+  expect(fetchMock.mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false)
+})
+
+it('사례를 한 건씩 보여주며 사례 전환 후에도 저장 전 판단과 사유를 보존한다', async () => {
+  const original = fetchMock.getMockImplementation()!
+  const material = { ...reviewMaterial, cases: [reviewMaterial.cases[0], { ...reviewMaterial.cases[0], case_id: 'E02', question: '두 번째 질문' }] }
+  fetchMock.mockImplementation((path, options) => path.endsWith('/review')
+    ? Promise.resolve(json({ ...reviewDefaults, quality: qualityState, material, material_error: '', is_baseline: false, baseline_version: 0, baseline_history: [], reviews: [] }))
+    : original(path, options))
+  open(`/ops/evaluations/${id}`)
+  fireEvent.change(await screen.findByLabelText('E01 판단'), { target: { value: 'DEFERRED' } })
+  fireEvent.change(screen.getByLabelText('E01 판단 사유'), { target: { value: '첨부 원문 확인 중' } })
+  fireEvent.click(screen.getByRole('button', { name: '다음 사례' }))
+  expect(screen.queryByLabelText('E01 판단')).toBeNull()
+  expect(screen.getByLabelText('E02 판단')).toHaveProperty('value', '')
+  fireEvent.click(screen.getByRole('button', { name: '이전 사례' }))
+  expect(screen.getByLabelText('E01 판단')).toHaveProperty('value', 'DEFERRED')
+  expect(screen.getByLabelText('E01 판단 사유')).toHaveProperty('value', '첨부 원문 확인 중')
+  expect(screen.getByRole('button', { name: '검토 승인 저장' })).toHaveProperty('disabled', true)
+  expect(fetchMock.mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false)
+})
+
+it.each([true, false])('저장 후 다음 사례는 저장 성공(%s)일 때만 이동하고 실패 시 초안을 보존한다', async (success) => {
+  const original = fetchMock.getMockImplementation()!
+  const material = { ...reviewMaterial, cases: [reviewMaterial.cases[0], { ...reviewMaterial.cases[0], case_id: 'E02', question: '두 번째 질문' }] }
+  const state = { ...reviewDefaults, quality: qualityState, material, material_error: '', is_baseline: false, baseline_version: 0, baseline_history: [], reviews: [] }
+  let resolveSave!: (response: Response) => void
+  const response = new Promise<Response>((resolve) => { resolveSave = resolve })
+  fetchMock.mockImplementation((path, options) => {
+    if (path.endsWith('/case-review') && options?.method === 'POST') return response
+    if (path.endsWith('/review')) return Promise.resolve(json(state))
+    return original(path, options)
+  })
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: vi.fn() })
+  try {
+    open(`/ops/evaluations/${id}`)
+    fireEvent.change(await screen.findByLabelText('E01 판단'), { target: { value: 'UNSUITABLE' } })
+    fireEvent.change(screen.getByLabelText('E01 판단 사유'), { target: { value: '지원 대상 누락' } })
+    fireEvent.click(screen.getByRole('button', { name: '저장 후 다음 사례' }))
+    await waitFor(() => expect(fetchMock.mock.calls.some(([, options]) => options?.method === 'POST')).toBe(true))
+    expect(screen.getByLabelText('E01 판단')).toBeTruthy()
+    await act(async () => {
+      resolveSave(success ? json({ ...state, review_version: 1, case_reviews: [{ id: 1, version: 1, case_id: 'E01', decision: 'UNSUITABLE', comment: '지원 대상 누락', capture_sha256: material.capture_sha256, fixture_sha256: material.fixture_sha256, rubric_version: state.rubric.version, reviewed_by: 'operator@example.com', created_at: completed.created_at }] }) : json({ detail: '저장 실패' }, 503))
+      await response
+    })
+    if (success) {
+      await screen.findByLabelText('E02 판단')
+      expect(document.activeElement?.id).toBe('case-review-E02')
+      expect(screen.getByRole('button', { name: '검토 승인 저장' })).toHaveProperty('disabled', true)
+    } else {
+      expect(screen.getByLabelText('E01 판단 사유')).toHaveProperty('value', '지원 대상 누락')
+      expect(screen.queryByLabelText('E02 판단')).toBeNull()
+    }
+    expect(fetchMock.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(1)
+  } finally { delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView }
+})

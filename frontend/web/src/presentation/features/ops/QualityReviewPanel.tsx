@@ -15,6 +15,7 @@ export function QualityReviewPanel({ runId, data, busy, onBusy, onDirty, onConfl
   const [comment, setComment] = useState('')
   const [confirmed, setConfirmed] = useState(false)
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
   const active = useRef(false)
   const quality = data.quality
   const cases = data.material?.cases.map((item) => item.case_id).join(', ')
@@ -27,7 +28,7 @@ export function QualityReviewPanel({ runId, data, busy, onBusy, onDirty, onConfl
     if (active.current || busy || !data.material || !quality.input_sha256) return
     if (fixture && (!decision || !comment.trim() || !confirmed)) return
     if (!fixture && dirty) return
-    active.current = true; onBusy(true); setError('')
+    active.current = true; onBusy(true); setError(''); setNotice('')
     try {
       const value = fixture && decision ? await saveFixtureReview(runId, {
         decision, comment: comment.trim(), fixture_sha256: data.material.fixture_sha256,
@@ -35,6 +36,7 @@ export function QualityReviewPanel({ runId, data, busy, onBusy, onDirty, onConfl
         fixture_version: quality.fixture_version,
       }) : await assessEvaluationQuality(runId, quality.input_sha256)
       onSaved(value)
+      setNotice(fixture ? '기준 자료 검토를 저장했습니다. 이제 사례별 후보 답변을 검토하세요.' : `품질 판정을 저장했습니다: ${labels[value.quality?.status ?? 'NOT_EVALUATED']}. 아래 판정 사유와 다음 단계를 확인하세요.`)
       if (fixture) { setDecision(''); setComment(''); setConfirmed(false) }
     } catch (reason) {
       if (reason instanceof OpsApiError && reason.status === 409) onConflict()
@@ -49,12 +51,13 @@ export function QualityReviewPanel({ runId, data, busy, onBusy, onDirty, onConfl
     {!quality.is_current && quality.history.length > 0 && <p className="text-sm text-amber-800">자료·정책·검토가 변경됐습니다. 이전 판정은 이력으로 보존되며 다시 판정해야 합니다.</p>}
     {current && <ul className="list-disc pl-5 text-sm">{current.reasons.map((reason, index) => <li key={`${reason.code}-${reason.case_id}-${index}`}>{reason.case_id ? `${reason.case_id}: ` : ''}{reason.message}</li>)}</ul>}
     {quality.blocked_reason && <p role="alert" className="text-sm text-amber-800">{quality.blocked_reason}</p>}
+    {notice && <p role="status" className="rounded-lg bg-green-50 p-3 text-sm text-brand-primary">{notice}</p>}
     {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
     <button className={`${styles.secondaryButton} justify-self-start`} disabled={busy || dirty || !data.material || !quality.input_sha256} onClick={() => void save(false)}>현재 근거로 품질 판정 저장</button>
     {dirty && <p className="text-sm text-amber-800">저장하지 않은 기준 자료 검토가 있습니다. 먼저 자료 검토를 저장하거나 입력을 비운 뒤 다른 검토·품질 판정·기준 지정을 진행하세요.</p>}
     <details id="fixture-review" tabIndex={-1} style={{ scrollMarginTop: 'calc(var(--workspace-header-h, 0px) + 1rem)' }} className="grid gap-3"><summary className="cursor-pointer text-sm font-semibold">평가 기준 자료 검토 · {quality.fixture_reviews[0] ? fixtureLabels[quality.fixture_reviews[0].decision] : '미검토'}</summary>
       <div className="mt-3 grid gap-3 text-sm">
-        <p>아래 각 사례의 AI 작성 참조 조건을 원문 근거와 대조합니다. 기대 상태·기대 인용·포함할 사실·금지 주장을 모두 확인하세요. 이 기록은 후보 답변 검토와 별개이며 AI 작성 출처는 유지됩니다.</p>
+        <p>사례 선택에서 각 사례의 AI 작성 참조 조건을 원문 근거와 대조합니다. 기대 상태·기대 인용·포함할 사실·금지 주장을 모두 확인하세요. 이 기록은 후보 답변 검토와 별개이며 AI 작성 출처는 유지됩니다.</p>
         <p>대상 사례: {data.material?.cases.map((item) => item.case_id).join(', ') ?? '자료 확인 불가'}</p>
         <label className="grid gap-2">평가 기준 자료 판단<select className="rounded-xl border border-line p-3" value={decision} disabled={busy} onChange={(event) => setDecision(event.target.value as typeof decision)}><option value="">판단 선택</option><option value="APPROVED">검토 승인</option><option value="CHANGES_REQUESTED">수정 필요</option><option value="DEFERRED">판단 보류</option></select></label>
         <label className="grid gap-2">평가 기준 자료 검토 사유<textarea className="rounded-xl border border-line p-3" rows={2} value={comment} maxLength={3000} disabled={busy} onChange={(event) => setComment(event.target.value)} /></label>

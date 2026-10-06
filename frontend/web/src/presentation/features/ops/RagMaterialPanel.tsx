@@ -63,6 +63,15 @@ function Material({ runId, onExpired, onReviewChanged }: Props) {
     }
   }
   const item = material?.cases[selected]
+  const currentReview = (caseId: string) => state?.case_reviews.find((row) => row.case_id === caseId && row.is_current
+    && row.material_sha256 === material?.material_sha256 && row.rubric_version === state.rubric.version)
+  const reviewedCount = material?.cases.filter((item) => currentReview(item.case_id)).length ?? 0
+  const suitableCount = material?.cases.filter((item) => {
+    const review = currentReview(item.case_id)
+    return review?.retrieval_decision === 'SUITABLE' && review.answer_decision === 'SUITABLE' && review.citation_decision === 'SUITABLE'
+  }).length ?? 0
+  const selectCase = (index: number) => { setSelected(index); setSaved(false) }
+
   return <section className={styles.card} aria-label="RAG 사례 검토 자료" aria-busy={busy}>
     <h2 className={styles.cardTitle}>RAG 사례 검토 자료</h2>
     <p className="text-sm">접수 당시 고정한 원문·청크와 저장된 답변을 대조합니다. 조회 시 모델 호출은 없습니다.</p>
@@ -70,15 +79,30 @@ function Material({ runId, onExpired, onReviewChanged }: Props) {
     <button type="button" className={styles.secondaryButton} disabled={busy || locked || qualityBusy || referenceDirty || referenceBusy} onClick={() => void read()}>{busy ? '불러오는 중…' : material ? '검토 자료 새로고침' : '검토 자료 보기'}</button>
     {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
     {state && material && item && <div className="space-y-4">
+      <section aria-label="RAG 검토 진행 안내" className="grid gap-3 rounded-xl border border-brand-primary/20 bg-[#f3f7f5] p-5 text-sm">
+        <h3 className="font-bold">검토 진행 안내</h3>
+        <p className="font-semibold">사례 검토 저장 {reviewedCount} / {material.cases.length}건 · 검색·답변·인용 모두 적합 {suitableCount}건</p>
+        <progress className="h-2 w-full accent-brand-primary" aria-label="RAG 사례 검토 진행률" value={reviewedCount} max={material.cases.length} />
+        <p>자료 승인: {state.reference_review.approved ? '완료' : '필요'} · 품질 판정: {state.quality.is_current ? { NOT_EVALUATED: '미판정', NEEDS_REVIEW: '검토 필요', FAIL: '부적합', PASS: '합격' }[state.quality.status] : '현재 검토로 재판정 필요'} · 비교 기준: {state.baseline.selected ? '지정됨' : '미지정'}</p>
+        <p>{!state.reference_review.approved ? '다음 할 일: 각 사례의 원문과 참조 조건을 확인하고 자료 검토를 저장하세요.' : reviewedCount < material.cases.length ? '다음 할 일: 미검토 사례의 검색·답변·인용을 판단하고 사유를 저장하세요.' : suitableCount < material.cases.length ? '부적합·보류 사례가 있습니다. 품질 점검에서 사유를 확인하세요. 합격을 위해 판단을 바꿀 필요는 없습니다.' : !state.baseline.selected ? '다음 할 일: 품질 점검 결과를 확인하고 조건이 충족되면 비교 기준을 지정하세요.' : '현재 자료의 비교 기준 지정까지 완료했습니다.'}</p>
+        <nav aria-label="RAG 검토 위치" className="flex flex-wrap gap-2">
+          <a href="#rag-case-review" className={styles.secondaryButton}>사례 확인</a>
+          <a href="#rag-reference-review" className={styles.secondaryButton}>자료 검토</a>
+          <a href="#rag-quality-review" className={styles.secondaryButton}>품질·기준 확인</a>
+        </nav>
+      </section>
       {material.data_type === 'official-html-snapshot' && <p className="text-sm">실제 공고의 저장된 HTML 본문입니다. 첨부파일은 포함하지 않습니다. 문단 단위로 나눈 평가용 청크이며, 기존 고정 근거 답변의 검토 승인은 이 RAG 결과에 적용되지 않습니다.</p>}
-      <RagQualityPanel key={`${runId}:${state.quality.input_sha256}`} runId={runId} state={state} disabled={locked || busy || referenceDirty || referenceBusy} onBusy={setQualityBusy} onSaved={(value) => { setState(value); setQualityBusy(false); setSaved(false); onReviewChanged?.() }} onExpired={onExpired} />
-      <RagReferenceReviewPanel key={`${runId}:${state.review_version}:${material.fixture_sha256}`} runId={runId} state={state} disabled={locked || qualityBusy} onDirty={setReferenceDirty} onBusy={setReferenceBusy} onSaved={(value) => { setState(value); setReferenceDirty(false); setReferenceBusy(false); setSaved(false); onReviewChanged?.() }} onExpired={onExpired} />
       <p className="text-sm">후보: {origins[material.candidate_measurement_kind]} · 비교: {origins[material.reference_measurement_kind]}</p>
-      <label className="block text-sm font-semibold">검토 사례
-        <select className="mt-1 w-full rounded-lg border border-line p-2" value={selected} disabled={locked || qualityBusy || referenceBusy} onChange={(event) => { setSelected(Number(event.target.value)); setSaved(false) }}>
-          {material.cases.map((value, index) => <option key={value.case_id} value={index}>{value.case_id} · {value.question}</option>)}
+      <label id="rag-case-review" className="block scroll-mt-28 text-sm font-semibold">검토 사례
+        <select className="mt-1 w-full rounded-lg border border-line p-2" value={selected} disabled={locked || qualityBusy || referenceBusy} onChange={(event) => selectCase(Number(event.target.value))}>
+          {material.cases.map((value, index) => <option key={value.case_id} value={index}>{value.case_id} · {currentReview(value.case_id) ? '검토 저장됨' : '미검토'} · {value.question}</option>)}
         </select>
       </label>
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="button" className={styles.secondaryButton} disabled={locked || qualityBusy || referenceBusy || selected === 0} onClick={() => selectCase(selected - 1)}>이전 사례</button>
+        <span className="text-sm tabular-nums">{selected + 1} / {material.cases.length}번째 사례</span>
+        <button type="button" className={styles.secondaryButton} disabled={locked || qualityBusy || referenceBusy || selected === material.cases.length - 1} onClick={() => selectCase(selected + 1)}>다음 사례</button>
+      </div>
       <p className="font-semibold whitespace-pre-wrap">{item.question}</p>
       <div className="grid gap-3 lg:grid-cols-2"><Observation label="후보" value={item.candidate} item={item} /><Observation label="비교" value={item.reference} item={item} /></div>
       <details><summary className="cursor-pointer font-semibold">고정 원문 · {item.document_id}</summary>
@@ -101,8 +125,10 @@ function Material({ runId, onExpired, onReviewChanged }: Props) {
           <p className="break-all text-xs">참조 청크: {expected.chunk_id}</p><p className="whitespace-pre-wrap">{expected.quote}</p>
         </blockquote>) : <p className="text-sm">지정된 참조 인용 없음</p>}
       </details>
-      {saved && <p role="status" className="text-sm">사례 검토가 저장되었습니다. 품질 점검은 새 검토를 반영해 별도로 저장하세요.</p>}
+      {saved && <p role="status" className="rounded-lg bg-green-50 p-3 text-sm text-brand-primary">사례 검토가 저장되었습니다. 품질 점검은 새 검토를 반영해 별도로 저장하세요.</p>}
       <RagCaseReviewForm key={`${item.case_id}:${state.review_version}:${material.material_sha256}`} runId={runId} item={item} state={state} disabled={qualityBusy || referenceDirty || referenceBusy} onExpired={onExpired} onLock={(value) => { setLocked(value); if (value) setSaved(false) }} onSaved={(value) => { setState(value); setSaved(true); onReviewChanged?.() }} />
+      <div id="rag-reference-review" className="scroll-mt-28"><RagReferenceReviewPanel key={`${runId}:${state.review_version}:${material.fixture_sha256}`} runId={runId} state={state} disabled={locked || qualityBusy} onDirty={setReferenceDirty} onBusy={setReferenceBusy} onSaved={(value) => { setState(value); setReferenceDirty(false); setReferenceBusy(false); setSaved(false); onReviewChanged?.() }} onExpired={onExpired} /></div>
+      <div id="rag-quality-review" className="scroll-mt-28"><RagQualityPanel key={`${runId}:${state.quality.input_sha256}`} runId={runId} state={state} disabled={locked || busy || referenceDirty || referenceBusy} onBusy={setQualityBusy} onSaved={(value) => { setState(value); setQualityBusy(false); setSaved(false); onReviewChanged?.() }} onExpired={onExpired} /></div>
       <details className="break-all text-xs"><summary className="cursor-pointer">자료 무결성 정보</summary>
         <p>검토 자료: {material.material_sha256}</p><p>평가 자료: {material.fixture_sha256}</p>
         <p>후보 캡처: {material.candidate_capture_sha256}</p><p>비교 캡처: {material.reference_capture_sha256}</p>
