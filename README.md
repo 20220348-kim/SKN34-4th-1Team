@@ -202,14 +202,14 @@ flowchart LR
 
 ### Kubernetes와 LLMOps 실행 구조
 
-![GovBiz Kubernetes 업무 서비스와 Compose LLMOps 연결 구조](docs/assets/architecture/govbiz-local-architecture.png)
+![GovBiz Kubernetes 업무 서비스와 Compose LLMOps 연결 구조](docs/assets/architecture/govbiz-local-architecture.png?v=4f2deb366694)
 
 Kubernetes에는 Core·Catalog·AI·Django Ops와 업무 저장소를 두고,
 Compose에는 Prefect·평가 실행기·결과 저장소·Langfuse를 둡니다.
 Ops API와 같은 Pod의 `ops-sync`가 내부 HTTP 브리지로 실행 상태와 결과를 조회합니다.
 이 연결의 평가 범위는 **저장 응답의 무료 재평가**이며, 유료 실행의 Kubernetes 예산 API 연결은 별도입니다.
 
-[구조도 크게 보기](docs/assets/architecture/govbiz-local-architecture.png) ·
+[구조도 크게 보기](docs/assets/architecture/govbiz-local-architecture.png?v=4f2deb366694) ·
 [SVG 원본](docs/assets/architecture/govbiz-local-architecture.svg) ·
 [배치·호출 경로·현재 확인 범위](docs/assets/architecture/README-local.md)
 
