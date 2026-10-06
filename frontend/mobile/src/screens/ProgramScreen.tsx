@@ -176,7 +176,7 @@ export function ProgramScreen({ identity, onLogin, resumeAction, onResumed }: {
         else setQuestionOpen(true)
       }} /> : <Button label={program.sourceCode === 'CNTRADE_NOTICE' ? '공식 공지 목록 확인' : '공식 원문 확인'} onPress={() => void openSource(program.sourceUrl)} />}</View>
     </View>}
-    <PartnerSheet visible={questionOpen && Boolean(program?.evidenceQuestionSupported)} title="원문에 질문하기" onClose={closeQuestion} actions={<Button label="닫기" variant="secondary" onPress={closeQuestion} />}>
+    <PartnerSheet visible={questionOpen && Boolean(program?.evidenceQuestionSupported)} title="원문에 질문하기" dimBackdrop={false} onClose={closeQuestion} actions={<Button label="닫기" variant="secondary" onPress={closeQuestion} />}>
       {program && <>
         {!program.evidenceQuestionSupported ? <Notice>이 제공처 공고는 아직 원문 근거 답변을 지원하지 않습니다. 공식 공고 원문에서 확인해 주세요.</Notice>
         : <>
