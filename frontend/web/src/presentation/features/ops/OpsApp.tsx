@@ -15,6 +15,7 @@ import { BudgetOverview, RunBudgetPanel } from './BudgetPanel'
 import { LiveReadinessPanel } from './LiveReadinessPanel'
 import { EvaluationSchedulesPanel } from './EvaluationSchedulesPanel'
 import { WorkspacePageHeader } from '../../shared/workspace/WorkspacePageHeader'
+import { PerformanceDashboard } from './PerformanceDashboard'
 
 const listPath = '/ops/evaluations'
 const notice = '저장된 과거 평가 결과를 비교합니다. 새 모델 호출은 없으며 현재 모델의 품질 측정이 아닙니다.'
@@ -88,6 +89,7 @@ export function OpsApp() {
 
 type EvaluationDraft = { mode: 'replay' | 'live'; dataset: string; reference: string; candidate: string }
 const opsPages = [
+  { path: '/ops/dashboard', label: '성능 대시보드', description: '현재 지표와 변화 추이' },
   { path: listPath, label: '평가 이력', description: '결과 조회와 답변 검토' },
   { path: `${listPath}/new`, label: '새 평가', description: '자료 선택과 실행 접수' },
   { path: '/ops/budget', label: '예산 관리', description: '사용량과 한도 관리' },
@@ -98,9 +100,8 @@ function OpsWorkspace({ session, onExpired, onReviewChanged }: { session: OpsSes
   const location = useLocation()
   const [draft, setDraft] = useState<EvaluationDraft | null>(null)
   const previousPath = useRef(location.pathname)
-  const current = location.pathname === `${listPath}/new` ? opsPages[1]
-    : location.pathname.startsWith(listPath) ? opsPages[0]
-      : opsPages.find((page) => page.path === location.pathname) ?? opsPages[0]
+  const current = opsPages.find((page) => page.path === location.pathname)
+    ?? (location.pathname.startsWith(listPath) ? opsPages[1] : opsPages[0])
   const legacyPath = location.pathname === listPath ? ({ '#new-evaluation': `${listPath}/new`, '#evaluation-budget': '/ops/budget', '#evaluation-schedules': '/ops/schedules' } as Record<string, string>)[location.hash] : undefined
   useEffect(() => {
     document.title = `GovBiz · ${current.label}`
@@ -121,6 +122,8 @@ function OpsWorkspace({ session, onExpired, onReviewChanged }: { session: OpsSes
     </aside>
     <main id="ops-main" tabIndex={-1} className="min-w-0 focus-visible:outline-2 focus-visible:outline-brand-primary">
       {legacyPath ? <Navigate replace to={legacyPath} /> : <Routes>
+        <Route path="/ops/dashboard" element={<PerformanceDashboard onExpired={onExpired} />} />
+        <Route path="/ops" element={<Navigate replace to="/ops/dashboard" />} />
         <Route path="/ops/evaluations" element={<EvaluationList onExpired={onExpired} />} />
         <Route path="/ops/evaluations/new" element={<EvaluationCreate owner={session.user!.id} datasets={session.datasets} liveEnabled={session.live_enabled} ragLiveEnabled={session.rag_live_enabled} onExpired={onExpired} draft={draft} onDraftChange={setDraft} />} />
         <Route path="/ops/evaluations/:runId" element={<EvaluationDetail key={location.pathname} onExpired={onExpired} onReviewChanged={onReviewChanged} />} />
