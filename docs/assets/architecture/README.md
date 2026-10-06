@@ -3,7 +3,7 @@
 주요 서비스 연결을 기술 로고와 함께 정리한 문서용 이미지입니다.
 **로컬 구성 기록(2026-09-12)**, **초기 배포 예정안(2026-09-13)**,
 **Vercel + AWS 배포 구성(2026-09-16 정리)**, **통합 전 Mac Kubernetes(2026-09-20)**,
-**현재 개인 포크 로컬 Kubernetes(2026-09-21)**를 별도 파일로 관리합니다.
+**Kubernetes·Compose LLMOps 연결 구성(2026-10-07)**을 별도 파일로 관리합니다.
 이미지 제작은 앱 실행 코드나 배포 설정을 변경하지 않습니다.
 
 ## 메인 README 서비스 요청 관계 — 2026-10-06
@@ -12,21 +12,24 @@
 - React 웹과 React Native 앱을 같은 높이에 두고 Core·Ops·Catalog·AI·평가 실행기의 요청 관계를 표시합니다.
 - 메인 README는 표시 환경의 자동 배치 차이를 피하도록 PNG를 사용합니다. Mermaid 11.12.0에서
   두 클라이언트의 상단 좌표가 같은지 확인한 뒤 SVG와 2배 해상도 PNG로 내보냈습니다.
+- 메인 README에서는 가로 420px로 축소해 가운데 배치하며, 전체 해상도는 `크게 보기` 링크로 제공합니다.
 - Mermaid 원본을 수정하면 PNG·SVG도 함께 갱신하고 웹·앱의 높이, 연결선과 글자 겹침을 확인합니다.
   이 그림은 서비스 요청 관계이며 클라우드 배포 현황이나 DB 연결 전체를 표현하지 않습니다.
 
-## 현재 개인 포크 · 로컬 Kubernetes · 개발 모드 / GitOps
+## Kubernetes · Compose LLMOps 연결 구성 — 2026-10-07
 
-![GovBiz 개인 포크 기반 로컬 시스템 아키텍처](govbiz-local-architecture.png)
+![GovBiz Kubernetes 업무 서비스와 Compose LLMOps 연결 구조](govbiz-local-architecture.png)
 
 - [현재 구성 PNG](govbiz-local-architecture.png) · [SVG 원본](govbiz-local-architecture.svg)
 - [서비스·데이터·개발·배포 경로와 확인 범위](README-local.md)
 - [생성 스크립트](build-local.mjs) · [Kubernetes 로고 출처·해시](kubernetes-logo-sources.json) · [RabbitMQ 로고 출처·해시](logo-sources.json)
 
-교육기관 원본 병합 → 개인 포크 main Sync → 네 CI → 비공개 GHCR → 같은 포크의 digest 갱신 → 로컬 Argo CD를 표시합니다.
-그림은 2026-09-21 기록이며, 이후 코드의 발행 조건은 LLMOps를 포함한 다섯 CI와 필수 job 성공으로 강화했습니다. [현재 발행 조건](../../msa-image-release.md)을 따릅니다.
-PC의 Vite·port-forward·네 서비스와 독립 DB를 보여주고, 코드 저장을 로컬 재빌드로 반영하는 개발 모드를 별도로 구분합니다.
-공개 GHCR 전환은 준비 단계이며, 그림은 기존 비공개 실행 구성을 기준으로 합니다.
+Kubernetes의 Core·Catalog·AI·Ops와 Compose의 Prefect·평가 실행기·결과 서버·Langfuse를 구분합니다.
+Ops API와 같은 Pod의 `ops-sync`가 전용 내부 HTTP 브리지로 무료 재평가의 상태·보고서를 조회하며,
+React에서 사람 검토·품질 판정·비교 기준 관리로 이어집니다. 유료 Kubernetes 예산 연결은 별도입니다.
+이미지는 같은 SHA의 다섯 필수 CI 후 발행하고, 소스 이미지 또는 검증된 GHCR로 로컬 환경을 준비합니다.
+새 Argo 자동 배포 연결과 실제 클러스터 Ready 상태를 완료로 표시하지 않습니다.
+작성 시점의 가동 관측과 구현 범위는 [그림 설명](README-local.md#현재-확인-범위)을 따릅니다.
 
 ## 통합 전 Mac Kubernetes · 비공개 GHCR · Argo CD 기록
 

@@ -19,7 +19,8 @@ for (const source of manifest) {
   icons.set(source.name, `data:image/svg+xml;base64,${bytes.toString('base64')}`);
 }
 
-const W = 2820, H = 2250;
+const W = 2800, H = 2510;
+const usedIcons = new Set();
 const ink = '#172B3A', muted = '#526675';
 const colors = {runtime:'#7A8E9C', deploy:'#AD6C1C', config:'#97A6B3', dev:'#2D8570'};
 const parts = [];
@@ -32,6 +33,7 @@ function card(x, y, w, h, fill='#FFFFFF', stroke='#D3DEE5', radius=22) {
 }
 function icon(name, x, y, w, h=w) {
   if (!icons.has(name)) throw new Error(`Unknown logo: ${name}`);
+  usedIcons.add(name);
   parts.push(`<image data-brand="${name}" x="${x}" y="${y}" width="${w}" height="${h}" preserveAspectRatio="xMidYMid meet" href="${icons.get(name)}"/>`);
 }
 function edge(d, kind='runtime', both=false) {
@@ -42,174 +44,184 @@ function label(x, y, value, max=360, fill=muted) {
 }
 
 parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-labelledby="title desc">
-<title id="title">GovBiz 개인 포크 기반 로컬 시스템 아키텍처</title>
-<desc id="desc">2026-09-21 기준. 교육기관 원본 병합, 개인 포크 main Sync, 네 CI 통과, 비공개 GHCR 이미지 발행, 같은 포크의 Helm digest 갱신, 로컬 kind의 Argo CD 배포. 브라우저는 PC의 Vite에서 port-forward를 거쳐 Core에 연결한다. Core, Catalog, AI, Ops를 독립 실행하며 MySQL 세 개와 Redis, Elasticsearch, Qdrant, RabbitMQ가 있다. 명시적 연결 프로필에서 RabbitMQ, OpenAI, SMTP를 연결했다. 자동 수집과 유료 정기 작업은 예산 보호를 위해 대기하며 OAuth와 Bizno는 미연결이다. 개발 모드는 GitOps와 번갈아 사용한다. 공개 GHCR 전환은 아직 적용하지 않았다.</desc>
-<defs>${Object.entries(colors).map(([id,color])=>`<marker id="${id}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M1 1L9 5L1 9Z" fill="${color}"/></marker>`).join('')}</defs>
+<title id="title">GovBiz 로컬 아키텍처 — Kubernetes와 Compose LLMOps</title>
+<desc id="desc">2026-10-07 코드 기준의 연결 프로필. React에서 Core와 Django Ops로 요청하고, Kubernetes Ops API와 같은 Pod의 동기화 컨테이너가 내부 HTTP 브리지로 Compose의 Prefect와 결과 서버에 연결한다. Compose 평가 실행기는 pandas, Pandera, Evidently로 분석하고 Langfuse에 점수를 기록한다. Kubernetes 연결 범위는 저장 응답의 무료 재평가이며 유료 예산 역방향 연결은 별도다. 이미지 발행은 동일 SHA의 다섯 CI를 요구하며 신규 Argo 자동 배포는 연결되지 않았다. 작성 시점 PC에서는 Compose LLMOps 컨테이너만 관측했으며 저장된 Kubernetes API 주소는 응답하지 않았다.</desc>
+<defs>${Object.entries(colors).map(([name,color])=>`<marker id="${name}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M1 1L9 5L1 9Z" fill="${color}"/></marker>`).join('')}</defs>
 <style>text{font-family:Arial,"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",sans-serif}</style>
 <rect width="${W}" height="${H}" rx="36" fill="#FFFFFF"/>`);
-text(80,95,'GovBiz',{size:56,weight:700});
-text(305,93,'로컬 시스템 아키텍처',{size:36,weight:600});
-text(80,145,'개인 포크 · Kubernetes MSA · GitOps 배포와 로컬 코드 개발을 분리',{size:24,fill:muted});
-card(2185,53,550,63,'#EDF8F1','#BDDAC8',17);
-text(2460,95,'LOCAL KUBERNETES + GITOPS',{size:25,weight:600,anchor:'middle',max:515,fill:'#256B49'});
-text(2735,148,'2026.09.21 · Intel Mac 확인 / Windows WSL2 검증 별도',{size:19,fill:muted,anchor:'end',max:680});
-parts.push('<path d="M80 182H2740" stroke="#E4EBF0" stroke-width="2"/>');
 
-// Remote supply chain: promotion consumes verified Actions receipts, not a registry event.
-card(80,214,2660,425,'#F8FAFD','#D2DFEB',30);
-text(110,252,'원격 GitHub · 병합된 코드를 배포하는 경로',{size:24,weight:600,fill:muted});
-card(110,304,430,226);
-icon('git',137,330,47); icon('github',200,330,50);
-text(270,365,'교육기관 → 내 포크',{size:24,weight:600,max:245});
-text(137,420,'upstream PR 병합 → Sync',{size:27,weight:600,max:380});
-text(137,464,'ilil1/SKN34-4th-1Team · main',{size:22,max:380});
-text(137,500,'소스와 infrastructure/gitops를 함께 관리',{size:20,fill:muted,max:380});
-card(635,304,550,226,'#F1F6FE','#C5D8F0');
-icon('githubactions',660,329,54); text(735,369,'GitHub Actions',{size:34,weight:600,max:420});
-text(660,421,'동일 SHA · 4개 CI 통과',{size:28,weight:600,max:490});
-text(660,464,'원본 소스 일치 · 발행 명시적 활성화',{size:23,max:490});
-text(660,500,'서비스별 빌드 또는 검증 이미지 재사용',{size:22,fill:muted,max:490});
-edge('M540 419H635','deploy'); label(588,397,'main',80,colors.deploy);
-card(1280,304,410,226,'#F5F1FB','#D8C9E8');
-icon('github',1305,331,52); text(1375,369,'GHCR · Private',{size:32,weight:600,max:285});
-text(1305,420,'4개 서비스 이미지 · digest 고정',{size:24,weight:600,max:360});
-text(1305,460,'ghcr.io/ilil1/',{size:23,max:360});
-text(1305,496,'skn34-4th-1team-*',{size:23,fill:muted,max:360});
-edge('M1185 419H1280','deploy'); label(1232,397,'push',78,colors.deploy);
-card(1800,304,430,226,'#FFF8EB','#E5C590');
-text(1825,352,'Fork image promotion',{size:29,weight:600,max:380});
-text(1825,399,'발행 완료 workflow_run',{size:24,max:380});
-text(1825,442,'receipt 검증 → 새 digest 기록',{size:23,max:380});
-text(1825,491,'기존 소스·CI 검증 조건 유지',{size:22,fill:muted,max:380});
-edge('M910 304V279H2015V304','deploy');
-card(1220,261,440,32,'#F8FAFD','#F8FAFD',4); label(1440,286,'CI 결과 + 이미지 검증 artifact',415,colors.deploy);
-card(2325,304,385,226,'#F1F9F5','#C1DECE');
-icon('helm',2350,332,52); text(2420,367,'같은 포크 · main',{size:27,weight:600,max:263});
-text(2350,419,'infrastructure/gitops/',{size:24,weight:600,max:335});
-text(2350,461,'environments/fork/*.yaml',{size:22,max:335});
-text(2350,500,'Helm values에 digest 자동 커밋',{size:21,fill:muted,max:335});
-edge('M2230 419H2325','deploy'); label(2277,397,'commit',84,colors.deploy);
-text(110,582,'Git: 소스·Helm·digest  |  GHCR: 이미지 본체  |  PC Kubernetes Secret: 런타임 비밀값과 pull 인증',{size:24,fill:muted,max:2570});
-text(110,615,'작업 브랜치 push / PC의 git pull만으로 이미지 발행하지 않음 · 공개 전환 코드는 준비됐지만 현재 패키지는 비공개',{size:21,fill:muted,max:2570});
+text(70,91,'GovBiz',{size:56,weight:700});
+text(300,91,'로컬 시스템 아키텍처',{size:38,weight:600});
+text(70,140,'업무 서비스는 Kubernetes · 평가 실행과 관측은 Compose · 사람 검토는 React Ops',{size:25,fill:muted,max:1900});
+card(2170,51,560,62,'#EDF8F1','#BDDAC8',16);
+text(2450,91,'KUBERNETES + LLMOPS',{size:26,weight:700,anchor:'middle',fill:'#256B49',max:520});
+text(2730,140,'2026.10.07 · 구현된 연결 구성 기준',{size:21,fill:muted,anchor:'end',max:650});
 
-// Local machine: browser and Vite stay outside the kind node.
-card(80,701,2660,1425,'#F7FAFD','#BED3E5',32);
-icon('docker',109,725,73,52); text(201,767,'내 PC · Docker Desktop',{size:35,weight:600});
-text(110,810,'Docker가 실행 중일 때 동작 · 단일 노드 · 외부 공개 운영 환경 아님',{size:23,fill:muted,max:1660});
-card(2190,735,510,45,'#EDF8F1','#BDDAC8',12);
-text(2445,766,'확인 시점: 4개 서비스 Ready · Argo Healthy',{size:21,weight:600,anchor:'middle',max:485,fill:'#256B49'});
-card(110,877,425,360,'#FFFFFF','#CBD9E5');
-icon('chrome',141,905,53); text(212,943,'브라우저',{size:30,weight:600});
-text(140,986,'http://127.0.0.1:5173',{size:28,weight:600,max:367});
-edge('M323 1010V1050','runtime',true);
-icon('react',141,1078,53); icon('vitejs',213,1080,47);
-text(140,1170,'React / Vite 개발 서버',{size:28,weight:600,max:365});
-text(140,1209,'dev:k8s:connected · Vite HMR',{size:22,fill:muted,max:365});
-card(110,1320,425,160,'#EDF8F5','#C1DECE');
-text(140,1367,'kubectl port-forward',{size:28,weight:600,max:365});
-text(140,1410,'127.0.0.1:18080 → Core :8080',{size:24,max:365});
-text(140,1449,'loopback 전용 · Ingress / Nginx 없음',{size:20,fill:muted,max:365});
-edge('M323 1237V1320'); label(388,1284,'/api/*',125);
-card(110,1560,425,240,'#F1F9F5','#C1DECE');
-text(140,1606,'개발 / GitOps 모드 선택',{size:27,weight:600,max:365});
-text(140,1650,'dev: Argo Application 제거',{size:22,max:365});
-text(140,1690,'서비스·DB·PVC는 그대로 보존',{size:22,max:365});
-text(140,1730,'로컬 이미지 복원 후 gitops 재개',{size:21,max:365});
-text(140,1770,'두 도구가 같은 배포를 덮어쓰지 않음',{size:19,fill:muted,max:365});
-
-// Node, application namespace and data ownership.
-card(602,855,2101,980,'#FFFFFF','#BDD3E7',29);
-icon('kubernetes',630,880,60); text(712,922,'Kubernetes · kind / govbiz-f218b0ac1c',{size:33,weight:600,max:1180});
-text(2653,921,'Service DNS · Eureka 없음',{size:22,fill:muted,anchor:'end',max:510});
-text(650,970,'namespace: govbiz-msa  ·  서비스별 Helm release / Deployment / ClusterIP Service',{size:25,weight:600,max:1950});
-card(650,1010,420,151,'#FFF5F4','#E9C7C3');
-icon('redis',675,1030,52); text(745,1070,'Redis · :6379',{size:30,weight:600,max:300});
-text(675,1116,'Core 검색 결과·조건 복원',{size:23,max:370});
-text(675,1147,'세션 DB / LLM 응답 캐시 아님',{size:19,fill:muted,max:370});
-card(1160,1010,420,151,'#FFFBF0','#E6D596');
-icon('elasticsearch',1185,1030,52); text(1255,1070,'Elasticsearch',{size:29,weight:600,max:300});
-text(1185,1116,'Core 조회 · Catalog 색인 소유',{size:23,max:370});
-text(1185,1147,'Nori / BM25 · :9200 · 자동 색인 OFF',{size:19,fill:muted,max:370});
-card(1670,1010,420,151,'#F4F8FD','#C3D7EB');
-icon('kubernetes',1695,1030,49); text(1760,1070,'kubelet · image pull',{size:27,weight:600,max:305});
-text(1695,1116,'imagePullSecret: ghcr-pull',{size:23,max:370});
-text(1695,1147,'PAT read:packages · 4개 이미지',{size:19,fill:muted,max:370});
-card(2180,1010,475,151,'#FFF5ED','#E7C7AD');
-icon('argocd',2205,1030,55); text(2280,1070,'Argo CD Core',{size:31,weight:600,max:345});
-text(2205,1116,'argocd namespace · 4 Applications',{size:23,max:425});
-text(2205,1147,'auto-sync + self-heal · prune OFF',{size:19,fill:muted,max:425});
-edge('M1485 530V661H1880V1010','deploy');
-text(1930,685,'kubelet / 런타임이 이미지 다운로드',{size:19,max:450,fill:colors.deploy});
-edge('M2517 530V661H2720V990H2417V1010','deploy');
-card(2425,650,240,34,'#FFFFFF','#FFFFFF',3); label(2545,675,'Git 감지 · Helm 렌더',230,colors.deploy);
-
-card(630,1250,2045,291,'#FAFCFE','#E4EBF2',20);
-edge('M1880 1161V1250','deploy'); label(1994,1213,'실행 이미지',165,colors.deploy);
-edge('M2417 1161V1250','deploy'); label(2518,1213,'4개 배포 apply',190,colors.deploy);
-edge('M850 1280V1161'); label(763,1220,'검색 결과·조건',164);
-edge('M1040 1280V1190H1370V1161'); label(1210,1182,'키워드 조회',165);
-edge('M1470 1280V1161','config'); label(1540,1217,'색인 OFF',110,colors.config);
-const services = [
-  {x:650,name:'core-service · :8080',logo:'springboot',tech:'Spring Boot / Kotlin',fill:'#F2F9EE',stroke:'#C5DDBC',lines:['회원 · 기업 · 파트너 · 공고 조회','Catalog snapshot → 조회 DB 복제','RabbitMQ 큐 · SMTP 메일 연결']},
-  {x:1160,name:'catalog-service · :8081',logo:'springboot',tech:'Spring Boot / Kotlin',fill:'#F2F9EE',stroke:'#C5DDBC',lines:['공고 원본 · 수집 / 색인 소유','Core에 내부 HTTP snapshot 제공','외부 API 수집 / 자동 색인 OFF']},
-  {x:1670,name:'ai-service · :8000',logo:'fastapi',tech:'FastAPI / Python',fill:'#EFF9F9',stroke:'#BBDDDD',lines:['문서 · 임베딩 · 추천 / 근거 답변','Core·Catalog가 내부 HTTP 호출','OpenAI 연결 · 자동 유료 작업 대기']},
-  {x:2180,name:'ops-service · :8000',logo:'django',tech:'Django / Gunicorn',fill:'#F1F8F5',stroke:'#C2DACD',lines:['관리자 / LLMOps 확장 서비스','전용 DB · 독립 실행 · health','업무·인증 분리 완성 의미 아님']},
+// Delivery describes the current supported path, not the retired promotion/Argo chain.
+card(60,188,2680,282,'#F8FAFD','#D2DFEB',26);
+text(90,228,'01   소스 · 검증 · 로컬 배포',{size:25,weight:700,fill:muted});
+const delivery = [
+  [90,560,'git','소스 · 개인 포크',['skn-* → 원본 main PR 병합','개인 포크 main 동기화','소스와 Helm을 한 저장소에서 관리']],
+  [740,570,'githubactions','필수 CI 5개',['GovBiz · Catalog · Ops','LLMOps · Infra','같은 소스 SHA의 필수 작업 통과']],
+  [1400,565,'github','GHCR 이미지 발행',['개인 포크에서 명시적으로 활성화','검증 receipt · 서비스 이미지 digest','발행 성공과 실제 배포는 별도']],
+  [2055,650,'helm','로컬 초기화 · 갱신',['소스 빌드: up --local-images','검증된 GHCR: up','Helm 적용 · kind 이미지 적재']],
 ];
-for (const s of services) {
-  card(s.x,1280,420,240,s.fill,s.stroke);
-  text(s.x+23,1318,s.name,{size:24,weight:600,max:375});
-  icon(s.logo,s.x+23,1337,46); text(s.x+83,1373,s.tech,{size:25,weight:600,max:313});
-  s.lines.forEach((value,i)=>text(s.x+23,1418+i*35,value,{size:i===2?19:22,fill:i===2?muted:ink,max:374}));
+for(const [x,w,brand,title,lines] of delivery){
+  card(x,255,w,184);
+  icon(brand,x+22,277,42);
+  text(x+80,309,title,{size:28,weight:600,max:w-100});
+  lines.forEach((line,i)=>text(x+22,350+i*31,line,{size:22,fill:i===2?muted:ink,max:w-44}));
 }
-edge('M535 1400H650'); label(592,1378,'HTTP',92);
-edge('M1070 1395H1160','runtime',true); label(1115,1354,'snapshot',85); label(1115,1377,'인증 HTTP',88);
-edge('M955 1280V1267H1830V1280');
-card(1110,1249,595,29,'#FAFCFE','#FAFCFE',3); label(1407,1271,'Core → AI : 내부 인증 HTTP · 요청형 AI 연결',565);
-edge('M1580 1457H1670','config'); label(1625,1434,'색인 OFF',88,colors.config);
+for(const [a,b] of [[650,740],[1310,1400],[1965,2055]]) edge(`M${a} 344H${b}`,'deploy');
+
+// User-facing entry points are numbered to avoid a long proxy line crossing service lanes.
+card(60,510,2680,229,'#F8FBFD','#D2DFEB',26);
+text(90,551,'02   사용자 · 관리자 진입',{size:25,weight:700,fill:muted});
+card(90,577,370,130);
+icon('chrome',114,598,45);
+text(180,632,'브라우저',{size:29,weight:600,max:250});
+text(113,678,'사용자 화면 · 관리자 Ops',{size:23,max:325});
+card(540,577,530,130);
+icon('react',561,599,45); icon('vitejs',624,600,41);
+text(685,632,'React / Vite',{size:30,weight:600,max:360});
+text(562,677,'localhost:5173  ·  /ops/evaluations',{size:23,max:486});
+edge('M460 642H540');
+card(1150,577,725,130,'#F1F8FC','#C3DAE8');
+text(1175,617,'Vite 프록시 → loopback port-forward',{size:26,weight:600,max:675});
+text(1175,654,'① /api/*  →  :18080  →  Core :8080',{size:24,max:675});
+text(1175,690,'② /api/v1/ops/*  →  :18001  →  Ops :8000',{size:24,max:675});
+edge('M1070 642H1150');
+card(1955,577,750,130,'#F6F3FD','#D8CDEA');
+text(1980,617,'연결된 도구 UI',{size:27,weight:600,max:700});
+text(1980,654,'Prefect  localhost:14200  ·  작업 상태·로그',{size:23,max:700});
+text(1980,690,'Langfuse  localhost:13000  ·  trace·평가 점수',{size:23,max:700});
+
+// Kubernetes application ownership and dedicated persistent storage.
+card(60,790,1560,1090,'#F6FAFE','#BCD1E5',30);
+icon('kubernetes',94,819,57);
+text(173,860,'Kubernetes · kind',{size:37,weight:700,max:800});
+text(100,904,'namespace: govbiz-msa · 서비스별 Helm / Deployment / ClusterIP',{size:24,fill:muted,max:1470});
+edge('M315 1010V963H1350V1010');
+parts.push('<path d="M825 1010V963" stroke="#7A8E9C" stroke-width="3" fill="none"/>');
+label(946,946,'Core / Catalog → AI 내부 HTTP',800);
+const apps = [
+  [100,430,'springboot','① Core API · :8080',['Spring Boot / Kotlin','계정·기업·신청·협업 업무','검색 조합 · 공식 근거 검증','Core 관리자 세션의 인증 기준']],
+  [610,430,'springboot','Catalog · :8081',['Spring Boot / Kotlin','공고 수집·정규화·색인 소유','인증된 HTTP snapshot 제공','Core는 조회용 복제본을 보관']],
+  [1120,460,'fastapi','AI Service · :8000',['FastAPI / Python','임베딩·추천·RAG·문서·도우미','OpenAI · LangChain / LangGraph','Langfuse SDK 추적은 연결 설정 시']],
+];
+for(const [x,w,brand,title,lines] of apps){
+  card(x,1010,w,220,brand==='fastapi'?'#EDF9FB':'#F2F8EF',brand==='fastapi'?'#B8DCE3':'#CBDFBF');
+  icon(brand,x+20,1032,43);
+  text(x+80,1064,title,{size:27,weight:700,max:w-96});
+  lines.forEach((line,i)=>text(x+22,1105+i*33,line,{size:i===3?20:23,fill:i===3?muted:ink,max:w-44}));
+}
+edge('M530 1163H610','runtime',true);
+label(570,1143,'snapshot',78);
 const databases = [
-  [650,'mysql','Core MySQL 8.4','govbiz_core · 계정 / 기업 / 조회 복제본'],
-  [1160,'mysql','Catalog MySQL 8.4','govbiz_catalog · 공고 원본 / 발행 상태'],
-  [1670,'qdrant','Qdrant · :6333','AI 벡터 저장소 · 외부 색인 비활성'],
-  [2180,'mysql','Ops MySQL 8.4','govbiz_ops · Ops 전용'],
+  [100,430,'mysql','Core MySQL 8.4','계정·업무·조회용 공고 복제본'],
+  [610,430,'mysql','Catalog MySQL 8.4','공고 원본·수집 상태·공개 버전'],
+  [1120,460,'qdrant','Qdrant · :6333','AI 의미 검색·원문 근거 청크'],
 ];
-for (const [x,logo,title,description] of databases) {
-  edge(`M${x+210} 1520V1580`,logo==='qdrant'?'config':'runtime');
-  label(x+285,1555,logo==='qdrant'?'벡터':'SQL :3306',100);
-  card(x,1580,420,125,'#F5F9FF','#C6D9ED');
-  icon(logo,x+22,1603,45); text(x+82,1633,title,{size:27,weight:600,max:315});
-  text(x+22,1676,description,{size:20,max:378});
+for(const [x,w,brand,title,detail] of databases){
+  edge(`M${x+w/2} 1230V1310`);
+  label(x+w/2+92,1275,brand==='mysql'?'SQL :3306':'벡터 검색',180);
+  card(x,1310,w,108,'#FFFFFF','#C6D9EB',18);
+  icon(brand,x+21,1330,42);
+  text(x+79,1361,title,{size:26,weight:600,max:w-99});
+  text(x+22,1399,detail,{size:22,fill:muted,max:w-44});
 }
-edge('M650 1485H620V1772H650','runtime',true);
-card(650,1730,420,80,'#FFF5ED','#E7C7AD',14);
-icon('rabbitmq',670,1747,44);
-text(730,1762,'RabbitMQ · :5672',{size:26,weight:600,max:320});
-text(730,1796,'Core 비동기 큐 · 내부 전용 · PVC',{size:20,max:320});
-text(1120,1752,'데이터: MySQL 3개 + Redis / Elasticsearch / Qdrant / RabbitMQ · StatefulSet + PVC',{size:22,max:1520,fill:muted});
-text(1120,1785,'연결 프로필: OpenAI / SMTP ON · 자동 수집·임베딩·문서 분석·리포트는 예산 확인 후',{size:20,max:1520,fill:muted});
-text(1120,1815,'OAuth / Bizno 미연결 · DB·Secret·PVC는 Argo 서비스 자동 sync 대상 아님',{size:20,max:1520,fill:muted});
-
-// Alternative local development path; mutually exclusive with Argo ownership.
-card(110,1880,2590,206,'#F0F9F5','#BBDDD0',22);
-text(140,1920,'개발 모드 · 내 PC의 코드 저장을 반영하는 경로',{size:25,weight:600,fill:colors.dev});
-text(2665,1920,'GitOps와 번갈아 사용 · GHCR 업로드 없음',{size:22,fill:colors.dev,anchor:'end',max:670});
-const steps = [
-  [140,460,'코드 저장','dev.py --watch · 변경 감지'],
-  [695,470,'Docker 로컬 빌드','변경 서비스만 이미지 재빌드'],
-  [1260,470,'kind load docker-image','자기 PC 클러스터에 이미지 적재'],
-  [1825,840,'선택 서비스 rollout','실패 시 직전 이미지 복원 · DB는 되돌리지 않음'],
+card(100,1480,670,300,'#FFFFFF','#C6D9EB');
+text(125,1522,'업무용 공용 인프라',{size:27,weight:700,max:620});
+const stores = [
+  [1550,'redis','Redis :6379','Core 검색 결과·조건 복원'],
+  [1620,'elasticsearch','Elasticsearch :9200','Catalog 색인 · Core 키워드 조회'],
+  [1690,'rabbitmq','RabbitMQ :5672','Core 비동기 작업 · Outbox 연계'],
 ];
-for (const [x,w,title,detail] of steps) {
-  card(x,1950,w,103,'#FFFFFF','#C6DED4',15);
-  text(x+20,1988,title,{size:25,weight:600,max:w-40});
-  text(x+20,2027,detail,{size:21,fill:muted,max:w-40});
+for(const [y,brand,title,detail] of stores){
+  icon(brand,125,y,37);
+  text(178,y+26,title,{size:25,weight:600,max:550});
+  text(178,y+56,detail,{size:21,fill:muted,max:550});
 }
-edge('M600 2000H695','dev'); edge('M1165 2000H1260','dev'); edge('M1730 2000H1825','dev');
-text(140,2074,'백엔드는 HMR이 아니라 재빌드·재배포 · 웹 저장 반영은 Vite HMR · 다른 팀원 PC와 공용 이미지에는 영향 없음',{size:20,fill:colors.dev,max:2510});
+card(920,1480,660,205,'#ECF8F3','#B9DBCB');
+icon('django',943,1500,42);
+text(1004,1534,'② Django Ops · :8000',{size:29,weight:700,max:548});
+text(943,1574,'Ops API + ops-sync · 같은 Pod / 같은 이미지',{size:24,max:615});
+text(943,1610,'Core 관리자 인증 · 실행·예산·취소·사람 검토',{size:23,max:615});
+text(943,1646,'Prefect 상태와 결과 동기화 · 비교 기준·복구 이력',{size:22,max:615});
+edge('M1250 1685V1740');
+card(920,1740,660,100,'#FFFFFF','#C6D9EB',18);
+icon('mysql',943,1758,42);
+text(1004,1787,'Ops MySQL 8.4 · 독립 DB / PVC',{size:27,weight:600,max:548});
+text(943,1820,'실행 · 검토 · 품질 판정 · 기준 · 예산 · 일정',{size:23,fill:muted,max:610});
+text(100,1860,'저장소: MySQL 3개 + Redis · Elasticsearch · Qdrant · RabbitMQ → StatefulSet / PVC',{size:21,fill:muted,max:1480});
 
-parts.push('<path d="M80 2153H2740" stroke="#E4EBF0" stroke-width="2"/>');
-const legends = [[85,'runtime','요청·데이터 연결'],[620,'deploy','이미지·GitOps 제어'],[1230,'config','설정된 연결 / 현재 비활성'],[1990,'dev','로컬 개발 반영']];
-for (const [x,kind,name] of legends) { edge(`M${x} 2190H${x+60}`,kind); text(x+78,2198,name,{size:22,max:600}); }
-text(80,2235,'단일 PC 실행 구성 · AWS / Vercel / ECR / SSM 없음 · 모바일 앱 실행·Windows 실기기·고가용성·전체 AI 품질 검증은 별도',{size:21,fill:muted,max:2660});
+// The bridge carries Ops -> Prefect and read-only artifact HTTP. No live budget return path is implied.
+card(1660,1490,280,178,'#F0F5FC','#C6D6E8',18);
+text(1800,1530,'내부 HTTP 브리지',{size:24,weight:700,anchor:'middle',max:244});
+text(1800,1567,'Service + EndpointSlice',{size:19,anchor:'middle',max:250});
+text(1800,1602,'전용 Docker 내부망',{size:22,anchor:'middle',max:248});
+text(1800,1640,'무료 저장 응답 재평가',{size:21,anchor:'middle',max:248});
+edge('M1580 1577H1660');
+text(1774,987,'접수 · 상태 조회',{size:21,fill:muted,max:200});
+text(1750,1444,'인증된 결과 읽기',{size:21,fill:muted,max:220});
+
+card(1980,790,760,1090,'#FAF7FF','#D7C8E7',30);
+icon('docker',2014,820,62,45);
+text(2100,860,'Compose · LLMOps',{size:34,weight:700,max:595});
+text(2020,904,'Prefect · 실행기 · 결과 저장소 · Langfuse',{size:24,fill:muted,max:680});
+card(2020,945,680,155,'#FFFFFF','#D6CBE4');
+text(2045,987,'Prefect Server · :4200',{size:31,weight:700,max:630});
+text(2045,1030,'평가 flow 접수 · 실행 상태 · 작업 로그',{size:25,max:630});
+text(2045,1072,'Prefect 이력: SQLite / prefect-data 볼륨',{size:23,fill:muted,max:630});
+edge('M2360 1100V1160'); label(2485,1139,'작업 실행',195);
+card(2020,1160,680,185,'#F1EEF9','#D5C5E5');
+text(2045,1202,'평가 실행기 · Prefect flow',{size:31,weight:700,max:630});
+text(2045,1244,'pandas 집계 → Pandera 검증 → 지표 계산',{size:25,max:630});
+text(2045,1284,'Evidently 비교 보고서 · Langfuse 점수',{size:25,max:630});
+text(2045,1322,'저장 캡처 재평가 / 승인형 새 답변·RAG 실행',{size:22,fill:muted,max:630});
+edge('M2360 1345V1405'); label(2480,1383,'결과 기록',195);
+card(2020,1405,680,155,'#FFFFFF','#D6CBE4');
+text(2045,1447,'결과 볼륨 / 읽기 전용 HTTP',{size:30,weight:700,max:630});
+text(2045,1488,'ops-artifacts :8010 · 전용 토큰 인증',{size:25,max:630});
+text(2045,1527,'/results: 실행기 쓰기 · /evaluation-data: 자료',{size:23,fill:muted,max:630});
+edge('M2700 1253H2720V1676H2700');
+card(2020,1620,680,215,'#FFFFFF','#D6CBE4');
+text(2045,1663,'Langfuse Web + Worker',{size:31,weight:700,max:630});
+text(2045,1705,'모델 trace · 토큰·지연·오류 · 평가 점수',{size:24,max:630});
+text(2045,1747,'PostgreSQL · ClickHouse · Redis · MinIO',{size:24,fill:muted,max:630});
+text(2045,1786,'각 저장소의 Compose 볼륨으로 보존',{size:23,fill:muted,max:630});
+text(2045,1817,'업무용 MySQL · Redis와 분리',{size:20,fill:muted,max:630});
+edge('M1940 1535H1960V1024H2020');
+edge('M1940 1618H1973V1480H2020');
+
+// Human review changes the comparison baseline; orchestration completion is not a quality verdict.
+card(60,1920,2680,240,'#F0F9F5','#BBDDD0',26);
+text(90,1960,'03   React Ops에서 이어지는 평가 · 사람 검토',{size:26,weight:700,fill:'#256B49'});
+const review = [
+  [90,570,'자료 선택 · 실행 접수','자료·캡처·버전을 고정하고 실행 관리'],
+  [750,570,'보고서 · trace 비교','후보와 기존 기준의 차이 확인'],
+  [1410,570,'자료 · 답변 사람 검토','사례별 판단·사유와 실행 승인 저장'],
+  [2070,635,'품질 판정 · 비교 기준','승인된 결과를 다음 평가의 기준으로'],
+];
+for(const [x,w,title,detail] of review){
+  card(x,1990,w,100,'#FFFFFF','#C6DED4',15);
+  text(x+23,2028,title,{size:28,weight:600,max:w-46});
+  text(x+23,2066,detail,{size:23,fill:muted,max:w-46});
+}
+for(const [a,b] of [[660,750],[1320,1410],[1980,2070]]) edge(`M${a} 2039H${b}`,'dev');
+text(90,2128,'Kubernetes 연결: 무료 재평가·보고서·상태 동기화  |  Compose live: 승인·예산 통제  |  Kubernetes live 예산 연결은 별도',{size:23,fill:'#256B49',max:2600});
+
+card(60,2200,2680,137,'#FAFBFD','#D2DFEB',23);
+text(90,2241,'로컬 코드 반영',{size:26,weight:700,max:360});
+text(450,2241,'코드 저장 → dev.py → 변경 서비스 Docker 빌드 → kind load → rollout',{size:27,weight:600,max:2230});
+text(90,2298,'웹은 Vite HMR · 연결된 Ops는 전용 갱신 절차 사용 · 신규 Argo 자동 배포 미연결 · DB / Secret / 볼륨은 별도 보존',{size:23,fill:muted,max:2600});
+
+parts.push('<path d="M70 2380H2730" stroke="#E4EBF0" stroke-width="2"/>');
+for(const [x,kind,name] of [[75,'runtime','요청 · 데이터'],[565,'deploy','검증 · 이미지 공급'],[1235,'dev','평가 · 사람 검토']]){
+  edge(`M${x} 2420H${x+55}`,kind); text(x+76,2428,name,{size:22,max:570});
+}
+text(2725,2428,'실행 완료 ≠ 품질 합격',{size:24,weight:600,anchor:'end',max:800});
+text(75,2477,'작성 시점 관측: Compose LLMOps 컨테이너 실행 중 · 저장된 kind API 주소 접속 불가 · 실시간 가동·전체 모델 품질을 보증하는 그림은 아님',{size:21,fill:muted,max:2650});
 parts.push('</svg>');
 const svg = parts.join('\n');
 await fs.writeFile(path.join(root,`${basename}.svg`),svg);
@@ -240,7 +252,7 @@ if (process.argv.includes('--render')) {
     },{W,H});
     if(errors.length) throw new Error(`Text bounds failed: ${JSON.stringify(errors)}`);
     const count=await page.locator('image').evaluateAll(nodes=>new Set(nodes.map(n=>n.dataset.brand)).size);
-    if(count!==icons.size) throw new Error(`Unused logos: ${icons.size-count}`);
+    if(count!==usedIcons.size) throw new Error(`Missing rendered logos: ${usedIcons.size-count}`);
     await page.screenshot({path:path.join(root,`${basename}.png`),fullPage:true});
     console.log(`Created ${basename}.png (${W*2} × ${H*2}); ${count} logos and text bounds verified; network blocked`);
   } finally { await browser.close(); }
