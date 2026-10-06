@@ -46,7 +46,7 @@ export function BudgetLimitsForm({ summary, owner, onSaved, onExpired }: {
     } finally { submitting.current = false; setBusy(false) }
   }
   if (!summary.limits_revision) return null
-  return <section aria-label="누적 한도 설정" className="space-y-3 border-t border-sample-border pt-4">
+  return <section aria-label="누적 한도 설정" className="space-y-3 border-t border-line pt-4">
     <button className={styles.secondaryButton} disabled={busy || summary.state === 'inconsistent'} onClick={open}>누적 한도 설정</button>
     {opened && <>
       <p className="text-sm">과거 반영분과 앞으로 사용할 몫을 포함한 전체 누적 한도입니다. 사용량을 초기화하거나 모델 호출을 활성화하지 않습니다.</p>
@@ -55,7 +55,7 @@ export function BudgetLimitsForm({ summary, owner, onSaved, onExpired }: {
         <label className="grid gap-1">호출 누적 한도<input className="rounded border p-2" inputMode="numeric" value={calls} onChange={(event) => setCalls(event.target.value)} required /></label>
         <label className="grid gap-1">출력 토큰 누적 한도<input className="rounded border p-2" inputMode="numeric" value={output} onChange={(event) => setOutput(event.target.value)} required /></label>
         <label className="grid gap-1">입력 토큰 누적 한도<input className="rounded border p-2" inputMode="numeric" value={input} onChange={(event) => setInput(event.target.value)} required={previous?.input_tokens != null} /></label>
-        <p className="text-xs text-sample-muted">입력 한도는 과거 미확인 기록을 해결한 뒤 설정할 수 있습니다. 최초 미설정은 빈칸으로 두며, 활성화 후에는 해제할 수 없습니다.</p>
+        <p className="text-xs text-ink-muted">입력 한도는 과거 미확인 기록을 해결한 뒤 설정할 수 있습니다. 최초 미설정은 빈칸으로 두며, 활성화 후에는 해제할 수 없습니다.</p>
         <label className="grid gap-1 sm:col-span-2">한도 변경 사유<textarea className="rounded border p-2" value={reason} onChange={(event) => setReason(event.target.value)} maxLength={1000} required /></label>
         <button className={styles.primaryButton} type="submit">변경 내용 확인</button>
         <button className={styles.secondaryButton} type="button" onClick={() => setOpened(false)}>닫기</button>

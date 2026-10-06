@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native'
 import { router } from 'expo-router'
 import { applicationProgressStages, applicationServiceFieldLabels, type ApplicationPreparationSummary, type ApplicationProgressStage } from '@govbiz/shared/domain/entities/ApplicationPreparation'
+import { applicationProgressStageLabels } from '@govbiz/shared/domain/labels'
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
 import { ApiError, errorMessage } from '../api/client'
 import { updatePreparationProgress, type PreparationReview } from '../api/preparation'
@@ -10,9 +11,6 @@ import { AppIcon } from './AppIcon'
 import { PartnerSheet } from './PartnerSheet'
 import { usePreparationWorkspace } from './usePreparationWorkspace'
 
-export const preparationStageLabels: Record<ApplicationProgressStage, string> = {
-  PREPARING: '준비 중', APPLIED: '지원 완료', DOCUMENT_REVIEW: '서류 심사', PRESENTATION_REVIEW: '발표 심사', SELECTED: '선정', REJECTED: '미선정',
-}
 export const preparationKey = (identity: SupportProgramIdentity) => JSON.stringify([identity.sourceCode, identity.sourceProgramId])
 export const preparationDate = (date: string) => date.slice(5, 10).replace('-', '.')
 const reviewDateFormatter = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', month: '2-digit', day: '2-digit' })
@@ -94,9 +92,9 @@ export function ProgressStageSheet({ items, token, onClose, onSaved }: {
       {items.map((value) => <Pressable key={value.id} accessibilityRole="radio" accessibilityState={{ checked: value.id === item?.id }}
         disabled={busy} onPress={() => setSelectedId(value.id)} style={local.option}>
         <Text style={styles.body}>{value.id === item?.id ? '● ' : '○ '}{value.formTitle} · {applicationServiceFieldLabels[value.serviceField]}</Text></Pressable>)}</View>}
-    {applicationProgressStages.map((value) => <Pressable key={value} accessibilityRole="radio" accessibilityLabel={preparationStageLabels[value]}
+    {applicationProgressStages.map((value) => <Pressable key={value} accessibilityRole="radio" accessibilityLabel={applicationProgressStageLabels[value]}
       accessibilityState={{ checked: value === stage, disabled: busy }} disabled={busy} onPress={() => setStage(value)} style={local.option}>
-      <Text style={[styles.body, value === stage && { color: colors.primary }]}>{value === stage ? '● ' : '○ '}{preparationStageLabels[value]}</Text></Pressable>)}
+      <Text style={[styles.body, value === stage && { color: colors.primary }]}>{value === stage ? '● ' : '○ '}{applicationProgressStageLabels[value]}</Text></Pressable>)}
     {error && <Notice error>{error}</Notice>}
   </PartnerSheet>
 }
@@ -113,8 +111,8 @@ export function ProgramPreparationSection({ identity, token }: { identity: Suppo
     {workspace.reviewError && <Notice error>중복 검토 조회 실패: {workspace.reviewError}</Notice>}
     {(workspace.preparationError || workspace.reviewError) && <Button label="준비 현황 다시 확인" variant="ghost" onPress={workspace.refresh} />}
     {workspace.preparations !== null && <View style={local.stageRow}><View style={local.text}><Text style={local.small}>진행 단계</Text>
-      <Text style={styles.body}>{items[0] ? preparationStageLabels[items[0].progressStage] : '관심'}</Text></View>
-      <StatusBadge label={items[0] ? preparationStageLabels[items[0].progressStage] : '관심'} tone={items[0] ? 'info' : 'neutral'} />
+      <Text style={styles.body}>{items[0] ? applicationProgressStageLabels[items[0].progressStage] : '관심'}</Text></View>
+      <StatusBadge label={items[0] ? applicationProgressStageLabels[items[0].progressStage] : '관심'} tone={items[0] ? 'info' : 'neutral'} />
       <Pressable accessibilityRole="button" accessibilityLabel="진행 단계 바꾸기" style={local.change} onPress={() => items.length ? setStageOpen(true)
         : Alert.alert('아직 신청 준비를 시작하지 않았어요', '신청 문서를 만들면 진행 단계를 관리할 수 있어요.')}><Text style={local.changeText}>바꾸기</Text></Pressable></View>}
     {items.map((item) => <PreparationRow key={item.id} item={item} />)}

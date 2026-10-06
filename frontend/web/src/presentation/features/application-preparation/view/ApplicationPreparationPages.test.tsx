@@ -2551,7 +2551,7 @@ describe('application preparation creation and detail', () => {
     expect(document.activeElement).toBe(close)
     // 마지막 요소("검토하고 초안 만들기" 링크)에서 Tab을 누르면 첫 요소로, 첫 요소에서 Shift+Tab을 누르면 마지막 요소로 돕니다.
     const last = within(sheet).getByRole('link', { name: '검토하고 초안 만들기' })
-    expect(sheet.getAttribute('data-covers-assistant')).toBe('true')
+    expect(sheet.getAttribute('data-covers-assistant')).toBe('narrow')
     fireEvent.keyDown(sheet, { key: 'Tab', shiftKey: true })
     expect(document.activeElement).toBe(last)
     fireEvent.keyDown(sheet, { key: 'Tab' })

@@ -77,7 +77,7 @@ describe('지원사업 직접 필터 검색', () => {
     const params = new URL(fetchMock.mock.calls[2][0]).searchParams
     expect(params.get('sourceCode')).toBe(undated.sourceCode)
     expect(params.get('status')).toBe('UNKNOWN')
-    expect(within(screen.getByRole('region', { name: '필터 검색 결과' })).getByText('상태 미확인')).toBeTruthy()
+    expect(within(screen.getByRole('region', { name: '필터 검색 결과' })).getByText('상태 확인 필요')).toBeTruthy()
     fireEvent.click(screen.getByRole('link', { name: undated.title }))
     await screen.findByRole('heading', { name: undated.title })
     expect(screen.queryByRole('link', { name: '원문에 질문하기' })).toBeNull()
@@ -478,6 +478,8 @@ describe('지원사업 직접 필터 검색', () => {
     expect((await screen.findByRole('link', { name: program.title })).getAttribute('href')).toContain(`${detailPath}?`)
     fireEvent.click(await screen.findByRole('link', { name: program.title }))
     await screen.findByRole('heading', { name: program.title })
+    // 좁은 화면에서 아래에 붙는 할 일 바는 도우미 런처를 그 위로 올립니다(data-assistant-lift).
+    expect(screen.getByRole('complementary', { name: '이 공고로 할 일' }).getAttribute('data-assistant-lift')).toBe('narrow')
     if (path.startsWith('/app')) {
       // 작업 화면의 상세도 검색 탭 줄을 이어받고 들어온 필터 검색이 선택된 채입니다. 사이드바는 새검색이 켜져 있습니다.
       expect(within(screen.getByRole('tablist', { name: '지원사업 검색 방식' })).getByRole('tab', { name: '필터 검색' }).getAttribute('aria-selected')).toBe('true')
@@ -485,6 +487,8 @@ describe('지원사업 직접 필터 검색', () => {
       fireEvent.click(screen.getByRole('button', { name: '원문에 질문하기' }))
       expect(screen.getByTestId('location').textContent).toContain('ask=1')
       expect(screen.getByRole('textbox', { name: '공고 원문에 질문하기' })).toBeTruthy()
+      // 옆 패널은 런처 자리와 [질문 보내기]를 덮으므로 열려 있는 동안 런처를 숨깁니다.
+      expect(document.getElementById('support-program-ask')?.getAttribute('data-covers-assistant')).toBe('always')
       fireEvent.click(screen.getByRole('button', { name: '질문 패널 닫기' }))
       expect(screen.getByTestId('location').textContent).not.toContain('ask=1')
       await screen.findByRole('heading', { name: program.title })

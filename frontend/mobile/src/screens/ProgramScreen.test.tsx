@@ -92,20 +92,20 @@ test('saved program preparation changes only the selected document with its stor
   await screen.findByText('담은 공고라 보여요')
   await screen.findByLabelText('진행 단계 바꾸기')
   fireEvent.press(screen.getByLabelText('진행 단계 바꾸기'))
-  fireEvent.press(screen.getByLabelText('지원 완료'))
+  fireEvent.press(screen.getByLabelText('제출 완료'))
   fireEvent.press(screen.getByText('저장'))
   await waitFor(() => expect(apiRequest).toHaveBeenCalledWith('/api/v1/application-preparations/9/progress-stage', expect.objectContaining({
     method: 'PUT', accessToken: 'owner', body: { expectedProgressRevision: 1, progressStage: 'APPLIED' },
   })))
   await waitFor(() => expect(screen.queryByText('진행 단계 바꾸기')).toBeNull())
-  await waitFor(() => expect(screen.getAllByText('지원 완료').length).toBeGreaterThan(0))
+  await waitFor(() => expect(screen.getAllByText('제출 완료').length).toBeGreaterThan(0))
 })
 test('a progress conflict stays visible instead of reporting a successful stage update', async () => {
   jest.mocked(apiRequest).mockImplementation((path, options) => options?.method === 'PUT' ? Promise.reject(new ApiError(409, 'conflict')) : respond(path))
   render(<ProgramScreen identity={identity} onLogin={jest.fn()} />)
   await screen.findByLabelText('진행 단계 바꾸기')
   fireEvent.press(screen.getByLabelText('진행 단계 바꾸기'))
-  fireEvent.press(screen.getByLabelText('지원 완료'))
+  fireEvent.press(screen.getByLabelText('제출 완료'))
   fireEvent.press(screen.getByText('저장'))
   await screen.findByText(/다른 화면에서 진행 단계가 변경/)
   expect(screen.getByText('진행 단계 바꾸기')).toBeTruthy()

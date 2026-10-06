@@ -21,7 +21,7 @@ function Observation({ label, value, item }: { label: string; value: Case['candi
     const chunk = item.chunks.find((chunk) => chunk.id === id)
     return chunk ? `청크 ${chunk.order + 1}` : id
   }
-  return <article className="min-w-0 rounded-xl border border-sample-border p-4" aria-label={`${label} 답변과 근거`}>
+  return <article className="min-w-0 rounded-xl border border-line p-4" aria-label={`${label} 답변과 근거`}>
     <h3 className="font-semibold">{label}</h3>
     <p className="text-sm">{value.failure?.stage === 'not_started' ? '아직 실행하지 않은 기록 · 품질 비교 기준 아님' : value.failure ? `${stages[value.failure.stage]} 실패 · ${value.failure.code}` : '답변 도달'}</p>
     <p className="text-sm">답변 상태: {value.answer_status ? statuses[value.answer_status] : '미실행 또는 미확인'}</p>
@@ -75,7 +75,7 @@ function Material({ runId, onExpired, onReviewChanged }: Props) {
       <RagReferenceReviewPanel key={`${runId}:${state.review_version}:${material.fixture_sha256}`} runId={runId} state={state} disabled={locked || qualityBusy} onDirty={setReferenceDirty} onBusy={setReferenceBusy} onSaved={(value) => { setState(value); setReferenceDirty(false); setReferenceBusy(false); setSaved(false); onReviewChanged?.() }} onExpired={onExpired} />
       <p className="text-sm">후보: {origins[material.candidate_measurement_kind]} · 비교: {origins[material.reference_measurement_kind]}</p>
       <label className="block text-sm font-semibold">검토 사례
-        <select className="mt-1 w-full rounded-lg border border-sample-border p-2" value={selected} disabled={locked || qualityBusy || referenceBusy} onChange={(event) => { setSelected(Number(event.target.value)); setSaved(false) }}>
+        <select className="mt-1 w-full rounded-lg border border-line p-2" value={selected} disabled={locked || qualityBusy || referenceBusy} onChange={(event) => { setSelected(Number(event.target.value)); setSaved(false) }}>
           {material.cases.map((value, index) => <option key={value.case_id} value={index}>{value.case_id} · {value.question}</option>)}
         </select>
       </label>
@@ -88,7 +88,7 @@ function Material({ runId, onExpired, onReviewChanged }: Props) {
         <pre className="max-h-96 overflow-y-auto whitespace-pre-wrap break-words p-3 text-sm">{item.content}</pre>
       </details>
       <div><h3 className="font-semibold">고정 청크 · {item.chunk_version}</h3>
-        {item.chunks.map((chunk) => <details key={chunk.id} className="border-b border-sample-border py-2">
+        {item.chunks.map((chunk) => <details key={chunk.id} className="border-b border-line py-2">
           <summary className="cursor-pointer text-sm">청크 {chunk.order + 1} · {([
             ['후보', item.candidate], ['비교', item.reference],
           ] as const).map(([label, value]) => `${label}: ${value.retrieved_chunk_ids === null ? '검색 미확인' : value.retrieved_chunk_ids.includes(chunk.id) ? '검색됨' : '검색되지 않음'} / ${value.cited_chunk_ids === null ? '인용 미확인' : value.cited_chunk_ids.includes(chunk.id) ? '인용됨' : '인용되지 않음'}`).join(' · ')}</summary>

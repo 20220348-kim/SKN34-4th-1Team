@@ -12,6 +12,7 @@ frontend/                      사용자 클라이언트
     domain/                    entities, 업무 오류, Repository 계약, 유스케이스
     data/models/               Zod 응답 검증 및 DTO → domain 변환
     data/api/                  주소/fetch를 주입하는 공고 HTTP 클라이언트
+    design/                    색·모서리 디자인 토큰(웹 Tailwind 변수와 모바일 colors의 원본)
 backend/                       웹과 앱 공용 Core API·AI Service
 ```
 

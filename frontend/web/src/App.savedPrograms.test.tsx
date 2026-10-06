@@ -120,9 +120,13 @@ describe('관심 공고함', () => {
       .mockRejectedValueOnce(new Error('down')).mockResolvedValueOnce([])
     renderApp('/app/saved-programs', memberAccount)
 
-    expect(await screen.findByText(savedSupportProgramMessages.failed)).toBeTruthy()
+    expect((await screen.findByRole('alert')).textContent).toContain(savedSupportProgramMessages.failed)
+    // 브라우저 제목은 사이드바 메뉴와 같은 화면 이름입니다.
+    expect(document.title).toBe('관심 공고함 · GovBiz')
     fireEvent.click(screen.getByRole('button', { name: '다시 시도' }))
-    expect(await screen.findByText(savedSupportProgramMessages.empty)).toBeTruthy()
+    // 빈 화면은 공용 EmptyState입니다: 지금 상태(제목) + 한 줄 설명 + 다음 행동 하나.
+    const empty = await screen.findByRole('region', { name: savedSupportProgramMessages.emptyTitle })
+    expect(empty.textContent).toContain(savedSupportProgramMessages.emptyDescription)
     expect(screen.getByRole('link', { name: '지원사업 찾기' }).getAttribute('href')).toBe('/app/chat')
     expect(browse).toHaveBeenCalledTimes(2)
   })

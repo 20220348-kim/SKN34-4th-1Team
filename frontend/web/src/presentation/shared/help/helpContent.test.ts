@@ -44,13 +44,6 @@ describe('도움말 항목', () => {
     }
   })
 
-  it('준비 중 기능을 다루는 항목은 무엇이 안 되는지 함께 적는다', () => {
-    const preparing = findHelpEntry('feature-status-preparing')
-    expect(preparing?.limitation).not.toBeNull()
-    expect(preparing?.body.some((paragraph) => paragraph.includes('저장되지 않아요'))).toBe(true)
-    // 관심 공고함은 정식 기능이므로 준비 중이라고 안내하지 않는다.
-    expect(preparing?.body.some((paragraph) => paragraph.includes('관심 공고함은 아직'))).toBe(false)
-  })
 })
 
 describe('화면별 추천 질문', () => {
@@ -67,17 +60,20 @@ describe('화면별 추천 질문', () => {
     expect(ids).not.toContain('search-score-meaning')
   })
 
-  it('화면을 지정한 항목이 먼저, 화면과 무관한 항목이 나중에 온다', () => {
+  it('그 화면을 지정한 항목만 낸다', () => {
     const ids = helpEntriesForRoute(appPaths.profile, 5).map((entry) => entry.id)
     expect(ids[0]).toBe('partner-write-requires-company')
-    expect(ids).toContain('feature-status-preparing')
-    expect(ids.indexOf('feature-status-preparing')).toBeGreaterThan(0)
+    for (const id of ids) expect(findHelpEntry(id)?.routes.some((route) => appPaths.profile.startsWith(route)), id).toBe(true)
   })
 
-  it('아는 화면이 없어도 화면과 무관한 항목은 남고 개수 제한을 지킨다', () => {
-    expect(helpEntriesForRoute(appPaths.adminAccounts).map((entry) => entry.id)).toEqual(['feature-status-preparing'])
-    expect(helpEntriesForRoute(appPaths.proposals).map((entry) => entry.id)).toEqual(['proposal-box', 'feature-status-preparing'])
+  it('아는 화면이 없으면 추천 질문이 없고 개수 제한을 지킨다', () => {
+    expect(helpEntriesForRoute(appPaths.adminAccounts)).toEqual([])
+    expect(helpEntriesForRoute(appPaths.proposals).map((entry) => entry.id)).toEqual(['proposal-box'])
     expect(helpEntriesForRoute(appPaths.chat, 2)).toHaveLength(2)
+  })
+
+  it('준비 중 기능을 설명하는 항목은 두지 않는다', () => {
+    expect(findHelpEntry('feature-status-preparing')).toBeUndefined()
   })
 
   it('챗봇 표면에 없는 항목은 추천하지 않는다', () => {

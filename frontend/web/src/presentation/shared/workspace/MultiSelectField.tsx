@@ -4,17 +4,17 @@ import type { FilterChoiceOption } from './filterChoiceOptions'
 import { useFloatingPopover } from './useFloatingPopover'
 
 const styles = {
-  trigger: 'inline-flex min-h-10 cursor-pointer items-center gap-1.5 rounded-full border border-sample-border bg-white px-3.5 text-[0.85rem] font-semibold text-app-ink hover:border-[#087f46] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary aria-expanded:border-[#087f46]',
+  trigger: 'inline-flex min-h-10 cursor-pointer items-center gap-1.5 rounded-full border border-line bg-white px-3.5 text-[0.85rem] font-semibold text-ink hover:border-brand-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary aria-expanded:border-brand-primary',
   triggerActive: 'border-brand-line bg-brand-soft text-brand-primary',
   count: 'inline-flex min-w-5 items-center justify-center rounded-full bg-brand-primary px-1.5 text-[0.68rem] font-extrabold text-white',
-  caret: 'text-[0.7rem] text-sample-muted',
+  caret: 'text-[0.7rem] text-ink-muted',
   value: 'min-w-0 flex-1 truncate text-left',
   // 펼침 목록입니다. 여섯 줄 남짓 보이고 나머지는 안에서 스크롤합니다.
-  popover: 'z-40 flex flex-col gap-0.5 rounded-xl border border-sample-border bg-white p-1.5 shadow-[0_12px_32px_rgb(32_33_36_/_14%)] outline-0',
+  popover: 'z-40 flex flex-col gap-0.5 rounded-xl border border-line bg-white p-1.5 shadow-[0_12px_32px_rgb(32_33_36_/_14%)] outline-0',
   // 체크 상자 없이 고른 줄은 연한 초록 바탕과 굵은 글자로만 표시합니다.
-  option: 'flex min-h-9 cursor-pointer items-center rounded-lg px-3 text-sm text-app-ink hover:bg-surface-muted has-[:checked]:bg-brand-soft has-[:checked]:font-bold has-[:checked]:text-brand-primary has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-brand-primary',
+  option: 'flex min-h-9 cursor-pointer items-center rounded-lg px-3 text-sm text-ink hover:bg-surface-muted has-[:checked]:bg-brand-soft has-[:checked]:font-bold has-[:checked]:text-brand-primary has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-brand-primary',
   checkbox: 'sr-only',
-  divider: 'my-0.5 h-px bg-sample-border',
+  divider: 'my-0.5 h-px bg-line',
 } as const
 
 const rowPx = 36

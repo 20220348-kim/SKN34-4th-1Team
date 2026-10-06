@@ -7,7 +7,8 @@ import { useAssistantViewModel } from './useAssistantViewModel'
 
 /**
  * 모든 화면 오른쪽 아래에 떠 있는 GovBiz 도우미입니다. 런처(56px 원)와 열렸을 때의 패널로 이루어지며,
- * 로그인·회원가입처럼 도우미가 필요 없는 화면에서는 그리지 않습니다.
+ * 로그인·회원가입처럼 도우미가 필요 없는 화면과 입력창을 가리는 채팅 화면에서는 그리지 않습니다.
+ * 아래 고정 바가 있는 화면에서는 그 바가 단 `data-assistant-lift`(assistantLift)로 CSS가 런처·패널을 바 위로 올립니다.
  */
 export function AssistantWidget() {
   const vm = useAssistantViewModel()
@@ -18,7 +19,7 @@ export function AssistantWidget() {
   return (
     <>
       {vm.isOpen ? <AssistantPanel vm={vm} launcherRef={launcherRef} /> : null}
-      <div className={`${styles.launcherWrap} ${vm.isLifted ? styles.launcherWrapLifted : vm.isAnswerEditor ? styles.launcherWrapAnswerEditor : styles.launcherWrapDefault}`}>
+      <div className={styles.launcherWrap}>
         {vm.showLabel ? <span className={styles.launcherLabel} aria-hidden="true">{assistantMessages.launcherLabel}</span> : null}
         <button
           ref={launcherRef}

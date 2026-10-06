@@ -32,7 +32,7 @@ export function RagComparisonResult({ comparison }: { comparison: RagComparison 
       <p>자료: {report.fixtureSha256}</p><p>캡처: {report.captureSha256}</p><p>프롬프트: {report.execution.promptSha256 ?? '실행 없음'}</p>
     </div>)}</div>
     <details><summary className="cursor-pointer font-semibold">사례별 검색·인용·실패</summary>
-      {current.cases.map((item) => <article key={item.caseId} className="border-b border-sample-border py-3 text-sm break-all">
+      {current.cases.map((item) => <article key={item.caseId} className="border-b border-line py-3 text-sm break-all">
         <strong>{item.caseId}</strong><p>검색 재현율 {measure(item.retrievalRecallAtK)} · 답변 인용 재현율 {measure(item.answerCitationRecall)}</p>
         <p>{item.failure ? `${stages[item.failure.stage]} 실패 · ${item.failure.code}` : '답변 도달'}</p>
         <p>검색 근거: {item.retrievedChunkIds?.join(', ') ?? '미측정'}</p><p>인용 근거: {item.citedChunkIds?.join(', ') ?? '미측정'}</p>

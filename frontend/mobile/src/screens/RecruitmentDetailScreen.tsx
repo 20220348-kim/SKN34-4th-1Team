@@ -8,6 +8,7 @@ import { partnerProposalStatusLabels } from '@govbiz/shared/domain/entities/Part
 import type { Company } from '@govbiz/shared/domain/entities/Company'
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
 import type { SupportProgramStatus } from '@govbiz/shared/domain/entities/SupportProgram'
+import { programStatusLabels } from '@govbiz/shared/domain/labels'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { ApiError, programClient } from '../api/client'
 import { getCompany } from '../api/company'
@@ -146,9 +147,6 @@ export function RecruitmentDetailScreen({ id, onLogin, onCompany, onProgram, onI
   if (!detail) return <Page><Notice error>모집글을 확인하지 못했습니다.</Notice></Page>
   const sourceName = catalogSourceLabels[detail.program.sourceCode as keyof typeof catalogSourceLabels] ?? detail.program.sourceCode
   const programStatus = linkedStatus?.key === `${detail.program.sourceCode}:${detail.program.sourceProgramId}` ? linkedStatus : null
-  const programStatusLabels: Record<SupportProgramStatus, string> = {
-    OPEN: '접수 중', UPCOMING: '접수 예정', CLOSED: '접수 마감', UNKNOWN: '접수 상태 미확인',
-  }
   const programStatusColor = programStatus?.status === 'OPEN' ? colors.primary
     : programStatus?.status === 'UPCOMING' ? colors.info : colors.muted
 

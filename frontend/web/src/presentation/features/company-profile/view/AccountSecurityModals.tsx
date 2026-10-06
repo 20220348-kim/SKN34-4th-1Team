@@ -109,8 +109,8 @@ export function DeleteAccountModal({ vm, email }: { vm: SecurityViewModel['delet
         <div className={workspaceModalStyles.consequences} role="status" aria-label="삭제되는 것">
           <strong>삭제되는 것</strong>
           <ul className={workspaceModalStyles.consequenceList}>{consequences.map((item) => <li key={item}>{item}</li>)}</ul>
-          {vm.preview.status === 'loading' ? <p className="m-0 mt-1 text-sample-muted">건수를 확인하는 중…</p> : null}
-          {vm.preview.status === 'failed' ? <p className="m-0 mt-1 text-sample-muted">건수는 지금 확인하지 못했습니다.</p> : null}
+          {vm.preview.status === 'loading' ? <p className="m-0 mt-1 text-ink-muted">건수를 확인하는 중…</p> : null}
+          {vm.preview.status === 'failed' ? <p className="m-0 mt-1 text-ink-muted">건수는 지금 확인하지 못했습니다.</p> : null}
         </div>
         */}
 

@@ -1,11 +1,14 @@
 import { useEffect, useRef } from 'react'
 import { Link } from 'react-router'
+import { daysUntil, ddayTone, formatDday, type DdayTone } from '@govbiz/shared/domain/labels'
 
 import { partnerProposalStatusTones, type PartnerProposal } from '../../../../domain/entities/PartnerProposal'
 import { toRegionName } from '../../../../domain/entities/Region'
+import { assistantCover } from '../../../shared/assistant/assistantPlacement'
 import { companyInitial } from '../../../shared/partner-recruitment/partnerRecruitmentLabels'
 import { workspaceChipClassName, workspacePageStyles, workspaceTagClassName } from '../../../shared/workspace/WorkspacePage.styles'
 import { WorkspaceModal } from '../../../shared/workspace/WorkspaceModal'
+import { ddayToneClassNames } from '../../../shared/workspace/WorkspaceStates.styles'
 import { workspaceModalStyles } from '../../../shared/workspace/WorkspaceModal.styles'
 import { PartnerManagementHeader } from '../../../shared/partner-recruitment/PartnerManagementHeader'
 import {
@@ -27,12 +30,14 @@ function formatDateTime(value: string): string {
   return value.slice(0, 16).replace(/-/g, '.').replace('T', ' ')
 }
 
-/** 응답 기한까지 남은 날입니다. 지났으면 null. */
-function daysUntil(value: string): number | null {
-  const due = new Date(value)
-  if (Number.isNaN(due.getTime())) return null
-  const days = Math.ceil((due.getTime() - Date.now()) / 86_400_000)
-  return days < 0 ? null : days
+/**
+ * 대기 중인 제안의 응답 기한 D-day입니다. 기한은 서울 시각(`2026-09-23T14:20:00`)이라 그 날짜 부분으로 shared D-day(D-3 · 당일 D-day)와
+ * 색 단계(`ddayTone`)를 씁니다. 대기 중이 아니거나 기한 날짜가 지났거나 읽을 수 없으면 null입니다.
+ */
+function proposalDueDday(proposal: PartnerProposal): { label: string; tone: DdayTone } | null {
+  if (proposal.status !== 'PENDING') return null
+  const days = daysUntil(proposal.expiresAt.slice(0, 10))
+  return days === null || days < 0 ? null : { label: formatDday(days), tone: ddayTone(days) }
 }
 
 /** 행의 "09.23 받음 · 09.02 수락" 같은 시점 한 마디입니다. */
@@ -147,7 +152,7 @@ export function PartnerProposalBoxPage() {
             {proposals.map((proposal) => {
               const isSelected = selectedProposal?.id === proposal.id
               const statusLabel = vm.statusLabel(proposal)
-              const dueDays = proposal.status === 'PENDING' ? daysUntil(proposal.expiresAt) : null
+              const dueDday = proposalDueDday(proposal)
               return (
                 <article key={proposal.id} aria-label={`${proposal.counterpart.companyName} 제안`}>
                   <button
@@ -164,6 +169,8 @@ export function PartnerProposalBoxPage() {
                       <span className={s.rowTitle}>
                         {proposal.counterpart.companyName}
                         <StatusBadge proposal={proposal} label={statusLabel} />
+                        {/* 남은 응답 기한은 모집글 카드처럼 상태 배지 옆 D-day 배지로 알립니다. */}
+                        {dueDday !== null && <span className={`${workspacePageStyles.tag} ${ddayToneClassNames[dueDday.tone]}`}><span className="sr-only">응답 기한 </span>{dueDday.label}</span>}
                       </span>
                       <span className={s.rowSub}>
                         <span>{proposal.recruitment.title}</span>
@@ -171,7 +178,7 @@ export function PartnerProposalBoxPage() {
                       </span>
                     </span>
                     {proposal.status === 'PENDING' ? (
-                      <span className={s.rowDue}>기한 {formatShortDate(proposal.expiresAt)}{dueDays !== null ? ` · D-${dueDays}` : ''}</span>
+                      <span className={s.rowDue}>기한 {formatShortDate(proposal.expiresAt)}</span>
                     ) : null}
                     <svg className={s.rowChevron} width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m9 6 6 6-6 6" /></svg>
                   </button>
@@ -245,7 +252,7 @@ function ProposalPanel({ proposal, boxLabel, statusLabel, actions, recruitmentPa
   useEffect(() => {
     panelRef.current?.focus()
   }, [proposal.id])
-  const dueDays = proposal.status === 'PENDING' ? daysUntil(proposal.expiresAt) : null
+  const dueDday = proposalDueDday(proposal)
   const profile = proposal.counterpart.profile
 
   return (
@@ -256,6 +263,7 @@ function ProposalPanel({ proposal, boxLabel, statusLabel, actions, recruitmentPa
       role="region"
       aria-label={`${boxLabel} 상세`}
       tabIndex={-1}
+      {...assistantCover.always}
       onKeyDown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); onClose() } }}
     >
       <header className={s.panelHeader}>
@@ -302,7 +310,7 @@ function ProposalPanel({ proposal, boxLabel, statusLabel, actions, recruitmentPa
           {proposal.status === 'PENDING' ? (
             <div className={s.kvRow}>
               <dt className={s.kvLabel}>응답 기한</dt>
-              <dd className={s.kvValue}>{formatDateTime(proposal.expiresAt)}{dueDays !== null ? ` · D-${dueDays}` : ''}</dd>
+              <dd className={s.kvValue}>{formatDateTime(proposal.expiresAt)}{dueDday !== null ? ` · ${dueDday.label}` : ''}</dd>
             </div>
           ) : proposal.respondedAt ? (
             <div className={s.kvRow}>

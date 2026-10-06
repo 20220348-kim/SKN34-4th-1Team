@@ -1,12 +1,13 @@
 import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from 'react'
-import { applicationDeadlineDays, type ApplicationFormAvailability } from '../../../../domain/entities/ApplicationPreparation'
+import { daysUntil, programStatusLabels } from '@govbiz/shared/domain/labels'
+import type { ApplicationFormAvailability } from '../../../../domain/entities/ApplicationPreparation'
 import { regionNames } from '../../../../domain/entities/Region'
-import type { SupportProgramStatus } from '../../../../domain/entities/SupportProgram'
 import { supportProgramCategories } from '../../../../domain/entities/SupportProgramCategory'
 import { catalogSourceCodes, catalogSourceLabels, type SupportProgramCatalogFilters } from '../../../../domain/entities/SupportProgramCatalog'
 import { defaultProgramSelectionFilters, splitFilterValues } from '../../../shared/support-program/catalogSearchParams'
 import { SelectField } from '../../../shared/workspace/SelectField'
 import { MultiSelectField } from '../../../shared/workspace/MultiSelectField'
+import { StatusTag } from '../../../shared/workspace/StatusTag'
 import { toFilterChoiceOptions } from '../../../shared/workspace/filterChoiceOptions'
 import { useDelayedFlag } from '../../../shared/workspace/useDelayedFlag'
 import {
@@ -22,28 +23,17 @@ import { ButtonSpinner, PickerRowSkeletons } from './ApplicationPreparationSkele
 
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
-const programStatus: Record<SupportProgramStatus, { label: string; tone: string }> = {
-  OPEN: { label: '접수 중', tone: b.brand },
-  UPCOMING: { label: '접수 예정', tone: b.info },
-  CLOSED: { label: '접수 종료', tone: b.neutral },
-  UNKNOWN: { label: '상태 미확인', tone: b.warning },
-}
 type ConditionKey = 'keyword' | 'region' | 'category' | 'sourceCode' | 'status'
-const filterStatusLabels: Record<SupportProgramCatalogFilters['status'], string> = {
-  ALL: '전체', OPEN: '접수 중', UPCOMING: '접수 예정', CLOSED: '접수 종료', UNKNOWN: '상태 미확인',
-}
+const filterStatusLabels: Record<SupportProgramCatalogFilters['status'], string> = { ALL: '전체', ...programStatusLabels }
 
 function sourceLabel(sourceCode: string) {
   return (catalogSourceLabels as Record<string, string>)[sourceCode] ?? sourceCode
 }
 
-/** 접수 상태(점) · 마감까지 남은 날 · (선택) 출처 배지 한 줄입니다. 마감일이 없거나 지났으면 D-n은 두지 않습니다. */
+/** 접수 상태 · D-day(공용 StatusTag) · (선택) 출처 배지 한 줄입니다. 마감일이 없거나 지났거나 접수 중이 아니면 D-day는 두지 않습니다. */
 export function ProgramBadges({ program, withSource = false, extra }: { program: SelectableSupportProgram; withSource?: boolean; extra?: ReactNode }) {
-  const status = programStatus[program.status]
-  const days = applicationDeadlineDays(program.applicationEndDate)
   return <span className={b.row}>
-    <span className={`${b.badge} ${status.tone}`}><span className={b.dot} aria-hidden="true" />{status.label}</span>
-    {days !== null && days >= 0 && <span className={`${b.badge} ${days <= 3 ? b.warning : b.neutral}`}>{days === 0 ? 'D-Day' : `D-${days}`}</span>}
+    <StatusTag status={program.status} daysLeft={daysUntil(program.applicationEndDate)} />
     {withSource && <span className={`${b.badge} ${b.outline}`}>{sourceLabel(program.sourceCode)}</span>}
     {extra}
   </span>

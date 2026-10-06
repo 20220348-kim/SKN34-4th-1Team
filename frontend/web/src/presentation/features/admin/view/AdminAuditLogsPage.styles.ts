@@ -3,7 +3,7 @@ function classes(...groups: string[]) {
 }
 
 const fieldControl = classes(
-  'min-h-11 rounded-xl border border-line bg-surface px-3 text-xs text-app-ink',
+  'min-h-11 rounded-xl border border-line bg-surface px-3 text-xs text-ink',
   'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary',
 )
 
@@ -20,7 +20,7 @@ export const adminAuditLogsPageStyles = {
   formError: 'm-0 text-[0.78rem] leading-[1.6] text-danger',
   timeCell: 'whitespace-nowrap tabular-nums',
   personCell: 'flex min-w-0 flex-col gap-0.5',
-  personEmail: 'font-bold text-app-ink [overflow-wrap:anywhere]',
+  personEmail: 'font-bold text-ink [overflow-wrap:anywhere]',
   personId: 'text-[0.68rem] text-ink-subtle',
   summaryCell: 'block min-w-[12rem] max-w-[22rem] font-mono text-[0.7rem] [overflow-wrap:anywhere]',
   userAgent: 'block max-w-[14rem] truncate text-[0.68rem] text-ink-subtle',

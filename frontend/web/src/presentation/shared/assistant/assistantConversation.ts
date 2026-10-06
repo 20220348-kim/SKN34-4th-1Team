@@ -1,3 +1,5 @@
+import { daysUntil, ddayTone, formatDday } from '@govbiz/shared/domain/labels'
+
 import type { AssistantAnswer, AssistantCard as AssistantAnswerCard } from '../../../domain/entities/AssistantAnswer'
 import type { PartnerProposal } from '../../../domain/entities/PartnerProposal'
 import type { SavedSupportProgram } from '../../../domain/entities/SavedSupportProgram'
@@ -29,7 +31,6 @@ export const assistantHelpTopics: readonly AssistantHelpTopic[] = [
   { id: 'saved', label: '관심 공고·리포트', entryIds: ['saved-programs-pipeline', 'daily-report'] },
   { id: 'review', label: '중복 검토·신청 문서', entryIds: ['review-save-vs-run', 'review-input-revision', 'application-preparation-flow'] },
   { id: 'partner', label: '파트너·기업 등록', entryIds: ['partner-write-requires-company', 'proposal-box'] },
-  { id: 'general', label: '기타 안내', entryIds: ['feature-status-preparing'] },
 ]
 
 export function findAssistantHelpTopic(id: string): AssistantHelpTopic | undefined {
@@ -74,7 +75,6 @@ export type AssistantSession = {
   contactUrl: string | null
 }
 
-const DAY_MS = 86_400_000
 const SOON_DAYS = 7
 
 let sequence = 0
@@ -299,24 +299,13 @@ export function loginBenefitsAnswer(returnTo: string): AssistantMessage {
   })
 }
 
-/** 서울 기준 오늘 0시입니다. */
-function startOfSeoulDay(now: Date): number {
-  const seoul = new Date(now.getTime() + 9 * 60 * 60 * 1000)
-  return Date.UTC(seoul.getUTCFullYear(), seoul.getUTCMonth(), seoul.getUTCDate()) - 9 * 60 * 60 * 1000
-}
-
-/** YYYY-MM-DD까지 남은 날수입니다. 지난 날짜는 음수입니다. */
-export function daysUntil(date: string, now: Date): number {
-  return Math.round((Date.parse(`${date}T00:00:00+09:00`) - startOfSeoulDay(now)) / DAY_MS)
-}
-
+/** 마감일 태그입니다. 글자는 shared D-day 문구(D-3 · 오늘 마감 · 마감)이고, 색은 3일 이내 hot · 7일 이내 soon입니다. */
 function deadlineTag(applicationEndDate: string | null, now: Date): AssistantCardRow['tag'] {
-  if (applicationEndDate === null) return { label: '미정', tone: 'muted' }
   const remaining = daysUntil(applicationEndDate, now)
-  if (Number.isNaN(remaining)) return { label: '미정', tone: 'muted' }
-  if (remaining < 0) return { label: '마감', tone: 'muted' }
-  if (remaining === 0) return { label: 'D-day', tone: 'hot' }
-  return { label: `D-${remaining}`, tone: remaining <= 3 ? 'hot' : remaining <= SOON_DAYS ? 'soon' : 'ok' }
+  if (remaining === null) return { label: '미정', tone: 'muted' }
+  // 색 단계는 shared ddayTone(7일 이내 · 30일 이내 · 그 뒤 · 지남)을 도우미 카드 색 이름에 대응합니다.
+  const tone = ({ urgent: 'hot', soon: 'soon', later: 'ok', closed: 'muted' } as const)[ddayTone(remaining)]
+  return { label: formatDday(remaining), tone }
 }
 
 function monthDay(date: string): string {
@@ -334,7 +323,7 @@ export function savedProgramsAnswer(saved: SavedSupportProgram[], now: Date): As
     })
   }
   const upcoming = saved
-    .filter((item) => item.program.applicationEndDate === null || daysUntil(item.program.applicationEndDate, now) >= 0)
+    .filter((item) => item.program.applicationEndDate === null || (daysUntil(item.program.applicationEndDate, now) ?? -1) >= 0)
     .sort((a, b) => {
       const left = a.program.applicationEndDate
       const right = b.program.applicationEndDate
@@ -343,7 +332,7 @@ export function savedProgramsAnswer(saved: SavedSupportProgram[], now: Date): As
       if (right === null) return -1
       return left < right ? -1 : 1
     })
-  const soon = upcoming.filter((item) => item.program.applicationEndDate !== null && daysUntil(item.program.applicationEndDate, now) <= SOON_DAYS).length
+  const soon = upcoming.filter((item) => (daysUntil(item.program.applicationEndDate, now) ?? Infinity) <= SOON_DAYS).length
   const rows: AssistantCardRow[] = upcoming.slice(0, 3).map((item) => ({
     tag: deadlineTag(item.program.applicationEndDate, now),
     title: item.program.title,
@@ -399,31 +388,13 @@ export function receivedProposalsAnswer(
   })
 }
 
-/** 로그인·회원가입처럼 도우미를 두지 않는 화면입니다. */
+/**
+ * 도우미를 두지 않는 화면입니다. 로그인·회원가입처럼 필요 없는 화면과, 아래 입력창을 가리는 채팅 화면(`/`, `/app/chat`)입니다.
+ * 아래 고정 바가 있는 다른 화면은 숨기지 않고 바 위로 올립니다(assistantLift).
+ */
 export function isAssistantHiddenOn(pathname: string): boolean {
   const path = pathname.replace(/\/+$/, '') || publicPaths.landing
-  return path === appPaths.welcome || path === appPaths.welcomeCompany || [publicPaths.login, publicPaths.signup, publicPaths.oauthComplete, publicPaths.reportEmail, '/forgot-password', '/reset-password'].includes(path)
-    || path.startsWith('/examples/')
-}
-
-/** 채팅 입력창이 아래에 있는 화면에서는 런처를 위로 올립니다. */
-export function isComposerScreen(pathname: string): boolean {
-  const path = pathname.replace(/\/+$/, '') || publicPaths.landing
   return path === publicPaths.landing || path === appPaths.chat
-}
-
-/** 중복 검토 입력 화면(`/app/combination-reviews/new` · `/:id`)입니다. 아래 고정 단계 바의 주 버튼을 가리지 않게 런처를 그 위로 올립니다. */
-export function isReviewStepScreen(pathname: string): boolean {
-  const path = pathname.replace(/\/+$/, '')
-  const prefix = `${appPaths.combinationReviews}/`
-  if (!path.startsWith(prefix)) return false
-  const rest = path.slice(prefix.length)
-  return rest === 'new' || /^\d+$/.test(rest)
-}
-
-/** 답변 입력 화면(`/app/application-preparations/:id`)입니다. 600px 미만에서 아래 고정 바가 있어 런처를 그 위로 올립니다. */
-export function isAnswerEditorScreen(pathname: string): boolean {
-  const path = pathname.replace(/\/+$/, '')
-  const prefix = `${appPaths.applicationPreparations}/`
-  return path.startsWith(prefix) && /^\d+$/.test(path.slice(prefix.length))
+    || path === appPaths.welcome || path === appPaths.welcomeCompany || [publicPaths.login, publicPaths.signup, publicPaths.oauthComplete, publicPaths.reportEmail, '/forgot-password', '/reset-password'].includes(path)
+    || path.startsWith('/examples/')
 }

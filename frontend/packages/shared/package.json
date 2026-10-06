@@ -6,7 +6,8 @@
   "exports": {
     "./domain/*": "./src/domain/*.ts",
     "./data/models/*": "./src/data/models/*.ts",
-    "./data/api/*": "./src/data/api/*.ts"
+    "./data/api/*": "./src/data/api/*.ts",
+    "./design/*": "./src/design/*.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

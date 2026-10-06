@@ -424,7 +424,7 @@ function DocumentResults({ id }: { id: number }) {
           <h2 className={n.cardTitle}>입력 위치가 변경됐습니다</h2>
           <p className={n.muted}>승인 전에는 새 위치를 저장하거나 기존 답변·파일을 수정하지 않습니다. 아래 변경을 확인해 주세요.</p>
           <ul className={s.fieldList}>{migration.changes.map((change, index) => <li className={`${n.summary} ${n.muted}`} key={`${change.fieldLabel}-${index}`}>
-            <strong className="text-app-ink">{change.fieldLabel} · {changeTypeLabel[change.changeType]}</strong>
+            <strong className="text-ink">{change.fieldLabel} · {changeTypeLabel[change.changeType]}</strong>
             <span>기존: {change.oldLocation ?? '입력 위치 없음'}</span>
             <span>새 위치: {change.newLocation ?? '입력 위치 없음'}</span>
           </li>)}</ul>

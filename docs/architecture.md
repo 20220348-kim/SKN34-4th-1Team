@@ -14,6 +14,7 @@
 ## 웹·앱 공통 코드
 
 `frontend/web`와 Expo React Native `frontend/mobile`은 `frontend/packages/shared`의 domain·유스케이스·DTO 검증을 가져옵니다.
+색·모서리 디자인 토큰(`design/tokens.ts`)도 shared 한 곳에 두고, 웹은 이 값으로 만든 Tailwind `@theme` 파일을, 모바일은 값을 그대로 씁니다.
 공고 호출은 `웹/앱 화면 → 공통 유스케이스 → 플랫폼 Repository → 공통 공고 HTTP 클라이언트 → Core API`
 로 이어집니다. 공통 클라이언트에는 공개 API 주소와 fetch만 주입하며 Vite/Expo 환경변수·브라우저 저장소·React를 참조하지 않습니다.
 웹은 기존 쿠키 설정을 유지하고 앱의 세션 저장·네비게이션은 모바일 쪽에서 담당합니다.

@@ -1,34 +1,9 @@
 @import "tailwindcss";
+/* 색 의미 토큰(--color-brand-primary, --color-ink-muted …)은 shared 토큰으로 만든 생성 파일에 있습니다. */
+@import "./design-tokens.css";
 
 @theme {
-  --color-app-canvas: #f5f6f7;
-  --color-app-ink: #202124;
-  /* 의미 토큰입니다. 새 색이 아니라 화면마다 흩어져 있던 값을 이름으로 모은 것이며, 온보딩 화면부터 이 이름만 씁니다. */
-  --color-surface: #ffffff;
-  --color-surface-muted: #f1f3f4;
-  --color-line: #e3e5e8;
-  --color-line-strong: #cfd4d9;
-  --color-ink-muted: #606770;
-  --color-ink-subtle: #838a93;
-  --color-brand-hover: #066538;
-  --color-brand-soft: #e7f6ed;
-  --color-brand-line: #b4ddc7;
-  --color-danger: #9a3947;
-  --color-danger-soft: #fff5f6;
-  --color-danger-line: #efc6cd;
-  --color-warning: #8a5a00;
-  --color-warning-soft: #fff4e0;
-  --color-warning-line: #f1d9a6;
-  --color-info: #1f5f99;
-  --color-info-soft: #eaf2fb;
-  --color-info-line: #bcd4ec;
   --shadow-focus: 0 0 0 3px rgb(8 127 70 / 14%);
-  --color-brand-accent: #e7f6ed;
-  --color-brand-primary: #087f46;
-  --color-sample-primary: #087f46;
-  --color-sample-heading: #202124;
-  --color-sample-muted: #606770;
-  --color-sample-border: #e3e5e8;
   --breakpoint-chat: 47.5rem;
   --breakpoint-sample: 45rem;
   --animate-connection-pulse: connection-pulse 1s ease-in-out infinite alternate;
@@ -119,11 +94,18 @@
 
 @layer base {
   :root {
-    color: var(--color-app-ink);
+    color: var(--color-ink);
     /* 공개·작업 화면 모두 흰 바탕이라 문서도 흰색으로 둡니다. 회색 캔버스 색은 말풍선·강조 칸에만 씁니다. */
     background: #fff;
     font-family: Inter, Pretendard, 'Noto Sans KR', system-ui, sans-serif;
     line-height: normal;
+    /*
+     * 한글 단어가 음절 중간에서 끊기지 않게 띄어쓰기에서만 줄을 바꿉니다.
+     * 칸보다 긴 한 단어(주소·긴 영문·숫자)는 넘치지 않도록 어디서든 끊습니다. 해시처럼 일부러 글자마다 끊는 곳은
+     * 그 요소에 break-all을 직접 둡니다.
+     */
+    word-break: keep-all;
+    overflow-wrap: anywhere;
     font-synthesis: none;
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
@@ -154,6 +136,21 @@
 }
 
 /*
+ * 도우미 런처·패널을 화면 아래 고정 바 위로 올리는 높이입니다(presentation/shared/assistant/assistantLift.ts).
+ * 바가 data-assistant-lift를 달고 그려져 있는 동안에만 값이 생깁니다. "always"는 모든 폭, "narrow"는 600px 미만에서만 올립니다.
+ * 5.5rem은 지금 가장 높은 바(공고 상세의 아래 동작 바, 약 93px)와 두 줄짜리 중복 검토 단계 바를 넘는 높이입니다.
+ */
+:root:has([data-assistant-lift='always']) {
+  --assistant-lift: calc(5.5rem + env(safe-area-inset-bottom));
+}
+
+@media (max-width: 599px) {
+  :root:has([data-assistant-lift='narrow']) {
+    --assistant-lift: calc(5.5rem + env(safe-area-inset-bottom));
+  }
+}
+
+/*
  * 관심 공고함의 연도·월 select입니다. 브라우저가 select의 펼침 목록 꾸미기(appearance: base-select)를 지원하면
  * 기본 select 그대로 두고 목록만 여섯 줄(줄당 2.25rem)까지 보이게 하고 나머지는 안에서 스크롤합니다.
  * 지원하지 않는 브라우저에서는 평소의 기본 목록이 그대로 열립니다.
@@ -169,7 +166,7 @@
     overflow-y: auto;
     margin-top: 0.25rem;
     padding: 0.25rem;
-    border: 1px solid var(--color-sample-border);
+    border: 1px solid var(--color-line);
     border-radius: 0.85rem;
     background: #fff;
     box-shadow: 0 12px 32px rgb(32 33 36 / 12%);
@@ -183,7 +180,7 @@
     border-radius: 0.5rem;
     font-size: 0.85rem;
     font-weight: 600;
-    color: var(--color-app-ink);
+    color: var(--color-ink);
   }
 
   .calendar-select option::checkmark {

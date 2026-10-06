@@ -181,7 +181,7 @@ export function ChatPage({ layout = 'landing' }: { layout?: ChatPageLayout }) {
       >
         {searchStatusAnnouncement}
       </p>
-      {isRestoredHistory ? <p className="mb-3 text-center text-xs text-sample-muted">저장된 대화입니다. 공고 상태와 신청 조건은 현재 원문에서 다시 확인해 주세요.</p> : null}
+      {isRestoredHistory ? <p className="mb-3 text-center text-xs text-ink-muted">저장된 대화입니다. 공고 상태와 신청 조건은 현재 원문에서 다시 확인해 주세요.</p> : null}
       {messages.map((message, index) => {
         // 공개 첫 화면은 소개 영역이 환영 안내를 대신합니다. 대화 상태 자체는 유지합니다.
         if (layout === 'landing' && index === 0) return null

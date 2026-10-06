@@ -222,7 +222,7 @@ test.each(['예산 소진 시까지', '예산소진시까지', '상시 접수', 
   await screen.findByText(applicationPeriod)
   expect(screen.getByText('접수 중')).toBeTruthy()
   expect(screen.queryByText(/^D-\d+$/)).toBeNull()
-  expect(screen.queryByText('접수 상태 미확인')).toBeNull()
+  expect(screen.queryByText('상태 확인 필요')).toBeNull()
 })
 
 test.each(['공고문 참조', '상시 접수 (접수 종료)'])('keeps unresolved or ended rolling period %s from being labelled open', async (applicationPeriod) => {
@@ -231,8 +231,21 @@ test.each(['공고문 참조', '상시 접수 (접수 종료)'])('keeps unresolv
   } }) : respond(path))
   render(<DailyReportScreen {...callbacks} />)
   await screen.findByText(applicationPeriod)
-  expect(screen.getByText('접수 상태 미확인')).toBeTruthy()
+  expect(screen.getByText('상태 확인 필요')).toBeTruthy()
   expect(screen.queryByText('접수 중')).toBeNull()
+})
+
+test('shows the deadline day as D-day instead of D-0', async () => {
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(new Date())
+  const applicationPeriod = `${today} ~ ${today}`
+  jest.mocked(apiRequest).mockImplementation((path) => path.endsWith('/latest') ? Promise.resolve({ report: {
+    ...report, programs: [{ ...report.programs[0], applicationPeriod }],
+  } }) : respond(path))
+  render(<DailyReportScreen {...callbacks} />)
+  await screen.findByText(applicationPeriod)
+  expect(screen.getByText('접수 중')).toBeTruthy()
+  expect(screen.getByText('오늘 마감')).toBeTruthy()
+  expect(screen.queryByText('D-0')).toBeNull()
 })
 
 test('shows actionable report limitations without repeated green notices or raw collection timestamps', async () => {

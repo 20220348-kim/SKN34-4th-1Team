@@ -11,8 +11,9 @@ import { PartnerManagementHeader } from '../../../shared/partner-recruitment/Par
 import {
   programDeadlineLabel,
   recruitmentConditionTags,
-  recruitmentDeadlineLabel,
+  recruitmentDeadlineText,
 } from '../../../shared/partner-recruitment/partnerRecruitmentLabels'
+import { RecruitmentDdayTag } from '../../../shared/partner-recruitment/RecruitmentDdayTag'
 import { useMyPartnerRecruitmentsViewModel } from '../viewmodel/useMyPartnerRecruitmentsViewModel'
 import { partnerRecruitmentStyles } from './PartnerRecruitment.styles'
 import { RecruitmentCardSkeleton } from './RecruitmentCardSkeleton'
@@ -128,10 +129,11 @@ function MyRecruitmentCard({
   return (
     <article className={isClosed ? workspacePageStyles.outlinedCard : workspacePageStyles.card} aria-label={recruitment.title}>
       <div className={partnerRecruitmentStyles.cardTop}>
-        <span className={workspaceTagClassName(isClosed ? 'muted' : 'ok')}>{isClosed ? '모집 마감' : '모집 중'}</span>
-        <span className={isClosed ? partnerRecruitmentStyles.mineDeadline : partnerRecruitmentStyles.cardDeadline}>
-          {isClosed ? '마감' : recruitmentDeadlineLabel(recruitment.recruitmentDeadline)} · {recruitment.recruitmentDeadline}
+        <span className={partnerRecruitmentStyles.tagRow}>
+          <span className={workspaceTagClassName(isClosed ? 'muted' : 'ok')}>{isClosed ? '모집 마감' : '모집 중'}</span>
+          <RecruitmentDdayTag deadline={recruitment.recruitmentDeadline} closed={isClosed} />
         </span>
+        <span className={partnerRecruitmentStyles.mineDeadline}>{recruitmentDeadlineText(recruitment.recruitmentDeadline)}</span>
       </div>
 
       <div className="flex flex-col gap-[0.2rem]">

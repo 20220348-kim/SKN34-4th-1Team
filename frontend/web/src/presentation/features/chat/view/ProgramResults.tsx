@@ -1,5 +1,6 @@
 import { memo } from 'react'
 import { Link, useLocation } from 'react-router'
+import { programStatusLabels } from '@govbiz/shared/domain/labels'
 
 import type { SupportProgram, SupportProgramEligibilityAxis } from '../../../../domain/entities/SupportProgram'
 import { loginPathFor, signupPathFor } from '../../../shared/auth/returnPath'
@@ -34,16 +35,16 @@ export const ProgramResults = memo(function ProgramResults({ programs, totalCoun
       </div>
       {lockedCount > 0 ? (
         <section aria-label="추가 검색 결과" className="mt-4 space-y-3">
-          <div className="rounded-2xl border border-brand-primary/20 bg-brand-accent/40 p-5">
-            <h3 className="text-base font-bold text-app-ink">추가 지원사업 {lockedCount}건이 있어요</h3>
-            <p className="mt-2 text-sm leading-6 text-sample-muted">
+          <div className="rounded-2xl border border-brand-primary/20 bg-brand-soft/40 p-5">
+            <h3 className="text-base font-bold text-ink">추가 지원사업 {lockedCount}건이 있어요</h3>
+            <p className="mt-2 text-sm leading-6 text-ink-muted">
               회원가입 또는 로그인하면 이번 검색 결과를 최대 5건까지 확인할 수 있어요.
             </p>
             <div className="mt-4 flex flex-wrap gap-2">
               <Link to={signupPathFor(returnTo)} className="inline-flex min-h-11 items-center justify-center rounded-full bg-brand-primary px-5 py-2 text-sm font-semibold text-white hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary">
                 회원가입하고 전체 보기
               </Link>
-              <Link to={loginPathFor(returnTo)} className="inline-flex min-h-11 items-center justify-center rounded-full border border-brand-primary bg-white px-5 py-2 text-sm font-semibold text-brand-primary hover:bg-brand-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary">
+              <Link to={loginPathFor(returnTo)} className="inline-flex min-h-11 items-center justify-center rounded-full border border-brand-primary bg-white px-5 py-2 text-sm font-semibold text-brand-primary hover:bg-brand-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary">
                 로그인하고 전체 보기
               </Link>
             </div>
@@ -111,7 +112,7 @@ function ProgramCard({ program, interests }: { program: SupportProgram; interest
           ) : null}
         </div>
         <span className={chatPageStyles.programDeadline}>
-          {{ OPEN: '접수 중', UPCOMING: '접수 예정', CLOSED: '접수 마감', UNKNOWN: '상태 확인 필요' }[program.status]} ·{' '}
+          {programStatusLabels[program.status]} ·{' '}
           {formatApplicationDeadline(program)}
         </span>
       </div>

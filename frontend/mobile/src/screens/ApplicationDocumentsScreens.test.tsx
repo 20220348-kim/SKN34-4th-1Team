@@ -59,7 +59,8 @@ afterEach(() => { delete process.env.EXPO_PUBLIC_API_BASE_URL; jest.restoreAllMo
 test('saving reports the final numbered filename after copying finishes', async () => {
   jest.mocked(shareApplicationFile).mockResolvedValueOnce({ status: 'saved', fileName: '사업계획서 (2).hwpx', renamed: true })
   render(<ApplicationDocumentScreen {...docProps} />)
-  await screen.findByText('초안 완료')
+  // 이 파일의 첫 테스트라 첫 렌더가 모듈을 처음 읽는 시간까지 떠안습니다. 느린 CI에서 기본 1초를 넘겨 실패하지 않게 첫 화면만 넉넉히 기다립니다.
+  await screen.findByText('초안 완료', {}, { timeout: 5000 })
   fireEvent.press(screen.getByLabelText('사업계획서.hwpx 기기에 저장'))
   await screen.findByText('사업계획서 (2).hwpx 파일을 저장했어요. 같은 이름의 파일이 있어 번호를 붙였어요.')
   expect(shareApplicationFile).toHaveBeenCalledWith('https://api.example.test:first@test.com', expect.any(Blob), documentFile.fileName, expect.any(Function), expect.any(AbortSignal), 'save')

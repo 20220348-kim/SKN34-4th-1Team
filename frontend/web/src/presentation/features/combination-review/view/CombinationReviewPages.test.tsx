@@ -255,6 +255,8 @@ describe('review screens and execution safety', () => {
       expect(screen.getByDisplayValue(reviewFixture.title)).toBeTruthy()
       expect(screen.getByRole('heading', { level: 1, name: '새 검토' })).toBeTruthy()
     }
+    // 모든 폭에서 아래에 붙는 단계 바는 도우미 런처를 그 위로 올립니다.
+    expect(document.querySelector('[data-assistant-lift="always"]')?.textContent).toContain('다음')
     const posts = fetch.mock.calls.filter(([, init]) => init?.method === 'POST')
     expect(posts).toHaveLength(1)
     expect(posts[0][0]).toMatch(/\/api\/v1\/combination-reviews$/)
@@ -377,7 +379,9 @@ describe('review screens and execution safety', () => {
   it('mounts with GET only and renders empty list', async () => {
     mount('/app/combination-reviews')
     await screen.findByText('아직 저장한 검토가 없어요')
-    expect(screen.getByText(/저장한 검토와 실행 기록은 본인만 볼 수 있어요/)).toBeTruthy()
+    // 목록 위 안내 문구는 두지 않습니다. 검토 범위 안내는 새 검토 화면에만 있습니다.
+    expect(screen.queryByText(/저장한 검토와 실행 기록은 본인만 볼 수 있어요/)).toBeNull()
+    expect(screen.queryByText(/두 공고를 함께 신청 · 선정 · 수행할 수 있는지 봐요/)).toBeNull()
     expect(screen.getAllByRole('link', { name: '새 검토' }).every((link) => link.getAttribute('href') === '/app/combination-reviews/new')).toBe(true)
     expect(repository.create).not.toHaveBeenCalled(); expect(repository.start).not.toHaveBeenCalled()
   })
@@ -684,5 +688,37 @@ describe('review screens and execution safety', () => {
     fireEvent.click(screen.getByRole('button', { name: '다음 →' }))
 
     expect(scrollTo).toHaveBeenLastCalledWith({ top: 0, left: 0, behavior: 'auto' })
+  })
+})
+
+describe('loading placeholders', () => {
+  // 스켈레톤 막대는 낭독하지 않는 장식이라 클래스로 셉니다. 버튼 스피너(animate-spin)는 세지 않습니다.
+  const placeholders = () => document.querySelectorAll('[class*="animate-pulse"]').length
+
+  it('draws card placeholders only after 300ms while the list, a saved review and a run result first load', async () => {
+    vi.useFakeTimers()
+    repository.list.mockReturnValue(new Promise(() => {}))
+    repository.get.mockReturnValue(new Promise(() => {}))
+    repository.run.mockReturnValue(new Promise(() => {}))
+    for (const path of ['/app/combination-reviews', '/app/combination-reviews/12?step=participation', '/app/combination-reviews/12/runs/30']) {
+      const { unmount } = mount(path)
+      await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+      expect(screen.getByText(/불러오는 중입니다/).getAttribute('role')).toBe('status')
+      expect(placeholders()).toBe(0)
+      await act(async () => { await vi.advanceTimersByTimeAsync(300) })
+      expect(placeholders()).toBeGreaterThan(0)
+      unmount()
+    }
+  })
+
+  it('keeps loaded reviews and shows progress on the more button instead of list placeholders', async () => {
+    repository.list.mockResolvedValueOnce({ items: [reviewFixture], nextBeforeId: 12 }).mockReturnValueOnce(new Promise(() => {}))
+    mount('/app/combination-reviews')
+    fireEvent.click(await screen.findByRole('button', { name: '더 보기' }))
+    const more = screen.getByRole('button', { name: '불러오는 중…' })
+    expect(more.getAttribute('aria-busy')).toBe('true')
+    expect(screen.getByText(reviewFixture.title)).toBeTruthy()
+    await new Promise((resolve) => setTimeout(resolve, 350))
+    expect(placeholders()).toBe(0)
   })
 })

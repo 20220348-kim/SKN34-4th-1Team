@@ -15,8 +15,9 @@ import {
   companyInitial,
   companySummaryLine,
   programDeadlineLabel,
-  recruitmentDeadlineLabel,
+  recruitmentDeadlineText,
 } from '../../../shared/partner-recruitment/partnerRecruitmentLabels'
+import { RecruitmentDdayTag } from '../../../shared/partner-recruitment/RecruitmentDdayTag'
 import { appPaths } from '../../../shared/routes/appPaths'
 import { useSupportProgramSaveViewModel } from '../../../shared/support-program/useSupportProgramSaveViewModel'
 import { usePartnerRecruitmentDetailViewModel } from '../viewmodel/usePartnerRecruitmentDetailViewModel'
@@ -149,10 +150,9 @@ export function PartnerRecruitmentDetailPage() {
                     {recruitment.isMine ? '내가 쓴 모집글' : '기업마당 공고'}
                   </span>
                   <span className={workspaceTagClassName('muted')}>{isClosed ? '모집 마감' : '모집 중'}</span>
+                  <RecruitmentDdayTag deadline={recruitment.recruitmentDeadline} closed={isClosed} />
                 </span>
-                <span className={isClosed ? partnerRecruitmentStyles.mineDeadline : partnerRecruitmentStyles.cardDeadline}>
-                  {isClosed ? '모집 마감' : recruitmentDeadlineLabel(recruitment.recruitmentDeadline)} · {recruitment.recruitmentDeadline}
-                </span>
+                <span className={partnerRecruitmentStyles.mineDeadline}>{recruitmentDeadlineText(recruitment.recruitmentDeadline)}</span>
               </div>
 
               <h2 className={partnerRecruitmentStyles.detailTitle}>{recruitment.title}</h2>
@@ -240,7 +240,7 @@ export function PartnerRecruitmentDetailPage() {
                   {recruitment.program.organization}
                 </span>
               </div>
-              <p className="m-0 text-[0.82rem] leading-[1.55] text-sample-muted">
+              <p className="m-0 text-[0.82rem] leading-[1.55] text-ink-muted">
                 {recruitment.program.summary}
               </p>
               <div className={partnerRecruitmentStyles.rawBox}>

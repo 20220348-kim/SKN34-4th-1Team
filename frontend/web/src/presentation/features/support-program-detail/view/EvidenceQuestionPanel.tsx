@@ -1,6 +1,7 @@
 import { type FormEvent, useEffect, useRef } from 'react'
 
 import type { SupportProgramIdentity } from '../../../../domain/repositories/SupportProgramRepository'
+import { assistantCover } from '../../../shared/assistant/assistantPlacement'
 import { useEvidenceQuestionThread } from '../viewmodel/useEvidenceQuestionThread'
 import { maximumSupportProgramEvidenceQuestionLength } from '../viewmodel/useSupportProgramEvidenceQuestionViewModel'
 import { EvidenceQuestionFeedback } from './EvidenceQuestionFeedback'
@@ -42,6 +43,8 @@ export function EvidenceQuestionPanel({ identity, programTitle, onClose }: {
       className={q.panel}
       role="region"
       aria-labelledby="support-program-ask-title"
+      // 오른쪽 옆 패널(좁은 화면은 아래 시트)이 도우미 런처 자리와 [질문 보내기]를 덮으므로 열려 있는 동안 런처를 숨깁니다.
+      {...assistantCover.always}
       onSubmit={handleSubmit}
       onKeyDown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); onClose() } }}
     >

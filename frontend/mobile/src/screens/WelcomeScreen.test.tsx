@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react-native'
+import { colors } from '../ui'
 import { WelcomeScreen } from './WelcomeScreen'
 
 test('four introduction previews show the actual condition and result card vocabulary without interactive searches', () => {
@@ -13,8 +14,8 @@ test('four introduction previews show the actual condition and result card vocab
   expect(screen.getAllByTestId('program-status-dot')).toHaveLength(2)
   expect(screen.getByText('D-5')).toBeTruthy()
   expect(screen.getByText('D-3')).toBeTruthy()
-  expect(screen.getByText('조건 확인')).toHaveStyle({ backgroundColor: '#E7F5EE' })
-  expect(screen.getByText('확인 필요')).toHaveStyle({ backgroundColor: '#FFF4E5' })
+  expect(screen.getByText('조건 확인')).toHaveStyle({ backgroundColor: colors.soft })
+  expect(screen.getByText('확인 필요')).toHaveStyle({ backgroundColor: colors.warningSoft })
   fireEvent.press(screen.getByLabelText('다음'))
   expect(screen.getByText('원문 근거 답변 · 예시')).toBeTruthy()
   fireEvent.press(screen.getByLabelText('다음'))

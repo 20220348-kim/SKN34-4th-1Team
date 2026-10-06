@@ -5,8 +5,9 @@ import { workspacePageStyles, workspaceTagClassName } from '../../../shared/work
 import {
   companyAgeLabel,
   programDeadlineLabel,
-  recruitmentDeadlineLabel,
+  recruitmentDeadlineText,
 } from '../../../shared/partner-recruitment/partnerRecruitmentLabels'
+import { RecruitmentDdayTag } from '../../../shared/partner-recruitment/RecruitmentDdayTag'
 import { publicPaths } from '../../../shared/routes/appPaths'
 import { usePublicPartnerRecruitmentDetailViewModel } from '../viewmodel/usePublicPartnerRecruitmentDetailViewModel'
 import { MaskedCompanyRow } from './MaskedCompanyRow'
@@ -68,9 +69,8 @@ export function PublicPartnerRecruitmentDetailPage() {
         <div className={styles.tagRow}>
           <span className={workspaceTagClassName('ok')}>기업마당 공고</span>
           <span className={workspaceTagClassName('muted')}>{isClosed ? '모집 마감' : '모집 중'}</span>
-          <span className={styles.cardDeadline}>
-            {isClosed ? '모집 마감' : recruitmentDeadlineLabel(recruitment.recruitmentDeadline)} · {recruitment.recruitmentDeadline}
-          </span>
+          <RecruitmentDdayTag deadline={recruitment.recruitmentDeadline} closed={isClosed} />
+          <span className={styles.mutedDeadline}>{recruitmentDeadlineText(recruitment.recruitmentDeadline)}</span>
         </div>
         <h1 className={styles.detailTitle}>{recruitment.title}</h1>
         <div className={styles.heroActions}>

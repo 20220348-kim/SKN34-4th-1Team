@@ -15,6 +15,7 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "test": "vitest run",
+    "tokens": "node scripts/generate-design-tokens.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

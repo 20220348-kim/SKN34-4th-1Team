@@ -6,11 +6,11 @@ export const workspaceToastDurationMs = 8_000
 const toastStyles = {
   // 흰 카드입니다. PC는 오른쪽 위, 좁은 폭(760px 미만)은 아래 전체 폭.
   region: 'pointer-events-none fixed top-4 right-4 z-[60] flex w-[min(380px,calc(100%_-_2rem))] flex-col gap-2 max-chat:inset-x-3 max-chat:top-auto max-chat:bottom-4 max-chat:w-auto',
-  toast: 'pointer-events-auto relative flex items-center gap-2.5 overflow-hidden rounded-xl border border-sample-border bg-white py-3 pr-2 pl-3.5 text-[0.85rem] text-app-ink shadow-[0_14px_34px_rgb(32_33_36_/_14%)]',
+  toast: 'pointer-events-auto relative flex items-center gap-2.5 overflow-hidden rounded-xl border border-line bg-white py-3 pr-2 pl-3.5 text-[0.85rem] text-ink shadow-[0_14px_34px_rgb(32_33_36_/_14%)]',
   icon: 'shrink-0 text-brand-primary',
   iconDanger: 'shrink-0 text-danger',
   text: 'min-w-0 flex-1 leading-[1.45]',
-  close: 'grid size-8 shrink-0 cursor-pointer place-items-center rounded-lg border-0 bg-transparent text-sample-muted hover:bg-black/5 hover:text-app-ink focus-visible:outline-2 focus-visible:outline-brand-primary',
+  close: 'grid size-8 shrink-0 cursor-pointer place-items-center rounded-lg border-0 bg-transparent text-ink-muted hover:bg-black/5 hover:text-ink focus-visible:outline-2 focus-visible:outline-brand-primary',
   bar: 'absolute bottom-0 left-0 h-[3px] bg-brand-primary motion-safe:animate-[workspace-toast-bar_var(--toast-ms)_linear_forwards]',
 } as const
 

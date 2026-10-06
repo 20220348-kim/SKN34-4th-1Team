@@ -4,20 +4,16 @@ import { Link } from 'react-router'
 import { type AssistantCard as AssistantCardModel, type AssistantCardButton, type AssistantMessage } from './assistantConversation'
 import { assistantMessages } from './assistantMessages'
 import { assistantCardTagClassName, assistantStyles as styles } from './Assistant.styles'
-import { useFloatingPopover } from '../workspace/useFloatingPopover'
 import type { AssistantViewModel } from './useAssistantViewModel'
 
 /**
- * 도우미 패널입니다. 머리(아바타·이름·상태·메뉴·닫기), 대화 영역, 빠른 답변, 입력창 순서이고 머리와 입력창은 고정,
+ * 도우미 패널입니다. 머리(아바타·이름·새 대화·닫기), 대화 영역, 빠른 답변, 입력창 순서이고 머리와 입력창은 고정,
  * 대화 영역만 스크롤합니다. 비모달이라 배경은 그대로 조작할 수 있고 Esc로 닫습니다.
  */
 export function AssistantPanel({ vm, launcherRef }: { vm: AssistantViewModel; launcherRef: React.RefObject<HTMLButtonElement | null> }) {
   const logRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const [draft, setDraft] = useState('')
-  const [isMenuOpen, setIsMenuOpen] = useState(false)
-  // 패널이 overflow-hidden이라 메뉴는 fixed로 띄우고, 오른쪽 끝에서 잘리면 안쪽으로 옮깁니다.
-  const menuFloating = useFloatingPopover({ open: isMenuOpen, placement: 'bottom-end', gap: 4 })
   const lastMessageId = vm.messages[vm.messages.length - 1]?.id
 
   // 열면 입력창에 포커스, 닫으면 런처로 돌아갑니다.
@@ -36,12 +32,11 @@ export function AssistantPanel({ vm, launcherRef }: { vm: AssistantViewModel; la
   useEffect(() => {
     function onKeyDown(event: globalThis.KeyboardEvent) {
       if (event.key !== 'Escape') return
-      if (isMenuOpen) { setIsMenuOpen(false); return }
       vm.close()
     }
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)
-  }, [isMenuOpen, vm])
+  }, [vm])
 
   function submit(event?: FormEvent<HTMLFormElement>) {
     event?.preventDefault()
@@ -60,13 +55,12 @@ export function AssistantPanel({ vm, launcherRef }: { vm: AssistantViewModel; la
 
   function onNavigate(button: AssistantCardButton) {
     vm.prepareNavigation(button)
-    setIsMenuOpen(false)
     vm.close()
   }
 
   return (
     <section
-      className={`${styles.panel} ${vm.isLifted ? styles.panelLifted : styles.panelDefault}`}
+      className={styles.panel}
       role="dialog"
       aria-modal="false"
       aria-label={assistantMessages.name}
@@ -78,25 +72,19 @@ export function AssistantPanel({ vm, launcherRef }: { vm: AssistantViewModel; la
           <p className={styles.headerName}>{assistantMessages.name}</p>
         </div>
         <div className={styles.headerActions}>
+          {/* 메뉴를 거치지 않고 한 번에 새 대화를 시작합니다. 아이콘은 다시 시작을 뜻하는 원형 화살표입니다. */}
           <button
-            ref={menuFloating.reference}
             className={styles.headerButton}
             type="button"
-            aria-label={assistantMessages.menu}
-            aria-haspopup="menu"
-            aria-expanded={isMenuOpen}
-            onClick={() => setIsMenuOpen((value) => !value)}
+            aria-label={assistantMessages.newConversation}
+            title={assistantMessages.newConversation}
+            onClick={() => { vm.startNewConversation(); inputRef.current?.focus() }}
           >
-            ⋯
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M21 12a9 9 0 1 1-2.64-6.36" /><path d="M21 3v6h-6" />
+            </svg>
           </button>
           <button className={styles.headerButton} type="button" aria-label={assistantMessages.close} onClick={vm.close}>✕</button>
-          {isMenuOpen ? (
-            <div ref={menuFloating.floating} style={menuFloating.floatingStyles} className={styles.menu} role="menu" aria-label={assistantMessages.menu}>
-              <button className={styles.menuItem} type="button" role="menuitem" onClick={() => { setIsMenuOpen(false); vm.startNewConversation() }}>
-                {assistantMessages.newConversation}
-              </button>
-            </div>
-          ) : null}
         </div>
       </header>
 

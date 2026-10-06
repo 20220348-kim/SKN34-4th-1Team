@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef } from 'react'
+import { programStatusLabels } from '@govbiz/shared/domain/labels'
 
 import type { SupportProgram } from '../../../domain/entities/SupportProgram'
 
@@ -20,7 +21,7 @@ type Props = {
 
 const muted = 'text-sm leading-6 text-slate-600'
 const button = 'inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-emerald-700'
-const primary = 'inline-flex items-center justify-center rounded-lg bg-brand-primary px-4 py-2 text-sm font-semibold text-white hover:bg-[#066538] disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-brand-primary'
+const primary = 'inline-flex items-center justify-center rounded-lg bg-brand-primary px-4 py-2 text-sm font-semibold text-white hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-brand-primary'
 const warning = 'rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950'
 const programKey = (program: Pick<SupportProgram, 'sourceCode' | 'id'>) => `${program.sourceCode}:${program.id}`
 
@@ -50,7 +51,7 @@ export function SavedSupportProgramPickerDialog({
           const action = !supported
             ? (typeof unsupportedLabel === 'function' ? unsupportedLabel(program) : unsupportedLabel)
             : selected ? '선택 해제' : '선택'
-          return <li className={`rounded-xl border p-4 transition-colors ${selected ? 'border-emerald-500 bg-emerald-50 ring-1 ring-emerald-200' : 'border-slate-200 bg-white'}`} key={key}><div className="flex flex-wrap items-center justify-between gap-3"><div className="min-w-0 flex-1"><strong>{program.title}</strong><p className={muted}>{program.organization} · {({ OPEN: '접수 중', CLOSED: '접수 종료', UPCOMING: '접수 예정', UNKNOWN: '접수 상태 미확인' })[program.status]}</p><p className={muted}>{program.applicationPeriod}</p></div><button type="button" className={selected ? primary : button} aria-label={`${program.title} 관심 공고 ${action}`} aria-pressed={selected} disabled={!supported || (!selected && selectedProgramKeys.length >= selectionLimit)} onClick={() => onToggle(program)}>{action}</button></div></li>
+          return <li className={`rounded-xl border p-4 transition-colors ${selected ? 'border-emerald-500 bg-emerald-50 ring-1 ring-emerald-200' : 'border-slate-200 bg-white'}`} key={key}><div className="flex flex-wrap items-center justify-between gap-3"><div className="min-w-0 flex-1"><strong>{program.title}</strong><p className={muted}>{program.organization} · {programStatusLabels[program.status]}</p><p className={muted}>{program.applicationPeriod}</p></div><button type="button" className={selected ? primary : button} aria-label={`${program.title} 관심 공고 ${action}`} aria-pressed={selected} disabled={!supported || (!selected && selectedProgramKeys.length >= selectionLimit)} onClick={() => onToggle(program)}>{action}</button></div></li>
         })}</ul>}
       </div>
       <footer className={`flex items-center gap-3 border-t border-slate-200 px-5 py-4 ${selectionLimit === 1 ? 'justify-end' : 'justify-between'}`}>

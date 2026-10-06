@@ -13,8 +13,9 @@ import {
   companySummaryLine,
   programDeadlineLabel,
   recruitmentConditionTags,
-  recruitmentDeadlineLabel,
+  recruitmentDeadlineText,
 } from '../../../shared/partner-recruitment/partnerRecruitmentLabels'
+import { RecruitmentDdayTag } from '../../../shared/partner-recruitment/RecruitmentDdayTag'
 import { appPaths } from '../../../shared/routes/appPaths'
 import { usePartnerRecruitmentListViewModel } from '../viewmodel/usePartnerRecruitmentListViewModel'
 import { partnerRecruitmentStyles } from './PartnerRecruitment.styles'
@@ -28,17 +29,17 @@ function RecruitmentCard({ recruitment }: { recruitment: PartnerRecruitmentSumma
   return (
     <article className={cardClassName} aria-label={recruitment.title}>
       <div className={partnerRecruitmentStyles.cardTop}>
-        <span className={workspaceTagClassName(recruitment.isMine ? 'warn' : 'ok')}>
-          {recruitment.isMine ? '내가 쓴 모집글' : '기업마당 공고'}
+        {/* 남은 날은 신청 문서 카드처럼 왼쪽 태그 옆 D-day 배지로, 오른쪽에는 마감 날짜만 둡니다. */}
+        <span className={partnerRecruitmentStyles.tagRow}>
+          <span className={workspaceTagClassName(recruitment.isMine ? 'warn' : 'ok')}>
+            {recruitment.isMine ? '내가 쓴 모집글' : '기업마당 공고'}
+          </span>
+          {/* 상태 태그가 없는 카드라 마감된 글은 여기서 "모집 마감"을 알리고, 모집 중이면 D-day를 붙입니다. */}
+          {recruitment.status === 'CLOSED' ? <span className={workspaceTagClassName('muted')}>모집 마감</span> : null}
+          <RecruitmentDdayTag deadline={recruitment.recruitmentDeadline} closed={recruitment.status === 'CLOSED'} />
         </span>
-        <span
-          className={
-            recruitment.isMine || recruitment.status === 'CLOSED'
-              ? partnerRecruitmentStyles.mineDeadline
-              : partnerRecruitmentStyles.cardDeadline
-          }
-        >
-          {recruitment.status === 'CLOSED' ? '모집 마감' : recruitmentDeadlineLabel(recruitment.recruitmentDeadline)}
+        <span className={partnerRecruitmentStyles.mineDeadline}>
+          {recruitmentDeadlineText(recruitment.recruitmentDeadline)}
         </span>
       </div>
 

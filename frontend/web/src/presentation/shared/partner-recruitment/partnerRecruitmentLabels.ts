@@ -1,3 +1,5 @@
+import { daysUntil, ddayTone, formatDate, formatDday, type DdayTone } from '@govbiz/shared/domain/labels'
+
 import {
   partnerRoleLabels,
   type PartnerRecruitmentCompany,
@@ -5,19 +7,29 @@ import {
 } from '../../../domain/entities/PartnerRecruitment'
 import { toRegionName } from '../../../domain/entities/Region'
 
-const DAY_MS = 86_400_000
-
-/** YYYY-MM-DD를 서울 기준 오늘과 비교해 "모집 마감 D-5"처럼 표시합니다. 지난 날짜는 "모집 마감"입니다. */
-export function recruitmentDeadlineLabel(deadline: string, today: Date = new Date()): string {
-  const remaining = Math.round((Date.parse(`${deadline}T00:00:00+09:00`) - startOfSeoulDay(today)) / DAY_MS)
-  if (Number.isNaN(remaining) || remaining < 0) return '모집 마감'
-  if (remaining === 0) return '오늘 마감'
-  return `모집 마감 D-${remaining}`
+/**
+ * 모집 중인 글의 마감 D-day 배지입니다(서울 기준, shared D-day 글자와 `ddayTone` 색 단계). 예: "D-5", 당일 "오늘 마감".
+ * 마감됐거나 마감일이 지났거나 읽을 수 없으면 배지를 그리지 않도록 null입니다.
+ */
+export function recruitmentDday(deadline: string, closed: boolean, today: Date = new Date()): { label: string; tone: DdayTone } | null {
+  if (closed) return null
+  const days = daysUntil(deadline, today)
+  return days === null || days < 0 ? null : { label: formatDday(days), tone: ddayTone(days) }
 }
 
+/**
+ * 카드 오른쪽의 모집 마감일입니다. 예: "모집 마감일 2026.10.11". 남은 날은 왼쪽 D-day 배지가, 마감 여부는 왼쪽 상태 태그가 알립니다.
+ * 읽을 수 없는 날짜는 "모집 마감일 확인 필요"입니다(모바일과 같은 문구).
+ */
+export function recruitmentDeadlineText(deadline: string): string {
+  return daysUntil(deadline) === null ? '모집 마감일 확인 필요' : `모집 마감일 ${formatDate(deadline)}`
+}
+
+/** 공고 접수 마감일을 shared 날짜 형식으로 씁니다. 예: "공고 마감 2026.10.07". */
 export function programDeadlineLabel(applicationEndDate: string | null): string {
-  return applicationEndDate === null ? '공고 마감일 미정' : `공고 마감 ${applicationEndDate}`
+  return applicationEndDate === null ? '공고 마감일 미정' : `공고 마감 ${formatDate(applicationEndDate)}`
 }
+
 
 /**
  * 법인 형태 표기입니다. 상호 앞뒤에 붙는 "(주)"·"주식회사"·"㈜" 같은 말은 회사를 구분해 주지 않으므로 아바타 글자에서 뺍니다.
@@ -58,10 +70,4 @@ export function recruitmentConditionTags(recruitment: PartnerRecruitmentSummary)
 /** 최소 업력이 없으면 무관입니다. */
 export function companyAgeLabel(minimumCompanyAgeYears: number | null): string {
   return minimumCompanyAgeYears === null ? '무관' : `${minimumCompanyAgeYears}년 이상`
-}
-
-function startOfSeoulDay(date: Date): number {
-  const seoul = new Date(date.getTime() + 9 * 60 * 60 * 1000)
-  const day = seoul.toISOString().slice(0, 10)
-  return Date.parse(`${day}T00:00:00+09:00`)
 }

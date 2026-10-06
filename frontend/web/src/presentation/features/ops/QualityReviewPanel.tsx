@@ -21,7 +21,7 @@ export function QualityReviewPanel({ runId, data, busy, onBusy, onDirty, onConfl
   const dirty = decision !== '' || comment !== '' || confirmed
   useEffect(() => { onDirty(dirty) }, [dirty, onDirty])
   useEffect(() => { setConfirmed(false) }, [runId, data.material?.fixture_sha256, quality?.fixture_version, cases])
-  if (!quality) return <p className="text-sm text-sample-muted">품질 판정 정보를 확인할 수 없습니다.</p>
+  if (!quality) return <p className="text-sm text-ink-muted">품질 판정 정보를 확인할 수 없습니다.</p>
   const current = quality.history.find((item) => item.id === quality.current_id)
   const save = async (fixture: boolean) => {
     if (active.current || busy || !data.material || !quality.input_sha256) return
@@ -42,10 +42,10 @@ export function QualityReviewPanel({ runId, data, busy, onBusy, onDirty, onConfl
       else setError(reason instanceof Error ? reason.message : '품질 판정을 저장하지 못했습니다.')
     } finally { active.current = false; onBusy(false) }
   }
-  return <section id="quality-review" tabIndex={-1} aria-label="품질 판정" style={{ scrollMarginTop: 'calc(var(--workspace-header-h, 0px) + 1rem)' }} className="grid gap-4 rounded-xl border border-sample-border p-4">
+  return <section id="quality-review" tabIndex={-1} aria-label="품질 판정" style={{ scrollMarginTop: 'calc(var(--workspace-header-h, 0px) + 1rem)' }} className="grid gap-4 rounded-xl border border-line p-4">
     <h3 className="font-bold">품질 판정 · <span className={workspaceTagClassName(quality.status === 'PASS' ? 'ok' : quality.status === 'FAIL' ? 'danger' : 'info')}>{labels[quality.status]}</span></h3>
     <p className="text-sm leading-6">실행 완료와 품질 판정은 별개입니다. 합격은 표시된 사례와 정책의 범위에만 적용되며, 전체 모델의 정확도를 보장하지 않습니다.</p>
-    <p className="text-xs text-sample-muted">정책: {quality.policy?.definition.version ?? '확인 불가'} · 자동 의미 충실도: 미측정 · 의미 판단: 사례별 사람 검토</p>
+    <p className="text-xs text-ink-muted">정책: {quality.policy?.definition.version ?? '확인 불가'} · 자동 의미 충실도: 미측정 · 의미 판단: 사례별 사람 검토</p>
     {!quality.is_current && quality.history.length > 0 && <p className="text-sm text-amber-800">자료·정책·검토가 변경됐습니다. 이전 판정은 이력으로 보존되며 다시 판정해야 합니다.</p>}
     {current && <ul className="list-disc pl-5 text-sm">{current.reasons.map((reason, index) => <li key={`${reason.code}-${reason.case_id}-${index}`}>{reason.case_id ? `${reason.case_id}: ` : ''}{reason.message}</li>)}</ul>}
     {quality.blocked_reason && <p role="alert" className="text-sm text-amber-800">{quality.blocked_reason}</p>}
@@ -56,11 +56,11 @@ export function QualityReviewPanel({ runId, data, busy, onBusy, onDirty, onConfl
       <div className="mt-3 grid gap-3 text-sm">
         <p>아래 각 사례의 AI 작성 참조 조건을 원문 근거와 대조합니다. 기대 상태·기대 인용·포함할 사실·금지 주장을 모두 확인하세요. 이 기록은 후보 답변 검토와 별개이며 AI 작성 출처는 유지됩니다.</p>
         <p>대상 사례: {data.material?.cases.map((item) => item.case_id).join(', ') ?? '자료 확인 불가'}</p>
-        <label className="grid gap-2">평가 기준 자료 판단<select className="rounded-xl border border-sample-border p-3" value={decision} disabled={busy} onChange={(event) => setDecision(event.target.value as typeof decision)}><option value="">판단 선택</option><option value="APPROVED">검토 승인</option><option value="CHANGES_REQUESTED">수정 필요</option><option value="DEFERRED">판단 보류</option></select></label>
-        <label className="grid gap-2">평가 기준 자료 검토 사유<textarea className="rounded-xl border border-sample-border p-3" rows={2} value={comment} maxLength={3000} disabled={busy} onChange={(event) => setComment(event.target.value)} /></label>
+        <label className="grid gap-2">평가 기준 자료 판단<select className="rounded-xl border border-line p-3" value={decision} disabled={busy} onChange={(event) => setDecision(event.target.value as typeof decision)}><option value="">판단 선택</option><option value="APPROVED">검토 승인</option><option value="CHANGES_REQUESTED">수정 필요</option><option value="DEFERRED">판단 보류</option></select></label>
+        <label className="grid gap-2">평가 기준 자료 검토 사유<textarea className="rounded-xl border border-line p-3" rows={2} value={comment} maxLength={3000} disabled={busy} onChange={(event) => setComment(event.target.value)} /></label>
         <label className="flex items-start gap-2"><input type="checkbox" checked={confirmed} disabled={busy} onChange={(event) => setConfirmed(event.target.checked)} />모든 대상 사례의 평가 기준 자료를 확인하고 위 판단을 기록합니다.</label>
         <button className={`${styles.secondaryButton} justify-self-start`} disabled={busy || !data.material || !quality.input_sha256 || !confirmed || !decision || !comment.trim()} onClick={() => void save(true)}>평가 기준 자료 검토 저장</button>
-        <p className="text-xs text-sample-muted">기준 자료 검토를 변경하면 해당 데이터셋의 활성 비교 기준이 해제되고 품질 재판정이 필요합니다.</p>
+        <p className="text-xs text-ink-muted">기준 자료 검토를 변경하면 해당 데이터셋의 활성 비교 기준이 해제되고 품질 재판정이 필요합니다.</p>
         {quality.fixture_reviews.map((item) => <div key={item.id} className="rounded-xl bg-slate-50 p-3"><p>{fixtureLabels[item.decision]} · {item.reviewed_by} · {new Date(item.created_at).toLocaleString('ko-KR')}</p><p className="whitespace-pre-wrap">{item.comment}</p></div>)}
       </div>
     </details>

@@ -3,6 +3,8 @@ import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, View } from 'r
 import { useFocusEffect } from 'expo-router'
 import type { Company } from '@govbiz/shared/domain/entities/Company'
 import { sendHourLabel, type DailyReport, type DailyReportItem, type DailyReportSettings } from '@govbiz/shared/domain/entities/DailyReport'
+import type { SupportProgramStatus } from '@govbiz/shared/domain/entities/SupportProgram'
+import { formatDday, programStatusLabels } from '@govbiz/shared/domain/labels'
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
 import { AppIcon } from '../components/AppIcon'
 import { ApiError, errorMessage } from '../api/client'
@@ -73,13 +75,14 @@ function completeness(company: Company | null, purpose: string) {
     .filter(Boolean).length / 3) * 100)
 }
 
-function periodLabel(period: string) {
+/** 리포트의 접수 기간 문자열에서 상태와 보조 문구(시작일 · D-day · 마감일)를 읽습니다. 읽을 수 없으면 null입니다. */
+function periodLabel(period: string): { status: SupportProgramStatus; deadline: string | null } | null {
   const range = /^(\d{4})[-.](\d{2})[-.](\d{2})\s*~\s*(\d{4})[-.](\d{2})[-.](\d{2})$/.exec(period)
   if (!range) {
     const normalized = period.normalize('NFKC').replace(/\s+/g, '')
     if (/예산소진|상시/.test(normalized)
       && !/접수종료|모집종료|마감완료|접수예정|추후공지/.test(normalized)) {
-      return { status: '접수 중', deadline: null }
+      return { status: 'OPEN', deadline: null }
     }
     return null
   }
@@ -94,9 +97,9 @@ function periodLabel(period: string) {
   const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date())
   const part = (type: string) => Number(parts.find((item) => item.type === type)?.value)
   const today = Date.UTC(part('year'), part('month') - 1, part('day'))
-  if (today < start) return { status: '접수 예정', deadline: `${Number(sm)}.${sd} 시작` }
-  if (today > end) return { status: '마감', deadline: `${Number(em)}.${ed} 마감` }
-  return { status: '접수 중', deadline: `D-${Math.round((end - today) / 86_400_000)}` }
+  if (today < start) return { status: 'UPCOMING', deadline: `${Number(sm)}.${sd} 시작` }
+  if (today > end) return { status: 'CLOSED', deadline: `${Number(em)}.${ed} 마감` }
+  return { status: 'OPEN', deadline: formatDday(Math.round((end - today) / 86_400_000)) }
 }
 
 export function DailyReportScreen({ onLogin, onCompany, onSearch, onOpenProgram, settingsOnly = false, reportId }: {
@@ -328,8 +331,8 @@ function ReportProgramCard({ item, saved, busy, onOpen, onSource, onToggle }: {
 }) {
   const period = periodLabel(item.applicationPeriod)
   return <Card>
-    <View style={local.meta}><StatusBadge label={period?.status ?? '접수 상태 미확인'}
-      tone={period?.status === '접수 중' ? 'success' : period?.status === '접수 예정' ? 'info' : 'neutral'} />
+    <View style={local.meta}><StatusBadge label={programStatusLabels[period?.status ?? 'UNKNOWN']}
+      tone={period?.status === 'OPEN' ? 'success' : period?.status === 'UPCOMING' ? 'info' : 'neutral'} />
       {period?.deadline && <Text style={styles.muted}>{period.deadline}</Text>}
       <Text style={local.score}>{item.relevanceScore === null ? '관련도 점수 없음' : `관련도 ${item.relevanceScore}`}</Text></View>
     <Text style={styles.heading}>{item.title}</Text>

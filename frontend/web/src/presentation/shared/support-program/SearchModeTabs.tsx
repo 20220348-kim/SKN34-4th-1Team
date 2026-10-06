@@ -1,6 +1,9 @@
 import { useRef, type KeyboardEvent, type ReactNode } from 'react'
 
-const searchModeTabLabels = ['AI 대화 검색', '필터 검색'] as const
+import { screenTitles } from '../routes/screenTitles'
+
+// 탭 이름은 브라우저 제목과 같은 화면 이름입니다.
+const searchModeTabLabels = [screenTitles.aiSearch, screenTitles.filterSearch] as const
 
 /**
  * 로그인 뒤 작업 화면에서 검색 탭을 담는 줄입니다. 다른 작업 화면의 머리글처럼 위에 붙고 본문은 작업 칸과 함께 스크롤됩니다.
@@ -29,12 +32,12 @@ export function SearchModeTabs({ isFilter, onSelect, controlsPanels = true }: {
   }
 
   return <div role="tablist" aria-label="지원사업 검색 방식" aria-orientation="horizontal"
-    className="inline-flex gap-1 rounded-full border border-sample-border bg-white p-1">
+    className="inline-flex gap-1 rounded-full border border-line bg-white p-1">
     {searchModeTabLabels.map((label, index) => <button type="button" key={label} role="tab" id={`search-tab-${index}`}
       ref={(node) => { tabs.current[index] = node }} aria-controls={controlsPanels ? `search-panel-${index}` : undefined}
       aria-selected={isFilter === (index === 1)}
       tabIndex={isFilter === (index === 1) ? 0 : -1} onKeyDown={(event) => handleKey(event, index)} onClick={() => onSelect(index === 1)}
-      className={`min-h-10 cursor-pointer rounded-full px-6 text-sm font-bold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary max-chat:px-5 ${isFilter === (index === 1) ? 'bg-white text-brand-primary shadow-sm' : 'text-sample-muted hover:text-app-ink'}`}>
+      className={`min-h-10 cursor-pointer rounded-full px-6 text-sm font-bold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary max-chat:px-5 ${isFilter === (index === 1) ? 'bg-white text-brand-primary shadow-sm' : 'text-ink-muted hover:text-ink'}`}>
       {label}
     </button>)}
   </div>
