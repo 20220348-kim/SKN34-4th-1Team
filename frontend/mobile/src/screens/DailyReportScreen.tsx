@@ -1,14 +1,13 @@
 import { useCallback, useRef, useState } from 'react'
 import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, View } from 'react-native'
 import { useFocusEffect } from 'expo-router'
-import { companyDtoSchema, toCompany } from '@govbiz/shared/data/models/CompanyDto'
-import { savedSupportProgramDtoSchema } from '@govbiz/shared/data/models/SavedSupportProgramDto'
 import type { Company } from '@govbiz/shared/domain/entities/Company'
 import { sendHourLabel, type DailyReport, type DailyReportItem, type DailyReportSettings } from '@govbiz/shared/domain/entities/DailyReport'
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
 import { AppIcon } from '../components/AppIcon'
-import { ApiError, apiRequest, errorMessage } from '../api/client'
-import { listSavedPrograms } from '../api/savedPrograms'
+import { ApiError, errorMessage } from '../api/client'
+import { getCompany } from '../api/company'
+import { listSavedPrograms, removeSavedProgram, saveProgram } from '../api/savedPrograms'
 import { dailyReportErrorMessage, getDailyReportSettings, getLatestDailyReport,
   requestDailyReportEmailVerification, saveDailyReportSettings, getDailyReport } from '../api/dailyReport'
 import { DailyReportPushSettings } from '../notifications/DailyReportPushSettings'
@@ -145,7 +144,7 @@ export function DailyReportScreen({ onLogin, onCompany, onSearch, onOpenProgram,
       try {
         const [settings, company, report] = await Promise.all([
           getDailyReportSettings(token, controller.signal),
-          apiRequest('/api/v1/me/company', { accessToken: token, signal: controller.signal }).then((value) => toCompany(companyDtoSchema.parse(value)))
+          getCompany(token, controller.signal)
             .catch((cause: unknown) => {
               if (cause instanceof ApiError && cause.status === 404 && cause.code === 'COMPANY_NOT_REGISTERED') return null
               throw cause
@@ -226,11 +225,8 @@ export function DailyReportScreen({ onLogin, onCompany, onSearch, onOpenProgram,
     setBusy(key); setActionError(null); setNotice(null)
     try {
       if (visible.saved.has(key)) {
-        const query = new URLSearchParams(identity)
-        await apiRequest(`/api/v1/me/saved-programs?${query}`, { method: 'DELETE', accessToken: token, signal: controller.signal })
-      } else savedSupportProgramDtoSchema.parse(await apiRequest('/api/v1/me/saved-programs', {
-        method: 'POST', body: identity, accessToken: token, signal: controller.signal,
-      }))
+        await removeSavedProgram(token, identity, controller.signal)
+      } else await saveProgram(token, identity, controller.signal)
       if (controller.signal.aborted) return
       setState((current) => {
         if (current.token !== token || current.saved === null) return current

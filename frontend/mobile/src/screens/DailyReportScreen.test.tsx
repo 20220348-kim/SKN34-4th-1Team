@@ -161,6 +161,41 @@ test('a pending saved-list response cannot hide the loaded report or leak after 
   expect(screen.queryByLabelText('저장 상태 다시 확인')).toBeNull()
 })
 
+test('a validated save response updates the report bookmark with the requested source identity', async () => {
+  jest.mocked(apiRequest).mockImplementation((path, options) => {
+    if (path.endsWith('/latest')) return Promise.resolve({ report })
+    if (path === '/api/v1/me/saved-programs' && options?.method === 'POST') {
+      return Promise.resolve({ program: documentProgram, savedAt: '2026-10-06T09:00:00+09:00' })
+    }
+    return respond(path, options)
+  })
+  render(<DailyReportScreen {...callbacks} />)
+  fireEvent.press(await screen.findByLabelText('스마트공장 고도화 지원 관심 공고에 저장'))
+  await waitFor(() => expect(screen.getByLabelText('스마트공장 고도화 지원 관심 공고에서 빼기').props.accessibilityState.selected).toBe(true))
+  expect(apiRequest).toHaveBeenCalledWith('/api/v1/me/saved-programs', expect.objectContaining({
+    accessToken: 'first-account', signal: expect.any(AbortSignal), method: 'POST',
+    body: { sourceCode: 'BIZINFO', sourceProgramId: 'PBLN_123' },
+  }))
+})
+
+test.each([
+  { id: 'PBLN_OTHER' },
+  { sourceCode: 'KSTARTUP', sourceName: 'K-Startup', sourceUrl: 'https://www.k-startup.go.kr/notice' },
+])('a save response for a different composite identity cannot mark the report item saved: %j', async (differentIdentity) => {
+  jest.mocked(apiRequest).mockImplementation((path, options) => {
+    if (path.endsWith('/latest')) return Promise.resolve({ report })
+    if (path === '/api/v1/me/saved-programs' && options?.method === 'POST') {
+      return Promise.resolve({ program: { ...documentProgram, ...differentIdentity }, savedAt: '2026-10-06T09:00:00+09:00' })
+    }
+    return respond(path, options)
+  })
+  render(<DailyReportScreen {...callbacks} />)
+  fireEvent.press(await screen.findByLabelText('스마트공장 고도화 지원 관심 공고에 저장'))
+  await screen.findByText('연결하지 못했거나 응답을 확인할 수 없습니다. 잠시 후 다시 시도해 주세요.')
+  expect(screen.getByLabelText('스마트공장 고도화 지원 관심 공고에 저장').props.accessibilityState.selected).toBe(false)
+  expect(screen.queryByLabelText('스마트공장 고도화 지원 관심 공고에서 빼기')).toBeNull()
+})
+
 test('an invalid saved-list response is an explicit partial error and a saved-state 401 still invalidates the session', async () => {
   let savedReads = 0
   jest.mocked(apiRequest).mockImplementation((path) => {
