@@ -8,7 +8,6 @@ import org.apache.ibatis.annotations.Param
 data class NotificationSettingsDbRow(
     var accountId: Long = 0,
     var deadlineReminderEnabled: Boolean = false,
-    var deadlineReminderDaysBefore: Int = 3,
     var deadlineReminderEmail: Boolean = false,
     var deadlineReminderPush: Boolean = false,
 )
@@ -22,7 +21,6 @@ interface NotificationSettingsMapper {
     fun upsert(
         @Param("accountId") accountId: Long,
         @Param("enabled") enabled: Boolean,
-        @Param("daysBefore") daysBefore: Int,
         @Param("email") email: Boolean,
         @Param("push") push: Boolean,
         @Param("now") now: LocalDateTime,

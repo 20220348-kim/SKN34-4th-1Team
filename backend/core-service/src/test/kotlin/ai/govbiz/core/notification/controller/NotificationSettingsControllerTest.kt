@@ -34,7 +34,7 @@ class NotificationSettingsControllerTest {
     private val sessions = mock(AccountSessionService::class.java)
     private val account = AccountTestHelper.account()
     private val cookie = Cookie(SessionCookieHelper.COOKIE_NAME, "session-token")
-    private val emailOn = DeadlineReminderSetting(enabled = true, daysBefore = 3, email = true, push = false)
+    private val emailOn = DeadlineReminderSetting(enabled = true, email = true, push = false)
     private lateinit var mvc: MockMvc
 
     @BeforeEach
@@ -56,7 +56,10 @@ class NotificationSettingsControllerTest {
         mvc.perform(get("/api/v1/me/notification-settings").cookie(cookie))
             .andExpect(status().isOk()).andExpect(header().string("Cache-Control", "no-store"))
             .andExpect(jsonPath("$.deadlineReminder.enabled").value(false))
-            .andExpect(jsonPath("$.deadlineReminder.daysBefore").value(3))
+            .andExpect(jsonPath("$.deadlineReminder.daysBefore").doesNotExist())
+            .andExpect(jsonPath("$.reminderDaysBefore[0]").value(7))
+            .andExpect(jsonPath("$.reminderDaysBefore[1]").value(3))
+            .andExpect(jsonPath("$.reminderDaysBefore[2]").value(1))
             .andExpect(jsonPath("$.emailConfirmed").value(true))
             .andExpect(jsonPath("$.pushDeviceRegistered").value(false))
             .andExpect(jsonPath("$.schedulerEnabled").value(false))
@@ -67,7 +70,7 @@ class NotificationSettingsControllerTest {
     @Test
     fun cookieUpdateFromAnotherOriginIsRejectedBeforeTheService() {
         mvc.perform(put("/api/v1/me/notification-settings").cookie(cookie).header("Origin", "https://attacker.example")
-            .contentType(MediaType.APPLICATION_JSON).content(body(true, 3, true, false)))
+            .contentType(MediaType.APPLICATION_JSON).content(body(true, true, false)))
             .andExpect(status().isForbidden())
         verifyNoInteractions(service, sessions)
     }
@@ -77,20 +80,20 @@ class NotificationSettingsControllerTest {
         doReturn(account).`when`(sessions).requireAccount("session-token")
         doReturn(result(emailOn)).`when`(service).updateDeadlineReminder(account, emailOn)
         mvc.perform(put("/api/v1/me/notification-settings").cookie(cookie).header("Origin", "http://localhost:5173")
-            .contentType(MediaType.APPLICATION_JSON).content(body(true, 3, true, false)))
+            .contentType(MediaType.APPLICATION_JSON).content(body(true, true, false)))
             .andExpect(status().isOk()).andExpect(header().string("Cache-Control", "no-store"))
             .andExpect(jsonPath("$.deadlineReminder.email").value(true))
         mvc.perform(put("/api/v1/me/notification-settings").header("Authorization", "Bearer session-token")
-            .contentType(MediaType.APPLICATION_JSON).content(body(true, 3, true, false)))
+            .contentType(MediaType.APPLICATION_JSON).content(body(true, true, false)))
             .andExpect(status().isOk())
         verify(service, org.mockito.Mockito.times(2)).updateDeadlineReminder(account, emailOn)
     }
 
     @Test
-    fun outOfRangeDaysOrEnabledWithoutChannelAreRejectedBeforeTheService() {
+    fun enabledWithoutChannelOrMissingFieldsAreRejectedBeforeTheService() {
         doReturn(account).`when`(sessions).requireAccount("session-token")
-        for (request in listOf(body(true, 0, true, false), body(false, 8, false, false), body(true, 3, false, false),
-            """{"deadlineReminder":{"enabled":true,"daysBefore":3}}""", """{}""")) {
+        for (request in listOf(body(true, false, false),
+            """{"deadlineReminder":{"enabled":true}}""", """{}""")) {
             mvc.perform(put("/api/v1/me/notification-settings").cookie(cookie).header("Origin", "http://localhost:5173")
                 .contentType(MediaType.APPLICATION_JSON).content(request))
                 .andExpect(status().isBadRequest())
@@ -104,22 +107,33 @@ class NotificationSettingsControllerTest {
         doThrow(NotificationSettingsException(NotificationSettingsErrorCode.EMAIL_CONFIRMATION_REQUIRED)).`when`(service)
             .updateDeadlineReminder(account, emailOn)
         mvc.perform(put("/api/v1/me/notification-settings").cookie(cookie).header("Origin", "http://localhost:5173")
-            .contentType(MediaType.APPLICATION_JSON).content(body(true, 3, true, false)))
+            .contentType(MediaType.APPLICATION_JSON).content(body(true, true, false)))
             .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("EMAIL_CONFIRMATION_REQUIRED"))
             .andExpect(header().string("Cache-Control", "no-store"))
-        val pushOn = DeadlineReminderSetting(enabled = true, daysBefore = 3, email = false, push = true)
+        val pushOn = DeadlineReminderSetting(enabled = true, email = false, push = true)
         doThrow(NotificationSettingsException(NotificationSettingsErrorCode.PUSH_DELIVERY_UNAVAILABLE)).`when`(service)
             .updateDeadlineReminder(account, pushOn)
         mvc.perform(put("/api/v1/me/notification-settings").cookie(cookie).header("Origin", "http://localhost:5173")
-            .contentType(MediaType.APPLICATION_JSON).content(body(true, 3, false, true)))
+            .contentType(MediaType.APPLICATION_JSON).content(body(true, false, true)))
             .andExpect(status().isServiceUnavailable()).andExpect(jsonPath("$.code").value("PUSH_DELIVERY_UNAVAILABLE"))
     }
 
-    private fun body(enabled: Boolean, daysBefore: Int, email: Boolean, push: Boolean) =
-        """{"deadlineReminder":{"enabled":$enabled,"daysBefore":$daysBefore,"email":$email,"push":$push}}"""
+    @Test
+    fun olderClientsThatStillSendDaysBeforeAreSavedWithTheFixedSchedule() {
+        doReturn(account).`when`(sessions).requireAccount("session-token")
+        doReturn(result(emailOn)).`when`(service).updateDeadlineReminder(account, emailOn)
+        mvc.perform(put("/api/v1/me/notification-settings").cookie(cookie).header("Origin", "http://localhost:5173")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("""{"deadlineReminder":{"enabled":true,"daysBefore":5,"email":true,"push":false}}"""))
+            .andExpect(status().isOk()).andExpect(jsonPath("$.reminderDaysBefore[0]").value(7))
+        verify(service).updateDeadlineReminder(account, emailOn)
+    }
+
+    private fun body(enabled: Boolean, email: Boolean, push: Boolean) =
+        """{"deadlineReminder":{"enabled":$enabled,"email":$email,"push":$push}}"""
 
     private fun result(setting: DeadlineReminderSetting) = NotificationSettingsResult(
         deadlineReminder = setting, emailConfirmed = true, emailDeliveryAvailable = true, pushDeliveryAvailable = true,
-        pushDeviceRegistered = false, schedulerEnabled = false, sendHour = 9,
+        pushDeviceRegistered = false, schedulerEnabled = false, sendHour = 9, reminderDaysBefore = listOf(7, 3, 1),
     )
 }

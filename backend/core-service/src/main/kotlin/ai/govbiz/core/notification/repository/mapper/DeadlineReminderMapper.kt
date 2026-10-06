@@ -22,8 +22,8 @@ data class DeadlineReminderDbRow(
  */
 @Mapper
 interface DeadlineReminderMapper {
-    /** 오늘로부터 계정이 고른 일수 뒤가 신청 마감일인 관심 공고를 한 번만 예약합니다. */
-    fun reserveDue(@Param("today") today: LocalDate, @Param("now") now: LocalDateTime): Int
+    /** 오늘로부터 [daysBefore]의 일수 뒤가 신청 마감일인 관심 공고를 일수마다 한 번만 예약합니다. */
+    fun reserveDue(@Param("today") today: LocalDate, @Param("daysBefore") daysBefore: List<Int>, @Param("now") now: LocalDateTime): Int
 
     /** [since] 이후 예약했고 아직 보내지 않은 채널이 있는 알림(오래된 순)입니다. */
     fun findDispatchable(@Param("since") since: LocalDateTime, @Param("limit") limit: Int): List<DeadlineReminderDbRow>

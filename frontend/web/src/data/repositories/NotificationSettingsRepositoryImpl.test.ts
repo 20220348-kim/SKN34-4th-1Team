@@ -3,9 +3,9 @@ import type { NotificationSettings } from '@govbiz/shared/domain/entities/Notifi
 import { NotificationSettingsRepositoryImpl } from './NotificationSettingsRepositoryImpl'
 
 const settings: NotificationSettings = {
-  deadlineReminder: { enabled: true, daysBefore: 3, email: true, push: false },
+  deadlineReminder: { enabled: true, email: true, push: false },
   emailConfirmed: true, emailDeliveryAvailable: true, pushDeliveryAvailable: false,
-  pushDeviceRegistered: false, schedulerEnabled: false, sendHour: 9,
+  pushDeviceRegistered: false, schedulerEnabled: false, sendHour: 9, reminderDaysBefore: [7, 3, 1],
 }
 
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
@@ -27,9 +27,12 @@ describe('알림 설정 API 경계', () => {
   it('서버 오류 코드만 보존하고 원문은 노출하지 않으며 계약과 다른 응답은 거부한다', async () => {
     vi.stubGlobal('fetch', vi.fn()
       .mockResolvedValueOnce(Response.json({ code: 'PUSH_DELIVERY_UNAVAILABLE', detail: 'expo access token missing' }, { status: 503 }))
-      .mockResolvedValueOnce(Response.json({ ...settings, deadlineReminder: { enabled: true, daysBefore: 3, email: false, push: false } })))
+      .mockResolvedValueOnce(Response.json({ ...settings, deadlineReminder: { enabled: true, email: false, push: false } }))
+      // 알림 일수를 알려 주지 않는 예전 Core 응답도 계약과 다르게 봅니다.
+      .mockResolvedValueOnce(Response.json({ ...settings, reminderDaysBefore: undefined })))
     const repository = new NotificationSettingsRepositoryImpl()
     await expect(repository.settings()).rejects.toMatchObject({ status: 503, code: 'PUSH_DELIVERY_UNAVAILABLE', message: 'PUSH_DELIVERY_UNAVAILABLE' })
+    await expect(repository.settings()).rejects.toMatchObject({ status: 502, code: 'INVALID_RESPONSE' })
     await expect(repository.settings()).rejects.toMatchObject({ status: 502, code: 'INVALID_RESPONSE' })
   })
 })

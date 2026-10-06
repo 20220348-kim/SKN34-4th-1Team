@@ -110,16 +110,16 @@ V20에 맞추고 미적용 대화용 V19를 한 번만 out-of-order로 적용하
 ## 관심 공고 마감 알림
 
 `ai.govbiz.core.notification`은 로그인 회원의 알림 설정과 관심 공고 마감 알림을 담당합니다. V50이
-`account_notification_setting`과 고유 키 `(account_id, source_code, source_program_id, kind, due_date)`의
-`deadline_reminder` 발송 기록을 추가합니다. 메일·앱 알림은 맞춤 리포트의 `DailyReportMailClient`·`DailyReportPushClient`와
+`account_notification_setting`과 `deadline_reminder` 발송 기록을 추가하고, V52가 발송 기록 고유 키를
+`(account_id, source_code, source_program_id, kind, due_date, days_before)`로 바꿉니다. 메일·앱 알림은 맞춤 리포트의 `DailyReportMailClient`·`DailyReportPushClient`와
 기기 등록을 그대로 쓰며 새 큐·외부 서비스는 없습니다. 스케줄러 `DEADLINE_REMINDER_ENABLED`는 기본 꺼짐이고,
-`DEADLINE_REMINDER_SEND_HOUR`(기본 9) 이후 마감 N일 전 공고를 예약해 채널별로 한 번만 보냅니다.
+`DEADLINE_REMINDER_SEND_HOUR`(기본 9) 이후 마감 7·3·1일 전 공고를 일수마다 예약해 채널별로 한 번씩 보냅니다.
 [조건·상태·설정·검증](../../docs/deadline-reminders.md)을 참고하세요.
 
 | 알림 설정 API | 동작 |
 |---|---|
-| `GET /api/v1/me/notification-settings` | 본인 마감 알림 설정(`enabled`, `daysBefore`, `email`, `push`)과 수신 주소 확인·발송 가능·기기 등록·스케줄러 상태. no-store |
-| `PUT /api/v1/me/notification-settings` | `{deadlineReminder: {...}}` 저장. 범위 밖·채널 없음 400, 수신 주소 미확인 409, 발송 미설정 503 |
+| `GET /api/v1/me/notification-settings` | 본인 마감 알림 설정(`enabled`, `email`, `push`), 알림 일수 `reminderDaysBefore`(`[7,3,1]`)와 수신 주소 확인·발송 가능·기기 등록·스케줄러 상태. no-store |
+| `PUT /api/v1/me/notification-settings` | `{deadlineReminder: {enabled, email, push}}` 저장(예전 `daysBefore`는 무시). 필드 누락·채널 없음 400, 수신 주소 미확인 409, 발송 미설정 503 |
 
 ## 실행
 

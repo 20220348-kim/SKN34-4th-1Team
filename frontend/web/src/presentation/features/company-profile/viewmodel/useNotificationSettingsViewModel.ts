@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 
-import { sendHourLabel } from '@govbiz/shared/domain/entities/DailyReport'
 import {
   type DeadlineReminderSetting,
   type NotificationSettings,
-  deadlineReminderDaysOptions,
+  deadlineReminderScheduleText,
   findDeadlineReminderProblem,
   turnOnDeadlineReminder,
   usableDeadlineReminderChannels,
@@ -110,8 +109,7 @@ export function useNotificationSettingsViewModel(
     setting,
     isSaving,
     error,
-    timing: `마감 ${setting.daysBefore}일 전 ${sendHourLabel(settings.sendHour)} 이후에 한 번 보내요.`,
-    daysOptions: deadlineReminderDaysOptions,
+    timing: deadlineReminderScheduleText(settings),
     enableBlocker,
     schedulerNote: settings.schedulerEnabled ? null : notificationSettingsMessages.schedulerOff,
     channels: [
@@ -146,7 +144,6 @@ export function useNotificationSettingsViewModel(
       if (next === null) setError(notificationSettingsMessages.noChannel)
       else void save(next)
     },
-    changeDaysBefore: (daysBefore: number) => { void save({ ...setting, daysBefore }) },
     toggleChannel: (channel: DeadlineReminderChannelKey) => { void save({ ...setting, [channel]: !setting[channel] }) },
   } as const
 }

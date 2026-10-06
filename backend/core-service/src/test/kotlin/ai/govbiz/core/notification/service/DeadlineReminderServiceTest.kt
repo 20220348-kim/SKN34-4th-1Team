@@ -70,7 +70,7 @@ class DeadlineReminderServiceTest {
         doReturn(true).`when`(reminders).claim(1, EMAIL)
         doReturn(true).`when`(reminders).claim(1, PUSH)
         doReturn(account).`when`(accounts).findById(7)
-        doReturn(DeadlineReminderSetting(enabled = true, daysBefore = 3, email = true, push = true)).`when`(settings).deadlineReminder(7)
+        doReturn(DeadlineReminderSetting(enabled = true, email = true, push = true)).`when`(settings).deadlineReminder(7)
         doReturn(SavedSupportProgram(AccountTestHelper.NOW, program)).`when`(savedPrograms).findByIdentity(7, "BIZINFO", "PBLN_1")
         doReturn(DailyReportSubscription(7, "", false, "member@example.org", AccountTestHelper.NOW, null)).`when`(reports).subscription(7)
         doReturn(true).`when`(mail).isAvailable()
@@ -149,7 +149,7 @@ class DeadlineReminderServiceTest {
 
     @Test
     fun turnedOffSettingOrSuspendedAccountIsSkippedBeforeAnyProviderCall() {
-        doReturn(DeadlineReminderSetting(enabled = true, daysBefore = 3, email = false, push = true)).`when`(settings).deadlineReminder(7)
+        doReturn(DeadlineReminderSetting(enabled = true, email = false, push = true)).`when`(settings).deadlineReminder(7)
         service().run()
         verify(reminders).finish(1, EMAIL, DeadlineReminderOutcome.skipped("ReminderDisabled"))
         verify(reminders).finish(1, PUSH, DeadlineReminderOutcome.SENT)

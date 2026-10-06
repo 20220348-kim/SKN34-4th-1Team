@@ -45,6 +45,7 @@ class NotificationSettingsService(
         pushDeviceRegistered = push.hasSubscriber(account.id),
         schedulerEnabled = properties.enabled,
         sendHour = properties.sendHour,
+        reminderDaysBefore = DeadlineReminderSetting.REMINDER_DAYS_BEFORE,
     )
 
     private fun emailConfirmed(account: Account) = reports.subscription(account.id)?.isEmailConfirmedFor(account.email) == true

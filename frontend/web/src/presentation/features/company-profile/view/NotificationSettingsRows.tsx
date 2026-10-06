@@ -1,7 +1,7 @@
-import { useId } from 'react'
 import { Link } from 'react-router'
 
 import { appPaths } from '../../../shared/routes/appPaths'
+import { HelpTip } from '../../../shared/workspace/HelpTip'
 import { workspacePageStyles, workspaceTagClassName } from '../../../shared/workspace/WorkspacePage.styles'
 import { WorkspaceToggle } from '../../../shared/workspace/WorkspaceToggle'
 import type { NotificationSettingsViewModel } from '../viewmodel/useNotificationSettingsViewModel'
@@ -43,8 +43,11 @@ export function NotificationSettingsRows({ vm }: { vm: NotificationSettingsViewM
   )
 }
 
+/**
+ * 마감 알림 한 줄입니다. 보내는 시점과 지금 켤 수 없는 이유·서버 발송 상태는 제목 옆 ? 도움말에 둡니다.
+ * 수신 주소 확인 링크는 말풍선 안에서는 키보드로 닿지 않으므로 필요할 때 줄 아래에 그대로 둡니다.
+ */
 function DeadlineReminderRow({ vm }: { vm: ReadyViewModel }) {
-  const daysId = useId()
   const needsEmailConfirmation = vm.channels.some((channel) => channel.needsEmailConfirmation)
   const confirmLink = (
     <Link className={workspacePageStyles.quietLink} to={`${appPaths.reports}?settings=open`}>수신 주소 확인하기</Link>
@@ -52,9 +55,13 @@ function DeadlineReminderRow({ vm }: { vm: ReadyViewModel }) {
   return (
     <div className={companyProfileStyles.reminderBox} aria-busy={vm.isSaving}>
       <div className={companyProfileStyles.reminderHeader}>
-        <span className="min-w-0">
+        <span className={`${companyProfileStyles.titleRow} min-w-0`}>
           <span className={companyProfileStyles.accountValue}>관심 공고 마감 알림</span>
-          <span className={companyProfileStyles.settingDescription}>{vm.timing}</span>
+          <HelpTip label="관심 공고 마감 알림 도움말" title="관심 공고 마감 알림">
+            <p className="m-0">{vm.timing}</p>
+            {vm.enableBlocker ? <p className="m-0">{vm.enableBlocker}</p> : null}
+            {vm.schedulerNote ? <p className="m-0">{vm.schedulerNote}</p> : null}
+          </HelpTip>
         </span>
         <WorkspaceToggle
           label="관심 공고 마감 알림"
@@ -65,18 +72,6 @@ function DeadlineReminderRow({ vm }: { vm: ReadyViewModel }) {
       </div>
       {vm.setting.enabled ? (
         <div className={companyProfileStyles.reminderOptions} role="group" aria-label="마감 알림 받는 방법">
-          <div className={companyProfileStyles.reminderDays}>
-            <label className={companyProfileStyles.reminderLabel} htmlFor={daysId}>알림 시점</label>
-            <select
-              id={daysId}
-              className={companyProfileStyles.reminderSelect}
-              value={vm.setting.daysBefore}
-              disabled={vm.isSaving}
-              onChange={(event) => vm.changeDaysBefore(Number(event.target.value))}
-            >
-              {vm.daysOptions.map((days) => <option key={days} value={days}>마감 {days}일 전</option>)}
-            </select>
-          </div>
           {vm.channels.map((channel) => (
             <label className={companyProfileStyles.reminderChannel} key={channel.key}>
               <input
@@ -94,12 +89,7 @@ function DeadlineReminderRow({ vm }: { vm: ReadyViewModel }) {
           {needsEmailConfirmation ? confirmLink : null}
         </div>
       ) : null}
-      {vm.enableBlocker ? (
-        <p className={companyProfileStyles.reminderNote}>
-          {vm.enableBlocker} {needsEmailConfirmation ? confirmLink : null}
-        </p>
-      ) : null}
-      {vm.schedulerNote ? <p className={companyProfileStyles.reminderNote}>{vm.schedulerNote}</p> : null}
+      {vm.enableBlocker && needsEmailConfirmation ? <p className={companyProfileStyles.reminderNote}>{confirmLink}</p> : null}
       {vm.isSaving ? <p className="sr-only" aria-live="polite">알림 설정을 저장하는 중이에요.</p> : null}
       {vm.error ? <p className={companyProfileStyles.formError} role="alert">{vm.error}</p> : null}
     </div>
