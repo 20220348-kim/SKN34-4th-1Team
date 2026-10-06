@@ -362,7 +362,8 @@ function ApplicationPipeline({ filteredSavedPrograms, savedPrograms, today, filt
     </div> : null}
 
     {nextBeforeId !== null && phase !== 'failed' ? <div className={s.pipelineMore}>
-      <button type="button" className={workspacePageStyles.secondaryButton} disabled={loadingMore} onClick={onLoadMore}>
+      <button type="button" className={workspacePageStyles.secondaryButton} disabled={loadingMore} aria-busy={loadingMore} onClick={onLoadMore}>
+        {loadingMore ? <span className="size-3 shrink-0 rounded-full border-[1.5px] border-current border-t-transparent motion-safe:animate-spin" aria-hidden="true" /> : null}
         {loadingMore ? '불러오는 중…' : '더 보기'}
       </button>
       <span className={s.note}>신청 준비 {keptItems.length}건 표시</span>

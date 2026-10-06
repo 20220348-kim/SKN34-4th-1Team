@@ -10,6 +10,7 @@ import { HelpTip } from '../../../shared/workspace/HelpTip'
 import { WorkspaceModal } from '../../../shared/workspace/WorkspaceModal'
 import { workspaceModalStyles } from '../../../shared/workspace/WorkspaceModal.styles'
 import { WorkspacePageHeader } from '../../../shared/workspace/WorkspacePageHeader'
+import { useDelayedFlag } from '../../../shared/workspace/useDelayedFlag'
 import {
   companyAgeLabel,
   companyInitial,
@@ -22,6 +23,36 @@ import { appPaths } from '../../../shared/routes/appPaths'
 import { useSupportProgramSaveViewModel } from '../../../shared/support-program/useSupportProgramSaveViewModel'
 import { usePartnerRecruitmentDetailViewModel } from '../viewmodel/usePartnerRecruitmentDetailViewModel'
 import { partnerRecruitmentStyles } from './PartnerRecruitment.styles'
+
+const skeletonBar = 'block rounded-md bg-surface-muted motion-safe:animate-pulse'
+
+/** 모집글을 읽는 동안의 자리입니다. 모집 조건 카드(태그 줄 · 제목 · 작성 기업 · 조건 여섯 칸)와 본문 카드를 같은 틀의 막대로 채웁니다. */
+function RecruitmentDetailSkeleton() {
+  return <div className={workspacePageStyles.column} aria-hidden="true">
+    <section className={workspacePageStyles.card}>
+      <div className={partnerRecruitmentStyles.cardTop}>
+        <span className={partnerRecruitmentStyles.tagRow}><span className={`${skeletonBar} h-[1.35rem] w-20 rounded-full`} /><span className={`${skeletonBar} h-[1.35rem] w-14 rounded-full`} /></span>
+        <span className={`${skeletonBar} h-3 w-28`} />
+      </div>
+      <span className="flex h-7 items-center"><span className={`${skeletonBar} h-5 w-3/5`} /></span>
+      <div className={partnerRecruitmentStyles.detailAuthorCard}>
+        <span className="flex min-w-0 items-center gap-[0.65rem]">
+          <span className={`${skeletonBar} size-9 shrink-0 rounded-full`} />
+          <span className="flex min-w-0 flex-col gap-1.5"><span className={`${skeletonBar} h-3.5 w-36`} /><span className={`${skeletonBar} h-3 w-52 max-w-full`} /></span>
+        </span>
+      </div>
+      <div className={partnerRecruitmentStyles.conditionGrid}>
+        {Array.from({ length: 6 }, (_, index) => <div className={partnerRecruitmentStyles.conditionCell} key={index}>
+          <span className={`${skeletonBar} h-3 w-14`} /><span className={`${skeletonBar} h-3.5 w-24`} />
+        </div>)}
+      </div>
+    </section>
+    <section className={workspacePageStyles.card}>
+      <span className="flex h-6 items-center"><span className={`${skeletonBar} h-4 w-24`} /></span>
+      <span className={`${skeletonBar} h-3.5 w-full`} /><span className={`${skeletonBar} h-3.5 w-11/12`} /><span className={`${skeletonBar} h-3.5 w-3/5`} />
+    </section>
+  </div>
+}
 
 /**
  * 모집글 상세와 참여 제안 화면입니다. 공고 원문은 그대로 보여 줍니다.
@@ -63,10 +94,16 @@ export function PartnerRecruitmentDetailPage() {
     proposalFlowSteps,
   } = usePartnerRecruitmentDetailViewModel()
 
+  // 읽는 동안에도 머리글은 먼저 그리고, 300ms가 넘으면 본문 자리에 같은 틀의 스켈레톤을 둡니다.
+  const showSkeleton = useDelayedFlag(phase === 'loading')
   if (phase === 'loading') {
-    return <div className={workspacePageStyles.content} aria-label="모집글 불러오는 중">
-      <p className={workspacePageStyles.emptyNote}>모집글을 불러오는 중입니다.</p>
-    </div>
+    return <>
+      <WorkspacePageHeader parent={{ to: appPaths.partners, label: '파트너 관리' }} title="모집글 상세" />
+      <div className={workspacePageStyles.content} aria-label="모집글 불러오는 중">
+        <p className="sr-only" role="status">모집글을 불러오는 중입니다.</p>
+        {showSkeleton ? <RecruitmentDetailSkeleton /> : null}
+      </div>
+    </>
   }
 
   if (phase === 'failed') {

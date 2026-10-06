@@ -4,6 +4,7 @@ import { workspaceModalStyles } from '../../../shared/workspace/WorkspaceModal.s
 import { workspacePageStyles, workspaceTagClassName } from '../../../shared/workspace/WorkspacePage.styles'
 import { WorkspacePageHeader } from '../../../shared/workspace/WorkspacePageHeader'
 import { adminAccessMessages } from '../viewmodel/adminAccountAccess'
+import { useDelayedFlag } from '../../../shared/workspace/useDelayedFlag'
 import { useAdminAccountDetailViewModel } from '../viewmodel/useAdminAccountDetailViewModel'
 import { adminAccountsPageStyles as styles } from './AdminAccountsPage.styles'
 
@@ -12,6 +13,8 @@ type DetailViewModel = ReturnType<typeof useAdminAccountDetailViewModel>
 /** 관리자 계정 상세입니다. 계정·기업·활동·조치 기록을 보여 주고, 정지·정지 해제·강제 로그아웃은 사유를 받아 처리합니다. */
 export function AdminAccountDetailPage() {
   const vm = useAdminAccountDetailViewModel()
+  const loading = vm.phase !== 'missing' && vm.phase !== 'failed' && vm.account === null
+  const showSkeleton = useDelayedFlag(loading)
 
   return (
     <>
@@ -39,7 +42,10 @@ export function AdminAccountDetailPage() {
             <button className={workspacePageStyles.quietLink} type="button" onClick={vm.retry}>다시 시도</button>
           </p>
         ) : vm.account === null ? (
-          <p className={workspacePageStyles.emptyNote}>계정을 불러오는 중입니다.</p>
+          <>
+            <p className="sr-only" role="status">계정을 불러오는 중입니다.</p>
+            {showSkeleton ? <DetailSkeleton /> : null}
+          </>
         ) : (
           <div className={styles.detailGrid}>
             <section className={workspacePageStyles.card} aria-label="계정 정보">
@@ -98,6 +104,21 @@ export function AdminAccountDetailPage() {
       <AdminAccountActionModal vm={vm.modal} />
     </>
   )
+}
+
+/** 계정 상세를 읽는 동안의 자리입니다. 실제와 같은 네 카드(계정 · 기업 · 활동 · 조치 기록)에 제목과 항목 줄을 막대로 채웁니다. */
+function DetailSkeleton() {
+  return <div className={styles.detailGrid} aria-hidden="true">
+    {[5, 4, 4, 2].map((rows, card) => <section className={workspacePageStyles.card} key={card}>
+      <span className={`${styles.skeletonLine} h-6`}><span className={`${styles.skeletonBar} h-4 ${card === 0 ? 'w-48' : 'w-16'}`} /></span>
+      <div className={styles.infoList}>
+        {Array.from({ length: rows }, (_, row) => <div className={styles.infoRow} key={row}>
+          <span className={`${styles.skeletonLine} h-5`}><span className={`${styles.skeletonBar} h-3 w-16`} /></span>
+          <span className={`${styles.skeletonLine} h-5`}><span className={`${styles.skeletonBar} h-3 w-28`} /></span>
+        </div>)}
+      </div>
+    </section>)}
+  </div>
 }
 
 function InfoList({ rows }: { rows: { label: string; value: string }[] }) {

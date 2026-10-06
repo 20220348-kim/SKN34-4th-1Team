@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { Provider } from 'react-redux'
 import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -669,6 +669,33 @@ describe('기업 프로필 화면', () => {
     businessVerifiedAt: '2026-09-08T10:00:00',
     updatedAt: '2026-09-08T10:00:00',
   }
+
+  it('기업 정보와 협업 설정을 읽기 전에는 미등록·완성도 같은 값을 보여 주지 않고 카드 자리를 그린다', async () => {
+    let resolveCompany: (company: typeof registeredCompany) => void = () => {}
+    vi.spyOn(appContainer.resolve('getMyCompanyUseCase'), 'execute').mockReturnValue(new Promise((resolve) => { resolveCompany = resolve }))
+    vi.spyOn(appContainer.resolve('getCompanyPartnerProfileUseCase'), 'execute').mockResolvedValue(null)
+    renderApp('/app/profile')
+
+    const header = within(screen.getByRole('banner'))
+    expect(header.getByText('프로필 완성도 —')).toBeTruthy()
+    expect(screen.getByRole('status').textContent).toContain('기업 정보를 불러오는 중입니다.')
+    expect(screen.queryByText('기업 미등록')).toBeNull()
+    expect(screen.queryByText('사업자등록번호 확인 전')).toBeNull()
+    expect(screen.queryByRole('region', { name: '프로필 요약' })).toBeNull()
+    expect(screen.queryByRole('region', { name: '협업·파트너 설정' })).toBeNull()
+    // 300ms 안에는 자리만 잡고(보이지 않음), 더 걸리면 막대가 보입니다. 계정과 알림 카드는 처음부터 그립니다.
+    const skeletons = () => Array.from(document.querySelectorAll('section[aria-hidden="true"]'))
+    expect(skeletons()).toHaveLength(3)
+    expect(skeletons().every((card) => card.className.includes('invisible'))).toBe(true)
+    await waitFor(() => expect(skeletons().some((card) => card.className.includes('invisible'))).toBe(false))
+    expect(screen.getByRole('region', { name: '계정과 알림' })).toBeTruthy()
+
+    await act(async () => resolveCompany(registeredCompany))
+    expect(await screen.findByRole('region', { name: '프로필 요약' })).toBeTruthy()
+    expect(skeletons()).toHaveLength(0)
+    expect(header.queryByText('프로필 완성도 —')).toBeNull()
+    expect(screen.getByRole('region', { name: '협업·파트너 설정' })).toBeTruthy()
+  })
 
   it('사이드바에서 내 프로필로 이동하면 기업이 없을 때 등록 폼부터 보여 주고 나머지 섹션은 그대로 둔다', async () => {
     vi.spyOn(appContainer.resolve('getMyCompanyUseCase'), 'execute').mockResolvedValue(null)
@@ -1391,8 +1418,9 @@ describe('파트너 모집 화면', () => {
       capabilities: [],
       recruitmentDeadline: '2026-09-14',
     }))
+    // 상세는 읽는 동안에도 머리글을 먼저 그리므로, 본문은 기다려 확인합니다.
     expect(await screen.findByRole('heading', { name: '모집글 상세' })).toBeTruthy()
-    expect(screen.getByText('AI 실증 과제 데이터 구축·라벨링 참여기관 구합니다')).toBeTruthy()
+    expect(await screen.findByText('AI 실증 과제 데이터 구축·라벨링 참여기관 구합니다')).toBeTruthy()
     expect(fetch).not.toHaveBeenCalled()
   })
 

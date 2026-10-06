@@ -100,9 +100,9 @@ function useAdminAccountPage(query: AdminAccountQuery, useCase: ListUseCases['br
   }
 }
 
-/** 요약 수치는 화면을 열 때 한 번 읽습니다. 실패하면 요약 줄만 숨기고 목록은 그대로 씁니다. */
+/** 요약 수치는 화면을 열 때 한 번 읽습니다. 실패하면 요약 줄만 숨기고 목록은 그대로 씁니다. 읽는 중은 undefined, 실패는 null입니다. */
 function useAdminAccountStats(useCase: ListUseCases['getStats']) {
-  const [stats, setStats] = useState<AdminAccountStats | null>(null)
+  const [stats, setStats] = useState<AdminAccountStats | null | undefined>(undefined)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -187,7 +187,9 @@ export function useAdminAccountListViewModel(useCases: Partial<ListUseCases> = {
       setDraft({ base: '', value: '' })
       applyQuery({ ...defaultAdminAccountQuery, sort: query.sort })
     },
-    stats: stats === null ? null : toStatCells(stats),
+    stats: stats ? toStatCells(stats) : null,
+    /** 요약 수치를 아직 읽는 중입니다. 화면이 요약 줄 자리를 미리 잡아 둡니다. */
+    statsLoading: stats === undefined,
   }
 }
 

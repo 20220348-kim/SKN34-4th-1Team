@@ -208,10 +208,15 @@ export function useCompanyProfileViewModel(useCases: Partial<CompanyUseCases> = 
     (checklist.filter((item) => item.isDone).length / checklist.length) * 100,
   )
 
+  // 기업 정보와(등록된 기업이면) 협업·파트너 설정을 모두 읽기 전에는 완성도·요약을 계산해 보여 주지 않습니다.
+  const isLoading = companyState.status === 'loading'
+    || (companyState.status === 'registered' && (partnerProfile.loadStatus === 'idle' || partnerProfile.loadStatus === 'loading'))
+
   const { lookup } = businessLookup
   return {
     account,
     companyState,
+    isLoading,
     company,
     partnerProfile,
     notice,

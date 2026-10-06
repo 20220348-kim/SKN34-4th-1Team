@@ -4,8 +4,39 @@ import { workspacePageStyles, workspaceTagClassName } from '../../../shared/work
 import { SelectField } from '../../../shared/workspace/SelectField'
 import { WorkspacePageHeader } from '../../../shared/workspace/WorkspacePageHeader'
 import { adminAccessMessages } from '../viewmodel/adminAccountAccess'
+import { useDelayedFlag } from '../../../shared/workspace/useDelayedFlag'
 import { useAdminAccountListViewModel } from '../viewmodel/useAdminAccountListViewModel'
 import { adminAccountsPageStyles as styles, adminStatValueClassName } from './AdminAccountsPage.styles'
+
+const tableHeads = ['이메일', '기업', '권한', '로그인 방법', '인증', '가입일', '최근 로그인', '상태']
+
+/** 요약 수치를 읽는 동안의 자리입니다. 실제와 같은 여섯 칸을 먼저 두어 나중에 끼어들며 표를 밀어내지 않습니다. */
+function StatSkeletons({ visible }: { visible: boolean }) {
+  return <div className={`${styles.statRow} ${visible ? '' : 'invisible'}`} aria-hidden="true">
+    {Array.from({ length: 6 }, (_, index) => <div className={styles.statCell} key={index}>
+      <span className={`${styles.skeletonLine} h-[31px]`}><span className={`${styles.skeletonBar} h-5 w-14`} /></span>
+      <span className={`${styles.skeletonLine} h-4`}><span className={`${styles.skeletonBar} h-2.5 w-16`} /></span>
+    </div>)}
+  </div>
+}
+
+/** 계정 표를 처음 읽는 동안의 자리입니다. 실제 표와 같은 머리 줄과 열 구성에 막대만 채웁니다. */
+function TableSkeleton() {
+  return <div className={styles.tableScroll} aria-hidden="true">
+    <table className={workspacePageStyles.table}>
+      <thead><tr>{tableHeads.map((head) => <th className={workspacePageStyles.tableHeadCell} key={head}>{head}</th>)}</tr></thead>
+      <tbody>
+        {Array.from({ length: 10 }, (_, row) => <tr key={row}>
+          {tableHeads.map((head, column) => <td className={workspacePageStyles.tableCell} key={head}>
+            <span className={`${styles.skeletonLine} h-[1.35rem]`}>
+              <span className={`${styles.skeletonBar} ${column === 0 ? 'h-3.5 w-40' : column === 1 ? 'h-3 w-24' : column === 5 || column === 6 ? 'h-3 w-20' : 'h-[1.35rem] w-12 rounded-full'}`} />
+            </span>
+          </td>)}
+        </tr>)}
+      </tbody>
+    </table>
+  </div>
+}
 
 /** 관리자 계정 목록입니다. 검색·필터로 계정을 찾고, 정지·강제 로그아웃 같은 조치는 상세에서 합니다. */
 export function AdminAccountsPage() {
@@ -16,6 +47,10 @@ export function AdminAccountsPage() {
     { label: '로그인 방법', value: vm.loginMethod, options: vm.loginMethodOptions, onChange: vm.selectLoginMethod },
     { label: '정렬', value: vm.sort, options: vm.sortOptions, onChange: vm.selectSort },
   ]
+  // 처음 읽을 때만 300ms가 넘으면 자리를 그리고, 조건·페이지를 바꿔 다시 읽을 때는 직전 표를 흐리게 둔 채 새 결과로 바꿉니다.
+  const loading = vm.phase === 'loading'
+  const showStatSkeleton = useDelayedFlag(vm.statsLoading)
+  const showTableSkeleton = useDelayedFlag(loading && vm.rows.length === 0)
 
   return (
     <>
@@ -31,7 +66,7 @@ export function AdminAccountsPage() {
               </div>
             ))}
           </div>
-        ) : null}
+        ) : vm.statsLoading ? <StatSkeletons visible={showStatSkeleton} /> : null}
 
         <section className={workspacePageStyles.card} aria-label="계정 목록">
           {/* 검색어는 조회를 눌러야 적용됩니다. 이메일·기업명, 숫자면 사업자등록번호 일부로도 찾습니다. */}
@@ -74,7 +109,7 @@ export function AdminAccountsPage() {
 
           <div className={styles.toolbar}>
             <h2 className={styles.resultCount} aria-live="polite">
-              {vm.resultTotal === null
+              {vm.resultTotal === null || loading
                 ? '검색 결과'
                 : <>검색 결과 <span className={styles.resultTotal}>{vm.resultTotal.toLocaleString()}건</span></>}
             </h2>
@@ -98,12 +133,15 @@ export function AdminAccountsPage() {
               계정 목록을 불러오지 못했습니다.{' '}
               <button className={workspacePageStyles.quietLink} type="button" onClick={vm.retry}>다시 시도</button>
             </p>
-          ) : vm.phase === 'loading' && vm.rows.length === 0 ? (
-            <p className={workspacePageStyles.emptyNote}>계정 목록을 불러오는 중입니다.</p>
+          ) : loading && vm.rows.length === 0 ? (
+            <>
+              <p className="sr-only" role="status">계정 목록을 불러오는 중입니다.</p>
+              {showTableSkeleton ? <TableSkeleton /> : null}
+            </>
           ) : vm.rows.length === 0 ? (
             <p className={workspacePageStyles.emptyNote}>조건에 맞는 계정이 없습니다.</p>
           ) : (
-            <div className={styles.tableScroll} role="region" aria-label="계정 표 가로 스크롤" tabIndex={0}>
+            <div className={`${styles.tableScroll} ${loading ? styles.stale : ''}`} role="region" aria-label="계정 표 가로 스크롤" aria-busy={loading} tabIndex={0}>
               <table className={workspacePageStyles.table}>
                 <thead>
                   <tr>

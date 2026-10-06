@@ -83,6 +83,8 @@ export const companyProfileStyles = {
   publicOpen: 'border-t border-line px-[0.7rem] py-[0.55rem] font-bold text-brand-primary',
   publicClosed: 'border-t border-line px-[0.7rem] py-[0.55rem] text-ink-muted',
   notice: 'm-0 rounded-[0.85rem] bg-brand-soft px-4 py-3 text-[0.8rem] font-semibold text-brand-primary',
+  // 불러오는 동안 카드 안을 채우는 막대입니다. 카드 틀은 실제와 같은 것을 씁니다.
+  skeletonBar: 'block rounded-md bg-surface-muted motion-safe:animate-pulse',
   // 폼·입력·조회 결과 모양은 온보딩 2단계와 같은 shared/company 스타일을 그대로 씁니다.
   ...companyFormStyles,
   // 완성도 막대 아래 한 줄로 흐르는 체크리스트입니다. 좁으면 줄을 바꿉니다.

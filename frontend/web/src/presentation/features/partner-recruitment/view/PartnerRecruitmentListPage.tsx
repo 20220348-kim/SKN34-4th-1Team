@@ -178,7 +178,7 @@ export function PartnerRecruitmentListPage() {
 
           {/* 결과 머리줄: 왼쪽 건수, 오른쪽 정렬 드롭다운(필터 검색과 같은 배치). 정렬은 바로 적용됩니다. */}
           <div className={partnerRecruitmentStyles.resultHead}>
-            <h2 className={partnerRecruitmentStyles.resultTitle} aria-live="polite">검색 결과 <span className="text-brand-primary">{total.toLocaleString()}건</span></h2>
+            <h2 className={partnerRecruitmentStyles.resultTitle} aria-live="polite">검색 결과 <span className="text-brand-primary">{phase === 'loading' ? '—' : total.toLocaleString()}건</span></h2>
             <label className={partnerRecruitmentStyles.sortLabel}>정렬
               <SelectField label="모집글 정렬" className={partnerRecruitmentStyles.sortSelect} value={query.sort} options={sortOptions} onChange={selectSort} />
             </label>
@@ -199,7 +199,8 @@ export function PartnerRecruitmentListPage() {
             </section>
           ) : (
             <>
-              <div className={partnerRecruitmentStyles.cardGrid}>
+              {/* 조건·페이지를 바꿔 다시 읽는 동안에는 직전 카드를 흐리게 둔 채 새 결과로 바꿉니다. */}
+              <div className={`${partnerRecruitmentStyles.cardGrid} ${phase === 'loading' ? 'pointer-events-none opacity-50' : ''}`} aria-busy={phase === 'loading'}>
                 {recruitments.map((recruitment) => (
                   <RecruitmentCard key={recruitment.id} recruitment={recruitment} />
                 ))}

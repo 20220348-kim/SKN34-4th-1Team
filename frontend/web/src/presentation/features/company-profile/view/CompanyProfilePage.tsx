@@ -7,6 +7,7 @@ import {
 import { HelpTip } from '../../../shared/workspace/HelpTip'
 import { companyInitial } from '../../../shared/partner-recruitment/partnerRecruitmentLabels'
 import { WorkspacePageHeader } from '../../../shared/workspace/WorkspacePageHeader'
+import { useDelayedFlag } from '../../../shared/workspace/useDelayedFlag'
 import { BusinessLookupResult } from '../../../shared/company/BusinessLookupResult'
 import { BusinessNumberField } from '../../../shared/company/BusinessNumberField'
 import { CompanyProfileFields } from '../../../shared/company/CompanyProfileFields'
@@ -37,6 +38,55 @@ const usageIcons: Record<'target' | 'users' | 'shield', ReactNode> = {
   shield: <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />,
 }
 
+/** 글자 한 줄 자리입니다. `box`는 실제 줄 높이, `bar`는 그 안 가운데에 놓이는 막대의 크기입니다. */
+function SkeletonLine({ box, bar }: { box: string; bar: string }) {
+  return <span className={`flex items-center ${box}`}><span className={`${companyProfileStyles.skeletonBar} ${bar}`} /></span>
+}
+
+/** 회색 칸 한 개(라벨 + 값) 자리입니다. */
+function SkeletonField({ tall = false }: { tall?: boolean }) {
+  return <div className={companyProfileStyles.field}>
+    <SkeletonLine box="h-4" bar="h-2.5 w-12" />
+    <SkeletonLine box={tall ? 'h-6' : 'h-5'} bar="h-3.5 w-3/5" />
+  </div>
+}
+
+/**
+ * 기업 정보와 협업 설정을 읽는 동안의 자리입니다. 읽기 전에 "기업 미등록 · 완성도 33%" 같은 틀린 값을 먼저 보여 주지 않도록
+ * 요약 · 기업 기본정보 · 협업·파트너 설정 카드를 같은 틀의 막대로 채웁니다. 300ms 안에 끝나면 막대는 보이지 않고 자리만 잡습니다.
+ */
+function ProfileSkeleton({ part, visible }: { part: 'summary' | 'company' | 'partner'; visible: boolean }) {
+  const bar = companyProfileStyles.skeletonBar
+  return <section className={`${workspacePageStyles.card} ${visible ? '' : 'invisible'}`} aria-hidden="true">
+    {part === 'summary' ? <>
+      <div className={companyProfileStyles.summaryTop}>
+        <div className={companyProfileStyles.summaryIdentity}>
+          <span className={`${bar} size-[3.25rem] shrink-0 rounded-[0.9rem]`} />
+          <div className="flex flex-col">
+            <SkeletonLine box="h-[29px]" bar="h-5 w-44" />
+            <span className={companyProfileStyles.summaryTags}><span className={`${bar} h-6 w-16 rounded-full`} /><span className={`${bar} h-6 w-20 rounded-full`} /><span className={`${bar} h-6 w-16 rounded-full`} /></span>
+          </div>
+        </div>
+      </div>
+      <div className={companyProfileStyles.completion}>
+        <span className="flex items-center justify-between"><SkeletonLine box="h-[17px]" bar="h-3 w-20" /><SkeletonLine box="h-[17px]" bar="h-3 w-8" /></span>
+        <span className={`${bar} h-2 w-full rounded-full`} />
+        <SkeletonLine box="h-[18px]" bar="h-3 w-3/5" />
+        <span className={companyProfileStyles.checklist}><SkeletonLine box="h-[18px]" bar="h-3 w-40" /><SkeletonLine box="h-[18px]" bar="h-3 w-24" /><SkeletonLine box="h-[18px]" bar="h-3 w-28" /></span>
+      </div>
+    </> : <>
+      <div className={workspacePageStyles.cardHeader}>
+        <SkeletonLine box="h-10" bar="h-4 w-32" />
+        <span className={`${bar} h-10 w-14 rounded-full`} />
+      </div>
+      <div className={companyProfileStyles.fieldGrid}>
+        {/* 기업 기본정보의 첫 줄은 값 옆에 태그가 붙어 한 줄이 조금 높습니다. */}
+        {Array.from({ length: part === 'company' ? 7 : 4 }, (_, index) => <SkeletonField key={index} tall={part === 'company' && index < 2} />)}
+      </div>
+    </>}
+  </section>
+}
+
 /**
  * 기업 프로필 화면입니다. 기업 기본정보는 사업자등록번호 조회로 등록·수정하고, 협업·파트너 설정은 모집글 상세와
  * 기업 프로필 보기에 나갑니다. 담당자 연락처는 제안을 수락한 뒤에만 공개되며 GovBiz는 역량·실적을 검증하지 않습니다.
@@ -59,6 +109,8 @@ export function CompanyProfilePage() {
     usageNotes,
     publicityRows,
   } = vm
+
+  const showSkeleton = useDelayedFlag(vm.isLoading)
 
   // 옆 칸에 있던 안내는 관련 카드 제목 옆 ? 도움말로 옮겼습니다. 열어야 보이므로 본문 폭을 차지하지 않습니다.
   const usageHelp = (
@@ -121,13 +173,16 @@ export function CompanyProfilePage() {
     <>
       <WorkspacePageHeader
         title="내 프로필"
-        actions={<span className={workspaceTagClassName('muted')}>프로필 완성도 {completionPercent}%</span>}
+        actions={<span className={workspaceTagClassName('muted')}>프로필 완성도 {vm.isLoading ? '—' : `${completionPercent}%`}</span>}
       />
 
       <div className={workspacePageStyles.content}>
         {notice ? <p className={companyProfileStyles.notice} role="status">{notice}</p> : null}
         <div className={workspacePageStyles.column}>
-            <section className={workspacePageStyles.card} aria-label="프로필 요약">
+            {vm.isLoading ? <>
+              <p className="sr-only" role="status">기업 정보를 불러오는 중입니다.</p>
+              <ProfileSkeleton part="summary" visible={showSkeleton} />
+            </> : <section className={workspacePageStyles.card} aria-label="프로필 요약">
               <div className={companyProfileStyles.summaryTop}>
                 <div className={companyProfileStyles.summaryIdentity}>
                   <span className={companyProfileStyles.summaryAvatar} aria-hidden="true">
@@ -206,13 +261,9 @@ export function CompanyProfilePage() {
                   ))}
                 </div>
               </div>
-            </section>
+            </section>}
 
-            {companyState.status === 'loading' ? (
-              <section className={workspacePageStyles.card} aria-label="기업 정보 불러오기">
-                <p className={workspacePageStyles.emptyNote} aria-live="polite">기업 정보를 불러오는 중입니다.</p>
-              </section>
-            ) : null}
+            {companyState.status === 'loading' ? <ProfileSkeleton part="company" visible={showSkeleton} /> : null}
             {companyState.status === 'error' ? (
               <section className={workspacePageStyles.card} aria-label="기업 정보 불러오기">
                 <p className={workspacePageStyles.emptyNote} role="alert">기업 정보를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.</p>
@@ -298,7 +349,9 @@ export function CompanyProfilePage() {
               </section>
             ) : null}
 
-            <CompanyPartnerProfileSection vm={vm.partnerProfile} titleHelp={publicityHelp} />
+            {vm.isLoading
+              ? <ProfileSkeleton part="partner" visible={showSkeleton} />
+              : <CompanyPartnerProfileSection vm={vm.partnerProfile} titleHelp={publicityHelp} />}
 
             <section className={workspacePageStyles.card} aria-label="계정과 알림">
               <h2 className={workspacePageStyles.cardTitle}>계정과 알림</h2>

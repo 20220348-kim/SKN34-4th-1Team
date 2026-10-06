@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { Provider } from 'react-redux'
 import { MemoryRouter, useLocation } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -80,6 +80,30 @@ afterEach(() => {
 })
 
 describe('관리자 계정 관리', () => {
+  it('목록을 읽는 동안 요약 여섯 칸과 표 자리를 미리 잡고, 요약을 못 읽으면 그 줄만 없앤다', async () => {
+    let resolvePage: (page: typeof accountPage) => void = () => {}
+    let rejectStats: (reason: Error) => void = () => {}
+    vi.spyOn(appContainer.resolve('browseAdminAccountsUseCase'), 'execute').mockReturnValue(new Promise((resolve) => { resolvePage = resolve }))
+    vi.spyOn(appContainer.resolve('getAdminAccountStatsUseCase'), 'execute').mockReturnValue(new Promise((_, reject) => { rejectStats = reject }))
+    renderApp('/app/admin/accounts')
+
+    // 요약 자리는 처음부터 여섯 칸을 차지해(300ms 전에는 보이지 않음) 나중에 표를 밀어내지 않습니다.
+    const statCells = () => document.querySelectorAll('[aria-hidden="true"] > .rounded-\\[1\\.4rem\\]')
+    expect(statCells()).toHaveLength(6)
+    expect(screen.getByRole('heading', { level: 2, name: '검색 결과' })).toBeTruthy()
+    expect(screen.getByText('계정 목록을 불러오는 중입니다.').getAttribute('role')).toBe('status')
+    expect(screen.queryByText('조건에 맞는 계정이 없습니다.')).toBeNull()
+    expect(document.querySelector('table')).toBeNull()
+    await waitFor(() => expect(document.querySelectorAll('table[class] tbody tr')).toHaveLength(10))
+    expect(document.querySelector('table')?.closest('[aria-hidden="true"]')).toBeTruthy()
+
+    await act(async () => { rejectStats(new Error('stats failed')); resolvePage(accountPage) })
+    expect(await screen.findByRole('heading', { level: 2, name: '검색 결과 2건' })).toBeTruthy()
+    expect(statCells()).toHaveLength(0)
+    expect(screen.queryByRole('group', { name: '계정 요약' })).toBeNull()
+    expect(screen.getByRole('region', { name: '계정 표 가로 스크롤' }).getAttribute('aria-busy')).toBe('false')
+  })
+
   it('목록은 요약·검색 결과·계정 표를 보여 주고 조건을 바꾸면 첫 페이지부터 다시 읽는다', async () => {
     const browse = appContainer.resolve('browseAdminAccountsUseCase').execute as ReturnType<typeof vi.fn>
     renderApp('/app/admin/accounts')
