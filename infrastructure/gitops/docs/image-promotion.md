@@ -175,6 +175,8 @@ Service 비교에는 [Kubernetes Service 기본 동작](https://kubernetes.io/do
 Chart에 없는 자동 할당 `clusterIP`·`clusterIPs`·`ipFamilies`는 값 비교에서 제외하지만
 headless 모드와 `ipFamilyPolicy` 변경은 차단한다. Chart가 주소·family를 명시하면 해당 값도 비교한다.
 Service metadata의 annotation·label, EndpointSlice, 실제 Pod·프로세스·통신 상태는 이 검사 범위에 없다.
+현재 EndpointSlice·Pod 연결 대상은 별도 [읽기 전용 진단](../../../docs/local-fork-development.md#kubernetes-service의-실제-연결-대상-확인)의
+`fork_cluster.py status --json --network-details`로 확인한다. 해당 진단이 통과해도 전환 충돌을 해제하거나 배포를 승인하지 않는다.
 
 비교 기준은 **현재 checkout의 `environments/portfolio/<service>.yaml`에 선언된 기본 환경**이다.
 Ops는 `reference: checkout_portfolio_ops_defaults`, 나머지는 `checkout_portfolio_service_defaults`와

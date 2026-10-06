@@ -131,6 +131,41 @@ python -B infrastructure/gitops/scripts/fork_cluster.py status --json \
 `doctor`도 Docker·kind 조회를 각각 15초로 제한합니다. Docker timeout이 Kubernetes 중단을 뜻하지는 않습니다.
 노드 condition 의미는 [Kubernetes 공식 문서](https://kubernetes.io/docs/concepts/architecture/nodes/#condition)를 따릅니다.
 
+### Kubernetes Service의 실제 연결 대상 확인
+
+`plan-gitops --state-dir`의 Service 선언 비교와 별도로, 현재 EndpointSlice가 준비된 Pod를
+가리키는지 다음 읽기 전용 옵션으로 확인합니다. Docker·모델 API나 애플리케이션 요청은 사용하지 않습니다.
+
+```bash
+python -B infrastructure/gitops/scripts/fork_cluster.py status --json --network-details \
+  --state-dir /실제/개인/state/경로
+```
+
+- `network_details.services`는 Core·Catalog·AI·Ops 각각의 Service, selector로 선택한 Pod,
+  Service 이름 label을 가진 EndpointSlice를 대조합니다. Compose 브리지·DB 서비스는 대상이 아닙니다.
+- EndpointSlice의 Service 소유 UID, targetRef의 Pod 이름·namespace·UID, 현재 Pod IP와 주소 family,
+  Service targetPort에 대응하는 포트·protocol·appProtocol을 확인합니다. 이름 기반 targetPort는
+  Pod의 일반 컨테이너에서 찾고, 숫자 targetPort에는 containerPort 선언을 강제하지 않습니다.
+- 선택한 Pod는 Running·Ready이고 삭제 중이 아니어야 합니다. Endpoint도 ready·serving이며
+  terminating이 아니어야 합니다. API에서 생략·null인 endpoint 조건의 기본 의미는 따르지만,
+  `publishNotReadyAddresses=true`나 endpoint Ready 표시만으로 불량 Pod를 정상 처리하지 않습니다.
+- Service에 선언된 모든 IP family별로 준비된 Pod의 endpoint가 있어야 합니다. 같은 endpoint가
+  여러 slice에 나타나도 중복 집계하지 않습니다. `ready_endpoint_count`는 Pod UID·family별 건수입니다.
+- 결과는 `PASS`, `FAIL`, `UNKNOWN`으로 구분합니다. 누락·준비되지 않은 Pod·오래된 대상·주소/포트
+  불일치는 `FAIL`, 조회 실패·불완전한 응답·검사 도중 변경은 `UNKNOWN`이며 모두 종료 코드 1입니다.
+  네트워크 검사가 통과해도 기본 status의 이미지·노드·저장소 검사가 실패하면 전체 종료 코드는 1입니다.
+- namespace 범위의 Kubernetes 조회를 두 번 수행하고 관련 리소스가 달라지면 결과를 무효화합니다.
+  명령당 15초 제한이며 자동 재시도·서비스 재시작·EndpointSlice 수정은 하지 않습니다.
+- 추가 보고서에는 서비스 이름·건수·고정된 오류 코드만 남기고 주소·Pod 이름·설정값·오류 원문은
+  출력하지 않습니다. 기본 status 보고서의 기존 Pod·이미지 정보는 그대로 유지합니다.
+
+이 결과는 selector와 endpoint 참조의 현재 일치 여부입니다. Pod의 Deployment/ReplicaSet 소유 계보,
+DNS·HTTP·인증·NetworkPolicy 집행이나 실제 업무 성공은 검증하지 않습니다.
+`traffic_verified=false`, `network_policy_verified=false`, `services_changed=false`를 유지합니다.
+배포 중에는 일시적으로 `FAIL`/`UNKNOWN`일 수 있으며, 배포 완료 후 다시 확인합니다.
+기본 `status --json` 동작은 유지하고 `--image-details`, `--ops-details`와 함께 사용할 수 있습니다.
+Endpoint 조건·포트 해석은 [Kubernetes EndpointSlice API](https://kubernetes.io/docs/reference/kubernetes-api/discovery/endpoint-slice-v1/)를 따릅니다.
+
 ### Kubernetes와 Compose의 Ops 연결 상태 확인
 
 Ops를 Compose 평가 실행기와 연결한 환경에서는 Pod Ready 외에 Prefect·결과 서버·실행기와

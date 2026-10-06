@@ -62,12 +62,14 @@ class WebCommandTests(unittest.TestCase):
             patch.object(cluster, "verify_context") as verify,
             patch("cluster_status.snapshot", return_value=report) as snapshot,
             patch("image_status.audit") as audit,
+            patch("network_status.snapshot") as network_snapshot,
             patch("sys.stdout", new_callable=io.StringIO) as output,
         ):
             snapshot.side_effect = lambda *args: verify.assert_called_once_with(["kube"], {}, timeout=15) or report
             cluster.main()
         self.assertEqual(json.loads(output.getvalue()), report)
         audit.assert_not_called()
+        network_snapshot.assert_not_called()
 
     def test_image_details_exit_code_and_report_follow_identity_and_source_checks(self):
         for matches, review in ((True, False), (False, False), (True, True)):
@@ -95,7 +97,7 @@ class WebCommandTests(unittest.TestCase):
 
     def test_status_json_does_not_inspect_unowned_cluster(self):
         with (
-            patch("sys.argv", ["fork_cluster.py", "status", "--json", "--image-details", "--ops-details"]),
+            patch("sys.argv", ["fork_cluster.py", "status", "--json", "--image-details", "--ops-details", "--network-details"]),
             patch.object(cluster, "os", SimpleNamespace(name="posix")),
             patch.object(cluster, "load_settings", return_value={}),
             patch.object(cluster, "commands", return_value=(["kube"], ["namespaced"], ["argo"])),
@@ -103,6 +105,7 @@ class WebCommandTests(unittest.TestCase):
             patch("cluster_status.snapshot") as snapshot,
             patch("image_status.audit") as audit,
             patch("ops_status.snapshot") as ops_snapshot,
+            patch("network_status.snapshot") as network_snapshot,
             patch("sys.stderr", new_callable=io.StringIO),
             self.assertRaises(SystemExit),
         ):
@@ -110,6 +113,31 @@ class WebCommandTests(unittest.TestCase):
         snapshot.assert_not_called()
         audit.assert_not_called()
         ops_snapshot.assert_not_called()
+        network_snapshot.assert_not_called()
+
+    def test_network_details_requires_pass_and_runs_after_ownership_check(self):
+        for result in ("PASS", "FAIL", "UNKNOWN"):
+            report = dict.fromkeys(("workloads_ready", "baseline_matches", "nodes_healthy", "storage_ready", "local_storage_ok"), True)
+            with (
+                self.subTest(result=result),
+                patch("sys.argv", ["fork_cluster.py", "status", "--json", "--network-details"]),
+                patch.object(cluster, "os", SimpleNamespace(name="posix")),
+                patch.object(cluster, "load_settings", return_value={"namespace": "govbiz-msa"}),
+                patch.object(cluster, "commands", return_value=(["kube"], ["ns"], ["argo"])),
+                patch.object(cluster, "verify_context") as verify,
+                patch("cluster_status.snapshot", return_value=report),
+                patch("network_status.snapshot") as network_snapshot,
+                patch("sys.stdout", new_callable=io.StringIO) as output,
+            ):
+                network_snapshot.side_effect = lambda *args: verify.assert_called_once_with(["kube"], {"namespace": "govbiz-msa"}, timeout=15) or {"status": result}
+                if result == "PASS":
+                    cluster.main()
+                else:
+                    with self.assertRaises(SystemExit) as stopped:
+                        cluster.main()
+                    self.assertEqual(stopped.exception.code, 1)
+                network_snapshot.assert_called_once_with({"namespace": "govbiz-msa"}, ["ns"])
+            self.assertEqual(json.loads(output.getvalue())["network_details"]["status"], result)
 
     def test_ops_details_exit_code_requires_pass_after_ownership_check(self):
         for result in ("PASS", "FAIL", "UNKNOWN"):
@@ -176,7 +204,8 @@ class WebCommandTests(unittest.TestCase):
                      ["web", "--ops-port", "18080"], ["status", "--ops-port", "28001"],
                      ["up", "--core-port", "28080"], ["web", "--json"],
                      ["status", "--image-details"], ["up", "--image-details"],
-                     ["status", "--ops-details"], ["up", "--ops-details"]):
+                     ["status", "--ops-details"], ["up", "--ops-details"],
+                     ["status", "--network-details"], ["up", "--network-details"]):
             with (
                 self.subTest(args=args),
                 patch("sys.argv", ["fork_cluster.py", *args]),
