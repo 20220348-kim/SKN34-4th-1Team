@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router'
 import { getLiveReadiness, OpsApiError, type LiveReadiness } from '../../../data/ops/opsApi'
 import { workspacePageStyles as styles } from '../../shared/workspace/WorkspacePage.styles'
 import { DailyBudgetPanel } from './DailyBudgetPanel'
@@ -9,7 +10,7 @@ const budgetIssues = new Set([
   'DAILY_BUDGET_UNAVAILABLE', 'DAILY_INSUFFICIENT_CALLS', 'DAILY_INSUFFICIENT_INPUT_TOKENS', 'DAILY_INSUFFICIENT_OUTPUT_TOKENS',
 ])
 
-// Selection or a successful budget write remounts the panel and aborts old queries.
+// A new selection or leaving this page aborts old checks; returning requires a fresh check.
 export function LiveReadinessPanel({ datasetId, executionProfile, onExpired }: {
   datasetId: string; executionProfile: string; onExpired: () => void
 }) {
@@ -54,7 +55,7 @@ export function LiveReadinessPanel({ datasetId, executionProfile, onExpired }: {
       {result.blockers.length > 0 && <ul className="list-disc space-y-1 pl-5 text-red-700" aria-label="점검 차단 사유">{result.blockers.map((issue) => <li key={issue.code}>{issue.message}</li>)}</ul>}
       {result.warnings.length > 0 && <ul className="list-disc space-y-1 pl-5 text-amber-800" aria-label="점검 주의 사항">{result.warnings.map((issue) => <li key={issue.code}>{issue.message}</li>)}</ul>}
       {[...result.blockers, ...result.warnings].some((issue) => budgetIssues.has(issue.code)) && <p>
-        <a className="text-brand-primary underline" href="#evaluation-budget">누적 예산 관리로 이동</a>
+        <Link className="text-brand-primary underline" to="/ops/budget">누적 예산 관리로 이동</Link>
         <span>하여 한도와 미반영 사용량을 확인하세요. 저장 후 이 점검을 다시 실행하세요.</span>
       </p>}
       <p className="text-xs text-ink-muted">실제 사용량·금액 견적이 아닌 최대 예약량입니다. 이 결과는 실행 승인이 아니며 다른 실행으로 잔여 한도가 바뀔 수 있습니다. 접수 시 서버가 다시 검증합니다. API 연결·실행기 상태·선택한 비교 기준과 답변 품질은 이 점검에 포함하지 않습니다.</p>

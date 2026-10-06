@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { Provider } from 'react-redux'
 import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
@@ -42,6 +42,7 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 
 beforeEach(() => {
   authenticated = true
+  vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
   sessionStorage.clear()
   vi.spyOn(crypto, 'randomUUID').mockReturnValue(id)
   fetchMock = vi.fn(async (path: string, _options?: RequestInit) => {
@@ -69,7 +70,7 @@ beforeEach(() => {
 })
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
-function open(path = '/ops/evaluations') {
+function open(path = '/ops/evaluations/new') {
   return render(<Provider store={createAppStore()}><MemoryRouter initialEntries={[path]}><App /></MemoryRouter></Provider>)
 }
 
@@ -121,6 +122,7 @@ describe('React LLMOps 운영 화면', () => {
     fireEvent.change(await screen.findByLabelText('실행 방식'), { target: { value: 'live' } })
     fireEvent.click(screen.getByRole('button', { name: '실행 설정·예산 점검' }))
     if (!delayed) await screen.findByText('조회 시점의 설정·예산에서 차단 사유가 없습니다.')
+    fireEvent.click(screen.getByRole('link', { name: '예산 관리' }))
     if (kind === 'limits') {
       fireEvent.click(await screen.findByRole('button', { name: '누적 한도 설정' }))
       fireEvent.change(screen.getByLabelText('한도 변경 사유'), { target: { value: '실행 준비 한도 검토' } })
@@ -144,12 +146,14 @@ describe('React LLMOps 운영 화면', () => {
       fireEvent.click(screen.getByRole('button', { name: '검토한 사용량 반영' }))
       await screen.findByText('검토한 과거 사용량을 장부에 반영했습니다.')
     }
+    expect(screen.getByRole('region', { name: '누적 평가 예산' }).id).toBe('evaluation-budget')
+    fireEvent.click(screen.getByRole('link', { name: '새 평가' }))
     if (delayed) await act(async () => { resolve(json(readiness)); await pending })
     expect(screen.queryByText('조회 시점의 설정·예산에서 차단 사유가 없습니다.')).toBeNull()
     expect(screen.getByRole('button', { name: '실행 설정·예산 점검' })).toHaveProperty('disabled', false)
     expect(fetchMock.mock.calls.filter(([path]) => path.includes('/live-readiness?'))).toHaveLength(1)
     expect(fetchMock.mock.calls.some(([path, options]) => path === '/api/v1/ops/evaluations' && options?.method === 'POST')).toBe(false)
-    expect(screen.getByRole('region', { name: '누적 평가 예산' }).id).toBe('evaluation-budget')
+    expect(screen.queryByRole('region', { name: '누적 평가 예산' })).toBeNull()
   })
 
   it('선택한 새 모델 평가의 설정·예산만 점검하고 전송 승인을 대신하지 않는다', async () => {
@@ -311,7 +315,7 @@ describe('React LLMOps 운영 화면', () => {
       return original(path, options)
     })
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-    const view = open()
+    const view = open('/ops/evaluations')
     await act(async () => { await vi.advanceTimersByTimeAsync(0) })
     expect(screen.getByText('실행 중')).toBeTruthy()
     expect(screen.getByText(/상태 확인 지연/)).toBeTruthy()
@@ -336,7 +340,7 @@ describe('React LLMOps 운영 화면', () => {
       return original(path, options)
     })
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
-    open()
+    open('/ops/evaluations')
     await act(async () => { await vi.advanceTimersByTimeAsync(0) })
     await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
     expect(screen.getByRole('alert')).toBeTruthy()
@@ -503,7 +507,7 @@ describe('React LLMOps 운영 화면', () => {
       }
       return original(path, options)
     })
-    open()
+    open('/ops/evaluations')
     expect(await screen.findByRole('alert')).toBeTruthy()
     expect(screen.queryByText('아직 실행한 평가가 없습니다.')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: '목록 새로고침' }))
@@ -1267,7 +1271,7 @@ describe('전체 RAG 저장 캡처 재평가', () => {
       if (path === `/api/v1/ops/evaluations/${id}`) return json(ragRun)
       return original(path, options)
     })
-    open('/ops/evaluations')
+    open('/ops/evaluations/new')
     fireEvent.change(await screen.findByLabelText('실행 방식'), { target: { value: 'live' } })
     fireEvent.change(screen.getByLabelText('평가 자료'), { target: { value: ragDataset.id } })
     expect(screen.getByLabelText('실행 방식')).toHaveProperty('value', 'replay')
@@ -1373,16 +1377,64 @@ it.each([false, true])('실제 공고는 출처와 과거 모델·참조 보완(
   expect(fetchMock.mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false)
 })
 
-it('평가 목록을 운영 설정보다 먼저 제공하고 바로가기에서 각 작업 위치를 찾는다', async () => {
-  open()
-  const history = await screen.findByRole('region', { name: '평가 실행 이력' })
-  const budget = screen.getByRole('region', { name: '누적 평가 예산' })
-  expect(history.compareDocumentPosition(budget) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-  for (const [name, target] of [['답변 검토하기', 'evaluation-history'], ['새 평가 준비', 'new-evaluation'], ['예산 관리', 'evaluation-budget'], ['정기 실행 관리', 'evaluation-schedules']]) {
-    expect(screen.getByRole('link', { name }).getAttribute('href')).toBe(`#${target}`)
-    expect(document.getElementById(target)).toBeTruthy()
-  }
+it('작업 메뉴마다 해당 기능만 표시하고 다른 기능의 조회를 시작하지 않는다', async () => {
+  open('/ops/evaluations')
+  await screen.findByRole('region', { name: '평가 실행 이력' })
+  const menu = within(screen.getByRole('navigation', { name: 'LLMOps 작업 메뉴' }))
+  expect(menu.getByRole('link', { name: '평가 이력' }).getAttribute('aria-current')).toBe('page')
+  expect(screen.queryByRole('region', { name: '평가 실행' })).toBeNull()
+  expect(screen.queryByRole('region', { name: '누적 평가 예산' })).toBeNull()
+  expect(screen.queryByRole('region', { name: '정기 평가 계획' })).toBeNull()
+  expect(fetchMock.mock.calls.some(([path]) => path.includes('/budget/') || path.includes('/schedules?'))).toBe(false)
+  fireEvent.click(menu.getByRole('link', { name: '새 평가' }))
+  await screen.findByRole('region', { name: '평가 실행' })
+  expect(screen.queryByRole('region', { name: '평가 실행 이력' })).toBeNull()
+  expect(document.activeElement?.id).toBe('ops-main')
+  fireEvent.click(menu.getByRole('link', { name: '예산 관리' }))
+  await screen.findByRole('region', { name: '누적 평가 예산' })
+  expect(screen.queryByRole('region', { name: '평가 실행' })).toBeNull()
+  fireEvent.click(menu.getByRole('link', { name: '정기 실행' }))
+  await screen.findByText('등록된 정기 계획이 없습니다.')
+  expect(screen.queryByRole('region', { name: '누적 평가 예산' })).toBeNull()
+  expect(menu.getByRole('link', { name: '정기 실행' }).getAttribute('aria-current')).toBe('page')
   expect(fetchMock.mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false)
+})
+
+it.each([
+  ['/ops/evaluations#evaluation-budget', '예산 관리'],
+  ['/ops/evaluations#evaluation-schedules', '정기 실행'],
+  ['/ops/evaluations#new-evaluation', '새 평가'],
+  ['/ops/budget', '예산 관리'], ['/ops/schedules', '정기 실행'],
+])('기존 바로가기와 직접 주소 %s는 %s 화면을 연다', async (path, heading) => {
+  open(path)
+  expect(await screen.findByRole('heading', { level: 1, name: heading })).toBeTruthy()
+  expect(screen.queryByRole('region', { name: '평가 실행 이력' })).toBeNull()
+  expect(fetchMock.mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false)
+})
+
+it('예산 화면을 다녀와도 평가 선택은 유지하고 유료 전송 확인은 해제한다', async () => {
+  open()
+  fireEvent.change(await screen.findByLabelText('평가 자료'), { target: { value: comparisonDataset.id } })
+  fireEvent.change(screen.getByLabelText('실행 방식'), { target: { value: 'live' } })
+  fireEvent.click(screen.getByLabelText('위 자료의 OpenAI 전송과 최대 호출 예산을 확인했습니다.'))
+  fireEvent.click(screen.getByRole('link', { name: '예산 관리' }))
+  await screen.findByRole('region', { name: '누적 평가 예산' })
+  fireEvent.click(screen.getByRole('link', { name: '새 평가' }))
+  expect(await screen.findByLabelText('평가 자료')).toHaveProperty('value', comparisonDataset.id)
+  expect(screen.getByLabelText('실행 방식')).toHaveProperty('value', 'live')
+  expect(screen.getByLabelText('위 자료의 OpenAI 전송과 최대 호출 예산을 확인했습니다.')).toHaveProperty('checked', false)
+  expect(screen.getByRole('button', { name: '새 응답 생성 및 평가' })).toHaveProperty('disabled', true)
+  expect(fetchMock.mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false)
+})
+
+it.each(['/ops/budget', '/ops/schedules', '/ops/evaluations/new'])('로그인 후 요청한 작업 화면 %s로 복귀한다', async (path) => {
+  authenticated = false
+  open(path)
+  fireEvent.change(await screen.findByLabelText('이메일'), { target: { value: 'operator@example.com' } })
+  fireEvent.change(screen.getByLabelText('비밀번호'), { target: { value: 'example-password' } })
+  fireEvent.click(screen.getByRole('button', { name: '이메일로 로그인' }))
+  const name = path.endsWith('budget') ? '예산 관리' : path.endsWith('schedules') ? '정기 실행' : '새 평가'
+  expect(await screen.findByRole('heading', { level: 1, name })).toBeTruthy()
 })
 
 it('사례를 한 건씩 보여주며 사례 전환 후에도 저장 전 판단과 사유를 보존한다', async () => {
@@ -1437,4 +1489,36 @@ it.each([true, false])('저장 후 다음 사례는 저장 성공(%s)일 때만 
     }
     expect(fetchMock.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(1)
   } finally { delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView }
+})
+
+it('접수 중 메뉴를 옮겨도 늦은 응답이 현재 화면을 바꾸지 않고 재진입 시 같은 요청만 조회한다', async () => {
+  let resolve!: (response: Response) => void
+  const response = new Promise<Response>((done) => { resolve = done })
+  const original = fetchMock.getMockImplementation()!
+  fetchMock.mockImplementation((path, options) => path === '/api/v1/ops/evaluations' && options?.method === 'POST' ? response : original(path, options))
+  open()
+  fireEvent.click(await screen.findByRole('button', { name: '평가 실행' }))
+  await waitFor(() => expect(fetchMock.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(1))
+  fireEvent.click(screen.getByRole('link', { name: '예산 관리' }))
+  await screen.findByRole('region', { name: '누적 평가 예산' })
+  await act(async () => { resolve(json(completed, 202)); await response })
+  expect(screen.getByRole('heading', { level: 1, name: '예산 관리' })).toBeTruthy()
+  expect(readPendingEvaluation('core:99')?.request_id).toBe(id)
+  fireEvent.click(screen.getByRole('link', { name: '새 평가' }))
+  await screen.findByRole('heading', { name: '평가 실행 상세' })
+  expect(fetchMock.mock.calls.filter(([, options]) => options?.method === 'POST')).toHaveLength(1)
+  expect(readPendingEvaluation('core:99')).toBeNull()
+})
+
+it('이력 화면을 떠나면 목록 자동 조회를 중단한다', async () => {
+  open('/ops/evaluations')
+  await screen.findByText(completed.dataset_label)
+  fireEvent.click(screen.getByRole('link', { name: '새 평가' }))
+  await screen.findByLabelText('평가 자료')
+  const reads = () => fetchMock.mock.calls.filter(([path]) => path.includes('/evaluations?page='))
+  const count = reads().length
+  expect(reads()[0][1]?.signal?.aborted).toBe(true)
+  vi.useFakeTimers()
+  await act(async () => { await vi.advanceTimersByTimeAsync(15_000) })
+  expect(reads()).toHaveLength(count)
 })
