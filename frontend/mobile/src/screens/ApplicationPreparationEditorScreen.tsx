@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ActivityIndicator, Alert, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, Text, View } from 'react-native'
+import { ActivityIndicator, Alert, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 import { useNavigation } from 'expo-router'
-import { usePreventRemove } from 'expo-router/react-navigation'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { useHeaderHeight, usePreventRemove } from 'expo-router/react-navigation'
 import * as Crypto from 'expo-crypto'
 import { ApplicationPreparationError } from '@govbiz/shared/domain/errors/ApplicationPreparationError'
 import { isWritableApplicationAnswer } from '@govbiz/shared/domain/entities/ApplicationDocumentGeneration'
@@ -24,7 +23,7 @@ export function ApplicationPreparationEditorScreen(props: Props) {
 function OwnedEditor({ token, email, id, reviewing, initialQuestion, onReview, onEditor, onDocuments, onReanalyze }: Props & { token: string; email: string }) {
   const vm = useApplicationPreparationEditor(id, token)
   const navigation = useNavigation()
-  const insets = useSafeAreaInsets()
+  const headerHeight = useHeaderHeight()
   const useCase = useMemo(() => applicationPreparationUseCase(token), [token])
   const [questionKey, setQuestionKey] = useState(initialQuestion ?? '')
   const [sheet, setSheet] = useState<'questions' | 'conflict' | null>(null)
@@ -83,7 +82,8 @@ function OwnedEditor({ token, email, id, reviewing, initialQuestion, onReview, o
   const value = current ? vm.value(current.section, current.field.key) : ''
   const readonly = current?.field.documentWritable === false
   const blocked = vm.saving || vm.conflict || Boolean(vm.saveError) || generating
-  return <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={100}>
+  return <KeyboardAvoidingView testID="application-preparation-keyboard-container" style={{ flex: 1 }}
+    behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={headerHeight}>
     <ScrollView ref={scroll} contentContainerStyle={preparationUi.scroll} keyboardShouldPersistTaps="handled">
       <PreparationSteps active={reviewing ? 2 : 1} />
       {vm.error && <Notice error>{vm.error}</Notice>}
@@ -117,11 +117,11 @@ function OwnedEditor({ token, email, id, reviewing, initialQuestion, onReview, o
       </> : <Notice>작성할 문항이 없어요. 공식 원문에서 양식을 확인해 주세요.</Notice>}
       <Button label="공식 공고 원문" variant="ghost" onPress={() => void Linking.openURL(vm.preparation!.form.sourceUrl).catch(() => setActionError('공식 공고 원문을 열지 못했어요.'))} />
     </ScrollView>
-    <View style={[preparationUi.footer, { paddingBottom: 12 + insets.bottom }]}>{reviewing
+    <View style={[preparationUi.footer, local.footer]}>{reviewing
       ? <><Button label={hasPending ? '같은 생성 요청으로 확인' : '공식 양식으로 초안 만들기'} busy={generating} disabled={blocked || Boolean(missing.length) || !writableAnswers || dirty} onPress={() => void generate()} />
         <Button label="생성 결과 보기" variant="ghost" disabled={generating} onPress={() => onDocuments()} /></>
-      : <View style={styles.row}><Button label="이전" variant="secondary" disabled={index === 0 || blocked} onPress={() => void move(index - 1)} />
-        <Button label={index === questions.length - 1 ? '답변 검토하기' : '다음'} disabled={blocked || !questions.length} onPress={() => void move(index === questions.length - 1 ? 'review' : index + 1)} /></View>}
+      : <View style={local.navigation}><Button label="이전" variant="secondary" style={local.navigationButton} disabled={index === 0 || blocked} onPress={() => void move(index - 1)} />
+        <Button label={index === questions.length - 1 ? '답변 검토하기' : '다음'} style={local.navigationButton} disabled={blocked || !questions.length} onPress={() => void move(index === questions.length - 1 ? 'review' : index + 1)} /></View>}
     </View>
     <PartnerSheet visible={sheet === 'questions'} title="작성 항목" onClose={() => setSheet(null)} actions={<Button label="닫기" variant="secondary" onPress={() => setSheet(null)} />}>{questions.map((question, q) => <Button key={question.key}
       label={`${q + 1}. ${question.field.label}${vm.value(question.section, question.field.key) ? ' · 저장 답변 있음' : ''}`} variant="secondary" onPress={() => reviewing ? onEditor(question.key) : void move(q)} />)}</PartnerSheet>
@@ -131,3 +131,10 @@ function OwnedEditor({ token, email, id, reviewing, initialQuestion, onReview, o
         <Text style={styles.label}>서버에 저장된 답변</Text><Text style={styles.body}>{applicationFactValue(question.section, question.field.key) || '비어 있음'}</Text></Card>)}</PartnerSheet>
   </KeyboardAvoidingView>
 }
+
+const local = StyleSheet.create({
+  // 하단 탭이 안전 영역을 확보하므로 버튼 박스에는 기본 여백만 둔다.
+  footer: { paddingTop: 8, paddingBottom: 8, flexShrink: 0 },
+  navigation: { flexDirection: 'row', alignItems: 'stretch', gap: 10 },
+  navigationButton: { flex: 1 },
+})
