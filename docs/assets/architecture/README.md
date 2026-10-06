@@ -6,6 +6,15 @@
 **현재 개인 포크 로컬 Kubernetes(2026-09-21)**를 별도 파일로 관리합니다.
 이미지 제작은 앱 실행 코드나 배포 설정을 변경하지 않습니다.
 
+## 메인 README 서비스 요청 관계 — 2026-10-06
+
+- [PNG](govbiz-service-requests.png) · [SVG](govbiz-service-requests.svg) · [Mermaid 원본](govbiz-service-requests.mmd)
+- React 웹과 React Native 앱을 같은 높이에 두고 Core·Ops·Catalog·AI·평가 실행기의 요청 관계를 표시합니다.
+- 메인 README는 표시 환경의 자동 배치 차이를 피하도록 PNG를 사용합니다. Mermaid 11.12.0에서
+  두 클라이언트의 상단 좌표가 같은지 확인한 뒤 SVG와 2배 해상도 PNG로 내보냈습니다.
+- Mermaid 원본을 수정하면 PNG·SVG도 함께 갱신하고 웹·앱의 높이, 연결선과 글자 겹침을 확인합니다.
+  이 그림은 서비스 요청 관계이며 클라우드 배포 현황이나 DB 연결 전체를 표현하지 않습니다.
+
 ## 현재 개인 포크 · 로컬 Kubernetes · 개발 모드 / GitOps
 
 ![GovBiz 개인 포크 기반 로컬 시스템 아키텍처](govbiz-local-architecture.png)
