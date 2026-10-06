@@ -1,4 +1,5 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react-native'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native'
+import { Alert } from 'react-native'
 import * as Clipboard from 'expo-clipboard'
 import { ApiError, apiRequest, programClient } from '../api/client'
 import { closeRecruitment, getRecruitment, sendProposal } from '../api/partners'
@@ -86,7 +87,27 @@ test.each([{ isMine: false, status: 'OPEN' as const }, { isMine: true, status: '
   render(<RecruitmentDetailScreen id={9} {...callbacks} />)
   await screen.findByText('협업 소개')
   expect(screen.queryByLabelText('수정')).toBeNull()
+  expect(screen.queryByRole('button', { name: '모집 마감' })).toBeNull()
   expect(callbacks.onEdit).not.toHaveBeenCalled()
+})
+
+test('the owner closes recruitment only after explicit confirmation and loses management actions after success', async () => {
+  const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => undefined)
+  const owned = { ...recruitment, isMine: true }
+  jest.mocked(getRecruitment).mockResolvedValue(owned)
+  jest.mocked(closeRecruitment).mockResolvedValue({ ...owned, status: 'CLOSED' })
+  render(<RecruitmentDetailScreen id={9} {...callbacks} />)
+  fireEvent.press(await screen.findByRole('button', { name: '모집 마감' }))
+  expect(alert).toHaveBeenCalledWith('모집을 마감할까요?', '마감 후 대기 중인 제안도 종료됩니다.', expect.any(Array))
+  expect(alert.mock.calls[0][2]?.find(button => button.text === '취소')?.style).toBe('cancel')
+  expect(closeRecruitment).not.toHaveBeenCalled()
+  await act(async () => alert.mock.calls[0][2]?.find(button => button.text === '모집 마감')?.onPress?.())
+  expect(closeRecruitment).toHaveBeenCalledWith(9, 'my-token', expect.any(AbortSignal))
+  expect(closeRecruitment).toHaveBeenCalledTimes(1)
+  await waitFor(() => {
+    expect(screen.queryByRole('button', { name: '수정' })).toBeNull()
+    expect(screen.queryByRole('button', { name: '모집 마감' })).toBeNull()
+  })
 })
 
 test('proposal requires an explicit message and keeps the checked company profile independent of contact release', async () => {
