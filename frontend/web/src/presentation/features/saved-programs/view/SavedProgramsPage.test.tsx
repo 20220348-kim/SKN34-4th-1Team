@@ -71,11 +71,11 @@ it('관심 공고를 내부 스크롤 없이 달력과 페이지 목록으로 �
   fireEvent.click(screen.getByRole('button', { name: '2페이지' }))
   expect(screen.getByRole('button', { name: '2페이지' }).getAttribute('aria-current')).toBe('page')
   fireEvent.click(screen.getByRole('tab', { name: '달력' }))
-  // 연도 목록은 2000년부터 2030년까지입니다.
+  // 연도 목록과 월 이동은 같은 2000~2100년 범위입니다.
   const yearOptions = optionLabels(screen.getByRole('combobox', { name: '달력 연도' }))
-  expect(yearOptions).toHaveLength(31)
+  expect(yearOptions).toHaveLength(101)
   expect(yearOptions[0]).toBe('2000년')
-  expect(yearOptions[30]).toBe('2030년')
+  expect(yearOptions[100]).toBe('2100년')
   expect(screen.queryByRole('button', { name: '다음 연도' })).toBeNull()
   chooseOption(screen.getByRole('combobox', { name: '달력 연도' }), '2027')
   expect(screen.getByRole('table', { name: '2027년 9월 접수 일정' })).toBeTruthy()
@@ -83,6 +83,22 @@ it('관심 공고를 내부 스크롤 없이 달력과 페이지 목록으로 �
   chooseOption(screen.getByRole('combobox', { name: '달력 월' }), '12')
   fireEvent.click(screen.getByRole('button', { name: '다음 달' }))
   expect(screen.getByRole('table', { name: '2028년 1월 접수 일정' })).toBeTruthy()
+})
+
+it.each([2031, 2050, 2100])('관심 공고 달력에서 %i년을 직접 선택하고 오늘로 돌아온다', (year) => {
+  render(<MemoryRouter><SavedProgramsPage initial={{ today: '2026-10-05', programs: createCalendarPreview('2026-10-05') }} /></MemoryRouter>)
+  fireEvent.click(screen.getByRole('tab', { name: '달력' }))
+  chooseOption(screen.getByRole('combobox', { name: '달력 연도' }), String(year))
+  expect(screen.getByRole('table', { name: `${year}년 10월 접수 일정` })).toBeTruthy()
+  chooseOption(screen.getByRole('combobox', { name: '달력 월' }), '12')
+  if (year === 2100) {
+    expect((screen.getByRole('button', { name: '다음 달' }) as HTMLButtonElement).disabled).toBe(true)
+  } else {
+    fireEvent.click(screen.getByRole('button', { name: '다음 달' }))
+    expect(screen.getByRole('table', { name: `${year + 1}년 1월 접수 일정` })).toBeTruthy()
+  }
+  fireEvent.click(screen.getByRole('button', { name: '오늘' }))
+  expect(screen.getByRole('table', { name: '2026년 10월 접수 일정' })).toBeTruthy()
 })
 
 it('관심 공고 목록은 날짜가 아니라 서버 접수 상태를 표시한다', () => {

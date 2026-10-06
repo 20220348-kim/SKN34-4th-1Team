@@ -5,7 +5,7 @@ import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/
 import { Button, Card, Notice, colors, styles } from '../ui'
 import { ChoiceField } from './ChoiceField'
 import { preparationKey } from './PreparationRows'
-import { buildSavedCalendar, moveSavedCalendarMonth, savedCalendarMonth, type SavedCalendarMonth } from './savedProgramPresentation'
+import { buildSavedCalendar, firstSavedCalendarYear, lastSavedCalendarYear, moveSavedCalendarMonth, savedCalendarMonth, type SavedCalendarMonth } from './savedProgramPresentation'
 
 /** 관심 공고의 접수 시작·마감 일정을 네이티브 월별 달력과 날짜별 목록으로 표시합니다. */
 export function SavedProgramCalendar({ items, month, today, ready, loading, onMonthChange, onOpenProgram }: {
@@ -18,12 +18,12 @@ export function SavedProgramCalendar({ items, month, today, ready, loading, onMo
   const selectedDate = selected?.startsWith(`${monthKey}-`) ? selected : null
   const events = weeks.flat().find(day => day.key === selectedDate)?.events ?? []
   const eventCount = weeks.flat().reduce((total, day) => total + day.events.length, 0)
-  const years = [...new Set([...Array.from({ length: 31 }, (_, index) => 2000 + index), month.year])].sort((left, right) => left - right)
+  const years = Array.from({ length: lastSavedCalendarYear - firstSavedCalendarYear + 1 }, (_, index) => firstSavedCalendarYear + index)
   const move = (amount: number) => { setSelected(null); onMonthChange(moveSavedCalendarMonth(month, amount)) }
   return <View style={{ gap: 12 }}>
-    <View style={styles.row}><Button label="이전 달" variant="secondary" size="small" disabled={month.year === 2000 && month.month === 1} onPress={() => move(-1)} />
+    <View style={styles.row}><Button label="이전 달" variant="secondary" size="small" disabled={month.year === firstSavedCalendarYear && month.month === 1} onPress={() => move(-1)} />
       <Text accessibilityRole="header" style={[styles.heading, { flex: 1, textAlign: 'center' }]}>{month.year}년 {month.month}월</Text>
-      <Button label="다음 달" variant="secondary" size="small" disabled={month.year === 2100 && month.month === 12} onPress={() => move(1)} /></View>
+      <Button label="다음 달" variant="secondary" size="small" disabled={month.year === lastSavedCalendarYear && month.month === 12} onPress={() => move(1)} /></View>
     <View style={styles.row}><View style={{ flex: 1 }}><ChoiceField label="달력 연도" value={String(month.year)}
       options={years.map(year => ({ value: String(year), label: `${year}년` }))} onChange={value => { setSelected(null); onMonthChange({ ...month, year: Number(value) }) }} /></View>
       <View style={{ flex: 1 }}><ChoiceField label="달력 월" value={String(month.month)} options={Array.from({ length: 12 }, (_, index) => ({ value: String(index + 1), label: `${index + 1}월` }))}
