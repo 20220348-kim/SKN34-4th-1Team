@@ -2,6 +2,8 @@ import { Stack } from 'expo-router'
 import { CollaborationHeaderAction } from './collab'
 import { colors } from '../../../src/ui'
 
+export const unstable_settings = { anchor: 'index' }
+
 export default function AllLayout() {
   return <Stack screenOptions={{ headerTintColor: colors.text, headerTitleAlign: 'left', headerBackTitle: '전체',
     headerTitleStyle: { fontSize: 18, fontWeight: '700' }, headerShadowVisible: false,
