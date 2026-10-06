@@ -15,7 +15,6 @@ import deployment
 import gitops_runtime as runtime
 from repository import Fork
 
-
 FORK = Fork("alice/project", "main")
 
 
@@ -143,6 +142,42 @@ class RuntimePreflightTests(unittest.TestCase):
             {"core-service", "catalog-service", "ai-service"},
         )
         self.assertEqual(list(self.state.iterdir()), [])
+
+    def test_preservation_rehearsal_does_not_remove_existing_blockers(self):
+        container = self.deployment["spec"]["template"]["spec"]["containers"][0]
+        container["env"].append({"name": "CUSTOM", "value": "PRIVATE"})
+        details = {"status": "MATCHES_INSPECTED_FIELDS"}
+        with patch("gitops_preservation.review", return_value=details) as rehearse:
+            report = runtime.preflight(self.state, FORK, review_preservation=True)
+        self.assertEqual(report["status"], "BLOCKED")
+        self.assertIn("ops_environment_differs", report["blockers"])
+        self.assertEqual(report["preservationReview"]["helmPreservation"], details)
+        self.assertFalse(report["deploymentAuthorized"])
+        self.assertEqual(rehearse.call_args.args[-1], "helm")
+        self.assertEqual(self.command.call_count, 16)
+        self.assertEqual(list(self.state.iterdir()), [])
+
+    def test_changes_during_preservation_rehearsal_invalidate_the_observation(self):
+        def change(*args):
+            self.deployment["metadata"]["resourceVersion"] = "2"
+            return {"status": "MATCHES_INSPECTED_FIELDS"}
+
+        with (
+            patch("gitops_preservation.review", side_effect=change),
+            self.assertRaisesRegex(ValueError, "changed during preflight"),
+        ):
+            runtime.preflight(self.state, FORK, review_preservation=True)
+
+    def test_unsuccessful_preservation_blocks_even_without_local_overrides(self):
+        for status in ("BLOCKED", "UNKNOWN"):
+            with (
+                self.subTest(status=status),
+                patch("gitops_preservation.review", return_value={"status": status}),
+            ):
+                report = runtime.preflight(self.state, FORK, review_preservation=True)
+            self.assertEqual(report["status"], status)
+            self.assertEqual(report["blockers"], ["preservation_not_verified"])
+            self.assertFalse(report["deploymentAuthorized"])
 
     def test_connected_ops_is_detected_without_saved_activation_records(self):
         container = self.deployment["spec"]["template"]["spec"]["containers"][0]

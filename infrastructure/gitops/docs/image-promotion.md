@@ -199,6 +199,37 @@ Secret 존재·키·DB schema, 이미지·노드 배치·NetworkPolicy 설정의
 실제 probe 성공·자원 사용량·RBAC 권한·PVC 데이터·마운트 동작·관리자 인증이나 Argo 기동을 검증하지 않으며
 `existingRuntimeVerified=false`를 유지한다. 실제 적용 전에는 전체 전환 절차가 필요하다.
 
+### 현재 연결 설정을 Helm으로 재현해 보기
+
+기본 환경과 차이가 있다면 다음 옵션으로 현재 환경변수·Secret 참조와 Ops sync 구성을
+임시 values에 반영해 같은 checkout의 Chart로 렌더링할 수 있다.
+
+```bash
+python3 -B infrastructure/gitops/scripts/deployment.py plan-gitops \
+  --branch main --state-dir "$OPS_STATE_DIR" --review-preservation
+```
+
+`runtimePreflight.preservationReview.helmPreservation`은 네 서비스의 환경변수와 Ops API/sync의
+동일 환경을 재현한 뒤 실행·저장소·probe·자원·보안·Service 선언을 다시 비교한다. RabbitMQ 큐,
+개인 관리자 로그인, Compose Prefect·결과 서버 연결을 기본값으로 덮지 않고 표현할 수 있는지
+검토하는 단계다. Secret의 실제 값은 조회하지 않는다. 추가·누락된 컨테이너, `envFrom`, 평문
+비밀번호·토큰, Chart가 표현할 수 없는 참조, API와 다른 sync 환경·이미지는 재현 대상으로 인정하지 않는다.
+sync의 명령·마운트·보안·자원 차이도 비교하므로 컨테이너 이름만 같다고 일치로 처리하지 않는다.
+
+- `MATCHES_INSPECTED_FIELDS`: 비교한 필드를 현재 Chart로 재현할 수 있음. 최신 발행 Chart와의
+  호환성, 이미지·Secret 존재·DB schema·외부 연결·노드 배치·NetworkPolicy·실제 통신은 별도 검증이다.
+- `BLOCKED`: 지원하지 않는 주입/컨테이너 구성이 있거나 렌더링 후에도 비교 필드에 차이가 있음.
+- `UNKNOWN`: Helm 실행·렌더링 결과 비교를 완료하지 못함. 외부 오류 본문은 출력하지 않는다.
+
+재현이 실패하거나 확인 불가이면 `preservation_not_verified`도 차단 목록에 추가한다.
+기본 환경과 차이가 없더라도 요청한 재현 검사를 완료하지 못하면 공개 발행 검증·Argo 계획으로
+넘어가지 않는다. `UNKNOWN`은 상위 `runtimePreflight.status`에도 반영한다.
+
+보고서에는 상태·고정된 사유·차이 필드명만 포함한다. values는 임시 디렉터리에서만 사용하고 제거하며
+출력·영구 저장·Argo 반영을 하지 않는다. 점검 전후 기존 리소스·Chart·로컬 기록의 변경도 재확인한다.
+재현에 성공해도 기존 `runtime_transition_required`와 차단 목록은 유지된다. 공개 이미지·migration·
+백업·실제 전환 검증을 대신하지 않으며, `--state-dir` 없는 계획이나 `verify-public`에는 사용할 수 없다.
+
 ## 배포 PR 없이 GHCR 이미지로 로컬 초기화
 
 `fork_cluster.py up`은 개인 포크 기본 브랜치의 현재 SHA에 대해 다음을 직접 검증한다.

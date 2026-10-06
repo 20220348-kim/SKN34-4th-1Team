@@ -11,10 +11,9 @@ from pathlib import Path
 
 import connected_runtime
 import fork_cluster as cluster
-from gitops_service import service_review
 import ops_runtime
 import yaml
-
+from gitops_service import service_review
 
 SCOPE = "local_overrides_and_service_runtime"
 
@@ -68,8 +67,14 @@ def rendered_defaults(helm, references, chart):
                 raise ValueError("Unexpected local reference Deployment")
             deployment = candidates[0]
             containers = deployment["spec"]["template"]["spec"]["containers"]
-            if [item["name"] for item in containers] != [service] or (
-                environment_rows(containers[0]["env"]) != environment_rows(rows)
+            names = [service]
+            if yaml.safe_load(payload).get("opsSync", {}).get("enabled") is True:
+                if service != "ops-service":
+                    raise ValueError("Local reference sync requires Ops")
+                names.append("ops-sync")
+            if [item["name"] for item in containers] != names or any(
+                environment_rows(item["env"]) != environment_rows(rows)
+                for item in containers
             ):
                 raise ValueError("Local reference environment differs from Helm")
             deployments[service] = deployment
@@ -394,7 +399,7 @@ def local_inputs(state, settings):
     }
 
 
-def preflight(state, fork, helm="helm"):
+def preflight(state, fork, helm="helm", *, review_preservation=False):
     """Detect local connection conflicts, not migration or deployment readiness."""
     state = Path(state)
     settings = cluster.load_settings(state)
@@ -497,6 +502,14 @@ def preflight(state, fork, helm="helm"):
         blockers.append("service_runtime_policy_differs")
     if any(any(review.values()) for review in preservation["networkReviews"].values()):
         blockers.append("service_routing_differs")
+    if review_preservation:
+        from gitops_preservation import review
+
+        preservation["helmPreservation"] = review(
+            deployments, services, references, chart, helm
+        )
+        if preservation["helmPreservation"]["status"] != "MATCHES_INSPECTED_FIELDS":
+            blockers.append("preservation_not_verified")
     # A result describes only a stable observation, never a reusable approval.
     for kind, resources in (("Deployment", deployments), ("Service", services)):
         for service, resource in resources.items():
@@ -519,11 +532,14 @@ def preflight(state, fork, helm="helm"):
     ):
         raise ValueError("Local runtime changed during preflight")
     cluster.require_dev(state, settings)
+    status = "BLOCKED" if blockers else "NO_LOCAL_OVERRIDES"
+    if preservation.get("helmPreservation", {}).get("status") == "UNKNOWN":
+        status = "UNKNOWN"
     return {
         "schema": "msa-local-runtime-preflight-v1",
         "scope": SCOPE,
         "inspectedServices": list(cluster.SERVICES),
-        "status": "BLOCKED" if blockers else "NO_LOCAL_OVERRIDES",
+        "status": status,
         "stateId": settings["stateId"],
         "blockers": blockers,
         "preservationReview": preservation,
