@@ -4,7 +4,7 @@ import { useFocusEffect } from 'expo-router'
 import * as Clipboard from 'expo-clipboard'
 import * as Crypto from 'expo-crypto'
 import type { ApplicationPreparation, ApplicationDocument, ApplicationDocumentGenerationJob } from '@govbiz/shared/domain/entities/ApplicationPreparation'
-import { generationStages, generationFailureTitle, failureGroupOf, isWritableApplicationAnswer } from '@govbiz/shared/domain/entities/ApplicationDocumentGeneration'
+import { generationStages, generationFailureTitle, failureGroupOf, applicationDraftMode } from '@govbiz/shared/domain/entities/ApplicationDocumentGeneration'
 import { ApplicationPreparationError } from '@govbiz/shared/domain/errors/ApplicationPreparationError'
 import { useAuth } from '../auth/session'
 import { applicationPreparationUseCase, discardDeletedPendingPreparation } from '../api/applicationPreparation'
@@ -164,11 +164,12 @@ function OwnedDocuments({ id, jobId, token, email, onEditor, onReanalyze, onOnli
   const isRunning = Boolean(job && running(job)), unknown = job?.status === 'UNKNOWN'
   const group = job ? failureGroupOf(job) : null
   const missingRequired = preparation.form.sections.flatMap(section => section.fields.filter(field => field.required && field.documentWritable !== false && !section.facts.some(fact => fact.fieldKey === field.key)))
-  const writableAnswers = preparation.form.sections.reduce((count, section) => count + section.fields.filter(field =>
-    isWritableApplicationAnswer(field, section.facts.find(fact => fact.fieldKey === field.key && fact.status === 'PROVIDED')?.value)).length, 0)
+  const draftMode = applicationDraftMode(preparation.form.sections.flatMap(section => section.fields.map(field => ({
+    field, value: section.facts.find(fact => fact.fieldKey === field.key && fact.status === 'PROVIDED')?.value,
+  }))))
   const recoveringRequest = pending?.kind === 'document' && pending.preparationId === id
   const canGenerate = !loading && !busy && !isRunning && !unknown && (recoveringRequest ||
-    !currentFiles.length && !missingRequired.length && writableAnswers > 0 &&
+    !currentFiles.length &&
     (!job || job.expectedRevision !== preparation.inputRevision || approved || job.status === 'FAILED' && group === 'temporary'))
   const renderFile = (file: ApplicationDocument) => <Card key={file.id}><Text style={styles.heading}>{file.fileName}</Text><Text style={styles.muted}>{Math.ceil(file.size / 1024)} KB · 답변 버전 {file.inputRevision}</Text>
     {file.filledAnswerCount !== null && <Text style={styles.muted}>자동 기입 {file.filledAnswerCount}개 · 직접 작성 필요 {file.unfilledAnswerCount}개</Text>}
@@ -189,7 +190,7 @@ function OwnedDocuments({ id, jobId, token, email, onEditor, onReanalyze, onOnli
     {pending && <Notice>결과를 확인하지 못한 보관 요청이 있어요. 같은 요청으로 확인하면 중복 유료 생성을 방지할 수 있어요.</Notice>}
     {pending?.kind === 'document' && <Button label="보관 요청 대상 확인" variant="ghost" busy={busy === 'pending'} disabled={busy !== null} onPress={() => void checkPending()} />}
     {pending?.kind === 'document' && pending.preparationId !== id && <Button label="보관 요청의 문서 열기" variant="secondary" onPress={() => onOpenPending(pending.preparationId)} />}
-    {isRunning && <Card><View style={styles.row}><StatusBadge label={job!.status === 'QUEUED' ? '초안 생성 대기' : '초안 만드는 중'} tone="info" /></View><Text style={styles.heading}>공식 양식에 답변을 담고 있어요</Text>
+    {isRunning && <Card><View style={styles.row}><StatusBadge label={job!.status === 'QUEUED' ? '초안 생성 대기' : '초안 만드는 중'} tone="info" /></View><Text style={styles.heading}>신청문서 초안을 만들고 있어요</Text>
       <Text style={styles.muted}>화면을 떠나도 작업은 이어져요. 기존 작업을 조회하며 새로 시작하지 않아요.</Text>
       {generationStages.map(([stage, label], index) => <Text key={stage} style={[styles.body, job?.stage === stage && { color: colors.primary, fontWeight: '600' }]}>{job?.stage && index < generationStages.findIndex(([code]) => code === job.stage) ? '✓ ' : job?.stage === stage ? '● ' : '○ '}{label}</Text>)}
     </Card>}
@@ -206,8 +207,13 @@ function OwnedDocuments({ id, jobId, token, email, onEditor, onReanalyze, onOnli
       <Button label="전체 공유" accessibilityLabel="현재 답변 파일 ZIP 공유" variant="ghost" disabled={busy !== null} busy={busy === 'share:archive'} onPress={() => void download(null, preparation.inputRevision)} />
     </View>}
     {previousFiles.length > 0 && <><Text style={styles.heading}>이전 파일</Text><Notice>답변이 바뀌었어요. 이전 파일은 해당 답변 버전으로 만들어진 초안입니다.</Notice>{previousFiles.map(renderFile)}</>}
-    {!isRunning && !currentFiles.length && (missingRequired.length > 0 || writableAnswers === 0) && <Notice>초안을 만들기 전에 작성할 답변을 저장하고 필수 항목을 확인해 주세요.</Notice>}
-    {canGenerate && <><Text style={styles.muted}>초안 생성은 유료 AI를 사용해요.</Text><Button label={pending ? '같은 생성 요청으로 확인' : previousFiles.length ? '수정 답변으로 다시 만들기' : job?.status === 'FAILED' ? '초안 생성 다시 시도' : '초안 만들기'} busy={busy === 'generate'} onPress={() => void generate()} /></>}
+    {!isRunning && !currentFiles.length && missingRequired.length > 0 && <Notice>필수 답변 {missingRequired.length}개가 비어 있어요. 비워 둔 채로도 초안을 만들 수 있으며 문서에는 빈칸으로 남아요.</Notice>}
+    {canGenerate && <><Notice>{recoveringRequest ? '보관한 답변 버전의 같은 요청을 확인해요. 새 요청 키를 만들지 않아요.' : draftMode === 'original'
+      ? '입력한 답변이 없거나 모두 미정이에요. 초안을 만들면 답변을 기입하지 않은 공식 양식 그대로 저장돼요. AI를 호출하지 않아요.'
+      : draftMode === 'manualOnly' ? '저장된 답변 중 양식에 자동으로 기입할 수 있는 것이 없어 초안을 만들지 못할 수 있어요. 원문 양식에 직접 옮겨 적어 주세요.'
+        : '저장된 답변만 공식 양식에 기입해요. 비운 질문과 미정은 빈칸으로 남아요.'}</Notice>
+      {!recoveringRequest && draftMode !== 'original' && <Text style={styles.muted}>답변 기입에는 유료 AI 호출이 발생할 수 있어요.</Text>}
+      <Button label={pending ? '같은 생성 요청으로 확인' : previousFiles.length ? '수정 답변으로 다시 만들기' : job?.status === 'FAILED' ? '초안 생성 다시 시도' : '초안 만들기'} busy={busy === 'generate'} onPress={() => void generate()} /></>}
     <Button label="답변 수정하기" variant="secondary" disabled={busy !== null} onPress={onEditor} />
     <Button label="온라인 신청 입력 도우미" variant="secondary" onPress={onOnline} />
     <Button label="공식 공고 원문" variant="ghost" onPress={() => void Linking.openURL(preparation.form.sourceUrl).catch(() => setError('공식 공고 원문을 열지 못했어요.'))} />

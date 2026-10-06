@@ -26,7 +26,7 @@
 `Expo route → mobile screen/hook → shared ApplicationPreparationUseCase → mobile ApplicationPreparationRepository → Bearer HTTP → 기존 Core Controller/Service`.
 반환 DTO는 shared의 Zod 모델로 검증한다. 파일 메타데이터·가용성·매핑 변경 확인 계약은 shared로 모으고 웹도 같은 모델을 사용한다.
 생성 단계와 실패 분류는 순수 shared 업무 함수이며 웹의 이전 경로는 재수출로 유지한다. 화면·세션·기기 파일 API는 모바일에 둔다.
-실제 기입 가능 답변은 shared `isWritableApplicationAnswer`로 판단한다. 빈 답변·미정(UNKNOWN)·자동 기입 불가 문항은 기입 대상에서 제외하며, 웹과 모바일이 같은 함수를 사용한다.
+실제 기입 가능 답변은 shared `isWritableApplicationAnswer`로 판단한다. 빈 답변·미정(UNKNOWN)·자동 기입 불가 문항은 기입 대상에서 제외하며, 웹과 모바일이 같은 함수를 사용한다. 검토·결과 화면의 원본 저장·답변 기입·수동 작성 안내는 shared `applicationDraftMode`로 구분한다.
 Core·AI의 양식 발견, 문서 생성 큐, 소유권·revision·형식별 기입 경계와 공개 HTTP 계약은 변경하지 않는다.
 문서 결과는 서버의 미기입 사유·입력칸 글자 수와 남은 예시 문구 수를 보존하고, 모바일에서도 직접 작성·제출 전 확인 안내를 표시한다.
 
@@ -46,7 +46,8 @@ Core·AI의 양식 발견, 문서 생성 큐, 소유권·revision·형식별 기
 - 유료 분석·생성 전에 requestKey와 대상 식별자/revision만 SecureStore에 계정·API별로 보관한다. 토큰·답변은 이 보관 기록에 넣지 않는다.
 - 접수 여부가 불명확하면 보관 요청을 유지한다. 목록·대상 화면에서 같은 requestKey로 확인하며 새 키로 자동 재시도하지 않는다.
 - 대상 문서가 삭제되어 같은 요청 확인이 막히면 목록 또는 문서 결과의 `보관 요청 대상 확인`을 사용한다. 인증된 문서 GET이 `404 / APPLICATION_PREPARATION_NOT_FOUND`를 반환한 경우에만 계정·API별 같은 보관 기록을 정리한다. 문서가 남아 있거나 통신·인증 실패·기능 미지원 404이면 기록을 유지한다. 확인 중 요청이 바뀌거나 계정이 전환되면 새 기록을 지우지 않는다. 로그아웃만으로 미확인 유료 요청을 버리지 않는다.
-- 필수 저장 답변이 없거나 자동 기입 가능한 답변이 없으면 초안 생성을 막는다. 현재 revision 파일이 이미 있으면 재생성 대신 결과로 이동한다.
+- 필수 답변이 비어 있어도 저장된 답변만 기입해 초안을 만들 수 있다. 전부 비어 있거나 미정이면 AI 호출 없이 공식 원본을 저장한다. 실제 답변이 있지만 자동 기입할 수 있는 답변이 없으면 원본으로 대체하지 않고 서버의 `APPLICATION_DOCUMENT_NO_WRITABLE_INPUT` 오류를 표시한다.
+- 생성 전 미저장 답변을 먼저 저장하고 반환된 최신 revision을 사용한다. 저장 실패·충돌, 진행 중·결과 불명 작업은 생성을 막고, 현재 revision 파일이 이미 있으면 재생성 대신 결과로 이동한다. 검토·결과 조회만으로 생성하지 않는다.
 - 양식 입력 위치 변경은 승인 토큰·revision을 검증한 API로 적용한다. 기존 답변·파일은 보존하며 적용만으로 유료 생성을 실행하지 않는다.
 
 ## 기기 파일

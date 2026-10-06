@@ -79,7 +79,7 @@ PDF/HWP/HWPX를 명시적 요청에서 분석한다.
 ### skn-140 문서 생성 계약
 
 입력 페이지는 `/app/application-preparations/:preparationId`, 결과 페이지는 그 아래 `/documents`이다.
-생성 버튼은 저장하지 않은 답변 또는 필수 입력 누락이 있으면 비활성화한다. `?generate=입력revision`으로
+생성 전 미저장 답변을 먼저 저장하며 저장 실패·충돌이면 생성을 중단한다. 필수 입력 누락은 생성 차단 조건이 아니며, 웹과 모바일은 저장된 답변만 기입하거나 무응답·미정이면 공식 원본을 저장하는 같은 정책을 사용한다. `?generate=입력revision`으로
 결과 페이지에 진입하면 기존 파일을 조회한 뒤 없을 때만 생성한다. 일반 결과 조회는 AI를 호출하지 않는다.
 
 - `GET /api/v1/application-preparations/{id}/documents`: 현재 revision 파일 메타데이터 목록.

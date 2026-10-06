@@ -4,7 +4,7 @@ import { useNavigation } from 'expo-router'
 import { useHeaderHeight, usePreventRemove } from 'expo-router/react-navigation'
 import * as Crypto from 'expo-crypto'
 import { ApplicationPreparationError } from '@govbiz/shared/domain/errors/ApplicationPreparationError'
-import { isWritableApplicationAnswer } from '@govbiz/shared/domain/entities/ApplicationDocumentGeneration'
+import { applicationDraftMode } from '@govbiz/shared/domain/entities/ApplicationDocumentGeneration'
 import { useAuth } from '../auth/session'
 import { readPendingPreparation, savePendingPreparation, clearPendingPreparation } from '../auth/preparationPending'
 import { applicationPreparationUseCase } from '../api/applicationPreparation'
@@ -43,7 +43,7 @@ function OwnedEditor({ token, email, id, reviewing, initialQuestion, onReview, o
     void vm.flush().then(saved => { if (saved) navigation.dispatch(data.action); else Alert.alert('답변을 먼저 저장해 주세요', '입력한 내용은 이 화면에 남아 있어요. 저장 상태를 확인한 뒤 다시 이동해 주세요.') })
   })
   const missing = questions.filter(question => question.field.required && question.field.documentWritable !== false && !vm.value(question.section, question.field.key).trim())
-  const writableAnswers = questions.filter(question => isWritableApplicationAnswer(question.field, vm.value(question.section, question.field.key))).length
+  const draftMode = applicationDraftMode(questions.map(question => ({ field: question.field, value: vm.value(question.section, question.field.key) })))
   const unknown = questions.filter(question => vm.value(question.section, question.field.key).trim() === '미정').length
   async function move(target: number | 'review') {
     if (!await vm.flush()) return
@@ -51,20 +51,24 @@ function OwnedEditor({ token, email, id, reviewing, initialQuestion, onReview, o
     setQuestionKey(questions[target]?.key ?? ''); setSheet(null); scroll.current?.scrollTo({ y: 0, animated: false })
   }
   async function generate() {
-    if (guard.current || missing.length || !writableAnswers || !await vm.flush()) return
-    const detail = vm.latest(); if (!detail) return
+    if (guard.current) return
+    const base = getApiBaseUrl()
     const controller = new AbortController(); request.current = controller
     guard.current = true; setGenerating(true); setActionError(null)
-    const base = getApiBaseUrl()
     try {
+      if (!await vm.flush() || controller.signal.aborted) return
+      const detail = vm.latest(); if (!detail) return
       const [files, jobs, previous] = await Promise.all([useCase.documents(id, controller.signal), useCase.documentJobs(id, controller.signal), readPendingPreparation(base, email)])
+      if (controller.signal.aborted) return
       if (files.some(file => file.inputRevision === detail.inputRevision)) { onDocuments(); return }
       const active = jobs.find(job => job.status === 'QUEUED' || job.status === 'RUNNING')
       if (active) { onDocuments(active.id); return }
-      if (jobs.some(job => job.expectedRevision === detail.inputRevision && job.status === 'UNKNOWN')) { setActionError('이전 생성 결과를 아직 확인하지 못했어요. 새 유료 생성을 시작하지 않았어요.'); return }
+      if (jobs.some(job => job.status === 'UNKNOWN')) { setActionError('이전 생성 결과를 아직 확인하지 못했어요. 새 초안 생성을 시작하지 않았어요.'); return }
       const record = previous ?? { kind: 'document' as const, preparationId: id, expectedRevision: detail.inputRevision, requestKey: Crypto.randomUUID() }
       if (record.kind !== 'document' || record.preparationId !== id || record.expectedRevision !== detail.inputRevision) { setActionError('다른 입력 버전의 미확인 요청이 있어요. 생성 결과 화면에서 기존 요청부터 확인해 주세요.'); return }
-      await savePendingPreparation(base, email, record); setHasPending(true)
+      await savePendingPreparation(base, email, record)
+      if (controller.signal.aborted) return
+      setHasPending(true)
       const job = await useCase.submitDocumentJob(id, record.expectedRevision, controller.signal, record.requestKey)
       await clearPendingPreparation(base, email); setHasPending(false)
       if (!controller.signal.aborted) onDocuments(job.id)
@@ -96,11 +100,14 @@ function OwnedEditor({ token, email, id, reviewing, initialQuestion, onReview, o
       {reviewing ? <>
         <Text style={styles.title}>답변을 마지막으로 확인해 주세요</Text>
         <Notice>{missing.length ? `필수 답변 ${missing.length}개가 비어 있어요.` : `필수 답변을 저장했어요. 미정인 답변 ${unknown}개는 자동으로 기입하지 않아요.`}</Notice>
+        {missing.length > 0 && <Notice>비워 둔 채로도 초안을 만들 수 있어요. 비운 질문은 문서에 빈칸으로 남아요.</Notice>}
         {questions.map(question => <Card key={question.key}><Text style={styles.heading}>{question.field.label}</Text><Text style={styles.muted}>{vm.value(question.section, question.field.key) || '아직 답변하지 않았어요.'}</Text>
           {question.field.documentWritable === false && <Notice>이 답변은 원본 파일에서 직접 작성해야 해요.</Notice>}
           <Button label="수정" accessibilityLabel={`${question.field.label} 수정`} variant="ghost" disabled={blocked} onPress={() => { void vm.flush().then(saved => { if (saved) onEditor(question.key) }) }} /></Card>)}
-        {!writableAnswers && <Notice>자동 기입할 수 있는 저장 답변이 없어요. 답변을 확인하거나 원본 문서에서 직접 작성해 주세요.</Notice>}
-        <Text style={styles.muted}>초안 생성은 유료 AI를 사용해요. 제출 전 파일을 직접 확인해 주세요.</Text>
+        <Notice>{draftMode === 'writing' ? '저장된 답변만 공식 양식에 기입해요. 비운 질문과 미정은 빈칸으로 남아요.'
+          : draftMode === 'manualOnly' ? '저장된 답변 중 양식에 자동으로 기입할 수 있는 것이 없어 초안을 만들지 못할 수 있어요. 원문 양식에 직접 옮겨 적어 주세요.'
+            : '입력한 답변이 없거나 모두 미정이에요. 초안을 만들면 답변을 기입하지 않은 공식 양식 그대로 저장돼요. AI를 호출하지 않아요.'}</Notice>
+        <Text style={styles.muted}>{draftMode === 'original' ? '원본 양식을 저장한 뒤 직접 작성할 수 있어요.' : '답변 기입에는 유료 AI 호출이 발생할 수 있어요.'} 제출 전 파일을 직접 확인해 주세요.</Text>
       </> : current ? <>
         <View style={{ height: 5, backgroundColor: colors.track, borderRadius: 8 }}><View style={{ height: 5, width: `${(index + 1) / questions.length * 100}%`, borderRadius: 8, backgroundColor: colors.primary }} /></View>
         <Card><View style={styles.row}><Text style={[styles.muted, { flex: 1 }]}>질문 {index + 1} / {questions.length}</Text><StatusBadge label={current.field.required ? '필수' : '선택'} tone={current.field.required ? 'warning' : 'neutral'} /></View>
@@ -118,7 +125,7 @@ function OwnedEditor({ token, email, id, reviewing, initialQuestion, onReview, o
       <Button label="공식 공고 원문" variant="ghost" onPress={() => void Linking.openURL(vm.preparation!.form.sourceUrl).catch(() => setActionError('공식 공고 원문을 열지 못했어요.'))} />
     </ScrollView>
     <View style={[preparationUi.footer, local.footer]}>{reviewing
-      ? <><Button label={hasPending ? '같은 생성 요청으로 확인' : '공식 양식으로 초안 만들기'} busy={generating} disabled={blocked || Boolean(missing.length) || !writableAnswers || dirty} onPress={() => void generate()} />
+      ? <><Button label={hasPending ? '같은 생성 요청으로 확인' : '공식 양식으로 초안 만들기'} busy={generating} disabled={blocked} onPress={() => void generate()} />
         <Button label="생성 결과 보기" variant="ghost" disabled={generating} onPress={() => onDocuments()} /></>
       : <View style={local.navigation}><Button label="이전" variant="secondary" style={local.navigationButton} disabled={index === 0 || blocked} onPress={() => void move(index - 1)} />
         <Button label={index === questions.length - 1 ? '답변 검토하기' : '다음'} style={local.navigationButton} disabled={blocked || !questions.length} onPress={() => void move(index === questions.length - 1 ? 'review' : index + 1)} /></View>}

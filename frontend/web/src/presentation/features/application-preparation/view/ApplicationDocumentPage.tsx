@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router'
-import { isWritableApplicationAnswer } from '@govbiz/shared/domain/entities/ApplicationDocumentGeneration'
+import { applicationDraftMode, isWritableApplicationAnswer } from '@govbiz/shared/domain/entities/ApplicationDocumentGeneration'
 import { appContainer } from '../../../../app/appContainer'
 import { useAppSelector } from '../../../../app/hooks'
 import type { ApplicationDocument, ApplicationDocumentGenerationJob, ApplicationDocumentMigrationNotice, ApplicationPreparation } from '../../../../domain/entities/ApplicationPreparation'
@@ -361,6 +361,9 @@ function DocumentResults({ id }: { id: number }) {
     else if (latestRevision !== null) void downloadArchive(latestRevision)
   }
   const regenerate = () => { if (preparation) generate(preparation.inputRevision) }
+  const draftMode = applicationDraftMode(preparation?.form.sections.flatMap(section => section.fields.map(field => ({
+    field, value: section.facts.find(fact => fact.fieldKey === field.key && fact.status === 'PROVIDED')?.value,
+  }))) ?? [])
   const changedBadge = canRegenerate ? <span className={d.changedBadge}>답변이 바뀜</span> : null
   const downloadLabel = single ? '내려받기' : '전체 내려받기'
 
@@ -448,7 +451,9 @@ function DocumentResults({ id }: { id: number }) {
         {!busy && preparation && files.length === 0 && !error && !failedJob && !capacityFull && !migration && !migrationMessage && <section className={n.card} aria-labelledby="documents-empty-title">
           <div className={n.empty}>
             <h2 className={n.cardTitle} id="documents-empty-title">아직 만든 초안이 없어요</h2>
-            <p className={n.muted}>저장된 답변을 공식 양식의 입력칸에 기입해 초안을 만들어요.</p>
+            <p className={n.muted}>{draftMode === 'original' ? '입력한 답변이 없거나 모두 미정이에요. AI 호출 없이 공식 양식 그대로 저장돼요.'
+              : draftMode === 'manualOnly' ? '저장된 답변 중 자동 기입할 수 있는 것이 없어 초안을 만들지 못할 수 있어요. 원문 양식에 직접 옮겨 적어 주세요.'
+                : '저장된 답변을 공식 양식의 입력칸에 기입해 초안을 만들어요. 비운 질문은 빈칸으로 남아요.'}</p>
             <button type="button" className={n.secondarySm} onClick={() => generate(preparation.inputRevision)}>초안 만들기</button>
           </div>
         </section>}

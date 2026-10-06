@@ -1,6 +1,6 @@
 import { type KeyboardEvent as ReactKeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
-import { isWritableApplicationAnswer } from '@govbiz/shared/domain/entities/ApplicationDocumentGeneration'
+import { applicationDraftMode } from '@govbiz/shared/domain/entities/ApplicationDocumentGeneration'
 import { daysUntil, ddayTone, formatDday, programStatusLabels } from '@govbiz/shared/domain/labels'
 import { useAppSelector } from '../../../../app/hooks'
 import { assistantCover, assistantLift } from '../../../shared/assistant/assistantPlacement'
@@ -220,15 +220,7 @@ function AnswerEditor({ vm }: { vm: EditorViewModel }) {
   const requiredMissing = missingRequired.length
   const missingOptional = questions.filter(({ section, field }) => !field.required && writable(field) && !valueOf(section, field).trim())
   const optionalMissing = missingOptional.length
-  /**
-   * 저장된 답변 수와, 그중 문서에 기입될 수 있는 답변 수입니다. "미정"으로 둔 질문은 기입하지 않으므로 세지 않습니다.
-   * 서버는 저장된 답변이 하나도 없을 때만 공식 양식 그대로 저장하므로, 기입할 수 없는 칸의 답변만 있는 경우를 따로 구분합니다.
-   */
-  const answered = questions.filter(({ section, field }) => {
-    const value = valueOf(section, field).trim()
-    return value !== '' && value !== undecidedAnswer
-  })
-  const fillableAnswers = questions.filter(({ section, field }) => isWritableApplicationAnswer(field, valueOf(section, field))).length
+  const draftMode = applicationDraftMode(questions.map(({ section, field }) => ({ field, value: valueOf(section, field) })))
   const fieldError = current && vm.fieldError?.key === current.key ? vm.fieldError.message : null
   // 지금 질문의 칸 오류는 칸 아래에만 보여 줍니다. 같은 문구를 위쪽 실패 알림으로 겹쳐 띄우지 않습니다.
   const failed = vm.autosave.status === 'failed' && !fieldError ? vm.autosave : null
@@ -439,9 +431,9 @@ function AnswerEditor({ vm }: { vm: EditorViewModel }) {
       선택 질문 {optionalMissing}개는 비워 두면 문서에 빈칸으로 남아요.
       {requiredMissing === 0 && <> <button type="button" className={e.retryButton} onClick={() => move(questions.indexOf(missingOptional[0]))}>첫 빈 선택 질문으로</button></>}
     </p>}
-    <p className={e.reviewNote}>{fillableAnswers > 0
+    <p className={e.reviewNote}>{draftMode === 'writing'
       ? 'AI가 공식 양식에 답변을 기입해요 · 보통 1~3분'
-      : answered.length > 0
+      : draftMode === 'manualOnly'
         ? '저장된 답변 중 양식에 자동으로 기입할 수 있는 것이 없어 초안을 만들지 못할 수 있어요. 원문 양식에 직접 옮겨 적어 주세요.'
         : '입력한 답변이 없어요. 지금 초안을 만들면 답변을 기입하지 않은 공식 양식 그대로 저장돼요.'}</p>
     {!narrow && moveButtons}
