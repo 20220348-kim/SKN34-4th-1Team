@@ -12,6 +12,8 @@ import { ApplicationPreparationNewScreen } from './ApplicationPreparationNewScre
 import { ApplicationDocumentScreen } from './ApplicationDocumentScreen'
 import { documentFile, documentForm, documentJob, documentPreparation, documentProgram, documentSummary } from '../test/applicationDocumentFixtures'
 
+jest.mock('expo-crypto', () => ({ randomUUID: () => '11111111-1111-4111-8111-111111111111' }))
+
 jest.mock('expo-router', () => ({ useFocusEffect: (callback: () => () => void) => {
   const React = jest.requireActual<typeof import('react')>('react'); React.useEffect(callback, [callback])
 } }))
@@ -217,14 +219,32 @@ test('unknown generation offers a read-only recovery and never automatic paid re
   expect(screen.queryByLabelText('초안 만들기')).toBeNull()
 })
 
-test('undecided saved facts do not enable document generation', async () => {
-  const undecided = { ...documentPreparation, form: { ...documentForm, sections: documentForm.sections.map(section => ({ ...section,
-    facts: section.facts.map(fact => ({ ...fact, status: 'UNKNOWN', value: null })),
+test.each(['empty', 'undecided', 'partial'] as const)('the document page allows explicit generation for %s answers', async kind => {
+  const preparation = { ...documentPreparation, form: { ...documentForm, sections: documentForm.sections.map(section => ({ ...section,
+    facts: kind === 'empty' ? [] : kind === 'partial' ? section.facts.slice(0, 1) : section.facts.map(fact => ({ ...fact, status: 'UNKNOWN', value: null })),
   })) } }
-  api.get.mockResolvedValue(undecided); api.documents.mockResolvedValue([]); api.documentJobs.mockResolvedValue([])
+  api.get.mockResolvedValue(preparation); api.documents.mockResolvedValue([]); api.documentJobs.mockResolvedValue([])
+  api.submitDocumentJob.mockResolvedValue(documentJob)
   render(<ApplicationDocumentScreen {...docProps} />)
-  await screen.findByText('초안을 만들기 전에 작성할 답변을 저장하고 필수 항목을 확인해 주세요.')
-  expect(screen.queryByLabelText('초안 만들기')).toBeNull()
+  const generate = await screen.findByRole('button', { name: '초안 만들기' })
+  if (kind === 'partial') expect(screen.getByText(/필수 답변 1개가 비어 있어요/)).toBeTruthy()
+  else expect(screen.getByText(/AI를 호출하지 않아요/)).toBeTruthy()
+  expect(api.submitDocumentJob).not.toHaveBeenCalled()
+  fireEvent.press(generate)
+  await waitFor(() => expect(api.submitDocumentJob).toHaveBeenCalledWith(9, 1, expect.any(AbortSignal), '11111111-1111-4111-8111-111111111111'))
+  expect(api.submitDocumentJob).toHaveBeenCalledTimes(1)
+})
+
+test('manual-only provided answers keep the explicit server failure instead of offering an original fallback', async () => {
+  api.get.mockResolvedValue({ ...documentPreparation, form: { ...documentForm, sections: documentForm.sections.map(section => ({ ...section,
+    fields: section.fields.map(field => ({ ...field, required: false, documentWritable: false })),
+  })) } })
+  const failed = { ...documentJob, status: 'FAILED', fileIds: [], failureCode: 'APPLICATION_DOCUMENT_NO_WRITABLE_INPUT' }
+  api.documents.mockResolvedValue([]); api.documentJobs.mockResolvedValue([failed]); api.documentJob.mockResolvedValue(failed)
+  render(<ApplicationDocumentScreen {...docProps} />)
+  await screen.findByText('이 양식은 자동으로 채우기 어려워요')
+  expect(screen.queryByText(/AI를 호출하지 않아요/)).toBeNull()
+  expect(screen.queryByRole('button', { name: '초안 만들기' })).toBeNull()
   expect(api.submitDocumentJob).not.toHaveBeenCalled()
 })
 
@@ -238,6 +258,7 @@ test('undecided current answers still allow confirming the same previously store
   render(<ApplicationDocumentScreen {...docProps} />)
   fireEvent.press(await screen.findByLabelText('같은 생성 요청으로 확인'))
   await waitFor(() => expect(api.submitDocumentJob).toHaveBeenCalledWith(9, 1, expect.any(AbortSignal), requestKey))
+  expect(screen.queryByText(/AI를 호출하지 않아요/)).toBeNull()
 })
 
 test('current generated documents retain overflow guidance and remaining examples for manual completion', async () => {

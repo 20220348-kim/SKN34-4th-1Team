@@ -6,6 +6,19 @@ export function isWritableApplicationAnswer(field: Pick<ApplicationFormField, 'd
   return field.documentWritable !== false && answer !== '' && answer !== '미정'
 }
 
+/** 무응답·미정은 원본 저장, 실제 답변은 기입 대상으로 안내한다. 필수 누락은 생성을 막지 않는다. */
+export function applicationDraftMode(answers: ReadonlyArray<{
+  field: Pick<ApplicationFormField, 'documentWritable'>; value: string | null | undefined
+}>): 'original' | 'writing' | 'manualOnly' {
+  let provided = false
+  for (const { field, value } of answers) {
+    const answer = value?.trim() ?? ''
+    if (isWritableApplicationAnswer(field, answer)) return 'writing'
+    if (answer !== '' && answer !== '미정') provided = true
+  }
+  return provided ? 'manualOnly' : 'original'
+}
+
 /** 서버 작업 표가 기록하는 단계 순서입니다. 화면은 단계를 추측하지 않고 이 값만 표시합니다. */
 export const generationStages = [
   ['PREPARING', '답변 확인'],

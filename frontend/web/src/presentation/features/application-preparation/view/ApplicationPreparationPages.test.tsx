@@ -2663,6 +2663,38 @@ describe('application preparation creation and detail', () => {
     expect(document.activeElement).toBe(screen.getByRole('heading', { name: '과제명' }))
   })
 
+  it('submits a partial draft with an unanswered required question', async () => {
+    const partial = readyPreparation()
+    partial.form.sections[1].facts = []
+    repository.get.mockResolvedValue(partial)
+    mount('/app/application-preparations/12?step=review')
+    expect(await screen.findByText('필수 질문 1개가 비어 있어요')).toBeTruthy()
+    const create = screen.getByRole('button', { name: '초안 만들기' })
+    expect(create).not.toHaveProperty('disabled', true)
+    expect(repository.submitDocumentJob).not.toHaveBeenCalled()
+    fireEvent.click(create)
+    await waitFor(() => expect(repository.submitDocumentJob).toHaveBeenCalledWith(12, 3, expect.any(AbortSignal), undefined))
+  })
+
+  it('uses original-draft guidance for all undecided answers in the review and direct document page', async () => {
+    const undecided = readyPreparation()
+    undecided.form.sections.forEach((section, sectionIndex) => {
+      section.facts = section.fields.map((field, index) => ({ id: (sectionIndex + 1) * 10 + index, fieldKey: field.key,
+        status: 'UNKNOWN' as const, value: null, sourceText: '미정', inputRevision: 3, updatedAt: undecided.updatedAt }))
+    })
+    repository.get.mockResolvedValue(undecided)
+    mount('/app/application-preparations/12?step=review')
+    expect(await screen.findByText('입력한 답변이 없어요. 지금 초안을 만들면 답변을 기입하지 않은 공식 양식 그대로 저장돼요.')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '초안 만들기' }))
+    await waitFor(() => expect(repository.submitDocumentJob).toHaveBeenCalledWith(12, 3, expect.any(AbortSignal), undefined))
+    cleanup(); repository.submitDocumentJob.mockClear(); repository.documents.mockResolvedValue([])
+    mount('/app/application-preparations/12/documents')
+    expect(await screen.findByText('입력한 답변이 없거나 모두 미정이에요. AI 호출 없이 공식 양식 그대로 저장돼요.')).toBeTruthy()
+    expect(repository.submitDocumentJob).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '초안 만들기' }))
+    await waitFor(() => expect(repository.submitDocumentJob).toHaveBeenCalledWith(12, 3, expect.any(AbortSignal), undefined))
+  })
+
   it('creates the draft from the review even when nothing is answered', async () => {
     const empty = readyPreparation()
     empty.form.sections.forEach((section) => { section.facts = [] })

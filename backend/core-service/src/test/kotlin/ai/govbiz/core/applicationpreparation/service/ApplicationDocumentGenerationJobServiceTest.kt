@@ -166,6 +166,34 @@ class ApplicationDocumentGenerationJobServiceTest {
     }
 
     @Test
+    fun originalDraftWithOnlyUnknownFactsDoesNotCallMappingOrWriting() {
+        `when`(preparations.findOwned(owner, job.preparationId)).thenReturn(detail.copy(
+            facts = detail.facts.map { it.copy(status = ApplicationFactStatus.UNKNOWN, value = null) }))
+        assertTrue(service.execute(job.id))
+        verify(jobs, never()).beginAi(anyLong())
+        verify(client, never()).map(any(AiDocumentMappingRequest::class.java) ?: mapRequest)
+        verify(client, never()).generate(any(AiDocumentGenerationRequest::class.java) ?: generationRequest)
+        verify(jobs).succeed(job.id, listOf(file.id))
+    }
+
+    @Test
+    fun missingRequiredAnswerDoesNotPreventWritingTheProvidedAnswer() {
+        val expanded = form.copy(sections = form.sections.map { section -> section.copy(fields = section.fields +
+            ApplicationFormFieldDefinition("goal", "추진 목표", "추진 목표 입력", true)) })
+        val bindings = listOf(binding, ApplicationDocumentPlacement("company:goal", "goal-cell"))
+        `when`(preparations.findOwned(owner, job.preparationId)).thenReturn(detail.copy(form = expanded))
+        `when`(snapshots.findByVersion(form.formVersionId)).thenReturn(expanded.copy(documentMapSnapshot =
+            ApplicationDocumentMapSnapshot("application-document-mcp-v1", pipeline, hash(source), "test-map", "test-engine",
+                bindings, bindings.map { it.targetId }, mapOf("targets" to bindings.map { mapOf("targetId" to it.targetId) }))))
+        assertTrue(service.execute(job.id))
+        val request = org.mockito.ArgumentCaptor.forClass(AiDocumentGenerationRequest::class.java)
+        verify(client).generate(request.capture() ?: generationRequest)
+        assertEquals(listOf("company:name"), request.value.facts.map { it.id })
+        assertEquals(listOf(binding), request.value.bindings)
+        verify(jobs).succeed(job.id, listOf(file.id))
+    }
+
+    @Test
     fun existingGeneratedFileDoesNotRecordAnotherPaidAttempt() {
         `when`(files.findFingerprint(eq(owner.id), eq(job.preparationId), eq(job.expectedRevision), anyString())).thenReturn(file)
         assertTrue(service.execute(job.id))
