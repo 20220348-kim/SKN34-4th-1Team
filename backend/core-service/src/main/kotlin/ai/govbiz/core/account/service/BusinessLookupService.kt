@@ -1,7 +1,7 @@
 package ai.govbiz.core.account.service
 
 import ai.govbiz.core.account.client.bizno.BiznoClient
-import ai.govbiz.core.account.client.bizno.dto.BiznoBusiness
+import ai.govbiz.core.account.domain.RegisteredBusiness
 import ai.govbiz.core.account.service.exception.BusinessNotFoundException
 import org.springframework.stereotype.Service
 
@@ -15,7 +15,7 @@ class BusinessLookupService(
 ) {
 
     /** 등록되지 않은 번호는 404, 휴·폐업은 상태와 함께 그대로 돌려줍니다. */
-    fun lookup(businessNumber: String): BiznoBusiness =
+    fun lookup(businessNumber: String): RegisteredBusiness =
         biznoClient.findByBusinessNumber(normalizeBusinessNumber(businessNumber)).firstOrNull()
             ?: throw BusinessNotFoundException()
 

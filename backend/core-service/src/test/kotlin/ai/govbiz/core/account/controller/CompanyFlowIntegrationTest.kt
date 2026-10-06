@@ -2,7 +2,7 @@ package ai.govbiz.core.account.controller
 
 import ai.govbiz.core._common.test.MySqlTestContainerConfig
 import ai.govbiz.core.account.client.bizno.BiznoClient
-import ai.govbiz.core.account.client.bizno.dto.BiznoBusiness
+import ai.govbiz.core.account.domain.RegisteredBusiness
 import ai.govbiz.core.account.client.bizno.exception.BiznoClientException
 import ai.govbiz.core.account.helper.SessionCookieHelper
 import ai.govbiz.core.account.helper.SignupTestHelper
@@ -64,7 +64,7 @@ class CompanyFlowIntegrationTest {
             .`when`(biznoClient).findByBusinessNumber("1112233334")
         doReturn(listOf(activeBusiness().copy(businessNumber = "1208734519", companyName = "한빛정밀", businessStatus = "휴업자", businessStatusCode = "02")))
             .`when`(biznoClient).findByBusinessNumber("1208734519")
-        doReturn(emptyList<BiznoBusiness>()).`when`(biznoClient).findByBusinessNumber("1234567890")
+        doReturn(emptyList<RegisteredBusiness>()).`when`(biznoClient).findByBusinessNumber("1234567890")
         doThrow(BiznoClientException.notConfigured()).`when`(biznoClient).findByBusinessNumber("9999999999")
     }
 
@@ -260,7 +260,7 @@ class CompanyFlowIntegrationTest {
         header(HttpHeaders.ORIGIN, "http://localhost:5173")
 
     private fun activeBusiness() =
-        BiznoBusiness(
+        RegisteredBusiness(
             businessNumber = "1248100998",
             companyName = "삼성전자(주)",
             businessStatus = "계속사업자",

@@ -1,7 +1,7 @@
 package ai.govbiz.core.account.service
 
 import ai.govbiz.core.account.client.bizno.BiznoClient
-import ai.govbiz.core.account.client.bizno.dto.BiznoBusiness
+import ai.govbiz.core.account.domain.RegisteredBusiness
 import ai.govbiz.core.account.service.exception.BusinessNotFoundException
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -40,7 +40,7 @@ class BusinessLookupServiceTest {
 
     @Test
     fun reportsAnUnregisteredNumberAsNotFound() {
-        doReturn(emptyList<BiznoBusiness>()).`when`(biznoClient).findByBusinessNumber("1234567890")
+        doReturn(emptyList<RegisteredBusiness>()).`when`(biznoClient).findByBusinessNumber("1234567890")
 
         assertThrows(BusinessNotFoundException::class.java) { service.lookup("123-45-67890") }
     }
@@ -53,7 +53,7 @@ class BusinessLookupServiceTest {
     }
 
     private fun activeBusiness() =
-        BiznoBusiness(
+        RegisteredBusiness(
             businessNumber = "1248100998",
             companyName = "삼성전자(주)",
             businessStatus = "계속사업자",

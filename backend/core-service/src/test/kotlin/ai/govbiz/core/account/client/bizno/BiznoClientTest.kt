@@ -1,7 +1,7 @@
 package ai.govbiz.core.account.client.bizno
 
 import ai.govbiz.core.account.client.bizno.config.BiznoClientProperties
-import ai.govbiz.core.account.client.bizno.dto.BiznoBusiness
+import ai.govbiz.core.account.domain.RegisteredBusiness
 import ai.govbiz.core.account.client.bizno.exception.BiznoClientException
 import java.net.ConnectException
 import java.net.SocketTimeoutException
@@ -53,7 +53,7 @@ class BiznoClientTest {
 
         assertEquals(
             listOf(
-                BiznoBusiness(
+                RegisteredBusiness(
                     businessNumber = BUSINESS_NUMBER,
                     companyName = "삼성전자(주)",
                     businessStatus = "계속사업자",
@@ -83,10 +83,24 @@ class BiznoClientTest {
     }
 
     @Test
+    fun normalizesTheProviderFieldsAndKeepsSuspendedRegistrationPolicyInTheInternalModel() {
+        expectResponse(withSuccess(
+            """{"resultCode":0,"items":[{"bno":"124-81-00998","company":"  휴업 기업 & 연구소  ","bstt":"  휴업자  ","bsttcd":" 02 "},null]}""",
+            MediaType.APPLICATION_JSON,
+        ))
+
+        val business = client.findByBusinessNumber(BUSINESS_NUMBER).single()
+
+        assertEquals(RegisteredBusiness(BUSINESS_NUMBER, "휴업 기업 & 연구소", "휴업자", "02"), business)
+        assertFalse(business.isActive)
+        assertTrue(business.canRegister)
+    }
+
+    @Test
     fun treatsMissingItemsAsNoResult() {
         expectResponse(withSuccess("""{"resultCode":0,"resultMsg":"NORMAL SERVICE.","totalCount":0}""", MediaType.APPLICATION_JSON))
 
-        assertEquals(emptyList<BiznoBusiness>(), client.findByBusinessNumber(BUSINESS_NUMBER))
+        assertEquals(emptyList<RegisteredBusiness>(), client.findByBusinessNumber(BUSINESS_NUMBER))
     }
 
     @Test
@@ -94,7 +108,7 @@ class BiznoClientTest {
         server.expect(requestTo(lookupUrl(UNREGISTERED_NUMBER)))
             .andRespond(withSuccess(UNREGISTERED_RESPONSE, MediaType.APPLICATION_JSON))
 
-        assertEquals(emptyList<BiznoBusiness>(), client.findByBusinessNumber(UNREGISTERED_NUMBER))
+        assertEquals(emptyList<RegisteredBusiness>(), client.findByBusinessNumber(UNREGISTERED_NUMBER))
     }
 
     @Test
@@ -106,7 +120,7 @@ class BiznoClientTest {
             ),
         )
 
-        assertEquals(emptyList<BiznoBusiness>(), client.findByBusinessNumber(BUSINESS_NUMBER))
+        assertEquals(emptyList<RegisteredBusiness>(), client.findByBusinessNumber(BUSINESS_NUMBER))
     }
 
     @Test
