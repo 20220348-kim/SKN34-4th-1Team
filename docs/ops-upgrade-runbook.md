@@ -1193,3 +1193,36 @@ Ops와 migration 도구의 Git tree가 앞선 `4b238ac` 리허설과 같음을 �
 응답했다. 웹·Core health·Ops readiness도 모두 HTTP 200이었다. 후속 `main`인 `a4166d9`의
 깨끗한 checkout에서 실제 소스 검증을 실행했으며, 당시 `ci.yml`이 진행 중이라 차단됐다.
 WSL 조회 경로는 복구됐지만 원본 DB migration과 서비스 교체는 수행하지 않았다.
+
+### 갱신된 실행 명세 이미지와 실제 전환 구성 검증 — 2026-10-06
+
+`faf98ace7d466ce8683df169cff3b6a7ca874f84`의 깨끗한 checkout에서 변경된 평가 목록과
+실행 명세를 포함한 Ops·평가 실행기 이미지를 다시 빌드했다. 로컬 이미지의 OCI revision,
+소스 지문, non-root 계정과 실행 명세를 검증했으며 기존 서비스에는 적용하지 않았다.
+
+| 대상 | 로컬 이미지 | immutable ID |
+|---|---|---|
+| Ops API·sync·결과 서버 | `govbiz-ops-service:msa-faf98ac-20261006` | `sha256:f1c1b543192863995fd2dbbab2077215c36981b82577ec1e492518904b3d4cc5` |
+| 평가 실행기 | `govbiz-evaluation-runner:msa-faf98ac-20261006` | `sha256:8392ad20095f2a8843bac6e6e8fd495614f85347194cb4ab2f3fdc941c67f26e` |
+
+두 이미지의 실행 명세 SHA-256은 `6dcfea8b12675320a19569e16466f202cf9ffc4732a94c8dbb2fbed852c5b721`이다.
+현재 작업 디렉터리의 Ops 소스 150개도 빌드 checkout과 바이트 단위로 일치했다.
+
+| 실제 개인 환경을 읽어 확인한 항목 | 결과 |
+|---|---|
+| 중지·재개 계획 | `PLANNED`, 차단 항목 0건, 서비스 변경 없음 |
+| Compose 전환 구성 | 실행기·결과 서버의 기존 결과 볼륨과 데이터 마운트 보존, 환경변수 보간 검증 `PASS` |
+| migration Job | 기존 Deployment와 DB 경로·Secret 참조 일치, 오프라인 Helm 정책 검증 `PASS`, Job 미적용 |
+| HTTP 연결 | 웹·Core health·Ops readiness 200 |
+| 비용·적용 | 모델 API 호출 0회, 새 중지 상태의 백업·원본 migration·런타임 교체 미실행 |
+
+준비 중 `main`이 `5581e3f35db88069579b77a1a2b3999cef243a57`로 진행했으나 Ops·AI·평가·LLMOps·
+GitOps·발행 도구의 여섯 Git tree는 빌드 시점과 같았다. 이후 해당 SHA의 CI 5개 성공을 확인했다.
+[당시 발행 실행](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/37354060191)은 CI 대기로
+발행을 건너뛰었으며, 이 준비에서 공개 GHCR receipt를 검증하지는 않았다. 과거 CI 성공이나
+동일 실행 입력 확인을 현재 원격 HEAD의 필수 CI·이미지 발행 검증으로 대체하지 않는다.
+
+Git 제외 경로 `work/ops-transition-faf98ac/`의 `prepared-images.json`, `maintenance-plan.json`,
+`compose-preflight.json`, `migration-job-preflight.json`, `transition-evidence.json`에 준비 결과를
+보관한다. 이 기록은 서비스 중단·원본 DB 변경 승인이 아니며, 실제 전환 전에 최신 소스·CI를
+재확인하고 승인된 중지 상태의 새 백업·복원 검증을 확보해야 한다.
