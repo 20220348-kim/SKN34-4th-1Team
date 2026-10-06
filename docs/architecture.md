@@ -199,6 +199,7 @@ QUEUED·RUNNING·UNKNOWN 작업이 있으면 DELETE는 409 `APPLICATION_PREPARAT
 같은 프로세스의 `ApplicationDocumentGenerationJobWorker`(2초 폴링, 인스턴스당 동시 2개)가 QUEUED 행을 UPDATE 한 번으로 claim해
 `ApplicationDocumentService.generateNow → 공식 첨부 Client → ApplicationDocumentMappingService → ApplicationDocumentEditor → AiApplicationPreparationClient → AI Service Router → Service → 위치 선택 Agent → OpenAI`를 실행합니다.
 작업은 단계(PREPARING·MAPPING·WRITING·SAVING)를 기록하고 SUCCEEDED면 파일 ID를, FAILED면 사용자용 실패 문구와(입력 위치 변경이면) 승인 안내를 돌려줍니다.
+`ApplicationDocumentService.generateNow`는 `ApplicationDocumentMappingService.ensure`의 새 매핑 요청 또는 답변 기입 요청 중 최초 요청 직전에 작업의 `ai_started_at`을 한 번 기록합니다. 매핑 캐시를 사용하면 답변 기입 요청에서 기록하고, 생성 파일 재사용·답변 없는 원본 저장에는 기록하지 않습니다. 기록 저장에 실패하면 요청을 보내지 않습니다. 최초 매핑 호출 뒤의 알 수 없는 실패와 실행 중단도 기존 UNKNOWN 분류·만료 처리에 포함됩니다.
 유료 AI 호출 뒤 결과를 확인하지 못한 실행은 UNKNOWN으로 남아 그 준비 건의 새 작업을 막고, `unknown-outcome-lock-ttl`(기본 24시간)이 지나면 실패로 내려 다시 받습니다.
 QUEUED 1시간이 지나면 만료, RUNNING 30분이 지나면 유료 AI 호출 전(재시작 등으로 끊긴 실행)은 실패, 호출 뒤는 결과 불명으로 정리합니다. 동기 `POST …/documents`는 같은 규칙을 거치는 기존 계약으로 남아 있지만 웹은 호출하지 않습니다.
 공식 첨부 SHA-256이 선택한 양식 버전과 일치할 때 원본의 문단·표 셀 또는 PDF 페이지를 분석합니다.

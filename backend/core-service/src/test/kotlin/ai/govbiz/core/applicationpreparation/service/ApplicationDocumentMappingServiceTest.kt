@@ -56,7 +56,9 @@ class ApplicationDocumentMappingServiceTest {
         `when`(snapshots.findByVersion(form.formVersionId)).thenReturn(form)
         `when`(client.configuration()).thenReturn(AiDocumentConfigurationPayload("application-document-mcp-v1", "b".repeat(64)))
 
-        assertSame(saved, service.ensure(form, bytes, format))
+        var aiStarts = 0
+        assertSame(saved, service.ensure(form, bytes, format, onAiStart = { aiStarts += 1 }))
+        assertEquals(0, aiStarts)
         verify(client, never()).map(any(AiDocumentMappingRequest::class.java) ?:
             AiDocumentMappingRequest(sourceBase64 = "", sourceSha256 = "", format = format, scope = "", fields = emptyList()))
         verifyNoInteractions(editor)
@@ -216,5 +218,39 @@ class ApplicationDocumentMappingServiceTest {
         assertEquals("APPLICATION_DOCUMENT_MAPPING_FAILED", error.code)
         verify(snapshots).findByVersion(form(false).formVersionId)
         verifyNoMoreInteractions(snapshots)
+    }
+
+    @Test fun newMappingRecordsAiStartImmediatelyBeforeDispatch() {
+        stub()
+        val calls = mutableListOf<String>()
+        val request = AiDocumentMappingRequest(sourceBase64 = "", sourceSha256 = "", format = "hwpx", scope = "", fields = emptyList())
+        `when`(client.map(any(AiDocumentMappingRequest::class.java) ?: request)).thenAnswer {
+            calls += "map"
+            AiDocumentMappingPayload("application-document-mcp-v1", "b".repeat(64), hash, "test-map", "test-engine",
+                listOf(ApplicationDocumentPlacement("company:name", "name-cell")), listOf("name-cell"),
+                mapOf("targets" to listOf(mapOf("targetId" to "name-cell")), "unmappedFieldIds" to listOf("company:consent")))
+        }
+
+        service.ensure(form(false), bytes, "hwpx", onAiStart = { calls += "record" })
+        assertEquals(listOf("record", "map"), calls)
+    }
+
+    @Test fun failedStartRecordPreventsTheMappingRequest() {
+        stub()
+        val failure = IllegalStateException("job is no longer active")
+        assertSame(failure, assertThrows(IllegalStateException::class.java) {
+            service.ensure(form(false), bytes, "hwpx", onAiStart = { throw failure })
+        })
+        verify(client, never()).map(any(AiDocumentMappingRequest::class.java) ?:
+            AiDocumentMappingRequest(sourceBase64 = "", sourceSha256 = "", format = "hwpx", scope = "", fields = emptyList()))
+    }
+
+    @Test fun sourceValidationFailureDoesNotRecordAiStart() {
+        var aiStarts = 0
+        assertThrows(ApplicationDocumentException::class.java) {
+            service.ensure(form(false), "changed source".toByteArray(), "hwpx", onAiStart = { aiStarts += 1 })
+        }
+        assertEquals(0, aiStarts)
+        verifyNoInteractions(client, snapshots, editor)
     }
 }

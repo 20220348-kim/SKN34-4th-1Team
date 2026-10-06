@@ -22,7 +22,7 @@ class ApplicationDocumentMappingService(
     private val snapshots: ApplicationFormSnapshotRepository,
 ) {
     fun ensure(form: ApplicationFormManifest, bytes: ByteArray, format: String,
-               captureChange: Boolean = false): ApplicationDocumentMapSnapshot {
+               captureChange: Boolean = false, onAiStart: () -> Unit = {}): ApplicationDocumentMapSnapshot {
         val sourceHash = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
         if (sourceHash != form.attachmentSha256) throw ApplicationDocumentException("APPLICATION_DOCUMENT_SOURCE_CHANGED", "공식 원본이 변경되었습니다.")
         val configuration = callMcp { mcp.configuration() }
@@ -39,11 +39,14 @@ class ApplicationDocumentMappingService(
             AiDocumentFieldReference("${section.key}:${field.key}", "${section.title} / ${field.label}", field.guidance, field.required, field.options)
         } }
         if (fields.size !in 1..200) throw ApplicationDocumentException("APPLICATION_DOCUMENT_LIMIT_EXCEEDED", "양식 문항 수가 분석 제한을 초과했습니다.")
-        val result = callMcp { mcp.map(AiDocumentMappingRequest(sourceBase64 = Base64.getEncoder().encodeToString(bytes), sourceSha256 = sourceHash,
+        val request = AiDocumentMappingRequest(sourceBase64 = Base64.getEncoder().encodeToString(bytes), sourceSha256 = sourceHash,
             format = format.lowercase(), scope = (form.formTitle + "\n" + form.sections.joinToString("\n") { "${it.title} | ${it.locator} | ${it.description}" }).take(30000),
             fields = fields, pdfTargets = if (format.equals("pdf", true)) inspection?.targets.orEmpty() else emptyList(),
             hwpTargets = if (format.equals("hwp", true)) inspection?.targets.orEmpty() else emptyList(),
-            pageImages = inspection?.pageImages.orEmpty(), pdfFields = inspection?.pdfFields.orEmpty())) }
+            pageImages = inspection?.pageImages.orEmpty(), pdfFields = inspection?.pdfFields.orEmpty())
+        // 캐시 재사용·원본 검사·요청 구성에는 호출 기록을 남기지 않고 실제 매핑 요청 직전에 기록한다.
+        onAiStart()
+        val result = callMcp { mcp.map(request) }
         val targetIds = (result.documentMap["targets"] as? List<*>)?.mapNotNull { (it as? Map<*, *>)?.get("targetId") as? String }?.toSet().orEmpty()
         val unmapped = (result.documentMap["unmappedFieldIds"] as? List<*>)?.map { it as? String
             ?: throw ApplicationDocumentException("APPLICATION_DOCUMENT_MAPPING_FAILED", "입력칸 분석 결과를 확인하지 못했습니다.") }.orEmpty()

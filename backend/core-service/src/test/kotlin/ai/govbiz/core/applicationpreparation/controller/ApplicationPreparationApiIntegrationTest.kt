@@ -72,6 +72,9 @@ import ai.govbiz.core.applicationpreparation.domain.ApplicationOnlineFormSource
 import ai.govbiz.core.applicationpreparation.domain.ApplicationOnlineFormSourceControl
 import ai.govbiz.core.applicationpreparation.domain.exception.ApplicationPreparationNotFoundException
 import ai.govbiz.core.applicationpreparation.domain.ApplicationFormManifest
+import ai.govbiz.core.applicationpreparation.domain.ApplicationFormSectionDefinition
+import ai.govbiz.core.applicationpreparation.domain.ApplicationFormFieldDefinition
+import ai.govbiz.core.applicationpreparation.domain.ApplicationServiceField
 import ai.govbiz.core.applicationpreparation.domain.ApplicationFormDiscoveryConfiguration
 import ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentPlacement
 import ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentSkippedFact
@@ -104,6 +107,7 @@ class ApplicationPreparationApiIntegrationTest {
     @Autowired private lateinit var migrationProposals: ApplicationDocumentMigrationProposalStore
     @Autowired private lateinit var redis: StringRedisTemplate
     @Autowired private lateinit var documentEditor: ApplicationDocumentEditor
+    @Autowired private lateinit var documentJobs: ai.govbiz.core.applicationpreparation.service.ApplicationDocumentGenerationJobService
     @Autowired private lateinit var mvc: MockMvc
     @Autowired private lateinit var accounts: AccountRepository
     @Autowired private lateinit var sessions: AccountSessionService
@@ -442,6 +446,38 @@ class ApplicationPreparationApiIntegrationTest {
             .andExpect(jsonPath("$.code").value("APPLICATION_PREPARATION_RUN_CONFLICT"))
         mvc.perform(get("$BASE/$id").cookie(owner)).andExpect(status().isOk())
         assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM application_document_generation_job WHERE preparation_id = ?", Int::class.java, id))
+    }
+
+    @Test
+    fun firstMappingFailurePersistsAiStartAndUnknownJobOutcome() {
+        val original = "official-form".toByteArray()
+        val hash = java.security.MessageDigest.getInstance("SHA-256").digest(original).joinToString("") { "%02x".format(it) }
+        val form = ApplicationFormManifest(1, "first-mapping-record-v1", "BIZINFO", DISCOVERY_PROGRAM_ID, "동적 지원사업", "신청 양식",
+            "https://www.bizinfo.go.kr/form", "사업계획서.hwpx", original.size.toLong(), hash, "SOURCE_DOCUMENT_EXTRACTED", false,
+            listOf(ApplicationServiceField.GENERAL),
+            listOf(ApplicationFormSectionDefinition("company", "기업", "table 1", "기업 입력",
+                listOf(ApplicationFormFieldDefinition("name", "기업명", "기업명 입력", true)))))
+        snapshotRepository.save(listOf(form), hash, "test", ApplicationFormDiscoveryConfiguration(
+            AI_APPLICATION_FORM_DISCOVERY_CONTRACT_VERSION, "test-model", DISCOVERY_PROMPT_VERSION))
+        activateStored(form.formVersionId)
+        val created = mvc.perform(post(BASE).cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN).contentType(MediaType.APPLICATION_JSON)
+            .content("""{"sourceCode":"BIZINFO","sourceProgramId":"$DISCOVERY_PROGRAM_ID","formVersionId":"${form.formVersionId}","serviceField":"GENERAL"}"""))
+            .andExpect(status().isCreated()).andReturn().response
+        val id = json.readTree(created.contentAsString).path("id").asLong()
+        mvc.perform(put("$BASE/$id/sections/company/inputs").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN).contentType(MediaType.APPLICATION_JSON)
+            .content("""{"expectedRevision":1,"facts":[{"fieldKey":"name","status":"PROVIDED","value":"가상 기업","sourceText":"기업명"}]}"""))
+            .andExpect(status().isOk())
+        val request = AiDocumentMappingRequest(sourceBase64 = "", sourceSha256 = "", format = "hwpx", scope = "", fields = emptyList())
+        `when`(documentMcp.map(any(AiDocumentMappingRequest::class.java) ?: request)).thenThrow(IllegalStateException("mapping interrupted"))
+
+        val job = documentJobs.submit(requireNotNull(accounts.findById(ownerId)), id, UUID.randomUUID().toString(), 2)
+        assertTrue(documentJobs.execute(job.id))
+        assertEquals(1, jdbc.queryForObject("SELECT ai_started_at IS NOT NULL FROM application_document_generation_job WHERE id = ?", Int::class.java, job.id))
+        mvc.perform(get("$BASE/$id/documents/jobs/${job.id}").cookie(owner))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.status").value("UNKNOWN"))
+            .andExpect(jsonPath("$.failureCode").value("RUN_OUTCOME_UNKNOWN"))
+        verify(documentMcp, times(1)).map(any(AiDocumentMappingRequest::class.java) ?: request)
     }
 
     @Test
