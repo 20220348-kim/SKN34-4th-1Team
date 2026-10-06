@@ -245,6 +245,15 @@ describe('application preparation HTTP boundary', () => {
     expect(options.body).toBeUndefined()
   })
 
+  it('preserves the server conflict when an active document job prevents deletion', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ code: 'APPLICATION_PREPARATION_RUN_CONFLICT' }, { status: 409 }))
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(new ApplicationPreparationRepositoryImpl().delete(7)).rejects.toMatchObject({
+      status: 409, code: 'APPLICATION_PREPARATION_RUN_CONFLICT',
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
   it('uses the exact URLs, methods, body, session cookie and no-store options', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(Response.json({ items: [form] }))

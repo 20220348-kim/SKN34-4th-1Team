@@ -191,6 +191,10 @@ Frontend는 `/app/application-preparations`의 목록(상태 칩 `?status=`, 필
 각 ViewModel → `BrowseSupportProgramsUseCase` → 기존 catalog HTTP API로 전달합니다. 검색 버튼은 1페이지부터 조회하고,
 페이지 이동은 마지막으로 적용한 조건을 유지합니다. 조건 해제·전체 초기화는 공고 선택을 유지한 채 다시 조회합니다.
 문서 생성은 웹이 `POST …/{id}/documents/jobs`로 작업을 접수(202)하고 `GET …/documents/jobs/{jobId}`를 2초마다 읽는 흐름입니다.
+신청 준비 삭제는 `ApplicationPreparationController → ApplicationPreparationService → ApplicationPreparationRepository → MyBatis → MySQL`을 거칩니다.
+삭제와 문서 생성 접수는 같은 준비 건 행을 `FOR UPDATE`로 잠그고 활성 작업도 잠금 조회로 확인합니다.
+QUEUED·RUNNING·UNKNOWN 작업이 있으면 DELETE는 409 `APPLICATION_PREPARATION_RUN_CONFLICT`를 반환해 준비 건과 작업 기록을 보존합니다.
+삭제가 먼저 커밋되면 대기하던 생성 접수는 소유한 준비 건을 찾지 못해 404로 종료합니다. 완료·실패 작업만 있으면 기존 cascade 삭제를 허용합니다.
 `ApplicationDocumentGenerationJobController → ApplicationDocumentGenerationJobService`가 계정별 작업(V45 `application_document_generation_job`, 준비 건당 진행 중 1개·계정당 3개)을 접수하고,
 같은 프로세스의 `ApplicationDocumentGenerationJobWorker`(2초 폴링, 인스턴스당 동시 2개)가 QUEUED 행을 UPDATE 한 번으로 claim해
 `ApplicationDocumentService.generateNow → 공식 첨부 Client → ApplicationDocumentMappingService → ApplicationDocumentEditor → AiApplicationPreparationClient → AI Service Router → Service → 위치 선택 Agent → OpenAI`를 실행합니다.

@@ -7,6 +7,8 @@ import ai.govbiz.core.applicationpreparation.domain.ApplicationProgressUpdateRes
 import ai.govbiz.core.applicationpreparation.domain.ApplicationServiceField
 import ai.govbiz.core.applicationpreparation.domain.NewApplicationPreparation
 import ai.govbiz.core.applicationpreparation.domain.StoredApplicationPreparation
+import ai.govbiz.core.applicationpreparation.domain.exception.ApplicationPreparationRunConflictException
+import ai.govbiz.core.applicationpreparation.repository.mapper.ApplicationDocumentGenerationJobMapper
 import ai.govbiz.core.applicationpreparation.repository.mapper.ApplicationPreparationDbRow
 import ai.govbiz.core.applicationpreparation.repository.mapper.ApplicationPreparationMapper
 import java.time.Clock
@@ -20,6 +22,7 @@ import org.springframework.transaction.annotation.Transactional
 @Repository
 class ApplicationPreparationRepository(
     private val mapper: ApplicationPreparationMapper,
+    private val documentJobs: ApplicationDocumentGenerationJobMapper,
     @param:Qualifier("seoulClock") private val clock: Clock,
 ) {
     @Transactional
@@ -70,6 +73,9 @@ class ApplicationPreparationRepository(
     @Transactional
     fun deleteOwned(ownerAccountId: Long, preparationId: Long): Boolean {
         require(ownerAccountId > 0 && preparationId > 0) { "ownerAccountId and preparationId must be positive" }
+        // 생성 접수와 같은 준비 건을 잠가 확인 이후 새 작업이 들어오는 것을 막는다.
+        mapper.findOwnedForUpdate(ownerAccountId, preparationId) ?: return false
+        if (documentJobs.findActive(preparationId) != null) throw ApplicationPreparationRunConflictException()
         return mapper.deleteOwned(ownerAccountId, preparationId) == 1
     }
 

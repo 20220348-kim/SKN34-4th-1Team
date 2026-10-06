@@ -8,6 +8,15 @@ jest.mock('./client', () => ({ ...jest.requireActual('./client'), getApiBaseUrl:
 jest.mock('../auth/preparationPending', () => ({ clearPendingPreparationIfUnchanged: jest.fn() }))
 const fetchApi = jest.fn()
 const response = (data: unknown, status = 200) => ({ ok: status >= 200 && status < 300, status, json: async () => data }) as Response
+
+test('keeps an active document job deletion conflict as an error without retrying', async () => {
+  fetchApi.mockResolvedValue(response({ code: 'APPLICATION_PREPARATION_RUN_CONFLICT' }, 409))
+  await expect(applicationPreparationUseCase('owned').delete(9)).rejects.toMatchObject({
+    status: 409, code: 'APPLICATION_PREPARATION_RUN_CONFLICT',
+  })
+  expect(fetchApi).toHaveBeenCalledTimes(1)
+  expect(fetchApi).toHaveBeenCalledWith(expect.stringMatching(/\/application-preparations\/9$/), expect.objectContaining({ method: 'DELETE' }))
+})
 beforeEach(() => { fetchApi.mockReset(); jest.mocked(createApiFetch).mockReturnValue(fetchApi); jest.mocked(clearPendingPreparationIfUnchanged).mockReset().mockResolvedValue(true) })
 test('uses authenticated mobile transport and rejects another preparation identity', async () => {
   fetchApi.mockResolvedValue(response(documentPreparation))
