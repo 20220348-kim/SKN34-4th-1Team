@@ -10,8 +10,8 @@ import type { LoginRequest } from '../auth/loginFlow'
 export type SearchMode = 'ai' | 'filter'
 const modes = [{ value: 'ai', label: 'AI 검색' }, { value: 'filter', label: '필터 검색' }] as const
 
-export function SearchScreen({ mode, onModeChange, onOpenProgram, onLogin }: {
-  mode: SearchMode; onModeChange(mode: SearchMode): void
+export function SearchScreen({ mode, headerHeight = 0, onModeChange, onOpenProgram, onLogin }: {
+  mode: SearchMode; headerHeight?: number; onModeChange(mode: SearchMode): void
   onOpenProgram(identity: SupportProgramIdentity): void; onLogin(request?: LoginRequest): void
 }) {
   const [visited, setVisited] = useState<Record<SearchMode, boolean>>({ ai: mode === 'ai', filter: mode === 'filter' })
@@ -21,14 +21,14 @@ export function SearchScreen({ mode, onModeChange, onOpenProgram, onLogin }: {
   // Mount a search only on first visit, then keep its input, results and scroll view alive.
   // Hidden search panels must not be reachable by touch or screen readers.
   return <View style={local.page}>
-    <View style={local.header} onLayout={(event) => setControlHeight(event.nativeEvent.layout.height)}><View style={local.control}>
+    <View testID="search-mode-header" style={local.header} onLayout={(event) => setControlHeight(event.nativeEvent.layout.height)}><View style={local.control}>
       <SegmentedControl label="검색 방식" options={modes} value={mode} onChange={onModeChange} />
     </View></View>
     {modes.map(({ value, label }) => (visited[value] || mode === value) && <View key={value}
       testID={`search-panel-${value}`} accessibilityLabel={label}
       accessibilityElementsHidden={mode !== value} importantForAccessibility={mode === value ? 'auto' : 'no-hide-descendants'}
       pointerEvents={mode === value ? 'auto' : 'none'} style={[local.panel, mode !== value && local.hidden]}>
-      {value === 'ai' ? <ChatScreen onOpenProgram={onOpenProgram} onLogin={onLogin} keyboardOffset={controlHeight} active={mode === 'ai'} />
+      {value === 'ai' ? <ChatScreen onOpenProgram={onOpenProgram} onLogin={onLogin} keyboardOffset={headerHeight + controlHeight} active={mode === 'ai'} />
         : <CatalogScreen onOpenProgram={onOpenProgram} keyboardOffset={controlHeight} />}
     </View>)}
   </View>
