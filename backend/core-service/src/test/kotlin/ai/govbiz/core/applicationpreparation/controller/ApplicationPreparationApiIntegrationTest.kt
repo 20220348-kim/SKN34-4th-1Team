@@ -1490,8 +1490,9 @@ class ApplicationPreparationApiIntegrationTest {
             .andExpect(jsonPath("$[0].remainingExampleCount").value(3))
     }
 
-    @Test
-    fun generatesPartialDraftWithoutSendingUnmappedAnswersAndPreservesItsRevisionSnapshot() {
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(booleans = [false, true])
+    fun generatesPartialDraftWithoutSendingUnmappedAnswersAndPreservesItsRevisionSnapshot(unmappedRequired: Boolean) {
         val original = requireNotNull(javaClass.getResourceAsStream("/combinationreview/general.hwpx")).readBytes()
         val target = documentEditor.inspect(original, "HWPX").targets.first { it.text.isBlank() }
         `when`(bizInfoAttachments.collect("BIZINFO", DISCOVERY_PROGRAM_ID)).thenReturn(SupportProgramAttachments("동적 지원사업", listOf(
@@ -1500,8 +1501,9 @@ class ApplicationPreparationApiIntegrationTest {
         `when`(documentParser.parse(original, "HWPX")).thenReturn(listOf(SupportProgramDocumentBlock(DISCOVERY_LOCATOR, DISCOVERY_BLOCK_TEXT)))
         val discovered = json.readValue(resource("discovery-contract-response.json"), AiApplicationFormDiscoveryPayload::class.java)
         val firstField = discovered.forms.single().sections.single().fields.single().copy(required = true)
+        // 넣을 칸을 찾지 못한 문항은 필수여도 생성을 막지 않고 미기입 답변으로 알린다.
         val consent = firstField.copy(fieldKey = "privacy-consent", label = "개인정보 동의", guidance = "동의 여부를 입력합니다.",
-            required = false, evidenceQuote = "지원 대상")
+            required = unmappedRequired, evidenceQuote = "지원 대상")
         `when`(ai.discover(any(AiApplicationFormDiscoveryRequest::class.java) ?: fallbackDiscoveryRequest())).thenReturn(discovered.copy(forms = listOf(
             discovered.forms.single().copy(sections = listOf(discovered.forms.single().sections.single().copy(fields = listOf(firstField, consent))))
         )))
@@ -1531,6 +1533,7 @@ class ApplicationPreparationApiIntegrationTest {
 
         val discoveryResponse = mvc.perform(post("$BASE/forms/discover").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN).contentType(MediaType.APPLICATION_JSON)
             .content("""{"sourceCode":"BIZINFO","sourceProgramId":"$DISCOVERY_PROGRAM_ID"}""")).andExpect(status().isOk()).andReturn().response
+        assertTrue(json.readTree(discoveryResponse.contentAsString).path("warnings").any { it.asString().contains("문항 1개는 넣을 칸을 찾지 못해 원본에서 직접 작성해야 해요") })
         val version = json.readTree(discoveryResponse.contentAsString).path("items").path(0).path("formVersionId").asString()
         activateStored(version)
         val created = mvc.perform(post(BASE).cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN).contentType(MediaType.APPLICATION_JSON)
@@ -1597,14 +1600,14 @@ class ApplicationPreparationApiIntegrationTest {
             .content("""{"expectedRevision":1,"facts":[{"fieldKey":"business-overview","status":"PROVIDED","value":"가상 답변","sourceText":"가상 답변"}]}"""))
             .andExpect(status().isOk())
         // Simulate a persisted required field whose cached FILE map has no binding.
-        // The same pipeline cache is reused, so generation must reject it independently.
+        // A missing required binding is a manual entry, so the result is the same as an optional one: nothing to write.
         if (requiredBindingMissing) jdbc.update(
             "UPDATE application_form_snapshot SET manifest_json = JSON_SET(manifest_json, '$.sections[0].fields[0].required', CAST('true' AS JSON)) WHERE form_version_id = ?",
             version,
         )
         mvc.perform(post("$BASE/$id/documents").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN).contentType(MediaType.APPLICATION_JSON)
             .content("""{"expectedRevision":2}""")).andExpect(status().isUnprocessableContent())
-            .andExpect(jsonPath("$.code").value(if (requiredBindingMissing) "APPLICATION_DOCUMENT_MAPPING_FAILED" else "APPLICATION_DOCUMENT_NO_WRITABLE_INPUT"))
+            .andExpect(jsonPath("$.code").value("APPLICATION_DOCUMENT_NO_WRITABLE_INPUT"))
         assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM application_document_file WHERE preparation_id = ?", Int::class.java, id))
         verify(documentMcp, org.mockito.Mockito.never()).generate(any(AiDocumentGenerationRequest::class.java) ?: AiDocumentGenerationRequest(
             sourceBase64 = "", sourceSha256 = "", format = "hwpx", answerRevision = 1, facts = emptyList(), scope = "test"))

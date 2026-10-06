@@ -114,10 +114,14 @@ class ApplicationDocumentMappingServiceTest {
             any(ApplicationDocumentMapSnapshot::class.java) ?: previous)
     }
 
-    @Test fun requiredUnmappedFieldCannotBePublished() {
+    @Test fun requiredUnmappedFieldIsLeftForManualEntryWhileOtherFieldsStayWritable() {
         stub()
-        val error=assertThrows(ApplicationDocumentException::class.java) { service.ensure(form(true),bytes,"hwpx") }
-        assertEquals("APPLICATION_DOCUMENT_MAPPING_FAILED",error.code)
+        val form=form(true)
+        val mapped=service.ensure(form,bytes,"hwpx")
+        val response=ApplicationFormResponse.from(form.copy(documentMapSnapshot=mapped))
+        assertTrue(response.sections.single().fields[0].documentWritable)
+        assertFalse(response.sections.single().fields[1].documentWritable)
+        assertEquals(listOf("company:name"),mapped.bindings.map { it.factId })
     }
 
     @Test fun changedPipelineRemapsAndReplacesSavedBindingsForTheSameSource() {

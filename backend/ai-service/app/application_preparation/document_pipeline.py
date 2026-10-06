@@ -12,7 +12,7 @@ from app.application_preparation.xlsx_adapter import XlsxDocumentAdapter
 from app.application_preparation.answer_slots import answer_slots
 from app.application_preparation.document import DocumentFact
 from app.application_preparation.document_contract import (
-    CONTRACT, DocumentAnalysisStage, DocumentError, DocumentMap, EditOperation, GenerateDocumentRequest, MapDocumentRequest, NativeTarget, PIPELINE_VERSION, PlanSelection, SkippedFact, digest, validate_plan, validate_mapping, mapping_label_key, mapping_label_matches,
+    CONTRACT, DocumentAnalysisStage, DocumentError, DocumentMap, EditOperation, GenerateDocumentRequest, MapDocumentRequest, NativeTarget, PIPELINE_VERSION, PlanSelection, SkippedFact, digest, validate_plan, validate_mapping, salvage_mapping, mapping_label_key, mapping_label_matches,
 )
 from app.application_preparation.hwpx_form_analysis import annotate_semantic_reading_order
 
@@ -371,6 +371,8 @@ async def map_document(request: MapDocumentRequest, agent) -> dict:
         source = base64.b64decode(request.sourceBase64, validate=True)
         path.write_bytes(source)
         document = await inspect_document(path, request)
+        # 여러 열에 나뉜 표 질문은 칸 하나에 넣을 수 없어 사람이 직접 작성할 문항으로 남기고, 나머지 문항만 매핑합니다.
+        compound_ids: list[str] = []
         if request.format == "hwpx":
             for field in request.fields:
                 key = mapping_label_key(field.label.partition(" / ")[2] or field.label)
@@ -385,7 +387,14 @@ async def map_document(request: MapDocumentRequest, agent) -> dict:
                     if len(columns) > 1 and key in {mapping_label_key(h) for h in headings} and not any(mapping_label_key(c) in key for c in columns):
                         logger.warning("hwpx_compound_question source_sha256=%s field_id=%s field_label=%s columns=%s",
                                        request.sourceSha256, field.id, field.label[:100], columns[:12])
-                        raise DocumentError("FORM_REANALYSIS_REQUIRED", reason="COMPOUND_TABLE_QUESTION")
+                        compound_ids.append(field.id)
+                        break
+        mapping_request = request
+        if compound_ids:
+            remaining = [field for field in request.fields if field.id not in compound_ids]
+            if not remaining:
+                raise DocumentError("FORM_REANALYSIS_REQUIRED", reason="COMPOUND_TABLE_QUESTION")
+            mapping_request = request.model_copy(update={"fields": remaining})
         labels = {mapping_label_key(field.label.partition(" / ")[2] or field.label) for field in request.fields}
         labels.add(mapping_label_key(request.scope.splitlines()[0]))
         # A tool may name an empty cell after nearby units/options ("명 (남, 여)").
@@ -404,10 +413,12 @@ async def map_document(request: MapDocumentRequest, agent) -> dict:
                     target.editable = False
                     target.unsupportedReason = "PRESERVED_FIELD_LABEL_OR_TITLE"
         selection, rejected_reason, schema_errors = None, None, None
+        attempts = []
+        salvage_reasons: dict[str, str] = {}
         for attempt in range(2):
             try:
-                selection = (await agent.map_document(request, document) if attempt == 0 else
-                             await agent.map_document(request, document, rejected_output=selection, rejection_reason=rejected_reason,
+                selection = (await agent.map_document(mapping_request, document) if attempt == 0 else
+                             await agent.map_document(mapping_request, document, rejected_output=selection, rejection_reason=rejected_reason,
                                                       schema_errors=schema_errors))
             except DocumentError:
                 raise
@@ -432,32 +443,49 @@ async def map_document(request: MapDocumentRequest, agent) -> dict:
             except Exception as error:
                 logger.warning("document_plan_failed mode=map type=%s", type(error).__name__)
                 raise DocumentError("PLAN_FAILED") from None
+            attempts.append(selection)
             try:
-                validate_mapping(request, document, selection)
+                validate_mapping(mapping_request, document, selection)
                 break
             except DocumentError as error:
                 targets_by_id = {target.targetId: target for target in document.targets}
                 bound_ids = {binding.factId for binding in selection.bindings}
                 logger.warning("document_mapping_rejected format=%s source_sha256=%s attempt=%d reason=%s unmappedRequired=%s unmapped=%s bindings=%s",
                                request.format, request.sourceSha256, attempt, error.reason,
-                               [field.id for field in request.fields if field.required and field.id not in bound_ids][:30],
+                               [field.id for field in mapping_request.fields if field.required and field.id not in bound_ids][:30],
                                list(selection.unmappedFieldIds)[:30],
                                [{"fieldId": binding.factId, "targetId": binding.targetId,
                                  "kind": targets_by_id[binding.targetId].kind if binding.targetId in targets_by_id else "UNKNOWN",
                                  "editable": targets_by_id[binding.targetId].editable if binding.targetId in targets_by_id else False,
                                  "inScope": binding.targetId in selection.scopeTargetIds}
                                 for binding in selection.bindings[:30]])
-                if attempt != 0 or error.reason not in {"MAPPING_BOX_COVERS_PRINTED_LABEL", "MAPPING_TARGET_OVERLAP", "MAPPING_BOX_OUT_OF_PAGE", "FIELD_LABEL_MISMATCH", "INVALID_UNMAPPED_FIELDS", "FIELD_COVERAGE_MISMATCH", "MAPPING_TARGET_NOT_EDITABLE_OR_OUT_OF_SCOPE"}:
+                if attempt == 0 and error.reason in {"MAPPING_BOX_COVERS_PRINTED_LABEL", "MAPPING_TARGET_OVERLAP", "MAPPING_BOX_OUT_OF_PAGE", "FIELD_LABEL_MISMATCH", "INVALID_UNMAPPED_FIELDS", "FIELD_COVERAGE_MISMATCH", "MAPPING_TARGET_NOT_EDITABLE_OR_OUT_OF_SCOPE"}:
+                    rejected_reason = error.reason
+                    logger.warning("document_mapping_correction reason=%s attempt=1", error.reason)
+                    continue
+                # 고쳐 달라고 해도 규칙을 어기면 어긴 문항만 사람이 직접 작성할 문항으로 빼고 나머지 칸은 살립니다.
+                # 두 시도 중 살린 칸이 더 많은 쪽(같으면 나중 시도)을 쓰고, 남는 칸이 없거나 계약이 깨졌으면 원래 실패를 냅니다.
+                salvaged = max((result for candidate in reversed(attempts)
+                                if (result := salvage_mapping(mapping_request, document, candidate)) is not None),
+                               key=lambda result: len(result[0].bindings), default=None)
+                if salvaged is None:
                     raise
-                rejected_reason = error.reason
-                logger.warning("document_mapping_correction reason=%s attempt=1", error.reason)
+                selection, salvage_reasons = salvaged
+                logger.warning("document_mapping_salvaged format=%s source_sha256=%s reason=%s kept=%d dropped=%s",
+                               request.format, request.sourceSha256, error.reason, len(selection.bindings),
+                               [{"fieldId": key, "reason": value} for key, value in list(salvage_reasons.items())[:30]])
+                break
         if path.read_bytes() != source:
             raise DocumentError("SOURCE_CHANGED")
-        document.unmappedFieldIds = selection.unmappedFieldIds
+        document.unmappedFieldIds = [*selection.unmappedFieldIds, *compound_ids]
+        document.unmappedReasons = {
+            **{field_id: salvage_reasons.get(field_id, "MODEL_UNMAPPED") for field_id in selection.unmappedFieldIds},
+            **{field_id: "COMPOUND_TABLE_QUESTION" for field_id in compound_ids},
+        }
         document.documentAnalysis.mapping = DocumentAnalysisStage(
-            status="REVIEW_REQUIRED" if selection.unmappedFieldIds else "PASSED",
+            status="REVIEW_REQUIRED" if document.unmappedFieldIds else "PASSED",
             targetCount=len(selection.scopeTargetIds), resultCount=len(selection.bindings),
-            reviewCount=len(selection.unmappedFieldIds), note="Validated native bindings",
+            reviewCount=len(document.unmappedFieldIds), note="Validated native bindings",
         )
         return {"contractVersion": CONTRACT, "pipelineVersion": PIPELINE_VERSION, "sourceSha256": request.sourceSha256,
                 "mapVersion": document.mapVersion, "engineVersion": document.engineVersion,

@@ -6,7 +6,6 @@ import ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentFile
 import ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentSkippedFact
 import ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentUnfilledAnswer
 import ai.govbiz.core.applicationpreparation.domain.ApplicationFormManifest
-import ai.govbiz.core.applicationpreparation.domain.ApplicationFieldMappingStatus
 import ai.govbiz.core.applicationpreparation.domain.fieldMappings
 import ai.govbiz.core.applicationpreparation.service.dto.ApplicationDocumentMigrationConfirmedResult
 import ai.govbiz.core.applicationpreparation.domain.exception.ApplicationPreparationNotFoundException
@@ -199,9 +198,8 @@ class ApplicationDocumentService(
                 "입력 위치가 변경됐습니다. 변경 내용을 확인한 뒤 적용할 수 있습니다. 저장된 답변과 파일은 유지됩니다.",
                 mappingMigration = notice)
         }
+        // 넣을 칸을 찾지 못한 답변은 필수 여부와 관계없이 미기입 목록으로 알리고, 칸이 확인된 답변만 기입한다.
         val fieldMappings = manifest.fieldMappings(binding)
-        if (fieldMappings.any { it.status == ApplicationFieldMappingStatus.REQUIRED_MAPPING_MISSING })
-            throw ApplicationDocumentException("APPLICATION_DOCUMENT_MAPPING_FAILED", "질문 항목의 실제 입력 위치를 확인하지 못했습니다.")
         val mappedFactIds = fieldMappings.filter { it.writable }.map { it.fieldId }.toSet()
         val writableFacts = facts.filter { it.id in mappedFactIds }
         val unfilledAnswers = facts.filterNot { it.id in mappedFactIds }.map {
