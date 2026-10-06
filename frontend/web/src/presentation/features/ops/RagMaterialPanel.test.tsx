@@ -598,3 +598,30 @@ it('오래된 합격 기준도 사유를 남겨 해제할 수 있다', async () 
   expect(fetcher.mock.calls[2][1].method).toBe('DELETE')
   expect(JSON.parse(fetcher.mock.calls[2][1].body)).toEqual({ baseline_version: 2, reason: '정책 변경' })
 })
+
+it.each([true, false])('현재 자료 검토 여부(%s)를 진행률에 반영하고 부적합 기록을 적합으로 합산하지 않는다', async (current) => {
+  const state = savedState()
+  state.case_reviews[0].is_current = current
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json(state)))
+  render(<RagMaterialPanel runId="run-a" onExpired={vi.fn()} />)
+  fireEvent.click(screen.getByRole('button', { name: '검토 자료 보기' }))
+  const progress = await screen.findByRole('progressbar', { name: 'RAG 사례 검토 진행률' })
+  expect(progress).toHaveProperty('value', current ? 1 : 0)
+  expect(screen.getByText(`사례 검토 저장 ${current ? 1 : 0} / 1건 · 검색·답변·인용 모두 적합 0건`)).toBeTruthy()
+  expect(screen.getByRole('link', { name: '품질·기준 확인' }).getAttribute('href')).toBe('#rag-quality-review')
+})
+
+it('RAG 다음 사례 이동은 작성 중 잠그고 입력 취소 뒤에만 이동한다', async () => {
+  const second = { ...material.cases[0], case_id: 'R02', question: '두 번째 질문' }
+  const fetcher = vi.fn().mockResolvedValue(json(reviewState({ ...material, cases: [...material.cases, second] })))
+  vi.stubGlobal('fetch', fetcher)
+  render(<RagMaterialPanel runId="run-a" onExpired={vi.fn()} />)
+  fireEvent.click(screen.getByRole('button', { name: '검토 자료 보기' }))
+  fireEvent.change(await screen.findByLabelText('검토 근거'), { target: { value: '원문 확인 중' } })
+  expect(screen.getByRole('button', { name: '다음 사례' })).toHaveProperty('disabled', true)
+  fireEvent.click(screen.getByRole('button', { name: '입력 취소' }))
+  fireEvent.click(screen.getByRole('button', { name: '다음 사례' }))
+  expect(screen.getByLabelText('검토 사례')).toHaveProperty('value', '1')
+  expect(screen.getByRole('button', { name: '다음 사례' })).toHaveProperty('disabled', true)
+  expect(fetcher).toHaveBeenCalledTimes(1)
+})

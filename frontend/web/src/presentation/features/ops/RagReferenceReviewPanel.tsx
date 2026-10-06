@@ -46,7 +46,7 @@ export function RagReferenceReviewPanel({ runId, state, disabled, onDirty, onBus
   }
   return <section className="space-y-3 rounded-xl border border-line p-4" aria-label="RAG 참조 자료 검토" aria-busy={busy}>
     <h3 className="font-semibold">원문·참조 자료 검토 · {current ? labels[current.decision] : '현재 승인 없음'}</h3>
-    <p className="text-sm">{reference.rubric.description} 아래 사례 선택으로 전체 자료를 확인하세요. 승인은 이 실행의 전체 대상에만 적용되며 다른 실행에 자동 적용되지 않습니다.</p>
+    <p className="text-sm">{reference.rubric.description} 사례 선택에서 전체 자료를 확인하세요. 승인은 이 실행의 전체 대상에만 적용되며 다른 실행에 자동 적용되지 않습니다.</p>
     <p className="text-sm">AI 작성 출처는 유지합니다. 참조 자료 승인은 후보 답변의 품질 합격이나 비교 기준 지정과 별개입니다.</p>
     <p className="text-sm break-words">검토 대상 {reference.case_ids.length}건: {reference.case_ids.join(', ')}</p>
     <form className="space-y-3" onSubmit={(event) => { event.preventDefault(); void save() }}>

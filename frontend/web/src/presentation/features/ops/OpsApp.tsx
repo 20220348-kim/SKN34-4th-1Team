@@ -209,9 +209,27 @@ function EvaluationList({ owner, datasets, liveEnabled: allLiveEnabled, ragLiveE
   return <>
     <WorkspacePageHeader title="평가 실행 관리" actions={<button className={styles.secondaryButton} onClick={() => setRefresh((value) => value + 1)}>목록 새로고침</button>} />
     <div className={styles.content}>
-      <BudgetOverview onExpired={onExpired} refreshKey={refresh} operatorId={owner} onBudgetChanged={() => setBudgetRevision((value) => value + 1)} />
-      <EvaluationSchedulesPanel owner={owner} datasets={datasets} onExpired={onExpired} refreshKey={refresh + budgetRevision} />
-      <section className={styles.card} aria-label="평가 실행">
+      <section aria-label="운영 화면 안내" className="grid gap-3 border-l-4 border-brand-primary bg-white p-5">
+        <h2 className="text-lg font-bold">지금 하려는 작업을 선택하세요</h2>
+        <p className="text-sm text-ink-muted">기존 답변을 검토하려면 실행 이력에서 평가를 선택하세요. 새 평가 접수와 운영 설정은 아래에서 관리합니다.</p>
+        <nav aria-label="평가 작업 바로가기" className="flex flex-wrap gap-2">
+          <a className={styles.primaryButton} href="#evaluation-history">답변 검토하기</a>
+          <a className={styles.secondaryButton} href="#new-evaluation">새 평가 준비</a>
+          <a className={styles.secondaryButton} href="#evaluation-budget">예산 관리</a>
+          <a className={styles.secondaryButton} href="#evaluation-schedules">정기 실행 관리</a>
+        </nav>
+      </section>
+      <section id="evaluation-history" className={`${styles.card} scroll-mt-28`} aria-label="평가 실행 이력">
+        <h2 className={styles.cardTitle}>실행 이력{data ? ` · ${data.count}건` : ''}</h2>
+        <p className={styles.cardDescription}>검토할 평가 자료 이름을 선택하세요. 실행 완료는 품질 합격과 다릅니다. 목록은 5초마다 갱신합니다.</p>
+        {error && <p role="alert" className="text-sm text-red-700">{error} 기존 결과가 있으면 마지막으로 받은 상태를 유지합니다.</p>}
+        {!data ? (!error && <p role="status">실행 이력을 불러오고 있습니다.</p>) : !data.results.length ? <p className="py-8 text-center text-sm text-ink-muted">아직 실행한 평가가 없습니다. 아래에서 평가 자료와 실행 방식을 선택해 시작하세요.</p> : <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm"><thead className="border-b border-line text-xs text-ink-muted"><tr>{['평가 자료 / 요청', '상태', '요청자', '요청 시각'].map((label) => <th key={label} className="px-3 py-3 whitespace-nowrap">{label}</th>)}</tr></thead>
+            <tbody>{data.results.map((run) => <tr key={run.id} className="border-b border-line last:border-0"><td className="min-w-64 px-3 py-4"><Link className="font-semibold text-brand-primary hover:underline" to={`${listPath}/${run.id}`}>{run.dataset_label}<span className="mt-1 block font-mono text-xs font-normal text-ink-muted">{run.id}</span></Link><span className="text-xs text-ink-muted">{modeLabel(run)}</span></td><td className="px-3 py-4"><Status run={run} /><p className="mt-2 whitespace-nowrap text-xs text-ink-muted">마지막 확인: {run.synced_at ? date(run.synced_at) : '아직 확인되지 않음'}</p>{run.status_stale && <p className="mt-1 text-xs text-amber-800">상태 확인 지연 · 현재 상태를 확정할 수 없습니다.</p>}{run.error_message && <p className="mt-2 max-w-56 text-xs text-red-700">{run.error_message}</p>}</td><td className="px-3 py-4 whitespace-nowrap">{run.requested_by}</td><td className="px-3 py-4 whitespace-nowrap">{date(run.created_at)}</td></tr>)}</tbody>
+          </table></div>}
+        {data && <nav aria-label="평가 이력 페이지" className="mt-3 flex items-center justify-end gap-3 text-sm"><button className={styles.secondaryButton} disabled={!data.previous} onClick={() => setSearch({ page: String(page - 1) })}>이전</button><span>{page} / {Math.max(1, Math.ceil(data.count / 25))}</span><button className={styles.secondaryButton} disabled={!data.next} onClick={() => setSearch({ page: String(page + 1) })}>다음</button></nav>}
+      </section>
+      <section id="new-evaluation" className={`${styles.card} scroll-mt-28`} aria-label="평가 실행">
         <p className={styles.sectionEyebrow}>LLMOps 평가</p><h2 className={styles.cardTitle}>지원 대상 근거 답변 평가</h2>
         <p className="text-sm leading-6 text-ink-muted">{ragLive ? ragLiveNotice : mode === 'live' ? liveNotice : notice}</p>
         {selected && <p className="text-sm" role="status">평가 범위: {scopeLabel(selected.evaluation_scope)}. {ragLive ? ragLiveNotice : scopeNotice(selected.evaluation_scope)}</p>}
@@ -237,16 +255,8 @@ function EvaluationList({ owner, datasets, liveEnabled: allLiveEnabled, ragLiveE
         {submitError && <p role="alert" className="text-sm text-red-700">{submitError}</p>}
         {rejected && <button className={styles.secondaryButton} onClick={reselect}>접수되지 않은 조건 다시 선택</button>}
       </section>
-      <section className={styles.card} aria-label="평가 실행 이력">
-        <h2 className={styles.cardTitle}>실행 이력{data ? ` · ${data.count}건` : ''}</h2>
-        <p className={styles.cardDescription}>서버가 실행 상태를 확인하고 목록은 5초마다 갱신합니다. 마지막 확인 시각과 연결 오류를 함께 확인하세요.</p>
-        {error && <p role="alert" className="text-sm text-red-700">{error} 기존 결과가 있으면 마지막으로 받은 상태를 유지합니다.</p>}
-        {!data ? (!error && <p role="status">실행 이력을 불러오고 있습니다.</p>) : !data.results.length ? <p className="py-8 text-center text-sm text-ink-muted">아직 실행한 평가가 없습니다.</p> : <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm"><thead className="border-b border-line text-xs text-ink-muted"><tr>{['평가 자료 / 요청', '상태', '요청자', '요청 시각'].map((label) => <th key={label} className="px-3 py-3 whitespace-nowrap">{label}</th>)}</tr></thead>
-            <tbody>{data.results.map((run) => <tr key={run.id} className="border-b border-line last:border-0"><td className="min-w-64 px-3 py-4"><Link className="font-semibold text-brand-primary hover:underline" to={`${listPath}/${run.id}`}>{run.dataset_label}<span className="mt-1 block font-mono text-xs font-normal text-ink-muted">{run.id}</span></Link><span className="text-xs text-ink-muted">{modeLabel(run)}</span></td><td className="px-3 py-4"><Status run={run} /><p className="mt-2 whitespace-nowrap text-xs text-ink-muted">마지막 확인: {run.synced_at ? date(run.synced_at) : '아직 확인되지 않음'}</p>{run.status_stale && <p className="mt-1 text-xs text-amber-800">상태 확인 지연 · 현재 상태를 확정할 수 없습니다.</p>}{run.error_message && <p className="mt-2 max-w-56 text-xs text-red-700">{run.error_message}</p>}</td><td className="px-3 py-4">{run.requested_by}</td><td className="px-3 py-4 whitespace-nowrap">{date(run.created_at)}</td></tr>)}</tbody>
-          </table></div>}
-        {data && <nav aria-label="평가 이력 페이지" className="mt-3 flex items-center justify-end gap-3 text-sm"><button className={styles.secondaryButton} disabled={!data.previous} onClick={() => setSearch({ page: String(page - 1) })}>이전</button><span>{page} / {Math.max(1, Math.ceil(data.count / 25))}</span><button className={styles.secondaryButton} disabled={!data.next} onClick={() => setSearch({ page: String(page + 1) })}>다음</button></nav>}
-      </section>
+      <BudgetOverview onExpired={onExpired} refreshKey={refresh} operatorId={owner} onBudgetChanged={() => setBudgetRevision((value) => value + 1)} />
+      <div id="evaluation-schedules" className="scroll-mt-28"><EvaluationSchedulesPanel owner={owner} datasets={datasets} onExpired={onExpired} refreshKey={refresh + budgetRevision} /></div>
     </div>
   </>
 }
@@ -338,6 +348,9 @@ function EvaluationDetail({ onExpired, onReviewChanged }: { onExpired: () => voi
         {run.cancel_requested_at && <p role="status" className="text-sm text-ink-muted">취소 요청: {run.cancel_requested_by} · {date(run.cancel_requested_at)}{run.status === 'CANCELLING' ? ' · 실행 종료를 확인하고 있습니다.' : ''}</p>}
         {run.can_retry && <button className={`${styles.primaryButton} self-start`} disabled={busy} onClick={() => void retry()}>{busy ? '접수 확인 중…' : '같은 요청으로 접수 재확인'}</button>}
         <section className={styles.card}><h2 className={styles.cardTitle}>{run.dataset_label}</h2><p className="text-sm leading-6 text-ink-muted">{run.execution_mode === 'recovery' ? recoveryNotice : run.execution_mode === 'live' ? (run.evaluation_scope === 'source-chunks-retrieval-answer' ? ragLiveNotice : liveNotice) : notice}</p>
+          <p className="text-sm">{modeLabel(run)} · {scopeLabel(run.evaluation_scope)}</p>
+          {run.status === 'COMPLETED' && <p className="text-sm font-semibold text-brand-primary">평가 실행이 끝났습니다. 아래에서 답변과 근거를 검토하세요.</p>}
+          <details><summary className="cursor-pointer text-sm font-semibold">실행 정보·버전 자세히 보기</summary>
           <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-5 gap-y-3 text-sm">{[
             ['실행 방식', modeLabel(run)], ['평가 범위', scopeLabel(run.evaluation_scope)], ['요청 ID', run.id],
             ['접수 명세 ID', run.execution_spec_sha256 ?? '기존 기록 · 실행 명세 없음'],
@@ -350,7 +363,10 @@ function EvaluationDetail({ onExpired, onReviewChanged }: { onExpired: () => voi
             ...(run.live_config ? [['승인 예산', `${run.live_config.model} · 최대 ${run.live_config.max_model_calls}회 · 출력 최대 ${run.live_config.max_output_tokens}토큰/호출 · 입력 최대 ${run.live_config.max_input_tokens ?? '기록 없음'}토큰/호출`]] : []), ['기준 실행', run.reference_label], ['후보 실행', run.candidate_label], ['요청자', run.requested_by], ['요청 시각', date(run.created_at)],
             ['시작 / 종료', `${date(run.started_at)} / ${date(run.finished_at)}`], ['마지막 상태 확인', date(run.synced_at)], ['평가 결과 ID', run.evaluation_run_id ?? '결과 대기'],
           ].map(([label, value]) => <div key={label} className="contents"><dt className="text-ink-muted">{label}</dt><dd className="break-all">{value}</dd></div>)}</dl>
+          </details>
         </section>
+        {run.status === 'COMPLETED' && run.evaluation_scope === 'fixed-answer-context-only' && <EvaluationReviewPanel runId={run.id} onExpired={onExpired} onChanged={onReviewChanged} />}
+        {run.status === 'COMPLETED' && run.evaluation_scope === 'source-chunks-retrieval-answer' && <RagMaterialPanel runId={run.id} onExpired={onExpired} onReviewChanged={onReviewChanged} />}
         {run.source_run_id && <Link className="text-sm font-semibold text-brand-primary underline" to={`${listPath}/${run.source_run_id}`}>원본 실행과 실패 기록 보기</Link>}
         <RunBudgetPanel runId={run.id} onExpired={onExpired} refreshKey={refresh} />
         {run.postprocessing && <section className={styles.card} aria-label="후처리 복구">
@@ -367,8 +383,6 @@ function EvaluationDetail({ onExpired, onReviewChanged }: { onExpired: () => voi
           ['인용 재현율', run.summary.referenceCitationRecall?.toFixed(2) ?? '미측정'], ['모델 API 호출', run.model_api_calls === null ? '미확인' : `${run.model_api_calls}회`],
         ].map(([label, value]) => <div className="rounded-xl bg-[#f3f7f5] p-4" key={label}><p className="text-xs text-ink-muted">{label}</p><strong className="mt-3 block text-2xl">{value}</strong></div>)}</div><p className="text-xs leading-5 text-ink-muted">점수 범위는 0–1입니다. AI 작성 참조 자료에 대한 평가이며 의미 충실도는 미측정입니다. 완료 상태는 품질 합격을 뜻하지 않습니다.</p></section>}
         {run.status === 'COMPLETED' && (run.comparison ? <ComparisonResult comparison={run.comparison} /> : <p className="text-sm text-ink-muted">이전 실행에는 비교 상세가 없습니다. 새 평가를 실행하면 기준·후보 차이를 확인할 수 있습니다.</p>)}
-        {run.status === 'COMPLETED' && run.evaluation_scope === 'fixed-answer-context-only' && <EvaluationReviewPanel runId={run.id} onExpired={onExpired} onChanged={onReviewChanged} />}
-        {run.status === 'COMPLETED' && run.evaluation_scope === 'source-chunks-retrieval-answer' && <RagMaterialPanel runId={run.id} onExpired={onExpired} onReviewChanged={onReviewChanged} />}
         <section className={styles.card}><h2 className={styles.cardTitle}>상세 기록과 보고서</h2><div className="flex flex-wrap gap-3">
           {run.report_url && <a className={styles.primaryButton} href={run.report_url} target="_blank" rel="noopener noreferrer">Evidently 보고서</a>}
           {run.trace_links.map((trace) => <a key={trace.case_id} className={styles.secondaryButton} href={trace.url} target="_blank" rel="noopener noreferrer">Langfuse {trace.case_id} 추적·점수</a>)}
