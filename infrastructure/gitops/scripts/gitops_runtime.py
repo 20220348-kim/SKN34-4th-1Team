@@ -3,6 +3,8 @@
 import hashlib
 import json
 import re
+import subprocess
+import tempfile
 from pathlib import Path
 
 import connected_runtime
@@ -11,7 +13,117 @@ import ops_runtime
 import yaml
 
 
-SCOPE = "local_overrides_and_service_environments"
+SCOPE = "local_overrides_and_service_runtime"
+
+
+def chart_inputs():
+    chart = cluster.ROOT / "charts/govbiz-service"
+    return {
+        path.relative_to(chart).as_posix(): path.read_bytes()
+        for path in sorted(chart.rglob("*"))
+        if path.is_file()
+    }
+
+
+def rendered_defaults(helm, references, chart):
+    """Render the captured local inputs, without credentials or cluster access."""
+    deployments = {}
+    with tempfile.TemporaryDirectory(prefix="govbiz-runtime-review-") as directory:
+        root = Path(directory)
+        for name, payload in chart.items():
+            path = root / "chart" / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(payload)
+        for service, (payload, rows) in references.items():
+            values = root / f"{service}.yaml"
+            values.write_bytes(payload)
+            result = subprocess.run(
+                [
+                    helm,
+                    "template",
+                    service,
+                    str(root / "chart"),
+                    "-n",
+                    cluster.NAMESPACE,
+                    "-f",
+                    str(values),
+                ],
+                capture_output=True,
+                check=True,
+                timeout=30,
+            )
+            candidates = [
+                item
+                for item in yaml.safe_load_all(result.stdout)
+                if item and item.get("kind") == "Deployment"
+            ]
+            if len(candidates) != 1 or candidates[0]["metadata"]["name"] != service:
+                raise ValueError("Unexpected local reference Deployment")
+            deployment = candidates[0]
+            containers = deployment["spec"]["template"]["spec"]["containers"]
+            if [item["name"] for item in containers] != [service] or (
+                environment_rows(containers[0]["env"]) != environment_rows(rows)
+            ):
+                raise ValueError("Local reference environment differs from Helm")
+            deployments[service] = deployment
+    return deployments
+
+
+def named_entries(rows):
+    """Compare named lists without order differences or duplicate overwrites."""
+    result = {}
+    for row in rows:
+        name = row.get("name")
+        if not isinstance(name, str) or name in result:
+            raise ValueError("Ambiguous named runtime entries")
+        result[name] = row
+    return result
+
+
+def execution_review(actual, expected):
+    """Report fixed field names only: commands and storage paths may be sensitive."""
+    changed = []
+    actual_spec, expected_spec = actual["spec"], expected["spec"]
+    for field in ("replicas", "strategy"):
+        if actual_spec.get(field) != expected_spec.get(field):
+            changed.append(field)
+    actual_pod = actual_spec["template"]["spec"]
+    expected_pod = expected_spec["template"]["spec"]
+    if named_entries(actual_pod.get("volumes", [])) != named_entries(
+        expected_pod.get("volumes", [])
+    ):
+        changed.append("volumes")
+    if actual_pod.get("initContainers", []) != expected_pod.get("initContainers", []):
+        changed.append("initContainers")
+    actual_containers = named_entries(actual_pod["containers"])
+    for container in expected_pod["containers"]:
+        name = container["name"]
+        if name not in actual_containers:
+            # Missing/extra containers already have their own blocking report.
+            continue
+        observed = actual_containers[name]
+        for field in ("command", "args", "volumeMounts", "volumeDevices"):
+            actual_value, expected_value = (
+                observed.get(field, []),
+                container.get(field, []),
+            )
+            if field == "volumeDevices":
+                actual_value, expected_value = (
+                    named_entries(actual_value),
+                    named_entries(expected_value),
+                )
+            elif field == "volumeMounts":
+                # A single volume can be mounted at multiple paths. Preserve all
+                # entries, including duplicates, but ignore order for comparison.
+                actual_value = sorted(
+                    json.dumps(row, sort_keys=True) for row in actual_value
+                )
+                expected_value = sorted(
+                    json.dumps(row, sort_keys=True) for row in expected_value
+                )
+            if actual_value != expected_value:
+                changed.append(f"containers.{name}.{field}")
+    return {"changedFields": sorted(changed)}
 
 
 def portfolio_defaults(service):
@@ -114,7 +226,7 @@ def preservation_review(inputs, deployments, references):
     return {
         # Retain the original Ops fields for report consumers.
         **reviews.pop("ops-service"),
-        "scope": "service_environments_and_saved_integrations",
+        "scope": "service_configuration_and_saved_integrations",
         "serviceReviews": reviews,
         "integrationFeatures": sorted(profile.get("features", [])),
         "modelSettingNames": sorted(profile.get("modelKeys", [])),
@@ -141,7 +253,7 @@ def local_inputs(state, settings):
     }
 
 
-def preflight(state, fork):
+def preflight(state, fork, helm="helm"):
     """Detect local connection conflicts, not migration or deployment readiness."""
     state = Path(state)
     settings = cluster.load_settings(state)
@@ -168,8 +280,23 @@ def preflight(state, fork):
 
     deployments = {service: read_deployment(service) for service in cluster.SERVICES}
     references = {service: portfolio_defaults(service) for service in cluster.SERVICES}
+    chart = chart_inputs()
+    expected = rendered_defaults(helm, references, chart)
     containers = deployments["ops-service"]["spec"]["template"]["spec"]["containers"]
     preservation = preservation_review(inputs, deployments, references)
+    preservation["runtimeReviews"] = {
+        service: execution_review(deployments[service], expected[service])
+        for service in cluster.SERVICES
+    }
+    preservation["chartSha256"] = hashlib.sha256(
+        json.dumps(
+            {
+                name: hashlib.sha256(payload).hexdigest()
+                for name, payload in chart.items()
+            },
+            sort_keys=True,
+        ).encode()
+    ).hexdigest()
     blockers = []
     if inputs["integration"] is not None:
         blockers.append("local_integration_profile")
@@ -200,6 +327,10 @@ def preflight(state, fork):
         blockers.append("service_environment_differs")
     if any(review["uninspectedEnvFrom"] for review in service_reviews):
         blockers.append("service_env_from_uninspected")
+    if any(
+        review["changedFields"] for review in preservation["runtimeReviews"].values()
+    ):
+        blockers.append("service_execution_or_storage_differs")
     # A result describes only a stable observation, never a reusable approval.
     for service, deployment in deployments.items():
         current = read_deployment(service)
@@ -215,6 +346,7 @@ def preflight(state, fork):
     if (
         cluster.load_settings(state) != settings
         or local_inputs(state, settings) != inputs
+        or chart_inputs() != chart
     ):
         raise ValueError("Local runtime changed during preflight")
     cluster.require_dev(state, settings)
