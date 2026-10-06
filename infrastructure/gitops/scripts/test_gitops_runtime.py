@@ -1,0 +1,286 @@
+"""Local Argo planning conflicts without credentials, Docker or cluster mutations."""
+
+import copy
+import io
+import json
+import subprocess
+import tempfile
+import unittest
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
+from pathlib import Path
+from unittest.mock import patch
+
+import deployment
+import gitops_runtime as runtime
+from repository import Fork
+
+
+FORK = Fork("alice/project", "main")
+
+
+class RuntimePreflightTests(unittest.TestCase):
+    def setUp(self):
+        stack = self.enterContext(ExitStack())
+        self.state = Path(stack.enter_context(tempfile.TemporaryDirectory()))
+        self.settings = runtime.cluster.initial_settings(FORK)
+        self.deployment = {
+            "metadata": {
+                "name": "ops-service",
+                "namespace": "govbiz-msa",
+                "uid": "ops-uid",
+                "resourceVersion": "1",
+            },
+            "spec": {
+                "template": {
+                    "spec": {
+                        "containers": [
+                            {
+                                "name": "ops-service",
+                                "env": [
+                                    {
+                                        "name": "PREFECT_API_URL",
+                                        "value": "http://disabled-prefect.invalid/api",
+                                    }
+                                ],
+                            }
+                        ]
+                    }
+                }
+            },
+        }
+        self.load = stack.enter_context(
+            patch.object(runtime.cluster, "load_settings", return_value=self.settings)
+        )
+        self.owner = stack.enter_context(patch.object(runtime.cluster, "require_dev"))
+        stack.enter_context(
+            patch.object(
+                runtime.cluster,
+                "commands",
+                return_value=(["kubectl"], ["kubectl", "-n", "govbiz-msa"], []),
+            )
+        )
+        self.command = stack.enter_context(
+            patch.object(runtime.cluster, "run", side_effect=self.read)
+        )
+
+    def read(self, command, *, capture, timeout):
+        self.owner.assert_called()
+        self.assertEqual(
+            command,
+            [
+                "kubectl",
+                "-n",
+                "govbiz-msa",
+                "get",
+                "deployment",
+                "ops-service",
+                "-o",
+                "json",
+            ],
+        )
+        self.assertTrue(capture)
+        self.assertEqual(timeout, 15)
+        return json.dumps(self.deployment)
+
+    def test_bootstrap_only_observation_is_not_deployment_approval(self):
+        report = runtime.preflight(self.state, FORK)
+        self.assertEqual(report["status"], "NO_LOCAL_OVERRIDES")
+        self.assertEqual(report["blockers"], [])
+        for name in ("servicesChanged", "databaseChanged", "deploymentAuthorized"):
+            self.assertFalse(report[name])
+        self.assertEqual(self.command.call_count, 2)
+        self.assertEqual(self.owner.call_count, 2)
+        self.assertEqual(list(self.state.iterdir()), [])
+
+    def test_connected_ops_is_detected_without_saved_activation_records(self):
+        container = self.deployment["spec"]["template"]["spec"]["containers"][0]
+        for env in (
+            [],
+            [{"name": "PREFECT_API_URL", "value": "http://private/?token=PRIVATE"}],
+            [
+                {
+                    "name": "PREFECT_API_URL",
+                    "valueFrom": {"secretKeyRef": {"name": "private", "key": "url"}},
+                }
+            ],
+        ):
+            with self.subTest(env=env):
+                container["env"] = env
+                report = runtime.preflight(self.state, FORK)
+                self.assertEqual(report["blockers"], ["connected_or_unverified_ops"])
+                self.assertNotIn("PRIVATE", json.dumps(report))
+                self.assertNotIn("private", json.dumps(report))
+
+    def test_sync_container_and_saved_bridge_are_blocked(self):
+        containers = self.deployment["spec"]["template"]["spec"]["containers"]
+        containers.append(copy.deepcopy(containers[0]) | {"name": "ops-sync"})
+        record = runtime.ops_runtime.connection(self.settings, "personal-compose")
+        for name in (runtime.ops_runtime.BRIDGE, runtime.ops_runtime.PROFILE):
+            path = self.state / name
+            path.write_text(json.dumps(record))
+            report = runtime.preflight(self.state, FORK)
+            self.assertEqual(report["status"], "BLOCKED")
+            self.assertEqual(
+                report["blockers"],
+                ["connected_or_unverified_ops", "ops_container_layout_differs"],
+            )
+            self.assertEqual(json.loads(path.read_text()), record)
+            path.unlink()
+
+    def test_local_profiles_and_development_images_must_not_be_discarded(self):
+        profile = {key: self.settings[key] for key in ("repository", "stateId")}
+        profile.update(
+            schemaVersion=1,
+            features=["ai"],
+            origin="http://localhost:5173",
+            revision="a" * 32,
+            modelKeys=[],
+        )
+        (self.state / "integrations.json").write_text(json.dumps(profile))
+        (self.state / "dev-images.json").write_text("PRIVATE image configuration")
+        report = runtime.preflight(self.state, FORK)
+        self.assertEqual(
+            report["blockers"],
+            ["local_integration_profile", "local_development_images"],
+        )
+        self.assertNotIn("PRIVATE", json.dumps(report))
+
+    def test_foreign_state_or_unowned_cluster_stops_before_reading_deployment(self):
+        self.load.return_value = self.settings | {"repository": "bob/project"}
+        with self.assertRaisesRegex(ValueError, "another repository"):
+            runtime.preflight(self.state, FORK)
+        self.owner.assert_not_called()
+        self.command.assert_not_called()
+        self.load.return_value = self.settings
+        self.owner.side_effect = ValueError("wrong cluster owner")
+        with self.assertRaisesRegex(ValueError, "wrong cluster owner"):
+            runtime.preflight(self.state, FORK)
+        self.command.assert_not_called()
+
+    def test_foreign_connection_record_is_not_treated_as_bootstrap(self):
+        record = runtime.ops_runtime.connection(self.settings, "other-compose") | {
+            "stateId": "b" * 32
+        }
+        (self.state / runtime.ops_runtime.BRIDGE).write_text(json.dumps(record))
+        with self.assertRaises(ValueError):
+            runtime.preflight(self.state, FORK)
+        self.command.assert_not_called()
+
+    def test_deployment_or_local_state_changes_cannot_pass(self):
+        changed = copy.deepcopy(self.deployment)
+        changed["metadata"]["resourceVersion"] = "2"
+        self.command.side_effect = [json.dumps(self.deployment), json.dumps(changed)]
+        with self.assertRaisesRegex(ValueError, "changed during preflight"):
+            runtime.preflight(self.state, FORK)
+        self.command.side_effect = self.read
+        self.load.side_effect = [self.settings, self.settings | {"stateId": "b" * 32}]
+        with self.assertRaisesRegex(ValueError, "changed during preflight"):
+            runtime.preflight(self.state, FORK)
+        self.load.side_effect = None
+        with (
+            patch.object(
+                runtime,
+                "local_inputs",
+                side_effect=[
+                    {
+                        "integration": None,
+                        "development_images": False,
+                        "connections": {},
+                    },
+                    {
+                        "integration": None,
+                        "development_images": True,
+                        "connections": {},
+                    },
+                ],
+            ),
+            self.assertRaisesRegex(ValueError, "changed during preflight"),
+        ):
+            runtime.preflight(self.state, FORK)
+
+    def test_missing_or_deleting_deployment_is_not_a_clean_runtime(self):
+        for change in (
+            {"uid": None},
+            {"deletionTimestamp": "now"},
+            {"namespace": "other"},
+        ):
+            original = copy.deepcopy(self.deployment)
+            self.deployment["metadata"].update(change)
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                runtime.preflight(self.state, FORK)
+            self.deployment = original
+
+
+class RuntimePlanCliTests(unittest.TestCase):
+    def invoke(self, preflight):
+        output = io.StringIO()
+        with (
+            patch(
+                "sys.argv",
+                ["deployment.py", "plan-gitops", "--state-dir", "fixture-state"],
+            ),
+            patch.object(deployment, "from_origin", return_value=FORK),
+            patch.object(runtime, "preflight", **preflight) as check,
+            patch.object(
+                deployment,
+                "verified_release",
+                side_effect=ValueError("No complete verified publication"),
+            ) as publication,
+            redirect_stdout(output),
+        ):
+            self.assertEqual(deployment.main(), 1)
+        check.assert_called_once_with(Path("fixture-state"), FORK)
+        return json.loads(output.getvalue()), output.getvalue(), publication
+
+    def test_local_conflicts_block_before_publication_queries(self):
+        report, _, publication = self.invoke(
+            {
+                "return_value": {
+                    "status": "BLOCKED",
+                    "blockers": ["connected_or_unverified_ops"],
+                }
+            }
+        )
+        publication.assert_not_called()
+        self.assertEqual(report["reason"], "runtime_transition_required")
+        self.assertNotIn("resources", report)
+        self.assertFalse(report["clusterVerified"])
+
+    def test_local_check_does_not_replace_publication_checks(self):
+        report, _, publication = self.invoke(
+            {"return_value": {"status": "NO_LOCAL_OVERRIDES"}}
+        )
+        publication.assert_called_once()
+        self.assertTrue(publication.call_args.kwargs["verify_public_manifests"])
+        self.assertEqual(report["reason"], "publication_not_available")
+        self.assertNotIn("resources", report)
+
+    def test_unknown_runtime_does_not_leak_environment_or_subprocess_output(self):
+        for error in (
+            ValueError("PRIVATE config"),
+            subprocess.TimeoutExpired("PRIVATE command", 15, output="PRIVATE bytes"),
+        ):
+            report, output, publication = self.invoke({"side_effect": error})
+            publication.assert_not_called()
+            self.assertEqual(report["runtimePreflight"]["status"], "UNKNOWN")
+            self.assertEqual(report["reason"], "verification_failed")
+            self.assertNotIn("PRIVATE", output)
+            self.assertNotIn("resources", report)
+
+    def test_verify_public_rejects_state_option_without_cluster_reads(self):
+        with (
+            patch(
+                "sys.argv",
+                ["deployment.py", "verify-public", "--state-dir", "fixture-state"],
+            ),
+            patch.object(runtime, "preflight") as check,
+            redirect_stderr(io.StringIO()),
+            self.assertRaises(SystemExit) as stopped,
+        ):
+            deployment.main()
+        self.assertEqual(stopped.exception.code, 2)
+        check.assert_not_called()
+
+
+if __name__ == "__main__":
+    unittest.main()
