@@ -1,12 +1,14 @@
-"""Prepare private, pinned Argo inputs for an existing runtime; never apply them."""
+"""Prepare or revalidate private Argo inputs for an existing runtime; never apply."""
 
 import argparse
 import json
+import math
 import os
 import re
 import stat
 import subprocess
 import tempfile
+from contextlib import ExitStack
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -33,6 +35,7 @@ PRESERVABLE_BLOCKERS = {
     "ops_environment_differs",
     "service_environment_differs",
 }
+MAX_PLAN_BYTES = 16 * 1024 * 1024
 
 
 def build_plan(fork, publication, observed, values, helm="helm"):
@@ -162,8 +165,8 @@ def build_plan(fork, publication, observed, values, helm="helm"):
     return plan
 
 
-def output_path(state, name):
-    """Use a new private child of owned state, never a tracked deployment file."""
+def plan_directory(state, name):
+    """Resolve a named child of owned local state, never an arbitrary input path."""
     if not re.fullmatch(r"gitops-transition-[a-z0-9][a-z0-9-]{0,63}", name):
         raise ValueError(
             "Use a gitops-transition- name with lowercase letters and digits"
@@ -177,20 +180,112 @@ def output_path(state, name):
         or info.st_mode & 0o022
     ):
         raise ValueError("Use owned local state on a POSIX filesystem (WSL on Windows)")
-    output = state.resolve() / name
+    return state.resolve() / name
+
+
+def output_path(state, name):
+    """Use a new private child of owned state, never a tracked deployment file."""
+    output = plan_directory(state, name)
     if output.exists() or output.is_symlink():
         raise ValueError("Transition output already exists; use a new name")
     return output
 
 
+def file_identity(info):
+    return (
+        info.st_dev,
+        info.st_ino,
+        info.st_uid,
+        info.st_mode,
+        info.st_nlink,
+        info.st_size,
+        info.st_mtime_ns,
+        info.st_ctime_ns,
+    )
+
+
+def unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate transition JSON key")
+        result[key] = value
+    return result
+
+
+def reject_constant(value):
+    raise ValueError("Non-finite transition JSON value")
+
+
+def finite_float(value):
+    result = float(value)
+    if not math.isfinite(result):
+        raise ValueError("Non-finite transition JSON value")
+    return result
+
+
+def read_plan(state, name):
+    """Read a bounded private regular file without following links or opening FIFOs."""
+    directory = plan_directory(state, name)
+    with ExitStack() as stack:
+        folder = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        stack.callback(os.close, folder)
+        directory_info = os.fstat(folder)
+        if directory_info.st_uid != os.getuid() or directory_info.st_mode & 0o077:
+            raise ValueError("Transition directory must be private and owned")
+        info = os.stat("transition.json", dir_fd=folder, follow_symlinks=False)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or info.st_uid != os.getuid()
+            or info.st_mode & 0o077
+            or info.st_nlink != 1
+            or not 0 < info.st_size <= MAX_PLAN_BYTES
+        ):
+            raise ValueError(
+                "Transition file must be a bounded private owned regular file"
+            )
+        fd = os.open(
+            "transition.json",
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+            dir_fd=folder,
+        )
+        with os.fdopen(fd, "rb") as stream:
+            if file_identity(os.fstat(stream.fileno())) != file_identity(info):
+                raise ValueError("Transition file changed while opening")
+            payload = stream.read(MAX_PLAN_BYTES + 1)
+            if len(payload) != info.st_size or file_identity(
+                os.fstat(stream.fileno())
+            ) != file_identity(info):
+                raise ValueError("Transition file changed while reading")
+        if file_identity(
+            os.stat("transition.json", dir_fd=folder, follow_symlinks=False)
+        ) != file_identity(info):
+            raise ValueError("Transition file changed while reading")
+    value = json.loads(
+        payload.decode("utf-8"),
+        object_pairs_hook=unique_object,
+        parse_constant=reject_constant,
+        parse_float=finite_float,
+    )
+    return value, (
+        directory_info.st_dev,
+        directory_info.st_ino,
+        file_identity(info),
+        digest(payload),
+    )
+
+
 def write_plan(output, plan):
     """Publish a complete private file exclusively; never replace existing output."""
+    serialized = encoded(plan)
+    if len(serialized) > MAX_PLAN_BYTES:
+        raise ValueError("Transition file exceeds its size limit")
     output.mkdir(mode=0o700)
     created = []
     try:
         for name, payload in (
             (".gitignore", b"*\n"),
-            ("transition.json", encoded(plan)),
+            ("transition.json", serialized),
         ):
             path = output / name
             fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -204,8 +299,8 @@ def write_plan(output, plan):
         raise
 
 
-def prepare(root, fork, state, name, helm="helm"):
-    output = output_path(state, name)
+def current_plan(root, fork, state, helm="helm"):
+    """Rebuild from current publication and observed settings, not stored evidence."""
     publication = deployment.verified_release(
         root, fork, helm, verify_public_manifests=True
     )
@@ -224,9 +319,11 @@ def prepare(root, fork, state, name, helm="helm"):
         != publication
     ):
         raise ValueError("Publisher or image receipts changed during preparation")
-    # The private file is an observation, not a reusable deployment approval.
-    # Applying it will require fresh source/runtime and migration/backup checks.
-    write_plan(output, plan)
+    return plan
+
+
+def public_report(plan, name):
+    """Keep private values and rendered objects out of stdout in both commands."""
     return {
         key: plan[key]
         for key in (
@@ -248,11 +345,61 @@ def prepare(root, fork, state, name, helm="helm"):
     } | {"outputName": name, "configurationValuesIncluded": False}
 
 
+def prepare(root, fork, state, name, helm="helm"):
+    output = output_path(state, name)
+    plan = current_plan(root, fork, state, helm)
+    # The private file is an observation, not a reusable deployment approval.
+    # Applying it will require fresh source/runtime and migration/backup checks.
+    write_plan(output, plan)
+    return public_report(plan, name)
+
+
+def verify_saved(root, fork, state, name, helm="helm"):
+    saved, identity = read_plan(state, name)
+    settings = runtime.cluster.load_settings(state)
+    if (
+        not isinstance(saved, dict)
+        or saved.get("schema") != "msa-gitops-transition-v1"
+        or saved.get("status") != "PREPARED_NOT_APPLIED"
+        or saved.get("repository") != fork.repository
+        or settings["repository"].lower() != fork.repository.lower()
+        or saved.get("stateId") != settings["stateId"]
+        or not deployment.valid_sha(saved.get("sourceSha"))
+        or type(saved.get("publisherRunId")) is not int
+        or saved["publisherRunId"] <= 0
+        or not isinstance(saved.get("generatedAt"), str)
+        or datetime.fromisoformat(saved["generatedAt"]).utcoffset() is None
+    ):
+        raise ValueError("Stored transition identity is invalid")
+    fresh = current_plan(root, fork, state, helm)
+    # Recomputed file hashes alone cannot establish trust: compare every field
+    # against new verified inputs. Canonical JSON preserves bool/int distinctions.
+    if encoded({k: v for k, v in saved.items() if k != "generatedAt"}) != encoded(
+        {k: v for k, v in fresh.items() if k != "generatedAt"}
+    ):
+        raise ValueError("Stored transition differs from the current verified plan")
+    if runtime.cluster.load_settings(state) != settings:
+        raise ValueError("Local state changed during verification")
+    if read_plan(state, name)[1] != identity:
+        raise ValueError("Transition file changed during verification")
+    return public_report(fresh, name) | {
+        "status": "REVALIDATED_NOT_APPLIED",
+        "savedPlanMatched": True,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--state-dir", type=Path, required=True)
     parser.add_argument(
-        "--output-name", required=True, help="New gitops-transition-... child of state"
+        "--output-name",
+        required=True,
+        help="Named gitops-transition-... child of state",
+    )
+    parser.add_argument(
+        "--verify",
+        action="store_true",
+        help="Revalidate an existing file without rewriting or applying it",
     )
     parser.add_argument("--branch")
     parser.add_argument("--helm", default="helm")
@@ -261,12 +408,15 @@ def main():
     try:
         root = Path(__file__).resolve().parents[3]
         fork = from_origin(root, branch=args.branch).require_personal_publish()
-        report = prepare(root, fork, args.state_dir, args.output_name, args.helm)
+        action = verify_saved if args.verify else prepare
+        report = action(root, fork, args.state_dir, args.output_name, args.helm)
     except Exception as error:  # noqa: BLE001 - external output may contain local values
         report = {
             "schema": "msa-gitops-transition-v1",
             "status": "BLOCKED",
-            "reason": "transition_preparation_failed",
+            "reason": "transition_verification_failed"
+            if args.verify
+            else "transition_preparation_failed",
             "errorType": type(error).__name__,
             "configurationValuesIncluded": False,
             "deploymentAuthorized": False,

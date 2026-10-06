@@ -255,7 +255,7 @@ class TransitionPlanTests(unittest.TestCase):
                 patch.object(
                     transition.deployment,
                     "verified_release",
-                    side_effect=[self.publication, copy.deepcopy(self.publication)],
+                    side_effect=[copy.deepcopy(self.publication) for _ in range(4)],
                 ) as verify,
                 patch.object(runtime.cluster, "load_settings", return_value=settings),
                 patch.object(runtime.cluster, "require_dev"),
@@ -279,8 +279,13 @@ class TransitionPlanTests(unittest.TestCase):
                 report = transition.prepare(
                     Path("fixture-root"), self.fork, state, "gitops-transition-full"
                 )
-            self.assertEqual(verify.call_count, 2)
-            self.assertEqual(commands.call_count, 16)
+                checked = transition.verify_saved(
+                    Path("fixture-root"), self.fork, state, "gitops-transition-full"
+                )
+            self.assertEqual(checked["status"], "REVALIDATED_NOT_APPLIED")
+            self.assertFalse(checked["deploymentAuthorized"])
+            self.assertEqual(verify.call_count, 4)
+            self.assertEqual(commands.call_count, 32)
             self.assertEqual(report["status"], "PREPARED_NOT_APPLIED")
             self.assertNotIn("PRIVATE", json.dumps(report))
             plan = json.loads(
