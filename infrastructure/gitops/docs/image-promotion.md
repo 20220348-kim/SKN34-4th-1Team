@@ -121,7 +121,7 @@ Secret 값·환경변수 값은 보고서에 출력하지 않는다. 다음 충�
 | `service_environment_differs` | Core·Catalog·AI 기본 환경 대비 환경변수·Secret 참조의 변경·추가·누락 검토 |
 | `service_env_from_uninspected` | Core·Catalog·AI 컨테이너의 `envFrom` 주입 별도 검토 |
 | `service_execution_or_storage_differs` | 네 서비스의 저장소·실행 명령·초기화 컨테이너·복제 수·배포 전략 차이 검토 |
-| `service_runtime_policy_differs` | 네 서비스의 probe·자원·보안·서비스 계정·DNS·컨테이너 포트 및 lifecycle 설정 차이 검토 |
+| `service_runtime_policy_differs` | 네 서비스의 probe·자원·보안·서비스 계정·DNS·컨테이너 포트·lifecycle·노드 배치 선언 차이 검토 |
 | `service_routing_differs` | 네 Service의 선언 차이, Deployment selector·Pod 라벨 차이, Pod 선택·이름 기반 targetPort 연결 오류 검토 |
 
 `runtimePreflight.preservationReview`에는 전환 때 검토할 항목을 값 없이 제공한다.
@@ -148,6 +148,9 @@ Secret 값·환경변수 값은 보고서에 출력하지 않는다. 다음 충�
   - Pod: `securityContext`, `automountServiceAccountToken`, `serviceAccountName` 및 기존 `serviceAccount`,
     `hostNetwork`, `hostPID`, `hostIPC`, `shareProcessNamespace`, `dnsPolicy`, `dnsConfig`, `hostAliases`,
     `terminationGracePeriodSeconds`, `resources`.
+  - 배치 선언: `nodeSelector`, `nodeName`, `affinity`, `tolerations`, `topologySpreadConstraints`,
+    `schedulerName`, `schedulingGates`, `priorityClassName`, `priority`, `preemptionPolicy`,
+    `runtimeClassName`, `resourceClaims`. 노드·라벨·taint·클래스·claim 이름과 값은 출력하지 않는다.
   - 기본 서비스 컨테이너: 세 probe, `resources`, `securityContext`, `ports`, `lifecycle`.
   - probe 헤더·handler 명령·DNS 주소·계정 이름 등 값은 출력하지 않는다. 삭제된 probe·필수 보안 설정과
     누락된 자원 요청/한도도 차이로 처리한다. 추가 컨테이너는 기존 구성 차이로 차단한다.
@@ -169,6 +172,16 @@ probe 비교는 [Kubernetes 1.36의 기본값 처리](https://github.com/kuberne
 SI·이진·지수 표기를 유리수로 바꿔 `100m=0.1`, `1Gi=1024Mi`를 정확히 비교한다.
 요청과 한도는 별도로 유지하며, 알 수 없는 표기·비유한 값·지원 범위 밖 수량은 `UNKNOWN`으로 실패한다.
 이 비교는 API의 수량 반올림·범위 보정이나 admission 검증 전체를 재현하지 않는다.
+
+배치 선언 비교는 Deployment의 Pod template만 읽으며 Node·PriorityClass·RuntimeClass·ResourceClaim을
+조회하지 않는다. [Kubernetes 1.36의 PodSpec 기본값](https://github.com/kubernetes/kubernetes/blob/v1.36.0/pkg/apis/core/v1/defaults.go)에
+따라 생략되거나 빈 `schedulerName`은 `default-scheduler`와 같은 것으로 비교한다.
+[Toleration API 계약](https://github.com/kubernetes/kubernetes/blob/v1.36.0/staging/src/k8s.io/api/core/v1/types.go)의
+기본 `operator: Equal`과 빈 key·value·effect를 정규화하되, `tolerationSeconds: 0`과 무기한은 구분한다.
+toleration·배치 분산·gate·claim의 최상위 목록 순서는 무시하고 중복 항목과 알려지지 않은 하위 필드는
+유지한다. affinity 등 중첩 조건은 그대로 비교하므로 논리적으로 같은 조건의 표현 차이도 검토 대상으로 남을 수 있다.
+PriorityClass·RuntimeClass admission이 채우는 값을 추측하지 않으며, 목록 형식을 읽을 수 없으면 검사에 실패한다.
+이 비교는 실제 노드 배치·용량·taint 수용·클래스/claim 존재 여부나 Pending 해소를 증명하지 않는다.
 
 Service 비교에는 [Kubernetes Service 기본 동작](https://kubernetes.io/docs/concepts/services-networking/service/)의
 `ClusterIP`, `TCP`, 생략된 targetPort, session affinity·트래픽 정책 등의 기본값을 반영한다.
@@ -195,7 +208,7 @@ Helm 실행 실패, 서비스별 Deployment·Service 누락·중복·다른 name
 
 충돌이 없을 때의 `NO_LOCAL_OVERRIDES`는 **이 검사 범위에서 기본 구성과 충돌하는 기록이 없다는 뜻**이다.
 그 뒤에도 동일한 소스 CI·공개 발행 검증을 통과해야 계획이 생성된다. Docker·Compose 컨테이너 상태,
-Secret 존재·키·DB schema, 이미지·노드 배치·NetworkPolicy 설정의 기준 차이, Service의 실제 통신·EndpointSlice 상태,
+Secret 존재·키·DB schema, 이미지·NetworkPolicy 설정의 기준 차이, 실제 노드 배치 가능 여부, Service의 실제 통신·EndpointSlice 상태,
 실제 probe 성공·자원 사용량·RBAC 권한·PVC 데이터·마운트 동작·관리자 인증이나 Argo 기동을 검증하지 않으며
 `existingRuntimeVerified=false`를 유지한다. 실제 적용 전에는 전체 전환 절차가 필요하다.
 
@@ -210,14 +223,14 @@ python3 -B infrastructure/gitops/scripts/deployment.py plan-gitops \
 ```
 
 `runtimePreflight.preservationReview.helmPreservation`은 네 서비스의 환경변수와 Ops API/sync의
-동일 환경을 재현한 뒤 실행·저장소·probe·자원·보안·Service 선언을 다시 비교한다. RabbitMQ 큐,
+동일 환경을 재현한 뒤 실행·저장소·probe·자원·보안·노드 배치·Service 선언을 다시 비교한다. RabbitMQ 큐,
 개인 관리자 로그인, Compose Prefect·결과 서버 연결을 기본값으로 덮지 않고 표현할 수 있는지
 검토하는 단계다. Secret의 실제 값은 조회하지 않는다. 추가·누락된 컨테이너, `envFrom`, 평문
 비밀번호·토큰, Chart가 표현할 수 없는 참조, API와 다른 sync 환경·이미지는 재현 대상으로 인정하지 않는다.
 sync의 명령·마운트·보안·자원 차이도 비교하므로 컨테이너 이름만 같다고 일치로 처리하지 않는다.
 
 - `MATCHES_INSPECTED_FIELDS`: 비교한 필드를 현재 Chart로 재현할 수 있음. 최신 발행 Chart와의
-  호환성, 이미지·Secret 존재·DB schema·외부 연결·노드 배치·NetworkPolicy·실제 통신은 별도 검증이다.
+  호환성, 이미지·Secret 존재·DB schema·외부 연결·실제 노드 배치 가능 여부·NetworkPolicy·실제 통신은 별도 검증이다.
 - `BLOCKED`: 지원하지 않는 주입/컨테이너 구성이 있거나 렌더링 후에도 비교 필드에 차이가 있음.
 - `UNKNOWN`: Helm 실행·렌더링 결과 비교를 완료하지 못함. 외부 오류 본문은 출력하지 않는다.
 

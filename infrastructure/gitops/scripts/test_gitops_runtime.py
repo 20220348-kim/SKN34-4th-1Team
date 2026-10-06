@@ -255,6 +255,23 @@ class RuntimePreflightTests(unittest.TestCase):
                 self.state, FORK, review_preservation=True, published_files=files
             )
 
+    def test_placement_changes_block_checkout_and_published_reviews(self):
+        for service in runtime.cluster.SERVICES:
+            pod = self.deployments[service]["spec"]["template"]["spec"]
+            pod["nodeSelector"] = {"PRIVATE-label": "PRIVATE-node"}
+            pod["schedulerName"] = "PRIVATE-scheduler"
+        for files in (None, self.publication_files()):
+            with self.subTest(published=files is not None):
+                report = runtime.preflight(self.state, FORK, published_files=files)
+                self.assertEqual(report["status"], "BLOCKED")
+                self.assertEqual(report["blockers"], ["service_runtime_policy_differs"])
+                for details in report["preservationReview"]["policyReviews"].values():
+                    self.assertEqual(
+                        details["changedFields"], ["nodeSelector", "schedulerName"]
+                    )
+                self.assertFalse(report["deploymentAuthorized"])
+                self.assertNotIn("PRIVATE", json.dumps(report))
+
     def test_sync_container_and_saved_bridge_are_blocked(self):
         containers = self.deployment["spec"]["template"]["spec"]["containers"]
         containers.append(copy.deepcopy(containers[0]) | {"name": "ops-sync"})

@@ -217,11 +217,68 @@ def resource_settings(resources):
     return result
 
 
+def scheduling_settings(pod):
+    """Compare placement declarations, not scheduler decisions or available nodes."""
+    result = {
+        field: copy.deepcopy(pod.get(field, default))
+        for field, default in (
+            ("nodeSelector", {}),
+            ("nodeName", ""),
+            ("affinity", {}),
+            ("tolerations", []),
+            ("topologySpreadConstraints", []),
+            ("schedulerName", "default-scheduler"),
+            ("schedulingGates", []),
+            ("priorityClassName", ""),
+            ("priority", None),
+            ("preemptionPolicy", None),
+            ("runtimeClassName", None),
+            ("resourceClaims", []),
+        )
+    }
+    if result["schedulerName"] == "":
+        result["schedulerName"] = "default-scheduler"
+    # Normalize unordered top-level lists without losing duplicates/extensions.
+    # Do not infer admission defaults from PriorityClass/RuntimeClass or nodes.
+    for field in (
+        "tolerations",
+        "topologySpreadConstraints",
+        "schedulingGates",
+        "resourceClaims",
+    ):
+        rows = result[field]
+        if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+            raise ValueError("Invalid scheduling declaration")
+        if field == "tolerations":
+            for row in rows:
+                for key, default in (
+                    ("key", ""),
+                    ("value", ""),
+                    ("effect", ""),
+                    ("operator", "Equal"),
+                    ("tolerationSeconds", None),
+                ):
+                    row.setdefault(key, default)
+                if row["operator"] == "":
+                    row["operator"] = "Equal"
+        result[field] = sorted(
+            json.dumps(row, sort_keys=True, allow_nan=False) for row in rows
+        )
+    return result
+
+
 def policy_review(actual, expected):
     """Inspect declared health/resources/access settings, not live RBAC or health."""
     actual_pod = actual["spec"]["template"]["spec"]
     expected_pod = expected["spec"]["template"]["spec"]
     changed = []
+    observed_scheduling = scheduling_settings(actual_pod)
+    reference_scheduling = scheduling_settings(expected_pod)
+    changed.extend(
+        field
+        for field in reference_scheduling
+        if observed_scheduling[field] != reference_scheduling[field]
+    )
     for field, default in (
         ("securityContext", {}),
         ("automountServiceAccountToken", None),
