@@ -1,10 +1,13 @@
 import { useEffect, useId, useRef, type ReactNode } from 'react'
 import { Link } from 'react-router'
 import { sendHourLabel } from '@govbiz/shared/domain/entities/DailyReport'
+import { ddayTone } from '@govbiz/shared/domain/labels'
+import { programStatusLabels } from '@govbiz/shared/domain/labels'
 import type { DailyReport, DailyReportItem } from '../../../../domain/entities/DailyReport'
 import { appPaths, supportProgramDetailPath } from '../../../shared/routes/appPaths'
 import { supportProgramSaveMessages, supportProgramSaveNoticeDurationMs, useSupportProgramSaveViewModel } from '../../../shared/support-program/useSupportProgramSaveViewModel'
 import { HelpTip } from '../../../shared/workspace/HelpTip'
+import { ddayToneClassNames } from '../../../shared/workspace/WorkspaceStates.styles'
 import { workspacePageStyles as styles, workspaceTagClassName } from '../../../shared/workspace/WorkspacePage.styles'
 import { WorkspacePageHeader } from '../../../shared/workspace/WorkspacePageHeader'
 import { WorkspaceToast } from '../../../shared/workspace/WorkspaceToast'
@@ -175,9 +178,9 @@ function ReportContent({ report, today }: { report: DailyReport; today: string }
 }
 
 const periodStatus = {
-  OPEN: ['접수 중', 'bg-brand-soft text-brand-primary'],
-  UPCOMING: ['접수 예정', 'bg-info-soft text-info'],
-  CLOSED: ['접수 마감', 'bg-surface-muted text-ink-muted'],
+  OPEN: [programStatusLabels.OPEN, 'bg-brand-soft text-brand-primary'],
+  UPCOMING: [programStatusLabels.UPCOMING, 'bg-info-soft text-info'],
+  CLOSED: [programStatusLabels.CLOSED, 'bg-surface-muted text-ink-muted'],
 } as const
 
 // 자격 배지는 검색 결과와 같은 한 벌입니다. 대상·지역 판정 근거는 "매칭 근거" 줄 맨 앞에 둡니다.
@@ -220,7 +223,7 @@ function ReportItem({ item, today }: { item: DailyReportItem; today: string }) {
   return <article className={s.programCard} aria-label={item.title}>
     <div className={s.programTop}>
       {period && <span className={`${s.status} ${periodStatus[period.status][1]}`}><span className={s.statusDot} aria-hidden="true" />{periodStatus[period.status][0]}</span>}
-      {period?.daysLeft != null && <span className={`${s.dday} ${period.daysLeft === 0 ? s.ddayToday : period.daysLeft <= 3 ? s.ddaySoon : s.ddayCalm}`}>{period.daysLeft === 0 ? '오늘 마감' : `D-${period.daysLeft}`}</span>}
+      {period?.daysLeft != null && <span className={`${s.dday} ${ddayToneClassNames[ddayTone(period.daysLeft)]}`}>{period.daysLeft === 0 ? '오늘 마감' : `D-${period.daysLeft}`}</span>}
       <span className={`${s.eligibility} ${judged.tone}`}>{judged.label}</span>
       {item.relevanceScore !== null && <span className={s.relevance}>관련도 {item.relevanceScore}</span>}
     </div>

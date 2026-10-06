@@ -4,8 +4,9 @@ import { workspacePageStyles, workspaceTagClassName } from '../../../shared/work
 import {
   programDeadlineLabel,
   recruitmentConditionTags,
-  recruitmentDeadlineLabel,
+  recruitmentDeadlineText,
 } from '../../../shared/partner-recruitment/partnerRecruitmentLabels'
+import { RecruitmentDdayTag } from '../../../shared/partner-recruitment/RecruitmentDdayTag'
 import { usePublicPartnerRecruitmentListViewModel } from '../viewmodel/usePublicPartnerRecruitmentListViewModel'
 import { MaskedCompanyRow } from './MaskedCompanyRow'
 import { LoginPromptDialog } from '../../../shared/auth/LoginPromptDialog'
@@ -22,10 +23,13 @@ function RecruitmentCard({
   return (
     <article className={styles.card} aria-label={recruitment.title}>
       <div className={styles.cardTop}>
-        <span className={workspaceTagClassName('ok')}>기업마당 공고</span>
-        <span className={styles.cardDeadline}>
-          {recruitment.status === 'CLOSED' ? '모집 마감' : recruitmentDeadlineLabel(recruitment.recruitmentDeadline)}
+        <span className={styles.tagRow}>
+          <span className={workspaceTagClassName('ok')}>기업마당 공고</span>
+          {/* 상태 태그가 없는 카드라 마감된 글은 여기서 "모집 마감"을 알리고, 모집 중이면 D-day를 붙입니다. */}
+          {recruitment.status === 'CLOSED' ? <span className={workspaceTagClassName('muted')}>모집 마감</span> : null}
+          <RecruitmentDdayTag deadline={recruitment.recruitmentDeadline} closed={recruitment.status === 'CLOSED'} />
         </span>
+        <span className={styles.mutedDeadline}>{recruitmentDeadlineText(recruitment.recruitmentDeadline)}</span>
       </div>
 
       <div className="flex flex-col gap-[0.2rem]">

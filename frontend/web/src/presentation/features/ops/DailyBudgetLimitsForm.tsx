@@ -53,7 +53,7 @@ export function DailyBudgetLimitsForm({ daily, owner, onSaved, onExpired }: {
     } finally { submitting.current = false; setBusy(false) }
   }
   const amount = (value: number | undefined) => value === undefined ? '미설정' : value.toLocaleString('ko-KR')
-  return <section aria-label="일별 한도 설정" className="space-y-3 border-t border-sample-border pt-4">
+  return <section aria-label="일별 한도 설정" className="space-y-3 border-t border-line pt-4">
     <button type="button" className={styles.secondaryButton} disabled={opened || busy} onClick={open}>일별 한도 설정</button>
     {opened && <>
       <p className="text-sm">서울 시간의 예약 접수일 기준으로 매일 적용하는 한도입니다. 누적 한도와 함께 검사하며 사용량을 초기화하거나 모델 호출을 활성화하지 않습니다.</p>

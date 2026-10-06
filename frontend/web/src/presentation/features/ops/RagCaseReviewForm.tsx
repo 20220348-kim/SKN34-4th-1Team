@@ -44,7 +44,7 @@ export function RagCaseReviewForm({ runId, item, state, onExpired, onSaved, onLo
       if (mounted.current) setBusy(false)
     }
   }
-  return <section className="space-y-3 rounded-xl border border-sample-border p-4" aria-label="RAG 사례 검토 기록" aria-busy={busy}>
+  return <section className="space-y-3 rounded-xl border border-line p-4" aria-label="RAG 사례 검토 기록" aria-busy={busy}>
     <h3 className="font-semibold">후보 사례 검토 저장</h3>
     <p className="text-sm">원문·검색 결과·후보 답변을 대조하고 각 항목을 판단하세요. 품질 점검에는 저장된 검토만 반영됩니다. 검토 저장은 합격이나 기준 지정으로 이어지지 않습니다.</p>
     <form className="space-y-3" onSubmit={(event) => { event.preventDefault(); void save() }}>
@@ -52,14 +52,14 @@ export function RagCaseReviewForm({ runId, item, state, onExpired, onSaved, onLo
         const criterion = state.rubric.criteria.find((value) => value.key === key)
         return <label key={key} className="block text-sm font-semibold">{criterion?.label}
           <p className="font-normal">{criterion?.description}{!measured[key] && ' · 미측정: 판단 보류만 가능'}</p>
-          <select aria-label={criterion?.label} className="mt-1 w-full rounded-lg border border-sample-border p-2" value={decisions[key]} disabled={disabled || busy || conflict || !measured[key]} required onChange={(event) => { setDecisions({ ...decisions, [key]: event.target.value as Decision | '' }); markDirty() }}>
+          <select aria-label={criterion?.label} className="mt-1 w-full rounded-lg border border-line p-2" value={decisions[key]} disabled={disabled || busy || conflict || !measured[key]} required onChange={(event) => { setDecisions({ ...decisions, [key]: event.target.value as Decision | '' }); markDirty() }}>
             {measured[key] && <option value="">판단 선택</option>}
             {(Object.keys(labels) as Decision[]).filter((value) => measured[key] || value === 'DEFERRED').map((value) => <option key={value} value={value}>{labels[value]}</option>)}
           </select>
         </label>
       })}
       <label className="block text-sm font-semibold">검토 근거
-        <textarea className="mt-1 w-full rounded-lg border border-sample-border p-2" value={comment} maxLength={3000} rows={3} required disabled={disabled || busy || conflict} onChange={(event) => { setComment(event.target.value); markDirty() }} placeholder="대조한 원문·청크와 판단 이유를 기록하세요." />
+        <textarea className="mt-1 w-full rounded-lg border border-line p-2" value={comment} maxLength={3000} rows={3} required disabled={disabled || busy || conflict} onChange={(event) => { setComment(event.target.value); markDirty() }} placeholder="대조한 원문·청크와 판단 이유를 기록하세요." />
       </label>
       {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
       {conflict && <p className="text-sm">입력 내용을 확인한 뒤 ‘입력 취소’를 누르고 검토 자료를 새로고침하세요. 기존 판단은 새 자료에 자동으로 적용되지 않습니다.</p>}
@@ -71,7 +71,7 @@ export function RagCaseReviewForm({ runId, item, state, onExpired, onSaved, onLo
     </form>
     <h4 className="font-semibold">이 사례의 검토 이력 · {history.length}건</h4>
     {history.length === 0 && <p className="text-sm">저장된 사람 검토가 없습니다.</p>}
-    {history.map((row) => <article key={row.id} className="rounded-lg bg-sample-bg p-3 text-sm" aria-label={`검토 이력 ${row.version}`}>
+    {history.map((row) => <article key={row.id} className="rounded-lg bg-surface-muted p-3 text-sm" aria-label={`검토 이력 ${row.version}`}>
       <p>#{row.version} · {row.is_current ? '현재 자료의 최신 검토' : '이전 검토'} · {row.reviewed_by} · {new Date(row.created_at).toLocaleString('ko-KR')}</p>
       <p>검색: {labels[row.retrieval_decision]} · 답변: {labels[row.answer_decision]} · 인용: {labels[row.citation_decision]}</p>
       <p className="whitespace-pre-wrap break-words">{row.comment}</p>

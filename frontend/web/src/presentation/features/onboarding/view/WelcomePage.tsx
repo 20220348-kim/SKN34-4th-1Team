@@ -43,7 +43,7 @@ export function WelcomePage() {
         </div>
         <div className={s.hint}>
           <span className={s.hintIcon}><OnboardingIconGlyph name="info" size={15} /></span>
-          <span><b className="text-app-ink">사업자등록번호는 다음 단계에서 조회해요.</b> 지금 없으면 건너뛰고 프로필에서 나중에 등록할 수 있어요. 가입 때 적은 이메일은 다시 묻지 않아요.</span>
+          <span><b className="text-ink">사업자등록번호는 다음 단계에서 조회해요.</b> 지금 없으면 건너뛰고 프로필에서 나중에 등록할 수 있어요. 가입 때 적은 이메일은 다시 묻지 않아요.</span>
         </div>
       </OnboardingShell>
     </form>

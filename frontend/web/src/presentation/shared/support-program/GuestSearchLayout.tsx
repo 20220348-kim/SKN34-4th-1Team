@@ -53,7 +53,7 @@ export function GuestSearchLayout({ children, searchTabs, onNewChat, showConvers
             <span className="max-chat:sr-only">새 AI 대화 검색</span>
           </button>
           <Link to={publicPaths.login} aria-label="활동을 저장하려면 로그인을 해주세요" title="활동을 저장하려면 로그인을 해주세요"
-            className="flex min-h-11 items-start gap-2 rounded-xl px-1 py-1 text-xs leading-6 text-sample-muted no-underline hover:text-brand-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary max-chat:items-center max-chat:justify-center max-chat:px-0">
+            className="flex min-h-11 items-start gap-2 rounded-xl px-1 py-1 text-xs leading-6 text-ink-muted no-underline hover:text-brand-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary max-chat:items-center max-chat:justify-center max-chat:px-0">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"
               strokeLinecap="round" className="mt-0.5 shrink-0 max-chat:mt-0" aria-hidden="true">
               <circle cx="12" cy="12" r="9" /><path d="M12 11v6m0-10v.01" />

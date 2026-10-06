@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import App from '../../../App'
 import { appContainer } from '../../../app/appContainer'
+import indexCss from '../../../index.css?raw'
 import { createAppStore } from '../../../app/store'
 import { receivedPendingProposal, receivedProposalBox } from '../../../data/fixtures/partnerProposals'
 import { supportPrograms } from '../../../data/fixtures/supportPrograms'
@@ -63,20 +64,33 @@ afterEach(() => {
 })
 
 describe('GovBiz 도우미 위젯', () => {
-  it('비로그인 검색 화면에서 런처가 뜨고, 열면 인사와 주제 목록을 보여 준 뒤 주제 → 질문 → 도움말 답으로 타고 들어간다', () => {
+  it('입력창을 가리는 채팅 화면(비로그인 검색 · 작업 채팅)에서는 런처를 두지 않는다', () => {
     renderApp('/', null)
+    expect(screen.getByRole('textbox', { name: '지원사업 검색어' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: assistantMessages.openLauncher })).toBeNull()
+
+    cleanup()
+    renderApp('/app/chat', memberAccount)
+    expect(screen.getByRole('textbox', { name: '지원사업 검색어' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: assistantMessages.openLauncher })).toBeNull()
+  })
+
+  it('비로그인 공개 화면에서 런처가 뜨고, 열면 인사와 주제 목록을 보여 준 뒤 주제 → 질문 → 도움말 답으로 타고 들어간다', () => {
+    renderApp('/pricing', null)
 
     const launcher = screen.getByRole('button', { name: assistantMessages.openLauncher })
     expect(launcher.getAttribute('aria-expanded')).toBe('false')
-    // 채팅 입력창이 있는 화면이라 런처가 위로 올라갑니다.
-    expect(launcher.parentElement?.classList.contains('bottom-[92px]')).toBe(true)
+    // 아래 고정 바가 있으면(--assistant-lift) 그만큼 올라가고, 덮는 패널·시트가 열려 있으면 숨습니다.
+    expect(launcher.parentElement?.classList.contains('bottom-[calc(1.5rem+var(--assistant-lift,0px))]')).toBe(true)
+    expect(launcher.parentElement?.classList.contains('[body:has([data-covers-assistant=always])_&]:hidden')).toBe(true)
+    expect(launcher.parentElement?.classList.contains('max-[599px]:[body:has([data-covers-assistant])_&]:hidden')).toBe(true)
     expect(screen.getByText(assistantMessages.launcherLabel)).toBeTruthy()
 
     fireEvent.click(launcher)
     const panel = screen.getByRole('dialog', { name: assistantMessages.name })
-    // 입력창 위로 올린 만큼 높이도 줄여, 창을 낮춰도 패널 위쪽이 화면 밖으로 잘리지 않습니다.
-    expect(panel.classList.contains('bottom-[160px]')).toBe(true)
-    expect(panel.classList.contains('h-[min(600px,calc(100dvh-180px))]')).toBe(true)
+    // 런처를 올린 만큼 패널도 올리고 높이를 줄여, 창을 낮춰도 패널 위쪽이 화면 밖으로 잘리지 않습니다.
+    expect(panel.classList.contains('bottom-[calc(5.75rem+var(--assistant-lift,0px))]')).toBe(true)
+    expect(panel.classList.contains('h-[min(600px,calc(100dvh-7rem-var(--assistant-lift,0px)))]')).toBe(true)
     expect(within(panel).getByText(assistantMessages.greetingIntro)).toBeTruthy()
     expect(within(panel).getByText(assistantMessages.greetingAsk)).toBeTruthy()
     expect(screen.getByRole('button', { name: assistantMessages.closeLauncher }).getAttribute('aria-expanded')).toBe('true')
@@ -177,15 +191,16 @@ describe('GovBiz 도우미 위젯', () => {
     expect(sent.history.length).toBeGreaterThan(0)
     expect(sent.helpEntries.map((entry) => entry.id)).toContain('search-score-meaning')
 
-    // 메뉴의 새 대화는 인사로 되돌립니다.
-    fireEvent.click(within(panel).getByRole('button', { name: assistantMessages.menu }))
-    fireEvent.click(within(panel).getByRole('menuitem', { name: assistantMessages.newConversation }))
+    // 머리의 새 대화 아이콘은 메뉴 없이 바로 인사로 되돌리고 입력창에 초점을 둡니다.
+    expect(within(panel).queryByRole('menu')).toBeNull()
+    fireEvent.click(within(panel).getByRole('button', { name: assistantMessages.newConversation }))
+    expect(document.activeElement).toBe(input)
     expect(within(log).queryByText('공고를 먼저 골라야 합니다.')).toBeNull()
     expect(within(log).getByText(assistantMessages.greetingAsk)).toBeTruthy()
   })
 
   it('담당자 문의를 고르면 카카오톡 채널 1:1 채팅을 새 탭으로 여는 링크를 주고, 채널 ID가 없으면 문의 항목을 두지 않는다', () => {
-    renderApp('/', null)
+    renderApp('/pricing', null)
     fireEvent.click(screen.getByRole('button', { name: assistantMessages.openLauncher }))
     const panel = screen.getByRole('dialog', { name: assistantMessages.name })
     fireEvent.click(within(panel).getByRole('button', { name: assistantMessages.quickContact }))
@@ -201,13 +216,14 @@ describe('GovBiz 도우미 위젯', () => {
 
     cleanup()
     vi.stubEnv('VITE_KAKAO_CHANNEL_ID', 'not-a-channel-id')
-    renderApp('/', null)
+    renderApp('/pricing', null)
     fireEvent.click(screen.getByRole('button', { name: assistantMessages.openLauncher }))
     const again = screen.getByRole('dialog', { name: assistantMessages.name })
     expect(within(again).queryByRole('button', { name: assistantMessages.quickContact })).toBeNull()
   })
 
-  it('답변 입력 화면에서는 600px 미만에서만 런처를 아래 이동 바 위로 올리고, 항목 목록 시트나 문서 메뉴가 열려 있는 동안 숨긴다', async () => {
+  it('답변 입력 화면은 600px 미만의 아래 이동 바가 런처를 올리고, 항목 목록 시트나 문서 메뉴가 열려 있는 동안 런처를 숨긴다', async () => {
+    vi.stubGlobal('matchMedia', vi.fn((query: string) => ({ matches: query === '(max-width: 599px)', addEventListener: vi.fn(), removeEventListener: vi.fn() })))
     const preparationUseCase = appContainer.resolve('applicationPreparationUseCase')
     vi.spyOn(preparationUseCase, 'get').mockResolvedValue(answerEditorPreparation)
     vi.spyOn(preparationUseCase, 'documents').mockResolvedValue([])
@@ -215,29 +231,30 @@ describe('GovBiz 도우미 위젯', () => {
     renderApp('/app/application-preparations/12', memberAccount)
     await screen.findByLabelText('답변 입력')
 
-    const wrap = screen.getByRole('button', { name: assistantMessages.openLauncher }).parentElement!
-    // PC는 기본 자리(bottom 24px), 600px 미만은 채팅 화면과 같은 92px 위입니다.
-    expect(wrap.classList.contains('bottom-6')).toBe(true)
-    expect(wrap.classList.contains('max-[599px]:bottom-[92px]')).toBe(true)
-    expect(wrap.classList.contains('bottom-[92px]')).toBe(false)
-    // 화면이 data-covers-assistant를 단 요소를 그리는 동안 600px 미만에서 런처를 숨깁니다.
-    expect(wrap.classList.contains('max-[599px]:[body:has([data-covers-assistant])_&]:hidden')).toBe(true)
+    // 아래 이동 바가 data-assistant-lift="narrow"를 달아, 600px 미만에서만 index.css가 --assistant-lift를 채웁니다.
+    const moveBar = screen.getByRole('button', { name: '← 이전' }).parentElement!
+    expect(moveBar.getAttribute('data-assistant-lift')).toBe('narrow')
     expect(document.querySelector('[data-covers-assistant]')).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: '항목 목록' }))
-    expect(document.querySelector('[data-covers-assistant]')).toBe(screen.getByRole('dialog', { name: '항목 목록' }))
+    expect(screen.getByRole('dialog', { name: '항목 목록' }).getAttribute('data-covers-assistant')).toBe('narrow')
     fireEvent.keyDown(screen.getByRole('dialog', { name: '항목 목록' }), { key: 'Escape' })
     expect(document.querySelector('[data-covers-assistant]')).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: '문서 메뉴' }))
     expect(document.querySelector('[data-covers-assistant]')).toBe(screen.getByRole('menu', { name: '문서 메뉴' }))
 
-    // 초안 화면이나 목록에서는 올리지도 숨기지도 않습니다.
+    // 목록에는 아래 고정 바가 없어 올리지도 숨기지도 않습니다.
     cleanup()
     renderApp('/app/application-preparations', memberAccount)
-    const listWrap = screen.getByRole('button', { name: assistantMessages.openLauncher }).parentElement!
-    expect(listWrap.className).not.toContain('max-[599px]:bottom-[92px]')
-    expect(listWrap.classList.contains('bottom-6')).toBe(true)
+    expect(screen.getByRole('button', { name: assistantMessages.openLauncher })).toBeTruthy()
+    expect(document.querySelector('[data-assistant-lift], [data-covers-assistant]')).toBeNull()
+  })
+
+  it('index.css는 아래 고정 바 표시(data-assistant-lift)가 있을 때만 런처를 올리는 높이를 채운다', () => {
+    const css = indexCss.replace(/\s+/g, ' ')
+    expect(css).toContain(":root:has([data-assistant-lift='always']) { --assistant-lift:")
+    expect(css).toMatch(/@media \(max-width: 599px\) \{ :root:has\(\[data-assistant-lift='narrow'\]\) \{ --assistant-lift:/)
   })
 
   it('비로그인이 상태 질문을 고르면 로그인 안내와 복귀 경로가 담긴 링크를 준다', () => {
@@ -260,7 +277,7 @@ describe('도우미 자유 질문', () => {
   it('AI 스위치가 꺼져 있으면(기본값) 자유 입력을 모델에 보내지 않고 주제 알약으로 돌려보낸다', () => {
     vi.stubEnv('VITE_ASSISTANT_AI_ENABLED', '')
     const ask = vi.spyOn(appContainer.resolve('askAssistantUseCase'), 'execute')
-    renderApp('/', null)
+    renderApp('/pricing', null)
     fireEvent.click(screen.getByRole('button', { name: assistantMessages.openLauncher }))
     const panel = screen.getByRole('dialog', { name: assistantMessages.name })
     const input = within(panel).getByRole('textbox', { name: assistantMessages.placeholder })
@@ -281,7 +298,7 @@ describe('도우미 자유 질문', () => {
     const ask = vi.spyOn(appContainer.resolve('askAssistantUseCase'), 'execute')
       .mockResolvedValueOnce({ outcome: 'answered', answer: freeAnswer({ intent: 'PRODUCT_HELP', answer: '점수는 관련도예요.', citations: [first.id], navigation: first.action }) })
       .mockResolvedValueOnce({ outcome: 'answered', answer: freeAnswer({ intent: 'UNCLEAR', clarificationQuestion: '어떤 화면이 궁금하세요?' }) })
-    renderApp('/', null)
+    renderApp('/pricing', null)
     fireEvent.click(screen.getByRole('button', { name: assistantMessages.openLauncher }))
     const panel = screen.getByRole('dialog', { name: assistantMessages.name })
     const log = within(panel).getByRole('log', { name: '대화' })
@@ -292,7 +309,7 @@ describe('도우미 자유 질문', () => {
     expect(await within(log).findByText('점수는 관련도예요.')).toBeTruthy()
     expect(within(log).getByText(assistantMessages.helpSource(first.title))).toBeTruthy()
     expect(within(log).getByRole('link', { name: first.action!.label }).getAttribute('href')).toBe('/')
-    expect(ask.mock.calls[0]![0].context).toEqual({ route: '/', programSelected: false })
+    expect(ask.mock.calls[0]![0].context).toEqual({ route: '/pricing', programSelected: false })
 
     fireEvent.change(input, { target: { value: '그거' } })
     fireEvent.keyDown(input, { key: 'Enter' })
@@ -313,7 +330,7 @@ describe('도우미 자유 질문', () => {
           { kind: 'RECRUITMENT', id: '22', title: '스마트공장 참여기관 모집', subtitle: null, reason: '역량이 일부 맞아요.', quote: null, to: '/app/partners/detail?recruitmentId=22' },
         ],
       }) })
-    renderApp('/app/chat', companyAccount)
+    renderApp('/app/pricing', companyAccount)
     fireEvent.click(screen.getByRole('button', { name: assistantMessages.openLauncher }))
     const panel = screen.getByRole('dialog', { name: assistantMessages.name })
     const log = within(panel).getByRole('log', { name: '대화' })
@@ -341,7 +358,7 @@ describe('도우미 자유 질문', () => {
         navigation: { label: '관심 공고함 열기', to: '/app/saved-programs' },
         cards: [{ kind: 'PROGRAM', id: 'BIZINFO:PBLN_000000000000001', title: '서울 AI 실증 지원사업', subtitle: '2026-09-30 마감', reason: '온라인 접수로 확인됐어요.', quote: '기업마당 온라인 신청', to: '/app/support-programs/detail?sourceCode=BIZINFO&sourceProgramId=PBLN_000000000000001' }],
       }) })
-    renderApp('/app/chat', memberAccount)
+    renderApp('/app/pricing', memberAccount)
     fireEvent.click(screen.getByRole('button', { name: assistantMessages.openLauncher }))
     const panel = screen.getByRole('dialog', { name: assistantMessages.name })
     const log = within(panel).getByRole('log', { name: '대화' })
@@ -354,11 +371,11 @@ describe('도우미 자유 질문', () => {
     expect(within(log).getByText(assistantMessages.aiToolSource(assistantMessages.savedSource))).toBeTruthy()
   })
 
-  it('비로그인 상태 질문은 로그인 링크를, 검색 의도는 검색어를 채우는 버튼을, 한도 초과는 다시 시도 알약을 준다', async () => {
+  it('비로그인 상태 질문은 로그인 링크를, 한도 초과는 다시 시도 알약을, 검색 의도는 검색어를 채우는 버튼을 준다', async () => {
     vi.spyOn(appContainer.resolve('askAssistantUseCase'), 'execute')
       .mockResolvedValueOnce({ outcome: 'answered', answer: freeAnswer({ intent: 'ACCOUNT_STATE', answer: '로그인하면 알려 드려요.', accountTopic: 'SAVED_PROGRAMS' }) })
-      .mockResolvedValueOnce({ outcome: 'answered', answer: freeAnswer({ intent: 'SEARCH', answer: '검색해 볼까요?', searchQuery: '부산 수출 지원', navigation: { label: '검색 화면에서 찾기', to: '/app/chat' } }) })
       .mockResolvedValueOnce({ outcome: 'rate-limited', retryAfterSeconds: 12 })
+      .mockResolvedValueOnce({ outcome: 'answered', answer: freeAnswer({ intent: 'SEARCH', answer: '검색해 볼까요?', searchQuery: '부산 수출 지원', navigation: { label: '검색 화면에서 찾기', to: '/app/chat' } }) })
     renderApp('/partners', null)
     fireEvent.click(screen.getByRole('button', { name: assistantMessages.openLauncher }))
     const panel = screen.getByRole('dialog', { name: assistantMessages.name })
@@ -370,6 +387,11 @@ describe('도우미 자유 질문', () => {
     expect(await within(log).findByText('로그인하면 알려 드려요.')).toBeTruthy()
     expect(within(log).getByRole('link', { name: assistantMessages.login }).getAttribute('href')).toBe(`/login?next=${encodeURIComponent('/partners')}`)
 
+    fireEvent.change(input, { target: { value: '한 번 더' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(await within(log).findByText(assistantMessages.rateLimited(12))).toBeTruthy()
+    expect(within(panel).getByRole('button', { name: assistantMessages.retry })).toBeTruthy()
+
     fireEvent.change(input, { target: { value: '부산 수출 지원 찾아줘' } })
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(await within(log).findByText('검색해 볼까요?')).toBeTruthy()
@@ -378,14 +400,8 @@ describe('도우미 자유 질문', () => {
     fireEvent.click(searchLink)
     // 검색 화면의 입력창에 도우미가 고른 검색어가 미리 채워집니다. 검색은 사용자가 보낼 때 시작합니다.
     expect((await screen.findByRole('textbox', { name: '지원사업 검색어' }) as HTMLTextAreaElement).value).toBe('부산 수출 지원')
-
-    fireEvent.click(screen.getByRole('button', { name: assistantMessages.openLauncher }))
-    const reopened = screen.getByRole('dialog', { name: assistantMessages.name })
-    const reopenedInput = within(reopened).getByRole('textbox', { name: assistantMessages.placeholder })
-    fireEvent.change(reopenedInput, { target: { value: '한 번 더' } })
-    fireEvent.keyDown(reopenedInput, { key: 'Enter' })
-    expect(await within(reopened).findByText(assistantMessages.rateLimited(12))).toBeTruthy()
-    expect(within(reopened).getByRole('button', { name: assistantMessages.retry })).toBeTruthy()
+    // 검색 화면은 입력창을 가리지 않도록 도우미를 두지 않습니다.
+    expect(screen.queryByRole('button', { name: assistantMessages.openLauncher })).toBeNull()
   })
 })
 

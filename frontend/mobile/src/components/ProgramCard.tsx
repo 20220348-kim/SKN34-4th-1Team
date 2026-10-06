@@ -1,9 +1,8 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native'
 import type { SupportProgram } from '@govbiz/shared/domain/entities/SupportProgram'
+import { programStatusLabels } from '@govbiz/shared/domain/labels'
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
 import { Button, Card, StatusBadge, colors, styles } from '../ui'
-
-export const statusLabels = { OPEN: '접수 중', UPCOMING: '접수 예정', CLOSED: '마감', UNKNOWN: '상태 미확인' }
 
 export type ProgramSelectionLabels = { selected: string; select: string }
 export function ProgramCard({ program, onOpen, selection }: { program: SupportProgram; onOpen: (identity: SupportProgramIdentity) => void
@@ -11,7 +10,7 @@ export function ProgramCard({ program, onOpen, selection }: { program: SupportPr
 }) {
   const open = () => onOpen({ sourceCode: program.sourceCode, sourceProgramId: program.id })
   const body = <>
-      <View style={styles.row}><StatusBadge label={statusLabels[program.status]}
+      <View style={styles.row}><StatusBadge label={programStatusLabels[program.status]}
         tone={program.status === 'OPEN' ? 'success' : program.status === 'UPCOMING' ? 'info' : 'neutral'} /><Text style={styles.muted}>{program.sourceName}</Text></View>
       <Text style={styles.heading}>{program.title}</Text>
       <Text style={styles.muted}>{program.organization}</Text>

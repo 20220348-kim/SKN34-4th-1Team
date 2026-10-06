@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest'
 
-import { isReviewStepScreen } from './assistantConversation'
+import { isAssistantHiddenOn } from './assistantConversation'
 
 describe('assistant launcher placement', () => {
-  it('lifts the launcher only on combination review input screens with the step bar', () => {
-    expect(isReviewStepScreen('/app/combination-reviews/new')).toBe(true)
-    expect(isReviewStepScreen('/app/combination-reviews/12')).toBe(true)
-    expect(isReviewStepScreen('/app/combination-reviews/12/')).toBe(true)
-    expect(isReviewStepScreen('/app/combination-reviews')).toBe(false)
-    expect(isReviewStepScreen('/app/combination-reviews/12/runs/30')).toBe(false)
+  it('hides the launcher on chat screens whose composer it would cover and on standalone auth screens', () => {
+    for (const path of ['/', '/app/chat', '/app/chat/', '/login', '/signup', '/app/welcome', '/examples/sample-item/hook']) {
+      expect(isAssistantHiddenOn(path)).toBe(true)
+    }
+  })
+
+  it('keeps the launcher on other screens, including ones with bottom bars that lift it instead', () => {
+    for (const path of ['/pricing', '/partners', '/app/saved-programs', '/app/combination-reviews/new', '/app/application-preparations/12', '/app/support-programs/detail']) {
+      expect(isAssistantHiddenOn(path)).toBe(false)
+    }
   })
 })

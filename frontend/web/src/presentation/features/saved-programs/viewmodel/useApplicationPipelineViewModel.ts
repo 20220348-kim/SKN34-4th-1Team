@@ -1,17 +1,25 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { applicationProgressStageLabels } from '@govbiz/shared/domain/labels'
 
 import { appContainer } from '../../../../app/appContainer'
-import type { ApplicationPreparationSummary, ApplicationProgressStage } from '../../../../domain/entities/ApplicationPreparation'
+import { applicationProgressStages, type ApplicationPreparationSummary, type ApplicationProgressStage } from '../../../../domain/entities/ApplicationPreparation'
 import type { ApplicationPreparationUseCase } from '../../../../domain/usecases/ApplicationPreparationUseCase'
 
-export const applicationPipelineStages = [
-  { key: 'PREPARING', label: '준비 중', description: '신청 서류를 작성하고 있습니다.' },
-  { key: 'APPLIED', label: '지원 완료', description: '접수를 마친 사업입니다.' },
-  { key: 'DOCUMENT_REVIEW', label: '서류 심사', description: '서류 심사 결과를 기다립니다.' },
-  { key: 'PRESENTATION_REVIEW', label: '발표 심사', description: '발표 심사를 준비하거나 기다립니다.' },
-  { key: 'SELECTED', label: '선정', description: '선정되어 수행을 준비하는 사업입니다.' },
-  { key: 'REJECTED', label: '탈락', description: '선정되지 않아 종료된 사업입니다.' },
-] as const
+const stageDescriptions: Record<ApplicationProgressStage, string> = {
+  PREPARING: '신청 서류를 작성하고 있습니다.',
+  APPLIED: '접수를 마친 사업입니다.',
+  DOCUMENT_REVIEW: '서류 심사 결과를 기다립니다.',
+  PRESENTATION_REVIEW: '발표 심사를 준비하거나 기다립니다.',
+  SELECTED: '선정되어 수행을 준비하는 사업입니다.',
+  REJECTED: '선정되지 않아 종료된 사업입니다.',
+}
+
+/** 진행 단계 선택지입니다. 이름은 웹·앱이 함께 쓰는 shared 표시 문구입니다. */
+export const applicationPipelineStages = applicationProgressStages.map((key) => ({
+  key,
+  label: applicationProgressStageLabels[key],
+  description: stageDescriptions[key],
+}))
 
 export type ApplicationPipelineListUseCase = Pick<ApplicationPreparationUseCase, 'list' | 'updateProgress'>
 

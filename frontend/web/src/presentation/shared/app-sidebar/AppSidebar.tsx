@@ -12,6 +12,7 @@ import { ChatActivityDot } from '../chat-activity/ChatActivityDot'
 import { usePendingReceivedProposalCount } from '../partner-proposal/useReceivedProposals'
 import { useUnseenPreparationResultCount } from '../preparation-jobs/usePreparationJobs'
 import { appPaths, publicPaths } from '../routes/appPaths'
+import { screenTitles } from '../routes/screenTitles'
 import { useFloatingPopover } from '../workspace/useFloatingPopover'
 import { appSidebarStyles, sidebarMenuItemClassName } from './AppSidebar.styles'
 import type { ChatHistoryViewModel } from '../../features/chat/hooks/useChatHistory'
@@ -30,23 +31,23 @@ type MenuItem = {
 type MenuGroup = { title: string; items: MenuItem[] }
 
 // 순서는 사용 빈도와 업무 흐름(찾기 → 모아두기 → 준비·검토 → 협업 → 결제)을 따르고, 도우미 도움말 주제 순서와 맞춥니다.
-// 무리 이름 없이 한 목록이고, 대화 기록은 목록 아래 별도 구역에 둡니다.
+// 무리 이름 없이 한 목록이고, 대화 기록은 목록 아래 별도 구역에 둡니다. 메뉴 이름은 브라우저 제목과 같은 screenTitles를 씁니다.
 const menuGroups: MenuGroup[] = [
   {
     title: '메뉴',
     items: [
-      { label: '관심 공고함', icon: 'bookmark', to: appPaths.savedPrograms, matches: (pathname) => pathname.startsWith(appPaths.savedPrograms) },
-      { label: '기업 맞춤 리포트', icon: 'inbox', to: appPaths.reports, matches: (pathname) => pathname === appPaths.reports },
-      { label: '신청 문서 작성', icon: 'document', to: appPaths.applicationPreparations, matches: (pathname) => pathname.startsWith(appPaths.applicationPreparations) },
-      { label: '중복 지원·수혜 검토', icon: 'shield', to: appPaths.combinationReviews, matches: (pathname) => pathname.startsWith(appPaths.combinationReviews) },
+      { label: screenTitles.savedPrograms, icon: 'bookmark', to: appPaths.savedPrograms, matches: (pathname) => pathname.startsWith(appPaths.savedPrograms) },
+      { label: screenTitles.reports, icon: 'inbox', to: appPaths.reports, matches: (pathname) => pathname === appPaths.reports },
+      { label: screenTitles.applicationPreparations, icon: 'document', to: appPaths.applicationPreparations, matches: (pathname) => pathname.startsWith(appPaths.applicationPreparations) },
+      { label: screenTitles.combinationReviews, icon: 'shield', to: appPaths.combinationReviews, matches: (pathname) => pathname.startsWith(appPaths.combinationReviews) },
       {
-        label: '파트너 관리',
+        label: screenTitles.partnerManagement,
         icon: 'users',
         to: appPaths.partners,
         // 모집글과 제안함은 한 메뉴 아래 탭으로 오갑니다.
         matches: (pathname) => pathname.startsWith(appPaths.partners) || pathname.startsWith(appPaths.proposals),
       },
-      { label: '요금제', icon: 'pricing', to: appPaths.pricing, matches: (pathname) => pathname === appPaths.pricing },
+      { label: screenTitles.pricing, icon: 'pricing', to: appPaths.pricing, matches: (pathname) => pathname === appPaths.pricing },
     ],
   },
 ]
@@ -312,7 +313,7 @@ export function AppSidebar({ onClose, onNewChat, closeLabel, onNavigate, history
                 aria-current={pathname.startsWith(appPaths.profile) ? 'page' : undefined}
               >
                 <MenuIconGraphic name="building" />
-                <span>내 프로필</span>
+                <span>{screenTitles.profile}</span>
               </Link>
               {account.tier === 'ADMIN' ? (
                 <>
@@ -322,7 +323,7 @@ export function AppSidebar({ onClose, onNewChat, closeLabel, onNavigate, history
                     aria-current={pathname.startsWith(appPaths.adminAccounts) ? 'page' : undefined}
                   >
                     <MenuIconGraphic name="shield" />
-                    <span>회원 관리</span>
+                    <span>{screenTitles.adminAccounts}</span>
                   </Link>
                   {/* 회원 정보 조회·계정 조치·권한 변경 기록은 회원 관리 바로 아래에서 엽니다. */}
                   <Link
@@ -331,7 +332,7 @@ export function AppSidebar({ onClose, onNewChat, closeLabel, onNavigate, history
                     aria-current={pathname.startsWith(appPaths.adminAuditLogs) ? 'page' : undefined}
                   >
                     <MenuIconGraphic name="document" />
-                    <span>감사 기록</span>
+                    <span>{screenTitles.adminAuditLogs}</span>
                   </Link>
                 </>
               ) : null}

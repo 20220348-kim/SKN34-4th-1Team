@@ -4,7 +4,7 @@
 
 - [web](web/README.md): React·Vite 웹, 브라우저 UI·쿠키 인증·Vercel 설정
 - [mobile](mobile/README.md): Expo·React Native 앱, 네이티브 UI·내비게이션·세션 보관
-- [공통 패키지](packages/shared/): 웹·모바일이 공유하는 업무 모델·API 계약·응답 검증
+- [공통 패키지](packages/shared/): 웹·모바일이 공유하는 업무 모델·API 계약·응답 검증·디자인 토큰
 
 의존성 설치와 실행은 저장소 루트에서 진행합니다. 각 앱은 별도의 `package.json`을 갖고,
 workspace와 lockfile은 저장소 루트의 것을 사용합니다.

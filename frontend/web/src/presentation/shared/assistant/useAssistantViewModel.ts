@@ -23,10 +23,7 @@ import {
   freeTextFallback,
   greetingMessages,
   helpAnswer,
-  isAnswerEditorScreen,
   isAssistantHiddenOn,
-  isReviewStepScreen,
-  isComposerScreen,
   loginBenefitsAnswer,
   loginPromptAnswer,
   otherQuestionReply,
@@ -267,10 +264,8 @@ export function useAssistantViewModel(
   }, [append, browseSavedPrograms, contactUrl, isAuthenticated, pathname, receivedProposals, returnTo, routeReplies, session, submitText])
 
   return {
+    /** 채팅 화면·로그인처럼 도우미를 두지 않는 화면입니다. 아래 고정 바 위로 올리는 일은 CSS(assistantLift)가 맡습니다. */
     isHidden: isAssistantHiddenOn(pathname),
-    isLifted: isComposerScreen(pathname) || isReviewStepScreen(pathname),
-    /** 답변 입력 화면: 600px 미만에서만 아래 이동 바 위로 올리고, 항목 목록 시트 · 문서 메뉴가 열린 동안 숨깁니다. */
-    isAnswerEditor: isAnswerEditorScreen(pathname),
     isOpen,
     open,
     close,

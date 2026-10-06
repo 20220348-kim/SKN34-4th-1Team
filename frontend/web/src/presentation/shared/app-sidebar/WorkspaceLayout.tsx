@@ -39,7 +39,7 @@ export function WorkspaceLayout() {
             aria-label={vm.openLabel} title={vm.openLabel}
             aria-expanded={vm.isMobile ? vm.isMenuOpen : false} aria-haspopup={vm.isMobile ? 'dialog' : undefined}
             onClick={vm.openSidebar}><SidebarActionIcon name="panel" /></button>
-          <Link to={appPaths.chat} className="text-lg font-semibold tracking-tight text-app-ink no-underline">GovBiz</Link>
+          <Link to={appPaths.chat} className="text-lg font-semibold tracking-tight text-ink no-underline">GovBiz</Link>
           <button type="button" className={`${appSidebarStyles.iconButton} ml-auto`} aria-label="지원사업 새검색"
             title="지원사업 새검색" onClick={vm.requestNewChat}><SidebarActionIcon name="newChat" /></button>
         </header> : null}

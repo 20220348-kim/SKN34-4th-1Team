@@ -1,6 +1,8 @@
 import { type ReactNode, useEffect, useId, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
+import { programStatusLabels } from '@govbiz/shared/domain/labels'
 import { useAppDispatch, useAppSelector } from '../../../../app/hooks'
+import { assistantLift } from '../../../shared/assistant/assistantPlacement'
 import { selectCurrentAccount, signedOut } from '../../../shared/auth/state/authSlice'
 import { appPaths, combinationReviewRunResultPath, supportProgramDetailPath } from '../../../shared/routes/appPaths'
 import { reviewProgramKey, supportsAutomaticReview, type ReviewListItem, type RunSummary } from '../../../../domain/entities/CombinationReview'
@@ -17,7 +19,9 @@ import { SelectField } from '../../../shared/workspace/SelectField'
 import { WorkspacePageHeader } from '../../../shared/workspace/WorkspacePageHeader'
 import { WorkspaceModal } from '../../../shared/workspace/WorkspaceModal'
 import { WorkspaceToast, type WorkspaceToastNotice } from '../../../shared/workspace/WorkspaceToast'
+import { useDelayedFlag } from '../../../shared/workspace/useDelayedFlag'
 import { useFloatingPopover } from '../../../shared/workspace/useFloatingPopover'
+import { CatalogRowSkeletons, ReviewEditorSkeleton, ReviewListSkeleton, ReviewRunResultSkeleton } from './ReviewSkeletons'
 
 const listTitle = '중복 지원·수혜 검토'
 const scopeNotice = '두 공고를 함께 신청 · 선정 · 수행할 수 있는지 봐요. 과거 수혜 이력 누적 · 사업비 정산 규정은 이 검토 범위 밖이에요.'
@@ -138,15 +142,17 @@ function ReviewList({ account }: { account: string }) {
   const [toast, setToast] = useState<WorkspaceToastNotice | null>(null)
   const deleting = vm.busy.includes('delete')
   const loading = vm.busy.includes('list')
+  // 처음 읽을 때만 300ms가 넘으면 카드 자리를 그립니다. 더 보기는 버튼이 진행을 알립니다.
+  const showSkeleton = useDelayedFlag(loading && vm.page === null)
   const items = vm.page?.items ?? []
   const now = useNow(items.some((item) => latestRunView(item).state === 'working'), 15_000)
   const header = <WorkspacePageHeader title={listTitle} actions={<Link className={workspacePageStyles.primaryButton} to={appPaths.combinationReviewNew}>새 검토</Link>} />
   if (vm.error?.status === 401) return <>{header}<main className={workspacePageStyles.content}><ReviewError error={vm.error} /></main></>
   return <>{header}<main className={workspacePageStyles.content}>
-    <p className={s.muted}>{scopeNotice.split('.')[0]}. 저장한 검토와 실행 기록은 본인만 볼 수 있어요.</p>
     <ReviewError error={vm.error} />
     {vm.pollingPaused && <p className={s.warning}>진행 상태 자동 확인이 멈췄어요. [다시 시도]로 목록을 다시 불러와 주세요. 서버 작업은 취소되지 않아요.</p>}
-    {loading && <p role="status">검토 목록을 불러오는 중입니다.</p>}
+    {loading && <p className="sr-only" role="status">검토 목록을 불러오는 중입니다.</p>}
+    {showSkeleton && <ReviewListSkeleton />}
     {vm.page?.items.length === 0 && <div className={`${s.card} flex flex-col items-center gap-2 text-center`}>
       <h2 className="font-semibold">아직 저장한 검토가 없어요</h2>
       <p className={s.muted}>새 검토에서 공고 2개와 참여 상태를 입력하면 분석을 시작할 수 있어요.</p>
@@ -155,7 +161,7 @@ function ReviewList({ account }: { account: string }) {
     {items.length > 0 && <ul className="grid gap-3" aria-label="저장한 검토">{items.map((item) =>
       <ReviewListCard key={item.id} item={item} now={now} deleteDisabled={deleting} onDelete={() => setConfirming(item)} />)}</ul>}
     {vm.error && <div className="flex justify-center"><button className={s.secondarySm} disabled={loading} onClick={() => void vm.load()}>다시 시도</button></div>}
-    {vm.page?.nextBeforeId && <div className="flex justify-center"><button className={s.secondarySm} disabled={loading} onClick={() => void vm.load(vm.page!.nextBeforeId!)}>더 보기</button></div>}
+    {vm.page?.nextBeforeId && <div className="flex justify-center"><button className={s.secondarySm} disabled={loading} aria-busy={loading} onClick={() => void vm.load(vm.page!.nextBeforeId!)}>{loading ? <><span className={s.buttonSpinner} aria-hidden="true" />불러오는 중…</> : '더 보기'}</button></div>}
   </main>
   <WorkspaceModal isOpen={confirming !== null} title="검토를 삭제할까요?" tone="danger" onClose={() => setConfirming(null)}
     description={confirming ? `${confirming.title}의 입력과 실행 기록 · 보관한 원문이 모두 지워져요. 되돌릴 수 없어요.` : undefined}>
@@ -213,6 +219,10 @@ function RunResultPage({ reviewId, runId, account }: { reviewId: number; runId: 
     const scrollArea = contentRef.current?.parentElement
     if (scrollArea && typeof scrollArea.scrollTo === 'function') scrollArea.scrollTo({ top: 0, left: 0, behavior: 'auto' })
   }, [])
+  // 첫 렌더(읽기 시작 전)도 실패하기 전까지는 읽는 중으로 봅니다.
+  const loadingRun = vm.run?.id !== runId && (vm.busy.some((value) => value === 'load' || value === 'run') || vm.error === null)
+  const showRunSkeleton = useDelayedFlag(loadingRun)
+  const historyBusy = vm.busy.includes('history')
   if (vm.error?.status === 401) return <>{header}<main className={workspacePageStyles.content}><ReviewError error={vm.error} /></main></>
   const selectedRun = vm.run?.id === runId ? vm.run : null
   const runOptions = vm.runs?.items ?? []
@@ -227,11 +237,12 @@ function RunResultPage({ reviewId, runId, account }: { reviewId: number; runId: 
             ...runOptions.map((run) => ({ value: String(run.id), label: `실행 #${run.id} · ${runLabels[run.status]} · ${formatReviewDateTime(run.startedAt)}` })),
           ]}
           onChange={(value) => navigate(combinationReviewRunResultPath(reviewId, Number(value)))} />
-        {vm.runs?.nextBeforeId && <button className={s.secondarySm} type="button" disabled={vm.busy.includes('history')} onClick={() => vm.history(vm.runs!.nextBeforeId!)}>이전 실행 더 보기</button>}
+        {vm.runs?.nextBeforeId && <button className={s.secondarySm} type="button" disabled={historyBusy} aria-busy={historyBusy} onClick={() => vm.history(vm.runs!.nextBeforeId!)}>{historyBusy ? <><span className={s.buttonSpinner} aria-hidden="true" />불러오는 중…</> : '이전 실행 더 보기'}</button>}
       </div>
     </div>
     <ReviewError error={vm.error} />
-    {!selectedRun && vm.busy.some((value) => value === 'load' || value === 'run') && <p role="status">실행 결과를 불러오는 중입니다.</p>}
+    {loadingRun && <p className="sr-only" role="status">실행 결과를 불러오는 중입니다.</p>}
+    {showRunSkeleton && <ReviewRunResultSkeleton />}
     {!selectedRun && vm.review && vm.error && !vm.busy.includes('run') && <div className="flex justify-center"><button className={s.primary} type="button" onClick={() => vm.selectRun(runId)}>다시 시도</button></div>}
     {selectedRun && <ReviewRunResult run={selectedRun} currentRevision={vm.review?.inputRevision ?? selectedRun.inputRevision} names={vm.names} download={vm.download} downloading={vm.busy.includes('download')} />}
   </main></>
@@ -259,6 +270,13 @@ function ReviewEditor({ id, account, initialProgram = null }: { id: number | nul
   const saving = vm.busy.includes('save')
   const inputBusy = saving || vm.busy.includes('load')
   const analysisBusy = vm.busy.includes('analysis')
+  const historyBusy = vm.busy.includes('history')
+  // 저장한 검토를 처음 읽는 동안은 지금 단계의 카드 자리를, 공고 검색은 첫 결과 전에만 행 자리를 그리고 이후에는 이전 결과를 흐리게 둡니다.
+  // 첫 렌더는 읽기를 시작하기 전이라 busy가 비어 있습니다. 실패하기 전까지는 읽는 중으로 보고 [다시 시도] 카드가 잠깐 비치지 않게 합니다.
+  const loadingReview = Boolean(id) && !vm.review && (vm.busy.includes('load') || vm.error === null)
+  const showReviewSkeleton = useDelayedFlag(loadingReview)
+  const catalogLoading = vm.busy.includes('catalog')
+  const showCatalogSkeleton = useDelayedFlag(catalogLoading && !vm.catalog)
   const invalidProgramCount = vm.draft.programs.length !== 2
   const unsupported = vm.draft.programs.some((p) => !supportsAutomaticReview(p))
   const activeRun = vm.runs?.items.find((run) => run.status === 'QUEUED' || run.status === 'RUNNING')
@@ -301,32 +319,36 @@ function ReviewEditor({ id, account, initialProgram = null }: { id: number | nul
     {id && vm.error?.runId && <Link className={s.secondarySm} to={combinationReviewRunResultPath(id, vm.error.runId)}>실패 실행 #{vm.error.runId} 확인</Link>}
     {vm.rejectedRevision && vm.pending && <button className={s.secondarySm} onClick={vm.clearRejectedRequest}>버전 충돌로 거절된 실행 요청 정리</button>}
     {vm.notice && <p role="status" className={s.muted}>{vm.notice}</p>}
-    {id && !vm.review ? <div className={s.card}>{vm.busy.includes('load') ? <p role="status">저장 입력과 실행 기록을 불러오는 중입니다.</p> : <button className={s.secondarySm} onClick={vm.load}>다시 시도</button>}</div> : <>
+    {id && !vm.review ? (loadingReview
+      ? <><p className="sr-only" role="status">저장 입력과 실행 기록을 불러오는 중입니다.</p>{showReviewSkeleton && <ReviewEditorSkeleton step={step} />}</>
+      : <div className={s.card}><button className={s.secondarySm} onClick={vm.load}>다시 시도</button></div>) : <>
       {step === 'selection' && <>
         <fieldset disabled={inputBusy} className="space-y-4">
           <div className={s.card}><label className="font-semibold">검토 제목<input className={s.input} value={vm.draft.title} onChange={(e) => vm.setDraft({ ...vm.draft, title: e.target.value })} required placeholder="예: 창업 지원사업 참여 검토" /></label><p className={s.muted}>제목은 200자 이내입니다. 참여 상태는 다음 단계에서 입력합니다.</p></div>
           <section className={s.card} aria-label="공고 선택">
-            <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="font-bold">비교할 공고 선택</h2><strong className="rounded-full bg-brand-accent px-3 py-1 text-sm text-brand-primary">{vm.draft.programs.length}/2 선택</strong></div>
-            <p className={s.muted}>관심 공고함이나 전체 공고 검색에서 서로 비교할 공고를 정확히 2개 선택하세요. 접수 종료 공고도 참여 이력 검토에 사용할 수 있습니다.</p>
+            <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="font-bold">비교할 공고 선택</h2><strong className="rounded-full bg-brand-soft px-3 py-1 text-sm text-brand-primary">{vm.draft.programs.length}/2 선택</strong></div>
+            <p className={s.muted}>관심 공고함이나 전체 공고 검색에서 서로 비교할 공고를 정확히 2개 선택하세요. 접수 마감 공고도 참여 이력 검토에 사용할 수 있습니다.</p>
             <div className="mt-3 flex min-h-12 flex-col items-stretch gap-2 rounded-xl bg-slate-50 px-3 py-2" aria-label="현재 선택한 공고">
               {vm.draft.programs.length === 0 && <span className="text-sm text-slate-500">선택한 공고가 없습니다.</span>}
               {vm.draft.programs.map((program, index) => {
                 const name = vm.names[reviewProgramKey(program)] ?? '공고 정보 확인 중'
-                return <span className="inline-flex w-full min-w-0 items-center gap-2 rounded-xl border border-brand-primary/30 bg-brand-accent py-1 pr-1 pl-3 text-sm font-semibold text-brand-primary" key={reviewProgramKey(program)}><span className="min-w-0 flex-1 break-words">사업 {index + 1} · {name}</span><button type="button" className="grid size-7 shrink-0 place-items-center rounded-full hover:bg-brand-accent focus-visible:outline-2 focus-visible:outline-brand-primary" aria-label={`${name} 선택 해제`} onClick={() => vm.setDraft({ ...vm.draft, programs: vm.draft.programs.filter((_, selectedIndex) => selectedIndex !== index) })}>×</button></span>
+                return <span className="inline-flex w-full min-w-0 items-center gap-2 rounded-xl border border-brand-primary/30 bg-brand-soft py-1 pr-1 pl-3 text-sm font-semibold text-brand-primary" key={reviewProgramKey(program)}><span className="min-w-0 flex-1 break-words">사업 {index + 1} · {name}</span><button type="button" className="grid size-7 shrink-0 place-items-center rounded-full hover:bg-brand-soft focus-visible:outline-2 focus-visible:outline-brand-primary" aria-label={`${name} 선택 해제`} onClick={() => vm.setDraft({ ...vm.draft, programs: vm.draft.programs.filter((_, selectedIndex) => selectedIndex !== index) })}>×</button></span>
               })}
             </div>
-            <button ref={savedProgramsButtonRef} type="button" className="mt-4 flex w-full cursor-pointer items-center justify-between rounded-xl border border-slate-300 bg-white px-4 py-3 text-left text-sm font-semibold hover:border-brand-primary hover:bg-brand-accent focus-visible:outline-2 focus-visible:outline-brand-primary" aria-label="관심 공고함에서 선택" aria-haspopup="dialog" aria-expanded={savedProgramsOpen} onClick={() => setSavedProgramsOpen(true)}><span>관심 공고함에서 선택</span><span className="text-brand-primary">열기 ›</span></button>
+            <button ref={savedProgramsButtonRef} type="button" className="mt-4 flex w-full cursor-pointer items-center justify-between rounded-xl border border-slate-300 bg-white px-4 py-3 text-left text-sm font-semibold hover:border-brand-primary hover:bg-brand-soft focus-visible:outline-2 focus-visible:outline-brand-primary" aria-label="관심 공고함에서 선택" aria-haspopup="dialog" aria-expanded={savedProgramsOpen} onClick={() => setSavedProgramsOpen(true)}><span>관심 공고함에서 선택</span><span className="text-brand-primary">열기 ›</span></button>
             <SavedSupportProgramPickerDialog open={savedProgramsOpen} phase={vm.savedProgramChoices.phase} programs={vm.savedProgramChoices.programs} selectedProgramKeys={vm.draft.programs.map((program) => `${program.sourceCode}:${program.sourceProgramId}`)} selectionLimit={2} description="비교할 공고를 최대 2개까지 선택할 수 있습니다." listLabel="중복 지원 검토 관심 공고 목록" onToggle={vm.toggle} onRetry={vm.savedProgramChoices.retry} onClose={closeSavedPrograms} />
             <h3 className="mt-5 font-semibold">전체 공고 검색</h3>
             <div className="mt-3"><SupportProgramSearchFilters filters={vm.catalogFilters} appliedFilters={vm.appliedCatalogFilters} catalog={vm.catalog}
-              disabled={inputBusy} loading={vm.busy.includes('catalog')} onChange={vm.setCatalogFilters}
+              disabled={inputBusy} loading={catalogLoading} onChange={vm.setCatalogFilters}
               onSearch={(filters) => { void vm.search(1, filters) }} /></div>
-            {vm.busy.includes('catalog') && <p className="mt-3" role="status">공고를 불러오는 중입니다.</p>}
-            {vm.catalog?.programs.length === 0 && <p className="mt-3">검색 결과가 없습니다. 검색어나 필터를 바꿔 다시 검색해 주세요.</p>}
-            <ul className="mt-4 divide-y divide-slate-200">{vm.catalog?.programs.map((program) => {
+            {catalogLoading && <p className="sr-only" role="status">공고를 불러오는 중입니다.</p>}
+            {showCatalogSkeleton && <CatalogRowSkeletons />}
+            {/* 다시 검색하는 동안은 0건을 먼저 보여 주지 않고 이전 결과를 흐리게 둡니다. */}
+            {!catalogLoading && vm.catalog?.programs.length === 0 && <p className="mt-3">검색 결과가 없습니다. 검색어나 필터를 바꿔 다시 검색해 주세요.</p>}
+            <ul className={`mt-4 divide-y divide-slate-200 ${catalogLoading && vm.catalog ? s.stale : ''}`} aria-busy={catalogLoading}>{vm.catalog?.programs.map((program) => {
               const identity = { sourceCode: program.sourceCode, sourceProgramId: program.id, subProgramId: null }
               const selected = vm.draft.programs.some((p) => reviewProgramKey(p) === reviewProgramKey(identity))
-              return <li className={`my-2 rounded-xl border px-3 py-3 transition-colors ${selected ? 'border-brand-primary bg-brand-accent ring-1 ring-brand-primary/20' : 'border-transparent'}`} key={reviewProgramKey(identity)}><div className="flex flex-wrap items-center justify-between gap-2"><div className="min-w-0 flex-1"><strong>{program.title}</strong><p className={s.muted}>{program.organization} · {({ OPEN: '접수 중', CLOSED: '접수 종료', UPCOMING: '접수 예정', UNKNOWN: '접수 상태 미확인' })[program.status]}</p><p className={s.muted}>{program.applicationPeriod}</p></div><button type="button" className={selected ? s.primary : s.button} aria-pressed={selected} disabled={!selected && vm.draft.programs.length >= 2} onClick={() => vm.toggle(program)}>{selected ? '선택 해제' : '선택'}</button></div>
+              return <li className={`my-2 rounded-xl border px-3 py-3 transition-colors ${selected ? 'border-brand-primary bg-brand-soft ring-1 ring-brand-primary/20' : 'border-transparent'}`} key={reviewProgramKey(identity)}><div className="flex flex-wrap items-center justify-between gap-2"><div className="min-w-0 flex-1"><strong>{program.title}</strong><p className={s.muted}>{program.organization} · {programStatusLabels[program.status]}</p><p className={s.muted}>{program.applicationPeriod}</p></div><button type="button" className={selected ? s.primary : s.button} aria-pressed={selected} disabled={!selected && vm.draft.programs.length >= 2} onClick={() => vm.toggle(program)}>{selected ? '선택 해제' : '선택'}</button></div>
                 {!supportsAutomaticReview(identity) && <p className="text-sm text-amber-800">현재 자동 분석을 지원하지 않는 공고입니다.</p>}
                 <Link className="text-sm text-brand-primary underline" to={supportProgramDetailPath({ sourceCode: identity.sourceCode, sourceProgramId: identity.sourceProgramId }, true)} target="_blank">공고 상세 확인</Link>
               </li>
@@ -369,7 +391,7 @@ function ReviewEditor({ id, account, initialProgram = null }: { id: number | nul
         <section className={`${s.card} space-y-3`} aria-label="실행 기록"><h2 className="text-lg font-bold">실행 기록</h2>
           {vm.runs?.items.length === 0 && <p className={s.muted}>아직 분석을 실행하지 않았습니다.</p>}
           <ul className="space-y-2">{vm.runs?.items.map((run) => <li key={run.id}><Link className={`${s.button} w-full justify-start text-left`} to={combinationReviewRunResultPath(id, run.id)}>#{run.id} · 입력 버전 {run.inputRevision} · {runLabels[run.status]} · {formatReviewDateTime(run.startedAt)}</Link></li>)}</ul>
-          {vm.runs?.nextBeforeId && <div className="flex justify-center"><button className={s.secondarySm} disabled={vm.busy.includes('history')} onClick={() => vm.history(vm.runs!.nextBeforeId!)}>이전 실행 더 보기</button></div>}
+          {vm.runs?.nextBeforeId && <div className="flex justify-center"><button className={s.secondarySm} disabled={historyBusy} aria-busy={historyBusy} onClick={() => vm.history(vm.runs!.nextBeforeId!)}>{historyBusy ? <><span className={s.buttonSpinner} aria-hidden="true" />불러오는 중…</> : '이전 실행 더 보기'}</button></div>}
         </section>
         <StepBar note={activeRun ? '화면을 나가도 분석은 계속돼요' : '검토 실행 1회마다 유료 분석이 한 번 실행돼요'} reason={vm.pending ? null : runBlocked} reasonId={reasonId}
           back={<button className={s.secondaryPill} type="button" disabled={inputBusy} onClick={() => changeStep('participation')}>← 이전</button>}
@@ -393,7 +415,8 @@ function ReviewEditor({ id, account, initialProgram = null }: { id: number | nul
  * 왼쪽 [← 이전] · 가운데 저장 상태 안내 · 오른쪽 주 동작. 주 동작을 누를 수 없으면 그 이유를 버튼 앞에 적습니다.
  */
 function StepBar({ back, note, reason = null, reasonId, next }: { back?: ReactNode; note: string; reason?: string | null; reasonId?: string; next: ReactNode }) {
-  return <div className={s.stepBar}>
+  // 모든 폭에서 아래에 붙는 바라 도우미 런처를 그 위로 올립니다.
+  return <div className={s.stepBar} {...assistantLift.always}>
     {back}
     <span className={s.stepBarNote} role="status" aria-live="polite">{note}</span>
     <div className="ml-auto flex flex-wrap items-center justify-end gap-2">

@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react'
 import { Link, useLocation, useSearchParams } from 'react-router'
 
+import { assistantCover, assistantLift } from '../../../shared/assistant/assistantPlacement'
 import { loginPathFor } from '../../../shared/auth/returnPath'
 import { appPaths, isAppPath, supportProgramQuestionPath } from '../../../shared/routes/appPaths'
 import { workspacePageStyles } from '../../../shared/workspace/WorkspacePage.styles'
@@ -12,6 +13,7 @@ import {
 import type { SupportProgramIdentity } from '../../../../domain/repositories/SupportProgramRepository'
 import { useSupportProgramDetailViewModel } from '../viewmodel/useSupportProgramDetailViewModel'
 import { supportProgramSaveMessages, supportProgramSaveNoticeDurationMs, useSupportProgramSaveViewModel } from '../../../shared/support-program/useSupportProgramSaveViewModel'
+import { ddayToneClassNames } from '../../../shared/workspace/WorkspaceStates.styles'
 import { WorkspaceToast } from '../../../shared/workspace/WorkspaceToast'
 import { workspaceToastActionClassName } from '../../../shared/workspace/WorkspaceToast.styles'
 import { EvidenceQuestionPanel } from './EvidenceQuestionPanel'
@@ -114,7 +116,7 @@ function LoadingSupportProgramDetail({ searchReturnTo }: { searchReturnTo: Suppo
             {bar('w-full')}{bar('w-2/3')}
           </div>
         </div>
-        <aside className={s.aside} aria-hidden="true">
+        <aside className={s.aside} aria-hidden="true" {...assistantLift.narrow}>
           {bar('w-full', true)}
           {bar('w-full', true)}
           <div className={s.divider} />
@@ -262,7 +264,7 @@ function SupportProgramDetail({ program, searchReturnTo, fromPipeline }: {
                 <span className={`${s.statusDot} ${dotTone}`} aria-hidden="true" />
                 {status.label}
               </span>
-              {deadline ? <span className={`${s.deadline} ${deadline.urgent ? s.deadlineUrgent : s.deadlineCalm}`}>{deadline.label}</span> : null}
+              {deadline ? <span className={`${s.deadline} ${ddayToneClassNames[deadline.tone]}`}>{deadline.label}</span> : null}
               <span className={s.source}>{program.sourceName}</span>
             </div>
             <h1 id="support-program-title" className={s.title}>{program.title}</h1>
@@ -321,7 +323,8 @@ function SupportProgramDetail({ program, searchReturnTo, fromPipeline }: {
           </section>
         </article>
 
-        <aside className={s.aside} aria-label="이 공고로 할 일">
+        {/* 좁은 화면의 아래 동작 바 위로 도우미 런처를 올리고, [더 보기]로 바를 펼친 동안에는 런처를 숨깁니다. */}
+        <aside className={s.aside} aria-label="이 공고로 할 일" {...assistantLift.narrow} {...(moreOpen ? assistantCover.narrow : {})}>
           {/* 넓은 화면은 관심 공고 → 질문 → 설명 순서로 세로로, 좁은 화면은 동작 바 한 줄(관심 공고 · 더 보기 · 질문)로 다시 정렬됩니다. */}
           <div className={s.asideBar}>
             {saveControl}

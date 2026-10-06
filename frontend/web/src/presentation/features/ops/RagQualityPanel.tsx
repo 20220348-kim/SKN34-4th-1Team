@@ -44,7 +44,7 @@ export function RagQualityPanel({ runId, state, disabled, onBusy, onSaved, onExp
   const reasons = (record: NonNullable<typeof current>) => <ul className="list-disc space-y-1 pl-5">
     {record.reasons.map((reason, index) => <li key={index}>{reason.case_id && `${reason.case_id} · `}{reason.dimension && `${dimensions[reason.dimension]}: `}{reason.message}</li>)}
   </ul>
-  return <section className="space-y-3 rounded-xl border border-sample-border p-4" aria-label="RAG 품질 점검" aria-busy={busy}>
+  return <section className="space-y-3 rounded-xl border border-line p-4" aria-label="RAG 품질 점검" aria-busy={busy}>
     <h3 className="font-semibold">RAG 품질 점검 · {labels[quality.status]}</h3>
     <p className="text-sm">현재 저장된 검토로 검색·답변·인용의 부적합과 검토 필요 사유를 기록합니다. 원본 실행 실패와 미측정은 별도로 표시합니다.</p>
     <p className="text-sm">실제 모델 기록에서 참조 자료 승인과 모든 사례의 검색·답변·인용 적합 검토를 마쳐야 합격합니다. 합성·무료 대역 기록은 비교 기준으로 지정할 수 없습니다.</p>

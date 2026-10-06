@@ -17,7 +17,7 @@ export function FilterMultiChoices({ label, name, options, selected, onToggle, o
   return <fieldset className="m-0 min-w-0 border-0 p-0">
     <legend className="sr-only">{label}</legend>
     <div className="flex gap-3 max-chat:flex-col max-chat:gap-2">
-      <span aria-hidden="true" className="w-13 shrink-0 pt-2.5 text-xs font-semibold text-sample-muted max-chat:pt-0">{label}</span>
+      <span aria-hidden="true" className="w-13 shrink-0 pt-2.5 text-xs font-semibold text-ink-muted max-chat:pt-0">{label}</span>
       <div className="flex min-w-0 flex-wrap gap-1.5">
         <label className="relative min-w-0 max-w-full cursor-pointer">
           <input type="checkbox" name={name} value="" aria-label={`전체 ${label}`} checked={isAll} onChange={onClearAll} className="peer sr-only" />

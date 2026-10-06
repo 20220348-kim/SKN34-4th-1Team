@@ -10,7 +10,7 @@ export function RecruitmentCardSkeleton({ label, text, count = 3 }: { label: str
   return (
     <section className={partnerRecruitmentStyles.cardGrid} aria-label={label} aria-busy="true">
       {Array.from({ length: count }, (_, index) => (
-        <div key={index} className="flex min-h-[13rem] flex-col gap-3 rounded-[1.4rem] border border-sample-border bg-white p-[1.35rem]" aria-hidden="true">
+        <div key={index} className="flex min-h-[13rem] flex-col gap-3 rounded-[1.4rem] border border-line bg-white p-[1.35rem]" aria-hidden="true">
           <div className="flex items-center justify-between gap-3"><span className={`${bar} h-5 w-16 rounded-full`} /><span className={`${bar} h-4 w-12`} /></div>
           <span className={`${bar} h-5 w-4/5`} />
           <span className={`${bar} h-3.5 w-3/5`} />

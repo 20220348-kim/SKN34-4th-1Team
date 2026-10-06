@@ -18,7 +18,7 @@ test('starts with the first populated stage and shows only that stage while keep
   expect(screen.getByText('사업계획서')).toBeTruthy()
   expect(screen.queryByText('별도 작성본')).toBeNull()
   expect(screen.queryByText('담지 않은 사업의 문서')).toBeNull()
-  fireEvent.press(screen.getByRole('tab', { name: '지원 완료 1건' }))
+  fireEvent.press(screen.getByRole('tab', { name: '제출 완료 1건' }))
   expect(screen.queryByText('사업계획서')).toBeNull()
   expect(screen.getByText('별도 작성본')).toBeTruthy()
   fireEvent.press(screen.getByLabelText('별도 작성본 단계 바꾸기'))

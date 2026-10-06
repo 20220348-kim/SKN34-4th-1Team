@@ -44,20 +44,20 @@ export function RagReferenceReviewPanel({ runId, state, disabled, onDirty, onBus
       if (mounted.current) { setBusy(false); onBusy(false) }
     }
   }
-  return <section className="space-y-3 rounded-xl border border-sample-border p-4" aria-label="RAG 참조 자료 검토" aria-busy={busy}>
+  return <section className="space-y-3 rounded-xl border border-line p-4" aria-label="RAG 참조 자료 검토" aria-busy={busy}>
     <h3 className="font-semibold">원문·참조 자료 검토 · {current ? labels[current.decision] : '현재 승인 없음'}</h3>
     <p className="text-sm">{reference.rubric.description} 아래 사례 선택으로 전체 자료를 확인하세요. 승인은 이 실행의 전체 대상에만 적용되며 다른 실행에 자동 적용되지 않습니다.</p>
     <p className="text-sm">AI 작성 출처는 유지합니다. 참조 자료 승인은 후보 답변의 품질 합격이나 비교 기준 지정과 별개입니다.</p>
     <p className="text-sm break-words">검토 대상 {reference.case_ids.length}건: {reference.case_ids.join(', ')}</p>
     <form className="space-y-3" onSubmit={(event) => { event.preventDefault(); void save() }}>
       <label className="block text-sm font-semibold">참조 자료 판단
-        <select className="mt-1 w-full rounded-lg border border-sample-border p-2" value={decision} required disabled={disabled || busy || conflict} onChange={(event) => { setDecision(event.target.value as Decision | ''); markDirty() }}>
+        <select className="mt-1 w-full rounded-lg border border-line p-2" value={decision} required disabled={disabled || busy || conflict} onChange={(event) => { setDecision(event.target.value as Decision | ''); markDirty() }}>
           <option value="">판단 선택</option>
           {(Object.keys(labels) as Decision[]).filter((value) => value !== 'REVOKED' || reference.can_revoke).map((value) => <option key={value} value={value}>{labels[value]}</option>)}
         </select>
       </label>
       <label className="block text-sm font-semibold">참조 검토 근거
-        <textarea className="mt-1 w-full rounded-lg border border-sample-border p-2" value={comment} maxLength={3000} rows={3} required disabled={disabled || busy || conflict} onChange={(event) => { setComment(event.target.value); markDirty() }} placeholder="전체 대상의 검토 결과와 승인·수정·보류·철회 이유를 기록하세요." />
+        <textarea className="mt-1 w-full rounded-lg border border-line p-2" value={comment} maxLength={3000} rows={3} required disabled={disabled || busy || conflict} onChange={(event) => { setComment(event.target.value); markDirty() }} placeholder="전체 대상의 검토 결과와 승인·수정·보류·철회 이유를 기록하세요." />
       </label>
       <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={confirmed} disabled={disabled || busy || conflict} onChange={(event) => { setConfirmed(event.target.checked); markDirty() }} />전체 대상의 원문·청크·질문·기대 상태·기대 인용을 확인했습니다.</label>
       {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
@@ -69,7 +69,7 @@ export function RagReferenceReviewPanel({ runId, state, disabled, onDirty, onBus
       {dirty && <p className="text-xs">사례를 바꾸어 전체 자료를 확인할 수 있습니다. 참조 입력을 저장하거나 취소한 뒤 후보 검토·품질 점검·새로고침을 진행하세요.</p>}
     </form>
     <details><summary className="cursor-pointer font-semibold">참조 검토 이력 · {reference.history.length}건</summary>
-      {reference.history.map((row) => <article key={row.id} className="my-2 rounded-lg bg-sample-bg p-3 text-sm" aria-label={`참조 검토 이력 ${row.version}`}>
+      {reference.history.map((row) => <article key={row.id} className="my-2 rounded-lg bg-surface-muted p-3 text-sm" aria-label={`참조 검토 이력 ${row.version}`}>
         <p>#{row.version} · {labels[row.decision]} · {row.is_current ? '현재 자료의 최신 검토' : '이전 검토'}</p>
         <p>{row.reviewed_by} · {new Date(row.created_at).toLocaleString('ko-KR')}</p>
         <p className="whitespace-pre-wrap break-words">{row.comment}</p>

@@ -48,6 +48,6 @@ export function EvaluationReviewProgress({ data, hasDrafts, disabled, onNavigate
     {hasDrafts ? <p>저장하지 않은 사례 판단이 있습니다. 사례 검토를 저장한 뒤 다음 단계를 확인하세요.</p>
       : next ? <button type="button" className={`${styles.secondaryButton} justify-self-start`} onClick={() => onNavigate(next.target)}>{next.label}</button>
       : <p>이 실행이 현재 자료의 비교 기준입니다. 다른 자료나 전체 모델의 품질 승인을 뜻하지 않습니다.</p>}
-    <p className="text-xs text-sample-muted">이동 버튼은 검토·판정·기준을 저장하지 않습니다. 각 위치에서 내용을 확인하고 별도로 저장하세요.</p>
+    <p className="text-xs text-ink-muted">이동 버튼은 검토·판정·기준을 저장하지 않습니다. 각 위치에서 내용을 확인하고 별도로 저장하세요.</p>
   </section>
 }

@@ -7,11 +7,11 @@ export type SelectFieldOption = { value: string; label: string; disabled?: boole
 const selectFieldStyles = {
   trigger: 'flex cursor-pointer items-center justify-between gap-2 text-left disabled:cursor-not-allowed',
   triggerLabel: 'min-w-0 flex-1 truncate',
-  placeholder: 'text-sample-muted',
-  caret: 'shrink-0 text-[0.7rem] text-sample-muted',
-  listbox: 'z-40 m-0 list-none rounded-xl border border-sample-border bg-white p-1 shadow-[0_12px_32px_rgb(32_33_36_/_14%)] outline-0',
-  option: 'flex min-h-10 cursor-pointer items-center rounded-lg px-3 py-2 text-sm text-app-ink',
-  optionActive: 'bg-brand-accent',
+  placeholder: 'text-ink-muted',
+  caret: 'shrink-0 text-[0.7rem] text-ink-muted',
+  listbox: 'z-40 m-0 list-none rounded-xl border border-line bg-white p-1 shadow-[0_12px_32px_rgb(32_33_36_/_14%)] outline-0',
+  option: 'flex min-h-10 cursor-pointer items-center rounded-lg px-3 py-2 text-sm text-ink',
+  optionActive: 'bg-brand-soft',
   optionSelected: 'font-bold text-brand-primary',
   optionDisabled: 'cursor-not-allowed text-[#b8bcc2]',
 } as const

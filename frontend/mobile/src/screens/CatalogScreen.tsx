@@ -8,6 +8,7 @@ import {
 } from '@govbiz/shared/domain/entities/SupportProgramCatalogFilterOptions'
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
 import type { SupportProgram } from '@govbiz/shared/domain/entities/SupportProgram'
+import { programStatusLabels } from '@govbiz/shared/domain/labels'
 import { errorMessage, programClient } from '../api/client'
 import { ChoiceField } from '../components/ChoiceField'
 import { ProgramCard, type ProgramSelectionLabels } from '../components/ProgramCard'
@@ -22,9 +23,8 @@ export const initialFilters: SupportProgramCatalogFilters = {
 const options = (defaults: readonly string[], available?: readonly string[]) =>
   [{ value: '', label: '전체' }, ...mergeCatalogFilterOptions(defaults, available).map((value) => ({ value, label: value }))]
 const statusOptions = [
-  { value: 'ALL', label: '전체' }, { value: 'OPEN', label: '접수 중' }, { value: 'UPCOMING', label: '접수 예정' },
-  { value: 'CLOSED', label: '마감' }, { value: 'UNKNOWN', label: '상태 미확인' },
-] as const
+  { value: 'ALL', label: '전체' }, ...Object.entries(programStatusLabels).map(([value, label]) => ({ value, label })),
+]
 const sortOptions = [{ value: 'RECENT', label: '최신순' }, { value: 'DEADLINE', label: '마감일순' }] as const
 
 export function CatalogScreen({ onOpenProgram, keyboardOffset = 0, selection, header }: {

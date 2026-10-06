@@ -1,9 +1,10 @@
 import { type KeyboardEvent as ReactKeyboardEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router'
 import { isWritableApplicationAnswer } from '@govbiz/shared/domain/entities/ApplicationDocumentGeneration'
+import { daysUntil, ddayTone, formatDday, programStatusLabels } from '@govbiz/shared/domain/labels'
 import { useAppSelector } from '../../../../app/hooks'
+import { assistantCover, assistantLift } from '../../../shared/assistant/assistantPlacement'
 import {
-  applicationDeadlineDays,
   applicationServiceFieldLabels,
   type ApplicationFormField,
   type ApplicationFormSection,
@@ -12,12 +13,14 @@ import {
 } from '../../../../domain/entities/ApplicationPreparation'
 import { selectCurrentAccount } from '../../../shared/auth/state/authSlice'
 import { appPaths, supportProgramDetailPath } from '../../../shared/routes/appPaths'
+import { EmptyState } from '../../../shared/workspace/EmptyState'
 import { WorkspacePageHeader } from '../../../shared/workspace/WorkspacePageHeader'
 import { WorkspaceModal } from '../../../shared/workspace/WorkspaceModal'
 import { WorkspaceToast } from '../../../shared/workspace/WorkspaceToast'
 import { workspacePageStyles } from '../../../shared/workspace/WorkspacePage.styles'
 import { workspaceToastActionClassName } from '../../../shared/workspace/WorkspaceToast.styles'
 import { useDelayedFlag } from '../../../shared/workspace/useDelayedFlag'
+import { ddayToneClassNames } from '../../../shared/workspace/WorkspaceStates.styles'
 import { useFloatingPopover } from '../../../shared/workspace/useFloatingPopover'
 import { useMediaQuery } from '../../../shared/workspace/useMediaQuery'
 import { answerMaxLength, undecidedAnswer, useApplicationPreparationEditorViewModel } from '../viewmodel/useApplicationPreparationEditorViewModel'
@@ -387,8 +390,8 @@ function AnswerEditor({ vm }: { vm: EditorViewModel }) {
     requiredMissing={requiredMissing} reviewing={reviewing} onReview={() => move('review')} />
   const hasQuestions = questions.length > 0
   // [← 이전] · 자동 저장 상태 · [다음 →](검토에서는 [초안 만들기]). PC는 카드 바닥 줄, 600px 미만은 아래 고정 바입니다.
-  // 600px 미만에서는 자동 저장 상태를 위쪽 진행 줄에 두므로 바에는 버튼만 둡니다.
-  const moveButtons = hasQuestions ? <div className={narrow ? e.bar : e.cardFooter}>
+  // 600px 미만에서는 자동 저장 상태를 위쪽 진행 줄에 두므로 바에는 버튼만 둡니다. 아래 고정 바일 때는 도우미 런처를 그 위로 올립니다.
+  const moveButtons = hasQuestions ? <div className={narrow ? e.bar : e.cardFooter} {...(narrow ? assistantLift.narrow : {})}>
     <button type="button" className={e.prevButton} disabled={!reviewing && index === 0} aria-keyshortcuts="Control+Shift+Enter" onClick={goPrevious}>← 이전</button>
     {!narrow && <p className={e.footerStatus} role="status" aria-live="polite">{saveStatus}</p>}
     {reviewing
@@ -453,8 +456,8 @@ function AnswerEditor({ vm }: { vm: EditorViewModel }) {
         {vm.documentCount > 0 && <Link className={`${workspacePageStyles.secondaryButton} max-[599px]:hidden`} to={documentsTo}><EditorIcon name="doc" size={16} />문서 보기</Link>}
         <div ref={menuRef} className="relative">
           <button ref={menu.reference} type="button" className={e.iconButton} aria-label="문서 메뉴" aria-haspopup="menu" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}><EditorIcon name="more" /></button>
-          {/* data-covers-assistant: 600px 미만에서 열려 있는 동안 도우미 런처를 숨깁니다(Assistant.styles 참고). */}
-          {menuOpen && <div ref={menu.floating} style={menu.floatingStyles} className={e.menu} role="menu" aria-label="문서 메뉴" data-covers-assistant="true">
+          {/* assistantCover.narrow: 600px 미만에서 열려 있는 동안 도우미 런처를 숨깁니다(assistantPlacement 참고). */}
+          {menuOpen && <div ref={menu.floating} style={menu.floatingStyles} className={e.menu} role="menu" aria-label="문서 메뉴" {...assistantCover.narrow}>
             {vm.documentCount > 0 && <Link className={`${e.menuItem} min-[600px]:hidden`} role="menuitem" to={documentsTo} onClick={() => setMenuOpen(false)}>문서 보기</Link>}
             <a className={e.menuItem} role="menuitem" href={form.sourceUrl} target="_blank" rel="noreferrer" onClick={() => setMenuOpen(false)}>원문 보기 ↗</a>
             <Link className={e.menuItem} role="menuitem" to={reanalyzeTo} onClick={() => setMenuOpen(false)}>양식 다시 분석해 새로 시작</Link>
@@ -560,7 +563,7 @@ function AnswerEditor({ vm }: { vm: EditorViewModel }) {
     </main>
     {sheetOpen && <>
       <button type="button" className={e.sheetScrim} aria-label="항목 목록 닫기" tabIndex={-1} onClick={() => setSheetOpen(false)} />
-      <div ref={sheetRef} className={e.sheet} role="dialog" aria-modal="true" aria-label="항목 목록" tabIndex={-1} onKeyDown={onSheetKeyDown} data-covers-assistant="true">
+      <div ref={sheetRef} className={e.sheet} role="dialog" aria-modal="true" aria-label="항목 목록" tabIndex={-1} onKeyDown={onSheetKeyDown} {...assistantCover.narrow}>
         <span className={e.sheetGrab} aria-hidden="true" />
         <div className={e.sheetHeader}>
           <h2 className={e.sheetTitle}>항목 목록</h2>
@@ -586,10 +589,10 @@ const listStatusTabs: { value: ApplicationPreparationListStatus | undefined; lab
   { value: undefined, label: '전체' }, { value: 'in_progress', label: '진행 중' }, { value: 'done', label: '완료' },
 ]
 function deadlineBadge(item: ApplicationPreparationSummary) {
-  const days = applicationDeadlineDays(item.applicationEndDate)
+  const days = daysUntil(item.applicationEndDate)
   if (days === null) return null
-  if (days < 0) return { label: '접수 마감', className: s.badgeDeadline }
-  return { label: days === 0 ? 'D-Day' : `D-${days}`, className: days <= 7 ? s.badgeUrgent : s.badgeDeadline }
+  if (days < 0) return { label: programStatusLabels.CLOSED, className: s.badgeDeadline }
+  return { label: formatDday(days), className: `${s.badgeDday} ${ddayToneClassNames[ddayTone(days)]}` }
 }
 /** 카드의 [⋯] 메뉴입니다. 공고 상세로 가거나(돌아오면 이 목록 · 같은 필터) 삭제 확인을 엽니다. 바깥 클릭·Esc로 닫힙니다. */
 function PreparationMenu({ item, returnTo, disabled, onDelete }: { item: ApplicationPreparationSummary; returnTo: string; disabled: boolean; onDelete: () => void }) {
@@ -716,10 +719,10 @@ function ApplicationPreparationList() {
       {showSkeleton && <div className={s.cardGrid} aria-hidden="true">
         {[0, 1, 2, 3, 4, 5].map((index) => <div className={s.listCard} key={index}><ListCardSkeleton /></div>)}
       </div>}
-      {vm.page && items.length === 0 && vm.analyses.length === 0 && !vm.isInitialLoading && <section className={s.card} aria-labelledby="empty-preparations-title">
-        <h2 className={s.cardTitle} id="empty-preparations-title">{vm.status === undefined ? '아직 시작한 신청 문서가 없습니다.' : vm.status === 'done' ? '완료한 신청 문서가 없습니다.' : '진행 중인 신청 문서가 없습니다.'}</h2>
-        <p className={s.muted}>새 문서에서 공식 양식과 지원 분야를 확인한 뒤 시작해 주세요.</p>
-      </section>}
+      {/* 다른 작업 화면과 같은 공용 빈 화면(가운데 정렬)을 씁니다. 새 문서 버튼은 머리글에 있어 여기에는 두지 않습니다. */}
+      {vm.page && items.length === 0 && vm.analyses.length === 0 && !vm.isInitialLoading && <EmptyState
+        title={vm.status === undefined ? '아직 시작한 신청 문서가 없습니다.' : vm.status === 'done' ? '완료한 신청 문서가 없습니다.' : '진행 중인 신청 문서가 없습니다.'}
+        description="새 문서에서 공식 양식과 지원 분야를 확인한 뒤 시작해 주세요." />}
       {items.length + vm.analyses.length > 0 && <ul className={`${s.cardGrid} ${refreshing ? k.stale : ''}`} aria-label="신청 준비 목록" aria-busy={refreshing || vm.isLoadingMore}>
         {/* 양식만 분석해 둔 공고는 신청 문서 카드 앞에 "양식 분석" 카드로 둡니다. */}
         {vm.analyses.map((row) => <FormAnalysisCard key={`analysis-${row.job.id}`} row={row} readAt={vm.analysesReadAt} unseen={vm.isAnalysisUnseen(row.job)} />)}

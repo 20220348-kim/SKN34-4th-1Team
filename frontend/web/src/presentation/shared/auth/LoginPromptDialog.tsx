@@ -20,7 +20,7 @@ export const loginPromptTitle = '로그인이 필요해요'
 const loginPromptStyles = {
   body: 'flex items-start gap-3',
   icon: 'grid size-10 shrink-0 place-items-center rounded-full bg-brand-soft text-brand-primary',
-  text: 'm-0 flex-1 text-[0.875rem] leading-[1.6] text-app-ink',
+  text: 'm-0 flex-1 text-[0.875rem] leading-[1.6] text-ink',
   benefits: 'm-0 flex list-disc flex-col gap-1 rounded-[0.85rem] bg-surface-muted py-3 pr-3 pl-8 text-[0.8125rem] leading-[1.55] text-ink-muted',
   actions: 'flex flex-wrap justify-end gap-2 pt-1',
 } as const

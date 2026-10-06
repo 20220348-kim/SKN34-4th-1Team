@@ -5,10 +5,10 @@ import { useFloatingPopover } from './useFloatingPopover'
 const helpTipStyles = {
   root: 'relative inline-flex align-middle',
   button:
-    'grid size-5 shrink-0 cursor-help place-items-center rounded-full border border-sample-border bg-white text-[0.68rem] font-extrabold text-sample-muted hover:border-brand-primary hover:text-brand-primary focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand-primary',
+    'grid size-5 shrink-0 cursor-help place-items-center rounded-full border border-line bg-white text-[0.68rem] font-extrabold text-ink-muted hover:border-brand-primary hover:text-brand-primary focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-brand-primary',
   tooltip:
-    'z-20 flex w-[19rem] max-w-[min(19rem,80vw)] flex-col gap-2 rounded-[0.85rem] border border-sample-border bg-white p-3 text-left text-[0.78rem] font-normal leading-[1.55] text-app-ink shadow-[0_12px_32px_rgb(32_33_36_/_12%)]',
-  title: 'm-0 text-[0.72rem] font-extrabold text-sample-muted',
+    'z-20 flex w-[19rem] max-w-[min(19rem,80vw)] flex-col gap-2 rounded-[0.85rem] border border-line bg-white p-3 text-left text-[0.78rem] font-normal leading-[1.55] text-ink shadow-[0_12px_32px_rgb(32_33_36_/_12%)]',
+  title: 'm-0 text-[0.72rem] font-extrabold text-ink-muted',
 } as const
 
 /**

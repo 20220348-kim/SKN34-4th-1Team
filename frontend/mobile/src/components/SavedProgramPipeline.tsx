@@ -5,7 +5,8 @@ import type { ApplicationPreparationSummary, ApplicationProgressStage } from '@g
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
 import { Button, colors, styles } from '../ui'
 import { AppIcon, type AppIconName } from './AppIcon'
-import { preparationKey, preparationStageLabels } from './PreparationRows'
+import { applicationProgressStageLabels } from '@govbiz/shared/domain/labels'
+import { preparationKey } from './PreparationRows'
 
 type StepId = 'interest' | 'preparing' | 'applied' | 'review' | 'result'
 const steps: {
@@ -16,8 +17,8 @@ const steps: {
     description: '관심 있는 공고를 살펴보고 신청 문서 작성을 시작해 보세요.', empty: '아직 신청 준비를 시작하지 않은 관심 공고가 없어요.' },
   { id: 'preparing', label: '준비 중', icon: 'document', color: colors.info, soft: colors.infoSoft, stages: ['PREPARING'],
     description: '신청 문서를 준비하고 있는 사업이에요.', empty: '준비 중인 신청 문서가 없어요.' },
-  { id: 'applied', label: '지원 완료', icon: 'send', color: colors.primaryText, soft: colors.soft, stages: ['APPLIED'],
-    description: '지원을 마친 사업의 심사 진행을 관리해 보세요.', empty: '지원 완료로 표시한 신청 문서가 없어요.' },
+  { id: 'applied', label: applicationProgressStageLabels.APPLIED, icon: 'send', color: colors.primaryText, soft: colors.soft, stages: ['APPLIED'],
+    description: '제출을 마친 사업의 심사 진행을 관리해 보세요.', empty: '제출 완료로 표시한 신청 문서가 없어요.' },
   { id: 'review', label: '심사 중', icon: 'search', color: '#7040AC', soft: '#F3EDFC', stages: ['DOCUMENT_REVIEW', 'PRESENTATION_REVIEW'],
     description: '서류·발표 심사 단계를 구분해 확인할 수 있어요.', empty: '심사 중인 신청 문서가 없어요.' },
   { id: 'result', label: '결과', icon: 'report', color: colors.warning, soft: colors.warningSoft, stages: ['SELECTED', 'REJECTED'],
@@ -92,7 +93,7 @@ export function SavedProgramPipeline({ items, preparations, busy, onOpenProgram,
           : item.progressStage === 'REJECTED' ? { color: colors.danger, soft: colors.dangerSoft } : selected
         return <View key={item.id} style={[local.card, { borderTopColor: selected.color }]}>
           <View style={local.cardMeta}>
-            <Text style={[local.badge, { backgroundColor: badge.soft, color: badge.color }]}>{preparationStageLabels[item.progressStage]}</Text>
+            <Text style={[local.badge, { backgroundColor: badge.soft, color: badge.color }]}>{applicationProgressStageLabels[item.progressStage]}</Text>
             <Text style={styles.muted}>신청 문서</Text>
           </View>
           <Text style={local.programTitle}>{item.programTitle}</Text>

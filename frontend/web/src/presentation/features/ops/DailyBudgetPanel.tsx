@@ -1,7 +1,7 @@
 import type { DailyBudget } from '../../../data/ops/opsApi'
 
 export function DailyBudgetPanel({ value }: { value: DailyBudget | undefined }) {
-  return <section aria-label="일별 평가 예산" className="space-y-3 rounded-xl border border-sample-border p-4 text-sm">
+  return <section aria-label="일별 평가 예산" className="space-y-3 rounded-xl border border-line p-4 text-sm">
     <h3 className="font-semibold">일별 평가 예산 · 서울 시간</h3>
     {!value ? <p>서버에서 일별 예산 정보를 제공하지 않습니다.</p> : <>
       <p>{value.period_start.slice(0, 10)} 00:00부터 다음 날 00:00까지 · Asia/Seoul</p>
@@ -27,6 +27,6 @@ export function DailyBudgetPanel({ value }: { value: DailyBudget | undefined }) 
         </li>)}</ol>
       </details>}
     </>}
-    <p className="text-xs text-sample-muted">일별 정책 변경은 관리자 설정 화면 또는 운영 명령으로 기록합니다. 월별 한도·금액 한도와 정기 실행 활성화는 별도입니다.</p>
+    <p className="text-xs text-ink-muted">일별 정책 변경은 관리자 설정 화면 또는 운영 명령으로 기록합니다. 월별 한도·금액 한도와 정기 실행 활성화는 별도입니다.</p>
   </section>
 }

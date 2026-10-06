@@ -48,6 +48,7 @@ import { useRestoreAuthSession } from './presentation/shared/auth/hooks/useAuthS
 import { AssistantWidget } from './presentation/shared/assistant/AssistantWidget'
 import { GuestOnly, PublicOnly, RequireAuth } from './presentation/shared/auth/RouteGuards'
 import { APP_PREFIX, appPaths, publicPaths } from './presentation/shared/routes/appPaths'
+import { RouteDocumentTitle } from './presentation/shared/routes/RouteDocumentTitle'
 import { useResetScrollOnNavigate } from './presentation/shared/routes/useResetScrollOnNavigate'
 
 /**
@@ -88,6 +89,8 @@ function CoreApp() {
 
   return (
     <>
+    {/* 브라우저 제목은 화면마다 "화면 이름 · GovBiz"입니다. 이름은 routes/screenTitles 한 곳에서 정합니다. */}
+    <RouteDocumentTitle />
     <ChatActivityToast />
     <Routes>
       <Route element={<PublicLayout />}>

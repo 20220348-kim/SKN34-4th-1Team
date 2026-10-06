@@ -64,7 +64,7 @@ async function checkBounds(page, label) {
       .map(v => v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)
       .reduce((sum, v, index) => sum + v * [0.2126, 0.7152, 0.0722][index], 0)
     const rgb = color => color.match(/[\d.]+/g)?.map(Number)
-    for (const node of document.querySelectorAll('.text-sample-muted, .placeholder\\:text-sample-muted')) {
+    for (const node of document.querySelectorAll('.text-ink-muted, .placeholder\\:text-ink-muted')) {
       if (node.matches(':disabled') || !node.getClientRects().length) continue
       let background
       for (let ancestor = node; ancestor; ancestor = ancestor.parentElement) {
@@ -74,7 +74,7 @@ async function checkBounds(page, label) {
         if (candidate && (candidate.length === 3 || candidate[3] === 1)) { background = candidate; break }
       }
       if (!background) continue
-      const pseudo = node.classList.contains('placeholder:text-sample-muted') ? '::placeholder' : null
+      const pseudo = node.classList.contains('placeholder:text-ink-muted') ? '::placeholder' : null
       const foreground = rgb(getComputedStyle(node, pseudo).color)
       if (!foreground) continue
       const lights = [luminance(foreground), luminance(background)].sort((a, b) => b - a)

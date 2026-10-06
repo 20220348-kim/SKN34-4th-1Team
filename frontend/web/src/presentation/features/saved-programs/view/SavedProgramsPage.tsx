@@ -1,11 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
+import { applicationProgressStageLabels, ddayTone, programStatusLabels } from '@govbiz/shared/domain/labels'
 
 import { applicationServiceFieldLabels, type ApplicationPreparationSummary, type ApplicationProgressStage } from '../../../../domain/entities/ApplicationPreparation'
 import type { SupportProgramStatus } from '../../../../domain/entities/SupportProgram'
 import { regionNames } from '../../../../domain/entities/Region'
 import { supportProgramCategories } from '../../../../domain/entities/SupportProgramCategory'
+import { assistantCover } from '../../../shared/assistant/assistantPlacement'
 import { appPaths, readSavedProgramsViewMode, savedProgramsPath, supportProgramDetailPath, type SavedProgramsViewMode } from '../../../shared/routes/appPaths'
+import { EmptyState } from '../../../shared/workspace/EmptyState'
+import { ErrorState } from '../../../shared/workspace/ErrorState'
+import { ddayToneClassNames } from '../../../shared/workspace/WorkspaceStates.styles'
 import { workspacePageStyles, workspaceTagClassName } from '../../../shared/workspace/WorkspacePage.styles'
 import { WorkspacePageHeader } from '../../../shared/workspace/WorkspacePageHeader'
 import {
@@ -154,15 +159,10 @@ export function SavedProgramsPage({ initial, browseUseCase, preparationUseCase, 
             <p className="sr-only" role="status">{savedSupportProgramMessages.loading}</p>
           </section>
         ) : vm.phase === 'failed' ? (
-          <section className={s.emptyCard} aria-label="관심 공고 불러오기 실패">
-            <p className={workspacePageStyles.emptyNote}>{savedSupportProgramMessages.failed}</p>
-            <button className={workspacePageStyles.primaryButton} type="button" onClick={vm.retry}>다시 시도</button>
-          </section>
+          <ErrorState message={savedSupportProgramMessages.failed} onRetry={vm.retry} />
         ) : isEmpty ? (
-          <section className={s.emptyCard} aria-label="관심 공고 없음">
-            <p className={workspacePageStyles.emptyNote}>{savedSupportProgramMessages.empty}</p>
-            <Link className={workspacePageStyles.secondaryButton} to={appPaths.chat}>지원사업 찾기</Link>
-          </section>
+          <EmptyState icon={<BookmarkIcon />} title={savedSupportProgramMessages.emptyTitle} description={savedSupportProgramMessages.emptyDescription}
+            action={{ label: '지원사업 찾기', to: appPaths.chat }} />
         ) : null) : null}
 
         {vm.viewMode === 'calendar' && !isEmpty && vm.phase !== 'failed' ? <>
@@ -183,7 +183,7 @@ export function SavedProgramsPage({ initial, browseUseCase, preparationUseCase, 
                 <button type="button" className={s.arrow} aria-label="다음 달" title="다음 달" disabled={!vm.canNextMonth} onClick={() => vm.moveMonth(1)}><Arrow direction="right" /></button>
               </div>
               <button type="button" className={s.smallButton} onClick={vm.goToToday}>오늘</button>
-              <span className={s.note} role="status">표시 공고 <strong className="text-app-ink">{vm.programsInMonth}건</strong> / 전체 {vm.allProgramsInMonth}건</span>
+              <span className={s.note} role="status">표시 공고 <strong className="text-ink">{vm.programsInMonth}건</strong> / 전체 {vm.allProgramsInMonth}건</span>
             </div>
             <div className={s.legend} aria-label="일정 범례">
               <span className={s.legendItem}><span className={`${s.legendSwatch} bg-brand-soft border border-brand-line`} aria-hidden="true" />접수 시작</span>
@@ -196,11 +196,11 @@ export function SavedProgramsPage({ initial, browseUseCase, preparationUseCase, 
           <div className={s.calendarFrame}>
               <table className={s.calendarTable} aria-label={`${monthLabel} 접수 일정`}>
                 <thead><tr>{['일', '월', '화', '수', '목', '금', '토'].map((day, index) =>
-                  <th key={day} scope="col" className={`${s.weekday} ${index === 0 ? 'text-danger' : index === 6 ? 'text-info' : 'text-sample-muted'}`}>{day}</th>,
+                  <th key={day} scope="col" className={`${s.weekday} ${index === 0 ? 'text-danger' : index === 6 ? 'text-info' : 'text-ink-muted'}`}>{day}</th>,
                 )}</tr></thead>
                 <tbody>{vm.weeks.map(week => <tr key={week[0]!.key}>{week.map((day, index) =>
                   <td key={day.key} className={`${s.cell} ${!day.inMonth ? 'bg-[#fafbfc]' : 'bg-white'}`}>
-                    <time dateTime={day.key} aria-current={day.isToday ? 'date' : undefined} className={`${s.date} ${day.isToday ? 'bg-brand-primary font-bold text-white' : !day.inMonth ? 'text-[#9ca3af]' : index === 0 ? 'text-danger' : index === 6 ? 'text-info' : 'text-sample-muted'}`}>{day.day}</time>
+                    <time dateTime={day.key} aria-current={day.isToday ? 'date' : undefined} className={`${s.date} ${day.isToday ? 'bg-brand-primary font-bold text-white' : !day.inMonth ? 'text-[#9ca3af]' : index === 0 ? 'text-danger' : index === 6 ? 'text-info' : 'text-ink-muted'}`}>{day.day}</time>
                     <CalendarEvents date={day.key} today={vm.today} events={day.events} />
                   </td>,
                 )}</tr>)}</tbody>
@@ -235,23 +235,24 @@ export function SavedProgramsPage({ initial, browseUseCase, preparationUseCase, 
   </>
 }
 
-/** 마감 D-day 배지입니다. 오늘 마감은 danger, 3일 이내는 warning, 그 밖은 회색입니다. */
+/** 마감 D-day 배지입니다. 색은 shared `ddayTone`(7일 이내 빨강 · 30일 이내 노랑 · 그 뒤 초록)입니다. */
 function DeadlineBadge({ days }: { days: number | null }) {
   if (days === null) return null
-  const tone = days === 0 ? s.ddayToday : days <= 3 ? s.ddaySoon : s.ddayCalm
-  return <span className={`${s.dday} ${tone}`}>{days === 0 ? '오늘 마감' : `D-${days}`}</span>
+  return <span className={`${s.dday} ${ddayToneClassNames[ddayTone(days)]}`}>{days === 0 ? '오늘 마감' : `D-${days}`}</span>
+}
+
+const statusTones: Record<SupportProgramStatus, string> = {
+  OPEN: 'bg-brand-soft text-brand-primary', UPCOMING: 'bg-info-soft text-info', CLOSED: 'bg-surface-muted text-ink-muted', UNKNOWN: 'bg-warning-soft text-warning',
 }
 
 function StatusBadge({ status }: { status: SupportProgramStatus }) {
-  const label = programStatus(status)
-  const tone = { '접수 중': 'bg-brand-soft text-brand-primary', '접수 예정': 'bg-info-soft text-info', '접수 마감': 'bg-surface-muted text-ink-muted', '상태 미확인': 'bg-warning-soft text-warning' }[label]
-  return <span className={`${s.status} ${tone}`}><span className={s.statusDot} aria-hidden="true" />{label}</span>
+  return <span className={`${s.status} ${statusTones[status]}`}><span className={s.statusDot} aria-hidden="true" />{programStatusLabels[status]}</span>
 }
 
-/** 5열 보드입니다. 7단계 데이터는 그대로 두고 심사 중(서류 · 발표) · 결과(선정 · 탈락)로 묶어 카드 배지로 세부 단계를 보여 줍니다. */
+/** 5열 보드입니다. 7단계 데이터는 그대로 두고 심사 중(서류 · 발표) · 결과(선정 · 미선정)로 묶어 카드 배지로 세부 단계를 보여 줍니다. */
 const pipelineColumns: { key: string; label: string; stages: ApplicationProgressStage[] }[] = [
-  { key: 'PREPARING', label: '준비 중', stages: ['PREPARING'] },
-  { key: 'APPLIED', label: '지원 완료', stages: ['APPLIED'] },
+  { key: 'PREPARING', label: applicationProgressStageLabels.PREPARING, stages: ['PREPARING'] },
+  { key: 'APPLIED', label: applicationProgressStageLabels.APPLIED, stages: ['APPLIED'] },
   { key: 'REVIEW', label: '심사 중', stages: ['DOCUMENT_REVIEW', 'PRESENTATION_REVIEW'] },
   { key: 'RESULT', label: '결과', stages: ['SELECTED', 'REJECTED'] },
 ]
@@ -298,10 +299,7 @@ function ApplicationPipeline({ filteredSavedPrograms, savedPrograms, today, filt
   }
 
   return <div role="tabpanel" aria-label="지원사업 진행 관리" className={s.pipelineSection}>
-    {phase === 'failed' ? <section className={s.emptyCard} aria-label="진행 관리 불러오기 실패">
-      <p className={workspacePageStyles.emptyNote}>진행 중인 지원사업을 불러오지 못했어요.</p>
-      <button type="button" className={workspacePageStyles.primaryButton} onClick={onRetry}>다시 시도</button>
-    </section> : null}
+    {phase === 'failed' ? <ErrorState message="진행 중인 지원사업을 불러오지 못했어요. 잠시 후 다시 시도해 주세요." onRetry={onRetry} /> : null}
     {updateError ? <div className={s.pipelineError} role="alert">
       <span>{updateError}</span>
       <button type="button" className={workspacePageStyles.quietLink} onClick={onRetry}>최신 상태 불러오기</button>
@@ -406,8 +404,6 @@ function InterestPipelineCard({ program, today }: { program: CalendarProgram; to
   </article>
 }
 
-const stageLabels = Object.fromEntries(applicationPipelineStages.map(stage => [stage.key, stage.label])) as Record<ApplicationProgressStage, string>
-
 function PipelineCard({ item, showStageBadge, changing, onOpenStage }: {
   item: ApplicationPreparationSummary
   showStageBadge: boolean
@@ -416,7 +412,7 @@ function PipelineCard({ item, showStageBadge, changing, onOpenStage }: {
 }) {
   return <article className={s.pipelineCard}>
     <div className={s.pipelineCardTop}>
-      {showStageBadge ? <span className={workspaceTagClassName(item.progressStage === 'SELECTED' ? 'ok' : item.progressStage === 'REJECTED' ? 'muted' : 'info')}>{stageLabels[item.progressStage]}</span> : null}
+      {showStageBadge ? <span className={workspaceTagClassName(item.progressStage === 'SELECTED' ? 'ok' : item.progressStage === 'REJECTED' ? 'muted' : 'info')}>{applicationProgressStageLabels[item.progressStage]}</span> : null}
       <span className={workspaceTagClassName('muted')}>{applicationServiceFieldLabels[item.serviceField]}</span>
     </div>
     <h3 className={s.pipelineCardTitle} title={item.programTitle}>
@@ -494,10 +490,10 @@ function CalendarEventRow({ event, date, today, expanded = false }: { event: Cal
   return <li className={expanded ? s.dialogEvent : `${s.event} ${tone}`} title={event.program.title}>
     <span className={expanded ? `${s.dday} ${tone}` : s.eventBadge}>{label}</span>
     <span className="min-w-0 flex-1">
-      {detailPath ? <Link className={expanded ? 'block font-semibold text-app-ink hover:text-brand-primary' : s.eventTitle}
+      {detailPath ? <Link className={expanded ? 'block font-semibold text-ink hover:text-brand-primary' : s.eventTitle}
         to={detailPath} state={{ searchReturnTo: savedProgramsPath('calendar') }}>{event.program.title}</Link>
-        : <span className={expanded ? 'block font-semibold text-app-ink' : s.eventTitle}>{event.program.title}</span>}
-      {expanded ? <span className="mt-1 block text-xs text-sample-muted">{event.program.organization} · {event.program.region} · {event.program.category}</span> : null}
+        : <span className={expanded ? 'block font-semibold text-ink' : s.eventTitle}>{event.program.title}</span>}
+      {expanded ? <span className="mt-1 block text-xs text-ink-muted">{event.program.organization} · {event.program.region} · {event.program.category}</span> : null}
     </span>
   </li>
 }
@@ -519,10 +515,8 @@ function SavedProgramList({ programs, page, totalPages, onPageChange, daysUntilD
   const isNarrow = useMediaQuery(narrowViewportQuery)
   if (!programs.length) {
     return <div role="tabpanel" aria-label="관심 공고 목록">
-      <section className={s.emptyCard} aria-label="조건에 맞는 관심 공고 없음">
-        <p className={workspacePageStyles.emptyNote}>조건에 맞는 관심 공고가 없어요.</p>
-        {filtersActive ? <button type="button" className={workspacePageStyles.secondaryButton} onClick={onResetFilters}>필터 초기화</button> : null}
-      </section>
+      <EmptyState title="조건에 맞는 관심 공고가 없어요"
+        action={filtersActive ? { label: '필터 초기화', onClick: onResetFilters } : undefined} />
     </div>
   }
   // 행의 동작은 [관심 공고에서 빼기] 하나입니다. 상세는 제목을 누르면 열립니다.
@@ -555,7 +549,7 @@ function SavedProgramList({ programs, page, totalPages, onPageChange, daysUntilD
             </article>
           </td>
           <td className={`${s.td} ${s.rowDeadline}`}>
-            {program.endDate === null ? <span className="text-sample-muted">기간 없음</span> : <span className="inline-flex items-center gap-1.5"><DeadlineBadge days={days} />{days === null ? <span>{formatShortDate(program.endDate)}</span> : <span className="text-[0.72rem]">{formatShortDate(program.endDate)}</span>}</span>}
+            {program.endDate === null ? <span className="text-ink-muted">기간 없음</span> : <span className="inline-flex items-center gap-1.5"><DeadlineBadge days={days} />{days === null ? <span>{formatShortDate(program.endDate)}</span> : <span className="text-[0.72rem]">{formatShortDate(program.endDate)}</span>}</span>}
           </td>
           <td className={s.td}><StageBadgeButton program={program} item={preparationFor(program)} onOpen={onOpenStage} /></td>
           <td className={`${s.td} ${s.rowDate}`}>{program.savedAt ? `${formatShortDate(program.savedAt)} 담음` : '—'}</td>
@@ -597,7 +591,7 @@ function StageBadgeButton({ program, item, onOpen }: {
   item: ApplicationPreparationSummary | null
   onOpen: (program: CalendarProgram, item: ApplicationPreparationSummary | null) => void
 }) {
-  const label = item ? stageLabels[item.progressStage] : '관심'
+  const label = item ? applicationProgressStageLabels[item.progressStage] : '관심'
   const tone = !item ? 'bg-surface-muted text-ink-muted' : item.progressStage === 'SELECTED' ? 'bg-brand-soft text-brand-primary' : item.progressStage === 'REJECTED' ? 'bg-surface-muted text-ink-muted' : 'bg-info-soft text-info'
   return <button type="button" className={`${s.stageButton} ${tone}`} aria-label={`${program.title} 진행 단계: ${label}`} onClick={() => onOpen(program, item)}>
     {label}
@@ -626,7 +620,7 @@ function ProgressStagePanel({ program, item, changing, error, onClose, onSave }:
     : null
   return <>
     <button type="button" className={s.panelScrim} aria-label="닫기" onClick={onClose} />
-    <section ref={panelRef} className={s.panel} role="dialog" aria-label="진행 단계 바꾸기" tabIndex={-1}
+    <section ref={panelRef} className={s.panel} role="dialog" aria-label="진행 단계 바꾸기" tabIndex={-1} {...assistantCover.always}
       onKeyDown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); onClose() } }}>
       <header className={s.panelHeader}>
         <span className={s.panelGrab} aria-hidden="true" />
@@ -648,7 +642,7 @@ function ProgressStagePanel({ program, item, changing, error, onClose, onSave }:
           </label>)}
         </fieldset> : <div className={s.stageNote} role="note">
           <span className="font-bold">아직 신청 준비를 시작하지 않은 공고예요</span>
-          <span>신청 문서를 만들면 준비 중 · 지원 완료 · 심사 중 · 결과 단계를 이 패널에서 관리할 수 있어요.</span>
+          <span>신청 문서를 만들면 {applicationProgressStageLabels.PREPARING} · {applicationProgressStageLabels.APPLIED} · 심사 중 · 결과 단계를 이 패널에서 관리할 수 있어요.</span>
         </div>}
       </div>
       <footer className={s.panelFooter}>
@@ -696,13 +690,4 @@ function pageItems<Item>(items: readonly Item[], page: number, pageSize: number)
 function getDetailPath(program: CalendarProgram): string | null {
   if (!program.sourceCode || !program.sourceProgramId) return null
   return supportProgramDetailPath({ sourceCode: program.sourceCode, sourceProgramId: program.sourceProgramId }, true)
-}
-
-type ProgramStatus = '접수 예정' | '접수 중' | '접수 마감' | '상태 미확인'
-
-function programStatus(status: SupportProgramStatus): ProgramStatus {
-  if (status === 'OPEN') return '접수 중'
-  if (status === 'UPCOMING') return '접수 예정'
-  if (status === 'CLOSED') return '접수 마감'
-  return '상태 미확인'
 }

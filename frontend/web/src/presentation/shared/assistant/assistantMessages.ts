@@ -6,7 +6,6 @@ export const assistantMessages = {
   closeLauncher: '도우미 접기',
   close: '닫기',
   back: '뒤로가기',
-  menu: '더 보기',
   newConversation: '새 대화',
   today: '오늘',
   greetingIntro: '안녕하세요, GovBiz 도우미입니다.',

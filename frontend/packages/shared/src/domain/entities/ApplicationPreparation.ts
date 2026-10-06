@@ -103,15 +103,6 @@ export const applicationPreparationListStatuses = ['in_progress', 'done'] as con
 export type ApplicationPreparationListStatus = typeof applicationPreparationListStatuses[number]
 export type ApplicationPreparationListQuery = { beforeId?: number; status?: ApplicationPreparationListStatus }
 
-/** 접수 마감까지 남은 날. 마감일이 없으면 null, 지났으면 음수. 서울 날짜 기준. */
-export function applicationDeadlineDays(applicationEndDate: string | null | undefined, now: Date = new Date()): number | null {
-  if (!applicationEndDate) return null
-  const today = new Date(new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul' }).format(now) + 'T00:00:00Z')
-  const end = new Date(applicationEndDate + 'T00:00:00Z')
-  if (Number.isNaN(end.getTime())) return null
-  return Math.round((end.getTime() - today.getTime()) / 86_400_000)
-}
-
 export type ApplicationPreparation = {
   id: number
   inputRevision: number

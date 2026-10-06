@@ -4,7 +4,7 @@ import { createEvaluationSchedule, getEvaluationSchedules, getLiveReadiness, Ops
 import type { EvaluationSchedule, LiveReadiness, OpsSession, ScheduleInput, SchedulesPage } from '../../../data/ops/opsApi'
 import { workspacePageStyles as styles } from '../../shared/workspace/WorkspacePage.styles'
 
-const field = 'min-h-11 w-full rounded-xl border border-sample-border bg-white px-3 text-sm'
+const field = 'min-h-11 w-full rounded-xl border border-line bg-white px-3 text-sm'
 const message = (error: unknown) => error instanceof Error ? error.message : '정기 계획을 확인하지 못했습니다.'
 const number = (value: number) => value.toLocaleString('ko-KR')
 const reasons: Record<string, string> = {
@@ -34,7 +34,7 @@ function ScheduleRow({ row, label, owner, onSaved, onError }: { row: EvaluationS
     catch (error) { onError(error) }
     finally { sending.current = false; setBusy(false) }
   }
-  return <article className="grid gap-3 rounded-xl border border-sample-border p-4">
+  return <article className="grid gap-3 rounded-xl border border-line p-4">
     <h3 className="font-bold">{label} · {row.state === 'paused' ? '중지됨' : row.state === 'expired' ? '기간 종료' : '승인된 계획'}</h3>
     <p className="text-sm">{row.starts_on} ~ {row.ends_on} · 서울 매일 {row.daily_at} · {row.request.live_config.model}</p>
     <p className="text-sm">회당 최대 {number(row.max_usage.calls)}회 / 입력 {number(row.max_usage.input_tokens)} / 출력 {number(row.max_usage.output_tokens)} 토큰</p>
@@ -45,7 +45,7 @@ function ScheduleRow({ row, label, owner, onSaved, onError }: { row: EvaluationS
       {pending ? <><p className="text-sm">새 접수를 중지합니다. 이미 접수된 평가는 실행 상세에서 별도로 취소하세요.</p><button className={styles.secondaryButton} disabled={busy} onClick={() => void pause()}>확인한 계획 중지</button></>
         : <button className={styles.secondaryButton} disabled={!reason.trim()} onClick={() => setPending({ request_id: crypto.randomUUID(), reason: reason.trim() })}>계획 중지 내용 확인</button>}
     </div>}
-    {row.occurrences.length === 0 ? <p className="text-sm text-sample-muted">아직 도래한 접수 기록이 없습니다.</p> : <ul className="grid gap-2 text-sm" aria-label="날짜별 접수 기록">{row.occurrences.map((item) => <li key={item.id}>
+    {row.occurrences.length === 0 ? <p className="text-sm text-ink-muted">아직 도래한 접수 기록이 없습니다.</p> : <ul className="grid gap-2 text-sm" aria-label="날짜별 접수 기록">{row.occurrences.map((item) => <li key={item.id}>
       {item.scheduled_on} · {item.status === 'BLOCKED' ? `접수 차단: ${reasons[item.reason_code] ?? item.reason_code}` : item.run_id
         ? <Link className={styles.mutedLink} to={`/ops/evaluations/${item.run_id}`}>실행 보기 · {item.run_status}</Link> : '접수 확인 중'}
     </li>)}</ul>}
@@ -113,7 +113,7 @@ export function EvaluationSchedulesPanel({ owner, datasets, onExpired, refreshKe
   }
   return <section className={styles.card} aria-label="정기 평가 계획">
     <h2 className={styles.cardTitle}>정기 평가 계획</h2>
-    <p className="text-sm leading-6 text-sample-muted">서울 시간 기준 하루 한 번, 최대 31일 동안 승인한 자료·모델·비교 기준으로 평가합니다. 예정 시각 이후 같은 날에 접수하며, 서버가 꺼져 놓친 과거 날짜는 실행하지 않습니다. 기준 변경·예산 부족·이전 실행 미완료 시 차단 기록을 남깁니다.</p>
+    <p className="text-sm leading-6 text-ink-muted">서울 시간 기준 하루 한 번, 최대 31일 동안 승인한 자료·모델·비교 기준으로 평가합니다. 예정 시각 이후 같은 날에 접수하며, 서버가 꺼져 놓친 과거 날짜는 실행하지 않습니다. 기준 변경·예산 부족·이전 실행 미완료 시 차단 기록을 남깁니다.</p>
     {error && <p role="alert">{error}</p>}
     {saved && <p role="status">정기 계획을 저장했습니다. 승인 기간에 예산과 검토 기준을 다시 확인한 후 접수합니다.</p>}
     <button className={styles.secondaryButton} onClick={() => setRevision((value) => value + 1)}>정기 계획 새로고침</button>
@@ -132,7 +132,7 @@ export function EvaluationSchedulesPanel({ owner, datasets, onExpired, refreshKe
               <button className={styles.secondaryButton} disabled={!ready || !consent || !reason.trim() || days < 1 || days > 31} type="submit">정기 계획 내용 확인</button>
             </fieldset>
           </form>
-          {pending && <div className="grid gap-2 rounded-xl border border-sample-border p-4" role="region" aria-label="정기 계획 최종 확인"><p>{pending.starts_on} ~ {pending.ends_on} · 서울 {pending.daily_at} · 기준 버전 {pending.baseline_version} · {pending.reason}</p><p className="text-sm">한도가 부족하면 해당 날짜는 실행하지 않습니다. 중지 전까지 매일 이 승인 조건을 사용합니다.</p><button className={styles.primaryButton} disabled={busy} onClick={() => void save()}>{busy ? '저장 확인 중…' : '확인한 정기 계획 저장'}</button>{mayEdit && !busy && <button className={styles.secondaryButton} onClick={() => { setPending(null); setConsent(false); setError('') }}>정기 계획 수정</button>}{error && <p className="text-sm">재시도는 같은 요청으로 확인합니다. 조건을 바꾸기 전 목록에서 기존 계획의 접수 여부를 확인하세요.</p>}</div>}
+          {pending && <div className="grid gap-2 rounded-xl border border-line p-4" role="region" aria-label="정기 계획 최종 확인"><p>{pending.starts_on} ~ {pending.ends_on} · 서울 {pending.daily_at} · 기준 버전 {pending.baseline_version} · {pending.reason}</p><p className="text-sm">한도가 부족하면 해당 날짜는 실행하지 않습니다. 중지 전까지 매일 이 승인 조건을 사용합니다.</p><button className={styles.primaryButton} disabled={busy} onClick={() => void save()}>{busy ? '저장 확인 중…' : '확인한 정기 계획 저장'}</button>{mayEdit && !busy && <button className={styles.secondaryButton} onClick={() => { setPending(null); setConsent(false); setError('') }}>정기 계획 수정</button>}{error && <p className="text-sm">재시도는 같은 요청으로 확인합니다. 조건을 바꾸기 전 목록에서 기존 계획의 접수 여부를 확인하세요.</p>}</div>}
         </>}
       <div className="grid gap-3">{data.results.map((row) => <ScheduleRow key={row.id} row={row} owner={owner} label={datasets.find((item) => item.id === row.dataset_id)?.label ?? row.dataset_id} onSaved={() => setRevision((value) => value + 1)} onError={handleError} />)}</div>
       {data.total === 0 && <p className="text-sm">등록된 정기 계획이 없습니다.</p>}

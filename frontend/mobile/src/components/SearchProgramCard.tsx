@@ -1,15 +1,14 @@
 import { useState } from 'react'
 import { Linking, StyleSheet, Text, View } from 'react-native'
 import type { SupportProgram } from '@govbiz/shared/domain/entities/SupportProgram'
+import { daysUntil, formatDday, programStatusLabels } from '@govbiz/shared/domain/labels'
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
-import { Button, Notice, colors } from '../ui'
-import { statusLabels } from './ProgramCard'
-import { partnerDeadlineDay } from './PartnerDates'
+import { Button, Notice, badgeColors, colors, ddayBadgeTone } from '../ui'
 
 export function SearchProgramCard({ program, onOpen }: { program: SupportProgram; onOpen?(identity: SupportProgramIdentity): void }) {
   const [linkError, setLinkError] = useState<string | null>(null)
   const review = program.eligibilityReview
-  const deadline = program.applicationEndDate ? partnerDeadlineDay(program.applicationEndDate) : null
+  const deadline = daysUntil(program.applicationEndDate)
   const statusColor = program.status === 'OPEN' ? colors.primaryText : program.status === 'UPCOMING' ? colors.info : colors.muted
   const quotes = [...new Set([...(review?.target.evidence ?? []), ...(review?.region.evidence ?? [])].map(item => item.quote))]
   async function openSource() {
@@ -19,9 +18,9 @@ export function SearchProgramCard({ program, onOpen }: { program: SupportProgram
   }
   return <View style={[local.card, !onOpen && { padding: 12, gap: 7 }]}>
     <View style={local.meta}><View testID="program-status-dot" style={[local.dot, { backgroundColor: statusColor }]} />
-      <Text style={[local.status, { color: statusColor }]}>{statusLabels[program.status]}</Text>
-      {deadline !== null && <Text style={[local.deadline, deadline >= 0 && deadline <= 3 && { backgroundColor: colors.warningSoft, color: colors.warning }]}>
-        {deadline < 0 ? '마감' : deadline === 0 ? 'D-day' : `D-${deadline}`}</Text>}
+      <Text style={[local.status, { color: statusColor }]}>{programStatusLabels[program.status]}</Text>
+      {deadline !== null && <Text style={[local.deadline, badgeColors(ddayBadgeTone(deadline))]}>
+        {formatDday(deadline)}</Text>}
       {program.recommendationScore !== null && <Text style={local.score}>관련도 {program.recommendationScore}</Text>}</View>
     <Text style={[local.title, !onOpen && { fontSize: 14, lineHeight: 21 }]}>{program.title}</Text>
     {onOpen && <Text style={local.description}>{[program.organization, ...program.regions].filter(Boolean).join(' · ')}</Text>}

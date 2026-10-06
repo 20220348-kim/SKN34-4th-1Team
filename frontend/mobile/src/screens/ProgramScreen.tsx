@@ -3,18 +3,17 @@ import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, View } from 'r
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import type { SupportProgramDetail } from '@govbiz/shared/domain/entities/SupportProgram'
 import { splitSupportProgramTarget, supportProgramApplicationRouteLabel, supportProgramContactParts } from '@govbiz/shared/domain/entities/SupportProgramSections'
+import { daysUntil, formatDday, programStatusLabels } from '@govbiz/shared/domain/labels'
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
 import type { SupportProgramEvidenceAnswer } from '@govbiz/shared/domain/entities/SupportProgramEvidenceAnswer'
 import { toSupportProgramDetail } from '@govbiz/shared/data/models/SupportProgramDto'
 import { ApiError, errorMessage, programClient } from '../api/client'
 import { getSavedProgramStatus, removeSavedProgram, saveProgram } from '../api/savedPrograms'
 import { useAuth } from '../auth/session'
-import { statusLabels } from '../components/ProgramCard'
 import { AppIcon } from '../components/AppIcon'
-import { partnerDeadlineDay } from '../components/PartnerDates'
 import { PartnerSheet } from '../components/PartnerSheet'
 import { ProgramPreparationSection } from '../components/PreparationRows'
-import { Button, Card, Field, Notice, Page, StatusBadge, Subtitle, Title, colors, styles } from '../ui'
+import { Button, Card, Field, Notice, Page, StatusBadge, Subtitle, Title, colors, ddayBadgeTone, styles } from '../ui'
 
 export function ProgramScreen({ identity, onLogin, resumeAction, onResumed }: {
   identity: SupportProgramIdentity; onLogin: (action?: 'save' | 'question') => void
@@ -121,7 +120,7 @@ export function ProgramScreen({ identity, onLogin, resumeAction, onResumed }: {
     try { await Linking.openURL(`tel:${tel}`) } catch { setError('전화 앱을 열지 못했어요. 번호를 직접 입력해 주세요.') }
   }
 
-  const deadline = program?.applicationEndDate ? partnerDeadlineDay(program.applicationEndDate) : null
+  const deadline = daysUntil(program?.applicationEndDate)
   const statusColor = program?.status === 'OPEN' ? colors.primary : program?.status === 'UPCOMING' ? colors.info : colors.muted
   // 공식 API 값만 보여 줍니다. K-Startup은 지원·제외 대상을 나누고, 신청 방법은 공식 신청 필드로 분류한 경로입니다.
   const target = program ? splitSupportProgramTarget(program.sourceCode, program.targetDescription) : null
@@ -136,8 +135,8 @@ export function ProgramScreen({ identity, onLogin, resumeAction, onResumed }: {
     {error && <><Notice error>{error}</Notice><Button label="다시 불러오기" onPress={() => setRetry((value) => value + 1)} /></>}
     {!loading && !error && !program && <Notice>공고를 찾을 수 없습니다. 공고가 삭제되었거나 더 이상 제공되지 않을 수 있습니다.</Notice>}
     {program && <>
-      <View style={local.meta}><View style={[local.dot, { backgroundColor: statusColor }]} /><Text style={[local.status, { color: statusColor }]}>{statusLabels[program.status]}</Text>
-        {deadline !== null && <StatusBadge label={deadline < 0 ? '마감' : deadline === 0 ? 'D-day' : `D-${deadline}`} tone={deadline >= 0 && deadline <= 3 ? 'warning' : 'neutral'} />}
+      <View style={local.meta}><View style={[local.dot, { backgroundColor: statusColor }]} /><Text style={[local.status, { color: statusColor }]}>{programStatusLabels[program.status]}</Text>
+        {deadline !== null && <StatusBadge label={formatDday(deadline)} tone={ddayBadgeTone(deadline)} />}
         <View style={{ flex: 1 }} /><Text style={styles.muted}>{program.sourceName}</Text></View>
       <Title>{program.title}</Title>
       <Subtitle>{program.organization}</Subtitle>

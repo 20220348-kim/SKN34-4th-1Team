@@ -67,7 +67,7 @@ it('관심 공고를 내부 스크롤 없이 달력과 페이지 목록으로 �
   expect(screen.getByRole('navigation', { name: '관심 공고 페이지' })).toBeTruthy()
   const firstPage = screen.getByRole('button', { name: '1페이지' })
   expect(firstPage.classList.contains('text-white')).toBe(true)
-  expect(firstPage.classList.contains('text-sample-muted')).toBe(false)
+  expect(firstPage.classList.contains('text-ink-muted')).toBe(false)
   fireEvent.click(screen.getByRole('button', { name: '2페이지' }))
   expect(screen.getByRole('button', { name: '2페이지' }).getAttribute('aria-current')).toBe('page')
   fireEvent.click(screen.getByRole('tab', { name: '달력' }))
@@ -99,7 +99,7 @@ it('관심 공고 목록은 날짜가 아니라 서버 접수 상태를 표시�
   expect(screen.getByText('접수 중')).toBeTruthy()
   expect(screen.getByText('접수 예정')).toBeTruthy()
   expect(screen.getByText('접수 마감')).toBeTruthy()
-  expect(screen.getByText('상태 미확인')).toBeTruthy()
+  expect(screen.getByText('상태 확인 필요')).toBeTruthy()
 })
 
 it('진행 관리를 열 때 실제 신청 준비 건만 준비 중 단계에 표시한다', async () => {
@@ -153,9 +153,9 @@ it('진행 관리를 열 때 실제 신청 준비 건만 준비 중 단계에 �
   expect(list).toHaveBeenCalledTimes(1)
 
   const board = screen.getByLabelText('지원사업 파이프라인')
-  // 7단계 데이터는 그대로 두고 보드는 5열(심사 중 = 서류 · 발표, 결과 = 선정 · 탈락)로 묶습니다.
+  // 7단계 데이터는 그대로 두고 보드는 5열(심사 중 = 서류 · 발표, 결과 = 선정 · 미선정)로 묶습니다.
   expect(within(board).getAllByRole('heading', { level: 2 }).map(heading => heading.textContent)).toEqual([
-    '관심', '준비 중', '지원 완료', '심사 중', '결과',
+    '관심', '준비 중', '제출 완료', '심사 중', '결과',
   ])
   expect(within(board).getAllByRole('article')).toHaveLength(1)
   expect(within(board).getByRole('link', { name: '해외 진출 역량 강화 지원사업' }).getAttribute('href'))
@@ -166,14 +166,14 @@ it('진행 관리를 열 때 실제 신청 준비 건만 준비 중 단계에 �
   fireEvent.click(screen.getByRole('button', { name: '해외 진출 역량 강화 지원사업 단계 바꾸기' }))
   const panel = screen.getByRole('dialog', { name: '진행 단계 바꾸기' })
   expect((within(panel).getByRole('button', { name: '저장' }) as HTMLButtonElement).disabled).toBe(true)
-  fireEvent.click(within(panel).getByRole('radio', { name: /지원 완료/ }))
+  fireEvent.click(within(panel).getByRole('radio', { name: /제출 완료/ }))
   fireEvent.click(within(panel).getByRole('button', { name: '저장' }))
   await waitFor(() => expect(updateProgress).toHaveBeenCalledWith(41, {
     expectedProgressRevision: 1,
     progressStage: 'APPLIED',
   }))
   await waitFor(() => expect(screen.queryByRole('dialog', { name: '진행 단계 바꾸기' })).toBeNull())
-  expect(within(screen.getByRole('region', { name: '지원 완료' })).getByRole('article')).toBeTruthy()
+  expect(within(screen.getByRole('region', { name: '제출 완료' })).getByRole('article')).toBeTruthy()
 })
 
 it('진행 관리의 관심 단계는 세 건만 보이고 더보기 팝업에서 네 건씩 번호로 이동한다', async () => {
