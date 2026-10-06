@@ -2,15 +2,122 @@
 
 **LLM 기반 정부지원사업 탐색·신청 관리 플랫폼**
 
-공고 검색부터 근거 확인, 신청 문서 작성, 협업과 맞춤 리포트까지 웹·모바일에서 제공합니다.
-관리자는 같은 프로젝트의 LLMOps 화면에서 AI 답변을 평가하고, 사람이 검토한 결과를 비교 기준으로 관리합니다.
+공고를 찾고, 공식 근거를 확인하고, 신청을 준비하는 과정을 웹·모바일에서 연결합니다.
+관리자는 LLMOps 화면에서 AI 답변을 평가하고 사람이 검토한 결과를 다음 비교 기준으로 관리합니다.
 
-**문서 기준: 2026-10-06 저장소의 코드·설정.** 기능 구현, 실제 환경 검증, 운영 배포는 아래에서 구분합니다.
+**웹·모바일 서비스** · **공식 근거 기반 AI** · **평가·운영 LLMOps**
 
-[주요 기능](#주요-기능) · [서비스 구성](#서비스-구성) · [로컬 시작](#로컬-시작) ·
-[LLMOps](#llmops-평가운영) · [검증·배포 범위](#검증배포-범위) · [문서 안내](#문서-안내)
+[프로젝트 개요](#프로젝트-개요) · [팀 소개](#팀-소개) · [기술 스택](#기술-스택) · [주요 기능](#주요-기능) ·
+[시스템 아키텍처](#서비스-구성) · [데이터 준비](#데이터-준비) · [AI 처리 흐름](#ai-처리-흐름) ·
+[LLMOps](#llmops-평가운영) · [평가·검증](#검증배포-범위) · [저장소 구성](#저장소-구성) · [로컬 시작](#로컬-시작) · [문서 안내](#문서-안내)
 
-## 주요 기능
+> **문서 기준: 2026-10-06 저장소의 코드·설정.** 이 문서는 4차 프로젝트의 현재 구현을 설명합니다.
+> 3차의 발표 자료·과거 평가 결과·회고는 [3차 프로젝트 README](docs/third-project/README.md)에 보존합니다.
+
+<a id="프로젝트-개요"></a>
+
+## 1. 프로젝트 개요
+
+### 어떤 서비스인가요?
+
+GovBiz는 여러 기관에 흩어진 정부지원사업 공고를 모아 기업의 조건과 목적에 맞게 탐색하도록 돕는 서비스입니다.
+사용자는 AI 대화 또는 직접 필터로 공고를 찾고, 추천 이유와 지원 조건을 원문에서 확인합니다.
+관심 공고 저장, 신청 문서 작성, 진행 단계 관리, 중복 지원 검토와 협업 제안으로 이어갈 수 있습니다.
+
+### 해결하려는 문제
+
+| 사용자가 겪는 문제 | GovBiz의 해결 방법 |
+|---|---|
+| 기관마다 공고가 흩어져 있어 찾고 비교하기 어려움 | 공식 제공처 4곳의 공고를 수집·정규화하고 통합 검색 |
+| 키워드만으로 우리 기업에 맞는 사업을 고르기 어려움 | AI 대화로 조건을 구체화하고 키워드·의미 검색을 결합 |
+| AI 답변의 근거와 신청 조건을 확인하기 어려움 | 공식 본문의 인용 근거, 추천 이유와 자격 확인 정보를 함께 표시 |
+| 공고 탐색 이후 문서·일정·협업을 따로 관리해야 함 | 관심함·달력·신청 문서·진행 관리·협업 기능을 연결 |
+| 모델이나 프롬프트 변경의 영향을 확인하기 어려움 | 같은 평가 자료로 결과를 비교하고 검토·사용량·실패 이력을 보존 |
+
+### 4차 프로젝트에서 확장한 부분
+
+- **웹과 모바일:** 같은 계정·업무 API와 공통 TypeScript 계약을 사용하는 React 웹·Expo 앱 구성
+- **서비스 분리:** Core 사용자 업무, Catalog 공고 수집, AI 처리, Django Ops 평가 운영의 책임 분리
+- **LLMOps:** 평가 실행부터 보고서·사람 검토·비교 기준·예산·취소·복구까지 관리자 기능 연결
+- **개발·검증 환경:** 모노레포, 통합 Compose, 서비스별 CI, 로컬 Kubernetes 실행·이미지 검증 경로 정리
+
+<a id="팀-소개"></a>
+
+## 2. 팀 소개
+
+<!-- 팀원 소개는 보존된 3차 프로젝트 README의 이름·GitHub 프로필을 참고했습니다. -->
+
+<table>
+  <tr>
+    <td align="center">
+      <img src="https://github.com/ilil1.png" alt="김건우 GitHub 프로필" width="100" height="100"/><br>
+      <b>김건우</b><br>
+      <a href="https://github.com/ilil1">
+        <img src="https://img.shields.io/badge/GitHub-ilil1-181717?style=flat&logo=github"/>
+      </a>
+    </td>
+    <td align="center">
+      <img src="https://github.com/20220348-kim.png" alt="김동섭 GitHub 프로필" width="100" height="100"/><br>
+      <b>김동섭</b><br>
+      <a href="https://github.com/20220348-kim">
+        <img src="https://img.shields.io/badge/GitHub-20220348--kim-181717?style=flat&logo=github"/>
+      </a>
+    </td>
+    <td align="center">
+      <img src="https://github.com/lsm15111.png" alt="이성민 GitHub 프로필" width="100" height="100"/><br>
+      <b>이성민</b><br>
+      <a href="https://github.com/lsm15111">
+        <img src="https://img.shields.io/badge/GitHub-lsm15111-181717?style=flat&logo=github"/>
+      </a>
+    </td>
+  </tr>
+</table>
+
+<a id="기술-스택"></a>
+
+## 3. 기술 스택
+
+### 웹 · 모바일
+
+![React 19](https://img.shields.io/badge/React_19-61DAFB?style=for-the-badge&logo=react&logoColor=20232A)
+![TypeScript 6](https://img.shields.io/badge/TypeScript_6-3178C6?style=for-the-badge&logo=typescript&logoColor=white)
+![Vite 8](https://img.shields.io/badge/Vite_8-646CFF?style=for-the-badge&logo=vite&logoColor=white)
+![Tailwind CSS 4](https://img.shields.io/badge/Tailwind_CSS_4-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white)
+![Expo](https://img.shields.io/badge/Expo-000020?style=for-the-badge&logo=expo&logoColor=white)
+![React Native](https://img.shields.io/badge/React_Native-61DAFB?style=for-the-badge&logo=react&logoColor=20232A)
+
+React Router·Redux Toolkit·Zod와 Expo Router를 사용하며, 웹·앱 공통 업무 계약은 pnpm workspace로 관리합니다.
+
+### 백엔드 · AI
+
+![Kotlin](https://img.shields.io/badge/Kotlin-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white)
+![Spring Boot](https://img.shields.io/badge/Spring_Boot-6DB33F?style=for-the-badge&logo=springboot&logoColor=white)
+![Python 3.12](https://img.shields.io/badge/Python_3.12-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)
+![Django](https://img.shields.io/badge/Django-092E20?style=for-the-badge&logo=django&logoColor=white)
+![LangChain](https://img.shields.io/badge/LangChain-1C3C3C?style=for-the-badge&logo=langchain&logoColor=white)
+![LangGraph](https://img.shields.io/badge/LangGraph-1C3C3C?style=for-the-badge&logo=langgraph&logoColor=white)
+
+Core·Catalog는 JDK 21·MyBatis·Flyway, AI는 OpenAI·LangChain·LangGraph·Agents SDK,
+Ops는 Django REST Framework를 사용합니다.
+
+### 데이터 · LLMOps · 실행 환경
+
+| 영역 | 구성 |
+|---|---|
+| 데이터 저장·검색 | MySQL 8.4 · Elasticsearch + Nori/BM25 · Qdrant |
+| 캐시·비동기 처리 | Redis · RabbitMQ |
+| LLMOps | Langfuse · Prefect · Pandera · Evidently · pandas |
+| 로컬 실행·컨테이너 | Docker Compose · Kubernetes(kind) · Helm |
+| 검증·이미지 | GitHub Actions · GitHub Container Registry(GHCR) |
+
+버전 기준은 [루트 설정](package.json), [웹](frontend/web/package.json), [모바일](frontend/mobile/package.json),
+[AI](backend/ai-service/pyproject.toml), [Ops](backend/ops-service/pyproject.toml)과 각 잠금 파일입니다.
+서비스별 역할은 아래 [시스템 아키텍처](#서비스-구성), 실제 배포 범위는 [평가·검증·배포](#검증배포-범위)에 정리했습니다.
+
+<a id="주요-기능"></a>
+
+## 4. 주요 기능과 사용 흐름
 
 | 기능 | 현재 구현 |
 |---|---|
@@ -34,7 +141,27 @@
 환경별 API 키와 수집 설정에 따라 조회 가능한 자료가 달라집니다. 추천 관련도는 선정 확률이 아니며,
 원문 질문의 HTML 근거 확인과 신청 문서의 첨부파일 분석은 별도 경로입니다.
 
-## 서비스 구성
+### 사용자는 이렇게 이용합니다
+
+```mermaid
+flowchart LR
+    Search["공고 탐색<br/>AI 대화 · 직접 필터"] --> Evidence["근거 확인<br/>조건 · 원문 질문"]
+    Evidence --> Save["관심 공고 저장<br/>목록 · 달력"]
+    Save --> Document["신청 준비<br/>답변 · 문서 작성"]
+    Document --> Progress["진행 관리<br/>지원 · 심사 · 결과"]
+    Save --> Review["중복 지원 검토<br/>기존 수혜 정보 대조"]
+    Save --> Partner["협업 모집<br/>제안 · 수락 · 거절"]
+    classDef step fill:#e7f5eb,stroke:#92bda6,color:#183d32
+    classDef related fill:#e8f3fa,stroke:#91b9cd,color:#183d32
+    class Search,Evidence,Save,Document,Progress step
+    class Review,Partner related
+```
+
+웹·앱은 같은 계정과 데이터를 사용합니다. 관리자는 웹의 별도 LLMOps 화면에서 아래 평가·검토 흐름을 이용합니다.
+
+<a id="서비스-구성"></a>
+
+## 5. 시스템 아키텍처
 
 | 구성 요소 | 기술 | 책임 |
 |---|---|---|
@@ -49,24 +176,11 @@
 대화 조건 해석·추천·근거 답변·중복 검토·신청 문서는 LangChain을 사용하고,
 도구를 호출하는 GovBiz 도우미는 LangGraph를 사용합니다. LLMOps의 평가 작업은 Prefect가 실행합니다.
 
-```mermaid
-flowchart TB
-    Web["React Web<br/>사용자·관리자 화면"] --> Core["Core API<br/>인증·업무·검색 조합"]
-    Mobile["React Native App<br/>사용자 화면"] --> Core
-    Web -->|LLMOps 화면| Ops["Django Ops<br/>평가·검토·예산"]
-    Ops -.->|관리자 세션 확인| Core
-    Core -->|공고 snapshot 조회| Catalog["Catalog<br/>공고 수집·원본 관리"]
-    Core -->|추천·답변·문서 요청| AI["AI Service<br/>검색·생성·도우미"]
-    Catalog -->|벡터 색인 준비| AI
-    AI --> OpenAI["OpenAI<br/>임베딩·답변 생성"]
-    Ops -->|평가 접수| Evaluation["Prefect + 평가 실행기<br/>아래 LLMOps 흐름 참조"]
-    classDef client fill:#e8f3fa,stroke:#91b9cd,color:#183d32
-    classDef service fill:#e7f5eb,stroke:#92bda6,color:#183d32
-    classDef external fill:#f3f5f4,stroke:#a8b5af,color:#183d32
-    class Web,Mobile client
-    class Core,Catalog,AI,Ops service
-    class OpenAI,Evaluation external
-```
+![GovBiz 주요 서비스 요청 관계: React 웹과 React Native 앱을 같은 높이에 배치](docs/assets/architecture/govbiz-service-requests.png)
+
+[크게 보기](docs/assets/architecture/govbiz-service-requests.png) ·
+[SVG](docs/assets/architecture/govbiz-service-requests.svg) ·
+[편집용 Mermaid 원본](docs/assets/architecture/govbiz-service-requests.mmd)
 
 위 그림은 주요 서비스 요청 관계입니다. 상세 호출과 저장소 연결은 [서비스 호출·데이터 흐름](docs/architecture.md)을 참고하세요.
 
@@ -77,83 +191,103 @@ flowchart TB
 | **Redis** | 로그인 전후 검색 결과 복원, 일부 작업의 실행 잠금 등 기능별 임시 상태를 보관합니다. 회원·공고 원본 DB와 역할이 다릅니다. |
 | **RabbitMQ** | 리포트 생성·메일 발송, 중복 검토, 공식 양식 분석, 카카오 연결 해제 작업을 전달합니다. 작업 상태와 Outbox는 MySQL에 보존합니다. |
 
-## 저장소 구성
+### 데이터 구조와 소유권
 
-애플리케이션·평가 도구·Kubernetes 설정을 함께 관리하는 모노레포입니다.
-기준 저장소는 [`SKNETWORKS-FAMILY-AICAMP/SKN34-4th-1Team`](https://github.com/SKNETWORKS-FAMILY-AICAMP/SKN34-4th-1Team), 기본 브랜치는 `main`입니다.
-별도 submodule이나 두 번째 clone은 필요하지 않습니다. 서비스 프로세스·의존성·DB 책임은 분리합니다.
+| 데이터 소유 서비스 | 주요 저장 내용 | 스키마 정의 |
+|---|---|---|
+| Core | 계정·기업·관심 공고·신청 문서·협업·리포트, 조회용 공고 복제본·원문 캐시 | [Flyway migration](backend/core-service/src/main/resources/db/migration) |
+| Catalog | 제공처별 공고 원본·수집 상태·공개 버전 | [Flyway migration](backend/catalog-service/src/main/resources/db/migration) |
+| Ops | 평가 실행·검토·품질 판정·비교 기준·예산·일정 | [Django 모델](backend/ops-service/apps/evaluations/models.py) · [migration](backend/ops-service/apps/evaluations/migrations) |
 
-```text
-SKN34-4th-1Team/
-├─ frontend/
-│  ├─ web/                   React 웹·관리자·LLMOps 화면
-│  ├─ mobile/                Expo·React Native 앱
-│  └─ packages/shared/       공통 업무 모델·API 계약·응답 검증
-├─ backend/
-│  ├─ core-service/          공개 API·사용자 업무
-│  ├─ catalog-service/       공고 수집·원본·색인 공개
-│  ├─ ai-service/            내부 검색·AI·문서 도구
-│  └─ ops-service/           평가 운영 API·전용 DB
-├─ evaluation/               검색·근거 답변·문서 등의 평가 자료·실행기
-├─ infrastructure/
-│  ├─ llmops/                Langfuse·Prefect·실행기·복구 도구
-│  ├─ gitops/                Helm·kind·인프라 검증·기존 Argo 설정
-│  └─ …                      Compose·이미지 발행·기존 AWS 배포 템플릿
-├─ .github/workflows/        앱·Catalog·Ops·LLMOps·인프라 CI
-├─ docs/                     기능·운영 안내와 검증 기록
-├─ pnpm-workspace.yaml       웹·모바일·공통 패키지 workspace
-└─ compose.yaml              로컬 통합 개발 진입점
+서비스 사이의 인증과 자료 전달은 API로 연결합니다. 예를 들어 Ops는 Core에 관리자 세션을 확인하며,
+회원 DB를 복제하거나 비밀번호를 별도로 관리하지 않습니다.
+
+<a id="데이터-준비"></a>
+
+## 6. 데이터 준비와 검색 구성
+
+### 공식 공고 데이터
+
+| 제공처 | 수집 자료 | 식별 코드 |
+|---|---|---|
+| 기업마당 | 중앙부처·지자체·공공기관 기업지원사업 | `BIZINFO` |
+| K-Startup | 창업지원사업 | `KSTARTUP` |
+| 과학기술정보통신부 | 과학기술·연구개발 사업 | `MSIT` |
+| 충남 온라인수출지원시스템 | 충청남도 기업 수출지원사업 | `CNTRADE_NOTICE` |
+
+Catalog가 공식 API의 제목·기관·신청 기간·지역·분야·지원 대상·원문 URL·신청 경로를 정규화합니다.
+공고는 **제공처 코드 + 원본 ID**로 구분하고, 접수 상태는 신청 기간과 서울 기준 현재 날짜로 계산합니다.
+
+```mermaid
+flowchart TB
+    Source["공식 제공처 API 4곳"] --> Collect["Catalog 수집·검증<br/>페이지 완전성 · 필수 항목"]
+    Collect --> Normalize["공통 공고 구조로 정규화"]
+    Normalize --> Index["검색 색인 준비<br/>Elasticsearch · AI Service → Qdrant"]
+    Index --> Publish["수집·색인 성공 확인 후 공개<br/>Catalog MySQL"]
+    Publish --> Snapshot["인증된 HTTP snapshot"]
+    Snapshot --> Core["Core 조회용 복제본 갱신<br/>사용자 목록 · 상세 · 검색"]
+    classDef step fill:#e7f5eb,stroke:#92bda6,color:#183d32
+    classDef boundary fill:#e8f3fa,stroke:#91b9cd,color:#183d32
+    class Collect,Normalize,Index,Publish step
+    class Source,Snapshot,Core boundary
 ```
 
-## 로컬 시작
+- 같은 공고를 다시 수집하면 갱신하며, 성공적으로 수집한 제공처 범위에서만 누락 공고를 비활성화합니다.
+- 수집·응답 검증·색인 준비가 실패하면 기존 공개 자료를 유지합니다.
+- **Elasticsearch**는 한국어 키워드 후보, **Qdrant**는 의미 기반 후보와 공고별 근거 청크 검색을 담당합니다.
+- 사용자 검색에서는 두 후보 순위를 **RRF**로 결합합니다. RRF는 각 검색의 순위를 합쳐 후보를 정하는 방식입니다.
 
-### 통합 Compose
+[Catalog 구현·계약](backend/catalog-service/README.md) · [서비스 분리 설명](docs/catalog-service-extraction.md) ·
+[한국어 키워드 검색](docs/elasticsearch-lexical-search.md)
 
-루트 `compose.yaml`이 Core·Catalog·AI·Ops와 웹·저장소를 연결합니다.
-`infrastructure/compose.yaml`만 단독 실행하는 방식은 기존 embedded 수집 호환 경로입니다.
-처음 구성할 때는 [통합 개발 안내](docs/ops-monorepo-migration.md#로컬-개발-시작)를 따릅니다.
+<a id="ai-처리-흐름"></a>
 
-| 환경 파일 | 용도 |
-|---|---|
-| `.env` | 웹·Core·Catalog·AI 설정. `OPENAI_API_KEY`, 서버 간 공유할 32자 이상 `CATALOG_INTERNAL_TOKEN`과 필요한 제공처·문서·메일 설정 |
-| `backend/ops-service/.env` | Ops DB·Django 전용 설정 |
-| `.env.compose` | 위 두 환경 파일의 위치와 Compose 프로젝트명 |
+## 7. 주요 AI 기능의 처리 흐름
 
-각 예시 파일(`.env.example`, `backend/ops-service/.env.example`, `.env.compose.example`)을
-**해당 파일이 없을 때만** 복사하고 로컬 값을 입력합니다. 설정을 준비한 뒤 저장소 루트에서 실행합니다.
+### AI 대화 검색
 
-```bash
-python3 infrastructure/scripts/check-compose.py
-docker compose --env-file .env.compose config --quiet
-docker compose --env-file .env.compose up -d --build
+**질문 → 조건 제안 → 사용자 확인 → 키워드·의미 검색 → 후보 결합 → 추천·근거 검증** 순서입니다.
+LangChain·OpenAI가 검색 조건을 제안하고, 사용자가 확인한 조건으로 Core가 검색을 실행합니다.
+추천 Agent는 후보 공고의 본문과 기업 조건을 보고 관련도·추천 이유·자격 확인 정보를 생성합니다.
+조건 해석과 추천은 별도의 모델 호출이며, 추천 관련도를 선정 확률이나 자격 충족 확률로 표시하지 않습니다.
+
+### 공고 상세의 근거 기반 답변(RAG)
+
+RAG는 **검색한 공식 원문을 모델에게 함께 전달해 답변의 근거로 사용하는 방식**입니다.
+현재 상세 공고 질문은 기업마당 공식 HTML 본문을 사용합니다.
+
+```mermaid
+flowchart TB
+    Question["사용자가 상세 공고에 질문"] --> Prepare["Core<br/>공식 HTML 확인 · 원문 캐시 · 청킹"]
+    Prepare --> Retrieve["AI Service + OpenAI 임베딩 + Qdrant<br/>해당 공고의 근거 청크 검색"]
+    Retrieve --> Verify["Core<br/>검색 ID·해시 검증 · 원문 복원"]
+    Verify --> Answer["AI 답변 Agent<br/>LangChain + OpenAI"]
+    Answer --> Cite["인용 검증<br/>답변 · 원문 발췌 · 출처 표시"]
+    classDef step fill:#e7f5eb,stroke:#92bda6,color:#183d32
+    classDef ai fill:#e8f3fa,stroke:#91b9cd,color:#183d32
+    class Question,Prepare,Verify,Cite step
+    class Retrieve,Answer ai
 ```
 
-기본 웹 주소는 [localhost:5173](http://localhost:5173), Core API는 `http://localhost:8080`입니다.
-공고 자동 수집·색인·AI 기능은 활성화한 설정에 따라 외부 API를 호출합니다.
-기존 데이터가 있으면 먼저 [Catalog 전환](docs/catalog-service-extraction.md)과
-[기존 볼륨 연결](docs/ops-monorepo-migration.md#기존-컨테이너데이터-이전)을 확인합니다.
+근거가 부족한 질문은 확인할 수 없다고 안내하고, 외부 서비스 장애는 오류로 반환합니다.
+상세 공고의 HTML 질문과 신청 문서의 첨부파일 분석은 입력·처리 경로가 다릅니다.
 
-### 웹·모바일 개발
+### 신청 문서 작성과 GovBiz 도우미
 
-Node **24.x**·pnpm **11.22.x**를 사용하며 의존성은 루트에서 한 번 설치합니다.
-백엔드를 실행한 뒤 필요한 앱을 선택합니다. Compose의 웹을 실행 중이라면 호스트 웹과 포트가 겹치지 않게 구성합니다.
+| 기능 | 처리 흐름 | 사용자 확인 지점 |
+|---|---|---|
+| 신청 문서 | 공식 양식·문항 분석 → 답변 입력·초안 생성 → 원본 입력 위치 연결 → 형식별 기입·검증 → 다운로드 | 문항별 답변과 생성 결과를 확인합니다. 공식 사이트의 최종 제출은 사용자가 수행합니다. |
+| GovBiz 도우미 | 의도 분류 → 도움말 또는 권한 범위의 Core 자료 조회·관심 공고 RAG → 응답 검증 | 안내·자료 조회와 실제 검색·신청 동작을 구분합니다. |
 
-```bash
-pnpm install --frozen-lockfile
-pnpm dev:web
-# 모바일을 개발할 때 별도 터미널에서 실행
-pnpm dev:mobile
-```
+문서 작성은 지원 형식과 구조에 맞춰 Core 편집기·MCP 도구를 사용합니다.
+도우미의 의도 분류는 Agents SDK, 도구 실행 흐름은 LangGraph로 구성합니다.
 
-모바일은 `frontend/mobile/.env.example`에 따라 `EXPO_PUBLIC_API_BASE_URL`을 설정합니다.
-iOS 시뮬레이터의 `localhost:8080`, Android 에뮬레이터의 `10.0.2.2:8080`, 실기기의 PC LAN 주소를 구분합니다.
-푸시·소셜 로그인은 플랫폼 인증과 네이티브 빌드가 추가로 필요합니다.
-[모바일 실행 안내](frontend/mobile/README.md) · [공통 코드 관리](docs/mobile-monorepo.md)
+[실제 호출 경로](docs/architecture.md) · [AI Service](backend/ai-service/README.md) ·
+[문서 작성·형식별 지원 범위](docs/application-document-mcp-architecture.md)
 
-Core·Catalog를 직접 개발할 때는 JDK 21, AI·Ops는 Python 3.12를 사용합니다.
-Kubernetes 도구의 Python 3.13 환경은 애플리케이션 Python 환경과 별도입니다.
+<a id="llmops-평가운영"></a>
 
-## LLMOps 평가·운영
+## 8. LLMOps 평가·운영
 
 **모델이나 프롬프트를 바꿨을 때, 같은 질문에 대한 답변 품질이 좋아졌는지 확인하는 관리자 기능**입니다.
 평가 자료와 비교 대상을 고정한 뒤 결과·사용량·실패·사람의 판단을 함께 기록합니다.
@@ -162,6 +296,19 @@ Kubernetes 도구의 Python 3.13 환경은 애플리케이션 Python 환경과 �
 
 평가 도구는 **Langfuse + Prefect + Pandera + Evidently + pandas**로 구성하고,
 **React는 운영 화면, Django는 인증·실행 관리 API**를 담당합니다.
+
+### 다섯 도구의 역할
+
+| 도구 | 담당하는 일 | 확인할 수 있는 결과 |
+|---|---|---|
+| **Langfuse** | 모델 호출과 평가 점수를 연결해 추적 | 모델·지연·토큰 사용량·오류·trace |
+| **Prefect** | 평가 작업 실행과 단계·상태 관리 | 실행 상태·실패 단계·작업 로그 |
+| **pandas** | 사례별 결과를 표로 정리하고 집계 | 비교·지표 계산에 사용하는 데이터 |
+| **Pandera** | ID·상태·수치 범위 등 데이터 형식 검증 | 잘못된 입력·결과의 조기 거절 |
+| **Evidently** | 후보와 기준의 지표를 비교해 보고서 생성 | 비교 HTML 보고서 |
+
+프로젝트 평가기가 지표를 계산하고, Django의 품질 정책과 사람 검토로 합격·비교 기준을 결정합니다.
+데이터 형식 검증이나 작업 성공만으로 답변의 정확성을 승인하지 않습니다.
 
 ### 전체 처리 흐름
 
@@ -193,6 +340,10 @@ Kubernetes 도구의 Python 3.13 환경은 애플리케이션 Python 환경과 �
 
 새 RAG 평가는 **등록 자료 범위의 검색·답변 평가**입니다. 운영 공고 재수집·Core 재청킹·운영 색인 전체의
 성능 측정을 포함하지 않습니다. 자동 지표와 사람의 답변 검토는 별도로 기록합니다.
+
+Core HTTP의 저장 실행 기록도 요청·원문·검색·인용을 대조한 뒤 재평가 목록에 등록할 수 있습니다.
+무료 AI 대역과 당시 실제 모델의 저장 응답을 구분하며, 이 등록·재평가로 새 모델을 호출하지 않습니다.
+[Core HTTP 기록 연결](evaluation/support-program-evidence/README.md#core-http-기록을-ops-rag-평가에-연결)
 
 ### 운영 화면에서 할 수 있는 일
 
@@ -227,7 +378,30 @@ Kubernetes 도구의 Python 3.13 환경은 애플리케이션 Python 환경과 �
 [평가 자료·지표 설명](evaluation/support-program-evidence/README.md) ·
 [구현·실제 평가 기록](docs/llmops-next-development-plan.md)
 
-## 검증·배포 범위
+처음 이용한다면 [LLMOps 상세 사용 가이드 PDF · 23쪽](output/pdf/govbiz-llmops-user-guide-ko.pdf)를 참고하세요.
+화면별 기능, 평가 방식, 결과 해석, 사람 검토, 예산·복구와 환경 이전을 설명합니다.
+PDF의 화면·수치는 문서에 표시한 작성 시점의 예시입니다.
+
+<a id="검증배포-범위"></a>
+
+## 9. 평가·검증·배포 범위
+
+### 기능 검증과 모델 품질 평가
+
+| 구분 | 확인하는 것 | 현재 기록과 해석 |
+|---|---|---|
+| 자동 테스트·CI | API 계약·권한·DB·장애 처리·빌드·컨테이너 연결 | 아래 5개 워크플로로 검증합니다. 실제 성공 여부는 대상 커밋의 실행 결과로 확인합니다. |
+| 사람 검토 기준 | 원문과 답변의 조건·인용을 사람이 검토했는가 | 2026-10-05 기록 기준 실제 공고 2개·고정 근거 질문 6건의 `gpt-6-luna` 결과가 승인된 비교 기준입니다. |
+| RAG 실평가 | 검색한 근거와 생성 답변이 참조 조건을 보존하는가 | 등록 원문·청크로 실평가한 기록이 있으며, 2026-10-06 v2 결과의 H01 조건 누락과 미승인 상태를 별도로 기록했습니다. |
+
+[사람 검토·실평가 기록](docs/llmops-next-development-plan.md) ·
+[검색 평가 도구·저장 결과](evaluation/support-program-search/README.md) ·
+[근거 답변·RAG 평가 도구](evaluation/support-program-evidence/README.md)
+
+과거 검색 지표나 무료 대역 테스트 결과를 현재 모델의 정확도로 환산하지 않습니다.
+승인된 6건의 기준도 해당 공고·질문·근거 범위에서 사용합니다.
+
+### 실행·배포 범위
 
 | 구분 | 현재 범위 |
 |---|---|
@@ -288,7 +462,90 @@ Kubernetes 도구의 Python 3.13 환경은 애플리케이션 Python 환경과 �
 
 </details>
 
-## 문서 안내
+<a id="저장소-구성"></a>
+
+## 10. 저장소 구성
+
+애플리케이션·평가 도구·Kubernetes 설정을 함께 관리하는 모노레포입니다.
+기준 저장소는 [`SKNETWORKS-FAMILY-AICAMP/SKN34-4th-1Team`](https://github.com/SKNETWORKS-FAMILY-AICAMP/SKN34-4th-1Team), 기본 브랜치는 `main`입니다.
+별도 submodule이나 두 번째 clone은 필요하지 않습니다. 서비스 프로세스·의존성·DB 책임은 분리합니다.
+
+```text
+SKN34-4th-1Team/
+├─ frontend/
+│  ├─ web/                   React 웹·관리자·LLMOps 화면
+│  ├─ mobile/                Expo·React Native 앱
+│  └─ packages/shared/       공통 업무 모델·API 계약·응답 검증
+├─ backend/
+│  ├─ core-service/          공개 API·사용자 업무
+│  ├─ catalog-service/       공고 수집·원본·색인 공개
+│  ├─ ai-service/            내부 검색·AI·문서 도구
+│  └─ ops-service/           평가 운영 API·전용 DB
+├─ evaluation/               검색·근거 답변·문서 등의 평가 자료·실행기
+├─ infrastructure/
+│  ├─ llmops/                Langfuse·Prefect·실행기·복구 도구
+│  ├─ gitops/                Helm·kind·인프라 검증·기존 Argo 설정
+│  └─ …                      Compose·이미지 발행·기존 AWS 배포 템플릿
+├─ .github/workflows/        앱·Catalog·Ops·LLMOps·인프라 CI
+├─ docs/                     기능·운영 안내와 구조도·검증 기록
+├─ output/pdf/               LLMOps 사용자 가이드
+├─ pnpm-workspace.yaml       웹·모바일·공통 패키지 workspace
+└─ compose.yaml              로컬 통합 개발 진입점
+```
+
+<a id="로컬-시작"></a>
+
+## 11. 로컬 시작
+
+### 통합 Compose
+
+루트 `compose.yaml`이 Core·Catalog·AI·Ops와 웹·저장소를 연결합니다.
+`infrastructure/compose.yaml`만 단독 실행하는 방식은 기존 embedded 수집 호환 경로입니다.
+처음 구성할 때는 [통합 개발 안내](docs/ops-monorepo-migration.md#로컬-개발-시작)를 따릅니다.
+
+| 환경 파일 | 용도 |
+|---|---|
+| `.env` | 웹·Core·Catalog·AI 설정. `OPENAI_API_KEY`, 서버 간 공유할 32자 이상 `CATALOG_INTERNAL_TOKEN`과 필요한 제공처·문서·메일 설정 |
+| `backend/ops-service/.env` | Ops DB·Django 전용 설정 |
+| `.env.compose` | 위 두 환경 파일의 위치와 Compose 프로젝트명 |
+
+각 예시 파일(`.env.example`, `backend/ops-service/.env.example`, `.env.compose.example`)을
+**해당 파일이 없을 때만** 복사하고 로컬 값을 입력합니다. 설정을 준비한 뒤 저장소 루트에서 실행합니다.
+
+```bash
+python3 infrastructure/scripts/check-compose.py
+docker compose --env-file .env.compose config --quiet
+docker compose --env-file .env.compose up -d --build
+```
+
+기본 웹 주소는 [localhost:5173](http://localhost:5173), Core API는 `http://localhost:8080`입니다.
+공고 자동 수집·색인·AI 기능은 활성화한 설정에 따라 외부 API를 호출합니다.
+기존 데이터가 있으면 먼저 [Catalog 전환](docs/catalog-service-extraction.md)과
+[기존 볼륨 연결](docs/ops-monorepo-migration.md#기존-컨테이너데이터-이전)을 확인합니다.
+
+### 웹·모바일 개발
+
+Node **24.x**·pnpm **11.22.x**를 사용하며 의존성은 루트에서 한 번 설치합니다.
+백엔드를 실행한 뒤 필요한 앱을 선택합니다. Compose의 웹을 실행 중이라면 호스트 웹과 포트가 겹치지 않게 구성합니다.
+
+```bash
+pnpm install --frozen-lockfile
+pnpm dev:web
+# 모바일을 개발할 때 별도 터미널에서 실행
+pnpm dev:mobile
+```
+
+모바일은 `frontend/mobile/.env.example`에 따라 `EXPO_PUBLIC_API_BASE_URL`을 설정합니다.
+iOS 시뮬레이터의 `localhost:8080`, Android 에뮬레이터의 `10.0.2.2:8080`, 실기기의 PC LAN 주소를 구분합니다.
+푸시·소셜 로그인은 플랫폼 인증과 네이티브 빌드가 추가로 필요합니다.
+[모바일 실행 안내](frontend/mobile/README.md) · [공통 코드 관리](docs/mobile-monorepo.md)
+
+Core·Catalog를 직접 개발할 때는 JDK 21, AI·Ops는 Python 3.12를 사용합니다.
+Kubernetes 도구의 Python 3.13 환경은 애플리케이션 Python 환경과 별도입니다.
+
+<a id="문서-안내"></a>
+
+## 12. 문서 안내
 
 | 보고 싶은 내용 | 문서 |
 |---|---|
@@ -298,7 +555,7 @@ Kubernetes 도구의 Python 3.13 환경은 애플리케이션 Python 환경과 �
 | 웹·모바일 | [웹](frontend/web/README.md) · [모바일](frontend/mobile/README.md) · [공통 코드](docs/mobile-monorepo.md) · [앱 푸시](docs/mobile-report-push.md) |
 | 백엔드 | [Core](backend/core-service/README.md) · [Catalog](backend/catalog-service/README.md) · [AI](backend/ai-service/README.md) · [Ops](backend/ops-service/README.md) |
 | 신청 문서·중복 검토 | [문서 작성 구조·형식별 경계](docs/application-document-mcp-architecture.md) · [문서 도구 실행](docs/application-document-mcp-setup.md) · [중복 검토](docs/duplicate-support-review-design.md) |
-| LLMOps | [실행 환경](infrastructure/llmops/README.md) · [평가 자료·지표](evaluation/support-program-evidence/README.md) · [검토 기록 재사용](docs/ops-local-review-copy.md) · [갱신·백업·복구](docs/ops-upgrade-runbook.md) |
+| LLMOps | [사용 가이드 PDF](output/pdf/govbiz-llmops-user-guide-ko.pdf) · [실행 환경](infrastructure/llmops/README.md) · [평가 자료·지표](evaluation/support-program-evidence/README.md) · [검토 기록 재사용](docs/ops-local-review-copy.md) · [갱신·백업·복구](docs/ops-upgrade-runbook.md) |
 | Kubernetes·이미지 | [현재 지원 경로](infrastructure/gitops/README.md) · [개인 개발](docs/local-fork-development.md) · [이미지 발행](docs/msa-image-release.md) · [Windows 설치](docs/windows-kubernetes-setup.md) |
 
 각 검증 문서의 날짜·대상 커밋·환경을 함께 확인하세요. 과거 모델의 평가 결과나 배포 성공 기록을

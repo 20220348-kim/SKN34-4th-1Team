@@ -2,8 +2,9 @@
 
 [메인 README](../README.md)로 돌아가기
 
-메인 README는 현재 모노레포 구성과 구현·배포 상태를 안내합니다.
-팀 소개·프로젝트 개요·주요 기능·화면·아키텍처·평가 결과·회고는 [3차 프로젝트 README](third-project/README.md)에서 별도로 관리합니다.
+메인 README는 팀·프로젝트 소개부터 현재 웹·모바일 기능, 서비스·데이터·AI 흐름,
+LLMOps, 실행·검증·배포 범위까지 안내합니다.
+3차의 발표 자료·화면·당시 평가 결과·회고는 [3차 프로젝트 README](third-project/README.md)에 보존합니다.
 빠른 시작과 기술 문서 안내는 [기술 README](technical-readme.md)를 참고하세요.
 
 ## 구조와 구현 범위
