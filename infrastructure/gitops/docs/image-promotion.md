@@ -121,6 +121,7 @@ Secret 값·환경변수 값은 보고서에 출력하지 않는다. 다음 충�
 | `service_environment_differs` | Core·Catalog·AI 기본 환경 대비 환경변수·Secret 참조의 변경·추가·누락 검토 |
 | `service_env_from_uninspected` | Core·Catalog·AI 컨테이너의 `envFrom` 주입 별도 검토 |
 | `service_execution_or_storage_differs` | 네 서비스의 저장소·실행 명령·초기화 컨테이너·복제 수·배포 전략 차이 검토 |
+| `service_runtime_policy_differs` | 네 서비스의 probe·자원·보안·서비스 계정·DNS·컨테이너 포트 및 lifecycle 설정 차이 검토 |
 
 `runtimePreflight.preservationReview`에는 전환 때 검토할 항목을 값 없이 제공한다.
 
@@ -142,6 +143,21 @@ Secret 값·환경변수 값은 보고서에 출력하지 않는다. 다음 충�
   볼륨·마운트 순서 차이는 무시하고 중복된 볼륨 이름은 거절한다. 추가 컨테이너는 기존 구성 차이로 차단한다.
 - `chartSha256`: 캡처한 Chart 파일 경로와 내용 해시로 계산한 비교 기준 지문.
   서비스별 values의 `referenceSha256`과 함께 사용하며 서명이나 배포 승인이 아니다.
+- `policyReviews`: 네 서비스별 `changedFields` 목록. 다음 선언을 같은 Helm 기준과 비교한다.
+  - Pod: `securityContext`, `automountServiceAccountToken`, `serviceAccountName` 및 기존 `serviceAccount`,
+    `hostNetwork`, `hostPID`, `hostIPC`, `shareProcessNamespace`, `dnsPolicy`, `dnsConfig`, `hostAliases`,
+    `terminationGracePeriodSeconds`, `resources`.
+  - 기본 서비스 컨테이너: 세 probe, `resources`, `securityContext`, `ports`, `lifecycle`.
+  - probe 헤더·handler 명령·DNS 주소·계정 이름 등 값은 출력하지 않는다. 삭제된 probe·필수 보안 설정과
+    누락된 자원 요청/한도도 차이로 처리한다. 추가 컨테이너는 기존 구성 차이로 차단한다.
+
+probe 비교는 [Kubernetes 1.36의 기본값 처리](https://github.com/kubernetes/kubernetes/blob/v1.36.0/pkg/apis/core/v1/defaults.go)를
+반영한다. 생략된 probe 시간·횟수, HTTP scheme·path와 명시된 기본값을 같은 것으로 비교하며,
+알 수 없는 probe 필드를 삭제해 무시하지 않는다. 포트 목록 순서와 기본 `TCP` 표기도 구분하지 않는다.
+자원 비교는 [Kubernetes 수량 표기](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/)의
+SI·이진·지수 표기를 유리수로 바꿔 `100m=0.1`, `1Gi=1024Mi`를 정확히 비교한다.
+요청과 한도는 별도로 유지하며, 알 수 없는 표기·비유한 값·지원 범위 밖 수량은 `UNKNOWN`으로 실패한다.
+이 비교는 API의 수량 반올림·범위 보정이나 admission 검증 전체를 재현하지 않는다.
 
 비교 기준은 **현재 checkout의 `environments/portfolio/<service>.yaml`에 선언된 기본 환경**이다.
 Ops는 `reference: checkout_portfolio_ops_defaults`, 나머지는 `checkout_portfolio_service_defaults`와
@@ -159,8 +175,8 @@ Helm 실행 실패나 렌더링 결과와 기본 환경의 불일치도 `UNKNOWN
 
 충돌이 없을 때의 `NO_LOCAL_OVERRIDES`는 **이 검사 범위에서 기본 구성과 충돌하는 기록이 없다는 뜻**이다.
 그 뒤에도 동일한 소스 CI·공개 발행 검증을 통과해야 계획이 생성된다. Docker·Compose 컨테이너 상태,
-Secret 존재·키·DB schema, 이미지·probe·리소스 한도·보안 및 네트워크 설정의 기준 차이,
-PVC 데이터·마운트의 실제 동작, 관리자 인증이나 Argo 기동을 검증하지 않으며
+Secret 존재·키·DB schema, 이미지·노드 배치·Service 및 NetworkPolicy 설정의 기준 차이,
+실제 probe 성공·자원 사용량·RBAC 권한·PVC 데이터·마운트 동작·관리자 인증이나 Argo 기동을 검증하지 않으며
 `existingRuntimeVerified=false`를 유지한다. 실제 적용 전에는 전체 전환 절차가 필요하다.
 
 ## 배포 PR 없이 GHCR 이미지로 로컬 초기화
