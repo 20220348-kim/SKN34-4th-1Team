@@ -230,6 +230,36 @@ sync의 명령·마운트·보안·자원 차이도 비교하므로 컨테이너
 재현에 성공해도 기존 `runtime_transition_required`와 차단 목록은 유지된다. 공개 이미지·migration·
 백업·실제 전환 검증을 대신하지 않으며, `--state-dir` 없는 계획이나 `verify-public`에는 사용할 수 없다.
 
+### 검증된 공개 발행본으로 기존 연결 설정 비교하기
+
+작업 폴더의 Chart가 아닌 실제 공개 발행본을 기준으로 비교하려면 별도 읽기 전용 명령을 사용한다.
+
+```bash
+python3 -B infrastructure/gitops/scripts/deployment.py review-published-runtime \
+  --branch main --state-dir "$OPS_STATE_DIR"
+```
+
+1. `verify-public`과 같은 최신 소스·필수 CI·공개 receipt·Helm 정책·익명 manifest 검증을 먼저 수행한다.
+   확인할 수 있는 발행본이 없으면 Kubernetes를 조회하기 전에 차단한다. 과거 성공 발행본으로 대체하지 않는다.
+2. 검증된 발행 묶음의 Chart와 `environments/fork/<service>.yaml`로 현재 환경변수·Secret 참조·
+   Ops sync 재현 검사를 수행한다. 작업 폴더의 Chart·portfolio values로 대체하지 않는다.
+3. 발행 검증과 최신 필수 CI 확인을 다시 수행하고 소스 SHA·publisher·receipt·캡처한 파일을 비교한다.
+   발행본이 바뀌거나 재검증에 실패하면 런타임 관찰 결과를 버리고 `BLOCKED`로 종료한다.
+
+보고서 schema는 `msa-published-runtime-review-v1`이며 비교 기준은 `referenceScope: verified_publication`이다.
+전후 검증을 모두 마쳤을 때만 `publishedReferenceVerified: true`, `sourceSha`, `publisherRunId`와
+`runtimePreflight` 결과를 함께 제공한다. 서비스별 `reference`도 `verified_publication_ops_defaults`
+또는 `verified_publication_service_defaults`로 구분하며 values·Chart 지문을 유지한다.
+
+현재 환경에 전환 차단 항목이 있으면 Helm 재현에 성공해도 종료 코드 1과 `runtime_transition_required`를
+유지한다. 차단 항목이 없으면 `REVIEWED`와 종료 코드 0을 반환하지만 Application이나 values를 출력하지
+않고 자동 동기화·배포를 승인하지 않는다. `publishedReferenceVerified`는 **비교에 사용한 발행본**의 검증이며
+실행 중 이미지의 교체, Secret·DB·Compose 연결 정상, 백업·migration 완료를 의미하지 않는다.
+발행 기준 파일은 임시 렌더링에만 쓰고 기존 state·브랜치·작업 파일은 바꾸지 않는다.
+소스 Git 객체가 없다면 검증된 SHA를 `origin`에서 fetch할 수 있다.
+
+이 명령에는 `--state-dir`가 필수이며 재현 검사를 항상 수행하므로 `--review-preservation`을 함께 지정하지 않는다.
+
 ## 배포 PR 없이 GHCR 이미지로 로컬 초기화
 
 `fork_cluster.py up`은 개인 포크 기본 브랜치의 현재 SHA에 대해 다음을 직접 검증한다.

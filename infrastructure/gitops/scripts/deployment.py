@@ -364,24 +364,27 @@ def main():
     if len(sys.argv) < 2 or sys.argv[1] not in {
         "verify-public",
         "plan-gitops",
+        "review-published-runtime",
         "--help",
         "-h",
     }:
         raise SystemExit(
             "Separate deployment branches and deployment PR automation were removed. "
-            "Use verify-public or plan-gitops for read-only preparation. "
+            "Use verify-public, plan-gitops or review-published-runtime for read-only preparation. "
             "Automatic deployment is not configured; no remote changes were made."
         )
     parser = argparse.ArgumentParser(
         description="Verify public images or plan pinned Argo inputs; never apply to a cluster."
     )
-    parser.add_argument("action", choices=("verify-public", "plan-gitops"))
+    parser.add_argument(
+        "action", choices=("verify-public", "plan-gitops", "review-published-runtime")
+    )
     parser.add_argument("--branch", help="Origin's default branch when omitted")
     parser.add_argument("--helm", default="helm", help="Pinned Helm executable")
     parser.add_argument(
         "--state-dir",
         type=Path,
-        help="plan-gitops only: inspect owned local runtime conflicts before publication checks",
+        help="Owned local state for plan-gitops or review-published-runtime",
     )
     parser.add_argument(
         "--review-preservation",
@@ -389,16 +392,21 @@ def main():
         help="With --state-dir, render existing environment/sync settings temporarily; never apply or export values",
     )
     args = parser.parse_args()
-    if args.state_dir is not None and args.action != "plan-gitops":
-        parser.error("--state-dir is only supported by plan-gitops")
-    if args.review_preservation and args.state_dir is None:
+    published_review = args.action == "review-published-runtime"
+    if args.state_dir is not None and args.action == "verify-public":
+        parser.error("--state-dir is not supported by verify-public")
+    if published_review and args.state_dir is None:
+        parser.error("review-published-runtime requires --state-dir")
+    if args.review_preservation and (
+        args.state_dir is None or args.action != "plan-gitops"
+    ):
         parser.error("--review-preservation requires plan-gitops --state-dir")
     report = {
-        "schema": (
-            "msa-gitops-plan-v1"
-            if args.action == "plan-gitops"
-            else "msa-publication-check-v1"
-        ),
+        "schema": {
+            "verify-public": "msa-publication-check-v1",
+            "plan-gitops": "msa-gitops-plan-v1",
+            "review-published-runtime": "msa-published-runtime-review-v1",
+        }[args.action],
         "status": "BLOCKED",
         "clusterVerified": False,
         "layersDownloaded": False,
@@ -407,6 +415,16 @@ def main():
         root = Path(__file__).resolve().parents[3]
         fork = from_origin(root, branch=args.branch).require_personal_publish()
         report.update(repository=fork.repository, branch=fork.branch)
+        if published_review:
+            report.update(
+                referenceScope="verified_publication",
+                publishedReferenceVerified=False,
+                deploymentAuthorized=False,
+            )
+            publication = verified_release(
+                root, fork, args.helm, verify_public_manifests=True
+            )
+            record, files, sha = publication
         if args.state_dir is not None:
             from gitops_runtime import SCOPE, preflight
 
@@ -415,19 +433,36 @@ def main():
                 "scope": SCOPE,
             }
             options = {"review_preservation": True} if args.review_preservation else {}
-            report["runtimePreflight"] = preflight(
-                args.state_dir, fork, args.helm, **options
-            )
+            if published_review:
+                options = {"review_preservation": True, "published_files": files}
+            observed = preflight(args.state_dir, fork, args.helm, **options)
+            if published_review:
+                if (
+                    verified_release(
+                        root, fork, args.helm, verify_public_manifests=True
+                    )
+                    != publication
+                ):
+                    raise ValueError(
+                        "Publisher or image receipts changed during runtime review"
+                    )
+                report.update(
+                    sourceSha=sha,
+                    publisherRunId=record["runId"],
+                    publishedReferenceVerified=True,
+                )
+            report["runtimePreflight"] = observed
             if report["runtimePreflight"]["status"] != "NO_LOCAL_OVERRIDES":
                 raise ValueError("Local runtime requires an explicit transition")
-        record, files, sha = verified_release(
-            root, fork, args.helm, verify_public_manifests=True
-        )
-        plan = (
-            gitops_plan(fork, record, files, sha)
-            if args.action == "plan-gitops"
-            else {}
-        )
+        if not published_review:
+            record, files, sha = verified_release(
+                root, fork, args.helm, verify_public_manifests=True
+            )
+        plan = {}
+        if args.action == "plan-gitops":
+            plan = gitops_plan(fork, record, files, sha)
+        elif published_review:
+            plan = {"status": "REVIEWED", "existingRuntimeVerified": False}
         report.update(
             status="PASS",
             sourceSha=sha,
