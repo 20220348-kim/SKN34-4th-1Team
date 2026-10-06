@@ -24,26 +24,32 @@ class RuntimePreflightTests(unittest.TestCase):
         stack = self.enterContext(ExitStack())
         self.state = Path(stack.enter_context(tempfile.TemporaryDirectory()))
         self.settings = runtime.cluster.initial_settings(FORK)
-        self.deployment = {
-            "metadata": {
-                "name": "ops-service",
-                "namespace": "govbiz-msa",
-                "uid": "ops-uid",
-                "resourceVersion": "1",
-            },
-            "spec": {
-                "template": {
-                    "spec": {
-                        "containers": [
-                            {
-                                "name": "ops-service",
-                                "env": copy.deepcopy(runtime.ops_defaults()[1]),
-                            }
-                        ]
+        self.deployments = {
+            service: {
+                "metadata": {
+                    "name": service,
+                    "namespace": "govbiz-msa",
+                    "uid": service + "-uid",
+                    "resourceVersion": "1",
+                },
+                "spec": {
+                    "template": {
+                        "spec": {
+                            "containers": [
+                                {
+                                    "name": service,
+                                    "env": copy.deepcopy(
+                                        runtime.portfolio_defaults(service)[1]
+                                    ),
+                                }
+                            ]
+                        }
                     }
-                }
-            },
+                },
+            }
+            for service in runtime.cluster.SERVICES
         }
+        self.deployment = self.deployments["ops-service"]
         self.load = stack.enter_context(
             patch.object(runtime.cluster, "load_settings", return_value=self.settings)
         )
@@ -61,6 +67,8 @@ class RuntimePreflightTests(unittest.TestCase):
 
     def read(self, command, *, capture, timeout):
         self.owner.assert_called()
+        service = command[-3]
+        self.assertIn(service, runtime.cluster.SERVICES)
         self.assertEqual(
             command,
             [
@@ -69,14 +77,16 @@ class RuntimePreflightTests(unittest.TestCase):
                 "govbiz-msa",
                 "get",
                 "deployment",
-                "ops-service",
+                service,
                 "-o",
                 "json",
             ],
         )
         self.assertTrue(capture)
         self.assertEqual(timeout, 15)
-        return json.dumps(self.deployment)
+        return json.dumps(
+            self.deployment if service == "ops-service" else self.deployments[service]
+        )
 
     def test_bootstrap_only_observation_is_not_deployment_approval(self):
         report = runtime.preflight(self.state, FORK)
@@ -84,8 +94,15 @@ class RuntimePreflightTests(unittest.TestCase):
         self.assertEqual(report["blockers"], [])
         for name in ("servicesChanged", "databaseChanged", "deploymentAuthorized"):
             self.assertFalse(report[name])
-        self.assertEqual(self.command.call_count, 2)
+        self.assertEqual(self.command.call_count, 8)
         self.assertEqual(self.owner.call_count, 2)
+        self.assertEqual(
+            set(report["inspectedServices"]), set(runtime.cluster.SERVICES)
+        )
+        self.assertEqual(
+            set(report["preservationReview"]["serviceReviews"]),
+            {"core-service", "catalog-service", "ai-service"},
+        )
         self.assertEqual(list(self.state.iterdir()), [])
 
     def test_connected_ops_is_detected_without_saved_activation_records(self):
@@ -164,9 +181,13 @@ class RuntimePreflightTests(unittest.TestCase):
         self.command.assert_not_called()
 
     def test_deployment_or_local_state_changes_cannot_pass(self):
-        changed = copy.deepcopy(self.deployment)
+        first = [
+            json.dumps(self.deployments[service])
+            for service in runtime.cluster.SERVICES
+        ]
+        changed = copy.deepcopy(self.deployments["core-service"])
         changed["metadata"]["resourceVersion"] = "2"
-        self.command.side_effect = [json.dumps(self.deployment), json.dumps(changed)]
+        self.command.side_effect = first + [json.dumps(changed)]
         with self.assertRaisesRegex(ValueError, "changed during preflight"):
             runtime.preflight(self.state, FORK)
         self.command.side_effect = self.read
@@ -286,16 +307,23 @@ class RuntimePreflightTests(unittest.TestCase):
                 runtime.preflight(self.state, FORK)
 
     def test_changed_reference_file_cannot_return_a_stable_comparison(self):
-        payload, env = runtime.ops_defaults()
-        with (
-            patch.object(
-                runtime,
-                "ops_defaults",
-                side_effect=[(payload, env), (payload + b"\n", env)],
-            ),
-            self.assertRaisesRegex(ValueError, "changed during preflight"),
-        ):
-            runtime.preflight(self.state, FORK)
+        defaults = runtime.portfolio_defaults
+        for target in runtime.cluster.SERVICES:
+            seen = set()
+
+            def changing(service):
+                payload, env = defaults(service)
+                if service == target and service in seen:
+                    payload += b"\n"
+                seen.add(service)
+                return payload, env
+
+            with (
+                self.subTest(service=target),
+                patch.object(runtime, "portfolio_defaults", side_effect=changing),
+                self.assertRaisesRegex(ValueError, "changed during preflight"),
+            ):
+                runtime.preflight(self.state, FORK)
 
     def test_saved_feature_names_and_connection_disagreement_are_preserved(self):
         profile = {key: self.settings[key] for key in ("repository", "stateId")}
@@ -327,29 +355,154 @@ class RuntimePreflightTests(unittest.TestCase):
     )
     def test_reference_environment_matches_actual_helm_rendering(self):
         root = runtime.cluster.ROOT
-        output = subprocess.check_output(
-            [
-                "helm",
-                "template",
-                "ops-service",
-                str(root / "charts/govbiz-service"),
-                "-n",
-                "govbiz-msa",
-                "-f",
-                str(root / "environments/portfolio/ops-service.yaml"),
-            ],
-            timeout=30,
-        )
-        desired = next(
-            item
-            for item in runtime.yaml.safe_load_all(output)
-            if item["kind"] == "Deployment"
-        )
-        containers = desired["spec"]["template"]["spec"]["containers"]
-        self.assertEqual([item["name"] for item in containers], ["ops-service"])
+        for service in runtime.cluster.SERVICES:
+            with self.subTest(service=service):
+                output = subprocess.check_output(
+                    [
+                        "helm",
+                        "template",
+                        service,
+                        str(root / "charts/govbiz-service"),
+                        "-n",
+                        "govbiz-msa",
+                        "-f",
+                        str(root / f"environments/portfolio/{service}.yaml"),
+                    ],
+                    timeout=30,
+                )
+                desired = next(
+                    item
+                    for item in runtime.yaml.safe_load_all(output)
+                    if item["kind"] == "Deployment"
+                )
+                containers = desired["spec"]["template"]["spec"]["containers"]
+                self.assertEqual([item["name"] for item in containers], [service])
+                self.assertEqual(
+                    runtime.environment_rows(containers[0]["env"]),
+                    runtime.environment_rows(runtime.portfolio_defaults(service)[1]),
+                )
+
+    def test_other_service_overrides_are_detected_without_saved_profiles(self):
+        for service, variable in (
+            ("core-service", "ACCOUNT_DEV_LOGIN_ENABLED"),
+            ("catalog-service", "BIZINFO_SYNC_ENABLED"),
+            ("ai-service", "OPENAI_BASE_URL"),
+        ):
+            container = self.deployments[service]["spec"]["template"]["spec"][
+                "containers"
+            ][0]
+            env = {row["name"]: row for row in container["env"]}
+            env[variable]["value"] = "PRIVATE-override"
+            env["EXTRA_SETTING"] = {"name": "EXTRA_SETTING", "value": "PRIVATE-value"}
+            secret = next(key for key, row in env.items() if "valueFrom" in row)
+            env[secret]["valueFrom"]["secretKeyRef"]["name"] = "PRIVATE-secret"
+            missing = next(
+                key for key, row in env.items() if "value" in row and key != variable
+            )
+            env.pop(missing)
+            container["env"] = list(reversed(env.values()))
+            with self.subTest(service=service):
+                report = runtime.preflight(self.state, FORK)
+                self.assertEqual(report["blockers"], ["service_environment_differs"])
+                review = report["preservationReview"]["serviceReviews"][service]
+                self.assertEqual(
+                    review["environmentChanges"][service],
+                    {
+                        "changed": sorted([variable, secret]),
+                        "runtimeOnly": ["EXTRA_SETTING"],
+                        "missing": [missing],
+                    },
+                )
+                self.assertEqual(
+                    review["reference"], "checkout_portfolio_service_defaults"
+                )
+                self.assertEqual(len(review["referenceSha256"]), 64)
+                self.assertNotIn("PRIVATE", json.dumps(report))
+
+    def test_other_service_env_from_and_unknown_containers_block(self):
+        for service in ("core-service", "catalog-service", "ai-service"):
+            pod = self.deployments[service]["spec"]["template"]["spec"]
+            original = copy.deepcopy(pod["containers"])
+            for missing in (False, True):
+                pod["containers"] = [] if missing else copy.deepcopy(original)
+                pod["containers"].append(
+                    {
+                        "name": "extra-container",
+                        "envFrom": [{"configMapRef": {"name": "PRIVATE-config"}}],
+                    }
+                )
+                with self.subTest(service=service, missing=missing):
+                    report = runtime.preflight(self.state, FORK)
+                    self.assertEqual(
+                        report["blockers"],
+                        [
+                            "service_container_layout_differs",
+                            "service_env_from_uninspected",
+                        ],
+                    )
+                    review = report["preservationReview"]["serviceReviews"][service]
+                    self.assertEqual(
+                        review["containers"],
+                        {
+                            "runtimeOnly": ["extra-container"],
+                            "missing": [service] if missing else [],
+                        },
+                    )
+                    self.assertEqual(review["uninspectedEnvFrom"], ["extra-container"])
+                    self.assertNotIn("PRIVATE", json.dumps(report))
+            pod["containers"] = original
+
+    def test_each_service_must_have_stable_identity_and_spec(self):
+        for service in runtime.cluster.SERVICES:
+            for field in (
+                "uid",
+                "resourceVersion",
+                "namespace",
+                "name",
+                "deletionTimestamp",
+                "spec",
+            ):
+                calls = 0
+
+                def changing(command, **kwargs):
+                    nonlocal calls
+                    calls += 1
+                    data = json.loads(self.read(command, **kwargs))
+                    if calls > 4 and command[-3] == service:
+                        if field == "spec":
+                            data["spec"]["replicas"] = 0
+                        else:
+                            data["metadata"][field] = "changed"
+                    return json.dumps(data)
+
+                with (
+                    self.subTest(service=service, field=field),
+                    self.assertRaises(ValueError),
+                ):
+                    self.command.side_effect = changing
+                    runtime.preflight(self.state, FORK)
+        self.command.side_effect = self.read
+
+    def test_missing_other_deployment_is_not_a_clean_runtime(self):
+        for service in ("core-service", "catalog-service", "ai-service"):
+
+            def missing(command, **kwargs):
+                if command[-3] == service:
+                    raise subprocess.CalledProcessError(1, command, output="PRIVATE")
+                return self.read(command, **kwargs)
+
+            with (
+                self.subTest(service=service),
+                self.assertRaises(subprocess.CalledProcessError),
+            ):
+                self.command.side_effect = missing
+                runtime.preflight(self.state, FORK)
+
+    def test_service_environment_order_does_not_create_a_difference(self):
+        for workload in self.deployments.values():
+            workload["spec"]["template"]["spec"]["containers"][0]["env"].reverse()
         self.assertEqual(
-            runtime.environment_rows(containers[0]["env"]),
-            runtime.environment_rows(runtime.ops_defaults()[1]),
+            runtime.preflight(self.state, FORK)["status"], "NO_LOCAL_OVERRIDES"
         )
 
 
@@ -401,6 +554,9 @@ class RuntimePlanCliTests(unittest.TestCase):
         for error in (
             ValueError("PRIVATE config"),
             subprocess.TimeoutExpired("PRIVATE command", 15, output="PRIVATE bytes"),
+            subprocess.CalledProcessError(
+                1, "PRIVATE command", output="PRIVATE bytes", stderr="PRIVATE error"
+            ),
         ):
             report, output, publication = self.invoke({"side_effect": error})
             publication.assert_not_called()

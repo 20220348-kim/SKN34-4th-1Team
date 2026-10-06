@@ -402,11 +402,11 @@ def main():
         fork = from_origin(root, branch=args.branch).require_personal_publish()
         report.update(repository=fork.repository, branch=fork.branch)
         if args.state_dir is not None:
-            from gitops_runtime import preflight
+            from gitops_runtime import SCOPE, preflight
 
             report["runtimePreflight"] = {
                 "status": "UNKNOWN",
-                "scope": "local_overrides_and_ops_connection",
+                "scope": SCOPE,
             }
             report["runtimePreflight"] = preflight(args.state_dir, fork)
             if report["runtimePreflight"]["status"] != "NO_LOCAL_OVERRIDES":

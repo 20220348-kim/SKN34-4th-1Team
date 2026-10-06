@@ -101,7 +101,8 @@ python3 -B infrastructure/gitops/scripts/deployment.py plan-gitops \
   --branch main --state-dir "$OPS_STATE_DIR"
 ```
 
-전용 loopback 클러스터·소유권과 dev 모드를 확인하고, 로컬 연결 기록 및 현재 Ops Deployment를 읽는다.
+전용 loopback 클러스터·소유권과 dev 모드를 확인하고, 로컬 연결 기록 및 Core·Catalog·AI·Ops Deployment를 읽는다.
+개인 설정 기록이 없어도 각 서비스의 현재 환경변수를 비교하며, 네 Deployment 중 하나라도 조회할 수 없으면 실패한다.
 Secret 값·환경변수 값은 보고서에 출력하지 않는다. 다음 충돌은 종료 코드 1과
 `reason: runtime_transition_required`, `runtimePreflight.status: BLOCKED`로 반환한다.
 
@@ -113,21 +114,30 @@ Secret 값·환경변수 값은 보고서에 출력하지 않는다. 다음 충�
 | `ops_container_layout_differs` | 기본 계획에 없는 `ops-sync` 등 컨테이너 구성의 보존 방법 |
 | `ops_environment_differs` | Ops 기본 환경과 다른 환경변수·Secret 참조의 변경·추가·누락 검토 |
 | `ops_env_from_uninspected` | `envFrom`으로 주입된 설정의 별도 검토; Secret·ConfigMap 값은 조회하지 않음 |
+| `service_container_layout_differs` | Core·Catalog·AI의 추가·누락된 컨테이너 구성 검토 |
+| `service_environment_differs` | Core·Catalog·AI 기본 환경 대비 환경변수·Secret 참조의 변경·추가·누락 검토 |
+| `service_env_from_uninspected` | Core·Catalog·AI 컨테이너의 `envFrom` 주입 별도 검토 |
 
 `runtimePreflight.preservationReview`에는 전환 때 검토할 항목을 값 없이 제공한다.
 
 - `integrationFeatures`, `modelSettingNames`: 검증된 개인 설정에 기록된 기능과 모델 설정 키 이름.
-  실제 Core·Catalog·AI Deployment에 해당 설정이 반영됐다는 뜻은 아니다.
-- `containers`: 기본 구성에 없는 컨테이너와 누락된 기본 컨테이너 이름.
+  기능 연결의 정상 동작을 증명하지 않으며 실제 Deployment 설정 차이는 `serviceReviews`에서 확인한다.
+- `containers`: Ops 기본 구성에 없는 컨테이너와 누락된 기본 컨테이너 이름.
 - `environmentChanges`: `ops-service`·`ops-sync` 각각의 `changed`, `runtimeOnly`, `missing` 이름 목록.
   각 컨테이너를 같은 Ops 기본 환경과 비교한다. 변수 순서는 무시하지만 중복 이름·모호한 주입 형식은 거절한다.
   Secret 참조 대상이 달라져도 변수 이름만 표시하고 값·Secret 이름·key는 출력하지 않는다.
 - `uninspectedEnvFrom`: 주입 내용을 확인하지 않은 컨테이너 이름. 참조를 따라가 값을 읽지 않는다.
+- `serviceReviews`: Core·Catalog·AI의 서비스 이름별 비교 결과. 각각 `containers`, `environmentChanges`,
+  `uninspectedEnvFrom`, `reference`, `referenceSha256`을 포함한다. 추가 컨테이너의 환경변수는 비교하지
+  않고 구성 차이로 차단하며, 기본 서비스 컨테이너가 누락돼도 차단한다. 기존 Ops 필드 위치는 유지한다.
 - `connectionRecordConflict`: 활성화·브리지 기록의 Compose 프로젝트가 서로 다른지 표시.
   프로젝트 이름·주소·인증값은 보고서에 포함하지 않는다.
 
-비교 기준은 **현재 checkout의 `environments/portfolio/ops-service.yaml`에 선언된 기본 환경**이다.
-`reference: checkout_portfolio_ops_defaults`와 파일 SHA-256을 기록하며 검사 중 기준 파일 변경도 거절한다.
+비교 기준은 **현재 checkout의 `environments/portfolio/<service>.yaml`에 선언된 기본 환경**이다.
+Ops는 `reference: checkout_portfolio_ops_defaults`, 나머지는 `checkout_portfolio_service_defaults`와
+각 파일의 SHA-256을 기록한다. `runtimePreflight.inspectedServices`에 검사한 네 서비스를 표시하고,
+`scope: local_overrides_and_service_environments`로 비교 범위를 구분한다.
+네 Deployment의 식별자·resourceVersion·spec과 네 기준 파일을 다시 읽어 검사 도중 변경도 거절한다.
 이 비교를 최신 공개 이미지·발행된 Chart와의 전체 차이 검증으로 해석하지 않는다.
 `configurationValuesIncluded=false`, `overlayGenerated=false`를 유지하며 기존 설정을 Argo values로
 자동 복사하지 않는다. 표시된 차이가 모두 유지해야 할 설정이라는 뜻도 아니므로 항목별로 검토한다.
@@ -138,7 +148,8 @@ Secret 값·환경변수 값은 보고서에 출력하지 않는다. 다음 충�
 
 충돌이 없을 때의 `NO_LOCAL_OVERRIDES`는 **이 검사 범위에서 기본 구성과 충돌하는 기록이 없다는 뜻**이다.
 그 뒤에도 동일한 소스 CI·공개 발행 검증을 통과해야 계획이 생성된다. Docker·Compose 컨테이너 상태,
-Secret 존재·키·DB schema, 모든 서비스의 설정 차이, 관리자 인증이나 Argo 기동을 검증하지 않으며
+Secret 존재·키·DB schema, 이미지·볼륨·probe·init container 등 환경변수 외 Pod 설정의 기준 차이,
+관리자 인증이나 Argo 기동을 검증하지 않으며
 `existingRuntimeVerified=false`를 유지한다. 실제 적용 전에는 전체 전환 절차가 필요하다.
 
 ## 배포 PR 없이 GHCR 이미지로 로컬 초기화
