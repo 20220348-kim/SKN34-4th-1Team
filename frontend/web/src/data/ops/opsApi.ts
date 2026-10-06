@@ -1,6 +1,29 @@
 import { z } from 'zod'
 
 const base = '/api/v1/ops'
+const dashboardMetricsSchema = z.object({ status: z.number().min(0).max(1).nullable(), citation: z.number().min(0).max(1).nullable(), retrieval: z.number().min(0).max(1).nullable(), latency: z.number().nonnegative().nullable(), input_tokens: z.number().nonnegative().nullable(), output_tokens: z.number().nonnegative().nullable() })
+const dashboardSamplesSchema = z.object({ status: z.number().int().nonnegative().nullable(), citation: z.number().int().nonnegative().nullable(), retrieval: z.number().int().nonnegative().nullable(), latency: z.number().int().nonnegative().nullable(), input_tokens: z.number().int().nonnegative().nullable(), output_tokens: z.number().int().nonnegative().nullable() })
+const dashboardCoverageSchema = z.object({ status: z.string().nullable(), citation: z.string().nullable(), retrieval: z.string().nullable(), latency: z.string().nullable(), input_tokens: z.string().nullable(), output_tokens: z.string().nullable() })
+const dashboardSchema = z.object({
+  as_of: z.iso.datetime({ offset: true }), configured_model: z.string(),
+  window: z.object({ limit: z.number().int().positive(), loaded: z.number().int().nonnegative(), total: z.number().int().nonnegative(), truncated: z.boolean() }),
+  states: z.object({ completed: z.number().int().nonnegative(), failed: z.number().int().nonnegative(), active: z.number().int().nonnegative(), cancelled: z.number().int().nonnegative() }),
+  excluded: z.object({ replay: z.number().int().nonnegative(), incomplete: z.number().int().nonnegative(), unverifiable: z.number().int().nonnegative(), duplicate: z.number().int().nonnegative() }),
+  series: z.array(z.object({
+    id: z.string(), dataset_id: z.string(), dataset_label: z.string(), model: z.string(),
+    scope: z.enum(['fixed-answer-context-only', 'source-chunks-retrieval-answer']),
+    fixture_sha256: z.string(), evaluator_version: z.string(), case_ids: z.array(z.string()).min(1),
+    retrieval_k: z.array(z.tuple([z.string(), z.number().int().nonnegative().nullable()])).nullable(),
+    points: z.array(z.object({
+      run_id: z.uuid(), source_run_id: z.uuid().nullable(), mode: z.enum(['live', 'recovery']),
+      measured_at: z.iso.datetime({ offset: true }), evaluated_at: z.iso.datetime({ offset: true }), prompt_sha256: z.string().nullable(),
+      values: dashboardMetricsSchema, samples: dashboardSamplesSchema, coverage: dashboardCoverageSchema,
+    })).min(1),
+  })),
+})
+export type PerformanceDashboard = z.infer<typeof dashboardSchema>
+export type PerformanceSeries = PerformanceDashboard['series'][number]
+export type PerformancePoint = PerformanceSeries['points'][number]
 const scheduleUsageSchema = z.object({ calls: z.number().int().positive(), input_tokens: z.number().int().positive(), output_tokens: z.number().int().positive() })
 const liveConfigSchema = z.object({
   max_input_tokens: z.number().int().positive().optional(),
@@ -612,6 +635,7 @@ async function post<T>(path: string, data: unknown, schema: z.ZodType<T>, dispat
 }
 
 export const listEvaluations = (page: number, signal?: AbortSignal) => request(`/evaluations?page=${page}`, pageSchema, { signal })
+export const getPerformanceDashboard = (signal?: AbortSignal) => request('/dashboard', dashboardSchema, { signal })
 export const getEvaluation = (id: string, signal?: AbortSignal) => request(`/evaluations/${encodeURIComponent(id)}`, runSchema, { signal })
 export const getEvaluationReview = (id: string, signal?: AbortSignal) => request(`/evaluations/${encodeURIComponent(id)}/review`, reviewSchema, { signal })
 export const getRagMaterial = (id: string, signal?: AbortSignal) => request(`/evaluations/${encodeURIComponent(id)}/rag-material`, ragMaterialSchema, { signal })

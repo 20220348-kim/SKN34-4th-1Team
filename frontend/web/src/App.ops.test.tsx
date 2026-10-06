@@ -47,6 +47,7 @@ beforeEach(() => {
   vi.spyOn(crypto, 'randomUUID').mockReturnValue(id)
   fetchMock = vi.fn(async (path: string, _options?: RequestInit) => {
     if (path === '/api/v1/ops/session') return json(session())
+    if (path === '/api/v1/ops/dashboard') return json({ as_of: '2026-10-07T00:00:00Z', configured_model: 'gpt-6-luna', window: { limit: 200, loaded: 0, total: 0, truncated: false }, states: { completed: 0, failed: 0, active: 0, cancelled: 0 }, excluded: { replay: 0, incomplete: 0, unverifiable: 0, duplicate: 0 }, series: [] })
     if (path.startsWith('/api/v1/ops/schedules?')) return json({ enabled: false, timezone: 'Asia/Seoul', page: 1, total: 0, results: [] })
     if (path.startsWith('/api/v1/ops/budget/reservations')) return json({
       as_of: '2026-09-29T00:00:00Z', count: 0, next: null, previous: null, results: [],
@@ -1401,6 +1402,7 @@ it('작업 메뉴마다 해당 기능만 표시하고 다른 기능의 조회를
 })
 
 it.each([
+  ['/ops/dashboard', '성능 대시보드'], ['/ops', '성능 대시보드'],
   ['/ops/evaluations#evaluation-budget', '예산 관리'],
   ['/ops/evaluations#evaluation-schedules', '정기 실행'],
   ['/ops/evaluations#new-evaluation', '새 평가'],
@@ -1427,13 +1429,13 @@ it('예산 화면을 다녀와도 평가 선택은 유지하고 유료 전송 �
   expect(fetchMock.mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false)
 })
 
-it.each(['/ops/budget', '/ops/schedules', '/ops/evaluations/new'])('로그인 후 요청한 작업 화면 %s로 복귀한다', async (path) => {
+it.each(['/ops/dashboard', '/ops/budget', '/ops/schedules', '/ops/evaluations/new'])('로그인 후 요청한 작업 화면 %s로 복귀한다', async (path) => {
   authenticated = false
   open(path)
   fireEvent.change(await screen.findByLabelText('이메일'), { target: { value: 'operator@example.com' } })
   fireEvent.change(screen.getByLabelText('비밀번호'), { target: { value: 'example-password' } })
   fireEvent.click(screen.getByRole('button', { name: '이메일로 로그인' }))
-  const name = path.endsWith('budget') ? '예산 관리' : path.endsWith('schedules') ? '정기 실행' : '새 평가'
+  const name = path.endsWith('dashboard') ? '성능 대시보드' : path.endsWith('budget') ? '예산 관리' : path.endsWith('schedules') ? '정기 실행' : '새 평가'
   expect(await screen.findByRole('heading', { level: 1, name })).toBeTruthy()
 })
 
