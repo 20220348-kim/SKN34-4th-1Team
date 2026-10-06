@@ -143,6 +143,9 @@ class PublishedRuntimeCliTests(unittest.TestCase):
                 return_value=observed,
             ) as preflight,
             patch.object(deployment, "gitops_plan") as plan,
+            patch.object(
+                deployment, "publication_blocker", return_value={"status": "UNKNOWN"}
+            ),
             redirect_stdout(output),
         ):
             calls.attach_mock(verify, "verify")

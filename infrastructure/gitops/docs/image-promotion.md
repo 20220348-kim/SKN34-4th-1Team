@@ -38,12 +38,34 @@ GHCR에서는 익명 scoped token으로 manifest를 조회하므로 개인 PAT�
 실제 배포나 서비스 상태를 확인하지 않으므로 `clusterVerified: false`를 유지한다.
 manifest 조회 성공만으로 전체 pull·서비스 기동·Argo 동기화 완료로 판단하지 않는다.
 
-검증 실패 시 종료 코드 `1`, `status: BLOCKED`와 안전한 `reason`만 출력한다.
+검증 실패 시 종료 코드 `1`, `status: BLOCKED`와 안전한 사유·제한된 진단 정보를 출력한다.
 `publication_not_available`은 완전한 발행 증거가 아직 없다는 뜻이며,
 `required_source_checks_not_verified`는 필수 소스 검증이 충족되지 않았다는 뜻이다.
 검증 중 변경이 감지되면 `source_not_current`, `publication_changed`, `ci_evidence_changed`로 중단한다.
 기타 오류는 `verification_failed`이며 원본 예외·인증 정보는 JSON에 넣지 않는다.
 최신 발행이 실행 중이거나 실패한 경우 과거의 성공 이미지를 대신 사용하지 않는다.
+
+`publication_not_available`, `source_not_current`, `required_source_checks_not_verified`로
+차단되면 현재 기본 브랜치를 다시 조회해 `publicationBlocker`를 추가한다.
+발행 워크플로가 초록색이어도 필수 CI gate에서 이미지 발행이 건너뛰어질 수 있으므로,
+워크플로 성공을 receipt 발행 성공으로 해석하지 않는다.
+
+| `publicationBlocker.stage` | 의미와 다음 확인 |
+|---|---|
+| `upstream` | 원본 저장소의 최신 병합 내용과 일치하지 않음. 기존 원본 병합 검증 조건 확인 |
+| `required_ci` | 현재 SHA의 필수 CI를 확인하지 못함. `workflow`에 표시한 워크플로의 최신 push 실행·필수 job 확인 |
+| `publication` | 소스 검사는 통과했지만 이번 실행에서는 검증된 현재 발행본을 얻지 못함. 이미지·receipt 발행 결과 확인 |
+| `source` | 진단 도중 기본 브랜치가 변경됨. `status: UNKNOWN`, `reason: source_changed`로 진단 결과 폐기 |
+| `unknown` | API 오류·확인 불가 응답 등으로 진단 실패. 인증·연결을 확인한 뒤 명령 재실행 |
+
+CI 사유는 `ci_run_missing`, `ci_run_not_successful_or_untrusted`,
+`ci_jobs_not_successful_or_incomplete`, `ci_run_changed`로 구분한다. 실행 중·실패·출처 불일치는
+성공으로 취급하지 않으며, 진단은 첫 번째 충족되지 않은 검사만 보여준다.
+확인 중 브랜치가 유지됐을 때만 `observedSourceSha`를 기록한다. 이는 검증된 이미지의 `sourceSha`가 아니다.
+`advisoryOnly: true`를 유지하며 진단 성공·실패와 관계없이 원래 오류·종료 코드 1·배포 차단을 보존한다.
+API 응답·원본 예외·인증값은 출력하지 않고, CI·발행을 재실행하거나 과거 이미지를 대신 사용하지 않는다.
+동일 진단은 공개 발행 검증까지 도달한 `plan-gitops`와 `review-published-runtime`에도 적용한다.
+기존 런타임 충돌로 먼저 중단된 계획에는 불필요한 GitHub 진단을 추가하지 않는다.
 
 클러스터·DB·Secret·원격 Git·작업 파일·index·브랜치를 변경하지 않는다.
 로컬에 소스 Git 객체가 없으면 `origin`에서 해당 SHA만 fetch할 수 있다.

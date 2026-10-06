@@ -614,6 +614,9 @@ class PublicVerificationCliTests(unittest.TestCase):
                 patch.object(
                     deploy, "verified_release", side_effect=ValueError(message)
                 ),
+                patch.object(
+                    deploy, "publication_blocker", return_value={"status": "UNKNOWN"}
+                ),
                 contextlib.redirect_stdout(output),
             ):
                 self.assertEqual(deploy.main(), 1)
