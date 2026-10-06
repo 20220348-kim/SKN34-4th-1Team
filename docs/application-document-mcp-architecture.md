@@ -4,6 +4,8 @@
 
 React의 저장된 답변·expectedRevision → Core 생성 작업 접수(`POST …/documents/jobs`, 202) → 같은 프로세스의 `ApplicationDocumentGenerationJobWorker`가 claim → `ApplicationDocumentService.generateNow` → 공식 첨부 재수집/hash 확인 → AI `/internal/v1/application-preparations/document/generate` → 원본 복사본 지도 → OpenAI 구조화 수정 계획 → HWP는 Core hwplib 계획 실행 / HWPX·PDF는 MCP → Core 결과 확인 → 소유권/revision 잠금 재확인 → 파일 저장 → 기존 다운로드 API.
 
+답변 기입 전에 저장된 매핑을 확인하며, 재사용할 수 없으면 `ApplicationDocumentMappingService.ensure → ApplicationDocumentMcpClient.map → AI /internal/v1/application-preparations/document/map`을 먼저 호출한다. 생성 작업은 이 매핑 요청 또는 이후 답변 기입 요청 중 최초 AI 요청 직전에 `ai_started_at`을 한 번 저장하고 저장 성공 후 요청을 보낸다. 매핑 캐시를 사용하면 답변 기입 요청에서 기록하고, 완성 파일 재사용과 답변 없는 원본 저장에는 기록하지 않는다. 호출 시도 기록은 비용 발생 가능성을 나타내며 실제 청구액과 구분한다.
+
 | 형식 | 편집 경로 | 현재 검증/제약 |
 |---|---|---|
 | HWP | Core hwplib 검사 → AI 지도·계획 → Core hwplib 편집·재열기 | 일반 문단·표 셀 구간 및 실제 체크/라디오. 미지원 제어 문자·범위 주석은 거절 |

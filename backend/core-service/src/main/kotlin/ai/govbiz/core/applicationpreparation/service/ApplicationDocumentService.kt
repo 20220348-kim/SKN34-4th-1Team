@@ -141,7 +141,7 @@ class ApplicationDocumentService(
 
     /**
      * 실제 생성 흐름. 생성 작업(job)은 이 함수를 배경 실행 슬롯에서 호출하고 [onStage]로 단계를 기록한다.
-     * [onAiStart]는 유료 AI 호출 직전에 한 번 불린다. 그 뒤의 알 수 없는 실패는 결과 불명으로 분류한다.
+     * [onAiStart]는 최초 매핑 또는 답변 기입 AI 요청 직전에 한 번 불린다. 그 뒤의 알 수 없는 실패는 결과 불명으로 분류한다.
      */
     fun generateNow(
         account: Account, id: Long, expectedRevision: Long,
@@ -150,6 +150,13 @@ class ApplicationDocumentService(
     ): List<ApplicationDocumentFile> {
         val detail = preparations.findOwned(account, id)
         if (detail.preparation.inputRevision != expectedRevision) throw ApplicationPreparationRevisionConflictException()
+        var aiStarted = false
+        fun beginAiOnce() {
+            if (!aiStarted) {
+                onAiStart()
+                aiStarted = true
+            }
+        }
         val configuration = callMcp { mcp.configuration() }
         val pipelineVersion = configuration.pipelineVersion
         val nativeFormat = detail.form.attachmentFileName.substringAfterLast('.').lowercase().takeIf { it in setOf("docx", "xlsx") }
@@ -185,7 +192,7 @@ class ApplicationDocumentService(
         }
         onStage(ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentGenerationStage.MAPPING)
         val binding = try {
-            documentMapping.ensure(manifest, original.bytes, original.format, captureChange = true)
+            documentMapping.ensure(manifest, original.bytes, original.format, captureChange = true, onAiStart = ::beginAiOnce)
         } catch (changed: ApplicationDocumentMappingChangedException) {
             val notice = migrationProposals.create(account.id, id, expectedRevision, manifest, changed)
             throw ApplicationDocumentException("APPLICATION_DOCUMENT_FORM_REANALYSIS_REQUIRED",
@@ -206,7 +213,7 @@ class ApplicationDocumentService(
         val writableBindings = binding.bindings.filter { it.factId in writableFactIds }
         val inspection = if (original.format.lowercase() in setOf("pdf", "hwp")) editor.inspect(original.bytes, original.format) else null
         onStage(ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentGenerationStage.WRITING)
-        onAiStart()
+        beginAiOnce()
         val result = callMcp { mcp.generate(ai.govbiz.core.applicationpreparation.client.ai.dto.AiDocumentGenerationRequest(
             sourceBase64 = java.util.Base64.getEncoder().encodeToString(original.bytes),
             sourceSha256 = manifest.attachmentSha256, format = original.format.lowercase(),
