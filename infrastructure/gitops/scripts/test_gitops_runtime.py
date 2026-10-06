@@ -3,6 +3,7 @@
 import copy
 import io
 import json
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -36,12 +37,7 @@ class RuntimePreflightTests(unittest.TestCase):
                         "containers": [
                             {
                                 "name": "ops-service",
-                                "env": [
-                                    {
-                                        "name": "PREFECT_API_URL",
-                                        "value": "http://disabled-prefect.invalid/api",
-                                    }
-                                ],
+                                "env": copy.deepcopy(runtime.ops_defaults()[1]),
                             }
                         ]
                     }
@@ -107,7 +103,8 @@ class RuntimePreflightTests(unittest.TestCase):
             with self.subTest(env=env):
                 container["env"] = env
                 report = runtime.preflight(self.state, FORK)
-                self.assertEqual(report["blockers"], ["connected_or_unverified_ops"])
+                self.assertIn("connected_or_unverified_ops", report["blockers"])
+                self.assertIn("ops_environment_differs", report["blockers"])
                 self.assertNotIn("PRIVATE", json.dumps(report))
                 self.assertNotIn("private", json.dumps(report))
 
@@ -209,6 +206,151 @@ class RuntimePreflightTests(unittest.TestCase):
             with self.subTest(change=change), self.assertRaises(ValueError):
                 runtime.preflight(self.state, FORK)
             self.deployment = original
+
+    def test_environment_diff_names_are_complete_but_values_and_references_are_hidden(
+        self,
+    ):
+        container = self.deployment["spec"]["template"]["spec"]["containers"][0]
+        env = {row["name"]: row for row in container["env"]}
+        env["PREFECT_API_URL"]["value"] = "https://PRIVATE-prefect/?token=PRIVATE"
+        env["DB_PASSWORD"]["valueFrom"]["secretKeyRef"]["name"] = "PRIVATE-secret"
+        env.pop("DB_HOST")
+        env["LLMOPS_ARTIFACT_TOKEN"] = {
+            "name": "LLMOPS_ARTIFACT_TOKEN",
+            "value": "PRIVATE-token",
+        }
+        env["LLMOPS_ARTIFACT_URL"] = {
+            "name": "LLMOPS_ARTIFACT_URL",
+            "value": "https://PRIVATE-artifacts",
+        }
+        container["env"] = list(reversed(env.values()))
+        report = runtime.preflight(self.state, FORK)
+        details = report["preservationReview"]
+        self.assertEqual(
+            details["environmentChanges"]["ops-service"],
+            {
+                "changed": ["DB_PASSWORD", "PREFECT_API_URL"],
+                "runtimeOnly": ["LLMOPS_ARTIFACT_TOKEN", "LLMOPS_ARTIFACT_URL"],
+                "missing": ["DB_HOST"],
+            },
+        )
+        self.assertEqual(details["reference"], "checkout_portfolio_ops_defaults")
+        self.assertEqual(len(details["referenceSha256"]), 64)
+        self.assertFalse(details["configurationValuesIncluded"])
+        self.assertFalse(details["overlayGenerated"])
+        self.assertIn("ops_environment_differs", report["blockers"])
+        self.assertNotIn("PRIVATE", json.dumps(report))
+        self.assertNotIn("https://", json.dumps(report))
+
+    def test_environment_order_is_ignored_and_missing_expected_values_block(self):
+        container = self.deployment["spec"]["template"]["spec"]["containers"][0]
+        container["env"].reverse()
+        report = runtime.preflight(self.state, FORK)
+        self.assertEqual(report["status"], "NO_LOCAL_OVERRIDES")
+        self.assertEqual(
+            report["preservationReview"]["environmentChanges"]["ops-service"],
+            {
+                "changed": [],
+                "runtimeOnly": [],
+                "missing": [],
+            },
+        )
+        container["env"] = [row for row in container["env"] if row["name"] != "DB_NAME"]
+        report = runtime.preflight(self.state, FORK)
+        self.assertEqual(report["blockers"], ["ops_environment_differs"])
+
+    def test_env_from_is_reported_as_uninspected_and_blocks_without_secret_access(self):
+        container = self.deployment["spec"]["template"]["spec"]["containers"][0]
+        container["envFrom"] = [{"secretRef": {"name": "PRIVATE-secret"}}]
+        report = runtime.preflight(self.state, FORK)
+        self.assertEqual(report["blockers"], ["ops_env_from_uninspected"])
+        self.assertEqual(
+            report["preservationReview"]["uninspectedEnvFrom"], ["ops-service"]
+        )
+        self.assertNotIn("PRIVATE", json.dumps(report))
+
+    def test_ambiguous_environment_is_rejected_instead_of_silently_overwritten(self):
+        container = self.deployment["spec"]["template"]["spec"]["containers"][0]
+        for env in (
+            [
+                {"name": "DUPLICATE", "value": "PRIVATE-one"},
+                {"name": "DUPLICATE", "value": "PRIVATE-two"},
+            ],
+            [{"name": "INVALID PRIVATE", "value": "PRIVATE"}],
+            [{"name": "VALUE", "value": "PRIVATE", "valueFrom": {"secretKeyRef": {}}}],
+            [{"name": "VALUE", "value": 1}],
+            [{"name": "VALUE", "valueFrom": {}}],
+        ):
+            container["env"] = env
+            with self.subTest(env=env), self.assertRaises(ValueError):
+                runtime.preflight(self.state, FORK)
+
+    def test_changed_reference_file_cannot_return_a_stable_comparison(self):
+        payload, env = runtime.ops_defaults()
+        with (
+            patch.object(
+                runtime,
+                "ops_defaults",
+                side_effect=[(payload, env), (payload + b"\n", env)],
+            ),
+            self.assertRaisesRegex(ValueError, "changed during preflight"),
+        ):
+            runtime.preflight(self.state, FORK)
+
+    def test_saved_feature_names_and_connection_disagreement_are_preserved(self):
+        profile = {key: self.settings[key] for key in ("repository", "stateId")}
+        profile.update(
+            schemaVersion=1,
+            features=["mail", "ai"],
+            origin="http://localhost:5173",
+            revision="a" * 32,
+            modelKeys=["OPENAI_MODEL"],
+        )
+        (self.state / "integrations.json").write_text(json.dumps(profile))
+        for name, project in (
+            (runtime.ops_runtime.PROFILE, "project-one"),
+            (runtime.ops_runtime.BRIDGE, "project-two"),
+        ):
+            (self.state / name).write_text(
+                json.dumps(runtime.ops_runtime.connection(self.settings, project))
+            )
+        report = runtime.preflight(self.state, FORK)
+        details = report["preservationReview"]
+        self.assertEqual(details["integrationFeatures"], ["ai", "mail"])
+        self.assertEqual(details["modelSettingNames"], ["OPENAI_MODEL"])
+        self.assertTrue(details["connectionRecordConflict"])
+        self.assertNotIn("project-one", json.dumps(report))
+        self.assertNotIn("localhost", json.dumps(report))
+
+    @unittest.skipUnless(
+        shutil.which("helm"), "Pinned Helm required for real rendering"
+    )
+    def test_reference_environment_matches_actual_helm_rendering(self):
+        root = runtime.cluster.ROOT
+        output = subprocess.check_output(
+            [
+                "helm",
+                "template",
+                "ops-service",
+                str(root / "charts/govbiz-service"),
+                "-n",
+                "govbiz-msa",
+                "-f",
+                str(root / "environments/portfolio/ops-service.yaml"),
+            ],
+            timeout=30,
+        )
+        desired = next(
+            item
+            for item in runtime.yaml.safe_load_all(output)
+            if item["kind"] == "Deployment"
+        )
+        containers = desired["spec"]["template"]["spec"]["containers"]
+        self.assertEqual([item["name"] for item in containers], ["ops-service"])
+        self.assertEqual(
+            runtime.environment_rows(containers[0]["env"]),
+            runtime.environment_rows(runtime.ops_defaults()[1]),
+        )
 
 
 class RuntimePlanCliTests(unittest.TestCase):

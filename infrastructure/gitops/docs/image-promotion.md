@@ -111,6 +111,26 @@ Secret 값·환경변수 값은 보고서에 출력하지 않는다. 다음 충�
 | `local_development_images` | 개발 이미지 override의 명시적인 정리·전환 |
 | `connected_or_unverified_ops` | Ops 활성화·브리지 기록 또는 Prefect 연결과 최초 migration 절차 |
 | `ops_container_layout_differs` | 기본 계획에 없는 `ops-sync` 등 컨테이너 구성의 보존 방법 |
+| `ops_environment_differs` | Ops 기본 환경과 다른 환경변수·Secret 참조의 변경·추가·누락 검토 |
+| `ops_env_from_uninspected` | `envFrom`으로 주입된 설정의 별도 검토; Secret·ConfigMap 값은 조회하지 않음 |
+
+`runtimePreflight.preservationReview`에는 전환 때 검토할 항목을 값 없이 제공한다.
+
+- `integrationFeatures`, `modelSettingNames`: 검증된 개인 설정에 기록된 기능과 모델 설정 키 이름.
+  실제 Core·Catalog·AI Deployment에 해당 설정이 반영됐다는 뜻은 아니다.
+- `containers`: 기본 구성에 없는 컨테이너와 누락된 기본 컨테이너 이름.
+- `environmentChanges`: `ops-service`·`ops-sync` 각각의 `changed`, `runtimeOnly`, `missing` 이름 목록.
+  각 컨테이너를 같은 Ops 기본 환경과 비교한다. 변수 순서는 무시하지만 중복 이름·모호한 주입 형식은 거절한다.
+  Secret 참조 대상이 달라져도 변수 이름만 표시하고 값·Secret 이름·key는 출력하지 않는다.
+- `uninspectedEnvFrom`: 주입 내용을 확인하지 않은 컨테이너 이름. 참조를 따라가 값을 읽지 않는다.
+- `connectionRecordConflict`: 활성화·브리지 기록의 Compose 프로젝트가 서로 다른지 표시.
+  프로젝트 이름·주소·인증값은 보고서에 포함하지 않는다.
+
+비교 기준은 **현재 checkout의 `environments/portfolio/ops-service.yaml`에 선언된 기본 환경**이다.
+`reference: checkout_portfolio_ops_defaults`와 파일 SHA-256을 기록하며 검사 중 기준 파일 변경도 거절한다.
+이 비교를 최신 공개 이미지·발행된 Chart와의 전체 차이 검증으로 해석하지 않는다.
+`configurationValuesIncluded=false`, `overlayGenerated=false`를 유지하며 기존 설정을 Argo values로
+자동 복사하지 않는다. 표시된 차이가 모두 유지해야 할 설정이라는 뜻도 아니므로 항목별로 검토한다.
 
 활성화 기록이 없어도 실제 `PREFECT_API_URL`이 비활성 기본값과 다르거나 확인 불가이면 차단한다.
 검사 전후 Deployment 식별자·설정·로컬 기록이 달라지거나 소유권·조회에 실패하면
