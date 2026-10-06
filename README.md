@@ -157,7 +157,9 @@ flowchart LR
 대화 조건 해석·추천·근거 답변·중복 검토·신청 문서는 LangChain을 사용하고,
 도구를 호출하는 GovBiz 도우미는 LangGraph를 사용합니다. LLMOps의 평가 작업은 Prefect가 실행합니다.
 
-![GovBiz 주요 서비스 요청 관계: React 웹과 React Native 앱을 같은 높이에 배치](docs/assets/architecture/govbiz-service-requests.png)
+<p align="center">
+  <img src="docs/assets/architecture/govbiz-service-requests.png" alt="GovBiz 주요 서비스 요청 관계: React 웹과 React Native 앱을 같은 높이에 배치" width="420"/>
+</p>
 
 [크게 보기](docs/assets/architecture/govbiz-service-requests.png) ·
 [SVG](docs/assets/architecture/govbiz-service-requests.svg) ·
@@ -197,6 +199,22 @@ flowchart LR
 루트 `compose.yaml`이 Core·Catalog·AI·Ops와 웹·저장소를 연결합니다.
 웹·모바일은 같은 백엔드 API를 사용하며, 필요에 따라 프런트엔드를 별도 개발 서버로 실행할 수 있습니다.
 환경 파일 준비, 실행 명령, 접속 주소와 모바일 연결 방법은 [로컬 시작 가이드](docs/local-start.md)에 정리했습니다.
+
+### Kubernetes와 LLMOps 실행 구조
+
+![GovBiz Kubernetes 업무 서비스와 Compose LLMOps 연결 구조](docs/assets/architecture/govbiz-local-architecture.png)
+
+Kubernetes에는 Core·Catalog·AI·Django Ops와 업무 저장소를 두고,
+Compose에는 Prefect·평가 실행기·결과 저장소·Langfuse를 둡니다.
+Ops API와 같은 Pod의 `ops-sync`가 내부 HTTP 브리지로 실행 상태와 결과를 조회합니다.
+이 연결의 평가 범위는 **저장 응답의 무료 재평가**이며, 유료 실행의 Kubernetes 예산 API 연결은 별도입니다.
+
+[구조도 크게 보기](docs/assets/architecture/govbiz-local-architecture.png) ·
+[SVG 원본](docs/assets/architecture/govbiz-local-architecture.svg) ·
+[배치·호출 경로·현재 확인 범위](docs/assets/architecture/README-local.md)
+
+2026-10-07 코드 기준의 연결 구성도입니다. 작성 시점에는 Compose LLMOps 컨테이너 실행을 확인했으며,
+저장된 Kubernetes API 주소에 연결할 수 없어 클러스터의 현재 Ready 상태는 확인하지 못했습니다.
 
 <a id="데이터-준비"></a>
 
@@ -442,21 +460,9 @@ PDF의 화면·수치는 문서에 표시한 작성 시점의 예시입니다.
 로컬에서는 [변경 범위별 검증](AGENTS.md#변경-범위별-검증)에 따라 관련 테스트를 선택하고,
 전체 빌드·실제 DB·컨테이너 검증은 해당 CI에서 수행합니다.
 
-<details>
-<summary>과거 로컬 Kubernetes 구성도와 검증 기록 — 2026-09-21</summary>
-
-![2026-09-21 개인 포크의 로컬 Kubernetes 검증 구성](docs/assets/architecture/govbiz-local-architecture.png)
-
-위 그림은 개인 포크 `ilil1/SKN34-4th-1Team`의 Intel Mac 검증 당시 구성입니다.
-그림의 GHCR → Argo 자동 배포 연결을 현재 신규 환경의 실행 절차로 사용하지 않습니다.
-현재 시작 방법은 위의 Compose·로컬 이미지·GHCR `up` 안내를 따릅니다.
-
-[그림 원본·해설](docs/assets/architecture/README-local.md) ·
-[당시 GitOps 검증](docs/fork-gitops-validation-20260921.md) ·
-[통합 전 Kubernetes](docs/assets/architecture/README-kubernetes.md) ·
-[기존 Compose·AWS 구성](docs/assets/architecture/README.md)
-
-</details>
+이전 환경의 기록은 [2026-09-21 GitOps 검증](docs/fork-gitops-validation-20260921.md),
+[통합 전 Kubernetes](docs/assets/architecture/README-kubernetes.md),
+[기존 Compose·AWS 구성](docs/assets/architecture/README.md)에서 확인할 수 있습니다.
 
 <a id="저장소-구성"></a>
 
