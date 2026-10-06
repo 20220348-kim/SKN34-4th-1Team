@@ -26,6 +26,7 @@ class RuntimePreflightTests(unittest.TestCase):
         self.settings = runtime.cluster.initial_settings(FORK)
         self.deployments = {
             service: {
+                "kind": "Deployment",
                 "metadata": {
                     "name": service,
                     "namespace": "govbiz-msa",
@@ -33,9 +34,11 @@ class RuntimePreflightTests(unittest.TestCase):
                     "resourceVersion": "1",
                 },
                 "spec": {
+                    "selector": {"matchLabels": {"app": service}},
                     "replicas": 1,
                     "strategy": {"type": "Recreate"},
                     "template": {
+                        "metadata": {"labels": {"app": service}},
                         "spec": {
                             "volumes": [
                                 {"name": "tmp", "emptyDir": {"sizeLimit": "256Mi"}}
@@ -51,8 +54,24 @@ class RuntimePreflightTests(unittest.TestCase):
                                     ),
                                 }
                             ],
-                        }
+                        },
                     },
+                },
+            }
+            for service in runtime.cluster.SERVICES
+        }
+        self.services = {
+            service: {
+                "kind": "Service",
+                "metadata": {
+                    "name": service,
+                    "namespace": "govbiz-msa",
+                    "uid": service + "-service-uid",
+                    "resourceVersion": "1",
+                },
+                "spec": {
+                    "selector": {"app": service},
+                    "ports": [{"port": 8080}],
                 },
             }
             for service in runtime.cluster.SERVICES
@@ -63,7 +82,7 @@ class RuntimePreflightTests(unittest.TestCase):
             patch.object(
                 runtime,
                 "rendered_defaults",
-                return_value=copy.deepcopy(self.deployments),
+                return_value=copy.deepcopy((self.deployments, self.services)),
             )
         )
         self.load = stack.enter_context(
@@ -84,6 +103,8 @@ class RuntimePreflightTests(unittest.TestCase):
     def read(self, command, *, capture, timeout):
         self.owner.assert_called()
         service = command[-3]
+        kind = command[-4]
+        self.assertIn(kind, ("deployment", "service"))
         self.assertIn(service, runtime.cluster.SERVICES)
         self.assertEqual(
             command,
@@ -92,7 +113,7 @@ class RuntimePreflightTests(unittest.TestCase):
                 "-n",
                 "govbiz-msa",
                 "get",
-                "deployment",
+                kind,
                 service,
                 "-o",
                 "json",
@@ -100,6 +121,8 @@ class RuntimePreflightTests(unittest.TestCase):
         )
         self.assertTrue(capture)
         self.assertEqual(timeout, 15)
+        if kind == "service":
+            return json.dumps(self.services[service])
         return json.dumps(
             self.deployment if service == "ops-service" else self.deployments[service]
         )
@@ -110,7 +133,7 @@ class RuntimePreflightTests(unittest.TestCase):
         self.assertEqual(report["blockers"], [])
         for name in ("servicesChanged", "databaseChanged", "deploymentAuthorized"):
             self.assertFalse(report[name])
-        self.assertEqual(self.command.call_count, 8)
+        self.assertEqual(self.command.call_count, 16)
         self.assertEqual(self.owner.call_count, 2)
         self.assertEqual(
             set(report["inspectedServices"]), set(runtime.cluster.SERVICES)
@@ -198,7 +221,8 @@ class RuntimePreflightTests(unittest.TestCase):
 
     def test_deployment_or_local_state_changes_cannot_pass(self):
         first = [
-            json.dumps(self.deployments[service])
+            json.dumps(resources[service])
+            for resources in (self.deployments, self.services)
             for service in runtime.cluster.SERVICES
         ]
         changed = copy.deepcopy(self.deployments["core-service"])
@@ -374,7 +398,9 @@ class RuntimePreflightTests(unittest.TestCase):
             service: runtime.portfolio_defaults(service)
             for service in runtime.cluster.SERVICES
         }
-        expected = self.real_render("helm", references, runtime.chart_inputs())
+        expected, expected_services = self.real_render(
+            "helm", references, runtime.chart_inputs()
+        )
         for service, workload in self.deployments.items():
             workload["spec"] = copy.deepcopy(expected[service]["spec"])
             container = workload["spec"]["template"]["spec"]["containers"][0]
@@ -382,7 +408,19 @@ class RuntimePreflightTests(unittest.TestCase):
                 container[field]["successThreshold"] = 1
                 container[field]["httpGet"]["scheme"] = "HTTP"
             container["ports"][0]["protocol"] = "TCP"
-        self.render.return_value = expected
+            self.services[service]["spec"] = copy.deepcopy(
+                expected_services[service]["spec"]
+            )
+            self.services[service]["spec"].update(
+                clusterIP="10.96.0.10",
+                clusterIPs=["10.96.0.10"],
+                ipFamilies=["IPv4"],
+                ipFamilyPolicy="SingleStack",
+                sessionAffinity="None",
+                internalTrafficPolicy="Cluster",
+            )
+            self.services[service]["spec"]["ports"][0]["protocol"] = "TCP"
+        self.render.return_value = expected, expected_services
         report = runtime.preflight(self.state, FORK)
         self.assertEqual(report["status"], "NO_LOCAL_OVERRIDES")
         self.assertEqual(report["blockers"], [])
@@ -470,7 +508,7 @@ class RuntimePreflightTests(unittest.TestCase):
                 shareProcessNamespace=False,
             )
             actual = pod["containers"][0]
-            expected = self.render.return_value[service]["spec"]["template"]["spec"][
+            expected = self.render.return_value[0][service]["spec"]["template"]["spec"][
                 "containers"
             ][0]
             for field in ("startupProbe", "livenessProbe", "readinessProbe"):
@@ -507,7 +545,7 @@ class RuntimePreflightTests(unittest.TestCase):
         }
         container["readinessProbe"] = {"httpGet": {"port": "http", "path": "/ready"}}
         container["resources"] = {"requests": {"cpu": "100m"}, "limits": {"cpu": "1"}}
-        self.render.return_value["ops-service"] = copy.deepcopy(self.deployment)
+        self.render.return_value[0]["ops-service"] = copy.deepcopy(self.deployment)
         for parent, field, expected_field in (
             (pod, "securityContext", "securityContext"),
             (pod, "automountServiceAccountToken", "automountServiceAccountToken"),
@@ -688,7 +726,11 @@ class RuntimePreflightTests(unittest.TestCase):
                     nonlocal calls
                     calls += 1
                     data = json.loads(self.read(command, **kwargs))
-                    if calls > 4 and command[-3] == service:
+                    if (
+                        calls > 8
+                        and command[-4] == "deployment"
+                        and command[-3] == service
+                    ):
                         if field == "spec":
                             data["spec"]["replicas"] = 0
                         else:
@@ -841,7 +883,122 @@ class RuntimePreflightTests(unittest.TestCase):
         with self.assertRaises(subprocess.CalledProcessError):
             runtime.preflight(self.state, FORK, "/custom/helm")
         self.assertEqual(self.render.call_args.args[0], "/custom/helm")
-        self.assertEqual(self.command.call_count, 4)
+        self.assertEqual(self.command.call_count, 8)
+
+    def test_each_service_routing_difference_blocks_planning(self):
+        for service in runtime.cluster.SERVICES:
+            with self.subTest(service=service):
+                self.services[service]["spec"]["selector"] = {"app": "PRIVATE"}
+                report = runtime.preflight(self.state, FORK)
+                self.assertEqual(report["blockers"], ["service_routing_differs"])
+                self.assertEqual(
+                    report["preservationReview"]["networkReviews"][service],
+                    {
+                        "changedFields": ["service.selector"],
+                        "routingErrors": ["selector_does_not_match_pod"],
+                    },
+                )
+                self.assertNotIn("PRIVATE", json.dumps(report))
+                self.services[service]["spec"]["selector"] = {"app": service}
+
+    def test_service_identity_and_spec_must_remain_stable(self):
+        for service in runtime.cluster.SERVICES:
+            for field in (
+                "kind",
+                "uid",
+                "resourceVersion",
+                "namespace",
+                "name",
+                "deletionTimestamp",
+                "spec",
+            ):
+                calls = 0
+
+                def changing(command, **kwargs):
+                    nonlocal calls
+                    data = json.loads(self.read(command, **kwargs))
+                    if command[-4:-2] == ["service", service]:
+                        calls += 1
+                        if calls == 2:
+                            if field == "spec":
+                                data["spec"]["ports"] = []
+                            elif field == "kind":
+                                data["kind"] = "Deployment"
+                            else:
+                                data["metadata"][field] = "changed"
+                    return json.dumps(data)
+
+                with (
+                    self.subTest(service=service, field=field),
+                    self.assertRaises(ValueError),
+                ):
+                    self.command.side_effect = changing
+                    runtime.preflight(self.state, FORK)
+
+    def test_missing_or_foreign_service_cannot_produce_a_clean_report(self):
+        for service in runtime.cluster.SERVICES:
+
+            def missing(command, **kwargs):
+                if command[-4:-2] == ["service", service]:
+                    raise subprocess.CalledProcessError(1, command, output="PRIVATE")
+                return self.read(command, **kwargs)
+
+            with (
+                self.subTest(service=service),
+                self.assertRaises(subprocess.CalledProcessError),
+            ):
+                self.command.side_effect = missing
+                runtime.preflight(self.state, FORK)
+            self.command.side_effect = self.read
+            original = copy.deepcopy(self.services[service]["metadata"])
+            for change in (
+                {"uid": None},
+                {"resourceVersion": ""},
+                {"namespace": "other"},
+                {"deletionTimestamp": "now"},
+            ):
+                self.services[service]["metadata"] = original | change
+                with (
+                    self.subTest(service=service, change=change),
+                    self.assertRaises(ValueError),
+                ):
+                    runtime.preflight(self.state, FORK)
+            self.services[service]["metadata"] = original
+
+    def test_local_helm_requires_one_matching_service_per_release(self):
+        for variant in ("missing", "duplicate", "name", "namespace"):
+
+            def helm(command, **kwargs):
+                service = command[2]
+                network = copy.deepcopy(self.services[service])
+                if variant in ("name", "namespace"):
+                    network["metadata"][variant] = "other"
+                networks = (
+                    []
+                    if variant == "missing"
+                    else [network] * (2 if variant == "duplicate" else 1)
+                )
+                return subprocess.CompletedProcess(
+                    command,
+                    0,
+                    stdout=runtime.yaml.safe_dump_all(
+                        [self.deployments[service], *networks]
+                    ).encode(),
+                )
+
+            with (
+                self.subTest(variant=variant),
+                patch.object(runtime.subprocess, "run", side_effect=helm),
+                self.assertRaisesRegex(ValueError, "reference Service"),
+            ):
+                self.real_render(
+                    "helm",
+                    {
+                        name: runtime.portfolio_defaults(name)
+                        for name in runtime.cluster.SERVICES
+                    },
+                    runtime.chart_inputs(),
+                )
 
     def test_local_helm_uses_captured_inputs_and_rejects_wrong_environment(self):
         references = {

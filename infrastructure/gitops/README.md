@@ -20,10 +20,12 @@ LLMOps 개발 순서는 [후속 개발 전략](../../docs/llmops-next-developmen
 `MSA_PROMOTION_ENABLED=false`를 유지합니다. GHCR `up`은 별도 배포 브랜치 없이
 [현재 발행 검증 경로](docs/image-promotion.md)로 초기화합니다. 새 Argo `gitops` 전환은 아직 연결하지 않았습니다.
 `plan-gitops`는 자동 동기화를 끈 검토용 구성을 출력하며, 개인 환경 호환성 확인이나 실제 배포를 수행하지 않습니다.
-`--state-dir`을 지정하면 먼저 개인 연동 설정·네 서비스의 Deployment·연결된 Ops·sync 구성을 읽어 충돌을 차단합니다.
+`--state-dir`을 지정하면 먼저 개인 연동 설정·네 서비스의 Deployment·Service·연결된 Ops·sync 구성을 읽어 충돌을 차단합니다.
 보고서에는 개인 연동 기능과 현재 checkout의 서비스별 기본 환경 대비 변경·추가·누락된 설정 이름을 값 없이 표시합니다.
 같은 checkout의 Chart를 임시 경로에서 렌더링해 저장소·실행 명령·초기화 컨테이너·복제 수·배포 전략 차이도 차단합니다.
 probe·자원 요청/한도·Pod 및 컨테이너 보안·서비스 계정·DNS 설정 차이도 값 없이 보고하며, 실제 건강 상태나 RBAC 권한 검증은 별도입니다.
+Service의 selector·포트·노출 설정과 Deployment 라벨·selector를 비교하고, Pod 선택 및 이름 기반 targetPort의 선언상 연결도 검사합니다.
+자동 할당 IP·기본값은 차이에서 제외하며, EndpointSlice·실제 통신·NetworkPolicy 검증은 포함하지 않습니다.
 이 제한된 사전 검사는 전체 실행 환경의 호환성 검증을 대신하지 않습니다.
 
 ## 팀원 시작 경로

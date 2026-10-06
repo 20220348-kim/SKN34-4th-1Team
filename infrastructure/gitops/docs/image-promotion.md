@@ -101,10 +101,10 @@ python3 -B infrastructure/gitops/scripts/deployment.py plan-gitops \
   --branch main --state-dir "$OPS_STATE_DIR"
 ```
 
-전용 loopback 클러스터·소유권과 dev 모드를 확인하고, 로컬 연결 기록 및 Core·Catalog·AI·Ops Deployment를 읽는다.
-개인 설정 기록이 없어도 각 서비스의 현재 환경변수를 비교하며, 네 Deployment 중 하나라도 조회할 수 없으면 실패한다.
+전용 loopback 클러스터·소유권과 dev 모드를 확인하고, 로컬 연결 기록 및 Core·Catalog·AI·Ops Deployment·Service를 읽는다.
+개인 설정 기록이 없어도 각 서비스의 현재 환경변수를 비교하며, 여덟 리소스 중 하나라도 조회할 수 없으면 실패한다.
 `--helm`은 공개 이미지 검증과 이 로컬 비교에 함께 사용한다. 현재 Chart·서비스별 values를 메모리에
-캡처하고 임시 경로에서 렌더링한 Deployment를 기준으로 삼는다. 임시 파일은 성공·실패 시 제거하며,
+캡처하고 임시 경로에서 렌더링한 Deployment·Service를 기준으로 삼는다. 임시 파일은 성공·실패 시 제거하며,
 이 렌더링은 클러스터·DB·Secret을 변경하거나 migration Job을 실행하지 않는다.
 Secret 값·환경변수 값은 보고서에 출력하지 않는다. 다음 충돌은 종료 코드 1과
 `reason: runtime_transition_required`, `runtimePreflight.status: BLOCKED`로 반환한다.
@@ -122,6 +122,7 @@ Secret 값·환경변수 값은 보고서에 출력하지 않는다. 다음 충�
 | `service_env_from_uninspected` | Core·Catalog·AI 컨테이너의 `envFrom` 주입 별도 검토 |
 | `service_execution_or_storage_differs` | 네 서비스의 저장소·실행 명령·초기화 컨테이너·복제 수·배포 전략 차이 검토 |
 | `service_runtime_policy_differs` | 네 서비스의 probe·자원·보안·서비스 계정·DNS·컨테이너 포트 및 lifecycle 설정 차이 검토 |
+| `service_routing_differs` | 네 Service의 선언 차이, Deployment selector·Pod 라벨 차이, Pod 선택·이름 기반 targetPort 연결 오류 검토 |
 
 `runtimePreflight.preservationReview`에는 전환 때 검토할 항목을 값 없이 제공한다.
 
@@ -150,6 +151,16 @@ Secret 값·환경변수 값은 보고서에 출력하지 않는다. 다음 충�
   - 기본 서비스 컨테이너: 세 probe, `resources`, `securityContext`, `ports`, `lifecycle`.
   - probe 헤더·handler 명령·DNS 주소·계정 이름 등 값은 출력하지 않는다. 삭제된 probe·필수 보안 설정과
     누락된 자원 요청/한도도 차이로 처리한다. 추가 컨테이너는 기존 구성 차이로 차단한다.
+- `networkReviews`: 네 서비스별 `changedFields`와 `routingErrors` 목록.
+  - Service의 `selector`, `ports`(targetPort·protocol 포함), `type`, headless 여부, IP family 정책,
+    session affinity, 트래픽 정책, 외부 주소 및 LoadBalancer 설정을 같은 Helm 기준과 비교한다.
+    Deployment의 `spec.selector`와 Pod template 라벨 차이도 고정된 필드명으로 표시한다.
+  - Service selector가 비어 있거나 Pod template 라벨을 선택하지 못하면
+    `selector_does_not_match_pod`를 기록한다. 이름 기반 targetPort와 같은 protocol의 포트가
+    일반 컨테이너에 정확히 하나 없으면 `named_target_port_unresolved_or_ambiguous`로 차단한다.
+    숫자 targetPort에는 containerPort 선언을 강제하지 않는다.
+  - selector 값·주소·포트 값은 출력하지 않는다. 미지의 Service spec 필드가 달라지면 값이나 이름을
+    노출하지 않고 `service.otherFields`로 차단한다. 포트 순서는 무시하되 중복 항목을 덮어쓰지 않는다.
 
 probe 비교는 [Kubernetes 1.36의 기본값 처리](https://github.com/kubernetes/kubernetes/blob/v1.36.0/pkg/apis/core/v1/defaults.go)를
 반영한다. 생략된 probe 시간·횟수, HTTP scheme·path와 명시된 기본값을 같은 것으로 비교하며,
@@ -159,23 +170,30 @@ SI·이진·지수 표기를 유리수로 바꿔 `100m=0.1`, `1Gi=1024Mi`를 정
 요청과 한도는 별도로 유지하며, 알 수 없는 표기·비유한 값·지원 범위 밖 수량은 `UNKNOWN`으로 실패한다.
 이 비교는 API의 수량 반올림·범위 보정이나 admission 검증 전체를 재현하지 않는다.
 
+Service 비교에는 [Kubernetes Service 기본 동작](https://kubernetes.io/docs/concepts/services-networking/service/)의
+`ClusterIP`, `TCP`, 생략된 targetPort, session affinity·트래픽 정책 등의 기본값을 반영한다.
+Chart에 없는 자동 할당 `clusterIP`·`clusterIPs`·`ipFamilies`는 값 비교에서 제외하지만
+headless 모드와 `ipFamilyPolicy` 변경은 차단한다. Chart가 주소·family를 명시하면 해당 값도 비교한다.
+Service metadata의 annotation·label, EndpointSlice, 실제 Pod·프로세스·통신 상태는 이 검사 범위에 없다.
+
 비교 기준은 **현재 checkout의 `environments/portfolio/<service>.yaml`에 선언된 기본 환경**이다.
 Ops는 `reference: checkout_portfolio_ops_defaults`, 나머지는 `checkout_portfolio_service_defaults`와
 각 파일의 SHA-256을 기록한다. `runtimePreflight.inspectedServices`에 검사한 네 서비스를 표시하고,
 `scope: local_overrides_and_service_runtime`으로 비교 범위를 구분한다.
-네 Deployment의 식별자·resourceVersion·spec과 Chart·values 파일을 다시 읽어 검사 도중 변경도 거절한다.
-Helm 실행 실패나 렌더링 결과와 기본 환경의 불일치도 `UNKNOWN`으로 실패하며 계획을 출력하지 않는다.
+네 Deployment와 네 Service의 종류·식별자·resourceVersion·spec과 Chart·values 파일을 다시 읽어 검사 도중 변경도 거절한다.
+Helm 실행 실패, 서비스별 Deployment·Service 누락·중복·다른 namespace, 렌더링 결과와 기본 환경의 불일치도
+`UNKNOWN`으로 실패하며 계획을 출력하지 않는다.
 이 비교를 최신 공개 이미지·발행된 Chart와의 전체 차이 검증으로 해석하지 않는다.
 `configurationValuesIncluded=false`, `overlayGenerated=false`를 유지하며 기존 설정을 Argo values로
 자동 복사하지 않는다. 표시된 차이가 모두 유지해야 할 설정이라는 뜻도 아니므로 항목별로 검토한다.
 
 활성화 기록이 없어도 실제 `PREFECT_API_URL`이 비활성 기본값과 다르거나 확인 불가이면 차단한다.
-검사 전후 Deployment 식별자·설정·로컬 기록이 달라지거나 소유권·조회에 실패하면
+검사 전후 Deployment·Service 식별자·설정·로컬 기록이 달라지거나 소유권·조회에 실패하면
 `runtimePreflight.status: UNKNOWN`으로 실패하고 계획을 출력하지 않는다. 파일 삭제나 연결 해제는 하지 않는다.
 
 충돌이 없을 때의 `NO_LOCAL_OVERRIDES`는 **이 검사 범위에서 기본 구성과 충돌하는 기록이 없다는 뜻**이다.
 그 뒤에도 동일한 소스 CI·공개 발행 검증을 통과해야 계획이 생성된다. Docker·Compose 컨테이너 상태,
-Secret 존재·키·DB schema, 이미지·노드 배치·Service 및 NetworkPolicy 설정의 기준 차이,
+Secret 존재·키·DB schema, 이미지·노드 배치·NetworkPolicy 설정의 기준 차이, Service의 실제 통신·EndpointSlice 상태,
 실제 probe 성공·자원 사용량·RBAC 권한·PVC 데이터·마운트 동작·관리자 인증이나 Argo 기동을 검증하지 않으며
 `existingRuntimeVerified=false`를 유지한다. 실제 적용 전에는 전체 전환 절차가 필요하다.
 
