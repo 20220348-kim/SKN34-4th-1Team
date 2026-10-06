@@ -393,7 +393,7 @@ AI Service의 `/internal/v1/assistant/answers`를 한 번 호출해 의도 하�
 AI Service는 DB를 보지 않고 도구도 없습니다. 상태 답(`ACCOUNT_STATE`)은 Core가 세션 계정으로 관심 공고함·받은 제안함·기업 등록을
 읽어 문장을 만들고, 검색(`SEARCH`)·원문 질문(`PROGRAM_QUESTION`)은 실행하지 않고 기존 화면으로 이동 버튼만 붙입니다.
 인용 id는 요청에 실린 도움말 안에서만, 이동 경로는 Core 상수와 도움말 행동 경로 안에서만 인정하며 어긋나면 502로 버립니다.
-대화는 브라우저 세션 저장소에만 남고 서버는 저장하지 않습니다. 분류·인용 회귀는 [도우미 의도 분류 평가](../evaluation/assistant/README.md)로 확인합니다.
+도우미 대화는 Redux의 `assistant` 상태와 계정 소유자를 포함한 브라우저 탭 `sessionStorage`에 보관합니다. 인증 확인 전에는 복원하지 않고, 확인된 같은 계정의 캐시만 복원합니다. 로그아웃·로그인·계정 전환은 auth 이벤트에서 대화와 캐시를 초기화하며 같은 계정 재로그인도 새 세션 버전으로 구분합니다. ViewModel은 이전 세션의 요청을 취소하고 늦은 성공·실패·관심 공고 조회 결과를 버립니다. 계정 정보가 없는 구버전 캐시는 초기화합니다. 자유 질문에서는 현재 세션의 최근 대화 최대 6개를 Core에 보내지만, 서버는 도우미 대화 기록을 저장하지 않습니다. 분류·인용 회귀는 [도우미 의도 분류 평가](../evaluation/assistant/README.md)로 확인합니다.
 
 Core 설정 `app.assistant.agent-enabled=true`(루트 `ASSISTANT_AGENT_ENABLED`, 기본 꺼짐)면 같은 질문을 AI Service의
 `/internal/v1/assistant/agent`(LangGraph 도구 에이전트)로 보냅니다. 분류 뒤 회원 자료가 필요한 의도(`PARTNER_MATCH` 모집글 매칭,
