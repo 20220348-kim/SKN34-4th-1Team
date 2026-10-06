@@ -215,12 +215,18 @@ Catalog가 공식 API의 제목·기관·신청 기간·지역·분야·지원 �
 
 ```mermaid
 flowchart TB
-    Source["공식 제공처 API 4곳"] --> Collect["Catalog 수집·검증<br/>페이지 완전성 · 필수 항목"]
-    Collect --> Normalize["공통 공고 구조로 정규화"]
-    Normalize --> Index["검색 색인 준비<br/>Elasticsearch · AI Service → Qdrant"]
-    Index --> Publish["수집·색인 성공 확인 후 공개<br/>Catalog MySQL"]
-    Publish --> Snapshot["인증된 HTTP snapshot"]
-    Snapshot --> Core["Core 조회용 복제본 갱신<br/>사용자 목록 · 상세 · 검색"]
+    subgraph Preparation["1. 수집·검증·검색 색인 준비"]
+        direction LR
+        Source["공식 제공처<br/>API 4곳"] --> Collect["Catalog 수집·검증<br/>페이지 완전성 · 필수 항목"]
+        Collect --> Normalize["공통 공고 구조로<br/>정규화"]
+        Normalize --> Index["검색 색인 준비<br/>Elasticsearch<br/>AI Service → Qdrant"]
+    end
+    subgraph Publication["2. 공개·조회용 복제본 갱신"]
+        direction LR
+        Publish["수집·색인 성공 확인 후 공개<br/>Catalog MySQL"] --> Snapshot["인증된<br/>HTTP snapshot"]
+        Snapshot --> Core["Core 조회용 복제본 갱신<br/>사용자 목록 · 상세 · 검색"]
+    end
+    Preparation --> Publication
     classDef step fill:#e7f5eb,stroke:#92bda6,color:#183d32
     classDef boundary fill:#e8f3fa,stroke:#91b9cd,color:#183d32
     class Collect,Normalize,Index,Publish step
@@ -253,11 +259,17 @@ RAG는 **검색한 공식 원문을 모델에게 함께 전달해 답변의 근�
 
 ```mermaid
 flowchart TB
-    Question["사용자가 상세 공고에 질문"] --> Prepare["Core<br/>공식 HTML 확인 · 원문 캐시 · 청킹"]
-    Prepare --> Retrieve["AI Service + OpenAI 임베딩 + Qdrant<br/>해당 공고의 근거 청크 검색"]
-    Retrieve --> Verify["Core<br/>검색 ID·해시 검증 · 원문 복원"]
-    Verify --> Answer["AI 답변 Agent<br/>LangChain + OpenAI"]
-    Answer --> Cite["인용 검증<br/>답변 · 원문 발췌 · 출처 표시"]
+    subgraph EvidenceSearch["1. 질문·원문 준비·근거 검색"]
+        direction LR
+        Question["사용자가<br/>상세 공고에 질문"] --> Prepare["Core<br/>공식 HTML 확인<br/>원문 캐시 · 청킹"]
+        Prepare --> Retrieve["AI Service<br/>OpenAI 임베딩 + Qdrant<br/>해당 공고의 근거 청크 검색"]
+    end
+    subgraph AnswerGeneration["2. 근거 검증·답변 생성·출처 표시"]
+        direction LR
+        Verify["Core<br/>검색 ID·해시 검증<br/>원문 복원"] --> Answer["AI 답변 Agent<br/>LangChain + OpenAI"]
+        Answer --> Cite["인용 검증<br/>답변 · 원문 발췌<br/>출처 표시"]
+    end
+    EvidenceSearch --> AnswerGeneration
     classDef step fill:#e7f5eb,stroke:#92bda6,color:#183d32
     classDef ai fill:#e8f3fa,stroke:#91b9cd,color:#183d32
     class Question,Prepare,Verify,Cite step
