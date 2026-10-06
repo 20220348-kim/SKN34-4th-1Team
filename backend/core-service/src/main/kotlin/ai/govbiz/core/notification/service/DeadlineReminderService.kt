@@ -31,7 +31,7 @@ import org.springframework.stereotype.Service
  * 관심 공고 마감 알림을 예약하고 채널별로 한 번만 보냅니다.
  *
  * `DeadlineReminderScheduler → DeadlineReminderService → DeadlineReminderRepository → MyBatis Mapper → XML → MySQL`로
- * 오늘 마감 N일 전이 된 관심 공고를 예약하고, 채널을 PENDING → SENDING으로 선점한 뒤에만 기존 리포트 SMTP·Expo 발송 경계를 부릅니다.
+ * 오늘 마감 7·3·1일 전이 된 관심 공고를 일수마다 예약하고, 채널을 PENDING → SENDING으로 선점한 뒤에만 기존 리포트 SMTP·Expo 발송 경계를 부릅니다.
  * 발송 직전에 계정·설정·관심 공고·접수 상태(서울 날짜로 다시 계산)·수신 주소·기기를 다시 확인하고, 보낼 수 없으면 이유 코드와 함께
  * SKIPPED로 끝냅니다. 결과를 알 수 없는 발송은 UNKNOWN으로 남기고 자동으로 다시 보내지 않습니다.
  */

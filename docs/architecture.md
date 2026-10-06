@@ -351,7 +351,7 @@ Core 내부 전용 소비자가 기존 검색·근거 답변을 재사용하며 
 
 웹 프로필과 모바일 알림 설정은 `NotificationSettingsController → NotificationSettingsService → NotificationSettingsRepository → MyBatis Mapper → XML → MySQL`로
 본인 설정을 저장합니다. 스케줄러는 `DeadlineReminderScheduler → DeadlineReminderService → DeadlineReminderRepository → MyBatis Mapper → XML → MySQL`
-에서 마감 N일 전 관심 공고를 고유 키로 한 번만 예약하고 채널별 발송권을 선점한 뒤,
+에서 마감 7·3·1일 전 관심 공고를 마감일·일수별 고유 키로 한 번씩 예약하고 채널별 발송권을 선점한 뒤,
 `DailyReportMailClient → SMTP`와 `DailyReportPushClient → Expo Push Service → FCM/APNs`로 transaction 밖에서 보냅니다.
 발송 직전에 계정·설정·관심 공고·접수 상태·수신 주소·기기를 다시 확인하고 보낼 수 없으면 이유 코드와 함께 SKIPPED로 끝냅니다.
 [조건·상태·설정](deadline-reminders.md)을 참고하세요.

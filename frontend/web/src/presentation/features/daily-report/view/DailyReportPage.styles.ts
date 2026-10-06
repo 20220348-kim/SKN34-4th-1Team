@@ -96,6 +96,7 @@ export const dailyReportStyles = {
   channelHead: 'flex items-center justify-between gap-4',
   channelText: 'flex min-w-0 flex-col gap-0.5',
   channelTitle: 'text-[0.85rem] font-bold text-app-ink',
+  channelTitleRow: 'flex items-center gap-2',
   channelDescription: 'text-[0.74rem] leading-[1.5] text-sample-muted',
   channelAddress: 'flex flex-wrap items-center gap-x-2 gap-y-1.5',
   addressValue: 'text-[0.84rem] text-app-ink [overflow-wrap:anywhere]',

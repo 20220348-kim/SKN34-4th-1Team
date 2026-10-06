@@ -11,9 +11,9 @@ jest.mock('../api/client', () => ({ ...jest.requireActual('../api/client'), apiR
 
 const path = '/api/v1/me/notification-settings'
 const settings: NotificationSettings = {
-  deadlineReminder: { enabled: false, daysBefore: 3, email: false, push: false },
+  deadlineReminder: { enabled: false, email: false, push: false },
   emailConfirmed: true, emailDeliveryAvailable: true, pushDeliveryAvailable: true,
-  pushDeviceRegistered: true, schedulerEnabled: true, sendHour: 9,
+  pushDeviceRegistered: true, schedulerEnabled: true, sendHour: 9, reminderDaysBefore: [7, 3, 1],
 }
 const invalidateSession = jest.fn()
 
@@ -31,18 +31,19 @@ test('turning on saves the confirmed email through the shared contract and keeps
     ? new Promise((resolve) => { finish = resolve }) : Promise.resolve(settings))
   render(<DeadlineReminderSettings />)
   const toggle = await screen.findByLabelText('관심 공고 마감 알림')
-  expect(screen.getByText('마감 3일 전 오전 9시 이후에 한 번 보내요.')).toBeTruthy()
+  expect(screen.getByText('마감 7일·3일·1일 전 오전 9시 이후에 한 번씩 보내요.')).toBeTruthy()
+  expect(screen.queryByText('알림 시점')).toBeNull()
   fireEvent.press(toggle)
   expect(apiRequest).toHaveBeenLastCalledWith(path, expect.objectContaining({
-    method: 'PUT', accessToken: 'owner', body: { deadlineReminder: { enabled: true, daysBefore: 3, email: true, push: false } },
+    method: 'PUT', accessToken: 'owner', body: { deadlineReminder: { enabled: true, email: true, push: false } },
   }))
   expect(screen.getByLabelText('관심 공고 마감 알림').props.accessibilityState).toMatchObject({ checked: true, disabled: true })
-  expect(screen.getByLabelText('마감 1일 전').props.accessibilityState.disabled).toBe(true)
-  await act(async () => finish({ ...settings, deadlineReminder: { enabled: true, daysBefore: 3, email: true, push: false } }))
+  expect(screen.getByLabelText('앱 알림로 받기').props.accessibilityState.disabled).toBe(true)
+  await act(async () => finish({ ...settings, deadlineReminder: { enabled: true, email: true, push: false } }))
   await waitFor(() => expect(screen.getByLabelText('관심 공고 마감 알림').props.accessibilityState.disabled).toBe(false))
-  fireEvent.press(screen.getByLabelText('마감 1일 전'))
+  fireEvent.press(screen.getByLabelText('앱 알림로 받기'))
   expect(apiRequest).toHaveBeenLastCalledWith(path, expect.objectContaining({
-    method: 'PUT', body: { deadlineReminder: { enabled: true, daysBefore: 1, email: true, push: false } },
+    method: 'PUT', body: { deadlineReminder: { enabled: true, email: true, push: true } },
   }))
 })
 
@@ -66,8 +67,14 @@ test('without a usable channel the switch stays locked and explains how to enabl
 })
 
 test('malformed server settings are an explicit error instead of a default switch', async () => {
-  jest.mocked(apiRequest).mockResolvedValue({ ...settings, deadlineReminder: { enabled: true, daysBefore: 3, email: false, push: false } })
+  jest.mocked(apiRequest).mockResolvedValue({ ...settings, deadlineReminder: { enabled: true, email: false, push: false } })
   render(<DeadlineReminderSettings />)
   expect(await screen.findByLabelText('마감 알림 설정 다시 확인')).toBeTruthy()
   expect(screen.queryByLabelText('관심 공고 마감 알림')).toBeNull()
+})
+
+test('settings from a Core that does not report the reminder days are rejected instead of guessing the schedule', async () => {
+  jest.mocked(apiRequest).mockResolvedValue({ ...settings, reminderDaysBefore: undefined })
+  render(<DeadlineReminderSettings />)
+  expect(await screen.findByLabelText('마감 알림 설정 다시 확인')).toBeTruthy()
 })

@@ -4,6 +4,7 @@ import { sendHourLabel } from '@govbiz/shared/domain/entities/DailyReport'
 import type { DailyReport, DailyReportItem } from '../../../../domain/entities/DailyReport'
 import { appPaths, supportProgramDetailPath } from '../../../shared/routes/appPaths'
 import { supportProgramSaveMessages, supportProgramSaveNoticeDurationMs, useSupportProgramSaveViewModel } from '../../../shared/support-program/useSupportProgramSaveViewModel'
+import { HelpTip } from '../../../shared/workspace/HelpTip'
 import { workspacePageStyles as styles, workspaceTagClassName } from '../../../shared/workspace/WorkspacePage.styles'
 import { WorkspacePageHeader } from '../../../shared/workspace/WorkspacePageHeader'
 import { WorkspaceToast } from '../../../shared/workspace/WorkspaceToast'
@@ -291,6 +292,11 @@ function ReportSettings({ vm }: { vm: ViewModel }) {
     : !settings.emailConfirmed ? '수신 주소를 확인하면 켤 수 있어요.'
       : vm.company === null ? '기업 정보를 등록하면 켤 수 있어요.' : null
   const canEnable = settings.emailDeliveryAvailable && settings.emailConfirmed && vm.company !== null
+  // 주소 확인 안내와 지금 켤 수 없는 이유는 이메일 제목 옆 ? 도움말에 둡니다.
+  const emailHelp = [
+    ...(!settings.emailConfirmed ? ['주소를 확인한 뒤 수신 동의를 저장해야 정기 이메일이 켜져요. 계정의 이메일 인증과는 별개예요.'] : []),
+    ...(editing && !vm.enabled && enableBlocker ? [enableBlocker] : []),
+  ]
   const summary = [
     `정기 이메일 ${settings.enabled ? '켜짐' : '꺼짐'}`,
     settings.emailDeliveryAvailable ? schedule : '이메일 발송 준비 안 됨',
@@ -304,7 +310,12 @@ function ReportSettings({ vm }: { vm: ViewModel }) {
       <div className={s.channel}>
         <div className={s.channelHead}>
           <span className={s.channelText}>
-            <span className={s.channelTitle}>이메일</span>
+            <span className={s.channelTitleRow}>
+              <span className={s.channelTitle}>이메일</span>
+              {emailHelp.length > 0 && <HelpTip label="정기 이메일 도움말" title="정기 이메일">
+                {emailHelp.map((text) => <p key={text} className="m-0">{text}</p>)}
+              </HelpTip>}
+            </span>
             <span className={s.channelDescription}>{schedule} · 한국 시간</span>
           </span>
           {editing
@@ -317,9 +328,7 @@ function ReportSettings({ vm }: { vm: ViewModel }) {
           <span className={workspaceTagClassName(settings.emailConfirmed ? 'ok' : 'warn')}>{settings.emailConfirmed ? '확인됨' : '확인 필요'}</span>
           {!settings.emailConfirmed && <button className={`${s.smallButton} ml-auto`} type="button" disabled={busy || !settings.emailDeliveryAvailable} onClick={() => void vm.verifyEmail()}>{vm.busy === 'verify' ? '보내는 중…' : '확인 메일 보내기'}</button>}
         </div>
-        {!settings.emailConfirmed && <p className={s.note}>주소를 확인한 뒤 수신 동의를 저장해야 정기 이메일이 켜져요. 계정의 이메일 인증과는 별개예요.</p>}
         {vm.error?.at === 'verify' && <p role="alert" className={s.alert}>{vm.error.text}</p>}
-        {editing && !vm.enabled && enableBlocker && <p className={s.note}>{enableBlocker}</p>}
         {editing && vm.enabled && <label className={s.consent}>
           <input type="checkbox" checked={vm.consent} disabled={busy} onChange={(event) => vm.updateForm({ consent: event.target.checked })} />
           <span>기업 맞춤 지원사업 리포트의 정기 이메일 수신에 동의합니다. 언제든 이 화면이나 이메일의 수신 해지 링크에서 중지할 수 있습니다.</span>
@@ -329,9 +338,11 @@ function ReportSettings({ vm }: { vm: ViewModel }) {
       {/* 앱 푸시는 기기마다 모바일 앱에서 켜고 끕니다. 웹은 기기별 상태를 알 수 없어 켜는 곳만 안내합니다. */}
       <div className={s.channel}>
         <div className={s.channelHead}>
-          <span className={s.channelText}>
+          <span className={s.channelTitleRow}>
             <span className={s.channelTitle}>앱 푸시</span>
-            <span className={s.channelDescription}>모바일 앱의 전체 › 알림 설정에서 기기마다 켜요.</span>
+            <HelpTip label="앱 푸시 도움말" title="앱 푸시">
+              <p className="m-0">모바일 앱의 전체 › 알림 설정에서 기기마다 켜요.</p>
+            </HelpTip>
           </span>
           <span className={workspaceTagClassName('muted')}>앱에서 설정</span>
         </div>

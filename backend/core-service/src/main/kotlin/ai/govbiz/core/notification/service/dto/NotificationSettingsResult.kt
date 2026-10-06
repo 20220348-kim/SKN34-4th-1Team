@@ -13,4 +13,6 @@ data class NotificationSettingsResult(
     val pushDeviceRegistered: Boolean,
     val schedulerEnabled: Boolean,
     val sendHour: Int,
+    /** 마감 며칠 전에 보내는지입니다(큰 값부터). */
+    val reminderDaysBefore: List<Int>,
 )

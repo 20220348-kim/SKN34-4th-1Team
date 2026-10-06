@@ -30,8 +30,8 @@ class NotificationSettingsServiceTest {
     private val push = mock(DailyReportPushService::class.java)
     private val account = AccountTestHelper.account(id = 3, email = "member@example.org")
     private val service = NotificationSettingsService(repository, reports, mail, push, DeadlineReminderProperties(enabled = false, sendHour = 9))
-    private val emailOn = DeadlineReminderSetting(enabled = true, daysBefore = 3, email = true, push = false)
-    private val pushOn = DeadlineReminderSetting(enabled = true, daysBefore = 1, email = false, push = true)
+    private val emailOn = DeadlineReminderSetting(enabled = true, email = true, push = false)
+    private val pushOn = DeadlineReminderSetting(enabled = true, email = false, push = true)
 
     @BeforeEach
     fun deliveryConfigured() {
@@ -46,13 +46,14 @@ class NotificationSettingsServiceTest {
     fun accountWithoutSavedSettingsGetsTheOffDefaultAndCurrentDeliveryState() {
         doReturn(null).`when`(reports).subscription(3)
         val result = service.settings(account)
-        assertEquals(DeadlineReminderSetting(enabled = false, daysBefore = 3, email = false, push = false), result.deadlineReminder)
+        assertEquals(DeadlineReminderSetting(enabled = false, email = false, push = false), result.deadlineReminder)
         assertFalse(result.emailConfirmed)
         assertTrue(result.emailDeliveryAvailable)
         assertTrue(result.pushDeliveryAvailable)
         assertFalse(result.pushDeviceRegistered)
         assertFalse(result.schedulerEnabled)
         assertEquals(9, result.sendHour)
+        assertEquals(listOf(7, 3, 1), result.reminderDaysBefore)
     }
 
     @Test
@@ -90,16 +91,16 @@ class NotificationSettingsServiceTest {
         doReturn(false).`when`(mail).isAvailable()
         doReturn(false).`when`(push).available()
         doReturn(null).`when`(reports).subscription(3)
-        val off = DeadlineReminderSetting(enabled = false, daysBefore = 7, email = true, push = true)
+        val off = DeadlineReminderSetting(enabled = false, email = true, push = true)
         doReturn(off).`when`(repository).saveDeadlineReminder(3, off)
         assertEquals(off, service.updateDeadlineReminder(account, off).deadlineReminder)
         verify(repository).saveDeadlineReminder(3, off)
     }
 
     @Test
-    fun domainRejectsAnEnabledReminderWithoutChannelOrOutOfRangeDays() {
-        assertThrows(IllegalArgumentException::class.java) { DeadlineReminderSetting(enabled = true, daysBefore = 3, email = false, push = false) }
-        assertThrows(IllegalArgumentException::class.java) { DeadlineReminderSetting(enabled = false, daysBefore = 0, email = false, push = false) }
-        assertThrows(IllegalArgumentException::class.java) { DeadlineReminderSetting(enabled = false, daysBefore = 8, email = false, push = false) }
+    fun domainRejectsAnEnabledReminderWithoutChannelAndFixesTheSchedule() {
+        assertThrows(IllegalArgumentException::class.java) { DeadlineReminderSetting(enabled = true, email = false, push = false) }
+        assertEquals(DeadlineReminderSetting.DEFAULT, DeadlineReminderSetting(enabled = false, email = false, push = false))
+        assertEquals(listOf(7, 3, 1), DeadlineReminderSetting.REMINDER_DAYS_BEFORE)
     }
 }

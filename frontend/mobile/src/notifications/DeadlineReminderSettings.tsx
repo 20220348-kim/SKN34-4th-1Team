@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native'
-import { sendHourLabel } from '@govbiz/shared/domain/entities/DailyReport'
 import {
   type DeadlineReminderSetting,
   type NotificationSettings,
-  deadlineReminderDaysOptions,
+  deadlineReminderScheduleText,
   findDeadlineReminderProblem,
   turnOnDeadlineReminder,
   usableDeadlineReminderChannels,
@@ -105,18 +104,11 @@ export function DeadlineReminderSettings() {
       onPress={toggleEnabled} style={local.option}>
       <View style={{ flex: 1 }}>
         <Text style={styles.heading}>관심 공고 마감 알림</Text>
-        <Text style={styles.muted}>마감 {setting.daysBefore}일 전 {sendHourLabel(settings.sendHour)} 이후에 한 번 보내요.</Text>
+        <Text style={styles.muted}>{deadlineReminderScheduleText(settings)}</Text>
       </View>
       <Text style={local.check}>{setting.enabled ? '●' : '○'}</Text>
     </Pressable>
     {setting.enabled && <>
-      <Text style={styles.label}>알림 시점</Text>
-      <View style={local.chips}>{deadlineReminderDaysOptions.map((days) => <Pressable key={days} accessibilityRole="radio"
-        accessibilityLabel={`마감 ${days}일 전`} accessibilityState={{ checked: setting.daysBefore === days, disabled: saving }}
-        disabled={saving} onPress={() => { if (setting.daysBefore !== days) void save({ ...setting, daysBefore: days }) }}
-        style={[local.chip, setting.daysBefore === days && local.selectedChip]}>
-        <Text style={[styles.muted, setting.daysBefore === days && { color: colors.primary }]}>{days}일 전</Text>
-      </Pressable>)}</View>
       {channels.map((channel) => <Pressable key={channel.key} accessibilityRole="checkbox" accessibilityLabel={`${channel.label}로 받기`}
         accessibilityState={{ checked: channel.isOn, disabled: saving || (!channel.isOn && !channel.canTurnOn) }}
         disabled={saving || (!channel.isOn && !channel.canTurnOn)}
@@ -134,8 +126,4 @@ export function DeadlineReminderSettings() {
 const local = StyleSheet.create({
   option: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 48, gap: 8 },
   check: { color: colors.primary, fontSize: 22, fontWeight: '600' },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: { minHeight: 36, minWidth: 44, borderRadius: 999, borderWidth: 1, borderColor: colors.border,
-    paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center' },
-  selectedChip: { borderColor: colors.primary, backgroundColor: colors.soft },
 })

@@ -59,31 +59,30 @@ class DeadlineReminderRepositoryIntegrationTest {
     fun settingsUpsertKeepsTheFirstEmailConsentAndTheDatabaseRejectsInvalidRows() {
         val owner = account("settings")
         assertEquals(DeadlineReminderSetting.DEFAULT, settings.deadlineReminder(owner.id))
-        settings.saveDeadlineReminder(owner.id, DeadlineReminderSetting(enabled = true, daysBefore = 3, email = true, push = false))
+        settings.saveDeadlineReminder(owner.id, DeadlineReminderSetting(enabled = true, email = true, push = false))
         val consentedAt = consent(owner)
         assertNotNull(consentedAt)
-        val saved = settings.saveDeadlineReminder(owner.id, DeadlineReminderSetting(enabled = true, daysBefore = 7, email = true, push = true))
-        assertEquals(DeadlineReminderSetting(enabled = true, daysBefore = 7, email = true, push = true), saved)
+        val saved = settings.saveDeadlineReminder(owner.id, DeadlineReminderSetting(enabled = true, email = true, push = true))
+        assertEquals(DeadlineReminderSetting(enabled = true, email = true, push = true), saved)
         assertEquals(consentedAt, consent(owner))
-        settings.saveDeadlineReminder(owner.id, DeadlineReminderSetting(enabled = false, daysBefore = 7, email = false, push = true))
+        settings.saveDeadlineReminder(owner.id, DeadlineReminderSetting(enabled = false, email = false, push = true))
         assertNull(consent(owner))
 
         val update = "UPDATE account_notification_setting SET %s WHERE account_id = ?"
         assertThrows(DataAccessException::class.java) { jdbc.update(update.format("deadline_reminder_enabled = TRUE, deadline_reminder_push = FALSE"), owner.id) }
-        assertThrows(DataAccessException::class.java) { jdbc.update(update.format("deadline_reminder_days_before = 8"), owner.id) }
         assertThrows(DataAccessException::class.java) { jdbc.update(update.format("deadline_reminder_email = TRUE"), owner.id) }
 
         assertThrows(IllegalStateException::class.java) {
             TransactionTemplate(transactions).executeWithoutResult {
-                settings.saveDeadlineReminder(owner.id, DeadlineReminderSetting(enabled = true, daysBefore = 1, email = false, push = true))
+                settings.saveDeadlineReminder(owner.id, DeadlineReminderSetting(enabled = true, email = false, push = true))
                 error("rollback")
             }
         }
-        assertEquals(DeadlineReminderSetting(enabled = false, daysBefore = 7, email = false, push = true), settings.deadlineReminder(owner.id))
+        assertEquals(DeadlineReminderSetting(enabled = false, email = false, push = true), settings.deadlineReminder(owner.id))
     }
 
     @Test
-    fun onlyDueSavedProgramsOfEnabledActiveAccountsAreReservedOncePerDeadline() {
+    fun onlyDueSavedProgramsOfEnabledActiveAccountsAreReservedOncePerDeadlineAndDay() {
         val owner = account("owner")
         val disabled = account("disabled")
         val suspended = account("suspended")
@@ -100,9 +99,9 @@ class DeadlineReminderRepositoryIntegrationTest {
             }
         }
         jdbc.update("UPDATE support_program SET is_source_present = FALSE WHERE source_code = 'REMINDTEST' AND source_program_id = 'hidden'")
-        settings.saveDeadlineReminder(owner.id, DeadlineReminderSetting(enabled = true, daysBefore = 3, email = true, push = false))
-        settings.saveDeadlineReminder(disabled.id, DeadlineReminderSetting(enabled = false, daysBefore = 3, email = false, push = true))
-        settings.saveDeadlineReminder(suspended.id, DeadlineReminderSetting(enabled = true, daysBefore = 3, email = false, push = true))
+        settings.saveDeadlineReminder(owner.id, DeadlineReminderSetting(enabled = true, email = true, push = false))
+        settings.saveDeadlineReminder(disabled.id, DeadlineReminderSetting(enabled = false, email = false, push = true))
+        settings.saveDeadlineReminder(suspended.id, DeadlineReminderSetting(enabled = true, email = false, push = true))
         jdbc.update("UPDATE account SET suspended_at = NOW(6) WHERE id = ?", suspended.id)
 
         reminders.reserveDue(today)
@@ -136,13 +135,35 @@ class DeadlineReminderRepositoryIntegrationTest {
     }
 
     @Test
+    fun eachSavedProgramIsReservedOnceAtSevenThreeAndOneDayBeforeItsDeadline() {
+        val owner = account("schedule")
+        val due = today.plusDays(7)
+        program("REMINDTEST", "schedule", due)
+        assertTrue(savedPrograms.saveIfPresent(owner.id, "REMINDTEST", "schedule"))
+        settings.saveDeadlineReminder(owner.id, DeadlineReminderSetting(enabled = true, email = true, push = false))
+
+        // 마감 7·3·1일 전에만 예약하고, 같은 날 다시 돌아도 일수마다 한 번뿐입니다.
+        for (day in listOf(0L, 1L, 2L, 4L, 4L, 5L, 6L, 6L)) reminders.reserveDue(today.plusDays(day))
+
+        assertEquals(listOf(7, 3, 1), jdbc.queryForList(
+            "SELECT days_before FROM deadline_reminder WHERE account_id = ? ORDER BY days_before DESC", Int::class.java, owner.id))
+        assertEquals(setOf(due.toString()), jdbc.queryForList(
+            "SELECT due_date FROM deadline_reminder WHERE account_id = ?", String::class.java, owner.id).toSet())
+        assertThrows(DuplicateKeyException::class.java) {
+            jdbc.update("""INSERT INTO deadline_reminder (account_id, source_code, source_program_id, kind, due_date, days_before,
+                email_status, push_status, created_at) VALUES (?, 'REMINDTEST', 'schedule', 'DEADLINE', ?, 3, 'PENDING', 'NOT_REQUESTED', NOW(6))""",
+                owner.id, due)
+        }
+    }
+
+    @Test
     fun claimedChannelIsNeverClaimedAgainAndStaleWorkExpiresWithoutResending() {
         val owner = account("claim")
         program("REMINDTEST", "claim", today.plusDays(1))
         program("REMINDTEST", "yesterday", today.plusDays(1))
         savedPrograms.saveIfPresent(owner.id, "REMINDTEST", "claim")
         savedPrograms.saveIfPresent(owner.id, "REMINDTEST", "yesterday")
-        settings.saveDeadlineReminder(owner.id, DeadlineReminderSetting(enabled = true, daysBefore = 1, email = true, push = true))
+        settings.saveDeadlineReminder(owner.id, DeadlineReminderSetting(enabled = true, email = true, push = true))
         reminders.reserveDue(today)
         val reminder = reminders.dispatchable(500).single { it.accountId == owner.id && it.sourceProgramId == "claim" }
         val stale = reminders.dispatchable(500).single { it.accountId == owner.id && it.sourceProgramId == "yesterday" }

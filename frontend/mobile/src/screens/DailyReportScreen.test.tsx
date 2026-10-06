@@ -37,9 +37,9 @@ const report = {
   }],
 }
 const notificationSettings = {
-  deadlineReminder: { enabled: false, daysBefore: 3, email: false, push: false },
+  deadlineReminder: { enabled: false, email: false, push: false },
   emailConfirmed: false, emailDeliveryAvailable: true, pushDeliveryAvailable: true,
-  pushDeviceRegistered: false, schedulerEnabled: true, sendHour: 9,
+  pushDeviceRegistered: false, schedulerEnabled: true, sendHour: 9, reminderDaysBefore: [7, 3, 1],
 }
 const callbacks = { onLogin: jest.fn(), onCompany: jest.fn(), onSearch: jest.fn(), onOpenProgram: jest.fn() }
 const invalidateSession = jest.fn().mockResolvedValue(undefined)

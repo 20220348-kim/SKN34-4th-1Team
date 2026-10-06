@@ -3,6 +3,7 @@ package ai.govbiz.core.notification.repository
 import ai.govbiz.core.notification.domain.DeadlineReminder
 import ai.govbiz.core.notification.domain.DeadlineReminderChannel
 import ai.govbiz.core.notification.domain.DeadlineReminderOutcome
+import ai.govbiz.core.notification.domain.DeadlineReminderSetting
 import ai.govbiz.core.notification.domain.DeadlineReminderStatus
 import ai.govbiz.core.notification.repository.mapper.DeadlineReminderDbRow
 import ai.govbiz.core.notification.repository.mapper.DeadlineReminderMapper
@@ -22,7 +23,8 @@ class DeadlineReminderRepository(
     private val mapper: DeadlineReminderMapper,
     @param:Qualifier("seoulClock") private val clock: Clock,
 ) {
-    fun reserveDue(today: LocalDate): Int = mapper.reserveDue(today, now())
+    /** 오늘(서울) 기준 마감 7·3·1일 전이 된 관심 공고를 일수마다 하나씩 예약합니다. */
+    fun reserveDue(today: LocalDate): Int = mapper.reserveDue(today, DeadlineReminderSetting.REMINDER_DAYS_BEFORE, now())
 
     fun dispatchable(limit: Int): List<DeadlineReminder> = mapper.findDispatchable(todayStart(), limit).map { it.toDomain() }
 

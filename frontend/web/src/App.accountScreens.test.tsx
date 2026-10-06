@@ -699,9 +699,9 @@ describe('기업 프로필 화면', () => {
 
   it('계정과 알림 카드는 관심 공고 마감 알림만 서버 설정으로 켜고 나머지 알림은 스위치 없이 준비 중으로 표시한다', async () => {
     vi.spyOn(appContainer.resolve('notificationSettingsUseCase'), 'settings').mockResolvedValue({
-      deadlineReminder: { enabled: true, daysBefore: 3, email: true, push: false },
+      deadlineReminder: { enabled: true, email: true, push: false },
       emailConfirmed: true, emailDeliveryAvailable: true, pushDeliveryAvailable: false,
-      pushDeviceRegistered: false, schedulerEnabled: true, sendHour: 9,
+      pushDeviceRegistered: false, schedulerEnabled: true, sendHour: 9, reminderDaysBefore: [7, 3, 1],
     })
     renderApp('/app/profile')
     const account = await screen.findByRole('region', { name: '계정과 알림' })
