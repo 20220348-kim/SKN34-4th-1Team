@@ -346,6 +346,47 @@ cd infrastructure/gitops/scripts
 python3 -B -m unittest test_gitops_transition test_gitops_runtime test_gitops_preservation test_published_runtime
 ```
 
+### 저장된 전환 파일 재검증
+
+전환 파일을 생성한 뒤 소스·이미지 발행본·기존 환경이 바뀌었는지 확인하려면 같은 이름에
+`--verify`를 지정한다. 기본 생성 명령은 기존 경로 덮어쓰기를 계속 거절한다.
+
+```bash
+python3 -B infrastructure/gitops/scripts/gitops_transition.py --verify \
+  --branch main --state-dir "$OPS_STATE_DIR" \
+  --output-name gitops-transition-review-01
+```
+
+실행 흐름은 **비공개 파일 읽기 → 저장소·state 식별자 확인 → 최신 공개 발행 검증 →
+현재 환경 관찰·Helm 재현 → 발행 재검증 → 파일 전체 대조 → state·파일 재확인**이다.
+저장된 `PASS` 표시나 리소스 지문만으로 통과시키지 않으며, 파일에서 읽은 설정으로 GitHub·
+Kubernetes 조회 대상을 정하거나 Helm을 실행하지 않는다. 조회 대상은 현재 `origin`과 소유권을
+확인한 state이며, 렌더링 입력은 새로 검증한 발행본과 현재 환경에서만 가져온다.
+
+- 기존 state 내부의 이름으로만 파일을 선택한다. POSIX 소유자·비공개 권한을 확인하고
+  심볼릭 링크 디렉터리·파일, 여러 하드 링크, 일반 파일이 아닌 입력을 거절한다.
+  생성·읽기 크기는 16 MiB 이하로 제한한다. 중복 JSON 키·비유한 숫자·잘못된 형식도 실패한다.
+- 저장소·state·schema·소스 SHA·발행 run·설정·리소스·동기화 정책·미완료 검증 목록을 대조한다.
+  리소스를 바꾸고 지문까지 다시 계산해도 새로 생성한 계획과 다르면 거절한다.
+  `generatedAt`만 비교에서 제외하며 시간대가 있는 날짜 형식인지 검사한다. 생성 시간은 승인이나
+  유효 기간이 아니며, 최신 발행·환경 확인을 대신하지 않는다.
+- 파일을 연 시점의 식별자·크기·변경 시간과 내용을 확인하고, 외부 검증 후 파일과 state를 다시
+  읽어 교체·수정을 거절한다. 검증에 실패해도 기존 파일을 삭제하거나 최신 내용으로 덮어쓰지 않는다.
+- 성공 상태는 `REVALIDATED_NOT_APPLIED`, `savedPlanMatched=true`다. 표준 출력은 설정값을
+  제외한 요약만 제공하며 파일을 갱신하지 않는다. `deploymentAuthorized=false`,
+  `existingRuntimeVerified=false`와 원래 `pendingChecks`를 유지한다.
+
+재검증은 선언된 입력이 현재 관찰과 일치하는지만 확인한다. 실행 중 이미지·Secret 실제 값·DB
+상태·백업·외부 연결·실제 트래픽이나 Argo 인계 완료를 증명하지 않는다. 검증 후 환경은 다시
+바뀔 수 있으므로 실제 적용 시 재확인해야 하며, 자동 적용 명령은 아직 제공하지 않는다.
+
+관련 무료 테스트는 다음과 같다. Infra CI의 기존 `test_*.py` 검색에도 포함된다.
+
+```bash
+cd infrastructure/gitops/scripts
+python3 -B -m unittest test_gitops_transition test_gitops_transition_verify
+```
+
 ## 배포 PR 없이 GHCR 이미지로 로컬 초기화
 
 `fork_cluster.py up`은 개인 포크 기본 브랜치의 현재 SHA에 대해 다음을 직접 검증한다.
