@@ -68,7 +68,8 @@ export function OpsApp() {
     catch (reason) { setError(message(reason)) }
     finally { setLoggingOut(false) }
   }
-  return <div className="min-h-dvh bg-[#f7f9f8] text-ink">
+  return <div className="flex min-h-dvh flex-col bg-[#f7f9f8] text-ink">
+    <a href="#ops-main" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:bg-white focus:p-3">본문으로 건너뛰기</a>
     <header className="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-white px-[clamp(1rem,5vw,4.5rem)] py-4">
       <Link to={listPath} className="text-lg font-extrabold tracking-tight text-brand-primary">GovBiz <span className="ml-2 text-sm font-semibold text-ink-muted">LLMOps</span></Link>
       <nav aria-label="운영 메뉴" className="flex flex-wrap items-center gap-4 text-sm">
@@ -77,54 +78,67 @@ export function OpsApp() {
         {(session?.user || denied) && <><span>{session?.user?.username}</span><button className={styles.secondaryButton} onClick={() => void signOut()} disabled={loggingOut}>로그아웃</button></>}
       </nav>
     </header>
-    <main className="mx-auto max-w-[1240px]">
-      {error && <div className="m-5 rounded-xl border border-red-200 bg-red-50 p-4" role="alert">{error} {!session && <button className={styles.secondaryButton} onClick={() => { setError(''); setReload((value) => value + 1) }}>연결 다시 확인</button>}</div>}
-      {!session ? (!error && <p className="p-8" role="status">운영자 세션을 확인하고 있습니다.</p>)
-        : !session.user ? <Navigate replace to={loginPathFor(location.pathname === '/ops/login' ? listPath : location.pathname + location.search)} />
-          : <Routes>
-            <Route path="/ops/evaluations" element={<EvaluationList key={session.user.id} owner={session.user.id} datasets={session.datasets} liveEnabled={session.live_enabled} ragLiveEnabled={session.rag_live_enabled} onExpired={expired} />} />
-            <Route path="/ops/evaluations/:runId" element={<EvaluationDetail key={`${session.user.username}:${location.pathname}`} onExpired={expired} onReviewChanged={() => setReload((value) => value + 1)} />} />
-            <Route path="*" element={<Navigate replace to={listPath} />} />
-          </Routes>}
+    {error && <div className="m-5 rounded-xl border border-red-200 bg-red-50 p-4" role="alert">{error} {!session && <button className={styles.secondaryButton} onClick={() => { setError(''); setReload((value) => value + 1) }}>연결 다시 확인</button>}</div>}
+    {!session ? (!error && <p className="p-8" role="status">운영자 세션을 확인하고 있습니다.</p>)
+      : !session.user ? <Navigate replace to={loginPathFor(location.pathname === '/ops/login' ? listPath : location.pathname + location.search + location.hash)} />
+        : <OpsWorkspace key={session.user.id} session={session} onExpired={expired} onReviewChanged={() => setReload((value) => value + 1)} />}
+
+  </div>
+}
+
+type EvaluationDraft = { mode: 'replay' | 'live'; dataset: string; reference: string; candidate: string }
+const opsPages = [
+  { path: listPath, label: '평가 이력', description: '결과 조회와 답변 검토' },
+  { path: `${listPath}/new`, label: '새 평가', description: '자료 선택과 실행 접수' },
+  { path: '/ops/budget', label: '예산 관리', description: '사용량과 한도 관리' },
+  { path: '/ops/schedules', label: '정기 실행', description: '실행 일정과 중지 관리' },
+]
+
+function OpsWorkspace({ session, onExpired, onReviewChanged }: { session: OpsSession; onExpired: () => void; onReviewChanged: () => void }) {
+  const location = useLocation()
+  const [draft, setDraft] = useState<EvaluationDraft | null>(null)
+  const previousPath = useRef(location.pathname)
+  const current = location.pathname === `${listPath}/new` ? opsPages[1]
+    : location.pathname.startsWith(listPath) ? opsPages[0]
+      : opsPages.find((page) => page.path === location.pathname) ?? opsPages[0]
+  const legacyPath = location.pathname === listPath ? ({ '#new-evaluation': `${listPath}/new`, '#evaluation-budget': '/ops/budget', '#evaluation-schedules': '/ops/schedules' } as Record<string, string>)[location.hash] : undefined
+  useEffect(() => {
+    document.title = `GovBiz · ${current.label}`
+    if (previousPath.current !== location.pathname) {
+      previousPath.current = location.pathname
+      document.getElementById('ops-main')?.focus({ preventScroll: true })
+      window.scrollTo({ top: 0, left: 0, behavior: 'instant' })
+    }
+  }, [location.pathname, current.label])
+  return <div className="mx-auto grid w-full max-w-[1480px] min-w-0 flex-1 content-start lg:grid-cols-[208px_minmax(0,1fr)] lg:content-stretch">
+    <aside className="border-b border-line bg-white lg:border-r lg:border-b-0">
+      <nav aria-label="LLMOps 작업 메뉴" className="grid grid-cols-2 gap-1 p-3 lg:sticky lg:top-0 lg:grid-cols-1 lg:gap-2 lg:px-4 lg:py-8">
+        {opsPages.map((page) => <Link key={page.path} to={page.path} aria-label={page.label} aria-current={current.path === page.path ? 'page' : undefined}
+          className={`min-w-0 rounded-lg border-l-[3px] px-3 py-3 text-sm no-underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary ${current.path === page.path ? 'border-brand-primary bg-brand-soft font-bold text-brand-primary' : 'border-transparent text-ink-muted hover:bg-surface-muted hover:text-ink'}`}>
+          <span className="block">{page.label}</span><span className="mt-1 hidden text-xs font-normal lg:block">{page.description}</span>
+        </Link>)}
+      </nav>
+    </aside>
+    <main id="ops-main" tabIndex={-1} className="min-w-0 focus-visible:outline-2 focus-visible:outline-brand-primary">
+      {legacyPath ? <Navigate replace to={legacyPath} /> : <Routes>
+        <Route path="/ops/evaluations" element={<EvaluationList onExpired={onExpired} />} />
+        <Route path="/ops/evaluations/new" element={<EvaluationCreate owner={session.user!.id} datasets={session.datasets} liveEnabled={session.live_enabled} ragLiveEnabled={session.rag_live_enabled} onExpired={onExpired} draft={draft} onDraftChange={setDraft} />} />
+        <Route path="/ops/evaluations/:runId" element={<EvaluationDetail key={location.pathname} onExpired={onExpired} onReviewChanged={onReviewChanged} />} />
+        <Route path="/ops/budget" element={<><WorkspacePageHeader title="예산 관리" /><div className={styles.content}><p className="text-sm text-ink-muted">누적·일별 한도와 예약·사용 내역을 확인하고 관리합니다.</p><BudgetOverview onExpired={onExpired} refreshKey={0} operatorId={session.user!.id} /></div></>} />
+        <Route path="/ops/schedules" element={<><WorkspacePageHeader title="정기 실행" /><div className={styles.content}><EvaluationSchedulesPanel owner={session.user!.id} datasets={session.datasets} onExpired={onExpired} refreshKey={0} /></div></>} />
+        <Route path="*" element={<Navigate replace to={listPath} />} />
+      </Routes>}
     </main>
   </div>
 }
 
-function EvaluationList({ owner, datasets, liveEnabled: allLiveEnabled, ragLiveEnabled, onExpired }: { owner: string; datasets: OpsSession['datasets']; liveEnabled: boolean; ragLiveEnabled: boolean; onExpired: () => void }) {
+function EvaluationList({ onExpired }: { onExpired: () => void }) {
   const [search, setSearch] = useSearchParams()
   const pageValue = Number(search.get('page') ?? 1)
   const page = Number.isInteger(pageValue) && pageValue > 0 ? pageValue : 1
   const [data, setData] = useState<EvaluationPage | null>(null)
   const [error, setError] = useState('')
-  const [restored] = useState(() => {
-    try { return { pending: readPendingEvaluation(owner), error: '' } }
-    catch { return { pending: null, error: '보관한 요청을 읽을 수 없습니다. 이 탭의 요청 기록과 실행 이력을 확인해야 새 평가를 접수할 수 있습니다.' } }
-  })
-  const [pending, setPending] = useState<EvaluationSubmission | null>(restored.pending)
-  const [storageError, setStorageError] = useState(restored.error)
-  const [rejected, setRejected] = useState(false)
-  const [submitError, setSubmitError] = useState('')
   const [refresh, setRefresh] = useState(0)
-  const [budgetRevision, setBudgetRevision] = useState(0)
-  const [busy, setBusy] = useState(false)
-  const [mode, setMode] = useState<'replay' | 'live'>(restored.pending?.live_config ? 'live' : 'replay')
-  const [approved, setApproved] = useState(!!restored.pending?.live_config)
-  const [dataset, setDataset] = useState(restored.pending?.dataset_id ?? datasets[0]?.id ?? '')
-  const selected = datasets.find((item) => item.id === dataset)
-  const supported = selected?.evaluation_scope === 'fixed-answer-context-only' || selected?.evaluation_scope === 'source-chunks-retrieval-answer'
-  const ragLive = selected?.evaluation_scope === 'source-chunks-retrieval-answer' && mode === 'live'
-  const liveEnabled = allLiveEnabled && (!ragLive || ragLiveEnabled)
-  const canGenerate = supported && !!selected?.live_config && !!selected.execution_profiles.live
-  const [reference, setReference] = useState(restored.pending?.reference_capture_id ?? datasets[0]?.baseline?.id ?? datasets[0]?.captures[0]?.id ?? '')
-  const [candidate, setCandidate] = useState(restored.pending?.candidate_capture_id ?? datasets[0]?.captures.at(-1)?.id ?? '')
-  const changeDataset = (id: string) => {
-    const value = datasets.find((item) => item.id === id)
-    if (!value?.live_config) setMode('replay')
-    setApproved(false); setDataset(id); setReference(value?.baseline?.id ?? value?.captures[0]?.id ?? ''); setCandidate(value?.captures.at(-1)?.id ?? '')
-  }
-  const requestId = useRef<string | null>(restored.pending?.request_id ?? null)
-  const submitting = useRef(false)
-  const navigate = useNavigate()
   const expiry = useRef(onExpired); expiry.current = onExpired
   useEffect(() => {
     const controller = new AbortController()
@@ -147,8 +161,61 @@ function EvaluationList({ owner, datasets, liveEnabled: allLiveEnabled, ragLiveE
     void read()
     return () => { controller.abort(); clearTimeout(timer) }
   }, [page, refresh])
+  return <>
+    <WorkspacePageHeader title="평가 이력" actions={<><button className={styles.secondaryButton} onClick={() => setRefresh((value) => value + 1)}>목록 새로고침</button><Link className={styles.primaryButton} to={`${listPath}/new`}>새 평가 만들기</Link></>} />
+    <div className={styles.content}>
+      <section id="evaluation-history" className={`${styles.card} scroll-mt-28`} aria-label="평가 실행 이력">
+        <h2 className={styles.cardTitle}>실행 이력{data ? ` · ${data.count}건` : ''}</h2>
+        <p className={styles.cardDescription}>검토할 평가 자료 이름을 선택하세요. 실행 완료는 품질 합격과 다릅니다. 목록은 5초마다 갱신합니다.</p>
+        {error && <p role="alert" className="text-sm text-red-700">{error} 기존 결과가 있으면 마지막으로 받은 상태를 유지합니다.</p>}
+        {!data ? (!error && <p role="status">실행 이력을 불러오고 있습니다.</p>) : !data.results.length ? <p className="py-8 text-center text-sm text-ink-muted">아직 실행한 평가가 없습니다. 새 평가에서 자료와 실행 방식을 선택해 시작하세요.</p> : <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm"><thead className="border-b border-line text-xs text-ink-muted"><tr>{['평가 자료 / 요청', '상태', '요청자', '요청 시각'].map((label) => <th key={label} className="px-3 py-3 whitespace-nowrap">{label}</th>)}</tr></thead>
+            <tbody>{data.results.map((run) => <tr key={run.id} className="border-b border-line last:border-0"><td className="min-w-64 px-3 py-4"><Link className="font-semibold text-brand-primary hover:underline" to={`${listPath}/${run.id}`}>{run.dataset_label}<span className="mt-1 block font-mono text-xs font-normal text-ink-muted">{run.id}</span></Link><span className="text-xs text-ink-muted">{modeLabel(run)}</span></td><td className="px-3 py-4"><Status run={run} /><p className="mt-2 whitespace-nowrap text-xs text-ink-muted">마지막 확인: {run.synced_at ? date(run.synced_at) : '아직 확인되지 않음'}</p>{run.status_stale && <p className="mt-1 text-xs text-amber-800">상태 확인 지연 · 현재 상태를 확정할 수 없습니다.</p>}{run.error_message && <p className="mt-2 max-w-56 text-xs text-red-700">{run.error_message}</p>}</td><td className="px-3 py-4 whitespace-nowrap">{run.requested_by}</td><td className="px-3 py-4 whitespace-nowrap">{date(run.created_at)}</td></tr>)}</tbody>
+          </table></div>}
+        {data && <nav aria-label="평가 이력 페이지" className="mt-3 flex items-center justify-end gap-3 text-sm"><button className={styles.secondaryButton} disabled={!data.previous} onClick={() => setSearch({ page: String(page - 1) })}>이전</button><span>{page} / {Math.max(1, Math.ceil(data.count / 25))}</span><button className={styles.secondaryButton} disabled={!data.next} onClick={() => setSearch({ page: String(page + 1) })}>다음</button></nav>}
+      </section>
+    </div>
+  </>
+}
+
+function EvaluationCreate({ owner, datasets, liveEnabled: allLiveEnabled, ragLiveEnabled, onExpired, draft, onDraftChange }: {
+  owner: string; datasets: OpsSession['datasets']; liveEnabled: boolean; ragLiveEnabled: boolean; onExpired: () => void;
+  draft: EvaluationDraft | null; onDraftChange: (draft: EvaluationDraft) => void;
+}) {
+  const [restored] = useState(() => {
+    try { return { pending: readPendingEvaluation(owner), error: '' } }
+    catch { return { pending: null, error: '보관한 요청을 읽을 수 없습니다. 이 탭의 요청 기록과 실행 이력을 확인해야 새 평가를 접수할 수 있습니다.' } }
+  })
+  const [pending, setPending] = useState<EvaluationSubmission | null>(restored.pending)
+  const [storageError, setStorageError] = useState(restored.error)
+  const [rejected, setRejected] = useState(false)
+  const [submitError, setSubmitError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [mode, setMode] = useState<'replay' | 'live'>(restored.pending ? restored.pending.live_config ? 'live' : 'replay' : draft?.mode ?? 'replay')
+  const [approved, setApproved] = useState(!!restored.pending?.live_config)
+  const [dataset, setDataset] = useState(restored.pending?.dataset_id ?? draft?.dataset ?? datasets[0]?.id ?? '')
+  const selected = datasets.find((item) => item.id === dataset)
+  const supported = selected?.evaluation_scope === 'fixed-answer-context-only' || selected?.evaluation_scope === 'source-chunks-retrieval-answer'
+  const ragLive = selected?.evaluation_scope === 'source-chunks-retrieval-answer' && mode === 'live'
+  const liveEnabled = allLiveEnabled && (!ragLive || ragLiveEnabled)
+  const canGenerate = supported && !!selected?.live_config && !!selected.execution_profiles.live
+  const [reference, setReference] = useState(restored.pending?.reference_capture_id ?? draft?.reference ?? datasets[0]?.baseline?.id ?? datasets[0]?.captures[0]?.id ?? '')
+  const [candidate, setCandidate] = useState(restored.pending?.candidate_capture_id ?? draft?.candidate ?? datasets[0]?.captures.at(-1)?.id ?? '')
+  const changeDataset = (id: string) => {
+    const value = datasets.find((item) => item.id === id)
+    if (!value?.live_config) setMode('replay')
+    setApproved(false); setDataset(id); setReference(value?.baseline?.id ?? value?.captures[0]?.id ?? ''); setCandidate(value?.captures.at(-1)?.id ?? '')
+  }
+  useEffect(() => { onDraftChange({ mode, dataset, reference, candidate }) }, [mode, dataset, reference, candidate, onDraftChange])
+  const mounted = useRef(true)
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false } }, [])
+  const requestId = useRef<string | null>(restored.pending?.request_id ?? null)
+  const submitting = useRef(false)
+  const navigate = useNavigate()
+  const expiry = useRef(onExpired); expiry.current = onExpired
   const finish = useCallback((value: EvaluationRun, request: EvaluationSubmission) => {
     if (value.id !== request.request_id || value.requested_by_id !== owner) throw new Error('접수된 요청의 식별자와 계정이 일치하지 않습니다.')
+    if (!mounted.current) return
     clearPendingEvaluation(owner, request.request_id)
     navigate(`${listPath}/${value.id}`)
   }, [owner, navigate])
@@ -207,39 +274,19 @@ function EvaluationList({ owner, datasets, liveEnabled: allLiveEnabled, ragLiveE
     catch { setStorageError('접수되지 않은 요청 기록을 정리하지 못했습니다. 탭 저장소를 확인하세요.') }
   }
   return <>
-    <WorkspacePageHeader title="평가 실행 관리" actions={<button className={styles.secondaryButton} onClick={() => setRefresh((value) => value + 1)}>목록 새로고침</button>} />
+    <WorkspacePageHeader title="새 평가" />
     <div className={styles.content}>
-      <section aria-label="운영 화면 안내" className="grid gap-3 border-l-4 border-brand-primary bg-white p-5">
-        <h2 className="text-lg font-bold">지금 하려는 작업을 선택하세요</h2>
-        <p className="text-sm text-ink-muted">기존 답변을 검토하려면 실행 이력에서 평가를 선택하세요. 새 평가 접수와 운영 설정은 아래에서 관리합니다.</p>
-        <nav aria-label="평가 작업 바로가기" className="flex flex-wrap gap-2">
-          <a className={styles.primaryButton} href="#evaluation-history">답변 검토하기</a>
-          <a className={styles.secondaryButton} href="#new-evaluation">새 평가 준비</a>
-          <a className={styles.secondaryButton} href="#evaluation-budget">예산 관리</a>
-          <a className={styles.secondaryButton} href="#evaluation-schedules">정기 실행 관리</a>
-        </nav>
-      </section>
-      <section id="evaluation-history" className={`${styles.card} scroll-mt-28`} aria-label="평가 실행 이력">
-        <h2 className={styles.cardTitle}>실행 이력{data ? ` · ${data.count}건` : ''}</h2>
-        <p className={styles.cardDescription}>검토할 평가 자료 이름을 선택하세요. 실행 완료는 품질 합격과 다릅니다. 목록은 5초마다 갱신합니다.</p>
-        {error && <p role="alert" className="text-sm text-red-700">{error} 기존 결과가 있으면 마지막으로 받은 상태를 유지합니다.</p>}
-        {!data ? (!error && <p role="status">실행 이력을 불러오고 있습니다.</p>) : !data.results.length ? <p className="py-8 text-center text-sm text-ink-muted">아직 실행한 평가가 없습니다. 아래에서 평가 자료와 실행 방식을 선택해 시작하세요.</p> : <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm"><thead className="border-b border-line text-xs text-ink-muted"><tr>{['평가 자료 / 요청', '상태', '요청자', '요청 시각'].map((label) => <th key={label} className="px-3 py-3 whitespace-nowrap">{label}</th>)}</tr></thead>
-            <tbody>{data.results.map((run) => <tr key={run.id} className="border-b border-line last:border-0"><td className="min-w-64 px-3 py-4"><Link className="font-semibold text-brand-primary hover:underline" to={`${listPath}/${run.id}`}>{run.dataset_label}<span className="mt-1 block font-mono text-xs font-normal text-ink-muted">{run.id}</span></Link><span className="text-xs text-ink-muted">{modeLabel(run)}</span></td><td className="px-3 py-4"><Status run={run} /><p className="mt-2 whitespace-nowrap text-xs text-ink-muted">마지막 확인: {run.synced_at ? date(run.synced_at) : '아직 확인되지 않음'}</p>{run.status_stale && <p className="mt-1 text-xs text-amber-800">상태 확인 지연 · 현재 상태를 확정할 수 없습니다.</p>}{run.error_message && <p className="mt-2 max-w-56 text-xs text-red-700">{run.error_message}</p>}</td><td className="px-3 py-4 whitespace-nowrap">{run.requested_by}</td><td className="px-3 py-4 whitespace-nowrap">{date(run.created_at)}</td></tr>)}</tbody>
-          </table></div>}
-        {data && <nav aria-label="평가 이력 페이지" className="mt-3 flex items-center justify-end gap-3 text-sm"><button className={styles.secondaryButton} disabled={!data.previous} onClick={() => setSearch({ page: String(page - 1) })}>이전</button><span>{page} / {Math.max(1, Math.ceil(data.count / 25))}</span><button className={styles.secondaryButton} disabled={!data.next} onClick={() => setSearch({ page: String(page + 1) })}>다음</button></nav>}
-      </section>
+      <p className="text-sm text-ink-muted">평가 자료와 비교 대상을 선택한 뒤 실행하세요. 메뉴를 오가도 선택값은 유지되며, 유료 실행 확인과 예산 점검은 다시 해야 합니다.</p>
       <section id="new-evaluation" className={`${styles.card} scroll-mt-28`} aria-label="평가 실행">
-        <p className={styles.sectionEyebrow}>LLMOps 평가</p><h2 className={styles.cardTitle}>지원 대상 근거 답변 평가</h2>
+        <h2 className={styles.cardTitle}>평가 자료와 실행 방식</h2>
         <p className="text-sm leading-6 text-ink-muted">{ragLive ? ragLiveNotice : mode === 'live' ? liveNotice : notice}</p>
         {selected && <p className="text-sm" role="status">평가 범위: {scopeLabel(selected.evaluation_scope)}. {ragLive ? ragLiveNotice : scopeNotice(selected.evaluation_scope)}</p>}
-        <form className="flex flex-wrap items-end gap-3" onSubmit={(event) => { event.preventDefault(); void submit() }}>
-          <label className="grid w-full gap-2 text-sm font-semibold">실행 방식<select className={field} value={mode} disabled={busy || requestId.current !== null} onChange={(event) => { setMode(event.target.value as 'replay' | 'live'); setApproved(false) }}><option value="replay">저장 응답 재평가 · API 호출 없음</option><option value="live" disabled={!canGenerate}>새 응답 생성 · 유료 모델 호출</option></select></label>
-          <label className="grid min-w-0 flex-1 gap-2 text-sm font-semibold">평가 자료<select className={field} value={dataset} disabled={busy || requestId.current !== null} onChange={(event) => changeDataset(event.target.value)}>{datasets.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
-          <label className="grid min-w-56 flex-1 gap-2 text-sm font-semibold">기준 실행<select className={field} value={reference} disabled={busy || requestId.current !== null} onChange={(event) => setReference(event.target.value)}>{selected?.baseline && <option value={selected.baseline.id}>{selected.baseline.label}</option>}{selected?.captures.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
-          {mode === 'replay' && <label className="grid min-w-56 flex-1 gap-2 text-sm font-semibold">후보 실행<select className={field} value={candidate} disabled={busy || requestId.current !== null} onChange={(event) => setCandidate(event.target.value)}>{selected?.captures.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>}
-          <button className={styles.primaryButton} disabled={busy || !!storageError || rejected || (!pending && (!supported || !dataset || !reference || !candidate || (mode === 'live' && (!approved || !liveEnabled || !canGenerate))))}>{busy ? '접수 중…' : pending ? '같은 요청으로 재시도' : mode === 'live' ? '새 응답 생성 및 평가' : '평가 실행'}</button>
-          {mode === 'live' && selected?.live_config && <div className="w-full rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6">
+        <form className="grid gap-4 md:grid-cols-2" onSubmit={(event) => { event.preventDefault(); void submit() }}>
+          <label className="grid min-w-0 gap-2 text-sm font-semibold md:col-span-2">실행 방식<select className={field} value={mode} disabled={busy || requestId.current !== null} onChange={(event) => { setMode(event.target.value as 'replay' | 'live'); setApproved(false) }}><option value="replay">저장 응답 재평가 · API 호출 없음</option><option value="live" disabled={!canGenerate}>새 응답 생성 · 유료 모델 호출</option></select></label>
+          <label className="grid min-w-0 gap-2 text-sm font-semibold md:col-span-2">평가 자료<select className={field} value={dataset} disabled={busy || requestId.current !== null} onChange={(event) => changeDataset(event.target.value)}>{datasets.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
+          <label className="grid min-w-0 gap-2 text-sm font-semibold">기준 실행<select className={field} value={reference} disabled={busy || requestId.current !== null} onChange={(event) => setReference(event.target.value)}>{selected?.baseline && <option value={selected.baseline.id}>{selected.baseline.label}</option>}{selected?.captures.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
+          {mode === 'replay' && <label className="grid min-w-0 gap-2 text-sm font-semibold">후보 실행<select className={field} value={candidate} disabled={busy || requestId.current !== null} onChange={(event) => setCandidate(event.target.value)}>{selected?.captures.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>}
+          {mode === 'live' && selected?.live_config && <div className="min-w-0 rounded-xl border border-amber-200 md:col-span-2 bg-amber-50 p-4 text-sm leading-6">
             <p>모델: <strong>{selected.live_config.model}</strong> · 최대 {selected.live_config.max_model_calls}회 · 호출당 출력 최대 {selected.live_config.max_output_tokens.toLocaleString()}토큰 · 호출당 입력 최대 {selected.live_config.max_input_tokens?.toLocaleString() ?? '기록 없음'}토큰 · 자동 재호출 없음</p>
             {ragLive && <p>임베딩: {selected.live_config.embedding_model} · {selected.live_config.embedding_dimensions}차원. 최대 호출 수에는 문서·질문 임베딩과 답변이 포함됩니다. 전체 입력 예약 {selected.live_config.max_total_input_tokens?.toLocaleString()}토큰 · 전체 출력 예약 {selected.live_config.max_total_output_tokens?.toLocaleString()}토큰.</p>}
             <p>각 답변 생성 전에 같은 입력과 응답 형식을 OpenAI 입력 토큰 계산 API로 전송합니다. 계산 실패 또는 입력 상한 초과 시 생성을 중단합니다.</p>
@@ -247,7 +294,8 @@ function EvaluationList({ owner, datasets, liveEnabled: allLiveEnabled, ragLiveE
             {!liveEnabled && <p role="status" className="font-semibold">새 모델 평가가 비활성화되어 있습니다. 실행기의 API 키와 서버 설정을 준비해야 합니다.</p>}
             <label className="mt-3 flex items-start gap-2"><input type="checkbox" className="mt-1" checked={approved} disabled={!liveEnabled || busy || requestId.current !== null} onChange={(event) => setApproved(event.target.checked)} />위 자료의 OpenAI 전송과 최대 호출 예산을 확인했습니다.</label>
           </div>}
-          {mode === 'live' && !pending && selected?.execution_profiles.live && <LiveReadinessPanel key={`${dataset}:${selected.execution_profiles.live}:${budgetRevision}`} datasetId={dataset} executionProfile={selected.execution_profiles.live} onExpired={onExpired} />}
+          {mode === 'live' && !pending && selected?.execution_profiles.live && <div className="min-w-0 md:col-span-2"><LiveReadinessPanel key={`${dataset}:${selected.execution_profiles.live}`} datasetId={dataset} executionProfile={selected.execution_profiles.live} onExpired={onExpired} /></div>}
+          <button className={`${styles.primaryButton} justify-self-start md:col-span-2`} disabled={busy || !!storageError || rejected || (!pending && (!supported || !dataset || !reference || !candidate || (mode === 'live' && (!approved || !liveEnabled || !canGenerate))))}>{busy ? '접수 중…' : pending ? '같은 요청으로 재시도' : mode === 'live' ? '새 응답 생성 및 평가' : '평가 실행'}</button>
         </form>
         {selected && <p className="text-xs leading-5 text-ink-muted">비교 범위: {selected.case_ids.join(', ')} · {selected.case_ids.length}건. {mode === 'live' ? '현재 모델의 새 응답과 선택한 기준 응답을 비교합니다.' : reference === candidate ? '같은 저장 결과의 재현 검증입니다.' : '두 실행의 위 사례만 비교합니다. 원본의 다른 사례는 평가 범위에 포함하지 않습니다.'}</p>}
         {pending && <div className="rounded-xl bg-amber-50 p-3 text-sm" role="status"><p>보관한 요청: {pending.request_id}</p><p>{pending.dataset_id} · 기준 {pending.reference_capture_id}{pending.baseline_version ? ` · 기준 버전 ${pending.baseline_version}` : ''} · {pending.live_config ? `${pending.live_config.model} · 최대 ${pending.live_config.max_model_calls}회 · 출력 ${pending.live_config.max_output_tokens}토큰/회 · 입력 ${pending.live_config.max_input_tokens ?? '기록 없음'}토큰/회` : '저장 응답 재평가'}</p><p>새로고침·재로그인 뒤에도 이 탭에서 같은 요청을 확인합니다. 탭을 닫기 전 실행 이력에서 접수 여부를 확인하세요.</p></div>}
@@ -255,8 +303,6 @@ function EvaluationList({ owner, datasets, liveEnabled: allLiveEnabled, ragLiveE
         {submitError && <p role="alert" className="text-sm text-red-700">{submitError}</p>}
         {rejected && <button className={styles.secondaryButton} onClick={reselect}>접수되지 않은 조건 다시 선택</button>}
       </section>
-      <BudgetOverview onExpired={onExpired} refreshKey={refresh} operatorId={owner} onBudgetChanged={() => setBudgetRevision((value) => value + 1)} />
-      <div id="evaluation-schedules" className="scroll-mt-28"><EvaluationSchedulesPanel owner={owner} datasets={datasets} onExpired={onExpired} refreshKey={refresh + budgetRevision} /></div>
     </div>
   </>
 }

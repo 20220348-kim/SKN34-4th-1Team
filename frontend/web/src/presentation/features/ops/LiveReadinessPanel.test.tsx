@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { MemoryRouter } from 'react-router'
 import { getLiveReadiness } from '../../../data/ops/opsApi'
 import { LiveReadinessPanel } from './LiveReadinessPanel'
 
@@ -12,14 +13,14 @@ const checked = {
   remaining: { calls: 12, input_tokens: 400000, output_tokens: 24000 }, blockers: [], warnings: [],
 }
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } })
-const mount = (onExpired = vi.fn()) => render(<LiveReadinessPanel datasetId="fixed" executionProfile={profile} onExpired={onExpired} />)
+const mount = (onExpired = vi.fn()) => render(<LiveReadinessPanel datasetId="fixed" executionProfile={profile} onExpired={onExpired} />, { wrapper: MemoryRouter })
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 describe('실행 설정·예산 점검', () => {
   it('명시적인 GET 점검만 수행하며 폼 접수나 예산 예약을 하지 않는다', async () => {
     const fetch = vi.fn(async () => json(checked)), submit = vi.fn((event) => event.preventDefault())
     vi.stubGlobal('fetch', fetch)
-    render(<form onSubmit={submit}><LiveReadinessPanel datasetId="fixed" executionProfile={profile} onExpired={vi.fn()} /></form>)
+    render(<form onSubmit={submit}><LiveReadinessPanel datasetId="fixed" executionProfile={profile} onExpired={vi.fn()} /></form>, { wrapper: MemoryRouter })
     expect(fetch).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: '실행 설정·예산 점검' }))
     expect(await screen.findByRole('status')).toHaveProperty('textContent', '조회 시점의 설정·예산에서 차단 사유가 없습니다.')
@@ -40,7 +41,7 @@ describe('실행 설정·예산 점검', () => {
     await screen.findByText('누적 예산 한도를 설정하세요.')
     expect(screen.getAllByText('확인 불가·미설정')).toHaveLength(3)
     expect(screen.getByRole('list', { name: '점검 주의 사항' }).textContent).toContain('미확인 과거 입력')
-    expect(screen.getByRole('link', { name: '누적 예산 관리로 이동' }).getAttribute('href')).toBe('#evaluation-budget')
+    expect(screen.getByRole('link', { name: '누적 예산 관리로 이동' }).getAttribute('href')).toBe('/ops/budget')
     expect(screen.queryByText('조회 시점의 설정·예산에서 차단 사유가 없습니다.')).toBeNull()
   })
 
@@ -57,7 +58,7 @@ describe('실행 설정·예산 점검', () => {
     let resolve!: (value: Response) => void
     const pending = new Promise<Response>((done) => { resolve = done })
     vi.stubGlobal('fetch', vi.fn().mockReturnValueOnce(pending).mockResolvedValueOnce(json({ ...checked, dataset_id: 'second', model: 'second-model' })))
-    const view = render(<LiveReadinessPanel key="first" datasetId="fixed" executionProfile={profile} onExpired={vi.fn()} />)
+    const view = render(<LiveReadinessPanel key="first" datasetId="fixed" executionProfile={profile} onExpired={vi.fn()} />, { wrapper: MemoryRouter })
     fireEvent.click(screen.getByRole('button'))
     view.rerender(<LiveReadinessPanel key="second" datasetId="second" executionProfile={profile} onExpired={vi.fn()} />)
     expect(screen.queryByRole('table')).toBeNull()
