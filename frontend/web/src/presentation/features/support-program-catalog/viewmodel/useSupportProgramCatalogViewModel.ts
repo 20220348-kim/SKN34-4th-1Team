@@ -32,6 +32,8 @@ export function useSupportProgramCatalogViewModel(filters: SupportProgramCatalog
   }, [key, version, useCase])
   const phase = state.key === key ? state.phase : 'loading'
   return { phase, data: phase === 'ready' ? state.data : null,
+    /** 다시 읽는 동안 화면이 흐리게 보여 줄 직전 결과입니다. 처음 읽을 때는 없습니다. */
+    stale: phase === 'loading' ? state.data : null,
     regions: mergeCatalogFilterOptions(defaultCatalogRegions, state.data?.regions),
     categories: mergeCatalogFilterOptions(defaultCatalogCategories, state.data?.categories),
     startupStages: mergeCatalogFilterOptions(defaultCatalogStartupStages, state.data?.startupStages),

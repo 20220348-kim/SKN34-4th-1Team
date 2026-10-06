@@ -290,11 +290,15 @@ export function AppSidebar({ onClose, onNewChat, closeLabel, onNavigate, history
           </div>)}
           {history.deletingId !== null ? <p className="px-3 text-xs text-[#888]" role="status">대화 삭제 중…</p> : null}
           {history.deleteError ? <p className="px-3 text-xs text-red-700" role="alert">{history.deleteError}</p> : null}
-          {history.loading ? <p className="px-3 text-xs text-[#888]" role="status">기록을 불러오는 중…</p> : null}
+          {history.loading ? <p className="sr-only" role="status">기록을 불러오는 중…</p> : null}
+          {/* 처음 읽는 동안에는 기록 줄 자리 세 개를 둡니다. 더 읽을 때는 아래 버튼이 진행을 알립니다. */}
+          {history.loading && history.items.length === 0 ? <div className="flex flex-col gap-2 px-3 py-1" aria-hidden="true">
+            {['w-4/5', 'w-3/5', 'w-2/3'].map((width) => <span className={`block h-3.5 rounded-md bg-surface-muted motion-safe:animate-pulse ${width}`} key={width} />)}
+          </div> : null}
           {!history.loading && !history.loadError && history.items.length === 0 ? <p className="px-3 text-xs text-[#888]">대화를 시작하면 여기에 저장됩니다.</p> : null}
           {history.loadError ? <p className="px-3 text-xs text-red-700" role="alert">{history.loadError}</p> : null}
           {history.nextCursor !== null || history.loadError ? <button type="button" className={appSidebarStyles.accountMenuButton}
-            disabled={history.loading} onClick={history.loadMore}>{history.loadError ? '기록 다시 불러오기' : '이전 기록 더 보기'}</button> : null}
+            disabled={history.loading} aria-busy={history.loading} onClick={history.loadMore}>{history.loading ? '불러오는 중…' : history.loadError ? '기록 다시 불러오기' : '이전 기록 더 보기'}</button> : null}
           {history.saveError ? <div className="px-3 text-xs text-red-700" role="alert">
             <p>저장하지 못한 대화가 있습니다. 연결 오류·다른 창의 변경·저장 크기 제한 등을 확인해 주세요. 저장 전에는 이 창을 닫지 마세요.</p>
             <button type="button" className="cursor-pointer underline" onClick={history.retrySave}>대화 저장 재시도</button>

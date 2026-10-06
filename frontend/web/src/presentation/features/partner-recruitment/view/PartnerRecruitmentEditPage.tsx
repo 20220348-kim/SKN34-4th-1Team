@@ -5,11 +5,14 @@ import {
   workspaceTagClassName,
 } from '../../../shared/workspace/WorkspacePage.styles'
 import { WorkspacePageHeader } from '../../../shared/workspace/WorkspacePageHeader'
+import { useDelayedFlag } from '../../../shared/workspace/useDelayedFlag'
 import { appPaths } from '../../../shared/routes/appPaths'
 import { programDeadlineLabel } from '../../../shared/partner-recruitment/partnerRecruitmentLabels'
 import { usePartnerRecruitmentEditViewModel } from '../viewmodel/usePartnerRecruitmentEditViewModel'
 import { partnerRecruitmentStyles } from './PartnerRecruitment.styles'
 import { PartnerRecruitmentFormFields } from './PartnerRecruitmentFormFields'
+
+const skeletonBar = 'block rounded-md bg-surface-muted motion-safe:animate-pulse'
 
 /**
  * 모집글 수정 화면입니다. 작성 화면과 같은 2·3단계 폼을 쓰되 1단계의 공고는 바꿀 수 없어 묶인 공고를 보여 주기만 합니다.
@@ -19,13 +22,22 @@ export function PartnerRecruitmentEditPage() {
   const { phase, recruitment, canEdit, form, maximumRecruitmentDeadline, isSubmitting, submit, detailPath, listPath } =
     usePartnerRecruitmentEditViewModel()
   const header = <WorkspacePageHeader parent={{ to: appPaths.partners, label: '파트너 관리' }} title="모집글 수정" />
+  const showSkeleton = useDelayedFlag(phase === 'loading')
 
   if (phase === 'loading') {
     return (
       <>
         {header}
         <div className={workspacePageStyles.content} aria-label="모집글 불러오는 중">
-          <p className={workspacePageStyles.emptyNote}>모집글을 불러오는 중입니다.</p>
+          <p className="sr-only" role="status">모집글을 불러오는 중입니다.</p>
+          {/* 300ms가 넘으면 폼 카드 자리를 그립니다. 묶인 공고 한 줄과 입력 칸 다섯 개입니다. */}
+          {showSkeleton ? <section className={workspacePageStyles.card} aria-hidden="true">
+            <span className={`${skeletonBar} h-4 w-32`} />
+            <span className={`${skeletonBar} h-14 w-full rounded-[0.85rem]`} />
+            {Array.from({ length: 5 }, (_, index) => <span className="flex flex-col gap-2" key={index}>
+              <span className={`${skeletonBar} h-3 w-20`} /><span className={`${skeletonBar} h-11 w-full rounded-xl`} />
+            </span>)}
+          </section> : null}
         </div>
       </>
     )

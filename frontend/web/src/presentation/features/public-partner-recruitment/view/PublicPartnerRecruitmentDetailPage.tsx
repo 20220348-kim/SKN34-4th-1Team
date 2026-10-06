@@ -9,11 +9,14 @@ import {
 } from '../../../shared/partner-recruitment/partnerRecruitmentLabels'
 import { RecruitmentDdayTag } from '../../../shared/partner-recruitment/RecruitmentDdayTag'
 import { publicPaths } from '../../../shared/routes/appPaths'
+import { useDelayedFlag } from '../../../shared/workspace/useDelayedFlag'
 import { usePublicPartnerRecruitmentDetailViewModel } from '../viewmodel/usePublicPartnerRecruitmentDetailViewModel'
 import { MaskedCompanyRow } from './MaskedCompanyRow'
 import { LoginPromptDialog } from '../../../shared/auth/LoginPromptDialog'
 import { publicPartnerLoginDescription, publicPartnerMemberBenefits } from './publicPartnerMessages'
 import { publicPartnerRecruitmentStyles as styles } from './PublicPartnerRecruitment.styles'
+
+const skeletonBar = 'block rounded-md bg-surface-muted motion-safe:animate-pulse'
 
 /**
  * 로그인 전 공개 모집글 상세입니다. 공고 원문과 모집 조건은 그대로 보여 주지만 작성 기업 정보는 가리고, 프로필 매칭과
@@ -30,12 +33,20 @@ export function PublicPartnerRecruitmentDetailPage() {
     openLoginPrompt,
     closeLoginPrompt,
   } = usePublicPartnerRecruitmentDetailViewModel()
+  const showSkeleton = useDelayedFlag(phase === 'loading')
 
   if (phase === 'loading') {
     return (
       <main className={styles.page} aria-label="모집글 불러오는 중">
         <Link className={styles.backLink} to={publicPaths.partners}>← 파트너 모집 목록</Link>
-        <p className={styles.description}>모집글을 불러오는 중입니다.</p>
+        <p className="sr-only" role="status">모집글을 불러오는 중입니다.</p>
+        {/* 300ms가 넘으면 모집 조건 카드 자리를 그립니다. */}
+        {showSkeleton ? <section className={styles.card} aria-hidden="true">
+          <div className={styles.cardTop}><span className={`${skeletonBar} h-[1.35rem] w-20 rounded-full`} /><span className={`${skeletonBar} h-3 w-24`} /></div>
+          <span className={`${skeletonBar} h-6 w-3/5`} />
+          <span className={`${skeletonBar} h-12 w-full rounded-[0.85rem]`} />
+          <span className={`${skeletonBar} h-3.5 w-full`} /><span className={`${skeletonBar} h-3.5 w-11/12`} /><span className={`${skeletonBar} h-3.5 w-2/3`} />
+        </section> : null}
       </main>
     )
   }

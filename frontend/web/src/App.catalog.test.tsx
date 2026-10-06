@@ -384,6 +384,42 @@ describe('지원사업 직접 필터 검색', () => {
     expect(fetchMock).toHaveBeenCalledOnce()
   })
 
+  it('읽는 동안 결과 수를 0건이 아닌 —로 두고, 처음엔 행 자리를 그리며 다시 읽을 때는 직전 결과를 흐리게 유지한다', async () => {
+    // 응답 검증이 쪽 크기(12)와 건수를 맞춰 보므로 첫 쪽 12건 + 둘째 쪽 1건(총 13건)으로 둡니다.
+    const firstPage = Array.from({ length: 12 }, (_, index) => ({ ...program, id: `page-1-${index}`, title: index === 0 ? program.title : `${program.title} ${index}` }))
+    const resolvers: ((response: Response) => void)[] = []
+    const fetchMock = vi.fn().mockImplementation(() => new Promise<Response>((done) => { resolvers.push(done) }))
+    vi.stubGlobal('fetch', fetchMock)
+    start()
+    const results = screen.getByRole('region', { name: '필터 검색 결과' })
+    const heading = () => within(results).getByRole('heading', { level: 2 }).textContent
+    expect(heading()).toBe('검색 결과 —건')
+    // 300ms 안에는 낭독기용 문구만 있고, 더 걸리면 실제 행과 같은 틀의 자리를 그립니다.
+    expect(results.querySelector('[class*="animate-pulse"]')).toBeNull()
+    await waitFor(() => expect(results.querySelectorAll('[aria-hidden="true"] [class*="animate-pulse"]').length).toBeGreaterThan(12))
+    expect(within(results).queryByText('조건에 맞는 공고가 없어요.')).toBeNull()
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce())
+    await act(async () => resolvers[0](Response.json({ ...catalog, programs: firstPage, total: 13, totalPages: 2 })))
+    await waitFor(() => expect(heading()).toBe('검색 결과 13건'))
+    expect(results.querySelector('[class*="animate-pulse"]')).toBeNull()
+    const row = within(results).getByRole('link', { name: program.title })
+
+    fireEvent.click(within(results).getByRole('button', { name: '2페이지' }))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    expect(heading()).toBe('검색 결과 —건')
+    // 직전 행과 페이지 이동은 사라지지 않고 흐려진 채 남습니다.
+    expect(results.contains(row)).toBe(true)
+    expect(row.closest('[aria-busy="true"]')?.className).toContain('opacity-50')
+    expect(within(results).getByRole('navigation', { name: '공고 페이지' }).className).toContain('pointer-events-none')
+    expect(results.querySelector('[class*="animate-pulse"]')).toBeNull()
+
+    await act(async () => resolvers[1](Response.json({ ...catalog, programs: [{ ...program, id: 'page-2-0', title: '둘째 쪽 공고' }], total: 13, page: 2, totalPages: 2 })))
+    await waitFor(() => expect(heading()).toBe('검색 결과 13건'))
+    expect(within(results).getByRole('link', { name: '둘째 쪽 공고' }).closest('[aria-busy="true"]')).toBeNull()
+    expect(within(results).queryByRole('link', { name: program.title })).toBeNull()
+  })
+
   it('첫 조회 중에도 기본 필터로 검색하고 이전 응답은 취소한다', async () => {
     let resolve!: (response: Response) => void
     const fetchMock = vi.fn().mockImplementationOnce(() => new Promise<Response>((done) => { resolve = done }))

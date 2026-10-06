@@ -53,6 +53,10 @@ export const adminAccountsPageStyles = {
   historyMeta: 'text-[0.72rem] text-ink-muted',
   reasonInput: 'min-h-24 resize-y py-2 leading-[1.6]',
   reasonCount: 'm-0 text-right text-[0.72rem] text-ink-muted',
+  // 불러오는 동안 요약 칸·표 행·상세 카드 안을 채우는 막대와, 다시 읽는 동안 직전 표를 흐리게 두는 상태입니다.
+  skeletonBar: 'block rounded-md bg-surface-muted motion-safe:animate-pulse',
+  skeletonLine: 'flex items-center',
+  stale: 'pointer-events-none opacity-50',
 } as const
 
 /** 요약 수치가 나타내는 상태입니다. 색이 아니라 의미로 고르도록 이름을 상태로 둡니다. */

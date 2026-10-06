@@ -64,7 +64,8 @@ export const assistantStyles = {
   paragraph: 'm-0 mb-1.5 last:mb-0',
   timestamp: 'px-1 text-[10.5px] text-ink-muted',
   typing: 'inline-flex gap-1 rounded-2xl rounded-tl-[4px] bg-canvas px-3.5 py-3',
-  typingDot: 'inline-block size-1.5 rounded-full bg-ink-muted/70',
+  // 검색 말풍선과 같은 점 움직임입니다. 둘째 · 셋째 점은 조금씩 늦게 시작하고, 움직임 줄이기 설정이면 멈춥니다.
+  typingDot: 'inline-block size-1.5 rounded-full bg-ink-muted/70 motion-safe:animate-chat-loading-dot motion-reduce:animate-none nth-2:[animation-delay:160ms] nth-3:[animation-delay:320ms]',
 
   // 빠른 답변: 봇 말풍선 아래 알약. 누르면 사용자 말풍선이 되고 사라집니다.
   quickReplies: 'flex flex-wrap gap-1.5 pl-9',

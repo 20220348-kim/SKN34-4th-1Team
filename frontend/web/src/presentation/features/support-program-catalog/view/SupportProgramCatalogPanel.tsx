@@ -9,10 +9,13 @@ import { defaultCatalogFilters, joinFilterValues, readCatalogFilters, splitFilte
 import { FilterMultiChoices } from '../../../shared/workspace/FilterMultiChoices'
 import { SelectField } from '../../../shared/workspace/SelectField'
 import { toFilterChoiceOptions } from '../../../shared/workspace/filterChoiceOptions'
+import { useDelayedFlag } from '../../../shared/workspace/useDelayedFlag'
 import { useSupportProgramCatalogViewModel } from '../viewmodel/useSupportProgramCatalogViewModel'
 
 const inputStyle = 'min-h-11 w-full min-w-0 rounded-xl border border-line bg-white px-3 text-sm text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary'
 const buttonStyle = 'min-h-11 cursor-pointer rounded-xl px-5 text-sm font-bold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary disabled:cursor-not-allowed disabled:opacity-40'
+/** 다시 읽는 동안 직전 내용을 흐리게 두고 누르지 못하게 합니다. */
+const stale = 'pointer-events-none opacity-50'
 const statusLabels: Record<SupportProgramCatalogFilters['status'], string> = { ALL: '전체 접수 상태', ...programStatusLabels }
 
 /** 자연어 추천과 구분되는 DB 목록 화면입니다. AI 자격 판정을 표시하지 않습니다. */
@@ -23,7 +26,13 @@ export function SupportProgramCatalogPanel() {
   const catalog = useSupportProgramCatalogViewModel(filters)
   const apply = (next: SupportProgramCatalogFilters) => setParams(writeCatalogFilters(next))
   const returnTo = `${pathname}?${writeCatalogFilters(filters)}`
-  const pageStart = Math.max(1, Math.min(filters.page - 2, (catalog.data?.totalPages ?? 1) - 4))
+  // 다시 읽는 동안에는 직전 결과와 페이지 이동을 흐리게 둔 채 새 결과로 바로 바꿉니다. 처음 읽을 때만 300ms가 넘으면 행 자리를 그립니다.
+  const loading = catalog.phase === 'loading'
+  const shown = catalog.data ?? catalog.stale
+  // 직전 결과가 비어 있었으면 흐릴 행이 없으므로, 읽는 동안 빈 상태를 보여 주지 않고 처음처럼 행 자리를 그립니다.
+  const hasRows = Boolean(shown?.programs.length)
+  const showSkeleton = useDelayedFlag(loading && !hasRows)
+  const pageStart = Math.max(1, Math.min(filters.page - 2, (shown?.totalPages ?? 1) - 4))
   return (
     <main className="flex-1 bg-white text-ink">
       <div className="mx-auto grid w-full max-w-6xl gap-6 px-6 pt-6 pb-12 max-chat:gap-5 max-chat:px-4 max-chat:pt-4">
@@ -36,24 +45,23 @@ export function SupportProgramCatalogPanel() {
           startupStages={catalog.startupStages} applicantTypes={catalog.applicantTypes} founderAges={catalog.founderAges} onApply={apply} />
         <section aria-label="필터 검색 결과" className="min-w-0">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-            <h2 className="m-0 text-base font-bold" aria-live="polite">검색 결과 <span className="text-brand-primary">{(catalog.data?.total ?? 0).toLocaleString()}건</span></h2>
+            <h2 className="m-0 text-base font-bold" aria-live="polite">검색 결과 <span className="text-brand-primary">{catalog.data ? catalog.data.total.toLocaleString() : '—'}건</span></h2>
             <label className="flex items-center gap-2 text-xs text-ink-muted">정렬
               <SelectField label="공고 정렬" className={`${inputStyle} !min-h-9 !w-auto !text-xs`} value={filters.sort}
                 options={[{ value: 'RECENT', label: '최신순' }, { value: 'DEADLINE', label: '마감일순' }]}
                 onChange={(value) => apply({ ...filters, sort: value as SupportProgramCatalogFilters['sort'], page: 1 })} />
             </label>
           </div>
-          {catalog.phase === 'loading' ? <div role="status" className="rounded-2xl border border-line px-5 py-14 text-center text-sm text-ink-muted">
-            <span className="mx-auto mb-3 block size-6 rounded-full border-2 border-brand-soft border-t-brand-primary motion-safe:animate-spin" aria-hidden="true" />공고를 불러오고 있어요…
-          </div> : catalog.phase === 'failed' ? <div role="alert" className="rounded-2xl border border-line p-8 text-center">
+          {loading && <p className="sr-only" role="status">공고를 불러오고 있어요…</p>}
+          {loading && !hasRows ? (showSkeleton ? <CatalogRowSkeletons /> : null) : catalog.phase === 'failed' ? <div role="alert" className="rounded-2xl border border-line p-8 text-center">
             <p className="text-sm text-ink-muted">공고 목록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.</p>
             <button type="button" className={`${buttonStyle} bg-brand-primary text-white`} onClick={catalog.retry}>다시 불러오기</button>
-          </div> : catalog.data?.programs.length ? (
-            <div className="overflow-hidden rounded-2xl border border-line">
+          </div> : shown?.programs.length ? (
+            <div className={`overflow-hidden rounded-2xl border border-line ${loading ? stale : ''}`} aria-busy={loading}>
               <div aria-hidden="true" className="grid grid-cols-[minmax(0,1fr)_10rem_10rem] gap-5 bg-[#f7f8f9] px-5 py-3 text-xs font-semibold text-ink-muted max-chat:hidden">
                 <span>지원사업명 · 분야</span><span>기관</span><span>접수 상태 · 신청 기간</span>
               </div>
-              {catalog.data.programs.map((program) => <CatalogRow key={JSON.stringify([program.sourceCode, program.id])} program={program} returnTo={returnTo} inApp={isAppPath(pathname)} />)}
+              {shown.programs.map((program) => <CatalogRow key={JSON.stringify([program.sourceCode, program.id])} program={program} returnTo={returnTo} inApp={isAppPath(pathname)} />)}
             </div>
           ) : <div className="rounded-2xl border border-line p-10 text-center">
             <h3 className="m-0 text-base font-bold">{catalog.data?.total ? '이 페이지에는 공고가 없어요.' : '조건에 맞는 공고가 없어요.'}</h3>
@@ -62,14 +70,14 @@ export function SupportProgramCatalogPanel() {
               {catalog.data?.total ? '첫 페이지로' : '전체 공고 보기'}
             </button>
           </div>}
-          {catalog.data && catalog.data.totalPages > 1 ? <nav aria-label="공고 페이지" className="mt-6 flex flex-wrap justify-center gap-1.5">
+          {shown && shown.totalPages > 1 ? <nav aria-label="공고 페이지" className={`mt-6 flex flex-wrap justify-center gap-1.5 ${loading ? stale : ''}`}>
             <button type="button" className={`${buttonStyle} !px-3 text-ink-muted`} disabled={filters.page <= 1} onClick={() => apply({ ...filters, page: filters.page - 1 })}>이전</button>
-            {Array.from({ length: Math.min(5, catalog.data.totalPages) }, (_, index) => pageStart + index).map((page) => (
+            {Array.from({ length: Math.min(5, shown.totalPages) }, (_, index) => pageStart + index).map((page) => (
               <button type="button" key={page} aria-label={`${page}페이지`} aria-current={page === filters.page ? 'page' : undefined}
                 className={`${buttonStyle} !px-3.5 ${page === filters.page ? 'bg-brand-primary text-white' : 'text-ink-muted hover:bg-canvas'}`}
                 onClick={() => apply({ ...filters, page })}>{page}</button>
             ))}
-            <button type="button" className={`${buttonStyle} !px-3 text-ink-muted`} disabled={filters.page >= catalog.data.totalPages} onClick={() => apply({ ...filters, page: filters.page + 1 })}>다음</button>
+            <button type="button" className={`${buttonStyle} !px-3 text-ink-muted`} disabled={filters.page >= shown.totalPages} onClick={() => apply({ ...filters, page: filters.page + 1 })}>다음</button>
           </nav> : null}
         </section>
         <p className="m-0 text-xs leading-relaxed text-ink-muted">필터는 제공처의 공고 분류이며 신청 자격 판정이 아닙니다. 전국 공고는 ‘전국’을 선택해 확인하세요. 신청 자격은 공고 원문에서 확인해 주세요.</p>
@@ -149,6 +157,28 @@ function CatalogFilters({ filters, regions, categories, startupStages, applicant
         onClick={() => { setDraft({ ...defaultCatalogFilters }); setShowStartupFilters(false); onApply({ ...defaultCatalogFilters }) }}>필터 초기화</button>
     </div>
   </form>
+}
+
+const skeletonBar = 'block rounded-md bg-surface-muted motion-safe:animate-pulse'
+
+/** 결과 행 자리입니다. 실제 행과 같은 세 칸(공고명 · 기관 · 접수 상태와 기간) 틀에 막대만 채웁니다. */
+function CatalogRowSkeletons() {
+  return <div className="overflow-hidden rounded-2xl border border-line" aria-hidden="true">
+    <div className="grid grid-cols-[minmax(0,1fr)_10rem_10rem] gap-5 bg-[#f7f8f9] px-5 py-3 text-xs font-semibold text-ink-muted max-chat:hidden">
+      <span>지원사업명 · 분야</span><span>기관</span><span>접수 상태 · 신청 기간</span>
+    </div>
+    {Array.from({ length: 12 }, (_, index) => <div key={index} className="grid min-w-0 grid-cols-[minmax(0,1fr)_10rem_10rem] gap-5 border-t border-line px-5 py-5 first:border-t-0 max-chat:grid-cols-1 max-chat:gap-2 max-chat:px-4">
+      <div className="min-w-0">
+        <span className="mb-2 flex h-[18px] items-center"><span className={`${skeletonBar} h-2.5 w-1/4`} /></span>
+        <span className="flex h-[1.42rem] items-center"><span className={`${skeletonBar} h-3.5 w-2/3`} /></span>
+      </div>
+      <span className="flex h-[1.22rem] items-center self-center"><span className={`${skeletonBar} h-3 w-3/4`} /></span>
+      <div className="self-center max-chat:flex max-chat:flex-wrap max-chat:items-center max-chat:gap-2">
+        <span className={`${skeletonBar} h-6 w-12 rounded-full`} />
+        <span className="mt-1 flex h-[1.22rem] items-center max-chat:mt-0"><span className={`${skeletonBar} h-3 w-24`} /></span>
+      </div>
+    </div>)}
+  </div>
 }
 
 /** URL로 들어온 값이 지금 목록에 없어도 선택 상태를 잃지 않도록 뒤에 붙여 보여 줍니다. */

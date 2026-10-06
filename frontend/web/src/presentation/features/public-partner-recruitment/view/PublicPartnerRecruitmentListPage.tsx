@@ -1,5 +1,6 @@
 import type { PartnerRecruitmentSummary } from '../../../../domain/entities/PartnerRecruitment'
 import { SelectField } from '../../../shared/workspace/SelectField'
+import { useDelayedFlag } from '../../../shared/workspace/useDelayedFlag'
 import { workspacePageStyles, workspaceTagClassName } from '../../../shared/workspace/WorkspacePage.styles'
 import {
   programDeadlineLabel,
@@ -12,6 +13,8 @@ import { MaskedCompanyRow } from './MaskedCompanyRow'
 import { LoginPromptDialog } from '../../../shared/auth/LoginPromptDialog'
 import { publicPartnerLoginDescription, publicPartnerMemberBenefits } from './publicPartnerMessages'
 import { publicPartnerRecruitmentStyles as styles } from './PublicPartnerRecruitment.styles'
+
+const skeletonBar = 'block rounded-md bg-surface-muted motion-safe:animate-pulse'
 
 function RecruitmentCard({
   recruitment,
@@ -87,6 +90,7 @@ export function PublicPartnerRecruitmentListPage() {
     openLoginPrompt,
     closeLoginPrompt,
   } = usePublicPartnerRecruitmentListViewModel()
+  const showSkeleton = useDelayedFlag(phase === 'loading' && recruitments.length === 0)
 
   return (
     <main className={styles.page}>
@@ -139,7 +143,7 @@ export function PublicPartnerRecruitmentListPage() {
         </form>
         {/* 지원사업 찾기 필터 검색과 같은 "검색 결과 N건" 제목과 출처·정렬 선택입니다. 지역·분야 필터는 두지 않습니다. */}
           <h2 className={styles.resultCount} aria-live="polite">
-            검색 결과 <span className={styles.resultTotal}>{resultTotal.toLocaleString()}건</span>
+            검색 결과 <span className={styles.resultTotal}>{phase === 'loading' ? '—' : resultTotal.toLocaleString()}건</span>
           </h2>
           <div className={styles.listOptions}>
             <label className={styles.optionLabel}>출처
@@ -156,8 +160,16 @@ export function PublicPartnerRecruitmentListPage() {
             <button className={workspacePageStyles.quietLink} type="button" onClick={retry}>다시 시도</button>
           </section>
         ) : phase === 'loading' && recruitments.length === 0 ? (
-          <section className={styles.card} aria-label="모집글 불러오는 중">
-            <p className={styles.description}>모집글을 불러오는 중입니다.</p>
+          <section className={styles.cardGrid} aria-label="모집글 불러오는 중" aria-busy="true">
+            <p className="sr-only" role="status">모집글을 불러오는 중입니다.</p>
+            {/* 300ms가 넘으면 실제 카드와 같은 틀의 자리 세 장을 그립니다. */}
+            {showSkeleton ? [0, 1, 2].map((index) => <div className={styles.card} key={index} aria-hidden="true">
+              <div className={styles.cardTop}><span className={`${skeletonBar} h-[1.35rem] w-20 rounded-full`} /><span className={`${skeletonBar} h-3 w-14`} /></div>
+              <span className={`${skeletonBar} h-5 w-4/5`} />
+              <span className={`${skeletonBar} h-3.5 w-3/5`} />
+              <span className={`${skeletonBar} h-12 w-full rounded-[0.85rem]`} />
+              <span className="flex gap-1.5"><span className={`${skeletonBar} h-[1.35rem] w-16 rounded-full`} /><span className={`${skeletonBar} h-[1.35rem] w-12 rounded-full`} /><span className={`${skeletonBar} h-[1.35rem] w-20 rounded-full`} /></span>
+            </div>) : null}
           </section>
         ) : recruitments.length === 0 ? (
           <section className={styles.card} aria-label="검색 결과 없음">
@@ -170,7 +182,8 @@ export function PublicPartnerRecruitmentListPage() {
           </section>
         ) : (
           <>
-            <div className={styles.cardGrid}>
+            {/* 조건·페이지를 바꿔 다시 읽는 동안에는 직전 카드를 흐리게 둔 채 새 결과로 바꿉니다. */}
+            <div className={`${styles.cardGrid} ${phase === 'loading' ? 'pointer-events-none opacity-50' : ''}`} aria-busy={phase === 'loading'}>
               {recruitments.map((recruitment) => (
                 <RecruitmentCard key={recruitment.id} recruitment={recruitment} onOpenLoginPrompt={openLoginPrompt} />
               ))}

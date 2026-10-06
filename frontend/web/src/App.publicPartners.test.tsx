@@ -37,9 +37,11 @@ describe('공개 파트너 모집', () => {
   it('공개 목록은 출처·정렬·검색어를 바꾸면 첫 페이지부터 다시 읽는다', async () => {
     const browse = appContainer.resolve('browsePartnerRecruitmentsUseCase').execute as ReturnType<typeof vi.fn>
     renderApp('/partners', null)
-    // 처음 읽기 전에도 건수 자리를 비우지 않고 0건으로 보여 줍니다.
-    expect(screen.getByRole('heading', { level: 2, name: '검색 결과 0건' })).toBeTruthy()
+    // 처음 읽기 전에도 건수 자리는 비우지 않되, 아직 모르는 건수를 0건으로 보여 주지 않고 —로 둡니다.
+    expect(screen.getByRole('heading', { level: 2, name: '검색 결과 —건' })).toBeTruthy()
+    expect(screen.getByRole('status').textContent).toContain('모집글을 불러오는 중입니다.')
     await screen.findAllByRole('article')
+    expect(screen.getByRole('heading', { level: 2 }).textContent).not.toContain('—')
 
     chooseOption(screen.getByRole('combobox', { name: '정렬' }), 'RECENT')
     await waitFor(() => expect(browse).toHaveBeenLastCalledWith(

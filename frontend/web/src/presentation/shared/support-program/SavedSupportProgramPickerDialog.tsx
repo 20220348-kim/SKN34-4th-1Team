@@ -2,6 +2,7 @@ import { useEffect, useId, useRef } from 'react'
 import { programStatusLabels } from '@govbiz/shared/domain/labels'
 
 import type { SupportProgram } from '../../../domain/entities/SupportProgram'
+import { useDelayedFlag } from '../workspace/useDelayedFlag'
 
 type Props = {
   open: boolean
@@ -23,6 +24,7 @@ const muted = 'text-sm leading-6 text-slate-600'
 const button = 'inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-emerald-700'
 const primary = 'inline-flex items-center justify-center rounded-lg bg-brand-primary px-4 py-2 text-sm font-semibold text-white hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-brand-primary'
 const warning = 'rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950'
+const skeletonBar = 'block rounded-md bg-surface-muted motion-safe:animate-pulse'
 const programKey = (program: Pick<SupportProgram, 'sourceCode' | 'id'>) => `${program.sourceCode}:${program.id}`
 
 export function SavedSupportProgramPickerDialog({
@@ -32,6 +34,9 @@ export function SavedSupportProgramPickerDialog({
   const titleId = useId()
   const closeRef = useRef<HTMLButtonElement>(null)
   useEffect(() => { if (open) closeRef.current?.focus() }, [open])
+  // 300ms 안에 끝나면 행 자리를 그리지 않습니다.
+  const loading = open && (phase === 'idle' || phase === 'loading')
+  const showSkeleton = useDelayedFlag(loading)
   if (!open) return null
 
   return <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/40 p-4" role="dialog" aria-modal="true" aria-labelledby={titleId} onClick={(event) => { if (event.target === event.currentTarget) onClose() }} onKeyDown={(event) => { if (event.key === 'Escape') onClose() }}>
@@ -41,7 +46,11 @@ export function SavedSupportProgramPickerDialog({
         <button ref={closeRef} type="button" className="grid size-10 shrink-0 place-items-center rounded-full text-xl hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-emerald-700" aria-label="관심 공고함 닫기" onClick={onClose}>×</button>
       </header>
       <div className="min-h-36 flex-1 overflow-y-auto p-5">
-        {(phase === 'idle' || phase === 'loading') && <p role="status">관심 공고를 불러오는 중입니다.</p>}
+        {loading && <p className="sr-only" role="status">관심 공고를 불러오는 중입니다.</p>}
+        {showSkeleton && <ul className="space-y-3" aria-hidden="true">{[0, 1, 2].map((index) => <li className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-4" key={index}>
+          <span className="flex min-w-0 flex-1 flex-col gap-2"><span className={`${skeletonBar} h-4 w-3/5`} /><span className={`${skeletonBar} h-3 w-2/5`} /></span>
+          <span className={`${skeletonBar} h-9 w-16 rounded-lg`} />
+        </li>)}</ul>}
         {phase === 'failed' && <div className={warning} role="alert"><p>관심 공고를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.</p><button type="button" className={`${button} mt-3`} onClick={onRetry}>다시 불러오기</button></div>}
         {phase === 'ready' && programs.length === 0 && <p className={muted}>관심 공고함에 담은 공고가 없습니다.</p>}
         {programs.length > 0 && <ul className="space-y-3" aria-label={listLabel}>{programs.map((program) => {
