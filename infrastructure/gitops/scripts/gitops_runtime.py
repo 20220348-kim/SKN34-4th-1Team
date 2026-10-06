@@ -7,12 +7,13 @@ import re
 import subprocess
 import tempfile
 from fractions import Fraction
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import connected_runtime
 import fork_cluster as cluster
 import ops_runtime
 import yaml
+from check_msa import CHART_PATH
 from gitops_service import service_review
 
 SCOPE = "local_overrides_and_service_runtime"
@@ -278,6 +279,11 @@ def portfolio_defaults(service):
         raise ValueError("Unknown service reference")
     path = cluster.ROOT / f"environments/portfolio/{service}.yaml"
     payload = path.read_bytes()
+    return values_reference(payload)
+
+
+def values_reference(payload):
+    """Read environment contracts from captured values bytes without resolving Secrets."""
     values = yaml.safe_load(payload)
     expected = [{"name": name, "value": value} for name, value in values["env"].items()]
     expected.extend(
@@ -288,6 +294,35 @@ def portfolio_defaults(service):
         for name in values["secretKeys"]
     )
     return payload, expected
+
+
+def published_defaults(files):
+    """Use only the bundle returned by verified_release, never checkout chart files."""
+    references = {}
+    for service in cluster.SERVICES:
+        payload = files[f"infrastructure/gitops/environments/fork/{service}.yaml"]
+        if yaml.safe_load(payload).get("serviceName") != service:
+            raise ValueError("Published reference service differs")
+        references[service] = values_reference(payload)
+    chart = {}
+    for path, payload in files.items():
+        if not path.startswith(CHART_PATH + "/"):
+            continue
+        name = path[len(CHART_PATH) + 1 :]
+        parsed = PurePosixPath(name)
+        if (
+            not name
+            or parsed.is_absolute()
+            or ".." in parsed.parts
+            or str(parsed) != name
+            or "\\" in name
+            or ":" in name
+        ):
+            raise ValueError("Invalid published chart path")
+        chart[name] = payload
+    if not {"Chart.yaml", "values.yaml"} <= chart.keys():
+        raise ValueError("Published chart is incomplete")
+    return references, chart
 
 
 def environment_rows(rows):
@@ -399,7 +434,9 @@ def local_inputs(state, settings):
     }
 
 
-def preflight(state, fork, helm="helm", *, review_preservation=False):
+def preflight(
+    state, fork, helm="helm", *, review_preservation=False, published_files=None
+):
     """Detect local connection conflicts, not migration or deployment readiness."""
     state = Path(state)
     settings = cluster.load_settings(state)
@@ -431,11 +468,20 @@ def preflight(state, fork, helm="helm", *, review_preservation=False):
     services = {
         service: read_resource("Service", service) for service in cluster.SERVICES
     }
-    references = {service: portfolio_defaults(service) for service in cluster.SERVICES}
-    chart = chart_inputs()
+    if published_files is None:
+        references = {
+            service: portfolio_defaults(service) for service in cluster.SERVICES
+        }
+        chart = chart_inputs()
+    else:
+        references, chart = published_defaults(published_files)
     expected, expected_services = rendered_defaults(helm, references, chart)
     containers = deployments["ops-service"]["spec"]["template"]["spec"]["containers"]
     preservation = preservation_review(inputs, deployments, references)
+    if published_files is not None:
+        preservation["reference"] = "verified_publication_ops_defaults"
+        for review in preservation["serviceReviews"].values():
+            review["reference"] = "verified_publication_service_defaults"
     preservation["runtimeReviews"] = {
         service: execution_review(deployments[service], expected[service])
         for service in cluster.SERVICES
@@ -522,13 +568,17 @@ def preflight(state, fork, helm="helm", *, review_preservation=False):
                 or current.get("spec") != resource["spec"]
             ):
                 raise ValueError("Local runtime changed during preflight")
-    for service in cluster.SERVICES:
-        if portfolio_defaults(service) != references[service]:
+    if published_files is None:
+        for service in cluster.SERVICES:
+            if portfolio_defaults(service) != references[service]:
+                raise ValueError("Local runtime changed during preflight")
+        if chart_inputs() != chart:
             raise ValueError("Local runtime changed during preflight")
+    elif published_defaults(published_files) != (references, chart):
+        raise ValueError("Published inputs changed during preflight")
     if (
         cluster.load_settings(state) != settings
         or local_inputs(state, settings) != inputs
-        or chart_inputs() != chart
     ):
         raise ValueError("Local runtime changed during preflight")
     cluster.require_dev(state, settings)

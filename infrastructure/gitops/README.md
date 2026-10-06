@@ -14,6 +14,7 @@ LLMOps 개발 순서는 [후속 개발 전략](../../docs/llmops-next-developmen
 | 이미지 발행 | 개인 포크의 같은 소스 SHA에 대한 필수 CI와 이미지 검증 후 GHCR 발행 |
 | 별도 배포 PR | 제거. 자동 브랜치 생성·PR 생성·검사 dispatch 없음 |
 | Argo 입력 준비 | `deployment.py plan-gitops`: 검증된 공개 이미지·소스 SHA로 고정한 수동 동기화 계획 출력 |
+| 발행본 기준 연결 설정 비교 | `deployment.py review-published-runtime --state-dir ...`: 공개 발행 Chart·values로 기존 연결 설정을 재현하고 전후 발행 검증 |
 | Argo 자동 배포 | 대체 연결 미구현. 기존 클러스터는 변경하지 않음 |
 | 과거 snapshot | 읽기·검증 및 오프라인 정책 테스트 보존 |
 

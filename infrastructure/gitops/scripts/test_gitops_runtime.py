@@ -199,6 +199,62 @@ class RuntimePreflightTests(unittest.TestCase):
                 self.assertNotIn("PRIVATE", json.dumps(report))
                 self.assertNotIn("private", json.dumps(report))
 
+    def publication_files(self):
+        files = {
+            runtime.CHART_PATH + "/" + name: payload
+            for name, payload in runtime.chart_inputs().items()
+        }
+        files.update(
+            {
+                f"infrastructure/gitops/environments/fork/{service}.yaml": runtime.portfolio_defaults(
+                    service
+                )[0]
+                for service in runtime.cluster.SERVICES
+            }
+        )
+        return files
+
+    def test_published_references_do_not_fall_back_to_checkout_inputs(self):
+        files = self.publication_files()
+        with (
+            patch.object(
+                runtime, "chart_inputs", side_effect=AssertionError("checkout")
+            ),
+            patch.object(
+                runtime, "portfolio_defaults", side_effect=AssertionError("checkout")
+            ),
+        ):
+            report = runtime.preflight(self.state, FORK, published_files=files)
+        self.assertEqual(report["status"], "NO_LOCAL_OVERRIDES")
+        review = report["preservationReview"]
+        self.assertEqual(review["reference"], "verified_publication_ops_defaults")
+        self.assertTrue(
+            all(
+                item["reference"] == "verified_publication_service_defaults"
+                for item in review["serviceReviews"].values()
+            )
+        )
+        self.assertEqual(
+            self.render.call_args.args[2], runtime.published_defaults(files)[1]
+        )
+        self.assertEqual(self.command.call_count, 16)
+        self.assertFalse(report["deploymentAuthorized"])
+
+    def test_published_input_changes_during_rehearsal_invalidate_result(self):
+        files = self.publication_files()
+
+        def change(*args):
+            files[runtime.CHART_PATH + "/values.yaml"] += b"\n"
+            return {"status": "MATCHES_INSPECTED_FIELDS"}
+
+        with (
+            patch("gitops_preservation.review", side_effect=change),
+            self.assertRaisesRegex(ValueError, "Published inputs changed"),
+        ):
+            runtime.preflight(
+                self.state, FORK, review_preservation=True, published_files=files
+            )
+
     def test_sync_container_and_saved_bridge_are_blocked(self):
         containers = self.deployment["spec"]["template"]["spec"]["containers"]
         containers.append(copy.deepcopy(containers[0]) | {"name": "ops-sync"})
