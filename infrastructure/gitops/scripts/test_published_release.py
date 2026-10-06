@@ -172,6 +172,155 @@ class PublishedReleaseTests(SourceFixture):
             )
             self.assertEqual(values["imagePullSecrets"], [{"name": "ghcr-pull"}])
 
+    @unittest.skipUnless(
+        shutil.which("helm"), "Pinned Helm required for real rendering"
+    )
+    def test_gitops_plan_renders_the_verified_source_and_keeps_sync_disabled(self):
+        before = bundle.git_bytes(self.root, "status", "--porcelain")
+        with patch.object(cluster, "verify_pull_rights"):
+            record, files, sha = deploy.verified_release(
+                self.root, FORK, get=self.get, verify_public_manifests=True
+            )
+        # The resulting Application must stay on this revision after later merges.
+        self.current_sha = "e" * 40
+        calls = len(self.calls)
+        plan = deploy.gitops_plan(FORK, record, files, sha)
+        self.assertEqual(len(self.calls), calls)
+        self.assertEqual(plan, deploy.gitops_plan(FORK, record, files, sha))
+        self.assertFalse(plan["deploymentAuthorized"])
+        self.assertFalse(plan["existingRuntimeVerified"])
+        self.assertEqual(len(plan["resources"]), 5)
+        project, *apps = plan["resources"]
+        self.assertEqual(project["spec"]["sourceRepos"], [FORK.url])
+        self.assertEqual(project["spec"]["clusterResourceWhitelist"], [])
+        self.assertEqual(
+            project["spec"]["namespaceResourceWhitelist"],
+            [
+                {"group": "apps", "kind": "Deployment"},
+                {"group": "", "kind": "Service"},
+                {"group": "batch", "kind": "Job"},
+            ],
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            checkout = Path(directory).resolve()
+            bundle.write_files(
+                checkout,
+                {
+                    name: payload
+                    for name, payload in files.items()
+                    if name.startswith(bundle.CHART_PATH + "/")
+                },
+            )
+            for service, app in zip(bundle.SERVICES, apps, strict=True):
+                source = app["spec"]["source"]
+                helm = source["helm"]
+                self.assertEqual(source["targetRevision"], sha)
+                self.assertEqual(source["repoURL"], FORK.url)
+                self.assertEqual(source["path"], bundle.CHART_PATH)
+                self.assertEqual(
+                    set(helm), {"releaseName", "kubeVersion", "valuesObject"}
+                )
+                self.assertNotIn("sources", app["spec"])
+                self.assertNotIn("operation", app)
+                self.assertNotIn("finalizers", app["metadata"])
+                self.assertEqual(
+                    app["spec"]["syncPolicy"]["automated"],
+                    {
+                        "enabled": False,
+                        "prune": False,
+                        "selfHeal": False,
+                    },
+                )
+                self.assertEqual(app["spec"]["syncPolicy"]["retry"]["limit"], 0)
+                output = bundle.subprocess.check_output(
+                    [
+                        "helm",
+                        "template",
+                        helm["releaseName"],
+                        str(checkout / source["path"]),
+                        "-n",
+                        app["spec"]["destination"]["namespace"],
+                        "--kube-version",
+                        helm["kubeVersion"],
+                        "-f",
+                        "-",
+                    ],
+                    input=json.dumps(helm["valuesObject"]).encode(),
+                    timeout=30,
+                )
+                rendered = [
+                    r for r in bundle.yaml.safe_load_all(output) if r is not None
+                ]
+                verified = files[bundle.PREFIX + f"rendered/{service}.json"]
+                self.assertEqual(rendered, json.loads(verified))
+                self.assertEqual(
+                    plan["renderedSha256"][service], bundle.digest(verified)
+                )
+        self.assertEqual(
+            plan["resourcesSha256"], bundle.digest(bundle.encoded(plan["resources"]))
+        )
+        self.assertEqual(bundle.git_bytes(self.root, "status", "--porcelain"), before)
+        self.assertFalse(any("/pulls" in p or "deploy/fork" in p for p in self.calls))
+
+    def test_gitops_plan_rejects_wrong_source_private_images_and_changed_values(self):
+        with self.mocked_renderer():
+            record, files, sha = deploy.verified_release(self.root, FORK, get=self.get)
+        for change in (
+            {"verifiedRevision": "e" * 40},
+            {"repository": "other/project"},
+            {"branch": "other"},
+            {"visibility": "private"},
+        ):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                deploy.gitops_plan(FORK, record | change, files, sha)
+        path = bundle.PREFIX + "environments/fork/ops-service.yaml"
+        for change in (
+            {"image": {"repository": "wrong/image", "digest": "sha256:" + "a" * 64}},
+            {"imagePullSecrets": [{"name": "private-pull"}]},
+        ):
+            values = bundle.yaml.safe_load(files[path]) | change
+            altered = files | {path: bundle.yaml.safe_dump(values).encode()}
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                deploy.gitops_plan(FORK, record, altered, sha)
+
+    def test_gitops_plan_cli_uses_public_verification_without_cluster_or_git_writes(
+        self,
+    ):
+        with self.mocked_renderer():
+            record, files, sha = deploy.verified_release(self.root, FORK, get=self.get)
+        output = io.StringIO()
+        with (
+            patch("sys.argv", ["deployment.py", "plan-gitops"]),
+            patch.object(deploy, "from_origin", return_value=FORK),
+            patch.object(
+                deploy, "verified_release", return_value=(record, files, sha)
+            ) as verify,
+            patch.object(deploy, "commit_tree") as commit,
+            patch.object(deploy, "require_rules") as rules,
+            patch.object(cluster, "load_settings") as settings,
+            patch.object(cluster, "apply") as apply,
+            patch.object(cluster, "run") as command,
+            contextlib.redirect_stdout(output),
+        ):
+            self.assertEqual(deploy.main(), 0)
+        verify.assert_called_once_with(
+            Path(deploy.__file__).resolve().parents[3],
+            FORK,
+            "helm",
+            verify_public_manifests=True,
+        )
+        report = json.loads(output.getvalue())
+        self.assertEqual(report["schema"], "msa-gitops-plan-v1")
+        self.assertEqual(report["status"], "PLANNED")
+        self.assertEqual(report["sourceSha"], sha)
+        self.assertFalse(report["clusterVerified"])
+        self.assertFalse(report["layersDownloaded"])
+        self.assertFalse(report["automaticSyncEnabled"])
+        self.assertTrue(report["receiptsVerified"])
+        self.assertTrue(report["registryManifestsVerified"])
+        for mutation in (commit, rules, settings, apply, command):
+            mutation.assert_not_called()
+
     def test_public_check_reads_all_four_manifests_without_personal_credentials(self):
         requests = []
 
@@ -444,6 +593,10 @@ class PublicVerificationCliTests(unittest.TestCase):
             mutation.assert_not_called()
 
     def test_failure_returns_nonzero_with_safe_reason_and_no_partial_success(self):
+        for action in ("verify-public", "plan-gitops"):
+            self.assert_failure(action)
+
+    def assert_failure(self, action):
         for message, reason in (
             ("No complete verified publication", "publication_not_available"),
             ("Source advanced", "source_not_current"),
@@ -455,8 +608,8 @@ class PublicVerificationCliTests(unittest.TestCase):
         ):
             output = io.StringIO()
             with (
-                self.subTest(reason=reason),
-                patch("sys.argv", ["deployment.py", "verify-public"]),
+                self.subTest(action=action, reason=reason),
+                patch("sys.argv", ["deployment.py", action]),
                 patch.object(deploy, "from_origin", return_value=FORK),
                 patch.object(
                     deploy, "verified_release", side_effect=ValueError(message)
@@ -471,6 +624,7 @@ class PublicVerificationCliTests(unittest.TestCase):
             self.assertFalse(report["clusterVerified"])
             self.assertFalse(report["layersDownloaded"])
             self.assertNotIn("images", report)
+            self.assertNotIn("resources", report)
             self.assertNotIn("registryManifestsVerified", report)
             self.assertNotIn("fixture-bearer-token", output.getvalue())
 
