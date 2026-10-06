@@ -1,5 +1,8 @@
 # 신청 문서 Semantic Analysis 검증
 
+HWP·HWPX·PDF·DOCX·XLSX 공식 양식 각 1건의 실제 OpenAI 매핑 41개 대조와 원본 보존·기입 검증은
+[skn-261 공식 양식 5종 기록](runs/skn-261-official-20261006-v1/README.md)에 기록했다. 렌더·실행 환경·CI의 미검증 범위를 함께 구분한다.
+
 DOCX 공식 신청서 1차 평가와 1회 OpenAI Mapping 결과는 [docx-kotra-20260926-v1](runs/docx-kotra-20260926-v1/README.md)에 기록했다. 원본 DOCX는 저장소에 포함하지 않았다.
 추가 공식 신청서 2건, Word 렌더 및 서비스·버전 검증은 [DOCX 안정화 기록](runs/docx-stabilization-20260926-v1/README.md)에 기록했다.
 페이지 증가 원인·의정부 재평가·실제 Core↔AI HTTP와 최종 회귀는 [DOCX 후속 안정화](runs/docx-stabilization-r2-20260926-v1/README.md)에 기록한다.
