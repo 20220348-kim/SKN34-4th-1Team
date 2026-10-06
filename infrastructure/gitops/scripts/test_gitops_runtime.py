@@ -370,11 +370,237 @@ class RuntimePreflightTests(unittest.TestCase):
         shutil.which("helm"), "Pinned Helm required for real rendering"
     )
     def test_reference_environment_matches_actual_helm_rendering(self):
-        self.render.side_effect = self.real_render
+        references = {
+            service: runtime.portfolio_defaults(service)
+            for service in runtime.cluster.SERVICES
+        }
+        expected = self.real_render("helm", references, runtime.chart_inputs())
+        for service, workload in self.deployments.items():
+            workload["spec"] = copy.deepcopy(expected[service]["spec"])
+            container = workload["spec"]["template"]["spec"]["containers"][0]
+            for field in ("startupProbe", "livenessProbe", "readinessProbe"):
+                container[field]["successThreshold"] = 1
+                container[field]["httpGet"]["scheme"] = "HTTP"
+            container["ports"][0]["protocol"] = "TCP"
+        self.render.return_value = expected
         report = runtime.preflight(self.state, FORK)
         self.assertEqual(report["status"], "NO_LOCAL_OVERRIDES")
         self.assertEqual(report["blockers"], [])
         self.assertEqual(len(report["preservationReview"]["chartSha256"]), 64)
+
+    def test_policy_changes_block_and_keep_sensitive_values_out_of_report(self):
+        for workload in self.deployments.values():
+            pod = workload["spec"]["template"]["spec"]
+            pod.update(
+                securityContext={"runAsUser": 0},
+                automountServiceAccountToken=True,
+                serviceAccountName="PRIVATE-account",
+                hostNetwork=True,
+                hostPID=True,
+                hostIPC=True,
+                shareProcessNamespace=True,
+                dnsPolicy="None",
+                dnsConfig={"nameservers": ["PRIVATE-dns"]},
+                hostAliases=[{"ip": "PRIVATE-ip", "hostnames": ["PRIVATE-host"]}],
+                terminationGracePeriodSeconds=1,
+                resources={"limits": {"cpu": "2"}},
+            )
+            container = pod["containers"][0]
+            container.update(
+                securityContext={"privileged": True},
+                lifecycle={"preStop": {"exec": {"command": ["PRIVATE-command"]}}},
+                resources={"requests": {"cpu": "100m"}},
+                ports=[{"containerPort": 8080, "hostIP": "PRIVATE-host-ip"}],
+            )
+            for field in ("startupProbe", "livenessProbe", "readinessProbe"):
+                container[field] = {
+                    "httpGet": {
+                        "path": "/PRIVATE-path",
+                        "port": 8080,
+                        "httpHeaders": [
+                            {"name": "Authorization", "value": "PRIVATE-token"}
+                        ],
+                    }
+                }
+        report = runtime.preflight(self.state, FORK)
+        self.assertEqual(report["blockers"], ["service_runtime_policy_differs"])
+        for service in runtime.cluster.SERVICES:
+            self.assertEqual(
+                report["preservationReview"]["policyReviews"][service]["changedFields"],
+                sorted(
+                    [
+                        "securityContext",
+                        "automountServiceAccountToken",
+                        "serviceAccountName",
+                        "hostNetwork",
+                        "hostPID",
+                        "hostIPC",
+                        "shareProcessNamespace",
+                        "dnsPolicy",
+                        "dnsConfig",
+                        "hostAliases",
+                        "terminationGracePeriodSeconds",
+                        "resources",
+                        *(
+                            f"containers.{service}.{field}"
+                            for field in (
+                                "securityContext",
+                                "lifecycle",
+                                "resources",
+                                "ports",
+                                "startupProbe",
+                                "livenessProbe",
+                                "readinessProbe",
+                            )
+                        ),
+                    ]
+                ),
+            )
+        self.assertNotIn("PRIVATE", json.dumps(report))
+
+    def test_api_defaults_and_equivalent_quantities_are_not_differences(self):
+        for service, workload in self.deployments.items():
+            pod = workload["spec"]["template"]["spec"]
+            pod.update(
+                dnsPolicy="ClusterFirst",
+                terminationGracePeriodSeconds=30,
+                hostNetwork=False,
+                hostPID=False,
+                hostIPC=False,
+                shareProcessNamespace=False,
+            )
+            actual = pod["containers"][0]
+            expected = self.render.return_value[service]["spec"]["template"]["spec"][
+                "containers"
+            ][0]
+            for field in ("startupProbe", "livenessProbe", "readinessProbe"):
+                expected[field] = {"httpGet": {"port": "http"}}
+                actual[field] = {
+                    "httpGet": {"port": "http", "path": "/", "scheme": "HTTP"},
+                    "initialDelaySeconds": 0,
+                    "timeoutSeconds": 1,
+                    "periodSeconds": 10,
+                    "successThreshold": 1,
+                    "failureThreshold": 3,
+                }
+            expected["resources"] = {
+                "requests": {"cpu": "100m", "memory": "128Mi"},
+                "limits": {"cpu": "1", "memory": "1Gi"},
+            }
+            actual["resources"] = {
+                "requests": {"cpu": "0.1", "memory": "134217728"},
+                "limits": {"cpu": "1000m", "memory": "1024Mi"},
+            }
+        before = copy.deepcopy(self.deployments)
+        report = runtime.preflight(self.state, FORK)
+        self.assertEqual(report["status"], "NO_LOCAL_OVERRIDES")
+        self.assertEqual(self.deployments, before)
+
+    def test_missing_health_resource_and_security_settings_cannot_pass(self):
+        pod = self.deployment["spec"]["template"]["spec"]
+        pod["securityContext"] = {"runAsNonRoot": True}
+        pod["automountServiceAccountToken"] = False
+        container = pod["containers"][0]
+        container["securityContext"] = {
+            "allowPrivilegeEscalation": False,
+            "readOnlyRootFilesystem": True,
+        }
+        container["readinessProbe"] = {"httpGet": {"port": "http", "path": "/ready"}}
+        container["resources"] = {"requests": {"cpu": "100m"}, "limits": {"cpu": "1"}}
+        self.render.return_value["ops-service"] = copy.deepcopy(self.deployment)
+        for parent, field, expected_field in (
+            (pod, "securityContext", "securityContext"),
+            (pod, "automountServiceAccountToken", "automountServiceAccountToken"),
+            (container, "securityContext", "containers.ops-service.securityContext"),
+            (container, "readinessProbe", "containers.ops-service.readinessProbe"),
+            (container, "resources", "containers.ops-service.resources"),
+        ):
+            value = parent.pop(field)
+            with self.subTest(field=expected_field):
+                report = runtime.preflight(self.state, FORK)
+                self.assertEqual(report["blockers"], ["service_runtime_policy_differs"])
+                self.assertEqual(
+                    report["preservationReview"]["policyReviews"]["ops-service"][
+                        "changedFields"
+                    ],
+                    [expected_field],
+                )
+            parent[field] = value
+
+    def test_resource_quantity_comparison_is_exact_and_rejects_unknown_values(self):
+        for left, right in (
+            ("100m", "0.1"),
+            ("1.5Gi", "1536Mi"),
+            ("1k", "1e3"),
+            ("1G", "1000M"),
+            ("1u", "1000n"),
+            (1.5, "1500m"),
+        ):
+            with self.subTest(left=left, right=right):
+                self.assertEqual(
+                    runtime.resource_settings({"limits": {"memory": left}}),
+                    runtime.resource_settings({"limits": {"memory": right}}),
+                )
+        self.assertNotEqual(
+            runtime.resource_settings({"limits": {"memory": "1G"}}),
+            runtime.resource_settings({"limits": {"memory": "1Gi"}}),
+        )
+        self.assertNotEqual(
+            runtime.resource_settings({"limits": {"cpu": "1"}}),
+            runtime.resource_settings({"requests": {"cpu": "1"}}),
+        )
+        for value in (
+            "PRIVATE",
+            "NaN",
+            float("inf"),
+            True,
+            "1e9999",
+            "-1",
+            "1K",
+            "1E99",
+        ):
+            with (
+                self.subTest(value=value),
+                self.assertRaisesRegex(
+                    ValueError, "Unsupported runtime resource quantity"
+                ),
+            ):
+                runtime.resource_settings({"limits": {"cpu": value}})
+
+    def test_probe_and_resource_extensions_are_not_silently_ignored(self):
+        actual = copy.deepcopy(self.deployment)
+        container = actual["spec"]["template"]["spec"]["containers"][0]
+        container["readinessProbe"] = {"httpGet": {"port": "http"}}
+        expected = copy.deepcopy(actual)
+        container["readinessProbe"]["terminationGracePeriodSeconds"] = 12
+        container["resources"] = {"claims": [{"name": "PRIVATE-claim"}]}
+        report = runtime.policy_review(actual, expected)
+        self.assertEqual(
+            report["changedFields"],
+            [
+                "containers.ops-service.readinessProbe",
+                "containers.ops-service.resources",
+            ],
+        )
+        self.assertNotIn("PRIVATE", json.dumps(report))
+
+    def test_port_order_and_default_protocol_do_not_hide_real_changes(self):
+        actual = copy.deepcopy(self.deployment)
+        container = actual["spec"]["template"]["spec"]["containers"][0]
+        container["ports"] = [
+            {"name": "http", "containerPort": 8080},
+            {"name": "metrics", "containerPort": 8081},
+        ]
+        expected = copy.deepcopy(actual)
+        container["ports"].reverse()
+        for port in container["ports"]:
+            port["protocol"] = "TCP"
+        self.assertEqual(runtime.policy_review(actual, expected)["changedFields"], [])
+        container["ports"][0]["protocol"] = "UDP"
+        self.assertEqual(
+            runtime.policy_review(actual, expected)["changedFields"],
+            ["containers.ops-service.ports"],
+        )
 
     def test_other_service_overrides_are_detected_without_saved_profiles(self):
         for service, variable in (

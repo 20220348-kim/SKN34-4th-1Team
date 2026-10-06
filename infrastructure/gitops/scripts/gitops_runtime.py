@@ -1,10 +1,12 @@
 """Read existing local overrides before planning default public Argo workloads."""
 
+import copy
 import hashlib
 import json
 import re
 import subprocess
 import tempfile
+from fractions import Fraction
 from pathlib import Path
 
 import connected_runtime
@@ -123,6 +125,130 @@ def execution_review(actual, expected):
                 )
             if actual_value != expected_value:
                 changed.append(f"containers.{name}.{field}")
+    return {"changedFields": sorted(changed)}
+
+
+def probe_settings(probe):
+    """Retain the full probe, including handlers/headers, while applying API defaults."""
+    if probe is None:
+        return None
+    result = copy.deepcopy(probe)
+    result.setdefault("initialDelaySeconds", 0)
+    for field, default in (
+        ("timeoutSeconds", 1),
+        ("periodSeconds", 10),
+        ("successThreshold", 1),
+        ("failureThreshold", 3),
+    ):
+        if result.get(field, 0) == 0:
+            result[field] = default
+    if "httpGet" in result:
+        for field, default in (("scheme", "HTTP"), ("path", "/")):
+            if not result["httpGet"].get(field):
+                result["httpGet"][field] = default
+    return result
+
+
+def resource_settings(resources):
+    """Compare SI/binary/exponent quantities exactly, without float arithmetic.
+
+    This is not a Kubernetes admission validator or its saturation/rounding code.
+    Unknown or oversized values fail closed instead of being silently ignored.
+    """
+    result = copy.deepcopy(resources)
+    decimal = {
+        "": 0,
+        "n": -9,
+        "u": -6,
+        "m": -3,
+        "k": 3,
+        "M": 6,
+        "G": 9,
+        "T": 12,
+        "P": 15,
+        "E": 18,
+    }
+    binary = {unit + "i": 10 * exponent for exponent, unit in enumerate("KMGTPE", 1)}
+    for field in ("requests", "limits"):
+        values = result.setdefault(field, {})
+        for name, value in values.items():
+            if type(value) not in (str, int, float) or len(str(value)) > 128:
+                raise ValueError("Unsupported runtime resource quantity")
+            match = re.fullmatch(
+                r"([+]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+))"
+                r"(Ki|Mi|Gi|Ti|Pi|Ei|[numkMGTPE]|[eE][+-]?[0-9]{1,2})?",
+                str(value),
+            )
+            if not match:
+                raise ValueError("Unsupported runtime resource quantity")
+            number, unit = match.groups()
+            unit = unit or ""
+            if unit in binary:
+                factor = Fraction(2) ** binary[unit]
+            elif unit in decimal:
+                factor = Fraction(10) ** decimal[unit]
+            else:
+                factor = Fraction(10) ** int(unit[1:])
+            amount = Fraction(number) * factor
+            if amount > 2**63 - 1:
+                raise ValueError("Unsupported runtime resource quantity")
+            values[name] = amount
+    return result
+
+
+def policy_review(actual, expected):
+    """Inspect declared health/resources/access settings, not live RBAC or health."""
+    actual_pod = actual["spec"]["template"]["spec"]
+    expected_pod = expected["spec"]["template"]["spec"]
+    changed = []
+    for field, default in (
+        ("securityContext", {}),
+        ("automountServiceAccountToken", None),
+        ("serviceAccountName", ""),
+        ("serviceAccount", ""),
+        ("hostNetwork", False),
+        ("hostPID", False),
+        ("hostIPC", False),
+        ("shareProcessNamespace", False),
+        ("dnsPolicy", "ClusterFirst"),
+        ("dnsConfig", {}),
+        ("hostAliases", []),
+        ("terminationGracePeriodSeconds", 30),
+    ):
+        if actual_pod.get(field, default) != expected_pod.get(field, default):
+            changed.append(field)
+    if resource_settings(actual_pod.get("resources", {})) != resource_settings(
+        expected_pod.get("resources", {})
+    ):
+        changed.append("resources")
+    actual_containers = named_entries(actual_pod["containers"])
+    for container in expected_pod["containers"]:
+        name = container["name"]
+        if name not in actual_containers:
+            continue
+        observed = actual_containers[name]
+        for field in ("startupProbe", "livenessProbe", "readinessProbe"):
+            if probe_settings(observed.get(field)) != probe_settings(
+                container.get(field)
+            ):
+                changed.append(f"containers.{name}.{field}")
+        for field, default in (("securityContext", {}), ("lifecycle", {})):
+            if observed.get(field, default) != container.get(field, default):
+                changed.append(f"containers.{name}.{field}")
+        if resource_settings(observed.get("resources", {})) != resource_settings(
+            container.get("resources", {})
+        ):
+            changed.append(f"containers.{name}.resources")
+        ports = []
+        for item in (observed, container):
+            ports.append(
+                sorted(
+                    json.dumps({"protocol": "TCP", **port}, sort_keys=True)
+                    for port in item.get("ports", [])
+                )
+            )
+        if ports[0] != ports[1]:
+            changed.append(f"containers.{name}.ports")
     return {"changedFields": sorted(changed)}
 
 
@@ -288,6 +414,10 @@ def preflight(state, fork, helm="helm"):
         service: execution_review(deployments[service], expected[service])
         for service in cluster.SERVICES
     }
+    preservation["policyReviews"] = {
+        service: policy_review(deployments[service], expected[service])
+        for service in cluster.SERVICES
+    }
     preservation["chartSha256"] = hashlib.sha256(
         json.dumps(
             {
@@ -331,6 +461,10 @@ def preflight(state, fork, helm="helm"):
         review["changedFields"] for review in preservation["runtimeReviews"].values()
     ):
         blockers.append("service_execution_or_storage_differs")
+    if any(
+        review["changedFields"] for review in preservation["policyReviews"].values()
+    ):
+        blockers.append("service_runtime_policy_differs")
     # A result describes only a stable observation, never a reusable approval.
     for service, deployment in deployments.items():
         current = read_deployment(service)
