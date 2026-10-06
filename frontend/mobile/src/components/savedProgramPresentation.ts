@@ -5,6 +5,8 @@ export type SavedProgramFilters = { keyword: string; region: string[]; category:
 export type SavedProgramStageFilter = 'all' | 'interest' | ApplicationProgressStage
 export type SavedCalendarMonth = { year: number; month: number }
 export type SavedCalendarEvent = { item: SavedSupportProgram; type: 'START' | 'END' | 'SAME_DAY' }
+export const firstSavedCalendarYear = 2000
+export const lastSavedCalendarYear = 2100
 export const savedProgramTargetOptions = ['예비창업자', '창업기업', '중소기업', '소상공인', '기타'] as const
 export const emptySavedProgramFilters = (): SavedProgramFilters => ({ keyword: '', region: [], category: [], target: [] })
 
@@ -44,7 +46,7 @@ export function savedCalendarMonth(date: string): SavedCalendarMonth {
 
 export function moveSavedCalendarMonth(current: SavedCalendarMonth, amount: number): SavedCalendarMonth {
   const date = new Date(Date.UTC(current.year, current.month - 1 + amount, 1))
-  return date.getUTCFullYear() < 2000 || date.getUTCFullYear() > 2100 ? current
+  return date.getUTCFullYear() < firstSavedCalendarYear || date.getUTCFullYear() > lastSavedCalendarYear ? current
     : { year: date.getUTCFullYear(), month: date.getUTCMonth() + 1 }
 }
 
