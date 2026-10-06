@@ -7,6 +7,7 @@ export function reviewFailureMessage(error: unknown): string {
   if (error.status === 401) return '로그인 세션이 만료되었습니다. 개인 화면을 닫고 다시 로그인해 주세요.'
   if (error.status === 403) return '계정 상태 또는 요청 권한을 확인해 주세요.'
   if (error.status === 404) return '검토 또는 실행을 찾을 수 없습니다. 본인에게 저장된 항목인지 확인해 주세요.'
+  if (error.code === 'COMBINATION_REVIEW_DELETE_CONFLICT') return '대기·분석 중이거나 결과 확인이 필요한 실행이 있어 검토를 삭제할 수 없습니다. 검토와 실행 기록은 유지됩니다. 실행 상태를 확인해 주세요.'
   if (error.status === 409) return error.code === 'COMBINATION_REVIEW_REVISION_CONFLICT'
     ? '다른 화면에서 입력이 변경되었습니다. 작성 중인 입력은 유지됩니다. 최신 저장 입력을 조회한 뒤 직접 선택해 주세요.'
     : '실행 요청이 충돌했습니다. 실행 이력을 확인해 주세요. 요청 키나 내용을 자동으로 변경하지 않습니다.'

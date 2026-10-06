@@ -154,7 +154,7 @@ V10은 검토 입력, V11은 실행 스냅샷·원본 파일 이력을 저장합
 | `POST /api/v1/combination-reviews` | 제목·정확히 2개 사업의 현재 입력 생성. 201과 상세 본문·Location 반환 |
 | `GET /api/v1/combination-reviews?size=20&beforeId=123` | 본인 목록, 생성 ID 내림차순. size 1~50, beforeId 생략 가능. 각 항목의 `latestRun`은 가장 최근 실행 요약(실행 목록 항목과 같은 형식)이며 실행 전이면 null |
 | `GET /api/v1/combination-reviews/{id}` | 본인 상세 입력·버전 조회 |
-| `DELETE /api/v1/combination-reviews/{id}` | 본인 검토와 선택 공고·실행 이력·보관 원문 삭제. 성공 시 204 |
+| `DELETE /api/v1/combination-reviews/{id}` | 본인 검토와 선택 공고·실행 이력·보관 원문 삭제. 성공 시 204. 대기·분석 중·결과 불명 실행이 있으면 409 `COMBINATION_REVIEW_DELETE_CONFLICT`, 기록 보존 |
 | `PUT /api/v1/combination-reviews/{id}/inputs` | 제목·사업 목록 전체 교체. expectedRevision 일치 시 204, 충돌 시 409 |
 | `POST /api/v1/combination-reviews/{id}/runs` | expectedRevision·requestKey·선택적 additionalFacts로 비동기 분석 접수. 신규 202 QUEUED, 동일 요청 재조회 200 |
 | `GET /api/v1/combination-reviews/{id}/runs` | 본인 실행 목록, size/beforeId 커서 |

@@ -43,4 +43,11 @@ interface CombinationReviewMapper {
         @Param("ownerAccountId") ownerAccountId: Long,
         @Param("reviewId") reviewId: Long,
     ): Int
+
+    fun lockOwnedReview(
+        @Param("ownerAccountId") ownerAccountId: Long,
+        @Param("reviewId") reviewId: Long,
+    ): Long?
+
+    fun findDeletionBlockingRun(@Param("reviewId") reviewId: Long): Long?
 }

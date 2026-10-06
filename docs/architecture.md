@@ -1080,6 +1080,10 @@ PDF·첨부·다른 제공처 확장은 후속 범위입니다.
 모바일 결과의 인용·사업 순서는 실행 스냅샷 기준이다. 공식 HTTPS 페이지 열기와 보관 원본 다운로드(현재 웹 제공)를 구분한다.
 
 웹의 `/app/combination-reviews`는 본인 목록·커서 조회·확인 후 삭제와 검토별 최근 실행 상태(실행 전·대기·분석 중·완료·실패·확인 필요)를 제공한다.
+삭제는 `CombinationReviewController → CombinationReviewService → CombinationReviewRepository → MyBatis Mapper → XML → MySQL`로 처리한다.
+Repository는 새 실행 접수와 같은 검토 부모 행을 `FOR UPDATE`로 잠근 뒤, 모든 실행 중 `QUEUED`·`RUNNING`·`UNKNOWN`이 있는지 현재 읽기로 확인한다.
+해당 실행이 있으면 409 `COMBINATION_REVIEW_DELETE_CONFLICT`로 입력·실행 이력·보관 원문을 유지한다. 없으면 기존 FK cascade로 삭제한다.
+웹은 같은 상태에서 삭제 버튼을 잠그며, 조회 이후 접수된 실행 때문에 DELETE가 거절되면 삭제 보호 안내를 표시한다. 다른 소유자와 없는 검토는 기존 404를 유지한다.
 목록 상태는 Core 목록 응답의 `latestRun`(`CombinationReviewMapper.listReviews`가 검토별 최대 실행 ID를 LEFT JOIN)에서 읽고, 대기·분석 중인 검토만 그 검토의 실행 목록을 4초 간격으로 다시 읽는다.
 `/new`와 `/:reviewId`는 `제목·공고 2개 선택 → 공고별 참여 상태 → 공고 분석`의 3단계 흐름을 제공하며 현재 단계는 `?step=`(participation·analysis, 1단계는 생략)에 둔다.
 단계 이동 시 스크롤을 상단으로 초기화하고, 분석 단계에서 진행 카드(접수 뒤 경과 시간)·최근 실행 카드·실행과 이력 목록을 제공한다.

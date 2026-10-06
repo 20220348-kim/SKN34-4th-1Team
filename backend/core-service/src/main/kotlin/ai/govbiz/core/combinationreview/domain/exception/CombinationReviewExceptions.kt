@@ -4,4 +4,5 @@ package ai.govbiz.core.combinationreview.domain.exception
 class CombinationReviewNotFoundException : RuntimeException()
 class CombinationReviewRevisionConflictException : RuntimeException()
 class CombinationReviewRunConflictException : RuntimeException()
+class CombinationReviewDeleteConflictException : RuntimeException()
 class CombinationReviewCapacityException : RuntimeException()
