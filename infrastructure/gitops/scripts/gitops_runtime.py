@@ -11,9 +11,14 @@ import ops_runtime
 import yaml
 
 
-def ops_defaults():
+SCOPE = "local_overrides_and_service_environments"
+
+
+def portfolio_defaults(service):
     """Local reference only; neither a published release nor an approved overlay."""
-    path = cluster.ROOT / "environments/portfolio/ops-service.yaml"
+    if service not in cluster.SERVICES:
+        raise ValueError("Unknown service reference")
+    path = cluster.ROOT / f"environments/portfolio/{service}.yaml"
     payload = path.read_bytes()
     values = yaml.safe_load(payload)
     expected = [{"name": name, "value": value} for name, value in values["env"].items()]
@@ -39,7 +44,7 @@ def environment_rows(rows):
             or set(row) not in ({"name", "value"}, {"name", "valueFrom"})
             or ("value" in row and not isinstance(row["value"], str))
         ):
-            raise ValueError("Ambiguous Ops environment entries")
+            raise ValueError("Ambiguous service environment entries")
         if "valueFrom" in row:
             reference = row["valueFrom"]
             if (
@@ -49,13 +54,13 @@ def environment_rows(rows):
                 <= {"secretKeyRef", "configMapKeyRef", "fieldRef", "resourceFieldRef"}
                 or not isinstance(next(iter(reference.values())), dict)
             ):
-                raise ValueError("Unknown Ops environment reference")
+                raise ValueError("Unknown service environment reference")
         result[name] = row
     return result
 
 
-def preservation_review(inputs, deployment, reference):
-    """List differences for review, never copy live configuration into Argo values."""
+def environment_review(service, deployment, reference):
+    """Compare declared environments without resolving or reporting their values."""
     payload, rows = reference
     expected = environment_rows(rows)
     containers = deployment["spec"]["template"]["spec"]["containers"]
@@ -64,14 +69,14 @@ def preservation_review(inputs, deployment, reference):
         not isinstance(name, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", name)
         for name in names
     ):
-        raise ValueError("Invalid Ops container names")
+        raise ValueError("Invalid service container names")
     changes = {}
     indirect = []
     for item in containers:
         name = item["name"]
         if item.get("envFrom"):
             indirect.append(name)
-        if name not in {"ops-service", "ops-sync"}:
+        if name != service and not (service == "ops-service" and name == "ops-sync"):
             continue
         actual = environment_rows(item.get("env", []))
         changes[name] = {
@@ -83,23 +88,40 @@ def preservation_review(inputs, deployment, reference):
             "runtimeOnly": sorted(actual.keys() - expected.keys()),
             "missing": sorted(expected.keys() - actual.keys()),
         }
+    return {
+        "reference": (
+            "checkout_portfolio_ops_defaults"
+            if service == "ops-service"
+            else "checkout_portfolio_service_defaults"
+        ),
+        "referenceSha256": hashlib.sha256(payload).hexdigest(),
+        "containers": {
+            "runtimeOnly": sorted(set(names) - {service}),
+            "missing": sorted({service} - set(names)),
+        },
+        "environmentChanges": changes,
+        "uninspectedEnvFrom": sorted(indirect),
+    }
+
+
+def preservation_review(inputs, deployments, references):
+    """List differences for review, never copy live configuration into Argo values."""
+    reviews = {
+        service: environment_review(service, deployments[service], references[service])
+        for service in cluster.SERVICES
+    }
     profile = inputs["integration"] or {}
     return {
-        "scope": "ops_environment_and_saved_integrations",
-        "reference": "checkout_portfolio_ops_defaults",
-        "referenceSha256": hashlib.sha256(payload).hexdigest(),
+        # Retain the original Ops fields for report consumers.
+        **reviews.pop("ops-service"),
+        "scope": "service_environments_and_saved_integrations",
+        "serviceReviews": reviews,
         "integrationFeatures": sorted(profile.get("features", [])),
         "modelSettingNames": sorted(profile.get("modelKeys", [])),
         "connectionRecordConflict": len(
             {record["composeProject"] for record in inputs["connections"].values()}
         )
         > 1,
-        "containers": {
-            "runtimeOnly": sorted(set(names) - {"ops-service"}),
-            "missing": sorted({"ops-service"} - set(names)),
-        },
-        "environmentChanges": changes,
-        "uninspectedEnvFrom": sorted(indirect),
         "configurationValuesIncluded": False,
         "overlayGenerated": False,
     }
@@ -129,24 +151,25 @@ def preflight(state, fork):
     cluster.require_dev(state, settings)
     inputs = local_inputs(state, settings)
     _, namespaced, _ = cluster.commands(state, settings)
-    command = namespaced + ["get", "deployment", "ops-service", "-o", "json"]
 
-    def read_deployment():
-        return json.loads(cluster.run(command, capture=True, timeout=15))
+    def read_deployment(service):
+        command = namespaced + ["get", "deployment", service, "-o", "json"]
+        deployment = json.loads(cluster.run(command, capture=True, timeout=15))
+        meta = deployment["metadata"]
+        if (
+            meta.get("name") != service
+            or meta.get("namespace") != settings["namespace"]
+            or not meta.get("uid")
+            or not meta.get("resourceVersion")
+            or meta.get("deletionTimestamp")
+        ):
+            raise ValueError("Missing or unstable service Deployment identity")
+        return deployment
 
-    deployment = read_deployment()
-    meta = deployment["metadata"]
-    if (
-        meta.get("name") != "ops-service"
-        or meta.get("namespace") != settings["namespace"]
-        or not meta.get("uid")
-        or not meta.get("resourceVersion")
-        or meta.get("deletionTimestamp")
-    ):
-        raise ValueError("Missing or unstable Ops Deployment identity")
-    containers = deployment["spec"]["template"]["spec"]["containers"]
-    reference = ops_defaults()
-    preservation = preservation_review(inputs, deployment, reference)
+    deployments = {service: read_deployment(service) for service in cluster.SERVICES}
+    references = {service: portfolio_defaults(service) for service in cluster.SERVICES}
+    containers = deployments["ops-service"]["spec"]["template"]["spec"]["containers"]
+    preservation = preservation_review(inputs, deployments, references)
     blockers = []
     if inputs["integration"] is not None:
         blockers.append("local_integration_profile")
@@ -166,21 +189,39 @@ def preflight(state, fork):
         blockers.append("ops_environment_differs")
     if preservation["uninspectedEnvFrom"]:
         blockers.append("ops_env_from_uninspected")
+    service_reviews = preservation["serviceReviews"].values()
+    if any(any(review["containers"].values()) for review in service_reviews):
+        blockers.append("service_container_layout_differs")
+    if any(
+        any(change.values())
+        for review in service_reviews
+        for change in review["environmentChanges"].values()
+    ):
+        blockers.append("service_environment_differs")
+    if any(review["uninspectedEnvFrom"] for review in service_reviews):
+        blockers.append("service_env_from_uninspected")
     # A result describes only a stable observation, never a reusable approval.
-    current = read_deployment()
+    for service, deployment in deployments.items():
+        current = read_deployment(service)
+        if (
+            any(
+                current["metadata"][key] != deployment["metadata"][key]
+                for key in ("uid", "resourceVersion")
+            )
+            or current.get("spec") != deployment["spec"]
+            or portfolio_defaults(service) != references[service]
+        ):
+            raise ValueError("Local runtime changed during preflight")
     if (
-        current["metadata"].get("uid") != meta["uid"]
-        or current["metadata"].get("resourceVersion") != meta["resourceVersion"]
-        or current.get("spec") != deployment["spec"]
-        or cluster.load_settings(state) != settings
+        cluster.load_settings(state) != settings
         or local_inputs(state, settings) != inputs
-        or ops_defaults() != reference
     ):
         raise ValueError("Local runtime changed during preflight")
     cluster.require_dev(state, settings)
     return {
         "schema": "msa-local-runtime-preflight-v1",
-        "scope": "local_overrides_and_ops_connection",
+        "scope": SCOPE,
+        "inspectedServices": list(cluster.SERVICES),
         "status": "BLOCKED" if blockers else "NO_LOCAL_OVERRIDES",
         "stateId": settings["stateId"],
         "blockers": blockers,
