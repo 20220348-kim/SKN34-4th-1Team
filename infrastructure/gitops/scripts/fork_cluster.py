@@ -561,6 +561,7 @@ def main():
     parser.add_argument("--json", dest="json_output", action="store_true", help="status only: read-only deployment snapshot; exit 1 on rollout, baseline, node, PVC or local disk issues")
     parser.add_argument("--image-details", action="store_true", help="status --json only: inspect kind image IDs and compare declared revisions with this checkout; requires Docker")
     parser.add_argument("--ops-details", action="store_true", help="status --json only: inspect connected Compose containers and bridge routes without mutations; requires Docker")
+    parser.add_argument("--network-details", action="store_true", help="status --json only: compare Service endpoints with current Ready Pods without application traffic")
     args = parser.parse_args()
     if args.json_output and args.action != "status":
         parser.error("--json is only supported by status")
@@ -568,6 +569,8 @@ def main():
         parser.error("--image-details requires status --json")
     if args.ops_details and not (args.action == "status" and args.json_output):
         parser.error("--ops-details requires status --json")
+    if args.network_details and not (args.action == "status" and args.json_output):
+        parser.error("--network-details requires status --json")
     if args.action != "web" and (args.core_port is not None or args.ops_port is not None):
         parser.error("--core-port and --ops-port are only supported by web")
     core_port = 18080 if args.core_port is None else args.core_port
@@ -622,6 +625,7 @@ def main():
                 report = snapshot(state, settings, kube, nk, ak)
                 image_checks_ok = True
                 ops_checks_ok = True
+                network_checks_ok = True
                 if args.image_details:
                     from image_status import audit
                     report["image_details"] = audit(settings, report)
@@ -631,8 +635,12 @@ def main():
                     from ops_status import snapshot as ops_snapshot
                     report["ops_details"] = ops_snapshot(state, settings)
                     ops_checks_ok = report["ops_details"]["status"] == "PASS"
+                if args.network_details:
+                    from network_status import snapshot as network_snapshot
+                    report["network_details"] = network_snapshot(settings, nk)
+                    network_checks_ok = report["network_details"]["status"] == "PASS"
                 print(json.dumps(report, indent=2))
-                if not image_checks_ok or not ops_checks_ok or not all(report[key] for key in (
+                if not image_checks_ok or not ops_checks_ok or not network_checks_ok or not all(report[key] for key in (
                     "workloads_ready", "baseline_matches", "nodes_healthy", "storage_ready", "local_storage_ok"
                 )):
                     parser.exit(1)

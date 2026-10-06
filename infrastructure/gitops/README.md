@@ -27,6 +27,9 @@ probe·자원 요청/한도·Pod 및 컨테이너 보안·서비스 계정·DNS 
 Service의 selector·포트·노출 설정과 Deployment 라벨·selector를 비교하고, Pod 선택 및 이름 기반 targetPort의 선언상 연결도 검사합니다.
 자동 할당 IP·기본값은 차이에서 제외하며, EndpointSlice·실제 통신·NetworkPolicy 검증은 포함하지 않습니다.
 이 제한된 사전 검사는 전체 실행 환경의 호환성 검증을 대신하지 않습니다.
+현재 Service의 실제 연결 대상은 `fork_cluster.py status --json --network-details`로 별도 확인할 수 있습니다.
+EndpointSlice와 준비된 Pod의 UID·IP·포트를 대조하며 HTTP 통신 성공은 검증하지 않습니다.
+[연결 대상 진단 안내](../../docs/local-fork-development.md#kubernetes-service의-실제-연결-대상-확인)를 참고하세요.
 
 ## 팀원 시작 경로
 
