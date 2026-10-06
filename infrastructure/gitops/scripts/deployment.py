@@ -408,7 +408,7 @@ def main():
                 "status": "UNKNOWN",
                 "scope": SCOPE,
             }
-            report["runtimePreflight"] = preflight(args.state_dir, fork)
+            report["runtimePreflight"] = preflight(args.state_dir, fork, args.helm)
             if report["runtimePreflight"]["status"] != "NO_LOCAL_OVERRIDES":
                 raise ValueError("Local runtime requires an explicit transition")
         record, files, sha = verified_release(

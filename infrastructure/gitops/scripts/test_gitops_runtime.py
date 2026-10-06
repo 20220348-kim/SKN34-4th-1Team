@@ -33,23 +33,39 @@ class RuntimePreflightTests(unittest.TestCase):
                     "resourceVersion": "1",
                 },
                 "spec": {
+                    "replicas": 1,
+                    "strategy": {"type": "Recreate"},
                     "template": {
                         "spec": {
+                            "volumes": [
+                                {"name": "tmp", "emptyDir": {"sizeLimit": "256Mi"}}
+                            ],
                             "containers": [
                                 {
                                     "name": service,
+                                    "volumeMounts": [
+                                        {"name": "tmp", "mountPath": "/tmp"}
+                                    ],
                                     "env": copy.deepcopy(
                                         runtime.portfolio_defaults(service)[1]
                                     ),
                                 }
-                            ]
+                            ],
                         }
-                    }
+                    },
                 },
             }
             for service in runtime.cluster.SERVICES
         }
         self.deployment = self.deployments["ops-service"]
+        self.real_render = runtime.rendered_defaults
+        self.render = stack.enter_context(
+            patch.object(
+                runtime,
+                "rendered_defaults",
+                return_value=copy.deepcopy(self.deployments),
+            )
+        )
         self.load = stack.enter_context(
             patch.object(runtime.cluster, "load_settings", return_value=self.settings)
         )
@@ -354,33 +370,11 @@ class RuntimePreflightTests(unittest.TestCase):
         shutil.which("helm"), "Pinned Helm required for real rendering"
     )
     def test_reference_environment_matches_actual_helm_rendering(self):
-        root = runtime.cluster.ROOT
-        for service in runtime.cluster.SERVICES:
-            with self.subTest(service=service):
-                output = subprocess.check_output(
-                    [
-                        "helm",
-                        "template",
-                        service,
-                        str(root / "charts/govbiz-service"),
-                        "-n",
-                        "govbiz-msa",
-                        "-f",
-                        str(root / f"environments/portfolio/{service}.yaml"),
-                    ],
-                    timeout=30,
-                )
-                desired = next(
-                    item
-                    for item in runtime.yaml.safe_load_all(output)
-                    if item["kind"] == "Deployment"
-                )
-                containers = desired["spec"]["template"]["spec"]["containers"]
-                self.assertEqual([item["name"] for item in containers], [service])
-                self.assertEqual(
-                    runtime.environment_rows(containers[0]["env"]),
-                    runtime.environment_rows(runtime.portfolio_defaults(service)[1]),
-                )
+        self.render.side_effect = self.real_render
+        report = runtime.preflight(self.state, FORK)
+        self.assertEqual(report["status"], "NO_LOCAL_OVERRIDES")
+        self.assertEqual(report["blockers"], [])
+        self.assertEqual(len(report["preservationReview"]["chartSha256"]), 64)
 
     def test_other_service_overrides_are_detected_without_saved_profiles(self):
         for service, variable in (
@@ -505,6 +499,162 @@ class RuntimePreflightTests(unittest.TestCase):
             runtime.preflight(self.state, FORK)["status"], "NO_LOCAL_OVERRIDES"
         )
 
+    def test_storage_and_startup_changes_block_without_exposing_values(self):
+        for service in runtime.cluster.SERVICES:
+            spec = self.deployments[service]["spec"]
+            pod = spec["template"]["spec"]
+            container = pod["containers"][0]
+            spec["replicas"] = 0
+            spec["strategy"] = {"type": "RollingUpdate"}
+            pod["volumes"].append(
+                {
+                    "name": "private-volume",
+                    "persistentVolumeClaim": {"claimName": "PRIVATE-pvc"},
+                }
+            )
+            pod["initContainers"] = [
+                {
+                    "name": "private-init",
+                    "image": "PRIVATE-image",
+                    "args": ["PRIVATE-token"],
+                }
+            ]
+            container["volumeMounts"].append(
+                {"name": "private-volume", "mountPath": "/PRIVATE-path"}
+            )
+            container["volumeDevices"] = [
+                {"name": "device", "devicePath": "/PRIVATE-device"}
+            ]
+            container["command"] = ["PRIVATE-command"]
+            container["args"] = ["PRIVATE-password"]
+        report = runtime.preflight(self.state, FORK)
+        self.assertEqual(report["blockers"], ["service_execution_or_storage_differs"])
+        for service in runtime.cluster.SERVICES:
+            self.assertEqual(
+                report["preservationReview"]["runtimeReviews"][service][
+                    "changedFields"
+                ],
+                sorted(
+                    [
+                        "replicas",
+                        "strategy",
+                        "volumes",
+                        "initContainers",
+                        *(
+                            f"containers.{service}.{field}"
+                            for field in (
+                                "command",
+                                "args",
+                                "volumeMounts",
+                                "volumeDevices",
+                            )
+                        ),
+                    ]
+                ),
+            )
+        self.assertNotIn("PRIVATE", json.dumps(report))
+        self.assertNotIn("private-", json.dumps(report))
+
+    def test_removing_or_repointing_storage_is_a_difference(self):
+        original = copy.deepcopy(self.deployment)
+        for replacement in ([], [{"name": "tmp", "hostPath": {"path": "/PRIVATE"}}]):
+            self.deployment["spec"]["template"]["spec"]["volumes"] = replacement
+            report = runtime.preflight(self.state, FORK)
+            self.assertEqual(
+                report["preservationReview"]["runtimeReviews"]["ops-service"][
+                    "changedFields"
+                ],
+                ["volumes"],
+            )
+        self.deployment = original
+        self.deployment["spec"]["template"]["spec"]["containers"][0][
+            "volumeMounts"
+        ] = []
+        report = runtime.preflight(self.state, FORK)
+        self.assertEqual(
+            report["preservationReview"]["runtimeReviews"]["ops-service"][
+                "changedFields"
+            ],
+            ["containers.ops-service.volumeMounts"],
+        )
+
+    def test_volume_order_is_ignored_but_duplicate_volume_names_are_rejected(self):
+        actual = copy.deepcopy(self.deployment)
+        pod = actual["spec"]["template"]["spec"]
+        pod["volumes"].append({"name": "cache", "emptyDir": {}})
+        pod["containers"][0]["volumeMounts"].append(
+            {"name": "cache", "mountPath": "/cache"}
+        )
+        expected = copy.deepcopy(actual)
+        pod["volumes"].reverse()
+        pod["containers"][0]["volumeMounts"].reverse()
+        pod["containers"][0]["command"] = []
+        self.assertEqual(
+            runtime.execution_review(actual, expected)["changedFields"], []
+        )
+        pod["volumes"].append(copy.deepcopy(pod["volumes"][0]))
+        with self.assertRaisesRegex(ValueError, "Ambiguous"):
+            runtime.execution_review(actual, expected)
+
+    def test_chart_change_during_observation_rejects_the_report(self):
+        chart = runtime.chart_inputs()
+        with (
+            patch.object(
+                runtime,
+                "chart_inputs",
+                side_effect=[chart, chart | {"templates/new.yaml": b"changed"}],
+            ),
+            self.assertRaisesRegex(ValueError, "changed during preflight"),
+        ):
+            runtime.preflight(self.state, FORK)
+
+    def test_helm_failure_stops_the_observation(self):
+        self.render.side_effect = subprocess.CalledProcessError(
+            1, "PRIVATE command", stderr="PRIVATE detail"
+        )
+        with self.assertRaises(subprocess.CalledProcessError):
+            runtime.preflight(self.state, FORK, "/custom/helm")
+        self.assertEqual(self.render.call_args.args[0], "/custom/helm")
+        self.assertEqual(self.command.call_count, 4)
+
+    def test_local_helm_uses_captured_inputs_and_rejects_wrong_environment(self):
+        references = {
+            service: runtime.portfolio_defaults(service)
+            for service in runtime.cluster.SERVICES
+        }
+        chart = runtime.chart_inputs()
+        temporary_roots = []
+
+        def helm(command, **kwargs):
+            self.assertEqual(command[0], "/custom/helm")
+            self.assertEqual(command[1], "template")
+            service = command[2]
+            chart_path = Path(command[3])
+            temporary_roots.append(chart_path.parent)
+            self.assertNotEqual(
+                chart_path, runtime.cluster.ROOT / "charts/govbiz-service"
+            )
+            self.assertEqual(
+                (chart_path / "values.yaml").read_bytes(), chart["values.yaml"]
+            )
+            self.assertEqual(Path(command[-1]).read_bytes(), references[service][0])
+            self.assertEqual(
+                kwargs, {"capture_output": True, "check": True, "timeout": 30}
+            )
+            item = copy.deepcopy(self.deployments[service]) | {"kind": "Deployment"}
+            item["spec"]["template"]["spec"]["containers"][0]["env"] = []
+            return subprocess.CompletedProcess(
+                command, 0, stdout=json.dumps(item).encode()
+            )
+
+        with (
+            patch.object(runtime.subprocess, "run", side_effect=helm),
+            self.assertRaisesRegex(ValueError, "differs from Helm"),
+        ):
+            self.real_render("/custom/helm", references, chart)
+        self.assertTrue(temporary_roots)
+        self.assertTrue(all(not root.exists() for root in temporary_roots))
+
 
 class RuntimePlanCliTests(unittest.TestCase):
     def invoke(self, preflight):
@@ -512,7 +662,14 @@ class RuntimePlanCliTests(unittest.TestCase):
         with (
             patch(
                 "sys.argv",
-                ["deployment.py", "plan-gitops", "--state-dir", "fixture-state"],
+                [
+                    "deployment.py",
+                    "plan-gitops",
+                    "--state-dir",
+                    "fixture-state",
+                    "--helm",
+                    "/custom/helm",
+                ],
             ),
             patch.object(deployment, "from_origin", return_value=FORK),
             patch.object(runtime, "preflight", **preflight) as check,
@@ -524,7 +681,7 @@ class RuntimePlanCliTests(unittest.TestCase):
             redirect_stdout(output),
         ):
             self.assertEqual(deployment.main(), 1)
-        check.assert_called_once_with(Path("fixture-state"), FORK)
+        check.assert_called_once_with(Path("fixture-state"), FORK, "/custom/helm")
         return json.loads(output.getvalue()), output.getvalue(), publication
 
     def test_local_conflicts_block_before_publication_queries(self):
