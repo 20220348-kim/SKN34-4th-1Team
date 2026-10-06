@@ -11,7 +11,6 @@ from urllib.parse import quote
 from urllib.request import urlopen
 
 import yaml
-
 from deployment_candidate import (
     DEPLOYMENT_BRANCH,
     MANIFEST,
@@ -384,9 +383,16 @@ def main():
         type=Path,
         help="plan-gitops only: inspect owned local runtime conflicts before publication checks",
     )
+    parser.add_argument(
+        "--review-preservation",
+        action="store_true",
+        help="With --state-dir, render existing environment/sync settings temporarily; never apply or export values",
+    )
     args = parser.parse_args()
     if args.state_dir is not None and args.action != "plan-gitops":
         parser.error("--state-dir is only supported by plan-gitops")
+    if args.review_preservation and args.state_dir is None:
+        parser.error("--review-preservation requires plan-gitops --state-dir")
     report = {
         "schema": (
             "msa-gitops-plan-v1"
@@ -408,7 +414,10 @@ def main():
                 "status": "UNKNOWN",
                 "scope": SCOPE,
             }
-            report["runtimePreflight"] = preflight(args.state_dir, fork, args.helm)
+            options = {"review_preservation": True} if args.review_preservation else {}
+            report["runtimePreflight"] = preflight(
+                args.state_dir, fork, args.helm, **options
+            )
             if report["runtimePreflight"]["status"] != "NO_LOCAL_OVERRIDES":
                 raise ValueError("Local runtime requires an explicit transition")
         record, files, sha = verified_release(
