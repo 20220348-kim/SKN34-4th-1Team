@@ -68,10 +68,10 @@ for (const index of [0, 24, 25]) {
   expected[row.id] = { report_sha256: createHash('sha256').update(body).digest('hex'), execution_spec_sha256: row.execution_spec_sha256 }
 }
 
-test('real browser opens details and sandboxed report tabs across both list pages, then denies a member', { timeout: 120000 }, async (context) => {
+test('real browser opens separate budget and schedules, both list pages and sandboxed reports, then denies a member', { timeout: 120000 }, async (context) => {
   const stages = []
   const result = await withRestoreProxy(responses, async (origin) => ({ browser_ui: await checkRestoreBrowser(origin, responses, expected, reports, (stage) => stages.push(stage)) }), reports)
-  assert.deepEqual(stages, ['LAUNCH', 'LIST', 'BUDGET', 'DETAIL', 'REPORT', 'DETAIL', 'REPORT', 'DETAIL', 'RAG_MATERIAL', 'REPORT', 'MEMBER'])
+  assert.deepEqual(stages, ['LAUNCH', 'LIST', 'BUDGET', 'SCHEDULES', 'DETAIL', 'REPORT', 'DETAIL', 'REPORT', 'DETAIL', 'RAG_MATERIAL', 'REPORT', 'MEMBER'])
   assert.equal(result.browser_ui.listed_run_count, 26)
   assert.equal(result.browser_ui.pages_verified, 2)
   assert.equal(result.browser_ui.budget_view_verified, true)

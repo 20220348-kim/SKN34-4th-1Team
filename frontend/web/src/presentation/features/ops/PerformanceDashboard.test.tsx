@@ -6,6 +6,9 @@ import { getPerformanceDashboard } from '../../../data/ops/opsApi'
 import type { PerformanceDashboard as Dashboard, PerformancePoint } from '../../../data/ops/opsApi'
 import { PerformanceDashboard } from './PerformanceDashboard'
 
+// 검토 조회의 계약·오류·경쟁 응답은 DashboardReviewStatus.test.tsx에서 별도로 검증한다.
+vi.mock('./DashboardReviewStatus', () => ({ DashboardReviewStatus: ({ runId }: { runId: string }) => <output aria-label="검토 대상 실행">{runId}</output> }))
+
 const point = (id: string, measuredAt: string, value: number): PerformancePoint => ({
   run_id: id, source_run_id: null, mode: 'live', measured_at: measuredAt, evaluated_at: measuredAt,
   prompt_sha256: 'a'.repeat(64),
@@ -44,6 +47,7 @@ describe('성능 대시보드', () => {
     expect(within(cards).getByText('2개 사례 측정 / 전체 6개')).toBeTruthy()
     expect(within(cards).getByText('미측정')).toBeTruthy()
     expect(screen.getByRole('link', { name: '최근 답변·검토 확인 →' }).getAttribute('href')).toBe(`/ops/evaluations/${latest.run_id}`)
+    expect(screen.getByLabelText('검토 대상 실행').textContent).toBe(latest.run_id)
     expect(screen.getByRole('img').getAttribute('aria-label')).toContain('2회 중 2회 측정')
     expect(fetch).toHaveBeenCalledTimes(1)
     expect(fetch).toHaveBeenCalledWith('/api/v1/ops/dashboard', expect.objectContaining({ credentials: 'same-origin', cache: 'no-store' }))

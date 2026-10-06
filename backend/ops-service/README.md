@@ -63,6 +63,24 @@ React `/ops/dashboard`는 기존 Core 관리자 인증을 거쳐 `GET /api/v1/op
 조회·제한·쿼리·읽기 전용 검증은 `apps.evaluations.test_dashboard.DashboardApiTests`입니다. 후자는 Ops CI의
 MySQL 8.4 전체 테스트에 포함됩니다.
 
+선택한 최근 실측의 사람 검토는 별도 `GET /api/v1/ops/dashboard/runs/{run_id}/review-status`로
+확인합니다. `React → Django 관리자 인증 → 기존 고정 근거/RAG 자료 검증·검토 판정 → 요약` 흐름으로,
+현재 실행과 같은 자료의 지정 기준 실행만 확인합니다. 자료 검증에는 기존 산출물 저장소 읽기가
+포함되며, 평가 실행·품질 판정 저장·기준 지정·예산 변경은 수행하지 않습니다.
+
+- 현재 자료에 유효한 적합·부적합·보류, 미검토와 자료 변경으로 재검토할 사례 수를 구분합니다.
+  RAG은 검색·답변·인용을 모두 적합으로 검토해야 사례 적합으로 셉니다.
+- 참조 자료 승인, 고정 근거 답변의 전체 승인, 현재 품질 판정은 별도 상태입니다. 과거 합격도
+  입력·정책이 달라지면 `STALE`, 자료·정책 확인이 안 되면 `UNAVAILABLE`로 표시합니다.
+- 비교 기준은 현재 지정 행과 기존 승인·품질 조건을 다시 확인합니다. 다른 실행이나 조회 범위 밖의
+  실행도 기준일 수 있습니다. 기준의 재검토 필요·확인 불가를 미지정과 구분합니다.
+- 조회 실패는 503이며 미검토로 대체하지 않습니다. API는 GET 전용·캐시 금지이며 답변 본문,
+  검토 사유·검토자 정보는 요약 응답에 포함하지 않습니다.
+
+검토 요약의 DB 없는 테스트는 `apps.evaluations.test_dashboard_reviews.ReviewSummaryTests`,
+고정 근거·RAG의 승인/철회/기준/자료 변경/권한 통합 테스트는 같은 모듈의
+`FixedDashboardReviewTests`, `RagDashboardReviewTests`입니다. 실제 MySQL 검증은 Ops CI에서 수행합니다.
+
 ### 평가 자료와 실행 환경
 
 실제 공고의 과거 답변 자료 `official-answer-20260907-v3`는 v2의 H01 참조에서 빠진
