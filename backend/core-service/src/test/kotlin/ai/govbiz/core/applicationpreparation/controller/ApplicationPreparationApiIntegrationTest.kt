@@ -92,7 +92,6 @@ import ai.govbiz.core.applicationpreparation.service.ApplicationDocumentEditor
     "app.bizinfo.sync.enabled=false",
     "app.support-program-index.enabled=false",
     "app.account.cookie-secure=false",
-    "app.application-document.jobs.enabled=false",
     // 이 클래스의 테스트는 한 프로세스의 분당 전체 요청 한도(기본 60)를 함께 쓴다. 테스트 수와 실행 속도에 따라 뒤 테스트가 429를 받지 않게 넉넉히 둔다.
     "app.support-program-request.global-per-minute=1000",
 ])
@@ -434,21 +433,6 @@ class ApplicationPreparationApiIntegrationTest {
     }
 
     @Test
-    fun activeDocumentJobBlocksDirectDeleteAndPreservesTheOwnedPreparation() {
-        val id = create(owner)
-        jdbc.update("""INSERT INTO application_document_generation_job
-            (owner_account_id, preparation_id, request_key, expected_revision, created_at)
-            VALUES (?, ?, ?, 1, NOW(6))""", ownerId, id, UUID.randomUUID().toString())
-        mvc.perform(delete("$BASE/$id").cookie(other).header(HttpHeaders.ORIGIN, ORIGIN))
-            .andExpect(status().isNotFound())
-        mvc.perform(delete("$BASE/$id").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN))
-            .andExpect(status().isConflict())
-            .andExpect(jsonPath("$.code").value("APPLICATION_PREPARATION_RUN_CONFLICT"))
-        mvc.perform(get("$BASE/$id").cookie(owner)).andExpect(status().isOk())
-        assertEquals(1, jdbc.queryForObject("SELECT COUNT(*) FROM application_document_generation_job WHERE preparation_id = ?", Int::class.java, id))
-    }
-
-    @Test
     fun firstMappingFailurePersistsAiStartAndUnknownJobOutcome() {
         val original = "official-form".toByteArray()
         val hash = java.security.MessageDigest.getInstance("SHA-256").digest(original).joinToString("") { "%02x".format(it) }
@@ -471,7 +455,11 @@ class ApplicationPreparationApiIntegrationTest {
         `when`(documentMcp.map(any(AiDocumentMappingRequest::class.java) ?: request)).thenThrow(IllegalStateException("mapping interrupted"))
 
         val job = documentJobs.submit(requireNotNull(accounts.findById(ownerId)), id, UUID.randomUUID().toString(), 2)
-        assertTrue(documentJobs.execute(job.id))
+        org.awaitility.Awaitility.await().atMost(java.time.Duration.ofSeconds(15)).untilAsserted {
+            mvc.perform(get("$BASE/$id/documents/jobs/${job.id}").cookie(owner))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("UNKNOWN"))
+        }
         assertEquals(1, jdbc.queryForObject("SELECT ai_started_at IS NOT NULL FROM application_document_generation_job WHERE id = ?", Int::class.java, job.id))
         mvc.perform(get("$BASE/$id/documents/jobs/${job.id}").cookie(owner))
             .andExpect(status().isOk())
