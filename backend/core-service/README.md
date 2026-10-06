@@ -1102,7 +1102,7 @@ Discovery 전용 timeout은 model 210초 < AI run 240초 < Core read 270초 < Wo
 DOCX는 공식 첨부를 Core에서 ZIP/XML로 추출하고, AI Service가 OOXML의 실제 문단·표·셀·내용 컨트롤 주소를 검사합니다. 확인된 단순 입력칸만 원본과 분리해 편집한 뒤 다시 열어 값과 표 구조·스타일을 검증합니다. 세로 병합, 불명확한 다중 문단 셀과 혼합 스타일 등은 자동 작성하지 않습니다. 단순 가로 gridSpan은 하나의 실제 셀 주소로 유지합니다.
 DOCX의 `engineVersion`은 AI 설정 응답에서 확인하며 저장 지도와 생성 fingerprint에 반영합니다. DOCX 엔진이 바뀌면 해당 DOCX만 다시 매핑하고, 기존 HWP/HWPX/PDF의 공통 `pipelineVersion`과 생성 fingerprint는 유지합니다. Core는 DOCX 결과의 engineVersion·재열기·XML·스타일 검증 상태를 확인한 뒤 저장합니다.
 
-질문·입력칸 대응에서 선택 문항의 미지원 위치는 `documentMap.unmappedFieldIds`로 받으며, 공개 양식 필드의 `documentWritable=false`로 UI에 전달한다. 필수 미매핑 항목은 여전히 양식 검증에서 거절한다. 생성은 비어 있는 질문을 필수 여부와 관계없이 건너뛰며, 저장된 답변이 하나도 없으면 입력 위치 분석과 AI 호출 없이 공식 원본을 기입 수 0의 초안으로 저장한다. 저장된 답변은 binding 유무로 분리하고, binding이 있는 답변만 AI 문서 계획과 편집기로 전달한다. 미기입 답변의 식별자·표시명·당시 값·사유와 기입/미기입 답변 수는 생성 파일의 `placements_json.answerSummary`에 저장하므로 이후 답변 수정과 무관하게 목록 재조회에서 같은 값을 반환한다. 과거 파일에 이 정보가 없으면 현재 답변으로 추정하지 않는다. 저장된 답변이 있는데 자동 기입 가능한 답변이 하나도 없으면 `APPLICATION_DOCUMENT_NO_WRITABLE_INPUT`으로 원본 반환 없이 중단한다. 여러 표 열을 한 질문으로 묶은 이전 양식은 `APPLICATION_DOCUMENT_FORM_REANALYSIS_REQUIRED`를 유지한다. Core의 원문·소유권·revision·빈칸·값·결과 검증은 유지한다.
+질문·입력칸 대응에서 넣을 칸을 찾지 못한 문항은 필수 여부와 관계없이 `documentMap.unmappedFieldIds`로 받으며, 공개 양식 필드의 `documentWritable=false`로 UI에 전달하고 양식 분석 경고에 「양식명」의 직접 작성 문항 수를 남긴다. 칸이 확인된 문항은 그대로 자동 기입한다. 생성은 비어 있는 질문을 필수 여부와 관계없이 건너뛰며, 저장된 답변이 하나도 없으면 입력 위치 분석과 AI 호출 없이 공식 원본을 기입 수 0의 초안으로 저장한다. 저장된 답변은 binding 유무로 분리하고, binding이 있는 답변만 AI 문서 계획과 편집기로 전달한다. 미기입 답변의 식별자·표시명·당시 값·사유와 기입/미기입 답변 수는 생성 파일의 `placements_json.answerSummary`에 저장하므로 이후 답변 수정과 무관하게 목록 재조회에서 같은 값을 반환한다. 과거 파일에 이 정보가 없으면 현재 답변으로 추정하지 않는다. 저장된 답변이 있는데 자동 기입 가능한 답변이 하나도 없으면 `APPLICATION_DOCUMENT_NO_WRITABLE_INPUT`으로 원본 반환 없이 중단한다. 여러 표 열을 한 질문으로 묶은 이전 양식의 그 문항은 미매핑으로 남기고, 그런 문항만 있는 양식은 `APPLICATION_DOCUMENT_FORM_REANALYSIS_REQUIRED`를 유지한다. Core의 원문·소유권·revision·빈칸·값·결과 검증은 유지한다.
 
 지도와 캐시는 `mapVersion`을 포함한 AI `pipelineVersion`과 원본 SHA-256으로 비교한다. 버전이 달라 기존 양식을 다시 매핑할 때 이전 binding의 field ID·target ID·box 집합과 편집 scope가 새 결과와 같으면 MySQL `documentMapSnapshot`만 갱신하고 기존 답변·생성 파일은 보존한다. 주소 또는 scope가 달라지면 `APPLICATION_DOCUMENT_FORM_REANALYSIS_REQUIRED`(422)로 자동 작성을 중단하고 이전 지도도 덮어쓰지 않는다. 해당 오류는 자동 재시도로 해결되지 않는다. 변경이 발생한 작성본의 생성 응답에는 비교 내용과 15분 승인 토큰이 포함된다. 사용자가 `POST /api/v1/application-preparations/{id}/documents/mapping-migration/confirm`으로 명시적으로 승인하면 해당 작성본만 참조하는 새 양식 스냅샷을 생성한다. 이전 답변·revision·파일과 다른 사용자의 지도는 유지하며, 새 초안 생성은 별도 액션이다.
 
@@ -1140,7 +1140,7 @@ Repository의 행 잠금·실행권 갱신 transaction과 공개 오류 계약�
 
 `ApplicationFormManifest.fieldMappings(snapshot)`은 공식 `sectionKey:fieldKey` 문항과 FILE binding에서
 `ApplicationFieldMapping`을 계산한다. `ApplicationDocumentService`는 이 업무 projection의 writable로
-기입/미기입 답변을 분리하며 필수 binding 누락은 기존 `APPLICATION_DOCUMENT_MAPPING_FAILED`로 중단한다.
+기입/미기입 답변을 분리하며 필수 binding 누락도 생성을 중단하지 않고 `INPUT_LOCATION_NOT_FOUND` 미기입 답변으로 알린다.
 AI Service가 칸 규칙·넘침 검사로 남긴 답(`skippedFacts`)과 PDF 상자에 들어가지 않아 `fillPdfFitting`이 뺀 답은 나머지 답으로 만든
 초안과 함께 미기입 답변(`reason`: `OVERFLOW`·`AMBIGUOUS_SLOT`·`SLOT_MISMATCH`·`INPUT_LOCATION_NOT_FOUND`, 넘침이면 `capacity`)으로
 저장·응답하고, HWP는 `applyHwpPlan`이 계획의 `skippedFacts`·`literal`을 함께 검증합니다. AI Service가 답이 없는 표·칸에 남긴

@@ -55,7 +55,8 @@ class ApplicationDocumentMappingService(
             throw ApplicationDocumentException("APPLICATION_DOCUMENT_MAPPING_FAILED", "HWP 원본에 없는 입력 위치입니다.")
         if (result.contractVersion != "application-document-mcp-v1" || result.pipelineVersion != pipeline || result.sourceSha256 != sourceHash ||
             (docxEngine != null && result.engineVersion != docxEngine) ||
-            unmapped.size != unmapped.toSet().size || unmapped.any { it in boundFields || fields.any { f -> f.id == it && f.required } } ||
+            // 필수 문항도 넣을 칸을 찾지 못하면 미매핑으로 남겨 사람이 원본에서 직접 작성하고, 나머지 칸은 자동으로 채운다.
+            unmapped.size != unmapped.toSet().size || unmapped.any { it in boundFields } ||
             boundFields + unmapped.toSet() != fields.map { it.id }.toSet() ||
             result.bindings.any { it.targetId !in targetIds || it.targetId !in result.scopeTargetIds } || result.scopeTargetIds.any { it !in targetIds }) {
             throw ApplicationDocumentException("APPLICATION_DOCUMENT_MAPPING_FAILED", "질문 항목의 실제 입력 위치를 확인하지 못했습니다.")

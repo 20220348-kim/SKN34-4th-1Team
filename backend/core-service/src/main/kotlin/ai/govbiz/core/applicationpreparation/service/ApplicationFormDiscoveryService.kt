@@ -420,6 +420,8 @@ class ApplicationFormDiscoveryService(
             if (bound.isEmpty()) throw candidateFailure
                 ?: ApplicationFormDiscoveryException(if (hasExcludedDocument) excludedReason else Reason.NO_FORM, warnings = forUser(warnings))
             bound.forEach { form ->
+                val unmapped = (form.documentMapSnapshot?.documentMap?.get("unmappedFieldIds") as? List<*>).orEmpty().size
+                if (unmapped > 0) warnings.add("「${form.formTitle.take(200)}」에서 문항 ${unmapped}개는 넣을 칸을 찾지 못해 원본에서 직접 작성해야 해요.")
                 val document = documents.firstOrNull { it.sha256 == form.attachmentSha256 } ?: return@forEach
                 if (ApplicationAttachmentRole.hasConsentCheck(document.blocks.joinToString("\n") { it.text })) {
                     warnings.add("「${form.formTitle.take(200)}」에는 신청자가 직접 체크해야 하는 동의 항목이 있어요. 제출 전 원본에서 확인해 주세요.")

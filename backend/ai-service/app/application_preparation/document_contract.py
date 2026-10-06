@@ -111,6 +111,8 @@ class DocumentMap(Contract):
     auxiliaryStatus: str = "SKIPPED_PRIMARY_SUFFICIENT"
     auxiliaryText: str = Field(default="", max_length=40000)
     unmappedFieldIds: list[str] = Field(default_factory=list, max_length=200)
+    # 자동으로 넣지 못한 문항별 이유입니다(예: MAPPING_TARGET_OVERLAP). 사람이 원본에서 직접 작성할 문항을 설명합니다.
+    unmappedReasons: dict[str, str] = Field(default_factory=dict)
     documentAnalysis: DocumentAnalysisMetadata = Field(default_factory=DocumentAnalysisMetadata)
 
 
@@ -244,7 +246,41 @@ def mapping_label_matches(label: str, target: NativeTarget, guidance: str = "") 
     return any(field == value or len(value) >= 2 and (field in value or value in field) for value in labels)
 
 
-def validate_mapping(request: MapDocumentRequest, document: DocumentMap, selection: MappingSelection):
+def _binding_violation(request: MapDocumentRequest, document: DocumentMap, binding: DocumentPlacement,
+                       targets: dict, scope: set[str], labels: set[str]) -> str | None:
+    """바인딩 하나가 어기는 규칙의 이유 코드입니다. 다른 바인딩과의 겹침은 따로 봅니다."""
+    target = targets.get(binding.targetId)
+    if target is None or not target.editable or binding.targetId not in scope or target.kind == "PDF_TEXT":
+        return "MAPPING_TARGET_NOT_EDITABLE_OR_OUT_OF_SCOPE"
+    if not target.nativeLocator.get("bindingEligible", True):
+        return "REPEATED_ROW_NOT_SELECTED"
+    box = binding.box
+    field = next(f for f in request.fields if f.id == binding.factId)
+    candidates = {candidate.targetId for candidate in document.targets if candidate.editable
+                  and candidate.nativeLocator.get("fieldLabels") and mapping_label_matches(field.label, candidate, field.guidance)}
+    if candidates and binding.targetId not in candidates:
+        return "FIELD_LABEL_MISMATCH"
+    if not mapping_label_matches(field.label, target, field.guidance):
+        return "FIELD_LABEL_MISMATCH"
+    if (box is not None) != (target.kind == "PDF_PAGE"):
+        return "MAPPING_BOX_KIND_MISMATCH"
+    if box and (box.x + box.width > 1 or box.y + box.height > 1):
+        return "MAPPING_BOX_OUT_OF_PAGE"
+    if box:
+        for region in target.nativeLocator.get("printedTextRegions", []):
+            if mapping_label_key(region["text"]) in labels and box.overlaps(DocumentBox.model_validate(region["box"])):
+                return "MAPPING_BOX_COVERS_PRINTED_LABEL"
+    return None
+
+
+def _overlaps(one: DocumentPlacement, other: DocumentPlacement) -> bool:
+    return one.box is None or other.box is None or one.box.overlaps(other.box)
+
+
+def validate_mapping(request: MapDocumentRequest, document: DocumentMap, selection: MappingSelection,
+                     *, allow_required_unmapped: bool = False):
+    """매핑 결과를 원본 지도와 문항에 맞춰 엄격히 검사합니다. [allow_required_unmapped]는 살려 쓴 결과처럼
+    필수 문항을 사람이 직접 작성하도록 남긴 경우에만 켭니다."""
     fields = {f.id for f in request.fields}
     targets = {t.targetId: t for t in document.targets}
     if len(fields) != len(request.fields):
@@ -253,7 +289,7 @@ def validate_mapping(request: MapDocumentRequest, document: DocumentMap, selecti
     bound = {b.factId for b in selection.bindings}
     if len(unmapped) != len(selection.unmappedFieldIds) or not unmapped <= fields or unmapped & bound:
         raise DocumentError("MAPPING_FAILED", reason="INVALID_UNMAPPED_FIELDS")
-    if unmapped & {f.id for f in request.fields if f.required}:
+    if not allow_required_unmapped and unmapped & {f.id for f in request.fields if f.required}:
         raise DocumentError("MAPPING_FAILED", reason="UNMAPPED_REQUIRED_FIELDS")
     if bound | unmapped != fields:
         raise DocumentError("MAPPING_FAILED", reason="FIELD_COVERAGE_MISMATCH")
@@ -262,36 +298,67 @@ def validate_mapping(request: MapDocumentRequest, document: DocumentMap, selecti
     if document.sourceSha256 != request.sourceSha256 or document.format != request.format or len(targets) != len(document.targets):
         raise DocumentError("SOURCE_CHANGED")
     seen = {}
+    scope = set(selection.scopeTargetIds)
     labels = {mapping_label_key(f.label.partition(" / ")[2] or f.label) for f in request.fields}
     for binding in selection.bindings:
-        target = targets.get(binding.targetId)
-        if target is None or not target.editable or binding.targetId not in selection.scopeTargetIds or target.kind == "PDF_TEXT":
-            raise DocumentError("MAPPING_FAILED", reason="MAPPING_TARGET_NOT_EDITABLE_OR_OUT_OF_SCOPE")
-        if not target.nativeLocator.get("bindingEligible", True):
-            raise DocumentError("MAPPING_FAILED", reason="REPEATED_ROW_NOT_SELECTED")
-        box = binding.box
-        field = next(f for f in request.fields if f.id == binding.factId)
-        candidates = {candidate.targetId for candidate in document.targets if candidate.editable
-                      and candidate.nativeLocator.get("fieldLabels") and mapping_label_matches(field.label, candidate, field.guidance)}
-        if candidates and binding.targetId not in candidates:
-            raise DocumentError("MAPPING_FAILED", reason="FIELD_LABEL_MISMATCH")
-        if not mapping_label_matches(field.label, target, field.guidance):
-            raise DocumentError("MAPPING_FAILED", reason="FIELD_LABEL_MISMATCH")
-        if (box is not None) != (target.kind == "PDF_PAGE"):
-            raise DocumentError("MAPPING_FAILED", reason="MAPPING_BOX_KIND_MISMATCH")
-        if box and (box.x + box.width > 1 or box.y + box.height > 1):
-            raise DocumentError("MAPPING_FAILED", reason="MAPPING_BOX_OUT_OF_PAGE")
-        if box:
-            for region in target.nativeLocator.get("printedTextRegions", []):
-                if mapping_label_key(region["text"]) in labels and box.overlaps(DocumentBox.model_validate(region["box"])):
-                    raise DocumentError("MAPPING_FAILED", reason="MAPPING_BOX_COVERS_PRINTED_LABEL")
+        if reason := _binding_violation(request, document, binding, targets, scope, labels):
+            raise DocumentError("MAPPING_FAILED", reason=reason)
         for previous in seen.get(binding.targetId, []):
-            other = previous.box
-            if box is None or other is None or box.overlaps(other):
+            if _overlaps(binding, previous):
                 raise DocumentError("MAPPING_FAILED", reason="MAPPING_TARGET_OVERLAP")
         seen.setdefault(binding.targetId, []).append(binding)
     if any(targets[key].nativeLocator.get("parent") in seen for key in seen):
         raise DocumentError("MAPPING_FAILED", reason="MAPPING_PARENT_CHILD_CONFLICT")
+
+
+def salvage_mapping(request: MapDocumentRequest, document: DocumentMap,
+                    selection: MappingSelection) -> tuple[MappingSelection, dict[str, str]] | None:
+    """다시 요청해도 규칙을 어긴 매핑에서 어긴 문항만 사람이 직접 작성할 문항으로 옮기고 나머지 칸은 살립니다.
+    같은 칸을 고른 문항들과 서로 부모·자식인 칸을 고른 문항들은 어느 쪽이 맞는지 알 수 없어 모두 뺍니다.
+    질문 ID 중복이나 원본 변경처럼 계약이 깨졌거나 남는 칸이 없으면 None입니다(호출부가 원래 실패를 냅니다)."""
+    field_ids = [f.id for f in request.fields]
+    targets = {t.targetId: t for t in document.targets}
+    if (len(set(field_ids)) != len(field_ids) or len(targets) != len(document.targets)
+            or document.sourceSha256 != request.sourceSha256 or document.format != request.format):
+        return None
+    known = set(field_ids)
+    scope_ids = list(dict.fromkeys(key for key in selection.scopeTargetIds if key in targets))
+    scope = set(scope_ids)
+    declared = set(selection.unmappedFieldIds) & known
+    labels = {mapping_label_key(f.label.partition(" / ")[2] or f.label) for f in request.fields}
+    reasons: dict[str, str] = {field_id: "MODEL_UNMAPPED" for field_id in declared}
+    kept: list[DocumentPlacement] = []
+    for binding in selection.bindings:
+        if binding.factId not in known or binding.factId in declared:
+            continue
+        if reason := _binding_violation(request, document, binding, targets, scope, labels):
+            reasons.setdefault(binding.factId, reason)
+            continue
+        kept.append(binding)
+    dropped: dict[int, str] = {}
+    for index, binding in enumerate(kept):
+        for other_index, other in enumerate(kept):
+            if other_index != index and other.targetId == binding.targetId and _overlaps(binding, other):
+                dropped[index] = "MAPPING_TARGET_OVERLAP"
+    bound_targets = {binding.targetId for binding in kept}
+    for index, binding in enumerate(kept):
+        parent = targets[binding.targetId].nativeLocator.get("parent")
+        if parent in bound_targets:
+            dropped.setdefault(index, "MAPPING_PARENT_CHILD_CONFLICT")
+            for other_index, other in enumerate(kept):
+                if other.targetId == parent:
+                    dropped.setdefault(other_index, "MAPPING_PARENT_CHILD_CONFLICT")
+    for index, reason in dropped.items():
+        reasons.setdefault(kept[index].factId, reason)
+    kept = [binding for index, binding in enumerate(kept) if index not in dropped]
+    if not kept:
+        return None
+    bound = {binding.factId for binding in kept}
+    unmapped = [field_id for field_id in field_ids if field_id not in bound]
+    reasons = {field_id: reasons.get(field_id, "NOT_PLACED") for field_id in unmapped}
+    salvaged = MappingSelection(bindings=kept, scopeTargetIds=scope_ids, unmappedFieldIds=unmapped)
+    validate_mapping(request, document, salvaged, allow_required_unmapped=True)
+    return salvaged, reasons
 
 
 def validate_plan(request: GenerateDocumentRequest, document: DocumentMap, selection: PlanSelection,

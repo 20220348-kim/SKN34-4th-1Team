@@ -1192,9 +1192,10 @@ application_form_snapshot.manifest_json
 ```
 
 문서 생성 Service는 검증된 FILE snapshot의 projection으로 작성 가능한 답변을 선택한다.
-필수 binding 누락은 `REQUIRED_MAPPING_MISSING`/writable=false이며 생성은 기존
-`APPLICATION_DOCUMENT_MAPPING_FAILED`로 중단한다. 선택 문항은 `UNMAPPED`/writable=false이고
-기존 미기입 답변 기록을 유지한다. `MAPPED`는 위치 연결 결과이며 사용자 답변 확인이나 제출 완료를 뜻하지 않는다.
+필수 binding 누락은 `REQUIRED_MAPPING_MISSING`/writable=false, 선택 문항은 `UNMAPPED`/writable=false다.
+둘 다 생성을 중단하지 않고 `INPUT_LOCATION_NOT_FOUND` 미기입 답변으로 알리며, 칸이 확인된 답변만 기입한다.
+AI 매핑은 고쳐 달라고 한 번 더 요청해도 규칙을 어긴 문항(같은 칸 중복 등)만 미매핑으로 빼고 나머지 binding을 살리며,
+문항별 이유는 DocumentMap `unmappedReasons`에 남는다. 살릴 binding이 하나도 없으면 기존처럼 매핑 실패다. `MAPPED`는 위치 연결 결과이며 사용자 답변 확인이나 제출 완료를 뜻하지 않는다.
 FILE write authority는 계속 기존 `ApplicationDocumentMapSnapshot → DocumentMap → bindings/scope → WritePlan`에 있다.
 sourceSha256, mapVersion, pipelineVersion, engineVersion, planHash와 이관 비교/승인 규칙은 변경하지 않는다.
 projection은 저장하지 않으므로 DB migration과 공개 HTTP/MCP JSON 변경도 없다.
