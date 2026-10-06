@@ -379,7 +379,14 @@ def main():
     parser.add_argument("action", choices=("verify-public", "plan-gitops"))
     parser.add_argument("--branch", help="Origin's default branch when omitted")
     parser.add_argument("--helm", default="helm", help="Pinned Helm executable")
+    parser.add_argument(
+        "--state-dir",
+        type=Path,
+        help="plan-gitops only: inspect owned local runtime conflicts before publication checks",
+    )
     args = parser.parse_args()
+    if args.state_dir is not None and args.action != "plan-gitops":
+        parser.error("--state-dir is only supported by plan-gitops")
     report = {
         "schema": (
             "msa-gitops-plan-v1"
@@ -394,6 +401,16 @@ def main():
         root = Path(__file__).resolve().parents[3]
         fork = from_origin(root, branch=args.branch).require_personal_publish()
         report.update(repository=fork.repository, branch=fork.branch)
+        if args.state_dir is not None:
+            from gitops_runtime import preflight
+
+            report["runtimePreflight"] = {
+                "status": "UNKNOWN",
+                "scope": "local_overrides_and_ops_connection",
+            }
+            report["runtimePreflight"] = preflight(args.state_dir, fork)
+            if report["runtimePreflight"]["status"] != "NO_LOCAL_OVERRIDES":
+                raise ValueError("Local runtime requires an explicit transition")
         record, files, sha = verified_release(
             root, fork, args.helm, verify_public_manifests=True
         )
@@ -415,6 +432,7 @@ def main():
         report.update(plan)
     except Exception as error:  # noqa: BLE001 - do not print registry bearer or subprocess details
         reasons = {
+            "Local runtime requires an explicit transition": "runtime_transition_required",
             "No complete verified publication": "publication_not_available",
             "Source advanced": "source_not_current",
             "Deployment source blocked": "required_source_checks_not_verified",
