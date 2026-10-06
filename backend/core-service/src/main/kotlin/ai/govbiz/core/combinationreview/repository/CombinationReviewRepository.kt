@@ -11,6 +11,7 @@ import ai.govbiz.core.combinationreview.domain.ReviewRunStatus
 import ai.govbiz.core.combinationreview.domain.ReviewRunSummary
 import ai.govbiz.core.combinationreview.domain.SelectedReviewProgram
 import ai.govbiz.core.combinationreview.domain.StoredCombinationReview
+import ai.govbiz.core.combinationreview.domain.exception.CombinationReviewDeleteConflictException
 import ai.govbiz.core.combinationreview.repository.mapper.CombinationReviewDbRow
 import ai.govbiz.core.combinationreview.repository.mapper.CombinationReviewMapper
 import ai.govbiz.core.combinationreview.repository.mapper.CombinationReviewProgramDbRow
@@ -110,10 +111,12 @@ class CombinationReviewRepository(
         return true
     }
 
-    /** 부모 삭제로 선택 공고, 실행 이력과 보관 원문까지 FK 순서대로 함께 삭제한다. */
+    /** 새 실행 접수와 같은 부모 잠금을 소유하며 대기·실행·결과 불명 기록이 없는 검토만 삭제한다. */
     @Transactional
     fun deleteOwned(ownerAccountId: Long, reviewId: Long): Boolean {
         require(ownerAccountId > 0 && reviewId > 0) { "ownerAccountId and reviewId must be positive" }
+        mapper.lockOwnedReview(ownerAccountId, reviewId) ?: return false
+        if (mapper.findDeletionBlockingRun(reviewId) != null) throw CombinationReviewDeleteConflictException()
         return when (val deleted = mapper.deleteReview(ownerAccountId, reviewId)) {
             0 -> false
             1 -> true

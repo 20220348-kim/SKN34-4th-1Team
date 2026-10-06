@@ -100,6 +100,7 @@ export function reviewErrorMessage(error: unknown): string {
     if (error.status === 401) return '로그인이 만료됐어요. 다시 로그인해 주세요.'
     if (error.status === 403) return '이 검토에 접근할 수 없어요. 계정 상태를 확인해 주세요.'
     if (error.status === 404) return '검토 또는 실행을 찾을 수 없어요.'
+    if (error.code === 'COMBINATION_REVIEW_DELETE_CONFLICT') return '대기·분석 중이거나 결과 확인이 필요한 실행이 있어 검토를 삭제할 수 없어요. 검토와 실행 기록은 유지됩니다. 실행 상태를 확인해 주세요.'
     if (error.status === 409) return '저장된 입력이나 분석 요청이 변경됐어요. 작성한 내용은 유지됩니다. 최신 검토와 실행 이력을 확인해 주세요.'
     if (error.status === 429) return '요청량 또는 진행 중인 분석 한도에 도달했어요. 잠시 후 다시 확인해 주세요.'
     if (error.code === 'RUN_QUEUE_UNAVAILABLE') return '지금은 분석 요청을 접수할 수 없어요. 잠시 후 다시 시도해 주세요.'

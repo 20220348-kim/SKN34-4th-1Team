@@ -149,7 +149,7 @@ function ReviewList({ account }: { account: string }) {
   const header = <WorkspacePageHeader title={listTitle} actions={<Link className={workspacePageStyles.primaryButton} to={appPaths.combinationReviewNew}>새 검토</Link>} />
   if (vm.error?.status === 401) return <>{header}<main className={workspacePageStyles.content}><ReviewError error={vm.error} /></main></>
   return <>{header}<main className={workspacePageStyles.content}>
-    <ReviewError error={vm.error} />
+    <ReviewError error={confirming ? null : vm.error} />
     {vm.pollingPaused && <p className={s.warning}>진행 상태 자동 확인이 멈췄어요. [다시 시도]로 목록을 다시 불러와 주세요. 서버 작업은 취소되지 않아요.</p>}
     {loading && <p className="sr-only" role="status">검토 목록을 불러오는 중입니다.</p>}
     {showSkeleton && <ReviewListSkeleton />}
@@ -165,6 +165,7 @@ function ReviewList({ account }: { account: string }) {
   </main>
   <WorkspaceModal isOpen={confirming !== null} title="검토를 삭제할까요?" tone="danger" onClose={() => setConfirming(null)}
     description={confirming ? `${confirming.title}의 입력과 실행 기록 · 보관한 원문이 모두 지워져요. 되돌릴 수 없어요.` : undefined}>
+    <ReviewError error={vm.error} />
     <div className="flex flex-wrap justify-end gap-2">
       <button className={s.button} disabled={deleting} type="button" onClick={() => setConfirming(null)}>취소</button>
       <button className={s.dangerSolid} disabled={deleting} aria-busy={deleting} type="button" onClick={() => {

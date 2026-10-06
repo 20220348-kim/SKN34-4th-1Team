@@ -1,4 +1,4 @@
-import { MobileCombinationReviewRepository } from './combinationReviews'
+import { MobileCombinationReviewRepository, reviewErrorMessage } from './combinationReviews'
 import { mobileReview, reviewRequestKey, reviewRunFixture } from '../test/reviewFixtures'
 
 const originalFetch = globalThis.fetch
@@ -85,4 +85,15 @@ test('analysis admission stops HTTP waiting at 15 seconds without submitting ano
   await jest.advanceTimersByTimeAsync(15_000)
   await rejection
   expect(fetch).toHaveBeenCalledTimes(1)
+})
+
+test('a deletion conflict retains its server code and explains that the review is protected', async () => {
+  jest.mocked(fetch).mockResolvedValueOnce(response({ code: 'COMBINATION_REVIEW_DELETE_CONFLICT' }, 409))
+  let failure: unknown
+  try { await new MobileCombinationReviewRepository('owner').delete(5) } catch (error) { failure = error }
+  expect(failure).toMatchObject({ status: 409, code: 'COMBINATION_REVIEW_DELETE_CONFLICT' })
+  expect(reviewErrorMessage(failure)).toContain('검토를 삭제할 수 없어요')
+  expect(reviewErrorMessage(failure)).toContain('검토와 실행 기록은 유지됩니다')
+  expect(fetch).toHaveBeenCalledTimes(1)
+  expect(jest.mocked(fetch).mock.calls[0][1]?.method).toBe('DELETE')
 })

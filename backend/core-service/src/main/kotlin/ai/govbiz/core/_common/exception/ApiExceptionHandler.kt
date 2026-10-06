@@ -48,6 +48,7 @@ import ai.govbiz.core.combinationreview.domain.exception.CombinationReviewRevisi
 import ai.govbiz.core.combinationreview.controller.exception.InvalidCombinationReviewInputException
 import ai.govbiz.core.combinationreview.service.exception.CombinationReviewRunException
 import ai.govbiz.core.combinationreview.domain.exception.CombinationReviewRunConflictException
+import ai.govbiz.core.combinationreview.domain.exception.CombinationReviewDeleteConflictException
 import ai.govbiz.core.combinationreview.service.exception.ReviewRunFailureCode
 import ai.govbiz.core.partner.service.exception.ActiveBusinessRequiredException
 import ai.govbiz.core.partner.service.exception.CompanyRequiredException
@@ -253,6 +254,11 @@ class ApiExceptionHandler {
     fun handleCombinationReviewRunConflict(request: HttpServletRequest): ResponseEntity<ProblemDetail> =
         problemResponse(ProblemDefinition(HttpStatus.CONFLICT, URI.create("urn:govbiz:problem:combination-review-run-conflict"),
             "Combination Review Run Conflict", "The request key has a different payload or another run is active.", "COMBINATION_REVIEW_RUN_CONFLICT"), request)
+
+    @ExceptionHandler(CombinationReviewDeleteConflictException::class)
+    fun handleCombinationReviewDeleteConflict(request: HttpServletRequest): ResponseEntity<ProblemDetail> =
+        problemResponse(ProblemDefinition(HttpStatus.CONFLICT, URI.create("urn:govbiz:problem:combination-review-delete-conflict"),
+            "Combination Review Delete Conflict", "A queued, running or unresolved run prevents deletion of this review.", "COMBINATION_REVIEW_DELETE_CONFLICT"), request)
 
     @ExceptionHandler(CombinationReviewRunException::class)
     fun handleCombinationReviewRunFailure(error: CombinationReviewRunException, request: HttpServletRequest): ResponseEntity<ProblemDetail> {

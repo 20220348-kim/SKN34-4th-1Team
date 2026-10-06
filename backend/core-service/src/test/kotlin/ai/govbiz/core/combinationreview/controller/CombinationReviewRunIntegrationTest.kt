@@ -10,6 +10,8 @@ import ai.govbiz.core.combinationreview.client.AiCombinationReviewClient
 import ai.govbiz.core.combinationreview.client.dto.*
 import ai.govbiz.core.combinationreview.domain.*
 import ai.govbiz.core.combinationreview.domain.exception.CombinationReviewRunConflictException
+import ai.govbiz.core.combinationreview.domain.exception.CombinationReviewDeleteConflictException
+import ai.govbiz.core.combinationreview.domain.exception.CombinationReviewNotFoundException
 import ai.govbiz.core.combinationreview.helper.CombinationReviewHashHelper
 import ai.govbiz.core.combinationreview.repository.CombinationReviewRepository
 import ai.govbiz.core.combinationreview.repository.CombinationReviewRunRepository
@@ -36,6 +38,7 @@ import java.util.concurrent.Callable
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -58,6 +61,8 @@ import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.*
 import org.springframework.transaction.support.TransactionSynchronizationManager
+import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.support.TransactionTemplate
 import tools.jackson.databind.ObjectMapper
 
 @SpringBootTest(properties = [
@@ -77,6 +82,7 @@ class CombinationReviewRunIntegrationTest {
     @Autowired private lateinit var reviews: CombinationReviewRepository
     @Autowired private lateinit var runs: CombinationReviewRunRepository
     @Autowired private lateinit var service: CombinationReviewRunService
+    @Autowired private lateinit var transactionManager: PlatformTransactionManager
     @MockitoBean private lateinit var publisher: CombinationReviewOutboxScheduler
     @Autowired private lateinit var admission: SupportProgramRequestAdmissionService
     @MockitoBean private lateinit var source: BizInfoAttachmentClient
@@ -221,13 +227,106 @@ class CombinationReviewRunIntegrationTest {
         verifyNoInteractions(source, ai)
     }
 
-    @Test
-    fun deletedQueuedReviewCannotBeExecuted() {
+    @ParameterizedTest
+    @ValueSource(strings = ["QUEUED", "RUNNING", "UNKNOWN"])
+    fun blocksDirectDeletionAndPreservesActiveOrUnresolvedRuns(state: String) {
         val runId = id(submit().andExpect(status().isAccepted()))
-        assertTrue(reviews.deleteOwned(ownerId, reviewId))
-        service.executeQueued(runId)
-        assertFalse(runs.publishable().contains(runId))
+        if (state != "QUEUED") {
+            assertNotNull(runs.claim(runId, UUID.randomUUID().toString()))
+            val hash = CombinationReviewHashHelper.sha256(general)
+            val document = ReviewSourceDocument(0, BIZINFO_PAGE_URL, "general.hwpx", "HWPX", hash, hash, "test", LocalDateTime.now())
+            runs.saveEvidence(runId, ReviewEvidenceSnapshot(listOf(document), emptyList(), emptyList()), listOf(general))
+        }
+        if (state == "UNKNOWN") runs.markUnknown(runId, "RUN_OUTCOME_UNKNOWN")
+        val snapshot = runs.findOwned(ownerId, reviewId, runId)
+        mvc.perform(delete("/api/v1/combination-reviews/$reviewId").cookie(other).header(HttpHeaders.ORIGIN, ORIGIN))
+            .andExpect(status().isNotFound()).andExpect(jsonPath("$.code").value("COMBINATION_REVIEW_NOT_FOUND"))
+        mvc.perform(delete("/api/v1/combination-reviews/$reviewId").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN))
+            .andExpect(status().isConflict()).andExpect(jsonPath("$.code").value("COMBINATION_REVIEW_DELETE_CONFLICT"))
+            .andExpect(header().string(HttpHeaders.CACHE_CONTROL, "no-store"))
+        assertEquals(snapshot, runs.findOwned(ownerId, reviewId, runId))
+        assertEquals(draft, reviews.findOwned(ownerId, reviewId)!!.draft)
+        if (state != "QUEUED") assertArrayEquals(general, runs.findSource(ownerId, reviewId, runId, 0))
         verifyNoInteractions(source, ai)
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["SUCCEEDED", "FAILED", "INTERRUPTED"])
+    fun allowsDeletionOfTerminalRunsAndCascadesStoredSources(state: String) {
+        val runId = id(start().andExpect(status().isOk()))
+        if (state != "SUCCEEDED") jdbc.update(
+            "UPDATE combination_review_run SET status = ?, analysis_json = NULL, failure_code = 'TEST_FAILURE' WHERE id = ?", state, runId,
+        )
+        assertNotNull(runs.findSource(ownerId, reviewId, runId, 0))
+        mvc.perform(delete("/api/v1/combination-reviews/$reviewId").cookie(owner).header(HttpHeaders.ORIGIN, ORIGIN))
+            .andExpect(status().isNoContent()).andExpect(content().string(""))
+        assertNull(reviews.findOwned(ownerId, reviewId))
+        assertNull(runs.findOwned(ownerId, reviewId, runId))
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM combination_review_run_source WHERE run_id = ?", Int::class.java, runId))
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM combination_review_program WHERE review_id = ?", Int::class.java, reviewId))
+    }
+
+    @Test
+    fun deletionWaitsForAnUncommittedReservationThenPreservesTheQueuedRun() {
+        val reserved = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val deleting = CountDownLatch(1)
+        val executor = Executors.newFixedThreadPool(2)
+        try {
+            val admission = executor.submit(Callable {
+                TransactionTemplate(transactionManager).execute {
+                    val run = runs.reserve(ownerId, reviewId, 1, UUID.randomUUID().toString(), "", UUID.randomUUID().toString()).run
+                    reserved.countDown()
+                    check(release.await(20, TimeUnit.SECONDS))
+                    run.id
+                }!!
+            })
+            assertTrue(reserved.await(10, TimeUnit.SECONDS))
+            val deletion = executor.submit(Callable {
+                deleting.countDown()
+                assertThrows(CombinationReviewDeleteConflictException::class.java) { reviews.deleteOwned(ownerId, reviewId) }
+            })
+            assertTrue(deleting.await(10, TimeUnit.SECONDS))
+            assertThrows(TimeoutException::class.java) { deletion.get(200, TimeUnit.MILLISECONDS) }
+            release.countDown()
+            val runId = admission.get(20, TimeUnit.SECONDS)
+            deletion.get(20, TimeUnit.SECONDS)
+            assertNotNull(reviews.findOwned(ownerId, reviewId))
+            assertEquals(ReviewRunStatus.QUEUED, runs.findOwned(ownerId, reviewId, runId)!!.status)
+            verifyNoInteractions(source, ai)
+        } finally { release.countDown(); executor.shutdownNow() }
+    }
+
+    @Test
+    fun reservationWaitsForDeletionThenFailsWithoutCreatingAnOrphanRun() {
+        val deleted = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val reserving = CountDownLatch(1)
+        val executor = Executors.newFixedThreadPool(2)
+        try {
+            val deletion = executor.submit(Callable {
+                TransactionTemplate(transactionManager).execute {
+                    assertTrue(reviews.deleteOwned(ownerId, reviewId))
+                    deleted.countDown()
+                    check(release.await(20, TimeUnit.SECONDS))
+                }
+            })
+            assertTrue(deleted.await(10, TimeUnit.SECONDS))
+            val admission = executor.submit(Callable {
+                reserving.countDown()
+                assertThrows(CombinationReviewNotFoundException::class.java) {
+                    runs.reserve(ownerId, reviewId, 1, UUID.randomUUID().toString(), "", UUID.randomUUID().toString())
+                }
+            })
+            assertTrue(reserving.await(10, TimeUnit.SECONDS))
+            assertThrows(TimeoutException::class.java) { admission.get(200, TimeUnit.MILLISECONDS) }
+            release.countDown()
+            deletion.get(20, TimeUnit.SECONDS)
+            admission.get(20, TimeUnit.SECONDS)
+            assertNull(reviews.findOwned(ownerId, reviewId))
+            assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM combination_review_run WHERE review_id = ?", Int::class.java, reviewId))
+            verifyNoInteractions(source, ai)
+        } finally { release.countDown(); executor.shutdownNow() }
     }
 
     @Test
