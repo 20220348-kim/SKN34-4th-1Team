@@ -15,12 +15,15 @@ LLMOps 개발 순서는 [후속 개발 전략](../../docs/llmops-next-developmen
 | 별도 배포 PR | 제거. 자동 브랜치 생성·PR 생성·검사 dispatch 없음 |
 | Argo 입력 준비 | `deployment.py plan-gitops`: 검증된 공개 이미지·소스 SHA로 고정한 수동 동기화 계획 출력 |
 | 발행본 기준 연결 설정 비교 | `deployment.py review-published-runtime --state-dir ...`: 공개 발행 Chart·values로 기존 연결 설정을 재현하고 전후 발행 검증 |
+| 기존 환경 전환 파일 준비 | `gitops_transition.py`: 공개 발행본과 보존 가능한 기존 설정을 개인 state의 비공개 파일로 생성. 적용·동기화 없음 |
 | Argo 자동 배포 | 대체 연결 미구현. 기존 클러스터는 변경하지 않음 |
 | 과거 snapshot | 읽기·검증 및 오프라인 정책 테스트 보존 |
 
 `MSA_PROMOTION_ENABLED=false`를 유지합니다. GHCR `up`은 별도 배포 브랜치 없이
 [현재 발행 검증 경로](docs/image-promotion.md)로 초기화합니다. 새 Argo `gitops` 전환은 아직 연결하지 않았습니다.
 `plan-gitops`는 자동 동기화를 끈 검토용 구성을 출력하며, 개인 환경 호환성 확인이나 실제 배포를 수행하지 않습니다.
+기존 연결 설정을 보존한 전환 파일은 [전환 파일 준비](docs/image-promotion.md#기존-환경의-비공개-전환-파일-준비)로 생성합니다.
+이 파일은 백업·migration·실제 전환 검증이 남은 검토 자료이며, 생성 성공을 배포 준비 완료로 취급하지 않습니다.
 공개 발행본이 없거나 소스·CI 검증에 막히면 `publicationBlocker`에 현재 기본 브랜치의 원본 병합·필수 CI·
 발행 단계 진단을 표시합니다. 진단 결과는 배포 승인이 아니며 기존 차단과 종료 코드 1을 유지합니다.
 `--state-dir ... --review-preservation`은 기존 환경변수·Ops sync의 Helm 재현 가능성을 임시 렌더링으로

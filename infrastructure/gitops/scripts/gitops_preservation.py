@@ -1,4 +1,4 @@
-"""Rehearse existing environment/sync settings with Helm; never export or apply them."""
+"""Rehearse existing environment/sync settings with Helm without cluster writes."""
 
 import re
 import subprocess
@@ -48,7 +48,9 @@ def reference(service, deployment, original):
     return yaml.safe_dump(values, sort_keys=True).encode(), list(rows.values())
 
 
-def review(deployments, services, references, chart, helm="helm"):
+def review(
+    deployments, services, references, chart, helm="helm", *, prepared_values=None
+):
     """Return field names only; existing transition blockers remain authoritative."""
     report = {
         "status": "BLOCKED",
@@ -137,5 +139,10 @@ def review(deployments, services, references, chart, helm="helm"):
         for details in report["services"].values()
     ):
         report["status"] = "MATCHES_INSPECTED_FIELDS"
-    # No candidate values or hashes of potentially secret literals leave this function.
+        if prepared_values is not None:
+            prepared_values.update(
+                {service: payload for service, (payload, _) in candidates.items()}
+            )
+    # The public report never contains values. Only explicit preparation receives
+    # the private in-memory candidates; this function never writes or applies them.
     return report
