@@ -18,9 +18,9 @@
 
 ## Kubernetes · Compose LLMOps 연결 구성 — 2026-10-07
 
-![GovBiz Kubernetes 업무 서비스와 Compose LLMOps 연결 구조](govbiz-local-architecture.png)
+![GovBiz Kubernetes 업무 서비스와 Compose LLMOps 연결 구조](govbiz-local-architecture.png?v=4f2deb366694)
 
-- [현재 구성 PNG](govbiz-local-architecture.png) · [SVG 원본](govbiz-local-architecture.svg)
+- [현재 구성 PNG](govbiz-local-architecture.png?v=4f2deb366694) · [SVG 원본](govbiz-local-architecture.svg)
 - [서비스·데이터·개발·배포 경로와 확인 범위](README-local.md)
 - [생성 스크립트](build-local.mjs) · [Kubernetes 로고 출처·해시](kubernetes-logo-sources.json) · [RabbitMQ 로고 출처·해시](logo-sources.json)
 

@@ -4,11 +4,11 @@
 9월 21일 그림의 Ops 확장 예정 표기와 기존 Argo 자동 배포 경로를 현재 구현에 맞춰 교체했습니다.
 이 그림은 연결 프로필의 배치 구조이며, 모든 구성요소가 지금 실행 중이라는 의미는 아닙니다.
 
-![GovBiz Kubernetes 업무 서비스와 Compose LLMOps 연결 구조](govbiz-local-architecture.png)
+![GovBiz Kubernetes 업무 서비스와 Compose LLMOps 연결 구조](govbiz-local-architecture.png?v=4f2deb366694)
 
 ## 파일
 
-- [PNG](govbiz-local-architecture.png): 5,600 × 5,020, GitHub·발표 첨부용.
+- [PNG](govbiz-local-architecture.png?v=4f2deb366694): 5,600 × 5,020, GitHub·발표 첨부용.
 - [SVG](govbiz-local-architecture.svg): 2,800 × 2,510, 로고가 내장된 편집 가능한 원본.
 - [생성 스크립트](build-local.mjs): 기존 로컬 로고만 사용하며 클러스터·GHCR에 접근하지 않습니다.
 - 로고는 [기존 Kubernetes 출처·해시](kubernetes-logo-sources.json), [RabbitMQ 출처·해시](logo-sources.json), [Devicon 라이선스](DEVICON-LICENSE)를 재사용합니다.
