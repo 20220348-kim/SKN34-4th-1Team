@@ -58,39 +58,20 @@ GovBiz는 여러 기관에 흩어진 정부지원사업 공고를 모아 기업�
 
 ## 3. 기술 스택
 
-### 웹 · 모바일
-
-![React 19](https://img.shields.io/badge/React_19-61DAFB?style=for-the-badge&logo=react&logoColor=20232A)
-![TypeScript 6](https://img.shields.io/badge/TypeScript_6-3178C6?style=for-the-badge&logo=typescript&logoColor=white)
-![Vite 8](https://img.shields.io/badge/Vite_8-646CFF?style=for-the-badge&logo=vite&logoColor=white)
-![Tailwind CSS 4](https://img.shields.io/badge/Tailwind_CSS_4-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white)
-![Expo](https://img.shields.io/badge/Expo-000020?style=for-the-badge&logo=expo&logoColor=white)
-![React Native](https://img.shields.io/badge/React_Native-61DAFB?style=for-the-badge&logo=react&logoColor=20232A)
-
-React Router·Redux Toolkit·Zod와 Expo Router를 사용하며, 웹·앱 공통 업무 계약은 pnpm workspace로 관리합니다.
-
-### 백엔드 · AI
-
-![Kotlin](https://img.shields.io/badge/Kotlin-7F52FF?style=for-the-badge&logo=kotlin&logoColor=white)
-![Spring Boot](https://img.shields.io/badge/Spring_Boot-6DB33F?style=for-the-badge&logo=springboot&logoColor=white)
-![Python 3.12](https://img.shields.io/badge/Python_3.12-3776AB?style=for-the-badge&logo=python&logoColor=white)
-![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)
-![Django](https://img.shields.io/badge/Django-092E20?style=for-the-badge&logo=django&logoColor=white)
-![LangChain](https://img.shields.io/badge/LangChain-1C3C3C?style=for-the-badge&logo=langchain&logoColor=white)
-![LangGraph](https://img.shields.io/badge/LangGraph-1C3C3C?style=for-the-badge&logo=langgraph&logoColor=white)
-
-Core·Catalog는 JDK 21·MyBatis·Flyway, AI는 OpenAI·LangChain·LangGraph·Agents SDK,
-Ops는 Django REST Framework를 사용합니다.
-
-### 데이터 · LLMOps · 실행 환경
-
-| 영역 | 구성 |
+| 영역 | 적용 기술 |
 |---|---|
-| 데이터 저장·검색 | MySQL 8.4 · Elasticsearch + Nori/BM25 · Qdrant |
-| 캐시·비동기 처리 | Redis · RabbitMQ |
-| LLMOps | Langfuse · Prefect · Pandera · Evidently · pandas |
-| 로컬 실행·컨테이너 | Docker Compose · Kubernetes(kind) · Helm |
-| 검증·이미지 | GitHub Actions · GitHub Container Registry(GHCR) |
+| 구현 언어 | Kotlin, Python 3.12, TypeScript 6 |
+| 웹 프론트엔드 | React 19, Vite 8, Tailwind CSS 4, React Router, Redux Toolkit, Zod |
+| 모바일 | React Native, Expo, Expo Router |
+| 업무·수집 API | Spring Boot, JDK 21, MyBatis, Flyway |
+| AI API·Agent | FastAPI, OpenAI, LangChain, LangGraph, OpenAI Agents SDK |
+| 평가 운영 API | Django, Django REST Framework |
+| 데이터 저장·검색 | MySQL 8.4, Elasticsearch(Nori/BM25), Qdrant |
+| 캐시·비동기 처리 | Redis, RabbitMQ |
+| LLMOps | Langfuse, Prefect, Pandera, Evidently, pandas |
+| 로컬 실행·컨테이너 | Docker Compose, Kubernetes(kind), Helm |
+| 검증·이미지 관리 | GitHub Actions, GitHub Container Registry(GHCR) |
+| 모노레포·공통 계약 | pnpm workspace, 웹·앱 공통 TypeScript 계약 |
 
 버전 기준은 [루트 설정](package.json), [웹](frontend/web/package.json), [모바일](frontend/mobile/package.json),
 [AI](backend/ai-service/pyproject.toml), [Ops](backend/ops-service/pyproject.toml)과 각 잠금 파일입니다.
