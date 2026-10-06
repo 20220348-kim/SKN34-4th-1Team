@@ -14,6 +14,7 @@ import fork_cluster as cluster
 import ops_runtime
 import yaml
 from check_msa import CHART_PATH
+from deployment_candidate import KUBE_VERSION
 from gitops_service import service_review
 
 SCOPE = "local_overrides_and_service_runtime"
@@ -49,6 +50,8 @@ def rendered_defaults(helm, references, chart):
                     str(root / "chart"),
                     "-n",
                     cluster.NAMESPACE,
+                    "--kube-version",
+                    KUBE_VERSION,
                     "-f",
                     str(values),
                 ],
@@ -492,9 +495,21 @@ def local_inputs(state, settings):
 
 
 def preflight(
-    state, fork, helm="helm", *, review_preservation=False, published_files=None
+    state,
+    fork,
+    helm="helm",
+    *,
+    review_preservation=False,
+    published_files=None,
+    prepared_values=None,
 ):
     """Detect local connection conflicts, not migration or deployment readiness."""
+    if prepared_values is not None and (
+        prepared_values or not review_preservation or published_files is None
+    ):
+        raise ValueError(
+            "Preparation requires an empty destination and published preservation inputs"
+        )
     state = Path(state)
     settings = cluster.load_settings(state)
     if settings["repository"].lower() != fork.repository.lower():
@@ -608,8 +623,10 @@ def preflight(
     if review_preservation:
         from gitops_preservation import review
 
+        captured = {}
+        options = {"prepared_values": captured} if prepared_values is not None else {}
         preservation["helmPreservation"] = review(
-            deployments, services, references, chart, helm
+            deployments, services, references, chart, helm, **options
         )
         if preservation["helmPreservation"]["status"] != "MATCHES_INSPECTED_FIELDS":
             blockers.append("preservation_not_verified")
@@ -642,6 +659,10 @@ def preflight(
     status = "BLOCKED" if blockers else "NO_LOCAL_OVERRIDES"
     if preservation.get("helmPreservation", {}).get("status") == "UNKNOWN":
         status = "UNKNOWN"
+    # Configuration is never part of the public report. Hand it to the explicit
+    # local preparation caller only after the second observation and owner check.
+    if prepared_values is not None:
+        prepared_values.update(captured)
     return {
         "schema": "msa-local-runtime-preflight-v1",
         "scope": SCOPE,

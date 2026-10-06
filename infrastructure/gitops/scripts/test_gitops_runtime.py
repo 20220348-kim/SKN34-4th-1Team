@@ -143,6 +143,74 @@ class RuntimePreflightTests(unittest.TestCase):
         )
         self.assertEqual(list(self.state.iterdir()), [])
 
+    def published_files(self):
+        return {
+            runtime.CHART_PATH + "/" + name: payload
+            for name, payload in runtime.chart_inputs().items()
+        } | {
+            f"infrastructure/gitops/environments/fork/{service}.yaml": runtime.portfolio_defaults(
+                service
+            )[0]
+            for service in runtime.cluster.SERVICES
+        }
+
+    def test_private_values_are_returned_only_after_stable_published_observation(self):
+        captured = {}
+        report = runtime.preflight(
+            self.state,
+            FORK,
+            review_preservation=True,
+            published_files=self.published_files(),
+            prepared_values=captured,
+        )
+        self.assertEqual(set(captured), set(runtime.cluster.SERVICES))
+        self.assertFalse(report["deploymentAuthorized"])
+        self.assertFalse(report["preservationReview"]["configurationValuesIncluded"])
+        self.assertEqual(self.command.call_count, 16)
+        self.assertEqual(list(self.state.iterdir()), [])
+
+    def test_private_values_do_not_escape_if_runtime_changes_after_capture(self):
+        captured = {}
+        original = self.read
+        count = 0
+
+        def changed(command, **kwargs):
+            nonlocal count
+            count += 1
+            if count == 9:
+                self.deployments["core-service"]["metadata"]["resourceVersion"] = "2"
+            return original(command, **kwargs)
+
+        self.command.side_effect = changed
+        with self.assertRaisesRegex(ValueError, "changed during preflight"):
+            runtime.preflight(
+                self.state,
+                FORK,
+                review_preservation=True,
+                published_files=self.published_files(),
+                prepared_values=captured,
+            )
+        self.assertEqual(captured, {})
+
+    def test_private_capture_requires_published_preservation_and_empty_destination(
+        self,
+    ):
+        for options in (
+            {"prepared_values": {}},
+            {"review_preservation": True, "prepared_values": {}},
+            {
+                "review_preservation": True,
+                "published_files": self.published_files(),
+                "prepared_values": {"stale": b"value"},
+            },
+        ):
+            with (
+                self.subTest(options=options),
+                self.assertRaisesRegex(ValueError, "Preparation requires"),
+            ):
+                runtime.preflight(self.state, FORK, **options)
+        self.command.assert_not_called()
+
     def test_preservation_rehearsal_does_not_remove_existing_blockers(self):
         container = self.deployment["spec"]["template"]["spec"]["containers"][0]
         container["env"].append({"name": "CUSTOM", "value": "PRIVATE"})

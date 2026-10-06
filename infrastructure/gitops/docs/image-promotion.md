@@ -295,6 +295,57 @@ python3 -B infrastructure/gitops/scripts/deployment.py review-published-runtime 
 
 이 명령에는 `--state-dir`가 필수이며 재현 검사를 항상 수행하므로 `--review-preservation`을 함께 지정하지 않는다.
 
+### 기존 환경의 비공개 전환 파일 준비
+
+`review-published-runtime`은 값이 없는 비교 보고서만 출력한다. 기존 RabbitMQ·개인 로그인·
+Compose Prefect·결과 서버 연결을 보존한 실제 Argo 입력을 검토하려면 다음 명령을 사용한다.
+Windows에서는 기존 state가 있는 WSL Linux 파일시스템에서 실행한다.
+
+```bash
+python3 -B infrastructure/gitops/scripts/gitops_transition.py \
+  --branch main --state-dir "$OPS_STATE_DIR" \
+  --output-name gitops-transition-review-01
+```
+
+실행 흐름은 **현재 공개 발행 검증 → 기존 환경 관찰·Helm 재현 → 전환 입력 렌더링 →
+공개 발행 재검증 → 개인 파일 저장**이다. 원격 저장소·PR·클러스터·DB·Compose를 변경하지 않는다.
+
+- 같은 SHA의 필수 CI·receipt·익명 manifest·발행 Chart 검증을 먼저 통과해야 한다. 과거 발행본이나
+  현재 checkout의 Chart로 대체하지 않는다. 마지막 검증에서 발행본이 달라지거나 최신 필수 CI를
+  재확인하지 못하면 파일을 저장하지 않는다.
+- 네 서비스의 환경변수·Secret 참조와 Ops sync만 보존한다. 이미지 digest, migration, 저장소,
+  probe·자원·보안·Service·배치 설정은 발행본 기준을 유지하며 기존 선언과 재현 결과가 달라지면 거절한다.
+  `envFrom`, 지원하지 않는 Secret 참조·컨테이너, 자격증명 이름으로 식별된 평문 주입,
+  연결 기록 충돌, 개발 이미지 override, 알 수 없는 차단 항목도 파일 생성 대상이 아니다.
+- Helm 4.3.0과 Argo 입력에 고정한 Kubernetes 버전으로 렌더링한다. 앱·sync·migration의 이미지와
+  환경 일치, 서비스별 Secret 경계, Ops PreSync Job을 다시 검사한다. 기존 개인 연동을 보존하므로
+  공유 bootstrap의 모든 기능 비활성 정책을 통과했다고 표시하지 않는다.
+- 저장 위치는 `$OPS_STATE_DIR/<output-name>/transition.json`이며 새 `gitops-transition-...` 이름만
+  허용한다. 디렉터리는 `0700`, 파일은 `0600`으로 만들고 Git 제외 파일도 함께 둔다.
+  기존 경로를 덮어쓰지 않으며 저장 실패 시 이번에 생성한 불완전 파일만 제거한다.
+  파일에는 개인 주소·로그인 이메일 등 설정이 포함될 수 있으므로 공개 이슈·Git에 올리지 않는다.
+  Secret 리소스의 값은 조회하지 않고 참조만 유지한다. 표준 출력에는 설정값을 포함하지 않는다.
+
+파일 schema는 `msa-gitops-transition-v1`, 상태는 `PREPARED_NOT_APPLIED`다. 고정 SHA와 digest,
+AppProject·Application, 실제 렌더링 리소스, 파일 내 리소스 지문, 원래 전환 차단 항목과
+`pendingChecks`를 함께 기록한다. 지문은 서명이나 배포 승인이 아니다.
+자동 동기화·prune·self-heal은 꺼져 있고 자동 재시도는 0이며 sync operation은 생성하지 않는다.
+`deploymentAuthorized=false`, `existingRuntimeVerified=false`를 유지한다.
+
+종료 코드 0은 **전환 파일 생성 성공만** 의미한다. 기존 `plan-gitops`와
+`review-published-runtime`의 차단 동작은 그대로다. 파일을 적용하는 명령은 아직 제공하지 않는다.
+실제 전환 시에는 소스·CI·발행본과 현재 환경을 다시 확인하고 최신 백업·복원, Ops writer 중지와
+migration, Secret·외부 연결 확인, Argo 인계, 관리자 로그인·무료 평가 및 복구 검증을 완료해야 한다.
+생성 후 환경이 바뀔 수 있으므로 이 파일을 재사용 가능한 실행 승인으로 취급하지 않는다.
+
+Infra CI의 `kubernetes-manifests` 작업은 `test_*.py` 검색으로 `test_gitops_transition.py`도 실행한다.
+관련 무료 로컬 검증은 다음과 같다. 실제 Argo 설치·동기화·DB migration 검증은 포함하지 않는다.
+
+```bash
+cd infrastructure/gitops/scripts
+python3 -B -m unittest test_gitops_transition test_gitops_runtime test_gitops_preservation test_published_runtime
+```
+
 ## 배포 PR 없이 GHCR 이미지로 로컬 초기화
 
 `fork_cluster.py up`은 개인 포크 기본 브랜치의 현재 SHA에 대해 다음을 직접 검증한다.
