@@ -50,6 +50,46 @@ manifest 조회 성공만으로 전체 pull·서비스 기동·Argo 동기화 �
 검증 결과는 실행 시점의 증거이며 이후 배포를 승인하거나 미래의 상태를 보장하지 않는다.
 예전 `bootstrap`, `prepare`, `propose`, `check` 배포 PR 명령은 계속 비활성 상태다.
 
+## 실제 배포 없이 고정된 Argo 입력 준비
+
+공개 이미지 검증을 통과한 소스의 Argo 구성을 확인하려면 다음 명령을 사용한다.
+`verify-public`과 같은 Python·Git·Helm·`gh` 환경이 필요하다.
+
+```bash
+python -B infrastructure/gitops/scripts/deployment.py plan-gitops
+```
+
+`--branch`와 `--helm` 옵션은 `verify-public`과 같다. 실행 흐름은
+`최신 소스·필수 CI → 공개 receipt·Helm 정책·익명 manifest 검증 → 변경 여부 재확인 → Argo 계획 JSON`
+이다. 실패하면 종료 코드 1과 `BLOCKED`를 반환하고 일부 Application을 출력하지 않는다.
+기존 `verify-public`의 출력 계약과 과거 배포 PR 명령의 비활성 상태는 유지한다.
+
+성공한 `msa-gitops-plan-v1` 보고서는 `status: PLANNED`와 다음을 포함한다.
+
+- `resources`: AppProject 1개와 서비스별 Application 4개. Chart의 `targetRevision`은 검증한
+  전체 소스 SHA로 고정하고, 발행 receipt로 생성한 전체 values를 `helm.valuesObject`에 넣는다.
+  이후 `main` 병합을 따라가거나 소스 커밋에 남아 있는 과거 이미지 values를 다시 읽지 않는다.
+- 네 서비스 이미지 digest, 발행 run ID, Argo 리소스와 서비스별 렌더링 결과의 SHA-256.
+  해시는 비교용이며 전자서명이나 배포 승인이 아니다.
+- 자동 동기화·prune·self-heal 비활성, 자동 재시도 0회. 기존 서비스 namespace와
+  Deployment·Service·Ops migration Job 범위만 허용하고 DB·PVC·Secret 관리 권한은 추가하지 않는다.
+- `clusterVerified`, `existingRuntimeVerified`, `deploymentAuthorized`, `layersDownloaded`는 모두
+  `false`. 클러스터·로컬 state·Secret에 접근하지 않으며 원격 Git 변경이나 파일 저장도 하지 않는다.
+  필요한 Git 객체 fetch와 임시 Helm 렌더링은 기존 공개 검증 경로와 같다.
+
+이는 **현재 개인 환경에 즉시 적용할 전환 파일이 아니라, 발행된 기본 서비스 구성의 검토용 계획**이다.
+개인 Ops↔Compose 연결 설정·Secret 존재·Argo 리소스 추적 설정·기존 DB 호환성은 검사하지 않는다.
+Argo 설치·Application 적용·sync·원본 migration·런타임 교체 기능은 이번 명령에 없다.
+자동 동기화를 꺼도 나중에 사람이 sync하면 Ops PreSync migration Job이 실행될 수 있다.
+실제 전환 때에는 최신 검증과 [개인 환경 전환 절차](../../../docs/ops-upgrade-runbook.md)를
+수행하고 현재 실행 설정과의 차이를 확인해야 한다. 준비 결과를 재사용 가능한 배포 승인서로 쓰지 않는다.
+
+[Argo Helm valuesObject](https://argo-cd.readthedocs.io/en/stable/user-guide/helm/#values)와
+[자동 동기화 설정](https://argo-cd.readthedocs.io/en/stable/user-guide/auto_sync/)을 따른다.
+무료 회귀 테스트는 실제 Helm으로 각 Application의 고정 Chart·valuesObject를 렌더링해
+발행 검증 결과와 비교하고, 공개 검증 실패·소스 불일치·원격 변경 없음도 확인한다.
+Infra CI의 기존 `test_*.py` 검색에 포함되며 실제 Argo controller 동작 검증은 별도다.
+
 ## 배포 PR 없이 GHCR 이미지로 로컬 초기화
 
 `fork_cluster.py up`은 개인 포크 기본 브랜치의 현재 SHA에 대해 다음을 직접 검증한다.

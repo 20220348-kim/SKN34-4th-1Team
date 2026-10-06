@@ -10,12 +10,17 @@ from pathlib import Path
 from urllib.parse import quote
 from urllib.request import urlopen
 
+import yaml
+
 from deployment_candidate import (
     DEPLOYMENT_BRANCH,
     MANIFEST,
     PREFIX,
     SCHEMA,
+    SERVICES,
+    argo_resources,
     build,
+    digest,
     encoded,
     git_bytes,
     manifest_of,
@@ -314,22 +319,73 @@ def approved_release(root, fork, helm="helm", get=public_api):
     )
 
 
+def gitops_plan(fork, record, files, sha):
+    """Describe manual Argo inputs from an already verified public publication."""
+    if (
+        not valid_sha(sha)
+        or record.get("verifiedRevision") != sha
+        or record.get("repository") != fork.repository
+        or record.get("branch") != fork.branch
+        or record.get("visibility") != "public"
+    ):
+        raise ValueError("GitOps plan requires the matching public publication")
+    resources = argo_resources(fork)
+    rendered_hashes = {}
+    for service, application in zip(SERVICES, resources[1:], strict=True):
+        values = yaml.safe_load(files[PREFIX + f"environments/fork/{service}.yaml"])
+        if values["image"]["repository"] + "@" + values["image"]["digest"] != record[
+            "images"
+        ][service] or values.get("imagePullSecrets"):
+            raise ValueError("GitOps values differ from the public image receipt")
+        source = application["spec"]["source"]
+        source["targetRevision"] = sha
+        # Published values are generated from receipts and may not exist at sha.
+        # Supplying the entire verified values object avoids stale Git value files.
+        source["helm"].pop("valueFiles")
+        source["helm"]["valuesObject"] = values
+        application["spec"]["syncPolicy"]["automated"] = {
+            "enabled": False,
+            "prune": False,
+            "selfHeal": False,
+        }
+        application["spec"]["syncPolicy"]["retry"]["limit"] = 0
+        rendered_hashes[service] = digest(files[PREFIX + f"rendered/{service}.json"])
+    return {
+        "status": "PLANNED",
+        "resources": resources,
+        "resourcesSha256": digest(encoded(resources)),
+        "renderedSha256": rendered_hashes,
+        "automaticSyncEnabled": False,
+        "existingRuntimeVerified": False,
+        "deploymentAuthorized": False,
+    }
+
+
 def main():
-    if len(sys.argv) < 2 or sys.argv[1] not in {"verify-public", "--help", "-h"}:
+    if len(sys.argv) < 2 or sys.argv[1] not in {
+        "verify-public",
+        "plan-gitops",
+        "--help",
+        "-h",
+    }:
         raise SystemExit(
             "Separate deployment branches and deployment PR automation were removed. "
-            "Use verify-public for read-only publication checks. "
+            "Use verify-public or plan-gitops for read-only preparation. "
             "Automatic deployment is not configured; no remote changes were made."
         )
     parser = argparse.ArgumentParser(
-        description="Verify current public image receipts, Helm policy and anonymous manifests; never apply to a cluster."
+        description="Verify public images or plan pinned Argo inputs; never apply to a cluster."
     )
-    parser.add_argument("action", choices=("verify-public",))
+    parser.add_argument("action", choices=("verify-public", "plan-gitops"))
     parser.add_argument("--branch", help="Origin's default branch when omitted")
     parser.add_argument("--helm", default="helm", help="Pinned Helm executable")
     args = parser.parse_args()
     report = {
-        "schema": "msa-publication-check-v1",
+        "schema": (
+            "msa-gitops-plan-v1"
+            if args.action == "plan-gitops"
+            else "msa-publication-check-v1"
+        ),
         "status": "BLOCKED",
         "clusterVerified": False,
         "layersDownloaded": False,
@@ -338,8 +394,13 @@ def main():
         root = Path(__file__).resolve().parents[3]
         fork = from_origin(root, branch=args.branch).require_personal_publish()
         report.update(repository=fork.repository, branch=fork.branch)
-        record, _, sha = verified_release(
+        record, files, sha = verified_release(
             root, fork, args.helm, verify_public_manifests=True
+        )
+        plan = (
+            gitops_plan(fork, record, files, sha)
+            if args.action == "plan-gitops"
+            else {}
         )
         report.update(
             status="PASS",
@@ -351,6 +412,7 @@ def main():
             helmPolicyVerified=True,
             registryManifestsVerified=True,
         )
+        report.update(plan)
     except Exception as error:  # noqa: BLE001 - do not print registry bearer or subprocess details
         reasons = {
             "No complete verified publication": "publication_not_available",

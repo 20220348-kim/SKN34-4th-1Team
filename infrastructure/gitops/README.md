@@ -13,11 +13,13 @@ LLMOps 개발 순서는 [후속 개발 전략](../../docs/llmops-next-developmen
 | 로컬 Kubernetes | 로컬 소스의 `up --local-images` 또는 현재 CI·발행·receipt를 검증하는 GHCR `up` |
 | 이미지 발행 | 개인 포크의 같은 소스 SHA에 대한 필수 CI와 이미지 검증 후 GHCR 발행 |
 | 별도 배포 PR | 제거. 자동 브랜치 생성·PR 생성·검사 dispatch 없음 |
+| Argo 입력 준비 | `deployment.py plan-gitops`: 검증된 공개 이미지·소스 SHA로 고정한 수동 동기화 계획 출력 |
 | Argo 자동 배포 | 대체 연결 미구현. 기존 클러스터는 변경하지 않음 |
 | 과거 snapshot | 읽기·검증 및 오프라인 정책 테스트 보존 |
 
 `MSA_PROMOTION_ENABLED=false`를 유지합니다. GHCR `up`은 별도 배포 브랜치 없이
 [현재 발행 검증 경로](docs/image-promotion.md)로 초기화합니다. 새 Argo `gitops` 전환은 아직 연결하지 않았습니다.
+`plan-gitops`는 자동 동기화를 끈 검토용 구성을 출력하며, 개인 환경 호환성 확인이나 실제 배포를 수행하지 않습니다.
 
 ## 팀원 시작 경로
 
