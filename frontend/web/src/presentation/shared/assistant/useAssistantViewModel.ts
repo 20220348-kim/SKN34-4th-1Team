@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation } from 'react-router'
 
 import { appContainer } from '../../../app/appContainer'
-import { useAppDispatch } from '../../../app/hooks'
+import { useAppDispatch, useAppSelector, useAppStore } from '../../../app/hooks'
 import type { AskAssistantUseCase } from '../../../domain/usecases/AskAssistantUseCase'
 import { isValidAssistantMessage } from '../../../domain/usecases/AskAssistantUseCase'
 import type { BrowseSavedSupportProgramsUseCase } from '../../../domain/usecases/SavedSupportProgramUseCases'
@@ -35,6 +35,11 @@ import {
   userMessage,
 } from './assistantConversation'
 import { assistantMessages } from './assistantMessages'
+import { readAssistantConversation, writeAssistantConversation } from './assistantConversationStorage'
+import {
+  assistantConversationRestored, assistantConversationReplaced,
+  assistantMessagesAdded, assistantQuickRepliesChanged,
+} from './state/assistantSlice'
 
 type SavedProgramsUseCase = Pick<BrowseSavedSupportProgramsUseCase, 'execute'>
 type AskUseCase = Pick<AskAssistantUseCase, 'execute'>
@@ -45,36 +50,11 @@ type AskUseCase = Pick<AskAssistantUseCase, 'execute'>
  */
 export const assistantAnswerTimeoutMs = 45_000
 
-/** 대화는 브라우저 세션 동안만 남습니다. 탭을 닫으면 사라지고 서버에는 보내지 않습니다. */
-export const assistantConversationStorageKey = 'govbiz.assistant.conversation'
+// 기존 import 경로를 유지합니다. 자유 질문에서는 최근 대화 최대 6개를 Core에 전송합니다.
+export { assistantConversationStorageKey } from './state/assistantSlice'
 const labelShownStorageKey = 'govbiz.assistant.labelShown'
 /** 첫 방문에 런처 옆 라벨을 보여 주는 시간입니다. */
 export const assistantLauncherLabelMs = 5_000
-
-type StoredConversation = { messages: AssistantMessage[]; quickReplies: AssistantQuickReply[] }
-
-function readStored(): StoredConversation | null {
-  try {
-    const raw = window.sessionStorage.getItem(assistantConversationStorageKey)
-    if (raw === null) return null
-    const parsed: unknown = JSON.parse(raw)
-    if (typeof parsed !== 'object' || parsed === null) return null
-    const record = parsed as Partial<StoredConversation>
-    if (!Array.isArray(record.messages) || !Array.isArray(record.quickReplies)) return null
-    return { messages: record.messages, quickReplies: record.quickReplies }
-  } catch {
-    return null
-  }
-}
-
-function writeStored(value: StoredConversation | null) {
-  try {
-    if (value === null) window.sessionStorage.removeItem(assistantConversationStorageKey)
-    else window.sessionStorage.setItem(assistantConversationStorageKey, JSON.stringify(value))
-  } catch {
-    // 저장이 막힌 브라우저에서는 대화가 새로고침에 남지 않을 뿐입니다.
-  }
-}
 
 function readLabelShown(): boolean {
   try {
@@ -95,6 +75,10 @@ export function useAssistantViewModel(
   isAssistantAiEnabled: IsAssistantAiEnabled = appContainer.resolve('isAssistantAiEnabled'),
 ) {
   const dispatchToStore = useAppDispatch()
+  const store = useAppStore()
+  const conversation = useAppSelector((state) => state.assistant)
+  const { accountEmail, sessionVersion, authResolved, initialized, messages, quickReplies } = conversation
+  const conversationSession = useMemo(() => ({ accountEmail, sessionVersion }), [accountEmail, sessionVersion])
   const { pathname, search } = useLocation()
   const { isAuthenticated, hasCompany } = useAuthSession()
   const receivedProposals = useReceivedProposals()
@@ -103,14 +87,47 @@ export function useAssistantViewModel(
   // 모델 호출은 빌드 스위치로만 켭니다. 꺼져 있으면 자유 입력을 주제 알약으로 돌려보내 비용이 들지 않습니다.
   const aiEnabled = useMemo(() => isAssistantAiEnabled(), [isAssistantAiEnabled])
   const session = useMemo(() => ({ isAuthenticated, hasCompany, contactUrl }), [isAuthenticated, hasCompany, contactUrl])
-  const [isOpen, setIsOpen] = useState(false)
-  const [messages, setMessages] = useState<AssistantMessage[]>(() => readStored()?.messages ?? [])
-  const [quickReplies, setQuickReplies] = useState<AssistantQuickReply[]>(() => readStored()?.quickReplies ?? [])
-  const [isTyping, setIsTyping] = useState(false)
-  const [hasUnread, setHasUnread] = useState(false)
+  const [ui, setUi] = useState({ ...conversationSession, isOpen: false, isTyping: false, hasUnread: false })
+  // 계정이 바뀐 첫 렌더에서도 이전 패널·입력 초안·배지를 표시하지 않습니다.
+  const sameUiSession = ui.accountEmail === accountEmail && ui.sessionVersion === sessionVersion
+  const isOpen = sameUiSession && ui.isOpen
+  const isTyping = sameUiSession && ui.isTyping
+  const hasUnread = sameUiSession && ui.hasUnread
   const [showLabel, setShowLabel] = useState(() => !readLabelShown())
   const isOpenRef = useRef(isOpen)
   isOpenRef.current = isOpen
+  const mounted = useRef(true)
+  const requests = useRef(new Map<AbortController, ReturnType<typeof setTimeout>>())
+  const isCurrentSession = useCallback(() => {
+    const current = store.getState().assistant
+    return mounted.current && authResolved && current.authResolved
+      && current.accountEmail === accountEmail && current.sessionVersion === sessionVersion
+  }, [store, accountEmail, sessionVersion, authResolved])
+  const updateUi = useCallback((changes: Partial<Pick<typeof ui, 'isOpen' | 'isTyping' | 'hasUnread'>>) => {
+    if (!isCurrentSession()) return
+    setUi((current) => ({
+      ...(current.accountEmail === accountEmail && current.sessionVersion === sessionVersion
+        ? current : { ...conversationSession, isOpen: false, isTyping: false, hasUnread: false }),
+      ...changes,
+    }))
+  }, [accountEmail, sessionVersion, conversationSession, isCurrentSession])
+
+  useEffect(() => {
+    mounted.current = true
+    setUi({ accountEmail, sessionVersion, isOpen: false, isTyping: false, hasUnread: false })
+    const pending = requests.current
+    return () => {
+      mounted.current = false
+      for (const [controller, timer] of pending) { clearTimeout(timer); controller.abort() }
+      pending.clear()
+    }
+  }, [accountEmail, sessionVersion, authResolved])
+
+  useEffect(() => {
+    if (!authResolved || initialized || !isCurrentSession()) return
+    const stored = readAssistantConversation(accountEmail)
+    dispatchToStore(assistantConversationRestored({ ...conversationSession, messages: stored?.messages ?? [], quickReplies: stored?.quickReplies ?? [] }))
+  }, [accountEmail, authResolved, initialized, isCurrentSession, dispatchToStore, conversationSession])
 
   // 첫 방문 라벨은 몇 초 뒤 접히고 그 세션에는 다시 보이지 않습니다.
   useEffect(() => {
@@ -123,35 +140,35 @@ export function useAssistantViewModel(
   }, [showLabel])
 
   useEffect(() => {
-    writeStored(messages.length === 0 ? null : { messages, quickReplies })
-  }, [messages, quickReplies])
+    if (!initialized || !isCurrentSession()) return
+    writeAssistantConversation(messages.length === 0 ? null : { accountEmail, messages, quickReplies })
+  }, [accountEmail, messages, quickReplies, initialized, isCurrentSession])
 
   const routeReplies = useCallback(() => quickRepliesFor(session), [session])
 
   const append = useCallback((next: AssistantMessage[], followUps: AssistantQuickReply[]) => {
-    setMessages((current) => [...current, ...next])
-    setQuickReplies(followUps)
-    if (!isOpenRef.current) setHasUnread(true)
-  }, [])
+    if (!isCurrentSession()) return
+    dispatchToStore(assistantMessagesAdded({ ...conversationSession, messages: next, quickReplies: followUps }))
+    if (!isOpenRef.current) updateUi({ hasUnread: true })
+  }, [dispatchToStore, conversationSession, isCurrentSession, updateUi])
 
   const open = useCallback(() => {
-    setIsOpen(true)
-    setHasUnread(false)
+    if (!isCurrentSession()) return
+    updateUi({ isOpen: true, hasUnread: false })
     setShowLabel(false)
     if (messages.length === 0) {
-      setMessages(greetingMessages())
-      setQuickReplies(routeReplies())
+      dispatchToStore(assistantConversationReplaced({ ...conversationSession, messages: greetingMessages(), quickReplies: routeReplies() }))
     } else if (quickReplies.length === 0) {
-      setQuickReplies(routeReplies())
+      dispatchToStore(assistantQuickRepliesChanged({ ...conversationSession, quickReplies: routeReplies() }))
     }
-  }, [messages.length, quickReplies.length, routeReplies])
+  }, [messages.length, quickReplies.length, routeReplies, dispatchToStore, conversationSession, isCurrentSession, updateUi])
 
-  const close = useCallback(() => setIsOpen(false), [])
+  const close = useCallback(() => updateUi({ isOpen: false }), [updateUi])
 
   const startNewConversation = useCallback(() => {
-    setMessages(greetingMessages())
-    setQuickReplies(routeReplies())
-  }, [routeReplies])
+    if (!isCurrentSession()) return
+    dispatchToStore(assistantConversationReplaced({ ...conversationSession, messages: greetingMessages(), quickReplies: routeReplies() }))
+  }, [routeReplies, dispatchToStore, conversationSession, isCurrentSession])
 
   const returnTo = `${pathname}${search}`
 
@@ -160,6 +177,7 @@ export function useAssistantViewModel(
    * 서버가 인용을 그 안에서만 인정하게 합니다. 45초 안에 답이 없으면 끊고 다시 시도를 안내합니다.
    */
   const submitText = useCallback(async (text: string) => {
+    if (!isCurrentSession()) return
     const trimmed = text.trim()
     if (trimmed === '') return
     const asked = userMessage(trimmed)
@@ -170,11 +188,11 @@ export function useAssistantViewModel(
     const history = messages.slice(-6).map((item) => (item.role === 'user'
       ? { role: 'USER' as const, content: item.text }
       : { role: 'ASSISTANT' as const, content: item.paragraphs.join(' ') }))
-    setMessages((current) => [...current, asked])
-    setQuickReplies([])
-    setIsTyping(true)
+    dispatchToStore(assistantMessagesAdded({ ...conversationSession, messages: [asked], quickReplies: [] }))
+    updateUi({ isTyping: true })
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), assistantAnswerTimeoutMs)
+    requests.current.set(controller, timer)
     try {
       const result = await askAssistant.execute({
         message: trimmed,
@@ -187,27 +205,33 @@ export function useAssistantViewModel(
           action: entry.action === null ? null : { label: entry.action.label, to: entry.action.to.split('?')[0] ?? entry.action.to },
         })),
       }, controller.signal)
+      if (!isCurrentSession()) return
       const answer = result.outcome === 'answered'
         ? freeTextAnswer(result.answer, { pathname, search, session, returnTo })
         : freeTextFailure(trimmed, result.outcome === 'rate-limited' ? assistantMessages.rateLimited(result.retryAfterSeconds) : assistantMessages.unavailable)
       append([answer], answer.role === 'assistant' && answer.followUps.length > 0 ? answer.followUps : routeReplies())
     } catch {
+      if (!isCurrentSession()) return
       const answer = freeTextFailure(trimmed, assistantMessages.loadFailed)
       append([answer], answer.role === 'assistant' ? answer.followUps : [])
     } finally {
       clearTimeout(timer)
-      setIsTyping(false)
+      requests.current.delete(controller)
+      if (isCurrentSession()) updateUi({ isTyping: false })
     }
-  }, [aiEnabled, append, askAssistant, messages, pathname, returnTo, routeReplies, search, session])
+  }, [aiEnabled, append, askAssistant, messages, pathname, returnTo, routeReplies, search, session,
+    dispatchToStore, conversationSession, isCurrentSession, updateUi])
 
   /** 검색 이동 버튼은 검색 입력창에 도우미가 고른 검색어를 미리 채웁니다. 검색 자체는 사용자가 보낼 때 시작합니다. */
   const prepareNavigation = useCallback((button: AssistantCardButton) => {
+    if (!isCurrentSession()) return
     if (button.searchQuery !== undefined) dispatchToStore(draftChanged(button.searchQuery))
-  }, [dispatchToStore])
+  }, [dispatchToStore, isCurrentSession])
 
   const pickQuickReply = useCallback(async (reply: AssistantQuickReply) => {
+    if (!isCurrentSession()) return
     if (reply.kind === 'other') {
-      setQuickReplies(routeReplies())
+      dispatchToStore(assistantQuickRepliesChanged({ ...conversationSession, quickReplies: routeReplies() }))
       return
     }
     if (reply.kind === 'retry') {
@@ -215,8 +239,7 @@ export function useAssistantViewModel(
       return
     }
     const asked = userMessage(reply.label)
-    setMessages((current) => [...current, asked])
-    setQuickReplies([])
+    dispatchToStore(assistantMessagesAdded({ ...conversationSession, messages: [asked], quickReplies: [] }))
 
     if (reply.kind === 'topic') {
       const topic = reply.topicId === undefined ? undefined : findAssistantHelpTopic(reply.topicId)
@@ -251,21 +274,24 @@ export function useAssistantViewModel(
       return
     }
     // 관심 공고는 UseCase로 읽습니다. 실패해도 대화를 막지 않고 안내로 남깁니다.
-    setIsTyping(true)
+    updateUi({ isTyping: true })
     try {
       const saved = await browseSavedPrograms.execute()
+      if (!isCurrentSession()) return
       const answer = savedProgramsAnswer(saved, new Date())
       append([answer], answer.role === 'assistant' ? answer.followUps : [])
     } catch {
+      if (!isCurrentSession()) return
       append([{ ...freeTextFallback(), paragraphs: [assistantMessages.loadFailed], tone: 'warn', followUps: [reply, otherQuestionReply] } as AssistantMessage], [reply, otherQuestionReply])
     } finally {
-      setIsTyping(false)
+      if (isCurrentSession()) updateUi({ isTyping: false })
     }
-  }, [append, browseSavedPrograms, contactUrl, isAuthenticated, pathname, receivedProposals, returnTo, routeReplies, session, submitText])
+  }, [append, browseSavedPrograms, contactUrl, isAuthenticated, pathname, receivedProposals, returnTo, routeReplies, session, submitText,
+    dispatchToStore, conversationSession, isCurrentSession, updateUi])
 
   return {
     /** 채팅 화면·로그인처럼 도우미를 두지 않는 화면입니다. 아래 고정 바 위로 올리는 일은 CSS(assistantLift)가 맡습니다. */
-    isHidden: isAssistantHiddenOn(pathname),
+    isHidden: !authResolved || isAssistantHiddenOn(pathname),
     isOpen,
     open,
     close,
