@@ -223,6 +223,31 @@ class PreservationTests(unittest.TestCase):
         self.assertIn("containers.core-service.readinessProbe", changes["policy"])
         self.assertNotIn("PRIVATE", json.dumps(report))
 
+    def test_helm_rehearsal_does_not_hide_node_placement_changes(self):
+        pod = self.deployments["core-service"]["spec"]["template"]["spec"]
+        pod["nodeSelector"] = {"PRIVATE-label": "PRIVATE-node"}
+        pod["tolerations"] = [{"key": "PRIVATE-taint", "operator": "Exists"}]
+        pod["schedulingGates"] = [{"name": "PRIVATE-gate"}]
+        report = self.review()
+        self.assertEqual(report["status"], "BLOCKED")
+        self.assertEqual(
+            report["services"]["core-service"]["differences"]["policy"],
+            ["nodeSelector", "schedulingGates", "tolerations"],
+        )
+        self.assertNotIn("PRIVATE", json.dumps(report))
+        self.assertFalse(report["deploymentAuthorized"])
+
+    def test_malformed_placement_cannot_be_reported_as_matching(self):
+        self.deployments["core-service"]["spec"]["template"]["spec"]["tolerations"] = {
+            "PRIVATE": "PRIVATE"
+        }
+        report = self.review()
+        self.assertEqual(report["status"], "UNKNOWN")
+        self.assertTrue(
+            all(item["status"] == "UNKNOWN" for item in report["services"].values())
+        )
+        self.assertNotIn("PRIVATE", json.dumps(report))
+
     def test_ambiguous_env_is_rejected_without_private_error_text(self):
         self.container()["env"] += [{"name": "CUSTOM", "value": "PRIVATE"}] * 2
         report = self.review()
