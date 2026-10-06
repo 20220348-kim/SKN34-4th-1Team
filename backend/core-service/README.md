@@ -880,11 +880,12 @@ account/
 ├── controller            # 로그인·로그아웃·내 계정, 개발용 로그인, 기업 등록·수정 HTTP 진입점
 │   └── dto               # 공개 요청·응답 계약
 ├── service               # 회원가입, 로그인 검증·시도 제한, JWT 세션, 소셜 로그인, 비밀번호 변경·계정 삭제, 기업 등록(사업자등록번호 조회)
-├── client/bizno          # Bizno 사업자등록번호 조회 HTTP·응답 검증·오류 변환
+├── client/bizno          # Bizno 사업자등록번호 조회 HTTP·오류 변환
+│   └── mapper            # 원문 JSON 검증·정규화 → domain/RegisteredBusiness 변환
 ├── client/oauth          # 카카오·Google 인가 주소·코드 교환·ID 토큰 클레임 확인, 카카오 연결 끊기
 ├── repository            # 계정·세션·소셜 로그인 연결·기업 저장과 조회, DbRow 변환
 │   └── mapper            # MyBatis Mapper, DbRow
-├── domain                # 계정·역할·세션·소셜 로그인 공급자·기업 업무 모델
+├── domain                # 계정·역할·세션·소셜 로그인 공급자·기업·등록 사업자 업무 모델
 ├── helper                # HS256 JWT 발급·검증·해시, 세션·소셜 로그인 상태 쿠키 발급·읽기, 이메일 정규화
 ├── web                   # Account 파라미터 resolver, Origin 검사 interceptor와 MVC 등록
 └── config                # BCrypt, 세션·개발 로그인·소셜 로그인 설정

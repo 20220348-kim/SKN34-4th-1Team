@@ -2,7 +2,7 @@ package ai.govbiz.core.partner.controller
 
 import ai.govbiz.core._common.test.MySqlTestContainerConfig
 import ai.govbiz.core.account.client.bizno.BiznoClient
-import ai.govbiz.core.account.client.bizno.dto.BiznoBusiness
+import ai.govbiz.core.account.domain.RegisteredBusiness
 import ai.govbiz.core.account.helper.SessionCookieHelper
 import ai.govbiz.core.account.helper.SignupTestHelper
 import jakarta.servlet.http.Cookie
@@ -80,8 +80,8 @@ class PartnerProposalFlowIntegrationTest {
             today.minusDays(30),
             today.plusDays(30),
         )
-        doReturn(listOf(BiznoBusiness("1248100998", "삼성전자(주)", "계속사업자", "01"))).`when`(biznoClient).findByBusinessNumber("1248100998")
-        doReturn(listOf(BiznoBusiness("2208162517", "네이버 주식회사", "계속사업자", "01"))).`when`(biznoClient).findByBusinessNumber("2208162517")
+        doReturn(listOf(RegisteredBusiness("1248100998", "삼성전자(주)", "계속사업자", "01"))).`when`(biznoClient).findByBusinessNumber("1248100998")
+        doReturn(listOf(RegisteredBusiness("2208162517", "네이버 주식회사", "계속사업자", "01"))).`when`(biznoClient).findByBusinessNumber("2208162517")
     }
 
     @Test

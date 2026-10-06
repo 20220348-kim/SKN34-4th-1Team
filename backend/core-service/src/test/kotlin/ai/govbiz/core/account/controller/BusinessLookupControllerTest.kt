@@ -1,7 +1,7 @@
 package ai.govbiz.core.account.controller
 
 import ai.govbiz.core._common.exception.ApiExceptionHandler
-import ai.govbiz.core.account.client.bizno.dto.BiznoBusiness
+import ai.govbiz.core.account.domain.RegisteredBusiness
 import ai.govbiz.core.account.client.bizno.exception.BiznoClientException
 import ai.govbiz.core.account.helper.AccountTestHelper
 import ai.govbiz.core.account.helper.SessionCookieHelper
@@ -14,6 +14,8 @@ import jakarta.servlet.http.Cookie
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.extension.ExtendWith
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.CsvSource
 import org.mockito.Mock
 import org.mockito.Mockito.doReturn
 import org.mockito.Mockito.doThrow
@@ -49,20 +51,23 @@ class BusinessLookupControllerTest {
             .build()
     }
 
-    @Test
-    fun returnsTheCompanyNameAndStatusForARegisteredNumber() {
+    @ParameterizedTest
+    @CsvSource("01,계속사업자,true,true", "02,휴업자,false,true", "03,폐업자,false,false", "99,미확인 상태,false,false")
+    fun returnsTheSamePublicFieldsAndRegistrationPolicyForTheInternalBusinessStatus(
+        statusCode: String, businessStatus: String, active: Boolean, registerable: Boolean,
+    ) {
         doReturn(AccountTestHelper.account()).`when`(sessionService).requireAccount("session-token")
-        doReturn(BiznoBusiness("1248100998", "삼성전자(주)", "계속사업자", "01")).`when`(lookupService).lookup("124-81-00998")
+        doReturn(RegisteredBusiness("1248100998", "삼성전자(주)", businessStatus, statusCode)).`when`(lookupService).lookup("124-81-00998")
 
         mockMvc.perform(get(LOOKUP_PATH).param("businessNumber", "124-81-00998").cookie(session))
             .andExpect(status().isOk())
             .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
             .andExpect(jsonPath("$.businessNumber").value("1248100998"))
             .andExpect(jsonPath("$.companyName").value("삼성전자(주)"))
-            .andExpect(jsonPath("$.businessStatus").value("계속사업자"))
-            .andExpect(jsonPath("$.businessStatusCode").value("01"))
-            .andExpect(jsonPath("$.isActive").value(true))
-            .andExpect(jsonPath("$.canRegister").value(true))
+            .andExpect(jsonPath("$.businessStatus").value(businessStatus))
+            .andExpect(jsonPath("$.businessStatusCode").value(statusCode))
+            .andExpect(jsonPath("$.isActive").value(active))
+            .andExpect(jsonPath("$.canRegister").value(registerable))
     }
 
     @Test

@@ -959,9 +959,13 @@ C02 해석은 별도 `40s` 제한이며 사용자 확인을 사이에 두므로 
 가입·변경·재설정의 새 비밀번호는 영문 대·소문자, 숫자, 특수문자만 8~72자이며 한글·이모지·공백은 거부합니다. BCrypt의
 UTF-8 72바이트 한도는 문자 규칙과 별개로 계속 검사합니다. 로그인·탈퇴는 기존 BCrypt 해시의
 비밀번호 검증 호환성을 유지합니다. 재설정 토큰은 비밀번호 변경 transaction 안에서 잠가 같은 토큰의 동시 재사용을 막습니다.
-사업자등록번호 확인은 `BusinessLookupController → BusinessLookupService → BiznoClient`로 외부 HTTP를 한 번 부르고,
-`BiznoClient`가 응답 검증과 오류를 `BiznoClientException`으로 바꿔 API 키가 담긴 URL이 로그·응답에 남지 않게 합니다.
-기업 등록은 `CompanyController → CompanyService → BiznoClient(사업자등록번호 조회) · CompanyRepository → MySQL`입니다. 서버가 등록 시점에
+사업자등록번호 확인은 `BusinessLookupController → BusinessLookupService → BiznoClient`로 외부 HTTP를 한 번 부릅니다.
+`client/bizno/mapper/BiznoBusinessMapper`가 원문 JSON을 검증·정규화해 `account/domain/RegisteredBusiness`로 변환합니다.
+Service와 공개 `BusinessLookupResponse`는 이 내부 모델을 사용하며, 계속사업자·등록 가능 여부 판단은 Domain이 소유합니다.
+`BiznoClient`는 HTTP 오류를 `BiznoClientException`으로 바꿔 API 키가 담긴 URL이 로그·응답에 남지 않게 합니다.
+원문 JSON과 Jackson 타입은 Bizno Client·Mapper 경계 안에서만 사용하고 공개 응답의 기존 여섯 필드는 유지합니다.
+기업 등록은 `CompanyController → CompanyService → BusinessLookupService → BiznoClient(사업자등록번호 조회)`와
+`CompanyService → CompanyRepository → MySQL`로 이어집니다. 서버가 등록 시점에
 사업자등록번호를 다시 조회해 계속·휴업 사업자를 저장하고(폐업은 거절, 휴업은 파트너 기능만 제한), 계정 조회는 `company`를 LEFT JOIN해 요약과 `tier=COMPANY`를 계산합니다.
 파트너 모집글은 `partner` 기능의 `PartnerRecruitmentController → PartnerRecruitmentService → PartnerRecruitmentRepository → MySQL`입니다.
 Service가 세션 계정의 기업, `support_program`에 현재 있는 공고, 접수 상태(`SupportProgramStatusResolver`), 마감일 규칙을 확인한 뒤 저장하고,

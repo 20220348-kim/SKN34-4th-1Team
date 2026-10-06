@@ -1,6 +1,6 @@
 package ai.govbiz.core.account.controller.dto
 
-import ai.govbiz.core.account.client.bizno.dto.BiznoBusiness
+import ai.govbiz.core.account.domain.RegisteredBusiness
 
 /** 등록 전 미리보기입니다. 국세청이 알려 주는 상호·상태만 담고 소재지·업종은 없습니다. */
 data class BusinessLookupResponse(
@@ -15,7 +15,7 @@ data class BusinessLookupResponse(
     val canRegister: Boolean,
 ) {
     companion object {
-        fun from(business: BiznoBusiness): BusinessLookupResponse =
+        fun from(business: RegisteredBusiness): BusinessLookupResponse =
             BusinessLookupResponse(
                 businessNumber = business.businessNumber,
                 companyName = business.companyName,

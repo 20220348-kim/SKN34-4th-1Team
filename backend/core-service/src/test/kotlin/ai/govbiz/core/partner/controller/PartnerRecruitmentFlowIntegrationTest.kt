@@ -2,7 +2,7 @@ package ai.govbiz.core.partner.controller
 
 import ai.govbiz.core._common.test.MySqlTestContainerConfig
 import ai.govbiz.core.account.client.bizno.BiznoClient
-import ai.govbiz.core.account.client.bizno.dto.BiznoBusiness
+import ai.govbiz.core.account.domain.RegisteredBusiness
 import ai.govbiz.core.account.helper.SessionCookieHelper
 import ai.govbiz.core.account.helper.SignupTestHelper
 import jakarta.servlet.http.Cookie
@@ -71,9 +71,9 @@ class PartnerRecruitmentFlowIntegrationTest {
         insertProgram("open-program", today.plusDays(30), present = true)
         insertProgram("closed-program", today.minusDays(1), present = true)
         insertProgram("gone-program", today.plusDays(30), present = false)
-        doReturn(listOf(BiznoBusiness("1248100998", "삼성전자(주)", "계속사업자", "01")))
+        doReturn(listOf(RegisteredBusiness("1248100998", "삼성전자(주)", "계속사업자", "01")))
             .`when`(biznoClient).findByBusinessNumber("1248100998")
-        doReturn(listOf(BiznoBusiness("1208734519", "한빛정밀", "휴업자", "02")))
+        doReturn(listOf(RegisteredBusiness("1208734519", "한빛정밀", "휴업자", "02")))
             .`when`(biznoClient).findByBusinessNumber("1208734519")
     }
 
@@ -171,7 +171,7 @@ class PartnerRecruitmentFlowIntegrationTest {
             post("/api/v1/me/company").cookie(lead).origin()
                 .json("""{"businessNumber":"124-81-00998","region":"서울특별시","industry":"정보통신업","foundedYear":2021}"""),
         ).andExpect(status().isCreated())
-        doReturn(listOf(BiznoBusiness("2208162517", "네이버 주식회사", "계속사업자", "01")))
+        doReturn(listOf(RegisteredBusiness("2208162517", "네이버 주식회사", "계속사업자", "01")))
             .`when`(biznoClient).findByBusinessNumber("2208162517")
         val participant = signUp("participant@company.co.kr")
         mockMvc.perform(

@@ -1,6 +1,6 @@
 package ai.govbiz.core.account.service
 
-import ai.govbiz.core.account.client.bizno.dto.BiznoBusiness
+import ai.govbiz.core.account.domain.RegisteredBusiness
 import ai.govbiz.core.account.domain.Company
 import ai.govbiz.core.account.domain.CompanyProfileInput
 import ai.govbiz.core.account.domain.NewCompany
@@ -144,7 +144,7 @@ class CompanyServiceTest {
     }
 
     private fun activeBusiness() =
-        BiznoBusiness(
+        RegisteredBusiness(
             businessNumber = "1248100998",
             companyName = "삼성전자(주)",
             businessStatus = "계속사업자",
