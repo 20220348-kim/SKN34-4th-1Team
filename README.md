@@ -125,13 +125,12 @@ flowchart LR
 
 ## 5. 시스템 아키텍처
 
-GovBiz는 **웹·모바일이 같은 Core API를 사용**하고, 공고 수집·AI 처리·평가 운영을 별도 서비스로 분리합니다.
-**Core는 사용자 업무, Catalog는 공고 원본, AI Service는 AI 처리, Django Ops는 평가 운영**을 담당합니다.
+GovBiz는 **사용자 업무·공고 수집·AI 처리·평가 운영**을 독립 서비스로 나누고,
+HTTP API와 비동기 메시지로 연결합니다.
 
 ### 서비스 연결
 
-**사용자 업무 요청** — 웹과 앱은 Core를 통해 공고·계정·신청 기능을 사용합니다.
-Core는 Catalog의 공개 자료를 동기화하고 AI Service에 검색·생성을 요청합니다.
+**사용자 업무:** 웹·모바일은 같은 Core API를 사용하며, Core가 Catalog·AI Service를 호출합니다.
 
 ```mermaid
 flowchart LR
@@ -145,8 +144,7 @@ flowchart LR
     class Core,Catalog,AI service
 ```
 
-**관리자 평가 요청** — 같은 React 웹의 LLMOps 화면이 Django Ops API를 호출합니다.
-Ops는 Core에 관리자 권한을 확인하고, 평가 작업은 Prefect와 별도 실행기가 수행합니다.
+**평가 운영:** 같은 React 웹의 관리자 화면이 Ops를 호출하고, 평가 작업은 HTTP 요청 밖에서 실행됩니다.
 
 ```mermaid
 flowchart LR
@@ -161,78 +159,44 @@ flowchart LR
     class Evaluation execution
 ```
 
-화살표는 대표적인 **호출 방향**이며 응답은 생략했습니다. Catalog의 색인 준비는
-[데이터 준비](#데이터-준비), 검색·답변 단계는 [AI 처리 흐름](#ai-처리-흐름),
-평가·보고서·사람 검토는 [LLMOps](#llmops-평가운영)에서 이어집니다.
+화살표는 대표적인 호출 방향이며 응답은 생략했습니다.
+웹·앱은 [Shared 패키지](docs/mobile-monorepo.md)의 업무 모델·API 계약·응답 검증을 공유합니다.
 
-| 구성 요소 | 맡는 일 | 주요 연결 |
+### 서비스 경계와 데이터 소유권
+
+| 서비스 | 책임 | 관리하는 데이터 |
 |---|---|---|
-| [Web](frontend/web/README.md) · [Mobile](frontend/mobile/README.md) | React 웹·Expo 앱의 사용자 화면. LLMOps 관리자 화면은 웹에서 제공 | 사용자 업무는 Core, 웹의 평가 운영은 Ops |
-| [Shared](docs/mobile-monorepo.md) | 공통 업무 모델·API 계약·응답 검증을 담은 TypeScript 패키지 | 웹·앱이 가져다 사용하며 별도 서버로 실행하지 않음 |
-| [Core API](backend/core-service/README.md) | 계정·기업·신청·협업·리포트·관리자 업무, 검색 조합·원문 검증 | Catalog · AI Service · 업무 저장소 |
-| [Catalog](backend/catalog-service/README.md) | 제공처 공고 수집·정규화·색인 준비·공개 버전 관리 | 공식 제공처 API · AI Service · 검색 저장소 |
-| [AI Service](backend/ai-service/README.md) | 임베딩·의미 검색·추천·근거 답변·문서 작성·도우미 | OpenAI · Qdrant |
-| [Django Ops](backend/ops-service/README.md) | 관리자 권한 확인, 평가·예산·취소·검토·품질 판정·비교 기준 관리 | Core 인증 API · Prefect · 평가 결과 |
+| [Core API](backend/core-service/README.md) | 인증·사용자 업무, 검색 조합·원문 검증 | Core MySQL: 업무 기록·조회용 공고 복제본·원문 캐시 |
+| [Catalog](backend/catalog-service/README.md) | 공식 공고 수집·정규화·색인 준비·공개 | Catalog MySQL: 공고 원본·수집 상태·공개 버전 |
+| [AI Service](backend/ai-service/README.md) | OpenAI 기반 임베딩·검색·생성·도구 실행 | Qdrant: 공고 검색 벡터·근거 청크 |
+| [Django Ops](backend/ops-service/README.md) | 평가 접수·예산·검토·품질 판정·비교 기준 | Ops MySQL: 평가 실행·검토 이력·판정·예산·일정 |
 
-대화 조건 해석·추천·근거 답변·중복 검토·신청 문서는 LangChain,
-도구를 호출하는 GovBiz 도우미는 LangGraph를 사용합니다. 상세 호출은 [서비스 호출·데이터 흐름](docs/architecture.md)을 참고하세요.
-
-### 데이터 구조와 소유권
-
-**Core·Catalog·Ops는 각자의 MySQL 8.4 DB를 소유**합니다.
-Core는 Catalog의 인증된 HTTP snapshot을 검증해 자기 DB의 조회용 복제본을 갱신합니다.
-Ops의 관리자 인증도 Core API로 확인하며, 회원 DB나 비밀번호를 복제하지 않습니다.
-
-| 데이터 소유 서비스 | 주요 저장 내용 | 스키마 정의 |
-|---|---|---|
-| Core | 계정·기업·관심 공고·신청 문서·협업·리포트, 조회용 공고 복제본·원문 캐시 | [Flyway migration](backend/core-service/src/main/resources/db/migration) |
-| Catalog | 제공처별 공고 원본·수집 상태·공개 버전 | [Flyway migration](backend/catalog-service/src/main/resources/db/migration) |
-| Ops | 평가 실행·검토·품질 판정·비교 기준·예산·일정 | [Django 모델](backend/ops-service/apps/evaluations/models.py) · [migration](backend/ops-service/apps/evaluations/migrations) |
-
-| 저장·처리 도구 | 담당하는 데이터와 작업 |
-|---|---|
-| **Elasticsearch + Nori·BM25** | 한국어 키워드 검색 후보. Core가 의미 검색 후보와 RRF로 결합 |
-| **Qdrant** | 임베딩 기반 의미 검색 후보와 공고별 근거 청크 검색 |
-| **Redis** | 검색 결과·조건 복원, 일부 작업의 실행 잠금 등 임시 상태 |
-| **RabbitMQ** | 리포트·메일, 중복 검토, 공식 양식 분석, 카카오 연결 해제의 비동기 작업 전달. 작업 상태·Outbox는 MySQL에 보존 |
-| **LLMOps 결과·추적 저장소** | 보고서·캡처는 평가 결과 볼륨, Langfuse는 별도 PostgreSQL·ClickHouse·Redis·MinIO 사용 |
+- **DB 경계:** Core·Catalog·Ops는 각자의 MySQL DB를 소유합니다. Core는 Catalog의 인증된 snapshot을
+  자기 DB에 반영하고, Ops는 Core API로 관리자 권한을 확인합니다. 다른 서비스의 DB를 직접 읽지 않습니다.
+- **검색·임시 상태:** Catalog가 검색 색인 준비를 소유하며, 벡터 처리는 AI Service에 요청합니다.
+  Core는 Elasticsearch의 키워드 후보와 AI Service의 의미 검색 후보를 결합하고 Redis에 검색 결과·임시 상태를 보관합니다.
+- **비동기 작업:** Core의 작업 생산자·소비자는 RabbitMQ로 연결됩니다. 작업 상태와 Outbox는 Core MySQL에 저장합니다.
+- **평가 결과:** 별도 실행기가 결과 볼륨에 보고서·캡처를 기록하고 Langfuse에 추적·점수를 전송합니다.
+  Ops는 결과를 조회해 실행·검토 이력과 연결합니다.
 
 <a id="로컬-시작"></a>
 
-### 실행 방식: Compose와 Kubernetes
+### 배치 구조
 
-서비스의 책임은 같지만, 선택한 실행 구성에 따라 배치 위치가 달라집니다.
-**Kubernetes 연결 구성을 사용해도 Prefect·평가 실행기·결과 저장소·Langfuse는 Compose에 유지합니다.**
+아래는 코드가 제공하는 배치 구성이며, 현재 가동 상태와는 구분합니다.
 
-| 실행 구성 | 업무 서비스와 Ops | 평가 실행 환경 | 설정·실행 안내 |
-|---|---|---|---|
-| **통합 Compose** | Core·Catalog·AI·Ops·웹·저장소를 Compose로 구성 | Prefect·실행기·Langfuse는 별도 준비·연결 | [루트 Compose](compose.yaml) · [로컬 시작](docs/local-start.md) |
-| **LLMOps 독립 Compose** | Ops API·ops-sync·Ops DB는 Compose, 인증은 기존 Core에 연결 | Prefect·실행기·결과 볼륨·Langfuse를 Compose로 구성 | [Ops 실행 설정](infrastructure/llmops/compose.ops.yaml) · [LLMOps 실행 안내](infrastructure/llmops/README.md) |
-| **Kubernetes + Compose** | Core·Catalog·AI·Ops와 업무 저장소는 Kubernetes | Compose의 Prefect·결과 서버를 내부 HTTP 브리지로 연결 | [Kubernetes 개발](docs/local-fork-development.md) · [Ops 연결 계약](infrastructure/gitops/docs/ops-runtime.md) |
+| 배치 구성 | Core·Catalog·AI·Ops와 업무 저장소 | Prefect·평가 실행기·결과 저장소·Langfuse |
+|---|---|---|
+| **Compose** | Compose. Ops는 기존 Core에 연결하는 독립 구성도 제공 | 별도 LLMOps Compose |
+| **Kubernetes 혼합** | Kubernetes | Compose 유지 |
 
-> **실제 실행 확인 — 2026-10-08:** 로컬에서는 Ops API·ops-sync·Ops DB와 평가 도구가
-> **LLMOps 독립 Compose**로 실행 중입니다. 저장된 Kubernetes API 주소는 연결을 거부해
-> 현재 Pod·브리지 상태를 확인하지 못했습니다. 위 표는 코드가 제공하는 실행 구성을 설명합니다.
+Kubernetes 혼합 구성에서는 **Ops API와 `ops-sync`가 같은 Pod**에서 실행되고,
+내부 HTTP 브리지로 Compose의 Prefect와 `ops-artifacts` 결과 서버에 접근합니다.
+결과 볼륨은 Compose에 유지하며 인증된 HTTP로 읽습니다.
+이 연결은 저장 응답 재평가를 대상으로 하며, 유료 실행의 Kubernetes 예산 API 연결은 별도입니다.
 
-Kubernetes 연결 시 `ops-sync`는 Ops API와 같은 Pod에서 실행됩니다. Compose의 결과 볼륨은
-`ops-artifacts` 인증 HTTP로 조회하며, Compose 쪽에 Ops API·DB를 중복 기동하지 않습니다.
-이 연결 프로필의 평가 범위는 **저장 응답의 무료 재평가**이고, 유료 실행의 Kubernetes 예산 API 연결은 별도입니다.
-
-큰 배치도와 포트·저장소·브리지 설명은 [Kubernetes + Compose 상세 구성](docs/assets/architecture/README-local.md)에서 확인할 수 있습니다.
-웹·모바일 접속 주소와 환경 파일 준비는 [로컬 시작 가이드](docs/local-start.md),
-전체 평가 단계는 [LLMOps 평가·운영](#llmops-평가운영)을 참고하세요.
-
-<details>
-<summary>아키텍처 문서 표현 참고</summary>
-
-서비스 관계·데이터 소유권·실행 구성을 나누는 데 다음 공개 문서의 표현 방식을 참고했습니다.
-GovBiz의 구성 요소와 연결은 이 저장소의 코드·설정에 근거합니다.
-
-- [Google Cloud Online Boutique](https://github.com/GoogleCloudPlatform/microservices-demo#architecture): 핵심 관계도와 서비스별 책임 표를 함께 제공
-- [OpenTelemetry Demo](https://github.com/open-telemetry/opentelemetry.io/blob/main/content/en/docs/demo/architecture.md): 서비스 호출과 관측 데이터 흐름을 별도 도식으로 설명
-- [Langfuse](https://github.com/langfuse/langfuse#-deploy-langfuse): 기능 설명과 Compose·Kubernetes 배포 선택지를 분리
-
-</details>
+[서비스 호출 상세](docs/architecture.md) · [배치 구성도](docs/assets/architecture/README-local.md) ·
+[Ops 연결 계약](infrastructure/gitops/docs/ops-runtime.md)
 
 <a id="데이터-준비"></a>
 
