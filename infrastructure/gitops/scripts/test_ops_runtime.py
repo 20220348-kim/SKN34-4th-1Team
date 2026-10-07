@@ -3,9 +3,12 @@
 import base64
 import copy
 import hashlib
+import io
 import json
+import subprocess
 import tempfile
 import unittest
+from contextlib import nullcontext, redirect_stderr, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -340,6 +343,85 @@ class UpgradePreflightTests(unittest.TestCase):
         del self.result["admission_version"]
         self.result["checks"]["open_admission"] = None
         self.assertEqual(self.check(), self.result)
+
+
+class ReadOnlyCliOutputTests(unittest.TestCase):
+    def test_preflight_json_and_exit_status_survive_bridge_progress(self):
+        for state in ("PASS", "BLOCKED", "UNKNOWN"):
+            report = {
+                "status": state,
+                "reason": "admission_open" if state == "BLOCKED" else None,
+                "backup_verified": False,
+            }
+
+            def probe(*args):
+                print("PASS: bridge diagnostic, not deployment readiness")
+                return report
+
+            with (
+                self.subTest(status=state),
+                patch("sys.argv", ["ops_runtime.py", "--preflight"]),
+                patch.object(runtime, "load_settings", return_value=SETTINGS),
+                patch.object(runtime, "locked", return_value=nullcontext()),
+                patch.object(runtime, "upgrade_preflight", side_effect=probe),
+                patch.object(runtime, "activate") as activate,
+                redirect_stdout(io.StringIO()) as output,
+            ):
+                if state == "PASS":
+                    runtime.main()
+                else:
+                    with self.assertRaises(SystemExit) as stopped:
+                        runtime.main()
+                    self.assertEqual(stopped.exception.code, 1)
+            self.assertEqual(json.loads(output.getvalue()), report)
+            activate.assert_not_called()
+
+    def test_runtime_check_emits_only_json_and_preserves_run_id(self):
+        run_id = UUID("7f5ea1ca-6c60-4bca-a6a3-8af661a241c6")
+        report = {"status": "PASS", "evaluation_executed": False}
+
+        def check(*args):
+            print("PASS: bridge progress")
+            return report
+
+        with (
+            patch("sys.argv", ["ops_runtime.py", "--check", "--run-id", str(run_id)]),
+            patch.object(runtime, "load_settings", return_value=SETTINGS),
+            patch.object(runtime, "locked", return_value=nullcontext()),
+            patch.object(runtime, "check_runtime", side_effect=check) as checker,
+            patch.object(runtime, "activate") as activate,
+            redirect_stdout(io.StringIO()) as output,
+        ):
+            runtime.main()
+        self.assertEqual(json.loads(output.getvalue()), report)
+        self.assertEqual(checker.call_args.args[2], run_id)
+        activate.assert_not_called()
+
+    def test_external_failure_does_not_emit_progress_or_partial_success_json(self):
+        for flag, function in (
+            ("--preflight", "upgrade_preflight"), ("--check", "check_runtime")
+        ):
+            def fail(*args):
+                print("PRIVATE bridge output")
+                raise subprocess.TimeoutExpired("kubectl", 15, output="PRIVATE")
+
+            with (
+                self.subTest(flag=flag),
+                patch("sys.argv", ["ops_runtime.py", flag]),
+                patch.object(runtime, "load_settings", return_value=SETTINGS),
+                patch.object(runtime, "locked", return_value=nullcontext()),
+                patch.object(runtime, function, side_effect=fail),
+                patch.object(runtime, "activate") as activate,
+                redirect_stdout(io.StringIO()) as output,
+                redirect_stderr(io.StringIO()) as errors,
+                self.assertRaises(SystemExit) as stopped,
+            ):
+                runtime.main()
+            self.assertEqual(stopped.exception.code, 1)
+            self.assertEqual(output.getvalue(), "")
+            self.assertNotIn("PRIVATE", errors.getvalue())
+            self.assertIn("TimeoutExpired", errors.getvalue())
+            activate.assert_not_called()
 
 
 class ActivationTests(unittest.TestCase):

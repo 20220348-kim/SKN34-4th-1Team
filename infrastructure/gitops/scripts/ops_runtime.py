@@ -3,12 +3,14 @@
 import argparse
 import base64
 import hashlib
+import io
 import json
 import os
 import re
 import stat
 import subprocess
 import sys
+from contextlib import redirect_stdout
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -792,19 +794,18 @@ def main():
     try:
         settings = load_settings(args.state_dir)
         with locked(args.state_dir):
-            if args.preflight:
-                result = upgrade_preflight(args.state_dir, settings)
-                print(json.dumps(result, sort_keys=True))
-                if result["status"] != "PASS":
-                    parser.exit(1)
-                return
-            if args.check:
-                print(
-                    json.dumps(
-                        check_runtime(args.state_dir, settings, args.run_id),
-                        sort_keys=True,
+            if args.preflight or args.check:
+                # Lower-level bridge checks print progress. Keep this CLI's
+                # stdout a single JSON document, including blocked preflights.
+                with redirect_stdout(io.StringIO()):
+                    result = (
+                        upgrade_preflight(args.state_dir, settings)
+                        if args.preflight
+                        else check_runtime(args.state_dir, settings, args.run_id)
                     )
-                )
+                print(json.dumps(result, sort_keys=True))
+                if args.preflight and result["status"] != "PASS":
+                    parser.exit(1)
                 return
             activate(
                 args.state_dir,
