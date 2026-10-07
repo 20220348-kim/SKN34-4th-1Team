@@ -142,7 +142,7 @@ export function useCombinationReview(token: string, email: string, id: number | 
     const snapshot = latest.current
     if (!snapshot.storageReady) { setError('분석 요청 보관 상태를 먼저 확인해 주세요.'); return }
     if (snapshot.pending && !sameRequest) { setError('미확인 분석 요청이 있어요. 같은 요청으로 먼저 확인해 주세요.'); return }
-    if (!sameRequest && snapshot.runs.some(activeRun)) { setError('대기·분석 중이거나 운영 확인이 필요한 실행이 있어요. 새 분석을 시작할 수 없습니다.'); return }
+    if (!sameRequest && snapshot.runs.some(activeRun)) { setError('대기·분석 중이거나 결과를 확인하는 중인 실행이 있어요. 지금은 새 분석을 시작할 수 없어요.'); return }
     if (sameRequest && (!snapshot.pending || snapshot.pending.reviewId !== effectiveId)) { setError('이 검토의 미확인 요청이 없어요.'); return }
     const controller = new AbortController(); mutation.current = controller
     lock.current = true; setOperation('analysis'); setError(null)

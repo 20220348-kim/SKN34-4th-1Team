@@ -10,10 +10,12 @@ import ai.govbiz.core.combinationreview.domain.exception.CombinationReviewRevisi
 import ai.govbiz.core.combinationreview.domain.exception.CombinationReviewRunConflictException
 import ai.govbiz.core.combinationreview.domain.exception.CombinationReviewCapacityException
 import java.time.Clock
+import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.temporal.ChronoUnit
 import org.springframework.beans.factory.annotation.Qualifier
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Repository
 import org.springframework.transaction.annotation.Isolation
 import org.springframework.transaction.annotation.Transactional
@@ -24,7 +26,12 @@ import tools.jackson.databind.ObjectMapper
 class CombinationReviewRunRepository(
     private val mapper: CombinationReviewRunMapper, private val reviews: CombinationReviewRepository,
     private val json: ObjectMapper, @param:Qualifier("seoulClock") private val clock: Clock,
+    @param:Value("\${app.combination-review.unknown-ttl:PT30M}") private val unknownTtl: Duration,
 ) {
+    init {
+        require(unknownTtl >= Duration.ofMinutes(20)) { "app.combination-review.unknown-ttl must be at least PT20M" }
+    }
+
     @Transactional(isolation = Isolation.REPEATABLE_READ)
     fun reserve(ownerId: Long, reviewId: Long, expectedRevision: Long, requestKey: String, additionalFacts: String, runnerInstanceId: String): ReviewRunReservation {
         mapper.lockActiveAccount(ownerId) ?: throw CombinationReviewNotFoundException()
@@ -67,11 +74,13 @@ class CombinationReviewRunRepository(
     fun reservePublication(runId: Long): Boolean = mapper.reservePublication(runId, now()) == 1
     fun markPublished(runId: Long) { mapper.markPublished(runId, now()) }
 
+    /** 결과 불명(UNKNOWN)은 다시 호출하지 않고, TTL이 지나면 FAILED로 정리해 같은 검토의 새 실행과 계정 한도를 돌려준다. */
     @Transactional
     fun expireStaleWork() {
         val now = now()
         mapper.expireQueued(now)
         mapper.expireRunning(now)
+        mapper.releaseUnknown(now, unknownTtl.seconds)
     }
 
     fun findOwned(ownerId: Long, reviewId: Long, runId: Long): StoredCombinationReviewRun? = mapper.findOwned(ownerId, reviewId, runId)?.toDomain()

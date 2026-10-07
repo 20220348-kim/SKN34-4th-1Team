@@ -227,6 +227,26 @@ class CombinationReviewRunIntegrationTest {
         verifyNoInteractions(source, ai)
     }
 
+    @Test
+    fun unknownOutcomeIsReleasedAfterTheTtlWithoutCallingAiAgain() {
+        val runId = id(submit().andExpect(status().isAccepted()))
+        assertNotNull(runs.claim(runId, UUID.randomUUID().toString()))
+        runs.markUnknown(runId, "RUN_OUTCOME_UNKNOWN")
+        runs.expireStaleWork()
+        assertEquals(ReviewRunStatus.UNKNOWN, runs.findOwned(ownerId, reviewId, runId)!!.status)
+        submit().andExpect(status().isConflict())
+        jdbc.update("UPDATE combination_review_run SET finished_at = DATE_SUB(finished_at, INTERVAL 31 MINUTE) WHERE id = ?", runId)
+        runs.expireStaleWork()
+        val released = requireNotNull(runs.findOwned(ownerId, reviewId, runId))
+        assertEquals(ReviewRunStatus.FAILED, released.status)
+        assertEquals("RUN_OUTCOME_UNKNOWN_EXPIRED", released.failureCode)
+        service.executeQueued(runId)
+        runs.fail(runId, "LATE_FAILURE")
+        assertEquals("RUN_OUTCOME_UNKNOWN_EXPIRED", runs.findOwned(ownerId, reviewId, runId)!!.failureCode)
+        submit().andExpect(status().isAccepted())
+        verifyNoInteractions(source, ai)
+    }
+
     @ParameterizedTest
     @ValueSource(strings = ["QUEUED", "RUNNING", "UNKNOWN"])
     fun blocksDirectDeletionAndPreservesActiveOrUnresolvedRuns(state: String) {

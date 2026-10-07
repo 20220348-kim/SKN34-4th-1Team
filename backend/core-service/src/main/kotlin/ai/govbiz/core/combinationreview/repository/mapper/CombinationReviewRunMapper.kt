@@ -15,6 +15,7 @@ interface CombinationReviewRunMapper {
     fun claim(@Param("runId") runId: Long, @Param("runnerId") runnerId: String, @Param("now") now: LocalDateTime): Int
     fun expireQueued(@Param("now") now: LocalDateTime): Int
     fun expireRunning(@Param("now") now: LocalDateTime): Int
+    fun releaseUnknown(@Param("now") now: LocalDateTime, @Param("ttlSeconds") ttlSeconds: Long): Int
     fun lockOwnedReview(@Param("ownerId") ownerId: Long, @Param("reviewId") reviewId: Long): Long?
     fun findRequest(@Param("reviewId") reviewId: Long, @Param("requestKey") requestKey: String): CombinationReviewRunDbRow?
     fun countRunning(@Param("reviewId") reviewId: Long): Int

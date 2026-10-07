@@ -53,3 +53,14 @@ test.each([
   expect(screen.getByLabelText(`신청 · ${label}`).props.accessibilityState.expanded).toBe(true)
   expect(screen.getByText('과제·비용 관계를 확인해 주세요.')).toBeTruthy()
 })
+
+test('an unknown outcome says when the block lifts and an expired one explains the cleanup', () => {
+  const unknown = { ...reviewRunFixture('RUNNING'), status: 'UNKNOWN' as const, failureCode: 'RUN_OUTCOME_UNKNOWN' }
+  const view = render(<ReviewResult run={unknown} currentRevision={1} names={{}} onRefresh={jest.fn()} onSupplement={jest.fn()} />)
+  expect(screen.getByText(/30분 안에 실패로 정리되면 다시 분석할 수 있어요/)).toBeTruthy()
+  expect(screen.queryByText(/운영자 확인/)).toBeNull()
+  view.unmount()
+  const expired = { ...reviewRunFixture('FAILED'), failureCode: 'RUN_OUTCOME_UNKNOWN_EXPIRED' }
+  render(<ReviewResult run={expired} currentRevision={1} names={{}} onRefresh={jest.fn()} onSupplement={jest.fn()} />)
+  expect(screen.getByText(/완료 여부를 끝내 확인하지 못해 실패로 정리했어요/)).toBeTruthy()
+})

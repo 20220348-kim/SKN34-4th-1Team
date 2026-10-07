@@ -167,7 +167,8 @@ V25부터 실행 행이 Outbox이며 `CombinationReviewOutboxScheduler → Combi
 CombinationReviewRunConsumer → CombinationReviewRunService`로 기존 수집·파싱·AI를 실행합니다.
 `COMBINATION_REVIEW_QUEUE_ENABLED`는 직접 실행 false / Compose true이며, false일 때 새 분석은 503으로 거절하고
 동기 실행으로 우회하지 않습니다. 상태는 QUEUED/RUNNING/SUCCEEDED/FAILED/UNKNOWN/INTERRUPTED입니다.
-UNKNOWN은 같은 검토의 새 실행도 차단합니다. [한도·만료·재발행·배포·검증 상세](../../docs/rabbitmq-combination-review.md)를 참고하세요.
+UNKNOWN은 같은 검토의 새 실행도 차단하고, `app.combination-review.unknown-ttl`(`COMBINATION_REVIEW_UNKNOWN_TTL`, 기본 PT30M, 최소 PT20M)이
+지나면 AI를 다시 부르지 않고 `RUN_OUTCOME_UNKNOWN_EXPIRED`로 FAILED 처리해 검토 슬롯과 계정 한도(3건)를 돌려줍니다. [한도·만료·재발행·배포·검증 상세](../../docs/rabbitmq-combination-review.md)를 참고하세요.
 없는 검토와 타인 검토는 같은 404를 반환합니다. 성공 응답은 `Cache-Control: no-store`이며 시각은 `+09:00`입니다.
 쓰기 요청의 기존 Origin 방어를 유지하고 CORS에서 PUT·DELETE를 허용합니다. 상세 JSON·오류 코드는 위 설계 문서에 있습니다.
 
