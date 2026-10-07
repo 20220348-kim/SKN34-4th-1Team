@@ -11,6 +11,7 @@ import {
   splitSupportProgramTarget, supportProgramApplicationRouteLabel, supportProgramContactParts, type SupportProgramContactPart,
 } from '../../../../domain/entities/SupportProgramSections'
 import type { SupportProgramIdentity } from '../../../../domain/repositories/SupportProgramRepository'
+import { useSupportProgramAttachmentsViewModel } from '../viewmodel/useSupportProgramAttachmentsViewModel'
 import { useSupportProgramDetailViewModel } from '../viewmodel/useSupportProgramDetailViewModel'
 import { supportProgramSaveMessages, supportProgramSaveNoticeDurationMs, useSupportProgramSaveViewModel } from '../../../shared/support-program/useSupportProgramSaveViewModel'
 import { ddayToneClassNames } from '../../../shared/workspace/WorkspaceStates.styles'
@@ -321,6 +322,8 @@ function SupportProgramDetail({ program, searchReturnTo, fromPipeline }: {
               <span>상세 화면은 기업 조건으로 자격을 다시 평가하지 않아요. 지역·분야 태그만으로 신청 자격을 판단하지 마세요. 최종 조건은 원문 공고에서 확인해 주세요.</span>
             </p>
           </section>
+
+          <AttachmentList identity={identity} sourceUrl={program.sourceUrl} sourceName={program.sourceName} />
         </article>
 
         {/* 좁은 화면의 아래 동작 바 위로 도우미 런처를 올리고, [더 보기]로 바를 펼친 동안에는 런처를 숨깁니다. */}
@@ -445,6 +448,46 @@ function TagList({ emptyLabel, values }: { emptyLabel: string; values: string[] 
   )
 }
 
+/**
+ * 공고 원문이 직접 연결한 첨부 목록입니다(이미지 제외). 파일은 Core가 원본에서 받아 한글 이름 그대로 내려 줍니다.
+ * 첨부가 없으면 구역을 그리지 않고, 원문을 읽지 못하면 원문 링크로 안내합니다.
+ */
+function AttachmentList({ identity, sourceUrl, sourceName }: {
+  identity: SupportProgramIdentity
+  sourceUrl: string
+  sourceName: string
+}) {
+  const state = useSupportProgramAttachmentsViewModel(identity)
+  if (state.status === 'ready' && state.attachments.length === 0) return null
+
+  return (
+    <section className={s.prose} aria-labelledby="support-program-attachments" aria-busy={state.status === 'loading'}>
+      <h2 id="support-program-attachments" className={s.proseTitle}>첨부파일</h2>
+      {state.status === 'loading' ? (
+        <p className={s.attachmentNote} role="status">공고 원문에서 첨부파일을 불러오는 중이에요.</p>
+      ) : state.status === 'failed' ? (
+        <p className={s.attachmentNote} role="status">
+          첨부파일을 불러오지 못했어요.{' '}
+          <a className={s.attachmentSourceLink} href={sourceUrl} target="_blank" rel="noreferrer">{sourceName} 원문에서 확인</a>해 주세요.
+        </p>
+      ) : (
+        <ul className={s.attachmentList}>
+          {state.attachments.map((attachment) => (
+            <li key={attachment.downloadUrl} className={s.attachmentItem}>
+              <span className={s.rowIcon}><Icon name="document" /></span>
+              <span className={s.attachmentName}>{attachment.fileName}</span>
+              {attachment.extension ? <span className={s.tag}>{attachment.extension.toUpperCase()}</span> : null}
+              <a className={s.attachmentDownload} href={attachment.downloadUrl} download aria-label={`${attachment.fileName} 받기`}>
+                <Icon name="download" size={18} />받기
+              </a>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}
+
 const iconPaths = {
   chevronLeft: 'm15 18-6-6 6-6',
   bookmark: 'M6 4h12v16l-6-4-6 4z',
@@ -453,6 +496,7 @@ const iconPaths = {
   shield: 'M12 3 5 6v6c0 4.5 3 7.5 7 9 4-1.5 7-4.5 7-9V6zM9 12l2 2 4-4',
   alert: 'M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z',
   search: 'm21 21-4.3-4.3M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14z',
+  download: 'M12 4v11m0 0-4-4m4 4 4-4M5 20h14',
 } as const
 
 function Icon({ name, size = 20, filled = false }: { name: keyof typeof iconPaths; size?: number; filled?: boolean }) {

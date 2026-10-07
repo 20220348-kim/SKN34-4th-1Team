@@ -595,6 +595,25 @@ GET /api/v1/support-programs/detail
 `SUPPORT_PROGRAM_NOT_FOUND`(404)입니다. 검색 문맥이 없으므로 추천 이유는 빈 배열, 점수는 `null`입니다.
 공개 입력 제한과 JSON·오류 코드의 전체 계약은 [지원사업 API 계약](support-program-search-contract.md)에 있습니다.
 
+### 공고 상세 첨부파일
+
+상세 화면은 본문과 따로 첨부 목록을 불러옵니다. 목록은 공고 원문 페이지가 직접 연결한 파일(이미지 제외)이며,
+파일은 Core가 원본에서 받아 내려 줍니다. 원본 다운로드 주소와 Referer는 Core 안에만 두고 공개 응답에 내보내지 않습니다.
+
+```text
+GET /api/v1/support-programs/detail/attachments
+  → SupportProgramAttachmentController → SupportProgramAttachmentService
+  → SupportProgramDetailService(현재 공개 공고 확인) → Redis 보관 목록(6시간)
+  → 보관 목록이 없으면 제공처별 AttachmentClient.links(공식 상세 페이지만 읽고 파일은 받지 않음)
+
+GET /api/v1/support-programs/detail/attachments/download?index=
+  → 같은 목록의 index 첨부 → AttachmentClient.open(검증한 원본 주소)
+  → 원본 응답 본문을 Core 응답으로 그대로 전달(UTF-8 파일 이름, 100MB 상한)
+```
+
+신청 문서·중복 검토가 쓰는 분석용 수집(`collect`)은 바뀌지 않습니다. 목록용 `links`는 형식·개수를 거르지 않고 이미지만
+빼며, 원문 사이트로 가는 요청(보관 목록이 없을 때·받기)만 검색·AI와 별도인 고정 한도(주소별 분당 30, 전체 600, 동시 8)를 씁니다.
+
 ### 공고별 공식 원문 근거 질문
 
 기업마당 상세 화면의 **이 공고에 질문하기** 링크는

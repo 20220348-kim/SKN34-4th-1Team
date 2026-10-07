@@ -87,6 +87,7 @@ describe('Awilix application container and Service Locator', () => {
       interpretConversation: vi.fn(),
       answerEvidenceQuestion: vi.fn(),
       getDetail: vi.fn(),
+      getAttachments: vi.fn(),
       getSearchReadiness: vi.fn(),
       search,
       restoreSearch: vi.fn(),

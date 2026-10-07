@@ -3,9 +3,12 @@ package ai.govbiz.core.supportprogram.client.cntradenotice
 import ai.govbiz.core.supportprogram.client.document.MAX_SUPPORT_PROGRAM_ATTACHMENT_BYTES
 import ai.govbiz.core.supportprogram.client.document.MAX_SUPPORT_PROGRAM_ATTACHMENTS_TOTAL_BYTES
 import ai.govbiz.core.supportprogram.client.document.SupportProgramAttachment
+import ai.govbiz.core.supportprogram.client.document.SupportProgramAttachmentLink
 import ai.govbiz.core.supportprogram.client.document.SupportProgramAttachments
 import ai.govbiz.core.supportprogram.client.document.SupportProgramDocumentException
 import ai.govbiz.core.supportprogram.client.document.SupportProgramDocumentException.Reason
+import ai.govbiz.core.supportprogram.client.document.helper.SupportProgramAttachmentLinkHelper
+import java.io.InputStream
 import java.net.URI
 import java.nio.charset.StandardCharsets
 import org.jsoup.Jsoup
@@ -32,12 +35,7 @@ class CnTradeNoticeAttachmentClient(
             fail(Reason.UNSUPPORTED)
         }
         return try {
-            val candidates = findCandidates(expectedTitle)
-            if (candidates.isEmpty()) fail(Reason.NOT_FOUND)
-            val matching = candidates.map { candidate -> candidate to fetchDetail(candidate) }
-                .filter { (_, page) -> matchesOfficialRecord(page, expectedTitle, expectedBody) }
-            if (matching.size != 1) fail(if (matching.isEmpty()) Reason.NOT_FOUND else Reason.INVALID)
-            val (candidate, detail) = matching.single()
+            val (candidate, detail) = officialDetail(expectedTitle, expectedBody)
             val warnings = mutableListOf("충남 공식 게시판에서 제목·본문을 교차 검증한 PDF/HWP/HWPX/DOCX/XLSX만 수집했습니다. 추출 결과는 사용자가 원문과 대조해야 합니다.")
             val files = collectFiles(detail, candidate.detailUri, warnings)
             SupportProgramAttachments(expectedTitle, files, warnings.distinct(), candidate.detailUri.toString())
@@ -46,6 +44,42 @@ class CnTradeNoticeAttachmentClient(
         } catch (error: Exception) {
             throw SupportProgramDocumentException(Reason.UNAVAILABLE, error)
         }
+    }
+
+    /** 공고 상세에 보여 줄 첨부 목록입니다. 분석용 [collect]와 달리 형식·개수를 거르지 않고 이미지만 빼며 파일은 받지 않습니다. */
+    fun links(sourceProgramId: String, expectedTitle: String, expectedBody: String): List<SupportProgramAttachmentLink> {
+        if (!NOTICE_ID.matches(sourceProgramId) || expectedTitle.isBlank()) fail(Reason.UNSUPPORTED)
+        return try {
+            val (candidate, detail) = officialDetail(expectedTitle, expectedBody)
+            SupportProgramAttachmentLinkHelper.visible(detail.select(".board_view_file .file_each").mapNotNull { item ->
+                val anchor = item.selectFirst("a.down_txt[onclick]") ?: return@mapNotNull null
+                val key = DOWNLOAD_CALL.matchEntire(anchor.attr("onclick").trim())?.groupValues?.get(1) ?: return@mapNotNull null
+                SupportProgramAttachmentLinkHelper.link(anchor.text(), "$DOWNLOAD_URI?uniqueKey=$key", candidate.detailUri.toString())
+            })
+        } catch (error: SupportProgramDocumentException) {
+            throw error
+        } catch (error: Exception) {
+            throw SupportProgramDocumentException(Reason.UNAVAILABLE, error)
+        }
+    }
+
+    /** [links]가 돌려준 첨부 하나를 공식 게시판 상세를 Referer로 받아 길이(모르면 -1)와 본문을 [receive]로 넘깁니다. */
+    fun open(link: SupportProgramAttachmentLink, receive: (Long, InputStream) -> Unit) {
+        val key = DOWNLOAD_LINK.matchEntire(link.url)?.groupValues?.get(1) ?: fail(Reason.INVALID)
+        val referer = link.referer?.takeIf { it.startsWith("$BOARD_URI?") } ?: fail(Reason.INVALID)
+        restClient.post().uri(DOWNLOAD_URI).header(HttpHeaders.REFERER, referer).contentType(MediaType.APPLICATION_FORM_URLENCODED)
+            .accept(MediaType.ALL).body("uniqueKey=$key")
+            .exchange { _, response -> SupportProgramAttachmentLinkHelper.receive(response, receive) }
+    }
+
+    /** 제목으로 찾은 공식 게시판 글 가운데 OpenAPI 공고와 제목·본문이 같은 글 하나입니다. */
+    private fun officialDetail(expectedTitle: String, expectedBody: String): Pair<Candidate, Document> {
+        val candidates = findCandidates(expectedTitle)
+        if (candidates.isEmpty()) fail(Reason.NOT_FOUND)
+        val matching = candidates.map { candidate -> candidate to fetchDetail(candidate) }
+            .filter { (_, page) -> matchesOfficialRecord(page, expectedTitle, expectedBody) }
+        if (matching.size != 1) fail(if (matching.isEmpty()) Reason.NOT_FOUND else Reason.INVALID)
+        return matching.single()
     }
 
     private fun findCandidates(expectedTitle: String): List<Candidate> {
@@ -175,5 +209,6 @@ class CnTradeNoticeAttachmentClient(
         val NOTICE_ID = Regex("[1-9][0-9]{0,254}")
         val DETAIL_CALL = Regex("fn_edit\\('detail',\\s*'([0-9a-f]{64})',\\s*'N'\\);", RegexOption.IGNORE_CASE)
         val DOWNLOAD_CALL = Regex("kssFileDownloadForKeyAct\\('([0-9a-f]{64})'\\)", RegexOption.IGNORE_CASE)
+        val DOWNLOAD_LINK = Regex("https://cntrade\\.chungnam\\.go\\.kr/fileDownload\\.do\\?uniqueKey=([0-9a-fA-F]{64})")
     }
 }

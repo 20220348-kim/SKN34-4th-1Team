@@ -6,7 +6,10 @@ import ai.govbiz.core.supportprogram.client.document.SupportProgramDocumentExcep
 import ai.govbiz.core.supportprogram.client.document.MAX_SUPPORT_PROGRAM_ATTACHMENT_BYTES
 import ai.govbiz.core.supportprogram.client.document.MAX_SUPPORT_PROGRAM_ATTACHMENTS_TOTAL_BYTES
 import ai.govbiz.core.supportprogram.client.document.SupportProgramAttachment
+import ai.govbiz.core.supportprogram.client.document.SupportProgramAttachmentLink
 import ai.govbiz.core.supportprogram.client.document.SupportProgramAttachments
+import ai.govbiz.core.supportprogram.client.document.helper.SupportProgramAttachmentLinkHelper
+import java.io.InputStream
 import java.net.URI
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
@@ -121,6 +124,48 @@ class BizInfoAttachmentClient(
         }
     }
 
+    /** 공고 상세에 보여 줄 첨부 목록입니다. 분석용 [collect]와 달리 형식·개수를 거르지 않고 이미지만 빼며 파일은 받지 않습니다. */
+    fun links(sourceProgramId: String): List<SupportProgramAttachmentLink> {
+        if (!Regex("PBLN_[0-9]{1,32}").matches(sourceProgramId)) fail(Reason.UNSUPPORTED)
+        try {
+            val url = "https://www.bizinfo.go.kr/sii/siia/selectSIIA200Detail.do?pblancId=$sourceProgramId"
+            val detail = Jsoup.parse(htmlClient.fetchHtml(url, sourceProgramId), url).selectFirst(".support_project_detail")
+                ?: fail(Reason.NOT_FOUND)
+            val links = detail.select(".file_name").mapNotNull { name ->
+                val href = name.parent()?.selectFirst("a[href*='/cmm/fms/fileDown.do']")?.absUrl("href") ?: return@mapNotNull null
+                listable(href)?.let { SupportProgramAttachmentLinkHelper.link(name.text(), it) }
+            }
+            if (links.isNotEmpty()) return SupportProgramAttachmentLinkHelper.visible(links)
+            // 기업마당에 파일 없이 발행기관(중기부) 게시판만 연결한 공고는 그 게시판의 파일을 보여 줍니다.
+            val mss = detail.select("a[href]").mapNotNull { anchor ->
+                runCatching { URI(anchor.absUrl("href")) }.getOrNull()?.takeIf(::isMssPage)
+            }.distinct().singleOrNull() ?: return emptyList()
+            val board = Jsoup.parse(String(download(mss, 500_000), StandardCharsets.UTF_8), mss.toString()).selectFirst(".board_view")
+                ?: fail(Reason.INVALID)
+            return SupportProgramAttachmentLinkHelper.visible(board.select("a[href*='/common/board/Download.do']").mapNotNull { anchor ->
+                val label = anchor.parent()?.selectFirst(".name")?.text()
+                    ?: anchor.parent()?.parent()?.selectFirst(".name")?.text().orEmpty()
+                listable(anchor.absUrl("href"))?.let { SupportProgramAttachmentLinkHelper.link(label, it) }
+            })
+        } catch (error: SupportProgramDocumentException) {
+            throw error
+        } catch (error: Exception) {
+            throw SupportProgramDocumentException(Reason.UNAVAILABLE, cause = error)
+        }
+    }
+
+    /** [links]가 돌려준 첨부 하나를 원본에서 받아 길이(모르면 -1)와 본문을 [receive]로 넘깁니다. */
+    fun open(link: SupportProgramAttachmentLink, receive: (Long, InputStream) -> Unit) {
+        val uri = URI(link.url)
+        requireTrustedUri(uri, documentsOnly = false)
+        restClient.get().uri(uri).accept(MediaType.ALL).exchange { _, response ->
+            SupportProgramAttachmentLinkHelper.receive(response, receive)
+        }
+    }
+
+    private fun listable(url: String): String? =
+        runCatching { URI(url).also { requireTrustedUri(it, documentsOnly = false) }.toString() }.getOrNull()
+
     private fun addLink(links: MutableMap<String, Pair<String, String>>, warnings: MutableList<String>, url: String, name: String) {
         val format = when {
             Regex("(?i)\\.docx(?:\\s|$)").containsMatchIn(name) -> "DOCX"
@@ -160,8 +205,11 @@ class BizInfoAttachmentClient(
         }
     }
 
-    internal fun requireTrustedUri(uri: URI) {
+    /** 분석 수집은 [documentsOnly]로 중기부 게시판 파일을 문서 형식으로 제한하고, 상세 첨부 목록은 형식을 묻지 않습니다. */
+    internal fun requireTrustedUri(uri: URI, documentsOnly: Boolean = true) {
         if (uri.scheme != "https" || uri.userInfo != null || uri.fragment != null || uri.port !in listOf(-1, 443)) fail(Reason.INVALID)
+        val storedName = if (documentsOnly) Regex("[A-Za-z0-9-]+\\.(hwpx|hwp|pdf|docx|xlsx)", RegexOption.IGNORE_CASE)
+        else Regex("[A-Za-z0-9-]+\\.[A-Za-z0-9]{1,10}")
         val query = uri.rawQuery.orEmpty().split('&').map { it.substringBefore('=') }
         if (query.size != query.distinct().size) fail(Reason.INVALID)
         val valid = when (uri.host) {
@@ -170,7 +218,7 @@ class BizInfoAttachmentClient(
             "www.mss.go.kr", "mss.go.kr" -> isMssPage(uri) || (uri.path == "/common/board/Download.do" &&
                 query.toSet() == setOf("bcIdx", "cbIdx", "streFileNm") && parameter(uri, "cbIdx") == "310" &&
                 Regex("[0-9]+").matches(parameter(uri, "bcIdx")) &&
-                Regex("[A-Za-z0-9-]+\\.(hwpx|hwp|pdf|docx|xlsx)", RegexOption.IGNORE_CASE).matches(parameter(uri, "streFileNm")))
+                storedName.matches(parameter(uri, "streFileNm")))
             else -> false
         }
         if (!valid) fail(Reason.INVALID)

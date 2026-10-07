@@ -53,6 +53,7 @@ import {
 import { DevLogInUseCase } from '../../domain/usecases/DevLogInUseCase'
 import { CompleteOAuthSignInUseCase, StartOAuthSignInUseCase } from '../../domain/usecases/OAuthSignInUseCases'
 import { GetCurrentAccountUseCase } from '../../domain/usecases/GetCurrentAccountUseCase'
+import { GetSupportProgramAttachmentsUseCase } from '../../domain/usecases/GetSupportProgramAttachmentsUseCase'
 import { GetSupportProgramDetailUseCase } from '../../domain/usecases/GetSupportProgramDetailUseCase'
 import { GetSupportProgramSearchReadinessUseCase } from '../../domain/usecases/GetSupportProgramSearchReadinessUseCase'
 import { LogInUseCase } from '../../domain/usecases/LogInUseCase'
@@ -174,6 +175,10 @@ export function registerUseCases(container: AppContainer) {
     getCurrentAccountUseCase: asFunction(createGetCurrentAccountUseCase).singleton(),
     getSupportProgramDetailUseCase: asFunction(
       createGetSupportProgramDetailUseCase,
+    ).singleton(),
+    getSupportProgramAttachmentsUseCase: asFunction(
+      ({ supportProgramRepository }: Pick<AppCradle, 'supportProgramRepository'>) =>
+        new GetSupportProgramAttachmentsUseCase(supportProgramRepository),
     ).singleton(),
     getSupportProgramSearchReadinessUseCase: asFunction(
       createGetSupportProgramSearchReadinessUseCase,

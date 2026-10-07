@@ -465,3 +465,19 @@ function jsonResponse(body: unknown) {
     headers: { 'Content-Type': 'application/json' },
   })
 }
+
+describe('SupportProgramRepositoryImpl.getAttachments', () => {
+  it('원본 주소 없이 받은 첨부 순번을 Core 받기 주소로 바꾼다', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ items: [{ index: 2, fileName: '서식 묶음.zip', extension: 'zip' }] }))
+    vi.stubGlobal('fetch', fetchMock)
+    const identity = { sourceCode: 'KSTARTUP', sourceProgramId: '179431' }
+
+    const attachments = await new SupportProgramRepositoryImpl().getAttachments(identity)
+
+    expect(attachments).toHaveLength(1)
+    expect(attachments[0]).toMatchObject({ fileName: '서식 묶음.zip', extension: 'zip' })
+    const download = new URL(attachments[0]!.downloadUrl, 'http://localhost')
+    expect(download.pathname).toBe('/api/v1/support-programs/detail/attachments/download')
+    expect(Object.fromEntries(download.searchParams)).toEqual({ ...identity, index: '2' })
+  })
+})

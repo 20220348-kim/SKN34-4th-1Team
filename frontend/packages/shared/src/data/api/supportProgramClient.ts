@@ -1,11 +1,13 @@
 import { browseSupportProgramsApi } from './supportProgramCatalogApi'
 import {
   answerSupportProgramEvidenceQuestionApi,
+  getSupportProgramAttachmentsApi,
   getSupportProgramDetailApi,
   getSupportProgramSearchReadinessApi,
   interpretSupportProgramConversationApi,
   restoreSupportProgramSearchApi,
   searchSupportProgramsApi,
+  supportProgramAttachmentDownloadUrl,
 } from './supportProgramApi'
 
 export type SupportProgramClientOptions = {
@@ -39,6 +41,8 @@ export function createSupportProgramClient(options: SupportProgramClientOptions)
   return {
     browseCatalog: browseSupportProgramsApi.bind(null, context),
     getDetail: getSupportProgramDetailApi.bind(null, context),
+    getAttachments: getSupportProgramAttachmentsApi.bind(null, context),
+    attachmentDownloadUrl: supportProgramAttachmentDownloadUrl.bind(null, context),
     search: searchSupportProgramsApi.bind(null, context),
     getSearchReadiness: getSupportProgramSearchReadinessApi.bind(null, context),
     interpretConversation: interpretSupportProgramConversationApi.bind(null, context),

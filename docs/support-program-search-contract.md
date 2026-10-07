@@ -372,6 +372,37 @@ Accept: application/json
 }
 ```
 
+## 공개 상세 첨부파일
+
+공고 원문 페이지가 직접 연결한 첨부 목록과 받기입니다. 상세 조회와 같은 `sourceCode`·`sourceProgramId`를 쓰고 로그인은
+필요 없습니다. 이미지(jpg·png 등)는 빼고 최대 30개를 원문 순서대로 돌려주며, 원본 다운로드 주소는 내보내지 않습니다.
+
+```http
+GET /api/v1/support-programs/detail/attachments?sourceCode=KSTARTUP&sourceProgramId=179431
+Accept: application/json
+```
+
+```json
+{
+  "items": [
+    { "index": 0, "fileName": "[첨부파일] 서식1. 지원기업 사업계획서.hwp", "extension": "hwp" },
+    { "index": 1, "fileName": "[첨부파일] 서식 모음.zip", "extension": "zip" }
+  ]
+}
+```
+
+`extension`은 소문자이며 이름에 확장자가 없으면 빈 문자열입니다. 첨부가 없으면 `items`가 빈 배열입니다.
+파일은 `GET /api/v1/support-programs/detail/attachments/download?sourceCode=&sourceProgramId=&index=`로 받습니다.
+Core가 원본에서 받아 `application/octet-stream`과 UTF-8 `filename*`로 내려 줍니다.
+
+| 상황 | 상태 | `code` |
+|---|---|---|
+| 현재 공개 공고가 아님 | 404 | `SUPPORT_PROGRAM_NOT_FOUND` |
+| 목록에 없는 `index` | 404 | `SUPPORT_PROGRAM_ATTACHMENT_NOT_FOUND` |
+| 파일이 100MB를 넘음 | 413 | `SUPPORT_PROGRAM_ATTACHMENT_TOO_LARGE` |
+| 원문·원본 파일을 읽지 못함 | 503 | `SUPPORT_PROGRAM_ATTACHMENTS_UNAVAILABLE` |
+| 원문 사이트 요청 한도 초과 | 429·503 | `SUPPORT_PROGRAM_RATE_LIMITED`·`SUPPORT_PROGRAM_BUSY` |
+
 ## 공개 공식 원문 근거 질문
 
 목록 검색이나 상세 GET은 기업마당 상세 페이지를 수집하지 않습니다. 사용자가 특정 공고에 질문을 제출할 때만

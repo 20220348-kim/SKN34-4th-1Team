@@ -1,10 +1,12 @@
 import {
   answerSupportProgramEvidenceQuestionApi,
+  getSupportProgramAttachmentsApi,
   getSupportProgramDetailApi,
   getSupportProgramSearchReadinessApi,
   interpretSupportProgramConversationApi,
   searchSupportProgramsApi,
   restoreSupportProgramSearchApi,
+  supportProgramAttachmentDownloadUrl,
   SupportProgramSearchRestoreApiError,
   SupportProgramEvidenceApiError,
   SupportProgramInterpretationApiError,
@@ -20,7 +22,7 @@ import { toSupportProgramInterpretation } from '../models/SupportProgramConversa
 import type { SupportProgramInterpretRequest } from '../../domain/entities/SupportProgramConversation'
 import type { SupportProgramSearchResult } from '../../domain/entities/SupportProgramSearchResult'
 import { SupportProgramSearchRestoreError } from '../../domain/errors/SupportProgramSearchRestoreError'
-import type { SupportProgramDetail } from '../../domain/entities/SupportProgram'
+import type { SupportProgramAttachment, SupportProgramDetail } from '../../domain/entities/SupportProgram'
 import { SupportProgramRequestError } from '../../domain/errors/SupportProgramRequestError'
 import { SupportProgramInterpretationError } from '../../domain/errors/SupportProgramInterpretationError'
 import { SupportProgramSearchTimeoutError } from '../../domain/errors/SupportProgramSearchTimeoutError'
@@ -86,6 +88,18 @@ export class SupportProgramRepositoryImpl implements SupportProgramRepository {
   ): Promise<SupportProgramDetail | null> {
     const dto = await getSupportProgramDetailApi(identity, signal)
     return dto ? toSupportProgramDetail(dto) : null
+  }
+
+  async getAttachments(
+    identity: SupportProgramIdentity,
+    signal?: AbortSignal,
+  ): Promise<SupportProgramAttachment[]> {
+    const items = await getSupportProgramAttachmentsApi(identity, signal)
+    return items.map((item) => ({
+      fileName: item.fileName,
+      extension: item.extension,
+      downloadUrl: supportProgramAttachmentDownloadUrl(identity, item.index),
+    }))
   }
 
   async answerEvidenceQuestion(

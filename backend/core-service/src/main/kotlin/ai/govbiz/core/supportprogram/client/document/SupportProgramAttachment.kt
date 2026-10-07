@@ -17,5 +17,14 @@ data class SupportProgramAttachments(
     val sourcePageUrl: String? = null,
 )
 
+/** 공고 상세에 보여 줄 공식 첨부 한 건입니다. [url]과 [referer]는 Core가 원본을 받을 때만 쓰고 화면에는 내보내지 않습니다. */
+data class SupportProgramAttachmentLink(
+    val fileName: String,
+    val extension: String,
+    val url: String,
+    val referer: String? = null,
+)
+
 const val MAX_SUPPORT_PROGRAM_ATTACHMENT_BYTES = 16 * 1024 * 1024
 const val MAX_SUPPORT_PROGRAM_ATTACHMENTS_TOTAL_BYTES = 32 * 1024 * 1024
+const val MAX_SUPPORT_PROGRAM_ATTACHMENT_LINKS = 30

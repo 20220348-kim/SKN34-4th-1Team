@@ -43,6 +43,24 @@ describe('플랫폼별 공고 클라이언트', () => {
     expect(String(fetchMock.mock.calls[0][0])).toMatch(/^https:\/\/current.example.test\/api\//)
   })
 
+  it('공고 첨부 목록을 읽고 원본 주소 없이 Core 받기 주소를 만든다', async () => {
+    const identity = { sourceCode: 'BIZINFO', sourceProgramId: 'PBLN_1 & 2' }
+    const fetchMock = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(Response.json({ items: [{ index: 0, fileName: '신청서 양식.hwp', extension: 'hwp' }] }))
+      .mockResolvedValueOnce(new Response(null, { status: 503 }))
+    const client = createSupportProgramClient({ baseUrl: 'https://api.example.test/', fetch: fetchMock })
+
+    await expect(client.getAttachments(identity)).resolves.toEqual([{ index: 0, fileName: '신청서 양식.hwp', extension: 'hwp' }])
+    const listUrl = new URL(String(fetchMock.mock.calls[0][0]))
+    expect(listUrl.pathname).toBe('/api/v1/support-programs/detail/attachments')
+    expect(listUrl.searchParams.get('sourceProgramId')).toBe('PBLN_1 & 2')
+    await expect(client.getAttachments(identity)).rejects.toThrow('HTTP 503')
+
+    const download = new URL(client.attachmentDownloadUrl(identity, 1))
+    expect(download.origin + download.pathname).toBe('https://api.example.test/api/v1/support-programs/detail/attachments/download')
+    expect(Object.fromEntries(download.searchParams)).toEqual({ sourceCode: 'BIZINFO', sourceProgramId: 'PBLN_1 & 2', index: '1' })
+  })
+
   it('네트워크 장애를 다른 검색 경로로 바꾸지 않고 호출자에게 전달한다', async () => {
     const failure = new TypeError('network unavailable')
     const fetchMock = vi.fn<typeof fetch>().mockRejectedValue(failure)
