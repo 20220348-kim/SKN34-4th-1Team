@@ -50,6 +50,9 @@ python3 -B infrastructure/gitops/scripts/ops_runtime.py --preflight \
 
 첫 점검의 소스/이미지 불일치는 갱신 필요 근거로 보존한다. 소유권·DB·인증·브리지 장애는 먼저 해결한다.
 `--check` 성공은 새 평가 성공이나 관리자의 실제 인증을 증명하지 않는다.
+`--check`와 `--preflight`의 표준 출력은 JSON 하나다. 하위 브리지의 진행 문구를 섞지 않으므로
+파일 저장·JSON 파싱에 그대로 사용할 수 있다. `--preflight`의 `BLOCKED`·`UNKNOWN`은 JSON을
+출력하더라도 종료 코드 1을 유지하고, 조회 예외는 성공 JSON 없이 표준 오류와 종료 코드 1로 끝난다.
 
 `--preflight`는 기존 Pod의 Django 모델과 Prefect 조회 API를 사용한다. 새 명령 설치나 migration 없이
 미완료 평가(`RESULT_ERROR`와 알 수 없는 상태 포함), 종료되지 않은 예산 예약, 같은 Prefect flow의
