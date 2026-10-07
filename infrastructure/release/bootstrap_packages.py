@@ -8,18 +8,18 @@ import argparse
 import getpass
 import json
 import os
-from pathlib import Path
 import re
 import stat
 import subprocess
 import sys
 import tempfile
+import uuid
+from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
-import uuid
 
 from gate import UPSTREAM
-from repository import SERVICES, from_origin
+from repository import IMAGE_COMPONENTS, SERVICES, from_origin
 
 ROOT = Path(__file__).resolve().parents[2]
 EMPTY_DOCKERFILE = (
@@ -115,17 +115,19 @@ def docker(*args, env, data=None):
         raise ValueError(f"Docker {args[0]} failed; publication stays disabled") from None
 
 
-def prepare(fork, token, create=False):
+def prepare(fork, token, create=False, *, services=SERVICES):
     if os.environ.get("GITHUB_ACTIONS") == "true":
         raise ValueError("Run one-time setup locally, never in GitHub Actions")
+    if not services or len(set(services)) != len(services) or any(s not in IMAGE_COMPONENTS for s in services):
+        raise ValueError("Select known image components")
     check_identity(fork, token, create)
-    packages = {service: metadata(fork, service, token) for service in SERVICES}
+    packages = {service: metadata(fork, service, token) for service in services}
     # Validate all known destinations before building or uploading anything.
     for package in packages.values():
         if package is not None:
             validate_package(package, fork, require_link=not create)
         elif not create:
-            raise ValueError("All four pre-created private packages are required")
+            raise ValueError("All selected pre-created private packages are required")
     missing = [service for service, package in packages.items() if package is None]
     if missing:
         with tempfile.TemporaryDirectory(prefix="govbiz-package-login-") as temporary:
@@ -162,7 +164,7 @@ def prepare(fork, token, create=False):
                     docker("logout", "ghcr.io", env=env)
                 except ValueError:
                     pass  # Isolated credential directory is still deleted on exit.
-    for service in SERVICES:
+    for service in services:
         validate_package(metadata(fork, service, token), fork, require_link=not create)
         print(f"https://github.com/users/{fork.owner}/packages/container/{fork.name.lower()}-{service}/settings")
     print("Private metadata verified. This does not verify Actions write access or a deployed application.")
@@ -173,17 +175,20 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("create", "verify"))
     parser.add_argument("--token-file", type=Path)
+    parser.add_argument("--service", choices=("evaluation-runner",),
+                        help="Prepare only the evaluation runner; default remains the four business services")
     args = parser.parse_args()
+    services = (args.service,) if args.service else SERVICES
     try:
         fork = from_origin(ROOT)
         fork.require_personal_publish()
         if args.action == "create":
-            print("Destinations: " + ", ".join(fork.image(service) for service in SERVICES))
+            print("Destinations: " + ", ".join(fork.image(service) for service in services))
             if not sys.stdin.isatty() or input("Create only empty bootstrap packages at these destinations? Type yes: ") != "yes":
                 raise ValueError("One-time package creation was not confirmed")
         token = credential(args.token_file)
         try:
-            prepare(fork, token, create=args.action == "create")
+            prepare(fork, token, create=args.action == "create", services=services)
         finally:
             del token
     except (ValueError, OSError) as error:

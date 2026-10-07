@@ -12,6 +12,66 @@ from ci_policy import SUMMARY_NAMES, WORKFLOW_JOBS, WORKFLOWS
 
 
 class WorkflowPolicyTests(unittest.TestCase):
+    def test_runner_publication_reuses_exact_ci_gate_without_changing_business_matrix(
+        self,
+    ):
+        workflows = {
+            name: yaml.load(
+                (ROOT / ".github/workflows" / name).read_text(), Loader=yaml.BaseLoader
+            )
+            for name in ("msa-images.yml", "evaluation-images.yml")
+        }
+        business, runner = workflows.values()
+        self.assertEqual(runner["on"], business["on"])
+        self.assertEqual(runner["jobs"]["gate"], business["jobs"]["gate"])
+        self.assertNotEqual(
+            runner["concurrency"]["group"], business["concurrency"]["group"]
+        )
+        self.assertEqual(
+            len(business["jobs"]["publish"]["strategy"]["matrix"]["service"]), 4
+        )
+        publication = runner["jobs"]["publish"]
+        self.assertNotIn("strategy", publication)
+        self.assertEqual(publication["needs"], business["jobs"]["publish"]["needs"])
+        self.assertEqual(publication["if"], business["jobs"]["publish"]["if"])
+        self.assertEqual(
+            publication["permissions"], business["jobs"]["publish"]["permissions"]
+        )
+        self.assertEqual(
+            publication["steps"][0], business["jobs"]["publish"]["steps"][0]
+        )
+        self.assertTrue(
+            any(
+                'gate.py --check-sha "$SOURCE_SHA"' in step.get("run", "")
+                for step in publication["steps"]
+            )
+        )
+        self.assertTrue(
+            any(
+                'publish.py --service evaluation-runner --sha "$SOURCE_SHA"'
+                in step.get("run", "")
+                for step in publication["steps"]
+            )
+        )
+        preflight = runner["jobs"]["package-preflight"]
+        self.assertEqual(
+            preflight["permissions"], {"contents": "read", "packages": "read"}
+        )
+        self.assertEqual(preflight["if"], runner["jobs"]["gate"]["if"])
+        self.assertIn(
+            "--check-packages --service evaluation-runner", preflight["steps"][1]["run"]
+        )
+        self.assertEqual(preflight["steps"][0], runner["jobs"]["gate"]["steps"][0])
+        self.assertEqual(
+            runner["jobs"]["outcome"]["needs"], ["gate", "package-preflight", "publish"]
+        )
+        for job in runner["jobs"].values():
+            self.assertNotIn("continue-on-error", job)
+            for step in job["steps"]:
+                self.assertNotIn("continue-on-error", step)
+                if step.get("uses", "").startswith("actions/upload-artifact@"):
+                    self.assertTrue(step["with"]["name"].startswith("evaluation-"))
+
     def test_package_preflight_is_read_only_and_cannot_bypass_source_ci(self):
         workflow = yaml.load(
             (ROOT / ".github/workflows/msa-images.yml").read_text(),

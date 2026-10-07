@@ -33,6 +33,52 @@ GitHub의 공개 범위를 자동으로 변경하거나 원본 병합·CI 검증
 패키지가 없거나 접근할 수 없는 경우에도 자동 생성하지 않고 업로드 전에 중단합니다.
 기대 공개 범위와 다르거나 다른 저장소에 연결된 패키지는 거부하며, 공개 범위를 자동 변경하지 않습니다.
 
+## Kubernetes 평가 실행기 이미지
+
+`Evaluation runner image candidate` (`evaluation-images.yml`)는 `evaluation-runner`만 별도로 발행합니다.
+기존 `MSA image candidates`의 네 서비스 matrix·v2 receipt는 유지합니다. 실행기 패키지가 아직 준비되지
+않았거나 발행이 실패해도 기존 네 서비스 발행 워크플로의 의존성은 바뀌지 않습니다.
+
+발행 대상은 `ghcr.io/<개인 계정>/<저장소 이름 소문자>-evaluation-runner`입니다. 기존과 같이
+개인 포크·`MSA_RELEASE_ENABLED=true`·원본 병합·기본 브랜치의 동일 SHA 필수 CI 성공이 필요합니다.
+LLMOps CI의 격리 Kubernetes 평가 실행 검증도 포함하며, 실행 중·실패·취소·건너뛰기는 통과로
+취급하지 않습니다. 작업 브랜치 push, 수동 workflow 실행, 패키지 점검 성공으로 이 조건을 우회할 수 없습니다.
+
+패키지는 먼저 준비해야 합니다. 기존 초기화 도구에 `--service evaluation-runner`를 주면 해당
+패키지만 선택하며, 옵션을 생략한 기본 동작은 기존 네 서비스입니다. 초기화 도구는 계속 **앱 코드 없는
+빈 비공개 패키지**만 만들고, 실제 생성에는 숨김 PAT 입력과 대상 확인을 요구합니다.
+공개 배포는 [공개 전환 절차](../../docs/public-ghcr-transition.md)에 따라 공개 범위·연결 포크·Actions
+쓰기 권한을 준비한 후 `MSA_PACKAGE_VISIBILITY=public` 정책으로 확인합니다.
+발행기는 새 패키지를 자동 생성하거나 GitHub 공개 범위·권한·변수를 변경하지 않습니다.
+
+빌드는 다음 추적 입력만 선택한 SHA의 `git archive`로 추출해 저장소 루트 형식의 context를 만듭니다.
+
+- `infrastructure/llmops/Dockerfile.runner`
+- AI 서비스의 `pyproject.toml`, `uv.lock`, `app/`
+- `evaluation/support-program-evidence/`
+- Ops의 catalog·recovery·실행 명세·품질 정책·RAG replay 파일
+
+실제 목록은 `publish.py`의 `RUNNER_PATHS`이며 Dockerfile의 모든 `COPY` 입력과 일치하는지 테스트합니다.
+전체 checkout, 로컬 변경·미추적 파일·`.env`·`work/`는 전달하지 않습니다. 입력별 Git object ID와
+발행 정책 tree·플랫폼이 이미지 재사용 키를 결정합니다. Dockerfile 빌드 단계에서 기존
+`execution_spec.py` 검증과 네트워크 없는 임베딩 준비 검사를 수행하고, stale 실행 명세는 빌드 실패로 처리합니다.
+
+실행기 receipt는 `schemaVersion=3`이며 `sourceInputs`, `publisherTree`, `executionReleaseSha256`을
+기록합니다. 실행 명세의 Git blob SHA-256은 이미지 label에도 넣고 재사용 시 digest로 조회해 대조합니다.
+빌드 전·업로드 직전·후에 패키지 정책을 검사하고, CI나 소스가 바뀌면 업로드 또는 receipt 생성을 차단합니다.
+
+| 별도 workflow artifact | 의미 |
+| --- | --- |
+| `evaluation-package-preflight` | 실행기 한 패키지의 소유권·연결 저장소·공개 범위 진단 |
+| `evaluation-image-evaluation-runner` | 동일 SHA 검증을 거친 실행기 v3 receipt |
+| `evaluation-publication-evaluation-runner` | 실행기 업로드·재사용·receipt 생성 여부 |
+| `evaluation-publication-result` | gate·패키지 점검·실행기 발행의 종합 결과 |
+
+이 workflow의 `imagesVerified`는 실행기 한 이미지에 대한 결과입니다. 기존 네 서비스의 결과와 합쳐서
+해석하지 않습니다. 새 artifact는 기존 네 receipt를 읽는 배포 도구에 섞지 않습니다.
+이번 경로는 이미지 발행까지이며 **v3 receipt 소비·독립 Argo Application 연결·운영 PVC 인계·실제
+평가 환경 이전은 후속 작업**입니다. 코드·오프라인 테스트 완료는 원격 발행 성공을 뜻하지 않습니다.
+
 공개 포크에서 `GITHUB_TOKEN`으로 새 패키지를 생성하면 저장소의 공개 범위를 상속할 수 있으므로
 "새 패키지는 항상 비공개"라고 가정하지 않습니다.
 [GitHub 공식 설명](https://docs.github.com/en/packages/managing-github-packages-using-github-actions-workflows/publishing-and-installing-a-package-with-github-actions#default-permissions-and-access-settings-for-packages-modified-through-workflows)

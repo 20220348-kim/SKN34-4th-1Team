@@ -13,11 +13,27 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from gate import eligible, valid_sha
-from repository import from_ci
+from repository import IMAGE_COMPONENTS, from_ci
 
 ROOT = Path(__file__).resolve().parents[2]
 SERVICES = ("core-service", "catalog-service", "ai-service", "ops-service")
 PLATFORM = "linux/amd64"
+RUNNER = "evaluation-runner"
+RUNNER_DOCKERFILE = "infrastructure/llmops/Dockerfile.runner"
+RUNNER_RELEASE = "backend/ops-service/apps/evaluations/execution_release.json"
+# This image has a repository-root context. Archive only its actual COPY inputs;
+# never send local .env files, work/, caches or an entire checkout to Docker.
+RUNNER_PATHS = (
+    RUNNER_DOCKERFILE,
+    "backend/ai-service/pyproject.toml",
+    "backend/ai-service/uv.lock",
+    "backend/ai-service/app",
+    "evaluation/support-program-evidence",
+    *("backend/ops-service/apps/evaluations/" + name for name in (
+        "catalog.py", "capture_catalog.json", "rag_live_plans.json", "recovery_inputs.py",
+        "execution_spec.py", "execution_release.json", "quality_policy.py", "rag_replay.py",
+    )),
+)
 
 
 def run(*args, **kwargs):
@@ -29,7 +45,7 @@ def git(*args):
 
 
 def repository(service, fork):
-    if service not in SERVICES:
+    if service not in IMAGE_COMPONENTS:
         raise ValueError("Unknown GovBiz service")
     return fork.image(service)
 
@@ -40,6 +56,17 @@ def input_key(tree, publisher_tree):
         if not valid_sha(value):
             raise ValueError("Invalid Git tree identity")
     return hashlib.sha256(f"v1\n{PLATFORM}\n{tree}\n{publisher_tree}\n".encode()).hexdigest()
+
+
+def runner_input_key(inputs, publisher_tree):
+    """Bind every cross-service runner input and publication policy to reuse."""
+    if (set(inputs) != set(RUNNER_PATHS) or not valid_sha(publisher_tree)
+            or any(not valid_sha(value) for value in inputs.values())):
+        raise ValueError("Incomplete evaluation runner source identities")
+    payload = json.dumps(inputs, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(
+        f"evaluation-runner-v1\n{PLATFORM}\n{payload}\n{publisher_tree}\n".encode()
+    ).hexdigest()
 
 
 def package_exists(service, token, fork, visibility="private", *, result=None):
@@ -103,13 +130,15 @@ def package_exists(service, token, fork, visibility="private", *, result=None):
     return True
 
 
-def check_packages(token, fork, visibility, *, result):
-    """Read all four package policies without CI gating, Docker or image receipts."""
+def check_packages(token, fork, visibility, *, result, services=SERVICES):
+    """Read selected package policies without CI gating, Docker or receipts."""
     fork.require_personal_publish()
     if visibility not in ("private", "public") or not token:
         raise ValueError("Package preflight requires a token and private/public visibility")
+    if not services or len(set(services)) != len(services) or any(s not in IMAGE_COMPONENTS for s in services):
+        raise ValueError("Select known image components")
     result.update(packages={}, packagePolicyVerified=False)
-    for service in SERVICES:
+    for service in services:
         item = {}
         try:
             package_exists(service, token, fork, visibility, result=item)
@@ -125,11 +154,11 @@ def check_packages(token, fork, visibility, *, result):
         raise ValueError("Package preflight failed; inspect the per-service package checks")
 
 
-def lookup(uri, tag, key, docker_env, fork):
+def lookup(uri, tag, key, docker_env, fork, *, expected_labels=None):
     reference = uri + ":" + tag
     result = subprocess.run(["docker", "buildx", "imagetools", "inspect", reference,
                              "--format", "{{json .Manifest}}"],
-                            text=True, capture_output=True, env=docker_env)
+                            text=True, capture_output=True, env=docker_env, check=False)
     if result.returncode:
         # Authentication/rate-limit/network failures must never become "missing".
         if result.stderr.strip() == f"ERROR: {reference}: not found":
@@ -148,7 +177,8 @@ def lookup(uri, tag, key, docker_env, fork):
     labels = config.get("config", {}).get("Labels", {})
     if (config.get("os") != "linux" or config.get("architecture") != "amd64"
             or labels.get("ai.govbiz.input-key") != key
-            or labels.get("org.opencontainers.image.source") != fork.url.removesuffix(".git")):
+            or labels.get("org.opencontainers.image.source") != fork.url.removesuffix(".git")
+            or any(labels.get(name) != value for name, value in (expected_labels or {}).items())):
         raise ValueError("Existing image has different inputs/source/platform; refusing reuse or overwrite")
     return digest
 
@@ -167,8 +197,23 @@ def publish(service, sha, output, actor, token, fork, visibility="private", *, r
     if not package_exists(service, token, fork, visibility, result=result):
         raise ValueError(f"A pre-created {visibility} package linked to this exact fork is required; "
                          "automatic package creation is disabled and no image was uploaded")
-    tree = git("rev-parse", f"{sha}:backend/{service}")
-    key = input_key(tree, git("rev-parse", f"{sha}:infrastructure/release"))
+    extra_labels = {}
+    if service == RUNNER:
+        inputs = {path: git("rev-parse", f"{sha}:{path}") for path in RUNNER_PATHS}
+        publisher_tree = git("rev-parse", f"{sha}:infrastructure/release")
+        key = runner_input_key(inputs, publisher_tree)
+        release = subprocess.check_output(["git", "show", f"{sha}:{RUNNER_RELEASE}"], cwd=ROOT, timeout=15)
+        release_hash = hashlib.sha256(release).hexdigest()
+        extra_labels["ai.govbiz.execution-release-sha256"] = release_hash
+        receipt_source = {"schemaVersion": 3, "sourceInputs": inputs,
+                          "publisherTree": publisher_tree, "executionReleaseSha256": release_hash}
+        archive_paths = RUNNER_PATHS
+    else:
+        tree = git("rev-parse", f"{sha}:backend/{service}")
+        key = input_key(tree, git("rev-parse", f"{sha}:infrastructure/release"))
+        receipt_source = {"schemaVersion": 2, "sourceTree": tree}
+        archive_paths = (f"backend/{service}",)
+    lookup_options = {"expected_labels": extra_labels} if extra_labels else {}
     tag = "src-" + key
     with tempfile.TemporaryDirectory(prefix="govbiz-release-") as directory:
         temporary = Path(directory)
@@ -177,20 +222,28 @@ def publish(service, sha, output, actor, token, fork, visibility="private", *, r
         try:
             run("docker", "login", "--username", actor, "--password-stdin", "ghcr.io",
                 input=token, capture_output=True, env=docker_env)
-            digest = lookup(uri, tag, key, docker_env, fork)
+            digest = lookup(uri, tag, key, docker_env, fork, **lookup_options)
             result["reused"] = digest is not None
             if digest is None:
                 archive = temporary / "source.tar"
                 run("git", "archive", "--format=tar", "--output", str(archive), sha,
-                    f"backend/{service}", cwd=ROOT)
+                    *archive_paths, cwd=ROOT)
                 with tarfile.open(archive) as source:
                     source.extractall(temporary / "source", filter="data")
                 reference = uri + ":" + tag
+                context = temporary / "source"
+                build_options = []
+                if service == RUNNER:
+                    build_options += ["--file", str(context / RUNNER_DOCKERFILE)]
+                    for name, value in extra_labels.items():
+                        build_options += ["--label", name + "=" + value]
+                else:
+                    context = context / "backend" / service
                 run("docker", "build", "--platform", PLATFORM, "--label",
                     "org.opencontainers.image.revision=" + sha, "--label",
                     "org.opencontainers.image.source=" + fork.url.removesuffix(".git"), "--label",
                     "ai.govbiz.input-key=" + key, "--tag", reference,
-                    str(temporary / "source/backend" / service), env=docker_env)
+                    *build_options, str(context), env=docker_env)
                 if not eligible(sha, fork):
                     raise ValueError("Source superseded or checks changed during build; refusing upload")
                 if not package_exists(service, token, fork, visibility, result=result):
@@ -202,17 +255,17 @@ def publish(service, sha, output, actor, token, fork, visibility="private", *, r
                 # Recheck after upload as well; an unverified image gets no receipt.
                 if not package_exists(service, token, fork, visibility, result=result):
                     raise RuntimeError("Published package visibility/ownership could not be verified")
-                digest = lookup(uri, tag, key, docker_env, fork)
+                digest = lookup(uri, tag, key, docker_env, fork, **lookup_options)
                 if digest is None:
                     raise RuntimeError("Pushed image was not found in GHCR")
             elif not package_exists(service, token, fork, visibility, result=result):
                 raise ValueError("Reused package visibility/ownership could not be verified")
         finally:
-            subprocess.run(["docker", "logout", "ghcr.io"], capture_output=True, env=docker_env)
+            subprocess.run(["docker", "logout", "ghcr.io"], capture_output=True, env=docker_env, check=False)
     if not eligible(sha, fork):
         raise ValueError("Source superseded before receipt; uploaded images are not deployment approval")
-    receipt = {"schemaVersion": 2, "visibility": visibility, "service": service, "repository": uri, "digest": digest,
-               "tag": tag, "platform": PLATFORM, "verifiedRevision": sha, "sourceTree": tree,
+    receipt = {**receipt_source, "visibility": visibility, "service": service, "repository": uri, "digest": digest,
+               "tag": tag, "platform": PLATFORM, "verifiedRevision": sha,
                "inputKey": key}
     with output.open("x") as file:
         json.dump(receipt, file, indent=2)
@@ -224,14 +277,14 @@ def publish(service, sha, output, actor, token, fork, visibility="private", *, r
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check-packages", action="store_true", help="Read package policies only; never build or upload")
-    parser.add_argument("--service", choices=SERVICES)
+    parser.add_argument("--service", choices=IMAGE_COMPONENTS)
     parser.add_argument("--sha")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--report", type=Path)
     args = parser.parse_args()
     if args.check_packages:
-        if args.service or args.sha or args.output or not args.report:
-            parser.error("--check-packages requires --report and cannot use --service, --sha or --output")
+        if args.service not in (None, RUNNER) or args.sha or args.output or not args.report:
+            parser.error("--check-packages requires --report; only --service evaluation-runner may select a separate package")
     elif not all((args.service, args.sha, args.output)):
         parser.error("Publication requires --service, --sha and --output")
     if args.report and args.output and args.report.resolve() == args.output.resolve():
@@ -247,7 +300,8 @@ def main():
         result["repository"] = fork.repository
         visibility = os.environ.get("MSA_PACKAGE_VISIBILITY", "private")
         if args.check_packages:
-            check_packages(os.environ["GH_TOKEN"], fork, visibility, result=result)
+            check_packages(os.environ["GH_TOKEN"], fork, visibility, result=result,
+                           services=(RUNNER,) if args.service == RUNNER else SERVICES)
         else:
             publish(args.service, args.sha, args.output, os.environ["GITHUB_ACTOR"], os.environ["GH_TOKEN"], fork,
                     visibility, result=result)
