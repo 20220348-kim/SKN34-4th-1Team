@@ -65,11 +65,11 @@ def current_source(sha, fork, get=api):
 
 
 def upstream_merged(sha, fork, get=api):
-    """Publish only the latest merged upstream content after the fork is synced.
+    """Keep a merged candidate usable while upstream receives later commits.
 
-    A fork-only merge SHA is allowed because its private digest selections differ
-    from upstream. Every other tracked file must equal upstream, including this
-    publication policy; unmerged local development can never become a release.
+    The candidate must still be current on the fork and pass its own push CI.
+    A fork-only commit may differ from the latest upstream only in private digest
+    selections; unmerged application or publication policy changes stay blocked.
     """
     if not valid_sha(sha):
         raise ValueError("Invalid candidate SHA")
@@ -85,6 +85,20 @@ def upstream_merged(sha, fork, get=api):
     # Both commits belong to the same GitHub fork network. A missing base,
     # failed comparison or API permission error propagates; never assume merged.
     comparison = get(f"repos/{fork.repository}/compare/{head}...{sha}")
+    if comparison.get("status") == "behind":
+        # Comparing upstream HEAD ... candidate has no candidate-only commits or
+        # files when this exact candidate is already in upstream's history.
+        # Do not infer ancestry merely from an empty/truncated file list.
+        return (comparison.get("base_commit", {}).get("sha") == head
+                and comparison.get("merge_base_commit", {}).get("sha") == sha
+                and type(comparison.get("ahead_by")) is int
+                and comparison["ahead_by"] == 0
+                and type(comparison.get("behind_by")) is int
+                and comparison["behind_by"] > 0
+                and type(comparison.get("total_commits")) is int
+                and comparison["total_commits"] == 0
+                and comparison.get("commits") == []
+                and comparison.get("files") == [])
     files = comparison.get("files")
     count = comparison.get("total_commits")
     return (comparison.get("status") == "ahead"
@@ -162,7 +176,7 @@ def main():
         raise SystemExit("Image publication is disabled; opt in on your personal fork")
     if args.check_sha:
         if not eligible(args.check_sha, fork):
-            raise SystemExit("Release blocked: sync the latest merged upstream source and pass all required CI workflows and jobs")
+            raise SystemExit("Release blocked: pin an upstream-merged source on the fork default branch and pass all required CI workflows and jobs for that SHA")
         return
     event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
     sha = candidate(os.environ["GITHUB_EVENT_NAME"], event,

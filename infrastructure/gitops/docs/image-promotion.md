@@ -429,7 +429,7 @@ python3 -B -m unittest test_gitops_transition test_gitops_transition_verify test
 
 `fork_cluster.py up`은 개인 포크 기본 브랜치의 현재 SHA에 대해 다음을 직접 검증한다.
 
-1. 최신 upstream 병합본과의 일치 및 다섯 CI의 필수 16개 job 성공.
+1. 후보 SHA의 upstream 병합 이력 포함 여부 및 다섯 CI의 필수 16개 job·종합 판정 5개 성공.
 2. 성공한 이미지 발행 run/attempt와 정확한 네 receipt의 저장소·SHA·checksum·Git tree.
 3. 같은 Git 커밋의 Chart·values와 검증된 digest로 구성한 Helm 4.3.0 렌더링.
 4. 무료 실행 정책, Secret 참조, Ops 앱과 동일 이미지의 필수 migration Job.
@@ -438,6 +438,9 @@ python3 -B -m unittest test_gitops_transition test_gitops_transition_verify test
 실행 흐름은 `up → 현재 발행 검증 → immutable Git 설정 + receipt → Helm 검사 → 이미지 pull 권한 확인
 → 전용 kind 초기화 → Ops migration → 서비스 준비 확인`이다.
 검증 실패·만료 artifact·최신 발행 실패를 과거 이미지로 대신하지 않는다.
+개인 포크 기본 브랜치의 후보 SHA를 유지하면 팀 upstream의 후속 병합은 이 검증을 무효화하지
+않는다. 개인 기본 브랜치가 새 소스로 바뀌면 새 SHA의 CI·발행을 요구한다. 포크 전용 빈 커밋이나
+digest 변경처럼 원본 이력에 직접 포함되지 않은 후보의 예외는 [소스 검증 경계](../../../docs/msa-image-release.md#검증재실행-경계)를 따른다.
 임시 디렉터리에서 렌더링하며 작업 브랜치·index·로컬 수정·원격 Git을 변경하지 않는다.
 소스 객체가 없으면 `origin`에서 해당 SHA만 fetch한다.
 

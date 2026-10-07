@@ -145,8 +145,73 @@ class ReleaseGateTests(unittest.TestCase):
             self.assertFalse(gate.upstream_merged(SHA, FORK, get))
         comparison["files"] = []  # a content-identical fork merge is safe
         self.assertTrue(gate.upstream_merged(SHA, FORK, get))
-        comparison["status"] = "diverged"  # upstream advanced, fork not synced
+        comparison["status"] = "diverged"  # fork-only commits are not proven merged
         self.assertFalse(gate.upstream_merged(SHA, FORK, get))
+
+    def upstream_ahead_responses(self, comparison=None, **ci_options):
+        checks = self.responses(**ci_options)
+        ancestry = {"status": "behind", "base_commit": {"sha": TREE},
+                    "merge_base_commit": {"sha": SHA}, "ahead_by": 0, "behind_by": 6,
+                    "total_commits": 0, "commits": [], "files": []}
+        def get(path):
+            if path == f"repos/{gate.UPSTREAM}/git/ref/heads/main":
+                return {"object": {"sha": TREE}}
+            if path == f"repos/{FORK.repository}/compare/{TREE}...{SHA}":
+                return ancestry if comparison is None else comparison
+            return checks(path)
+        return get
+
+    def test_merged_candidate_survives_later_upstream_merges(self):
+        self.assertTrue(gate.eligible(SHA, FORK, self.upstream_ahead_responses()))
+
+    def test_upstream_advance_still_requires_every_exact_ci_run_and_job(self):
+        for filename in gate.WORKFLOWS:
+            with self.subTest(workflow=filename):
+                self.assertEqual(gate.blocked_reason(SHA, FORK, self.upstream_ahead_responses(
+                    workflows={filename: []})), "ci_run_missing:" + filename)
+                for state in ("failure", "cancelled", "skipped"):
+                    self.assertEqual(gate.blocked_reason(SHA, FORK, self.upstream_ahead_responses(
+                        workflows={filename: [run_record(filename, conclusion=state)]})),
+                        "ci_run_not_successful_or_untrusted:" + filename)
+                self.assertEqual(gate.blocked_reason(SHA, FORK, self.upstream_ahead_responses(
+                    workflows={filename: [run_record(filename, status="in_progress", conclusion=None)]})),
+                    "ci_run_not_successful_or_untrusted:" + filename)
+                def skip_job(response):
+                    response["jobs"][0]["conclusion"] = "skipped"
+                    return response
+                self.assertEqual(gate.blocked_reason(SHA, FORK, self.upstream_ahead_responses(
+                    jobs={filename: skip_job})), "ci_jobs_not_successful_or_incomplete:" + filename)
+
+    def test_incomplete_or_contradictory_merged_ancestry_is_rejected(self):
+        baseline = {"status": "behind", "base_commit": {"sha": TREE},
+                    "merge_base_commit": {"sha": SHA}, "ahead_by": 0, "behind_by": 6,
+                    "total_commits": 0, "commits": [], "files": []}
+        changes = (
+            {"status": "diverged"}, {"status": "ahead"}, {"status": "identical"},
+            {"base_commit": {"sha": SHA}}, {"merge_base_commit": {"sha": TREE}},
+            *({"ahead_by": value} for value in (1, False, "0", None)),
+            *({"behind_by": value} for value in (0, -1, True, "6", None)),
+            *({"total_commits": value} for value in (1, False, "0", None)),
+            {"commits": [{}]}, {"commits": None}, {"files": None},
+            {"files": [{"filename": "infrastructure/release/gate.py", "status": "modified"}]},
+        )
+        for change in changes:
+            with self.subTest(change=change):
+                self.assertFalse(gate.upstream_merged(SHA, FORK,
+                    self.upstream_ahead_responses({**baseline, **change})))
+        for key in baseline:
+            with self.subTest(missing=key):
+                self.assertFalse(gate.upstream_merged(SHA, FORK,
+                    self.upstream_ahead_responses({k: v for k, v in baseline.items() if k != key})))
+
+    def test_ancestry_lookup_error_does_not_grant_publication(self):
+        fixture = self.upstream_ahead_responses()
+        def get(path):
+            if "/compare/" in path:
+                raise URLError("ancestry unavailable")
+            return fixture(path)
+        with self.assertRaises(URLError):
+            gate.eligible(SHA, FORK, get)
 
     def test_incomplete_or_renamed_upstream_comparison_is_rejected(self):
         baseline = {"status": "ahead", "total_commits": 1, "commits": [{}],
