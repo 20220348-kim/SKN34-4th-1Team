@@ -1,0 +1,14 @@
+component: evaluation-runner
+replicas: 0
+# Fill with a verified runner image digest; no public runner publisher exists yet.
+image: ""
+storage:
+  existingClaim: restored-results
+  node: ""
+runner:
+  opsApiUrl: http://ops-service.govbiz-msa.svc.cluster.local:8000
+  # Preserve the existing reachable Langfuse endpoint until its separate migration.
+  langfuseUrl: ""
+resources:
+  requests: {cpu: 250m, memory: 512Mi}
+  limits: {cpu: "1", memory: 2Gi}

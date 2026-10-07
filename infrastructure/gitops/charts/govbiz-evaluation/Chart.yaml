@@ -1,0 +1,5 @@
+apiVersion: v2
+name: govbiz-evaluation
+description: One independently deployed Prefect, evaluation runner or artifact server
+type: application
+version: 0.1.0

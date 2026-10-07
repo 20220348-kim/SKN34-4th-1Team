@@ -1,8 +1,9 @@
 # Ops와 Compose 평가 실행 환경의 연결 계약
 
-Prefect·평가 실행기·결과 저장소는 기존 Compose에서 유지하고 Kubernetes에는 Ops API를 둔다.
-이 배치 방향은 사용자가 선택했다. 현재 구현은 **연결 진단과 선택 가능한 내부 HTTP 저장소 조회**를 제공하며,
-Compose 결과 볼륨이 Kubernetes에 자동 공유되거나 두 환경의 통신이 개통된 상태는 아니다.
+현재 개인 환경은 Kubernetes Ops API/sync와 Compose Prefect·평가 실행기·결과 저장소를 연결한다.
+2026-10-08 사용자가 단계적 Kubernetes 통합 방향을 선택했다. 이 문서는 이전 완료 전 유지할
+연결 계약이며, 새 목표·독립 배포 구성·저장소 이전 순서는 [Kubernetes 통합 안내](evaluation-kubernetes.md)를 따른다.
+공통 설정 템플릿만으로 Compose 결과 볼륨이 Kubernetes에 공유되거나 통신이 개통되지는 않는다.
 
 ## 명시적인 설정
 

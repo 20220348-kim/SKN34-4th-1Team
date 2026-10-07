@@ -129,6 +129,10 @@ Prefect 및 실제 Kubernetes 환경의 혼합 실행은 후속 통합 검증 �
 
 ### Compose 시작
 
+Compose는 로컬 개발 및 Kubernetes 이전 전의 기존 실행 환경으로 유지한다. 배포 대상은
+서비스별 Kubernetes 실행으로 통일하며 [평가 환경 이전 안내](../gitops/docs/evaluation-kubernetes.md)에
+따라 저장소·실행 이력을 먼저 보존한다. 아래 명령은 Compose용이며 새 Pod를 시작하지 않는다.
+
 저장소 루트에서 실행한다. Docker에는 약 8GB의 메모리를 확보하고, 13000·14200 포트가 비어 있는지 확인한다.
 Langfuse Web·Worker, PostgreSQL, ClickHouse, Redis, MinIO와 Prefect를 별도 Compose 프로젝트에 둔다.
 이미지는 digest로 고정하며 업무 서비스의 데이터베이스·볼륨을 공유하지 않는다.

@@ -57,7 +57,9 @@ EndpointSlice와 준비된 Pod의 UID·IP·포트를 대조하며 HTTP 통신 �
 개발 감시·웹 연결은 유지합니다. 소스 이미지 경로에는 GHCR 계정이나 PAT가 필요하지 않습니다.
 검증된 GHCR 이미지를 사용할 때는 `gh` 로그인과 해당 이미지의 pull 권한을 준비하고 일반 `up`을 실행합니다.
 
-Prefect·평가 실행기·결과 저장소는 Compose에 유지합니다.
+현재 Prefect·평가 실행기·결과 저장소는 Compose에서 실행됩니다. 배포 대상의 최종 방향은
+서비스 경계를 유지한 Kubernetes 통합입니다. [단계적 이전 구성과 완료 기준](docs/evaluation-kubernetes.md)을
+따르며, 독립 Helm 구성의 추가만으로 기존 환경이 이전된 것은 아닙니다.
 [Ops 연결 계약](docs/ops-runtime.md)과 [스키마·migration 계약](docs/ops-migration.md)을 따릅니다.
 기존 개발 클러스터·서비스·DB·볼륨을 이번 제거 작업에서 삭제하거나 변경하지 않았습니다.
 
