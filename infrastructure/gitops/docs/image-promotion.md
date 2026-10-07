@@ -387,6 +387,44 @@ cd infrastructure/gitops/scripts
 python3 -B -m unittest test_gitops_transition test_gitops_transition_verify
 ```
 
+### 전환 준비·재검증 실패 진단
+
+생성·재검증 명령은 실패 시 `BLOCKED`와 종료 코드 1을 유지하며 `failureStage`로 중단 단계를
+표시한다. 예외 원문·명령 인수·개인 경로·설정값은 진단 JSON에 넣지 않는다.
+
+| `failureStage` | 확인할 작업 |
+| --- | --- |
+| `repository_identity` | 현재 checkout의 `origin`과 개인 저장소 식별 |
+| `output_path_check` / `plan_write` | state 소유권·권한, 새 출력 이름, 파일 저장 가능 여부 |
+| `saved_plan_read` / `saved_plan_identity` | 기존 파일의 권한·형식과 저장소·state 일치 여부 |
+| `publication_verification` / `publication_revalidation` | 현재 소스의 필수 CI·발행·receipt·공개 이미지 및 전후 일치 여부 |
+| `runtime_preservation` | 기존 클러스터 조회와 연결 설정의 Helm 재현 |
+| `plan_rendering` | 검증된 발행본으로 만든 최종 Argo 입력·렌더링 정책 |
+| `plan_comparison` | 저장 파일과 현재 계획의 차이 |
+| `state_revalidation` / `saved_plan_revalidation` | 검증 도중 state나 파일이 바뀌었는지 확인 |
+
+`plan_comparison` 실패의 `changedSections`는 `publication`, `runtime`, `argo_resources`,
+`rendered_resources`, `safety_contract`, `other_fields` 중 달라진 영역만 표시한다.
+알 수 없는 필드도 비교하지만 입력에서 가져온 필드명이나 전후 값은 출력하지 않는다.
+생성 시각을 제외한 전체 비교, 누락·`null` 및 불리언·숫자 구분은 유지한다.
+차이가 있으면 기존 파일을 수정하지 않고 현재 상태를 검토한 뒤 새 이름으로 다시 생성한다.
+
+외부 명령은 `failureKind: external_command_failed` 또는 `external_command_timeout`으로
+구분하고 `externalTool`에는 `gh`, `git`, `helm`, `kubectl`, `unknown` 중 하나만 표시한다.
+예를 들어 `publication_verification` + `gh` 실패는 GitHub 조회 도구부터 확인할 근거이며,
+Kubernetes나 Docker 장애로 단정하거나 서비스를 재시작할 근거가 아니다.
+발행 검증의 GitHub API 호출은 표준 오류를 수집하고 호출당 90초로 제한한다. 명령 전체의
+90초 완료를 보장하지 않으며 시간 초과 시 과거 성공 결과로 대체하지 않는다.
+기존 `publicationBlocker`는 소스·CI·발행 차단의 참고 진단으로 계속 제공한다.
+
+새 진단은 차단 원인 확인을 돕는 정보이며 배포·재시작·자동 복구 승인이 아니다.
+Infra CI의 기존 검색은 `test_transition_diagnostics.py`도 실행한다.
+
+```bash
+cd infrastructure/gitops/scripts
+python3 -B -m unittest test_gitops_transition test_gitops_transition_verify test_transition_diagnostics test_sync_images
+```
+
 ## 배포 PR 없이 GHCR 이미지로 로컬 초기화
 
 `fork_cluster.py up`은 개인 포크 기본 브랜치의 현재 SHA에 대해 다음을 직접 검증한다.

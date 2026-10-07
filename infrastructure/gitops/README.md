@@ -26,6 +26,8 @@ LLMOps 개발 순서는 [후속 개발 전략](../../docs/llmops-next-developmen
 기존 연결 설정을 보존한 전환 파일은 [전환 파일 준비](docs/image-promotion.md#기존-환경의-비공개-전환-파일-준비)로 생성합니다.
 이 파일은 백업·migration·실제 전환 검증이 남은 검토 자료이며, 생성 성공을 배포 준비 완료로 취급하지 않습니다.
 저장 후의 변경 여부는 [전환 파일 재검증](docs/image-promotion.md#저장된-전환-파일-재검증)으로 확인합니다.
+생성·재검증 실패 시 `failureStage`와 값 없는 `changedSections`로 중단 지점을 구분합니다.
+외부 명령 실패·시간 초과는 `failureKind`와 허용된 도구 이름만 표시합니다.
 공개 발행본이 없거나 소스·CI 검증에 막히면 `publicationBlocker`에 현재 기본 브랜치의 원본 병합·필수 CI·
 발행 단계 진단을 표시합니다. 진단 결과는 배포 승인이 아니며 기존 차단과 종료 코드 1을 유지합니다.
 `--state-dir ... --review-preservation`은 기존 환경변수·Ops sync의 Helm 재현 가능성을 임시 렌더링으로
