@@ -18,7 +18,7 @@ export function ChoiceField({ label, value, options, onChange, disabled = false 
       <SafeAreaView style={{ flex: 1, backgroundColor: colors.background }}>
         <View style={{ padding: 20, gap: 16 }}><Text style={styles.heading}>{label}</Text><Button label="닫기" variant="secondary" onPress={() => setOpen(false)} /></View>
         <ScrollView contentContainerStyle={{ padding: 20, gap: 8 }}>
-          {options.map((item) => <Pressable key={item.value} accessibilityRole="radio" accessibilityState={{ checked: value === item.value }}
+          {options.map((item) => <Pressable key={item.value} accessibilityRole="radio" accessibilityLabel={item.label} accessibilityState={{ checked: value === item.value }}
             onPress={() => { onChange(item.value); setOpen(false) }} style={[styles.input, value === item.value && { backgroundColor: colors.soft }]}>
             <Text style={styles.body}>{item.label}{value === item.value ? '  ✓' : ''}</Text>
           </Pressable>)}

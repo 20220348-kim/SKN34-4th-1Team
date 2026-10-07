@@ -10,9 +10,12 @@ export class BrowseSupportProgramsUseCase {
   execute(command: SupportProgramCatalogFilters, signal?: AbortSignal) {
     const normalized = { ...command, keyword: command.keyword.trim(), region: command.region.trim(), category: command.category.trim(),
       startupStage: command.startupStage.trim(), applicantType: command.applicantType.trim(), founderAge: command.founderAge.trim() }
-    if ([normalized.keyword, normalized.region, normalized.category, normalized.startupStage, normalized.applicantType, normalized.founderAge]
-      .some((value) => value.length > 100 || /\p{C}/u.test(value))
-      || normalized.region.length > 50 || !catalogStatuses.includes(command.status) || !catalogSorts.includes(command.sort)
+    if ([normalized.keyword, normalized.startupStage, normalized.applicantType, normalized.founderAge]
+      .some((value) => value.length > 100)
+      || normalized.region.length > 200 || normalized.category.length > 300
+      || [normalized.keyword, normalized.region, normalized.category, normalized.startupStage, normalized.applicantType, normalized.founderAge]
+        .some((value) => /\p{C}/u.test(value))
+      || !catalogStatuses.includes(command.status) || !catalogSorts.includes(command.sort)
       || !catalogSourceCodes.includes(command.sourceCode)
       || (command.sourceCode !== 'KSTARTUP' && [normalized.startupStage, normalized.applicantType, normalized.founderAge].some(Boolean))
       || !Number.isInteger(command.page) || command.page < 1 || command.page > 1_000_000

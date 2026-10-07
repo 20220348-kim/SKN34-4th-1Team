@@ -14,7 +14,7 @@ import { SegmentedControl } from '../components/SegmentedControl'
 import { preparationDate, preparationKey, PreparationRow, ReviewRow, ProgressStageSheet } from '../components/PreparationRows'
 import { usePreparationWorkspace } from '../components/usePreparationWorkspace'
 import { GuestFeatureNotice } from '../components/GuestFeatureNotice'
-import { MultiSelectField } from '../components/MultiSelectField'
+import { FilterMultiChoices } from '../components/FilterMultiChoices'
 import { PartnerSheet } from '../components/PartnerSheet'
 import { SavedProgramCalendar } from '../components/SavedProgramCalendar'
 import { SavedProgramPipeline } from '../components/SavedProgramPipeline'
@@ -39,6 +39,7 @@ export function SavedProgramsScreen({ onOpenProgram, onCountChange, onLogin }: {
   const [state, setState] = useState<SavedState>({ token: null, programs: [], loading: true, error: null })
   const [revision, setRevision] = useState(0)
   const [view, setView] = useState<'saved' | 'preparation'>('saved')
+  const [filterOpen, setFilterOpen] = useState(false)
   const [filter, setFilter] = useState<Filter>('all')
   const [savedView, setSavedView] = useState<SavedView>('list')
   const [search, setSearch] = useState<{ owner: string | null; filters: SavedProgramFilters }>({ owner: null, filters: emptySavedProgramFilters() })
@@ -65,7 +66,7 @@ export function SavedProgramsScreen({ onOpenProgram, onCountChange, onLogin }: {
   const visible: SavedState = state.token === token ? state : { token, programs: [], loading: true, error: null }
   useEffect(() => { onCountChange?.(token ? visible.programs.length : 0) }, [token, visible.programs.length, onCountChange])
   useEffect(() => { if (!undo) return; const timer = setTimeout(() => setUndo(null), 7_000); return () => clearTimeout(timer) }, [undo])
-  useEffect(() => { setFilter('all'); setSavedView('list'); setMonth(savedCalendarMonth(savedCalendarToday())); setStageTarget(null) }, [token])
+  useEffect(() => { setFilter('all'); setSavedView('list'); setMonth(savedCalendarMonth(savedCalendarToday())); setStageTarget(null); setFilterOpen(false) }, [token])
   const criteria = search.owner === token ? search.filters : emptySavedProgramFilters()
   function changeCriteria(update: (value: SavedProgramFilters) => SavedProgramFilters) {
     setSearch(current => ({ owner: token, filters: update(current.owner === token ? current.filters : emptySavedProgramFilters()) }))
@@ -120,13 +121,13 @@ export function SavedProgramsScreen({ onOpenProgram, onCountChange, onLogin }: {
   const latestPreparation = (identity: SupportProgramIdentity) => workspace.preparations?.find((item) => preparationKey(item) === preparationKey(identity))
   const stageOf = (saved: SavedSupportProgram) => latestPreparation({ sourceCode: saved.program.sourceCode, sourceProgramId: saved.program.id })?.progressStage ?? 'interest'
   const matching = sortSavedProgramsByDeadline(filterSavedPrograms(visible.programs, criteria))
-  const shown = savedView !== 'list' || filter === 'all' ? matching : workspace.preparations === null ? [] : matching.filter(item => stageOf(item) === filter)
+  const shown = filter === 'all' ? matching : workspace.preparations === null ? [] : matching.filter(item => stageOf(item) === filter)
   const options = (values: readonly string[]) => [...new Set(values)].sort((left, right) => left.localeCompare(right, 'ko-KR'))
   const activeCriteria = [
     ...(criteria.keyword.trim() ? [{ key: 'keyword' as const, value: criteria.keyword, label: `검색 · ${criteria.keyword.trim()}` }] : []),
     ...(['region', 'category', 'target'] as const).flatMap(key => criteria[key].map(value => ({ key, value, label: `${{ region: '지역', category: '분야', target: '대상' }[key]} · ${value}` }))),
   ]
-  const listStageReady = savedView !== 'list' || filter === 'all' || workspace.preparations !== null
+  const listStageReady = filter === 'all' || workspace.preparations !== null && !workspace.preparationError
   const stageBusy = workspace.loading || workspace.preparations === null || Boolean(workspace.preparationError)
   const workCount = workspace.preparations !== null && workspace.reviews !== null ? workspace.preparations.length + workspace.reviews.length : null
   if (status === 'loading') return <Page><ActivityIndicator accessibilityLabel="로그인 상태 확인 중" /></Page>
@@ -144,26 +145,18 @@ export function SavedProgramsScreen({ onOpenProgram, onCountChange, onLogin }: {
       {view === 'saved' ? <>
         <SegmentedControl<SavedView> label="담은 공고 보기 방식" value={savedView} onChange={setSavedView} options={[
           { value: 'list', label: '목록' }, { value: 'calendar', label: '달력' }, { value: 'pipeline', label: '진행 관리' }]} />
-        <Field label="담은 공고 검색" placeholder="공고명 또는 기관명" value={criteria.keyword} maxLength={100}
-          onChangeText={keyword => changeCriteria(current => ({ ...current, keyword }))} />
-        <View style={styles.row}>
-          <MultiSelectField key={`region:${token}`} label="지역" selected={criteria.region} options={options([...regionNames, ...criteria.region, ...visible.programs.flatMap(item => item.program.regions)])}
-            onToggle={value => toggleCriterion('region', value)} onClear={() => changeCriteria(current => ({ ...current, region: [] }))} />
-          <MultiSelectField key={`category:${token}`} label="분야" selected={criteria.category} options={options([...supportProgramCategories, ...criteria.category, ...visible.programs.flatMap(item => item.program.categories)])}
-            onToggle={value => toggleCriterion('category', value)} onClear={() => changeCriteria(current => ({ ...current, category: [] }))} />
-          <MultiSelectField key={`target:${token}`} label="대상" selected={criteria.target} options={savedProgramTargetOptions}
-            onToggle={value => toggleCriterion('target', value)} onClear={() => changeCriteria(current => ({ ...current, target: [] }))} />
+        <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 9 }}><View style={{ flex: 1, minWidth: 0 }}>
+          <Field label="담은 공고 검색" placeholder="공고명 또는 기관명" value={criteria.keyword} maxLength={100}
+            onChangeText={keyword => changeCriteria(current => ({ ...current, keyword }))} /></View>
+          <Button label={`필터 ${criteria.region.length + criteria.category.length + criteria.target.length + (filter === 'all' ? 0 : 1)}`}
+            accessibilityLabel="관심 공고 필터 열기" variant="secondary" onPress={() => setFilterOpen(true)} />
         </View>
-        {(activeCriteria.length > 0 || savedView === 'list' && filter !== 'all') && <View style={local.applied}>
+        {(activeCriteria.length > 0 || filter !== 'all') && <View style={local.applied}>
           {activeCriteria.map(item => <Button key={`${item.key}:${item.value}`} size="small" variant="secondary" label={`${item.label} ×`}
             accessibilityLabel={`${item.label} 조건 해제`} onPress={() => item.key === 'keyword' ? changeCriteria(current => ({ ...current, keyword: '' })) : toggleCriterion(item.key, item.value)} />)}
-          {savedView === 'list' && filter !== 'all' && <Button size="small" variant="secondary" label={`진행 · ${filters.find(item => item.value === filter)?.label} ×`} onPress={() => setFilter('all')} />}
+          {filter !== 'all' && <Button size="small" variant="secondary" label={`진행 · ${filters.find(item => item.value === filter)?.label} ×`} onPress={() => setFilter('all')} />}
           <Button label="필터 초기화" size="small" variant="ghost" onPress={resetFilters} />
         </View>}
-        {savedView === 'list' && <ScrollView horizontal keyboardShouldPersistTaps="handled" showsHorizontalScrollIndicator={false} contentContainerStyle={local.filters}>{filters.map(({ value, label }) =>
-          <Pressable key={value} accessibilityRole="button" accessibilityLabel={`${label} 공고 필터`} accessibilityState={{ selected: filter === value }}
-            onPress={() => setFilter(value)} style={[local.chip, value === filter && local.activeChip]}><Text style={[local.chipText, value === filter && { color: colors.surface }]}>
-              {label} {value === 'all' ? matching.length : workspace.preparations === null ? '—' : matching.filter((item) => stageOf(item) === value).length}</Text></Pressable>)}</ScrollView>}
         {!visible.loading && !visible.error && listStageReady && <Text accessibilityLiveRegion="polite" style={styles.muted}>조건에 맞는 공고 {shown.length}건 / 담은 공고 {visible.programs.length}건{savedView === 'list' ? ' · 마감 임박순' : ''}</Text>}
         {visible.loading && !visible.programs.length && <ActivityIndicator accessibilityLabel="관심 공고 불러오는 중" color={colors.primary} />}
         {visible.error && <Notice error>{visible.error}</Notice>}
@@ -212,6 +205,22 @@ export function SavedProgramsScreen({ onOpenProgram, onCountChange, onLogin }: {
         {!workspace.loading && workspace.reviews?.length === 0 && <><Text style={styles.muted}>아직 중복 검토가 없습니다.</Text><Button label="새 검토" variant="secondary" onPress={() => router.push('/all/reviews/new')} /></>}
       </>}
     </ScrollView>
+    <PartnerSheet visible={filterOpen} title="관심 공고 필터" onClose={() => setFilterOpen(false)} actions={<>
+      <Button label="초기화" variant="secondary" onPress={resetFilters} />
+      <Button label={listStageReady && !visible.error ? `결과 ${shown.length}건 보기` : '결과 확인하기'} onPress={() => setFilterOpen(false)} />
+    </>}>
+      <FilterMultiChoices label="지역" selected={criteria.region} options={options([...regionNames, ...criteria.region, ...visible.programs.flatMap(item => item.program.regions)])}
+        onToggle={value => toggleCriterion('region', value)} onClear={() => changeCriteria(current => ({ ...current, region: [] }))} />
+      <FilterMultiChoices label="분야" selected={criteria.category} options={options([...supportProgramCategories, ...criteria.category, ...visible.programs.flatMap(item => item.program.categories)])}
+        onToggle={value => toggleCriterion('category', value)} onClear={() => changeCriteria(current => ({ ...current, category: [] }))} />
+      <FilterMultiChoices label="대상" selected={criteria.target} options={savedProgramTargetOptions}
+        onToggle={value => toggleCriterion('target', value)} onClear={() => changeCriteria(current => ({ ...current, target: [] }))} />
+      <Text style={styles.heading}>진행 단계</Text><View style={styles.row}>{filters.map(({ value, label }) =>
+        <Button key={value} label={label} accessibilityLabel={`진행 단계 ${label}`} size="small" variant={filter === value ? 'primary' : 'secondary'} onPress={() => setFilter(value)} />)}</View>
+      {workspace.preparationError && <Notice error>진행 단계를 확인하지 못했어요. {workspace.preparationError}</Notice>}
+      {visible.error && <Notice error>{visible.error}</Notice>}
+      <Text style={styles.muted}>지역·분야·대상을 여러 개 선택할 수 있어요. 선택하지 않으면 전체 담은 공고를 보여줍니다.</Text>
+    </PartnerSheet>
     {stageTarget?.owner === token && (stageTarget.items.length > 0
       ? <ProgressStageSheet key={`${token}:${preparationKey(stageTarget.identity)}`} items={stageTarget.items} token={token} onClose={() => setStageTarget(null)} onSaved={workspace.refresh} />
       : <PartnerSheet visible title="신청 준비 시작" onClose={() => setStageTarget(null)} actions={<Button label="닫기" variant="secondary" onPress={() => setStageTarget(null)} />}>
