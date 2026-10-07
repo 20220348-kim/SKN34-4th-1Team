@@ -1,6 +1,6 @@
 component: evaluation-runner
 replicas: 0
-# Fill with a verified runner image digest; no public runner publisher exists yet.
+# Filled from a verified v3 receipt by scripts/evaluation_release.py.
 image: ""
 storage:
   existingClaim: restored-results

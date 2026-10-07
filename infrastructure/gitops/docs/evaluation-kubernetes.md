@@ -51,7 +51,8 @@ Prefect용과 실행기용 writable 임시 경로는 용량을 제한한 emptyDi
 있지 않으므로 결과 서버의 init container가 **동일한 runner 이미지**에서 자료를 emptyDir로 복사한다.
 결과 서버는 복사된 자료를 읽기 전용으로 사용하며 호스트 checkout을 mount하지 않는다.
 Ops·runner의 실행 명세 일치와 각 이미지의 CI·발행 증거는 실제 전환 전에 별도로 검증해야 한다.
-digest 문법 검사만으로 이미지를 신뢰하지 않는다. 현재 공개 발행 파이프라인에는 runner가 없다.
+digest 문법 검사만으로 이미지를 신뢰하지 않는다. 실행기는 별도 `evaluation-images.yml`에서 발행하고,
+아래의 계획 도구가 기존 네 서비스 발행과 같은 SHA인지 확인한다. 실제 원격 발행 성공은 별도 확인한다.
 
 | 위치 | 주입 항목 |
 | --- | --- |
@@ -92,8 +93,61 @@ PVC 존재·복원 성공·실행기 생존·DNS·이미지 실행 명세·클�
 pull policy는 `Never`다. 실제 공개 이미지 검증의 대체 경로가 아니다.
 
 Infra CI의 기존 `test_*.py` 검색에 Chart·PVC 복원 단위 테스트가 포함된다. 이 검사는 오프라인 검증이다.
-LLMOps CI에는 아래의 실제 PVC 복원 smoke가 추가됐다. 세 Helm 릴리스의 실제 기동·평가 통합 검증은
-PVC smoke와 별도이며 아직 완료하지 않았다.
+LLMOps CI에는 아래의 실제 PVC 복원 smoke와 별도 평가 런타임 통합 검증이 연결됐다.
+세 Helm 릴리스의 기동·평가 성공은 최신 SHA의 해당 CI 결과로 확인한다.
+
+## 공개 발행 검증과 수동 Argo 계획
+
+[`evaluation_release.py`](../scripts/evaluation_release.py)는 개인 포크 기본 브랜치의 검증된 발행을
+읽어 **평가 namespace 전용** AppProject와 세 Application을 JSON 보고서에 만든다.
+기존 네 업무 Application·프로젝트는 변경하지 않는다. 원격 Git 읽기와 익명 GHCR manifest 조회만
+수행하며 Docker·kubectl은 호출하지 않는다. 소스 커밋이 로컬에 없으면 `git fetch`로 객체만 가져온다.
+
+```bash
+# 저장소 루트, 기존 GitOps Python 환경 + 인증된 gh + Helm 4.3.0.
+# 실제 계획에 사용할 노드·복원 PVC 이름과 접근 가능한 Langfuse origin으로 바꾼다.
+# namespace/PVC/Secret은 별도 인계 대상이며 이 명령이 만들거나 검사하지 않는다.
+python3 -B infrastructure/gitops/scripts/evaluation_release.py \
+  --node <대상-노드> \
+  --prefect-claim <복원된-Prefect-PVC> \
+  --results-claim <복원된-결과-PVC> \
+  --langfuse-url http://<접근-가능한-Langfuse-호스트>:3000
+```
+
+`--ops-api-url`의 기본값은 `http://ops-service.govbiz-msa.svc.cluster.local:8000`이다.
+두 URL은 비밀번호·토큰·경로 없는 HTTP(S) origin이어야 한다. Secret 값은 인자로 받지 않는다.
+업무 API 주소나 기존 Ops의 Prefect·결과 서버 연결을 변경하지 않는다.
+
+검증 흐름은 `현재 소스·필수 CI → 네 업무 이미지 receipt → 실행기 v3 receipt → Git 입력·실행 명세
+대조 → 공개 GHCR manifest 확인 → 같은 소스 Chart 렌더링 → 두 발행 기록·CI 재확인`이다.
+
+- 실행기 artifact의 workflow·저장소·브랜치·run·만료·ZIP 크기·SHA-256을 확인한다. 미지 artifact,
+  중복 receipt, 잘린 목록, 경로가 다른 ZIP 멤버를 거절한다. 최신 발행이 실패·진행 중이면 과거 성공으로
+  대체하지 않으며, 성공한 gate-only 실행의 진단 보고서를 이미지 receipt로 사용하지 않는다.
+- v3의 13개 입력 Git 객체, publisher tree, input key, 실행 명세의 원본 바이트 SHA-256을 실제 커밋과
+  대조한다. Ops와 runner는 같은 소스 SHA여야 하며 public receipt만 허용한다.
+- Chart·기본 values는 검증한 커밋에서 임시 디렉터리로 읽는다. 로컬 작업 파일이나 임의 이미지 입력을
+  사용하지 않는다. Prefect는 해당 소스의 고정 digest를 유지하고 결과 서버의 자료 이미지는 runner와 같다.
+- `govbiz-evaluation` AppProject는 해당 포크와 namespace, Deployment·Service만 허용한다.
+  PV·PVC·Secret·namespace·Job을 소유하지 않는다. 세 Application은 전체 SHA·digest로 고정하며,
+  자동 sync·prune·selfHeal은 false, retry는 0이다. 자동 namespace 생성과 삭제 finalizer도 넣지 않는다.
+- 모든 replica는 0이고 유료 호출·스케줄은 비활성화한다. 별도의 배포 브랜치·PR·자동 적용은 없다.
+
+성공은 `schema=evaluation-gitops-plan-v1`, `status=PLANNED`다. `resources`에 Argo 리소스,
+`renderedSha256`에 각 렌더 결과의 해시, 발행 run·attempt와 artifact 해시·실행 명세 해시를 남긴다.
+이는 서명된 승인이나 운영 인계 증거가 아니다. 조회 중 발행·CI·소스가 바뀌면 계획을 반환하지 않는다.
+실패 시 `status=BLOCKED`, 고정 `reason`과 오류 종류만 출력하며 URL·registry 오류 원문은 노출하지 않는다.
+
+`publicGHCRManifestsVerified=true`는 GHCR의 immutable manifest 조회 성공만 뜻한다. 레이어 다운로드,
+외부 Prefect registry 검증, PVC 복원·존재, Secret 설치, 네트워크 접근, 실제 실행은 검사하지 않는다.
+`layersDownloaded`, `prefectRegistryVerified`, `storageRestored`, `runtimeVerified`,
+`deploymentAuthorized`는 모두 false다. 실행기가 아직 발행되지 않았거나 현재 소스 CI가 미완료이면
+이 계획도 차단된다. 실제 전환 전에 보존할 PVC·비밀·네트워크와 기존 writer 중지·인계 절차를 완료한다.
+
+로컬 무료 검증은 `infrastructure/gitops/scripts`에서
+`python3 -B -m unittest test_evaluation_release test_evaluation_chart`로 실행한다.
+실제 임시 Git 저장소와 고정 Helm을 사용하며 GitHub·registry 응답만 대역 처리한다.
+Infra CI의 기존 `test_*.py` 검색이 새 검증을 포함한다. 실제 클러스터 이전 성공의 대체 증거는 아니다.
 
 ## 새 PVC에서 복원·Pod 교체 검증
 
@@ -189,10 +243,11 @@ NetworkPolicy 집행을 입증하지 않으며, 이 결과는 Argo CD 배포·�
    실제 개인 백업 검증과 운영 이전용 PVC 보존·인계는 남아 있다. 원본 볼륨은 유지한다.
 2. runner 이미지의 같은 SHA CI·공개 발행·실행 명세 검증 경로는
    [별도 실행기 발행 workflow](../../release/README.md#kubernetes-평가-실행기-이미지)에 추가했다.
-   실제 패키지 준비·최신 SHA CI·발행 성공과 v3 receipt 소비 검증은 별도로 확인해야 한다.
+   v3 receipt 소비·같은 SHA의 Ops 이미지 대조·독립 수동 Argo 계획도 구현했다.
+   실제 패키지 준비·최신 SHA CI·발행 성공과 운영 환경에서의 계획 검증은 별도로 확인해야 한다.
    기존 네 서비스의 필수 CI·발행 가드를 우회하지 않는다. 배포 방식은 서비스별 Argo Application과 수동 동기화를 유지한다.
-   기존 AppProject·진단은 네 업무 Application을 전제로 하므로 새 평가 namespace의 권한과
-   Application 조회 범위를 함께 검증한다. 이번 Chart를 기존 프로젝트에 바로 추가하지 않는다.
+   평가용 계획은 별도 프로젝트로 범위를 제한한다. 실제 적용 전 namespace·PVC·Secret 소유권 인계와
+   운영 진단의 Application 조회 범위 확장은 남아 있다.
 3. 위 격리 Kubernetes 런타임 검증의 최신 SHA 필수 CI 성공을 확인한다. 검증 경로는 구현했으며,
    실행 실패·취소·건너뛰기를 완료로 처리하지 않는다. 이후 개인 환경의 같은 이미지·백업으로 별도 검증한다.
 4. 실제 전환 시 Ops 접수·스케줄과 Compose writer를 중지하고 최신 백업을 만든다. 복원 검증 후
