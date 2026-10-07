@@ -36,7 +36,8 @@ API 경계에서 shared DTO 검증·Mapper를 사용하고, 등록 결과의 공
 모바일 공고 상세는 `ProgramScreen → readProgramDetail → shared 공고 HTTP Client → Core`로 읽고 모바일 API 경계에서 shared Mapper로 내부 모델을 만듭니다.
 원문 질문 예시는 입력만 채우고 명시적인 질문 전송에만 기존 answers API를 호출합니다. 답변 이력은 공고·계정별 화면 상태이며 서버에 새 대화 저장 계약을 추가하지 않습니다.
 모바일 관심함의 검색·다중 필터·정렬·달력은 검증된 관심 공고 모델을 로컬 화면에서 처리합니다. 공고 검색과 관심함의 조건은 한 시트에서 고르며
-공고 검색은 기존 catalog API, 관심함은 기존 로컬 필터를 사용합니다.
+공고 검색은 기존 catalog API, 관심함은 기존 로컬 필터를 사용합니다. 수신 설정의 보기/수정 분리는 기존 리포트 settings PUT과 주소 확인 POST를 그대로 사용하고,
+알림 설정은 리포트 앱 알림에서 진입합니다.
 목록·진행 관리의 단계 변경은 기존 `ProgressStageSheet → updatePreparationProgress → Core progress-stage API`를
 사용하며 문서별 진행 revision과 복합 공고 식별자를 검증합니다. 웹·공개 HTTP 계약과 shared DTO는 변경하지 않습니다.
 

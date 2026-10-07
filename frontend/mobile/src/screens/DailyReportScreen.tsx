@@ -102,7 +102,8 @@ function periodLabel(period: string): { status: SupportProgramStatus; deadline: 
   return { status: 'OPEN', deadline: formatDday(Math.round((end - today) / 86_400_000)) }
 }
 
-export function DailyReportScreen({ onLogin, onCompany, onSearch, onOpenProgram, settingsOnly = false, reportId }: {
+export function DailyReportScreen({ onLogin, onCompany, onSearch, onOpenProgram, settingsOnly = false, reportId, onSettings }: {
+  onSettings?(): void
   settingsOnly?: boolean
   reportId?: string
   onLogin(mode?: 'login' | 'signup'): void; onCompany(): void; onSearch(): void; onOpenProgram(identity: SupportProgramIdentity): void
@@ -114,6 +115,8 @@ export function DailyReportScreen({ onLogin, onCompany, onSearch, onOpenProgram,
   const [revision, setRevision] = useState(0)
   const [refreshing, setRefreshing] = useState(false)
   const [expanded, setExpanded] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const editingOwner = useRef<string | null>(null)
   const [purpose, setPurpose] = useState('')
   const [enabled, setEnabled] = useState(false)
   const [consent, setConsent] = useState(false)
@@ -156,7 +159,7 @@ export function DailyReportScreen({ onLogin, onCompany, onSearch, onOpenProgram,
         ])
         if (!controller.signal.aborted) {
           setState({ token, reportId, settings, company, report, saved: report?.programs.length ? null : new Set(), savedError: null, loading: false, error: null })
-          setPurpose(settings.supportPurpose); setEnabled(settings.enabled); setConsent(false)
+          if (editingOwner.current !== token) { editingOwner.current = null; setEditing(false); setPurpose(settings.supportPurpose); setEnabled(settings.enabled); setConsent(false) }
           setRefreshing(false)
           if (report?.programs.length) await loadSavedPrograms(token, controller.signal)
         }
@@ -197,6 +200,7 @@ export function DailyReportScreen({ onLogin, onCompany, onSearch, onOpenProgram,
       const saved = await saveDailyReportSettings(token, { supportPurpose: purpose.trim(), enabled, consent: enabled && consent }, controller.signal)
       if (controller.signal.aborted) return
       setState((current) => current.token === token ? { ...current, settings: saved } : current)
+      editingOwner.current = null; setEditing(false)
       setPurpose(saved.supportPurpose); setEnabled(saved.enabled); setConsent(false)
       setNotice('수신 설정을 저장했어요. 이미 생성된 리포트의 조건은 바뀌지 않아요.')
     } catch (cause) {
@@ -206,6 +210,14 @@ export function DailyReportScreen({ onLogin, onCompany, onSearch, onOpenProgram,
     } finally { if (request.current === controller) setBusy(null) }
   }
 
+  function editSettings() {
+    if (!token || !settings || busy) return
+    editingOwner.current = token; setEditing(true); setPurpose(settings.supportPurpose); setEnabled(settings.enabled); setConsent(false); setActionError(null)
+  }
+  function cancelSettings() {
+    if (!settings || busy) return
+    editingOwner.current = null; setEditing(false); setPurpose(settings.supportPurpose); setEnabled(settings.enabled); setConsent(false); setActionError(null)
+  }
   async function verifyEmail() {
     if (!token || !settings?.emailDeliveryAvailable || busy) return
     const controller = new AbortController(); request.current = controller
@@ -291,34 +303,49 @@ export function DailyReportScreen({ onLogin, onCompany, onSearch, onOpenProgram,
         <Button label={visible.company ? '기업 정보 채우기' : '기업 등록하기'} variant="secondary" onPress={onCompany} /></Card>
     </>)}
     {!settingsOnly && <Pressable accessibilityRole="button" accessibilityLabel="수신 설정" accessibilityState={{ expanded }} onPress={() => setExpanded(!expanded)}>
-      <Card><View style={local.dateLine}><Text style={styles.heading}>수신 설정 · 이메일 {settings.enabled ? '켬' : '끔'} · 앱 알림 {push.settings?.enabled ? '켬' : '끔'}</Text>
+      <Card><View style={local.dateLine}><Text style={styles.heading}>수신 설정 · 이메일 {settings.enabled ? '켬' : '끔'} · 앱 알림 {push.settings ? push.settings.enabled ? '켬' : '끔' : '확인 필요'}</Text>
         <Text style={styles.muted}>{expanded ? '▴' : '▾'}</Text></View></Card>
     </Pressable>}
     {settingsOnly && <DeadlineReminderSettings />}
     {settingsOnly && !visible.company && <Card><Text style={styles.body}>기업 정보를 등록하면 정기 리포트를 받을 수 있어요.</Text>
       <Button label="기업 등록하기" variant="secondary" onPress={onCompany} /></Card>}
     {(settingsOnly || expanded) && <Card>
-      <DailyReportPushSettings hasCompany={Boolean(visible.company)} />
-      <Text style={styles.muted}>수신 주소: {session?.account.email} · {settings.emailConfirmed ? '확인 완료' : '확인 필요'}</Text>
+      <Text style={styles.heading}>받는 방법</Text>
+      <View style={local.dateLine}><Text style={styles.label}>이메일</Text><StatusBadge label={settings.enabled ? '켜짐' : '꺼짐'} tone={settings.enabled ? 'success' : 'neutral'} /></View>
+      <Text style={styles.muted}>매일 {sendHourLabel(settings.sendHour)} 이후 · 한국 시간</Text>
+      <View style={local.dateLine}><Text style={styles.body}>{session?.account.email}</Text><StatusBadge label={settings.emailConfirmed ? '확인됨' : '확인 필요'} tone={settings.emailConfirmed ? 'success' : 'warning'} /></View>
       {!settings.emailDeliveryAvailable && <Notice>현재 이메일 발송 설정이 준비되지 않았어요. 확인 메일과 정기 발송을 사용할 수 없어요.</Notice>}
       {!settings.schedulerEnabled && <Notice>정기 리포트 예약이 꺼져 있어요. 이미 예약된 메일은 처리될 수 있어요.</Notice>}
       {!settings.emailConfirmed && settings.emailDeliveryAvailable && <Button label="이메일 주소 확인 메일 보내기"
         variant="secondary" busy={busy === 'verify'} disabled={Boolean(busy)} onPress={() => void verifyEmail()} />}
-      <Field label="지원 목적 (선택, 최대 100자)" value={purpose} onChangeText={setPurpose} maxLength={100}
-        editable={!busy} placeholder="예: AI 제품 개발, 해외 전시회 참가" />
-      <Pressable accessibilityRole="switch" accessibilityLabel="정기 이메일 수신"
-        accessibilityState={{ checked: enabled, disabled: Boolean(busy) }} disabled={Boolean(busy)}
-        onPress={() => { setEnabled(!enabled); setConsent(false) }} style={local.option}>
-        <Text style={styles.body}>매일 {sendHourLabel(settings.sendHour)} 이후 정기 이메일 받기</Text>
-        <Text style={local.check}>{enabled ? '●' : '○'}</Text>
-      </Pressable>
-      {enabled && <Pressable accessibilityRole="checkbox" accessibilityLabel="정기 이메일 수신 동의"
-        accessibilityState={{ checked: consent, disabled: Boolean(busy) }} disabled={Boolean(busy)}
-        onPress={() => setConsent(!consent)} style={local.option}>
-        <Text style={local.check}>{consent ? '☑' : '□'}</Text>
-        <Text style={[styles.body, { flex: 1 }]}>기업 맞춤 지원사업 리포트의 정기 이메일 수신에 동의합니다.</Text>
-      </Pressable>}
-      <Button label="수신 설정 저장" busy={busy === 'save'} disabled={!canSave} onPress={() => void saveSettings()} />
+      {editing && <>
+        <Pressable accessibilityRole="switch" accessibilityLabel="정기 이메일 수신" accessibilityState={{ checked: enabled,
+          disabled: Boolean(busy) || !enabled && (!settings.emailConfirmed || !settings.emailDeliveryAvailable || !visible.company) }}
+          disabled={Boolean(busy) || !enabled && (!settings.emailConfirmed || !settings.emailDeliveryAvailable || !visible.company)}
+          onPress={() => { setEnabled(!enabled); setConsent(false) }} style={local.option}>
+          <Text style={styles.body}>정기 이메일 받기</Text><Text style={local.check}>{enabled ? '●' : '○'}</Text>
+        </Pressable>
+        {!enabled && (!settings.emailConfirmed || !visible.company) && <Text style={styles.muted}>수신 주소 확인과 기업 정보 등록을 마치면 정기 이메일을 켤 수 있어요.</Text>}
+        {enabled && <Pressable accessibilityRole="checkbox" accessibilityLabel="정기 이메일 수신 동의"
+          accessibilityState={{ checked: consent, disabled: Boolean(busy) }} disabled={Boolean(busy)} onPress={() => setConsent(!consent)} style={local.option}>
+          <Text style={local.check}>{consent ? '☑' : '□'}</Text><Text style={[styles.body, { flex: 1 }]}>기업 맞춤 지원사업 리포트의 정기 이메일 수신에 동의합니다. 언제든 수신을 중지할 수 있어요.</Text>
+        </Pressable>}
+      </>}
+      {settingsOnly ? <DailyReportPushSettings hasCompany={Boolean(visible.company)} /> : <>
+        <View style={local.dateLine}><Text style={styles.label}>앱 알림</Text><StatusBadge label={push.settings ? push.settings.enabled ? '켜짐' : '꺼짐' : push.error ? '확인 필요' : '확인 중'} tone={push.settings?.enabled ? 'success' : 'neutral'} /></View>
+        <Text style={styles.muted}>리포트와 관심 공고 마감 알림을 이 기기로 받아요.</Text>
+        {push.error && <Notice error>{push.error}</Notice>}
+        {onSettings && <Button label="알림 설정" variant="secondary" onPress={onSettings} />}
+      </>}
+      <Text style={styles.heading}>추천 기준</Text>
+      {editing ? <Field label="지원 목적 (선택, 최대 100자)" value={purpose} onChangeText={setPurpose} maxLength={100}
+        editable={!busy} placeholder="예: AI 제품 개발, 해외 전시회 참가" /> : <>
+        <Text style={styles.muted}>지원 목적 · 선택</Text><Text style={styles.body}>{settings.supportPurpose || '미입력'}</Text>
+      </>}
+      <Text style={styles.muted}>저장한 조건은 다음 리포트부터 반영돼요. 이미 만든 오늘 리포트는 바뀌지 않아요.</Text>
+      {editing ? <View style={styles.row}><Button label="취소" variant="secondary" disabled={Boolean(busy)} onPress={cancelSettings} />
+        <Button label="수신 설정 저장" busy={busy === 'save'} disabled={!canSave} onPress={() => void saveSettings()} /></View>
+        : <Button label="수신 설정 수정" variant="secondary" disabled={Boolean(busy)} onPress={editSettings} />}
       <Text style={styles.muted}>주소 확인과 수신 동의는 별개예요. 메일 서버 접수는 받은 편지함 도착을 보장하지 않아요.</Text>
     </Card>}
     {notice && <Notice>{notice}</Notice>}
