@@ -32,7 +32,7 @@ class QuestionSetTest(unittest.TestCase):
         self.assertEqual(len(prepared), len(classify_cases))
         self.assertEqual(len(fixture["cases"]) - len(classify_cases), 20, "에이전트 문항 20개")
         help_cases = [case for case, _ in prepared if case["expectedIntent"] == "PRODUCT_HELP"]
-        self.assertEqual(len(help_cases), 30, "도움말 10항목 × 표현 3개")
+        self.assertEqual(len(help_cases), 27, "도움말 9항목 × 표현 3개")
         unanswerable = [case for case, _ in prepared if case["expectedIntent"] in ("OUT_OF_SCOPE", "UNCLEAR")]
         self.assertEqual(len(unanswerable), 10, "답할 수 없는 문항 10개")
         for case, request in prepared:

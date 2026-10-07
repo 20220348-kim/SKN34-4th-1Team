@@ -193,7 +193,7 @@ ANSWERED는 비어 있지 않은 answer와 빈 updates, null 질문을 반환합
 (`id`·`title`·`question`·`summary`·`body`·`limitation`·`audience`·`status`·`action`)이며 AI Service는 사본을 갖지 않습니다.
 응답 `intent`와 함께 채워야 하는 필드는 아래와 같고 나머지는 null 또는 빈 배열입니다.
 
-분류·인용 회귀는 [도우미 의도 분류 평가](../../evaluation/assistant/README.md)의 가상 질문 50문항으로 확인합니다. 기본 실행은 모델을 부르지 않고, `--live` 첫 측정(2026-09-13)은 의도 50/50·인용 30/30·기권 10/10이었습니다.
+분류·인용 회귀는 [도우미 의도 분류 평가](../../evaluation/assistant/README.md)의 가상 질문 47문항으로 확인합니다. 기본 실행은 모델을 부르지 않고, `--live` 첫 측정(2026-09-13, 당시 50문항)은 의도 50/50·인용 30/30·기권 10/10이었습니다.
 
 | intent | 채우는 필드 | 뜻 |
 |---|---|---|
