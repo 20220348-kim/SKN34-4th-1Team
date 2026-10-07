@@ -28,7 +28,7 @@ export function ApplicationPreparationNewScreen(props: Props) {
   if (auth.status !== 'signedIn' || !auth.session) return <PreparationAccess onLogin={props.onLogin} />
   return <OwnedNew key={auth.session.accessToken} token={auth.session.accessToken} email={auth.session.account.email} {...props} />
 }
-function OwnedNew({ token, email, initialProgram, onOpenProgram, onCreated, onList, onPendingDocument }: Props & { token: string; email: string }) {
+function OwnedNew({ token, email, initialProgram, onOpenProgram, onCreated, onPendingDocument }: Props & { token: string; email: string }) {
   const { invalidateSession } = useAuth()
   const insets = useSafeAreaInsets()
   const useCase = useMemo(() => applicationPreparationUseCase(token), [token])
@@ -174,7 +174,7 @@ function OwnedNew({ token, email, initialProgram, onOpenProgram, onCreated, onLi
     </Page>}
     <View style={[preparationUi.footer, { paddingBottom: 12 + insets.bottom }]}>{step === 'selection'
       ? <Button label="다음 · 양식 확인" disabled={!program || busy} onPress={() => setStep('form')} />
-      : <><Button label="이 양식으로 작성 시작" busy={busy} disabled={!form || loading} onPress={() => void create()} /><Button label="목록으로 돌아가기" variant="ghost" disabled={busy} onPress={onList} /></>}
+      : <><Button label="이 양식으로 작성 시작" busy={busy} disabled={!form || loading} onPress={() => void create()} /></>}
     </View>
   </View>
 }

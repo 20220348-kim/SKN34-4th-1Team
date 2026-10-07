@@ -2,6 +2,7 @@ import { useCallback, useMemo, useRef, useState } from 'react'
 import { ActivityIndicator, Alert, Text, View } from 'react-native'
 import { useFocusEffect } from 'expo-router'
 import type { ApplicationPreparationSummary, ApplicationPreparationListStatus, ApplicationDocumentGenerationJob, ApplicationFormDiscoveryJob } from '@govbiz/shared/domain/entities/ApplicationPreparation'
+import { daysUntil, formatDday, programStatusLabels } from '@govbiz/shared/domain/labels'
 import { ApplicationPreparationError } from '@govbiz/shared/domain/errors/ApplicationPreparationError'
 import { generationFailureTitle } from '@govbiz/shared/domain/entities/ApplicationDocumentGeneration'
 import { useAuth } from '../auth/session'
@@ -11,7 +12,7 @@ import { readPendingPreparation, type PendingPreparationRequest } from '../auth/
 import { PreparationAccess } from '../components/ApplicationPreparationUi'
 import { SegmentedControl } from '../components/SegmentedControl'
 import { useAppForeground } from '../components/useAppForeground'
-import { Button, Card, Notice, Page, StatusBadge, colors, styles } from '../ui'
+import { Button, Card, Notice, Page, StatusBadge, colors, ddayBadgeTone, styles } from '../ui'
 
 type Props = { onLogin(): void; onNew(identity?: { sourceCode: string; sourceProgramId: string }): void; onOpen(id: number, documents: boolean): void }
 const active = (status: string) => status === 'QUEUED' || status === 'RUNNING' || status === 'UNKNOWN'
@@ -116,7 +117,8 @@ function OwnedList({ token, email, onNew, onOpen }: Props & { token: string; ema
       const job = jobs.filter(candidate => candidate.preparationId === item.id).sort((a, b) => b.id - a.id)[0]
       const working = job && active(job.status)
       const completed = item.hasCurrentDocument || job?.status === 'SUCCEEDED' && job.expectedRevision === item.inputRevision
-      return <Card key={item.id}><View style={styles.row}><StatusBadge label={working ? job.status === 'UNKNOWN' ? '결과 확인 필요' : '초안 만드는 중' : job?.status === 'FAILED' ? '생성 실패' : completed ? '초안 완료' : '작성 중'} tone={completed && !working ? 'success' : working ? 'info' : 'neutral'} /></View>
+      const days = daysUntil(item.applicationEndDate)
+      return <Card key={item.id}><View style={styles.row}><StatusBadge label={working ? job.status === 'UNKNOWN' ? '결과 확인 필요' : '초안 만드는 중' : job?.status === 'FAILED' ? '생성 실패' : completed ? '초안 완료' : '작성 중'} tone={completed && !working ? 'success' : working ? 'info' : 'neutral'} />{days !== null && <StatusBadge label={days < 0 ? programStatusLabels.CLOSED : formatDday(days)} tone={days < 0 ? 'neutral' : ddayBadgeTone(days)} />}</View>
         <Text style={styles.heading}>{item.formTitle}</Text><Text style={styles.muted}>{item.programTitle}</Text>
         {item.requiredTotal !== undefined && <Text style={styles.muted}>필수 답변 {item.answeredRequired ?? 0} / {item.requiredTotal}</Text>}
         {item.requiredTotal !== undefined && item.requiredTotal > 0 && <View accessibilityRole="progressbar" accessibilityValue={{ min: 0, max: item.requiredTotal, now: item.answeredRequired ?? 0 }} style={{ height: 5, borderRadius: 8, backgroundColor: colors.track }}>

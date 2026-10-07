@@ -119,8 +119,8 @@ export function ProgramPreparationSection({ identity, token }: { identity: Suppo
     {reviews.map((item) => <ReviewRow key={item.review.id} item={item} />)}
     {!workspace.loading && workspace.preparations !== null && workspace.reviews !== null && !items.length && !reviews.length
       && <Text style={styles.muted}>아직 준비 중인 작업이 없어요.</Text>}
-    <View style={local.buttons}><Button label="+ 새 문서" variant="secondary" onPress={() => router.push({ pathname: '/all/preparation/new', params: identity })} />
-      <Button label="중복 검토 요청" variant="secondary" onPress={() => router.push({ pathname: '/all/reviews/new', params: identity })} /></View>
+    <View style={local.buttons}><Button label="+ 새 문서" variant="secondary" onPress={() => router.push({ pathname: '/all/preparation/new', params: { ...identity, from: 'program' } })} />
+      <Button label="중복 검토 요청" variant="secondary" onPress={() => router.push({ pathname: '/all/reviews/new', params: { ...identity, from: 'program' } })} /></View>
     {stageOpen && <ProgressStageSheet items={items} token={token} onClose={() => setStageOpen(false)} onSaved={workspace.refresh} />}
   </View>
 }

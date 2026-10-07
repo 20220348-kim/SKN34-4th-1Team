@@ -367,3 +367,23 @@ test('foreground refresh preserves the selected form for the same program', asyn
   fireEvent.press(screen.getByLabelText('이 양식으로 작성 시작'))
   await waitFor(() => expect(api.create).toHaveBeenCalledWith(expect.objectContaining({ formVersionId: 'second-form' }), expect.any(AbortSignal)))
 })
+
+
+test('document list distinguishes upcoming deadlines, today, expired and missing dates with Seoul dates', async () => {
+  jest.useFakeTimers().setSystemTime(new Date('2026-10-07T00:00:00Z'))
+  api.list.mockResolvedValue({ items: [
+    { ...documentSummary, id: 1, formTitle: '내일 마감 문서', applicationEndDate: '2026-10-08' },
+    { ...documentSummary, id: 2, formTitle: '오늘 마감 문서', applicationEndDate: '2026-10-07' },
+    { ...documentSummary, id: 3, formTitle: '지난 마감 문서', applicationEndDate: '2026-10-06' },
+    { ...documentSummary, id: 4, formTitle: '마감일 없는 문서', applicationEndDate: null },
+  ], nextBeforeId: null })
+  try {
+    render(<ApplicationDocumentsListScreen {...listProps} />)
+    await screen.findByText('내일 마감 문서')
+    expect(screen.getByText('D-1')).toBeTruthy()
+    expect(screen.getByText('오늘 마감')).toBeTruthy()
+    expect(screen.getByText('접수 마감')).toBeTruthy()
+    expect(screen.queryByText('D--1')).toBeNull()
+    expect(screen.queryByText('D-null')).toBeNull()
+  } finally { jest.useRealTimers() }
+})

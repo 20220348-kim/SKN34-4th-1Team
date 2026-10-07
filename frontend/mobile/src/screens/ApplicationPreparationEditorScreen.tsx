@@ -40,7 +40,16 @@ function OwnedEditor({ token, email, id, reviewing, initialQuestion, onReview, o
   const current = questions[index]
   const dirty = Object.keys(vm.pending).length > 0
   usePreventRemove(dirty || vm.saving, ({ data }) => {
-    void vm.flush().then(saved => { if (saved) navigation.dispatch(data.action); else Alert.alert('답변을 먼저 저장해 주세요', '입력한 내용은 이 화면에 남아 있어요. 저장 상태를 확인한 뒤 다시 이동해 주세요.') })
+    void vm.flush().then(saved => { if (saved) {
+      // 루트 Stack 복귀는 해당 Stack에서 재실행해야 source가 하위 작성 경로로 바뀌지 않습니다.
+      let dispatcher = navigation
+      while (data.action.target && dispatcher.getState()?.key !== data.action.target) {
+        const parent = dispatcher.getParent()
+        if (!parent) break
+        dispatcher = parent
+      }
+      dispatcher.dispatch(data.action)
+    } else Alert.alert('답변을 먼저 저장해 주세요', '입력한 내용은 이 화면에 남아 있어요. 저장 상태를 확인한 뒤 다시 이동해 주세요.') })
   })
   const missing = questions.filter(question => question.field.required && question.field.documentWritable !== false && !vm.value(question.section, question.field.key).trim())
   const draftMode = applicationDraftMode(questions.map(question => ({ field: question.field, value: vm.value(question.section, question.field.key) })))
@@ -129,6 +138,7 @@ function OwnedEditor({ token, email, id, reviewing, initialQuestion, onReview, o
         <Button label="생성 결과 보기" variant="ghost" disabled={generating} onPress={() => onDocuments()} /></>
       : <View style={local.navigation}><Button label="이전" variant="secondary" style={local.navigationButton} disabled={index === 0 || blocked} onPress={() => void move(index - 1)} />
         <Button label={index === questions.length - 1 ? '답변 검토하기' : '다음'} style={local.navigationButton} disabled={blocked || !questions.length} onPress={() => void move(index === questions.length - 1 ? 'review' : index + 1)} /></View>}
+      {!reviewing && index !== questions.length - 1 && <Button label="여기까지 작성하고 검토" variant="ghost" disabled={blocked || !questions.length} onPress={() => void move('review')} />}
     </View>
     <PartnerSheet visible={sheet === 'questions'} title="작성 항목" onClose={() => setSheet(null)} actions={<Button label="닫기" variant="secondary" onPress={() => setSheet(null)} />}>{questions.map((question, q) => <Button key={question.key}
       label={`${q + 1}. ${question.field.label}${vm.value(question.section, question.field.key) ? ' · 저장 답변 있음' : ''}`} variant="secondary" onPress={() => reviewing ? onEditor(question.key) : void move(q)} />)}</PartnerSheet>

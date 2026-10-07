@@ -32,5 +32,5 @@ test('old input results remain visibly stale and do not claim a current run link
 test('a saved program starts native selection with a public composite identity only', () => {
   render(<ProgramPreparationSection identity={{ sourceCode: 'BIZINFO', sourceProgramId: 'PBLN_100' }} token="owner" />)
   fireEvent.press(screen.getByText('중복 검토 요청'))
-  expect(router.push).toHaveBeenCalledWith({ pathname: '/all/reviews/new', params: { sourceCode: 'BIZINFO', sourceProgramId: 'PBLN_100' } })
+  expect(router.push).toHaveBeenCalledWith({ pathname: '/all/reviews/new', params: { sourceCode: 'BIZINFO', sourceProgramId: 'PBLN_100', from: 'program' } })
 })
