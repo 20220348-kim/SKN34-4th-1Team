@@ -3,7 +3,6 @@ import {
   applicationPreparationStyles as s,
   documentResultStyles as d,
   loadingStyles as k,
-  programPickerStyles as p,
 } from './ApplicationPreparation.styles'
 
 /**
@@ -105,22 +104,6 @@ export function DocumentFilesSkeleton() {
       <span className={d.fill}>
         <span className={`${k.bar} h-1.5 w-full rounded-full`} />
         <Line box="h-[17px]" bar="h-3 w-32" />
-      </span>
-    </div>)}
-  </div>
-}
-
-/** 공고 고르기 패널의 행 자리입니다. 라디오 · 배지 · 공고명 · 기관과 접수 기간. */
-export function PickerRowSkeletons() {
-  return <div className={p.list} aria-hidden="true">
-    {[0, 1, 2, 3].map((index) => <div className={p.row} key={index}>
-      <span className="flex items-start gap-2.5">
-        <span className={`${k.bar} mt-0.5 size-4 shrink-0 rounded-full`} />
-        <span className={p.rowText}>
-          <span className={`${k.bar} h-[22px] w-16`} />
-          <Line box="h-[1.23rem]" bar="h-3.5 w-4/5" />
-          <Line box="h-[17px]" bar="h-3 w-3/5" />
-        </span>
       </span>
     </div>)}
   </div>

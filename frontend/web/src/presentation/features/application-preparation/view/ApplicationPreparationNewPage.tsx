@@ -10,11 +10,22 @@ import { WorkspacePageHeader } from '../../../shared/workspace/WorkspacePageHead
 import { WorkspaceToast } from '../../../shared/workspace/WorkspaceToast'
 import { workspacePageStyles } from '../../../shared/workspace/WorkspacePage.styles'
 import { useDelayedFlag } from '../../../shared/workspace/useDelayedFlag'
-import { useApplicationPreparationNewViewModel, type SelectableSupportProgram } from '../viewmodel/useApplicationPreparationNewViewModel'
-import { applicationPreparationStyles as s, newPreparationStyles as n } from './ApplicationPreparation.styles'
+import { ProgramBadges, ProgramPickerPanel } from '../../../shared/support-program/ProgramPickerPanel'
+import type { SelectableSupportProgram } from '../../../shared/support-program/useProgramPickerViewModel'
+import {
+  noFormNotice,
+  storedForms,
+  useApplicationPreparationNewViewModel,
+  type AvailabilityLookup,
+} from '../viewmodel/useApplicationPreparationNewViewModel'
+import {
+  applicationPreparationStyles as s,
+  loadingStyles as k,
+  newPreparationStyles as n,
+  pickAvailabilityStyles as a,
+} from './ApplicationPreparation.styles'
 import { ButtonSpinner } from './ApplicationPreparationSkeletons'
 import { GoogleFormPrefill } from './GoogleFormPrefill'
-import { ProgramBadges, ProgramPickerPanel } from './ProgramPickerPanel'
 
 type NewViewModel = ReturnType<typeof useApplicationPreparationNewViewModel>
 
@@ -60,6 +71,26 @@ function AiIcon() {
   return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <path d="M11 3.5 12.8 9 18.5 11l-5.7 2L11 18.5 9.2 13 3.5 11 9.2 9zM18.5 3v4M16.5 5h4" />
   </svg>
+}
+
+function CheckIcon() {
+  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5" /></svg>
+}
+
+/** 공고 고르기 패널에서 고른 행 아래의 저장된 양식 조회 결과입니다. */
+function PickAvailability({ lookup, onRetry }: { lookup: AvailabilityLookup; onRetry: () => void }) {
+  if (lookup.status === 'loading') return <p className={a.loading} role="status">
+    <span className="sr-only">저장된 양식을 확인하고 있어요…</span>
+    <span className={`${k.bar} h-3.5 w-44`} aria-hidden="true" />
+  </p>
+  if (lookup.status === 'failed') return <div className={a.error} role="alert">
+    <span className="min-w-0 flex-1">저장된 양식을 확인하지 못했어요. {lookup.error.message}</span>
+    <button type="button" className={n.secondarySm} onClick={onRetry}>다시 시도</button>
+  </div>
+  const count = storedForms(lookup.result).length
+  return count > 0
+    ? <p className={a.ok} role="status"><CheckIcon />양식 {count}개 · 바로 작성할 수 있어요</p>
+    : <p className={a.none} role="status">{noFormNotice(lookup.result)?.title ?? '저장된 양식이 없어요'} · 고른 뒤 입력칸별로 분석</p>
 }
 
 function SourceLink({ href, title }: { href: string; title: string }) {
@@ -369,10 +400,13 @@ function NewPreparation({ addressSourceCode, addressProgramId, onProgramChosen }
         </div>}
       </div>
     </main>
+    {/* 행을 고르면 그 공고의 저장된 양식을 바로 조회하고(AI 호출 없음), 조회를 마쳐야 [이 공고 선택]을 누를 수 있습니다. */}
     {pickerOpen && <ProgramPickerPanel
+      subtitle="신청 문서를 만들 공고 1개를 골라 주세요"
+      confirmLabel="이 공고 선택"
       current={vm.program}
-      currentAvailability={vm.availability}
       urlProgramKey={entryProgramKey}
+      lookup={{ load: vm.loadAvailability, current: vm.availability, render: (lookup, retry) => <PickAvailability lookup={lookup} onRetry={retry} /> }}
       onConfirm={(program, availability) => {
         pickerConfirmed.current = true
         vm.choose(program, availability)

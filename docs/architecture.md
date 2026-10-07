@@ -192,9 +192,10 @@ Frontend는 `/app/application-preparations`의 목록(상태 칩 `?status=`, 필
 웹 답변 입력은 입력을 2초 멈추거나 질문·항목을 이동할 때 그 항목의 `PUT …/inputs`를 자동으로 호출하고(보낼 사실이 저장된 사실과 같으면 호출하지 않음),
 탭 숨김·화면 이탈 시에는 `keepalive` 요청으로 마지막 저장을 보냅니다. `APPLICATION_PREPARATION_REVISION_CONFLICT`는 최신 준비 건을 다시 조회하되 입력 중 값은 유지해 사용자가 다시 저장하게 합니다.
 "아직 정해지지 않았어요" 체크는 기존 사실 상태 `UNKNOWN`(값 null)으로 저장하며 문서 생성에서 제외됩니다. 로컬 저장소·이탈 경고는 두지 않습니다.
-신청 문서와 중복 지원 검토의 공고 검색은 공용 `SupportProgramSearchFilters`에서 검색어·지역·지원 분야·출처·접수 상태를 입력받고,
-각 ViewModel → `BrowseSupportProgramsUseCase` → 기존 catalog HTTP API로 전달합니다. 검색 버튼은 1페이지부터 조회하고,
-페이지 이동은 마지막으로 적용한 조건을 유지합니다. 조건 해제·전체 초기화는 공고 선택을 유지한 채 다시 조회합니다.
+신청 문서 새 문서와 중복 지원 검토 1단계(사업 1 · 사업 2 칸)는 공용 `공고 고르기` 패널(`ProgramPickerPanel` → `useProgramPickerViewModel`)에서
+관심 공고함 · 전체 검색 탭으로 공고 1개를 고릅니다. 전체 검색은 검색어·지역·지원 분야·출처·접수 상태(기본 "전체")를 `BrowseSupportProgramsUseCase` →
+기존 catalog HTTP API로 전달하고, [검색]은 1페이지부터, [더 보기]는 마지막으로 적용한 조건으로 다음 페이지를 이어 붙입니다. 조건 해제·필터 초기화는 고른 행을 유지한 채 다시 조회합니다.
+신청 문서는 행을 고를 때마다 저장된 양식을 조회(AI 호출 없음)한 뒤에만 확정할 수 있고, 중복 지원 검토는 다른 칸에서 고른 공고를 고를 수 없게 둡니다.
 문서 생성은 웹이 `POST …/{id}/documents/jobs`로 작업을 접수(202)하고 `GET …/documents/jobs/{jobId}`를 2초마다 읽는 흐름입니다.
 신청 준비 삭제는 `ApplicationPreparationController → ApplicationPreparationService → ApplicationPreparationRepository → MyBatis → MySQL`을 거칩니다.
 삭제와 문서 생성 접수는 같은 준비 건 행을 `FOR UPDATE`로 잠그고 활성 작업도 잠금 조회로 확인합니다.

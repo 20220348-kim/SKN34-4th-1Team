@@ -1,25 +1,22 @@
 import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from 'react'
 import { daysUntil, programStatusLabels } from '@govbiz/shared/domain/labels'
-import type { ApplicationFormAvailability } from '../../../../domain/entities/ApplicationPreparation'
-import { regionNames } from '../../../../domain/entities/Region'
-import { supportProgramCategories } from '../../../../domain/entities/SupportProgramCategory'
-import { catalogSourceCodes, catalogSourceLabels, type SupportProgramCatalogFilters } from '../../../../domain/entities/SupportProgramCatalog'
-import { defaultProgramSelectionFilters, splitFilterValues } from '../../../shared/support-program/catalogSearchParams'
-import { SelectField } from '../../../shared/workspace/SelectField'
-import { MultiSelectField } from '../../../shared/workspace/MultiSelectField'
-import { StatusTag } from '../../../shared/workspace/StatusTag'
-import { toFilterChoiceOptions } from '../../../shared/workspace/filterChoiceOptions'
-import { useDelayedFlag } from '../../../shared/workspace/useDelayedFlag'
+import { regionNames } from '../../../domain/entities/Region'
+import { supportProgramCategories } from '../../../domain/entities/SupportProgramCategory'
+import { catalogSourceCodes, catalogSourceLabels, type SupportProgramCatalogFilters } from '../../../domain/entities/SupportProgramCatalog'
+import { MultiSelectField } from '../workspace/MultiSelectField'
+import { SelectField } from '../workspace/SelectField'
+import { StatusTag } from '../workspace/StatusTag'
+import { toFilterChoiceOptions } from '../workspace/filterChoiceOptions'
+import { useDelayedFlag } from '../workspace/useDelayedFlag'
+import { splitFilterValues } from './catalogSearchParams'
+import { programBadgeStyles as b, programPickerStyles as p } from './ProgramPicker.styles'
 import {
-  noFormNotice,
   programKey,
-  storedForms,
   useProgramPickerViewModel,
-  type AvailabilityLookup,
+  type PickLookup,
+  type ProgramPickLookup,
   type SelectableSupportProgram,
-} from '../viewmodel/useApplicationPreparationNewViewModel'
-import { loadingStyles as k, newPreparationStyles as n, programBadgeStyles as b, programPickerStyles as p } from './ApplicationPreparation.styles'
-import { ButtonSpinner, PickerRowSkeletons } from './ApplicationPreparationSkeletons'
+} from './useProgramPickerViewModel'
 
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
@@ -31,7 +28,11 @@ function sourceLabel(sourceCode: string) {
 }
 
 /** 접수 상태 · D-day(공용 StatusTag) · (선택) 출처 배지 한 줄입니다. 마감일이 없거나 지났거나 접수 중이 아니면 D-day는 두지 않습니다. */
-export function ProgramBadges({ program, withSource = false, extra }: { program: SelectableSupportProgram; withSource?: boolean; extra?: ReactNode }) {
+export function ProgramBadges({ program, withSource = false, extra }: {
+  program: Pick<SelectableSupportProgram, 'status' | 'applicationEndDate' | 'sourceCode'>
+  withSource?: boolean
+  extra?: ReactNode
+}) {
   return <span className={b.row}>
     <StatusTag status={program.status} daysLeft={daysUntil(program.applicationEndDate)} />
     {withSource && <span className={`${b.badge} ${b.outline}`}>{sourceLabel(program.sourceCode)}</span>}
@@ -39,24 +40,26 @@ export function ProgramBadges({ program, withSource = false, extra }: { program:
   </span>
 }
 
-function CheckIcon() {
-  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5" /></svg>
+/** 누른 버튼 안, 문구 앞에 붙이는 스피너입니다. 버튼 글자색을 따릅니다. */
+function ButtonSpinner() {
+  return <span className={p.buttonSpinner} aria-hidden="true" />
 }
 
-/** 고른 행 아래의 저장된 양식 조회 결과입니다. */
-function PickAvailability({ lookup, onRetry }: { lookup: AvailabilityLookup; onRetry: () => void }) {
-  if (lookup.status === 'loading') return <p className={p.availLoading} role="status">
-    <span className="sr-only">저장된 양식을 확인하고 있어요…</span>
-    <span className={`${k.bar} h-3.5 w-44`} aria-hidden="true" />
-  </p>
-  if (lookup.status === 'failed') return <div className={p.availError} role="alert">
-    <span className="min-w-0 flex-1">저장된 양식을 확인하지 못했어요. {lookup.error.message}</span>
-    <button type="button" className={n.secondarySm} onClick={onRetry}>다시 시도</button>
+/** 공고 행의 자리입니다. 라디오 · 배지 · 공고명 · 기관과 접수 기간. 막대는 장식이라 낭독하지 않습니다. */
+function PickerRowSkeletons() {
+  const line = (box: string, bar: string) => <span className={`flex items-center ${box}`}><span className={`${p.bar} ${bar}`} /></span>
+  return <div className={p.list} aria-hidden="true">
+    {[0, 1, 2, 3].map((index) => <div className={p.row} key={index}>
+      <span className="flex items-start gap-2.5">
+        <span className={`${p.bar} mt-0.5 size-4 shrink-0 rounded-full`} />
+        <span className={p.rowText}>
+          <span className={`${p.bar} h-[22px] w-16`} />
+          {line('h-[1.23rem]', 'h-3.5 w-4/5')}
+          {line('h-[17px]', 'h-3 w-3/5')}
+        </span>
+      </span>
+    </div>)}
   </div>
-  const count = storedForms(lookup.result).length
-  return count > 0
-    ? <p className={p.availOk} role="status"><CheckIcon />양식 {count}개 · 바로 작성할 수 있어요</p>
-    : <p className={p.availNone} role="status">{noFormNotice(lookup.result)?.title ?? '저장된 양식이 없어요'} · 고른 뒤 입력칸별로 분석</p>
 }
 
 /** 목록을 읽는 동안의 표시입니다. 문구는 낭독기용이고, 행 자리는 300ms가 넘어야(`show`) 그립니다. */
@@ -74,19 +77,30 @@ function multiValueText(values: string[]) {
 }
 
 /**
- * 신청 문서를 만들 공고 1개를 고르는 옆 패널(600px 미만은 전체 높이 시트)입니다. 관심 공고함 · 전체 검색 두 목록의 라디오 행에서
- * 고르면 그 공고의 저장된 양식을 바로 조회하고, [이 공고 선택]을 눌러야 뒤 화면에 반영합니다.
- * 뒤 화면은 흐린 배경으로 덮고, 흐린 곳 · Esc · ✕ · [취소]는 고른 것을 버리고 닫습니다.
+ * 공고 1개를 고르는 옆 패널(600px 미만은 전체 높이 시트)입니다. 관심 공고함 · 전체 검색 두 목록의 라디오 행에서 고르고,
+ * 확정 버튼(`confirmLabel`)을 눌러야 뒤 화면에 반영합니다. 뒤 화면은 흐린 배경으로 덮고, 흐린 곳 · Esc · ✕ · [취소]는 고른 것을 버리고 닫습니다.
+ * - `lookup`이 있으면 행을 고를 때마다 그 공고를 조회해 행 아래에 보여 주고(`lookup.render`), 조회를 마쳐야 확정할 수 있습니다.
+ * - `disabledPrograms`(공고 키 → 표시 글자)의 공고는 흐리게 두고 고를 수 없습니다.
+ * - `renderRowExtra`는 행 아래에 붙일 한 줄 안내입니다.
+ * - `urlProgramKey`는 주소로 들어온 공고로, 목록에서 "지금 공고"로 표시합니다.
  */
-export function ProgramPickerPanel({ current, currentAvailability, urlProgramKey, onConfirm, onClose }: {
+export function ProgramPickerPanel<T = never>({
+  title = '공고 고르기', subtitle, confirmLabel, current, initialFilters, urlProgramKey = '', disabledPrograms = {},
+  renderRowExtra, lookup, onConfirm, onClose,
+}: {
+  title?: string
+  subtitle: string
+  confirmLabel: string
   current: SelectableSupportProgram | null
-  currentAvailability: AvailabilityLookup | null
-  /** 주소로 들어온 공고입니다. 목록에서 "지금 공고"로 표시합니다. */
-  urlProgramKey: string
-  onConfirm: (program: SelectableSupportProgram, availability: ApplicationFormAvailability) => void
+  initialFilters?: SupportProgramCatalogFilters
+  urlProgramKey?: string
+  disabledPrograms?: Readonly<Record<string, string>>
+  renderRowExtra?: (program: SelectableSupportProgram) => ReactNode
+  lookup?: ProgramPickLookup<T> & { render: (lookup: PickLookup<T>, retry: () => void) => ReactNode }
+  onConfirm: (program: SelectableSupportProgram, result: T | undefined) => void
   onClose: () => void
 }) {
-  const vm = useProgramPickerViewModel(current, currentAvailability)
+  const vm = useProgramPickerViewModel<T>(current, { initialFilters, lookup })
   const dialogRef = useRef<HTMLDivElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const [filtersOpen, setFiltersOpen] = useState(false)
@@ -94,6 +108,8 @@ export function ProgramPickerPanel({ current, currentAvailability, urlProgramKey
   const radioName = useId()
   const sourceId = useId()
   const statusId = useId()
+  const pickedDisabled = vm.picked !== null && disabledPrograms[programKey(vm.picked)] !== undefined
+  const canConfirm = vm.canConfirm && !pickedDisabled
 
   // 처음 포커스는 [✕]가 아니라 지금 고른 탭에 둡니다. 바로 화살표·Tab으로 목록을 고를 수 있습니다.
   useEffect(() => {
@@ -129,43 +145,49 @@ export function ProgramPickerPanel({ current, currentAvailability, urlProgramKey
   }
 
   function confirm() {
-    if (!vm.picked || vm.pickedAvailability?.status !== 'ready') return
-    onConfirm(vm.picked, vm.pickedAvailability.result)
+    if (!canConfirm || !vm.picked) return
+    onConfirm(vm.picked, vm.pickedLookup?.status === 'ready' ? vm.pickedLookup.result : undefined)
   }
 
   const renderRows = (programs: SelectableSupportProgram[], label: string) => <div className={p.list} role="radiogroup" aria-label={label}>
     {programs.map((program) => {
-      const checked = vm.picked !== null && programKey(vm.picked) === programKey(program)
-      return <div className={p.row} key={programKey(program)}>
+      const key = programKey(program)
+      const checked = vm.picked !== null && programKey(vm.picked) === key
+      const disabledLabel = disabledPrograms[key]
+      const tags = [
+        ...(key === urlProgramKey ? [<span className={`${b.badge} ${b.outline}`} key="url">지금 공고</span>] : []),
+        ...(disabledLabel !== undefined ? [<span className={`${b.badge} ${b.neutral}`} key="disabled">{disabledLabel}</span>] : []),
+      ]
+      return <div className={p.row} key={key}>
         <label className={p.rowLabel}>
-          <input className={p.radio} type="radio" name={radioName} checked={checked} onChange={() => vm.pick(program)} />
+          <input className={p.radio} type="radio" name={radioName} checked={checked} disabled={disabledLabel !== undefined} onChange={() => vm.pick(program)} />
           <span className={p.rowText}>
-            <ProgramBadges program={program} extra={programKey(program) === urlProgramKey
-              ? <span className={`${b.badge} ${b.outline} ml-auto`}>지금 공고</span> : null} />
+            <ProgramBadges program={program} extra={tags.length > 0 ? <span className={p.rowTags}>{tags}</span> : null} />
             <span className={p.rowTitle}>{program.title}</span>
             <span className={p.rowMeta}>{[program.organization, program.applicationPeriod].filter(Boolean).join(' · ')}</span>
           </span>
         </label>
-        {checked && vm.pickedAvailability && <PickAvailability lookup={vm.pickedAvailability} onRetry={vm.retryPick} />}
+        {checked && lookup && vm.pickedLookup && lookup.render(vm.pickedLookup, vm.retryPick)}
+        {renderRowExtra?.(program)}
       </div>
     })}
   </div>
 
-  const { filters, draft, catalog } = vm
+  const { filters, draft, catalog, defaults } = vm
   const appliedRegions = splitFilterValues(filters.region)
   const appliedCategories = splitFilterValues(filters.category)
   // [필터 (n)]과 조건 칩은 마지막으로 검색에 적용한 조건을 보여 줍니다. 필터 칸에서 고르는 중인 값은 [검색]을 눌러야 반영됩니다.
   const filterCount = appliedRegions.length + appliedCategories.length + (filters.sourceCode ? 1 : 0)
-    + (filters.status !== defaultProgramSelectionFilters.status ? 1 : 0)
+    + (filters.status !== defaults.status ? 1 : 0)
   const conditions: { key: ConditionKey; value?: string; label: string }[] = [
     ...(filters.keyword.trim() ? [{ key: 'keyword' as const, label: `검색 · ${filters.keyword.trim()}` }] : []),
     ...appliedRegions.map((value) => ({ key: 'region' as const, value, label: `지역 · ${value}` })),
     ...appliedCategories.map((value) => ({ key: 'category' as const, value, label: `분야 · ${value}` })),
     ...(filters.sourceCode ? [{ key: 'sourceCode' as const, label: `출처 · ${catalogSourceLabels[filters.sourceCode]}` }] : []),
-    ...(filters.status !== defaultProgramSelectionFilters.status ? [{ key: 'status' as const, label: `접수 · ${filterStatusLabels[filters.status]}` }] : []),
+    ...(filters.status !== defaults.status ? [{ key: 'status' as const, label: `접수 · ${filterStatusLabels[filters.status]}` }] : []),
   ]
-  const choices = (defaults: readonly string[], available: string[] = [], selected: string[]) =>
-    toFilterChoiceOptions([...new Set([...defaults, ...available, ...selected].filter(Boolean))])
+  const choices = (defaultValues: readonly string[], available: string[] = [], selected: string[]) =>
+    toFilterChoiceOptions([...new Set([...defaultValues, ...available, ...selected].filter(Boolean))])
   const searching = vm.search.status === 'loading'
   // 300ms 안에 끝나면 행 자리를 그리지 않습니다. 다시 검색할 때는 그동안 기존 결과를 흐리게 두고, 더 걸리면 행 자리로 바꿉니다.
   const showSavedSkeleton = useDelayedFlag(vm.tab === 'saved' && vm.saved.phase !== 'ready' && vm.saved.phase !== 'failed')
@@ -173,11 +195,11 @@ export function ProgramPickerPanel({ current, currentAvailability, urlProgramKey
   const staleResults = searching && vm.results.length > 0 && !showSearchSkeleton
 
   return <div className={p.overlay} onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
-    <div ref={dialogRef} className={p.panel} role="dialog" aria-modal="true" aria-label="공고 고르기" tabIndex={-1} onKeyDown={handleKeyDown}>
+    <div ref={dialogRef} className={p.panel} role="dialog" aria-modal="true" aria-label={title} tabIndex={-1} onKeyDown={handleKeyDown}>
       <div className={p.header}>
         <div className={p.headerText}>
-          <h2 className={p.title}>공고 고르기</h2>
-          <p className={p.sub}>신청 문서를 만들 공고 1개를 골라 주세요</p>
+          <h2 className={p.title}>{title}</h2>
+          <p className={p.sub}>{subtitle}</p>
         </div>
         <button type="button" className={p.close} aria-label="닫기" onClick={onClose}>✕</button>
       </div>
@@ -192,14 +214,14 @@ export function ProgramPickerPanel({ current, currentAvailability, urlProgramKey
           {vm.saved.phase === 'failed'
             ? <div className={p.state} role="alert">
               <p className="m-0">관심 공고를 불러오지 못했어요.</p>
-              <button type="button" className={n.primarySm} onClick={vm.saved.retry}>다시 시도</button>
+              <button type="button" className={p.primarySm} onClick={vm.saved.retry}>다시 시도</button>
             </div>
             : vm.saved.phase !== 'ready'
               ? <RowSkeletons label="관심 공고를 불러오는 중입니다." show={showSavedSkeleton} />
               : vm.saved.programs.length === 0
                 ? <div className={p.state}>
                   <p className="m-0">관심 공고함이 비어 있어요</p>
-                  <button type="button" className={n.secondarySm} onClick={() => vm.setTab('search')}>전체 검색</button>
+                  <button type="button" className={p.secondarySm} onClick={() => vm.setTab('search')}>전체 검색</button>
                 </div>
                 : renderRows(vm.saved.programs, '관심 공고 목록')}
         </div> : <div className={p.tabPanel} role="tabpanel" aria-label="전체 검색">
@@ -209,7 +231,7 @@ export function ProgramPickerPanel({ current, currentAvailability, urlProgramKey
               onKeyDown={(event) => {
                 if (event.key === 'Enter' && !event.nativeEvent.isComposing) { event.preventDefault(); vm.searchKeyword() }
               }} />
-            <button type="button" className={n.secondary} disabled={searching} aria-busy={searching} onClick={vm.searchKeyword}>{searching && <ButtonSpinner />}검색</button>
+            <button type="button" className={p.secondary} disabled={searching} aria-busy={searching} onClick={vm.searchKeyword}>{searching && <ButtonSpinner />}검색</button>
           </div>
           <button type="button" className={p.filterToggle} aria-expanded={filtersOpen} aria-controls={filtersId} onClick={() => setFiltersOpen((open) => !open)}>
             필터 ({filterCount})<span aria-hidden="true">{filtersOpen ? '▴' : '▾'}</span>
@@ -251,29 +273,29 @@ export function ProgramPickerPanel({ current, currentAvailability, urlProgramKey
           {vm.search.status === 'failed' && !vm.search.append
             ? <div className={p.state} role="alert">
               <p className="m-0">{vm.search.error.message}</p>
-              <button type="button" className={n.primarySm} onClick={vm.retrySearch}>다시 시도</button>
+              <button type="button" className={p.primarySm} onClick={vm.retrySearch}>다시 시도</button>
             </div>
             : (searching || vm.search.status === 'idle') && !staleResults
               ? <RowSkeletons label="공고를 검색하고 있습니다." show={showSearchSkeleton} />
               : vm.results.length === 0
                 ? <div className={p.state}><p className="m-0">조건에 맞는 공고가 없어요. 검색어나 필터를 바꿔 보세요.</p></div>
-                : <div className={`flex min-w-0 flex-col gap-3 ${staleResults ? k.stale : ''}`} aria-busy={staleResults}>
+                : <div className={`flex min-w-0 flex-col gap-3 ${staleResults ? p.stale : ''}`} aria-busy={staleResults}>
                   {staleResults && <p className="sr-only" role="status">공고를 검색하고 있습니다.</p>}
                   {catalog && <p className={p.count}>검색 결과 {catalog.total.toLocaleString('ko-KR')}건</p>}
                   {renderRows(vm.results, '공고 검색 결과')}
                   {vm.search.status === 'failed' && <div className={p.state} role="alert">
                     <p className="m-0">{vm.search.error.message}</p>
-                    <button type="button" className={n.primarySm} onClick={vm.retrySearch}>다시 시도</button>
+                    <button type="button" className={p.primarySm} onClick={vm.retrySearch}>다시 시도</button>
                   </div>}
-                  {catalog && catalog.page < catalog.totalPages && vm.search.status !== 'failed' && <button type="button" className={`${n.secondarySm} self-center`}
+                  {catalog && catalog.page < catalog.totalPages && vm.search.status !== 'failed' && <button type="button" className={`${p.secondarySm} self-center`}
                     disabled={vm.search.status === 'more'} aria-busy={vm.search.status === 'more'} onClick={vm.loadMore}>{vm.search.status === 'more' && <ButtonSpinner />}{vm.search.status === 'more' ? '불러오는 중…' : '더 보기'}</button>}
                 </div>}
         </div>}
       </div>
 
       <div className={p.footer}>
-        <button type="button" className={n.ghost} onClick={onClose}>취소</button>
-        <button type="button" className={n.primary} disabled={!vm.canConfirm} onClick={confirm}>이 공고 선택</button>
+        <button type="button" className={p.ghost} onClick={onClose}>취소</button>
+        <button type="button" className={p.primary} disabled={!canConfirm} onClick={confirm}>{confirmLabel}</button>
       </div>
     </div>
   </div>

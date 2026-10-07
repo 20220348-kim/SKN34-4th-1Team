@@ -1,17 +1,18 @@
 import { type ReactNode, useEffect, useId, useRef, useState } from 'react'
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
-import { programStatusLabels } from '@govbiz/shared/domain/labels'
 import { useAppDispatch, useAppSelector } from '../../../../app/hooks'
 import { assistantLift } from '../../../shared/assistant/assistantPlacement'
 import { selectCurrentAccount, signedOut } from '../../../shared/auth/state/authSlice'
 import { appPaths, combinationReviewRunResultPath, supportProgramDetailPath } from '../../../shared/routes/appPaths'
-import { reviewProgramKey, supportsAutomaticReview, type ReviewListItem, type RunSummary } from '../../../../domain/entities/CombinationReview'
+import { reviewProgramKey, supportsAutomaticReview, type ReviewListItem, type ReviewProgram, type RunSummary } from '../../../../domain/entities/CombinationReview'
 import { useReviewListViewModel } from '../viewmodel/useReviewListViewModel'
-import { useReviewEditorViewModel, type InitialReviewProgram } from '../viewmodel/useReviewEditorViewModel'
+import { useReviewEditorViewModel, type InitialReviewProgram, type ReviewProgramInfo } from '../viewmodel/useReviewEditorViewModel'
 import { ReviewParticipation } from './ReviewParticipation'
 import { ReviewRunResult } from './ReviewRunResult'
-import { SavedSupportProgramPickerDialog } from '../../../shared/support-program/SavedSupportProgramPickerDialog'
-import { SupportProgramSearchFilters } from '../../../shared/support-program/SupportProgramSearchFilters'
+import { defaultProgramSelectionFilters } from '../../../shared/support-program/catalogSearchParams'
+import { programPickerStyles } from '../../../shared/support-program/ProgramPicker.styles'
+import { ProgramBadges, ProgramPickerPanel } from '../../../shared/support-program/ProgramPickerPanel'
+import type { SelectableSupportProgram } from '../../../shared/support-program/useProgramPickerViewModel'
 import { elapsedLabel, formatReviewClock, formatReviewDateTime, runLabels } from './reviewLabels'
 import { reviewStyles as s } from './CombinationReview.styles'
 import { workspacePageStyles } from '../../../shared/workspace/WorkspacePage.styles'
@@ -21,11 +22,13 @@ import { WorkspaceModal } from '../../../shared/workspace/WorkspaceModal'
 import { WorkspaceToast, type WorkspaceToastNotice } from '../../../shared/workspace/WorkspaceToast'
 import { useDelayedFlag } from '../../../shared/workspace/useDelayedFlag'
 import { useFloatingPopover } from '../../../shared/workspace/useFloatingPopover'
-import { CatalogRowSkeletons, ReviewEditorSkeleton, ReviewListSkeleton, ReviewRunResultSkeleton } from './ReviewSkeletons'
+import { ReviewEditorSkeleton, ReviewListSkeleton, ReviewRunResultSkeleton } from './ReviewSkeletons'
 
 const listTitle = '중복 지원·수혜 검토'
 const scopeNotice = '두 공고를 함께 신청 · 선정 · 수행할 수 있는지 봐요. 과거 수혜 이력 누적 · 사업비 정산 규정은 이 검토 범위 밖이에요.'
 const unsupportedNotice = '선택한 공고는 현재 자동 분석을 지원하지 않습니다. 기업마당의 숫자형 PBLN_ 공고와 K-Startup·과기정통부·충남 수출지원의 숫자형 공고를 지원하며, 세부사업은 지정하지 않아야 합니다.'
+/** 사업 칸과 공고 고르기 행에 붙이는 한 줄 안내입니다. */
+const unsupportedProgramNote = '현재 자동 분석을 지원하지 않는 공고입니다.'
 const steps = [['selection', '제목 · 공고 선택'], ['participation', '참여 상태'], ['analysis', '공고 분석']] as const
 type Step = typeof steps[number][0]
 
@@ -210,7 +213,7 @@ export function CombinationReviewRunResultPage() {
 }
 
 function RunResultPage({ reviewId, runId, account }: { reviewId: number; runId: number; account: string }) {
-  const vm = useReviewEditorViewModel(reviewId, account, false, runId)
+  const vm = useReviewEditorViewModel(reviewId, account, runId)
   const navigate = useNavigate()
   const contentRef = useRef<HTMLElement>(null)
   const reviewPath = `${appPaths.combinationReviews}/${reviewId}`
@@ -253,18 +256,27 @@ function ReviewEditor({ id, account, initialProgram = null }: { id: number | nul
   const location = useLocation()
   const suppliedFacts = (location.state as { additionalFacts?: unknown } | null)?.additionalFacts
   const initialFacts = typeof suppliedFacts === 'string' ? suppliedFacts : ''
-  const [savedProgramsOpen, setSavedProgramsOpen] = useState(false)
-  const vm = useReviewEditorViewModel(id, account, savedProgramsOpen, null, initialFacts, initialProgram)
+  const vm = useReviewEditorViewModel(id, account, null, initialFacts, initialProgram)
   // 단계는 주소(?step=)가 정합니다. 새로고침 · 뒤로 가기 · 링크로 들어와도 같은 단계를 봅니다. 저장 전인 새 검토는 1단계뿐입니다.
   const [searchParams, setSearchParams] = useSearchParams()
   const requestedStep = searchParams.get('step')
   const step: Step = id && (requestedStep === 'analysis' || requestedStep === 'participation') ? requestedStep : 'selection'
   const reasonId = useId()
+  const slotsHeadingId = useId()
   const contentRef = useRef<HTMLElement>(null)
-  const savedProgramsButtonRef = useRef<HTMLButtonElement>(null)
-  const closeSavedPrograms = () => { setSavedProgramsOpen(false); savedProgramsButtonRef.current?.focus() }
+  /** 공고 고르기 패널을 연 사업 칸입니다. 닫혀 있으면 null입니다. */
+  const [pickerSlot, setPickerSlot] = useState<number | null>(null)
+  // 칸마다 [공고 고르기] 또는 [바꾸기] 버튼입니다. 패널을 닫거나 칸을 비운 뒤 포커스를 그 칸의 버튼으로 돌려줍니다.
+  const slotButtons = useRef<(HTMLButtonElement | null)[]>([])
+  const focusSlot = useRef<number | null>(null)
   useEffect(() => {
-    setSavedProgramsOpen(false)
+    if (focusSlot.current === null) return
+    slotButtons.current[focusSlot.current]?.focus()
+    focusSlot.current = null
+  })
+  const closePicker = () => { focusSlot.current = pickerSlot; setPickerSlot(null) }
+  useEffect(() => {
+    setPickerSlot(null)
     const scrollArea = contentRef.current?.parentElement
     if (scrollArea && typeof scrollArea.scrollTo === 'function') scrollArea.scrollTo({ top: 0, left: 0, behavior: 'auto' })
   }, [step])
@@ -272,12 +284,10 @@ function ReviewEditor({ id, account, initialProgram = null }: { id: number | nul
   const inputBusy = saving || vm.busy.includes('load')
   const analysisBusy = vm.busy.includes('analysis')
   const historyBusy = vm.busy.includes('history')
-  // 저장한 검토를 처음 읽는 동안은 지금 단계의 카드 자리를, 공고 검색은 첫 결과 전에만 행 자리를 그리고 이후에는 이전 결과를 흐리게 둡니다.
+  // 저장한 검토를 처음 읽는 동안은 지금 단계의 카드 자리를 그립니다.
   // 첫 렌더는 읽기를 시작하기 전이라 busy가 비어 있습니다. 실패하기 전까지는 읽는 중으로 보고 [다시 시도] 카드가 잠깐 비치지 않게 합니다.
   const loadingReview = Boolean(id) && !vm.review && (vm.busy.includes('load') || vm.error === null)
   const showReviewSkeleton = useDelayedFlag(loadingReview)
-  const catalogLoading = vm.busy.includes('catalog')
-  const showCatalogSkeleton = useDelayedFlag(catalogLoading && !vm.catalog)
   const invalidProgramCount = vm.draft.programs.length !== 2
   const unsupported = vm.draft.programs.some((p) => !supportsAutomaticReview(p))
   const activeRun = vm.runs?.items.find((run) => run.status === 'QUEUED' || run.status === 'RUNNING')
@@ -326,35 +336,16 @@ function ReviewEditor({ id, account, initialProgram = null }: { id: number | nul
       {step === 'selection' && <>
         <fieldset disabled={inputBusy} className="space-y-4">
           <div className={s.card}><label className="font-semibold">검토 제목<input className={s.input} value={vm.draft.title} onChange={(e) => vm.setDraft({ ...vm.draft, title: e.target.value })} required placeholder="예: 창업 지원사업 참여 검토" /></label><p className={s.muted}>제목은 200자 이내입니다. 참여 상태는 다음 단계에서 입력합니다.</p></div>
-          <section className={s.card} aria-label="공고 선택">
-            <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="font-bold">비교할 공고 선택</h2><strong className="rounded-full bg-brand-soft px-3 py-1 text-sm text-brand-primary">{vm.draft.programs.length}/2 선택</strong></div>
-            <p className={s.muted}>관심 공고함이나 전체 공고 검색에서 서로 비교할 공고를 정확히 2개 선택하세요. 접수 마감 공고도 참여 이력 검토에 사용할 수 있습니다.</p>
-            <div className="mt-3 flex min-h-12 flex-col items-stretch gap-2 rounded-xl bg-slate-50 px-3 py-2" aria-label="현재 선택한 공고">
-              {vm.draft.programs.length === 0 && <span className="text-sm text-slate-500">선택한 공고가 없습니다.</span>}
-              {vm.draft.programs.map((program, index) => {
-                const name = vm.names[reviewProgramKey(program)] ?? '공고 정보 확인 중'
-                return <span className="inline-flex w-full min-w-0 items-center gap-2 rounded-xl border border-brand-primary/30 bg-brand-soft py-1 pr-1 pl-3 text-sm font-semibold text-brand-primary" key={reviewProgramKey(program)}><span className="min-w-0 flex-1 break-words">사업 {index + 1} · {name}</span><button type="button" className="grid size-7 shrink-0 place-items-center rounded-full hover:bg-brand-soft focus-visible:outline-2 focus-visible:outline-brand-primary" aria-label={`${name} 선택 해제`} onClick={() => vm.setDraft({ ...vm.draft, programs: vm.draft.programs.filter((_, selectedIndex) => selectedIndex !== index) })}>×</button></span>
-              })}
+          <section className={s.card} aria-labelledby={slotsHeadingId}>
+            <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="font-bold" id={slotsHeadingId}>비교할 공고</h2><strong className="rounded-full bg-brand-soft px-3 py-1 text-sm text-brand-primary tabular-nums">{vm.draft.programs.length}/2</strong></div>
+            <p className={s.muted}>공고 두 개를 골라 주세요. 접수가 끝난 공고도 참여 이력 검토에 쓸 수 있어요.</p>
+            <div className={s.slots}>
+              {vm.slots.map((program, index) => <ProgramSlot key={index} index={index} program={program}
+                info={program ? vm.programInfo[reviewProgramKey(program)] : undefined} name={program ? vm.names[reviewProgramKey(program)] : undefined}
+                buttonRef={(element) => { slotButtons.current[index] = element }}
+                onPick={() => setPickerSlot(index)}
+                onClear={() => { focusSlot.current = index; vm.clearSlot(index) }} />)}
             </div>
-            <button ref={savedProgramsButtonRef} type="button" className="mt-4 flex w-full cursor-pointer items-center justify-between rounded-xl border border-slate-300 bg-white px-4 py-3 text-left text-sm font-semibold hover:border-brand-primary hover:bg-brand-soft focus-visible:outline-2 focus-visible:outline-brand-primary" aria-label="관심 공고함에서 선택" aria-haspopup="dialog" aria-expanded={savedProgramsOpen} onClick={() => setSavedProgramsOpen(true)}><span>관심 공고함에서 선택</span><span className="text-brand-primary">열기 ›</span></button>
-            <SavedSupportProgramPickerDialog open={savedProgramsOpen} phase={vm.savedProgramChoices.phase} programs={vm.savedProgramChoices.programs} selectedProgramKeys={vm.draft.programs.map((program) => `${program.sourceCode}:${program.sourceProgramId}`)} selectionLimit={2} description="비교할 공고를 최대 2개까지 선택할 수 있습니다." listLabel="중복 지원 검토 관심 공고 목록" onToggle={vm.toggle} onRetry={vm.savedProgramChoices.retry} onClose={closeSavedPrograms} />
-            <h3 className="mt-5 font-semibold">전체 공고 검색</h3>
-            <div className="mt-3"><SupportProgramSearchFilters filters={vm.catalogFilters} appliedFilters={vm.appliedCatalogFilters} catalog={vm.catalog}
-              disabled={inputBusy} loading={catalogLoading} onChange={vm.setCatalogFilters}
-              onSearch={(filters) => { void vm.search(1, filters) }} /></div>
-            {catalogLoading && <p className="sr-only" role="status">공고를 불러오는 중입니다.</p>}
-            {showCatalogSkeleton && <CatalogRowSkeletons />}
-            {/* 다시 검색하는 동안은 0건을 먼저 보여 주지 않고 이전 결과를 흐리게 둡니다. */}
-            {!catalogLoading && vm.catalog?.programs.length === 0 && <p className="mt-3">검색 결과가 없습니다. 검색어나 필터를 바꿔 다시 검색해 주세요.</p>}
-            <ul className={`mt-4 divide-y divide-slate-200 ${catalogLoading && vm.catalog ? s.stale : ''}`} aria-busy={catalogLoading}>{vm.catalog?.programs.map((program) => {
-              const identity = { sourceCode: program.sourceCode, sourceProgramId: program.id, subProgramId: null }
-              const selected = vm.draft.programs.some((p) => reviewProgramKey(p) === reviewProgramKey(identity))
-              return <li className={`my-2 rounded-xl border px-3 py-3 transition-colors ${selected ? 'border-brand-primary bg-brand-soft ring-1 ring-brand-primary/20' : 'border-transparent'}`} key={reviewProgramKey(identity)}><div className="flex flex-wrap items-center justify-between gap-2"><div className="min-w-0 flex-1"><strong>{program.title}</strong><p className={s.muted}>{program.organization} · {programStatusLabels[program.status]}</p><p className={s.muted}>{program.applicationPeriod}</p></div><button type="button" className={selected ? s.primary : s.button} aria-pressed={selected} disabled={!selected && vm.draft.programs.length >= 2} onClick={() => vm.toggle(program)}>{selected ? '선택 해제' : '선택'}</button></div>
-                {!supportsAutomaticReview(identity) && <p className="text-sm text-amber-800">현재 자동 분석을 지원하지 않는 공고입니다.</p>}
-                <Link className="text-sm text-brand-primary underline" to={supportProgramDetailPath({ sourceCode: identity.sourceCode, sourceProgramId: identity.sourceProgramId }, true)} target="_blank">공고 상세 확인</Link>
-              </li>
-            })}</ul>
-            {vm.catalog && <div className="mt-3 flex items-center gap-3"><button type="button" className={s.button} disabled={vm.catalog.page <= 1 || vm.busy.includes('catalog')} onClick={() => void vm.search(vm.catalog!.page - 1, vm.appliedCatalogFilters)}>이전 공고</button><span className="text-sm">{vm.catalog.page} / {Math.max(1, vm.catalog.totalPages)}</span><button type="button" className={s.button} disabled={vm.catalog.page >= vm.catalog.totalPages || vm.busy.includes('catalog')} onClick={() => void vm.search(vm.catalog!.page + 1, vm.appliedCatalogFilters)}>다음 공고</button></div>}
           </section>
           {unsupported && <p className={s.warning}>{unsupportedNotice}</p>}
         </fieldset>
@@ -408,7 +399,88 @@ function ReviewEditor({ id, account, initialProgram = null }: { id: number | nul
           </>} />
       </>}
     </>}
-  </main></>
+  </main>
+  {step === 'selection' && pickerSlot !== null && <SlotPickerPanel slot={pickerSlot} slots={vm.slots} programInfo={vm.programInfo}
+    onConfirm={(program) => { vm.chooseSlot(pickerSlot, program); closePicker() }} onClose={closePicker} />}
+  </>
+}
+
+/** 행 아래에 붙이는 자동 분석 미지원 안내입니다. 지원 여부는 사업 칸과 같은 규칙(`supportsAutomaticReview`)으로 정합니다. */
+function unsupportedRowNote(program: SelectableSupportProgram) {
+  return supportsAutomaticReview({ sourceCode: program.sourceCode, sourceProgramId: program.id, subProgramId: null })
+    ? null : <p className={programPickerStyles.rowNote}>{unsupportedProgramNote}</p>
+}
+
+/** "사업 1로" · "사업 3으로"처럼 사업 칸 이름에 조사 "(으)로"를 붙입니다. 예전에 3개를 저장한 검토는 사업 3 칸이 있습니다. */
+function slotWithRo(index: number) {
+  const number = index + 1
+  return `사업 ${number}${[0, 3, 6].includes(number % 10) ? '으로' : '로'}`
+}
+
+/**
+ * 사업 칸 하나에 둘 공고를 고르는 패널입니다(신청 문서 새 문서와 같은 공용 패널). 접수가 끝난 공고도 고를 수 있게 접수 상태 "전체"로
+ * 검색하고, 다른 칸에서 이미 고른 공고는 "사업 n로 고름"으로 흐리게 두어 고를 수 없게 합니다. 고르면 바로 확정할 수 있습니다.
+ */
+function SlotPickerPanel({ slot, slots, programInfo, onConfirm, onClose }: {
+  slot: number
+  slots: (ReviewProgram | null)[]
+  programInfo: Record<string, ReviewProgramInfo>
+  onConfirm: (program: SelectableSupportProgram) => void
+  onClose: () => void
+}) {
+  const currentProgram = slots[slot]
+  const currentInfo = currentProgram ? programInfo[reviewProgramKey(currentProgram)] : undefined
+  const chosenElsewhere = Object.fromEntries(slots.flatMap((program, index) =>
+    program && index !== slot ? [[reviewProgramKey(program), `${slotWithRo(index)} 고름`]] : []))
+  return <ProgramPickerPanel
+    subtitle={`${slotWithRo(slot)} 비교할 공고 1개를 골라 주세요`}
+    confirmLabel={`${slotWithRo(slot)} 선택`}
+    current={currentInfo?.status === 'ready' ? currentInfo.program : null}
+    initialFilters={defaultProgramSelectionFilters}
+    disabledPrograms={chosenElsewhere}
+    renderRowExtra={unsupportedRowNote}
+    onConfirm={onConfirm}
+    onClose={onClose}
+  />
+}
+
+/**
+ * 1단계의 사업 칸입니다. 비었으면 [공고 고르기]만 두고, 고른 뒤에는 신청 문서의 고른 공고 카드처럼 접수 상태 · D-day · 출처 배지와
+ * 공고명 · 기관 · 접수 기간, [공고 상세 ↗] · [바꾸기] · [빼기]를 둡니다. 상세를 읽는 동안이나 못 읽으면 이름 자리만 보입니다.
+ */
+function ProgramSlot({ index, program, info, name, buttonRef, onPick, onClear }: {
+  index: number
+  program: ReviewProgram | null
+  info: ReviewProgramInfo | undefined
+  name: string | undefined
+  buttonRef: (element: HTMLButtonElement | null) => void
+  onPick: () => void
+  onClear: () => void
+}) {
+  const label = `사업 ${index + 1}`
+  if (!program) return <div className={s.slotEmpty} role="group" aria-label={label}>
+    <span className={s.slotLabelMuted}>{label}</span>
+    <p className={s.slotHint}>비교할 공고를 아직 고르지 않았어요</p>
+    <button ref={buttonRef} type="button" className={s.primaryPill} aria-label={`${label} 공고 고르기`} aria-haspopup="dialog" onClick={onPick}>공고 고르기</button>
+  </div>
+  const detail = info?.status === 'ready' ? info.program : null
+  const title = detail?.title ?? name ?? '공고 정보 확인 중'
+  return <div className={s.slot} role="group" aria-label={label}>
+    <span className={s.slotLabel}>{label}</span>
+    {detail && <ProgramBadges program={detail} withSource />}
+    <strong className={s.slotTitle}>{title}</strong>
+    {detail && <span className={s.slotMeta}>{[detail.organization, detail.applicationPeriod && `접수 ${detail.applicationPeriod}`].filter(Boolean).join(' · ')}</span>}
+    {!supportsAutomaticReview(program) && <p className={s.slotWarning}>{unsupportedProgramNote}</p>}
+    <div className={s.slotFoot}>
+      <Link className={s.textLink} to={supportProgramDetailPath({ sourceCode: program.sourceCode, sourceProgramId: program.sourceProgramId }, true)} target="_blank">
+        공고 상세 ↗<span className="sr-only">: {title} (새 창)</span>
+      </Link>
+      <div className="flex items-center gap-1.5">
+        <button ref={buttonRef} type="button" className={s.secondarySm} aria-label={`${label} 공고 바꾸기`} aria-haspopup="dialog" onClick={onPick}>바꾸기</button>
+        <button type="button" className={s.secondarySm} aria-label={`${label} 공고 빼기`} onClick={onClear}>빼기</button>
+      </div>
+    </div>
+  </div>
 }
 
 /**
