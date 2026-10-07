@@ -24,6 +24,21 @@ describe('Vercel 운영 API 라우팅', () => {
     expect(response.headers.get('x-vercel-enable-rewrite-caching')).toBe('0')
   })
 
+  it('모바일 파일 링크 발급의 Bearer와 브라우저 다운로드의 ticket을 각각 중계한다', () => {
+    const path = '/api/v1/application-preparations/9/documents/11'
+    const issuing = new Request(`https://govbiz-test.vercel.app${path}/download-link`, {
+      method: 'POST', headers: { authorization: 'Bearer app-session', 'x-vercel-forwarded-for': '203.0.113.12' },
+    })
+    const issued = middleware(issuing)
+    expect(issued.headers.get('x-middleware-request-authorization')).toBe('Bearer app-session')
+    expect(issued.headers.get('x-middleware-rewrite')).toBe(`https://test-distribution.cloudfront.net${path}/download-link`)
+    const ticket = 'a'.repeat(43)
+    const downloading = middleware(request('203.0.113.12', `https://govbiz-test.vercel.app${path}/download?ticket=${ticket}`))
+    expect(downloading.headers.get('x-middleware-rewrite')).toBe(`https://test-distribution.cloudfront.net${path}/download?ticket=${ticket}`)
+    expect(downloading.headers.get('x-middleware-request-authorization')).toBeNull()
+    expect(downloading.headers.get('cache-control')).toContain('no-store')
+  })
+
   it('쿠키·Origin을 전달하되 위조 전달 헤더와 비밀키는 덮어쓴다', () => {
     const incoming = new Request('https://govbiz-test.vercel.app/api/v1/auth/login', {
       method: 'POST', body: '{"email":"test@example.com"}', headers: {

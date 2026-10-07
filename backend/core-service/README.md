@@ -213,7 +213,13 @@ HWPX discovery 요청에는 원본 `sourceBase64`·`sourceSha256`을 내부 AI �
 | `POST /api/v1/application-preparations/{id}/documents/jobs/seen` | 그 준비 건의 끝난 생성 결과를 확인한 것으로 표시(V47 `seen_at`, 204). 화면이 초안 화면을 열 때 호출 |
 | `POST /api/v1/application-preparations/forms/discovery-jobs/seen` | `sourceCode`·`sourceProgramId`의 끝난 분석 결과를 확인한 것으로 표시(204). 화면이 그 공고의 새 문서 화면을 열 때 호출 |
 | `GET /api/v1/application-preparations/{id}/documents/{fileId}/download` | 소유자 확인 후 binary attachment·no-store 반환 |
+| `POST /api/v1/application-preparations/{id}/documents/{fileId}/download-link` | 쿠키/Bearer 세션·파일 소유권 확인 후 `{preparationId, fileId, downloadPath, expiresAt}` 반환. `downloadPath`는 같은 API의 상대 경로이며 선택한 파일만 허용하는 2분 ticket 포함. 응답 no-store |
+| `GET /api/v1/application-preparations/{id}/documents/{fileId}/download?ticket=...` | 모바일 시스템 브라우저용 attachment. 로그인 헤더 없이 파일 전용 ticket·만료·현재 계정 상태·소유권을 확인. 원래 MIME·UTF-8 파일명·binary 반환, no-store·no-referrer. 유효하지 않거나 만료·계정 정지/삭제·문서 삭제된 링크는 410 `APPLICATION_DOCUMENT_DOWNLOAD_LINK_INVALID` |
 | `GET /api/v1/application-preparations/{id}/documents/archive?revision=N` | 그 답변 버전의 저장 파일을 한 번에 반환. 파일이 하나면 그 파일 그대로, 여럿이면 UTF-8 이름의 zip(`application/zip`, `X-Archive-File-Count`). 새 파일을 저장하지 않으며 없는 버전·타인 건은 404 |
+
+웹·앱 결과 화면은 파일 카드마다 `초안 다운로드` 하나만 제공하며 archive API는 호출하지 않습니다. 웹은 기존 인증 binary 다운로드를 사용합니다. 모바일은 링크 발급 POST 후 응답 경로·문서 ID를 검증해 시스템 브라우저에 전달합니다. `ApplicationDocumentController → ApplicationDocumentDownloadLinkService → 기존 파일/계정 Repository`로 소유권을 확인하며, 링크는 기존 Redis에 ticket의 SHA-256 키와 소유자·파일 식별자·만료만 2분 보관합니다. JWT·답변·파일 본문은 링크 또는 Redis grant에 넣지 않습니다. Redis 장애·잘못된 저장 내용은 만료 성공 응답으로 숨기지 않습니다.
+
+ticket은 브라우저 HEAD·다운로드 재시도를 위해 만료 전 재사용할 수 있는 파일 전용 권한입니다. 발급 뒤 로그아웃해도 이미 전달한 링크는 2분 동안 유효할 수 있으며 계정 정지/삭제·문서 삭제는 다운로드마다 다시 확인합니다. 공개 HTTPS API origin, 해당 Core 코드와 Redis, 쿼리를 전달하고 캐시하지 않는 배포 프록시가 필요합니다. 앱이 브라우저를 열었다는 것은 다운로드 완료 확인을 뜻하지 않으며 OS/브라우저별 실제 저장 흐름은 기기에서 검증해야 합니다.
 
 V45 `application_document_generation_job`은 생성 작업을 보관하며 `ApplicationDocumentGenerationJobWorker`가 같은 프로세스에서 2초마다 QUEUED 행을 claim해 실행합니다(`app.application-document.jobs.enabled`·`concurrency`·`poll-ms`). QUEUED 1시간은 만료, RUNNING 30분은 유료 AI 호출 전이면 실패(`RUN_INTERRUPTED`)·호출 뒤면 결과 불명, 결과 불명은 `unknown-outcome-lock-ttl` 뒤 실패로 내려 준비 건의 활성 슬롯을 비웁니다. V32은 원본 SHA-256·기입 위치 JSON·결과 binary를 준비 건/revision별로 보관합니다. 입력 변경 중 생성된 파일은 409로 저장을 거절하며 준비 건 삭제 시 cascade 삭제됩니다. HWP는 hwplib 1.1.11, HWPX는 ZIP/XML, PDF는 PDFBox의 편집 가능한 AcroForm과 OFL NanumGothic을 사용합니다. 원본 첨부는 기존 공식 제공처 Client로 재수집하고 해시를 대조합니다. 임의 URL을 받지 않습니다.
 

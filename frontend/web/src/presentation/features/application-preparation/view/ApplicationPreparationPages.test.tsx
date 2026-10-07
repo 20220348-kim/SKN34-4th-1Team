@@ -135,9 +135,9 @@ function header() {
   return within(screen.getByRole('banner'))
 }
 
-/** 파일 카드의 [받기] 버튼입니다. 파일 이름이 접근 이름에 붙습니다. */
+/** 파일 카드의 [초안 다운로드] 버튼입니다. 파일 이름이 접근 이름에 붙습니다. */
 function receiveButton(fileName = documentFile.fileName) {
-  return screen.getByRole('button', { name: `받기: ${fileName}` }) as HTMLButtonElement
+  return screen.getByRole('button', { name: `초안 다운로드: ${fileName}` }) as HTMLButtonElement
 }
 
 /** 답변 입력·초안 본문 첫 줄 "공고명 · 양식명 · 신청 분야"입니다. 전체 문구가 title에 있습니다. */
@@ -222,7 +222,8 @@ it('keeps the previous documents downloadable while a new draft is being made', 
   expect(screen.queryByText('답변이 바뀜')).toBeNull()
   await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
   expect(header().queryByText('초안 만드는 중')).toBeNull()
-  expect(header().getByRole('button', { name: '내려받기' })).toBeTruthy()
+  expect(header().queryByRole('button', { name: /다운로드|내려받기/ })).toBeNull()
+  expect(receiveButton()).toBeTruthy()
   expect(screen.getByRole('heading', { level: 2, name: /^답변 버전 3 문서/ })).toBeTruthy()
   expect(screen.getByText('이전 버전 문서 1개')).toBeTruthy()
   expect(screen.getByText('초안을 만들었어요')).toBeTruthy()
@@ -368,7 +369,7 @@ it('shows each file with its format, size, fill meter and folded auto-fill misse
   const misses = within(card).getByText('자동 기입 못한 답변 보기 (1)').closest('details') as HTMLDetailsElement
   expect(misses.open).toBe(false)
   expect(within(card).getByLabelText('자동 기입하지 못한 답변').textContent).toContain('기업 개요 / 개인정보 동의: 동의함 — 입력 위치 확인 불가')
-  expect(within(card).getByRole('button', { name: `받기: ${documentFile.fileName}` })).toBeTruthy()
+  expect(within(card).getByRole('button', { name: `초안 다운로드: ${documentFile.fileName}` })).toBeTruthy()
 })
 
 it('tells the user how many cells still hold a writing example to delete before submitting', async () => {
@@ -395,17 +396,19 @@ it('explains answers left out because the cell, blank or printed choice could no
   expect(misses).toContain('기업 개요 / 사업장: 전세 — 인쇄된 선택지·날짜와 달라 원본에서 직접 작성')
 })
 
-it('offers a whole-revision archive only for several current files and folds older versions away', async () => {
+it('offers one original-file draft download per card and folds older versions away without a ZIP action', async () => {
   repository.get.mockResolvedValue(readyPreparation())
   repository.documents.mockResolvedValue([
     { ...documentFile, id: 83, inputRevision: 3, fileName: '신청서_초안_v3.hwpx' },
     { ...documentFile, id: 82, inputRevision: 3, fileName: '사업계획서_초안_v3.docx', mediaType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' },
     { ...documentFile, id: 70, inputRevision: 2, fileName: '신청서_초안_v2.hwpx' },
   ])
-  repository.downloadDocumentArchive.mockResolvedValue(new Blob(['zip'], { type: 'application/zip' }))
+  const docxType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  const blob = new Blob(['docx'], { type: docxType })
+  repository.downloadDocument.mockResolvedValue(blob)
   vi.stubGlobal('URL', Object.assign(URL, { createObjectURL: vi.fn(() => 'blob:test'), revokeObjectURL: vi.fn() }))
   const clicked = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
-    expect(this.download).toBe('신청 문서_초안_v3.zip')
+    expect(this.download).toBe('사업계획서_초안_v3.docx')
   })
   mount('/app/application-preparations/12/documents')
   await waitFor(() => expect(receiveButton('신청서_초안_v3.hwpx')).toBeTruthy())
@@ -416,17 +419,21 @@ it('offers a whole-revision archive only for several current files and folds old
   expect(within(older).getByText('신청서_초안_v2.hwpx')).toBeTruthy()
   expect((header().getByRole('button', { name: '다시 만들기' }) as HTMLButtonElement).disabled).toBe(true)
   expect(screen.queryByText('답변이 바뀜')).toBeNull()
-  expect(header().queryByRole('button', { name: '내려받기' })).toBeNull()
-  fireEvent.click(header().getByRole('button', { name: '전체 내려받기' }))
+  expect(header().queryByRole('button', { name: /다운로드|내려받기/ })).toBeNull()
+  expect(screen.queryByRole('button', { name: '전체 내려받기' })).toBeNull()
+  const card = screen.getByRole('article', { name: '사업계획서_초안_v3.docx' })
+  expect(within(card).getAllByRole('button', { name: /^초안 다운로드:/ })).toHaveLength(1)
+  fireEvent.click(receiveButton('사업계획서_초안_v3.docx'))
   await waitFor(() => expect(clicked).toHaveBeenCalledTimes(1))
-  expect(repository.downloadDocumentArchive).toHaveBeenCalledWith(12, 3, expect.any(AbortSignal))
-  expect(repository.downloadDocument).not.toHaveBeenCalled()
+  expect(repository.downloadDocument).toHaveBeenCalledWith(12, 82, expect.any(AbortSignal))
+  expect(URL.createObjectURL).toHaveBeenCalledWith(blob)
+  expect(repository.downloadDocumentArchive).not.toHaveBeenCalled()
   expect(repository.submitDocumentJob).not.toHaveBeenCalled()
   clicked.mockRestore()
   vi.unstubAllGlobals()
 })
 
-it('downloads a single current file directly from the header instead of an archive', async () => {
+it('downloads a single current draft from its only download button with the original filename', async () => {
   repository.get.mockResolvedValue(readyPreparation())
   repository.documents.mockResolvedValue([documentFile])
   repository.downloadDocument.mockResolvedValue(new Blob(['hwpx'], { type: documentFile.mediaType }))
@@ -436,8 +443,9 @@ it('downloads a single current file directly from the header instead of an archi
   })
   mount('/app/application-preparations/12/documents')
   await waitFor(() => expect(receiveButton()).toBeTruthy())
-  expect(header().queryByRole('button', { name: '전체 내려받기' })).toBeNull()
-  fireEvent.click(header().getByRole('button', { name: '내려받기' }))
+  expect(header().queryByRole('button', { name: /다운로드|내려받기/ })).toBeNull()
+  expect(screen.getAllByRole('button', { name: /^초안 다운로드:/ })).toHaveLength(1)
+  fireEvent.click(receiveButton())
   await waitFor(() => expect(clicked).toHaveBeenCalledTimes(1))
   expect(repository.downloadDocument).toHaveBeenCalledWith(12, 81, expect.any(AbortSignal))
   expect(repository.downloadDocumentArchive).not.toHaveBeenCalled()
@@ -492,7 +500,7 @@ it('retries a temporary failure once with the current answers and keeps the serv
   expect(alert.textContent).toContain('잠시 후 다시 시도해 주세요. 답변은 그대로 저장되어 있어요.')
   expect(within(alert).getByText('문서를 생성하지 못했습니다. 잠시 후 다시 시도해 주세요.').tagName).toBe('P')
   expect(alert.className).toContain('bg-danger-soft')
-  expect(screen.queryByRole('button', { name: /받기/ })).toBeNull()
+  expect(screen.queryByRole('button', { name: /초안 다운로드/ })).toBeNull()
   expect(screen.queryByText('아직 만든 초안이 없어요')).toBeNull()
   fireEvent.click(within(alert).getByRole('button', { name: '다시 시도' }))
   await waitFor(() => expect(receiveButton()).toBeTruthy())

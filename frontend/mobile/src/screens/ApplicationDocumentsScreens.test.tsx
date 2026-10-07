@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native'
-import { Alert, AppState, type AppStateStatus } from 'react-native'
+import { Alert, AppState, Linking, type AppStateStatus } from 'react-native'
 import { useAuth } from '../auth/session'
-import { applicationPreparationUseCase, discardDeletedPendingPreparation } from '../api/applicationPreparation'
+import { applicationPreparationUseCase, discardDeletedPendingPreparation, prepareApplicationDocumentDownload } from '../api/applicationPreparation'
 import { ApplicationPreparationError } from '@govbiz/shared/domain/errors/ApplicationPreparationError'
 import { programClient } from '../api/client'
 import { listReviewSavedPrograms } from '../api/combinationReviews'
@@ -18,7 +18,7 @@ jest.mock('expo-router', () => ({ useFocusEffect: (callback: () => () => void) =
   const React = jest.requireActual<typeof import('react')>('react'); React.useEffect(callback, [callback])
 } }))
 jest.mock('../auth/session', () => ({ useAuth: jest.fn() }))
-jest.mock('../api/applicationPreparation', () => ({ applicationPreparationUseCase: jest.fn(), discardDeletedPendingPreparation: jest.fn() }))
+jest.mock('../api/applicationPreparation', () => ({ applicationPreparationUseCase: jest.fn(), discardDeletedPendingPreparation: jest.fn(), prepareApplicationDocumentDownload: jest.fn() }))
 jest.mock('../api/client', () => ({ ...jest.requireActual('../api/client'), programClient: jest.fn() }))
 jest.mock('../api/combinationReviews', () => ({ listReviewSavedPrograms: jest.fn() }))
 jest.mock('../api/applicationDocumentFiles', () => ({ shareApplicationFile: jest.fn() }))
@@ -32,6 +32,8 @@ const auth = { status: 'signedIn', session: { accessToken: 'owned-token', accoun
 const listProps = { onLogin: jest.fn(), onNew: jest.fn(), onOpen: jest.fn() }
 const newProps = { onLogin: jest.fn(), onOpenProgram: jest.fn(), onCreated: jest.fn(), onList: jest.fn(), onPendingDocument: jest.fn() }
 const docProps = { id: 9, onLogin: jest.fn(), onEditor: jest.fn(), onReanalyze: jest.fn(), onOnline: jest.fn(), onList: jest.fn(), onOpenPending: jest.fn() }
+const browserUrl = (fileId = 11) => `https://api.example.test/api/v1/application-preparations/9/documents/${fileId}/download?ticket=${'a'.repeat(43)}`
+const downloadNotice = (fileName: string) => `${fileName} 다운로드를 브라우저에서 열었어요. 브라우저의 다운로드 목록에서 확인해 주세요.`
 function captureTimeouts() {
   const original = globalThis.setTimeout
   const calls: Parameters<typeof setTimeout>[] = [], results: ReturnType<typeof setTimeout>[] = []
@@ -42,6 +44,7 @@ function captureTimeouts() {
 }
 beforeEach(() => {
   process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.example.test'
+  auth.invalidateSession.mockReset().mockResolvedValue(undefined)
   jest.mocked(useAuth).mockReturnValue(auth as unknown as ReturnType<typeof useAuth>)
   Object.values(api).forEach(fn => fn.mockReset())
   Object.values(listProps).forEach(fn => fn.mockClear()); Object.values(newProps).forEach(fn => fn.mockClear())
@@ -51,72 +54,196 @@ beforeEach(() => {
   api.list.mockResolvedValue({ items: [documentSummary], nextBeforeId: null }); api.recentDocumentJobs.mockResolvedValue([]); api.discoveryJobs.mockResolvedValue([]); api.delete.mockResolvedValue(undefined)
   api.availability.mockResolvedValue({ state: { status: 'AVAILABLE' }, forms: { items: [documentForm] } }); api.markDiscoveryJobsSeen.mockResolvedValue(undefined); api.create.mockResolvedValue(documentPreparation)
   api.get.mockResolvedValue(documentPreparation); api.documents.mockResolvedValue([documentFile]); api.documentJobs.mockResolvedValue([documentJob]); api.documentJob.mockResolvedValue(documentJob); api.markDocumentJobsSeen.mockResolvedValue(undefined)
-  api.downloadDocument.mockResolvedValue(new Blob(['data'], { type: 'application/hwp+zip' })); jest.mocked(shareApplicationFile).mockReset().mockResolvedValue({ status: 'shareClosed' })
+  jest.mocked(shareApplicationFile).mockReset()
+  jest.mocked(prepareApplicationDocumentDownload).mockReset().mockImplementation(async (_token, _id, fileId) => browserUrl(fileId))
+  jest.spyOn(Linking, 'openURL').mockResolvedValue(undefined)
   jest.mocked(listReviewSavedPrograms).mockResolvedValue([documentProgram])
   jest.mocked(programClient).mockReturnValue({ browseCatalog: jest.fn().mockResolvedValue({ programs: [documentProgram], total: 1, page: 1, pageSize: 12, totalPages: 1,
     regions: ['서울'], categories: ['기술'], startupStages: [], applicantTypes: [], founderAges: [] }) } as unknown as ReturnType<typeof programClient>)
 })
 afterEach(() => { delete process.env.EXPO_PUBLIC_API_BASE_URL; jest.restoreAllMocks() })
 
-test('saving reports the final numbered filename after copying finishes', async () => {
-  jest.mocked(shareApplicationFile).mockResolvedValueOnce({ status: 'saved', fileName: '사업계획서 (2).hwpx', renamed: true })
+test('download opens the authenticated file link in the browser without a folder picker or saved claim', async () => {
   render(<ApplicationDocumentScreen {...docProps} />)
   // 이 파일의 첫 테스트라 첫 렌더가 모듈을 처음 읽는 시간까지 떠안습니다. 느린 CI에서 기본 1초를 넘겨 실패하지 않게 첫 화면만 넉넉히 기다립니다.
   await screen.findByText('초안 완료', {}, { timeout: 5000 })
-  fireEvent.press(screen.getByLabelText('사업계획서.hwpx 기기에 저장'))
-  await screen.findByText('사업계획서 (2).hwpx 파일을 저장했어요. 같은 이름의 파일이 있어 번호를 붙였어요.')
-  expect(shareApplicationFile).toHaveBeenCalledWith('https://api.example.test:first@test.com', expect.any(Blob), documentFile.fileName, expect.any(Function), expect.any(AbortSignal), 'save')
-  expect(api.submitDocumentJob).not.toHaveBeenCalled()
-})
-
-test('a cancelled retry removes the previous saved notice without showing an error or new success', async () => {
-  jest.mocked(shareApplicationFile).mockResolvedValueOnce({ status: 'saved', fileName: documentFile.fileName, renamed: false })
-    .mockResolvedValueOnce({ status: 'cancelled' })
-  render(<ApplicationDocumentScreen {...docProps} />)
-  await screen.findByText('초안 완료')
-  fireEvent.press(screen.getByLabelText('사업계획서.hwpx 기기에 저장'))
-  await screen.findByText('사업계획서.hwpx 파일을 저장했어요.')
-  fireEvent.press(screen.getByLabelText('사업계획서.hwpx 기기에 저장'))
-  await waitFor(() => expect(shareApplicationFile).toHaveBeenCalledTimes(2))
-  await waitFor(() => expect(screen.getByLabelText('사업계획서.hwpx 기기에 저장').props.accessibilityState.disabled).toBe(false))
-  expect(screen.queryByText(/파일을 저장했어요/)).toBeNull()
-  expect(screen.queryByText(/저장할 폴더를 열지 못했어요/)).toBeNull()
-})
-
-test('copy failure shows its error and never shows a saved notice', async () => {
-  jest.mocked(shareApplicationFile).mockRejectedValueOnce(new Error('파일을 저장하지 못했어요. 선택한 폴더의 접근 권한과 저장 공간을 확인해 주세요.'))
-  render(<ApplicationDocumentScreen {...docProps} />)
-  await screen.findByText('초안 완료')
-  fireEvent.press(screen.getByLabelText('사업계획서.hwpx 기기에 저장'))
-  await screen.findByText(/파일을 저장하지 못했어요/)
-  expect(screen.queryByText(/파일을 저장했어요/)).toBeNull()
-  expect(api.submitDocumentJob).not.toHaveBeenCalled()
-})
-
-test('sharing reports only share sheet closure without a saved notice', async () => {
-  render(<ApplicationDocumentScreen {...docProps} />)
-  await screen.findByText('초안 완료')
-  fireEvent.press(screen.getByLabelText('사업계획서.hwpx 공유'))
-  await screen.findByText('공유 화면을 닫았어요.')
-  expect(screen.queryByText(/파일을 저장했어요/)).toBeNull()
-})
-
-test('archive saving and sharing use the same current revision ZIP download without regenerating it', async () => {
-  api.documents.mockResolvedValue([documentFile, { ...documentFile, id: 82, fileName: '별첨.pdf', mediaType: 'application/pdf' }])
-  api.downloadDocumentArchive.mockResolvedValue(new Blob(['zip'], { type: 'application/zip' }))
-  const name = `신청문서-9-답변${documentPreparation.inputRevision}.zip`
-  jest.mocked(shareApplicationFile).mockResolvedValueOnce({ status: 'saved', fileName: name, renamed: false })
-    .mockResolvedValueOnce({ status: 'shareClosed' })
-  render(<ApplicationDocumentScreen {...docProps} />)
-  await screen.findByLabelText('현재 답변 파일 ZIP 기기에 저장')
-  fireEvent.press(screen.getByLabelText('현재 답변 파일 ZIP 기기에 저장'))
-  await screen.findByText(`${name} 파일을 저장했어요.`)
-  expect(api.downloadDocumentArchive).toHaveBeenCalledWith(9, documentPreparation.inputRevision, expect.any(AbortSignal))
-  expect(shareApplicationFile).toHaveBeenNthCalledWith(1, 'https://api.example.test:first@test.com', expect.any(Blob), name, expect.any(Function), expect.any(AbortSignal), 'save')
-  fireEvent.press(screen.getByLabelText('현재 답변 파일 ZIP 공유'))
-  await screen.findByText('공유 화면을 닫았어요.')
-  expect(shareApplicationFile).toHaveBeenNthCalledWith(2, 'https://api.example.test:first@test.com', expect.any(Blob), name, expect.any(Function), expect.any(AbortSignal), 'share')
+  fireEvent.press(screen.getByLabelText('초안 다운로드: 사업계획서.hwpx'))
+  await screen.findByText(downloadNotice(documentFile.fileName))
+  expect(prepareApplicationDocumentDownload).toHaveBeenCalledWith('owned-token', 9, documentFile.id, expect.any(AbortSignal))
+  expect(Linking.openURL).toHaveBeenCalledWith(browserUrl())
+  expect(shareApplicationFile).not.toHaveBeenCalled()
   expect(api.downloadDocument).not.toHaveBeenCalled()
+  expect(screen.queryByText(/파일을 저장했어요/)).toBeNull()
+  expect(api.submitDocumentJob).not.toHaveBeenCalled()
+})
+
+test('a failed retry clears the previous browser notice and exposes the link error', async () => {
+  jest.mocked(prepareApplicationDocumentDownload).mockResolvedValueOnce(browserUrl())
+    .mockRejectedValueOnce(new ApplicationPreparationError(503, 'REQUEST_FAILED'))
+  render(<ApplicationDocumentScreen {...docProps} />)
+  await screen.findByText('초안 완료')
+  fireEvent.press(screen.getByLabelText('초안 다운로드: 사업계획서.hwpx'))
+  await screen.findByText(downloadNotice(documentFile.fileName))
+  fireEvent.press(screen.getByLabelText('초안 다운로드: 사업계획서.hwpx'))
+  await screen.findByText(/서버에서 신청문서 요청을 처리하지 못했습니다/)
+  await waitFor(() => expect(screen.getByLabelText('초안 다운로드: 사업계획서.hwpx').props.accessibilityState.disabled).toBe(false))
+  expect(screen.queryByText(/파일을 저장했어요/)).toBeNull()
+  expect(screen.queryByText(downloadNotice(documentFile.fileName))).toBeNull()
+  expect(Linking.openURL).toHaveBeenCalledTimes(1)
+})
+
+test('a browser launch failure shows an error and never reports saved or opened', async () => {
+  jest.mocked(Linking.openURL).mockRejectedValueOnce(new Error('OS refused'))
+  render(<ApplicationDocumentScreen {...docProps} />)
+  await screen.findByText('초안 완료')
+  fireEvent.press(screen.getByLabelText('초안 다운로드: 사업계획서.hwpx'))
+  await screen.findByText('다운로드 브라우저를 열지 못했어요. 다시 시도해 주세요.')
+  expect(screen.queryByText(downloadNotice(documentFile.fileName))).toBeNull()
+  expect(screen.queryByText(/파일을 저장했어요/)).toBeNull()
+  expect(api.submitDocumentJob).not.toHaveBeenCalled()
+})
+
+test.each([
+  ['pdf', 'application/pdf'], ['hwp', 'application/x-hwp'], ['hwpx', 'application/hwp+zip'],
+  ['docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+  ['xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+])('one draft download opens the original %s file without a duplicate or ZIP action', async (extension, mediaType) => {
+  const file = { ...documentFile, fileName: `신청서-초안.${extension}`, mediaType }
+  api.documents.mockResolvedValue([file])
+  render(<ApplicationDocumentScreen {...docProps} />)
+  const button = await screen.findByLabelText(`초안 다운로드: ${file.fileName}`)
+  expect(screen.getAllByText('초안 다운로드')).toHaveLength(1)
+  expect(screen.queryByLabelText('내려받기')).toBeNull()
+  expect(screen.queryByLabelText('전체 내려받기')).toBeNull()
+  expect(screen.queryByText('다른 앱으로 공유')).toBeNull()
+  fireEvent.press(button)
+  await screen.findByText(downloadNotice(file.fileName))
+  expect(prepareApplicationDocumentDownload).toHaveBeenCalledWith('owned-token', 9, file.id, expect.any(AbortSignal))
+  expect(Linking.openURL).toHaveBeenCalledWith(browserUrl(file.id))
+  expect(shareApplicationFile).not.toHaveBeenCalled()
+  expect(api.downloadDocument).not.toHaveBeenCalled()
+  expect(api.downloadDocumentArchive).not.toHaveBeenCalled()
+  expect(api.submitDocumentJob).not.toHaveBeenCalled()
+})
+
+test('a background transition aborts the pending link and returning cannot launch its late response', async () => {
+  let change!: (state: AppStateStatus) => void
+  jest.spyOn(AppState, 'addEventListener').mockImplementation((_event, listener) => { change = listener; return { remove: jest.fn() } })
+  let finish!: (value: string) => void
+  jest.mocked(prepareApplicationDocumentDownload).mockReturnValueOnce(new Promise<string>(resolve => { finish = resolve }))
+  render(<ApplicationDocumentScreen {...docProps} />)
+  fireEvent.press(await screen.findByLabelText(`초안 다운로드: ${documentFile.fileName}`))
+  await waitFor(() => expect(prepareApplicationDocumentDownload).toHaveBeenCalledTimes(1))
+  const signal = jest.mocked(prepareApplicationDocumentDownload).mock.calls[0][3]!
+  const previous = AppState.currentState
+  try {
+    AppState.currentState = 'background'
+    await act(async () => change('background'))
+    expect(signal.aborted).toBe(true)
+    AppState.currentState = 'active'
+    await act(async () => change('active'))
+    await act(async () => finish(browserUrl()))
+    expect(Linking.openURL).not.toHaveBeenCalled()
+    expect(screen.queryByText(downloadNotice(documentFile.fileName))).toBeNull()
+    fireEvent.press(screen.getByLabelText(`초안 다운로드: ${documentFile.fileName}`))
+    await waitFor(() => expect(Linking.openURL).toHaveBeenCalledTimes(1))
+  } finally { AppState.currentState = previous }
+})
+
+test('account replacement invalidates a pending link while the new account can start its own download', async () => {
+  let finish!: (value: string) => void
+  jest.mocked(prepareApplicationDocumentDownload).mockReturnValueOnce(new Promise<string>(resolve => { finish = resolve }))
+  const view = render(<ApplicationDocumentScreen {...docProps} />)
+  fireEvent.press(await screen.findByLabelText(`초안 다운로드: ${documentFile.fileName}`))
+  await waitFor(() => expect(prepareApplicationDocumentDownload).toHaveBeenCalledTimes(1))
+  const oldSignal = jest.mocked(prepareApplicationDocumentDownload).mock.calls[0][3]!
+  jest.mocked(useAuth).mockReturnValue({ ...auth, session: { accessToken: 'new-account-token', account: { email: 'second@test.com' } } } as unknown as ReturnType<typeof useAuth>)
+  view.rerender(<ApplicationDocumentScreen {...docProps} />)
+  await screen.findByLabelText(`초안 다운로드: ${documentFile.fileName}`)
+  await act(async () => finish(browserUrl()))
+  expect(oldSignal.aborted).toBe(true)
+  expect(Linking.openURL).not.toHaveBeenCalled()
+  fireEvent.press(screen.getByLabelText(`초안 다운로드: ${documentFile.fileName}`))
+  await waitFor(() => expect(Linking.openURL).toHaveBeenCalledTimes(1))
+  expect(prepareApplicationDocumentDownload).toHaveBeenLastCalledWith('new-account-token', 9, 11, expect.any(AbortSignal))
+})
+
+test('expired authentication prevents browser handoff and invalidates the app session', async () => {
+  auth.invalidateSession.mockClear()
+  jest.mocked(prepareApplicationDocumentDownload).mockRejectedValueOnce(new ApplicationPreparationError(401, 'AUTHENTICATION_REQUIRED'))
+  render(<ApplicationDocumentScreen {...docProps} />)
+  fireEvent.press(await screen.findByLabelText(`초안 다운로드: ${documentFile.fileName}`))
+  await waitFor(() => expect(auth.invalidateSession).toHaveBeenCalledTimes(1))
+  expect(Linking.openURL).not.toHaveBeenCalled()
+  expect(shareApplicationFile).not.toHaveBeenCalled()
+})
+
+test('a single latest file downloads directly while older files stay folded', async () => {
+  const latest = { ...documentFile, inputRevision: 2 }
+  api.get.mockResolvedValue({ ...documentPreparation, inputRevision: 2 })
+  api.documents.mockResolvedValue([{ ...documentFile, id: 80, fileName: '이전-신청서.hwpx' }, latest])
+  render(<ApplicationDocumentScreen {...docProps} />)
+  await screen.findByLabelText(`초안 다운로드: ${latest.fileName}`)
+  expect(screen.getAllByText('초안 다운로드')).toHaveLength(1)
+  expect(screen.queryByLabelText('전체 내려받기')).toBeNull()
+  expect(screen.queryByText('이전-신청서.hwpx')).toBeNull()
+  expect(screen.getByText('HWPX · 1 KB · 답변 버전 2')).toBeTruthy()
+  fireEvent.press(screen.getByLabelText(`초안 다운로드: ${latest.fileName}`))
+  await screen.findByText(downloadNotice(latest.fileName))
+  expect(prepareApplicationDocumentDownload).toHaveBeenCalledWith('owned-token', 9, latest.id, expect.any(AbortSignal))
+  expect(Linking.openURL).toHaveBeenCalledWith(browserUrl(latest.id))
+  expect(api.downloadDocumentArchive).not.toHaveBeenCalled()
+  expect(api.submitDocumentJob).not.toHaveBeenCalled()
+})
+
+test('several drafts each have their own direct download without a combined ZIP action', async () => {
+  const pdf = { ...documentFile, id: 82, fileName: '별첨.pdf', mediaType: 'application/pdf' }
+  api.documents.mockResolvedValue([documentFile, pdf])
+  render(<ApplicationDocumentScreen {...docProps} />)
+  await screen.findByLabelText(`초안 다운로드: ${pdf.fileName}`)
+  expect(screen.getAllByText('초안 다운로드')).toHaveLength(2)
+  expect(screen.queryByLabelText('전체 내려받기')).toBeNull()
+  expect(screen.getByText('PDF · 1 KB · 답변 버전 1')).toBeTruthy()
+  fireEvent.press(screen.getByLabelText(`초안 다운로드: ${pdf.fileName}`))
+  await screen.findByText(downloadNotice(pdf.fileName))
+  expect(prepareApplicationDocumentDownload).toHaveBeenCalledWith('owned-token', 9, pdf.id, expect.any(AbortSignal))
+  expect(Linking.openURL).toHaveBeenCalledWith(browserUrl(pdf.id))
+  expect(api.downloadDocumentArchive).not.toHaveBeenCalled()
+})
+
+test('changed answers show the latest generated drafts and download the selected original file', async () => {
+  const older = { ...documentFile, id: 70, inputRevision: 2, fileName: '이전-답변.hwpx' }
+  const latest = { ...documentFile, id: 83, inputRevision: 3, fileName: '최신-신청서.hwpx' }
+  api.get.mockResolvedValue({ ...documentPreparation, inputRevision: 4 })
+  api.documents.mockResolvedValue([older, latest, { ...latest, id: 84, fileName: '최신-계획서.hwpx' }])
+  render(<ApplicationDocumentScreen {...docProps} />)
+  await screen.findByText('답변이 바뀜')
+  expect(screen.getByText('답변 버전 3 문서 · 2개')).toBeTruthy()
+  expect(screen.queryByText(older.fileName)).toBeNull()
+  expect(screen.getByLabelText('수정 답변으로 다시 만들기')).toBeTruthy()
+  fireEvent.press(screen.getByLabelText('이전 버전 문서 1개 보기'))
+  expect(screen.getByText('답변 버전 2 문서')).toBeTruthy()
+  expect(screen.getByLabelText(`초안 다운로드: ${older.fileName}`)).toBeTruthy()
+  fireEvent.press(screen.getByLabelText('이전 버전 문서 1개 접기'))
+  expect(screen.queryByText(older.fileName)).toBeNull()
+  fireEvent.press(screen.getByLabelText(`초안 다운로드: ${latest.fileName}`))
+  await screen.findByText(downloadNotice(latest.fileName))
+  expect(prepareApplicationDocumentDownload).toHaveBeenCalledWith('owned-token', 9, latest.id, expect.any(AbortSignal))
+  expect(Linking.openURL).toHaveBeenCalledWith(browserUrl(latest.id))
+  expect(api.downloadDocumentArchive).not.toHaveBeenCalled()
+  expect(api.submitDocumentJob).not.toHaveBeenCalled()
+})
+
+test('a result without generated files has no download action and never requests a binary on entry', async () => {
+  api.documents.mockResolvedValue([]); api.documentJobs.mockResolvedValue([])
+  render(<ApplicationDocumentScreen {...docProps} />)
+  await screen.findByLabelText('초안 만들기')
+  expect(screen.queryByLabelText('내려받기')).toBeNull()
+  expect(screen.queryByLabelText('전체 내려받기')).toBeNull()
+  expect(screen.queryByText('초안 다운로드')).toBeNull()
+  expect(api.downloadDocument).not.toHaveBeenCalled()
+  expect(prepareApplicationDocumentDownload).not.toHaveBeenCalled()
+  expect(api.downloadDocumentArchive).not.toHaveBeenCalled()
   expect(api.submitDocumentJob).not.toHaveBeenCalled()
 })
 
@@ -206,9 +333,9 @@ test('opening a completed result only reads jobs and downloads the selected owne
   render(<ApplicationDocumentScreen {...docProps} />)
   await screen.findByText('초안 완료')
   expect(api.submitDocumentJob).not.toHaveBeenCalled()
-  fireEvent.press(screen.getByLabelText('사업계획서.hwpx 기기에 저장'))
-  await waitFor(() => expect(shareApplicationFile).toHaveBeenCalledWith('https://api.example.test:first@test.com', expect.any(Blob), '사업계획서.hwpx', expect.any(Function), expect.any(AbortSignal), 'save'))
-  expect(api.downloadDocument).toHaveBeenCalledWith(9, 11, expect.any(AbortSignal))
+  fireEvent.press(screen.getByLabelText(`초안 다운로드: ${documentFile.fileName}`))
+  await waitFor(() => expect(Linking.openURL).toHaveBeenCalledWith(browserUrl()))
+  expect(prepareApplicationDocumentDownload).toHaveBeenCalledWith('owned-token', 9, 11, expect.any(AbortSignal))
 })
 test('unknown generation offers a read-only recovery and never automatic paid retries', async () => {
   const unknown = { ...documentJob, status: 'UNKNOWN', fileIds: [], failureCode: 'APPLICATION_DOCUMENT_OUTCOME_UNKNOWN', finishedAt: documentJob.finishedAt }
