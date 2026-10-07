@@ -1845,8 +1845,9 @@ describe('application preparation creation and detail', () => {
     mount(newPath)
     const card = await screen.findByRole('region', { name: '구글 설문으로 신청하는 공고예요' })
     expect(formSection().contains(card)).toBe(true)
-    expect(repository.googleForm).toHaveBeenCalledWith('BIZINFO', 'PBLN_1', expect.anything())
+    // 설문은 카드를 그린 뒤 effect에서 불러오므로, 입력칸이 나타난 다음에 요청을 확인합니다.
     const company = await within(card).findByRole('textbox', { name: /기업명/ }) as HTMLInputElement
+    expect(repository.googleForm).toHaveBeenCalledWith('BIZINFO', 'PBLN_1', expect.anything())
     expect(company.value).toBe('합성테크')
     expect(within(card).getByText('기업 정보')).toBeTruthy()
     const attendee = within(card).getByRole('textbox', { name: /참석자 성함/ })

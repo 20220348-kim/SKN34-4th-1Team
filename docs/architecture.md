@@ -271,6 +271,7 @@ UNKNOWN은 Outbox 스케줄러의 만료 정리에서 같은 공고의 가용성
 2. 소비자는 선택한 제공처에 따라 `BizInfoAttachmentClient`, `MsitAttachmentClient`, `KStartupAttachmentClient`,
    `CnTradeNoticeAttachmentClient`를 통해 검증된 공식 상세의 직접 연결 첨부를 수집. 충남은 API 제목·본문과 게시판 상세를 교차 검증.
 3. `SupportProgramDocumentParser`: PDFBox, Apache Tika HWP5 또는 HWPX/DOCX/XLSX ZIP/XML로 텍스트·위치를 추출. 신청 문서 발견과 중복 지원 검토가 같은 안전 경계를 사용.
+   중복 검토는 근거용 `parseEvidence`로 PDF 글자 좌표 줄 잇기·표 행과 HWPX 표 행을 쓰고, 문서 기록에 `EVIDENCE_VERSION`을 남긴다(양식 분석 재사용 키는 그대로).
    공고별로 읽을 수 있는 문서가 있으면 크기 제한 초과·텍스트 추출 불가 첨부는 경고와 함께 제외하고, 모두 제외되면 실행을 실패 처리.
 4. `CombinationReviewRunRepository`: 원문 바이트·해시·메타데이터·텍스트를 짧은 transaction에서 보존. 검증한 공식 공고 상세 주소와
    첨부 다운로드 주소를 서로 다른 필드로 저장해 화면의 공고 페이지 이동과 보관 원본 다운로드를 구분.

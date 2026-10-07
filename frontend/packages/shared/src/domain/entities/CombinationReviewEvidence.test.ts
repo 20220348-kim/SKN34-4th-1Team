@@ -203,6 +203,29 @@ describe('evidence quote formatting shared by web and mobile', () => {
     ].map(evidenceLocatorLabel)).toEqual([
       '3쪽', '12쪽 (2)', '문단 123–219', '문단 5 (2)', '문단 1–305', '2구역 문단 7', '입력 칸 주변 글', '문단 4–9', '신청서 시트 12행', 'PDF 3쪽, 문단 2',
     ])
-    expect(['PDF page 1 part 1', 'HWPX section0 paragraphs 1-2', 'HWP paragraphs 1-2', '알 수 없음'].map(evidenceFormatOf)).toEqual(['PDF', 'HWPX', 'HWP', ''])
+    expect(['PDF page 1 part 1', 'HWPX section0 paragraphs 1-2', 'HWP paragraphs 1-2', '알 수 없음'].map((locator) => evidenceFormatOf(locator))).toEqual(['PDF', 'HWPX', 'HWP', ''])
+  })
+  it('shows Core layout extraction as stored: no screen PDF joins, and rebuilt table rows stay rows that can be related', () => {
+    const layoutVersion = 'pdfbox-3.0.8-tika-4.0.0-hwp-form-controls-v2-hwpx-direct-paragraph-v1-evidence-layout-v1'
+    expect(evidenceFormatOf('PDF page 3 part 1', { format: 'PDF', parserVersion: layoutVersion })).toBe('PDF_LAYOUT')
+    expect(evidenceFormatOf('HWPX section0 paragraphs 1-2', { format: 'HWPX', parserVersion: layoutVersion })).toBe('HWPX_LAYOUT')
+    expect(evidenceFormatOf('PDF page 3 part 1', { format: 'PDF', parserVersion: 'pdfbox-3.0.8-tika-4.0.0' })).toBe('PDF')
+    const text = [
+      'l 지원 제외 대상에 해당하는 중소기업 또는 소상공인으로서 국세 체납 중인 기업',
+      '세금 분납 계획에 따라 성실하게 납부하고 있는 경우에는 신청 가능',
+      '구분 | 내용 | 비고',
+      '제외 대상 | 동일 과제로 타 사업 수혜 기업 | 선정 취소',
+    ].join('\n')
+    const lines = formatEvidenceText(text, 'PDF_LAYOUT')
+    expect(lines.map((line) => [line.kind, line.marker, line.text])).toEqual([
+      ['item', '•', '지원 제외 대상에 해당하는 중소기업 또는 소상공인으로서 국세 체납 중인 기업'],
+      ['text', '', '세금 분납 계획에 따라 성실하게 납부하고 있는 경우에는 신청 가능'],
+      ['table', '', '구분 | 내용 | 비고'],
+      ['table', '', '제외 대상 | 동일 과제로 타 사업 수혜 기업 | 선정 취소'],
+    ])
+    expect(lines.map((line) => line.related)).toEqual([true, false, false, true])
+    expect(formatEvidenceText('제외 대상 | 동일 과제로 타 사업 수혜 기업', 'HWPX_LAYOUT')).toEqual([
+      { kind: 'table', level: 1, marker: '', text: '제외 대상 | 동일 과제로 타 사업 수혜 기업', related: true },
+    ])
   })
 })
