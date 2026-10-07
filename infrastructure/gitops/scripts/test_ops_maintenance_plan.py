@@ -3,6 +3,7 @@
 import copy
 import io
 import json
+import subprocess
 import unittest
 from contextlib import nullcontext, redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -81,8 +82,9 @@ class PlanTests(unittest.TestCase):
     def setUp(self):
         # Reuse the existing dedicated MySQL/Compose ownership fixture.
         db_tests.SourceTests.setUp(self)
-        self.stack.enter_context(
-            patch.object(maintenance.database, "load_settings", return_value=db_tests.SETTINGS)
+        self.settings = db_tests.SETTINGS | {"mode": "dev"}
+        self.load = self.stack.enter_context(
+            patch.object(maintenance.database, "load_settings", return_value=self.settings)
         )
         self.probe = self.stack.enter_context(
             patch.object(maintenance.ops_runtime, "upgrade_preflight", return_value=preflight())
@@ -111,6 +113,45 @@ class PlanTests(unittest.TestCase):
         stopped["State"].update(Status="exited", Running=False)
         self.writers[stopped["Id"]] = stopped
 
+    def enable_gitops(self):
+        self.settings["mode"] = "gitops"
+        self.deployment["kind"] = "Deployment"
+        self.deployment["metadata"].update(
+            name="ops-service",
+            namespace=self.settings["namespace"],
+            annotations={
+                "argocd.argoproj.io/tracking-id": (
+                    "govbiz-fork-ops-service:apps/Deployment:govbiz-msa/ops-service"
+                )
+            },
+        )
+        quiet = preflight() | {
+            "status": "PASS",
+            "admission_supported": True,
+            "admission_blocked": True,
+            "admission_version": 8,
+        }
+        quiet.pop("reason")
+        quiet["checks"]["open_admission"] = 0
+        self.probe.return_value = quiet
+        self.argo = self.stack.enter_context(
+            patch.object(
+                maintenance,
+                "argo_observation",
+                return_value={
+                    "projectUid": "project-uid",
+                    "projectSpecSha256": "a" * 64,
+                    "applications": {
+                        "ops-service": {
+                            "uid": "application-uid",
+                            "sourceSha": "b" * 40,
+                            "specSha256": "c" * 64,
+                        }
+                    },
+                },
+            )
+        )
+
     def plan(self):
         return maintenance.plan(Path("fixture"))
 
@@ -133,6 +174,151 @@ class PlanTests(unittest.TestCase):
         unrelated["State"].update(Status="running", Running=True)
         self.writers["d" * 64] = unrelated
         self.assertNotIn("d" * 64, self.plan()["writers"])
+
+    def test_gitops_plan_requires_stable_manual_argo_and_retains_exact_resume_scope(
+        self,
+    ):
+        self.enable_gitops()
+        before = copy.deepcopy((self.settings, self.resources, self.writers))
+        report = self.plan()
+        self.assertEqual(report["status"], "PLANNED")
+        self.assertEqual(report["argo_observation"], self.argo.return_value)
+        self.assertEqual(self.argo.call_count, 2)
+        maintenance.database.require_dev.assert_not_called()
+        self.assertEqual(report["stop_order"], ["deployment/ops-service", "c" * 64, "b" * 64])
+        self.assertEqual(report["leave_stopped"], ["d" * 64])
+        self.assertEqual(before, (self.settings, self.resources, self.writers))
+        self.assertNotIn("do-not-disclose", json.dumps(report))
+        for key in ("services_changed", "backup_verified", "upgrade_allowed"):
+            self.assertIs(report[key], False)
+        for call in self.run.call_args_list:
+            self.assertIn(call.args[0][:2], (["docker", "ps"], ["docker", "image"]))
+
+    def test_gitops_owner_sync_or_late_argo_changes_reject_plan(self):
+        self.enable_gitops()
+        original = copy.deepcopy(self.argo.return_value)
+        for observations in (
+            [ValueError("wrong owner or active sync")],
+            [original, ValueError("changed owner or active sync")],
+            [original, original | {"projectUid": "replaced"}],
+            [original, original | {"applications": {}}],
+        ):
+            self.argo.side_effect = observations
+            with self.subTest(observations=observations), self.assertRaises(ValueError):
+                self.plan()
+        maintenance.database.require_dev.assert_not_called()
+
+    def test_gitops_tracking_must_match_expected_application_and_resource(self):
+        self.enable_gitops()
+        baseline = copy.deepcopy(self.deployment)
+        for change in (
+            "missing",
+            "foreign",
+            "label",
+            "hook",
+            "name",
+            "namespace",
+            "kind",
+        ):
+            item = copy.deepcopy(baseline)
+            if change == "missing":
+                item["metadata"]["annotations"] = {}
+            elif change == "foreign":
+                item["metadata"]["annotations"]["argocd.argoproj.io/tracking-id"] = "other"
+            elif change == "label":
+                item["metadata"]["labels"] = {"argocd.argoproj.io/instance": "other"}
+            elif change == "hook":
+                item["metadata"]["annotations"]["argocd.argoproj.io/hook"] = "Sync"
+            elif change == "kind":
+                item["kind"] = "Job"
+            else:
+                item["metadata"][change] = "other"
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                maintenance.deployment_record(item, gitops_namespace="govbiz-msa")
+
+    def test_gitops_open_legacy_or_busy_admission_cannot_prepare_stop_plan(self):
+        self.enable_gitops()
+        original = copy.deepcopy(self.probe.return_value)
+        for kind in ("open", "legacy", "busy", "unknown"):
+            value = copy.deepcopy(original)
+            if kind == "legacy":
+                value = preflight()
+            elif kind == "open":
+                value.update(status="BLOCKED", reason="admission_open", admission_blocked=False)
+                value["checks"]["open_admission"] = 1
+            elif kind == "busy":
+                value["checks"]["unfinished_flows"] = 1
+            else:
+                value["status"] = "UNKNOWN"
+            self.probe.return_value = value
+            with self.subTest(kind=kind), self.assertRaises(ValueError):
+                self.plan()
+        self.run.assert_not_called()
+
+    def test_gitops_inventory_does_not_enable_dev_database_backup(self):
+        self.enable_gitops()
+        with (
+            patch.object(maintenance.database, "require_dev", maintenance.ops_runtime.require_dev),
+            self.assertRaisesRegex(ValueError, "GitOps owns"),
+        ):
+            maintenance.database.frozen_source(Path("fixture"), self.settings)
+        self.run.assert_not_called()
+
+    def test_admission_state_or_connection_change_during_inventory_is_rejected(self):
+        self.enable_gitops()
+        original = copy.deepcopy(self.probe.return_value)
+        for change in ("admission", "work", "settings", "profile", "bridge", "hpa"):
+            self.probe.side_effect = None
+            self.load.side_effect = None
+            self.connection.side_effect = None
+            changed = copy.deepcopy(original)
+            if change == "admission":
+                changed["admission_version"] += 1
+            elif change == "work":
+                changed["checks"]["unfinished_flows"] = 1
+            elif change == "settings":
+                self.load.side_effect = [
+                    self.settings,
+                    self.settings | {"stateId": "replaced"},
+                ]
+            elif change in {"profile", "bridge"}:
+                record = {"composeProject": "fixture"}
+                self.connection.side_effect = [record, record] + (
+                    [{"composeProject": "other"}]
+                    if change == "profile"
+                    else [record, {"composeProject": "other"}]
+                )
+            else:
+                calls = 0
+
+                def read(args):
+                    nonlocal calls
+                    resource = args[args.index("get") + 1]
+                    if resource == "hpa":
+                        calls += 1
+                        if calls == 2:
+                            return {
+                                "items": [{"spec": {"scaleTargetRef": {"name": "ops-service"}}}]
+                            }
+                    return copy.deepcopy(self.resources[resource])
+
+                with (
+                    patch.object(maintenance.database, "read_json", side_effect=read),
+                    self.assertRaises(ValueError),
+                ):
+                    self.plan()
+                continue
+            self.probe.side_effect = [original, changed]
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                self.plan()
+
+    def test_only_preflight_observation_time_can_change(self):
+        original = preflight()
+        self.probe.side_effect = [
+            original | {"started_at": "before-start", "checked_at": "before-end"},
+            original | {"started_at": "after-start", "checked_at": "after-end"},
+        ]
+        self.assertEqual(self.plan()["status"], "PLANNED")
 
     def test_unavailable_exact_image_blocks_plan_without_a_pull(self):
         def run(args, **kwargs):
@@ -248,7 +434,14 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(output.getvalue(), "")
 
     def test_cli_returns_failure_for_blocked_plan_or_redacted_exception(self):
-        for value in ({"status": "BLOCKED"}, ValueError("secret-diagnostic")):
+        for value in (
+            {"status": "BLOCKED"},
+            ValueError("secret-diagnostic"),
+            subprocess.TimeoutExpired(["kubectl", "secret-diagnostic"], 15),
+            subprocess.CalledProcessError(
+                1, ["kubectl", "secret-diagnostic"], output="secret-diagnostic"
+            ),
+        ):
             output, error = io.StringIO(), io.StringIO()
             with (
                 patch("sys.argv", ["ops_maintenance_plan.py", "--state-dir", "fixture"]),
