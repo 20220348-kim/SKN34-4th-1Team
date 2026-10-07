@@ -187,8 +187,10 @@ NetworkPolicy 집행을 입증하지 않으며, 이 결과는 Argo CD 배포·�
    Prefect·결과를 복원하고 실행 ID·보고서 해시·SQLite WAL·파일 권한을 대조한다. 현재 복원 도구의
    격리 Docker 검증과 새 PVC 검증을 구분한다. 임시 PVC 복원 도구·필수 CI 경로는 추가했으며,
    실제 개인 백업 검증과 운영 이전용 PVC 보존·인계는 남아 있다. 원본 볼륨은 유지한다.
-2. runner 이미지의 같은 SHA CI·공개 발행·실행 명세 검증을 추가한다. 기존 네 서비스의 필수 CI·발행
-   가드를 우회하지 않는다. 배포 방식은 서비스별 Argo Application과 수동 동기화를 유지한다.
+2. runner 이미지의 같은 SHA CI·공개 발행·실행 명세 검증 경로는
+   [별도 실행기 발행 workflow](../../release/README.md#kubernetes-평가-실행기-이미지)에 추가했다.
+   실제 패키지 준비·최신 SHA CI·발행 성공과 v3 receipt 소비 검증은 별도로 확인해야 한다.
+   기존 네 서비스의 필수 CI·발행 가드를 우회하지 않는다. 배포 방식은 서비스별 Argo Application과 수동 동기화를 유지한다.
    기존 AppProject·진단은 네 업무 Application을 전제로 하므로 새 평가 namespace의 권한과
    Application 조회 범위를 함께 검증한다. 이번 Chart를 기존 프로젝트에 바로 추가하지 않는다.
 3. 위 격리 Kubernetes 런타임 검증의 최신 SHA 필수 CI 성공을 확인한다. 검증 경로는 구현했으며,

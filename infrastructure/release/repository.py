@@ -4,14 +4,15 @@ CI identity comes from GitHub's own context, never a release receipt or PR input
 Local identity comes from origin; upstream is not a publication destination.
 """
 
-from dataclasses import dataclass
 import os
-from pathlib import Path
 import re
 import subprocess
+from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import urlsplit
 
 SERVICES = ("core-service", "catalog-service", "ai-service", "ops-service")
+IMAGE_COMPONENTS = (*SERVICES, "evaluation-runner")
 EDUCATION_OWNER = "sknetworks-family-aicamp"
 
 
@@ -55,7 +56,7 @@ class Fork:
         return "https://github.com/" + self.repository
 
     def image(self, service):
-        if service not in SERVICES:
+        if service not in IMAGE_COMPONENTS:
             raise ValueError("Unknown GovBiz service")
         return "ghcr.io/" + self.repository.lower() + "-" + service
 
@@ -90,7 +91,7 @@ def from_origin(root, branch=None):
     repository = repository_from_url(remote)
     if branch is None:
         result = subprocess.run(["git", "-C", str(root), "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"],
-                                text=True, capture_output=True, timeout=15)
+                                text=True, capture_output=True, timeout=15, check=False)
         if result.returncode not in (0, 1):
             raise ValueError("Cannot determine origin's default branch; specify --branch")
         branch = result.stdout.strip().removeprefix("refs/remotes/origin/") if result.returncode == 0 else "main"
