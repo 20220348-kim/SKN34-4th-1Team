@@ -97,7 +97,7 @@ function OwnedEditor({ token, email, id, reviewing, initialQuestion, onReview, o
   const blocked = vm.saving || vm.conflict || Boolean(vm.saveError) || generating
   return <KeyboardAvoidingView testID="application-preparation-keyboard-container" style={{ flex: 1 }}
     behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={headerHeight}>
-    <ScrollView ref={scroll} contentContainerStyle={preparationUi.scroll} keyboardShouldPersistTaps="handled">
+    <ScrollView ref={scroll} bounces={false} overScrollMode="never" contentContainerStyle={preparationUi.scroll} keyboardShouldPersistTaps="handled">
       <PreparationSteps active={reviewing ? 2 : 1} />
       {vm.error && <Notice error>{vm.error}</Notice>}
       <View style={styles.row}><Text style={[styles.muted, { flex: 1 }]}>{reviewing ? '답변 최종 검토' : current?.section.title}</Text>

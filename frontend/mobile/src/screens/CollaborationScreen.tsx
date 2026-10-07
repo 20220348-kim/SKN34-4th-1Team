@@ -8,6 +8,7 @@ import { regionNamesWithoutNationwide } from '@govbiz/shared/domain/entities/Reg
 import { browseProposals, browseRecruitments, getProposal, partnerErrorMessage, respondProposal } from '../api/partners'
 import { ApiError } from '../api/client'
 import { useAuth } from '../auth/session'
+import { useScrollBoundary } from '../components/useScrollBoundary'
 import { Button, Card, Notice, StatusBadge, colors, styles } from '../ui'
 import { PartnerSheet } from '../components/PartnerSheet'
 import { AppIcon } from '../components/AppIcon'
@@ -27,6 +28,7 @@ export function CollaborationScreen({ view, onViewChange, onPendingCount, onOpen
   onOpenRecruitment(id: number): void; onLogin(): void
 }) {
   const { session, status, invalidateSession } = useAuth()
+  const scrollBoundary = useScrollBoundary(true)
   const token = status === 'signedIn' ? session?.accessToken ?? null : null
   const [query, setQuery] = useState<PartnerRecruitmentQuery>({ ...defaultPartnerRecruitmentQuery, mineOnly })
   const [keyword, setKeyword] = useState('')
@@ -154,7 +156,7 @@ export function CollaborationScreen({ view, onViewChange, onPendingCount, onOpen
       : <SegmentedControl label="협업 보기" value={view} onChange={onViewChange}
         options={[{ value: 'recruitments', label: '모집글' }, { value: 'box', label: `제안함 ${pendingCount || ''}`.trim() }]} />}</View>}
     {view === 'recruitments' && query.mineOnly && !token ? <View style={local.list}><Notice>내 모집글은 로그인 후 확인할 수 있어요.</Notice><Button label="로그인하기" onPress={onLogin} /></View>
-    : view === 'recruitments' ? <FlatList data={visibleRecruitments.items} keyExtractor={(item) => String(item.id)}
+    : view === 'recruitments' ? <FlatList {...scrollBoundary} data={visibleRecruitments.items} keyExtractor={(item) => String(item.id)}
       contentContainerStyle={local.list} keyboardShouldPersistTaps="handled"
       refreshing={visibleRecruitments.loading && visibleRecruitments.items.length > 0}
       onRefresh={() => setRevision((value) => value + 1)}
@@ -180,7 +182,7 @@ export function CollaborationScreen({ view, onViewChange, onPendingCount, onOpen
         ? <Button label="더 보기" variant="secondary" disabled={visibleRecruitments.loading}
           onPress={() => setQuery((current) => ({ ...current, page: current.page + 1 }))} /> : null} />
     : !token ? <View style={local.list}><Notice>제안함은 로그인 후 확인할 수 있어요.</Notice><Button label="로그인하기" onPress={onLogin} /></View>
-      : <FlatList data={filteredProposals} keyExtractor={(item) => String(item.id)} contentContainerStyle={local.list}
+      : <FlatList {...scrollBoundary} data={filteredProposals} keyExtractor={(item) => String(item.id)} contentContainerStyle={local.list}
         refreshing={visibleBox.loading && Boolean(visibleBox.page)} onRefresh={() => setRevision((value) => value + 1)}
         ListHeaderComponent={<View style={local.listHeader}>
           {!management && <SegmentedControl label="제안함 구분" value={box} onChange={(next) => { setBox(next); setFilter('all') }}
@@ -290,7 +292,7 @@ const local = StyleSheet.create({
   page: { flex: 1, backgroundColor: colors.background },
   header: { backgroundColor: colors.surface, paddingHorizontal: 16, paddingTop: 4, paddingBottom: 12 },
   loading: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  list: { paddingHorizontal: 16, paddingVertical: 12, gap: 10, paddingBottom: 40 },
+  list: { paddingHorizontal: 16, paddingTop: 12, gap: 10 },
   listHeader: { gap: 12, marginBottom: 2 },
   searchRow: { flexDirection: 'row', gap: 8, alignItems: 'center' },
   searchInput: { flex: 1, minHeight: 44, minWidth: 0, backgroundColor: colors.surface, borderRadius: 999,

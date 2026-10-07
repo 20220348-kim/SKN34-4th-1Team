@@ -38,14 +38,14 @@ export function WelcomeScreen({ busy, error, onBrowse, onLogin, onSignup }: {
       </Pressable>)}
     </View>
     {error && <View style={{ paddingHorizontal: 20 }}><Notice error>{error}</Notice></View>}
-    <ScrollView ref={carousel} testID="welcome-carousel" horizontal pagingEnabled directionalLockEnabled bounces={false}
+    <ScrollView ref={carousel} testID="welcome-carousel" horizontal pagingEnabled directionalLockEnabled bounces={false} overScrollMode="never"
       scrollEnabled={!busy} showsHorizontalScrollIndicator={false} style={{ flex: 1 }} keyboardShouldPersistTaps="handled"
       onLayout={event => { const width = event.nativeEvent.layout.width; if (width > 0 && width !== pageWidth) {
         setPageWidth(width)
       } }}
       onMomentumScrollEnd={event => { if (busy) { carousel.current?.scrollTo({ x: index * pageWidth, animated: false }); return }
         setIndex(Math.max(0, Math.min(slides.length - 1, Math.round(event.nativeEvent.contentOffset.x / pageWidth)))) }}>
-      {slides.map((slide, step) => <ScrollView key={step} style={{ width: pageWidth }} contentContainerStyle={local.slide}
+      {slides.map((slide, step) => <ScrollView key={step} bounces={false} overScrollMode="never" style={{ width: pageWidth }} contentContainerStyle={local.slide}
         keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}
         accessibilityElementsHidden={step !== index} importantForAccessibility={step === index ? 'auto' : 'no-hide-descendants'}>
         <View style={local.heading}><Text style={local.title}>{slide.title}</Text><Text style={[local.title, { color: colors.primary }]}>{slide.highlight}</Text>
@@ -69,7 +69,7 @@ export function WelcomeScreen({ busy, error, onBrowse, onLogin, onSignup }: {
 const local = StyleSheet.create({
   page: { flex: 1, backgroundColor: colors.surface }, navigation: { paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   progress: { paddingHorizontal: 20, flexDirection: 'row', gap: 6 }, progressTarget: { flex: 1, minHeight: 30, justifyContent: 'center' },
-  bar: { height: 3, borderRadius: 3, backgroundColor: colors.track }, slide: { paddingHorizontal: 20, paddingBottom: 18 },
+  bar: { height: 3, borderRadius: 3, backgroundColor: colors.track }, slide: { paddingHorizontal: 20 },
   heading: { paddingTop: 15, paddingBottom: 18 }, title: { fontSize: 26, lineHeight: 37, fontWeight: '700', color: colors.text, textAlign: 'center' },
   swipeHint: { fontSize: 12, lineHeight: 20, color: colors.muted, textAlign: 'center', paddingTop: 5 },
   footerLinks: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingTop: 6 },

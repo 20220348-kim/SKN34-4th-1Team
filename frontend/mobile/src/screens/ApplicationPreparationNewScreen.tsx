@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ActivityIndicator, Linking, Text, View } from 'react-native'
 import { useFocusEffect } from 'expo-router'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import * as Crypto from 'expo-crypto'
 import type { ApplicationForm, ApplicationFormDiscoveryJob, ApplicationFormAvailability, ApplicationServiceField } from '@govbiz/shared/domain/entities/ApplicationPreparation'
 import { applicationServiceFieldLabels } from '@govbiz/shared/domain/entities/ApplicationPreparation'
@@ -30,7 +29,6 @@ export function ApplicationPreparationNewScreen(props: Props) {
 }
 function OwnedNew({ token, email, initialProgram, onOpenProgram, onCreated, onPendingDocument }: Props & { token: string; email: string }) {
   const { invalidateSession } = useAuth()
-  const insets = useSafeAreaInsets()
   const useCase = useMemo(() => applicationPreparationUseCase(token), [token])
   const [step, setStep] = useState<'selection' | 'form'>('selection')
   const [method, setMethod] = useState<'filter' | 'saved'>('filter')
@@ -172,7 +170,7 @@ function OwnedNew({ token, email, initialProgram, onOpenProgram, onCreated, onPe
       <Button label={pending?.kind === 'discovery' ? '같은 분석 요청으로 확인' : forms.length ? '입력칸별 양식 다시 분석' : '입력칸별 양식 분석하기'} variant="secondary" disabled={!pendingReady || loading || busy || Boolean(job && (!terminal(job) || job.status === 'UNKNOWN'))} onPress={() => void analyze()} />
       {jobs.filter(candidate => candidate.status === 'QUEUED' || candidate.status === 'RUNNING' || candidate.status === 'UNKNOWN').length >= 3 && <Notice>진행 중이거나 확인이 필요한 분석이 3건이에요. 기존 작업을 먼저 확인해 주세요.</Notice>}
     </Page>}
-    <View style={[preparationUi.footer, { paddingBottom: 12 + insets.bottom }]}>{step === 'selection'
+    <View style={preparationUi.footer}>{step === 'selection'
       ? <Button label="다음 · 양식 확인" disabled={!program || busy} onPress={() => setStep('form')} />
       : <><Button label="이 양식으로 작성 시작" busy={busy} disabled={!form || loading} onPress={() => void create()} /></>}
     </View>

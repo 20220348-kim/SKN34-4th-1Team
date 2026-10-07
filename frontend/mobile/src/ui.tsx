@@ -1,8 +1,10 @@
-import type { PropsWithChildren } from 'react'
+import { useContext, type PropsWithChildren } from 'react'
 import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, TextInput, View, type TextInputProps, type StyleProp, type ViewStyle } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { BottomTabBarHeightContext } from 'expo-router/js-tabs'
 import { colors as tokens, radius } from '@govbiz/shared/design/tokens'
 import { ddayTone } from '@govbiz/shared/domain/labels'
+import { useScrollBoundary } from './components/useScrollBoundary'
 
 /** 화면 코드가 쓰는 색 이름입니다. 값은 웹과 같은 shared 디자인 토큰에서 가져옵니다. */
 export const colors = {
@@ -13,19 +15,22 @@ export const colors = {
   info: tokens.info, infoSoft: tokens.infoSoft, warning: tokens.warning, warningSoft: tokens.warningSoft,
 }
 
-// Navigation owns the header/tab insets. Only headerless pages apply the top inset here.
-export function Page({ children, scroll = true, headerless = false, keyboardOffset = 0, refreshing, onRefresh, backgroundColor = colors.background }: PropsWithChildren<{
-  scroll?: boolean; headerless?: boolean; keyboardOffset?: number; refreshing?: boolean; onRefresh?: () => void; backgroundColor?: string
+// Tabs own the bottom inset; a root page or its fixed footer owns it otherwise.
+export function Page({ children, scroll = true, headerless = false, bottomSafeArea = true, keyboardOffset = 0, refreshing, onRefresh, backgroundColor = colors.background }: PropsWithChildren<{
+  scroll?: boolean; headerless?: boolean; bottomSafeArea?: boolean; keyboardOffset?: number; refreshing?: boolean; onRefresh?: () => void; backgroundColor?: string
 }>) {
   const insets = useSafeAreaInsets()
+  const tabBarHeight = useContext(BottomTabBarHeightContext)
+  const paddingBottom = bottomSafeArea && tabBarHeight === undefined ? insets.bottom : 0
+  const scrollBoundary = useScrollBoundary(Boolean(onRefresh))
   return <KeyboardAvoidingView style={[styles.page, { backgroundColor, paddingTop: headerless ? insets.top : 0,
     paddingLeft: insets.left, paddingRight: insets.right }]}
     behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     keyboardVerticalOffset={keyboardOffset + (headerless ? 0 : insets.top + 56)}>
-    {scroll ? <ScrollView contentContainerStyle={[styles.content, { paddingBottom: 24 + insets.bottom }]}
+    {scroll ? <ScrollView {...scrollBoundary} contentContainerStyle={[styles.content, { paddingBottom }]}
       refreshControl={onRefresh ? <RefreshControl refreshing={Boolean(refreshing)} onRefresh={onRefresh} tintColor={colors.primary} /> : undefined}
       keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">{children}</ScrollView>
-      : <View style={[styles.content, { flex: 1, paddingBottom: 24 + insets.bottom }]}>{children}</View>}
+      : <View style={[styles.content, { flex: 1, paddingBottom }]}>{children}</View>}
   </KeyboardAvoidingView>
 }
 

@@ -13,8 +13,8 @@ export function PreparationSteps({ active }: { active: 0 | 1 | 2 }) {
     style={[local.step, active === index && local.current]}>{index + 1}. {label}</Text>)}</View>
 }
 export const preparationUi = StyleSheet.create({
-  footer: { paddingHorizontal: 16, paddingTop: 12, gap: 8, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border },
-  scroll: { padding: 16, gap: 12 },
+  footer: { paddingHorizontal: 16, paddingVertical: 8, gap: 8, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: colors.border },
+  scroll: { paddingHorizontal: 16, paddingTop: 16, gap: 12 },
   selected: { backgroundColor: colors.soft, borderRadius: 10, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center' },
   row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   grow: { flex: 1 },

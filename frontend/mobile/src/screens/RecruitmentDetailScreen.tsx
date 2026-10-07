@@ -151,7 +151,7 @@ export function RecruitmentDetailScreen({ id, onLogin, onCompany, onProgram, onI
     : programStatus?.status === 'UPCOMING' ? colors.info : colors.muted
 
   return <View style={local.page}>
-    <Page>
+    <Page bottomSafeArea={false}>
       <View style={local.header}>
         <View style={local.row}><StatusBadge label={`${sourceName} 공고`} tone="info" />
           <StatusBadge label={recruitmentDeadlineLabel(detail.recruitmentDeadline)}

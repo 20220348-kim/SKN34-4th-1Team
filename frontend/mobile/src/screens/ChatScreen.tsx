@@ -206,7 +206,7 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active 
   const introductory = history.length === 0 && !proposal && !result && !busy
   return <KeyboardAvoidingView testID="ai-search-keyboard-container" style={local.page}
     behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={keyboardOffset} enabled={active}>
-    <ScrollView ref={timeline} testID="ai-search-timeline" style={local.scroll} contentContainerStyle={[local.timeline, introductory && { flexGrow: 1 }]}
+    <ScrollView ref={timeline} testID="ai-search-timeline" bounces={false} overScrollMode="never" style={local.scroll} contentContainerStyle={[local.timeline, introductory && { flexGrow: 1 }]}
       onLayout={event => { timelineSize.current.viewport = event.nativeEvent.layout.height; scrollPendingTimeline() }}
       onContentSizeChange={(_width, height) => { timelineSize.current.content = height; scrollPendingTimeline() }}
       keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
@@ -290,7 +290,7 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active 
 
 const local = StyleSheet.create({
   page: { flex: 1, backgroundColor: colors.surface }, scroll: { flex: 1 },
-  timeline: { padding: 16, paddingBottom: 20, gap: 16, width: '100%', maxWidth: 720, alignSelf: 'center' },
+  timeline: { paddingHorizontal: 16, paddingTop: 16, gap: 16, width: '100%', maxWidth: 720, alignSelf: 'center' },
   contentGroup: { gap: 16 },
   intro: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingVertical: 32 },
   brandMark: { width: 54, height: 54, borderRadius: 17, backgroundColor: colors.soft, alignItems: 'center', justifyContent: 'center', marginBottom: 18 },
