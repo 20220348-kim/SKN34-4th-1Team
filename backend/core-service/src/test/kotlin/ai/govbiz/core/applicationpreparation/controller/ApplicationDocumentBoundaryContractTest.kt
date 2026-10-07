@@ -4,6 +4,7 @@ import ai.govbiz.core.account.domain.Account
 import ai.govbiz.core.account.domain.AccountRole
 import ai.govbiz.core.applicationpreparation.controller.dto.ConfirmApplicationDocumentMigrationRequest
 import ai.govbiz.core.applicationpreparation.service.ApplicationDocumentService
+import ai.govbiz.core.applicationpreparation.service.ApplicationDocumentDownloadLinkService
 import ai.govbiz.core.applicationpreparation.service.dto.*
 import ai.govbiz.core.applicationpreparation.service.exception.ApplicationDocumentException
 import java.time.LocalDateTime
@@ -37,7 +38,7 @@ class ApplicationDocumentBoundaryContractTest {
         val account = Account(1, "test@example.com", AccountRole.USER, null, null, LocalDateTime.now())
         `when`(service.confirmMigration(account, 2, 7, "token"))
             .thenReturn(ApplicationDocumentMigrationConfirmedResult(2, 7, "approved-version"))
-        val response = ApplicationDocumentController(service).confirmMigration(account, 2,
+        val response = ApplicationDocumentController(service, mock(ApplicationDocumentDownloadLinkService::class.java)).confirmMigration(account, 2,
             ConfirmApplicationDocumentMigrationRequest(7, "token"))
         assertEquals(200, response.statusCode.value())
         assertEquals("no-store", response.headers.cacheControl)

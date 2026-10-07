@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ActivityIndicator, Linking, Text, View } from 'react-native'
+import { ActivityIndicator, AppState, Linking, Text, View } from 'react-native'
 import { useFocusEffect } from 'expo-router'
 import * as Clipboard from 'expo-clipboard'
 import * as Crypto from 'expo-crypto'
 import type { ApplicationPreparation, ApplicationDocument, ApplicationDocumentGenerationJob } from '@govbiz/shared/domain/entities/ApplicationPreparation'
 import { generationStages, generationFailureTitle, failureGroupOf, applicationDraftMode } from '@govbiz/shared/domain/entities/ApplicationDocumentGeneration'
+import { applicationDocumentFileFormat, applicationDocumentFileGroups } from '@govbiz/shared/domain/entities/ApplicationDocumentFiles'
 import { ApplicationPreparationError } from '@govbiz/shared/domain/errors/ApplicationPreparationError'
 import { useAuth } from '../auth/session'
-import { applicationPreparationUseCase, discardDeletedPendingPreparation } from '../api/applicationPreparation'
+import { applicationPreparationUseCase, discardDeletedPendingPreparation, prepareApplicationDocumentDownload } from '../api/applicationPreparation'
 import { getApiBaseUrl } from '../api/client'
-import { shareApplicationFile } from '../api/applicationDocumentFiles'
 import { clearPendingPreparation, readPendingPreparation, savePendingPreparation, type PendingPreparationRequest } from '../auth/preparationPending'
 import { PartnerSheet } from '../components/PartnerSheet'
 import { PreparationAccess } from '../components/ApplicationPreparationUi'
@@ -37,13 +37,19 @@ function OwnedDocuments({ id, jobId, token, email, onEditor, onReanalyze, onOnli
   const [revision, setRevision] = useState(0)
   const [migrationOpen, setMigrationOpen] = useState(false)
   const [approved, setApproved] = useState(false)
+  const [previousOpen, setPreviousOpen] = useState(false)
   const action = useRef<AbortController | null>(null)
   const downloadWork = useRef<AbortController | null>(null)
   const focused = useRef(false)
   const mounted = useRef(true)
   const locked = useRef(false)
-  const base = getApiBaseUrl(), owner = `${base}:${email}`
+  const base = getApiBaseUrl()
   const foreground = useAppForeground()
+  useEffect(() => {
+    if (foreground || !downloadWork.current) return
+    downloadWork.current.abort(); downloadWork.current = null
+    locked.current = false; setBusy(null)
+  }, [foreground])
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; action.current?.abort() } }, [])
   useFocusEffect(useCallback(() => {
     focused.current = true
@@ -98,22 +104,17 @@ function OwnedDocuments({ id, jobId, token, email, onEditor, onReanalyze, onOnli
     } catch (cause) { if (!controller.signal.aborted) reportError(cause) }
     finally { locked.current = false; if (!controller.signal.aborted && mounted.current) setBusy(null) }
   }
-  async function download(file: ApplicationDocument | null, targetRevision?: number, mode: 'save' | 'share' = 'share') {
+  async function download(file: ApplicationDocument) {
     if (locked.current || !preparation || !focused.current) return
-    locked.current = true; setBusy(`${mode}:${file ? file.id : 'archive'}`); setError(null); setNotice(null)
+    locked.current = true; setBusy(`save:${file.id}`); setError(null); setNotice(null)
     const controller = new AbortController(); downloadWork.current = controller
     try {
-      const blob = file ? await useCase.downloadDocument(id, file.id, controller.signal) : await useCase.downloadDocumentArchive(id, targetRevision!, controller.signal)
-      if (file && blob.size !== file.size) throw new Error('문서 크기가 저장된 결과와 다릅니다. 다시 확인해 주세요.')
+      const url = await prepareApplicationDocumentDownload(token, id, file.id, controller.signal)
       if (controller.signal.aborted || !mounted.current || !focused.current) return
-      const extensions: Record<string, string> = { 'application/pdf': 'pdf', 'application/x-hwp': 'hwp', 'application/hwp+zip': 'hwpx', 'application/zip': 'zip',
-        'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx' }
-      const extension = extensions[blob.type.split(';')[0]]
-      if (!file && !extension) throw new Error('묶음 내려받기의 파일 형식을 확인하지 못했어요.')
-      const result = await shareApplicationFile(owner, blob, file?.fileName ?? `신청문서-${id}-답변${targetRevision}.${extension}`, () => mounted.current && focused.current && !controller.signal.aborted, controller.signal, mode)
+      if (AppState.currentState === 'background' || AppState.currentState === 'inactive') return
+      await Linking.openURL(url).catch(() => { throw new Error('다운로드 브라우저를 열지 못했어요. 다시 시도해 주세요.') })
       if (controller.signal.aborted || !mounted.current || !focused.current || downloadWork.current !== controller) return
-      if (result.status === 'saved') setNotice(`${result.fileName} 파일을 저장했어요.${result.renamed ? ' 같은 이름의 파일이 있어 번호를 붙였어요.' : ''}`)
-      else if (result.status === 'shareClosed') setNotice('공유 화면을 닫았어요.')
+      setNotice(`${file.fileName} 다운로드를 브라우저에서 열었어요. 브라우저의 다운로드 목록에서 확인해 주세요.`)
     } catch (cause) { if (!controller.signal.aborted) reportError(cause) }
     finally {
       if (downloadWork.current === controller) {
@@ -160,7 +161,8 @@ function OwnedDocuments({ id, jobId, token, email, onEditor, onReanalyze, onOnli
     <Button label="다시 확인" disabled={busy !== null} onPress={() => setRevision(value => value + 1)} />
     <Button label="목록으로 돌아가기" variant="ghost" disabled={busy !== null} onPress={onList} /></Page>
   const currentFiles = files.filter(file => file.inputRevision === preparation.inputRevision)
-  const previousFiles = files.filter(file => file.inputRevision !== preparation.inputRevision)
+  const { latestRevision, latestFiles, previousFiles, previousRevisions } = applicationDocumentFileGroups(files)
+  const answersChanged = latestRevision !== null && !currentFiles.length
   const isRunning = Boolean(job && running(job)), unknown = job?.status === 'UNKNOWN'
   const group = job ? failureGroupOf(job) : null
   const missingRequired = preparation.form.sections.flatMap(section => section.fields.filter(field => field.required && field.documentWritable !== false && !section.facts.some(fact => fact.fieldKey === field.key)))
@@ -171,7 +173,7 @@ function OwnedDocuments({ id, jobId, token, email, onEditor, onReanalyze, onOnli
   const canGenerate = !loading && !busy && !isRunning && !unknown && (recoveringRequest ||
     !currentFiles.length &&
     (!job || job.expectedRevision !== preparation.inputRevision || approved || job.status === 'FAILED' && group === 'temporary'))
-  const renderFile = (file: ApplicationDocument) => <Card key={file.id}><Text style={styles.heading}>{file.fileName}</Text><Text style={styles.muted}>{Math.ceil(file.size / 1024)} KB · 답변 버전 {file.inputRevision}</Text>
+  const renderFile = (file: ApplicationDocument) => <Card key={file.id}><Text style={styles.heading}>{file.fileName}</Text><Text style={styles.muted}>{applicationDocumentFileFormat(file)} · {Math.ceil(file.size / 1024)} KB · 답변 버전 {file.inputRevision}</Text>
     {file.filledAnswerCount !== null && <Text style={styles.muted}>자동 기입 {file.filledAnswerCount}개 · 직접 작성 필요 {file.unfilledAnswerCount}개</Text>}
     {(file.remainingExampleCount ?? 0) > 0 && <Notice>직접 작성할 칸 {file.remainingExampleCount}곳에 예시 문구가 남아 있어요. 제출 전에 지워 주세요.</Notice>}
     {file.unfilledAnswers.map(answer => <View key={answer.fieldId} style={{ gap: 6 }}><Notice>{answer.fieldLabel}: {answer.reason === 'OVERFLOW'
@@ -180,11 +182,12 @@ function OwnedDocuments({ id, jobId, token, email, onEditor, onReanalyze, onOnli
         : answer.reason === 'SLOT_MISMATCH' ? '인쇄된 선택지·날짜와 달라요. 원본 파일에서 직접 작성해 주세요.'
           : '원본 파일에서 직접 작성해 주세요.'}</Notice><Text style={styles.body}>{answer.value}</Text>
       <Button label="답변 복사" accessibilityLabel={`${answer.fieldLabel} 답변 복사`} variant="ghost" onPress={() => void Clipboard.setStringAsync(answer.value).then(() => setNotice('답변을 복사했어요.')).catch(() => setError('답변을 복사하지 못했어요.'))} /></View>)}
-    <Button label="기기에 저장" accessibilityLabel={`${file.fileName} 기기에 저장`} variant="secondary" disabled={busy !== null} busy={busy === `save:${file.id}`} onPress={() => void download(file, undefined, 'save')} />
-    <Button label="다른 앱으로 공유" accessibilityLabel={`${file.fileName} 공유`} variant="ghost" disabled={busy !== null} busy={busy === `share:${file.id}`} onPress={() => void download(file)} />
+    <Button label="초안 다운로드" accessibilityLabel={`초안 다운로드: ${file.fileName}`} disabled={busy !== null} busy={busy === `save:${file.id}`} onPress={() => void download(file)} />
   </Card>
   return <Page refreshing={loading} onRefresh={() => setRevision(value => value + 1)}>
-    <Card><Text style={styles.heading}>{preparation.form.programTitle}</Text><Text style={styles.muted}>{preparation.form.formTitle}</Text></Card>
+    <Card><Text style={styles.heading}>{preparation.form.programTitle}</Text><Text style={styles.muted}>{preparation.form.formTitle}</Text>
+      {answersChanged && <View style={styles.row}><StatusBadge label="답변이 바뀜" tone="warning" /></View>}
+    </Card>
     {error && <><Notice error>{error}</Notice><Button label="생성 결과 다시 확인" variant="secondary" onPress={() => setRevision(value => value + 1)} /></>}
     {notice && <Notice>{notice}</Notice>}
     {pending && <Notice>결과를 확인하지 못한 보관 요청이 있어요. 같은 요청으로 확인하면 중복 유료 생성을 방지할 수 있어요.</Notice>}
@@ -200,20 +203,22 @@ function OwnedDocuments({ id, jobId, token, email, onEditor, onReanalyze, onOnli
       {group === 'userFix' && <Button label="답변 수정하기" variant="secondary" onPress={onEditor} />}
     </Card>}
     {currentFiles.length > 0 && <View style={styles.row}><StatusBadge label="초안 완료" tone="success" /></View>}
-    {currentFiles.map(renderFile)}
-    {currentFiles.length > 1 && <View style={{ gap: 8 }}>
-      <Text style={styles.muted}>현재 답변 파일 {currentFiles.length}개를 ZIP으로 묶어 내보냅니다.</Text>
-      <Button label="전체 기기에 저장" accessibilityLabel="현재 답변 파일 ZIP 기기에 저장" variant="secondary" disabled={busy !== null} busy={busy === 'save:archive'} onPress={() => void download(null, preparation.inputRevision, 'save')} />
-      <Button label="전체 공유" accessibilityLabel="현재 답변 파일 ZIP 공유" variant="ghost" disabled={busy !== null} busy={busy === 'share:archive'} onPress={() => void download(null, preparation.inputRevision)} />
-    </View>}
-    {previousFiles.length > 0 && <><Text style={styles.heading}>이전 파일</Text><Notice>답변이 바뀌었어요. 이전 파일은 해당 답변 버전으로 만들어진 초안입니다.</Notice>{previousFiles.map(renderFile)}</>}
+    {answersChanged && <Notice>저장된 답변과 생성 문서의 버전이 달라요. 가장 최근에 생성한 문서는 답변 버전 {latestRevision}의 초안입니다.</Notice>}
+    {latestRevision !== null && <><Text style={styles.heading}>답변 버전 {latestRevision} 문서 · {latestFiles.length}개</Text>{latestFiles.map(renderFile)}</>}
+    {previousFiles.length > 0 && <>
+      <Button label={`이전 버전 문서 ${previousFiles.length}개 ${previousOpen ? '접기' : '보기'}`} variant="ghost" onPress={() => setPreviousOpen(value => !value)} />
+      {previousOpen && previousRevisions.map(fileRevision => <View key={fileRevision} style={{ gap: 12 }}>
+        <Text style={styles.heading}>답변 버전 {fileRevision} 문서</Text>
+        {previousFiles.filter(file => file.inputRevision === fileRevision).map(renderFile)}
+      </View>)}
+    </>}
     {!isRunning && !currentFiles.length && missingRequired.length > 0 && <Notice>필수 답변 {missingRequired.length}개가 비어 있어요. 비워 둔 채로도 초안을 만들 수 있으며 문서에는 빈칸으로 남아요.</Notice>}
     {canGenerate && <><Notice>{recoveringRequest ? '보관한 답변 버전의 같은 요청을 확인해요. 새 요청 키를 만들지 않아요.' : draftMode === 'original'
       ? '입력한 답변이 없거나 모두 미정이에요. 초안을 만들면 답변을 기입하지 않은 공식 양식 그대로 저장돼요. AI를 호출하지 않아요.'
       : draftMode === 'manualOnly' ? '저장된 답변 중 양식에 자동으로 기입할 수 있는 것이 없어 초안을 만들지 못할 수 있어요. 원문 양식에 직접 옮겨 적어 주세요.'
         : '저장된 답변만 공식 양식에 기입해요. 비운 질문과 미정은 빈칸으로 남아요.'}</Notice>
       {!recoveringRequest && draftMode !== 'original' && <Text style={styles.muted}>답변 기입에는 유료 AI 호출이 발생할 수 있어요.</Text>}
-      <Button label={pending ? '같은 생성 요청으로 확인' : previousFiles.length ? '수정 답변으로 다시 만들기' : job?.status === 'FAILED' ? '초안 생성 다시 시도' : '초안 만들기'} busy={busy === 'generate'} onPress={() => void generate()} /></>}
+      <Button label={pending ? '같은 생성 요청으로 확인' : files.length ? '수정 답변으로 다시 만들기' : job?.status === 'FAILED' ? '초안 생성 다시 시도' : '초안 만들기'} busy={busy === 'generate'} onPress={() => void generate()} /></>}
     <Button label="답변 수정하기" variant="secondary" disabled={busy !== null} onPress={onEditor} />
     <Button label="온라인 신청 입력 도우미" variant="secondary" onPress={onOnline} />
     <Button label="공식 공고 원문" variant="ghost" onPress={() => void Linking.openURL(preparation.form.sourceUrl).catch(() => setError('공식 공고 원문을 열지 못했어요.'))} />

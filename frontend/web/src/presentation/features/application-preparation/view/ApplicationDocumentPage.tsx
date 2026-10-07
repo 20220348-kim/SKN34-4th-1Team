@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router'
 import { applicationDraftMode, isWritableApplicationAnswer } from '@govbiz/shared/domain/entities/ApplicationDocumentGeneration'
+import { applicationDocumentFileFormat, applicationDocumentFileGroups } from '@govbiz/shared/domain/entities/ApplicationDocumentFiles'
 import { appContainer } from '../../../../app/appContainer'
 import { useAppSelector } from '../../../../app/hooks'
 import type { ApplicationDocument, ApplicationDocumentGenerationJob, ApplicationDocumentMigrationNotice, ApplicationPreparation } from '../../../../domain/entities/ApplicationPreparation'
@@ -44,18 +45,6 @@ export function ApplicationDocumentPage() {
   return <DocumentResults key={`${account.email}:${id}`} id={id} />
 }
 
-const formatLabels: Record<string, string> = {
-  'application/x-hwp': 'HWP',
-  'application/hwp+zip': 'HWPX',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'DOCX',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'XLSX',
-  'application/pdf': 'PDF',
-}
-
-function formatOf(file: ApplicationDocument) {
-  return formatLabels[file.mediaType] ?? file.fileName.split('.').pop()?.toUpperCase() ?? ''
-}
-
 function elapsedLabel(seconds: number) {
   const minutes = Math.floor(seconds / 60)
   return minutes > 0 ? `${minutes}분 ${seconds % 60}초 지남` : `${seconds}초 지남`
@@ -94,17 +83,13 @@ function DocumentResults({ id }: { id: number }) {
   const [migrationMessage, setMigrationMessage] = useState<string | null>(null)
   const [busySince, setBusySince] = useState<number | null>(null)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
-  const [archiving, setArchiving] = useState(false)
   /** 지금 따라가고 있는 생성 작업. 진행 카드가 서버가 기록한 단계를 보여 준다. */
   const [job, setJob] = useState<ApplicationDocumentGenerationJob | null>(null)
   const [toast, setToast] = useState<WorkspaceToastNotice | null>(null)
   const downloadController = useRef<AbortController | null>(null)
   const migrationController = useRef<AbortController | null>(null)
   const back = `${appPaths.applicationPreparations}/${id}`
-  const latestRevision = files.length > 0 ? Math.max(...files.map((file) => file.inputRevision)) : null
-  const latestFiles = files.filter((file) => file.inputRevision === latestRevision)
-  const previousFiles = files.filter((file) => file.inputRevision !== latestRevision)
-  const previousRevisions = [...new Set(previousFiles.map((file) => file.inputRevision))].sort((a, b) => b - a)
+  const { latestRevision, latestFiles, previousFiles, previousRevisions } = applicationDocumentFileGroups(files)
   const latestJob = jobs.find((candidate) => candidate.status === 'SUCCEEDED' && candidate.finishedAt
     && latestFiles.some((file) => candidate.fileIds.includes(file.id)))
   const latestMadeAt = latestJob?.finishedAt ? madeAtLabel(latestJob.finishedAt) : null
@@ -282,23 +267,6 @@ function DocumentResults({ id }: { id: number }) {
     setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
 
-  async function downloadArchive(revision: number) {
-    if (downloadController.current) return
-    const controller = new AbortController()
-    downloadController.current = controller
-    setArchiving(true); setError(null)
-    try {
-      const blob = await useCase.downloadDocumentArchive(id, revision, controller.signal)
-      if (controller.signal.aborted) return
-      saveBlob(blob, `신청 문서_초안_v${revision}.zip`)
-    } catch (caught) {
-      if (!controller.signal.aborted) setError(caught instanceof Error ? caught.message : '전체 내려받기에 실패했습니다.')
-    } finally {
-      if (!controller.signal.aborted) setArchiving(false)
-      if (downloadController.current === controller) downloadController.current = null
-    }
-  }
-
   async function download(file: ApplicationDocument) {
     if (downloadController.current) return
     const controller = new AbortController()
@@ -317,7 +285,7 @@ function DocumentResults({ id }: { id: number }) {
   }
 
   function renderFile(file: ApplicationDocument) {
-    const format = formatOf(file)
+    const format = applicationDocumentFileFormat(file)
     const filled = file.filledAnswerCount
     const unfilled = file.unfilledAnswerCount
     // 기입한 수가 지금 양식의 질문 수보다 크면(입력 위치를 다시 적용하기 전의 파일) 모두 기입한 것으로 봅니다.
@@ -330,8 +298,8 @@ function DocumentResults({ id }: { id: number }) {
           <span className={d.fileMeta}>{format} · {Math.ceil(file.size / 1024)} KB</span>
         </div>
         <div className={d.fileActions}>
-          <button type="button" className={n.secondarySm} disabled={downloading !== null || archiving} onClick={() => { void download(file) }}>
-            {downloading === file.id && <ButtonSpinner />}받기<span className="sr-only">: {file.fileName}</span>
+          <button type="button" className={n.primary} disabled={downloading !== null} onClick={() => { void download(file) }}>
+            {downloading === file.id && <ButtonSpinner />}초안 다운로드<span className="sr-only">: {file.fileName}</span>
           </button>
         </div>
       </div>
@@ -353,19 +321,11 @@ function DocumentResults({ id }: { id: number }) {
     </article>
   }
 
-  // 머리글 오른쪽과 600px 미만 아래 줄이 같은 두 버튼을 씁니다. 파일이 여러 개면 zip으로, 하나면 그 파일을 바로 받습니다.
-  const single = latestFiles.length === 1 ? latestFiles[0] : null
-  const downloadPending = archiving || (single !== null && downloading === single.id)
-  function downloadLatest() {
-    if (single) void download(single)
-    else if (latestRevision !== null) void downloadArchive(latestRevision)
-  }
   const regenerate = () => { if (preparation) generate(preparation.inputRevision) }
   const draftMode = applicationDraftMode(preparation?.form.sections.flatMap(section => section.fields.map(field => ({
     field, value: section.facts.find(fact => fact.fieldKey === field.key && fact.status === 'PROVIDED')?.value,
   }))) ?? [])
   const changedBadge = canRegenerate ? <span className={d.changedBadge}>답변이 바뀜</span> : null
-  const downloadLabel = single ? '내려받기' : '전체 내려받기'
 
   // 저장된 문서를 읽는 동안(아직 보여 줄 문서가 없을 때) 300ms가 넘으면 문구 대신 파일 카드 자리를 그립니다.
   const checking = busy && !job
@@ -378,9 +338,6 @@ function DocumentResults({ id }: { id: number }) {
     : files.length > 0 ? <>
       {changedBadge && <span className={d.headerOnly}>{changedBadge}</span>}
       <button type="button" className={`${workspacePageStyles.secondaryButton} ${d.headerOnly}`} disabled={!canRegenerate} onClick={regenerate}>다시 만들기</button>
-      <button type="button" className={`${workspacePageStyles.primaryButton} ${d.headerOnly}`} disabled={downloading !== null || archiving} onClick={downloadLatest}>
-        {downloadPending && <ButtonSpinner />}{downloadLabel}
-      </button>
     </> : undefined
 
   return <>
@@ -482,13 +439,10 @@ function DocumentResults({ id }: { id: number }) {
 
         {files.length > 0 && <p className={d.note}>한 원본 파일에 신청서가 여러 개 있으면 한 파일로 드려요. 내려받은 문서의 기입 위치와 줄바꿈을 확인한 뒤 제출해 주세요.</p>}
 
-        {files.length > 0 && <div className={d.mobileBar}>
+        {canRegenerate && <div className={d.mobileBar}>
           {changedBadge && <span className="self-start">{changedBadge}</span>}
           <div className={d.mobileButtons}>
             <button type="button" className={e.prevButton} disabled={!canRegenerate} onClick={regenerate}>다시 만들기</button>
-            <button type="button" className={e.nextButton} disabled={downloading !== null || archiving} onClick={downloadLatest}>
-              {downloadPending && <ButtonSpinner />}{downloadLabel}
-            </button>
           </div>
         </div>}
       </div>

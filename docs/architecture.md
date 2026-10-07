@@ -33,6 +33,7 @@ API 경계에서 shared DTO 검증·Mapper를 사용하고, 등록 결과의 공
 저장 성공·취소 후 앱 상세로 복귀하며 공개 HTTP·DB 계약은 변경하지 않습니다.
 관심 공고 선택 시트는 기존 관심 공고 API를 사용하며, 접수 상태와 서울 기준 마감일은 작성 시 다시 확인합니다.
 기존 웹의 domain/model 파일은 공통 구현을 재수출하므로 두 구현이 따로 변경되지 않습니다.
+신청 문서 결과의 최신 생성 답변 버전 분류와 파일 형식 표시는 shared `ApplicationDocumentFiles`가 담당합니다. 웹·앱 모두 각 파일 카드의 `초안 다운로드` 하나로 선택한 파일을 원래 형식·파일명 그대로 받고 이전 버전은 접어 둡니다. 화면에 상단·하단 통합 다운로드나 ZIP 묶음 동작을 중복 제공하지 않습니다. 웹은 기존 인증 binary API와 브라우저 다운로드를 사용합니다. 모바일은 `화면 → mobile api/applicationPreparation의 링크 발급·DTO 검증 → Bearer POST → ApplicationDocumentController → ApplicationDocumentDownloadLinkService → 파일 Repository·Redis`로 2분 파일 전용 링크를 받고, 시스템 브라우저 GET에서 계정 Repository·파일 Repository로 현재 소유권을 다시 확인한 attachment를 내려받습니다. 상대 경로·식별자 검증과 URL 변환은 모바일 HTTP 경계, 공개 응답 경로 구성은 Core controller/dto가 소유합니다. TXT 공유의 기기 임시 파일·공유 화면은 모바일에 남깁니다.
 모바일 기업·관심 공고·가입 이메일 인증의 HTTP 호출·응답 검증·DTO 변환은 `src/api` 경계가 담당하며 화면은 내부 모델을 받습니다. 문서의 실제 기입 가능 답변 판단은 shared `isWritableApplicationAnswer`를, 원본 저장·답변 기입·수동 작성 안내는 `applicationDraftMode`를 웹·앱에서 재사용합니다. 필수 답변 일부가 비어 있어도 저장된 답변으로 초안을 만들고, 전부 비어 있거나 미정이면 기존 Core 생성 규칙에 따라 AI 호출 없이 공식 원본을 저장합니다. 실제 수동 작성 답변만 있는 경우는 원본 반환으로 숨기지 않고 기존 서버 오류를 표시합니다.
 모바일 공고 상세는 `ProgramScreen → readProgramDetail → shared 공고 HTTP Client → Core`로 읽고 모바일 API 경계에서 shared Mapper로 내부 모델을 만듭니다.
 원문 질문 예시는 입력만 채우고 명시적인 질문 전송에만 기존 answers API를 호출합니다. 답변 이력은 공고·계정별 화면 상태이며 서버에 새 대화 저장 계약을 추가하지 않습니다.
@@ -234,7 +235,7 @@ V33의 생성기 버전으로 이전 결과와 구분하여 같은 답변 revisi
 생성기 5는 HWP 선택 컨트롤의 정확한 값 매칭을 Core에서 처리하고 나머지 답변 위치를 AI에 요청합니다. 체크 그룹 갱신·밑줄 빈칸 치환·HWP 줄 배치 재계산 뒤 저장합니다. 미정 답변은 기입 대상에서 제외하고 Frontend가 누락 항목을 표시합니다. 표가 있는 HWP 섹션의 표 밖 빈 문단은 위치 후보에서 제외하고, 예시 삭제 후 빈 문단이 되는 경우도 기입 단계에서 거절합니다. 이전 생성기 결과는 재사용하지 않습니다. 전체 페이지 조판과 실제 양식의 의미적 배치 품질은 자동 테스트와 별도로 검수해야 합니다.
 외부 호출은 DB transaction 밖에서 실행하고 저장 시 입력 revision을 잠금으로 재확인합니다.
 같은 revision의 저장 파일은 재사용하며, 현재 프로세스에서 같은 준비 건의 동시 생성은 거절합니다.
-Frontend는 입력 화면과 `/:preparationId/documents` 결과 화면을 분리합니다. 원본 파일 단위로 다운로드하고 현재 버전 파일이 여럿이면 `documents/archive?revision=`으로 zip을 받으며, 결과를 확인하지 못한 생성의 Redis 잠금은 영구가 아니라 `app.application-document.unknown-outcome-lock-ttl`(기본 24시간) 뒤 풀립니다.
+Frontend는 입력 화면과 `/:preparationId/documents` 결과 화면을 분리합니다. 파일마다 `초안 다운로드`로 원래 형식의 파일을 받고 이전 답변 버전의 파일은 접어 둡니다. archive API는 유지하지만 현재 결과 화면에서는 호출하지 않습니다. 모바일 브라우저 링크는 기존 Redis에 해시 키·파일 식별자·2분 만료만 보관하며 로그인 JWT를 URL로 전달하지 않습니다. HEAD·재시도를 허용하고 만료·삭제·계정 정지는 명시적인 410 오류로 처리합니다. 결과를 확인하지 못한 생성의 Redis 잠금은 영구가 아니라 `app.application-document.unknown-outcome-lock-ttl`(기본 24시간) 뒤 풀립니다.
 내려받은 파일에서 수정하거나 이전 입력 화면에서 답변을 수정·저장한 뒤 다시 생성합니다.
 V31의 문항별 텍스트 작성본 API·기록은 남아 있으나 현재 UI는 호출하지 않습니다.
 

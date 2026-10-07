@@ -1,5 +1,5 @@
 import { ApiError, createApiFetch } from './client'
-import { applicationPreparationUseCase, discardDeletedPendingPreparation, parsePreparationId } from './applicationPreparation'
+import { applicationPreparationUseCase, discardDeletedPendingPreparation, parsePreparationId, prepareApplicationDocumentDownload } from './applicationPreparation'
 import { clearPendingPreparationIfUnchanged } from '../auth/preparationPending'
 import { documentPreparation, documentForm, documentFile, documentJob } from '../test/applicationDocumentFixtures'
 import { ApplicationPreparationError } from '@govbiz/shared/domain/errors/ApplicationPreparationError'
@@ -8,6 +8,43 @@ jest.mock('./client', () => ({ ...jest.requireActual('./client'), getApiBaseUrl:
 jest.mock('../auth/preparationPending', () => ({ clearPendingPreparationIfUnchanged: jest.fn() }))
 const fetchApi = jest.fn()
 const response = (data: unknown, status = 200) => ({ ok: status >= 200 && status < 300, status, json: async () => data }) as Response
+
+const downloadPath = `/api/v1/application-preparations/9/documents/11/download?ticket=${'a'.repeat(43)}`
+const downloadLink = { preparationId: 9, fileId: 11, downloadPath, expiresAt: '2026-10-07T12:02:00+09:00' }
+
+test('browser download authenticates only link creation and returns the exact API file URL', async () => {
+  fetchApi.mockResolvedValue(response(downloadLink))
+  await expect(prepareApplicationDocumentDownload('owned-session', 9, 11)).resolves.toBe(`https://api.example.test${downloadPath}`)
+  expect(createApiFetch).toHaveBeenCalledWith('owned-session')
+  expect(fetchApi).toHaveBeenCalledTimes(1)
+  expect(fetchApi).toHaveBeenCalledWith('https://api.example.test/api/v1/application-preparations/9/documents/11/download-link',
+    expect.objectContaining({ method: 'POST', cache: 'no-store', headers: { Accept: 'application/json' } }))
+})
+
+test.each([
+  { preparationId: 8 }, { fileId: 12 }, { expiresAt: 'invalid' },
+  { downloadPath: `https://evil.test${downloadPath}` }, { downloadPath: `https://api.example.test${downloadPath}` },
+  { downloadPath: downloadPath.replace('/11/', '/12/') }, { downloadPath: `${downloadPath}&accessToken=session` },
+  { downloadPath: downloadPath.replace('a'.repeat(43), 'login.jwt.token') }, { downloadPath: '//evil.test/file' },
+])('browser download rejects an invalid, foreign or mismatched response: %j', async invalid => {
+  fetchApi.mockResolvedValue(response({ ...downloadLink, ...invalid }))
+  await expect(prepareApplicationDocumentDownload('owned', 9, 11)).rejects.toMatchObject({ status: 502, code: 'INVALID_RESPONSE' })
+})
+
+test('browser download exposes backend failures and refuses a late link after cancellation', async () => {
+  fetchApi.mockResolvedValue(response({ code: 'APPLICATION_PREPARATION_NOT_FOUND' }, 404))
+  await expect(prepareApplicationDocumentDownload('owned', 9, 11)).rejects.toMatchObject({ status: 404, code: 'APPLICATION_PREPARATION_NOT_FOUND' })
+  fetchApi.mockRejectedValue(new ApiError(401, 'expired'))
+  await expect(prepareApplicationDocumentDownload('expired', 9, 11)).rejects.toMatchObject({ status: 401 })
+  let finish!: (value: Response) => void
+  fetchApi.mockReturnValue(new Promise<Response>(resolve => { finish = resolve }))
+  const controller = new AbortController()
+  const pending = prepareApplicationDocumentDownload('owned', 9, 11, controller.signal)
+  controller.abort(); finish(response(downloadLink))
+  await expect(pending).rejects.toThrow('취소')
+  const innerSignal = fetchApi.mock.calls[2][1].signal as AbortSignal
+  expect(innerSignal.aborted).toBe(true)
+})
 
 test('keeps an active document job deletion conflict as an error without retrying', async () => {
   fetchApi.mockResolvedValue(response({ code: 'APPLICATION_PREPARATION_RUN_CONFLICT' }, 409))

@@ -16,6 +16,24 @@ import { clearPendingPreparationIfUnchanged, type PendingPreparationRequest } fr
 
 const base = '/api/v1/application-preparations'
 
+const documentDownloadLinkSchema = z.object({
+  preparationId: z.number().int().positive(), fileId: z.number().int().positive(),
+  downloadPath: z.string(), expiresAt: z.string().datetime({ offset: true }),
+})
+
+/** HTTP 응답에서 선택한 파일의 같은 API 주소만 브라우저에 전달한다. */
+export async function prepareApplicationDocumentDownload(token: string, id: number, fileId: number, signal?: AbortSignal): Promise<string> {
+  const result = await applicationRequest(token, `/${id}/documents/${fileId}/download-link`, documentDownloadLinkSchema, 'POST', undefined, signal)
+  const path = `${base}/${id}/documents/${fileId}/download?ticket=`
+  if (result.preparationId !== id || result.fileId !== fileId || !result.downloadPath.startsWith(path) ||
+    !/^[A-Za-z0-9_-]{43}$/.test(result.downloadPath.slice(path.length))) throw new ApplicationPreparationError(502, 'INVALID_RESPONSE')
+  if (signal?.aborted) throw new Error('다운로드 요청이 취소되었습니다.')
+  const api = new URL(getApiBaseUrl())
+  const url = new URL(result.downloadPath, api)
+  if (url.origin !== api.origin) throw new ApplicationPreparationError(502, 'INVALID_RESPONSE')
+  return url.toString()
+}
+
 export async function applicationRequest<T>(token: string, path: string, schema: z.ZodType<T>, method: 'GET' | 'POST' | 'PUT' | 'DELETE' = 'GET', body?: unknown, signal?: AbortSignal): Promise<T> {
   const controller = new AbortController()
   const abort = () => controller.abort()

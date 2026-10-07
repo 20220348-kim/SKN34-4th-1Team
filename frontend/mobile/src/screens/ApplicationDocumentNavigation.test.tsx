@@ -1,9 +1,9 @@
 import { act, fireEvent, waitFor } from '@testing-library/react-native'
 import { useState } from 'react'
-import { Text } from 'react-native'
+import { Linking, Text } from 'react-native'
 import { Stack, router } from 'expo-router'
 import { renderRouter, screen } from 'expo-router/testing-library'
-import { applicationPreparationUseCase } from '../api/applicationPreparation'
+import { applicationPreparationUseCase, prepareApplicationDocumentDownload } from '../api/applicationPreparation'
 import { ApplicationPreparationError } from '@govbiz/shared/domain/errors/ApplicationPreparationError'
 import { shareApplicationFile, type ApplicationFileResult } from '../api/applicationDocumentFiles'
 import { useAuth } from '../auth/session'
@@ -13,7 +13,7 @@ import { ApplicationOnlineInputScreen } from './ApplicationOnlineInputScreen'
 import { ApplicationPreparationEditorScreen } from './ApplicationPreparationEditorScreen'
 import { documentFile, documentForm, documentJob, documentPreparation } from '../test/applicationDocumentFixtures'
 
-jest.mock('../api/applicationPreparation', () => ({ applicationPreparationUseCase: jest.fn() }))
+jest.mock('../api/applicationPreparation', () => ({ applicationPreparationUseCase: jest.fn(), prepareApplicationDocumentDownload: jest.fn() }))
 jest.mock('../api/applicationDocumentFiles', () => ({ shareApplicationFile: jest.fn() }))
 jest.mock('../auth/session', () => ({ useAuth: jest.fn() }))
 jest.mock('expo-crypto', () => ({ randomUUID: () => '11111111-1111-4111-8111-111111111111' }))
@@ -50,7 +50,7 @@ function savedPreparation(name: string) {
       value: fact.fieldKey === 'name' ? name : fact.value, sourceText: fact.fieldKey === 'name' ? name : fact.sourceText,
     })) })) } }
 }
-const blob = () => new Blob(['data'], { type: 'application/hwp+zip' })
+const browserUrl = `https://api.example.test/api/v1/application-preparations/9/documents/11/download?ticket=${'a'.repeat(43)}`
 beforeEach(() => {
   process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.example.test'
   Object.values(api).forEach(fn => fn.mockReset())
@@ -60,50 +60,55 @@ beforeEach(() => {
   jest.mocked(clearPendingPreparation).mockReset().mockResolvedValue(undefined)
   api.submitDocumentJob.mockResolvedValue(documentJob)
   jest.mocked(shareApplicationFile).mockReset().mockResolvedValue({ status: 'shareClosed' })
+  jest.mocked(prepareApplicationDocumentDownload).mockReset().mockResolvedValue(browserUrl)
+  jest.spyOn(Linking, 'openURL').mockResolvedValue(undefined)
   jest.mocked(applicationPreparationUseCase).mockReturnValue(api as unknown as ReturnType<typeof applicationPreparationUseCase>)
   jest.mocked(useAuth).mockReturnValue({ status: 'signedIn', session: { accessToken: 'owned', account: { email: 'owner@test.com' } },
     invalidateSession: jest.fn() } as unknown as ReturnType<typeof useAuth>)
   api.get.mockResolvedValue(documentPreparation); api.documents.mockResolvedValue([documentFile]); api.documentJobs.mockResolvedValue([documentJob])
-  api.documentJob.mockResolvedValue(documentJob); api.markDocumentJobsSeen.mockResolvedValue(undefined); api.downloadDocument.mockResolvedValue(blob())
+  api.documentJob.mockResolvedValue(documentJob); api.markDocumentJobsSeen.mockResolvedValue(undefined)
   api.onlineInputGuide.mockResolvedValue({ preparationId: 9, inputRevision: 1, totalCount: 1, readyCount: 1, needsReviewCount: 0, missingCount: 0,
     directInputCount: 0, externalMappingVerified: false, officialApplicationUrl: null, items: [], savedAnswers: [{ fieldId: 'company:name', label: '기업명', answer: '테스트 기업' }] })
 })
 afterEach(() => { delete process.env.EXPO_PUBLIC_API_BASE_URL; jest.restoreAllMocks() })
 
-test('Stack navigation aborts a pending download and a late response cannot open sharing after returning', async () => {
-  const download = deferred<Blob>()
-  api.downloadDocument.mockReturnValueOnce(download.promise)
+test('Stack navigation aborts a pending link and a late response cannot launch the browser after returning', async () => {
+  const download = deferred<string>()
+  jest.mocked(prepareApplicationDocumentDownload).mockReturnValueOnce(download.promise)
   renderRouter(routes, { initialUrl: '/documents' })
   await screen.findByText('초안 완료')
-  fireEvent.press(screen.getByLabelText('사업계획서.hwpx 공유'))
-  await waitFor(() => expect(api.downloadDocument).toHaveBeenCalledTimes(1))
-  const signal: AbortSignal = api.downloadDocument.mock.calls[0][2]
+  fireEvent.press(screen.getByLabelText('초안 다운로드: 사업계획서.hwpx'))
+  await waitFor(() => expect(prepareApplicationDocumentDownload).toHaveBeenCalledTimes(1))
+  const signal = jest.mocked(prepareApplicationDocumentDownload).mock.calls[0][3]!
   fireEvent.press(screen.getByLabelText('온라인 신청 입력 도우미'))
   await screen.findByText('온라인 신청을 준비하세요')
   expect(signal.aborted).toBe(true)
   await act(async () => router.back())
   await screen.findByText('초안 완료')
-  await act(async () => download.resolve(blob()))
+  await act(async () => download.resolve(browserUrl))
+  expect(Linking.openURL).not.toHaveBeenCalled()
   expect(shareApplicationFile).not.toHaveBeenCalled()
-  fireEvent.press(screen.getByLabelText('사업계획서.hwpx 공유'))
-  await waitFor(() => expect(shareApplicationFile).toHaveBeenCalledTimes(1))
+  fireEvent.press(screen.getByLabelText('초안 다운로드: 사업계획서.hwpx'))
+  await waitFor(() => expect(Linking.openURL).toHaveBeenCalledTimes(1))
+  expect(shareApplicationFile).not.toHaveBeenCalled()
   expect(api.submitDocumentJob).not.toHaveBeenCalled()
 })
 
-test('leaving during native saving prevents a late saved notice and blocks repeated taps', async () => {
-  const saving = deferred<ApplicationFileResult>()
-  jest.mocked(shareApplicationFile).mockReturnValueOnce(saving.promise)
+test('leaving during browser launch prevents a late notice and blocks repeated taps', async () => {
+  const opening = deferred<void>()
+  jest.mocked(Linking.openURL).mockReturnValueOnce(opening.promise)
   renderRouter(routes, { initialUrl: '/documents' })
   await screen.findByText('초안 완료')
-  const save = screen.getByLabelText('사업계획서.hwpx 기기에 저장')
+  const save = screen.getByLabelText('초안 다운로드: 사업계획서.hwpx')
   fireEvent.press(save); fireEvent.press(save)
-  await waitFor(() => expect(shareApplicationFile).toHaveBeenCalledTimes(1))
-  expect(api.downloadDocument).toHaveBeenCalledTimes(1)
+  await waitFor(() => expect(Linking.openURL).toHaveBeenCalledTimes(1))
+  expect(prepareApplicationDocumentDownload).toHaveBeenCalledTimes(1)
   fireEvent.press(screen.getByLabelText('온라인 신청 입력 도우미'))
   await screen.findByText('온라인 신청을 준비하세요')
-  await act(async () => { saving.resolve({ status: 'saved', fileName: '사업계획서.hwpx', renamed: false }); router.back() })
+  await act(async () => { opening.resolve(); router.back() })
   await screen.findByText('초안 완료')
   expect(screen.queryByText(/파일을 저장했어요/)).toBeNull()
+  expect(screen.queryByText(/다운로드를 브라우저에서 열었어요/)).toBeNull()
   expect(api.submitDocumentJob).not.toHaveBeenCalled()
 })
 

@@ -2,6 +2,8 @@ package ai.govbiz.core.applicationpreparation.controller
 
 import ai.govbiz.core.account.domain.Account
 import ai.govbiz.core.applicationpreparation.service.ApplicationDocumentService
+import ai.govbiz.core.applicationpreparation.service.ApplicationDocumentDownloadLinkService
+import ai.govbiz.core.applicationpreparation.controller.dto.ApplicationDocumentDownloadLinkResponse
 import ai.govbiz.core.applicationpreparation.domain.ApplicationDocumentFile
 import ai.govbiz.core.applicationpreparation.controller.dto.ApplicationDocumentResponse
 import ai.govbiz.core.applicationpreparation.controller.dto.ApplicationDocumentUnfilledAnswerResponse
@@ -20,7 +22,10 @@ import java.nio.charset.StandardCharsets
 
 @RestController
 @RequestMapping("/api/v1/application-preparations/{id}/documents")
-class ApplicationDocumentController(private val service: ApplicationDocumentService) {
+class ApplicationDocumentController(
+    private val service: ApplicationDocumentService,
+    private val downloadLinks: ApplicationDocumentDownloadLinkService,
+) {
     @GetMapping
     fun list(account: Account, @PathVariable @Min(1) id: Long) = response(service.current(account, id))
 
@@ -37,9 +42,21 @@ class ApplicationDocumentController(private val service: ApplicationDocumentServ
                     inputRevision = it.inputRevision, formVersionId = it.formVersionId)
             })
 
-    @GetMapping("/{fileId}/download")
+    @PostMapping("/{fileId}/download-link")
+    fun downloadLink(account: Account, @PathVariable @Min(1) id: Long, @PathVariable @Min(1) fileId: Long) =
+        ResponseEntity.ok().cacheControl(CacheControl.noStore())
+            .body(ApplicationDocumentDownloadLinkResponse.from(downloadLinks.create(account, id, fileId)))
+
+    @GetMapping(value = ["/{fileId}/download"], params = ["!ticket"])
     fun download(account: Account, @PathVariable @Min(1) id: Long, @PathVariable @Min(1) fileId: Long): ResponseEntity<ByteArray> {
         val file = service.download(account, id, fileId)
+        return attachment(file.fileName, file.mediaType, file.bytes)
+    }
+
+    @GetMapping(value = ["/{fileId}/download"], params = ["ticket"])
+    fun browserDownload(@PathVariable @Min(1) id: Long, @PathVariable @Min(1) fileId: Long,
+                        @RequestParam ticket: String): ResponseEntity<ByteArray> {
+        val file = downloadLinks.download(id, fileId, ticket)
         return attachment(file.fileName, file.mediaType, file.bytes)
     }
 
@@ -55,7 +72,7 @@ class ApplicationDocumentController(private val service: ApplicationDocumentServ
         ResponseEntity.ok().cacheControl(CacheControl.noStore())
             .contentType(MediaType.parseMediaType(mediaType)).contentLength(bytes.size.toLong())
             .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment().filename(fileName, StandardCharsets.UTF_8).build().toString())
-            .header("X-Content-Type-Options", "nosniff").body(bytes)
+            .header("X-Content-Type-Options", "nosniff").header("Referrer-Policy", "no-referrer").body(bytes)
 
     private fun response(files: List<ApplicationDocumentFile>) = ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(files.map {
         ApplicationDocumentResponse(it.id, it.inputRevision, it.fileName, it.mediaType, it.bytes.size,
