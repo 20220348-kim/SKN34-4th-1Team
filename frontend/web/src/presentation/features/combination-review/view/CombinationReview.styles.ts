@@ -75,6 +75,8 @@ export const reviewStyles = {
   // 근거 원문의 강조 낱말과 접힘 · 끊김 안내
   evidenceMark: 'rounded-sm bg-warning-soft px-0.5 font-bold text-warning',
   evidenceNote: 'text-xs leading-6 text-ink-muted',
+  // [앞뒤 원문 보기]에서 인용한 줄 묶음입니다. 왼쪽 막대와 옅은 바탕으로 앞뒤 원문과 구분하고, 글 위치는 다른 줄과 맞춥니다.
+  evidenceQuoted: '-mx-1.5 space-y-0.5 rounded-md bg-brand-soft px-1.5 py-0.5 shadow-[inset_2px_0_0_var(--color-brand-primary)]',
   textLink: `inline-flex items-center gap-1 text-xs font-bold text-brand-primary no-underline hover:underline disabled:cursor-not-allowed disabled:opacity-50 ${focus}`,
   // 불러오는 중 (신청 문서 작성 화면과 같은 막대)
   skeletonBar: 'block rounded-md bg-surface-muted motion-safe:animate-pulse',

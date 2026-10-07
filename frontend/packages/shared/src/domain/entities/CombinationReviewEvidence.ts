@@ -273,11 +273,50 @@ export function isApplicationFormText(text: string): boolean {
   return formSignals.filter((signal) => signal.test(text)).length >= 3
 }
 
-/** 인용이 저장된 원문 조각의 앞이나 뒤를 잘라 냈는지 알려 줍니다. 원문 조각에서 찾지 못하면 잘리지 않은 것으로 봅니다. */
+// 인용 경계에서 공백 · 탭만 건너뛰면 줄바꿈(\r\n 포함)이나 글 끝에 닿는지 봅니다.
+const lineBoundaryBefore = /(?:^|[\r\n])[ \t]*$/
+const lineBoundaryAfter = /^[ \t]*(?:[\r\n]|$)/
+
+/**
+ * 인용이 원문 조각의 줄 중간에서 시작하거나 끝나는지 알려 줍니다. 앞(뒤)에 다른 글이 있고, 인용 경계에서 공백 · 탭만 건너뛰어
+ * 줄바꿈에 닿지 않을 때만 잘린 것으로 봅니다. 글머리 항목처럼 온전한 줄 단위 인용은 잘리지 않았고, 예전 800자 창처럼 줄 중간에서
+ * 끊은 인용은 잘렸습니다. 원문 조각에서 찾지 못하면 잘리지 않은 것으로 봅니다.
+ */
 export function evidenceQuoteCut(blockText: string, quote: string): { start: boolean; end: boolean } {
   const index = blockText.indexOf(quote)
   if (index < 0) return { start: false, end: false }
-  return { start: blockText.slice(0, index).trim() !== '', end: blockText.slice(index + quote.length).trim() !== '' }
+  const before = blockText.slice(0, index)
+  const after = blockText.slice(index + quote.length)
+  return {
+    start: before.trim() !== '' && !lineBoundaryBefore.test(before) && !lineBoundaryAfter.test(quote),
+    end: after.trim() !== '' && !lineBoundaryAfter.test(after) && !lineBoundaryBefore.test(quote),
+  }
+}
+
+/** 원문 조각에 인용 밖의 글(앞뒤 줄)이 더 있는지 알려 줍니다. 잘리지 않은 인용도 앞뒤 원문을 펼쳐 볼 수 있게 합니다. */
+export function evidenceHasContext(blockText: string, quote: string): boolean {
+  const index = blockText.indexOf(quote)
+  return index >= 0 && (blockText.slice(0, index).trim() !== '' || blockText.slice(index + quote.length).trim() !== '')
+}
+
+/**
+ * 원문 조각 전체를 정리한 줄 가운데 인용에 해당하는 줄 범위입니다(end는 빼고). 글머리와 글자를 공백 없이 견줘 인용 줄과 차례대로
+ * 맞는 줄이 가장 길게 이어진 곳을 고르므로, 같은 줄이 조각의 다른 자리에 있어도 인용 밖은 표시하지 않습니다. 맞는 줄이 없으면 null입니다.
+ */
+export function evidenceQuoteRange(blockLines: readonly EvidenceLine[], quoteLines: readonly EvidenceLine[]): { start: number; end: number } | null {
+  const key = (line: EvidenceLine) => `${line.marker}${line.text}`.replace(/\s+/g, '')
+  const quoteKeys = quoteLines.map(key)
+  let best: { start: number; end: number } | null = null
+  for (let start = 0; start < blockLines.length; start += 1) {
+    let end = start
+    for (let next = 0; end < blockLines.length; end += 1) {
+      const found = quoteKeys.indexOf(key(blockLines[end]!), next)
+      if (found < 0) break
+      next = found + 1
+    }
+    if (end > start && (!best || end - start > best.end - best.start)) best = { start, end }
+  }
+  return best
 }
 
 /** Core 원문 추출기의 위치 표기(PDF page 3 part 1 등)를 사용자 말로 바꿉니다. 모르는 표기는 그대로 둡니다. */

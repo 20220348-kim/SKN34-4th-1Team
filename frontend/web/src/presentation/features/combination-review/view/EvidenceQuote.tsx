@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import {
-  evidenceFormatOf, evidenceLocatorLabel, evidencePreview, evidenceQuoteCut, formatEvidenceText, isApplicationFormText, splitEvidenceKeywords,
-  type EvidenceLine, type EvidencePreviewEntry,
+  evidenceFormatOf, evidenceHasContext, evidenceLocatorLabel, evidencePreview, evidenceQuoteCut, evidenceQuoteRange, formatEvidenceText, isApplicationFormText,
+  splitEvidenceKeywords, type EvidenceLine,
 } from '@govbiz/shared/domain/entities/CombinationReviewEvidence'
 import { reviewStageLabels, type ReviewStage } from '@govbiz/shared/domain/entities/CombinationReviewResult'
 import type { ReviewRun } from '../../../../domain/entities/CombinationReview'
@@ -17,7 +17,9 @@ function shortFileName(name: string): string {
 
 /**
  * 근거 원문 하나입니다. 저장된 인용문을 shared 규칙으로 정리해, 중복 · 제한 낱말이 든 줄과 앞뒤 한 줄만 먼저 보여 줍니다.
- * [전체 보기]는 정리한 전체(인용이 원문 조각을 잘랐으면 그 조각 전체)를, [원문 그대로]는 저장된 인용을 줄바꿈까지 그대로 보여 줍니다.
+ * 인용이 줄 중간에서 잘렸으면 생략 표시와 [이 부분 전체 보기](원문 조각 전체)를, 온전한 줄 단위 인용인데 조각에 앞뒤 줄이 더 있으면
+ * [앞뒤 원문 보기](조각 전체, 인용한 줄은 표시)를, 그 밖에는 접힌 줄이 있을 때 [전체 n줄 보기]를 둡니다.
+ * [원문 그대로]는 저장된 인용을 줄바꿈까지 그대로 보여 줍니다.
  */
 export function EvidenceQuote({ id, number, run, citation, alsoIn, download, downloading }: {
   id: string; number: number; run: ReviewRun; citation: Citation; alsoIn: readonly ReviewStage[]; download: (index: number) => void; downloading: boolean
@@ -32,10 +34,15 @@ export function EvidenceQuote({ id, number, run, citation, alsoIn, download, dow
   const preview = evidencePreview(lines)
   const cut = block ? evidenceQuoteCut(block.text, citation.quote) : { start: false, end: false }
   const cutAny = cut.start || cut.end
-  const canExpand = cutAny || preview.some((entry) => entry.type === 'gap')
-  const shown: EvidencePreviewEntry[] = view === 'full'
-    ? (cutAny && block ? formatEvidenceText(block.text, format) : lines).map((line) => ({ type: 'line', line }))
-    : preview
+  // 잘리지 않은 줄 단위 인용도 원문 조각에 앞뒤 줄이 더 있으면 조각 전체를 펼쳐 볼 수 있습니다.
+  const hasContext = !cutAny && block !== undefined && evidenceHasContext(block.text, citation.quote)
+  const showsBlock = cutAny || hasContext
+  const canExpand = showsBlock || preview.some((entry) => entry.type === 'gap')
+  const expandLabel = cutAny ? '이 부분 전체 보기 ▾' : hasContext ? '앞뒤 원문 보기 ▾' : `전체 ${lines.length}줄 보기 ▾`
+  // 펼친 보기는 원문 조각 전체(앞뒤 원문이면 인용한 줄을 따로 표시) 또는 인용 전체를 정리한 줄입니다.
+  const full = view === 'full' && showsBlock && block ? formatEvidenceText(block.text, format) : lines
+  const quoted = view === 'full' && hasContext ? evidenceQuoteRange(full, lines) : null
+  const fullLines = (from: number, to?: number) => full.slice(from, to).map((line, index) => <EvidenceLineView key={from + index} line={line} />)
   const bodyId = `${id}-text`
   const source = [`사업 ${(block?.programIndex ?? 0) + 1}`, ...(document ? [shortFileName(document.fileName)] : []), ...(locator ? [locator] : [])].join(' · ')
   const tags = [
@@ -50,17 +57,25 @@ export function EvidenceQuote({ id, number, run, citation, alsoIn, download, dow
     {tags.length > 0 && <div className="flex flex-wrap gap-1">{tags.map((tag) => <span key={tag} className={`${s.badge} ${s.badgeNeutral}`}>{tag}</span>)}</div>}
     <blockquote id={bodyId} className="m-0 space-y-0.5 border-l-[3px] border-brand-primary/30 pl-2.5">
       {view === 'raw' ? <p className="text-[0.8125rem] leading-6 whitespace-pre-wrap [overflow-wrap:anywhere]">{citation.quote}</p> : <>
-        {view === 'full' && cutAny && <p className={s.evidenceNote}>인용 앞뒤를 포함한 {locator || '원문 조각'} 전체예요.</p>}
+        {view === 'full' && showsBlock && <p className={s.evidenceNote}>인용 앞뒤를 포함한 {locator || '원문 조각'} 전체예요.</p>}
         {view === 'preview' && cut.start && <p className={s.evidenceNote}>… 앞 내용 생략</p>}
-        {shown.map((entry, index) => entry.type === 'gap'
-          ? <p key={index} className={`${s.evidenceNote} pl-6`}>⋯ {entry.count}줄 접힘</p>
-          : <EvidenceLineView key={index} line={entry.line} />)}
+        {view === 'full'
+          ? quoted
+            ? <>
+              {fullLines(0, quoted.start)}
+              <div role="group" aria-label="인용한 부분" className={s.evidenceQuoted}>{fullLines(quoted.start, quoted.end)}</div>
+              {fullLines(quoted.end)}
+            </>
+            : fullLines(0)
+          : preview.map((entry, index) => entry.type === 'gap'
+            ? <p key={index} className={`${s.evidenceNote} pl-6`}>⋯ {entry.count}줄 접힘</p>
+            : <EvidenceLineView key={index} line={entry.line} />)}
         {view === 'preview' && cut.end && <p className={s.evidenceNote}>뒤로 이어짐 …</p>}
       </>}
     </blockquote>
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
       {canExpand && view !== 'raw' && <button type="button" className={s.textLink} aria-expanded={view === 'full'} aria-controls={bodyId} onClick={() => setView(view === 'full' ? 'preview' : 'full')}>
-        {view === 'full' ? '간단히 보기 ▴' : cutAny ? '이 부분 전체 보기 ▾' : `전체 ${lines.length}줄 보기 ▾`}
+        {view === 'full' ? '간단히 보기 ▴' : expandLabel}
       </button>}
       <button type="button" className={s.textLink} aria-pressed={view === 'raw'} aria-controls={bodyId} onClick={() => setView(view === 'raw' ? 'preview' : 'raw')}>원문 그대로</button>
       <span className="ml-auto flex flex-wrap gap-4">

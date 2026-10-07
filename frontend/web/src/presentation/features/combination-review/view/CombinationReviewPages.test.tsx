@@ -889,7 +889,8 @@ describe('review screens and execution safety', () => {
       '▪ 신청 사업의 내용이 타 정부지원 사업 등을 통해 지원받은 내용과 ', '유사·중복되는 경우', '\uf06d 세금계산서 발생이 제한되는 간이사업자',
       '- 4 -', '정책매장운영팀 1230013 2026/08/31-10:27:41', '□ 모집대상', '◦ 인천국제공항 출국장 정책면세점에 신규 입점을 희망하는 기업', '□ 선정규모', '◦ 5대 품목 비중별 고득점 순으로 선정',
     ].join('\n')
-    run.evidence!.blocks[0] = { ...run.evidence!.blocks[0]!, locator: 'PDF page 3 part 1', text: `${quote}\n◦ 지원기간은 거래계약일로부터 1년` }
+    // 예전 800자 창처럼 인용이 원문 조각의 마지막 줄 중간(" 후 개별 통보" 앞)에서 끊긴 경우입니다.
+    run.evidence!.blocks[0] = { ...run.evidence!.blocks[0]!, locator: 'PDF page 3 part 1', text: `${quote} 후 개별 통보\n◦ 지원기간은 거래계약일로부터 1년` }
     run.analysis!.pairs[0].stages[0].citations = [{ evidenceId: 'E0', quote }]
     run.analysis!.pairs[0].stages[4].citations = [{ evidenceId: 'E0', quote }]
     repository.run.mockResolvedValue(run)
@@ -907,20 +908,55 @@ describe('review screens and execution safety', () => {
     expect(within(application).getByText('⋯ 4줄 접힘')).toBeTruthy()
     expect(within(application).queryByText(/고득점 순으로 선정/)).toBeNull()
     expect(within(application).getByText('뒤로 이어짐 …')).toBeTruthy()
-    // 인용이 원문 조각 앞부분만 가져왔으므로 [이 부분 전체 보기]는 조각 전체를 정리해 보여 준다.
+    // 인용이 원문 조각을 줄 중간에서 잘랐으므로 [이 부분 전체 보기]는 조각 전체를 정리해 보여 준다.
     const expand = within(application).getByRole('button', { name: '이 부분 전체 보기 ▾' })
     fireEvent.click(expand)
     expect(expand.getAttribute('aria-expanded')).toBe('true')
     expect(expand.textContent).toBe('간단히 보기 ▴')
     expect(within(application).getByText('인용 앞뒤를 포함한 3쪽 전체예요.')).toBeTruthy()
-    expect(within(application).getByText(/고득점 순으로 선정/)).toBeTruthy()
+    expect(within(application).getByText('5대 품목 비중별 고득점 순으로 선정 후 개별 통보')).toBeTruthy()
     expect(within(application).getByText(/지원기간은 거래계약일로부터 1년/)).toBeTruthy()
+    expect(within(application).queryByRole('group', { name: '인용한 부분' })).toBeNull()
     // [원문 그대로]는 저장된 인용을 글자 그대로 보여 준다.
     const raw = within(application).getByRole('button', { name: '원문 그대로' })
     fireEvent.click(raw)
     expect(raw.getAttribute('aria-pressed')).toBe('true')
     expect(document.getElementById(raw.getAttribute('aria-controls')!)!.textContent).toBe(quote)
     expect(repository.start).not.toHaveBeenCalled()
+  })
+  it('does not mark an item quote of whole lines as cut and opens the surrounding source with the quoted lines marked', async () => {
+    const run = structuredClone(runFixture)
+    // 원문 조각 안의 글머리 항목 두 줄을 줄 단위로 그대로 인용한 경우입니다. 조각에는 앞뒤 줄이 더 있습니다.
+    const quote = ['◦ 타 정부지원 사업 등을 통해 지원받은 내용과 유사·중복되는 경우', '◦ 국세 체납 중인 기업'].join('\n')
+    run.evidence!.blocks[0] = { ...run.evidence!.blocks[0]!, locator: 'PDF page 3 part 1', text: ['□ 신청 자격', '◦ 공고일 기준 창업 7년 이내 기업', quote, '□ 신청방법', '◦ 이메일 접수'].join('\n') }
+    run.analysis!.pairs[0].stages[0].citations = [{ evidenceId: 'E0', quote }]
+    repository.run.mockResolvedValue(run)
+    mount('/app/combination-reviews/12/runs/30')
+    const application = await screen.findByRole('article', { name: '신청 단계 판단' })
+    fireEvent.click(stageToggle(application))
+    fireEvent.click(within(application).getByRole('button', { name: /근거 원문 1개/ }))
+    // 잘리지 않았으므로 생략 표시가 없고 접힌 줄도 없지만, [앞뒤 원문 보기]로 조각의 앞뒤 줄을 볼 수 있다.
+    expect(within(application).getByText('국세 체납 중인 기업')).toBeTruthy()
+    expect(within(application).queryByText('… 앞 내용 생략')).toBeNull()
+    expect(within(application).queryByText('뒤로 이어짐 …')).toBeNull()
+    expect(within(application).queryByText(/줄 접힘/)).toBeNull()
+    expect(within(application).queryByRole('button', { name: /이 부분 전체 보기|줄 보기/ })).toBeNull()
+    expect(within(application).queryByText('신청 자격')).toBeNull()
+    const expand = within(application).getByRole('button', { name: '앞뒤 원문 보기 ▾' })
+    expect(expand.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(expand)
+    expect(expand.getAttribute('aria-expanded')).toBe('true')
+    expect(expand.textContent).toBe('간단히 보기 ▴')
+    expect(within(application).getByText('인용 앞뒤를 포함한 3쪽 전체예요.')).toBeTruthy()
+    for (const line of ['신청 자격', '공고일 기준 창업 7년 이내 기업', '신청방법', '이메일 접수']) expect(within(application).getByText(line)).toBeTruthy()
+    // 조각 전체 가운데 인용한 줄만 한 묶음으로 표시한다.
+    const quoted = within(application).getByRole('group', { name: '인용한 부분' })
+    expect(document.getElementById(expand.getAttribute('aria-controls')!)!.contains(quoted)).toBe(true)
+    expect(quoted.textContent).toBe('◦타 정부지원 사업 등을 통해 지원받은 내용과 유사·중복되는 경우◦국세 체납 중인 기업')
+    fireEvent.click(expand)
+    expect(expand.textContent).toBe('앞뒤 원문 보기 ▾')
+    expect(within(application).queryByText('신청 자격')).toBeNull()
+    expect(within(application).queryByRole('group', { name: '인용한 부분' })).toBeNull()
   })
   it('does not mark a loaded review dirty before the user edits its status', async () => {
     mount('/app/combination-reviews/12'); await screen.findByDisplayValue(reviewFixture.title)
