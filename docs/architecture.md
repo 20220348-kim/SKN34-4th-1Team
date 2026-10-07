@@ -21,7 +21,8 @@
 모바일 비로그인 하단은 검색·협업·전체 3탭이며 공개 검색과 모집글 조회를 허용합니다. 전체 메뉴는 모든 기능을 노출하되
 개인 기능은 로그인 안내를 먼저 열고 확인된 인증 뒤 해당 라우트로 이동합니다. 확인된 로그인 뒤에는
 검색·관심함·리포트·전체 4탭과 `app/(tabs)/all`의 기존 계정·기업·알림 설정·신청 준비·협업 화면으로 연결합니다.
-협업 탭에서 로그인하면 기존 All Stack으로 이동하며 선택한 view·box·mine을 보존합니다. 메뉴는 기존 화면·Bearer API·공통 DTO를 재사용하며 서버 계약은 바꾸지 않습니다.
+협업 탭에서 로그인하면 기존 All Stack으로 이동하며 선택한 view·box·mine을 보존합니다. 전체 메뉴는 모집글과 파트너 관리로 연결하며
+파트너 관리 안의 받은/보낸 제안·내 모집글은 기존 제안함/모집글 Bearer API를 재사용합니다. 메뉴는 기존 화면·Bearer API·공통 DTO를 재사용하며 서버 계약은 바꾸지 않습니다.
 협업 머리글의 연필은 모바일 `/partner/new`로 연결합니다. 작성은 `RecruitmentCreateScreen → mobile api/partners의 createRecruitment
 → shared CreatePartnerRecruitmentUseCase → 모바일 Bearer HTTP 요청 → 기존 Core 모집글 API`로 이어집니다.
 API 경계에서 shared DTO 검증·Mapper를 사용하고, 등록 결과의 공고 복합 식별자·본인 글 여부를 확인한 뒤 기존 상세 화면으로 이동합니다.

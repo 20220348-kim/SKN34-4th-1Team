@@ -1,18 +1,16 @@
 import { useState } from 'react'
-import { ActivityIndicator, DevSettings, Pressable, StyleSheet, Text, TextInput, View } from 'react-native'
+import { ActivityIndicator, DevSettings, Pressable, StyleSheet, Text, View } from 'react-native'
 import { useAuth } from '../auth/session'
 import { clearIntroductionCompleted } from '../auth/introductionStorage'
 import { AppIcon, type AppIconName } from '../components/AppIcon'
 import { Button, Notice, Page, colors } from '../ui'
 
 export type MenuDestination = 'account' | 'company' | 'settings' | 'filter' | 'ai' | 'saved' | 'report'
-  | 'documents' | 'reviews' | 'recruitments' | 'received' | 'sent' | 'mine'
+  | 'partners' | 'documents' | 'reviews' | 'recruitments' | 'received' | 'sent' | 'mine'
 type MenuItem = { destination: MenuDestination; label: string; description: string; icon: AppIconName }
-const normalize = (value: string) => value.replace(/\s/g, '').toLowerCase()
 
 export function MenuScreen({ onOpen }: { onOpen(destination: MenuDestination): void }) {
   const { status, session, restoreError } = useAuth()
-  const [query, setQuery] = useState('')
   const [introBusy, setIntroBusy] = useState(false)
   const [introError, setIntroError] = useState<string | null>(null)
   async function replayIntroduction() {
@@ -31,8 +29,6 @@ export function MenuScreen({ onOpen }: { onOpen(destination: MenuDestination): v
   const groups: { title: string; items: MenuItem[] }[] = [
     { title: '내 정보', items: [
       { destination: 'account', label: '내 계정', description: '이메일 · 로그인 관리', icon: 'account' },
-      { destination: 'company', label: account?.company ? '기업 정보' : '기업 정보 등록', description: '지역 · 업종 · 설립연도', icon: 'building' },
-      { destination: 'settings', label: '알림 설정', description: '마감 알림 · 리포트 수신', icon: 'bell' },
     ] },
     { title: '지원사업 찾기', items: [
       { destination: 'filter', label: '공고 검색', description: '조건으로 찾기', icon: 'search' },
@@ -46,32 +42,18 @@ export function MenuScreen({ onOpen }: { onOpen(destination: MenuDestination): v
     ] },
     { title: '협업', items: [
       { destination: 'recruitments', label: '모집글', description: '파트너 찾기', icon: 'collaboration' },
-      { destination: 'received', label: '받은 제안', description: '받은 제안 내역', icon: 'inbox' },
-      { destination: 'sent', label: '보낸 제안', description: '보낸 제안 내역', icon: 'outbox' },
-      { destination: 'mine', label: '내 모집글', description: '작성한 모집글', icon: 'pencil' },
+      { destination: 'partners', label: '파트너 관리', description: '제안 · 내 모집글', icon: 'collaboration' },
     ] },
   ]
-  const filtered = groups.map((group) => ({ ...group, items: group.items.filter((item) =>
-    normalize(item.label + item.description).includes(normalize(query))) })).filter((group) => group.items.length)
   return <Page headerless backgroundColor={colors.surface}>
     <View style={local.profile}>
-      <Pressable accessibilityRole="button" accessibilityLabel="내 계정 열기" onPress={() => onOpen('account')} style={local.identity}>
+      <View style={local.identity}>
         <Text style={local.name}>{account?.company?.companyName ?? (account ? '내 계정' : '로그인해 주세요')}</Text>
         {!account?.company && <Text style={local.email}>{account?.email ?? '계정과 관심 공고를 이어서 사용하세요'}</Text>}
-      </Pressable>
-      <Pressable accessibilityRole="button" accessibilityLabel="내 정보 열기" onPress={() => onOpen('account')} style={local.account}>
-        <Text style={local.meta}>{account ? '내 정보' : '로그인'}</Text><AppIcon name="account" color={colors.muted} size={19} />
-      </Pressable>
+      </View>
     </View>
     {restoreError && <Notice error>{restoreError}</Notice>}
-    <View style={local.search}><AppIcon name="search" color={colors.muted} size={23} />
-      <TextInput accessibilityLabel="메뉴 검색" placeholder="메뉴 검색" placeholderTextColor={colors.placeholder}
-        value={query} onChangeText={setQuery} autoCorrect={false} style={local.input} />
-      {query.length > 0 && <Pressable accessibilityRole="button" accessibilityLabel="메뉴 검색 지우기"
-        onPress={() => setQuery('')} style={local.clear}><Text style={local.clearText}>×</Text></Pressable>}
-    </View>
-    {filtered.length === 0 && <Text accessibilityLiveRegion="polite" style={local.empty}>검색한 메뉴가 없어요.</Text>}
-    {filtered.map((group) => <View key={group.title} style={local.group}>
+    {groups.map((group) => <View key={group.title} style={local.group}>
       <Text accessibilityRole="header" style={local.heading}>{group.title}</Text>
       {group.items.map((item) => <Pressable key={item.destination} accessibilityRole="button" accessibilityLabel={item.label}
         accessibilityHint={item.description} onPress={() => onOpen(item.destination)}
@@ -80,7 +62,7 @@ export function MenuScreen({ onOpen }: { onOpen(destination: MenuDestination): v
         <Text style={local.label}>{item.label}</Text><Text style={local.description}>{!account && !['filter', 'ai', 'recruitments'].includes(item.destination) ? '로그인 후 이용' : item.description}</Text>
       </Pressable>)}
     </View>)}
-    {__DEV__ && status === 'signedOut' && !query.trim() && <>
+    {__DEV__ && status === 'signedOut' && <>
       {introError && <Notice error>{introError}</Notice>}
       <Button label="기능 소개 다시 보기" variant="secondary" busy={introBusy} onPress={() => void replayIntroduction()} />
     </>}

@@ -1,5 +1,5 @@
 import { Alert } from 'react-native'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react-native'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native'
 import { useAuth } from '../auth/session'
 import { browseProposals, browseRecruitments, getProposal, respondProposal } from '../api/partners'
 import { CollaborationScreen } from './CollaborationScreen'
@@ -114,4 +114,42 @@ test('my recruitment entry sends the mine filter, while a guest entry only offer
   await screen.findByText('내 모집글은 로그인 후 확인할 수 있어요.')
   expect(browseRecruitments).not.toHaveBeenCalled()
   expect(screen.queryByText(recruitment.title)).toBeNull()
+})
+
+
+test('partner management unifies received, sent and owned recruitment entry without duplicating proposal tabs', async () => {
+  jest.mocked(useAuth).mockReturnValue({ status: 'signedIn', session: { accessToken: 'my-token' }, invalidateSession: jest.fn() } as unknown as ReturnType<typeof useAuth>)
+  const change = jest.fn()
+  const view = render(<CollaborationScreen management view="box" initialBox="received" onManagementTabChange={change}
+    onViewChange={jest.fn()} onOpenRecruitment={onOpenRecruitment} onLogin={onLogin} />)
+  await screen.findByText('전체 1')
+  expect(screen.getAllByRole('tab', { name: '보낸 제안' })).toHaveLength(1)
+  fireEvent.press(screen.getByRole('tab', { name: '보낸 제안' }))
+  expect(change).toHaveBeenLastCalledWith('sent')
+  await waitFor(() => expect(browseProposals).toHaveBeenCalledWith('sent', 'my-token', expect.any(AbortSignal)))
+  fireEvent.press(screen.getByRole('tab', { name: '내 모집글' }))
+  expect(change).toHaveBeenLastCalledWith('mine')
+  view.rerender(<CollaborationScreen management view="recruitments" mineOnly onManagementTabChange={change}
+    onViewChange={jest.fn()} onOpenRecruitment={onOpenRecruitment} onLogin={onLogin} />)
+  await waitFor(() => expect(browseRecruitments).toHaveBeenCalledWith(expect.objectContaining({ mineOnly: true }), 'my-token', expect.any(AbortSignal)))
+})
+
+
+test('entering owned recruitment from management never renders the cached public recruitment while the owned query is pending', async () => {
+  jest.mocked(useAuth).mockReturnValue({ status: 'signedIn', session: { accessToken: 'my-token' }, invalidateSession: jest.fn() } as unknown as ReturnType<typeof useAuth>)
+  let finish!: (page: Awaited<ReturnType<typeof browseRecruitments>>) => void
+  jest.mocked(browseRecruitments).mockImplementation(query => query.mineOnly
+    ? new Promise(resolve => { finish = resolve })
+    : Promise.resolve({ recruitments: [{ ...recruitment, title: '전체 목록 모집글' }], total: 1, page: 1, pageSize: 20, totalPages: 1 }))
+  const view = render(<CollaborationScreen management view="box" onViewChange={jest.fn()} onOpenRecruitment={onOpenRecruitment} onLogin={onLogin} />)
+  await screen.findByText('전체 1')
+  await waitFor(() => expect(browseRecruitments).toHaveBeenCalledWith(expect.objectContaining({ mineOnly: false }), 'my-token', expect.any(AbortSignal)))
+  view.rerender(<CollaborationScreen management view="recruitments" mineOnly onViewChange={jest.fn()} onOpenRecruitment={onOpenRecruitment} onLogin={onLogin} />)
+  expect(screen.queryByText('전체 목록 모집글')).toBeNull()
+  expect(screen.queryByRole('button', { name: '내가 쓴 글' })).toBeNull()
+  await waitFor(() => expect(finish).toBeDefined())
+  expect(screen.queryByText('전체 목록 모집글')).toBeNull()
+  await act(async () => finish({ recruitments: [{ ...recruitment, title: '내가 올린 모집글' }], total: 1, page: 1, pageSize: 20, totalPages: 1 }))
+  await screen.findByText('내가 올린 모집글')
+  expect(screen.queryByText('전체 목록 모집글')).toBeNull()
 })

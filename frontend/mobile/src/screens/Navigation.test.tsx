@@ -111,21 +111,21 @@ const allMenuRoutes = {
 }
 
 test.each([
-  ['내 계정', '/all/account'], ['기업 정보 등록', '/all/company'], ['알림 설정', '/all/settings'],
+  ['내 계정', '/all/account'],
   ['신청 문서', '/all/preparation'], ['중복 검토', '/all/reviews'], ['모집글', '/all/collab'],
-  ['받은 제안', '/all/collab'], ['보낸 제안', '/all/collab'], ['내 모집글', '/all/collab'],
+  ['파트너 관리', '/all/collab'],
 ])('pressing All returns from %s to the menu and allows opening another feature', async (label, pathname) => {
   jest.mocked(useAuth).mockReturnValue(memberAuth)
   const view = renderRouter(allMenuRoutes, { initialUrl: '/all' })
   fireEvent.press(await screen.findByLabelText(label))
   await waitFor(() => expect(view.getPathname()).toBe(pathname))
   fireEvent.press(screen.getByLabelText('전체'))
-  await screen.findByLabelText('메뉴 검색')
+  await screen.findByLabelText('파트너 관리')
   expect(view.getPathname()).toBe('/all')
   expect(router.canDismiss()).toBe(false)
-  fireEvent.press(screen.getByLabelText('알림 설정'))
-  await screen.findByText('알림 설정 화면')
-  expect(view.getPathname()).toBe('/all/settings')
+  fireEvent.press(screen.getByLabelText('파트너 관리'))
+  await screen.findByText('협업 화면')
+  expect(view.getPathname()).toBe('/all/collab')
 })
 
 test('pressing All from another tab returns to the menu without changing the search draft', async () => {
@@ -138,7 +138,7 @@ test('pressing All from another tab returns to the menu without changing the sea
   fireEvent.press(screen.getByLabelText('검색'))
   await screen.findByDisplayValue('유지할 검색 조건')
   fireEvent.press(screen.getByLabelText('전체'))
-  await screen.findByLabelText('메뉴 검색')
+  await screen.findByLabelText('파트너 관리')
   expect(view.getPathname()).toBe('/all')
   fireEvent.press(screen.getByLabelText('검색'))
   await screen.findByDisplayValue('유지할 검색 조건')
@@ -150,7 +150,7 @@ test.each(['/all/account', '/all/company', '/all/settings', '/all/preparation', 
     const view = renderRouter(allMenuRoutes, { initialUrl })
     await waitFor(() => expect(router.canGoBack()).toBe(true))
     await act(async () => router.back())
-    await screen.findByLabelText('메뉴 검색')
+    await screen.findByLabelText('파트너 관리')
     expect(view.getPathname()).toBe('/all')
     expect(screen.getByLabelText('전체').props.accessibilityState.selected).toBe(true)
   })
@@ -159,7 +159,7 @@ test('pressing All from a direct link and pressing it again keeps one menu scree
   const view = renderRouter(allMenuRoutes, { initialUrl: '/all/company' })
   await screen.findByText('기업 정보 화면')
   fireEvent.press(screen.getByLabelText('전체'))
-  await screen.findByLabelText('메뉴 검색')
+  await screen.findByLabelText('파트너 관리')
   fireEvent.press(screen.getByLabelText('전체'))
   await waitFor(() => expect(view.getPathname()).toBe('/all'))
   expect(router.canDismiss()).toBe(false)
@@ -170,10 +170,10 @@ test('pressing All recovers a stack that was opened without a menu underneath', 
     default: AllLayout.default, unstable_settings: { anchor: 'company' },
   } }, { initialUrl: '/all/company' })
   await screen.findByText('기업 정보 화면')
-  expect(screen.queryByLabelText('메뉴 검색')).toBeNull()
+  expect(screen.queryByLabelText('파트너 관리')).toBeNull()
   expect(router.canDismiss()).toBe(false)
   fireEvent.press(screen.getByLabelText('전체'))
-  await screen.findByLabelText('메뉴 검색')
+  await screen.findByLabelText('파트너 관리')
   expect(view.getPathname()).toBe('/all')
   expect(router.canDismiss()).toBe(false)
 })
@@ -185,7 +185,7 @@ test('pressing All from a nested account screen returns to the menu instead of t
   fireEvent.press(await screen.findByLabelText('기업 프로필 등록'))
   await screen.findByText('기업 정보 화면')
   fireEvent.press(screen.getByLabelText('전체'))
-  await screen.findByLabelText('메뉴 검색')
+  await screen.findByLabelText('파트너 관리')
   expect(view.getPathname()).toBe('/all')
   expect(router.canDismiss()).toBe(false)
 })
@@ -206,7 +206,7 @@ test('pressing All saves a pending document answer before removing its editor', 
     expectedRevision: 1, facts: expect.arrayContaining([expect.objectContaining({ fieldKey: 'name', value: '전체로 돌아가기 전에 저장할 기업' })]),
   }), expect.any(AbortSignal))
   await act(async () => finish({ ...documentPreparation, inputRevision: 2 }))
-  await screen.findByLabelText('메뉴 검색')
+  await screen.findByLabelText('파트너 관리')
   expect(view.getPathname()).toBe('/all')
 })
 
@@ -223,7 +223,7 @@ test('a failed document save prevents All from discarding the answer or leaving 
   await waitFor(() => expect(alert).toHaveBeenCalledWith('답변을 먼저 저장해 주세요', expect.any(String)))
   expect(view.getPathname()).toBe('/all/preparation/9')
   expect(screen.getByLabelText('내 답변').props.value).toBe('저장 실패에도 유지할 기업')
-  expect(screen.queryByLabelText('메뉴 검색')).toBeNull()
+  expect(screen.queryByLabelText('파트너 관리')).toBeNull()
 })
 
 test.each(['recruitments', 'box'])('the existing collaboration pencil opens the native form from %s and returns to the same view', async (viewMode) => {
@@ -257,7 +257,7 @@ test('guests have exactly search, collaboration and All and browse public recrui
   expect(view.getPathname()).toBe('/collab')
   expect(browseProposals).not.toHaveBeenCalled()
   fireEvent.press(screen.getByLabelText('전체'))
-  await screen.findByLabelText('메뉴 검색')
+  await screen.findByLabelText('파트너 관리')
   expect(screen.getByLabelText('신청 문서')).toBeTruthy()
   expect(screen.getByLabelText('관심 공고함')).toBeTruthy()
   fireEvent.press(screen.getByLabelText('내 계정'))
@@ -360,7 +360,7 @@ test.each([
 test.each([['공고 검색', 'filter', '공고명·기관명'], ['AI 검색', 'ai', '회사 상황이나 궁금한 점']])(
   'All %s enters the existing search mode', async (label, mode, field) => {
     const view = renderRouter(routes, { initialUrl: '/all' })
-    await screen.findByLabelText('메뉴 검색')
+    await screen.findByLabelText('파트너 관리')
     fireEvent.press(screen.getByLabelText(label))
     await screen.findByLabelText(field)
     expect(view.getPathname()).toBe('/')
@@ -409,5 +409,65 @@ test('legacy preparation review links enter the independent native review list',
   const view = renderRouter(routes, { initialUrl: '/all/preparation?kind=reviews' })
   await screen.findByText('로그인하고 시작')
   await waitFor(() => expect(view.getPathname()).toBe('/all/reviews'))
+  expect(screen.getByLabelText('전체').props.accessibilityState.selected).toBe(true)
+})
+
+
+test('All partner management switches received, sent and owned tabs and a recruitment menu entry restores its public mode and pencil', async () => {
+  jest.mocked(useAuth).mockReturnValue(memberAuth)
+  jest.mocked(browseProposals).mockImplementation(async box => ({ box, proposals: [], pendingCount: 0 }))
+  const view = renderRouter(routes, { initialUrl: '/all' })
+  fireEvent.press(await screen.findByLabelText('파트너 관리'))
+  await waitFor(() => expect(view.getPathname()).toBe('/all/collab'))
+  expect(view.getSearchParams()).toMatchObject({ management: '1', view: 'box', box: 'received', mine: '0' })
+  expect(screen.queryByLabelText('모집글 작성')).toBeNull()
+  fireEvent.press(await screen.findByRole('tab', { name: '보낸 제안' }))
+  await waitFor(() => expect(view.getSearchParams()).toMatchObject({ management: '1', view: 'box', box: 'sent', mine: '0' }))
+  await waitFor(() => expect(browseProposals).toHaveBeenCalledWith('sent', expect.any(String), expect.any(AbortSignal)))
+  fireEvent.press(screen.getByRole('tab', { name: '내 모집글' }))
+  await waitFor(() => expect(view.getSearchParams()).toMatchObject({ management: '1', view: 'recruitments', mine: '1' }))
+  await waitFor(() => expect(browseRecruitments).toHaveBeenLastCalledWith(expect.objectContaining({ mineOnly: true }), expect.any(String), expect.any(AbortSignal)))
+  fireEvent.press(screen.getByLabelText('전체'))
+  fireEvent.press(await screen.findByLabelText('모집글'))
+  await waitFor(() => expect(view.getSearchParams()).toMatchObject({ management: '0', view: 'recruitments', mine: '0' }))
+  expect(await screen.findByLabelText('모집글 작성')).toBeTruthy()
+  await waitFor(() => expect(browseRecruitments).toHaveBeenLastCalledWith(expect.objectContaining({ mineOnly: false }), expect.any(String), expect.any(AbortSignal)))
+}, 15000)
+
+test.each([
+  { suffix: '', tab: '받은 제안', mine: false },
+  { suffix: '&view=recruitments', tab: '받은 제안', mine: false },
+  { suffix: '&mine=1', tab: '내 모집글', mine: true },
+])('a direct management link $suffix selects $tab without a public recruitment pencil', async entry => {
+  jest.mocked(useAuth).mockReturnValue(memberAuth)
+  jest.mocked(browseProposals).mockImplementation(async box => ({ box, proposals: [], pendingCount: 0 }))
+  renderRouter(routes, { initialUrl: '/all/collab?management=1' + entry.suffix })
+  const tab = await screen.findByRole('tab', { name: entry.tab })
+  expect(tab.props.accessibilityState.selected).toBe(true)
+  expect(screen.queryByLabelText('모집글 작성')).toBeNull()
+  await waitFor(() => expect(browseRecruitments).toHaveBeenLastCalledWith(expect.objectContaining({ mineOnly: entry.mine }), expect.any(String), expect.any(AbortSignal)))
+})
+
+test('a guest partner management entry stays on All until verified login and retains its management destination', async () => {
+  let verifyLogin!: () => void
+  function ReactiveAuthLayout() {
+    const [verified, setVerified] = useState(false)
+    verifyLogin = () => setVerified(true)
+    jest.mocked(useAuth).mockReturnValue(verified ? memberAuth : { status: 'signedOut', session: null, restoreError: null } as ReturnType<typeof useAuth>)
+    const Layout = routes._layout
+    return <Layout />
+  }
+  const view = renderRouter({ ...routes, _layout: ReactiveAuthLayout }, { initialUrl: '/all' })
+  fireEvent.press(await screen.findByLabelText('파트너 관리'))
+  await screen.findByText('로그인이 필요해요')
+  expect(view.getPathname()).toBe('/all')
+  expect(browseProposals).not.toHaveBeenCalled()
+  fireEvent.press(screen.getByLabelText('계속 둘러보기'))
+  expect(view.getPathname()).toBe('/all')
+  fireEvent.press(screen.getByLabelText('파트너 관리'))
+  await act(async () => verifyLogin())
+  await screen.findByRole('tab', { name: '받은 제안' })
+  expect(view.getPathname()).toBe('/all/collab')
+  expect(view.getSearchParams()).toMatchObject({ management: '1', view: 'box', box: 'received', mine: '0' })
   expect(screen.getByLabelText('전체').props.accessibilityState.selected).toBe(true)
 })

@@ -14,31 +14,27 @@ const auth = (account: { email: string; company: { companyName: string } | null 
 beforeEach(() => { auth(null); jest.mocked(clearIntroductionCompleted).mockReset().mockResolvedValue(undefined) })
 afterEach(() => jest.restoreAllMocks())
 
-test('menu filtering matches descriptions and whitespace and clears an empty result', () => {
+test('All removes duplicate entries and combines proposal destinations into partner management', () => {
   auth({ email: 'member@example.test', company: null })
   const open = jest.fn()
   render(<MenuScreen onOpen={open} />)
-  fireEvent.changeText(screen.getByLabelText('메뉴 검색'), '마감 알림')
-  expect(screen.getByLabelText('알림 설정')).toBeTruthy()
-  expect(screen.queryByLabelText('모집글')).toBeNull()
-  fireEvent.press(screen.getByLabelText('알림 설정'))
-  expect(open).toHaveBeenCalledWith('settings')
-  fireEvent.changeText(screen.getByLabelText('메뉴 검색'), '없는메뉴')
-  expect(screen.getByText('검색한 메뉴가 없어요.')).toBeTruthy()
-  fireEvent.press(screen.getByLabelText('메뉴 검색 지우기'))
-  expect(screen.getByLabelText('모집글')).toBeTruthy()
-  expect(screen.queryByText('검색한 메뉴가 없어요.')).toBeNull()
+  for (const name of ['메뉴 검색', '기업 정보 등록', '기업 정보', '알림 설정', '내 정보 열기', '받은 제안', '보낸 제안', '내 모집글']) expect(screen.queryByLabelText(name)).toBeNull()
+  fireEvent.press(screen.getByLabelText('파트너 관리'))
+  expect(open).toHaveBeenCalledWith('partners')
+  fireEvent.press(screen.getByLabelText('모집글'))
+  expect(open).toHaveBeenCalledWith('recruitments')
+  expect(screen.getAllByLabelText('내 계정')).toHaveLength(1)
 })
 
 test('profile uses the session company or real email and removes them on logout', () => {
   auth({ email: 'member@example.test', company: null })
   const view = render(<MenuScreen onOpen={jest.fn()} />)
   expect(screen.getByText('member@example.test')).toBeTruthy()
-  expect(screen.getByLabelText('기업 정보 등록')).toBeTruthy()
+  expect(screen.queryByLabelText('기업 정보 등록')).toBeNull()
   auth({ email: 'business@example.test', company: { companyName: '실제 기업' } })
   view.rerender(<MenuScreen onOpen={jest.fn()} />)
   expect(screen.getByText('실제 기업')).toBeTruthy()
-  expect(screen.getByLabelText('기업 정보')).toBeTruthy()
+  expect(screen.queryByLabelText('기업 정보')).toBeNull()
   expect(screen.queryByText('member@example.test')).toBeNull()
   auth(null)
   view.rerender(<MenuScreen onOpen={jest.fn()} />)
@@ -88,7 +84,7 @@ test('guest All retains all feature destinations and labels private ones as requ
   expect(screen.getByLabelText('AI 검색')).toBeTruthy()
   expect(screen.getByLabelText('모집글')).toBeTruthy()
   expect(screen.getAllByText('로그인 후 이용').length).toBeGreaterThan(0)
-  for (const name of ['기업 정보 등록', '관심 공고함', '맞춤 리포트', '신청 문서', '중복 검토', '받은 제안', '내 모집글']) {
+  for (const name of ['관심 공고함', '맞춤 리포트', '신청 문서', '중복 검토', '파트너 관리']) {
     expect(screen.getByLabelText(name)).toBeTruthy()
   }
 })
