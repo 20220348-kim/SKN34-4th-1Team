@@ -397,6 +397,12 @@ python3 infrastructure/llmops/ops_smoke.py --base-url http://localhost:5173 \
   --compare-captures --output work/llmops-comparison-verification.json
 ```
 
+`--base-url`은 경로가 없는 `http://localhost:<port>` 또는 `http://127.0.0.1:<port>`만 허용한다.
+HTTP 연결은 IPv4 loopback으로 직접 열어 Windows에서 `localhost`의 IPv6 연결 거절 후 발생하는
+대기 시간을 피한다. 요청 URL·Host·Origin·쿠키는 지정한 주소를 유지하므로 `localhost`를 사용하는
+Core CORS·CSRF 설정을 바꾸지 않는다. 환경변수의 HTTP proxy와 리다이렉트는 사용하지 않으며,
+인증 오류와 기존 15초 제한 시간은 실패로 전달한다.
+
 이 검증은 새 평가 요청 1건을 생성하고 같은 요청을 재전송한다. `COMPLETED`, 가상 사례 6건의 요약,
 동일 Prefect 실행 ID, 보고서 HTTP 200을 확인한다. 결과는 JSON에 보존하고 비밀번호는 출력하지 않는다.
 실패·취소·접수 응답 유실·보고서 훼손·권한 오류는 Ops 단위/DB 통합 테스트에서도 검증한다.

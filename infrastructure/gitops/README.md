@@ -15,7 +15,7 @@ LLMOps 개발 순서는 [후속 개발 전략](../../docs/llmops-next-developmen
 | 별도 배포 PR | 제거. 자동 브랜치 생성·PR 생성·검사 dispatch 없음 |
 | Argo 입력 준비 | `deployment.py plan-gitops`: 검증된 공개 이미지·소스 SHA로 고정한 수동 동기화 계획 출력 |
 | 발행본 기준 연결 설정 비교 | `deployment.py review-published-runtime --state-dir ...`: 공개 발행 Chart·values로 기존 연결 설정을 재현하고 전후 발행 검증 |
-| 기존 환경 전환 파일 준비 | `gitops_transition.py`: 공개 발행본과 보존 가능한 기존 설정을 개인 state의 비공개 파일로 생성. 적용·동기화 없음 |
+| 기존 환경 전환 파일 준비 | `gitops_transition.py`: dev 환경 또는 안정된 수동 Argo 환경의 기존 설정과 공개 발행본으로 개인 state의 비공개 파일 생성. 적용·동기화 없음 |
 | 저장된 전환 파일 재검증 | `gitops_transition.py --verify`: 현재 발행본·환경으로 계획을 다시 생성해 파일 전체와 비교. 파일 갱신·적용 없음 |
 | 개인 환경 Argo 인계 | 2026-10-07 공개 이미지 4개를 수동 동기화해 `Synced/Healthy` 확인. 아래 실행 기록 참고 |
 | Argo 자동 배포 | 자동 인계·새 발행본 자동 적용 미구현. 자동 동기화·prune·selfHeal 비활성 |

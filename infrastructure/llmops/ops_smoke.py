@@ -4,14 +4,81 @@ import argparse
 import json
 import os
 import re
+import socket
 import time
 from hashlib import sha256
+from http.client import HTTPConnection
 from http.cookiejar import CookieJar
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import HTTPCookieProcessor, Request, build_opener
+from urllib.request import (
+    HTTPHandler,
+    HTTPCookieProcessor,
+    HTTPRedirectHandler,
+    ProxyHandler,
+    Request,
+    build_opener,
+)
 from uuid import UUID, uuid4
+
+
+class LoopbackHTTPConnection(HTTPConnection):
+    """Reach IPv4 Vite without changing the localhost Host, Origin or cookies."""
+
+    def connect(self):
+        if self.host not in {"localhost", "127.0.0.1"} or self._tunnel_host:
+            raise OSError("Smoke HTTP connections require direct loopback access")
+        self.sock = socket.create_connection(
+            ("127.0.0.1", self.port),
+            self.timeout,
+            self.source_address,
+        )
+
+
+class LoopbackHTTPHandler(HTTPHandler):
+    def __init__(self, origin):
+        super().__init__()
+        self.origin = origin
+
+    def http_open(self, request):
+        return self.do_open(LoopbackHTTPConnection, request)
+
+    def http_request(self, request):
+        target = urlsplit(request.full_url)
+        if (target.scheme, target.netloc) != self.origin:
+            raise URLError(
+                "Smoke HTTP redirects must stay on the configured loopback origin"
+            )
+        return super().http_request(request)
+
+    https_request = http_request
+
+
+class NoSmokeRedirects(HTTPRedirectHandler):
+    def redirect_request(self, request, response, code, message, headers, new_url):
+        raise URLError("Smoke HTTP redirects are not allowed")
+
+
+def loopback_client(base, cookies):
+    target = urlsplit(base)
+    if (
+        target.scheme != "http"
+        or target.hostname not in {"localhost", "127.0.0.1"}
+        or target.username is not None
+        or target.password is not None
+        or target.path
+        or target.query
+        or target.fragment
+        or not 1 <= (target.port if target.port is not None else 80) <= 65535
+    ):
+        raise ValueError("This smoke test requires an HTTP loopback web origin")
+    return build_opener(
+        ProxyHandler({}),
+        LoopbackHTTPHandler((target.scheme, target.netloc)),
+        NoSmokeRedirects(),
+        HTTPCookieProcessor(cookies),
+    )
 
 
 def replay_selection(session, dataset_id):
@@ -370,10 +437,11 @@ def main():
     registration = json.loads(args.core_rag_replay.read_bytes()) if args.core_rag_replay else None
     is_rag = args.rag_replay or registration is not None or args.core_snapshot_replay is not None
     base = args.base_url.rstrip("/")
-    if urlsplit(base).hostname not in {"localhost", "127.0.0.1"}:
-        parser.error("This smoke test requires a loopback web endpoint")
     cookies = CookieJar()
-    client = build_opener(HTTPCookieProcessor(cookies))
+    try:
+        client = loopback_client(base, cookies)
+    except ValueError as error:
+        parser.error(str(error))
 
     def request(path, data=None, *, csrf=True):
         headers = {"Origin": base}
