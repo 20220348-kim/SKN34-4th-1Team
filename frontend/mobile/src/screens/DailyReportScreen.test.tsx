@@ -82,8 +82,9 @@ test('push-only subscription shows next report timing without requiring email ve
   render(<DailyReportScreen {...callbacks} />)
   await screen.findByText('다음 리포트는 서울 시간 오전 8시 이후 생성될 예정이에요.')
   fireEvent.press(screen.getByLabelText('수신 설정'))
-  expect(screen.getByText('이 기기 앱 알림 끄기')).toBeTruthy()
-  expect(screen.getByText('서울 시간 오전 8시 이후 생성되는 리포트를 알려드려요.')).toBeTruthy()
+  expect(screen.getByText('앱 알림')).toBeTruthy()
+  expect(screen.getByText('켜짐')).toBeTruthy()
+  expect(screen.queryByText('이 기기 앱 알림 끄기')).toBeNull()
 })
 
 test('an afternoon send hour reads as 오후 in the next report message and the email delivery switch', async () => {
@@ -92,7 +93,7 @@ test('an afternoon send hour reads as 오후 in the next report message and the 
   render(<DailyReportScreen {...callbacks} />)
   await screen.findByText('다음 리포트는 서울 시간 오후 1시 이후 생성될 예정이에요.')
   fireEvent.press(screen.getByLabelText('수신 설정'))
-  expect(screen.getByText('매일 오후 1시 이후 정기 이메일 받기')).toBeTruthy()
+  expect(screen.getByText('매일 오후 1시 이후 · 한국 시간')).toBeTruthy()
   expect(screen.queryByText(/오전 13시|매일 13시/)).toBeNull()
 })
 
@@ -293,6 +294,7 @@ test('email verification is explicit and enabling delivery requires consent befo
   render(<DailyReportScreen {...callbacks} />)
   await screen.findByText('수신 설정을 켜면 정기 리포트를 받을 수 있어요.')
   fireEvent.press(screen.getByLabelText('수신 설정'))
+  fireEvent.press(screen.getByLabelText('수신 설정 수정'))
   fireEvent.press(screen.getByLabelText('정기 이메일 수신'))
   fireEvent.press(screen.getByText('수신 설정 저장'))
   expect(await screen.findByText('정기 이메일 수신 동의에 체크해 주세요.')).toBeTruthy()
@@ -363,10 +365,11 @@ test('signed-out users see a login action without a private data request', () =>
 })
 
 
-test('All settings opens the form directly and saves through the existing API without loading reports', async () => {
+test('notification settings opens a settings view and edits through the existing API without loading reports', async () => {
   jest.mocked(apiRequest).mockImplementation((path, options) => path.endsWith('/settings') && options?.method === 'PUT'
     ? Promise.resolve({ ...settings, supportPurpose: '제품 개발' }) : respond(path))
   render(<DailyReportScreen {...callbacks} settingsOnly />)
+  fireEvent.press(await screen.findByLabelText('수신 설정 수정'))
   await screen.findByLabelText('지원 목적 (선택, 최대 100자)')
   expect(await screen.findByLabelText('관심 공고 마감 알림')).toBeTruthy()
   expect(screen.queryByLabelText('수신 설정')).toBeNull()
@@ -377,4 +380,88 @@ test('All settings opens the form directly and saves through the existing API wi
     accessToken: 'first-account', method: 'PUT', body: { supportPurpose: '제품 개발', enabled: false, consent: false },
   })))
   await screen.findByText('수신 설정을 저장했어요. 이미 생성된 리포트의 조건은 바뀌지 않아요.')
+})
+
+
+test('report settings are readonly until editing and cancel does not write or retain the discarded purpose', async () => {
+  const openSettings = jest.fn()
+  render(<DailyReportScreen {...callbacks} onSettings={openSettings} />)
+  await screen.findByLabelText('수신 설정')
+  fireEvent.press(screen.getByLabelText('수신 설정'))
+  expect(screen.queryByLabelText('지원 목적 (선택, 최대 100자)')).toBeNull()
+  fireEvent.press(screen.getByLabelText('알림 설정'))
+  expect(openSettings).toHaveBeenCalledTimes(1)
+  fireEvent.press(screen.getByLabelText('수신 설정 수정'))
+  fireEvent.changeText(screen.getByLabelText('지원 목적 (선택, 최대 100자)'), '버릴 지원 목적')
+  fireEvent.press(screen.getByLabelText('취소'))
+  expect(screen.queryByDisplayValue('버릴 지원 목적')).toBeNull()
+  expect(jest.mocked(apiRequest).mock.calls.some(([, options]) => options?.method === 'PUT')).toBe(false)
+})
+
+
+test('a failed settings save keeps editing and the unsaved purpose until an explicit retry or cancel', async () => {
+  let failed = false
+  jest.mocked(apiRequest).mockImplementation((path, options) => {
+    if (path.endsWith('/settings') && options?.method === 'PUT') {
+      if (!failed) { failed = true; return Promise.reject(new ApiError(503, '수신 설정 저장 실패')) }
+      return Promise.resolve({ ...settings, supportPurpose: '보존할 지원 목적' })
+    }
+    return respond(path)
+  })
+  render(<DailyReportScreen {...callbacks} settingsOnly />)
+  fireEvent.press(await screen.findByLabelText('수신 설정 수정'))
+  fireEvent.changeText(screen.getByLabelText('지원 목적 (선택, 최대 100자)'), '보존할 지원 목적')
+  fireEvent.press(screen.getByLabelText('수신 설정 저장'))
+  await screen.findByText('수신 설정 저장 실패')
+  expect(screen.getByLabelText('지원 목적 (선택, 최대 100자)').props.value).toBe('보존할 지원 목적')
+  expect(screen.queryByLabelText('수신 설정 수정')).toBeNull()
+  fireEvent.press(screen.getByLabelText('수신 설정 저장'))
+  await screen.findByText('수신 설정을 저장했어요. 이미 생성된 리포트의 조건은 바뀌지 않아요.')
+  expect(screen.queryByLabelText('지원 목적 (선택, 최대 100자)')).toBeNull()
+  expect(screen.getByText('보존할 지원 목적')).toBeTruthy()
+  expect(jest.mocked(apiRequest).mock.calls.filter(([, options]) => options?.method === 'PUT')).toHaveLength(2)
+})
+
+test('refresh preserves an active edit and cancel restores the freshly loaded settings', async () => {
+  let settingsReads = 0
+  jest.mocked(apiRequest).mockImplementation(path => path.endsWith('/settings')
+    ? Promise.resolve({ ...settings, supportPurpose: ++settingsReads === 1 ? '처음 저장한 목적' : '새로 읽은 목적' }) : respond(path))
+  render(<DailyReportScreen {...callbacks} />)
+  fireEvent.press(await screen.findByLabelText('수신 설정'))
+  fireEvent.press(screen.getByLabelText('수신 설정 수정'))
+  fireEvent.changeText(screen.getByLabelText('지원 목적 (선택, 최대 100자)'), '아직 저장하지 않은 목적')
+  fireEvent(screen.UNSAFE_getByType(RefreshControl), 'refresh')
+  await waitFor(() => expect(settingsReads).toBe(2))
+  await waitFor(() => expect(screen.UNSAFE_getByType(RefreshControl).props.refreshing).toBe(false))
+  expect(screen.getByLabelText('지원 목적 (선택, 최대 100자)').props.value).toBe('아직 저장하지 않은 목적')
+  fireEvent.press(screen.getByLabelText('취소'))
+  expect(screen.getByText('새로 읽은 목적')).toBeTruthy()
+  expect(jest.mocked(apiRequest).mock.calls.some(([, options]) => options?.method === 'PUT')).toBe(false)
+})
+
+test('an account switch discards an active edit and cannot apply a late settings save', async () => {
+  let finish!: (value: unknown) => void
+  let pendingSignal!: AbortSignal
+  jest.mocked(apiRequest).mockImplementation((path, options) => {
+    if (path.endsWith('/settings') && options?.method === 'PUT') {
+      pendingSignal = options.signal!
+      return new Promise(resolve => { finish = resolve })
+    }
+    if (path.endsWith('/settings') && options?.accessToken === 'second-account') return Promise.resolve({ ...settings, supportPurpose: '새 계정의 목적' })
+    return respond(path)
+  })
+  const view = render(<DailyReportScreen {...callbacks} settingsOnly />)
+  fireEvent.press(await screen.findByLabelText('수신 설정 수정'))
+  fireEvent.changeText(screen.getByLabelText('지원 목적 (선택, 최대 100자)'), '이전 계정의 목적')
+  fireEvent.press(screen.getByLabelText('수신 설정 저장'))
+  await waitFor(() => expect(pendingSignal).toBeDefined())
+  signedIn('second-account')
+  view.rerender(<DailyReportScreen {...callbacks} settingsOnly />)
+  await screen.findByText('새 계정의 목적')
+  expect(pendingSignal.aborted).toBe(true)
+  await act(async () => finish({ ...settings, supportPurpose: '이전 계정의 목적' }))
+  expect(screen.queryByText('이전 계정의 목적')).toBeNull()
+  expect(screen.queryByLabelText('지원 목적 (선택, 최대 100자)')).toBeNull()
+  expect(screen.queryByText('수신 설정을 저장했어요. 이미 생성된 리포트의 조건은 바뀌지 않아요.')).toBeNull()
+  expect(screen.getByText('새 계정의 목적')).toBeTruthy()
 })

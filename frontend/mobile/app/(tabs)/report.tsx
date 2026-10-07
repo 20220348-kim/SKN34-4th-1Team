@@ -9,7 +9,7 @@ export default function ReportRoute() {
   const router = useRouter()
   const requestLogin = useLoginFlow()
   const params = useLocalSearchParams<{ reportId?: string }>()
-  return <DailyReportScreen reportId={typeof params.reportId === 'string' ? params.reportId : undefined}
+  return <DailyReportScreen onSettings={() => router.push({ pathname: '/(tabs)/all/settings', params: { from: 'report', ...(typeof params.reportId === 'string' ? { reportId: params.reportId } : {}) } })} reportId={typeof params.reportId === 'string' ? params.reportId : undefined}
     onLogin={(mode) => requestLogin({ direct: true, mode: mode === 'signup' ? 'signup' : 'login' })}
     onCompany={() => router.push('/(tabs)/all/company')} onSearch={() => router.navigate('/(tabs)')}
     onOpenProgram={(identity) => router.push({ pathname: '/program', params: identity })} />
