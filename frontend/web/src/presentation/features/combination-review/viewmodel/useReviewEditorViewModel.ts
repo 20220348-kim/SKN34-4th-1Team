@@ -1,13 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { appContainer } from '../../../../app/appContainer'
 import { appPaths } from '../../../shared/routes/appPaths'
 import { reviewProgramKey, supportsAutomaticReview, unknownParticipation, validateReviewDraft, type CombinationReview, type ReviewDraft, type ReviewPage, type ReviewProgram, type ReviewRun, type RunRequest, type RunSummary } from '../../../../domain/entities/CombinationReview'
-import type { SupportProgram } from '../../../../domain/entities/SupportProgram'
-import type { SupportProgramCatalog, SupportProgramCatalogFilters } from '../../../../domain/entities/SupportProgramCatalog'
+import type { SupportProgramDetail } from '../../../../domain/entities/SupportProgram'
+import type { SelectableSupportProgram } from '../../../shared/support-program/useProgramPickerViewModel'
 import { useReviewScope } from './useReviewScope'
-import { useSavedSupportProgramChoices } from '../../../shared/support-program/useSavedSupportProgramChoices'
-import { defaultProgramSelectionFilters } from '../../../shared/support-program/catalogSearchParams'
 
 // 자동 조회보다 늦게 도착한 과거 응답이 완료 상태를 대기/분석 중으로 되돌리지 않게 한다.
 function isEarlierState(current: RunSummary, next: RunSummary) {
@@ -20,13 +18,38 @@ function isEarlierState(current: RunSummary, next: RunSummary) {
 /** 새 검토에 미리 골라 둘 공고입니다. 공고 상세의 [중복 지원·수혜 검토]가 주소에 실어 보냅니다. */
 export type InitialReviewProgram = Pick<ReviewProgram, 'sourceCode' | 'sourceProgramId'>
 
-export function useReviewEditorViewModel(id: number | null, account: string, loadSavedPrograms = false, resultRunId: number | null = null, initialFacts = '', initialProgram: InitialReviewProgram | null = null) {
+/** 고른 공고의 표시 정보입니다. 상세를 읽는 동안은 없고, 읽지 못하면 이름 자리에 이유만 보입니다. */
+export type ReviewProgramInfo = { status: 'ready'; program: SelectableSupportProgram } | { status: 'missing' | 'failed' }
+
+function infoOf(found: SupportProgramDetail | null): ReviewProgramInfo {
+  return found ? { status: 'ready', program: found } : { status: 'missing' }
+}
+
+function programLabel(info: ReviewProgramInfo) {
+  if (info.status === 'ready') return `${info.program.title} · ${info.program.organization}`
+  return info.status === 'missing' ? '공고 정보를 찾을 수 없음' : '공고 정보를 불러오지 못함'
+}
+
+/** 1단계의 사업 칸 수입니다. 새 분석은 정확히 2개를 비교합니다. */
+const slotCount = 2
+
+/**
+ * 저장할 공고 목록과 비운 칸 위치로 사업 칸을 그립니다. 비운 칸은 null이고, 칸 순서가 곧 저장할 사업 순서입니다.
+ * 예전에 3개를 저장한 검토는 칸을 늘려 모두 보여 줍니다.
+ */
+function toSlots(programs: ReviewProgram[], gap: number | null): (ReviewProgram | null)[] {
+  if (programs.length >= slotCount) return programs
+  const slots: (ReviewProgram | null)[] = [...programs]
+  if (gap !== null) slots.splice(gap, 0, null)
+  while (slots.length < slotCount) slots.push(null)
+  return slots
+}
+
+export function useReviewEditorViewModel(id: number | null, account: string, resultRunId: number | null = null, initialFacts = '', initialProgram: InitialReviewProgram | null = null) {
   const useCase = appContainer.resolve('combinationReviewUseCase')
-  const catalogUseCase = appContainer.resolve('browseSupportProgramsUseCase')
   const detailUseCase = appContainer.resolve('getSupportProgramDetailUseCase')
   const journal = appContainer.resolve('reviewRequestJournal')
   const navigate = useNavigate()
-  const savedProgramChoices = useSavedSupportProgramChoices(loadSavedPrograms)
   const { perform, ...scope } = useReviewScope()
   const [review, setReview] = useState<CombinationReview | null>(null)
   // 새 검토만 미리 고른 공고를 사업 1로 둡니다. 참여 상태는 다른 공고처럼 모름에서 시작합니다.
@@ -35,10 +58,10 @@ export function useReviewEditorViewModel(id: number | null, account: string, loa
     title: '',
     programs: preselected ? [{ sourceCode: preselected.sourceCode, sourceProgramId: preselected.sourceProgramId, subProgramId: null, participation: unknownParticipation() }] : [],
   }))
-  const [catalog, setCatalog] = useState<SupportProgramCatalog | null>(null)
-  const [catalogFilters, setCatalogFilters] = useState(defaultProgramSelectionFilters)
-  const [appliedCatalogFilters, setAppliedCatalogFilters] = useState(defaultProgramSelectionFilters)
-  const [names, setNames] = useState<Record<string, string>>({})
+  /** 앞 칸을 비우고 뒤 칸만 남겼을 때 비운 칸의 위치입니다. 남은 공고가 앞 칸으로 당겨지지 않게 합니다. */
+  const [gap, setGap] = useState<number | null>(null)
+  const [programInfo, setProgramInfo] = useState<Record<string, ReviewProgramInfo>>({})
+  const names = useMemo(() => Object.fromEntries(Object.entries(programInfo).map(([key, info]) => [key, programLabel(info)])), [programInfo])
   const [runs, setRuns] = useState<ReviewPage<RunSummary> | null>(null)
   const [run, setRun] = useState<ReviewRun | null>(null)
   const [facts, setFacts] = useState(initialFacts)
@@ -54,46 +77,51 @@ export function useReviewEditorViewModel(id: number | null, account: string, loa
     void perform('load', async (signal) => {
       const saved = journal.read(account, id)
       const [detail, history] = await Promise.all([useCase.get(id, signal), useCase.runs(id, undefined, signal)])
-      const labels = Object.fromEntries(await Promise.all(detail.programs.map(async (program) => {
+      // 사업 칸의 배지 · 공고명 · 기관과 실행 결과의 공고 이름은 상세 조회로 채웁니다. 못 읽은 공고는 이유만 보입니다.
+      const infos = Object.fromEntries(await Promise.all(detail.programs.map(async (program): Promise<[string, ReviewProgramInfo]> => {
         const key = reviewProgramKey(program)
         try {
-          const found = await detailUseCase.execute(program, signal)
-          return [key, found ? `${found.title} · ${found.organization}` : '공고 정보를 찾을 수 없음']
+          return [key, infoOf(await detailUseCase.execute(program, signal))]
         } catch {
-          return [key, '공고 정보를 불러오지 못함']
+          return [key, { status: 'failed' }]
         }
       })))
-      return { saved, detail, history, labels }
-    }, ({ saved, detail, history, labels }) => { setReview(detail); setDraft({ title: detail.title, programs: detail.programs }); setNames(labels); setRuns(history); setPending(saved); setJournalReady(true) })
+      return { saved, detail, history, infos }
+    }, ({ saved, detail, history, infos }) => { setReview(detail); setDraft({ title: detail.title, programs: detail.programs }); setGap(null); setProgramInfo(infos); setRuns(history); setPending(saved); setJournalReady(true) })
   }, [id, account, journal, useCase, detailUseCase, perform])
   useEffect(() => { load() }, [load])
-  // 미리 고른 공고의 이름은 상세 조회로 채웁니다. 조회만 하고 저장·분석은 보내지 않으며, 못 읽어도 선택은 그대로 둡니다.
+  // 미리 고른 공고의 표시 정보는 상세 조회로 채웁니다. 조회만 하고 저장·분석은 보내지 않으며, 못 읽어도 선택은 그대로 둡니다.
   useEffect(() => {
     if (!preselected) return
     const controller = new AbortController()
     const key = reviewProgramKey(preselected)
     void detailUseCase.execute(preselected, controller.signal)
-      .then((found) => (found ? `${found.title} · ${found.organization}` : '공고 정보를 찾을 수 없음'), () => '공고 정보를 불러오지 못함')
-      .then((label) => { if (!controller.signal.aborted) setNames((current) => ({ [key]: label, ...current })) })
+      .then(infoOf, (): ReviewProgramInfo => ({ status: 'failed' }))
+      .then((info) => { if (!controller.signal.aborted) setProgramInfo((current) => ({ [key]: info, ...current })) })
     return () => controller.abort()
   }, [preselected, detailUseCase])
-  const search = (page = 1, filters: SupportProgramCatalogFilters = catalogFilters) => {
-    if (busy.includes('catalog')) return
-    const query = { ...filters, keyword: filters.keyword.trim(), page }
-    setAppliedCatalogFilters(query)
-    setCatalog(null)
-    return perform('catalog', (signal) => catalogUseCase.execute(query, signal), setCatalog)
+  /** 사업 칸입니다. 비운 칸은 null이고, 채운 칸의 순서가 저장할 사업 순서입니다. */
+  const slots = toSlots(draft.programs, gap)
+  const placeSlots = (next: (ReviewProgram | null)[]) => {
+    const programs = next.filter((program): program is ReviewProgram => program !== null)
+    setDraft({ ...draft, programs })
+    setGap(programs.length < slotCount ? next.indexOf(null) : null)
   }
-  const toggle = (program: SupportProgram) => {
-    const selected = { sourceCode: program.sourceCode, sourceProgramId: program.id, subProgramId: null, participation: unknownParticipation() }
-    const selectedIndex = draft.programs.findIndex((p) => reviewProgramKey(p) === reviewProgramKey(selected))
-    if (selectedIndex >= 0) {
-      setDraft({ ...draft, programs: draft.programs.filter((_, index) => index !== selectedIndex) })
-      return
-    }
-    if (draft.programs.length >= 2) return
-    setDraft({ ...draft, programs: [...draft.programs, selected] }); setNames({ ...names, [reviewProgramKey(selected)]: `${program.title} · ${program.organization}` })
+  /**
+   * 칸에 공고를 둡니다. 같은 공고를 다시 고르면 그대로 두고, 다른 공고로 바꾸면 그 공고의 참여 상태는 모름에서 시작합니다.
+   * 다른 칸에 이미 있는 공고는 두지 않습니다(같은 공고끼리는 비교할 수 없음).
+   */
+  const chooseSlot = (index: number, program: SelectableSupportProgram) => {
+    const chosen: ReviewProgram = { sourceCode: program.sourceCode, sourceProgramId: program.id, subProgramId: null, participation: unknownParticipation() }
+    const key = reviewProgramKey(chosen)
+    if (slots.some((slot, slotIndex) => slotIndex !== index && slot !== null && reviewProgramKey(slot) === key)) return
+    setProgramInfo((current) => ({ ...current, [key]: { status: 'ready', program } }))
+    const existing = slots[index]
+    if (existing && reviewProgramKey(existing) === key) return
+    placeSlots(slots.map((slot, slotIndex) => slotIndex === index ? chosen : slot))
   }
+  /** 칸을 비웁니다. 다른 칸의 공고는 제자리에 둡니다. */
+  const clearSlot = (index: number) => placeSlots(slots.map((slot, slotIndex) => slotIndex === index ? null : slot))
   const history = useCallback((before?: number) => {
     if (id) void perform('history', (signal) => useCase.runs(id, before, signal), (value) => setRuns((old) => ({ ...value, items: before ? [...(old?.items ?? []), ...value.items] : value.items })))
   }, [id, perform, useCase])
@@ -179,6 +207,6 @@ export function useReviewEditorViewModel(id: number | null, account: string, loa
       anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 1000)
     })
   }
-  return { ...scope, review, draft, setDraft, catalog, savedProgramChoices, catalogFilters, setCatalogFilters, appliedCatalogFilters, names, runs, run, facts, setFacts,
-    pending, notice, dirty, pollingPaused, rejectedRevision, clearRejectedRequest, load, search, toggle, saveInput, history, selectRun, start, download }
+  return { ...scope, review, draft, setDraft, slots, programInfo, names, runs, run, facts, setFacts,
+    pending, notice, dirty, pollingPaused, rejectedRevision, clearRejectedRequest, load, chooseSlot, clearSlot, saveInput, history, selectRun, start, download }
 }

@@ -50,25 +50,21 @@ export function ReviewEditorSkeleton({ step }: { step: 'selection' | 'participat
     <CardSkeleton titleWidth="w-32"><Line box="h-6" bar="h-3.5 w-full" /><Line box="h-6" bar="h-3.5 w-4/5" /></CardSkeleton>
     <CardSkeleton titleWidth="w-24">{[0, 1].map((index) => <span className={`${s.skeletonBar} h-10 w-full rounded-lg`} key={index} />)}</CardSkeleton>
   </div>
+  // 1단계: 검토 제목 카드와 비교할 공고 카드(제목 · n/2 · 안내 한 줄 · 사업 칸 2개).
   return <div className="space-y-4" aria-hidden="true">
     <CardSkeleton titleWidth="w-20"><span className={`${s.skeletonBar} h-[42px] w-full rounded-lg`} /><Line box="h-6" bar="h-3.5 w-3/5" /></CardSkeleton>
     <div className={`${s.card} flex flex-col gap-3`}>
-      <span className="flex items-center justify-between gap-2"><Line box="h-6" bar="h-4 w-36" /><span className={`${s.skeletonBar} h-7 w-16 rounded-full`} /></span>
-      <span className="flex flex-col"><Line box="h-6" bar="h-3.5 w-full" /><Line box="h-6" bar="h-3.5 w-3/5" /></span>
-      <span className={`${s.skeletonBar} h-12 w-full rounded-xl`} />
-      <span className={`${s.skeletonBar} h-12 w-full rounded-xl`} />
+      <span className="flex items-center justify-between gap-2"><Line box="h-6" bar="h-4 w-28" /><span className={`${s.skeletonBar} h-7 w-12 rounded-full`} /></span>
+      <Line box="h-6" bar="h-3.5 w-3/5" />
+      <span className={s.slots}>{[0, 1].map((index) => <span className={s.slot} key={index}>
+        <Line box="h-4" bar="h-3 w-10" />
+        <span className={`${s.skeletonBar} h-[22px] w-24`} />
+        <Line box="h-[1.4rem]" bar="h-4 w-4/5" />
+        <Line box="h-5" bar="h-3.5 w-3/5" />
+        <span className="flex w-full items-center justify-between gap-2 pt-1"><Line box="h-4" bar="h-3 w-16" /><span className={`${s.skeletonBar} h-8 w-28 rounded-full`} /></span>
+      </span>)}</span>
     </div>
   </div>
-}
-
-/** 전체 공고 검색 결과 행 자리입니다. 공고명 · 기관과 접수 상태 · 접수 기간 | [선택]. */
-export function CatalogRowSkeletons() {
-  return <ul className="mt-4 divide-y divide-slate-200" aria-hidden="true">
-    {[0, 1, 2].map((index) => <li className="my-2 flex items-center justify-between gap-2 px-3 py-3" key={index}>
-      <span className="flex min-w-0 flex-1 flex-col"><Line box="h-6" bar="h-4 w-3/5" /><Line box="h-6" bar="h-3.5 w-2/5" /><Line box="h-6" bar="h-3.5 w-1/3" /></span>
-      <span className={`${s.skeletonBar} h-9 w-14 rounded-lg`} />
-    </li>)}
-  </ul>
 }
 
 /** 실행 결과 자리입니다. 요약 카드(판단 배지 · 사업 2개 · 요약 문단) · 안내 상자 · 확인할 정보 · 단계별 판단 카드 2장. */

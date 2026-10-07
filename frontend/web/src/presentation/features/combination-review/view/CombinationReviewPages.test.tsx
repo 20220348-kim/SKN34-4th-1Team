@@ -8,6 +8,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { appContainer } from '../../../../app/appContainer'
 import { createAppStore } from '../../../../app/store'
 import { signedIn, signedOut } from '../../../shared/auth/state/authSlice'
+import { reviewProgramKey, unknownParticipation, type ReviewProgram } from '../../../../domain/entities/CombinationReview'
+import type { SupportProgram } from '../../../../domain/entities/SupportProgram'
 import { CombinationReviewError } from '../../../../domain/errors/CombinationReviewError'
 import { CombinationReviewUseCase } from '../../../../domain/usecases/CombinationReviewUseCase'
 import { CombinationReviewRepositoryImpl } from '../../../../data/repositories/CombinationReviewRepositoryImpl'
@@ -22,9 +24,23 @@ const originalCatalog = appContainer.resolve('browseSupportProgramsUseCase')
 const originalDetail = appContainer.resolve('getSupportProgramDetailUseCase')
 const originalSavedPrograms = appContainer.resolve('browseSavedSupportProgramsUseCase')
 const browseSavedPrograms = vi.fn()
+const browsePrograms = vi.fn()
 const repository = { list: vi.fn(), get: vi.fn(), create: vi.fn(), delete: vi.fn(), replace: vi.fn(), runs: vi.fn(), run: vi.fn(), start: vi.fn(), source: vi.fn() }
+/** 검색 결과·관심 공고로 쓰는 공고입니다. 기업마당 숫자형 공고라 자동 분석을 지원합니다. */
+function catalogProgram(id: string, overrides: Partial<SupportProgram> = {}): SupportProgram {
+  return { ...structuredClone(supportPrograms[0]!), id, ...overrides }
+}
+function catalogPage(programs: SupportProgram[]) {
+  return { programs, total: programs.length, page: 1, pageSize: 10, totalPages: 1, regions: [], categories: [], startupStages: [], applicantTypes: [], founderAges: [] }
+}
+const savedEntries = (...programs: SupportProgram[]) => programs.map((program) => ({ savedAt: '2026-09-12T10:00:00+09:00', program }))
+/** 1단계의 사업 칸(사업 1 · 사업 2)입니다. */
+const slot = (number: number) => screen.getByRole('group', { name: `사업 ${number}` })
+const nextButton = () => screen.getByRole('button', { name: '다음 →' }) as HTMLButtonElement
+const programKeys = (programs: ReviewProgram[]) => programs.map(reviewProgramKey)
 beforeEach(() => {
   sessionStorage.clear(); vi.resetAllMocks()
+  browsePrograms.mockResolvedValue(catalogPage([]))
   repository.get.mockResolvedValue(structuredClone(reviewFixture))
   repository.runs.mockResolvedValue({ items: [], nextBeforeId: null })
   repository.run.mockResolvedValue(structuredClone(runFixture))
@@ -37,6 +53,7 @@ beforeEach(() => {
   browseSavedPrograms.mockResolvedValue([])
   appContainer.register({
     combinationReviewUseCase: asValue(new CombinationReviewUseCase(repository)),
+    browseSupportProgramsUseCase: asValue({ execute: browsePrograms }),
     browseSavedSupportProgramsUseCase: asValue({ execute: browseSavedPrograms }),
     getSupportProgramDetailUseCase: asValue({ execute: vi.fn(async (identity) => ({ ...supportPrograms[0], sourceCode: identity.sourceCode, id: identity.sourceProgramId, title: identity.sourceProgramId === 'PBLN_100' ? '청년창업 사업화 지원 공고' : '딥테크 성장 지원 공고' })) }),
   })
@@ -72,16 +89,86 @@ describe('review screens and execution safety', () => {
     expect(repository.start).not.toHaveBeenCalled()
   })
 
-  it('keeps selected programs in order and removes only the chosen program', async () => {
+  it('clears and changes slots of a saved review in place and starts a newly chosen program from unknown participation', async () => {
+    const first = catalogProgram('PBLN_100', { title: '청년창업 사업화 지원 공고' })
+    const another = catalogProgram('PBLN_400', { title: '새로 고른 공고' })
+    browseSavedPrograms.mockResolvedValue(savedEntries(first, another))
+    repository.replace.mockResolvedValue(undefined)
     mount('/app/combination-reviews/12')
     await screen.findByDisplayValue(reviewFixture.title)
-    const selected = within(screen.getByLabelText('현재 선택한 공고'))
-    await selected.findByText(/사업 1 · 청년창업 사업화 지원 공고/)
-    expect(selected.getByText(/사업 2 · 딥테크 성장 지원 공고/)).toBeTruthy()
-    fireEvent.click(selected.getByRole('button', { name: /청년창업 사업화 지원 공고.*선택 해제/ }))
-    expect(selected.queryByText(/청년창업/)).toBeNull()
-    expect(selected.getByText(/사업 1 · 딥테크 성장 지원 공고/)).toBeTruthy()
-    expect((screen.getByRole('button', { name: '다음 →' }) as HTMLButtonElement).disabled).toBe(true)
+    // 저장한 두 공고가 저장 순서대로 사업 1 · 사업 2 칸에 보입니다.
+    expect(await within(slot(1)).findByText('청년창업 사업화 지원 공고')).toBeTruthy()
+    expect(within(slot(2)).getByText('딥테크 성장 지원 공고')).toBeTruthy()
+    expect(screen.getByText('2/2')).toBeTruthy()
+
+    // [빼기]는 그 칸만 비우고 다른 칸의 공고는 제자리에 둡니다. 포커스는 비운 칸의 [공고 고르기]로 옮깁니다.
+    fireEvent.click(within(slot(1)).getByRole('button', { name: '사업 1 공고 빼기' }))
+    expect(document.activeElement).toBe(within(slot(1)).getByRole('button', { name: '사업 1 공고 고르기' }))
+    expect(within(slot(1)).queryByText('청년창업 사업화 지원 공고')).toBeNull()
+    expect(within(slot(2)).getByText('딥테크 성장 지원 공고')).toBeTruthy()
+    expect(screen.getByText('1/2')).toBeTruthy()
+    expect(nextButton().disabled).toBe(true)
+    expect(document.getElementById(nextButton().getAttribute('aria-describedby')!)!.textContent).toBe('공고를 2개 고르면 넘어갈 수 있어요 · 지금 1개')
+
+    // [바꾸기]로 연 패널을 Esc로 닫으면 바꾸지 않고 [바꾸기]로 포커스가 돌아옵니다.
+    const change = within(slot(2)).getByRole('button', { name: '사업 2 공고 바꾸기' })
+    fireEvent.click(change)
+    fireEvent.keyDown(screen.getByRole('dialog', { name: '공고 고르기' }), { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: '공고 고르기' })).toBeNull()
+    expect(document.activeElement).toBe(change)
+    expect(within(slot(2)).getByText('딥테크 성장 지원 공고')).toBeTruthy()
+
+    fireEvent.click(change)
+    const panel = screen.getByRole('dialog', { name: '공고 고르기' })
+    expect(within(panel).getByText('사업 2로 비교할 공고 1개를 골라 주세요')).toBeTruthy()
+    fireEvent.click(await within(panel).findByRole('radio', { name: /새로 고른 공고/ }))
+    fireEvent.click(within(panel).getByRole('button', { name: '사업 2로 선택' }))
+    expect(screen.queryByRole('dialog', { name: '공고 고르기' })).toBeNull()
+    expect(within(slot(2)).getByText('새로 고른 공고')).toBeTruthy()
+    expect(document.activeElement).toBe(within(slot(2)).getByRole('button', { name: '사업 2 공고 바꾸기' }))
+
+    // 사업 1을 고를 때 사업 2의 공고는 흐리게 두고 고를 수 없습니다.
+    fireEvent.click(within(slot(1)).getByRole('button', { name: '사업 1 공고 고르기' }))
+    const other = screen.getByRole('dialog', { name: '공고 고르기' })
+    const taken = await within(other).findByRole('radio', { name: /새로 고른 공고/ }) as HTMLInputElement
+    expect(taken.disabled).toBe(true)
+    expect(within(other).getByText('사업 2로 고름')).toBeTruthy()
+    fireEvent.click(within(other).getByRole('radio', { name: /청년창업 사업화 지원 공고/ }))
+    fireEvent.click(within(other).getByRole('button', { name: '사업 1로 선택' }))
+    expect(within(slot(1)).getByText('청년창업 사업화 지원 공고')).toBeTruthy()
+
+    fireEvent.click(nextButton())
+    expect(await screen.findAllByText('지금 어디까지 진행했나요?')).toHaveLength(2)
+    const saved = repository.replace.mock.calls[0][2]
+    expect(programKeys(saved.programs)).toEqual(['BIZINFO:PBLN_100', 'BIZINFO:PBLN_400'])
+    // 칸을 바꾼 공고는 저장돼 있던 참여 상태를 이어받지 않고 모름에서 시작합니다.
+    expect(saved.programs.map((program: ReviewProgram) => program.participation)).toEqual([unknownParticipation(), unknownParticipation()])
+    expect(saved.programs.map((program: ReviewProgram) => program.subProgramId)).toEqual([null, null])
+    expect(repository.start).not.toHaveBeenCalled()
+  })
+
+  it('shows the name only and the unsupported warning inside a slot whose program detail fails to load', async () => {
+    repository.get.mockResolvedValue({ ...structuredClone(reviewFixture), programs: [reviewFixture.programs[0], { ...reviewFixture.programs[1], sourceProgramId: 'R2026-1' }] })
+    const detail = vi.mocked(appContainer.resolve('getSupportProgramDetailUseCase').execute)
+    const loaded = detail.getMockImplementation()!
+    detail.mockImplementation(async (identity, signal) => {
+      if (identity.sourceProgramId === 'R2026-1') throw new Error('offline')
+      return loaded(identity, signal)
+    })
+    mount('/app/combination-reviews/12')
+    await screen.findByDisplayValue(reviewFixture.title)
+    expect(within(slot(2)).getByText('공고 정보를 불러오지 못함')).toBeTruthy()
+    expect(within(slot(2)).queryByText('접수 중')).toBeNull()
+    expect(within(slot(2)).getByText('현재 자동 분석을 지원하지 않는 공고입니다.')).toBeTruthy()
+    expect(within(slot(2)).getByRole('button', { name: '사업 2 공고 바꾸기' })).toBeTruthy()
+    // 읽은 공고는 신청 문서의 고른 공고 카드처럼 접수 상태 · 출처 배지와 기관 · 접수 기간을 보입니다.
+    expect(within(slot(1)).getByText('청년창업 사업화 지원 공고')).toBeTruthy()
+    expect(within(slot(1)).getByText('접수 중')).toBeTruthy()
+    expect(within(slot(1)).getByText('기업마당')).toBeTruthy()
+    expect(within(slot(1)).getByText(`${supportPrograms[0]!.organization} · 접수 ${supportPrograms[0]!.applicationPeriod}`)).toBeTruthy()
+    expect(within(slot(1)).queryByText('현재 자동 분석을 지원하지 않는 공고입니다.')).toBeNull()
+    expect(within(slot(1)).getByRole('link', { name: /공고 상세/ }).getAttribute('href')).toBe('/app/support-programs/detail?sourceCode=BIZINFO&sourceProgramId=PBLN_100')
+    expect(screen.getByText(/선택한 공고는 현재 자동 분석을 지원하지 않습니다/)).toBeTruthy()
   })
 
   it('submits once then polls queued and running work until completion without another POST', async () => {
@@ -154,70 +241,110 @@ describe('review screens and execution safety', () => {
     expect(repository.run).not.toHaveBeenCalled()
     expect(repository.start).not.toHaveBeenCalled()
   })
-  it('adds two saved notices to a new review without a catalog search', async () => {
-    const programs = supportPrograms.slice(0, 2).map((program, index) => ({ ...structuredClone(program), id: `saved-${index + 1}` }))
-    browseSavedPrograms.mockResolvedValueOnce(programs.map((program, index) => ({ savedAt: `2026-09-12T10:0${index}:00+09:00`, program })))
+  it('fills two empty slots from the saved list and the full search of the shared picker panel', async () => {
+    const saved = catalogProgram('PBLN_301', { title: '관심 공고 하나' })
+    const closed = catalogProgram('PBLN_302', { title: '접수 끝난 공고', status: 'CLOSED' })
+    const unsupported = catalogProgram('R2026-9', { title: '자동 분석 미지원 공고' })
+    browseSavedPrograms.mockResolvedValue(savedEntries(saved))
+    browsePrograms.mockResolvedValue(catalogPage([saved, closed, unsupported]))
+    repository.create.mockResolvedValue(structuredClone(reviewFixture))
     mount('/app/combination-reviews/new')
 
-    const selectionSummary = screen.getByLabelText('현재 선택한 공고')
-    expect(selectionSummary.className).toContain('min-h-12')
-    expect(screen.getByText('선택한 공고가 없습니다.')).toBeTruthy()
+    // 빈 칸 두 개로 시작하고, 관심 공고는 패널을 열 때 읽습니다.
+    const programs = screen.getByRole('region', { name: '비교할 공고' })
+    expect(within(programs).getByText('0/2')).toBeTruthy()
+    expect(within(programs).getByText('공고 두 개를 골라 주세요. 접수가 끝난 공고도 참여 이력 검토에 쓸 수 있어요.')).toBeTruthy()
+    expect(within(slot(1)).getByText('비교할 공고를 아직 고르지 않았어요')).toBeTruthy()
+    expect(within(slot(2)).getByRole('button', { name: '사업 2 공고 고르기' })).toBeTruthy()
     expect(browseSavedPrograms).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button', { name: '관심 공고함에서 선택' }))
-    const dialog = await screen.findByRole('dialog', { name: '관심 공고함에서 선택' })
-    const savedPrograms = await within(dialog).findByRole('list', { name: '중복 지원 검토 관심 공고 목록' })
-    fireEvent.click(within(savedPrograms).getByRole('button', { name: `${programs[0]!.title} 관심 공고 선택` }))
-    fireEvent.click(within(savedPrograms).getByRole('button', { name: `${programs[1]!.title} 관심 공고 선택` }))
+    expect(nextButton().disabled).toBe(true)
 
-    expect(screen.getAllByText('2/2 선택')).toHaveLength(2)
-    expect(within(savedPrograms).getAllByRole('button', { name: /관심 공고 선택 해제$/ })).toHaveLength(2)
-    expect(selectionSummary.children).toHaveLength(2)
-    expect(browseSavedPrograms).toHaveBeenCalledWith(expect.any(AbortSignal))
-    fireEvent.click(within(dialog).getByRole('button', { name: '선택 완료' }))
-    expect(screen.queryByRole('dialog', { name: '관심 공고함에서 선택' })).toBeNull()
+    const pickFirst = within(slot(1)).getByRole('button', { name: '사업 1 공고 고르기' })
+    fireEvent.click(pickFirst)
+    const panel = screen.getByRole('dialog', { name: '공고 고르기' })
+    expect(panel.getAttribute('aria-modal')).toBe('true')
+    expect(within(panel).getByText('사업 1로 비교할 공고 1개를 골라 주세요')).toBeTruthy()
+    expect(document.activeElement).toBe(within(panel).getByRole('tab', { name: '관심 공고함' }))
+    const confirmFirst = within(panel).getByRole('button', { name: '사업 1로 선택' }) as HTMLButtonElement
+    expect(confirmFirst.disabled).toBe(true)
+    // 고르기만 하면 바로 확정할 수 있습니다(신청 문서와 달리 양식 조회가 없음).
+    fireEvent.click(await within(panel).findByRole('radio', { name: /관심 공고 하나/ }))
+    expect(confirmFirst.disabled).toBe(false)
+    fireEvent.click(confirmFirst)
+    expect(screen.queryByRole('dialog', { name: '공고 고르기' })).toBeNull()
+    expect(within(slot(1)).getByText('관심 공고 하나')).toBeTruthy()
+    expect(within(slot(1)).getByText('기업마당')).toBeTruthy()
+    expect(within(slot(1)).getByRole('link', { name: /공고 상세/ }).getAttribute('href')).toBe('/app/support-programs/detail?sourceCode=BIZINFO&sourceProgramId=PBLN_301')
+    expect(document.activeElement).toBe(within(slot(1)).getByRole('button', { name: '사업 1 공고 바꾸기' }))
+    expect(within(programs).getByText('1/2')).toBeTruthy()
+
+    fireEvent.click(within(slot(2)).getByRole('button', { name: '사업 2 공고 고르기' }))
+    const second = screen.getByRole('dialog', { name: '공고 고르기' })
+    expect(within(second).getByText('사업 2로 비교할 공고 1개를 골라 주세요')).toBeTruthy()
+    // 사업 1에서 고른 공고는 흐리게 두고 고를 수 없습니다.
+    expect((await within(second).findByRole('radio', { name: /관심 공고 하나/ }) as HTMLInputElement).disabled).toBe(true)
+    expect(within(second).getByText('사업 1로 고름')).toBeTruthy()
+    fireEvent.click(within(second).getByRole('tab', { name: '전체 검색' }))
+    // 전체 검색은 접수가 끝난 공고도 보이도록 접수 상태 "전체"로 찾습니다.
+    const closedRadio = await within(second).findByRole('radio', { name: /접수 끝난 공고/ })
+    expect(browsePrograms).toHaveBeenCalledOnce()
+    expect(browsePrograms.mock.calls[0][0]).toMatchObject({ keyword: '', status: 'ALL', page: 1 })
+    expect((within(second).getByRole('radio', { name: /관심 공고 하나/ }) as HTMLInputElement).disabled).toBe(true)
+    // 자동 분석을 지원하지 않는 공고는 행 아래에 알립니다.
+    const unsupportedRow = within(second).getByRole('radio', { name: /자동 분석 미지원 공고/ }).closest('label')!.parentElement!
+    expect(unsupportedRow.textContent).toContain('현재 자동 분석을 지원하지 않는 공고입니다.')
+    expect(closedRadio.closest('label')!.parentElement!.textContent).not.toContain('현재 자동 분석을 지원하지 않는 공고입니다.')
+    fireEvent.click(closedRadio)
+    fireEvent.click(within(second).getByRole('button', { name: '사업 2로 선택' }))
+    expect(within(slot(2)).getByText('접수 끝난 공고')).toBeTruthy()
+    expect(within(slot(2)).getByText('접수 마감')).toBeTruthy()
+    expect(within(programs).getByText('2/2')).toBeTruthy()
+
+    // 제목과 두 칸이 모두 있어야 넘어갈 수 있습니다.
+    expect(nextButton().disabled).toBe(true)
+    fireEvent.change(screen.getByLabelText('검토 제목'), { target: { value: '두 공고 검토' } })
+    expect(nextButton().disabled).toBe(false)
+    fireEvent.click(nextButton())
+    await waitFor(() => expect(repository.create).toHaveBeenCalledOnce())
+    expect(repository.create.mock.calls[0][0].programs).toEqual([
+      { sourceCode: 'BIZINFO', sourceProgramId: 'PBLN_301', subProgramId: null, participation: unknownParticipation() },
+      { sourceCode: 'BIZINFO', sourceProgramId: 'PBLN_302', subProgramId: null, participation: unknownParticipation() },
+    ])
+    expect(repository.start).not.toHaveBeenCalled()
   })
 
-  it('starts a review opened from a program detail with that program already chosen as program 1', async () => {
-    const other = { ...structuredClone(supportPrograms[1]!), id: 'saved-2' }
-    browseSavedPrograms.mockResolvedValueOnce([{ savedAt: '2026-09-12T10:00:00+09:00', program: other }])
+  it('starts a review opened from a program detail with that program already in slot 1', async () => {
+    const other = catalogProgram('PBLN_500', { title: '다른 관심 공고' })
+    browseSavedPrograms.mockResolvedValue(savedEntries(other))
     repository.create.mockResolvedValue(structuredClone(reviewFixture))
     mount('/app/combination-reviews/new?sourceCode=BIZINFO&sourceProgramId=PBLN_100')
 
-    const selected = within(screen.getByLabelText('현재 선택한 공고'))
-    expect(await selected.findByText(`사업 1 · 청년창업 사업화 지원 공고 · ${supportPrograms[0]!.organization}`)).toBeTruthy()
-    expect(screen.getByText('1/2 선택')).toBeTruthy()
-    // 미리 고르기는 공고 이름만 조회하고 검토를 만들거나 분석을 보내지 않습니다.
+    expect(await within(slot(1)).findByText('청년창업 사업화 지원 공고')).toBeTruthy()
+    expect(within(slot(1)).getByText(`${supportPrograms[0]!.organization} · 접수 ${supportPrograms[0]!.applicationPeriod}`)).toBeTruthy()
+    expect(within(slot(2)).getByRole('button', { name: '사업 2 공고 고르기' })).toBeTruthy()
+    expect(screen.getByText('1/2')).toBeTruthy()
+    // 미리 고르기는 공고 상세만 조회하고 검토를 만들거나 분석을 보내지 않습니다.
     expect(repository.create).not.toHaveBeenCalled()
     expect(repository.start).not.toHaveBeenCalled()
 
-    fireEvent.click(screen.getByRole('button', { name: '관심 공고함에서 선택' }))
-    const dialog = await screen.findByRole('dialog', { name: '관심 공고함에서 선택' })
-    fireEvent.click(await within(dialog).findByRole('button', { name: `${other.title} 관심 공고 선택` }))
-    fireEvent.click(within(dialog).getByRole('button', { name: '선택 완료' }))
+    fireEvent.click(within(slot(2)).getByRole('button', { name: '사업 2 공고 고르기' }))
+    const panel = screen.getByRole('dialog', { name: '공고 고르기' })
+    fireEvent.click(await within(panel).findByRole('radio', { name: /다른 관심 공고/ }))
+    fireEvent.click(within(panel).getByRole('button', { name: '사업 2로 선택' }))
     fireEvent.change(screen.getByLabelText('검토 제목'), { target: { value: '상세에서 시작한 검토' } })
-    fireEvent.click(screen.getByRole('button', { name: '다음 →' }))
+    fireEvent.click(nextButton())
 
     await waitFor(() => expect(repository.create).toHaveBeenCalledOnce())
-    expect(repository.create.mock.calls[0][0].programs.map((program: { sourceCode: string; sourceProgramId: string }) => `${program.sourceCode}:${program.sourceProgramId}`))
-      .toEqual(['BIZINFO:PBLN_100', `${other.sourceCode}:saved-2`])
+    expect(programKeys(repository.create.mock.calls[0][0].programs)).toEqual(['BIZINFO:PBLN_100', 'BIZINFO:PBLN_500'])
   })
 
   it.each(['?sourceCode=bizinfo&sourceProgramId=PBLN_100', '?sourceCode=BIZINFO&sourceProgramId=%20', '?sourceProgramId=PBLN_100'])(
     'starts a new review without a preselected program for an invalid address %s', (search) => {
       mount(`/app/combination-reviews/new${search}`)
-      expect(screen.getByText('선택한 공고가 없습니다.')).toBeTruthy()
-      expect(screen.getByText('0/2 선택')).toBeTruthy()
+      expect(screen.getByText('0/2')).toBeTruthy()
+      expect(within(slot(1)).getByRole('button', { name: '사업 1 공고 고르기' })).toBeTruthy()
+      expect(within(slot(2)).getByRole('button', { name: '사업 2 공고 고르기' })).toBeTruthy()
     })
-
-  it('shows an explicit empty message only after opening the saved-program picker', async () => {
-    mount('/app/combination-reviews/new')
-    expect(screen.queryByText('관심 공고함에 담은 공고가 없습니다.')).toBeNull()
-
-    fireEvent.click(screen.getByRole('button', { name: '관심 공고함에서 선택' }))
-
-    expect(await screen.findByText('관심 공고함에 담은 공고가 없습니다.')).toBeTruthy()
-    expect(screen.queryByText(/관심 공고를 불러오지 못했습니다/)).toBeNull()
-  })
 
   it.each([201, 404])('handles new review save HTTP %s through the production adapter', async (status) => {
     const fetch = vi.fn(async (_url: string, init?: RequestInit) => {
@@ -236,15 +363,23 @@ describe('review screens and execution safety', () => {
     })
     mount('/app/combination-reviews/new')
     fireEvent.change(screen.getByLabelText('검토 제목'), { target: { value: reviewFixture.title } })
-    fireEvent.click(screen.getByText('공고 검색'))
-    const choices = await screen.findAllByRole('button', { name: '선택' })
-    fireEvent.click(choices[0]); fireEvent.click(choices[1])
-    expect(screen.getByText('2/2 선택')).toBeTruthy()
-    expect(screen.getAllByRole('button', { name: '선택 해제' })).toHaveLength(2)
-    expect(screen.getByLabelText('현재 선택한 공고').children).toHaveLength(2)
-    expect(fetch).toHaveBeenCalledOnce()
-    expect(new URL(fetch.mock.calls[0][0]).pathname).toMatch(/\/catalog$/)
-    expect(new URL(fetch.mock.calls[0][0]).searchParams.get('status')).toBe('ALL')
+    // 관심 공고함이 비어 있으면 패널이 전체 검색으로 열립니다. 사업 2에서는 사업 1의 공고를 고를 수 없어 다음 공고를 고릅니다.
+    for (const number of [1, 2]) {
+      fireEvent.click(within(slot(number)).getByRole('button', { name: `사업 ${number} 공고 고르기` }))
+      const panel = screen.getByRole('dialog', { name: '공고 고르기' })
+      const choices = await within(panel).findAllByRole('radio')
+      fireEvent.click(choices.find((choice) => !(choice as HTMLInputElement).disabled)!)
+      fireEvent.click(within(panel).getByRole('button', { name: `사업 ${number}로 선택` }))
+    }
+    expect(screen.getByText('2/2')).toBeTruthy()
+    expect(within(slot(1)).getByText(supportPrograms[0]!.title)).toBeTruthy()
+    expect(within(slot(2)).getByText(supportPrograms[1]!.title)).toBeTruthy()
+    // 패널을 열 때마다 카탈로그를 접수 상태 "전체"로 한 번 찾습니다(접수 마감 공고도 고를 수 있음).
+    expect(fetch).toHaveBeenCalledTimes(2)
+    for (const [url] of fetch.mock.calls) {
+      expect(new URL(url).pathname).toMatch(/\/catalog$/)
+      expect(new URL(url).searchParams.get('status')).toBe('ALL')
+    }
     fireEvent.click(screen.getByRole('button', { name: '다음 →' }))
     if (status === 201) {
       // 새 검토는 1단계 [다음]에서 만들어지고, 참여 상태 단계로 넘어갈 뿐 분석은 보내지 않는다.

@@ -9,6 +9,17 @@ export const reviewStyles = {
   input: 'mt-1 block w-full rounded-lg border border-line bg-white p-2.5 text-sm focus:border-brand-primary focus:outline-brand-primary',
   warning: 'rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950',
   info: 'rounded-xl border border-info-line bg-info-soft p-4 text-sm leading-6 text-ink',
+  // 1단계 비교할 공고의 사업 칸(사업 1 · 사업 2). 작업 공간이 넓으면 두 칸을 나란히, 좁으면 위아래로 둡니다.
+  slots: 'mt-3 grid grid-cols-1 gap-3 @min-[40rem]/workspace:grid-cols-2',
+  slotEmpty: 'flex min-w-0 flex-col items-start gap-2 rounded-2xl border border-dashed border-line-strong bg-white p-4',
+  slot: 'flex min-w-0 flex-col items-start gap-2 rounded-2xl border border-line bg-white p-4',
+  slotLabel: 'text-xs font-extrabold text-brand-primary',
+  slotLabelMuted: 'text-xs font-extrabold text-ink-muted',
+  slotHint: 'm-0 text-[0.8125rem] leading-[1.6] text-ink-muted',
+  slotTitle: 'text-[0.95rem] leading-[1.45] font-bold text-ink [overflow-wrap:anywhere]',
+  slotMeta: 'text-[0.8125rem] text-ink-muted tabular-nums',
+  slotWarning: 'm-0 text-sm text-amber-800',
+  slotFoot: 'mt-auto flex w-full flex-wrap items-center justify-between gap-2 pt-1',
   // 목록 카드 · 단계 이동 바 · 결과 카드 (화면 통일안 27–29)
   secondarySm: `inline-flex h-8 shrink-0 cursor-pointer items-center justify-center gap-1 rounded-full border border-line-strong bg-white px-3 text-[0.8125rem] font-bold text-ink no-underline hover:border-brand-primary hover:text-brand-primary disabled:cursor-not-allowed disabled:opacity-50 ${focus}`,
   menuButton: `grid size-8 shrink-0 cursor-pointer place-items-center rounded-full border border-line-strong bg-white text-base leading-none text-ink-muted hover:text-ink ${focus}`,
@@ -56,7 +67,6 @@ export const reviewStyles = {
   badgeNeutral: 'bg-surface-muted text-ink-muted',
   badgeDanger: 'bg-danger-soft text-danger',
   textLink: `inline-flex items-center gap-1 text-xs font-bold text-brand-primary no-underline hover:underline disabled:cursor-not-allowed disabled:opacity-50 ${focus}`,
-  // 불러오는 중 (신청 문서 작성 화면과 같은 막대 · 다시 읽는 동안 흐림)
+  // 불러오는 중 (신청 문서 작성 화면과 같은 막대)
   skeletonBar: 'block rounded-md bg-surface-muted motion-safe:animate-pulse',
-  stale: 'pointer-events-none opacity-50',
 } as const
