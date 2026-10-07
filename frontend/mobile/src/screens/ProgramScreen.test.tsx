@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react-native'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native'
 import { Linking } from 'react-native'
 import { ApiError, apiRequest, programClient } from '../api/client'
 import { useAuth } from '../auth/session'
@@ -37,7 +37,7 @@ test.each(['signedOut', 'signedIn'] as const)('program information and its offic
   await screen.findByText('테스트 지원사업')
   expect(screen.getByText('지원 기관')).toBeTruthy()
   expect(screen.getByText('중소기업')).toBeTruthy()
-  expect(screen.getByText('서울 · 경기 / 기술 · 창업')).toBeTruthy()
+  for (const value of ['한눈에 보기', '서울', '경기', '기술', '창업']) expect(screen.getByText(value)).toBeTruthy()
   expect(screen.getByText(detail.summary)).toBeTruthy()
   expect(screen.getByText('공고 정보는 신청 자격의 확정 판정이 아닙니다. 제출 전 공식 공고의 요건과 마감일을 확인해 주세요.')).toBeTruthy()
   expect(screen.queryByRole('button', { name: '더 보기' })).toBeNull()
@@ -118,7 +118,7 @@ test('question entry preserves the existing explicit AI request and visible prog
   fireEvent.press(screen.getByText('원문에 질문하기'))
   expect(answer).not.toHaveBeenCalled()
   fireEvent.changeText(screen.getByLabelText('공고에 대해 궁금한 점'), '신청 서류는?')
-  fireEvent.press(screen.getByText('원문에서 답변 찾기'))
+  fireEvent.press(screen.getByText('질문 보내기'))
   await screen.findByText('공고 원문 답변')
   expect(answer).toHaveBeenCalledWith({ ...identity, question: '신청 서류는?' }, expect.anything())
 })
@@ -213,4 +213,86 @@ test('a continuation belonging to a different session cannot save or open questi
   await screen.findByText('테스트 지원사업')
   expect(screen.queryByLabelText('공고에 대해 궁금한 점')).toBeNull()
   expect(resumed).not.toHaveBeenCalled()
+})
+
+
+test('evidence suggestions fill without sending and successful questions remain as a local thread', async () => {
+  render(<ProgramScreen identity={identity} onLogin={jest.fn()} />)
+  await screen.findByText('테스트 지원사업')
+  fireEvent.press(screen.getByLabelText('원문에 질문하기'))
+  fireEvent.press(screen.getByLabelText('지원 대상'))
+  expect(answer).not.toHaveBeenCalled()
+  expect(screen.getByLabelText('공고에 대해 궁금한 점').props.value).toBe('지원 대상이 어떻게 되나요?')
+  fireEvent.press(screen.getByLabelText('질문 보내기'))
+  await screen.findByText('공고 원문 답변')
+  expect(screen.getByLabelText('공고에 대해 궁금한 점').props.value).toBe('')
+  expect(screen.getByText('지원 대상이 어떻게 되나요?')).toBeTruthy()
+  answer.mockResolvedValueOnce({ answerStatus: 'INSUFFICIENT_EVIDENCE', answer: '공식 근거가 부족합니다.', citations: [] })
+  fireEvent.changeText(screen.getByLabelText('공고에 대해 궁금한 점'), '추가 질문')
+  fireEvent.press(screen.getByLabelText('질문 보내기'))
+  await screen.findByText('공식 근거가 부족합니다.')
+  expect(screen.getByText('공고 원문 답변')).toBeTruthy()
+  expect(screen.getByText('추가 질문')).toBeTruthy()
+})
+
+test('cancelling an evidence request preserves the draft and never displays its late answer', async () => {
+  let finish!: (value: unknown) => void
+  answer.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+  render(<ProgramScreen identity={identity} onLogin={jest.fn()} />)
+  await screen.findByText('테스트 지원사업')
+  fireEvent.press(screen.getByLabelText('원문에 질문하기'))
+  fireEvent.changeText(screen.getByLabelText('공고에 대해 궁금한 점'), '취소할 질문')
+  fireEvent.press(screen.getByLabelText('질문 보내기'))
+  await screen.findByLabelText('원문에서 답변을 찾는 중')
+  fireEvent.press(screen.getByLabelText('취소'))
+  expect(screen.getByLabelText('공고에 대해 궁금한 점').props.value).toBe('취소할 질문')
+  await act(async () => finish({ answerStatus: 'ANSWERED', answer: '늦은 답변', citations: [] }))
+  expect(screen.queryByText('늦은 답변')).toBeNull()
+})
+
+
+test('a failed follow-up keeps the prior answer and current question for explicit retry', async () => {
+  render(<ProgramScreen identity={identity} onLogin={jest.fn()} />)
+  await screen.findByText('테스트 지원사업')
+  fireEvent.press(screen.getByLabelText('원문에 질문하기'))
+  fireEvent.changeText(screen.getByLabelText('공고에 대해 궁금한 점'), '첫 질문')
+  fireEvent.press(screen.getByLabelText('질문 보내기'))
+  await screen.findByText('공고 원문 답변')
+  answer.mockRejectedValueOnce(new Error('offline'))
+  fireEvent.changeText(screen.getByLabelText('공고에 대해 궁금한 점'), '재시도할 질문')
+  fireEvent.press(screen.getByLabelText('질문 보내기'))
+  await screen.findByText('연결하지 못했거나 응답을 확인할 수 없습니다. 잠시 후 다시 시도해 주세요.')
+  expect(screen.getByText('공고 원문 답변')).toBeTruthy()
+  expect(screen.getByLabelText('공고에 대해 궁금한 점').props.value).toBe('재시도할 질문')
+  expect(answer).toHaveBeenCalledTimes(2)
+  fireEvent.press(screen.getByLabelText('질문 보내기'))
+  await waitFor(() => expect(answer).toHaveBeenCalledTimes(3))
+  await waitFor(() => expect(screen.getByLabelText('공고에 대해 궁금한 점').props.value).toBe(''))
+})
+
+test.each(['account', 'program'] as const)('changing the %s clears the thread and discards a previous pending answer', async destination => {
+  const view = render(<ProgramScreen identity={identity} onLogin={jest.fn()} />)
+  await screen.findByText('테스트 지원사업')
+  fireEvent.press(screen.getByLabelText('원문에 질문하기'))
+  fireEvent.changeText(screen.getByLabelText('공고에 대해 궁금한 점'), '이전 질문')
+  fireEvent.press(screen.getByLabelText('질문 보내기'))
+  await screen.findByText('공고 원문 답변')
+  let finish!: (value: unknown) => void
+  answer.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+  fireEvent.changeText(screen.getByLabelText('공고에 대해 궁금한 점'), '이전 대상의 추가 질문')
+  fireEvent.press(screen.getByLabelText('질문 보내기'))
+  await waitFor(() => expect(answer).toHaveBeenCalledTimes(2))
+  const pendingSignal = answer.mock.calls[1][1] as AbortSignal
+  const nextIdentity = destination === 'program' ? { ...identity, sourceProgramId: 'P/999' } : identity
+  if (destination === 'account') jest.mocked(useAuth).mockReturnValue({ status: 'signedIn',
+    session: { accessToken: 'next-owner' }, invalidateSession } as unknown as ReturnType<typeof useAuth>)
+  else jest.mocked(programClient).mockReturnValue({ getDetail: jest.fn().mockResolvedValue({ ...programDetail, id: 'P/999', title: '다음 공고' }),
+    answerEvidenceQuestion: answer } as unknown as ReturnType<typeof programClient>)
+  view.rerender(<ProgramScreen identity={nextIdentity} onLogin={jest.fn()} />)
+  await waitFor(() => expect(pendingSignal.aborted).toBe(true))
+  expect(screen.queryByText('공고 원문 답변')).toBeNull()
+  expect(screen.queryByText('이전 질문')).toBeNull()
+  await act(async () => finish({ answerStatus: 'ANSWERED', answer: '이전 대상의 늦은 답변', citations: [] }))
+  expect(screen.queryByText('이전 대상의 늦은 답변')).toBeNull()
+  await waitFor(() => expect(screen.getByLabelText('공고에 대해 궁금한 점').props.value).toBe(''))
 })

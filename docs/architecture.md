@@ -33,6 +33,8 @@ API 경계에서 shared DTO 검증·Mapper를 사용하고, 등록 결과의 공
 관심 공고 선택 시트는 기존 관심 공고 API를 사용하며, 접수 상태와 서울 기준 마감일은 작성 시 다시 확인합니다.
 기존 웹의 domain/model 파일은 공통 구현을 재수출하므로 두 구현이 따로 변경되지 않습니다.
 모바일 기업·관심 공고·가입 이메일 인증의 HTTP 호출·응답 검증·DTO 변환은 `src/api` 경계가 담당하며 화면은 내부 모델을 받습니다. 문서의 실제 기입 가능 답변 판단은 shared `isWritableApplicationAnswer`를, 원본 저장·답변 기입·수동 작성 안내는 `applicationDraftMode`를 웹·앱에서 재사용합니다. 필수 답변 일부가 비어 있어도 저장된 답변으로 초안을 만들고, 전부 비어 있거나 미정이면 기존 Core 생성 규칙에 따라 AI 호출 없이 공식 원본을 저장합니다. 실제 수동 작성 답변만 있는 경우는 원본 반환으로 숨기지 않고 기존 서버 오류를 표시합니다.
+모바일 공고 상세는 `ProgramScreen → readProgramDetail → shared 공고 HTTP Client → Core`로 읽고 모바일 API 경계에서 shared Mapper로 내부 모델을 만듭니다.
+원문 질문 예시는 입력만 채우고 명시적인 질문 전송에만 기존 answers API를 호출합니다. 답변 이력은 공고·계정별 화면 상태이며 서버에 새 대화 저장 계약을 추가하지 않습니다.
 모바일 관심함의 검색·다중 필터·정렬·달력은 검증된 관심 공고 모델을 로컬 화면에서 처리합니다. 공고 검색과 관심함의 조건은 한 시트에서 고르며
 공고 검색은 기존 catalog API, 관심함은 기존 로컬 필터를 사용합니다.
 목록·진행 관리의 단계 변경은 기존 `ProgressStageSheet → updatePreparationProgress → Core progress-stage API`를
