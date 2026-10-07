@@ -18,7 +18,8 @@ export default function MenuRoute() {
       case 'report': router.navigate('/(tabs)/report'); break
       case 'documents': router.push({ pathname: '/(tabs)/all/preparation', params: { kind: 'documents' } }); break
       case 'reviews': router.push('/(tabs)/all/reviews'); break
-      case 'recruitments': router.navigate(signedIn ? '/(tabs)/all/collab' : '/(tabs)/collab'); break
+      case 'recruitments': router.navigate({ pathname: signedIn ? '/(tabs)/all/collab' : '/(tabs)/collab', params: { management: '0', view: 'recruitments', mine: '0' } }); break
+      case 'partners': router.push({ pathname: '/(tabs)/all/collab', params: { management: '1', view: 'box', box: 'received', mine: '0' } }); break
       case 'received': router.push({ pathname: '/(tabs)/all/collab', params: { view: 'box', box: 'received' } }); break
       case 'sent': router.push({ pathname: '/(tabs)/all/collab', params: { view: 'box', box: 'sent' } }); break
       case 'mine': router.push({ pathname: '/(tabs)/all/collab', params: { mine: '1' } }); break

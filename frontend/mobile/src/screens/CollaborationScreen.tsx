@@ -16,13 +16,13 @@ import { SegmentedControl } from '../components/SegmentedControl'
 
 type ViewMode = 'recruitments' | 'box'
 type ProposalFilter = 'all' | 'pending' | 'accepted' | 'ended'
-type RecruitmentState = { owner: string | null; items: PartnerRecruitmentSummary[]; total: number; totalPages: number; loading: boolean; error: string | null }
+type RecruitmentState = { owner: string | null; mineOnly: boolean; items: PartnerRecruitmentSummary[]; total: number; totalPages: number; loading: boolean; error: string | null }
 type BoxState = { owner: string | null; page: PartnerProposalBoxPage | null; loading: boolean; error: string | null }
-const emptyRecruitments = (owner: string | null): RecruitmentState => ({ owner, items: [], total: 0, totalPages: 0, loading: true, error: null })
+const emptyRecruitments = (owner: string | null, mineOnly = false): RecruitmentState => ({ owner, mineOnly, items: [], total: 0, totalPages: 0, loading: true, error: null })
 const emptyBox = (owner: string | null): BoxState => ({ owner, page: null, loading: true, error: null })
 
-export function CollaborationScreen({ view, onViewChange, onPendingCount, onOpenRecruitment, onLogin, initialBox = 'received', mineOnly = false }: {
-  initialBox?: PartnerProposalBox; mineOnly?: boolean
+export function CollaborationScreen({ view, onViewChange, onPendingCount, onOpenRecruitment, onLogin, initialBox = 'received', mineOnly = false, management = false, onManagementTabChange }: {
+  initialBox?: PartnerProposalBox; mineOnly?: boolean; management?: boolean; onManagementTabChange?(tab: 'received' | 'sent' | 'mine'): void
   view: ViewMode; onViewChange(value: ViewMode): void; onPendingCount?(count: number): void
   onOpenRecruitment(id: number): void; onLogin(): void
 }) {
@@ -32,7 +32,7 @@ export function CollaborationScreen({ view, onViewChange, onPendingCount, onOpen
   const [keyword, setKeyword] = useState('')
   const [box, setBox] = useState<PartnerProposalBox>(initialBox)
   const [filter, setFilter] = useState<ProposalFilter>('all')
-  const [recruitmentState, setRecruitmentState] = useState<RecruitmentState>(() => emptyRecruitments(token))
+  const [recruitmentState, setRecruitmentState] = useState<RecruitmentState>(() => emptyRecruitments(token, mineOnly))
   const [receivedState, setReceivedState] = useState<BoxState>(() => emptyBox(token))
   const [sentState, setSentState] = useState<BoxState>(() => emptyBox(token))
   const [revision, setRevision] = useState(0)
@@ -47,11 +47,11 @@ export function CollaborationScreen({ view, onViewChange, onPendingCount, onOpen
 
   useFocusEffect(useCallback(() => {
     const controller = new AbortController()
-    setRecruitmentState((current) => current.owner === token && current.items.length
-      ? { ...current, loading: true, error: null } : emptyRecruitments(token))
+    setRecruitmentState((current) => current.owner === token && current.mineOnly === query.mineOnly && current.items.length
+      ? { ...current, loading: true, error: null } : emptyRecruitments(token, query.mineOnly))
     if (!query.mineOnly || token) void browseRecruitments(query, token ?? undefined, controller.signal).then((page) => {
       if (controller.signal.aborted) return
-      setRecruitmentState((current) => ({ owner: token, items: query.page > 1 && current.owner === token
+      setRecruitmentState((current) => ({ owner: token, mineOnly: query.mineOnly, items: query.page > 1 && current.owner === token && current.mineOnly === query.mineOnly
         ? [...current.items.filter((item) => !page.recruitments.some((next) => next.id === item.id)), ...page.recruitments]
         : page.recruitments, total: page.total, totalPages: page.totalPages, loading: false, error: null }))
     }).catch((cause: unknown) => {
@@ -86,7 +86,8 @@ export function CollaborationScreen({ view, onViewChange, onPendingCount, onOpen
     return () => controller.abort()
   }, [box, query, revision, token, invalidateSession, onPendingCount]))
 
-  const visibleRecruitments = recruitmentState.owner === token ? recruitmentState : emptyRecruitments(token)
+  const visibleRecruitments = recruitmentState.owner === token && recruitmentState.mineOnly === (management && view === 'recruitments' || query.mineOnly)
+    ? recruitmentState : emptyRecruitments(token, query.mineOnly)
   const selected = selection?.owner === token ? selection.proposal : null
   const visibleBox = (box === 'received' ? receivedState : sentState).owner === token
     ? box === 'received' ? receivedState : sentState : emptyBox(token)
@@ -145,8 +146,13 @@ export function CollaborationScreen({ view, onViewChange, onPendingCount, onOpen
   if (status === 'unavailable') return <View style={local.loading}><Notice error>로그인 상태를 확인하지 못했습니다.</Notice></View>
 
   return <View style={local.page}>
-    {token && <View style={local.header}><SegmentedControl label="협업 보기" value={view} onChange={onViewChange}
-      options={[{ value: 'recruitments', label: '모집글' }, { value: 'box', label: `제안함 ${pendingCount || ''}`.trim() }]} /></View>}
+    {token && <View style={local.header}>{management
+      ? <SegmentedControl<'received' | 'sent' | 'mine'> label="파트너 관리 구분" value={view === 'recruitments' ? 'mine' : box}
+        options={[{ value: 'received', label: `받은 제안${pendingCount ? ` ${pendingCount}` : ''}` }, { value: 'sent', label: '보낸 제안' }, { value: 'mine', label: '내 모집글' }]}
+        onChange={tab => { if (tab !== 'mine') { setBox(tab); setFilter('all') } changeQuery({ mineOnly: tab === 'mine' });
+          if (onManagementTabChange) onManagementTabChange(tab); else onViewChange(tab === 'mine' ? 'recruitments' : 'box') }} />
+      : <SegmentedControl label="협업 보기" value={view} onChange={onViewChange}
+        options={[{ value: 'recruitments', label: '모집글' }, { value: 'box', label: `제안함 ${pendingCount || ''}`.trim() }]} />}</View>}
     {view === 'recruitments' && query.mineOnly && !token ? <View style={local.list}><Notice>내 모집글은 로그인 후 확인할 수 있어요.</Notice><Button label="로그인하기" onPress={onLogin} /></View>
     : view === 'recruitments' ? <FlatList data={visibleRecruitments.items} keyExtractor={(item) => String(item.id)}
       contentContainerStyle={local.list} keyboardShouldPersistTaps="handled"
@@ -158,7 +164,7 @@ export function CollaborationScreen({ view, onViewChange, onPendingCount, onOpen
           onSubmitEditing={() => changeQuery({ keyword })} style={local.searchInput} />
           <Button label={`필터${query.regions.length + query.seekingRoles.length ? ` ${query.regions.length + query.seekingRoles.length}` : ''}`}
             size="small" variant="secondary" onPress={() => setFilterOpen(true)} /></View>
-        <View style={local.row}>{token && <Pressable accessibilityRole="button" accessibilityState={{ selected: query.mineOnly }}
+        <View style={local.row}>{token && !management && <Pressable accessibilityRole="button" accessibilityState={{ selected: query.mineOnly }}
           onPress={() => token ? changeQuery({ mineOnly: !query.mineOnly }) : onLogin()} style={local.chip}>
           <Text style={styles.muted}>내가 쓴 글</Text></Pressable>}
           <Pressable accessibilityRole="button" accessibilityLabel={partnerRecruitmentSortLabels[query.sort]}
@@ -177,8 +183,8 @@ export function CollaborationScreen({ view, onViewChange, onPendingCount, onOpen
       : <FlatList data={filteredProposals} keyExtractor={(item) => String(item.id)} contentContainerStyle={local.list}
         refreshing={visibleBox.loading && Boolean(visibleBox.page)} onRefresh={() => setRevision((value) => value + 1)}
         ListHeaderComponent={<View style={local.listHeader}>
-          <SegmentedControl label="제안함 구분" value={box} onChange={(next) => { setBox(next); setFilter('all') }}
-            options={[{ value: 'received', label: '받은 제안' }, { value: 'sent', label: '보낸 제안' }]} />
+          {!management && <SegmentedControl label="제안함 구분" value={box} onChange={(next) => { setBox(next); setFilter('all') }}
+            options={[{ value: 'received', label: '받은 제안' }, { value: 'sent', label: '보낸 제안' }]} />}
           {visibleBox.page && <View style={local.row}>{([
             ['all', `전체 ${proposals.length}`], ['pending', `대기 ${proposals.filter((item) => item.status === 'PENDING').length}`],
             ['accepted', `수락 ${proposals.filter((item) => item.status === 'ACCEPTED').length}`],
