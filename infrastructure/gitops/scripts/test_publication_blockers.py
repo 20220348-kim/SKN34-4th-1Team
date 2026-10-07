@@ -70,6 +70,29 @@ class PublicationBlockerTests(unittest.TestCase):
         self.assertEqual(result["reason"], "upstream_not_merged")
         self.assertNotIn("workflow", result)
 
+    def test_later_upstream_merge_keeps_ci_and_publication_checks_required(self):
+        for state, stage, reason in (
+            ("success", "publication", "verified_publication_missing"),
+            ("missing", "required_ci", "ci_run_missing"),
+            ("failure", "required_ci", "ci_run_not_successful_or_untrusted"),
+            ("skipped", "required_ci", "ci_jobs_not_successful_or_incomplete"),
+        ):
+            fixture = ci_results([state])
+            def get(path):
+                if "SKNETWORKS-FAMILY-AICAMP" in path and "/git/ref/" in path:
+                    return {"object": {"sha": "b" * 40}}
+                if "/compare/" in path:
+                    return {"status": "behind", "base_commit": {"sha": "b" * 40},
+                            "merge_base_commit": {"sha": SHA}, "ahead_by": 0, "behind_by": 6,
+                            "total_commits": 0, "commits": [], "files": []}
+                return fixture(path)
+            with self.subTest(ci=state):
+                result = deployment.publication_blocker(FORK, get)
+                self.assertEqual(result["stage"], stage)
+                self.assertEqual(result["reason"], reason)
+                self.assertTrue(result["advisoryOnly"])
+                self.assertNotIn("imagesVerified", result)
+
     def test_source_change_discards_the_stale_diagnosis(self):
         fixture = ci_results(["failure"])
         reads = 0

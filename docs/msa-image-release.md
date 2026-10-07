@@ -36,11 +36,12 @@ GitHub는 워크플로가 `GITHUB_TOKEN`으로 만든 패키지가 기본적으�
 4. 패키지 준비를 검증한 뒤 이미지 발행만 `MSA_RELEASE_ENABLED=true`로 허용합니다.
    `MSA_PROMOTION_ENABLED=false`를 유지합니다. [별도 배포 PR은 제거했습니다](../infrastructure/gitops/docs/deployment-candidates.md).
 5. 기능은 개인 작업 브랜치에서 개발하고 교육기관 원본에 PR을 제출합니다. **원본 PR이 병합된 뒤**
-   본인 포크의 기본 브랜치를 최신 upstream과 동기화합니다. 로컬 `git pull`만으로는 원격 Actions가 실행되지 않습니다.
+   본인 포크의 기본 브랜치를 배포할 upstream 병합 커밋에 맞춥니다. 로컬 `git pull`만으로는 원격 Actions가 실행되지 않습니다.
    GitHub의 Sync fork 또는 동기화한 로컬 기본 브랜치를 origin에 push해야 합니다.
-   포크 생성만으로 기존 커밋의 CI가 재실행되지는 않습니다.
+   해당 후보의 CI·발행·배포가 끝날 때까지 개인 기본 브랜치를 유지합니다. 포크 생성만으로 기존 커밋의 CI가 재실행되지는 않습니다.
 6. `GovBiz CI`, `Catalog separation CI`, `GovBiz Ops CI`, `Infra CI`, `LLMOps CI`와 각 필수 job이 **동일 SHA**에서 모두 성공하면
-   `MSA image candidates`가 실행됩니다. 단, 개인 포크의 내용이 최신 upstream 병합본과 일치해야 합니다.
+   `MSA image candidates`가 실행됩니다. 후보가 upstream 기본 브랜치의 현재 커밋이거나 그 이력의 조상임을 확인합니다.
+   팀 upstream의 후속 병합은 후보를 무효화하지 않지만, 개인 기본 브랜치가 새 소스로 바뀌면 새 SHA를 검증해야 합니다.
    원본에 아직 병합되지 않은 코드·CI·발행 정책 변경은 본인 포크에서 테스트가 성공해도 발행하지 않습니다.
    필요하면 같은 검증된 SHA의 기본 브랜치에서 해당 workflow를 수동 실행합니다.
 7. 이미지 발행 결과와 네 receipt를 확인합니다. 별도 배포 PR 생성이나 Argo 자동 배포는 수행하지 않습니다.
@@ -51,8 +52,9 @@ GitHub는 워크플로가 `GITHUB_TOKEN`으로 만든 패키지가 기본적으�
 기본 브랜치를 최신 upstream과 동기화하고 Actions를 허용한 뒤 **최초 한 번만 빈 커밋**을
 push해 다섯 push CI를 시작할 수 있습니다. 비공개 패키지 초기 준비가 끝나지 않았다면 두 발행 변수는
 계속 `false`로 둡니다. 빈 커밋은 CI 기록을 만들 뿐 패키지를 준비하거나 발행 잠금을 해제하지 않습니다.
-파일 변경이 없는 빈 커밋은 upstream 내용과 같으므로 소스 검증에서 허용하지만,
-미병합 코드가 섞인 커밋은 계속 차단합니다.
+파일 변경이 없는 빈 커밋은 최신 upstream의 후손이고 내용도 같을 때 소스 검증에서 허용하지만,
+미병합 코드가 섞인 커밋은 계속 차단합니다. 이 포크 전용 예외는 upstream에 포함된 커밋 자체를
+고정하는 방식과 다릅니다. 이후 upstream과 갈라지면 원본에 병합된 커밋을 다시 선택해야 합니다.
 
 아래는 기본 브랜치가 `main`인 경우의 Mac·Windows/WSL2 명령입니다. `origin`이 **본인 포크**인지
 먼저 `git remote -v`로 확인하세요. 다른 브랜치에서 실행하거나 추적·미추적 변경이 있으면
@@ -160,9 +162,13 @@ Actions 토큰의 같은 권한 부족을 입증하지는 않습니다. 비공�
   필수 job의 이름·matrix 구성을 바꾸면 `infrastructure/release/gate.py`의 정책도 함께 갱신해야 합니다.
 - 발행 시작·업로드 전과 승격 파일 쓰기·커밋 직전에 같은 CI 조건을 다시 확인합니다. 원격 브랜치 보호/Ruleset 설정과는 별개입니다.
 - 다섯 필수 CI는 모든 push와 PR에서 실행합니다. 필수 상태 검사가 경로 필터 때문에 누락되지 않도록 Catalog·LLMOps의 PR 필터도 제거했습니다.
-- 최신 upstream 기본 브랜치가 후보의 조상이어야 하고 다섯 개인 이미지 선택 파일 외에는 모든 추적 파일이 같아야 합니다.
-  이 기준은 bot digest와 upstream 동기화로 생긴 개인 merge SHA는 허용하지만 미병합 변경·동기화되지 않은 upstream은 차단합니다.
-  upstream API 오류나 불완전한 비교 결과를 성공으로 취급하지 않습니다.
+- 후보가 upstream 기본 브랜치의 현재 SHA이거나 이미 포함된 조상 커밋이어야 합니다.
+  [GitHub Compare API](https://docs.github.com/en/rest/commits/commits#compare-two-commits)로
+  `upstream HEAD...후보 SHA`를 비교할 때 `behind` 상태, 정확한 base·merge base,
+  후보 고유 커밋 0개와 일관된 개수·목록을 확인합니다. 파일 목록이 비었다는 이유만으로 허용하지 않습니다.
+  포크 전용 merge·빈 커밋·bot digest는 기존처럼 최신 upstream의 후손이고 다섯 개인 이미지 선택
+  파일 외에는 모든 추적 파일이 같아야 합니다. 갈라진 이력·미병합 변경·API 오류·불완전한 비교는 차단합니다.
+  개인 기본 브랜치의 후보 SHA와 필수 CI·발행 receipt는 계속 같은 소스로 고정하며 팀의 후속 병합만 허용합니다.
 - 서비스 tree·발행 도구 tree·플랫폼으로 입력 키를 계산합니다. 같은 키라도 이미지 source label과 플랫폼을 재검사합니다.
 - `git archive`로 추적 소스만 빌드합니다. 미추적 비밀값·캐시는 제외하지만 이미 커밋한 비밀값을 정화하는 기능은 아닙니다.
 - 인증·네트워크 오류를 이미지 없음으로 취급하지 않습니다. 부분 실패 시 일부 이미지는 남을 수 있지만 자동 배포하지 않습니다.
