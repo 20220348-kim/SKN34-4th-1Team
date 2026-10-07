@@ -130,6 +130,8 @@ test('AI result opens the real program detail and returns to the same draft and 
     getSearchReadiness: jest.fn().mockResolvedValue({ indexReady: true, searchState: 'SEARCHABLE' }),
     search: jest.fn().mockResolvedValue({ query: context.query, totalCount: 1, programs: [program], resultToken: null, expiresAt: null }),
     getDetail: jest.fn().mockResolvedValue(programDetail),
+    // 상세 화면의 공식 첨부 카드도 같은 클라이언트로 목록을 읽습니다. 첨부가 없으면 카드를 그리지 않습니다.
+    getAttachments: jest.fn().mockResolvedValue([]),
   }
   jest.mocked(programClient).mockReturnValue(client as unknown as ReturnType<typeof programClient>)
   const scrollTo = jest.spyOn(ScrollView.prototype, 'scrollTo')
