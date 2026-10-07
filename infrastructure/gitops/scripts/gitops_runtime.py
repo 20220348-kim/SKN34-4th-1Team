@@ -14,10 +14,97 @@ import fork_cluster as cluster
 import ops_runtime
 import yaml
 from check_msa import CHART_PATH
-from deployment_candidate import KUBE_VERSION
+from deployment_candidate import KUBE_VERSION, argo_resources, digest, encoded
 from gitops_service import service_review
+from repository import Fork
 
 SCOPE = "local_overrides_and_service_runtime"
+
+
+def argo_observation(state, settings):
+    """Bind a follow-up plan to stable, manually synced, owned Argo inputs."""
+    kube, _, argo = cluster.commands(state, settings)
+    cluster.verify_context(kube, settings, timeout=15)
+    desired = argo_resources(Fork(settings["repository"], settings["branch"]))
+    project = json.loads(
+        cluster.run(
+            argo + ["get", "appproject", "govbiz-fork", "-o", "json"],
+            capture=True,
+            timeout=15,
+        )
+    )
+    meta = project.get("metadata", {})
+    if (
+        project.get("kind") != "AppProject"
+        or meta.get("name") != "govbiz-fork"
+        or meta.get("namespace") != "argocd"
+        or not meta.get("uid")
+        or meta.get("deletionTimestamp")
+        or encoded(project.get("spec")) != encoded(desired[0]["spec"])
+    ):
+        raise ValueError("Argo project differs from the dedicated fork policy")
+    applications = cluster.applications(kube, argo)
+    expected = {"govbiz-fork-" + service for service in cluster.SERVICES}
+    if (
+        len(applications) != len(expected)
+        or {app.get("metadata", {}).get("name") for app in applications} != expected
+    ):
+        raise ValueError("Expected only the four dedicated fork Applications")
+    observed = {}
+    for app in applications:
+        meta = app.get("metadata", {})
+        spec = app.get("spec", {})
+        status = app.get("status", {})
+        service = meta["name"].removeprefix("govbiz-fork-")
+        source = spec.get("source", {})
+        helm = source.get("helm", {})
+        policy = spec.get("syncPolicy", {})
+        revision = source.get("targetRevision")
+        if (
+            app.get("kind") != "Application"
+            or meta.get("namespace") != "argocd"
+            or not meta.get("uid")
+            or meta.get("deletionTimestamp")
+            or spec.get("project") != "govbiz-fork"
+            or spec.get("destination")
+            != {
+                "server": "https://kubernetes.default.svc",
+                "namespace": settings["namespace"],
+            }
+            or "sources" in spec
+            or set(source) != {"repoURL", "path", "targetRevision", "helm"}
+            or source.get("repoURL")
+            != "https://github.com/" + settings["repository"] + ".git"
+            or source.get("path") != CHART_PATH
+            or not isinstance(revision, str)
+            or not re.fullmatch(r"[a-f0-9]{40}", revision)
+            or set(helm) != {"releaseName", "kubeVersion", "valuesObject"}
+            or helm.get("releaseName") != service
+            or helm.get("kubeVersion") != KUBE_VERSION
+            or not isinstance(helm.get("valuesObject"), dict)
+            or encoded(policy.get("automated"))
+            != encoded({"enabled": False, "prune": False, "selfHeal": False})
+            or type(policy.get("retry", {}).get("limit")) is not int
+            or policy["retry"]["limit"] != 0
+            or app.get("operation")
+            or status.get("operationState", {}).get("phase") != "Succeeded"
+            or status.get("sync", {}).get("status") != "Synced"
+            or status.get("sync", {}).get("revision") != revision
+            or status.get("health", {}).get("status") != "Healthy"
+        ):
+            raise ValueError(
+                "Argo follow-up planning requires stable, pinned manual Applications"
+            )
+        observed[service] = {
+            "uid": meta["uid"],
+            "sourceSha": revision,
+            "specSha256": digest(encoded(spec)),
+        }
+    return {
+        "projectUid": project["metadata"]["uid"],
+        "projectSpecSha256": digest(encoded(project["spec"])),
+        "applications": observed,
+    }
 
 
 def chart_inputs():
@@ -514,8 +601,13 @@ def preflight(
     settings = cluster.load_settings(state)
     if settings["repository"].lower() != fork.repository.lower():
         raise ValueError("Runtime state belongs to another repository")
-    # Verifies loopback context, owner marker and absence of Argo ownership first.
-    cluster.require_dev(state, settings)
+    # Plans never write. Existing GitOps inputs must be pinned and idle; dev
+    # still requires that no Argo Applications own the inspected services.
+    argo = None
+    if settings["mode"] == "gitops":
+        argo = argo_observation(state, settings)
+    else:
+        cluster.require_dev(state, settings)
     inputs = local_inputs(state, settings)
     _, namespaced, _ = cluster.commands(state, settings)
 
@@ -655,7 +747,11 @@ def preflight(
         or local_inputs(state, settings) != inputs
     ):
         raise ValueError("Local runtime changed during preflight")
-    cluster.require_dev(state, settings)
+    if argo is not None:
+        if argo_observation(state, settings) != argo:
+            raise ValueError("Argo inputs changed during preflight")
+    else:
+        cluster.require_dev(state, settings)
     status = "BLOCKED" if blockers else "NO_LOCAL_OVERRIDES"
     if preservation.get("helmPreservation", {}).get("status") == "UNKNOWN":
         status = "UNKNOWN"
@@ -674,4 +770,5 @@ def preflight(
         "servicesChanged": False,
         "databaseChanged": False,
         "deploymentAuthorized": False,
+        **({"argoObservation": argo} if argo is not None else {}),
     }

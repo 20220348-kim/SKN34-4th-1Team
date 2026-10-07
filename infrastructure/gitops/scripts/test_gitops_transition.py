@@ -153,6 +153,30 @@ class TransitionPlanTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "preservation is incomplete"):
                     self.build()
 
+    def test_existing_argo_plan_keeps_update_pending_and_manual(self):
+        self.observed["argoObservation"] = {
+            "projectUid": "existing-project",
+            "projectSpecSha256": "b" * 64,
+            "applications": {
+                service: {"uid": service, "sourceSha": "c" * 40, "specSha256": "d" * 64}
+                for service in transition.SERVICES
+            },
+        }
+        with patch.object(
+            runtime.cluster, "run", side_effect=AssertionError("cluster write")
+        ):
+            plan = self.build()
+        self.assertEqual(plan["runtimePreflight"], self.observed)
+        self.assertIn("manual_argo_update", plan["pendingChecks"])
+        self.assertNotIn("manual_argo_handoff", plan["pendingChecks"])
+        self.assertFalse(plan["deploymentAuthorized"])
+        self.assertFalse(plan["existingRuntimeVerified"])
+        self.assertFalse(plan["automaticSyncEnabled"])
+        for application in plan["resources"][1:]:
+            self.assertNotIn("operation", application)
+            self.assertEqual(application["spec"]["source"]["targetRevision"], self.sha)
+            self.assertEqual(application["spec"]["syncPolicy"]["retry"]["limit"], 0)
+
     def test_conflicting_connections_unknown_or_missing_preservation_cannot_be_exported(
         self,
     ):

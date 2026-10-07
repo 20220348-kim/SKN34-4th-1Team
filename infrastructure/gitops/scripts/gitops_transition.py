@@ -209,7 +209,9 @@ def build_plan(fork, publication, observed, values, helm="helm"):
             "backup_and_restore",
             "ops_migration_and_writer_coordination",
             "secrets_and_external_connections",
-            "manual_argo_handoff",
+            "manual_argo_update"
+            if observed.get("argoObservation")
+            else "manual_argo_handoff",
             "application_smoke_and_rollback",
         ],
     )

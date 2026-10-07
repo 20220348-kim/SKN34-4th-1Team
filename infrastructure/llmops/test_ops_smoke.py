@@ -3,15 +3,166 @@
 import copy
 import importlib.util
 import json
+import socket
+import threading
 from hashlib import sha256
+from http.cookiejar import CookieJar
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.request import Request
 from unittest.mock import Mock
 
 import pytest
 
-spec = importlib.util.spec_from_file_location("ops_smoke", Path(__file__).with_name("ops_smoke.py"))
+spec = importlib.util.spec_from_file_location(
+    "ops_smoke", Path(__file__).with_name("ops_smoke.py")
+)
 smoke = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(smoke)
+
+
+@pytest.fixture
+def loopback_server():
+    requests = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            requests.append(self.path)
+            if self.path == "/redirect":
+                self.send_response(302)
+                self.send_header("Location", self.server.redirect)
+                self.end_headers()
+                return
+            self.send_response(401 if self.path == "/unauthorized" else 200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header(
+                "Set-Cookie", "govbiz_session=fixture; Path=/; HttpOnly; SameSite=Lax"
+            )
+            self.end_headers()
+            self.wfile.write(
+                json.dumps(
+                    {
+                        "host": self.headers.get("Host"),
+                        "origin": self.headers.get("Origin"),
+                        "cookie": self.headers.get("Cookie"),
+                    }
+                ).encode()
+            )
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(
+        target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True
+    )
+    thread.start()
+    try:
+        yield server, requests
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+        assert not thread.is_alive()
+
+
+@pytest.mark.parametrize("host", ["localhost", "127.0.0.1"])
+def test_loopback_transport_uses_ipv4_without_changing_origin_host_or_cookies(
+    monkeypatch, loopback_server, host
+):
+    server, requests = loopback_server
+    base = f"http://{host}:{server.server_port}"
+    original = socket.getaddrinfo
+    addresses = []
+
+    def only_ipv4(address, *args, **kwargs):
+        addresses.append(address)
+        assert address == "127.0.0.1", "Do not resolve localhost or a proxy address"
+        return original(address, *args, **kwargs)
+
+    monkeypatch.setattr(socket, "getaddrinfo", only_ipv4)
+    monkeypatch.setenv("http_proxy", "http://unreachable-proxy.invalid:8080")
+    monkeypatch.setenv("HTTP_PROXY", "http://unreachable-proxy.invalid:8080")
+    monkeypatch.delenv("no_proxy", raising=False)
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    cookies = CookieJar()
+    client = smoke.loopback_client(base, cookies)
+    for path in ("/login", "/report"):
+        with client.open(
+            Request(base + path, headers={"Origin": base}), timeout=1
+        ) as response:
+            payload = json.load(response)
+            assert response.status == 200 and payload["host"] == base.removeprefix(
+                "http://"
+            )
+            assert payload["origin"] == base
+    assert payload["cookie"] == "govbiz_session=fixture"
+    assert all(cookie.has_nonstandard_attr("HttpOnly") for cookie in cookies)
+    assert addresses == ["127.0.0.1", "127.0.0.1"]
+    assert requests == ["/login", "/report"]
+
+
+@pytest.mark.parametrize(
+    "base",
+    [
+        "https://localhost:5173",
+        "http://remote.invalid:5173",
+        "http://[::1]:5173",
+        "http://name:password@localhost:5173",
+        "http://localhost:5173/api",
+        "http://localhost:5173?target=x",
+        "http://localhost:5173#fragment",
+        "http://localhost:0",
+        "http://localhost:65536",
+        "ftp://localhost:5173",
+    ],
+)
+def test_invalid_smoke_origin_never_opens_a_connection(monkeypatch, base):
+    connect = Mock(side_effect=AssertionError("Unexpected connection"))
+    monkeypatch.setattr(socket, "create_connection", connect)
+    with pytest.raises(ValueError):
+        smoke.loopback_client(base, CookieJar())
+    connect.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "location",
+    [
+        "http://outside.invalid/report",
+        "https://outside.invalid/report",
+        "ftp://outside.invalid/file",
+        "http://localhost:1/report",
+        "/report",
+    ],
+)
+def test_smoke_redirects_are_not_followed(loopback_server, location):
+    server, requests = loopback_server
+    server.redirect = location
+    base = f"http://localhost:{server.server_port}"
+    client = smoke.loopback_client(base, CookieJar())
+    with pytest.raises(URLError, match="redirects are not allowed"):
+        client.open(Request(base + "/redirect", headers={"Origin": base}), timeout=1)
+    assert requests == ["/redirect"]
+
+
+def test_loopback_transport_preserves_auth_errors_and_timeout(
+    monkeypatch, loopback_server
+):
+    server, _ = loopback_server
+    base = f"http://localhost:{server.server_port}"
+    client = smoke.loopback_client(base, CookieJar())
+    with pytest.raises(HTTPError) as rejected:
+        client.open(base + "/unauthorized", timeout=1)
+    assert rejected.value.code == 401
+    rejected.value.close()
+    connect = Mock(side_effect=TimeoutError("fixture timeout"))
+    monkeypatch.setattr(socket, "create_connection", connect)
+    with pytest.raises(URLError) as failed:
+        client.open(base + "/report", timeout=0.25)
+    assert isinstance(failed.value.reason, TimeoutError)
+    assert connect.call_args.args[:2] == (("127.0.0.1", server.server_port), 0.25)
+    assert connect.call_count == 1
 
 
 @pytest.fixture

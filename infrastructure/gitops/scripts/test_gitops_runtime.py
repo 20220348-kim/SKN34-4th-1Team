@@ -100,7 +100,14 @@ class RuntimePreflightTests(unittest.TestCase):
         )
 
     def read(self, command, *, capture, timeout):
-        self.owner.assert_called()
+        if self.settings["mode"] == "gitops":
+            self.argo_owner.assert_called()
+            if command == ["get", "appproject", "govbiz-fork", "-o", "json"]:
+                self.assertTrue(capture)
+                self.assertEqual(timeout, 15)
+                return json.dumps(self.project)
+        else:
+            self.owner.assert_called()
         service = command[-3]
         kind = command[-4]
         self.assertIn(kind, ("deployment", "service"))
@@ -125,6 +132,190 @@ class RuntimePreflightTests(unittest.TestCase):
         return json.dumps(
             self.deployment if service == "ops-service" else self.deployments[service]
         )
+
+    def enable_gitops(self):
+        self.settings["mode"] = "gitops"
+        self.project, *self.apps = runtime.argo_resources(FORK)
+        self.project["metadata"]["uid"] = "project-uid"
+        for app in self.apps:
+            app["metadata"]["uid"] = app["metadata"]["name"] + "-uid"
+            source = app["spec"]["source"]
+            source["targetRevision"] = "a" * 40
+            source["helm"].pop("valueFiles")
+            source["helm"]["valuesObject"] = {"env": {"PRIVATE_VALUE": "do-not-print"}}
+            app["spec"]["syncPolicy"]["automated"] = {
+                "enabled": False,
+                "prune": False,
+                "selfHeal": False,
+            }
+            app["spec"]["syncPolicy"]["retry"]["limit"] = 0
+            app["status"] = {
+                "sync": {"status": "Synced", "revision": "a" * 40},
+                "health": {"status": "Healthy"},
+                "operationState": {"phase": "Succeeded"},
+            }
+        self.argo_owner = self.enterContext(
+            patch.object(runtime.cluster, "verify_context")
+        )
+        self.applications = self.enterContext(
+            patch.object(
+                runtime.cluster,
+                "applications",
+                side_effect=lambda *args: copy.deepcopy(self.apps),
+            )
+        )
+
+    def test_gitops_followup_preserves_ownership_and_captures_only_stable_inputs(self):
+        self.enable_gitops()
+        before = copy.deepcopy(
+            (self.apps, self.project, self.deployments, self.services)
+        )
+        captured = {}
+        report = runtime.preflight(
+            self.state,
+            FORK,
+            review_preservation=True,
+            published_files=self.published_files(),
+            prepared_values=captured,
+        )
+        self.owner.assert_not_called()
+        self.assertEqual(self.argo_owner.call_count, 2)
+        self.assertEqual(set(captured), set(runtime.cluster.SERVICES))
+        self.assertEqual(
+            set(report["argoObservation"]["applications"]),
+            set(runtime.cluster.SERVICES),
+        )
+        self.assertEqual(report["argoObservation"]["projectUid"], "project-uid")
+        self.assertNotIn("do-not-print", json.dumps(report))
+        self.assertFalse(report["deploymentAuthorized"])
+        self.assertFalse(report["servicesChanged"])
+        self.assertEqual(
+            before, (self.apps, self.project, self.deployments, self.services)
+        )
+        self.assertEqual(list(self.state.iterdir()), [])
+
+    def test_gitops_active_unpinned_or_foreign_applications_are_rejected(self):
+        self.enable_gitops()
+        original = copy.deepcopy(self.apps)
+        for path, value in (
+            (("metadata", "uid"), ""),
+            (("metadata", "namespace"), "other"),
+            (("metadata", "deletionTimestamp"), "now"),
+            (("spec", "project"), "other"),
+            (("spec", "destination", "namespace"), "other"),
+            (("spec", "destination", "server"), "https://foreign.invalid"),
+            (("spec", "sources"), []),
+            (("spec", "source", "repoURL"), "https://github.com/other/repository.git"),
+            (("spec", "source", "path"), "another-chart"),
+            (("spec", "source", "targetRevision"), "main"),
+            (("spec", "source", "helm", "parameters"), []),
+            (("spec", "source", "helm", "releaseName"), "other"),
+            (("spec", "source", "helm", "kubeVersion"), "1.20.0"),
+            (("spec", "syncPolicy", "automated", "enabled"), True),
+            (("spec", "syncPolicy", "automated", "enabled"), 0),
+            (("spec", "syncPolicy", "automated", "prune"), True),
+            (("spec", "syncPolicy", "automated", "selfHeal"), True),
+            (("spec", "syncPolicy", "retry", "limit"), 1),
+            (("spec", "syncPolicy", "retry", "limit"), False),
+            (("operation",), {"sync": {}}),
+            (("status", "operationState", "phase"), "Running"),
+            (("status", "operationState", "phase"), "Failed"),
+            (("status", "sync", "status"), "OutOfSync"),
+            (("status", "sync", "revision"), "b" * 40),
+            (("status", "health", "status"), "Progressing"),
+        ):
+            self.apps = copy.deepcopy(original)
+            target = self.apps[0]
+            for key in path[:-1]:
+                target = target[key]
+            target[path[-1]] = value
+            captured = {}
+            with (
+                self.subTest(path=path, value=value),
+                self.assertRaisesRegex(ValueError, "manual Applications"),
+            ):
+                runtime.preflight(
+                    self.state,
+                    FORK,
+                    review_preservation=True,
+                    published_files=self.published_files(),
+                    prepared_values=captured,
+                )
+            self.assertEqual(captured, {})
+
+    def test_gitops_project_and_application_set_cannot_be_adopted(self):
+        self.enable_gitops()
+        original_project, original_apps = copy.deepcopy((self.project, self.apps))
+        for change in ("policy", "project_uid", "missing", "extra", "duplicate"):
+            self.project, self.apps = copy.deepcopy((original_project, original_apps))
+            if change == "policy":
+                self.project["spec"]["clusterResourceWhitelist"] = [
+                    {"group": "*", "kind": "*"}
+                ]
+            elif change == "project_uid":
+                self.project["metadata"].pop("uid")
+            elif change == "missing":
+                self.apps.pop()
+            elif change == "extra":
+                self.apps.append(copy.deepcopy(self.apps[0]))
+            else:
+                self.apps[-1] = copy.deepcopy(self.apps[0])
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                runtime.preflight(self.state, FORK)
+
+    def test_gitops_change_during_observation_does_not_release_private_values(self):
+        self.enable_gitops()
+        original = copy.deepcopy(self.apps)
+        for change in ("uid", "values", "active"):
+            self.apps = copy.deepcopy(original)
+            count = 0
+
+            def changing(*args):
+                nonlocal count
+                count += 1
+                if count == 2:
+                    if change == "uid":
+                        self.apps[0]["metadata"]["uid"] = "replacement"
+                    elif change == "values":
+                        self.apps[0]["spec"]["source"]["helm"]["valuesObject"][
+                            "changed"
+                        ] = True
+                    else:
+                        self.apps[0]["operation"] = {"sync": {}}
+                return copy.deepcopy(self.apps)
+
+            self.applications.side_effect = changing
+            captured = {}
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                runtime.preflight(
+                    self.state,
+                    FORK,
+                    review_preservation=True,
+                    published_files=self.published_files(),
+                    prepared_values=captured,
+                )
+            self.assertEqual(captured, {})
+
+    def test_gitops_wrong_or_changed_cluster_owner_stops_planning(self):
+        self.enable_gitops()
+        for observations in (
+            [ValueError("wrong owner")],
+            [None, ValueError("changed owner")],
+        ):
+            self.argo_owner.side_effect = observations
+            captured = {}
+            with (
+                self.subTest(count=len(observations)),
+                self.assertRaisesRegex(ValueError, "owner"),
+            ):
+                runtime.preflight(
+                    self.state,
+                    FORK,
+                    review_preservation=True,
+                    published_files=self.published_files(),
+                    prepared_values=captured,
+                )
+            self.assertEqual(captured, {})
 
     def test_bootstrap_only_observation_is_not_deployment_approval(self):
         report = runtime.preflight(self.state, FORK)

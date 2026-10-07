@@ -181,6 +181,50 @@ class SavedPlanTests(unittest.TestCase):
                 self.verify()
             self.assertEqual(self.path.read_bytes(), before)
 
+    def test_argo_adoption_or_changed_identity_invalidates_saved_plan_without_writing(
+        self,
+    ):
+        observation = {
+            "projectUid": "project-uid",
+            "projectSpecSha256": "b" * 64,
+            "applications": {
+                "core-service": {
+                    "uid": "core-uid",
+                    "sourceSha": "c" * 40,
+                    "specSha256": "d" * 64,
+                },
+            },
+        }
+        cases = [(None, observation)]
+        for field, value in (
+            ("uid", "new-uid"),
+            ("sourceSha", "e" * 40),
+            ("specSha256", "f" * 64),
+        ):
+            changed = copy.deepcopy(observation)
+            changed["applications"]["core-service"][field] = value
+            cases.append((observation, changed))
+        cases.append((observation, observation | {"projectUid": "new-project"}))
+        for saved_argo, current_argo in cases:
+            saved = self.plan | {
+                "runtimePreflight": {}
+                if saved_argo is None
+                else {"argoObservation": saved_argo}
+            }
+            self.replace(saved)
+            before = self.path.read_bytes()
+            self.current.return_value = self.fresh | {
+                "runtimePreflight": {"argoObservation": current_argo}
+            }
+            with (
+                self.subTest(saved=saved_argo, current=current_argo),
+                self.assertRaises(transition.TransitionFailure) as failed,
+            ):
+                self.verify()
+            self.assertEqual(failed.exception.stage, "plan_comparison")
+            self.assertEqual(failed.exception.changed_sections, ["runtime"])
+            self.assertEqual(self.path.read_bytes(), before)
+
     def test_file_replacement_or_edit_during_external_checks_is_rejected(self):
         for replace in (False, True):
             self.replace(self.plan)

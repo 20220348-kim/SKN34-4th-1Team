@@ -123,7 +123,20 @@ python3 -B infrastructure/gitops/scripts/deployment.py plan-gitops \
   --branch main --state-dir "$OPS_STATE_DIR"
 ```
 
-전용 loopback 클러스터·소유권과 dev 모드를 확인하고, 로컬 연결 기록 및 Core·Catalog·AI·Ops Deployment·Service를 읽는다.
+전용 loopback 클러스터·소유권을 확인하고, 로컬 연결 기록 및 Core·Catalog·AI·Ops Deployment·Service를 읽는다.
+dev 모드에서는 기존처럼 Argo Application이 없어야 한다. 이미 GitOps로 전환한 환경도 읽기 전용으로
+점검할 수 있지만, 전용 AppProject와 네 Application이 다음 조건을 모두 만족해야 한다.
+
+- 프로젝트의 저장소·배포 대상·리소스 권한이 전용 포크 정책과 일치한다.
+- 네 Application의 저장소·Chart·대상 namespace·Helm release·Kubernetes 버전이 일치하고,
+  source는 커밋 SHA로 고정되어 있다. 다중 source와 별도 Helm override는 허용하지 않는다.
+- 자동 동기화·prune·self-heal이 꺼져 있고 재시도는 0이다. 대기 중 operation이 없으며,
+  마지막 operation은 `Succeeded`, 현재 상태는 해당 SHA의 `Synced`·`Healthy`여야 한다.
+- 관찰 전후 프로젝트·Application의 UID·spec 지문이 같아야 한다. 변경·교체·삭제 중이거나
+  동기화가 진행 중이면 설정을 준비 호출자에게 넘기기 전에 실패한다.
+
+GitOps 관찰 결과는 `argoObservation`에 UID·source SHA·spec 지문만 기록한다. 현재 Application의
+설정값은 보고서에 포함하지 않으며, 이 검사가 다음 후보의 CI·공개 이미지 검증을 대신하지 않는다.
 개인 설정 기록이 없어도 각 서비스의 현재 환경변수를 비교하며, 여덟 리소스 중 하나라도 조회할 수 없으면 실패한다.
 `--helm`은 공개 이미지 검증과 이 로컬 비교에 함께 사용한다. 현재 Chart·서비스별 values를 메모리에
 캡처하고 임시 경로에서 렌더링한 Deployment·Service를 기준으로 삼는다. 임시 파일은 성공·실패 시 제거하며,
@@ -309,6 +322,7 @@ python3 -B infrastructure/gitops/scripts/gitops_transition.py \
 
 실행 흐름은 **현재 공개 발행 검증 → 기존 환경 관찰·Helm 재현 → 전환 입력 렌더링 →
 공개 발행 재검증 → 개인 파일 저장**이다. 원격 저장소·PR·클러스터·DB·Compose를 변경하지 않는다.
+dev 환경의 최초 인계와 위 조건을 만족하는 기존 GitOps 환경의 다음 후보 준비를 지원한다.
 
 - 같은 SHA의 필수 CI·receipt·익명 manifest·발행 Chart 검증을 먼저 통과해야 한다. 과거 발행본이나
   현재 checkout의 Chart로 대체하지 않는다. 마지막 검증에서 발행본이 달라지거나 최신 필수 CI를
@@ -329,6 +343,8 @@ python3 -B infrastructure/gitops/scripts/gitops_transition.py \
 파일 schema는 `msa-gitops-transition-v1`, 상태는 `PREPARED_NOT_APPLIED`다. 고정 SHA와 digest,
 AppProject·Application, 실제 렌더링 리소스, 파일 내 리소스 지문, 원래 전환 차단 항목과
 `pendingChecks`를 함께 기록한다. 지문은 서명이나 배포 승인이 아니다.
+기존 Argo 환경은 `runtimePreflight.argoObservation`을 저장하고 수동 갱신을
+`manual_argo_update`로 남긴다. dev 환경의 최초 인계는 `manual_argo_handoff`를 유지한다.
 자동 동기화·prune·self-heal은 꺼져 있고 자동 재시도는 0이며 sync operation은 생성하지 않는다.
 `deploymentAuthorized=false`, `existingRuntimeVerified=false`를 유지한다.
 
@@ -372,6 +388,9 @@ Kubernetes 조회 대상을 정하거나 Helm을 실행하지 않는다. 조회 
   유효 기간이 아니며, 최신 발행·환경 확인을 대신하지 않는다.
 - 파일을 연 시점의 식별자·크기·변경 시간과 내용을 확인하고, 외부 검증 후 파일과 state를 다시
   읽어 교체·수정을 거절한다. 검증에 실패해도 기존 파일을 삭제하거나 최신 내용으로 덮어쓰지 않는다.
+- dev 상태에서 저장한 뒤 Argo로 인계했거나, 기존 프로젝트·Application의 UID·source·spec이
+  바뀌면 이전 파일은 `plan_comparison`의 `runtime` 변경으로 거절된다. 최신 입력으로 다시
+  준비할 때는 새 `--output-name`을 사용한다. 과거 파일을 수정해 현재 상태에 맞추지 않는다.
 - 성공 상태는 `REVALIDATED_NOT_APPLIED`, `savedPlanMatched=true`다. 표준 출력은 설정값을
   제외한 요약만 제공하며 파일을 갱신하지 않는다. `deploymentAuthorized=false`,
   `existingRuntimeVerified=false`와 원래 `pendingChecks`를 유지한다.
