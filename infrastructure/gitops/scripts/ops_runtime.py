@@ -1,4 +1,4 @@
-"""Activate the owned kind/Compose Ops connection using local development images."""
+"""Inspect Ops in dev/GitOps; activate local development images only in dev."""
 
 import argparse
 import base64
@@ -29,6 +29,7 @@ from fork_cluster import (
     render_services,
     require_dev,
     run,
+    verify_context,
     write_json,
 )
 from ops_migration import run_migration
@@ -84,10 +85,15 @@ def read_connection(path, settings):
 
 
 def upgrade_preflight(state, settings):
-    require_dev(state, settings)
+    # Reading admission/work history must not relinquish Argo ownership. The
+    # activation and migration entry points retain their separate dev guards.
+    if settings["mode"] != "gitops":
+        require_dev(state, settings)
+    kube, nk, _ = commands(state, settings)
+    if settings["mode"] == "gitops":
+        verify_context(kube, settings, timeout=15)
     record = read_connection(Path(state) / BRIDGE, settings)
     ops_bridge.connect(state, settings, record["composeProject"], check=True)
-    _, nk, _ = commands(state, settings)
     # Execute the reviewed checkout's probe against the existing image/schema.
     # It only imports stable models/client code; no file is installed in the Pod.
     program = Path(__file__).with_name("ops_upgrade_probe.py").read_text()
@@ -151,6 +157,8 @@ def upgrade_preflight(state, settings):
             or result["admission_version"] < 1
         ):
             raise ValueError("Incomplete Ops upgrade admission version")
+    if settings["mode"] == "gitops":
+        verify_context(kube, settings, timeout=15)
     return result
 
 
@@ -765,7 +773,7 @@ def main():
     mode.add_argument(
         "--preflight",
         action="store_true",
-        help="Read admission control, outstanding evaluations, reservations, Prefect runs and schedules",
+        help="Read admission control, evaluations, reservations and Prefect schedules in dev or GitOps mode; no upgrade",
     )
     parser.add_argument(
         "--run-id",
@@ -789,7 +797,7 @@ def main():
         parser.error("Activation requires --artifact-env; --run-id requires --check")
     if os.name == "nt":
         parser.error(
-            "Run activation inside WSL2 with Linux Python, as for fork_cluster.py"
+            "Run Ops checks and activation inside WSL2 with Linux Python, as for fork_cluster.py"
         )
     try:
         settings = load_settings(args.state_dir)
