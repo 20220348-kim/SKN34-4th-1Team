@@ -326,6 +326,17 @@ jobs:
           mv linux-amd64/helm .
           test "$(./helm version --template '{{.Version}}')" = v4.3.0
           echo "$tool_dir" >> "$GITHUB_PATH"
+      - name: Verify evaluation PVC restore and replacement with synthetic WAL and reports
+        timeout-minutes: 8
+        run: backend/ai-service/.venv/bin/python -B infrastructure/gitops/scripts/smoke_evaluation_pvc.py --report work/llmops-ci/evaluation-pvc.json
+      - name: Preserve isolated evaluation PVC evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: llmops-evaluation-pvc-${{ github.sha }}
+          path: work/llmops-ci/evaluation-pvc.json
+          if-no-files-found: warn
+          retention-days: 7
       - name: Verify Kubernetes evaluation, endpoint recovery and Ops DB/volume restore
         timeout-minutes: 30
         run: backend/ai-service/.venv/bin/python -B infrastructure/gitops/scripts/smoke_ops_bridge.py --evaluate --report work/llmops-ci/ops-bridge.json

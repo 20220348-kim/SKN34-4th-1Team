@@ -13,6 +13,7 @@ import sys
 import tarfile
 import tempfile
 import time
+from contextlib import closing
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
@@ -121,7 +122,7 @@ def check_prefect(root, expected):
     if not path.is_file():
         raise ValueError("Prefect SQLite database is missing")
     # Never use immutable=1: it can ignore committed data still in the WAL.
-    with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True) as database:
+    with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as database:
         database.execute("PRAGMA query_only=ON")
         if database.execute("PRAGMA integrity_check").fetchall() != [("ok",)]:
             raise ValueError("Prefect SQLite integrity check failed")
@@ -175,7 +176,9 @@ def check_prefect(root, expected):
 
 
 def sqlite_digest(root):
-    with sqlite3.connect((root / "prefect.db").as_uri() + "?mode=ro", uri=True) as db:
+    with closing(
+        sqlite3.connect((root / "prefect.db").as_uri() + "?mode=ro", uri=True)
+    ) as db:
         db.execute("PRAGMA query_only=ON")
         return hashlib.sha256("\n".join(sorted(db.iterdump())).encode()).hexdigest()
 

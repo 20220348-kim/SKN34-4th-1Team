@@ -91,14 +91,72 @@ PVC 존재·복원 성공·실행기 생존·DNS·이미지 실행 명세·클�
 `allowLocalImages: true`는 별도 격리 CI 클러스터에 미리 적재한 `govbiz/name:tag`만 사용하고
 pull policy는 `Never`다. 실제 공개 이미지 검증의 대체 경로가 아니다.
 
-Infra CI의 기존 `test_*.py` 검색에 새 테스트가 포함된다. 로컬과 이 CI 검사는 오프라인 검증이며,
-이번에 추가한 세 릴리스의 실제 Pod 기동·평가 통합 검증은 아직 완료하지 않았다.
+Infra CI의 기존 `test_*.py` 검색에 Chart·PVC 복원 단위 테스트가 포함된다. 이 검사는 오프라인 검증이다.
+LLMOps CI에는 아래의 실제 PVC 복원 smoke가 추가됐다. 세 Helm 릴리스의 실제 기동·평가 통합 검증은
+PVC smoke와 별도이며 아직 완료하지 않았다.
+
+## 새 PVC에서 복원·Pod 교체 검증
+
+[`evaluation_pvc_restore.py`](../scripts/evaluation_pvc_restore.py)는 기존 암호화 통합 백업을
+메모리에서 인증·복호화하고, 격리 MySQL에서 완료된 Ops 실행과 보고서의 연결을 확인한다.
+그 MySQL을 제거한 뒤 **새 임시 namespace와 두 PVC**에 Prefect·결과 파일만 전달한다.
+SQL dump·복구 키를 Kubernetes Secret, ConfigMap, Pod 명세 또는 명령행 인자로 전달하지 않는다.
+복원 파일과 검사 입력은 `kubectl exec`의 표준 입력을 사용한다.
+
+실행은 WSL/Linux와 초기화된 개인 kind 상태를 요구한다. 기존 `dev`·`gitops` 상태 모두 소유권을
+검사하며 업무 Deployment·Argo Application·접수 상태·원본 볼륨은 변경하지 않는다.
+대상은 현재 저장소의 단일 노드 kind 환경으로 한정한다. 기준 `standard` StorageClass의 provisioner가
+`rancher.io/local-path`, binding이 `WaitForFirstConsumer`, 회수 정책이 `Delete`여야 한다.
+같은 provisioner·binding·회수 정책의 **전용 임시 StorageClass**를 새로 만들어 사용한다. 공유 class에
+남아 있는 기존 Available PV가 새 PVC에 연결되어 삭제되는 일을 피하기 위한 제한이다.
+이 `Delete` 정책은 **검사 후 버릴 복사본 전용**이며 운영 이전 PVC의 보존 정책이 아니다.
+[StorageClass 동작](https://kubernetes.io/docs/concepts/storage/storage-classes/)에 맞춰
+`nodeName` 대신 `nodeSelector`로 배치한다.
+
+```bash
+# 실제 임시 PVC를 생성·복원·삭제한다. 기존 서비스를 중지하거나 재개하지 않는다.
+# 입력은 기존 ops_state_snapshot.py backup으로 만든 private 통합 백업과 키다.
+python3 -B infrastructure/gitops/scripts/evaluation_pvc_restore.py \
+  --state-dir infrastructure/gitops/.local/fork \
+  --archive /private-backups/ops-state.enc \
+  --key-file /private-backups/ops-state.key
+```
+
+`--state-dir`은 실제 초기화된 상태 디렉터리로 지정한다. 키·백업 파일은 기존 private 권한 검사와
+크기 제한을 그대로 따른다. 기존 백업을 읽을 뿐 새 백업을 만들거나 최신성·전체 복구를 증명하지 않는다.
+Docker의 격리 MySQL과 Kubernetes의 복원 helper가 순차 실행되므로 실행 전 자원 여유도 확인한다.
+
+검증 순서는 다음과 같다.
+
+1. 새 namespace·전용 StorageClass를 `create`하고 UID·소유 라벨을 기록한다. 기존 자원은 채택하지 않는다.
+2. 새 PVC 두 개의 Bound 상태와 각 PV의 claim UID·provisioner·회수 정책을 확인한다.
+3. 빈 PVC에만 복원하고 원본 파일 바이트·권한·소유자·시각을 대조한다. Prefect WAL·무결성·완료 이력과
+   보고서 해시도 확인하며 활성 스케줄·미완료 실행이 남으면 실패한다.
+4. **복사본만** UID/GID `10001`, 디렉터리 `0750`, 파일 `0640`으로 바꾼다. 원본 권한 보존 검증과
+   새 런타임에 맞춘 권한 변경을 구분한다. 이 작업의 root helper에만 CHOWN·DAC_OVERRIDE·FOWNER를 주며
+   일반 런타임 Chart의 권한은 확대하지 않는다. SQLite 검사 연결은 권한 변경 전에 명시적으로 닫는다.
+5. 복원 Pod가 종료·삭제된 뒤 새 비루트 Pod에서 전체 파일·메타데이터, SQLite 논리 내용, 완료 실행,
+   보고서 해시와 쓰기 권한을 확인한다. API·실행기·스케줄러는 시작하지 않는다.
+6. 소유 namespace와 새 PVC를 정리하고 연결됐던 PV의 삭제와 임시 StorageClass 삭제까지 확인한다.
+   정리 실패도 성공으로 처리하지 않는다. 중단·응답 유실 시
+   `kubectl get ns,storageclass -l ai.govbiz.evaluation-restore`로 남은 검사 자원을 확인한다.
+   UID나 소유 라벨이 달라지면 자동 삭제하지 않는다.
+
+성공 보고서는 `scope=disposable_kubernetes_evaluation_pvc`, `production_storage_restored=false`,
+`application_started=false`를 명시한다. 이 명령은 **복원 연습**이며 운영에 연결할 PVC를 남기지 않는다.
+NetworkPolicy는 추가하지만 기본 kind CNI에서 실제 집행됐다고 보고하지 않는다.
+
+LLMOps CI는 별도 kind 클러스터에서 [`smoke_evaluation_pvc.py`](../scripts/smoke_evaluation_pvc.py)를
+필수 실행한다. 합성 완료 이력·보고서·checkpoint 전 WAL을 사용하며 실제 UID/GID `10001`의 Pod 교체를
+확인하고 클러스터를 정리한다. 결과는 `evaluation-pvc.json` artifact로 남긴다. 이것은 실제 개인 백업의
+복원 성공이나 무료 평가 실행 완료를 대신하지 않으며, 최신 커밋 CI가 통과하기 전에는 미검증 상태다.
 
 ## 후속 완료 기준
 
 1. 기존 [암호화 백업·복원](../../../docs/ops-upgrade-runbook.md)을 이용해 **새 Kubernetes PVC**로
    Prefect·결과를 복원하고 실행 ID·보고서 해시·SQLite WAL·파일 권한을 대조한다. 현재 복원 도구의
-   격리 Docker 검증과 새 PVC 검증을 구분한다. 원본 볼륨은 유지한다.
+   격리 Docker 검증과 새 PVC 검증을 구분한다. 임시 PVC 복원 도구·필수 CI 경로는 추가했으며,
+   실제 개인 백업 검증과 운영 이전용 PVC 보존·인계는 남아 있다. 원본 볼륨은 유지한다.
 2. runner 이미지의 같은 SHA CI·공개 발행·실행 명세 검증을 추가한다. 기존 네 서비스의 필수 CI·발행
    가드를 우회하지 않는다. 배포 방식은 서비스별 Argo Application과 수동 동기화를 유지한다.
    기존 AppProject·진단은 네 업무 Application을 전제로 하므로 새 평가 namespace의 권한과
