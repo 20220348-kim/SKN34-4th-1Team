@@ -111,7 +111,7 @@ Prefect가 비활성인 최초 bootstrap은 이 검사 대상이 아니며 journ
 
 ### 실제 중지 전에 대상과 복구 순서 확인하기
 
-[`ops_maintenance_plan.py`](../infrastructure/gitops/scripts/ops_maintenance_plan.py)는 개인 dev 환경의
+[`ops_maintenance_plan.py`](../infrastructure/gitops/scripts/ops_maintenance_plan.py)는 개인 dev 또는 GitOps 환경의
 현재 상태를 읽어 백업용 중지 범위와 원래 실행 상태로 돌아갈 순서를 JSON으로 출력한다.
 WSL에서 개인 state 경로를 지정하며 서비스·DB·Secret을 변경하지 않는다.
 
@@ -121,11 +121,19 @@ python3 -B infrastructure/gitops/scripts/ops_maintenance_plan.py --state-dir "$O
 
 - 접수 제어가 없는 구버전은 `admission_control_unsupported`이고 나머지 미완료 작업·예약·일정
   수가 모두 0일 때만 계획할 수 있다. 접수 제어를 지원하는 버전은 접수를 중지한 `PASS`가 필요하다.
-  이 예외는 대상 조회에만 적용한다. 기존 갱신 도구의 차단 조건은 그대로 유지한다.
+  구버전 예외는 dev 환경의 대상 조회에만 적용한다. GitOps 환경은 접수 제어를 지원하고 접수가
+  중지된 `PASS`가 필요하다. 정상 운영 중 접수가 열려 있으면 계획을 거절하며 자동 중지하지 않는다.
+- GitOps는 전용 클러스터 소유권과 AppProject·네 Application을 조회 전후로 확인한다.
+  고정 SHA의 `Synced/Healthy`, 마지막 operation의 `Succeeded`, 자동 동기화·prune·self-heal
+  비활성화와 재시도 0이 필요하다. 대기 중 operation이나 프로젝트·Application UID·명세 변경은
+  거절한다. `argo_observation`에는 UID·소스 SHA·명세 지문만 기록한다.
 - Deployment UID·resourceVersion·spec 해시·원래 replicas, MySQL Pod·StatefulSet·PVC·Service
   식별자와 이미지 digest, Compose 쓰기 컨테이너의 ID·이미지·실행 상태를 기록한다.
-  개인 dev의 안정된 Ops API/sync 1개 replica만 지원하며 Argo 관리·HPA·재시작 중 상태는 거절한다.
-  점검 전후 대상이 바뀌어도 중단한다. 환경변수 값과 자격 증명은 출력하지 않는다.
+  안정된 Ops API/sync 1개 replica만 지원한다. dev에서는 Argo 관리를 거절하고, GitOps에서는
+  `govbiz-fork-ops-service` Application과 해당 namespace의 Ops Deployment를 가리키는 정확한
+  tracking-id를 요구한다. 추적 정보 누락·다른 Application·추가 Argo hook·HPA·재시작 중 상태는 거절한다.
+  점검 끝에 접수·미완료 작업을 다시 검사하고 관찰 시각을 제외한 결과가 같아야 한다. 접수 버전,
+  HPA, 개인 state·연결 기록 또는 점검 대상이 바뀌어도 중단한다. 환경변수 값과 자격 증명은 출력하지 않는다.
 - `stop_order`는 Kubernetes Ops API/sync와 현재 실행 중인 Compose 쓰기 컨테이너만 포함한다.
   Prefect는 쓰기 실행기 다음에 중지하고 먼저 재개한다. `resume_order`는 원래 실행 중이던 대상만
   되살리는 순서다. `leave_stopped`에 있는 기존 중지 컨테이너는 시작하지 않는다.
@@ -149,7 +157,17 @@ python3 -B infrastructure/gitops/scripts/ops_maintenance_plan.py --state-dir "$O
    확인한다. Compose 주소가 바뀌었으면 기존 브리지 도구로 연결을 갱신하고 다시 검사한다.
 
 이 계획 도구는 중지·재개를 자동 실행하지 않는다. 원본에 migration을 적용하는 절차와도 별개다.
-관련 무료 테스트는 Infra CI의 `test_*.py` 검색에 포함되고 Ops CI에서 정적 검사를 수행한다.
+GitOps에서의 계획 지원은 `ops_db_snapshot.py` 등 dev 전용 백업·갱신 명령의 모드 제한을 해제하지
+않는다. GitOps의 실제 중지·백업·복원·수동 동기화는 운영 절차로 별도 수행하며, 계획을 통과시키려고
+state 모드나 Argo 추적 정보를 수정하지 않는다.
+
+관련 무료 검증은 `infrastructure/gitops/scripts`에서 다음과 같이 실행한다. Infra CI의 기존
+`test_*.py` 검색에도 포함되고 Ops CI에서 정적 검사를 수행한다. 실제 서비스 중지나 DB
+백업·복원을 수행하는 테스트는 아니다.
+
+```bash
+python3 -B -m unittest test_ops_maintenance_plan test_gitops_runtime
+```
 
 ### 최초 migration과 접수 중지를 함께 확인하기
 
@@ -1406,3 +1424,15 @@ GHCR 발행 후 자동 배포, 다른 PC의 전환이나 상용 운영 준비 �
 UID·명세가 같았다. 서비스 중지·접수 변경·migration·새 평가·배포는 수행하지 않았다.
 이는 정상 운영 중인 환경에서 갱신 전 중지가 필요함을 확인한 결과이며 갱신 준비 완료가 아니다.
 Git 제외 경로 `work/gitops-preflight-20261008/verification.json`에 관찰 결과를 보관한다.
+
+### GitOps 모드의 백업 전 중지 계획 검사 — 2026-10-08
+
+`ops_maintenance_plan.py`를 기존 `gitops` 모드에서 실행했다. 전용 Argo 프로젝트·네 Application의
+수동 동기화 상태와 Ops Deployment의 정확한 tracking-id를 확인했다. 접수는 `version=8`로
+열려 있어 계획 생성은 종료 코드 1로 거절됐으며, 성공 JSON이나 중지 명령을 출력하지 않았다.
+별도 읽기 전용 preflight는 `BLOCKED / admission_open`이었고 미완료 작업·예약·활성 일정은 0건이었다.
+
+관찰 시작·완료 시각을 제외하면 전후 접수 검사 결과가 같았고 개인 설정 파일, Argo UID·명세,
+Ops Deployment UID·resourceVersion·명세도 유지됐다. 접수 중지·서비스 변경·백업·원본 migration은
+수행하지 않았다. `PLANNED` 경로와 변경 중 거절은 무료 회귀 테스트로 확인한 범위다.
+Git 제외 경로 `work/gitops-maintenance-20261008/final-verification.json`에 실제 차단 검증을 보관한다.

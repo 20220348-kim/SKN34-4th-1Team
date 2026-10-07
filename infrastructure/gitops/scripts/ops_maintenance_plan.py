@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 import re
+import subprocess
 import sys
 from contextlib import redirect_stdout
 from datetime import UTC, datetime
@@ -13,6 +14,7 @@ from pathlib import Path
 import ops_db_snapshot as database
 import ops_runtime
 from fork_cluster import locked
+from gitops_runtime import argo_observation
 
 
 def require_quiet(preflight):
@@ -116,10 +118,33 @@ def inspect_writers(project):
     return writers
 
 
-def deployment_record(deployment):
-    meta, spec, status = deployment["metadata"], deployment["spec"], deployment.get("status", {})
+def deployment_record(deployment, *, gitops_namespace=None):
+    meta, spec, status = (
+        deployment["metadata"],
+        deployment["spec"],
+        deployment.get("status", {}),
+    )
     containers = spec["template"]["spec"]["containers"]
     replicas = spec.get("replicas", 1)
+    tracking = {
+        field: {
+            key: value
+            for key, value in meta.get(field, {}).items()
+            if key.startswith("argocd.argoproj.io/")
+        }
+        for field in ("labels", "annotations")
+    }
+    expected_tracking = {"labels": {}, "annotations": {}}
+    if gitops_namespace is not None:
+        if (
+            deployment.get("kind") != "Deployment"
+            or meta.get("name") != "ops-service"
+            or meta.get("namespace") != gitops_namespace
+        ):
+            raise ValueError("Unexpected Argo Ops resource identity")
+        expected_tracking["annotations"]["argocd.argoproj.io/tracking-id"] = (
+            f"govbiz-fork-ops-service:apps/Deployment:{gitops_namespace}/ops-service"
+        )
     if (
         not meta.get("uid")
         or not meta.get("resourceVersion")
@@ -129,17 +154,18 @@ def deployment_record(deployment):
         or status.get("observedGeneration") != meta["generation"]
         or any(
             status.get(name, 0) != replicas
-            for name in ("replicas", "readyReplicas", "updatedReplicas", "availableReplicas")
+            for name in (
+                "replicas",
+                "readyReplicas",
+                "updatedReplicas",
+                "availableReplicas",
+            )
         )
         or len(containers) != 2
         or {item["name"] for item in containers} != {"ops-service", "ops-sync"}
-        or any(
-            key.startswith("argocd.argoproj.io/")
-            for field in ("labels", "annotations")
-            for key in meta.get(field, {})
-        )
+        or tracking != expected_tracking
     ):
-        raise ValueError("Expected one stable, locally owned Ops API/sync replica")
+        raise ValueError("Expected one stable Ops API/sync replica with matching ownership")
     for container in containers:
         env = container.get("env", [])
         mapping = {row["name"]: row for row in env}
@@ -168,7 +194,11 @@ def deployment_record(deployment):
 
 def plan(state):
     settings = database.load_settings(state)
-    database.require_dev(state, settings)
+    argo = None
+    if settings["mode"] == "gitops":
+        argo = argo_observation(state, settings)
+    else:
+        database.require_dev(state, settings)
     record = database.read_connection(Path(state) / database.PROFILE, settings)
     if database.read_connection(Path(state) / database.BRIDGE, settings) != record:
         raise ValueError("Ops connection records differ")
@@ -176,10 +206,14 @@ def plan(state):
     with redirect_stdout(io.StringIO()):
         preflight = ops_runtime.upgrade_preflight(state, settings)
     require_quiet(preflight)
+    # The legacy admission exception belongs only to the original dev inventory.
+    if argo is not None and preflight["status"] != "PASS":
+        raise ValueError("GitOps maintenance requires supported, paused admission")
     _, namespaced, _ = database.commands(state, settings)
     namespaced = [*namespaced, "--request-timeout=15s"]
     deployment_args = namespaced + ["get", "deployment", "ops-service", "-o", "json"]
-    deployment = deployment_record(database.read_json(deployment_args))
+    deployment_options = {"gitops_namespace": settings["namespace"]} if argo is not None else {}
+    deployment = deployment_record(database.read_json(deployment_args), **deployment_options)
     autoscalers = database.read_json(namespaced + ["get", "hpa", "-o", "json"])["items"]
     if any(row["spec"]["scaleTargetRef"].get("name") == "ops-service" for row in autoscalers):
         raise ValueError("Ops autoscaling prevents a maintenance window")
@@ -208,7 +242,7 @@ def plan(state):
     # A report describes one observation, never a reusable approval to mutate.
     latest_pod = database.read_json(pod_args)
     if (
-        deployment_record(database.read_json(deployment_args)) != deployment
+        deployment_record(database.read_json(deployment_args), **deployment_options) != deployment
         or inspect_writers(record["composeProject"]) != writers
         or latest_pod["metadata"]["uid"] != pod["metadata"]["uid"]
         or latest_pod["status"]["containerStatuses"] != statuses
@@ -216,6 +250,37 @@ def plan(state):
         or database.database_identity(namespaced, latest_pod) != identity
     ):
         raise ValueError("Source changed while preparing maintenance")
+    latest_autoscalers = database.read_json(namespaced + ["get", "hpa", "-o", "json"])["items"]
+    if any(
+        row["spec"]["scaleTargetRef"].get("name") == "ops-service" for row in latest_autoscalers
+    ):
+        raise ValueError("Ops autoscaling changed while preparing maintenance")
+    with redirect_stdout(io.StringIO()):
+        latest_preflight = ops_runtime.upgrade_preflight(state, settings)
+    require_quiet(latest_preflight)
+    if (
+        {
+            key: value
+            for key, value in latest_preflight.items()
+            if key not in {"started_at", "checked_at"}
+        }
+        != {
+            key: value
+            for key, value in preflight.items()
+            if key not in {"started_at", "checked_at"}
+        }
+        or database.load_settings(state) != settings
+        or any(
+            database.read_connection(Path(state) / name, settings) != record
+            for name in (database.PROFILE, database.BRIDGE)
+        )
+    ):
+        raise ValueError("Ops admission or connection changed while preparing maintenance")
+    if argo is not None:
+        if argo_observation(state, settings) != argo:
+            raise ValueError("Argo changed while preparing maintenance")
+    else:
+        database.require_dev(state, settings)
     active = sorted(
         (identity for identity, row in writers.items() if row["running"]),
         key=lambda identity: (
@@ -244,6 +309,7 @@ def plan(state):
         "services_changed": False,
         "backup_verified": False,
         "upgrade_allowed": False,
+        **({"argo_observation": argo} if argo is not None else {}),
     }
 
 
@@ -256,7 +322,7 @@ def main():
             report = plan(args.state_dir)
         print(json.dumps(report, sort_keys=True))
         return 0 if report["status"] == "PLANNED" else 1
-    except (ValueError, KeyError, TypeError, OSError):
+    except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError):
         print("Cannot prepare Ops maintenance (private details withheld)", file=sys.stderr)
         return 1
 
