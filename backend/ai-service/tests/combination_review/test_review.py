@@ -3,6 +3,7 @@ from copy import deepcopy
 import json
 import os
 from pathlib import Path
+import random
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -85,6 +86,24 @@ def make_service(data=None, *, status="completed", content=None, http_status=200
     )
     agent = CombinationReviewAgent(model=model, run_timeout_seconds=run_timeout)
     return CombinationReviewService(agent, "test-model"), calls
+
+
+def test_citation_markers_the_model_writes_into_sentences_are_removed_from_user_visible_text():
+    marker = chr(0xE200) + "cite" + chr(0xE202) + "citationOptionIndex=1" + chr(0xE201)
+    data = selection_data()
+    data["summary"] = f"사업 1과 사업 2의 중복 여부를 확인했습니다. {marker} {marker}"
+    stage = data["pairs"][0]["stages"][0]
+    stage["explanation"] = f"사업 1은 동일 과제 중복 지원을 제한합니다. {marker}"
+    stage["questions"] = [f"같은 비용인가요? {marker}"] + stage["questions"][1:]
+    service, _calls = make_service(data)
+
+    result = asyncio.run(service.analyze(AnalyzeRequest.model_validate(request_data())))
+
+    assert result["summary"] == "사업 1과 사업 2의 중복 여부를 확인했습니다."
+    first = result["pairs"][0]["stages"][0]
+    assert first["explanation"] == "사업 1은 동일 과제 중복 지원을 제한합니다."
+    assert first["questions"][0] == "같은 비용인가요?"
+    assert "citationOptionIndex" not in json.dumps(result, ensure_ascii=False)
 
 
 def test_langchain_responses_returns_the_same_contract_consumed_by_core():
@@ -306,3 +325,239 @@ def test_fastapi_timeout_response_and_safe_diagnostic_log(caplog):
     assert "program_count=2" in caplog.text
     assert "evidence_count=2" in caplog.text
     assert "private-timeout-detail" not in caplog.text
+
+
+def options_for(text):
+    request = request_data()
+    request["evidence"][0]["text"] = text
+    return [
+        (option.heading, option.quote)
+        for option in build_citation_options(AnalyzeRequest.model_validate(request))
+        if option.evidenceIndex == 0
+    ]
+
+
+def assert_exact_and_complete(text, options):
+    """Every quote is an exact, in-order substring Core accepts, and no non-space character is left out."""
+    covered = [False] * len(text)
+    cursor = 0
+    for heading, quote in options:
+        assert 4 <= len(quote) <= 800 and len(quote.encode("utf-16-le")) // 2 <= 800
+        assert len(heading) <= 60 and quote == quote.strip()
+        index = text.find(quote, cursor)
+        assert index >= 0
+        covered[index:index + len(quote)] = [True] * len(quote)
+        cursor = index + len(quote)
+    assert all(covered[index] or char.isspace() for index, char in enumerate(text))
+
+
+def test_level_one_and_two_bullets_start_items_while_dashes_and_notes_stay_attached():
+    lines = [
+        "□ 신청 제외 대상: 아래 항목 중 하나라도 해당하는 기업은 신청할 수 없습니다",
+        "○ 국세 또는 지방세를 체납 중인 기업(신청일 기준으로 판단합니다)",
+        " - 단, 징수유예를 받은 경우는 신청 가능",
+        "※ 체납 여부는 납세증명서로 확인",
+        "○ 동일 과제로 다른 정부 지원사업에 선정되어 협약 기간 중인 기업",
+        "  * 협약 종료 후에는 신청 가능",
+    ]
+    text = "\n".join(lines)
+
+    assert options_for(text) == [
+        ("", lines[0]),
+        (lines[0], "\n".join(lines[1:4])),
+        (lines[0], "\n".join(lines[4:6]).strip()),
+    ]
+    assert_exact_and_complete(text, options_for(text))
+
+
+def test_numbered_items_start_units_but_decimals_and_dates_do_not():
+    lines = [
+        "1. 지원 내용: 기업당 최대 5천만원 이내에서 총사업비의 70%를 지원합니다",
+        "1.5배 이내의 민간부담금은 기업이 현금으로 부담하며 현물은 인정하지 않습니다",
+        "2) 최근 3년 이내에 같은 사업에 2회 이상 선정된 기업은 신청이 제한됩니다",
+        "(3) 선정 후 협약을 포기한 기업은 다음 연도 공모에 참여할 수 없습니다",
+        "가. 다른 부처의 동일 과제 지원을 받고 있는 경우 지원 대상에서 제외합니다",
+        "② 휴업 또는 폐업 중인 기업은 신청 자격이 없으며 확인 시 선정을 취소합니다",
+        "ㅇ 선정 기업은 협약 기간 안에 사업을 완료하고 결과보고서를 제출하여야 합니다",
+        "2026. 12. 31.까지 제출하지 않으면 지원금 일부를 환수할 수 있습니다",
+        "주) 기한 연장은 전담기관 승인을 받은 경우에만 인정합니다",
+    ]
+
+    assert [quote for _, quote in options_for("\n".join(lines))] == [
+        "\n".join(lines[0:2]), lines[2], lines[3], lines[4], lines[5], "\n".join(lines[6:9]),
+    ]
+
+
+def test_a_long_unit_restarts_at_a_line_only_after_a_sentence_end():
+    first = "협약 기간 중 사업계획을 변경하려면 사전에 전담기관의 승인을 받아야 하며 " * 8 + "승인 없이 변경하면 환수합니다."
+    second = "선정된 기업은 같은 내용으로 다른 기관의 지원을 중복하여 받을 수 없으며 " * 2 + "적발 시 선정을 취소함"
+    third = "협약 종료 후 3년간 성과를 보고하여야 합니다."
+    unfinished = first.removesuffix("환수합니다.") + "지원금을"
+
+    assert [quote for _, quote in options_for(f"{first}\n{second}\n{third}")] == [first, f"{second}\n{third}"]
+    assert [quote for _, quote in options_for(f"{unfinished}\n{second}\n{third}")] == [
+        f"{unfinished}\n{second}", third,
+    ]
+
+
+def test_short_units_join_the_next_unit_and_a_tiny_last_unit_joins_the_previous_one():
+    long_item = "○ " + "다른 중앙부처나 지자체의 유사 사업에서 같은 비용을 지원받은 경우 지원 대상에서 제외합니다 " * 10
+    long_item = long_item.strip()
+
+    assert options_for("□ 신청 자격\n○ 중소기업기본법 제2조에 따른 중소기업으로서 공고일 기준 업력 7년 이내인 기업") == [
+        ("", "□ 신청 자격\n○ 중소기업기본법 제2조에 따른 중소기업으로서 공고일 기준 업력 7년 이내인 기업"),
+    ]
+    assert [quote for _, quote in options_for(f"○ 짧은 항목입니다\n{long_item}")] == ["○ 짧은 항목입니다", long_item]
+    assert [quote for _, quote in options_for(f"1)\n{long_item}")] == [f"1)\n{long_item}"]
+    assert [quote for _, quote in options_for("○ 국세 체납 기업은 지원 대상에서 제외하며 신청 시 납세증명서를 제출합니다\n② 끝")] == [
+        "○ 국세 체납 기업은 지원 대상에서 제외하며 신청 시 납세증명서를 제출합니다\n② 끝",
+    ]
+
+
+def test_a_line_over_800_characters_is_cut_at_spaces_without_dropping_a_short_tail():
+    # The last space before 800 characters would leave only "끝다", which is too short to cite.
+    line = "가나다라마바사아자차 " * 72 + "가나다라마바 끝다"
+
+    options = options_for(line)
+
+    assert [quote for _, quote in options] == [line[:791], line[792:]]
+    assert_exact_and_complete(line, options)
+    paragraph = "동일한 사업비로 다른 기관의 지원을 받은 사실이 확인되면 협약을 해지하고 지원금을 환수합니다. " * 40
+    assert len(options_for(paragraph)) >= 3
+    assert_exact_and_complete(paragraph, options_for(paragraph))
+
+
+def test_quotes_stay_within_800_utf16_units_for_core():
+    text = "\U000F0832나 " * 210
+
+    options = options_for(text)
+
+    assert len(options) == 2
+    assert_exact_and_complete(text, options)
+
+
+def test_heading_is_the_nearest_upper_heading_and_is_not_added_to_the_quote():
+    restriction = "□ 다른 정부 창업지원사업에 선정되어 협약 기간 중인 기업과 최근 3년 안에 같은 사업에 선정된 기업은 신청할 수 없습니다"
+    text = "\n".join([
+        "Ⅰ. 사업 개요",
+        "이 사업은 창업기업의 성장을 위해 사업화 자금과 멘토링을 함께 지원하는 사업입니다",
+        "1. 지원 대상",
+        "□ 신청 자격",
+        "○ 공고일 기준 창업 7년 이내인 중소기업으로서 본사가 서울에 있는 기업",
+        "○ 대표자가 만 39세 이하인 청년 창업기업은 서류평가에서 2점의 가점을 받을 수 있습니다",
+        "2. 지원 제외",
+        restriction,
+        "- 단, 협약을 정상 종료한 경우 신청 가능",
+        "○ 협약 중 사업을 포기한 기업은 포기일부터 1년간 신청할 수 없습니다",
+    ])
+
+    # 인용이 이미 그 제목으로 시작하면 같은 줄을 두 번 보내지 않도록 heading을 비웁니다.
+    assert options_for(text) == [
+        ("", "Ⅰ. 사업 개요\n이 사업은 창업기업의 성장을 위해 사업화 자금과 멘토링을 함께 지원하는 사업입니다"),
+        ("", "1. 지원 대상\n□ 신청 자격\n○ 공고일 기준 창업 7년 이내인 중소기업으로서 본사가 서울에 있는 기업"),
+        ("□ 신청 자격", "○ 대표자가 만 39세 이하인 청년 창업기업은 서류평가에서 2점의 가점을 받을 수 있습니다"),
+        ("", f"2. 지원 제외\n{restriction}\n- 단, 협약을 정상 종료한 경우 신청 가능"),
+        (restriction[:60], "○ 협약 중 사업을 포기한 기업은 포기일부터 1년간 신청할 수 없습니다"),
+    ]
+
+
+REALISTIC_EXCERPTS = [
+    # HWP paragraphs
+    "지식재산처 공고 제2026-144호\n2026년 IP투자연계 지식재산평가 지원사업 공고\n1. 사업 개요\n"
+    "□ 우수 지식재산(IP)을 보유한 중소·초기 중견기업에 대한 투자심의 시 평가비용 지원\n2. 지원 대상\n"
+    "□ 신청일 현재 공개된 출원 또는 등록된 특허권을 보유하고 투자를 유치함에 있어\n"
+    "ㅇ 중소기업기본법 제2조에 따른 중소기업\n"
+    "ㅇ 중견기업 성장촉진 및 경쟁력 강화에 관한 특별법 제2조에 따른 중견기업(단, 직전연도 매출액 3,000억원 이상 제외)\n"
+    "\n\n※ 동일 특허로 같은 연도에 다른 평가지원 사업의 지원을 받은 경우 신청 불가\n② 끝",
+    # PDF page with CRLF, wrapped lines and a page number
+    "3. 신청 제외 대상\r\n  가. 공고일 현재 국세·지방세 체납 기업. 단, 징수유예 또는 체납처분 유예를 받은 경우는\r\n"
+    "예외로 함\r\n  나) 정부 R&D 사업에 참여제한 중인 기업\r\n    - 참여제한 기간이 공고 마감일 이전에 종료되는 경우 신청 가능\r\n"
+    "  * 다른 부처 유사 사업과 중복 수혜가 확인되면 선정을 취소하고 지원금을 환수함\r\n- 3 -\r\n",
+    # Table cells extracted one per line
+    "업종 분류\n산업분류코드\n(KSIC-11)\n제외 업종\n제조업\n33402 中\n불건전 영상게임기 제조업\n"
+    + "\n".join(f"{code}\n제외 업종 예시 {code}" for code in range(56211, 56311)),
+    # Consent form paragraph longer than 800 characters
+    "◈ 기업(개인)정보 수집·이용에 관한 사항\n수집·이용 목적\n"
+    + "신청자격 및 중복지원 검토, 선정평가, 협약체결, 사업운영, 사후관리, 정책자료 활용 등 제반사항, " * 14
+    + "\n동의를 거부할 수 있으나 거부 시 지원이 불가능합니다.",
+]
+
+
+@pytest.mark.parametrize("text", REALISTIC_EXCERPTS)
+def test_realistic_excerpts_split_into_exact_complete_quotes(text):
+    assert_exact_and_complete(text, options_for(text))
+
+
+def test_generated_blocks_always_split_into_exact_complete_quotes():
+    generator = random.Random(305)
+    starts = ["", "", "□ ", "○ ", "ㅇ ", "- ", "※ ", "* ", "1. ", "2) ", "(3) ", "가. ", "① ", "Ⅱ. ", "제2조 ", "1.5 ", "주) "]
+    words = ["중복", "지원", "제외", "신청", "협약", "기업은", "다른 사업", "합니다.", "함", "가", "　", "  ", "\U000F0832"]
+    for _ in range(300):
+        lines, size = [], generator.randint(1, 3800)
+        while sum(len(line) + 1 for line in lines) < size:
+            body = " ".join(generator.choice(words) for _ in range(generator.choice([0, 1, 3, 20, 150, 400])))
+            lines.append(generator.choice(["", " ", "\t"]) + generator.choice(starts) + body + generator.choice(["", " ", "\r"]))
+        text = "\n".join(lines)[:4000]
+        if len(text.strip()) >= 4:
+            assert_exact_and_complete(text, options_for(text))
+
+
+def many_options_request(count):
+    request = request_data()
+    line = "○ 다른 정부 지원사업에 선정되어 협약 기간 중인 기업은 신청할 수 없습니다 {:04d}"
+    request["evidence"] = [
+        {**request["evidence"][0], "id": f"E{index}", "programIndex": index % 2,
+         "text": "\n".join(line.format(index * 5 + item) for item in range(5 if index < count - 2048 else 4))}
+        for index in range(512)
+    ]
+    return AnalyzeRequest.model_validate(request)
+
+
+@pytest.mark.parametrize(("count", "accepted"), [(2048, True), (2049, False)])
+def test_more_than_2048_citation_options_fail_before_the_model_call(monkeypatch, count, accepted):
+    import app.combination_review.service as module
+    monkeypatch.setattr(module.tiktoken, "get_encoding", lambda _: SimpleNamespace(encode=lambda *a, **kw: [0]))
+    request = many_options_request(count)
+    assert len(build_citation_options(request)) == count
+    agent = SimpleNamespace(analyze=AsyncMock(return_value=AnalysisSelection.model_validate(selection_data())))
+
+    if accepted:
+        asyncio.run(CombinationReviewService(agent, "test-model").analyze(request))
+        assert agent.analyze.call_count == 1
+        return
+    with pytest.raises(CombinationReviewError, match="CONTEXT_TOO_LARGE"):
+        asyncio.run(CombinationReviewService(agent, "test-model").analyze(request))
+    agent.analyze.assert_not_called()
+
+    app = create_app(settings=Settings(openai_api_key="unused-test-key", openai_model="test-model",
+                                       llm_model_timeout_seconds=2, llm_run_timeout_seconds=3))
+    app.state.container.combination_review_service = CombinationReviewService(agent, "test-model")
+    with TestClient(app) as client:
+        failure = client.post("/internal/v1/combination-reviews/analyze", json=request.model_dump())
+    assert failure.status_code == 422
+    assert failure.json() == {"detail": {"code": "CONTEXT_TOO_LARGE"}}
+    agent.analyze.assert_not_called()
+
+
+def test_agent_sends_option_headings_while_core_still_receives_evidence_id_and_quote():
+    request = request_data()
+    request["evidence"][0]["text"] = (
+        "□ 신청 제한\n○ 다른 정부 창업지원사업에 선정되어 협약 기간 중인 기업은 신청할 수 없습니다\n"
+        "○ 최근 3년 이내 같은 사업에 선정된 기업은 신청할 수 없으며 적발 시 선정을 취소합니다"
+    )
+    service, calls = make_service()
+
+    result = asyncio.run(service.analyze(AnalyzeRequest.model_validate(request)))
+
+    body = json.loads(calls[0].content)
+    payload = json.loads(next(message for message in body["input"] if message["role"] == "user")["content"])
+    first = "□ 신청 제한\n○ 다른 정부 창업지원사업에 선정되어 협약 기간 중인 기업은 신청할 수 없습니다"
+    assert payload["citationOptions"] == [
+        {"citationOptionIndex": 0, "programIndex": 0, "locator": "contract fixture", "heading": "", "quote": first},
+        {"citationOptionIndex": 1, "programIndex": 0, "locator": "contract fixture", "heading": "□ 신청 제한",
+         "quote": "○ 최근 3년 이내 같은 사업에 선정된 기업은 신청할 수 없으며 적발 시 선정을 취소합니다"},
+        {"citationOptionIndex": 2, "programIndex": 1, "locator": "contract fixture", "heading": "",
+         "quote": request["evidence"][1]["text"]},
+    ]
+    citations = [citation for stage in result["pairs"][0]["stages"] for citation in stage["citations"]]
+    assert citations and all(citation == {"evidenceId": "E0", "quote": first} for citation in citations)

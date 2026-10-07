@@ -1,4 +1,5 @@
 from itertools import combinations
+import re
 from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -62,12 +63,16 @@ class AnalyzeRequest(Contract):
         return self
 
 
+MAX_CITATION_OPTIONS = 2048
+
+
 class CitationSelection(Contract):
-    citationOptionIndex: int = Field(ge=0, le=2047)
+    citationOptionIndex: int = Field(ge=0, le=MAX_CITATION_OPTIONS - 1)
 
 
 class CitationOption(Contract):
     evidenceIndex: int = Field(ge=0, le=511)
+    heading: str = Field(max_length=60)
     quote: str = Field(min_length=4, max_length=800)
 
 
@@ -120,9 +125,9 @@ class AnalysisSelection(Contract):
 
 def build_citation_options(request: AnalyzeRequest) -> list[CitationOption]:
     return [
-        CitationOption(evidenceIndex=evidence_index, quote=quote)
+        CitationOption(evidenceIndex=evidence_index, heading=heading, quote=quote)
         for evidence_index, evidence in enumerate(request.evidence)
-        for quote in _split_exact_quotes(evidence.text)
+        for heading, quote in _split_exact_quotes(evidence.text)
     ]
 
 
@@ -151,21 +156,77 @@ def validate_selection(
                     raise ValueError("citation option belongs to another pair")
 
 
-def _split_exact_quotes(text: str) -> list[str]:
+# A level-1/2 bullet, number or heading starts an item; level-3 bullets (-, ·), notes (※, *) and unmarked lines continue it.
+_ITEM_START = re.compile(
+    r"[□▢■❏☑◦○〇❍●•⦁∘￭▸▶♣➡↓☞➜⇨]|[①-⑳❶-❿➀-➓㉑-㉟]|[0-9]{1,2}(?:\.(?![0-9])|\))"
+    r"|[가나다라마바사아자차카타파하](?:\.(?=\s)|\))|\([0-9]{1,2}\)|[ㅇᄋoOｏ](?=\s)|제\s?[0-9]+\s?[장조]|[Ⅰ-Ⅹ]"
+)
+_HEADING = re.compile(r"[□▢■❏]|[0-9]{1,2}\.(?![0-9])\s*\S.{0,28}$|[Ⅰ-Ⅹ]|제\s?[0-9]+\s?장")
+_SENTENCE_END = re.compile(r"(?:다|함|음|임|됨|요|시오|것)[.)\]」』]?$|[.!?。]$")
+
+
+def _split_exact_quotes(text: str) -> list[tuple[str, str]]:
+    """Split one evidence block into (heading, quote) item units whose quotes are exact substrings covering the text.
+
+    The heading is the nearest heading line seen so far, given to the model as context and never added to the quote.
+    It is left empty when the quote already starts with it, so the same line is not sent twice.
+    """
+    units: list[list] = []  # [start, end, heading] of contiguous raw line ranges
+    heading = previous_line = ""
+    offset = 0
+    for line in text.split("\n"):
+        start, end = offset, offset + len(line)
+        offset = end + 1
+        value = line.strip()
+        if not value:
+            continue
+        if _HEADING.match(value):
+            heading = value[:60]
+        # Past 400 characters, a new unit starts after a line that ends a sentence.
+        if (not units or _ITEM_START.match(value)
+                or (end - units[-1][0] > 400 and _SENTENCE_END.search(previous_line))):
+            units.append([start, end, heading])
+        else:
+            units[-1][1] = end
+        previous_line = value
+    merged: list[list] = []
+    for unit in units:
+        # A unit under 40 characters joins the next one within 400; one too short to cite on its own always joins.
+        previous = merged[-1] if merged else None
+        size = len(text[previous[0]:previous[1]].strip()) if previous else 0
+        if previous and (size < 4 or (size < 40 and unit[1] - previous[0] <= 400)):
+            previous[1] = unit[1]
+        else:
+            merged.append(unit)
+    if len(merged) > 1 and len(text[merged[-1][0]:merged[-1][1]].strip()) < 4:
+        last = merged.pop()
+        merged[-1][1] = last[1]
+    return [
+        ("" if quote.startswith(heading) else heading, quote)
+        for start, end, heading in merged
+        for quote in _split_long_unit(text, start, end)
+        if len(quote) >= 4
+    ]
+
+
+def _split_long_unit(text: str, start: int, end: int) -> list[str]:
+    """Keep a unit of up to 800 characters whole; cut a longer one at a newline or space without a tail too short to cite."""
     quotes: list[str] = []
-    start = 0
-    while start < len(text):
-        while start < len(text) and text[start].isspace():
+    end = start + len(text[start:end].rstrip())
+    while start < end:
+        while text[start].isspace():
             start += 1
-        if start >= len(text):
-            break
-        end = min(start + 800, len(text))
-        if end < len(text):
-            boundary = max(text.rfind("\n", start + 200, end), text.rfind(" ", start + 200, end))
+        stop = min(start + 800, end)
+        while len(text[start:stop].encode("utf-16-le")) > 1600:  # Core counts 800 UTF-16 code units.
+            stop -= 1
+        if stop < end:
+            limit = end - 4
+            while text[limit].isspace():
+                limit -= 1
+            stop = max(min(stop, limit), start + 1)
+            boundary = max(text.rfind("\n", start + 200, stop), text.rfind(" ", start + 200, stop))
             if boundary > start:
-                end = boundary
-        quote = text[start:end].strip()
-        if len(quote) >= 4:
-            quotes.append(quote)
-        start = end
+                stop = boundary
+        quotes.append(text[start:stop].strip())
+        start = stop
     return quotes

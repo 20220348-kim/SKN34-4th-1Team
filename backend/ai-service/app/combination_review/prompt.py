@@ -15,6 +15,10 @@ programIndex 0을 “사업 1”, programIndex 1을 “사업 2”로 부른다.
 한국어 문맥과 조사가 자연스럽게 이어지도록 표현한다.
 인용은 citationOptions에 제시된 citationOptionIndex만 선택한다.
 인용문·근거 ID·URL을 직접 생성하거나 citationOptions의 문구를 다시 쓰지 않는다.
+citationOptions의 quote는 원문을 글머리·번호 항목 단위로 나눈 발췌다.
+heading은 맥락 파악용으로만 주는 가장 가까운 상위 제목이며 인용문에 포함되지 않는다.
+실제 규정 문장이 든 선택지를 고르고, 관련되면 그 예외·정의를 담은 이웃 항목이나 ※ 주석 선택지도 citations에 함께 넣는다.
+summary, scope, explanation, questions, limitations 문장 안에는 인용 표시나 선택지 번호를 쓰지 않는다.
 
 신청, 선정, 확약, 협약, 수행, 교부는 별개다. UNKNOWN은 NO가 아니며 이전 상태에서 다음 상태를 추론하지 않는다.
 연도·프로그램 유형·기관·주체·동일 과제·비용·과거 이력·확약 시각이 필요한데 없다면 질문한다.
