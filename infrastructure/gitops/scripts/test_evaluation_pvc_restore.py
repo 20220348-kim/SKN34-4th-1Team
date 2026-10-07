@@ -391,6 +391,32 @@ class KubernetesTests(unittest.TestCase):
                 )
             self.assertEqual(self.events, [])
 
+    def test_runtime_failure_still_removes_verified_claims(self):
+        with (
+            self.assertRaisesRegex(ValueError, "application failed"),
+            restore.restored_pvcs(
+                ["kubectl", "--context", "kind-fixture"],
+                "fixture-control-plane",
+                self.stores,
+                self.expected,
+            ) as (namespace, result),
+        ):
+            self.assertEqual(namespace, self.namespace)
+            self.assertEqual(result["status"], "VERIFIED")
+            self.assertFalse(
+                any("namespace" in args and "delete" in args for args, _ in self.events)
+            )
+            self.assertTrue(
+                any("verify" in args and "delete" in args for args, _ in self.events)
+            )
+            raise ValueError("application failed")
+        self.assertTrue(
+            any("namespace" in args and "delete" in args for args, _ in self.events)
+        )
+        self.assertTrue(
+            any("storageclass" in args and "delete" in args for args, _ in self.events)
+        )
+
 
 class ArchiveTests(unittest.TestCase):
     def test_actual_pvc_smoke_is_mandatory_in_required_llmops_ci(self):

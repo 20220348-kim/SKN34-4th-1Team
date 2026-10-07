@@ -151,6 +151,36 @@ LLMOps CI는 별도 kind 클러스터에서 [`smoke_evaluation_pvc.py`](../scrip
 확인하고 클러스터를 정리한다. 결과는 `evaluation-pvc.json` artifact로 남긴다. 이것은 실제 개인 백업의
 복원 성공이나 무료 평가 실행 완료를 대신하지 않으며, 최신 커밋 CI가 통과하기 전에는 미검증 상태다.
 
+## 격리 Kubernetes에서 실제 평가 실행 검증
+
+LLMOps CI의 기존 격리 통합 검증에 `--evaluation-runtime` 단계를 연결했다.
+`smoke_ops_bridge.py --evaluate --evaluation-runtime --report <새 보고서 경로>`로 실행하며,
+도구가 직접 만든 클러스터·Compose 프로젝트만 사용한다. 개인 클러스터를 지정하는 옵션은 없다.
+
+실행 흐름은 `관리자 HTTP 로그인 → Kubernetes Ops API → Kubernetes Prefect → Kubernetes 실행기
+→ 결과 PVC → Kubernetes 결과 서버 → Ops sync·인증 보고서 조회`다. Langfuse는 이 검증의
+격리 Compose에 유지하며, 관측 서비스까지 Kubernetes로 이전했다고 보고하지 않는다.
+
+1. 기존 격리 MySQL·볼륨 복원 검증을 먼저 완료한다. Ops API·sync와 Compose 평가 writer가 정지한
+   상태에서 실제 Prefect SQLite와 완료 보고서를 읽는다. 개인 백업·운영 데이터는 사용하지 않는다.
+2. 기존 PVC 복원 도구로 새 namespace·StorageClass·PVC 2개에 복원하고 실행 ID·보고서 해시·권한을
+   검증한다. 앞의 최소 합성 SQLite 대신 실제 평가에 사용했던 Prefect 스키마를 그대로 사용한다.
+3. 같은 이미지로 렌더링한 Prefect·결과 서버를 먼저 기동하고 실행기 1개를 시작한다. 자동 migration은
+   계속 비활성화한다. Ops API와 sync의 두 URL을 함께 바꾼 뒤 격리 접수를 재개한다.
+4. 기존 완료 이력을 확인하고 무료 평가를 접수한다. 동일 요청 재전송의 flow 일치, 백그라운드 상태
+   반영, 인증 보고서 조회와 모델 호출 0회를 확인한다.
+5. 실행기를 정지한 뒤 Prefect·결과 서버 Pod를 교체하고 실행기를 다시 시작한다. 실제 Pod UID 변경,
+   이미지 동일성, DB 실행 ID·명세·보고서 해시 보존을 대조하고 새 무료 평가를 한 번 더 실행한다.
+6. 원본 Compose 볼륨이 변경되지 않았는지 다시 읽어 비교한다. 임시 namespace·PVC·PV·StorageClass와
+   이미지 태그를 정리하고, 바깥 실행기가 격리 클러스터·Compose 프로젝트를 제거한다. 검증 실패도
+   정리 경로를 거치며 새 Kubernetes 쓰기를 과거 Compose DB로 되돌리지 않는다.
+
+`ops-bridge.json`의 `evaluation_kubernetes_runtime`에 단계별 증거를 남긴다.
+`scope=disposable_kubernetes_evaluation_runtime`, `observability_runtime=isolated_compose`,
+`production_cutover=false`, `personal_environment_verified=false`를 명시한다. 기본 kind CNI에서
+NetworkPolicy 집행을 입증하지 않으며, 이 결과는 Argo CD 배포·공개 이미지 발행·운영 PVC 인계의
+증거가 아니다. 로컬 단위·렌더링 검사만 통과한 상태에서는 **실제 런타임 검증은 최신 SHA CI 대기**다.
+
 ## 후속 완료 기준
 
 1. 기존 [암호화 백업·복원](../../../docs/ops-upgrade-runbook.md)을 이용해 **새 Kubernetes PVC**로
@@ -161,8 +191,8 @@ LLMOps CI는 별도 kind 클러스터에서 [`smoke_evaluation_pvc.py`](../scrip
    가드를 우회하지 않는다. 배포 방식은 서비스별 Argo Application과 수동 동기화를 유지한다.
    기존 AppProject·진단은 네 업무 Application을 전제로 하므로 새 평가 namespace의 권한과
    Application 조회 범위를 함께 검증한다. 이번 Chart를 기존 프로젝트에 바로 추가하지 않는다.
-3. 격리된 Kubernetes에서 Prefect·결과 서버를 먼저 확인하고 실행기 1개를 시작한다. 기존 완료 이력,
-   새 무료 평가, 인증된 보고서, 중복 방지, 재시작 후 데이터 보존을 검증한다.
+3. 위 격리 Kubernetes 런타임 검증의 최신 SHA 필수 CI 성공을 확인한다. 검증 경로는 구현했으며,
+   실행 실패·취소·건너뛰기를 완료로 처리하지 않는다. 이후 개인 환경의 같은 이미지·백업으로 별도 검증한다.
 4. 실제 전환 시 Ops 접수·스케줄과 Compose writer를 중지하고 최신 백업을 만든다. 복원 검증 후
    Ops의 URL을 전환한다. 새 대상에 쓰기가 생긴 뒤에는 과거 Compose DB로 단순 URL 롤백하지 않는다.
 5. Langfuse와 관련 DB·저장소는 별도 이전 단위로 검증한다. 마지막에 임시 브리지를 제거하며,

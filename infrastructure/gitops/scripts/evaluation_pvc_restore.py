@@ -1,7 +1,8 @@
 """Rehearse an encrypted evaluation backup on NEW disposable kind PVCs.
 
-Never stops writers, restores an existing PVC, starts an API/runner, or changes
-Ops routing. The generated namespace and PVCs are removed after the rehearsal.
+The CLI never stops writers, restores an existing PVC, starts an API/runner, or
+changes Ops routing. The internal context also supports the disposable runtime
+CI. The generated namespace and PVCs are always removed after use.
 """
 
 import argparse
@@ -10,6 +11,7 @@ import json
 import os
 import re
 import subprocess
+from contextlib import contextmanager
 from pathlib import Path
 from uuid import uuid4
 
@@ -114,8 +116,13 @@ def require_owner(resource, namespace, token, uid=None):
     return metadata["uid"]
 
 
-def rehearse(kube, node, stores, expected, *, image=None):
-    """Internal entry also used with synthetic fixtures by the required CI job."""
+@contextmanager
+def restored_pvcs(kube, node, stores, expected, *, image=None):
+    """Yield verified temporary claims; always delete them, including on caller failure.
+
+    The CLI only reads these claims. The disposable runtime CI also starts the
+    evaluation chart inside this lifetime; this is not a production handoff API.
+    """
     snapshot.probe.expected_runs(expected)
     if set(stores) != {"prefect", "results"}:
         raise ValueError("Both restored stores are required")
@@ -333,6 +340,15 @@ def rehearse(kube, node, stores, expected, *, image=None):
             )
         ):
             raise ValueError("Incomplete runtime PVC verification")
+        snapshot.storage.run(
+            [
+                str(p)
+                for p in nk
+                + ["delete", "pod", "verify", "--wait=true", "--timeout=60s"]
+            ],
+            timeout=75,
+        )
+        yield namespace, result
     finally:
         if uid is not None:
             current = run(kube + ["get", "namespace", namespace, "-o", "json"])
@@ -379,8 +395,14 @@ def rehearse(kube, node, stores, expected, *, image=None):
                     ],
                     timeout=45,
                 )
+
+
+def rehearse(kube, node, stores, expected, *, image=None):
+    """Restore/read only; no application or retained PVC is exposed by the CLI."""
+    with restored_pvcs(kube, node, stores, expected, image=image) as (_, result):
+        evidence = dict(result)
     return {
-        **result,
+        **evidence,
         "scope": "disposable_kubernetes_evaluation_pvc",
         "cleanup_complete": True,
         "application_started": False,

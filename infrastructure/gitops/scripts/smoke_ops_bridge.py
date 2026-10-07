@@ -91,7 +91,14 @@ def main():
         help="Also run isolated Kubernetes Ops evaluation and restart checks",
     )
     parser.add_argument("--helm", default="helm")
+    parser.add_argument(
+        "--evaluation-runtime",
+        action="store_true",
+        help="After --evaluate, restore and run all three evaluation components in Kubernetes",
+    )
     args = parser.parse_args()
+    if args.evaluation_runtime and not args.evaluate:
+        parser.error("--evaluation-runtime requires --evaluate")
     if args.report.exists():
         parser.error("Report must be a new file")
     if "v0.33.0" not in execute([args.kind, "version"]):
@@ -376,6 +383,7 @@ def main():
                     args.kind,
                     args.helm,
                     report,
+                    evaluation_runtime=args.evaluation_runtime,
                 )
             report["status"] = "PASS"
             print(

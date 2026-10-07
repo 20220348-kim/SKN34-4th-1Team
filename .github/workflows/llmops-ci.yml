@@ -337,9 +337,10 @@ jobs:
           path: work/llmops-ci/evaluation-pvc.json
           if-no-files-found: warn
           retention-days: 7
-      - name: Verify Kubernetes evaluation, endpoint recovery and Ops DB/volume restore
-        timeout-minutes: 30
-        run: backend/ai-service/.venv/bin/python -B infrastructure/gitops/scripts/smoke_ops_bridge.py --evaluate --report work/llmops-ci/ops-bridge.json
+      - name: Verify Ops recovery and restored Kubernetes evaluation runtime
+        # Reuse this job's disposable cluster/images; no personal environment is stopped.
+        timeout-minutes: 40
+        run: backend/ai-service/.venv/bin/python -B infrastructure/gitops/scripts/smoke_ops_bridge.py --evaluate --evaluation-runtime --report work/llmops-ci/ops-bridge.json
       - name: Preserve isolated Compose bridge evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
