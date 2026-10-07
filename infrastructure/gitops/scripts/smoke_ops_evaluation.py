@@ -31,7 +31,7 @@ from smoke_ops_bridge import execute
 BASE = "http://localhost:5173"
 
 
-def database_record(nk, run_id):
+def database_record(nk, run_id, *, artifact_url="http://ops-compose-artifacts:8010"):
     # UUID comes from a verified smoke result, never from shell interpolation.
     from uuid import UUID
 
@@ -47,7 +47,7 @@ def database_record(nk, run_id):
         "assert len(rows)==1 and rows[0]['status']=='COMPLETED' and rows[0]['model_api_calls']==0; "
         "assert settings.DATABASES['default']['HOST']=='ops-mysql'; "
         "assert settings.DATABASES['default']['NAME']=='govbiz_ops'; "
-        "assert settings.LLMOPS_ARTIFACT_URL=='http://ops-compose-artifacts:8010'; "
+        f"assert settings.LLMOPS_ARTIFACT_URL=={artifact_url!r}; "
         "print(json.dumps({'run':rows[0],'db_host':'ops-mysql','db_name':'govbiz_ops',"
         "'execution_release_sha256':hashlib.sha256(RELEASE_PATH.read_bytes()).hexdigest()},default=str))"
     )
@@ -299,7 +299,18 @@ def check_rag_preserved(nk, password, evidence):
     )
 
 
-def verify(state, settings, compose, compose_env, ops_image, kind, helm, report):
+def verify(
+    state,
+    settings,
+    compose,
+    compose_env,
+    ops_image,
+    kind,
+    helm,
+    report,
+    *,
+    evaluation_runtime=False,
+):
     kube, nk, _ = fork_cluster.commands(state, settings)
     project = report["compose_project"]
     core_image = "govbiz-core-service:" + project
@@ -741,6 +752,18 @@ def verify(state, settings, compose, compose_env, ops_image, kind, helm, report)
         report["backup_admission_pause"] = set_admission(
             nk, "pause", report["admission_resume"]["version"]
         )
+        backup_expected = {
+            item["request_id"]: {
+                "flow_id": item["prefect_flow_run_id"],
+                "execution_spec_sha256": item["execution_spec_sha256"],
+                "report_sha256": report_hash,
+            }
+            for item, report_hash in (
+                (result, original_report),
+                (rag_before["evaluation"], rag_before["report_sha256"]),
+                (rag_after["evaluation"], rag_after["report_sha256"]),
+            )
+        }
         runner_image_id = smoke_ops_backup.verify(
             state,
             settings,
@@ -750,20 +773,25 @@ def verify(state, settings, compose, compose_env, ops_image, kind, helm, report)
             core_password=password,
             compose=compose,
             compose_env=compose_env,
-            expected={
-                item["request_id"]: {
-                    "flow_id": item["prefect_flow_run_id"],
-                    "execution_spec_sha256": item["execution_spec_sha256"],
-                    "report_sha256": report_hash,
-                }
-                for item, report_hash in (
-                    (result, original_report),
-                    (rag_before["evaluation"], rag_before["report_sha256"]),
-                    (rag_after["evaluation"], rag_after["report_sha256"]),
-                )
-            },
+            expected=backup_expected,
             release_sha256=before["execution_release_sha256"],
         )
+        if evaluation_runtime:
+            import smoke_evaluation_runtime
+
+            report["evaluation_phase"] = "kubernetes_evaluation_runtime"
+            smoke_evaluation_runtime.verify(
+                state,
+                settings,
+                compose,
+                compose_env,
+                kind,
+                helm,
+                password,
+                web_env,
+                backup_expected,
+                report,
+            )
         report.update(
             evaluation_status="PASS",
             evaluation_phase="complete",
