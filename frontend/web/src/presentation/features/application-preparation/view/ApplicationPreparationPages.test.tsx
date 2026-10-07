@@ -2741,15 +2741,16 @@ describe('application preparation creation and detail', () => {
     expect(focus).toHaveBeenLastCalledWith({ preventScroll: true })
   })
 
-  it('folds the online input helper under the card unless the address asks to open it', async () => {
+  it('hides the online input helper unless the failure card link opens it under the card', async () => {
     const first = mount('/app/application-preparations/12')
-    const helper = (await screen.findByRole('heading', { name: '온라인 신청 입력 도우미' })).closest('details') as HTMLDetailsElement
-    expect(helper.open).toBe(false)
-    expect(screen.getByRole('region', { name: '기업 개요 작성' }).compareDocumentPosition(helper) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    await screen.findByRole('region', { name: '기업 개요 작성' })
+    expect(screen.queryByRole('heading', { name: '온라인 신청 입력 도우미' })).toBeNull()
+    expect(repository.onlineInputGuide).not.toHaveBeenCalled()
     first.unmount()
     mount('/app/application-preparations/12?helper=open')
     const opened = (await screen.findByRole('heading', { name: '온라인 신청 입력 도우미' })).closest('details') as HTMLDetailsElement
     expect(opened.open).toBe(true)
+    expect(screen.getByRole('region', { name: '기업 개요 작성' }).compareDocumentPosition(opened) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
   it('rejects a malformed detail id without making a request', () => {
