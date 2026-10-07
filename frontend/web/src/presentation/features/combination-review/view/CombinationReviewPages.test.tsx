@@ -62,6 +62,8 @@ afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); appConta
 function Isolation() { useReviewSessionIsolation(); return null }
 function LocationProbe() { const location = useLocation(); return <output data-testid="location">{location.pathname + location.search}</output> }
 const currentLocation = () => screen.getByTestId('location').textContent
+/** 결과 화면 단계 줄의 머리 버튼(펼치기 · 접기)입니다. */
+const stageToggle = (article: HTMLElement) => within(within(article).getByRole('heading', { level: 3 })).getByRole('button')
 function mount(path = '/app/combination-reviews/12?step=analysis', strict = false) {
   const store = createAppStore()
   store.dispatch(signedIn({ email: 'a@example.com', role: 'USER', tier: 'MEMBER', emailVerified: false, hasPassword: true, accountType: null, onboarded: true, company: null }))
@@ -696,14 +698,16 @@ describe('review screens and execution safety', () => {
     citation.quote = '사업 0과 사업 1은 원문에 적힌 표현입니다.'
     repository.run.mockResolvedValue(run)
     mount('/app/combination-reviews/12/runs/30')
-    const region = await screen.findByRole('region', { name: '검토 요약' })
-    expect(within(region).getByText(expected)).toBeTruthy()
+    const region = await screen.findByRole('region', { name: '검토 결론' })
+    fireEvent.click(within(region).getByRole('button', { name: /요약 더 보기/ }))
+    expect(within(region).getByText(expected).hidden).toBe(false)
     const application = screen.getByRole('article', { name: '신청 단계 판단' })
-    fireEvent.click(within(application).getByRole('button', { name: /근거 1개/ }))
+    fireEvent.click(stageToggle(application))
+    fireEvent.click(within(application).getByRole('button', { name: /근거 원문 1개/ }))
     expect(within(application).getByText(citation.quote)).toBeTruthy()
     expect(repository.start).not.toHaveBeenCalled()
   })
-  it('summarizes verdicts, collects questions and shows six stage cards with sources without execution metadata', async () => {
+  it('leads with a fixed conclusion and stage strip, then priority questions, collapsible stage rows and folded sources', async () => {
     repository.runs.mockResolvedValue({ items: [runFixture], nextBeforeId: null })
     const view = mount()
     const scrollTo = vi.fn()
@@ -720,37 +724,65 @@ describe('review screens and execution safety', () => {
     expect(scrollTo).toHaveBeenCalledWith({ top: 0, left: 0, behavior: 'auto' })
     expect(screen.getByText(/과거 입력 버전의 결과/)).toBeTruthy()
     expect(screen.queryByText(/BIZINFO:PBLN_/)).toBeNull()
-    expect(screen.getByText('제한을 찾지 못한 것은 허용이 아니에요')).toBeTruthy()
+    expect(screen.getByText(/제한을 못 찾은 것이 허용을 뜻하지는 않아요/)).toBeTruthy()
     expect(screen.queryByText(/당시 제목:/)).toBeNull()
     expect(screen.queryByText(/실행별 추가 설명:/)).toBeNull()
     expect(screen.queryByText(/프롬프트/)).toBeNull()
-    const summary = screen.getByRole('region', { name: '검토 요약' })
+    const conclusion = screen.getByRole('region', { name: '검토 결론' })
     // 판정 다섯 가지를 주의(제한 · 충돌) · 확인 필요(정보 · 근거 부족) · 가능(범위 내 허용)으로 센다.
-    expect(within(summary).getByText('주의 2')).toBeTruthy()
-    expect(within(summary).getByText('확인 필요 3')).toBeTruthy()
-    expect(within(summary).getByText('가능 1')).toBeTruthy()
+    expect(within(conclusion).getByText('주의 2')).toBeTruthy()
+    expect(within(conclusion).getByText('확인 필요 3')).toBeTruthy()
+    expect(within(conclusion).getByText('가능 1')).toBeTruthy()
+    // 결론 문장은 AI 요약이 아니라 판정 조합으로 정한다(제한이 충돌보다 앞선다).
+    expect(within(conclusion).getByRole('heading', { level: 2 }).textContent).toBe('함께 진행하면 문제가 될 수 있는 단계가 있어요')
+    expect(within(conclusion).getByText('수행 단계에 공고가 정한 제한이 적용돼요. 확약 단계는 공고 내용이 서로 달라요.')).toBeTruthy()
     // 실행 당시 사업 순서(뒤바뀐 순서)대로 공고 이름을 보인다.
-    expect(within(summary).getAllByRole('listitem').map((item) => item.textContent)).toEqual([expect.stringMatching(/^사업 1딥테크 성장 지원 공고/), expect.stringMatching(/^사업 2청년창업 사업화 지원 공고/)])
-    expect(within(summary).getByText(runFixture.analysis!.summary)).toBeTruthy()
-    const questions = screen.getByRole('region', { name: '확인할 정보' })
+    expect(within(conclusion).getAllByRole('listitem').map((item) => item.textContent)).toEqual([expect.stringMatching(/^사업 1딥테크 성장 지원 공고/), expect.stringMatching(/^사업 2청년창업 사업화 지원 공고/)])
+    // AI 요약은 접어 두고 [요약 더 보기]로 펼친다.
+    const summaryText = within(conclusion).getByText(runFixture.analysis!.summary)
+    expect(summaryText.hidden).toBe(true)
+    fireEvent.click(within(conclusion).getByRole('button', { name: /요약 더 보기/ }))
+    expect(summaryText.hidden).toBe(false)
+    // 단계 색 띠는 신청 → 교부 순서이고 판정을 함께 읽어 준다.
+    const strip = within(conclusion).getByRole('group', { name: '단계별 판정' })
+    expect(within(strip).getAllByRole('button').map((cell) => cell.getAttribute('aria-label'))).toEqual(['신청 단계 확인 필요 · 자세히 보기', '선정 단계 확인 필요 · 자세히 보기', '확약 단계 주의 · 자세히 보기', '협약 단계 확인 필요 · 자세히 보기', '수행 단계 주의 · 자세히 보기', '교부 단계 가능 · 자세히 보기'])
+    const questions = screen.getByRole('region', { name: '먼저 확인할 것' })
     expect(within(questions).getAllByText('지원 목적이 동일한가요?')).toHaveLength(1)
-    expect(within(questions).getByRole('link', { name: '입력 보완하기' }).getAttribute('href')).toBe('/app/combination-reviews/12?step=participation')
+    expect(within(questions).queryByRole('button', { name: /모두 보기/ })).toBeNull()
+    expect(within(questions).getByRole('link', { name: '참여 상태 입력하고 다시 보기' }).getAttribute('href')).toBe('/app/combination-reviews/12?step=participation')
     const cards = screen.getAllByRole('article')
-    expect(cards.map((card) => card.getAttribute('aria-label'))).toEqual(['확약 단계 판단', '수행 단계 판단', '신청 단계 판단', '선정 단계 판단', '협약 단계 판단', '교부 단계 판단'])
-    // 첫 주의 카드만 근거를 펼쳐 둔다.
-    const first = within(cards[0]!).getByRole('button', { name: /근거 1개/ })
+    expect(cards.map((card) => card.getAttribute('aria-label'))).toEqual(['신청 단계 판단', '선정 단계 판단', '확약 단계 판단', '협약 단계 판단', '수행 단계 판단', '교부 단계 판단'])
+    // 주의(충돌 · 제한) 단계 줄만 펼쳐 두고, 근거 원문은 첫 주의 줄에서만 펼친다.
+    expect(cards.map((card) => stageToggle(card).getAttribute('aria-expanded'))).toEqual(['false', 'false', 'true', 'false', 'true', 'false'])
+    expect(within(cards[0]!).getByText('동일 목적 사업비에 한정')).toBeTruthy()
+    expect(within(cards[0]!).getByText('질문 1 · 근거 1')).toBeTruthy()
+    const first = within(cards[2]!).getByRole('button', { name: /근거 원문 1개/ })
     const citations = document.getElementById(first.getAttribute('aria-controls')!)!
     expect(first.getAttribute('aria-expanded')).toBe('true')
     expect(citations.hidden).toBe(false)
-    expect(within(cards[0]!).getByText(/PDF 3쪽, 문단 2/)).toBeTruthy()
-    expect(within(cards[0]!).getByRole('link', { name: '공고 페이지 보기 ↗' }).getAttribute('href')).toBe(runFixture.evidence!.documents[0].sourcePageUrl)
-    expect(within(cards[0]!).getByRole('button', { name: '원문 받기' })).toBeTruthy()
+    expect(within(cards[2]!).getByText(/PDF 3쪽, 문단 2/)).toBeTruthy()
+    expect(within(cards[2]!).getByRole('link', { name: '공고 페이지 보기 ↗' }).getAttribute('href')).toBe(runFixture.evidence!.documents[0].sourcePageUrl)
+    expect(within(cards[2]!).getByRole('button', { name: '원문 받기' })).toBeTruthy()
     fireEvent.click(first)
     expect(citations.hidden).toBe(true)
-    expect(within(cards[1]!).getByRole('button', { name: /근거 1개/ }).getAttribute('aria-expanded')).toBe('false')
-    expect(within(cards[2]!).getByText('기관 확인 필요')).toBeTruthy()
+    expect(within(cards[4]!).getByRole('button', { name: /근거 원문 1개/ }).getAttribute('aria-expanded')).toBe('false')
+    expect(within(cards[0]!).getByText('기관 확인 필요')).toBeTruthy()
     expect(within(cards[5]!).queryByText('기관 확인 필요')).toBeNull()
+    // 띠의 칸을 누르면 접혀 있던 그 단계 줄을 펼치고 그 줄로 이동한다.
+    const scrollIntoView = vi.fn()
+    cards[0]!.scrollIntoView = scrollIntoView
+    fireEvent.click(within(strip).getByRole('button', { name: '신청 단계 확인 필요 · 자세히 보기' }))
+    expect(stageToggle(cards[0]!).getAttribute('aria-expanded')).toBe('true')
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' })
+    expect(document.activeElement).toBe(stageToggle(cards[0]!))
+    fireEvent.click(stageToggle(cards[2]!))
+    expect(stageToggle(cards[2]!).getAttribute('aria-expanded')).toBe('false')
+    // 공식 원문 · 판단 한계는 한 줄로 접어 두고 펼치면 지금 내용을 그대로 보인다.
     const sources = screen.getByRole('region', { name: '공식 원문과 수집 범위' })
+    const sourcesToggle = within(sources).getByRole('button', { name: /공식 원문 1개 · 판단 한계 2개/ })
+    expect(sourcesToggle.getAttribute('aria-expanded')).toBe('false')
+    expect(within(sources).queryByRole('link', { name: '공고 페이지 보기 ↗: 공식-원문-모의.pdf' })).toBeNull()
+    fireEvent.click(sourcesToggle)
     expect(within(sources).getByRole('link', { name: '공고 페이지 보기 ↗: 공식-원문-모의.pdf' }).getAttribute('href')).toBe(runFixture.evidence!.documents[0].sourcePageUrl)
     expect(within(sources).getAllByRole('button', { name: '받기: 공식-원문-모의.pdf' })).toHaveLength(1)
     expect(within(sources).getByText(/두 공고 사이의 제한만 봤어요/)).toBeTruthy()
@@ -770,12 +802,15 @@ describe('review screens and execution safety', () => {
 
     mount('/app/combination-reviews/12/runs/30')
 
-    expect(await screen.findByText('사업 1은 ‘예’이고 사업 2는 ‘미확인’입니다.')).toBeTruthy()
+    fireEvent.click(await screen.findByRole('button', { name: /요약 더 보기/ }))
+    expect(screen.getByText('사업 1은 ‘예’이고 사업 2는 ‘미확인’입니다.').hidden).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: /공식 원문 1개 · 판단 한계 2개/ }))
     expect(screen.getByText(/입력한 참여 상태 · 추가 설명과 자동 수집한 원문 범위/)).toBeTruthy()
     expect(screen.getByText('협약은 ‘아니오’이고 수행은 ‘시작 전’이며 교부는 ‘미확인’입니다.')).toBeTruthy()
     expect(screen.getByText(/‘수행 중’ 상태까지 확인/)).toBeTruthy()
+    fireEvent.click(stageToggle(screen.getByRole('article', { name: '신청 단계 판단' })))
     expect(screen.getByText('‘완료’ 또는 ‘중단’ 여부는 ‘미확인’입니다.')).toBeTruthy()
-    expect(within(screen.getByRole('region', { name: '확인할 정보' })).getByText('선정 결과가 ‘예’인가요?')).toBeTruthy()
+    expect(within(screen.getByRole('region', { name: '먼저 확인할 것' })).getByText('선정 결과가 ‘예’인가요?')).toBeTruthy()
   })
   it('loads the selected result automatically after the application StrictMode remount', async () => {
     mount('/app/combination-reviews/12/runs/30', true)
@@ -812,22 +847,38 @@ describe('review screens and execution safety', () => {
     expect(selectedValue(screen.getByLabelText('사업 1 지원금 교부 여부'))).toBe('UNKNOWN')
     await waitFor(() => expect(repository.start).not.toHaveBeenCalled())
   })
-  it('deduplicates stage questions above the collapsed detail and opens the input step', async () => {
+  it('shows one unseen question per stage first, expands to every question once and opens the input step', async () => {
     const run = structuredClone(runFixture)
     run.analysis!.pairs[0].stages[0].questions = ['두 사업의 비용이 같나요?']
-    run.analysis!.pairs[0].stages[1].questions = ['두 사업의 비용이 같나요?', '확약서를 제출했나요?']
+    run.analysis!.pairs[0].stages[1].questions = ['두 사업의 비용이 같나요?', '확약서를 제출했나요?', '협약 기간이 겹치나요?']
     repository.run.mockResolvedValue(run)
     mount('/app/combination-reviews/12/runs/30')
-    const questions = await screen.findByRole('region', { name: '확인할 정보' })
+    const questions = await screen.findByRole('region', { name: '먼저 확인할 것' })
+    // 주의 단계(확약)의 질문이 먼저이고, 선정 단계는 앞에서 나온 질문을 건너뛰고 다음 질문을 고른다.
+    expect(within(questions).getAllByRole('listitem').map((item) => item.textContent)).toEqual(['확약지원 목적이 동일한가요?', '신청두 사업의 비용이 같나요?', '선정확약서를 제출했나요?'])
+    expect(within(questions).queryByText('협약 기간이 겹치나요?')).toBeNull()
+    fireEvent.click(within(questions).getByRole('button', { name: /질문 4개 모두 보기/ }))
+    expect(within(questions).getAllByRole('listitem')).toHaveLength(4)
     expect(within(questions).getAllByText('두 사업의 비용이 같나요?')).toHaveLength(1)
-    // 다른 단계의 질문(지원 목적)까지 모아 중복 없이 3개다.
-    expect(within(questions).getByText('3개 · 답하면 판단이 바뀔 수 있어요')).toBeTruthy()
-    fireEvent.click(within(questions).getByRole('link', { name: '입력 보완하기' }))
+    expect(within(questions).getByText('협약 기간이 겹치나요?')).toBeTruthy()
+    fireEvent.click(within(questions).getByRole('link', { name: '참여 상태 입력하고 다시 보기' }))
     expect(await screen.findAllByText('지금 어디까지 진행했나요?')).toHaveLength(2)
     expect(selectedValue(screen.getByLabelText('사업 1 현재 진행 상태'))).toBe('IN_PROGRESS')
     expect((screen.getByLabelText('분석에 참고할 추가 설명 (선택)') as HTMLTextAreaElement).value).toBe(run.input.additionalFacts)
     expect(repository.replace).not.toHaveBeenCalled()
     expect(repository.start).not.toHaveBeenCalled()
+  })
+  it('says the review cannot decide yet and keeps every stage folded when only facts are missing', async () => {
+    const run = structuredClone(runFixture)
+    run.input.programs = run.input.programs.map((program) => ({ ...program, participation: unknownParticipation() }))
+    for (const stage of run.analysis!.pairs[0].stages) stage.judgment = 'NEEDS_FACTS'
+    repository.run.mockResolvedValue(run)
+    mount('/app/combination-reviews/12/runs/30')
+    const conclusion = await screen.findByRole('region', { name: '검토 결론' })
+    expect(within(conclusion).getByRole('heading', { level: 2 }).textContent).toBe('두 공고를 함께 진행해도 되는지 아직 정할 수 없어요')
+    expect(within(conclusion).getByText('공고에서 서로를 막는 조항은 찾지 못했고, 내 참여 상태가 모두 미확인이에요.')).toBeTruthy()
+    expect(within(conclusion).getByText('확인 필요 6')).toBeTruthy()
+    expect(screen.getAllByRole('article').map((card) => stageToggle(card).getAttribute('aria-expanded'))).toEqual(Array(6).fill('false'))
   })
   it('does not mark a loaded review dirty before the user edits its status', async () => {
     mount('/app/combination-reviews/12'); await screen.findByDisplayValue(reviewFixture.title)

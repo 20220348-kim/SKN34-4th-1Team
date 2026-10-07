@@ -66,6 +66,12 @@ export const reviewStyles = {
   badgeInfo: 'bg-info-soft text-info',
   badgeNeutral: 'bg-surface-muted text-ink-muted',
   badgeDanger: 'bg-danger-soft text-danger',
+  // 결과 결론 카드의 단계 색 띠(여섯 칸)와 단계별 판단의 접히는 줄 머리
+  stageCell: `flex h-9 min-w-0 cursor-pointer items-center justify-center rounded-lg border text-xs font-bold hover:brightness-95 ${focus}`,
+  stageCellWarn: 'border-warning/40 bg-warning-soft text-warning',
+  stageCellInfo: 'border-info/40 bg-info-soft text-info',
+  stageCellOk: 'border-brand-primary/30 bg-brand-soft text-brand-primary',
+  stageRowButton: 'flex w-full cursor-pointer items-start gap-3 border-0 bg-transparent px-4 py-3 text-left text-ink hover:bg-surface-muted focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand-primary',
   textLink: `inline-flex items-center gap-1 text-xs font-bold text-brand-primary no-underline hover:underline disabled:cursor-not-allowed disabled:opacity-50 ${focus}`,
   // 불러오는 중 (신청 문서 작성 화면과 같은 막대)
   skeletonBar: 'block rounded-md bg-surface-muted motion-safe:animate-pulse',
