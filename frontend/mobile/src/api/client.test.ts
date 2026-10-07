@@ -1,4 +1,5 @@
-import { ApiError, apiRequest, createApiFetch, getApiBaseUrl } from './client'
+import { ApiError, apiRequest, createApiFetch, getApiBaseUrl, programClient, readProgramDetail } from './client'
+import { programDetail } from '../test/preparationFixtures'
 
 describe('native API boundary', () => {
   const originalFetch = globalThis.fetch
@@ -47,5 +48,46 @@ describe('native API boundary', () => {
       expect(error).toMatchObject({ status: 429, code: 'RATE_LIMITED', retryAfterSeconds: 30 })
       expect((error as Error).message).not.toContain('database')
     }
+  })
+})
+
+
+describe('mobile detail reader through the shared HTTP client', () => {
+  const originalFetch = globalThis.fetch
+  const identity = { sourceCode: 'BIZINFO', sourceProgramId: 'P/123' }
+  beforeEach(() => { process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.example.test' })
+  afterEach(() => { globalThis.fetch = originalFetch; delete process.env.EXPO_PUBLIC_API_BASE_URL })
+
+  it('reads the selected public detail as an internal model through the configured mobile fetch', async () => {
+    globalThis.fetch = jest.fn().mockResolvedValue({ ok: true, status: 200,
+      json: async () => ({ ...programDetail, regions: ['서울'], categories: ['기술'], internalDebug: 'server-only' }) })
+    const result = await readProgramDetail(programClient('owner'), identity)
+    expect(result).toMatchObject({ id: identity.sourceProgramId, title: programDetail.title, regions: ['서울'], categories: ['기술'] })
+    expect(result).not.toHaveProperty('internalDebug')
+    const [request, init] = (globalThis.fetch as jest.Mock).mock.calls[0]
+    const url = new URL(request)
+    expect(url.origin).toBe('https://api.example.test')
+    expect(url.searchParams.get('sourceCode')).toBe(identity.sourceCode)
+    expect(url.searchParams.get('sourceProgramId')).toBe(identity.sourceProgramId)
+    expect(init.headers.get('Authorization')).toBe('Bearer owner')
+    expect(init.credentials).toBe('omit')
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps an absent detail distinct from a failed request', async () => {
+    const json = jest.fn()
+    globalThis.fetch = jest.fn().mockResolvedValue({ ok: false, status: 404, json })
+    await expect(readProgramDetail(programClient(), identity)).resolves.toBeNull()
+    expect(json).not.toHaveBeenCalled()
+    globalThis.fetch = jest.fn().mockResolvedValue({ ok: false, status: 500 })
+    await expect(readProgramDetail(programClient(), identity)).rejects.toThrow()
+  })
+
+  it.each([
+    { ...programDetail, id: 'another-program' },
+    { ...programDetail, regions: '서울' },
+  ])('rejects an incorrect identity or invalid DTO before exposing detail data', async payload => {
+    globalThis.fetch = jest.fn().mockResolvedValue({ ok: true, status: 200, json: async () => payload })
+    await expect(readProgramDetail(programClient(), identity)).rejects.toThrow()
   })
 })

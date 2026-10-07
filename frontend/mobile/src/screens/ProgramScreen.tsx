@@ -6,8 +6,7 @@ import { splitSupportProgramTarget, supportProgramApplicationRouteLabel, support
 import { daysUntil, formatDday, programStatusLabels } from '@govbiz/shared/domain/labels'
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
 import type { SupportProgramEvidenceAnswer } from '@govbiz/shared/domain/entities/SupportProgramEvidenceAnswer'
-import { toSupportProgramDetail } from '@govbiz/shared/data/models/SupportProgramDto'
-import { ApiError, errorMessage, programClient } from '../api/client'
+import { ApiError, errorMessage, programClient, readProgramDetail } from '../api/client'
 import { getSavedProgramStatus, removeSavedProgram, saveProgram } from '../api/savedPrograms'
 import { useAuth } from '../auth/session'
 import { AppIcon } from '../components/AppIcon'
@@ -30,7 +29,7 @@ export function ProgramScreen({ identity, onLogin, resumeAction, onResumed }: {
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [question, setQuestion] = useState('')
-  const [answer, setAnswer] = useState<SupportProgramEvidenceAnswer | null>(null)
+  const [turns, setTurns] = useState<{ question: string; answer: SupportProgramEvidenceAnswer }[]>([])
   const [answerError, setAnswerError] = useState<string | null>(null)
   const [answering, setAnswering] = useState(false)
   const [questionOpen, setQuestionOpen] = useState(false)
@@ -46,8 +45,8 @@ export function ProgramScreen({ identity, onLogin, resumeAction, onResumed }: {
     let active = true
     const controller = new AbortController()
     setLoading(true); setError(null); setProgram(null)
-    client.getDetail({ sourceCode, sourceProgramId }, controller.signal)
-      .then((value) => { if (active) setProgram(value ? toSupportProgramDetail(value) : null) })
+    readProgramDetail(client, { sourceCode, sourceProgramId }, controller.signal)
+      .then((value) => { if (active) setProgram(value) })
       .catch((cause: unknown) => { if (active) setError(errorMessage(cause)) })
       .finally(() => { if (active) setLoading(false) })
     return () => { active = false; controller.abort() }
@@ -57,7 +56,7 @@ export function ProgramScreen({ identity, onLogin, resumeAction, onResumed }: {
     let active = true
     const controller = new AbortController()
     work.current?.abort(); saveWork.current?.abort()
-    setAnswer(null); setAnswerError(null); setQuestion(''); setAnswering(false)
+    setTurns([]); setAnswerError(null); setQuestion(''); setAnswering(false)
     setSaved(null); setSaveError(null); setSaving(false)
     if (token) getSavedProgramStatus(token, { sourceCode, sourceProgramId }, controller.signal)
       .then((value) => { if (active) setSaved(value) })
@@ -98,18 +97,19 @@ export function ProgramScreen({ identity, onLogin, resumeAction, onResumed }: {
   async function ask() {
     if (!program?.evidenceQuestionSupported) return
     if (!token) { onLogin('question'); return }
-    if (!question.trim() || answering) return
+    if (!question.trim() || answering || work.current && !work.current.signal.aborted) return
+    const asked = question.trim()
     const controller = new AbortController(); work.current = controller
-    setAnswering(true); setAnswerError(null); setAnswer(null)
+    setAnswering(true); setAnswerError(null)
     try {
-      const result = await client.answerEvidenceQuestion({ sourceCode, sourceProgramId, question: question.trim() }, controller.signal)
-      if (!controller.signal.aborted) setAnswer(result)
+      const result = await client.answerEvidenceQuestion({ sourceCode, sourceProgramId, question: asked }, controller.signal)
+      if (!controller.signal.aborted) { setTurns(previous => [...previous, { question: asked, answer: result }]); setQuestion('') }
     } catch (cause) {
       if (!controller.signal.aborted) {
         if (cause instanceof ApiError && cause.status === 401) void invalidateSession().catch(() => undefined)
         setAnswerError(errorMessage(cause))
       }
-    } finally { if (!controller.signal.aborted) setAnswering(false) }
+    } finally { if (work.current === controller) { work.current = null; if (!controller.signal.aborted) setAnswering(false) } }
   }
 
   async function openSource(url: string) {
@@ -120,7 +120,7 @@ export function ProgramScreen({ identity, onLogin, resumeAction, onResumed }: {
     try { await Linking.openURL(`tel:${tel}`) } catch { setError('전화 앱을 열지 못했어요. 번호를 직접 입력해 주세요.') }
   }
 
-  const deadline = daysUntil(program?.applicationEndDate)
+  const deadline = program?.status === 'OPEN' ? daysUntil(program.applicationEndDate) : null
   const statusColor = program?.status === 'OPEN' ? colors.primary : program?.status === 'UPCOMING' ? colors.info : colors.muted
   // 공식 API 값만 보여 줍니다. K-Startup은 지원·제외 대상을 나누고, 신청 방법은 공식 신청 필드로 분류한 경로입니다.
   const target = program ? splitSupportProgramTarget(program.sourceCode, program.targetDescription) : null
@@ -140,25 +140,28 @@ export function ProgramScreen({ identity, onLogin, resumeAction, onResumed }: {
         <View style={{ flex: 1 }} /><Text style={styles.muted}>{program.sourceName}</Text></View>
       <Title>{program.title}</Title>
       <Subtitle>{program.organization}</Subtitle>
-      <View style={local.glance}><View style={local.fact}><Text style={styles.muted}>접수 기간</Text><Text style={[styles.body, local.factValue]}>{program.applicationPeriod}</Text></View>
+      <View style={local.glance}><Text style={[styles.heading, { paddingTop: 14 }]}>한눈에 보기</Text>
+        <View style={local.fact}><Text style={styles.muted}>접수 기간</Text><Text style={[styles.body, local.factValue]}>{program.applicationPeriod}</Text></View>
         <View style={local.fact}><Text style={styles.muted}>신청 방법</Text><Text style={[routeLabel ? styles.body : styles.muted, local.factValue]}>{routeLabel ?? '공고 원문에서 확인해 주세요'}</Text></View>
-        {program.supervisingInstitutionType ? <View style={local.fact}><Text style={styles.muted}>주관 기관 유형</Text><Text style={[styles.body, local.factValue]}>{program.supervisingInstitutionType}</Text></View> : null}
         {contactParts.length > 0 && <View style={local.factStacked}><Text style={styles.muted}>문의처</Text><Text selectable style={styles.body}>
           {contactParts.map(({ text, tel }, index) => tel
             ? <Text key={index} style={local.phone} accessibilityRole="link" accessibilityLabel={`${text} 전화 걸기`} onPress={() => void call(tel)}>{text}</Text>
             : <Text key={index}>{text}</Text>)}
-        </Text></View>}</View>
+        </Text></View>}
+        <View style={local.fact}><Text style={styles.muted}>지역</Text><View style={[styles.row, { flex: 1, justifyContent: 'flex-end' }]}>{program.regions.length ? program.regions.map(value => <StatusBadge key={value} label={value} />) : <Text style={styles.muted}>지역 정보 없음</Text>}</View></View>
+        <View style={local.fact}><Text style={styles.muted}>분야</Text><View style={[styles.row, { flex: 1, justifyContent: 'flex-end' }]}>{program.categories.length ? program.categories.map(value => <StatusBadge key={value} label={value} />) : <Text style={styles.muted}>분야 정보 없음</Text>}</View></View>
+        {program.supervisingInstitutionType ? <View style={local.fact}><Text style={styles.muted}>주관 기관 유형</Text><Text style={[styles.body, local.factValue]}>{program.supervisingInstitutionType}</Text></View> : null}
+      </View>
       {token && saved && <ProgramPreparationSection key={`${token}:${sourceCode}:${sourceProgramId}`} identity={identity} token={token} />}
       {saveError && <><Notice error>{saveError}</Notice><Button variant="ghost" label="저장 상태 다시 확인" onPress={() => setRetry((value) => value + 1)} /></>}
       {saveNotice && <Notice>{saveNotice}</Notice>}
       {!program.evidenceQuestionSupported && <Notice>이 제공처 공고는 아직 원문 근거 답변을 지원하지 않습니다. 공식 공고 원문에서 확인해 주세요.</Notice>}
+      <Card><Text style={styles.heading}>지원 내용</Text><Text selectable style={styles.body}>{program.summary || '공고 원문에서 확인해 주세요.'}</Text></Card>
       <Card>
         <Text style={styles.heading}>지원 대상</Text><Text style={styles.body}>{target?.target || '원문을 확인해 주세요.'}</Text>
         {target?.excluded ? <><Text style={styles.heading}>제외 대상</Text><Text style={styles.body}>{target.excluded}</Text></> : null}
         {program.preferenceDescription ? <><Text style={styles.heading}>우대 사항</Text><Text style={styles.body}>{program.preferenceDescription}</Text></> : null}
-        <Text style={styles.muted}>{program.regions.join(' · ')} / {program.categories.join(' · ')}</Text>
       </Card>
-      <Card><Text style={styles.heading}>사업 내용</Text><Text selectable style={styles.body}>{program.summary || '공고 원문에서 확인해 주세요.'}</Text></Card>
       {program.applicationRoute.method ? <Card><Text style={styles.heading}>신청 방법</Text><Text selectable style={styles.body}>{program.applicationRoute.method}</Text></Card> : null}
       {applicationUrl ? <Button variant="secondary" label={program.applicationRoute.type === 'GOOGLE_FORMS' ? '구글 설문 신청서 열기' : '신청 사이트 열기'}
         onPress={() => void openSource(applicationUrl)} /> : null}
@@ -176,32 +179,45 @@ export function ProgramScreen({ identity, onLogin, resumeAction, onResumed }: {
         else setQuestionOpen(true)
       }} /> : <Button label={program.sourceCode === 'CNTRADE_NOTICE' ? '공식 공지 목록 확인' : '공식 원문 확인'} onPress={() => void openSource(program.sourceUrl)} />}</View>
     </View>}
-    <PartnerSheet visible={questionOpen && Boolean(program?.evidenceQuestionSupported)} title="원문에 질문하기" dimBackdrop={false} onClose={closeQuestion} actions={<Button label="닫기" variant="secondary" onPress={closeQuestion} />}>
+    <PartnerSheet visible={questionOpen && Boolean(program?.evidenceQuestionSupported)} title="원문에 질문하기" dimBackdrop={false} onClose={closeQuestion}
+      actions={token ? <><Button label="취소" variant="secondary" style={{ flex: 1 }} onPress={() => {
+        if (answering) { work.current?.abort(); work.current = null; setAnswering(false) } else closeQuestion()
+      }} /><Button label={answering ? '답변 찾는 중…' : '질문 보내기'} style={{ flex: 2 }} busy={answering} disabled={!question.trim() || answering}
+        onPress={() => void ask()} /></> : <Button label="로그인하고 질문하기" onPress={() => { closeQuestion(); onLogin('question') }} />}>
       {program && <>
-        {!program.evidenceQuestionSupported ? <Notice>이 제공처 공고는 아직 원문 근거 답변을 지원하지 않습니다. 공식 공고 원문에서 확인해 주세요.</Notice>
-        : <>
-        <Subtitle>AI가 이 공고의 원문에서 근거를 찾아 답합니다.</Subtitle>
-        {token ? <>
-          <Field label="공고에 대해 궁금한 점" value={question} onChangeText={setQuestion} multiline maxLength={500}
-            placeholder="신청할 때 필요한 서류는 무엇인가요?" editable={!answering} />
-          <Button label="원문에서 답변 찾기" busy={answering} disabled={!question.trim()} onPress={() => void ask()} />
-          {answering && <Button variant="ghost" label="답변 요청 취소" onPress={() => { work.current?.abort(); setAnswering(false) }} />}
-        </> : <Button label="로그인하고 질문하기" variant="secondary" onPress={() => { setQuestionOpen(false); onLogin('question') }} />}
-        {answerError && <Notice error>{answerError}</Notice>}
-        {answer && <><Text style={styles.badge}>{answer.answerStatus === 'ANSWERED' ? 'AI 답변 · 원문 근거 포함' : '원문 근거 부족'}</Text>
-          <Text selectable style={styles.body}>{answer.answer}</Text>
-          {answer.citations.map((citation, index) => <Card key={`${citation.chunkOrder}-${index}`}>
+        <Text style={styles.muted}>{program.title}</Text>
+        <Subtitle>공고 원문에 있는 내용만 근거로 답해요. 최종 신청 조건은 원문에서 다시 확인해 주세요.</Subtitle>
+        {turns.map((turn, turnIndex) => <View key={turnIndex} style={{ gap: 10 }}>
+          <View style={local.question}><Text selectable style={styles.body}>{turn.question}</Text></View>
+          <Text style={styles.badge}>{turn.answer.answerStatus === 'ANSWERED' ? 'AI 답변 · 원문 근거 포함' : '원문 근거 부족'}</Text>
+          <Text selectable style={styles.body}>{turn.answer.answer}</Text>
+          {turn.answer.citations.map((citation, index) => <Card key={`${turnIndex}-${citation.chunkOrder}-${index}`}>
             <Text selectable style={styles.body}>“{citation.excerpt}”</Text>
             <Button variant="ghost" label={`근거 ${index + 1} 원문 열기`} onPress={() => void openSource(citation.sourceUrl)} />
           </Card>)}
-        </>}
+        </View>)}
+        {answering && <><View style={local.question}><Text style={styles.body}>{question.trim()}</Text></View><ActivityIndicator accessibilityLabel="원문에서 답변을 찾는 중" color={colors.primary} /></>}
+        {answerError && <Notice error>{answerError}</Notice>}
+        {token && <>
+          {!turns.length && !question && !answering && <View><Text style={styles.muted}>예시 질문</Text><View style={styles.row}>
+            {evidenceSuggestions.map(([label, value]) => <Button key={label} label={label} size="small" variant="secondary" onPress={() => setQuestion(value)} />)}
+          </View></View>}
+          <Field label="공고에 대해 궁금한 점" value={question} onChangeText={setQuestion} multiline maxLength={500}
+            placeholder="공고에 대해 궁금한 점을 물어보세요" editable={!answering} />
+          <Text style={[styles.muted, { textAlign: 'right' }]}>{Array.from(question).length} / 500자</Text>
         </>}
       </>}
     </PartnerSheet>
   </View>
 }
 
+const evidenceSuggestions = [
+  ['지원 대상', '지원 대상이 어떻게 되나요?'], ['신청 방법', '신청 방법과 접수처를 알려 주세요.'],
+  ['신청 기간', '신청 기간은 언제까지인가요?'], ['문의처', '문의처와 연락처를 알려 주세요.'],
+] as const
+
 const local = StyleSheet.create({
+  question: { backgroundColor: colors.soft, borderRadius: 12, padding: 13 },
   page: { flex: 1, backgroundColor: colors.surface },
   meta: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   dot: { width: 5, height: 5, borderRadius: 3 },

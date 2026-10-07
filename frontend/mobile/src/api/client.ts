@@ -1,3 +1,5 @@
+import { toSupportProgramDetail } from '@govbiz/shared/data/models/SupportProgramDto'
+import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
 import { createSupportProgramClient } from '@govbiz/shared/data/api/supportProgramClient'
 
 export class ApiError extends Error {
@@ -87,6 +89,12 @@ export async function apiRequest(path: string, options: ApiRequestOptions = {}):
 
 export function programClient(accessToken?: string) {
   return createSupportProgramClient({ baseUrl: getApiBaseUrl, credentials: 'omit', fetch: createApiFetch(accessToken) })
+}
+
+/** 공개 응답에서 내부 상세 모델로의 변환은 모바일 API 경계에서 수행합니다. */
+export async function readProgramDetail(client: ReturnType<typeof programClient>, identity: SupportProgramIdentity, signal?: AbortSignal) {
+  const dto = await client.getDetail(identity, signal)
+  return dto ? toSupportProgramDetail(dto) : null
 }
 
 export function errorMessage(error: unknown): string {
