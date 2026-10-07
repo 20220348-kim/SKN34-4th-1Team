@@ -1226,3 +1226,75 @@ Git 제외 경로 `work/ops-transition-faf98ac/`의 `prepared-images.json`, `mai
 `compose-preflight.json`, `migration-job-preflight.json`, `transition-evidence.json`에 준비 결과를
 보관한다. 이 기록은 서비스 중단·원본 DB 변경 승인이 아니며, 실제 전환 전에 최신 소스·CI를
 재확인하고 승인된 중지 상태의 새 백업·복원 검증을 확보해야 한다.
+
+### 개인 Ops 원본 migration·런타임 교체 및 업무 검증 — 2026-10-07
+
+사용자가 실제 배포와 일시 중단을 승인한 개인 환경에서 `76f9b257094c8278e0710e99c356400857ea2ae3`의
+필수 CI 5개 성공을 확인하고 최초 migration과 런타임 교체를 수행했다. 이 기록은 해당 개인 환경의
+실행 증거이며, 다른 PC의 배포나 공개 GHCR·Argo 동기화 완료를 뜻하지 않는다.
+
+| 검증 범위 | 실제 결과 |
+|---|---|
+| 새 백업 | Ops 쓰기 프로세스를 중지한 상태에서 DB 23개 테이블·126개 행, 결과·Prefect·실행 키를 암호화 |
+| 격리 복원·갱신 | DB·파일·완료 평가 연결·키·DB 로그인 검증 후 migration 11개와 원래 행 보존·반복 실행 확인 |
+| 원본 migration | `0017_input_token_budget → 0028_daily_evaluation_schedules`, 접수 중지 상태로 완료 |
+| 런타임 | Kubernetes Ops API/sync와 Compose 실행기·결과 서버 교체, Prefect·결과 HTTP 인증·실제 schema 검사 통과 |
+| 기존 결과 | 완료 평가 2건과 인증된 보고서 조회·런타임 결과 검사 통과 |
+| 관리자 인증 | 기존 계정의 비밀번호 로그인, Core/Ops 동일 사용자, HttpOnly 세션, 로그아웃 검증 |
+| 실제 브라우저 | 목록·상세·보고서 2건, 새로고침, 로그아웃 및 발급 후 폐기된 세션의 재사용 거절 통과 |
+| 새 무료 평가 | 저장 응답 6개 사례 완료, 중복 요청의 동일 Prefect flow 유지, CSRF·목록 자동 동기화·보고서 조회·공유 로그아웃 통과 |
+| 비용 | 기존 및 새 실행의 모델 API 호출 0회. 실제 모델 품질 평가나 사람의 정답 검토를 수행한 것은 아님 |
+
+- Ops 이미지: `govbiz-ops-service:msa-76f9b25-20261007`,
+  `sha256:0a7d16654382ee5c63adac6ffb519e5b0af4685d336cb4423170cfad333f1b2e`.
+- 실행기 이미지: `govbiz-evaluation-runner:msa-76f9b25-20261007`,
+  `sha256:b0bda61a0dc743762d0bbad5231d3c0c0ff436b86166f68bd958a35602f6594a`.
+- 실행 명세 SHA-256: `3a194a7e2a34e0530ebe08fe3da1686f552065b07cd6c4886f4a781b8e6fd7ff`.
+- 최초 migration·rollout 요청: `c5222bc8-fea8-4fb8-b343-af2c7d36ebfd`.
+- 새 완료 평가: `c790f353-27e5-48cd-b319-b2f43fbc8264`,
+  Prefect flow `1f74372c-4077-4dc3-b211-e56556e85d16`.
+
+검증 중 Langfuse를 메모리 확보 목적으로 중지한 상태에서 첫 새 평가
+`2b1519bc-a154-4c6e-8da6-fb44f39cef5a`의 점수 발행이 연결 오류로 실패했다.
+접수를 다시 중지하고 원래 Langfuse 컨테이너 6개를 복구한 뒤 새 요청으로 위 완료 결과를 얻었다.
+실패 이력은 그대로 보존한다. Prefect·결과 서버의 상태 확인만으로 Langfuse 점수 발행까지
+정상이라고 판단할 수 없으며, 실제 무료 평가가 이 연결도 검증한다.
+
+원래 Windows 사본의 결과 서버 데이터 마운트는 배포용 Linux checkout으로 옮겼다.
+평가 입력 87개 파일의 경로·내용이 같은지 확인했고, 원본 파일과 결과 볼륨을 유지했다.
+원래 컨테이너 구성은 암호화해 보관했다. Python bytecode cache는 평가 입력 비교에서 제외했다.
+
+실제 백업·키·상세 구성은 저장소 밖 개인 디렉터리에 보관하며 Git에 넣지 않는다.
+개인 state의 `ops-initial-migrations/`, `ops-initial-rollouts/`, `runtime-preserved-*.json`과
+Git 제외 경로 `work/deployment-20261007/`의 인증·브라우저·무료 평가 보고서가 실행 근거다.
+Core를 기존 이미지로 재시작한 뒤에는 완료 보고서 3건과 전체 이력 4건을 실제 브라우저에서
+다시 대조했다. 지정한 실패 1건의 상태·오류·flow ID도 확인하고 예상하지 못한 실행은 거절했다.
+개인 개발 로그인으로 일반 회원 테스트 계정을 사용해 Ops session·목록·runtime·보고서의 403과
+로그아웃을 확인했다. 이는 앞서 검증한 기존 관리자 비밀번호 로그인과 별도인 접근 제어 검사다.
+Ops 재시작 뒤 업무 재확인, Core·Catalog 원본 갱신 및 공개 이미지의 Argo 인계는 별도 검증 대상이다.
+
+같은 날 Core·Catalog도 각각 쓰기를 잠시 중지해 암호화 백업을 만들고, 새 네트워크 격리
+MySQL 8.4에 복원했다. 복원 덤프의 완전 일치와 아래 SQL 적용 후 원래 컬럼·행 보존을 확인했다.
+
+| 서비스 | 원본 버전 | 격리 SQL 검증 | 보존한 원래 데이터 |
+|---|---|---|---|
+| Core | Flyway V45 | V46–V52 | 38개 테이블·19,805개 행 |
+| Catalog | Flyway V1 | V2–V3 | 6개 테이블·9,887개 행 |
+
+Core V51의 의도된 projection revision 초기화는 별도 확인했다. 원본 DB 덤프는 검사 전후 같았고,
+임시 DB를 정리한 후 기존 이미지를 재개했다. 이 검사는 격리 DB에 migration SQL을 직접 적용한
+리허설이며, 새 서비스 이미지의 Flyway 기동이나 원본 DB 갱신 성공을 뜻하지 않는다.
+DB 로그인과 Core 서명 키를 포함한 기존 Secret 4개도 별도 암호화 보관했다.
+서비스를 재개한 이후에는 쓰기가 발생할 수 있으므로 실제 전환 직전 다시 백업해야 한다.
+
+이후 배포 대상 `5601bfabcbf398fa3520e7aa802f97ee5e88e1b7`의 GovBiz·Catalog·Ops·Infra·LLMOps
+필수 push CI 5개와 각 필수 job이 모두 통과했다. 실행 ID는 각각 `37560348953`,
+`37560348908`, `37560348900`, `37560348991`, `37560348998`이다.
+그러나 대기 중 upstream에 모바일·테스트·문서 변경 25개 파일이 추가돼
+`db8b891fd921c5983eebae284764815bce2a7b2d`로 바뀌었다. 이미지 발행 실행
+`37564270397`은 `upstream_not_merged`로 publish job을 생략했다. 워크플로 자체의
+success는 공개 이미지 발행 성공을 뜻하지 않으며, 새 GHCR 영수증·Argo 인계는 확보하지 못했다.
+Argo CD 컨트롤러는 준비됐지만 Application은 0개다. 기존 Kubernetes 서비스 4개는 Ready이고,
+Core·Ops health는 HTTP 200, 평가 접수는 열린 상태다. Prefect·실행기와 원래 Langfuse 관련
+서비스 6개도 재개한 상태를 유지했다. 기존 Ops migration Job·로그는 향후 Argo hook 교체 전에
+암호화 보관했다. 다음 원격 동기화 또는 배포 후보 고정 정책의 범위를 결정한 뒤 실제 전환을 재개한다.
