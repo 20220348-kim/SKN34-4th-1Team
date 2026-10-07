@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import sqlite3
+import subprocess
 import tempfile
 import unittest
 from contextlib import ExitStack, contextmanager
@@ -47,6 +48,38 @@ def fixture(root, kind):
         connection.executescript(SQLITE)
         connection.close()
     return files.collect(root)
+
+
+@unittest.skipUnless(os.name == "posix", "CLI is WSL/Linux only")
+class CliTests(unittest.TestCase):
+    def test_argo_process_failures_are_redacted_without_success_output(self):
+        for failure in (
+            subprocess.TimeoutExpired("private Argo values", 15),
+            subprocess.CalledProcessError(1, "private Argo values"),
+        ):
+            with (
+                self.subTest(failure=type(failure).__name__),
+                patch(
+                    "sys.argv",
+                    [
+                        "ops_state_snapshot.py",
+                        "verify",
+                        "--archive",
+                        "private",
+                        "--key-file",
+                        "key",
+                    ],
+                ),
+                patch.object(snapshot, "verify", side_effect=failure),
+                patch.object(snapshot.os, "umask"),
+                patch("builtins.print") as output,
+                patch("sys.stderr") as error,
+            ):
+                with self.assertRaises(SystemExit) as exit_status:
+                    snapshot.main()
+            self.assertEqual(exit_status.exception.code, 1)
+            output.assert_not_called()
+            self.assertNotIn("private Argo values", str(error.write.call_args_list))
 
 
 class FileTests(unittest.TestCase):
@@ -392,6 +425,28 @@ class ArchiveTests(unittest.TestCase):
         for name, options in (
             ("dump", {"side_effect": [self.db["sql"], "changed"]}),
             ("frozen_source", {"side_effect": [([], SOURCE), ([], SOURCE | {"changed": True})]}),
+            (
+                "frozen_source",
+                {"side_effect": [([], SOURCE), ([], SOURCE | {"admission_version": 9})]},
+            ),
+            (
+                "frozen_source",
+                {
+                    "side_effect": [
+                        ([], SOURCE),
+                        ([], SOURCE | {"argo_observation": {"projectUid": "changed"}}),
+                    ]
+                },
+            ),
+            (
+                "frozen_source",
+                {
+                    "side_effect": [
+                        ([], SOURCE),
+                        ([], SOURCE | {"deployment_spec_sha256": "changed"}),
+                    ]
+                },
+            ),
         ):
             with (
                 self.mocks(),

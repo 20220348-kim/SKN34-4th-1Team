@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import secrets
+import subprocess
 import tempfile
 import time
 import unittest
@@ -38,7 +39,7 @@ class SourceTests(unittest.TestCase):
     def setUp(self):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)
-        self.stack.enter_context(patch.object(snapshot, "require_dev"))
+        self.dev_guard = self.stack.enter_context(patch.object(snapshot, "require_dev"))
         self.stack.enter_context(
             patch.object(snapshot, "commands", return_value=([], ["kubectl"], []))
         )
@@ -235,24 +236,164 @@ class SourceTests(unittest.TestCase):
                 self.source()
 
 
+class GitOpsSourceTests(SourceTests):
+    def setUp(self):
+        super().setUp()
+        self.settings = SETTINGS | {"mode": "gitops"}
+        self.deployment["kind"] = "Deployment"
+        self.deployment["metadata"].update(
+            name="ops-service",
+            namespace="govbiz-msa",
+            generation=2,
+            annotations={
+                "argocd.argoproj.io/tracking-id": (
+                    "govbiz-fork-ops-service:apps/Deployment:govbiz-msa/ops-service"
+                )
+            },
+        )
+        self.deployment["status"]["observedGeneration"] = 2
+        self.argo = self.enterContext(
+            patch.object(
+                snapshot,
+                "argo_observation",
+                return_value={
+                    "projectUid": "project",
+                    "projectSpecSha256": "d" * 64,
+                    "applications": {
+                        "ops-service": {"uid": "app", "sourceSha": "e" * 40, "specSha256": "f" * 64}
+                    },
+                },
+            )
+        )
+        self.load = self.enterContext(
+            patch.object(snapshot, "load_settings", return_value=self.settings)
+        )
+        self.query = self.enterContext(patch.object(snapshot, "query", return_value="1\t0\t8"))
+
+    def source(self):
+        return snapshot.frozen_source(Path("fixture"), self.settings)[1]
+
+    def test_stopped_gitops_binds_argo_deployment_and_paused_admission_without_writes(self):
+        original = copy.deepcopy((self.settings, self.resources, self.writers))
+        result = self.source()
+        self.assertEqual(result["admission_version"], 8)
+        self.assertEqual(result["argo_observation"], self.argo.return_value)
+        self.assertEqual(
+            result["deployment_spec_sha256"],
+            hashlib.sha256(
+                json.dumps(self.deployment["spec"], sort_keys=True).encode()
+            ).hexdigest(),
+        )
+        self.assertEqual(self.argo.call_count, 2)
+        self.argo.assert_called_with(Path("fixture"), self.settings, stopped_ops=True)
+        self.dev_guard.assert_not_called()
+        self.assertEqual(original, (self.settings, self.resources, self.writers))
+        self.assertEqual(self.query.call_count, 1)
+        self.assertTrue(self.query.call_args.args[1].startswith("SELECT "))
+
+    def test_foreign_tracking_or_unobserved_stop_is_rejected(self):
+        original = copy.deepcopy(self.deployment)
+        for section, key, value in (
+            ("metadata", "uid", ""),
+            ("metadata", "generation", True),
+            ("metadata", "namespace", "foreign"),
+            ("metadata", "annotations", {}),
+            ("metadata", "labels", {"argocd.argoproj.io/instance": "other"}),
+            (
+                "metadata",
+                "annotations",
+                original["metadata"]["annotations"] | {"argocd.argoproj.io/hook": "PreSync"},
+            ),
+            ("status", "observedGeneration", 1),
+            ("status", "readyReplicas", 1),
+            ("status", "replicas", False),
+            ("spec", "replicas", False),
+        ):
+            self.resources["deployment"] = copy.deepcopy(original)
+            self.resources["deployment"][section][key] = value
+            with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                self.source()
+        self.query.assert_not_called()
+
+    def test_ambiguous_database_environment_is_rejected(self):
+        original = copy.deepcopy(self.deployment)
+        for change in ("duplicate", "envFrom", "valueFrom"):
+            self.resources["deployment"] = copy.deepcopy(original)
+            container = self.resources["deployment"]["spec"]["template"]["spec"]["containers"][0]
+            if change == "duplicate":
+                container["env"].append(copy.deepcopy(container["env"][0]))
+            elif change == "envFrom":
+                container["envFrom"] = [{"secretRef": {"name": "foreign"}}]
+            else:
+                container["env"][0]["valueFrom"] = {
+                    "secretKeyRef": {"name": "foreign", "key": "host"}
+                }
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                self.source()
+        self.query.assert_not_called()
+
+    def test_argo_settings_or_connections_changed_during_read_are_rejected(self):
+        record = self.connection.return_value
+        for change in ("argo", "settings", "profile", "bridge"):
+            self.argo.side_effect = None
+            self.load.side_effect = None
+            self.connection.side_effect = None
+            if change == "argo":
+                self.argo.side_effect = [self.argo.return_value, {"projectUid": "changed"}]
+            elif change == "settings":
+                self.load.side_effect = [self.settings | {"mode": "dev"}]
+            else:
+                self.connection.side_effect = (
+                    [record, record, {}, record]
+                    if change == "profile"
+                    else [record, record, record, {}]
+                )
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, "changed"):
+                self.source()
+
+    def test_open_gate_prevents_a_frozen_source(self):
+        self.query.return_value = "1\t1\t9"
+        with self.assertRaisesRegex(ValueError, "paused admission"):
+            self.source()
+
+
 class ContractTests(unittest.TestCase):
+    def test_paused_admission_requires_exactly_one_supported_closed_gate(self):
+        for value in ("", "1\t1\t8", "2\t0\t8", "1\t0\t0", "1\t0\t-1", "1\t0\t8\n2\t0\t9"):
+            with patch.object(snapshot, "query", return_value=value), self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "paused admission"):
+                    snapshot.paused_admission_version([])
+        with patch.object(snapshot, "query", return_value="1\t0\t8"):
+            self.assertEqual(snapshot.paused_admission_version([]), 8)
+        with patch.object(
+            snapshot, "query", side_effect=snapshot.storage.SnapshotError("missing table")
+        ):
+            with self.assertRaises(snapshot.storage.SnapshotError):
+                snapshot.paused_admission_version([])
+
     @unittest.skipUnless(os.name == "posix", "CLI is WSL/Linux only")
     def test_cli_failure_redacts_private_error_and_never_prints_success(self):
-        with (
-            patch(
-                "sys.argv",
-                ["ops_db_snapshot.py", "verify", "--archive", "private", "--key-file", "key"],
-            ),
-            patch.object(snapshot, "verify", side_effect=ValueError("private SQL/password")),
-            patch.object(snapshot.os, "umask"),
-            patch("builtins.print") as output,
-            patch("sys.stderr") as error,
+        for failure in (
+            ValueError("private SQL/password"),
+            subprocess.TimeoutExpired("private SQL/password", 15),
+            subprocess.CalledProcessError(1, "private SQL/password"),
         ):
-            with self.assertRaises(SystemExit) as exit_status:
-                snapshot.main()
-        self.assertEqual(exit_status.exception.code, 1)
-        output.assert_not_called()
-        self.assertNotIn("private SQL/password", str(error.write.call_args_list))
+            with (
+                self.subTest(failure=type(failure).__name__),
+                patch(
+                    "sys.argv",
+                    ["ops_db_snapshot.py", "verify", "--archive", "private", "--key-file", "key"],
+                ),
+                patch.object(snapshot, "verify", side_effect=failure),
+                patch.object(snapshot.os, "umask"),
+                patch("builtins.print") as output,
+                patch("sys.stderr") as error,
+            ):
+                with self.assertRaises(SystemExit) as exit_status:
+                    snapshot.main()
+            self.assertEqual(exit_status.exception.code, 1)
+            output.assert_not_called()
+            self.assertNotIn("private SQL/password", str(error.write.call_args_list))
 
     def test_invalid_archive_contract_and_sql_hash_are_rejected(self):
         for change in (
@@ -343,6 +484,13 @@ class ArchiveTests(unittest.TestCase):
             ([before, before], [SQL, SQL + "changed"], [COUNTS, COUNTS]),
             ([before, before], [SQL], [COUNTS, COUNTS | {"auth_user": 2}]),
             ([before, before, before | {"restart": 1}], [SQL, SQL], [COUNTS, COUNTS]),
+            ([before, before | {"admission_version": 9}], [SQL], [COUNTS]),
+            (
+                [before, before, before | {"argo_observation": {"projectUid": "changed"}}],
+                [SQL, SQL],
+                [COUNTS, COUNTS],
+            ),
+            ([before, before | {"deployment_spec_sha256": "changed"}], [SQL], [COUNTS]),
         ):
             with (
                 patch.object(snapshot, "load_settings", return_value=SETTINGS),
@@ -542,6 +690,22 @@ INSERT INTO evaluations_evaluationbudgetreservation VALUES (1,1,'2026-10-05 00:0
                 self.assertTrue(result["cleanup_complete"])
                 self.assertFalse(result["full_backup_verified"])
             self.assertEqual(snapshot.dump(command), sql)
+            # The new GitOps gate is read against real MySQL only in this disposable fixture.
+            snapshot.query(
+                command,
+                "CREATE TABLE evaluations_evaluationadmission "
+                "(id bigint PRIMARY KEY, accepting bool NOT NULL, version bigint NOT NULL);",
+            )
+            with self.assertRaises(ValueError):
+                snapshot.paused_admission_version(command)
+            snapshot.query(command, "INSERT INTO evaluations_evaluationadmission VALUES (1, 1, 8);")
+            with self.assertRaises(ValueError):
+                snapshot.paused_admission_version(command)
+            snapshot.query(
+                command,
+                "UPDATE evaluations_evaluationadmission SET accepting=0, version=9 WHERE id=1;",
+            )
+            self.assertEqual(snapshot.paused_admission_version(command), 9)
         finally:
             snapshot.storage.run(["docker", "rm", "--force", "--volumes", identity])
 

@@ -21,8 +21,8 @@ from repository import Fork
 SCOPE = "local_overrides_and_service_runtime"
 
 
-def argo_observation(state, settings):
-    """Bind a follow-up plan to stable, manually synced, owned Argo inputs."""
+def argo_observation(state, settings, *, stopped_ops=False):
+    """Inspect manual Argo inputs; stopped backups alone permit Ops workload drift."""
     kube, _, argo = cluster.commands(state, settings)
     cluster.verify_context(kube, settings, timeout=15)
     desired = argo_resources(Fork(settings["repository"], settings["branch"]))
@@ -60,6 +60,44 @@ def argo_observation(state, settings):
         helm = source.get("helm", {})
         policy = spec.get("syncPolicy", {})
         revision = source.get("targetRevision")
+        sync_status = status.get("sync", {}).get("status")
+        stopped_drift = (
+            stopped_ops and service == "ops-service" and sync_status == "OutOfSync"
+        )
+        if stopped_drift:
+            # Scaling Ops to zero may be OutOfSync. No other drifting/prunable
+            # resource is accepted. The backup caller must also prove zero Pods
+            # and stopped Compose writers; this observation alone is not enough.
+            resources = status.get("resources")
+            if (
+                not isinstance(resources, list)
+                or not resources
+                or any(
+                    not isinstance(row, dict)
+                    or row.get("status") not in {"Synced", "OutOfSync"}
+                    or row.get("requiresPruning")
+                    for row in resources
+                )
+                or [
+                    {
+                        key: row.get(key)
+                        for key in ("group", "kind", "namespace", "name")
+                    }
+                    for row in resources
+                    if row["status"] == "OutOfSync"
+                ]
+                != [
+                    {
+                        "group": "apps",
+                        "kind": "Deployment",
+                        "namespace": settings["namespace"],
+                        "name": "ops-service",
+                    }
+                ]
+            ):
+                raise ValueError(
+                    "Only the stopped Ops Deployment may be OutOfSync for backup"
+                )
         if (
             app.get("kind") != "Application"
             or meta.get("namespace") != "argocd"
@@ -88,7 +126,7 @@ def argo_observation(state, settings):
             or policy["retry"]["limit"] != 0
             or app.get("operation")
             or status.get("operationState", {}).get("phase") != "Succeeded"
-            or status.get("sync", {}).get("status") != "Synced"
+            or (sync_status != "Synced" and not stopped_drift)
             or status.get("sync", {}).get("revision") != revision
             or status.get("health", {}).get("status") != "Healthy"
         ):

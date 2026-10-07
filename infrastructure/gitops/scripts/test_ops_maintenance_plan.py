@@ -255,11 +255,13 @@ class PlanTests(unittest.TestCase):
                 self.plan()
         self.run.assert_not_called()
 
-    def test_gitops_inventory_does_not_enable_dev_database_backup(self):
+    def test_gitops_inventory_does_not_allow_backup_of_running_ops(self):
         self.enable_gitops()
         with (
-            patch.object(maintenance.database, "require_dev", maintenance.ops_runtime.require_dev),
-            self.assertRaisesRegex(ValueError, "GitOps owns"),
+            patch.object(
+                maintenance.database, "argo_observation", return_value=self.argo.return_value
+            ),
+            self.assertRaisesRegex(ValueError, "Stop the Kubernetes Ops"),
         ):
             maintenance.database.frozen_source(Path("fixture"), self.settings)
         self.run.assert_not_called()
