@@ -548,7 +548,8 @@ function AnswerEditor({ vm }: { vm: EditorViewModel }) {
               {!narrow && moveButtons}
             </section>}
           </div>
-          <ApplicationOnlineInputGuide preparationId={preparation.id} inputRevision={preparation.inputRevision} defaultOpen={search.get('helper') === 'open'} />
+          {/* 온라인 신청 입력 도우미(답변 복사 · TXT 받기)는 평소에는 숨기고, 초안 실패 카드의 [답변 모아 보기](`?helper=open`)로 들어올 때만 펼쳐 보여 줍니다. */}
+          {search.get('helper') === 'open' && <ApplicationOnlineInputGuide preparationId={preparation.id} inputRevision={preparation.inputRevision} defaultOpen />}
         </div>
       </div>
       {narrow && moveButtons}

@@ -1260,6 +1260,7 @@ public responder-only 권한은 UNKNOWN_NOT_VERIFIED다. Phase 5는 아직 종�
 공개 DTO는 controller/dto, 내부 projection은 service/dto에 둔다.
 
 기존 답변 입력 화면에 입력 안내와 개별·전체 저장 답변 복사, UTF-8 TXT 다운로드를 제공한다.
+웹은 이 칸을 평소 숨기고, 초안 실패 카드의 [답변 모아 보기](`?helper=open`)로 들어올 때만 펼쳐 보여 준다.
 현재 ONLINE_FORM Source/Map은 저장되지 않고 Manifest에는 외부 입력 타입이 없다.
 FILE binding을 온라인 binding으로 취급하지 않으며 `inputMode=UNKNOWN`, `externalMappingVerified=false`다.
 유효한 PROVIDED 답변은 READY/copyable=true, 값 없음/UNKNOWN은 MISSING, 공식 선택지 불일치는 NEEDS_REVIEW다.

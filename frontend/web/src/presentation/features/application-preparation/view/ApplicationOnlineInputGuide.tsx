@@ -10,8 +10,8 @@ const inputModes = { UNKNOWN: '입력 형태 미확인', SHORT_TEXT: '짧은 답
   SINGLE_CHOICE: '단일 선택', MULTI_CHOICE: '복수 선택', DROPDOWN: '드롭다운' }
 
 /**
- * 답변 입력 화면 질문 카드 아래의 접힌 칸입니다. 처음에는 닫혀 있고 `defaultOpen`(주소 `?helper=open`)이면 펼친 채 엽니다.
- * 닫혀 있어도 안내를 미리 불러와 접힌 줄에 준비된 답변 수를 보여 줍니다.
+ * 답변 입력 화면 질문 카드 아래의 접는 칸입니다. 답변 입력 화면은 초안 실패 카드의 [답변 모아 보기](주소 `?helper=open`)로
+ * 들어올 때만 이 칸을 `defaultOpen`으로 펼쳐 보여 줍니다. 접어도 안내를 미리 불러와 접힌 줄에 준비된 답변 수를 보여 줍니다.
  */
 export function ApplicationOnlineInputGuide({ preparationId, inputRevision, defaultOpen = false }: { preparationId: number; inputRevision: number; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen)
