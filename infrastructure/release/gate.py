@@ -19,7 +19,8 @@ PROMOTION_PATHS = {"infrastructure/gitops/environments/fork/" + name for name in
 
 
 def api(path):
-    return json.loads(subprocess.check_output(["gh", "api", path], text=True))
+    return json.loads(subprocess.check_output(
+        ["gh", "api", path], text=True, timeout=90, stderr=subprocess.PIPE))
 
 
 def valid_sha(sha):

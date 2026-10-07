@@ -11,17 +11,19 @@ import zipfile
 from urllib.parse import quote
 
 import yaml
-
 from promote_image import ROOT, SERVICES, UniqueLoader, updated_values, validate_receipt
+
+# promote_image initializes the shared release-module path before these imports.
+# isort: split
 from gate import eligible, valid_sha
-from repository import Fork, from_ci
 from outcome import PUBLICATION_REPORTS
+from repository import Fork, from_ci
 
 ENVIRONMENT = "fork"
 
 
 def api(path, binary=False):
-    result = subprocess.check_output(["gh", "api", path], timeout=90)
+    result = subprocess.check_output(["gh", "api", path], timeout=90, stderr=subprocess.PIPE)
     return result if binary else json.loads(result)
 
 

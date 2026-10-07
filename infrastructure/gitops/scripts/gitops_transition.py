@@ -8,7 +8,7 @@ import re
 import stat
 import subprocess
 import tempfile
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -36,6 +36,57 @@ PRESERVABLE_BLOCKERS = {
     "service_environment_differs",
 }
 MAX_PLAN_BYTES = 16 * 1024 * 1024
+
+
+class TransitionFailure(ValueError):
+    """Carry a fixed failure stage without exposing external error text."""
+
+    def __init__(self, stage, *, changed_sections=()):
+        super().__init__("Transition failed at " + stage)
+        self.stage = stage
+        self.changed_sections = changed_sections
+
+
+@contextmanager
+def transition_stage(stage):
+    try:
+        yield
+    except TransitionFailure:
+        raise
+    except Exception as error:
+        raise TransitionFailure(stage) from error
+
+
+def changed_sections(saved, fresh):
+    """Compare all fields but report only fixed section names, never input keys."""
+    groups = {
+        "publication": {"repository", "sourceSha", "publisherRunId", "images"},
+        "runtime": {"stateId", "runtimePreflight"},
+        "argo_resources": {"resources", "resourcesSha256"},
+        "rendered_resources": {"rendered", "renderedSha256"},
+        "safety_contract": {
+            "schema",
+            "status",
+            "automaticSyncEnabled",
+            "existingRuntimeVerified",
+            "deploymentAuthorized",
+            "publishedReferenceVerified",
+            "sharedBootstrapPolicyVerified",
+            "configurationValuesIncluded",
+            "secretValuesRead",
+            "servicesChanged",
+            "databaseChanged",
+            "pendingChecks",
+        },
+    }
+    known = set().union(*groups.values(), {"generatedAt"})
+    groups["other_fields"] = (saved.keys() | fresh.keys()) - known
+    return [
+        name
+        for name, keys in groups.items()
+        if encoded({key: saved[key] for key in keys if key in saved})
+        != encoded({key: fresh[key] for key in keys if key in fresh})
+    ]
 
 
 def build_plan(fork, publication, observed, values, helm="helm"):
@@ -301,24 +352,28 @@ def write_plan(output, plan):
 
 def current_plan(root, fork, state, helm="helm"):
     """Rebuild from current publication and observed settings, not stored evidence."""
-    publication = deployment.verified_release(
-        root, fork, helm, verify_public_manifests=True
-    )
+    with transition_stage("publication_verification"):
+        publication = deployment.verified_release(
+            root, fork, helm, verify_public_manifests=True
+        )
     values = {}
-    observed = runtime.preflight(
-        state,
-        fork,
-        helm,
-        review_preservation=True,
-        published_files=publication[1],
-        prepared_values=values,
-    )
-    plan = build_plan(fork, publication, observed, values, helm)
-    if (
-        deployment.verified_release(root, fork, helm, verify_public_manifests=True)
-        != publication
-    ):
-        raise ValueError("Publisher or image receipts changed during preparation")
+    with transition_stage("runtime_preservation"):
+        observed = runtime.preflight(
+            state,
+            fork,
+            helm,
+            review_preservation=True,
+            published_files=publication[1],
+            prepared_values=values,
+        )
+    with transition_stage("plan_rendering"):
+        plan = build_plan(fork, publication, observed, values, helm)
+    with transition_stage("publication_revalidation"):
+        if (
+            deployment.verified_release(root, fork, helm, verify_public_manifests=True)
+            != publication
+        ):
+            raise ValueError("Publisher or image receipts changed during preparation")
     return plan
 
 
@@ -346,42 +401,48 @@ def public_report(plan, name):
 
 
 def prepare(root, fork, state, name, helm="helm"):
-    output = output_path(state, name)
+    with transition_stage("output_path_check"):
+        output = output_path(state, name)
     plan = current_plan(root, fork, state, helm)
     # The private file is an observation, not a reusable deployment approval.
     # Applying it will require fresh source/runtime and migration/backup checks.
-    write_plan(output, plan)
+    with transition_stage("plan_write"):
+        write_plan(output, plan)
     return public_report(plan, name)
 
 
 def verify_saved(root, fork, state, name, helm="helm"):
-    saved, identity = read_plan(state, name)
-    settings = runtime.cluster.load_settings(state)
-    if (
-        not isinstance(saved, dict)
-        or saved.get("schema") != "msa-gitops-transition-v1"
-        or saved.get("status") != "PREPARED_NOT_APPLIED"
-        or saved.get("repository") != fork.repository
-        or settings["repository"].lower() != fork.repository.lower()
-        or saved.get("stateId") != settings["stateId"]
-        or not deployment.valid_sha(saved.get("sourceSha"))
-        or type(saved.get("publisherRunId")) is not int
-        or saved["publisherRunId"] <= 0
-        or not isinstance(saved.get("generatedAt"), str)
-        or datetime.fromisoformat(saved["generatedAt"]).utcoffset() is None
-    ):
-        raise ValueError("Stored transition identity is invalid")
+    with transition_stage("saved_plan_read"):
+        saved, identity = read_plan(state, name)
+    with transition_stage("saved_plan_identity"):
+        settings = runtime.cluster.load_settings(state)
+        if (
+            not isinstance(saved, dict)
+            or saved.get("schema") != "msa-gitops-transition-v1"
+            or saved.get("status") != "PREPARED_NOT_APPLIED"
+            or saved.get("repository") != fork.repository
+            or settings["repository"].lower() != fork.repository.lower()
+            or saved.get("stateId") != settings["stateId"]
+            or not deployment.valid_sha(saved.get("sourceSha"))
+            or type(saved.get("publisherRunId")) is not int
+            or saved["publisherRunId"] <= 0
+            or not isinstance(saved.get("generatedAt"), str)
+            or datetime.fromisoformat(saved["generatedAt"]).utcoffset() is None
+        ):
+            raise ValueError("Stored transition identity is invalid")
     fresh = current_plan(root, fork, state, helm)
     # Recomputed file hashes alone cannot establish trust: compare every field
     # against new verified inputs. Canonical JSON preserves bool/int distinctions.
-    if encoded({k: v for k, v in saved.items() if k != "generatedAt"}) != encoded(
-        {k: v for k, v in fresh.items() if k != "generatedAt"}
-    ):
-        raise ValueError("Stored transition differs from the current verified plan")
-    if runtime.cluster.load_settings(state) != settings:
-        raise ValueError("Local state changed during verification")
-    if read_plan(state, name)[1] != identity:
-        raise ValueError("Transition file changed during verification")
+    with transition_stage("plan_comparison"):
+        changes = changed_sections(saved, fresh)
+        if changes:
+            raise TransitionFailure("plan_comparison", changed_sections=changes)
+    with transition_stage("state_revalidation"):
+        if runtime.cluster.load_settings(state) != settings:
+            raise ValueError("Local state changed during verification")
+    with transition_stage("saved_plan_revalidation"):
+        if read_plan(state, name)[1] != identity:
+            raise ValueError("Transition file changed during verification")
     return public_report(fresh, name) | {
         "status": "REVALIDATED_NOT_APPLIED",
         "savedPlanMatched": True,
@@ -407,23 +468,48 @@ def main():
     fork = None
     try:
         root = Path(__file__).resolve().parents[3]
-        fork = from_origin(root, branch=args.branch).require_personal_publish()
+        with transition_stage("repository_identity"):
+            fork = from_origin(root, branch=args.branch).require_personal_publish()
         action = verify_saved if args.verify else prepare
         report = action(root, fork, args.state_dir, args.output_name, args.helm)
     except Exception as error:  # noqa: BLE001 - external output may contain local values
+        cause = (
+            error.__cause__ or error if isinstance(error, TransitionFailure) else error
+        )
         report = {
             "schema": "msa-gitops-transition-v1",
             "status": "BLOCKED",
             "reason": "transition_verification_failed"
             if args.verify
             else "transition_preparation_failed",
-            "errorType": type(error).__name__,
+            "errorType": type(cause).__name__,
             "configurationValuesIncluded": False,
             "deploymentAuthorized": False,
             "servicesChanged": False,
             "databaseChanged": False,
         }
-        if fork is not None and str(error).startswith(
+        if isinstance(error, TransitionFailure):
+            report["failureStage"] = error.stage
+            if error.changed_sections:
+                report["changedSections"] = error.changed_sections
+        if isinstance(cause, subprocess.TimeoutExpired):
+            report["failureKind"] = "external_command_timeout"
+        elif isinstance(cause, subprocess.CalledProcessError):
+            report["failureKind"] = "external_command_failed"
+        if isinstance(
+            cause, (subprocess.TimeoutExpired, subprocess.CalledProcessError)
+        ):
+            tool = (
+                Path(cause.cmd[0]).name.lower().removesuffix(".exe")
+                if isinstance(cause.cmd, (tuple, list))
+                and cause.cmd
+                and isinstance(cause.cmd[0], str)
+                else "unknown"
+            )
+            report["externalTool"] = (
+                tool if tool in {"gh", "git", "helm", "kubectl"} else "unknown"
+            )
+        if fork is not None and str(cause).startswith(
             (
                 "No complete verified publication",
                 "Source advanced",

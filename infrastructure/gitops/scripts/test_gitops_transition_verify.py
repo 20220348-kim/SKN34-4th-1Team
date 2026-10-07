@@ -117,7 +117,7 @@ class SavedPlanTests(unittest.TestCase):
             self.replace(candidate)
             with (
                 self.subTest(field=field),
-                self.assertRaisesRegex(ValueError, "differs from the current"),
+                self.assertRaisesRegex(ValueError, "plan_comparison"),
             ):
                 self.verify()
 
@@ -166,7 +166,7 @@ class SavedPlanTests(unittest.TestCase):
             self.current.return_value = self.fresh | {key: value}
             with (
                 self.subTest(key=key),
-                self.assertRaisesRegex(ValueError, "differs from the current"),
+                self.assertRaisesRegex(ValueError, "plan_comparison"),
             ):
                 self.verify()
 
@@ -200,7 +200,7 @@ class SavedPlanTests(unittest.TestCase):
             self.current.side_effect = changed
             with (
                 self.subTest(replace=replace),
-                self.assertRaisesRegex(ValueError, "changed during verification"),
+                self.assertRaisesRegex(ValueError, "saved_plan_revalidation"),
             ):
                 self.verify()
 
@@ -211,7 +211,7 @@ class SavedPlanTests(unittest.TestCase):
                 "load_settings",
                 side_effect=[self.settings, self.settings | {"stateId": "changed"}],
             ),
-            self.assertRaisesRegex(ValueError, "Local state changed"),
+            self.assertRaisesRegex(ValueError, "state_revalidation"),
         ):
             self.verify()
 
