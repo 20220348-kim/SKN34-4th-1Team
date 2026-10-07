@@ -87,7 +87,28 @@ flowchart LR
     class Review,Partner related
 ```
 
-웹·앱은 같은 계정과 데이터를 사용합니다. 관리자는 웹의 별도 LLMOps 화면에서 아래 평가·검토 흐름을 이용합니다.
+### 관리자는 이렇게 운영합니다
+
+기존 관리자 계정으로 웹에 로그인한 뒤, 필요한 업무에 따라 아래 두 흐름을 이용합니다.
+
+```mermaid
+%%{init: {"flowchart": {"nodeSpacing": 30, "rankSpacing": 30}}}%%
+flowchart TB
+    subgraph Management["회원 관리"]
+        direction LR
+        Check["회원 조회<br/>계정 · 기업 · 활동"] --> Accounts["계정 조치<br/>정지 · 권한 변경"]
+        Accounts --> Audit["감사 기록 확인<br/>처리자 · 조치 이력"]
+    end
+    subgraph Evaluation["LLMOps 평가 운영"]
+        direction LR
+        Setup["평가 준비<br/>자료 · 비교 대상<br/>예산 확인"] --> Run["평가 실행<br/>진행 · 결과 확인"]
+        Run --> Review["사람 검토<br/>자료 · 사례 · 승인"]
+        Review --> Baseline["품질 판정<br/>합격 후<br/>비교 기준 지정"]
+    end
+    Management ~~~ Evaluation
+    classDef step fill:#e7f5eb,stroke:#92bda6,color:#183d32
+    class Check,Accounts,Audit,Setup,Run,Review,Baseline step
+```
 
 <a id="기술-스택"></a>
 
