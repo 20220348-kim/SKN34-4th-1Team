@@ -67,7 +67,7 @@ export function ReviewEditorSkeleton({ step }: { step: 'selection' | 'participat
   </div>
 }
 
-/** 실행 결과 자리입니다. 요약 카드(판단 배지 · 사업 2개 · 요약 문단) · 안내 상자 · 확인할 정보 · 단계별 판단 카드 2장. */
+/** 실행 결과 자리입니다. 결론 카드(판단 배지 · 결론 문장 · 단계 색 띠 · 사업 2개) · 먼저 확인할 것 · 접힌 단계 줄 3개. */
 export function ReviewRunResultSkeleton() {
   return <div className="space-y-4" aria-hidden="true">
     <div className={`${s.card} flex flex-col gap-3`}>
@@ -75,19 +75,20 @@ export function ReviewRunResultSkeleton() {
         {[0, 1, 2].map((index) => <span className={`${s.skeletonBar} h-[22px] w-14`} key={index} />)}
         <span className="ml-auto"><Line box="h-4" bar="h-3 w-16" /></span>
       </span>
+      <span className="flex flex-col gap-1"><Line box="h-7" bar="h-5 w-4/5" /><Line box="h-6" bar="h-3.5 w-3/5" /></span>
+      <span className="grid grid-cols-6 gap-1">{[0, 1, 2, 3, 4, 5].map((index) => <span className={`${s.skeletonBar} h-9 rounded-lg`} key={index} />)}</span>
       <span className="flex flex-col gap-1">{[0, 1].map((index) => <span className="flex items-center gap-2" key={index}><span className={`${s.skeletonBar} h-[22px] w-12`} /><Line box="h-5" bar="h-3.5 w-1/2" /></span>)}</span>
-      <span className="flex flex-col"><Line box="h-7" bar="h-3.5 w-full" /><Line box="h-7" bar="h-3.5 w-11/12" /><Line box="h-7" bar="h-3.5 w-3/5" /></span>
     </div>
-    <span className={`${s.skeletonBar} h-20 w-full rounded-xl`} />
     <div className={`${s.card} flex flex-col gap-2`}>
-      <span className="flex items-center justify-between gap-2"><Line box="h-6" bar="h-4 w-24" /><span className={`${s.skeletonBar} h-8 w-24 rounded-full`} /></span>
-      <Line box="h-6" bar="h-3.5 w-2/3" />
+      <span className="flex items-center justify-between gap-2"><Line box="h-6" bar="h-4 w-24" /><span className={`${s.skeletonBar} h-10 w-48 rounded-full`} /></span>
+      {[0, 1, 2].map((index) => <span className="flex items-center gap-2" key={index}><span className={`${s.skeletonBar} h-[22px] w-10`} /><Line box="h-6" bar="h-3.5 w-2/3" /></span>)}
     </div>
     <Line box="h-6" bar="h-4 w-28" />
-    {[0, 1].map((index) => <div className={`${s.card} flex flex-col gap-2`} key={index}>
-      <span className="flex items-center gap-2"><Line box="h-4" bar="h-3 w-8" /><Line box="h-6" bar="h-4 w-32" /><span className={`${s.skeletonBar} h-[22px] w-12`} /></span>
-      <Line box="h-5" bar="h-3 w-1/2" />
-      <span className="flex flex-col"><Line box="h-7" bar="h-3.5 w-full" /><Line box="h-7" bar="h-3.5 w-4/5" /></span>
-    </div>)}
+    <div className={`${s.card} flex flex-col divide-y divide-slate-200 p-0`}>
+      {[0, 1, 2].map((index) => <span className="flex items-start gap-3 px-4 py-3" key={index}>
+        <span className={`${s.skeletonBar} size-6 rounded-full`} />
+        <span className="flex flex-1 flex-col gap-1"><span className="flex items-center gap-2"><Line box="h-6" bar="h-4 w-12" /><span className={`${s.skeletonBar} h-[22px] w-14`} /></span><Line box="h-4" bar="h-3 w-3/5" /></span>
+      </span>)}
+    </div>
   </div>
 }

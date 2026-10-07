@@ -248,7 +248,7 @@ function RunResultPage({ reviewId, runId, account }: { reviewId: number; runId: 
     {loadingRun && <p className="sr-only" role="status">실행 결과를 불러오는 중입니다.</p>}
     {showRunSkeleton && <ReviewRunResultSkeleton />}
     {!selectedRun && vm.review && vm.error && !vm.busy.includes('run') && <div className="flex justify-center"><button className={s.primary} type="button" onClick={() => vm.selectRun(runId)}>다시 시도</button></div>}
-    {selectedRun && <ReviewRunResult run={selectedRun} currentRevision={vm.review?.inputRevision ?? selectedRun.inputRevision} names={vm.names} download={vm.download} downloading={vm.busy.includes('download')} />}
+    {selectedRun && <ReviewRunResult key={selectedRun.id} run={selectedRun} currentRevision={vm.review?.inputRevision ?? selectedRun.inputRevision} names={vm.names} download={vm.download} downloading={vm.busy.includes('download')} />}
   </main></>
 }
 
