@@ -43,6 +43,7 @@ ops_manage evaluation_admission pause \
 
 ```bash
 # 변수는 개인 PC의 실제 state 경로와 기존 완료 평가 UUID로 지정한다.
+# --check는 dev 모드의 로컬 이미지 검사다. GitOps에서는 아래 별도 진단을 사용한다.
 python3 -B infrastructure/gitops/scripts/ops_runtime.py --check \
   --state-dir "$OPS_STATE_DIR" --run-id "$OPS_EXISTING_RUN_ID"
 python3 -B backend/ops-service/apps/evaluations/execution_spec.py --root .
@@ -53,11 +54,17 @@ python3 -B infrastructure/gitops/scripts/ops_runtime.py --preflight \
 
 첫 점검의 소스/이미지 불일치는 갱신 필요 근거로 보존한다. 소유권·DB·인증·브리지 장애는 먼저 해결한다.
 `--check` 성공은 새 평가 성공이나 관리자의 실제 인증을 증명하지 않는다.
-`ops_runtime.py --check/--preflight`는 개발 모드용이다. Argo 인계 후 `mode=gitops`에서는
-사용할 수 없으며, 상태를 `dev`로 바꿔 검사를 우회하지 않는다. 이 경우
+`ops_runtime.py --preflight`는 `dev`와 `gitops` 모드 모두에서 실행할 수 있다. GitOps에서도
+개인 클러스터 소유권을 조회 전후로 확인하고, 기존 Compose 브리지 소유권·연결 주소가 일치해야
+검사한다. Argo Application·이미지·접수 상태를 변경하지 않으며 `mode`를 `dev`로 바꿀 필요가 없다.
+접수가 열린 정상 운영 상태에서는 `BLOCKED / admission_open`, 종료 코드 1이 예상 결과다.
+이를 통과시키려고 진단 명령이 접수를 자동 중지하지 않는다.
+
+`ops_runtime.py --check`와 로컬 이미지 활성화·갱신은 여전히 개발 모드용이다. GitOps의 이미지·런타임은
 `fork_cluster.py status --state-dir "$OPS_STATE_DIR" --json --image-details --ops-details --network-details`와
 실행 중인 Ops의 `check_evaluation_runtime --run-id "$OPS_EXISTING_RUN_ID"`를 읽기 전용 진단에 사용한다.
-이 진단은 쓰기 중지·백업 전 preflight를 대신하지 않으므로 다음 전환에서는 그 범위를 별도로 검증한다.
+`--preflight` 성공도 Argo 동기화의 중지·배포 대상 이미지 승인·백업·migration을 증명하지 않는다.
+GitOps에서 이 읽기 전용 검사가 성공해도 `--ops-image` 활성화나 개발 모드 전용 갱신 차단은 유지된다.
 `--check`와 `--preflight`의 표준 출력은 JSON 하나다. 하위 브리지의 진행 문구를 섞지 않으므로
 파일 저장·JSON 파싱에 그대로 사용할 수 있다. `--preflight`의 `BLOCKED`·`UNKNOWN`은 JSON을
 출력하더라도 종료 코드 1을 유지하고, 조회 예외는 성공 JSON 없이 표준 오류와 종료 코드 1로 끝난다.
@@ -1389,3 +1396,13 @@ Git 제외 경로 `work/deployment-20261007/`에 실행 증거를 보관한다. 
 않았으며 `MSA_PROMOTION_ENABLED=false`를 유지한다. 이후 새 발행본으로의 전환도 새로운
 소스·CI·receipt 검증과 필요한 백업·migration·수동 동기화가 필요하다. 자동 인계 CLI,
 GHCR 발행 후 자동 배포, 다른 PC의 전환이나 상용 운영 준비 완료를 뜻하지 않는다.
+
+### GitOps 모드의 읽기 전용 갱신 사전 검사 — 2026-10-08
+
+위 개인 환경을 `gitops` 모드 그대로 유지한 채 확장된 `ops_runtime.py --preflight`를 실행했다.
+접수는 `version=8`로 열려 있어 `BLOCKED / admission_open`, 종료 코드 1을 반환했다.
+미완료 평가·열린 예산 예약·Prefect 미완료 실행·활성 스케줄·미중지 Ops 계획·미완료 접수 이력은
+모두 0건이었다. 검사 전후 개인 설정 파일, Argo Application 4개의 UID·명세, Ops Deployment의
+UID·명세가 같았다. 서비스 중지·접수 변경·migration·새 평가·배포는 수행하지 않았다.
+이는 정상 운영 중인 환경에서 갱신 전 중지가 필요함을 확인한 결과이며 갱신 준비 완료가 아니다.
+Git 제외 경로 `work/gitops-preflight-20261008/verification.json`에 관찰 결과를 보관한다.

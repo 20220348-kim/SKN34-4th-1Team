@@ -256,25 +256,156 @@ class UpgradePreflightTests(unittest.TestCase):
             },
         }
 
-    def check(self):
+    def check(self, mode="dev"):
+        settings = {**SETTINGS, "mode": mode}
+        before = {path.name: path.read_bytes() for path in self.state.iterdir()}
         with (
-            patch.object(runtime, "require_dev"),
+            patch.object(runtime, "require_dev") as dev,
+            patch.object(runtime, "verify_context") as owner,
             patch.object(ops_bridge, "connect") as bridge,
             patch.object(
                 runtime, "quiet", return_value=json.dumps(self.result)
             ) as execute,
         ):
-            result = runtime.upgrade_preflight(self.state, SETTINGS)
-        bridge.assert_called_once_with(self.state, SETTINGS, "fixture", check=True)
+            result = runtime.upgrade_preflight(self.state, settings)
+        bridge.assert_called_once_with(self.state, settings, "fixture", check=True)
+        if mode == "gitops":
+            dev.assert_not_called()
+            self.assertEqual(owner.call_count, 2)
+            for call in owner.call_args_list:
+                self.assertEqual(call.args, (runtime.commands(self.state, settings)[0], settings))
+                self.assertEqual(call.kwargs, {"timeout": 15})
+        else:
+            dev.assert_called_once_with(self.state, settings)
+            owner.assert_not_called()
+        execute.assert_called_once()
         command = execute.call_args.args[0]
-        self.assertIn("exec", command)
-        self.assertEqual(command[-3:], ["--", "python", "-"])
+        self.assertEqual(command, runtime.commands(self.state, settings)[1] + [
+            "exec", "-i", "deployment/ops-service", "-c", "ops-service", "--", "python", "-",
+        ])
         self.assertIn("def database_snapshot", execute.call_args.kwargs["data"])
+        self.assertEqual(before, {path.name: path.read_bytes() for path in self.state.iterdir()})
         return result
 
     def test_read_only_probe_does_not_require_an_activation_record(self):
         self.assertEqual(self.check(), self.result)
         self.assertFalse((self.state / runtime.PROFILE).exists())
+
+    def test_gitops_keeps_probe_contract_and_local_files_unchanged(self):
+        for status in ("PASS", "BLOCKED", "UNKNOWN"):
+            self.result["status"] = status
+            with self.subTest(status=status):
+                self.assertEqual(self.check("gitops"), self.result)
+        self.assertFalse((self.state / runtime.PROFILE).exists())
+
+    def test_gitops_open_admission_remains_blocked(self):
+        self.result.update(status="BLOCKED", reason="admission_open", admission_blocked=False)
+        self.result["checks"]["open_admission"] = 1
+        self.assertEqual(self.check("gitops"), self.result)
+        self.result["status"] = "PASS"
+        with self.assertRaises(ValueError):
+            self.check("gitops")
+
+    def test_gitops_wrong_or_changed_owner_never_returns_a_report(self):
+        settings = {**SETTINGS, "mode": "gitops"}
+        before = {path.name: path.read_bytes() for path in self.state.iterdir()}
+        for observations in ([ValueError("wrong owner")], [None, ValueError("changed owner")]):
+            with (
+                self.subTest(observations=len(observations)),
+                patch.object(runtime, "require_dev", wraps=fork_cluster.require_dev) as dev,
+                patch.object(runtime, "verify_context", side_effect=observations),
+                patch.object(ops_bridge, "connect") as bridge,
+                patch.object(runtime, "quiet", return_value=json.dumps(self.result)) as execute,
+                self.assertRaisesRegex(ValueError, "owner"),
+            ):
+                runtime.upgrade_preflight(self.state, settings)
+            dev.assert_not_called()
+            self.assertEqual(execute.call_count, len(observations) - 1)
+            self.assertEqual(bridge.call_count, len(observations) - 1)
+            self.assertEqual(before, {path.name: path.read_bytes() for path in self.state.iterdir()})
+
+    def test_gitops_bridge_failure_stops_before_the_probe(self):
+        for failure in ("not connected", "address changed", "not owned"):
+            with (
+                self.subTest(failure=failure),
+                patch.object(runtime, "verify_context"),
+                patch.object(ops_bridge, "connect", side_effect=ValueError(failure)),
+                patch.object(runtime, "quiet") as execute,
+                self.assertRaisesRegex(ValueError, failure),
+            ):
+                runtime.upgrade_preflight(self.state, {**SETTINGS, "mode": "gitops"})
+            execute.assert_not_called()
+
+    def test_gitops_foreign_connection_is_rejected_before_probe(self):
+        for key in ("repository", "stateId", "namespace"):
+            record = {**runtime.connection(SETTINGS, "fixture"), key: "another"}
+            (self.state / runtime.BRIDGE).write_text(json.dumps(record))
+            with (
+                self.subTest(key=key),
+                patch.object(runtime, "verify_context"),
+                patch.object(ops_bridge, "connect") as bridge,
+                patch.object(runtime, "quiet") as execute,
+                self.assertRaisesRegex(ValueError, "another"),
+            ):
+                runtime.upgrade_preflight(self.state, {**SETTINGS, "mode": "gitops"})
+            bridge.assert_not_called()
+            execute.assert_not_called()
+
+    def test_dev_with_argo_and_unknown_mode_still_stop_before_probe(self):
+        for mode in ("dev", "unknown"):
+            with (
+                self.subTest(mode=mode),
+                patch.object(fork_cluster, "verify_context"),
+                patch.object(fork_cluster, "applications", return_value=[{"metadata": {"name": "owned"}}]),
+                patch.object(ops_bridge, "connect") as bridge,
+                patch.object(runtime, "quiet") as execute,
+                self.assertRaises(ValueError),
+            ):
+                runtime.upgrade_preflight(self.state, {**SETTINGS, "mode": mode})
+            bridge.assert_not_called()
+            execute.assert_not_called()
+
+    def test_gitops_activation_and_local_image_check_remain_blocked(self):
+        settings = {**SETTINGS, "mode": "gitops"}
+        for image in (None, IMAGE):
+            with (
+                self.subTest(image=image),
+                patch.object(runtime, "quiet") as quiet,
+                patch.object(runtime, "run") as run,
+                patch.object(runtime, "load_image") as load,
+                patch.object(runtime, "run_migration") as migrate,
+                patch.object(runtime, "read_artifact_token") as token,
+                patch.object(runtime, "upgrade_preflight") as preflight,
+            ):
+                with self.assertRaisesRegex(ValueError, "GitOps owns"):
+                    runtime.activate(self.state, settings, self.state / "absent.env", ops_image=image)
+                with self.assertRaisesRegex(ValueError, "GitOps owns"):
+                    runtime.check_runtime(self.state, settings, expected_image=image)
+            for command in (quiet, run, load, migrate, token, preflight):
+                command.assert_not_called()
+
+    def test_gitops_cli_outputs_one_json_and_preserves_non_success_exit(self):
+        for status in ("PASS", "BLOCKED", "UNKNOWN"):
+            self.result["status"] = status
+            with (
+                self.subTest(status=status),
+                patch("sys.argv", ["ops_runtime.py", "--preflight", "--state-dir", str(self.state)]),
+                patch.object(runtime, "load_settings", return_value={**SETTINGS, "mode": "gitops"}),
+                patch.object(runtime, "locked", return_value=nullcontext()),
+                patch.object(runtime, "verify_context"),
+                patch.object(ops_bridge, "connect", side_effect=lambda *a, **kw: print("PASS: bridge only")),
+                patch.object(runtime, "quiet", return_value=json.dumps(self.result)),
+                patch.object(runtime, "activate") as activate,
+                redirect_stdout(io.StringIO()) as output,
+            ):
+                if status == "PASS":
+                    runtime.main()
+                else:
+                    with self.assertRaises(SystemExit) as stopped:
+                        runtime.main()
+                    self.assertEqual(stopped.exception.code, 1)
+            self.assertEqual(json.loads(output.getvalue()), self.result)
+            activate.assert_not_called()
 
     def test_missing_or_false_success_evidence_is_rejected(self):
         for value in (None, {}, {**self.result["checks"], "open_reservations": 1}):

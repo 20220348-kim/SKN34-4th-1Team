@@ -219,7 +219,13 @@ migration → API+sync 적용 → rollout → 읽기 전용 런타임 진단 순
 ### 소스와 실행 환경의 버전 점검
 
 갱신 전 접수 제어·미완료 평가·열린 예산 예약·Prefect 작업과 활성 스케줄은 `ops_runtime.py --preflight`로
-읽기 전용 점검한다. 기존 연결의 재활성화도 이 검사가 통과해야 Secret·migration·workload 변경을 진행한다.
+`dev`·`gitops` 모드에서 읽기 전용 점검한다. GitOps에서는 조회 전후로 개인 클러스터 소유권을 확인하고
+기존 Compose 브리지의 소유권·연결 주소를 검사한다. Argo 소유권을 해제하거나 상태 파일의 모드를
+바꾸지 않는다. 접수 중인 정상 환경은 `BLOCKED / admission_open`, 종료 코드 1을 반환하며 자동으로
+접수를 중지하지 않는다. `PASS`·`BLOCKED`·`UNKNOWN`의 기존 JSON 계약과 실패 종료 코드를 유지한다.
+이 검사는 현재 작업·접수 상태를 읽는 범위이며 Argo 동기화 중지·배포 대상·백업의 검증은 별도다.
+개발 모드의 기존 연결 재활성화도 이 검사가 통과해야 Secret·migration·workload 변경을 진행한다.
+`--check` 및 로컬 이미지의 `--ops-image` 활성화·갱신은 계속 개발 모드에서만 허용한다.
 `schemaVersion=4`는 Ops DB의 미중지 일별 계획과 처리 미완료 접수 이력도 별도로 검사한다.
 미래·만료 계획과 실행 플래그가 꺼진 계획도 중지가 필요하다. 최신 앱의 계획 중지 API는 미접수
 `PENDING`을 `SCHEDULE_CLOSED`로 종료하며 접수된 실행은 보존한다. 구버전 잔여 이력 등으로
@@ -535,9 +541,12 @@ Prefect 장애 중에도 기존 완료 보고서와 Ops 생존·DB 준비 probe�
 
 ## 연결된 Ops의 이미지 갱신 경로
 
-Compose 실행기와 연결된 Ops는 `ops_runtime.py --preflight`로 접수 중지·진행 중 작업 상태를
+개발 모드에서 Compose 실행기와 연결된 Ops는 `ops_runtime.py --preflight`로 접수 중지·진행 중 작업 상태를
 확인한 뒤, 이 문서의 `--ops-image` 갱신 절차를 사용한다. 실행기와 이미지의 release 확인,
 migration, 실행 후 런타임 검사를 일반 이미지 교체로 건너뛰지 않는다.
+GitOps 모드의 `--preflight` 성공은 이 로컬 이미지 갱신 경로를 허용하지 않는다.
+공개 발행본은 [개인 환경 Argo 인계 기록](../../../docs/ops-upgrade-runbook.md#개인-환경-공개-이미지의-argo-인계--2026-10-07)의
+소스·CI·receipt·백업·migration·수동 동기화 범위를 별도로 확인한다.
 
 `dev.py`는 활성화 기록이 있거나 실제 컨테이너의 Prefect URL이 명시적인 초기화용 비활성 주소가
 아니면 Ops 빌드·교체·이전 이미지 복원을 거절한다. URL 누락·간접 참조·중복도 미확인으로 거절한다.
