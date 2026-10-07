@@ -1,8 +1,10 @@
 # 평가 실행 환경의 Kubernetes 통합
 
 2026-10-08부터 배포 대상의 실행 환경은 Kubernetes로 통일하고 서비스·데이터 경계는 유지한다.
-Compose는 로컬 개발과 전환 전 원본 보존에 사용한다. 기존 개인 환경은 아직
-Kubernetes Ops + Compose Prefect·실행기·결과 서버·Langfuse로 동작한다.
+Compose는 로컬 개발에 유지하고, 이전 중에는 기존 인스턴스와 원본 데이터를 보존한다.
+기존 개인 환경의 Kubernetes Ops + Compose Prefect·실행기·결과 서버·Langfuse 구성은 이전 중
+상태다. 평가 세 구성요소만 옮겨도 전체 이전 완료는 아니며, Langfuse와 관련 저장소까지 포함한
+[전체 Kubernetes 배포 기준](../README.md#최종-배포-목표와-완료-기준)을 적용한다.
 
 ## 이번 구현: 독립 배포와 저장소 계약
 
