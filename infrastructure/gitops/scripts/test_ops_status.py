@@ -183,6 +183,61 @@ class SnapshotTests(unittest.TestCase):
             self.assertEqual(status.snapshot(self.state, SETTINGS)["status"], "UNKNOWN")
         inspect.assert_not_called()
 
+    def test_gitops_uses_owned_connection_and_read_only_bridge_without_http_claim(self):
+        settings = {**SETTINGS, "mode": "gitops"}
+        before = {path.name: path.read_bytes() for path in self.state.iterdir()}
+        with (
+            patch.object(status, "container_status", side_effect=self.observations * 2),
+            patch.object(status.ops_bridge, "connect") as bridge,
+        ):
+            report = status.snapshot(self.state, settings)
+        self.assertEqual(report["status"], "PASS")
+        self.assertTrue(report["bridge_verified"])
+        self.assertFalse(report["application_paths_verified"])
+        self.assertFalse(report["evaluation_executed"])
+        bridge.assert_called_once_with(self.state, settings, PROJECT, check=True)
+        self.assertEqual(
+            before, {path.name: path.read_bytes() for path in self.state.iterdir()}
+        )
+
+    def test_gitops_foreign_records_and_unknown_modes_prevent_docker_access(self):
+        for field in ("repository", "stateId", "namespace"):
+            with (
+                self.subTest(field=field),
+                patch.object(status, "container_status") as inspect,
+                patch.object(status.ops_bridge, "connect") as bridge,
+            ):
+                report = status.snapshot(
+                    self.state, {**SETTINGS, "mode": "gitops", field: "other"}
+                )
+            self.assertEqual(
+                report["issues"], ["CONNECTION_RECORD_INVALID_OR_MISSING"]
+            )
+            inspect.assert_not_called()
+            bridge.assert_not_called()
+        with (
+            patch.object(status, "container_status") as inspect,
+            patch.object(status.ops_bridge, "connect") as bridge,
+        ):
+            report = status.snapshot(self.state, {**SETTINGS, "mode": "unknown"})
+        self.assertEqual(report["status"], "UNKNOWN")
+        self.assertEqual(report["issues"], ["UNSUPPORTED_MODE"])
+        inspect.assert_not_called()
+        bridge.assert_not_called()
+
+    def test_gitops_bridge_failure_is_redacted_and_cannot_pass(self):
+        with (
+            patch.object(status, "container_status", side_effect=self.observations),
+            patch.object(
+                status.ops_bridge, "connect", side_effect=ValueError("PRIVATE")
+            ),
+        ):
+            report = status.snapshot(self.state, {**SETTINGS, "mode": "gitops"})
+        self.assertEqual(report["status"], "FAIL")
+        self.assertEqual(report["issues"], ["BRIDGE_CHECK_FAILED"])
+        self.assertFalse(report["bridge_verified"])
+        self.assertNotIn("PRIVATE", json.dumps(report))
+
     def test_one_stopped_service_still_reports_all_components_and_does_not_claim_routes(
         self,
     ):

@@ -170,6 +170,8 @@ Endpoint 조건·포트 해석은 [Kubernetes EndpointSlice API](https://kuberne
 
 Ops를 Compose 평가 실행기와 연결한 환경에서는 Pod Ready 외에 Prefect·결과 서버·실행기와
 브리지도 확인합니다. Docker가 실행 중일 때 다음 읽기 전용 옵션을 사용합니다.
+기존 연결 기록을 보존한 `dev`와 `gitops` 모드에서 사용할 수 있습니다. Argo 소유권을 해제하거나
+서비스를 개발 모드로 되돌릴 필요는 없습니다.
 
 ```bash
 python -B infrastructure/gitops/scripts/fork_cluster.py status --json --ops-details \
@@ -183,17 +185,20 @@ python -B infrastructure/gitops/scripts/fork_cluster.py status --json --ops-deta
   연결·Kubernetes Service/EndpointSlice와 실제 컨테이너 주소 일치를 확인한 경우에만 true입니다.
   검사 전후 컨테이너가 교체되거나 재시작 횟수가 바뀌면 실패합니다.
 - `status=FAIL`은 컨테이너 또는 브리지 검사 실패, `UNKNOWN`은 연결 기록 누락·불일치 또는
-  개발 모드가 아님을 뜻합니다. 둘 다 기본 Kubernetes 결과와 함께 JSON을 출력하고 종료 코드 1을
+  지원하지 않는 모드를 뜻합니다. 둘 다 기본 Kubernetes 결과와 함께 JSON을 출력하고 종료 코드 1을
   반환합니다. 개인 Ops 연결을 아직 구성하지 않았다면 이 옵션을 사용하지 않습니다.
 - healthcheck가 없는 컨테이너는 `health=null`로 표시합니다. `PASS`도 프로세스와 브리지 관측 결과이며
   HTTP 인증·DB 연결·실제 평가 성공을 보장하지 않습니다. `application_paths_verified=false`와
-  `evaluation_executed=false`를 유지하며 업무 경로는 `ops_runtime.py --check`와 무료 평가로 별도 확인합니다.
+  `evaluation_executed=false`를 유지합니다. `dev`에서는 `ops_runtime.py --check`와 무료 평가로,
+  `gitops`에서는 실제 관리자 로그인·기존 보고서 조회·승인된 무료 평가로 업무 경로를 별도 확인합니다.
 - Secret·환경변수·명령 인자·health 로그는 수집하지 않고 subprocess 오류 원문도 출력하지 않습니다.
   컨테이너 시작·중지·재생성, 브리지 갱신, 평가 접수 또는 state 변경을 수행하지 않습니다.
 
 `COMPOSE_NOT_READY`이면 표시된 서비스와 해당 의존성부터 확인합니다. 컨테이너가 모두 정상인데
 `BRIDGE_CHECK_FAILED`이면 `ops_bridge.py check`로 원인을 확인한 뒤 필요한 경우에만 기존
 [브리지 연결 절차](../infrastructure/gitops/docs/ops-runtime.md)를 따릅니다.
+`gitops`에서 `check`는 소유권과 현재 경로만 읽습니다. `connect`와 Ops 활성화·갱신은 계속
+개발 모드 전용이며, 진단 실패를 해소하려고 Argo 소유권이나 state 기록을 임의로 변경하지 않습니다.
 기본 `status --json`은 계속 Docker 없이 동작하고 `--image-details`와 함께 사용할 수도 있습니다.
 
 Docker Desktop 복귀 후 프로세스·브리지 진단이 통과해도 `check_evaluation_runtime`의 `evidence`가

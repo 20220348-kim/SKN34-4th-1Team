@@ -15,6 +15,7 @@ from unittest.mock import patch
 import ops_bridge as bridge
 import smoke_ops_bridge
 from check_msa import REPOSITORY_ROOT
+from fork_cluster import require_dev
 
 SETTINGS = {
     "cluster": "govbiz-fixture",
@@ -292,6 +293,112 @@ class BridgeConnectTests(unittest.TestCase):
                 for call in self.calls
             )
         )
+
+    def test_gitops_check_preserves_routes_files_and_argo_ownership(self):
+        bridge.connect(self.state, SETTINGS, PROJECT)
+        settings = {**SETTINGS, "mode": "gitops"}
+        before = {path.name: path.read_bytes() for path in self.state.iterdir()}
+        resources = copy.deepcopy(self.resources)
+        self.calls.clear()
+        with (
+            patch.object(bridge, "require_dev", wraps=require_dev) as dev,
+            patch.object(bridge, "verify_context") as owner,
+        ):
+            bridge.connect(self.state, settings, PROJECT, check=True)
+        dev.assert_not_called()
+        self.assertEqual(owner.call_count, 2)
+        for call in owner.call_args_list:
+            self.assertEqual(
+                call.args, (bridge.commands(self.state, settings)[0], settings)
+            )
+            self.assertEqual(call.kwargs, {"timeout": 15})
+        self.assertTrue(self.calls)
+        self.assertTrue(all("get" in call for call in self.calls))
+        self.assertEqual(resources, self.resources)
+        self.assertEqual(
+            before, {path.name: path.read_bytes() for path in self.state.iterdir()}
+        )
+
+    def test_gitops_check_rejects_wrong_or_changed_cluster_owner_without_writes(self):
+        bridge.connect(self.state, SETTINGS, PROJECT)
+        settings = {**SETTINGS, "mode": "gitops"}
+        before = {path.name: path.read_bytes() for path in self.state.iterdir()}
+        for observations in (
+            [ValueError("wrong owner")], [None, ValueError("changed owner")]
+        ):
+            self.calls.clear()
+            with (
+                patch.object(bridge, "verify_context", side_effect=observations),
+                self.assertRaisesRegex(ValueError, "owner"),
+            ):
+                bridge.connect(self.state, settings, PROJECT, check=True)
+            self.assertTrue(all("get" in call for call in self.calls))
+            if len(observations) == 1:
+                self.assertEqual(self.calls, [])
+            self.assertEqual(
+                before, {path.name: path.read_bytes() for path in self.state.iterdir()}
+            )
+
+    def test_gitops_check_still_rejects_disconnected_stale_or_foreign_routes(self):
+        bridge.connect(self.state, SETTINGS, PROJECT)
+        resources = copy.deepcopy(self.resources)
+        snapshot = copy.deepcopy(self.snapshot)
+        for failure in (
+            "disconnected", "stale", "foreign", "argo_owned", "extra_slice", "replaced"
+        ):
+            with self.subTest(failure=failure), patch.object(bridge, "verify_context"):
+                self.resources = copy.deepcopy(resources)
+                self.snapshot = copy.deepcopy(snapshot)
+                self.calls.clear()
+                if failure == "disconnected":
+                    self.snapshot["nodeConnected"] = False
+                elif failure == "stale":
+                    self.snapshot["addresses"]["prefect"] = "172.28.0.8"
+                elif failure in {"foreign", "argo_owned"}:
+                    annotations = self.resources[("Service", "ops-compose-prefect")][
+                        "metadata"
+                    ]["annotations"]
+                    key = (
+                        bridge.STATE_KEY if failure == "foreign"
+                        else "argocd.argoproj.io/tracking-id"
+                    )
+                    annotations[key] = "other"
+                elif failure == "extra_slice":
+                    extra = copy.deepcopy(
+                        resources[("EndpointSlice", "ops-compose-prefect")]
+                    )
+                    extra["metadata"]["name"] = "other"
+                    self.resources[("EndpointSlice", "other")] = extra
+                changed = copy.deepcopy(self.snapshot)
+                if failure == "replaced":
+                    changed["containers"]["prefect"] = "replacement-id"
+                with (
+                    patch.object(
+                        bridge, "topology", side_effect=[self.snapshot, changed]
+                    ),
+                    self.assertRaises(ValueError),
+                ):
+                    bridge.connect(
+                        self.state, {**SETTINGS, "mode": "gitops"}, PROJECT, check=True
+                    )
+                self.assertTrue(all("get" in call for call in self.calls))
+
+    def test_gitops_writes_and_unknown_mode_checks_remain_blocked_before_reads(self):
+        for mode, check in (("gitops", False), ("unknown", True), ("unknown", False)):
+            with (
+                self.subTest(mode=mode, check=check),
+                patch.object(bridge, "require_dev", wraps=require_dev),
+                patch.object(bridge, "verify_context") as owner,
+                patch.object(bridge, "topology") as topology,
+                self.assertRaises(ValueError),
+            ):
+                bridge.connect(
+                    self.state, {**SETTINGS, "mode": mode}, PROJECT, check=check
+                )
+            owner.assert_not_called()
+            topology.assert_not_called()
+        self.assertEqual(self.calls, [])
+        self.assertEqual(list(self.state.iterdir()), [])
 
     def test_extra_endpoint_slice_prevents_route_update(self):
         bridge.connect(self.state, SETTINGS, PROJECT)

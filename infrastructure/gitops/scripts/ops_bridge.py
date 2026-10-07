@@ -1,4 +1,4 @@
-"""Connect one owned development kind node to private Compose HTTP endpoints.
+"""Connect in dev, or inspect owned Compose routes in dev and GitOps modes.
 
 No model calls, application patches, credential reads, host ports or Argo changes.
 Run connect again after Compose replaces either container; check detects stale IPs.
@@ -18,6 +18,7 @@ from fork_cluster import (
     locked,
     require_dev,
     run,
+    verify_context,
     write_json,
 )
 
@@ -356,8 +357,13 @@ def existing_resources(nk, desired):
 
 
 def connect(state, settings, project, *, check=False):
-    require_dev(state, settings)
     kube, nk, _ = commands(state, settings)
+    if check and settings["mode"] == "gitops":
+        # Observing existing routes must not require relinquishing Argo ownership.
+        # Writes still require dev mode and the absence of Argo Applications.
+        verify_context(kube, settings, timeout=15)
+    else:
+        require_dev(state, settings)
     before = topology(settings, project)
     verify_cluster_ranges(kube, before)
     desired = manifests(settings, project, before["addresses"])
@@ -379,6 +385,8 @@ def connect(state, settings, project, *, check=False):
             raise ValueError(
                 "Compose topology changed during check; rerun check before using Ops"
             )
+        if settings["mode"] == "gitops":
+            verify_context(kube, settings, timeout=15)
         print(
             "PASS: current bridge ownership and endpoint addresses (not HTTP or evaluation success)"
         )

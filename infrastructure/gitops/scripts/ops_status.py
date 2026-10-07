@@ -128,8 +128,8 @@ def snapshot(state, settings):
         "application_paths_verified": False,
         "evaluation_executed": False,
     }
-    if settings["mode"] != "dev":
-        report["issues"].append("DEVELOPMENT_MODE_REQUIRED")
+    if settings["mode"] not in {"dev", "gitops"}:
+        report["issues"].append("UNSUPPORTED_MODE")
         return report
     try:
         record = read_connection(state / PROFILE, settings)
