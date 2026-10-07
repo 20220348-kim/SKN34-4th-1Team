@@ -76,8 +76,10 @@ LLMOps CI의 격리 Kubernetes 평가 실행 검증도 포함하며, 실행 중�
 
 이 workflow의 `imagesVerified`는 실행기 한 이미지에 대한 결과입니다. 기존 네 서비스의 결과와 합쳐서
 해석하지 않습니다. 새 artifact는 기존 네 receipt를 읽는 배포 도구에 섞지 않습니다.
-이번 경로는 이미지 발행까지이며 **v3 receipt 소비·독립 Argo Application 연결·운영 PVC 인계·실제
-평가 환경 이전은 후속 작업**입니다. 코드·오프라인 테스트 완료는 원격 발행 성공을 뜻하지 않습니다.
+발행 이후에는 [평가 GitOps 계획 도구](../gitops/docs/evaluation-kubernetes.md#공개-발행-검증과-수동-argo-계획)가
+v3 receipt와 같은 SHA의 기존 네 이미지 발행 기록을 함께 검증하고, 평가 전용 AppProject와 세 개의
+수동 Application을 생성합니다. 모든 replica는 0이며 운영 PVC 인계·실제 평가 환경 이전은 후속
+작업입니다. 코드·오프라인 테스트 완료는 원격 발행 성공을 뜻하지 않습니다.
 
 공개 포크에서 `GITHUB_TOKEN`으로 새 패키지를 생성하면 저장소의 공개 범위를 상속할 수 있으므로
 "새 패키지는 항상 비공개"라고 가정하지 않습니다.

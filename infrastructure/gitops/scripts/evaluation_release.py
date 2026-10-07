@@ -1,0 +1,428 @@
+"""Verify runner receipts and plan dormant, manual Argo evaluation releases."""
+
+import argparse
+import io
+import json
+import re
+import tempfile
+import zipfile
+from pathlib import Path
+from urllib.parse import quote
+
+import yaml
+from check_evaluation import COMPONENTS, render_bundle
+from deployment import source_checks, verified_release
+from deployment_candidate import (
+    KUBE_VERSION,
+    digest,
+    encoded,
+    git_bytes,
+    tracked_files,
+    write_files,
+)
+from fork_cluster import verify_pull_rights
+from promote_image import UniqueLoader
+from publish import RUNNER, RUNNER_PATHS, RUNNER_RELEASE, runner_input_key
+from repository import from_origin
+from sync_images import api, select_release, valid_run
+
+WORKFLOW = ".github/workflows/evaluation-images.yml"
+ARTIFACT = "evaluation-image-evaluation-runner"
+REPORTS = {
+    "evaluation-package-preflight",
+    "evaluation-publication-evaluation-runner",
+    "evaluation-publication-result",
+}
+CHART = "infrastructure/gitops/charts/govbiz-evaluation"
+VALUES = "infrastructure/gitops/environments/evaluation"
+NAMESPACE = "govbiz-evaluation"
+PROJECT = "govbiz-evaluation"
+
+
+def select_runner_release(fork, get=api):
+    """Do not fall back past a failed, pending or malformed newer publisher."""
+    runs = get(
+        f"repos/{fork.repository}/actions/workflows/evaluation-images.yml/runs"
+        f"?branch={quote(fork.branch, safe='')}&per_page=100"
+    )["workflow_runs"]
+    for run in sorted(runs, key=lambda row: row["id"], reverse=True):
+        if run.get("status") != "completed" or run.get("conclusion") not in {
+            "success",
+            "skipped",
+        }:
+            return None
+        if run["conclusion"] == "skipped":
+            continue
+        if not valid_run(
+            run,
+            run.get("head_sha"),
+            WORKFLOW,
+            {"workflow_run", "workflow_dispatch"},
+            fork,
+        ) or any(
+            type(run.get(key)) is not int or run[key] <= 0
+            for key in ("id", "run_attempt")
+        ):
+            raise ValueError("Untrusted evaluation publisher")
+        repository_id = run["repository"].get("id")
+        if type(repository_id) is not int or repository_id <= 0:
+            raise ValueError("Missing publisher repository identity")
+        response = get(
+            f"repos/{fork.repository}/actions/runs/{run['id']}/artifacts?per_page=100"
+        )
+        artifacts = response["artifacts"]
+        if response.get("total_count") != len(artifacts):
+            raise ValueError("Incomplete publisher artifacts")
+        receipts = [row for row in artifacts if row.get("name") not in REPORTS]
+        if not receipts:  # successful gate-only run; reports are not image receipts
+            continue
+        if len(receipts) != 1 or receipts[0].get("name") != ARTIFACT:
+            raise ValueError("Exactly one evaluation runner receipt is required")
+        artifact = receipts[0]
+        origin = artifact.get("workflow_run", {})
+        if (
+            artifact.get("expired") is not False
+            or type(artifact.get("id")) is not int
+            or artifact["id"] <= 0
+            or type(artifact.get("size_in_bytes")) is not int
+            or not 0 < artifact["size_in_bytes"] < 16384
+            or origin.get("id") != run["id"]
+            or origin.get("head_sha") != run["head_sha"]
+            or origin.get("head_branch") != fork.branch
+            or origin.get("repository_id") != repository_id
+            or origin.get("head_repository_id") != repository_id
+        ):
+            raise ValueError("Invalid, expired or cross-repository runner artifact")
+        return run, artifact
+    return None
+
+
+def checked_runner_receipt(root, fork, sha, release, get=api):
+    """Bind v3 provenance to actual committed inputs, including manifest bytes."""
+    run, artifact = release
+    if run["head_sha"] != sha:
+        raise ValueError("Runner and Ops publications must use the same source SHA")
+    payload = get(
+        f"repos/{fork.repository}/actions/artifacts/{artifact['id']}/zip", binary=True
+    )
+    if (
+        len(payload) != artifact["size_in_bytes"]
+        or len(payload) >= 16384
+        or "sha256:" + digest(payload) != artifact.get("digest")
+    ):
+        raise ValueError("Runner receipt archive checksum or size mismatch")
+    with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+        members = archive.infolist()
+        if (
+            len(members) != 1
+            or members[0].filename != RUNNER + ".json"
+            or members[0].file_size > 8192
+        ):
+            raise ValueError("Unexpected runner receipt archive contents")
+        receipt = json.loads(archive.read(members[0]))
+    keys = {
+        "schemaVersion",
+        "service",
+        "repository",
+        "digest",
+        "tag",
+        "platform",
+        "verifiedRevision",
+        "inputKey",
+        "visibility",
+        "sourceInputs",
+        "publisherTree",
+        "executionReleaseSha256",
+    }
+    if (
+        not isinstance(receipt, dict)
+        or set(receipt) != keys
+        or type(receipt["schemaVersion"]) is not int
+        or receipt["schemaVersion"] != 3
+        or receipt["service"] != RUNNER
+        or receipt["repository"] != fork.image(RUNNER)
+        or receipt["platform"] != "linux/amd64"
+        or receipt["visibility"] != "public"
+        or receipt["verifiedRevision"] != sha
+        or not isinstance(receipt["digest"], str)
+        or not re.fullmatch(r"sha256:[a-f0-9]{64}", receipt["digest"])
+    ):
+        raise ValueError("A matching public v3 runner receipt is required")
+    paths = (*RUNNER_PATHS, "infrastructure/release")
+    identities = (
+        git_bytes(root, "rev-parse", *(sha + ":" + path for path in paths))
+        .decode()
+        .splitlines()
+    )
+    inputs = dict(zip(paths, identities, strict=True))
+    publisher = inputs.pop("infrastructure/release")
+    key = runner_input_key(inputs, publisher)
+    manifest = tracked_files(root, sha, (RUNNER_RELEASE,))[RUNNER_RELEASE]
+    if (
+        receipt["sourceInputs"] != inputs
+        or receipt["publisherTree"] != publisher
+        or receipt["inputKey"] != key
+        or receipt["tag"] != "src-" + key
+        or receipt["executionReleaseSha256"] != digest(manifest)
+    ):
+        raise ValueError(
+            "Runner receipt differs from committed inputs or execution release"
+        )
+    return receipt
+
+
+def argo_plan(fork, sha, values):
+    destination = {"server": "https://kubernetes.default.svc", "namespace": NAMESPACE}
+    resources = [
+        {
+            "apiVersion": "argoproj.io/v1alpha1",
+            "kind": "AppProject",
+            "metadata": {"name": PROJECT, "namespace": "argocd"},
+            "spec": {
+                "sourceRepos": [fork.url],
+                "destinations": [destination],
+                "clusterResourceWhitelist": [],
+                "namespaceResourceWhitelist": [
+                    {"group": "apps", "kind": "Deployment"},
+                    {"group": "", "kind": "Service"},
+                ],
+            },
+        }
+    ]
+    for name in COMPONENTS:
+        resources.append(
+            {
+                "apiVersion": "argoproj.io/v1alpha1",
+                "kind": "Application",
+                "metadata": {"name": PROJECT + "-" + name, "namespace": "argocd"},
+                "spec": {
+                    "project": PROJECT,
+                    "destination": destination,
+                    "source": {
+                        "repoURL": fork.url,
+                        "targetRevision": sha,
+                        "path": CHART,
+                        "helm": {
+                            "releaseName": name,
+                            "kubeVersion": KUBE_VERSION,
+                            "valuesObject": values[name],
+                        },
+                    },
+                    "syncPolicy": {
+                        "automated": {
+                            "enabled": False,
+                            "prune": False,
+                            "selfHeal": False,
+                        },
+                        "retry": {"limit": 0},
+                        "syncOptions": ["FailOnSharedResource=true"],
+                    },
+                },
+            }
+        )
+    return resources
+
+
+def plan(
+    root,
+    fork,
+    *,
+    node,
+    prefect_claim,
+    results_claim,
+    langfuse_url,
+    ops_api_url="http://ops-service.govbiz-msa.svc.cluster.local:8000",
+    helm="helm",
+    get=api,
+):
+    """Read-only preparation. Existing storage, Secrets and runtime are unverified."""
+    msa_release = select_release(fork, get)
+    record, _, sha = verified_release(
+        root, fork, helm, get, verify_public_manifests=True
+    )
+    checks = source_checks(fork, sha, get)
+    release = select_runner_release(fork, get)
+    if release is None:
+        raise ValueError("No complete evaluation runner publication")
+    receipt = checked_runner_receipt(root, fork, sha, release, get)
+    runner_image = receipt["repository"] + "@" + receipt["digest"]
+    verify_pull_rights(None, None, {"images": {RUNNER: runner_image}})
+    files = tracked_files(root, sha, (CHART, VALUES))
+    values = {
+        name: yaml.load(files[VALUES + "/" + name + ".yaml"], Loader=UniqueLoader)
+        for name in COMPONENTS
+    }
+    for name, value in values.items():
+        value.update(replicas=0, allowLocalImages=False, imagePullSecrets=[])
+        value["storage"] = {
+            "existingClaim": prefect_claim if name == "prefect" else results_claim,
+            "node": node,
+        }
+    values[RUNNER]["image"] = runner_image
+    values[RUNNER]["runner"] = {"opsApiUrl": ops_api_url, "langfuseUrl": langfuse_url}
+    values["ops-artifacts"].update(
+        image=record["images"]["ops-service"], evidenceImage=runner_image
+    )
+    with tempfile.TemporaryDirectory(
+        prefix="govbiz-evaluation-publication-"
+    ) as directory:
+        checkout = Path(directory)
+        write_files(checkout, files)
+        metadata = yaml.load(files[CHART + "/Chart.yaml"], Loader=UniqueLoader)
+        if metadata.get("dependencies"):
+            raise ValueError("Evaluation chart cannot fetch untracked dependencies")
+        rendered = render_bundle(values, NAMESPACE, helm, chart=checkout / CHART)
+    if set(rendered) != set(COMPONENTS):
+        raise ValueError("All evaluation releases must be rendered")
+    for name, rows in rendered.items():
+        expected = ["Deployment"] if name == RUNNER else ["Deployment", "Service"]
+        if sorted(row["kind"] for row in rows) != expected:
+            raise ValueError("Evaluation chart exceeds its project resource scope")
+        for row in rows:
+            if (
+                row["metadata"]["namespace"] != NAMESPACE
+                or row["metadata"]["name"] != name
+            ):
+                raise ValueError("Evaluation chart exceeds its resource identity")
+            if row["apiVersion"] != (
+                "apps/v1" if row["kind"] == "Deployment" else "v1"
+            ):
+                raise ValueError("Evaluation chart exceeds its project API scope")
+            if row["kind"] == "Deployment":
+                pod = row["spec"]["template"]["spec"]
+                if row["spec"].get("replicas") != 0 or [
+                    container["image"] for container in pod["containers"]
+                ] != [values[name]["image"]]:
+                    raise ValueError(
+                        "Evaluation plan must stay dormant on verified images"
+                    )
+                expected_init = {
+                    "prefect": [values["prefect"]["image"]],
+                    RUNNER: [],
+                    "ops-artifacts": [runner_image],
+                }[name]
+                if [c["image"] for c in pod.get("initContainers", [])] != expected_init:
+                    raise ValueError(
+                        "Evaluation init images differ from verified inputs"
+                    )
+                if name == RUNNER:
+                    entries = pod["containers"][0]["env"]
+                    env = {row["name"]: row.get("value") for row in entries}
+                    if (
+                        len(env) != len(entries)
+                        or any(
+                            env.get(flag) != "false"
+                            for flag in (
+                                "LLMOPS_LIVE_ENABLED",
+                                "LLMOPS_RAG_LIVE_ENABLED",
+                                "LLMOPS_SCHEDULES_ENABLED",
+                            )
+                        )
+                        or env.get("OPENAI_API_KEY") != ""
+                    ):
+                        raise ValueError(
+                            "Evaluation runner must keep paid calls and schedules disabled"
+                        )
+    resources = argo_plan(fork, sha, values)
+    # Recheck both independently published bundles and CI after rendering/registry I/O.
+    if select_runner_release(fork, get) != release:
+        raise ValueError("Evaluation publication changed during validation")
+    if select_release(fork, get) != msa_release:
+        raise ValueError("Ops publication changed during validation")
+    if source_checks(fork, sha, get) != checks:
+        raise ValueError("Required source checks changed during validation")
+    return {
+        "schema": "evaluation-gitops-plan-v1",
+        "status": "PLANNED",
+        "repository": fork.repository,
+        "branch": fork.branch,
+        "sourceSha": sha,
+        "msaPublisherRunId": record["runId"],
+        "runnerPublisherRunId": release[0]["id"],
+        "runnerPublisherRunAttempt": release[0]["run_attempt"],
+        "runnerArtifactId": release[1]["id"],
+        "runnerArtifactSha256": release[1]["digest"],
+        "executionReleaseSha256": receipt["executionReleaseSha256"],
+        "images": {name: value["image"] for name, value in values.items()},
+        "resources": resources,
+        "resourcesSha256": digest(encoded(resources)),
+        "renderedSha256": {
+            name: digest(encoded(rows)) for name, rows in rendered.items()
+        },
+        "receiptsVerified": True,
+        "helmPolicyVerified": True,
+        "publicGHCRManifestsVerified": True,
+        "prefectRegistryVerified": False,
+        "layersDownloaded": False,
+        "automaticSyncEnabled": False,
+        "clusterChanged": False,
+        "storageRestored": False,
+        "runtimeVerified": False,
+        "deploymentAuthorized": False,
+    }
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--branch", help="Origin's default branch when omitted")
+    parser.add_argument("--helm", default="helm")
+    parser.add_argument("--node", required=True)
+    parser.add_argument("--prefect-claim", required=True)
+    parser.add_argument("--results-claim", required=True)
+    parser.add_argument("--langfuse-url", required=True)
+    parser.add_argument(
+        "--ops-api-url", default="http://ops-service.govbiz-msa.svc.cluster.local:8000"
+    )
+    args = parser.parse_args()
+    try:
+        root = Path(__file__).resolve().parents[3]
+        fork = from_origin(root, branch=args.branch).require_personal_publish()
+        report = plan(
+            root,
+            fork,
+            helm=args.helm,
+            node=args.node,
+            prefect_claim=args.prefect_claim,
+            results_claim=args.results_claim,
+            langfuse_url=args.langfuse_url,
+            ops_api_url=args.ops_api_url,
+        )
+    except Exception as error:  # noqa: BLE001 - do not expose registry or endpoint credentials
+        reasons = {
+            "No complete verified publication": "msa_publication_not_available",
+            "No complete evaluation runner publication": "runner_publication_not_available",
+            "Source advanced": "source_not_current",
+            "Deployment source blocked": "required_source_checks_not_verified",
+            "Runner and Ops publications": "publication_source_mismatch",
+            "A matching public v3 runner receipt": "runner_receipt_invalid",
+            "Runner receipt differs": "runner_inputs_mismatch",
+            "Evaluation publication changed": "runner_publication_changed",
+            "Ops publication changed": "msa_publication_changed",
+            "Required source checks changed": "ci_evidence_changed",
+        }
+        print(
+            json.dumps(
+                {
+                    "schema": "evaluation-gitops-plan-v1",
+                    "status": "BLOCKED",
+                    "reason": next(
+                        (
+                            code
+                            for prefix, code in reasons.items()
+                            if str(error).startswith(prefix)
+                        ),
+                        "verification_failed",
+                    ),
+                    "errorType": type(error).__name__,
+                    "clusterChanged": False,
+                    "deploymentAuthorized": False,
+                }
+            )
+        )
+        return 1
+    print(json.dumps(report, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

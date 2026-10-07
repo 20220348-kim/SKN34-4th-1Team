@@ -35,7 +35,7 @@ def validate_bundle(values):
         raise ValueError("A runner requires both Prefect and artifact replicas")
 
 
-def render_bundle(values, namespace="govbiz-evaluation", helm="helm"):
+def render_bundle(values, namespace="govbiz-evaluation", helm="helm", *, chart=CHART):
     validate_bundle(values)
     version = subprocess.check_output(
         [helm, "version", "--template", "{{.Version}}"],
@@ -55,7 +55,7 @@ def render_bundle(values, namespace="govbiz-evaluation", helm="helm"):
                     helm,
                     "template",
                     component,
-                    str(CHART),
+                    str(chart),
                     "--namespace",
                     namespace,
                     "--kube-version",
