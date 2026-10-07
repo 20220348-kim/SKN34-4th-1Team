@@ -20,6 +20,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from fork_cluster import REPOSITORY_ROOT, STATE, commands, load_settings, require_dev
+from gitops_runtime import argo_observation
 from ops_runtime import BRIDGE, PROFILE, read_connection
 
 sys.path.insert(0, str(REPOSITORY_ROOT / "infrastructure/llmops"))
@@ -122,7 +123,11 @@ def database_identity(namespaced, pod):
 
 
 def frozen_source(state, settings):
-    require_dev(state, settings)
+    argo = None
+    if settings.get("mode") == "gitops":
+        argo = argo_observation(state, settings, stopped_ops=True)
+    else:
+        require_dev(state, settings)
     record = read_connection(Path(state) / PROFILE, settings)
     if read_connection(Path(state) / BRIDGE, settings) != record:
         raise ValueError("Ops connection records differ")
@@ -131,20 +136,57 @@ def frozen_source(state, settings):
     deployment = read_json(namespaced + ["get", "deployment", "ops-service", "-o", "json"])
     containers = deployment["spec"]["template"]["spec"]["containers"]
     if (
-        deployment["spec"].get("replicas", 1) != 0
-        or deployment.get("status", {}).get("replicas", 0) != 0
+        type(deployment["spec"].get("replicas")) is not int
+        or deployment["spec"]["replicas"] != 0
+        or any(
+            type(deployment.get("status", {}).get(key, 0)) is not int
+            or deployment.get("status", {}).get(key, 0) != 0
+            for key in ("replicas", "readyReplicas", "updatedReplicas", "availableReplicas")
+        )
+        or len(containers) != 2
         or {item["name"] for item in containers} != {"ops-service", "ops-sync"}
     ):
         raise ValueError("Stop the Kubernetes Ops API and sync before DB backup")
+    if argo is not None:
+        meta = deployment["metadata"]
+        tracking = {
+            key: value
+            for key, value in meta.get("annotations", {}).items()
+            if key.startswith("argocd.argoproj.io/")
+        }
+        if (
+            deployment.get("kind") != "Deployment"
+            or meta.get("name") != "ops-service"
+            or meta.get("namespace") != settings["namespace"]
+            or not meta.get("uid")
+            or not meta.get("resourceVersion")
+            or meta.get("deletionTimestamp")
+            or type(meta.get("generation")) is not int
+            or type(deployment.get("status", {}).get("observedGeneration")) is not int
+            or deployment.get("status", {}).get("observedGeneration") != meta["generation"]
+            or tracking
+            != {
+                "argocd.argoproj.io/tracking-id": (
+                    f"govbiz-fork-ops-service:apps/Deployment:{settings['namespace']}/ops-service"
+                )
+            }
+            or any(key.startswith("argocd.argoproj.io/") for key in meta.get("labels", {}))
+        ):
+            raise ValueError("Stopped Ops must retain its exact Argo ownership")
     for container in containers:
-        env = {item["name"]: item.get("value") for item in container.get("env", [])}
-        if any(
-            env.get(name) != value
-            for name, value in {
-                "DB_HOST": "ops-mysql",
-                "DB_PORT": "3306",
-                "DB_NAME": DATABASE,
-            }.items()
+        rows = container.get("env", [])
+        env = {item["name"]: item for item in rows}
+        if (
+            container.get("envFrom")
+            or len(env) != len(rows)
+            or any(
+                env.get(name) != {"name": name, "value": value}
+                for name, value in {
+                    "DB_HOST": "ops-mysql",
+                    "DB_PORT": "3306",
+                    "DB_NAME": DATABASE,
+                }.items()
+            )
         ):
             raise ValueError("Ops deployment does not use the supported database")
     if read_json(
@@ -216,8 +258,27 @@ def frozen_source(state, settings):
     image = "mysql@" + image.split("@", 1)[1]
     # It must already be available locally; never silently pull a replacement image.
     storage.run(["docker", "image", "inspect", image])
+    identity = database_identity(namespaced, pod)
+    gitops_source = {}
+    if argo is not None:
+        command = [*namespaced, "exec", "-i", "ops-mysql-0", "-c", "mysql", "--", *storage.AUTH]
+        gitops_source = {
+            "argo_observation": argo,
+            "admission_version": paused_admission_version(command),
+            "deployment_spec_sha256": hashlib.sha256(
+                json.dumps(deployment["spec"], sort_keys=True).encode()
+            ).hexdigest(),
+        }
+        if (
+            load_settings(state) != settings
+            or read_connection(Path(state) / PROFILE, settings) != record
+            or read_connection(Path(state) / BRIDGE, settings) != record
+            or argo_observation(state, settings, stopped_ops=True) != argo
+        ):
+            raise ValueError("GitOps ownership or connection changed during backup inspection")
     return namespaced, {
-        **database_identity(namespaced, pod),
+        **identity,
+        **gitops_source,
         "repository": settings["repository"],
         "state_id": settings["stateId"],
         "namespace": settings["namespace"],
@@ -234,6 +295,17 @@ def frozen_source(state, settings):
 
 def query(command, text):
     return storage.run([*command, *MYSQL], data=text.encode()).decode("utf-8").strip()
+
+
+def paused_admission_version(command):
+    """Read the existing gate from the stopped source DB; never create or pause it."""
+    value = query(
+        command, "SELECT id, accepting, version FROM evaluations_evaluationadmission ORDER BY id;"
+    )
+    match = re.fullmatch(r"1\t0\t([1-9][0-9]*)", value)
+    if match is None:
+        raise ValueError("GitOps backup requires one supported, paused admission gate")
+    return int(match[1])
 
 
 def validate_accounts(value):
@@ -690,7 +762,7 @@ def main():
             else verify(args.archive, args.key_file)
         )
         print(json.dumps(result, sort_keys=True))
-    except (ValueError, KeyError, TypeError, OSError):
+    except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError):
         # Never print raw SQL, credentials, remote output or archive contents.
         parser.exit(
             1, "Ops DB snapshot failed; no source writes, overwrite or automatic restart.\n"

@@ -243,6 +243,84 @@ class RuntimePreflightTests(unittest.TestCase):
                 )
             self.assertEqual(captured, {})
 
+    def stopped_ops_app(self):
+        app = next(
+            app
+            for app in self.apps
+            if app["metadata"]["name"] == "govbiz-fork-ops-service"
+        )
+        app["status"]["sync"]["status"] = "OutOfSync"
+        app["status"]["resources"] = [
+            {
+                "group": "apps",
+                "kind": "Deployment",
+                "namespace": "govbiz-msa",
+                "name": "ops-service",
+                "status": "OutOfSync",
+            }
+        ]
+        return app
+
+    def test_stopped_backup_allows_only_ops_drift_without_loosening_planning(self):
+        self.enable_gitops()
+        before = runtime.argo_observation(self.state, self.settings)
+        self.stopped_ops_app()
+        self.assertEqual(
+            runtime.argo_observation(self.state, self.settings, stopped_ops=True),
+            before,
+        )
+        with self.assertRaises(ValueError):
+            runtime.argo_observation(self.state, self.settings)
+        self.owner.assert_not_called()
+
+    def test_stopped_backup_rejects_unknown_other_or_prunable_drift(self):
+        self.enable_gitops()
+        app = self.stopped_ops_app()
+        row = copy.deepcopy(app["status"]["resources"][0])
+        for resources in (
+            None,
+            [],
+            [{}],
+            [row, row],
+            [row | {"name": "other"}],
+            [row | {"namespace": "other"}],
+            [row | {"kind": "Service"}],
+            [row | {"status": "Unknown"}],
+            [row | {"requiresPruning": True}],
+            [row, {"status": "Synced", "requiresPruning": True}],
+        ):
+            app["status"]["resources"] = resources
+            with self.subTest(resources=resources), self.assertRaises(ValueError):
+                runtime.argo_observation(self.state, self.settings, stopped_ops=True)
+        app["status"]["resources"] = [row]
+        other = next(item for item in self.apps if item is not app)
+        other["status"]["sync"]["status"] = "OutOfSync"
+        with self.assertRaises(ValueError):
+            runtime.argo_observation(self.state, self.settings, stopped_ops=True)
+
+    def test_stopped_backup_keeps_manual_operation_and_ownership_guards(self):
+        self.enable_gitops()
+        app = self.stopped_ops_app()
+        original = copy.deepcopy(app)
+        for path, value in (
+            (("metadata", "uid"), ""),
+            (("spec", "syncPolicy", "automated", "enabled"), True),
+            (("spec", "syncPolicy", "automated", "selfHeal"), True),
+            (("spec", "syncPolicy", "retry", "limit"), 1),
+            (("operation",), {"sync": {}}),
+            (("status", "operationState", "phase"), "Running"),
+            (("status", "operationState", "phase"), "Failed"),
+            (("status", "health", "status"), "Degraded"),
+        ):
+            app.clear()
+            app.update(copy.deepcopy(original))
+            target = app
+            for key in path[:-1]:
+                target = target[key]
+            target[path[-1]] = value
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                runtime.argo_observation(self.state, self.settings, stopped_ops=True)
+
     def test_gitops_project_and_application_set_cannot_be_adopted(self):
         self.enable_gitops()
         original_project, original_apps = copy.deepcopy((self.project, self.apps))

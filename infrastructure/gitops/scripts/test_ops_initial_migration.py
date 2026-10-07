@@ -502,6 +502,15 @@ class ExecutionTests(unittest.TestCase):
     def journal(self):
         return self.state / "ops-initial-migrations" / (REQUEST + ".json")
 
+    def test_gitops_backup_support_does_not_enable_initial_migration(self):
+        self.mocks["load_settings"].return_value = SETTINGS | {"mode": "gitops"}
+        self.mocks["require_dev"].side_effect = migration.database.require_dev
+        with self.assertRaisesRegex(ValueError, "GitOps owns"):
+            migration.migrate(self.args)
+        for name in ("frozen_source", "source_evidence", "read_archive", "run_migration"):
+            self.mocks[name].assert_not_called()
+        self.assertFalse(self.journal().exists())
+
     def test_default_only_verifies_and_does_not_create_job_or_load_cluster_image(self):
         report = migration.migrate(self.args)
         self.assertEqual(report["status"], "VERIFIED_FOR_MIGRATION")

@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -424,7 +425,7 @@ def main():
             )
         )
         print(json.dumps(result, sort_keys=True))
-    except (ValueError, KeyError, TypeError, OSError):
+    except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError):
         parser.exit(1, "Ops storage snapshot failed; no source writes or automatic restart.\n")
 
 

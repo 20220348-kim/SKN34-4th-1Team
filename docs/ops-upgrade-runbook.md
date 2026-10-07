@@ -157,9 +157,10 @@ python3 -B infrastructure/gitops/scripts/ops_maintenance_plan.py --state-dir "$O
    확인한다. Compose 주소가 바뀌었으면 기존 브리지 도구로 연결을 갱신하고 다시 검사한다.
 
 이 계획 도구는 중지·재개를 자동 실행하지 않는다. 원본에 migration을 적용하는 절차와도 별개다.
-GitOps에서의 계획 지원은 `ops_db_snapshot.py` 등 dev 전용 백업·갱신 명령의 모드 제한을 해제하지
-않는다. GitOps의 실제 중지·백업·복원·수동 동기화는 운영 절차로 별도 수행하며, 계획을 통과시키려고
-state 모드나 Argo 추적 정보를 수정하지 않는다.
+`ops_db_snapshot.py`와 `ops_state_snapshot.py`는 아래 조건을 만족하는 중지된 GitOps 환경의
+암호화 백업도 지원한다. 초기 migration·배포 명령의 dev 제한을 해제하는 것은 아니다.
+실제 중지·백업·복원·수동 동기화는 운영 절차로 별도 수행하며, 검사를 통과시키려고 state 모드나
+Argo 추적 정보를 수정하지 않는다.
 
 관련 무료 검증은 `infrastructure/gitops/scripts`에서 다음과 같이 실행한다. Infra CI의 기존
 `test_*.py` 검색에도 포함되고 Ops CI에서 정적 검사를 수행한다. 실제 서비스 중지나 DB
@@ -425,6 +426,27 @@ DB와 파일을 서로 다른 시점에 복사한 뒤 일관된 백업이라고 
 기존 Compose 백업 도구의 인증·암호화 형식을 재사용하지만 payload의 범위는
 `kubernetes_ops_database`로 구분한다. Compose DB+파일 백업과 서로 대체할 수 없다.
 SQL과 비밀번호를 출력하거나 평문 임시 파일로 저장하지 않는다.
+
+개인 dev와 수동 GitOps 모드를 지원한다. GitOps에서는 다음 조건을 추가로 검사한다.
+
+- 네 Application과 AppProject의 소유권·고정 SHA·명세를 확인한다. 자동 동기화·prune·self-heal은
+  꺼져 있고 재시도는 0이어야 하며, 대기 중 operation 없이 마지막 operation이 `Succeeded`이고
+  health가 `Healthy`여야 한다. 다른 서비스는 `Synced` 상태를 유지해야 한다.
+- 수동으로 Ops를 0개로 줄이면 Ops Application은 `OutOfSync`가 될 수 있다. 백업 검사에서만
+  해당 namespace의 `apps/Deployment/ops-service` 한 리소스의 차이를 허용한다. 다른 리소스의
+  차이·삭제 대기·알 수 없는 상태는 거절한다. 이 허용이 Deployment의 차이가 replicas뿐이라는
+  증명은 아니므로, 정확한 Argo tracking-id와 DB 연결·중지 상태도 별도로 검사한다.
+  일반 배포 준비·중지 계획의 `Synced` 요구는 그대로 유지한다.
+- Deployment의 replicas와 상태별 replica 수가 0이고 최신 generation이 관찰돼야 하며,
+  Ops Pod가 없어야 한다. Compose 실행기·Prefect의 종료 및 HPA 부재도 함께 확인한다.
+- 정지된 Ops API 대신 원본 DB에서 기존 접수 제어 행을 읽는다. `id=1`, `accepting=0`, 양수인
+  version을 가진 단일 행이 필요하다. 테이블·행 누락과 열린 접수는 거절하며 자동 생성·중지는 하지 않는다.
+- Argo UID·명세 지문·고정 SHA, Deployment 명세 지문과 접수 version을 백업 원본 정보에 묶고
+  반복 대조한다. state·연결 기록·소유권이 바뀌면 백업 파일을 발행하지 않는다. DB 백업 이후
+  상태 묶음을 만들 때도 같은 원본 정보가 필요하므로 그 사이 서비스를 재개하면 안 된다.
+
+호출 흐름은 `백업 CLI → 중지·소유권·접수 검사 → DB 덤프 / 상태 캡처 → 반복 대조 → 암호화 파일`
+이다. 이 경로를 지원한다는 것과 실제 환경의 백업·복원 검증을 완료했다는 것은 별도로 기록한다.
 
 먼저 위 절차에 따라 진행 중 작업과 접수를 정리하고, 운영자가 Kubernetes `ops-service`
 Deployment의 API·sync와 해당 Compose 프로젝트의 실행기·Prefect를 중지해야 한다.
