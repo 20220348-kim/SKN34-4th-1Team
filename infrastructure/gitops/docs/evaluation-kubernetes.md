@@ -235,6 +235,20 @@ LLMOps CI의 기존 격리 통합 검증에 `--evaluation-runtime` 단계를 연
 NetworkPolicy 집행을 입증하지 않으며, 이 결과는 Argo CD 배포·공개 이미지 발행·운영 PVC 인계의
 증거가 아니다. 로컬 단위·렌더링 검사만 통과한 상태에서는 **실제 런타임 검증은 최신 SHA CI 대기**다.
 
+평가 Deployment의 rollout이 실패하면 임시 namespace를 정리하기 전에 같은 보고서의
+`evaluation_kubernetes_runtime.rollout_failure`에 실패 component·오류 종류, Pod 배치 여부,
+init/main 컨테이너의 준비 상태·재시작 횟수·현재/직전 종료 사유와 코드를 남긴다.
+Pod 로그와 이벤트는 크기·시간 제한 안에서 읽고, 권한·읽기 전용 파일시스템·DB 스키마·볼륨 마운트·
+메모리/디스크 압박·프로브 연결 거부 등의 **고정 진단 코드**만 `signals`에 기록한다.
+로그 원문, Pod spec, 환경변수·Secret 값, 이벤트 원문은 artifact에 저장하지 않는다.
+진단 조회 자체가 실패하면 `diagnostic_errors`로 구분하고 원래 rollout 오류를 그대로 반환한다.
+최초 기동·Prefect/결과 서버 재시작의 240초와 실행기 재기동의 180초 제한, CI 실패 판정,
+임시 PVC·태그 정리 경로는 유지한다. 진단 정보가 없거나 일부만 수집됐다고 정상으로 처리하지 않는다.
+
+이 경로를 수정한 뒤에는 `test_smoke_evaluation_runtime`의 실패·민감값 비노출·정리 순서 검증과
+최신 SHA의 실제 LLMOps CI를 함께 확인한다. 별도 합성 데이터로 수행한 로컬 Prefect 기동 성공은
+CI의 전체 Ops 복구·평가 실행·Pod 교체 성공을 대체하지 않는다.
+
 ## 후속 완료 기준
 
 1. 기존 [암호화 백업·복원](../../../docs/ops-upgrade-runbook.md)을 이용해 **새 Kubernetes PVC**로

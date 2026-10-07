@@ -3,6 +3,7 @@
 import base64
 import copy
 import json
+import subprocess
 import tempfile
 import unittest
 from contextlib import contextmanager
@@ -196,6 +197,155 @@ class RuntimeTests(unittest.TestCase):
                 else:
                     self.assertEqual(smoke.restart([], "prefect")["after"], after)
 
+    def test_failed_rollout_preserves_safe_evidence_and_original_error(self):
+        original = subprocess.CalledProcessError(
+            1, ["kubectl", "rollout"], stderr="private-token"
+        )
+        calls = []
+
+        def command(args, **kwargs):
+            calls.append(args)
+            if "rollout" in args:
+                raise original
+            if "pods" in args:
+                return json.dumps(
+                    {
+                        "items": [
+                            {
+                                "metadata": {"name": "prefect-test"},
+                                "spec": {"env": {"SECRET": "private-token"}},
+                                "status": {
+                                    "phase": "Running",
+                                    "conditions": [
+                                        {"type": "PodScheduled", "status": "True"}
+                                    ],
+                                    "initContainerStatuses": [
+                                        {
+                                            "name": "restored-prefect-database",
+                                            "ready": True,
+                                            "restartCount": 0,
+                                            "state": {
+                                                "terminated": {
+                                                    "reason": "Completed",
+                                                    "exitCode": 0,
+                                                }
+                                            },
+                                        }
+                                    ],
+                                    "containerStatuses": [
+                                        {
+                                            "name": "prefect",
+                                            "ready": False,
+                                            "restartCount": 2,
+                                            "state": {
+                                                "waiting": {
+                                                    "reason": "CrashLoopBackOff",
+                                                    "message": "private-token",
+                                                }
+                                            },
+                                            "lastState": {
+                                                "terminated": {
+                                                    "reason": "OOMKilled",
+                                                    "exitCode": 137,
+                                                    "message": "private-token",
+                                                }
+                                            },
+                                        }
+                                    ],
+                                },
+                            }
+                        ]
+                    }
+                )
+            if "events" in args:
+                return json.dumps(
+                    {
+                        "items": [
+                            {
+                                "message": "probe failed: connection refused private-token"
+                            }
+                        ]
+                    }
+                )
+            if "logs" in args:
+                return "PermissionError: private-token; Read-only file system /private/path"
+            self.fail(args)
+
+        evidence = {}
+        with (
+            patch.object(smoke, "execute", side_effect=command),
+            self.assertRaises(subprocess.CalledProcessError) as caught,
+        ):
+            smoke.rollout(["kubectl", "-n", "owned-test"], "prefect", evidence)
+        self.assertIs(caught.exception, original)
+        report = evidence["rollout_failure"]
+        self.assertEqual(report["component"], "prefect")
+        self.assertEqual(report["pod_count"], 1)
+        self.assertEqual(
+            report["pods"][0]["containers"][1]["lastState"]["terminated"],
+            {"reason": "OOMKilled", "exit_code": 137},
+        )
+        self.assertEqual(
+            report["signals"],
+            ["permission_denied", "probe_connection_refused", "read_only_filesystem"],
+        )
+        self.assertNotIn("private", json.dumps(report))
+        self.assertTrue(any("--previous" in args for args in calls))
+        self.assertTrue(
+            all("--limit-bytes=16384" in args for args in calls if "logs" in args)
+        )
+
+    def test_unavailable_diagnostics_never_hide_rollout_failure(self):
+        original = subprocess.TimeoutExpired(
+            ["kubectl", "rollout"], 255, output="private-token"
+        )
+
+        def command(args, **kwargs):
+            if "rollout" in args:
+                raise original
+            raise OSError("private-token")
+
+        evidence = {}
+        with (
+            patch.object(smoke, "execute", side_effect=command),
+            self.assertRaises(subprocess.TimeoutExpired) as caught,
+        ):
+            smoke.rollout(["kubectl"], "evaluation-runner", evidence, seconds=180)
+        self.assertIs(caught.exception, original)
+        self.assertEqual(
+            evidence["rollout_failure"]["diagnostic_errors"],
+            ["pod_events_unavailable", "pod_status_unavailable"],
+        )
+        self.assertNotIn("private-token", json.dumps(evidence))
+
+    def test_successful_rollout_does_not_collect_logs_or_change_deadlines(self):
+        evidence = {}
+        with patch.object(smoke, "execute") as command:
+            smoke.rollout(["kubectl"], "prefect", evidence)
+        command.assert_called_once_with(
+            ["kubectl", "rollout", "status", "deployment/prefect", "--timeout=240s"],
+            timeout=255,
+        )
+        self.assertEqual(evidence, {})
+
+    def test_malformed_diagnostics_preserve_the_original_failure(self):
+        original = subprocess.CalledProcessError(1, ["kubectl", "rollout"])
+        with (
+            patch.object(
+                smoke,
+                "execute",
+                side_effect=[original, '{"items":[null]}', '{"items":[null]}'],
+            ),
+            self.assertRaises(subprocess.CalledProcessError) as caught,
+        ):
+            report = {}
+            smoke.rollout(["kubectl"], "prefect", report)
+        self.assertIs(caught.exception, original)
+        self.assertEqual(
+            report["rollout_failure"]["diagnostic_errors"],
+            ["pod_events_unavailable", "pod_status_unavailable"],
+        )
+
     def test_runtime_is_mandatory_in_required_ci(self):
         workflow = yaml.safe_load(
             (smoke.REPOSITORY_ROOT / ".github/workflows/llmops-ci.yml").read_text(
@@ -213,7 +363,7 @@ class RuntimeTests(unittest.TestCase):
         self.assertIn("--evaluate ", checks[0]["run"])
         self.assertEqual(workflow["jobs"]["merge-readiness"]["needs"], ["integration"])
 
-    def test_deployment_failure_cleans_pvcs_and_tags_without_reporting_success(self):
+    def deployment_failure(self, *, at_rollout=False):
         events = []
         settings = {
             "repository": "bridge-smoke/local",
@@ -243,6 +393,10 @@ class RuntimeTests(unittest.TestCase):
                 if "deployment" in args:
                     return json.dumps({"spec": {"replicas": 0}})
                 if "pods" in args:
+                    if "pvc-created" in events:
+                        events.append("diagnosed")
+                    return '{"items":[]}'
+                if "events" in args:
                     return '{"items":[]}'
                 if "secret" in args:
                     return json.dumps(
@@ -258,7 +412,9 @@ class RuntimeTests(unittest.TestCase):
                 return IMAGE_ID
             if args[:3] == ["docker", "image", "rm"]:
                 events.append("tag-deleted")
-            if data and json.loads(data).get("kind") == "Deployment":
+            if at_rollout and "rollout" in args:
+                raise subprocess.CalledProcessError(1, args, stderr="private-token")
+            if not at_rollout and data and json.loads(data).get("kind") == "Deployment":
                 raise ValueError("deployment failed")
             return ""
 
@@ -286,7 +442,9 @@ class RuntimeTests(unittest.TestCase):
                 "render_bundle",
                 return_value={"prefect": [{"kind": "Deployment"}]},
             ),
-            self.assertRaisesRegex(ValueError, "deployment failed"),
+            self.assertRaises(
+                subprocess.CalledProcessError if at_rollout else ValueError
+            ),
         ):
             smoke.verify(
                 Path(directory),
@@ -302,12 +460,26 @@ class RuntimeTests(unittest.TestCase):
             )
         self.assertEqual(
             events,
-            ["pvc-created", "pvc-deleted", "tag-deleted", "tag-deleted", "tag-deleted"],
+            [
+                "pvc-created",
+                *(["diagnosed"] if at_rollout else []),
+                "pvc-deleted",
+                "tag-deleted",
+                "tag-deleted",
+                "tag-deleted",
+            ],
         )
         evidence = report["evaluation_kubernetes_runtime"]
         self.assertEqual(evidence["status"], "FAIL")
         self.assertFalse(evidence["cleanup_complete"])
         self.assertNotIn("token", json.dumps(evidence))
+        self.assertEqual("rollout_failure" in evidence, at_rollout)
+
+    def test_deployment_failure_cleans_pvcs_and_tags_without_reporting_success(self):
+        self.deployment_failure()
+
+    def test_rollout_is_diagnosed_before_namespace_and_tags_are_deleted(self):
+        self.deployment_failure(at_rollout=True)
 
 
 if __name__ == "__main__":

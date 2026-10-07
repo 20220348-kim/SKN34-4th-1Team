@@ -174,13 +174,178 @@ def pod_identity(ek, component):
     return {"uid": rows[0]["metadata"]["uid"], "image_id": statuses[0]["imageID"]}
 
 
-def restart(ek, component):
+def failure_signals(text):
+    """Only fixed diagnostic codes may leave raw Kubernetes responses/logs."""
+    patterns = {
+        "permission_denied": r"PermissionError|Permission denied",
+        "read_only_filesystem": r"Read-only file system",
+        "missing_database_schema": r"no such (table|column)",
+        "database_locked": r"database is locked",
+        "invalid_cli_option": r"No such option|unrecognized arguments",
+        "port_in_use": r"Address already in use|Port .* is already in use",
+        "insufficient_memory": r"Insufficient memory",
+        "insufficient_cpu": r"Insufficient cpu",
+        "node_disk_pressure": r"node.kubernetes.io/disk-pressure",
+        "node_memory_pressure": r"node.kubernetes.io/memory-pressure",
+        "failed_mount": r"MountVolume.*failed|Unable to attach or mount volumes",
+        "probe_connection_refused": r"[Pp]robe failed.*connection refused",
+    }
+    return sorted(
+        name for name, pattern in patterns.items() if re.search(pattern, text)
+    )
+
+
+def rollout(ek, component, evidence, *, seconds=240):
+    """Keep failure evidence before the owned namespace is deleted; never recover silently."""
+    if component not in check_evaluation.COMPONENTS:
+        raise ValueError("Unknown evaluation component")
+    try:
+        execute(
+            ek
+            + ["rollout", "status", "deployment/" + component, f"--timeout={seconds}s"],
+            timeout=seconds + 15,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        failure = evidence["rollout_failure"] = {
+            "component": component,
+            "error_type": type(error).__name__,
+            "pods": [],
+            "signals": [],
+            "diagnostic_errors": [],
+        }
+        try:
+            rows = json.loads(
+                execute(
+                    ek
+                    + [
+                        "get",
+                        "pods",
+                        "-l",
+                        "app.kubernetes.io/name=" + component,
+                        "-o",
+                        "json",
+                    ],
+                    timeout=15,
+                )
+            )["items"]
+            failure["pod_count"] = len(rows)
+            reasons = {
+                "ContainerCreating",
+                "PodInitializing",
+                "CrashLoopBackOff",
+                "ErrImagePull",
+                "ImagePullBackOff",
+                "ErrImageNeverPull",
+                "CreateContainerConfigError",
+                "CreateContainerError",
+                "RunContainerError",
+                "OOMKilled",
+                "Error",
+                "Completed",
+            }
+            allowed = {component, "restored-prefect-database", "evaluation-evidence"}
+            for row in rows[:4]:
+                status = row.get("status", {})
+                pod = {
+                    "phase": status.get("phase")
+                    if status.get("phase")
+                    in {"Pending", "Running", "Succeeded", "Failed", "Unknown"}
+                    else "Unknown",
+                    "scheduled": any(
+                        c.get("type") == "PodScheduled" and c.get("status") == "True"
+                        for c in status.get("conditions", [])
+                    ),
+                    "containers": [],
+                }
+                failure["pods"].append(pod)
+                for container in status.get("initContainerStatuses", []) + status.get(
+                    "containerStatuses", []
+                ):
+                    name = container.get("name")
+                    if name not in allowed:
+                        continue
+                    item = {
+                        "name": name,
+                        "ready": container.get("ready") is True,
+                        "restarts": container.get("restartCount")
+                        if type(container.get("restartCount")) is int
+                        else None,
+                    }
+                    for field in ("state", "lastState"):
+                        state = container.get(field, {})
+                        item[field] = {
+                            kind: {
+                                "reason": value.get("reason")
+                                if value.get("reason") in reasons
+                                else "Unknown",
+                                **(
+                                    {
+                                        "exit_code": value.get("exitCode")
+                                        if type(value.get("exitCode")) is int
+                                        else None
+                                    }
+                                    if kind == "terminated"
+                                    else {}
+                                ),
+                            }
+                            for kind, value in state.items()
+                            if kind in {"running", "waiting", "terminated"}
+                        }
+                    pod["containers"].append(item)
+                    for previous in (
+                        (False, True) if container.get("restartCount", 0) else (False,)
+                    ):
+                        try:
+                            logs = execute(
+                                ek
+                                + [
+                                    "logs",
+                                    row["metadata"]["name"],
+                                    "-c",
+                                    name,
+                                    "--tail=100",
+                                    "--limit-bytes=16384",
+                                    *(["--previous"] if previous else []),
+                                ],
+                                timeout=15,
+                            )
+                            failure["signals"].extend(failure_signals(logs))
+                        except Exception:  # noqa: BLE001 - diagnostics must not mask the original failure
+                            failure["diagnostic_errors"].append(
+                                "container_logs_unavailable"
+                            )
+        except Exception:  # noqa: BLE001 - retain the original rollout failure even for malformed diagnostics
+            failure["diagnostic_errors"].append("pod_status_unavailable")
+        try:
+            events = json.loads(
+                execute(
+                    ek
+                    + [
+                        "get",
+                        "events",
+                        "--field-selector=involvedObject.kind=Pod",
+                        "-o",
+                        "json",
+                    ],
+                    timeout=15,
+                )
+            )["items"]
+            failure["signals"].extend(
+                failure_signals(
+                    "\n".join(str(row.get("message", "")) for row in events)
+                )
+            )
+        except Exception:  # noqa: BLE001 - diagnostics cannot turn a failed rollout into another outcome
+            failure["diagnostic_errors"].append("pod_events_unavailable")
+        failure["signals"] = sorted(set(failure["signals"]))
+        failure["diagnostic_errors"] = sorted(set(failure["diagnostic_errors"]))
+        raise
+
+
+def restart(ek, component, evidence=None):
     before = pod_identity(ek, component)
     execute(ek + ["rollout", "restart", "deployment/" + component])
-    execute(
-        ek + ["rollout", "status", "deployment/" + component, "--timeout=240s"],
-        timeout=255,
-    )
+    rollout(ek, component, evidence if evidence is not None else {})
     after = pod_identity(ek, component)
     if before["uid"] == after["uid"] or before["image_id"] != after["image_id"]:
         raise ValueError("Pod replacement must preserve the evaluation image")
@@ -390,16 +555,7 @@ def verify(
             for component in ("prefect", "ops-artifacts", "evaluation-runner"):
                 for resource in rendered[component]:
                     execute(ek + ["create", "-f", "-"], data=json.dumps(resource))
-                execute(
-                    ek
-                    + [
-                        "rollout",
-                        "status",
-                        "deployment/" + component,
-                        "--timeout=240s",
-                    ],
-                    timeout=255,
-                )
+                rollout(ek, component, evidence)
             evidence["pods"] = {name: pod_identity(ek, name) for name in images}
             artifact_url = switch_ops(nk, namespace)
             evidence["admission_resume"] = set_admission(
@@ -451,18 +607,11 @@ def verify(
                     timeout=135,
                 )
                 for component in ("prefect", "ops-artifacts"):
-                    evidence["replacements"][component] = restart(ek, component)
+                    evidence["replacements"][component] = restart(
+                        ek, component, evidence
+                    )
                 execute(ek + ["scale", "deployment/evaluation-runner", "--replicas=1"])
-                execute(
-                    ek
-                    + [
-                        "rollout",
-                        "status",
-                        "deployment/evaluation-runner",
-                        "--timeout=180s",
-                    ],
-                    timeout=195,
-                )
+                rollout(ek, "evaluation-runner", evidence, seconds=180)
                 new_runner = pod_identity(ek, "evaluation-runner")
                 old_runner = evidence["pods"]["evaluation-runner"]
                 if (
