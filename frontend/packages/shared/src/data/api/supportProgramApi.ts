@@ -23,11 +23,16 @@ import {
   parseSupportProgramEvidenceAnswerDto,
   type SupportProgramEvidenceAnswerDto,
 } from '../models/SupportProgramEvidenceAnswerDto'
+import {
+  supportProgramAttachmentListDtoSchema,
+  type SupportProgramAttachmentDto,
+} from '../models/SupportProgramAttachmentDto'
 
 const SEARCH_SUPPORT_PROGRAMS_PATH = '/api/v1/support-programs/search'
 const SUPPORT_PROGRAM_SEARCH_READINESS_PATH = '/api/v1/support-programs/readiness'
 const SUPPORT_PROGRAM_DETAIL_PATH = '/api/v1/support-programs/detail'
 const SUPPORT_PROGRAM_EVIDENCE_ANSWER_PATH = '/api/v1/support-programs/detail/answers'
+const SUPPORT_PROGRAM_ATTACHMENTS_PATH = '/api/v1/support-programs/detail/attachments'
 const SUPPORT_PROGRAM_INTERPRETATION_PATH = '/api/v1/support-programs/conversation/interpret'
 
 export async function interpretSupportProgramConversationApi(context: SupportProgramHttpContext, command: SupportProgramInterpretRequest, signal?: AbortSignal) {
@@ -268,6 +273,45 @@ export async function getSupportProgramDetailApi(context: SupportProgramHttpCont
   }
 
   return detail
+}
+
+/** 공고 원문이 직접 연결한 첨부 목록(이미지 제외)입니다. 원문을 읽지 못하면 빈 목록 대신 오류를 냅니다. */
+export async function getSupportProgramAttachmentsApi(context: SupportProgramHttpContext,
+  identity: SupportProgramIdentity,
+  signal?: AbortSignal,
+): Promise<SupportProgramAttachmentDto[]> {
+  const response = await context.fetch(
+    `${context.baseUrl}${SUPPORT_PROGRAM_ATTACHMENTS_PATH}?${identityParams(identity).toString()}`,
+    {
+      headers: { Accept: 'application/json' },
+      signal,
+    },
+  )
+
+  if (!response.ok) {
+    throw new SupportProgramApiError(
+      `Core API returned HTTP ${response.status} for the support program attachments request.`,
+    )
+  }
+
+  return supportProgramAttachmentListDtoSchema.parse(await response.json()).items
+}
+
+/** Core가 원본에서 받아 한글 파일 이름 그대로 내려 주는 첨부 받기 주소입니다. 로그인 없이 링크로 엽니다. */
+export function supportProgramAttachmentDownloadUrl(context: SupportProgramHttpContext,
+  identity: SupportProgramIdentity,
+  index: number,
+): string {
+  const searchParams = identityParams(identity)
+  searchParams.set('index', String(index))
+  return `${context.baseUrl}${SUPPORT_PROGRAM_ATTACHMENTS_PATH}/download?${searchParams.toString()}`
+}
+
+function identityParams(identity: SupportProgramIdentity) {
+  return new URLSearchParams({
+    sourceCode: identity.sourceCode,
+    sourceProgramId: identity.sourceProgramId,
+  })
 }
 
 /** 특정 공고 원문을 근거로 한 사용자의 명시적 질문에 답합니다. */

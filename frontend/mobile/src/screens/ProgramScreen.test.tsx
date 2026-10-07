@@ -8,6 +8,8 @@ import { preparation, preparationDetail, programDetail } from '../test/preparati
 jest.mock('expo-router', () => ({ useFocusEffect: (effect: () => void) => { const React = jest.requireActual<typeof import('react')>('react'); React.useEffect(effect, [effect]) } }))
 jest.mock('../auth/session', () => ({ useAuth: jest.fn() }))
 jest.mock('../api/client', () => ({ ...jest.requireActual('../api/client'), apiRequest: jest.fn(), programClient: jest.fn() }))
+// 공식 첨부 카드는 원문을 따로 읽어 이 화면 흐름과 무관하므로 격리합니다. 첨부 동작은 ProgramAttachments.test가 확인합니다.
+jest.mock('../components/ProgramAttachments', () => ({ ProgramAttachments: () => null }))
 const answer = jest.fn()
 const identity = { sourceCode: 'BIZINFO', sourceProgramId: 'P/123' }
 const invalidateSession = jest.fn()

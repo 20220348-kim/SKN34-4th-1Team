@@ -12,6 +12,7 @@ import { useAuth } from '../auth/session'
 import { AppIcon } from '../components/AppIcon'
 import { PartnerSheet } from '../components/PartnerSheet'
 import { ProgramPreparationSection } from '../components/PreparationRows'
+import { ProgramAttachments } from '../components/ProgramAttachments'
 import { Button, Card, Field, Notice, Page, StatusBadge, Subtitle, Title, colors, ddayBadgeTone, styles } from '../ui'
 
 export function ProgramScreen({ identity, onLogin, resumeAction, onResumed }: {
@@ -163,6 +164,7 @@ export function ProgramScreen({ identity, onLogin, resumeAction, onResumed }: {
         {program.preferenceDescription ? <><Text style={styles.heading}>우대 사항</Text><Text style={styles.body}>{program.preferenceDescription}</Text></> : null}
       </Card>
       {program.applicationRoute.method ? <Card><Text style={styles.heading}>신청 방법</Text><Text selectable style={styles.body}>{program.applicationRoute.method}</Text></Card> : null}
+      <ProgramAttachments client={client} identity={identity} />
       {applicationUrl ? <Button variant="secondary" label={program.applicationRoute.type === 'GOOGLE_FORMS' ? '구글 설문 신청서 열기' : '신청 사이트 열기'}
         onPress={() => void openSource(applicationUrl)} /> : null}
       <Notice>공고 정보는 신청 자격의 확정 판정이 아닙니다. 제출 전 공식 공고의 요건과 마감일을 확인해 주세요.</Notice>

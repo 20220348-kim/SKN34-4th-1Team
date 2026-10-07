@@ -70,6 +70,7 @@ import ai.govbiz.core.supportprogram.service.search.exception.SupportProgramSear
 import ai.govbiz.core.supportprogram.repository.exception.SupportProgramSearchResultStoreException
 import ai.govbiz.core.supportprogram.service.catalog.exception.SupportProgramCatalogFilterException
 import ai.govbiz.core.supportprogram.service.evidence.exception.SupportProgramEvidenceNotSupportedException
+import ai.govbiz.core.supportprogram.service.attachment.exception.SupportProgramAttachmentException
 import ai.govbiz.core.supportprogram.service.evidence.exception.SupportProgramEvidenceUnavailableException
 import ai.govbiz.core.assistant.service.exception.AssistantToolUnauthorizedException
 import ai.govbiz.core.assistant.service.exception.AssistantToolsDisabledException
@@ -397,6 +398,38 @@ class ApiExceptionHandler {
                 "Evidence-based answers are temporarily unavailable for this support program.",
                 "SUPPORT_PROGRAM_EVIDENCE_UNAVAILABLE",
             ),
+            request,
+        )
+
+    @ExceptionHandler(SupportProgramAttachmentException::class)
+    fun handleSupportProgramAttachmentException(
+        exception: SupportProgramAttachmentException,
+        request: HttpServletRequest,
+    ): ResponseEntity<ProblemDetail> =
+        problemResponse(
+            when (exception.reason) {
+                SupportProgramAttachmentException.Reason.NOT_FOUND -> ProblemDefinition(
+                    HttpStatus.NOT_FOUND,
+                    URI.create("urn:govbiz:problem:support-program-attachment-not-found"),
+                    "Support Program Attachment Not Found",
+                    "The requested attachment is not listed for this support program.",
+                    "SUPPORT_PROGRAM_ATTACHMENT_NOT_FOUND",
+                )
+                SupportProgramAttachmentException.Reason.TOO_LARGE -> ProblemDefinition(
+                    HttpStatus.CONTENT_TOO_LARGE,
+                    URI.create("urn:govbiz:problem:support-program-attachment-too-large"),
+                    "Support Program Attachment Too Large",
+                    "The attachment is too large to download through this service. Use the official page instead.",
+                    "SUPPORT_PROGRAM_ATTACHMENT_TOO_LARGE",
+                )
+                SupportProgramAttachmentException.Reason.UNAVAILABLE -> ProblemDefinition(
+                    HttpStatus.SERVICE_UNAVAILABLE,
+                    URI.create("urn:govbiz:problem:support-program-attachments-unavailable"),
+                    "Support Program Attachments Unavailable",
+                    "Official attachments are temporarily unavailable for this support program.",
+                    "SUPPORT_PROGRAM_ATTACHMENTS_UNAVAILABLE",
+                )
+            },
             request,
         )
 

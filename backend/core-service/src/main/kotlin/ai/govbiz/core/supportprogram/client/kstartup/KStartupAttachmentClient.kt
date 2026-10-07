@@ -3,13 +3,17 @@ package ai.govbiz.core.supportprogram.client.kstartup
 import ai.govbiz.core.supportprogram.client.document.MAX_SUPPORT_PROGRAM_ATTACHMENT_BYTES
 import ai.govbiz.core.supportprogram.client.document.MAX_SUPPORT_PROGRAM_ATTACHMENTS_TOTAL_BYTES
 import ai.govbiz.core.supportprogram.client.document.SupportProgramAttachment
+import ai.govbiz.core.supportprogram.client.document.SupportProgramAttachmentLink
 import ai.govbiz.core.supportprogram.client.document.SupportProgramAttachments
 import ai.govbiz.core.supportprogram.client.document.SupportProgramDocumentException
 import ai.govbiz.core.supportprogram.client.document.SupportProgramDocumentException.Reason
+import ai.govbiz.core.supportprogram.client.document.helper.SupportProgramAttachmentLinkHelper
+import java.io.InputStream
 import java.net.URI
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import org.jsoup.Jsoup
+import org.jsoup.nodes.Document
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.http.HttpHeaders
 import org.springframework.http.MediaType
@@ -24,19 +28,8 @@ class KStartupAttachmentClient(
     fun collect(sourceCode: String, sourceProgramId: String, sourceUrl: String): SupportProgramAttachments {
         if (sourceCode != "KSTARTUP" || !PROGRAM_ID.matches(sourceProgramId)) fail(Reason.UNSUPPORTED)
         return try {
-            val requested = requireDetailUri(URI(sourceUrl), sourceProgramId)
-            var html = fetchPage(requested)
-            var detailUri = requested
-            REDIRECT.find(html)?.groupValues?.get(1)?.let { path ->
-                val redirected = requireDetailUri(requested.resolve(path.replace("&amp;", "&")), sourceProgramId)
-                if (redirected == requested) fail(Reason.INVALID)
-                detailUri = redirected
-                html = fetchPage(redirected)
-            }
-            if (REDIRECT.containsMatchIn(html)) fail(Reason.INVALID)
-            val page = Jsoup.parse(html, detailUri.toString())
+            val (detailUri, page) = detailPage(sourceProgramId, sourceUrl)
             val title = page.selectFirst("#scrTitle h3")?.text()?.trim().orEmpty()
-            if (title.isBlank()) fail(Reason.NOT_FOUND)
             val warnings = mutableListOf("K-Startup 공식 페이지가 직접 연결한 PDF/HWP/HWPX/DOCX/XLSX만 수집했습니다. 추출 결과는 사용자가 원문과 대조해야 합니다.")
             val candidates = linkedMapOf<String, Candidate>()
             page.select(".board_file li").forEach { item ->
@@ -68,6 +61,51 @@ class KStartupAttachmentClient(
         } catch (error: Exception) {
             throw SupportProgramDocumentException(Reason.UNAVAILABLE, error)
         }
+    }
+
+    /** 공고 상세에 보여 줄 첨부 목록입니다. 분석용 [collect]와 달리 형식·개수를 거르지 않고 이미지만 빼며 파일은 받지 않습니다. */
+    fun links(sourceProgramId: String, sourceUrl: String): List<SupportProgramAttachmentLink> {
+        if (!PROGRAM_ID.matches(sourceProgramId)) fail(Reason.UNSUPPORTED)
+        return try {
+            val (detailUri, page) = detailPage(sourceProgramId, sourceUrl)
+            SupportProgramAttachmentLinkHelper.visible(page.select(".board_file li").mapNotNull { item ->
+                val fileName = item.selectFirst("a.file_bg")?.text().orEmpty()
+                val href = item.select("a.btn_down[name=downloadBtn][href]").singleOrNull()?.absUrl("href") ?: return@mapNotNull null
+                val download = runCatching { requireDownloadUri(URI(href)) }.getOrNull() ?: return@mapNotNull null
+                SupportProgramAttachmentLinkHelper.link(fileName, download.toString(), detailUri.toString())
+            })
+        } catch (error: SupportProgramDocumentException) {
+            throw error
+        } catch (error: Exception) {
+            throw SupportProgramDocumentException(Reason.UNAVAILABLE, error)
+        }
+    }
+
+    /** [links]가 돌려준 첨부 하나를 공고 상세를 Referer로 받아 길이(모르면 -1)와 본문을 [receive]로 넘깁니다. */
+    fun open(link: SupportProgramAttachmentLink, receive: (Long, InputStream) -> Unit) {
+        val uri = requireDownloadUri(URI(link.url))
+        val referer = link.referer?.let(::URI)?.takeIf { it.scheme == "https" && it.host in HOSTS && it.path in DETAIL_PATHS }
+            ?: fail(Reason.INVALID)
+        restClient.get().uri(uri).header(HttpHeaders.REFERER, referer.toString()).accept(MediaType.ALL).exchange { _, response ->
+            SupportProgramAttachmentLinkHelper.receive(response, receive)
+        }
+    }
+
+    /** 공식 상세 주소를 검증해 읽고, 진행·마감 상태 페이지로 한 번 넘기는 안내를 따라간 최종 주소와 문서입니다. */
+    private fun detailPage(sourceProgramId: String, sourceUrl: String): Pair<URI, Document> {
+        val requested = requireDetailUri(URI(sourceUrl), sourceProgramId)
+        var html = fetchPage(requested)
+        var detailUri = requested
+        REDIRECT.find(html)?.groupValues?.get(1)?.let { path ->
+            val redirected = requireDetailUri(requested.resolve(path.replace("&amp;", "&")), sourceProgramId)
+            if (redirected == requested) fail(Reason.INVALID)
+            detailUri = redirected
+            html = fetchPage(redirected)
+        }
+        if (REDIRECT.containsMatchIn(html)) fail(Reason.INVALID)
+        val page = Jsoup.parse(html, detailUri.toString())
+        if (page.selectFirst("#scrTitle h3")?.text()?.trim().isNullOrBlank()) fail(Reason.NOT_FOUND)
+        return detailUri to page
     }
 
     private fun downloadWithinLimits(

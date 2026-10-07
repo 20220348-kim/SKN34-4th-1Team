@@ -103,6 +103,16 @@ export const supportProgramDetailStyles = {
     'inline-flex h-10 items-center justify-center gap-1.5 rounded-full border border-line-strong bg-surface px-4 text-[0.875rem] font-semibold text-ink no-underline',
     'hover:border-brand-primary hover:text-brand-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary',
   ),
+  // 공식 첨부 목록입니다. 공고 내용 카드와 같은 카드에 파일 이름 · 형식 태그 · [받기]를 한 줄씩 둡니다.
+  attachmentList: 'm-0 flex list-none flex-col p-0',
+  attachmentItem: 'flex min-h-12 items-center gap-2.5 border-t border-surface-muted py-2 first:border-t-0 first:pt-0',
+  attachmentName: 'min-w-0 flex-1 text-[0.9375rem] leading-[1.5] break-all text-ink',
+  attachmentDownload: classes(
+    'inline-flex h-9 shrink-0 items-center gap-1 rounded-full border border-line-strong bg-surface px-3 text-[0.8125rem] font-semibold text-ink no-underline',
+    'hover:border-brand-primary hover:text-brand-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary',
+  ),
+  attachmentNote: 'm-0 text-[0.875rem] leading-[1.6] text-ink-muted',
+  attachmentSourceLink: 'font-semibold text-brand-primary underline-offset-2 hover:underline',
   // 불러오는 동안의 스켈레톤입니다. 완성 화면과 같은 카드 자리(hero · 한눈에 보기 · 공고 내용 · 할 일)를 잡아 둡니다.
   skeletonCard: 'flex flex-col gap-3 rounded-2xl border border-line bg-surface px-6 py-5 max-[599px]:px-4 max-[599px]:py-4',
   skeletonBar: 'h-3.5 rounded-md bg-surface-muted motion-safe:animate-pulse',

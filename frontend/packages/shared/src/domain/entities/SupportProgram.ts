@@ -55,3 +55,11 @@ export type SupportProgramDetail = Omit<SupportProgram, 'matchedReasons' | 'reco
   /** K-Startup 주관 기관 유형(공공기관·민간·교육기관·지자체 등)입니다. 기관 이름이 아닙니다. */
   supervisingInstitutionType: string | null
 }
+
+/** 공고 원문이 직접 연결한 첨부 한 건입니다. 이미지는 빼며, Core가 원본에서 받아 내려 주는 주소로 엽니다. */
+export type SupportProgramAttachment = {
+  fileName: string
+  /** 소문자 확장자입니다. 이름에 없으면 빈 문자열입니다. */
+  extension: string
+  downloadUrl: string
+}

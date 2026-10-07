@@ -14,4 +14,6 @@ export const searchSupportProgramsApi = supportProgramClient.search
 export const restoreSupportProgramSearchApi = supportProgramClient.restoreSearch
 export const getSupportProgramSearchReadinessApi = supportProgramClient.getSearchReadiness
 export const getSupportProgramDetailApi = supportProgramClient.getDetail
+export const getSupportProgramAttachmentsApi = supportProgramClient.getAttachments
+export const supportProgramAttachmentDownloadUrl = supportProgramClient.attachmentDownloadUrl
 export const answerSupportProgramEvidenceQuestionApi = supportProgramClient.answerEvidenceQuestion

@@ -61,6 +61,7 @@ import type {
 import type { DevLogInUseCase } from '../../domain/usecases/DevLogInUseCase'
 import type { CompleteOAuthSignInUseCase, StartOAuthSignInUseCase } from '../../domain/usecases/OAuthSignInUseCases'
 import type { GetCurrentAccountUseCase } from '../../domain/usecases/GetCurrentAccountUseCase'
+import type { GetSupportProgramAttachmentsUseCase } from '../../domain/usecases/GetSupportProgramAttachmentsUseCase'
 import type { GetSupportProgramDetailUseCase } from '../../domain/usecases/GetSupportProgramDetailUseCase'
 import type { GetSupportProgramSearchReadinessUseCase } from '../../domain/usecases/GetSupportProgramSearchReadinessUseCase'
 import type { LogInUseCase } from '../../domain/usecases/LogInUseCase'
@@ -132,6 +133,7 @@ export type AppCradle = {
   isAssistantAiEnabled: IsAssistantAiEnabled
   getCurrentAccountUseCase: GetCurrentAccountUseCase
   getSupportProgramDetailUseCase: GetSupportProgramDetailUseCase
+  getSupportProgramAttachmentsUseCase: GetSupportProgramAttachmentsUseCase
   getSupportProgramSearchReadinessUseCase: GetSupportProgramSearchReadinessUseCase
   logInUseCase: LogInUseCase
   logOutUseCase: LogOutUseCase
