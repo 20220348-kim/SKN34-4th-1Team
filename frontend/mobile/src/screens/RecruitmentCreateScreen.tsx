@@ -229,7 +229,7 @@ function OwnedCreate({ token, companyName, recruitmentId, onCreated, onCancel, o
   </Page>
 
   return <View style={local.page}>
-    <Page>
+    <Page bottomSafeArea={false}>
       <Text style={styles.subtitle}>{editing ? '연결된 공고를 유지하고 모집 조건과 소개를 수정해요.' : '함께 지원사업을 준비할 기업을 모집해요.'}</Text>
       <Card><Text style={styles.heading}>1. 연결할 공고</Text>
         <Text style={styles.muted}>작성 기업: {editingRecruitment?.company.companyName ?? companyName}</Text>

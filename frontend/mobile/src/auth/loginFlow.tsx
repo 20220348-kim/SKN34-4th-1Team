@@ -55,7 +55,7 @@ export function LoginFlowProvider({ children }: { children: ReactNode }) {
           <Pressable accessibilityRole="button" accessibilityLabel="로그인 방법 닫기" onPress={cancel} style={local.close}>
             <Text style={local.closeIcon}>×</Text></Pressable>
         </View>
-        <ScrollView style={{ flexShrink: 1 }} contentContainerStyle={local.methodsContent} keyboardShouldPersistTaps="handled">
+        <ScrollView bounces={false} overScrollMode="never" style={{ flexShrink: 1 }} contentContainerStyle={local.methodsContent} keyboardShouldPersistTaps="handled">
         <Text style={local.methodsDescription}>로그인하면 보던 화면에서 이어서 이용할 수 있어요.</Text>
         <Button label="카카오로 계속하기" variant="secondary" style={{ backgroundColor: '#FEE500', borderWidth: 0 }}
           onPress={() => setMethodNotice('카카오 로그인은 모바일 연결을 준비 중이에요. 이메일 로그인을 이용해 주세요.')} />

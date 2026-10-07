@@ -16,7 +16,7 @@ export function PartnerSheet({ visible, title, onClose, children, actions, dimBa
         <View style={local.header}><Text style={local.title}>{title}</Text>
           <Pressable accessibilityRole="button" accessibilityLabel="닫기" onPress={onClose} style={local.close}>
             <Text style={local.closeText}>×</Text></Pressable></View>
-        <ScrollView contentContainerStyle={local.content} keyboardShouldPersistTaps="handled">{children}</ScrollView>
+        <ScrollView bounces={false} overScrollMode="never" contentContainerStyle={local.content} keyboardShouldPersistTaps="handled">{children}</ScrollView>
         <View style={local.actions}>{actions}</View>
       </View>
     </KeyboardAvoidingView>

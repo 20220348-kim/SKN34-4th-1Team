@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ActivityIndicator, Alert, AppState, StyleSheet, Text, View } from 'react-native'
 import { useFocusEffect, useRouter } from 'expo-router'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { currentStatusLabels, currentStatusToParticipation, participationToCurrentStatus, showFundingQuestion, type CurrentStatus } from '@govbiz/shared/domain/entities/CombinationReviewParticipation'
 import { reviewProgramKey, supportsAutomaticReview, unknownParticipation, type ReviewProgram } from '@govbiz/shared/domain/entities/CombinationReview'
 import type { SupportProgram } from '@govbiz/shared/domain/entities/SupportProgram'
@@ -91,7 +90,6 @@ function OwnedReviewEditor({ id, runId, initialProgram, initialStep, onStepChang
   const vm = useCombinationReview(token, email, id, runId)
   const { invalidateSession } = useAuth()
   const router = useRouter()
-  const insets = useSafeAreaInsets()
   const [step, setStep] = useState<CombinationReviewStep>(initialStep ?? (id ? 'analysis' : 'selection'))
   const [method, setMethod] = useState<'filter' | 'saved'>('filter')
   const [savedVisited, setSavedVisited] = useState(false)
@@ -231,7 +229,7 @@ function OwnedReviewEditor({ id, runId, initialProgram, initialStep, onStepChang
       {vm.run && <ReviewResult key={vm.run.id} run={vm.run} names={names} currentRevision={vm.currentRevision} onSupplement={supplement} onRefresh={vm.refresh} />}
       {!vm.pending && <Button label="입력 수정하기" variant="secondary" disabled={vm.busy} onPress={supplement} />}
     </Page>}
-    <View style={[local.actions, { paddingBottom: 12 + insets.bottom }]}>
+    <View style={local.actions}>
       {step === 'selection' && <Button style={local.action} label="다음 · 참여 상태 입력" busy={vm.saving} disabled={locked || vm.loading || !vm.draft.title.trim() || vm.draft.programs.length !== 2} onPress={() => void saveStep('participation')} />}
       {step === 'participation' && <><Button style={local.action} label="공고 선택으로" variant="secondary" disabled={locked || vm.loading} onPress={() => void saveStep('selection')} /><Button style={local.action} label="다음 · 분석 확인" busy={vm.saving} disabled={locked || vm.loading} onPress={() => void saveStep('confirm')} /></>}
       {step === 'confirm' && <><Button style={local.action} label="입력 수정" variant="secondary" disabled={locked} onPress={() => changeStep('participation')} /><Button style={local.action} label="검토 실행"
@@ -245,6 +243,6 @@ const local = StyleSheet.create({
   panel: { flex: 1 }, hidden: { display: 'none' }, selectionHeader: { gap: 12 }, action: { flex: 1 },
   selected: { backgroundColor: colors.soft, borderRadius: 10, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 6 },
   steps: { flexDirection: 'row', justifyContent: 'space-between', gap: 6 }, current: { color: colors.primary, fontWeight: '600' },
-  actions: { paddingHorizontal: 16, paddingTop: 12, borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.surface, flexDirection: 'row', justifyContent: 'space-evenly', gap: 8 },
+  actions: { paddingHorizontal: 16, paddingVertical: 8, borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.surface, flexDirection: 'row', justifyContent: 'space-evenly', gap: 8 },
   notice: { padding: 12, gap: 6 },
 })

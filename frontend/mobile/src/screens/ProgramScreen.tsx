@@ -129,7 +129,7 @@ export function ProgramScreen({ identity, onLogin, resumeAction, onResumed }: {
   const applicationUrl = program?.applicationRoute.url ?? null
   const contactParts = program?.contact ? supportProgramContactParts(program.contact) : []
   function closeQuestion() { work.current?.abort(); setAnswering(false); setQuestionOpen(false) }
-  return <View style={local.page}><Page backgroundColor={colors.surface}>
+  return <View style={local.page}><Page bottomSafeArea={!program} backgroundColor={colors.surface}>
     {status === 'unavailable' && <><Notice error>로그인 상태를 확인한 뒤 저장과 원문 질문을 이용할 수 있어요.</Notice>
       <Button label="로그인 상태 다시 확인" onPress={() => void refreshSession()} /></>}
     {loading && <ActivityIndicator color={colors.primary} accessibilityLabel="공고 상세를 불러오는 중" />}

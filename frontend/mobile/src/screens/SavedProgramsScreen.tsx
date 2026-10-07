@@ -8,6 +8,7 @@ import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/
 import { ApiError, errorMessage } from '../api/client'
 import { listSavedPrograms, removeSavedProgram, saveProgram } from '../api/savedPrograms'
 import { useAuth } from '../auth/session'
+import { useScrollBoundary } from '../components/useScrollBoundary'
 import { Page, Button, Field, Notice, Card, StatusBadge, colors, ddayBadgeTone, styles } from '../ui'
 import { AppIcon } from '../components/AppIcon'
 import { SegmentedControl } from '../components/SegmentedControl'
@@ -35,6 +36,7 @@ export function SavedProgramsScreen({ onOpenProgram, onCountChange, onLogin }: {
   onOpenProgram(identity: SupportProgramIdentity): void; onCountChange?(count: number): void; onLogin(mode?: 'login' | 'signup'): void
 }) {
   const { session, status, refreshSession, invalidateSession } = useAuth()
+  const scrollBoundary = useScrollBoundary(true)
   const token = status === 'signedIn' ? session?.accessToken ?? null : null
   const [state, setState] = useState<SavedState>({ token: null, programs: [], loading: true, error: null })
   const [revision, setRevision] = useState(0)
@@ -137,7 +139,7 @@ export function SavedProgramsScreen({ onOpenProgram, onCountChange, onLogin }: {
   return <View style={local.page}>
     <View style={local.header}><SegmentedControl<'saved' | 'preparation'> label="관심함 보기" value={view} onChange={setView} options={[
       { value: 'saved', label: '담은 공고' }, { value: 'preparation', label: `준비 중인 작업${workCount === null ? '' : ` ${workCount}`}` }]} /></View>
-    <ScrollView contentContainerStyle={local.list} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag"
+    <ScrollView {...scrollBoundary} contentContainerStyle={local.list} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag"
       refreshControl={<RefreshControl refreshing={visible.loading || workspace.loading} onRefresh={refresh} tintColor={colors.primary} />}>
       {workspace.preparationError && <Notice error>신청 문서 조회 실패: {workspace.preparationError}</Notice>}
       {workspace.reviewError && <Notice error>중복 검토 조회 실패: {workspace.reviewError}</Notice>}
@@ -234,7 +236,7 @@ export function SavedProgramsScreen({ onOpenProgram, onCountChange, onLogin }: {
 
 const local = StyleSheet.create({
   page: { flex: 1, backgroundColor: colors.background }, header: { paddingHorizontal: 16, paddingTop: 6, paddingBottom: 12, backgroundColor: colors.surface },
-  list: { padding: 16, gap: 10, paddingBottom: 100 }, filters: { gap: 6, paddingBottom: 2 },
+  list: { paddingHorizontal: 16, paddingTop: 16, gap: 10 }, filters: { gap: 6, paddingBottom: 2 },
   applied: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 }, stageButton: { minHeight: 44, justifyContent: 'center' },
   chip: { minHeight: 36, paddingHorizontal: 11, borderRadius: 999, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, justifyContent: 'center' },
   activeChip: { backgroundColor: colors.text, borderColor: colors.text }, chipText: { color: colors.secondaryText, fontSize: 12 },

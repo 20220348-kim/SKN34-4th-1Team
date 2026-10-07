@@ -17,7 +17,7 @@ export function MultiSelectField({ label, selected, options, onToggle, onClear }
           <Text style={styles.muted}>선택하지 않으면 전체 공고를 표시합니다.</Text>
           <View style={styles.row}><Button label={`${label} 선택 해제`} variant="secondary" onPress={onClear} />
             <Button label="선택 완료" onPress={() => setOpen(false)} /></View></View>
-        <ScrollView contentContainerStyle={{ padding: 20, gap: 8 }}>{options.map(value => <Pressable key={value}
+        <ScrollView bounces={false} overScrollMode="never" contentContainerStyle={{ padding: 20, gap: 8 }}>{options.map(value => <Pressable key={value}
           accessibilityRole="checkbox" accessibilityLabel={`${label} ${value}`} accessibilityState={{ checked: selected.includes(value) }}
           onPress={() => onToggle(value)} style={[styles.input, selected.includes(value) && { backgroundColor: colors.soft }]}>
           <Text style={styles.body}>{selected.includes(value) ? '☑ ' : '☐ '}{value}</Text></Pressable>)}</ScrollView>
