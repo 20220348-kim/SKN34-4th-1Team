@@ -17,11 +17,15 @@ LLMOps 개발 순서는 [후속 개발 전략](../../docs/llmops-next-developmen
 | 발행본 기준 연결 설정 비교 | `deployment.py review-published-runtime --state-dir ...`: 공개 발행 Chart·values로 기존 연결 설정을 재현하고 전후 발행 검증 |
 | 기존 환경 전환 파일 준비 | `gitops_transition.py`: 공개 발행본과 보존 가능한 기존 설정을 개인 state의 비공개 파일로 생성. 적용·동기화 없음 |
 | 저장된 전환 파일 재검증 | `gitops_transition.py --verify`: 현재 발행본·환경으로 계획을 다시 생성해 파일 전체와 비교. 파일 갱신·적용 없음 |
-| Argo 자동 배포 | 대체 연결 미구현. 기존 클러스터는 변경하지 않음 |
+| 개인 환경 Argo 인계 | 2026-10-07 공개 이미지 4개를 수동 동기화해 `Synced/Healthy` 확인. 아래 실행 기록 참고 |
+| Argo 자동 배포 | 자동 인계·새 발행본 자동 적용 미구현. 자동 동기화·prune·selfHeal 비활성 |
 | 과거 snapshot | 읽기·검증 및 오프라인 정책 테스트 보존 |
 
 `MSA_PROMOTION_ENABLED=false`를 유지합니다. GHCR `up`은 별도 배포 브랜치 없이
-[현재 발행 검증 경로](docs/image-promotion.md)로 초기화합니다. 새 Argo `gitops` 전환은 아직 연결하지 않았습니다.
+[현재 발행 검증 경로](docs/image-promotion.md)로 초기화합니다.
+개인 환경 1곳은 검증된 `e7898ec` 공개 발행본으로 수동 인계를 마쳤습니다.
+[실제 백업·migration·Argo 인계 기록](../../docs/ops-upgrade-runbook.md#개인-환경-공개-이미지의-argo-인계--2026-10-07)을 참고하세요.
+이는 운영자가 수행한 전환이며, 아래 준비 도구에 적용·자동 배포 기능이 추가된 것은 아닙니다.
 `plan-gitops`는 자동 동기화를 끈 검토용 구성을 출력하며, 개인 환경 호환성 확인이나 실제 배포를 수행하지 않습니다.
 기존 연결 설정을 보존한 전환 파일은 [전환 파일 준비](docs/image-promotion.md#기존-환경의-비공개-전환-파일-준비)로 생성합니다.
 이 파일은 백업·migration·실제 전환 검증이 남은 검토 자료이며, 생성 성공을 배포 준비 완료로 취급하지 않습니다.

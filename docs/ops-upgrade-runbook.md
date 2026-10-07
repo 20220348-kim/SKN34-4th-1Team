@@ -5,6 +5,9 @@
 클라우드의 빈 Docker 환경이나 임시 테스트 통과를 개인 PC 갱신 완료로 기록하지 않는다.
 백업·접수 중지·업무 검증은 운영자가 수행하는 필수 단계이며 자동화됐다는 뜻이 아니다.
 
+개인 환경의 최신 실행 결과는 [공개 이미지의 Argo 인계](#개인-환경-공개-이미지의-argo-인계--2026-10-07)에
+기록한다. 아래 과거 리허설·전환 준비 기록의 미완료 상태와 구분한다.
+
 ## 1. 대상과 사전 상태 고정
 
 - [병합 조건](merge-protection.md)과 최신 배포 대상 SHA의 실제 필수 CI 성공을 확인한다.
@@ -50,6 +53,11 @@ python3 -B infrastructure/gitops/scripts/ops_runtime.py --preflight \
 
 첫 점검의 소스/이미지 불일치는 갱신 필요 근거로 보존한다. 소유권·DB·인증·브리지 장애는 먼저 해결한다.
 `--check` 성공은 새 평가 성공이나 관리자의 실제 인증을 증명하지 않는다.
+`ops_runtime.py --check/--preflight`는 개발 모드용이다. Argo 인계 후 `mode=gitops`에서는
+사용할 수 없으며, 상태를 `dev`로 바꿔 검사를 우회하지 않는다. 이 경우
+`fork_cluster.py status --state-dir "$OPS_STATE_DIR" --json --image-details --ops-details --network-details`와
+실행 중인 Ops의 `check_evaluation_runtime --run-id "$OPS_EXISTING_RUN_ID"`를 읽기 전용 진단에 사용한다.
+이 진단은 쓰기 중지·백업 전 preflight를 대신하지 않으므로 다음 전환에서는 그 범위를 별도로 검증한다.
 `--check`와 `--preflight`의 표준 출력은 JSON 하나다. 하위 브리지의 진행 문구를 섞지 않으므로
 파일 저장·JSON 파싱에 그대로 사용할 수 있다. `--preflight`의 `BLOCKED`·`UNKNOWN`은 JSON을
 출력하더라도 종료 코드 1을 유지하고, 조회 예외는 성공 JSON 없이 표준 오류와 종료 코드 1로 끝난다.
@@ -1301,3 +1309,83 @@ Argo CD 컨트롤러는 준비됐지만 Application은 0개다. 기존 Kubernete
 Core·Ops health는 HTTP 200, 평가 접수는 열린 상태다. Prefect·실행기와 원래 Langfuse 관련
 서비스 6개도 재개한 상태를 유지했다. 기존 Ops migration Job·로그는 향후 Argo hook 교체 전에
 암호화 보관했다. 다음 원격 동기화 또는 배포 후보 고정 정책의 범위를 결정한 뒤 실제 전환을 재개한다.
+
+### 개인 환경 공개 이미지의 Argo 인계 — 2026-10-07
+
+기존 개인 클러스터를 유지한 채 `e7898ec7c459ea3cab5a2a2999656fc9e6654e38`의 공개 발행본으로
+Core·Catalog·AI·Ops를 실제 전환했다. 이 절차는 사용자가 승인한 일시 중단 범위에서 운영자가
+수행했으며, `gitops_transition.py`에 적용 기능을 추가한 것은 아니다.
+
+동일 소스 SHA의 필수 CI와 실제 job 성공을 확인했다. GovBiz `37583507014`, Catalog
+`37583507049`, Ops `37583507030`, Infra `37583507034`, LLMOps `37583507041`이다.
+[공개 이미지 발행 실행](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/37587330040)의
+gate·package-preflight·서비스 4개 publish·outcome 성공 후 receipt와 공개 pull을 검증했다.
+AI·Catalog·Ops는 서비스 소스가 같은 `2fffa74`의 이미지를 재사용했고 Core는 `e7898ec`에서
+빌드됐다. 네 receipt의 `verifiedRevision`은 모두 `e7898ec`이며, 모든 이미지를 새로 빌드했다고
+기록하지 않는다.
+
+| 서비스 | 실제 GHCR 이미지 digest | 전환 후 원본 DB |
+|---|---|---|
+| AI | `sha256:f301b72dbeda1404e3c636de7be956d4b4131ecab53ce536e39b8dd8726b0549` | 별도 DB migration 없음 |
+| Catalog | `sha256:51c12c5baac9b4133d9cce40e8f10341353c7d31fc1b9af3d675a0d22015e8c8` | Flyway V1 → V3, 실패 0건 |
+| Core | `sha256:34cb2382217111efe1683781119f155bec16229a938354c15e9f4f9ec4982624` | Flyway V45 → V52, 실패 0건 |
+| Ops | `sha256:44318ff51513c6d46070fef81eb1e6475f045c798cd32332a006b85e37678718` | PreSync hook 성공, 기존 `0028_daily_evaluation_schedules` 유지 |
+
+이미지 이름은 `ghcr.io/ilil1/skn34-4th-1team-{서비스명}-service`이며 digest로 고정했다.
+Ops의 `0017 → 0028` 최초 migration은 앞선 기록에서 이미 완료됐으므로 이번 전환과 중복 계산하지 않는다.
+
+실제 전환 직전 접수를 중지하고 Core·Catalog·Ops의 쓰기 Pod와 Compose 실행기·Prefect를
+중지한 뒤 새 암호화 백업을 만들었다. 이전 리허설 백업을 그대로 전환 근거로 사용하지 않았다.
+
+| 새 백업·격리 복원 범위 | 검증 결과 |
+|---|---|
+| Core DB | 38개 테이블·19,806개 행, 복원 덤프 일치 및 V46–V52 적용 후 원래 컬럼·행 보존 |
+| Catalog DB | 6개 테이블·9,887개 행, 복원 덤프 일치 및 V2–V3 적용 후 원래 컬럼·행 보존 |
+| Ops DB | 32개 테이블·192개 행, DB 로그인·실행 키·기존 완료 평가 3건 연결 검증 |
+| 결과·Prefect | 결과 30개 파일·18,573,922바이트, Prefect 4개 파일·6,398,317바이트 복원·권한·SQLite 확인 |
+| 정리 | 격리 복원용 임시 DB 정리 확인, 원본 DB·볼륨 유지 |
+
+Core V51의 의도된 projection revision 초기화는 별도로 확인했다. Ops 복원 검증 당시 유료 사용
+영수증은 0건이어서 실제 유료 호출 정산 검증을 완료한 것으로 취급하지 않는다.
+
+기존 Job을 제외한 리소스 32개의 UID, PVC 8개의 바인딩·명세, Secret 8개의 UID·내용을 보존했다.
+Compose 컨테이너 14개의 ID·이미지·설정·마운트와 원래 실행 상태도 대조했다.
+오래된 Ops migration Job·로그는 암호화 보관한 뒤 Argo hook으로 교체했고, 기존 Catalog Job 2개는
+그대로 유지했다. Langfuse 관련 서비스 6개는 이번 전환 중 계속 실행했다.
+
+`govbiz-fork` AppProject와 서비스별 Application 4개를 만들고 Catalog → Core → AI → Ops 순서로
+고정된 revision을 수동 동기화했다. 네 Application 모두 `Succeeded / Synced / Healthy`이며,
+개인 state는 `mode=gitops`, 이미지 기준은 `baseline_source=ghcr`이다. 실제 Pod의 컨테이너 5개
+(Ops sync 포함)에서 이미지 참조·CRI ID·서비스 소스를 대조했다. 노드·스토리지·서비스 연결 대상과
+Ops 브리지 검사도 통과했다. 자동 동기화·prune·selfHeal과 자동 재시도는 끈 상태다.
+
+Ops API·sync·Compose 실행기·결과 서버의 실행 명세 해시는
+`3a194a7e2a34e0530ebe08fe3da1686f552065b07cd6c4886f4a781b8e6fd7ff`로 일치했다.
+원래 Prefect·실행기를 재개하고 평가 접수를 `version=8`, `accepting=true`로 복구했다.
+웹은 `http://localhost:5173/`, Kubernetes 연결은 Core `18080`·Ops `18001`을 사용한다.
+
+전환 직후 기존 관리자 비밀번호 로그인, Core/Ops 동일 사용자, HttpOnly 세션, 기존 완료 보고서 3건의
+내용·실행 명세 보존을 확인했다. 실제 브라우저에서 목록·상세·보고서·새로고침·로그아웃과 폐기된
+세션의 재사용 거절도 통과했다. 기존 실패 실행 `2b1519bc-a154-4c6e-8da6-fb44f39cef5a`는
+상태·오류·flow ID를 그대로 보존했다.
+
+새 무료 평가 `f370b72b-2871-467b-b8c1-47af97ff2d73`도 전환 후 실제로 완료했다.
+Prefect flow는 `71caae8c-9919-4e32-8c8e-b8d4c0033ba6`이며 저장 응답 6개 사례의 `self-replay`다.
+중복 요청의 동일 flow 유지, CSRF 거절, 상세 조회 없이 Ops sync의 목록 상태 반영, 보고서 HTTP 200,
+런타임 검사와 로그아웃 후 접근 거절을 확인했다. 모델 API 호출은 0회이며 실제 모델 품질 평가나
+사람의 정답 검토를 수행한 것은 아니다.
+새 실행을 포함한 전체 이력 5건(완료 4건·기존 실패 1건)을 실제 브라우저에서 다시 대조했고,
+완료 보고서 4건·새로고침·HttpOnly 세션·폐기된 세션 차단이 통과했다. 개인 개발 로그인의 일반
+회원으로 Ops session·목록·runtime·보고서가 모두 403인지도 확인했다.
+
+검증 중 Windows Python의 `localhost` HTTP 요청에 시간 초과가 발생했다. 같은 경로의 IPv4
+응답을 확인했지만 `127.0.0.1` Origin은 Core가 403으로 거절했다. 서비스의 허용 Origin과 제한 시간은
+변경하지 않고, 비공개 검증 프로세스에서만 `localhost`의 주소 해석을 IPv4로 고정해 위 검사를
+완료했다. 앞선 실패는 준비 검사·로그인 단계여서 평가 접수는 없었다. 이 결과를 Windows·WSL의
+간헐적 연결 문제 자체가 수정됐다는 의미로 해석하지 않는다.
+
+실제 백업·키·상세 설정은 저장소 밖 개인 디렉터리에 두고, private state의 `cutover-*.json`과
+Git 제외 경로 `work/deployment-20261007/`에 실행 증거를 보관한다. 별도 배포 브랜치·PR은 만들지
+않았으며 `MSA_PROMOTION_ENABLED=false`를 유지한다. 이후 새 발행본으로의 전환도 새로운
+소스·CI·receipt 검증과 필요한 백업·migration·수동 동기화가 필요하다. 자동 인계 CLI,
+GHCR 발행 후 자동 배포, 다른 PC의 전환이나 상용 운영 준비 완료를 뜻하지 않는다.
