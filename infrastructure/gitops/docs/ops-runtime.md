@@ -1,8 +1,9 @@
 # Ops와 Compose 평가 실행 환경의 연결 계약
 
 현재 개인 환경은 Kubernetes Ops API/sync와 Compose Prefect·평가 실행기·결과 저장소를 연결한다.
-2026-10-08 사용자가 단계적 Kubernetes 통합 방향을 선택했다. 이 문서는 이전 완료 전 유지할
-연결 계약이며, 새 목표·독립 배포 구성·저장소 이전 순서는 [Kubernetes 통합 안내](evaluation-kubernetes.md)를 따른다.
+2026-10-08 사용자가 전체 실행 구성의 Kubernetes 통합을 최종 배포 목표로 확정했다.
+이 연결 계약은 로컬 개발과 이전 기간에 사용한다. 배포 환경에서는 Compose 의존을 제거해야 하며,
+독립 배포 구성·저장소 이전 순서는 [Kubernetes 통합 안내](evaluation-kubernetes.md)를 따른다.
 공통 설정 템플릿만으로 Compose 결과 볼륨이 Kubernetes에 공유되거나 통신이 개통되지는 않는다.
 
 ## 명시적인 설정

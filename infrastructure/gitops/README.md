@@ -5,6 +5,31 @@
 필수 CI와 이미지 발행 검증은 유지합니다. [제거 범위와 현재 상태](docs/deployment-candidates.md)를 참고하세요.
 LLMOps 개발 순서는 [후속 개발 전략](../../docs/llmops-next-development-plan.md)을 따릅니다.
 
+## 최종 배포 목표와 완료 기준
+
+**최종 목표는 우리가 운영하는 전체 실행 구성을 Kubernetes로 통일하는 것입니다.**
+Kubernetes와 Compose를 함께 쓰는 구조는 로컬 개발용이며, 현재 개인 환경의 혼합 실행은
+이전 중 상태입니다. 하이브리드 연결 성공을 최종 배포 목표의 완료로 계산하지 않습니다.
+
+| 배포 범위 | 최종 기준 |
+| --- | --- |
+| 웹·업무 서비스 | 배포용 웹과 Core·Catalog·AI·Ops API/sync를 Kubernetes에서 실행하고 외부 접근·인증 경로 검증 |
+| 평가 실행 | Prefect·evaluation-runner·ops-artifacts를 독립 배포하고 클러스터 내부 Service로 연결 |
+| 관측 | Langfuse 웹·worker와 PostgreSQL·ClickHouse·Redis·객체 저장소까지 이전 |
+| 업무 데이터·기반 서비스 | 서비스별 MySQL, 검색·벡터 저장소, 캐시와 사용하는 큐의 영속성·복원·접근 제어 검증 |
+| 배포·복구 | 검증된 이미지·설정을 Argo CD로 관리하고 migration·중지·재개·백업 복원·재시작 후 보존을 검증 |
+
+단계별 완료는 `구성 코드 → 격리 Kubernetes 검증 → 실제 이전 → Compose 의존 제거`로 구분합니다.
+배포 대상이 로컬 Compose, 호스트 데이터 마운트 또는 Windows/WSL 중계에 의존하지 않고,
+기존 Compose 배포 인스턴스가 꺼진 상태에서 업무·평가·보고서·관측·복구가 검증돼야 전체 이전 완료입니다.
+로컬 개발용 Compose는 유지하며 원본 볼륨 삭제는 별도의 데이터 보존 판단입니다.
+OpenAI·공공 데이터 등 외부 API는 기존 서비스 계약을 유지합니다.
+
+현재 `govbiz-local-data`는 로컬 검증용이므로 운영 데이터 구성의 완료 증거로 사용하지 않습니다.
+다음 구현 순서는 평가 저장소 복원과 이미지 발행·Argo 연결, 평가 환경 실제 전환,
+Langfuse와 관련 저장소 이전, 남은 웹·데이터·외부 접근 및 운영 복구 검증입니다.
+[평가 환경 이전의 상세 기준](docs/evaluation-kubernetes.md)을 함께 따릅니다.
+
 ## 현재 상태
 
 | 항목 | 지원 범위 |
