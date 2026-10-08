@@ -350,6 +350,184 @@ class EvaluationReleaseTests(SourceFixture):
                 self.plan()
         self.assertFalse(any("/actions/artifacts/" in path for path in self.calls))
 
+    @contextlib.contextmanager
+    def restored_storage(self):
+        path = self.root / "retained-restore.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "archive_sha256": "c" * 64,
+                    "cross_store_business_links_verified": True,
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.addCleanup(path.unlink, missing_ok=True)
+        observed = {
+            "namespace": release.NAMESPACE,
+            "namespace_uid": "namespace-uid",
+            "claims": {
+                "prefect": {"claim_uid": "prefect-uid"},
+                "results": {"claim_uid": "results-uid"},
+            },
+            "data_reverified": False,
+        }
+        with (
+            patch.object(
+                fork_cluster,
+                "load_settings",
+                return_value={
+                    "repository": FORK.repository,
+                    "branch": FORK.branch,
+                    "cluster": "fixture",
+                },
+            ) as settings,
+            patch.object(fork_cluster, "commands", return_value=(["kubectl"], [], [])),
+            patch.object(fork_cluster, "verify_context") as context,
+            patch.object(
+                release.pvc_restore, "inspect_retained", return_value=observed
+            ) as inspection,
+            patch.object(fork_cluster, "verify_pull_rights"),
+            patch.object(release, "verify_pull_rights"),
+        ):
+            yield path, inspection, context, settings
+
+    def restored_plan(self, path):
+        return release.plan_from_restore(
+            self.root,
+            FORK,
+            state=self.root,
+            restore_report=path,
+            langfuse_url="http://langfuse-web:3000",
+            get=self.get,
+        )
+
+    def test_retained_report_binds_dormant_plan_and_rechecks_live_storage(self):
+        with self.restored_storage() as (path, inspection, context, _):
+            result = self.restored_plan(path)
+        self.assertEqual(inspection.call_count, 2)
+        self.assertEqual(context.call_count, 2)
+        self.assertEqual(inspection.call_args.args[1], "fixture-control-plane")
+        self.assertTrue(result["retainedStorageIdentityVerified"])
+        self.assertEqual(
+            result["restoreReportSha256"], source.digest(path.read_bytes())
+        )
+        self.assertEqual(result["reportedArchiveSha256"], "c" * 64)
+        for field in (
+            "clusterChanged",
+            "storageRestored",
+            "runtimeVerified",
+            "deploymentAuthorized",
+            "restoreReportAuthenticated",
+        ):
+            self.assertIs(result[field], False)
+        for app in result["resources"][1:]:
+            values = app["spec"]["source"]["helm"]["valuesObject"]
+            component = app["spec"]["source"]["helm"]["releaseName"]
+            self.assertEqual(values["replicas"], 0)
+            self.assertEqual(
+                values["storage"],
+                {
+                    "node": "fixture-control-plane",
+                    "existingClaim": "prefect" if component == "prefect" else "results",
+                },
+            )
+
+    def test_retained_plan_cannot_bypass_required_ci_or_live_storage_checks(self):
+        with self.restored_storage() as (path, inspection, context, settings):
+            settings.return_value["repository"] = "foreign/project"
+            with self.assertRaisesRegex(ValueError, "repository differ"):
+                self.restored_plan(path)
+            context.assert_not_called()
+            settings.return_value["repository"] = FORK.repository
+            self.ci_state[0] = "failure"
+            with self.assertRaisesRegex(ValueError, "source blocked"):
+                self.restored_plan(path)
+            self.assertEqual(inspection.call_count, 1)
+            self.ci_state[0] = "success"
+            inspection.reset_mock()
+            inspection.side_effect = [
+                inspection.return_value,
+                ValueError("Retained volume identity changed"),
+            ]
+            with self.assertRaisesRegex(ValueError, "identity changed"):
+                self.restored_plan(path)
+            self.assertEqual(inspection.call_count, 2)
+            inspection.side_effect = [
+                inspection.return_value,
+                inspection.return_value | {"namespace_uid": "replacement"},
+            ]
+            with self.assertRaisesRegex(ValueError, "changed during"):
+                self.restored_plan(path)
+
+    def test_incomplete_or_oversize_report_fails_before_cluster_read(self):
+        with self.restored_storage() as (path, inspection, context, _):
+            for raw in (
+                b"{}",
+                b"not json",
+                b"x" * 65537,
+                b'{"archive_sha256":"bad","cross_store_business_links_verified":true}',
+            ):
+                path.write_bytes(raw)
+                with self.subTest(raw=raw[:50]), self.assertRaises(ValueError):
+                    self.restored_plan(path)
+            context.assert_not_called()
+            inspection.assert_not_called()
+
+    def test_cli_accepts_only_one_complete_storage_input_mode(self):
+        base = ["evaluation_release.py", "--langfuse-url", "http://langfuse-web:3000"]
+        for flags in (
+            [],
+            ["--node", "node"],
+            ["--restore-report", "report.json"],
+            [
+                "--state-dir",
+                "state",
+                "--node",
+                "node",
+                "--prefect-claim",
+                "a",
+                "--results-claim",
+                "b",
+            ],
+            [
+                "--restore-report",
+                "report.json",
+                "--state-dir",
+                "state",
+                "--node",
+                "node",
+            ],
+        ):
+            with (
+                self.subTest(flags=flags),
+                patch.object(sys, "argv", base + flags),
+                contextlib.redirect_stderr(io.StringIO()),
+                self.assertRaises(SystemExit) as raised,
+            ):
+                release.main()
+            self.assertEqual(raised.exception.code, 2)
+        output = io.StringIO()
+        with (
+            patch.object(
+                sys,
+                "argv",
+                base + ["--restore-report", "report.json", "--state-dir", "state"],
+            ),
+            patch.object(release, "from_origin", return_value=FORK),
+            patch.object(
+                release,
+                "plan_from_restore",
+                side_effect=ValueError("Retained private report secret-value"),
+            ),
+            contextlib.redirect_stdout(output),
+        ):
+            self.assertEqual(release.main(), 1)
+        self.assertNotIn("secret-value", output.getvalue())
+        self.assertEqual(
+            json.loads(output.getvalue())["reason"], "retained_storage_not_verified"
+        )
+
     def test_plan_blocks_mixed_source_or_private_registry_or_invalid_storage(self):
         with patch.object(fork_cluster, "verify_pull_rights"), self.mocked_renderer():
             self.runner["head_sha"] = "e" * 40

@@ -519,6 +519,128 @@ def retain_for_migration(kube, node, stores, expected, *, image=None):
     }
 
 
+def inspect_retained(kube, node, report):
+    """Read live storage identities before initial handoff; never certify its data."""
+    if (
+        report.get("status") != "RESTORED_NOT_ACTIVATED"
+        or report.get("scope") != "retained_kubernetes_evaluation_pvc"
+        or report.get("namespace") != MIGRATION_NAMESPACE
+        or report.get("node") != node
+        or report.get("reclaim_policy") != "Retain"
+        or any(
+            report.get(key) is not True
+            for key in ("resources_retained", "helpers_removed")
+        )
+        or any(
+            report.get(key) is not False
+            for key in ("application_started", "services_changed", "production_cutover")
+        )
+        or set(report.get("claims", {})) != {"prefect", "results"}
+        or any(not report.get(key) for key in ("namespace_uid", "storage_class_uid"))
+    ):
+        raise ValueError("A retained, inactive evaluation restore report is required")
+    namespace = MIGRATION_NAMESPACE
+    nk = kube + ["--namespace", namespace]
+    resource = run(kube + ["get", "namespace", namespace, "-o", "json"])
+    token = resource.get("metadata", {}).get("labels", {}).get(LABEL, "")
+    if not re.fullmatch(r"[a-f0-9]{32}", token):
+        raise ValueError("Retained namespace has no restore ownership")
+    require_owner(resource, namespace, token, report["namespace_uid"])
+    if (
+        resource["metadata"].get("deletionTimestamp")
+        or resource.get("status", {}).get("phase") != "Active"
+    ):
+        raise ValueError("Retained namespace is not active")
+    storage_name = "govbiz-evaluation-restore-" + token[:12]
+    if report.get("storage_class") != storage_name:
+        raise ValueError("Retained StorageClass differs from restore ownership")
+    resource = run(kube + ["get", "storageclass", storage_name, "-o", "json"])
+    require_owner(resource, storage_name, token, report["storage_class_uid"])
+    if (
+        resource["metadata"].get("deletionTimestamp")
+        or resource.get("provisioner") != "rancher.io/local-path"
+        or resource.get("volumeBindingMode") != "WaitForFirstConsumer"
+        or resource.get("reclaimPolicy") != "Retain"
+    ):
+        raise ValueError("Retained StorageClass policy changed")
+    claims = {name: row["claim_uid"] for name, row in report["claims"].items()}
+    if (
+        not all(claims.values())
+        or bound_volumes(kube, nk, namespace, storage_name, token, claims, "Retain")
+        != report["claims"]
+    ):
+        raise ValueError("Retained volume identity changed")
+    for kind, row in report["claims"].items():
+        claim = run(nk + ["get", "pvc", kind, "-o", "json"])
+        volume = run(kube + ["get", "pv", row["pv"], "-o", "json"])
+        if (
+            claim["metadata"].get("deletionTimestamp")
+            or volume["metadata"].get("deletionTimestamp")
+            or volume.get("status", {}).get("phase") != "Bound"
+            or claim["metadata"].get("uid") != row["claim_uid"]
+            or volume["metadata"].get("uid") != row["pv_uid"]
+        ):
+            raise ValueError("Retained volume is being replaced or deleted")
+        terms = (
+            volume["spec"]
+            .get("nodeAffinity", {})
+            .get("required", {})
+            .get("nodeSelectorTerms", [])
+        )
+        # Only the repository's single-node local-path provisioner is supported.
+        # Do not interpret arbitrary OR/NOT affinity expressions as equivalent.
+        if terms != [
+            {
+                "matchExpressions": [
+                    {
+                        "key": "kubernetes.io/hostname",
+                        "operator": "In",
+                        "values": [node],
+                    }
+                ]
+            }
+        ]:
+            raise ValueError("Retained volume does not belong to the selected node")
+    resource = run(kube + ["get", "node", node, "-o", "json"])
+    if (
+        resource["metadata"].get("name") != node
+        or resource["metadata"].get("deletionTimestamp")
+        or resource["metadata"].get("labels", {}).get("kubernetes.io/hostname") != node
+        or not any(
+            item.get("type") == "Ready" and item.get("status") == "True"
+            for item in resource.get("status", {}).get("conditions", [])
+        )
+    ):
+        raise ValueError("Retained storage node is not ready")
+    # An initial handoff must not overlap helpers, writers or controllers which
+    # could create them later. This is an observation, not a Kubernetes lock.
+    workloads = run(
+        nk
+        + [
+            "get",
+            "pods,deployments,statefulsets,daemonsets,replicasets,replicationcontrollers,jobs,cronjobs",
+            "-o",
+            "json",
+        ]
+    )
+    if workloads["items"]:
+        raise ValueError("Retained namespace already contains workloads")
+    return {
+        "namespace": namespace,
+        "namespace_uid": report["namespace_uid"],
+        "storage_class": storage_name,
+        "storage_class_uid": report["storage_class_uid"],
+        "node": node,
+        "claims": report["claims"],
+        "reclaim_policy": "Retain",
+        "identity_verified": True,
+        "workloads_absent": True,
+        "data_reverified": False,
+        "archive_freshness_verified": False,
+        "source_quiescence_verified": False,
+    }
+
+
 def verify_archive(state, archive, key_file, *, retain=False):
     settings = fork_cluster.load_settings(state)
     kube, _, _ = fork_cluster.commands(state, settings)

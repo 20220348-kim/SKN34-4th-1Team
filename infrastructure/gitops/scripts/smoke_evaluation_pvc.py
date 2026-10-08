@@ -170,6 +170,9 @@ def main():
                 **retained,
                 "retained_after_return": True,
                 "repeat_restore_rejected": True,
+                "handoff_storage": restore.inspect_retained(
+                    kube, cluster + "-control-plane", retained
+                ),
             }
             report["status"] = "PASS"
     finally:
