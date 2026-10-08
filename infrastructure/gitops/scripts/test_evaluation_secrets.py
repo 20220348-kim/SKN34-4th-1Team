@@ -129,6 +129,13 @@ class EvaluationSecretTests(unittest.TestCase):
             },
         }
         self.objects, self.calls = {}, []
+        self.authentication = self.enterContext(
+            patch.object(
+                prepare.evaluation_langfuse,
+                "verify",
+                return_value={"status": "VERIFIED", "kubernetesRouteVerified": False},
+            )
+        )
         self.progress = {"creationAttempts": [], "created": []}
         self.after_create = None
         self.enterContext(
@@ -235,9 +242,18 @@ class EvaluationSecretTests(unittest.TestCase):
             "runtimeStarted",
             "sourceQuiescenceVerified",
             "archiveFreshnessVerified",
-            "langfuseAuthenticationVerified",
         ):
             self.assertFalse(result[field])
+        self.assertTrue(result["langfuseAuthenticationVerified"])
+        self.authentication.assert_called_with(
+            "fixture", {name: self.env[name] for name in prepare.LANGFUSE_KEYS}
+        )
+
+    def test_invalid_langfuse_authentication_prevents_both_secret_creations(self):
+        self.authentication.side_effect = ValueError("private authentication error")
+        with self.assertRaises(ValueError):
+            self.prepare(create=True)
+        self.assertEqual(self.writes(), [])
 
     def test_rerun_reuses_exact_secret_identities_without_overwrite(self):
         self.prepare(create=True)

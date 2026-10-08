@@ -463,7 +463,9 @@ class RuntimeTests(unittest.TestCase):
         self.assertIn("--evaluate ", checks[0]["run"])
         self.assertEqual(workflow["jobs"]["merge-readiness"]["needs"], ["integration"])
 
-    def deployment_failure(self, *, at_rollout=False, network_result=None):
+    def deployment_failure(
+        self, *, at_rollout=False, network_result=None, authentication_error=False
+    ):
         events = []
         settings = {
             "repository": "bridge-smoke/local",
@@ -536,6 +538,14 @@ class RuntimeTests(unittest.TestCase):
             patch.object(smoke.snapshot.storage, "inspect", return_value={}),
             patch.object(smoke.snapshot.storage, "environment", return_value=env),
             patch.object(
+                smoke.evaluation_langfuse,
+                "verify",
+                return_value={"status": "VERIFIED"},
+                side_effect=ValueError("private authentication error")
+                if authentication_error
+                else None,
+            ) as authentication,
+            patch.object(
                 smoke.evaluation_network_probe,
                 "exercise",
                 return_value=network_result
@@ -572,6 +582,19 @@ class RuntimeTests(unittest.TestCase):
                 EXPECTED,
                 report,
             )
+        authentication.assert_called_once_with(PROJECT, env)
+        if authentication_error:
+            network_probe.assert_not_called()
+            render.assert_not_called()
+            self.assertEqual(events, [])
+            self.assertFalse(
+                any(
+                    call.args[0][:3] == ["docker", "image", "tag"]
+                    for call in execute.call_args_list
+                )
+            )
+            self.assertNotIn("private", json.dumps(report))
+            return
         self.assertEqual(network_probe.call_args.args[1], PROJECT + "-control-plane")
         self.assertEqual(network_probe.call_args.kwargs, {"helm": "helm"})
         if network_result is not None:
@@ -625,6 +648,9 @@ class RuntimeTests(unittest.TestCase):
 
     def test_deployment_failure_cleans_pvcs_and_tags_without_reporting_success(self):
         self.deployment_failure()
+
+    def test_langfuse_authentication_failure_blocks_network_and_storage_setup(self):
+        self.deployment_failure(authentication_error=True)
 
     def test_rollout_is_diagnosed_before_namespace_and_tags_are_deleted(self):
         self.deployment_failure(at_rollout=True)

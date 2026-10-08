@@ -334,7 +334,8 @@ python3 -B infrastructure/gitops/scripts/evaluation_secrets.py \
 ```
 
 검증 흐름은 `백업 인증·복원 보고서의 백업 해시 대조 → 원본 저장소·state·Compose 프로젝트 대조 →
-현재 보존 PVC와 workload 부재 확인 → Ops 토큰·참조와 기존 runner 대조 → Secret 생성·재조회`다.
+현재 보존 PVC와 workload 부재 확인 → Ops 토큰·참조와 기존 runner 대조 → 원본 Langfuse 프로젝트
+인증 → Secret 생성·재조회`다.
 백업에 기록된 실행기 컨테이너가 교체됐거나 인증값이 달라지면 새 백업·복원 기준을 확정해야 한다.
 기존 컨테이너를 중지하거나 새로 시작하는 기능은 없다.
 
@@ -345,6 +346,15 @@ python3 -B infrastructure/gitops/scripts/evaluation_secrets.py \
   ID·이미지·Compose 소유권을 확인한 뒤 읽는다. 원본 실행기의 budget 토큰도 백업과 대조한다.
 - Ops에서 budget 토큰을 사용하지 않던 환경은 그 상태를 확인하고 유지한다. 이 명령이 Ops의
   budget 인증을 새로 활성화하거나 다른 토큰을 발급하지 않는다.
+- 같은 Compose 프로젝트의 실행 중인 `langfuse-web` 한 개를 찾아 컨테이너 ID·이미지·프로젝트
+  label·초기화 프로젝트 ID·기본 네트워크의 사설 IPv4를 확인한다. 기존 Node 런타임에서 해당 IP가
+  자신의 네트워크 인터페이스 주소인지 다시 확인한 뒤 `/api/public/projects`에 GET만 보낸다.
+  무인증 요청이 401/403이고 기존 runner 키의 응답이 200·정확한 프로젝트 한 개여야 통과한다.
+  [Langfuse 프로젝트 API 인증](https://langfuse.com/docs/api-and-data-platform/features/public-api)을 따른다.
+  `LANGFUSE_INIT_PROJECT_ID`가 없는 수동 초기화·외부 Langfuse 구성은 이 이전 도구의 지원 범위가 아니다.
+- 인증키는 `docker exec -i`의 stdin으로만 전달한다. 리다이렉트·프록시·임의 URL을 사용하지 않고
+  응답은 16KiB, 요청당 총 5초로 제한한다. 원문 응답과 오류를 기록하지 않으며 인증 전후 컨테이너
+  교체·재시작·IP·프로젝트 변경도 거부한다. 인증 실패 시 두 Secret 모두 생성하지 않는다.
 - DB 비밀번호·Django 키·OpenAI 키는 복사하지 않는다. 비밀값은 메모리와 kubectl stdin으로만
   전달하며 평문 manifest·명령 인자·도구 로그·보고서로 내보내지 않는다.
 - 새 Secret은 `Opaque`, `immutable: true`이며 복원 namespace UID·백업 해시·개인 state에 연결한다.
@@ -356,8 +366,16 @@ python3 -B infrastructure/gitops/scripts/evaluation_secrets.py \
   로컬 상태 잠금을 사용하지만 다른 운영자의 클러스터 변경을 잠그지는 않는다.
 
 조회 성공은 `VERIFIED_NOT_CREATED`와 `missingSecrets`, 생성 성공은 `PREPARED_NOT_ACTIVATED`다.
-이 결과는 백업 최신성·원본 writer 중지·Langfuse 로그인·네트워크 통제·평가 성공을 증명하지 않는다.
+인증 성공은 `langfuseAuthenticationVerified=true`와 `langfuseAuthentication`에 기록한다.
+범위는 `compose_langfuse_container_authentication`이며 `kubernetesRouteVerified=false`다.
+이 결과는 백업 최신성·원본 writer 중지·브라우저 로그인·Kubernetes에서 Langfuse로의 연결·점수 쓰기·
+네트워크 통제·평가 성공을 증명하지 않는다.
 현재 실제 개인 백업을 대상으로 한 생성은 별도로 수행해야 하며, Argo 동기화나 서비스 기동은 하지 않는다.
+
+2026-10-08 개인 Compose의 기존 runner 키로 무인증 거부와 `govbiz-evidence-development` 프로젝트
+인증을 확인했다. 이 환경의 Langfuse는 loopback에서 수신하지 않아 컨테이너의 자체 사설 IP를 사용했다.
+서비스·키·데이터를 변경하지 않았다. Infra CI는 Node 24에서 인증 HTTP 응답·리다이렉트·실패 경계를
+오프라인 검사하고, LLMOps CI는 격리된 기존 Langfuse에 실제 인증한 뒤 평가 런타임 검증을 진행한다.
 
 ## 전환 전 NetworkPolicy 실제 통신 검증
 
@@ -530,7 +548,9 @@ LLMOps CI의 기존 격리 통합 검증에 `--evaluation-runtime` 단계를 연
 
 1. 기존 격리 MySQL·볼륨 복원 검증을 먼저 완료한다. Ops API·sync와 Compose 평가 writer가 정지한
    상태에서 실제 Prefect SQLite와 완료 보고서를 읽는다. 개인 백업·운영 데이터는 사용하지 않는다.
-2. 위 Chart 정책의 합성 통신 검사와 임시 자원 정리를 먼저 통과해야 한다. 그 뒤 기존 PVC 복원
+2. 격리 Compose의 Langfuse 프로젝트 인증과 위 Chart 정책의 합성 통신 검사·임시 자원 정리를
+   먼저 통과해야 한다. 인증 결과는 `evaluation_kubernetes_runtime.langfuse_authentication`에 남긴다.
+   그 뒤 기존 PVC 복원
    도구로 새 namespace·StorageClass·PVC 2개에 복원하고 실행 ID·보고서 해시·권한을
    검증한다. 앞의 최소 합성 SQLite 대신 실제 평가에 사용했던 Prefect 스키마를 그대로 사용한다.
 3. `environments/evaluation`의 배포용 values를 읽고 검증 전용 이미지·PVC·노드·연결 주소와 replica만
@@ -576,6 +596,11 @@ CI의 전체 Ops 복구·평가 실행·Pod 교체 성공을 대체하지 않는
 실패했다. Core DB 복원 도구가 `core-service`를 replica 0으로 남긴 뒤 평가 런타임 경로가 이를
 재개하지 않은 결함을 수정했다. `evaluation_kubernetes_runtime.core_resume`에 재개 결과를 기록하며
 실제 전체 통과 여부는 이 수정이 포함된 최신 SHA의 CI로 확인한다. 개인 Core를 자동 재시작하는 기능은 아니다.
+
+2026-10-08 `faf8c9a`의 [LLMOps CI](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/37723156467)가
+통과했다. 보고서에서 평가 런타임 `PASS`, 기존 완료 이력 3개 복원, 무료 평가와 Pod 교체 후 재평가,
+인증 보고서 조회, 원본 저장소 보존, 모델 호출 0회와 정리 완료를 확인했다. 이는 격리된 런타임의
+검증 기록이며 개인 환경 전환·이미지 발행이나 이후 Service/DNS·인증 변경의 최신 SHA CI를 대신하지 않는다.
 
 Kubernetes 1.36의 이미지 자격 증명 검증은 이미지 ID 외에 저장소 이름별 pull 기록도 확인한다.
 복원 helper가 받은 Prefect 이미지를 `govbiz/prefect:...`로 바꾸면 CRI에 이미지가 있어도 새 저장소의

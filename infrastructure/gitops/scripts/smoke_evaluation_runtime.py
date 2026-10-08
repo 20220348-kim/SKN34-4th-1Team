@@ -16,6 +16,7 @@ from urllib.error import URLError
 from urllib.request import ProxyHandler, build_opener
 
 import check_evaluation
+import evaluation_langfuse
 import evaluation_network_probe
 import evaluation_pvc_restore as pvc
 import fork_cluster
@@ -537,6 +538,9 @@ def verify(
         raise ValueError(
             "Ops and the restored artifact service must share their fixture token"
         )
+    evidence["langfuse_authentication"] = evaluation_langfuse.verify(
+        project, runner_env
+    )
     network = evaluation_network_probe.exercise(
         kube, project + "-control-plane", helm=helm
     )
