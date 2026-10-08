@@ -3,9 +3,11 @@ import type { SupportProgram } from '@govbiz/shared/domain/entities/SupportProgr
 import { programStatusLabels } from '@govbiz/shared/domain/labels'
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
 import { Button, Card, StatusBadge, colors, styles } from '../ui'
+import { ProgramInterestButton, type SearchProgramInterests } from './SearchProgramInterests'
 
 export type ProgramSelectionLabels = { selected: string; select: string }
-export function ProgramCard({ program, onOpen, selection }: { program: SupportProgram; onOpen: (identity: SupportProgramIdentity) => void
+export function ProgramCard({ program, onOpen, selection, interests, onLogin }: { program: SupportProgram; onOpen: (identity: SupportProgramIdentity) => void
+  interests?: SearchProgramInterests; onLogin?(): void
   selection?: { selected: boolean; disabled: boolean; onToggle(): void; labels?: ProgramSelectionLabels }
 }) {
   const open = () => onOpen({ sourceCode: program.sourceCode, sourceProgramId: program.id })
@@ -20,7 +22,8 @@ export function ProgramCard({ program, onOpen, selection }: { program: SupportPr
       {program.matchedReasons.map((reason) => <Text key={reason} style={styles.muted}>• {reason}</Text>)}
       <Text style={[styles.label, { textAlign: 'right' }]}>공고 상세 →</Text>
     </>
-  if (!selection) return <Pressable accessibilityRole="button" accessibilityLabel={`${program.title}, 상세 보기`} onPress={open}><Card>{body}</Card></Pressable>
+  if (!selection) return <Card><Pressable accessibilityRole="button" accessibilityLabel={`${program.title}, 상세 보기`} onPress={open} style={{ gap: 9 }}>{body}</Pressable>
+    {interests && onLogin && <ProgramInterestButton identity={{ sourceCode: program.sourceCode, sourceProgramId: program.id }} title={program.title} interests={interests} onLogin={onLogin} />}</Card>
   return <View testID={`review-program-${program.sourceCode}-${program.id}`} style={[styles.card, local.selectable, selection.selected && local.selected]}>
     {selection.selected && <Text style={local.selectedLabel}>{selection.labels?.selected ?? '✓ 비교 대상 선택됨'}</Text>}
     <Pressable accessibilityRole="button" accessibilityLabel={`${program.title}, 상세 보기`} onPress={open} style={{ gap: 9 }}>{body}</Pressable>

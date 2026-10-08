@@ -13,6 +13,7 @@ import { useAuth } from '../auth/session'
 import { SearchProgramCard } from '../components/SearchProgramCard'
 import { SearchConditionCard } from '../components/SearchConditionCard'
 import { AppIcon } from '../components/AppIcon'
+import type { SearchProgramInterests } from '../components/SearchProgramInterests'
 import { Button, Notice, colors, styles } from '../ui'
 
 const emptyContext: SupportProgramConversationContext = {
@@ -22,8 +23,9 @@ const emptyContext: SupportProgramConversationContext = {
 
 type TimelineTarget = 'message' | 'waiting' | 'answer' | 'proposal' | 'results' | 'notice'
 
-export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active = true }: {
+export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active = true, interests }: {
   onOpenProgram: (identity: SupportProgramIdentity) => void; onLogin: (request?: LoginRequest) => void; keyboardOffset?: number; active?: boolean
+  interests?: SearchProgramInterests
 }) {
   const { session, status, invalidateSession } = useAuth()
   const composerInput = useRef<TextInput>(null)
@@ -259,7 +261,8 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active 
         onLayout={event => recordTimelineTarget('results', timelineVersions.results, event)}>
         <View style={styles.row}><Text style={styles.heading}>추천 공고</Text><Text style={styles.muted}>{result.totalCount}건</Text></View>
         {result.totalCount === 0 && <Notice>조건에 맞는 공고가 없습니다. 필요한 지원이나 회사 조건을 바꿔 보세요.</Notice>}
-        {result.programs.map(program => <SearchProgramCard key={JSON.stringify([program.sourceCode, program.id])} program={program} onOpen={onOpenProgram} />)}
+        {result.programs.map(program => <SearchProgramCard key={JSON.stringify([program.sourceCode, program.id])} program={program} onOpen={onOpenProgram}
+          interests={interests} onLogin={() => onLogin()} />)}
         {!token && result.resultToken && result.totalCount > result.programs.length && <View style={local.locked}>
           <Text style={styles.heading}>추가 지원사업 {result.totalCount - result.programs.length}건이 있어요</Text>
           <Text style={styles.body}>로그인하면 이번 추천 결과를 최대 5건까지 확인할 수 있어요.</Text>

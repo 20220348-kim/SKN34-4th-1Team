@@ -13,6 +13,7 @@ import { ChoiceField } from '../components/ChoiceField'
 import { FilterMultiChoices } from '../components/FilterMultiChoices'
 import { PartnerSheet } from '../components/PartnerSheet'
 import { ProgramCard, type ProgramSelectionLabels } from '../components/ProgramCard'
+import type { SearchProgramInterests } from '../components/SearchProgramInterests'
 import { Button, Field, Notice, Page, colors, styles } from '../ui'
 
 export const initialFilters: SupportProgramCatalogFilters = {
@@ -25,8 +26,9 @@ const options = (defaults: readonly string[], available?: readonly string[]) =>
 const statusOptions = [{ value: 'ALL', label: '전체 접수 상태' }, ...Object.entries(programStatusLabels).map(([value, label]) => ({ value, label }))]
 const sortOptions = [{ value: 'RECENT', label: '최신순' }, { value: 'DEADLINE', label: '마감일순' }] as const
 
-export function CatalogScreen({ onOpenProgram, keyboardOffset = 0, selection, header }: {
+export function CatalogScreen({ onOpenProgram, keyboardOffset = 0, selection, header, interests, onLogin }: {
   onOpenProgram(identity: SupportProgramIdentity): void; keyboardOffset?: number; header?: ReactNode
+  interests?: SearchProgramInterests; onLogin?(): void
   selection?: { keys: string[]; disabled?: boolean; maximum?: number; labels?: ProgramSelectionLabels; onToggle(program: SupportProgram): void }
 }) {
   const defaults = { ...initialFilters, status: selection ? 'ALL' as const : initialFilters.status }
@@ -101,6 +103,7 @@ export function CatalogScreen({ onOpenProgram, keyboardOffset = 0, selection, he
       {catalog.programs.map(program => {
         const selected = selection?.keys.includes(`${program.sourceCode}:${program.id}`) ?? false
         return <ProgramCard key={JSON.stringify([program.sourceCode, program.id])} program={program} onOpen={onOpenProgram}
+          interests={!selection ? interests : undefined} onLogin={onLogin}
           selection={selection ? { selected, labels: selection.labels, disabled: Boolean(selection.disabled || (!selected && selection.keys.length >= (selection.maximum ?? 2))), onToggle: () => selection.onToggle(program) } : undefined} />
       })}
       {catalog.totalPages > 0 && <View style={styles.row}>

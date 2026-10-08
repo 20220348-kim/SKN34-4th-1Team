@@ -4,8 +4,10 @@ import type { SupportProgram } from '@govbiz/shared/domain/entities/SupportProgr
 import { daysUntil, formatDday, programStatusLabels } from '@govbiz/shared/domain/labels'
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
 import { Button, Notice, badgeColors, colors, ddayBadgeTone } from '../ui'
+import { ProgramInterestButton, type SearchProgramInterests } from './SearchProgramInterests'
 
-export function SearchProgramCard({ program, onOpen }: { program: SupportProgram; onOpen?(identity: SupportProgramIdentity): void }) {
+export function SearchProgramCard({ program, onOpen, interests, onLogin }: { program: SupportProgram; onOpen?(identity: SupportProgramIdentity): void
+  interests?: SearchProgramInterests; onLogin?(): void }) {
   const [linkError, setLinkError] = useState<string | null>(null)
   const review = program.eligibilityReview
   const deadline = daysUntil(program.applicationEndDate)
@@ -33,6 +35,7 @@ export function SearchProgramCard({ program, onOpen }: { program: SupportProgram
         : <Text style={local.evidence}>확인 가능한 본문 인용이 제공되지 않았습니다.</Text>}
     </View>
     {onOpen && <>
+      {interests && onLogin && <ProgramInterestButton identity={{ sourceCode: program.sourceCode, sourceProgramId: program.id }} title={program.title} interests={interests} onLogin={onLogin} />}
       <View style={local.actions}><View style={{ flex: 1 }}><Button label={program.sourceCode === 'CNTRADE_NOTICE' ? '공식 공지 목록' : '원문 보기'} variant="ghost" onPress={() => void openSource()} /></View>
         <Button label="상세 보기" accessibilityLabel={`${program.title}, 상세 보기`} variant="secondary"
           onPress={() => onOpen({ sourceCode: program.sourceCode, sourceProgramId: program.id })} /></View>
