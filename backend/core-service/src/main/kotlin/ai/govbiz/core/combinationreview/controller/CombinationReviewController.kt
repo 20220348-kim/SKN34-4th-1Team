@@ -60,7 +60,7 @@ class CombinationReviewController(private val service: CombinationReviewService)
         @PathVariable @Min(1) id: Long,
         @RequestBody @Valid request: ReplaceCombinationReviewInputRequest,
     ): ResponseEntity<Void> {
-        service.replaceOwned(account, id, request.expectedRevision, request.toDraft())
+        service.replaceOwned(account, id, request.expectedRevision, request.toDraft(), request.keepsStoredRelation())
         return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build()
     }
 }

@@ -49,7 +49,9 @@ class CombinationReviewRunRepository(
         val review = requireNotNull(reviews.findOwned(ownerId, reviewId))
         val row = CombinationReviewRunDbRow(
             reviewId = reviewId, inputRevision = revision, requestKey = requestKey, requestHash = hash,
-            inputJson = json.writeValueAsString(ReviewRunSnapshot(review.draft.title, review.draft.input.programs, additionalFacts, LocalDate.now(clock))),
+            inputJson = json.writeValueAsString(ReviewRunSnapshot(
+                review.draft.title, review.draft.input.programs, additionalFacts, LocalDate.now(clock), review.draft.input.relation,
+            )),
             runnerInstanceId = runnerInstanceId, startedAt = now(),
         )
         check(mapper.insertRun(row) == 1 && row.id > 0)

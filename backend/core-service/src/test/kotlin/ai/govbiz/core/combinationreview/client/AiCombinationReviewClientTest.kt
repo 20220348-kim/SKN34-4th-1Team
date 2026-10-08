@@ -3,6 +3,7 @@ package ai.govbiz.core.combinationreview.client
 import ai.govbiz.core._common.exception.AiServiceCallException
 import ai.govbiz.core._common.exception.AiServiceFailure
 import ai.govbiz.core.combinationreview.client.dto.AiCombinationReviewRequest
+import ai.govbiz.core.combinationreview.client.dto.AiCombinationReviewV3Request
 import ai.govbiz.core.combinationreview.client.exception.AiCombinationReviewClientException
 import ai.govbiz.core.combinationreview.client.exception.AiCombinationReviewClientException.Reason
 import org.junit.jupiter.api.Assertions.*
@@ -42,10 +43,33 @@ class AiCombinationReviewClientTest {
     }
 
     @Test
+    fun sendsAndReadsTheV3ContractOnTheSameAnalyzePath() {
+        val body = resource("contract-v3-request.json")
+        val response = resource("contract-v3-response.json")
+        server.expect(requestTo("http://ai.test/internal/v1/combination-reviews/analyze")).andExpect(method(HttpMethod.POST))
+            .andExpect(content().json(body)).andRespond(withSuccess(response, MediaType.APPLICATION_JSON))
+        val result = client.analyzeV3(json.readValue(body, AiCombinationReviewV3Request::class.java))
+        assertEquals("combination-review-v3", result.contractVersion)
+        assertEquals(listOf("APPLY", "CONCURRENT", "SAME_SUBJECT"), result.pairs.single().answers.map { it.question })
+        assertEquals(listOf("NOT_ALLOWED", "ALLOWED"), result.pairs.single().answers[2].conditions.map { it.result })
+        assertEquals("E0", result.pairs.single().answers[2].consequences.first().citations.single().evidenceId)
+        server.verify()
+    }
+
+    @Test
     fun retrievesModelAndPromptMetadataWithoutCallingAnalyze() {
         server.expect(requestTo("http://ai.test/internal/v1/combination-reviews/configuration")).andExpect(method(HttpMethod.GET))
             .andRespond(withSuccess("""{"contractVersion":"combination-review-v2","model":"test-model","promptVersion":"sha256:test"}""", MediaType.APPLICATION_JSON))
         assertEquals("test-model", client.configuration().model)
+        server.verify()
+    }
+
+    @Test
+    fun asksForTheV3ConfigurationWithTheContractQuery() {
+        server.expect(requestTo("http://ai.test/internal/v1/combination-reviews/configuration?contractVersion=combination-review-v3"))
+            .andExpect(method(HttpMethod.GET))
+            .andRespond(withSuccess("""{"contractVersion":"combination-review-v3","model":"test-model","promptVersion":"sha256:test"}""", MediaType.APPLICATION_JSON))
+        assertEquals("combination-review-v3", client.configuration("combination-review-v3").contractVersion)
         server.verify()
     }
 

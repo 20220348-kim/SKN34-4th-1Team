@@ -1,6 +1,7 @@
 package ai.govbiz.core.combinationreview.controller.dto
 
 import ai.govbiz.core.combinationreview.domain.CombinationReviewSummary
+import ai.govbiz.core.combinationreview.domain.ReviewRelation
 import ai.govbiz.core.combinationreview.domain.SelectedReviewProgram
 import ai.govbiz.core.combinationreview.domain.StoredCombinationReview
 import ai.govbiz.core.combinationreview.service.dto.CombinationReviewPageResult
@@ -12,6 +13,7 @@ data class CombinationReviewResponse(
     val title: String,
     val inputRevision: Long,
     val programs: List<SelectedReviewProgramResponse>,
+    val relation: ReviewRelationResponse,
     val createdAt: OffsetDateTime,
     val updatedAt: OffsetDateTime,
 ) {
@@ -19,6 +21,7 @@ data class CombinationReviewResponse(
         fun from(review: StoredCombinationReview) = CombinationReviewResponse(
             review.id, review.draft.title, review.inputRevision,
             review.draft.input.programs.map(SelectedReviewProgramResponse::from),
+            ReviewRelationResponse.from(review.draft.input.relation),
             review.createdAt.atZone(SEOUL).toOffsetDateTime(),
             review.updatedAt.atZone(SEOUL).toOffsetDateTime(),
         )
@@ -41,6 +44,13 @@ data class SelectedReviewProgramResponse(
                 )
             },
         )
+    }
+}
+
+/** 검토 단위 사업쌍 관계(같은 과제·같은 비용). 값은 UNKNOWN·YES·NO다. */
+data class ReviewRelationResponse(val sameProject: String, val sameCost: String) {
+    companion object {
+        fun from(relation: ReviewRelation) = ReviewRelationResponse(relation.sameProject.name, relation.sameCost.name)
     }
 }
 

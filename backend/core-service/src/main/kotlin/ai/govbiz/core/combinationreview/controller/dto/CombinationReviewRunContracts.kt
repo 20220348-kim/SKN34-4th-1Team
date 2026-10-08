@@ -13,7 +13,7 @@ data class StartCombinationReviewRunRequest(
     @field:Pattern(regexp = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}") val requestKey: String,
     @field:Size(max = 8000) val additionalFacts: String = "",
 )
-data class ReviewRunInputResponse(val title: String, val programs: List<SelectedReviewProgramResponse>, val additionalFacts: String, val asOfDate: String)
+data class ReviewRunInputResponse(val title: String, val programs: List<SelectedReviewProgramResponse>, val relation: ReviewRelationResponse, val additionalFacts: String, val asOfDate: String)
 data class ReviewEvidenceBlockResponse(val id: String, val programIndex: Int, val documentHash: String, val locator: String, val text: String)
 data class ReviewDocumentResponse(
     val programIndex: Int, val sourceUrl: String, val sourcePageUrl: String?, val fileName: String, val format: String,
@@ -23,7 +23,14 @@ data class ReviewEvidenceResponse(val documents: List<ReviewDocumentResponse>, v
 data class ReviewConfigurationResponse(val contractVersion: String, val model: String, val promptVersion: String)
 data class ReviewCitationResponse(val evidenceId: String, val quote: String)
 data class ReviewStageResponse(val stage: String, val judgment: String, val scope: String, val explanation: String, val questions: List<String>, val requiresInstitutionConfirmation: Boolean, val citations: List<ReviewCitationResponse>)
-data class ReviewPairResponse(val firstProgramIndex: Int, val secondProgramIndex: Int, val stages: List<ReviewStageResponse>)
+data class ReviewConditionResponse(val condition: String, val result: String, val citations: List<ReviewCitationResponse>)
+data class ReviewConsequenceResponse(val moment: String, val action: String, val citations: List<ReviewCitationResponse>)
+data class ReviewAnswerResponse(
+    val question: String, val verdict: String, val explanation: String, val conditions: List<ReviewConditionResponse>,
+    val consequences: List<ReviewConsequenceResponse>, val institutionQuestion: String, val citations: List<ReviewCitationResponse>,
+)
+/** v2 실행(`combination-review-v2`)은 stages만, v3 실행(`combination-review-v3`)은 answers만 채우고 나머지는 빈 배열이다. */
+data class ReviewPairResponse(val firstProgramIndex: Int, val secondProgramIndex: Int, val stages: List<ReviewStageResponse>, val answers: List<ReviewAnswerResponse>)
 data class ReviewAnalysisResponse(val summary: String, val pairs: List<ReviewPairResponse>, val limitations: List<String>)
 data class CombinationReviewRunResponse(
     val id: Long, val reviewId: Long, val inputRevision: Long, val requestKey: String, val status: String,
@@ -33,7 +40,10 @@ data class CombinationReviewRunResponse(
     companion object {
         fun from(run: StoredCombinationReviewRun) = CombinationReviewRunResponse(
             run.id, run.reviewId, run.inputRevision, run.requestKey, run.status.name,
-            ReviewRunInputResponse(run.input.title, run.input.programs.map(SelectedReviewProgramResponse::from), run.input.additionalFacts, run.input.asOfDate.toString()),
+            ReviewRunInputResponse(
+                run.input.title, run.input.programs.map(SelectedReviewProgramResponse::from), ReviewRelationResponse.from(run.input.relation),
+                run.input.additionalFacts, run.input.asOfDate.toString(),
+            ),
             run.evidence?.let { e -> ReviewEvidenceResponse(
                 e.documents.map { ReviewDocumentResponse(it.programIndex, it.sourceUrl, it.sourcePageUrl, it.fileName, it.format, it.rawHash, it.textHash, it.parserVersion, it.fetchedAt.offset()) },
                 e.blocks.map { ReviewEvidenceBlockResponse(it.id, it.programIndex, it.documentHash, it.locator, it.text) }, e.coverageWarnings,
@@ -41,7 +51,11 @@ data class CombinationReviewRunResponse(
             run.configuration?.let { ReviewConfigurationResponse(it.contractVersion, it.model, it.promptVersion) },
             run.analysis?.let { a -> ReviewAnalysisResponse(a.summary, a.pairs.map { p -> ReviewPairResponse(p.firstProgramIndex, p.secondProgramIndex,
                 p.stages.map { s -> ReviewStageResponse(s.stage.name, s.judgment.name, s.scope, s.explanation, s.questions, s.requiresInstitutionConfirmation,
-                    s.citations.map { ReviewCitationResponse(it.evidenceId, it.quote) }) }) }, a.limitations) },
+                    s.citations.citations()) },
+                p.answers.map { q -> ReviewAnswerResponse(q.question.name, q.verdict.name, q.explanation,
+                    q.conditions.map { ReviewConditionResponse(it.condition, it.result.name, it.citations.citations()) },
+                    q.consequences.map { ReviewConsequenceResponse(it.moment.name, it.action, it.citations.citations()) },
+                    q.institutionQuestion, q.citations.citations()) }) }, a.limitations) },
             run.failureCode, run.startedAt.offset(), run.finishedAt?.offset(),
         )
     }
@@ -53,3 +67,4 @@ data class CombinationReviewRunSummaryResponse(val id: Long, val inputRevision: 
 }
 data class CombinationReviewRunPageResponse(val items: List<CombinationReviewRunSummaryResponse>, val nextBeforeId: Long?)
 private fun LocalDateTime.offset() = atZone(ZoneId.of("Asia/Seoul")).toOffsetDateTime()
+private fun List<ReviewCitation>.citations() = map { ReviewCitationResponse(it.evidenceId, it.quote) }

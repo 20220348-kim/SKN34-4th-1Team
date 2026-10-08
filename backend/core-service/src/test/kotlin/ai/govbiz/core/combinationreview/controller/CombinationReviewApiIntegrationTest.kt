@@ -96,6 +96,8 @@ class CombinationReviewApiIntegrationTest {
             .andExpect(jsonPath("$.programs[0].participation.commitmentSubmitted").value("UNKNOWN"))
             .andExpect(jsonPath("$.programs[0].participation.fundingReceived").value("NO"))
             .andExpect(jsonPath("$.programs[1].participation.applicationSubmitted").value("UNKNOWN"))
+            .andExpect(jsonPath("$.relation.sameProject").value("UNKNOWN"))
+            .andExpect(jsonPath("$.relation.sameCost").value("UNKNOWN"))
             .andExpect(jsonPath("$.createdAt", endsWith("+09:00")))
             .andReturn().response
         val id = json.readTree(response.contentAsString).path("id").asLong()
@@ -104,6 +106,48 @@ class CombinationReviewApiIntegrationTest {
         mvc.perform(get("$BASE/$id").cookie(owner))
             .andExpect(status().isOk()).andExpect(content().json(response.contentAsString))
             .andExpect(header().string(HttpHeaders.CACHE_CONTROL, "no-store"))
+    }
+
+    @Test
+    fun storesTheOptionalPairRelationThroughCreateReplaceAndRead() {
+        val created = write(post(BASE), payload(relation = """{"sameProject":"YES","sameCost":"NO"}"""))
+            .andExpect(status().isCreated())
+            .andExpect(jsonPath("$.relation.sameProject").value("YES"))
+            .andExpect(jsonPath("$.relation.sameCost").value("NO"))
+            .andReturn().response
+        val id = json.readTree(created.contentAsString).path("id").asLong()
+        mvc.perform(get("$BASE/$id").cookie(owner)).andExpect(status().isOk())
+            .andExpect(jsonPath("$.relation.sameProject").value("YES")).andExpect(jsonPath("$.relation.sameCost").value("NO"))
+
+        // 보낸 관계 객체는 전체 교체이며 그 안에서 생략한 칸은 모름이다.
+        write(put("$BASE/$id/inputs"), replacement(relation = """{"sameCost":"YES"}""")).andExpect(status().isNoContent())
+        mvc.perform(get("$BASE/$id").cookie(owner)).andExpect(status().isOk()).andExpect(jsonPath("$.inputRevision").value(2))
+            .andExpect(jsonPath("$.relation.sameProject").value("UNKNOWN")).andExpect(jsonPath("$.relation.sameCost").value("YES"))
+
+        write(put("$BASE/$id/inputs"), replacement(revision = "2", relation = "{}")).andExpect(status().isNoContent())
+        mvc.perform(get("$BASE/$id").cookie(owner)).andExpect(status().isOk()).andExpect(jsonPath("$.inputRevision").value(3))
+            .andExpect(jsonPath("$.relation.sameProject").value("UNKNOWN")).andExpect(jsonPath("$.relation.sameCost").value("UNKNOWN"))
+    }
+
+    @Test
+    fun replaceWithoutRelationKeepsTheStoredRelation() {
+        val created = write(post(BASE), payload(relation = """{"sameProject":"YES","sameCost":"NO"}""")).andExpect(status().isCreated())
+            .andReturn().response
+        val id = json.readTree(created.contentAsString).path("id").asLong()
+
+        // 관계를 아직 보내지 않는 모바일 초안 저장이 웹에서 고른 관계를 지우지 않는다. 나머지 입력과 버전은 바뀐다.
+        write(put("$BASE/$id/inputs"), replacement(title = "모바일에서 저장")).andExpect(status().isNoContent())
+        mvc.perform(get("$BASE/$id").cookie(owner)).andExpect(status().isOk())
+            .andExpect(jsonPath("$.title").value("모바일에서 저장")).andExpect(jsonPath("$.inputRevision").value(2))
+            .andExpect(jsonPath("$.programs[0].participation.selected").value("YES"))
+            .andExpect(jsonPath("$.relation.sameProject").value("YES")).andExpect(jsonPath("$.relation.sameCost").value("NO"))
+        assertEquals(
+            listOf(mapOf("same_project" to "YES", "same_cost" to "NO")),
+            jdbc.queryForList("SELECT same_project, same_cost FROM combination_review WHERE id = ?", id),
+        )
+        // 오래된 버전의 관계 생략 저장은 다른 입력처럼 충돌이며 저장된 관계를 바꾸지 않는다.
+        write(put("$BASE/$id/inputs"), replacement(relation = "{}")).andExpect(status().isConflict())
+        mvc.perform(get("$BASE/$id").cookie(owner)).andExpect(jsonPath("$.relation.sameProject").value("YES"))
     }
 
     @Test
@@ -239,6 +283,9 @@ class CombinationReviewApiIntegrationTest {
             """{"title":"검토","programs":null}""",
             """{"title":null,"programs":[$PROGRAM,$SECOND]}""",
             """{"title":"검토","programs":[{"sourceCode":"BIZINFO","sourceProgramId":"공고-A","participation":null},$SECOND]}""",
+            payload(relation = "null"), payload(relation = """{"sameProject":"MAYBE"}"""),
+            payload(relation = """{"sameCost":"yes"}"""), payload(relation = """{"sameProject":1}"""),
+            payload(relation = """{"sameProject":null}"""), payload(relation = """{"sameCost":"NOT_STARTED"}"""),
         )
         val id = create()
         for (body in invalidBodies) {
@@ -337,11 +384,11 @@ class CombinationReviewApiIntegrationTest {
     private fun write(request: MockHttpServletRequestBuilder, body: String, session: Cookie = owner, origin: String = ORIGIN): ResultActions =
         mvc.perform(request.cookie(session).header(HttpHeaders.ORIGIN, origin).contentType(MediaType.APPLICATION_JSON).content(body))
 
-    private fun payload(title: String = "중복 지원 검토", programs: String = "[$PROGRAM,$SECOND]"): String =
-        "{\"title\":${json.writeValueAsString(title)},\"programs\":$programs}"
+    private fun payload(title: String = "중복 지원 검토", programs: String = "[$PROGRAM,$SECOND]", relation: String? = null): String =
+        "{\"title\":${json.writeValueAsString(title)},\"programs\":$programs" + (relation?.let { ",\"relation\":$it" } ?: "") + "}"
 
-    private fun replacement(revision: String = "1", title: String = "수정 검토"): String =
-        payload(title).dropLast(1) + ",\"expectedRevision\":$revision}"
+    private fun replacement(revision: String = "1", title: String = "수정 검토", relation: String? = null): String =
+        payload(title, relation = relation).dropLast(1) + ",\"expectedRevision\":$revision}"
 
     private fun countReviews(): Int = requireNotNull(jdbc.queryForObject("SELECT COUNT(*) FROM combination_review", Int::class.java))
 

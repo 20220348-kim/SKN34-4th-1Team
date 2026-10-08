@@ -7,6 +7,7 @@ import ai.govbiz.core.combinationreview.domain.ParticipationAnswer
 import ai.govbiz.core.combinationreview.domain.ProgramExecutionStatus
 import ai.govbiz.core.combinationreview.domain.ProgramParticipation
 import ai.govbiz.core.combinationreview.domain.ReviewProgramIdentity
+import ai.govbiz.core.combinationreview.domain.ReviewRelation
 import ai.govbiz.core.combinationreview.domain.ReviewRunStatus
 import ai.govbiz.core.combinationreview.domain.ReviewRunSummary
 import ai.govbiz.core.combinationreview.domain.SelectedReviewProgram
@@ -36,6 +37,8 @@ class CombinationReviewRepository(
         val row = CombinationReviewDbRow(
             ownerAccountId = ownerAccountId,
             title = draft.title,
+            sameProject = draft.input.relation.sameProject.name,
+            sameCost = draft.input.relation.sameCost.name,
             createdAt = now,
             updatedAt = now,
         )
@@ -56,7 +59,10 @@ class CombinationReviewRepository(
     fun findOwned(ownerAccountId: Long, reviewId: Long): StoredCombinationReview? {
         require(ownerAccountId > 0 && reviewId > 0) { "ownerAccountId and reviewId must be positive" }
         val row = mapper.findReview(ownerAccountId, reviewId) ?: return null
-        val input = CombinationReviewInput.restore(mapper.findPrograms(ownerAccountId, reviewId).map { it.toDomain() })
+        val input = CombinationReviewInput.restore(
+            mapper.findPrograms(ownerAccountId, reviewId).map { it.toDomain() },
+            ReviewRelation(ParticipationAnswer.valueOf(row.sameProject), ParticipationAnswer.valueOf(row.sameCost)),
+        )
         return StoredCombinationReview(
             id = row.id,
             ownerAccountId = row.ownerAccountId,
@@ -87,6 +93,7 @@ class CombinationReviewRepository(
     /**
      * 부모 행의 소유자·버전 비교 후 사업 목록을 하나의 transaction에서 교체한다.
      * false는 없음·다른 소유자·버전 충돌을 구분해 노출하지 않는다. HTTP 오류 변환은 Service가 담당한다.
+     * keepRelation이면 같은 UPDATE에서 관계 칸을 건드리지 않아 저장된 관계를 그대로 둔다.
      */
     @Transactional
     fun replaceOwned(
@@ -94,14 +101,18 @@ class CombinationReviewRepository(
         reviewId: Long,
         expectedRevision: Long,
         draft: CombinationReviewDraft,
+        keepRelation: Boolean = false,
     ): Boolean {
         require(ownerAccountId > 0 && reviewId > 0) { "ownerAccountId and reviewId must be positive" }
         require(expectedRevision in 1 until Long.MAX_VALUE) { "expectedRevision must be positive and incrementable" }
+        val relation = draft.input.relation.takeUnless { keepRelation }
         val changed = mapper.updateReviewIfRevisionMatches(
             ownerAccountId = ownerAccountId,
             reviewId = reviewId,
             expectedRevision = expectedRevision,
             title = draft.title,
+            sameProject = relation?.sameProject?.name,
+            sameCost = relation?.sameCost?.name,
             updatedAt = LocalDateTime.now(clock).truncatedTo(ChronoUnit.MICROS),
         )
         if (changed == 0) return false

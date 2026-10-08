@@ -145,20 +145,21 @@ Compose에서는 큐만 기본 활성이고 새 정기 작업 예약·메일은 
 [Outbox·중복 처리·실행 불명·설정·검증 상세](../../docs/rabbitmq-daily-report-generation.md)를 참고하세요.
 
 중복 지원 검토는 `ai.govbiz.core.combinationreview`에 세션 인증 기반 생성·목록·상세·입력 수정·삭제 API를 구현했습니다.
-V10은 검토 입력, V11은 실행 스냅샷·원본 파일 이력을 저장합니다. 공식 첨부 자동 수집·PDF/HWP/HWPX 파싱과
+V10은 검토 입력, V11은 실행 스냅샷·원본 파일 이력을 저장합니다. V53은 검토 단위 선택 입력인 사업쌍 관계
+(`same_project`·`same_cost`, `UNKNOWN`/`YES`/`NO`, 기본 `UNKNOWN`)를 추가합니다. 공식 첨부 자동 수집·PDF/HWP/HWPX 파싱과
 단일 Agent 분석을 사용자 화면에 연결했습니다.
 [기능 설계와 구현 경계](../../docs/duplicate-support-review-design.md)를 참고하세요.
 
 | 중복 지원 검토 API | 동작 |
 |---|---|
-| `POST /api/v1/combination-reviews` | 제목·정확히 2개 사업의 현재 입력 생성. 201과 상세 본문·Location 반환 |
+| `POST /api/v1/combination-reviews` | 제목·정확히 2개 사업의 현재 입력과 선택 `relation`(`sameProject`·`sameCost`, 생략 시 `UNKNOWN`) 생성. 201과 상세 본문·Location 반환 |
 | `GET /api/v1/combination-reviews?size=20&beforeId=123` | 본인 목록, 생성 ID 내림차순. size 1~50, beforeId 생략 가능. 각 항목의 `latestRun`은 가장 최근 실행 요약(실행 목록 항목과 같은 형식)이며 실행 전이면 null |
-| `GET /api/v1/combination-reviews/{id}` | 본인 상세 입력·버전 조회 |
+| `GET /api/v1/combination-reviews/{id}` | 본인 상세 입력(`relation` 포함)·버전 조회 |
 | `DELETE /api/v1/combination-reviews/{id}` | 본인 검토와 선택 공고·실행 이력·보관 원문 삭제. 성공 시 204. 대기·분석 중·결과 불명 실행이 있으면 409 `COMBINATION_REVIEW_DELETE_CONFLICT`, 기록 보존 |
-| `PUT /api/v1/combination-reviews/{id}/inputs` | 제목·사업 목록 전체 교체. expectedRevision 일치 시 204, 충돌 시 409 |
+| `PUT /api/v1/combination-reviews/{id}/inputs` | 제목·사업 목록 전체 교체. `relation`을 보내면 함께 교체하고 생략하면 저장된 관계를 유지(명시적 null은 400). expectedRevision 일치 시 204, 충돌 시 409 |
 | `POST /api/v1/combination-reviews/{id}/runs` | expectedRevision·requestKey·선택적 additionalFacts로 비동기 분석 접수. 신규 202 QUEUED, 동일 요청 재조회 200 |
 | `GET /api/v1/combination-reviews/{id}/runs` | 본인 실행 목록, size/beforeId 커서 |
-| `GET /api/v1/combination-reviews/{id}/runs/{runId}` | 당시 입력·근거·설정·결과 또는 실패 조회. 근거 문서는 공식 공고 상세 `sourcePageUrl`과 수집 첨부 `sourceUrl`을 구분해 반환 |
+| `GET /api/v1/combination-reviews/{id}/runs/{runId}` | 당시 입력(`relation` 포함, 이전 실행은 `UNKNOWN`)·근거·설정·결과 또는 실패 조회. 사업쌍 결과는 `configuration.contractVersion`이 v2면 `stages`, v3면 세 질문 `answers`를 채우고 다른 쪽은 빈 배열. 근거 문서는 공식 공고 상세 `sourcePageUrl`과 수집 첨부 `sourceUrl`을 구분해 반환 |
 | `GET /api/v1/combination-reviews/{id}/runs/{runId}/sources/{documentIndex}` | 실행 당시 원본 파일 다운로드. documentIndex는 0부터 시작 |
 
 소유자는 기존 세션 쿠키를 검증한 Account로 결정하며, 관리자도 타인 검토를 조회·수정할 수 없습니다.
@@ -169,6 +170,10 @@ CombinationReviewRunConsumer → CombinationReviewRunService`로 기존 수집·
 동기 실행으로 우회하지 않습니다. 상태는 QUEUED/RUNNING/SUCCEEDED/FAILED/UNKNOWN/INTERRUPTED입니다.
 UNKNOWN은 같은 검토의 새 실행도 차단하고, `app.combination-review.unknown-ttl`(`COMBINATION_REVIEW_UNKNOWN_TTL`, 기본 PT30M, 최소 PT20M)이
 지나면 AI를 다시 부르지 않고 `RUN_OUTCOME_UNKNOWN_EXPIRED`로 FAILED 처리해 검토 슬롯과 계정 한도(3건)를 돌려줍니다. [한도·만료·재발행·배포·검증 상세](../../docs/rabbitmq-combination-review.md)를 참고하세요.
+새 실행의 AI 계약은 `COMBINATION_REVIEW_CONTRACT_VERSION`(`v2` 여섯 단계 | `v3` 세 질문, 기본 `v2`)으로 고르며 다른 값이면 시작에 실패합니다.
+v3는 `configuration?contractVersion=combination-review-v3`로 설정을 확인하고, 참여 사실 6칸 대신 사업별 상태 4값(+`UNKNOWN`)과 관계를 보냅니다.
+상태 4값은 shared `participationToReviewStatus`와 같은 규칙으로 Domain(`ProgramParticipation.reviewStatus`)이 계산하며,
+응답은 Facade에서 v2와 같은 인용 검사와 판정별 조건·인용·기관 확인 문장 규칙으로 검증합니다. 지난 v2 결과는 그대로 읽습니다.
 없는 검토와 타인 검토는 같은 404를 반환합니다. 성공 응답은 `Cache-Control: no-store`이며 시각은 `+09:00`입니다.
 쓰기 요청의 기존 Origin 방어를 유지하고 CORS에서 PUT·DELETE를 허용합니다. 상세 JSON·오류 코드는 위 설계 문서에 있습니다.
 
@@ -794,6 +799,7 @@ Compose는 일부 주소·CORS 값을 내부 네트워크에 맞게 덮어씁니
 | `AI_SERVICE_CONNECT_TIMEOUT` | `1s` | AI Service 연결 제한시간 |
 | `AI_SERVICE_READ_TIMEOUT` | `35s` | AI Health·대화 조건 해석·원문 근거 답변 응답 제한시간 |
 | `AI_COMBINATION_REVIEW_READ_TIMEOUT` | `75s` | 중복 지원·수혜 분석 전용 응답 제한시간 |
+| `COMBINATION_REVIEW_CONTRACT_VERSION` | `v2` | 중복 검토 새 실행의 AI 계약(`v2` 여섯 단계, `v3` 세 질문). 실행 시점 값을 쓰며 지난 실행은 저장된 계약으로 읽음 |
 | `AI_RANKING_READ_TIMEOUT` | `55s` | 지원사업 최종 점수화 전용 응답 제한시간 |
 | `AI_SEMANTIC_SEARCH_READ_TIMEOUT` | `30s` | 의미 검색·색인 응답 제한시간 |
 | `ELASTICSEARCH_BASE_URL` | `http://127.0.0.1:9200` | 호스트 실행 시 키워드 색인·검색 주소. Compose는 `http://elasticsearch:9200`으로 고정 |

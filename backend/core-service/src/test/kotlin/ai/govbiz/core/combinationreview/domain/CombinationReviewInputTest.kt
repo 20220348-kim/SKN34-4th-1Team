@@ -76,6 +76,14 @@ class CombinationReviewInputTest {
     }
 
     @Test
+    fun pairRelationIsOptionalUnknownAndKeptWhenRestored() {
+        assertEquals(ReviewRelation(ParticipationAnswer.UNKNOWN, ParticipationAnswer.UNKNOWN), input(a, b).relation)
+        val relation = ReviewRelation(sameProject = ParticipationAnswer.YES, sameCost = ParticipationAnswer.NO)
+        assertEquals(relation, CombinationReviewInput(listOf(SelectedReviewProgram(a), SelectedReviewProgram(b)), relation).relation)
+        assertEquals(relation, CombinationReviewInput.restore(listOf(a, b, c).map(::SelectedReviewProgram), relation).relation)
+    }
+
+    @Test
     fun rejectsSelfPairsAndReversedPairs() {
         assertThrows(IllegalArgumentException::class.java) { ReviewProgramPair(a, a) }
         assertThrows(IllegalArgumentException::class.java) { ReviewProgramPair(b, a) }
