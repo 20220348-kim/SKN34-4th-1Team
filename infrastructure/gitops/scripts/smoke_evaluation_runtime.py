@@ -90,17 +90,20 @@ def langfuse_url(compose, env, project):
 
 
 def bundle(images, node, observation_url):
+    # Exercise the deployment profiles, including each component's resources.
+    # Only fixture identities, routes and activation differ in the owned CI cluster.
     values = {
-        name: {
-            "component": name,
-            "replicas": 1,
-            "allowLocalImages": True,
-            "image": images[name],
-            "storage": {"existingClaim": "results", "node": node},
-        }
+        name: yaml.safe_load(
+            pvc.PREFECT_VALUES.with_name(name + ".yaml").read_text(encoding="utf-8")
+        )
         for name in check_evaluation.COMPONENTS
     }
-    values["prefect"]["storage"]["existingClaim"] = "prefect"
+    for name, value in values.items():
+        value.update(replicas=1, allowLocalImages=True, image=images[name])
+        value["storage"] = {
+            "existingClaim": "prefect" if name == "prefect" else "results",
+            "node": node,
+        }
     values["ops-artifacts"]["evidenceImage"] = images["evaluation-runner"]
     values["evaluation-runner"]["runner"] = {
         "opsApiUrl": "http://ops-service.govbiz-msa.svc.cluster.local:8000",

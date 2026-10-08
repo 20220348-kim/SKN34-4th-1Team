@@ -238,7 +238,10 @@ LLMOps CI의 기존 격리 통합 검증에 `--evaluation-runtime` 단계를 연
    상태에서 실제 Prefect SQLite와 완료 보고서를 읽는다. 개인 백업·운영 데이터는 사용하지 않는다.
 2. 기존 PVC 복원 도구로 새 namespace·StorageClass·PVC 2개에 복원하고 실행 ID·보고서 해시·권한을
    검증한다. 앞의 최소 합성 SQLite 대신 실제 평가에 사용했던 Prefect 스키마를 그대로 사용한다.
-3. 같은 이미지로 렌더링한 Prefect·결과 서버를 먼저 기동하고 실행기 1개를 시작한다. 자동 migration은
+3. `environments/evaluation`의 배포용 values를 읽고 검증 전용 이미지·PVC·노드·연결 주소와 replica만
+   바꾸어 렌더링한다. 실행기의 2Gi, 결과 서버의 256Mi 등 구성요소별 CPU·메모리 요청/한도를 유지한다.
+   결과 서버의 자료 복사 init container도 같은 제한을 사용한다. 공통 Chart 기본값만으로 검증하지 않는다.
+   같은 이미지로 렌더링한 Prefect·결과 서버를 먼저 기동하고 실행기 1개를 시작한다. 자동 migration은
    계속 비활성화한다. Ops API와 sync의 두 URL을 함께 바꾼 뒤 격리 접수를 재개한다.
 4. 기존 완료 이력을 확인하고 무료 평가를 접수한다. 동일 요청 재전송의 flow 일치, 백그라운드 상태
    반영, 인증 보고서 조회와 모델 호출 0회를 확인한다.

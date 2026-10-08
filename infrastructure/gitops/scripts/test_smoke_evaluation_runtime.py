@@ -25,6 +25,32 @@ EXPECTED = {
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_runtime_uses_deployment_resource_profiles_for_main_and_init_containers(
+        self,
+    ):
+        images = {
+            name: f"govbiz/{name}:{PROJECT}" for name in check_evaluation.COMPONENTS
+        }
+        rows = check_evaluation.render_bundle(
+            smoke.bundle(images, PROJECT + "-control-plane", "http://172.20.0.2:3000"),
+            "govbiz-evaluation-restore-abc123",
+        )
+        defaults = yaml.safe_load(
+            (check_evaluation.CHART / "values.yaml").read_text(encoding="utf-8")
+        )
+        for name, resources in rows.items():
+            profile = yaml.safe_load(
+                smoke.pvc.PREFECT_VALUES.with_name(name + ".yaml").read_text(
+                    encoding="utf-8"
+                )
+            )
+            expected = profile.get("resources", defaults["resources"])
+            workload = next(row for row in resources if row["kind"] == "Deployment")
+            pod = workload["spec"]["template"]["spec"]
+            for container in pod["containers"] + pod.get("initContainers", []):
+                with self.subTest(component=name, container=container["name"]):
+                    self.assertEqual(container["resources"], expected)
+
     def test_real_chart_with_ci_images_is_free_and_uses_restored_claims(self):
         images = {
             name: f"govbiz/{name}:{PROJECT}" for name in check_evaluation.COMPONENTS
