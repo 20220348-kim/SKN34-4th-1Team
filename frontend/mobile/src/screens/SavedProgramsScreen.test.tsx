@@ -25,6 +25,50 @@ beforeEach(() => {
   jest.mocked(useAuth).mockReturnValue(auth('first-token') as unknown as ReturnType<typeof useAuth>)
 })
 
+test('preparation work filters the document status and application stage independently from review work', async () => {
+  const completed = { ...preparation, id: 10, formTitle: '완료 문서', hasCurrentDocument: true, progressStage: 'APPLIED' }
+  jest.mocked(apiRequest).mockImplementation(path => path.startsWith('/api/v1/application-preparations?')
+    ? Promise.resolve({ items: [preparation, completed], nextBeforeId: null }) : respond(path))
+  render(<SavedProgramsScreen onLogin={jest.fn()} onOpenProgram={jest.fn()} />)
+  fireEvent.press(await screen.findByRole('tab', { name: '준비 중인 작업 2' }))
+  fireEvent.press(screen.getByLabelText('준비 작업 필터 열기'))
+  fireEvent.press(screen.getByLabelText('작업 종류: 전체 작업'))
+  fireEvent.press(screen.getByRole('radio', { name: '신청 문서' }))
+  fireEvent.press(screen.getByLabelText('작업 상태: 전체 상태'))
+  fireEvent.press(screen.getByRole('radio', { name: '초안 완료' }))
+  fireEvent.press(screen.getByLabelText('신청 진행 단계: 전체 단계'))
+  fireEvent.press(screen.getByRole('radio', { name: '제출 완료' }))
+  fireEvent.press(screen.getByLabelText('결과 1건 보기'))
+  expect(screen.getByLabelText('완료 문서 · 일반 신청 열기')).toBeTruthy()
+  expect(screen.queryByLabelText('사업계획서 · 일반 신청 열기')).toBeNull()
+  fireEvent.press(screen.getByLabelText('준비 작업 필터 초기화'))
+  expect(screen.getByLabelText('사업계획서 · 일반 신청 열기')).toBeTruthy()
+})
+
+test('review status filters separate failed runs from results for changed inputs', async () => {
+  const changed = { ...review, id: 7, title: '입력 바뀐 검토', inputRevision: 2 }
+  jest.mocked(apiRequest).mockImplementation(path => path.startsWith('/api/v1/combination-reviews?')
+    ? Promise.resolve({ items: [review, changed], nextBeforeId: null })
+    : path.endsWith('/5') ? Promise.resolve(review) : path.endsWith('/7') ? Promise.resolve(changed)
+      : path.includes('/runs?') ? Promise.resolve({ items: [{ ...run, status: 'FAILED' }], nextBeforeId: null }) : respond(path))
+  render(<SavedProgramsScreen onLogin={jest.fn()} onOpenProgram={jest.fn()} />)
+  fireEvent.press(await screen.findByRole('tab', { name: '준비 중인 작업 3' }))
+  fireEvent.press(screen.getByLabelText('준비 작업 필터 열기'))
+  fireEvent.press(screen.getByLabelText('작업 종류: 전체 작업'))
+  fireEvent.press(screen.getByRole('radio', { name: '중복 검토' }))
+  fireEvent.press(screen.getByLabelText('작업 상태: 전체 상태'))
+  fireEvent.press(screen.getByRole('radio', { name: '분석 실패' }))
+  fireEvent.press(screen.getByLabelText('결과 1건 보기'))
+  expect(screen.getByLabelText('동시 신청 검토 열기')).toBeTruthy()
+  expect(screen.queryByLabelText('입력 바뀐 검토 열기')).toBeNull()
+  fireEvent.press(screen.getByLabelText('준비 작업 필터 열기'))
+  fireEvent.press(screen.getByLabelText('작업 상태: 분석 실패'))
+  fireEvent.press(screen.getByRole('radio', { name: '입력 변경' }))
+  fireEvent.press(screen.getByLabelText('결과 1건 보기'))
+  expect(screen.getByLabelText('입력 바뀐 검토 열기')).toBeTruthy()
+  expect(screen.queryByLabelText('동시 신청 검토 열기')).toBeNull()
+})
+
 test('a delayed previous account response cannot reveal saved programs or preparation work', async () => {
   let finish!: (value: unknown) => void
   jest.mocked(apiRequest).mockImplementation((path, options) => {

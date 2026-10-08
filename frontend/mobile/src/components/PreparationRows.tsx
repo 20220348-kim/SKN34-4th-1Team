@@ -15,6 +15,13 @@ export const preparationKey = (identity: SupportProgramIdentity) => JSON.stringi
 export const preparationDate = (date: string) => date.slice(5, 10).replace('-', '.')
 const reviewDateFormatter = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', month: '2-digit', day: '2-digit' })
 const reviewRowDate = (date: string) => reviewDateFormatter.formatToParts(new Date(date)).filter(part => part.type === 'month' || part.type === 'day').map(part => part.value).join('.')
+export const preparationWorkStatusLabels = { writing: '작성 중', draft_ready: '초안 완료', document_unknown: '상태 확인 필요' } as const
+export const reviewWorkStatusLabels = { unstarted: '분석 전', changed: '입력 변경', QUEUED: '분석 대기', RUNNING: '분석 중',
+  SUCCEEDED: '분석 완료', FAILED: '분석 실패', INTERRUPTED: '분석 중단', UNKNOWN: '결과 확인 필요' } as const
+export const preparationWorkStatus = (item: ApplicationPreparationSummary): keyof typeof preparationWorkStatusLabels =>
+  item.hasCurrentDocument === true ? 'draft_ready' : item.hasCurrentDocument === false ? 'writing' : 'document_unknown'
+export const reviewWorkStatus = ({ review, latestRun }: PreparationReview): keyof typeof reviewWorkStatusLabels =>
+  !latestRun ? 'unstarted' : latestRun.inputRevision !== review.inputRevision ? 'changed' : latestRun.status
 
 export function PreparationRow({ item }: { item: ApplicationPreparationSummary }) {
   const completed = item.hasCurrentDocument === true
@@ -31,7 +38,7 @@ export function PreparationRow({ item }: { item: ApplicationPreparationSummary }
         accessibilityValue={{ min: 0, max: total, now: answered }} style={local.track}>
         <View style={[local.bar, { width: `${Math.min(100, answered / total * 100)}%` }]} /></View>}
     </View>
-    <View style={local.pill}><StatusBadge label={completed ? '초안 완료' : item.hasCurrentDocument === false ? '작성 중' : '상태 확인 필요'}
+    <View style={local.pill}><StatusBadge label={preparationWorkStatusLabels[preparationWorkStatus(item)]}
       tone={completed ? 'success' : 'neutral'} /></View>
   </Pressable>
 }
@@ -47,8 +54,7 @@ export function ReviewRow({ item }: { item: PreparationReview }) {
     const timer = setInterval(() => setNow(Date.now()), 1_000)
     return () => clearInterval(timer)
   }, [running])
-  const labels = { QUEUED: '분석 대기', RUNNING: '분석 중', SUCCEEDED: '분석 완료', FAILED: '분석 실패', INTERRUPTED: '분석 중단', UNKNOWN: '결과 확인 필요' }
-  const label = !latestRun ? '분석 전' : !current ? '입력 변경' : labels[latestRun.status]
+  const label = reviewWorkStatusLabels[reviewWorkStatus(item)]
   const elapsed = latestRun ? Math.max(0, Math.floor((now - new Date(latestRun.startedAt).getTime()) / 1_000)) : 0
   return <Pressable accessibilityRole="button" accessibilityLabel={`${review.title} 열기`} style={local.row}
     onPress={() => router.push({ pathname: '/all/reviews/[id]', params: { id: String(review.id), ...(current && latestRun ? { runId: String(latestRun.id) } : {}) } })}>
