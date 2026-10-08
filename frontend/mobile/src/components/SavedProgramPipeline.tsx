@@ -50,7 +50,7 @@ export function SavedProgramPipeline({ items, preparations, busy, onOpenProgram,
         {overview.map(step => { const active = step.id === selectedId; return <Pressable key={step.id}
           accessibilityRole="tab" accessibilityLabel={`${step.label} ${step.count}건`} accessibilityState={{ selected: active }}
           onPress={() => setSelectedId(step.id)} style={({ pressed }) => [local.step,
-            { backgroundColor: active ? step.color : colors.surface, borderColor: active ? step.color : colors.border }, pressed && { opacity: 0.7 }]}>
+            { backgroundColor: active ? step.color : colors.surface, borderColor: active ? step.color : colors.border }, pressed && { opacity: 0.9 }]}>
           <View style={[local.icon, { backgroundColor: step.soft }]}><AppIcon name={step.icon} color={step.color} size={18} /></View>
           <Text style={[local.stepLabel, active && { color: colors.surface }]}>{step.label}</Text>
           <Text style={[local.stepCount, { color: active ? colors.surface : step.color }]}>{step.count}<Text style={local.countUnit}>건</Text></Text>

@@ -45,7 +45,7 @@ export function Button({ label, onPress, disabled, variant = 'primary', busy, si
     style={({ pressed }) => [styles.button, variant === 'secondary' && styles.secondary,
       variant === 'ghost' && styles.ghost, variant === 'danger' && styles.dangerButton,
       size === 'small' && styles.smallButton, size === 'large' && styles.largeButton,
-      (disabled || busy || pressed) && { opacity: 0.55 }, style]}>
+      (disabled || busy) ? { opacity: 0.55 } : pressed && { opacity: 0.9 }, style]}>
     {busy && <ActivityIndicator color={variant === 'primary' ? colors.surface : colors.primary} />}
     <Text style={[styles.buttonText, variant === 'secondary' && { color: colors.text },
       variant === 'ghost' && { color: colors.secondaryText }, variant === 'danger' && { color: colors.danger },

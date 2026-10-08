@@ -1,8 +1,9 @@
 import { useState } from 'react'
-import { ActivityIndicator, DevSettings, Pressable, StyleSheet, Text, View } from 'react-native'
+import { ActivityIndicator, DevSettings, StyleSheet, Text, View } from 'react-native'
 import { useAuth } from '../auth/session'
 import { clearIntroductionCompleted } from '../auth/introductionStorage'
 import { AppIcon, type AppIconName } from '../components/AppIcon'
+import { MenuPressable } from '../components/MenuPressable'
 import { Button, Notice, Page, colors } from '../ui'
 
 export type MenuDestination = 'account' | 'company' | 'settings' | 'filter' | 'ai' | 'saved' | 'report'
@@ -41,7 +42,7 @@ export function MenuScreen({ onOpen }: { onOpen(destination: MenuDestination): v
       { destination: 'reviews', label: '중복 검토', description: '공고 조합 검토', icon: 'shield' },
     ] },
     { title: '협업', items: [
-      { destination: 'recruitments', label: '모집글', description: '파트너 찾기', icon: 'collaboration' },
+      { destination: 'recruitments', label: '모집글', description: '파트너 찾기', icon: 'recruitment' },
       { destination: 'partners', label: '파트너 관리', description: '제안 · 내 모집글', icon: 'collaboration' },
     ] },
     { title: '서비스 안내', items: [
@@ -58,12 +59,12 @@ export function MenuScreen({ onOpen }: { onOpen(destination: MenuDestination): v
     {restoreError && <Notice error>{restoreError}</Notice>}
     {groups.map((group) => <View key={group.title} style={local.group}>
       <Text accessibilityRole="header" style={local.heading}>{group.title}</Text>
-      {group.items.map((item) => <Pressable key={item.destination} accessibilityRole="button" accessibilityLabel={item.label}
+      {group.items.map((item) => <MenuPressable key={item.destination} accessibilityRole="button" accessibilityLabel={item.label}
         accessibilityHint={item.description} onPress={() => onOpen(item.destination)}
-        style={({ pressed }) => [local.row, pressed && { backgroundColor: colors.background }]}>
+        style={({ pressed }) => [local.row, pressed && { backgroundColor: `${colors.text}05` }]}>
         <View style={local.icon}><AppIcon name={item.icon} color={colors.primary} size={22} /></View>
         <Text style={local.label}>{item.label}</Text><Text style={local.description}>{!account && !['filter', 'ai', 'recruitments', 'pricing'].includes(item.destination) ? '로그인 후 이용' : item.description}</Text>
-      </Pressable>)}
+      </MenuPressable>)}
     </View>)}
     {__DEV__ && status === 'signedOut' && <>
       {introError && <Notice error>{introError}</Notice>}

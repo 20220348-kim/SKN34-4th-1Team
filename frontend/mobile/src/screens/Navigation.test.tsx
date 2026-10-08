@@ -1,5 +1,5 @@
 import { Alert, Text } from 'react-native'
-import { useState } from 'react'
+import { createContext, useContext, useState } from 'react'
 import { Stack, router, useLocalSearchParams } from 'expo-router'
 import { act, fireEvent, renderRouter, screen, waitFor } from 'expo-router/testing-library'
 import TabLayout from '../../app/(tabs)/_layout'
@@ -390,6 +390,43 @@ test('guest private menu entries keep All on cancellation and enter the selected
   await screen.findByText('선택한 회원 관심함')
   expect(view.getPathname()).toBe('/saved')
   expect(tabLabels()).toEqual(['검색', '관심함', '리포트', '메뉴'])
+})
+
+test('logging in through the guest account menu opens the main search instead of the account screen', async () => {
+  let verifyLogin!: () => void
+  function ReactiveAuthLayout() {
+    const [verified, setVerified] = useState(false)
+    verifyLogin = () => setVerified(true)
+    jest.mocked(useAuth).mockReturnValue(verified ? memberAuth : { status: 'signedOut', session: null, restoreError: null } as ReturnType<typeof useAuth>)
+    const Layout = routes._layout
+    return <Layout />
+  }
+  const view = renderRouter({ ...routes, _layout: ReactiveAuthLayout }, { initialUrl: '/all' })
+  fireEvent.press(await screen.findByLabelText('내 계정'))
+  await screen.findByLabelText('이메일')
+  await act(async () => verifyLogin())
+  await screen.findByLabelText('회사 상황이나 궁금한 점')
+  expect(view.getPathname()).toBe('/')
+  expect(screen.queryByLabelText('기업 프로필 등록')).toBeNull()
+  expect(tabLabels()).toEqual(['검색', '관심함', '리포트', '메뉴'])
+})
+
+test('logging in on a directly opened account route returns to the main search', async () => {
+  const signedOut = { status: 'signedOut', session: null, restoreError: null } as ReturnType<typeof useAuth>
+  const TestAuthContext = createContext(signedOut)
+  jest.mocked(useAuth).mockImplementation(() => useContext(TestAuthContext))
+  let verifyLogin!: () => void
+  function ReactiveAuthLayout() {
+    const [verified, setVerified] = useState(false)
+    verifyLogin = () => setVerified(true)
+    const Layout = routes._layout
+    return <TestAuthContext.Provider value={verified ? memberAuth : signedOut}><Layout /></TestAuthContext.Provider>
+  }
+  const view = renderRouter({ ...routes, _layout: ReactiveAuthLayout }, { initialUrl: '/all/account' })
+  await screen.findByLabelText('이메일')
+  await act(async () => verifyLogin())
+  await screen.findByLabelText('회사 상황이나 궁금한 점')
+  expect(view.getPathname()).toBe('/')
 })
 
 test.each([
