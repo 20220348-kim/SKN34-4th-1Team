@@ -115,6 +115,62 @@ def main():
             report["pvc"] = restore.rehearse(
                 kube, cluster + "-control-plane", stores, expected
             )
+            # Retention must survive the context's exit. The outer disposable
+            # cluster owns these synthetic copies, so no personal data is touched.
+            retained = restore.retain_for_migration(
+                kube, cluster + "-control-plane", stores, expected
+            )
+            nk = kube + ["-n", retained["namespace"]]
+            token = restore.run(
+                kube + ["get", "namespace", retained["namespace"], "-o", "json"]
+            )["metadata"]["labels"][restore.LABEL]
+            volumes = restore.bound_volumes(
+                kube,
+                nk,
+                retained["namespace"],
+                retained["storage_class"],
+                token,
+                {name: row["claim_uid"] for name, row in retained["claims"].items()},
+                "Retain",
+            )
+            if (
+                volumes != retained["claims"]
+                or restore.run(nk + ["get", "pods", "-o", "json"])["items"]
+            ):
+                raise ValueError("Retained storage or helper cleanup was not preserved")
+            # A second request must refuse this namespace and preserve its PVCs.
+            try:
+                restore.retain_for_migration(
+                    kube, cluster + "-control-plane", stores, expected
+                )
+            except ValueError as error:
+                if str(error) != "Retained namespace already exists":
+                    raise
+                if (
+                    restore.bound_volumes(
+                        kube,
+                        nk,
+                        retained["namespace"],
+                        retained["storage_class"],
+                        token,
+                        {
+                            name: row["claim_uid"]
+                            for name, row in retained["claims"].items()
+                        },
+                        "Retain",
+                    )
+                    != volumes
+                ):
+                    raise ValueError(
+                        "A repeated restore changed retained storage"
+                    ) from None
+            else:
+                raise ValueError("An existing retained namespace was accepted")
+            report["retained_pvc"] = {
+                **retained,
+                "retained_after_return": True,
+                "repeat_restore_rejected": True,
+            }
             report["status"] = "PASS"
     finally:
         try:
