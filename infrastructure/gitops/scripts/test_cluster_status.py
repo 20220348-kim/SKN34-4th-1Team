@@ -2,11 +2,11 @@
 
 import copy
 import json
-from pathlib import Path
 import subprocess
 import tempfile
-from types import SimpleNamespace
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import cluster_status as status
@@ -209,6 +209,7 @@ class SnapshotTests(unittest.TestCase):
         )
         self.assertTrue(result["checkout_dirty"])
         self.assertFalse(result["argocd"]["application_crd_present"])
+        self.assertEqual(result["argocd"]["evaluation"]["status"], "NOT_INSTALLED")
         for key in ("image_source_verified", "application_paths_verified", "backup_verified"):
             self.assertIs(result[key], False)
         self.assertNotIn("DO-NOT-PRINT", json.dumps(result))
@@ -220,9 +221,11 @@ class SnapshotTests(unittest.TestCase):
             )
 
     def test_kubernetes_timeout_does_not_produce_success(self):
-        with patch.object(status, "run", side_effect=subprocess.TimeoutExpired("kube", 15)):
-            with self.assertRaises(subprocess.TimeoutExpired):
-                status.snapshot(Path("unused"), {}, ["kube"], ["namespaced"], ["argo"])
+        with (
+            patch.object(status, "run", side_effect=subprocess.TimeoutExpired("kube", 15)),
+            self.assertRaises(subprocess.TimeoutExpired),
+        ):
+            status.snapshot(Path("unused"), {}, ["kube"], ["namespaced"], ["argo"])
 
     def test_unbound_terminating_missing_claims_or_nodes_are_not_healthy(self):
         deployment, pod, _ = workload()
@@ -269,7 +272,246 @@ class SnapshotTests(unittest.TestCase):
             with self.subTest(phase=phase, deleting=deleting, missing=missing):
                 self.assertFalse(result["storage_ready"])
                 self.assertFalse(result["nodes_healthy"])
-                self.assertEqual(result["missing_claims"], ["data"] if missing else [])
+            self.assertEqual(result["missing_claims"], ["data"] if missing else [])
+
+
+def evaluation_apps():
+    from evaluation_release import argo_plan
+
+    return [
+        {
+            **app,
+            "status": {
+                "sync": {"status": "Synced", "revision": "a" * 40},
+                "health": {"status": "Healthy"},
+            },
+        }
+        for app in argo_plan(
+            SimpleNamespace(url="https://github.com/alice/project.git"),
+            "a" * 40,
+            {name: {"replicas": 0} for name in status.COMPONENTS},
+        )
+        if app["kind"] == "Application"
+    ]
+
+
+class EvaluationApplicationTests(unittest.TestCase):
+    def test_dormant_healthy_applications_are_not_runtime_or_publication_proof(self):
+        report = status.evaluation_applications(evaluation_apps(), "alice/project")
+        self.assertEqual(report["status"], "OBSERVED")
+        self.assertEqual(len(report["applications"]), 3)
+        self.assertTrue(all(not item["issues"] for item in report["applications"]))
+        for key in (
+            "runtime_verified",
+            "storage_verified",
+            "publication_verified",
+            "deployment_authorized",
+        ):
+            self.assertIs(report[key], False)
+
+    def test_missing_or_partially_installed_components_remain_explicit(self):
+        report = status.evaluation_applications([], "alice/project")
+        self.assertEqual(report["status"], "NOT_INSTALLED")
+        self.assertTrue(
+            all(
+                item["issues"] == ["APPLICATION_MISSING"]
+                for item in report["applications"]
+            )
+        )
+        report = status.evaluation_applications(evaluation_apps()[:1], "alice/project")
+        self.assertEqual(report["status"], "ATTENTION")
+        self.assertEqual(sum(item["present"] for item in report["applications"]), 1)
+
+    def test_wrong_named_app_is_reported_even_when_routed_outside_evaluation_namespace(
+        self,
+    ):
+        changes = (
+            lambda app: app["spec"].update(project="default"),
+            lambda app: app["spec"]["destination"].update(namespace="govbiz-msa"),
+            lambda app: app["spec"]["destination"].update(
+                server="https://other-cluster"
+            ),
+            lambda app: app["spec"]["source"].update(
+                repoURL="https://github.com/other/project.git"
+            ),
+            lambda app: app["spec"]["source"].update(path="other/chart"),
+            lambda app: app["spec"]["source"]["helm"].update(releaseName="other"),
+            lambda app: app["spec"].update(sources=[{"repoURL": "private"}]),
+        )
+        for change in changes:
+            apps = evaluation_apps()
+            change(apps[0])
+            with self.subTest(change=change):
+                report = status.evaluation_applications(apps, "alice/project")
+                self.assertEqual(report["status"], "ATTENTION")
+                self.assertIn(
+                    "APPLICATION_IDENTITY_MISMATCH", report["applications"][0]["issues"]
+                )
+
+    def test_auto_sync_stale_revision_unhealthy_and_pending_operations_need_attention(
+        self,
+    ):
+        cases = (
+            (
+                lambda a: a["spec"]["syncPolicy"].update(automated={}),
+                "AUTOMATIC_SYNC_CONFIGURED",
+            ),
+            (
+                lambda a: a["spec"]["syncPolicy"]["automated"].update(enabled=True),
+                "AUTOMATIC_SYNC_CONFIGURED",
+            ),
+            (
+                lambda a: a["spec"]["syncPolicy"]["automated"].update(prune=True),
+                "AUTOMATIC_SYNC_CONFIGURED",
+            ),
+            (
+                lambda a: a["spec"]["syncPolicy"]["automated"].update(selfHeal=True),
+                "AUTOMATIC_SYNC_CONFIGURED",
+            ),
+            (
+                lambda a: a["spec"]["source"].update(targetRevision="main"),
+                "REVISION_NOT_PINNED",
+            ),
+            (
+                lambda a: a["status"]["sync"].update(revision="b" * 40),
+                "SYNC_REVISION_MISMATCH",
+            ),
+            (
+                lambda a: a["status"]["sync"].update(status="OutOfSync"),
+                "APPLICATION_NOT_SYNCED",
+            ),
+            (
+                lambda a: a["status"]["health"].update(status="Degraded"),
+                "APPLICATION_NOT_HEALTHY",
+            ),
+            (
+                lambda a: a["metadata"].update(deletionTimestamp="now"),
+                "APPLICATION_TERMINATING",
+            ),
+            (
+                lambda a: a.update(operation={"sync": {}}),
+                "APPLICATION_OPERATION_ACTIVE",
+            ),
+            (
+                lambda a: a["status"].update(operationState={"phase": "Running"}),
+                "APPLICATION_OPERATION_ACTIVE",
+            ),
+            (
+                lambda a: a["status"].update(conditions=[{"message": "PRIVATE"}]),
+                "APPLICATION_CONDITIONS_PRESENT",
+            ),
+        )
+        for change, expected in cases:
+            apps = evaluation_apps()
+            change(apps[0])
+            with self.subTest(expected=expected, change=change):
+                report = status.evaluation_applications(apps, "alice/project")
+                self.assertEqual(report["status"], "ATTENTION")
+                self.assertIn(expected, report["applications"][0]["issues"])
+                self.assertNotIn("PRIVATE", json.dumps(report))
+        apps = evaluation_apps()
+        for app in apps:
+            app["spec"]["syncPolicy"].pop("automated")
+        self.assertEqual(
+            status.evaluation_applications(apps, "alice/project")["status"], "OBSERVED"
+        )
+
+    def test_individually_synced_different_revisions_are_not_a_consistent_bundle(self):
+        apps = evaluation_apps()
+        apps[0]["spec"]["source"]["targetRevision"] = "b" * 40
+        apps[0]["status"]["sync"]["revision"] = "b" * 40
+        report = status.evaluation_applications(apps, "alice/project")
+        self.assertEqual(report["status"], "ATTENTION")
+        self.assertTrue(
+            all(
+                "COMPONENT_REVISION_MISMATCH" in item["issues"]
+                for item in report["applications"]
+            )
+        )
+
+    def test_unknown_status_and_revision_never_echo_private_response_values(self):
+        apps = evaluation_apps()
+        apps[0]["spec"]["source"]["targetRevision"] = "PRIVATE"
+        apps[0]["status"] = {
+            "sync": {"status": "PRIVATE", "revision": "PRIVATE"},
+            "health": {"status": "PRIVATE", "message": "PRIVATE"},
+        }
+        report = status.evaluation_applications(apps, "alice/project")
+        self.assertEqual(report["status"], "ATTENTION")
+        self.assertNotIn("PRIVATE", json.dumps(report))
+        self.assertEqual(report["applications"][0]["sync"], "Unknown")
+        self.assertIsNone(report["applications"][0]["desired_revision"])
+
+    def test_snapshot_keeps_msa_scope_and_reuses_one_bounded_argo_read(self):
+        apps = evaluation_apps()
+        for app in apps:
+            app["spec"]["source"]["helm"]["valuesObject"]["secret"] = "PRIVATE"
+        apps.append(
+            {
+                "metadata": {"name": "govbiz-core-service"},
+                "spec": {"destination": {"namespace": "govbiz-msa"}},
+                "status": {
+                    "sync": {"status": "Synced"},
+                    "health": {"status": "Healthy"},
+                },
+            }
+        )
+        apps.append(
+            {
+                "metadata": {"name": "unrelated-app"},
+                "spec": {
+                    "destination": {"namespace": "unrelated"},
+                    "private": "PRIVATE",
+                },
+            }
+        )
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(
+                status,
+                "run",
+                side_effect=[
+                    '{"items": []}',
+                    '{"items": []}',
+                    "applications.argoproj.io",
+                    json.dumps({"items": apps}),
+                    "b" * 40,
+                    "",
+                ],
+            ) as run,
+        ):
+            report = status.snapshot(
+                Path(directory),
+                {
+                    "repository": "alice/project",
+                    "namespace": "govbiz-msa",
+                    "cluster": "owned",
+                    "mode": "gitops",
+                },
+                ["kube"],
+                ["ns"],
+                ["argo"],
+            )
+        self.assertEqual(
+            [app["name"] for app in report["argocd"]["applications"]],
+            ["govbiz-core-service"],
+        )
+        self.assertEqual(report["argocd"]["evaluation"]["status"], "OBSERVED")
+        self.assertEqual(
+            sum(
+                call.args[0][:3] == ["argo", "get", "applications"]
+                for call in run.call_args_list
+            ),
+            1,
+        )
+        self.assertNotIn("PRIVATE", json.dumps(report))
+        self.assertNotIn("unrelated-app", json.dumps(report))
+        for call in run.call_args_list:
+            self.assertLessEqual(call.kwargs["timeout"], 15)
+            self.assertFalse(
+                set(map(str, call.args[0]))
+                & {"apply", "patch", "delete", "secrets", "exec"}
+            )
 
 
 if __name__ == "__main__":

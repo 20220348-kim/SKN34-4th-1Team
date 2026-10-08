@@ -1,10 +1,12 @@
 """Read deployment versions and readiness without Docker, secrets or mutations."""
 
 import json
+import re
 import shutil
 import subprocess
 from datetime import datetime, timezone
 
+from check_evaluation import COMPONENTS
 from check_msa import REPOSITORY_ROOT, SERVICES
 from portfolio_cluster import run
 
@@ -137,6 +139,99 @@ def service_status(service, deployment, pods, expected_image):
     }
 
 
+def evaluation_applications(applications, repository):
+    """Observe the three evaluation declarations; never certify a running workload."""
+    observations = []
+    for component in COMPONENTS:
+        name = "govbiz-evaluation-" + component
+        matches = [app for app in applications if app["metadata"]["name"] == name]
+        item = {"name": name, "present": bool(matches), "issues": []}
+        observations.append(item)
+        if len(matches) != 1:
+            item["issues"].append(
+                "APPLICATION_MISSING" if not matches else "APPLICATION_DUPLICATE"
+            )
+            continue
+        app = matches[0]
+        spec, observed = app["spec"], app.get("status", {})
+        source = spec.get("source", {})
+        destination = spec.get("destination", {})
+        identity_matches = (
+            app["metadata"].get("namespace") == "argocd"
+            and spec.get("project") == "govbiz-evaluation"
+            and destination
+            == {
+                "server": "https://kubernetes.default.svc",
+                "namespace": "govbiz-evaluation",
+            }
+            and source.get("repoURL") == "https://github.com/" + repository + ".git"
+            and source.get("path") == "infrastructure/gitops/charts/govbiz-evaluation"
+            and source.get("helm", {}).get("releaseName") == component
+            and not spec.get("sources")
+        )
+        revision = source.get("targetRevision", "")
+        pinned = isinstance(revision, str) and re.fullmatch(r"[a-f0-9]{40}", revision)
+        synced_revision = observed.get("sync", {}).get("revision", "")
+        policy = spec.get("syncPolicy") or {}
+        automated = policy.get("automated")
+        manual = automated is None or (
+            isinstance(automated, dict)
+            and automated.get("enabled") is False
+            and automated.get("prune", False) is False
+            and automated.get("selfHeal", False) is False
+        )
+        sync = observed.get("sync", {}).get("status")
+        health = observed.get("health", {}).get("status")
+        item.update(
+            identity_matches=identity_matches,
+            manual_sync=manual,
+            desired_revision=revision if pinned else None,
+            observed_revision=synced_revision
+            if isinstance(synced_revision, str)
+            and re.fullmatch(r"[a-f0-9]{40}", synced_revision)
+            else None,
+            sync=sync if sync in {"Synced", "OutOfSync", "Unknown"} else "Unknown",
+            health=health
+            if health
+            in {"Healthy", "Progressing", "Degraded", "Suspended", "Missing", "Unknown"}
+            else "Unknown",
+        )
+        checks = {
+            "APPLICATION_IDENTITY_MISMATCH": identity_matches,
+            "REVISION_NOT_PINNED": bool(pinned),
+            "AUTOMATIC_SYNC_CONFIGURED": manual,
+            "APPLICATION_NOT_SYNCED": sync == "Synced",
+            "SYNC_REVISION_MISMATCH": bool(pinned) and synced_revision == revision,
+            "APPLICATION_NOT_HEALTHY": health == "Healthy",
+            "APPLICATION_TERMINATING": not app["metadata"].get("deletionTimestamp"),
+            "APPLICATION_CONDITIONS_PRESENT": not observed.get("conditions"),
+            "APPLICATION_OPERATION_ACTIVE": not app.get("operation")
+            and observed.get("operationState", {}).get("phase")
+            not in {"Running", "Terminating"},
+        }
+        item["issues"].extend(code for code, ok in checks.items() if not ok)
+    revisions = {
+        item.get("desired_revision") for item in observations if item["present"]
+    }
+    if len(revisions) > 1:
+        for item in observations:
+            if item["present"]:
+                item["issues"].append("COMPONENT_REVISION_MISMATCH")
+    return {
+        "scope": "evaluation_argo_declarations",
+        "status": "NOT_INSTALLED"
+        if not any(item["present"] for item in observations)
+        else "ATTENTION"
+        if any(item["issues"] for item in observations)
+        else "OBSERVED",
+        "applications": observations,
+        "runtime_verified": False,
+        "storage_verified": False,
+        "publication_verified": False,
+        "deployment_authorized": False,
+    }
+
+
 def snapshot(state, settings, kube, nk, ak):
     # The caller must verify the dedicated context and ownership marker first.
     resources = json.loads(
@@ -194,10 +289,12 @@ def snapshot(state, settings, kube, nk, ak):
         timeout=15,
     ).strip()
     applications = []
+    all_applications = []
     if crd:
-        for app in json.loads(
+        all_applications = json.loads(
             run(ak + ["get", "applications", "-o", "json"], capture=True, timeout=15)
-        )["items"]:
+        )["items"]
+        for app in all_applications:
             if app["spec"].get("destination", {}).get("namespace") != settings["namespace"]:
                 continue
             applications.append(
@@ -243,7 +340,11 @@ def snapshot(state, settings, kube, nk, ak):
         "local_filesystems": filesystems,
         "services": services,
         "claims": claims,
-        "argocd": {"application_crd_present": bool(crd), "applications": applications},
+        "argocd": {
+            "application_crd_present": bool(crd),
+            "applications": applications,
+            "evaluation": evaluation_applications(all_applications, settings["repository"]),
+        },
         "image_source_verified": False,
         "application_paths_verified": False,
         "backup_verified": False,
