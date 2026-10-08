@@ -315,6 +315,7 @@ class EvaluationReleaseTests(SourceFixture):
             [
                 {"group": "apps", "kind": "Deployment"},
                 {"group": "", "kind": "Service"},
+                {"group": "networking.k8s.io", "kind": "NetworkPolicy"},
             ],
         )
         self.assertEqual(len(apps), 3)
@@ -622,6 +623,39 @@ class EvaluationReleaseTests(SourceFixture):
             self.assertEqual(release.main(), 1)
         self.assertNotIn("password", output.getvalue())
         self.assertEqual(json.loads(output.getvalue())["status"], "BLOCKED")
+
+    def test_missing_or_broadened_ingress_policy_blocks_release_plan(self):
+        actual_render = release.render_bundle
+        for mutation in ("missing", "all_peers", "all_ports", "all_pods", "wrong_wave"):
+
+            def render(*args, mutation=mutation, **kwargs):
+                rows = actual_render(*args, **kwargs)
+                policy = next(
+                    r for r in rows["prefect"] if r["kind"] == "NetworkPolicy"
+                )
+                if mutation == "missing":
+                    rows["prefect"].remove(policy)
+                elif mutation == "all_peers":
+                    policy["spec"]["ingress"][0]["from"] = [{}]
+                elif mutation == "all_ports":
+                    del policy["spec"]["ingress"][0]["ports"]
+                elif mutation == "all_pods":
+                    policy["spec"]["podSelector"] = {}
+                else:
+                    policy["metadata"]["annotations"][
+                        "argocd.argoproj.io/sync-wave"
+                    ] = "1"
+                return rows
+
+            with (
+                self.subTest(mutation=mutation),
+                patch.object(fork_cluster, "verify_pull_rights"),
+                patch.object(release, "verify_pull_rights"),
+                self.mocked_renderer(),
+                patch.object(release, "render_bundle", side_effect=render),
+                self.assertRaises(ValueError),
+            ):
+                self.plan()
 
 
 if __name__ == "__main__":

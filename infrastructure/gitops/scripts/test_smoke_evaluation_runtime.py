@@ -168,6 +168,70 @@ class RuntimeTests(unittest.TestCase):
             )
         self.assertNotIn("ops-compose", json.dumps(change))
 
+    def core_restore_report(self):
+        return {
+            "core_auth_restore": {
+                "status": "PASS",
+                "scope": "disposable_core_database_and_fresh_session",
+                "source_preserved": True,
+                "cleanup_complete": True,
+            }
+        }
+
+    def test_completed_core_backup_resumes_fixture_before_web_verification(self):
+        deployment = {"metadata": {"resourceVersion": "123"}, "spec": {"replicas": 0}}
+        with patch.object(
+            smoke, "execute", side_effect=[json.dumps(deployment), "", ""]
+        ) as command:
+            result = smoke.resume_core(
+                ["kubectl", "-n", "govbiz-msa"], self.core_restore_report()
+            )
+        self.assertEqual(
+            result, {"status": "PASS", "previous_replicas": 0, "replicas": 1}
+        )
+        scale = command.call_args_list[1].args[0]
+        self.assertIn("deployment/core-service", scale)
+        self.assertIn("--current-replicas=0", scale)
+        self.assertIn("--resource-version=123", scale)
+        self.assertIn("--replicas=1", scale)
+        self.assertEqual(
+            command.call_args_list[2].args[0][-3:],
+            ["status", "deployment/core-service", "--timeout=300s"],
+        )
+
+    def test_unverified_core_restore_cannot_resume_writers(self):
+        for key, value in (
+            ("status", "FAIL"),
+            ("scope", "personal"),
+            ("source_preserved", False),
+            ("cleanup_complete", False),
+        ):
+            report = self.core_restore_report()
+            report["core_auth_restore"][key] = value
+            with self.subTest(key=key), patch.object(smoke, "execute") as command:
+                with self.assertRaises(ValueError):
+                    smoke.resume_core(["kubectl"], report)
+                command.assert_not_called()
+
+    def test_core_resume_rejects_changed_replica_state_and_propagates_rollout_failure(
+        self,
+    ):
+        deployment = {"metadata": {"resourceVersion": "123"}, "spec": {"replicas": 1}}
+        with patch.object(
+            smoke, "execute", return_value=json.dumps(deployment)
+        ) as command:
+            with self.assertRaises(ValueError):
+                smoke.resume_core(["kubectl"], self.core_restore_report())
+            self.assertEqual(command.call_count, 1)
+        deployment["spec"]["replicas"] = 0
+        failure = subprocess.CalledProcessError(1, ["kubectl", "rollout"])
+        with patch.object(
+            smoke, "execute", side_effect=[json.dumps(deployment), "", failure]
+        ):
+            with self.assertRaises(subprocess.CalledProcessError) as caught:
+                smoke.resume_core(["kubectl"], self.core_restore_report())
+            self.assertIs(caught.exception, failure)
+
     def test_report_hash_and_unique_flow_are_checked_after_restart(self):
         record = {
             "run": {
@@ -301,7 +365,10 @@ class RuntimeTests(unittest.TestCase):
                     }
                 )
             if "logs" in args:
-                return "shutil.Error: private-token; Operation not permitted; Read-only file system /private/path"
+                return (
+                    "shutil.Error: private-token; Operation not permitted; "
+                    "Read-only file system /private/path"
+                )
             self.fail(args)
 
         evidence = {}

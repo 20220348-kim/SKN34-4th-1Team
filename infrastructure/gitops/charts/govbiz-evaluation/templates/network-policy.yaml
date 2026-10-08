@@ -1,0 +1,31 @@
+{{- $component := .Values.component -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $component }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: {{ $component }}}
+  policyTypes: [Ingress]
+  {{- if eq $component "evaluation-runner" }}
+  ingress: []
+  {{- else }}
+  ingress:
+    - from:
+        # Both selectors must match: another namespace's ops-service is denied.
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: govbiz-msa}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: ops-service}
+        {{- if eq $component "prefect" }}
+        # podSelector alone is restricted to this evaluation namespace.
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: evaluation-runner}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ ternary 4200 8010 (eq $component "prefect") }}
+  {{- end }}

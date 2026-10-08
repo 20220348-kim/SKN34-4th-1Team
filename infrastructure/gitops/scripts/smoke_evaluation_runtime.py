@@ -155,6 +155,39 @@ def switch_ops(nk, namespace):
     return routes["LLMOPS_ARTIFACT_URL"]
 
 
+def resume_core(nk, report):
+    """Resume the disposable Core stopped by the completed backup rehearsal."""
+    restored = report.get("core_auth_restore", {})
+    if (
+        restored.get("status") != "PASS"
+        or restored.get("scope") != "disposable_core_database_and_fresh_session"
+        or restored.get("source_preserved") is not True
+        or restored.get("cleanup_complete") is not True
+    ):
+        raise ValueError("Core source preservation and restore cleanup are required")
+    deployment = json.loads(
+        execute(nk + ["get", "deployment", "core-service", "-o", "json"])
+    )
+    version = deployment["metadata"]["resourceVersion"]
+    if deployment["spec"]["replicas"] != 0 or not version:
+        raise ValueError("Expected the Core fixture stopped by its backup rehearsal")
+    execute(
+        nk
+        + [
+            "scale",
+            "deployment/core-service",
+            "--current-replicas=0",
+            "--resource-version=" + version,
+            "--replicas=1",
+        ]
+    )
+    execute(
+        nk + ["rollout", "status", "deployment/core-service", "--timeout=300s"],
+        timeout=315,
+    )
+    return {"status": "PASS", "previous_replicas": 0, "replicas": 1}
+
+
 def pod_identity(ek, component):
     rows = json.loads(
         execute(
@@ -566,6 +599,9 @@ def verify(
                 rollout(ek, component, evidence)
             evidence["pods"] = {name: pod_identity(ek, name) for name in images}
             artifact_url = switch_ops(nk, namespace)
+            # restored_core intentionally leaves the source scaled to zero after
+            # proving its copied DB. Both web forwards need a running target.
+            evidence["core_resume"] = resume_core(nk, report)
             evidence["admission_resume"] = set_admission(
                 nk, "resume", report["backup_admission_pause"]["version"]
             )
