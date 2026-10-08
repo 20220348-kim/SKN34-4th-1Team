@@ -74,6 +74,9 @@ Service의 selector·포트·노출 설정과 Deployment 라벨·selector를 비
 현재 Service의 실제 연결 대상은 `fork_cluster.py status --json --network-details`로 별도 확인할 수 있습니다.
 EndpointSlice와 준비된 Pod의 UID·IP·포트를 대조하며 HTTP 통신 성공은 검증하지 않습니다.
 [연결 대상 진단 안내](../../docs/local-fork-development.md#kubernetes-service의-실제-연결-대상-확인)를 참고하세요.
+`status --json`의 `argocd.evaluation`은 평가용 세 Application의 누락·선언·동기화 상태를 별도로
+표시합니다. replica 0의 준비 상태도 관찰 대상이며 실제 실행·이전 완료를 증명하지 않습니다.
+[평가 Application 진단 범위](docs/evaluation-kubernetes.md#평가-argo-application-상태-조회)를 참고하세요.
 
 ## 팀원 시작 경로
 

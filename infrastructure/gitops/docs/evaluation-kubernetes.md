@@ -149,6 +149,25 @@ python3 -B infrastructure/gitops/scripts/evaluation_release.py \
 실제 임시 Git 저장소와 고정 Helm을 사용하며 GitHub·registry 응답만 대역 처리한다.
 Infra CI의 기존 `test_*.py` 검색이 새 검증을 포함한다. 실제 클러스터 이전 성공의 대체 증거는 아니다.
 
+## 평가 Argo Application 상태 조회
+
+기존 `fork_cluster.py status --json --state-dir <개인-state>`의 `argocd.evaluation`에서
+평가용 세 Application을 별도로 확인한다. 기존 업무 서비스의 `argocd.applications` 범위와
+상태 명령의 종료 코드 기준은 유지한다. 클러스터 소유권 확인 후 기존 Application 목록 조회를
+재사용하며 추가 배포·Secret 조회·워크로드 변경을 수행하지 않는다.
+
+- `NOT_INSTALLED`: 예상한 세 Application이 모두 없다. 각 항목에 `APPLICATION_MISSING`을 표시한다.
+- `ATTENTION`: 일부 누락, 저장소·프로젝트·목적지·Chart·릴리스 불일치, 자동 동기화 설정,
+  고정되지 않은 SHA, 소스와 동기화 SHA의 차이, 구성요소 간 SHA 불일치, 비정상 상태·진행 중 작업 등이 있다.
+- `OBSERVED`: 세 Application의 선언과 Argo의 보고 상태에서 위 문제가 관찰되지 않았다.
+  replica 0인 준비 단계도 이 상태가 될 수 있으므로 실행 성공이나 이전 완료를 뜻하지 않는다.
+
+예상한 Application 이름이 다른 namespace나 클러스터를 가리켜도 누락시키지 않고 불일치로 표시한다.
+Helm values·환경변수·상태 오류 메시지 원문은 출력하지 않는다. `runtime_verified`,
+`storage_verified`, `publication_verified`, `deployment_authorized`는 모두 false다.
+실제 Pod·PVC·통신·평가 성공, 현재 CI·이미지 발행 및 AppProject 권한은 별도 검증 대상이다.
+기존 배포·개발 모드 전환의 Application 소유권 제한을 이 조회 결과로 해제하지 않는다.
+
 ## 새 PVC에서 복원·Pod 교체 검증
 
 [`evaluation_pvc_restore.py`](../scripts/evaluation_pvc_restore.py)는 기존 암호화 통합 백업을
@@ -260,8 +279,8 @@ CI의 전체 Ops 복구·평가 실행·Pod 교체 성공을 대체하지 않는
    v3 receipt 소비·같은 SHA의 Ops 이미지 대조·독립 수동 Argo 계획도 구현했다.
    실제 패키지 준비·최신 SHA CI·발행 성공과 운영 환경에서의 계획 검증은 별도로 확인해야 한다.
    기존 네 서비스의 필수 CI·발행 가드를 우회하지 않는다. 배포 방식은 서비스별 Argo Application과 수동 동기화를 유지한다.
-   평가용 계획은 별도 프로젝트로 범위를 제한한다. 실제 적용 전 namespace·PVC·Secret 소유권 인계와
-   운영 진단의 Application 조회 범위 확장은 남아 있다.
+   평가용 계획은 별도 프로젝트로 범위를 제한한다. 실제 적용 전 namespace·PVC·Secret 소유권 인계는 남아 있다.
+   운영 진단은 위의 평가 Application 조회를 포함하지만 런타임·저장소 검증은 별도다.
 3. 위 격리 Kubernetes 런타임 검증의 최신 SHA 필수 CI 성공을 확인한다. 검증 경로는 구현했으며,
    실행 실패·취소·건너뛰기를 완료로 처리하지 않는다. 이후 개인 환경의 같은 이미지·백업으로 별도 검증한다.
 4. 실제 전환 시 Ops 접수·스케줄과 Compose writer를 중지하고 최신 백업을 만든다. 복원 검증 후
