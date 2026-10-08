@@ -8,5 +8,5 @@ export default function PreparationOnlineRoute() {
   const router = useRouter(), requestLogin = useLoginFlow()
   const { id: value } = useLocalSearchParams<{ id?: string }>(), id = parsePreparationId(value)
   if (!id) return <Page><Notice error>올바른 신청문서 주소가 아닙니다.</Notice></Page>
-  return <ApplicationOnlineInputScreen id={id} onLogin={() => requestLogin()} onEditor={() => router.navigate({ pathname: '/all/preparation/[id]', params: { id: String(id) } })} />
+  return <ApplicationOnlineInputScreen id={id} onLogin={() => requestLogin()} onEditor={() => router.push({ pathname: '/all/preparation/[id]', params: { id: String(id) } })} />
 }

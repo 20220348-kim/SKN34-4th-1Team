@@ -58,10 +58,31 @@ beforeEach(() => {
   jest.mocked(prepareApplicationDocumentDownload).mockReset().mockImplementation(async (_token, _id, fileId) => browserUrl(fileId))
   jest.spyOn(Linking, 'openURL').mockResolvedValue(undefined)
   jest.mocked(listReviewSavedPrograms).mockResolvedValue([documentProgram])
-  jest.mocked(programClient).mockReturnValue({ browseCatalog: jest.fn().mockResolvedValue({ programs: [documentProgram], total: 1, page: 1, pageSize: 12, totalPages: 1,
+  jest.mocked(programClient).mockReturnValue({ getDetail: jest.fn().mockResolvedValue({ ...documentProgram, applicationRoute: { type: 'UNKNOWN', method: null, url: null } }), browseCatalog: jest.fn().mockResolvedValue({ programs: [documentProgram], total: 1, page: 1, pageSize: 12, totalPages: 1,
     regions: ['서울'], categories: ['기술'], startupStages: [], applicantTypes: [], founderAges: [] }) } as unknown as ReturnType<typeof programClient>)
 })
 afterEach(() => { delete process.env.EXPO_PUBLIC_API_BASE_URL; jest.restoreAllMocks() })
+
+test.each(['GOOGLE_FORMS', 'EXTERNAL_SITE', 'UNKNOWN'] as const)('document results offer an input helper only for %s', async type => {
+  jest.mocked(programClient).mockReturnValue({ getDetail: jest.fn().mockResolvedValue({ ...documentProgram,
+    applicationRoute: { type, method: null, url: type === 'GOOGLE_FORMS' ? 'https://docs.google.com/forms/d/e/example/viewform' : null } }) } as unknown as ReturnType<typeof programClient>)
+  render(<ApplicationDocumentScreen {...docProps} />)
+  await screen.findByText('초안 완료')
+  await waitFor(() => expect(programClient).toHaveBeenCalledWith('owned-token'))
+  if (type === 'GOOGLE_FORMS') expect(await screen.findByLabelText('구글폼 입력 도우미')).toBeTruthy()
+  else expect(screen.queryByLabelText('구글폼 입력 도우미')).toBeNull()
+  expect(screen.queryByLabelText('목록으로 돌아가기')).toBeNull()
+  fireEvent.press(screen.getByLabelText('답변 수정하기'))
+  expect(docProps.onEditor).toHaveBeenCalled()
+})
+
+test('a failed application route lookup is explicit and keeps the generated documents usable', async () => {
+  jest.mocked(programClient).mockReturnValue({ getDetail: jest.fn().mockRejectedValue(new Error('offline')) } as unknown as ReturnType<typeof programClient>)
+  render(<ApplicationDocumentScreen {...docProps} />)
+  await screen.findByText('구글폼 신청 여부를 확인하지 못했어요. 다시 확인해 주세요.')
+  expect(screen.getByLabelText('초안 다운로드: 사업계획서.hwpx')).toBeTruthy()
+  expect(screen.queryByLabelText('구글폼 입력 도우미')).toBeNull()
+})
 
 test('download opens the authenticated file link in the browser without a folder picker or saved claim', async () => {
   render(<ApplicationDocumentScreen {...docProps} />)
@@ -416,7 +437,7 @@ test('changing a filter cancels deletion and immediately releases its lock', asy
   expect(screen.getByLabelText('사업계획서 삭제').props.accessibilityState.busy).toBe(false)
 })
 
-test('missing result documents retain the recovery action and return to the list after clearing', async () => {
+test('missing result documents retain the recovery action without a redundant list button', async () => {
   const pending = { kind: 'document' as const, preparationId: 9, expectedRevision: 1, requestKey: '11111111-1111-4111-8111-111111111111' }
   jest.mocked(readPendingPreparation).mockResolvedValue(pending)
   api.get.mockRejectedValue(new ApplicationPreparationError(404, 'APPLICATION_PREPARATION_NOT_FOUND'))
@@ -426,8 +447,7 @@ test('missing result documents retain the recovery action and return to the list
   expect(discardDeletedPendingPreparation).toHaveBeenCalledWith('owned-token', 'first@test.com', pending, expect.any(AbortSignal))
   expect(api.submitDocumentJob).not.toHaveBeenCalled()
   expect(screen.queryByLabelText('보관 요청 대상 확인')).toBeNull()
-  fireEvent.press(screen.getByLabelText('목록으로 돌아가기'))
-  expect(docProps.onList).toHaveBeenCalled()
+  expect(screen.queryByLabelText('목록으로 돌아가기')).toBeNull()
 })
 
 test('list recovery preserves a failed check and clears only after confirmed success', async () => {

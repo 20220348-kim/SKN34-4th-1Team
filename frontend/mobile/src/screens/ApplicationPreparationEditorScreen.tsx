@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ActivityIndicator, Alert, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 import { useNavigation } from 'expo-router'
 import { useHeaderHeight, usePreventRemove } from 'expo-router/react-navigation'
 import * as Crypto from 'expo-crypto'
@@ -131,7 +131,6 @@ function OwnedEditor({ token, email, id, reviewing, initialQuestion, onReview, o
             <Button label="답변 지우기" variant="ghost" onPress={() => vm.change(current.key, '')} /></View></>}
         </Card><Text style={styles.muted}>입력을 멈추면 자동으로 저장돼요. 모르는 내용은 미정으로 남겨도 괜찮아요.</Text>
       </> : <Notice>작성할 문항이 없어요. 공식 원문에서 양식을 확인해 주세요.</Notice>}
-      <Button label="공식 공고 원문" variant="ghost" onPress={() => void Linking.openURL(vm.preparation!.form.sourceUrl).catch(() => setActionError('공식 공고 원문을 열지 못했어요.'))} />
     </ScrollView>
     <View style={[preparationUi.footer, local.footer]}>{reviewing
       ? <><Button label={hasPending ? '같은 생성 요청으로 확인' : '공식 양식으로 초안 만들기'} busy={generating} disabled={blocked} onPress={() => void generate()} />
