@@ -27,7 +27,7 @@ import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPat
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 
 /**
- * 실제 MySQL과 HTTP 계층을 통해 로그인 → 내 정보 → 로그아웃 → 재로그인, 정지 계정, 유휴 만료와
+ * 실제 MySQL과 HTTP 계층을 통해 로그인 → 내 정보 → 로그아웃 → 재로그인, 무효 세션 쿠키 정리, 정지 계정, 유휴 만료와
  * 개발용 시드 로그인을 세션 쿠키로 확인합니다.
  */
 @SpringBootTest(
@@ -109,6 +109,33 @@ class AccountAuthFlowIntegrationTest {
         mockMvc.perform(get("/api/v1/auth/me").cookie(newSession))
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.account.email").value("manager@company.co.kr"))
+    }
+
+    @Test
+    fun invalidOrLoggedOutSessionCookieIsAGuestOnPublicListsAnd401OnMeWithTheCookieExpired() {
+        val loggedOut = logIn("manager@company.co.kr", "password1", rememberMe = true)
+        mockMvc.perform(post("/api/v1/auth/logout").cookie(loggedOut).header(HttpHeaders.ORIGIN, "http://localhost:5173"))
+            .andExpect(status().isNoContent())
+
+        for (stale in listOf(Cookie(SessionCookieHelper.COOKIE_NAME, "invalid"), loggedOut)) {
+            mockMvc.perform(get(RECRUITMENTS_PATH).cookie(stale))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.recruitments").isArray())
+                .andExpect(cookie().value(SessionCookieHelper.COOKIE_NAME, ""))
+                .andExpect(cookie().maxAge(SessionCookieHelper.COOKIE_NAME, 0))
+                .andExpect(cookie().httpOnly(SessionCookieHelper.COOKIE_NAME, true))
+                .andExpect(cookie().path(SessionCookieHelper.COOKIE_NAME, "/"))
+
+            mockMvc.perform(get("/api/v1/auth/me").cookie(stale))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("AUTHENTICATION_REQUIRED"))
+                .andExpect(cookie().maxAge(SessionCookieHelper.COOKIE_NAME, 0))
+        }
+
+        // 쿠키 없이 무효 Bearer를 보내는 앱 요청은 지금처럼 401이고 쿠키를 건드리지 않습니다.
+        mockMvc.perform(get(RECRUITMENTS_PATH).header(HttpHeaders.AUTHORIZATION, "Bearer invalid"))
+            .andExpect(status().isUnauthorized())
+            .andExpect(cookie().doesNotExist(SessionCookieHelper.COOKIE_NAME))
     }
 
     @Test
@@ -243,5 +270,10 @@ class AccountAuthFlowIntegrationTest {
             .andExpect(cookie().maxAge(SessionCookieHelper.COOKIE_NAME, if (rememberMe) 30 * 24 * 60 * 60 else -1))
             .andReturn().response
         return requireNotNull(response.getCookie(SessionCookieHelper.COOKIE_NAME))
+    }
+
+    companion object {
+        private const val RECRUITMENTS_PATH =
+            "/api/v1/partners/recruitments?keyword=&mine=false&sort=DEADLINE&page=1&pageSize=20"
     }
 }

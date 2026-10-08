@@ -38,7 +38,7 @@ class DailyReportControllerTest {
     fun setUp() {
         val admission = SupportProgramRequestAdmissionService(SupportProgramRequestAdmissionProperties())
         mvc = MockMvcBuilders.standaloneSetup(DailyReportController(reports, subscriptions, admission), DailyReportEmailController(subscriptions, admission))
-            .setCustomArgumentResolvers(AuthenticatedAccountArgumentResolver(sessions))
+            .setCustomArgumentResolvers(AuthenticatedAccountArgumentResolver(sessions, AccountTestHelper.cookieHelper()))
             .addInterceptors(SessionOriginInterceptor(listOf("http://localhost:5173")))
             .setControllerAdvice(DailyReportExceptionHandler(), ApiExceptionHandler()).build()
     }

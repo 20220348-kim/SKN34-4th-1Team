@@ -69,7 +69,7 @@ class AccountAuthControllerTest {
                 AccountAuthController(loginService, signupService, sessionService, cookieHelper),
                 AccountDevLoginController(devLoginService, cookieHelper),
             )
-            .setCustomArgumentResolvers(AuthenticatedAccountArgumentResolver(sessionService))
+            .setCustomArgumentResolvers(AuthenticatedAccountArgumentResolver(sessionService, cookieHelper))
             .addInterceptors(SessionOriginInterceptor(listOf("http://localhost:5173")))
             .setControllerAdvice(ApiExceptionHandler())
             .build()
@@ -269,6 +269,22 @@ class AccountAuthControllerTest {
         mockMvc.perform(get(ME_PATH).cookie(sessionCookie()))
             .andExpect(status().isForbidden())
             .andExpect(jsonPath("$.code").value("ACCOUNT_SUSPENDED"))
+            .andExpect(cookie().maxAge(SessionCookieHelper.COOKIE_NAME, 0))
+    }
+
+    @Test
+    fun meAnswers401AndExpiresAnInvalidSessionCookie() {
+        doThrow(AuthenticationRequiredException()).`when`(sessionService).requireAccount("session-token")
+
+        mockMvc.perform(get(ME_PATH).cookie(sessionCookie()))
+            .andExpect(status().isUnauthorized())
+            .andExpect(jsonPath("$.code").value("AUTHENTICATION_REQUIRED"))
+            .andExpect(cookie().value(SessionCookieHelper.COOKIE_NAME, ""))
+            .andExpect(cookie().maxAge(SessionCookieHelper.COOKIE_NAME, 0))
+            .andExpect(cookie().path(SessionCookieHelper.COOKIE_NAME, "/"))
+            .andExpect(cookie().httpOnly(SessionCookieHelper.COOKIE_NAME, true))
+            .andExpect(cookie().secure(SessionCookieHelper.COOKIE_NAME, true))
+            .andExpect(cookie().sameSite(SessionCookieHelper.COOKIE_NAME, "Lax"))
     }
 
     @Test
@@ -278,6 +294,7 @@ class AccountAuthControllerTest {
 
         mockMvc.perform(get(ME_PATH))
             .andExpect(status().isUnauthorized())
+            .andExpect(cookie().doesNotExist(SessionCookieHelper.COOKIE_NAME))
             .andExpect(header().string(HttpHeaders.WWW_AUTHENTICATE, "Bearer"))
             .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
             .andExpect(jsonPath("$.code").value("AUTHENTICATION_REQUIRED"))

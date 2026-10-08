@@ -20,7 +20,7 @@ class DailyReportPushControllerTest {
     private val account = AccountTestHelper.account()
     private val id = "a4a15267-866c-4df0-bb91-55d7c14d7a72"
     private val mvc = MockMvcBuilders.standaloneSetup(DailyReportPushController(service))
-        .setCustomArgumentResolvers(AuthenticatedAccountArgumentResolver(sessions))
+        .setCustomArgumentResolvers(AuthenticatedAccountArgumentResolver(sessions, AccountTestHelper.cookieHelper()))
         .setControllerAdvice(ApiExceptionHandler()).build()
 
     @Test

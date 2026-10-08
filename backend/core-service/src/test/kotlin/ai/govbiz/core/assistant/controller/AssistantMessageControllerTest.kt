@@ -1,5 +1,6 @@
 package ai.govbiz.core.assistant.controller
 
+import ai.govbiz.core.account.helper.AccountTestHelper
 import ai.govbiz.core._common.config.JsonDeserializationConfig
 import ai.govbiz.core._common.exception.AiServiceCallException
 import ai.govbiz.core._common.exception.ApiExceptionHandler
@@ -59,7 +60,7 @@ class AssistantMessageControllerTest {
         val admission = SupportProgramRequestAdmissionService(SupportProgramRequestAdmissionProperties(perClient, 100, 4)) { 0L }
         val agentAdmission = SupportProgramRequestAdmissionService(SupportProgramRequestAdmissionProperties(agentPerClient, 100, 4)) { 0L }
         return MockMvcBuilders.standaloneSetup(AssistantMessageController(service, admission, agentAdmission, agent))
-            .setCustomArgumentResolvers(AuthenticatedAccountArgumentResolver { sessionService })
+            .setCustomArgumentResolvers(AuthenticatedAccountArgumentResolver({ sessionService }, { AccountTestHelper.cookieHelper() }))
             .setControllerAdvice(ApiExceptionHandler()).setValidator(validator)
             .setMessageConverters(JacksonJsonHttpMessageConverter(mapper)).build()
     }

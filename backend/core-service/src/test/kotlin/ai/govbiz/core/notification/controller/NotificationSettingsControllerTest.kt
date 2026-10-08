@@ -40,7 +40,7 @@ class NotificationSettingsControllerTest {
     @BeforeEach
     fun setUp() {
         mvc = MockMvcBuilders.standaloneSetup(NotificationSettingsController(service))
-            .setCustomArgumentResolvers(AuthenticatedAccountArgumentResolver(sessions))
+            .setCustomArgumentResolvers(AuthenticatedAccountArgumentResolver(sessions, AccountTestHelper.cookieHelper()))
             .addInterceptors(SessionOriginInterceptor(listOf("http://localhost:5173")))
             .setControllerAdvice(NotificationSettingsExceptionHandler(), ApiExceptionHandler()).build()
     }

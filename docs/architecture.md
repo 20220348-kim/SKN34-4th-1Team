@@ -1014,7 +1014,8 @@ Service가 제안자의 기업, 모집글의 모집 상태, 당사자 여부를 
 채웁니다. 토큰은 응답 본문에 싣지 않고 쿠키로만 전달하며, 쿠키가 붙은 상태 변경 요청은 `SameSite=Lax`와
 `SessionOriginInterceptor`의 Origin 검사로 CSRF를 막습니다. 로그인 시도는 `AccountLoginAttemptGuard`가 계정·접속 주소
 기준으로 제한합니다. 세션 행이 없으면(로그아웃) JWT가 유효해도 401이고, "로그인 상태 유지" 여부에 따라 30일 또는 12시간의
-절대 만료와 7일 유휴 만료를 함께 검사합니다. 화면 권한 단계(`tier`)는 `Account`가 역할·인증 상태로 계산해 `/me`에
+절대 만료와 7일 유휴 만료를 함께 검사합니다. 쓸 수 없는 세션 쿠키는 resolver가 응답에 만료 쿠키를 붙여 지우며,
+`Account?` 파라미터는 손님(null)으로, `Account` 파라미터는 401(정지 403)로 처리합니다. 화면 권한 단계(`tier`)는 `Account`가 역할·인증 상태로 계산해 `/me`에
 내려 주고, 프런트의 `RequireAuth`는 이 값으로만 `/app` 아래 라우트를 나누며 서버가 모든 쓰기 API에서 다시 검사합니다.
 Spring Security filter chain은 쓰지 않고 `spring-security-crypto`의 BCrypt만 사용합니다. 개발용 시드 로그인은
 설정이 켜졌을 때만 별도 Controller가 등록되며 관리자·회원 시드 계정을 만듭니다.
