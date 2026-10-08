@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { router, useFocusEffect } from 'expo-router'
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native'
 import type { SavedSupportProgram } from '@govbiz/shared/domain/entities/SavedSupportProgram'
-import { applicationProgressStages, type ApplicationPreparationSummary } from '@govbiz/shared/domain/entities/ApplicationPreparation'
+import { applicationProgressStages, type ApplicationPreparationSummary, type ApplicationProgressStage } from '@govbiz/shared/domain/entities/ApplicationPreparation'
 import { applicationProgressStageLabels, daysUntil, formatDday, programStatusLabels } from '@govbiz/shared/domain/labels'
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
 import { ApiError, errorMessage } from '../api/client'
@@ -12,11 +12,12 @@ import { useScrollBoundary } from '../components/useScrollBoundary'
 import { Page, Button, Field, Notice, Card, StatusBadge, colors, ddayBadgeTone, styles } from '../ui'
 import { AppIcon } from '../components/AppIcon'
 import { SegmentedControl } from '../components/SegmentedControl'
-import { preparationDate, preparationKey, PreparationRow, ReviewRow, ProgressStageSheet } from '../components/PreparationRows'
+import { preparationDate, preparationKey, PreparationRow, ReviewRow, ProgressStageSheet, preparationWorkStatus, preparationWorkStatusLabels, reviewWorkStatus, reviewWorkStatusLabels } from '../components/PreparationRows'
 import { usePreparationWorkspace } from '../components/usePreparationWorkspace'
 import { GuestFeatureNotice } from '../components/GuestFeatureNotice'
 import { FilterMultiChoices } from '../components/FilterMultiChoices'
 import { PartnerSheet } from '../components/PartnerSheet'
+import { ChoiceField } from '../components/ChoiceField'
 import { SavedProgramCalendar } from '../components/SavedProgramCalendar'
 import { SavedProgramPipeline } from '../components/SavedProgramPipeline'
 import { emptySavedProgramFilters, filterSavedPrograms, savedCalendarMonth, savedCalendarToday, savedProgramTargetOptions, sortSavedProgramsByDeadline,
@@ -28,6 +29,8 @@ type SavedState = { token: string | null; programs: SavedSupportProgram[]; loadi
 type Filter = SavedProgramStageFilter
 type Undo = { owner: string; item: SavedSupportProgram; index: number }
 type SavedView = 'list' | 'calendar' | 'pipeline'
+type WorkType = 'all' | 'document' | 'review'
+type WorkStatus = 'all' | keyof typeof preparationWorkStatusLabels | keyof typeof reviewWorkStatusLabels
 type StageTarget = { owner: string; identity: SupportProgramIdentity; items: ApplicationPreparationSummary[] }
 const filters: { value: Filter; label: string }[] = [{ value: 'all', label: '전체' }, { value: 'interest', label: '관심' },
   ...applicationProgressStages.map((value) => ({ value, label: applicationProgressStageLabels[value] }))]
@@ -43,6 +46,9 @@ export function SavedProgramsScreen({ onOpenProgram, onCountChange, onLogin }: {
   const [view, setView] = useState<'saved' | 'preparation'>('saved')
   const [filterOpen, setFilterOpen] = useState(false)
   const [filter, setFilter] = useState<Filter>('all')
+  const [workType, setWorkType] = useState<WorkType>('all')
+  const [workStatus, setWorkStatus] = useState<WorkStatus>('all')
+  const [workStage, setWorkStage] = useState<'all' | ApplicationProgressStage>('all')
   const [savedView, setSavedView] = useState<SavedView>('list')
   const [search, setSearch] = useState<{ owner: string | null; filters: SavedProgramFilters }>({ owner: null, filters: emptySavedProgramFilters() })
   const today = savedCalendarToday()
@@ -68,7 +74,7 @@ export function SavedProgramsScreen({ onOpenProgram, onCountChange, onLogin }: {
   const visible: SavedState = state.token === token ? state : { token, programs: [], loading: true, error: null }
   useEffect(() => { onCountChange?.(token ? visible.programs.length : 0) }, [token, visible.programs.length, onCountChange])
   useEffect(() => { if (!undo) return; const timer = setTimeout(() => setUndo(null), 7_000); return () => clearTimeout(timer) }, [undo])
-  useEffect(() => { setFilter('all'); setSavedView('list'); setMonth(savedCalendarMonth(savedCalendarToday())); setStageTarget(null); setFilterOpen(false) }, [token])
+  useEffect(() => { setFilter('all'); setWorkType('all'); setWorkStatus('all'); setWorkStage('all'); setSavedView('list'); setMonth(savedCalendarMonth(savedCalendarToday())); setStageTarget(null); setFilterOpen(false) }, [token])
   const criteria = search.owner === token ? search.filters : emptySavedProgramFilters()
   function changeCriteria(update: (value: SavedProgramFilters) => SavedProgramFilters) {
     setSearch(current => ({ owner: token, filters: update(current.owner === token ? current.filters : emptySavedProgramFilters()) }))
@@ -77,6 +83,7 @@ export function SavedProgramsScreen({ onOpenProgram, onCountChange, onLogin }: {
     changeCriteria(current => ({ ...current, [key]: current[key].includes(value) ? current[key].filter(item => item !== value) : [...current[key], value] }))
   }
   function resetFilters() { changeCriteria(emptySavedProgramFilters); setFilter('all') }
+  function resetWorkFilters() { setWorkType('all'); setWorkStatus('all'); setWorkStage('all') }
   function newDocument(identity?: SupportProgramIdentity) { router.push(identity ? { pathname: '/all/preparation/new', params: identity } : '/all/preparation/new') }
   function openStage(identity: SupportProgramIdentity, preferredId?: number) {
     if (!token || workspace.preparations === null || workspace.loading || workspace.preparationError) return
@@ -132,6 +139,12 @@ export function SavedProgramsScreen({ onOpenProgram, onCountChange, onLogin }: {
   const listStageReady = filter === 'all' || workspace.preparations !== null && !workspace.preparationError
   const stageBusy = workspace.loading || workspace.preparations === null || Boolean(workspace.preparationError)
   const workCount = workspace.preparations !== null && workspace.reviews !== null ? workspace.preparations.length + workspace.reviews.length : null
+  const shownPreparations = workType === 'review' ? [] : workspace.preparations?.filter(item =>
+    (workStatus === 'all' || preparationWorkStatus(item) === workStatus) && (workStage === 'all' || item.progressStage === workStage)) ?? []
+  const shownReviews = workType === 'document' || workStage !== 'all' ? [] : workspace.reviews?.filter(item => workStatus === 'all' || reviewWorkStatus(item) === workStatus) ?? []
+  const workFilterCount = Number(workType !== 'all') + Number(workStatus !== 'all') + Number(workStage !== 'all')
+  const workStatusOptions = [{ value: 'all', label: '전체 상태' },
+    ...Object.entries(workType === 'document' ? preparationWorkStatusLabels : workType === 'review' ? reviewWorkStatusLabels : { ...preparationWorkStatusLabels, ...reviewWorkStatusLabels }).map(([value, label]) => ({ value, label }))]
   if (status === 'loading') return <Page><ActivityIndicator accessibilityLabel="로그인 상태 확인 중" /></Page>
   if (status === 'unavailable') return <Page><Notice error>로그인 상태를 확인하지 못했습니다.</Notice><Button label="다시 확인" onPress={() => void refreshSession()} /></Page>
   if (!token) return <Page><GuestFeatureNotice title="관심 있는 공고를 한곳에 모아보세요" icon="bookmark"
@@ -198,19 +211,32 @@ export function SavedProgramsScreen({ onOpenProgram, onCountChange, onLogin }: {
           </Card>
         })}
       </> : <>
+        <Button label={`필터 ${workFilterCount}`} accessibilityLabel="준비 작업 필터 열기" variant="secondary" onPress={() => setFilterOpen(true)} />
+        {workFilterCount > 0 && <Button label="준비 작업 필터 초기화" variant="ghost" onPress={resetWorkFilters} />}
         {workspace.loading && <ActivityIndicator accessibilityLabel="준비 중인 작업 불러오는 중" color={colors.primary} />}
-        <Text style={local.groupTitle}>신청 문서 {workspace.preparations?.length ?? '—'}</Text>
-        {workspace.preparations?.map((item) => <PreparationRow key={item.id} item={item} />)}
-        {!workspace.loading && workspace.preparations?.length === 0 && <><Text style={styles.muted}>아직 신청 문서가 없습니다.</Text><Button label="새 신청문서" variant="secondary" onPress={() => newDocument()} /></>}
-        <Text style={local.groupTitle}>중복 검토 {workspace.reviews?.length ?? '—'}</Text>
-        {workspace.reviews?.map((item) => <ReviewRow key={item.review.id} item={item} />)}
-        {!workspace.loading && workspace.reviews?.length === 0 && <><Text style={styles.muted}>아직 중복 검토가 없습니다.</Text><Button label="새 검토" variant="secondary" onPress={() => router.push('/all/reviews/new')} /></>}
+        {!workspace.loading && workCount !== null && <Text accessibilityLiveRegion="polite" style={styles.muted}>조건에 맞는 작업 {shownPreparations.length + shownReviews.length}건 / 전체 작업 {workCount}건</Text>}
+        {workType !== 'review' && <><Text style={local.groupTitle}>신청 문서 {workspace.preparations === null ? '—' : shownPreparations.length}</Text>
+          {shownPreparations.map((item) => <PreparationRow key={item.id} item={item} />)}
+          {!workspace.loading && workspace.preparations?.length === 0 && <><Text style={styles.muted}>아직 신청 문서가 없습니다.</Text><Button label="새 신청문서" variant="secondary" onPress={() => newDocument()} /></>}
+          {!workspace.loading && (workspace.preparations?.length ?? 0) > 0 && !shownPreparations.length && <Notice>조건에 맞는 신청 문서가 없습니다.</Notice>}</>}
+        {workType !== 'document' && workStage === 'all' && <><Text style={local.groupTitle}>중복 검토 {workspace.reviews === null ? '—' : shownReviews.length}</Text>
+          {shownReviews.map((item) => <ReviewRow key={item.review.id} item={item} />)}
+          {!workspace.loading && workspace.reviews?.length === 0 && <><Text style={styles.muted}>아직 중복 검토가 없습니다.</Text><Button label="새 검토" variant="secondary" onPress={() => router.push('/all/reviews/new')} /></>}
+          {!workspace.loading && (workspace.reviews?.length ?? 0) > 0 && !shownReviews.length && <Notice>조건에 맞는 중복 검토가 없습니다.</Notice>}</>}
       </>}
     </ScrollView>
-    <PartnerSheet visible={filterOpen} title="관심 공고 필터" onClose={() => setFilterOpen(false)} actions={<>
-      <Button label="초기화" variant="secondary" onPress={resetFilters} />
-      <Button label={listStageReady && !visible.error ? `결과 ${shown.length}건 보기` : '결과 확인하기'} onPress={() => setFilterOpen(false)} />
+    <PartnerSheet visible={filterOpen} title={view === 'saved' ? '관심 공고 필터' : '준비 작업 필터'} onClose={() => setFilterOpen(false)} actions={<>
+      <Button label="초기화" variant="secondary" onPress={view === 'saved' ? resetFilters : resetWorkFilters} />
+      <Button label={view === 'preparation' ? workCount === null ? '결과 확인하기' : `결과 ${shownPreparations.length + shownReviews.length}건 보기`
+        : listStageReady && !visible.error ? `결과 ${shown.length}건 보기` : '결과 확인하기'} onPress={() => setFilterOpen(false)} />
     </>}>
+      {view === 'preparation' ? <>
+        <ChoiceField label="작업 종류" value={workType} options={[{ value: 'all', label: '전체 작업' }, { value: 'document', label: '신청 문서' }, { value: 'review', label: '중복 검토' }]}
+          onChange={value => { setWorkType(value as WorkType); setWorkStatus('all'); setWorkStage('all') }} />
+        <ChoiceField label="작업 상태" value={workStatus} options={workStatusOptions} onChange={value => setWorkStatus(value as WorkStatus)} />
+        {workType === 'document' && <ChoiceField label="신청 진행 단계" value={workStage} options={[{ value: 'all', label: '전체 단계' }, ...applicationProgressStages.map(value => ({ value, label: applicationProgressStageLabels[value] }))]}
+          onChange={value => setWorkStage(value as 'all' | ApplicationProgressStage)} />}
+      </> : <>
       <FilterMultiChoices label="지역" selected={criteria.region} options={options([...regionNames, ...criteria.region, ...visible.programs.flatMap(item => item.program.regions)])}
         onToggle={value => toggleCriterion('region', value)} onClear={() => changeCriteria(current => ({ ...current, region: [] }))} />
       <FilterMultiChoices label="분야" selected={criteria.category} options={options([...supportProgramCategories, ...criteria.category, ...visible.programs.flatMap(item => item.program.categories)])}
@@ -222,6 +248,7 @@ export function SavedProgramsScreen({ onOpenProgram, onCountChange, onLogin }: {
       {workspace.preparationError && <Notice error>진행 단계를 확인하지 못했어요. {workspace.preparationError}</Notice>}
       {visible.error && <Notice error>{visible.error}</Notice>}
       <Text style={styles.muted}>지역·분야·대상을 여러 개 선택할 수 있어요. 선택하지 않으면 전체 담은 공고를 보여줍니다.</Text>
+      </>}
     </PartnerSheet>
     {stageTarget?.owner === token && (stageTarget.items.length > 0
       ? <ProgressStageSheet key={`${token}:${preparationKey(stageTarget.identity)}`} items={stageTarget.items} token={token} onClose={() => setStageTarget(null)} onSaved={workspace.refresh} />
