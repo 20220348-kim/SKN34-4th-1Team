@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -759,20 +759,140 @@ class ArchiveTests(unittest.TestCase):
             patch.object(
                 restore, "retain_for_migration", side_effect=rehearse
             ) as retained,
+            patch.object(restore.snapshot, "verify_current_source") as source_check,
+            patch.object(restore, "inspect_retained") as storage_check,
         ):
             result = restore.verify_archive("state", "archive", "key")
             retained.assert_not_called()
             disposable.assert_called_once()
+            source_check.assert_not_called()
+            storage_check.assert_not_called()
             events.clear()
             retained_result = restore.verify_archive(
                 "state", "archive", "key", retain=True
             )
             retained.assert_called_once()
+            self.assertEqual(source_check.call_count, 2)
+            storage_check.assert_called_once()
         self.assertTrue(result["cross_store_business_links_verified"])
         self.assertTrue(retained_result["cross_store_business_links_verified"])
+        self.assertTrue(retained_result["archive_freshness_verified"])
+        self.assertTrue(retained_result["source_quiescence_verified"])
+        self.assertEqual(
+            retained_result["source_verification_scope"],
+            "before_and_after_retained_restore",
+        )
         self.assertEqual(
             retained_result["archive_sha256"], hashlib.sha256(b"encrypted").hexdigest()
         )
+
+    def test_retained_copy_requires_current_source_before_and_after_storage_creation(
+        self,
+    ):
+        for failure in ("before", "destination", "after", "settings", "storage", None):
+            with self.subTest(failure=failure), ExitStack() as stack:
+                events = []
+                settings = {"cluster": "fixture"}
+                payload = {
+                    "database": {},
+                    "stores": {
+                        kind: {"entries": {}} for kind in ("prefect", "results")
+                    },
+                }
+
+                def source(*args, events=events, failure=failure):
+                    events.append("source")
+                    if failure == "before" or (
+                        failure == "after" and "restore" in events
+                    ):
+                        raise ValueError("private source state")
+
+                @contextmanager
+                def database(*args, events=events):
+                    events.append("database")
+                    yield []
+
+                def retained(*args, events=events):
+                    events.append("restore")
+                    return {"production_cutover": False}
+
+                def inspect(*args, events=events, failure=failure):
+                    events.append("inspect")
+                    if failure == "storage":
+                        raise ValueError("changed retained storage")
+
+                for module, name, kwargs in (
+                    (
+                        restore.fork_cluster,
+                        "load_settings",
+                        {
+                            "side_effect": [
+                                settings,
+                                {} if failure == "destination" else settings,
+                                {} if failure == "settings" else settings,
+                            ]
+                        },
+                    ),
+                    (
+                        restore.fork_cluster,
+                        "commands",
+                        {"return_value": (["kubectl"], [], [])},
+                    ),
+                    (restore.fork_cluster, "verify_context", {}),
+                    (
+                        restore.snapshot.database,
+                        "read_archive",
+                        {"return_value": b"encrypted"},
+                    ),
+                    (restore.snapshot.storage, "key_bytes", {"return_value": b"key"}),
+                    (
+                        restore.snapshot.storage,
+                        "open_payload",
+                        {"return_value": payload},
+                    ),
+                    (
+                        restore.snapshot,
+                        "validate",
+                        {"side_effect": lambda value: value},
+                    ),
+                    (
+                        restore.snapshot,
+                        "verify_current_source",
+                        {"side_effect": source},
+                    ),
+                    (
+                        restore.snapshot.database,
+                        "restored_database",
+                        {"side_effect": database},
+                    ),
+                    (restore.snapshot, "completed_evidence", {"return_value": {}}),
+                    (restore, "retain_for_migration", {"side_effect": retained}),
+                    (restore, "inspect_retained", {"side_effect": inspect}),
+                ):
+                    stack.enter_context(patch.object(module, name, **kwargs))
+                untouched = stack.enter_context(
+                    patch.object(restore.snapshot.storage, "run")
+                )
+                if failure:
+                    with self.assertRaises(ValueError):
+                        restore.verify_archive("state", "archive", "key", retain=True)
+                else:
+                    result = restore.verify_archive(
+                        "state", "archive", "key", retain=True
+                    )
+                    self.assertTrue(result["archive_freshness_verified"])
+                    self.assertFalse(result["production_cutover"])
+                self.assertEqual(events[0], "source")
+                self.assertEqual(
+                    events.count("restore"),
+                    int(failure not in {"before", "destination"}),
+                )
+                if not failure:
+                    self.assertEqual(
+                        events, ["source", "database", "restore", "source", "inspect"]
+                    )
+                # No fallback, deletion, retry or service resume after a failed check.
+                untouched.assert_not_called()
 
     def test_cli_failure_does_not_expose_private_subprocess_details(self):
         with (

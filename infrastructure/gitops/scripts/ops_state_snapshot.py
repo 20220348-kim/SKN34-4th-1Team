@@ -321,6 +321,50 @@ def backup(state, db_archive, key_file, output, *, include_runtime_keys=False):
     }
 
 
+def verify_current_source(state, payload):
+    """Compare an authenticated archive with its still-frozen source; never stop writers."""
+    validate(payload)
+    settings = database.load_settings(state)
+    namespaced, before = database.frozen_source(state, settings)
+    db = payload["database"]
+    if before != db.get("source"):
+        raise ValueError("Archive belongs to a different maintenance state")
+    sources = volume_sources(before)
+    if sources != payload.get("sources"):
+        raise ValueError("Archived source volumes or consumers changed")
+    command = [*namespaced, "exec", "-i", "ops-mysql-0", "-c", "mysql", "--", *storage.AUTH]
+
+    def check_database():
+        counts = database.inventory(command)
+        database.quiet_database(command, counts)
+        if counts != db["table_counts"] or database.dump(command) != db["sql"]:
+            raise ValueError("Source DB differs from the archived database")
+
+    def check_keys():
+        if "runtime_keys" in payload:
+            archived = {k: v for k, v in payload["runtime_keys"].items() if k != "proof"}
+            if runtime_keys.capture(namespaced, before, sources) != archived:
+                raise ValueError("Archived runtime credentials changed")
+
+    check_database()
+    check_keys()
+    for kind, source in sources.items():
+        store = payload["stores"][kind]
+        if (
+            source["image"] != store["image"]
+            or volume_helper(source["image"], kind, source=source["volume"]) != store["entries"]
+        ):
+            raise ValueError("Source volume differs from the archived inventory")
+    check_database()
+    check_keys()
+    if (
+        database.load_settings(state) != settings
+        or volume_sources(before) != sources
+        or database.frozen_source(state, settings) != (namespaced, before)
+    ):
+        raise ValueError("Source ownership or writer state changed during comparison")
+
+
 def verify(
     archive, key_file, *, completed_links=False, verify_runtime_keys=False, database_login=False
 ):
