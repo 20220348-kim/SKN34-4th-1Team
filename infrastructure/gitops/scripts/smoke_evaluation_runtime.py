@@ -16,6 +16,7 @@ from urllib.error import URLError
 from urllib.request import ProxyHandler, build_opener
 
 import check_evaluation
+import evaluation_network_probe
 import evaluation_pvc_restore as pvc
 import fork_cluster
 import fork_web
@@ -536,6 +537,17 @@ def verify(
         raise ValueError(
             "Ops and the restored artifact service must share their fixture token"
         )
+    network = evaluation_network_probe.exercise(
+        kube, project + "-control-plane", helm=helm
+    )
+    evidence["network_policy_probe"] = network
+    if (
+        network.get("status") != "ENFORCED"
+        or network.get("policyProfile") != "evaluation_chart"
+        or network.get("networkPolicyEnforcementVerified") is not True
+        or network.get("cleanupComplete") is not True
+    ):
+        raise ValueError("Evaluation chart network enforcement and cleanup must pass")
     observation_url = langfuse_url(compose, compose_env, project)
     local_images = {
         name: "govbiz/" + name + ":" + project
@@ -560,8 +572,8 @@ def verify(
         ):
             evidence["restored_pvc"] = proof
             ek = kube + ["-n", namespace]
-            # The restore reader policy is replaced only in this owned CI cluster.
-            # The default kind CNI does not demonstrate NetworkPolicy enforcement.
+            # Remove the restore-only deny-all policy in the owned CI fixture;
+            # the runtime uses the chart ingress policies verified above.
             execute(ek + ["delete", "networkpolicy", "deny-all"])
             for name, data in (
                 ("llmops-artifacts", {"LLMOPS_ARTIFACT_TOKEN": token}),
@@ -722,7 +734,8 @@ def verify(
         evidence.update(
             source_stores_unchanged=True,
             model_api_calls=0,
-            network_policy_enforcement_verified=False,
+            network_policy_enforcement_verified=True,
+            network_policy_scope="single_node_synthetic_chart_ingress",
         )
     finally:
         for image in reversed(tagged):

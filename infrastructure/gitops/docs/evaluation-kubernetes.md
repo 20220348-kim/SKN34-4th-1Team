@@ -413,6 +413,53 @@ NetworkPolicy 객체 생성만으로 차단이 보장되지 않는다. 정책을
 `docker.io/kindest/kindnetd:v20260820-69b56db7`였다. 이 결과를 다른 kind 버전이나 노드에 일반화하지 않는다.
 새 Chart의 실제 Prefect·Ops·결과 서버 통신 검증은 최신 SHA CI와 실제 배포에서 별도로 확인한다.
 
+### 실제 Chart 정책의 합성 통신 검증
+
+기본 검사는 CNI의 일반적인 ingress·egress 집행을 확인한다. `--evaluation-chart`를 지정하면
+같은 Helm Chart에서 렌더링한 평가용 NetworkPolicy 세 개를 새 임시 환경에서 검사한다.
+
+```bash
+python3 -B infrastructure/gitops/scripts/evaluation_network_probe.py \
+  --state-dir infrastructure/gitops/.local/fork \
+  --evaluation-chart --helm helm > /private-backups/evaluation-chart-network.json
+```
+
+이 모드는 임시 namespace 두 개와 합성 HTTP Pod 여섯 개를 사용한다. 실제 Prefect·실행기·결과
+서버 프로세스, Secret, PVC는 생성하지 않는다. 평가 namespace와 `govbiz-msa`의 관계만 임시
+namespace로 바꾸며 Pod selector·허용 포트·ingress 규칙은 렌더링 결과를 사용한다. 렌더링 결과가
+임시 namespace 밖을 지정하면 생성 전에 차단한다. 원본 정책 spec 해시와 namespace 치환 내역을
+보고서의 `chartPolicySpecSha256`·`namespaceRebinding`에 기록한다.
+
+| 출발 Pod | 대상 | 정책 적용 중 기대 결과 |
+| --- | --- | --- |
+| Ops namespace의 `ops-service` | Prefect / TCP 4200 | 허용 |
+| Ops namespace의 `ops-service` | 결과 서버 / TCP 8010 | 허용 |
+| 평가 namespace의 `evaluation-runner` | Prefect / TCP 4200 | 허용 |
+| 평가 namespace의 `evaluation-runner` | 결과 서버 / TCP 8010 | 차단 |
+| 평가 namespace의 가짜 `ops-service` | Prefect / TCP 4200 | 차단 |
+| 평가 namespace의 가짜 `ops-service` | 결과 서버 / TCP 8010 | 차단 |
+| 다른 namespace의 `evaluation-runner` | Prefect / TCP 4200 | 차단 |
+| Ops namespace의 `ops-service` | 실행기 대역 / TCP 8090 | 차단 |
+
+실행기 대역은 TCP 8090에서 의도적으로 응답하므로 차단 결과를 실제 실행기의 열린 포트 부재로
+혼동하지 않는다. 모든 경로는 정책 적용 전·제거 후에 연결되어야 하며, 세 대상 서버의 loopback
+응답도 확인한다. 정책 전파는 최대 120초의 관찰 구간에서 세 번 연속 기대 결과로 확인한다.
+진행 중인 요청에는 별도의 제한 시간이 있다. 기존 기본 검사의 45초 관찰 구간은 유지한다.
+
+LLMOps CI의 기존 `--evaluation-runtime` 단계에서도 이 모드를 필수 실행한다. Chart 프로파일의
+집행 검증과 임시 자원 정리가 모두 성공해야 평가 PVC 복원·런타임 기동 단계로 진행한다. 실패·
+불명확·다른 프로파일 결과는 통과시키지 않는다. 보고서는
+`evaluation_kubernetes_runtime.network_policy_probe`에 남긴다. 추가 클러스터를 만들거나 기존
+실행 환경을 중지하지 않고, CI가 소유한 kind 클러스터를 사용한다.
+
+이 결과는 단일 노드 IPv4 **Pod IP**에 대한 합성 검사다. 실제 Service/DNS·다중 노드·IPv6·
+애플리케이션 인증·외부 egress 검증과 구분하며 `evaluationRuntimeVerified=false`를 유지한다.
+
+2026-10-08 개인 클러스터의 Chart 모드 실행은 `ENFORCED`였다. 허용 3개·차단 5개 경로가 세 번
+연속 기대 결과와 일치했고, 정책 제거 후 8개 경로의 연결 복구와 임시 namespace 정리를 확인했다.
+기존 업무·평가 서비스와 CNI는 변경하지 않았다. 필수 CI에 연결한 코드의 전체 검증은 이 변경을
+포함한 커밋이 푸시된 뒤 확인해야 한다.
+
 ## 평가 Argo 선언 등록
 
 복원 보고서 모드에 `--register-argo`를 추가하면 검증된 AppProject 한 개와 Application 세 개를
@@ -461,7 +508,8 @@ LLMOps CI의 기존 격리 통합 검증에 `--evaluation-runtime` 단계를 연
 
 1. 기존 격리 MySQL·볼륨 복원 검증을 먼저 완료한다. Ops API·sync와 Compose 평가 writer가 정지한
    상태에서 실제 Prefect SQLite와 완료 보고서를 읽는다. 개인 백업·운영 데이터는 사용하지 않는다.
-2. 기존 PVC 복원 도구로 새 namespace·StorageClass·PVC 2개에 복원하고 실행 ID·보고서 해시·권한을
+2. 위 Chart 정책의 합성 통신 검사와 임시 자원 정리를 먼저 통과해야 한다. 그 뒤 기존 PVC 복원
+   도구로 새 namespace·StorageClass·PVC 2개에 복원하고 실행 ID·보고서 해시·권한을
    검증한다. 앞의 최소 합성 SQLite 대신 실제 평가에 사용했던 Prefect 스키마를 그대로 사용한다.
 3. `environments/evaluation`의 배포용 values를 읽고 검증 전용 이미지·PVC·노드·연결 주소와 replica만
    바꾸어 렌더링한다. 실행기의 2Gi, 결과 서버의 256Mi 등 구성요소별 CPU·메모리 요청/한도를 유지한다.
@@ -482,9 +530,11 @@ LLMOps CI의 기존 격리 통합 검증에 `--evaluation-runtime` 단계를 연
 
 `ops-bridge.json`의 `evaluation_kubernetes_runtime`에 단계별 증거를 남긴다.
 `scope=disposable_kubernetes_evaluation_runtime`, `observability_runtime=isolated_compose`,
-`production_cutover=false`, `personal_environment_verified=false`를 명시한다. 기본 kind CNI에서
-NetworkPolicy 집행을 입증하지 않으며, 이 결과는 Argo CD 배포·공개 이미지 발행·운영 PVC 인계의
-증거가 아니다. 로컬 단위·렌더링 검사만 통과한 상태에서는 **실제 런타임 검증은 최신 SHA CI 대기**다.
+`production_cutover=false`, `personal_environment_verified=false`를 명시한다. NetworkPolicy 성공은
+별도 합성 검사를 통과한 경우에만 `network_policy_enforcement_verified=true`로 기록하며 범위는
+`network_policy_scope=single_node_synthetic_chart_ingress`다. 이 결과는 Argo CD 배포·공개 이미지
+발행·운영 PVC 인계의 증거가 아니다. 로컬 단위·렌더링 검사만 통과한 상태에서는
+**실제 런타임 검증은 최신 SHA CI 대기**다.
 
 평가 Deployment의 rollout이 실패하면 임시 namespace를 정리하기 전에 같은 보고서의
 `evaluation_kubernetes_runtime.rollout_failure`에 실패 component·오류 종류, Pod 배치 여부,
