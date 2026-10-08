@@ -5,25 +5,41 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langsmith import tracing_context
 from openai import APITimeoutError
-from app.combination_review.models import AnalysisSelection, AnalyzeRequest, build_citation_options
-from app.combination_review.prompt import INSTRUCTIONS
+from app.combination_review.models import (
+    AnalysisSelection, AnalysisSelectionV3, AnalyzeRequest, AnalyzeRequestV3, CONTRACT_VERSION_V3,
+    build_citation_options,
+)
+from app.combination_review.prompt import INSTRUCTIONS, INSTRUCTIONS_V3
+
+
+def _responses_schema(selection: type[AnalysisSelection | AnalysisSelectionV3], pair: str, items: str) -> dict:
+    schema = selection.model_json_schema()
+    # The discriminator literals are disjoint: anyOf preserves this union while
+    # avoiding the nested oneOf/discriminator unsupported by Responses schemas.
+    union = schema["$defs"][pair]["properties"][items]["items"]
+    union["anyOf"] = union.pop("oneOf")
+    union.pop("discriminator")
+    return schema
 
 
 class CombinationReviewAgent:
-    """Single structured call, no tools, handoffs, retries or rule fallback."""
+    """Single structured call per request (v2 six stages or v3 three questions), no tools, handoffs, retries or rule fallback."""
     def __init__(self, *, model: ChatOpenAI, run_timeout_seconds: float):
         self._run_timeout_seconds = run_timeout_seconds
-        schema = AnalysisSelection.model_json_schema()
-        # The judgment literals are disjoint: anyOf preserves this union while
-        # avoiding the nested oneOf/discriminator unsupported by Responses schemas.
-        stages = schema["$defs"]["PairSelection"]["properties"]["stages"]["items"]
-        stages["anyOf"] = stages.pop("oneOf")
-        stages.pop("discriminator")
         self._structured_model = model.with_structured_output(
-            schema, method="json_schema", strict=True, include_raw=True,
+            _responses_schema(AnalysisSelection, "PairSelection", "stages"),
+            method="json_schema", strict=True, include_raw=True,
+        )
+        self._structured_model_v3 = model.with_structured_output(
+            _responses_schema(AnalysisSelectionV3, "PairSelectionV3", "answers"),
+            method="json_schema", strict=True, include_raw=True,
         )
 
-    async def analyze(self, request: AnalyzeRequest) -> AnalysisSelection:
+    async def analyze(self, request: AnalyzeRequest | AnalyzeRequestV3) -> AnalysisSelection | AnalysisSelectionV3:
+        if request.contractVersion == CONTRACT_VERSION_V3:
+            structured_model, instructions, selection = self._structured_model_v3, INSTRUCTIONS_V3, AnalysisSelectionV3
+        else:
+            structured_model, instructions, selection = self._structured_model, INSTRUCTIONS, AnalysisSelection
         payload = request.model_dump(exclude={"evidence"})
         payload["citationOptions"] = [
             {
@@ -38,8 +54,8 @@ class CombinationReviewAgent:
         try:
             async with asyncio.timeout(self._run_timeout_seconds):
                 with tracing_context(enabled=False):
-                    result = await self._structured_model.ainvoke([
-                        SystemMessage(content=INSTRUCTIONS),
+                    result = await structured_model.ainvoke([
+                        SystemMessage(content=instructions),
                         HumanMessage(content=json.dumps(payload, ensure_ascii=False)),
                     ])
         except (APITimeoutError, TimeoutError) as error:
@@ -48,4 +64,4 @@ class CombinationReviewAgent:
                 or result["raw"].response_metadata.get("status") != "completed"
                 or result["parsed"] is None):
             raise ValueError("invalid combination review output")
-        return AnalysisSelection.model_validate(result["parsed"])
+        return selection.model_validate(result["parsed"])

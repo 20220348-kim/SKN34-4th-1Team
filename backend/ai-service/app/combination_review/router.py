@@ -1,8 +1,8 @@
 import logging
 from time import perf_counter
-from typing import Annotated
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from app.combination_review.models import AnalyzeRequest
+from typing import Annotated, Literal
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, status
+from app.combination_review.models import AnalyzeRequest, AnalyzeRequestV3, CONTRACT_VERSION
 from app.combination_review.service import CombinationReviewError, CombinationReviewService
 
 router = APIRouter(prefix="/internal/v1/combination-reviews", tags=["internal"])
@@ -14,6 +14,9 @@ _SAFE_FAILURE_REASONS = {
     "invalid limitation": "limitation",
     "out-of-range citation option": "citation_option_range",
     "citation option belongs to another pair": "citation_option_pair",
+    "invalid answer order": "answer_order",
+    "blank answer text": "answer_text",
+    "uncited answer": "answer_citation",
 }
 
 
@@ -22,12 +25,21 @@ def get_service(request: Request) -> CombinationReviewService:
 
 
 @router.get("/configuration")
-async def configuration(service: Annotated[CombinationReviewService, Depends(get_service)]):
-    return service.configuration()
+async def configuration(
+    service: Annotated[CombinationReviewService, Depends(get_service)],
+    contract_version: Annotated[
+        Literal["combination-review-v2", "combination-review-v3"], Query(alias="contractVersion"),
+    ] = CONTRACT_VERSION,
+):
+    return service.configuration(contract_version)
 
 
 @router.post("/analyze")
-async def analyze(payload: AnalyzeRequest, service: Annotated[CombinationReviewService, Depends(get_service)]):
+async def analyze(
+    # v2 and v3 share the endpoint; contractVersion selects the request contract and its response.
+    payload: Annotated[AnalyzeRequest | AnalyzeRequestV3, Body(discriminator="contractVersion")],
+    service: Annotated[CombinationReviewService, Depends(get_service)],
+):
     started = perf_counter()
     try:
         return await service.analyze(payload)
