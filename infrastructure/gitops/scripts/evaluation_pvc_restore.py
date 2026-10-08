@@ -26,7 +26,10 @@ MIGRATION_NAMESPACE = "govbiz-evaluation"
 PREFECT_VALUES = (
     Path(__file__).resolve().parents[1] / "environments/evaluation/prefect.yaml"
 )
-BOOTSTRAP = "import json,sys; v=json.load(sys.stdin); n={'__name__':'pvc_probe'}; exec(v.pop('program'),n); n['main'](v)"
+BOOTSTRAP = (
+    "import json,sys; v=json.load(sys.stdin); n={'__name__':'pvc_probe'}; "
+    "exec(v.pop('program'),n); n['main'](v)"
+)
 
 
 def helper_program():
@@ -649,12 +652,33 @@ def verify_archive(state, archive, key_file, *, retain=False):
     payload = snapshot.validate(
         snapshot.storage.open_payload(raw, snapshot.storage.key_bytes(key_file))
     )
+    # A disposable rehearsal may use an older backup. A retained migration copy
+    # must match the current stopped source before allocating any new storage.
+    if retain:
+        snapshot.verify_current_source(state, payload)
     stores = {name: store["entries"] for name, store in payload["stores"].items()}
     # Caller-provided IDs cannot stand in for evidence from the restored Ops DB.
     with snapshot.database.restored_database(payload["database"]) as command:
         expected = snapshot.completed_evidence(command, stores["results"])
+    if retain:
+        if fork_cluster.load_settings(state) != settings:
+            raise ValueError("Destination settings changed before retained restore")
+        fork_cluster.verify_context(kube, settings, timeout=15)
     restore = retain_for_migration if retain else rehearse
     result = restore(kube, settings["cluster"] + "-control-plane", stores, expected)
+    if retain:
+        # The retained context has removed its helpers. A failure here keeps the
+        # new PVCs for inspection, but must never return a successful handoff.
+        snapshot.verify_current_source(state, payload)
+        if fork_cluster.load_settings(state) != settings:
+            raise ValueError("Destination settings changed during retained restore")
+        fork_cluster.verify_context(kube, settings, timeout=15)
+        inspect_retained(kube, settings["cluster"] + "-control-plane", result)
+        result.update(
+            archive_freshness_verified=True,
+            source_quiescence_verified=True,
+            source_verification_scope="before_and_after_retained_restore",
+        )
     return {
         **result,
         "archive_sha256": hashlib.sha256(raw).hexdigest(),
@@ -691,9 +715,12 @@ def main():
         parser.exit(
             1,
             (
-                "Retained evaluation restore failed; do not activate services. Inspect govbiz-evaluation and its labeled StorageClass/PVs; storage was not automatically deleted and helper cleanup may be incomplete.\n"
+                "Retained evaluation restore failed; do not activate services. "
+                "Inspect govbiz-evaluation and its labeled StorageClass/PVs; "
+                "storage was not automatically deleted and helper cleanup may be incomplete.\n"
                 if args.retain_for_migration
-                else "Evaluation PVC rehearsal failed; existing services were not changed. Inspect disposable resources if cleanup failed.\n"
+                else "Evaluation PVC rehearsal failed; existing services were not changed. "
+                "Inspect disposable resources if cleanup failed.\n"
             ),
         )
 

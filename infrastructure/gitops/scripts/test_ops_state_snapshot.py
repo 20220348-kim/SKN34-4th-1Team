@@ -364,6 +364,152 @@ class SourceTests(unittest.TestCase):
             snapshot.volume_sources(SOURCE)
 
 
+class CurrentSourceTests(unittest.TestCase):
+    def setUp(self):
+        stack = ExitStack()
+        self.addCleanup(stack.close)
+        folder = stack.enter_context(tempfile.TemporaryDirectory())
+        self.value = {
+            "schema_version": 1,
+            "scope": snapshot.SCOPE,
+            "database": {**copy.deepcopy(db_payload()), "source": copy.deepcopy(SOURCE)},
+            "sources": {
+                kind: {"image": IMAGE, "volume": "fixture_" + kind} for kind in snapshot.STORES
+            },
+            "stores": {},
+            "runtime_keys": {**key_payload(), "proof": {"synthetic": "archive proof"}},
+        }
+        for kind in snapshot.STORES:
+            root = Path(folder) / kind
+            root.mkdir()
+            self.value["stores"][kind] = {"image": IMAGE, "entries": fixture(root, kind)}
+        self.settings = {"stateId": "fixture", "mode": "gitops"}
+        self.mocks = {}
+        for module, name, value in (
+            (snapshot.database, "load_settings", self.settings),
+            (snapshot.database, "frozen_source", (["kubectl"], copy.deepcopy(SOURCE))),
+            (snapshot, "volume_sources", copy.deepcopy(self.value["sources"])),
+            (snapshot.database, "inventory", self.value["database"]["table_counts"]),
+            (snapshot.database, "quiet_database", None),
+            (snapshot.database, "dump", self.value["database"]["sql"]),
+            (snapshot.runtime_keys, "capture", key_payload()),
+        ):
+            self.mocks[name] = stack.enter_context(patch.object(module, name, return_value=value))
+        self.reads = stack.enter_context(
+            patch.object(
+                snapshot,
+                "volume_helper",
+                side_effect=lambda image, kind, **kw: copy.deepcopy(
+                    self.value["stores"][kind]["entries"]
+                ),
+            )
+        )
+
+    def test_current_archive_is_compared_without_returning_private_content(self):
+        self.assertIsNone(snapshot.verify_current_source("state", self.value))
+        for name in (
+            "load_settings",
+            "frozen_source",
+            "volume_sources",
+            "inventory",
+            "quiet_database",
+            "dump",
+            "capture",
+        ):
+            self.assertEqual(self.mocks[name].call_count, 2, name)
+        self.assertEqual(self.reads.call_count, 2)
+        for call in self.reads.call_args_list:
+            self.assertEqual(set(call.kwargs), {"source"})
+        self.assertIn("proof", self.value["runtime_keys"])
+
+    def test_wrong_maintenance_state_or_volume_owner_blocks_before_data_reads(self):
+        for name, value in (
+            ("frozen_source", (["kubectl"], {**SOURCE, "deployment_version": "changed"})),
+            ("volume_sources", {"results": {"volume": "another-volume"}}),
+        ):
+            with (
+                self.subTest(name=name),
+                patch.object(
+                    snapshot.database if name == "frozen_source" else snapshot,
+                    name,
+                    return_value=value,
+                ),
+                self.assertRaises(ValueError),
+            ):
+                snapshot.verify_current_source("state", self.value)
+        self.reads.assert_not_called()
+        self.mocks["dump"].assert_not_called()
+
+    def test_unfinished_work_counts_and_sql_changes_are_rejected(self):
+        for phase in (0, 1):
+            for name, changed in (
+                ("inventory", {}),
+                ("dump", "private changed SQL"),
+                ("quiet_database", ValueError("Outstanding work")),
+            ):
+                original = self.mocks[name].return_value
+                with (
+                    self.subTest(phase=phase, name=name),
+                    patch.object(
+                        snapshot.database,
+                        name,
+                        side_effect=[original] * phase + [changed],
+                    ),
+                    self.assertRaises(ValueError),
+                ):
+                    snapshot.verify_current_source("state", self.value)
+
+    def test_each_source_file_inventory_and_image_must_match_archive(self):
+        for kind in snapshot.STORES:
+            for field in ("entries", "image"):
+                value = copy.deepcopy(self.value)
+                value["stores"][kind][field] = (
+                    {**value["stores"][kind][field], "another": value["stores"][kind][field]["."]}
+                    if field == "entries"
+                    else "sha256:" + "d" * 64
+                )
+                with self.subTest(kind=kind, field=field), self.assertRaises(ValueError):
+                    snapshot.verify_current_source("state", value)
+
+    def test_credential_rotation_at_either_observation_is_rejected(self):
+        for phase in (0, 1):
+            changed = key_payload()
+            changed["keys"]["budget"] = "private_changed_" + "z" * 40
+            with (
+                self.subTest(phase=phase),
+                patch.object(
+                    snapshot.runtime_keys,
+                    "capture",
+                    side_effect=[key_payload()] * phase + [changed],
+                ),
+                self.assertRaisesRegex(ValueError, "credentials"),
+            ):
+                snapshot.verify_current_source("state", self.value)
+
+    def test_resumed_writer_or_changed_ownership_after_reads_cannot_pass(self):
+        for name, changed in (
+            ("frozen_source", ValueError("Writer resumed")),
+            ("frozen_source", (["another-context"], SOURCE)),
+            ("volume_sources", {}),
+            ("load_settings", {"stateId": "another"}),
+        ):
+            with (
+                self.subTest(name=name, changed=changed),
+                patch.object(
+                    snapshot if name == "volume_sources" else snapshot.database,
+                    name,
+                    side_effect=[self.mocks[name].return_value, changed],
+                ),
+                self.assertRaises(ValueError),
+            ):
+                snapshot.verify_current_source("state", self.value)
+
+    def test_archive_without_runtime_keys_does_not_claim_to_check_them(self):
+        self.value.pop("runtime_keys")
+        snapshot.verify_current_source("state", self.value)
+        self.mocks["capture"].assert_not_called()
+
+
 @unittest.skipUnless(os.name == "posix", "Private archives and OpenSSL require Linux")
 class ArchiveTests(unittest.TestCase):
     def setUp(self):
