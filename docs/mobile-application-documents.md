@@ -76,3 +76,5 @@ pnpm.cmd --filter @govbiz/mobile start --clear
 Expo Go에서는 휴대폰 브라우저에서 접근할 수 있는 같은 LAN의 개발 API 주소를 사용한다. 배포 앱은 `EXPO_PUBLIC_API_BASE_URL`을 공개 HTTPS origin으로 설정하고 새 Core API를 함께 배포한다. 운영 프록시는 POST의 Bearer와 GET의 ticket 쿼리·attachment 헤더를 전달하고 응답을 캐시하지 않아야 한다. 기존 Vercel middleware의 경로·쿼리·인증 전달을 재사용한다.
 실제 문서 분석·생성에는 기존 AI 호출 비용이 발생할 수 있다. 로컬 자동 테스트는 응답·파일 API 테스트 대역으로 유료 호출 없이 검증한다.
 시스템 브라우저의 실제 다운로드·TXT 공유와 HWP/HWPX/PDF/DOCX/XLSX 결과 확인은 자동 테스트·JS export와 별개다. Expo Go 및 설치한 배포 앱 양쪽에서 기기 다운로드를 확인해야 한다.
+
+중복 검토 결과는 헤더의 뒤로가기를 사용하며 별도의 검토 목록 이동 버튼을 표시하지 않는다.

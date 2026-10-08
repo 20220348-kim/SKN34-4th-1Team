@@ -27,7 +27,7 @@ const entries = new Map<string, string>()
 const onOpen = jest.fn()
 let saved: CombinationReview
 let request: RunRequest | null
-const editor = (id: number | null = null) => <CombinationReviewEditorScreen id={id} onLogin={jest.fn()} onList={jest.fn()} onOpenProgram={onOpen} />
+const editor = (id: number | null = null) => <CombinationReviewEditorScreen id={id} onLogin={jest.fn()} onOpenProgram={onOpen} />
 beforeEach(() => {
   entries.clear(); request = null; saved = structuredClone(mobileReview)
   mockAuth = { status: 'signedIn', session: { accessToken: 'first-token', account: { email: 'first@example.test' } }, invalidateSession: mockInvalidate }
@@ -248,7 +248,7 @@ test('a late first-step save from a previous account cannot move the new account
   let finish!: (value: CombinationReview) => void
   mockRepository.create.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
   const onStepChange = jest.fn()
-  const props = { id: null, onStepChange, onLogin: jest.fn(), onList: jest.fn(), onOpenProgram: onOpen }
+  const props = { id: null, onStepChange, onLogin: jest.fn(), onOpenProgram: onOpen }
   const view = render(<CombinationReviewEditorScreen {...props} />)
   await screen.findByText('검색 결과 3건')
   fireEvent.changeText(screen.getByLabelText('검토 제목'), '첫 계정의 새 검토')
@@ -278,7 +278,7 @@ test('changing a deep-link run on the same review opens the requested snapshot r
   mockRepository.runs.mockResolvedValue({ items: [reviewRunFixture('SUCCEEDED')], nextBeforeId: null })
   mockRepository.run.mockImplementation(async (_id: number, runId: number) => ({ ...reviewRunFixture('SUCCEEDED'), id: runId,
     input: { ...reviewRunFixture().input, title: `실행 ${runId}의 입력` } }))
-  const props = { id: 5, onLogin: jest.fn(), onList: jest.fn(), onOpenProgram: onOpen }
+  const props = { id: 5, onLogin: jest.fn(), onOpenProgram: onOpen }
   const view = render(<CombinationReviewEditorScreen {...props} runId={6} />)
   await screen.findByText('실행 6의 입력')
   view.rerender(<CombinationReviewEditorScreen {...props} runId={8} />)

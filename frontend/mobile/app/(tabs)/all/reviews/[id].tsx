@@ -14,5 +14,5 @@ export default function ReviewRoute() {
   const step = typeof params.step === 'string' && ['selection', 'participation', 'confirm', 'analysis'].includes(params.step) ? params.step as CombinationReviewStep : undefined
   return <><ProgramReturnHeader params={params} /><CombinationReviewEditorScreen id={id} runId={runId} initialStep={step} onLogin={() => requestLogin()}
     onStepChange={(_id, next) => router.setParams({ step: next })}
-    onList={() => router.navigate('/all/reviews')} onOpenProgram={identity => router.push({ pathname: '/program', params: identity })} /></>
+    onOpenProgram={identity => router.push({ pathname: '/program', params: identity })} /></>
 }

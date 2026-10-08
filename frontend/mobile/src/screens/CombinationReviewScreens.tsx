@@ -73,19 +73,19 @@ function OwnedReviewList({ token, onNew }: { token: string; onNew(): void }) {
 
 export type CombinationReviewStep = 'selection' | 'participation' | 'confirm' | 'analysis'
 
-export function CombinationReviewEditorScreen({ id, runId, initialProgram, initialStep, onStepChange, onLogin, onOpenProgram, onList }: {
+export function CombinationReviewEditorScreen({ id, runId, initialProgram, initialStep, onStepChange, onLogin, onOpenProgram }: {
   id: number | null; runId?: number; initialProgram?: SupportProgramIdentity; initialStep?: CombinationReviewStep; onLogin(): void
-  onStepChange?(id: number, step: CombinationReviewStep): void; onOpenProgram(identity: SupportProgramIdentity): void; onList(): void
+  onStepChange?(id: number, step: CombinationReviewStep): void; onOpenProgram(identity: SupportProgramIdentity): void
 }) {
   const auth = useAuth()
   if (auth.status !== 'signedIn' || !auth.session) return <ReviewLogin onLogin={onLogin} />
   return <OwnedReviewEditor key={`${auth.session.accessToken}:${id ?? 'new'}:${runId ?? 'latest'}:${initialProgram?.sourceCode ?? ''}:${initialProgram?.sourceProgramId ?? ''}`} id={id} runId={runId} initialProgram={initialProgram}
-    initialStep={initialStep} onStepChange={onStepChange} token={auth.session.accessToken} email={auth.session.account.email} onOpenProgram={onOpenProgram} onList={onList} />
+    initialStep={initialStep} onStepChange={onStepChange} token={auth.session.accessToken} email={auth.session.account.email} onOpenProgram={onOpenProgram} />
 }
 
-function OwnedReviewEditor({ id, runId, initialProgram, initialStep, onStepChange, token, email, onOpenProgram, onList }: {
+function OwnedReviewEditor({ id, runId, initialProgram, initialStep, onStepChange, token, email, onOpenProgram }: {
   id: number | null; runId?: number; initialProgram?: SupportProgramIdentity; initialStep?: CombinationReviewStep; token: string; email: string
-  onStepChange?(id: number, step: CombinationReviewStep): void; onOpenProgram(identity: SupportProgramIdentity): void; onList(): void
+  onStepChange?(id: number, step: CombinationReviewStep): void; onOpenProgram(identity: SupportProgramIdentity): void
 }) {
   const vm = useCombinationReview(token, email, id, runId)
   const { invalidateSession } = useAuth()
@@ -229,13 +229,12 @@ function OwnedReviewEditor({ id, runId, initialProgram, initialStep, onStepChang
       {vm.run && <ReviewResult key={vm.run.id} run={vm.run} names={names} currentRevision={vm.currentRevision} onSupplement={supplement} onRefresh={vm.refresh} />}
       {!vm.pending && <Button label="입력 수정하기" variant="secondary" disabled={vm.busy} onPress={supplement} />}
     </Page>}
-    <View style={local.actions}>
+    {step !== 'analysis' && <View style={local.actions}>
       {step === 'selection' && <Button style={local.action} label="다음 · 참여 상태 입력" busy={vm.saving} disabled={locked || vm.loading || !vm.draft.title.trim() || vm.draft.programs.length !== 2} onPress={() => void saveStep('participation')} />}
       {step === 'participation' && <><Button style={local.action} label="공고 선택으로" variant="secondary" disabled={locked || vm.loading} onPress={() => void saveStep('selection')} /><Button style={local.action} label="다음 · 분석 확인" busy={vm.saving} disabled={locked || vm.loading} onPress={() => void saveStep('confirm')} /></>}
       {step === 'confirm' && <><Button style={local.action} label="입력 수정" variant="secondary" disabled={locked} onPress={() => changeStep('participation')} /><Button style={local.action} label="검토 실행"
         busy={vm.busy} disabled={vm.loading || Boolean(vm.pending) || vm.active || !vm.storageReady || !vm.review || vm.dirty || unsupported || vm.draft.programs.length !== 2} onPress={() => void start()} /></>}
-      {step === 'analysis' && <Button style={local.action} label="검토 목록으로" variant="secondary" onPress={onList} />}
-    </View>
+    </View>}
   </View>
 }
 
