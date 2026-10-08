@@ -7,7 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import closing, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -248,7 +248,9 @@ class EvaluationChartTests(unittest.TestCase):
             )
             for name in check.COMPONENTS
         }
-        compose = yaml.safe_load((root.parent / "llmops/compose.yaml").read_text())
+        compose = yaml.safe_load(
+            (root.parent / "llmops/compose.yaml").read_text(encoding="utf-8")
+        )
         self.assertEqual(
             templates["prefect"]["image"], compose["services"]["prefect"]["image"]
         )
@@ -302,7 +304,9 @@ class EvaluationChartTests(unittest.TestCase):
     def test_explicit_local_images_are_never_pulled(self):
         values = bundle()
         for name, value in values.items():
-            value.update(allowLocalImages=True, image="govbiz/" + name + ":rehearsal")
+            value["allowLocalImages"] = True
+            if name != "prefect":
+                value["image"] = "govbiz/" + name + ":rehearsal"
         values["ops-artifacts"]["evidenceImage"] = values["evaluation-runner"]["image"]
         for rows in check.render_bundle(values).values():
             pod = workload(rows)["spec"]["template"]["spec"]
@@ -311,6 +315,25 @@ class EvaluationChartTests(unittest.TestCase):
                     c["imagePullPolicy"] == "Never"
                     for c in pod["containers"] + pod.get("initContainers", [])
                 )
+            )
+
+    def test_ci_prefect_requires_an_immutable_reference_instead_of_a_local_alias(self):
+        for image in ("govbiz/prefect:rehearsal", "prefecthq/prefect:3.8.6-python3.12"):
+            values = bundle()
+            for name, value in values.items():
+                value["allowLocalImages"] = True
+                value["image"] = "govbiz/" + name + ":rehearsal"
+            values["ops-artifacts"]["evidenceImage"] = values["evaluation-runner"][
+                "image"
+            ]
+            values["prefect"]["image"] = image
+            with (
+                self.subTest(image=image),
+                self.assertRaises(subprocess.CalledProcessError) as caught,
+            ):
+                check.render_bundle(values)
+            self.assertIn(
+                b"An immutable image@sha256 digest is required", caught.exception.stderr
             )
 
     def test_restored_sqlite_guard_preserves_history_and_allows_server_recovery(
@@ -333,7 +356,7 @@ class EvaluationChartTests(unittest.TestCase):
 
             self.assertNotEqual(run().returncode, 0)
             self.assertFalse(path.exists())
-            with sqlite3.connect(path) as db:
+            with closing(sqlite3.connect(path)) as db, db:
                 db.executescript(
                     "CREATE TABLE alembic_version(version_num TEXT); INSERT INTO alembic_version VALUES ('fixture'); CREATE TABLE deployment_schedule(active INTEGER); CREATE TABLE flow_run(state_type TEXT); INSERT INTO flow_run VALUES ('COMPLETED');"
                 )
@@ -345,18 +368,18 @@ class EvaluationChartTests(unittest.TestCase):
                 "INSERT INTO flow_run VALUES ('RUNNING')",
                 "INSERT INTO flow_run VALUES (NULL)",
             ):
-                with sqlite3.connect(path) as db:
+                with closing(sqlite3.connect(path)) as db, db:
                     db.execute(query)
                 # Draining is a cutover check, not a condition for server restart.
                 current = path.read_bytes()
                 self.assertEqual(run().returncode, 0)
                 self.assertEqual(path.read_bytes(), current)
-                with sqlite3.connect(path) as db:
+                with closing(sqlite3.connect(path)) as db, db:
                     db.execute("DELETE FROM deployment_schedule")
                     db.execute(
                         "DELETE FROM flow_run WHERE state_type IS NULL OR state_type != 'COMPLETED'"
                     )
-            with sqlite3.connect(path) as db:
+            with closing(sqlite3.connect(path)) as db, db:
                 db.execute("DELETE FROM alembic_version")
             self.assertNotEqual(run().returncode, 0)
 

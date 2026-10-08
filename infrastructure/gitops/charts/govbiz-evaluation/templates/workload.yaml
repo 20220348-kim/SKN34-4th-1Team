@@ -12,7 +12,7 @@
   {{- fail "evidenceImage is only used by ops-artifacts" -}}
 {{- end -}}
 {{- range $image := $images -}}
-  {{- if $.Values.allowLocalImages -}}
+  {{- if and $.Values.allowLocalImages (ne $component "prefect") -}}
     {{- if not (regexMatch `^govbiz/[a-z0-9-]+:[a-z0-9][a-z0-9.-]+$` $image) -}}
       {{- fail "Local CI images require an explicit govbiz/name:tag" -}}
     {{- end -}}

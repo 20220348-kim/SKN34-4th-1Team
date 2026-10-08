@@ -504,16 +504,21 @@ def verify(
             "Ops and the restored artifact service must share their fixture token"
         )
     observation_url = langfuse_url(compose, compose_env, project)
-    images = {
-        name: "govbiz/" + name + ":" + project for name in check_evaluation.COMPONENTS
+    local_images = {
+        name: "govbiz/" + name + ":" + project
+        for name in ("evaluation-runner", "ops-artifacts")
     }
+    # The restore helper pulls this original reference. Kubelet credential
+    # records are repository-scoped: retagging it as govbiz/prefect can make
+    # Never reject the cached image even when the alias exists in CRI.
+    images = {"prefect": prefect_image, **local_images}
     tagged = []
     try:
-        for component, image in images.items():
+        for component, image in local_images.items():
             execute(["docker", "image", "tag", containers[component]["Image"], image])
             tagged.append(image)
         execute(
-            [kind, "load", "docker-image", *images.values(), "--name", project],
+            [kind, "load", "docker-image", *local_images.values(), "--name", project],
             timeout=600,
         )
         with pvc.restored_pvcs(kube, project + "-control-plane", stores, expected) as (
