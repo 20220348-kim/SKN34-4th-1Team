@@ -168,7 +168,7 @@ export function ProgramScreen({ identity, onLogin, resumeAction, onResumed }: {
       {applicationUrl ? <Button variant="secondary" label={program.applicationRoute.type === 'GOOGLE_FORMS' ? '구글 설문 신청서 열기' : '신청 사이트 열기'}
         onPress={() => void openSource(applicationUrl)} /> : null}
       <Notice>공고 정보는 신청 자격의 확정 판정이 아닙니다. 제출 전 공식 공고의 요건과 마감일을 확인해 주세요.</Notice>
-      <Button label={program.sourceCode === 'CNTRADE_NOTICE' ? '공식 공지 목록 열기' : '공식 공고 원문 열기'} onPress={() => void openSource(program.sourceUrl)} />
+      <Button variant="secondary" label={program.sourceCode === 'CNTRADE_NOTICE' ? '공식 공지 목록 열기' : '공식 공고 원문 열기'} onPress={() => void openSource(program.sourceUrl)} />
     </>}
   </Page>
     {program && <View style={[local.footer, { paddingBottom: Math.max(insets.bottom, 12) }]}>
