@@ -130,6 +130,10 @@ export function useChatPageViewModel() {
     void chat.retryInterpretation()
   }
 
+  function handleClarificationInput() {
+    composerInputRef.current?.focus()
+  }
+
   function handleDraftChange(event: ChangeEvent<HTMLTextAreaElement>) {
     chat.updateDraft(event.target.value)
   }
@@ -170,6 +174,7 @@ export function useChatPageViewModel() {
     cancelInterpretation: chat.cancelInterpretation,
     handleConfirmInterpretation,
     handleRetryInterpretation,
+    handleClarificationInput,
     searchOptions: chat.searchOptions,
     canSearch: readiness.canSearch,
     canRetrySearch: readiness.canSearch && chat.canRetrySearch,

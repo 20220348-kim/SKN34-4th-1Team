@@ -113,7 +113,7 @@ test.each(['ios', 'android'] as const)('%s disables keyboard avoidance in the hi
   const hiddenStyle = StyleSheet.flatten(screen.getByTestId('ai-search-keyboard-container', { includeHiddenElements: true }).props.style)
   if (os === 'android') expect(hiddenStyle.height).toBeUndefined()
   else expect(hiddenStyle.paddingBottom).toBe(0)
-  fireEvent.press(screen.getByRole('tab', { name: 'AI 검색' }))
+  fireEvent.press(screen.getByRole('tab', { name: 'AI 대화 검색' }))
   await layout('ai-search-keyboard-container', 600)
   await waitFor(() => expectVisibleSpace(os, 328))
   expect(screen.getByDisplayValue('모드 전환 뒤 이어 쓸 질문')).toBeTruthy()

@@ -3,10 +3,11 @@ import { Fragment } from 'react'
 import type { ChatConversationProposal } from '../viewmodel/chatConversationProposal'
 import { chatPageStyles } from './ChatPage.styles'
 
-export function ConversationProposal({ proposal, onConfirm, onCancel }: {
+export function ConversationProposal({ proposal, onConfirm, onCancel, onClarify }: {
   proposal: ChatConversationProposal
   onConfirm: () => void
   onCancel: () => void
+  onClarify: () => void
 }) {
   const ready = proposal.kind === 'ready'
   const canConfirm = ready && proposal.canConfirm
@@ -56,7 +57,9 @@ export function ConversationProposal({ proposal, onConfirm, onCancel }: {
           <p className={chatPageStyles.proposalHint}>아직 검색하지 않았어요. 바꾸고 싶은 조건은 새 메시지로 알려주세요.</p>
         </details> : null}
         <div className={chatPageStyles.conditionsActions}>
-          <button type="button" className={chatPageStyles.proposalCancelButton} onClick={onCancel}>제안 취소</button>
+          <button type="button" className={chatPageStyles.proposalCancelButton} onClick={ready ? onCancel : onClarify}>
+            {ready ? '제안 취소' : '추가 내용 입력하기'}
+          </button>
           {ready ? <button type="button" className={chatPageStyles.conditionsButton} disabled={!canConfirm}
             onClick={onConfirm}>이 조건으로 검색 <span aria-hidden="true">→</span></button> : null}
         </div>

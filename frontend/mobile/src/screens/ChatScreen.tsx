@@ -212,9 +212,9 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active 
       keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
       {introductory ? <View style={local.intro}>
         <View style={local.brandMark}><Text style={local.brandLetter}>G</Text></View>
-        <Text accessibilityRole="header" style={local.introTitle}>우리 회사의 다음 기회,</Text>
-        <Text style={[local.introTitle, { color: colors.primary }]}>말로 찾아보세요</Text>
-        <Text style={local.introDescription}>지역 · 업종 · 필요한 지원을 알려 주세요.{'\n'}AI가 검색 조건을 정리해 드려요.</Text>
+        <Text accessibilityRole="header" style={local.introTitle}>우리 회사에 맞는 지원사업,</Text>
+        <Text style={[local.introTitle, { color: colors.primary }]}>AI와 함께 <Text style={{ textDecorationLine: 'underline' }}>무료로</Text> 찾아보세요.</Text>
+        <Text style={local.introDescription}>회사의 지역과 업종, 필요한 지원을 알려주세요.{'\n'}관련 공고와 확인할 신청 조건을 함께 안내합니다.</Text>
       </View> : null}
       {history.map((item, index) => item.role === 'user'
         ? <View key={index} style={local.userBubble}><Text selectable style={styles.body}>{item.text}</Text></View>
@@ -222,7 +222,14 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active 
           testID={index === history.length - 1 ? 'ai-search-latest-answer' : undefined}
           onLayout={index === history.length - 1 ? event => recordTimelineTarget('answer', timelineVersions.answer, event) : undefined}>
           <View style={local.assistantName}><Text style={local.miniMark}>G</Text><Text style={local.name}>GovBiz AI</Text></View>
-          <Text selectable style={local.answer}>{item.text}</Text></View>)}
+          {index === history.length - 1 && proposal?.status === 'CLARIFICATION_REQUIRED' && !busy
+            ? <View testID="ai-search-clarification" style={local.clarification}>
+              <Text style={local.clarificationEyebrow}>조금만 더 알려주세요</Text>
+              <Text selectable style={local.clarificationQuestion}>{proposal.clarificationQuestion}</Text>
+              <Text style={styles.muted}>답변을 입력해 주세요. 아직 검색하지 않았어요.</Text>
+              <Button label="추가 내용 입력하기" variant="secondary" onPress={() => composerInput.current?.focus()} />
+            </View> : <Text selectable style={local.answer}>{item.text}</Text>}
+        </View>)}
       {busy === 'interpret' && <View key={`message-${timelineVersions.message}`} testID="ai-search-pending-message" style={local.userBubble}
         onLayout={event => recordTimelineTarget('message', timelineVersions.message, event)}><Text style={styles.body}>{message}</Text></View>}
       {busy && <View key={`waiting-${timelineVersions.waiting}`} testID="ai-search-waiting" accessibilityLiveRegion="polite" style={local.waiting}
@@ -265,16 +272,20 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active 
           </View>
         </View>}
       </View>}
-      {(history.length > 0 || result) && <Button label="새 대화" variant="ghost" onPress={() => {
-        cancel(); pendingRestore.current = null; retryRestore.current = null; setRestoreFailure(null); setSessionNotice(null)
-        setHistory([]); setContext(emptyContext); setProposal(null); setClarification(null); setResult(null); setError(null); setMessage('')
-      }} />}
+      {(history.length > 0 || result) && proposal?.status !== 'CLARIFICATION_REQUIRED' && <View style={local.contentGroup}>
+        {result?.totalCount === 0 && <Notice>
+          지원받고 싶은 내용과 회사의 지역·업종을 추가로 알려 주세요. 기존 대화의 조건을 이어서 정리해요.
+        </Notice>}
+        <Button label="추가 내용 입력하기" variant="secondary" disabled={Boolean(busy)} onPress={() => composerInput.current?.focus()} />
+      </View>}
       {introductory && status === 'signedOut' && <View style={local.guestHint}><Text style={local.hintText}>
         로그인 없이 검색과 협업 모집글을 둘러볼 수 있어요.{'\n'}공고 저장과 맞춤 리포트는 로그인 후 이용해요.</Text></View>}
     </ScrollView>
     <View testID="ai-search-composer" style={local.composerDock}>
       <View style={local.composer}>
-        <TextInput ref={composerInput} accessibilityLabel="회사 상황이나 궁금한 점" placeholder="어떤 지원사업을 찾고 있나요?"
+        <TextInput ref={composerInput} accessibilityLabel="회사 상황이나 궁금한 점" placeholder={introductory
+          ? '예: 서울에서 AI 서비스를 만드는 창업기업입니다. 사업화 지원을 받을 수 있을까요?'
+          : '지원사업·조건을 입력해 주세요.'}
           placeholderTextColor={colors.placeholder} value={message} onChangeText={setMessage} multiline maxLength={500}
           editable={!busy} style={local.input} />
         <Pressable accessibilityRole="button" accessibilityLabel={busy ? '요청 취소' : 'AI에게 보내기'}
@@ -301,6 +312,9 @@ const local = StyleSheet.create({
   userBubble: { alignSelf: 'flex-end', maxWidth: '86%', backgroundColor: colors.divider, borderRadius: 22, paddingHorizontal: 16, paddingVertical: 12 },
   assistant: { gap: 10 }, assistantName: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   miniMark: { overflow: 'hidden', backgroundColor: colors.primary, color: colors.surface, fontSize: 12, fontWeight: '700', paddingHorizontal: 6, paddingVertical: 3, borderRadius: 6 },
+  clarification: { padding: 16, borderRadius: 20, borderWidth: 1, borderColor: '#CFE8DA', backgroundColor: colors.surface, gap: 12 },
+  clarificationEyebrow: { color: colors.primaryText, fontSize: 14, lineHeight: 21, fontWeight: '600' },
+  clarificationQuestion: { color: colors.text, fontSize: 17, lineHeight: 26, fontWeight: '600' },
   name: { color: colors.text, fontSize: 14, fontWeight: '600' }, answer: { color: colors.text, fontSize: 15, lineHeight: 26 },
   waiting: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10 },
   locked: { backgroundColor: colors.soft, borderWidth: 1, borderColor: '#BFE3CF', borderRadius: 18, padding: 18, gap: 12 },
