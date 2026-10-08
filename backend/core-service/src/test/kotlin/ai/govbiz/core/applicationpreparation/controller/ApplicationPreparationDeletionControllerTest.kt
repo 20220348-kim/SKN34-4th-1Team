@@ -27,7 +27,7 @@ class ApplicationPreparationDeletionControllerTest {
         doReturn(account).`when`(sessions).requireAccount("session-token")
         doThrow(ApplicationPreparationRunConflictException()).`when`(service).deleteOwned(account, 7)
         val mvc = MockMvcBuilders.standaloneSetup(ApplicationPreparationController(service, mock(ApplicationFormDiscoveryService::class.java), false))
-            .setCustomArgumentResolvers(AuthenticatedAccountArgumentResolver(sessions))
+            .setCustomArgumentResolvers(AuthenticatedAccountArgumentResolver(sessions, AccountTestHelper.cookieHelper()))
             .setControllerAdvice(ApiExceptionHandler())
             .build()
 

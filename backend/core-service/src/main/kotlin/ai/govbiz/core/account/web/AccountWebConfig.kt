@@ -1,5 +1,6 @@
 package ai.govbiz.core.account.web
 
+import ai.govbiz.core.account.helper.SessionCookieHelper
 import ai.govbiz.core.account.service.AccountSessionService
 import org.springframework.beans.factory.ObjectProvider
 import org.springframework.beans.factory.annotation.Value
@@ -18,11 +19,17 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer
 @Configuration(proxyBeanMethods = false)
 class AccountWebConfig(
     private val sessionServiceProvider: ObjectProvider<AccountSessionService>,
+    private val sessionCookieHelperProvider: ObjectProvider<SessionCookieHelper>,
     @param:Value("\${app.cors.allowed-origin}") private val allowedOrigin: String,
 ) : WebMvcConfigurer {
 
     override fun addArgumentResolvers(resolvers: MutableList<HandlerMethodArgumentResolver>) {
-        resolvers.add(AuthenticatedAccountArgumentResolver { sessionServiceProvider.getObject() })
+        resolvers.add(
+            AuthenticatedAccountArgumentResolver(
+                { sessionServiceProvider.getObject() },
+                { sessionCookieHelperProvider.getObject() },
+            ),
+        )
     }
 
     override fun addInterceptors(registry: InterceptorRegistry) {

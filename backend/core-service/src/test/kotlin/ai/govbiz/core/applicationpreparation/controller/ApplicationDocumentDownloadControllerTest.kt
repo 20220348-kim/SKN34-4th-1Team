@@ -1,5 +1,6 @@
 package ai.govbiz.core.applicationpreparation.controller
 
+import ai.govbiz.core.account.helper.AccountTestHelper
 import ai.govbiz.core._common.exception.ApiExceptionHandler
 import ai.govbiz.core.account.domain.Account
 import ai.govbiz.core.account.domain.AccountRole
@@ -50,7 +51,7 @@ class ApplicationDocumentDownloadControllerTest {
         doReturn(account).`when`(sessions).requireAccount("session-token")
         doThrow(AuthenticationRequiredException()).`when`(sessions).requireAccount(null)
         mvc = MockMvcBuilders.standaloneSetup(ApplicationDocumentController(files, links))
-            .setCustomArgumentResolvers(AuthenticatedAccountArgumentResolver(sessions))
+            .setCustomArgumentResolvers(AuthenticatedAccountArgumentResolver(sessions, AccountTestHelper.cookieHelper()))
             .setControllerAdvice(ApiExceptionHandler(), ApplicationDocumentExceptionHandler()).build()
     }
 

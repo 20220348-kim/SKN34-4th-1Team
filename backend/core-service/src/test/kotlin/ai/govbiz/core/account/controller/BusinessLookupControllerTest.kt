@@ -46,7 +46,7 @@ class BusinessLookupControllerTest {
     fun setUp() {
         mockMvc = MockMvcBuilders
             .standaloneSetup(BusinessLookupController(lookupService))
-            .setCustomArgumentResolvers(AuthenticatedAccountArgumentResolver(sessionService))
+            .setCustomArgumentResolvers(AuthenticatedAccountArgumentResolver(sessionService, AccountTestHelper.cookieHelper()))
             .setControllerAdvice(ApiExceptionHandler())
             .build()
     }

@@ -38,7 +38,7 @@ class ApplicationGoogleFormControllerTest {
     @BeforeEach
     fun setUp() {
         mvc = MockMvcBuilders.standaloneSetup(ApplicationGoogleFormController(service))
-            .setCustomArgumentResolvers(AuthenticatedAccountArgumentResolver(sessions))
+            .setCustomArgumentResolvers(AuthenticatedAccountArgumentResolver(sessions, AccountTestHelper.cookieHelper()))
             .setControllerAdvice(ApiExceptionHandler())
             .build()
     }

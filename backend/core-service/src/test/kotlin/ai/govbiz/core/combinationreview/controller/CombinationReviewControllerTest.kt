@@ -37,7 +37,7 @@ class CombinationReviewControllerTest {
     fun setUp() {
         doReturn(account).`when`(sessions).requireAccount("session-token")
         mvc = MockMvcBuilders.standaloneSetup(CombinationReviewController(service))
-            .setCustomArgumentResolvers(AuthenticatedAccountArgumentResolver(sessions))
+            .setCustomArgumentResolvers(AuthenticatedAccountArgumentResolver(sessions, AccountTestHelper.cookieHelper()))
             .addInterceptors(SessionOriginInterceptor(listOf("http://localhost:5173")))
             .setControllerAdvice(ApiExceptionHandler()).build()
     }

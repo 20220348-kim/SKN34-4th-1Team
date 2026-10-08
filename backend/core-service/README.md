@@ -481,6 +481,9 @@ Controller의 `SupportProgramRequestAdmissionService.execute`가 공개 요청 �
 웹 `/auth/login`, `/auth/signup`의 응답에는 토큰이 들어가지 않고 HttpOnly 쿠키 계약을 유지합니다.
 쿠키와 Bearer가 함께 오면 계정 resolver는 쿠키를 우선하며 쿠키 쓰기 요청의 Origin 검사를 생략하지 않습니다.
 앱은 쿠키를 보내지 않습니다(`credentials: omit`). 잘못되거나 중복된 Authorization은 비로그인 상태로 숨기지 않고 401입니다.
+무효·만료·로그아웃된 세션 쿠키(정지 계정 포함)는 응답에 같은 속성의 `Max-Age=0` 쿠키를 붙여 지웁니다. 이때 비로그인을 허용하는
+`Account?` API(예: 공개 모집글 목록)는 손님으로 계속 처리하고, 로그인이 필요한 API와 `/auth/me`는 기존처럼 401(정지 403)입니다.
+세션 저장소 조회 실패는 손님으로 바꾸지 않고 오류로 돌려줍니다.
 
 앱 소셜 로그인은 다음 순서입니다.
 

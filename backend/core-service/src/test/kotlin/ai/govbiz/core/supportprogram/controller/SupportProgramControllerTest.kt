@@ -1,5 +1,6 @@
 package ai.govbiz.core.supportprogram.controller
 
+import ai.govbiz.core.account.helper.AccountTestHelper
 import ai.govbiz.core._common.exception.AiServiceCallException
 import ai.govbiz.core.supportprogram.client.elasticsearch.exception.ElasticsearchClientException
 import ai.govbiz.core._common.exception.ApiExceptionHandler
@@ -104,7 +105,7 @@ class SupportProgramControllerTest {
                     requestAdmissionService = SupportProgramRequestAdmissionService(SupportProgramRequestAdmissionProperties()),
                 ),
             )
-            .setCustomArgumentResolvers(AuthenticatedAccountArgumentResolver { Mockito.mock(AccountSessionService::class.java) })
+            .setCustomArgumentResolvers(AuthenticatedAccountArgumentResolver({ Mockito.mock(AccountSessionService::class.java) }, { AccountTestHelper.cookieHelper() }))
             .setControllerAdvice(ApiExceptionHandler())
             .build()
     }

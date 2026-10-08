@@ -1,5 +1,6 @@
 package ai.govbiz.core.supportprogram.controller
 
+import ai.govbiz.core.account.helper.AccountTestHelper
 import ai.govbiz.core._common.config.JsonDeserializationConfig
 import ai.govbiz.core._common.test.RedisTestConnection
 import ai.govbiz.core._common.exception.ApiExceptionHandler
@@ -97,7 +98,7 @@ class SupportProgramSearchPreviewControllerTest {
             Mockito.mock(SupportProgramDetailService::class.java), Mockito.mock(SupportProgramEvidenceService::class.java),
             SupportProgramRequestAdmissionService(SupportProgramRequestAdmissionProperties(perClient, 100, 4)) { 0L },
         ),
-    ).setCustomArgumentResolvers(AuthenticatedAccountArgumentResolver(sessions))
+    ).setCustomArgumentResolvers(AuthenticatedAccountArgumentResolver(sessions, AccountTestHelper.cookieHelper()))
         .addInterceptors(SessionOriginInterceptor(listOf(ORIGIN)))
         .setControllerAdvice(ApiExceptionHandler()).setValidator(validator)
         .setMessageConverters(JacksonJsonHttpMessageConverter(mapper)).build()
@@ -232,13 +233,19 @@ class SupportProgramSearchPreviewControllerTest {
     }
 
     @Test
-    fun invalidSessionsCannotTurnEitherSearchMethodIntoAnAnonymousPreview() {
+    fun invalidSessionCookiesSearchAsAGuestAndExpireTheCookieWhileRestoreStays401() {
         val mvc = mvc()
-        for (request in listOf(get(PATH).queryParam("query", "무역"), postSearch(), restore(UUID.randomUUID().toString()))) {
-            mvc.perform(request.member("expired-session")).andExpect(status().isUnauthorized())
+        Mockito.`when`(search.search("무역", true, null)).thenReturn(SupportProgramSearchResult("무역", programs))
+        stubPost()
+        for (request in listOf(get(PATH).queryParam("query", "무역"), postSearch())) {
+            mvc.perform(request.member("expired-session")).andExpect(status().isOk())
                 .andExpect(header().string("Cache-Control", "no-store"))
+                .andExpect(jsonPath("$.programs.length()").value(2)).andExpect(jsonPath("$.resultToken").isString())
+                .andExpect(cookie().maxAge("govbiz_session", 0))
         }
-        Mockito.verifyNoInteractions(search)
+        mvc.perform(restore(UUID.randomUUID().toString()).member("expired-session")).andExpect(status().isUnauthorized())
+            .andExpect(header().string("Cache-Control", "no-store"))
+            .andExpect(cookie().maxAge("govbiz_session", 0))
     }
 
     @Test

@@ -1,5 +1,6 @@
 package ai.govbiz.core.supportprogram.controller
 
+import ai.govbiz.core.account.helper.AccountTestHelper
 import ai.govbiz.core._common.exception.AiServiceCallException
 import ai.govbiz.core._common.exception.ApiExceptionHandler
 import ai.govbiz.core.account.service.AccountSessionService
@@ -51,7 +52,7 @@ class SupportProgramRequestAdmissionControllerTest {
         )
         return MockMvcBuilders.standaloneSetup(
             SupportProgramController(SupportProgramSearchPreviewService(search, Mockito.mock(SupportProgramSearchResultRepository::class.java)), readiness, detail, evidence, admission),
-        ).setCustomArgumentResolvers(AuthenticatedAccountArgumentResolver { Mockito.mock(AccountSessionService::class.java) })
+        ).setCustomArgumentResolvers(AuthenticatedAccountArgumentResolver({ Mockito.mock(AccountSessionService::class.java) }, { AccountTestHelper.cookieHelper() }))
             .setControllerAdvice(ApiExceptionHandler()).build()
     }
 
