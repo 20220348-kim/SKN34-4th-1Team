@@ -13,6 +13,7 @@ import os
 import re
 from pathlib import Path
 
+import evaluation_langfuse
 import evaluation_pvc_restore as pvc
 import fork_cluster
 import ops_runtime
@@ -251,6 +252,9 @@ def prepare(state, archive, key_file, restore_report, *, create=False, progress)
         return found
 
     found = existing_secrets()  # Check both names before any write.
+    authentication = evaluation_langfuse.verify(
+        source["compose_project"], current["credentials"]
+    )
     if create:
         for resource in resources:
             recheck()
@@ -282,7 +286,8 @@ def prepare(state, archive, key_file, restore_report, *, create=False, progress)
         "creation": progress,
         "archiveAuthenticated": True,
         "sourceTokensMatched": True,
-        "langfuseAuthenticationVerified": False,
+        "langfuseAuthenticationVerified": True,
+        "langfuseAuthentication": authentication,
         "archiveFreshnessVerified": False,
         "sourceQuiescenceVerified": False,
         "runtimeStarted": False,
