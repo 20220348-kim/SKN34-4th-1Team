@@ -169,7 +169,8 @@ const exclusions = [
 
 test('formats evidence quotes around related lines and opens the whole source block or the stored text', () => {
   const run = reviewRunFixture('SUCCEEDED')
-  run.evidence!.blocks[0] = { ...run.evidence!.blocks[0], locator: 'PDF page 3 part 1', text: `${exclusions}\n◦ 지원기간은 거래계약일로부터 1년` }
+  // 예전 800자 창처럼 인용이 원문 조각의 마지막 줄 중간(" 후 개별 통보" 앞)에서 끊긴 경우예요.
+  run.evidence!.blocks[0] = { ...run.evidence!.blocks[0], locator: 'PDF page 3 part 1', text: `${exclusions} 후 개별 통보\n◦ 지원기간은 거래계약일로부터 1년` }
   run.analysis!.pairs[0].stages[0].citations = [{ evidenceId: 'E1', quote: exclusions }]
   run.analysis!.pairs[0].stages[4].citations = [{ evidenceId: 'E1', quote: exclusions }]
   show(run)
@@ -188,15 +189,16 @@ test('formats evidence quotes around related lines and opens the whole source bl
   expect(stage.getByText('⋯ 4줄 접힘')).toBeTruthy()
   expect(stage.queryByText(/고득점 순으로 선정/)).toBeNull()
   expect(stage.getByText('뒤로 이어짐 …')).toBeTruthy()
-  // 인용이 원문 조각 앞부분만 가져왔으므로 [이 부분 전체 보기]는 조각 전체를 정리해 보여 줘요.
+  // 인용이 원문 조각을 줄 중간에서 잘랐으므로 [이 부분 전체 보기]는 조각 전체를 정리해 보여 줘요.
   const expand = stage.getByRole('button', { name: '이 부분 전체 보기 ▾' })
   expect(expand.props.accessibilityState.expanded).toBe(false)
   fireEvent.press(expand)
   expect(stage.getByRole('button', { name: '간단히 보기 ▴' }).props.accessibilityState.expanded).toBe(true)
   expect(stage.getByText('인용 앞뒤를 포함한 3쪽 전체예요.')).toBeTruthy()
-  expect(stage.getByText(/고득점 순으로 선정/)).toBeTruthy()
+  expect(stage.getByText('5대 품목 비중별 고득점 순으로 선정 후 개별 통보')).toBeTruthy()
   expect(stage.getByText(/지원기간은 거래계약일로부터 1년/)).toBeTruthy()
   expect(stage.queryByText('뒤로 이어짐 …')).toBeNull()
+  expect(stage.queryByTestId('evidence-quoted-lines')).toBeNull()
   // [원문 그대로]는 저장된 인용을 글자 그대로 보여 줘요.
   const raw = stage.getByRole('button', { name: '원문 그대로' })
   expect(raw.props.accessibilityState.selected).toBe(false)
@@ -207,6 +209,41 @@ test('formats evidence quotes around related lines and opens the whole source bl
   fireEvent.press(stage.getByRole('button', { name: '원문 그대로' }))
   expect(stage.getByRole('button', { name: '이 부분 전체 보기 ▾' })).toBeTruthy()
   expect(stage.getByText('⋯ 4줄 접힘')).toBeTruthy()
+})
+
+test('does not mark an item quote of whole lines as cut and opens the surrounding source with the quoted lines marked', () => {
+  const run = reviewRunFixture('SUCCEEDED')
+  // 원문 조각 안의 글머리 항목 두 줄을 줄 단위로 그대로 인용한 경우예요. 조각에는 앞뒤 줄이 더 있어요.
+  const quote = ['◦ 타 정부지원 사업 등을 통해 지원받은 내용과 유사·중복되는 경우', '◦ 국세 체납 중인 기업'].join('\n')
+  run.evidence!.blocks[0] = { ...run.evidence!.blocks[0], locator: 'PDF page 3 part 1', text: ['□ 신청 자격', '◦ 공고일 기준 창업 7년 이내 기업', quote, '□ 신청방법', '◦ 이메일 접수'].join('\n') }
+  run.analysis!.pairs[0].stages[0].citations = [{ evidenceId: 'E1', quote }]
+  show(run)
+  fireEvent.press(screen.getByRole('button', { name: /^1단계 신청/ }))
+  fireEvent.press(stageRow('APPLICATION').getByRole('button', { name: '근거 원문 1개 보기 ▾' }))
+  const stage = stageRow('APPLICATION')
+  // 잘리지 않았으니 생략 표시가 없고 접힌 줄도 없지만, [앞뒤 원문 보기]로 조각의 앞뒤 줄을 볼 수 있어요.
+  expect(stage.getByText('국세 체납 중인 기업')).toBeTruthy()
+  expect(stage.queryByText('… 앞 내용 생략')).toBeNull()
+  expect(stage.queryByText('뒤로 이어짐 …')).toBeNull()
+  expect(stage.queryByText(/줄 접힘/)).toBeNull()
+  expect(stage.queryByRole('button', { name: /이 부분 전체 보기|줄 보기/ })).toBeNull()
+  expect(stage.queryByText('신청 자격')).toBeNull()
+  const expand = stage.getByRole('button', { name: '앞뒤 원문 보기 ▾' })
+  expect(expand.props.accessibilityState.expanded).toBe(false)
+  fireEvent.press(expand)
+  expect(stage.getByRole('button', { name: '간단히 보기 ▴' }).props.accessibilityState.expanded).toBe(true)
+  expect(stage.getByText('인용 앞뒤를 포함한 3쪽 전체예요.')).toBeTruthy()
+  for (const line of ['신청 자격', '공고일 기준 창업 7년 이내 기업', '신청방법', '이메일 접수']) expect(stage.getByText(line)).toBeTruthy()
+  // 조각 전체 가운데 인용한 줄만 한 묶음으로 표시해요.
+  const quoted = within(stage.getByTestId('evidence-quoted-lines'))
+  expect(stage.getByTestId('evidence-quoted-lines')).toHaveStyle({ backgroundColor: colors.soft, borderLeftColor: colors.primary })
+  expect(quoted.getByText('국세 체납 중인 기업')).toBeTruthy()
+  expect(quoted.getAllByTestId('evidence-keyword').map(node => node.props.children)).toEqual(['타 정부지원 사업', '중복'])
+  expect(quoted.queryByText(/신청 자격|창업 7년|신청방법|이메일 접수/)).toBeNull()
+  fireEvent.press(stage.getByRole('button', { name: '간단히 보기 ▴' }))
+  expect(stage.getByRole('button', { name: '앞뒤 원문 보기 ▾' }).props.accessibilityState.expanded).toBe(false)
+  expect(stage.queryByText('신청 자격')).toBeNull()
+  expect(stage.queryByTestId('evidence-quoted-lines')).toBeNull()
 })
 
 test('tags application form quotes and quotes cited by many stages, and expands an uncut quote to all its lines', () => {

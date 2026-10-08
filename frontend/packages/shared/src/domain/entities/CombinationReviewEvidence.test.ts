@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
-  evidenceFormatOf, evidenceLocatorLabel, evidencePreview, evidenceQuoteCut, formatEvidenceText, isApplicationFormText, splitEvidenceKeywords,
+  evidenceFormatOf, evidenceHasContext, evidenceLocatorLabel, evidencePreview, evidenceQuoteCut, evidenceQuoteRange, formatEvidenceText, isApplicationFormText,
+  splitEvidenceKeywords,
 } from './CombinationReviewEvidence'
 
 // 아래 원문은 로컬 검토 실행(2026-10-07)에 저장된 실제 인용의 일부입니다.
@@ -189,11 +190,37 @@ describe('evidence quote formatting shared by web and mobile', () => {
     expect(isApplicationFormText('□ 신청방법 : 이메일 접수\n※ 제출서류 미비 시 지원 제외')).toBe(false)
   })
 
-  it('tells whether a quote cut the stored source block at either end', () => {
-    const block = '앞 문단\n7. 다른 창업지원사업에 선정되어\n현재 사업화자금을 지원받고 있는 기업'
-    expect(evidenceQuoteCut(block, '7. 다른 창업지원사업에 선정되어')).toEqual({ start: true, end: true })
+  it('treats only a quote that starts or ends mid-line as cut and still tells whether the block has surrounding text', () => {
+    const block = '□ 지원 제외 대상\n◦ 신청 사업의 내용이 타 정부지원 사업 등을 통해 지원받은 내용과 유사·중복되는 경우\n◦ 국세 체납 기업\n□ 신청방법'
+    // 예전 800자 창은 줄 중간의 공백에서 끊겨 앞뒤가 잘립니다.
+    expect(evidenceQuoteCut(block, '타 정부지원 사업 등을 통해 지원받은 내용과 유사·중복되는 경우\n◦ 국세')).toEqual({ start: true, end: true })
+    expect(evidenceQuoteCut(block, '□ 지원 제외 대상\n◦ 신청 사업의 내용이')).toEqual({ start: false, end: true })
+    // 줄 단위 인용(글머리 항목)은 조각 안에 앞뒤 줄이 더 있어도 잘리지 않았고, 앞뒤 원문은 있습니다.
+    const item = '◦ 신청 사업의 내용이 타 정부지원 사업 등을 통해 지원받은 내용과 유사·중복되는 경우\n◦ 국세 체납 기업'
+    expect(evidenceQuoteCut(block, item)).toEqual({ start: false, end: false })
+    expect(evidenceHasContext(block, item)).toBe(true)
+    // 줄 앞뒤의 공백 · 탭과 \r\n 줄바꿈은 줄 경계로 봅니다. 인용이 줄바꿈을 품고 시작하거나 끝나도 같습니다.
+    expect(evidenceQuoteCut('□ 제목\r\n  ◦ 항목 하나\t\r\n□ 다음', '◦ 항목 하나')).toEqual({ start: false, end: false })
+    expect(evidenceQuoteCut('□ 제목\n◦ 항목 하나\n□ 다음', '\n◦ 항목 하나\n')).toEqual({ start: false, end: false })
+    // 인용이 조각 전체이거나 조각에서 찾지 못하면 잘리지 않았고 앞뒤 원문도 없습니다(앞뒤 공백만 있는 것도 없는 것으로 봅니다).
     expect(evidenceQuoteCut(block, block)).toEqual({ start: false, end: false })
+    expect(evidenceHasContext(block, block)).toBe(false)
+    expect(evidenceHasContext(`\n${block}\n`, block)).toBe(false)
     expect(evidenceQuoteCut(block, '없는 문장')).toEqual({ start: false, end: false })
+    expect(evidenceHasContext(block, '없는 문장')).toBe(false)
+  })
+
+  it('finds the lines of an uncut quote inside the whole formatted block without marking the same line elsewhere', () => {
+    const block = ['□ 지원 제외 대상', '◦ 해당 없음', '◦ 타 기관 지원을 받는 경우 중복지원 불가', '◦ 해당 없음', '□ 신청방법', '◦ 이메일 접수'].join('\n')
+    const blockLines = formatEvidenceText(block, 'HWPX')
+    expect(evidenceQuoteRange(blockLines, formatEvidenceText('◦ 타 기관 지원을 받는 경우 중복지원 불가\n◦ 해당 없음', 'HWPX'))).toEqual({ start: 2, end: 4 })
+    expect(blockLines.slice(2, 4).map((line) => line.text)).toEqual(['타 기관 지원을 받는 경우 중복지원 불가', '해당 없음'])
+    // 따로 읽으면 제목인 번호 줄이 조각 안에서 같은 번호 목록의 글머리로 바뀌어도 같은 줄로 봅니다.
+    const numbered = formatEvidenceText('1. 목적\n2. 지원 제외 대상\n3. 신청방법', 'HWP')
+    expect(numbered[1]).toMatchObject({ kind: 'item', marker: '2.' })
+    expect(formatEvidenceText('2. 지원 제외 대상', 'HWP')[0]).toMatchObject({ kind: 'heading' })
+    expect(evidenceQuoteRange(numbered, formatEvidenceText('2. 지원 제외 대상', 'HWP'))).toEqual({ start: 1, end: 2 })
+    expect(evidenceQuoteRange(blockLines, formatEvidenceText('없는 문장', 'HWPX'))).toBeNull()
   })
 
   it('names every Core locator in user terms and keeps unknown ones', () => {
