@@ -32,7 +32,7 @@ export default function MenuRoute() {
   function open(destination: MenuDestination) {
     if (status === 'signedOut' && !['filter', 'ai', 'recruitments', 'pricing'].includes(destination)) {
       requestLogin({ direct: destination === 'account', message: '이 기능은 로그인 후 이용할 수 있어요.',
-        onAuthenticated: () => navigate(destination, true) })
+        onAuthenticated: () => destination === 'account' ? router.navigate('/(tabs)') : navigate(destination, true) })
       return
     }
     navigate(destination, status === 'signedIn')

@@ -1,7 +1,9 @@
-import { useEffect } from 'react'
+import { useEffect, type Ref } from 'react'
+import type { View } from 'react-native'
 import { Tabs, usePathname, useRouter } from 'expo-router'
 import { StackActions, type NavigationState } from 'expo-router/react-navigation'
 import { AppIcon } from '../../src/components/AppIcon'
+import { MenuPressable } from '../../src/components/MenuPressable'
 import { ReportHeaderAction } from './report'
 import { colors } from '../../src/ui'
 import { useAuth } from '../../src/auth/session'
@@ -18,6 +20,9 @@ export default function TabLayout() {
   return <Tabs initialRouteName="index" screenOptions={{ headerTintColor: colors.text, headerTitleAlign: 'left',
     headerTitleStyle: { fontSize: 18, fontWeight: '700' }, headerShadowVisible: false, headerStyle: { backgroundColor: colors.surface },
     tabBarActiveTintColor: colors.primary, tabBarInactiveTintColor: colors.muted, tabBarHideOnKeyboard: true,
+    tabBarButton: ({ style, ref, ...props }) => <MenuPressable {...props} ref={ref as Ref<View>}
+      android_ripple={{ color: `${colors.text}0A`, borderless: false, radius: 18 }}
+      style={({ pressed }) => [style, pressed && { opacity: 0.9 }]} />,
     tabBarLabelStyle: { fontSize: 11, fontWeight: '500' }, tabBarStyle: { backgroundColor: colors.surface, borderTopColor: colors.border, elevation: 0 } }}>
     <Tabs.Screen name="index" options={{ title: '검색', tabBarAccessibilityLabel: '검색', headerTitle: '지원사업 검색', tabBarIcon: ({ color, focused }) => <AppIcon name="search" color={color} selected={focused} /> }} />
     <Tabs.Screen name="collab" options={{ href: signedIn ? null : undefined, title: '협업', tabBarAccessibilityLabel: '협업', headerTitle: '협업 모집글',

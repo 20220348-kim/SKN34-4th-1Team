@@ -7,7 +7,7 @@ export function SegmentedControl<T extends string>({ label, value, options, onCh
   return <View accessibilityRole="tablist" accessibilityLabel={label} style={local.track}>
     {options.map((option) => <Pressable key={option.value} accessibilityRole="tab" accessibilityLabel={option.label}
       accessibilityState={{ selected: option.value === value }} onPress={() => onChange(option.value)}
-      style={({ pressed }) => [local.segment, value === option.value && local.selected, pressed && { opacity: 0.7 }]}>
+      style={({ pressed }) => [local.segment, value === option.value && local.selected, pressed && { opacity: 0.9 }]}>
       <Text style={[local.label, value === option.value && local.selectedLabel]}>{option.label}</Text>
     </Pressable>)}
   </View>
