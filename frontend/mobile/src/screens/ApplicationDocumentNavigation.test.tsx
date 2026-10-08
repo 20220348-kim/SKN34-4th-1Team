@@ -11,11 +11,18 @@ import { readPendingPreparation, savePendingPreparation, clearPendingPreparation
 import { ApplicationDocumentScreen } from './ApplicationDocumentScreen'
 import { ApplicationOnlineInputScreen } from './ApplicationOnlineInputScreen'
 import { ApplicationPreparationEditorScreen } from './ApplicationPreparationEditorScreen'
+import { programClient } from '../api/client'
+import { programDetail } from '../test/preparationFixtures'
 import { documentFile, documentForm, documentJob, documentPreparation } from '../test/applicationDocumentFixtures'
+import PreparationEditorRoute from '../../app/(tabs)/all/preparation/[id]'
+import PreparationReviewRoute from '../../app/(tabs)/all/preparation/[id]/review'
+import PreparationDocumentRoute from '../../app/(tabs)/all/preparation/[id]/documents'
 
-jest.mock('../api/applicationPreparation', () => ({ applicationPreparationUseCase: jest.fn(), prepareApplicationDocumentDownload: jest.fn() }))
+jest.mock('../api/applicationPreparation', () => ({ ...jest.requireActual('../api/applicationPreparation'), applicationPreparationUseCase: jest.fn(), prepareApplicationDocumentDownload: jest.fn() }))
 jest.mock('../api/applicationDocumentFiles', () => ({ shareApplicationFile: jest.fn() }))
 jest.mock('../auth/session', () => ({ useAuth: jest.fn() }))
+jest.mock('../auth/loginFlow', () => ({ useLoginFlow: () => jest.fn() }))
+jest.mock('../api/client', () => ({ ...jest.requireActual('../api/client'), programClient: jest.fn() }))
 jest.mock('expo-crypto', () => ({ randomUUID: () => '11111111-1111-4111-8111-111111111111' }))
 jest.mock('../auth/preparationPending', () => ({ readPendingPreparation: jest.fn(), savePendingPreparation: jest.fn(), clearPendingPreparation: jest.fn() }))
 const api = { get: jest.fn(), documents: jest.fn(), documentJobs: jest.fn(), documentJob: jest.fn(), markDocumentJobsSeen: jest.fn(),
@@ -31,7 +38,7 @@ function EditableReviewRoute() {
 const routes = {
   _layout: () => <Stack screenOptions={{ animation: 'none' }} />,
   documents: () => <ApplicationDocumentScreen id={9} onLogin={jest.fn()} onEditor={jest.fn()} onReanalyze={jest.fn()}
-    onOnline={() => router.push('/online')} onList={jest.fn()} onOpenPending={jest.fn()} />,
+    onOnline={() => router.push('/online')} onOpenPending={jest.fn()} />,
   online: () => <ApplicationOnlineInputScreen id={9} onLogin={jest.fn()} onEditor={() => router.push('/other')} />,
   other: () => <Text>다른 화면</Text>,
   review: () => <ApplicationPreparationEditorScreen id={9} reviewing onLogin={jest.fn()} onEditor={jest.fn()} onReview={jest.fn()}
@@ -52,6 +59,8 @@ function savedPreparation(name: string) {
 }
 const browserUrl = `https://api.example.test/api/v1/application-preparations/9/documents/11/download?ticket=${'a'.repeat(43)}`
 beforeEach(() => {
+  jest.mocked(programClient).mockReturnValue({ getDetail: jest.fn().mockResolvedValue({ ...programDetail,
+    applicationRoute: { type: 'GOOGLE_FORMS', method: '구글폼', url: 'https://docs.google.com/forms/d/e/example/viewform' } }) } as unknown as ReturnType<typeof programClient>)
   process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.example.test'
   Object.values(api).forEach(fn => fn.mockReset())
   onDocuments.mockReset()
@@ -68,9 +77,35 @@ beforeEach(() => {
   api.get.mockResolvedValue(documentPreparation); api.documents.mockResolvedValue([documentFile]); api.documentJobs.mockResolvedValue([documentJob])
   api.documentJob.mockResolvedValue(documentJob); api.markDocumentJobsSeen.mockResolvedValue(undefined)
   api.onlineInputGuide.mockResolvedValue({ preparationId: 9, inputRevision: 1, totalCount: 1, readyCount: 1, needsReviewCount: 0, missingCount: 0,
-    directInputCount: 0, externalMappingVerified: false, officialApplicationUrl: null, items: [], savedAnswers: [{ fieldId: 'company:name', label: '기업명', answer: '테스트 기업' }] })
+    directInputCount: 0, externalMappingVerified: false, officialApplicationUrl: 'https://docs.google.com/forms/d/e/example/viewform', items: [], savedAnswers: [{ fieldId: 'company:name', label: '기업명', answer: '테스트 기업' }] })
 })
 afterEach(() => { delete process.env.EXPO_PUBLIC_API_BASE_URL; jest.restoreAllMocks() })
+
+test('editing a result enters the answer input even when the review screen is already on the stack', async () => {
+  const view = renderRouter({
+    _layout: () => <Stack screenOptions={{ animation: 'none' }} />,
+    'all/preparation/[id]': PreparationEditorRoute,
+    'all/preparation/[id]/review': PreparationReviewRoute,
+    'all/preparation/[id]/documents': PreparationDocumentRoute,
+  }, { initialUrl: '/all/preparation/9' })
+  await screen.findByLabelText('내 답변')
+  expect(screen.queryByLabelText('공식 공고 원문')).toBeNull()
+  await act(async () => router.push('/all/preparation/9/review'))
+  await screen.findByText('답변을 마지막으로 확인해 주세요')
+  await act(async () => router.push('/all/preparation/9/documents'))
+  fireEvent.press(await screen.findByLabelText('답변 수정하기'))
+  await screen.findByLabelText('내 답변')
+  expect(view.getPathname()).toBe('/all/preparation/9')
+  expect(screen.queryByText('답변을 마지막으로 확인해 주세요')).toBeNull()
+}, 15_000)
+
+test('direct input-helper links reject non-Google application routes without inspecting an online form', async () => {
+  jest.mocked(programClient).mockReturnValue({ getDetail: jest.fn().mockResolvedValue(programDetail) } as unknown as ReturnType<typeof programClient>)
+  renderRouter(routes, { initialUrl: '/online' })
+  await screen.findByText('이 공고는 구글폼 신청을 지원하지 않아 입력 도우미를 제공하지 않습니다.')
+  expect(api.onlineInputGuide).not.toHaveBeenCalled()
+  expect(screen.queryByLabelText('TXT로 내려받기·공유')).toBeNull()
+})
 
 test('Stack navigation aborts a pending link and a late response cannot launch the browser after returning', async () => {
   const download = deferred<string>()
@@ -80,8 +115,8 @@ test('Stack navigation aborts a pending link and a late response cannot launch t
   fireEvent.press(screen.getByLabelText('초안 다운로드: 사업계획서.hwpx'))
   await waitFor(() => expect(prepareApplicationDocumentDownload).toHaveBeenCalledTimes(1))
   const signal = jest.mocked(prepareApplicationDocumentDownload).mock.calls[0][3]!
-  fireEvent.press(screen.getByLabelText('온라인 신청 입력 도우미'))
-  await screen.findByText('온라인 신청을 준비하세요')
+  fireEvent.press(await screen.findByLabelText('구글폼 입력 도우미'))
+  await screen.findByText('구글폼 신청을 준비하세요')
   expect(signal.aborted).toBe(true)
   await act(async () => router.back())
   await screen.findByText('초안 완료')
@@ -103,8 +138,8 @@ test('leaving during browser launch prevents a late notice and blocks repeated t
   fireEvent.press(save); fireEvent.press(save)
   await waitFor(() => expect(Linking.openURL).toHaveBeenCalledTimes(1))
   expect(prepareApplicationDocumentDownload).toHaveBeenCalledTimes(1)
-  fireEvent.press(screen.getByLabelText('온라인 신청 입력 도우미'))
-  await screen.findByText('온라인 신청을 준비하세요')
+  fireEvent.press(await screen.findByLabelText('구글폼 입력 도우미'))
+  await screen.findByText('구글폼 신청을 준비하세요')
   await act(async () => { opening.resolve(); router.back() })
   await screen.findByText('초안 완료')
   expect(screen.queryByText(/파일을 저장했어요/)).toBeNull()

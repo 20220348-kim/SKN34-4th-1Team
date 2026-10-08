@@ -9,21 +9,21 @@ import { applicationDocumentFileFormat, applicationDocumentFileGroups } from '@g
 import { ApplicationPreparationError } from '@govbiz/shared/domain/errors/ApplicationPreparationError'
 import { useAuth } from '../auth/session'
 import { applicationPreparationUseCase, discardDeletedPendingPreparation, prepareApplicationDocumentDownload } from '../api/applicationPreparation'
-import { getApiBaseUrl } from '../api/client'
+import { getApiBaseUrl, programClient, readProgramDetail } from '../api/client'
 import { clearPendingPreparation, readPendingPreparation, savePendingPreparation, type PendingPreparationRequest } from '../auth/preparationPending'
 import { PartnerSheet } from '../components/PartnerSheet'
 import { PreparationAccess } from '../components/ApplicationPreparationUi'
 import { useAppForeground } from '../components/useAppForeground'
 import { Button, Card, Notice, Page, StatusBadge, colors, styles } from '../ui'
 
-type Props = { id: number; jobId?: number; onLogin(): void; onEditor(): void; onReanalyze(identity: { sourceCode: string; sourceProgramId: string }): void; onOnline(): void; onList(): void; onOpenPending(id: number): void }
+type Props = { id: number; jobId?: number; onLogin(): void; onEditor(): void; onReanalyze(identity: { sourceCode: string; sourceProgramId: string }): void; onOnline(): void; onOpenPending(id: number): void }
 const running = (job: ApplicationDocumentGenerationJob) => job.status === 'QUEUED' || job.status === 'RUNNING'
 export function ApplicationDocumentScreen(props: Props) {
   const auth = useAuth()
   if (auth.status !== 'signedIn' || !auth.session) return <PreparationAccess onLogin={props.onLogin} />
   return <OwnedDocuments key={`${auth.session.accessToken}:${props.id}`} token={auth.session.accessToken} email={auth.session.account.email} {...props} />
 }
-function OwnedDocuments({ id, jobId, token, email, onEditor, onReanalyze, onOnline, onList, onOpenPending }: Props & { token: string; email: string }) {
+function OwnedDocuments({ id, jobId, token, email, onEditor, onReanalyze, onOnline, onOpenPending }: Props & { token: string; email: string }) {
   const { invalidateSession } = useAuth()
   const useCase = useMemo(() => applicationPreparationUseCase(token), [token])
   const [preparation, setPreparation] = useState<ApplicationPreparation | null>(null)
@@ -34,6 +34,7 @@ function OwnedDocuments({ id, jobId, token, email, onEditor, onReanalyze, onOnli
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [googleFormAvailable, setGoogleFormAvailable] = useState(false)
   const [revision, setRevision] = useState(0)
   const [migrationOpen, setMigrationOpen] = useState(false)
   const [approved, setApproved] = useState(false)
@@ -69,7 +70,7 @@ function OwnedDocuments({ id, jobId, token, email, onEditor, onReanalyze, onOnli
     if (!foreground) return
     const controller = new AbortController()
     let timer: ReturnType<typeof setTimeout> | undefined
-    setLoading(true); setError(null)
+    setLoading(true); setError(null); setGoogleFormAvailable(false)
     const follow = async (selected: ApplicationDocumentGenerationJob) => {
       if (controller.signal.aborted) return
       setJob(selected)
@@ -88,12 +89,16 @@ function OwnedDocuments({ id, jobId, token, email, onEditor, onReanalyze, onOnli
       const [detail, stored, recent] = await Promise.all([useCase.get(id, controller.signal), useCase.documents(id, controller.signal), useCase.documentJobs(id, controller.signal)])
       if (controller.signal.aborted) return
       setPreparation(detail); setFiles(stored); setPending(record); setJob(null)
+      // 문서 결과 조회로 외부 폼을 분석하지 않고, 카탈로그의 공식 신청 경로만 확인합니다.
+      void readProgramDetail(programClient(token), { sourceCode: detail.form.sourceCode, sourceProgramId: detail.form.sourceProgramId }, controller.signal)
+        .then(program => { if (!controller.signal.aborted) setGoogleFormAvailable(program?.applicationRoute.type === 'GOOGLE_FORMS') })
+        .catch(() => { if (!controller.signal.aborted) setError('구글폼 신청 여부를 확인하지 못했어요. 다시 확인해 주세요.') })
       const latest = recent.find(candidate => running(candidate)) ?? recent.slice().sort((a, b) => b.id - a.id)[0]
       const selected = jobId ?? latest?.id
       if (selected) await follow(await useCase.documentJob(id, selected, controller.signal))
     })().catch(cause => { if (!controller.signal.aborted) reportError(cause) }).finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => { controller.abort(); clearTimeout(timer) }
-  }, [foreground, id, jobId, revision, useCase, base, email, reportError]))
+  }, [foreground, id, jobId, revision, useCase, base, email, token, reportError]))
   async function checkPending() {
     if (!pending || locked.current) return
     locked.current = true; setBusy('pending'); setError(null)
@@ -158,8 +163,7 @@ function OwnedDocuments({ id, jobId, token, email, onEditor, onReanalyze, onOnli
   if (!preparation) return <Page><Notice error>{error ?? '신청문서를 확인하지 못했어요.'}</Notice>
     {notice && <Notice>{notice}</Notice>}
     {pending?.kind === 'document' && <Button label="보관 요청 대상 확인" variant="secondary" busy={busy === 'pending'} onPress={() => void checkPending()} />}
-    <Button label="다시 확인" disabled={busy !== null} onPress={() => setRevision(value => value + 1)} />
-    <Button label="목록으로 돌아가기" variant="ghost" disabled={busy !== null} onPress={onList} /></Page>
+    <Button label="다시 확인" disabled={busy !== null} onPress={() => setRevision(value => value + 1)} /></Page>
   const currentFiles = files.filter(file => file.inputRevision === preparation.inputRevision)
   const { latestRevision, latestFiles, previousFiles, previousRevisions } = applicationDocumentFileGroups(files)
   const answersChanged = latestRevision !== null && !currentFiles.length
@@ -220,9 +224,7 @@ function OwnedDocuments({ id, jobId, token, email, onEditor, onReanalyze, onOnli
       {!recoveringRequest && draftMode !== 'original' && <Text style={styles.muted}>답변 기입에는 유료 AI 호출이 발생할 수 있어요.</Text>}
       <Button label={pending ? '같은 생성 요청으로 확인' : files.length ? '수정 답변으로 다시 만들기' : job?.status === 'FAILED' ? '초안 생성 다시 시도' : '초안 만들기'} busy={busy === 'generate'} onPress={() => void generate()} /></>}
     <Button label="답변 수정하기" variant="secondary" disabled={busy !== null} onPress={onEditor} />
-    <Button label="온라인 신청 입력 도우미" variant="secondary" onPress={onOnline} />
-    <Button label="공식 공고 원문" variant="ghost" onPress={() => void Linking.openURL(preparation.form.sourceUrl).catch(() => setError('공식 공고 원문을 열지 못했어요.'))} />
-    <Button label="목록으로 돌아가기" variant="ghost" onPress={onList} />
+    {googleFormAvailable && <Button label="구글폼 입력 도우미" variant="secondary" onPress={onOnline} />}
     <Text style={styles.muted}>생성한 초안은 기관 제출이나 검수 완료를 뜻하지 않아요. 내려받아 원본 양식에서 최종 확인해 주세요.</Text>
     <PartnerSheet visible={migrationOpen} title="입력 위치 변경 확인" onClose={() => { if (!busy) setMigrationOpen(false) }} actions={<><Button label="취소" variant="secondary" disabled={busy !== null} onPress={() => setMigrationOpen(false)} /><Button label="새 입력 위치 적용" busy={busy === 'migration'} disabled={busy !== null} onPress={() => void approve()} /></>}>
       <Text style={styles.muted}>기존 답변과 파일을 유지하고 새 양식 위치를 적용해요. 적용만으로 초안을 다시 생성하지 않아요.</Text>

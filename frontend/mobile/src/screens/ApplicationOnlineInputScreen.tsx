@@ -6,7 +6,7 @@ import type { ApplicationOnlineInputGuide } from '@govbiz/shared/domain/entities
 import { formatSavedApplicationAnswers } from '@govbiz/shared/domain/entities/ApplicationOnlineInputGuide'
 import { ApplicationPreparationError } from '@govbiz/shared/domain/errors/ApplicationPreparationError'
 import { applicationPreparationUseCase } from '../api/applicationPreparation'
-import { getApiBaseUrl } from '../api/client'
+import { getApiBaseUrl, programClient, readProgramDetail } from '../api/client'
 import { shareApplicationFile } from '../api/applicationDocumentFiles'
 import { useAuth } from '../auth/session'
 import { PreparationAccess } from '../components/ApplicationPreparationUi'
@@ -25,6 +25,7 @@ function OwnedOnline({ id, token, email, onEditor }: { id: number; token: string
   const [notice, setNotice] = useState<string | null>(null)
   const [revision, setRevision] = useState(0)
   const [busy, setBusy] = useState(false)
+  const [unavailable, setUnavailable] = useState(false)
   const request = useRef<AbortController | null>(null)
   const focused = useRef(false)
   const mounted = useRef(true)
@@ -37,17 +38,24 @@ function OwnedOnline({ id, token, email, onEditor }: { id: number; token: string
     }
   }, []))
   useFocusEffect(useCallback(() => {
-    const controller = new AbortController(); setGuide(null); setError(null)
-    void Promise.all([useCase.onlineInputGuide(id, controller.signal), useCase.get(id, controller.signal)]).then(([result, detail]) => {
+    const controller = new AbortController(); setGuide(null); setError(null); setUnavailable(false)
+    void (async () => {
+      const detail = await useCase.get(id, controller.signal)
       if (controller.signal.aborted) return
+      const program = await readProgramDetail(programClient(token), { sourceCode: detail.form.sourceCode, sourceProgramId: detail.form.sourceProgramId }, controller.signal)
+      if (controller.signal.aborted) return
+      if (program?.applicationRoute.type !== 'GOOGLE_FORMS') { setUnavailable(true); return }
+      const result = await useCase.onlineInputGuide(id, controller.signal)
+      if (controller.signal.aborted) return
+      if (result.officialApplicationUrl !== program.applicationRoute.url) throw new Error('공식 구글폼 신청 주소가 바뀌었어요. 입력 안내를 다시 확인해 주세요.')
       if (result.inputRevision !== detail.inputRevision) throw new Error('저장된 답변이 바뀌었어요. 답변 입력 화면에서 최신 내용을 확인해 주세요.')
       setGuide(result)
-    }).catch(cause => { if (!controller.signal.aborted) {
+    })().catch(cause => { if (!controller.signal.aborted) {
       if (cause instanceof ApplicationPreparationError && cause.status === 401) void invalidateSession().catch(() => undefined)
       setError(cause instanceof Error ? cause.message : '온라인 신청 안내를 확인하지 못했어요.')
     } })
     return () => controller.abort()
-  }, [id, useCase, revision, invalidateSession]))
+  }, [id, token, useCase, revision, invalidateSession]))
   async function copy(value: string) {
     try { await Clipboard.setStringAsync(value); if (mounted.current) setNotice('답변을 복사했어요.') }
     catch { if (mounted.current) setError('답변을 복사하지 못했어요. 다시 시도해 주세요.') }
@@ -67,10 +75,11 @@ function OwnedOnline({ id, token, email, onEditor }: { id: number; token: string
     }
   }
   const statuses = { READY: '준비 완료', NEEDS_REVIEW: '확인 필요', MISSING: '답변 필요', DIRECT_INPUT: '직접 처리 필요' }
-  return <Page><Text style={styles.title}>온라인 신청을 준비하세요</Text><Notice>저장 답변을 복사해 공식 신청 화면에 직접 입력해요. 자동 입력이나 최종 제출은 하지 않습니다.</Notice>
+  return <Page><Text style={styles.title}>구글폼 신청을 준비하세요</Text><Notice>구글폼으로 신청하는 공고에 제공하는 도우미예요. 저장 답변을 복사해 구글폼에 직접 입력해요. 자동 입력이나 최종 제출은 하지 않습니다.</Notice>
     {error && <><Notice error>{error}</Notice><Button label="입력 안내 다시 확인" variant="secondary" onPress={() => setRevision(value => value + 1)} /></>}
     {notice && <Notice>{notice}</Notice>}
-    {!guide && !error && <ActivityIndicator accessibilityLabel="온라인 신청 안내 불러오는 중" color={colors.primary} />}
+    {unavailable && <Notice>이 공고는 구글폼 신청을 지원하지 않아 입력 도우미를 제공하지 않습니다.</Notice>}
+    {!guide && !error && !unavailable && <ActivityIndicator accessibilityLabel="온라인 신청 안내 불러오는 중" color={colors.primary} />}
     {guide && <><Text style={styles.heading}>준비된 답변 {guide.readyCount} / {guide.totalCount}</Text>
       {!guide.externalMappingVerified && <Notice>공식 신청 문항과 저장 답변의 대응 관계를 직접 확인해 주세요.</Notice>}
       {guide.items.map((item, index) => <Card key={item.sourceControlId ?? item.fieldId ?? String(index)}><View style={styles.row}><StatusBadge label={statuses[item.status]} tone={item.status === 'READY' ? 'success' : 'warning'} /></View>

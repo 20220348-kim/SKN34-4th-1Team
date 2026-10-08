@@ -17,7 +17,7 @@ export default function AllLayout() {
     <Stack.Screen name="preparation/[id]" options={{ title: '답변 작성' }} />
     <Stack.Screen name="preparation/[id]/review" options={{ title: '답변 검토' }} />
     <Stack.Screen name="preparation/[id]/documents" options={{ title: '문서 결과' }} />
-    <Stack.Screen name="preparation/[id]/online" options={{ title: '온라인 신청 안내' }} />
+    <Stack.Screen name="preparation/[id]/online" options={{ title: '구글폼 입력 도우미' }} />
     <Stack.Screen name="reviews/index" options={{ title: '중복 검토' }} />
     <Stack.Screen name="reviews/new" options={{ title: '중복 지원·수혜 검토' }} />
     <Stack.Screen name="reviews/[id]" options={{ title: '중복 지원·수혜' }} />
