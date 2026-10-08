@@ -34,6 +34,7 @@ import tools.jackson.databind.ObjectMapper
     "app.account.jwt-secret=test-jwt-secret-0123456789abcdef0123456789",
     "app.bizinfo.sync.enabled=false", "app.support-program-index.enabled=false", "app.account.cookie-secure=false",
     "app.combination-review.queue.enabled=true", "spring.rabbitmq.listener.simple.auto-startup=false",
+    "app.combination-review.contract-version=v2",
 ])
 @AutoConfigureMockMvc
 @Import(MySqlTestContainerConfig::class)

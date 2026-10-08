@@ -170,7 +170,7 @@ CombinationReviewRunConsumer → CombinationReviewRunService`로 기존 수집·
 동기 실행으로 우회하지 않습니다. 상태는 QUEUED/RUNNING/SUCCEEDED/FAILED/UNKNOWN/INTERRUPTED입니다.
 UNKNOWN은 같은 검토의 새 실행도 차단하고, `app.combination-review.unknown-ttl`(`COMBINATION_REVIEW_UNKNOWN_TTL`, 기본 PT30M, 최소 PT20M)이
 지나면 AI를 다시 부르지 않고 `RUN_OUTCOME_UNKNOWN_EXPIRED`로 FAILED 처리해 검토 슬롯과 계정 한도(3건)를 돌려줍니다. [한도·만료·재발행·배포·검증 상세](../../docs/rabbitmq-combination-review.md)를 참고하세요.
-새 실행의 AI 계약은 `COMBINATION_REVIEW_CONTRACT_VERSION`(`v2` 여섯 단계 | `v3` 세 질문, 기본 `v2`)으로 고르며 다른 값이면 시작에 실패합니다.
+새 실행의 AI 계약은 `COMBINATION_REVIEW_CONTRACT_VERSION`(`v3` 세 질문 기본 | `v2` 여섯 단계, 되돌릴 때만)으로 고르며 다른 값이면 시작에 실패합니다.
 v3는 `configuration?contractVersion=combination-review-v3`로 설정을 확인하고, 참여 사실 6칸 대신 사업별 상태 4값(+`UNKNOWN`)과 관계를 보냅니다.
 상태 4값은 shared `participationToReviewStatus`와 같은 규칙으로 Domain(`ProgramParticipation.reviewStatus`)이 계산하며,
 응답은 Facade에서 v2와 같은 인용 검사와 판정별 조건·인용·기관 확인 문장 규칙으로 검증합니다. 지난 v2 결과는 그대로 읽습니다.
@@ -799,7 +799,7 @@ Compose는 일부 주소·CORS 값을 내부 네트워크에 맞게 덮어씁니
 | `AI_SERVICE_CONNECT_TIMEOUT` | `1s` | AI Service 연결 제한시간 |
 | `AI_SERVICE_READ_TIMEOUT` | `35s` | AI Health·대화 조건 해석·원문 근거 답변 응답 제한시간 |
 | `AI_COMBINATION_REVIEW_READ_TIMEOUT` | `75s` | 중복 지원·수혜 분석 전용 응답 제한시간 |
-| `COMBINATION_REVIEW_CONTRACT_VERSION` | `v2` | 중복 검토 새 실행의 AI 계약(`v2` 여섯 단계, `v3` 세 질문). 실행 시점 값을 쓰며 지난 실행은 저장된 계약으로 읽음 |
+| `COMBINATION_REVIEW_CONTRACT_VERSION` | `v3` | 중복 검토 새 실행의 AI 계약(`v3` 세 질문, `v2` 여섯 단계는 되돌릴 때만). 실행 시점 값을 쓰며 지난 실행은 저장된 계약으로 읽음 |
 | `AI_RANKING_READ_TIMEOUT` | `55s` | 지원사업 최종 점수화 전용 응답 제한시간 |
 | `AI_SEMANTIC_SEARCH_READ_TIMEOUT` | `30s` | 의미 검색·색인 응답 제한시간 |
 | `ELASTICSEARCH_BASE_URL` | `http://127.0.0.1:9200` | 호스트 실행 시 키워드 색인·검색 주소. Compose는 `http://elasticsearch:9200`으로 고정 |

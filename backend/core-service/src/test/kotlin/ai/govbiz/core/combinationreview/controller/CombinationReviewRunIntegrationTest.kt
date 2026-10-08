@@ -70,6 +70,7 @@ import tools.jackson.databind.node.ObjectNode
     "app.account.jwt-secret=test-jwt-secret-0123456789abcdef0123456789",
     "app.ai-service.base-url=http://127.0.0.1:1", "app.ai-service.connect-timeout=10ms", "app.ai-service.read-timeout=10ms",
     "app.combination-review.queue.enabled=true", "spring.rabbitmq.listener.simple.auto-startup=false",
+    "app.combination-review.contract-version=v2",
     "app.bizinfo.sync.enabled=false", "app.support-program-index.enabled=false", "app.account.cookie-secure=false",
 ])
 @AutoConfigureMockMvc

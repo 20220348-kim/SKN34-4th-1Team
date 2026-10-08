@@ -277,7 +277,7 @@ UNKNOWN은 Outbox 스케줄러의 만료 정리에서 같은 공고의 가용성
 4. `CombinationReviewRunRepository`: 원문 바이트·해시·메타데이터·텍스트를 짧은 transaction에서 보존. 검증한 공식 공고 상세 주소와
    첨부 다운로드 주소를 서로 다른 필드로 저장해 화면의 공고 페이지 이동과 보관 원본 다운로드를 구분.
 5. `AiCombinationReviewFacade → AiCombinationReviewClient → AI Router → CombinationReviewService → CombinationReviewAgent → OpenAI` 단일 호출.
-   계약은 `CombinationReviewProperties`(`app.combination-review.contract-version`, 기본 v2)로 고르며, v3는 같은 경로로 사업별 상태 4값·관계를 보내고 세 질문 답을 받습니다.
+   계약은 `CombinationReviewProperties`(`app.combination-review.contract-version`, 기본 v3)로 고르며, v3는 같은 경로로 사업별 상태 4값·관계를 보내고 세 질문 답을 받습니다.
 6. AI와 Core에서 사업쌍·단계·인용을 검증하고 실행 성공/실패 저장. AI는 서버가 원문에서 만든 인용 선택지 번호만 고르고,
    코드가 정확한 원문과 근거 ID를 복원한다. 다른 사업쌍의 선택지나 범위 밖 번호는 실패 처리. 현재 입력은 덮어쓰지 않음.
 
