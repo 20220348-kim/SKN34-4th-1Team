@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App'
 import { createAppStore } from './app/store'
 import { sessionRestored } from './presentation/shared/auth/state/authSlice'
+import { pricingFrequentlyAskedQuestions, pricingPlans } from '@govbiz/shared/design/pricingContent'
 
 beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})))
@@ -32,6 +33,19 @@ function renderApp(path: string, signedIn = path.startsWith('/app')) {
 }
 
 describe('공개 요금제', () => {
+  it('웹은 모바일과 같은 가격·혜택·FAQ를 표시한다', () => {
+    renderApp('/pricing')
+    for (const plan of pricingPlans) {
+      const card = screen.getByRole('heading', { name: plan.name, level: 3 }).closest('article')!
+      expect(within(card).getByText(plan.price)).toBeTruthy()
+      expect(within(card).getByText(plan.priceNote, { selector: 'p' })).toBeTruthy()
+      for (const feature of plan.features) expect(within(card).getByText(feature)).toBeTruthy()
+    }
+    for (const faq of pricingFrequentlyAskedQuestions) {
+      expect(screen.getByText(faq.question).closest('details')?.textContent).toContain(faq.answer)
+    }
+    expect(fetch).not.toHaveBeenCalled()
+  })
   it.each(['/pricing', '/app/pricing'])('%s 제목은 전체 접근성 이름과 글자 공간을 유지하며 순서대로 등장한다', (path) => {
     renderApp(path)
     const title = '기업의 다음 단계에 맞는 요금제'

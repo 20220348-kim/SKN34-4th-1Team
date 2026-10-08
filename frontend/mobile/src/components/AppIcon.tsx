@@ -1,7 +1,7 @@
 import Svg, { Circle, Path, Rect } from 'react-native-svg'
 import type { ColorValue } from 'react-native'
 
-export type AppIconName = 'search' | 'bookmark' | 'collaboration' | 'report' | 'account' | 'pencil' | 'send' | 'calendar' | 'message' | 'document' | 'shield' | 'menu' | 'building' | 'bell' | 'inbox' | 'outbox' | 'back' | 'arrowUp' | 'filter'
+export type AppIconName = 'search' | 'bookmark' | 'collaboration' | 'report' | 'account' | 'pencil' | 'send' | 'calendar' | 'message' | 'document' | 'shield' | 'menu' | 'building' | 'bell' | 'inbox' | 'outbox' | 'back' | 'arrowUp' | 'filter' | 'creditCard'
 
 /** Paths from the approved mobile design; do not substitute emoji or a heart for the bookmark. */
 export function AppIcon({ name, color, size = 24, selected = false }: {
@@ -31,6 +31,8 @@ export function AppIcon({ name, color, size = 24, selected = false }: {
     {name === 'document' && <Path d="M6 3h8l4 4v14H6zM14 3v5h4M9 12h6M9 16h6" />}
     {name === 'shield' && <Path d="m12 3 8 3v6c0 4-4 7-8 9-4-2-8-5-8-9V6z" />}
     {name === 'menu' && <Path d="M4 6h16M4 12h16M4 18h16" />}
+    {name === 'creditCard' && <><Rect x={2} y={4} width={20} height={16} rx={2} />
+      <Path d="M2 10h20M6 15h2" strokeWidth={selected ? 2.5 : 1.75} /></>}
     {name === 'building' && <><Rect x={5} y={3} width={14} height={18} rx={2} /><Path d="M9 7h1M14 7h1M9 11h1M14 11h1M10 21v-6h4v6" /></>}
     {name === 'bell' && <Path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" />}
   </Svg>

@@ -6,7 +6,7 @@ import { AppIcon, type AppIconName } from '../components/AppIcon'
 import { Button, Notice, Page, colors } from '../ui'
 
 export type MenuDestination = 'account' | 'company' | 'settings' | 'filter' | 'ai' | 'saved' | 'report'
-  | 'partners' | 'documents' | 'reviews' | 'recruitments' | 'received' | 'sent' | 'mine'
+  | 'partners' | 'documents' | 'reviews' | 'recruitments' | 'received' | 'sent' | 'mine' | 'pricing'
 type MenuItem = { destination: MenuDestination; label: string; description: string; icon: AppIconName }
 
 export function MenuScreen({ onOpen }: { onOpen(destination: MenuDestination): void }) {
@@ -44,6 +44,9 @@ export function MenuScreen({ onOpen }: { onOpen(destination: MenuDestination): v
       { destination: 'recruitments', label: '모집글', description: '파트너 찾기', icon: 'collaboration' },
       { destination: 'partners', label: '파트너 관리', description: '제안 · 내 모집글', icon: 'collaboration' },
     ] },
+    { title: '서비스 안내', items: [
+      { destination: 'pricing', label: '요금제', description: '기능 · 이용 안내', icon: 'creditCard' },
+    ] },
   ]
   return <Page headerless backgroundColor={colors.surface}>
     <View style={local.profile}>
@@ -59,7 +62,7 @@ export function MenuScreen({ onOpen }: { onOpen(destination: MenuDestination): v
         accessibilityHint={item.description} onPress={() => onOpen(item.destination)}
         style={({ pressed }) => [local.row, pressed && { backgroundColor: colors.background }]}>
         <View style={local.icon}><AppIcon name={item.icon} color={colors.primary} size={22} /></View>
-        <Text style={local.label}>{item.label}</Text><Text style={local.description}>{!account && !['filter', 'ai', 'recruitments'].includes(item.destination) ? '로그인 후 이용' : item.description}</Text>
+        <Text style={local.label}>{item.label}</Text><Text style={local.description}>{!account && !['filter', 'ai', 'recruitments', 'pricing'].includes(item.destination) ? '로그인 후 이용' : item.description}</Text>
       </Pressable>)}
     </View>)}
     {__DEV__ && status === 'signedOut' && <>

@@ -9,6 +9,8 @@ import LegacyCollaborationRoute from '../../app/(tabs)/collab'
 import CollaborationRoute from '../../app/(tabs)/all/collab'
 import ReportRoute from '../../app/(tabs)/report'
 import SavedRoute from '../../app/(tabs)/saved'
+import PricingRoute from '../../app/(tabs)/pricing'
+import MenuPricingRoute from '../../app/(tabs)/all/pricing'
 import LegacyAccountRoute from '../../app/(tabs)/account'
 import AccountRoute from '../../app/(tabs)/all/account'
 import * as AllLayout from '../../app/(tabs)/all/_layout'
@@ -56,6 +58,7 @@ const routes = {
   '(tabs)/_layout': TabLayout, '(tabs)/index': SearchRoute, '(tabs)/chat': ChatRoute,
   '(tabs)/collab': LegacyCollaborationRoute, '(tabs)/report': ReportRoute,
   '(tabs)/saved': SavedRoute, '(tabs)/account': LegacyAccountRoute, program: ProgramDestination,
+  '(tabs)/pricing': PricingRoute, '(tabs)/all/pricing': MenuPricingRoute,
   '(tabs)/all/_layout': AllLayout, '(tabs)/all/index': MenuRoute, '(tabs)/all/account': AccountRoute,
   '(tabs)/all/collab': CollaborationRoute, '(tabs)/all/company': CompanyRoute,
   '(tabs)/all/settings': SettingsRoute, '(tabs)/all/preparation': PreparationRoute, company: LegacyCompanyRoute,
@@ -97,7 +100,8 @@ test('the root introduction mounts the actual navigator only after choosing publ
   expect(view.getSearchParams()).toMatchObject({ mode: 'filter' })
 })
 
-const tabLabels = () => screen.getAllByLabelText(/^(검색|협업|관심함|리포트|메뉴)$/).map(tab => tab.props.accessibilityLabel)
+const tabLabels = () => screen.getAllByLabelText(/^(검색|협업|요금제|관심함|리포트|메뉴)$/)
+  .filter(tab => typeof tab.props.accessibilityState?.selected === 'boolean').map(tab => tab.props.accessibilityLabel)
 const memberAuth = { status: 'signedIn', session: { accessToken: 'owner', account: { email: 'member@example.com', company: null } },
   restoreError: null, invalidateSession: jest.fn().mockResolvedValue(undefined) } as unknown as ReturnType<typeof useAuth>
 
@@ -112,6 +116,7 @@ const allMenuRoutes = {
 
 test.each([
   ['내 계정', '/all/account'],
+  ['요금제', '/all/pricing'],
   ['신청 문서', '/all/preparation'], ['중복 검토', '/all/reviews'], ['모집글', '/all/collab'],
   ['파트너 관리', '/all/collab'],
 ])('pressing All returns from %s to the menu and allows opening another feature', async (label, pathname) => {
@@ -248,10 +253,10 @@ test('the collaboration pencil requires company registration before opening the 
   expect(screen.queryByLabelText('모집글 제목 *')).toBeNull()
 })
 
-test('guests have exactly search, collaboration and All and browse public recruitment without private calls', async () => {
+test('guests have search, collaboration, pricing and All and browse public recruitment without private calls', async () => {
   const view = renderRouter(routes, { initialUrl: '/' })
   await screen.findByLabelText('회사 상황이나 궁금한 점')
-  expect(tabLabels()).toEqual(['검색', '협업', '메뉴'])
+  expect(tabLabels()).toEqual(['검색', '협업', '요금제', '메뉴'])
   fireEvent.press(screen.getByLabelText('협업'))
   await screen.findByText('모집글 0건')
   expect(view.getPathname()).toBe('/collab')
@@ -264,7 +269,7 @@ test('guests have exactly search, collaboration and All and browse public recrui
   await screen.findByLabelText('이메일')
   expect(view.getPathname()).toBe('/all')
   fireEvent.press(screen.getByLabelText('로그인 취소'))
-  expect(tabLabels()).toEqual(['검색', '협업', '메뉴'])
+  expect(tabLabels()).toEqual(['검색', '협업', '요금제', '메뉴'])
 }, 15_000)
 
 test('verified members retain the original four tabs and private All menu', async () => {
@@ -277,6 +282,71 @@ test('verified members retain the original four tabs and private All menu', asyn
   expect(screen.getByLabelText('관심 공고함')).toBeTruthy()
 })
 
+test.each([false, true])('pricing opens without a new request and its free action preserves the search mode and draft (signed in: %s)', async signedIn => {
+  if (signedIn) jest.mocked(useAuth).mockReturnValue(memberAuth)
+  const view = renderRouter(routes, { initialUrl: '/?mode=filter' })
+  fireEvent.changeText(await screen.findByLabelText('공고명·기관명'), '유지할 검색 조건')
+  const requests = jest.mocked(programClient).mock.calls.length
+  if (signedIn) fireEvent.press(screen.getByLabelText('메뉴'))
+  fireEvent.press(screen.getByLabelText('요금제'))
+  await screen.findByText('월 9,900원')
+  expect(view.getPathname()).toBe(signedIn ? '/all/pricing' : '/pricing')
+  expect(screen.getByLabelText(signedIn ? '메뉴' : '요금제').props.accessibilityState.selected).toBe(true)
+  expect(screen.queryByText('로그인이 필요해요')).toBeNull()
+  expect(programClient).toHaveBeenCalledTimes(requests)
+  fireEvent.press(screen.getByRole('tab', { name: '무료' }))
+  fireEvent.press(screen.getByRole('button', { name: '무료로 지원사업 찾기' }))
+  await screen.findByDisplayValue('유지할 검색 조건')
+  expect(view.getPathname()).toBe('/')
+  expect(view.getSearchParams()).toMatchObject({ mode: 'filter' })
+})
+
+test('guest menu pricing opens the public pricing tab without requesting login', async () => {
+  const view = renderRouter(routes, { initialUrl: '/all' })
+  await screen.findByText('서비스 안내')
+  const entry = screen.getAllByLabelText('요금제').find(item => item.props.accessibilityState?.selected === undefined)!
+  expect(entry.props.accessibilityHint).toBe('기능 · 이용 안내')
+  fireEvent.press(entry)
+  await screen.findByText('월 9,900원')
+  expect(view.getPathname()).toBe('/pricing')
+  expect(screen.queryByText('로그인이 필요해요')).toBeNull()
+})
+
+test('plus from guest pricing keeps the plan when login is cancelled and resumes saved programs after verified login', async () => {
+  let verifyLogin!: () => void
+  function ReactiveAuthLayout() {
+    const [verified, setVerified] = useState(false)
+    verifyLogin = () => setVerified(true)
+    jest.mocked(useAuth).mockReturnValue(verified ? memberAuth : { status: 'signedOut', session: null, restoreError: null } as ReturnType<typeof useAuth>)
+    const Layout = routes._layout
+    return <Layout />
+  }
+  const view = renderRouter({ ...routes, _layout: ReactiveAuthLayout, '(tabs)/saved': () => <Text>회원 관심 공고함</Text> }, { initialUrl: '/pricing' })
+  fireEvent.press(await screen.findByRole('button', { name: '지금 무료로 이용하기' }))
+  await screen.findByText('로그인이 필요해요')
+  expect(view.getPathname()).toBe('/pricing')
+  fireEvent.press(screen.getByLabelText('계속 둘러보기'))
+  expect(view.getPathname()).toBe('/pricing')
+  expect(screen.getByRole('tab', { name: '플러스' }).props.accessibilityState.selected).toBe(true)
+  fireEvent.press(screen.getByRole('button', { name: '지금 무료로 이용하기' }))
+  await act(async () => verifyLogin())
+  await screen.findByText('회원 관심 공고함')
+  expect(view.getPathname()).toBe('/saved')
+  expect(tabLabels()).toEqual(['검색', '관심함', '리포트', '메뉴'])
+})
+
+test('a signed-in public pricing link continues in the member menu and plus opens saved programs', async () => {
+  jest.mocked(useAuth).mockReturnValue(memberAuth)
+  const view = renderRouter({ ...routes, '(tabs)/saved': () => <Text>회원 관심 공고함</Text> }, { initialUrl: '/pricing' })
+  await screen.findByText('월 9,900원')
+  await waitFor(() => expect(view.getPathname()).toBe('/all/pricing'))
+  expect(tabLabels()).toEqual(['검색', '관심함', '리포트', '메뉴'])
+  expect(screen.getByLabelText('메뉴').props.accessibilityState.selected).toBe(true)
+  fireEvent.press(screen.getByRole('button', { name: '지금 무료로 이용하기' }))
+  await screen.findByText('회원 관심 공고함')
+  expect(view.getPathname()).toBe('/saved')
+})
+
 test('signing in from the guest collaboration tab retains its destination inside the member All stack', async () => {
   const view = renderRouter(routes, { initialUrl: '/collab' })
   await screen.findByText('모집글 0건')
@@ -287,7 +357,7 @@ test('signing in from the guest collaboration tab retains its destination inside
   expect(screen.getByLabelText('메뉴').props.accessibilityState.selected).toBe(true)
 })
 
-test('logging out from a hidden member tab returns to public search with three tabs', async () => {
+test('logging out from a hidden member tab returns to public search with four guest tabs', async () => {
   jest.mocked(useAuth).mockReturnValue(memberAuth)
   const safeRoutes = { ...routes, '(tabs)/saved': () => <Text>회원 관심함 화면</Text> }
   const view = renderRouter(safeRoutes, { initialUrl: '/saved' })
@@ -295,7 +365,7 @@ test('logging out from a hidden member tab returns to public search with three t
   jest.mocked(useAuth).mockReturnValue({ status: 'signedOut', session: null, restoreError: null } as ReturnType<typeof useAuth>)
   await act(async () => router.setParams({ check: 'logout' }))
   await waitFor(() => expect(view.getPathname()).toBe('/'))
-  expect(tabLabels()).toEqual(['검색', '협업', '메뉴'])
+  expect(tabLabels()).toEqual(['검색', '협업', '요금제', '메뉴'])
 })
 
 test('guest private menu entries keep All on cancellation and enter the selected feature only after verified login', async () => {
