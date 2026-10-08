@@ -544,6 +544,8 @@ class RuntimeTests(unittest.TestCase):
                     "status": "ENFORCED",
                     "policyProfile": "evaluation_chart",
                     "networkPolicyEnforcementVerified": True,
+                    "serviceClusterIPVerified": True,
+                    "serviceDnsVerified": True,
                     "cleanupComplete": True,
                 },
             ) as network_probe,
@@ -634,6 +636,9 @@ class RuntimeTests(unittest.TestCase):
             {"status": "ERROR"},
             {"policyProfile": "cni"},
             {"networkPolicyEnforcementVerified": False},
+            {"serviceClusterIPVerified": False},
+            {"serviceDnsVerified": False},
+            {"serviceDnsVerified": None},
             {"cleanupComplete": False},
         ):
             with self.subTest(change=change):
@@ -642,6 +647,8 @@ class RuntimeTests(unittest.TestCase):
                         "status": "ENFORCED",
                         "policyProfile": "evaluation_chart",
                         "networkPolicyEnforcementVerified": True,
+                        "serviceClusterIPVerified": True,
+                        "serviceDnsVerified": True,
                         "cleanupComplete": True,
                         **change,
                     }

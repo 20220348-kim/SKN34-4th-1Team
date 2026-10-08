@@ -4,8 +4,9 @@ import contextlib
 import copy
 import io
 import json
+import socket
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import evaluation_network_probe as probe
 
@@ -24,6 +25,9 @@ class ProbeTests(unittest.TestCase):
         self.replace_namespace = False
         self.node_changed = False
         self.cleanup_failure = False
+        self.service_bypass = None
+        self.dns_failure_during_policy = False
+        self.service_create_timeout = False
         self.node_reads = 0
         self.clock = 0
         self.counter = 0
@@ -72,9 +76,13 @@ class ProbeTests(unittest.TestCase):
             if item["kind"] == "Pod":
                 item["status"] = {"podIP": "10.244.0." + str(self.counter)}
                 item["spec"]["nodeName"] = "fixture-control-plane"
+            if item["kind"] == "Service":
+                item["spec"]["clusterIP"] = "10.96.0." + str(self.counter)
             self.resources[key] = item
             self.created.append(item)
             if self.create_timeout and item["kind"] == "Namespace":
+                raise TimeoutError("PRIVATE_DIAGNOSTIC")
+            if self.service_create_timeout and item["kind"] == "Service":
                 raise TimeoutError("PRIVATE_DIAGNOSTIC")
             return copy.deepcopy(item)
         if args[:2] == ["delete", "--raw"]:
@@ -92,16 +100,35 @@ class ProbeTests(unittest.TestCase):
                 self.resources = {k: v for k, v in self.resources.items() if k[0] != name}
             return {"kind": "Status", "status": "Success"}
         if args[0] == "exec":
-            source, address = args[1], args[-3]
+            source, address, expected_ip = args[1], args[-4], args[-1]
             if self.response_invalid:
                 return {"outcome": "unexpected_response", "private": "PRIVATE_DIAGNOSTIC"}
             policies = any(k[1] == "networkpolicy" for k in self.resources)
             if address == "127.0.0.1":
                 return {"outcome": "rejected" if self.server_broken else "reachable"}
-            destination = next(
-                k[2]
-                for k, v in self.resources.items()
-                if k[1] == "pod" and v["status"]["podIP"] == address
+            service = next(
+                (
+                    v
+                    for k, v in self.resources.items()
+                    if k[1] == "service" and v["spec"]["clusterIP"] == (expected_ip or address)
+                ),
+                None,
+            )
+            mode = "service_dns" if expected_ip else "cluster_ip" if service else "pod_ip"
+            if expected_ip:
+                self.assertIsNotNone(service)
+                meta = service["metadata"]
+                self.assertEqual(address, f"{meta['name']}.{meta['namespace']}.svc.cluster.local.")
+                if policies and self.dns_failure_during_policy and source == "foreign-runner":
+                    return {"outcome": "dns_error"}
+            destination = (
+                service["metadata"]["name"]
+                if service
+                else next(
+                    k[2]
+                    for k, v in self.resources.items()
+                    if k[1] == "pod" and v["status"]["podIP"] == address
+                )
             )
             allow = (source, destination) in {
                 ("allowed", "server"),
@@ -110,7 +137,10 @@ class ProbeTests(unittest.TestCase):
                 ("evaluation-runner", "prefect"),
             }
             blocked = (not policies and self.baseline_broken) or (
-                policies and self.enforced and (not allow or self.allow_broken)
+                policies
+                and self.enforced
+                and mode != self.service_bypass
+                and (not allow or self.allow_broken)
             )
             return {"outcome": "timeout" if blocked else "reachable"}
         self.fail("Unexpected command: " + str(args))
@@ -127,6 +157,8 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual(set(result["recovery"].values()), {"reachable"})
         self.assertFalse(result["productionCutover"])
         self.assertFalse(result["evaluationRuntimeVerified"])
+        self.assertFalse(result["serviceClusterIPVerified"])
+        self.assertFalse(result["serviceDnsVerified"])
         self.assertTrue(result["cleanupComplete"])
         self.assertFalse(self.resources)
 
@@ -233,8 +265,11 @@ class ProbeTests(unittest.TestCase):
         result = probe.exercise(self.kube, "fixture-control-plane", helm="helm")
         self.assertEqual(result["status"], "ENFORCED")
         self.assertEqual(result["policyProfile"], "evaluation_chart")
-        self.assertEqual(sum(result["expectedReachability"].values()), 3)
-        self.assertEqual(len(result["policyChecks"]), 8)
+        self.assertEqual(sum(result["expectedReachability"].values()), 9)
+        self.assertEqual(len(result["policyChecks"]), 22)
+        self.assertTrue(result["serviceClusterIPVerified"])
+        self.assertTrue(result["serviceDnsVerified"])
+        self.assertEqual(result["addressModes"], ["pod_ip", "cluster_ip", "service_dns"])
         self.assertEqual(len(result["chartPolicySpecSha256"]), 3)
         self.assertFalse(result["evaluationRuntimeVerified"])
         self.assertFalse(self.resources)
@@ -242,6 +277,26 @@ class ProbeTests(unittest.TestCase):
         pods = [r for r in self.created if r["kind"] == "Pod"]
         self.assertEqual(len(policies), 3)
         self.assertEqual(len(pods), 6)
+        services = [r for r in self.created if r["kind"] == "Service"]
+        self.assertEqual({s["metadata"]["name"] for s in services}, {"prefect", "ops-artifacts"})
+        for service in services:
+            self.assertEqual(service["spec"]["type"], "ClusterIP")
+            selected = [
+                p
+                for p in pods
+                if p["metadata"]["labels"]["app.kubernetes.io/name"] == service["metadata"]["name"]
+            ]
+            self.assertEqual(len(selected), 1)
+            self.assertEqual(service["spec"]["ports"][0]["targetPort"], "http")
+            self.assertEqual(
+                selected[0]["spec"]["containers"][0]["ports"],
+                [
+                    {
+                        "name": "http",
+                        "containerPort": service["spec"]["ports"][0]["port"],
+                    }
+                ],
+            )
         self.assertNotIn("govbiz-msa", {r["metadata"]["namespace"] for r in policies + pods})
         for policy in policies:
             for rule in policy["spec"]["ingress"]:
@@ -296,6 +351,121 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual(result["status"], "NOT_ENFORCED")
         self.assertTrue(result["cleanupComplete"])
         self.assertFalse(result["networkPolicyEnforcementVerified"])
+
+    def test_pod_ip_enforcement_cannot_hide_service_route_bypass(self):
+        for mode in ("cluster_ip", "service_dns"):
+            with self.subTest(mode=mode):
+                self.service_bypass = mode
+                result = probe.exercise(self.kube, "fixture-control-plane", helm="helm")
+                self.assertEqual(result["status"], "NOT_ENFORCED")
+                self.assertEqual(result["policyChecks"]["foreign_runner_to_prefect"], "timeout")
+                self.assertEqual(
+                    result["policyChecks"]["foreign_runner_to_prefect__" + mode], "reachable"
+                )
+                self.assertFalse(result["serviceDnsVerified"])
+                self.assertFalse(result["serviceClusterIPVerified"])
+                self.assertFalse(self.resources)
+
+    def test_dns_failure_on_denied_route_is_not_successful_enforcement(self):
+        self.dns_failure_during_policy = True
+        result = probe.exercise(self.kube, "fixture-control-plane", helm="helm")
+        self.assertEqual(result["status"], "ERROR")
+        self.assertFalse(result["networkPolicyEnforcementVerified"])
+        self.assertFalse(result["serviceDnsVerified"])
+        self.assertTrue(result["cleanupComplete"])
+        self.assertFalse(self.resources)
+
+    def test_service_create_response_loss_still_cleans_owned_namespaces(self):
+        self.service_create_timeout = True
+        result = probe.exercise(self.kube, "fixture-control-plane", helm="helm")
+        self.assertEqual(result["status"], "ERROR")
+        self.assertTrue(result["cleanupComplete"])
+        self.assertNotIn("PRIVATE_DIAGNOSTIC", json.dumps(result))
+        self.assertFalse(self.resources)
+
+    def test_unsafe_chart_services_fail_before_creating_any_resources(self):
+        render = probe.render_bundle
+        for problem in ("missing", "extra", "namespace", "external", "selector", "port"):
+
+            def invalid(*args, problem=problem, **kwargs):
+                rows = render(*args, **kwargs)
+                service = next(r for r in rows["prefect"] if r["kind"] == "Service")
+                if problem == "missing":
+                    rows["prefect"].remove(service)
+                elif problem == "extra":
+                    rows["evaluation-runner"].append(service)
+                elif problem == "namespace":
+                    service["metadata"]["namespace"] = "govbiz-msa"
+                elif problem == "external":
+                    service["spec"]["externalIPs"] = ["192.0.2.1"]
+                elif problem == "selector":
+                    service["spec"]["selector"] = {}
+                else:
+                    service["spec"]["ports"][0]["targetPort"] = 80
+                return rows
+
+            with (
+                self.subTest(problem=problem),
+                patch.object(probe, "render_bundle", side_effect=invalid),
+            ):
+                result = probe.exercise(self.kube, "fixture-control-plane", helm="helm")
+                self.assertEqual(result["status"], "ERROR")
+                self.assertFalse(self.created)
+
+
+class ClientTests(unittest.TestCase):
+    def test_dns_errors_and_wrong_answers_never_become_http_denial(self):
+        for answers, error, outcome in (
+            ([], socket.gaierror("private"), "dns_error"),
+            ([], TimeoutError("private"), "dns_error"),
+            ([], None, "dns_mismatch"),
+            (["10.96.0.9"], None, "dns_mismatch"),
+            (["10.96.0.1", "10.96.0.9"], None, "dns_mismatch"),
+        ):
+            with (
+                self.subTest(outcome=outcome, answers=answers),
+                patch("sys.argv", ["probe", "prefect.fixture", "token", "4200", "10.96.0.1"]),
+                patch(
+                    "socket.getaddrinfo",
+                    return_value=[
+                        (socket.AF_INET, socket.SOCK_STREAM, 6, "", (ip, 4200)) for ip in answers
+                    ],
+                    side_effect=error,
+                ),
+                patch("http.client.HTTPConnection") as connect,
+                contextlib.redirect_stdout(io.StringIO()) as stdout,
+                self.assertRaises(SystemExit),
+            ):
+                exec(probe.CLIENT, {})
+            self.assertEqual(json.loads(stdout.getvalue()), {"outcome": outcome})
+            connect.assert_not_called()
+
+    def test_dns_connection_uses_the_verified_cluster_ip_and_fresh_connection(self):
+        for blocked in (False, True):
+            connection = MagicMock()
+            connection.getresponse.return_value.status = 200
+            connection.getresponse.return_value.read.return_value = b"token"
+            if blocked:
+                connection.request.side_effect = TimeoutError()
+            with (
+                self.subTest(blocked=blocked),
+                patch("sys.argv", ["probe", "prefect.fixture", "token", "4200", "10.96.0.1"]),
+                patch(
+                    "socket.getaddrinfo",
+                    return_value=[(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.96.0.1", 4200))],
+                ),
+                patch("http.client.HTTPConnection", return_value=connection) as connect,
+                contextlib.redirect_stdout(io.StringIO()) as stdout,
+            ):
+                exec(probe.CLIENT, {})
+            self.assertEqual(
+                json.loads(stdout.getvalue()),
+                {
+                    "outcome": "timeout" if blocked else "reachable",
+                },
+            )
+            connect.assert_called_once_with("10.96.0.1", 4200, timeout=2)
+            connection.close.assert_called_once()
 
 
 if __name__ == "__main__":

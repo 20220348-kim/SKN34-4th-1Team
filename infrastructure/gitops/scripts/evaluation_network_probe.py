@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import ipaddress
 import json
+import re
 import time
 from pathlib import Path
 from uuid import uuid4
@@ -32,7 +33,19 @@ HTTPServer(('0.0.0.0', int(sys.argv[2])), Handler).serve_forever()
 """
 CLIENT = """
 import errno, http.client, json, socket, sys
-connection = http.client.HTTPConnection(sys.argv[1], int(sys.argv[3]), timeout=2)
+address = sys.argv[1]
+if sys.argv[4]:
+    try:
+        resolved = {r[4][0] for r in socket.getaddrinfo(
+            address, int(sys.argv[3]), socket.AF_INET, socket.SOCK_STREAM)}
+    except OSError:
+        print(json.dumps({'outcome': 'dns_error'}))
+        sys.exit(0)
+    if resolved != {sys.argv[4]}:
+        print(json.dumps({'outcome': 'dns_mismatch'}))
+        sys.exit(0)
+    address = resolved.pop()
+connection = http.client.HTTPConnection(address, int(sys.argv[3]), timeout=2)
 try:
     connection.request('GET', '/')
     response = connection.getresponse()
@@ -72,6 +85,7 @@ def pod(namespace, token, name, role, node, image, *, port=PORT):
                     "image": image,
                     "imagePullPolicy": "IfNotPresent",
                     "command": ["python", "-B", "-c", SERVER, token, str(port)],
+                    "ports": [{"name": "http", "containerPort": port}],
                     "resources": {
                         "requests": {"cpu": "10m", "memory": "32Mi"},
                         "limits": {"cpu": "100m", "memory": "64Mi"},
@@ -139,8 +153,39 @@ def chart_fixture(namespace, ops_namespace, token, node, image, helm):
     rendered = render_bundle(values, namespace, helm)
     if set(rendered) != set(COMPONENTS):
         raise ValueError("All three evaluation policy releases are required")
-    resources, hashes = [], {}
+    resources, hashes, services = [], {}, []
     for component, rows in rendered.items():
+        service_rows = [row for row in rows if row["kind"] == "Service"]
+        if component == "evaluation-runner":
+            if service_rows:
+                raise ValueError("Runner must not expose a chart Service")
+        else:
+            if len(service_rows) != 1:
+                raise ValueError("One chart Service per HTTP component is required")
+            service = service_rows[0]
+            meta, spec = service["metadata"], service["spec"]
+            if (
+                service["apiVersion"] != "v1"
+                or meta.get("name") != component
+                or meta.get("namespace") != namespace
+                or any(
+                    meta.get(key) for key in ("ownerReferences", "finalizers", "deletionTimestamp")
+                )
+                or set(spec) != {"type", "selector", "ports"}
+                or spec["type"] != "ClusterIP"
+                or spec["selector"] != {"app.kubernetes.io/name": component}
+                or spec["ports"]
+                != [
+                    {
+                        "name": "http",
+                        "port": 4200 if component == "prefect" else 8010,
+                        "targetPort": "http",
+                    }
+                ]
+            ):
+                raise ValueError("Chart Service exceeds the disposable ClusterIP scope")
+            meta["labels"] = {LABEL: token}
+            services.append(service)
         candidates = [row for row in rows if row["kind"] == "NetworkPolicy"]
         if len(candidates) != 1 or candidates[0]["metadata"]["name"] != component:
             raise ValueError("One chart NetworkPolicy per component is required")
@@ -197,7 +242,7 @@ def chart_fixture(namespace, ops_namespace, token, node, image, helm):
         (namespace, name, port)
         for name, port in (("prefect", 4200), ("ops-artifacts", 8010), ("evaluation-runner", PORT))
     ]
-    return pods, resources, routes, servers, hashes
+    return pods, resources, routes, servers, hashes, services
 
 
 def identity(resource, name, token, uid=None):
@@ -239,8 +284,15 @@ def remove(kube, kind, name, token, *, namespace=None, uid=None):
     )
 
 
-def request(kube, namespace, source, address, token, *, port=PORT):
-    ipaddress.ip_address(address)
+def request(kube, namespace, source, address, token, *, port=PORT, dns_expected_ip=None):
+    if dns_expected_ip is None:
+        ipaddress.ip_address(address)
+    elif ipaddress.ip_address(dns_expected_ip).version != 4 or not re.fullmatch(
+        r"(?:prefect|ops-artifacts)\.govbiz-evaluation-net-probe-[a-f0-9]{12}-a"
+        r"\.svc\.cluster\.local\.",
+        address,
+    ):
+        raise ValueError("DNS probe must target this fixture's IPv4 ClusterIP Service")
     result = pvc.run(
         kube
         + [
@@ -256,6 +308,7 @@ def request(kube, namespace, source, address, token, *, port=PORT):
             address,
             token,
             str(port),
+            dns_expected_ip or "",
         ],
         timeout=15,
     )
@@ -275,6 +328,9 @@ def exercise(kube, node, *, helm=None):
         "status": "ERROR",
         "scope": "single_node_synthetic_ipv4_tcp",
         "policyProfile": "evaluation_chart" if chart_mode else "cni",
+        "addressModes": ["pod_ip", "cluster_ip", "service_dns"] if chart_mode else ["pod_ip"],
+        "serviceClusterIPVerified": False,
+        "serviceDnsVerified": False,
         "node": node,
         "networkPolicyEnforcementVerified": False,
         "evaluationRuntimeVerified": False,
@@ -297,12 +353,13 @@ def exercise(kube, node, *, helm=None):
         result["nodeUid"] = observed_node["metadata"]["uid"]
         image = yaml.safe_load(pvc.PREFECT_VALUES.read_text(encoding="utf-8"))["image"]
         if chart_mode:
-            pod_specs, policy_specs, routes, servers, hashes = chart_fixture(
+            pod_specs, policy_specs, routes, servers, hashes, service_specs = chart_fixture(
                 *names, token, node, image, helm
             )
             result["chartPolicySpecSha256"] = hashes
             result["namespaceRebinding"] = {"govbiz-msa": names[1]}
         else:
+            service_specs = []
             pod_specs = [
                 pod(ns, token, name, role, node, image)
                 for ns, name, role in (
@@ -370,10 +427,41 @@ def exercise(kube, node, *, helm=None):
                 raise ValueError("This probe requires the selected single IPv4 node")
             addresses[name] = str(address)
 
+        service_ips = {}
+        for resource in service_specs:
+            created = pvc.run(kube + ["create", "-f", "-", "-o", "json"], value=resource)
+            name = resource["metadata"]["name"]
+            identity(created, name, token)
+            address = ipaddress.ip_address(created["spec"]["clusterIP"])
+            if address.version != 4:
+                raise ValueError("This probe requires IPv4 ClusterIP Services")
+            service_ips[name] = str(address)
+        # Keep the original Pod IP route keys. Services only exist for the two
+        # HTTP components; runner ingress remains a Pod IP-only check.
+        destinations = {key: (addresses[route[2]], None) for key, route in routes.items()}
+        for key, route in list(routes.items()):
+            target = route[2]
+            if target in service_ips:
+                for suffix, address, expected_ip in (
+                    ("cluster_ip", service_ips[target], None),
+                    ("service_dns", f"{target}.{names[0]}.svc.cluster.local.", service_ips[target]),
+                ):
+                    routes[key + "__" + suffix] = route
+                    destinations[key + "__" + suffix] = (address, expected_ip)
+        result["expectedReachability"] = {key: route[-1] for key, route in routes.items()}
+
         def sample():
             return {
-                key: request(kube, ns, source, addresses[target], token, port=port)
-                for key, (ns, source, target, port, _) in routes.items()
+                key: request(
+                    kube,
+                    ns,
+                    source,
+                    destinations[key][0],
+                    token,
+                    port=port,
+                    dns_expected_ip=destinations[key][1],
+                )
+                for key, (ns, source, _target, port, _) in routes.items()
             }
 
         result["baseline"] = sample()
@@ -385,8 +473,9 @@ def exercise(kube, node, *, helm=None):
             name = policy["metadata"]["name"]
             policy_uids[name] = identity(created, name, token)
         # Policy distribution is asynchronous. New HTTP/TCP connections are used on
-        # every attempt; the larger chart matrix has a 120s convergence window.
-        deadline = time.monotonic() + (120 if chart_mode else 45)
+        # every attempt; 22 chart routes include separate DNS resolution and
+        # Service translation. Allow 240s for three complete matching rounds.
+        deadline = time.monotonic() + (240 if chart_mode else 45)
         consecutive = 0
         while True:
             observed = sample()
@@ -445,6 +534,8 @@ def exercise(kube, node, *, helm=None):
             result["cleanupErrors"] = errors
             result["status"] = "ERROR"
     result["networkPolicyEnforcementVerified"] = result["status"] == "ENFORCED"
+    result["serviceClusterIPVerified"] = chart_mode and result["status"] == "ENFORCED"
+    result["serviceDnsVerified"] = chart_mode and result["status"] == "ENFORCED"
     return result
 
 
