@@ -17,7 +17,7 @@ import { useFloatingPopover } from '../workspace/useFloatingPopover'
 import { appSidebarStyles, sidebarMenuItemClassName } from './AppSidebar.styles'
 import type { ChatHistoryViewModel } from '../../features/chat/hooks/useChatHistory'
 
-type MenuIcon = 'search' | 'document' | 'bookmark' | 'users' | 'inbox' | 'building' | 'shield' | 'pricing' | 'logout' | 'more' | 'newChat' | 'panel' | 'trash'
+type MenuIcon = 'search' | 'document' | 'bookmark' | 'users' | 'contact' | 'inbox' | 'building' | 'shield' | 'pricing' | 'logout' | 'more' | 'newChat' | 'panel' | 'trash'
 
 /** 사이드바 메뉴 한 줄입니다. `to`가 없으면 아직 화면이 없는 메뉴이므로 링크로 만들지 않습니다. */
 type MenuItem = {
@@ -88,6 +88,13 @@ const iconPaths: Record<MenuIcon, ReactNode> = {
     <>
       <rect x="4" y="3" width="16" height="18" rx="2" />
       <path d="M9 7h2M13 7h2M9 11h2M13 11h2M9 15h2M13 15h2" />
+    </>
+  ),
+  contact: (
+    <>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <circle cx="8" cy="10" r="2" />
+      <path d="M5 17v-1a3 3 0 0 1 6 0v1M14 9h4M14 13h4" />
     </>
   ),
   shield: <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />,
@@ -326,7 +333,7 @@ export function AppSidebar({ onClose, onNewChat, closeLabel, onNavigate, history
                     to={appPaths.adminAccounts}
                     aria-current={pathname.startsWith(appPaths.adminAccounts) ? 'page' : undefined}
                   >
-                    <MenuIconGraphic name="shield" />
+                    <MenuIconGraphic name="contact" />
                     <span>{screenTitles.adminAccounts}</span>
                   </Link>
                   {/* 회원 정보 조회·계정 조치·권한 변경 기록은 회원 관리 바로 아래에서 엽니다. */}
