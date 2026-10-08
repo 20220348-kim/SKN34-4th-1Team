@@ -10,8 +10,13 @@ import SearchRoute from '../../app/(tabs)/index'
 import ProgramRoute from '../../app/program'
 import { LoginFlowProvider } from '../auth/loginFlow'
 import { programDetail } from '../test/preparationFixtures'
+import { listSavedPrograms, saveProgram } from '../api/savedPrograms'
 
 jest.mock('../auth/session', () => ({ useAuth: jest.fn() }))
+jest.mock('expo-router', () => ({ ...jest.requireActual('expo-router'), useFocusEffect: (callback: () => void) => {
+  const React = jest.requireActual<typeof import('react')>('react'); React.useEffect(callback, [callback])
+} }))
+jest.mock('../api/savedPrograms', () => ({ ...jest.requireActual('../api/savedPrograms'), listSavedPrograms: jest.fn(), saveProgram: jest.fn() }))
 jest.mock('../api/client', () => ({ ...jest.requireActual('../api/client'), programClient: jest.fn() }))
 const emptyPage = { programs: [], total: 0, page: 1, pageSize: 12, totalPages: 0, regions: [], categories: [],
   startupStages: [], applicantTypes: [], founderAges: [] }
@@ -25,6 +30,31 @@ function Host() {
 
 beforeEach(() => {
   jest.mocked(useAuth).mockReturnValue({ status: 'signedOut', session: null } as ReturnType<typeof useAuth>)
+  jest.mocked(listSavedPrograms).mockReset().mockResolvedValue([])
+  jest.mocked(saveProgram).mockReset()
+})
+
+test('both search modes share an interest added from the result card without opening its detail', async () => {
+  const program = { ...programDetail, matchedReasons: [], recommendationScore: null, eligibilityReview: null }
+  jest.mocked(useAuth).mockReturnValue({ status: 'signedIn', session: { accessToken: 'owner' }, invalidateSession: jest.fn() } as unknown as ReturnType<typeof useAuth>)
+  jest.mocked(saveProgram).mockResolvedValue({ savedAt: '2026-10-07', program })
+  const client = { browseCatalog: jest.fn().mockResolvedValue({ ...emptyPage, programs: [program], total: 1, totalPages: 1 }),
+    interpretConversation: jest.fn().mockResolvedValue({ status: 'READY', proposedContext: context, clarificationQuestion: null, changedFields: [] }),
+    getSearchReadiness: jest.fn().mockResolvedValue({ indexReady: true, searchState: 'SEARCHABLE' }),
+    search: jest.fn().mockResolvedValue({ query: context.query, programs: [program], totalCount: 1, resultToken: null, expiresAt: null }) }
+  jest.mocked(programClient).mockReturnValue(client as unknown as ReturnType<typeof programClient>)
+  const open = jest.fn(), props = { onOpenProgram: open, onLogin: jest.fn(), onModeChange: jest.fn() }
+  const view = render(<SearchScreen mode="filter" {...props} />)
+  fireEvent.press(await screen.findByLabelText(`${program.title} 관심 공고에 추가`))
+  await screen.findByLabelText(`${program.title} 관심 공고에서 빼기`)
+  view.rerender(<SearchScreen mode="ai" {...props} />)
+  fireEvent.changeText(screen.getByLabelText('회사 상황이나 궁금한 점'), '사업화 지원')
+  fireEvent.press(screen.getByLabelText('AI에게 보내기'))
+  fireEvent.press(await screen.findByLabelText('이 조건으로 검색'))
+  await waitFor(() => expect(within(screen.getByTestId('search-panel-ai')).getByLabelText(`${program.title} 관심 공고에서 빼기`)).toBeTruthy())
+  expect(saveProgram).toHaveBeenCalledWith('owner', { sourceCode: program.sourceCode, sourceProgramId: program.id }, expect.any(AbortSignal))
+  expect(listSavedPrograms).toHaveBeenCalledTimes(1)
+  expect(open).not.toHaveBeenCalled()
 })
 
 test('switching search modes retains inputs and results without querying an unvisited mode or refetching', async () => {

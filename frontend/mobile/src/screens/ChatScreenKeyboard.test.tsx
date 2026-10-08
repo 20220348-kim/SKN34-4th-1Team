@@ -12,6 +12,9 @@ import { LoginFlowProvider } from '../auth/loginFlow'
 import { programClient } from '../api/client'
 
 jest.mock('../auth/session', () => ({ useAuth: jest.fn() }))
+jest.mock('expo-router', () => ({ ...jest.requireActual('expo-router'), useFocusEffect: (callback: () => void) => {
+  const React = jest.requireActual<typeof import('react')>('react'); React.useEffect(callback, [callback])
+} }))
 jest.mock('../api/client', () => ({ ...jest.requireActual('../api/client'), programClient: jest.fn() }))
 
 type KeyboardListener = (event: KeyboardEvent) => void
