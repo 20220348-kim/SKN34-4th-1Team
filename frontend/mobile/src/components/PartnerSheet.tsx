@@ -4,20 +4,20 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { colors } from '../ui'
 
 /** 공용 네이티브 시트. 배경을 투명하게 표시해도 바깥 영역을 누르면 닫힙니다. */
-export function PartnerSheet({ visible, title, onClose, children, actions, dimBackdrop = true }: PropsWithChildren<{
-  visible: boolean; title: string; onClose(): void; actions: ReactNode; dimBackdrop?: boolean
+export function PartnerSheet({ visible, title, onClose, children, actions, dimBackdrop = true, compact = false, bottomSafeArea = true }: PropsWithChildren<{
+  visible: boolean; title: string; onClose(): void; actions: ReactNode; dimBackdrop?: boolean; compact?: boolean; bottomSafeArea?: boolean
 }>) {
   const insets = useSafeAreaInsets()
   return <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={[local.overlay, !dimBackdrop && local.transparentOverlay]}>
       <Pressable style={StyleSheet.absoluteFill} accessibilityLabel="시트 닫기" onPress={onClose} />
-      <View accessibilityViewIsModal style={[local.sheet, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+      <View accessibilityViewIsModal style={[local.sheet, compact && { minHeight: 0 }, { paddingBottom: bottomSafeArea ? compact ? insets.bottom : Math.max(insets.bottom, 16) : 0 }]}>
         <View style={local.grab} />
         <View style={local.header}><Text style={local.title}>{title}</Text>
           <Pressable accessibilityRole="button" accessibilityLabel="닫기" onPress={onClose} style={local.close}>
             <Text style={local.closeText}>×</Text></Pressable></View>
-        <ScrollView bounces={false} overScrollMode="never" contentContainerStyle={local.content} keyboardShouldPersistTaps="handled">{children}</ScrollView>
-        <View style={local.actions}>{actions}</View>
+        <ScrollView bounces={false} overScrollMode="never" style={compact && { flexGrow: 0, flexShrink: 1 }} contentContainerStyle={[local.content, compact && { paddingBottom: 0 }]} keyboardShouldPersistTaps="handled">{children}</ScrollView>
+        {actions != null && <View style={local.actions}>{actions}</View>}
       </View>
     </KeyboardAvoidingView>
   </Modal>

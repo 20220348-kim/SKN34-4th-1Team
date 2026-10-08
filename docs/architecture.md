@@ -321,6 +321,19 @@ ChatConversationController → ChatConversationService → ChatConversationRepos
 사이드바 요금제 아래 목록은 생성 ID 기반 30개 단위 커서 조회를 사용합니다. 기록을 열면 기존 Redux 상태만 복원하며
 검색·해석·OpenAI를 재호출하지 않습니다. 공고 결과는 저장 당시 내용이라는 안내를 표시합니다.
 
+모바일은 `ChatScreen → mobile src/api/chatConversations → shared 대화 DTO 검증 → Bearer 인증의
+ChatConversationController → 기존 Service·Repository·MyBatis·MySQL`로 같은 계정별 기록을 저장·조회합니다.
+`X-Chat-Account`와 `expectedVersion`을 함께 보내고, API 경계에서 저장된 공고 DTO를 shared Mapper로 내부 모델로 변환합니다.
+질문·답변·추천을 시간순으로 유지하고 완료된 대화 상태만 자동 저장합니다. 대화 기록 시트에서 기존 30개 커서 목록과
+상세 스냅샷을 열며 AI를 재호출하지 않습니다. 새 대화는 화면만 초기화하고 서버 기록은 보존합니다.
+저장 실패·충돌은 현재 대화와 함께 표시하며 재저장·미저장 이탈 안내를 제공합니다. 계정 전환·화면 이탈 시 진행 요청과 늦은 응답을 폐기합니다.
+공개 HTTP·DB 계약은 변경하지 않습니다.
+
+모바일 기록 삭제는 `ChatScreen의 삭제 확인 → mobile api/chatConversations → Bearer DELETE
+/api/v1/me/chat-conversations/{id} → 기존 ChatConversationController·Service·Repository`로 이어집니다.
+API 경계에서 204 응답을 확인한 뒤에만 해당 행을 제거하고 현재 대화이면 화면 상태와 대기 중인 스크롤을 초기화합니다.
+다른 대화의 화면 상태는 유지하며 삭제 실패·계정 변경·늦은 삭제 응답은 현재 계정의 기록을 변경하지 않습니다.
+
 Core는 세션 account ID로 모든 SQL을 제한하고 `X-Chat-Account` 사전조건으로 다른 탭의 계정 변경을 감지합니다.
 `V19`의 복합 UNIQUE와 FK는 소유자별 ID를 보호하며 저장 transaction의 계정 행 잠금·expectedVersion 검사로
 중복 생성·동시 덮어쓰기를 막습니다. 동일 내용 재전송은 멱등이며 충돌은 409로 드러냅니다. 이 스냅샷은 회원이 저장한

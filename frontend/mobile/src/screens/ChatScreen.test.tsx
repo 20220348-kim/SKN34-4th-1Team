@@ -1,14 +1,203 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react-native'
-import { ScrollView } from 'react-native'
+import { Alert, ScrollView } from 'react-native'
 import { ChatScreen } from './ChatScreen'
 import { programClient } from '../api/client'
 import { useAuth } from '../auth/session'
 import { programDetail } from '../test/preparationFixtures'
 import { SupportProgramSearchRestoreApiError } from '@govbiz/shared/data/api/supportProgramApi'
 import type { LoginRequest } from '../auth/loginFlow'
+import { deleteChatConversation, getChatConversation, listChatConversations, saveChatConversation } from '../api/chatConversations'
+let mockMessageNumber = 0
+jest.mock('expo-crypto', () => ({ randomUUID: () => `message-${++mockMessageNumber}` }))
 
 jest.mock('../auth/session', () => ({ useAuth: jest.fn() }))
 beforeEach(() => { jest.mocked(useAuth).mockReturnValue({ status: 'signedOut', session: null, invalidateSession: jest.fn() } as unknown as ReturnType<typeof useAuth>) })
+jest.mock('../api/chatConversations', () => ({ deleteChatConversation: jest.fn(), getChatConversation: jest.fn(), listChatConversations: jest.fn(), saveChatConversation: jest.fn() }))
+beforeEach(() => {
+  mockMessageNumber = 0
+  jest.mocked(saveChatConversation).mockReset().mockImplementation(async (_token, _email, id, version) => ({ id, title: '사업화 지원', version: version + 1, updatedAt: '2026-10-08T09:00:00' }))
+  jest.mocked(listChatConversations).mockReset().mockResolvedValue({ items: [], nextCursor: null })
+  jest.mocked(getChatConversation).mockReset()
+  jest.mocked(deleteChatConversation).mockReset().mockResolvedValue(undefined)
+})
+
+describe('conversation deletion', () => {
+  afterEach(() => jest.restoreAllMocks())
+  async function recordedConversation() {
+    signIn()
+    const client = historyClient()
+    const props = { onOpenProgram: jest.fn(), onLogin: jest.fn() }
+    const view = render(<ChatScreen {...props} />)
+    await sendQuestion('삭제할 대화')
+    const saved = jest.mocked(saveChatConversation).mock.calls[0]
+    const record = { id: saved[2], title: '삭제할 대화', version: 1, updatedAt: '2026-10-08T09:00:00' }
+    jest.mocked(listChatConversations).mockResolvedValue({ items: [record, { ...record, id: 'other', title: '다른 기록' }], nextCursor: null })
+    fireEvent.press(screen.getByLabelText('대화 기록'))
+    await screen.findByLabelText('대화 삭제: 삭제할 대화')
+    return { view, props, record, client }
+  }
+  function deletionConfirmation(alert: jest.SpyInstance) {
+    return alert.mock.calls.at(-1)![2].find((button: { style: string }) => button.style === 'destructive').onPress as () => void
+  }
+
+  test('confirmation is required and a successful current-record deletion clears the screen only after the response', async () => {
+    const alert = jest.spyOn(Alert, 'alert')
+    const { record, client } = await recordedConversation()
+    fireEvent.press(screen.getByLabelText('대화 삭제: 삭제할 대화'))
+    expect(deleteChatConversation).not.toHaveBeenCalled()
+    expect(alert).toHaveBeenCalledWith('대화 기록을 삭제할까요?', expect.stringContaining('삭제할 대화'), expect.any(Array))
+    let finish!: () => void
+    jest.mocked(deleteChatConversation).mockReturnValue(new Promise(resolve => { finish = () => resolve(undefined) }))
+    const confirm = deletionConfirmation(alert)
+    act(() => { confirm(); confirm() })
+    expect(deleteChatConversation).toHaveBeenCalledTimes(1)
+    expect(deleteChatConversation).toHaveBeenCalledWith('verified', 'owner@example.com', record.id, expect.any(AbortSignal))
+    expect(screen.getByLabelText('대화 열기: 삭제할 대화')).toBeTruthy()
+    expect(screen.getByLabelText('대화 기록 닫기').props.accessibilityState.disabled).toBe(true)
+    await act(async () => finish())
+    expect(screen.queryByLabelText('대화 열기: 삭제할 대화')).toBeNull()
+    expect(screen.getByLabelText('대화 열기: 다른 기록')).toBeTruthy()
+    fireEvent.press(screen.getByLabelText('대화 기록 닫기'))
+    expect(screen.queryByText('삭제할 대화')).toBeNull()
+    expect(screen.getByText('우리 회사에 맞는 지원사업,')).toBeTruthy()
+    expect(client.interpretConversation).toHaveBeenCalledTimes(1)
+    expect(client.search).not.toHaveBeenCalled()
+  })
+
+  test('deleting a different record preserves the active conversation and its save version', async () => {
+    const alert = jest.spyOn(Alert, 'alert')
+    const { record } = await recordedConversation()
+    fireEvent.press(screen.getByLabelText('대화 삭제: 다른 기록'))
+    await act(async () => deletionConfirmation(alert)())
+    expect(screen.queryByLabelText('대화 열기: 다른 기록')).toBeNull()
+    expect(screen.getByLabelText('대화 열기: 삭제할 대화')).toBeTruthy()
+    fireEvent.press(screen.getByLabelText('대화 기록 닫기'))
+    expect(screen.getByText('삭제할 대화')).toBeTruthy()
+    await sendQuestion('이어서 질문')
+    expect(jest.mocked(saveChatConversation).mock.calls.at(-1)!.slice(2, 4)).toEqual([record.id, 1])
+  })
+
+  test('a deletion failure retains the record and conversation and allows retry', async () => {
+    const alert = jest.spyOn(Alert, 'alert')
+    await recordedConversation()
+    jest.mocked(deleteChatConversation).mockRejectedValueOnce(new Error('offline'))
+    fireEvent.press(screen.getByLabelText('대화 삭제: 삭제할 대화'))
+    await act(async () => deletionConfirmation(alert)())
+    expect(screen.getByText('대화 기록을 삭제하지 못했어요. 기록은 유지됩니다. 다시 삭제해 주세요.')).toBeTruthy()
+    expect(screen.getByLabelText('대화 열기: 삭제할 대화')).toBeTruthy()
+    fireEvent.press(screen.getByLabelText('대화 삭제: 삭제할 대화'))
+    await act(async () => deletionConfirmation(alert)())
+    expect(screen.queryByLabelText('대화 열기: 삭제할 대화')).toBeNull()
+  })
+
+  test.each(['confirmation', 'request'] as const)('account changes discard the old %s before it can alter another account', async stage => {
+    const alert = jest.spyOn(Alert, 'alert')
+    const { view, props } = await recordedConversation()
+    let finish!: () => void
+    jest.mocked(deleteChatConversation).mockReturnValue(new Promise(resolve => { finish = () => resolve(undefined) }))
+    fireEvent.press(screen.getByLabelText('대화 삭제: 삭제할 대화'))
+    const confirm = deletionConfirmation(alert)
+    if (stage === 'request') act(confirm)
+    jest.mocked(useAuth).mockReturnValue({ status: 'signedIn', session: { accessToken: 'another', account: { email: 'another@example.com' } } } as ReturnType<typeof useAuth>)
+    view.rerender(<ChatScreen {...props} />)
+    if (stage === 'confirmation') {
+      act(confirm)
+      expect(deleteChatConversation).not.toHaveBeenCalled()
+    } else {
+      expect(jest.mocked(deleteChatConversation).mock.calls[0][3]!.aborted).toBe(true)
+      await act(async () => finish())
+    }
+    expect(screen.queryByLabelText('대화 열기: 삭제할 대화')).toBeNull()
+    expect(screen.getByText('우리 회사에 맞는 지원사업,')).toBeTruthy()
+  })
+})
+
+function historyClient() {
+  const client = { interpretConversation: jest.fn().mockResolvedValue({ status: 'READY', proposedContext: context, answer: '조건을 확인해 주세요.', clarificationQuestion: null, changedFields: [] }),
+    getSearchReadiness: jest.fn().mockResolvedValue({ indexReady: true, searchState: 'SEARCHABLE' }), search: jest.fn().mockResolvedValue(full) }
+  jest.mocked(programClient).mockReturnValue(client as unknown as ReturnType<typeof programClient>)
+  return client
+}
+
+async function sendQuestion(text: string) {
+  fireEvent.changeText(screen.getByLabelText('회사 상황이나 궁금한 점'), text)
+  await act(async () => { fireEvent.press(screen.getByLabelText('AI에게 보내기')) })
+}
+
+test('each result stays before the next question and earlier recommendations remain after a second search', async () => {
+  const client = historyClient()
+  client.search.mockResolvedValueOnce({ ...full, programs: [programs[0]] }).mockResolvedValueOnce({ ...full, programs: [programs[1]] })
+  render(<ChatScreen onOpenProgram={jest.fn()} onLogin={jest.fn()} />)
+  await sendQuestion('첫 질문')
+  await act(async () => { fireEvent.press(screen.getByLabelText('이 조건으로 검색')) })
+  await sendQuestion('두 번째 질문')
+  const contents = within(screen.getByTestId('ai-search-timeline')).getAllByText(/^(첫 질문|두 번째 질문|추천 사업 0)$/).map(node => node.props.children)
+  expect(contents).toEqual(['첫 질문', '추천 사업 0', '두 번째 질문'])
+  await act(async () => { fireEvent.press(screen.getByLabelText('이 조건으로 검색')) })
+  expect(screen.getByText('추천 사업 0')).toBeTruthy()
+  expect(screen.getByText('추천 사업 1')).toBeTruthy()
+  expect(screen.getByTestId('ai-search-previous-results')).toBeTruthy()
+  expect(saveChatConversation).not.toHaveBeenCalled()
+})
+
+test('saved history survives a remount and opens questions, proposals and results without new AI calls', async () => {
+  signIn()
+  const client = historyClient()
+  const props = { onOpenProgram: jest.fn(), onLogin: jest.fn() }
+  let view = render(<ChatScreen {...props} />)
+  await sendQuestion('저장할 질문')
+  await act(async () => { fireEvent.press(screen.getByLabelText('이 조건으로 검색')) })
+  const saved = jest.mocked(saveChatConversation).mock.calls.at(-1)!
+  expect(saved.slice(0, 2)).toEqual(['verified', 'owner@example.com'])
+  expect(saved[3]).toBe(1)
+  const summary = { id: saved[2], title: '저장할 질문', version: 2, updatedAt: '2026-10-08T09:00:00' }
+  jest.mocked(listChatConversations).mockResolvedValue({ items: [summary], nextCursor: null })
+  jest.mocked(getChatConversation).mockResolvedValue({ conversation: summary, snapshot: saved[4] })
+  view.unmount(); view = render(<ChatScreen {...props} />)
+  fireEvent.press(screen.getByLabelText('대화 기록'))
+  fireEvent.press(await screen.findByLabelText('대화 열기: 저장할 질문'))
+  await screen.findByText('추천 사업 4')
+  expect(screen.getByText('저장할 질문')).toBeTruthy()
+  expect(client.interpretConversation).toHaveBeenCalledTimes(1)
+  expect(client.search).toHaveBeenCalledTimes(1)
+  fireEvent.press(screen.getByLabelText('새 대화'))
+  expect(screen.queryByText('저장할 질문')).toBeNull()
+  expect(screen.queryByText('추천 사업 4')).toBeNull()
+  await sendQuestion('새로운 대화')
+  expect(jest.mocked(saveChatConversation).mock.calls.at(-1)![3]).toBe(0)
+  expect(jest.mocked(saveChatConversation).mock.calls.at(-1)![2]).not.toBe(saved[2])
+  view.unmount()
+})
+
+test('a failed history save keeps the conversation and retries the same snapshot without another AI call', async () => {
+  signIn()
+  const client = historyClient()
+  jest.mocked(saveChatConversation).mockRejectedValueOnce(new Error('offline'))
+  render(<ChatScreen onOpenProgram={jest.fn()} onLogin={jest.fn()} />)
+  await sendQuestion('저장 실패 질문')
+  await screen.findByLabelText('대화 다시 저장')
+  expect(screen.getByText('저장 실패 질문')).toBeTruthy()
+  const snapshot = jest.mocked(saveChatConversation).mock.calls[0][4]
+  await act(async () => { fireEvent.press(screen.getByLabelText('대화 다시 저장')) })
+  expect(jest.mocked(saveChatConversation).mock.calls[1][4]).toBe(snapshot)
+  expect(screen.queryByLabelText('대화 다시 저장')).toBeNull()
+  expect(client.interpretConversation).toHaveBeenCalledTimes(1)
+})
+
+test('a previous account history response is discarded on account change', async () => {
+  signIn(); historyClient()
+  let finish!: (page: Awaited<ReturnType<typeof listChatConversations>>) => void
+  jest.mocked(listChatConversations).mockReturnValue(new Promise(resolve => { finish = resolve }))
+  const props = { onOpenProgram: jest.fn(), onLogin: jest.fn() }
+  const view = render(<ChatScreen {...props} />)
+  fireEvent.press(screen.getByLabelText('대화 기록'))
+  const signal = jest.mocked(listChatConversations).mock.calls[0][3]!
+  jest.mocked(useAuth).mockReturnValue({ status: 'signedIn', session: { accessToken: 'another', account: { email: 'another@example.com' } } } as ReturnType<typeof useAuth>)
+  view.rerender(<ChatScreen {...props} />)
+  await act(async () => finish({ items: [{ id: 'old', title: '이전 계정 비공개 기록', version: 1, updatedAt: '2026-10-08T09:00:00' }], nextCursor: null }))
+  expect(signal.aborted).toBe(true)
+  expect(screen.queryByLabelText('대화 열기: 이전 계정 비공개 기록')).toBeNull()
+})
 jest.mock('../api/client', () => ({ ...jest.requireActual('../api/client'), programClient: jest.fn(), errorMessage: () => '요청 실패' }))
 
 const context = { query: '사업화 지원', acceptingOnly: true,
@@ -85,7 +274,7 @@ test('insufficient search details invite extra input and preserve the pending cl
   expect(clarificationCard.getByText('답변을 입력해 주세요. 아직 검색하지 않았어요.')).toBeTruthy()
   expect(screen.getAllByLabelText('추가 내용 입력하기')).toHaveLength(1)
   fireEvent.changeText(screen.getByLabelText('회사 상황이나 궁금한 점'), '작성 중인 추가 내용')
-  expect(screen.queryByLabelText('새 대화')).toBeNull()
+  expect(screen.getByLabelText('새 대화')).toBeTruthy()
   fireEvent.press(screen.getByLabelText('추가 내용 입력하기'))
   expect(screen.getByLabelText('회사 상황이나 궁금한 점').props.value).toBe('작성 중인 추가 내용')
   expect(client.interpretConversation).toHaveBeenCalledTimes(1)
