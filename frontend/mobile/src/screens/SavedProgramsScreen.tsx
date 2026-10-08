@@ -225,16 +225,16 @@ export function SavedProgramsScreen({ onOpenProgram, onCountChange, onLogin }: {
           {!workspace.loading && (workspace.reviews?.length ?? 0) > 0 && !shownReviews.length && <Notice>조건에 맞는 중복 검토가 없습니다.</Notice>}</>}
       </>}
     </ScrollView>
-    <PartnerSheet visible={filterOpen} title={view === 'saved' ? '관심 공고 필터' : '준비 작업 필터'} onClose={() => setFilterOpen(false)} actions={<>
+    <PartnerSheet visible={filterOpen} compact={view === 'preparation'} title={view === 'saved' ? '관심 공고 필터' : '준비 작업 필터'} onClose={() => setFilterOpen(false)} actions={<>
       <Button label="초기화" variant="secondary" onPress={view === 'saved' ? resetFilters : resetWorkFilters} />
       <Button label={view === 'preparation' ? workCount === null ? '결과 확인하기' : `결과 ${shownPreparations.length + shownReviews.length}건 보기`
         : listStageReady && !visible.error ? `결과 ${shown.length}건 보기` : '결과 확인하기'} onPress={() => setFilterOpen(false)} />
     </>}>
       {view === 'preparation' ? <>
-        <ChoiceField label="작업 종류" value={workType} options={[{ value: 'all', label: '전체 작업' }, { value: 'document', label: '신청 문서' }, { value: 'review', label: '중복 검토' }]}
+        <ChoiceField compact label="작업 종류" value={workType} options={[{ value: 'all', label: '전체 작업' }, { value: 'document', label: '신청 문서' }, { value: 'review', label: '중복 검토' }]}
           onChange={value => { setWorkType(value as WorkType); setWorkStatus('all'); setWorkStage('all') }} />
-        <ChoiceField label="작업 상태" value={workStatus} options={workStatusOptions} onChange={value => setWorkStatus(value as WorkStatus)} />
-        {workType === 'document' && <ChoiceField label="신청 진행 단계" value={workStage} options={[{ value: 'all', label: '전체 단계' }, ...applicationProgressStages.map(value => ({ value, label: applicationProgressStageLabels[value] }))]}
+        <ChoiceField compact label="작업 상태" value={workStatus} options={workStatusOptions} onChange={value => setWorkStatus(value as WorkStatus)} />
+        {workType === 'document' && <ChoiceField compact label="신청 진행 단계" value={workStage} options={[{ value: 'all', label: '전체 단계' }, ...applicationProgressStages.map(value => ({ value, label: applicationProgressStageLabels[value] }))]}
           onChange={value => setWorkStage(value as 'all' | ApplicationProgressStage)} />}
       </> : <>
       <FilterMultiChoices label="지역" selected={criteria.region} options={options([...regionNames, ...criteria.region, ...visible.programs.flatMap(item => item.program.regions)])}
