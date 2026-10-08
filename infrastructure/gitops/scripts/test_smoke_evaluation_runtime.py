@@ -463,7 +463,7 @@ class RuntimeTests(unittest.TestCase):
         self.assertIn("--evaluate ", checks[0]["run"])
         self.assertEqual(workflow["jobs"]["merge-readiness"]["needs"], ["integration"])
 
-    def deployment_failure(self, *, at_rollout=False):
+    def deployment_failure(self, *, at_rollout=False, network_result=None):
         events = []
         settings = {
             "repository": "bridge-smoke/local",
@@ -535,6 +535,18 @@ class RuntimeTests(unittest.TestCase):
             patch.object(smoke, "collect", return_value={}),
             patch.object(smoke.snapshot.storage, "inspect", return_value={}),
             patch.object(smoke.snapshot.storage, "environment", return_value=env),
+            patch.object(
+                smoke.evaluation_network_probe,
+                "exercise",
+                return_value=network_result
+                if network_result is not None
+                else {
+                    "status": "ENFORCED",
+                    "policyProfile": "evaluation_chart",
+                    "networkPolicyEnforcementVerified": True,
+                    "cleanupComplete": True,
+                },
+            ) as network_probe,
             patch.object(smoke, "langfuse_url", return_value="http://172.20.0.2:3000"),
             patch.object(smoke.pvc, "restored_pvcs", side_effect=restored),
             patch.object(
@@ -558,6 +570,22 @@ class RuntimeTests(unittest.TestCase):
                 EXPECTED,
                 report,
             )
+        self.assertEqual(network_probe.call_args.args[1], PROJECT + "-control-plane")
+        self.assertEqual(network_probe.call_args.kwargs, {"helm": "helm"})
+        if network_result is not None:
+            self.assertEqual(events, [])
+            render.assert_not_called()
+            self.assertEqual(
+                report["evaluation_kubernetes_runtime"]["network_policy_probe"],
+                network_result,
+            )
+            self.assertFalse(
+                any(
+                    call.args[0][:3] == ["docker", "image", "tag"]
+                    for call in execute.call_args_list
+                )
+            )
+            return
         self.assertEqual(
             events,
             [
@@ -598,6 +626,26 @@ class RuntimeTests(unittest.TestCase):
 
     def test_rollout_is_diagnosed_before_namespace_and_tags_are_deleted(self):
         self.deployment_failure(at_rollout=True)
+
+    def test_network_failure_or_wrong_profile_blocks_runtime_before_creating_pvcs(self):
+        for change in (
+            {"status": "NOT_ENFORCED"},
+            {"status": "INCONCLUSIVE"},
+            {"status": "ERROR"},
+            {"policyProfile": "cni"},
+            {"networkPolicyEnforcementVerified": False},
+            {"cleanupComplete": False},
+        ):
+            with self.subTest(change=change):
+                self.deployment_failure(
+                    network_result={
+                        "status": "ENFORCED",
+                        "policyProfile": "evaluation_chart",
+                        "networkPolicyEnforcementVerified": True,
+                        "cleanupComplete": True,
+                        **change,
+                    }
+                )
 
 
 if __name__ == "__main__":

@@ -92,18 +92,23 @@ class ProbeTests(unittest.TestCase):
                 self.resources = {k: v for k, v in self.resources.items() if k[0] != name}
             return {"kind": "Status", "status": "Success"}
         if args[0] == "exec":
-            source, address = args[1], args[-2]
+            source, address = args[1], args[-3]
             if self.response_invalid:
                 return {"outcome": "unexpected_response", "private": "PRIVATE_DIAGNOSTIC"}
             policies = any(k[1] == "networkpolicy" for k in self.resources)
             if address == "127.0.0.1":
                 return {"outcome": "rejected" if self.server_broken else "reachable"}
-            server_ip = next(
-                v["status"]["podIP"]
+            destination = next(
+                k[2]
                 for k, v in self.resources.items()
-                if k[1:] == ("pod", "server")
+                if k[1] == "pod" and v["status"]["podIP"] == address
             )
-            allow = source == "allowed" and address == server_ip
+            allow = (source, destination) in {
+                ("allowed", "server"),
+                ("ops", "prefect"),
+                ("ops", "ops-artifacts"),
+                ("evaluation-runner", "prefect"),
+            }
             blocked = (not policies and self.baseline_broken) or (
                 policies and self.enforced and (not allow or self.allow_broken)
             )
@@ -223,6 +228,74 @@ class ProbeTests(unittest.TestCase):
         self.assertEqual(result["status"], "ERROR")
         self.assertNotIn("PRIVATE_DIAGNOSTIC", stdout.getvalue())
         self.assertFalse(self.created)
+
+    def test_actual_chart_policies_cover_ops_runner_and_impostor_clients(self):
+        result = probe.exercise(self.kube, "fixture-control-plane", helm="helm")
+        self.assertEqual(result["status"], "ENFORCED")
+        self.assertEqual(result["policyProfile"], "evaluation_chart")
+        self.assertEqual(sum(result["expectedReachability"].values()), 3)
+        self.assertEqual(len(result["policyChecks"]), 8)
+        self.assertEqual(len(result["chartPolicySpecSha256"]), 3)
+        self.assertFalse(result["evaluationRuntimeVerified"])
+        self.assertFalse(self.resources)
+        policies = [r for r in self.created if r["kind"] == "NetworkPolicy"]
+        pods = [r for r in self.created if r["kind"] == "Pod"]
+        self.assertEqual(len(policies), 3)
+        self.assertEqual(len(pods), 6)
+        self.assertNotIn("govbiz-msa", {r["metadata"]["namespace"] for r in policies + pods})
+        for policy in policies:
+            for rule in policy["spec"]["ingress"]:
+                for peer in rule["from"]:
+                    if "namespaceSelector" in peer:
+                        self.assertEqual(
+                            peer["namespaceSelector"]["matchLabels"],
+                            {
+                                "kubernetes.io/metadata.name": result["namespaceRebinding"][
+                                    "govbiz-msa"
+                                ]
+                            },
+                        )
+                        self.assertEqual(
+                            peer["podSelector"]["matchLabels"],
+                            {"app.kubernetes.io/name": "ops-service"},
+                        )
+        self.assertEqual(
+            {p["spec"]["containers"][0]["command"][-1] for p in pods}, {"4200", "8010", "8090"}
+        )
+
+    def test_chart_policy_scope_and_render_failure_prevent_all_writes(self):
+        render = probe.render_bundle
+        for problem in ("missing", "namespace", "foreign_peer", "helm"):
+
+            def invalid(*args, problem=problem, **kwargs):
+                if problem == "helm":
+                    raise ValueError("PRIVATE_DIAGNOSTIC")
+                rows = render(*args, **kwargs)
+                if problem == "missing":
+                    del rows["prefect"]
+                else:
+                    policy = next(r for r in rows["prefect"] if r["kind"] == "NetworkPolicy")
+                    if problem == "namespace":
+                        policy["metadata"]["namespace"] = "govbiz-msa"
+                    else:
+                        policy["spec"]["ingress"][0]["from"][0]["namespaceSelector"] = {}
+                return rows
+
+            with (
+                self.subTest(problem=problem),
+                patch.object(probe, "render_bundle", side_effect=invalid),
+            ):
+                result = probe.exercise(self.kube, "fixture-control-plane", helm="helm")
+            self.assertEqual(result["status"], "ERROR")
+            self.assertFalse(self.created)
+            self.assertNotIn("PRIVATE_DIAGNOSTIC", json.dumps(result))
+
+    def test_chart_profile_never_passes_when_cni_ignores_policies(self):
+        self.enforced = False
+        result = probe.exercise(self.kube, "fixture-control-plane", helm="helm")
+        self.assertEqual(result["status"], "NOT_ENFORCED")
+        self.assertTrue(result["cleanupComplete"])
+        self.assertFalse(result["networkPolicyEnforcementVerified"])
 
 
 if __name__ == "__main__":
