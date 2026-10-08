@@ -34,6 +34,7 @@ const runFailureMessages: Record<string, string> = {
   RUN_QUEUE_UNAVAILABLE: '현재 분석 요청을 접수할 수 없어 실행하지 못했습니다. 잠시 후 다시 시도해 주세요.',
   QUEUE_EXPIRED: '분석 요청이 대기 시간 안에 처리되지 않아 종료되었습니다. 잠시 후 새 분석을 실행해 주세요.',
   ACCOUNT_INACTIVE: '계정 상태가 변경되어 분석을 진행할 수 없습니다. 로그인 및 계정 상태를 확인해 주세요.',
+  RUN_OUTCOME_UNKNOWN_EXPIRED: '분석 완료 여부를 끝내 확인하지 못해 실패로 정리했습니다. 결과가 필요하면 새 분석을 실행해 주세요.',
 }
 
 export function reviewRunFailureMessage(failureCode: string | null): string {

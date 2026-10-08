@@ -72,7 +72,7 @@ export function ReviewRunResult({ run, currentRevision, names, download, downloa
     {run.inputRevision !== currentRevision && <p className={s.warning}>과거 입력 버전의 결과입니다. 현재 저장 입력(버전 {currentRevision})에 대한 결과가 아닙니다.</p>}
     {run.status === 'QUEUED' && <p role="status" className={s.info}>분석 차례를 기다리고 있어요. 화면을 나가도 계속되고, 상태는 자동으로 확인해요.</p>}
     {run.status === 'RUNNING' && <p role="status" className={s.info}>공식 문서를 읽고 단계별로 판단하고 있어요. 화면을 나가도 계속되고, 상태는 자동으로 확인해요.</p>}
-    {run.status === 'UNKNOWN' && <p role="status" className={s.warning}>분석 완료 여부를 확인할 수 없습니다. 중복 과금을 방지하기 위해 자동 재실행과 같은 검토의 새 분석을 차단했습니다. 운영자 확인이 필요합니다.</p>}
+    {run.status === 'UNKNOWN' && <p role="status" className={s.warning}>분석 완료 여부를 확인할 수 없습니다. 중복 과금을 방지하기 위해 자동 재실행과 같은 검토의 새 분석을 잠시 차단했습니다. 30분 안에 실패로 정리되면 새 분석을 실행할 수 있습니다.</p>}
     {(run.status === 'FAILED' || run.status === 'INTERRUPTED') && <div className={`${s.warning} flex flex-wrap items-center justify-between gap-3`}>
       <p>{reviewRunFailureMessage(run.failureCode)}</p>
       <Link className={s.secondarySm} to={`${appPaths.combinationReviews}/${run.reviewId}?step=analysis`}>다시 시도</Link>

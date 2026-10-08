@@ -117,4 +117,8 @@
         UPDATE combination_review_run SET status = 'UNKNOWN', failure_code = 'RUN_OUTCOME_UNKNOWN', finished_at = #{now}
         WHERE status = 'RUNNING' AND COALESCE(execution_started_at, started_at) &lt;= DATE_SUB(#{now}, INTERVAL 20 MINUTE)
     </update>
+    <update id="releaseUnknown">
+        UPDATE combination_review_run SET status = 'FAILED', failure_code = 'RUN_OUTCOME_UNKNOWN_EXPIRED'
+        WHERE status = 'UNKNOWN' AND finished_at &lt;= DATE_SUB(#{now}, INTERVAL #{ttlSeconds} SECOND)
+    </update>
 </mapper>

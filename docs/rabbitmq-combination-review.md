@@ -59,12 +59,12 @@ DB transaction 안에서 RabbitMQ·다운로드·AI를 호출하지 않는다. �
 | RUNNING | DB 실행권 선점 완료. 같은 ID의 재전달은 재실행하지 않음 |
 | SUCCEEDED | 검증된 분석 결과와 근거 저장 완료 |
 | FAILED | 수집 실패·잘못된 응답 등 확정된 기술 실패. 정상적인 근거 부족 판단과 다름 |
-| UNKNOWN | AI 호출/결과 저장의 완료 여부 불명 또는 실행 20분 초과. 자동 재실행하지 않음 |
+| UNKNOWN | AI 호출/결과 저장의 완료 여부 불명 또는 실행 20분 초과. 자동 재실행하지 않음. TTL(`COMBINATION_REVIEW_UNKNOWN_TTL`, 기본 30분, 최소 20분)이 지나면 `RUN_OUTCOME_UNKNOWN_EXPIRED`로 FAILED 처리해 슬롯과 한도를 돌려준다 |
 | INTERRUPTED | 기존 이력 및 운영 확인 후 중단 확정 상태 |
 
 - DB 고유키 `(review_id, request_key)`와 요청 해시가 중복 요청을 보호한다.
 - `(review_id, running_slot)`은 QUEUED/RUNNING/UNKNOWN을 같은 활성 슬롯으로 취급한다.
-  UNKNOWN이 있는 검토는 새 키로도 재실행할 수 없다.
+  UNKNOWN이 있는 검토는 TTL로 FAILED가 되기 전까지 새 키로도 재실행할 수 없다.
 - 계정 행 잠금 아래 계정 전체의 QUEUED/RUNNING/UNKNOWN 합계를 검사해 **최대 3건**만 허용한다.
 - 새 접수는 기존 요청량 제한도 적용받는다. 정상적인 동일 키 재조회는 새 요청량을 소비하지 않는다.
 - 검토 큐는 single-active-consumer, 동시 소비 1, prefetch 1이다. 리포트 소비자와 별개다.
@@ -124,6 +124,8 @@ ORDER BY id;
 ```
 
 UNKNOWN은 해당 run ID와 runner_instance_id를 기준으로 실제 worker 종료 및 외부 호출/과금 상태를 확인한다.
+만료 검사는 UNKNOWN 기록 후 TTL이 지나면 AI를 다시 부르지 않고 FAILED / `RUN_OUTCOME_UNKNOWN_EXPIRED`로 정리한다.
+이미 끝난 실행권은 되살아나지 않으므로 늦은 완료·재전달은 상태를 바꾸지 못하고, 사용자가 새 분석을 직접 실행해야 새 호출이 생긴다.
 상태를 QUEUED로 돌리거나 DLQ를 일괄 재생하지 않는다. 자동 재실행이 안전함을 보장하는 복구 API는 제공하지 않는다.
 운영자가 중단을 확정한 뒤 별도 승인된 조건부 데이터 수정 절차로 INTERRUPTED 처리할 수 있지만, 이것이 과금 취소를 뜻하지 않는다.
 
@@ -134,7 +136,7 @@ UNKNOWN은 해당 run ID와 runner_instance_id를 기준으로 실제 worker 종
 - `CombinationReviewQueueIntegrationTest`: 실제 RabbitMQ/MySQL, 소비 중단 중 적재, 중복 전달,
   브로커 중단/복구, 누락 binding, 잘못된 메시지 DLQ, AI 결과 불명 재실행 차단.
 - Frontend: 202 해석, 대기→분석→완료 자동 조회, 재접속 복구, 조회 실패 중지/수동 재확인,
-  로그아웃 격리, UNKNOWN의 새 실행 차단.
+  로그아웃 격리, UNKNOWN의 새 실행 차단과 30분 뒤 해제 안내.
 - Compose 검증: 실제 사용자 검토 작업이나 유료 AI 호출 없이 두 큐/DLQ와 소비자 연결·브로커 복구를 검사한다.
 
 이 검증은 실제 공고 분석의 정확도나 사람 검수를 대신하지 않는다. 자동 테스트의 외부 다운로드·AI는 스텁이다.

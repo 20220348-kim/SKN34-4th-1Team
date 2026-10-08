@@ -238,6 +238,7 @@ describe('review screens and execution safety', () => {
     repository.run.mockResolvedValue({ ...runFixture, status: 'UNKNOWN', analysis: null, failureCode: 'RUN_OUTCOME_UNKNOWN' })
     await act(async () => { mount() })
     expect(screen.getByText(/완료 여부를 확인할 수 없는 실행/)).toBeTruthy()
+    expect(screen.getByText(/30분 안에 실패로 정리되면 새 분석을 실행할 수 있어요/)).toBeTruthy()
     expect((screen.getByRole('button', { name: '검토 실행' }) as HTMLButtonElement).disabled).toBe(true)
     await act(async () => { await vi.advanceTimersByTimeAsync(9000) })
     expect(repository.run).not.toHaveBeenCalled()
@@ -649,6 +650,7 @@ describe('review screens and execution safety', () => {
     ['RUN_FAILED', '분석 처리 중 일시적인 시스템 오류가 발생해'],
     ['QUEUE_EXPIRED', '분석 요청이 대기 시간 안에 처리되지 않아'],
     ['ACCOUNT_INACTIVE', '계정 상태가 변경되어 분석을 진행할 수 없습니다'],
+    ['RUN_OUTCOME_UNKNOWN_EXPIRED', '분석 완료 여부를 끝내 확인하지 못해 실패로 정리했습니다'],
   ])('explains the saved %s failure without exposing its internal code', async (failureCode, message) => {
     repository.run.mockResolvedValue({ ...runFixture, status: 'FAILED', analysis: null, failureCode })
 

@@ -90,7 +90,7 @@ function latestRunView(item: ReviewListItem) {
   const resultPath = combinationReviewRunResultPath(item.id, run.id)
   if (run.status === 'QUEUED') return { badge: '분석 대기', tone: s.badgeInfo, note: '차례를 기다리고 있어요. 곧 분석을 시작해요', action: '진행 보기', to: analysisPath, state: 'working' as const }
   if (run.status === 'RUNNING') return { badge: '분석 중', tone: s.badgeInfo, note: '공식 문서를 읽고 단계별로 판단하고 있어요', action: '진행 보기', to: analysisPath, state: 'working' as const }
-  if (run.status === 'UNKNOWN') return { badge: runLabels.UNKNOWN, tone: s.badgeWarn, note: '완료 여부를 확인하지 못했어요. 중복 과금을 막기 위해 새 분석을 막아 뒀어요', action: '상태 보기', to: analysisPath, state: 'checking' as const }
+  if (run.status === 'UNKNOWN') return { badge: runLabels.UNKNOWN, tone: s.badgeWarn, note: '완료 여부를 확인하지 못했어요. 중복 과금을 막기 위해 새 분석을 잠시 막아 뒀고, 30분 안에 풀려요', action: '상태 보기', to: analysisPath, state: 'checking' as const }
   if (run.status === 'SUCCEEDED') return {
     badge: runLabels.SUCCEEDED, tone: s.badgeOk, action: '결과 보기', to: resultPath, state: 'done' as const,
     note: run.inputRevision < item.inputRevision ? '입력을 바꾼 뒤에는 아직 실행하지 않았어요. 지난 입력의 결과예요' : '판단 결과와 확인할 정보를 볼 수 있어요',
@@ -376,7 +376,7 @@ function ReviewEditor({ id, account, initialProgram = null }: { id: number | nul
           {invalidProgramCount && <p className={s.warning}>기존에 저장한 3개 공고의 결과는 조회할 수 있지만 새 분석은 공고를 2개로 줄인 뒤 실행할 수 있습니다.</p>}
           {unsupported && <p className={s.warning}>{unsupportedNotice}</p>}
           {analysisBusy && <p role="status" className={s.info}>분석 요청을 접수하고 있어요. 창을 닫아도 접수된 서버 작업은 취소되지 않아요.</p>}
-          {unknownRun && <p className={s.warning}>완료 여부를 확인할 수 없는 실행이 있어 같은 검토의 새 분석을 막았어요. 중복 과금을 막기 위해 자동으로 다시 실행하지 않으며 운영자 확인이 필요해요.</p>}
+          {unknownRun && <p className={s.warning}>완료 여부를 확인할 수 없는 실행이 있어 같은 검토의 새 분석을 잠시 막았어요. 중복 과금을 막기 위해 자동으로 다시 실행하지 않고, 30분 안에 실패로 정리되면 새 분석을 실행할 수 있어요.</p>}
           {vm.pollingPaused && <p className={s.warning}>상태 자동 조회가 멈췄어요. 아래 실행 기록에서 항목을 눌러 다시 확인해 주세요. 서버 작업은 취소되지 않아요.</p>}
           {vm.pending && <div className={`${s.warning} flex flex-wrap items-center justify-between gap-3`}><div><p>응답을 확인하지 못한 분석 요청이 있어요. 같은 요청 키 · 입력 버전 · 추가 설명으로만 다시 확인해요.</p><p>요청 입력 버전 {vm.pending.expectedRevision}</p><p className="whitespace-pre-wrap">추가 설명: {vm.pending.additionalFacts || '없음'}</p></div><button className={s.secondarySm} disabled={analysisBusy} onClick={() => vm.start(true)}>다시 시도</button></div>}
         </section>

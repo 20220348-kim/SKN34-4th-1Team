@@ -45,9 +45,9 @@ export function ReviewResult({ run, currentRevision, names, onSupplement, onRefr
     {run.inputRevision !== currentRevision && <Notice>입력 변경 전의 결과예요. 현재 입력에 대한 결과가 아닙니다. 이전 결과는 이력에 보관돼요.</Notice>}
     {(run.status === 'QUEUED' || run.status === 'RUNNING') && <Card><Text style={styles.heading}>{run.status === 'QUEUED' ? '검토 요청이 접수됐어요' : '공식 자료 수집·분석 중이에요'}</Text>
       <Text style={styles.body}>다른 화면으로 이동해도 요청은 유지돼요. 새 분석을 요청하지 않아도 상태를 다시 확인할 수 있어요.</Text></Card>}
-    {run.status === 'UNKNOWN' && <Notice error>분석 완료 여부를 확인하지 못했어요. 중복 실행을 막기 위해 새 분석은 차단돼 있습니다. 운영자 확인이 필요해요.</Notice>}
+    {run.status === 'UNKNOWN' && <Notice error>분석 완료 여부를 확인하지 못했어요. 중복 과금을 막기 위해 새 분석을 잠시 막아 뒀어요. 30분 안에 실패로 정리되면 다시 분석할 수 있어요.</Notice>}
     {(run.status === 'FAILED' || run.status === 'INTERRUPTED') && <Notice error>분석을 완료하지 못했어요. 자료 수집·분석 실패는 허용이나 근거 부족 판단을 의미하지 않습니다.
-      {run.failureCode?.startsWith('SOURCE_') ? ' 공식 원문 또는 첨부 자료를 확인해 주세요.' : run.failureCode === 'QUEUE_EXPIRED' ? ' 대기 시간 안에 분석이 시작되지 않았어요.' : ''}</Notice>}
+      {run.failureCode?.startsWith('SOURCE_') ? ' 공식 원문 또는 첨부 자료를 확인해 주세요.' : run.failureCode === 'QUEUE_EXPIRED' ? ' 대기 시간 안에 분석이 시작되지 않았어요.' : run.failureCode === 'RUN_OUTCOME_UNKNOWN_EXPIRED' ? ' 완료 여부를 끝내 확인하지 못해 실패로 정리했어요. 필요하면 다시 분석해 주세요.' : ''}</Notice>}
     {run.analysis && <>
       <Card><Text style={styles.heading}>검토 요약</Text><Text style={styles.body}>{displayText(run.analysis.summary)}</Text></Card>
       <Card><Text style={styles.heading}>먼저 확인할 내용</Text>
