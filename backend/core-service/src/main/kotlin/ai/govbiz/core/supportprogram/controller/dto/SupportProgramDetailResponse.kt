@@ -55,7 +55,7 @@ data class SupportProgramDetailResponse(
                 contact = program.contact?.let(SupportProgramContactResponse::from),
                 preferenceDescription = program.preferenceDescription,
                 supervisingInstitutionType = program.supervisingInstitutionType,
-                evidenceQuestionSupported = program.sourceCode == SupportProgramEvidenceService.BIZINFO_SOURCE_CODE,
+                evidenceQuestionSupported = program.sourceCode in SupportProgramEvidenceService.EVIDENCE_SOURCE_LABELS,
             )
     }
 }

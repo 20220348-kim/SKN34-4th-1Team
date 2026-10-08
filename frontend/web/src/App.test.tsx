@@ -544,6 +544,7 @@ describe('App navigation', () => {
       citations: [{
         excerpt: `${'공고 안내입니다. '.repeat(70)}\n지원 대상은 서울 소재 창업 7년 이내 중소기업입니다.`,
         sourceUrl: detail.sourceUrl,
+        sourceLabel: '기업마당 상세 본문',
         chunkOrder: 0,
       }],
     }
@@ -595,7 +596,7 @@ describe('App navigation', () => {
       question: '신청 대상은 누구인가요?',
     })
 
-    const citationLink = screen.getByRole('link', { name: '근거 1 원문 보기 ↗' })
+    const citationLink = screen.getByRole('link', { name: '근거 1 · 기업마당 상세 본문 ↗' })
     expect(citationLink.getAttribute('href')).toBe(detail.sourceUrl)
     expect(citationLink.getAttribute('target')).toBe('_blank')
     expect(citationLink.getAttribute('rel')).toBe('noreferrer')
@@ -603,15 +604,15 @@ describe('App navigation', () => {
       .toBe(evidenceAnswer.citations[0].excerpt)
   })
 
-  it('K-Startup 상세에서는 원문 링크를 유지하고 질문 입력이나 근거 답변 HTTP 요청을 만들지 않는다', async () => {
+  it('원문 질문 미지원 제공처(과기정통부) 상세에서는 원문 링크를 유지하고 질문 입력이나 근거 답변 HTTP 요청을 만들지 않는다', async () => {
     const detail = {
-      ...supportProgramDetails[0], sourceCode: 'KSTARTUP', sourceName: 'K-Startup',
-      sourceUrl: 'https://www.k-startup.go.kr/web/contents/bizpbanc-ongoing.do',
+      ...supportProgramDetails[0], sourceCode: 'MSIT', sourceName: '과학기술정보통신부',
+      sourceUrl: 'https://www.msit.go.kr/bbs/view.do?nttSeqNo=3186573',
       evidenceQuestionSupported: false,
     }
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse(detail))
     vi.stubGlobal('fetch', fetchMock)
-    renderApp(createAppStore(), `/support-programs/detail?sourceCode=KSTARTUP&sourceProgramId=${detail.id}`)
+    renderApp(createAppStore(), `/support-programs/detail?sourceCode=MSIT&sourceProgramId=${detail.id}`)
 
     await screen.findByRole('heading', { name: detail.title })
     expect(screen.getByText('이 제공처 공고는 아직 원문 근거 답변을 지원하지 않습니다. 원문 공고에서 확인해 주세요.'))
@@ -619,7 +620,7 @@ describe('App navigation', () => {
     expect(screen.queryByRole('textbox', { name: '공고 원문에 질문하기' })).toBeNull()
     expect(screen.queryByRole('button', { name: '질문하고 근거 받기' })).toBeNull()
     expect(screen.queryByRole('link', { name: '원문에 질문하기' })).toBeNull()
-    expect(screen.getByRole('link', { name: 'K-Startup 원문 보기 ↗' }).getAttribute('href')).toBe(detail.sourceUrl)
+    expect(screen.getByRole('link', { name: '과학기술정보통신부 원문 보기 ↗' }).getAttribute('href')).toBe(detail.sourceUrl)
     expect(fetchMock).toHaveBeenCalledOnce()
     expect(new URL(String(fetchMock.mock.calls[0]?.[0])).pathname).toBe('/api/v1/support-programs/detail')
   })
@@ -632,7 +633,7 @@ describe('App navigation', () => {
     const answer = {
       answer: '지원 대상은 중소기업입니다.',
       answerStatus: 'ANSWERED',
-      citations: [{ excerpt: '중소기업 지원사업', sourceUrl: detail.sourceUrl, chunkOrder: 0 }],
+      citations: [{ excerpt: '중소기업 지원사업', sourceUrl: detail.sourceUrl, sourceLabel: '기업마당 상세 본문', chunkOrder: 0 }],
     }
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse(answer))
@@ -750,7 +751,7 @@ describe('App navigation', () => {
     await act(async () => resolveAnswer(jsonResponse({
       answer: '이전 질문의 늦은 답변입니다.',
       answerStatus: 'ANSWERED',
-      citations: [{ excerpt: '이전 근거', sourceUrl: detail.sourceUrl, chunkOrder: 0 }],
+      citations: [{ excerpt: '이전 근거', sourceUrl: detail.sourceUrl, sourceLabel: '기업마당 상세 본문', chunkOrder: 0 }],
     })))
 
     expect(screen.queryByText('이전 질문의 늦은 답변입니다.')).toBeNull()

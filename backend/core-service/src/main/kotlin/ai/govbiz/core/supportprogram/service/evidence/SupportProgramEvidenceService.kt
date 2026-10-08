@@ -3,7 +3,7 @@ package ai.govbiz.core.supportprogram.service.evidence
 import ai.govbiz.core.supportprogram.domain.SupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgramSourceDocument
 import ai.govbiz.core.supportprogram.facade.AiSupportProgramEvidenceFacade
-import ai.govbiz.core.supportprogram.facade.BizInfoSupportProgramSourceDocumentFacade
+import ai.govbiz.core.supportprogram.facade.SupportProgramSourceDocumentFacade
 import ai.govbiz.core.supportprogram.facade.exception.SupportProgramSourceDocumentFacadeException
 import ai.govbiz.core.supportprogram.repository.SupportProgramRepository
 import ai.govbiz.core.supportprogram.helper.SupportProgramEvidenceTracingHelper
@@ -18,12 +18,12 @@ import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.stereotype.Service
 import org.slf4j.LoggerFactory
 
-/** 특정 기업마당 공고의 공식 상세 원문을 근거로 질문에 답합니다. */
+/** 특정 기업마당·K-Startup 공고의 공식 상세 원문을 근거로 질문에 답합니다. */
 @Service
 class SupportProgramEvidenceService(
     private val detailService: SupportProgramDetailService,
     private val repository: SupportProgramRepository,
-    private val sourceDocumentFacade: BizInfoSupportProgramSourceDocumentFacade,
+    private val sourceDocumentFacade: SupportProgramSourceDocumentFacade,
     private val aiEvidenceFacade: AiSupportProgramEvidenceFacade,
     @param:Qualifier("seoulClock") private val clock: Clock,
     private val tracing: SupportProgramEvidenceTracingHelper = SupportProgramEvidenceTracingHelper(),
@@ -37,22 +37,23 @@ class SupportProgramEvidenceService(
         question: String,
     ): SupportProgramEvidenceAnswerResult = tracing.observe("total") {
         val program = tracing.observe("core.detail") { detailService.get(sourceCode, sourceProgramId) }
-        if (program.sourceCode != BIZINFO_SOURCE_CODE) throw SupportProgramEvidenceNotSupportedException()
+        val sourceLabel = EVIDENCE_SOURCE_LABELS[program.sourceCode] ?: throw SupportProgramEvidenceNotSupportedException()
         val document = tracing.observe("core.source") { currentSourceDocument(program) }
         val chunks = tracing.observe("core.chunk") { chunksFor(document) }
         aiEvidenceFacade.answer(
             question = question.trim(),
             chunks = chunks,
             sourceUrl = document.sourceUrl,
+            sourceLabel = sourceLabel,
         )
     }
 
     /**
      * 공고의 현재 원문을 확보해 청킹만 합니다(색인·답변 없음). 도우미 관심 공고 질문과 원문 선수집이 씁니다.
-     * 기업마당 공고가 아니면 [SupportProgramEvidenceNotSupportedException], 수집 실패는 [SupportProgramEvidenceUnavailableException]입니다.
+     * [EVIDENCE_SOURCE_LABELS]에 없는 제공처 공고면 [SupportProgramEvidenceNotSupportedException], 수집 실패는 [SupportProgramEvidenceUnavailableException]입니다.
      */
     fun prepareChunks(program: SupportProgram): List<SupportProgramEvidenceChunk> {
-        if (program.sourceCode != BIZINFO_SOURCE_CODE) throw SupportProgramEvidenceNotSupportedException()
+        if (program.sourceCode !in EVIDENCE_SOURCE_LABELS) throw SupportProgramEvidenceNotSupportedException()
         return chunksFor(currentSourceDocument(program))
     }
 
@@ -126,8 +127,15 @@ class SupportProgramEvidenceService(
     companion object {
         private val logger = LoggerFactory.getLogger(SupportProgramEvidenceService::class.java)
         private const val MAX_CACHED_DOCUMENTS = 32
-        /** 공식 원문 근거 답변을 지원하는 유일한 제공처입니다. 상세 응답의 지원 여부도 이 값으로 정합니다. */
-        const val BIZINFO_SOURCE_CODE = "BIZINFO"
+        /**
+         * 공식 상세 원문 근거 답변을 지원하는 제공처와 근거 링크에 보일 원문 이름입니다. 답변·선수집의 지원 여부,
+         * 상세 응답의 `evidenceQuestionSupported`, 인용의 `sourceLabel`을 모두 이 값 하나로 정합니다.
+         * 과기정통부(MSIT)는 상세 본문이 첨부 안내뿐이고 충남 수출지원(CNTRADE_NOTICE)은 상세 주소를 만들 수 없어 제외합니다.
+         */
+        val EVIDENCE_SOURCE_LABELS: Map<String, String> = mapOf(
+            "BIZINFO" to "기업마당 상세 본문",
+            "KSTARTUP" to "K-Startup 상세 본문",
+        )
         private val REFRESH_AFTER: Duration = Duration.ofHours(6)
     }
 }

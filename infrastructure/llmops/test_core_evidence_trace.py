@@ -203,7 +203,12 @@ def test_runner_persists_sanitized_pass_or_failure_evidence(tmp_path, monkeypatc
                     "answerStatus": "ANSWERED",
                     "answer": "PRIVATE-EVIDENCE-ANSWER",
                     "citations": [
-                        {"excerpt": trace.SOURCE_TEXT, "sourceUrl": PROGRAM["sourceUrl"], "chunkOrder": 0},
+                        {
+                            "excerpt": trace.SOURCE_TEXT,
+                            "sourceUrl": PROGRAM["sourceUrl"],
+                            "sourceLabel": trace.SOURCE_LABEL,
+                            "chunkOrder": 0,
+                        },
                     ],
                 },
             )

@@ -7,7 +7,7 @@ import { Button, Notice, colors, styles } from '../ui'
 const slides = [
   { title: '말로 물어보면', highlight: '맞는 지원사업을 찾아요', description: '지역 · 업종 · 필요한 지원을 적으면\n검색 조건으로 정리해 드려요' },
   { title: '신청 자격은', highlight: '공고 원문 문장으로 확인해요', description: '결과마다 자격 판단에 쓴 본문 문장을\n함께 보여 드려요' },
-  { title: '궁금한 조건은', highlight: '공고에 직접 물어보세요', description: '로그인 후 지원되는 기업마당 공고의\n상세 본문에서 근거를 찾아 답해 드려요' },
+  { title: '궁금한 조건은', highlight: '공고에 직접 물어보세요', description: '로그인 후 지원되는 기업마당·K-Startup 공고의\n상세 본문에서 근거를 찾아 답해 드려요' },
   { title: '담아 두면', highlight: '신청 준비까지 이어져요', description: '로그인하면 관심 공고함부터\n신청 문서 · 중복 검토까지 한곳에서' },
 ]
 

@@ -298,7 +298,7 @@ AI 경계 실패는 `facade/exception`에서 표현하고 Service가 공개 실�
                        ├→ MySQL: 현재 공개 공고 카탈로그·공고별 공식 원문
                        ├→ Elasticsearch: Nori·BM25 키워드 후보 색인·검색
                        ├→ 공공데이터포털: 기업마당·K-Startup 공고 수집
-                       ├→ 기업마당 공식 HTTPS 상세 페이지: 명시적 원문 질문 시 HTML 수집
+                       ├→ 기업마당·K-Startup 공식 HTTPS 상세 페이지: 명시적 원문 질문 시 HTML 수집
                        └→ AI Service
                            ├→ OpenAI: 문서·질의 임베딩, 조건 변경 해석·후보 점수화·근거 답변
                            └→ Qdrant: 공고 검색·원문 근거 청크의 분리된 벡터 컬렉션
@@ -639,7 +639,7 @@ GET /api/v1/support-programs/detail/attachments/download?index=
 
 ### 공고별 공식 원문 근거 질문
 
-기업마당 상세 화면의 **이 공고에 질문하기** 링크는
+기업마당·K-Startup 상세 화면의 **이 공고에 질문하기** 링크는
 `/support-programs/detail/question?sourceCode={sourceCode}&sourceProgramId={id}`로 이동합니다.
 질문 페이지는 URL 식별자를 검증하므로 직접 접속·새로고침이 가능하며 상세 화면으로 돌아가는 링크를
 제공합니다. 페이지 진입 시 API를 호출하지 않고, 사용자가 질문을 제출할 때 아래 기존 API를 호출합니다.
@@ -651,8 +651,11 @@ POST /api/v1/support-programs/detail/answers
   → SupportProgramDetailService → 현재 공개 공고 확인
   → SupportProgramRepository → MySQL의 공고별 원문 캐시 조회
   → 캐시가 없거나 URL이 바뀌었거나 6시간이 지남:
-      BizInfoSupportProgramSourceDocumentFacade → BizInfoSourceDocumentClient
-        → 기업마당 공식 HTTPS 상세 페이지의 HTML만 수집·읽기 가능한 텍스트로 정규화
+      SupportProgramSourceDocumentFacade → 제공처별 Client
+        → BIZINFO: BizInfoSourceDocumentClient → 기업마당 공식 HTTPS 상세 HTML
+        → KSTARTUP: KStartupSourceDocumentClient → K-Startup 공식 HTTPS 상세 HTML
+          (마감 공고는 진행 중 페이지의 fullUrl로 같은 공고의 마감 페이지를 한 번 따라감)
+        → 제공처별 Mapper가 읽기 가능한 텍스트로 정규화
       → SupportProgramRepository → MySQL 원문 UPSERT
   → 같은 공고 ID·내용 해시의 불변 청크 재사용 (Core 인스턴스별 최근 32개 공고)
     → 없으면 SupportProgramEvidenceChunker → 결정적 청크 최대 50개
@@ -661,24 +664,29 @@ POST /api/v1/support-programs/detail/answers
       → 질문과 가까운 청크 최대 5개 검색 (동일 질문 임베딩은 최대 256개/300초 재사용)
       → 단일 typed Agent → OpenAI 근거 답변·짧은 인용 번호 선택
       → Agent가 검증한 번호를 요청의 원래 청크 ID로 복원
-  → Core가 청크·인용을 검증 → 답변과 원문 발췌·URL 반환
+  → Core가 청크·인용을 검증 → 답변과 원문 발췌·URL·원문 이름(sourceLabel) 반환
 ```
 
-이 경로는 `BIZINFO` 현재 공고에만 제공됩니다. 기업마당 공식 `https://bizinfo.go.kr` 및 그 하위 도메인의
+이 경로는 `BIZINFO`·`KSTARTUP` 현재 공고에만 제공되며, 지원 여부와 인용 원문 이름은
+`SupportProgramEvidenceService.EVIDENCE_SOURCE_LABELS` 하나로 정합니다. 기업마당 공식 `https://bizinfo.go.kr` 및 그 하위 도메인의
 상세 HTML만 허용하며, URL에는 요청한 원본 공고 ID와 같은 `pblancId`가 정확히 하나 있어야 합니다.
 자동 리디렉션은 끄고 각 이동 URL을 같은 조건으로 검증해 최대 3회 따릅니다. 따라서 기존 상세 URL에서
 `/sii/siia/selectSIIA200Detail.do?pblancId=...`로 이동할 수 있으며, 외부 호스트·비 HTTPS·다른 공고 ID·순환 이동은
 거부합니다. 원문 HTML은 최대 500KB로 읽고 jsoup `1.23.2`로 파싱합니다. `.support_project_detail` 안의
 `.title_area .title`이 요청 공고 제목과 일치해야 하며, `.view_cont` 본문만 추출해 메뉴·다른 공고·푸터를
-제외합니다. 정규화 본문은 최대 30,000자로 제한합니다. 공식 원문을 성공적으로 읽고 검증한 뒤에만
+제외합니다. K-Startup은 `k-startup.go.kr`의 `bizpbanc-ongoing.do`·`bizpbanc-deadline.do` 상세 URL과 같은 `pbancSn`만
+허용하고 HTTP 리디렉션은 따르지 않으며, 마감 공고의 진행 중 페이지가 스크립트 `fullUrl`로 알려 주는 마감 페이지만
+한 번 따라갑니다. HTML은 최대 1,000,000바이트로 읽고 `.app_notice_details-wrap`의 `#scrTitle h3`가 공백·따옴표·
+문장부호를 무시하고 공고명과 일치할 때 공통 안내·첨부 목록·저작권·버튼·숨김 요소를 뺀 상세 본문을 추출합니다.
+저장 URL은 마감 페이지가 아닌 공고의 `sourceUrl`입니다. 정규화 본문은 80~30,000자로 제한합니다. 공식 원문을 성공적으로 읽고 검증한 뒤에만
 짧은 DB transaction으로 저장하므로 원문 수집·AI 오류가 공고 동기화·목록 검색·상세 GET을 바꾸지 않습니다.
-현재 공고의 제공처가 `BIZINFO`가 아니면 422 `SUPPORT_PROGRAM_EVIDENCE_NOT_SUPPORTED`, 공식 원문 수집·검증에
-실패하면 503 `SUPPORT_PROGRAM_EVIDENCE_UNAVAILABLE`을 반환합니다. AI 근거 색인·검색·답변의 연결·시간 초과·계약
+현재 공고의 제공처가 지원 제공처가 아니면 422 `SUPPORT_PROGRAM_EVIDENCE_NOT_SUPPORTED`, 공식 원문 수집·검증에
+실패하면 API 요약으로 대신 답하지 않고 503 `SUPPORT_PROGRAM_EVIDENCE_UNAVAILABLE`을 반환합니다. AI 근거 색인·검색·답변의 연결·시간 초과·계약
 오류는 일반 AI 경계와 같은 502/503/504 분류를 사용합니다.
 
-Frontend는 `KSTARTUP`을 포함한 비 `BIZINFO` 상세에서 질문 페이지 링크 대신 미지원 안내와 원문 링크를
-표시합니다. 미지원 제공처의 질문 페이지에 직접 접속해도 입력을 표시하지 않고 ViewModel에서 전송을 차단합니다.
-K-Startup 공식 URL 표시 허용은 원문 수집·RAG 지원과 별개입니다.
+Frontend는 `evidenceQuestionSupported=false`인 상세(`MSIT`·`CNTRADE_NOTICE`)에서 질문 페이지 링크 대신 미지원 안내와
+원문 링크를 표시합니다. 미지원 제공처의 질문 페이지에 직접 접속해도 입력을 표시하지 않고 ViewModel에서 전송을 차단합니다.
+공식 URL 표시 허용은 원문 수집·RAG 지원과 별개입니다. 근거 링크는 서버가 준 `sourceLabel`로 "근거 N · 원문 이름"을 표시합니다.
 
 원문은 제목·공식 URL을 포함한 텍스트로 저장하며, 같은 원문은 요청마다 다시 수집하지 않고 최대 6시간
 재사용합니다. 청크는 내용·원문 해시·순서에서 결정적으로 만들며 각 청크는 최대 1,500 UTF-16 코드 단위입니다. AI Service는
@@ -692,8 +700,8 @@ K-Startup 공식 URL 표시 허용은 원문 수집·RAG 지원과 별개입니�
 `index`는 원문의 `order`와 다르며 요청마다 새로 부여합니다. 범위 초과·중복·상태 모순을 보정하거나 무시하지
 않고 기존 오류로 반환합니다. Core와 공개 HTTP의 인용 계약은 변경하지 않습니다.
 
-첨부파일·PDF·OCR·다른 제공처 원문 수집은 이 흐름에 포함하지 않습니다. 공고 목록 검색의 의미·키워드 후보 선정·AI
-점수화와도 별도 사용 사례이므로, 원문 질문을 하지 않으면 기업마당 상세 HTML을 수집하거나 evidence 컬렉션을
+첨부파일·PDF·OCR·과기정통부·충남 수출입공지 원문 수집은 이 흐름에 포함하지 않습니다. 공고 목록 검색의 의미·키워드 후보 선정·AI
+점수화와도 별도 사용 사례이므로, 원문 질문을 하지 않으면 기업마당·K-Startup 상세 HTML을 수집하거나 evidence 컬렉션을
 사용하지 않습니다.
 
 ## 검색 품질 평가 fixture 내보내기와 캡처
@@ -1105,7 +1113,7 @@ Core의 Health는 프로세스 상태, AI Health는 AI Service의 정해진 Heal
 이들이 성공했다고 MySQL·Qdrant·OpenAI를 포함한 실제 검색 전체가 준비됐음을 보장하지 않습니다.
 전체 연결 동작은 [Compose 검증 절차](../infrastructure/README.md)로 확인합니다.
 
-현재 제품은 공고 요약의 의미·키워드 결합 검색·구조화된 추천과, 기업마당 공식 HTML 한 종류의 공고별 근거 답변을 제공합니다.
+현재 제품은 공고 요약의 의미·키워드 결합 검색·구조화된 추천과, 기업마당·K-Startup 공식 상세 HTML의 공고별 근거 답변을 제공합니다.
 실제 검색 후보·최종 추천의 캡처, AI-only 참조 판정과 변경 전후 보고서는
 [공유 평가 자료](../evaluation/support-program-search/runs/support-program-catalog-20260906-v1/README.md)에 있습니다.
 평가 가능한 질문은 6개, 그중 양성 질문은 2개뿐이며 독립적인 사람 검토 품질 증거는 아닙니다.

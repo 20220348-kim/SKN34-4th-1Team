@@ -260,7 +260,7 @@ class SupportProgramControllerTest {
     }
 
     @Test
-    fun marksEvidenceQuestionsUnsupportedForOtherSources() {
+    fun marksEvidenceQuestionsSupportedForKStartupDetails() {
         val program = catalogProgram()
         Mockito.doReturn(program.copy(program = program.program.copy(sourceCode = "KSTARTUP", sourceName = "K-Startup",
             sourceUrl = "https://www.k-startup.go.kr/web/contents/bizpbanc-ongoing.do?pbancSn=177911",
@@ -275,12 +275,29 @@ class SupportProgramControllerTest {
         )
             .andExpect(status().isOk())
             .andExpect(jsonPath("$.sourceCode").value("KSTARTUP"))
-            .andExpect(jsonPath("$.evidenceQuestionSupported").value(false))
+            .andExpect(jsonPath("$.evidenceQuestionSupported").value(true))
             .andExpect(jsonPath("$.contact.department").value("창업보육센터"))
             .andExpect(jsonPath("$.contact.phoneNumber").value("0312508269"))
             .andExpect(jsonPath("$.contact.text").value(nullValue()))
             .andExpect(jsonPath("$.preferenceDescription").value("1인창조, 재창업"))
             .andExpect(jsonPath("$.supervisingInstitutionType").value("공공기관"))
+    }
+
+    @Test
+    fun marksEvidenceQuestionsUnsupportedForSourcesWithoutAReadableDetailBody() {
+        val program = catalogProgram()
+        Mockito.doReturn(program.copy(program = program.program.copy(sourceCode = "MSIT", sourceName = "과학기술정보통신부",
+            sourceUrl = "https://www.msit.go.kr/bbs/view.do?nttSeqNo=3186573")))
+            .`when`(supportProgramRepository).findPresentBySourceAndProgramId("MSIT", "PBLN_TEST")
+
+        mockMvc.perform(
+            get(DETAIL_PATH)
+                .queryParam("sourceCode", "MSIT")
+                .queryParam("sourceProgramId", "PBLN_TEST"),
+        )
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.sourceCode").value("MSIT"))
+            .andExpect(jsonPath("$.evidenceQuestionSupported").value(false))
     }
 
     @Test
@@ -390,6 +407,7 @@ class SupportProgramControllerTest {
                     SupportProgramEvidenceCitationResult(
                         excerpt = "신청 방법: 온라인 접수",
                         sourceUrl = "https://www.bizinfo.go.kr/web/lay1/bbs/S1T122C128/AS/74/view.do?pblancId=PBLN_TEST",
+                        sourceLabel = "기업마당 상세 본문",
                         chunkOrder = 2,
                     ),
                 ),
@@ -409,6 +427,7 @@ class SupportProgramControllerTest {
             .andExpect(jsonPath("$.answer").value("공식 원문에 따르면 온라인으로 신청합니다."))
             .andExpect(jsonPath("$.answerStatus").value("ANSWERED"))
             .andExpect(jsonPath("$.citations[0].excerpt").value("신청 방법: 온라인 접수"))
+            .andExpect(jsonPath("$.citations[0].sourceLabel").value("기업마당 상세 본문"))
             .andExpect(jsonPath("$.citations[0].chunkOrder").value(2))
     }
 

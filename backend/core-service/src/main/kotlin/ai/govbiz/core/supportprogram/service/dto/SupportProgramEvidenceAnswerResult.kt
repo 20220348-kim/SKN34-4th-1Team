@@ -8,6 +8,8 @@ enum class SupportProgramEvidenceAnswerStatus {
 data class SupportProgramEvidenceCitationResult(
     val excerpt: String,
     val sourceUrl: String,
+    /** 근거 링크에 보일 원문 이름입니다(예: 기업마당 상세 본문). */
+    val sourceLabel: String,
     val chunkOrder: Int,
 )
 

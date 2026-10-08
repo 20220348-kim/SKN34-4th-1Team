@@ -3,7 +3,7 @@ package ai.govbiz.core.supportprogram.service.evidence
 import ai.govbiz.core.supportprogram.domain.SupportProgram
 import ai.govbiz.core.supportprogram.domain.SupportProgramSourceDocument
 import ai.govbiz.core.supportprogram.facade.AiSupportProgramEvidenceFacade
-import ai.govbiz.core.supportprogram.facade.BizInfoSupportProgramSourceDocumentFacade
+import ai.govbiz.core.supportprogram.facade.SupportProgramSourceDocumentFacade
 import ai.govbiz.core.supportprogram.facade.exception.SupportProgramSourceDocumentFacadeException
 import ai.govbiz.core.supportprogram.helper.SupportProgramContentHashHelper
 import ai.govbiz.core.supportprogram.helper.SupportProgramTestHelper
@@ -50,7 +50,7 @@ class SupportProgramEvidenceServiceTest {
     private lateinit var repository: SupportProgramRepository
 
     @Mock
-    private lateinit var sourceDocumentFacade: BizInfoSupportProgramSourceDocumentFacade
+    private lateinit var sourceDocumentFacade: SupportProgramSourceDocumentFacade
 
     @Mock
     private lateinit var aiEvidenceFacade: AiSupportProgramEvidenceFacade
@@ -78,6 +78,7 @@ class SupportProgramEvidenceServiceTest {
             QUESTION,
             SupportProgramEvidenceChunker.chunk(cached),
             program.sourceUrl,
+            BIZINFO_LABEL,
         )
 
         val result = service.answer("BIZINFO", "PBLN_TEST", "  $QUESTION  ")
@@ -99,6 +100,7 @@ class SupportProgramEvidenceServiceTest {
             QUESTION,
             SupportProgramEvidenceChunker.chunk(refreshed),
             program.sourceUrl,
+            BIZINFO_LABEL,
         )
 
         service.answer("BIZINFO", "PBLN_TEST", QUESTION)
@@ -120,6 +122,96 @@ class SupportProgramEvidenceServiceTest {
             service.answer("OTHER", "PBLN_TEST", QUESTION)
         }
         verifyNoInteractions(repository, sourceDocumentFacade, aiEvidenceFacade)
+    }
+
+    @Test
+    fun answersKStartupProgramsFromTheirOfficialDetailDocumentWithTheKStartupLabel() {
+        val program = kStartupProgram()
+        val loaded = document(program, LocalDateTime.of(2026, 9, 5, 12, 0), "제출서류: 참가신청서 1부, 발표자료 1부")
+        doReturn(program).`when`(detailService).get("KSTARTUP", "178927")
+        doReturn(null).`when`(repository).findPresentSourceDocument("KSTARTUP", "178927")
+        doReturn(loaded).`when`(sourceDocumentFacade).load(program)
+        doReturn(answer()).`when`(aiEvidenceFacade).answer(
+            QUESTION,
+            SupportProgramEvidenceChunker.chunk(loaded),
+            program.sourceUrl,
+            KSTARTUP_LABEL,
+        )
+
+        assertEquals(answer(), service.answer("KSTARTUP", "178927", QUESTION))
+
+        val ordered = inOrder(sourceDocumentFacade, repository, aiEvidenceFacade)
+        ordered.verify(sourceDocumentFacade).load(program)
+        ordered.verify(repository).upsertSourceDocument(loaded)
+        ordered.verify(aiEvidenceFacade).answer(QUESTION, SupportProgramEvidenceChunker.chunk(loaded), program.sourceUrl, KSTARTUP_LABEL)
+    }
+
+    @Test
+    fun reusesAFreshKStartupDocumentStoredUnderTheProgramSourceUrl() {
+        val program = kStartupProgram()
+        val cached = document(program, LocalDateTime.of(2026, 9, 5, 11, 0))
+        doReturn(program).`when`(detailService).get("KSTARTUP", "178927")
+        doReturn(cached).`when`(repository).findPresentSourceDocument("KSTARTUP", "178927")
+        doReturn(answer()).`when`(aiEvidenceFacade).answer(
+            QUESTION,
+            SupportProgramEvidenceChunker.chunk(cached),
+            program.sourceUrl,
+            KSTARTUP_LABEL,
+        )
+
+        service.answer("KSTARTUP", "178927", QUESTION)
+
+        verifyNoInteractions(sourceDocumentFacade)
+        verify(repository, never()).upsertSourceDocument(cached)
+    }
+
+    @Test
+    fun keepsKStartupFetchFailuresAsEvidenceUnavailableWithoutAnsweringFromApiText() {
+        val program = kStartupProgram()
+        val failure = sourceFailure()
+        doReturn(program).`when`(detailService).get("KSTARTUP", "178927")
+        doReturn(null).`when`(repository).findPresentSourceDocument("KSTARTUP", "178927")
+        doThrow(failure).`when`(sourceDocumentFacade).load(program)
+
+        val exception = assertThrows(SupportProgramEvidenceUnavailableException::class.java) {
+            service.answer("KSTARTUP", "178927", QUESTION)
+        }
+
+        assertSame(failure, exception.cause)
+        verifyNoInteractions(aiEvidenceFacade)
+    }
+
+    @Test
+    fun refusesMsitAndCntradeNoticeProgramsForAnswersAndPreparedChunks() {
+        listOf(
+            "MSIT" to "https://www.msit.go.kr/bbs/view.do?nttSeqNo=3186573",
+            "CNTRADE_NOTICE" to "https://cntrade.chungnam.go.kr/notice",
+        ).forEach { (sourceCode, sourceUrl) ->
+            val program = SupportProgramTestHelper.catalogProgram("PBLN_TEST").program.copy(
+                sourceCode = sourceCode,
+                sourceUrl = sourceUrl,
+            )
+            doReturn(program).`when`(detailService).get(sourceCode, "PBLN_TEST")
+
+            assertThrows(SupportProgramEvidenceNotSupportedException::class.java) {
+                service.answer(sourceCode, "PBLN_TEST", QUESTION)
+            }
+            assertThrows(SupportProgramEvidenceNotSupportedException::class.java) {
+                service.prepareChunks(program)
+            }
+        }
+        verifyNoInteractions(repository, sourceDocumentFacade, aiEvidenceFacade)
+    }
+
+    @Test
+    fun preparesKStartupChunksWithoutCallingAi() {
+        val program = kStartupProgram()
+        val cached = document(program, LocalDateTime.of(2026, 9, 5, 11, 0))
+        doReturn(cached).`when`(repository).findPresentSourceDocument("KSTARTUP", "178927")
+
+        assertEquals(SupportProgramEvidenceChunker.chunk(cached), service.prepareChunks(program))
+
+        verifyNoInteractions(sourceDocumentFacade, aiEvidenceFacade)
     }
 
     @Test
@@ -168,6 +260,7 @@ class SupportProgramEvidenceServiceTest {
             QUESTION,
             SupportProgramEvidenceChunker.chunk(refreshed),
             program.sourceUrl,
+            BIZINFO_LABEL,
         )
 
         assertEquals(answer(), service.answer("BIZINFO", "PBLN_TEST", QUESTION))
@@ -175,7 +268,7 @@ class SupportProgramEvidenceServiceTest {
         val ordered = inOrder(sourceDocumentFacade, repository, aiEvidenceFacade)
         ordered.verify(sourceDocumentFacade).load(program)
         ordered.verify(repository).upsertSourceDocument(refreshed)
-        ordered.verify(aiEvidenceFacade).answer(QUESTION, SupportProgramEvidenceChunker.chunk(refreshed), program.sourceUrl)
+        ordered.verify(aiEvidenceFacade).answer(QUESTION, SupportProgramEvidenceChunker.chunk(refreshed), program.sourceUrl, BIZINFO_LABEL)
     }
 
     @Test
@@ -190,6 +283,7 @@ class SupportProgramEvidenceServiceTest {
             QUESTION,
             SupportProgramEvidenceChunker.chunk(refreshed),
             program.sourceUrl,
+            BIZINFO_LABEL,
         )
 
         assertEquals(answer(), service.answer("BIZINFO", "PBLN_TEST", QUESTION))
@@ -255,7 +349,7 @@ class SupportProgramEvidenceServiceTest {
         val refreshed = first.copy(fetchedAt = LocalDateTime.of(2026, 9, 5, 12, 0))
         doReturn(program).`when`(detailService).get("BIZINFO", program.id)
         doReturn(first, refreshed).`when`(repository).findPresentSourceDocument("BIZINFO", program.id)
-        doReturn(answer()).`when`(aiEvidenceFacade).answer(anyString(), anyList(), anyString())
+        doReturn(answer()).`when`(aiEvidenceFacade).answer(anyString(), anyList(), anyString(), anyString())
 
         service.answer("BIZINFO", program.id, QUESTION)
         service.answer("BIZINFO", program.id, "문의처는 어디인가요?")
@@ -278,7 +372,7 @@ class SupportProgramEvidenceServiceTest {
         val changed = document(program, first.fetchedAt, "신청 방법이 방문 접수로 변경되었습니다.")
         doReturn(program).`when`(detailService).get("BIZINFO", program.id)
         doReturn(first, changed).`when`(repository).findPresentSourceDocument("BIZINFO", program.id)
-        doReturn(answer()).`when`(aiEvidenceFacade).answer(anyString(), anyList(), anyString())
+        doReturn(answer()).`when`(aiEvidenceFacade).answer(anyString(), anyList(), anyString(), anyString())
 
         repeat(2) { service.answer("BIZINFO", program.id, QUESTION) }
 
@@ -292,7 +386,7 @@ class SupportProgramEvidenceServiceTest {
     fun boundsTheChunkCacheAndKeepsIdenticalTextFromDifferentProgramsSeparate() {
         val programs = (0..32).map { SupportProgramTestHelper.catalogProgram("PBLN_CACHE_$it").program }
         val fetchedAt = LocalDateTime.of(2026, 9, 5, 11, 0)
-        doReturn(answer()).`when`(aiEvidenceFacade).answer(anyString(), anyList(), anyString())
+        doReturn(answer()).`when`(aiEvidenceFacade).answer(anyString(), anyList(), anyString(), anyString())
         for (program in programs) {
             doReturn(program).`when`(detailService).get("BIZINFO", program.id)
             doReturn(document(program, fetchedAt)).`when`(repository).findPresentSourceDocument("BIZINFO", program.id)
@@ -314,7 +408,7 @@ class SupportProgramEvidenceServiceTest {
         val stale = fresh.copy(fetchedAt = LocalDateTime.of(2026, 9, 5, 4, 59))
         doReturn(program).`when`(detailService).get("BIZINFO", program.id)
         doReturn(fresh, stale).`when`(repository).findPresentSourceDocument("BIZINFO", program.id)
-        doReturn(answer()).`when`(aiEvidenceFacade).answer(anyString(), anyList(), anyString())
+        doReturn(answer()).`when`(aiEvidenceFacade).answer(anyString(), anyList(), anyString(), anyString())
         doThrow(sourceFailure()).`when`(sourceDocumentFacade).load(program)
 
         service.answer("BIZINFO", program.id, QUESTION)
@@ -349,6 +443,12 @@ class SupportProgramEvidenceServiceTest {
         fetchedAt = fetchedAt,
     )
 
+    private fun kStartupProgram() = SupportProgramTestHelper.catalogProgram("178927").program.copy(
+        sourceCode = "KSTARTUP",
+        sourceName = "K-Startup",
+        sourceUrl = "https://www.k-startup.go.kr/web/contents/bizpbanc-ongoing.do?schM=view&pbancSn=178927",
+    )
+
     private fun sourceFailure(): SupportProgramSourceDocumentFacadeException =
         SupportProgramSourceDocumentFacadeException.fromClient(
             SupportProgramSourceDocumentFacadeException.Failure.UNAVAILABLE,
@@ -358,5 +458,7 @@ class SupportProgramEvidenceServiceTest {
 
     private companion object {
         const val QUESTION = "신청 방법이 무엇인가요?"
+        const val BIZINFO_LABEL = "기업마당 상세 본문"
+        const val KSTARTUP_LABEL = "K-Startup 상세 본문"
     }
 }

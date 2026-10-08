@@ -25,7 +25,7 @@ class SavedSupportProgramPrefetchService(
             evidenceFacade.index(evidenceService.prepareChunks(program))
             SavedSupportProgramPrefetchStatus.DONE
         } catch (_: SupportProgramEvidenceNotSupportedException) {
-            // 기업마당 외 공고는 원문 근거를 지원하지 않는다. 다시 시도해도 같으므로 실패로 닫는다.
+            // 원문 근거 미지원 제공처(과기정통부·충남 수출지원 등) 공고다. 다시 시도해도 같으므로 실패로 닫는다.
             SavedSupportProgramPrefetchStatus.FAILED
         }
         repository.finishPrefetch(savedId, status)

@@ -3,15 +3,25 @@ package ai.govbiz.core.supportprogram.service.saved
 import ai.govbiz.core.supportprogram.client.SavedSupportProgramPrefetchQueueClient
 import ai.govbiz.core.supportprogram.domain.SavedSupportProgramPrefetchStatus
 import ai.govbiz.core.supportprogram.domain.SupportProgram
+import ai.govbiz.core.supportprogram.domain.SupportProgramSourceDocument
 import ai.govbiz.core.supportprogram.domain.SupportProgramStatus
 import ai.govbiz.core.supportprogram.facade.AiSupportProgramEvidenceFacade
+import ai.govbiz.core.supportprogram.facade.SupportProgramSourceDocumentFacade
+import ai.govbiz.core.supportprogram.helper.SupportProgramContentHashHelper
 import ai.govbiz.core.supportprogram.repository.SavedSupportProgramRepository
+import ai.govbiz.core.supportprogram.repository.SupportProgramRepository
+import ai.govbiz.core.supportprogram.service.detail.SupportProgramDetailService
 import ai.govbiz.core.supportprogram.service.evidence.SupportProgramEvidenceChunk
+import ai.govbiz.core.supportprogram.service.evidence.SupportProgramEvidenceChunker
 import ai.govbiz.core.supportprogram.service.evidence.SupportProgramEvidenceService
 import ai.govbiz.core.supportprogram.service.evidence.exception.SupportProgramEvidenceNotSupportedException
 import ai.govbiz.core.supportprogram.service.evidence.exception.SupportProgramEvidenceUnavailableException
 import com.rabbitmq.client.Channel
+import java.time.Clock
+import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.ZoneId
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import org.mockito.ArgumentMatchers.anyList
@@ -46,6 +56,36 @@ class SavedSupportProgramPrefetchTest {
         service.prefetch(5L)
         Mockito.verify(facade, Mockito.never()).index(anyList())
         Mockito.verify(repository).finishPrefetch(5L, SavedSupportProgramPrefetchStatus.FAILED)
+    }
+
+    @Test
+    fun kStartupProgramsArePreparedLikeBizInfoWhileMsitProgramsAreClosedAsFailed() {
+        val sourceDocuments = Mockito.mock(SupportProgramSourceDocumentFacade::class.java)
+        val programs = Mockito.mock(SupportProgramRepository::class.java)
+        val realEvidence = SupportProgramEvidenceService(
+            Mockito.mock(SupportProgramDetailService::class.java), programs, sourceDocuments, facade,
+            Clock.fixed(Instant.parse("2026-09-05T03:00:00Z"), ZoneId.of("Asia/Seoul")),
+        )
+        val prefetch = SavedSupportProgramPrefetchService(repository, realEvidence, facade)
+        val kStartup = program.copy(id = "178927", sourceCode = "KSTARTUP", sourceName = "K-Startup",
+            sourceUrl = "https://www.k-startup.go.kr/web/contents/bizpbanc-ongoing.do?schM=view&pbancSn=178927")
+        val msit = program.copy(id = "3186573", sourceCode = "MSIT", sourceName = "과학기술정보통신부",
+            sourceUrl = "https://www.msit.go.kr/bbs/view.do?nttSeqNo=3186573")
+        val content = "공고명: 178927 공고\n공식 원문: ${kStartup.sourceUrl}\n\n제출서류: 참가신청서 1부"
+        val document = SupportProgramSourceDocument("KSTARTUP", "178927", kStartup.sourceUrl, content,
+            SupportProgramContentHashHelper.sha256(content), LocalDateTime.of(2026, 9, 5, 12, 0))
+        `when`(repository.findPublishedProgram(7L)).thenReturn(kStartup)
+        `when`(repository.findPublishedProgram(8L)).thenReturn(msit)
+        `when`(sourceDocuments.load(kStartup)).thenReturn(document)
+
+        prefetch.prefetch(7L)
+        prefetch.prefetch(8L)
+
+        Mockito.verify(programs).upsertSourceDocument(document)
+        Mockito.verify(facade).index(SupportProgramEvidenceChunker.chunk(document))
+        Mockito.verify(repository).finishPrefetch(7L, SavedSupportProgramPrefetchStatus.DONE)
+        Mockito.verify(repository).finishPrefetch(8L, SavedSupportProgramPrefetchStatus.FAILED)
+        Mockito.verify(sourceDocuments, Mockito.never()).load(msit)
     }
 
     @Test

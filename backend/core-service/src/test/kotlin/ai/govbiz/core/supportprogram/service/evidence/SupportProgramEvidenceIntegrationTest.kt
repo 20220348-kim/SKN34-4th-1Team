@@ -141,6 +141,7 @@ class SupportProgramEvidenceIntegrationTest {
                         val chunks = SupportProgramEvidenceChunker.chunk(current)
                         body["citations"].forEach { citation ->
                             assertEquals(current.sourceUrl, citation["sourceUrl"].asString())
+                            assertEquals("기업마당 상세 본문", citation["sourceLabel"].asString())
                             assertEquals(chunks[citation["chunkOrder"].asInt()].text, citation["excerpt"].asString())
                         }
                         if (liveUrl == null) {

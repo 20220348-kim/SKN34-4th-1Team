@@ -27,7 +27,7 @@ export function EvidenceQuestionFeedback({ state, compact = false }: { state: Su
             <li key={`${citation.chunkOrder}:${citation.sourceUrl}:${citation.excerpt}`} className={s.evidenceCitation}>
               <blockquote className={s.evidenceExcerpt}>{citation.excerpt}</blockquote>
               <a className={s.evidenceSourceLink} href={citation.sourceUrl} target="_blank" rel="noreferrer">
-                근거 {index + 1} 원문 보기 ↗
+                근거 {index + 1} · {citation.sourceLabel} ↗
               </a>
             </li>
           ))}

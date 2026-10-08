@@ -149,6 +149,7 @@ def observation(
             {
                 "excerpt": by_id[chunk_id]["text"],
                 "sourceUrl": public_response["citations"][0]["sourceUrl"],
+                "sourceLabel": trace.SOURCE_LABEL,
                 "chunkOrder": by_id[chunk_id]["order"],
             }
             for chunk_id in response["citationChunkIds"]

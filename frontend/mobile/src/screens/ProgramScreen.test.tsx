@@ -52,8 +52,8 @@ test.each(['signedOut', 'signedIn'] as const)('program information and its offic
 }, 15_000)
 
 test.each([
-  { sourceCode: 'KSTARTUP', status: 'signedOut' },
-  { sourceCode: 'KSTARTUP', status: 'signedIn' },
+  { sourceCode: 'MSIT', status: 'signedOut' },
+  { sourceCode: 'MSIT', status: 'signedIn' },
   { sourceCode: 'CNTRADE_NOTICE', status: 'signedOut' },
   { sourceCode: 'CNTRADE_NOTICE', status: 'signedIn' },
 ] as const)('unsupported $sourceCode evidence offers an official source to $status without login or an AI request', async ({ sourceCode, status }) => {
@@ -235,6 +235,27 @@ test('evidence suggestions fill without sending and successful questions remain 
   await screen.findByText('공식 근거가 부족합니다.')
   expect(screen.getByText('공고 원문 답변')).toBeTruthy()
   expect(screen.getByText('추가 질문')).toBeTruthy()
+})
+
+test('K-Startup evidence citations show the server source label and open the official detail page', async () => {
+  const kStartupUrl = 'https://www.k-startup.go.kr/web/contents/bizpbanc-ongoing.do?schM=view&pbancSn=178927'
+  const kStartup = { sourceCode: 'KSTARTUP', sourceProgramId: '178927' }
+  jest.mocked(programClient).mockReturnValue({ getDetail: jest.fn().mockResolvedValue({
+    ...programDetail, sourceCode: 'KSTARTUP', id: '178927', sourceName: 'K-Startup', sourceUrl: kStartupUrl,
+  }), answerEvidenceQuestion: answer } as unknown as ReturnType<typeof programClient>)
+  answer.mockResolvedValueOnce({ answerStatus: 'ANSWERED', answer: '참가신청서와 발표자료를 제출합니다.', citations: [{
+    excerpt: '제출서류: 참가신청서 1부, 발표자료 1부', sourceUrl: kStartupUrl, sourceLabel: 'K-Startup 상세 본문', chunkOrder: 2,
+  }] })
+  const open = jest.spyOn(Linking, 'openURL').mockResolvedValue(true)
+  render(<ProgramScreen identity={kStartup} onLogin={jest.fn()} />)
+  await screen.findByText('테스트 지원사업')
+  fireEvent.press(screen.getByLabelText('원문에 질문하기'))
+  fireEvent.changeText(screen.getByLabelText('공고에 대해 궁금한 점'), '제출 서류는?')
+  fireEvent.press(screen.getByLabelText('질문 보내기'))
+  await screen.findByText('참가신청서와 발표자료를 제출합니다.')
+  expect(answer).toHaveBeenCalledWith({ ...kStartup, question: '제출 서류는?' }, expect.anything())
+  fireEvent.press(screen.getByLabelText('근거 1 · K-Startup 상세 본문 ↗'))
+  expect(open).toHaveBeenCalledWith(kStartupUrl)
 })
 
 test('cancelling an evidence request preserves the draft and never displays its late answer', async () => {

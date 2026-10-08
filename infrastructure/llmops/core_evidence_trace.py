@@ -15,6 +15,8 @@ TRACE_PATTERN = re.compile(r"support_program_evidence trace_id=([0-9a-f]{32})")
 PROGRAM_ID = "PBLN_COMPOSE_EXPORT"
 SOURCE_TEXT = "PRIVATE-EVIDENCE-SOURCE 접수 기간은 합성 자료에만 해당합니다. 실제 지원사업 안내나 품질 정답이 아닌 통합 검증용 원문입니다. 신청 조건은 담당 기관의 공고에서 확인해야 합니다."
 SCENARIOS = ("ok", "hit", "fail", "timeout", "invalid-citation", "search-fail")
+# Core가 기업마당 공고 인용에 붙이는 원문 이름입니다(SupportProgramEvidenceService.EVIDENCE_SOURCE_LABELS).
+SOURCE_LABEL = "기업마당 상세 본문"
 
 
 def span_tree(scenario):
@@ -245,7 +247,8 @@ def verify_evidence_traces(*, core_url, stub_url, environment, core_logs, call_j
                     "Wrong evidence response",
                 )
                 require(
-                    response.get("citations") == [{"excerpt": SOURCE_TEXT, "sourceUrl": source_url, "chunkOrder": 0}],
+                    response.get("citations")
+                    == [{"excerpt": SOURCE_TEXT, "sourceUrl": source_url, "sourceLabel": SOURCE_LABEL, "chunkOrder": 0}],
                     "Wrong Core evidence citation",
                 )
             else:

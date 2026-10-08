@@ -7,8 +7,8 @@ export type EvidenceQuestionTurn = { id: number; question: string; state: Suppor
 
 /**
  * 질문 패널의 빈 상태에 두는 예시 키워드입니다. 누르면 입력에 질문 문장이 채워지고, 전송은 사용자가 합니다.
- * 지금 근거는 기업마당 상세 페이지 본문뿐이라(첨부 공고문은 읽지 않음) 본문에 보통 있는 항목만 둡니다.
- * 제출 서류·지원 규모처럼 첨부에만 있는 것은 넣지 않습니다.
+ * 지금 근거는 기업마당·K-Startup 상세 페이지 본문뿐이라(첨부 공고문은 읽지 않음) 두 제공처 본문에 보통 있는 항목만 둡니다.
+ * 제출 서류·지원 규모처럼 기업마당에서는 첨부에만 있는 경우가 많은 것은 넣지 않습니다.
  */
 export const evidenceQuestionSuggestions = [
   { label: '지원 대상', question: '지원 대상이 어떻게 되나요?' },

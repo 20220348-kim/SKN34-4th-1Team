@@ -75,7 +75,7 @@ export const pricingSearchSteps = [
   {
     number: '03',
     title: '원문을 근거로 질문하기',
-    description: '기업마당 공고 상세에서 궁금한 내용을 질문하고, 답변의 근거를 원문과 함께 확인하세요.',
+    description: '기업마당·K-Startup 공고 상세에서 궁금한 내용을 질문하고, 답변의 근거를 원문과 함께 확인하세요.',
   },
 ] as const
 
