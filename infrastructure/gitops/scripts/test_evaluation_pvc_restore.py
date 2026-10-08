@@ -167,6 +167,10 @@ class KubernetesTests(unittest.TestCase):
             self.stores, self.expected = fixture(Path(folder))
         self.namespace = None
         self.token = None
+        self.storage_name = None
+        self.policy = None
+        self.pods = {}
+        self.pv_reads = 0
         for owner, name, function in (
             (restore, "run", self.fake_run),
             (restore.snapshot.storage, "run", self.command),
@@ -179,10 +183,21 @@ class KubernetesTests(unittest.TestCase):
         self.events.append((args, None))
         if self.fail == "cleanup" and "namespace" in args and "delete" in args:
             raise ValueError("cleanup failure")
+        if "delete" in args and "pod" in args:
+            name = args[args.index("pod") + 1]
+            if self.fail == "helper_cleanup":
+                raise ValueError("helper cleanup failure")
+            self.pods.pop(name, None)
         return b""
 
     def fake_run(self, args, *, value=None, timeout=60):
         self.events.append((args, value))
+        if "get" in args and "namespace" in args and "--ignore-not-found" in args:
+            return (
+                {"metadata": {"name": restore.MIGRATION_NAMESPACE}}
+                if self.fail == "collision"
+                else None
+            )
         if "storageclass" in args and "standard" in args:
             return {
                 "provisioner": "foreign"
@@ -199,38 +214,61 @@ class KubernetesTests(unittest.TestCase):
                     raise ValueError("already exists")
                 self.namespace = value["metadata"]["name"]
                 self.token = value["metadata"]["labels"][restore.LABEL]
-            return {
+            if value["kind"] == "StorageClass":
+                self.storage_name = value["metadata"]["name"]
+                self.policy = value["reclaimPolicy"]
+            result = {
                 **value,
                 "metadata": {
                     **value["metadata"],
                     "uid": "uid-" + value["metadata"]["name"],
                 },
             }
+            if value["kind"] == "Pod":
+                self.pods[value["metadata"]["name"]] = result
+            return result
         if "get" in args:
+            if "pods" in args:
+                return {"items": list(self.pods.values())}
+            if "pod" in args:
+                return self.pods[args[args.index("pod") + 1]]
             if "namespace" in args or "storageclass" in args:
+                name = self.storage_name if "storageclass" in args else self.namespace
                 return {
                     "metadata": {
-                        "name": self.namespace,
+                        "name": name,
                         "uid": "foreign"
                         if self.fail == "owner"
                         or (self.fail == "class_owner" and "storageclass" in args)
-                        else "uid-" + self.namespace,
+                        else "uid-" + name,
                         "labels": {restore.LABEL: self.token},
                     }
                 }
             if "pvc" in args:
                 name = args[args.index("pvc") + 1]
                 return {
-                    "metadata": {"uid": "uid-" + name},
+                    "metadata": {
+                        "name": name,
+                        "namespace": self.namespace,
+                        "uid": "uid-" + name,
+                        "labels": {restore.LABEL: self.token},
+                    },
                     "status": {"phase": "Bound"},
-                    "spec": {"volumeName": "pv-" + name},
+                    "spec": {
+                        "volumeName": "pv-" + name,
+                        "storageClassName": self.storage_name,
+                    },
                 }
             if "pv" in args:
                 name = args[args.index("pv") + 1]
                 kind = name.removeprefix("pv-")
+                self.pv_reads += 1
                 return {
                     "metadata": {
                         "name": name,
+                        "uid": "replaced-pv"
+                        if self.fail == "pv_changed" and self.pv_reads > 2
+                        else "uid-" + name,
                         "annotations": {
                             "pv.kubernetes.io/provisioned-by": "rancher.io/local-path"
                         },
@@ -241,8 +279,10 @@ class KubernetesTests(unittest.TestCase):
                             "name": kind,
                             "namespace": self.namespace,
                         },
-                        "persistentVolumeReclaimPolicy": "Delete",
-                        "storageClassName": self.namespace,
+                        "persistentVolumeReclaimPolicy": "Delete"
+                        if self.fail == "retention"
+                        else self.policy,
+                        "storageClassName": self.storage_name,
                     },
                 }
         if "exec" in args:
@@ -417,6 +457,123 @@ class KubernetesTests(unittest.TestCase):
             any("storageclass" in args and "delete" in args for args, _ in self.events)
         )
 
+    def retained(self):
+        return restore.retain_for_migration(
+            ["kubectl"], "fixture-control-plane", self.stores, self.expected
+        )
+
+    def test_retained_restore_keeps_identified_volumes_without_starting_services(self):
+        result = self.retained()
+        self.assertEqual(result["status"], "RESTORED_NOT_ACTIVATED")
+        self.assertEqual(result["namespace"], "govbiz-evaluation")
+        self.assertNotEqual(result["storage_class"], result["namespace"])
+        self.assertEqual(result["reclaim_policy"], "Retain")
+        self.assertEqual(set(result["claims"]), {"prefect", "results"})
+        self.assertTrue(result["helpers_removed"])
+        self.assertTrue(result["resources_retained"])
+        for name in (
+            "application_started",
+            "services_changed",
+            "production_cutover",
+            "archive_freshness_verified",
+            "source_quiescence_verified",
+        ):
+            self.assertFalse(result[name])
+        self.assertEqual(self.pods, {})
+        self.assertEqual(self.pv_reads, 4)
+        deletes = [args for args, _ in self.events if "delete" in args]
+        self.assertEqual(len(deletes), 2)
+        self.assertTrue(all("pod" in args for args in deletes))
+        self.assertFalse(
+            any(
+                value and value.get("kind") in {"Deployment", "Secret", "Service"}
+                for _, value in self.events
+            )
+        )
+        self.assertNotIn(next(iter(self.expected)), json.dumps(result))
+
+    def test_failed_retained_restore_never_deletes_storage_or_reports_success(self):
+        for defect in (
+            "class",
+            "collision",
+            "class_collision",
+            "pv",
+            "restore",
+            "proof",
+            "retention",
+            "pv_changed",
+            "owner",
+            "class_owner",
+            "helper_cleanup",
+        ):
+            self.events = []
+            self.pods = {}
+            self.pv_reads = 0
+            self.fail = defect
+            with self.subTest(defect=defect), self.assertRaises(ValueError):
+                self.retained()
+            deletes = [args for args, _ in self.events if "delete" in args]
+            self.assertTrue(all("pod" in args for args in deletes))
+            if defect not in {"owner", "helper_cleanup"}:
+                self.assertEqual(self.pods, {})
+            if defect in {"class", "collision", "class_collision", "pv", "retention"}:
+                self.assertFalse(any("exec" in args for args, _ in self.events))
+
+    def test_retained_cleanup_refuses_foreign_pods_without_deleting_them(self):
+        self.retained()
+        for defect in ("name", "uid", "label"):
+            self.events = []
+            item = {
+                "metadata": {
+                    "name": "verify",
+                    "namespace": self.namespace,
+                    "uid": "original",
+                    "labels": {restore.LABEL: self.token},
+                }
+            }
+            if defect == "name":
+                item["metadata"]["name"] = "foreign"
+            elif defect == "label":
+                item["metadata"]["labels"] = {}
+            self.pods = {item["metadata"]["name"]: item}
+
+            def changed(args, defect=defect, **kwargs):
+                value = copy.deepcopy(self.fake_run(args, **kwargs))
+                if defect == "uid" and "get" in args and "pod" in args:
+                    value["metadata"]["uid"] = "replaced"
+                return value
+
+            with (
+                self.subTest(defect=defect),
+                patch.object(restore, "run", side_effect=changed),
+                self.assertRaises(ValueError),
+            ):
+                restore.remove_retained_helpers(
+                    ["kubectl"],
+                    ["kubectl", "-n", self.namespace],
+                    self.namespace,
+                    self.token,
+                    "uid-" + self.namespace,
+                )
+            self.assertTrue(self.pods)
+            self.assertFalse(any("delete" in args for args, _ in self.events))
+
+    def test_caller_failure_cannot_delete_retained_storage(self):
+        with (
+            self.assertRaisesRegex(ValueError, "caller failed"),
+            restore.restored_pvcs(
+                ["kubectl"],
+                "fixture-control-plane",
+                self.stores,
+                self.expected,
+                retain=True,
+            ),
+        ):
+            raise ValueError("caller failed")
+        self.assertTrue(
+            all("pod" in args for args, _ in self.events if "delete" in args)
+        )
+
 
 class ArchiveTests(unittest.TestCase):
     def test_actual_pvc_smoke_is_mandatory_in_required_llmops_ci(self):
@@ -484,10 +641,24 @@ class ArchiveTests(unittest.TestCase):
                 "completed_evidence",
                 return_value={"from": "database"},
             ),
-            patch.object(restore, "rehearse", side_effect=rehearse),
+            patch.object(restore, "rehearse", side_effect=rehearse) as disposable,
+            patch.object(
+                restore, "retain_for_migration", side_effect=rehearse
+            ) as retained,
         ):
             result = restore.verify_archive("state", "archive", "key")
+            retained.assert_not_called()
+            disposable.assert_called_once()
+            events.clear()
+            retained_result = restore.verify_archive(
+                "state", "archive", "key", retain=True
+            )
+            retained.assert_called_once()
         self.assertTrue(result["cross_store_business_links_verified"])
+        self.assertTrue(retained_result["cross_store_business_links_verified"])
+        self.assertEqual(
+            retained_result["archive_sha256"], hashlib.sha256(b"encrypted").hexdigest()
+        )
 
     def test_cli_failure_does_not_expose_private_subprocess_details(self):
         with (
@@ -503,6 +674,36 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual(result.exception.code, 1)
         output.assert_not_called()
         self.assertNotIn("private archive SQL", str(error.write.call_args_list))
+
+    def test_retained_cli_requires_explicit_option_and_reports_preserved_storage(self):
+        with (
+            patch(
+                "sys.argv",
+                [
+                    "probe",
+                    "--archive",
+                    "private",
+                    "--key-file",
+                    "key",
+                    "--retain-for-migration",
+                ],
+            ),
+            patch.object(
+                restore, "verify_archive", side_effect=ValueError("private archive SQL")
+            ) as verify,
+            patch.object(restore.os, "name", "posix"),
+            patch("sys.stderr") as error,
+            patch("builtins.print") as output,
+            self.assertRaises(SystemExit) as result,
+        ):
+            restore.main()
+        self.assertEqual(result.exception.code, 1)
+        self.assertTrue(verify.call_args.kwargs["retain"])
+        self.assertIn(
+            "storage was not automatically deleted", str(error.write.call_args_list)
+        )
+        self.assertNotIn("private archive SQL", str(error.write.call_args_list))
+        output.assert_not_called()
 
 
 if __name__ == "__main__":

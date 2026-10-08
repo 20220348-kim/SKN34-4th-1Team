@@ -1,4 +1,4 @@
-"""Restore and inspect disposable PVC data; no server, credentials or model calls."""
+"""Restore and inspect new PVC copies; no server, credentials or model calls."""
 
 import json
 import os
@@ -40,7 +40,7 @@ def restore(stores, expected, root):
         restored = files.restore(target, entries, kind, expected)
         logical = probe.sqlite_digest(target) if kind == "prefect" else None
         # The archive's metadata has already been checked exactly. Kubernetes
-        # uses UID/GID 10001; only this disposable copy is mapped to 0750/0640.
+        # uses UID/GID 10001; only this new copy is mapped to 0750/0640.
         for path in [*target.rglob("*"), target]:
             path.chmod(0o750 if path.is_dir() else 0o640)
             os.chown(path, UID, GID)

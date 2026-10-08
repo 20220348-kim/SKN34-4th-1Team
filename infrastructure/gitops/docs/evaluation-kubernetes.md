@@ -221,9 +221,41 @@ Docker의 격리 MySQL과 Kubernetes의 복원 helper가 순차 실행되므로 
 `application_started=false`를 명시한다. 이 명령은 **복원 연습**이며 운영에 연결할 PVC를 남기지 않는다.
 NetworkPolicy는 추가하지만 기본 kind CNI에서 실제 집행됐다고 보고하지 않는다.
 
+## 이전용 복원 데이터 보존
+
+같은 명령에 `--retain-for-migration`을 명시하면 새 `govbiz-evaluation` namespace에
+`prefect`·`results` PVC를 복원하고 검증 후 보존한다. 기존 namespace가 있으면 재사용·덮어쓰기 없이
+실패하므로, 실행 전 이전 대상과 백업을 확정한다. 기존 서비스를 중지하거나 Ops 주소를 바꾸지 않는다.
+
+```bash
+python3 -B infrastructure/gitops/scripts/evaluation_pvc_restore.py \
+  --state-dir infrastructure/gitops/.local/fork \
+  --archive /private-backups/ops-state.enc \
+  --key-file /private-backups/ops-state.key \
+  --retain-for-migration
+```
+
+- 전용 임의 이름의 StorageClass를 만들고 처음부터 `Retain`을 사용한다. 다른 Available PV를
+  채택하지 않으며 각 PVC UID·PV UID·claimRef·provisioner·보존 정책을 복원 전후에 확인한다.
+- 기본 복원 연습과 같은 DB 연결 증거·WAL·보고서·파일 권한·비루트 Pod 교체 검증을 수행한다.
+  검증 후 helper Pod만 제거하고 namespace·PVC·PV·StorageClass·격리 정책을 남긴다.
+- 실패해도 데이터 자원을 자동 삭제하지 않는다. 소유권을 확인할 수 있는 helper만 정리하며,
+  정리 실패도 오류다. CLI 오류 원문에 백업 내용·SQL·개인 파일 경로를 출력하지 않는다.
+- 성공은 `RESTORED_NOT_ACTIVATED`다. 백업 해시와 namespace·StorageClass·PVC·PV의 식별 정보를
+  반환하지만 백업 최신성, 기존 writer 중지, 실제 서비스 실행과 전환은 검증하지 않는다.
+  이 결과만으로 Argo를 활성화하거나 접수를 재개하지 않는다.
+
+실제 전환에는 접수·스케줄·writer 중지 후 최신 백업 확보, 검증된 같은 소스 이미지와 Secret 준비,
+네트워크 접근 정책 구성, Ops 연결 변경·업무 검증이 별도로 필요하다. 실패하거나 오래된 복원본이
+남아 있으면 UID·백업 해시와 보존할 데이터를 확인해 수동 정리한 뒤 새로 실행한다. 자동 삭제나
+`Delete` 정책 전환을 복구 절차로 사용하지 않는다.
+[`Retain` 정책](https://kubernetes.io/docs/concepts/storage/persistent-volumes/#retain)은 PVC 삭제 시
+볼륨을 수동 회수 대상으로 남기는 정책이며 백업이나 kind 노드 삭제에 대한 보호가 아니다.
+
 LLMOps CI는 별도 kind 클러스터에서 [`smoke_evaluation_pvc.py`](../scripts/smoke_evaluation_pvc.py)를
 필수 실행한다. 합성 완료 이력·보고서·checkpoint 전 WAL을 사용하며 실제 UID/GID `10001`의 Pod 교체를
-확인하고 클러스터를 정리한다. 결과는 `evaluation-pvc.json` artifact로 남긴다. 이것은 실제 개인 백업의
+확인한다. 보존 모드 반환 후 PVC·PV 식별과 `Retain` 유지, helper 제거, 재실행 거절도 검사한 뒤
+합성 데이터 전용 클러스터 전체를 정리한다. 결과는 `evaluation-pvc.json` artifact로 남긴다. 이것은 실제 개인 백업의
 복원 성공이나 무료 평가 실행 완료를 대신하지 않으며, 최신 커밋 CI가 통과하기 전에는 미검증 상태다.
 
 ## 격리 Kubernetes에서 실제 평가 실행 검증
@@ -287,7 +319,8 @@ Kubernetes 1.36의 이미지 자격 증명 검증은 이미지 ID 외에 저장�
 1. 기존 [암호화 백업·복원](../../../docs/ops-upgrade-runbook.md)을 이용해 **새 Kubernetes PVC**로
    Prefect·결과를 복원하고 실행 ID·보고서 해시·SQLite WAL·파일 권한을 대조한다. 현재 복원 도구의
    격리 Docker 검증과 새 PVC 검증을 구분한다. 임시 PVC 복원 도구·필수 CI 경로는 추가했으며,
-   실제 개인 백업 검증과 운영 이전용 PVC 보존·인계는 남아 있다. 원본 볼륨은 유지한다.
+   이전용 PVC를 보존하는 실행 옵션도 구현했다. 실제 개인 백업 적용·최신성 확인과 서비스 인계는
+   남아 있다. 원본 볼륨은 유지한다.
 2. runner 이미지의 같은 SHA CI·공개 발행·실행 명세 검증 경로는
    [별도 실행기 발행 workflow](../../release/README.md#kubernetes-평가-실행기-이미지)에 추가했다.
    v3 receipt 소비·같은 SHA의 Ops 이미지 대조·독립 수동 Argo 계획도 구현했다.

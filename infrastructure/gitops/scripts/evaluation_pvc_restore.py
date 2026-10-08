@@ -1,8 +1,9 @@
-"""Rehearse an encrypted evaluation backup on NEW disposable kind PVCs.
+"""Restore an encrypted evaluation backup on NEW dedicated kind PVCs.
 
 The CLI never stops writers, restores an existing PVC, starts an API/runner, or
 changes Ops routing. The internal context also supports the disposable runtime
-CI. The generated namespace and PVCs are always removed after use.
+CI. By default all copies are removed. --retain-for-migration keeps verified
+storage in a new govbiz-evaluation namespace without activating any service.
 """
 
 import argparse
@@ -21,6 +22,7 @@ import ops_state_snapshot as snapshot
 import yaml
 
 LABEL = "ai.govbiz.evaluation-restore"
+MIGRATION_NAMESPACE = "govbiz-evaluation"
 PREFECT_VALUES = (
     Path(__file__).resolve().parents[1] / "environments/evaluation/prefect.yaml"
 )
@@ -112,17 +114,88 @@ def require_owner(resource, namespace, token, uid=None):
         or not metadata.get("uid")
         or (uid is not None and metadata["uid"] != uid)
     ):
-        raise ValueError("Disposable resource ownership changed")
+        raise ValueError("Restore resource ownership changed")
     return metadata["uid"]
 
 
+def bound_volumes(kube, nk, namespace, storage_name, token, claims, policy):
+    """Verify newly provisioned PV identities before writing and before retention."""
+    volumes = {}
+    for kind, claim_uid in claims.items():
+        claim = run(nk + ["get", "pvc", kind, "-o", "json"])
+        require_owner(claim, kind, token, claim_uid)
+        if (
+            claim["metadata"].get("namespace") != namespace
+            or claim.get("status", {}).get("phase") != "Bound"
+            or claim["spec"].get("storageClassName") != storage_name
+        ):
+            raise ValueError("New PVC did not bind with its original identity")
+        name = claim["spec"]["volumeName"]
+        pv = run(kube + ["get", "pv", name, "-o", "json"])
+        ref = pv.get("spec", {}).get("claimRef", {})
+        if (
+            pv["metadata"].get("name") != name
+            or not pv["metadata"].get("uid")
+            or ref.get("uid") != claim_uid
+            or ref.get("namespace") != namespace
+            or ref.get("name") != kind
+            or pv["spec"].get("persistentVolumeReclaimPolicy") != policy
+            or pv["spec"].get("storageClassName") != storage_name
+            or pv["metadata"]
+            .get("annotations", {})
+            .get("pv.kubernetes.io/provisioned-by")
+            != "rancher.io/local-path"
+        ):
+            raise ValueError(
+                "PVC must have a new PV with the selected retention policy"
+            )
+        volumes[kind] = {
+            "claim_uid": claim_uid,
+            "pv": name,
+            "pv_uid": pv["metadata"]["uid"],
+        }
+    if len({row["pv"] for row in volumes.values()}) != 2:
+        raise ValueError("Restored stores cannot share one PV")
+    return volumes
+
+
+def remove_retained_helpers(kube, nk, namespace, token, uid):
+    """Stop only this restore's helpers; never remove retained storage on failure."""
+    require_owner(
+        run(kube + ["get", "namespace", namespace, "-o", "json"]), namespace, token, uid
+    )
+    pods = run(nk + ["get", "pods", "-o", "json"])["items"]
+    for item in pods:
+        name = item.get("metadata", {}).get("name")
+        if (
+            name not in {"restore", "verify"}
+            or item["metadata"].get("namespace") != namespace
+        ):
+            raise ValueError("Unexpected workload in retained restore namespace")
+        require_owner(item, name, token)
+    for item in pods:
+        name = item["metadata"]["name"]
+        current = run(nk + ["get", "pod", name, "-o", "json"])
+        require_owner(current, name, token, item["metadata"]["uid"])
+        snapshot.storage.run(
+            [
+                str(p)
+                for p in nk + ["delete", "pod", name, "--wait=true", "--timeout=60s"]
+            ],
+            timeout=75,
+        )
+
+
 @contextmanager
-def restored_pvcs(kube, node, stores, expected, *, image=None):
-    """Yield verified temporary claims; always delete them, including on caller failure.
+def restored_pvcs(kube, node, stores, expected, *, image=None, retain=False):
+    """Yield verified claims. Retained copies survive success AND failure.
 
     The CLI only reads these claims. The disposable runtime CI also starts the
-    evaluation chart inside this lifetime; this is not a production handoff API.
+    evaluation chart inside the default disposable lifetime. Retention stages
+    storage only; it never certifies source quiescence or authorizes activation.
     """
+    if type(retain) is not bool:
+        raise ValueError("Select an explicit boolean retention mode")
     snapshot.probe.expected_runs(expected)
     if set(stores) != {"prefect", "results"}:
         raise ValueError("Both restored stores are required")
@@ -133,6 +206,11 @@ def restored_pvcs(kube, node, stores, expected, *, image=None):
         raise ValueError("Use an immutable Python helper image")
     if not re.fullmatch(r"[a-z0-9][a-z0-9.-]{0,251}[a-z0-9]", node):
         raise ValueError("An explicit kind node is required")
+    if retain and run(
+        kube
+        + ["get", "namespace", MIGRATION_NAMESPACE, "--ignore-not-found", "-o", "json"]
+    ):
+        raise ValueError("Retained namespace already exists")
     # This first implementation targets the repository's single-node kind setup.
     # No static/existing PV can be adopted and no production CSI is assumed.
     storage_class = run(kube + ["get", "storageclass", "standard", "-o", "json"])
@@ -143,7 +221,9 @@ def restored_pvcs(kube, node, stores, expected, *, image=None):
     ):
         raise ValueError("Rehearsal requires kind's disposable standard StorageClass")
     token = uuid4().hex
-    namespace = "govbiz-evaluation-restore-" + token[:12]
+    storage_name = "govbiz-evaluation-restore-" + token[:12]
+    namespace = MIGRATION_NAMESPACE if retain else storage_name
+    policy = "Retain" if retain else "Delete"
     nk = kube + ["--namespace", namespace]
     uid = None
     class_uid = None
@@ -166,13 +246,13 @@ def restored_pvcs(kube, node, stores, expected, *, image=None):
             value={
                 "apiVersion": "storage.k8s.io/v1",
                 "kind": "StorageClass",
-                "metadata": {"name": namespace, "labels": {LABEL: token}},
+                "metadata": {"name": storage_name, "labels": {LABEL: token}},
                 "provisioner": "rancher.io/local-path",
                 "volumeBindingMode": "WaitForFirstConsumer",
-                "reclaimPolicy": "Delete",
+                "reclaimPolicy": policy,
             },
         )
-        class_uid = require_owner(created_class, namespace, token)
+        class_uid = require_owner(created_class, storage_name, token)
         # No credentials or API service are mounted. Policy is defense in depth;
         # kind's default CNI does not prove enforcement of NetworkPolicy.
         run(
@@ -199,12 +279,12 @@ def restored_pvcs(kube, node, stores, expected, *, image=None):
                     "spec": {
                         "accessModes": ["ReadWriteOnce"],
                         "volumeMode": "Filesystem",
-                        "storageClassName": namespace,
+                        "storageClassName": storage_name,
                         "resources": {"requests": {"storage": "1Gi"}},
                     },
                 },
             )
-            claims[kind] = claim["metadata"]["uid"]
+            claims[kind] = require_owner(claim, kind, token)
         run(
             nk + ["create", "-f", "-", "-o", "json"],
             value=pod(namespace, token, "restore", node, image),
@@ -217,30 +297,10 @@ def restored_pvcs(kube, node, stores, expected, *, image=None):
             ],
             timeout=195,
         )
-        for kind, claim_uid in claims.items():
-            claim = run(nk + ["get", "pvc", kind, "-o", "json"])
-            if (
-                claim["metadata"]["uid"] != claim_uid
-                or claim.get("status", {}).get("phase") != "Bound"
-            ):
-                raise ValueError("New PVC did not bind with its original identity")
-            pv = run(kube + ["get", "pv", claim["spec"]["volumeName"], "-o", "json"])
-            ref = pv.get("spec", {}).get("claimRef", {})
-            if (
-                ref.get("uid") != claim_uid
-                or ref.get("namespace") != namespace
-                or ref.get("name") != kind
-                or pv["spec"].get("persistentVolumeReclaimPolicy") != "Delete"
-                or pv["spec"].get("storageClassName") != namespace
-                or pv["metadata"]
-                .get("annotations", {})
-                .get("pv.kubernetes.io/provisioned-by")
-                != "rancher.io/local-path"
-            ):
-                raise ValueError("PVC must have a newly provisioned disposable PV")
-            pv_names.append(pv["metadata"]["name"])
-        if len(set(pv_names)) != 2:
-            raise ValueError("Restored stores cannot share one PV")
+        volumes = bound_volumes(
+            kube, nk, namespace, storage_name, token, claims, policy
+        )
+        pv_names = [row["pv"] for row in volumes.values()]
         proof = run(
             nk
             + [
@@ -348,9 +408,34 @@ def restored_pvcs(kube, node, stores, expected, *, image=None):
             ],
             timeout=75,
         )
+        if retain:
+            require_owner(
+                run(kube + ["get", "storageclass", storage_name, "-o", "json"]),
+                storage_name,
+                token,
+                class_uid,
+            )
+            if (
+                bound_volumes(kube, nk, namespace, storage_name, token, claims, policy)
+                != volumes
+            ):
+                raise ValueError("Restored volume identity changed before retention")
+            result = {
+                **result,
+                "namespace": namespace,
+                "namespace_uid": uid,
+                "storage_class": storage_name,
+                "storage_class_uid": class_uid,
+                "reclaim_policy": policy,
+                "node": node,
+                "helper_image": image,
+                "claims": volumes,
+            }
         yield namespace, result
     finally:
-        if uid is not None:
+        if retain and uid is not None:
+            remove_retained_helpers(kube, nk, namespace, token, uid)
+        elif uid is not None:
             current = run(kube + ["get", "namespace", namespace, "-o", "json"])
             require_owner(current, namespace, token, uid)
             snapshot.storage.run(
@@ -378,9 +463,9 @@ def restored_pvcs(kube, node, stores, expected, *, image=None):
                 )
             if class_uid is not None:
                 current_class = run(
-                    kube + ["get", "storageclass", namespace, "-o", "json"]
+                    kube + ["get", "storageclass", storage_name, "-o", "json"]
                 )
-                require_owner(current_class, namespace, token, class_uid)
+                require_owner(current_class, storage_name, token, class_uid)
                 snapshot.storage.run(
                     [
                         str(p)
@@ -388,7 +473,7 @@ def restored_pvcs(kube, node, stores, expected, *, image=None):
                         + [
                             "delete",
                             "storageclass",
-                            namespace,
+                            storage_name,
                             "--wait=true",
                             "--timeout=30s",
                         ]
@@ -412,7 +497,29 @@ def rehearse(kube, node, stores, expected, *, image=None):
     }
 
 
-def verify_archive(state, archive, key_file):
+def retain_for_migration(kube, node, stores, expected, *, image=None):
+    """Keep new verified copies, but do not connect services or claim cutover readiness."""
+    with restored_pvcs(kube, node, stores, expected, image=image, retain=True) as (
+        _,
+        result,
+    ):
+        evidence = dict(result)
+    return {
+        **evidence,
+        "status": "RESTORED_NOT_ACTIVATED",
+        "scope": "retained_kubernetes_evaluation_pvc",
+        "resources_retained": True,
+        "helpers_removed": True,
+        "application_started": False,
+        "services_changed": False,
+        "production_cutover": False,
+        "archive_freshness_verified": False,
+        "source_quiescence_verified": False,
+        "network_policy_enforcement_verified": False,
+    }
+
+
+def verify_archive(state, archive, key_file, *, retain=False):
     settings = fork_cluster.load_settings(state)
     kube, _, _ = fork_cluster.commands(state, settings)
     fork_cluster.verify_context(kube, settings, timeout=15)
@@ -424,7 +531,8 @@ def verify_archive(state, archive, key_file):
     # Caller-provided IDs cannot stand in for evidence from the restored Ops DB.
     with snapshot.database.restored_database(payload["database"]) as command:
         expected = snapshot.completed_evidence(command, stores["results"])
-    result = rehearse(kube, settings["cluster"] + "-control-plane", stores, expected)
+    restore = retain_for_migration if retain else rehearse
+    result = restore(kube, settings["cluster"] + "-control-plane", stores, expected)
     return {
         **result,
         "archive_sha256": hashlib.sha256(raw).hexdigest(),
@@ -437,20 +545,34 @@ def main():
     parser.add_argument("--state-dir", type=Path, default=fork_cluster.STATE)
     parser.add_argument("--archive", type=Path, required=True)
     parser.add_argument("--key-file", type=Path, required=True)
+    parser.add_argument(
+        "--retain-for-migration",
+        action="store_true",
+        help="Keep new govbiz-evaluation PVCs with Retain policy; never activate services",
+    )
     args = parser.parse_args()
     if os.name != "posix":
         parser.error("Run inside WSL/Linux")
     try:
         print(
             json.dumps(
-                verify_archive(args.state_dir, args.archive, args.key_file),
+                verify_archive(
+                    args.state_dir,
+                    args.archive,
+                    args.key_file,
+                    retain=args.retain_for_migration,
+                ),
                 sort_keys=True,
             )
         )
     except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError):
         parser.exit(
             1,
-            "Evaluation PVC rehearsal failed; existing services were not changed. Inspect disposable resources if cleanup failed.\n",
+            (
+                "Retained evaluation restore failed; do not activate services. Inspect govbiz-evaluation and its labeled StorageClass/PVs; storage was not automatically deleted and helper cleanup may be incomplete.\n"
+                if args.retain_for_migration
+                else "Evaluation PVC rehearsal failed; existing services were not changed. Inspect disposable resources if cleanup failed.\n"
+            ),
         )
 
 
