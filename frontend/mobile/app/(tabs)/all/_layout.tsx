@@ -5,7 +5,7 @@ import { colors } from '../../../src/ui'
 export const unstable_settings = { anchor: 'index' }
 
 export default function AllLayout() {
-  return <Stack screenOptions={{ headerTintColor: colors.text, headerTitleAlign: 'left', headerBackTitle: '전체',
+  return <Stack screenOptions={{ headerTintColor: colors.text, headerTitleAlign: 'left', headerBackTitle: '메뉴',
     headerTitleStyle: { fontSize: 18, fontWeight: '700' }, headerShadowVisible: false,
     headerStyle: { backgroundColor: colors.surface }, contentStyle: { backgroundColor: colors.background } }}>
     <Stack.Screen name="index" options={{ headerShown: false }} />

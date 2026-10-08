@@ -97,7 +97,7 @@ test('the root introduction mounts the actual navigator only after choosing publ
   expect(view.getSearchParams()).toMatchObject({ mode: 'filter' })
 })
 
-const tabLabels = () => screen.getAllByLabelText(/^(검색|협업|관심함|리포트|전체)$/).map(tab => tab.props.accessibilityLabel)
+const tabLabels = () => screen.getAllByLabelText(/^(검색|협업|관심함|리포트|메뉴)$/).map(tab => tab.props.accessibilityLabel)
 const memberAuth = { status: 'signedIn', session: { accessToken: 'owner', account: { email: 'member@example.com', company: null } },
   restoreError: null, invalidateSession: jest.fn().mockResolvedValue(undefined) } as unknown as ReturnType<typeof useAuth>
 
@@ -119,7 +119,7 @@ test.each([
   const view = renderRouter(allMenuRoutes, { initialUrl: '/all' })
   fireEvent.press(await screen.findByLabelText(label))
   await waitFor(() => expect(view.getPathname()).toBe(pathname))
-  fireEvent.press(screen.getByLabelText('전체'))
+  fireEvent.press(screen.getByLabelText('메뉴'))
   await screen.findByLabelText('파트너 관리')
   expect(view.getPathname()).toBe('/all')
   expect(router.canDismiss()).toBe(false)
@@ -132,12 +132,12 @@ test('pressing All from another tab returns to the menu without changing the sea
   jest.mocked(useAuth).mockReturnValue(memberAuth)
   const view = renderRouter(allMenuRoutes, { initialUrl: '/?mode=filter' })
   fireEvent.changeText(await screen.findByLabelText('공고명·기관명'), '유지할 검색 조건')
-  fireEvent.press(screen.getByLabelText('전체'))
+  fireEvent.press(screen.getByLabelText('메뉴'))
   fireEvent.press(await screen.findByLabelText('내 계정'))
   await waitFor(() => expect(view.getPathname()).toBe('/all/account'))
   fireEvent.press(screen.getByLabelText('검색'))
   await screen.findByDisplayValue('유지할 검색 조건')
-  fireEvent.press(screen.getByLabelText('전체'))
+  fireEvent.press(screen.getByLabelText('메뉴'))
   await screen.findByLabelText('파트너 관리')
   expect(view.getPathname()).toBe('/all')
   fireEvent.press(screen.getByLabelText('검색'))
@@ -152,15 +152,15 @@ test.each(['/all/account', '/all/company', '/all/settings', '/all/preparation', 
     await act(async () => router.back())
     await screen.findByLabelText('파트너 관리')
     expect(view.getPathname()).toBe('/all')
-    expect(screen.getByLabelText('전체').props.accessibilityState.selected).toBe(true)
+    expect(screen.getByLabelText('메뉴').props.accessibilityState.selected).toBe(true)
   })
 
 test('pressing All from a direct link and pressing it again keeps one menu screen', async () => {
   const view = renderRouter(allMenuRoutes, { initialUrl: '/all/company' })
   await screen.findByText('기업 정보 화면')
-  fireEvent.press(screen.getByLabelText('전체'))
+  fireEvent.press(screen.getByLabelText('메뉴'))
   await screen.findByLabelText('파트너 관리')
-  fireEvent.press(screen.getByLabelText('전체'))
+  fireEvent.press(screen.getByLabelText('메뉴'))
   await waitFor(() => expect(view.getPathname()).toBe('/all'))
   expect(router.canDismiss()).toBe(false)
 })
@@ -172,7 +172,7 @@ test('pressing All recovers a stack that was opened without a menu underneath', 
   await screen.findByText('기업 정보 화면')
   expect(screen.queryByLabelText('파트너 관리')).toBeNull()
   expect(router.canDismiss()).toBe(false)
-  fireEvent.press(screen.getByLabelText('전체'))
+  fireEvent.press(screen.getByLabelText('메뉴'))
   await screen.findByLabelText('파트너 관리')
   expect(view.getPathname()).toBe('/all')
   expect(router.canDismiss()).toBe(false)
@@ -184,7 +184,7 @@ test('pressing All from a nested account screen returns to the menu instead of t
   fireEvent.press(await screen.findByLabelText('내 계정'))
   fireEvent.press(await screen.findByLabelText('기업 프로필 등록'))
   await screen.findByText('기업 정보 화면')
-  fireEvent.press(screen.getByLabelText('전체'))
+  fireEvent.press(screen.getByLabelText('메뉴'))
   await screen.findByLabelText('파트너 관리')
   expect(view.getPathname()).toBe('/all')
   expect(router.canDismiss()).toBe(false)
@@ -199,7 +199,7 @@ test('pressing All saves a pending document answer before removing its editor', 
   await act(async () => router.push('/all/preparation/9'))
   await screen.findByDisplayValue('테스트 기업')
   fireEvent.changeText(screen.getByLabelText('내 답변'), '전체로 돌아가기 전에 저장할 기업')
-  fireEvent.press(screen.getByLabelText('전체'))
+  fireEvent.press(screen.getByLabelText('메뉴'))
   await waitFor(() => expect(preparationApi.replaceInputs).toHaveBeenCalledTimes(1))
   expect(view.getPathname()).toBe('/all/preparation/9')
   expect(preparationApi.replaceInputs).toHaveBeenCalledWith(9, 'company', expect.objectContaining({
@@ -219,7 +219,7 @@ test('a failed document save prevents All from discarding the answer or leaving 
   await act(async () => router.push('/all/preparation/9'))
   await screen.findByDisplayValue('테스트 기업')
   fireEvent.changeText(screen.getByLabelText('내 답변'), '저장 실패에도 유지할 기업')
-  fireEvent.press(screen.getByLabelText('전체'))
+  fireEvent.press(screen.getByLabelText('메뉴'))
   await waitFor(() => expect(alert).toHaveBeenCalledWith('답변을 먼저 저장해 주세요', expect.any(String)))
   expect(view.getPathname()).toBe('/all/preparation/9')
   expect(screen.getByLabelText('내 답변').props.value).toBe('저장 실패에도 유지할 기업')
@@ -251,12 +251,12 @@ test('the collaboration pencil requires company registration before opening the 
 test('guests have exactly search, collaboration and All and browse public recruitment without private calls', async () => {
   const view = renderRouter(routes, { initialUrl: '/' })
   await screen.findByLabelText('회사 상황이나 궁금한 점')
-  expect(tabLabels()).toEqual(['검색', '협업', '전체'])
+  expect(tabLabels()).toEqual(['검색', '협업', '메뉴'])
   fireEvent.press(screen.getByLabelText('협업'))
   await screen.findByText('모집글 0건')
   expect(view.getPathname()).toBe('/collab')
   expect(browseProposals).not.toHaveBeenCalled()
-  fireEvent.press(screen.getByLabelText('전체'))
+  fireEvent.press(screen.getByLabelText('메뉴'))
   await screen.findByLabelText('파트너 관리')
   expect(screen.getByLabelText('신청 문서')).toBeTruthy()
   expect(screen.getByLabelText('관심 공고함')).toBeTruthy()
@@ -264,15 +264,15 @@ test('guests have exactly search, collaboration and All and browse public recrui
   await screen.findByLabelText('이메일')
   expect(view.getPathname()).toBe('/all')
   fireEvent.press(screen.getByLabelText('로그인 취소'))
-  expect(tabLabels()).toEqual(['검색', '협업', '전체'])
+  expect(tabLabels()).toEqual(['검색', '협업', '메뉴'])
 }, 15_000)
 
 test('verified members retain the original four tabs and private All menu', async () => {
   jest.mocked(useAuth).mockReturnValue(memberAuth)
   renderRouter(routes, { initialUrl: '/' })
   await screen.findByLabelText('회사 상황이나 궁금한 점')
-  expect(tabLabels()).toEqual(['검색', '관심함', '리포트', '전체'])
-  fireEvent.press(screen.getByLabelText('전체'))
+  expect(tabLabels()).toEqual(['검색', '관심함', '리포트', '메뉴'])
+  fireEvent.press(screen.getByLabelText('메뉴'))
   await screen.findByLabelText('신청 문서')
   expect(screen.getByLabelText('관심 공고함')).toBeTruthy()
 })
@@ -283,8 +283,8 @@ test('signing in from the guest collaboration tab retains its destination inside
   jest.mocked(useAuth).mockReturnValue(memberAuth)
   await act(async () => router.setParams({ view: 'recruitments' }))
   await waitFor(() => expect(view.getPathname()).toBe('/all/collab'))
-  expect(tabLabels()).toEqual(['검색', '관심함', '리포트', '전체'])
-  expect(screen.getByLabelText('전체').props.accessibilityState.selected).toBe(true)
+  expect(tabLabels()).toEqual(['검색', '관심함', '리포트', '메뉴'])
+  expect(screen.getByLabelText('메뉴').props.accessibilityState.selected).toBe(true)
 })
 
 test('logging out from a hidden member tab returns to public search with three tabs', async () => {
@@ -295,7 +295,7 @@ test('logging out from a hidden member tab returns to public search with three t
   jest.mocked(useAuth).mockReturnValue({ status: 'signedOut', session: null, restoreError: null } as ReturnType<typeof useAuth>)
   await act(async () => router.setParams({ check: 'logout' }))
   await waitFor(() => expect(view.getPathname()).toBe('/'))
-  expect(tabLabels()).toEqual(['검색', '협업', '전체'])
+  expect(tabLabels()).toEqual(['검색', '협업', '메뉴'])
 })
 
 test('guest private menu entries keep All on cancellation and enter the selected feature only after verified login', async () => {
@@ -319,7 +319,7 @@ test('guest private menu entries keep All on cancellation and enter the selected
   await act(async () => verifyLogin())
   await screen.findByText('선택한 회원 관심함')
   expect(view.getPathname()).toBe('/saved')
-  expect(tabLabels()).toEqual(['검색', '관심함', '리포트', '전체'])
+  expect(tabLabels()).toEqual(['검색', '관심함', '리포트', '메뉴'])
 })
 
 test.each([
@@ -330,7 +330,7 @@ test.each([
   const view = renderRouter(routes, { initialUrl })
   await screen.findByLabelText(label)
   await waitFor(() => expect(view.getPathname()).toBe(pathname))
-  expect(screen.getByLabelText(initialUrl.startsWith('/collab') ? '협업' : '전체').props.accessibilityState.selected).toBe(true)
+  expect(screen.getByLabelText(initialUrl.startsWith('/collab') ? '협업' : '메뉴').props.accessibilityState.selected).toBe(true)
   if (initialUrl.startsWith('/collab')) expect(view.getSearchParams()).toMatchObject({ view: 'box', box: 'sent' })
 })
 
@@ -346,7 +346,7 @@ test.each([
   const view = renderRouter(routes, { initialUrl: pathname + suffix })
   await screen.findByText(notice)
   expect(view.getPathname()).toBe(pathname)
-  expect(screen.getByLabelText('전체').props.accessibilityState.selected).toBe(true)
+  expect(screen.getByLabelText('메뉴').props.accessibilityState.selected).toBe(true)
   fireEvent.press(screen.getByLabelText(label === '중복 검토' ? '로그인하고 시작' : label === '신청 문서' ? '로그인하고 시작하기' : '로그인하기'))
   if (label !== '알림 설정') {
     await screen.findByText('로그인이 필요해요')
@@ -409,7 +409,7 @@ test('legacy preparation review links enter the independent native review list',
   const view = renderRouter(routes, { initialUrl: '/all/preparation?kind=reviews' })
   await screen.findByText('로그인하고 시작')
   await waitFor(() => expect(view.getPathname()).toBe('/all/reviews'))
-  expect(screen.getByLabelText('전체').props.accessibilityState.selected).toBe(true)
+  expect(screen.getByLabelText('메뉴').props.accessibilityState.selected).toBe(true)
 })
 
 
@@ -427,7 +427,7 @@ test('All partner management switches received, sent and owned tabs and a recrui
   fireEvent.press(screen.getByRole('tab', { name: '내 모집글' }))
   await waitFor(() => expect(view.getSearchParams()).toMatchObject({ management: '1', view: 'recruitments', mine: '1' }))
   await waitFor(() => expect(browseRecruitments).toHaveBeenLastCalledWith(expect.objectContaining({ mineOnly: true }), expect.any(String), expect.any(AbortSignal)))
-  fireEvent.press(screen.getByLabelText('전체'))
+  fireEvent.press(screen.getByLabelText('메뉴'))
   fireEvent.press(await screen.findByLabelText('모집글'))
   await waitFor(() => expect(view.getSearchParams()).toMatchObject({ management: '0', view: 'recruitments', mine: '0' }))
   expect(await screen.findByLabelText('모집글 작성')).toBeTruthy()
@@ -469,5 +469,5 @@ test('a guest partner management entry stays on All until verified login and ret
   await screen.findByRole('tab', { name: '받은 제안' })
   expect(view.getPathname()).toBe('/all/collab')
   expect(view.getSearchParams()).toMatchObject({ management: '1', view: 'box', box: 'received', mine: '0' })
-  expect(screen.getByLabelText('전체').props.accessibilityState.selected).toBe(true)
+  expect(screen.getByLabelText('메뉴').props.accessibilityState.selected).toBe(true)
 })

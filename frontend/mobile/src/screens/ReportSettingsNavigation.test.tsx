@@ -49,7 +49,7 @@ test.each([undefined, '7'])('report %s opens notification settings and returns t
   fireEvent.press(screen.getByLabelText('알림 설정 열기'))
   await screen.findByText('알림 설정 화면', {}, { timeout: 5000 })
   expect(view.getPathname()).toBe('/all/settings')
-  expect(screen.getByLabelText('전체').props.accessibilityState.selected).toBe(true)
+  expect(screen.getByLabelText('메뉴').props.accessibilityState.selected).toBe(true)
   fireEvent.press(await screen.findByLabelText('리포트로 돌아가기'))
   await screen.findByText('리포트 화면')
   expect(view.getPathname()).toBe('/report')
