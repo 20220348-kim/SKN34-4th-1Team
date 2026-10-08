@@ -5,10 +5,11 @@ import { assistantLift } from '../../../shared/assistant/assistantPlacement'
 import { selectCurrentAccount, signedOut } from '../../../shared/auth/state/authSlice'
 import { appPaths, combinationReviewRunResultPath, supportProgramDetailPath } from '../../../shared/routes/appPaths'
 import { reviewProgramKey, supportsAutomaticReview, type ReviewListItem, type ReviewProgram, type RunSummary } from '../../../../domain/entities/CombinationReview'
+import { reviewAnswersOf } from '@govbiz/shared/domain/entities/CombinationReviewResult'
 import { useReviewListViewModel } from '../viewmodel/useReviewListViewModel'
 import { useReviewEditorViewModel, type InitialReviewProgram, type ReviewProgramInfo } from '../viewmodel/useReviewEditorViewModel'
-import { ReviewParticipation } from './ReviewParticipation'
 import { ReviewRunResult } from './ReviewRunResult'
+import { ReviewNarrowingPanel, ReviewSituationFields } from './ReviewSituation'
 import { defaultProgramSelectionFilters } from '../../../shared/support-program/catalogSearchParams'
 import { programPickerStyles } from '../../../shared/support-program/ProgramPicker.styles'
 import { ProgramBadges, ProgramPickerPanel } from '../../../shared/support-program/ProgramPickerPanel'
@@ -25,11 +26,12 @@ import { useFloatingPopover } from '../../../shared/workspace/useFloatingPopover
 import { ReviewEditorSkeleton, ReviewListSkeleton, ReviewRunResultSkeleton } from './ReviewSkeletons'
 
 const listTitle = '중복 지원·수혜 검토'
-const scopeNotice = '두 공고를 함께 신청 · 선정 · 수행할 수 있는지 봐요. 과거 수혜 이력 누적 · 사업비 정산 규정은 이 검토 범위 밖이에요.'
+const scopeNotice = '두 공고를 함께 신청 · 수행할 수 있는지, 같은 과제 · 비용으로 두 번 받는 것은 아닌지 봐요. 다른 사업까지 합친 과거 수혜 이력 누적은 이 검토 범위 밖이에요.'
 const unsupportedNotice = '선택한 공고는 현재 자동 분석을 지원하지 않습니다. 기업마당의 숫자형 PBLN_ 공고와 K-Startup·과기정통부·충남 수출지원의 숫자형 공고를 지원하며, 세부사업은 지정하지 않아야 합니다.'
 /** 사업 칸과 공고 고르기 행에 붙이는 한 줄 안내입니다. */
 const unsupportedProgramNote = '현재 자동 분석을 지원하지 않는 공고입니다.'
-const steps = [['selection', '제목 · 공고 선택'], ['participation', '참여 상태'], ['analysis', '공고 분석']] as const
+// 참여 상태는 필수 단계가 아니라 공고 분석 단계의 "내 상황(선택)"에서 받습니다. 예전 주소 `?step=participation`은 공고 분석 단계로 엽니다.
+const steps = [['selection', '제목 · 공고 선택'], ['analysis', '공고 분석']] as const
 type Step = typeof steps[number][0]
 
 const sessionKeys = new WeakMap<object, number>()
@@ -158,7 +160,7 @@ function ReviewList({ account }: { account: string }) {
     {showSkeleton && <ReviewListSkeleton />}
     {vm.page?.items.length === 0 && <div className={`${s.card} flex flex-col items-center gap-2 text-center`}>
       <h2 className="font-semibold">아직 저장한 검토가 없어요</h2>
-      <p className={s.muted}>새 검토에서 공고 2개와 참여 상태를 입력하면 분석을 시작할 수 있어요.</p>
+      <p className={s.muted}>새 검토에서 공고 2개를 고르면 바로 분석할 수 있어요.</p>
       <Link className={s.secondarySm} to={appPaths.combinationReviewNew}>새 검토</Link>
     </div>}
     {items.length > 0 && <ul className="grid gap-3" aria-label="저장한 검토">{items.map((item) =>
@@ -218,7 +220,7 @@ function RunResultPage({ reviewId, runId, account }: { reviewId: number; runId: 
   const contentRef = useRef<HTMLElement>(null)
   const reviewPath = `${appPaths.combinationReviews}/${reviewId}`
   const header = <WorkspacePageHeader parent={[{ to: appPaths.combinationReviews, label: listTitle }, { to: `${reviewPath}?step=analysis`, label: vm.review?.title ?? '검토' }]} title="검토 결과"
-    actions={<Link className={workspacePageStyles.secondaryButton} to={`${reviewPath}?step=participation`}>입력 수정</Link>} />
+    actions={<Link className={workspacePageStyles.secondaryButton} to={reviewPath}>입력 수정</Link>} />
   useEffect(() => {
     const scrollArea = contentRef.current?.parentElement
     if (scrollArea && typeof scrollArea.scrollTo === 'function') scrollArea.scrollTo({ top: 0, left: 0, behavior: 'auto' })
@@ -227,6 +229,9 @@ function RunResultPage({ reviewId, runId, account }: { reviewId: number; runId: 
   const loadingRun = vm.run?.id !== runId && (vm.busy.some((value) => value === 'load' || value === 'run') || vm.error === null)
   const showRunSkeleton = useDelayedFlag(loadingRun)
   const historyBusy = vm.busy.includes('history')
+  const rerunBusy = vm.busy.includes('save') || vm.busy.includes('analysis')
+  // 저장(바뀐 경우) 뒤 접수한 새 실행의 결과 화면으로 옮겨 진행 상태와 결과를 이어서 봅니다.
+  const rerun = (additionalFacts: string) => vm.saveAndStart(additionalFacts, (started) => navigate(combinationReviewRunResultPath(reviewId, started.id)))
   if (vm.error?.status === 401) return <>{header}<main className={workspacePageStyles.content}><ReviewError error={vm.error} /></main></>
   const selectedRun = vm.run?.id === runId ? vm.run : null
   const runOptions = vm.runs?.items ?? []
@@ -248,8 +253,26 @@ function RunResultPage({ reviewId, runId, account }: { reviewId: number; runId: 
     {loadingRun && <p className="sr-only" role="status">실행 결과를 불러오는 중입니다.</p>}
     {showRunSkeleton && <ReviewRunResultSkeleton />}
     {!selectedRun && vm.review && vm.error && !vm.busy.includes('run') && <div className="flex justify-center"><button className={s.primary} type="button" onClick={() => vm.selectRun(runId)}>다시 시도</button></div>}
-    {selectedRun && <ReviewRunResult key={selectedRun.id} run={selectedRun} currentRevision={vm.review?.inputRevision ?? selectedRun.inputRevision} names={vm.names} download={vm.download} downloading={vm.busy.includes('download')} />}
+    {selectedRun && <ReviewRunResult key={selectedRun.id} run={selectedRun} currentRevision={vm.review?.inputRevision ?? selectedRun.inputRevision} names={vm.names} download={vm.download} downloading={vm.busy.includes('download')}
+      narrowing={vm.review && reviewAnswersOf(selectedRun.analysis) && <ReviewNarrowingPanel value={vm.draft} names={vm.names} dirty={vm.dirty} busy={rerunBusy}
+        blocked={vm.startBlocked} pendingPath={vm.pending ? `${reviewPath}?step=analysis` : null}
+        onChange={(situation) => vm.setDraft({ ...vm.draft, ...situation })} onSubmit={() => rerun(selectedRun.input.additionalFacts)} />}
+      reanalyze={vm.review && <Reanalyze busy={rerunBusy} blocked={vm.pending ? '응답을 확인하지 못한 분석 요청이 있어요' : vm.startBlocked} onClick={() => rerun(selectedRun.input.additionalFacts)} />} />}
   </main></>
+}
+
+/**
+ * 지난 여섯 단계 결과에 붙는 [새 방식으로 다시 분석]입니다. 지금 저장된 입력으로 새 분석을 한 번 접수하고, 분석 방식은 서버가 정합니다.
+ * 지금 보낼 수 없으면 이유를 버튼 앞에 적습니다.
+ */
+function Reanalyze({ busy, blocked, onClick }: { busy: boolean; blocked: string | null; onClick: () => void }) {
+  const reasonId = useId()
+  return <div className="flex flex-wrap items-center justify-end gap-2">
+    {blocked && <p className={`${s.stepBarReason} m-0`} id={reasonId}>{blocked}</p>}
+    <button type="button" className={s.secondarySm} disabled={busy || !!blocked} aria-busy={busy} aria-describedby={blocked ? reasonId : undefined} onClick={onClick}>
+      {busy ? <><span className={s.buttonSpinner} aria-hidden="true" />접수 중…</> : '새 방식으로 다시 분석'}
+    </button>
+  </div>
 }
 
 function ReviewEditor({ id, account, initialProgram = null }: { id: number | null; account: string; initialProgram?: InitialReviewProgram | null }) {
@@ -260,9 +283,10 @@ function ReviewEditor({ id, account, initialProgram = null }: { id: number | nul
   // 단계는 주소(?step=)가 정합니다. 새로고침 · 뒤로 가기 · 링크로 들어와도 같은 단계를 봅니다. 저장 전인 새 검토는 1단계뿐입니다.
   const [searchParams, setSearchParams] = useSearchParams()
   const requestedStep = searchParams.get('step')
-  const step: Step = id && (requestedStep === 'analysis' || requestedStep === 'participation') ? requestedStep : 'selection'
+  const step: Step = id && (requestedStep === 'analysis' || requestedStep === 'participation') ? 'analysis' : 'selection'
   const reasonId = useId()
   const slotsHeadingId = useId()
+  const situationHeadingId = useId()
   const contentRef = useRef<HTMLElement>(null)
   /** 공고 고르기 패널을 연 사업 칸입니다. 닫혀 있으면 null입니다. */
   const [pickerSlot, setPickerSlot] = useState<number | null>(null)
@@ -308,22 +332,19 @@ function ReviewEditor({ id, account, initialProgram = null }: { id: number | nul
   // 주 버튼을 누를 수 없는 이유입니다. 버튼 옆에 적고 aria-describedby로 연결합니다.
   const selectionBlocked = !vm.draft.title.trim() ? '검토 제목을 입력하면 넘어갈 수 있어요'
     : invalidProgramCount ? `공고를 2개 고르면 넘어갈 수 있어요 · 지금 ${vm.draft.programs.length}개` : null
-  const runBlocked = activeRun ? '분석이 끝나면 다시 실행할 수 있어요'
-    : unknownRun ? '완료 여부를 확인하지 못한 실행이 있어 새 분석을 막았어요'
-      : vm.dirty ? '바뀐 입력을 이전 단계에서 저장하면 실행할 수 있어요'
-        : invalidProgramCount ? '공고를 2개로 줄이면 실행할 수 있어요'
-          : unsupported ? '자동 분석을 지원하지 않는 공고가 있어요' : null
+  // 바뀐 내 상황은 [검토 실행]이 먼저 저장하므로 실행을 막는 이유가 아닙니다.
+  const runBlocked = vm.startBlocked
   if (vm.error?.status === 401) return <>{header}<main className={workspacePageStyles.content}><ReviewError error={vm.error} /></main></>
   return <>{header}<main ref={contentRef} className={workspacePageStyles.content}>
-    <ol className="grid gap-2 max-[599px]:hidden sm:grid-cols-3" aria-label="검토 진행 단계">
+    <ol className="grid gap-2 max-[599px]:hidden sm:grid-cols-2" aria-label="검토 진행 단계">
       {steps.map(([value, label], index) => <li key={value} className={`flex flex-col rounded-2xl border px-3 py-2 ${index === stepIndex ? 'border-brand-primary bg-brand-soft' : index < stepIndex ? 'border-brand-primary/40 bg-white' : 'border-slate-200 bg-white'}`} aria-current={index === stepIndex ? 'step' : undefined}>
         <span className={`text-xs font-bold ${index <= stepIndex ? 'text-brand-primary' : 'text-slate-500'}`}>{index + 1}단계{index < stepIndex ? ' · 완료' : index === stepIndex ? ' · 진행 중' : ''}</span>
         <b className="text-sm">{label}</b>
       </li>)}
     </ol>
     <div className="flex flex-col gap-1.5 min-[600px]:hidden" aria-hidden="true">
-      <div className="flex justify-between text-sm font-extrabold"><span>{steps[stepIndex]![1]}</span><span className="text-slate-500 tabular-nums">{stepIndex + 1} / 3</span></div>
-      <div className="h-1.5 overflow-hidden rounded-full bg-surface-muted"><i className="block h-full rounded-full bg-brand-primary" style={{ width: `${(stepIndex + 1) / 3 * 100}%` }} /></div>
+      <div className="flex justify-between text-sm font-extrabold"><span>{steps[stepIndex]![1]}</span><span className="text-slate-500 tabular-nums">{stepIndex + 1} / {steps.length}</span></div>
+      <div className="h-1.5 overflow-hidden rounded-full bg-surface-muted"><i className="block h-full rounded-full bg-brand-primary" style={{ width: `${(stepIndex + 1) / steps.length * 100}%` }} /></div>
       <span className="text-xs text-slate-500">{saveNote}</span>
     </div>
     <ReviewError error={vm.error} />
@@ -335,7 +356,7 @@ function ReviewEditor({ id, account, initialProgram = null }: { id: number | nul
       : <div className={s.card}><button className={s.secondarySm} onClick={vm.load}>다시 시도</button></div>) : <>
       {step === 'selection' && <>
         <fieldset disabled={inputBusy} className="space-y-4">
-          <div className={s.card}><label className="font-semibold">검토 제목<input className={s.input} value={vm.draft.title} onChange={(e) => vm.setDraft({ ...vm.draft, title: e.target.value })} required placeholder="예: 창업 지원사업 참여 검토" /></label><p className={s.muted}>제목은 200자 이내입니다. 참여 상태는 다음 단계에서 입력합니다.</p></div>
+          <div className={s.card}><label className="font-semibold">검토 제목<input className={s.input} value={vm.draft.title} onChange={(e) => vm.setDraft({ ...vm.draft, title: e.target.value })} required placeholder="예: 창업 지원사업 참여 검토" /></label><p className={s.muted}>제목은 200자 이내입니다. 공고 두 개만 고르면 다음 단계에서 바로 분석할 수 있어요.</p></div>
           <section className={s.card} aria-labelledby={slotsHeadingId}>
             <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="font-bold" id={slotsHeadingId}>비교할 공고</h2><strong className="rounded-full bg-brand-soft px-3 py-1 text-sm text-brand-primary tabular-nums">{vm.draft.programs.length}/2</strong></div>
             <p className={s.muted}>공고 두 개를 골라 주세요. 접수가 끝난 공고도 참여 이력 검토에 쓸 수 있어요.</p>
@@ -350,17 +371,7 @@ function ReviewEditor({ id, account, initialProgram = null }: { id: number | nul
           {unsupported && <p className={s.warning}>{unsupportedNotice}</p>}
         </fieldset>
         <StepBar note={saveNote} reason={selectionBlocked} reasonId={reasonId}
-          next={<button className={s.primaryPill} type="button" onClick={() => goTo('participation')} disabled={!!selectionBlocked || inputBusy} aria-busy={saving} aria-describedby={selectionBlocked ? reasonId : undefined}>{nextLabel}</button>} />
-      </>}
-      {step === 'participation' && <>
-        <fieldset disabled={inputBusy} className="space-y-4">
-          <p className={s.muted}>공고마다 지금 어디까지 진행했는지 골라 주세요. 잘 모르면 "잘 모르겠음"으로 두세요.</p>
-          {vm.draft.programs.map((program, index) => <ReviewParticipation key={reviewProgramKey(program)} program={program} index={index} name={vm.names[reviewProgramKey(program)]} onChange={(participation) => vm.setDraft({ ...vm.draft, programs: vm.draft.programs.map((p, i) => i === index ? { ...p, participation } : p) })} />)}
-          <div className={s.card}><label className="block text-sm font-semibold">분석에 참고할 추가 설명 (선택)<textarea className={s.input} rows={4} maxLength={8000} value={vm.facts} onChange={(e) => vm.setFacts(e.target.value)} placeholder={'예: 두 사업에서 같은 인건비를 사용하려고 합니다.\n한 사업의 확약서를 철회할 예정입니다.\n두 사업의 수행 내용이 일부 같습니다.'} /></label><p className={s.muted}>{vm.facts.length}/8000 · 이번 실행에만 저장돼요.</p></div>
-          {unsupported && <p className={s.warning}>{unsupportedNotice}</p>}
-        </fieldset>
-        <StepBar note={saveNote} back={<button className={s.secondaryPill} type="button" disabled={inputBusy} onClick={() => goTo('selection')}>← 이전</button>}
-          next={<button className={s.primaryPill} type="button" disabled={inputBusy} aria-busy={saving} onClick={() => goTo('analysis')}>{nextLabel}</button>} />
+          next={<button className={s.primaryPill} type="button" onClick={() => goTo('analysis')} disabled={!!selectionBlocked || inputBusy} aria-busy={saving} aria-describedby={selectionBlocked ? reasonId : undefined}>{nextLabel}</button>} />
       </>}
       {step === 'analysis' && id && <>
         <p className={s.info}>{scopeNotice}</p>
@@ -370,9 +381,22 @@ function ReviewEditor({ id, account, initialProgram = null }: { id: number | nul
           {!activeRun && finishedRun && <LatestRunCard reviewId={id} run={finishedRun} stale={finishedRun.inputRevision !== vm.review?.inputRevision || vm.dirty} />}
         </div>
         <section className={`${s.card} space-y-3`} aria-label="분석 대상 공고"><h2 className="font-bold">분석 대상 공고</h2><ul className="space-y-2">{vm.draft.programs.map((program, index) => <li key={reviewProgramKey(program)} className="rounded-lg bg-slate-50 p-3"><strong>사업 {index + 1} · {vm.names[reviewProgramKey(program)] ?? '공고 정보 확인 중'}</strong></li>)}</ul></section>
+        {/* 내 상황은 모두 선택입니다. 고르면 조건부 답을 좁혀 주고, [검토 실행]이나 단계 이동 때 저장합니다. */}
+        <section className={`${s.card} space-y-4`} aria-labelledby={situationHeadingId}>
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-center gap-2"><h2 className="font-bold" id={situationHeadingId}>내 상황</h2><span className={`${s.badge} ${s.badgeNeutral}`}>선택</span></div>
+            <p className={s.muted}>모두 비워 둬도 분석할 수 있어요. 고르면 조건에 따라 갈리는 답을 내 상황에 맞춰 좁혀요.</p>
+          </div>
+          <fieldset disabled={inputBusy || analysisBusy} className="min-w-0 space-y-4">
+            <legend className="sr-only">내 상황 (선택)</legend>
+            <ReviewSituationFields value={vm.draft} names={vm.names} onChange={(situation) => vm.setDraft({ ...vm.draft, ...situation })} />
+            <label className="block text-sm font-semibold">분석에 참고할 추가 설명 (선택)<textarea className={s.input} rows={4} maxLength={8000} value={vm.facts} onChange={(e) => vm.setFacts(e.target.value)} placeholder={'예: 두 사업에서 같은 인건비를 사용하려고 합니다.\n한 사업의 협약이 다음 달에 끝납니다.\n두 사업의 수행 내용이 일부 같습니다.'} /></label>
+            <p className={s.muted}>{vm.facts.length}/8000 · 추가 설명은 이번 실행에만 저장돼요.</p>
+          </fieldset>
+          {vm.dirty && <p className={s.info}>바꾼 내 상황은 [검토 실행]을 누르면 저장한 뒤 분석해요.</p>}
+        </section>
         <section className={`${s.card} space-y-3`} aria-label="분석 실행"><h2 className="text-lg font-bold">공식 근거 분석</h2>
           <p className={s.muted}>PDF·HWP·HWPX 공식 첨부를 자동 수집하여 OpenAI로 분석합니다. [검토 실행]을 누르면 유료 API 호출이 발생할 수 있습니다. 원문 미확보·미지원 형식은 오류로 표시합니다.</p>
-          {vm.dirty && <p className={s.warning}>저장하지 않은 입력이 있습니다. 이전 단계에서 저장한 뒤 분석해 주세요.</p>}
           {invalidProgramCount && <p className={s.warning}>기존에 저장한 3개 공고의 결과는 조회할 수 있지만 새 분석은 공고를 2개로 줄인 뒤 실행할 수 있습니다.</p>}
           {unsupported && <p className={s.warning}>{unsupportedNotice}</p>}
           {analysisBusy && <p role="status" className={s.info}>분석 요청을 접수하고 있어요. 창을 닫아도 접수된 서버 작업은 취소되지 않아요.</p>}
@@ -386,15 +410,15 @@ function ReviewEditor({ id, account, initialProgram = null }: { id: number | nul
           {vm.runs?.nextBeforeId && <div className="flex justify-center"><button className={s.secondarySm} disabled={historyBusy} aria-busy={historyBusy} onClick={() => vm.history(vm.runs!.nextBeforeId!)}>{historyBusy ? <><span className={s.buttonSpinner} aria-hidden="true" />불러오는 중…</> : '이전 실행 더 보기'}</button></div>}
         </section>
         <StepBar note={activeRun ? '화면을 나가도 분석은 계속돼요' : '검토 실행 1회마다 유료 분석이 한 번 실행돼요'} reason={vm.pending ? null : runBlocked} reasonId={reasonId}
-          back={<button className={s.secondaryPill} type="button" disabled={inputBusy} onClick={() => changeStep('participation')}>← 이전</button>}
+          back={<button className={s.secondaryPill} type="button" disabled={inputBusy || analysisBusy} onClick={() => goTo('selection')}>← 이전</button>}
           next={vm.pending ? null : <>
             {/* 현재 입력으로 끝난 결과가 있으면 [결과 보기]가 주 동작이고, 다시 실행은 보조 동작입니다(실행마다 유료). */}
             {currentResult && <Link className={s.primaryPill} to={combinationReviewRunResultPath(id, currentResult.id)}>결과 보기 →</Link>}
-            <button className={currentResult ? s.secondaryPill : s.primaryPill} type="button" aria-busy={analysisBusy || !!activeRun}
+            <button className={currentResult ? s.secondaryPill : s.primaryPill} type="button" aria-busy={analysisBusy || saving || !!activeRun}
               aria-describedby={runBlocked ? reasonId : undefined}
-              disabled={analysisBusy || inputBusy || !!runBlocked} onClick={() => vm.start(false)}>
-              {(analysisBusy || activeRun) && <span className={s.buttonSpinner} aria-hidden="true" />}
-              {analysisBusy ? '접수 중…' : activeRun ? (activeRun.status === 'QUEUED' ? '차례 기다리는 중…' : '분석 중…') : currentResult || finishedRun ? '다시 실행' : '검토 실행'}
+              disabled={analysisBusy || inputBusy || !!runBlocked} onClick={() => vm.saveAndStart(vm.facts)}>
+              {(analysisBusy || saving || activeRun) && <span className={s.buttonSpinner} aria-hidden="true" />}
+              {saving ? '저장 중…' : analysisBusy ? '접수 중…' : activeRun ? (activeRun.status === 'QUEUED' ? '차례 기다리는 중…' : '분석 중…') : currentResult || finishedRun ? '다시 실행' : '검토 실행'}
             </button>
           </>} />
       </>}

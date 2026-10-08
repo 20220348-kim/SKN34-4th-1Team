@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CombinationReviewRepositoryImpl } from '../../repositories/CombinationReviewRepositoryImpl'
 import { runSchema } from '../../models/CombinationReviewDto'
-import { reviewFixture, runFixture } from '../../../presentation/features/combination-review/testing/reviewFixtures'
+import { answerRunFixture, reviewFixture, runFixture } from '../../../presentation/features/combination-review/testing/reviewFixtures'
 import { CombinationReviewUseCase } from '../../../domain/usecases/CombinationReviewUseCase'
 
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers() })
@@ -40,6 +40,18 @@ describe('combination review HTTP boundary', () => {
     invalid.analysis!.pairs[0].stages[0].citations[0].quote = '원문에 없는 허용'
     expect(runSchema.safeParse(invalid).success).toBe(false)
     expect(runSchema.safeParse({ ...runFixture, status: 'FAILED' }).success).toBe(false)
+  })
+  it('accepts a three-question result and rejects one whose condition quote is not in the source', () => {
+    expect(runSchema.safeParse(answerRunFixture).success).toBe(true)
+    const invalid = structuredClone(answerRunFixture)
+    invalid.analysis!.pairs[0]!.answers![0]!.conditions[0]!.citations[0]!.quote = '원문에 없는 조건'
+    expect(runSchema.safeParse(invalid).success).toBe(false)
+  })
+  it('sends the optional relation with the saved input', async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetch)
+    await repository.replace(12, 2, { title: reviewFixture.title, programs: reviewFixture.programs, relation: { sameProject: 'YES', sameCost: 'UNKNOWN' } })
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toMatchObject({ expectedRevision: 2, relation: { sameProject: 'YES', sameCost: 'UNKNOWN' } })
   })
   it('rejects a valid-looking response belonging to a different review or request', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(Response.json({ ...runFixture, reviewId: 99 })).mockResolvedValueOnce(Response.json(runFixture)))

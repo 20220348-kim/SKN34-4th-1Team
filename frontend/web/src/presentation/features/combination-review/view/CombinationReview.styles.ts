@@ -77,6 +77,8 @@ export const reviewStyles = {
   evidenceNote: 'text-xs leading-6 text-ink-muted',
   // [앞뒤 원문 보기]에서 인용한 줄 묶음입니다. 왼쪽 막대와 옅은 바탕으로 앞뒤 원문과 구분하고, 글 위치는 다른 줄과 맞춥니다.
   evidenceQuoted: '-mx-1.5 space-y-0.5 rounded-md bg-brand-soft px-1.5 py-0.5 shadow-[inset_2px_0_0_var(--color-brand-primary)]',
+  // 내 상황(선택)의 예 · 아니오 · 모름 고르기입니다. 고른 칸은 브랜드 색 테두리와 옅은 바탕으로 보입니다.
+  choice: 'inline-flex min-h-9 cursor-pointer items-center gap-1.5 rounded-full border border-line-strong bg-white px-3 text-sm font-semibold text-ink has-[:checked]:border-brand-primary has-[:checked]:bg-brand-soft has-[:checked]:text-brand-primary has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-brand-primary has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-50',
   textLink: `inline-flex items-center gap-1 text-xs font-bold text-brand-primary no-underline hover:underline disabled:cursor-not-allowed disabled:opacity-50 ${focus}`,
   // 불러오는 중 (신청 문서 작성 화면과 같은 막대)
   skeletonBar: 'block rounded-md bg-surface-muted motion-safe:animate-pulse',

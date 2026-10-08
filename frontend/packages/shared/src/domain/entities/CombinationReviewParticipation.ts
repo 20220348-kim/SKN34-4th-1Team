@@ -60,3 +60,42 @@ export function currentStatusToParticipation(status: CurrentStatus, previous: Pa
 export function showFundingQuestion(status: CurrentStatus, value: Participation): boolean {
   return ['AGREEMENT', 'IN_PROGRESS', 'COMPLETED', 'STOPPED'].includes(status) || value.fundingReceived !== 'UNKNOWN'
 }
+
+/**
+ * 세 질문 방식(v3)의 사업별 지금 상태 4값(+모름)입니다. 공고 규정이 상대 사업을 나누는 정도(신청만 했음 · 선정되어 수행 중 · 이미 받음)에 맞춥니다.
+ * 저장은 새 칸 없이 기존 사실 6개로 하고, 상태는 사실에서 다시 계산합니다(Core도 같은 대응을 씁니다).
+ */
+export const reviewProgramStatusLabels = {
+  UNKNOWN: '모름', NOT_APPLIED: '신청 전', APPLIED: '신청함 · 심사 중', ACTIVE: '선정 · 협약 · 수행 중', FINISHED: '받음 · 종료',
+} as const
+export type ReviewProgramStatus = keyof typeof reviewProgramStatusLabels
+
+const statusGroups: Record<CurrentStatus, ReviewProgramStatus> = {
+  BEFORE_APPLICATION: 'NOT_APPLIED',
+  APPLICATION: 'APPLIED', NOT_SELECTED: 'APPLIED',
+  SELECTED: 'ACTIVE', COMMITMENT: 'ACTIVE', AGREEMENT: 'ACTIVE', IN_PROGRESS: 'ACTIVE',
+  COMPLETED: 'FINISHED', STOPPED: 'FINISHED',
+  UNKNOWN: 'UNKNOWN',
+}
+const statusFacts: Record<Exclude<ReviewProgramStatus, 'UNKNOWN'>, CurrentStatus> = {
+  NOT_APPLIED: 'BEFORE_APPLICATION', APPLIED: 'APPLICATION', ACTIVE: 'IN_PROGRESS', FINISHED: 'COMPLETED',
+}
+
+/** 저장된 사실 6개를 상태 4값(+모름)으로 읽습니다. 하나의 진행 상태로 읽히지 않는 사실은 모름입니다. */
+export function participationToReviewStatus(value: Participation): ReviewProgramStatus {
+  return statusGroups[participationToCurrentStatus(value)]
+}
+
+/**
+ * 고른 상태를 기존 사실 6개로 저장합니다. 이미 같은 상태로 읽히면 사실을 그대로 둬 세부 사실(미선정 · 확약 등)을 지우지 않습니다.
+ * 모름은 사실을 바꾸지 않습니다. 다만 다른 상태로 읽히던 사실에서 모름을 고르면 진행 사실만 모름으로 되돌려 고른 값이 그대로 보이게 하고,
+ * 진행 상태와 따로 저장하는 교부 여부는 남깁니다.
+ */
+export function reviewStatusToParticipation(status: ReviewProgramStatus, previous: Participation): Participation {
+  if (participationToReviewStatus(previous) === status) return previous
+  if (status === 'UNKNOWN') return { ...previous, applicationSubmitted: 'UNKNOWN', selected: 'UNKNOWN', commitmentSubmitted: 'UNKNOWN', agreementSigned: 'UNKNOWN', executionStatus: 'UNKNOWN' }
+  return currentStatusToParticipation(statusFacts[status], previous)
+}
+
+export const reviewRelationLabels = { sameProject: '같은 과제·제품인가요?', sameCost: '같은 비용 항목에 쓰나요?' } as const
+export const reviewRelationAnswerLabels = { YES: '예', NO: '아니오', UNKNOWN: '모름' } as const

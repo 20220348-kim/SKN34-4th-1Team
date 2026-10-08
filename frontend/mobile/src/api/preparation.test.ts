@@ -1,3 +1,4 @@
+import { unknownRelation } from '@govbiz/shared/domain/entities/CombinationReview'
 import { apiRequest } from './client'
 import { listPreparations, listPreparationReviews, updatePreparationProgress } from './preparation'
 import { preparation, preparationDetail, review, run } from '../test/preparationFixtures'
@@ -20,7 +21,8 @@ test('a repeated cursor cannot silently omit preparation pages or loop', async (
 test('review summaries read current inputs and the latest run without starting analysis', async () => {
   jest.mocked(apiRequest).mockImplementation((path) => Promise.resolve(path.includes('/runs?') ? { items: [run], nextBeforeId: null }
     : path === '/api/v1/combination-reviews/5' ? review : { items: [review], nextBeforeId: null }))
-  expect(await listPreparationReviews('owner')).toEqual([{ review, latestRun: run }])
+  // 관계 칸이 없던 응답은 shared DTO가 관계를 모두 모름으로 채워 읽어요.
+  expect(await listPreparationReviews('owner')).toEqual([{ review: { ...review, relation: unknownRelation() }, latestRun: run }])
   expect(jest.mocked(apiRequest).mock.calls.every(([, options]) => options?.method === undefined && options?.accessToken === 'owner')).toBe(true)
 })
 test('progress updates use the stored revision and reject a mismatched response', async () => {
