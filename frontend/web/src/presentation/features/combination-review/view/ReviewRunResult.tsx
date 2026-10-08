@@ -2,12 +2,13 @@ import { useState } from 'react'
 import { Link } from 'react-router'
 import {
   reviewHeadline, reviewJudgmentLabels, reviewQuestions, reviewStageLabels, reviewVerdictLabels, reviewVerdictOf,
-  type ReviewStageResult, type ReviewVerdict,
+  type ReviewStage, type ReviewStageResult, type ReviewVerdict,
 } from '@govbiz/shared/domain/entities/CombinationReviewResult'
 import { appPaths } from '../../../shared/routes/appPaths'
 import { reviewProgramKey, reviewStages, type ReviewRun } from '../../../../domain/entities/CombinationReview'
 import { reviewRunFailureMessage } from '../viewmodel/reviewMessages'
 import { reviewStyles as s } from './CombinationReview.styles'
+import { EvidenceQuote } from './EvidenceQuote'
 
 const verdictBadges: Record<ReviewVerdict, string> = { warn: s.badgeWarn, info: s.badgeInfo, ok: s.badgeOk }
 const verdictCells: Record<ReviewVerdict, string> = { warn: s.stageCellWarn, info: s.stageCellInfo, ok: s.stageCellOk }
@@ -24,6 +25,7 @@ const displayReviewText = (text: string) => text.replace(
 
 type Pair = NonNullable<ReviewRun['analysis']>['pairs'][number]
 const stageRowId = (run: ReviewRun, pair: Pair, stage: ReviewStageResult) => `review-stage-${run.id}-${pair.firstProgramIndex}-${pair.secondProgramIndex}-${stage.stage}`
+const citationKey = (citation: ReviewStageResult['citations'][number]) => `${citation.evidenceId}\u0000${citation.quote}`
 
 /**
  * 실행 결과입니다. 결론(판정 조합으로 정한 문장 · 단계 색 띠) → 먼저 확인할 것 → 접힌 단계 줄 → 접힌 원문 · 판단 한계 순으로 둡니다.
@@ -45,6 +47,12 @@ export function ReviewRunResult({ run, currentRevision, names, download, downloa
   const counts = verdictOrder.map((verdict) => [verdict, allStages.filter((stage) => reviewVerdictOf(stage.judgment) === verdict).length] as const).filter(([, count]) => count > 0)
   const headline = reviewHeadline(allStages, run.input.programs.map((program) => program.participation))
   const questions = reviewQuestions(allStages)
+  // 같은 인용을 고른 단계들입니다. 단계 줄마다 "○○ 단계에도 인용"으로 알립니다.
+  const citedStages = new Map<string, ReviewStage[]>()
+  for (const stage of allStages) for (const citation of stage.citations) {
+    const stages = citedStages.get(citationKey(citation)) ?? []
+    if (!stages.includes(stage.stage)) citedStages.set(citationKey(citation), [...stages, stage.stage])
+  }
   const [summaryOpen, setSummaryOpen] = useState(false)
   const [allQuestions, setAllQuestions] = useState(false)
   const [sourcesOpen, setSourcesOpen] = useState(false)
@@ -130,7 +138,7 @@ export function ReviewRunResult({ run, currentRevision, names, download, downloa
                 const id = stageRowId(run, pair, stage)
                 const open = stageOpen(id, stage)
                 return <StageRow key={id} id={id} run={run} stage={stage} open={open} onToggle={() => setStageToggles((current) => ({ ...current, [id]: !open }))}
-                  citationsOpen={stage === firstWarn} download={download} downloading={downloading} />
+                  citationsOpen={stage === firstWarn} citedStages={citedStages} download={download} downloading={downloading} />
               })}
             </div>
           </div>
@@ -161,8 +169,9 @@ export function ReviewRunResult({ run, currentRevision, names, download, downloa
 }
 
 /** 단계 하나의 접히는 줄입니다. 접혀 있어도 단계 · 판정 · 판단 범위 · 질문/근거 수는 보이고, 근거 원문은 펼친 줄 안에서 한 번 더 눌러 봅니다. */
-function StageRow({ id, run, stage, open, onToggle, citationsOpen, download, downloading }: {
-  id: string; run: ReviewRun; stage: ReviewStageResult; open: boolean; onToggle: () => void; citationsOpen: boolean; download: (index: number) => void; downloading: boolean
+function StageRow({ id, run, stage, open, onToggle, citationsOpen, citedStages, download, downloading }: {
+  id: string; run: ReviewRun; stage: ReviewStageResult; open: boolean; onToggle: () => void; citationsOpen: boolean
+  citedStages: ReadonlyMap<string, readonly ReviewStage[]>; download: (index: number) => void; downloading: boolean
 }) {
   const [showCitations, setShowCitations] = useState(citationsOpen)
   const verdict = reviewVerdictOf(stage.judgment)
@@ -198,19 +207,8 @@ function StageRow({ id, run, stage, open, onToggle, citationsOpen, download, dow
           근거 원문 {stage.citations.length}개 {showCitations ? '접기 ▴' : '보기 ▾'}
         </button>
         <ol id={citationsId} hidden={!showCitations} className="space-y-2">
-          {stage.citations.map((citation, i) => {
-            const block = run.evidence?.blocks.find((b) => b.id === citation.evidenceId)
-            const documentIndex = run.evidence?.documents.findIndex((d) => d.rawHash === block?.documentHash && d.programIndex === block?.programIndex) ?? -1
-            const document = documentIndex >= 0 ? run.evidence!.documents[documentIndex] : undefined
-            return <li className="rounded-xl border border-slate-200 p-3 text-sm" key={i}>
-              <b className="block text-xs text-brand-primary break-all">근거 {i + 1} · 사업 {(block?.programIndex ?? 0) + 1}{block?.locator ? ` · ${block.locator}` : ''}</b>
-              <blockquote className="mt-1 border-l-[3px] border-brand-primary/30 pl-2.5 whitespace-pre-wrap">{citation.quote}</blockquote>
-              <div className="mt-2 flex flex-wrap gap-4">
-                {document?.sourcePageUrl && <a className={s.textLink} href={document.sourcePageUrl} target="_blank" rel="noreferrer">공고 페이지 보기 ↗</a>}
-                {documentIndex >= 0 && <button type="button" className={s.textLink} disabled={downloading} onClick={() => download(documentIndex)}>원문 받기</button>}
-              </div>
-            </li>
-          })}
+          {stage.citations.map((citation, i) => <EvidenceQuote key={i} id={`${id}-evidence-${i}`} number={i + 1} run={run} citation={citation}
+            alsoIn={(citedStages.get(citationKey(citation)) ?? []).filter((other) => other !== stage.stage)} download={download} downloading={downloading} />)}
         </ol>
       </>}
     </div>

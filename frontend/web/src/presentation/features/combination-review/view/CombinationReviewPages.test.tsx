@@ -882,6 +882,46 @@ describe('review screens and execution safety', () => {
     expect(within(conclusion).getByText('확인 필요 6')).toBeTruthy()
     expect(screen.getAllByRole('article').map((card) => stageToggle(card).getAttribute('aria-expanded'))).toEqual(Array(6).fill('false'))
   })
+  it('formats evidence quotes around related lines and opens the whole source block or the stored text', async () => {
+    const run = structuredClone(runFixture)
+    const quote = [
+      '◦ 지원 제외 대상에 해당하는 기업', '▪ 국세 체납 중인 기업 또는 대표자. 다만, 분납 계획에 따라 세금을 ', '성실하게 납부하는 경우 신청 가능',
+      '▪ 신청 사업의 내용이 타 정부지원 사업 등을 통해 지원받은 내용과 ', '유사·중복되는 경우', '\uf06d 세금계산서 발생이 제한되는 간이사업자',
+      '- 4 -', '정책매장운영팀 1230013 2026/08/31-10:27:41', '□ 모집대상', '◦ 인천국제공항 출국장 정책면세점에 신규 입점을 희망하는 기업', '□ 선정규모', '◦ 5대 품목 비중별 고득점 순으로 선정',
+    ].join('\n')
+    run.evidence!.blocks[0] = { ...run.evidence!.blocks[0]!, locator: 'PDF page 3 part 1', text: `${quote}\n◦ 지원기간은 거래계약일로부터 1년` }
+    run.analysis!.pairs[0].stages[0].citations = [{ evidenceId: 'E0', quote }]
+    run.analysis!.pairs[0].stages[4].citations = [{ evidenceId: 'E0', quote }]
+    repository.run.mockResolvedValue(run)
+    mount('/app/combination-reviews/12/runs/30')
+    const application = await screen.findByRole('article', { name: '신청 단계 판단' })
+    fireEvent.click(stageToggle(application))
+    fireEvent.click(within(application).getByRole('button', { name: /근거 원문 1개/ }))
+    // 위치는 사용자 말로, 같은 인용을 고른 다른 단계를 함께 알린다.
+    expect(within(application).getByText('사업 1 · 공식-원문-모의.pdf · 3쪽')).toBeTruthy()
+    expect(within(application).getByText('수행 단계에도 인용')).toBeTruthy()
+    // PDF 줄바꿈은 잇고, 글꼴 전용 문자 · 쪽 번호 · 출력 도장은 보이지 않고, 관련 줄과 앞뒤 한 줄만 남긴다.
+    expect(within(application).getByText(/세금을 성실하게 납부하는 경우 신청 가능/)).toBeTruthy()
+    expect([...application.querySelectorAll('mark')].map((mark) => mark.textContent)).toEqual(['지원 제외', '타 정부지원 사업', '중복'])
+    expect(application.textContent).not.toMatch(/[\ue000-\uf8ff]|1230013|- 4 -/)
+    expect(within(application).getByText('⋯ 4줄 접힘')).toBeTruthy()
+    expect(within(application).queryByText(/고득점 순으로 선정/)).toBeNull()
+    expect(within(application).getByText('뒤로 이어짐 …')).toBeTruthy()
+    // 인용이 원문 조각 앞부분만 가져왔으므로 [이 부분 전체 보기]는 조각 전체를 정리해 보여 준다.
+    const expand = within(application).getByRole('button', { name: '이 부분 전체 보기 ▾' })
+    fireEvent.click(expand)
+    expect(expand.getAttribute('aria-expanded')).toBe('true')
+    expect(expand.textContent).toBe('간단히 보기 ▴')
+    expect(within(application).getByText('인용 앞뒤를 포함한 3쪽 전체예요.')).toBeTruthy()
+    expect(within(application).getByText(/고득점 순으로 선정/)).toBeTruthy()
+    expect(within(application).getByText(/지원기간은 거래계약일로부터 1년/)).toBeTruthy()
+    // [원문 그대로]는 저장된 인용을 글자 그대로 보여 준다.
+    const raw = within(application).getByRole('button', { name: '원문 그대로' })
+    fireEvent.click(raw)
+    expect(raw.getAttribute('aria-pressed')).toBe('true')
+    expect(document.getElementById(raw.getAttribute('aria-controls')!)!.textContent).toBe(quote)
+    expect(repository.start).not.toHaveBeenCalled()
+  })
   it('does not mark a loaded review dirty before the user edits its status', async () => {
     mount('/app/combination-reviews/12'); await screen.findByDisplayValue(reviewFixture.title)
     fireEvent.click(screen.getByRole('button', { name: '다음 →' }))

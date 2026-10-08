@@ -72,6 +72,9 @@ export const reviewStyles = {
   stageCellInfo: 'border-info/40 bg-info-soft text-info',
   stageCellOk: 'border-brand-primary/30 bg-brand-soft text-brand-primary',
   stageRowButton: 'flex w-full cursor-pointer items-start gap-3 border-0 bg-transparent px-4 py-3 text-left text-ink hover:bg-surface-muted focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-brand-primary',
+  // 근거 원문의 강조 낱말과 접힘 · 끊김 안내
+  evidenceMark: 'rounded-sm bg-warning-soft px-0.5 font-bold text-warning',
+  evidenceNote: 'text-xs leading-6 text-ink-muted',
   textLink: `inline-flex items-center gap-1 text-xs font-bold text-brand-primary no-underline hover:underline disabled:cursor-not-allowed disabled:opacity-50 ${focus}`,
   // 불러오는 중 (신청 문서 작성 화면과 같은 막대)
   skeletonBar: 'block rounded-md bg-surface-muted motion-safe:animate-pulse',
