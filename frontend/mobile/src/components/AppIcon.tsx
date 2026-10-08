@@ -1,7 +1,7 @@
 import Svg, { Circle, Path, Rect } from 'react-native-svg'
 import type { ColorValue } from 'react-native'
 
-export type AppIconName = 'search' | 'bookmark' | 'collaboration' | 'report' | 'account' | 'pencil' | 'send' | 'calendar' | 'message' | 'document' | 'shield' | 'menu' | 'building' | 'bell' | 'inbox' | 'outbox' | 'back' | 'arrowUp' | 'filter' | 'creditCard' | 'recruitment' | 'externalLink'
+export type AppIconName = 'search' | 'bookmark' | 'collaboration' | 'report' | 'account' | 'pencil' | 'send' | 'calendar' | 'message' | 'document' | 'shield' | 'menu' | 'building' | 'bell' | 'inbox' | 'outbox' | 'back' | 'arrowUp' | 'filter' | 'creditCard' | 'recruitment' | 'externalLink' | 'trash'
 
 /** Paths from the approved mobile design; do not substitute emoji or a heart for the bookmark. */
 export function AppIcon({ name, color, size = 24, selected = false }: {
@@ -15,6 +15,7 @@ export function AppIcon({ name, color, size = 24, selected = false }: {
     {name === 'arrowUp' && <Path d="M12 19V5M6 11l6-6 6 6" />}
     {name === 'recruitment' && <><Path d="m3 10 14-5v14L3 14zM7 15l2 6h3l-2-5M21 9v6" /></>}
     {name === 'externalLink' && <Path d="M14 3h7v7M21 3l-9 9M10 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5" />}
+    {name === 'trash' && <Path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7" />}
     {name === 'bookmark' && <Path d="M6 4h12v16l-6-4-6 4z" fill={selected ? color : 'none'} />}
     {name === 'collaboration' && <><Circle cx={9} cy={8} r={3.5} fill={selected ? color : 'none'} />
       <Path d="M2.5 20a6.5 6.5 0 0 1 13 0M16 4.5a3.5 3.5 0 0 1 0 7M21.5 20a6.5 6.5 0 0 0-4-6" /></>}

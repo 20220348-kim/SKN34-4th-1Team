@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type LayoutChangeEvent } from 'react-native'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View, type LayoutChangeEvent } from 'react-native'
+import { randomUUID } from 'expo-crypto'
+import type { ChatConversationSnapshot, ChatConversationSummary, ChatMessage } from '@govbiz/shared/domain/entities/ChatConversation'
 import type { SupportProgramConversationContext, SupportProgramInterpretation, SupportProgramPendingClarification } from '@govbiz/shared/domain/entities/SupportProgramConversation'
 import type { SupportProgramSearchResult } from '@govbiz/shared/domain/entities/SupportProgramSearchResult'
 import { RestoreSupportProgramSearchUseCase } from '@govbiz/shared/domain/usecases/RestoreSupportProgramSearchUseCase'
@@ -8,18 +10,17 @@ import { SupportProgramSearchRestoreError } from '@govbiz/shared/domain/errors/S
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
 import { ApiError, errorMessage, programClient } from '../api/client'
 import { restoreSearchResults, searchPrograms } from '../api/searchResults'
+import { deleteChatConversation, getChatConversation, listChatConversations, saveChatConversation } from '../api/chatConversations'
 import type { LoginRequest } from '../auth/loginFlow'
 import { useAuth } from '../auth/session'
 import { SearchProgramCard } from '../components/SearchProgramCard'
 import { SearchConditionCard } from '../components/SearchConditionCard'
 import { AppIcon } from '../components/AppIcon'
+import { PartnerSheet } from '../components/PartnerSheet'
 import type { SearchProgramInterests } from '../components/SearchProgramInterests'
 import { Button, Notice, colors, styles } from '../ui'
 
-const emptyContext: SupportProgramConversationContext = {
-  query: null, acceptingOnly: true,
-  companyConditions: { region: null, industry: null, establishedOn: null, foundedYear: null, supportPurpose: null },
-}
+import { chatSearchOptions, chatSnapshot, contextFromSearch, emptyChatContext as emptyContext } from './chatConversationState'
 
 type TimelineTarget = 'message' | 'waiting' | 'answer' | 'proposal' | 'results' | 'notice'
 
@@ -43,7 +44,7 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active 
   const [proposal, setProposal] = useState<SupportProgramInterpretation | null>(null)
   const [clarification, setClarification] = useState<SupportProgramPendingClarification | null>(null)
   const [result, setResult] = useState<SupportProgramSearchResult | null>(null)
-  const [history, setHistory] = useState<{ role: 'user' | 'assistant'; text: string }[]>([])
+  const [history, setHistory] = useState<ChatMessage[]>([])
   const [busy, setBusy] = useState<'interpret' | 'search' | 'restore' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [sessionNotice, setSessionNotice] = useState<string | null>(null)
@@ -53,6 +54,21 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active 
   const pendingRestore = useRef<{ resultToken: string; context: SupportProgramConversationContext; history: typeof history } | null>(null)
   const retryRestore = useRef<typeof pendingRestore.current>(null)
   const [restoreFailure, setRestoreFailure] = useState<'expired' | 'unavailable' | null>(null)
+  const email = session?.account?.email
+  const historyWork = useRef<AbortController | null>(null)
+  const conversationVersion = useRef(0)
+  const unsavedSnapshot = useRef<ChatConversationSnapshot | null>(null)
+  const [savingHistory, setSavingHistory] = useState(false)
+  const [historyError, setHistoryError] = useState<string | null>(null)
+  const [recordsOpen, setRecordsOpen] = useState(false)
+  const [records, setRecords] = useState<ChatConversationSummary[]>([])
+  const [recordsCursor, setRecordsCursor] = useState<number | null>(null)
+  const [loadingRecords, setLoadingRecords] = useState(false)
+  const [recordsError, setRecordsError] = useState<string | null>(null)
+  const [deletingRecord, setDeletingRecord] = useState<string | null>(null)
+  const deletionId = useRef<string | null>(null)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [historyRestored, setHistoryRestored] = useState(false)
 
   function cancelScrollFrame() {
     if (scrollFrame.current !== null) cancelAnimationFrame(scrollFrame.current)
@@ -103,14 +119,135 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active 
     const selected = !previousToken.current && token ? pendingRestore.current : null
     previousToken.current = token; pendingRestore.current = null; retryRestore.current = null
     generation.current += 1
-    request.current?.abort()
+    request.current?.abort(); historyWork.current?.abort()
+    conversationVersion.current = 0; unsavedSnapshot.current = null
+    deletionId.current = null; setDeletingRecord(null); setDeleteError(null)
+    setSavingHistory(false); setHistoryError(null); setRecordsOpen(false); setRecords([]); setRecordsCursor(null); setLoadingRecords(false); setRecordsError(null); setHistoryRestored(false)
     setMessage(''); setContext(emptyContext); setProposal(null); setClarification(null); setResult(null)
     setHistory([]); setBusy(null); setError(null)
     setRestoreFailure(null)
     if (token) setSessionNotice(null)
     if (selected && token) void restore(selected, token)
-    return () => { generation.current += 1; request.current?.abort(); clearTimelineScroll() }
+    return () => { generation.current += 1; request.current?.abort(); historyWork.current?.abort(); clearTimelineScroll() }
   }, [token])
+
+  async function persist(snapshot: ChatConversationSnapshot) {
+    if (!token || !email || deletionId.current) return
+    unsavedSnapshot.current = snapshot
+    const controller = new AbortController(); historyWork.current = controller
+    const revision = generation.current
+    setSavingHistory(true); setHistoryError(null)
+    try {
+      const id = snapshot.messages.find(item => item.role === 'user')!.id
+      const saved = await saveChatConversation(token, email, id, conversationVersion.current, snapshot, controller.signal)
+      if (controller.signal.aborted || revision !== generation.current) return
+      conversationVersion.current = saved.version; unsavedSnapshot.current = null
+    } catch (cause) {
+      if (controller.signal.aborted || revision !== generation.current) return
+      if (cause instanceof ApiError && cause.status === 401) void invalidateSession().catch(() => undefined)
+      setHistoryError(cause instanceof ApiError ? cause.message : '대화 기록을 저장하지 못했어요. 현재 대화는 유지됩니다. 다시 저장해 주세요.')
+    } finally { if (!controller.signal.aborted && revision === generation.current) setSavingHistory(false) }
+  }
+
+  function confirmDiscard(action: () => void) {
+    if (busy || savingHistory || loadingRecords || deletionId.current) return
+    if (unsavedSnapshot.current) Alert.alert('저장하지 못한 대화가 있어요', '화면을 바꾸면 저장하지 못한 내용은 사라질 수 있어요.', [
+      { text: '계속 보기', style: 'cancel' }, { text: '이동하기', onPress: action },
+    ])
+    else action()
+  }
+
+  function newConversation() {
+    generation.current += 1; request.current?.abort(); historyWork.current?.abort(); clearTimelineScroll()
+    pendingRestore.current = null; retryRestore.current = null; conversationVersion.current = 0; unsavedSnapshot.current = null
+    setHistory([]); setContext(emptyContext); setResult(null); setProposal(null); setClarification(null); setMessage('')
+    setError(null); setHistoryError(null); setRestoreFailure(null); setSessionNotice(null)
+    setHistoryRestored(false)
+    timeline.current?.scrollTo({ y: 0, animated: false })
+  }
+
+  async function readRecords(before: number | null = null) {
+    if (!token || !email || busy || savingHistory || loadingRecords || deletionId.current) return
+    historyWork.current?.abort()
+    const controller = new AbortController(); historyWork.current = controller
+    setRecordsOpen(true); setLoadingRecords(true); setRecordsError(null); setDeleteError(null)
+    if (before === null) { setRecords([]); setRecordsCursor(null) }
+    try {
+      const page = await listChatConversations(token, email, before, controller.signal)
+      if (controller.signal.aborted) return
+      setRecords(previous => before === null ? page.items : [...previous, ...page.items.filter(item => !previous.some(existing => existing.id === item.id))])
+      setRecordsCursor(page.nextCursor)
+    } catch (cause) {
+      if (controller.signal.aborted) return
+      if (cause instanceof ApiError && cause.status === 401) void invalidateSession().catch(() => undefined)
+      setRecordsError('대화 기록을 불러오지 못했어요. 다시 시도해 주세요.')
+    } finally { if (!controller.signal.aborted) setLoadingRecords(false) }
+  }
+
+  async function openConversation(id: string) {
+    if (!token || !email || loadingRecords || savingHistory || busy || deletionId.current) return
+    historyWork.current?.abort(); clearTimelineScroll()
+    const controller = new AbortController(); historyWork.current = controller
+    const revision = ++generation.current
+    setLoadingRecords(true); setRecordsError(null)
+    try {
+      const detail = await getChatConversation(token, email, id, controller.signal)
+      if (controller.signal.aborted || revision !== generation.current) return
+      const snapshot = detail.snapshot
+      const restoredContext = contextFromSearch(snapshot.conversationQuery, snapshot.searchOptions)
+      const latestResult = [...snapshot.messages].reverse().find(item => item.programs !== undefined)
+      const restoredProposal = snapshot.interpretation.result ?? (snapshot.pendingProposal
+        ? { status: 'READY' as const, proposedContext: snapshot.pendingProposal, clarificationQuestion: null, changedFields: [] } : null)
+      conversationVersion.current = detail.conversation.version; unsavedSnapshot.current = null
+      setHistory(snapshot.messages); setContext(restoredContext); setMessage(''); setProposal(restoredProposal); setClarification(snapshot.pendingClarification)
+      setResult(latestResult ? { query: latestResult.searchQuery ?? '', programs: latestResult.programs!, totalCount: latestResult.totalCount ?? latestResult.programs!.length,
+        resultToken: latestResult.resultToken ?? null, expiresAt: latestResult.expiresAt ?? null } : null)
+      pendingRestore.current = null; retryRestore.current = null
+      setHistoryError(null); setError(snapshot.searchError ?? snapshot.interpretation.error ?? null); setRestoreFailure(null); setSessionNotice(null); setRecordsOpen(false)
+      setHistoryRestored(true)
+      requestTimelineScroll(restoredProposal?.status === 'READY' ? 'proposal' : latestResult ? 'results' : 'answer')
+    } catch (cause) {
+      if (controller.signal.aborted || revision !== generation.current) return
+      if (cause instanceof ApiError && cause.status === 401) void invalidateSession().catch(() => undefined)
+      setRecordsError(cause instanceof ApiError && cause.status === 404 ? '이 대화 기록은 더 이상 찾을 수 없어요.' : '대화를 열지 못했어요. 다시 시도해 주세요.')
+    } finally { if (!controller.signal.aborted && revision === generation.current) setLoadingRecords(false) }
+  }
+
+  function confirmDelete(record: ChatConversationSummary) {
+    if (busy || savingHistory || loadingRecords || deletionId.current) return
+    const revision = generation.current
+    Alert.alert('대화 기록을 삭제할까요?', `“${record.title}”의 질문·답변·추천 공고가 삭제됩니다. 삭제한 기록은 복구할 수 없어요.`, [
+      { text: '취소', style: 'cancel' }, { text: '삭제', style: 'destructive', onPress: () => {
+        if (revision === generation.current && previousToken.current === token) void removeConversation(record.id)
+      } },
+    ])
+  }
+
+  async function removeConversation(id: string) {
+    if (!token || !email || busy || savingHistory || loadingRecords || deletionId.current) return
+    deletionId.current = id; setDeletingRecord(id); setDeleteError(null)
+    historyWork.current?.abort()
+    const controller = new AbortController(); historyWork.current = controller
+    const revision = generation.current
+    try {
+      await deleteChatConversation(token, email, id, controller.signal)
+      if (controller.signal.aborted || revision !== generation.current) return
+      setRecords(previous => previous.filter(record => record.id !== id))
+      deletionId.current = null; setDeletingRecord(null)
+      if (history.find(item => item.role === 'user')?.id === id) newConversation()
+    } catch (cause) {
+      if (controller.signal.aborted || revision !== generation.current) return
+      if (cause instanceof ApiError && cause.status === 401) void invalidateSession().catch(() => undefined)
+      setDeleteError('대화 기록을 삭제하지 못했어요. 기록은 유지됩니다. 다시 삭제해 주세요.')
+    } finally {
+      if (!controller.signal.aborted && revision === generation.current) { deletionId.current = null; setDeletingRecord(null) }
+    }
+  }
+
+  function closeRecords() {
+    if (deletionId.current) return
+    historyWork.current?.abort(); setLoadingRecords(false); setRecordsOpen(false)
+  }
 
   async function restore(selected: NonNullable<typeof pendingRestore.current>, accessToken: string) {
     const controller = new AbortController(); request.current = controller
@@ -122,8 +259,16 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active 
         restoreSearch: (resultToken, signal) => restoreSearchResults(accessToken, resultToken, signal),
       }).execute(selected.resultToken, controller.signal)
       if (controller.signal.aborted || generation.current !== revision) return
-      setContext(restored.context); setResult(restored); setHistory(selected.history); retryRestore.current = null
+      const restoredHistory = selected.history.map(item => item.resultToken === selected.resultToken
+        ? { ...item, programs: restored.programs, totalCount: restored.totalCount, resultToken: restored.resultToken, expiresAt: restored.expiresAt } : item)
+      const lastResult = [...restoredHistory].reverse().find(item => item.programs !== undefined)!
+      const lastContext = contextFromSearch(lastResult.searchQuery ?? null, lastResult.searchOptions ?? chatSearchOptions(restored.context))
+      setContext(lastContext); setResult({ query: lastResult.searchQuery ?? '', programs: lastResult.programs!, totalCount: lastResult.totalCount ?? lastResult.programs!.length,
+        resultToken: lastResult.resultToken ?? null, expiresAt: lastResult.expiresAt ?? null })
+      setHistory(restoredHistory); retryRestore.current = null
       requestTimelineScroll('results')
+      setBusy(null)
+      await persist(chatSnapshot(restoredHistory, lastContext, null, null))
     } catch (cause) {
       if (controller.signal.aborted || generation.current !== revision) return
       if (cause instanceof SupportProgramSearchRestoreError && cause.reason === 'unauthorized') {
@@ -141,7 +286,7 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active 
   function cancel() { generation.current += 1; request.current?.abort(); setBusy(null); clearTimelineScroll() }
 
   async function interpret() {
-    if (!message.trim() || busy) return
+    if (!message.trim() || busy || savingHistory || loadingRecords || deletionId.current || history.length >= 197) return
     const controller = new AbortController(); request.current = controller
     const revision = ++generation.current
     const text = message.trim()
@@ -156,11 +301,15 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active 
       }, controller.signal)
       if (controller.signal.aborted || generation.current !== revision) return
       setProposal(next); setMessage('')
-      setClarification(next.status === 'CLARIFICATION_REQUIRED' && next.clarificationQuestion
-        ? { question: next.clarificationQuestion, draftContext: next.proposedContext } : null)
-      setHistory((previous) => [...previous.slice(-8), { role: 'user', text },
-        { role: 'assistant', text: next.answer ?? next.clarificationQuestion ?? '아래 검색 조건을 확인해 주세요.' }])
+      const nextClarification = next.status === 'CLARIFICATION_REQUIRED' && next.clarificationQuestion
+        ? { question: next.clarificationQuestion, draftContext: next.proposedContext } : null
+      setClarification(nextClarification)
+      const nextHistory: ChatMessage[] = [...history, { id: randomUUID(), role: 'user', text },
+        { id: randomUUID(), role: 'assistant', text: next.answer ?? next.clarificationQuestion ?? '아래 검색 조건을 확인해 주세요.' }]
+      setHistory(nextHistory)
       requestTimelineScroll(next.status === 'READY' ? 'proposal' : 'answer')
+      setBusy(null)
+      await persist(chatSnapshot(nextHistory, context, next, nextClarification))
     } catch (cause) {
       if (!controller.signal.aborted && generation.current === revision) {
         if (cause instanceof ApiError && cause.status === 401) void invalidateSession().catch(() => undefined)
@@ -171,7 +320,7 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active 
   }
 
   async function search() {
-    if (busy || proposal?.status !== 'READY' || !proposal.proposedContext.query || message.trim()) return
+    if (busy || savingHistory || loadingRecords || deletionId.current || proposal?.status !== 'READY' || !proposal.proposedContext.query || message.trim()) return
     const controller = new AbortController(); request.current = controller
     const revision = ++generation.current
     const nextContext = proposal.proposedContext
@@ -194,8 +343,13 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active 
       }).execute(next.resultToken, controller.signal)
       if (controller.signal.aborted || generation.current !== revision) return
       setContext(nextContext); setResult(next); setProposal(null); setClarification(null)
-      setHistory((previous) => [...previous.slice(-9), { role: 'assistant', text: `관련 공고 ${next.totalCount}건을 찾았습니다.` }])
+      const nextHistory: ChatMessage[] = [...history, { id: randomUUID(), role: 'assistant', text: `관련 공고 ${next.totalCount}건을 찾았습니다.`,
+        programs: next.programs, totalCount: next.totalCount, resultToken: next.resultToken, expiresAt: next.expiresAt,
+        searchQuery: nextContext.query!, searchOptions: chatSearchOptions(nextContext) }]
+      setHistory(nextHistory)
       requestTimelineScroll('results')
+      setBusy(null)
+      await persist(chatSnapshot(nextHistory, nextContext, null, null))
     } catch (cause) {
       if (!controller.signal.aborted && generation.current === revision) {
         if (cause instanceof ApiError && cause.status === 401) void invalidateSession().catch(() => undefined)
@@ -206,19 +360,51 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active 
   }
 
   const introductory = history.length === 0 && !proposal && !result && !busy
+  const latestResultId = [...history].reverse().find(item => item.programs !== undefined)?.id
+  const blocked = Boolean(busy) || savingHistory || loadingRecords || deletingRecord !== null
+  function renderResults(item: ChatMessage) {
+    const latest = item.id === latestResultId
+    const programs = item.programs ?? []
+    const totalCount = item.totalCount ?? programs.length
+    return <View key={latest ? `results-${item.id}-${timelineVersions.results}` : item.id}
+      testID={latest ? 'ai-search-results' : 'ai-search-previous-results'} style={local.contentGroup}
+      onLayout={latest ? event => recordTimelineTarget('results', timelineVersions.results, event) : undefined}>
+      <View style={styles.row}><Text style={styles.heading}>추천 공고</Text><Text style={styles.muted}>{totalCount}건</Text></View>
+      {totalCount === 0 && <Notice>조건에 맞는 공고가 없습니다. 필요한 지원이나 회사 조건을 바꿔 보세요.</Notice>}
+      {programs.map(program => <SearchProgramCard key={JSON.stringify([program.sourceCode, program.id])} program={program} onOpen={onOpenProgram}
+        interests={interests} onLogin={() => onLogin()} />)}
+      {!token && item.resultToken && totalCount > programs.length && <View style={local.locked}>
+        <Text style={styles.heading}>추가 지원사업 {totalCount - programs.length}건이 있어요</Text>
+        <Text style={styles.body}>로그인하면 이번 추천 결과를 최대 5건까지 확인할 수 있어요.</Text>
+        <Button label="로그인하고 모두 보기" disabled={status !== 'signedOut' || blocked} onPress={() => {
+          pendingRestore.current = { resultToken: item.resultToken!, context: contextFromSearch(item.searchQuery ?? null, item.searchOptions ?? chatSearchOptions(context)), history }
+          onLogin({ direct: true, message: '이번 검색 결과를 그대로 이어서 확인할 수 있어요.', onCancel: () => { pendingRestore.current = null } })
+        }} />
+        <View accessibilityLabel="로그인 후 확인할 지원사업" style={local.lockPreview}>
+          <View style={local.lockLine} /><Text style={styles.muted}>로그인 후 확인할 수 있는 지원사업</Text>
+        </View>
+      </View>}
+    </View>
+  }
   return <KeyboardAvoidingView testID="ai-search-keyboard-container" style={local.page}
     behavior={Platform.OS === 'ios' ? 'padding' : 'height'} keyboardVerticalOffset={keyboardOffset} enabled={active}>
+    {(token || history.length > 0) && <View style={local.historyToolbar}>
+      {savingHistory && <ActivityIndicator accessibilityLabel="대화 기록 저장 중" color={colors.primary} />}
+      {token && <Button label="대화 기록" variant="ghost" size="small" disabled={blocked} onPress={() => void readRecords()} />}
+      <Button label="새 대화" variant="ghost" size="small" disabled={blocked} onPress={() => confirmDiscard(newConversation)} />
+    </View>}
     <ScrollView ref={timeline} testID="ai-search-timeline" bounces={false} overScrollMode="never" style={local.scroll} contentContainerStyle={[local.timeline, introductory && { flexGrow: 1 }]}
       onLayout={event => { timelineSize.current.viewport = event.nativeEvent.layout.height; scrollPendingTimeline() }}
       onContentSizeChange={(_width, height) => { timelineSize.current.content = height; scrollPendingTimeline() }}
       keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
+      {historyRestored && <Notice>이전 대화의 추천 공고는 저장 당시 정보예요. 최신 접수 상태와 신청 조건은 공고 상세에서 확인해 주세요.</Notice>}
       {introductory ? <View style={local.intro}>
         <View style={local.brandMark}><Text style={local.brandLetter}>G</Text></View>
         <Text accessibilityRole="header" style={local.introTitle}>우리 회사에 맞는 지원사업,</Text>
         <Text style={[local.introTitle, { color: colors.primary }]}>AI와 함께 <Text style={{ textDecorationLine: 'underline' }}>무료로</Text> 찾아보세요.</Text>
         <Text style={local.introDescription}>회사의 지역과 업종, 필요한 지원을 알려주세요.{'\n'}관련 공고와 확인할 신청 조건을 함께 안내합니다.</Text>
       </View> : null}
-      {history.map((item, index) => item.role === 'user'
+      {history.map((item, index) => <Fragment key={item.id}>{item.role === 'user'
         ? <View key={index} style={local.userBubble}><Text selectable style={styles.body}>{item.text}</Text></View>
         : <View key={index === history.length - 1 ? `answer-${index}-${timelineVersions.answer}` : index} style={local.assistant}
           testID={index === history.length - 1 ? 'ai-search-latest-answer' : undefined}
@@ -231,7 +417,7 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active 
               <Text style={styles.muted}>답변을 입력해 주세요. 아직 검색하지 않았어요.</Text>
               <Button label="추가 내용 입력하기" variant="secondary" onPress={() => composerInput.current?.focus()} />
             </View> : <Text selectable style={local.answer}>{item.text}</Text>}
-        </View>)}
+        </View>}{item.programs !== undefined && renderResults(item)}</Fragment>)}
       {busy === 'interpret' && <View key={`message-${timelineVersions.message}`} testID="ai-search-pending-message" style={local.userBubble}
         onLayout={event => recordTimelineTarget('message', timelineVersions.message, event)}><Text style={styles.body}>{message}</Text></View>}
       {busy && <View key={`waiting-${timelineVersions.waiting}`} testID="ai-search-waiting" accessibilityLiveRegion="polite" style={local.waiting}
@@ -240,7 +426,7 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active 
       {proposal?.status === 'READY' && <View key={`proposal-${timelineVersions.proposal}`} testID="ai-search-proposal" style={local.contentGroup}
         onLayout={event => recordTimelineTarget('proposal', timelineVersions.proposal, event)}>
         {message.trim() && <Notice>입력한 내용을 먼저 AI에게 보내 조건을 갱신해 주세요.</Notice>}
-        <SearchConditionCard context={proposal.proposedContext} busy={Boolean(busy)} disabled={Boolean(busy) || Boolean(message.trim())}
+        <SearchConditionCard context={proposal.proposedContext} busy={Boolean(busy)} disabled={blocked || Boolean(message.trim())}
           onConfirm={() => void search()} onEdit={() => { setMessage(proposal.proposedContext.query ?? ''); composerInput.current?.focus() }} />
       </View>}
       {(error || sessionNotice || restoreFailure) && <View key={`notice-${timelineVersions.notice}`} testID="ai-search-notice" style={local.contentGroup}
@@ -252,29 +438,15 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active 
         {restoreFailure === 'expired' && <Button label="같은 조건으로 다시 검색" onPress={() => {
           const selected = retryRestore.current
           if (!selected) return
+          setHistory(selected.history.filter(item => item.programs === undefined)); setContext(selected.context)
           setProposal({ status: 'READY', proposedContext: selected.context, clarificationQuestion: null, changedFields: [] })
           setMessage(''); setError(null); setRestoreFailure(null); retryRestore.current = null
           requestTimelineScroll('proposal')
         }} />}
       </View>}
-      {result && <View key={`results-${timelineVersions.results}`} testID="ai-search-results" style={local.contentGroup}
-        onLayout={event => recordTimelineTarget('results', timelineVersions.results, event)}>
-        <View style={styles.row}><Text style={styles.heading}>추천 공고</Text><Text style={styles.muted}>{result.totalCount}건</Text></View>
-        {result.totalCount === 0 && <Notice>조건에 맞는 공고가 없습니다. 필요한 지원이나 회사 조건을 바꿔 보세요.</Notice>}
-        {result.programs.map(program => <SearchProgramCard key={JSON.stringify([program.sourceCode, program.id])} program={program} onOpen={onOpenProgram}
-          interests={interests} onLogin={() => onLogin()} />)}
-        {!token && result.resultToken && result.totalCount > result.programs.length && <View style={local.locked}>
-          <Text style={styles.heading}>추가 지원사업 {result.totalCount - result.programs.length}건이 있어요</Text>
-          <Text style={styles.body}>로그인하면 이번 추천 결과를 최대 5건까지 확인할 수 있어요.</Text>
-          <Button label="로그인하고 모두 보기" disabled={status !== 'signedOut' || Boolean(busy)} onPress={() => {
-            pendingRestore.current = { resultToken: result.resultToken!, context, history }
-            onLogin({ direct: true, message: '이번 검색 결과를 그대로 이어서 확인할 수 있어요.', onCancel: () => { pendingRestore.current = null } })
-          }} />
-          <View accessibilityLabel="로그인 후 확인할 지원사업" style={local.lockPreview}>
-            <View style={local.lockLine} /><Text style={styles.muted}>로그인 후 확인할 수 있는 지원사업</Text>
-          </View>
-        </View>}
-      </View>}
+      {historyError && <View style={local.contentGroup}><Notice error>{historyError}</Notice>
+        <Button label="대화 다시 저장" variant="secondary" disabled={blocked} onPress={() => { if (unsavedSnapshot.current) void persist(unsavedSnapshot.current) }} /></View>}
+      {history.length >= 197 && <Notice>이 대화의 기록 한도에 도달했어요. 새 대화에서 이어서 질문해 주세요.</Notice>}
       {(history.length > 0 || result) && proposal?.status !== 'CLARIFICATION_REQUIRED' && <View style={local.contentGroup}>
         {result?.totalCount === 0 && <Notice>
           지원받고 싶은 내용과 회사의 지역·업종을 추가로 알려 주세요. 기존 대화의 조건을 이어서 정리해요.
@@ -290,20 +462,43 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active 
           ? '예: 서울에서 AI 서비스를 만드는 창업기업입니다. 사업화 지원을 받을 수 있을까요?'
           : '지원사업·조건을 입력해 주세요.'}
           placeholderTextColor={colors.placeholder} value={message} onChangeText={setMessage} multiline maxLength={500}
-          editable={!busy} style={local.input} />
+          editable={!blocked} style={local.input} />
         <Pressable accessibilityRole="button" accessibilityLabel={busy ? '요청 취소' : 'AI에게 보내기'}
-          accessibilityState={{ disabled: !busy && !message.trim(), busy: Boolean(busy) }} disabled={!busy && !message.trim()}
+          accessibilityState={{ disabled: !busy && (!message.trim() || blocked || history.length >= 197), busy: Boolean(busy) }} disabled={!busy && (!message.trim() || blocked || history.length >= 197)}
           onPress={busy ? cancel : () => void interpret()} style={[local.send, !busy && !message.trim() && { backgroundColor: colors.track }]}>
           {busy ? <View style={local.stop} /> : <AppIcon name="arrowUp" color={message.trim() ? colors.surface : colors.placeholder} size={22} />}
         </Pressable>
       </View>
       <Text style={local.disclaimer}>AI 답변은 참고용입니다. 최종 신청 조건은 공고 원문에서 확인하세요.</Text>
     </View>
+    <PartnerSheet visible={recordsOpen} title="대화 기록" compact bottomSafeArea={false} onClose={closeRecords}
+      actions={<Button label="닫기" accessibilityLabel="대화 기록 닫기" variant="secondary" disabled={deletingRecord !== null} style={{ flex: 1 }} onPress={closeRecords} />}>
+      {loadingRecords && <ActivityIndicator accessibilityLabel="대화 기록 불러오는 중" color={colors.primary} />}
+      {recordsError && <><Notice error>{recordsError}</Notice><Button label="대화 기록 다시 불러오기" disabled={loadingRecords} onPress={() => void readRecords()} /></>}
+      {deleteError && <Notice error>{deleteError}</Notice>}
+      {!loadingRecords && !recordsError && records.length === 0 && <Notice>저장한 대화가 없어요. 로그인 후 나눈 대화는 자동으로 저장됩니다.</Notice>}
+      {records.map(record => <View key={record.id} style={local.recordRow}><Pressable accessibilityRole="button" accessibilityLabel={`대화 열기: ${record.title}`}
+        disabled={loadingRecords || deletingRecord !== null} onPress={() => confirmDiscard(() => void openConversation(record.id))}
+        style={({ pressed }) => [local.historyRow, pressed && { backgroundColor: colors.divider }]}>
+        <Text numberOfLines={2} style={styles.body}>{record.title}</Text>
+        <Text style={styles.muted}>{record.updatedAt.slice(0, 10)}</Text>
+      </Pressable><Pressable accessibilityRole="button" accessibilityLabel={`대화 삭제: ${record.title}`}
+        accessibilityState={{ disabled: loadingRecords || deletingRecord !== null, busy: deletingRecord === record.id }}
+        disabled={loadingRecords || deletingRecord !== null} onPress={() => confirmDelete(record)}
+        style={({ pressed }) => [local.deleteRecord, pressed && { backgroundColor: colors.divider }]}>
+        {deletingRecord === record.id ? <ActivityIndicator accessibilityLabel="대화 기록 삭제 중" color={colors.muted} /> : <AppIcon name="trash" color={colors.muted} size={19} />}
+      </Pressable></View>)}
+      {recordsCursor !== null && <Button label="이전 대화 더 보기" variant="secondary" disabled={loadingRecords || deletingRecord !== null} onPress={() => void readRecords(recordsCursor)} />}
+    </PartnerSheet>
   </KeyboardAvoidingView>
 }
 
 const local = StyleSheet.create({
   page: { flex: 1, backgroundColor: colors.surface }, scroll: { flex: 1 },
+  historyToolbar: { flexDirection: 'row', justifyContent: 'flex-end', paddingHorizontal: 16, gap: 8 },
+  historyRow: { flex: 1, minHeight: 56, paddingVertical: 12, paddingHorizontal: 8, borderRadius: 12, gap: 4 },
+  recordRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  deleteRecord: { width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   timeline: { paddingHorizontal: 16, paddingTop: 16, gap: 16, width: '100%', maxWidth: 720, alignSelf: 'center' },
   contentGroup: { gap: 16 },
   intro: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingVertical: 32 },

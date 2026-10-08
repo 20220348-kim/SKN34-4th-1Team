@@ -11,6 +11,8 @@ import ProgramRoute from '../../app/program'
 import { LoginFlowProvider } from '../auth/loginFlow'
 import { programDetail } from '../test/preparationFixtures'
 import { listSavedPrograms, saveProgram } from '../api/savedPrograms'
+let mockMessageNumber = 0
+jest.mock('expo-crypto', () => ({ randomUUID: () => `message-${++mockMessageNumber}` }))
 
 jest.mock('../auth/session', () => ({ useAuth: jest.fn() }))
 jest.mock('expo-router', () => ({ ...jest.requireActual('expo-router'), useFocusEffect: (callback: () => void) => {
