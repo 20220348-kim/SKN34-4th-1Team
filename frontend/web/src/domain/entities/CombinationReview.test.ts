@@ -29,6 +29,12 @@ describe('validateReviewDraft', () => {
     expect(validateReviewDraft({ title: '두 사업 비교', programs: [program('PBLN_1'), program('PBLN_2')] }).programs).toHaveLength(2)
   })
 
+  it('keeps the optional relation and leaves it out when it was not given', () => {
+    const programs = [program('PBLN_1'), program('PBLN_2')]
+    expect(validateReviewDraft({ title: '관계', programs, relation: { sameProject: 'YES', sameCost: 'NO' } }).relation).toEqual({ sameProject: 'YES', sameCost: 'NO' })
+    expect('relation' in validateReviewDraft({ title: '관계 없음', programs })).toBe(false)
+  })
+
   it('rejects any program count other than two', () => {
     for (const programs of [[program('PBLN_1')], [program('PBLN_1'), program('PBLN_2'), program('PBLN_3')]]) {
       expect(() => validateReviewDraft({ title: '잘못된 사업 수', programs })).toThrow('비교할 서로 다른 사업을 2개 선택해 주세요.')

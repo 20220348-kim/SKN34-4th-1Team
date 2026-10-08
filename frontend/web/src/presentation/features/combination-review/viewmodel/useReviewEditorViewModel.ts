@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { appContainer } from '../../../../app/appContainer'
 import { appPaths } from '../../../shared/routes/appPaths'
-import { reviewProgramKey, supportsAutomaticReview, unknownParticipation, validateReviewDraft, type CombinationReview, type ReviewDraft, type ReviewPage, type ReviewProgram, type ReviewRun, type RunRequest, type RunSummary } from '../../../../domain/entities/CombinationReview'
+import { reviewProgramKey, supportsAutomaticReview, unknownParticipation, unknownRelation, validateReviewDraft, type CombinationReview, type ReviewDraft, type ReviewPage, type ReviewProgram, type ReviewRun, type RunRequest, type RunSummary } from '../../../../domain/entities/CombinationReview'
 import type { SupportProgramDetail } from '../../../../domain/entities/SupportProgram'
 import type { SelectableSupportProgram } from '../../../shared/support-program/useProgramPickerViewModel'
 import { useReviewScope } from './useReviewScope'
@@ -30,6 +30,11 @@ function programLabel(info: ReviewProgramInfo) {
   return info.status === 'missing' ? '공고 정보를 찾을 수 없음' : '공고 정보를 불러오지 못함'
 }
 
+/** 저장 · 비교할 입력입니다. 관계 칸이 없던 검토는 모두 모름으로 보고, 필드 순서를 맞춰 바뀜 여부를 JSON으로 비교합니다. */
+function inputOf(value: ReviewDraft): Required<ReviewDraft> {
+  return { title: value.title, programs: value.programs, relation: value.relation ?? unknownRelation() }
+}
+
 /** 1단계의 사업 칸 수입니다. 새 분석은 정확히 2개를 비교합니다. */
 const slotCount = 2
 
@@ -52,11 +57,12 @@ export function useReviewEditorViewModel(id: number | null, account: string, res
   const navigate = useNavigate()
   const { perform, ...scope } = useReviewScope()
   const [review, setReview] = useState<CombinationReview | null>(null)
-  // 새 검토만 미리 고른 공고를 사업 1로 둡니다. 참여 상태는 다른 공고처럼 모름에서 시작합니다.
+  // 새 검토만 미리 고른 공고를 사업 1로 둡니다. 내 상황(사업별 상태 · 관계)은 다른 공고처럼 모름에서 시작합니다.
   const [preselected] = useState(() => (id === null ? initialProgram : null))
-  const [draft, setDraft] = useState<ReviewDraft>(() => ({
+  const [draft, setDraft] = useState<Required<ReviewDraft>>(() => ({
     title: '',
     programs: preselected ? [{ sourceCode: preselected.sourceCode, sourceProgramId: preselected.sourceProgramId, subProgramId: null, participation: unknownParticipation() }] : [],
+    relation: unknownRelation(),
   }))
   /** 앞 칸을 비우고 뒤 칸만 남겼을 때 비운 칸의 위치입니다. 남은 공고가 앞 칸으로 당겨지지 않게 합니다. */
   const [gap, setGap] = useState<number | null>(null)
@@ -87,7 +93,7 @@ export function useReviewEditorViewModel(id: number | null, account: string, res
         }
       })))
       return { saved, detail, history, infos }
-    }, ({ saved, detail, history, infos }) => { setReview(detail); setDraft({ title: detail.title, programs: detail.programs }); setGap(null); setProgramInfo(infos); setRuns(history); setPending(saved); setJournalReady(true) })
+    }, ({ saved, detail, history, infos }) => { setReview(detail); setDraft(inputOf(detail)); setGap(null); setProgramInfo(infos); setRuns(history); setPending(saved); setJournalReady(true) })
   }, [id, account, journal, useCase, detailUseCase, perform])
   useEffect(() => { load() }, [load])
   // 미리 고른 공고의 표시 정보는 상세 조회로 채웁니다. 조회만 하고 저장·분석은 보내지 않으며, 못 읽어도 선택은 그대로 둡니다.
@@ -158,18 +164,22 @@ export function useReviewEditorViewModel(id: number | null, account: string, res
     timer = setTimeout(() => void poll(), 3000)
     return () => { stopped = true; clearTimeout(timer) }
   }, [id, activeRunId, pollingPaused, perform, useCase, acceptRun])
-  const dirty = review !== null && JSON.stringify(draft) !== JSON.stringify({ title: review.title, programs: review.programs })
+  const dirty = review !== null && JSON.stringify(inputOf(draft)) !== JSON.stringify(inputOf(review))
   const rejectedRevision = error?.status === 409 && error.code === 'COMBINATION_REVIEW_REVISION_CONFLICT' && !error.runId
   const clearRejectedRequest = () => {
     if (!id || !pending || !rejectedRevision) return
     try { journal.remove(account, id); setPending(null); setNotice('버전 충돌로 생성되지 않은 요청을 정리했습니다. 화면을 새로고침한 뒤 직접 새 분석을 시작하세요.') }
     catch { setError({ message: '보관한 요청을 지우지 못했습니다. 브라우저 저장소 설정을 확인해 주세요.' }) }
   }
-  const start = useCallback((retry: boolean) => {
-    if (!id || !review || !journalReady || busy.includes('analysis')) return
-    if (!retry && (pending || dirty || runs?.items.some((item) => ['QUEUED', 'RUNNING', 'UNKNOWN'].includes(item.status)) || !review.programs.every(supportsAutomaticReview))) return
+  /**
+   * 저장된 입력 버전(current)으로 분석을 접수합니다. 응답을 잃은 요청은 같은 키 · 버전 · 추가 설명으로만 다시 보냅니다.
+   * onAccepted는 서버가 접수한 실행을 받은 뒤 부릅니다(결과 화면에서 새 실행으로 이동할 때 씁니다).
+   */
+  const startRun = (current: CombinationReview, retry: boolean, additionalFacts: string, onAccepted?: (run: ReviewRun) => void) => {
+    if (!id || !journalReady || busy.includes('analysis')) return
+    if (!retry && (pending || runs?.items.some((item) => ['QUEUED', 'RUNNING', 'UNKNOWN'].includes(item.status)) || !current.programs.every(supportsAutomaticReview))) return
     if (retry && !pending) return
-    const request = retry ? pending! : { expectedRevision: review.inputRevision, requestKey: crypto.randomUUID(), additionalFacts: facts }
+    const request = retry ? pending! : { expectedRevision: current.inputRevision, requestKey: crypto.randomUUID(), additionalFacts }
     try {
       if (!retry && journal.read(account, id)) return
       journal.write(account, id, request)
@@ -179,25 +189,39 @@ export function useReviewEditorViewModel(id: number | null, account: string, res
       acceptRun(value)
       journal.remove(account, id); setPending(null); setPollingPaused(false)
       setNotice(['QUEUED', 'RUNNING'].includes(value.status) ? '분석 요청이 접수되었습니다. 상태는 자동으로 갱신되며, 다른 화면으로 이동해도 작업은 유지됩니다.' : '저장된 실행을 확인했습니다. 새 분석은 자동으로 시작하지 않습니다.')
+      onAccepted?.(value)
     })
-  }, [id, review, journalReady, busy, pending, dirty, runs, facts, journal, account, setError, perform, useCase, acceptRun])
-  // 단계를 넘길 때 입력을 저장한다. 새 검토는 이때 만들고(참여 상태는 모름), 기존 검토는 바뀐 경우에만 입력 버전을 확인해 덮어쓴다.
-  // 유료 분석은 여기서 시작하지 않는다 — 3단계 [검토 실행](start)에서만 보낸다.
-  const saveInput = (next: () => void) => {
+  }
+  /** 저장된 입력 그대로 분석을 접수하거나(retry=false) 응답을 잃은 요청을 다시 확인합니다(retry=true). 저장하지 않은 입력이 있으면 새 분석은 보내지 않습니다. */
+  const start = (retry: boolean) => {
+    if (!review || (!retry && dirty)) return
+    startRun(review, retry, facts)
+  }
+  // 입력을 저장한다. 새 검토는 이때 만들고(내 상황은 모름), 기존 검토는 바뀐 경우에만 입력 버전을 확인해 덮어쓴다.
+  // 유료 분석은 여기서 시작하지 않는다 — [검토 실행] · [저장하고 다시 분석](saveAndStart)에서만 보낸다. next는 저장된 입력을 받는다.
+  const saveInput = (next: (current: CombinationReview) => void) => {
     if (busy.includes('save') || busy.includes('load')) return
     let input: ReviewDraft
     try { input = validateReviewDraft(draft) } catch (e) { setError({ message: (e as Error).message }); return }
     if (!id) {
-      void perform('save', (signal) => useCase.create(input, signal), (saved) => navigate(`${appPaths.combinationReviews}/${saved.id}?step=participation`, { replace: true }))
+      void perform('save', (signal) => useCase.create(input, signal), (saved) => navigate(`${appPaths.combinationReviews}/${saved.id}?step=analysis`, { replace: true }))
       return
     }
     if (!review) return
-    if (JSON.stringify(input) === JSON.stringify({ title: review.title, programs: review.programs })) { setError(null); next(); return }
+    if (JSON.stringify(inputOf(input)) === JSON.stringify(inputOf(review))) { setError(null); next(review); return }
     // 확인하지 못한 분석 요청은 접수 당시 입력 버전을 쓰므로, 그 요청을 확인하기 전에는 입력을 바꾸지 않는다.
     if (pending) { setError({ message: '확인하지 못한 분석 요청이 있어 입력을 저장하지 않았습니다. 공고 분석 단계에서 요청을 먼저 확인해 주세요.' }); return }
-    const saved: CombinationReview = { ...review, ...input, inputRevision: review.inputRevision + 1 }
-    void perform('save', (signal) => useCase.replace(id, review.inputRevision, input, signal), () => { setReview(saved); setDraft(input); next() })
+    const saved: CombinationReview = { ...review, ...inputOf(input), inputRevision: review.inputRevision + 1 }
+    void perform('save', (signal) => useCase.replace(id, review.inputRevision, input, signal), () => { setReview(saved); setDraft(inputOf(saved)); next(saved) })
   }
+  /** 바뀐 입력이 있으면 저장(입력 버전 확인)한 뒤 그 버전으로 새 분석을 접수합니다. 저장이 실패하면 분석을 보내지 않고 편집 내용을 유지합니다. */
+  const saveAndStart = (additionalFacts: string, onAccepted?: (run: ReviewRun) => void) =>
+    saveInput((current) => startRun(current, false, additionalFacts, onAccepted))
+  /** 새 분석을 지금 보낼 수 없는 이유입니다. 저장하지 않은 입력은 [검토 실행]이 먼저 저장하므로 이유가 아닙니다. */
+  const startBlocked = runs?.items.some((item) => item.status === 'QUEUED' || item.status === 'RUNNING') ? '분석이 끝나면 다시 실행할 수 있어요'
+    : runs?.items.some((item) => item.status === 'UNKNOWN') ? '완료 여부를 확인하지 못한 실행이 있어 새 분석을 막았어요'
+      : draft.programs.length !== 2 ? '공고를 2개로 줄이면 실행할 수 있어요'
+        : draft.programs.some((program) => !supportsAutomaticReview(program)) ? '자동 분석을 지원하지 않는 공고가 있어요' : null
   const download = (documentIndex: number) => {
     if (!id || !run) return
     const selectedRun = run
@@ -208,5 +232,5 @@ export function useReviewEditorViewModel(id: number | null, account: string, res
     })
   }
   return { ...scope, review, draft, setDraft, slots, programInfo, names, runs, run, facts, setFacts,
-    pending, notice, dirty, pollingPaused, rejectedRevision, clearRejectedRequest, load, chooseSlot, clearSlot, saveInput, history, selectRun, start, download }
+    pending, notice, dirty, pollingPaused, rejectedRevision, clearRejectedRequest, load, chooseSlot, clearSlot, saveInput, history, selectRun, start, saveAndStart, startBlocked, download }
 }

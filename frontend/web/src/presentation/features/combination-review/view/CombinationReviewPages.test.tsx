@@ -15,7 +15,7 @@ import { CombinationReviewUseCase } from '../../../../domain/usecases/Combinatio
 import { CombinationReviewRepositoryImpl } from '../../../../data/repositories/CombinationReviewRepositoryImpl'
 import { supportPrograms } from '../../../../data/fixtures/supportPrograms'
 import { CombinationReviewEditorPage, CombinationReviewListPage, CombinationReviewRunResultPage } from './CombinationReviewPages'
-import { reviewFixture, runFixture } from '../testing/reviewFixtures'
+import { answerRunFixture, reviewFixture, runFixture } from '../testing/reviewFixtures'
 import { useReviewSessionIsolation } from '../viewmodel/useReviewSessionIsolation'
 import { chooseOption, optionLabels, selectedValue } from '../../../../test/selectField'
 
@@ -83,7 +83,7 @@ describe('review screens and execution safety', () => {
     const navigation = within(screen.getByRole('navigation', { name: '상위 화면' }))
     await waitFor(() => expect(navigation.getAllByRole('link').map((link) => link.textContent)).toEqual(['중복 지원·수혜 검토', reviewFixture.title]))
     expect(navigation.getByRole('link', { name: '중복 지원·수혜 검토' }).getAttribute('href')).toBe('/app/combination-reviews')
-    expect(screen.getByRole('link', { name: '입력 수정' }).getAttribute('href')).toBe('/app/combination-reviews/12?step=participation')
+    expect(screen.getByRole('link', { name: '입력 수정' }).getAttribute('href')).toBe('/app/combination-reviews/12')
     fireEvent.click(navigation.getByRole('link', { name: reviewFixture.title }))
     expect(await screen.findByRole('region', { name: '분석 실행' })).toBeTruthy()
     fireEvent.click(screen.getByRole('link', { name: '중복 지원·수혜 검토' }))
@@ -140,7 +140,7 @@ describe('review screens and execution safety', () => {
     expect(within(slot(1)).getByText('청년창업 사업화 지원 공고')).toBeTruthy()
 
     fireEvent.click(nextButton())
-    expect(await screen.findAllByText('지금 어디까지 진행했나요?')).toHaveLength(2)
+    expect(await screen.findByRole('region', { name: '분석 실행' })).toBeTruthy()
     const saved = repository.replace.mock.calls[0][2]
     expect(programKeys(saved.programs)).toEqual(['BIZINFO:PBLN_100', 'BIZINFO:PBLN_400'])
     // 칸을 바꾼 공고는 저장돼 있던 참여 상태를 이어받지 않고 모름에서 시작합니다.
@@ -385,8 +385,9 @@ describe('review screens and execution safety', () => {
     }
     fireEvent.click(screen.getByRole('button', { name: '다음 →' }))
     if (status === 201) {
-      // 새 검토는 1단계 [다음]에서 만들어지고, 참여 상태 단계로 넘어갈 뿐 분석은 보내지 않는다.
-      expect(await screen.findAllByText('지금 어디까지 진행했나요?')).toHaveLength(2)
+      // 새 검토는 1단계 [다음]에서 만들어지고, 바로 공고 분석 단계로 넘어갈 뿐 분석은 보내지 않는다.
+      expect(await screen.findByRole('region', { name: '분석 실행' })).toBeTruthy()
+      expect(screen.getByLabelText('사업 1 지금 상태')).toBeTruthy()
       expect(screen.getByRole('heading', { level: 1, name: reviewFixture.title })).toBeTruthy()
     } else {
       expect((await screen.findByRole('alert')).textContent).toContain('Core API 실행 버전')
@@ -394,7 +395,7 @@ describe('review screens and execution safety', () => {
       expect(screen.getByRole('heading', { level: 1, name: '새 검토' })).toBeTruthy()
     }
     // 모든 폭에서 아래에 붙는 단계 바는 도우미 런처를 그 위로 올립니다.
-    expect(document.querySelector('[data-assistant-lift="always"]')?.textContent).toContain('다음')
+    expect(document.querySelector('[data-assistant-lift="always"]')?.textContent).toContain(status === 201 ? '검토 실행' : '다음')
     const posts = fetch.mock.calls.filter(([, init]) => init?.method === 'POST')
     expect(posts).toHaveLength(1)
     expect(posts[0][0]).toMatch(/\/api\/v1\/combination-reviews$/)
@@ -404,11 +405,9 @@ describe('review screens and execution safety', () => {
     mount('/app/combination-reviews/12'); await screen.findByDisplayValue(reviewFixture.title)
     fireEvent.change(screen.getByLabelText('검토 제목'), { target: { value: '수정된 제목' } })
     fireEvent.click(screen.getByRole('button', { name: '다음 →' }))
-    expect(await screen.findAllByText('지금 어디까지 진행했나요?')).toHaveLength(2)
+    expect(await screen.findByRole('region', { name: '분석 실행' })).toBeTruthy()
     expect(repository.replace).toHaveBeenCalledWith(12, 2, expect.objectContaining({ title: '수정된 제목' }), expect.any(AbortSignal))
     expect(screen.getAllByText('자동 저장됨').length).toBeGreaterThan(0)
-    fireEvent.click(screen.getByRole('button', { name: '다음 →' }))
-    expect(await screen.findByRole('region', { name: '분석 실행' })).toBeTruthy()
     expect(repository.replace).toHaveBeenCalledTimes(1)
     expect(repository.start).not.toHaveBeenCalled()
     fireEvent.click(screen.getByRole('button', { name: '검토 실행' }))
@@ -416,14 +415,35 @@ describe('review screens and execution safety', () => {
     expect(repository.get).toHaveBeenCalledTimes(1)
     expect(repository.start).toHaveBeenCalledWith(12, expect.objectContaining({ expectedRevision: 3 }), expect.any(AbortSignal))
   })
-  it('saves a changed participation status before showing the analysis step', async () => {
+  it('saves a changed optional situation first and then starts the analysis on the saved revision', async () => {
     repository.replace.mockResolvedValue(undefined)
-    mount('/app/combination-reviews/12?step=participation'); await screen.findAllByText('지금 어디까지 진행했나요?')
-    chooseOption(screen.getByLabelText('사업 2 현재 진행 상태'), 'COMMITMENT')
-    fireEvent.click(screen.getByRole('button', { name: '다음 →' }))
-    expect(await screen.findByRole('region', { name: '분석 실행' })).toBeTruthy()
+    mount(); await screen.findByRole('button', { name: '검토 실행' })
+    chooseOption(screen.getByLabelText('사업 2 지금 상태'), 'FINISHED')
+    fireEvent.click(within(screen.getByRole('group', { name: '같은 과제·제품인가요?' })).getByRole('radio', { name: '예' }))
+    expect(screen.getByText('바꾼 내 상황은 [검토 실행]을 누르면 저장한 뒤 분석해요.')).toBeTruthy()
+    // 바꾼 내 상황은 실행을 막지 않습니다. [검토 실행]이 먼저 저장(입력 버전 확인)하고 새 버전으로 접수합니다.
+    fireEvent.click(screen.getByRole('button', { name: '검토 실행' }))
+    await screen.findByText(/저장된 실행을 확인했습니다/)
     const saved = repository.replace.mock.calls[0][2]
-    expect(saved.programs[1].participation.commitmentSubmitted).toBe('YES')
+    expect(repository.replace.mock.calls[0][1]).toBe(2)
+    expect(saved.programs[1].participation).toMatchObject({ executionStatus: 'COMPLETED', fundingReceived: 'UNKNOWN' })
+    expect(saved.relation).toEqual({ sameProject: 'YES', sameCost: 'UNKNOWN' })
+    expect(repository.start).toHaveBeenCalledOnce()
+    expect(repository.start.mock.calls[0][1]).toMatchObject({ expectedRevision: 3, additionalFacts: '' })
+    expect(repository.replace.mock.invocationCallOrder[0]).toBeLessThan(repository.start.mock.invocationCallOrder[0]!)
+  })
+  it('saves the optional situation when going back and does not run on a revision conflict', async () => {
+    repository.replace.mockRejectedValueOnce(new CombinationReviewError(409, 'COMBINATION_REVIEW_REVISION_CONFLICT')).mockResolvedValue(undefined)
+    mount(); await screen.findByRole('button', { name: '검토 실행' })
+    chooseOption(screen.getByLabelText('사업 1 지금 상태'), 'NOT_APPLIED')
+    fireEvent.click(screen.getByRole('button', { name: '검토 실행' }))
+    expect((await screen.findByRole('alert')).textContent).toContain('다른 화면에서 입력이 변경되었습니다')
+    expect(repository.start).not.toHaveBeenCalled()
+    expect(selectedValue(screen.getByLabelText('사업 1 지금 상태'))).toBe('NOT_APPLIED')
+    fireEvent.click(screen.getByRole('button', { name: '← 이전' }))
+    await screen.findByDisplayValue(reviewFixture.title)
+    expect(repository.replace).toHaveBeenCalledTimes(2)
+    expect(repository.replace.mock.calls[1][2].programs[0].participation).toMatchObject({ applicationSubmitted: 'NO', executionStatus: 'UNKNOWN' })
     expect(repository.start).not.toHaveBeenCalled()
   })
   it('focuses the server version error and preserves edited inputs', async () => {
@@ -451,26 +471,25 @@ describe('review screens and execution safety', () => {
     fireEvent.change(screen.getByLabelText('검토 제목'), { target: { value: '수정한 검토 제목' } })
     fireEvent.click(screen.getByRole('button', { name: '다음 →' }))
 
-    expect(await screen.findAllByText('지금 어디까지 진행했나요?')).toHaveLength(2)
+    expect(await screen.findByRole('region', { name: '분석 실행' })).toBeTruthy()
     expect(screen.queryByRole('alert')).toBeNull()
   })
   it('keeps the step in the address so going back and reopening show the same step', async () => {
     mount('/app/combination-reviews/12'); await screen.findByDisplayValue(reviewFixture.title)
     expect(currentLocation()).toBe('/app/combination-reviews/12')
-    fireEvent.click(screen.getByRole('button', { name: '다음 →' }))
-    await screen.findAllByText('지금 어디까지 진행했나요?')
-    expect(currentLocation()).toBe('/app/combination-reviews/12?step=participation')
+    // 참여 상태는 필수 단계가 아니어서 공고 고르기 다음이 바로 공고 분석입니다.
+    expect(within(screen.getByRole('list', { name: '검토 진행 단계' })).getAllByRole('listitem').map((item) => item.textContent)).toEqual(['1단계 · 진행 중제목 · 공고 선택', '2단계공고 분석'])
     fireEvent.click(screen.getByRole('button', { name: '다음 →' }))
     await screen.findByRole('region', { name: '분석 실행' })
     expect(currentLocation()).toBe('/app/combination-reviews/12?step=analysis')
     fireEvent.click(screen.getByRole('button', { name: '← 이전' }))
-    await screen.findAllByText('지금 어디까지 진행했나요?')
-    fireEvent.click(screen.getByRole('button', { name: '← 이전' }))
     await screen.findByDisplayValue(reviewFixture.title)
     expect(currentLocation()).toBe('/app/combination-reviews/12')
     cleanup()
+    // 예전 참여 상태 단계 주소는 공고 분석 단계로 엽니다.
     mount('/app/combination-reviews/12?step=participation')
-    expect(await screen.findAllByText('지금 어디까지 진행했나요?')).toHaveLength(2)
+    expect(await screen.findByRole('region', { name: '분석 실행' })).toBeTruthy()
+    expect(screen.queryByText('지금 어디까지 진행했나요?')).toBeNull()
     expect(repository.replace).not.toHaveBeenCalled()
   })
   it('shows the latest run state of each review on the list and routes each action to the matching screen', async () => {
@@ -591,9 +610,7 @@ describe('review screens and execution safety', () => {
   it('retains one logical request after response loss and across remount, with no automatic POST', async () => {
     repository.start.mockRejectedValueOnce(new TypeError('network lost')).mockImplementation(async (_id, request) => ({ ...runFixture, requestKey: request.requestKey }))
     const view = mount(); await screen.findByRole('button', { name: '검토 실행' })
-    fireEvent.click(screen.getByRole('button', { name: '← 이전' }))
     fireEvent.change(screen.getByLabelText('분석에 참고할 추가 설명 (선택)'), { target: { value: '한 번만 전달할 설명' } })
-    fireEvent.click(screen.getByRole('button', { name: '다음 →' }))
     const button = screen.getByRole('button', { name: '검토 실행' }); fireEvent.click(button); fireEvent.click(button)
     await screen.findByRole('alert')
     expect(repository.start).toHaveBeenCalledTimes(1)
@@ -751,7 +768,7 @@ describe('review screens and execution safety', () => {
     const questions = screen.getByRole('region', { name: '먼저 확인할 것' })
     expect(within(questions).getAllByText('지원 목적이 동일한가요?')).toHaveLength(1)
     expect(within(questions).queryByRole('button', { name: /모두 보기/ })).toBeNull()
-    expect(within(questions).getByRole('link', { name: '참여 상태 입력하고 다시 보기' }).getAttribute('href')).toBe('/app/combination-reviews/12?step=participation')
+    expect(within(questions).getByRole('link', { name: '내 상황 입력하고 다시 보기' }).getAttribute('href')).toBe('/app/combination-reviews/12?step=analysis')
     const cards = screen.getAllByRole('article')
     expect(cards.map((card) => card.getAttribute('aria-label'))).toEqual(['신청 단계 판단', '선정 단계 판단', '확약 단계 판단', '협약 단계 판단', '수행 단계 판단', '교부 단계 판단'])
     // 주의(충돌 · 제한) 단계 줄만 펼쳐 두고, 근거 원문은 첫 주의 줄에서만 펼친다.
@@ -837,17 +854,27 @@ describe('review screens and execution safety', () => {
     expect(await screen.findByRole('region', { name: '실행 29 결과' })).toBeTruthy()
     expect(repository.run).toHaveBeenCalledWith(12, 29, expect.any(AbortSignal))
   })
-  it('uses one current status per program while keeping independent saved facts', async () => {
+  it('offers one optional four-value status per program and two relation questions on the analysis step', async () => {
     mount('/app/combination-reviews/12'); await screen.findByDisplayValue(reviewFixture.title)
     fireEvent.click(screen.getByRole('button', { name: '다음 →' }))
-    expect(await screen.findByText(/사업 1 · 청년창업 사업화 지원 공고/)).toBeTruthy()
-    expect(screen.queryByLabelText('사업 1 신청')).toBeNull()
-    expect(screen.queryByLabelText('사업 1 선정')).toBeNull()
-    expect(screen.getAllByText('지금 어디까지 진행했나요?')).toHaveLength(2)
-    fireEvent.change(screen.getByLabelText('사업 1 현재 진행 상태'), { target: { value: 'IN_PROGRESS' } })
-    expect(selectedValue(screen.getByLabelText('사업 1 현재 진행 상태'))).toBe('IN_PROGRESS')
-    expect(selectedValue(screen.getByLabelText('사업 1 지원금 교부 여부'))).toBe('UNKNOWN')
+    const situation = await screen.findByRole('region', { name: '내 상황' })
+    expect(within(situation).getByText('선택')).toBeTruthy()
+    expect(within(situation).getByText(/사업 1 · 청년창업 사업화 지원 공고/)).toBeTruthy()
+    expect(screen.queryByText('지금 어디까지 진행했나요?')).toBeNull()
+    expect(screen.queryByLabelText('사업 1 지원금 교부 여부')).toBeNull()
+    // 저장된 사실 6개(선정 · 수행 중)는 네 상태 중 "선정 · 협약 · 수행 중"으로 읽습니다.
+    expect(selectedValue(screen.getByLabelText('사업 1 지금 상태'))).toBe('ACTIVE')
+    expect(optionLabels(screen.getByLabelText('사업 1 지금 상태'))).toEqual(['모름', '신청 전', '신청함 · 심사 중', '선정 · 협약 · 수행 중', '받음 · 종료'])
+    for (const question of ['같은 과제·제품인가요?', '같은 비용 항목에 쓰나요?']) {
+      const group = within(situation).getByRole('group', { name: question })
+      expect(within(group).getAllByRole('radio').map((radio) => radio.closest('label')!.textContent)).toEqual(['예', '아니오', '모름'])
+      expect((within(group).getByRole('radio', { name: '모름' }) as HTMLInputElement).checked).toBe(true)
+    }
+    // 고르기만 해서는 저장 · 분석하지 않습니다.
+    chooseOption(screen.getByLabelText('사업 1 지금 상태'), 'UNKNOWN')
+    expect(selectedValue(screen.getByLabelText('사업 1 지금 상태'))).toBe('UNKNOWN')
     await waitFor(() => expect(repository.start).not.toHaveBeenCalled())
+    expect(repository.replace).not.toHaveBeenCalled()
   })
   it('shows one unseen question per stage first, expands to every question once and opens the input step', async () => {
     const run = structuredClone(runFixture)
@@ -863,9 +890,9 @@ describe('review screens and execution safety', () => {
     expect(within(questions).getAllByRole('listitem')).toHaveLength(4)
     expect(within(questions).getAllByText('두 사업의 비용이 같나요?')).toHaveLength(1)
     expect(within(questions).getByText('협약 기간이 겹치나요?')).toBeTruthy()
-    fireEvent.click(within(questions).getByRole('link', { name: '참여 상태 입력하고 다시 보기' }))
-    expect(await screen.findAllByText('지금 어디까지 진행했나요?')).toHaveLength(2)
-    expect(selectedValue(screen.getByLabelText('사업 1 현재 진행 상태'))).toBe('IN_PROGRESS')
+    fireEvent.click(within(questions).getByRole('link', { name: '내 상황 입력하고 다시 보기' }))
+    expect(await screen.findByRole('region', { name: '내 상황' })).toBeTruthy()
+    expect(selectedValue(screen.getByLabelText('사업 1 지금 상태'))).toBe('ACTIVE')
     expect((screen.getByLabelText('분석에 참고할 추가 설명 (선택)') as HTMLTextAreaElement).value).toBe(run.input.additionalFacts)
     expect(repository.replace).not.toHaveBeenCalled()
     expect(repository.start).not.toHaveBeenCalled()
@@ -961,10 +988,8 @@ describe('review screens and execution safety', () => {
   it('does not mark a loaded review dirty before the user edits its status', async () => {
     mount('/app/combination-reviews/12'); await screen.findByDisplayValue(reviewFixture.title)
     fireEvent.click(screen.getByRole('button', { name: '다음 →' }))
-    await screen.findAllByText('지금 어디까지 진행했나요?')
-    fireEvent.click(screen.getByRole('button', { name: '다음 →' }))
     await screen.findByRole('region', { name: '분석 실행' })
-    expect(screen.queryByText(/저장하지 않은 입력이 있습니다/)).toBeNull()
+    expect(screen.queryByText(/바꾼 내 상황은/)).toBeNull()
     expect(repository.replace).not.toHaveBeenCalled()
   })
   it('moves the workspace scroll area to the top whenever the step changes', async () => {
@@ -976,6 +1001,161 @@ describe('review screens and execution safety', () => {
     fireEvent.click(screen.getByRole('button', { name: '다음 →' }))
 
     expect(scrollTo).toHaveBeenLastCalledWith({ top: 0, left: 0, behavior: 'auto' })
+  })
+})
+
+describe('three-question results', () => {
+  const answerCard = (number: number) => screen.getAllByRole('article')[number - 1]!
+  /** 카드 머리(질문 · 판정 칩)의 글자입니다. 근거 원문의 강조 낱말과 섞이지 않게 머리만 읽습니다. */
+  const cardHead = (card: HTMLElement) => card.firstElementChild!.textContent
+  /** "걸리면 생기는 일" 한 줄의 시점 칩과 조치입니다. */
+  const consequenceLine = (group: HTMLElement) => within(group).getAllByRole('listitem')[0]!.firstElementChild!.textContent
+  it('leads with a fixed conclusion and three question cards with conditions, citations, consequences and an institution question', async () => {
+    const run = structuredClone(answerRunFixture)
+    // 같은 인용을 다른 질문도 고르면 근거마다 알린다.
+    run.analysis!.pairs[0]!.answers![2]!.citations.push({ evidenceId: 'E1', quote: '중복지원 기간이 겹치지 않는 경우 지원가능합니다.' })
+    repository.run.mockResolvedValue(run)
+    repository.runs.mockResolvedValue({ items: [run], nextBeforeId: null })
+    mount('/app/combination-reviews/12/runs/31')
+    const conclusion = await screen.findByRole('region', { name: '검토 결론' })
+    // 결론 문장은 AI 요약이 아니라 판정 조합으로 정한다(불가가 기관 확인 · 조건부보다 앞선다).
+    expect(within(conclusion).getByRole('heading', { level: 2 }).textContent).toBe('같은 과제·비용으로 두 번 받을 수 없어요')
+    expect(within(conclusion).getByText('함께 수행은 기관 확인이 필요해요. 신청은 조건에 따라 달라요.')).toBeTruthy()
+    for (const chip of ['신청 · 조건부', '함께 수행 · 기관 확인', '같은 과제·비용 · 불가']) expect(within(conclusion).getByText(chip)).toBeTruthy()
+    expect(within(conclusion).getByText(/제한을 못 찾은 것이 허용을 뜻하지는 않아요/)).toBeTruthy()
+    expect(within(conclusion).getByText(run.analysis!.summary).hidden).toBe(true)
+    // 여섯 단계 결과의 띠 · 먼저 확인할 것 · 이전 방식 안내는 없다.
+    expect(screen.queryByRole('group', { name: '단계별 판정' })).toBeNull()
+    expect(screen.queryByRole('region', { name: '먼저 확인할 것' })).toBeNull()
+    expect(screen.queryByRole('group', { name: '이전 방식 결과 안내' })).toBeNull()
+    expect(screen.getAllByRole('article').map(cardHead))
+      .toEqual(['1. 둘 다 신청할 수 있나요?조건부', '2. 둘 다 되면 함께 수행할 수 있나요?기관 확인', '3. 같은 과제·비용으로 두 번 받는 것은 아닌가요?불가'])
+
+    // 1. 조건부: 조건 → 결과 칩, 조건 근거는 눌러서 본다. 답 근거는 처음부터 펼친다.
+    const apply = answerCard(1)
+    const conditions = within(within(apply).getByRole('list', { name: '조건별 결과' })).getAllByRole('listitem').filter((item) => item.parentElement?.getAttribute('aria-label') === '조건별 결과')
+    expect(conditions.map((item) => item.querySelector('div')!.textContent)).toEqual(['최근 2년 안에 같은 제품으로 같은 내용의 지원을 받았다면→결과: 불가', '그 밖의 경우→결과: 가능'])
+    const conditionEvidence = within(conditions[0]!).getByRole('button', { name: '근거 1개 보기 ▾' })
+    expect(conditionEvidence.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(conditionEvidence)
+    expect(document.getElementById(conditionEvidence.getAttribute('aria-controls')!)!.hidden).toBe(false)
+    expect(within(conditions[0]!).getByText(/PDF 3쪽, 문단 2/)).toBeTruthy()
+    const applyEvidence = within(apply).getByRole('button', { name: '근거 원문 1개 접기 ▴' })
+    expect(applyEvidence.getAttribute('aria-expanded')).toBe('true')
+    expect(within(apply).queryByText('기관에 물어볼 것')).toBeNull()
+
+    // 2. 기관 확인: 물어볼 문장, 걸리면 생기는 일(시점 · 조치 · 근거).
+    const concurrent = answerCard(2)
+    expect(within(concurrent).getByText('기관에 물어볼 것')).toBeTruthy()
+    expect(within(concurrent).getByText('두 사업의 협약 기간이 일부 겹치면 함께 수행할 수 있나요?')).toBeTruthy()
+    const agreement = within(concurrent).getByRole('group', { name: '걸리면 생기는 일' })
+    expect(consequenceLine(agreement)).toBe('협약협약 후 확인되면 협약 해약')
+    fireEvent.click(within(agreement).getByRole('button', { name: '근거 1개 보기 ▾' }))
+    expect(within(agreement).getByText(/사업 2 · 모집공고\.pdf/)).toBeTruthy()
+    expect(within(concurrent).getByText('같은 과제·비용 질문에도 인용')).toBeTruthy()
+
+    // 3. 불가: 근거와 정산 시점의 조치.
+    const same = answerCard(3)
+    expect(within(same).getByText('함께 수행 질문에도 인용')).toBeTruthy()
+    const settlement = within(same).getByRole('group', { name: '걸리면 생기는 일' })
+    expect(consequenceLine(settlement)).toBe('정산·지급해당 금액 환수')
+
+    // 내 상황으로 좁히기는 질문 카드 뒤, 접힌 원문 · 판단 한계 앞에 둔다. 바꾼 것이 없으면 다시 분석하지 않는다.
+    const narrowing = screen.getByRole('region', { name: '내 상황으로 좁히기' })
+    const sources = screen.getByRole('region', { name: '공식 원문과 수집 범위' })
+    expect(same.compareDocumentPosition(narrowing) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(narrowing.compareDocumentPosition(sources) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    const submit = within(narrowing).getByRole('button', { name: '저장하고 다시 분석' }) as HTMLButtonElement
+    expect(submit.disabled).toBe(true)
+    expect(document.getElementById(submit.getAttribute('aria-describedby')!)!.textContent).toBe('상황을 바꾸면 다시 분석할 수 있어요')
+    fireEvent.click(within(sources).getByRole('button', { name: /공식 원문 2개 · 판단 한계 2개/ }))
+    expect(within(sources).getByText(/입력한 내 상황 · 추가 설명과 자동 수집한 원문 범위/)).toBeTruthy()
+    expect(repository.start).not.toHaveBeenCalled()
+    expect(repository.replace).not.toHaveBeenCalled()
+  })
+
+  it('shows allowed and no-rule answers without calling missing rules permission', async () => {
+    const run = structuredClone(answerRunFixture)
+    const [apply, concurrent, same] = run.analysis!.pairs[0]!.answers!
+    Object.assign(apply!, { verdict: 'ALLOWED', conditions: [] })
+    Object.assign(concurrent!, { verdict: 'NO_RULE', institutionQuestion: '', citations: [], consequences: [], explanation: '두 공고 모두 동시 수행 규정이 없어요.' })
+    Object.assign(same!, { verdict: 'ALLOWED', consequences: [] })
+    repository.run.mockResolvedValue(run)
+    mount('/app/combination-reviews/12/runs/31')
+    const conclusion = await screen.findByRole('region', { name: '검토 결론' })
+    expect(within(conclusion).getByRole('heading', { level: 2 }).textContent).toBe('함께 수행에 관한 규정을 찾지 못했어요')
+    expect(within(conclusion).getByText('신청 · 같은 과제·비용은 가능해요.')).toBeTruthy()
+    for (const chip of ['신청 · 가능', '함께 수행 · 규정 없음', '같은 과제·비용 · 가능']) expect(within(conclusion).getByText(chip)).toBeTruthy()
+    const noRule = answerCard(2)
+    expect(screen.getAllByRole('article').map(cardHead)).toEqual(['1. 둘 다 신청할 수 있나요?가능', '2. 둘 다 되면 함께 수행할 수 있나요?규정 없음', '3. 같은 과제·비용으로 두 번 받는 것은 아닌가요?가능'])
+    // 수집 범위 경고가 있으면 규정 없음 카드가 판단 한계를 함께 보라고 알린다.
+    expect(within(noRule).getByText('두 공고에서 이 질문에 해당하는 규정을 찾지 못했어요. 허용을 뜻하지는 않아요. 읽지 못한 첨부가 있어 아래 판단 한계를 함께 확인해 주세요.')).toBeTruthy()
+    expect(within(noRule).queryByRole('button', { name: /근거/ })).toBeNull()
+    expect(within(answerCard(1)).queryByRole('list', { name: '조건별 결과' })).toBeNull()
+  })
+
+  it('saves the narrowed situation, starts a new run on the saved revision and opens its result', async () => {
+    repository.replace.mockResolvedValue(undefined)
+    repository.runs.mockResolvedValue({ items: [answerRunFixture], nextBeforeId: null })
+    const queued = { ...structuredClone(answerRunFixture), id: 32, status: 'QUEUED' as const, analysis: null, evidence: null, configuration: null, finishedAt: null }
+    repository.start.mockImplementation(async (_id, request) => ({ ...queued, inputRevision: request.expectedRevision, requestKey: request.requestKey, input: { ...queued.input, additionalFacts: request.additionalFacts } }))
+    repository.run.mockImplementation(async (_reviewId, runId) => runId === 32 ? { ...queued, inputRevision: 3 } : structuredClone(answerRunFixture))
+    mount('/app/combination-reviews/12/runs/31')
+    const narrowing = await screen.findByRole('region', { name: '내 상황으로 좁히기' })
+    expect(selectedValue(within(narrowing).getByLabelText('사업 1 지금 상태'))).toBe('ACTIVE')
+    chooseOption(within(narrowing).getByLabelText('사업 1 지금 상태'), 'NOT_APPLIED')
+    fireEvent.click(within(within(narrowing).getByRole('group', { name: '같은 비용 항목에 쓰나요?' })).getByRole('radio', { name: '아니오' }))
+    fireEvent.click(within(narrowing).getByRole('button', { name: '저장하고 다시 분석' }))
+
+    await waitFor(() => expect(currentLocation()).toBe('/app/combination-reviews/12/runs/32'))
+    expect(repository.replace).toHaveBeenCalledWith(12, 2, expect.objectContaining({ relation: { sameProject: 'UNKNOWN', sameCost: 'NO' } }), expect.any(AbortSignal))
+    expect(repository.replace.mock.calls[0][2].programs[0].participation).toMatchObject({ applicationSubmitted: 'NO', selected: 'UNKNOWN', executionStatus: 'UNKNOWN' })
+    expect(repository.start).toHaveBeenCalledOnce()
+    expect(repository.start.mock.calls[0][1]).toMatchObject({ expectedRevision: 3, additionalFacts: answerRunFixture.input.additionalFacts })
+    expect(await screen.findByText(/분석 차례를 기다리고 있어요/)).toBeTruthy()
+  })
+
+  it('keeps the narrowed situation and starts nothing when the save hits a revision conflict', async () => {
+    repository.replace.mockRejectedValue(new CombinationReviewError(409, 'COMBINATION_REVIEW_REVISION_CONFLICT'))
+    repository.run.mockResolvedValue(structuredClone(answerRunFixture))
+    mount('/app/combination-reviews/12/runs/31')
+    const narrowing = await screen.findByRole('region', { name: '내 상황으로 좁히기' })
+    fireEvent.click(within(within(narrowing).getByRole('group', { name: '같은 과제·제품인가요?' })).getByRole('radio', { name: '예' }))
+    fireEvent.click(within(narrowing).getByRole('button', { name: '저장하고 다시 분석' }))
+    expect((await screen.findByRole('alert')).textContent).toContain('다른 화면에서 입력이 변경되었습니다')
+    expect(repository.start).not.toHaveBeenCalled()
+    expect((within(within(narrowing).getByRole('group', { name: '같은 과제·제품인가요?' })).getByRole('radio', { name: '예' }) as HTMLInputElement).checked).toBe(true)
+    expect(currentLocation()).toBe('/app/combination-reviews/12/runs/31')
+  })
+
+  it('keeps an old six-stage result readable and starts a new analysis from its notice', async () => {
+    repository.runs.mockResolvedValue({ items: [runFixture], nextBeforeId: null })
+    const queued = { ...structuredClone(runFixture), id: 33, status: 'QUEUED' as const, analysis: null, evidence: null, configuration: null, finishedAt: null }
+    repository.start.mockImplementation(async (_id, request) => ({ ...queued, inputRevision: request.expectedRevision, requestKey: request.requestKey, input: { ...queued.input, additionalFacts: request.additionalFacts } }))
+    repository.run.mockImplementation(async (_reviewId, runId) => runId === 33 ? { ...queued, inputRevision: 2 } : structuredClone(runFixture))
+    mount('/app/combination-reviews/12/runs/30')
+    const notice = await screen.findByRole('group', { name: '이전 방식 결과 안내' })
+    expect(notice.textContent).toContain('여섯 단계로 나눠 판단한 이전 방식의 결과예요.')
+    // 지난 결과는 지금 화면(단계 띠 · 단계 줄) 그대로 보이고 좁히기 칸은 없다.
+    expect(screen.getByRole('group', { name: '단계별 판정' })).toBeTruthy()
+    expect(screen.getAllByRole('article')).toHaveLength(6)
+    expect(screen.queryByRole('region', { name: '내 상황으로 좁히기' })).toBeNull()
+    fireEvent.click(within(notice).getByRole('button', { name: '새 방식으로 다시 분석' }))
+    await waitFor(() => expect(currentLocation()).toBe('/app/combination-reviews/12/runs/33'))
+    expect(repository.replace).not.toHaveBeenCalled()
+    expect(repository.start).toHaveBeenCalledOnce()
+    expect(repository.start.mock.calls[0][1]).toMatchObject({ expectedRevision: 2, additionalFacts: runFixture.input.additionalFacts })
+  })
+
+  it('does not start a new analysis from an old result while another run is in progress', async () => {
+    const running = { ...structuredClone(runFixture), id: 34, status: 'RUNNING' as const, analysis: null, finishedAt: null }
+    repository.runs.mockResolvedValue({ items: [running, runFixture], nextBeforeId: null })
+    mount('/app/combination-reviews/12/runs/30')
+    const notice = await screen.findByRole('group', { name: '이전 방식 결과 안내' })
+    const button = await within(notice).findByRole('button', { name: '새 방식으로 다시 분석' }) as HTMLButtonElement
+    await waitFor(() => expect(button.disabled).toBe(true))
+    expect(document.getElementById(button.getAttribute('aria-describedby')!)!.textContent).toBe('분석이 끝나면 다시 실행할 수 있어요')
+    expect(repository.start).not.toHaveBeenCalled()
   })
 })
 

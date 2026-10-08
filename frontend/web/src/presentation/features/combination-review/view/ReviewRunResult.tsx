@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { type ReactNode, useState } from 'react'
 import { Link } from 'react-router'
 import {
-  reviewHeadline, reviewJudgmentLabels, reviewQuestions, reviewStageLabels, reviewVerdictLabels, reviewVerdictOf,
+  reviewAnswersOf, reviewHeadline, reviewJudgmentLabels, reviewQuestions, reviewStageLabels, reviewVerdictLabels, reviewVerdictOf,
   type ReviewStage, type ReviewStageResult, type ReviewVerdict,
 } from '@govbiz/shared/domain/entities/CombinationReviewResult'
 import { appPaths } from '../../../shared/routes/appPaths'
@@ -9,30 +9,24 @@ import { reviewProgramKey, reviewStages, type ReviewRun } from '../../../../doma
 import { reviewRunFailureMessage } from '../viewmodel/reviewMessages'
 import { reviewStyles as s } from './CombinationReview.styles'
 import { EvidenceQuote } from './EvidenceQuote'
+import { ReviewAnswerResult } from './ReviewAnswerResult'
+import { citationKey, displayReviewText } from './reviewText'
 
 const verdictBadges: Record<ReviewVerdict, string> = { warn: s.badgeWarn, info: s.badgeInfo, ok: s.badgeOk }
 const verdictCells: Record<ReviewVerdict, string> = { warn: s.stageCellWarn, info: s.stageCellInfo, ok: s.stageCellOk }
 const verdictOrder: ReviewVerdict[] = ['warn', 'info', 'ok']
 
-const statusTerms: Record<string, string> = {
-  NOT_STARTED: '‘시작 전’', IN_PROGRESS: '‘수행 중’', COMPLETED: '‘완료’', STOPPED: '‘중단’',
-  UNKNOWN: '‘미확인’', YES: '‘예’', NO: '‘아니오’',
-}
-const displayReviewText = (text: string) => text.replace(
-  /\b(?:NOT_STARTED|IN_PROGRESS|COMPLETED|STOPPED|UNKNOWN|YES|NO)\b/g,
-  (term) => statusTerms[term] ?? term,
-)
-
 type Pair = NonNullable<ReviewRun['analysis']>['pairs'][number]
 const stageRowId = (run: ReviewRun, pair: Pair, stage: ReviewStageResult) => `review-stage-${run.id}-${pair.firstProgramIndex}-${pair.secondProgramIndex}-${stage.stage}`
-const citationKey = (citation: ReviewStageResult['citations'][number]) => `${citation.evidenceId}\u0000${citation.quote}`
 
 /**
- * 실행 결과입니다. 결론(판정 조합으로 정한 문장 · 단계 색 띠) → 먼저 확인할 것 → 접힌 단계 줄 → 접힌 원문 · 판단 한계 순으로 둡니다.
- * 주의(제한 · 충돌) 단계만 처음부터 펼치고, AI 요약 · 근거 원문 · 판단 한계는 눌러서 봅니다.
+ * 실행 결과입니다. 분석 계약에 따라 세 질문 결과(결론 → 질문 카드 3장 → 내 상황으로 좁히기) 또는 지난 여섯 단계 결과(결론 · 단계 색 띠 →
+ * 먼저 확인할 것 → 접힌 단계 줄)를 그리고, 맨 아래에 접힌 공식 원문 · 판단 한계를 둡니다.
+ * narrowing은 세 질문 결과 아래에 둘 "내 상황으로 좁히기", reanalyze는 지난 결과 안내에 붙일 "새 방식으로 다시 분석" 동작입니다.
  */
-export function ReviewRunResult({ run, currentRevision, names, download, downloading }: {
+export function ReviewRunResult({ run, currentRevision, names, download, downloading, narrowing, reanalyze }: {
   run: ReviewRun; currentRevision: number; names: Record<string, string>; download: (index: number) => void; downloading: boolean
+  narrowing?: ReactNode; reanalyze?: ReactNode
 }) {
   // This prompt used internal (zero-based) indices in prose. Only adapt an
   // explicitly zero-based legacy summary; preserve stored data and source quotes.
@@ -42,39 +36,10 @@ export function ReviewRunResult({ run, currentRevision, names, download, downloa
   const displayedSummary = displayReviewText(legacySummary
     ? summary.replace(/사업(\s*)([01])(?![0-9])/g, (_match, space: string, index: string) => `사업${space}${Number(index) + 1}`)
     : summary)
-  const pairs = run.analysis?.pairs ?? []
-  const allStages = pairs.flatMap((pair) => pair.stages)
-  const counts = verdictOrder.map((verdict) => [verdict, allStages.filter((stage) => reviewVerdictOf(stage.judgment) === verdict).length] as const).filter(([, count]) => count > 0)
-  const headline = reviewHeadline(allStages, run.input.programs.map((program) => program.participation))
-  const questions = reviewQuestions(allStages)
-  // 같은 인용을 고른 단계들입니다. 단계 줄마다 "○○ 단계에도 인용"으로 알립니다.
-  const citedStages = new Map<string, ReviewStage[]>()
-  for (const stage of allStages) for (const citation of stage.citations) {
-    const stages = citedStages.get(citationKey(citation)) ?? []
-    if (!stages.includes(stage.stage)) citedStages.set(citationKey(citation), [...stages, stage.stage])
-  }
-  const [summaryOpen, setSummaryOpen] = useState(false)
-  const [allQuestions, setAllQuestions] = useState(false)
+  const answers = reviewAnswersOf(run.analysis)
+  const programNames = run.input.programs.map((program, index) => names[reviewProgramKey(program)] ?? `사업 ${index + 1}`)
   const [sourcesOpen, setSourcesOpen] = useState(false)
-  // 주의(제한 · 충돌) 단계는 처음부터 펼칩니다. 사용자가 누른 줄만 따로 기억해, 진행 중이던 실행이 끝나 판단이 생겨도 같은 규칙이 적용됩니다.
-  const [stageToggles, setStageToggles] = useState<Record<string, boolean>>({})
-  const stageOpen = (id: string, stage: ReviewStageResult) => stageToggles[id] ?? reviewVerdictOf(stage.judgment) === 'warn'
-  // 띠의 칸을 누르면 그 단계 줄을 펼치고 그 줄로 내려가 초점을 옮깁니다. 줄 머리는 늘 그려져 있어 바로 찾을 수 있습니다.
-  const showStage = (id: string) => {
-    setStageToggles((current) => ({ ...current, [id]: true }))
-    const row = document.getElementById(id)
-    const reduceMotion = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    if (row && typeof row.scrollIntoView === 'function') row.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' })
-    row?.querySelector<HTMLButtonElement>('button[aria-expanded]')?.focus({ preventScroll: true })
-  }
-  const programName = (index: number) => {
-    const program = run.input.programs[index]
-    return program ? names[reviewProgramKey(program)] ?? `사업 ${index + 1}` : `사업 ${index + 1}`
-  }
-  const shownQuestions = allQuestions ? questions.all : questions.priority
   const limitationCount = (run.evidence?.coverageWarnings.length ?? 0) + (run.analysis?.limitations.length ?? 0)
-  const summaryId = `review-summary-${run.id}`
-  const questionsId = `review-questions-${run.id}`
   const sourcesId = `review-sources-${run.id}`
   return <section className="space-y-4" aria-label={`실행 ${run.id} 결과`}>
     {run.inputRevision !== currentRevision && <p className={s.warning}>과거 입력 버전의 결과입니다. 현재 저장 입력(버전 {currentRevision})에 대한 결과가 아닙니다.</p>}
@@ -85,66 +50,9 @@ export function ReviewRunResult({ run, currentRevision, names, download, downloa
       <p>{reviewRunFailureMessage(run.failureCode)}</p>
       <Link className={s.secondarySm} to={`${appPaths.combinationReviews}/${run.reviewId}?step=analysis`}>다시 시도</Link>
     </div>}
-    {run.analysis && <>
-      <section className={`${s.card} space-y-3`} aria-label="검토 결론">
-        <div className="flex flex-wrap items-center gap-1.5">
-          {counts.map(([verdict, count]) => <span key={verdict} className={`${s.badge} ${verdictBadges[verdict]}`}>{reviewVerdictLabels[verdict]} {count}</span>)}
-          <span className="ml-auto text-xs text-slate-500 tabular-nums">{allStages.length}단계 판단</span>
-        </div>
-        <div className="space-y-1">
-          <h2 className="text-lg leading-snug font-extrabold text-ink">{headline.title}</h2>
-          <p className="text-sm leading-6 text-slate-600">{headline.reason}</p>
-        </div>
-        {pairs.map((pair) => <div key={`${pair.firstProgramIndex}:${pair.secondProgramIndex}`} role="group" aria-label={pairs.length > 1 ? `사업 ${pair.firstProgramIndex + 1} × 사업 ${pair.secondProgramIndex + 1} 단계별 판정` : '단계별 판정'} className="grid grid-cols-6 gap-1">
-          {[...pair.stages].sort((a, b) => reviewStages.indexOf(a.stage) - reviewStages.indexOf(b.stage)).map((stage) => {
-            const verdict = reviewVerdictOf(stage.judgment)
-            const id = stageRowId(run, pair, stage)
-            return <button key={stage.stage} type="button" className={`${s.stageCell} ${verdictCells[verdict]}`} aria-controls={id}
-              aria-label={`${reviewStageLabels[stage.stage]} 단계 ${reviewVerdictLabels[verdict]} · 자세히 보기`} onClick={() => showStage(id)}>{reviewStageLabels[stage.stage]}</button>
-          })}
-        </div>)}
-        <ul className="space-y-1">{run.input.programs.map((program, index) => <li key={reviewProgramKey(program)} className="flex items-baseline gap-2 text-sm">
-          <span className={`${s.badge} ${s.badgeNeutral}`}>사업 {index + 1}</span><b className="min-w-0">{programName(index)}</b>
-        </li>)}</ul>
-        <p className="text-xs leading-5 text-slate-600">
-          AI가 공식 원문을 읽은 결과이고 사람이 검수하지 않았어요. 제한을 못 찾은 것이 허용을 뜻하지는 않아요.
-          {displayedSummary && <button type="button" className={`${s.textLink} ml-1.5`} aria-expanded={summaryOpen} aria-controls={summaryId} onClick={() => setSummaryOpen(!summaryOpen)}>{summaryOpen ? '요약 접기 ▴' : '요약 더 보기 ▾'}</button>}
-        </p>
-        {displayedSummary && <p id={summaryId} hidden={!summaryOpen} className="rounded-xl bg-surface-muted p-3 text-sm leading-7 whitespace-pre-wrap">{displayedSummary}</p>}
-      </section>
-      <section className={`${s.card} space-y-3`} aria-label="먼저 확인할 것">
-        <div className="flex flex-wrap items-center gap-2">
-          <h2 className="font-bold">먼저 확인할 것</h2>
-          {questions.priority.length > 0 && <span className="text-xs text-slate-500">단계마다 하나씩 · 답하면 판단이 바뀔 수 있어요</span>}
-          <Link className={`${s.primaryPill} ml-auto`} to={`${appPaths.combinationReviews}/${run.reviewId}?step=participation`} state={{ additionalFacts: run.input.additionalFacts }}>참여 상태 입력하고 다시 보기</Link>
-        </div>
-        {shownQuestions.length > 0 ? <ul id={questionsId} className="space-y-1.5 text-sm leading-6">{shownQuestions.map((question) => <li key={question.text} className="flex items-baseline gap-2">
-          <span className={`${s.badge} ${s.badgeNeutral}`}>{reviewStageLabels[question.stage]}</span><span className="min-w-0">{displayReviewText(question.text)}</span>
-        </li>)}</ul>
-          : <p className={s.muted}>현재 분석에서 추가로 확인할 질문은 없어요.</p>}
-        {questions.all.length > questions.priority.length && <button type="button" className={s.textLink} aria-expanded={allQuestions} aria-controls={questionsId} onClick={() => setAllQuestions(!allQuestions)}>
-          {allQuestions ? '단계별 첫 질문만 보기 ▴' : `질문 ${questions.all.length}개 모두 보기 ▾`}
-        </button>}
-      </section>
-      <section className="space-y-3" aria-label="단계별 판단">
-        <h2 className="font-bold">단계별 판단 <span className="text-xs font-semibold text-slate-500">눌러서 펼쳐요</span></h2>
-        {pairs.map((pair) => {
-          const ordered = [...pair.stages].sort((a, b) => reviewStages.indexOf(a.stage) - reviewStages.indexOf(b.stage))
-          const firstWarn = ordered.find((stage) => reviewVerdictOf(stage.judgment) === 'warn')
-          return <div className="space-y-2" key={`${pair.firstProgramIndex}:${pair.secondProgramIndex}`}>
-            {pairs.length > 1 && <h3 className="text-sm font-bold">사업 {pair.firstProgramIndex + 1} × 사업 {pair.secondProgramIndex + 1}</h3>}
-            <div className={`${s.card} divide-y divide-slate-200 overflow-hidden p-0`}>
-              {ordered.map((stage) => {
-                const id = stageRowId(run, pair, stage)
-                const open = stageOpen(id, stage)
-                return <StageRow key={id} id={id} run={run} stage={stage} open={open} onToggle={() => setStageToggles((current) => ({ ...current, [id]: !open }))}
-                  citationsOpen={stage === firstWarn} citedStages={citedStages} download={download} downloading={downloading} />
-              })}
-            </div>
-          </div>
-        })}
-      </section>
-    </>}
+    {run.analysis && (answers
+      ? <ReviewAnswerResult run={run} answers={answers} programNames={programNames} summary={displayedSummary} download={download} downloading={downloading} narrowing={narrowing} />
+      : <StageResult run={run} programNames={programNames} summary={displayedSummary} download={download} downloading={downloading} reanalyze={reanalyze} />)}
     {run.evidence && <section className={`${s.card} space-y-3`} aria-label="공식 원문과 수집 범위">
       <button type="button" className="flex w-full cursor-pointer items-center gap-2 text-left text-sm font-bold text-ink" aria-expanded={sourcesOpen} aria-controls={sourcesId} onClick={() => setSourcesOpen(!sourcesOpen)}>
         <span className="min-w-0 flex-1">공식 원문 {run.evidence.documents.length}개 · 판단 한계 {limitationCount}개</span>
@@ -160,12 +68,123 @@ export function ReviewRunResult({ run, currentRevision, names, download, downloa
         <ul className="list-disc space-y-1 pl-5 text-xs leading-5 text-slate-600">
           {run.evidence.coverageWarnings.map((warning, i) => <li key={`w${i}`}>{warning}</li>)}
           {run.analysis?.limitations.map((text, i) => <li key={`l${i}`}>{displayReviewText(text)}</li>)}
-          <li>입력한 참여 상태 · 추가 설명과 자동 수집한 원문 범위 안에서만 판단했어요.</li>
-          <li>두 공고 사이의 제한만 봤어요. 과거 수혜 이력 누적 · 사업비 정산 규정은 이 검토 범위 밖이에요.</li>
+          {answers ? <>
+            <li>입력한 내 상황 · 추가 설명과 자동 수집한 원문 범위 안에서만 판단했어요.</li>
+            <li>두 공고 사이의 규정만 봤어요. 다른 사업까지 합친 수혜 이력 누적은 이 검토 범위 밖이에요.</li>
+          </> : <>
+            <li>입력한 참여 상태 · 추가 설명과 자동 수집한 원문 범위 안에서만 판단했어요.</li>
+            <li>두 공고 사이의 제한만 봤어요. 과거 수혜 이력 누적 · 사업비 정산 규정은 이 검토 범위 밖이에요.</li>
+          </>}
         </ul>
       </div>
     </section>}
   </section>
+}
+
+/**
+ * 지난 여섯 단계 방식(v2)의 결과입니다. 이전 방식이라는 안내(새 방식으로 다시 분석) → 결론(판정 조합으로 정한 문장 · 단계 색 띠) →
+ * 먼저 확인할 것 → 접힌 단계 줄 순으로 둡니다. 주의(제한 · 충돌) 단계만 처음부터 펼치고, AI 요약 · 근거 원문은 눌러서 봅니다.
+ */
+function StageResult({ run, programNames, summary, download, downloading, reanalyze }: {
+  run: ReviewRun; programNames: string[]; summary: string; download: (index: number) => void; downloading: boolean; reanalyze?: ReactNode
+}) {
+  const pairs = run.analysis?.pairs ?? []
+  const allStages = pairs.flatMap((pair) => pair.stages)
+  const counts = verdictOrder.map((verdict) => [verdict, allStages.filter((stage) => reviewVerdictOf(stage.judgment) === verdict).length] as const).filter(([, count]) => count > 0)
+  const headline = reviewHeadline(allStages, run.input.programs.map((program) => program.participation))
+  const questions = reviewQuestions(allStages)
+  // 같은 인용을 고른 단계들입니다. 단계 줄마다 "○○ 단계에도 인용"으로 알립니다.
+  const citedStages = new Map<string, ReviewStage[]>()
+  for (const stage of allStages) for (const citation of stage.citations) {
+    const stages = citedStages.get(citationKey(citation)) ?? []
+    if (!stages.includes(stage.stage)) citedStages.set(citationKey(citation), [...stages, stage.stage])
+  }
+  const [summaryOpen, setSummaryOpen] = useState(false)
+  const [allQuestions, setAllQuestions] = useState(false)
+  // 주의(제한 · 충돌) 단계는 처음부터 펼칩니다. 사용자가 누른 줄만 따로 기억해, 진행 중이던 실행이 끝나 판단이 생겨도 같은 규칙이 적용됩니다.
+  const [stageToggles, setStageToggles] = useState<Record<string, boolean>>({})
+  const stageOpen = (id: string, stage: ReviewStageResult) => stageToggles[id] ?? reviewVerdictOf(stage.judgment) === 'warn'
+  // 띠의 칸을 누르면 그 단계 줄을 펼치고 그 줄로 내려가 초점을 옮깁니다. 줄 머리는 늘 그려져 있어 바로 찾을 수 있습니다.
+  const showStage = (id: string) => {
+    setStageToggles((current) => ({ ...current, [id]: true }))
+    const row = document.getElementById(id)
+    const reduceMotion = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    if (row && typeof row.scrollIntoView === 'function') row.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block: 'start' })
+    row?.querySelector<HTMLButtonElement>('button[aria-expanded]')?.focus({ preventScroll: true })
+  }
+  const shownQuestions = allQuestions ? questions.all : questions.priority
+  const summaryId = `review-summary-${run.id}`
+  const questionsId = `review-questions-${run.id}`
+  return <>
+    <div className={`${s.info} flex flex-wrap items-center justify-between gap-3`} role="group" aria-label="이전 방식 결과 안내">
+      <p className="min-w-0 flex-1">여섯 단계로 나눠 판단한 이전 방식의 결과예요. 새 방식은 세 질문(신청 · 함께 수행 · 같은 과제·비용)에 조건과 근거로 답해요.</p>
+      {reanalyze}
+    </div>
+    <section className={`${s.card} space-y-3`} aria-label="검토 결론">
+      <div className="flex flex-wrap items-center gap-1.5">
+        {counts.map(([verdict, count]) => <span key={verdict} className={`${s.badge} ${verdictBadges[verdict]}`}>{reviewVerdictLabels[verdict]} {count}</span>)}
+        <span className="ml-auto text-xs text-slate-500 tabular-nums">{allStages.length}단계 판단</span>
+      </div>
+      <div className="space-y-1">
+        <h2 className="text-lg leading-snug font-extrabold text-ink">{headline.title}</h2>
+        <p className="text-sm leading-6 text-slate-600">{headline.reason}</p>
+      </div>
+      {pairs.map((pair) => <div key={`${pair.firstProgramIndex}:${pair.secondProgramIndex}`} role="group" aria-label={pairs.length > 1 ? `사업 ${pair.firstProgramIndex + 1} × 사업 ${pair.secondProgramIndex + 1} 단계별 판정` : '단계별 판정'} className="grid grid-cols-6 gap-1">
+        {[...pair.stages].sort((a, b) => reviewStages.indexOf(a.stage) - reviewStages.indexOf(b.stage)).map((stage) => {
+          const verdict = reviewVerdictOf(stage.judgment)
+          const id = stageRowId(run, pair, stage)
+          return <button key={stage.stage} type="button" className={`${s.stageCell} ${verdictCells[verdict]}`} aria-controls={id}
+            aria-label={`${reviewStageLabels[stage.stage]} 단계 ${reviewVerdictLabels[verdict]} · 자세히 보기`} onClick={() => showStage(id)}>{reviewStageLabels[stage.stage]}</button>
+        })}
+      </div>)}
+      <ul className="space-y-1">{run.input.programs.map((program, index) => <li key={reviewProgramKey(program)} className="flex items-baseline gap-2 text-sm">
+        <span className={`${s.badge} ${s.badgeNeutral}`}>사업 {index + 1}</span><b className="min-w-0">{programNames[index]}</b>
+      </li>)}</ul>
+      <p className="text-xs leading-5 text-slate-600">
+        AI가 공식 원문을 읽은 결과이고 사람이 검수하지 않았어요. 제한을 못 찾은 것이 허용을 뜻하지는 않아요.
+        {summary && <button type="button" className={`${s.textLink} ml-1.5`} aria-expanded={summaryOpen} aria-controls={summaryId} onClick={() => setSummaryOpen(!summaryOpen)}>{summaryOpen ? '요약 접기 ▴' : '요약 더 보기 ▾'}</button>}
+      </p>
+      {summary && <p id={summaryId} hidden={!summaryOpen} className="rounded-xl bg-surface-muted p-3 text-sm leading-7 whitespace-pre-wrap">{summary}</p>}
+    </section>
+    <section className={`${s.card} space-y-3`} aria-label="먼저 확인할 것">
+      <div className="flex flex-wrap items-center gap-2">
+        <h2 className="font-bold">먼저 확인할 것</h2>
+        {questions.priority.length > 0 && <span className="text-xs text-slate-500">단계마다 하나씩 · 답하면 판단이 바뀔 수 있어요</span>}
+        <Link className={`${s.primaryPill} ml-auto`} to={`${appPaths.combinationReviews}/${run.reviewId}?step=analysis`} state={{ additionalFacts: run.input.additionalFacts }}>내 상황 입력하고 다시 보기</Link>
+      </div>
+      {shownQuestions.length > 0 ? <ul id={questionsId} className="space-y-1.5 text-sm leading-6">{shownQuestions.map((question) => <li key={question.text} className="flex items-baseline gap-2">
+        <span className={`${s.badge} ${s.badgeNeutral}`}>{reviewStageLabels[question.stage]}</span><span className="min-w-0">{displayReviewText(question.text)}</span>
+      </li>)}</ul>
+        : <p className={s.muted}>현재 분석에서 추가로 확인할 질문은 없어요.</p>}
+      {questions.all.length > questions.priority.length && <button type="button" className={s.textLink} aria-expanded={allQuestions} aria-controls={questionsId} onClick={() => setAllQuestions(!allQuestions)}>
+        {allQuestions ? '단계별 첫 질문만 보기 ▴' : `질문 ${questions.all.length}개 모두 보기 ▾`}
+      </button>}
+    </section>
+    <section className="space-y-3" aria-label="단계별 판단">
+      <h2 className="font-bold">단계별 판단 <span className="text-xs font-semibold text-slate-500">눌러서 펼쳐요</span></h2>
+      {pairs.map((pair) => {
+        const ordered = [...pair.stages].sort((a, b) => reviewStages.indexOf(a.stage) - reviewStages.indexOf(b.stage))
+        const firstWarn = ordered.find((stage) => reviewVerdictOf(stage.judgment) === 'warn')
+        return <div className="space-y-2" key={`${pair.firstProgramIndex}:${pair.secondProgramIndex}`}>
+          {pairs.length > 1 && <h3 className="text-sm font-bold">사업 {pair.firstProgramIndex + 1} × 사업 {pair.secondProgramIndex + 1}</h3>}
+          <div className={`${s.card} divide-y divide-slate-200 overflow-hidden p-0`}>
+            {ordered.map((stage) => {
+              const id = stageRowId(run, pair, stage)
+              const open = stageOpen(id, stage)
+              return <StageRow key={id} id={id} run={run} stage={stage} open={open} onToggle={() => setStageToggles((current) => ({ ...current, [id]: !open }))}
+                citationsOpen={stage === firstWarn} citedStages={citedStages} download={download} downloading={downloading} />
+            })}
+          </div>
+        </div>
+      })}
+    </section>
+  </>
+}
+
+/** "수행 단계에도 인용"처럼 같은 인용을 고른 다른 단계를 알리는 말입니다. 네 단계 이상이면 개수만 적습니다. */
+function stagesAlsoCiting(stages: readonly ReviewStage[]): string | null {
+  if (stages.length === 0) return null
+  return stages.length > 3 ? `다른 ${stages.length}개 단계에도 인용` : `${stages.map((stage) => reviewStageLabels[stage]).join('·')} 단계에도 인용`
 }
 
 /** 단계 하나의 접히는 줄입니다. 접혀 있어도 단계 · 판정 · 판단 범위 · 질문/근거 수는 보이고, 근거 원문은 펼친 줄 안에서 한 번 더 눌러 봅니다. */
@@ -208,7 +227,7 @@ function StageRow({ id, run, stage, open, onToggle, citationsOpen, citedStages, 
         </button>
         <ol id={citationsId} hidden={!showCitations} className="space-y-2">
           {stage.citations.map((citation, i) => <EvidenceQuote key={i} id={`${id}-evidence-${i}`} number={i + 1} run={run} citation={citation}
-            alsoIn={(citedStages.get(citationKey(citation)) ?? []).filter((other) => other !== stage.stage)} download={download} downloading={downloading} />)}
+            alsoIn={stagesAlsoCiting((citedStages.get(citationKey(citation)) ?? []).filter((other) => other !== stage.stage))} download={download} downloading={downloading} />)}
         </ol>
       </>}
     </div>

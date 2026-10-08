@@ -35,18 +35,15 @@ function CardSkeleton({ titleWidth = 'w-40', children }: { titleWidth?: string; 
 }
 
 /** 저장한 검토를 읽는 동안 지금 단계(주소의 `?step=`)의 카드 배치를 그립니다. */
-export function ReviewEditorSkeleton({ step }: { step: 'selection' | 'participation' | 'analysis' }) {
-  if (step === 'participation') return <div className="space-y-4" aria-hidden="true">
-    <Line box="h-6" bar="h-3.5 w-3/5" />
-    {[0, 1].map((index) => <CardSkeleton key={index} titleWidth="w-56">
-      <Line box="h-5" bar="h-3.5 w-40" />
-      <span className={`${s.skeletonBar} h-[42px] w-full rounded-lg`} />
-    </CardSkeleton>)}
-    <CardSkeleton titleWidth="w-52"><span className={`${s.skeletonBar} h-28 w-full rounded-lg`} /><Line box="h-6" bar="h-3 w-32" /></CardSkeleton>
-  </div>
+export function ReviewEditorSkeleton({ step }: { step: 'selection' | 'analysis' }) {
   if (step === 'analysis') return <div className="space-y-4" aria-hidden="true">
     <span className={`${s.skeletonBar} h-[4.5rem] w-full rounded-xl`} />
     <CardSkeleton titleWidth="w-28">{[0, 1].map((index) => <span className={`${s.skeletonBar} h-11 w-full rounded-lg`} key={index} />)}</CardSkeleton>
+    <CardSkeleton titleWidth="w-24">
+      <Line box="h-6" bar="h-3.5 w-3/5" />
+      <span className="grid gap-3 @min-[40rem]/workspace:grid-cols-2">{[0, 1].map((index) => <span className={`${s.skeletonBar} h-[42px] w-full rounded-lg`} key={index} />)}</span>
+      {[0, 1].map((index) => <span className="flex gap-2" key={index}>{[0, 1, 2].map((choice) => <span className={`${s.skeletonBar} h-9 w-16 rounded-full`} key={choice} />)}</span>)}
+    </CardSkeleton>
     <CardSkeleton titleWidth="w-32"><Line box="h-6" bar="h-3.5 w-full" /><Line box="h-6" bar="h-3.5 w-4/5" /></CardSkeleton>
     <CardSkeleton titleWidth="w-24">{[0, 1].map((index) => <span className={`${s.skeletonBar} h-10 w-full rounded-lg`} key={index} />)}</CardSkeleton>
   </div>
