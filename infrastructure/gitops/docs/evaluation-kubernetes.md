@@ -14,9 +14,9 @@ Compose는 로컬 개발에 유지하고, 이전 중에는 기존 인스턴스�
 
 | 릴리스 | 배포 리소스 | 저장소 | 역할 |
 | --- | --- | --- | --- |
-| `prefect` | Deployment·ClusterIP Service | 별도 복원한 Prefect PVC | 기존 SQLite 이력과 수동 평가 API |
-| `evaluation-runner` | Deployment | 복원한 결과 PVC, 읽기/쓰기 | 기존 `ops_flow.py`의 단일 실행기 |
-| `ops-artifacts` | Deployment·ClusterIP Service | 같은 결과 PVC, 읽기 전용 | 기존 인증된 결과·평가 자료 HTTP 조회 |
+| `prefect` | Deployment·ClusterIP Service·NetworkPolicy | 별도 복원한 Prefect PVC | 기존 SQLite 이력과 수동 평가 API |
+| `evaluation-runner` | Deployment·NetworkPolicy | 복원한 결과 PVC, 읽기/쓰기 | 기존 `ops_flow.py`의 단일 실행기 |
+| `ops-artifacts` | Deployment·ClusterIP Service·NetworkPolicy | 같은 결과 PVC, 읽기 전용 | 기존 인증된 결과·평가 자료 HTTP 조회 |
 
 Chart는 PVC·PV·Secret·namespace·migration Job을 생성하거나 삭제하지 않는다. 기존 Compose named
 volume을 Pod에 직접 연결하지 않으며 hostPath도 사용하지 않는다. 별도 PVC를 준비하고 복원·검증한
@@ -69,6 +69,18 @@ digest 문법 검사만으로 이미지를 신뢰하지 않는다. 실행기는 
 기록은 유지하므로 접근 가능한 Langfuse URL과 기존 키가 필요하다. Langfuse 자체의 Kubernetes
 이전은 별도 단계다. namespace나 ClusterIP만으로 네트워크 접근이 격리됐다고 간주하지 않는다.
 실제 배포 전 CNI의 NetworkPolicy 집행·Prefect API 접근 제한을 검증한다.
+
+세 릴리스는 component별 ingress NetworkPolicy를 함께 렌더링한다. Prefect의 TCP 4200은 같은
+평가 namespace의 `evaluation-runner`와 `govbiz-msa`의 `ops-service` Pod만 허용한다. 결과 서버의
+TCP 8010은 `govbiz-msa/ops-service`만 허용하고, 실행기로 들어오는 Pod 트래픽은 모두 차단한다.
+Ops API와 sync는 같은 Pod이므로 같은 허용 규칙을 사용한다. namespaceSelector와 podSelector는
+하나의 peer에서 동시에 만족해야 하며, 다른 namespace에서 같은 Pod label을 붙여도 허용하지 않는다.
+정책은 Argo sync wave -1로 Deployment보다 먼저 생성한다. 이미지·소스 계획 검증에서도 정책 누락,
+포트·peer 확대, 잘못된 selector와 적용 순서를 거부한다.
+
+이번 정책은 ingress만 제한한다. 실행기의 Ops·Langfuse·DNS 등 egress는 기존 연결을 유지하며,
+외부 통신 통제·다른 NetworkPolicy가 합산하는 허용·hostNetwork 및 노드 접근까지 차단했다고
+보고하지 않는다. 기존 데이터나 클러스터에 직접 적용하지 않고 검증된 SHA의 수동 Argo 동기화에 포함한다.
 
 전환 후 경로는 `Ops API → Prefect Service → 실행기 → 결과 PVC → 결과 서버 → Ops API/sync`다.
 실행기에서 Ops로의 예산·사용량 요청과 Langfuse 점수 기록도 유지한다.
@@ -136,7 +148,7 @@ python3 -B infrastructure/gitops/scripts/evaluation_release.py \
   대조한다. Ops와 runner는 같은 소스 SHA여야 하며 public receipt만 허용한다.
 - Chart·기본 values는 검증한 커밋에서 임시 디렉터리로 읽는다. 로컬 작업 파일이나 임의 이미지 입력을
   사용하지 않는다. Prefect는 해당 소스의 고정 digest를 유지하고 결과 서버의 자료 이미지는 runner와 같다.
-- `govbiz-evaluation` AppProject는 해당 포크와 namespace, Deployment·Service만 허용한다.
+- `govbiz-evaluation` AppProject는 해당 포크와 namespace, Deployment·Service·NetworkPolicy만 허용한다.
   PV·PVC·Secret·namespace·Job을 소유하지 않는다. 세 Application은 전체 SHA·digest로 고정하며,
   자동 sync·prune·selfHeal은 false, retry는 0이다. 자동 namespace 생성과 삭제 finalizer도 넣지 않는다.
 - 모든 replica는 0이고 유료 호출·스케줄은 비활성화한다. 별도의 배포 브랜치·PR·자동 적용은 없다.
@@ -347,6 +359,60 @@ python3 -B infrastructure/gitops/scripts/evaluation_secrets.py \
 이 결과는 백업 최신성·원본 writer 중지·Langfuse 로그인·네트워크 통제·평가 성공을 증명하지 않는다.
 현재 실제 개인 백업을 대상으로 한 생성은 별도로 수행해야 하며, Argo 동기화나 서비스 기동은 하지 않는다.
 
+## 전환 전 NetworkPolicy 실제 통신 검증
+
+평가 API를 활성화하기 전에 개인 클러스터에서 다음 명령으로 네트워크 정책의 집행 여부를
+확인한다. 이 명령은 **임시 namespace 두 개·Pod 네 개·NetworkPolicy 두 개를 생성하고 제거**한다.
+기존 평가·업무 namespace, CNI, Secret, PVC와 Compose 서비스는 수정하지 않는다.
+
+```bash
+python3 -B infrastructure/gitops/scripts/evaluation_network_probe.py \
+  --state-dir infrastructure/gitops/.local/fork > /private-backups/evaluation-network.json
+```
+
+CLI는 기존 개인 state와 클러스터 소유권을 검증하고 같은 state의 작업 잠금을 사용한다.
+검증 Pod는 이미 평가 구성에 고정한 Prefect Python 이미지를 사용하지만 합성 HTTP 서버만 실행한다.
+Pod마다 메모리 요청 32Mi·한도 64Mi, CPU 요청 10m·한도 100m을 지정한다. 비루트 사용자와
+읽기 전용 파일시스템을 사용하며 ServiceAccount 토큰·Secret·볼륨은 마운트하지 않는다.
+현재 개발 환경을 멈추지 않고 실행할 메모리 여유를 먼저 확인한다.
+
+| 경로 | 정책 적용 전 | 정책 적용 중 | 정책 제거 후 |
+| --- | --- | --- | --- |
+| 같은 namespace의 허용 client → server | 허용 | 허용 | 허용 |
+| 같은 namespace의 다른 client → server | 허용 | 차단 | 허용 |
+| 다른 namespace의 동일 label client → server | 허용 | 차단 | 허용 |
+| 허용 client → 다른 namespace의 server | 허용 | 차단 | 허용 |
+
+- 모든 경로의 기준 연결을 확인한 뒤 ingress·egress 정책을 생성한다. 새 TCP 연결을 매번 사용하고,
+  정책 전파를 기다리며 세 번 연속 기대 결과와 일치해야 집행 검증에 성공한다.
+- 예기치 않은 HTTP 본문과 kubectl 오류는 차단 성공이 아니다. 두 서버의 loopback 응답과 정책 제거
+  후 모든 경로의 연결 복구도 확인한다. 서버 장애·전체 통신 장애를 정상적인 접근 통제로 표시하지 않는다.
+- 정리 시 생성한 namespace의 label·UID를 다시 확인하고 Kubernetes API 삭제 요청에 UID 조건을
+  전달한다. 생성 응답이 유실돼도 이번 실행의 임의 식별자가 일치하는 리소스만 정리한다.
+  하나의 정리가 실패해도 다른 namespace 정리를 시도하며 `cleanupErrors`에 이름과 오류 종류를 남긴다.
+  정리가 실패한 실행은 성공으로 반환하지 않는다. 보고서의 namespace를 확인하되 기존 데이터는 삭제하지 않는다.
+
+성공은 `ENFORCED`이며 종료 코드 0이다. `NOT_ENFORCED`는 허용 경로가 연결되는 동안 필요한 차단을
+확인하지 못했다는 뜻이다. `INCONCLUSIVE`는 허용 경로도 차단되어 판정할 수 없는 경우이며,
+실행·복구·정리 실패는 `ERROR`다. 이 세 상태는 종료 코드 1과
+`networkPolicyEnforcementVerified=false`를 반환한다.
+
+검증 범위는 **동일 노드 IPv4 Pod IP의 TCP 8090**이다. 다중 노드·IPv6·Service/DNS·외부 통신·
+실제 Prefect/Ops 정책·인증·Argo 동기화 성공까지 입증하지 않는다. Infra CI의 `test_*.py` 탐색은
+이 도구의 판정·소유권·정리 단위 테스트를 수행하며 실제 CNI 통신은 대상 클러스터에서 별도 실행한다.
+
+NetworkPolicy 객체 생성만으로 차단이 보장되지 않는다. 정책을 집행하는 네트워크 플러그인이 필요하다
+([Kubernetes NetworkPolicy 전제 조건](https://kubernetes.io/docs/concepts/services-networking/network-policies/#prerequisites)).
+실제 차단이 확인되지 않으면 Prefect 전환 완료로 처리하지 않는다. CNI 변경은 별도의 인프라 작업으로
+계획하고, 현재 실행 중인 클러스터에 다른 CNI를 바로 겹쳐 설치하지 않는다.
+
+2026-10-08 개인 클러스터 `govbiz-f218b0ac1c`에서 합성 통신 검증을 실행해 `ENFORCED`를 확인했다.
+정책 적용 전·제거 후 네 경로는 모두 연결됐고, 정책 적용 중 허용 경로 한 개와 차단 경로 세 개가
+세 번 연속 기대 결과와 일치했다. 임시 namespace 두 개와 하위 리소스도 정리됐다.
+관측된 네트워크 DaemonSet은 `kindnet`·`kube-proxy`, kindnet 이미지는
+`docker.io/kindest/kindnetd:v20260820-69b56db7`였다. 이 결과를 다른 kind 버전이나 노드에 일반화하지 않는다.
+새 Chart의 실제 Prefect·Ops·결과 서버 통신 검증은 최신 SHA CI와 실제 배포에서 별도로 확인한다.
+
 ## 평가 Argo 선언 등록
 
 복원 보고서 모드에 `--register-argo`를 추가하면 검증된 AppProject 한 개와 Application 세 개를
@@ -377,7 +443,7 @@ python3 -B infrastructure/gitops/scripts/evaluation_release.py \
   상태를 확인한 뒤 같은 명령으로 나머지만 등록할 수 있다. 보고서를 덮어쓰기 전에 이전 실행
   결과를 보존한다. 원시 오류나 비밀값은 보고서에 기록하지 않는다.
 
-성공 상태는 `REGISTERED_NOT_SYNCED`다. Argo 화면에 등록됐다는 뜻이며 Deployment·Service는
+성공 상태는 `REGISTERED_NOT_SYNCED`다. Argo 화면에 등록됐다는 뜻이며 Deployment·Service·NetworkPolicy는
 아직 생성하지 않는다. PVC·PV·StorageClass·namespace·Secret과 기존 업무 Application의 소유권은
 변경하지 않는다. Secret 준비, 네트워크 접근 통제, 최신 백업과 원본 writer 중지, 수동 동기화·
 활성화·Ops URL 전환·실제 평가 검증은 다음 단계다. 보고서는 `syncRequested=false`,
@@ -403,7 +469,9 @@ LLMOps CI의 기존 격리 통합 검증에 `--evaluation-runtime` 단계를 연
    실행기·결과 서버만 로컬 태그로 kind에 적재한다. Prefect는 원본 Compose 이미지 ID와 고정 digest의
    이미지 ID가 같은지 검사하고, 복원 helper가 확보한 원본 참조를 그대로 사용한다.
    같은 이미지로 렌더링한 Prefect·결과 서버를 먼저 기동하고 실행기 1개를 시작한다. 자동 migration은
-   계속 비활성화한다. Ops API와 sync의 두 URL을 함께 바꾼 뒤 격리 접수를 재개한다.
+   계속 비활성화한다. Ops API와 sync의 두 URL을 함께 바꾼다. 앞선 Core DB 복원 검증이 원본 보존을
+   위해 중지했던 격리 Core는 복원 검증 성공·원본 보존·복원 컨테이너 정리를 확인한 뒤 재개한다.
+   replica 0과 resourceVersion 조건으로 1개만 기동하고 rollout 완료 후 격리 접수와 웹 검증을 재개한다.
 4. 기존 완료 이력을 확인하고 무료 평가를 접수한다. 동일 요청 재전송의 flow 일치, 백그라운드 상태
    반영, 인증 보고서 조회와 모델 호출 0회를 확인한다.
 5. 실행기를 정지한 뒤 Prefect·결과 서버 Pod를 교체하고 실행기를 다시 시작한다. 실제 Pod UID 변경,
@@ -432,6 +500,11 @@ Pod 로그와 이벤트는 크기·시간 제한 안에서 읽고, 권한·읽�
 최신 SHA의 실제 LLMOps CI를 함께 확인한다. 별도 합성 데이터로 수행한 로컬 Prefect 기동 성공은
 CI의 전체 Ops 복구·평가 실행·Pod 교체 성공을 대체하지 않는다.
 
+`4103390`의 LLMOps CI에서는 세 평가 Pod의 최초 기동까지 통과했지만, 후속 웹 포트포워드 시작에
+실패했다. Core DB 복원 도구가 `core-service`를 replica 0으로 남긴 뒤 평가 런타임 경로가 이를
+재개하지 않은 결함을 수정했다. `evaluation_kubernetes_runtime.core_resume`에 재개 결과를 기록하며
+실제 전체 통과 여부는 이 수정이 포함된 최신 SHA의 CI로 확인한다. 개인 Core를 자동 재시작하는 기능은 아니다.
+
 Kubernetes 1.36의 이미지 자격 증명 검증은 이미지 ID 외에 저장소 이름별 pull 기록도 확인한다.
 복원 helper가 받은 Prefect 이미지를 `govbiz/prefect:...`로 바꾸면 CRI에 이미지가 있어도 새 저장소의
 기록이 없어 `Never` 정책에서 `ErrImageNeverPull`이 발생할 수 있다
@@ -459,6 +532,7 @@ Kubernetes 1.36의 이미지 자격 증명 검증은 이미지 ID 외에 저장�
 3. 위 격리 Kubernetes 런타임 검증의 최신 SHA 필수 CI 성공을 확인한다. 검증 경로는 구현했으며,
    실행 실패·취소·건너뛰기를 완료로 처리하지 않는다. 이후 개인 환경의 같은 이미지·백업으로 별도 검증한다.
 4. 실제 전환 시 Ops 접수·스케줄과 Compose writer를 중지하고 최신 백업을 만든다. 복원 검증 후
-   Ops의 URL을 전환한다. 새 대상에 쓰기가 생긴 뒤에는 과거 Compose DB로 단순 URL 롤백하지 않는다.
+   Ops의 URL을 전환한다. 그 전에 위 합성 통신 검사로 CNI 집행을 확인하고 실제 평가용 정책의
+   허용·차단 경로도 검증해야 한다. 새 대상에 쓰기가 생긴 뒤에는 과거 Compose DB로 단순 URL 롤백하지 않는다.
 5. Langfuse와 관련 DB·저장소는 별도 이전 단위로 검증한다. 마지막에 임시 브리지를 제거하며,
    기존 Compose 데이터 삭제는 별도의 보존·복구 확인 이후 수행한다.

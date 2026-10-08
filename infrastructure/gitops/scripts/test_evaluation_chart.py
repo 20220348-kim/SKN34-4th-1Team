@@ -53,9 +53,9 @@ class EvaluationChartTests(unittest.TestCase):
             with self.subTest(component=component):
                 self.assertCountEqual(
                     [row["kind"] for row in rows],
-                    ["Deployment"]
+                    ["Deployment", "NetworkPolicy"]
                     if component == "evaluation-runner"
-                    else ["Deployment", "Service"],
+                    else ["Deployment", "Service", "NetworkPolicy"],
                 )
                 deploy = workload(rows)
                 self.assertEqual(deploy["spec"]["replicas"], 0)
@@ -80,9 +80,50 @@ class EvaluationChartTests(unittest.TestCase):
                         container["securityContext"]["capabilities"], {"drop": ["ALL"]}
                     )
                     self.assertNotIn("envFrom", container)
-                if len(rows) == 2:
+                if component != "evaluation-runner":
                     service = next(row for row in rows if row["kind"] == "Service")
                     self.assertEqual(service["spec"]["type"], "ClusterIP")
+
+    def test_ingress_requires_exact_namespace_pod_and_port_without_egress_changes(self):
+        for component, rows in self.resources.items():
+            policy = next(row for row in rows if row["kind"] == "NetworkPolicy")
+            self.assertEqual(
+                policy["metadata"]["annotations"]["argocd.argoproj.io/sync-wave"], "-1"
+            )
+            spec = policy["spec"]
+            self.assertEqual(spec["podSelector"], workload(rows)["spec"]["selector"])
+            self.assertEqual(spec["policyTypes"], ["Ingress"])
+            self.assertNotIn("egress", spec)
+            if component == "evaluation-runner":
+                self.assertEqual(spec["ingress"], [])
+                continue
+            self.assertEqual(len(spec["ingress"]), 1)
+            rule = spec["ingress"][0]
+            self.assertEqual(
+                rule["ports"],
+                [{"protocol": "TCP", "port": 4200 if component == "prefect" else 8010}],
+            )
+            peers = [
+                {
+                    "namespaceSelector": {
+                        "matchLabels": {"kubernetes.io/metadata.name": "govbiz-msa"}
+                    },
+                    "podSelector": {
+                        "matchLabels": {"app.kubernetes.io/name": "ops-service"}
+                    },
+                }
+            ]
+            if component == "prefect":
+                peers.append(
+                    {
+                        "podSelector": {
+                            "matchLabels": {
+                                "app.kubernetes.io/name": "evaluation-runner"
+                            }
+                        }
+                    }
+                )
+            self.assertEqual(rule["from"], peers)
 
     def test_shared_results_have_one_writer_and_matching_immutable_fixtures(self):
         pods = {
@@ -417,7 +458,11 @@ class EvaluationChartTests(unittest.TestCase):
             self.assertFalse(path.exists())
             with closing(sqlite3.connect(path)) as db, db:
                 db.executescript(
-                    "CREATE TABLE alembic_version(version_num TEXT); INSERT INTO alembic_version VALUES ('fixture'); CREATE TABLE deployment_schedule(active INTEGER); CREATE TABLE flow_run(state_type TEXT); INSERT INTO flow_run VALUES ('COMPLETED');"
+                    "CREATE TABLE alembic_version(version_num TEXT); "
+                    "INSERT INTO alembic_version VALUES ('fixture'); "
+                    "CREATE TABLE deployment_schedule(active INTEGER); "
+                    "CREATE TABLE flow_run(state_type TEXT); "
+                    "INSERT INTO flow_run VALUES ('COMPLETED');"
                 )
             before = path.read_bytes()
             self.assertEqual(run().returncode, 0)

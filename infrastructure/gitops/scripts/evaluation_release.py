@@ -187,6 +187,7 @@ def argo_plan(fork, sha, values):
                 "namespaceResourceWhitelist": [
                     {"group": "apps", "kind": "Deployment"},
                     {"group": "", "kind": "Service"},
+                    {"group": "networking.k8s.io", "kind": "NetworkPolicy"},
                 ],
             },
         }
@@ -277,7 +278,11 @@ def plan(
     if set(rendered) != set(COMPONENTS):
         raise ValueError("All evaluation releases must be rendered")
     for name, rows in rendered.items():
-        expected = ["Deployment"] if name == RUNNER else ["Deployment", "Service"]
+        expected = (
+            ["Deployment", "NetworkPolicy"]
+            if name == RUNNER
+            else ["Deployment", "NetworkPolicy", "Service"]
+        )
         if sorted(row["kind"] for row in rows) != expected:
             raise ValueError("Evaluation chart exceeds its project resource scope")
         for row in rows:
@@ -286,10 +291,61 @@ def plan(
                 or row["metadata"]["name"] != name
             ):
                 raise ValueError("Evaluation chart exceeds its resource identity")
-            if row["apiVersion"] != (
-                "apps/v1" if row["kind"] == "Deployment" else "v1"
+            if (
+                row["apiVersion"]
+                != {
+                    "Deployment": "apps/v1",
+                    "Service": "v1",
+                    "NetworkPolicy": "networking.k8s.io/v1",
+                }[row["kind"]]
             ):
                 raise ValueError("Evaluation chart exceeds its project API scope")
+            if row["kind"] == "NetworkPolicy":
+                peers = [
+                    {
+                        "namespaceSelector": {
+                            "matchLabels": {"kubernetes.io/metadata.name": "govbiz-msa"}
+                        },
+                        "podSelector": {
+                            "matchLabels": {"app.kubernetes.io/name": "ops-service"}
+                        },
+                    }
+                ]
+                if name == "prefect":
+                    peers.append(
+                        {
+                            "podSelector": {
+                                "matchLabels": {"app.kubernetes.io/name": RUNNER}
+                            }
+                        }
+                    )
+                expected_policy = {
+                    "podSelector": {"matchLabels": {"app.kubernetes.io/name": name}},
+                    "policyTypes": ["Ingress"],
+                    "ingress": []
+                    if name == RUNNER
+                    else [
+                        {
+                            "from": peers,
+                            "ports": [
+                                {
+                                    "protocol": "TCP",
+                                    "port": 4200 if name == "prefect" else 8010,
+                                }
+                            ],
+                        }
+                    ],
+                }
+                if (
+                    row["spec"] != expected_policy
+                    or row["metadata"]
+                    .get("annotations", {})
+                    .get("argocd.argoproj.io/sync-wave")
+                    != "-1"
+                ):
+                    raise ValueError(
+                        "Evaluation ingress must only allow the expected Ops and runner peers"
+                    )
             if row["kind"] == "Deployment":
                 pod = row["spec"]["template"]["spec"]
                 if row["spec"].get("replicas") != 0 or [
