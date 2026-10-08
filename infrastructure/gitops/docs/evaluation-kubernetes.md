@@ -424,8 +424,8 @@ python3 -B infrastructure/gitops/scripts/evaluation_network_probe.py \
   --evaluation-chart --helm helm > /private-backups/evaluation-chart-network.json
 ```
 
-이 모드는 임시 namespace 두 개와 합성 HTTP Pod 여섯 개를 사용한다. 실제 Prefect·실행기·결과
-서버 프로세스, Secret, PVC는 생성하지 않는다. 평가 namespace와 `govbiz-msa`의 관계만 임시
+이 모드는 임시 namespace 두 개, 합성 HTTP Pod 여섯 개와 Chart의 ClusterIP Service 두 개를 사용한다.
+실제 Prefect·실행기·결과 서버 프로세스, Secret, PVC는 생성하지 않는다. 평가 namespace와 `govbiz-msa`의 관계만 임시
 namespace로 바꾸며 Pod selector·허용 포트·ingress 규칙은 렌더링 결과를 사용한다. 렌더링 결과가
 임시 namespace 밖을 지정하면 생성 전에 차단한다. 원본 정책 spec 해시와 namespace 치환 내역을
 보고서의 `chartPolicySpecSha256`·`namespaceRebinding`에 기록한다.
@@ -443,22 +443,44 @@ namespace로 바꾸며 Pod selector·허용 포트·ingress 규칙은 렌더링 
 
 실행기 대역은 TCP 8090에서 의도적으로 응답하므로 차단 결과를 실제 실행기의 열린 포트 부재로
 혼동하지 않는다. 모든 경로는 정책 적용 전·제거 후에 연결되어야 하며, 세 대상 서버의 loopback
-응답도 확인한다. 정책 전파는 최대 120초의 관찰 구간에서 세 번 연속 기대 결과로 확인한다.
+응답도 확인한다.
+
+Prefect·결과 서버를 향하는 일곱 경로는 **Pod IP·Service ClusterIP·Service DNS**를 각각 확인한다.
+실행기는 Chart에 Service가 없으므로 기존 Pod IP 경로만 검사한다. 총 22개 검사에서 허용 9개·차단
+13개가 기대 결과이며, 기존 Pod IP 키에 `__cluster_ip`·`__service_dns` 접미사로 결과를 구분한다.
+Service는 같은 Chart의 selector·포트·이름 있는 `targetPort: http`를 그대로 사용한다. 잘못된 selector,
+외부 IP, 추가 Service, 예상하지 않은 포트·namespace는 리소스 생성 전에 거부한다.
+
+DNS 검사는 각 출발 Pod에서 매번 `서비스.임시-namespace.svc.cluster.local.`의 IPv4 주소를 조회하고,
+그 결과가 생성 시 확인한 ClusterIP 하나와 정확히 같을 때만 해당 주소에 새 HTTP 연결을 시도한다.
+DNS 조회 실패·다른 IP 응답은 접근 차단 성공이 아니라 오류다. `cluster.local`은 현재 kind의 도메인
+계약이며 사용자 정의 클러스터 도메인·IPv6 검증으로 일반화하지 않는다.
+[Kubernetes Service DNS 형식](https://kubernetes.io/docs/concepts/services-networking/dns-pod-service/#services)을 따른다.
+
+정책 전파는 최대 240초의 관찰 구간에서 전체 22개 결과가 세 번 연속 일치해야 통과한다.
 진행 중인 요청에는 별도의 제한 시간이 있다. 기존 기본 검사의 45초 관찰 구간은 유지한다.
 
 LLMOps CI의 기존 `--evaluation-runtime` 단계에서도 이 모드를 필수 실행한다. Chart 프로파일의
-집행 검증과 임시 자원 정리가 모두 성공해야 평가 PVC 복원·런타임 기동 단계로 진행한다. 실패·
+집행 검증, Service ClusterIP·DNS 확인과 임시 자원 정리가 모두 성공해야 평가 PVC 복원·런타임 기동 단계로 진행한다. 실패·
 불명확·다른 프로파일 결과는 통과시키지 않는다. 보고서는
 `evaluation_kubernetes_runtime.network_policy_probe`에 남긴다. 추가 클러스터를 만들거나 기존
 실행 환경을 중지하지 않고, CI가 소유한 kind 클러스터를 사용한다.
 
-이 결과는 단일 노드 IPv4 **Pod IP**에 대한 합성 검사다. 실제 Service/DNS·다중 노드·IPv6·
-애플리케이션 인증·외부 egress 검증과 구분하며 `evaluationRuntimeVerified=false`를 유지한다.
+성공 시 `serviceClusterIPVerified=true`, `serviceDnsVerified=true`와
+`addressModes=[pod_ip, cluster_ip, service_dns]`를 기록한다. Pod IP 검사만 통과한 이전 보고서는 새 CI
+단계의 통과 근거가 아니다. 이 결과는 단일 노드 IPv4 합성 Pod·Service·DNS에 대한 검사다.
+다중 노드·IPv6·애플리케이션 인증·외부 egress 검증과 구분하며 `evaluationRuntimeVerified=false`를 유지한다.
 
-2026-10-08 개인 클러스터의 Chart 모드 실행은 `ENFORCED`였다. 허용 3개·차단 5개 경로가 세 번
+2026-10-08 기존 Pod IP 전용 Chart 모드 실행은 `ENFORCED`였다. 허용 3개·차단 5개 경로가 세 번
 연속 기대 결과와 일치했고, 정책 제거 후 8개 경로의 연결 복구와 임시 namespace 정리를 확인했다.
 기존 업무·평가 서비스와 CNI는 변경하지 않았다. 필수 CI에 연결한 코드의 전체 검증은 이 변경을
 포함한 커밋이 푸시된 뒤 확인해야 한다.
+
+같은 날 Service·DNS 확장 모드도 개인 클러스터에서 `ENFORCED`를 확인했다. 22개 검사에서 허용
+9개·차단 13개가 세 번 연속 일치했고, 정책 적용 전·제거 후에는 22개 모두 연결됐다.
+`serviceClusterIPVerified`, `serviceDnsVerified`, `cleanupComplete`는 모두 true였으며 임시
+namespace 두 개와 하위 Pod·Service·NetworkPolicy 정리를 확인했다. 이는 실제 평가 서비스의
+인증·실행이나 원격 필수 CI 통과를 대신하지 않는다.
 
 ## 평가 Argo 선언 등록
 
@@ -532,7 +554,7 @@ LLMOps CI의 기존 격리 통합 검증에 `--evaluation-runtime` 단계를 연
 `scope=disposable_kubernetes_evaluation_runtime`, `observability_runtime=isolated_compose`,
 `production_cutover=false`, `personal_environment_verified=false`를 명시한다. NetworkPolicy 성공은
 별도 합성 검사를 통과한 경우에만 `network_policy_enforcement_verified=true`로 기록하며 범위는
-`network_policy_scope=single_node_synthetic_chart_ingress`다. 이 결과는 Argo CD 배포·공개 이미지
+`network_policy_scope=single_node_synthetic_chart_ingress_pod_service_dns`다. 이 결과는 Argo CD 배포·공개 이미지
 발행·운영 PVC 인계의 증거가 아니다. 로컬 단위·렌더링 검사만 통과한 상태에서는
 **실제 런타임 검증은 최신 SHA CI 대기**다.
 

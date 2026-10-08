@@ -545,6 +545,8 @@ def verify(
         network.get("status") != "ENFORCED"
         or network.get("policyProfile") != "evaluation_chart"
         or network.get("networkPolicyEnforcementVerified") is not True
+        or network.get("serviceClusterIPVerified") is not True
+        or network.get("serviceDnsVerified") is not True
         or network.get("cleanupComplete") is not True
     ):
         raise ValueError("Evaluation chart network enforcement and cleanup must pass")
@@ -735,7 +737,7 @@ def verify(
             source_stores_unchanged=True,
             model_api_calls=0,
             network_policy_enforcement_verified=True,
-            network_policy_scope="single_node_synthetic_chart_ingress",
+            network_policy_scope="single_node_synthetic_chart_ingress_pod_service_dns",
         )
     finally:
         for image in reversed(tagged):
