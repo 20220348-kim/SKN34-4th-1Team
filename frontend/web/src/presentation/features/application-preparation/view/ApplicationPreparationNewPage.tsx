@@ -4,6 +4,7 @@ import { useAppSelector } from '../../../../app/hooks'
 import { applicationServiceFieldLabels, type ApplicationFormDiscoveryJob } from '../../../../domain/entities/ApplicationPreparation'
 import { ApplicationPreparationError } from '../../../../domain/errors/ApplicationPreparationError'
 import { selectCurrentAccount } from '../../../shared/auth/state/authSlice'
+import { PlanUsageLine } from '../../../shared/plan-usage/PlanUsageLine'
 import { appPaths } from '../../../shared/routes/appPaths'
 import { SelectField } from '../../../shared/workspace/SelectField'
 import { WorkspacePageHeader } from '../../../shared/workspace/WorkspacePageHeader'
@@ -235,6 +236,7 @@ function FormChoice({ vm }: { vm: NewViewModel }) {
         <button type="button" className={n.secondarySm} disabled={vm.submitting || vm.analysisBlocked} onClick={vm.discoverForms}><AiIcon />입력칸별로 다시 분석</button>
         <span className={n.cost}>유료 AI · 계정당 동시에 3건</span>
       </p>
+      {vm.draftUsage && <PlanUsageLine view={vm.draftUsage} className={n.usage} />}
     </section>
   </section>
 }
@@ -306,6 +308,8 @@ function FormSectionBody({ vm }: { vm: NewViewModel }) {
           <div className={n.centeredAction}>
             <button type="button" className={n.secondary} disabled={vm.submitting || vm.analysisBlocked} onClick={vm.discoverForms}><AiIcon />{vm.lastAnalysis && vm.lastAnalysis.kind !== 'unknown' ? '입력칸별로 다시 분석' : '입력칸별로 분석'}</button>
             <p className={n.muted}>AI가 공식 첨부를 읽어 문항을 뽑아요. 유료 AI 호출이며 계정당 동시에 3건까지 할 수 있어요.</p>
+            {/* 이번 달 신청 문서 이용량입니다. 이미 센 공고를 다시 분석하면 늘지 않으므로 한도에 닿아도 버튼은 막지 않습니다. */}
+            {vm.draftUsage && <PlanUsageLine view={vm.draftUsage} className={n.usageCentered} />}
             {program && <SourceLink href={program.sourceUrl} title={program.title} />}
           </div>
         </section>}

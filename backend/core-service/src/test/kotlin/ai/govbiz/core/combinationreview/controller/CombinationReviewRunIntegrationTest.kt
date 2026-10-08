@@ -189,6 +189,42 @@ class CombinationReviewRunIntegrationTest {
     }
 
     @Test
+    fun freePlanCountsThreeRunsAMonthIgnoringFailuresAndKeepingDeletedReviews() {
+        val (freeId, free) = session(plan = null)
+        reviewId = reviews.create(freeId, draft).id
+        val first = id(submit(cookie = free).andExpect(status().isAccepted()))
+        service.executeQueued(first)
+        val succeededReview = reviewId
+        reviewId = reviews.create(freeId, draft).id
+        val second = id(submit(cookie = free).andExpect(status().isAccepted()))
+        reviewId = reviews.create(freeId, draft).id
+        submit(cookie = free).andExpect(status().isAccepted())
+        reviewId = reviews.create(freeId, draft).id
+        submit(cookie = free).andExpect(status().isTooManyRequests())
+            .andExpect(jsonPath("$.code").value("PLAN_QUOTA_EXCEEDED"))
+            .andExpect(jsonPath("$.feature").value("COMBINATION_REVIEW"))
+            .andExpect(jsonPath("$.limit").value(3))
+            .andExpect(jsonPath("$.used").value(3))
+            .andExpect(header().exists(HttpHeaders.RETRY_AFTER))
+        // 한도를 넘은 접수는 실행을 남기지 않습니다.
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM combination_review_run WHERE review_id = ?", Int::class.java, reviewId))
+        // 실패로 끝난 실행은 횟수에서 빠집니다.
+        jdbc.update("UPDATE combination_review_run SET status = 'FAILED', failure_code = 'RUN_FAILED', finished_at = NOW(6) WHERE id = ?", second)
+        submit(cookie = free).andExpect(status().isAccepted())
+        // 이미 쓴 검토를 지워도 그 달 횟수는 남습니다.
+        mvc.perform(delete("/api/v1/combination-reviews/$succeededReview").cookie(free).header(HttpHeaders.ORIGIN, ORIGIN))
+            .andExpect(status().isNoContent())
+        reviewId = reviews.create(freeId, draft).id
+        submit(cookie = free).andExpect(status().isTooManyRequests()).andExpect(jsonPath("$.code").value("PLAN_QUOTA_EXCEEDED"))
+        mvc.perform(get("/api/v1/plan-usage").cookie(free)).andExpect(status().isOk())
+            .andExpect(jsonPath("$.plan").value("FREE"))
+            .andExpect(jsonPath("$.items[3].feature").value("COMBINATION_REVIEW"))
+            .andExpect(jsonPath("$.items[3].limit").value(3))
+            .andExpect(jsonPath("$.items[3].used").value(3))
+        verify(ai, times(1)).analyze(any(AiCombinationReviewRequest::class.java) ?: request)
+    }
+
+    @Test
     fun accountCanReserveOnlyThreePendingReviewsAndOtherAccountsAreIndependent() {
         repeat(3) {
             reviewId = reviews.create(ownerId, draft).id
@@ -756,8 +792,10 @@ class CombinationReviewRunIntegrationTest {
         output.toByteArray()
     }
     private fun resource(name: String) = requireNotNull(javaClass.getResourceAsStream("/combinationreview/$name")).use { it.readBytes() }
-    private fun session(): Pair<Long, Cookie> {
+    /** 한도와 무관한 흐름 테스트는 요금제 월 한도에 걸리지 않게 PREMIUM 계정으로 만든다. */
+    private fun session(plan: String? = "PREMIUM"): Pair<Long, Cookie> {
         val account = accounts.createAccount(NewAccount("${UUID.randomUUID()}@example.com", "test-hash", LocalDateTime.now()))
+        if (plan != null) jdbc.update("INSERT INTO account_plan (account_id, plan_code, assigned_at) VALUES (?, ?, NOW(6))", account.id, plan)
         val issued = sessions.issue(account.id, false); accounts.createSession(account.id, issued.session)
         return account.id to Cookie(SessionCookieHelper.COOKIE_NAME, issued.sessionToken)
     }

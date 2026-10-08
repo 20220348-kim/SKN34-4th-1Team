@@ -9,6 +9,7 @@ import { createAppStore } from '../../../../app/store'
 import { supportProgramDetails, supportPrograms } from '../../../../data/fixtures/supportPrograms'
 import type { ApplicationDocumentGenerationJob, ApplicationForm, ApplicationPreparation, ApplicationPreparationPage } from '../../../../domain/entities/ApplicationPreparation'
 import { ApplicationPreparationError } from '../../../../domain/errors/ApplicationPreparationError'
+import { PlanQuotaExceededError, QuotaUnavailableError } from '@govbiz/shared/domain/errors/PlanQuotaError'
 import { ApplicationPreparationUseCase } from '../../../../domain/usecases/ApplicationPreparationUseCase'
 import { signedIn } from '../../../shared/auth/state/authSlice'
 import { ApplicationPreparationEditorPage, ApplicationPreparationListPage } from './ApplicationPreparationPages'
@@ -647,6 +648,58 @@ it('explains the three-job limit at submit time and submits again only on retry'
   expect(repository.submitDocumentJob.mock.calls.map((call) => call[1])).toEqual([3, 3])
   expect(new ApplicationPreparationError(429, 'APPLICATION_DOCUMENT_JOB_CAPACITY').message)
     .toBe('진행 중인 초안 만들기가 3건이에요. 끝난 뒤 다시 시도해 주세요.')
+})
+
+const draftLimitMessage = '이번 달 신청 문서 초안 3건을 모두 썼어요. 이미 시작한 공고의 문서는 계속 만들 수 있어요. 11월 1일에 다시 채워져요.'
+const draftUsage = (used: number) => ({
+  plan: 'FREE' as const, items: [{ feature: 'APPLICATION_DRAFT' as const, period: 'MONTH' as const, limit: 3, used, resetsAt: '2026-11-01T00:00:00+09:00' }],
+})
+
+it('shows the monthly draft limit from the server without a retry or a pricing link and rereads the usage', async () => {
+  const usage = vi.spyOn(appContainer.resolve('planUsageUseCase'), 'usage').mockResolvedValue(draftUsage(3))
+  repository.get.mockResolvedValue(readyPreparation())
+  repository.submitDocumentJob.mockRejectedValueOnce(new PlanQuotaExceededError({ feature: 'APPLICATION_DRAFT', period: 'MONTH', plan: 'FREE', limit: 3, resetsAt: '2026-11-01T00:00:00+09:00' }))
+  mount('/app/application-preparations/12/documents?generate=3')
+  const alert = await screen.findByRole('alert')
+  expect(within(alert).getByText(draftLimitMessage)).toBeTruthy()
+  expect(within(alert).queryByRole('link')).toBeNull()
+  // 다시 보내도 같은 결과라 [다시 시도]를 두지 않고, 같은 안내를 이용량 줄로 한 번 더 보이지 않습니다.
+  expect(within(alert).queryByRole('button', { name: '다시 시도' })).toBeNull()
+  expect(screen.getAllByText(draftLimitMessage)).toHaveLength(1)
+  expect(screen.queryByText('아직 만든 초안이 없어요')).toBeNull()
+  await waitFor(() => expect(usage).toHaveBeenCalledTimes(2))
+  expect(repository.submitDocumentJob).toHaveBeenCalledTimes(1)
+})
+
+it('keeps a retry for a usage check failure and does not block regenerating at the monthly limit', async () => {
+  vi.spyOn(appContainer.resolve('planUsageUseCase'), 'usage').mockResolvedValue(draftUsage(3))
+  repository.get.mockResolvedValue(readyPreparation())
+  repository.submitDocumentJob.mockRejectedValueOnce(new QuotaUnavailableError())
+  mount('/app/application-preparations/12/documents?generate=3')
+  const alert = await screen.findByRole('alert')
+  expect(alert.textContent).toContain('지금은 이용량을 확인할 수 없어 실행하지 않았어요. 잠시 후 다시 시도해 주세요.')
+  fireEvent.click(within(alert).getByRole('button', { name: '다시 시도' }))
+  await waitFor(() => expect(receiveButton()).toBeTruthy())
+
+  cleanup()
+  // 이미 센 공고의 문서는 다시 만들어도 늘지 않으므로, 한도에 닿아도 [다시 만들기]를 막지 않고 이용량만 알립니다.
+  repository.get.mockResolvedValue({ ...readyPreparation(), inputRevision: 4 })
+  repository.documents.mockResolvedValue([documentFile])
+  mount('/app/application-preparations/12/documents')
+  const line = (await screen.findByText(draftLimitMessage)).closest('p')!
+  expect(within(line).queryByRole('link')).toBeNull()
+  expect((header().getByRole('button', { name: '다시 만들기' }) as HTMLButtonElement).disabled).toBe(false)
+})
+
+it('shows this month draft usage on the review step without blocking [초안 만들기]', async () => {
+  const usage = vi.spyOn(appContainer.resolve('planUsageUseCase'), 'usage').mockResolvedValue(draftUsage(0))
+  repository.get.mockResolvedValue(readyPreparation())
+  mount('/app/application-preparations/12?step=review')
+  const review = await screen.findByRole('region', { name: '초안을 만들기 전에 확인해 주세요' })
+  const line = (await within(review).findByText('이번 달 0/3건')).closest('p')!
+  expect(line.textContent).toBe('신청 문서 초안·이번 달 0/3건')
+  expect((within(review).getByRole('button', { name: '초안 만들기' }) as HTMLButtonElement).disabled).toBe(false)
+  expect(usage).toHaveBeenCalledOnce()
 })
 
 it('shows the empty state and makes the first draft from the current answers on click', async () => {
@@ -2098,6 +2151,28 @@ describe('application preparation creation and detail', () => {
     expect(screen.queryByRole('heading', { name: '작성할 양식' })).toBeNull()
     expect(startButton().disabled).toBe(true)
     expect(repository.create).not.toHaveBeenCalled()
+  })
+
+  it('shows this month draft usage beside the analysis button without blocking it and the shared message when the server refuses', async () => {
+    const usage = vi.spyOn(appContainer.resolve('planUsageUseCase'), 'usage').mockResolvedValue({
+      plan: 'FREE', items: [{ feature: 'APPLICATION_DRAFT', period: 'MONTH', limit: 3, used: 3, resetsAt: '2026-11-01T00:00:00+09:00' }],
+    })
+    repository.availability.mockResolvedValue(availabilityOf('PENDING', 'NOT_ANALYZED'))
+    repository.discover.mockRejectedValue(new PlanQuotaExceededError({ feature: 'APPLICATION_DRAFT', period: 'MONTH', plan: 'FREE', limit: 3, resetsAt: '2026-11-01T00:00:00+09:00' }))
+    mount(newPath)
+    const card = await screen.findByRole('region', { name: '아직 분석하지 않은 공고예요' })
+    const message = '이번 달 신청 문서 초안 3건을 모두 썼어요. 이미 시작한 공고의 문서는 계속 만들 수 있어요. 11월 1일에 다시 채워져요.'
+    const line = (await within(card).findByText(message)).closest('p')!
+    expect(within(line).queryByRole('link')).toBeNull()
+    // 이미 센 공고는 다시 분석해도 늘지 않으므로 한도에 닿아도 버튼은 막지 않고 서버 판단을 따릅니다.
+    const analyze = within(card).getByRole('button', { name: '입력칸별로 분석' }) as HTMLButtonElement
+    expect(analyze.disabled).toBe(false)
+    fireEvent.click(analyze)
+    const alert = await within(formSection()).findByRole('alert')
+    expect(alert.textContent).toContain('양식을 분석하지 못했어요')
+    expect(alert.textContent).toContain(message)
+    expect(alert.textContent).not.toContain('신청 준비 정보를 처리하지 못했습니다.')
+    await waitFor(() => expect(usage).toHaveBeenCalledTimes(2))
   })
 
   it('offers multiple stored forms as radio cards, re-fits the service field and reanalyzes with a secondary button', async () => {

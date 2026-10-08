@@ -13,7 +13,7 @@ import { workspacePageStyles, workspaceTagClassName } from '../../../shared/work
 import { companyProfileStyles } from './CompanyProfilePage.styles'
 
 /**
- * 프로필의 요금제와 이용량 카드입니다. 지금 요금제와 기능별로 오늘 쓴 양, 다시 채워지는 때를 보여 줍니다.
+ * 프로필의 요금제와 이용량 카드입니다. 지금 요금제와 기능별로 이번 기간에 쓴 양, 다시 채워지는 때를 보여 줍니다.
  * 아직 한도를 정하지 않은 기능은 막대 없이 "제한 없음"으로 적습니다. 결제는 아직 없으므로 요금제를 바꾸는 동작은 두지 않습니다.
  */
 export function PlanUsageSection({ load, onRetry }: { load: PlanUsageLoad; onRetry: () => void }) {

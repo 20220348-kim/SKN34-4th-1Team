@@ -8,10 +8,11 @@ describe('PlanUsageDto', () => {
       plan: 'FREE',
       items: [
         { feature: 'AI_SEARCH', period: 'DAY', limit: 10, used: 3, resetsAt: '2026-10-09T00:00:00+09:00' },
+        { feature: 'APPLICATION_DRAFT', period: 'MONTH', limit: 3, used: 1, resetsAt: '2026-11-01T00:00:00+09:00' },
         { feature: 'FUTURE_FEATURE', period: 'DAY', limit: 5, used: 0, resetsAt: '2026-10-09T00:00:00+09:00' },
       ],
     })
-    expect(parsed.items.map((item) => item.feature)).toEqual(['AI_SEARCH'])
+    expect(parsed.items.map((item) => item.feature)).toEqual(['AI_SEARCH', 'APPLICATION_DRAFT'])
     expect(planUsageSchema.parse({ plan: null, items: [] }).plan).toBeNull()
     expect(planUsageSchema.safeParse({ plan: 'GOLD', items: [] }).success).toBe(false)
   })

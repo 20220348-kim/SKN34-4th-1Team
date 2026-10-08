@@ -1,5 +1,6 @@
 package ai.govbiz.core.applicationpreparation.service
 
+import ai.govbiz.core.planusage.PlanUsageTestHelper
 import ai.govbiz.core._common.helper.buildRestClient
 import ai.govbiz.core.account.domain.Account
 import ai.govbiz.core.account.domain.AccountRole
@@ -48,7 +49,7 @@ class ApplicationOnlineFormVerticalSmokeTest {
         val contents = mock(ApplicationPreparationContentRepository::class.java)
         val saved = mock(SavedSupportProgramRepository::class.java)
         val supportPrograms = mock(SupportProgramRepository::class.java)
-        val service = ApplicationPreparationService(repository, forms, inputs, ai, contents, saved, client, supportPrograms)
+        val service = ApplicationPreparationService(repository, forms, inputs, ai, contents, saved, client, supportPrograms, PlanUsageTestHelper.allowAll(), PlanUsageTestHelper.noTransactions())
         val manifest = javaClass.getResourceAsStream("/application-preparation/innovation-voucher-2026-v1.json")!!.use {
             jacksonObjectMapper().readValue(it, ApplicationFormManifest::class.java)
         }

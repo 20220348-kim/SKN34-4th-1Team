@@ -3,6 +3,7 @@ import { CombinationReviewRepositoryImpl } from '../../repositories/CombinationR
 import { runSchema } from '../../models/CombinationReviewDto'
 import { answerRunFixture, reviewFixture, runFixture } from '../../../presentation/features/combination-review/testing/reviewFixtures'
 import { CombinationReviewUseCase } from '../../../domain/usecases/CombinationReviewUseCase'
+import { PlanQuotaExceededError, QuotaUnavailableError } from '@govbiz/shared/domain/errors/PlanQuotaError'
 
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers() })
 const repository = new CombinationReviewRepositoryImpl()
@@ -85,6 +86,21 @@ describe('combination review HTTP boundary', () => {
     expect(await (await repository.source(12, 30, 0)).text()).toBe('source-bytes')
     expect(fetch.mock.calls[0][0]).toContain('/12/runs/30/sources/0')
     expect(fetch.mock.calls[0][1].credentials).toBe('include')
+  })
+  it('turns plan quota problems into shared errors before review errors and keeps the per-minute limit separate', async () => {
+    const quota = { type: 'urn:govbiz:problem:plan-quota-exceeded', title: 'Plan Quota Exceeded', status: 429, detail: 'private detail',
+      instance: '/api/v1/combination-reviews/12/runs', code: 'PLAN_QUOTA_EXCEEDED', feature: 'COMBINATION_REVIEW', period: 'MONTH',
+      plan: 'FREE', limit: 3, used: 3, resetsAt: '2026-11-01T00:00:00+09:00', retryAfterSeconds: 100 }
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(Response.json(quota, { status: 429, headers: { 'Content-Type': 'application/problem+json', 'Retry-After': '100' } }))
+      .mockResolvedValueOnce(Response.json({ status: 503, code: 'QUOTA_UNAVAILABLE' }, { status: 503, headers: { 'Content-Type': 'application/problem+json' } }))
+      .mockResolvedValueOnce(Response.json({ code: 'RUN_RATE_LIMITED' }, { status: 429, headers: { 'Retry-After': '30' } })))
+
+    const exceeded = await repository.start(12, request).catch((error: unknown) => error)
+    expect(exceeded).toBeInstanceOf(PlanQuotaExceededError)
+    expect((exceeded as PlanQuotaExceededError).message).toBe('이번 달 중복 검토 3회를 모두 썼어요. 진행 중인 검토도 횟수에 들어가요. 11월 1일에 다시 채워져요.')
+    expect(await repository.start(12, request).catch((error: unknown) => error)).toBeInstanceOf(QuotaUnavailableError)
+    await expect(repository.start(12, request)).rejects.toMatchObject({ name: 'CombinationReviewError', status: 429, code: 'RUN_RATE_LIMITED', retryAfter: '30' })
   })
   it('rejects duplicate selection and invalid title before HTTP', () => {
     const useCase = new CombinationReviewUseCase(repository)

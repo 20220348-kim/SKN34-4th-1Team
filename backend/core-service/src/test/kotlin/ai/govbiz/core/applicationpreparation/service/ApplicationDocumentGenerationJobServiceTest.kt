@@ -1,5 +1,6 @@
 package ai.govbiz.core.applicationpreparation.service
 
+import ai.govbiz.core.planusage.PlanUsageTestHelper
 import ai.govbiz.core.account.helper.AccountTestHelper
 import ai.govbiz.core.account.repository.AccountRepository
 import ai.govbiz.core.applicationpreparation.client.ai.ApplicationDocumentMcpClient
@@ -66,9 +67,11 @@ class ApplicationDocumentGenerationJobServiceTest {
         ApplicationDocumentMappingService(client, editor, snapshots), mock(ApplicationDocumentMigrationProposalStore::class.java),
         mock(ApplicationDocumentMigrationRepository::class.java), client, attachments, mock(MsitAttachmentClient::class.java),
         mock(KStartupAttachmentClient::class.java), mock(CnTradeNoticeAttachmentClient::class.java),
-        mock(SupportProgramDetailService::class.java), admission, mock(ApplicationFormAvailabilityRepository::class.java),
+        mock(SupportProgramDetailService::class.java), admission, PlanUsageTestHelper.allowAll(),
+        mock(ApplicationFormAvailabilityRepository::class.java),
         jacksonObjectMapper(), Duration.ofHours(24))
-    private val service = ApplicationDocumentGenerationJobService(jobs, documents, preparations, accounts, admission)
+    private val service = ApplicationDocumentGenerationJobService(jobs, documents, preparations, accounts, admission,
+        PlanUsageTestHelper.allowAll(), PlanUsageTestHelper.noTransactions())
     private val mapRequest = AiDocumentMappingRequest(sourceBase64 = "", sourceSha256 = "", format = "hwpx", scope = "", fields = emptyList())
     private val generationRequest = AiDocumentGenerationRequest(sourceBase64 = "", sourceSha256 = "", format = "hwpx", answerRevision = 2, facts = emptyList(), scope = "")
 

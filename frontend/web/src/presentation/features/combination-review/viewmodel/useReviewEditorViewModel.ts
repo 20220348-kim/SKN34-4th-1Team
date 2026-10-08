@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
+import { PlanQuotaExceededError, QuotaUnavailableError } from '@govbiz/shared/domain/errors/PlanQuotaError'
 import { appContainer } from '../../../../app/appContainer'
+import { planUsageView } from '../../../shared/plan-usage/planUsageView'
+import { usePlanUsage } from '../../../shared/plan-usage/usePlanUsage'
 import { appPaths } from '../../../shared/routes/appPaths'
 import { reviewProgramKey, supportsAutomaticReview, unknownParticipation, unknownRelation, validateReviewDraft, type CombinationReview, type ReviewDraft, type ReviewPage, type ReviewProgram, type ReviewRun, type RunRequest, type RunSummary } from '../../../../domain/entities/CombinationReview'
 import type { SupportProgramDetail } from '../../../../domain/entities/SupportProgram'
@@ -77,6 +80,11 @@ export function useReviewEditorViewModel(id: number | null, account: string, res
   const [pollingPaused, setPollingPaused] = useState(false)
   const autoSelectedRunId = useRef<number | null>(null)
   const { setError, busy, error } = scope
+  // 이번 달 검토 실행 이용량입니다. 실행 버튼이 있는 입력 화면에서만 읽고, 결과 화면에서는 읽지 않습니다.
+  const planUsage = usePlanUsage(resultRunId === null)
+  const reviewUsage = planUsageView(planUsage.usage, 'COMBINATION_REVIEW')
+  const reviewLimitReached = reviewUsage?.isLimitReached ?? false
+  const reloadPlanUsage = planUsage.reload
 
   const load = useCallback(() => {
     if (!id) return
@@ -178,6 +186,8 @@ export function useReviewEditorViewModel(id: number | null, account: string, res
   const startRun = (current: CombinationReview, retry: boolean, additionalFacts: string, onAccepted?: (run: ReviewRun) => void) => {
     if (!id || !journalReady || busy.includes('analysis')) return
     if (!retry && (pending || runs?.items.some((item) => ['QUEUED', 'RUNNING', 'UNKNOWN'].includes(item.status)) || !current.programs.every(supportsAutomaticReview))) return
+    // 이번 달 검토 횟수를 다 썼으면 새 실행을 보내지 않습니다. 결과를 모르는 요청의 [다시 시도]는 같은 실행을 확인하는 것이라 막지 않습니다.
+    if (!retry && reviewLimitReached) return
     if (retry && !pending) return
     const request = retry ? pending! : { expectedRevision: current.inputRevision, requestKey: crypto.randomUUID(), additionalFacts }
     try {
@@ -185,12 +195,22 @@ export function useReviewEditorViewModel(id: number | null, account: string, res
       journal.write(account, id, request)
     } catch { setError({ message: '요청 키를 안전하게 보관할 수 없어 분석을 시작하지 않았습니다. 브라우저 저장소 설정을 확인해 주세요.' }); return }
     setPending(request)
-    void perform('analysis', (signal) => useCase.start(id, request, signal), (value) => {
+    void perform('analysis', async (signal) => {
+      try {
+        return await useCase.start(id, request, signal)
+      } catch (failure) {
+        // 요금제 한도 · 이용량 확인 실패는 서버가 실행을 만들지 않았다는 확정 응답이라, 결과를 모르는 요청으로 남기지 않고 보관한 요청 키를 지웁니다.
+        if (failure instanceof PlanQuotaExceededError || failure instanceof QuotaUnavailableError) {
+          try { journal.remove(account, id); setPending(null) } catch { /* 지우지 못하면 [다시 시도]로 같은 요청을 다시 확인할 수 있습니다. */ }
+        }
+        throw failure
+      }
+    }, (value) => {
       acceptRun(value)
       journal.remove(account, id); setPending(null); setPollingPaused(false)
       setNotice(['QUEUED', 'RUNNING'].includes(value.status) ? '분석 요청이 접수되었습니다. 상태는 자동으로 갱신되며, 다른 화면으로 이동해도 작업은 유지됩니다.' : '저장된 실행을 확인했습니다. 새 분석은 자동으로 시작하지 않습니다.')
       onAccepted?.(value)
-    })
+    }).finally(reloadPlanUsage) // 접수됐든 거절됐든 이번 달 남은 횟수를 다시 읽습니다.
   }
   /** 저장된 입력 그대로 분석을 접수하거나(retry=false) 응답을 잃은 요청을 다시 확인합니다(retry=true). 저장하지 않은 입력이 있으면 새 분석은 보내지 않습니다. */
   const start = (retry: boolean) => {
@@ -217,8 +237,12 @@ export function useReviewEditorViewModel(id: number | null, account: string, res
   /** 바뀐 입력이 있으면 저장(입력 버전 확인)한 뒤 그 버전으로 새 분석을 접수합니다. 저장이 실패하면 분석을 보내지 않고 편집 내용을 유지합니다. */
   const saveAndStart = (additionalFacts: string, onAccepted?: (run: ReviewRun) => void) =>
     saveInput((current) => startRun(current, false, additionalFacts, onAccepted))
-  /** 새 분석을 지금 보낼 수 없는 이유입니다. 저장하지 않은 입력은 [검토 실행]이 먼저 저장하므로 이유가 아닙니다. */
-  const startBlocked = runs?.items.some((item) => item.status === 'QUEUED' || item.status === 'RUNNING') ? '분석이 끝나면 다시 실행할 수 있어요'
+  /**
+   * 새 분석을 지금 보낼 수 없는 이유입니다. 저장하지 않은 입력은 [검토 실행]이 먼저 저장하므로 이유가 아닙니다.
+   * 이번 달 검토 횟수를 다 썼으면 그 사실을 먼저 알립니다. 다시 채워지는 때는 분석 실행 카드의 이용량 줄이 알립니다.
+   */
+  const startBlocked = reviewLimitReached ? '이번 달 검토 횟수를 모두 썼어요'
+    : runs?.items.some((item) => item.status === 'QUEUED' || item.status === 'RUNNING') ? '분석이 끝나면 다시 실행할 수 있어요'
     : runs?.items.some((item) => item.status === 'UNKNOWN') ? '완료 여부를 확인하지 못한 실행이 있어 새 분석을 막았어요'
       : draft.programs.length !== 2 ? '공고를 2개로 줄이면 실행할 수 있어요'
         : draft.programs.some((program) => !supportsAutomaticReview(program)) ? '자동 분석을 지원하지 않는 공고가 있어요' : null
@@ -232,5 +256,7 @@ export function useReviewEditorViewModel(id: number | null, account: string, res
     })
   }
   return { ...scope, review, draft, setDraft, slots, programInfo, names, runs, run, facts, setFacts,
-    pending, notice, dirty, pollingPaused, rejectedRevision, clearRejectedRequest, load, chooseSlot, clearSlot, saveInput, history, selectRun, start, saveAndStart, startBlocked, download }
+    pending, notice, dirty, pollingPaused, rejectedRevision, clearRejectedRequest, load, chooseSlot, clearSlot, saveInput, history, selectRun, start, saveAndStart, startBlocked, download,
+    /** 이번 달 검토 실행 이용량입니다. 읽지 못했으면 null입니다. */
+    reviewUsage }
 }

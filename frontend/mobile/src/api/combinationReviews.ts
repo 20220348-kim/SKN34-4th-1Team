@@ -1,7 +1,9 @@
 import type { z } from 'zod'
 import { reviewPageSchema, reviewProblemSchema, reviewSchema, runPageSchema, runSchema } from '@govbiz/shared/data/models/CombinationReviewDto'
+import { readPlanQuotaProblem } from '@govbiz/shared/data/models/PlanUsageDto'
 import type { SupportProgram } from '@govbiz/shared/domain/entities/SupportProgram'
 import { CombinationReviewError } from '@govbiz/shared/domain/errors/CombinationReviewError'
+import { PlanQuotaExceededError, QuotaUnavailableError } from '@govbiz/shared/domain/errors/PlanQuotaError'
 import type { ReviewDraft, RunRequest } from '@govbiz/shared/domain/entities/CombinationReview'
 import type { CombinationReviewRepository } from '@govbiz/shared/domain/repositories/CombinationReviewRepository'
 import { ApiError, createApiFetch, getApiBaseUrl } from './client'
@@ -29,9 +31,14 @@ export class MobileCombinationReviewRepository implements CombinationReviewRepos
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       })
       if (!response.ok) {
-        const problem = reviewProblemSchema.safeParse(await response.json().catch(() => null))
-        throw new CombinationReviewError(response.status, problem.success ? problem.data.code : 'REQUEST_FAILED',
+        const problemBody: unknown = await response.json().catch(() => null)
+        const problem = reviewProblemSchema.safeParse(problemBody)
+        const failure = new CombinationReviewError(response.status, problem.success ? problem.data.code : 'REQUEST_FAILED',
           problem.success ? problem.data.runId ?? null : null, response.headers.get('Retry-After'))
+        // 요금제 한도 문제 응답은 shared 안내 문구를 원인으로 남깁니다. 상태 코드는 그대로 두어 요청 키 정리 규칙이 같게 동작합니다.
+        const quota = readPlanQuotaProblem(response.status, problemBody)
+        if (quota) failure.cause = quota
+        throw failure
       }
       if (schema === 'empty') {
         if (response.status !== 204) throw new CombinationReviewError(502, 'INVALID_RESPONSE')
@@ -97,6 +104,7 @@ export class MobileCombinationReviewRepository implements CombinationReviewRepos
 
 export function reviewErrorMessage(error: unknown): string {
   if (error instanceof CombinationReviewError) {
+    if (error.cause instanceof PlanQuotaExceededError || error.cause instanceof QuotaUnavailableError) return error.cause.message
     if (error.status === 401) return '로그인이 만료됐어요. 다시 로그인해 주세요.'
     if (error.status === 403) return '이 검토에 접근할 수 없어요. 계정 상태를 확인해 주세요.'
     if (error.status === 404) return '검토 또는 실행을 찾을 수 없어요.'

@@ -108,6 +108,8 @@ const usage = { plan: 'FREE', items: [
   { feature: 'AI_SEARCH', period: 'DAY', limit: 10, used: 3, resetsAt: '2026-10-09T00:00:00+09:00' },
   // 진행 중인 요청 때문에 한도를 넘겨 세어져도 막대와 숫자는 한도에서 멈춥니다.
   { feature: 'EVIDENCE_QUESTION', period: 'DAY', limit: 10, used: 11, resetsAt: '2026-10-09T00:00:00+09:00' },
+  { feature: 'APPLICATION_DRAFT', period: 'MONTH', limit: 3, used: 4, resetsAt: '2026-11-01T00:00:00+09:00' },
+  { feature: 'COMBINATION_REVIEW', period: 'MONTH', limit: 3, used: 0, resetsAt: '2026-11-01T00:00:00+09:00' },
 ] }
 function signIn() {
   jest.mocked(useAuth).mockReturnValue({ status: 'signedIn', session: { accessToken: 'owner', account: { email: 'owner@example.com', company: null } },
@@ -122,14 +124,17 @@ test('a signed-in account shows its plan and every usage limit as progress witho
   expect(apiRequest).toHaveBeenCalledWith('/api/v1/plan-usage', expect.objectContaining({ accessToken: 'owner' }))
   expect(view.getByText('현재 요금제')).toBeTruthy()
   expect(view.getByText('무료')).toBeTruthy()
-  for (const [label, count] of [['AI 대화 검색', '오늘 3/10회'], ['공고 원문 질문', '오늘 10/10회']]) {
+  for (const [label, count] of [['AI 대화 검색', '오늘 3/10회'], ['공고 원문 질문', '오늘 10/10회'],
+    ['신청 문서 초안', '이번 달 3/3건'], ['중복 지원·수혜 검토', '이번 달 0/3회']]) {
     expect(view.getByText(label)).toBeTruthy()
     expect(view.getByText(count)).toBeTruthy()
   }
-  expect(view.getAllByRole('progressbar')).toHaveLength(2)
+  expect(view.getAllByRole('progressbar')).toHaveLength(4)
   expect(view.getByRole('progressbar', { name: 'AI 대화 검색 이용량' }).props.accessibilityValue).toEqual({ min: 0, max: 10, now: 3 })
   expect(view.getByRole('progressbar', { name: '공고 원문 질문 이용량' }).props.accessibilityValue).toEqual({ min: 0, max: 10, now: 10 })
+  expect(view.getByRole('progressbar', { name: '신청 문서 초안 이용량' }).props.accessibilityValue).toEqual({ min: 0, max: 3, now: 3 })
   expect(view.getAllByText('자정(서울 시간)에 다시 채워져요.')).toHaveLength(2)
+  expect(view.getAllByText('11월 1일에 다시 채워져요.')).toHaveLength(2)
   expect(StyleSheet.flatten(view.getByText('오늘 10/10회').props.style).color).toBe(colors.warning)
   expect(StyleSheet.flatten(view.getByText('오늘 3/10회').props.style).color).not.toBe(colors.warning)
   expect(view.getByText('결제는 아직 받지 않아요.')).toBeTruthy()

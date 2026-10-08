@@ -19,13 +19,23 @@ class PlanUsageWindowTest {
     }
 
     @Test
+    fun monthlyWindowsCoverTheWholeSeoulMonthIncludingTheYearBoundary() {
+        val now = ZonedDateTime.of(2026, 12, 31, 23, 59, 59, 0, seoul)
+        val window = PlanUsageWindow.current(PlanUsagePeriod.MONTH, now)
+        assertEquals("2026-12", window.key)
+        assertEquals(ZonedDateTime.of(2026, 12, 1, 0, 0, 0, 0, seoul), window.startsAt)
+        assertEquals(ZonedDateTime.of(2027, 1, 1, 0, 0, 0, 0, seoul), window.resetsAt)
+    }
+
+    @Test
     fun onlyFreeHasLimitsUntilPaidPlansAreDecided() {
-        assertEquals(listOf(10, 10), PlanUsageFeature.entries.map(PlanCode.FREE::limitOf))
+        assertEquals(listOf(10, 10, 3, 3), PlanUsageFeature.entries.map(PlanCode.FREE::limitOf))
         // PLUS·PREMIUM은 아직 숫자를 정하지 않아 제한하지 않습니다.
-        assertEquals(listOf(null, null), PlanUsageFeature.entries.map(PlanCode.PLUS::limitOf))
-        assertEquals(listOf(null, null), PlanUsageFeature.entries.map(PlanCode.PREMIUM::limitOf))
+        assertEquals(listOf(null, null, null, null), PlanUsageFeature.entries.map(PlanCode.PLUS::limitOf))
+        assertEquals(listOf(null, null, null, null), PlanUsageFeature.entries.map(PlanCode.PREMIUM::limitOf))
         assertEquals(2, PlanCode.GUEST_AI_SEARCH_PER_DAY)
         assertEquals(PlanUsagePeriod.DAY, PlanUsageFeature.AI_SEARCH.period)
-        assertEquals(PlanUsagePeriod.DAY, PlanUsageFeature.EVIDENCE_QUESTION.period)
+        assertEquals(PlanUsagePeriod.MONTH, PlanUsageFeature.APPLICATION_DRAFT.period)
+        assertEquals(PlanUsagePeriod.MONTH, PlanUsageFeature.COMBINATION_REVIEW.period)
     }
 }

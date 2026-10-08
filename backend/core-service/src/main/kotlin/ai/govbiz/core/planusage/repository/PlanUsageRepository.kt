@@ -2,7 +2,10 @@ package ai.govbiz.core.planusage.repository
 
 import ai.govbiz.core.planusage.domain.PlanCode
 import ai.govbiz.core.planusage.domain.PlanUsageFeature
+import ai.govbiz.core.planusage.domain.PlanUsageJob
+import ai.govbiz.core.planusage.domain.PlanUsageWindow
 import ai.govbiz.core.planusage.repository.exception.PlanUsageStoreException
+import ai.govbiz.core.planusage.repository.mapper.PlanUsageDraftProgramDbRow
 import ai.govbiz.core.planusage.repository.mapper.PlanUsageMapper
 import java.time.Clock
 import java.time.LocalDateTime
@@ -22,6 +25,23 @@ class PlanUsageRepository(
         mapper.findPlanCode(accountId)?.let(PlanCode::valueOf) ?: PlanCode.FREE
     }
 
+    /** 호출한 transaction이 끝날 때까지 계정 행을 잠급니다. 월 한도 작업 접수와 같은 행이라 같은 계정의 확인이 한 줄로 섭니다. */
+    fun lockAccount(accountId: Long) {
+        store { checkNotNull(mapper.lockAccount(accountId)) { "account $accountId is not active" } }
+    }
+
+    /** 작업 표를 남기지 않는 신청 문서 경로가 쓴 공고를 기록하고 기록 ID를 돌려줍니다. */
+    fun addDraftProgram(accountId: Long, sourceCode: String, sourceProgramId: String): Long = store {
+        val row = PlanUsageDraftProgramDbRow(accountId = accountId, sourceCode = sourceCode, sourceProgramId = sourceProgramId, createdAt = now())
+        check(mapper.insertDraftProgram(row) == 1 && row.id > 0) { "draft program usage was not recorded" }
+        row.id
+    }
+
+    /** 실행이 실패한 경로가 남긴 공고 기록을 지워 사용량을 돌려줍니다. */
+    fun removeDraftProgram(id: Long) {
+        store { mapper.deleteDraftProgram(id) }
+    }
+
     /**
      * 한도 안일 때만 1을 더하고 더했는지 돌려줍니다. 먼저 그 기간의 행을 만들거나 잠그고 조건부 UPDATE 한 문장으로 더하므로,
      * 같은 계정의 요청이 동시에 와도 한도를 넘겨 더하지 않습니다. [limit]이 null(제한 없음)이면 사용량만 남기도록 항상 더합니다.
@@ -37,9 +57,42 @@ class PlanUsageRepository(
         store { mapper.decrement(accountId, feature.name, periodKey, now()) }
     }
 
+    /** 지운 신청 문서·중복 검토가 그 달에 이미 쓴 횟수를 더해 둡니다. */
+    fun addCount(accountId: Long, feature: PlanUsageFeature, periodKey: String, amount: Int) {
+        require(amount > 0) { "amount must be positive" }
+        store { mapper.addCount(accountId, feature.name, periodKey, amount, now()) }
+    }
+
     fun findCounts(accountId: Long, periodKeys: Collection<String>): Map<Pair<PlanUsageFeature, String>, Int> = store {
         mapper.findCounts(accountId, periodKeys.distinct()).associate {
             (PlanUsageFeature.valueOf(it.feature) to it.periodKey) to it.usedCount
+        }
+    }
+
+    /**
+     * 월 한도 기능의 작업 표에서 이번 기간에 실패하지 않은 작업을 셉니다. [excluding]은 방금 만든 작업을 뺀 수를,
+     * [including]은 아직 작업이 없는 공고를 더한 수를 셀 때 씁니다.
+     */
+    fun countJobs(
+        accountId: Long,
+        feature: PlanUsageFeature,
+        window: PlanUsageWindow,
+        excluding: PlanUsageJob? = null,
+        including: PlanUsageJob.DraftProgram? = null,
+    ): Int = store {
+        val from = window.startsAt.toLocalDateTime()
+        val to = window.resetsAt.toLocalDateTime()
+        when (feature) {
+            PlanUsageFeature.COMBINATION_REVIEW ->
+                mapper.countChargeableReviewRuns(accountId, from, to, (excluding as? PlanUsageJob.ReviewRun)?.runId)
+            PlanUsageFeature.APPLICATION_DRAFT -> mapper.countChargeableDraftPrograms(
+                accountId, from, to,
+                (excluding as? PlanUsageJob.FormDiscovery)?.jobId,
+                (excluding as? PlanUsageJob.DocumentGeneration)?.jobId,
+                including?.sourceCode, including?.sourceProgramId,
+            )
+            PlanUsageFeature.AI_SEARCH, PlanUsageFeature.EVIDENCE_QUESTION ->
+                throw IllegalArgumentException("$feature is counted per request, not from jobs")
         }
     }
 

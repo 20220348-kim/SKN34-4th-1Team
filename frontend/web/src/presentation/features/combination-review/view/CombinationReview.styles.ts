@@ -9,6 +9,8 @@ export const reviewStyles = {
   input: 'mt-1 block w-full rounded-lg border border-line bg-white p-2.5 text-sm focus:border-brand-primary focus:outline-brand-primary',
   warning: 'rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950',
   info: 'rounded-xl border border-info-line bg-info-soft p-4 text-sm leading-6 text-ink',
+  // 분석 실행 카드 안의 이번 달 검토 이용량 한 줄입니다. 색은 이용량 줄이 정하고 글자 크기만 본문 안내에 맞춥니다.
+  usageLine: 'text-sm',
   // 1단계 비교할 공고의 사업 칸(사업 1 · 사업 2). 작업 공간이 넓으면 두 칸을 나란히, 좁으면 위아래로 둡니다.
   slots: 'mt-3 grid grid-cols-1 gap-3 @min-[40rem]/workspace:grid-cols-2',
   slotEmpty: 'flex min-w-0 flex-col items-start gap-2 rounded-2xl border border-dashed border-line-strong bg-white p-4',

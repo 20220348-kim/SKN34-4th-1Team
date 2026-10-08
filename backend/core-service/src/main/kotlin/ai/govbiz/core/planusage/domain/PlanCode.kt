@@ -8,16 +8,20 @@ package ai.govbiz.core.planusage.domain
 enum class PlanCode(
     private val aiSearchPerDay: Int?,
     private val evidenceQuestionsPerDay: Int?,
+    private val applicationDraftsPerMonth: Int?,
+    private val combinationReviewsPerMonth: Int?,
 ) {
-    FREE(aiSearchPerDay = 10, evidenceQuestionsPerDay = 10),
-    PLUS(aiSearchPerDay = null, evidenceQuestionsPerDay = null),
-    PREMIUM(aiSearchPerDay = null, evidenceQuestionsPerDay = null),
+    FREE(aiSearchPerDay = 10, evidenceQuestionsPerDay = 10, applicationDraftsPerMonth = 3, combinationReviewsPerMonth = 3),
+    PLUS(aiSearchPerDay = null, evidenceQuestionsPerDay = null, applicationDraftsPerMonth = null, combinationReviewsPerMonth = null),
+    PREMIUM(aiSearchPerDay = null, evidenceQuestionsPerDay = null, applicationDraftsPerMonth = null, combinationReviewsPerMonth = null),
     ;
 
     /** 이 요금제의 기능별 한도입니다. null이면 제한하지 않습니다. */
     fun limitOf(feature: PlanUsageFeature): Int? = when (feature) {
         PlanUsageFeature.AI_SEARCH -> aiSearchPerDay
         PlanUsageFeature.EVIDENCE_QUESTION -> evidenceQuestionsPerDay
+        PlanUsageFeature.APPLICATION_DRAFT -> applicationDraftsPerMonth
+        PlanUsageFeature.COMBINATION_REVIEW -> combinationReviewsPerMonth
     }
 
     companion object {

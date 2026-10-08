@@ -24,6 +24,7 @@ import ai.govbiz.core.supportprogram.client.document.SupportProgramAttachment
 import ai.govbiz.core.supportprogram.service.detail.SupportProgramDetailService
 import ai.govbiz.core.supportprogram.service.admission.SupportProgramRequestAdmissionService
 import ai.govbiz.core.applicationpreparation.service.dto.ApplicationDocumentArchiveResult
+import ai.govbiz.core.planusage.service.PlanUsageService
 import org.springframework.stereotype.Service
 import java.security.MessageDigest
 
@@ -43,6 +44,7 @@ class ApplicationDocumentService(
     private val cnTrade: CnTradeNoticeAttachmentClient,
     private val details: SupportProgramDetailService,
     private val admission: SupportProgramRequestAdmissionService,
+    private val planUsage: PlanUsageService,
     private val availability: ai.govbiz.core.applicationpreparation.repository.ApplicationFormAvailabilityRepository,
     private val json: tools.jackson.databind.ObjectMapper,
     @param:org.springframework.beans.factory.annotation.Value("\${app.application-document.unknown-outcome-lock-ttl:PT24H}")
@@ -134,9 +136,15 @@ class ApplicationDocumentService(
             }
     }
 
-    /** 동기 HTTP 경로. 요청량 제한을 거친 뒤 [generateNow]를 그대로 실행한다. */
+    /**
+     * 작업 표를 쓰지 않는 이전 동기 생성 경로다. 요청량 제한을 거친 뒤 [generateNow]를 실행한다. 클라이언트는 생성 작업을 쓰지만,
+     * 이 경로도 AI 전에 그 공고를 신청 문서 월 한도에 기록하고 생성이 실패하면 돌려준다.
+     */
     fun generate(account: Account, id: Long, expectedRevision: Long): List<ApplicationDocumentFile> =
-        admission.execute("application-document:${account.id}:$id") { generateNow(account, id, expectedRevision) }
+        admission.execute("application-document:${account.id}:$id") {
+            val draft = preparations.findOwned(account, id).preparation.draft
+            planUsage.consumeDraftProgram(account.id, draft.sourceCode, draft.sourceProgramId) { generateNow(account, id, expectedRevision) }
+        }
 
     /**
      * 실제 생성 흐름. 생성 작업(job)은 이 함수를 배경 실행 슬롯에서 호출하고 [onStage]로 단계를 기록한다.

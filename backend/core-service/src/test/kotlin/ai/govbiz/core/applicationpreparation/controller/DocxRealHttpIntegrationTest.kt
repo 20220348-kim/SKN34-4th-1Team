@@ -77,6 +77,8 @@ class DocxRealHttpIntegrationTest {
         `when`(attachments.collect("BIZINFO", program)).thenReturn(SupportProgramAttachments("KOTRA HTTP E2E",
             listOf(SupportProgramAttachment(expected.path("sourceUrl").asString(), "kotra.docx", "DOCX", source)), emptyList()))
         val account = accounts.createAccount(NewAccount("${UUID.randomUUID()}@example.test", "test-hash", LocalDateTime.now()))
+        // 요금제 월 한도와 무관한 흐름 테스트라 PREMIUM 계정으로 만든다(한도 검증은 planusage 테스트).
+        jdbc.update("INSERT INTO account_plan (account_id, plan_code, assigned_at) VALUES (?, 'PREMIUM', NOW(6))", account.id)
         val session = sessions.issue(account.id, false)
         accounts.createSession(account.id, session.session)
         val client = HttpClient.newHttpClient()

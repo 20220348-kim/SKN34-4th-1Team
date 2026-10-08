@@ -25,6 +25,7 @@ import { WorkspaceModal } from '../../../shared/workspace/WorkspaceModal'
 import { WorkspaceToast, type WorkspaceToastNotice } from '../../../shared/workspace/WorkspaceToast'
 import { useDelayedFlag } from '../../../shared/workspace/useDelayedFlag'
 import { useFloatingPopover } from '../../../shared/workspace/useFloatingPopover'
+import { PlanUsageLine } from '../../../shared/plan-usage/PlanUsageLine'
 import { ReviewEditorSkeleton, ReviewListSkeleton, ReviewRunResultSkeleton } from './ReviewSkeletons'
 
 const listTitle = '중복 지원·수혜 검토'
@@ -398,6 +399,7 @@ function ReviewEditor({ id, account, initialProgram = null }: { id: number | nul
         </section>
         <section className={`${s.card} space-y-3`} aria-label="분석 실행"><h2 className="text-lg font-bold">공식 근거 분석</h2>
           <p className={s.muted}>PDF·HWP·HWPX 공식 첨부를 자동 수집하여 OpenAI로 분석합니다. [검토 실행]을 누르면 유료 API 호출이 발생할 수 있습니다. 원문 미확보·미지원 형식은 오류로 표시합니다.</p>
+          {vm.reviewUsage && <PlanUsageLine view={vm.reviewUsage} className={s.usageLine} />}
           {invalidProgramCount && <p className={s.warning}>기존에 저장한 3개 공고의 결과는 조회할 수 있지만 새 분석은 공고를 2개로 줄인 뒤 실행할 수 있습니다.</p>}
           {unsupported && <p className={s.warning}>{unsupportedNotice}</p>}
           {analysisBusy && <p role="status" className={s.info}>분석 요청을 접수하고 있어요. 창을 닫아도 접수된 서버 작업은 취소되지 않아요.</p>}

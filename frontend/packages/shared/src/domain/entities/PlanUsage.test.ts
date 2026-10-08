@@ -6,6 +6,7 @@ import {
 
 const daily: LimitedPlanUsageItem = { feature: 'AI_SEARCH', period: 'DAY', limit: 10, used: 8, resetsAt: '2026-10-09T00:00:00+09:00' }
 const unlimited: PlanUsageItem = { feature: 'EVIDENCE_QUESTION', period: 'DAY', limit: null, used: 42, resetsAt: daily.resetsAt }
+const drafts: LimitedPlanUsageItem = { feature: 'APPLICATION_DRAFT', period: 'MONTH', limit: 3, used: 4, resetsAt: '2026-11-01T00:00:00+09:00' }
 
 describe('PlanUsage', () => {
   it('names every plan in Korean', () => {
@@ -20,7 +21,9 @@ describe('PlanUsage', () => {
     expect(planUsageCountText(daily)).toBe('오늘 8/10회')
     // 진행 중인 요청이 남아 한도를 넘겨 세어져도 화면은 한도에서 멈춥니다.
     expect(planUsageCountText({ ...daily, used: 11 })).toBe('오늘 10/10회')
-    expect(remainingPlanUses({ ...daily, used: 11 })).toBe(0)
+    // 진행 중인 작업이 남아 월 한도를 넘겨 세어져도 화면은 한도에서 멈춥니다.
+    expect(planUsageCountText(drafts)).toBe('이번 달 3/3건')
+    expect(remainingPlanUses(drafts)).toBe(0)
   })
 
   it('never warns or blocks a plan without a limit and says so instead of a count against a limit', () => {
@@ -29,10 +32,12 @@ describe('PlanUsage', () => {
     expect(isNearPlanLimit(unlimited)).toBe(false)
     expect(isPlanLimitReached(unlimited)).toBe(false)
     expect(planUsageCountText(unlimited)).toBe('오늘 42회 · 제한 없음')
+    expect(planUsageCountText({ ...drafts, limit: null, used: 7 })).toBe('이번 달 7건 · 제한 없음')
   })
 
-  it('says the daily reset in Seoul time instead of the device time zone', () => {
+  it('reads the reset date in Seoul time instead of the device time zone', () => {
     expect(planUsageResetText(daily)).toBe('자정(서울 시간)에 다시 채워져요.')
+    expect(planUsageResetText(drafts)).toBe('11월 1일에 다시 채워져요.')
   })
 
   it('explains what the user can still do when a quota is used up', () => {
@@ -42,6 +47,10 @@ describe('PlanUsage', () => {
       .toBe('오늘 AI 대화 검색 10회를 모두 썼어요. 자정(서울 시간)에 다시 채워져요. 필터 검색은 계속 쓸 수 있어요.')
     expect(planQuotaExceededMessage({ feature: 'EVIDENCE_QUESTION', period: 'DAY', limit: 10, plan: 'FREE', resetsAt: daily.resetsAt }))
       .toBe('오늘 공고 원문 질문 10회를 모두 썼어요. 자정(서울 시간)에 다시 채워져요.')
+    expect(planQuotaExceededMessage({ ...drafts, plan: 'FREE' }))
+      .toBe('이번 달 신청 문서 초안 3건을 모두 썼어요. 이미 시작한 공고의 문서는 계속 만들 수 있어요. 11월 1일에 다시 채워져요.')
+    expect(planQuotaExceededMessage({ feature: 'COMBINATION_REVIEW', period: 'MONTH', limit: 3, plan: 'FREE', resetsAt: drafts.resetsAt }))
+      .toBe('이번 달 중복 검토 3회를 모두 썼어요. 진행 중인 검토도 횟수에 들어가요. 11월 1일에 다시 채워져요.')
   })
 
   it('finds a feature only when the usage was loaded', () => {

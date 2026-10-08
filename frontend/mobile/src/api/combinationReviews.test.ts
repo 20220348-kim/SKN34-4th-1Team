@@ -1,3 +1,4 @@
+import { CombinationReviewError } from '@govbiz/shared/domain/errors/CombinationReviewError'
 import { MobileCombinationReviewRepository, reviewErrorMessage } from './combinationReviews'
 import { mobileReview, reviewRequestKey, reviewRunFixture } from '../test/reviewFixtures'
 
@@ -85,6 +86,25 @@ test('analysis admission stops HTTP waiting at 15 seconds without submitting ano
   await jest.advanceTimersByTimeAsync(15_000)
   await rejection
   expect(fetch).toHaveBeenCalledTimes(1)
+})
+
+test('plan limit rejections keep their review status for request-key rules and explain the limit with the shared message', async () => {
+  const repository = new MobileCombinationReviewRepository('owner')
+  const request = { expectedRevision: 1, requestKey: reviewRequestKey, additionalFacts: '' }
+  jest.mocked(fetch).mockResolvedValueOnce(response({ status: 429, code: 'PLAN_QUOTA_EXCEEDED', feature: 'COMBINATION_REVIEW', period: 'MONTH',
+    plan: 'FREE', limit: 3, used: 3, resetsAt: '2026-11-01T00:00:00+09:00', retryAfterSeconds: 2_000_000 }, 429))
+  const exceeded = await repository.start(5, request).catch((error: unknown) => error)
+  expect(exceeded).toBeInstanceOf(CombinationReviewError)
+  expect(exceeded).toMatchObject({ status: 429, code: 'PLAN_QUOTA_EXCEEDED' })
+  expect(reviewErrorMessage(exceeded)).toBe('이번 달 중복 검토 3회를 모두 썼어요. 진행 중인 검토도 횟수에 들어가요. 11월 1일에 다시 채워져요.')
+  jest.mocked(fetch).mockResolvedValueOnce(response({ status: 503, code: 'QUOTA_UNAVAILABLE' }, 503))
+  const unavailable = await repository.start(5, request).catch((error: unknown) => error)
+  expect(unavailable).toMatchObject({ status: 503, code: 'QUOTA_UNAVAILABLE' })
+  expect(reviewErrorMessage(unavailable)).toBe('지금은 이용량을 확인할 수 없어 실행하지 않았어요. 잠시 후 다시 시도해 주세요.')
+  // 진행 중인 분석 수 제한은 요금제 안내로 바꾸지 않습니다.
+  jest.mocked(fetch).mockResolvedValueOnce(response({ code: 'RUN_CAPACITY_EXCEEDED' }, 429))
+  expect(reviewErrorMessage(await repository.start(5, request).catch((error: unknown) => error)))
+    .toBe('요청량 또는 진행 중인 분석 한도에 도달했어요. 잠시 후 다시 확인해 주세요.')
 })
 
 test('a deletion conflict retains its server code and explains that the review is protected', async () => {

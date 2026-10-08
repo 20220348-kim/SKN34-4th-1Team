@@ -1,4 +1,5 @@
 import type { z } from 'zod'
+import { readPlanQuotaProblem } from '@govbiz/shared/data/models/PlanUsageDto'
 import { CombinationReviewError } from '../../domain/errors/CombinationReviewError'
 import { reviewProblemSchema } from '../models/CombinationReviewDto'
 import { getCoreApiBaseUrl } from './coreApiConfig'
@@ -16,7 +17,11 @@ export async function combinationReviewRequest<T>(path: string, schema: z.ZodTyp
       ...(body === undefined ? {} : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
     })
     if (!response.ok) {
-      const problem = reviewProblemSchema.safeParse(await response.json().catch(() => null))
+      const body: unknown = await response.json().catch(() => null)
+      // 요금제 한도(429 PLAN_QUOTA_EXCEEDED)와 이용량 확인 실패(503 QUOTA_UNAVAILABLE)는 shared 오류로 먼저 바꿉니다.
+      const quota = readPlanQuotaProblem(response.status, body)
+      if (quota) throw quota
+      const problem = reviewProblemSchema.safeParse(body)
       const code = problem.success ? problem.data.code : response.status === 404 ? 'COMBINATION_REVIEW_API_UNAVAILABLE' : 'REQUEST_FAILED'
       throw new CombinationReviewError(response.status, code, problem.success ? problem.data.runId ?? null : null, response.headers.get('Retry-After'))
     }

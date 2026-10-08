@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { PlanQuotaExceededError, QuotaUnavailableError } from '@govbiz/shared/domain/errors/PlanQuotaError'
 import { ApplicationPreparationRepositoryImpl } from '../../repositories/ApplicationPreparationRepositoryImpl'
 
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers() })
@@ -324,6 +325,29 @@ describe('application preparation HTTP boundary', () => {
     await expect(repository.googleForm('KSTARTUP', '179183')).rejects.toMatchObject({
       status: 422, code: 'APPLICATION_ONLINE_FORM_LOGIN_REQUIRED', message: expect.stringContaining('로그인해야 열리는 설문'),
     })
+  })
+
+  it('passes plan quota rejections of discovery and draft jobs through as shared errors instead of request failures', async () => {
+    const quota = {
+      type: 'urn:govbiz:problem:plan-quota-exceeded', title: 'Plan Quota Exceeded', status: 429, detail: 'private detail',
+      instance: '/api/v1/application-preparations/forms/discovery-jobs', code: 'PLAN_QUOTA_EXCEEDED', feature: 'APPLICATION_DRAFT',
+      period: 'MONTH', plan: 'FREE', limit: 3, used: 3, resetsAt: '2026-11-01T00:00:00+09:00', retryAfterSeconds: 100,
+    }
+    const problem = { 'Content-Type': 'application/problem+json' }
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(Response.json(quota, { status: 429, headers: { ...problem, 'Retry-After': '100' } }))
+      .mockResolvedValueOnce(Response.json({ ...quota, instance: '/api/v1/application-preparations/1/documents/jobs' }, { status: 429, headers: problem }))
+      .mockResolvedValueOnce(Response.json({ status: 503, code: 'QUOTA_UNAVAILABLE' }, { status: 503, headers: problem }))
+      // 요금제 계약이 아닌 429는 지금처럼 신청 준비 오류로 둡니다.
+      .mockResolvedValueOnce(Response.json({ code: 'APPLICATION_DOCUMENT_JOB_CAPACITY' }, { status: 429 })))
+    const repository = new ApplicationPreparationRepositoryImpl()
+
+    const discovery = await repository.discover('BIZINFO', 'PBLN_1').catch((error: unknown) => error)
+    expect(discovery).toBeInstanceOf(PlanQuotaExceededError)
+    expect((discovery as Error).message).toBe('이번 달 신청 문서 초안 3건을 모두 썼어요. 이미 시작한 공고의 문서는 계속 만들 수 있어요. 11월 1일에 다시 채워져요.')
+    expect(await repository.submitDocumentJob(1, 3).catch((error: unknown) => error)).toBeInstanceOf(PlanQuotaExceededError)
+    expect(await repository.submitDocumentJob(1, 3).catch((error: unknown) => error)).toBeInstanceOf(QuotaUnavailableError)
+    await expect(repository.submitDocumentJob(1, 3)).rejects.toMatchObject({ name: 'ApplicationPreparationError', status: 429, code: 'APPLICATION_DOCUMENT_JOB_CAPACITY' })
   })
 
   it('uses a form-discovery-specific message for an invalid AI response', async () => {
