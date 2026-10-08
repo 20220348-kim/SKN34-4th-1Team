@@ -548,6 +548,47 @@ python3 -B infrastructure/gitops/scripts/evaluation_release.py \
 활성화·Ops URL 전환·실제 평가 검증은 다음 단계다. 보고서는 `syncRequested=false`,
 `runtimeStarted=false`, `runtimeVerified=false`, `deploymentAuthorized=false`로 이 범위를 구분한다.
 
+## 최초 수동 동기화 요청
+
+등록을 마친 뒤 WSL/Linux에서 `--request-dormant-sync`를 명시하면 세 평가 Application에
+**replica 0의 최초 수동 동기화**를 요청한다. 기본 계획 조회와 `--register-argo`는 계속 동기화를
+요청하지 않으며, 두 변경 옵션은 동시에 사용할 수 없다.
+
+```bash
+python3 -B infrastructure/gitops/scripts/evaluation_release.py \
+  --state-dir infrastructure/gitops/.local/fork \
+  --restore-report /private-backups/evaluation-retained.json \
+  --langfuse-url "$LANGFUSE_URL" \
+  --request-dormant-sync > /private-backups/evaluation-sync-request.json
+```
+
+호출 흐름은 `현재 CI·공개 이미지·보존 PVC 재검증 → 기존 Argo 선언 대조 → 서버 dry-run →
+계획 재검증 → 각 Application의 operation 요청 → 발행 증거 재확인`이다.
+
+- AppProject와 세 Application이 모두 먼저 등록되어 있어야 한다. 같은 복원 namespace UID·보고서
+  해시·계획 해시와 전체 선언이 일치해야 하며, 다른 Application 소유권·이전 동기화 이력·진행 중
+  작업·자동 동기화·replica 변경은 차단한다. 기존 대상 Deployment·Service·NetworkPolicy도 자동 채택하지 않는다.
+- 서버 측 dry-run 세 개를 먼저 통과한 뒤에만 실제 요청을 보낸다. JSON Patch는 UID·resourceVersion·
+  전체 spec을 원자적으로 검사하고 `operation`만 추가한다. 패치는 파일로 저장하거나 인자에 넣지 않고
+  `/dev/stdin`으로 전달한다. 중간에 대상이나 설정이 바뀌면 덮어쓰기·재시도하지 않는다.
+- [Argo CD 3.5.3 Operation 계약](https://github.com/argoproj/argo-cd/blob/v3.5.3/pkg/apis/application/v1alpha1/types.go)에
+  따라 정확한 소스 SHA, apply 방식, force/prune 비활성, retry 0, `FailOnSharedResource=true`를 사용한다.
+  source·로컬 manifest를 덮어쓰는 sync 옵션은 받지 않는다. replica·자동 동기화 설정과 Ops 주소도 바꾸지 않는다.
+- 성공은 `DORMANT_SYNC_REQUESTED`다. 요청 확인 목록은 `synchronization.acknowledged`에 남기며
+  `syncCompleted=null`, `runtimeStarted=null`, `runtimeVerified=false`, `activationRequested=false`를
+  유지한다. Argo가 실제로 적용을 끝냈는지와 Pod가 없는지는 별도 조회로 확인해야 한다. 종료 코드 0이
+  `Synced/Healthy`나 평가 실행 성공을 뜻하지 않는다.
+- 요청 전 `attempted`를 기록하므로 응답 유실 시 `syncRequested`·`clusterChanged`가 null일 수 있다.
+  중간 실패 시 나머지 요청을 멈추고 이미 요청한 작업을 취소·롤백·삭제하지 않는다. 세 Application에
+  대한 요청은 하나의 트랜잭션이 아니다. 결과를 저장하고 Argo 상태를 확인한다.
+- 이 명령은 최초 요청 전용이다. 일부 요청이 접수됐거나 workload가 생성됐으면 같은 명령을 반복해
+  나머지를 자동 처리하지 않는다. 동기화 오류·완료 상태와 현재 선언을 확인한 뒤 복구 범위를 정한다.
+  동시에 수동 sync·소스 변경·활성화를 진행하지 않는다.
+
+오프라인 테스트는 CI·저장소 변경, 충돌, admission 변경, 응답 유실과 부분 요청을 검사하며 Infra CI의
+`test_*.py` 검색에 포함된다. 실제 개인 환경의 최초 동기화·완료 확인은 검증된 공개 실행기 발행과
+보존 PVC·Argo 등록이 끝난 뒤 수행한다. 이 단계에서 PVC·Secret 생성이나 실행기 기동을 대신하지 않는다.
+
 ## 격리 Kubernetes에서 실제 평가 실행 검증
 
 LLMOps CI의 기존 격리 통합 검증에 `--evaluation-runtime` 단계를 연결했다.
@@ -600,6 +641,13 @@ Pod 로그와 이벤트는 크기·시간 제한 안에서 읽고, 권한·읽�
 최초 기동·Prefect/결과 서버 재시작의 240초와 실행기 재기동의 180초 제한, CI 실패 판정,
 임시 PVC·태그 정리 경로는 유지한다. 진단 정보가 없거나 일부만 수집됐다고 정상으로 처리하지 않는다.
 
+임시 PVC 정리가 실패하면 `evaluation_kubernetes_runtime.restored_pvc.cleanup_failure`에
+실패 단계·오류 종류를 남긴다. 같은 namespace UID·소유권을 확인한 뒤 삭제 진행 여부,
+알려진 namespace 정리 조건, 남은 Pod·PVC 개수와 삭제 중·finalizer 보유 개수만 조회한다.
+진단은 조회당 최대 10초인 두 번의 읽기로 제한하고, 이름·조건 메시지·finalizer 이름·spec·로그는
+저장하지 않는다. 조회 실패는 고정 `diagnosticErrors`로 구분하며 원래 정리 오류를 유지한다.
+삭제 재시도·강제 삭제·finalizer 제거와 제한 시간 증가는 수행하지 않는다.
+
 이 경로를 수정한 뒤에는 `test_smoke_evaluation_runtime`의 실패·민감값 비노출·정리 순서 검증과
 최신 SHA의 실제 LLMOps CI를 함께 확인한다. 별도 합성 데이터로 수행한 로컬 Prefect 기동 성공은
 CI의 전체 Ops 복구·평가 실행·Pod 교체 성공을 대체하지 않는다.
@@ -613,6 +661,12 @@ CI의 전체 Ops 복구·평가 실행·Pod 교체 성공을 대체하지 않는
 통과했다. 보고서에서 평가 런타임 `PASS`, 기존 완료 이력 3개 복원, 무료 평가와 Pod 교체 후 재평가,
 인증 보고서 조회, 원본 저장소 보존, 모델 호출 0회와 정리 완료를 확인했다. 이는 격리된 런타임의
 검증 기록이며 개인 환경 전환·이미지 발행이나 이후 Service/DNS·인증 변경의 최신 SHA CI를 대신하지 않는다.
+
+같은 날 `4a99bf2`의 [LLMOps CI](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/37729887987)는
+Service·DNS를 포함한 접근 통제, PVC 복원, 무료 평가와 Pod 교체 후 재평가까지 통과했지만
+마지막 임시 namespace 삭제 단계에서 실패했다. 기존 보고서에는 삭제 실패 원인이 없어
+위의 정리 진단을 추가했다. 삭제 지연·finalizer 등을 원인으로 확정하거나 해결됐다고 판단하지 않으며,
+새 진단이 포함된 최신 SHA의 전체 실행 결과를 확인해야 한다.
 
 Kubernetes 1.36의 이미지 자격 증명 검증은 이미지 ID 외에 저장소 이름별 pull 기록도 확인한다.
 복원 helper가 받은 Prefect 이미지를 `govbiz/prefect:...`로 바꾸면 CRI에 이미지가 있어도 새 저장소의
@@ -634,7 +688,7 @@ Kubernetes 1.36의 이미지 자격 증명 검증은 이미지 ID 외에 저장�
    실제 패키지 준비·최신 SHA CI·발행 성공과 운영 환경에서의 계획 검증은 별도로 확인해야 한다.
    기존 네 서비스의 필수 CI·발행 가드를 우회하지 않는다. 배포 방식은 서비스별 Argo Application과 수동 동기화를 유지한다.
    평가용 계획은 별도 프로젝트로 범위를 제한한다. 복원 보고서와 현재 보존 PVC를 대조해 수동 계획에
-   연결하는 읽기 전용 경로와 동기화하지 않는 Argo 선언 등록 명령은 구현했다. 실제 등록 실행과
+   연결하는 읽기 전용 경로, Argo 선언 등록과 replica 0 최초 수동 동기화 요청 명령은 구현했다. 실제 등록·동기화 실행과
    namespace·PVC 확인 및 서비스 인계는 남아 있다. 암호화 백업과 기존 runner에서 평가 Secret만
    준비하는 명령도 구현했으며 실제 개인 백업을 이용한 생성·인증 검증은 별도다.
    운영 진단은 위의 평가 Application 조회를 포함하지만 런타임·저장소 검증은 별도다.
