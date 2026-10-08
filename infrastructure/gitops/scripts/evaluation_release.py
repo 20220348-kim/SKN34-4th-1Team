@@ -1,8 +1,9 @@
-"""Verify runner receipts and prepare dormant, manual Argo evaluation releases."""
+"""Verify evaluation releases, register Argo declarations and request dormant sync."""
 
 import argparse
 import io
 import json
+import os
 import re
 import tempfile
 import zipfile
@@ -492,15 +493,7 @@ def require_registered_resource(actual, expected):
     return metadata["uid"]
 
 
-def register_from_restore(root, fork, *, state, restore_report, progress, **options):
-    """Create only the project and inactive Applications; never request a sync."""
-    result = plan_from_restore(
-        root, fork, state=state, restore_report=restore_report, **options
-    )
-    settings = fork_cluster.load_settings(state)
-    if settings["mode"] != "gitops":
-        raise ValueError("Evaluation registration requires existing GitOps mode")
-    kube, _, ak = fork_cluster.commands(state, settings)
+def registration_resources(result):
     # Bind retry ownership to this restore and declaration, not merely their names.
     resources = json.loads(encoded(result["resources"]))
     annotations = {
@@ -512,33 +505,50 @@ def register_from_restore(root, fork, *, state, restore_report, progress, **opti
     }
     for resource in resources:
         resource["metadata"]["annotations"] = dict(annotations)
+    return resources
+
+
+def registered_resources(kube, ak, resources):
+    applications = pvc_restore.run(
+        kube + ["get", "applications.argoproj.io", "--all-namespaces", "-o", "json"]
+    )["items"]
+    expected = {row["metadata"]["name"]: row for row in resources[1:]}
+    found = {}
+    for application in applications:
+        metadata = application["metadata"]
+        spec = application.get("spec", {})
+        name = metadata["name"]
+        if (
+            spec.get("project") == PROJECT
+            or spec.get("destination", {}).get("namespace") == NAMESPACE
+            or (metadata.get("namespace") == "argocd" and name in expected)
+        ):
+            if metadata.get("namespace") != "argocd" or name not in expected:
+                raise ValueError("Evaluation namespace has another Argo owner")
+            require_registered_resource(application, expected[name])
+            found[("Application", name)] = application
+    project = pvc_restore.run(
+        ak + ["get", "appproject", PROJECT, "--ignore-not-found", "-o", "json"]
+    )
+    if project:
+        require_registered_resource(project, resources[0])
+        found[("AppProject", PROJECT)] = project
+    return found
+
+
+def register_from_restore(root, fork, *, state, restore_report, progress, **options):
+    """Create only the project and inactive Applications; never request a sync."""
+    result = plan_from_restore(
+        root, fork, state=state, restore_report=restore_report, **options
+    )
+    settings = fork_cluster.load_settings(state)
+    if settings["mode"] != "gitops":
+        raise ValueError("Evaluation registration requires existing GitOps mode")
+    kube, _, ak = fork_cluster.commands(state, settings)
+    resources = registration_resources(result)
 
     def inspect():
-        applications = pvc_restore.run(
-            kube + ["get", "applications.argoproj.io", "--all-namespaces", "-o", "json"]
-        )["items"]
-        expected = {row["metadata"]["name"]: row for row in resources[1:]}
-        found = {}
-        for application in applications:
-            metadata = application["metadata"]
-            spec = application.get("spec", {})
-            name = metadata["name"]
-            if (
-                spec.get("project") == PROJECT
-                or spec.get("destination", {}).get("namespace") == NAMESPACE
-                or (metadata.get("namespace") == "argocd" and name in expected)
-            ):
-                if metadata.get("namespace") != "argocd" or name not in expected:
-                    raise ValueError("Evaluation namespace has another Argo owner")
-                require_registered_resource(application, expected[name])
-                found[("Application", name)] = application
-        project = pvc_restore.run(
-            ak + ["get", "appproject", PROJECT, "--ignore-not-found", "-o", "json"]
-        )
-        if project:
-            require_registered_resource(project, resources[0])
-            found[("AppProject", PROJECT)] = project
-        return found
+        return registered_resources(kube, ak, resources)
 
     fork_cluster.verify_context(kube, settings, timeout=15)
     existing = inspect()  # Reject every collision before the first write.
@@ -612,6 +622,148 @@ def register_from_restore(root, fork, *, state, restore_report, progress, **opti
     }
 
 
+def request_dormant_sync(root, fork, *, state, restore_report, progress, **options):
+    """Request only the first replica-zero sync. Never retry an uncertain operation."""
+    result = plan_from_restore(
+        root, fork, state=state, restore_report=restore_report, **options
+    )
+    settings = fork_cluster.load_settings(state)
+    if settings["mode"] != "gitops":
+        raise ValueError("Evaluation registration requires existing GitOps mode")
+    kube, _, ak = fork_cluster.commands(state, settings)
+    resources = registration_resources(result)
+    fork_cluster.verify_context(kube, settings, timeout=15)
+    initial = registered_resources(kube, ak, resources)
+    if set(initial) != {(r["kind"], r["metadata"]["name"]) for r in resources}:
+        raise ValueError("Evaluation sync requires all four registered declarations")
+    operation = {
+        "sync": {
+            "revision": result["sourceSha"],
+            "prune": False,
+            "syncStrategy": {"apply": {"force": False}},
+            "syncOptions": ["FailOnSharedResource=true"],
+        },
+        "retry": {"limit": 0},
+    }
+
+    def require_unused_targets(names):
+        rows = pvc_restore.run(
+            kube
+            + [
+                "-n",
+                NAMESPACE,
+                "get",
+                "deployments,services,networkpolicies",
+                "-o",
+                "json",
+            ]
+        )["items"]
+        if any(row["metadata"]["name"] in names for row in rows):
+            raise ValueError(
+                "Evaluation sync target already exists; no adoption is allowed"
+            )
+
+    def patch_request(expected, actual, *, dry_run):
+        name = expected["metadata"]["name"]
+        metadata = actual["metadata"]
+        if (
+            require_registered_resource(actual, expected)
+            != initial[("Application", name)]["metadata"]["uid"]
+            or not isinstance(metadata.get("resourceVersion"), str)
+            or not metadata["resourceVersion"]
+        ):
+            raise ValueError("Evaluation Argo identity changed before sync")
+        patch = [
+            {"op": "test", "path": "/metadata/uid", "value": metadata["uid"]},
+            {
+                "op": "test",
+                "path": "/metadata/resourceVersion",
+                "value": metadata["resourceVersion"],
+            },
+            {"op": "test", "path": "/spec", "value": expected["spec"]},
+            {"op": "add", "path": "/operation", "value": operation},
+        ]
+        command = ak + [
+            "patch",
+            "application",
+            name,
+            "--type=json",
+            "--patch-file=/dev/stdin",
+            "--request-timeout=15s",
+            "-o",
+            "json",
+        ]
+        if dry_run:
+            command += ["--dry-run=server"]
+        else:
+            progress["attempted"].append({"name": name, "uid": metadata["uid"]})
+        admitted = pvc_restore.run(command, value=patch, timeout=30)
+        if (
+            admitted.get("operation") != operation
+            or require_registered_resource({**admitted, "operation": None}, expected)
+            != metadata["uid"]
+        ):
+            raise ValueError("Evaluation sync admission changed the request")
+        if not dry_run:
+            progress["acknowledged"].append({"name": name, "uid": metadata["uid"]})
+
+    require_unused_targets(set(COMPONENTS))
+    for resource in resources[1:]:
+        name = resource["metadata"]["name"]
+        patch_request(resource, initial[("Application", name)], dry_run=True)
+    # Revalidate source, receipts, CI and the still-empty retained namespace after
+    # admission checks, before requesting any controller action.
+    if (
+        plan_from_restore(
+            root, fork, state=state, restore_report=restore_report, **options
+        )
+        != result
+    ):
+        raise ValueError("Evaluation sync plan changed before request")
+    project_uid = initial[("AppProject", PROJECT)]["metadata"]["uid"]
+    for resource in resources[1:]:
+        if fork_cluster.load_settings(state) != settings:
+            raise ValueError("Evaluation sync cluster settings changed")
+        fork_cluster.verify_context(kube, settings, timeout=15)
+        project = pvc_restore.run(ak + ["get", "appproject", PROJECT, "-o", "json"])
+        if require_registered_resource(project, resources[0]) != project_uid:
+            raise ValueError("Evaluation Argo identity changed before sync")
+        name = resource["metadata"]["name"]
+        actual = pvc_restore.run(ak + ["get", "application", name, "-o", "json"])
+        require_unused_targets({resource["spec"]["source"]["helm"]["releaseName"]})
+        patch_request(resource, actual, dry_run=False)
+    # Workloads may now exist at replica zero, so initial-handoff storage inspection
+    # is intentionally not reused. Recheck publication without claiming runtime state.
+    fresh = plan(
+        root,
+        fork,
+        node=result["retainedStorage"]["node"],
+        prefect_claim="prefect",
+        results_claim="results",
+        **options,
+    )
+    # plan_from_restore overrides this one fact after observing retained PVCs;
+    # publication-only planning cannot repeat the empty-namespace check now.
+    if any(
+        result.get(key) != value
+        for key, value in fresh.items()
+        if key != "retainedStorageIdentityVerified"
+    ):
+        raise ValueError("Evaluation sync plan changed after request")
+    return {
+        **result,
+        "status": "DORMANT_SYNC_REQUESTED",
+        "clusterChanged": True,
+        "synchronization": progress,
+        "syncRequested": True,
+        "syncCompleted": None,
+        "desiredReplicas": 0,
+        "activationRequested": False,
+        "runtimeStarted": None,
+        "runtimeVerified": False,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--branch", help="Origin's default branch when omitted")
@@ -621,18 +773,26 @@ def main():
     parser.add_argument("--results-claim")
     parser.add_argument("--restore-report", type=Path)
     parser.add_argument("--state-dir", type=Path)
-    parser.add_argument(
+    actions = parser.add_mutually_exclusive_group()
+    actions.add_argument(
         "--register-argo",
         action="store_true",
         help="Create dormant Argo declarations from a newly verified retained-storage plan",
+    )
+    actions.add_argument(
+        "--request-dormant-sync",
+        action="store_true",
+        help="WSL/Linux: request the first manual sync of registered replica-zero Applications",
     )
     parser.add_argument("--langfuse-url", required=True)
     parser.add_argument(
         "--ops-api-url", default="http://ops-service.govbiz-msa.svc.cluster.local:8000"
     )
     args = parser.parse_args()
-    if args.register_argo and not args.restore_report:
-        parser.error("--register-argo requires --restore-report and --state-dir")
+    if (args.register_argo or args.request_dormant_sync) and not args.restore_report:
+        parser.error("Argo actions require --restore-report and --state-dir")
+    if args.request_dormant_sync and os.name != "posix":
+        parser.error("Run the sync request inside WSL/Linux")
     manual = (args.node, args.prefect_claim, args.results_claim)
     if args.restore_report:
         if not args.state_dir or any(manual):
@@ -644,6 +804,7 @@ def main():
             "Use --node, --prefect-claim and --results-claim, or a restore report with state"
         )
     progress = {"creationAttempts": [], "created": []}
+    sync_progress = {"attempted": [], "acknowledged": []}
     try:
         root = Path(__file__).resolve().parents[3]
         fork = from_origin(root, branch=args.branch).require_personal_publish()
@@ -652,7 +813,16 @@ def main():
             "langfuse_url": args.langfuse_url,
             "ops_api_url": args.ops_api_url,
         }
-        if args.register_argo:
+        if args.request_dormant_sync:
+            report = request_dormant_sync(
+                root,
+                fork,
+                state=args.state_dir,
+                restore_report=args.restore_report,
+                progress=sync_progress,
+                **options,
+            )
+        elif args.register_argo:
             report = register_from_restore(
                 root,
                 fork,
@@ -696,6 +866,7 @@ def main():
             "Evaluation Argo resource differs": "argo_resource_conflict",
             "Evaluation Argo identity changed": "argo_identity_changed",
             "Evaluation registration plan changed": "registration_plan_changed",
+            "Evaluation sync": "dormant_sync_not_verified",
         }
         print(
             json.dumps(
@@ -712,8 +883,24 @@ def main():
                     ),
                     "errorType": type(error).__name__,
                     "clusterChanged": True
-                    if progress["created"]
-                    else (None if progress["creationAttempts"] else False),
+                    if progress["created"] or sync_progress["acknowledged"]
+                    else (
+                        None
+                        if progress["creationAttempts"] or sync_progress["attempted"]
+                        else False
+                    ),
+                    **(
+                        {
+                            "synchronization": sync_progress,
+                            "syncRequested": True
+                            if sync_progress["acknowledged"]
+                            else (None if sync_progress["attempted"] else False),
+                            "syncCompleted": None,
+                            "activationRequested": False,
+                        }
+                        if args.request_dormant_sync
+                        else {}
+                    ),
                     **(
                         {"registration": progress, "syncRequested": False}
                         if args.register_argo

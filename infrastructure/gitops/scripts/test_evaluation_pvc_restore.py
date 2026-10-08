@@ -487,6 +487,43 @@ class KubernetesTests(unittest.TestCase):
             any("storageclass" in args and "delete" in args for args, _ in self.events)
         )
 
+    def test_cleanup_failure_updates_yielded_proof_without_retry_or_private_error(self):
+        for diagnostic_fails in (False, True):
+            self.events.clear()
+            self.fail = "cleanup"
+
+            def inspect(args, diagnostic_fails=diagnostic_fails, **kwargs):
+                if "--request-timeout=8s" in args:
+                    self.assertIn("get", args)
+                    self.assertEqual(kwargs["timeout"], 10)
+                    if diagnostic_fails:
+                        raise ValueError("private diagnostic output")
+                return self.fake_run(args, **kwargs)
+
+            with (
+                self.subTest(diagnostic_fails=diagnostic_fails),
+                patch.object(restore, "run", side_effect=inspect),
+                self.assertRaisesRegex(ValueError, "^cleanup failure$"),
+                restore.restored_pvcs(
+                    ["kubectl"], "fixture-control-plane", self.stores, self.expected
+                ) as (_, proof),
+            ):
+                evidence = {"restored_pvc": proof}
+            failure = evidence["restored_pvc"]["cleanup_failure"]
+            self.assertEqual(failure["stage"], "namespace_delete")
+            self.assertEqual(failure["errorType"], "ValueError")
+            self.assertEqual(
+                failure["diagnosticErrors"],
+                ["namespace_inspection_failed"] if diagnostic_fails else [],
+            )
+            self.assertNotIn("private", json.dumps(failure))
+            deletes = [args for args, _ in self.events if "delete" in args]
+            self.assertEqual(sum("namespace" in args for args in deletes), 1)
+            self.assertFalse(any("storageclass" in args for args in deletes))
+            self.assertFalse(
+                any("--force" in args or "patch" in args for args, _ in self.events)
+            )
+
     def retained(self):
         return restore.retain_for_migration(
             ["kubectl"], "fixture-control-plane", self.stores, self.expected
@@ -687,6 +724,124 @@ class KubernetesTests(unittest.TestCase):
         self.assertTrue(
             all("pod" in args for args, _ in self.events if "delete" in args)
         )
+
+
+class CleanupObservationTests(unittest.TestCase):
+    def namespace(self):
+        return {
+            "metadata": {
+                "name": "test-namespace",
+                "uid": "original-uid",
+                "labels": {restore.LABEL: "test-token"},
+                "deletionTimestamp": "private timestamp",
+                "annotations": {"private": "private secret"},
+            },
+            "spec": {"finalizers": ["private finalizer"]},
+            "status": {
+                "conditions": [
+                    {
+                        "type": "NamespaceContentRemaining",
+                        "status": "True",
+                        "reason": "private reason",
+                        "message": "private content",
+                    },
+                    {"type": "NamespaceDeletionDiscoveryFailure", "status": "False"},
+                    {"type": "private condition", "status": "True"},
+                ]
+            },
+        }
+
+    def observe(self):
+        return restore.cleanup_observation(
+            ["kubectl", "--context", "kind-fixture"],
+            "test-namespace",
+            "test-token",
+            "original-uid",
+        )
+
+    def test_only_bounded_owned_read_only_counts_and_known_conditions_are_exported(
+        self,
+    ):
+        rows = [
+            {
+                "kind": kind,
+                "metadata": {
+                    "name": "private name",
+                    "deletionTimestamp": "private timestamp",
+                    "finalizers": ["private finalizer"],
+                },
+                "spec": {"env": "private secret"},
+            }
+            for kind in ("Pod", "PersistentVolumeClaim", "Secret")
+        ] + [{"kind": "Pod", "metadata": {"name": "private ready pod"}}]
+        with patch.object(
+            restore, "run", side_effect=[self.namespace(), {"items": rows}]
+        ) as run:
+            result = self.observe()
+        self.assertEqual(run.call_count, 2)
+        for call in run.call_args_list:
+            self.assertEqual(call.kwargs, {"timeout": 10})
+            self.assertIn("--request-timeout=8s", call.args[0])
+            self.assertIn("get", call.args[0])
+            self.assertFalse({"delete", "patch", "logs", "exec"} & set(call.args[0]))
+        self.assertTrue(result["ownershipVerified"])
+        self.assertTrue(result["namespaceTerminating"])
+        self.assertTrue(result["namespaceConditions"]["NamespaceContentRemaining"])
+        self.assertFalse(
+            result["namespaceConditions"]["NamespaceDeletionDiscoveryFailure"]
+        )
+        self.assertEqual(
+            result["remainingResources"],
+            {
+                "Pod": {"count": 2, "terminating": 1, "withFinalizers": 1},
+                "PersistentVolumeClaim": {
+                    "count": 1,
+                    "terminating": 1,
+                    "withFinalizers": 1,
+                },
+            },
+        )
+        self.assertEqual(result["diagnosticErrors"], [])
+        self.assertNotIn("private", json.dumps(result))
+        self.assertNotIn("test-token", json.dumps(result))
+
+    def test_absent_or_replaced_namespace_is_not_inspected_further(self):
+        for defect in ("absent", "uid", "label"):
+            current = self.namespace()
+            if defect == "absent":
+                current = None
+            elif defect == "uid":
+                current["metadata"]["uid"] = "replaced"
+            else:
+                current["metadata"]["labels"] = {}
+            with (
+                self.subTest(defect=defect),
+                patch.object(restore, "run", return_value=current) as run,
+            ):
+                result = self.observe()
+            run.assert_called_once()
+            self.assertFalse(result["ownershipVerified"])
+            self.assertNotIn("remainingResources", result)
+            self.assertEqual(result["namespacePresent"], defect != "absent")
+            self.assertEqual(
+                result["diagnosticErrors"],
+                [] if defect == "absent" else ["namespace_inspection_failed"],
+            )
+
+    def test_query_and_malformed_response_errors_are_sanitized(self):
+        for stage, responses in (
+            ("namespace", [ValueError("private stderr")]),
+            ("namespace", [{"metadata": None}]),
+            ("resource", [self.namespace(), ValueError("private stderr")]),
+            ("resource", [self.namespace(), {"items": [None]}]),
+        ):
+            with (
+                self.subTest(stage=stage, responses=responses),
+                patch.object(restore, "run", side_effect=responses),
+            ):
+                result = self.observe()
+            self.assertEqual(result["diagnosticErrors"], [stage + "_inspection_failed"])
+            self.assertNotIn("private", json.dumps(result))
 
 
 class ArchiveTests(unittest.TestCase):

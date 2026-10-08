@@ -189,6 +189,66 @@ def remove_retained_helpers(kube, nk, namespace, token, uid):
         )
 
 
+def cleanup_observation(kube, namespace, token, uid):
+    """Read bounded cleanup facts only; never export names, messages, spec or logs."""
+    result = {"ownershipVerified": False, "diagnosticErrors": []}
+    command = kube + ["--request-timeout=8s"]
+    try:
+        current = run(
+            command
+            + ["get", "namespace", namespace, "--ignore-not-found", "-o", "json"],
+            timeout=10,
+        )
+        result["namespacePresent"] = bool(current)
+        if not current:
+            return result
+        require_owner(current, namespace, token, uid)
+        result["ownershipVerified"] = True
+        result["namespaceTerminating"] = bool(
+            current["metadata"].get("deletionTimestamp")
+        )
+        conditions = {
+            "NamespaceDeletionDiscoveryFailure",
+            "NamespaceDeletionGroupVersionParsingFailure",
+            "NamespaceDeletionContentFailure",
+            "NamespaceContentRemaining",
+            "NamespaceFinalizersRemaining",
+        }
+        result["namespaceConditions"] = {
+            name: any(
+                row.get("type") == name and row.get("status") == "True"
+                for row in current.get("status", {}).get("conditions", [])
+            )
+            for name in sorted(conditions)
+        }
+    except Exception:  # noqa: BLE001 - diagnostics cannot replace the cleanup failure
+        result["diagnosticErrors"].append("namespace_inspection_failed")
+        return result
+    try:
+        rows = run(
+            command + ["-n", namespace, "get", "pods,pvc", "-o", "json"], timeout=10
+        )["items"]
+        result["remainingResources"] = {
+            kind: {
+                "count": sum(row.get("kind") == kind for row in rows),
+                "terminating": sum(
+                    row.get("kind") == kind
+                    and bool(row.get("metadata", {}).get("deletionTimestamp"))
+                    for row in rows
+                ),
+                "withFinalizers": sum(
+                    row.get("kind") == kind
+                    and bool(row.get("metadata", {}).get("finalizers"))
+                    for row in rows
+                ),
+            }
+            for kind in ("Pod", "PersistentVolumeClaim")
+        }
+    except Exception:  # noqa: BLE001 - never publish private kubectl output
+        result["diagnosticErrors"].append("resource_inspection_failed")
+    return result
+
+
 @contextmanager
 def restored_pvcs(kube, node, stores, expected, *, image=None, retain=False):
     """Yield verified claims. Retained copies survive success AND failure.
@@ -439,50 +499,64 @@ def restored_pvcs(kube, node, stores, expected, *, image=None, retain=False):
         if retain and uid is not None:
             remove_retained_helpers(kube, nk, namespace, token, uid)
         elif uid is not None:
-            current = run(kube + ["get", "namespace", namespace, "-o", "json"])
-            require_owner(current, namespace, token, uid)
-            snapshot.storage.run(
-                [
-                    str(p)
-                    for p in kube
-                    + [
-                        "delete",
-                        "namespace",
-                        namespace,
-                        "--wait=true",
-                        "--timeout=120s",
-                    ]
-                ],
-                timeout=135,
-            )
-            for name in pv_names:
-                snapshot.storage.run(
-                    [
-                        str(p)
-                        for p in kube
-                        + ["wait", "--for=delete", "pv/" + name, "--timeout=90s"]
-                    ],
-                    timeout=105,
-                )
-            if class_uid is not None:
-                current_class = run(
-                    kube + ["get", "storageclass", storage_name, "-o", "json"]
-                )
-                require_owner(current_class, storage_name, token, class_uid)
+            cleanup_stage = "namespace_ownership"
+            try:
+                current = run(kube + ["get", "namespace", namespace, "-o", "json"])
+                require_owner(current, namespace, token, uid)
+                cleanup_stage = "namespace_delete"
                 snapshot.storage.run(
                     [
                         str(p)
                         for p in kube
                         + [
                             "delete",
-                            "storageclass",
-                            storage_name,
+                            "namespace",
+                            namespace,
                             "--wait=true",
-                            "--timeout=30s",
+                            "--timeout=120s",
                         ]
                     ],
-                    timeout=45,
+                    timeout=135,
                 )
+                cleanup_stage = "volume_deletion_wait"
+                for name in pv_names:
+                    snapshot.storage.run(
+                        [
+                            str(p)
+                            for p in kube
+                            + ["wait", "--for=delete", "pv/" + name, "--timeout=90s"]
+                        ],
+                        timeout=105,
+                    )
+                if class_uid is not None:
+                    cleanup_stage = "storage_class_ownership"
+                    current_class = run(
+                        kube + ["get", "storageclass", storage_name, "-o", "json"]
+                    )
+                    require_owner(current_class, storage_name, token, class_uid)
+                    cleanup_stage = "storage_class_delete"
+                    snapshot.storage.run(
+                        [
+                            str(p)
+                            for p in kube
+                            + [
+                                "delete",
+                                "storageclass",
+                                storage_name,
+                                "--wait=true",
+                                "--timeout=30s",
+                            ]
+                        ],
+                        timeout=45,
+                    )
+            except Exception as error:  # noqa: BLE001 - preserve failure, expose fixed diagnostics only
+                if isinstance(result, dict):
+                    result["cleanup_failure"] = {
+                        "stage": cleanup_stage,
+                        "errorType": type(error).__name__,
+                        **cleanup_observation(kube, namespace, token, uid),
+                    }
+                raise
 
 
 def rehearse(kube, node, stores, expected, *, image=None):
