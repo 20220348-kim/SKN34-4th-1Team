@@ -383,7 +383,7 @@ test('filter links and returning from a detail keep the selected search mode and
   await act(async () => router.back())
   await screen.findByDisplayValue('유지할 조건')
   expect(view.getSearchParams()).toMatchObject({ mode: 'filter' })
-  fireEvent.press(screen.getByRole('tab', { name: 'AI 검색' }))
+  fireEvent.press(screen.getByRole('tab', { name: 'AI 대화 검색' }))
   await screen.findByLabelText('회사 상황이나 궁금한 점')
   expect(view.getSearchParams()).toMatchObject({ mode: 'ai' })
 })

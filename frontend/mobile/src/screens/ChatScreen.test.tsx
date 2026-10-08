@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react-native'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react-native'
 import { ScrollView } from 'react-native'
 import { ChatScreen } from './ChatScreen'
 import { programClient } from '../api/client'
@@ -69,6 +69,35 @@ function signIn() {
   jest.mocked(useAuth).mockReturnValue({ status: 'signedIn', session: { accessToken: 'verified', account: { email: 'owner@example.com' } },
     invalidateSession: jest.fn().mockResolvedValue(undefined) } as unknown as ReturnType<typeof useAuth>)
 }
+
+test('insufficient search details invite extra input and preserve the pending clarification for the next turn', async () => {
+  const draftContext = { ...context, query: null }
+  const client = { interpretConversation: jest.fn().mockResolvedValueOnce({ status: 'CLARIFICATION_REQUIRED', proposedContext: draftContext,
+    answer: null, clarificationQuestion: '어떤 지원이 필요한가요?', changedFields: [] }).mockResolvedValueOnce({ status: 'READY', proposedContext: context,
+    clarificationQuestion: null, changedFields: [] }), search: jest.fn() }
+  jest.mocked(programClient).mockReturnValue(client as unknown as ReturnType<typeof programClient>)
+  render(<ChatScreen onOpenProgram={jest.fn()} onLogin={jest.fn()} />)
+  fireEvent.changeText(screen.getByLabelText('회사 상황이나 궁금한 점'), '지원사업 찾아줘')
+  fireEvent.press(screen.getByLabelText('AI에게 보내기'))
+  await screen.findByText('어떤 지원이 필요한가요?')
+  const clarificationCard = within(screen.getByTestId('ai-search-clarification'))
+  expect(clarificationCard.getByText('조금만 더 알려주세요')).toBeTruthy()
+  expect(clarificationCard.getByText('답변을 입력해 주세요. 아직 검색하지 않았어요.')).toBeTruthy()
+  expect(screen.getAllByLabelText('추가 내용 입력하기')).toHaveLength(1)
+  fireEvent.changeText(screen.getByLabelText('회사 상황이나 궁금한 점'), '작성 중인 추가 내용')
+  expect(screen.queryByLabelText('새 대화')).toBeNull()
+  fireEvent.press(screen.getByLabelText('추가 내용 입력하기'))
+  expect(screen.getByLabelText('회사 상황이나 궁금한 점').props.value).toBe('작성 중인 추가 내용')
+  expect(client.interpretConversation).toHaveBeenCalledTimes(1)
+  expect(screen.getByText('지원사업 찾아줘')).toBeTruthy()
+  fireEvent.changeText(screen.getByLabelText('회사 상황이나 궁금한 점'), '서울에서 사업화 지원이 필요해요')
+  fireEvent.press(screen.getByLabelText('AI에게 보내기'))
+  await screen.findByText('이 조건으로 검색할까요?')
+  expect(client.interpretConversation).toHaveBeenLastCalledWith(expect.objectContaining({
+    message: '서울에서 사업화 지원이 필요해요', pendingClarification: { question: '어떤 지원이 필요한가요?', draftContext },
+  }), expect.any(AbortSignal))
+  expect(client.search).not.toHaveBeenCalled()
+})
 test('selected guest results restore with the new token without repeating interpretation or paid search', async () => {
   const { client, view, props } = await guestSearch()
   signIn(); view.rerender(<ChatScreen {...props} />)
@@ -122,8 +151,11 @@ test.each(['signedOut', 'signedIn'] as const)('G01 uses the same introduction an
   jest.mocked(programClient).mockReturnValue(client as unknown as ReturnType<typeof programClient>)
   if (status === 'signedIn') signIn()
   render(<ChatScreen onOpenProgram={jest.fn()} onLogin={jest.fn()} />)
-  expect(screen.getByText('우리 회사의 다음 기회,')).toBeTruthy()
-  expect(screen.getByText('말로 찾아보세요')).toBeTruthy()
+  expect(screen.getByText('우리 회사에 맞는 지원사업,')).toBeTruthy()
+  expect(screen.getByText('AI와 함께 무료로 찾아보세요.')).toBeTruthy()
+  expect(screen.getByText('회사의 지역과 업종, 필요한 지원을 알려주세요.\n관련 공고와 확인할 신청 조건을 함께 안내합니다.')).toBeTruthy()
+  expect(screen.getByLabelText('회사 상황이나 궁금한 점').props.placeholder).toBe('예: 서울에서 AI 서비스를 만드는 창업기업입니다. 사업화 지원을 받을 수 있을까요?')
+  expect(screen.queryByText('우리 회사의 다음 기회,')).toBeNull()
   expect(screen.getByTestId('ai-search-composer')).toBeTruthy()
   fireEvent.changeText(screen.getByLabelText('회사 상황이나 궁금한 점'), '입력 중')
   expect(client.interpretConversation).not.toHaveBeenCalled()
@@ -298,7 +330,7 @@ describe('mobile AI timeline scrolling', () => {
     expect(client.interpretConversation).toHaveBeenCalledTimes(1)
   })
 
-  test.each(['cancel', 'new conversation', 'account change', 'unmount'] as const)('%s discards queued layout and late response scrolling', async (action) => {
+  test.each(['cancel', 'account change', 'unmount'] as const)('%s discards queued layout and late response scrolling', async (action) => {
     let resolveOld!: (value: typeof ready) => void
     clientWith(jest.fn().mockResolvedValueOnce(ready).mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve })))
     const props = { onOpenProgram: jest.fn(), onLogin: jest.fn() }
@@ -310,7 +342,6 @@ describe('mobile AI timeline scrolling', () => {
     const staleLayout = screen.getByTestId('ai-search-pending-message').props.onLayout
     layout('ai-search-pending-message', 800, 100)
     if (action === 'cancel') fireEvent.press(screen.getByLabelText('요청 취소'))
-    else if (action === 'new conversation') fireEvent.press(screen.getByLabelText('새 대화'))
     else if (action === 'account change') { signIn(); view.rerender(<ChatScreen {...props} />) }
     else view.unmount()
     act(() => staleLayout({ nativeEvent: { layout: { x: 0, y: 800, width: 360, height: 100 } } }))

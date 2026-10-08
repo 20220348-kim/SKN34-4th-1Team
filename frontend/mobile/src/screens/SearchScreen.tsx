@@ -8,7 +8,7 @@ import { ChatScreen } from './ChatScreen'
 import type { LoginRequest } from '../auth/loginFlow'
 
 export type SearchMode = 'ai' | 'filter'
-const modes = [{ value: 'ai', label: 'AI 검색' }, { value: 'filter', label: '필터 검색' }] as const
+const modes = [{ value: 'ai', label: 'AI 대화 검색' }, { value: 'filter', label: '필터 검색' }] as const
 
 export function SearchScreen({ mode, headerHeight = 0, onModeChange, onOpenProgram, onLogin }: {
   mode: SearchMode; headerHeight?: number; onModeChange(mode: SearchMode): void

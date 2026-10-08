@@ -537,7 +537,7 @@ describe('대화 조건 해석·확인 검색 HTTP E2E', () => {
     expect(clarification.querySelector('details')).toBeNull()
     expect(clarification.textContent).not.toMatch(/미확정 초안|미입력|현재:|제안:|현재 소재지|설립일 ·|2024-01-01|서울|SW/)
     expect(within(clarification).getAllByRole('button')).toHaveLength(1)
-    expect(within(clarification).getByRole('button', { name: '제안 취소' })).toBeTruthy()
+    expect(within(clarification).getByRole('button', { name: '추가 내용 입력하기' })).toBeTruthy()
     expect(screen.queryByRole('button', { name: '이 조건으로 검색' })).toBeNull()
     expect(store.getState().chat.searchOptions).toEqual({ acceptingOnly: true })
     expect(network.searchRequests).toHaveLength(0)
@@ -567,16 +567,12 @@ describe('대화 조건 해석·확인 검색 HTTP E2E', () => {
     expect(network.searchRequests).toHaveLength(1)
   })
 
-  it.each(['READY', 'CLARIFICATION_REQUIRED'] as const)('%s 제안 취소는 미확정 초안을 폐기하고 실제 검색은 보내지 않는다', async (status) => {
-    const proposal: SupportProgramInterpretation = status === 'READY'
-      ? readyConversationProposal(seoulConversationContext)
-      : { status, proposedContext: { ...seoulConversationContext,
-        companyConditions: { ...seoulConversationContext.companyConditions, establishedOn: null },
-      }, clarificationQuestion: '정확한 설립일을 알려주세요.', changedFields: ['REGION', 'INDUSTRY'] }
+  it('READY 제안 취소는 미확정 초안을 폐기하고 실제 검색은 보내지 않는다', async () => {
+    const proposal = readyConversationProposal(seoulConversationContext)
     const network = mockConversationNetwork([proposal, readyConversationProposal(seoulConversationContext)])
     const { store } = renderConversationApp()
     await submitMessage('서울 SW 사업화')
-    expect(store.getState().chat.pendingClarification !== null).toBe(status === 'CLARIFICATION_REQUIRED')
+    expect(store.getState().chat.pendingClarification).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: '제안 취소' }))
     expect(screen.queryByRole('button', { name: '이 조건으로 검색' })).toBeNull()
     expect(store.getState().chat.searchOptions).toEqual({ acceptingOnly: true })
@@ -589,6 +585,36 @@ describe('대화 조건 해석·확인 검색 HTTP E2E', () => {
     fireEvent.click(screen.getByRole('button', { name: '제안 취소' }))
     expect(screen.queryByRole('region', { name: '조건 변경 제안' })).toBeNull()
     expect(store.getState().chat.pendingClarification).toBeNull()
+    expect(network.searchRequests).toHaveLength(0)
+  })
+
+  it.each(['/', '/app/chat'])('%s에서 정보 부족 안내의 추가 입력은 기존 대화와 질문·입력을 보존한다', async (path) => {
+    const draftContext = { ...emptyConversationContext, companyConditions: { ...emptyConversationContext.companyConditions, region: '서울' } }
+    const question = '어떤 지원사업을 찾으시나요? 필요한 지원 내용이나 목적을 알려 주세요.'
+    const network = mockConversationNetwork([
+      { status: 'CLARIFICATION_REQUIRED', proposedContext: draftContext, clarificationQuestion: question, changedFields: ['REGION'] },
+      readyConversationProposal(seoulConversationContext),
+    ])
+    const { store } = renderConversationApp(path)
+    await submitMessage('서울 지원사업')
+    const card = screen.getByRole('region', { name: '조건 추가 확인' })
+    const pending = store.getState().chat.pendingClarification
+    const messages = store.getState().chat.messages
+    const input = screen.getByRole('textbox', { name: '지원사업 검색어' }) as HTMLTextAreaElement
+    fireEvent.change(input, { target: { value: '작성 중인 추가 내용' } })
+    expect(within(card).queryByRole('button', { name: '제안 취소' })).toBeNull()
+    fireEvent.click(within(card).getByRole('button', { name: '추가 내용 입력하기' }))
+    expect(document.activeElement).toBe(input)
+    expect(input.value).toBe('작성 중인 추가 내용')
+    expect(store.getState().chat.pendingClarification).toBe(pending)
+    expect(store.getState().chat.messages).toBe(messages)
+    expect(screen.getByRole('region', { name: '조건 추가 확인' })).toBe(card)
+    expect(network.interpretRequests).toHaveLength(1)
+    expect(network.searchRequests).toHaveLength(0)
+    await submitMessage('SW 사업화 지원이 필요해요')
+    expect(network.interpretRequests[1]).toEqual({ message: 'SW 사업화 지원이 필요해요', context: emptyConversationContext,
+      pendingClarification: { question, draftContext } })
+    expect(screen.getByRole('region', { name: '조건 변경 제안' })).toBeTruthy()
     expect(network.searchRequests).toHaveLength(0)
   })
 
