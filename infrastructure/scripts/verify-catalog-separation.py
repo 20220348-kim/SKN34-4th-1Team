@@ -11,6 +11,7 @@ configured local Langfuse; only that opt-in shares the existing tracing network.
 import argparse
 from datetime import datetime, timezone
 import hashlib
+from http.cookies import SimpleCookie
 import json
 import os
 from pathlib import Path
@@ -57,6 +58,31 @@ def call_json(url, token=None):
             return error.code, json.loads(body)
         except json.JSONDecodeError:
             return error.code, None
+
+
+def member_session(core_url, sql):
+    """Return a disposable Bearer session for Core's member-only AI APIs.
+
+    AI search, assistant and evidence questions count against plan limits. The
+    isolated fixture member is raised to PREMIUM so readiness retries never hit
+    the FREE daily caps; production plan assignment is never touched.
+    """
+    request = urllib.request.Request(
+        core_url + "/api/v1/auth/dev-login", data=json.dumps({"role": "USER"}).encode(),
+        headers={"Content-Type": "application/json", "Accept": "application/json"})
+    with LOCAL_HTTP.open(request, timeout=30) as response:
+        email = json.load(response)["account"]["email"]
+        cookies = SimpleCookie()
+        for header in response.headers.get_all("Set-Cookie", []):
+            cookies.load(header)
+    require(re.fullmatch(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+", email), "Unexpected fixture member email")
+    require("govbiz_session" in cookies, "Development login returned no session")
+    sql("mysql", "INSERT INTO account_plan (account_id, plan_code, assigned_at) "
+                 f"SELECT id, 'PREMIUM', NOW(6) FROM account WHERE email = '{email}' "
+                 "ON DUPLICATE KEY UPDATE plan_code = 'PREMIUM'")
+    require(sql("mysql", "SELECT plan.plan_code FROM account_plan plan JOIN account ON account.id = plan.account_id "
+                         f"WHERE account.email = '{email}'") == "PREMIUM", "Fixture member plan was not raised")
+    return cookies["govbiz_session"].value
 
 
 def wait_for(label, probe, timeout):
@@ -492,8 +518,13 @@ def main():
                     == "GOOGLE_FORMS", "Core DB lost the projected application route")
             print("PASS: distinct MySQL databases, catalog-only tables and four persisted projection checkpoints", flush=True)
 
+            session_token = member_session(core_url, sql)
+
+            def member_call(url):
+                return call_json(url, session_token if url.startswith(core_url) else None)
+
             def search():
-                code, value = call_json(core_url + "/api/v1/support-programs/search?" + urllib.parse.urlencode({"query": "서울 AI", "acceptingOnly": "true"}))
+                code, value = member_call(core_url + "/api/v1/support-programs/search?" + urllib.parse.urlencode({"query": "서울 AI", "acceptingOnly": "true"}))
                 return value if code == 200 and value.get("totalCount", 0) >= 2 else None
 
             wait_for("Core semantic search through local OpenAI fixtures and real indexes", search, args.timeout)
@@ -509,25 +540,25 @@ def main():
                                      capture=True, timeout=15).stdout)), args.timeout)
                     core_search_trace.verify_search_traces(
                         core_url=core_url, stub_url="http://127.0.0.1:" + values["OPENAI_STUB_HOST_PORT"],
-                        environment=os.environ, call_json=call_json, output=args.search_traces_output,
+                        environment=os.environ, call_json=member_call, output=args.search_traces_output,
                         core_logs=lambda: run(compose + ["logs", "--no-color", "core-service"], capture=True, timeout=15).stdout,
                     )
                     if args.assistant_traces_output:
                         core_assistant_trace.verify_assistant_traces(
-                            core_url=core_url, stub_url="http://127.0.0.1:" + values["OPENAI_STUB_HOST_PORT"],
+                            core_url=core_url, session_token=session_token, stub_url="http://127.0.0.1:" + values["OPENAI_STUB_HOST_PORT"],
                             environment=os.environ, call_json=call_json, output=args.assistant_traces_output,
                             core_logs=lambda: run(compose + ["logs", "--no-color", "core-service"], capture=True, timeout=15).stdout,
                         )
                     if args.evidence_traces_output:
                         core_evidence_trace.verify_evidence_traces(
-                            core_url=core_url, stub_url="http://127.0.0.1:" + values["OPENAI_STUB_HOST_PORT"],
+                            core_url=core_url, session_token=session_token, stub_url="http://127.0.0.1:" + values["OPENAI_STUB_HOST_PORT"],
                             environment=os.environ, call_json=call_json, sql=sql, program=application,
                             output=args.evidence_traces_output,
                             core_logs=lambda: run(compose + ["logs", "--no-color", "core-service"], capture=True, timeout=15).stdout,
                         )
                     if args.rag_capture_output:
                         core_rag_capture.verify_rag_capture(
-                            core_url=core_url, environment=os.environ, sql=sql, program=application,
+                            core_url=core_url, session_token=session_token, environment=os.environ, sql=sql, program=application,
                             output=args.rag_capture_output,
                             core_logs=lambda: run(compose + ["logs", "--no-color", "core-service"], capture=True, timeout=15).stdout,
                             read_wire=lambda: run(compose + ["exec", "-T", "ai-service", "python", "-c",

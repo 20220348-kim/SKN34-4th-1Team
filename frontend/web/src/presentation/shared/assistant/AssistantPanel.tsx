@@ -13,12 +13,13 @@ import type { AssistantViewModel } from './useAssistantViewModel'
 export function AssistantPanel({ vm, launcherRef }: { vm: AssistantViewModel; launcherRef: React.RefObject<HTMLButtonElement | null> }) {
   const logRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const loginLinkRef = useRef<HTMLAnchorElement>(null)
   const [draft, setDraft] = useState('')
   const lastMessageId = vm.messages[vm.messages.length - 1]?.id
 
-  // 열면 입력창에 포커스, 닫으면 런처로 돌아갑니다.
+  // 열면 입력창(로그인 전에는 그 자리의 로그인 링크)에 포커스, 닫으면 런처로 돌아갑니다.
   useEffect(() => {
-    inputRef.current?.focus()
+    (inputRef.current ?? loginLinkRef.current)?.focus()
     const launcher = launcherRef.current
     return () => { launcher?.focus() }
   }, [launcherRef])
@@ -133,19 +134,27 @@ export function AssistantPanel({ vm, launcherRef }: { vm: AssistantViewModel; la
         ) : null}
       </div>
 
-      <form className={styles.composer} onSubmit={submit} aria-label="메시지 입력">
-        <textarea
-          ref={inputRef}
-          className={styles.input}
-          rows={1}
-          aria-label={assistantMessages.placeholder}
-          placeholder={assistantMessages.placeholder}
-          value={draft}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={onInputKeyDown}
-        />
-        <button className={styles.send} type="submit" aria-label={assistantMessages.send} disabled={draft.trim() === '' || vm.isTyping}>↑</button>
-      </form>
+      {vm.canAskFreeText ? (
+        <form className={styles.composer} onSubmit={submit} aria-label="메시지 입력">
+          <textarea
+            ref={inputRef}
+            className={styles.input}
+            rows={1}
+            aria-label={assistantMessages.placeholder}
+            placeholder={assistantMessages.placeholder}
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={onInputKeyDown}
+          />
+          <button className={styles.send} type="submit" aria-label={assistantMessages.send} disabled={draft.trim() === '' || vm.isTyping}>↑</button>
+        </form>
+      ) : (
+        // 자유 질문은 회원만 씁니다. 로그인 전에는 입력창 대신 안내와 로그인 링크를 두고, 위의 주제 알약은 그대로 씁니다.
+        <div className={styles.composerLogin}>
+          <p className={styles.composerLoginText}>{assistantMessages.freeTextLoginRequired}</p>
+          <Link ref={loginLinkRef} className={styles.composerLoginLink} to={vm.loginPath} onClick={vm.close}>{assistantMessages.login}</Link>
+        </div>
+      )}
     </section>
   )
 }

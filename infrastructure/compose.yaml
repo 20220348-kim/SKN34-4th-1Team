@@ -226,6 +226,8 @@ services:
       ACCOUNT_DEV_LOGIN_EMAIL: ${ACCOUNT_DEV_LOGIN_EMAIL:-admin@govbiz.local}
       ACCOUNT_DEV_LOGIN_MEMBER_EMAIL: ${ACCOUNT_DEV_LOGIN_MEMBER_EMAIL:-member@govbiz.local}
       ACCOUNT_DEV_LOGIN_PASSWORD: ${ACCOUNT_DEV_LOGIN_PASSWORD:-govbiz-admin1}
+      # 로컬 데모 시드 계정(개발 로그인 2 + 데모 회원 4)은 요금제 한도 없이 씁니다. 빈 값으로 두면 끕니다.
+      PLAN_USAGE_UNLIMITED_ACCOUNT_EMAILS: ${PLAN_USAGE_UNLIMITED_ACCOUNT_EMAILS-admin@govbiz.local,member@govbiz.local,jihoon.park@demo.govbiz.local,hana.choi@demo.govbiz.local,dohyun.jung@demo.govbiz.local,yuna.kang@demo.govbiz.local}
       ACCOUNT_PASSWORD_RESET_MAIL_ENABLED: ${ACCOUNT_PASSWORD_RESET_MAIL_ENABLED:-false}
       ACCOUNT_PASSWORD_RESET_FROM: ${ACCOUNT_PASSWORD_RESET_FROM:-}
       ACCOUNT_PASSWORD_RESET_FRONTEND_BASE_URL: ${ACCOUNT_PASSWORD_RESET_FRONTEND_BASE_URL:-http://127.0.0.1:5173}

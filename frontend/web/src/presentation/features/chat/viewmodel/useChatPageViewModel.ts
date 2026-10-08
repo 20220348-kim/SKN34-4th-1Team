@@ -13,6 +13,8 @@ import {
 } from '../hooks/useSupportProgramChat'
 import { useSupportProgramSearchReadiness } from '../hooks/useSupportProgramSearchReadiness'
 import { formatSupportProgramEligibilityCounts } from '../supportProgramEligibility'
+import { planUsageView } from '../../../shared/plan-usage/planUsageView'
+import { usePlanUsage } from '../../../shared/plan-usage/usePlanUsage'
 import { createChatConversationProposal } from './chatConversationProposal'
 import { useSearchResultInterests } from './useSearchResultInterests'
 
@@ -21,6 +23,11 @@ export function useChatPageViewModel() {
   const readiness = useSupportProgramSearchReadiness()
   const chat = useSupportProgramChat()
   const interests = useSearchResultInterests(chat.messages.some((message) => Boolean(message.programs?.length)))
+  // AI 대화 검색 이용량입니다. 못 읽으면 줄을 그리지 않고 막지도 않습니다(서버가 다시 판단).
+  const planUsage = usePlanUsage()
+  const aiSearchUsage = planUsageView(planUsage.usage, 'AI_SEARCH')
+  // 한도를 다 쓰면 검색 실행(이 조건으로 검색 · 다시 검색)만 막습니다. 메시지 해석과 필터 검색은 이용량에 들지 않습니다.
+  const searchLimitMessage = aiSearchUsage?.isLimitReached ? aiSearchUsage.limitMessage : null
   const displayProposal = createChatConversationProposal({
     isBusy: chat.isBusy,
     confirmedContext: chat.confirmedContext,
@@ -28,6 +35,7 @@ export function useChatPageViewModel() {
     pendingClarification: chat.pendingClarification,
     canSearch: readiness.canSearch,
     hasUnsentMessage: chat.draft.trim().length > 0,
+    searchLimitMessage,
   })
   const hasConfirmedSearch = chat.confirmedContext.query !== null
   const isComposingInput = useRef(false)
@@ -97,6 +105,14 @@ export function useChatPageViewModel() {
     }
   }, [chat.messages, chat.isSearching, chat.interpretation.status])
 
+  // 검색을 한 번 시도하면(성공 · 한도 초과 · 실패 · 시간 초과 · 취소) 이용량을 다시 읽습니다.
+  const wasSearching = useRef(chat.isSearching)
+  const reloadPlanUsage = planUsage.reload
+  useEffect(() => {
+    if (wasSearching.current && !chat.isSearching) reloadPlanUsage()
+    wasSearching.current = chat.isSearching
+  }, [chat.isSearching, reloadPlanUsage])
+
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     void chat.submitMessage()
@@ -117,12 +133,12 @@ export function useChatPageViewModel() {
   }
 
   function handleRetrySearch() {
-    if (!readiness.canSearch) return
+    if (!readiness.canSearch || searchLimitMessage) return
     void chat.retrySearch()
   }
 
   function handleConfirmInterpretation() {
-    if (!readiness.canSearch) return
+    if (!readiness.canSearch || searchLimitMessage) return
     void chat.confirmInterpretation()
   }
 
@@ -177,7 +193,9 @@ export function useChatPageViewModel() {
     handleClarificationInput,
     searchOptions: chat.searchOptions,
     canSearch: readiness.canSearch,
-    canRetrySearch: readiness.canSearch && chat.canRetrySearch,
+    canRetrySearch: readiness.canSearch && chat.canRetrySearch && !searchLimitMessage,
+    /** AI 대화 검색 이용량 한 줄입니다. 읽지 못했으면 null이라 그리지 않습니다. */
+    aiSearchUsage,
     isReadyToSubmit: chat.isReadyToSubmit,
     conversationCount: chat.conversationCount,
     draft: chat.draft,

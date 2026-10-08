@@ -369,6 +369,8 @@ def verify_driver_replays_actual_ai_records(monkeypatch, tmp_path, nonce, replay
         def post(
             url,
             question,
+            *,
+            session_token,
             sequence=sequence,
             partial=partial,
             logs=logs,
@@ -379,6 +381,7 @@ def verify_driver_replays_actual_ai_records(monkeypatch, tmp_path, nonce, replay
                 sequence
             )
             assert question == expected_question
+            assert session_token == "member-session"
             if partial and scenario == "hit":
                 raise OSError("injected Core disconnect")
             logs.append("support_program_evidence trace_id=" + tid)
@@ -408,6 +411,7 @@ def verify_driver_replays_actual_ai_records(monkeypatch, tmp_path, nonce, replay
         output = tmp_path / ("driver-partial" if partial else "driver-complete")
         args = {
             "core_url": "http://core.invalid",
+            "session_token": "member-session",
             "environment": {"LANGFUSE_SECRET_KEY": "sk-local"},
             "core_logs": lambda logs=logs: "\n".join(logs),
             "read_wire": lambda wire=wire: "\n".join(json.dumps(row) for row in wire),

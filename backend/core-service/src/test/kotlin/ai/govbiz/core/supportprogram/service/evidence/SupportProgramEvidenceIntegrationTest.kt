@@ -1,5 +1,9 @@
 package ai.govbiz.core.supportprogram.service.evidence
 
+import java.util.UUID
+import ai.govbiz.core.account.service.AccountSessionService
+import ai.govbiz.core.account.repository.AccountRepository
+import ai.govbiz.core.account.domain.NewAccount
 import ai.govbiz.core._common.test.MySqlTestContainerConfig
 import ai.govbiz.core.supportprogram.client.bizinfo.mapper.BizInfoSourceDocumentMapper
 import ai.govbiz.core.supportprogram.domain.CatalogSupportProgram
@@ -58,7 +62,10 @@ import tools.jackson.databind.json.JsonMapper
 class SupportProgramEvidenceIntegrationTest {
     @Autowired private lateinit var repository: SupportProgramRepository
     @Autowired private lateinit var jdbc: JdbcTemplate
+    @Autowired private lateinit var accounts: AccountRepository
+    @Autowired private lateinit var sessions: AccountSessionService
     @LocalServerPort private var port: Int = 0
+    private lateinit var sessionToken: String
 
     @TestBean(name = "bizInfoSourceDocumentRestClient", methodName = "sourceClient", enforceOverride = true)
     private lateinit var sourceRestClient: RestClient
@@ -71,6 +78,11 @@ class SupportProgramEvidenceIntegrationTest {
 
     @BeforeEach
     fun resetOnlyTheTestContainerAndHttpExpectations() {
+        // 공고 원문 질문은 로그인한 회원만 쓴다. 매 테스트 새 회원이라 하루 질문 한도가 서로 섞이지 않는다.
+        val account = accounts.createAccount(NewAccount("${UUID.randomUUID()}@example.test", "test-hash", LocalDateTime.now()))
+        val issued = sessions.issue(account.id, false)
+        accounts.createSession(account.id, issued.session)
+        sessionToken = issued.sessionToken
         jdbc.update("DELETE FROM support_program_source_document")
         jdbc.update("DELETE FROM support_program")
         sourceServer.reset()
@@ -261,6 +273,7 @@ class SupportProgramEvidenceIntegrationTest {
         .connectTimeout(Duration.ofSeconds(2)).version(HttpClient.Version.HTTP_1_1).build().use { client ->
             client.send(HttpRequest.newBuilder(URI("http://127.0.0.1:$port/api/v1/support-programs/detail/answers"))
                 .timeout(Duration.ofSeconds(180)).header("Content-Type", "application/json")
+                .header("Authorization", "Bearer $sessionToken")
                 .POST(HttpRequest.BodyPublishers.ofString(json.writeValueAsString(request))).build(),
                 HttpResponse.BodyHandlers.ofString())
         }

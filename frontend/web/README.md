@@ -383,6 +383,7 @@ Core의 도구 에이전트(`ASSISTANT_AGENT_ENABLED`)가 켜져 있으면 같�
 사업자 조회·등록 문구·상태별 안내는 모바일과 함께 쓰려고 shared `domain/entities/CompanyRegistration`에 둡니다. 협업·파트너
 설정은 `/api/v1/me/company/partner-profile`에 저장되고, 계정과 알림 카드의 비밀번호 변경·계정 삭제는 확인 모달로 처리합니다. 소셜 로그인으로만 가입한 계정(`hasPassword=false`)은
 비밀번호 항목을 숨기고 계정 삭제에 비밀번호를 묻지 않습니다.
+요금제와 이용량은 `GET /api/v1/plan-usage`(`PlanUsageUseCase`)로 읽어 프로필의 "요금제와 이용량" 절에 기능별 횟수·진행 막대·다시 채워지는 때를 보여 주고(한도를 아직 정하지 않은 요금제는 막대 없이 "제한 없음"), AI 대화 검색 입력줄·원문 질문 근처에는 한 줄로 보여 줍니다(80%부터 주의, 한도에 닿으면 그 기능만 막고 shared 안내, `limit`이 없으면 그리지 않음). 요금제 화면에는 아직 한도가 없어 요금제 화면 링크는 두지 않습니다. 한도 응답(429 `PLAN_QUOTA_EXCEEDED`, 503 `QUOTA_UNAVAILABLE`)은 각 API 경계에서 shared 오류로 바꿉니다. 도우미 자유 질문과 원문 질문은 로그인한 회원만 씁니다.
 알림은 관심 공고 마감 알림만 `/api/v1/me/notification-settings`에 저장합니다(`useNotificationSettingsViewModel`). 바꾸면 바로 저장하고,
 저장하는 동안 조작을 막으며 실패하면 이전 값으로 되돌려 이유를 알립니다. 파트너 제안·새 공고 알림은 스위치 없이 `준비 중`으로 표시합니다.
 파트너 모집 목록·상세는 `PartnerRecruitmentRepository`(`data/api/partnerRecruitmentApi`)로 Core API를 읽습니다. 공개·내부 화면이
@@ -440,7 +441,7 @@ Redux `receivedProposals` slice와 `useReceivedProposals`(계정당 한 번 조�
 대화 삭제는 AI·검색 API를 호출하지 않으며 공고 원본·다른 업무 문서를 삭제하지 않습니다. 이름 변경은 아직 제공하지 않습니다.
 계정 탈퇴 시에는 개인 대화 기록과 삭제 식별 정보를 함께 제거합니다.
 
-`src/test/setupChatHistory.ts`는 다른 기능 테스트의 순차 fetch 대역과 백그라운드 기록 API를 격리합니다. `src/test/setupPreparationJobs.ts`는 작업 화면 틀이 사이드바 배지를 위해 읽는 분석·초안 작업 목록(`PreparationJobsSync`)을 같은 이유로 격리하며, 그 동작을 검증하는 테스트는 mock을 해제합니다.
+`src/test/setupChatHistory.ts`는 다른 기능 테스트의 순차 fetch 대역과 백그라운드 기록 API를 격리합니다. `src/test/setupPlanUsage.ts`는 여러 화면이 백그라운드로 읽는 이용량 API를 같은 이유로 격리합니다. `src/test/setupPreparationJobs.ts`는 작업 화면 틀이 사이드바 배지를 위해 읽는 분석·초안 작업 목록(`PreparationJobsSync`)을 같은 이유로 격리하며, 그 동작을 검증하는 테스트는 mock을 해제합니다.
 `App.chatHistory.test.tsx`와 `ChatConversationRepositoryImpl.test.ts`는 이 대역을 해제하여 실제 HTTP·DTO 경로를 검증합니다.
 Core API 코드도 변경되므로 기존 실행 이미지는 재빌드해야 합니다. [백엔드 변경 반영 안내](../../infrastructure/README.md#백엔드-변경-반영과-화면api-버전-불일치)를 참고하세요.
 
@@ -506,8 +507,8 @@ Repository → UseCase → Hook → Redux 결과 메시지 → `ProgramResults`�
 모션 줄이기 설정에서는 움직임을 끄고 단계 문구와 정적인 표시를 유지합니다. 장식은 스크린 리더에서
 숨기고 기존 단일 상태 알림을 사용하며, 완료·취소·오류 시 로딩 카드는 사라집니다.
 첫 화면의 별도 환영 말풍선은 소개 영역으로 대신하며 Redux 대화 상태는 유지합니다. 예시 질문은 입력만
-채우고 자동 전송하지 않습니다. 참고 디자인에 있는 기관·공고 수, 무료 검색 횟수·잔여 한도는
-실제 구현된 정책이 아니므로 표시하지 않습니다. 브랜드는 GovBiz를 유지합니다.
+채우고 자동 전송하지 않습니다. 참고 디자인에 있는 기관·공고 수는 실제 값이 아니므로 표시하지 않고,
+AI 대화 검색의 남은 횟수는 Core 사용량 API(`GET /api/v1/plan-usage`)의 실제 값만 보여 줍니다. 브랜드는 GovBiz를 유지합니다.
 
 요금제(`/pricing`)는 무료·플러스·프리미엄 3개 카드와 자주 묻는 질문을 제공하는 공개 소개 화면입니다.
 무료 카드는 기본 기능(검색·조건 확인·원문 질문·도우미·공개 모집글 열람)을, 플러스 카드(월 9,900원 예정가, 정식 출시 전까지 회원 무료)는

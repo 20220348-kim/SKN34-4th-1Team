@@ -249,6 +249,26 @@ verify_application_preparation_flow() {
     return 1
   fi
 
+  # The same member session runs every AI search below. Raise only this isolated fixture member to
+  # PREMIUM (no plan limit yet) so readiness retries never hit the FREE daily AI search limit.
+  local member_email member_plan
+  member_email="$(sed -n 's/.*"email"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${LAST_RESPONSE_FILE}")"
+  if [[ ! "${member_email}" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$ ]]; then
+    echo "Development login returned an unexpected member email" >&2
+    return 1
+  fi
+  member_plan="$("${COMPOSE[@]}" exec -T mysql sh -c 'exec mysql --batch --skip-column-names --user="$MYSQL_USER" --password="$MYSQL_PASSWORD" "$MYSQL_DATABASE"' <<SQL
+INSERT INTO account_plan (account_id, plan_code, assigned_at)
+SELECT id, 'PREMIUM', NOW(6) FROM account WHERE email = '${member_email}'
+ON DUPLICATE KEY UPDATE plan_code = 'PREMIUM';
+SELECT plan.plan_code FROM account_plan plan JOIN account ON account.id = plan.account_id WHERE account.email = '${member_email}';
+SQL
+)"
+  if [[ "${member_plan}" != "PREMIUM" ]]; then
+    echo "Compose verification could not raise the fixture member plan" >&2
+    return 1
+  fi
+
   # A bundled legacy manifest alone no longer authorizes new drafts. Seed this known fixture only
   # inside the isolated verification database, through the same snapshot + availability contract.
   local manifest_hex

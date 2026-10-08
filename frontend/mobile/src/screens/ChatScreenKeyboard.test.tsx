@@ -16,6 +16,8 @@ jest.mock('expo-router', () => ({ ...jest.requireActual('expo-router'), useFocus
   const React = jest.requireActual<typeof import('react')>('react'); React.useEffect(callback, [callback])
 } }))
 jest.mock('../api/client', () => ({ ...jest.requireActual('../api/client'), programClient: jest.fn() }))
+// 이용량 표시는 ChatScreen.test가 확인합니다. 여기서는 응답을 보내지 않아 네트워크에 닿지 않습니다.
+jest.mock('../api/planUsage', () => ({ planUsageUseCase: () => ({ usage: () => new Promise(() => undefined) }) }))
 
 type KeyboardListener = (event: KeyboardEvent) => void
 let listeners: Map<KeyboardEventName, Set<KeyboardListener>>

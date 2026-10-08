@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { SupportProgramInterpretRequest } from '../../domain/entities/SupportProgramConversation'
 import { supportProgramInterpretationDtoSchema } from '../models/SupportProgramConversationDto'
+import { readPlanQuotaProblem } from '../models/PlanUsageDto'
 
 import type {
   SupportProgramEvidenceQuestion,
@@ -169,6 +170,8 @@ export async function searchSupportProgramsApi(context: SupportProgramHttpContex
   )
 
   if (!response.ok) {
+    const quota = await readPlanQuotaRejection(response)
+    if (quota) throw quota
     const requestRejection = await readRequestRejection(response)
     if (requestRejection) throw requestRejection
     if (response.status === 504
@@ -328,11 +331,15 @@ export async function answerSupportProgramEvidenceQuestionApi(context: SupportPr
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(command),
+      // 원문 질문은 로그인한 회원만 쓰므로 검색과 같이 세션 쿠키를 함께 보냅니다(다른 출처 개발 주소 포함).
+      credentials: context.credentials,
       signal,
     },
   )
 
   if (!response.ok) {
+    const quota = await readPlanQuotaRejection(response)
+    if (quota) throw quota
     const requestRejection = await readRequestRejection(response)
     if (requestRejection) throw requestRejection
     throw new SupportProgramEvidenceApiError(response.status)
@@ -342,6 +349,13 @@ export async function answerSupportProgramEvidenceQuestionApi(context: SupportPr
     await response.json(),
     command.sourceCode,
   )
+}
+
+/** 요금제 한도 문제 응답(PLAN_QUOTA_EXCEEDED·QUOTA_UNAVAILABLE)이면 shared 오류로 바꿉니다. 다른 판정이 본문을 다시 읽도록 복제본을 읽습니다. */
+async function readPlanQuotaRejection(response: Response) {
+  if (response.status !== 429 && response.status !== 503) return null
+  if (response.headers.get('Content-Type')?.split(';')[0]?.trim().toLowerCase() !== 'application/problem+json') return null
+  return readPlanQuotaProblem(response.status, await response.clone().json().catch(() => null))
 }
 
 async function readRequestRejection(response: Response): Promise<SupportProgramRequestApiError | null> {

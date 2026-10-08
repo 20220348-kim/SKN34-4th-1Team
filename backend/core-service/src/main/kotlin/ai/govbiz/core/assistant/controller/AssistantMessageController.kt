@@ -17,7 +17,8 @@ import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
 
 /**
- * 도우미 자유 질문 입구입니다. 비로그인도 물을 수 있고, 세션이 있으면 회원 상태 답에 씁니다.
+ * 도우미 자유 질문 입구입니다. AI를 부르는 질문이라 요금제 정책에 따라 로그인한 회원만 물을 수 있고(도움말 주제는 화면에서 바로 보여 줌),
+ * 회원 상태 답에 세션 계정을 씁니다.
  * 요청량·동시 실행 한도는 검색·원문 질문과 같은 Bean을 공유하므로 도우미가 한도를 따로 늘리지 않습니다.
  * 도구 에이전트가 켜져 있으면 모델을 여러 번 부르므로 주소당 분당 상한(`app.assistant.agent-per-client-per-minute`)을 더 겁니다.
  */
@@ -31,7 +32,7 @@ class AssistantMessageController(
 ) {
     @PostMapping("/messages")
     fun answer(
-        account: Account?,
+        account: Account,
         @RequestBody @Valid request: AssistantMessageRequest,
         httpRequest: HttpServletRequest,
     ): ResponseEntity<AssistantMessageResponse> = admission.execute(httpRequest.remoteAddr) {

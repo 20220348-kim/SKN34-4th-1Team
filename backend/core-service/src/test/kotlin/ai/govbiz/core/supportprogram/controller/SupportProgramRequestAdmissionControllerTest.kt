@@ -1,6 +1,12 @@
 package ai.govbiz.core.supportprogram.controller
 
 import ai.govbiz.core.account.helper.AccountTestHelper
+import ai.govbiz.core.account.service.exception.AuthenticationRequiredException
+import org.springframework.http.HttpHeaders
+import java.time.LocalDateTime
+import ai.govbiz.core.account.domain.AccountRole
+import ai.govbiz.core.account.domain.Account
+import ai.govbiz.core.planusage.PlanUsageTestHelper
 import ai.govbiz.core._common.exception.AiServiceCallException
 import ai.govbiz.core._common.exception.ApiExceptionHandler
 import ai.govbiz.core.account.service.AccountSessionService
@@ -44,6 +50,11 @@ class SupportProgramRequestAdmissionControllerTest {
     private val evidence = Mockito.mock(SupportProgramEvidenceService::class.java)
     private val now = AtomicLong()
     private val result = SupportProgramSearchResult("서울 AI", emptyList())
+    private val sessions = Mockito.mock(AccountSessionService::class.java).also {
+        Mockito.doReturn(Account(7, "member@example.test", AccountRole.USER, null, null, LocalDateTime.of(2026, 9, 1, 9, 0)))
+            .`when`(it).requireAccount(MEMBER_TOKEN)
+        Mockito.doThrow(AuthenticationRequiredException()).`when`(it).requireAccount(null)
+    }
 
     private fun mvc(perClient: Int = 1, global: Int = 10, concurrent: Int = 2): MockMvc {
         val admission = SupportProgramRequestAdmissionService(
@@ -51,8 +62,8 @@ class SupportProgramRequestAdmissionControllerTest {
             now::get,
         )
         return MockMvcBuilders.standaloneSetup(
-            SupportProgramController(SupportProgramSearchPreviewService(search, Mockito.mock(SupportProgramSearchResultRepository::class.java)), readiness, detail, evidence, admission),
-        ).setCustomArgumentResolvers(AuthenticatedAccountArgumentResolver({ Mockito.mock(AccountSessionService::class.java) }, { AccountTestHelper.cookieHelper() }))
+            SupportProgramController(SupportProgramSearchPreviewService(search, Mockito.mock(SupportProgramSearchResultRepository::class.java)), readiness, detail, evidence, admission, PlanUsageTestHelper.allowAll()),
+        ).setCustomArgumentResolvers(AuthenticatedAccountArgumentResolver({ sessions }, { AccountTestHelper.cookieHelper() }))
             .setControllerAdvice(ApiExceptionHandler()).build()
     }
 
@@ -65,6 +76,7 @@ class SupportProgramRequestAdmissionControllerTest {
         .with { it.remoteAddr = "192.0.2.1"; it }
 
     private fun answerRequest(): MockHttpServletRequestBuilder = post(ANSWERS)
+        .header(HttpHeaders.AUTHORIZATION, "Bearer $MEMBER_TOKEN")
         .contentType(MediaType.APPLICATION_JSON)
         .content("""{"sourceCode":"BIZINFO","sourceProgramId":"PBLN_TEST","question":"신청 대상은?"}""")
         .with { it.remoteAddr = "192.0.2.1"; it }
@@ -151,8 +163,13 @@ class SupportProgramRequestAdmissionControllerTest {
         mvc.perform(get(SEARCH).param("query", "가".repeat(501))).andExpect(status().isBadRequest())
         mvc.perform(postSearchRequest().content("""{"query":" "}"""))
             .andExpect(status().isBadRequest())
-        mvc.perform(post(ANSWERS).contentType(MediaType.APPLICATION_JSON).content("{}"))
+        mvc.perform(post(ANSWERS).header(HttpHeaders.AUTHORIZATION, "Bearer $MEMBER_TOKEN").contentType(MediaType.APPLICATION_JSON).content("{}"))
             .andExpect(status().isBadRequest())
+        // 로그인하지 않은 원문 질문은 요청량을 쓰기 전에 401로 끝납니다.
+        mvc.perform(post(ANSWERS).contentType(MediaType.APPLICATION_JSON)
+            .content("""{"sourceCode":"BIZINFO","sourceProgramId":"PBLN_TEST","question":"신청 대상은?"}""")
+            .with { it.remoteAddr = "192.0.2.1"; it })
+            .andExpect(status().isUnauthorized())
         mvc.perform(options(SEARCH)).andExpect(status().isOk())
         mvc.perform(head(SEARCH).param("query", "서울 AI").with { it.remoteAddr = "192.0.2.1"; it })
             .andExpect(status().isOk())
@@ -214,5 +231,6 @@ class SupportProgramRequestAdmissionControllerTest {
     companion object {
         private const val SEARCH = "/api/v1/support-programs/search"
         private const val ANSWERS = "/api/v1/support-programs/detail/answers"
+        private const val MEMBER_TOKEN = "member-session-token"
     }
 }

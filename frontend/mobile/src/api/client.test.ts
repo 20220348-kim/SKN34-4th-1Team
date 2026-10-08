@@ -1,3 +1,4 @@
+import { PlanQuotaExceededError, QuotaUnavailableError } from '@govbiz/shared/domain/errors/PlanQuotaError'
 import { ApiError, apiRequest, createApiFetch, errorMessage, getApiBaseUrl, programClient, readProgramDetail, requestResultUnconfirmed, requestRetryAfterSeconds } from './client'
 import { SupportProgramInterpretationApiError, SupportProgramRequestApiError, SupportProgramSearchTimeoutApiError } from '@govbiz/shared/data/api/supportProgramApi'
 import { programDetail } from '../test/preparationFixtures'
@@ -66,6 +67,50 @@ describe('native API boundary', () => {
   })
 })
 
+
+describe('plan quota problems', () => {
+  const originalFetch = globalThis.fetch
+  const usedUp = '오늘 AI 대화 검색 10회를 모두 썼어요. 자정(서울 시간)에 다시 채워져요. 필터 검색은 계속 쓸 수 있어요.'
+  const unavailable = '지금은 이용량을 확인할 수 없어 실행하지 않았어요. 잠시 후 다시 시도해 주세요.'
+  const exceeded = { code: 'PLAN_QUOTA_EXCEEDED', feature: 'AI_SEARCH', period: 'DAY', plan: 'FREE', limit: 10, used: 10,
+    resetsAt: '2026-10-09T00:00:00+09:00', retryAfterSeconds: 3600, detail: 'private server text' }
+  const problem = (status: number, body: Record<string, unknown>) => new Response(JSON.stringify({ status, ...body }),
+    { status, headers: { 'Content-Type': 'application/problem+json' } })
+  beforeEach(() => { process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.example.test' })
+  afterEach(() => { globalThis.fetch = originalFetch; delete process.env.EXPO_PUBLIC_API_BASE_URL })
+
+  it('explains a used-up plan limit with the shared message and keeps its retry time', async () => {
+    globalThis.fetch = jest.fn().mockResolvedValue(problem(429, exceeded))
+    const failure = await apiRequest('/api/v1/support-programs/search', { method: 'POST', body: { query: '사업화 지원' }, accessToken: 'owner' })
+      .catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(ApiError)
+    expect(failure).toMatchObject({ status: 429, code: 'PLAN_QUOTA_EXCEEDED', retryAfterSeconds: 3600, message: usedUp })
+    expect(errorMessage(failure)).toBe(usedUp)
+  })
+
+  it('reports an unchecked plan usage as a failure instead of a normal result', async () => {
+    globalThis.fetch = jest.fn().mockResolvedValue(problem(503, { code: 'QUOTA_UNAVAILABLE' }))
+    await expect(apiRequest('/api/v1/plan-usage')).rejects.toMatchObject({ status: 503, code: 'QUOTA_UNAVAILABLE', message: unavailable })
+  })
+
+  it('keeps the per-minute request limit separate from the plan limit', async () => {
+    const search = { method: 'POST', body: { query: '사업화 지원' } }
+    globalThis.fetch = jest.fn().mockResolvedValue(problem(429, { code: 'SUPPORT_PROGRAM_RATE_LIMITED', retryAfterSeconds: 30 }))
+    await expect(apiRequest('/api/v1/support-programs/search', search)).rejects.toMatchObject({ status: 429, code: 'SUPPORT_PROGRAM_RATE_LIMITED',
+      retryAfterSeconds: 30, message: '요청이 많습니다. 잠시 후 다시 시도해 주세요.' })
+    // 계약과 다른 한도 응답은 한도 안내로 꾸미지 않습니다.
+    globalThis.fetch = jest.fn().mockResolvedValue(problem(429, { ...exceeded, feature: 'UNKNOWN_FEATURE' }))
+    await expect(apiRequest('/api/v1/support-programs/search', search)).rejects.toMatchObject({ status: 429, message: '요청이 많습니다. 잠시 후 다시 시도해 주세요.' })
+  })
+
+  it('shows the shared message for quota errors thrown by the shared program client', async () => {
+    globalThis.fetch = jest.fn().mockResolvedValue(problem(429, exceeded))
+    const failure = await programClient('owner').search({ query: '사업화 지원', acceptingOnly: true }).catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(PlanQuotaExceededError)
+    expect(errorMessage(failure)).toBe(usedUp)
+    expect(errorMessage(new QuotaUnavailableError())).toBe(unavailable)
+  })
+})
 
 describe('mobile detail reader through the shared HTTP client', () => {
   const originalFetch = globalThis.fetch

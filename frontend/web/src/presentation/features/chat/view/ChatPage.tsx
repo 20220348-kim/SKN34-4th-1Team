@@ -2,6 +2,7 @@ import type { FormEvent } from 'react'
 import { flushSync } from 'react-dom'
 
 import type { SupportProgramSearchReadiness } from '../../../../domain/entities/SupportProgramSearchReadiness'
+import { PlanUsageLine } from '../../../shared/plan-usage/PlanUsageLine'
 import { useChatPageViewModel } from '../viewmodel/useChatPageViewModel'
 import { companyConditionFields } from '../viewmodel/chatConversationProposal'
 import { ConversationProposal } from './ConversationProposal'
@@ -51,6 +52,7 @@ export function ChatPage({ layout = 'landing' }: { layout?: ChatPageLayout }) {
     searchStatusAnnouncement,
     suggestions,
     timelineRef,
+    aiSearchUsage,
   } = useChatPageViewModel()
 
   const hasReadinessNotice = readiness.isInitialLoading || readiness.isError
@@ -87,6 +89,13 @@ export function ChatPage({ layout = 'landing' }: { layout?: ChatPageLayout }) {
       <small className={`${chatPageStyles.composerHint} ${isDockedLanding ? chatPageStyles.dockedComposerHint : ''}`}>
         Enter로 전송 · Shift+Enter로 줄바꿈
       </small>
+      {/* AI 대화 검색 이용량입니다. 한도를 정하지 않은 요금제는 그리지 않습니다. */}
+      {aiSearchUsage ? (
+        <PlanUsageLine
+          view={aiSearchUsage}
+          className={isDockedLanding ? chatPageStyles.dockedComposerUsage : chatPageStyles.composerUsage}
+        />
+      ) : null}
     </div>
   )
 

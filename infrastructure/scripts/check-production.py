@@ -37,6 +37,8 @@ def validate(config):
     origin = core.get("APP_CORS_ALLOWED_ORIGIN", "")
     if not re.fullmatch(r"https://[a-z0-9-]+\.vercel\.app", origin):
         errors.append("고정 운영 Vercel HTTPS origin이 필요합니다(끝 / 제외).")
+    if core.get("PLAN_USAGE_UNLIMITED_ACCOUNT_EMAILS", "").strip():
+        errors.append("운영에서는 요금제 한도 없는 개발용 계정(PLAN_USAGE_UNLIMITED_ACCOUNT_EMAILS)을 비워야 합니다.")
     if core.get("ACCOUNT_DEV_LOGIN_ENABLED") != "false" or core.get("ACCOUNT_COOKIE_SECURE") != "true":
         errors.append("개발 로그인은 false, Secure 쿠키는 true여야 합니다.")
     mail_enabled = False

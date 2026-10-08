@@ -8,8 +8,10 @@ import { isValidAssistantMessage } from '../../../domain/usecases/AskAssistantUs
 import type { BrowseSavedSupportProgramsUseCase } from '../../../domain/usecases/SavedSupportProgramUseCases'
 import type { IsAssistantAiEnabled } from '../../../data/config/assistantAi'
 import type { KakaoChannelChatUrl } from '../../../data/config/kakaoChannel'
+import { AssistantApiError } from '../../../data/api/assistantApi'
 import { draftChanged } from '../../features/chat/state/chatSlice'
 import { useAuthSession } from '../auth/hooks/useAuthSession'
+import { loginPathFor } from '../auth/returnPath'
 import { findHelpEntry, helpEntriesForSurface } from '../help/helpContent'
 import { useReceivedProposals } from '../partner-proposal/useReceivedProposals'
 import {
@@ -21,6 +23,8 @@ import {
   freeTextAnswer,
   freeTextFailure,
   freeTextFallback,
+  freeTextLoginAnswer,
+  freeTextSessionExpired,
   greetingMessages,
   helpAnswer,
   isAssistantHiddenOn,
@@ -86,6 +90,9 @@ export function useAssistantViewModel(
   const contactUrl = useMemo(() => kakaoChannelChatUrl(), [kakaoChannelChatUrl])
   // 모델 호출은 빌드 스위치로만 켭니다. 꺼져 있으면 자유 입력을 주제 알약으로 돌려보내 비용이 들지 않습니다.
   const aiEnabled = useMemo(() => isAssistantAiEnabled(), [isAssistantAiEnabled])
+  // 자유 질문(모델 호출)은 회원만 씁니다. 로그인 전에는 입력창 대신 로그인 안내를 두고, 주제 알약 · 도움말은 그대로 씁니다.
+  // 모델이 꺼져 있으면 자유 입력은 서버에 가지 않고 주제 알약으로 돌아가므로 지금처럼 입력창을 둡니다.
+  const canAskFreeText = isAuthenticated || !aiEnabled
   const session = useMemo(() => ({ isAuthenticated, hasCompany, contactUrl }), [isAuthenticated, hasCompany, contactUrl])
   const [ui, setUi] = useState({ ...conversationSession, isOpen: false, isTyping: false, hasUnread: false })
   // 계정이 바뀐 첫 렌더에서도 이전 패널·입력 초안·배지를 표시하지 않습니다.
@@ -185,6 +192,12 @@ export function useAssistantViewModel(
       append([asked, freeTextFallback()], routeReplies())
       return
     }
+    // 서버가 비로그인 자유 질문을 받지 않으므로 보내지 않고 로그인을 안내합니다(이전 대화의 다시 시도 알약 등).
+    if (!isAuthenticated) {
+      const answer = freeTextLoginAnswer(returnTo)
+      append([asked, answer], answer.role === 'assistant' ? answer.followUps : [])
+      return
+    }
     const history = messages.slice(-6).map((item) => (item.role === 'user'
       ? { role: 'USER' as const, content: item.text }
       : { role: 'ASSISTANT' as const, content: item.paragraphs.join(' ') }))
@@ -210,16 +223,19 @@ export function useAssistantViewModel(
         ? freeTextAnswer(result.answer, { pathname, search, session, returnTo })
         : freeTextFailure(trimmed, result.outcome === 'rate-limited' ? assistantMessages.rateLimited(result.retryAfterSeconds) : assistantMessages.unavailable)
       append([answer], answer.role === 'assistant' && answer.followUps.length > 0 ? answer.followUps : routeReplies())
-    } catch {
+    } catch (error) {
       if (!isCurrentSession()) return
-      const answer = freeTextFailure(trimmed, assistantMessages.loadFailed)
+      // 세션이 끝나 서버가 로그인을 요구하면 일반 실패 대신 다시 로그인하라고 알립니다.
+      const answer = error instanceof AssistantApiError && error.status === 401
+        ? freeTextSessionExpired()
+        : freeTextFailure(trimmed, assistantMessages.loadFailed)
       append([answer], answer.role === 'assistant' ? answer.followUps : [])
     } finally {
       clearTimeout(timer)
       requests.current.delete(controller)
       if (isCurrentSession()) updateUi({ isTyping: false })
     }
-  }, [aiEnabled, append, askAssistant, messages, pathname, returnTo, routeReplies, search, session,
+  }, [aiEnabled, append, askAssistant, isAuthenticated, messages, pathname, returnTo, routeReplies, search, session,
     dispatchToStore, conversationSession, isCurrentSession, updateUi])
 
   /** 검색 이동 버튼은 검색 입력창에 도우미가 고른 검색어를 미리 채웁니다. 검색 자체는 사용자가 보낼 때 시작합니다. */
@@ -302,6 +318,9 @@ export function useAssistantViewModel(
     quickReplies,
     isTyping,
     pickQuickReply: (reply: AssistantQuickReply) => { void pickQuickReply(reply) },
+    /** 자유 질문 입력창을 둘지입니다. 거짓이면 입력창 대신 로그인 안내와 [loginPath] 링크를 둡니다. */
+    canAskFreeText,
+    loginPath: loginPathFor(returnTo),
     submitText: (text: string) => { void submitText(text) },
     prepareNavigation,
     startNewConversation,

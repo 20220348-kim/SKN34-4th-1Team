@@ -85,7 +85,8 @@ def test_broken_wire_trace_is_rejected(mutation):
 def test_driver_keeps_allowlisted_success_and_failure_evidence(tmp_path, monkeypatch, fail):
     logs, counts = [], {}
 
-    def post(url, message):
+    def post(url, message, *, session_token):
+        assert session_token == "member-session"
         assert trace.re.fullmatch(r"이 공고 PRIVATE-ASSISTANT-TRACE-[a-f]{32}-(ok|fail|timeout)", message)
         scenario = message.rsplit("-", 1)[1]
         index = {"ok": 1, "fail": 2, "timeout": 3}[scenario]
@@ -108,6 +109,7 @@ def test_driver_keeps_allowlisted_success_and_failure_evidence(tmp_path, monkeyp
     output = tmp_path / "trace.json"
     kwargs = dict(
         core_url="http://localhost:8080",
+        session_token="member-session",
         stub_url="http://localhost:8002",
         environment=ENV,
         core_logs=lambda: "\n".join(logs),

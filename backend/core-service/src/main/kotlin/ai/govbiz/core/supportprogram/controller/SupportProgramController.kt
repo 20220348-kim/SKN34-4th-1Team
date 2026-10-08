@@ -1,6 +1,8 @@
 package ai.govbiz.core.supportprogram.controller
 
 import ai.govbiz.core.account.domain.Account
+import ai.govbiz.core.planusage.domain.PlanUsageFeature
+import ai.govbiz.core.planusage.service.PlanUsageService
 import ai.govbiz.core.supportprogram.controller.dto.SupportProgramEvidenceAnswerResponse
 import ai.govbiz.core.supportprogram.controller.dto.SupportProgramEvidenceQuestionRequest
 import ai.govbiz.core.supportprogram.controller.dto.SupportProgramDetailResponse
@@ -37,6 +39,7 @@ class SupportProgramController(
     private val detailService: SupportProgramDetailService,
     private val evidenceService: SupportProgramEvidenceService,
     private val requestAdmissionService: SupportProgramRequestAdmissionService,
+    private val planUsageService: PlanUsageService,
 ) {
 
     @GetMapping("/search")
@@ -49,9 +52,11 @@ class SupportProgramController(
         @RequestParam(defaultValue = "true") acceptingOnly: Boolean,
         httpRequest: HttpServletRequest,
     ): ResponseEntity<SupportProgramSearchResponse> = requestAdmissionService.execute(httpRequest.remoteAddr) {
-        ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(
-            SupportProgramSearchResponse.from(searchService.search(query, acceptingOnly, null, account?.id)),
-        )
+        countingAiSearch(account, query, httpRequest) {
+            ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(
+                SupportProgramSearchResponse.from(searchService.search(query, acceptingOnly, null, account?.id)),
+            )
+        }
     }
 
     @PostMapping("/search")
@@ -60,11 +65,13 @@ class SupportProgramController(
         @RequestBody @jakarta.validation.Valid request: SupportProgramSearchRequest,
         httpRequest: HttpServletRequest,
     ): ResponseEntity<SupportProgramSearchResponse> = requestAdmissionService.execute(httpRequest.remoteAddr) {
-        ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(
-            SupportProgramSearchResponse.from(
-                searchService.search(request.query, request.acceptingOnly, request.companyConditions?.toDomain(), account?.id),
-            ),
-        )
+        countingAiSearch(account, request.query, httpRequest) {
+            ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(
+                SupportProgramSearchResponse.from(
+                    searchService.search(request.query, request.acceptingOnly, request.companyConditions?.toDomain(), account?.id),
+                ),
+            )
+        }
     }
 
     @PostMapping("/search/results")
@@ -95,17 +102,25 @@ class SupportProgramController(
     ): SupportProgramDetailResponse =
         SupportProgramDetailResponse.from(detailService.get(sourceCode, sourceProgramId))
 
+    /** 공고 원문 질문은 로그인한 회원만 씁니다. 요금제의 하루 질문 횟수에서 먼저 빼고 답하지 못하면 돌려줍니다. */
     @PostMapping("/detail/answers")
     fun answerFromOfficialSource(
+        account: Account,
         @RequestBody @jakarta.validation.Valid request: SupportProgramEvidenceQuestionRequest,
         httpRequest: HttpServletRequest,
     ): SupportProgramEvidenceAnswerResponse = requestAdmissionService.execute(httpRequest.remoteAddr) {
-        SupportProgramEvidenceAnswerResponse.from(
-            evidenceService.answer(
-                sourceCode = request.sourceCode,
-                sourceProgramId = request.sourceProgramId,
-                question = request.question,
-            ),
-        )
+        planUsageService.consume(account, httpRequest.remoteAddr, PlanUsageFeature.EVIDENCE_QUESTION) {
+            SupportProgramEvidenceAnswerResponse.from(
+                evidenceService.answer(
+                    sourceCode = request.sourceCode,
+                    sourceProgramId = request.sourceProgramId,
+                    question = request.question,
+                ),
+            )
+        }
     }
+
+    /** 검색어가 있는 검색만 AI(의미 검색·순위)를 부르므로 그때만 AI 대화 검색 횟수로 셉니다. */
+    private fun <T> countingAiSearch(account: Account?, query: String, httpRequest: HttpServletRequest, action: () -> T): T =
+        if (query.isBlank()) action() else planUsageService.consume(account, httpRequest.remoteAddr, PlanUsageFeature.AI_SEARCH, action)
 }

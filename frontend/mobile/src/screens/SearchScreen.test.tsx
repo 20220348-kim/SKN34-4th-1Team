@@ -20,6 +20,8 @@ jest.mock('expo-router', () => ({ ...jest.requireActual('expo-router'), useFocus
 } }))
 jest.mock('../api/savedPrograms', () => ({ ...jest.requireActual('../api/savedPrograms'), listSavedPrograms: jest.fn(), saveProgram: jest.fn() }))
 jest.mock('../api/client', () => ({ ...jest.requireActual('../api/client'), programClient: jest.fn() }))
+// 이용량 표시는 ChatScreen.test가 확인합니다. 여기서는 응답을 보내지 않아 네트워크에 닿지 않습니다.
+jest.mock('../api/planUsage', () => ({ planUsageUseCase: () => ({ usage: () => new Promise(() => undefined) }) }))
 const emptyPage = { programs: [], total: 0, page: 1, pageSize: 12, totalPages: 0, regions: [], categories: [],
   startupStages: [], applicantTypes: [], founderAges: [] }
 const context = { query: '사업화 지원', acceptingOnly: true,

@@ -93,6 +93,15 @@ describe('createChatConversationProposal', () => {
     }))).toMatchObject({ kind: 'ready', canConfirm: canSearch })
   })
 
+  it('AI 대화 검색 한도를 다 썼으면 검색 준비와 관계없이 확인 검색만 막고 그 안내를 담는다', () => {
+    const interpretation = { result: readyConversationProposal(seoulConversationContext) }
+    expect(createChatConversationProposal(createSource({ interpretation, searchLimitMessage: '오늘 AI 대화 검색 10회를 모두 썼어요.' })))
+      .toMatchObject({ kind: 'ready', canConfirm: false, searchLimitMessage: '오늘 AI 대화 검색 10회를 모두 썼어요.' })
+    expect(createChatConversationProposal(createSource({ interpretation, searchLimitMessage: null })))
+      .toMatchObject({ kind: 'ready', canConfirm: true })
+    expect(createChatConversationProposal(createSource({ interpretation, searchLimitMessage: null }))).not.toHaveProperty('searchLimitMessage')
+  })
+
   it('조건 차이를 계산해도 입력 객체와 변경 필드를 수정하지 않는다', () => {
     const source = structuredClone(createSource({
       interpretation: { request: { context: emptyConversationContext }, result: readyConversationProposal(seoulConversationContext) },

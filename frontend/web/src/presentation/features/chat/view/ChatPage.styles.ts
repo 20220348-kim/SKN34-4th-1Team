@@ -157,6 +157,9 @@ export const chatPageStyles = {
   ),
   composerFooter: 'flex min-h-[4.25rem] flex-wrap items-center gap-x-4 gap-y-2 pt-1 pr-[5.5rem] pb-5 pl-7 max-chat:pl-5',
   composerHint: 'block text-[0.75rem] leading-relaxed text-ink-muted max-chat:text-[0.68rem]',
+  // 입력 안내와 같은 줄에 붙는 AI 대화 검색 이용량입니다. 글자 크기를 안내에 맞춥니다.
+  composerUsage: 'text-[0.75rem] max-chat:text-[0.68rem]',
+  dockedComposerUsage: 'justify-end text-right text-[0.65rem]',
   sourceHint: 'mx-4 mt-7 mb-0 flex flex-wrap items-center justify-center gap-2 text-center text-xs leading-relaxed text-ink-muted',
   programCard:
     'rounded-2xl border border-line bg-white p-5 shadow-[0_8px_24px_rgb(32_33_36_/_4%)]',

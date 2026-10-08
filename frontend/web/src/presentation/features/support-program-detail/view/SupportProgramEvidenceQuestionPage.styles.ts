@@ -16,6 +16,7 @@ export const supportProgramEvidenceQuestionStyles = {
   evidenceHeader: 'flex flex-wrap items-start justify-between gap-4',
   evidenceBadge: 'shrink-0 rounded-full bg-brand-soft px-3 py-[0.45rem] text-[0.7rem] font-extrabold text-brand-primary',
   evidenceDescription: 'mt-3 mb-0 leading-[1.6] text-ink-muted',
+  loginLink: 'mt-5 inline-flex min-h-11 items-center rounded-full bg-brand-primary px-5 text-[0.86rem] font-bold text-white no-underline hover:bg-brand-hover focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-brand-primary',
   evidenceForm: 'mt-5 grid gap-2',
   evidenceLabel: 'text-[0.82rem] font-extrabold text-ink',
   evidenceInput: classes(
@@ -25,6 +26,8 @@ export const supportProgramEvidenceQuestionStyles = {
   ),
   evidenceControls: 'mt-1 flex items-center justify-between gap-3',
   evidenceCount: 'text-[0.72rem] text-ink-muted',
+  // 입력 아래 오늘 질문 이용량입니다. 색은 이용량 줄이 정하고 글자 크기만 글자 수 안내에 맞춥니다.
+  evidenceUsage: 'text-[0.72rem]',
   evidenceSubmitButton: classes(
     'cursor-pointer rounded-full border-0 bg-brand-primary px-4 py-[0.7rem] text-[0.78rem] font-extrabold text-white',
     'hover:bg-brand-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary disabled:cursor-not-allowed disabled:opacity-[0.4]',

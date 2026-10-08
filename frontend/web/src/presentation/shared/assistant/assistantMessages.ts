@@ -64,5 +64,9 @@ export const assistantMessages = {
   helpDemo: '이 기능은 지금 예시 값으로 동작해요.',
   manualLink: '매뉴얼에서 자세히 보기 · 준비 중',
   loadFailed: '답변을 받지 못했어요. 잠시 뒤 다시 시도해 주세요.',
+  /** 자유 질문은 회원만 쓸 수 있습니다. 로그인 전에는 입력창 자리에 이 안내를 둡니다. */
+  freeTextLoginRequired: '로그인하면 도우미에게 직접 물어볼 수 있어요.',
+  /** 로그인이 끝난 세션으로 자유 질문을 보내 서버가 로그인을 요구했을 때입니다. */
+  sessionLoginRequired: '로그인이 필요해요. 다시 로그인하면 질문할 수 있어요.',
   retry: '다시 시도',
 } as const

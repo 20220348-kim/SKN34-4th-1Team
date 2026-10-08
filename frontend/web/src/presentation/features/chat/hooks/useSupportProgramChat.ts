@@ -14,6 +14,7 @@ import { SupportProgramRequestError } from '../../../../domain/errors/SupportPro
 import { SupportProgramInterpretationError } from '../../../../domain/errors/SupportProgramInterpretationError'
 import { SupportProgramSearchTimeoutError } from '../../../../domain/errors/SupportProgramSearchTimeoutError'
 import { supportProgramRequestFailureMessage } from '../../../shared/support-program/supportProgramRequestFailureMessage'
+import { planQuotaFailureMessage } from '../../../shared/plan-usage/planUsageView'
 import {
   companyDefaultsLoaded,
   conversationReset,
@@ -214,7 +215,8 @@ export function useSupportProgramChat(
         const searchFailedAction = searchFailed({
           query: searchQuery,
           requestId,
-          message: error instanceof SupportProgramSearchRestoreError
+          // 요금제 한도(429)와 이용량 확인 실패(503)는 shared가 만든 안내를 그대로 보여 줍니다.
+          message: planQuotaFailureMessage(error) ?? (error instanceof SupportProgramSearchRestoreError
             ? error.reason === 'unauthorized'
               ? '로그인 상태를 확인하지 못했습니다. 새로고침한 뒤 다시 로그인해 주세요.'
               : error.message
@@ -222,7 +224,7 @@ export function useSupportProgramChat(
               ? supportProgramRequestFailureMessage(error)
               : error instanceof SupportProgramSearchTimeoutError
                 ? '서버의 지원사업 검색 시간이 초과되었습니다. 확인한 조건으로 다시 검색해 주세요.'
-                : undefined,
+                : undefined),
         })
         dispatchAction(searchFailedAction)
       } finally {

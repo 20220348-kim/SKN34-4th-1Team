@@ -1,8 +1,9 @@
 # 요금제 사용량 한도
 
-결제 연동 없이 요금제·한도·사용량 기록·화면 표시를 먼저 만드는 작업을 여러 단계로 나눈다. 이 문서는 첫 단계인 요금제 기본 구조
-(요금제 종류·배정·현재 요금제 조회·화면 표시)를 다룬다. 기준 설계는 2026-10-07 「요금제별 사용량 한도 설계」이고,
-결정마다 웹 조사 결과와 기존 설계 중 하나를 골랐다(섞지 않음). 모든 회원은 FREE에서 시작하며 결제·구독은 받지 않는다.
+결제 연동 없이 요금제·한도·사용량 기록·화면 표시를 먼저 만드는 작업을 여러 단계로 나눈다. 이 문서는 요금제 기본 구조
+(요금제 종류·배정·현재 요금제 조회)와 두 번째 단계인 하루 한도(AI 대화 검색·공고 원문 질문)를 다룬다. 기준 설계는
+2026-10-07 「요금제별 사용량 한도 설계」이고, 결정마다 웹 조사 결과와 기존 설계 중 하나를 골랐다(섞지 않음).
+모든 회원은 FREE에서 시작하며 결제·구독은 받지 않는다.
 
 ## 요금제
 
@@ -13,13 +14,44 @@
 | 프리미엄(예정) | `PREMIUM` | 운영자가 `account_plan`에 배정한 계정만 |
 
 요금제 종류는 Core `planusage/domain/PlanCode.kt`가 원본이고, DB는 `account_plan.plan_code`의 CHECK 제약으로 같은 세 값만 받는다.
-계정을 지우면 배정 행도 함께 지워진다. 이 단계에서는 요금제에 따라 기능을 막거나 횟수를 세지 않는다.
+계정을 지우면 배정 행과 사용량 행도 함께 지워진다.
 
-- **조회:** `GET /api/v1/plan-usage`가 현재 요금제 `{ "plan": "FREE" | "PLUS" | "PREMIUM" | null }`을 돌려준다. 로그인 전에는
-  `plan: null`이고 no-store다. 기능별 사용량(`items`)은 다음 단계에서 같은 응답에 더한다(추가형 변경). shared 스키마는 모르는
-  필드를 읽지 않고 넘기므로 지금 앱·웹은 깨지지 않는다.
-- **화면:** 웹 프로필은 현재 요금제 이름과 "결제는 아직 받지 않아요" 안내, 요금제 화면 링크를 보여 준다. 앱 내 계정은 현재 요금제
-  한 줄만 보여 주고 결제·요금제 안내 링크를 두지 않는다.
+## 한도
+
+| 기능 | 로그인 전 | FREE | PLUS(예정) | PREMIUM(예정) |
+|---|---|---|---|---|
+| AI 대화 검색(검색 실행 기준) | 하루 2회 · 결과 2건 | 하루 10회 | 아직 정하지 않음 · 제한 없음 | 아직 정하지 않음 · 제한 없음 |
+| 공고 원문 질문 | 로그인 필요 | 하루 10회 | 아직 정하지 않음 · 제한 없음 | 아직 정하지 않음 · 제한 없음 |
+| 도우미 자유 질문 | 로그인 필요 | 이용 가능 | 이용 가능 | 이용 가능 |
+| 필터 검색·공고 상세·첨부 받기 | 횟수 제한 없음 | 횟수 제한 없음 | 횟수 제한 없음 | 횟수 제한 없음 |
+
+숫자는 Core `planusage/domain/PlanCode.kt`가 원본이다. 기능별 한도가 `null`이면 그 요금제는 아직 한도를 정하지 않은 것이라
+막지 않는다. PLUS·PREMIUM 숫자를 정하면 그 상수만 바꾸면 적용된다.
+로컬 개발에서는 `PLAN_USAGE_UNLIMITED_ACCOUNT_EMAILS`(Core `app.plan-usage.unlimited-account-emails`)에 적은 계정만 한도 없이 쓴다.
+로컬 Compose 기본값은 데모 시드 계정 6개(개발 로그인 `admin@govbiz.local`·`member@govbiz.local`과 `@demo.govbiz.local` 4개)이며,
+이 계정도 사용량은 세고 응답의 `limit`만 null이다. 새로 가입한 계정은 그대로 FREE 한도를 받아 한도 동작을 확인할 수 있다.
+운영 Compose는 이 값을 넘기지 않고 `check-production.py`가 값이 있으면 배포를 막는다. 대화 조건 해석은 AI 검색 횟수로 세지 않고 기존 분당 요청
+제한만 받는다. 기업 맞춤 리포트의 내부 검색·원문 답변은 리포트 생성 예산으로만 센다.
+
+## 세는 규칙
+
+- **기간:** 하루는 서울 날짜다. 날짜가 바뀌면 새 기간 키(`YYYY-MM-DD`)의 행을 쓰므로 초기화 작업이 없다.
+- **하루 한도(AI 검색·원문 질문):** 분당 요청 제한을 통과한 요청만, AI를 부르기 전에 `plan_usage_counter`(V56) 행을 만들거나 잠근 뒤
+  조건부 UPDATE 한 문장(`used_count < limit`)으로 1을 더한다. 동시에 와도 한도를 넘겨 더하지 않는다. 요청이 실패하면 되돌린다.
+  검색어가 없는 최신 목록 조회는 AI를 부르지 않아 세지 않는다.
+- **한도 없는 요금제:** 한도가 `null`이면 조건 없이 1을 더해 사용량만 남기고 막지 않는다. 실패하면 똑같이 되돌린다.
+  나중에 숫자를 정하면 그날 이미 센 사용량부터 적용된다.
+- **로그인 전 체험:** 접속 주소를 SHA-256으로만 넣은 Redis 키에 다음 서울 자정까지 둔다(Lua로 한도 안일 때만 증가).
+  DB에는 남기지 않는다. 같은 회사 망·공용 망에서는 한도를 나눠 쓸 수 있고, 로그인하면 계정 한도를 쓴다.
+- **로그인:** 공고 원문 질문과 도우미 자유 질문은 로그인한 회원만 쓴다(없으면 401 `AUTHENTICATION_REQUIRED`).
+- **응답:** 한도 초과는 `429 PLAN_QUOTA_EXCEEDED`(`feature`·`period`·`plan`·`limit`·`used`·`resetsAt`·`retryAfterSeconds`,
+  `Retry-After`는 다음 초기화까지 초). 분당 제한 `SUPPORT_PROGRAM_RATE_LIMITED`와 다른 코드다. 사용량 저장소를 읽거나 쓰지 못하면
+  유료 기능을 실행하지 않고 `503 QUOTA_UNAVAILABLE`.
+- **조회:** `GET /api/v1/plan-usage`가 현재 요금제와 기능별 `feature`·`period`·`limit`·`used`·`resetsAt`(+09:00)을 돌려준다(no-store).
+  로그인 전에는 `plan: null`과 접속 주소의 AI 대화 검색 체험만 담는다. 한도가 없는 요금제는 `limit: null`이다.
+- **화면:** 웹은 AI 검색 입력 아래와 원문 질문(상세 패널·질문 화면)에 "오늘 8/10회" 줄을 두고 80%부터 경고 색과 다시 채워지는 때를,
+  다 쓰면 그 기능만 막고 안내를 보인다. 웹 프로필과 앱 내 계정은 기능별 이용량을 보여 주고, 한도가 없으면 막대 없이 "제한 없음"으로 적는다.
+  `limit`이 null인 기능은 이용량 줄을 그리지 않는다. 요금제 화면은 아직 한도를 보여 주지 않으므로 웹·앱 모두 요금제 화면으로 잇지 않는다.
 
 ## 판단 기록
 
@@ -27,26 +59,42 @@
 |---|---|---|---|---|---|
 | D1 | 플랜 단위 | 기업(사업자) 구독, 프리미엄 3좌석, 무료도 사업자번호 기준 | 팀·워크스페이스 플랜은 협업 수요가 생길 때 도입하고 개인·팀 청구를 따로 둔다 | 웹 조사 | 기업이 계정당 하나이고 좌석·초대 기능이 없다. 계정 단위로 시작하고 좌석은 결제 단계에서 다룬다 |
 | D2 | 한도 단위 | 기능별 횟수(하루·월) | AI 제품은 크레딧이 늘지만 예측 가능한 결과 단위와 사용량 표시가 핵심 | 기존 설계 | 기능이 넷뿐이라 "오늘 8/10회"가 크레딧 환산보다 이해하기 쉽다 |
-| D8 | 첫 범위 | 결제 없이 플랜·한도·원장·화면, 모두 FREE로 시작 | — | 기존 설계 | 요금제 화면의 "플러스 정식 출시 전까지 회원 무료" 문구는 한도를 적용하는 단계에서 이 결정에 맞게 고친다 |
+| D3 | 로그인 전 AI | 하루 3회·결과 2건, 원문 질문·도우미는 로그인 | 로그아웃 사용자에게 기본 기능만 열고 고급 기능은 로그인(ChatGPT·Perplexity) | 기존 설계(횟수는 사용자 결정으로 하루 2회) | 결과 2건 제한은 이미 있었고 하루 횟수만 더했다 |
+| D3-식별 | 로그인 전 식별 | 접속 주소와 기기 | 익명 한도는 주소·브라우저 식별자로 세며, 브라우저 식별자는 지우면 초기화되고 VPN·모바일망은 오탐이 난다 | 웹 조사 | 기기 식별자는 클라이언트가 바꿀 수 있어 남용을 막지 못하고 수집만 늘린다. 주소만 해시로 하루 보관 |
+| D8 | 첫 범위 | 결제 없이 플랜·한도·원장·화면, 모두 FREE로 시작 | — | 기존 설계 | 요금제 화면(가격·한도표·"플러스 정식 출시 전까지 회원 무료" 문구)은 사용자가 보류해 이번 단계에서도 바꾸지 않는다 |
+| D9 | 유료 요금제 숫자 | PLUS 하루 40·50회, PREMIUM 150·200회 | — | 사용자 결정 | 유료 요금제 숫자는 아직 정하지 않았다. 한도를 `null`(제한 없음)로 두고 사용량만 세며, 숫자를 정하면 상수만 바꾼다 |
+| E1 | 초과 응답 | 429 `PLAN_QUOTA_EXCEEDED` | 쿼터 소진에 402를 쓰자는 문서도 있으나 402는 RFC 9110상 예약된 비표준이고 OpenAI·Google은 쿼터 소진도 429 | 기존 설계 | 결제가 없어 "결제 필요"가 사실이 아니다. 코드와 `Retry-After`(다음 초기화)로 분당 제한과 구분한다 |
+| E2 | 저장소 장애 | 503 `QUOTA_UNAVAILABLE`로 막음 | 가용성 우선 API는 fail-open, 비용·보안 민감 경로는 fail-closed | 기존 설계 | 목적이 OpenAI 비용 보호이고 카운터가 Core MySQL과 같은 장애 경계다 |
+| E3 | 초기화 | 서울 자정·월초 | 달력 기준은 계획하기 쉽고 롤링 창은 초기화 시점을 예측하기 어렵다 | 기존 설계 | 방향이 같다. 이번 단계는 하루 한도라 서울 자정만 쓴다 |
+| E4 | 세는 방식 | AI 전 조건부 UPDATE 예약 → 성공 확정 / 실패 해제, 요청 키 | 원자적 조건부 증가와 예약·확정·해제, 멱등 키로 이중 집계 방지 | 기존 설계 | 하루 한도는 AI 호출 전 조건부 증가로 예약하고 실패하면 되돌린다 |
+| E5 | 화면 | "오늘 8/10회"·초기화 안내·업그레이드 버튼 | 사용량을 계속 보이고 80%부터 경고·선택지·초기화 날짜를 닫을 수 있게 보인다 | 웹 조사 | 경고 기준(80%)이 설계 시안에 없다. 결제가 없고 요금제 화면에 한도가 없어 웹·앱 모두 링크 없이 표시만 한다 |
 
-구현 세부: 요금제 배정은 `account_plan` 표로 저장한다. 관리 화면이 없어 배정은 아래 운영 SQL로 한다.
+구현 세부: 한도 숫자는 설계의 "플랜별 한도 테이블" 대신 코드 상수로 둔다. 관리 화면이 없어 DB 표는 바꾸는 방법(SQL·배포)이 같고
+테스트·리뷰만 어려워진다(AGENTS.md 단순성 원칙). 요금제 배정은 `account_plan` 표로 저장한다.
 
-참고: [워크스페이스 청구](https://cipherstash.com/docs/reference/workspace/billing),
-[AI 크레딧](https://schematichq.com/blog/why-ai-companies-are-turning-to-credit-based-pricing).
+참고: [MDN 402](https://developer.mozilla.org/docs/Web/HTTP/Status/402),
+[OpenAI 429·insufficient_quota](https://help.openai.com/en/articles/5955604-troubleshooting-api-rate-limits-and-429-errors),
+[쿼터 402 사례](https://api-docs.zutrix.com/rate-limits),
+[워크스페이스 청구](https://cipherstash.com/docs/reference/workspace/billing),
+[AI 크레딧](https://schematichq.com/blog/why-ai-companies-are-turning-to-credit-based-pricing),
+[무료 AI 한도 비교](https://www.scriptbyai.com/ai-chatbot-free-plan-limits/),
+[익명 한도 제약](https://duckduckgo.com/duckduckgo-help-pages/duckai/usage-limits),
+[fail-open·fail-closed](https://docs.cloud.google.com/service-infrastructure/docs/rate-limiting),
+[달력 기준 초기화](https://discourse.shapr3d.com/t/generative-ai-daily-limit-date-day-instead-of-rolling-hours/39840),
+[예약 기반 쿼터](https://specs.openstack.org/openstack/neutron-specs/specs/liberty/better-quotas.html),
+[사용량 UX](https://www.saasui.design/blog/saas-usage-quota-limits-ux-patterns).
 
 ## 운영
 
 - 테스트·제휴 계정 상향: `INSERT INTO account_plan (account_id, plan_code, assigned_at) VALUES (?, 'PREMIUM', NOW(6)) AS assigned
   ON DUPLICATE KEY UPDATE plan_code = assigned.plan_code, assigned_at = assigned.assigned_at`. 행을 지우면 FREE로 돌아간다.
+  PLUS·PREMIUM은 아직 한도가 없어 검증 스크립트(Compose·카탈로그 분리·LLMOps)도 검증 DB의 테스트 회원만 PREMIUM으로 올려 호출한다.
+- 오늘 사용량 확인: `SELECT feature, period_key, used_count FROM plan_usage_counter WHERE account_id = ? ORDER BY period_key DESC`.
 
 ## 다음 단계(이번 범위 밖)
 
-아래 순서로 브랜치를 나눠 더한다.
+1. **월 한도:** 신청 문서 초안·중복 검토의 월 횟수.
 
-1. **하루 한도:** AI 대화 검색·공고 원문 질문의 하루 횟수, 로그인 전 AI 검색 체험, 사용량 기록 표, 조회 응답의 기능별 `items`와
-   화면 이용량 표시, 한도 초과·사용량 확인 불가 응답.
-2. **월 한도:** 신청 문서 초안·중복 검토의 월 횟수.
-3. **개수 한도:** 관심 공고·파트너 모집글 개수와 파트너 제안 횟수.
-4. **동시 처리:** 요금제별 동시 분석·초안 수.
-
-결제·약관·청약철회·해지, 같은 기업 좌석, 기업 맞춤 리포트 빈도는 그 뒤 작업에서 다룬다.
+PLUS·PREMIUM 숫자, 관심 공고·파트너 모집글 개수와 파트너 제안 횟수, 요금제별 동시 분석·초안 수, 요금제 화면 한도표,
+같은 기업 좌석, 결제·약관·청약철회·해지, 기업 맞춤 리포트 빈도, 기능별 토큰 원가 기록과 한도 실측 조정, 탈퇴 후 재가입 남용은
+그 뒤 작업에서 다룬다.

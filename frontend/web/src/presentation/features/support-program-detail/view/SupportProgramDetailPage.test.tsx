@@ -80,6 +80,27 @@ describe('상세 오류 복구와 검색 화면 복귀', () => {
     expect(screen.getByRole('note')).toBeTruthy()
   })
 
+  it('질문 패널은 오늘 질문 수를 보이고, 다 쓰면 입력·예시·보내기를 막고 다시 채워지는 때를 알린다', async () => {
+    vi.spyOn(appContainer.resolve('getSupportProgramDetailUseCase'), 'execute').mockResolvedValue(supportProgramDetails[0])
+    vi.spyOn(appContainer.resolve('checkSavedSupportProgramUseCase'), 'execute').mockResolvedValue(false)
+    const ask = vi.spyOn(appContainer.resolve('askSupportProgramEvidenceQuestionUseCase'), 'execute')
+    vi.spyOn(appContainer.resolve('planUsageUseCase'), 'usage').mockResolvedValue({
+      plan: 'FREE', items: [{ feature: 'EVIDENCE_QUESTION', period: 'DAY', limit: 10, used: 10, resetsAt: '2026-10-09T00:00:00+09:00' }],
+    })
+    renderDetail({ searchReturnTo: '/app/chat' }, `?${new URLSearchParams({ sourceCode: supportPrograms[0].sourceCode, sourceProgramId: supportPrograms[0].id, ask: '1' })}`, memberAccount)
+
+    await screen.findByRole('heading', { name: supportPrograms[0].title })
+    const panel = screen.getByRole('region', { name: '원문에 질문하기' })
+    const limit = (await within(panel).findByText('오늘 공고 원문 질문 10회를 모두 썼어요. 자정(서울 시간)에 다시 채워져요.')).closest('p')!
+    expect(within(limit).queryByRole('link')).toBeNull()
+    const input = within(panel).getByRole('textbox', { name: '공고 원문에 질문하기' }) as HTMLTextAreaElement
+    expect(input.disabled).toBe(true)
+    expect(input.getAttribute('aria-describedby')?.split(' ')).toContain(limit.id)
+    expect(within(panel).queryByRole('group', { name: '예시 질문' })).toBeNull()
+    expect((within(panel).getByRole('button', { name: '질문 보내기' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(ask).not.toHaveBeenCalled()
+  })
+
   it('과기정통부 공고는 근거 질문 없이 신청 문서 작성 도우미로 연결한다', async () => {
     const program = { ...supportProgramDetails[0], sourceCode: 'MSIT', id: '3186573', sourceName: '과학기술정보통신부', evidenceQuestionSupported: false }
     vi.spyOn(appContainer.resolve('getSupportProgramDetailUseCase'), 'execute').mockResolvedValue(program)
