@@ -23,14 +23,14 @@ export function Page({ children, scroll = true, headerless = false, bottomSafeAr
   const tabBarHeight = useContext(BottomTabBarHeightContext)
   const paddingBottom = bottomSafeArea && tabBarHeight === undefined ? insets.bottom : 0
   const scrollBoundary = useScrollBoundary(Boolean(onRefresh))
-  return <KeyboardAvoidingView style={[styles.page, { backgroundColor, paddingTop: headerless ? insets.top : 0,
+  return <KeyboardAvoidingView style={[styles.page, { backgroundColor, paddingTop: headerless ? insets.top : 0, paddingBottom,
     paddingLeft: insets.left, paddingRight: insets.right }]}
     behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     keyboardVerticalOffset={keyboardOffset + (headerless ? 0 : insets.top + 56)}>
-    {scroll ? <ScrollView {...scrollBoundary} contentContainerStyle={[styles.content, { paddingBottom }]}
+    {scroll ? <ScrollView {...scrollBoundary} contentContainerStyle={[styles.content, { paddingBottom: 0 }]}
       refreshControl={onRefresh ? <RefreshControl refreshing={Boolean(refreshing)} onRefresh={onRefresh} tintColor={colors.primary} /> : undefined}
       keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">{children}</ScrollView>
-      : <View style={[styles.content, { flex: 1, paddingBottom }]}>{children}</View>}
+      : <View style={[styles.content, { flex: 1, paddingBottom: 0 }]}>{children}</View>}
   </KeyboardAvoidingView>
 }
 

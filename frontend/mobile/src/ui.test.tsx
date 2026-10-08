@@ -1,6 +1,6 @@
 import type { ComponentProps } from 'react'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react-native'
-import { Platform, RefreshControl, ScrollView, StyleSheet, Text } from 'react-native'
+import { KeyboardAvoidingView, Platform, RefreshControl, ScrollView, StyleSheet, Text } from 'react-native'
 import { Stack, Tabs, router } from 'expo-router'
 import { renderRouter } from 'expo-router/testing-library'
 import { SafeAreaInsetsContext } from 'react-native-safe-area-context'
@@ -35,7 +35,10 @@ test('a real tab stack owns the bottom safe area, while root pages and fixed foo
   expect(StyleSheet.flatten(pageScroll('탭 본문 마지막 내용').props.contentContainerStyle).paddingBottom).toBe(0)
   await act(async () => router.push('/root'))
   await screen.findByText('독립 화면 마지막 내용')
-  expect(StyleSheet.flatten(pageScroll('독립 화면 마지막 내용').props.contentContainerStyle).paddingBottom).toBe(insets.bottom)
+  expect(StyleSheet.flatten(pageScroll('독립 화면 마지막 내용').props.contentContainerStyle).paddingBottom).toBe(0)
+  let container = pageScroll('독립 화면 마지막 내용').parent
+  while (container && container.type !== KeyboardAvoidingView) container = container.parent
+  expect(StyleSheet.flatten(container?.props.style).paddingBottom).toBe(insets.bottom)
   await act(async () => router.push('/detail'))
   await screen.findByText('상세 본문 마지막 내용')
   expect(StyleSheet.flatten(pageScroll('상세 본문 마지막 내용').props.contentContainerStyle).paddingBottom).toBe(0)
@@ -47,6 +50,8 @@ test.each(['ios', 'android'] as const)('%s keeps top refresh available and preve
   const refresh = jest.fn()
   render(<Page refreshing={false} onRefresh={refresh}><Text>짧은 결과</Text></Page>)
   const scroll = pageScroll('짧은 결과')
+  expect(scroll.props.contentInsetAdjustmentBehavior).toBe('never')
+  expect(scroll.props.automaticallyAdjustContentInsets).toBe(false)
   fireEvent(scroll, 'scrollBeginDrag', scrollEvent(0))
   fireEvent.scroll(scroll, scrollEvent(-40))
   expect(scroll.props.bounces).toBe(os === 'ios')
