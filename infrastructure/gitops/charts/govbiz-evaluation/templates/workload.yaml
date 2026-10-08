@@ -113,7 +113,17 @@ spec:
           command:
             - /app/backend/ai-service/.venv/bin/python
             - -c
-            - "import shutil; shutil.copytree('/app/evaluation/support-program-evidence', '/evidence', dirs_exist_ok=True)"
+            - |
+              import shutil
+              from pathlib import Path
+              source, target = Path('/app/evaluation/support-program-evidence'), Path('/evidence')
+              # The mount root belongs to Kubernetes; only copy children we own.
+              for entry in source.iterdir():
+                  destination = target / entry.name
+                  if entry.is_dir():
+                      shutil.copytree(entry, destination, dirs_exist_ok=True)
+                  else:
+                      shutil.copy2(entry, destination)
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           securityContext:

@@ -301,7 +301,7 @@ class RuntimeTests(unittest.TestCase):
                     }
                 )
             if "logs" in args:
-                return "PermissionError: private-token; Read-only file system /private/path"
+                return "shutil.Error: private-token; Operation not permitted; Read-only file system /private/path"
             self.fail(args)
 
         evidence = {}

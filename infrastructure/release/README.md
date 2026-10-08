@@ -44,11 +44,28 @@ GitHub의 공개 범위를 자동으로 변경하거나 원본 병합·CI 검증
 LLMOps CI의 격리 Kubernetes 평가 실행 검증도 포함하며, 실행 중·실패·취소·건너뛰기는 통과로
 취급하지 않습니다. 작업 브랜치 push, 수동 workflow 실행, 패키지 점검 성공으로 이 조건을 우회할 수 없습니다.
 
-패키지는 먼저 준비해야 합니다. 기존 초기화 도구에 `--service evaluation-runner`를 주면 해당
-패키지만 선택하며, 옵션을 생략한 기본 동작은 기존 네 서비스입니다. 초기화 도구는 계속 **앱 코드 없는
-빈 비공개 패키지**만 만들고, 실제 생성에는 숨김 PAT 입력과 대상 확인을 요구합니다.
-공개 배포는 [공개 전환 절차](../../docs/public-ghcr-transition.md)에 따라 공개 범위·연결 포크·Actions
-쓰기 권한을 준비한 후 `MSA_PACKAGE_VISIBILITY=public` 정책으로 확인합니다.
+패키지는 먼저 준비해야 합니다. 공개 실행기는 **PAT 없이** `Evaluation runner package setup`
+(`evaluation-package-setup.yml`)을 기본 브랜치에서 수동 실행해 빈 패키지 한 개를 준비할 수 있습니다.
+자동 trigger는 없으며 `confirm_package`에 정확한 `ghcr.io/<계정>/<저장소 소문자>-evaluation-runner`를
+입력해야 합니다. 개인 포크·공개 정책·발행 활성화·동일 소스의 필수 CI 검증 후에만 단기
+`GITHUB_TOKEN`으로 동작하고, 기존 `msa-release` environment 정책을 그대로 적용합니다.
+
+앱 코드 없는 `FROM scratch` Dockerfile만 stdin으로 빌드하며 소스 저장소 연결 label을 포함합니다.
+checkout·앱 코드·비밀 파일은 build context로 전달하지 않습니다. 기존 패키지는 소유자·연결 저장소를
+조회할 뿐 덮어쓰지 않습니다. 기본 브랜치와 CI를 업로드 직전·후에 다시 확인하며, 기존 자동
+발행기와 concurrency 그룹을 공유합니다. GitHub 공개 범위는 자동 변경하지 않고 실제 조회값으로
+`AWAITING_PUBLIC_CONFIGURATION` 또는 `PUBLIC_METADATA_VERIFIED`를 보고합니다.
+
+`evaluation-package-setup` artifact는 초기화 사실만 기록합니다. 실제 앱 이미지·v3 receipt·배포는
+생성하지 않습니다. 패키지 화면의 Public·연결 포크·Actions 접근을 확인한 후 기존
+`Evaluation runner image candidate`를 실행합니다. 상세 순서는
+[PAT 없는 최초 준비](../../docs/public-ghcr-transition.md#pat-없이-평가-실행기-패키지-최초-준비)를 따릅니다.
+
+로컬 도구를 명시적으로 선택할 수도 있습니다. `bootstrap_packages.py create --service evaluation-runner`는
+숨김 입력한 일회용 PAT로 빈 비공개 패키지만 만듭니다. 옵션을 생략하면 기존 네 서비스가 대상입니다.
+공개 전환 뒤 로컬 메타데이터 검사는 `bootstrap_packages.py verify --service evaluation-runner
+--visibility public`으로 실행합니다. 이 옵션은 조회 전용이며 패키지를 공개로 바꾸지 않습니다.
+`create --visibility public`은 거절하고 기존 비공개 생성·검증의 기본 동작을 유지합니다.
 발행기는 새 패키지를 자동 생성하거나 GitHub 공개 범위·권한·변수를 변경하지 않습니다.
 
 빌드는 다음 추적 입력만 선택한 SHA의 `git archive`로 추출해 저장소 루트 형식의 context를 만듭니다.

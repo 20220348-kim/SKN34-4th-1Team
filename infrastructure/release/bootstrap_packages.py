@@ -1,4 +1,4 @@
-"""Prepare empty private GHCR packages locally; never upload application source.
+"""Prepare empty private GHCR packages and verify their selected visibility locally.
 
 This is a one-time, interactive setup tool, not the CI publisher. Repository
 linking and Actions write access must then be configured in GitHub's package UI.
@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import uuid
+import warnings
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -39,8 +40,15 @@ def credential(path=None):
     if path is None:
         if not sys.stdin.isatty():
             raise ValueError("Use an interactive terminal or your mode-0600 --token-file")
-        token = getpass.getpass("One-time GHCR setup PAT (hidden): ").strip()
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", getpass.GetPassWarning)
+                token = getpass.getpass("One-time GHCR setup PAT (hidden): ").strip()
+        except getpass.GetPassWarning:
+            raise ValueError("This terminal cannot hide input; use a normal interactive terminal") from None
     else:
+        if os.name != "posix":
+            raise ValueError("--token-file requires POSIX ownership checks; use hidden input on Windows")
         descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         with os.fdopen(descriptor) as stream:
             info = os.fstat(stream.fileno())
@@ -95,15 +103,17 @@ def metadata(fork, service, token):
     return package
 
 
-def validate_package(package, fork, require_link=False):
+def validate_package(package, fork, require_link=False, *, visibility="private"):
+    if visibility not in ("private", "public"):
+        raise ValueError("Expected package visibility must be private or public")
     if package is None:
         raise ValueError("Package missing or inaccessible")
     linked = (package.get("repository") or {}).get("full_name", "")
-    if (package.get("visibility") != "private"
+    if (package.get("visibility") != visibility
             or (package.get("owner") or {}).get("login", "").lower() != fork.owner.lower()
             or (linked and linked.lower() != fork.repository.lower())
             or (require_link and linked.lower() != fork.repository.lower())):
-        raise ValueError("Package must be private, owned by you, and linked only to your exact fork")
+        raise ValueError(f"Package must be {visibility}, owned by you, and linked only to your exact fork")
 
 
 def docker(*args, env, data=None):
@@ -115,19 +125,21 @@ def docker(*args, env, data=None):
         raise ValueError(f"Docker {args[0]} failed; publication stays disabled") from None
 
 
-def prepare(fork, token, create=False, *, services=SERVICES):
+def prepare(fork, token, create=False, *, services=SERVICES, visibility="private"):
     if os.environ.get("GITHUB_ACTIONS") == "true":
         raise ValueError("Run one-time setup locally, never in GitHub Actions")
     if not services or len(set(services)) != len(services) or any(s not in IMAGE_COMPONENTS for s in services):
         raise ValueError("Select known image components")
+    if visibility not in ("private", "public") or (create and visibility != "private"):
+        raise ValueError("Creation is private only; public visibility is a read-only verify option")
     check_identity(fork, token, create)
     packages = {service: metadata(fork, service, token) for service in services}
     # Validate all known destinations before building or uploading anything.
     for package in packages.values():
         if package is not None:
-            validate_package(package, fork, require_link=not create)
+            validate_package(package, fork, require_link=not create, visibility=visibility)
         elif not create:
-            raise ValueError("All selected pre-created private packages are required")
+            raise ValueError(f"All selected pre-created {visibility} packages are required")
     missing = [service for service, package in packages.items() if package is None]
     if missing:
         with tempfile.TemporaryDirectory(prefix="govbiz-package-login-") as temporary:
@@ -165,19 +177,23 @@ def prepare(fork, token, create=False, *, services=SERVICES):
                 except ValueError:
                     pass  # Isolated credential directory is still deleted on exit.
     for service in services:
-        validate_package(metadata(fork, service, token), fork, require_link=not create)
+        validate_package(metadata(fork, service, token), fork, require_link=not create, visibility=visibility)
         print(f"https://github.com/users/{fork.owner}/packages/container/{fork.name.lower()}-{service}/settings")
-    print("Private metadata verified. This does not verify Actions write access or a deployed application.")
-    print("Keep both release variables false until package UI permissions and CI access are verified.")
+    print(f"{visibility.capitalize()} metadata verified. This does not verify Actions write access or a deployed application.")
+    print("This tool does not change package permissions, release variables or existing services.")
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("create", "verify"))
     parser.add_argument("--token-file", type=Path)
+    parser.add_argument("--visibility", choices=("private", "public"), default="private",
+                        help="Expected visibility for verify; create always requires private")
     parser.add_argument("--service", choices=("evaluation-runner",),
                         help="Prepare only the evaluation runner; default remains the four business services")
     args = parser.parse_args()
+    if args.action == "create" and args.visibility != "private":
+        parser.error("create only prepares private empty packages; use verify --visibility public after UI configuration")
     services = (args.service,) if args.service else SERVICES
     try:
         fork = from_origin(ROOT)
@@ -188,7 +204,7 @@ def main():
                 raise ValueError("One-time package creation was not confirmed")
         token = credential(args.token_file)
         try:
-            prepare(fork, token, create=args.action == "create", services=services)
+            prepare(fork, token, create=args.action == "create", services=services, visibility=args.visibility)
         finally:
             del token
     except (ValueError, OSError) as error:

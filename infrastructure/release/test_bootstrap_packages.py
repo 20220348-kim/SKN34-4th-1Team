@@ -1,15 +1,15 @@
 import io
-import json
 import os
-from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+import warnings
+from pathlib import Path
 from unittest.mock import patch
 from urllib.error import HTTPError, URLError
 
 import bootstrap_packages as bootstrap
-from repository import Fork, SERVICES
+from repository import SERVICES, Fork
 
 FORK = Fork("alice/Example")
 TOKEN = "ghp_" + "a" * 36
@@ -79,6 +79,19 @@ class BootstrapTests(unittest.TestCase):
         with patch.object(bootstrap.sys.stdin, "isatty", return_value=False), self.assertRaises(ValueError):
             bootstrap.credential()
 
+    def test_hidden_input_does_not_fall_back_to_echo_and_windows_file_is_rejected(self):
+        def cannot_hide(prompt):
+            warnings.warn("Password input may be echoed", bootstrap.getpass.GetPassWarning)
+            self.fail("Input must stop before the echo fallback")
+        with patch.object(bootstrap.sys.stdin, "isatty", return_value=True), \
+                patch.object(bootstrap.getpass, "getpass", side_effect=cannot_hide), \
+                self.assertRaisesRegex(ValueError, "cannot hide input"):
+            bootstrap.credential()
+        with patch.object(bootstrap.os, "name", "nt"), patch.object(bootstrap.os, "open") as opened, \
+                self.assertRaisesRegex(ValueError, "POSIX ownership checks"):
+            bootstrap.credential("token")
+        opened.assert_not_called()
+
     def test_http_failures_do_not_expose_token_or_become_missing(self):
         for status in (301, 302, 401, 403, 429, 500):
             with patch.object(bootstrap, "build_opener") as opener:
@@ -115,6 +128,52 @@ class BootstrapTests(unittest.TestCase):
                 patch.object(bootstrap, "docker") as docker, self.assertRaises(ValueError):
             bootstrap.prepare(FORK, TOKEN)
         docker.assert_not_called()
+
+    def test_public_verify_reads_only_selected_runner_and_never_uses_docker(self):
+        current = package(visibility="public", repository={"full_name": FORK.repository})
+        with patch.object(bootstrap, "check_identity") as identity, \
+                patch.object(bootstrap, "metadata", return_value=current) as metadata, \
+                patch.object(bootstrap, "docker") as docker, patch("sys.stdout", new_callable=io.StringIO) as output:
+            bootstrap.prepare(FORK, TOKEN, services=("evaluation-runner",), visibility="public")
+        identity.assert_called_once_with(FORK, TOKEN, False)
+        self.assertEqual({call.args[1] for call in metadata.call_args_list}, {"evaluation-runner"})
+        self.assertIn("Public metadata verified", output.getvalue())
+        self.assertNotIn("Private metadata verified", output.getvalue())
+        self.assertNotIn(TOKEN, output.getvalue())
+        docker.assert_not_called()
+
+    def test_public_verify_rejects_missing_private_unlinked_and_foreign_packages(self):
+        for current in (None, package(), package(visibility="public"),
+                        package(visibility="public", owner={"login": "bob"}, repository={"full_name": FORK.repository}),
+                        package(visibility="public", repository={"full_name": "alice/Other"})):
+            with self.subTest(package=current), patch.object(bootstrap, "check_identity"), \
+                    patch.object(bootstrap, "metadata", return_value=current), \
+                    patch.object(bootstrap, "docker") as docker, self.assertRaises(ValueError):
+                bootstrap.prepare(FORK, TOKEN, services=("evaluation-runner",), visibility="public")
+            docker.assert_not_called()
+
+    def test_creation_cannot_request_public_visibility_or_change_existing_packages(self):
+        with patch.object(bootstrap, "check_identity") as identity, \
+                patch.object(bootstrap, "metadata") as metadata, patch.object(bootstrap, "docker") as docker:
+            for create, visibility in ((True, "public"), (False, "internal")):
+                with self.subTest(create=create, visibility=visibility), self.assertRaises(ValueError):
+                    bootstrap.prepare(FORK, TOKEN, create=create, visibility=visibility)
+            identity.assert_not_called()
+            metadata.assert_not_called()
+            docker.assert_not_called()
+
+    def test_cli_public_verify_routes_visibility_but_public_create_stops_before_credentials(self):
+        with patch.object(bootstrap.sys, "argv", ["bootstrap_packages.py", "verify", "--service", "evaluation-runner", "--visibility", "public"]), \
+                patch.object(bootstrap, "from_origin", return_value=FORK), \
+                patch.object(bootstrap, "credential", return_value=TOKEN), patch.object(bootstrap, "prepare") as prepare:
+            bootstrap.main()
+        prepare.assert_called_once_with(FORK, TOKEN, create=False, services=("evaluation-runner",), visibility="public")
+        with patch.object(bootstrap.sys, "argv", ["bootstrap_packages.py", "create", "--visibility", "public"]), \
+                patch.object(bootstrap, "credential") as credential, patch("sys.stderr", new_callable=io.StringIO), \
+                self.assertRaises(SystemExit) as error:
+            bootstrap.main()
+        self.assertEqual(error.exception.code, 2)
+        credential.assert_not_called()
 
     def test_existing_private_packages_are_never_overwritten(self):
         with patch.object(bootstrap, "check_identity"), patch.object(bootstrap, "metadata", return_value=package()), \

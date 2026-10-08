@@ -50,9 +50,14 @@ Prefect용과 실행기용 writable 임시 경로는 용량을 제한한 emptyDi
 실제 후보의 이미지는 `image@sha256:...`로 고정한다. Ops 이미지에는 평가 fixture가 포함되어
 있지 않으므로 결과 서버의 init container가 **동일한 runner 이미지**에서 자료를 emptyDir로 복사한다.
 결과 서버는 복사된 자료를 읽기 전용으로 사용하며 호스트 checkout을 mount하지 않는다.
+복사 init container는 마운트 루트의 소유권·권한을 보존하고 그 안의 파일·디렉터리만 복사한다.
+`copytree`로 마운트 자체의 메타데이터를 바꾸면 UID 10001에서 `Operation not permitted`로
+실패하므로 이 경로와 재시도를 비루트 프로세스로 검증한다.
 Ops·runner의 실행 명세 일치와 각 이미지의 CI·발행 증거는 실제 전환 전에 별도로 검증해야 한다.
 digest 문법 검사만으로 이미지를 신뢰하지 않는다. 실행기는 별도 `evaluation-images.yml`에서 발행하고,
 아래의 계획 도구가 기존 네 서비스 발행과 같은 SHA인지 확인한다. 실제 원격 발행 성공은 별도 확인한다.
+실행기 패키지가 아직 없으면 [PAT 없는 수동 초기화](../../../docs/public-ghcr-transition.md#pat-없이-평가-실행기-패키지-최초-준비)로
+빈 패키지만 준비한다. 초기화 결과는 실제 실행기 발행·receipt·배포 증거가 아니다.
 
 | 위치 | 주입 항목 |
 | --- | --- |
