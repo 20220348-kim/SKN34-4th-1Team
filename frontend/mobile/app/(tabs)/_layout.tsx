@@ -37,7 +37,7 @@ export default function TabLayout() {
       event.preventDefault()
       navigation.dispatch({ ...StackActions.popTo('index'), source, target: stack.key })
       if (!navigation.isFocused()) navigation.navigate(route.name)
-    } })} options={{ title: '전체', tabBarAccessibilityLabel: '전체', headerShown: false,
+    } })} options={{ title: '메뉴', tabBarAccessibilityLabel: '메뉴', headerShown: false,
       tabBarIcon: ({ color }) => <AppIcon name="menu" color={color} /> }} />
     <Tabs.Screen name="account" options={{ href: null }} />
     <Tabs.Screen name="chat" options={{ href: null }} />
