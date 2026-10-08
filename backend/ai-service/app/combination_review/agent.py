@@ -30,6 +30,7 @@ class CombinationReviewAgent:
                 "citationOptionIndex": index,
                 "programIndex": request.evidence[option.evidenceIndex].programIndex,
                 "locator": request.evidence[option.evidenceIndex].locator,
+                "heading": option.heading,
                 "quote": option.quote,
             }
             for index, option in enumerate(build_citation_options(request))
