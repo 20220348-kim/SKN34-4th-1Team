@@ -19,6 +19,9 @@ PROJECT = "govbiz-bridge-smoke-" + "a" * 10
 ID = "11111111-1111-4111-8111-111111111111"
 FLOW = "22222222-2222-4222-8222-222222222222"
 IMAGE_ID = "sha256:" + "d" * 64
+PREFECT_IMAGE = yaml.safe_load(smoke.pvc.PREFECT_VALUES.read_text(encoding="utf-8"))[
+    "image"
+]
 EXPECTED = {
     ID: {"flow_id": FLOW, "execution_spec_sha256": "b" * 64, "report_sha256": "c" * 64}
 }
@@ -31,6 +34,7 @@ class RuntimeTests(unittest.TestCase):
         images = {
             name: f"govbiz/{name}:{PROJECT}" for name in check_evaluation.COMPONENTS
         }
+        images["prefect"] = PREFECT_IMAGE
         rows = check_evaluation.render_bundle(
             smoke.bundle(images, PROJECT + "-control-plane", "http://172.20.0.2:3000"),
             "govbiz-evaluation-restore-abc123",
@@ -55,6 +59,7 @@ class RuntimeTests(unittest.TestCase):
         images = {
             name: f"govbiz/{name}:{PROJECT}" for name in check_evaluation.COMPONENTS
         }
+        images["prefect"] = PREFECT_IMAGE
         rows = check_evaluation.render_bundle(
             smoke.bundle(images, PROJECT + "-control-plane", "http://172.20.0.2:3000"),
             "govbiz-evaluation-restore-abc123",
@@ -77,6 +82,8 @@ class RuntimeTests(unittest.TestCase):
                 self.assertEqual(env["LLMOPS_LIVE_ENABLED"], "false")
                 self.assertEqual(env["LLMOPS_RAG_LIVE_ENABLED"], "false")
             if name == "prefect":
+                self.assertEqual(pod["initContainers"][0]["image"], PREFECT_IMAGE)
+                self.assertEqual(pod["initContainers"][0]["imagePullPolicy"], "Never")
                 env = {row["name"]: row["value"] for row in container["env"]}
                 self.assertEqual(env["PREFECT_API_DATABASE_MIGRATE_ON_START"], "false")
 
@@ -456,7 +463,7 @@ class RuntimeTests(unittest.TestCase):
         with (
             tempfile.TemporaryDirectory() as directory,
             patch.object(smoke.fork_cluster, "require_dev"),
-            patch.object(smoke, "execute", side_effect=command),
+            patch.object(smoke, "execute", side_effect=command) as execute,
             patch.object(smoke, "stopped_sources", return_value=(containers, {})),
             patch.object(smoke, "collect", return_value={}),
             patch.object(smoke.snapshot.storage, "inspect", return_value={}),
@@ -467,7 +474,7 @@ class RuntimeTests(unittest.TestCase):
                 smoke.check_evaluation,
                 "render_bundle",
                 return_value={"prefect": [{"kind": "Deployment"}]},
-            ),
+            ) as render,
             self.assertRaises(
                 subprocess.CalledProcessError if at_rollout else ValueError
             ),
@@ -492,8 +499,26 @@ class RuntimeTests(unittest.TestCase):
                 "pvc-deleted",
                 "tag-deleted",
                 "tag-deleted",
-                "tag-deleted",
             ],
+        )
+        values = render.call_args.args[0]
+        self.assertEqual(values["prefect"]["image"], PREFECT_IMAGE)
+        commands = [call.args[0] for call in execute.call_args_list]
+        local_images = [
+            f"govbiz/{name}:{PROJECT}"
+            for name in ("evaluation-runner", "ops-artifacts")
+        ]
+        self.assertEqual(
+            [args for args in commands if args[:3] == ["docker", "image", "tag"]],
+            [["docker", "image", "tag", IMAGE_ID, image] for image in local_images],
+        )
+        self.assertEqual(
+            [args for args in commands if args[:3] == ["kind", "load", "docker-image"]],
+            [["kind", "load", "docker-image", *local_images, "--name", PROJECT]],
+        )
+        self.assertEqual(
+            [args for args in commands if args[:3] == ["docker", "image", "rm"]],
+            [["docker", "image", "rm", image] for image in reversed(local_images)],
         )
         evidence = report["evaluation_kubernetes_runtime"]
         self.assertEqual(evidence["status"], "FAIL")

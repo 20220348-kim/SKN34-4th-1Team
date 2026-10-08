@@ -89,8 +89,10 @@ python3 -B -m unittest test_evaluation_chart
 검사기는 세 릴리스의 결과 PVC·노드·자료 이미지 일치, Prefect 저장소 분리, 실행기만 단독 활성화하는
 오류를 검사한 뒤 고정 Helm/Kubernetes 버전으로 렌더링한다. 성공은 `RENDERED_NOT_APPLIED`이며
 PVC 존재·복원 성공·실행기 생존·DNS·이미지 실행 명세·클러스터 자원 여유를 증명하지 않는다.
-`allowLocalImages: true`는 별도 격리 CI 클러스터에 미리 적재한 `govbiz/name:tag`만 사용하고
-pull policy는 `Never`다. 실제 공개 이미지 검증의 대체 경로가 아니다.
+`allowLocalImages: true`에서는 실행기·결과 서버와 자료 복사 이미지에 별도 격리 CI 클러스터에
+미리 적재한 `govbiz/name:tag`를 사용한다. Prefect는 복원 helper가 사용한 원본 `image@sha256`
+참조를 유지하며 로컬 별칭을 허용하지 않는다. 모든 컨테이너의 pull policy는 `Never`다.
+실제 공개 이미지 검증의 대체 경로가 아니다.
 
 Infra CI의 기존 `test_*.py` 검색에 Chart·PVC 복원 단위 테스트가 포함된다. 이 검사는 오프라인 검증이다.
 LLMOps CI에는 아래의 실제 PVC 복원 smoke와 별도 평가 런타임 통합 검증이 연결됐다.
@@ -241,6 +243,8 @@ LLMOps CI의 기존 격리 통합 검증에 `--evaluation-runtime` 단계를 연
 3. `environments/evaluation`의 배포용 values를 읽고 검증 전용 이미지·PVC·노드·연결 주소와 replica만
    바꾸어 렌더링한다. 실행기의 2Gi, 결과 서버의 256Mi 등 구성요소별 CPU·메모리 요청/한도를 유지한다.
    결과 서버의 자료 복사 init container도 같은 제한을 사용한다. 공통 Chart 기본값만으로 검증하지 않는다.
+   실행기·결과 서버만 로컬 태그로 kind에 적재한다. Prefect는 원본 Compose 이미지 ID와 고정 digest의
+   이미지 ID가 같은지 검사하고, 복원 helper가 확보한 원본 참조를 그대로 사용한다.
    같은 이미지로 렌더링한 Prefect·결과 서버를 먼저 기동하고 실행기 1개를 시작한다. 자동 migration은
    계속 비활성화한다. Ops API와 sync의 두 URL을 함께 바꾼 뒤 격리 접수를 재개한다.
 4. 기존 완료 이력을 확인하고 무료 평가를 접수한다. 동일 요청 재전송의 flow 일치, 백그라운드 상태
@@ -270,6 +274,13 @@ Pod 로그와 이벤트는 크기·시간 제한 안에서 읽고, 권한·읽�
 이 경로를 수정한 뒤에는 `test_smoke_evaluation_runtime`의 실패·민감값 비노출·정리 순서 검증과
 최신 SHA의 실제 LLMOps CI를 함께 확인한다. 별도 합성 데이터로 수행한 로컬 Prefect 기동 성공은
 CI의 전체 Ops 복구·평가 실행·Pod 교체 성공을 대체하지 않는다.
+
+Kubernetes 1.36의 이미지 자격 증명 검증은 이미지 ID 외에 저장소 이름별 pull 기록도 확인한다.
+복원 helper가 받은 Prefect 이미지를 `govbiz/prefect:...`로 바꾸면 CRI에 이미지가 있어도 새 저장소의
+기록이 없어 `Never` 정책에서 `ErrImageNeverPull`이 발생할 수 있다
+([Kubelet pull 기록 처리](https://github.com/kubernetes/kubernetes/blob/v1.36.4/pkg/kubelet/images/pullmanager/image_pull_manager.go),
+[Never 정책 처리](https://github.com/kubernetes/kubernetes/blob/v1.36.4/pkg/kubelet/images/image_manager.go)).
+원본 digest 참조를 보존해 이 불일치를 방지한다. Kubelet의 검증 설정·기록과 rollout 제한은 변경하지 않는다.
 
 ## 후속 완료 기준
 
