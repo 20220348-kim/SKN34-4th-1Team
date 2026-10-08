@@ -4,11 +4,8 @@ import {
   evidenceFormatOf, evidenceHasContext, evidenceLocatorLabel, evidencePreview, evidenceQuoteCut, evidenceQuoteRange, formatEvidenceText, isApplicationFormText,
   splitEvidenceKeywords, type EvidenceLine,
 } from '@govbiz/shared/domain/entities/CombinationReviewEvidence'
-import { reviewStageLabels, type ReviewStage, type ReviewStageResult } from '@govbiz/shared/domain/entities/CombinationReviewResult'
-import type { ReviewRun } from '@govbiz/shared/domain/entities/CombinationReview'
+import type { ReviewCitation, ReviewRun } from '@govbiz/shared/domain/entities/CombinationReview'
 import { Button, StatusBadge, colors, styles } from '../ui'
-
-type Citation = ReviewStageResult['citations'][number]
 
 /** 글자만 있는 작은 버튼입니다. 중복 검토 결과의 펼치기 · 보기 전환에 써요. */
 export function TextToggle({ label, onPress, expanded, selected }: { label: string; onPress(): void; expanded?: boolean; selected?: boolean }) {
@@ -21,11 +18,11 @@ export function TextToggle({ label, onPress, expanded, selected }: { label: stri
  * 근거 원문 하나입니다. 저장된 인용문을 shared 규칙으로 정리해 중복 · 제한 낱말이 든 줄과 그 앞뒤 · 상위 항목만 먼저 보여 줘요.
  * 인용이 줄 중간에서 잘렸으면 생략 표시와 [이 부분 전체 보기](원문 조각 전체)를, 온전한 줄 단위 인용인데 조각에 앞뒤 줄이 더 있으면
  * [앞뒤 원문 보기](조각 전체, 인용한 줄은 표시)를, 그 밖에는 접힌 줄이 있을 때 [전체 n줄 보기]를 둬요.
- * [원문 그대로]는 저장된 인용을 줄바꿈까지 그대로 보여 줘요.
+ * [원문 그대로]는 저장된 인용을 줄바꿈까지 그대로 보여 줘요. alsoIn은 같은 인용을 고른 다른 단계 · 질문 안내("수행 단계에도 인용")예요.
  * 파일 이름이 길면 출처 줄의 가운데를 줄여 사업 번호와 확장자 · 위치가 보이게 해요.
  */
-export function ReviewEvidenceQuote({ number, run, citation, alsoIn, onOpenSource }: {
-  number: number; run: ReviewRun; citation: Citation; alsoIn: readonly ReviewStage[]; onOpenSource(url: string): void
+export function ReviewEvidenceQuote({ number, run, citation, alsoIn = null, onOpenSource }: {
+  number: number; run: ReviewRun; citation: ReviewCitation; alsoIn?: string | null; onOpenSource(url: string): void
 }) {
   const [view, setView] = useState<'preview' | 'full' | 'raw'>('preview')
   const block = run.evidence?.blocks.find(item => item.id === citation.evidenceId)
@@ -48,7 +45,7 @@ export function ReviewEvidenceQuote({ number, run, citation, alsoIn, onOpenSourc
   const source = [`사업 ${(block?.programIndex ?? 0) + 1}`, ...(document ? [document.fileName] : []), ...(locator ? [locator] : [])].join(' · ')
   const tags = [
     ...(isApplicationFormText(citation.quote) ? ['신청서 서식'] : []),
-    ...(alsoIn.length > 3 ? [`다른 ${alsoIn.length}개 단계에도 인용`] : alsoIn.length > 0 ? [`${alsoIn.map(stage => reviewStageLabels[stage]).join('·')} 단계에도 인용`] : []),
+    ...(alsoIn ? [alsoIn] : []),
   ]
   return <View style={local.card}>
     <View style={local.header}>

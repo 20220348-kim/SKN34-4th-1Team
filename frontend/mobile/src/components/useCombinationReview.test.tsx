@@ -2,7 +2,7 @@ import { act, renderHook, waitFor } from '@testing-library/react-native'
 import { AppState } from 'react-native'
 import { useCombinationReview } from './useCombinationReview'
 import { mobileReview, reviewRunFixture } from '../test/reviewFixtures'
-import type { CombinationReview, ReviewDraft } from '@govbiz/shared/domain/entities/CombinationReview'
+import { unknownRelation, type CombinationReview, type ReviewDraft } from '@govbiz/shared/domain/entities/CombinationReview'
 import { CombinationReviewError } from '@govbiz/shared/domain/errors/CombinationReviewError'
 import { readPendingReview, clearPendingReview, savePendingReview } from '../auth/reviewPending'
 
@@ -96,7 +96,7 @@ test('saving a new review creates one stable ID and never journals or starts ana
   const view = renderHook(() => useCombinationReview('token', 'owner@example.test', null))
   await waitFor(() => expect(view.result.current.storageReady).toBe(true))
   await act(async () => {
-    view.result.current.setDraft({ title: '  단계 저장 검토  ', programs: mobileReview.programs })
+    view.result.current.setDraft({ title: '  단계 저장 검토  ', programs: mobileReview.programs, relation: unknownRelation() })
     view.result.current.setFacts('실행 때만 저장할 설명')
   })
   let saved: CombinationReview | null = null
@@ -149,7 +149,7 @@ test('double save is serialized and failure preserves inputs for a manual retry'
   mockRepository.create.mockImplementationOnce(() => new Promise((_, reject) => { fail = reject }))
   const view = renderHook(() => useCombinationReview('token', 'owner@example.test', null))
   await waitFor(() => expect(view.result.current.loading).toBe(false))
-  await act(async () => view.result.current.setDraft({ title: '유지할 제목', programs: mobileReview.programs }))
+  await act(async () => view.result.current.setDraft({ title: '유지할 제목', programs: mobileReview.programs, relation: unknownRelation() }))
   let first!: Promise<CombinationReview | null>
   await act(async () => { first = view.result.current.saveInputs(); expect(await view.result.current.saveInputs()).toBeNull() })
   expect(view.result.current.saving).toBe(true)
@@ -198,8 +198,70 @@ test('an input save authentication failure invalidates the session without runni
   mockRepository.create.mockRejectedValue(new CombinationReviewError(401, 'AUTH_REQUIRED'))
   const view = renderHook(() => useCombinationReview('token', 'owner@example.test', null))
   await waitFor(() => expect(view.result.current.loading).toBe(false))
-  await act(async () => view.result.current.setDraft({ title: '저장할 입력', programs: mobileReview.programs }))
+  await act(async () => view.result.current.setDraft({ title: '저장할 입력', programs: mobileReview.programs, relation: unknownRelation() }))
   await act(async () => { await view.result.current.saveInputs() })
   expect(mockInvalidate).toHaveBeenCalledTimes(1)
   expect(mockRepository.start).not.toHaveBeenCalled()
+})
+
+test('a stored relation survives load, unrelated edits and the save request so an app save never resets what the web saved', async () => {
+  stored = { ...structuredClone(mobileReview), relation: { sameProject: 'YES', sameCost: 'NO' } }
+  mockRepository.runs.mockResolvedValue({ items: [], nextBeforeId: null })
+  const view = renderHook(() => useCombinationReview('token', 'owner@example.test', 5))
+  await waitFor(() => expect(view.result.current.loading).toBe(false))
+  expect(view.result.current.draft.relation).toEqual({ sameProject: 'YES', sameCost: 'NO' })
+  expect(view.result.current.dirty).toBe(false)
+  await act(async () => view.result.current.setDraft(previous => ({ ...previous, title: '제목만 고친 검토' })))
+  await act(async () => { await view.result.current.saveInputs() })
+  expect(mockRepository.replace).toHaveBeenCalledTimes(1)
+  expect(mockRepository.replace.mock.calls[0][2]).toEqual({ title: '제목만 고친 검토', programs: mobileReview.programs, relation: { sameProject: 'YES', sameCost: 'NO' } })
+  expect(view.result.current.draft.relation).toEqual({ sameProject: 'YES', sameCost: 'NO' })
+  expect(view.result.current.dirty).toBe(false)
+  expect(mockRepository.start).not.toHaveBeenCalled()
+})
+
+test('a review saved before the relation fields existed reads as unknown and is not marked changed', async () => {
+  mockRepository.runs.mockResolvedValue({ items: [], nextBeforeId: null })
+  const view = renderHook(() => useCombinationReview('token', 'owner@example.test', 5))
+  await waitFor(() => expect(view.result.current.loading).toBe(false))
+  expect(stored).not.toHaveProperty('relation')
+  expect(view.result.current.draft.relation).toEqual(unknownRelation())
+  expect(view.result.current.dirty).toBe(false)
+  await act(async () => { await view.result.current.saveInputs() })
+  expect(mockRepository.replace).not.toHaveBeenCalled()
+})
+
+test('save-and-start writes a changed situation on the expected revision first and then runs that saved revision once', async () => {
+  mockRepository.runs.mockResolvedValue({ items: [], nextBeforeId: null })
+  const view = renderHook(() => useCombinationReview('token', 'owner@example.test', 5))
+  await waitFor(() => expect(view.result.current.loading).toBe(false))
+  expect(view.result.current.startBlocked).toBeNull()
+  await act(async () => view.result.current.setDraft(previous => ({ ...previous, relation: { ...previous.relation, sameCost: 'YES' } })))
+  expect(view.result.current.dirty).toBe(true)
+  let accepted: boolean | undefined
+  await act(async () => { accepted = await view.result.current.saveAndStart('이전 실행의 추가 설명') })
+  expect(accepted).toBe(true)
+  expect(mockRepository.replace).toHaveBeenCalledWith(5, 1, expect.objectContaining({ relation: { sameProject: 'UNKNOWN', sameCost: 'YES' } }), expect.any(AbortSignal))
+  expect(mockRepository.start).toHaveBeenCalledTimes(1)
+  expect(mockRepository.start).toHaveBeenCalledWith(5, expect.objectContaining({ expectedRevision: 2, additionalFacts: '이전 실행의 추가 설명' }), expect.any(AbortSignal))
+  expect(mockRepository.replace.mock.invocationCallOrder[0]).toBeLessThan(mockRepository.start.mock.invocationCallOrder[0])
+  expect(view.result.current.dirty).toBe(false)
+  view.unmount()
+})
+
+test('save-and-start neither saves nor runs while another run is still in progress and says why', async () => {
+  mockRepository.runs.mockResolvedValue({ items: [reviewRunFixture('RUNNING')], nextBeforeId: null })
+  mockRepository.run.mockResolvedValue(reviewRunFixture('RUNNING'))
+  const view = renderHook(() => useCombinationReview('token', 'owner@example.test', 5))
+  await waitFor(() => expect(view.result.current.loading).toBe(false))
+  expect(view.result.current.startBlocked).toBe('분석이 끝나면 다시 실행할 수 있어요')
+  await act(async () => view.result.current.setDraft(previous => ({ ...previous, relation: { ...previous.relation, sameProject: 'NO' } })))
+  let accepted: boolean | undefined
+  await act(async () => { accepted = await view.result.current.saveAndStart() })
+  expect(accepted).toBe(false)
+  expect(view.result.current.error).toBe('분석이 끝나면 다시 실행할 수 있어요')
+  expect(mockRepository.replace).not.toHaveBeenCalled()
+  expect(mockRepository.start).not.toHaveBeenCalled()
+  expect(view.result.current.draft.relation.sameProject).toBe('NO')
+  view.unmount()
 })

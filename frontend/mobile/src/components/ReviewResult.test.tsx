@@ -1,8 +1,8 @@
 import { fireEvent, render, screen, within } from '@testing-library/react-native'
-import { Linking } from 'react-native'
+import { Linking, Text } from 'react-native'
 import type { ReviewRun } from '@govbiz/shared/domain/entities/CombinationReview'
 import { ReviewResult } from './ReviewResult'
-import { reviewRunFixture } from '../test/reviewFixtures'
+import { answerRunFixture, reviewRunFixture } from '../test/reviewFixtures'
 import { colors } from '../ui'
 
 const names = { 'BIZINFO:PBLN_100': '첫 사업', 'BIZINFO:PBLN_200': '둘째 사업' }
@@ -87,10 +87,10 @@ test('leads with a fixed conclusion and stage band, then priority questions, col
   fireEvent.press(screen.getByRole('button', { name: '요약 더 보기 ▾' }))
   expect(screen.getByText('모의 분석입니다. 기관 확인이 필요합니다.')).toBeTruthy()
   expect(screen.getByRole('button', { name: '요약 접기 ▴' }).props.accessibilityState.expanded).toBe(true)
-  // 같은 질문은 한 번만, 질문이 더 없으면 [모두 보기]가 없어요. 참여 상태 입력 단계로 가는 버튼이 있어요.
+  // 같은 질문은 한 번만, 질문이 더 없으면 [모두 보기]가 없어요. 내 상황을 고르는 분석 확인 단계로 가는 버튼이 있어요.
   expect(questionItems()).toEqual(['확약 지원 목적이 동일한가요?'])
   expect(screen.queryByRole('button', { name: /모두 보기/ })).toBeNull()
-  fireEvent.press(screen.getByRole('button', { name: '참여 상태 입력하고 다시 보기' }))
+  fireEvent.press(screen.getByRole('button', { name: '내 상황 입력하고 다시 보기' }))
   expect(onSupplement).toHaveBeenCalledTimes(1)
   // 주의(충돌 · 제한) 단계 줄만 펼쳐 두고, 근거 원문은 첫 주의 줄에서만 펼쳐요.
   expect(expandedStates()).toEqual([false, false, true, false, true, false])
@@ -296,4 +296,154 @@ test('shows Core layout extraction as stored: table rows stay rows with highligh
   expect(stage.getAllByTestId('evidence-keyword').map(node => node.props.children)).toContain('제외 대상')
   // 화면에서 PDF 줄 잇기를 다시 하지 않아 Core가 남긴 줄 그대로예요.
   expect(stage.getByText('선정 기업은 협약 종료 후 3년간 성과를 보고하여야 하며 보고하지 않으면 다음 공모')).toBeTruthy()
+})
+
+test('an old six-stage result keeps its screen and adds a notice with the new-analysis action, without the narrowing panel', () => {
+  render(<ReviewResult run={judgedRun()} currentRevision={1} names={names} onRefresh={jest.fn()} onSupplement={jest.fn()}
+    narrowing={<Text>좁히기 자리</Text>} reanalyze={<Text>새 방식으로 다시 분석 자리</Text>} />)
+  const notice = within(screen.getByTestId('review-legacy-notice'))
+  expect(notice.getByText('여섯 단계로 나눠 판단한 이전 방식의 결과예요. 새 방식은 세 질문(신청 · 함께 수행 · 같은 과제·비용)에 조건과 근거로 답해요.')).toBeTruthy()
+  expect(notice.getByText('새 방식으로 다시 분석 자리')).toBeTruthy()
+  // 지난 결과는 지금 화면(결론 · 단계 띠 · 먼저 확인할 것 · 단계 줄) 그대로이고, 세 질문 결과의 좁히기 칸은 없어요.
+  expect(screen.getAllByTestId(/^band-0-/)).toHaveLength(6)
+  expect(stageButtons()).toHaveLength(6)
+  expect(screen.queryByText('좁히기 자리')).toBeNull()
+  expect(screen.queryByTestId('review-conclusion')).toBeNull()
+})
+
+describe('three-question results', () => {
+  const card = (question: string) => within(screen.getByTestId(`answer-${question}`))
+  function showAnswers(run: ReviewRun = answerRunFixture()) {
+    return render(<ReviewResult run={run} currentRevision={1} names={names} onRefresh={jest.fn()} onSupplement={jest.fn()}
+      narrowing={<Text accessibilityRole="header">내 상황으로 좁히기 자리</Text>} reanalyze={<Text>다시 분석 자리</Text>} />)
+  }
+
+  test('leads with a fixed conclusion, then three question cards and the narrowing slot before the folded sources', () => {
+    showAnswers()
+    expect(screen.getAllByRole('header').map(node => node.props.children)).toEqual(['이 실행의 비교 대상', '같은 과제·비용으로 두 번 받을 수 없어요',
+      '1. 둘 다 신청할 수 있나요?', '2. 둘 다 되면 함께 수행할 수 있나요?', '3. 같은 과제·비용으로 두 번 받는 것은 아닌가요?', '내 상황으로 좁히기 자리'])
+    // 결론 문장은 AI 요약이 아니라 판정 조합으로 정해요(불가가 기관 확인 · 조건부보다 앞서요).
+    const conclusion = within(screen.getByTestId('review-conclusion'))
+    expect(conclusion.getByText('함께 수행은 기관 확인이 필요해요. 신청은 조건에 따라 달라요.')).toBeTruthy()
+    expect(['APPLY', 'CONCURRENT', 'SAME_SUBJECT'].map(question => screen.getByTestId(`answer-chip-${question}`).props.children))
+      .toEqual(['신청 · 조건부', '함께 수행 · 기관 확인', '같은 과제·비용 · 불가'])
+    expect(conclusion.getByLabelText('같은 과제·비용 질문 불가')).toHaveStyle({ backgroundColor: colors.dangerSoft, color: colors.danger })
+    expect(conclusion.getByText('질문 3개 판단')).toBeTruthy()
+    expect(conclusion.getByText(/제한을 못 찾은 것이 허용을 뜻하지는 않아요/)).toBeTruthy()
+    expect(screen.queryByText('세 질문 모의 분석입니다.')).toBeNull()
+    fireEvent.press(conclusion.getByRole('button', { name: '요약 더 보기 ▾' }))
+    expect(screen.getByText('세 질문 모의 분석입니다.')).toBeTruthy()
+    // 여섯 단계 결과의 띠 · 먼저 확인할 것 · 이전 방식 안내와 다시 분석 동작은 없어요.
+    expect(screen.queryAllByTestId(/^band-/)).toHaveLength(0)
+    expect(screen.queryByText('먼저 확인할 것')).toBeNull()
+    expect(screen.queryByTestId('review-legacy-notice')).toBeNull()
+    expect(screen.queryByText('다시 분석 자리')).toBeNull()
+    // 좁히기 칸은 질문 카드 뒤, 접힌 공식 원문 · 판단 한계 앞이에요.
+    const order = screen.getAllByText(/내 상황으로 좁히기 자리|공식 원문 2개 · 판단 한계 2개/)
+    expect(order).toHaveLength(2)
+    expect(order[0].props.children).toBe('내 상황으로 좁히기 자리')
+    fireEvent.press(screen.getByRole('button', { name: '공식 원문 2개 · 판단 한계 2개' }))
+    expect(screen.getByText('• 입력한 내 상황 · 추가 설명과 자동 수집한 원문 범위 안에서만 판단했어요.')).toBeTruthy()
+    expect(screen.getByText('• 두 공고 사이의 규정만 봤어요. 다른 사업까지 합친 수혜 이력 누적은 이 검토 범위 밖이에요.')).toBeTruthy()
+  })
+
+  test('a conditional answer shows each condition with a result chip and folded evidence, and opens the answer evidence with its surrounding source', () => {
+    showAnswers()
+    const apply = card('APPLY')
+    expect(screen.getByTestId('answer-APPLY-verdict')).toHaveTextContent('조건부')
+    expect(apply.getByText('최근 같은 제품으로 지원받았는지에 따라 달라요.')).toBeTruthy()
+    const first = within(screen.getByTestId('answer-APPLY-condition-0'))
+    expect(first.getByText('최근 2년 안에 같은 제품으로 같은 내용의 지원을 받았다면')).toBeTruthy()
+    expect(first.getByLabelText('결과 불가')).toHaveStyle({ backgroundColor: colors.dangerSoft, color: colors.danger })
+    const second = within(screen.getByTestId('answer-APPLY-condition-1'))
+    expect(second.getByText('그 밖의 경우')).toBeTruthy()
+    expect(second.getByLabelText('결과 가능')).toHaveStyle({ backgroundColor: colors.soft, color: colors.primaryText })
+    expect(second.queryByRole('button')).toBeNull()
+    // 조건 근거는 접혀 있다가 눌러서 봐요. 줄 중간을 자른 인용이라 [이 부분 전체 보기]가 있어요.
+    const conditionEvidence = first.getByRole('button', { name: '근거 1개 보기 ▾' })
+    expect(conditionEvidence.props.accessibilityState.expanded).toBe(false)
+    expect(first.queryByText('근거 1')).toBeNull()
+    fireEvent.press(conditionEvidence)
+    expect(first.getByRole('button', { name: '근거 1개 접기 ▴' }).props.accessibilityState.expanded).toBe(true)
+    expect(first.getByText('사업 1 · 모의-공고.pdf · 3쪽')).toBeTruthy()
+    expect(first.getByRole('button', { name: '이 부분 전체 보기 ▾' })).toBeTruthy()
+    // 답 근거는 처음부터 펼쳐 두고, 온전한 한 줄 인용이라 [앞뒤 원문 보기]로 원문 조각의 앞뒤 줄을 봐요.
+    expect(apply.getByRole('button', { name: '근거 원문 1개 접기 ▴' }).props.accessibilityState.expanded).toBe(true)
+    expect(apply.queryByText('신청방법')).toBeNull()
+    fireEvent.press(apply.getByRole('button', { name: '앞뒤 원문 보기 ▾' }))
+    for (const line of ['신청 자격', '신청방법', '이메일 접수']) expect(apply.getByText(line)).toBeTruthy()
+    expect(within(apply.getByTestId('evidence-quoted-lines')).queryByText(/신청 자격|신청방법|이메일 접수/)).toBeNull()
+    // 조건부 답에는 기관에 물어볼 것 · 걸리면 생기는 일이 없어요.
+    expect(screen.queryByTestId('answer-APPLY-institution')).toBeNull()
+    expect(screen.queryByTestId('answer-APPLY-consequences')).toBeNull()
+  })
+
+  test('an institution question and consequences say what to ask and what happens when, with folded evidence and shared-citation notes', () => {
+    const run = answerRunFixture()
+    // 같은 인용을 다른 질문도 고르면 근거마다 알려요.
+    run.analysis!.pairs[0].answers![2].citations.push({ evidenceId: 'E1', quote: '중복지원 기간이 겹치지 않는 경우 지원가능합니다.' })
+    showAnswers(run)
+    const concurrent = card('CONCURRENT')
+    const ask = within(screen.getByTestId('answer-CONCURRENT-institution'))
+    expect(ask.getByText('기관에 물어볼 것')).toBeTruthy()
+    expect(ask.getByText('두 사업의 협약 기간이 일부 겹치면 함께 수행할 수 있나요?')).toBeTruthy()
+    expect(within(screen.getByTestId('answer-CONCURRENT-consequences')).getByText('걸리면 생기는 일')).toBeTruthy()
+    const agreement = within(screen.getByTestId('answer-CONCURRENT-consequence-0'))
+    expect(agreement.getByLabelText('협약 시점')).toHaveTextContent('협약')
+    expect(agreement.getByText('협약 후 확인되면 협약 해약')).toBeTruthy()
+    const consequenceEvidence = agreement.getByRole('button', { name: '근거 1개 보기 ▾' })
+    expect(consequenceEvidence.props.accessibilityState.expanded).toBe(false)
+    fireEvent.press(consequenceEvidence)
+    expect(agreement.getByText('사업 2 · 모집공고.pdf · 7쪽')).toBeTruthy()
+    expect(concurrent.getByText('같은 과제·비용 질문에도 인용')).toBeTruthy()
+    const same = card('SAME_SUBJECT')
+    expect(same.getByText('함께 수행 질문에도 인용')).toBeTruthy()
+    expect(within(screen.getByTestId('answer-SAME_SUBJECT-consequence-0')).getByLabelText('정산·지급 시점')).toHaveTextContent('정산·지급')
+    expect(same.getByText('해당 금액 환수')).toBeTruthy()
+    expect(screen.queryByTestId('answer-SAME_SUBJECT-institution')).toBeNull()
+  })
+
+  test.each([
+    ['ALLOWED', '가능', colors.soft, colors.primaryText],
+    ['CONDITIONAL', '조건부', colors.warningSoft, colors.warning],
+    ['NOT_ALLOWED', '불가', colors.dangerSoft, colors.danger],
+    ['NO_RULE', '규정 없음', colors.divider, colors.secondaryText],
+    ['ASK_INSTITUTION', '기관 확인', colors.infoSoft, colors.info],
+  ] as const)('%s shows its own verdict chip on the question card and in the conclusion', (verdict, label, backgroundColor, color) => {
+    const run = answerRunFixture()
+    const answer = run.analysis!.pairs[0].answers![0]
+    Object.assign(answer, { verdict, conditions: verdict === 'CONDITIONAL' ? answer.conditions : [],
+      institutionQuestion: verdict === 'ASK_INSTITUTION' ? '최근 지원 이력도 중복으로 보나요?' : '' })
+    showAnswers(run)
+    const chip = screen.getByTestId('answer-APPLY-verdict')
+    expect(chip).toHaveTextContent(label)
+    expect(chip.props.accessibilityLabel).toBe(`판정 ${label}`)
+    expect(chip).toHaveStyle({ backgroundColor, color })
+    expect(screen.getByTestId('answer-chip-APPLY')).toHaveTextContent(`신청 · ${label}`)
+    expect(screen.getByLabelText(`신청 질문 ${label}`)).toHaveStyle({ backgroundColor, color })
+    expect(screen.queryAllByTestId(/^answer-APPLY-condition-\d$/)).toHaveLength(verdict === 'CONDITIONAL' ? 2 : 0)
+    expect(screen.queryAllByTestId('answer-APPLY-institution')).toHaveLength(verdict === 'ASK_INSTITUTION' ? 1 : 0)
+  })
+
+  test('allowed and no-rule answers never present a missing rule as permission', () => {
+    const run = answerRunFixture()
+    const [apply, concurrent, same] = run.analysis!.pairs[0].answers!
+    Object.assign(apply, { verdict: 'ALLOWED', conditions: [] })
+    Object.assign(concurrent, { verdict: 'NO_RULE', institutionQuestion: '', citations: [], consequences: [], explanation: '두 공고 모두 동시 수행 규정이 없어요.' })
+    Object.assign(same, { verdict: 'ALLOWED', consequences: [] })
+    const view = showAnswers(run)
+    const conclusion = within(screen.getByTestId('review-conclusion'))
+    expect(conclusion.getByText('함께 수행에 관한 규정을 찾지 못했어요')).toBeTruthy()
+    expect(conclusion.getByText('신청 · 같은 과제·비용은 가능해요.')).toBeTruthy()
+    // 수집 범위 경고가 있으면 규정 없음 카드가 판단 한계를 함께 보라고 알려요. 근거가 없으니 근거 버튼도 없어요.
+    const noRule = card('CONCURRENT')
+    expect(noRule.getByText('두 공고에서 이 질문에 해당하는 규정을 찾지 못했어요. 허용을 뜻하지는 않아요. 읽지 못한 첨부가 있어 아래 판단 한계를 함께 확인해 주세요.')).toBeTruthy()
+    expect(noRule.queryByRole('button')).toBeNull()
+    expect(card('APPLY').queryByText(/허용을 뜻하지는 않아요/)).toBeNull()
+    view.unmount()
+
+    run.evidence!.coverageWarnings = []
+    showAnswers(run)
+    expect(card('CONCURRENT').getByText('두 공고에서 이 질문에 해당하는 규정을 찾지 못했어요. 허용을 뜻하지는 않아요.')).toBeTruthy()
+  })
 })

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ActivityIndicator, Alert, AppState, StyleSheet, Text, View } from 'react-native'
 import { useFocusEffect, useRouter } from 'expo-router'
-import { currentStatusLabels, currentStatusToParticipation, participationToCurrentStatus, showFundingQuestion, type CurrentStatus } from '@govbiz/shared/domain/entities/CombinationReviewParticipation'
 import { reviewProgramKey, supportsAutomaticReview, unknownParticipation, type ReviewProgram } from '@govbiz/shared/domain/entities/CombinationReview'
 import type { SupportProgram } from '@govbiz/shared/domain/entities/SupportProgram'
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
@@ -15,6 +14,7 @@ import { CatalogScreen } from './CatalogScreen'
 import { ChoiceField } from '../components/ChoiceField'
 import { SegmentedControl } from '../components/SegmentedControl'
 import { ReviewSavedPrograms } from '../components/ReviewSavedPrograms'
+import { ReviewNarrowingPanel, ReviewSituationFields, type ReviewSituation } from '../components/ReviewSituation'
 import { Button, Card, Field, Notice, Page, StatusBadge, Title, colors, styles } from '../ui'
 
 function ReviewLogin({ onLogin }: { onLogin(): void }) {
@@ -65,13 +65,18 @@ function OwnedReviewList({ token, onNew }: { token: string; onNew(): void }) {
     {loading && items === null && <ActivityIndicator color={colors.primary} accessibilityLabel="검토 목록 불러오는 중" />}
     {error && <><Notice error>{error}</Notice><Button label="검토 목록 다시 확인" onPress={refresh} /></>}
     {items !== null && <Text style={styles.label}>중복 검토 {items.length}</Text>}
-    {items?.length === 0 && !error && <Card><Text style={styles.heading}>아직 저장한 검토가 없어요</Text><Text style={styles.body}>공고 2개와 참여 상태를 입력해 검토를 시작해 주세요.</Text></Card>}
+    {items?.length === 0 && !error && <Card><Text style={styles.heading}>아직 저장한 검토가 없어요</Text><Text style={styles.body}>공고 2개를 고르면 바로 분석할 수 있어요.</Text></Card>}
     {items?.map(item => <ReviewRow key={item.review.id} item={item} />)}
     <Button label="새 검토 시작" onPress={onNew} />
   </Page>
 }
 
-export type CombinationReviewStep = 'selection' | 'participation' | 'confirm' | 'analysis'
+/**
+ * 입력 단계예요. 공고 선택 다음이 바로 분석 확인(confirm)이고, 사업별 상태 · 관계 · 추가 설명은 그 단계의 "내 상황(선택)"에서 받아요.
+ * analysis는 실행 결과 화면이에요. 예전 참여 상태 단계 주소(`step=participation`)는 라우트가 분석 확인으로 열어요.
+ */
+export type CombinationReviewStep = 'selection' | 'confirm' | 'analysis'
+const scopeNotice = '두 공고를 함께 신청 · 수행할 수 있는지, 같은 과제 · 비용으로 두 번 받는 것은 아닌지 봐요. 다른 사업까지 합친 과거 수혜 이력 누적은 이 검토 범위 밖이에요.'
 
 export function CombinationReviewEditorScreen({ id, runId, initialProgram, initialStep, onStepChange, onLogin, onOpenProgram }: {
   id: number | null; runId?: number; initialProgram?: SupportProgramIdentity; initialStep?: CombinationReviewStep; onLogin(): void
@@ -141,7 +146,6 @@ function OwnedReviewEditor({ id, runId, initialProgram, initialStep, onStepChang
   }, [id, initialSourceCode, initialSourceProgramId, token, vm.setDraft])
 
   const name = (program: ReviewProgram, index: number) => names[reviewProgramKey(program)] ?? `사업 ${index + 1} · 공고명 확인 필요`
-  const setParticipation = (index: number, program: ReviewProgram) => vm.setDraft(previous => ({ ...previous, programs: previous.programs.map((item, i) => i === index ? program : item) }))
   function toggle(program: SupportProgram) {
     if (locked) return
     const identity = { sourceCode: program.sourceCode, sourceProgramId: program.id, subProgramId: null }
@@ -161,16 +165,19 @@ function OwnedReviewEditor({ id, runId, initialProgram, initialStep, onStepChang
   }
   function reload() {
     Alert.alert('최신 저장 입력을 사용할까요?', '현재 작성 중인 내용은 저장된 입력으로 바뀝니다.', [
-      { text: '취소', style: 'cancel' }, { text: '불러오기', onPress: () => { vm.reloadInputs(); changeStep('participation') } },
+      { text: '취소', style: 'cancel' }, { text: '불러오기', onPress: () => { vm.reloadInputs(); changeStep('confirm') } },
     ])
   }
   async function start(same = false) { if (await vm.start(same)) changeStep('analysis') }
-  function supplement() { if (vm.run) vm.setFacts(vm.run.input.additionalFacts); changeStep('participation') }
+  /** 바뀐 입력(내 상황 포함)을 저장한 뒤 그 버전으로 새 분석을 접수하고 결과 화면에서 새 실행을 보여 줘요. */
+  async function saveAndStart(additionalFacts?: string) { if (await vm.saveAndStart(additionalFacts)) changeStep('analysis') }
+  function supplement() { if (vm.run) vm.setFacts(vm.run.input.additionalFacts); changeStep('confirm') }
+  const setSituation = (situation: ReviewSituation) => vm.setDraft(previous => ({ ...previous, programs: situation.programs, relation: situation.relation }))
   const unsupported = vm.draft.programs.some(program => !supportsAutomaticReview(program))
-  const progress = <View style={local.steps}>{['공고 선택', '참여 상태', '분석 확인'].map((label, index) => <Text key={label}
-    style={[styles.muted, ['selection', 'participation', 'confirm'][index] === step && local.current]}>{index + 1}. {label}</Text>)}</View>
+  const progress = <View style={local.steps}>{(['selection', 'confirm'] as const).map((value, index) => <Text key={value}
+    style={[styles.muted, value === step && local.current]}>{index + 1}. {value === 'selection' ? '공고 선택' : '분석 확인'}</Text>)}</View>
   const saveHint = <Text accessibilityLiveRegion="polite" style={styles.muted}>{vm.saving ? '저장 중…' : vm.saveError ? '저장하지 못했어요. 입력은 이 화면에 유지됩니다.'
-    : vm.review && !vm.dirty ? '제목·공고·참여 상태 저장됨' : '다음 단계로 넘어가면 입력이 저장돼요.'}</Text>
+    : vm.review && !vm.dirty ? '제목·공고·내 상황 저장됨' : step === 'confirm' ? '바꾼 입력은 검토 실행 전에 저장돼요.' : '다음 단계로 넘어가면 입력이 저장돼요.'}</Text>
   const selectionHeader = <View style={local.selectionHeader}>{progress}{saveHint}<Field label="검토 제목" value={vm.draft.title} maxLength={200} editable={!locked}
     placeholder="예: 창업·기술개발 사업 함께 지원하기" onChangeText={title => vm.setDraft(previous => ({ ...previous, title }))} />
     <Card><View style={styles.row}><Text style={styles.label}>비교할 공고</Text><StatusBadge label={vm.draft.programs.length > 2 ? `기존 공고 ${vm.draft.programs.length}개` : `${vm.draft.programs.length} / 2 선택`} /></View>
@@ -196,45 +203,56 @@ function OwnedReviewEditor({ id, runId, initialProgram, initialStep, onStepChang
       {savedVisited && <View style={[local.panel, method !== 'saved' && local.hidden]} accessibilityElementsHidden={method !== 'saved'} importantForAccessibility={method === 'saved' ? 'auto' : 'no-hide-descendants'} pointerEvents={method === 'saved' ? 'auto' : 'none'}>
         <ReviewSavedPrograms header={selectionHeader} token={token} keys={vm.selectedKeys} disabled={locked} onToggle={toggle} onOpen={onOpenProgram} /></View>}
     </View>}
-    {step === 'participation' && <Page key="participation">{progress}{saveHint}<Title>현재 참여 상태를 알려주세요</Title><Text style={styles.muted}>모르는 항목은 미확인으로 남겨도 돼요. 실제 지급 여부는 참여 상태와 따로 입력합니다.</Text>
-      {vm.draft.programs.map((program, index) => {
-        const status = participationToCurrentStatus(program.participation)
-        return <Card key={reviewProgramKey(program)}><Text style={styles.heading}>{name(program, index)}</Text>
-          <ChoiceField label={`사업 ${index + 1} 현재 참여 상태`} value={status} disabled={locked} options={Object.entries(currentStatusLabels).map(([value, label]) => ({ value, label }))}
-            onChange={value => { if (!locked) setParticipation(index, { ...program, participation: currentStatusToParticipation(value as CurrentStatus, program.participation) }) }} />
-          {showFundingQuestion(status, program.participation) && <ChoiceField label={`사업 ${index + 1} 실제 지원금 지급 여부`} value={program.participation.fundingReceived} disabled={locked}
-            options={[{ value: 'UNKNOWN', label: '잘 모르겠음' }, { value: 'YES', label: '예' }, { value: 'NO', label: '아니오' }]}
-            onChange={value => { if (!locked) setParticipation(index, { ...program, participation: { ...program.participation, fundingReceived: value as 'UNKNOWN' | 'YES' | 'NO' } }) }} />}
-        </Card>
-      })}
-      <Field label="추가로 알려줄 내용 (선택)" multiline value={vm.facts} onChangeText={vm.setFacts} editable={!locked} maxLength={8000}
-        placeholder="예: 두 사업에서 같은 인건비를 사용하려고 해요." style={{ minHeight: 110, textAlignVertical: 'top' }} />
-      <Text style={styles.muted}>{vm.facts.length} / 8000 · 추가 설명은 검토 실행을 요청할 때 이 실행에만 저장돼요.</Text>
-    </Page>}
     {step === 'confirm' && <Page key="confirm">{progress}{saveHint}<Title>이 내용으로 검토할까요?</Title>
-      {vm.draft.programs.map((program, index) => <Card key={reviewProgramKey(program)}><Text style={styles.heading}>{name(program, index)}</Text>
-        <Text style={styles.body}>{currentStatusLabels[participationToCurrentStatus(program.participation)]}</Text><Text style={styles.muted}>실제 지원금 지급 · {{ YES: '예', NO: '아니오', UNKNOWN: '미확인' }[program.participation.fundingReceived]}</Text></Card>)}
-      <Text style={styles.body}>{vm.facts || '추가 설명이 없어요.'}</Text>
-      <Text style={styles.muted}>추가 설명은 검토 실행을 요청할 때 이 실행에만 저장돼요.</Text>
+      <Notice>{scopeNotice}</Notice>
+      <Card><Text accessibilityRole="header" style={styles.heading}>분석 대상 공고</Text>
+        {vm.draft.programs.map((program, index) => <Text key={reviewProgramKey(program)} style={styles.body}>사업 {index + 1} · {names[reviewProgramKey(program)] ?? '공고명 확인 필요'}</Text>)}
+      </Card>
+      <Card>
+        <View style={styles.row}><Text accessibilityRole="header" style={styles.heading}>내 상황</Text><StatusBadge label="선택" /></View>
+        <Text style={styles.muted}>모두 비워 둬도 분석할 수 있어요. 고르면 조건에 따라 갈리는 답을 내 상황에 맞춰 좁혀요.</Text>
+        <ReviewSituationFields value={vm.draft} names={names} disabled={locked} onChange={setSituation} />
+        <Field label="추가로 알려줄 내용 (선택)" multiline value={vm.facts} onChangeText={vm.setFacts} editable={!locked} maxLength={8000}
+          placeholder="예: 두 사업에서 같은 인건비를 사용하려고 해요." style={{ minHeight: 110, textAlignVertical: 'top' }} />
+        <Text style={styles.muted}>{vm.facts.length} / 8000 · 추가 설명은 검토 실행을 요청할 때 이 실행에만 저장돼요.</Text>
+        {vm.dirty && <Notice>바꾼 내 상황은 [검토 실행]을 누르면 저장한 뒤 분석해요.</Notice>}
+      </Card>
       {unsupported && <Notice error>선택한 공고는 현재 자동 분석을 지원하지 않아요. 다른 공고를 선택하거나 공식 원문을 확인해 주세요.</Notice>}
       <Notice>공식 원문을 바탕으로 AI가 분석하며 사용 비용이 발생할 수 있어요. 접수된 분석은 앱을 닫아도 이어집니다. 결과는 신청 자격이나 동시 수혜를 보장하지 않습니다.</Notice>
+      {vm.startBlocked && <Text testID="review-start-reason" accessibilityLiveRegion="polite" style={styles.muted}>{vm.startBlocked}</Text>}
     </Page>}
-    {step === 'analysis' && <Page key="analysis"><Title>{vm.review?.title ?? '공고 분석'}</Title>
+    {/* 새 실행을 접수하거나 다른 실행을 고르면 화면을 새로 그려 맨 위의 진행 상태부터 보여 줘요. */}
+    {step === 'analysis' && <Page key={`analysis:${vm.selectedRunId ?? 'latest'}`}><Title>{vm.review?.title ?? '공고 분석'}</Title>
       {vm.busy && <ActivityIndicator color={colors.primary} accessibilityLabel="분석 요청 확인 중" />}
       {!vm.loading && !vm.error && !vm.run && !vm.runs.length && <Notice>아직 분석 결과가 없어요. 입력을 확인한 뒤 명시적으로 분석을 요청해 주세요.</Notice>}
       {vm.runs.length > 0 && <ChoiceField label="실행 결과 선택" value={String(vm.selectedRunId ?? vm.runs[0].id)}
         options={[...(vm.selectedRunId && !vm.runs.some(item => item.id === vm.selectedRunId) ? [{ value: String(vm.selectedRunId), label: `실행 ${vm.selectedRunId} · 결과 확인` }] : []), ...vm.runs.map(item => ({ value: String(item.id), label: `실행 ${item.id} · ${reviewRunLabels[item.status]} · ${reviewTime(item.startedAt)} · 입력 ${item.inputRevision}` }))]}
         onChange={value => vm.selectRun(Number(value))} />}
       {vm.cursor && <Button label="이전 실행 더 보기" variant="secondary" disabled={vm.busy} onPress={() => void vm.moreRuns()} />}
-      {vm.run && <ReviewResult key={vm.run.id} run={vm.run} names={names} currentRevision={vm.currentRevision} onSupplement={supplement} onRefresh={vm.refresh} />}
+      {vm.run && <ReviewResult key={vm.run.id} run={vm.run} names={names} currentRevision={vm.currentRevision} onSupplement={supplement} onRefresh={vm.refresh}
+        narrowing={vm.review && <ReviewNarrowingPanel value={vm.draft} names={names} dirty={vm.dirty} busy={vm.busy} disabled={vm.loading || !vm.storageReady}
+          blocked={vm.startBlocked} onChange={setSituation} onSubmit={() => void saveAndStart(vm.run!.input.additionalFacts)} />}
+        reanalyze={vm.review && <Reanalyze busy={vm.busy} disabled={vm.loading || !vm.storageReady} blocked={vm.startBlocked}
+          onPress={() => void saveAndStart(vm.run!.input.additionalFacts)} />} />}
       {!vm.pending && <Button label="입력 수정하기" variant="secondary" disabled={vm.busy} onPress={supplement} />}
     </Page>}
     {step !== 'analysis' && <View style={local.actions}>
-      {step === 'selection' && <Button style={local.action} label="다음 · 참여 상태 입력" busy={vm.saving} disabled={locked || vm.loading || !vm.draft.title.trim() || vm.draft.programs.length !== 2} onPress={() => void saveStep('participation')} />}
-      {step === 'participation' && <><Button style={local.action} label="공고 선택으로" variant="secondary" disabled={locked || vm.loading} onPress={() => void saveStep('selection')} /><Button style={local.action} label="다음 · 분석 확인" busy={vm.saving} disabled={locked || vm.loading} onPress={() => void saveStep('confirm')} /></>}
-      {step === 'confirm' && <><Button style={local.action} label="입력 수정" variant="secondary" disabled={locked} onPress={() => changeStep('participation')} /><Button style={local.action} label="검토 실행"
-        busy={vm.busy} disabled={vm.loading || Boolean(vm.pending) || vm.active || !vm.storageReady || !vm.review || vm.dirty || unsupported || vm.draft.programs.length !== 2} onPress={() => void start()} /></>}
+      {step === 'selection' && <Button style={local.action} label="다음 · 분석 확인" busy={vm.saving} disabled={locked || vm.loading || !vm.draft.title.trim() || vm.draft.programs.length !== 2} onPress={() => void saveStep('confirm')} />}
+      {/* 이전 단계로 갈 때도 바꾼 내 상황을 저장해요. [검토 실행]은 바뀐 입력을 먼저 저장(입력 버전 확인)한 뒤 그 버전으로 분석을 접수해요. */}
+      {step === 'confirm' && <><Button style={local.action} label="공고 선택으로" variant="secondary" disabled={locked || vm.loading} onPress={() => void saveStep('selection')} /><Button style={local.action} label="검토 실행"
+        busy={vm.busy} disabled={vm.loading || !vm.storageReady || !vm.review || Boolean(vm.startBlocked)} onPress={() => void saveAndStart()} /></>}
     </View>}
+  </View>
+}
+
+/**
+ * 지난 여섯 단계 결과에 붙는 [새 방식으로 다시 분석]이에요. 지금 저장된 입력으로 새 분석을 한 번 접수하고, 분석 방식은 서버가 정해요.
+ * 지금 보낼 수 없으면 이유를 버튼 위에 적어요.
+ */
+function Reanalyze({ busy, disabled, blocked, onPress }: { busy: boolean; disabled: boolean; blocked: string | null; onPress(): void }) {
+  return <View style={local.reanalyze}>
+    {blocked && <Text testID="review-reanalyze-reason" accessibilityLiveRegion="polite" style={styles.muted}>{blocked}</Text>}
+    <Button label="새 방식으로 다시 분석" variant="secondary" busy={busy} disabled={disabled || Boolean(blocked)} onPress={onPress} />
   </View>
 }
 
@@ -243,5 +261,5 @@ const local = StyleSheet.create({
   selected: { backgroundColor: colors.soft, borderRadius: 10, paddingHorizontal: 10, flexDirection: 'row', alignItems: 'center', gap: 6 },
   steps: { flexDirection: 'row', justifyContent: 'space-between', gap: 6 }, current: { color: colors.primary, fontWeight: '600' },
   actions: { paddingHorizontal: 16, paddingVertical: 8, borderTopWidth: 1, borderTopColor: colors.border, backgroundColor: colors.surface, flexDirection: 'row', justifyContent: 'space-evenly', gap: 8 },
-  notice: { padding: 12, gap: 6 },
+  notice: { padding: 12, gap: 6 }, reanalyze: { gap: 6 },
 })
