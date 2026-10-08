@@ -13,6 +13,8 @@ React·TypeScript·Vite·Tailwind CSS를 사용합니다. 전체 기술 구성�
 실제 구현은 `frontend/packages/shared`에 있고, 기존 `src/domain`과 `src/data/models`는 호환용 재수출입니다.
 새 공통 로직은 `@govbiz/shared/...`를 가져오며 웹 화면·쿠키 인증·Vite 설정은 여기에 둡니다.
 전체 실행·공유 경계는 [웹·앱 공동 관리](../../docs/mobile-monorepo.md)를 참고하세요.
+요금제의 가격·혜택·출시 안내·FAQ는 `@govbiz/shared/design/pricingContent`를 웹과 모바일에서 함께 읽습니다.
+웹의 공개·작업 요금제 경로와 버튼 이동은 유지하며 모바일은 같은 내용을 탭 전환형으로 표시합니다.
 
 ## 실행
 

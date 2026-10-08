@@ -15,13 +15,17 @@
 
 `frontend/web`와 Expo React Native `frontend/mobile`은 `frontend/packages/shared`의 domain·유스케이스·DTO 검증을 가져옵니다.
 색·모서리 디자인 토큰(`design/tokens.ts`)도 shared 한 곳에 두고, 웹은 이 값으로 만든 Tailwind `@theme` 파일을, 모바일은 값을 그대로 씁니다.
+요금제 가격·혜택·출시 안내·FAQ는 shared `design/pricingContent.ts`에서 웹과 모바일이 함께 읽습니다.
+모바일은 `비로그인 요금제 탭 또는 메뉴 → PricingScreen → shared 표시 내용`으로 무료·플러스·프리미엄을 전환하며,
+표시만으로 HTTP 요청을 보내지 않습니다. 플러스 이용 버튼은 기존 `LoginFlowProvider`가 확인한 로그인 뒤 관심함으로 이동합니다.
+비로그인 `/pricing`과 로그인 후 메뉴 안의 `/all/pricing`은 같은 화면을 사용하고 결제·구독 API는 추가하지 않습니다.
 공고 호출은 `웹/앱 화면 → 공통 유스케이스 → 플랫폼 Repository → 공통 공고 HTTP 클라이언트 → Core API`
 로 이어집니다. 공통 클라이언트에는 공개 API 주소와 fetch만 주입하며 Vite/Expo 환경변수·브라우저 저장소·React를 참조하지 않습니다.
 웹은 기존 쿠키 설정을 유지하고 앱의 세션 저장·네비게이션은 모바일 쪽에서 담당합니다.
-모바일 비로그인 하단은 검색·협업·전체 3탭이며 공개 검색과 모집글 조회를 허용합니다. 전체 메뉴는 모든 기능을 노출하되
+모바일 비로그인 하단은 검색·협업·요금제·메뉴 4탭이며 공개 검색과 모집글·요금제 조회를 허용합니다. 메뉴는 모든 기능을 노출하되
 개인 기능은 로그인 안내를 먼저 열고 확인된 인증 뒤 해당 라우트로 이동합니다. 확인된 로그인 뒤에는
-검색·관심함·리포트·전체 4탭과 `app/(tabs)/all`의 기존 계정·기업·알림 설정·신청 준비·협업 화면으로 연결합니다.
-협업 탭에서 로그인하면 기존 All Stack으로 이동하며 선택한 view·box·mine을 보존합니다. 전체 메뉴는 모집글과 파트너 관리로 연결하며
+검색·관심함·리포트·메뉴 4탭과 `app/(tabs)/all`의 기존 계정·기업·알림 설정·신청 준비·협업 화면으로 연결합니다.
+협업 탭에서 로그인하면 기존 All Stack으로 이동하며 선택한 view·box·mine을 보존합니다. 메뉴는 모집글과 파트너 관리로 연결하며
 파트너 관리 안의 받은/보낸 제안·내 모집글은 기존 제안함/모집글 Bearer API를 재사용합니다. 메뉴는 기존 화면·Bearer API·공통 DTO를 재사용하며 서버 계약은 바꾸지 않습니다.
 협업 머리글의 연필은 모바일 `/partner/new`로 연결합니다. 작성은 `RecruitmentCreateScreen → mobile api/partners의 createRecruitment
 → shared CreatePartnerRecruitmentUseCase → 모바일 Bearer HTTP 요청 → 기존 Core 모집글 API`로 이어집니다.

@@ -12,6 +12,10 @@ export default function MenuRoute() {
       case 'account': router.push('/(tabs)/all/account'); break
       case 'company': router.push('/(tabs)/all/company'); break
       case 'settings': router.push('/(tabs)/all/settings'); break
+      case 'pricing':
+        if (signedIn) router.push('/(tabs)/all/pricing')
+        else router.navigate('/(tabs)/pricing')
+        break
       case 'filter': router.navigate({ pathname: '/(tabs)', params: { mode: 'filter' } }); break
       case 'ai': router.navigate({ pathname: '/(tabs)', params: { mode: 'ai' } }); break
       case 'saved': router.navigate('/(tabs)/saved'); break
@@ -26,7 +30,7 @@ export default function MenuRoute() {
     }
   }
   function open(destination: MenuDestination) {
-    if (status === 'signedOut' && !['filter', 'ai', 'recruitments'].includes(destination)) {
+    if (status === 'signedOut' && !['filter', 'ai', 'recruitments', 'pricing'].includes(destination)) {
       requestLogin({ direct: destination === 'account', message: '이 기능은 로그인 후 이용할 수 있어요.',
         onAuthenticated: () => navigate(destination, true) })
       return

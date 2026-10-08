@@ -12,6 +12,7 @@ export default function AllLayout() {
     <Stack.Screen name="account" options={{ title: '내 정보' }} />
     <Stack.Screen name="company" options={{ title: '기업 정보' }} />
     <Stack.Screen name="settings" options={{ title: '알림 설정' }} />
+    <Stack.Screen name="pricing" options={{ title: '요금제' }} />
     <Stack.Screen name="preparation" options={{ title: '신청 준비' }} />
     <Stack.Screen name="preparation/new" options={{ title: '새 문서' }} />
     <Stack.Screen name="preparation/[id]" options={{ title: '답변 작성' }} />
