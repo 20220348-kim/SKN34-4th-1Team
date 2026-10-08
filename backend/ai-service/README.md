@@ -39,6 +39,12 @@ Agent 안에서 API 전송 스키마의 판별 union을 `anyOf`로 변환하고 
 2,048개를 넘으면 모델 호출 전에 `CONTEXT_TOO_LARGE`로 거절합니다. 근거 ID와 인용문은 코드가 원문에서
 복원하므로 모델이 공백·문장부호를 바꾼 인용을 생성하지 않습니다. 다른 사업쌍의 선택지, 범위 밖 번호, 사업쌍 누락·단계 중복,
 기관 확인이 필요한 확정 판단은 기술 오류로 거절합니다.
+같은 `analyze` 경로는 요청의 `contractVersion`으로 여섯 단계를 판단하는 `combination-review-v2`와 세 질문(APPLY 신청,
+CONCURRENT 동시 수행, SAME_SUBJECT 같은 과제·비용)에 다섯 판정(ALLOWED·CONDITIONAL·NOT_ALLOWED·NO_RULE·ASK_INSTITUTION)으로
+답하는 `combination-review-v3`를 함께 받습니다. v3는 사업별 상태(NOT_APPLIED·APPLIED·ACTIVE·FINISHED, 모르면 UNKNOWN)와 두 사업 관계(sameProject·sameCost)를
+선택 입력으로 받고, 프롬프트와 버전 hash가 v2와 다르며 `GET .../configuration?contractVersion=combination-review-v3`로 조회합니다(쿼리가 없으면 v2).
+질문 누락·중복·순서 오류, 판정별 인용·조건 규칙 위반, 인용 없는 조건부 답·조치는 같은 503 기술 오류입니다.
+Core가 새 실행의 기본 계약을 v3로 바꾼 뒤 v2 분석 경로를 지웁니다.
 구조화 출력의 형태 준수와 실제 판단 품질은 다르며 [공식 안내](https://developers.openai.com/api/docs/guides/structured-outputs)를 참고합니다.
 [실행·원문 관리 계약](../../docs/duplicate-support-review-design.md)과 [무료 검증](../../evaluation/combination-review/README.md)에 범위를 정리했습니다.
 
@@ -75,6 +81,7 @@ AI Service가 하는 일:
 - 도우미 자유 질문을 여섯 의도 중 하나로 분류하고, 사용법 답은 Core가 보낸 도움말 항목만 인용해 반환 (`govbiz-assistant-v1`)
 - 도우미 도구 에이전트: 분류 뒤 자료가 필요한 의도(모집글 매칭·내 상태·관심 공고)는 LangGraph로 Core 내부 도구를 최대 3회 부르고 답·카드를 반환 (`govbiz-assistant-agent-v1`)
 - Core가 보낸 정확히 2개 사업의 전체 근거·참여 사실을 단일 Agent로 대조하고 한 사업쌍의 여섯 단계 판단·질문·정확한 인용을 반환 (`combination-review-v2`)
+  또는 세 질문의 판정·확인할 조건·걸리면 생기는 일·정확한 인용을 반환 (`combination-review-v3`)
 
 AI Service가 하지 않는 일:
 

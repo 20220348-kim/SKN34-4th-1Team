@@ -49,18 +49,23 @@ class AnalyzeRequest(Contract):
 
     @model_validator(mode="after")
     def valid_context(self) -> Self:
-        identities = [(p.sourceCode, p.sourceProgramId, p.subProgramId) for p in self.programs]
-        if len(set(identities)) != len(identities):
-            raise ValueError("duplicate programs")
-        if len({e.id for e in self.evidence}) != len(self.evidence):
-            raise ValueError("duplicate evidence")
-        if any(e.programIndex >= len(self.programs) for e in self.evidence):
-            raise ValueError("invalid program index")
-        if {e.programIndex for e in self.evidence} != set(range(len(self.programs))):
-            raise ValueError("missing program evidence")
-        if sum(len(e.text) for e in self.evidence) > 120_000 or any(len(w) > 500 for w in self.coverageWarnings):
-            raise ValueError("context limit exceeded")
+        _check_context(self)
         return self
+
+
+def _check_context(request: "AnalyzeRequest | AnalyzeRequestV3") -> None:
+    """Input rules shared by v2 and v3: distinct programs, evidence for every program and the size limits."""
+    identities = [(p.sourceCode, p.sourceProgramId, p.subProgramId) for p in request.programs]
+    if len(set(identities)) != len(identities):
+        raise ValueError("duplicate programs")
+    if len({e.id for e in request.evidence}) != len(request.evidence):
+        raise ValueError("duplicate evidence")
+    if any(e.programIndex >= len(request.programs) for e in request.evidence):
+        raise ValueError("invalid program index")
+    if {e.programIndex for e in request.evidence} != set(range(len(request.programs))):
+        raise ValueError("missing program evidence")
+    if sum(len(e.text) for e in request.evidence) > 120_000 or any(len(w) > 500 for w in request.coverageWarnings):
+        raise ValueError("context limit exceeded")
 
 
 MAX_CITATION_OPTIONS = 2048
@@ -123,7 +128,7 @@ class AnalysisSelection(Contract):
     limitations: list[Limitation] = Field(min_length=1, max_length=12)
 
 
-def build_citation_options(request: AnalyzeRequest) -> list[CitationOption]:
+def build_citation_options(request: "AnalyzeRequest | AnalyzeRequestV3") -> list[CitationOption]:
     return [
         CitationOption(evidenceIndex=evidence_index, heading=heading, quote=quote)
         for evidence_index, evidence in enumerate(request.evidence)
@@ -148,12 +153,152 @@ def validate_selection(
         for stage in pair.stages:
             if any(not question.strip() for question in stage.questions):
                 raise ValueError("invalid question")
-            for citation in stage.citations:
-                if citation.citationOptionIndex >= len(citation_options):
-                    raise ValueError("out-of-range citation option")
-                selected = request.evidence[citation_options[citation.citationOptionIndex].evidenceIndex]
-                if selected.programIndex not in {pair.firstProgramIndex, pair.secondProgramIndex}:
-                    raise ValueError("citation option belongs to another pair")
+            _check_citations(request, pair, stage.citations, citation_options)
+
+
+def _check_citations(
+    request: "AnalyzeRequest | AnalyzeRequestV3",
+    pair: "PairSelection | PairSelectionV3",
+    citations: list[CitationSelection],
+    citation_options: list[CitationOption],
+) -> None:
+    for citation in citations:
+        if citation.citationOptionIndex >= len(citation_options):
+            raise ValueError("out-of-range citation option")
+        selected = request.evidence[citation_options[citation.citationOptionIndex].evidenceIndex]
+        if selected.programIndex not in {pair.firstProgramIndex, pair.secondProgramIndex}:
+            raise ValueError("citation option belongs to another pair")
+
+
+# --- combination-review-v3: three questions, five verdicts and optional user facts ---
+# v2 above keeps serving Core until its default contract becomes v3; then the v2 analysis path is removed.
+
+CONTRACT_VERSION_V3 = "combination-review-v3"
+QUESTIONS = ("APPLY", "CONCURRENT", "SAME_SUBJECT")
+ReviewQuestion = Literal["APPLY", "CONCURRENT", "SAME_SUBJECT"]
+Moment = Literal["EVALUATION", "SELECTION", "AGREEMENT", "EXECUTION", "SETTLEMENT", "AFTER"]
+
+
+class ProgramV3(Contract):
+    sourceCode: str = Field(pattern=r"^[A-Z][A-Z0-9_]{0,63}$")
+    sourceProgramId: str = Field(min_length=1, max_length=255)
+    subProgramId: str | None = Field(max_length=255)
+    status: Literal["UNKNOWN", "NOT_APPLIED", "APPLIED", "ACTIVE", "FINISHED"]
+
+
+class Relation(Contract):
+    sameProject: Answer
+    sameCost: Answer
+
+
+class AnalyzeRequestV3(Contract):
+    contractVersion: Literal["combination-review-v3"]
+    programs: list[ProgramV3] = Field(min_length=2, max_length=2)
+    relation: Relation
+    asOfDate: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    additionalFacts: str = Field(max_length=8000)
+    evidence: list[EvidenceBlock] = Field(min_length=1, max_length=512)
+    coverageWarnings: list[str] = Field(max_length=40)
+
+    @model_validator(mode="after")
+    def valid_context(self) -> Self:
+        _check_context(self)
+        return self
+
+
+class ConditionSelection(Contract):
+    condition: str = Field(min_length=1, max_length=200)
+    result: Literal["ALLOWED", "NOT_ALLOWED"]
+    citations: list[CitationSelection] = Field(max_length=8)
+
+
+class ConsequenceSelection(Contract):
+    moment: Moment
+    action: str = Field(min_length=1, max_length=200)
+    # A consequence is written only from cited penalty text, so it always carries its own citation.
+    citations: list[CitationSelection] = Field(min_length=1, max_length=8)
+
+
+class AnswerSelectionBase(Contract):
+    # The model writes the explanation before it commits to a verdict, as v2 writes it before the judgment.
+    question: ReviewQuestion
+    explanation: str = Field(min_length=1, max_length=600)
+    verdict: str
+    conditions: list[ConditionSelection] = Field(max_length=0)
+    consequences: list[ConsequenceSelection] = Field(max_length=4)
+    institutionQuestion: str = Field(max_length=300)
+    citations: list[CitationSelection] = Field(max_length=8)
+
+
+class DefinitiveAnswerSelection(AnswerSelectionBase):
+    verdict: Literal["ALLOWED", "NOT_ALLOWED"]
+    citations: list[CitationSelection] = Field(min_length=1, max_length=8)
+
+
+class ConditionalAnswerSelection(AnswerSelectionBase):
+    verdict: Literal["CONDITIONAL"]
+    conditions: list[ConditionSelection] = Field(min_length=1, max_length=4)
+
+
+class NoRuleAnswerSelection(AnswerSelectionBase):
+    verdict: Literal["NO_RULE"]
+
+
+class AskInstitutionAnswerSelection(AnswerSelectionBase):
+    verdict: Literal["ASK_INSTITUTION"]
+    institutionQuestion: str = Field(min_length=1, max_length=300)
+    citations: list[CitationSelection] = Field(min_length=1, max_length=8)
+
+
+AnswerSelection = Annotated[
+    DefinitiveAnswerSelection | ConditionalAnswerSelection | NoRuleAnswerSelection | AskInstitutionAnswerSelection,
+    Field(discriminator="verdict"),
+]
+
+
+class PairSelectionV3(Contract):
+    firstProgramIndex: Literal[0]
+    secondProgramIndex: Literal[1]
+    answers: list[AnswerSelection] = Field(min_length=3, max_length=3)
+
+
+class AnalysisSelectionV3(Contract):
+    summary: str = Field(min_length=1, max_length=1200)
+    pairs: list[PairSelectionV3] = Field(min_length=1, max_length=1)
+    limitations: list[Limitation] = Field(min_length=1, max_length=12)
+
+
+def validate_answers(
+    request: AnalyzeRequestV3,
+    output: AnalysisSelectionV3,
+    citation_options: list[CitationOption],
+) -> None:
+    """Rules the v3 schema cannot express: pair set, question order, non-blank text, CONDITIONAL citation and citations."""
+    expected = set(combinations(range(len(request.programs)), 2))
+    actual = [(p.firstProgramIndex, p.secondProgramIndex) for p in output.pairs]
+    if len(actual) != len(expected) or set(actual) != expected:
+        raise ValueError("missing or duplicate pair")
+    if any(not item.strip() for item in output.limitations):
+        raise ValueError("invalid limitation")
+    if not output.summary.strip():
+        raise ValueError("blank answer text")
+    for pair in output.pairs:
+        if tuple(answer.question for answer in pair.answers) != QUESTIONS:
+            raise ValueError("invalid answer order")
+        for answer in pair.answers:
+            texts = [answer.explanation, *(item.condition for item in answer.conditions),
+                     *(item.action for item in answer.consequences)]
+            if answer.verdict == "ASK_INSTITUTION":
+                texts.append(answer.institutionQuestion)
+            if any(not text.strip() for text in texts):
+                raise ValueError("blank answer text")
+            if answer.verdict == "CONDITIONAL" and not answer.citations and not any(
+                item.citations for item in answer.conditions
+            ):
+                raise ValueError("uncited answer")
+            for citations in [answer.citations, *(item.citations for item in answer.conditions),
+                              *(item.citations for item in answer.consequences)]:
+                _check_citations(request, pair, citations, citation_options)
 
 
 # A level-1/2 bullet, number or heading starts an item; level-3 bullets (-, ·), notes (※, *) and unmarked lines continue it.

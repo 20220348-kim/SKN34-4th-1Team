@@ -1,5 +1,6 @@
 import asyncio
 from copy import deepcopy
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -15,8 +16,11 @@ from langsmith import get_tracing_context
 from pydantic import ValidationError
 
 from app.combination_review.agent import CombinationReviewAgent
-from app.combination_review.models import AnalyzeRequest, AnalysisSelection, build_citation_options, validate_selection
-from app.combination_review.prompt import PROMPT_VERSION
+from app.combination_review.models import (
+    AnalysisSelection, AnalysisSelectionV3, AnalyzeRequest, AnalyzeRequestV3, build_citation_options,
+    validate_answers, validate_selection,
+)
+from app.combination_review.prompt import INSTRUCTIONS, INSTRUCTIONS_V3, PROMPT_VERSION, PROMPT_VERSION_V3
 from app.combination_review.service import CombinationReviewError, CombinationReviewService
 from app.config import Settings
 from app.main import create_app
@@ -561,3 +565,263 @@ def test_agent_sends_option_headings_while_core_still_receives_evidence_id_and_q
     ]
     citations = [citation for stage in result["pairs"][0]["stages"] for citation in stage["citations"]]
     assert citations and all(citation == {"evidenceId": "E0", "quote": first} for citation in citations)
+
+
+# --- combination-review-v3: three questions, five verdicts and optional user facts ---
+
+
+def v3_request_data():
+    return json.loads((FIXTURES / "contract-v3-request.json").read_text(encoding="utf-8"))
+
+
+def v3_response_data():
+    data = json.loads((FIXTURES / "contract-v3-response.json").read_text(encoding="utf-8"))
+    data["promptVersion"] = PROMPT_VERSION_V3
+    return data
+
+
+def v3_selection_data():
+    options = build_citation_options(AnalyzeRequestV3.model_validate(v3_request_data()))
+    data = v3_response_data()
+    for name in ["contractVersion", "model", "promptVersion"]:
+        data.pop(name)
+    for item in data["pairs"][0]["answers"]:
+        for citations in [item["citations"], *(c["citations"] for c in item["conditions"] + item["consequences"])]:
+            for citation in citations:
+                evidence_index = int(citation.pop("evidenceId")[1:])
+                quote = citation.pop("quote")
+                citation["citationOptionIndex"] = next(
+                    index for index, option in enumerate(options)
+                    if option.evidenceIndex == evidence_index and quote == option.quote
+                )
+    return data
+
+
+def answer(data, index):
+    return data["pairs"][0]["answers"][index]
+
+
+def service_app(service):
+    app = create_app(settings=Settings(openai_api_key="unused-test-key", openai_model="test-model",
+                                       llm_model_timeout_seconds=2, llm_run_timeout_seconds=3))
+    app.state.container.combination_review_service = service
+    return app
+
+
+def test_v3_router_returns_the_three_question_contract_and_keeps_v2_on_the_same_endpoint():
+    service, calls = make_service(v3_selection_data())
+
+    with TestClient(service_app(service)) as client:
+        result = client.post("/internal/v1/combination-reviews/analyze", json=v3_request_data())
+
+    assert result.status_code == 200
+    assert result.json() == v3_response_data()
+    answers = result.json()["pairs"][0]["answers"]
+    assert [item["question"] for item in answers] == ["APPLY", "CONCURRENT", "SAME_SUBJECT"]
+    assert set(answers[2]) == {"question", "verdict", "explanation", "conditions", "consequences",
+                               "institutionQuestion", "citations"}
+    assert "citationOptionIndex" not in result.text
+    assert len(calls) == 1
+    body = json.loads(calls[0].content)
+    assert body["store"] is False and body["max_output_tokens"] == 6000 and not body.get("tools")
+    assert body["text"]["format"]["strict"] is True
+    schema = json.dumps(body["text"]["format"]["schema"])
+    assert '"oneOf"' not in schema and '"discriminator"' not in schema and '"anyOf"' in schema
+    assert '"answers"' in schema and '"stages"' not in schema
+    system = next(message for message in body["input"] if message["role"] == "system")
+    assert system["content"] == INSTRUCTIONS_V3
+    payload = json.loads(next(message for message in body["input"] if message["role"] == "user")["content"])
+    assert "evidence" not in payload
+    assert payload["relation"] == {"sameProject": "UNKNOWN", "sameCost": "NO"}
+    assert [program["status"] for program in payload["programs"]] == ["UNKNOWN", "ACTIVE"]
+    assert len(payload["citationOptions"]) == 3
+
+    # A v2 request still gets the v2 prompt, schema and response from the same endpoint.
+    v2_service, v2_calls = make_service()
+    with TestClient(service_app(v2_service)) as client:
+        assert client.post("/internal/v1/combination-reviews/analyze", json=request_data()).json() == response_data()
+    v2_body = json.loads(v2_calls[0].content)
+    assert next(m for m in v2_body["input"] if m["role"] == "system")["content"] == INSTRUCTIONS
+    assert '"stages"' in json.dumps(v2_body["text"]["format"]["schema"])
+
+
+def test_configuration_returns_the_v3_prompt_version_only_when_asked():
+    service, _ = make_service()
+    path = "/internal/v1/combination-reviews/configuration"
+    with TestClient(service_app(service)) as client:
+        default = client.get(path)
+        v2 = client.get(path, params={"contractVersion": "combination-review-v2"})
+        v3 = client.get(path, params={"contractVersion": "combination-review-v3"})
+        unknown = client.get(path, params={"contractVersion": "v3"})
+
+    assert default.json() == v2.json() == {
+        "contractVersion": "combination-review-v2", "model": "test-model", "promptVersion": PROMPT_VERSION,
+    }
+    assert v3.json() == {"contractVersion": "combination-review-v3", "model": "test-model", "promptVersion": PROMPT_VERSION_V3}
+    assert unknown.status_code == 422
+
+
+def test_v3_prompt_has_its_own_version():
+    assert PROMPT_VERSION_V3 != PROMPT_VERSION
+    assert PROMPT_VERSION_V3 == "sha256:" + hashlib.sha256(INSTRUCTIONS_V3.encode("utf-8")).hexdigest()
+    for word in ["APPLY", "CONCURRENT", "SAME_SUBJECT", "NO_RULE", "ASK_INSTITUTION", "citationOptionIndex",
+                 "사업 1", "3책5공", "환수", "제재부가금"]:
+        assert word in INSTRUCTIONS_V3
+
+
+@pytest.mark.parametrize("change", [
+    # ALLOWED / NOT_ALLOWED: at least one citation and no conditions.
+    lambda d: answer(d, 0).update(citations=[]),
+    lambda d: answer(d, 0).update(verdict="NOT_ALLOWED", conditions=deepcopy(answer(d, 2)["conditions"])),
+    # CONDITIONAL: 1..4 conditions and at least one citation over the answer and its conditions.
+    lambda d: answer(d, 2).update(conditions=[]),
+    lambda d: answer(d, 2).update(conditions=answer(d, 2)["conditions"] * 3),
+    lambda d: [condition.update(citations=[]) for condition in answer(d, 2)["conditions"]],
+    lambda d: answer(d, 2)["conditions"][0].update(result="CONDITIONAL"),
+    lambda d: answer(d, 2)["conditions"][0].update(condition="   "),
+    # NO_RULE: no conditions.
+    lambda d: answer(d, 2).update(verdict="NO_RULE"),
+    # ASK_INSTITUTION: a non-blank institution question and at least one citation.
+    lambda d: answer(d, 1).update(institutionQuestion=""),
+    lambda d: answer(d, 1).update(institutionQuestion="  "),
+    lambda d: answer(d, 1).update(citations=[]),
+    # Consequences: 0..4, a known moment, a non-blank action and a citation.
+    lambda d: answer(d, 2).update(consequences=answer(d, 2)["consequences"] * 3),
+    lambda d: answer(d, 2)["consequences"][0].update(citations=[]),
+    lambda d: answer(d, 2)["consequences"][0].update(action=" "),
+    lambda d: answer(d, 2)["consequences"][0].update(moment="FUNDING"),
+    # Limits and unknown values.
+    lambda d: answer(d, 0).update(citations=answer(d, 0)["citations"] * 9),
+    lambda d: answer(d, 0).update(explanation="가" * 601),
+    lambda d: answer(d, 0).update(explanation=" "),
+    lambda d: answer(d, 0).update(institutionQuestion="가" * 301),
+    lambda d: answer(d, 0).update(verdict="NEEDS_FACTS"),
+    lambda d: d.update(summary=" "),
+    lambda d: d.update(limitations=[" "]),
+    # Exactly one answer per question, in the order APPLY, CONCURRENT, SAME_SUBJECT, for the single pair.
+    lambda d: d["pairs"][0]["answers"].reverse(),
+    lambda d: answer(d, 1).update(question="APPLY"),
+    lambda d: d["pairs"][0]["answers"].pop(),
+    lambda d: d["pairs"][0]["answers"].append(deepcopy(answer(d, 2))),
+    lambda d: d["pairs"].append(deepcopy(d["pairs"][0])),
+    # A citation must be a citation option of this request.
+    lambda d: answer(d, 0)["citations"][0].update(citationOptionIndex=500),
+    lambda d: answer(d, 2)["consequences"][0]["citations"][0].update(citationOptionIndex=3),
+])
+def test_v3_answers_breaking_a_verdict_or_order_rule_fail_without_a_normal_answer(change):
+    data = v3_selection_data()
+    change(data)
+    service, calls = make_service(data)
+
+    with pytest.raises(CombinationReviewError, match="COMBINATION_REVIEW_FAILED") as failure:
+        asyncio.run(service.analyze(AnalyzeRequestV3.model_validate(v3_request_data())))
+    # Rejected by the output schema (ValidationError) or by validate_answers, not by a conversion error.
+    assert isinstance(failure.value.__cause__, ValueError)
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize(("change", "reason"), [
+    (lambda d: d["pairs"][0]["answers"].reverse(), "answer_order"),
+    (lambda d: [condition.update(citations=[]) for condition in answer(d, 2)["conditions"]], "answer_citation"),
+    (lambda d: answer(d, 1).update(institutionQuestion=" "), "answer_text"),
+    (lambda d: answer(d, 2)["conditions"][1]["citations"].append({"citationOptionIndex": 500}), "citation_option_range"),
+    (lambda d: answer(d, 0).update(citations=[]), "upstream_or_schema"),
+])
+def test_v3_rule_failures_return_503_with_a_safe_log_reason(change, reason, caplog):
+    data = v3_selection_data()
+    change(data)
+    service, _ = make_service(data)
+    caplog.set_level("WARNING", logger="app.combination_review.router")
+
+    with TestClient(service_app(service)) as client:
+        failure = client.post("/internal/v1/combination-reviews/analyze", json=v3_request_data())
+
+    assert failure.status_code == 503
+    assert failure.json() == {"detail": {"code": "COMBINATION_REVIEW_FAILED"}}
+    assert f"failure_reason={reason}" in caplog.text
+
+
+def test_v3_citation_option_from_another_pair_is_rejected():
+    request = AnalyzeRequestV3.model_validate(v3_request_data())
+    options = build_citation_options(request)
+    output = AnalysisSelectionV3.model_validate(v3_selection_data())
+    validate_answers(request, output, options)
+    # Two programs form a single pair, so move the cited block outside it to exercise the guard.
+    request.evidence[0].programIndex = 2
+
+    with pytest.raises(ValueError, match="citation option belongs to another pair"):
+        validate_answers(request, output, options)
+    agent = SimpleNamespace(analyze=AsyncMock(return_value=output))
+    with pytest.raises(CombinationReviewError, match="COMBINATION_REVIEW_FAILED") as failure:
+        asyncio.run(CombinationReviewService(agent, "test-model").analyze(request))
+    assert str(failure.value.__cause__) == "citation option belongs to another pair"
+
+
+def test_v3_citation_markers_are_removed_from_every_user_visible_text():
+    marker = chr(0xE200) + "cite" + chr(0xE202) + "citationOptionIndex=1" + chr(0xE201)
+    data = v3_selection_data()
+    answer(data, 1).update(explanation=f"기관 해석이 필요합니다. {marker}", institutionQuestion=f"적용되나요? {marker}")
+    answer(data, 2)["conditions"][0].update(condition=f"같은 과제라면 {marker}")
+    answer(data, 2)["consequences"][0].update(action=f"선정이 취소됩니다. {marker}")
+    service, _ = make_service(data)
+
+    result = asyncio.run(service.analyze(AnalyzeRequestV3.model_validate(v3_request_data())))
+
+    answers = result["pairs"][0]["answers"]
+    assert answers[1]["explanation"] == "기관 해석이 필요합니다." and answers[1]["institutionQuestion"] == "적용되나요?"
+    assert answers[2]["conditions"][0]["condition"] == "같은 과제라면"
+    assert answers[2]["consequences"][0]["action"] == "선정이 취소됩니다."
+    assert chr(0xE200) not in json.dumps(result, ensure_ascii=False)
+
+
+def test_v3_timeout_and_context_limit_behave_like_v2(monkeypatch):
+    service, calls = make_service(v3_selection_data(), delay=1, run_timeout=0.05)
+    with pytest.raises(CombinationReviewError, match="COMBINATION_REVIEW_TIMEOUT"):
+        asyncio.run(service.analyze(AnalyzeRequestV3.model_validate(v3_request_data())))
+    assert len(calls) == 1
+
+    import app.combination_review.service as module
+    monkeypatch.setattr(module.tiktoken, "get_encoding", lambda _: SimpleNamespace(encode=lambda *a, **kw: [0]*100001))
+    agent = SimpleNamespace(analyze=AsyncMock())
+    with pytest.raises(CombinationReviewError, match="CONTEXT_TOO_LARGE"):
+        asyncio.run(CombinationReviewService(agent, "test-model").analyze(AnalyzeRequestV3.model_validate(v3_request_data())))
+    agent.analyze.assert_not_called()
+
+
+@pytest.mark.parametrize("change", [
+    lambda d: d["programs"][0].update(status="MAYBE"),
+    lambda d: d["programs"][0].update(status=None),
+    lambda d: d["programs"][0].update(status="IN_PROGRESS"),
+    lambda d: d["programs"][0].pop("status"),
+    lambda d: d["programs"][0].update(participation=request_data()["programs"][0]["participation"]),
+    lambda d: d.pop("relation"),
+    lambda d: d["relation"].update(sameProject="MAYBE"),
+    lambda d: d["relation"].update(sameCost=None),
+    lambda d: d["relation"].update(sameFacility="YES"),
+    lambda d: d.update(programs=d["programs"] * 2),
+    lambda d: d["evidence"].pop(),
+    lambda d: d["evidence"][0].update(programIndex=2),
+    lambda d: d.update(contractVersion="combination-review-v2"),
+])
+def test_invalid_v3_inputs_are_rejected_before_agent(change):
+    data = v3_request_data()
+    change(data)
+    with pytest.raises(ValidationError):
+        AnalyzeRequestV3.model_validate(data)
+
+    agent = SimpleNamespace(analyze=AsyncMock())
+    with TestClient(service_app(CombinationReviewService(agent, "test-model"))) as client:
+        assert client.post("/internal/v1/combination-reviews/analyze", json=data).status_code == 422
+    agent.analyze.assert_not_called()
+
+
+def test_a_request_is_validated_against_the_contract_its_version_names():
+    agent = SimpleNamespace(analyze=AsyncMock())
+    with TestClient(service_app(CombinationReviewService(agent, "test-model"))) as client:
+        for body in [
+            {**request_data(), "contractVersion": "combination-review-v3"},
+            {**v3_request_data(), "contractVersion": "combination-review-v2"},
+            {**v3_request_data(), "contractVersion": "combination-review-v4"},
+        ]:
+            assert client.post("/internal/v1/combination-reviews/analyze", json=body).status_code == 422
+    agent.analyze.assert_not_called()
