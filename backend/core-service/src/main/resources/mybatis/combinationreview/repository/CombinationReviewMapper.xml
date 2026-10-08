@@ -6,6 +6,8 @@
         <result column="owner_account_id" property="ownerAccountId" />
         <result column="title" property="title" />
         <result column="input_revision" property="inputRevision" />
+        <result column="same_project" property="sameProject" />
+        <result column="same_cost" property="sameCost" />
         <result column="created_at" property="createdAt" />
         <result column="updated_at" property="updatedAt" />
     </resultMap>
@@ -23,8 +25,8 @@
         <result column="funding_received" property="fundingReceived" />
     </resultMap>
     <insert id="insertReview" useGeneratedKeys="true" keyProperty="id">
-        INSERT INTO combination_review (owner_account_id, title, input_revision, created_at, updated_at)
-        VALUES (#{ownerAccountId}, #{title}, #{inputRevision}, #{createdAt}, #{updatedAt})
+        INSERT INTO combination_review (owner_account_id, title, input_revision, same_project, same_cost, created_at, updated_at)
+        VALUES (#{ownerAccountId}, #{title}, #{inputRevision}, #{sameProject}, #{sameCost}, #{createdAt}, #{updatedAt})
     </insert>
     <insert id="insertProgram">
         INSERT INTO combination_review_program (
@@ -36,7 +38,7 @@
         )
     </insert>
     <select id="findReview" resultMap="reviewRow">
-        SELECT id, owner_account_id, title, input_revision, created_at, updated_at
+        SELECT id, owner_account_id, title, input_revision, same_project, same_cost, created_at, updated_at
         FROM combination_review
         WHERE id = #{reviewId} AND owner_account_id = #{ownerAccountId}
     </select>
@@ -79,7 +81,11 @@
     </select>
     <update id="updateReviewIfRevisionMatches">
         UPDATE combination_review
-        SET title = #{title}, input_revision = input_revision + 1, updated_at = #{updatedAt}
+        SET title = #{title},
+        <if test="sameProject != null and sameCost != null">
+            same_project = #{sameProject}, same_cost = #{sameCost},
+        </if>
+            input_revision = input_revision + 1, updated_at = #{updatedAt}
         WHERE id = #{reviewId} AND owner_account_id = #{ownerAccountId} AND input_revision = #{expectedRevision}
     </update>
     <delete id="deletePrograms">

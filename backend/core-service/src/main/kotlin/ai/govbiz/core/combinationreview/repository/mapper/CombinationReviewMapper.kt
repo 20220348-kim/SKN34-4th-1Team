@@ -31,6 +31,9 @@ interface CombinationReviewMapper {
         @Param("reviewId") reviewId: Long,
         @Param("expectedRevision") expectedRevision: Long,
         @Param("title") title: String,
+        /** null이면 두 관계 칸을 바꾸지 않는다. 두 값은 함께 null이거나 함께 값이 있다. */
+        @Param("sameProject") sameProject: String?,
+        @Param("sameCost") sameCost: String?,
         @Param("updatedAt") updatedAt: LocalDateTime,
     ): Int
 

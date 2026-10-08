@@ -64,6 +64,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.support.TransactionTemplate
 import tools.jackson.databind.ObjectMapper
+import tools.jackson.databind.node.ObjectNode
 
 @SpringBootTest(properties = [
     "app.account.jwt-secret=test-jwt-secret-0123456789abcdef0123456789",
@@ -102,6 +103,7 @@ class CombinationReviewRunIntegrationTest {
     private lateinit var deep: ByteArray
     private val g = ReviewProgramIdentity("BIZINFO", "PBLN_000000000117820")
     private val d = ReviewProgramIdentity("BIZINFO", "PBLN_000000000117172")
+    private val v3Placeholder = AiCombinationReviewV3Request("", emptyList(), AiReviewRelationRequest("", ""), "", "", emptyList(), emptyList())
     private val draft get() = CombinationReviewDraft("처음 검토", CombinationReviewInput(listOf(SelectedReviewProgram(g), SelectedReviewProgram(d))))
     private val path get() = "/api/v1/combination-reviews/$reviewId/runs"
 
@@ -384,8 +386,15 @@ class CombinationReviewRunIntegrationTest {
             .andExpect(jsonPath("$.evidence.reviewStatus").value("AUTOMATIC_UNREVIEWED"))
             .andExpect(jsonPath("$.evidence.documents[0].sourcePageUrl").value(BIZINFO_PAGE_URL))
             .andExpect(jsonPath("$.configuration.model").value("test-model"))
-            .andExpect(jsonPath("$.analysis.pairs[0].stages.length()").value(6)).andReturn().response
+            .andExpect(jsonPath("$.configuration.contractVersion").value(AI_COMBINATION_REVIEW_CONTRACT_VERSION))
+            .andExpect(jsonPath("$.input.relation.sameProject").value("UNKNOWN"))
+            .andExpect(jsonPath("$.input.relation.sameCost").value("UNKNOWN"))
+            .andExpect(jsonPath("$.analysis.pairs[0].stages.length()").value(6))
+            .andExpect(jsonPath("$.analysis.pairs[0].answers.length()").value(0)).andReturn().response
         val id = json.readTree(result.contentAsString).path("id").asLong()
+        // 기본 계약(v2)은 기존처럼 쿼리 없는 설정 확인과 v2 분석만 호출한다.
+        verify(ai).configuration(null)
+        verify(ai, never()).analyzeV3(any(AiCombinationReviewV3Request::class.java) ?: v3Placeholder)
         mvc.perform(get("$path/$id").cookie(owner)).andExpect(status().isOk()).andExpect(content().json(result.contentAsString))
         mvc.perform(get("$path/$id/sources/0").cookie(owner)).andExpect(status().isOk())
             .andExpect(content().bytes(general)).andExpect(header().string("X-Content-Type-Options", "nosniff"))
@@ -394,6 +403,30 @@ class CombinationReviewRunIntegrationTest {
         val stored = requireNotNull(runs.findOwned(ownerId, reviewId, id))
         assertEquals(CombinationReviewHashHelper.sha256(general), stored.evidence!!.documents.first().rawHash)
         assertTrue(stored.evidence.blocks.any { it.text.contains("글로벌기업 협업 프로그램") })
+    }
+
+    @Test
+    fun runsStoredBeforeV3WithoutRelationOrAnswersStillReadUnchanged() {
+        val id = id(start().andExpect(status().isOk()).andExpect(jsonPath("$.status").value("SUCCEEDED")))
+        val input = json.readTree(jdbc.queryForObject("SELECT input_json FROM combination_review_run WHERE id = ?", String::class.java, id)) as ObjectNode
+        val analysis = json.readTree(jdbc.queryForObject("SELECT analysis_json FROM combination_review_run WHERE id = ?", String::class.java, id)) as ObjectNode
+        input.remove("relation")
+        analysis.path("pairs").forEach { (it as ObjectNode).remove("answers") }
+        // V53·세 질문 계약 이전에 저장된 실행 JSON 모양으로 되돌린다.
+        jdbc.update("UPDATE combination_review_run SET input_json = ?, analysis_json = ? WHERE id = ?", input.toString(), analysis.toString(), id)
+        assertFalse(jdbc.queryForObject("SELECT input_json FROM combination_review_run WHERE id = ?", String::class.java, id)!!.contains("relation"))
+
+        mvc.perform(get("$path/$id").cookie(owner)).andExpect(status().isOk())
+            .andExpect(jsonPath("$.input.relation.sameProject").value("UNKNOWN"))
+            .andExpect(jsonPath("$.input.relation.sameCost").value("UNKNOWN"))
+            .andExpect(jsonPath("$.analysis.summary").value(answer.summary))
+            .andExpect(jsonPath("$.analysis.pairs[0].stages.length()").value(6))
+            .andExpect(jsonPath("$.analysis.pairs[0].stages[0].judgment").value(answer.pairs[0].stages[0].judgment))
+            .andExpect(jsonPath("$.analysis.pairs[0].stages[0].citations[0].quote").value(answer.pairs[0].stages[0].citations[0].quote))
+            .andExpect(jsonPath("$.analysis.pairs[0].answers.length()").value(0))
+        val stored = requireNotNull(runs.findOwned(ownerId, reviewId, id))
+        assertEquals(ReviewRelation(), stored.input.relation)
+        assertTrue(stored.analysis!!.pairs.single().answers.isEmpty())
     }
 
     @Test

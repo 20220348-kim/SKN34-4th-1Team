@@ -142,7 +142,7 @@ LLM이 사용자 설명에서 추출한 중요한 상태 변경은 제안으로 
 | GET `/api/v1/combination-reviews/{id}/runs/{runId}` | 해당 검토에 속하는 실행 조회 |
 | GET `/api/v1/combination-reviews/{id}/runs` | 본인 실행 목록·커서 조회 |
 | GET `/api/v1/combination-reviews/{id}/runs/{runId}/sources/{documentIndex}` | 실행 당시 원본 파일 다운로드 |
-| GET `/internal/v1/combination-reviews/configuration` | AI 모델·프롬프트·계약 버전 확인. LLM 호출 없음 |
+| GET `/internal/v1/combination-reviews/configuration` | AI 모델·프롬프트·계약 버전 확인. 쿼리 없으면 v2, `?contractVersion=combination-review-v3`면 v3. LLM 호출 없음 |
 | POST `/internal/v1/combination-reviews/analyze` | Core가 구성한 근거·사실을 AI Service에서 분석 |
 
 쓰기 요청에는 세션 쿠키를 전달하고 기존 Origin 검사를 유지한다. CORS의 GET·POST 허용에 PUT·DELETE를 추가했다.
@@ -318,11 +318,15 @@ V10은 기존 migration을 수정하지 않고 새 테이블만 추가한다. �
   세부사업 ID 생략/null은 부모 공고를 뜻하고 빈 문자열은 거절한다.
 - participation 또는 개별 사실 생략은 UNKNOWN이다. 신청·선정·확약·협약·교부는 YES/NO/UNKNOWN,
   수행은 UNKNOWN/NOT_STARTED/IN_PROGRESS/COMPLETED/STOPPED다. 명시적인 null·잘못된 값은 400이다.
+- 검토 단위 선택 입력 `relation: {sameProject, sameCost}`(같은 과제·같은 비용, 각 YES/NO/UNKNOWN)를 받는다(V53).
+  생성에서 생략하면 둘 다 UNKNOWN이고, 객체 안에서 생략한 칸도 UNKNOWN이다. 명시적인 null·잘못된 값은 400이다.
 - 생성은 201, `Location: /api/v1/combination-reviews/{id}`와 상세 본문을 반환한다.
-  상세 본문은 `id`, `title`, `inputRevision`, `programs`, `createdAt`, `updatedAt`이고 소유자 ID는 노출하지 않는다.
+  상세 본문은 `id`, `title`, `inputRevision`, `programs`, `relation`, `createdAt`, `updatedAt`이고 소유자 ID는 노출하지 않는다.
   생성 버전은 1이며 시각은 서울 offset `+09:00`이다.
 - PUT은 생성과 같은 제목·전체 사업 배열 및 `expectedRevision`(1~Long.MAX_VALUE-1 정수)을 받는다.
-  부분 수정이 아니므로 생략한 참여 사실은 UNKNOWN으로 교체된다. 성공하면 버전을 1 올리고 204를 반환한다.
+  부분 수정이 아니므로 생략한 참여 사실은 UNKNOWN으로 교체된다. 단, `relation`을 통째로 생략하면 저장된 관계를 유지한다
+  (관계를 아직 보내지 않는 화면의 저장이 다른 화면의 선택을 지우지 않게 하며, 같은 UPDATE에서 관계 칸만 건드리지 않는다).
+  `relation`을 보내면 함께 교체한다. 성공하면 버전을 1 올리고 204를 반환한다.
   재조회 응답에 다른 요청의 입력이 섞이지 않게 PUT 응답에는 본문을 넣지 않는다. 최신 입력은 GET으로 조회한다.
 - 목록은 `size` 기본 20·범위 1~50, 선택적 `beforeId` 양수 ID 커서다.
   `items`에 상세의 메타데이터(사업 배열 제외), `nextBeforeId`에 다음 조회 커서 또는 null을 반환한다.
@@ -484,11 +488,11 @@ Cookie: <existing-session-cookie>
 
 | 저장 위치 | 내용 |
 |---|---|
-| `combination_review` / `combination_review_program` | 사용자가 편집 중인 최신 제목·사업·참여 상태·버전 |
-| `combination_review_run.input_json` | 당시 입력·추가 진술·서울 기준 날짜 |
+| `combination_review` / `combination_review_program` | 사용자가 편집 중인 최신 제목·사업쌍 관계(V53)·사업·참여 상태·버전 |
+| `combination_review_run.input_json` | 당시 입력(사업쌍 관계 포함, V53 이전 실행은 UNKNOWN으로 읽음)·추가 진술·서울 기준 날짜 |
 | `combination_review_run.evidence_json` | 문서 URL·파일명·형식·원본/텍스트 해시·파서 버전·수집 시각, 위치를 포함한 전체 텍스트 블록, 수집 한계 |
 | `combination_review_run.configuration_json` | 호출 전 확인한 AI 계약·모델·프롬프트 버전. 성공 응답과 일치해야 저장 성공 |
-| `combination_review_run.analysis_json` | 사업쌍별 여섯 단계의 판단·범위·설명·질문·인용 및 전체 한계 |
+| `combination_review_run.analysis_json` | v2는 사업쌍별 여섯 단계(`stages`)의 판단·범위·설명·질문·인용, v3는 세 질문(`answers`)의 판정·설명·조건·걸리면 생기는 일·기관 확인 문장·인용, 그리고 전체 한계. 다른 계약의 배열은 비어 있고, `answers`가 없는 지난 v2 JSON은 빈 배열로 읽음 |
 | `combination_review_run_source.raw_bytes` | 각 실행에서 다운로드한 원본 바이트(MEDIUMBLOB)와 SHA-256 |
 
 인용 ID `E0`, `E1` 등은 **해당 Run 내부에서만 유일**하다. PDF 페이지/분할 위치 또는 HWPX section/문단 범위로 원문을 추적한다.
@@ -533,6 +537,16 @@ AI는 모든 사업쌍의 신청·선정·확약·협약·수행·교부 여섯 
 선택하며, 코드가 근거 ID와 정확한 원문을 복원한다. 선택지가 2,048개를 넘으면 모델을 호출하지 않고 SOURCE_TOO_LARGE로 실패 처리한다. 다른 사업쌍의
 선택지나 범위 밖 번호, 기관 확인이 필요한 확정 판단, 누락/중복 사업쌍·단계는 저장 성공으로 바꾸지 않는다.
 사용자 사실 부족·공식 근거 부족·규정 충돌은 정상 분석의 서로 다른 판단 상태다. 기술 실패는 analysis=null인 FAILED다.
+
+세 질문 계약 `combination-review-v3`도 같은 분석 경로로 받는다. Core는 `app.combination-review.contract-version`
+(env `COMBINATION_REVIEW_CONTRACT_VERSION`, `v2`|`v3`, 기본 `v2`, 다른 값은 시작 실패)으로 새 실행의 계약을 고르며, 큐 소비 시점의 값을 쓴다.
+v3는 `GET /internal/v1/combination-reviews/configuration?contractVersion=combination-review-v3`로 설정을 확인해 저장하고,
+참여 사실 6칸 대신 사업별 상태(UNKNOWN/NOT_APPLIED/APPLIED/ACTIVE/FINISHED)와 `relation`을 보낸다. 상태는 shared
+`participationToReviewStatus`와 같은 규칙(서로 어긋나거나 순서를 정할 수 없는 사실은 UNKNOWN)으로 Domain이 계산한다.
+Core Facade는 v2와 같은 인용 검사(근거 ID 존재·원문 조각 포함·4~800자, 답·조건·조치마다 최대 8개)에 더해 사업쌍 (0,1) 하나,
+APPLY → CONCURRENT → SAME_SUBJECT 순서의 세 답, ALLOWED·NOT_ALLOWED는 답 인용 1개 이상·조건 없음, CONDITIONAL은 조건 1~4개와
+답 또는 조건 인용 1개 이상, NO_RULE은 조건 없음, ASK_INSTITUTION은 기관 확인 문장과 답 또는 조건 인용 1개 이상, 걸리면 생기는 일 0~4개를 확인한다.
+실행 응답의 `analysis.pairs[]`는 `stages`와 `answers`를 모두 내려주며 계약에 맞지 않는 쪽은 빈 배열이다. `configuration.contractVersion`으로 구분한다.
 
 AI는 같은 분석 경로에서 `combination-review-v3`도 받는다. v3는 여섯 단계 대신 세 질문(APPLY 둘 다 신청할 수 있나,
 CONCURRENT 둘 다 되면 함께 수행할 수 있나, SAME_SUBJECT 같은 과제·비용으로 두 번 받는 것은 아닌가)에 이 순서로 한 번씩 답한다.

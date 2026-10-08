@@ -6,8 +6,11 @@ import ai.govbiz.core.combinationreview.domain.ParticipationAnswer
 import ai.govbiz.core.combinationreview.domain.ProgramExecutionStatus
 import ai.govbiz.core.combinationreview.domain.ProgramParticipation
 import ai.govbiz.core.combinationreview.domain.ReviewProgramIdentity
+import ai.govbiz.core.combinationreview.domain.ReviewRelation
 import ai.govbiz.core.combinationreview.domain.SelectedReviewProgram
 import ai.govbiz.core.combinationreview.controller.exception.InvalidCombinationReviewInputException
+import com.fasterxml.jackson.annotation.JsonSetter
+import com.fasterxml.jackson.annotation.Nulls
 import jakarta.validation.Valid
 import jakarta.validation.constraints.Max
 import jakarta.validation.constraints.Min
@@ -17,8 +20,9 @@ data class CreateCombinationReviewRequest(
     val title: String,
     @field:Valid @field:Size(min = 2, max = 2)
     val programs: List<SelectedReviewProgramRequest?>,
+    val relation: ReviewRelationRequest = ReviewRelationRequest(),
 ) {
-    fun toDraft(): CombinationReviewDraft = toDraft(title, programs)
+    fun toDraft(): CombinationReviewDraft = toDraft(title, programs, relation)
 }
 
 data class ReplaceCombinationReviewInputRequest(
@@ -27,8 +31,14 @@ data class ReplaceCombinationReviewInputRequest(
     val title: String,
     @field:Valid @field:Size(min = 2, max = 2)
     val programs: List<SelectedReviewProgramRequest?>,
+    /** 생략하면 저장된 관계를 유지한다. 관계를 보내지 않는 이전 화면의 저장이 다른 화면의 선택을 지우지 않게 한다. 명시적 null은 400이다. */
+    @field:JsonSetter(nulls = Nulls.FAIL)
+    val relation: ReviewRelationRequest? = null,
 ) {
-    fun toDraft(): CombinationReviewDraft = toDraft(title, programs)
+    /** 관계를 생략한 요청의 초안 관계는 저장하지 않으며, Repository가 저장된 값을 유지한다. */
+    fun toDraft(): CombinationReviewDraft = toDraft(title, programs, relation ?: ReviewRelationRequest())
+
+    fun keepsStoredRelation(): Boolean = relation == null
 }
 
 data class SelectedReviewProgramRequest(
@@ -57,8 +67,16 @@ data class ProgramParticipationRequest(
     )
 }
 
+/** 검토 단위 사업쌍 관계. 생성에서 생략하면 UNKNOWN이고, 보낸 객체 안에서 생략한 칸도 UNKNOWN이다. */
+data class ReviewRelationRequest(
+    val sameProject: String = "UNKNOWN",
+    val sameCost: String = "UNKNOWN",
+) {
+    fun toDomain(): ReviewRelation = ReviewRelation(ParticipationAnswer.valueOf(sameProject), ParticipationAnswer.valueOf(sameCost))
+}
+
 /** 요청 변환의 검증 실패만 400으로 바꾼다. 저장 자료 손상이나 DB 장애를 입력 오류로 숨기지 않는다. */
-private fun toDraft(title: String, programs: List<SelectedReviewProgramRequest?>): CombinationReviewDraft =
+private fun toDraft(title: String, programs: List<SelectedReviewProgramRequest?>, relation: ReviewRelationRequest): CombinationReviewDraft =
     try {
         CombinationReviewDraft(
             title,
@@ -68,7 +86,7 @@ private fun toDraft(title: String, programs: List<SelectedReviewProgramRequest?>
                     ReviewProgramIdentity(program.sourceCode, program.sourceProgramId, program.subProgramId),
                     program.participation.toDomain(),
                 )
-            }),
+            }, relation.toDomain()),
         )
     } catch (_: IllegalArgumentException) {
         throw InvalidCombinationReviewInputException()

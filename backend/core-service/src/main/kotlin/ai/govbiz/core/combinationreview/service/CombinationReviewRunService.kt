@@ -1,6 +1,7 @@
 package ai.govbiz.core.combinationreview.service
 
 import ai.govbiz.core.account.domain.Account
+import ai.govbiz.core.combinationreview.config.CombinationReviewProperties
 import ai.govbiz.core.combinationreview.facade.AiCombinationReviewFacade
 import ai.govbiz.core.combinationreview.facade.exception.AiCombinationReviewFacadeException
 import ai.govbiz.core.combinationreview.helper.CombinationReviewHashHelper
@@ -39,6 +40,7 @@ class CombinationReviewRunService(
     private val ai: AiCombinationReviewFacade, private val admission: SupportProgramRequestAdmissionService,
     @param:Qualifier("seoulClock") private val clock: Clock,
     @param:Value("\${app.combination-review.queue.enabled:false}") private val queueEnabled: Boolean,
+    private val properties: CombinationReviewProperties,
 ) {
     private val runnerInstanceId = UUID.randomUUID().toString()
 
@@ -129,7 +131,8 @@ class CombinationReviewRunService(
             if (blocks.size > 512 || blocks.sumOf { it.text.length } > 120_000) throw CombinationReviewRunException(ReviewRunFailureCode.SOURCE_TOO_LARGE)
             val evidence = ReviewEvidenceSnapshot(documents, blocks, warnings.distinct())
             runs.saveEvidence(run.id, evidence, raw)
-            val configuration = ai.configuration()
+            // 계약 버전은 접수 시점이 아니라 실제 실행 시점의 설정을 따른다. 지난 실행은 저장된 설정으로 읽는다.
+            val configuration = ai.configuration(properties.reviewContractVersion)
             runs.saveConfiguration(run.id, configuration)
             analysisStarted = true
             val analysis = ai.analyze(run.input, evidence, configuration)

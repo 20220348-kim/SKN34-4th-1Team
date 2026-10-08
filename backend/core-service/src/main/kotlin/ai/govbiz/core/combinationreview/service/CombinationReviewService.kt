@@ -25,9 +25,10 @@ class CombinationReviewService(private val repository: CombinationReviewReposito
         return CombinationReviewPageResult(items, items.lastOrNull()?.id?.takeIf { rows.size > size })
     }
 
-    fun replaceOwned(account: Account, reviewId: Long, expectedRevision: Long, draft: CombinationReviewDraft) {
+    /** keepRelation이면 draft의 관계 대신 저장된 관계를 유지한다(관계를 보내지 않는 화면의 저장). */
+    fun replaceOwned(account: Account, reviewId: Long, expectedRevision: Long, draft: CombinationReviewDraft, keepRelation: Boolean = false) {
         // 성공한 PUT 뒤에 다시 조회하면 다른 요청의 새 버전이 섞일 수 있어 본문 없이 완료한다.
-        if (repository.replaceOwned(account.id, reviewId, expectedRevision, draft)) return
+        if (repository.replaceOwned(account.id, reviewId, expectedRevision, draft, keepRelation)) return
         if (repository.findOwned(account.id, reviewId) == null) throw CombinationReviewNotFoundException()
         throw CombinationReviewRevisionConflictException()
     }

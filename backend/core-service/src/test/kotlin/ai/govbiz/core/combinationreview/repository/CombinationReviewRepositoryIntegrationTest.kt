@@ -9,6 +9,7 @@ import ai.govbiz.core.combinationreview.domain.ParticipationAnswer
 import ai.govbiz.core.combinationreview.domain.ProgramExecutionStatus
 import ai.govbiz.core.combinationreview.domain.ProgramParticipation
 import ai.govbiz.core.combinationreview.domain.ReviewProgramIdentity
+import ai.govbiz.core.combinationreview.domain.ReviewRelation
 import ai.govbiz.core.combinationreview.domain.SelectedReviewProgram
 import ai.govbiz.core.combinationreview.domain.StoredCombinationReview
 import java.time.LocalDateTime
@@ -78,6 +79,54 @@ class CombinationReviewRepositoryIntegrationTest {
         assertEquals(1L, created.inputRevision)
         assertSameSnapshot(created, requireNotNull(repository.findOwned(ownerId, created.id)))
         assertNull(repository.findOwned(ownerId, Long.MAX_VALUE))
+    }
+
+    @Test
+    fun storesThePairRelationAndReplacesItWithTheRestOfTheInput() {
+        val relation = ReviewRelation(sameProject = ParticipationAnswer.YES, sameCost = ParticipationAnswer.NO)
+        val created = repository.create(ownerId, CombinationReviewDraft("관계 입력", draft().input.let { CombinationReviewInput(it.programs, relation) }))
+        assertEquals(relation, requireNotNull(repository.findOwned(ownerId, created.id)).draft.input.relation)
+        assertEquals(
+            listOf(mapOf("same_project" to "YES", "same_cost" to "NO")),
+            jdbc.queryForList("SELECT same_project, same_cost FROM combination_review WHERE id = ?", created.id),
+        )
+
+        // 관계를 보내지 않은 저장(keepRelation)은 같은 UPDATE에서 관계 칸만 그대로 두고 나머지를 교체한다.
+        assertTrue(repository.replaceOwned(ownerId, created.id, 1, draft("관계 유지", "c", "d"), keepRelation = true))
+        val kept = requireNotNull(repository.findOwned(ownerId, created.id))
+        assertEquals(relation, kept.draft.input.relation)
+        assertEquals(listOf("c", "d"), kept.draft.input.programs.map { it.identity.sourceProgramId })
+        assertEquals(2L, kept.inputRevision)
+
+        // 관계를 보낸 저장은 관계도 교체한다.
+        assertTrue(repository.replaceOwned(ownerId, created.id, 2, draft("관계 모름")))
+        assertEquals(ReviewRelation(), requireNotNull(repository.findOwned(ownerId, created.id)).draft.input.relation)
+        val changed = ReviewRelation(sameCost = ParticipationAnswer.YES)
+        assertTrue(repository.replaceOwned(ownerId, created.id, 3, CombinationReviewDraft("비용만", CombinationReviewInput(draft().input.programs, changed))))
+        assertEquals(changed, requireNotNull(repository.findOwned(ownerId, created.id)).draft.input.relation)
+        assertFalse(repository.replaceOwned(ownerId, created.id, 3, CombinationReviewDraft("오래된 관계", CombinationReviewInput(draft().input.programs, relation))))
+        assertFalse(repository.replaceOwned(ownerId, created.id, 3, draft("오래된 유지"), keepRelation = true))
+        assertEquals(changed, requireNotNull(repository.findOwned(ownerId, created.id)).draft.input.relation)
+        assertEquals(4L, requireNotNull(repository.findOwned(ownerId, created.id)).inputRevision)
+    }
+
+    @Test
+    fun existingRowsDefaultToUnknownAndTheDatabaseRejectsOtherRelationValues() {
+        val created = repository.create(ownerId, draft())
+        jdbc.update(
+            "INSERT INTO combination_review (owner_account_id, title, created_at, updated_at) VALUES (?, '기존 방식 행', NOW(6), NOW(6))",
+            ownerId,
+        )
+        assertEquals(
+            listOf("UNKNOWN"),
+            jdbc.queryForList("SELECT DISTINCT same_project FROM combination_review WHERE owner_account_id = ?", String::class.java, ownerId),
+        )
+        for (value in listOf("yes", "MAYBE", "")) {
+            assertThrows(DataAccessException::class.java) { jdbc.update("UPDATE combination_review SET same_project = ? WHERE id = ?", value, created.id) }
+            assertThrows(DataAccessException::class.java) { jdbc.update("UPDATE combination_review SET same_cost = ? WHERE id = ?", value, created.id) }
+        }
+        assertThrows(DataAccessException::class.java) { jdbc.update("UPDATE combination_review SET same_cost = NULL WHERE id = ?", created.id) }
+        assertSameSnapshot(created, requireNotNull(repository.findOwned(ownerId, created.id)))
     }
 
     @Test
@@ -313,5 +362,6 @@ class CombinationReviewRepositoryIntegrationTest {
         assertEquals(expected.updatedAt, actual.updatedAt)
         assertEquals(expected.draft.title, actual.draft.title)
         assertEquals(expected.draft.input.programs, actual.draft.input.programs)
+        assertEquals(expected.draft.input.relation, actual.draft.input.relation)
     }
 }

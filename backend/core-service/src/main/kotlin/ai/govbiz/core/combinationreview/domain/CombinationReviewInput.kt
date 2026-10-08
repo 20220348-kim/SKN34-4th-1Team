@@ -8,6 +8,15 @@ data class SelectedReviewProgram(
     val participation: ProgramParticipation = ProgramParticipation(),
 )
 
+/**
+ * 검토 단위로 사용자가 고르는 두 사업의 관계(같은 과제·같은 비용). 선택 입력이며 기본값은 UNKNOWN이다.
+ * UNKNOWN은 NO와 다르며 공고 원문이나 참여 사실에서 자동으로 추론하지 않는다.
+ */
+data class ReviewRelation(
+    val sameProject: ParticipationAnswer = ParticipationAnswer.UNKNOWN,
+    val sameCost: ParticipationAnswer = ParticipationAnswer.UNKNOWN,
+)
+
 /** 무순서 사업쌍을 필드 순서로 정규화한 값. 허용·제한 여부를 담지 않는다. */
 data class ReviewProgramPair(
     val first: ReviewProgramIdentity,
@@ -20,9 +29,13 @@ data class ReviewProgramPair(
     }
 }
 
-/** 검토 가능한 두 사업의 불변 입력 스냅샷과 비교 대상 쌍을 구성한다. */
-class CombinationReviewInput private constructor(programs: List<SelectedReviewProgram>, restoreLegacy: Boolean) {
-    constructor(programs: List<SelectedReviewProgram>) : this(programs, false)
+/** 검토 가능한 두 사업의 불변 입력 스냅샷과 비교 대상 쌍을 구성한다. 사업쌍 관계는 검토 단위 선택 입력이다. */
+class CombinationReviewInput private constructor(
+    programs: List<SelectedReviewProgram>,
+    val relation: ReviewRelation,
+    restoreLegacy: Boolean,
+) {
+    constructor(programs: List<SelectedReviewProgram>, relation: ReviewRelation = ReviewRelation()) : this(programs, relation, false)
 
     val programs: List<SelectedReviewProgram> = Collections.unmodifiableList(ArrayList(programs))
 
@@ -47,6 +60,7 @@ class CombinationReviewInput private constructor(programs: List<SelectedReviewPr
 
     companion object {
         /** 정책 변경 전에 저장한 세 사업 검토는 조회·결과 확인만 가능하도록 복원한다. */
-        fun restore(programs: List<SelectedReviewProgram>): CombinationReviewInput = CombinationReviewInput(programs, true)
+        fun restore(programs: List<SelectedReviewProgram>, relation: ReviewRelation = ReviewRelation()): CombinationReviewInput =
+            CombinationReviewInput(programs, relation, true)
     }
 }
