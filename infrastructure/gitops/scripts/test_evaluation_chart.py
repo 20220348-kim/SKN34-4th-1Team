@@ -2,6 +2,8 @@
 
 import io
 import json
+import os
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -10,6 +12,7 @@ import unittest
 from contextlib import closing, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
+from uuid import uuid4
 
 import check_evaluation as check
 import yaml
@@ -113,6 +116,62 @@ class EvaluationChartTests(unittest.TestCase):
                 for row in pods["ops-artifacts"]["initContainers"][0]["volumeMounts"]
             ],
         )
+
+    @unittest.skipUnless(os.name == "posix", "POSIX volume ownership regression")
+    def test_evidence_init_can_copy_into_writable_mount_owned_by_another_user(self):
+        # Kubernetes mounts an emptyDir owned by root with fsGroup write access.
+        # An unprivileged process may create files but cannot copystat that root.
+        # /tmp provides the same ownership restriction without root/chown access.
+        target = Path(tempfile.gettempdir())
+        before = target.stat()
+        if before.st_uid == os.getuid():
+            self.skipTest(
+                "Use an unprivileged test user with a root-owned temporary directory"
+            )
+        name = "govbiz-evidence-copy-" + uuid4().hex
+        outputs = [target / name, target / (name + ".json")]
+        self.assertTrue(all(not path.exists() for path in outputs))
+        container = workload(self.resources["ops-artifacts"])["spec"]["template"][
+            "spec"
+        ]["initContainers"][0]
+        try:
+            with tempfile.TemporaryDirectory(
+                prefix="govbiz-evidence-source-"
+            ) as directory:
+                source = Path(directory)
+                (source / name).mkdir()
+                content = "한글 평가 자료\n".encode()
+                (source / name / "fixture.txt").write_bytes(content)
+                (source / (name + ".json")).write_text(
+                    '{"fixture":true}', encoding="utf-8"
+                )
+                program = (
+                    container["command"][-1]
+                    .replace(
+                        "'/app/evaluation/support-program-evidence'", repr(str(source))
+                    )
+                    .replace("'/evidence'", repr(str(target)))
+                )
+                for _ in range(2):  # An init retry must safely reuse its own copies.
+                    result = subprocess.run(
+                        [sys.executable, "-B", "-c", program],
+                        capture_output=True,
+                        timeout=15,
+                        check=False,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr.decode())
+                    self.assertEqual((outputs[0] / "fixture.txt").read_bytes(), content)
+                    self.assertEqual(outputs[1].read_text(), '{"fixture":true}')
+                self.assertEqual((source / name / "fixture.txt").read_bytes(), content)
+            after = target.stat()
+            self.assertEqual(
+                (after.st_uid, after.st_gid, after.st_mode),
+                (before.st_uid, before.st_gid, before.st_mode),
+            )
+        finally:
+            if outputs[0].exists():
+                shutil.rmtree(outputs[0])
+            outputs[1].unlink(missing_ok=True)
 
     def test_runner_is_free_only_and_secrets_do_not_enter_prefect_or_artifacts(self):
         envs = {

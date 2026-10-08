@@ -180,7 +180,7 @@ def pod_identity(ek, component):
 def failure_signals(text):
     """Only fixed diagnostic codes may leave raw Kubernetes responses/logs."""
     patterns = {
-        "permission_denied": r"PermissionError|Permission denied",
+        "permission_denied": r"PermissionError|Permission denied|Operation not permitted",
         "read_only_filesystem": r"Read-only file system",
         "missing_database_schema": r"no such (table|column)",
         "database_locked": r"database is locked",
