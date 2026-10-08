@@ -3,7 +3,7 @@ import { AppState } from 'react-native'
 import { useFocusEffect } from 'expo-router'
 import { randomUUID } from 'expo-crypto'
 import { CombinationReviewUseCase } from '@govbiz/shared/domain/usecases/CombinationReviewUseCase'
-import { reviewProgramKey, supportsAutomaticReview, validateReviewDraft, type CombinationReview, type ReviewDraft, type ReviewRun, type RunSummary } from '@govbiz/shared/domain/entities/CombinationReview'
+import { reviewProgramKey, supportsAutomaticReview, unknownRelation, validateReviewDraft, type CombinationReview, type ReviewDraft, type ReviewRun, type RunSummary } from '@govbiz/shared/domain/entities/CombinationReview'
 import { CombinationReviewError } from '@govbiz/shared/domain/errors/CombinationReviewError'
 import { MobileCombinationReviewRepository, reviewErrorMessage } from '../api/combinationReviews'
 import { getApiBaseUrl } from '../api/client'
@@ -12,12 +12,32 @@ import { useAuth } from '../auth/session'
 
 const activeRun = (run: RunSummary) => ['QUEUED', 'RUNNING', 'UNKNOWN'].includes(run.status)
 
+/**
+ * 저장 · 비교할 입력이에요. 관계 칸이 없던 검토는 모두 모름으로 보고, 필드 순서를 맞춰 바뀜 여부를 JSON으로 비교해요.
+ * 저장할 때도 관계를 늘 함께 보내 웹에서 고른 관계를 앱 저장이 모름으로 되돌리지 않게 해요.
+ */
+function inputOf(value: ReviewDraft): Required<ReviewDraft> {
+  const relation = value.relation ?? unknownRelation()
+  return { title: value.title, programs: value.programs, relation: { sameProject: relation.sameProject, sameCost: relation.sameCost } }
+}
+const sameInput = (first: ReviewDraft, second: ReviewDraft) => JSON.stringify(inputOf(first)) === JSON.stringify(inputOf(second))
+
+/** 새 분석을 지금 보낼 수 없는 이유예요. 저장하지 않은 입력은 [검토 실행] · [저장하고 다시 분석]이 먼저 저장하므로 이유가 아니에요. */
+function startBlockedOf({ pending, runs, draft }: { pending: PendingReviewRequest | null; runs: readonly RunSummary[]; draft: ReviewDraft }): string | null {
+  if (pending) return '응답을 확인하지 못한 분석 요청이 있어요. 화면 위의 [같은 요청으로 확인]을 먼저 눌러 주세요.'
+  if (runs.some(run => run.status === 'QUEUED' || run.status === 'RUNNING')) return '분석이 끝나면 다시 실행할 수 있어요'
+  if (runs.some(run => run.status === 'UNKNOWN')) return '완료 여부를 확인하지 못한 실행이 있어 새 분석을 막았어요'
+  if (draft.programs.length !== 2) return '공고를 2개로 줄이면 실행할 수 있어요'
+  if (draft.programs.some(program => !supportsAutomaticReview(program))) return '자동 분석을 지원하지 않는 공고가 있어요'
+  return null
+}
+
 /** One account/route instance owns drafts, cancellation and the acknowledged run. */
 export function useCombinationReview(token: string, email: string, id: number | null, initialRunId?: number) {
   const useCase = useMemo(() => new CombinationReviewUseCase(new MobileCombinationReviewRepository(token)), [token])
   const { invalidateSession } = useAuth()
   const [review, setReview] = useState<CombinationReview | null>(null)
-  const [draft, setDraft] = useState<ReviewDraft>({ title: '', programs: [] })
+  const [draft, setDraft] = useState<Required<ReviewDraft>>({ title: '', programs: [], relation: unknownRelation() })
   const [facts, setFacts] = useState('')
   const [runs, setRuns] = useState<RunSummary[]>([])
   const [cursor, setCursor] = useState<number | null>(null)
@@ -65,8 +85,8 @@ export function useCombinationReview(token: string, email: string, id: number | 
         const [saved, page] = await Promise.all([useCase.get(reviewId, controller.signal), useCase.runs(reviewId, undefined, controller.signal)])
         if (controller.signal.aborted) return
         const current = latest.current
-        const dirty = current.review !== null && JSON.stringify({ title: current.review.title, programs: current.review.programs }) !== JSON.stringify(current.draft)
-        if (!loaded.current || !dirty) { setReview(saved); setDraft({ title: saved.title, programs: saved.programs }); setSaveError(null); loaded.current = true }
+        const dirty = current.review !== null && !sameInput(current.review, current.draft)
+        if (!loaded.current || !dirty) { setReview(saved); setDraft(inputOf(saved)); setSaveError(null); loaded.current = true }
         else if (saved.inputRevision !== current.review?.inputRevision) setError('다른 화면에서 입력이 변경됐어요. 작성한 내용은 유지됩니다. 최신 저장 입력을 확인해 주세요.')
         setCurrentRevision(saved.inputRevision); setRuns(page.items); setCursor(page.nextBeforeId)
         if (!current.selectedRunId && page.items[0]) setSelectedRunId(page.items[0].id)
@@ -115,19 +135,19 @@ export function useCombinationReview(token: string, email: string, id: number | 
     try {
       if (!snapshot.storageReady) throw new Error('분석 요청 보관 상태를 먼저 확인한 뒤 입력을 저장해 주세요.')
       if (snapshot.pending) throw new Error('미확인 분석 요청이 있어 입력을 저장하지 않았어요. 같은 요청으로 먼저 확인해 주세요.')
-      const input = validateReviewDraft(snapshot.draft)
+      const input = inputOf(validateReviewDraft(snapshot.draft))
       let saved = snapshot.review
       if (!saved) saved = await useCase.create(input, controller.signal)
-      else if (JSON.stringify({ title: saved.title, programs: saved.programs }) !== JSON.stringify(input)) {
+      else if (!sameInput(saved, input)) {
         await useCase.replace(saved.id, saved.inputRevision, input, controller.signal)
         if (controller.signal.aborted) return null
         saved = await useCase.get(saved.id, controller.signal)
       }
       if (controller.signal.aborted) return null
-      if (JSON.stringify({ title: saved.title, programs: saved.programs }) !== JSON.stringify(input)) {
+      if (!sameInput(saved, input)) {
         throw new Error('저장된 입력이 작성한 내용과 달라 다음 단계로 이동하지 않았어요. 최신 입력을 확인해 주세요.')
       }
-      const savedDraft = { title: saved.title, programs: saved.programs }
+      const savedDraft = inputOf(saved)
       latest.current = { ...latest.current, review: saved, draft: savedDraft }
       setReview(saved); setDraft(savedDraft); setCurrentRevision(saved.inputRevision); loaded.current = true
       return saved
@@ -137,7 +157,8 @@ export function useCombinationReview(token: string, email: string, id: number | 
     } finally { lock.current = false; if (!controller.signal.aborted) setOperation(null) }
   }
 
-  async function start(sameRequest = false) {
+  /** 저장된 입력 그대로 분석을 접수하거나(sameRequest=false) 응답을 잃은 요청을 같은 키로 다시 확인해요. additionalFacts가 없으면 입력 중인 추가 설명을 보내요. */
+  async function start(sameRequest = false, additionalFacts?: string) {
     if (lock.current) return
     const snapshot = latest.current
     if (!snapshot.storageReady) { setError('분석 요청 보관 상태를 먼저 확인해 주세요.'); return }
@@ -153,10 +174,10 @@ export function useCombinationReview(token: string, email: string, id: number | 
         const input = validateReviewDraft(snapshot.draft)
         if (!input.programs.every(supportsAutomaticReview)) throw new Error('선택한 공고는 현재 자동 분석을 지원하지 않아요.')
         const saved = snapshot.review
-        if (!saved || JSON.stringify({ title: saved.title, programs: saved.programs }) !== JSON.stringify(input)) {
+        if (!saved || !sameInput(saved, input)) {
           throw new Error('검토 입력을 먼저 저장해 주세요. 이전 단계에서 다음을 누른 뒤 검토를 실행해 주세요.')
         }
-        submitted = { reviewId: saved.id, request: { expectedRevision: saved.inputRevision, requestKey: randomUUID(), additionalFacts: snapshot.facts } }
+        submitted = { reviewId: saved.id, request: { expectedRevision: saved.inputRevision, requestKey: randomUUID(), additionalFacts: additionalFacts ?? snapshot.facts } }
         try { await savePendingReview(baseUrl, email, submitted) }
         catch { setStorageReady(false); throw new Error('분석 요청을 안전하게 보관하지 못해 분석을 시작하지 않았어요. 보관 상태를 다시 확인해 주세요.') }
         if (controller.signal.aborted) return
@@ -183,6 +204,18 @@ export function useCombinationReview(token: string, email: string, id: number | 
     } finally { lock.current = false; if (!controller.signal.aborted) setOperation(null) }
   }
 
+  /**
+   * 바뀐 입력(내 상황 포함)이 있으면 같은 입력 버전으로 저장한 뒤, 저장된 버전으로 새 분석을 한 번 접수해요.
+   * 지금 새 분석을 보낼 수 없으면 저장하지 않고, 저장이 실패하면 분석을 보내지 않고 작성한 내용을 유지해요.
+   */
+  async function saveAndStart(additionalFacts?: string) {
+    if (lock.current || loading) return false
+    const blocked = startBlockedOf(latest.current)
+    if (blocked) { setError(blocked); return false }
+    if (!(await saveInputs())) return false
+    return await start(false, additionalFacts)
+  }
+
   async function moreRuns() {
     if (!effectiveId || !cursor || lock.current) return
     const controller = new AbortController(); mutation.current = controller; lock.current = true; setOperation('history')
@@ -194,7 +227,7 @@ export function useCombinationReview(token: string, email: string, id: number | 
   }
 
   const selectedKeys = draft.programs.map(reviewProgramKey)
-  const dirty = review !== null && JSON.stringify({ title: review.title, programs: review.programs }) !== JSON.stringify(draft)
+  const dirty = review !== null && !sameInput(review, draft)
   return { review, draft, setDraft, facts, setFacts, runs, cursor, run, selectedRunId, pending, loading, busy, saving: operation === 'save', saveError, dirty, error, setError, storageReady,
-    currentRevision, selectedKeys, active: runs.some(activeRun), saveInputs, start, selectRun, refresh, reloadInputs, moreRuns }
+    currentRevision, selectedKeys, active: runs.some(activeRun), startBlocked: startBlockedOf({ pending, runs, draft }), saveInputs, start, saveAndStart, selectRun, refresh, reloadInputs, moreRuns }
 }
