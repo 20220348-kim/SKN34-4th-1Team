@@ -390,6 +390,12 @@ Core 내부 전용 소비자가 기존 검색·근거 답변을 재사용하며 
 발송 직전에 계정·설정·관심 공고·접수 상태·수신 주소·기기를 다시 확인하고 보낼 수 없으면 이유 코드와 함께 SKIPPED로 끝냅니다.
 [조건·상태·설정](deadline-reminders.md)을 참고하세요.
 
+## 요금제 사용량 한도
+
+결제 연동 전이라 모든 회원은 FREE로 시작하고 `account_plan`에 배정된 계정만 다른 요금제를 씁니다(V54).
+화면은 `GET /api/v1/plan-usage`(`PlanUsageController → PlanUsageService → PlanUsageRepository → MyBatis Mapper → XML → MySQL`)로
+현재 요금제를 읽습니다. 기능별 사용량 한도는 아직 적용하지 않으며 [요금제 사용량 한도](plan-usage-limits.md)의 다음 단계에서 더합니다.
+
 ## 검색·상세 조회·원문 근거 질문
 
 공개 대화 해석·검색·근거 질문은 입력 검증 뒤 Controller에서 `SupportProgramRequestAdmissionService`를 거쳐

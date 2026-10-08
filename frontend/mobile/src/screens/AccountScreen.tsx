@@ -7,6 +7,7 @@ import { sendSignupEmailCode, verifySignupEmailCode } from '../api/account'
 import { useAuth } from '../auth/session'
 import { authErrorMessage } from '../auth/errors'
 import { supportsNativeOAuth } from '../auth/oauth'
+import { PlanUsageSection } from '../components/PlanUsage'
 import { Page, Button, Field, Notice, Card, colors } from '../ui'
 
 export function AccountScreen({ onCompany, onSettings, initialMode = 'login', authOnly = false, onBusyChange, showSocialOptions = true }: {
@@ -88,6 +89,7 @@ export function AccountScreen({ onCompany, onSettings, initialMode = 'login', au
   if (auth.session) return <Page>
     <Text style={{ fontSize: 26, fontWeight: '700', color: colors.text }}>내 계정</Text>
     <Card><Text style={{ color: colors.text, fontSize: 18 }}>{auth.session.account.email}</Text><Text style={{ color: colors.muted, marginTop: 8 }}>{auth.session.account.company?.companyName ?? '기업 정보를 등록하면 맞춤 서비스를 이용할 수 있습니다.'}</Text></Card>
+    <PlanUsageSection token={auth.session.accessToken} />
     {auth.restoreError && <Notice error>{auth.restoreError}</Notice>}
     <Button label={auth.session.account.company ? '기업 프로필 관리' : '기업 프로필 등록'} onPress={onCompany} />
     {onSettings && <Button label="알림 설정" variant="secondary" onPress={onSettings} />}

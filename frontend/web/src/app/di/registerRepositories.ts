@@ -3,6 +3,7 @@ import { ChatConversationRepositoryImpl } from '../../data/repositories/ChatConv
 import { ApplicationPreparationRepositoryImpl } from '../../data/repositories/ApplicationPreparationRepositoryImpl'
 import { DailyReportRepositoryImpl } from '../../data/repositories/DailyReportRepositoryImpl'
 import { NotificationSettingsRepositoryImpl } from '../../data/repositories/NotificationSettingsRepositoryImpl'
+import { PlanUsageRepositoryImpl } from '../../data/repositories/PlanUsageRepositoryImpl'
 import { asClass } from 'awilix/browser'
 
 import { AccountRepositoryImpl } from '../../data/repositories/AccountRepositoryImpl'
@@ -24,6 +25,7 @@ export function registerRepositories(container: AppContainer) {
     applicationPreparationRepository: asClass(ApplicationPreparationRepositoryImpl).singleton(),
     dailyReportRepository: asClass(DailyReportRepositoryImpl).singleton(),
     notificationSettingsRepository: asClass(NotificationSettingsRepositoryImpl).singleton(),
+    planUsageRepository: asClass(PlanUsageRepositoryImpl).singleton(),
     combinationReviewRepository: asClass(CombinationReviewRepositoryImpl).singleton(),
     accountRepository: asClass(AccountRepositoryImpl).singleton(),
     assistantRepository: asClass(AssistantRepositoryImpl).singleton(),

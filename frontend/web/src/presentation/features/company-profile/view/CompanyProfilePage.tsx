@@ -11,6 +11,7 @@ import { useDelayedFlag } from '../../../shared/workspace/useDelayedFlag'
 import { BusinessLookupResult } from '../../../shared/company/BusinessLookupResult'
 import { BusinessNumberField } from '../../../shared/company/BusinessNumberField'
 import { CompanyProfileFields } from '../../../shared/company/CompanyProfileFields'
+import { usePlanUsage } from '../../../shared/plan-usage/usePlanUsage'
 import { useAccountSecurityViewModel } from '../viewmodel/useAccountSecurityViewModel'
 import { useCompanyProfileViewModel } from '../viewmodel/useCompanyProfileViewModel'
 import { useNotificationSettingsViewModel } from '../viewmodel/useNotificationSettingsViewModel'
@@ -18,6 +19,7 @@ import { ChangePasswordModal, DeleteAccountModal } from './AccountSecurityModals
 import { CompanyPartnerProfileSection } from './CompanyPartnerProfileSection'
 import { companyProfileStyles } from './CompanyProfilePage.styles'
 import { NotificationSettingsRows } from './NotificationSettingsRows'
+import { PlanUsageSection } from './PlanUsageSection'
 
 const usageIcons: Record<'target' | 'users' | 'shield', ReactNode> = {
   target: (
@@ -97,6 +99,7 @@ export function CompanyProfilePage() {
   const vm = useCompanyProfileViewModel()
   const security = useAccountSecurityViewModel()
   const notifications = useNotificationSettingsViewModel()
+  const planUsage = usePlanUsage()
   const {
     companyState,
     company,
@@ -352,6 +355,8 @@ export function CompanyProfilePage() {
             {vm.isLoading
               ? <ProfileSkeleton part="partner" visible={showSkeleton} />
               : <CompanyPartnerProfileSection vm={vm.partnerProfile} titleHelp={publicityHelp} />}
+
+            <PlanUsageSection load={planUsage.load} onRetry={planUsage.reload} />
 
             <section className={workspacePageStyles.card} aria-label="계정과 알림">
               <h2 className={workspacePageStyles.cardTitle}>계정과 알림</h2>
