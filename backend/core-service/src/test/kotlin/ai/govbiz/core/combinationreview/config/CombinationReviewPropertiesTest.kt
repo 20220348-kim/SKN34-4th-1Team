@@ -11,14 +11,14 @@ class CombinationReviewPropertiesTest {
     private val runner = ApplicationContextRunner().withUserConfiguration(CombinationReviewConfig::class.java)
 
     @Test
-    fun newRunsUseV2UntilV3IsExplicitlySelected() {
-        assertEquals(ReviewContractVersion.V2, CombinationReviewProperties().reviewContractVersion)
-        assertEquals(ReviewContractVersion.V3, CombinationReviewProperties("v3").reviewContractVersion)
+    fun newRunsUseV3UnlessV2IsExplicitlySelected() {
+        assertEquals(ReviewContractVersion.V3, CombinationReviewProperties().reviewContractVersion)
+        assertEquals(ReviewContractVersion.V2, CombinationReviewProperties("v2").reviewContractVersion)
         runner.run { context ->
-            assertEquals(ReviewContractVersion.V2, context.getBean(CombinationReviewProperties::class.java).reviewContractVersion)
-        }
-        runner.withPropertyValues("app.combination-review.contract-version=v3", "app.combination-review.queue.enabled=true").run { context ->
             assertEquals(ReviewContractVersion.V3, context.getBean(CombinationReviewProperties::class.java).reviewContractVersion)
+        }
+        runner.withPropertyValues("app.combination-review.contract-version=v2", "app.combination-review.queue.enabled=true").run { context ->
+            assertEquals(ReviewContractVersion.V2, context.getBean(CombinationReviewProperties::class.java).reviewContractVersion)
         }
     }
 

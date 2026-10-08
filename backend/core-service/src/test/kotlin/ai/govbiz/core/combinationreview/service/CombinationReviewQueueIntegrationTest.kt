@@ -46,6 +46,7 @@ import tools.jackson.databind.ObjectMapper
     "app.bizinfo.sync.enabled=false", "app.kstartup.sync.enabled=false", "app.msit.sync.enabled=false",
     "app.cntrade-notice.sync.enabled=false", "app.support-program-index.enabled=false",
     "app.combination-review.queue.enabled=true", "app.daily-report.queue.enabled=false",
+    "app.combination-review.contract-version=v2",
     "spring.rabbitmq.listener.simple.auto-startup=false", "app.ai-service.base-url=http://127.0.0.1:1",
 ])
 @Import(MySqlTestContainerConfig::class)

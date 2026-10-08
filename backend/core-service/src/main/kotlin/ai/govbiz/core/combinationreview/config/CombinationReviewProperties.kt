@@ -10,7 +10,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties
 @ConfigurationProperties(prefix = "app.combination-review")
 data class CombinationReviewProperties(
     /** 새 분석 실행이 따르는 AI 계약입니다. `v2`(여섯 단계) 또는 `v3`(세 질문)만 허용합니다. */
-    val contractVersion: String = "v2",
+    val contractVersion: String = "v3",
 ) {
     init {
         require(contractVersion in VERSIONS) { "app.combination-review.contract-version must be v2 or v3" }

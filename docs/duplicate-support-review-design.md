@@ -539,7 +539,7 @@ AI는 모든 사업쌍의 신청·선정·확약·협약·수행·교부 여섯 
 사용자 사실 부족·공식 근거 부족·규정 충돌은 정상 분석의 서로 다른 판단 상태다. 기술 실패는 analysis=null인 FAILED다.
 
 세 질문 계약 `combination-review-v3`도 같은 분석 경로로 받는다. Core는 `app.combination-review.contract-version`
-(env `COMBINATION_REVIEW_CONTRACT_VERSION`, `v2`|`v3`, 기본 `v2`, 다른 값은 시작 실패)으로 새 실행의 계약을 고르며, 큐 소비 시점의 값을 쓴다.
+(env `COMBINATION_REVIEW_CONTRACT_VERSION`, `v2`|`v3`, 기본 `v3`, 다른 값은 시작 실패)으로 새 실행의 계약을 고르며, 큐 소비 시점의 값을 쓴다.
 v3는 `GET /internal/v1/combination-reviews/configuration?contractVersion=combination-review-v3`로 설정을 확인해 저장하고,
 참여 사실 6칸 대신 사업별 상태(UNKNOWN/NOT_APPLIED/APPLIED/ACTIVE/FINISHED)와 `relation`을 보낸다. 상태는 shared
 `participationToReviewStatus`와 같은 규칙(서로 어긋나거나 순서를 정할 수 없는 사실은 UNKNOWN)으로 Domain이 계산한다.
@@ -554,8 +554,8 @@ CONCURRENT 둘 다 되면 함께 수행할 수 있나, SAME_SUBJECT 같은 과�
 수 있는 조건과 그 결과(가능/불가)를 돌려준다. 사업별 상태와 두 사업 관계(sameProject·sameCost)는 선택 입력이고, UNKNOWN이 아닌
 값은 확인된 사실로 적용해 조건을 판정으로 확정한다. 걸리면 생기는 일은 인용한 제재 문장에서만 시점(평가·선정·협약·수행·정산·사후)과
 함께 적는다. 인용은 v2와 같은 선택지 번호 방식이며, 질문 누락·순서 오류, 판정별 인용·조건 규칙 위반, 인용 없는 조건부 답·조치는
-v2와 같은 기술 실패다. v3 프롬프트 버전은 `configuration?contractVersion=combination-review-v3`로 따로 조회하며, Core가 새 실행의
-기본 계약을 v3로 바꾸기 전까지 v2 요청·응답은 그대로 유지한다.
+v2와 같은 기술 실패다. v3 프롬프트 버전은 `configuration?contractVersion=combination-review-v3`로 따로 조회하며, Core 새 실행의
+기본 계약은 v3이며, v2 요청·응답은 되돌리기와 지난 결과 표시를 위해 v2 분석 경로를 지울 때까지 유지한다.
 
 | HTTP | code / 조건 |
 |---|---|

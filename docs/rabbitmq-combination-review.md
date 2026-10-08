@@ -102,7 +102,7 @@ AI 호출 이후 통신 단절·저장 오류는 UNKNOWN으로 기록한다. 상
 
 `COMBINATION_REVIEW_QUEUE_ENABLED`는 Core 직접 실행 시 기본 false, Compose에서는 기본 true다.
 RabbitMQ 연결은 기존 `RABBITMQ_HOST/PORT/USERNAME/PASSWORD/VHOST`를 공유한다.
-AI 계약 `COMBINATION_REVIEW_CONTRACT_VERSION`(`v2`|`v3`, 기본 `v2`)은 접수가 아니라 소비자가 실행을 시작할 때 읽는다.
+AI 계약 `COMBINATION_REVIEW_CONTRACT_VERSION`(`v2`|`v3`, 기본 `v3`)은 접수가 아니라 소비자가 실행을 시작할 때 읽는다.
 값을 바꾸고 재배포하면 이미 QUEUED인 작업도 새 값으로 실행되며, 끝난 실행은 저장된 `configuration.contractVersion`으로 그대로 읽는다.
 기능이 false면 신규 접수·소비·만료 검사·발행이 비활성화되고, 기존 결과 GET과 동일 키 재조회는 가능하다.
 true로 바꾸면 **기존 QUEUED 작업이 사용자 재클릭 없이 실행될 수 있다.** 실행 전 대기 작업을 확인해야 한다.
