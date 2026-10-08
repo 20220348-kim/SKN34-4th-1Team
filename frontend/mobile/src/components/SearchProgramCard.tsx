@@ -1,10 +1,11 @@
 import { useState } from 'react'
-import { Linking, StyleSheet, Text, View } from 'react-native'
+import { Linking, Pressable, StyleSheet, Text, View } from 'react-native'
 import type { SupportProgram } from '@govbiz/shared/domain/entities/SupportProgram'
 import { daysUntil, formatDday, programStatusLabels } from '@govbiz/shared/domain/labels'
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
 import { Button, Notice, badgeColors, colors, ddayBadgeTone } from '../ui'
 import { ProgramInterestButton, type SearchProgramInterests } from './SearchProgramInterests'
+import { AppIcon } from './AppIcon'
 
 export function SearchProgramCard({ program, onOpen, interests, onLogin }: { program: SupportProgram; onOpen?(identity: SupportProgramIdentity): void
   interests?: SearchProgramInterests; onLogin?(): void }) {
@@ -24,7 +25,10 @@ export function SearchProgramCard({ program, onOpen, interests, onLogin }: { pro
       {deadline !== null && <Text style={[local.deadline, badgeColors(ddayBadgeTone(deadline))]}>
         {formatDday(deadline)}</Text>}
       {program.recommendationScore !== null && <Text style={local.score}>관련도 {program.recommendationScore}</Text>}</View>
-    <Text style={[local.title, !onOpen && { fontSize: 14, lineHeight: 21 }]}>{program.title}</Text>
+    <View style={local.titleRow}><Text style={[local.title, { flex: 1 }, !onOpen && { fontSize: 14, lineHeight: 21 }]}>{program.title}</Text>
+      {onOpen && interests && onLogin && <ProgramInterestButton identity={{ sourceCode: program.sourceCode, sourceProgramId: program.id }} title={program.title} interests={interests} onLogin={onLogin} showError={false} />}
+    </View>
+    {interests?.errors[JSON.stringify([program.sourceCode, program.id])] && <Notice error>{interests.errors[JSON.stringify([program.sourceCode, program.id])]}</Notice>}
     {onOpen && <Text style={local.description}>{[program.organization, ...program.regions].filter(Boolean).join(' · ')}</Text>}
     {onOpen && <Text style={local.description}>{program.applicationPeriod}</Text>}
     <View style={[local.quote, !onOpen && { padding: 8, gap: 6 }]}>
@@ -35,8 +39,12 @@ export function SearchProgramCard({ program, onOpen, interests, onLogin }: { pro
         : <Text style={local.evidence}>확인 가능한 본문 인용이 제공되지 않았습니다.</Text>}
     </View>
     {onOpen && <>
-      {interests && onLogin && <ProgramInterestButton identity={{ sourceCode: program.sourceCode, sourceProgramId: program.id }} title={program.title} interests={interests} onLogin={onLogin} />}
-      <View style={local.actions}><View style={{ flex: 1 }}><Button label={program.sourceCode === 'CNTRADE_NOTICE' ? '공식 공지 목록' : '원문 보기'} variant="ghost" onPress={() => void openSource()} /></View>
+      <View style={local.actions}>
+        <Pressable accessibilityRole="link" accessibilityLabel={program.sourceCode === 'CNTRADE_NOTICE' ? '공식 공지 목록 보러가기' : '원문 보러가기'}
+          onPress={() => void openSource()} style={({ pressed }) => [local.sourceLink, pressed && { opacity: 0.9 }]}>
+          <Text style={local.sourceLabel}>{program.sourceCode === 'CNTRADE_NOTICE' ? '공식 공지 목록 보러가기' : '원문 보러가기'}</Text>
+          <AppIcon name="externalLink" color={colors.primaryText} size={15} />
+        </Pressable>
         <Button label="상세 보기" accessibilityLabel={`${program.title}, 상세 보기`} variant="secondary"
           onPress={() => onOpen({ sourceCode: program.sourceCode, sourceProgramId: program.id })} /></View>
       {linkError && <Notice error>{linkError}</Notice>}
@@ -54,11 +62,14 @@ const local = StyleSheet.create({
   status: { color: colors.primaryText, fontSize: 13, lineHeight: 20, fontWeight: '600' },
   score: { marginLeft: 'auto', color: colors.primaryText, fontSize: 13, lineHeight: 20, fontWeight: '600' },
   title: { color: colors.text, fontSize: 17, lineHeight: 25, fontWeight: '600' },
+  titleRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },
   description: { color: colors.secondaryText, fontSize: 13, lineHeight: 20 },
   quote: { backgroundColor: colors.background, borderRadius: 12, padding: 12, gap: 8 },
   badge: { alignSelf: 'flex-start', overflow: 'hidden', borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3,
     color: colors.primaryText, backgroundColor: colors.soft, fontSize: 12, lineHeight: 18, fontWeight: '600' },
   evidence: { color: colors.secondaryText, fontSize: 13, lineHeight: 21 },
-  actions: { flexDirection: 'row', gap: 8, alignItems: 'center' },
+  actions: { flexDirection: 'row', gap: 8, alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap' },
+  sourceLink: { flexDirection: 'row', alignItems: 'center', gap: 5, minHeight: 44, flexShrink: 1 },
+  sourceLabel: { color: colors.primaryText, fontSize: 14, fontWeight: '600', flexShrink: 1 },
   disclaimer: { color: colors.muted, fontSize: 12, lineHeight: 19 },
 })

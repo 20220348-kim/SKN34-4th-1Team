@@ -1,10 +1,12 @@
 import { useCallback, useRef, useState } from 'react'
 import { useFocusEffect } from 'expo-router'
+import { ActivityIndicator, Pressable } from 'react-native'
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
 import { ApiError, errorMessage } from '../api/client'
 import { listSavedPrograms, removeSavedProgram, saveProgram } from '../api/savedPrograms'
 import { useAuth } from '../auth/session'
-import { Button, Notice } from '../ui'
+import { colors, Notice } from '../ui'
+import { AppIcon } from './AppIcon'
 
 const keyOf = (identity: SupportProgramIdentity) => JSON.stringify([identity.sourceCode, identity.sourceProgramId])
 type State = { owner: string | null; saved: Set<string>; pending: Set<string>; ready: boolean; error: string | null; errors: Record<string, string> }
@@ -62,15 +64,20 @@ export function useSearchProgramInterests() {
 
 export type SearchProgramInterests = ReturnType<typeof useSearchProgramInterests>
 
-export function ProgramInterestButton({ identity, title, interests, onLogin }: {
-  identity: SupportProgramIdentity; title: string; interests: SearchProgramInterests; onLogin(): void
+export function ProgramInterestButton({ identity, title, interests, onLogin, showError = true }: {
+  identity: SupportProgramIdentity; title: string; interests: SearchProgramInterests; onLogin(): void; showError?: boolean
 }) {
   const key = keyOf(identity), saved = interests.saved.has(key), busy = interests.pending.has(key)
   const label = saved ? '관심 공고에서 빼기' : '관심 공고에 추가'
   return <>
-    <Button label={label} accessibilityLabel={`${title} ${label}`} variant="secondary" busy={busy}
-      disabled={!interests.available || interests.authenticated && !interests.ready}
-      onPress={() => interests.authenticated ? void interests.toggle(identity) : onLogin()} />
-    {interests.errors[key] && <Notice error>{interests.errors[key]}</Notice>}
+    <Pressable accessibilityRole="button" accessibilityLabel={`${title} ${label}`}
+      accessibilityState={{ selected: saved, busy, disabled: !interests.available || busy || interests.authenticated && !interests.ready }}
+      disabled={!interests.available || busy || interests.authenticated && !interests.ready}
+      onPress={() => interests.authenticated ? void interests.toggle(identity) : onLogin()}
+      style={({ pressed }) => ({ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 12,
+        backgroundColor: pressed ? colors.divider : 'transparent' })}>
+      {busy ? <ActivityIndicator color={colors.primary} /> : <AppIcon name="bookmark" color={colors.primary} selected={saved} size={22} />}
+    </Pressable>
+    {showError && interests.errors[key] && <Notice error>{interests.errors[key]}</Notice>}
   </>
 }
