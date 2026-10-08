@@ -1,4 +1,4 @@
-"""Verify runner receipts and plan dormant, manual Argo evaluation releases."""
+"""Verify runner receipts and prepare dormant, manual Argo evaluation releases."""
 
 import argparse
 import io
@@ -411,6 +411,151 @@ def plan_from_restore(root, fork, *, state, restore_report, **options):
     }
 
 
+def require_registered_resource(actual, expected):
+    """Resume only our exact dormant declaration, never adopt or update a resource."""
+    metadata = actual.get("metadata", {})
+    wanted = expected["metadata"]
+    if (
+        actual.get("apiVersion") != expected["apiVersion"]
+        or actual.get("kind") != expected["kind"]
+        or any(metadata.get(key) != wanted[key] for key in ("name", "namespace"))
+        or not metadata.get("uid")
+        or metadata.get("deletionTimestamp")
+        or metadata.get("ownerReferences")
+        or metadata.get("finalizers")
+        or any(
+            metadata.get("annotations", {}).get(key) != value
+            for key, value in wanted["annotations"].items()
+        )
+        or encoded(actual.get("spec")) != encoded(expected["spec"])
+        or actual.get("operation")
+        or actual.get("status", {}).get("operationState")
+        or actual.get("status", {}).get("history")
+    ):
+        raise ValueError("Evaluation Argo resource differs or has been synchronized")
+    return metadata["uid"]
+
+
+def register_from_restore(root, fork, *, state, restore_report, progress, **options):
+    """Create only the project and inactive Applications; never request a sync."""
+    result = plan_from_restore(
+        root, fork, state=state, restore_report=restore_report, **options
+    )
+    settings = fork_cluster.load_settings(state)
+    if settings["mode"] != "gitops":
+        raise ValueError("Evaluation registration requires existing GitOps mode")
+    kube, _, ak = fork_cluster.commands(state, settings)
+    # Bind retry ownership to this restore and declaration, not merely their names.
+    resources = json.loads(encoded(result["resources"]))
+    annotations = {
+        "ai.govbiz/evaluation-namespace-uid": result["retainedStorage"][
+            "namespace_uid"
+        ],
+        "ai.govbiz/evaluation-plan-sha256": result["resourcesSha256"],
+        "ai.govbiz/evaluation-restore-sha256": result["restoreReportSha256"],
+    }
+    for resource in resources:
+        resource["metadata"]["annotations"] = dict(annotations)
+
+    def inspect():
+        applications = pvc_restore.run(
+            kube + ["get", "applications.argoproj.io", "--all-namespaces", "-o", "json"]
+        )["items"]
+        expected = {row["metadata"]["name"]: row for row in resources[1:]}
+        found = {}
+        for application in applications:
+            metadata = application["metadata"]
+            spec = application.get("spec", {})
+            name = metadata["name"]
+            if (
+                spec.get("project") == PROJECT
+                or spec.get("destination", {}).get("namespace") == NAMESPACE
+                or (metadata.get("namespace") == "argocd" and name in expected)
+            ):
+                if metadata.get("namespace") != "argocd" or name not in expected:
+                    raise ValueError("Evaluation namespace has another Argo owner")
+                require_registered_resource(application, expected[name])
+                found[("Application", name)] = application
+        project = pvc_restore.run(
+            ak + ["get", "appproject", PROJECT, "--ignore-not-found", "-o", "json"]
+        )
+        if project:
+            require_registered_resource(project, resources[0])
+            found[("AppProject", PROJECT)] = project
+        return found
+
+    fork_cluster.verify_context(kube, settings, timeout=15)
+    existing = inspect()  # Reject every collision before the first write.
+    for resource in resources:
+        key = (resource["kind"], resource["metadata"]["name"])
+        if key not in existing:
+            admitted = pvc_restore.run(
+                ak + ["create", "--dry-run=server", "-f", "-", "-o", "json"],
+                value=resource,
+            )
+            # Admission must not enable automation or broaden the project.
+            require_registered_resource(
+                {**admitted, "metadata": {**admitted["metadata"], "uid": "dry-run"}},
+                resource,
+            )
+    # Remote validation and admission can take time. Recompute, do not consume a
+    # previously saved plan as deployment authority.
+    if (
+        plan_from_restore(
+            root, fork, state=state, restore_report=restore_report, **options
+        )
+        != result
+    ):
+        raise ValueError("Evaluation registration plan changed before creation")
+    for resource in resources:
+        fork_cluster.verify_context(kube, settings, timeout=15)
+        current = inspect()
+        for key, previous in existing.items():
+            if (
+                key not in current
+                or current[key]["metadata"]["uid"] != previous["metadata"]["uid"]
+            ):
+                raise ValueError("Evaluation Argo identity changed during registration")
+        key = (resource["kind"], resource["metadata"]["name"])
+        if key not in current:
+            # Record before the request: a timeout can still leave a created object.
+            progress["creationAttempts"].append({"kind": key[0], "name": key[1]})
+            actual = pvc_restore.run(
+                ak + ["create", "-f", "-", "-o", "json"], value=resource
+            )
+            progress["created"].append({"kind": key[0], "name": key[1]})
+            require_registered_resource(actual, resource)
+            current[key] = actual
+        existing = current
+    # A manual sync, storage replacement or CI change during registration is an
+    # error. Leave the named objects in place for inspection; never auto-delete.
+    if (
+        plan_from_restore(
+            root, fork, state=state, restore_report=restore_report, **options
+        )
+        != result
+    ):
+        raise ValueError("Evaluation registration plan changed after creation")
+    current = inspect()
+    registered = []
+    for resource in resources:
+        key = (resource["kind"], resource["metadata"]["name"])
+        actual = current.get(key, {})
+        uid = require_registered_resource(actual, resource)
+        if uid != existing[key]["metadata"]["uid"]:
+            raise ValueError("Evaluation Argo identity changed during registration")
+        registered.append({"kind": key[0], "name": key[1], "uid": uid})
+    return {
+        **result,
+        "status": "REGISTERED_NOT_SYNCED",
+        "clusterChanged": bool(progress["created"]),
+        "registration": progress,
+        "registeredResources": registered,
+        "syncRequested": False,
+        "runtimeStarted": False,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--branch", help="Origin's default branch when omitted")
@@ -420,11 +565,18 @@ def main():
     parser.add_argument("--results-claim")
     parser.add_argument("--restore-report", type=Path)
     parser.add_argument("--state-dir", type=Path)
+    parser.add_argument(
+        "--register-argo",
+        action="store_true",
+        help="Create dormant Argo declarations from a newly verified retained-storage plan",
+    )
     parser.add_argument("--langfuse-url", required=True)
     parser.add_argument(
         "--ops-api-url", default="http://ops-service.govbiz-msa.svc.cluster.local:8000"
     )
     args = parser.parse_args()
+    if args.register_argo and not args.restore_report:
+        parser.error("--register-argo requires --restore-report and --state-dir")
     manual = (args.node, args.prefect_claim, args.results_claim)
     if args.restore_report:
         if not args.state_dir or any(manual):
@@ -435,6 +587,7 @@ def main():
         parser.error(
             "Use --node, --prefect-claim and --results-claim, or a restore report with state"
         )
+    progress = {"creationAttempts": [], "created": []}
     try:
         root = Path(__file__).resolve().parents[3]
         fork = from_origin(root, branch=args.branch).require_personal_publish()
@@ -443,7 +596,16 @@ def main():
             "langfuse_url": args.langfuse_url,
             "ops_api_url": args.ops_api_url,
         }
-        if args.restore_report:
+        if args.register_argo:
+            report = register_from_restore(
+                root,
+                fork,
+                state=args.state_dir,
+                restore_report=args.restore_report,
+                progress=progress,
+                **options,
+            )
+        elif args.restore_report:
             report = plan_from_restore(
                 root,
                 fork,
@@ -473,6 +635,11 @@ def main():
             "Ops publication changed": "msa_publication_changed",
             "Required source checks changed": "ci_evidence_changed",
             "Retained": "retained_storage_not_verified",
+            "Evaluation registration requires": "gitops_mode_required",
+            "Evaluation namespace has another": "argo_namespace_conflict",
+            "Evaluation Argo resource differs": "argo_resource_conflict",
+            "Evaluation Argo identity changed": "argo_identity_changed",
+            "Evaluation registration plan changed": "registration_plan_changed",
         }
         print(
             json.dumps(
@@ -488,7 +655,14 @@ def main():
                         "verification_failed",
                     ),
                     "errorType": type(error).__name__,
-                    "clusterChanged": False,
+                    "clusterChanged": True
+                    if progress["created"]
+                    else (None if progress["creationAttempts"] else False),
+                    **(
+                        {"registration": progress, "syncRequested": False}
+                        if args.register_argo
+                        else {}
+                    ),
                     "deploymentAuthorized": False,
                 }
             )

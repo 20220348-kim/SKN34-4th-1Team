@@ -107,8 +107,9 @@ LLMOps CI에는 아래의 실제 PVC 복원 smoke와 별도 평가 런타임 통
 
 [`evaluation_release.py`](../scripts/evaluation_release.py)는 개인 포크 기본 브랜치의 검증된 발행을
 읽어 **평가 namespace 전용** AppProject와 세 Application을 JSON 보고서에 만든다.
-기존 네 업무 Application·프로젝트는 변경하지 않는다. 원격 Git 읽기와 익명 GHCR manifest 조회만
-수행하며 Docker·kubectl은 호출하지 않는다. 소스 커밋이 로컬에 없으면 `git fetch`로 객체만 가져온다.
+기존 네 업무 Application·프로젝트는 변경하지 않는다. 수동 노드·PVC 입력의 계획 모드는 원격 Git
+읽기와 익명 GHCR manifest 조회만 수행하며 Docker·kubectl은 호출하지 않는다. 복원 보고서 모드는
+클러스터 상태도 조회한다. 소스 커밋이 로컬에 없으면 `git fetch`로 객체만 가져온다.
 
 ```bash
 # 저장소 루트, 기존 GitOps Python 환경 + 인증된 gh + Helm 4.3.0.
@@ -303,6 +304,42 @@ Langfuse 주소는 실제 사용 중인 접근 가능한 주소로 지정한다.
 Infra CI의 기존 테스트 검색과 LLMOps CI의 합성 PVC 복원 단계에도 포함되며, 실제 PVC의 노드
 고정·보존 상태 검사 성공 여부는 최신 커밋의 해당 CI 결과로 확인한다.
 
+## 평가 Argo 선언 등록
+
+복원 보고서 모드에 `--register-argo`를 추가하면 검증된 AppProject 한 개와 Application 세 개를
+기존 개인 GitOps 클러스터의 `argocd` namespace에 등록한다. 저장한 계획 JSON을 그대로 적용하지
+않고 같은 SHA의 필수 CI·공개 이미지 발행·Helm 정책·보존 PVC를 새로 검증한다.
+
+```bash
+python3 -B infrastructure/gitops/scripts/evaluation_release.py \
+  --state-dir infrastructure/gitops/.local/fork \
+  --restore-report /private-backups/evaluation-retained.json \
+  --langfuse-url "$LANGFUSE_URL" \
+  --register-argo > /private-backups/evaluation-registration.json
+```
+
+- 개인 클러스터의 소유권과 `gitops` 모드를 확인하고, 모든 이름 충돌과 다른 Application의 평가
+  namespace 사용을 생성 전에 검사한다. 등록 요청은 서버 측 dry-run을 먼저 통과해야 한다.
+- `kubectl create`만 사용한다. 같은 복원 namespace UID·보고서 해시·계획 해시와 정확히 같은
+  선언은 재사용하지만, 기존 리소스를 덮어쓰거나 자동 채택하지 않는다. 다른 소스나 설정으로
+  갱신하는 명령이 아니며, 이미 동기화한 Application은 재사용하지 않는다.
+- Application은 정확한 소스 SHA·`replicas: 0`·`automated.enabled: false`·prune/selfHeal 비활성·
+  재시도 0을 유지한다. sync 요청, cascade 삭제 finalizer, ownerReference는 추가하지 않는다.
+  [자동 동기화 설정](https://argo-cd.readthedocs.io/en/stable/user-guide/auto_sync/)과
+  [Application 삭제 정책](https://argo-cd.readthedocs.io/en/stable/user-guide/app_deletion/)을 따른다.
+- 생성 전후에 계획과 저장소를 다시 검증하며 UID 교체·수동 sync·CI 변경을 성공으로 처리하지
+  않는다. 이 검사는 클러스터 잠금이 아니므로 동시에 수동 sync나 전환을 실행하지 않는다.
+- 중간 실패 시 이미 만든 선언을 자동 삭제하지 않는다. `registration.creationAttempts`와
+  `created`를 남기며 응답 유실로 생성 여부를 모르면 `clusterChanged: null`을 반환한다.
+  상태를 확인한 뒤 같은 명령으로 나머지만 등록할 수 있다. 보고서를 덮어쓰기 전에 이전 실행
+  결과를 보존한다. 원시 오류나 비밀값은 보고서에 기록하지 않는다.
+
+성공 상태는 `REGISTERED_NOT_SYNCED`다. Argo 화면에 등록됐다는 뜻이며 Deployment·Service는
+아직 생성하지 않는다. PVC·PV·StorageClass·namespace·Secret과 기존 업무 Application의 소유권은
+변경하지 않는다. Secret 준비, 네트워크 접근 통제, 최신 백업과 원본 writer 중지, 수동 동기화·
+활성화·Ops URL 전환·실제 평가 검증은 다음 단계다. 보고서는 `syncRequested=false`,
+`runtimeStarted=false`, `runtimeVerified=false`, `deploymentAuthorized=false`로 이 범위를 구분한다.
+
 ## 격리 Kubernetes에서 실제 평가 실행 검증
 
 LLMOps CI의 기존 격리 통합 검증에 `--evaluation-runtime` 단계를 연결했다.
@@ -372,7 +409,8 @@ Kubernetes 1.36의 이미지 자격 증명 검증은 이미지 ID 외에 저장�
    실제 패키지 준비·최신 SHA CI·발행 성공과 운영 환경에서의 계획 검증은 별도로 확인해야 한다.
    기존 네 서비스의 필수 CI·발행 가드를 우회하지 않는다. 배포 방식은 서비스별 Argo Application과 수동 동기화를 유지한다.
    평가용 계획은 별도 프로젝트로 범위를 제한한다. 복원 보고서와 현재 보존 PVC를 대조해 수동 계획에
-   연결하는 읽기 전용 경로는 구현했다. 실제 적용 전 namespace·PVC·Secret 소유권 인계는 남아 있다.
+   연결하는 읽기 전용 경로와 동기화하지 않는 Argo 선언 등록 명령은 구현했다. 실제 등록 실행과
+   namespace·PVC 확인, Secret 준비 및 서비스 인계는 남아 있다.
    운영 진단은 위의 평가 Application 조회를 포함하지만 런타임·저장소 검증은 별도다.
 3. 위 격리 Kubernetes 런타임 검증의 최신 SHA 필수 CI 성공을 확인한다. 검증 경로는 구현했으며,
    실행 실패·취소·건너뛰기를 완료로 처리하지 않는다. 이후 개인 환경의 같은 이미지·백업으로 별도 검증한다.
