@@ -228,6 +228,16 @@ class KubernetesTests(unittest.TestCase):
                 self.pods[value["metadata"]["name"]] = result
             return result
         if "get" in args:
+            if "node" in args:
+                return {
+                    "metadata": {
+                        "name": "fixture-control-plane",
+                        "labels": {"kubernetes.io/hostname": "fixture-control-plane"},
+                    },
+                    "status": {"conditions": [{"type": "Ready", "status": "True"}]},
+                }
+            if any("pods," in part for part in args):
+                return {"items": list(self.pods.values())}
             if "pods" in args:
                 return {"items": list(self.pods.values())}
             if "pod" in args:
@@ -242,7 +252,11 @@ class KubernetesTests(unittest.TestCase):
                         or (self.fail == "class_owner" and "storageclass" in args)
                         else "uid-" + name,
                         "labels": {restore.LABEL: self.token},
-                    }
+                    },
+                    "status": {"phase": "Active"},
+                    "provisioner": "rancher.io/local-path",
+                    "volumeBindingMode": "WaitForFirstConsumer",
+                    "reclaimPolicy": self.policy,
                 }
             if "pvc" in args:
                 name = args[args.index("pvc") + 1]
@@ -273,7 +287,23 @@ class KubernetesTests(unittest.TestCase):
                             "pv.kubernetes.io/provisioned-by": "rancher.io/local-path"
                         },
                     },
+                    "status": {"phase": "Bound"},
                     "spec": {
+                        "nodeAffinity": {
+                            "required": {
+                                "nodeSelectorTerms": [
+                                    {
+                                        "matchExpressions": [
+                                            {
+                                                "key": "kubernetes.io/hostname",
+                                                "operator": "In",
+                                                "values": ["fixture-control-plane"],
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        },
                         "claimRef": {
                             "uid": "foreign" if self.fail == "pv" else "uid-" + kind,
                             "name": kind,
@@ -461,6 +491,90 @@ class KubernetesTests(unittest.TestCase):
         return restore.retain_for_migration(
             ["kubectl"], "fixture-control-plane", self.stores, self.expected
         )
+
+    def test_retained_inspection_reads_current_identities_without_writes(self):
+        report = self.retained()
+        self.events.clear()
+        observed = restore.inspect_retained(
+            ["kubectl"], "fixture-control-plane", report
+        )
+        self.assertEqual(observed["claims"], report["claims"])
+        self.assertTrue(observed["identity_verified"])
+        self.assertTrue(observed["workloads_absent"])
+        for field in (
+            "data_reverified",
+            "archive_freshness_verified",
+            "source_quiescence_verified",
+        ):
+            self.assertIs(observed[field], False)
+        self.assertTrue(
+            all("get" in args and value is None for args, value in self.events)
+        )
+
+    def test_retained_inspection_rejects_stale_report_and_live_storage_changes(self):
+        report = self.retained()
+        for change in (
+            {"scope": "disposable_kubernetes_evaluation_pvc"},
+            {"status": "FAIL"},
+            {"helpers_removed": False},
+            {"application_started": True},
+            {"node": "other-node"},
+            {"namespace_uid": "replaced"},
+            {"storage_class_uid": "replaced"},
+            {"claims": {"prefect": report["claims"]["prefect"]}},
+            {
+                "claims": report["claims"]
+                | {"results": report["claims"]["results"] | {"pv_uid": "replaced"}}
+            },
+        ):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                restore.inspect_retained(
+                    ["kubectl"], "fixture-control-plane", report | change
+                )
+        mutations = [
+            ("namespace", ["metadata", "deletionTimestamp"], "now"),
+            ("namespace", ["status", "phase"], "Terminating"),
+            ("storageclass", ["reclaimPolicy"], "Delete"),
+            ("storageclass", ["provisioner"], "other"),
+            ("storageclass", ["volumeBindingMode"], "Immediate"),
+            ("pvc", ["metadata", "deletionTimestamp"], "now"),
+            ("pvc", ["metadata", "uid"], "replacement"),
+            ("pv", ["metadata", "deletionTimestamp"], "now"),
+            ("pv", ["status", "phase"], "Released"),
+            ("pv", ["spec", "persistentVolumeReclaimPolicy"], "Delete"),
+            ("pv", ["spec", "claimRef", "uid"], "replacement"),
+            ("pv", ["spec", "nodeAffinity"], {}),
+            ("node", ["status", "conditions"], []),
+            ("node", ["metadata", "labels", "kubernetes.io/hostname"], "other"),
+        ]
+        for resource, keys, value in mutations:
+
+            def changed(args, resource=resource, keys=keys, value=value, **kwargs):
+                result = self.fake_run(args, **kwargs)
+                if resource in args:
+                    target = result
+                    for key in keys[:-1]:
+                        target = target[key]
+                    target[keys[-1]] = value
+                return result
+
+            self.events.clear()
+            with (
+                self.subTest(resource=resource, keys=keys),
+                patch.object(restore, "run", side_effect=changed),
+                self.assertRaises(ValueError),
+            ):
+                restore.inspect_retained(["kubectl"], "fixture-control-plane", report)
+            self.assertTrue(
+                all("get" in args and value is None for args, value in self.events)
+            )
+        for kind in ("Pod", "Deployment", "Job", "CronJob"):
+            self.pods = {"writer": {"kind": kind}}
+            with (
+                self.subTest(workload=kind),
+                self.assertRaisesRegex(ValueError, "workloads"),
+            ):
+                restore.inspect_retained(["kubectl"], "fixture-control-plane", report)
 
     def test_retained_restore_keeps_identified_volumes_without_starting_services(self):
         result = self.retained()

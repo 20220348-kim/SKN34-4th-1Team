@@ -141,7 +141,7 @@ python3 -B infrastructure/gitops/scripts/evaluation_release.py \
 실패 시 `status=BLOCKED`, 고정 `reason`과 오류 종류만 출력하며 URL·registry 오류 원문은 노출하지 않는다.
 
 `publicGHCRManifestsVerified=true`는 GHCR의 immutable manifest 조회 성공만 뜻한다. 레이어 다운로드,
-외부 Prefect registry 검증, PVC 복원·존재, Secret 설치, 네트워크 접근, 실제 실행은 검사하지 않는다.
+외부 Prefect registry 검증, PVC 복원·존재, Secret 설치, 네트워크 접근, 실제 실행은 기본 계획에서 검사하지 않는다.
 `layersDownloaded`, `prefectRegistryVerified`, `storageRestored`, `runtimeVerified`,
 `deploymentAuthorized`는 모두 false다. 실행기가 아직 발행되지 않았거나 현재 소스 CI가 미완료이면
 이 계획도 차단된다. 실제 전환 전에 보존할 PVC·비밀·네트워크와 기존 writer 중지·인계 절차를 완료한다.
@@ -232,7 +232,7 @@ python3 -B infrastructure/gitops/scripts/evaluation_pvc_restore.py \
   --state-dir infrastructure/gitops/.local/fork \
   --archive /private-backups/ops-state.enc \
   --key-file /private-backups/ops-state.key \
-  --retain-for-migration
+  --retain-for-migration > /private-backups/evaluation-retained.json
 ```
 
 - 전용 임의 이름의 StorageClass를 만들고 처음부터 `Retain`을 사용한다. 다른 Available PV를
@@ -257,6 +257,46 @@ LLMOps CI는 별도 kind 클러스터에서 [`smoke_evaluation_pvc.py`](../scrip
 확인한다. 보존 모드 반환 후 PVC·PV 식별과 `Retain` 유지, helper 제거, 재실행 거절도 검사한 뒤
 합성 데이터 전용 클러스터 전체를 정리한다. 결과는 `evaluation-pvc.json` artifact로 남긴다. 이것은 실제 개인 백업의
 복원 성공이나 무료 평가 실행 완료를 대신하지 않으며, 최신 커밋 CI가 통과하기 전에는 미검증 상태다.
+
+## 보존된 PVC와 배포 계획 연결
+
+복원 CLI의 성공 JSON을 private 경로에 저장한 뒤 `evaluation_release.py`에
+`--restore-report`와 `--state-dir`을 함께 전달한다. 이 모드는 수동 `--node`·`--prefect-claim`·
+`--results-claim`과 함께 사용할 수 없다. 노드는 소유권을 확인한 개인 클러스터에서 가져오고,
+PVC 이름은 복원 도구의 `prefect`·`results`로 고정한다. 실행 전 `LANGFUSE_URL` 환경변수에
+실제로 접근 가능한 기존 Langfuse 주소를 설정한다.
+
+```bash
+python3 -B infrastructure/gitops/scripts/evaluation_release.py \
+  --state-dir infrastructure/gitops/.local/fork \
+  --restore-report /private-backups/evaluation-retained.json \
+  --langfuse-url "$LANGFUSE_URL"
+```
+
+Langfuse 주소는 실제 사용 중인 접근 가능한 주소로 지정한다. 기존 수동 입력 방식의 계획 생성도
+유지하지만 그 모드에서는 `retainedStorageIdentityVerified=false`다.
+
+연결 모드는 **읽기 전용**이며 다음 순서로 동작한다.
+
+1. 보고서 크기·복원 종류와 개인 클러스터의 저장소·브랜치·소유권을 확인한다.
+2. 현재 namespace·StorageClass·PVC·PV의 UID와 소유 라벨, 바인딩 관계, `Retain` 정책,
+   볼륨의 노드 고정 및 노드 Ready 상태를 대조한다. 삭제 중인 리소스는 거절한다.
+3. helper를 포함한 Pod나 Deployment·Job·CronJob 등 워크로드가 하나라도 남아 있으면 차단한다.
+   최초 인계를 위한 검사이므로 이미 설치한 replica 0 Deployment도 재사용하지 않는다.
+4. 기존과 같은 SHA의 필수 CI·이미지 발행·공개 receipt·Helm 정책을 검증해 replica 0 계획을 만든다.
+5. 클러스터 소유권과 저장소 상태를 다시 조회한다. 조회 실패나 식별 정보 변경 시 계획을 반환하지 않는다.
+
+결과의 `retainedStorageIdentityVerified=true`와 `retainedStorage`는 조회 당시 리소스 식별을
+확인했다는 뜻이다. 보고서 파일 해시는 `restoreReportSha256`, 보고서에 적힌 백업 해시는
+`reportedArchiveSha256`로 구분한다. JSON 보고서는 서명된 증거가 아니며
+`restoreReportAuthenticated=false`다. 파일 내용·백업 최신성·원본 writer 중지를 다시 확인한
+것이 아니므로 `storageRestored`, `data_reverified`, `runtimeVerified`, `deploymentAuthorized`는
+계속 false다. Secret 내용 조회, Pod 실행, Argo 적용·동기화, Ops 주소 변경은 수행하지 않는다.
+두 번의 조회도 클러스터 변경을 잠그지 않으므로 실제 적용 직전에 다시 검증해야 한다.
+
+로컬에서는 `test_evaluation_release`, `test_evaluation_pvc_restore`의 관련 테스트를 실행한다.
+Infra CI의 기존 테스트 검색과 LLMOps CI의 합성 PVC 복원 단계에도 포함되며, 실제 PVC의 노드
+고정·보존 상태 검사 성공 여부는 최신 커밋의 해당 CI 결과로 확인한다.
 
 ## 격리 Kubernetes에서 실제 평가 실행 검증
 
@@ -326,7 +366,8 @@ Kubernetes 1.36의 이미지 자격 증명 검증은 이미지 ID 외에 저장�
    v3 receipt 소비·같은 SHA의 Ops 이미지 대조·독립 수동 Argo 계획도 구현했다.
    실제 패키지 준비·최신 SHA CI·발행 성공과 운영 환경에서의 계획 검증은 별도로 확인해야 한다.
    기존 네 서비스의 필수 CI·발행 가드를 우회하지 않는다. 배포 방식은 서비스별 Argo Application과 수동 동기화를 유지한다.
-   평가용 계획은 별도 프로젝트로 범위를 제한한다. 실제 적용 전 namespace·PVC·Secret 소유권 인계는 남아 있다.
+   평가용 계획은 별도 프로젝트로 범위를 제한한다. 복원 보고서와 현재 보존 PVC를 대조해 수동 계획에
+   연결하는 읽기 전용 경로는 구현했다. 실제 적용 전 namespace·PVC·Secret 소유권 인계는 남아 있다.
    운영 진단은 위의 평가 Application 조회를 포함하지만 런타임·저장소 검증은 별도다.
 3. 위 격리 Kubernetes 런타임 검증의 최신 SHA 필수 CI 성공을 확인한다. 검증 경로는 구현했으며,
    실행 실패·취소·건너뛰기를 완료로 처리하지 않는다. 이후 개인 환경의 같은 이미지·백업으로 별도 검증한다.

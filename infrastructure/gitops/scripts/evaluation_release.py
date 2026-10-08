@@ -9,6 +9,8 @@ import zipfile
 from pathlib import Path
 from urllib.parse import quote
 
+import evaluation_pvc_restore as pvc_restore
+import fork_cluster
 import yaml
 from check_evaluation import COMPONENTS, render_bundle
 from deployment import source_checks, verified_release
@@ -357,8 +359,55 @@ def plan(
         "automaticSyncEnabled": False,
         "clusterChanged": False,
         "storageRestored": False,
+        "retainedStorageIdentityVerified": False,
         "runtimeVerified": False,
         "deploymentAuthorized": False,
+    }
+
+
+def plan_from_restore(root, fork, *, state, restore_report, **options):
+    """Bind a dormant plan to observed storage, without trusting report contents as proof."""
+    with Path(restore_report).open("rb") as stream:
+        raw = stream.read(65537)
+    if len(raw) > 65536:
+        raise ValueError("Retained restore report is too large")
+    report = json.loads(raw)
+    if report.get(
+        "cross_store_business_links_verified"
+    ) is not True or not re.fullmatch(
+        r"[a-f0-9]{64}", report.get("archive_sha256", "")
+    ):
+        raise ValueError("Retained archive restore report is required")
+    settings = fork_cluster.load_settings(state)
+    if (
+        settings["repository"].lower() != fork.repository.lower()
+        or settings["branch"] != fork.branch
+    ):
+        raise ValueError("Retained cluster and release repository differ")
+    kube, _, _ = fork_cluster.commands(state, settings)
+    fork_cluster.verify_context(kube, settings, timeout=15)
+    node = settings["cluster"] + "-control-plane"
+    storage = pvc_restore.inspect_retained(kube, node, report)
+    result = plan(
+        root,
+        fork,
+        node=node,
+        prefect_claim="prefect",
+        results_claim="results",
+        **options,
+    )
+    # Image/CI/Helm checks can take time. Do not return a plan based only on the
+    # earlier cluster observation; neither observation authorizes activation.
+    fork_cluster.verify_context(kube, settings, timeout=15)
+    if pvc_restore.inspect_retained(kube, node, report) != storage:
+        raise ValueError("Retained storage changed during release planning")
+    return {
+        **result,
+        "retainedStorageIdentityVerified": True,
+        "retainedStorage": storage,
+        "restoreReportSha256": digest(raw),
+        "reportedArchiveSha256": report["archive_sha256"],
+        "restoreReportAuthenticated": False,
     }
 
 
@@ -366,27 +415,51 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--branch", help="Origin's default branch when omitted")
     parser.add_argument("--helm", default="helm")
-    parser.add_argument("--node", required=True)
-    parser.add_argument("--prefect-claim", required=True)
-    parser.add_argument("--results-claim", required=True)
+    parser.add_argument("--node")
+    parser.add_argument("--prefect-claim")
+    parser.add_argument("--results-claim")
+    parser.add_argument("--restore-report", type=Path)
+    parser.add_argument("--state-dir", type=Path)
     parser.add_argument("--langfuse-url", required=True)
     parser.add_argument(
         "--ops-api-url", default="http://ops-service.govbiz-msa.svc.cluster.local:8000"
     )
     args = parser.parse_args()
+    manual = (args.node, args.prefect_claim, args.results_claim)
+    if args.restore_report:
+        if not args.state_dir or any(manual):
+            parser.error(
+                "Use --restore-report with --state-dir and no manual node/claims"
+            )
+    elif args.state_dir or not all(manual):
+        parser.error(
+            "Use --node, --prefect-claim and --results-claim, or a restore report with state"
+        )
     try:
         root = Path(__file__).resolve().parents[3]
         fork = from_origin(root, branch=args.branch).require_personal_publish()
-        report = plan(
-            root,
-            fork,
-            helm=args.helm,
-            node=args.node,
-            prefect_claim=args.prefect_claim,
-            results_claim=args.results_claim,
-            langfuse_url=args.langfuse_url,
-            ops_api_url=args.ops_api_url,
-        )
+        options = {
+            "helm": args.helm,
+            "langfuse_url": args.langfuse_url,
+            "ops_api_url": args.ops_api_url,
+        }
+        if args.restore_report:
+            report = plan_from_restore(
+                root,
+                fork,
+                state=args.state_dir,
+                restore_report=args.restore_report,
+                **options,
+            )
+        else:
+            report = plan(
+                root,
+                fork,
+                node=args.node,
+                prefect_claim=args.prefect_claim,
+                results_claim=args.results_claim,
+                **options,
+            )
     except Exception as error:  # noqa: BLE001 - do not expose registry or endpoint credentials
         reasons = {
             "No complete verified publication": "msa_publication_not_available",
@@ -399,6 +472,7 @@ def main():
             "Evaluation publication changed": "runner_publication_changed",
             "Ops publication changed": "msa_publication_changed",
             "Required source checks changed": "ci_evidence_changed",
+            "Retained": "retained_storage_not_verified",
         }
         print(
             json.dumps(
