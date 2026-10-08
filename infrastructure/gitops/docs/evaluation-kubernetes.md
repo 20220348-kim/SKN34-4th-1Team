@@ -304,6 +304,49 @@ Langfuse 주소는 실제 사용 중인 접근 가능한 주소로 지정한다.
 Infra CI의 기존 테스트 검색과 LLMOps CI의 합성 PVC 복원 단계에도 포함되며, 실제 PVC의 노드
 고정·보존 상태 검사 성공 여부는 최신 커밋의 해당 CI 결과로 확인한다.
 
+## 평가 Secret 준비
+
+[`evaluation_secrets.py`](../scripts/evaluation_secrets.py)는 보존 PVC를 만든 **같은 암호화 백업**과
+현재 인증값을 대조해 `govbiz-evaluation`의 Secret 두 개를 준비한다. WSL/Linux에서 실행하며
+기본 동작은 조회·검증이다. `--create`를 명시해야 누락된 Secret을 생성한다.
+
+```bash
+# 먼저 검증: 클러스터 쓰기 없음. 백업은 --runtime-keys를 포함해 생성한 것이어야 한다.
+python3 -B infrastructure/gitops/scripts/evaluation_secrets.py \
+  --state-dir infrastructure/gitops/.local/fork \
+  --archive /private-backups/ops-state.enc \
+  --key-file /private-backups/ops-state.key \
+  --restore-report /private-backups/evaluation-retained.json
+
+# 위 명령에 --create를 추가하면 없는 Secret만 생성한다.
+```
+
+검증 흐름은 `백업 인증·복원 보고서의 백업 해시 대조 → 원본 저장소·state·Compose 프로젝트 대조 →
+현재 보존 PVC와 workload 부재 확인 → Ops 토큰·참조와 기존 runner 대조 → Secret 생성·재조회`다.
+백업에 기록된 실행기 컨테이너가 교체됐거나 인증값이 달라지면 새 백업·복원 기준을 확정해야 한다.
+기존 컨테이너를 중지하거나 새로 시작하는 기능은 없다.
+
+- `llmops-artifacts`: 암호화 백업의 `LLMOPS_ARTIFACT_TOKEN` 한 개. 현재 Ops Secret 및 API/sync의
+  `secretKeyRef`도 같은 값을 사용하는지 확인한다.
+- `llmops-runner`: 백업의 `LLMOPS_BUDGET_TOKEN`과 원본 실행기의 `LANGFUSE_PUBLIC_KEY`,
+  `LANGFUSE_SECRET_KEY`. Langfuse 키는 기존 백업에 포함되지 않으므로 기록된 원본 실행기의
+  ID·이미지·Compose 소유권을 확인한 뒤 읽는다. 원본 실행기의 budget 토큰도 백업과 대조한다.
+- Ops에서 budget 토큰을 사용하지 않던 환경은 그 상태를 확인하고 유지한다. 이 명령이 Ops의
+  budget 인증을 새로 활성화하거나 다른 토큰을 발급하지 않는다.
+- DB 비밀번호·Django 키·OpenAI 키는 복사하지 않는다. 비밀값은 메모리와 kubectl stdin으로만
+  전달하며 평문 manifest·명령 인자·도구 로그·보고서로 내보내지 않는다.
+- 새 Secret은 `Opaque`, `immutable: true`이며 복원 namespace UID·백업 해시·개인 state에 연결한다.
+  기존 두 이름을 모두 검사한 뒤 생성하고 정확히 같은 값·소유 정보만 재사용한다. 값 회전·삭제·
+  덮어쓰기는 제공하지 않는다. 변경이 필요하면 별도 중지·교체 절차가 필요하다
+  ([Kubernetes immutable Secret](https://kubernetes.io/docs/concepts/configuration/secret/#immutable-secrets)).
+- 각 생성 전후에 현재 인증값과 저장소를 다시 확인한다. 부분 실패와 응답 유실은 생성 시도·확인
+  내역을 남기며 자동 삭제하지 않는다. 같은 조건의 재실행으로 누락된 Secret만 준비할 수 있다.
+  로컬 상태 잠금을 사용하지만 다른 운영자의 클러스터 변경을 잠그지는 않는다.
+
+조회 성공은 `VERIFIED_NOT_CREATED`와 `missingSecrets`, 생성 성공은 `PREPARED_NOT_ACTIVATED`다.
+이 결과는 백업 최신성·원본 writer 중지·Langfuse 로그인·네트워크 통제·평가 성공을 증명하지 않는다.
+현재 실제 개인 백업을 대상으로 한 생성은 별도로 수행해야 하며, Argo 동기화나 서비스 기동은 하지 않는다.
+
 ## 평가 Argo 선언 등록
 
 복원 보고서 모드에 `--register-argo`를 추가하면 검증된 AppProject 한 개와 Application 세 개를
@@ -410,7 +453,8 @@ Kubernetes 1.36의 이미지 자격 증명 검증은 이미지 ID 외에 저장�
    기존 네 서비스의 필수 CI·발행 가드를 우회하지 않는다. 배포 방식은 서비스별 Argo Application과 수동 동기화를 유지한다.
    평가용 계획은 별도 프로젝트로 범위를 제한한다. 복원 보고서와 현재 보존 PVC를 대조해 수동 계획에
    연결하는 읽기 전용 경로와 동기화하지 않는 Argo 선언 등록 명령은 구현했다. 실제 등록 실행과
-   namespace·PVC 확인, Secret 준비 및 서비스 인계는 남아 있다.
+   namespace·PVC 확인 및 서비스 인계는 남아 있다. 암호화 백업과 기존 runner에서 평가 Secret만
+   준비하는 명령도 구현했으며 실제 개인 백업을 이용한 생성·인증 검증은 별도다.
    운영 진단은 위의 평가 Application 조회를 포함하지만 런타임·저장소 검증은 별도다.
 3. 위 격리 Kubernetes 런타임 검증의 최신 SHA 필수 CI 성공을 확인한다. 검증 경로는 구현했으며,
    실행 실패·취소·건너뛰기를 완료로 처리하지 않는다. 이후 개인 환경의 같은 이미지·백업으로 별도 검증한다.
