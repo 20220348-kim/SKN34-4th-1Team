@@ -12,6 +12,9 @@ export function useScrollBoundary(refreshable = false) {
   }, [refreshable])
   const iosRefresh = Platform.OS === 'ios' && refreshable
   return {
+    // 헤더·탭·Page가 안전 영역을 소유하므로 ScrollView에 자동 여백을 더하지 않습니다.
+    contentInsetAdjustmentBehavior: 'never' as const,
+    automaticallyAdjustContentInsets: false,
     bounces: iosRefresh && refreshBounce,
     alwaysBounceVertical: iosRefresh,
     overScrollMode: 'never' as const,
