@@ -1,6 +1,7 @@
 package ai.govbiz.core.supportprogram.client.document
 
 import ai.govbiz.core.supportprogram.client.document.SupportProgramDocumentException.Reason
+import ai.govbiz.core.supportprogram.client.document.helper.SupportProgramEvidenceLayoutHelper
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.util.zip.ZipInputStream
@@ -33,9 +34,9 @@ data class SupportProgramDocumentBlock(val locator: String, val text: String)
 /** 공식 PDF/HWP/HWPX/DOCX/XLSX 원문의 순서와 위치를 보존하며 안전 한도 안에서 텍스트 블록으로 변환합니다. */
 @Component
 class SupportProgramDocumentParser {
-    fun parse(bytes: ByteArray, format: String): List<SupportProgramDocumentBlock> = try {
-        if (bytes.size > MAX_SUPPORT_PROGRAM_ATTACHMENT_BYTES) fail(Reason.TOO_LARGE)
-        val blocks = when (format) {
+    /** 신청 문서 양식 분석과 공용 추출입니다. 결과가 바뀌면 VERSION을 올려야 하고, 양식 분석 재사용 키가 함께 바뀝니다. */
+    fun parse(bytes: ByteArray, format: String): List<SupportProgramDocumentBlock> = guarded(bytes) {
+        when (format) {
             "PDF" -> pdf(bytes)
             "HWP" -> hwp(bytes)
             "HWPX" -> hwpx(bytes)
@@ -43,6 +44,26 @@ class SupportProgramDocumentParser {
             "XLSX" -> xlsx(bytes)
             else -> fail(Reason.UNSUPPORTED)
         }
+    }
+
+    /**
+     * 중복 검토 근거용 추출입니다. PDF는 글자 좌표로 화면 줄바꿈을 잇고 칸이 벌어진 줄을 표 행으로, HWPX는 표를 행 단위로 뽑습니다.
+     * 나머지 형식은 공용 추출과 같습니다. 양식 분석 재사용 키에 들어가는 VERSION 대신 EVIDENCE_VERSION을 씁니다.
+     */
+    fun parseEvidence(bytes: ByteArray, format: String): List<SupportProgramDocumentBlock> = guarded(bytes) {
+        when (format) {
+            "PDF" -> pdfLayout(bytes)
+            "HWP" -> hwp(bytes)
+            "HWPX" -> hwpxLayout(bytes)
+            "DOCX" -> docx(bytes)
+            "XLSX" -> xlsx(bytes)
+            else -> fail(Reason.UNSUPPORTED)
+        }
+    }
+
+    private fun guarded(bytes: ByteArray, read: () -> List<SupportProgramDocumentBlock>): List<SupportProgramDocumentBlock> = try {
+        if (bytes.size > MAX_SUPPORT_PROGRAM_ATTACHMENT_BYTES) fail(Reason.TOO_LARGE)
+        val blocks = read()
         if (blocks.sumOf { it.text.length } < 50) fail(Reason.UNSUPPORTED)
         if (blocks.sumOf { it.text.length } > MAX_DOCUMENT_CHARACTERS || blocks.size > 256) fail(Reason.TOO_LARGE)
         blocks
@@ -71,6 +92,22 @@ class SupportProgramDocumentParser {
                 if (text.length < 10) fail(Reason.UNSUPPORTED)
                 splitText(text).forEachIndexed { part, value ->
                     add(SupportProgramDocumentBlock("PDF page $page part ${part + 1}", value))
+                }
+            }
+        }
+    }
+
+    private fun pdfLayout(bytes: ByteArray): List<SupportProgramDocumentBlock> = Loader.loadPDF(bytes).use { document ->
+        if (document.isEncrypted || !document.currentAccessPermission.canExtractContent()) fail(Reason.UNSUPPORTED)
+        if (document.numberOfPages !in 1..80) fail(Reason.TOO_LARGE)
+        val stripper = SupportProgramEvidenceLayoutHelper.PdfLineStripper()
+        stripper.getText(document)
+        if (stripper.pages.size != document.numberOfPages || stripper.pages.any { it.text.trim().length < 10 }) fail(Reason.UNSUPPORTED)
+        buildList {
+            SupportProgramEvidenceLayoutHelper.pdfPages(stripper.pages).forEachIndexed { index, text ->
+                if (text.isBlank()) return@forEachIndexed
+                splitText(text).forEachIndexed { part, value ->
+                    add(SupportProgramDocumentBlock("PDF page ${index + 1} part ${part + 1}", value))
                 }
             }
         }
@@ -170,37 +207,8 @@ class SupportProgramDocumentParser {
     }
 
     private fun hwpx(bytes: ByteArray): List<SupportProgramDocumentBlock> {
-        val sections = sortedMapOf<Int, ByteArray>()
-        var expanded = 0
-        var entries = 0
-        ZipInputStream(ByteArrayInputStream(bytes)).use { zip ->
-            while (true) {
-                val entry = zip.nextEntry ?: break
-                if (++entries > 256 || entry.name.contains("..") || entry.name.startsWith("/")) fail(Reason.INVALID)
-                val section = Regex("Contents/section(\\d+)\\.xml").matchEntire(entry.name)
-                val output = ByteArrayOutputStream()
-                val buffer = ByteArray(8192)
-                while (true) {
-                    val count = zip.read(buffer)
-                    if (count < 0) break
-                    expanded += count
-                    if (expanded > 24 * 1024 * 1024) fail(Reason.TOO_LARGE)
-                    if (section != null) output.write(buffer, 0, count)
-                }
-                if (section != null && sections.put(section.groupValues[1].toInt(), output.toByteArray()) != null) fail(Reason.INVALID)
-            }
-        }
-        if (sections.isEmpty()) fail(Reason.INVALID)
-        val factory = DocumentBuilderFactory.newInstance().apply {
-            isNamespaceAware = true
-            setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
-            setFeature("http://xml.org/sax/features/external-general-entities", false)
-            setFeature("http://xml.org/sax/features/external-parameter-entities", false)
-            setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "")
-            setAttribute(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "")
-            isXIncludeAware = false
-            isExpandEntityReferences = false
-        }
+        val sections = hwpxSections(bytes)
+        val factory = secureXmlFactory()
         return buildList {
             sections.forEach { (section, xml) ->
                 val nodes = factory.newDocumentBuilder().parse(ByteArrayInputStream(xml)).getElementsByTagNameNS(HP, "p")
@@ -237,6 +245,77 @@ class SupportProgramDocumentParser {
                 flush(nodes.length)
             }
         }
+    }
+
+    /** 근거용 HWPX 추출입니다. 표는 행 단위 한 줄로 만들고, 위치는 원본 문단 번호 범위로 남깁니다. */
+    private fun hwpxLayout(bytes: ByteArray): List<SupportProgramDocumentBlock> {
+        val sections = hwpxSections(bytes)
+        val factory = secureXmlFactory()
+        return buildList {
+            sections.forEach { (section, xml) ->
+                val root = factory.newDocumentBuilder().parse(ByteArrayInputStream(xml)).documentElement
+                var buffer = StringBuilder()
+                var first = 0
+                var last = 0
+                fun flush() {
+                    if (buffer.isNotEmpty()) add(SupportProgramDocumentBlock("HWPX section$section paragraphs $first-$last", buffer.toString()))
+                    buffer = StringBuilder()
+                }
+                for (line in SupportProgramEvidenceLayoutHelper.hwpxLines(root)) {
+                    if (line.text.length > 3000) {
+                        flush()
+                        splitText(line.text).forEachIndexed { part, value ->
+                            add(SupportProgramDocumentBlock("HWPX section$section paragraph ${line.paragraph} part ${part + 1}", value))
+                        }
+                        continue
+                    }
+                    if (buffer.length + line.text.length + 1 > 3000) flush()
+                    if (buffer.isEmpty()) {
+                        first = line.paragraph
+                        last = line.paragraph
+                    } else buffer.append('\n')
+                    buffer.append(line.text)
+                    last = maxOf(last, line.paragraph)
+                }
+                flush()
+            }
+        }
+    }
+
+    private fun hwpxSections(bytes: ByteArray): Map<Int, ByteArray> {
+        val sections = sortedMapOf<Int, ByteArray>()
+        var expanded = 0
+        var entries = 0
+        ZipInputStream(ByteArrayInputStream(bytes)).use { zip ->
+            while (true) {
+                val entry = zip.nextEntry ?: break
+                if (++entries > 256 || entry.name.contains("..") || entry.name.startsWith("/")) fail(Reason.INVALID)
+                val section = Regex("Contents/section(\\d+)\\.xml").matchEntire(entry.name)
+                val output = ByteArrayOutputStream()
+                val buffer = ByteArray(8192)
+                while (true) {
+                    val count = zip.read(buffer)
+                    if (count < 0) break
+                    expanded += count
+                    if (expanded > 24 * 1024 * 1024) fail(Reason.TOO_LARGE)
+                    if (section != null) output.write(buffer, 0, count)
+                }
+                if (section != null && sections.put(section.groupValues[1].toInt(), output.toByteArray()) != null) fail(Reason.INVALID)
+            }
+        }
+        if (sections.isEmpty()) fail(Reason.INVALID)
+        return sections
+    }
+
+    private fun secureXmlFactory(): DocumentBuilderFactory = DocumentBuilderFactory.newInstance().apply {
+        isNamespaceAware = true
+        setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
+        setFeature("http://xml.org/sax/features/external-general-entities", false)
+        setFeature("http://xml.org/sax/features/external-parameter-entities", false)
+        setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "")
+        setAttribute(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "")
+        isXIncludeAware = false
+        isExpandEntityReferences = false
     }
 
     private fun docx(bytes: ByteArray): List<SupportProgramDocumentBlock> {
@@ -461,6 +540,8 @@ class SupportProgramDocumentParser {
 
     companion object {
         const val VERSION = "pdfbox-3.0.8-tika-4.0.0-hwp-form-controls-v2-hwpx-direct-paragraph-v1"
+        /** 근거용 추출 버전입니다. 화면은 이 표시("-evidence-layout-")로 PDF 줄 잇기를 다시 하지 않고 " | " 행을 표 행으로 그립니다. */
+        const val EVIDENCE_VERSION = "$VERSION-evidence-layout-v1"
         const val MAX_DOCUMENT_CHARACTERS = 120_000
         private const val HP = "http://www.hancom.co.kr/hwpml/2011/paragraph"
     }

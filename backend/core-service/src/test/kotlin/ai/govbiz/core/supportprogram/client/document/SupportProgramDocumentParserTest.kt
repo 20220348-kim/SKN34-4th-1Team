@@ -96,6 +96,36 @@ class SupportProgramDocumentParserTest {
     }
 
     @Test
+    fun evidenceExtractionKeepsEveryHwpxCharacterAndRebuildsTableRows() {
+        val letters = Regex("[\\p{L}\\p{N}]")
+        for (name in listOf("general.hwpx", "deeptech.hwpx")) {
+            val shared = mapper.parse(resource(name), "HWPX")
+            val evidence = mapper.parseEvidence(resource(name), "HWPX")
+            val text = evidence.joinToString("\n") { it.text }
+            assertTrue(text.contains("3개 유형에 중복 신청은 가능하나 1개 유형만 수행 가능(동시수행 불가)합니다."))
+            assertTrue(text.contains(" | "))
+            assertTrue(evidence.all { it.text.length <= 3000 && Regex("HWPX section0 paragraphs? \\d+").containsMatchIn(it.locator) })
+            assertEquals(letters.findAll(shared.joinToString("") { it.text }).count(), letters.findAll(text).count())
+            assertEquals(shared, mapper.parse(resource(name), "HWPX"))
+        }
+    }
+
+    @Test
+    fun evidenceExtractionJoinsPdfLinesWithoutLosingPagesOrRestrictionSentences() {
+        val shared = mapper.parse(resource("deeptech.pdf"), "PDF")
+        val evidence = mapper.parseEvidence(resource("deeptech.pdf"), "PDF")
+        val letters = Regex("[\\p{L}\\p{N}]")
+        assertTrue(evidence.any { it.locator.startsWith("PDF page 1 ") && it.text.contains("동시수행 불가") })
+        assertTrue(evidence.any { it.locator.startsWith("PDF page 18 ") && it.text.contains("지원 제외사업") })
+        assertEquals(shared.map { it.locator.substringBefore(" part") }.toSet(), evidence.map { it.locator.substringBefore(" part") }.toSet())
+        val before = letters.findAll(shared.joinToString("") { it.text }).count()
+        val after = letters.findAll(evidence.joinToString("") { it.text }).count()
+        assertTrue(after <= before && after >= before * 0.97, "letters $before -> $after")
+        assertTrue(evidence.sumOf { it.text.lines().size } < shared.sumOf { it.text.lines().size })
+        assertTrue(evidence.flatMap { it.text.lines() }.all { it.length <= 600 })
+    }
+
+    @Test
     fun readsDocxParagraphsAndRejectsExternalEntities() {
         val contentTypes = """<Types><Override ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"""
         val paragraph = "신청기업의 상호와 대표자명, 사업자등록번호, 주소, 연락처를 작성해 주세요. ".repeat(2).trim()

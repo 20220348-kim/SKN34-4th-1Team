@@ -244,3 +244,19 @@ test('an unknown outcome says when the block lifts and an expired one explains t
   render(<ReviewResult run={expired} currentRevision={1} names={{}} onRefresh={jest.fn()} onSupplement={jest.fn()} />)
   expect(screen.getByText(/완료 여부를 끝내 확인하지 못해 실패로 정리했어요/)).toBeTruthy()
 })
+
+test('shows Core layout extraction as stored: table rows stay rows with highlights and PDF lines are not joined again', () => {
+  const run = reviewRunFixture('SUCCEEDED')
+  const quote = ['구분 | 내용', '제외 대상 | 동일 과제로 타 사업 수혜 기업', '◦ 선정 기업은 협약 종료 후 3년간 성과를 보고하여야 하며 보고하지 않으면 다음 공모', '참여를 제한함'].join('\n')
+  run.evidence!.documents[0] = { ...run.evidence!.documents[0], parserVersion: 'pdfbox-3.0.8-tika-4.0.0-hwp-form-controls-v2-hwpx-direct-paragraph-v1-evidence-layout-v1' }
+  run.evidence!.blocks[0] = { ...run.evidence!.blocks[0], locator: 'PDF page 4 part 1', text: quote }
+  run.analysis!.pairs[0].stages[0].citations = [{ evidenceId: 'E1', quote }]
+  show(run)
+  fireEvent.press(screen.getByRole('button', { name: /^1단계 신청/ }))
+  fireEvent.press(stageRow('APPLICATION').getByRole('button', { name: '근거 원문 1개 보기 ▾' }))
+  const stage = stageRow('APPLICATION')
+  expect(stage.getAllByText('표')).toHaveLength(2)
+  expect(stage.getAllByTestId('evidence-keyword').map(node => node.props.children)).toContain('제외 대상')
+  // 화면에서 PDF 줄 잇기를 다시 하지 않아 Core가 남긴 줄 그대로예요.
+  expect(stage.getByText('선정 기업은 협약 종료 후 3년간 성과를 보고하여야 하며 보고하지 않으면 다음 공모')).toBeTruthy()
+})

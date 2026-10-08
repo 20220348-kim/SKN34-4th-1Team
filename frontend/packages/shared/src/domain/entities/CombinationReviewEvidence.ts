@@ -131,13 +131,16 @@ function continuesPdfLine(previous: PhysicalLine, joinedPrevious: string, curren
 
 /** 원문 조각을 화면에 보여 줄 줄 목록으로 정리합니다. format은 원문 파일 형식(PDF · HWP · HWPX · DOCX · XLSX)입니다. */
 export function formatEvidenceText(text: string, format: string): EvidenceLine[] {
+  // Core 근거용 배치 추출(PDF_LAYOUT · HWPX_LAYOUT)은 PDF 줄 잇기와 표 행(" | ")이 이미 돼 있어 화면에서 다시 잇지 않습니다.
+  const layout = format.endsWith('_LAYOUT')
+  const source = layout ? format.slice(0, -'_LAYOUT'.length) : format
   const form = isApplicationFormText(text)
   const physical: PhysicalLine[] = text.split('\n')
     .filter((raw) => !stampLine.test(raw))
     .map((raw) => {
       const line = raw.replace(/\r$/, '')
       const cleaned = cleanLine(line)
-      return { raw: line, trailingSpace: /[ \t]$/.test(line), text: format === 'PDF' ? cleaned.replace(misreadWingdingsBullet, '•') : cleaned }
+      return { raw: line, trailingSpace: /[ \t]$/.test(line), text: source === 'PDF' ? cleaned.replace(misreadWingdingsBullet, '•') : cleaned }
     })
     .filter((line) => line.text && !placeholderLine.test(line.text) && !signatureLine.test(line.text) && !(form && emptyFormField.test(line.text)))
   const pdfJoin = format === 'PDF' && allowsPdfJoin(text, physical)
@@ -161,6 +164,11 @@ export function formatEvidenceText(text: string, format: string): EvidenceLine[]
     && (!/(?:다|니다|요)\.?$|[.!?。]$/.test(line) || /^[\d.,%~\s-]+$/.test(line))
   const classified: Omit<EvidenceLine, 'related'>[] = []
   for (let start = 0; start < joined.length;) {
+    if (layout && joined[start]!.includes(' | ')) {
+      classified.push({ kind: 'table', level: 1, marker: '', text: joined[start]! })
+      start += 1
+      continue
+    }
     let end = start
     while (end < joined.length && end - start < 12 && tableCell(joined[end]!)) end += 1
     if (end - start >= 4) {
@@ -171,7 +179,8 @@ export function formatEvidenceText(text: string, format: string): EvidenceLine[]
       start += 1
     }
   }
-  return reviseLines(classified).map((line) => ({ ...line, related: line.kind !== 'table' && isRelated(line.text) }))
+  // 짧은 칸을 묶은 표는 강조하지 않지만, Core가 행 단위로 되살린 표 행(" | ")은 제한 내용이 들어 있어 관련 줄로 봅니다.
+  return reviseLines(classified).map((line) => ({ ...line, related: (line.kind !== 'table' || line.text.includes(' | ')) && isRelated(line.text) }))
 }
 
 /** 번호 계열입니다. "2. …" 제목과 "3." 글머리가 이웃하면 같은 목록입니다. */
@@ -292,6 +301,8 @@ export function evidenceLocatorLabel(locator: string): string {
 }
 
 /** 위치 표기 앞머리로 원문 파일 형식을 알아냅니다. 원문 목록에서 파일을 찾지 못했을 때 씁니다. */
-export function evidenceFormatOf(locator: string): string {
-  return /^(PDF|HWPX|HWP|DOCX|XLSX)\b/.exec(locator)?.[1] ?? ''
+/** 원문 형식입니다. Core 근거용 배치 추출 버전("-evidence-layout-")으로 뽑은 원문은 PDF_LAYOUT처럼 따로 부릅니다. 지난 실행은 저장된 버전대로 보여 줍니다. */
+export function evidenceFormatOf(locator: string, document?: { format: string; parserVersion: string }): string {
+  const format = document?.format ?? /^(PDF|HWPX|HWP|DOCX|XLSX)\b/.exec(locator)?.[1] ?? ''
+  return document?.parserVersion.includes('-evidence-layout-') ? `${format}_LAYOUT` : format
 }

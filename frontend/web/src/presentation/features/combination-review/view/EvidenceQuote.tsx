@@ -26,7 +26,7 @@ export function EvidenceQuote({ id, number, run, citation, alsoIn, download, dow
   const block = run.evidence?.blocks.find((b) => b.id === citation.evidenceId)
   const documentIndex = run.evidence?.documents.findIndex((d) => d.rawHash === block?.documentHash && d.programIndex === block?.programIndex) ?? -1
   const document = documentIndex >= 0 ? run.evidence!.documents[documentIndex] : undefined
-  const format = document?.format ?? evidenceFormatOf(block?.locator ?? '')
+  const format = evidenceFormatOf(block?.locator ?? '', document)
   const locator = block ? evidenceLocatorLabel(block.locator) : ''
   const lines = formatEvidenceText(citation.quote, format)
   const preview = evidencePreview(lines)

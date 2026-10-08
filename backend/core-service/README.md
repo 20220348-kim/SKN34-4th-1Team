@@ -280,6 +280,9 @@ worker도 기존 검색·AI 기능의 공유 동시 실행 슬롯을 사용합�
 두 기능이 함께 쓰는 공식 첨부 수집·파싱은 제공처별 `BizInfoAttachmentClient`·`MsitAttachmentClient`·
 `KStartupAttachmentClient`·`CnTradeNoticeAttachmentClient`와
 `supportprogram/client/document/SupportProgramDocumentParser`에 두고, AI DTO 변환은 `AiCombinationReviewMapper`가 담당합니다.
+중복 검토는 근거용 `parseEvidence`(`EVIDENCE_VERSION`)를 씁니다. PDF는 `helper/SupportProgramEvidenceLayoutHelper`가 글자 좌표로
+오른쪽 끝까지 찬 줄만 잇고(줄 끝 공백 글자로 띄어쓰기 판단) 칸이 벌어진 줄을 표 행(`칸 | 칸`)으로 나누며 쪽 머리·꼬리 띠의 쪽 번호와 반복 줄을 지웁니다. HWPX는 표를 행 단위로,
+1칸 상자·1열 표는 본문처럼 뽑습니다. 양식 분석은 기존 `parse`와 `VERSION`(재사용 키)을 그대로 써서 다시 분석하지 않습니다.
 신청 양식 발견은 같은 서식의 형식별 사본 중 읽힌 사본 하나를 `_common/helper/AttachmentCopyHelper`로 남기고, 파싱한 첨부를
 `applicationpreparation/domain/ApplicationAttachmentRole`의 파일명 규칙으로 걸러 위원용·공고문 같은 비신청 문서를 AI 호출 전에
 제외합니다(남는 문서가 없으면 전부 분석). 이름이 신청서·양식이 아니고 본문에 서식 신호도 없는 첨부는 유료 분석을 보내지 않으며

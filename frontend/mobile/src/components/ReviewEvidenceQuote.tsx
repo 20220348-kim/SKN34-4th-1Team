@@ -28,7 +28,7 @@ export function ReviewEvidenceQuote({ number, run, citation, alsoIn, onOpenSourc
   const [view, setView] = useState<'preview' | 'full' | 'raw'>('preview')
   const block = run.evidence?.blocks.find(item => item.id === citation.evidenceId)
   const document = run.evidence?.documents.find(item => item.rawHash === block?.documentHash && item.programIndex === block?.programIndex)
-  const format = document?.format ?? evidenceFormatOf(block?.locator ?? '')
+  const format = evidenceFormatOf(block?.locator ?? '', document)
   const locator = block ? evidenceLocatorLabel(block.locator) : ''
   const lines = formatEvidenceText(citation.quote, format)
   const preview = evidencePreview(lines)

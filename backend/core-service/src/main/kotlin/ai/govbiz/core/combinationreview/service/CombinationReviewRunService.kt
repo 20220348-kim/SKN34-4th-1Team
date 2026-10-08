@@ -93,7 +93,7 @@ class CombinationReviewRunService(
                 var rejectedReason: SupportProgramDocumentException.Reason? = null
                 fetched.files.forEach { file ->
                     val parsed = try {
-                        documentParser.parse(file.bytes, file.format)
+                        documentParser.parseEvidence(file.bytes, file.format)
                     } catch (error: SupportProgramDocumentException) {
                         if (error.reason !in setOf(
                                 SupportProgramDocumentException.Reason.UNSUPPORTED,
@@ -111,7 +111,7 @@ class CombinationReviewRunService(
                         file.format,
                         CombinationReviewHashHelper.sha256(file.bytes),
                         CombinationReviewHashHelper.sha256(parsed.joinToString("\n") { it.text }),
-                        SupportProgramDocumentParser.VERSION,
+                        SupportProgramDocumentParser.EVIDENCE_VERSION,
                         LocalDateTime.now(clock).truncatedTo(ChronoUnit.MICROS),
                         fetched.sourcePageUrl,
                     )
