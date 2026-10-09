@@ -12,6 +12,7 @@ from pathlib import Path
 import evaluation_release as release
 import evaluation_retained_data
 import evaluation_secrets
+import network_status
 from gitops_runtime import probe_settings, resource_settings
 from gitops_service import service_settings
 
@@ -77,12 +78,31 @@ def argo_inventory(rows):
     return set(keys)
 
 
-def observe(kube, ak, plan, report, rendered):
+def observe(kube, ak, plan, report, rendered, *, started_resources=None):
     """Capture stable identities/spec hashes, never export live environment or errors."""
     storage = release.pvc_restore.inspect_retained_storage(
         kube, plan["retainedStorage"]["node"], report
     )
-    resources = release.registration_resources(plan)
+    resources = (
+        started_resources
+        if started_resources is not None
+        else release.registration_resources(plan)
+    )
+    replicas = {
+        name: int(
+            started_resources is not None and name in ("prefect", "ops-artifacts")
+        )
+        for name in release.COMPONENTS
+    }
+    for name, rows in rendered.items():
+        deployment = [row for row in rows if row["kind"] == "Deployment"]
+        if (
+            len(deployment) != 1
+            or deployment[0]["spec"].get("replicas") != replicas[name]
+        ):
+            raise ValueError(
+                "Evaluation observation mode differs from rendered replicas"
+            )
     project = release.pvc_restore.run(
         ak + ["get", "appproject", release.PROJECT, "-o", "json"]
     )
@@ -165,10 +185,13 @@ def observe(kube, ak, plan, report, rendered):
             "json",
         ]
     )["items"]
+    dynamic_kinds = (
+        {"ReplicaSet", "Pod"} if started_resources is not None else {"ReplicaSet"}
+    )
     actual_rows = {
-        resource_key(row): row for row in live if row["kind"] != "ReplicaSet"
+        resource_key(row): row for row in live if row["kind"] not in dynamic_kinds
     }
-    if len(actual_rows) != sum(row["kind"] != "ReplicaSet" for row in live) or set(
+    if len(actual_rows) != sum(row["kind"] not in dynamic_kinds for row in live) or set(
         actual_rows
     ) != set(expected_rows):
         raise ValueError(
@@ -200,26 +223,29 @@ def observe(kube, ak, plan, report, rendered):
         spec, reference = actual["spec"], expected["spec"]
         if key[0] == "Deployment":
             status = actual.get("status", {})
+            count = replicas[key[1]]
             if (
                 type(meta.get("generation")) is not int
                 or status.get("observedGeneration") != meta["generation"]
                 or type(spec.get("replicas")) is not int
-                or spec["replicas"] != 0
+                or spec["replicas"] != count
                 or any(
-                    status.get(field, 0) != 0
+                    status.get(field, 0) != count
                     for field in (
                         "replicas",
                         "readyReplicas",
                         "availableReplicas",
                         "updatedReplicas",
-                        "unavailableReplicas",
-                        "terminatingReplicas",
                     )
+                )
+                or any(
+                    status.get(field, 0) != 0
+                    for field in ("unavailableReplicas", "terminatingReplicas")
                 )
                 or deployment_spec(spec) != deployment_spec(reference)
             ):
                 raise ValueError(
-                    "Evaluation dormant Deployment differs or is not stopped"
+                    "Evaluation Deployment differs or rollout is incomplete"
                 )
         elif key[0] == "Service":
             address = ipaddress.ip_address(spec["clusterIP"])
@@ -237,6 +263,7 @@ def observe(kube, ak, plan, report, rendered):
             "specSha256": release.digest(release.encoded(spec)),
         }
     # Deployment controllers may create a ReplicaSet even with desired replicas 0.
+    active_sets = {}
     for row in (row for row in live if row["kind"] == "ReplicaSet"):
         meta, spec, status = row["metadata"], row["spec"], row.get("status", {})
         owners = meta.get("ownerReferences", [])
@@ -248,27 +275,51 @@ def observe(kube, ak, plan, report, rendered):
         ):
             raise ValueError("Evaluation dormant ReplicaSet has an unexpected owner")
         owner = actual_rows[("Deployment", owners[0]["name"])]["metadata"]
+        count = spec.get("replicas")
         if (
             not meta.get("uid")
             or meta.get("deletionTimestamp")
             or meta.get("namespace") != release.NAMESPACE
             or owners[0].get("uid") != owner["uid"]
             or type(spec.get("replicas")) is not int
-            or spec["replicas"] != 0
+            or count not in range(replicas[owner["name"]] + 1)
             or type(meta.get("generation")) is not int
             or status.get("observedGeneration") != meta["generation"]
             or any(
-                status.get(field, 0) != 0
+                status.get(field, 0) != count
                 for field in (
                     "replicas",
                     "readyReplicas",
                     "availableReplicas",
                     "fullyLabeledReplicas",
-                    "terminatingReplicas",
                 )
             )
+            or status.get("terminatingReplicas", 0) != 0
         ):
             raise ValueError("Evaluation dormant ReplicaSet is not stopped")
+        if count:
+            template = copy.deepcopy(spec["template"])
+            pod_hash = (
+                template["metadata"].get("labels", {}).pop("pod-template-hash", None)
+            )
+            expected_template = actual_rows[("Deployment", owner["name"])]["spec"][
+                "template"
+            ]
+            expected_selector = copy.deepcopy(
+                actual_rows[("Deployment", owner["name"])]["spec"]["selector"]
+            )
+            expected_selector["matchLabels"]["pod-template-hash"] = pod_hash
+            if (
+                not pod_hash
+                or spec.get("selector") != expected_selector
+                or owner["name"] in active_sets
+                or deployment_spec({"template": template})
+                != deployment_spec({"template": expected_template})
+            ):
+                raise ValueError(
+                    "Evaluation active ReplicaSet differs from the Deployment"
+                )
+            active_sets[owner["name"]] = row
         identity = "ReplicaSet/" + meta["name"]
         if identity in observed_rows:
             raise ValueError("Evaluation dormant ReplicaSet identity is duplicated")
@@ -276,12 +327,173 @@ def observe(kube, ak, plan, report, rendered):
             "uid": meta["uid"],
             "specSha256": release.digest(release.encoded(spec)),
         }
-    return {
+    result = {
         "storage": storage,
         "projectUid": project_uid,
         "applications": observed_apps,
         "resources": observed_rows,
     }
+    if started_resources is not None:
+        result["storageWorkloads"] = storage_workloads(
+            kube, live, active_sets, plan["retainedStorage"]["node"]
+        )
+    return result
+
+
+def storage_workloads(kube, live, active_sets, node):
+    """Observe two Ready storage Pods and their exact Service destinations; no traffic."""
+    if set(active_sets) != {"prefect", "ops-artifacts"}:
+        raise ValueError(
+            "Both storage ReplicaSets must be ready; runner must stay stopped"
+        )
+    pods = [row for row in live if row["kind"] == "Pod"]
+    if len(pods) != 2:
+        raise ValueError("Only the two storage Pods may be present")
+    observed = {}
+    for pod in pods:
+        meta, spec, status = pod["metadata"], pod["spec"], pod.get("status", {})
+        name = meta.get("labels", {}).get("app.kubernetes.io/name")
+        replica_set = active_sets.get(name)
+        if replica_set is None or name in observed:
+            raise ValueError("Unexpected evaluation Pod")
+        owner = replica_set["metadata"]
+        references = meta.get("ownerReferences", [])
+        if (
+            not meta.get("uid")
+            or meta.get("namespace") != release.NAMESPACE
+            or len(references) != 1
+            or references[0].get("apiVersion") != "apps/v1"
+            or references[0].get("kind") != "ReplicaSet"
+            or references[0].get("name") != owner["name"]
+            or references[0].get("uid") != owner["uid"]
+            or references[0].get("controller") is not True
+            or not network_status.pod_ready(pod)
+            or spec.get("nodeName") != node
+            or meta.get("labels")
+            != replica_set["spec"]["template"]["metadata"].get("labels")
+        ):
+            raise ValueError(
+                "Storage Pod is not Ready on its owned node and ReplicaSet"
+            )
+        expected = deployment_spec(replica_set["spec"])["template"]["spec"]
+        actual = deployment_spec({"template": {"metadata": {}, "spec": spec}})[
+            "template"
+        ]["spec"]
+        actual.pop("nodeName", None)
+        # Only these admission/scheduler defaults may be absent from the template.
+        for field, default in (
+            ("serviceAccount", "default"),
+            ("serviceAccountName", "default"),
+            ("enableServiceLinks", True),
+            ("priority", 0),
+            ("preemptionPolicy", "PreemptLowerPriority"),
+        ):
+            if field not in expected and actual.get(field) == default:
+                actual.pop(field)
+        if "tolerations" not in expected and "tolerations" in actual:
+            allowed = [
+                {
+                    "key": "node.kubernetes.io/" + key,
+                    "operator": "Exists",
+                    "effect": "NoExecute",
+                    "tolerationSeconds": 300,
+                }
+                for key in ("not-ready", "unreachable")
+            ]
+            if (
+                sorted(actual["tolerations"], key=lambda row: row.get("key", ""))
+                == allowed
+            ):
+                actual.pop("tolerations")
+        if actual != expected:
+            raise ValueError(
+                "Storage Pod configuration differs from the verified template"
+            )
+        identities = {}
+        for field, state_field in (
+            ("containers", "containerStatuses"),
+            ("initContainers", "initContainerStatuses"),
+        ):
+            containers = expected.get(field, [])
+            states = status.get(state_field, [])
+            if len(states) != len(containers) or {row["name"] for row in states} != {
+                row["name"] for row in containers
+            }:
+                raise ValueError("Storage container observation is incomplete")
+            for row in states:
+                if (
+                    not row.get("imageID")
+                    or not row.get("containerID")
+                    or type(row.get("restartCount")) is not int
+                ):
+                    raise ValueError("Storage container execution identity is missing")
+                if field == "containers":
+                    if row.get("ready") is not True or not row.get("state", {}).get(
+                        "running"
+                    ):
+                        raise ValueError("Storage container is not ready")
+                elif row.get("state", {}).get("terminated", {}).get("exitCode") != 0:
+                    raise ValueError("Storage initialization did not succeed")
+                identities[row["name"]] = {
+                    key: row[key] for key in ("imageID", "containerID", "restartCount")
+                }
+        observed[name] = {
+            "uid": meta["uid"],
+            "replicaSetUid": owner["uid"],
+            "specSha256": release.digest(release.encoded(spec)),
+            "containers": identities,
+            "podIPs": status.get("podIPs", []),
+        }
+    slices = release.pvc_restore.run(
+        kube
+        + [
+            "-n",
+            release.NAMESPACE,
+            "get",
+            "endpointslices.discovery.k8s.io",
+            "-o",
+            "json",
+        ]
+    )
+    if slices.get("metadata", {}).get("continue"):
+        raise ValueError("Incomplete EndpointSlice observation")
+    resources = {
+        resource_key(row): row for row in live if row["kind"] in ("Service", "Pod")
+    }
+    endpoints = {}
+    for row in slices["items"]:
+        meta = row["metadata"]
+        key = resource_key(row)
+        if (
+            key in resources
+            or row["kind"] != "EndpointSlice"
+            or not meta.get("uid")
+            or meta.get("namespace") != release.NAMESPACE
+            or meta.get("labels", {}).get(network_status.SERVICE_LABEL)
+            not in active_sets
+        ):
+            raise ValueError("Unexpected storage EndpointSlice")
+        resources[key] = row
+        endpoints[meta["name"]] = {
+            "uid": meta["uid"],
+            "sha256": release.digest(
+                release.encoded(
+                    {
+                        key: row.get(key)
+                        for key in ("addressType", "ports", "endpoints", "metadata")
+                    }
+                )
+            ),
+        }
+    services = [
+        network_status.service_status(name, resources, release.NAMESPACE)
+        for name in sorted(active_sets)
+    ]
+    if any(
+        row["status"] != "PASS" or row["selected_pod_count"] != 1 for row in services
+    ):
+        raise ValueError("Storage Service does not point to its sole Ready Pod")
+    return {"pods": observed, "endpoints": endpoints, "services": services}
 
 
 def verify(

@@ -1025,6 +1025,62 @@ Infra CI의 기존 `test_*.py` 검색이 새 오프라인 테스트를 포함한
 실제 controller 실행 검증을 대신하지 않는다**. 새 명령의 개인 환경 서버 dry-run·요청·rollout 확인은
 최신 필수 CI·발행과 보존 인계가 완료된 후 수행하며, 이번 로컬 구현에서 실제 기동은 수행하지 않았다.
 
+### 기동 후 Argo·Pod·Service 연결의 읽기 전용 확인
+
+저장 서비스 기동을 요청한 뒤 같은 도구의 `--verify-started`로 현재 rollout 상태를 확인한다.
+이 옵션은 `--request-start`와 함께 사용할 수 없다. Pod나 검사 namespace를 만들거나,
+동기화·scale·restart·HTTP 요청을 수행하지 않는다. 기존 원본과 백업의 대조에는 앞서 설명한
+읽기 전용 Docker helper 및 원래 Langfuse 인증 조회를 재사용한다.
+
+```bash
+python3 -B infrastructure/gitops/scripts/evaluation_storage_start.py \
+  --state-dir infrastructure/gitops/.local/fork \
+  --restore-report /private-backups/evaluation-retained.json \
+  --langfuse-url "$LANGFUSE_URL" \
+  --archive /private-backups/ops-state.enc \
+  --key-file /private-backups/ops-state.key \
+  --verify-started > /private-backups/evaluation-storage-rollout.json
+```
+
+검사 흐름은 `현재 CI·발행·Chart 확인 → Argo·저장소·workload·EndpointSlice 관측 →
+원본·백업·Secret 및 발행 재확인 → 같은 리소스 재관측`이다.
+
+- 두 Application은 기동 계획 annotation과 replica 1 선언에 일치하고, 세 Application 모두
+  동일 SHA의 `Synced/Healthy`와 최신 작업 `Succeeded`를 만족해야 한다. 진행 중 operation,
+  과거 replica 0의 sync 결과, 조건 오류·누락·다른 소유권은 거부한다.
+- 실제 Deployment 전체 spec을 발행 Chart와 비교한다. Prefect·결과 서버의 관측 generation과
+  전체·updated·ready·available replica는 모두 1이어야 하며, unavailable·terminating은 0이다.
+  실행기 Deployment와 그 ReplicaSet은 계속 0이고 실행기 Pod도 없어야 한다.
+- 각 저장 서비스의 활성 ReplicaSet 하나와 Ready Pod 하나만 허용한다. Deployment → ReplicaSet →
+  Pod의 owner UID, template·selector·label·노드·Pod 설정을 대조한다. 알려진 API 기본값만 정규화하며,
+  추가 컨테이너·볼륨·권한·임의 ServiceAccount·변경된 label은 허용하지 않는다.
+- 일반 컨테이너의 Running·Ready와 init container의 종료 코드 0을 요구한다. 컨테이너 ID·image ID·
+  재시작 횟수를 관측해 검사 도중 변경을 거부한다. image ID 기록 자체를 registry의 플랫폼별 manifest
+  digest 검증으로 보고하지 않는다.
+- 두 Service의 EndpointSlice 소유권과 실제 Ready Pod UID·이름·namespace·IP·포트를 대조한다.
+  과거 Pod를 가리키는 연결, 누락·다른 대상·준비되지 않은 연결은 차단한다. Service·NetworkPolicy와
+  namespace·PVC·PV·StorageClass도 기존 선언과 복원 소유권을 유지해야 한다.
+- 원본 writer 중지·백업 최신성·준비된 Secret을 재검증하고, 두 관측 사이 리소스 식별자·spec·Pod
+  실행 ID·EndpointSlice·원본 인증값·발행이 바뀌면 성공으로 보고하지 않는다. 이후 발생하는 변경을
+  차단하는 전역 잠금은 아니다.
+
+성공은 `STORAGE_ROLLOUT_VERIFIED`이며 `syncCompleted`, `storagePodsReady`,
+`serviceEndpointsVerified`, `runnerStopped`가 true다. `clusterChanged=false`,
+`syncRequested=false`이며 `runtimeVerified`, `httpTrafficVerified`,
+`networkPolicyEnforcementVerified`, `storageDataReverified`는 false로 유지한다.
+기동 후 변경될 수 있는 대상 SQLite를 과거 백업과 다시 비교하지 않으며, 실제 HTTP 인증·결과 조회·
+데이터 보존 검증을 대신하지 않는다. 접수·원본 중지를 유지한 **실행기 및 Ops 전환 전 단계 전용 검사**다.
+
+미완료·변경·오류는 종료 코드 1과 `BLOCKED`로 반환하고 자동 복구하지 않는다. 보고서에는
+관측 식별 정보와 해시·고정 상태만 기록하며 live 환경변수·Secret·오류 원문을 출력하지 않는다.
+기존 replica 0 검사는 기본 조건을 유지하므로 기동한 상태를 dormant 성공으로 처리하지 않는다.
+
+새 테스트는 기존 Infra CI의 오프라인 검색에 포함된다. 실제 Helm 구성과 합성 Argo·Kubernetes
+응답으로 성공·진행 중·소유권 오류·Pod 설정 변경·잘못된 EndpointSlice·검사 도중 재시작을 검증한다.
+2026-10-10 개인 클러스터의 서버 dry-run에서 두 Pod의 API 기본값 호환성도 확인했다. 이 확인은
+기존 업무 namespace에서 Pod 수용 여부만 검사했으며 Pod 생성·스케줄링·실제 rollout은 수행하지 않았다.
+새 조회 명령으로 개인 평가 환경의 실제 rollout을 검증하는 작업은 보존 인계와 기동 이후에 남아 있다.
+
 ## 격리 Kubernetes에서 실제 평가 실행 검증
 
 LLMOps CI의 기존 격리 통합 검증에 `--evaluation-runtime` 단계를 연결했다.
@@ -1131,7 +1187,7 @@ Kubernetes 1.36의 이미지 자격 증명 검증은 이미지 ID 외에 저장�
    기존 네 서비스의 필수 CI·발행 가드를 우회하지 않는다. 배포 방식은 서비스별 Argo Application과 수동 동기화를 유지한다.
    평가용 계획은 별도 프로젝트로 범위를 제한한다. 복원 보고서와 현재 보존 PVC를 대조해 수동 계획에
    연결하는 읽기 전용 경로, Argo 선언 등록과 replica 0 최초 수동 동기화 요청·적용 완료 확인,
-   저장 서비스 두 개의 첫 기동 요청 명령은 구현했다. 실제 등록·동기화 실행과
+   저장 서비스 두 개의 첫 기동 요청 및 기동 후 Argo·Pod·Service 조회 명령은 구현했다. 실제 등록·동기화 실행과
    namespace·PVC 확인 및 서비스 인계는 남아 있다. 암호화 백업과 기존 runner에서 평가 Secret만
    준비하는 명령도 구현했으며 실제 개인 백업을 이용한 생성·인증 검증은 별도다.
    운영 진단은 위의 평가 Application 조회를 포함하지만 런타임·저장소 검증은 별도다.

@@ -67,7 +67,7 @@ class StorageStartTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.report_path = Path(temporary.name) / "restore.json"
         self.report_path.write_bytes(self.report_bytes)
-        initial, _, _, policies = copy.deepcopy(self.transition)
+        initial, _, _, policies, _ = copy.deepcopy(self.transition)
         self.project, *apps = initial
         self.project["metadata"].update(uid="project-uid", resourceVersion="1")
         self.apps = {}
@@ -282,7 +282,7 @@ class StorageStartTests(unittest.TestCase):
     def test_published_transition_changes_only_two_replicas_and_binding_annotation(
         self,
     ):
-        initial, started, fingerprint, policies = self.transition
+        initial, started, fingerprint, policies, _ = self.transition
         self.assertEqual(initial[0], started[0])
         for before, after in zip(initial[1:], started[1:]):
             expected = copy.deepcopy(before)
