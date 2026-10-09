@@ -962,6 +962,69 @@ Infra CI는 실제 SQLite/WAL·파일 비교와 Pod 소유권·읽기 전용 mou
 6개를 다시 통과했다. 기존 개인 클러스터의 서버 dry-run에서도 보안·마운트 기본값 일치를 확인했다.
 이 dry-run은 기존 업무 namespace에서 API 수용 여부만 확인했으며 Pod 생성·스케줄링·PVC 읽기는 수행하지 않았다.
 
+### Prefect·결과 서버의 첫 기동 요청
+
+`evaluation_storage_start.py`는 위 replica 0 동기화가 검증된 환경에서 **Prefect와 결과 서버만**
+기동하도록 Argo에 요청한다. 평가 실행기는 replica 0을 유지하며 Ops 접수·URL·원본 Compose
+서비스를 변경하지 않는다. 원본 중지·최신 백업·보존 복원·Secret 준비를 먼저 완료해야 한다.
+
+WSL/Linux에서 기본 명령은 검토만 수행한다. 백업·원본·인증값과 Argo 상태를 읽고 발행 Chart를
+렌더링하며, Kubernetes 검사 Pod·통신 검사 자원·기동 요청을 만들지 않는다.
+
+```bash
+python3 -B infrastructure/gitops/scripts/evaluation_storage_start.py \
+  --state-dir infrastructure/gitops/.local/fork \
+  --restore-report /private-backups/evaluation-retained.json \
+  --langfuse-url "$LANGFUSE_URL" \
+  --archive /private-backups/ops-state.enc \
+  --key-file /private-backups/ops-state.key \
+  > /private-backups/evaluation-storage-start-review.json
+```
+
+실제 기동을 요청할 때는 같은 명령에 `--request-start`를 추가한다. 기본 성공 상태는
+`STORAGE_START_PLANNED`이며 서비스 실행을 보장하지 않는다. 요청 모드는 다음 순서를 따른다.
+
+1. 같은 SHA의 필수 CI·공개 이미지·발행 증거와 Argo replica 0 동기화, 원본 writer 중지·백업
+   최신성·준비된 Secret을 검증한다. 대상 PVC는 위 읽기 전용 임시 Pod로 다시 검사하고 정리를 확인한다.
+2. **발행 SHA의 Chart**로 Prefect·결과 서버의 replica만 1로 바꾼 구성을 렌더링한다. 이미지·
+   실행 명령·저장소·연결 설정은 유지하며 실행기는 0이다. 렌더링 결과에서 replica만 0으로 되돌린
+   해시가 원래 발행 계획과 같아야 하므로, 기동 시에만 추가되는 Pod 설정·리소스도 거부한다.
+   최초 복원 연결 annotation은 보존하고,
+   두 Application에 기동 계획 해시 `ai.govbiz/evaluation-storage-start-sha256`를 추가한다.
+3. 같은 노드의 임시 namespace·합성 HTTP Pod로 기존 Chart 통신 검사를 실행한다. 허용·차단,
+   Service DNS·ClusterIP, 정리가 모두 성공하고 **두 저장 서비스 정책 해시가 발행 Chart와 같아야**
+   진행한다. 실제 서비스 인증·runner의 Compose Langfuse egress를 검증했다고 보고하지 않는다.
+4. 검사 후 원본·Secret·Argo·PVC 상태와 발행을 다시 확인한다. 두 Application 모두 서버 dry-run을
+   통과한 뒤 `prefect → ops-artifacts` 순서로 수동 sync를 요청한다. UID·resourceVersion·전체
+   spec·annotation을 JSON Patch의 test 조건으로 검사하므로, 조회 이후 바뀐 선언을 덮어쓰지 않는다.
+5. 각 요청 전과 마지막에 현재 발행·복원 보고서·원본·인증값·Argo 소유권을 확인한다. 실제 Service·
+   NetworkPolicy의 추가·교체·spec 변경, 실행기 Deployment 변경·replica 증가·Pod 출현도 차단한다.
+   아직 요청하지 않은 Application은 원래 완료된 replica 0 동기화 상태여야 한다. 첫 요청의 실패·오류·
+   중단 상태가 관찰되면 두 번째 요청을 보내지 않는다.
+
+동기화 revision은 검증한 SHA로 고정하고 자동 sync·prune·force는 끄며 retry limit은 0이다.
+Deployment를 직접 scale하지 않는다. 로컬 state 잠금과 API의 조건부 갱신은 다른 운영자의 모든
+클러스터 변경을 막는 전역 잠금이 아니므로 검사 이후 상태까지 보장하지 않는다.
+
+성공은 `STORAGE_START_REQUESTED`, `syncRequested=true`, `clusterChanged=true`다.
+이는 **두 요청의 API 응답을 확인했다는 뜻**이며 rollout·HTTP 인증·데이터 보존·평가 성공은 별도다.
+`syncCompleted=null`, `runtimeVerified=false`, `runnerActivationRequested=false`,
+`opsRoutingChanged=false`를 유지한다. `storagePolicyEnforcementVerified=true`의 범위도 위
+합성 검사에 한정된다. 이후 실제 Prefect·결과 서버 상태와 인증·데이터를 검증하고 실행기·Ops를 전환한다.
+
+실패는 종료 코드 1과 `BLOCKED`로 반환한다. `progress.attempted`는 전송을 시도한 Application,
+`acknowledged`는 원하는 선언과 operation을 응답에서 확인한 Application이다. 응답 유실 때
+`syncRequested=null`일 수 있으며, 검사 Pod 생성만으로도 `clusterChanged=true`가 될 수 있다.
+일부 기동 후 실패하거나 응답이 불확실하면 Argo와 실제 Pod·데이터 상태부터 확인한다. 자동 재요청·
+replica 원복·PVC 삭제·과거 Compose 데이터로의 URL 롤백은 수행하지 않는다. 이미 replica 1로
+변경된 환경에서 같은 명령을 다시 실행하면 초기 replica 0 검사에서 차단된다.
+
+Infra CI의 기존 `test_*.py` 검색이 새 오프라인 테스트를 포함한다. 테스트는 발행 Chart 렌더링과
+정책 해시 일치, 사전 조건·동시 변경·입력 변조·부분 요청·응답 유실 및 비밀정보 없는 실패 출력을
+검증한다. 기존 LLMOps 격리 실행은 Chart의 실제 서비스 경로를 검증하지만 **이 새 Argo 요청 명령의
+실제 controller 실행 검증을 대신하지 않는다**. 새 명령의 개인 환경 서버 dry-run·요청·rollout 확인은
+최신 필수 CI·발행과 보존 인계가 완료된 후 수행하며, 이번 로컬 구현에서 실제 기동은 수행하지 않았다.
+
 ## 격리 Kubernetes에서 실제 평가 실행 검증
 
 LLMOps CI의 기존 격리 통합 검증에 `--evaluation-runtime` 단계를 연결했다.
@@ -1067,7 +1130,8 @@ Kubernetes 1.36의 이미지 자격 증명 검증은 이미지 ID 외에 저장�
    운영 전환 시점의 소스·발행 증거 재검증과 개인 환경에서의 계획 검증은 남아 있다.
    기존 네 서비스의 필수 CI·발행 가드를 우회하지 않는다. 배포 방식은 서비스별 Argo Application과 수동 동기화를 유지한다.
    평가용 계획은 별도 프로젝트로 범위를 제한한다. 복원 보고서와 현재 보존 PVC를 대조해 수동 계획에
-   연결하는 읽기 전용 경로, Argo 선언 등록과 replica 0 최초 수동 동기화 요청·적용 완료 확인 명령은 구현했다. 실제 등록·동기화 실행과
+   연결하는 읽기 전용 경로, Argo 선언 등록과 replica 0 최초 수동 동기화 요청·적용 완료 확인,
+   저장 서비스 두 개의 첫 기동 요청 명령은 구현했다. 실제 등록·동기화 실행과
    namespace·PVC 확인 및 서비스 인계는 남아 있다. 암호화 백업과 기존 runner에서 평가 Secret만
    준비하는 명령도 구현했으며 실제 개인 백업을 이용한 생성·인증 검증은 별도다.
    운영 진단은 위의 평가 Application 조회를 포함하지만 런타임·저장소 검증은 별도다.
