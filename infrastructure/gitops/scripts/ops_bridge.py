@@ -1,7 +1,7 @@
-"""Connect in dev, or inspect owned Compose routes in dev and GitOps modes.
+"""Connect in dev, inspect routes, or refresh existing GitOps bridge addresses.
 
 No model calls, application patches, credential reads, host ports or Argo changes.
-Run connect again after Compose replaces either container; check detects stale IPs.
+After Compose address changes, use connect in dev or refresh in GitOps; check is read-only.
 """
 
 import argparse
@@ -9,6 +9,7 @@ import ipaddress
 import json
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 from fork_cluster import (
@@ -379,7 +380,9 @@ def connect(state, settings, project, *, check=False):
                     for key in ("addressType", "ports", "endpoints")
                 ):
                     raise ValueError(
-                        "Compose container address changed; run connect again"
+                        "Compose container address changed; run "
+                        + ("refresh" if settings["mode"] == "gitops" else "connect")
+                        + " again"
                     )
         if topology(settings, project) != before:
             raise ValueError(
@@ -439,9 +442,124 @@ def connect(state, settings, project, *, check=False):
     )
 
 
+def refresh(state, settings, project):
+    """Repair only existing, independently owned EndpointSlices after a restart."""
+    from ops_runtime import BRIDGE, PROFILE, connection, read_connection
+
+    if sys.platform != "linux" or settings["mode"] != "gitops":
+        raise ValueError("Bridge refresh requires Linux/WSL and GitOps mode")
+    kube, nk, _ = commands(state, settings)
+
+    def observe():
+        verify_context(kube, settings, timeout=15)
+        if any(
+            read_connection(Path(state) / name, settings)
+            != connection(settings, project)
+            for name in (BRIDGE, PROFILE)
+        ):
+            raise ValueError("Ops connection records differ from the requested project")
+        snapshot = topology(settings, project)
+        if not snapshot["nodeConnected"]:
+            raise ValueError("Refresh requires an already connected private bridge")
+        verify_cluster_ranges(kube, snapshot)
+        desired = manifests(settings, project, snapshot["addresses"])
+        current = existing_resources(nk, desired)
+        if len(current) != len(desired):
+            raise ValueError("Refresh cannot create missing bridge resources")
+        for item in desired:
+            actual = current[(item["kind"], item["metadata"]["name"])]
+            meta = actual["metadata"]
+            if (
+                actual.get("apiVersion") != item["apiVersion"]
+                or actual.get("kind") != item["kind"]
+                or meta.get("name") != item["metadata"]["name"]
+                or meta.get("namespace") != settings["namespace"]
+                or not meta.get("uid")
+                or not meta.get("resourceVersion")
+                or any(
+                    meta.get(key)
+                    for key in ("deletionTimestamp", "ownerReferences", "finalizers")
+                )
+            ):
+                raise ValueError(
+                    "Refresh requires stable, independently owned bridge resources"
+                )
+            if item["kind"] == "EndpointSlice":
+                endpoints = actual.get("endpoints", [])
+                if (
+                    actual.get("addressType") != item["addressType"]
+                    or actual.get("ports") != item["ports"]
+                    or len(endpoints) != 1
+                    or set(endpoints[0]) != {"addresses", "conditions"}
+                    or endpoints[0].get("conditions") != {"ready": True}
+                    or len(endpoints[0].get("addresses", [])) != 1
+                ):
+                    raise ValueError("Existing bridge endpoint contract changed")
+                address = ipaddress.IPv4Address(endpoints[0]["addresses"][0])
+                if not any(
+                    address in ipaddress.ip_network(cidr)
+                    for cidr in snapshot["subnets"]
+                ):
+                    raise ValueError(
+                        "Existing endpoint is outside the owned private bridge"
+                    )
+        return snapshot, desired, current
+
+    before, desired, expected = observe()
+    patches = []
+    for item in desired:
+        key = (item["kind"], item["metadata"]["name"])
+        actual = expected[key]
+        if item["kind"] != "EndpointSlice" or actual["endpoints"] == item["endpoints"]:
+            continue
+        # Test the observed object atomically, then change only its destination.
+        patch = (
+            [
+                {
+                    "op": "test",
+                    "path": "/metadata/" + field,
+                    "value": actual["metadata"][field],
+                }
+                for field in ("uid", "resourceVersion", "labels", "annotations")
+            ]
+            + [
+                {"op": "test", "path": "/" + field, "value": actual[field]}
+                for field in ("addressType", "ports", "endpoints")
+            ]
+            + [{"op": "replace", "path": "/endpoints", "value": item["endpoints"]}]
+        )
+        command = nk + [
+            "patch",
+            "endpointslice",
+            key[1],
+            "--type=json",
+            "--patch-file=/dev/stdin",
+            "-o",
+            "json",
+        ]
+        patches.append((key, command, json.dumps(patch)))
+    # Validate every intended change before sending the first real write.
+    for _, command, payload in patches:
+        run(command + ["--dry-run=server"], data=payload, capture=True, timeout=60)
+    for key, command, payload in patches:
+        snapshot, _, current = observe()
+        if snapshot != before or current != expected:
+            raise ValueError(
+                "Bridge changed during refresh; inspect routes before retrying"
+            )
+        expected[key] = json.loads(run(command, data=payload, capture=True, timeout=60))
+    after, _, current = observe()
+    if after != before or current != expected:
+        raise ValueError("Bridge changed after refresh; inspect routes before retrying")
+    connect(state, settings, project, check=True)
+    print(
+        "Refreshed existing GitOps bridge addresses; HTTP and evaluation require separate checks."
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("env", "connect", "check"))
+    parser.add_argument("action", choices=("env", "connect", "check", "refresh"))
     parser.add_argument("--state-dir", type=Path, default=STATE)
     parser.add_argument("--compose-project")
     args = parser.parse_args()
@@ -453,12 +571,15 @@ def main():
             if not args.compose_project:
                 raise ValueError("--compose-project is required")
             with locked(args.state_dir):
-                connect(
-                    args.state_dir,
-                    settings,
-                    args.compose_project,
-                    check=args.action == "check",
-                )
+                if args.action == "refresh":
+                    refresh(args.state_dir, settings, args.compose_project)
+                else:
+                    connect(
+                        args.state_dir,
+                        settings,
+                        args.compose_project,
+                        check=args.action == "check",
+                    )
     except subprocess.TimeoutExpired:
         parser.exit(
             1,

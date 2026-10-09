@@ -234,6 +234,26 @@ class BridgeConnectTests(unittest.TestCase):
                 )
             resource = self.resources.get(tuple(command[index + 1 : index + 3]))
             return json.dumps(resource) if resource else ""
+        if "patch" in command:
+            self.assertIn("--patch-file=/dev/stdin", command)
+            key = ("EndpointSlice", command[command.index("patch") + 2])
+            actual = self.resources[key]
+            operations = json.loads(data)
+            for operation in operations[:-1]:
+                self.assertEqual(operation["op"], "test")
+                value = actual
+                for segment in operation["path"][1:].split("/"):
+                    value = value[segment]
+                if value != operation["value"]:
+                    raise subprocess.CalledProcessError(1, "kubectl")
+            self.assertEqual(operations[-1]["op"], "replace")
+            self.assertEqual(operations[-1]["path"], "/endpoints")
+            updated = copy.deepcopy(actual)
+            updated["endpoints"] = operations[-1]["value"]
+            updated["metadata"]["resourceVersion"] = str(len(self.calls))
+            if "--dry-run=server" not in command:
+                self.resources[key] = updated
+            return json.dumps(updated)
         resource = json.loads(data)
         self.assertTrue("create" in command or "replace" in command)
         key = (resource["kind"], resource["metadata"]["name"])
@@ -399,6 +419,200 @@ class BridgeConnectTests(unittest.TestCase):
             topology.assert_not_called()
         self.assertEqual(self.calls, [])
         self.assertEqual(list(self.state.iterdir()), [])
+
+    def prepare_refresh(self):
+        import ops_runtime
+
+        bridge.connect(self.state, SETTINGS, PROJECT)
+        bridge.write_json(
+            self.state / ops_runtime.PROFILE, ops_runtime.connection(SETTINGS, PROJECT)
+        )
+        for key, resource in self.resources.items():
+            resource["metadata"]["uid"] = "uid-" + "-".join(key)
+        self.snapshot["subnets"] = ["172.28.0.0/16"]
+        self.snapshot["addresses"] = {
+            "prefect": "172.28.0.8",
+            "ops-artifacts": "172.28.0.9",
+        }
+        self.calls.clear()
+        patcher = patch.object(bridge, "verify_context")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        patcher = patch.object(bridge.sys, "platform", "linux")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return {**SETTINGS, "mode": "gitops"}
+
+    def real_patches(self):
+        return [
+            call
+            for call in self.calls
+            if "patch" in call and "--dry-run=server" not in call
+        ]
+
+    def test_gitops_refresh_changes_only_addresses_and_is_idempotent(self):
+        settings = self.prepare_refresh()
+        files = {path.name: path.read_bytes() for path in self.state.iterdir()}
+        before = copy.deepcopy(self.resources)
+        bridge.refresh(self.state, settings, PROJECT)
+        self.assertEqual(len(self.real_patches()), 2)
+        self.assertTrue(all("get" in call or "patch" in call for call in self.calls))
+        for key, resource in self.resources.items():
+            expected = copy.deepcopy(before[key])
+            if key[0] == "EndpointSlice":
+                service = "prefect" if key[1].endswith("prefect") else "ops-artifacts"
+                expected["endpoints"][0]["addresses"] = [
+                    self.snapshot["addresses"][service]
+                ]
+                expected["metadata"]["resourceVersion"] = resource["metadata"][
+                    "resourceVersion"
+                ]
+            self.assertEqual(resource, expected)
+        self.assertEqual(
+            files, {path.name: path.read_bytes() for path in self.state.iterdir()}
+        )
+        self.calls.clear()
+        bridge.refresh(self.state, settings, PROJECT)
+        self.assertTrue(all("get" in call for call in self.calls))
+
+    def test_gitops_refresh_rejects_missing_foreign_or_altered_resources_before_writes(
+        self,
+    ):
+        settings = self.prepare_refresh()
+        original = copy.deepcopy(self.resources)
+        for failure in (
+            "missing",
+            "argo",
+            "owner",
+            "finalizer",
+            "port",
+            "multiple",
+            "public",
+            "deleting",
+        ):
+            with self.subTest(failure=failure):
+                self.resources = copy.deepcopy(original)
+                self.calls.clear()
+                key = ("EndpointSlice", "ops-compose-artifacts")
+                resource = self.resources[key]
+                if failure == "missing":
+                    del self.resources[key]
+                elif failure == "argo":
+                    resource["metadata"]["annotations"][
+                        "argocd.argoproj.io/tracking-id"
+                    ] = "other"
+                elif failure == "owner":
+                    resource["metadata"]["ownerReferences"] = [{"uid": "foreign"}]
+                elif failure == "finalizer":
+                    resource["metadata"]["finalizers"] = ["foreign"]
+                elif failure == "port":
+                    resource["ports"][0]["port"] = 9999
+                elif failure == "multiple":
+                    resource["endpoints"].append(
+                        copy.deepcopy(resource["endpoints"][0])
+                    )
+                elif failure == "public":
+                    resource["endpoints"][0]["addresses"] = ["8.8.8.8"]
+                elif failure == "deleting":
+                    resource["metadata"]["deletionTimestamp"] = "2026-10-09T00:00:00Z"
+                with self.assertRaises(ValueError):
+                    bridge.refresh(self.state, settings, PROJECT)
+                self.assertEqual(self.real_patches(), [])
+
+    def test_gitops_refresh_rejects_mode_record_and_disconnected_network(self):
+        settings = self.prepare_refresh()
+        for invalid in ({**settings, "mode": "dev"}, {**settings, "mode": "unknown"}):
+            with self.assertRaises(ValueError):
+                bridge.refresh(self.state, invalid, PROJECT)
+        with self.assertRaisesRegex(ValueError, "records differ"):
+            bridge.refresh(self.state, settings, "other-project")
+        self.snapshot["nodeConnected"] = False
+        with self.assertRaisesRegex(ValueError, "already connected"):
+            bridge.refresh(self.state, settings, PROJECT)
+        self.assertEqual(self.real_patches(), [])
+
+    def test_gitops_refresh_dry_run_failure_prevents_all_writes(self):
+        settings = self.prepare_refresh()
+
+        def fail(command, **kwargs):
+            if "--dry-run=server" in command and "ops-compose-artifacts" in command:
+                raise subprocess.CalledProcessError(1, "kubectl")
+            return self.execute(command, **kwargs)
+
+        with (
+            patch.object(bridge, "run", side_effect=fail),
+            self.assertRaises(subprocess.CalledProcessError),
+        ):
+            bridge.refresh(self.state, settings, PROJECT)
+        self.assertEqual(self.real_patches(), [])
+
+    def test_gitops_refresh_detects_container_change_before_writes(self):
+        settings = self.prepare_refresh()
+        changed = copy.deepcopy(self.snapshot)
+        changed["containers"]["prefect"] = "replacement"
+        with (
+            patch.object(
+                bridge, "topology", side_effect=[copy.deepcopy(self.snapshot), changed]
+            ),
+            self.assertRaisesRegex(ValueError, "changed during refresh"),
+        ):
+            bridge.refresh(self.state, settings, PROJECT)
+        self.assertEqual(self.real_patches(), [])
+
+    def test_gitops_refresh_resource_race_is_rejected_by_atomic_patch(self):
+        settings = self.prepare_refresh()
+
+        def race(command, **kwargs):
+            if "patch" in command and "--dry-run=server" not in command:
+                resource = self.resources[("EndpointSlice", "ops-compose-prefect")]
+                resource["metadata"]["uid"] = "replacement"
+            return self.execute(command, **kwargs)
+
+        with (
+            patch.object(bridge, "run", side_effect=race),
+            self.assertRaises(subprocess.CalledProcessError),
+        ):
+            bridge.refresh(self.state, settings, PROJECT)
+        self.assertEqual(len(self.real_patches()), 1)
+        self.assertEqual(
+            self.resources[("EndpointSlice", "ops-compose-prefect")]["endpoints"][0][
+                "addresses"
+            ],
+            ["172.28.0.2"],
+        )
+
+    def test_gitops_refresh_partial_failure_is_not_rolled_back_and_can_resume(self):
+        settings = self.prepare_refresh()
+        original = copy.deepcopy(
+            self.resources[("EndpointSlice", "ops-compose-artifacts")]
+        )
+
+        def fail(command, **kwargs):
+            if (
+                "patch" in command
+                and "--dry-run=server" not in command
+                and "ops-compose-artifacts" in command
+            ):
+                raise subprocess.CalledProcessError(1, "kubectl")
+            return self.execute(command, **kwargs)
+
+        with (
+            patch.object(bridge, "run", side_effect=fail),
+            self.assertRaises(subprocess.CalledProcessError),
+        ):
+            bridge.refresh(self.state, settings, PROJECT)
+        self.assertEqual(
+            self.resources[("EndpointSlice", "ops-compose-prefect")]["endpoints"][0][
+                "addresses"
+            ],
+            ["172.28.0.8"],
+        )
+        self.assertEqual(
+            self.resources[("EndpointSlice", "ops-compose-artifacts")], original
+        )
+        self.calls.clear()
+        bridge.refresh(self.state, settings, PROJECT)
+        self.assertEqual(len(self.real_patches()), 1)
 
     def test_extra_endpoint_slice_prevents_route_update(self):
         bridge.connect(self.state, SETTINGS, PROJECT)
