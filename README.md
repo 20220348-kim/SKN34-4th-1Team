@@ -132,14 +132,14 @@ HTTP API와 비동기 메시지로 연결합니다.
 
 ### 서비스 연결
 
-**사용자 업무:** 웹·모바일은 같은 Core API를 사용하며, Core가 Catalog·AI Service를 호출합니다.
+**사용자 업무:** 웹·모바일은 같은 `core-service`를 사용하며, `core-service`가 `catalog-service`와 `ai-service`를 호출합니다.
 
 ```mermaid
 flowchart LR
-    Web["React Web<br/>사용자 화면"] --> Core["Core API<br/>사용자 업무 · 검색"]
+    Web["React Web<br/>사용자 화면"] --> Core["core-service<br/>사용자 업무 · 검색"]
     Mobile["React Native App<br/>사용자 화면"] --> Core
-    Core -->|snapshot 조회| Catalog["Catalog<br/>공고 수집 · 원본 관리"]
-    Core -->|검색 · 생성| AI["AI Service<br/>검색 · 답변 · 문서"]
+    Core -->|snapshot 조회| Catalog["catalog-service<br/>공고 수집 · 원본 관리"]
+    Core -->|검색 · 생성| AI["ai-service<br/>검색 · 답변 · 문서"]
     Core -.-> CoreDB[("Core MySQL<br/>계정 · 업무 기록")]
     Catalog -.-> CatalogDB[("Catalog MySQL<br/>원본 · 수집 상태")]
     AI -.-> Qdrant[("Qdrant<br/>벡터 · 근거 청크")]
@@ -154,13 +154,13 @@ flowchart LR
     class CoreDB,CatalogDB,Qdrant,Elastic,Redis storage
 ```
 
-**비동기 작업:** 큐가 활성화된 업무는 Core가 작업과 발행 대기 기록(Outbox)을 MySQL에 저장한 뒤
-RabbitMQ로 전달합니다. 발행기와 소비자는 모두 Core 내부에서 실행됩니다.
+**비동기 작업:** 큐가 활성화된 업무는 `core-service`가 작업과 발행 대기 기록(Outbox)을 MySQL에 저장한 뒤
+RabbitMQ로 전달합니다. 발행기와 소비자는 모두 `core-service` 내부에서 실행됩니다.
 
 ```mermaid
 flowchart LR
-    Producer["Core<br/>작업 예약 · 발행"] ==>|작업 ID| Queue["RabbitMQ<br/>업무별 큐"]
-    Queue ==>|소비| Consumer["Core 내부 소비자<br/>업무 실행"]
+    Producer["core-service<br/>작업 예약 · 발행"] ==>|작업 ID| Queue["RabbitMQ<br/>업무별 큐"]
+    Queue ==>|소비| Consumer["core-service<br/>내부 소비자 · 업무 실행"]
     Producer -.-> CoreDB[("Core MySQL<br/>작업 · 상태 · 결과")]
     Consumer -.-> CoreDB
     classDef service fill:#e7f5eb,stroke:#92bda6,color:#183d32
@@ -172,15 +172,15 @@ flowchart LR
 ```
 
 적용 업무는 **리포트 생성·메일 발송, 중복 지원 검토, 신청 양식·문항 분석, 카카오 연결 해제,
-관심 공고 원문 수집·색인**입니다. 소비자는 업무에 따라 AI Service·공식 원문·메일 서버·카카오 API를 호출합니다.
+관심 공고 원문 수집·색인**입니다. 소비자는 업무에 따라 `ai-service`·공식 원문·메일 서버·카카오 API를 호출합니다.
 
-**평가 운영:** 같은 React 웹의 관리자 화면이 Ops를 호출하고, 평가 작업은 HTTP 요청 밖에서 실행됩니다.
+**평가 운영:** 같은 React 웹의 관리자 화면이 `ops-service`를 호출하고, 평가 작업은 HTTP 요청 밖에서 실행됩니다.
 
 ```mermaid
 flowchart LR
-    Admin["React Web<br/>LLMOps 관리자 화면"] --> Ops["Django Ops<br/>예산 · 실행 관리 · 검토"]
+    Admin["React Web<br/>LLMOps 관리자 화면"] --> Ops["ops-service<br/>예산 · 실행 관리 · 검토"]
     Ops -->|평가 접수| Evaluation["Prefect + 평가 실행기<br/>평가 · 보고서 · 추적"]
-    Ops -->|관리자 세션 확인| Core["Core API<br/>계정 · 권한"]
+    Ops -->|관리자 세션 확인| Core["core-service<br/>계정 · 권한"]
     Ops -.-> OpsDB[("Ops MySQL<br/>실행 · 검토 · 예산")]
     Core -.-> CoreDB[("Core MySQL<br/>계정 · 권한")]
     classDef client fill:#e8f3fa,stroke:#91b9cd,color:#183d32
@@ -201,19 +201,20 @@ flowchart LR
 
 | 서비스 | 책임 | 관리하는 데이터 |
 |---|---|---|
-| [Core API](backend/core-service/README.md) | 인증·사용자 업무, 검색 조합·원문 검증 | Core MySQL: 업무 기록·조회용 공고 복제본·원문 캐시 |
-| [Catalog](backend/catalog-service/README.md) | 공식 공고 수집·정규화·색인 준비·공개 | Catalog MySQL: 공고 원본·수집 상태·공개 버전 |
-| [AI Service](backend/ai-service/README.md) | OpenAI 기반 임베딩·검색·생성·도구 실행 | Qdrant: 공고 검색 벡터·근거 청크 |
-| [Django Ops](backend/ops-service/README.md) | 평가 접수·예산·검토·품질 판정·비교 기준 | Ops MySQL: 평가 실행·검토 이력·판정·예산·일정 |
+| [core-service](backend/core-service/README.md) | 인증·사용자 업무, 검색 조합·원문 검증 | Core MySQL: 업무 기록·조회용 공고 복제본·원문 캐시 |
+| [catalog-service](backend/catalog-service/README.md) | 공식 공고 수집·정규화·색인 준비·공개 | Catalog MySQL: 공고 원본·수집 상태·공개 버전 |
+| [ai-service](backend/ai-service/README.md) | OpenAI 기반 임베딩·검색·생성·도구 실행 | Qdrant: 공고 검색 벡터·근거 청크 |
+| [ops-service](backend/ops-service/README.md) | 평가 접수·예산·검토·품질 판정·비교 기준 | Ops MySQL: 평가 실행·검토 이력·판정·예산·일정 |
 
-- **DB 경계:** Core·Catalog·Ops는 각자의 MySQL DB를 소유합니다. Core는 Catalog의 인증된 snapshot을
-  자기 DB에 반영하고, Ops는 Core API로 관리자 권한을 확인합니다. 다른 서비스의 DB를 직접 읽지 않습니다.
-- **검색·임시 상태:** Catalog가 검색 색인 준비를 소유하며, 벡터 처리는 AI Service에 요청합니다.
-  Core는 Elasticsearch의 키워드 후보와 AI Service의 의미 검색 후보를 결합하고 Redis에 검색 결과·임시 상태를 보관합니다.
+- **DB 경계:** `core-service`·`catalog-service`·`ops-service`는 각자의 MySQL DB를 소유합니다.
+  `core-service`는 `catalog-service`의 인증된 snapshot을 자기 DB에 반영하고,
+  `ops-service`는 `core-service`로 관리자 권한을 확인합니다. 다른 서비스의 DB를 직접 읽지 않습니다.
+- **검색·임시 상태:** `catalog-service`가 검색 색인 준비를 소유하며, 벡터 처리는 `ai-service`에 요청합니다.
+  `core-service`는 Elasticsearch의 키워드 후보와 `ai-service`의 의미 검색 후보를 결합하고 Redis에 검색 결과·임시 상태를 보관합니다.
 - **비동기 작업:** RabbitMQ 메시지에는 작업 식별자만 담고, 작업 데이터·Outbox·결과는 Core MySQL에 유지합니다.
   소비자는 DB 상태로 중복 실행을 제어하고 처리 결과를 저장한 뒤 수신 확인(ACK)을 보냅니다.
 - **평가 결과:** 별도 실행기가 결과 볼륨에 보고서·캡처를 기록하고 Langfuse에 추적·점수를 전송합니다.
-  Ops는 결과를 조회해 실행·검토 이력과 연결합니다.
+  `ops-service`는 결과를 조회해 실행·검토 이력과 연결합니다.
 
 <a id="로컬-시작"></a>
 
@@ -221,12 +222,12 @@ flowchart LR
 
 아래는 코드가 제공하는 배치 구성이며, 현재 가동 상태와는 구분합니다.
 
-| 배치 구성 | Core·Catalog·AI·Ops와 업무 저장소 | Prefect·평가 실행기·결과 저장소·Langfuse |
+| 배치 구성 | 애플리케이션 서비스·업무 저장소 | Prefect·평가 실행기·결과 저장소·Langfuse |
 |---|---|---|
-| **Compose** | Compose. Ops는 기존 Core에 연결하는 독립 구성도 제공 | 별도 LLMOps Compose |
+| **Compose** | Compose. `ops-service`는 기존 `core-service`에 연결하는 독립 구성도 제공 | 별도 LLMOps Compose |
 | **Kubernetes 혼합** | Kubernetes | Compose 유지 |
 
-Kubernetes 혼합 구성에서는 **Ops API와 `ops-sync`가 같은 Pod**에서 실행되고,
+Kubernetes 혼합 구성에서는 **`ops-service`와 `ops-sync`가 같은 Pod**에서 실행되고,
 내부 HTTP 브리지로 Compose의 Prefect와 `ops-artifacts` 결과 서버에 접근합니다.
 결과 볼륨은 Compose에 유지하며 인증된 HTTP로 읽습니다.
 이 연결은 저장 응답 재평가를 대상으로 하며, 유료 실행의 Kubernetes 예산 API 연결은 별도입니다.
