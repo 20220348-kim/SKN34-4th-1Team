@@ -443,36 +443,34 @@ DB에서 삭제하지 않고 **현재 공고 목록·검색에서 제외되도�
 AI가 제안한 조건을 사용자가 확인하면, 키워드·의미 검색으로 공고 후보를 찾고 AI가 추천합니다.
 공고 정보는 **Core MySQL**, 키워드 검색은 **Elasticsearch**, 의미 검색은 **Qdrant**를 사용합니다.
 
-**실제 사용 화면:** 2026-10-10 새 질문으로 실행한 예시입니다. 공고 상태와 추천 점수는 캡처 당시 표시값입니다.
-
-사진을 누르면 원본 크기로 볼 수 있습니다.
-
-<table>
+<table width="100%">
   <tr>
-    <td align="center" width="50%">
+    <td align="center" valign="top" width="50%">
       <strong>① 질문 입력</strong><br>
-      <a href="docs/assets/screenshots/ai-search/01-new-question.jpg"><img src="docs/assets/screenshots/ai-search/01-new-question.jpg" alt="AI 대화 검색에 새 질문을 입력한 화면" width="260"></a><br>
+      <a href="docs/assets/screenshots/ai-search/01-new-question.jpg"><img src="docs/assets/screenshots/ai-search/01-new-question.jpg" alt="AI 대화 검색에 새 질문을 입력한 화면" width="320"></a><br>
       회사 조건과 필요한 지원을 입력합니다.
     </td>
-    <td align="center" width="50%">
+    <td align="center" valign="top" width="50%">
       <strong>② 조건 확인</strong><br>
-      <a href="docs/assets/screenshots/ai-search/02-confirm-conditions.jpg"><img src="docs/assets/screenshots/ai-search/02-confirm-conditions.jpg" alt="AI가 제안한 조건과 이 조건으로 검색 버튼" width="260"></a><br>
+      <a href="docs/assets/screenshots/ai-search/02-confirm-conditions.jpg"><img src="docs/assets/screenshots/ai-search/02-confirm-conditions.jpg" alt="AI가 제안한 조건과 이 조건으로 검색 버튼" width="320"></a><br>
       제안된 조건을 확인하고 검색합니다.
     </td>
   </tr>
   <tr>
-    <td align="center" width="50%">
+    <td align="center" valign="top" width="50%">
       <strong>③ 추천 결과</strong><br>
-      <a href="docs/assets/screenshots/ai-search/03-new-recommendations.jpg"><img src="docs/assets/screenshots/ai-search/03-new-recommendations.jpg" alt="새 검색으로 나온 추천 공고와 조건 검토 결과" width="260"></a><br>
+      <a href="docs/assets/screenshots/ai-search/03-new-recommendations.jpg"><img src="docs/assets/screenshots/ai-search/03-new-recommendations.jpg" alt="새 검색으로 나온 추천 공고와 조건 검토 결과" width="320"></a><br>
       추천 공고와 확인 필요 사항을 봅니다.
     </td>
-    <td align="center" width="50%">
+    <td align="center" valign="top" width="50%">
       <strong>④ 원문 근거 확인</strong><br>
-      <a href="docs/assets/screenshots/ai-search/04-source-evidence.jpg"><img src="docs/assets/screenshots/ai-search/04-source-evidence.jpg" alt="추천 공고의 원문 근거를 펼친 화면" width="260"></a><br>
+      <a href="docs/assets/screenshots/ai-search/04-source-evidence.jpg"><img src="docs/assets/screenshots/ai-search/04-source-evidence.jpg" alt="추천 공고의 원문 근거를 펼친 화면" width="320"></a><br>
       인용 근거를 펼치고 공식 공고를 확인합니다.
     </td>
   </tr>
 </table>
+
+사진을 누르면 원본 크기로 볼 수 있습니다.
 
 **공고 조회·후보 검색:** 번호는 `core-service`가 조회·검색을 요청하는 순서입니다.
 
