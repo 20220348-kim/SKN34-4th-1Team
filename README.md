@@ -62,16 +62,14 @@ GovBiz는 여러 기관에 흩어진 정부지원사업 공고를 모아 기업�
 
 ```mermaid
 flowchart LR
-    Search["공고 탐색<br/>AI 대화 · 직접 필터"] --> Evidence["근거 확인<br/>조건 · 원문 질문"]
-    Evidence --> Save["관심 공고 저장<br/>목록 · 달력"]
-    Save --> Document["신청 준비<br/>답변 · 문서 작성"]
-    Document --> Progress["진행 관리<br/>지원 · 심사 · 결과"]
-    Save --> Review["중복 지원 검토<br/>기존 수혜 정보 대조"]
-    Save --> Partner["협업 모집<br/>제안 · 수락 · 거절"]
-    classDef step fill:#e7f5eb,stroke:#92bda6,color:#183d32
-    classDef related fill:#e8f3fa,stroke:#91b9cd,color:#183d32
-    class Search,Evidence,Save,Document,Progress step
-    class Review,Partner related
+    Search["공고 탐색<br/>AI 대화·필터"] --> Evidence["근거 확인<br/>조건·원문 질문"]
+    Evidence --> Save["관심 공고 저장<br/>목록·달력"]
+    Save --> Document["신청 준비<br/>답변·문서 작성"]
+    Document --> Progress["진행 관리<br/>지원·심사·결과"]
+    Save --> Review["중복 지원 검토<br/>수혜 정보 대조"]
+    Save --> Partner["협업 모집<br/>제안·수락·거절"]
+    classDef client fill:#e8f3fa,stroke:#91b9cd,color:#183d32
+    class Search,Evidence,Save,Document,Progress,Review,Partner client
 ```
 
 ### 관리자는 이렇게 운영합니다
@@ -81,8 +79,8 @@ flowchart LR
     Setup["평가 준비<br/>자료 · 대상 · 예산"] --> Run["평가 실행<br/>진행 · 결과 확인"]
     Run --> Review["사람 검토<br/>자료 · 사례 · 승인"]
     Review --> Baseline["품질 판정<br/>합격 후 기준 지정"]
-    classDef step fill:#e7f5eb,stroke:#92bda6,color:#183d32
-    class Setup,Run,Review,Baseline step
+    classDef client fill:#e8f3fa,stroke:#91b9cd,color:#183d32
+    class Setup,Run,Review,Baseline client
 ```
 
 ### 기능별 상세 설명
@@ -90,7 +88,7 @@ flowchart LR
 | 기능 | 현재 구현 |
 |---|---|
 | **공고 검색·추천** | AI 대화로 조건을 제안하고 사용자 확인 후 검색합니다. 직접 필터 검색은 키워드·지역·분야·출처·접수 상태와 K-Startup 추가 조건, 정렬·페이지 이동을 제공합니다. AI 추천은 키워드·의미 검색 후보를 결합해 관련도와 자격 근거를 표시합니다. |
-| **공고 상세·원문 질문** | 접수 기간·신청 방법·공식 문의처·지원 조건을 조회하고 공식 원문으로 이동합니다. 기업마당 상세 HTML에 질문하면 답변과 인용 근거를 확인할 수 있습니다. |
+| **공고 상세·원문 질문** | 접수 기간·신청 방법·공식 문의처·지원 조건을 조회하고 공식 원문으로 이동합니다. 기업마당·K-Startup 상세 HTML에 질문하면 답변과 인용 근거를 확인할 수 있습니다. |
 | **관심 공고·진행 관리** | 공고 저장·해제, 목록·달력·진행 관리 보기와 신청 문서의 준비·지원·심사·결과 단계를 관리합니다. |
 | **신청 문서 작성** | 공식 양식·문항 발견, 문항별 답변 저장·검토, AI 초안과 생성 작업 조회, 지원 형식의 원본 문서 작성·다운로드를 제공합니다. 모바일은 파일 저장·공유로 연결합니다. [형식별 지원 범위](docs/application-document-mcp-architecture.md) |
 | **중복 지원·수혜 검토** | 선택한 공고·기존 수혜 정보를 공식 근거와 대조하고 사업쌍별 판단·인용·기관 확인 사항을 저장합니다. 비동기 분석 상태와 결과를 다시 조회할 수 있습니다. |
@@ -230,22 +228,15 @@ Kubernetes 혼합 구성에서는 **`ops-service`와 `ops-sync`가 같은 Pod**�
 
 ### 서비스 경계와 데이터 소유권
 
-| 서비스 | 책임 | 관리하는 데이터 |
-|---|---|---|
-| [core-service](backend/core-service/README.md) | 인증·사용자 업무, 검색 조합·원문 검증 | Core MySQL: 업무 기록·조회용 공고 복제본·원문 캐시 |
-| [catalog-service](backend/catalog-service/README.md) | 공식 공고 수집·정규화·색인 준비·공개 | Catalog MySQL: 공고 원본·수집 상태·공개 버전 |
-| [ai-service](backend/ai-service/README.md) | OpenAI 기반 임베딩·검색·생성·도구 실행 | Qdrant: 공고 검색 벡터·근거 청크 |
-| [ops-service](backend/ops-service/README.md) | 평가 접수·예산·검토·품질 판정·비교 기준 | Ops MySQL: 평가 실행·검토 이력·판정·예산·일정 |
+| 서비스 | 소유 저장소·데이터 |
+|---|---|
+| [core-service](backend/core-service/README.md) | MySQL — 계정·업무 기록·공고 복제본 |
+| [catalog-service](backend/catalog-service/README.md) | MySQL — 공고 원본·수집·공개 상태 |
+| [ai-service](backend/ai-service/README.md) | Qdrant — 검색 벡터·근거 청크 |
+| [ops-service](backend/ops-service/README.md) | MySQL — 평가·검토·예산·일정 |
 
-- **DB 경계:** `core-service`·`catalog-service`·`ops-service`는 각자의 MySQL DB를 소유합니다.
-  `core-service`는 `catalog-service`의 인증된 snapshot을 자기 DB에 반영하고,
-  `ops-service`는 `core-service`로 관리자 권한을 확인합니다. 다른 서비스의 DB를 직접 읽지 않습니다.
-- **검색·임시 상태:** `catalog-service`가 검색 색인 준비를 소유하며, 벡터 처리는 `ai-service`에 요청합니다.
-  `core-service`는 Elasticsearch의 키워드 후보와 `ai-service`의 의미 검색 후보를 결합하고 Redis에 검색 결과·임시 상태를 보관합니다.
-- **비동기 작업:** RabbitMQ 메시지에는 작업 식별자만 담고, 작업 데이터·Outbox·결과는 Core MySQL에 유지합니다.
-  소비자는 DB 상태로 중복 실행을 제어하고 처리 결과를 저장한 뒤 수신 확인(ACK)을 보냅니다.
-- **평가 결과:** 별도 실행기가 결과 볼륨에 보고서·캡처를 기록하고 Langfuse에 추적·점수를 전송합니다.
-  `ops-service`는 결과를 조회해 실행·검토 이력과 연결합니다.
+각 서비스는 다른 서비스의 DB에 직접 접근하지 않고 API로 연동합니다.
+Core는 Catalog의 공고 원본을 받아 조회용 복제본을 유지합니다.
 
 아래 ERD는 현재 스키마의 **주요 엔터티와 키**를 서비스별로 요약한 것입니다.
 관계선은 같은 DB 안의 외래 키(FK)를 나타내며, 서비스 사이에는 FK가 없습니다.
@@ -400,24 +391,36 @@ Qdrant·Elasticsearch·Redis와 평가 결과 파일의 연결은 [서비스 연
 Catalog가 공식 API의 제목·기관·신청 기간·지역·분야·지원 대상·원문 URL·신청 경로를 정규화합니다.
 공고는 **제공처 코드 + 원본 ID**로 구분하고, 접수 상태는 신청 기간과 서울 기준 현재 날짜로 계산합니다.
 
+**수집·색인 준비:** `catalog-service`가 수집 결과를 검증·정규화하고, 키워드 색인과 의미 검색 벡터를 준비합니다.
+
 ```mermaid
-flowchart TB
-    subgraph Preparation["1. 수집·검증·검색 색인 준비"]
-        direction LR
-        Source["공식 제공처<br/>API 4곳"] --> Collect["Catalog 수집·검증<br/>페이지 완전성 · 필수 항목"]
-        Collect --> Normalize["공통 공고 구조로<br/>정규화"]
-        Normalize --> Index["검색 색인 준비<br/>Elasticsearch<br/>AI Service → Qdrant"]
-    end
-    subgraph Publication["2. 공개·조회용 복제본 갱신"]
-        direction LR
-        Publish["수집·색인 성공 확인 후 공개<br/>Catalog MySQL"] --> Snapshot["인증된<br/>HTTP snapshot"]
-        Snapshot --> Core["Core 조회용 복제본 갱신<br/>사용자 목록 · 상세 · 검색"]
-    end
-    Preparation --> Publication
-    classDef step fill:#e7f5eb,stroke:#92bda6,color:#183d32
-    classDef boundary fill:#e8f3fa,stroke:#91b9cd,color:#183d32
-    class Collect,Normalize,Index,Publish step
-    class Source,Snapshot,Core boundary
+flowchart LR
+    Source["공식 제공처<br/>API 4곳"] --> Catalog["catalog-service<br/>수집 · 검증 · 정규화"]
+    Catalog -. 키워드 색인 .-> Elastic[("Elasticsearch<br/>공고 검색 문서")]
+    Catalog -->|벡터 준비 요청| AI["ai-service<br/>OpenAI 임베딩"]
+    AI -. 벡터 저장 .-> Qdrant[("Qdrant<br/>공고 검색 벡터")]
+    classDef client fill:#e8f3fa,stroke:#91b9cd,color:#183d32
+    classDef service fill:#e7f5eb,stroke:#92bda6,color:#183d32
+    classDef vectorDb fill:#fce2ef,stroke:#c26493,color:#6b2f50
+    classDef searchIndex fill:#dbf3ef,stroke:#46988a,color:#20564f
+    class Source client
+    class Catalog,AI service
+    class Qdrant vectorDb
+    class Elastic searchIndex
+```
+
+**공개·동기화:** 수집과 두 색인 준비가 모두 성공하면 Catalog MySQL에 공개합니다.
+`core-service`는 인증된 HTTP snapshot을 조회·검증해 Core MySQL의 조회용 복제본을 갱신합니다.
+
+```mermaid
+flowchart LR
+    Core["core-service<br/>snapshot 검증 · 반영"] -->|인증된 snapshot 조회| Catalog["catalog-service<br/>성공한 수집 결과 공개"]
+    Catalog -. 공개 .-> CatalogDB[("Catalog MySQL<br/>공고 · 공개 버전")]
+    Core -. 갱신 .-> CoreDB[("Core MySQL<br/>조회용 공고 복제본")]
+    classDef service fill:#e7f5eb,stroke:#92bda6,color:#183d32
+    classDef mysql fill:#fff4df,stroke:#c8ad72,color:#183d32
+    class Core,Catalog service
+    class CoreDB,CatalogDB mysql
 ```
 
 - 같은 공고를 다시 수집하면 갱신하며, 성공적으로 수집한 제공처 범위에서만 누락 공고를 비활성화합니다.
@@ -429,23 +432,37 @@ flowchart TB
 검색어가 들어오면 `core-service`가 검색 가능한 현재 공고를 먼저 읽어 메모리에 보관하고,
 ‘접수 중만 보기’ 조건을 적용한 뒤 키워드 검색과 의미 검색을 차례로 실행합니다.
 
+**공고 조회·후보 검색:** 번호는 `core-service`가 조회·검색을 요청하는 순서입니다.
+
 ```mermaid
-flowchart TB
-    subgraph CandidateSearch["1. 공고 조회·후보 검색"]
-        direction LR
-        Read["core-service<br/>Core MySQL 공고 조회<br/>검색 대상·접수 상태 확인"] --> Keyword["Elasticsearch<br/>키워드 검색<br/>공고 ID·순위 반환"]
-        Keyword --> Semantic["ai-service → Qdrant<br/>의미 검색<br/>공고 ID·순위 반환"]
-    end
-    subgraph ResultAssembly["2. 후보 결합·평가·최종 응답"]
-        direction LR
-        Merge["core-service<br/>RRF 결합 · 최대 20건<br/>읽어 둔 공고와 ID로 연결"] --> Rank["ai-service → OpenAI<br/>관련도·자격 조건 평가<br/>최대 5건 추천"]
-        Rank --> Response["core-service → 웹·앱<br/>공고 정보 + 추천 점수<br/>추천 이유·자격 검토"]
-    end
-    CandidateSearch --> ResultAssembly
-    classDef step fill:#e7f5eb,stroke:#92bda6,color:#183d32
-    classDef boundary fill:#e8f3fa,stroke:#91b9cd,color:#183d32
-    class Read,Merge,Rank step
-    class Keyword,Semantic,Response boundary
+flowchart LR
+    User["웹 · 앱<br/>검색어 · 기업 조건"] --> Core["core-service<br/>검색 대상·접수 확인"]
+    Core -.->|1. 공고 조회| CoreDB[("Core MySQL<br/>공고 내용 · 기간")]
+    Core -.->|2. 키워드 검색| Elastic[("Elasticsearch<br/>키워드 후보")]
+    Core -->|3. 의미 검색| AI["ai-service<br/>질문 임베딩 · 검색"]
+    AI -. 후보 검색 .-> Qdrant[("Qdrant<br/>공고 검색 벡터")]
+    classDef client fill:#e8f3fa,stroke:#91b9cd,color:#183d32
+    classDef service fill:#e7f5eb,stroke:#92bda6,color:#183d32
+    classDef mysql fill:#fff4df,stroke:#c8ad72,color:#183d32
+    classDef vectorDb fill:#fce2ef,stroke:#c26493,color:#6b2f50
+    classDef searchIndex fill:#dbf3ef,stroke:#46988a,color:#20564f
+    class User client
+    class Core,AI service
+    class CoreDB mysql
+    class Qdrant vectorDb
+    class Elastic searchIndex
+```
+
+**후보 결합·최종 응답:** 공고 ID·순위로 후보를 합친 뒤, 읽어 둔 공고 내용에 AI 평가 결과를 더합니다.
+
+```mermaid
+flowchart LR
+    Merge["core-service<br/>RRF 결합 · 최대 20건<br/>MySQL 공고와 ID로 연결"] --> Rank["ai-service<br/>OpenAI 관련도 · 자격 평가<br/>최대 5건 추천"]
+    Rank -->|core-service 검증| Response["웹 · 앱<br/>공고 정보 · 추천 점수<br/>추천 이유 · 자격 검토"]
+    classDef client fill:#e8f3fa,stroke:#91b9cd,color:#183d32
+    classDef service fill:#e7f5eb,stroke:#92bda6,color:#183d32
+    class Merge,Rank service
+    class Response client
 ```
 
 두 검색의 결과는 **제공처 코드 + 원본 ID**로 연결합니다. 예를 들어 `BIZINFO:123`이 양쪽 검색에 나오면
@@ -481,25 +498,37 @@ LangChain·OpenAI가 검색 조건을 제안하고, 사용자가 확인한 조�
 ### 공고 상세의 근거 기반 답변(RAG)
 
 RAG는 **검색한 공식 원문을 모델에게 함께 전달해 답변의 근거로 사용하는 방식**입니다.
-현재 상세 공고 질문은 기업마당 공식 HTML 본문을 사용합니다.
+현재 상세 공고 질문은 기업마당·K-Startup 공식 HTML 본문을 사용합니다.
+
+**원문 준비·근거 검색:** 저장한 원문이 없거나 갱신이 필요하면 공식 HTML을 읽어 MySQL에 저장하고 청크로 나눕니다.
 
 ```mermaid
-flowchart TB
-    subgraph EvidenceSearch["1. 질문·원문 준비·근거 검색"]
-        direction LR
-        Question["사용자가<br/>상세 공고에 질문"] --> Prepare["Core<br/>공식 HTML 확인<br/>원문 캐시 · 청킹"]
-        Prepare --> Retrieve["AI Service<br/>OpenAI 임베딩 + Qdrant<br/>해당 공고의 근거 청크 검색"]
-    end
-    subgraph AnswerGeneration["2. 근거 검증·답변 생성·출처 표시"]
-        direction LR
-        Verify["Core<br/>검색 ID·해시 검증<br/>원문 복원"] --> Answer["AI 답변 Agent<br/>LangChain + OpenAI"]
-        Answer --> Cite["인용 검증<br/>답변 · 원문 발췌<br/>출처 표시"]
-    end
-    EvidenceSearch --> AnswerGeneration
-    classDef step fill:#e7f5eb,stroke:#92bda6,color:#183d32
-    classDef ai fill:#e8f3fa,stroke:#91b9cd,color:#183d32
-    class Question,Prepare,Verify,Cite step
-    class Retrieve,Answer ai
+flowchart LR
+    Question["웹 · 앱<br/>상세 공고 질문"] --> Core["core-service<br/>원문 확인 · 청킹"]
+    Core -. 원문 조회·저장 .-> CoreDB[("Core MySQL<br/>공식 원문 캐시")]
+    Core -->|필요할 때 수집| Source["공식 상세 페이지<br/>HTML 본문"]
+    Core -->|청크 색인·검색| AI["ai-service<br/>OpenAI 임베딩"]
+    AI -. 근거 검색 .-> Qdrant[("Qdrant<br/>해당 공고의 근거 청크")]
+    classDef client fill:#e8f3fa,stroke:#91b9cd,color:#183d32
+    classDef service fill:#e7f5eb,stroke:#92bda6,color:#183d32
+    classDef mysql fill:#fff4df,stroke:#c8ad72,color:#183d32
+    classDef vectorDb fill:#fce2ef,stroke:#c26493,color:#6b2f50
+    class Question,Source client
+    class Core,AI service
+    class CoreDB mysql
+    class Qdrant vectorDb
+```
+
+**검증·답변·출처 표시:** 검색된 청크의 ID·해시를 원문과 대조한 뒤 답변을 생성하고 인용을 확인합니다.
+
+```mermaid
+flowchart LR
+    Verify["core-service<br/>청크 ID · 해시 검증<br/>원문 복원"] --> Answer["ai-service<br/>답변 Agent<br/>LangChain + OpenAI"]
+    Answer -->|core-service 인용 검증| Response["웹 · 앱<br/>답변 · 원문 발췌<br/>출처 표시"]
+    classDef client fill:#e8f3fa,stroke:#91b9cd,color:#183d32
+    classDef service fill:#e7f5eb,stroke:#92bda6,color:#183d32
+    class Verify,Answer service
+    class Response client
 ```
 
 근거가 부족한 질문은 확인할 수 없다고 안내하고, 외부 서비스 장애는 오류로 반환합니다.
@@ -545,10 +574,59 @@ flowchart TB
 
 ### 전체 처리 흐름
 
-![GovBiz LLMOps: 관리자 접수, 세 가지 평가 경로, 결과 분석, 사람 검토와 비교 기준 지정](docs/assets/llmops/llmops-evaluation-flow.png)
+**접수·권한·예산 확인:** 관리자의 요청을 검증하고 HTTP 요청 밖의 평가 실행으로 연결합니다.
 
-[구조도 크게 보기](docs/assets/llmops/llmops-evaluation-flow.png) ·
-[SVG 원본·그림 설명](docs/assets/llmops/README.md)
+```mermaid
+flowchart LR
+    Admin["React Web<br/>자료 · 실행 방식 선택"] --> Ops["ops-service<br/>명세 고정 · 예산 예약"]
+    Ops -->|관리자 세션 확인| Core["core-service<br/>계정 · 권한"]
+    Ops -->|평가 접수| Runner["Prefect + 평가 실행기<br/>별도 작업 실행"]
+    Ops -. 기록 .-> OpsDB[("Ops MySQL<br/>실행 명세 · 예산")]
+    classDef client fill:#e8f3fa,stroke:#91b9cd,color:#183d32
+    classDef service fill:#e7f5eb,stroke:#92bda6,color:#183d32
+    classDef execution fill:#f3f5f4,stroke:#a8b5af,color:#183d32
+    classDef mysql fill:#fff4df,stroke:#c8ad72,color:#183d32
+    class Admin client
+    class Ops,Core service
+    class Runner execution
+    class OpsDB mysql
+```
+
+**평가 실행·분석:** 세 가지 방식 중 하나를 실행하고 공통 지표 계산으로 연결합니다.
+
+```mermaid
+flowchart LR
+    Runner["평가 실행기<br/>한 가지 방식 선택"] --> Replay["저장 응답 재평가<br/>새 모델 호출 없음"]
+    Runner --> Answer["고정 근거 새 답변<br/>OpenAI 답변 생성"]
+    Runner --> Rag["새 RAG 실행<br/>OpenAI 임베딩 · 답변"]
+    Rag -. 색인·검색 .-> Qdrant[("격리된 메모리 Qdrant<br/>등록 원문 · 청크")]
+    Replay --> Analyze["pandas + Pandera<br/>변환 · 검증 · 지표 계산"]
+    Answer --> Analyze
+    Rag --> Analyze
+    Analyze -. 보존 .-> Artifacts[("결과 저장소<br/>답변 캡처 · 지표")]
+    classDef execution fill:#f3f5f4,stroke:#a8b5af,color:#183d32
+    classDef vectorDb fill:#fce2ef,stroke:#c26493,color:#6b2f50
+    class Runner,Replay,Answer,Rag,Analyze,Artifacts execution
+    class Qdrant vectorDb
+```
+
+**결과 확인·사람 검토:** 보고서와 추적을 확인하고, 검토·품질 판정을 거쳐 관리자가 비교 기준을 지정합니다.
+Langfuse의 실제 모델 호출 추적은 실행 중에도 수집합니다.
+
+```mermaid
+flowchart LR
+    Results["Evidently · Langfuse<br/>보고서·추적·점수"] --> Review["React Web<br/>사람 검토·기준 선택"]
+    Review -->|판정·지정 요청| Ops["ops-service<br/>정책·승인 확인"]
+    Ops -. 보존 .-> OpsDB[("Ops MySQL<br/>검토·판정·비교 기준")]
+    classDef client fill:#e8f3fa,stroke:#91b9cd,color:#183d32
+    classDef service fill:#e7f5eb,stroke:#92bda6,color:#183d32
+    classDef execution fill:#f3f5f4,stroke:#a8b5af,color:#183d32
+    classDef mysql fill:#fff4df,stroke:#c8ad72,color:#183d32
+    class Results execution
+    class Review client
+    class Ops service
+    class OpsDB mysql
+```
 
 1. **관리자 접수:** 기존 Core 관리자 계정으로 로그인하고 React의 `/ops/evaluations`에서
    자료·실행 방식·비교 대상을 선택합니다. Django Ops가 관리자 권한과 실행 명세를 확인하고,
