@@ -1,13 +1,19 @@
 name: LLMOps CI
 
 on:
-  # Every push needs a result for the same SHA, including docs-only/empty commits.
+  # Every push starts exact-SHA validation, including docs-only/empty commits.
+  # A newer run of the same ref may cancel its superseded validation.
   # Publication separately restricts the default branch, upstream merge and fork opt-in.
   push:
   pull_request:
 
 permissions:
   contents: read
+
+# Fixtures belong to each GitHub-hosted job, never to the personal cluster.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   integration:

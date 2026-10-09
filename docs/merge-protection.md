@@ -24,6 +24,24 @@ PR 리뷰 승인 수는 **0명**으로 유지한다. 필수 CI 성공과 리뷰 
 이전 종합 판정 성공만으로 통과시키지 않는다. workflow 전체가 시작되지 않으면 새 SHA의
 필수 check가 없으므로 병합은 대기한다. 작업 이름·matrix·의존관계 변경은 정책 테스트로 확인한다.
 
+## 같은 ref의 중복 CI 실행
+
+다섯 필수 workflow는 `github.workflow`와 `github.ref`를 함께 묶고
+`cancel-in-progress: true`를 사용한다. 같은 workflow·브랜치에 새 실행이 들어오면 이전 실행을
+취소해 장시간 검증이 누적되는 것을 줄인다. 다른 workflow·브랜치·PR의 merge ref는 서로 다른
+그룹이므로 독립적으로 실행한다. 같은 PR 또는 브랜치에서 과거 실행을 수동 재실행할 때도 그룹이
+같다는 점에 주의한다. GitHub의 실행 순서만으로 최신 SHA를 판단하지 않는다
+([공식 concurrency 동작](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency)).
+
+검사 항목·필수 job·실패 판정은 줄이지 않는다. 취소된 실행은 성공이 아니며, 현재 배포 대상 SHA의
+다섯 workflow와 모든 필수 job이 실제로 성공해야 발행할 수 있다. 이전 SHA의 성공·취소 결과를
+현재 SHA에 재사용하지 않는다. main이 계속 바뀌면 새 SHA의 전체 검증을 기다려야 하는 조건도 유지한다.
+
+이미지 발행과 평가 패키지 준비는 별도의 concurrency 그룹에서 `cancel-in-progress: false`를
+유지한다. 업로드 중인 작업을 CI 교체 때문에 중단하지 않으며, 발행 도구는 업로드 전후에 현재
+소스와 필수 CI를 다시 확인한다. 이 workflow 변경만으로 현재 실행 중인 원격 작업이 정리되거나
+실제 동시 실행 취소가 검증됐다고 보고하지 않는다.
+
 ## 실제 규칙 적용과 확인
 
 저장소 루트에서 GitHub CLI의 기존 인증을 사용한다. 관리 권한과 `api.github.com` 접근이 필요하다.

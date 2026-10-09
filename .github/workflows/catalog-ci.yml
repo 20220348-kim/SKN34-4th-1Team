@@ -9,6 +9,11 @@ on:
 permissions:
   contents: read
 
+# Superseded runs cannot authorize publication of the current branch head.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   catalog-service:
     name: Catalog clean build and boundaries

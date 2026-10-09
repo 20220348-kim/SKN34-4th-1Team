@@ -12,6 +12,55 @@ from ci_policy import SUMMARY_NAMES, WORKFLOW_JOBS, WORKFLOWS
 
 
 class WorkflowPolicyTests(unittest.TestCase):
+    def test_required_ci_cancels_only_the_same_workflow_and_ref(self):
+        groups = set()
+        for filename in WORKFLOWS:
+            workflow = yaml.load(
+                (ROOT / ".github/workflows" / filename).read_text(),
+                Loader=yaml.BaseLoader,
+            )
+            with self.subTest(filename=filename):
+                concurrency = workflow["concurrency"]
+                self.assertEqual(
+                    concurrency,
+                    {
+                        "group": "${{ github.workflow }}-${{ github.ref }}",
+                        "cancel-in-progress": "true",
+                    },
+                )
+                # Different branches, PR refs and workflows must never collide.
+                for ref in (
+                    "refs/heads/main",
+                    "refs/heads/skn-test",
+                    "refs/pull/1/merge",
+                    "refs/pull/2/merge",
+                ):
+                    group = (
+                        concurrency["group"]
+                        .replace("${{ github.workflow }}", workflow["name"])
+                        .replace("${{ github.ref }}", ref)
+                        .lower()
+                    )
+                    self.assertNotIn(group, groups)
+                    groups.add(group)
+
+    def test_publication_and_package_setup_are_not_interrupted_by_new_ci(self):
+        expected = {
+            "msa-images.yml": "msa-image-candidates",
+            "evaluation-images.yml": "evaluation-image-candidate",
+            "evaluation-package-setup.yml": "evaluation-image-candidate",
+        }
+        for filename, group in expected.items():
+            workflow = yaml.load(
+                (ROOT / ".github/workflows" / filename).read_text(),
+                Loader=yaml.BaseLoader,
+            )
+            with self.subTest(filename=filename):
+                self.assertEqual(
+                    workflow["concurrency"],
+                    {"group": group, "cancel-in-progress": "false"},
+                )
+
     def test_runner_publication_reuses_exact_ci_gate_without_changing_business_matrix(
         self,
     ):
