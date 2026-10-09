@@ -550,6 +550,7 @@ def verify(
         or network.get("policyProfile") != "evaluation_chart"
         or network.get("networkPolicyEnforcementVerified") is not True
         or network.get("runnerClusterEgressVerified") is not True
+        or network.get("langfuseClusterEgressVerified") is not True
         or network.get("serviceClusterIPVerified") is not True
         or network.get("serviceDnsVerified") is not True
         or network.get("cleanupComplete") is not True

@@ -27,7 +27,9 @@ class ProbeTests(unittest.TestCase):
         self.cleanup_failure = False
         self.service_bypass = None
         self.egress_bypass = False
+        self.langfuse_bypass = None
         self.dns_failure_during_policy = False
+        self.langfuse_dns_failure = False
         self.service_create_timeout = False
         self.node_reads = 0
         self.clock = 0
@@ -122,6 +124,8 @@ class ProbeTests(unittest.TestCase):
                 self.assertEqual(address, f"{meta['name']}.{meta['namespace']}.svc.cluster.local.")
                 if policies and self.dns_failure_during_policy and source == "foreign-runner":
                     return {"outcome": "dns_error"}
+                if policies and self.langfuse_dns_failure and meta["name"] == "langfuse-web":
+                    return {"outcome": "dns_error"}
             destination = (
                 service["metadata"]["name"]
                 if service
@@ -137,7 +141,10 @@ class ProbeTests(unittest.TestCase):
                 ("ops", "ops-artifacts"),
                 ("evaluation-runner", "prefect"),
                 ("evaluation-runner", "ops"),
+                ("evaluation-runner", "langfuse-web"),
             }
+            if source == "evaluation-runner" and destination == self.langfuse_bypass:
+                allow = True
             if self.egress_bypass and (source, destination) == (
                 "evaluation-runner",
                 "foreign-runner",
@@ -166,6 +173,7 @@ class ProbeTests(unittest.TestCase):
         self.assertFalse(result["evaluationRuntimeVerified"])
         self.assertFalse(result["serviceClusterIPVerified"])
         self.assertFalse(result["serviceDnsVerified"])
+        self.assertFalse(result["langfuseClusterEgressVerified"])
         self.assertTrue(result["cleanupComplete"])
         self.assertFalse(self.resources)
 
@@ -272,11 +280,12 @@ class ProbeTests(unittest.TestCase):
         result = probe.exercise(self.kube, "fixture-control-plane", helm="helm")
         self.assertEqual(result["status"], "ENFORCED")
         self.assertEqual(result["policyProfile"], "evaluation_chart")
-        self.assertEqual(sum(result["expectedReachability"].values()), 10)
-        self.assertEqual(len(result["policyChecks"]), 27)
+        self.assertEqual(sum(result["expectedReachability"].values()), 13)
+        self.assertEqual(len(result["policyChecks"]), 33)
         self.assertTrue(result["serviceClusterIPVerified"])
         self.assertTrue(result["serviceDnsVerified"])
         self.assertTrue(result["runnerClusterEgressVerified"])
+        self.assertTrue(result["langfuseClusterEgressVerified"])
         self.assertFalse(result["langfuseEgressVerified"])
         self.assertEqual(result["addressModes"], ["pod_ip", "cluster_ip", "service_dns"])
         self.assertEqual(len(result["chartPolicySpecSha256"]), 3)
@@ -285,15 +294,22 @@ class ProbeTests(unittest.TestCase):
         policies = [r for r in self.created if r["kind"] == "NetworkPolicy"]
         pods = [r for r in self.created if r["kind"] == "Pod"]
         self.assertEqual(len(policies), 3)
-        self.assertEqual(len(pods), 6)
+        self.assertEqual(len(pods), 10)
         services = [r for r in self.created if r["kind"] == "Service"]
-        self.assertEqual({s["metadata"]["name"] for s in services}, {"prefect", "ops-artifacts"})
+        self.assertEqual(
+            {s["metadata"]["name"] for s in services},
+            {"prefect", "ops-artifacts", "langfuse-web"},
+        )
         for service in services:
             self.assertEqual(service["spec"]["type"], "ClusterIP")
             selected = [
                 p
                 for p in pods
-                if p["metadata"]["labels"]["app.kubernetes.io/name"] == service["metadata"]["name"]
+                if p["metadata"]["namespace"] == service["metadata"]["namespace"]
+                and all(
+                    p["metadata"]["labels"].get(k) == v
+                    for k, v in service["spec"]["selector"].items()
+                )
             ]
             self.assertEqual(len(selected), 1)
             self.assertEqual(service["spec"]["ports"][0]["targetPort"], "http")
@@ -307,6 +323,10 @@ class ProbeTests(unittest.TestCase):
                 ],
             )
         self.assertNotIn("govbiz-msa", {r["metadata"]["namespace"] for r in policies + pods})
+        self.assertNotIn(
+            "govbiz-observability",
+            {r["metadata"]["namespace"] for r in policies + pods + services},
+        )
         for policy in policies:
             for rule in policy["spec"]["ingress"]:
                 for peer in rule["from"]:
@@ -325,11 +345,9 @@ class ProbeTests(unittest.TestCase):
                         )
         self.assertEqual(
             {p["spec"]["containers"][0]["command"][-1] for p in pods},
-            {"4200", "8000", "8010", "8090"},
+            {"3000", "3001", "4200", "8000", "8010", "8090"},
         )
-        runner_policy = next(
-            p for p in policies if p["metadata"]["name"] == "evaluation-runner"
-        )
+        runner_policy = next(p for p in policies if p["metadata"]["name"] == "evaluation-runner")
         dns, prefect, ops, langfuse = runner_policy["spec"]["egress"]
         self.assertEqual(
             dns["to"][0]["namespaceSelector"]["matchLabels"],
@@ -340,7 +358,47 @@ class ProbeTests(unittest.TestCase):
             {"kubernetes.io/metadata.name": result["namespaceRebinding"]["govbiz-msa"]},
         )
         self.assertEqual(prefect["ports"], [{"protocol": "TCP", "port": 4200}])
-        self.assertEqual(langfuse["to"], [{"ipBlock": {"cidr": "192.168.240.1/32"}}])
+        self.assertEqual(
+            langfuse,
+            {
+                "to": [
+                    {
+                        "namespaceSelector": {
+                            "matchLabels": {
+                                "kubernetes.io/metadata.name": result["namespaceRebinding"][
+                                    "govbiz-observability"
+                                ],
+                            }
+                        },
+                        "podSelector": {"matchLabels": {"app.kubernetes.io/name": "langfuse-web"}},
+                    }
+                ],
+                "ports": [{"protocol": "TCP", "port": 3000}],
+            },
+        )
+
+    def test_wrong_langfuse_namespace_label_or_port_cannot_pass(self):
+        for destination in (
+            "impostor-langfuse",
+            "wrong-label-langfuse",
+            "wrong-port-langfuse",
+        ):
+            with self.subTest(destination=destination):
+                self.langfuse_bypass = destination
+                result = probe.exercise(self.kube, "fixture-control-plane", helm="helm")
+                self.assertEqual(result["status"], "NOT_ENFORCED")
+                self.assertFalse(result["langfuseClusterEgressVerified"])
+                self.assertTrue(result["cleanupComplete"])
+                self.assertFalse(self.resources)
+
+    def test_chart_cleanup_failure_still_removes_all_three_owned_namespaces(self):
+        self.cleanup_failure = True
+        result = probe.exercise(self.kube, "fixture-control-plane", helm="helm")
+        self.assertEqual(result["status"], "ERROR")
+        self.assertFalse(result["langfuseClusterEgressVerified"])
+        self.assertFalse(result["cleanupComplete"])
+        self.assertEqual(len([k for k in self.deleted if k[1] == "namespace"]), 3)
+        self.assertFalse(any(k[0] and k[0].endswith(("-a", "-c")) for k in self.resources))
 
     def test_ingress_success_cannot_hide_runner_egress_bypass(self):
         self.egress_bypass = True
@@ -392,7 +450,8 @@ class ProbeTests(unittest.TestCase):
                 self.assertEqual(result["status"], "NOT_ENFORCED")
                 self.assertEqual(result["policyChecks"]["foreign_runner_to_prefect"], "timeout")
                 self.assertEqual(
-                    result["policyChecks"]["foreign_runner_to_prefect__" + mode], "reachable"
+                    result["policyChecks"]["foreign_runner_to_prefect__" + mode],
+                    "reachable",
                 )
                 self.assertFalse(result["serviceDnsVerified"])
                 self.assertFalse(result["serviceClusterIPVerified"])
@@ -415,9 +474,25 @@ class ProbeTests(unittest.TestCase):
         self.assertNotIn("PRIVATE_DIAGNOSTIC", json.dumps(result))
         self.assertFalse(self.resources)
 
+    def test_langfuse_dns_failure_does_not_count_as_network_protection(self):
+        self.langfuse_dns_failure = True
+        result = probe.exercise(self.kube, "fixture-control-plane", helm="helm")
+        self.assertEqual(result["status"], "ERROR")
+        self.assertFalse(result["langfuseClusterEgressVerified"])
+        self.assertFalse(result["serviceDnsVerified"])
+        self.assertTrue(result["cleanupComplete"])
+        self.assertFalse(self.resources)
+
     def test_unsafe_chart_services_fail_before_creating_any_resources(self):
         render = probe.render_bundle
-        for problem in ("missing", "extra", "namespace", "external", "selector", "port"):
+        for problem in (
+            "missing",
+            "extra",
+            "namespace",
+            "external",
+            "selector",
+            "port",
+        ):
 
             def invalid(*args, problem=problem, **kwargs):
                 rows = render(*args, **kwargs)
@@ -456,7 +531,10 @@ class ClientTests(unittest.TestCase):
         ):
             with (
                 self.subTest(outcome=outcome, answers=answers),
-                patch("sys.argv", ["probe", "prefect.fixture", "token", "4200", "10.96.0.1"]),
+                patch(
+                    "sys.argv",
+                    ["probe", "prefect.fixture", "token", "4200", "10.96.0.1"],
+                ),
                 patch(
                     "socket.getaddrinfo",
                     return_value=[
@@ -468,7 +546,7 @@ class ClientTests(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()) as stdout,
                 self.assertRaises(SystemExit),
             ):
-                exec(probe.CLIENT, {})
+                exec(probe.CLIENT, {})  # noqa: S102 - execute the fixed probe source under mocks
             self.assertEqual(json.loads(stdout.getvalue()), {"outcome": outcome})
             connect.assert_not_called()
 
@@ -481,7 +559,10 @@ class ClientTests(unittest.TestCase):
                 connection.request.side_effect = TimeoutError()
             with (
                 self.subTest(blocked=blocked),
-                patch("sys.argv", ["probe", "prefect.fixture", "token", "4200", "10.96.0.1"]),
+                patch(
+                    "sys.argv",
+                    ["probe", "prefect.fixture", "token", "4200", "10.96.0.1"],
+                ),
                 patch(
                     "socket.getaddrinfo",
                     return_value=[(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.96.0.1", 4200))],
@@ -489,7 +570,7 @@ class ClientTests(unittest.TestCase):
                 patch("http.client.HTTPConnection", return_value=connection) as connect,
                 contextlib.redirect_stdout(io.StringIO()) as stdout,
             ):
-                exec(probe.CLIENT, {})
+                exec(probe.CLIENT, {})  # noqa: S102 - execute the fixed probe source under mocks
             self.assertEqual(
                 json.loads(stdout.getvalue()),
                 {

@@ -12,7 +12,7 @@ from uuid import uuid4
 import evaluation_pvc_restore as pvc
 import fork_cluster
 import yaml
-from check_evaluation import COMPONENTS, render_bundle
+from check_evaluation import COMPONENTS, LANGFUSE_ORIGIN, render_bundle
 
 LABEL = "ai.govbiz.network-probe"
 ROLE = "ai.govbiz.probe-role"
@@ -132,7 +132,7 @@ def policies(namespace, token):
     ]
 
 
-def chart_fixture(namespace, ops_namespace, token, node, image, helm):
+def chart_fixture(namespace, ops_namespace, observation_namespace, token, node, image, helm):
     """Render the real chart, rebinding only namespaces for disposable traffic."""
     # No rendered workload is deployed. Images/claims/endpoints only satisfy the
     # complete chart schema; the synthetic HTTP Pods never use those contracts.
@@ -148,9 +148,9 @@ def chart_fixture(namespace, ops_namespace, token, node, image, helm):
     values["ops-artifacts"]["evidenceImage"] = image
     values["evaluation-runner"]["runner"] = {
         "opsApiUrl": "http://ops-service.govbiz-msa.svc.cluster.local:8000",
-        # Only the declared cluster egress is exercised here. Real Compose
-        # Langfuse authentication/traffic is covered by the runtime CI stage.
-        "langfuseUrl": "http://192.168.240.1:3000",
+        # Synthetic HTTP only; real Langfuse authentication/score persistence
+        # remains a separate runtime CI stage.
+        "langfuseUrl": LANGFUSE_ORIGIN,
     }
     rendered = render_bundle(values, namespace, helm)
     if set(rendered) != set(COMPONENTS):
@@ -214,22 +214,19 @@ def chart_fixture(namespace, ops_namespace, token, node, image, helm):
                     if (
                         direction == "egress"
                         and selector
-                        == {
-                            "matchLabels": {
-                                "kubernetes.io/metadata.name": "kube-system"
-                            }
-                        }
-                        and peer.get("podSelector")
-                        == {"matchLabels": {"k8s-app": "kube-dns"}}
+                        == {"matchLabels": {"kubernetes.io/metadata.name": "kube-system"}}
+                        and peer.get("podSelector") == {"matchLabels": {"k8s-app": "kube-dns"}}
                     ):
                         continue
-                    if selector != {
-                        "matchLabels": {"kubernetes.io/metadata.name": "govbiz-msa"}
+                    if selector == {"matchLabels": {"kubernetes.io/metadata.name": "govbiz-msa"}}:
+                        replacement = ops_namespace
+                    elif direction == "egress" and selector == {
+                        "matchLabels": {"kubernetes.io/metadata.name": "govbiz-observability"}
                     }:
+                        replacement = observation_namespace
+                    else:
                         raise ValueError("Unexpected chart peer namespace selector")
-                    selector["matchLabels"]["kubernetes.io/metadata.name"] = (
-                        ops_namespace
-                    )
+                    selector["matchLabels"]["kubernetes.io/metadata.name"] = replacement
         resources.append(policy)
     pods = []
     for ns, name, component, port in (
@@ -239,10 +236,32 @@ def chart_fixture(namespace, ops_namespace, token, node, image, helm):
         (namespace, "impostor-ops", "ops-service", 8000),
         (ops_namespace, "ops", "ops-service", 8000),
         (ops_namespace, "foreign-runner", "evaluation-runner", 8000),
+        (observation_namespace, "langfuse-web", "langfuse-web", 3000),
+        (observation_namespace, "wrong-label-langfuse", "other-app", 3000),
+        (observation_namespace, "wrong-port-langfuse", "langfuse-web", 3001),
+        (namespace, "impostor-langfuse", "langfuse-web", 3000),
     ):
-        resource = pod(ns, token, name, component, node, image, port=port)
+        resource = pod(ns, token, name, name, node, image, port=port)
         resource["metadata"]["labels"]["app.kubernetes.io/name"] = component
         pods.append(resource)
+    # This is a synthetic destination Service, not a Langfuse deployment.
+    # The role selector excludes the same-label wrong-port server.
+    services.append(
+        {
+            "apiVersion": "v1",
+            "kind": "Service",
+            "metadata": {
+                "name": "langfuse-web",
+                "namespace": observation_namespace,
+                "labels": {LABEL: token},
+            },
+            "spec": {
+                "type": "ClusterIP",
+                "selector": {LABEL: token, ROLE: "langfuse-web"},
+                "ports": [{"name": "http", "port": 3000, "targetPort": "http"}],
+            },
+        }
+    )
     # Last field is the expected result while policies are present. All routes
     # must be reachable before policy creation and again after policy removal.
     routes = {
@@ -289,6 +308,34 @@ def chart_fixture(namespace, ops_namespace, token, node, image, helm):
         ),
         "prefect_to_ops": (namespace, "prefect", "ops", 8000, False),
         "artifacts_to_ops": (namespace, "ops-artifacts", "ops", 8000, False),
+        "runner_to_langfuse": (
+            namespace,
+            "evaluation-runner",
+            "langfuse-web",
+            3000,
+            True,
+        ),
+        "runner_to_impostor_langfuse": (
+            namespace,
+            "evaluation-runner",
+            "impostor-langfuse",
+            3000,
+            False,
+        ),
+        "runner_to_wrong_label_langfuse": (
+            namespace,
+            "evaluation-runner",
+            "wrong-label-langfuse",
+            3000,
+            False,
+        ),
+        "runner_to_wrong_port_langfuse": (
+            namespace,
+            "evaluation-runner",
+            "wrong-port-langfuse",
+            3001,
+            False,
+        ),
     }
     servers = [
         (namespace, name, port)
@@ -299,6 +346,10 @@ def chart_fixture(namespace, ops_namespace, token, node, image, helm):
             (namespace, "impostor-ops", 8000),
             (ops_namespace, "ops", 8000),
             (ops_namespace, "foreign-runner", 8000),
+            (observation_namespace, "langfuse-web", 3000),
+            (observation_namespace, "wrong-label-langfuse", 3000),
+            (observation_namespace, "wrong-port-langfuse", 3001),
+            (namespace, "impostor-langfuse", 3000),
         ]
     )
     return pods, resources, routes, servers, hashes, services
@@ -347,7 +398,8 @@ def request(kube, namespace, source, address, token, *, port=PORT, dns_expected_
     if dns_expected_ip is None:
         ipaddress.ip_address(address)
     elif ipaddress.ip_address(dns_expected_ip).version != 4 or not re.fullmatch(
-        r"(?:prefect|ops-artifacts)\.govbiz-evaluation-net-probe-[a-f0-9]{12}-a"
+        r"(?:(?:prefect|ops-artifacts)\.govbiz-evaluation-net-probe-[a-f0-9]{12}-a"
+        r"|langfuse-web\.govbiz-evaluation-net-probe-[a-f0-9]{12}-c)"
         r"\.svc\.cluster\.local\.",
         address,
     ):
@@ -381,7 +433,10 @@ def exercise(kube, node, *, helm=None):
     token = uuid4().hex
     chart_mode = helm is not None
     prefix = "govbiz-evaluation-net-probe-" if chart_mode else "govbiz-net-probe-"
-    names = [prefix + token[:12] + suffix for suffix in ("-a", "-b")]
+    names = [
+        prefix + token[:12] + suffix
+        for suffix in (("-a", "-b", "-c") if chart_mode else ("-a", "-b"))
+    ]
     result = {
         "schema": "evaluation-network-probe-v1",
         "status": "ERROR",
@@ -416,7 +471,10 @@ def exercise(kube, node, *, helm=None):
                 *names, token, node, image, helm
             )
             result["chartPolicySpecSha256"] = hashes
-            result["namespaceRebinding"] = {"govbiz-msa": names[1]}
+            result["namespaceRebinding"] = {
+                "govbiz-msa": names[1],
+                "govbiz-observability": names[2],
+            }
         else:
             service_specs = []
             pod_specs = [
@@ -487,6 +545,7 @@ def exercise(kube, node, *, helm=None):
             addresses[name] = str(address)
 
         service_ips = {}
+        service_namespaces = {}
         for resource in service_specs:
             created = pvc.run(kube + ["create", "-f", "-", "-o", "json"], value=resource)
             name = resource["metadata"]["name"]
@@ -495,15 +554,20 @@ def exercise(kube, node, *, helm=None):
             if address.version != 4:
                 raise ValueError("This probe requires IPv4 ClusterIP Services")
             service_ips[name] = str(address)
-        # Keep the original Pod IP route keys. Services only exist for the two
-        # HTTP components; runner ingress remains a Pod IP-only check.
+            service_namespaces[name] = resource["metadata"]["namespace"]
+        # Keep the original Pod IP route keys. Only HTTP component destinations
+        # have Services; impostors and wrong-port servers remain Pod IP checks.
         destinations = {key: (addresses[route[2]], None) for key, route in routes.items()}
         for key, route in list(routes.items()):
             target = route[2]
             if target in service_ips:
                 for suffix, address, expected_ip in (
                     ("cluster_ip", service_ips[target], None),
-                    ("service_dns", f"{target}.{names[0]}.svc.cluster.local.", service_ips[target]),
+                    (
+                        "service_dns",
+                        f"{target}.{service_namespaces[target]}.svc.cluster.local.",
+                        service_ips[target],
+                    ),
                 ):
                     routes[key + "__" + suffix] = route
                     destinations[key + "__" + suffix] = (address, expected_ip)
@@ -532,7 +596,7 @@ def exercise(kube, node, *, helm=None):
             name = policy["metadata"]["name"]
             policy_uids[name] = identity(created, name, token)
         # Policy distribution is asynchronous. New HTTP/TCP connections are used on
-        # every attempt; 27 chart routes include separate DNS resolution and
+        # every attempt; 33 chart routes include separate DNS resolution and
         # Service translation. Allow 240s for three complete matching rounds.
         deadline = time.monotonic() + (240 if chart_mode else 45)
         consecutive = 0
@@ -586,7 +650,7 @@ def exercise(kube, node, *, helm=None):
         for name in reversed(attempted):
             try:
                 remove(kube, "namespace", name, token, uid=namespace_uids.get(name))
-            except Exception as error:  # noqa: BLE001 - attempt both cleanups
+            except Exception as error:  # noqa: BLE001 - attempt every cleanup
                 errors.append({"namespace": name, "errorType": type(error).__name__})
         result["cleanupComplete"] = not errors
         if errors:
@@ -595,9 +659,9 @@ def exercise(kube, node, *, helm=None):
     result["networkPolicyEnforcementVerified"] = result["status"] == "ENFORCED"
     result["serviceClusterIPVerified"] = chart_mode and result["status"] == "ENFORCED"
     result["serviceDnsVerified"] = chart_mode and result["status"] == "ENFORCED"
-    result["runnerClusterEgressVerified"] = (
-        chart_mode and result["status"] == "ENFORCED"
-    )
+    result["runnerClusterEgressVerified"] = chart_mode and result["status"] == "ENFORCED"
+    result["langfuseClusterEgressVerified"] = chart_mode and result["status"] == "ENFORCED"
+    # No real Langfuse authentication, API or Compose IP egress is exercised.
     result["langfuseEgressVerified"] = False
     return result
 

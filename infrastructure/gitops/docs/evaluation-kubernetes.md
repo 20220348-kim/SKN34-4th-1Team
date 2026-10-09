@@ -500,12 +500,14 @@ python3 -B infrastructure/gitops/scripts/evaluation_network_probe.py \
   --evaluation-chart --helm helm > /private-backups/evaluation-chart-network.json
 ```
 
-이 모드는 임시 namespace 두 개, 합성 HTTP Pod 여섯 개와 Chart의 ClusterIP Service 두 개를 사용한다.
-실제 Prefect·실행기·결과 서버 프로세스, Secret, PVC는 생성하지 않는다. 평가 namespace와 `govbiz-msa`의 관계만 임시
+이 모드는 임시 namespace 세 개, 합성 HTTP Pod 열 개, Chart의 ClusterIP Service 두 개와
+Langfuse 대역 Service 한 개를 사용한다. 실제 Prefect·실행기·결과 서버·Langfuse 프로세스,
+Secret, PVC는 생성하지 않는다. 평가 namespace와 `govbiz-msa`·`govbiz-observability`를 임시
 namespace로 바꾸며 Pod selector·허용 포트·ingress·egress 규칙은 렌더링 결과를 사용한다.
-DNS egress의 `kube-system/kube-dns` selector는 유지한다. Langfuse에는 합성 주소의 `/32`를 렌더링하지만
-실제 요청을 보내지 않으며 이 경로는 검증 범위에 포함하지 않는다. 알 수 없는 namespace selector는
-생성 전에 차단한다. 원본 정책 spec 해시와 namespace 치환 내역을
+DNS egress의 `kube-system/kube-dns` selector는 유지한다. Langfuse는 Kubernetes URL로 렌더링하며
+임시 관측 namespace의 HTTP 대역으로 통신한다. 잘못된 namespace·label·포트의 서버도 실제로
+응답하게 만들어 차단 여부를 구분한다. 알 수 없는 namespace selector는 생성 전에 차단한다.
+원본 정책 spec 해시와 namespace 치환 내역을
 보고서의 `chartPolicySpecSha256`·`namespaceRebinding`에 기록한다.
 
 | 출발 Pod | 대상 | 정책 적용 중 기대 결과 |
@@ -523,15 +525,21 @@ DNS egress의 `kube-system/kube-dns` selector는 유지한다. Langfuse에는 �
 | 평가 namespace의 `evaluation-runner` | Ops namespace의 다른 label Pod / TCP 8000 | 차단 |
 | Prefect 대역 | Ops 대역 / TCP 8000 | 차단 |
 | 결과 서버 대역 | Ops 대역 / TCP 8000 | 차단 |
+| 평가 namespace의 `evaluation-runner` | 관측 namespace의 `langfuse-web` 대역 / TCP 3000 | 허용 |
+| 평가 namespace의 `evaluation-runner` | 같은 평가 namespace의 가짜 `langfuse-web` / TCP 3000 | 차단 |
+| 평가 namespace의 `evaluation-runner` | 관측 namespace의 다른 label Pod / TCP 3000 | 차단 |
+| 평가 namespace의 `evaluation-runner` | 관측 namespace의 `langfuse-web` label 대역 / TCP 3001 | 차단 |
 
 실행기 대역은 TCP 8090에서 의도적으로 응답하므로 차단 결과를 실제 실행기의 열린 포트 부재로
-혼동하지 않는다. 모든 경로는 정책 적용 전·제거 후에 연결되어야 하며, 여섯 대상 서버의 loopback
+혼동하지 않는다. 모든 경로는 정책 적용 전·제거 후에 연결되어야 하며, 열 개 대상 서버의 loopback
 응답도 확인한다.
 
-Prefect·결과 서버를 향하는 일곱 경로는 **Pod IP·Service ClusterIP·Service DNS**를 각각 확인한다.
-실행기 ingress와 추가 egress 다섯 경로는 Pod IP로 검사한다. 총 27개 검사에서 허용 10개·차단
-17개가 기대 결과이며, 기존 Pod IP 키에 `__cluster_ip`·`__service_dns` 접미사로 결과를 구분한다.
-Service는 같은 Chart의 selector·포트·이름 있는 `targetPort: http`를 그대로 사용한다. 잘못된 selector,
+Prefect·결과 서버를 향하는 일곱 경로와 정상 Langfuse 대역 경로는
+**Pod IP·Service ClusterIP·Service DNS**를 각각 확인한다. 나머지 아홉 경로는 Pod IP로 검사한다.
+총 33개 검사에서 허용 13개·차단 20개가 기대 결과이며, 기존 Pod IP 키에
+`__cluster_ip`·`__service_dns` 접미사로 결과를 구분한다.
+Prefect·결과 Service는 같은 Chart의 selector·포트·이름 있는 `targetPort: http`를 그대로 사용한다.
+Langfuse 대역 Service는 TCP 3000의 정상 대역만 선택한다. 잘못된 Chart selector,
 외부 IP, 추가 Service, 예상하지 않은 포트·namespace는 리소스 생성 전에 거부한다.
 
 DNS 검사는 각 출발 Pod에서 매번 `서비스.임시-namespace.svc.cluster.local.`의 IPv4 주소를 조회하고,
@@ -540,20 +548,22 @@ DNS 조회 실패·다른 IP 응답은 접근 차단 성공이 아니라 오류�
 계약이며 사용자 정의 클러스터 도메인·IPv6 검증으로 일반화하지 않는다.
 [Kubernetes Service DNS 형식](https://kubernetes.io/docs/concepts/services-networking/dns-pod-service/#services)을 따른다.
 
-정책 전파는 최대 240초의 관찰 구간에서 전체 27개 결과가 세 번 연속 일치해야 통과한다.
+정책 전파는 최대 240초의 관찰 구간에서 전체 33개 결과가 세 번 연속 일치해야 통과한다.
 진행 중인 요청에는 별도의 제한 시간이 있다. 기존 기본 검사의 45초 관찰 구간은 유지한다.
 
 LLMOps CI의 기존 `--evaluation-runtime` 단계에서도 이 모드를 필수 실행한다. Chart 프로파일의
-집행 검증, Service ClusterIP·DNS·실행기의 클러스터 egress 확인과 임시 자원 정리가 모두 성공해야 평가 PVC 복원·런타임 기동 단계로 진행한다. 실패·
+집행 검증, Service ClusterIP·DNS·실행기의 클러스터 및 Langfuse 대역 egress 확인과 임시 자원
+정리가 모두 성공해야 평가 PVC 복원·런타임 기동 단계로 진행한다. 실패·
 불명확·다른 프로파일 결과는 통과시키지 않는다. 보고서는
 `evaluation_kubernetes_runtime.network_policy_probe`에 남긴다. 추가 클러스터를 만들거나 기존
 실행 환경을 중지하지 않고, CI가 소유한 kind 클러스터를 사용한다.
 
-성공 시 `serviceClusterIPVerified=true`, `serviceDnsVerified=true`, `runnerClusterEgressVerified=true`와
+성공 시 `serviceClusterIPVerified=true`, `serviceDnsVerified=true`, `runnerClusterEgressVerified=true`,
+`langfuseClusterEgressVerified=true`와
 `addressModes=[pod_ip, cluster_ip, service_dns]`를 기록한다. Pod IP 검사만 통과한 이전 보고서는 새 CI
-단계의 통과 근거가 아니다. ingress만 검사한 이전 결과도 새 egress 확인을 대신하지 않는다.
-이 결과는 단일 노드 IPv4 합성 Pod·Service·DNS와 위 다섯 egress 경로에 대한 검사다.
-다중 노드·IPv6·애플리케이션 인증·Langfuse 연결 검증과 구분하며
+단계의 통과 근거가 아니다. ingress 또는 Ops·Prefect egress만 검사한 이전 결과도 새 Langfuse
+대역 확인을 대신하지 않는다. 이 결과는 단일 노드 IPv4 합성 Pod·Service·DNS에 대한 검사다.
+다중 노드·IPv6·실제 Langfuse 인증 및 점수 저장·Compose IP egress 검증과 구분하며
 `evaluationRuntimeVerified=false`, `langfuseEgressVerified=false`를 유지한다.
 
 2026-10-08 기존 Pod IP 전용 Chart 모드 실행은 `ENFORCED`였다. 허용 3개·차단 5개 경로가 세 번
@@ -581,6 +591,17 @@ namespace 두 개와 하위 Pod·Service·NetworkPolicy 정리를 확인했다. 
 `work/evaluation-egress-network-20261009.json`에 보관한다. 관련 오프라인 테스트 105개도 통과했다.
 Langfuse에 실제 요청을 보낸 검사는 아니므로 `langfuseEgressVerified=false`를 유지하며,
 이 변경을 포함한 SHA의 전체 CI·실제 평가 실행은 아직 검증 대기다.
+
+2026-10-09 `skn-372` 후속 작업본에서는 Kubernetes Langfuse 대역을 포함한 33개 경로가 실제 개인
+클러스터에서 `ENFORCED`로 통과했다. 적용 전·제거 후 33개 연결, 적용 중 허용 13개·차단 20개의
+세 번 연속 일치와 `langfuseClusterEgressVerified=true`를 확인했다. 정상 Langfuse 대역의 Pod IP·
+ClusterIP·DNS는 연결됐고, 다른 namespace·label·TCP 3001 대역은 차단됐다. 임시 namespace 세 개의
+정리 완료를 별도 조회로 확인했으며, 기존 업무 Argo Application 네 개는 `Synced/Healthy`였다.
+로컬 결과는 Git에서 제외되는 `work/evaluation-langfuse-cluster-network-20261009.json`에 보관한다.
+Linux에서 `test_evaluation_network_probe`, `test_smoke_evaluation_runtime`, `test_evaluation_chart`
+선택 테스트 61개도 통과했다. 실제 Langfuse 인증·점수 저장이나 Compose IP egress 검증은 아니므로
+`langfuseEgressVerified=false`, `evaluationRuntimeVerified=false`, `productionCutover=false`는 유지한다.
+이 후속 변경을 포함한 SHA의 전체 CI·실제 평가 이전은 별도 검증이 필요하다.
 
 ## 평가 Argo 선언 등록
 
