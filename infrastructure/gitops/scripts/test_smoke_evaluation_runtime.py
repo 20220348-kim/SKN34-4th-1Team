@@ -560,6 +560,7 @@ class RuntimeTests(unittest.TestCase):
                     "serviceClusterIPVerified": True,
                     "serviceDnsVerified": True,
                     "runnerClusterEgressVerified": True,
+                    "langfuseClusterEgressVerified": True,
                     "cleanupComplete": True,
                 },
             ) as network_probe,
@@ -671,6 +672,8 @@ class RuntimeTests(unittest.TestCase):
             {"serviceDnsVerified": None},
             {"runnerClusterEgressVerified": False},
             {"runnerClusterEgressVerified": None},
+            {"langfuseClusterEgressVerified": False},
+            {"langfuseClusterEgressVerified": None},
             {"cleanupComplete": False},
         ):
             with self.subTest(change=change):
@@ -682,6 +685,7 @@ class RuntimeTests(unittest.TestCase):
                         "serviceClusterIPVerified": True,
                         "serviceDnsVerified": True,
                         "runnerClusterEgressVerified": True,
+                        "langfuseClusterEgressVerified": True,
                         "cleanupComplete": True,
                         **change,
                     }
