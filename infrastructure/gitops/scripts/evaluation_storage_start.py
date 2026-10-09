@@ -1,4 +1,4 @@
-"""Review or request the first Argo start of Prefect and the artifact server only."""
+"""Review, request or observe the first Argo start of the two storage services."""
 
 import argparse
 import copy
@@ -63,7 +63,7 @@ def transition(root, plan, helm):
     for app in started[1:]:
         if app["spec"]["source"]["helm"]["releaseName"] in COMPONENTS:
             app["metadata"]["annotations"][ANNOTATION] = fingerprint
-    return resources, started, fingerprint, policies
+    return resources, started, fingerprint, policies, rendered
 
 
 def require_observed(actual, expected, uid):
@@ -137,7 +137,7 @@ def request(
         "retainedStorage": verified["observation"]["storage"],
         "restoreReportSha256": report_sha,
     }
-    initial, started, fingerprint, policies = transition(root, bound, helm)
+    initial, started, fingerprint, policies, _ = transition(root, bound, helm)
     for app in initial[1:]:
         observed = verified["observation"]["applications"][app["metadata"]["name"]]
         if observed["specSha256"] != release.digest(release.encoded(app["spec"])):
@@ -441,6 +441,90 @@ def request(
     }
 
 
+def verify_started(
+    root, fork, *, state, restore_report, archive, key_file, langfuse_url, helm="helm"
+):
+    """Read rollout and endpoint evidence twice; never activate the runner or send traffic."""
+    report, report_sha = release.read_restore_report(restore_report)
+    settings = release.fork_cluster.load_settings(state)
+    if (
+        settings["mode"] != "gitops"
+        or settings["repository"].lower() != fork.repository.lower()
+        or settings["branch"] != fork.branch
+    ):
+        raise ValueError(
+            "Storage rollout verification requires the matching GitOps cluster"
+        )
+    kube, _, ak = release.fork_cluster.commands(state, settings)
+    kube, ak = kube + ["--request-timeout=15s"], ak + ["--request-timeout=15s"]
+    release.fork_cluster.verify_context(kube, settings, timeout=15)
+    node = settings["cluster"] + "-control-plane"
+    storage = release.pvc_restore.inspect_retained_storage(kube, node, report)
+    options = {
+        "node": node,
+        "prefect_claim": "prefect",
+        "results_claim": "results",
+        "langfuse_url": langfuse_url,
+        "helm": helm,
+    }
+    plan = release.plan(root, fork, **options)
+    bound = {**plan, "retainedStorage": storage, "restoreReportSha256": report_sha}
+    _, started, fingerprint, _, rendered = transition(root, bound, helm)
+    before = dormant.observe(
+        kube, ak, bound, report, rendered, started_resources=started
+    )
+    if before["storage"] != storage:
+        raise ValueError("Storage identity changed before rollout verification")
+    handoff = dormant.evaluation_secrets.verify_handoff(
+        state, archive, key_file, report, storage
+    )
+    if release.plan(root, fork, **options) != plan:
+        raise ValueError("Storage rollout publication changed")
+    if (
+        dormant.evaluation_secrets.verify_handoff(
+            state, archive, key_file, report, storage
+        )
+        != handoff
+    ):
+        raise ValueError("Storage rollout source or credentials changed")
+    if (
+        release.read_restore_report(restore_report) != (report, report_sha)
+        or release.fork_cluster.load_settings(state) != settings
+    ):
+        raise ValueError("Storage rollout verification inputs changed")
+    release.fork_cluster.verify_context(kube, settings, timeout=15)
+    after = dormant.observe(
+        kube, ak, bound, report, rendered, started_resources=started
+    )
+    if before != after:
+        raise ValueError("Storage rollout resources changed during verification")
+    return {
+        "schema": "evaluation-storage-start-v1",
+        "status": "STORAGE_ROLLOUT_VERIFIED",
+        "sourceSha": plan["sourceSha"],
+        "restoreReportSha256": report_sha,
+        "storageStartSha256": fingerprint,
+        "observation": after,
+        "desiredReplicas": {"prefect": 1, "ops-artifacts": 1, "evaluation-runner": 0},
+        "syncCompleted": True,
+        "storagePodsReady": True,
+        "serviceEndpointsVerified": True,
+        "runnerStopped": True,
+        "sourceQuiescenceVerified": True,
+        "archiveFreshnessVerified": True,
+        "preparedSecretsVerified": True,
+        "sourceHandoff": handoff,
+        "clusterChanged": False,
+        "syncRequested": False,
+        "runtimeVerified": False,
+        "httpTrafficVerified": False,
+        "networkPolicyEnforcementVerified": False,
+        "storageDataReverified": False,
+        "runnerActivationRequested": False,
+        "opsRoutingChanged": False,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("state-dir", "restore-report", "archive", "key-file"):
@@ -448,7 +532,13 @@ def main():
     parser.add_argument("--langfuse-url", required=True)
     parser.add_argument("--helm", default="helm")
     parser.add_argument("--branch")
-    parser.add_argument("--request-start", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--request-start", action="store_true")
+    mode.add_argument(
+        "--verify-started",
+        action="store_true",
+        help="Read Argo rollout, storage Pods and Service endpoints without changing resources",
+    )
     args = parser.parse_args()
     if os.name != "posix":
         parser.error("Run inside WSL/Linux")
@@ -462,7 +552,13 @@ def main():
         root = Path(__file__).resolve().parents[3]
         fork = release.from_origin(root, branch=args.branch).require_personal_publish()
         with release.fork_cluster.locked(args.state_dir):
-            result = request(
+            action = verify_started if args.verify_started else request
+            extra = (
+                {}
+                if args.verify_started
+                else {"start": args.request_start, "progress": progress}
+            )
+            result = action(
                 root,
                 fork,
                 state=args.state_dir,
@@ -471,8 +567,7 @@ def main():
                 key_file=args.key_file,
                 langfuse_url=args.langfuse_url,
                 helm=args.helm,
-                start=args.request_start,
-                progress=progress,
+                **extra,
             )
     except Exception as error:  # noqa: BLE001 - Never export private archive or API diagnostics.
         result = {
