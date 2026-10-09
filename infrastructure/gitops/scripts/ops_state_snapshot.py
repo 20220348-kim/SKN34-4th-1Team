@@ -172,7 +172,10 @@ def volume_helper(image, kind, *, source=None, entries=None, expected=None):
             "--tmpfs=/tmp:rw,noexec,nosuid,size=16m",
         ]
         if source is not None:
-            args += ["--mount", "type=volume,source=" + source + ",target=/source,readonly"]
+            args += [
+                "--mount",
+                "type=volume,source=" + source + ",target=/source,readonly",
+            ]
         else:
             args += ["--tmpfs=/restore:rw,noexec,nosuid,size=192m"]
         args += [
@@ -216,7 +219,8 @@ def volume_helper(image, kind, *, source=None, entries=None, expected=None):
                 expected is not None
                 and (
                     type(result.get("matched_executions")) is not int
-                    or result["matched_executions"] != len(expected)
+                    or result["matched_executions"]
+                    != len(probe.prefect_runs(expected) if kind == "prefect" else expected)
                 )
             )
         ):
@@ -366,7 +370,12 @@ def verify_current_source(state, payload):
 
 
 def verify(
-    archive, key_file, *, completed_links=False, verify_runtime_keys=False, database_login=False
+    archive,
+    key_file,
+    *,
+    completed_links=False,
+    verify_runtime_keys=False,
+    database_login=False,
 ):
     if database_login and not verify_runtime_keys:
         raise ValueError("Database login verification requires runtime key verification")
@@ -423,8 +432,16 @@ def verify(
         "full_backup_verified": False,
         "application_started": False,
         "cross_store_business_links_verified": completed_links,
-        "cross_store_scope": "completed_evaluations" if completed_links else None,
+        "cross_store_scope": (
+            "local_executions_and_shared_review_copies"
+            if expected and any("shared_review_copy" in row for row in expected.values())
+            else ("completed_evaluations" if completed_links else None)
+        ),
         "matched_completed_evaluations": len(expected) if expected is not None else 0,
+        "matched_prefect_executions": len(probe.prefect_runs(expected or {})),
+        "shared_review_copies_verified": sum(
+            "shared_review_copy" in row for row in (expected or {}).values()
+        ),
         "runtime_keys_verified": verify_runtime_keys,
         "runtime_key_checks": key_checks,
         "model_api_calls": 0,

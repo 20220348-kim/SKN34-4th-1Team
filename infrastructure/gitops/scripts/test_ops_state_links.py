@@ -1,6 +1,7 @@
 """Completed evaluation links, including real encrypted MySQL/SQLite/file restore."""
 
 import copy
+import gzip
 import hashlib
 import json
 import os
@@ -9,6 +10,7 @@ import sqlite3
 import tempfile
 import time
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 from uuid import uuid4
@@ -112,6 +114,117 @@ class LinkTests(unittest.TestCase):
             },
         )
         self.assertNotIn("execution_spec", json.dumps(expected))
+
+    def shared_rows(self):
+        seed = json.loads(links.SEED.read_bytes())
+        for item in seed["artifacts"]:
+            source = links.SEED.parent / item["file"]
+            raw = (
+                gzip.decompress(source.read_bytes())
+                if source.suffix == ".gz"
+                else source.read_bytes()
+            )
+            target = self.root / item["path"]
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(raw)
+        rows = []
+        for item in seed["records"]:
+            if item["model"] == "evaluations.evaluationrun":
+                fields = item["fields"]
+                rows.append(
+                    {
+                        **{
+                            key: fields[key]
+                            for key in (
+                                "evaluation_run_id",
+                                "dataset_id",
+                                "execution_mode",
+                                "execution_spec",
+                                "execution_spec_sha256",
+                                "summary",
+                            )
+                        },
+                        "id": item["pk"],
+                        "flow_id": fields["prefect_flow_run_id"],
+                        "requester_username": seed["reviewer"],
+                        "requester_active": 0,
+                    }
+                )
+        return rows, snapshot.files.collect(self.root)
+
+    def test_exact_shared_seed_and_local_history_are_distinguished(self):
+        shared, entries = self.shared_rows()
+        expected = self.evidence([ROW, *shared], entries)
+        self.assertNotIn("shared_review_copy", expected[REQUEST])
+        self.assertEqual(snapshot.probe.prefect_runs(expected), {REQUEST: expected[REQUEST]})
+        for row in shared:
+            proof = expected[row["id"]]["shared_review_copy"]
+            self.assertEqual(
+                proof["seed_sha256"],
+                hashlib.sha256(links.SEED.read_bytes()).hexdigest(),
+            )
+            self.assertGreaterEqual(proof["artifacts_verified"], 6)
+
+    def test_same_ids_from_active_or_different_requester_still_require_prefect(self):
+        shared, entries = self.shared_rows()
+        for change in (
+            {"requester_active": 1},
+            {"requester_username": "local-operator"},
+        ):
+            with self.subTest(change=change):
+                row = shared[0] | change
+                expected = self.evidence([row], entries)
+                self.assertNotIn("shared_review_copy", expected[row["id"]])
+                self.assertEqual(snapshot.probe.prefect_runs(expected), expected)
+
+    def test_shared_identity_or_any_seed_artifact_mismatch_is_rejected(self):
+        shared, entries = self.shared_rows()
+        for change in (
+            {"flow_id": str(uuid4())},
+            {"summary": {}},
+            {"dataset_id": "other"},
+        ):
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                links.shared_review_copy(shared[0] | change, entries)
+        # This file is outside the four normal DB/report linkage checks. Even a
+        # self-consistently rehashed archive must match the reviewed seed bytes.
+        path = self.root / shared[0]["id"] / "evaluation/results.json"
+        path.write_bytes(b'{"changed":true}')
+        with self.assertRaisesRegex(ValueError, "source seed"):
+            self.evidence(shared, snapshot.files.collect(self.root))
+        path.unlink()
+        with self.assertRaises(KeyError):
+            self.evidence(shared, snapshot.files.collect(self.root))
+
+    @unittest.skipUnless(os.name == "posix", "Ownership restoration requires Linux")
+    def test_mixed_shared_copies_preserve_reports_without_fabricating_prefect_history(
+        self,
+    ):
+        shared, entries = self.shared_rows()
+        expected = self.evidence([ROW, *shared], entries)
+        with (
+            tempfile.TemporaryDirectory() as source,
+            tempfile.TemporaryDirectory() as target,
+        ):
+            pref = prefect(Path(source))
+            result = snapshot.files.restore(Path(target), pref, "prefect", expected)
+            self.assertEqual(result["matched_executions"], 1)
+        with tempfile.TemporaryDirectory() as target:
+            result = snapshot.files.restore(Path(target), entries, "results", expected)
+            self.assertEqual(result["matched_executions"], 3)
+        # Removing the real local execution remains a hard failure.
+        with (
+            tempfile.TemporaryDirectory() as source,
+            tempfile.TemporaryDirectory() as target,
+        ):
+            root = Path(source)
+            prefect(root)
+            with closing(sqlite3.connect(root / "prefect.db")) as db, db:
+                db.execute("DELETE FROM flow_run")
+            with self.assertRaisesRegex(ValueError, "not preserved"):
+                snapshot.files.restore(
+                    Path(target), snapshot.files.collect(root), "prefect", expected
+                )
 
     def test_empty_duplicate_unsupported_or_changed_db_evidence_fails(self):
         for rows in (
@@ -265,12 +378,13 @@ class DockerLinkTests(unittest.TestCase):
                 """
 CREATE TABLE django_migrations (id int PRIMARY KEY, name varchar(255)) CHARACTER SET utf8mb4;
 INSERT INTO django_migrations VALUES (1,'0017_input_token_budget');
-CREATE TABLE auth_user (id int PRIMARY KEY, username varchar(255)) CHARACTER SET utf8mb4;
-INSERT INTO auth_user VALUES (1,'합성 사용자');
+CREATE TABLE auth_user (
+ id int PRIMARY KEY, username varchar(255), is_active boolean) CHARACTER SET utf8mb4;
+INSERT INTO auth_user VALUES (1,'합성 사용자',true);
 CREATE TABLE evaluations_evaluationrun (
  id char(32) PRIMARY KEY, prefect_flow_run_id char(32), evaluation_run_id varchar(32),
  dataset_id varchar(64), execution_mode varchar(16), execution_spec json,
- execution_spec_sha256 varchar(64), summary json, status varchar(16));
+ execution_spec_sha256 varchar(64), summary json, status varchar(16), requested_by_id int);
 CREATE TABLE evaluations_evaluationbudgetreservation (id int PRIMARY KEY, closed_at datetime);
 """,
             )
@@ -286,7 +400,7 @@ CREATE TABLE evaluations_evaluationbudgetreservation (id int PRIMARY KEY, closed
                     "execution_spec_sha256",
                     "summary",
                 )
-            ] + ["COMPLETED"]
+            ] + ["COMPLETED", "1"]
             literals = [
                 "_utf8mb4 0x"
                 + (json.dumps(value) if isinstance(value, dict) else value).encode().hex()

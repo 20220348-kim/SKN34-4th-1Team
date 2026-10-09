@@ -397,7 +397,12 @@ def restored_pvcs(kube, node, stores, expected, *, image=None, retain=False):
                 != hashlib.sha256(
                     json.dumps(entries, sort_keys=True).encode()
                 ).hexdigest()
-                or archive.get("matched_executions") != len(expected)
+                or archive.get("matched_executions")
+                != len(
+                    snapshot.probe.prefect_runs(expected)
+                    if kind == "prefect"
+                    else expected
+                )
                 or (kind == "prefect" and archive.get("sqlite_integrity") is not True)
             ):
                 raise ValueError(
@@ -763,6 +768,10 @@ def verify_archive(state, archive, key_file, *, retain=False):
         **result,
         "archive_sha256": hashlib.sha256(raw).hexdigest(),
         "cross_store_business_links_verified": True,
+        "matched_prefect_executions": len(snapshot.probe.prefect_runs(expected)),
+        "shared_review_copies_verified": sum(
+            "shared_review_copy" in row for row in expected.values()
+        ),
     }
 
 

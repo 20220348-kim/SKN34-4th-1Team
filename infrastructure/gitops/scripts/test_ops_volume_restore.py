@@ -171,6 +171,18 @@ class VolumeTests(unittest.TestCase):
         self.assertEqual(result["matched_executions"], 1)
         self.assertGreaterEqual(result["file_count"], 3)
 
+    def test_incomplete_copy_provenance_cannot_skip_prefect_history(self):
+        for proof in (
+            True,
+            {},
+            {"seed_id": "x", "seed_sha256": "a" * 64, "artifacts_verified": True},
+            {"seed_id": "x", "seed_sha256": "wrong", "artifacts_verified": 6},
+        ):
+            with self.subTest(proof=proof), self.assertRaises(ValueError):
+                probe.prefect_runs(
+                    {REQUEST: EXPECTED[REQUEST] | {"shared_review_copy": proof}}
+                )
+
     def test_corrupt_or_missing_sqlite_database_fails(self):
         (self.source / "prefect.db").write_bytes(b"corrupt")
         with self.assertRaises(sqlite3.DatabaseError):
