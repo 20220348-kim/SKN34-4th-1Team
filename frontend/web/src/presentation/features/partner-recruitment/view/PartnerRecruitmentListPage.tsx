@@ -5,7 +5,10 @@ import {
   workspacePageStyles,
   workspaceTagClassName,
 } from '../../../shared/workspace/WorkspacePage.styles'
+import { useAuthSession } from '../../../shared/auth/hooks/useAuthSession'
 import { PartnerManagementHeader } from '../../../shared/partner-recruitment/PartnerManagementHeader'
+import { EmptyState } from '../../../shared/workspace/EmptyState'
+import { PeopleIcon, SearchIcon } from '../../../shared/workspace/EmptyStateIcons'
 import { FilterMultiChoices } from '../../../shared/workspace/FilterMultiChoices'
 import { SelectField } from '../../../shared/workspace/SelectField'
 import {
@@ -121,6 +124,7 @@ export function PartnerRecruitmentListPage() {
     clearNarrowing,
     total,
   } = usePartnerRecruitmentListViewModel()
+  const { hasCompany } = useAuthSession()
 
   return (
     <>
@@ -192,11 +196,16 @@ export function PartnerRecruitmentListPage() {
           ) : phase === 'loading' && recruitments.length === 0 ? (
             <RecruitmentCardSkeleton label="모집글 불러오는 중" text="모집글을 불러오는 중입니다." />
           ) : recruitments.length === 0 ? (
-            <section className={workspacePageStyles.card} aria-label="검색 결과 없음">
-              <p className={workspacePageStyles.emptyNote}>
-                {hasActiveNarrowing ? '조건에 맞는 모집글이 없습니다. 검색어나 필터를 바꾸거나 초기화해 보세요.' : '아직 모집 중인 글이 없습니다. 첫 모집글을 올려 보세요.'}
-              </p>
-            </section>
+            // 다른 작업 화면과 같은 공용 빈 화면입니다. 검색·필터로 비었으면 초기화를, 아예 없으면 첫 모집글 작성을 권합니다.
+            hasActiveNarrowing ? (
+              <EmptyState icon={<SearchIcon />} title="조건에 맞는 모집글이 없어요"
+                description="검색어나 찾는 역할·지역을 바꾸거나 초기화해 보세요."
+                action={{ label: '검색·필터 초기화', onClick: clearNarrowing }} />
+            ) : (
+              <EmptyState icon={<PeopleIcon />} title="아직 모집 중인 글이 없어요"
+                description={hasCompany ? '함께 신청할 기업을 찾고 있다면 첫 모집글을 올려 보세요.' : '기업을 등록하면 모집글을 올려 함께 신청할 기업을 찾을 수 있어요.'}
+                action={hasCompany ? { label: '모집글 작성하기', to: appPaths.partnerNew } : { label: '기업 등록하기', to: appPaths.profile }} />
+            )
           ) : (
             <>
               {/* 조건·페이지를 바꿔 다시 읽는 동안에는 직전 카드를 흐리게 둔 채 새 결과로 바꿉니다. */}

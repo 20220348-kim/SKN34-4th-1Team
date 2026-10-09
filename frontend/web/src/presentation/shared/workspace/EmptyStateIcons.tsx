@@ -32,6 +32,21 @@ export function BookmarkOutlineIcon() {
   return <EmptyStateIcon><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" /></EmptyStateIcon>
 }
 
+/** 함께 신청할 기업을 찾는 파트너 모집글입니다. */
+export function PeopleIcon() {
+  return <EmptyStateIcon><circle cx="9" cy="8" r="3" /><path d="M3 20v-1a5 5 0 0 1 5-5h2a5 5 0 0 1 5 5v1" /><path d="M16 4.5a3 3 0 0 1 0 6" /><path d="M18 14a5 5 0 0 1 3 4.5V20" /></EmptyStateIcon>
+}
+
+/** 내가 올린 모집글(알리기)입니다. */
+export function MegaphoneIcon() {
+  return <EmptyStateIcon><path d="M3 11v2a1 1 0 0 0 1 1h2l5 4V6L6 10H4a1 1 0 0 0-1 1z" /><path d="M15 9a3 3 0 0 1 0 6" /><path d="M18 6a7 7 0 0 1 0 12" /></EmptyStateIcon>
+}
+
+/** 주고받은 참여 제안입니다. */
+export function EnvelopeIcon() {
+  return <EmptyStateIcon><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m3 7 9 6 9-6" /></EmptyStateIcon>
+}
+
 /** 검색어·필터 때문에 결과가 비었을 때입니다. */
 export function SearchIcon() {
   return <EmptyStateIcon><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></EmptyStateIcon>

@@ -5,7 +5,6 @@ function classes(...groups: string[]) {
 // 색상이나 CSS 속성이 아니라 제안함 화면에서 맡는 UI 역할을 이름으로 사용합니다.
 // 화면 통일안 34: 머리글 오른쪽 세그먼트(받은 · 보낸) → 상태 칩 → 행 목록 → 행을 누르면 옆 패널(모바일 아래 시트).
 export const partnerProposalStyles = {
-  lede: 'm-0 -mt-2 text-[0.8125rem] leading-[1.6] text-ink-muted',
   statusChips: 'flex flex-wrap items-center gap-2',
   chipCount: 'ml-1 tabular-nums opacity-80',
   // 기업 미등록 안내는 카드가 아니라 한 줄 info Alert입니다.
