@@ -422,8 +422,47 @@ flowchart TB
 
 - 같은 공고를 다시 수집하면 갱신하며, 성공적으로 수집한 제공처 범위에서만 누락 공고를 비활성화합니다.
 - 수집·응답 검증·색인 준비가 실패하면 기존 공개 자료를 유지합니다.
-- **Elasticsearch**는 한국어 키워드 후보, **Qdrant**는 의미 기반 후보와 공고별 근거 청크 검색을 담당합니다.
-- 사용자 검색에서는 두 후보 순위를 **RRF**로 결합합니다. RRF는 각 검색의 순위를 합쳐 후보를 정하는 방식입니다.
+
+### 사용자 검색과 최종 데이터 구성
+
+**화면에 표시할 공고 내용은 Core MySQL에서 읽고, Elasticsearch·Qdrant는 관련 공고를 고르는 데 사용합니다.**
+검색어가 들어오면 `core-service`가 검색 가능한 현재 공고를 먼저 읽어 메모리에 보관하고,
+‘접수 중만 보기’ 조건을 적용한 뒤 키워드 검색과 의미 검색을 차례로 실행합니다.
+
+```mermaid
+flowchart TB
+    subgraph CandidateSearch["1. 공고 조회·후보 검색"]
+        direction LR
+        Read["core-service<br/>Core MySQL 공고 조회<br/>검색 대상·접수 상태 확인"] --> Keyword["Elasticsearch<br/>키워드 검색<br/>공고 ID·순위 반환"]
+        Keyword --> Semantic["ai-service → Qdrant<br/>의미 검색<br/>공고 ID·순위 반환"]
+    end
+    subgraph ResultAssembly["2. 후보 결합·평가·최종 응답"]
+        direction LR
+        Merge["core-service<br/>RRF 결합 · 최대 20건<br/>읽어 둔 공고와 ID로 연결"] --> Rank["ai-service → OpenAI<br/>관련도·자격 조건 평가<br/>최대 5건 추천"]
+        Rank --> Response["core-service → 웹·앱<br/>공고 정보 + 추천 점수<br/>추천 이유·자격 검토"]
+    end
+    CandidateSearch --> ResultAssembly
+    classDef step fill:#e7f5eb,stroke:#92bda6,color:#183d32
+    classDef boundary fill:#e8f3fa,stroke:#91b9cd,color:#183d32
+    class Read,Merge,Rank step
+    class Keyword,Semantic,Response boundary
+```
+
+두 검색의 결과는 **제공처 코드 + 원본 ID**로 연결합니다. 예를 들어 `BIZINFO:123`이 양쪽 검색에 나오면
+하나의 후보로 합치고, **RRF**로 두 검색의 순위를 결합합니다. 선택한 ID에 해당하는 공고 내용은
+처음 읽어 둔 MySQL 데이터에서 찾아 AI 평가에 전달하므로, 검색 후 공고마다 DB를 다시 조회하지 않습니다.
+두 색인 모두 현재 MySQL 공고의 ID·내용 버전을 기준으로 검색 범위를 제한하고 결과를 검증합니다.
+
+| 최종 응답에 포함되는 내용 | 데이터 출처 |
+|---|---|
+| 제목·기관·설명·지원 대상·신청 기간·신청 경로·원문 링크 | Core MySQL에서 읽어 둔 공고 정보 |
+| 접수 상태 | 저장된 신청 기간과 서울 기준 현재 날짜로 계산 |
+| 추천 점수·추천 이유·자격 검토 결과 | 후보 공고에 대한 이번 검색의 AI 평가 결과를 `core-service`가 검증해 추가 |
+
+사용자 검색은 미리 동기화된 **Core MySQL**을 사용하며 Catalog MySQL을 직접 조회하지 않습니다.
+최종 추천은 최대 5건으로, 기준에 맞는 공고가 없으면 더 적거나 0건일 수 있습니다. 비로그인 사용자에게는 최대 2건을 먼저 표시합니다.
+검색어가 없으면 키워드·의미 검색과 AI 평가를 생략하고, MySQL 공고를 최신순으로 최대 5건 반환합니다.
+상세 공고 질문에서 원문 청크를 찾는 Qdrant 검색은 아래 [근거 기반 답변 흐름](#공고-상세의-근거-기반-답변rag)에서 별도로 설명합니다.
 
 [Catalog 구현·계약](backend/catalog-service/README.md) · [서비스 분리 설명](docs/catalog-service-extraction.md) ·
 [한국어 키워드 검색](docs/elasticsearch-lexical-search.md)
