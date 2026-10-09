@@ -3,6 +3,7 @@ import { ChatConversationUseCase } from '../../domain/usecases/ChatConversationU
 import { ApplicationPreparationUseCase } from '../../domain/usecases/ApplicationPreparationUseCase'
 import { DailyReportUseCase } from '../../domain/usecases/DailyReportUseCase'
 import { NotificationSettingsUseCase } from '@govbiz/shared/domain/usecases/NotificationSettingsUseCase'
+import { PlanUsageUseCase } from '@govbiz/shared/domain/usecases/PlanUsageUseCase'
 import { reviewRequestJournal } from '../../data/storage/reviewRequestJournal'
 import { asValue } from 'awilix/browser'
 import { asFunction } from 'awilix/browser'
@@ -85,6 +86,7 @@ export function registerUseCases(container: AppContainer) {
     notificationSettingsUseCase: asFunction(
       ({ notificationSettingsRepository }: Pick<AppCradle, 'notificationSettingsRepository'>) => new NotificationSettingsUseCase(notificationSettingsRepository),
     ).singleton(),
+    planUsageUseCase: asFunction(({ planUsageRepository }: Pick<AppCradle, 'planUsageRepository'>) => new PlanUsageUseCase(planUsageRepository)).singleton(),
     reviewRequestJournal: asValue(reviewRequestJournal),
     combinationReviewUseCase: asFunction(({ combinationReviewRepository }: Pick<AppCradle, 'combinationReviewRepository'>) => new CombinationReviewUseCase(combinationReviewRepository)).singleton(),
     browseSupportProgramsUseCase: asFunction(

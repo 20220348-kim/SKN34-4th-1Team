@@ -121,6 +121,19 @@ V20에 맞추고 미적용 대화용 V19를 한 번만 out-of-order로 적용하
 | `GET /api/v1/me/notification-settings` | 본인 마감 알림 설정(`enabled`, `email`, `push`), 알림 일수 `reminderDaysBefore`(`[7,3,1]`)와 수신 주소 확인·발송 가능·기기 등록·스케줄러 상태. no-store |
 | `PUT /api/v1/me/notification-settings` | `{deadlineReminder: {enabled, email, push}}` 저장(예전 `daysBefore`는 무시). 필드 누락·채널 없음 400, 수신 주소 미확인 409, 발송 미설정 503 |
 
+## 요금제 사용량 한도
+
+`ai.govbiz.core.planusage`는 계정의 현재 요금제(FREE·PLUS·PREMIUM)를 알려 줍니다. 결제 연동 전이라 모든 회원은 FREE에서 시작하고,
+V54 `account_plan`에 운영자가 배정한 계정만 PLUS·PREMIUM입니다(테스트 계정 예:
+`INSERT INTO account_plan (account_id, plan_code, assigned_at) VALUES (?, 'PREMIUM', NOW(6))`). 행을 지우면 FREE로 돌아갑니다.
+기능별 사용량 한도는 아직 적용하지 않습니다. 판단 근거와 다음 단계는 [요금제 사용량 한도](../../docs/plan-usage-limits.md)를 참고하세요.
+
+| 요금제 API | 동작 |
+|---|---|
+| `GET /api/v1/plan-usage` | 현재 요금제 `{ "plan": "FREE" \| "PLUS" \| "PREMIUM" }`. 로그인 전에는 `plan: null`. no-store |
+
+호출 흐름: `PlanUsageController → PlanUsageService → PlanUsageRepository → MyBatis Mapper → XML → MySQL`입니다.
+
 ## 실행
 
 기업 맞춤 리포트는 `ai.govbiz.core.dailyreport`에서 저장된 기업 조건·지원 목적을 기존 검색과 HTML 근거 답변에
@@ -432,6 +445,7 @@ Controller의 `SupportProgramRequestAdmissionService.execute`가 공개 요청 �
 | `POST /api/v1/assistant/messages` | 도우미 자유 질문 한 건의 의도 분류·답변. 비로그인 허용, 세션이 있으면 관심 공고함·받은 제안함·기업 상태로 답함. 프런트 `VITE_ASSISTANT_AI_ENABLED=true`일 때만 호출됨 |
 | `GET /api/v1/support-programs/detail` | 제공처 코드와 원본 ID로 현재 공고 상세 조회. `sourceUrl`은 공고 상세, `applicationRoute`는 공식 신청방법·URL·경로 분류, `contact`(담당 부서·제공처 원문 전화번호·문의처 원문, 없으면 null)·`preferenceDescription`·`supervisingInstitutionType`은 공식 API 값을 반환 |
 | `POST /api/v1/support-programs/detail/answers` | 특정 공고의 공식 원문 근거 질문·답변 |
+| `GET /api/v1/plan-usage` | 현재 요금제. 로그인 전에는 `plan: null` |
 | `GET /api/v1/support-programs/detail/attachments` | 공고 원문이 직접 연결한 첨부 목록(이미지 제외, 최대 30개). 원본 주소 없이 `index`·`fileName`·`extension`만 반환하고, 원문에서 읽은 목록은 Redis에 6시간 보관. 원문을 읽지 못하면 503 `SUPPORT_PROGRAM_ATTACHMENTS_UNAVAILABLE` |
 | `GET /api/v1/support-programs/detail/attachments/download` | 목록의 `index` 첨부를 Core가 원본에서 받아 그대로 흘려보냄. 화면에서 읽은 이름을 UTF-8 `filename*`로 다시 붙이고 항상 `application/octet-stream`. 100MB 초과는 413 `SUPPORT_PROGRAM_ATTACHMENT_TOO_LARGE`, 목록에 없는 순번은 404 `SUPPORT_PROGRAM_ATTACHMENT_NOT_FOUND` |
 | `POST /api/v1/sample-items/prepare` | 계층 연결 학습용 예제 |
@@ -922,6 +936,14 @@ partner/
 ├── repository            # 모집글·제안 저장, 기업·계정·공고 조인 조회, 검색·필터·정렬·페이지, 제안 수
 │   └── mapper            # MyBatis Mapper, DbRow
 └── domain                # 모집글·제안·역할 업무 모델, 조회 시점 모집·제안 상태 계산
+planusage/
+├── controller            # 현재 요금제 조회 HTTP 진입점
+│   └── dto               # 공개 응답 계약
+├── service               # 계정의 현재 요금제 조회
+│   └── dto               # 요금제 결과
+├── repository            # 요금제 배정 행(MySQL) 조회, 없으면 FREE
+│   └── mapper            # MyBatis Mapper
+└── domain                # 요금제 종류
 _health                    # Core API Health
 _health_ai_service         # AI Service Health의 Controller → Service → Client
 _sampleitem                # 학습 예제

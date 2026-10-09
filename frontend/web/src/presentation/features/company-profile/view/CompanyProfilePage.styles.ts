@@ -40,6 +40,8 @@ export const companyProfileStyles = {
   reminderOptions: 'flex flex-col gap-[0.65rem] border-t border-line pt-3',
   reminderChannel: 'flex items-start gap-2 text-[0.8rem] [&>input]:mt-[0.2rem]',
   reminderNote: 'm-0 text-[0.74rem] leading-[1.5] text-ink-muted',
+  // 요금제 카드의 결제·요금제 안내 한 줄입니다.
+  planNote: 'm-0 text-[0.74rem] leading-[1.5] text-ink-muted',
   choiceColumns: 'grid grid-cols-1 gap-4 @min-[32rem]/column:grid-cols-2',
   choiceGroup: 'flex flex-col gap-2',
   choiceLabel: 'text-[0.78rem] font-bold text-ink-muted',

@@ -11,6 +11,8 @@ import { GetSupportProgramDetailUseCase } from '../domain/usecases/GetSupportPro
 import { GetSupportProgramSearchReadinessUseCase } from '../domain/usecases/GetSupportProgramSearchReadinessUseCase'
 import { PrepareSampleItemUseCase } from '../domain/usecases/PrepareSampleItemUseCase'
 import { SearchSupportProgramsUseCase } from '../domain/usecases/SearchSupportProgramsUseCase'
+import { PlanUsageUseCase } from '@govbiz/shared/domain/usecases/PlanUsageUseCase'
+import { PlanUsageRepositoryImpl } from '../data/repositories/PlanUsageRepositoryImpl'
 import { appContainer } from './appContainer'
 import { createAppContainer } from './di/container'
 
@@ -78,6 +80,15 @@ describe('Awilix application container and Service Locator', () => {
     expect(first.resolve('searchSupportProgramsUseCase')).not.toBe(
       second.resolve('searchSupportProgramsUseCase'),
     )
+  })
+
+  it('wires the plan usage use case to the Core repository as an application singleton', () => {
+    const container = createAppContainer()
+    const useCase = container.resolve('planUsageUseCase')
+
+    expect(useCase).toBeInstanceOf(PlanUsageUseCase)
+    expect(container.resolve('planUsageUseCase')).toBe(useCase)
+    expect(container.resolve('planUsageRepository')).toBeInstanceOf(PlanUsageRepositoryImpl)
   })
 
   it('injects a repository override into the real search use case', async () => {
