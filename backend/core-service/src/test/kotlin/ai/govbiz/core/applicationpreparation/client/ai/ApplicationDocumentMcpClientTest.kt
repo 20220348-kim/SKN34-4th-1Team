@@ -93,4 +93,52 @@ class ApplicationDocumentMcpClientTest {
         assertFalse(error.message!!.contains("private upstream"))
         server.verify()
     }
+
+    private val configurationPath = "http://ai.test/internal/v1/application-preparations/document/configuration"
+    private val generatePath = "http://ai.test/internal/v1/application-preparations/document/generate"
+
+    @Test fun unreachableConfigurationIsARetryableFailureNotAnUnknownOutcome() {
+        server.expect(requestTo(configurationPath)).andRespond { throw java.net.ConnectException("Connection refused") }
+        val error = assertThrows(ApplicationDocumentMcpException::class.java) { client.configuration() }
+        assertEquals("APPLICATION_DOCUMENT_MCP_UNAVAILABLE", error.code)
+        server.verify()
+    }
+
+    @Test fun configurationServerErrorIsARetryableFailure() {
+        server.expect(requestTo(configurationPath)).andRespond(withServerError())
+        val error = assertThrows(ApplicationDocumentMcpException::class.java) { client.configuration() }
+        assertEquals("APPLICATION_DOCUMENT_MCP_UNAVAILABLE", error.code)
+        server.verify()
+    }
+
+    @Test fun configurationContractMismatchIsNotReady() {
+        server.expect(requestTo(configurationPath)).andRespond(withSuccess(
+            """{"contractVersion":"application-document-mcp-v0","pipelineVersion":"${"b".repeat(64)}","engineVersions":{}}""",
+            MediaType.APPLICATION_JSON))
+        val error = assertThrows(ApplicationDocumentMcpException::class.java) { client.configuration() }
+        assertEquals("APPLICATION_DOCUMENT_MCP_NOT_READY", error.code)
+        server.verify()
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = ["connect", "connect-timeout", "unknown-host"])
+    fun generationThatNeverReachedTheServiceIsRetryable(kind: String) {
+        server.expect(requestTo(generatePath)).andRespond {
+            throw when (kind) {
+                "connect" -> java.net.ConnectException("Connection refused")
+                "connect-timeout" -> java.net.http.HttpConnectTimeoutException("HTTP connect timed out")
+                else -> java.net.UnknownHostException("ai-service")
+            }
+        }
+        val error = assertThrows(ApplicationDocumentMcpException::class.java) { client.generate(request()) }
+        assertEquals("APPLICATION_DOCUMENT_MCP_UNAVAILABLE", error.code)
+        server.verify()
+    }
+
+    @Test fun responseTimeoutAfterSendingRemainsUnknownOutcome() {
+        server.expect(requestTo(generatePath)).andRespond { throw java.net.http.HttpTimeoutException("request timed out") }
+        val error = assertThrows(ApplicationDocumentMcpException::class.java) { client.generate(request()) }
+        assertEquals("APPLICATION_DOCUMENT_OUTCOME_UNKNOWN", error.code)
+        server.verify()
+    }
 }

@@ -8,6 +8,10 @@ import org.springframework.http.MediaType
 import org.springframework.stereotype.Component
 import org.springframework.web.client.RestClient
 import tools.jackson.databind.ObjectMapper
+import java.net.ConnectException
+import java.net.UnknownHostException
+import java.net.http.HttpConnectTimeoutException
+import java.nio.channels.UnresolvedAddressException
 
 @Component
 class ApplicationDocumentMcpClient(
@@ -15,10 +19,12 @@ class ApplicationDocumentMcpClient(
     @param:Value("\${DOCUMENT_INTERNAL_TOKEN:}") private val token: String,
     private val json: ObjectMapper,
 ) {
-    fun configuration(): AiDocumentConfigurationPayload = call {
+    /** 부작용 없는 설정 조회라 어떤 실패든 결과 불명이 아닙니다. 연결 실패는 다시 시도할 수 있는 일시 오류로 둡니다. */
+    fun configuration(): AiDocumentConfigurationPayload = call(readOnly = true) {
         client.get().uri("/internal/v1/application-preparations/document/configuration").retrieve()
             .body(AiDocumentConfigurationPayload::class.java)!!.also {
-                require(it.contractVersion == "application-document-mcp-v1" && Regex("[a-f0-9]{64}").matches(it.pipelineVersion))
+                if (it.contractVersion != "application-document-mcp-v1" || !Regex("[a-f0-9]{64}").matches(it.pipelineVersion))
+                    throw ApplicationDocumentMcpException("APPLICATION_DOCUMENT_MCP_NOT_READY", "문서 편집 실행 환경의 계약 버전을 확인하지 못했습니다.")
             }
     }
 
@@ -40,9 +46,17 @@ class ApplicationDocumentMcpClient(
             })
     }
 
-    private fun <T> call(block: () -> T): T = try { block() }
+    // 요청을 보내기 전에 끝난 실패와 설정 조회 실패는 유료 작업이 시작되지 않았으므로 결과 불명으로 두지 않습니다.
+    // 결과 불명은 작성본을 오래 잠그므로 요청 본문을 보낸 뒤의 실패에만 씁니다.
+    private fun <T> call(readOnly: Boolean = false, block: () -> T): T = try { block() }
     catch (error: ApplicationDocumentMcpException) { throw error }
     catch (error: Exception) {
+        if (readOnly || error.failedBeforeSending()) throw ApplicationDocumentMcpException("APPLICATION_DOCUMENT_MCP_UNAVAILABLE",
+            "문서 편집 서비스에 연결하지 못했습니다. 잠시 후 다시 시도해 주세요.", error)
         throw ApplicationDocumentMcpException("APPLICATION_DOCUMENT_OUTCOME_UNKNOWN", "문서 작업 결과를 확인하지 못했습니다. 관리자 확인 후 다시 시도해 주세요.", error)
+    }
+
+    private fun Throwable.failedBeforeSending(): Boolean = generateSequence(this) { it.cause }.any {
+        it is HttpConnectTimeoutException || it is ConnectException || it is UnknownHostException || it is UnresolvedAddressException
     }
 }
