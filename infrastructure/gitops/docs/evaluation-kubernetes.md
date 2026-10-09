@@ -843,7 +843,7 @@ python3 -B infrastructure/gitops/scripts/evaluation_release.py \
 ## replica 0 동기화 완료 확인
 
 요청 접수 이후에는 아래 읽기 전용 명령으로 Argo 적용 완료와 현재 리소스를 확인한다.
-클러스터 상태를 바꾸거나 refresh·sync·scale을 요청하지 않으며 Secret 값을 읽지 않는다.
+클러스터 상태를 바꾸거나 refresh·sync·scale을 요청하지 않는다. 기본 조회는 Secret 값을 읽지 않는다.
 
 ```bash
 python3 -B infrastructure/gitops/scripts/evaluation_dormant_status.py \
@@ -879,6 +879,45 @@ python3 -B infrastructure/gitops/scripts/evaluation_dormant_status.py \
 `networkPolicyEnforcementVerified`는 계속 false다. 서비스 기동 전에는 원본 writer 중지·백업 최신성,
 Secret 인증, egress를 포함한 접근 통제와 Ops 전환을 별도로 검증해야 한다.
 오류는 종료 코드 1과 `BLOCKED`로 반환하며 동기화를 재요청하거나 기존 자원을 정리하지 않는다.
+
+### 동기화 후 원본 최신성과 준비된 인증값 재검증
+
+같은 명령에 `--archive`와 `--key-file`을 함께 지정하면 WSL/Linux에서 보존 복원에 사용한
+암호화 백업과 **현재 중지된 원본**, 이미 준비된 두 Secret을 다시 대조한다. 먼저 replica 0·Pod 부재와
+Argo·PVC 소유권 검사를 통과해야 하며, 이 경로도 서비스를 중지·기동하거나 Secret을 생성하지 않는다.
+
+```bash
+python3 -B infrastructure/gitops/scripts/evaluation_dormant_status.py \
+  --state-dir infrastructure/gitops/.local/fork \
+  --restore-report /private-backups/evaluation-retained.json \
+  --langfuse-url "$LANGFUSE_URL" \
+  --archive /private-backups/ops-state.enc \
+  --key-file /private-backups/ops-state.key \
+  > /private-backups/evaluation-dormant-handoff-status.json
+```
+
+검사 흐름은 `Argo·replica 0 조회 → 백업 인증·원본 DB/볼륨/중지 상태·기존 Secret 검증 →
+동일 SHA CI·발행 재검증 → 원본·Secret 재검증 → Argo·Pod 부재 재조회`다.
+
+- 백업 해시·개인 state·Compose 프로젝트가 복원 보고서 및 현재 연결과 같아야 한다.
+  기존 원본 최신성 검사로 Ops DB 덤프·테이블 개수, Prefect·결과 파일과 runtime key를 대조한다.
+  접수·writer가 재개됐거나 데이터가 달라졌으면 실패한다. 파일 비교에는 원본 볼륨을 읽기 전용으로
+  마운트하는 임시 Docker helper를 사용하며, 원본 서비스·데이터와 Kubernetes는 수정하지 않는다.
+- 현재 Ops 토큰·참조와 기존 runner 인증값을 `llmops-artifacts`·`llmops-runner`에 대조한다.
+  두 Secret이 모두 존재하고 immutable·namespace UID·백업 해시·state 연결까지 일치해야 한다.
+  누락·교체·값 변경은 자동 복구하지 않는다. 기존 Langfuse 프로젝트 인증도 다시 확인한다.
+- Secret 값과 평문 SQL은 출력하지 않는다. 결과의 `sourceHandoff`에는 백업 해시·리소스 식별자와
+  인증 결과만 남긴다. 두 검사 사이에 식별자·인증 상태·발행·설정·복원 보고서·workload가 바뀌면 실패한다.
+  로컬 state 잠금은 다른 운영자의 클러스터 변경을 막지 못한다.
+- 성공 시에만 `archiveFreshnessVerified`, `sourceQuiescenceVerified`, `preparedSecretsVerified`가 true다.
+  관찰 범위는 `sourceVerificationScope=before_and_after_dormant_verification`이며 이후 변경을 보장하지 않는다.
+  기본 조회는 이 세 값을 false로 유지한다. 실패 시 전체 결과는 `BLOCKED`다.
+- 보존 **대상 PVC 내부 데이터** 재검사·실제 Kubernetes 인증 경로·NetworkPolicy 집행·서비스 기동·
+  Ops URL 전환은 포함하지 않는다. `storageDataReverified`, `networkPolicyEnforcementVerified`,
+  `runtimeVerified`, `activationAuthorized`는 계속 false다. 이 결과만으로 전환 완료를 선언하지 않는다.
+
+관련 오프라인 테스트는 기존 Infra CI의 `test_*.py` 검색에 포함된다. 실제 개인 환경에서는 최신 SHA의
+필수 CI·공개 발행과 최신 백업·보존 PVC·Secret·replica 0 동기화를 완료한 뒤 이 추가 검사를 수행한다.
 
 ## 격리 Kubernetes에서 실제 평가 실행 검증
 

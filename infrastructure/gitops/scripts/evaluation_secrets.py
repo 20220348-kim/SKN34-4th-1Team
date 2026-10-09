@@ -125,6 +125,8 @@ def live_credentials(kube, settings, source, keys):
 
 
 def require_secret(actual, expected):
+    if actual is None:
+        raise ValueError("Required evaluation Secret is missing")
     meta, wanted = actual.get("metadata", {}), expected["metadata"]
     if (
         actual.get("apiVersion") != "v1"
@@ -155,16 +157,8 @@ def require_secret(actual, expected):
     }
 
 
-def prepare(state, archive, key_file, restore_report, *, create=False, progress):
-    settings = fork_cluster.load_settings(state)
-    if settings["mode"] != "gitops":
-        raise ValueError("Use the existing personal GitOps environment")
-    connection = ops_runtime.read_connection(Path(state) / ops_runtime.BRIDGE, settings)
-    with Path(restore_report).open("rb") as stream:
-        raw_report = stream.read(65537)
-    if len(raw_report) > 65536:
-        raise ValueError("Retained report is too large")
-    report = json.loads(raw_report)
+def bound_archive(settings, connection, archive, key_file, report):
+    """Authenticate the same archive for initial preparation and dormant rechecks."""
     raw = snapshot.database.read_archive(archive)
     archive_hash = hashlib.sha256(raw).hexdigest()
     if (
@@ -187,17 +181,17 @@ def prepare(state, archive, key_file, restore_report, *, create=False, progress)
         }.items()
     ):
         raise ValueError("Archive belongs to another source environment")
-    kube, _, _ = fork_cluster.commands(state, settings)
-    node = settings["cluster"] + "-control-plane"
-    fork_cluster.verify_context(kube, settings, timeout=15)
-    retained = pvc.inspect_retained(kube, node, report)
-    current = live_credentials(kube, settings, source, keys)
+    return payload, archive_hash, keys, source
+
+
+def secret_resources(settings, retained, archive_hash, keys, current):
+    """The same four credentials and immutable ownership apply before and after sync."""
     annotations = {
         "ai.govbiz/evaluation-namespace-uid": retained["namespace_uid"],
         "ai.govbiz/evaluation-archive-sha256": archive_hash,
         "ai.govbiz/evaluation-state-id": settings["stateId"],
     }
-    resources = [
+    return [
         {
             "apiVersion": "v1",
             "kind": "Secret",
@@ -224,6 +218,88 @@ def prepare(state, archive, key_file, restore_report, *, create=False, progress)
             ),
         )
     ]
+
+
+def verify_handoff(state, archive, key_file, report, retained):
+    """Recheck frozen source and existing credentials; caller checks dormant workloads."""
+    settings = fork_cluster.load_settings(state)
+    if settings["mode"] != "gitops":
+        raise ValueError("Use the existing personal GitOps environment")
+    connection = ops_runtime.read_connection(Path(state) / ops_runtime.BRIDGE, settings)
+    payload, archive_hash, keys, source = bound_archive(
+        settings, connection, archive, key_file, report
+    )
+    snapshot.verify_current_source(state, payload)
+    kube, _, _ = fork_cluster.commands(state, settings)
+    kube = kube + ["--request-timeout=15s"]
+    node = settings["cluster"] + "-control-plane"
+    fork_cluster.verify_context(kube, settings, timeout=15)
+    if pvc.inspect_retained_storage(kube, node, report) != retained:
+        raise ValueError("Retained storage changed before credential verification")
+    current = live_credentials(kube, settings, source, keys)
+    resources = secret_resources(settings, retained, archive_hash, keys, current)
+
+    def identities():
+        return [
+            require_secret(
+                pvc.run(
+                    kube
+                    + [
+                        "-n",
+                        NAMESPACE,
+                        "get",
+                        "secret",
+                        row["metadata"]["name"],
+                        "-o",
+                        "json",
+                    ]
+                ),
+                row,
+            )
+            for row in resources
+        ]
+
+    found = identities()  # Both Secrets must exist; this path never creates them.
+    authentication = evaluation_langfuse.verify(
+        source["compose_project"], current["credentials"]
+    )
+    if (
+        fork_cluster.load_settings(state) != settings
+        or ops_runtime.read_connection(Path(state) / ops_runtime.BRIDGE, settings)
+        != connection
+        or pvc.inspect_retained_storage(kube, node, report) != retained
+        or live_credentials(kube, settings, source, keys) != current
+        or identities() != found
+    ):
+        raise ValueError("Evaluation handoff source or credentials changed")
+    return {
+        "archiveSha256": archive_hash,
+        "namespaceUid": retained["namespace_uid"],
+        "sourceIdentity": current["sourceIdentity"],
+        "secretIdentities": found,
+        "langfuseAuthentication": authentication,
+    }
+
+
+def prepare(state, archive, key_file, restore_report, *, create=False, progress):
+    settings = fork_cluster.load_settings(state)
+    if settings["mode"] != "gitops":
+        raise ValueError("Use the existing personal GitOps environment")
+    connection = ops_runtime.read_connection(Path(state) / ops_runtime.BRIDGE, settings)
+    with Path(restore_report).open("rb") as stream:
+        raw_report = stream.read(65537)
+    if len(raw_report) > 65536:
+        raise ValueError("Retained report is too large")
+    report = json.loads(raw_report)
+    _, archive_hash, keys, source = bound_archive(
+        settings, connection, archive, key_file, report
+    )
+    kube, _, _ = fork_cluster.commands(state, settings)
+    node = settings["cluster"] + "-control-plane"
+    fork_cluster.verify_context(kube, settings, timeout=15)
+    retained = pvc.inspect_retained(kube, node, report)
+    current = live_credentials(kube, settings, source, keys)
+    resources = secret_resources(settings, retained, archive_hash, keys, current)
     ek = kube + ["-n", NAMESPACE]
 
     def recheck():

@@ -380,6 +380,117 @@ class EvaluationSecretTests(unittest.TestCase):
             self.assertEqual(len(self.writes()), 1)
             self.assertEqual(len(self.objects), 1)
 
+    def handoff_fixture(self):
+        self.prepare(create=True)
+        self.calls.clear()
+        self.inspect.reset_mock()
+        self.frozen = self.enterContext(
+            patch.object(prepare.snapshot, "verify_current_source")
+        )
+        self.storage_check = self.enterContext(
+            patch.object(
+                prepare.pvc, "inspect_retained_storage", return_value=self.retained
+            )
+        )
+
+    def verify_handoff(self):
+        return prepare.verify_handoff(
+            self.root, "archive", "key", self.report, self.retained
+        )
+
+    def test_dormant_handoff_checks_existing_secrets_without_empty_namespace_or_writes(
+        self,
+    ):
+        self.handoff_fixture()
+        result = self.verify_handoff()
+        self.frozen.assert_called_once_with(self.root, self.payload)
+        self.inspect.assert_not_called()
+        self.assertEqual(self.storage_check.call_count, 2)
+        self.assertEqual(self.writes(), [])
+        self.assertEqual(len(result["secretIdentities"]), 2)
+        self.assertEqual(result["archiveSha256"], self.report["archive_sha256"])
+        for value in [*self.keys["keys"].values(), *self.env.values()]:
+            self.assertNotIn(value, json.dumps(result))
+            self.assertNotIn(
+                base64.b64encode(value.encode()).decode(), json.dumps(result)
+            )
+
+    def test_dormant_handoff_rejects_resumed_writer_or_stale_archive_before_secrets(
+        self,
+    ):
+        self.handoff_fixture()
+        self.frozen.side_effect = ValueError("source writer resumed or data changed")
+        with self.assertRaises(ValueError):
+            self.verify_handoff()
+        self.assertEqual(self.calls, [])
+        self.storage_check.assert_not_called()
+
+    def test_dormant_handoff_never_repairs_missing_changed_or_foreign_secrets(self):
+        self.handoff_fixture()
+        original = copy.deepcopy(self.objects)
+        for defect in ("missing", "token", "namespace", "archive", "mutable"):
+            self.objects = copy.deepcopy(original)
+            secret = self.objects["llmops-runner"]
+            if defect == "missing":
+                self.objects.pop("llmops-runner")
+            elif defect == "token":
+                secret["data"]["LANGFUSE_SECRET_KEY"] = "different"
+            elif defect == "namespace":
+                secret["metadata"]["annotations"][
+                    "ai.govbiz/evaluation-namespace-uid"
+                ] = "other"
+            elif defect == "archive":
+                secret["metadata"]["annotations"][
+                    "ai.govbiz/evaluation-archive-sha256"
+                ] = "0" * 64
+            else:
+                secret["immutable"] = False
+            with self.subTest(defect=defect), self.assertRaises(ValueError):
+                self.verify_handoff()
+            self.assertEqual(self.writes(), [])
+
+    def test_dormant_handoff_rejects_secret_replacement_during_authentication(self):
+        self.handoff_fixture()
+
+        def replace(*args):
+            self.objects["llmops-artifacts"]["metadata"]["uid"] = "replaced"
+            return {"status": "VERIFIED"}
+
+        self.authentication.side_effect = replace
+        with self.assertRaisesRegex(ValueError, "changed"):
+            self.verify_handoff()
+        self.assertEqual(self.writes(), [])
+
+    def test_dormant_handoff_rejects_wrong_archive_before_frozen_source_check(self):
+        self.handoff_fixture()
+        self.reader.return_value = b"another encrypted archive"
+        with self.assertRaisesRegex(ValueError, "another archive"):
+            self.verify_handoff()
+        self.frozen.assert_not_called()
+        self.assertEqual(self.calls, [])
+
+    def test_dormant_handoff_rejects_source_credentials_storage_and_authentication_changes(
+        self,
+    ):
+        self.handoff_fixture()
+        for defect in ("source", "storage", "authentication"):
+
+            def mutate(*args, defect=defect):
+                if defect == "source":
+                    self.ops["metadata"]["resourceVersion"] = "changed"
+                elif defect == "storage":
+                    self.storage_check.return_value = {"namespace_uid": "other"}
+                else:
+                    raise ValueError("private authentication error")
+                return {"status": "VERIFIED"}
+
+            self.ops["metadata"]["resourceVersion"] = "1"
+            self.storage_check.return_value = self.retained
+            self.authentication.side_effect = mutate
+            with self.subTest(defect=defect), self.assertRaises(ValueError):
+                self.verify_handoff()
+            self.assertEqual(self.writes(), [])
+
     @unittest.skipUnless(os.name == "posix", "Encrypted archive CLI is WSL/Linux only")
     def test_cli_uncertain_mutation_redacts_all_private_error_text(self):
         output = io.StringIO()

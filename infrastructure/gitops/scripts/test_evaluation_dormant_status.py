@@ -6,7 +6,7 @@ import json
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import nullcontext, redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -195,13 +195,14 @@ class DormantStatusTests(unittest.TestCase):
         self.assertTrue(kind.startswith("deployments,services,networkpolicies,pods,"))
         return {"items": copy.deepcopy(self.live)}
 
-    def verify(self):
+    def verify(self, **options):
         return dormant.verify(
             "root",
             self.fork,
             state="state",
             restore_report=self.report_path,
             langfuse_url="http://172.20.0.2:3000",
+            **options,
         )
 
     def observe(self):
@@ -241,6 +242,162 @@ class DormantStatusTests(unittest.TestCase):
         self.assertEqual(len(self.commands), 6)
         self.assertNotIn("LANGFUSE_SECRET_KEY", json.dumps(result))
         self.assertNotIn('spec"', json.dumps(result))
+
+    def test_source_checks_are_opt_in_and_secret_free_by_default(self):
+        with patch.object(dormant.evaluation_secrets, "verify_handoff") as handoff:
+            result = self.verify()
+        handoff.assert_not_called()
+        self.assertFalse(result["archiveFreshnessVerified"])
+        self.assertFalse(result["preparedSecretsVerified"])
+        self.assertIsNone(result["sourceHandoff"])
+
+    def test_archive_and_key_are_required_together_before_cluster_access(self):
+        for options in ({"archive": "a"}, {"key_file": "k"}):
+            with self.subTest(options=options), self.assertRaises(ValueError):
+                self.verify(**options)
+        self.context.assert_not_called()
+        self.assertEqual(self.commands, [])
+
+    def test_handoff_rechecks_bracket_published_and_live_state_without_authorizing_activation(
+        self,
+    ):
+        evidence = {
+            "archiveSha256": self.report["archive_sha256"],
+            "secretIdentities": ["uid"],
+        }
+        observations = []
+
+        def handoff(*args):
+            observations.append((self.planner.call_count, len(self.commands)))
+            self.assertEqual(args, ("state", "a", "k", self.report, self.storage))
+            return copy.deepcopy(evidence)
+
+        with patch.object(
+            dormant.evaluation_secrets, "verify_handoff", side_effect=handoff
+        ):
+            result = self.verify(archive="a", key_file="k")
+        self.assertEqual(observations, [(1, 3), (2, 3)])
+        self.assertEqual(len(self.commands), 6)
+        self.assertEqual(result["sourceHandoff"], evidence)
+        for flag in (
+            "archiveFreshnessVerified",
+            "sourceQuiescenceVerified",
+            "preparedSecretsVerified",
+        ):
+            self.assertTrue(result[flag])
+        for flag in (
+            "runtimeVerified",
+            "activationAuthorized",
+            "storageDataReverified",
+            "networkPolicyEnforcementVerified",
+            "clusterChanged",
+        ):
+            self.assertFalse(result[flag])
+
+    def test_stale_or_changed_source_and_credentials_cannot_return_dormant_success(
+        self,
+    ):
+        for results in (
+            [ValueError("stale source")],
+            [{"secretUid": "old"}, ValueError("writer resumed")],
+            [{"secretUid": "old"}, {"secretUid": "new"}],
+        ):
+            with (
+                self.subTest(results=results),
+                patch.object(
+                    dormant.evaluation_secrets, "verify_handoff", side_effect=results
+                ),
+                self.assertRaises(ValueError),
+            ):
+                self.verify(archive="a", key_file="k")
+
+    def test_workloads_or_report_changed_during_final_source_check_are_rejected(self):
+        original = copy.deepcopy(self.live)
+        for defect in ("pod", "report"):
+
+            def change(*args, defect=defect):
+                if handoff.call_count == 2:
+                    if defect == "pod":
+                        self.live.append(
+                            {"kind": "Pod", "metadata": {"name": "unexpected"}}
+                        )
+                    else:
+                        self.report_path.write_text("{}", encoding="utf-8")
+                return {"archiveSha256": "stable"}
+
+            with (
+                self.subTest(defect=defect),
+                patch.object(
+                    dormant.evaluation_secrets, "verify_handoff", side_effect=change
+                ) as handoff,
+                self.assertRaises(ValueError),
+            ):
+                self.verify(archive="a", key_file="k")
+            self.live = copy.deepcopy(original)
+            self.report_path.write_text(json.dumps(self.report), encoding="utf-8")
+
+    def test_cli_archive_check_uses_local_lock_and_redacts_source_failure(self):
+        output = io.StringIO()
+        with (
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "dormant",
+                    "--state-dir",
+                    "state",
+                    "--restore-report",
+                    "r",
+                    "--langfuse-url",
+                    "http://172.20.0.2:3000",
+                    "--archive",
+                    "a",
+                    "--key-file",
+                    "k",
+                ],
+            ),
+            patch.object(release, "from_origin", return_value=self.fork),
+            patch.object(
+                release.fork_cluster, "locked", return_value=nullcontext()
+            ) as locked,
+            patch.object(
+                dormant, "verify", side_effect=ValueError("private SQL token")
+            ),
+            redirect_stdout(output),
+        ):
+            if dormant.os.name != "posix":
+                self.skipTest("Archive checks require WSL/Linux")
+            self.assertEqual(dormant.main(), 1)
+        locked.assert_called_once_with(Path("state"))
+        result = json.loads(output.getvalue())
+        self.assertEqual(result["status"], "BLOCKED")
+        self.assertFalse(result["archiveFreshnessVerified"])
+        self.assertFalse(result["sourceQuiescenceVerified"])
+        self.assertFalse(result["preparedSecretsVerified"])
+        self.assertNotIn("private", output.getvalue())
+
+    def test_cli_rejects_single_archive_input(self):
+        with (
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "dormant",
+                    "--state-dir",
+                    "state",
+                    "--restore-report",
+                    "r",
+                    "--langfuse-url",
+                    "http://172.20.0.2:3000",
+                    "--archive",
+                    "a",
+                ],
+            ),
+            redirect_stderr(io.StringIO()),
+            self.assertRaises(SystemExit) as stopped,
+        ):
+            dormant.main()
+        self.assertEqual(stopped.exception.code, 2)
 
     def test_api_defaults_and_equivalent_quantities_do_not_look_like_drift(self):
         for row in self.live:
