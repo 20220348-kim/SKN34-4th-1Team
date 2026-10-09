@@ -396,8 +396,176 @@ class StorageRolloutTests(unittest.TestCase):
             self.verify()
 
 
+class StorageHttpBindingTests(unittest.TestCase):
+    # Share rollout fixtures without inheriting and rerunning their test methods.
+    resource = StorageRolloutTests.resource
+    run_command = StorageRolloutTests.run_command
+
+    @classmethod
+    def setUpClass(cls):
+        StorageRolloutTests.setUpClass.__func__(cls)
+
+    def setUp(self):
+        StorageRolloutTests.setUp(self)
+        secrets = dormant.evaluation_secrets
+        self.enterContext(
+            patch.object(secrets.ops_runtime, "read_connection", return_value={})
+        )
+        self.entries = {"fixture": "validated-entries"}
+        self.archive = self.enterContext(
+            patch.object(
+                secrets,
+                "bound_archive",
+                return_value=(
+                    {"stores": {"results": {"entries": self.entries}}},
+                    self.report["archive_sha256"],
+                    {"keys": {"artifact": "test-token-only-in-memory"}},
+                    {"id": "frozen-source"},
+                ),
+            )
+        )
+        self.frozen = self.enterContext(
+            patch.object(
+                secrets.snapshot.database,
+                "frozen_source",
+                return_value=(
+                    ["kubectl", "-n", "source"],
+                    {"id": "frozen-source"},
+                ),
+            )
+        )
+        self.expected = {"completed-record": "validated-evidence"}
+        self.evidence = self.enterContext(
+            patch.object(
+                secrets.snapshot, "completed_evidence", return_value=self.expected
+            )
+        )
+        self.http = self.enterContext(
+            patch.object(
+                start.storage_http,
+                "verify",
+                return_value={
+                    "status": "VERIFIED",
+                    "scope": "pod_loopback_port_forward",
+                },
+            )
+        )
+
+    def verify(self):
+        return start.verify_started(
+            "root",
+            self.fork,
+            state="state",
+            restore_report=self.report_path,
+            archive="archive",
+            key_file="key",
+            langfuse_url="http://private",
+            verify_http=True,
+        )
+
+    def test_http_is_between_two_source_and_rollout_checks_without_nested_passes(self):
+        events = []
+        proof = self.http.return_value
+        self.handoff.side_effect = lambda *a: (
+            events.append("source") or {"archiveSha256": self.report["archive_sha256"]}
+        )
+        self.http.side_effect = lambda *a: events.append("http") or proof
+        result = self.verify()
+        self.assertEqual(events, ["source", "http", "source"])
+        self.assertEqual(self.planner.call_count, 2)
+        self.assertEqual(len(self.commands), 8)  # Two full observations, not four.
+        self.assertEqual(result["status"], "STORAGE_HTTP_VERIFIED")
+        self.assertTrue(result["httpTrafficVerified"])
+        for field in (
+            "clusterServiceTrafficVerified",
+            "runtimeVerified",
+            "clusterChanged",
+            "storageDataReverified",
+            "networkPolicyEnforcementVerified",
+            "runnerActivationRequested",
+            "opsRoutingChanged",
+        ):
+            self.assertFalse(result[field])
+        self.http.assert_called_once_with(
+            ["kubectl"],
+            result["observation"]["storageWorkloads"]["pods"],
+            self.expected,
+            self.entries,
+            "test-token-only-in-memory",
+        )
+        self.assertEqual(
+            self.evidence.call_args.args[0][:9],
+            [
+                "kubectl",
+                "-n",
+                "source",
+                "exec",
+                "-i",
+                "ops-mysql-0",
+                "-c",
+                "mysql",
+                "--",
+            ],
+        )
+        self.assertNotIn("test-token-only-in-memory", json.dumps(result))
+
+    def test_changed_archive_or_frozen_source_blocks_before_http(self):
+        original = self.archive.return_value
+        for boundary in ("archive", "source"):
+            self.archive.return_value = original
+            self.frozen.return_value = (["kubectl"], {"id": "frozen-source"})
+            if boundary == "archive":
+                self.archive.return_value = (original[0], "changed", *original[2:])
+            else:
+                self.frozen.return_value = (["kubectl"], {"id": "other-source"})
+            with self.subTest(boundary=boundary), self.assertRaises(ValueError):
+                self.verify()
+            self.http.assert_not_called()
+            self.evidence.assert_not_called()
+
+    def test_failed_publication_or_completed_record_binding_prevents_http(self):
+        self.planner.side_effect = ValueError("publication is stale")
+        with self.assertRaises(ValueError):
+            self.verify()
+        self.http.assert_not_called()
+        self.planner.side_effect = lambda *a, **k: copy.deepcopy(self.plan)
+        self.evidence.side_effect = ValueError("DB record differs from archive")
+        with self.assertRaises(ValueError):
+            self.verify()
+        self.http.assert_not_called()
+
+    def test_source_change_during_http_is_not_success(self):
+        self.handoff.side_effect = [
+            {"archiveSha256": self.report["archive_sha256"]},
+            {"archiveSha256": "changed"},
+        ]
+        with self.assertRaisesRegex(ValueError, "credentials changed"):
+            self.verify()
+        self.http.assert_called_once()
+
+    def test_http_does_not_bypass_post_checks_of_pods_report_or_publication(self):
+        original = self.report_path.read_bytes()
+        for boundary in ("pod", "report", "publication"):
+
+            def change(*a, boundary=boundary):
+                if boundary == "pod":
+                    self.resource("Pod", "prefect-pod")["status"]["containerStatuses"][
+                        0
+                    ]["restartCount"] += 1
+                elif boundary == "report":
+                    self.report_path.write_bytes(original + b"\n")
+                else:
+                    self.planner.side_effect = ValueError("publication changed")
+                return {"status": "VERIFIED"}
+
+            self.http.side_effect = change
+            with self.subTest(boundary=boundary), self.assertRaises(ValueError):
+                self.verify()
+            self.report_path.write_bytes(original)
+
+
 class StorageRolloutCliTests(unittest.TestCase):
-    def arguments(self):
+    def arguments(self, mode="--verify-started"):
         return [
             "evaluation_storage_start.py",
             "--state-dir",
@@ -410,53 +578,70 @@ class StorageRolloutCliTests(unittest.TestCase):
             "key",
             "--langfuse-url",
             "http://private",
-            "--verify-started",
+            mode,
         ]
 
     def test_read_mode_cannot_request_start_and_dispatches_only_verification(self):
         output = io.StringIO()
-        with (
-            patch.object(sys, "argv", self.arguments()),
-            patch.object(start.os, "name", "posix"),
-            patch.object(release, "from_origin"),
-            patch.object(release.fork_cluster, "locked", return_value=nullcontext()),
-            patch.object(
-                start,
-                "verify_started",
-                return_value={"status": "STORAGE_ROLLOUT_VERIFIED"},
-            ) as verify,
-            patch.object(start, "request") as request,
-            redirect_stdout(output),
-        ):
-            self.assertEqual(start.main(), 0)
-        verify.assert_called_once()
-        request.assert_not_called()
-        with (
-            patch.object(sys, "argv", self.arguments() + ["--request-start"]),
-            redirect_stderr(io.StringIO()),
-            self.assertRaises(SystemExit),
-        ):
-            start.main()
+        for mode in ("--verify-started", "--verify-http"):
+            with (
+                self.subTest(mode=mode),
+                patch.object(sys, "argv", self.arguments(mode)),
+                patch.object(start.os, "name", "posix"),
+                patch.object(release, "from_origin"),
+                patch.object(
+                    release.fork_cluster, "locked", return_value=nullcontext()
+                ),
+                patch.object(
+                    start, "verify_started", return_value={"status": "VERIFIED"}
+                ) as verify,
+                patch.object(start, "request") as request,
+                redirect_stdout(output),
+            ):
+                self.assertEqual(start.main(), 0)
+            verify.assert_called_once()
+            self.assertEqual(
+                verify.call_args.kwargs["verify_http"], mode == "--verify-http"
+            )
+            self.assertNotIn("start", verify.call_args.kwargs)
+            request.assert_not_called()
+            for other in (
+                "--request-start",
+                "--verify-http" if mode == "--verify-started" else "--verify-started",
+            ):
+                with (
+                    patch.object(sys, "argv", self.arguments(mode) + [other]),
+                    redirect_stderr(io.StringIO()),
+                    self.assertRaises(SystemExit),
+                ):
+                    start.main()
 
     def test_read_failure_is_sanitized_and_reports_no_mutation(self):
-        output = io.StringIO()
-        with (
-            patch.object(sys, "argv", self.arguments()),
-            patch.object(start.os, "name", "posix"),
-            patch.object(release, "from_origin"),
-            patch.object(release.fork_cluster, "locked", return_value=nullcontext()),
-            patch.object(
-                start, "verify_started", side_effect=ValueError("PRIVATE credentials")
-            ),
-            redirect_stdout(output),
-        ):
-            self.assertEqual(start.main(), 1)
-        result = json.loads(output.getvalue())
-        self.assertEqual(result["status"], "BLOCKED")
-        self.assertFalse(result["clusterChanged"])
-        self.assertFalse(result["syncRequested"])
-        self.assertFalse(result["runtimeVerified"])
-        self.assertNotIn("PRIVATE", output.getvalue())
+        for mode in ("--verify-started", "--verify-http"):
+            output = io.StringIO()
+            with (
+                self.subTest(mode=mode),
+                patch.object(sys, "argv", self.arguments(mode)),
+                patch.object(start.os, "name", "posix"),
+                patch.object(release, "from_origin"),
+                patch.object(
+                    release.fork_cluster, "locked", return_value=nullcontext()
+                ),
+                patch.object(
+                    start,
+                    "verify_started",
+                    side_effect=ValueError("PRIVATE credentials"),
+                ),
+                redirect_stdout(output),
+            ):
+                self.assertEqual(start.main(), 1)
+            result = json.loads(output.getvalue())
+            self.assertEqual(result["status"], "BLOCKED")
+            self.assertFalse(result["clusterChanged"])
+            self.assertFalse(result["syncRequested"])
+            self.assertFalse(result["runtimeVerified"])
+            self.assertFalse(result["httpTrafficVerified"])
+            self.assertNotIn("PRIVATE", output.getvalue())
 
 
 if __name__ == "__main__":

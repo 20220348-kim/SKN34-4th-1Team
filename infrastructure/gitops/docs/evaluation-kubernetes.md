@@ -1098,8 +1098,10 @@ python3 -B infrastructure/gitops/scripts/evaluation_storage_start.py \
   --verify-http > /private-backups/evaluation-storage-http.json
 ```
 
-검사 흐름은 `발행·원본·백업·Secret·rollout 재검증 → 중지된 원본 Ops DB 완료 기록과
-인증된 백업 대조 → 대상 Pod의 HTTP GET 대조 → 같은 rollout·원본·발행 재검증`이다.
+검사 흐름은 `발행·원본·백업·Secret·rollout 확인 → 중지된 원본 Ops DB 완료 기록과
+인증된 백업 대조 → 대상 Pod의 HTTP GET 대조 → 같은 rollout·원본·발행 재확인`이다.
+`--verify-started`와 같은 실행 경로에서 HTTP 검사를 전후 확인 사이에 넣는다. 전체 기동 검증을
+다시 감싸 실행하지 않으므로 발행·원본·리소스 관측은 전후 한 번씩이며 HTTP 도중 변경도 감지한다.
 DB 조회에는 기존 고정 SELECT만 사용하며 별도 DB 복원이나 migration을 수행하지 않는다.
 
 - 포워딩은 관측한 정확한 Pod 이름을 지정하고 `--address=127.0.0.1`과 임의 할당 포트를 사용한다.
@@ -1111,6 +1113,8 @@ DB 조회에는 기존 고정 SELECT만 사용하며 별도 DB 복원이나 migr
 - Prefect의 health, 완료 실행의 ID·상태·실행 명세·데이터셋, deployment 연결과 현재 완료 상태
   이력을 조회한다. 출처가 검증된 공유 검토 복제본도 결과 파일은 검사하지만, 다른 환경의 Prefect
   이력을 현재 서버에 요구하거나 로컬 실행으로 집계하지 않는다.
+  완료 실행·deployment·상태 이력의 판정은 격리 복원 검사와 공통 함수를 사용한다. 격리 복원의
+  replay 전용 조건과 현재 환경의 백업 실행 명세 대조는 각 경로에서 유지한다.
 - 토큰은 메모리에서 읽어 loopback 인증 헤더에만 전달하며 명령 인자·보고서에 남기지 않는다.
   프록시와 리다이렉트를 사용하지 않고 응답 크기·시간을 제한한다. 검사 실패 시에도 자신이 만든
   포워딩 프로세스만 종료하며, 정리 실패는 성공으로 처리하지 않는다.

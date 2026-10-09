@@ -52,8 +52,6 @@ jobs:
           python-version: "3.13"
       - name: Check whitespace
         run: git show --format= --check HEAD
-      - name: Test repository boundary checks
-        run: python -B -m unittest discover -s scripts -p 'test_check_repository.py'
       - name: Validate repository boundary and documentation links
         run: python -B scripts/check_repository.py
 
@@ -137,27 +135,8 @@ jobs:
         run: |
           actual_helm_version="$(helm version --template '{{.Version}}')"
           test "$actual_helm_version" = "v4.3.0"
-      - name: Test chart boundaries and rejected settings
-        run: |
-          python -B -m unittest discover -s scripts -p 'test_merge_workflows.py'
-          python -B -m unittest discover -s scripts -p 'test_check_msa.py'
-          python -B -m unittest discover -s scripts -p 'test_ops_sync.py'
-          python -B -m unittest discover -s scripts -p 'test_ops_bridge.py'
-          python -B -m unittest discover -s scripts -p 'test_ops_runtime.py'
-          python -B -m unittest discover -s scripts -p 'test_ops_upgrade_probe.py'
-          python -B -m unittest discover -s scripts -p 'test_smoke_ops_backup.py'
-          python -B -m unittest discover -s scripts -p 'test_ops_*restore*.py'
-          python -B -m unittest discover -s scripts -p 'test_ops_browser_login.py'
-          python -B -m unittest discover -s scripts -p 'test_smoke_ops_volumes.py'
-          python -B -m unittest discover -s scripts -p 'test_fork_web.py'
-          python -B -m unittest discover -s scripts -p 'test_dev.py'
-          python -B -m unittest discover -s scripts -p 'test_check_portfolio.py'
-          python -B -m unittest discover -s scripts -p 'test_fork_cluster.py'
-          python -B -m unittest discover -s scripts -p 'test_connected_runtime.py'
-          python -B -m unittest discover -s scripts -p 'test_migration_guards.py'
-          python -B -m unittest discover -s scripts -p 'test_deployment*.py'
-          python -B -m unittest discover -s scripts -p 'test_published_release.py'
-          python -B -m unittest discover -s scripts -p 'test_sync_images.py'
+      # All scripts/test_*.py run once in kubernetes-manifests. Keep this job
+      # for chart validation/lint; merge-readiness still requires both jobs.
       - name: Validate independent releases and Argo project scope
         run: |
           python -B scripts/check_msa.py

@@ -10,7 +10,6 @@ import time
 from contextlib import contextmanager
 from urllib.error import HTTPError
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
-from uuid import UUID
 
 import evaluation_release as release
 import network_status
@@ -234,43 +233,23 @@ def verify(kube, pods, expected, entries, token):
         if prefect("/health") is not True:
             raise ValueError("Prefect health response differs")
         for request, row in local.items():
-            flow = prefect("/flow_runs/" + row["flow_id"])
+            flow = probe.completed_prefect_execution(prefect, request, row["flow_id"])
             marker = json.loads(
                 base64.b64decode(
                     entries[request + "/request.json"]["data"], validate=True
                 )
             )
-            if (
-                flow["id"] != row["flow_id"]
-                or flow["state_type"] != "COMPLETED"
-                or flow["state"]["type"] != "COMPLETED"
-                or any(
-                    flow["parameters"].get(key) != marker.get(key)
-                    for key in (
-                        "request_id",
-                        "dataset_id",
-                        "execution_mode",
-                        "execution_spec",
-                        "execution_spec_sha256",
-                    )
+            if any(
+                flow["parameters"].get(key) != marker.get(key)
+                for key in (
+                    "request_id",
+                    "dataset_id",
+                    "execution_mode",
+                    "execution_spec",
+                    "execution_spec_sha256",
                 )
             ):
                 raise ValueError("Prefect completed execution differs from the archive")
-            deployment_id = str(UUID(flow["deployment_id"]))
-            deployment = prefect("/deployments/" + deployment_id)
-            if (
-                deployment["id"] != deployment_id
-                or deployment["flow_id"] != flow["flow_id"]
-            ):
-                raise ValueError("Prefect deployment linkage differs")
-            history = prefect("/flow_run_states/?flow_run_id=" + row["flow_id"])
-            states = [s for s in history if s["id"] == flow["state"]["id"]]
-            if (
-                len(states) != 1
-                or states[0]["type"] != "COMPLETED"
-                or states[0]["state_details"]["flow_run_id"] != flow["id"]
-            ):
-                raise ValueError("Prefect completed state history differs")
     return {
         "status": "VERIFIED",
         "scope": "pod_loopback_port_forward",
