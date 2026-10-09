@@ -1,7 +1,9 @@
 """Restore and inspect new PVC copies; no server, credentials or model calls."""
 
+import base64
 import json
 import os
+import tempfile
 from pathlib import Path
 
 import ops_volume_restore_probe as probe
@@ -103,6 +105,68 @@ def verify(proof, expected, root):
     }
 
 
+def recheck(stores, root):
+    """Compare read-only retained data with an authenticated archive; copy SQLite to tmp."""
+    if (os.getuid(), os.getgid()) != (UID, GID):
+        raise ValueError("Recheck must use the evaluation runtime UID/GID")
+    if set(stores) != {"prefect", "results"}:
+        raise ValueError("Both archived stores are required")
+    for entries in stores.values():
+        files.validate(entries)
+    before = {kind: runtime_tree(root / kind) for kind in stores}
+    sqlite_files = {"prefect.db", "prefect.db-wal", "prefect.db-shm"}
+    for kind, entries in stores.items():
+        excluded = sqlite_files if kind == "prefect" else set()
+
+        # SQLite may checkpoint/remove WAL/SHM during the original restore. Every
+        # other path, file byte and directory must still match the archive.
+        def content(inventory, excluded):
+            return {
+                name: {key: row[key] for key in ("kind", "size", "sha256")}
+                for name, row in inventory.items()
+                if name not in excluded
+            }
+
+        if content(before[kind], excluded) != content(entries, excluded):
+            raise ValueError("Retained file content differs from the archive")
+    # A readonly SQLite connection can still need writable WAL/SHM. Never open
+    # SQLite on the PVC and never use immutable=1, which can ignore committed WAL.
+    with tempfile.TemporaryDirectory(prefix="evaluation-data-recheck-") as directory:
+        copies = []
+        for label, entries in (
+            ("archive", stores["prefect"]),
+            ("current", before["prefect"]),
+        ):
+            target = Path(directory) / label
+            target.mkdir()
+            for name in sqlite_files & entries.keys():
+                if entries[name]["kind"] != "file":
+                    raise ValueError("SQLite paths must be regular files")
+                raw = (
+                    base64.b64decode(entries[name]["data"], validate=True)
+                    if label == "archive"
+                    else (root / "prefect" / name).read_bytes()
+                )
+                (target / name).write_bytes(raw)
+            probe.check_prefect(target, {})
+            copies.append(probe.sqlite_digest(target))
+        if copies[0] != copies[1]:
+            raise ValueError("Retained Prefect logical data differs from the archive")
+    if {kind: runtime_tree(root / kind) for kind in stores} != before:
+        raise ValueError("Retained data changed during recheck")
+    return {
+        "status": "VERIFIED",
+        "archive_content_matched": True,
+        "sqlite_integrity": True,
+        "prefect_logical_data_matched": True,
+        "runtime_permissions_verified": True,
+        "retained_data_unchanged": True,
+        "runtime_uid": UID,
+        "runtime_gid": GID,
+        "model_api_calls": 0,
+    }
+
+
 def main(value):
     try:
         root = Path("/restore")
@@ -110,6 +174,8 @@ def main(value):
             result = restore(value["stores"], value["expected"], root)
         elif value["action"] == "verify":
             result = verify(value["proof"], value["expected"], root)
+        elif value["action"] == "recheck":
+            result = recheck(value["stores"], root)
         else:
             raise ValueError("Unsupported PVC probe action")
         print(json.dumps(result, sort_keys=True))

@@ -9,6 +9,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import evaluation_pvc_restore as restore
+import evaluation_retained_data
 
 
 def fixture(directory):
@@ -174,6 +175,15 @@ def main():
                     kube, cluster + "-control-plane", retained
                 ),
             }
+            report["retained_data_probe"] = {}
+            report["retained_data_recheck"] = evaluation_retained_data.recheck(
+                kube,
+                cluster + "-control-plane",
+                retained,
+                stores,
+                retained["helper_image"],
+                report["retained_data_probe"],
+            )
             report["status"] = "PASS"
     finally:
         try:

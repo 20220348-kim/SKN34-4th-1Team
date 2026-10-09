@@ -10,6 +10,7 @@ from contextlib import nullcontext
 from pathlib import Path
 
 import evaluation_release as release
+import evaluation_retained_data
 import evaluation_secrets
 from gitops_runtime import probe_settings, resource_settings
 from gitops_service import service_settings
@@ -284,10 +285,25 @@ def observe(kube, ak, plan, report, rendered):
 
 
 def verify(
-    root, fork, *, state, restore_report, archive=None, key_file=None, **options
+    root,
+    fork,
+    *,
+    state,
+    restore_report,
+    archive=None,
+    key_file=None,
+    verify_storage=False,
+    storage_progress=None,
+    **options,
 ):
     if (archive is None) != (key_file is None):
         raise ValueError("Both the retained archive and its key file are required")
+    if verify_storage and archive is None:
+        raise ValueError(
+            "Retained data verification requires the authenticated archive"
+        )
+    if storage_progress is None:
+        storage_progress = {}
     report, report_sha = release.read_restore_report(restore_report)
     settings = release.fork_cluster.load_settings(state)
     if (
@@ -340,6 +356,22 @@ def verify(
         handoff = evaluation_secrets.verify_handoff(
             state, archive, key_file, report, storage
         )
+    data = None
+    if verify_storage:
+        connection = evaluation_secrets.ops_runtime.read_connection(
+            Path(state) / evaluation_secrets.ops_runtime.BRIDGE, settings
+        )
+        payload, _, _, _ = evaluation_secrets.bound_archive(
+            settings, connection, archive, key_file, report
+        )
+        data = evaluation_retained_data.recheck(
+            kube,
+            node,
+            report,
+            {name: row["entries"] for name, row in payload["stores"].items()},
+            values["prefect"]["image"],
+            storage_progress,
+        )
     if (
         release.plan(
             root,
@@ -381,8 +413,10 @@ def verify(
         "runtimeVerified": False,
         "activationAuthorized": False,
         "networkPolicyEnforcementVerified": False,
-        "clusterChanged": False,
-        "storageDataReverified": False,
+        "clusterChanged": bool(storage_progress.get("created")),
+        "storageDataReverified": data is not None,
+        "storageData": data,
+        "storageProbe": storage_progress,
         "sourceQuiescenceVerified": handoff is not None,
         "archiveFreshnessVerified": handoff is not None,
         "preparedSecretsVerified": handoff is not None,
@@ -399,6 +433,11 @@ def main():
     parser.add_argument("--restore-report", type=Path, required=True)
     parser.add_argument("--archive", type=Path)
     parser.add_argument("--key-file", type=Path)
+    parser.add_argument(
+        "--verify-storage",
+        action="store_true",
+        help="With archive inputs, inspect retained data using a temporary read-only Pod",
+    )
     parser.add_argument("--langfuse-url", required=True)
     parser.add_argument(
         "--ops-api-url", default="http://ops-service.govbiz-msa.svc.cluster.local:8000"
@@ -410,6 +449,9 @@ def main():
         parser.error("--archive and --key-file must be provided together")
     if args.archive is not None and os.name != "posix":
         parser.error("Run archive and frozen source verification inside WSL/Linux")
+    if args.verify_storage and args.archive is None:
+        parser.error("--verify-storage requires --archive and --key-file")
+    storage_progress = {}
     try:
         root = Path(__file__).resolve().parents[3]
         fork = release.from_origin(root, branch=args.branch).require_personal_publish()
@@ -425,6 +467,8 @@ def main():
                 restore_report=args.restore_report,
                 archive=args.archive,
                 key_file=args.key_file,
+                verify_storage=args.verify_storage,
+                storage_progress=storage_progress,
                 langfuse_url=args.langfuse_url,
                 ops_api_url=args.ops_api_url,
                 helm=args.helm,
@@ -436,7 +480,11 @@ def main():
                     "schema": "evaluation-dormant-status-v1",
                     "status": "BLOCKED",
                     "errorType": type(error).__name__,
-                    "clusterChanged": False,
+                    "clusterChanged": True
+                    if storage_progress.get("created")
+                    else (None if storage_progress.get("creationAttempted") else False),
+                    "storageProbe": storage_progress,
+                    "storageDataReverified": False,
                     "syncCompleted": None,
                     "runtimeVerified": False,
                     "activationAuthorized": False,
