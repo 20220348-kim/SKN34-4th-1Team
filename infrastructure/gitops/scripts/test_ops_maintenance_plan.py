@@ -78,6 +78,123 @@ class QuietTests(unittest.TestCase):
                 maintenance.require_quiet(result)
 
 
+class RuntimeImageTests(unittest.TestCase):
+    def setUp(self):
+        self.image = "sha256:" + "a" * 64
+        self.identity = "b" * 64
+        self.images = {"ops-service": "fixture:api", "ops-sync": "fixture:sync"}
+        self.artifact = {
+            "Id": self.identity,
+            "Image": self.image,
+            "State": {"Status": "running"},
+            "Config": {
+                "Env": ["PRIVATE=do-not-disclose"],
+                "Labels": {
+                    "com.docker.compose.project": "fixture",
+                    "com.docker.compose.service": "ops-artifacts",
+                },
+            },
+        }
+        self.read = self.enterContext(
+            patch.object(maintenance.database, "read_json", return_value=[{"Id": self.image}])
+        )
+        self.run = self.enterContext(
+            patch.object(maintenance.database.storage, "run", return_value=self.identity.encode())
+        )
+        self.inspect = self.enterContext(
+            patch.object(maintenance.database.storage, "inspect", return_value=self.artifact)
+        )
+
+    def check(self):
+        return maintenance.runtime_image_check(self.images, "fixture")
+
+    def test_resolves_api_sync_and_artifact_to_same_local_image_without_secret_reads(self):
+        report = self.check()
+        self.assertEqual(report["status"], "VERIFIED")
+        self.assertEqual(report["blockers"], [])
+        self.assertEqual(set(report["ops_images"].values()), {self.image})
+        self.assertEqual(report["artifact"]["container_id"], self.identity)
+        self.assertNotIn("do-not-disclose", json.dumps(report))
+        self.assertEqual(self.read.call_count, 2)
+        for call in self.read.call_args_list:
+            self.assertEqual(call.args[0][:3], ["docker", "image", "inspect"])
+        self.assertEqual(self.run.call_args.args[0][:4], ["docker", "ps", "-aq", "--no-trunc"])
+        self.inspect.assert_called_once_with(self.identity)
+
+    def test_missing_or_unverified_image_blocks_without_exposing_private_diagnostics(self):
+        for value in (
+            [],
+            None,
+            {},
+            [{"Id": "do-not-disclose"}],
+            [{"Id": self.image}] * 2,
+            maintenance.database.storage.SnapshotError("do-not-disclose"),
+        ):
+            self.read.side_effect = value if isinstance(value, Exception) else None
+            self.read.return_value = value
+            with self.subTest(value=type(value).__name__):
+                report = self.check()
+                self.assertEqual(report["status"], "BLOCKED")
+                self.assertEqual(
+                    report["blockers"], ["source_ops_image_not_available_or_unverified"]
+                )
+                self.assertNotIn("do-not-disclose", json.dumps(report))
+
+    def test_distinct_api_and_sync_images_block(self):
+        self.read.side_effect = [[{"Id": self.image}], [{"Id": "sha256:" + "c" * 64}]]
+        self.assertEqual(self.check()["blockers"], ["source_ops_container_images_differ"])
+
+    def test_artifact_image_mismatch_blocks_before_backup(self):
+        self.artifact["Image"] = "sha256:" + "c" * 64
+        self.assertEqual(self.check()["blockers"], ["source_ops_artifact_images_differ"])
+
+    def test_missing_duplicate_or_unknown_artifact_identity_blocks(self):
+        for value in (b"", (self.identity + " " + self.identity).encode(), b"do-not-disclose"):
+            self.run.return_value = value
+            with self.subTest(value=value):
+                report = self.check()
+                self.assertEqual(
+                    report["blockers"], ["source_artifact_image_not_available_or_unverified"]
+                )
+                self.assertIsNone(report["artifact"])
+        self.inspect.assert_not_called()
+
+    def test_foreign_replaced_oneoff_or_unstable_artifact_blocks(self):
+        baseline = copy.deepcopy(self.artifact)
+        for change in (
+            "project",
+            "service",
+            "oneoff",
+            "identity",
+            "paused",
+            "restart",
+            "state",
+            "image",
+        ):
+            item = copy.deepcopy(baseline)
+            labels = item["Config"]["Labels"]
+            if change in {"project", "service"}:
+                labels["com.docker.compose." + change] = "foreign"
+            elif change == "oneoff":
+                labels["com.docker.compose.oneoff"] = "True"
+            elif change == "identity":
+                item["Id"] = "c" * 64
+            elif change in {"paused", "restart"}:
+                item["State"]["Paused" if change == "paused" else "Restarting"] = True
+            elif change == "state":
+                item["State"]["Status"] = "dead"
+            else:
+                item["Image"] = "do-not-disclose"
+            self.inspect.return_value = item
+            with self.subTest(change=change):
+                report = self.check()
+                self.assertEqual(
+                    report["blockers"], ["source_artifact_image_not_available_or_unverified"]
+                )
+                self.assertIsNone(report["artifact"])
+                self.assertNotIn("do-not-disclose", json.dumps(report))
+
+
 class PlanTests(unittest.TestCase):
     def setUp(self):
         # Reuse the existing dedicated MySQL/Compose ownership fixture.
@@ -158,6 +275,7 @@ class PlanTests(unittest.TestCase):
     def test_exact_running_scope_preserves_stopped_services_and_private_values(self):
         report = self.plan()
         self.assertEqual(report["status"], "PLANNED")
+        self.assertEqual(report["runtime_key_images"], {"status": "NOT_CHECKED"})
         self.assertEqual(report["stop_order"], ["deployment/ops-service", "c" * 64, "b" * 64])
         self.assertEqual(report["resume_order"], ["b" * 64, "c" * 64, "deployment/ops-service"])
         self.assertEqual(report["leave_stopped"], ["d" * 64])
@@ -333,6 +451,49 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(report["status"], "BLOCKED")
         self.assertEqual(report["blockers"], ["source_mysql_image_not_available_or_unverified"])
         self.assertNotIn("private engine", json.dumps(report))
+
+    def test_optional_runtime_key_image_check_blocks_or_plans_before_any_stop(self):
+        for blockers in ([], ["source_ops_artifact_images_differ"]):
+            evidence = {
+                "status": "BLOCKED" if blockers else "VERIFIED",
+                "blockers": blockers,
+                "ops_images": {"ops-service": "sha256:" + "a" * 64},
+                "artifact": {"container_id": "e" * 64},
+            }
+            with patch.object(maintenance, "runtime_image_check", return_value=evidence) as check:
+                report = maintenance.plan(Path("fixture"), runtime_keys=True)
+            self.assertEqual(report["status"], "BLOCKED" if blockers else "PLANNED")
+            self.assertEqual(report["blockers"], blockers)
+            self.assertEqual(report["runtime_key_images"], evidence)
+            self.assertEqual(check.call_count, 2)
+            self.assertEqual(check.call_args.args, (report["deployment"]["images"], "fixture"))
+            self.assertFalse(report["backup_verified"])
+            self.assertFalse(report["services_changed"])
+
+    def test_runtime_key_image_or_artifact_replacement_during_plan_is_rejected(self):
+        initial = {"status": "VERIFIED", "blockers": [], "artifact": {"container_id": "a" * 64}}
+        for changed in (
+            initial | {"artifact": {"container_id": "b" * 64}},
+            initial | {"ops_images": {"ops-service": "sha256:" + "c" * 64}},
+            {"status": "BLOCKED", "blockers": ["source_ops_image_not_available_or_unverified"]},
+        ):
+            with (
+                patch.object(maintenance, "runtime_image_check", side_effect=[initial, changed]),
+                self.assertRaisesRegex(ValueError, "images changed"),
+            ):
+                maintenance.plan(Path("fixture"), runtime_keys=True)
+
+    def test_cli_passes_runtime_key_image_option(self):
+        with (
+            patch(
+                "sys.argv", ["ops_maintenance_plan.py", "--state-dir", "fixture", "--runtime-keys"]
+            ),
+            patch.object(maintenance, "locked", return_value=nullcontext()),
+            patch.object(maintenance, "plan", return_value={"status": "PLANNED"}) as plan,
+            redirect_stdout(io.StringIO()),
+        ):
+            self.assertEqual(maintenance.main(), 0)
+        plan.assert_called_once_with(Path("fixture"), runtime_keys=True)
 
     def test_active_work_stops_inventory_before_resource_reads(self):
         value = preflight()

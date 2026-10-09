@@ -70,6 +70,45 @@ artifact ZIP의 출처·크기·SHA-256과 익명 GHCR manifest의 digest도 검
 현재 main이 바뀌면 위 발행 기록만으로 새 SHA의 배포를 허용하지 않는다. 기존 Compose 데이터는
 보존하며, Langfuse와 관련 DB·저장소의 Kubernetes 이전도 별도로 완료해야 한다.
 
+## Langfuse 복구와 이전 준비 점검 — 2026-10-10
+
+기존 Compose의 PostgreSQL·Redis·MinIO와 Langfuse 웹·worker를 원래 컨테이너로 재개했다.
+이미 실행 중인 ClickHouse는 유지했고 이미지·볼륨·자격 증명을 교체하지 않았다. 확인 시 여섯
+컨테이너는 모두 실행 중이며 재시작 횟수는 0이었다. 네 저장소 컨테이너의 healthcheck도 통과했다.
+기존 실행기의 키로 원래 Langfuse 프로젝트를 조회하고 인증 없는 요청의 거절을 확인했다.
+
+이후 새 임시 namespace에 `deny-all`과 **실제 Chart에서 렌더링한 runner NetworkPolicy**를
+적용하고, UID/GID 10001의 작은 조회 Pod에서 같은 검사를 수행했다. 현재 Compose Langfuse의
+단일 사설 IPv4 `/32:3000` 경로로 인증된 프로젝트 조회와 익명 요청 거절을 확인했다.
+기존 Ops 불변 이미지를 재사용했으며 runner 프로세스·평가·모델 API·점수 기록은 실행하지 않았다.
+조회 전후 Langfuse 컨테이너·이미지·주소·재시작 상태도 일치했고, 임시 namespace는 UID를
+대조한 뒤 삭제와 삭제 완료를 확인했다. 정책 명세 SHA-256은
+`58a7c4c2fc5e802a9675118084cf6a27ebad94ecb7d0da9c372ca1d50a4f8340`이다.
+이 결과는 현재 주소에 대한 임시 Pod의 실제 연결 증거이며 평가 서비스 활성화·전체 CNI 재검증·
+Langfuse의 Kubernetes 이전 완료를 뜻하지 않는다. 주소나 정책이 바뀌면 다시 확인해야 한다.
+
+지난 백업에서 중지 후에야 발견했던 이미지 준비 문제도
+[`ops_maintenance_plan.py --runtime-keys`](../../../docs/ops-upgrade-runbook.md#실제-중지-전에-대상과-복구-순서-확인하기)로
+미리 확인할 수 있도록 보완했다. 호스트 Docker의 Ops API/sync 이미지와 원래 결과 서버의
+image ID를 대조하고, 누락·불일치·조회 중 교체를 차단한다. 기본 계획에서는 이 추가 검사를
+`NOT_CHECKED`로 명시한다. Secret 값·DB 인증·실제 암호화 백업 검증을 대신하지 않는다.
+
+- 실제 환경에서도 API/sync·결과 서버의 image ID 일치를 확인했다.
+- 업무 Deployment 네 개는 모두 1/1이고 기존 수동 Argo 상태는 `Synced/Healthy`다.
+  접수는 버전 10으로 열려 있으며 미완료 평가·예약·스케줄은 0이다.
+  접수가 열린 상태에서 이미지 검사만 수행했으므로 중지 계획 `PLANNED`를 보고하지 않는다.
+- 변경한 계획 도구의 무료 단위 테스트 29개와 Ruff 검사·포맷 검사를 통과했다.
+  이 로컬 변경의 전체 CI는 커밋·푸시 후 확인할 범위다.
+- 관찰한 main `736fea0ee4419d865eeabb0174774f805469c37c`의
+  [LLMOps 통합 CI](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/37948866519)는 점검 당시 진행 중이었다.
+  이미지 workflow의 성공 표시만으로 실제 업로드·receipt 검증을 완료했다고 판단하지 않는다.
+
+`govbiz-evaluation`의 보존 PVC 인계·Secret 준비·Argo 등록·활성화는 여전히 남아 있다.
+먼저 같은 SHA의 필수 CI와 실제 발행 증거, 현재 Ops와 새 실행기의 스키마·실행 명세·예산 토큰
+연결을 확인한다. 이후 기존 writer 중지부터 최신 백업·보존 복원·수동 동기화·Ops 연결 전환과
+실패 시 원상 복귀까지 한 작업 창에서 이어가야 한다. 중간에 기존 writer를 재개한 백업으로
+보존 인계를 완료했다고 표시하지 않는다.
+
 ## 이번 구현: 독립 배포와 저장소 계약
 
 [`govbiz-evaluation` Chart](../charts/govbiz-evaluation/Chart.yaml)는 한 릴리스에 한 프로세스만

@@ -192,7 +192,69 @@ def deployment_record(deployment, *, gitops_namespace=None):
     }
 
 
-def plan(state):
+def runtime_image_check(images, project):
+    """Check host-side key-probe images without reading keys or stopping writers."""
+    result = {"status": "BLOCKED", "blockers": [], "ops_images": {}, "artifact": None}
+    try:
+        if set(images) != {"ops-service", "ops-sync"}:
+            raise ValueError("Unexpected Ops containers")
+        for name, reference in images.items():
+            items = database.read_json(["docker", "image", "inspect", reference])
+            if (
+                not isinstance(items, list)
+                or len(items) != 1
+                or not re.fullmatch(r"sha256:[a-f0-9]{64}", items[0]["Id"])
+            ):
+                raise ValueError("Unverified Ops image")
+            result["ops_images"][name] = items[0]["Id"]
+    except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError):
+        result["blockers"].append("source_ops_image_not_available_or_unverified")
+    if not result["blockers"] and len(set(result["ops_images"].values())) != 1:
+        result["blockers"].append("source_ops_container_images_differ")
+    try:
+        identities = (
+            database.storage.run(
+                [
+                    "docker",
+                    "ps",
+                    "-aq",
+                    "--no-trunc",
+                    "--filter",
+                    "label=com.docker.compose.project=" + project,
+                    "--filter",
+                    "label=com.docker.compose.service=ops-artifacts",
+                ]
+            )
+            .decode()
+            .split()
+        )
+        if len(identities) != 1 or not re.fullmatch(r"[a-f0-9]{64}", identities[0]):
+            raise ValueError("One owned artifact server is required")
+        item = database.storage.inspect(identities[0])
+        labels = item["Config"].get("Labels") or {}
+        if (
+            item["Id"] != identities[0]
+            or labels.get("com.docker.compose.project") != project
+            or labels.get("com.docker.compose.service") != "ops-artifacts"
+            or str(labels.get("com.docker.compose.oneoff", "false")).lower() != "false"
+            or item["State"].get("Paused")
+            or item["State"].get("Restarting")
+            or item["State"]["Status"] not in {"running", "exited", "created"}
+            or not re.fullmatch(r"sha256:[a-f0-9]{64}", item["Image"])
+        ):
+            raise ValueError("Unverified artifact server")
+        result["artifact"] = {"container_id": item["Id"], "image_id": item["Image"]}
+    except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError):
+        result["blockers"].append("source_artifact_image_not_available_or_unverified")
+    if not result["blockers"]:
+        if result["artifact"]["image_id"] not in result["ops_images"].values():
+            result["blockers"].append("source_ops_artifact_images_differ")
+        else:
+            result["status"] = "VERIFIED"
+    return result
+
+
+def plan(state, *, runtime_keys=False):
     settings = database.load_settings(state)
     argo = None
     if settings["mode"] == "gitops":
@@ -239,6 +301,11 @@ def plan(state):
         image_available = True
     except database.storage.SnapshotError:
         image_available = False
+    runtime_images = (
+        runtime_image_check(deployment["images"], record["composeProject"])
+        if runtime_keys
+        else {"status": "NOT_CHECKED"}
+    )
     # A report describes one observation, never a reusable approval to mutate.
     latest_pod = database.read_json(pod_args)
     if (
@@ -281,6 +348,13 @@ def plan(state):
             raise ValueError("Argo changed while preparing maintenance")
     else:
         database.require_dev(state, settings)
+    if (
+        runtime_keys
+        and runtime_image_check(deployment["images"], record["composeProject"]) != runtime_images
+    ):
+        raise ValueError("Runtime backup images changed while preparing maintenance")
+    blockers = [] if image_available else ["source_mysql_image_not_available_or_unverified"]
+    blockers.extend(runtime_images.get("blockers", []))
     active = sorted(
         (identity for identity, row in writers.items() if row["running"]),
         key=lambda identity: (
@@ -291,8 +365,9 @@ def plan(state):
     return {
         "schema_version": 1,
         "scope": "ops_backup_maintenance_plan",
-        "status": "PLANNED" if image_available else "BLOCKED",
-        "blockers": [] if image_available else ["source_mysql_image_not_available_or_unverified"],
+        "status": "BLOCKED" if blockers else "PLANNED",
+        "blockers": blockers,
+        "runtime_key_images": runtime_images,
         "checked_at": datetime.now(UTC).isoformat(),
         "repository": settings["repository"],
         "state_id": settings["stateId"],
@@ -316,10 +391,15 @@ def plan(state):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--state-dir", type=Path, default=database.STATE)
+    parser.add_argument(
+        "--runtime-keys",
+        action="store_true",
+        help="Also check local Ops key-probe images and artifact image alignment; no Secret reads",
+    )
     args = parser.parse_args()
     try:
         with locked(args.state_dir):
-            report = plan(args.state_dir)
+            report = plan(args.state_dir, runtime_keys=args.runtime_keys)
         print(json.dumps(report, sort_keys=True))
         return 0 if report["status"] == "PLANNED" else 1
     except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError):

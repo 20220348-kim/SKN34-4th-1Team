@@ -117,6 +117,10 @@ WSL에서 개인 state 경로를 지정하며 서비스·DB·Secret을 변경하
 
 ```bash
 python3 -B infrastructure/gitops/scripts/ops_maintenance_plan.py --state-dir "$OPS_STATE_DIR"
+
+# 실행 키를 포함하는 백업: 중지 전에 호스트 Ops 이미지와 결과 서버 이미지도 확인
+python3 -B infrastructure/gitops/scripts/ops_maintenance_plan.py \
+  --state-dir "$OPS_STATE_DIR" --runtime-keys
 ```
 
 - 접수 제어가 없는 구버전은 `admission_control_unsupported`이고 나머지 미완료 작업·예약·일정
@@ -140,6 +144,13 @@ python3 -B infrastructure/gitops/scripts/ops_maintenance_plan.py --state-dir "$O
   MySQL·결과 조회 서버와 관련 없는 Langfuse 구성 요소는 중지 대상에서 제외한다.
 - 복원용으로 원본과 정확히 같은 MySQL digest가 Docker에 있어야 `status=PLANNED`를 반환한다.
   이미지가 없거나 확인할 수 없으면 `BLOCKED`와 종료 코드 1을 반환하며 자동 pull하지 않는다.
+  `--runtime-keys`는 API/sync의 이미지가 **호스트 Docker**에 있고 같은 image ID로 해석되며,
+  같은 Compose 프로젝트의 유일한 `ops-artifacts`와도 image ID가 일치하는지 확인한다.
+  Kubernetes 노드에만 있는 이미지는 키 검증용 로컬 컨테이너에서 사용할 수 없다.
+  누락·서로 다른 이미지·불명확한 컨테이너 소유권은 고정된 `blockers`로 보고한다. 조회 도중
+  image ID나 결과 서버 컨테이너 ID가 바뀌어도 중단하며 자동 pull·재생성·Secret 조회는 하지 않는다.
+  이 옵션 없이 실행하면 `runtime_key_images.status=NOT_CHECKED`다. 옵션을 사용해 `VERIFIED`여도
+  이미지 준비만 확인한 것이며 실제 키 일치·DB 로그인·암호화 백업은 아래 절차에서 별도로 검증한다.
   `PLANNED`도 관찰 결과일 뿐 백업·갱신 승인이나 중지 완료가 아니다.
   `services_changed=false`, `backup_verified=false`, `upgrade_allowed=false`를 유지한다.
 
