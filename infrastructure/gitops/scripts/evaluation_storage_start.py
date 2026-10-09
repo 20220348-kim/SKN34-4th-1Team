@@ -443,9 +443,18 @@ def request(
 
 
 def verify_started(
-    root, fork, *, state, restore_report, archive, key_file, langfuse_url, helm="helm"
+    root,
+    fork,
+    *,
+    state,
+    restore_report,
+    archive,
+    key_file,
+    langfuse_url,
+    helm="helm",
+    verify_http=False,
 ):
-    """Read rollout and endpoint evidence twice; never activate the runner or send traffic."""
+    """Observe rollout before/after optional HTTP reads; never activate the runner."""
     report, report_sha = release.read_restore_report(restore_report)
     settings = release.fork_cluster.load_settings(state)
     if (
@@ -457,6 +466,7 @@ def verify_started(
             "Storage rollout verification requires the matching GitOps cluster"
         )
     kube, _, ak = release.fork_cluster.commands(state, settings)
+    forward_kube = kube  # A long-lived port-forward must not inherit request timeouts.
     kube, ak = kube + ["--request-timeout=15s"], ak + ["--request-timeout=15s"]
     release.fork_cluster.verify_context(kube, settings, timeout=15)
     node = settings["cluster"] + "-control-plane"
@@ -479,6 +489,44 @@ def verify_started(
     handoff = dormant.evaluation_secrets.verify_handoff(
         state, archive, key_file, report, storage
     )
+    proof = None
+    if verify_http:
+        secrets = dormant.evaluation_secrets
+        connection = secrets.ops_runtime.read_connection(
+            Path(state) / secrets.ops_runtime.BRIDGE, settings
+        )
+        payload, archive_hash, keys, source = secrets.bound_archive(
+            settings, connection, archive, key_file, report
+        )
+        if archive_hash != handoff["archiveSha256"]:
+            raise ValueError("Storage HTTP archive changed")
+        snapshot = secrets.snapshot
+        namespaced, frozen = snapshot.database.frozen_source(state, settings)
+        if frozen != source:
+            raise ValueError(
+                "Storage HTTP source is no longer the frozen archive source"
+            )
+        command = [
+            *namespaced,
+            "exec",
+            "-i",
+            "ops-mysql-0",
+            "-c",
+            "mysql",
+            "--",
+            *snapshot.storage.AUTH,
+        ]
+        entries = payload["stores"]["results"]["entries"]
+        # The handoff check bound the frozen DB dump to this archive. Only read
+        # completed records; the common post-check below also covers HTTP reads.
+        expected = snapshot.completed_evidence(command, entries)
+        proof = storage_http.verify(
+            forward_kube,
+            before["storageWorkloads"]["pods"],
+            expected,
+            entries,
+            keys["keys"]["artifact"],
+        )
     if release.plan(root, fork, **options) != plan:
         raise ValueError("Storage rollout publication changed")
     if (
@@ -499,7 +547,7 @@ def verify_started(
     )
     if before != after:
         raise ValueError("Storage rollout resources changed during verification")
-    return {
+    result = {
         "schema": "evaluation-storage-start-v1",
         "status": "STORAGE_ROLLOUT_VERIFIED",
         "sourceSha": plan["sourceSha"],
@@ -524,71 +572,14 @@ def verify_started(
         "runnerActivationRequested": False,
         "opsRoutingChanged": False,
     }
-
-
-def verify_http(
-    root, fork, *, state, restore_report, archive, key_file, langfuse_url, helm="helm"
-):
-    """Bind GET results to frozen source evidence and unchanged verified rollout."""
-    options = {
-        "state": state,
-        "restore_report": restore_report,
-        "archive": archive,
-        "key_file": key_file,
-        "langfuse_url": langfuse_url,
-        "helm": helm,
-    }
-    before = verify_started(root, fork, **options)
-    settings = release.fork_cluster.load_settings(state)
-    report, report_sha = release.read_restore_report(restore_report)
-    if report_sha != before["restoreReportSha256"]:
-        raise ValueError("Storage HTTP restore report changed")
-    secrets = dormant.evaluation_secrets
-    connection = secrets.ops_runtime.read_connection(
-        Path(state) / secrets.ops_runtime.BRIDGE, settings
-    )
-    payload, archive_hash, keys, source = secrets.bound_archive(
-        settings, connection, archive, key_file, report
-    )
-    if archive_hash != before["sourceHandoff"]["archiveSha256"]:
-        raise ValueError("Storage HTTP archive changed")
-    snapshot = secrets.snapshot
-    namespaced, frozen = snapshot.database.frozen_source(state, settings)
-    if frozen != source:
-        raise ValueError("Storage HTTP source is no longer the frozen archive source")
-    command = [
-        *namespaced,
-        "exec",
-        "-i",
-        "ops-mysql-0",
-        "-c",
-        "mysql",
-        "--",
-        *snapshot.storage.AUTH,
-    ]
-    entries = payload["stores"]["results"]["entries"]
-    # verify_started already compared the frozen DB dump with this archive. Read
-    # only its completed records; do not restore another DB or accept caller IDs.
-    expected = snapshot.completed_evidence(command, entries)
-    kube, _, _ = release.fork_cluster.commands(state, settings)
-    release.fork_cluster.verify_context(kube, settings, timeout=15)
-    proof = storage_http.verify(
-        kube,
-        before["observation"]["storageWorkloads"]["pods"],
-        expected,
-        entries,
-        keys["keys"]["artifact"],
-    )
-    after = verify_started(root, fork, **options)
-    if before != after:
-        raise ValueError("Storage HTTP rollout or source changed during verification")
-    return {
-        **after,
-        "status": "STORAGE_HTTP_VERIFIED",
-        "httpTrafficVerified": True,
-        "httpVerification": proof,
-        "clusterServiceTrafficVerified": False,
-    }
+    if proof is not None:
+        result.update(
+            status="STORAGE_HTTP_VERIFIED",
+            httpTrafficVerified=True,
+            httpVerification=proof,
+            clusterServiceTrafficVerified=False,
+        )
+    return result
 
 
 def main():
@@ -624,14 +615,10 @@ def main():
         fork = release.from_origin(root, branch=args.branch).require_personal_publish()
         with release.fork_cluster.locked(args.state_dir):
             action = (
-                verify_http
-                if args.verify_http
-                else verify_started
-                if args.verify_started
-                else request
+                verify_started if args.verify_started or args.verify_http else request
             )
             extra = (
-                {}
+                {"verify_http": args.verify_http}
                 if args.verify_started or args.verify_http
                 else {"start": args.request_start, "progress": progress}
             )

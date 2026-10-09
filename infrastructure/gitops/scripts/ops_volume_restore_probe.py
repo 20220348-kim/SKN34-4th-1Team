@@ -221,6 +221,31 @@ def prefect_json(path):
         return json.loads(raw)
 
 
+def completed_prefect_execution(read, request, flow_id):
+    """Read one completed execution and its deployment/state links in either runtime."""
+    flow = read("/flow_runs/" + flow_id)
+    if (
+        flow["id"] != flow_id
+        or flow["state_type"] != "COMPLETED"
+        or flow["state"]["type"] != "COMPLETED"
+        or flow["parameters"].get("request_id") != request
+    ):
+        raise ValueError("Prefect API completed execution differs")
+    deployment_id = str(UUID(flow["deployment_id"]))
+    deployment = read("/deployments/" + deployment_id)
+    if deployment["id"] != deployment_id or deployment["flow_id"] != flow["flow_id"]:
+        raise ValueError("Prefect API deployment differs")
+    history = read("/flow_run_states/?flow_run_id=" + flow_id)
+    states = [row for row in history if row["id"] == flow["state"]["id"]]
+    if (
+        len(states) != 1
+        or states[0]["type"] != "COMPLETED"
+        or states[0]["state_details"]["flow_run_id"] != flow["id"]
+    ):
+        raise ValueError("Prefect API state history differs")
+    return flow
+
+
 def check_prefect_api(root, expected):
     """Start only the restored API, never migrations, scheduling or a runner."""
     expected = prefect_runs(expected)
@@ -278,33 +303,13 @@ def check_prefect_api(root, expected):
                         ) from None
                     time.sleep(1)
             for request, evidence in expected.items():
-                flow = prefect_json("/flow_runs/" + evidence["flow_id"])
-                if (
-                    flow["id"] != evidence["flow_id"]
-                    or flow["state_type"] != "COMPLETED"
-                    or flow["state"]["type"] != "COMPLETED"
-                    or flow["parameters"].get("request_id") != request
-                    or flow["parameters"].get("execution_mode") != "replay"
-                    or flow["parameters"].get("live_config")
-                ):
-                    raise ValueError("Restored Prefect API execution differs")
-                deployment_id = str(UUID(flow["deployment_id"]))
-                deployment = prefect_json("/deployments/" + deployment_id)
-                if (
-                    deployment["id"] != deployment_id
-                    or deployment["flow_id"] != flow["flow_id"]
-                ):
-                    raise ValueError("Restored Prefect API deployment differs")
-                history = prefect_json(
-                    "/flow_run_states/?flow_run_id=" + evidence["flow_id"]
+                flow = completed_prefect_execution(
+                    prefect_json, request, evidence["flow_id"]
                 )
-                states = [row for row in history if row["id"] == flow["state"]["id"]]
-                if (
-                    len(states) != 1
-                    or states[0]["type"] != "COMPLETED"
-                    or states[0]["state_details"]["flow_run_id"] != flow["id"]
-                ):
-                    raise ValueError("Restored Prefect API state history differs")
+                if flow["parameters"].get("execution_mode") != "replay" or flow[
+                    "parameters"
+                ].get("live_config"):
+                    raise ValueError("Restored Prefect API execution differs")
             if server.poll() is not None:
                 raise ValueError("Restored Prefect server exited during verification")
         finally:
