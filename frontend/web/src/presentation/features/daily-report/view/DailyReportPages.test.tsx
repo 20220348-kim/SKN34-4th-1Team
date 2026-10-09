@@ -129,7 +129,7 @@ describe('기업 맞춤 리포트 화면', () => {
   it('기업이 없으면 등록 링크만 보여 주고 리포트 만들기를 내놓지 않는다', async () => {
     vi.mocked(appContainer.resolve('getMyCompanyUseCase').execute).mockResolvedValue(null)
     renderPage()
-    expect((await screen.findByRole('link', { name: '기업 등록' })).getAttribute('href')).toBe('/app/profile')
+    expect((await screen.findByRole('link', { name: '기업 등록하기' })).getAttribute('href')).toBe('/app/profile')
     expect(screen.queryByRole('button', { name: '오늘의 리포트 만들기' })).toBeNull()
     expect(screen.queryByRole('link', { name: '기업 정보 수정' })).toBeNull()
   })

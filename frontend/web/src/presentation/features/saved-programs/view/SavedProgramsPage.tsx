@@ -9,6 +9,7 @@ import { supportProgramCategories } from '../../../../domain/entities/SupportPro
 import { assistantCover } from '../../../shared/assistant/assistantPlacement'
 import { appPaths, readSavedProgramsViewMode, savedProgramsPath, supportProgramDetailPath, type SavedProgramsViewMode } from '../../../shared/routes/appPaths'
 import { EmptyState } from '../../../shared/workspace/EmptyState'
+import { BookmarkOutlineIcon, SearchIcon } from '../../../shared/workspace/EmptyStateIcons'
 import { ErrorState } from '../../../shared/workspace/ErrorState'
 import { ddayToneClassNames } from '../../../shared/workspace/WorkspaceStates.styles'
 import { workspacePageStyles, workspaceTagClassName } from '../../../shared/workspace/WorkspacePage.styles'
@@ -161,7 +162,7 @@ export function SavedProgramsPage({ initial, browseUseCase, preparationUseCase, 
         ) : vm.phase === 'failed' ? (
           <ErrorState message={savedSupportProgramMessages.failed} onRetry={vm.retry} />
         ) : isEmpty ? (
-          <EmptyState icon={<BookmarkIcon />} title={savedSupportProgramMessages.emptyTitle} description={savedSupportProgramMessages.emptyDescription}
+          <EmptyState icon={<BookmarkOutlineIcon />} title={savedSupportProgramMessages.emptyTitle} description={savedSupportProgramMessages.emptyDescription}
             action={{ label: '지원사업 찾기', to: appPaths.chat }} />
         ) : null) : null}
 
@@ -516,7 +517,8 @@ function SavedProgramList({ programs, page, totalPages, onPageChange, daysUntilD
   const isNarrow = useMediaQuery(narrowViewportQuery)
   if (!programs.length) {
     return <div role="tabpanel" aria-label="관심 공고 목록">
-      <EmptyState title="조건에 맞는 관심 공고가 없어요"
+      <EmptyState icon={<SearchIcon />} title="조건에 맞는 관심 공고가 없어요"
+        description={filtersActive ? '지역·분야·대상 필터를 바꾸거나 초기화해 보세요.' : undefined}
         action={filtersActive ? { label: '필터 초기화', onClick: onResetFilters } : undefined} />
     </div>
   }
