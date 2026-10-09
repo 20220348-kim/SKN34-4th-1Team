@@ -13,6 +13,8 @@ import java.util.regex.Pattern
  */
 object SupportProgramStatusResolver {
     private val WHITESPACE: Pattern = Pattern.compile("\\s+")
+    /** "모집완료 시"처럼 완료·마감·소진과 '시' 사이만 띄어 쓴 표현입니다. 공고마다 띄어쓰기가 달라 붙여 쓴 형태로 맞춥니다. */
+    private val SPACED_UNTIL: Pattern = Pattern.compile("(완료|마감|소진) 시")
 
     fun resolve(
         applicationPeriod: String,
@@ -44,7 +46,7 @@ object SupportProgramStatusResolver {
 
     fun isRollingPeriod(applicationPeriod: String): Boolean =
         containsAny(
-            normalize(applicationPeriod),
+            SPACED_UNTIL.matcher(normalize(applicationPeriod)).replaceAll("\$1시"),
             "예산 소진", "예산소진", "상시", "선착순", "모집 완료시", "모집완료시",
             "모집 마감시", "모집마감시", "수시", "정원 마감", "정원마감",
             "규모 마감", "규모마감", "소진시", "완료시",
