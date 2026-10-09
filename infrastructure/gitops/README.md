@@ -41,6 +41,7 @@ Langfuse와 관련 저장소 이전, 남은 웹·데이터·외부 접근 및 �
 | Argo 입력 준비 | `deployment.py plan-gitops`: 검증된 공개 이미지·소스 SHA로 고정한 수동 동기화 계획 출력 |
 | 평가 Argo 최초 동기화 요청 | `evaluation_release.py --request-dormant-sync`: 검증한 기존 세 Application에 replica 0 수동 sync 요청. 완료·실행 검증은 별도 |
 | 평가 Argo 적용 완료 확인 | `evaluation_dormant_status.py`: 같은 발행본의 Synced/Healthy·실제 선언·보존 PVC·Pod 부재를 읽기 전용으로 대조. 기동 승인은 별도 |
+| 평가 저장 서비스 기동 요청 | `evaluation_storage_start.py --request-start`: 데이터·원본·인증·정책 재검증 후 Prefect·결과 서버만 replica 1로 수동 sync 요청. 실행기·Ops 전환과 rollout 검증은 별도 |
 | 발행본 기준 연결 설정 비교 | `deployment.py review-published-runtime --state-dir ...`: 공개 발행 Chart·values로 기존 연결 설정을 재현하고 전후 발행 검증 |
 | 기존 환경 전환 파일 준비 | `gitops_transition.py`: dev 환경 또는 안정된 수동 Argo 환경의 기존 설정과 공개 발행본으로 개인 state의 비공개 파일 생성. 적용·동기화 없음 |
 | 저장된 전환 파일 재검증 | `gitops_transition.py --verify`: 현재 발행본·환경으로 계획을 다시 생성해 파일 전체와 비교. 파일 갱신·적용 없음 |
