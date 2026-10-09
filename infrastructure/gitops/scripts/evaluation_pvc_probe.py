@@ -90,6 +90,10 @@ def verify(proof, expected, root):
     return {
         "status": "VERIFIED",
         "matched_completed_evaluations": len(expected),
+        "matched_prefect_executions": len(probe.prefect_runs(expected)),
+        "shared_review_copies_verified": sum(
+            "shared_review_copy" in row for row in expected.values()
+        ),
         "runtime_uid": UID,
         "runtime_gid": GID,
         "pod_replacement_preserved_data": True,

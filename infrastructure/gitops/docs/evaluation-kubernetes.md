@@ -9,8 +9,30 @@ Compose는 로컬 개발에 유지하고, 이전 중에는 기존 인스턴스�
 ## 개인 환경의 실제 이전 상태 — 2026-10-09
 
 공개 이미지 준비는 `2cab4881fa8b128687a35d0da409ac2c4ee08002` 기준으로 완료했다.
-원격 발행 결과와 개인 클러스터 이전 상태를 구분한다. 이번 작업에서는 개인 클러스터를 변경하지
-않았으며, 이미지 발행 성공을 실제 PVC 인계·서비스 활성화 완료로 해석하지 않는다.
+이후 개인 환경의 최신 암호화 백업과 **임시 Kubernetes PVC 복원·Pod 교체 검증**을 진행했다.
+보존 PVC 인계·Secret 준비·Argo 등록·평가 서비스 활성화는 아직 완료하지 않았다.
+
+이번 실제 복원에서 완료 평가 6건 중 2건이
+[Git 공유 검토 사본](../../../docs/ops-local-review-copy.md#git에-공유하는-범위)임을 확인했다.
+이 사본에는 원래 Prefect 이력이 포함되지 않는데 기존 검증기가 로컬 실행처럼 요구해 이전이
+차단됐다. 비활성 공유 기록 계정·seed의 실행 식별자·명세·요약·모든 등록 파일의 해시가 일치하는
+사본만 별도로 검증하도록 수정했다. 누락된 Prefect 실행을 사본으로 추정하거나 이력을 새로 만들지 않는다.
+
+- 암호화 백업의 격리 MySQL 복원: 32개 테이블·232개 행, 원래 인증 해시를 사용한 DB 로그인과
+  잘못된 비밀번호 거절 확인.
+- 결과 파일·Ops 연결 6건 보존: **로컬 Prefect 완료 이력 4건 + 공유 검토 사본 2건**.
+  공유 사본도 보고서뿐 아니라 seed에 등록된 추가 결과·답변 파일까지 검증한다.
+- 새 임시 namespace·PVC에 실제 백업 복원, UID/GID 10001 읽기·쓰기, SQLite 무결성과
+  Pod 교체 후 데이터 보존 확인. 임시 리소스 정리 완료, 모델 호출 0회.
+- 기존 결과 서버를 현재 Kubernetes Ops와 같은 불변 이미지로 맞추고 토큰·읽기 전용 원본 볼륨을
+  유지했다. 중지했던 Ops·Prefect와 bridge 연결을 복구했으며 평가 접수는 버전 10으로 재개했다.
+- 기존 서비스가 재개됐으므로 이 백업은 **복원 검증 증거**다. 보존 PVC 인계 전에 다시 접수를
+  닫고 writer를 중지한 상태에서 최신 백업과 원본 일치 검사를 수행해야 한다.
+
+백업 SHA-256은 `fff811580ab425fede168ece7bd08bb266ce1be67a3a5dca1db2c864c5e27119`다.
+백업과 복구 키는 저장소 밖에 보관한다. `full_backup_verified=false`,
+`production_storage_restored=false`, `application_started=false` 범위는 유지한다.
+Langfuse 이전·Core 로그인 복원·NetworkPolicy 집행·새 평가 실행까지 완료했다는 뜻은 아니다.
 
 | 확인 대상 | 결과 | 남은 조건 |
 | --- | --- | --- |
@@ -18,7 +40,7 @@ Compose는 로컬 개발에 유지하고, 이전 중에는 기존 인스턴스�
 | 기존 업무 이미지 4개 | 같은 SHA의 v2 receipt·Git 입력·공개 GHCR manifest 대조 완료 | 이번 발행 이미지를 개인 클러스터에 적용하지 않음 |
 | 공개 평가 실행기 이미지 | 새 업로드·v3 receipt 생성과 공개 GHCR manifest 검증 완료 | 레이어 다운로드·실제 서비스 활성화는 별도 |
 | 실행기 패키지 권한 | Public·정확한 개인 포크 연결·권한 상속 해제·해당 포크 Actions Write 확인 | PAT 발급·입력·Secret 등록 없음 |
-| 개인 평가 namespace와 PVC 인계 | 직전 개인 환경 확인에서 `govbiz-evaluation`은 미설치, 기존 암호화 백업의 임시 PVC 복원 연습은 성공 | 최신 백업·보존 복원·Secret 준비·Argo 등록·동기화·활성화 필요 |
+| 개인 평가 namespace와 PVC 인계 | 최신 백업으로 임시 PVC 복원·Pod 교체 검증 성공, `govbiz-evaluation` 보존 인계는 미진행 | 검증 수정의 CI 확인·다시 중지한 원본의 최신 백업·보존 복원·Secret 준비·Argo 등록·동기화·활성화 필요 |
 
 발행 증거는 다음 실행에서 확인했다. 모든 실행의 대상은 위 전체 SHA이며, 최종 대조 시에도
 현재 main·필수 CI·발행 run/attempt·artifact가 유지되는지 확인했다.
@@ -255,6 +277,11 @@ Helm values·환경변수·상태 오류 메시지 원문은 출력하지 않는
 
 [`evaluation_pvc_restore.py`](../scripts/evaluation_pvc_restore.py)는 기존 암호화 통합 백업을
 메모리에서 인증·복호화하고, 격리 MySQL에서 완료된 Ops 실행과 보고서의 연결을 확인한다.
+공유 검토 사본은 저장소 seed와 비활성 기록 계정·실행 정보·모든 등록 파일을 대조하며 Prefect
+이력 보존 건수에 포함하지 않는다. `matched_completed_evaluations`는 전체 결과 연결,
+`matched_prefect_executions`는 로컬 실행 이력, `shared_review_copies_verified`는 확인한 사본 수다.
+인증할 수 없는 사본·변조·로컬 실행 이력 누락은 계속 실패한다. 복원 검증은 사람의 검토를
+새로 승인하거나 사본을 현 환경에서 실행한 것으로 바꾸지 않는다.
 그 MySQL을 제거한 뒤 **새 임시 namespace와 두 PVC**에 Prefect·결과 파일만 전달한다.
 SQL dump·복구 키를 Kubernetes Secret, ConfigMap, Pod 명세 또는 명령행 인자로 전달하지 않는다.
 복원 파일과 검사 입력은 `kubectl exec`의 표준 입력을 사용한다.

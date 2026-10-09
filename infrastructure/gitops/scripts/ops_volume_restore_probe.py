@@ -114,10 +114,35 @@ def expected_runs(value):
             raise ValueError("Noncanonical execution identity")
         if not re.fullmatch(r"[a-f0-9]{64}", row["report_sha256"]):
             raise ValueError("Missing authenticated report digest")
+        if "shared_review_copy" in row:
+            copy = row["shared_review_copy"]
+            if (
+                not isinstance(copy, dict)
+                or set(copy) != {"seed_id", "seed_sha256", "artifacts_verified"}
+                or not isinstance(copy["seed_id"], str)
+                or not re.fullmatch(r"[a-zA-Z0-9_-]{1,128}", copy["seed_id"])
+                or not isinstance(copy["seed_sha256"], str)
+                or not re.fullmatch(r"[a-f0-9]{64}", copy["seed_sha256"])
+                or type(copy["artifacts_verified"]) is not int
+                or copy["artifacts_verified"] < 6
+            ):
+                raise ValueError("Incomplete shared review provenance")
     return value
 
 
+def prefect_runs(expected):
+    """Shared copies retain reports but do not claim local Prefect history."""
+    if not expected:
+        return {}
+    return {
+        request: row
+        for request, row in expected_runs(expected).items()
+        if "shared_review_copy" not in row
+    }
+
+
 def check_prefect(root, expected):
+    expected = prefect_runs(expected)
     path = root / "prefect.db"
     if not path.is_file():
         raise ValueError("Prefect SQLite database is missing")
@@ -198,6 +223,7 @@ def prefect_json(path):
 
 def check_prefect_api(root, expected):
     """Start only the restored API, never migrations, scheduling or a runner."""
+    expected = prefect_runs(expected)
     before = sqlite_digest(root)
     with tempfile.TemporaryDirectory(prefix="prefect-restore-") as home:
         # No inherited profile, credentials, proxy, remote database or API URL.

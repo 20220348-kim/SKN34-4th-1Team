@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 import re
+from pathlib import Path
 from uuid import UUID
 
 import ops_db_snapshot as database
@@ -11,12 +12,91 @@ import ops_db_snapshot as database
 # These columns exist in the legacy 0017 schema as well as the current schema.
 COMPLETED = """
 SELECT JSON_OBJECT(
-  'id', id, 'flow_id', prefect_flow_run_id, 'evaluation_run_id', evaluation_run_id,
+  'id', r.id, 'flow_id', prefect_flow_run_id, 'evaluation_run_id', evaluation_run_id,
   'dataset_id', dataset_id, 'execution_mode', execution_mode,
   'execution_spec', execution_spec, 'execution_spec_sha256', execution_spec_sha256,
-  'summary', summary
-) FROM evaluations_evaluationrun WHERE status='COMPLETED' ORDER BY id LIMIT 10001;
+  'summary', summary, 'requester_username', u.username, 'requester_active', u.is_active
+) FROM evaluations_evaluationrun r LEFT JOIN auth_user u ON u.id=r.requested_by_id
+WHERE status='COMPLETED' ORDER BY r.id LIMIT 10001;
 """
+
+SEED = (
+    Path(__file__).resolve().parents[3]
+    / "backend/ops-service/apps/evaluations/seed/official-v3/seed.json"
+)
+
+
+def shared_review_copy(row, entries):
+    """Recognize only the repository's exact, inactive-attributed review copies.
+
+    A missing Prefect run alone is never evidence of an import. The checked-in
+    seed excludes Prefect history; authenticate every declared artifact and the
+    execution identity before marking that specific external-history scope.
+    """
+    raw = SEED.read_bytes()
+    seed = json.loads(raw)
+    if seed["schema_version"] != 2:
+        raise ValueError("Unsupported shared review seed")
+    if row.get("requester_username") != seed["reviewer"] or row.get("requester_active") != 0:
+        return None
+    request = str(UUID(row["id"]))
+    records = [
+        item["fields"]
+        for item in seed["records"]
+        if item["model"] == "evaluations.evaluationrun" and item["pk"] == request
+    ]
+    if not records:
+        return None
+    if len(records) != 1:
+        raise ValueError("Repeated shared review identity")
+    fields = records[0]
+    if (
+        fields["status"] != "COMPLETED"
+        or str(UUID(fields["prefect_flow_run_id"])) != str(UUID(row["flow_id"]))
+        or any(
+            fields[key] != row[key]
+            for key in (
+                "evaluation_run_id",
+                "dataset_id",
+                "execution_mode",
+                "execution_spec",
+                "execution_spec_sha256",
+                "summary",
+            )
+        )
+    ):
+        raise ValueError("Shared review execution differs from its source seed")
+    artifacts = [item for item in seed["artifacts"] if item["path"].startswith(request + "/")]
+    names = {item["path"] for item in artifacts}
+    required = {
+        request + "/" + name
+        for name in (
+            "request.json",
+            "evaluation/manifest.json",
+            "evaluation/comparison.json",
+            "evaluation/report.html",
+            "evaluation/results.json",
+            "evaluation/evidently.json",
+        )
+    }
+    if len(names) != len(artifacts) or not required.issubset(names):
+        raise ValueError("Incomplete shared review artifact manifest")
+    for item in artifacts:
+        archived = entries[item["path"]]
+        content = base64.b64decode(archived["data"], validate=True)
+        if (
+            archived["kind"] != "file"
+            or archived["size"] != len(content)
+            or len(content) != item["size"]
+            or archived["sha256"] != item["sha256"]
+            or hashlib.sha256(content).hexdigest() != item["sha256"]
+        ):
+            raise ValueError("Shared review artifact differs from its source seed")
+    return {
+        "seed_id": seed["seed_id"],
+        "seed_sha256": hashlib.sha256(raw).hexdigest(),
+        "artifacts_verified": len(artifacts),
+    }
 
 
 def completed_evidence(command, entries):
@@ -78,5 +158,8 @@ def completed_evidence(command, entries):
         ):
             raise ValueError("Restored DB and completed result artifacts do not match")
         expected[request] = {"flow_id": flow, "report_sha256": report_hash}
+        copy = shared_review_copy(row, entries)
+        if copy is not None:
+            expected[request]["shared_review_copy"] = copy
         flows.add(flow)
     return expected

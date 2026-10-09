@@ -670,7 +670,7 @@ class ArchiveTests(unittest.TestCase):
     def test_completed_link_failures_and_database_cleanup_cannot_report_success(self):
         with self.mocks():
             self.backup()
-        expected = {"private-request-id": {"flow_id": "private-flow-id"}}
+        expected = {str(uuid4()): {"flow_id": str(uuid4()), "report_sha256": "a" * 64}}
         for failure in (None, "links", "db-cleanup", "prefect"):
             events = []
 

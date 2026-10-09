@@ -88,6 +88,31 @@ class FileTests(unittest.TestCase):
         self.assertEqual(list((self.target / "prefect").iterdir()), [])
         self.assertEqual(keep.read_text(), "preserve")
 
+    def test_shared_report_copy_is_preserved_but_not_counted_as_local_prefect_execution(
+        self,
+    ):
+        local = next(iter(self.expected))
+        copied = "11111111-2222-4333-8444-555555555555"
+        self.expected[copied] = {
+            **self.expected[local],
+            "flow_id": "22222222-2222-4333-8444-555555555555",
+            "shared_review_copy": {
+                "seed_id": "synthetic-reviewed-copy",
+                "seed_sha256": "a" * 64,
+                "artifacts_verified": 6,
+            },
+        }
+        for name, row in list(self.stores["results"].items()):
+            if name == local or name.startswith(local + "/"):
+                self.stores["results"][copied + name[len(local) :]] = copy.deepcopy(row)
+        evidence = probe.restore(self.stores, self.expected, self.target)
+        self.assertEqual(evidence["prefect"]["archive"]["matched_executions"], 1)
+        self.assertEqual(evidence["results"]["archive"]["matched_executions"], 2)
+        result = probe.verify(evidence, self.expected, self.target)
+        self.assertEqual(result["matched_completed_evaluations"], 2)
+        self.assertEqual(result["matched_prefect_executions"], 1)
+        self.assertEqual(result["shared_review_copies_verified"], 1)
+
     def test_sqlite_inspection_connections_are_closed_before_permission_mapping(self):
         connections = []
         connect = sqlite3.connect
@@ -880,6 +905,12 @@ class ArchiveTests(unittest.TestCase):
 
     def test_only_store_data_and_db_verified_links_reach_kubernetes(self):
         events = []
+        links = {
+            "11111111-2222-4333-8444-555555555555": {
+                "flow_id": "22222222-2222-4333-8444-555555555555",
+                "report_sha256": "a" * 64,
+            }
+        }
         payload = {
             "database": {"sql": "private SQL"},
             "runtime_keys": {"key": "private key"},
@@ -897,7 +928,7 @@ class ArchiveTests(unittest.TestCase):
         def rehearse(kube, node, stores, expected):
             self.assertEqual(events, ["db-start", "db-removed"])
             self.assertNotIn("private", json.dumps(stores))
-            self.assertEqual(expected, {"from": "database"})
+            self.assertEqual(expected, links)
             return {"status": "VERIFIED"}
 
         with (
@@ -924,7 +955,7 @@ class ArchiveTests(unittest.TestCase):
             patch.object(
                 restore.snapshot,
                 "completed_evidence",
-                return_value={"from": "database"},
+                return_value=links,
             ),
             patch.object(restore, "rehearse", side_effect=rehearse) as disposable,
             patch.object(
