@@ -154,7 +154,8 @@ python3 -B infrastructure/gitops/scripts/ops_maintenance_plan.py --state-dir "$O
    캡처를 완료하고, 격리 복원·완료 평가 연결·키·DB 로그인·구버전 migration 검증은 별도로 기록한다.
 4. 성공·실패 모두 실제로 중지한 대상만 `resume_order`에 따라 원래 상태로 복구한다. 중간 실패 시
    아직 중지하지 않은 서비스에는 재시작을 걸지 않는다. 재개 뒤 rollout·브리지·기존 HTTP 연결을
-   확인한다. Compose 주소가 바뀌었으면 기존 브리지 도구로 연결을 갱신하고 다시 검사한다.
+   확인한다. Compose 주소가 바뀌었으면 `ops_bridge.py`의 개발 모드 `connect` 또는 GitOps 모드
+   [`refresh`](../infrastructure/gitops/docs/ops-runtime.md)로 기존 연결을 갱신하고 `check`로 다시 검사한다.
 
 이 계획 도구는 중지·재개를 자동 실행하지 않는다. 원본에 migration을 적용하는 절차와도 별개다.
 `ops_db_snapshot.py`와 `ops_state_snapshot.py`는 아래 조건을 만족하는 중지된 GitOps 환경의

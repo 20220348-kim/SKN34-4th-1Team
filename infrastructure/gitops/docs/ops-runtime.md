@@ -184,6 +184,31 @@ python3 -B infrastructure/gitops/scripts/ops_bridge.py check --compose-project g
 네트워크 state ID·참가자·포트·현재 IP·Pod/Service CIDR 중복과 기존 Kubernetes 리소스 소유권을 검사한 뒤 경로만 만든다.
 다른 소유자의 동명 Service/EndpointSlice를 인수하지 않고, 기존 Service는 변경하지 않는다.
 EndpointSlice 갱신에는 `resourceVersion`을 사용하며 연결 중 컨테이너 교체를 감지하면 실패한다.
+
+GitOps 전환 이후 Compose 재시작으로 IP가 바뀌면 Linux/WSL에서 기존 연결만 갱신한다.
+`connect`의 개발 모드 제한은 유지하며, 상태 파일을 개발 모드로 바꾸지 않는다.
+
+```bash
+python3 -B infrastructure/gitops/scripts/ops_bridge.py refresh \
+  --state-dir "$OPS_STATE_DIR" --compose-project govbiz-ops-preview
+python3 -B infrastructure/gitops/scripts/ops_bridge.py check \
+  --state-dir "$OPS_STATE_DIR" --compose-project govbiz-ops-preview
+```
+
+`refresh`는 기존 활성화·브리지 기록과 같은 Compose 프로젝트, 연결된 사설 네트워크,
+클러스터 소유권, 기존 Service 두 개와 EndpointSlice 두 개를 확인한다. 전체 변경의 서버 dry-run을
+마친 뒤 UID·resourceVersion·소유 정보·기존 endpoint를 원자적으로 검사하여 주소만 교체한다.
+누락된 자원 생성, Docker 네트워크 연결, Service·포트·Argo Application·Ops 설정 변경은 하지 않는다.
+Argo 소유 자원, 추가 backend, 변경된 포트, 다른 소유자와 검사 중 컨테이너 교체는 거부한다.
+부분 실패는 성공으로 처리하거나 자동 롤백하지 않는다. 현재 주소와 소유권을 확인한 뒤 다시 실행하면
+아직 오래된 주소만 갱신한다. 주소가 같으면 쓰기가 없다. 완료 후 HTTP·인증·평가는 별도 검증한다.
+
+2026-10-09 개인 GitOps 환경에서 중지됐던 Prefect·결과 서버를 같은 컨테이너로 재개한 뒤
+오래된 EndpointSlice 주소를 위 명령으로 복구했다. 갱신 전후 Argo 선언·Ops Deployment spec·
+Service·연결 기록이 같았고, Ops Pod에서 Prefect 상태 조회 200·결과 서버 무인증 401·인증 200을
+확인했다. 사전 점검에서 미완료 평가·예약·flow·활성 일정은 0건이었다. 접수는 열린 상태라
+`BLOCKED / admission_open`이 정상적으로 반환됐으며, 이 검증에서 접수 중지·평가 실행·백업·
+Kubernetes 평가 런타임 이전은 수행하지 않았다.
 도구는 bootstrap·개발 이미지 watcher와 같은 작업 잠금을 사용한다.
 `check`는 경로 조회 후 Docker 토폴로지를 다시 읽어 검사 도중 컨테이너가 교체되었는지도 확인한다.
 기존 연결을 유지한 `gitops` 모드에서도 `check`와 `fork_cluster.py status --json --ops-details`를
@@ -412,7 +437,8 @@ Vite는 다른 터미널에서 `pnpm --dir frontend/web dev:k8s`로 실행한다
 한쪽이 종료되면 함께 시작한 두 전달을 정리한다. Pod 교체 후 웹 명령을 다시 실행한다.
 
 `connect`는 자동 컨트롤러가 아니다. Compose가 Prefect/결과 서버를 교체하거나 네트워크를 다시 만들면
-**다시 실행해 EndpointSlice를 갱신**한다. `check`는 현재 IP·소유권만 읽어 확인하며 HTTP 성공을 뜻하지 않는다.
+**다시 실행해 EndpointSlice를 갱신**한다. GitOps 모드에서는 위의 `refresh`를 사용한다.
+`check`는 현재 IP·소유권만 읽어 확인하며 HTTP 성공을 뜻하지 않는다.
 EndpointSlice의 ready 표시는 구성된 라우팅 대상으로만 해석한다. Prefect에는 이 개발 구성의 별도 인증이 없으므로
 신뢰하는 로컬 Docker 환경에 한정하며 외부·공유 환경으로 그대로 확장하지 않는다.
 
