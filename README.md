@@ -148,10 +148,16 @@ flowchart LR
     Core -.-> Redis[("Redis<br/>캐시 · 임시 상태")]
     classDef client fill:#e8f3fa,stroke:#91b9cd,color:#183d32
     classDef service fill:#e7f5eb,stroke:#92bda6,color:#183d32
-    classDef storage fill:#fff4df,stroke:#c8ad72,color:#183d32
+    classDef mysql fill:#fff4df,stroke:#c8ad72,color:#183d32
+    classDef vectorDb fill:#fce2ef,stroke:#c26493,color:#6b2f50
+    classDef searchIndex fill:#dbf3ef,stroke:#46988a,color:#20564f
+    classDef redisCache fill:#ffe3dc,stroke:#c66b50,color:#703b2d
     class Web,Mobile client
     class Core,Catalog,AI service
-    class CoreDB,CatalogDB,Qdrant,Elastic,Redis storage
+    class CoreDB,CatalogDB mysql
+    class Qdrant vectorDb
+    class Elastic searchIndex
+    class Redis redisCache
 ```
 
 **비동기 작업:** 큐가 활성화된 업무는 `core-service`가 작업과 발행 대기 기록(Outbox)을 MySQL에 저장한 뒤
@@ -165,10 +171,10 @@ flowchart LR
     Consumer -.-> CoreDB
     classDef service fill:#e7f5eb,stroke:#92bda6,color:#183d32
     classDef queue fill:#e8f3fa,stroke:#91b9cd,color:#183d32
-    classDef storage fill:#fff4df,stroke:#c8ad72,color:#183d32
+    classDef mysql fill:#fff4df,stroke:#c8ad72,color:#183d32
     class Producer,Consumer service
     class Queue queue
-    class CoreDB storage
+    class CoreDB mysql
 ```
 
 적용 업무는 **리포트 생성·메일 발송, 중복 지원 검토, 신청 양식·문항 분석, 카카오 연결 해제,
@@ -186,14 +192,16 @@ flowchart LR
     classDef client fill:#e8f3fa,stroke:#91b9cd,color:#183d32
     classDef service fill:#e7f5eb,stroke:#92bda6,color:#183d32
     classDef execution fill:#f3f5f4,stroke:#a8b5af,color:#183d32
-    classDef storage fill:#fff4df,stroke:#c8ad72,color:#183d32
+    classDef mysql fill:#fff4df,stroke:#c8ad72,color:#183d32
     class Admin client
     class Ops,Core service
     class Evaluation execution
-    class OpsDB,CoreDB storage
+    class OpsDB,CoreDB mysql
 ```
 
 가는 실선은 서비스 호출, 굵은 실선은 큐 메시지 전달, 점선은 DB·검색 저장소·캐시 접근을 나타냅니다.
+저장소는 MySQL(노랑), Qdrant(분홍), Elasticsearch(청록), Redis(주황)으로 구분합니다.
+Core·Catalog·Ops의 MySQL은 같은 색을 사용하고, 서비스별 소유권은 이름으로 표시합니다.
 대표적인 연결만 표시하고 응답은 생략했습니다.
 웹·앱은 [Shared 패키지](docs/mobile-monorepo.md)의 업무 모델·API 계약·응답 검증을 공유합니다.
 
