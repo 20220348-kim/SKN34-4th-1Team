@@ -139,6 +139,28 @@ Compose 실행기를 함께 확인한다. [진단 범위와 실행 명령](ops-r
 기존 이미지의 실행 명세 일치를 새 main의 공개 발행 검증으로 간주하지 않는다.
 보존 PVC·Secret·Argo 등록과 실제 평가 환경 전환은 여전히 위의 완료 조건을 충족한 뒤 수행해야 한다.
 
+## 기존 연결의 실제 무료 평가 검증 — 2026-10-10
+
+중지돼 있던 로컬 웹 서버와 Core·Ops loopback port-forward를 재개하고 기존 관리자 계정으로
+무료 재생 평가를 실행했다. `Kubernetes Ops → Compose Prefect·실행기·결과 서버 → Ops sync →
+인증된 보고서 조회` 경로를 검증했으며 Kubernetes 평가 환경으로 이전한 결과는 아니다.
+
+- 복구 확인 실행 `bce92015-fba3-4ea3-ad4d-b135b0efa44d`가 완료됐고 DB의 실제 호출 횟수도 0이었다.
+- 검증 도구의 일반 재생 경로가 호출 횟수를 0으로 고정 기록하던 부분을 수정했다. 모든 smoke 실행은
+  완료 API 응답의 실제 정수 0을 확인해야 성공 보고서를 생성한다. 누락·불확실한 값은 실패한다.
+- 수정 후 실행 `b0c21247-39bf-43dd-8d8e-4f1be973228b`도 사례 6개·모델 호출 0회로 완료됐다.
+  관리자 로그인·CSRF, 중복 요청의 동일 Prefect flow, 상세 조회 없이 자동 상태 반영,
+  보고서 HTTP 200과 Core 로그아웃 후 Ops 접근 거절을 확인했다.
+- 무료 테스트 129개와 Ruff 검사를 통과했다. 첫 실행의 121개 성공 후, Windows 샌드박스의
+  소켓 제한으로 실패한 loopback 테스트 8개만 통신 가능한 환경에서 재검증해 통과했다.
+  기존 LLMOps CI가 이 테스트 파일과 실제 평가 smoke를 실행한다. 수정 코드의 최신 SHA 전체 CI는 별도다.
+
+병합 후 main은 `efaadb30a3812b4088318b5c736fec114ee1b69d`다. 이전 main의 LLMOps CI는 취소됐고
+새 main의 필수 CI가 진행 중이다. 실제 발행 가드 조회도 `ci_run_not_successful_or_untrusted:ci.yml`로
+차단됐다. 이 상태에서 원본 writer를 중지하거나 보존 PVC·Argo 전환을 시작하지 않았다.
+검증 보고서는 저장소 밖에 보관하며 위 두 실행으로 원본 데이터가 추가됐으므로 이전 백업을
+최신 인계 백업으로 재사용하지 않는다.
+
 ## 이번 구현: 독립 배포와 저장소 계약
 
 [`govbiz-evaluation` Chart](../charts/govbiz-evaluation/Chart.yaml)는 한 릴리스에 한 프로세스만

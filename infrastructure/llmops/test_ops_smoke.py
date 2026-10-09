@@ -2,6 +2,7 @@
 
 import copy
 import importlib.util
+import io
 import json
 import socket
 import threading
@@ -9,9 +10,11 @@ from hashlib import sha256
 from http.cookiejar import CookieJar
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock
 from urllib.error import HTTPError, URLError
 from urllib.request import Request
-from unittest.mock import Mock
+from uuid import UUID
 
 import pytest
 
@@ -204,6 +207,103 @@ def test_missing_replay_profile_never_falls_back_to_live(replay_session, profile
     replay_session["datasets"][0]["execution_profiles"]["replay"] = profile
     with pytest.raises(AssertionError):
         smoke.replay_selection(replay_session, "rag-synthetic-multichunk-v1")
+
+
+@pytest.fixture
+def main_replay(monkeypatch, tmp_path):
+    """Exercise the CLI success report with API responses, without a model or server."""
+    run_id = "11111111-1111-4111-8111-111111111111"
+    report = "/api/v1/ops/evaluations/" + run_id + "/report"
+    output = tmp_path / "smoke.json"
+    run = {
+        "id": run_id, "status": "COMPLETED", "model_api_calls": 0,
+        "prefect_flow_run_id": "flow", "evaluation_run_id": "evaluation",
+        "execution_spec_sha256": "a" * 64, "execution_profile": "b" * 64,
+        "execution_spec": {"generation": None, "dataset": {"case_ids": ["case"]}},
+        "comparison": {"case_ids": ["case"], "comparison": "self-replay", "metrics": []},
+        "summary": {"caseCount": 6, "statusAccuracy": 1,
+                    "referenceCitationRecall": 1, "semanticFaithfulness": None},
+        "report_url": report, "detail_url": "/ops/evaluations/" + run_id,
+    }
+    logged_in, submissions = False, 0
+    calls = []
+
+    def open_request(request, **kwargs):
+        nonlocal logged_in, submissions
+        path = request.selector
+        calls.append(path)
+        status, value = 200, {}
+        if path == "/api/v1/auth/login":
+            logged_in = True
+            value = {"account": {"role": "ADMIN"}}
+        elif path == "/api/v1/auth/logout":
+            logged_in = False
+            status = 204
+        elif path == "/api/v1/ops/session":
+            value = {
+                "user": {"username": "fixture-admin"},
+                "live_enabled": False, "rag_live_enabled": False,
+                "datasets": [{"id": "target-coverage-20260907-v1",
+                              "execution_profiles": {"replay": "b" * 64}}],
+            }
+        elif path == "/api/v1/health":
+            pass
+        elif not logged_in:
+            status = 401
+        elif request.data:
+            payload = json.loads(request.data)
+            if not request.has_header("X-csrftoken"):
+                status = 403
+            elif payload["dataset_id"] == "../../invalid":
+                status = 400
+            else:
+                submissions += 1
+                status = 202 if submissions == 1 else 200
+                value = {"prefect_flow_run_id": "flow", "execution_spec_sha256": "a" * 64}
+        elif path == report:
+            value = "<html>" + "x" * 1100 + "</html>"
+        else:
+            raise AssertionError("Unexpected HTTP path in CLI fixture")
+        response = io.BytesIO(value.encode() if isinstance(value, str) else json.dumps(value).encode())
+        response.status = status
+        response.headers = {"Content-Security-Policy": "sandbox allow-scripts;"}
+        return response
+
+    monkeypatch.setattr(smoke, "loopback_client", lambda *args: SimpleNamespace(open=open_request))
+    monkeypatch.setattr(smoke, "CookieJar", lambda: [SimpleNamespace(name="govbiz_ops_csrf", value="fixture")])
+    monkeypatch.setattr(smoke, "uuid4", lambda: UUID(run_id))
+    monkeypatch.setattr(smoke, "wait_for_list_state", Mock(return_value=run))
+    runtime = Mock(return_value={"status": "PASS"})
+    monkeypatch.setattr(smoke, "verify_runtime", runtime)
+    monkeypatch.setenv("CORE_ADMIN_EMAIL", "fixture-admin")
+    monkeypatch.setenv("CORE_ADMIN_PASSWORD", "fixture-only")
+    monkeypatch.setattr("sys.argv", ["ops_smoke.py", "--output", str(output)])
+    return run, output, calls, runtime
+
+
+@pytest.mark.parametrize("count", [None, False, True, 0.0, "0", -1, 1, 7, "missing"])
+def test_cli_never_reports_zero_when_api_call_count_is_unconfirmed(main_replay, count):
+    run, output, calls, runtime = main_replay
+    if count == "missing":
+        run.pop("model_api_calls")
+    else:
+        run["model_api_calls"] = count
+    with pytest.raises(ValueError, match="confirmed zero model API calls"):
+        smoke.main()
+    assert not output.exists()
+    assert run["report_url"] not in calls
+    runtime.assert_not_called()
+
+
+def test_cli_report_requires_actual_integer_zero_from_api(main_replay, capsys):
+    run, output, calls, runtime = main_replay
+    smoke.main()
+    report = json.loads(output.read_text())
+    assert report["model_api_calls"] == 0 and type(report["model_api_calls"]) is int
+    assert json.loads(capsys.readouterr().out) == report
+    assert report["request_id"] == run["id"] and report["core_logout_revokes_ops"] is True
+    assert calls.count(run["report_url"]) == 2
+    runtime.assert_called_once()
 
 
 def response(state, **overrides):
