@@ -8,6 +8,8 @@ import {
 import { WorkspaceModal } from '../../../shared/workspace/WorkspaceModal'
 import { workspaceModalStyles } from '../../../shared/workspace/WorkspaceModal.styles'
 import { PartnerManagementHeader } from '../../../shared/partner-recruitment/PartnerManagementHeader'
+import { EmptyState } from '../../../shared/workspace/EmptyState'
+import { BuildingIcon, MegaphoneIcon } from '../../../shared/workspace/EmptyStateIcons'
 import {
   programDeadlineLabel,
   recruitmentConditionTags,
@@ -56,14 +58,16 @@ export function MyPartnerRecruitmentsPage() {
           ) : phase === 'loading' && recruitments.length === 0 ? (
             <RecruitmentCardSkeleton label="모집글 불러오는 중" text="내 모집글을 불러오는 중입니다." />
           ) : recruitments.length === 0 ? (
-            <section className={workspacePageStyles.card} aria-label="내 모집글 없음">
-              <p className={workspacePageStyles.emptyNote}>
-                {hasCompany ? '아직 올린 모집글이 없습니다. 첫 모집글을 올려 보세요.' : '프로필에서 기업을 등록하면 모집글을 올릴 수 있습니다.'}
-              </p>
-              <div className={partnerRecruitmentStyles.linkRow}>
-                <Link className={workspacePageStyles.primaryButton} to={createPath}>{hasCompany ? '모집글 작성' : '기업 등록 후 작성'}</Link>
-              </div>
-            </section>
+            // 다른 작업 화면과 같은 공용 빈 화면(회색 아이콘 · 제목 · 설명 · 초록 버튼)을 씁니다.
+            hasCompany ? (
+              <EmptyState icon={<MegaphoneIcon />} title="아직 올린 모집글이 없어요"
+                description="모집글을 올리면 함께 신청할 기업의 참여 제안을 받을 수 있어요."
+                action={{ label: '모집글 작성하기', to: createPath }} />
+            ) : (
+              <EmptyState icon={<BuildingIcon />} title="기업을 등록하면 모집글을 올릴 수 있어요"
+                description="프로필에서 사업자 정보를 등록해 주세요."
+                action={{ label: '기업 등록하기', to: createPath }} />
+            )
           ) : (
             <>
               <div className={partnerRecruitmentStyles.cardGrid}>

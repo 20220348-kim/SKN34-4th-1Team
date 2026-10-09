@@ -7,10 +7,14 @@ import { toRegionName } from '../../../../domain/entities/Region'
 import { assistantCover } from '../../../shared/assistant/assistantPlacement'
 import { companyInitial } from '../../../shared/partner-recruitment/partnerRecruitmentLabels'
 import { workspaceChipClassName, workspacePageStyles, workspaceTagClassName } from '../../../shared/workspace/WorkspacePage.styles'
+import { EmptyState } from '../../../shared/workspace/EmptyState'
+import { EnvelopeIcon, SearchIcon } from '../../../shared/workspace/EmptyStateIcons'
+import { HelpTip } from '../../../shared/workspace/HelpTip'
 import { WorkspaceModal } from '../../../shared/workspace/WorkspaceModal'
 import { ddayToneClassNames } from '../../../shared/workspace/WorkspaceStates.styles'
 import { workspaceModalStyles } from '../../../shared/workspace/WorkspaceModal.styles'
 import { PartnerManagementHeader } from '../../../shared/partner-recruitment/PartnerManagementHeader'
+import { appPaths } from '../../../shared/routes/appPaths'
 import {
   proposalActionConfirmations,
   proposalActionLabels,
@@ -73,22 +77,27 @@ export function PartnerProposalBoxPage() {
       <PartnerManagementHeader active="proposals" />
 
       <div className={workspacePageStyles.content}>
-        <p className={s.lede}>기업 회원끼리 주고받은 참여 제안이에요 · 모집글 하나에 한 번, 7일 안에 답하지 않으면 끝나요</p>
-
-        {/* 받은 제안 · 보낸 제안 세그먼트는 본문 첫 줄 왼쪽에 내용 폭만큼만 둡니다(세로 flex 안에서 늘어나지 않게 self-start). */}
-        <div className={`${workspacePageStyles.segment} self-start`} role="tablist" aria-label="제안함 종류">
-          {boxes.map((item) => (
-            <button
-              className={workspacePageStyles.segmentTab}
-              key={item.key}
-              type="button"
-              role="tab"
-              aria-selected={box === item.key}
-              onClick={() => vm.selectBox(item.key)}
-            >
-              {item.label}
-            </button>
-          ))}
+        {/* 받은 제안 · 보낸 제안 세그먼트는 본문 첫 줄 왼쪽에 내용 폭만큼만 둡니다(세로 flex 안에서 늘어나지 않게 self-start).
+            제안함 규칙 안내는 본문 문장 대신 세그먼트 옆 ? 도움말에 둡니다. */}
+        <div className="flex items-center gap-2 self-start">
+          <div className={workspacePageStyles.segment} role="tablist" aria-label="제안함 종류">
+            {boxes.map((item) => (
+              <button
+                className={workspacePageStyles.segmentTab}
+                key={item.key}
+                type="button"
+                role="tab"
+                aria-selected={box === item.key}
+                onClick={() => vm.selectBox(item.key)}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+          <HelpTip label="제안함 도움말" title="제안함">
+            <p className="m-0">기업 회원끼리 주고받은 참여 제안이에요.</p>
+            <p className="m-0">모집글 하나에 한 번 보낼 수 있고, 7일 안에 답하지 않으면 끝나요.</p>
+          </HelpTip>
         </div>
 
         {vm.hasCompany ? null : (
@@ -136,17 +145,21 @@ export function PartnerProposalBoxPage() {
             <p className="sr-only" role="status">제안을 불러오는 중입니다.</p>
           </section>
         ) : proposals.length === 0 ? (
-          <section className={s.emptyCard} aria-label="제안 없음">
-            <p className={workspacePageStyles.emptyNote}>
-              {statusFilter !== 'all' ? '이 상태의 제안이 없어요.'
-                : box === 'received'
-                  ? '아직 받은 제안이 없습니다. 모집글을 올리면 다른 기업의 제안이 여기에 모여요.'
-                  : '아직 보낸 제안이 없습니다. 모집글 상세에서 참여 제안을 보낼 수 있어요.'}
-            </p>
-            {statusFilter !== 'all'
-              ? <button className={workspacePageStyles.secondaryButton} type="button" onClick={() => vm.selectStatusFilter('all')}>전체 보기</button>
-              : <Link className={workspacePageStyles.secondaryButton} to={vm.partnersPath}>파트너 모집</Link>}
-          </section>
+          // 다른 작업 화면과 같은 공용 빈 화면입니다. 상태 칩으로 비었으면 전체 보기, 받은 제안은 모집글 작성, 보낸 제안은 모집글 둘러보기를 권합니다.
+          statusFilter !== 'all' ? (
+            <EmptyState icon={<SearchIcon />} title="이 상태의 제안이 없어요"
+              description="다른 상태를 고르거나 전체 제안을 볼 수 있어요."
+              action={{ label: '전체 보기', onClick: () => vm.selectStatusFilter('all') }} />
+          ) : box === 'received' ? (
+            // 기업 미등록이면 위 안내 줄에 이미 [프로필에서 기업 등록]이 있어 버튼을 두 번 두지 않습니다.
+            <EmptyState icon={<EnvelopeIcon />} title="아직 받은 제안이 없어요"
+              description="모집글을 올리면 다른 기업의 참여 제안이 여기에 모여요."
+              action={vm.hasCompany ? { label: '모집글 작성하기', to: appPaths.partnerNew } : undefined} />
+          ) : (
+            <EmptyState icon={<EnvelopeIcon />} title="아직 보낸 제안이 없어요"
+              description="모집글 상세에서 함께 신청하고 싶은 기업에 참여 제안을 보낼 수 있어요."
+              action={{ label: '모집글 둘러보기', to: vm.partnersPath }} />
+          )
         ) : (
           <div className={s.list} role="tabpanel" aria-label={boxLabel}>
             {proposals.map((proposal) => {

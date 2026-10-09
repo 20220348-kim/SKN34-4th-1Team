@@ -1244,7 +1244,7 @@ describe('파트너 모집 화면', () => {
     const browse = appContainer.resolve('browsePartnerRecruitmentsUseCase').execute as ReturnType<typeof vi.fn>
     browse.mockResolvedValueOnce({ ...partnerRecruitmentPage, recruitments: [], total: 0, totalPages: 0 })
     renderApp('/app/partners')
-    expect(await screen.findByText(/아직 모집 중인 글이 없습니다/)).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: '아직 모집 중인 글이 없어요' })).toBeTruthy()
 
     browse.mockRejectedValueOnce(new Error('down'))
     fireEvent.change(screen.getByRole('searchbox', { name: '모집글 검색' }), { target: { value: '없는 글' } })
@@ -1253,8 +1253,9 @@ describe('파트너 모집 화면', () => {
 
     browse.mockResolvedValueOnce({ ...partnerRecruitmentPage, recruitments: [], total: 0, totalPages: 0 })
     fireEvent.click(screen.getByRole('button', { name: '다시 시도' }))
-    expect(await screen.findByRole('region', { name: '검색 결과 없음' })).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: '검색·필터 초기화' }))
+    // 검색·필터로 비었으면 빈 화면 안에서도 바로 초기화할 수 있습니다.
+    const empty = await screen.findByRole('region', { name: '조건에 맞는 모집글이 없어요' })
+    fireEvent.click(within(empty).getByRole('button', { name: '검색·필터 초기화' }))
     expect(await screen.findAllByRole('article')).toHaveLength(4)
   })
 
@@ -1794,7 +1795,7 @@ describe('제안함 화면', () => {
     // 받은 제안은 없고 내가 보낸 대기 제안만 하나 있는 상태입니다.
     browse.mockImplementation(async (box) => (box === 'sent' ? sentProposalBox : { box: 'received', proposals: [], pendingCount: 0 }))
     renderApp('/app/proposals', companyAccount)
-    await screen.findByText(/아직 받은 제안이 없습니다/)
+    await screen.findByRole('heading', { name: '아직 받은 제안이 없어요' })
     expect(screen.getByRole('tab', { name: '받은 제안' })).toBeTruthy()
 
     fireEvent.click(screen.getByRole('tab', { name: '보낸 제안' }))
@@ -1808,7 +1809,8 @@ describe('제안함 화면', () => {
     renderApp('/app/proposals', memberAccount)
     expect(screen.getByRole('region', { name: '기업 등록 필요' })).toBeTruthy()
     expect(screen.getByRole('link', { name: '프로필에서 기업 등록' }).getAttribute('href')).toBe('/app/profile')
-    expect(screen.getByRole('region', { name: '제안 없음' })).toBeTruthy()
+    // 등록 안내 줄에 버튼이 있으므로 빈 화면에는 같은 버튼을 다시 두지 않습니다.
+    expect(within(screen.getByRole('region', { name: '아직 받은 제안이 없어요' })).queryByRole('link')).toBeNull()
     expect(browse).not.toHaveBeenCalled()
   })
 })
