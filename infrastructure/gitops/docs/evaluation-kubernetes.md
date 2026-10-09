@@ -285,6 +285,31 @@ Docker의 격리 MySQL과 Kubernetes의 복원 helper가 순차 실행되므로 
 `application_started=false`를 명시한다. 이 명령은 **복원 연습**이며 운영에 연결할 PVC를 남기지 않는다.
 NetworkPolicy는 추가하지만 기본 kind CNI에서 실제 집행됐다고 보고하지 않는다.
 
+### 개인 암호화 백업의 실제 PVC 복원 검증 — 2026-10-09
+
+`skn-375`의 `7a41bfd`에서 기존 개인 클러스터에 위 복원 연습을 실행해 `VERIFIED`를 확인했다.
+입력은 2026-10-07 Argo 인계 직전에 생성한 Ops 통합 암호화 백업이며, 이번 이전을 위한 최신
+백업으로 취급하지 않는다. 백업 SHA-256은
+`5c900f91647ee40693af78d0c11976b429ea96bcb2f4b3d4de43a53ffe9b545b`다.
+백업·복호화 키·복원 데이터는 Git에 추가하지 않았다.
+
+| 확인 대상 | 결과 |
+| --- | --- |
+| 격리 MySQL에서 복원한 Ops DB와 결과·Prefect 연결 | 완료 평가 3건 대조, `cross_store_business_links_verified=true` |
+| 새 PVC의 SQLite 무결성 | `sqlite_integrity=true` |
+| 복원 Pod 삭제 후 새 비루트 Pod에서 데이터 확인 | `pod_replacement_preserved_data=true` |
+| 실행 사용자 권한 | UID/GID 10001, `runtime_writable=true` |
+| 임시 자원 정리 | `cleanup_complete=true`, namespace·StorageClass 잔여 0개 확인 |
+| 기존 업무 서비스 | Deployment 4개 모두 1/1, Argo Application 4개 모두 `Synced/Healthy` |
+| 유료 모델 호출·API/실행기 기동·기존 서비스 변경 | 모두 수행하지 않음 |
+
+로컬 검증 보고서는 Git 제외 경로의
+`work/evaluation-cutover-preflight-20261009/pvc-rehearsal.json`과
+`pvc-rehearsal-postcheck.json`에 보관했다. `govbiz-evaluation` namespace는 아직 없으며,
+이 검증은 이전용 PVC 보존·백업 최신성·Secret 준비·실제 평가 실행 완료를 의미하지 않는다.
+실제 인계는 같은 SHA의 필수 CI와 공개 이미지 발행을 확인한 뒤 원본 writer를 중지하고 새 백업으로
+`--retain-for-migration`을 실행해야 한다.
+
 ## 이전용 복원 데이터 보존
 
 같은 명령에 `--retain-for-migration`을 명시하면 새 `govbiz-evaluation` namespace에
