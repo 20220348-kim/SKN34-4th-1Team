@@ -252,11 +252,120 @@ class DormantStatusTests(unittest.TestCase):
         self.assertIsNone(result["sourceHandoff"])
 
     def test_archive_and_key_are_required_together_before_cluster_access(self):
-        for options in ({"archive": "a"}, {"key_file": "k"}):
+        for options in ({"archive": "a"}, {"key_file": "k"}, {"verify_storage": True}):
             with self.subTest(options=options), self.assertRaises(ValueError):
                 self.verify(**options)
         self.context.assert_not_called()
         self.assertEqual(self.commands, [])
+
+    def test_retained_data_probe_is_explicit_and_requires_successful_cleanup(self):
+        evidence = {"archiveSha256": self.report["archive_sha256"]}
+        payload = {
+            "stores": {
+                "prefect": {"entries": {"p": "archive"}},
+                "results": {"entries": {"r": "archive"}},
+            }
+        }
+        progress = {}
+
+        def recheck(kube, node, report, stores, image, tracking):
+            self.assertEqual(report, self.report)
+            self.assertEqual(
+                stores, {"prefect": {"p": "archive"}, "results": {"r": "archive"}}
+            )
+            self.assertEqual(image, self.values["prefect"]["image"])
+            self.assertEqual(len(self.commands), 3)
+            tracking.update(creationAttempted=True, created=True, cleanupComplete=True)
+            return {"status": "VERIFIED", "cleanup_complete": True}
+
+        with (
+            patch.object(
+                dormant.evaluation_secrets, "verify_handoff", return_value=evidence
+            ) as handoff,
+            patch.object(
+                dormant.evaluation_secrets.ops_runtime,
+                "read_connection",
+                return_value={},
+            ),
+            patch.object(
+                dormant.evaluation_secrets,
+                "bound_archive",
+                return_value=(payload, "hash", {}, {}),
+            ),
+            patch.object(
+                dormant.evaluation_retained_data, "recheck", side_effect=recheck
+            ) as inspector,
+        ):
+            result = self.verify(
+                archive="a",
+                key_file="k",
+                verify_storage=True,
+                storage_progress=progress,
+            )
+        self.assertEqual(handoff.call_count, 2)
+        inspector.assert_called_once()
+        self.assertTrue(result["storageDataReverified"])
+        self.assertTrue(result["clusterChanged"])
+        self.assertTrue(result["storageProbe"]["cleanupComplete"])
+        self.assertFalse(result["activationAuthorized"])
+        self.assertFalse(result["runtimeVerified"])
+        self.assertEqual(len(self.commands), 6)
+
+    def test_failed_source_check_prevents_data_probe_creation(self):
+        with (
+            patch.object(
+                dormant.evaluation_secrets,
+                "verify_handoff",
+                side_effect=ValueError("writer active"),
+            ),
+            patch.object(dormant.evaluation_retained_data, "recheck") as inspector,
+            self.assertRaises(ValueError),
+        ):
+            self.verify(archive="a", key_file="k", verify_storage=True)
+        inspector.assert_not_called()
+
+    def test_cli_probe_cleanup_failure_reports_mutation_without_private_details(self):
+        if dormant.os.name != "posix":
+            self.skipTest("Archive checks require WSL/Linux")
+        output = io.StringIO()
+
+        def fail(*args, storage_progress, **kwargs):
+            storage_progress.update(
+                creationAttempted=True, created=True, cleanupComplete=False
+            )
+            raise ValueError("private archive data")
+
+        with (
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "dormant",
+                    "--state-dir",
+                    "state",
+                    "--restore-report",
+                    "r",
+                    "--langfuse-url",
+                    "http://172.20.0.2:3000",
+                    "--archive",
+                    "a",
+                    "--key-file",
+                    "k",
+                    "--verify-storage",
+                ],
+            ),
+            patch.object(release, "from_origin", return_value=self.fork),
+            patch.object(release.fork_cluster, "locked", return_value=nullcontext()),
+            patch.object(dormant, "verify", side_effect=fail),
+            redirect_stdout(output),
+        ):
+            self.assertEqual(dormant.main(), 1)
+        result = json.loads(output.getvalue())
+        self.assertEqual(result["status"], "BLOCKED")
+        self.assertTrue(result["clusterChanged"])
+        self.assertFalse(result["storageDataReverified"])
+        self.assertFalse(result["storageProbe"]["cleanupComplete"])
+        self.assertNotIn("private", output.getvalue())
 
     def test_handoff_rechecks_bracket_published_and_live_state_without_authorizing_activation(
         self,

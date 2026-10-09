@@ -843,7 +843,8 @@ python3 -B infrastructure/gitops/scripts/evaluation_release.py \
 ## replica 0 동기화 완료 확인
 
 요청 접수 이후에는 아래 읽기 전용 명령으로 Argo 적용 완료와 현재 리소스를 확인한다.
-클러스터 상태를 바꾸거나 refresh·sync·scale을 요청하지 않는다. 기본 조회는 Secret 값을 읽지 않는다.
+기본 조회는 클러스터 상태를 바꾸거나 refresh·sync·scale을 요청하지 않으며 Secret 값을 읽지 않는다.
+아래 `--verify-storage` 옵션만 일회성 데이터 검사 Pod를 생성·정리한다.
 
 ```bash
 python3 -B infrastructure/gitops/scripts/evaluation_dormant_status.py \
@@ -918,6 +919,48 @@ python3 -B infrastructure/gitops/scripts/evaluation_dormant_status.py \
 
 관련 오프라인 테스트는 기존 Infra CI의 `test_*.py` 검색에 포함된다. 실제 개인 환경에서는 최신 SHA의
 필수 CI·공개 발행과 최신 백업·보존 PVC·Secret·replica 0 동기화를 완료한 뒤 이 추가 검사를 수행한다.
+
+### 보존 PVC 내부 데이터 재검증
+
+위 백업 옵션에 `--verify-storage`를 추가하면, 원본 최신성과 인증값을 확인한 후 **대상 PVC의 내용**도
+검사한다. 이 옵션은 `govbiz-evaluation`에 검사 Pod 한 개를 생성하고 제거한다. 서비스 replica·
+Argo 선언·Ops URL·Secret·PVC·PV는 변경하지 않는다.
+
+```bash
+python3 -B infrastructure/gitops/scripts/evaluation_dormant_status.py \
+  --state-dir infrastructure/gitops/.local/fork \
+  --restore-report /private-backups/evaluation-retained.json \
+  --langfuse-url "$LANGFUSE_URL" \
+  --archive /private-backups/ops-state.enc \
+  --key-file /private-backups/ops-state.key \
+  --verify-storage > /private-backups/evaluation-retained-data-status.json
+```
+
+- 같은 SHA의 발행 계획에 있는 불변 Prefect 이미지를 사용하고 UID/GID 10001·권한 상승 금지·
+  읽기 전용 루트 파일시스템을 유지한다. 두 PVC는 claim과 mount 모두 읽기 전용이며 ServiceAccount
+  토큰·Secret·환경변수를 주입하지 않는다. 앱 label을 붙이지 않아 기존 `deny-all` 정책 아래 검사한다.
+- 백업은 호스트에서 인증·복호화하고 파일 데이터는 `kubectl exec`의 stdin으로만 전달한다.
+  데이터가 명령 인자·Pod spec·보고서에 들어가지 않는다. 파일 수·크기는 기존 백업 제한을 따른다.
+- 결과 파일과 SQLite 이외 Prefect 파일의 경로·종류·크기·SHA-256을 백업과 비교하고,
+  현재 파일의 UID/GID·0750/0640 권한도 검사한다. 추가 파일·심볼릭 링크·권한 변경을 거부한다.
+- Prefect의 `prefect.db`, WAL·SHM만 256Mi 한도의 임시 메모리 볼륨에 복사한다. 백업 사본과 현재
+  사본 각각의 SQLite 무결성·참조·미완료 실행·활성 스케줄을 검사하고 논리 덤프 해시를 대조한다.
+  기존 복원 중 발생할 수 있는 WAL checkpoint 차이는 허용하되 커밋된 WAL의 데이터는 포함한다.
+  PVC의 SQLite를 직접 열거나 `immutable=1`로 WAL을 무시하지 않는다.
+- 검사 전후 대상 파일의 내용·메타데이터와 저장소 UID를 대조한다. 검사 Pod는 무작위 이름·소유
+  label·UID로 확인하고 API UID precondition으로 그 Pod만 삭제한다. 생성 응답 유실 때도 같은
+  소유권을 확인하며, 외부 Pod나 교체된 저장소를 자동 삭제하지 않는다. 삭제 확인 실패도 `BLOCKED`다.
+- `storageProbe`에는 생성 시도·확인·정리 상태를 남긴다. Pod를 만들었으면 최종 정리 후에도
+  `clusterChanged=true`로 기록하며, 생성 응답이 불확실한 실패는 null일 수 있다.
+  데이터 검사·정리와 후속 원본·Argo 재검사가 모두 성공해야 `storageDataReverified=true`다.
+  `activationAuthorized`, `runtimeVerified`, `networkPolicyEnforcementVerified`는 계속 false다.
+
+Infra CI는 실제 SQLite/WAL·파일 비교와 Pod 소유권·읽기 전용 mount·실패 시 정리를 오프라인 검사한다.
+기존 LLMOps CI의 `smoke_evaluation_pvc.py`도 새로 만든 합성 보존 PVC에서 이 경로를 실제 실행한다.
+로컬 선택 테스트는 이 최신 SHA의 Kubernetes 통합 검증이나 개인 데이터의 실제 이전을 대신하지 않는다.
+2026-10-10 로컬 관련 테스트 57개를 통과했고, 마지막 Pod label·환경변수 검증 보완 후 해당 테스트
+6개를 다시 통과했다. 기존 개인 클러스터의 서버 dry-run에서도 보안·마운트 기본값 일치를 확인했다.
+이 dry-run은 기존 업무 namespace에서 API 수용 여부만 확인했으며 Pod 생성·스케줄링·PVC 읽기는 수행하지 않았다.
 
 ## 격리 Kubernetes에서 실제 평가 실행 검증
 

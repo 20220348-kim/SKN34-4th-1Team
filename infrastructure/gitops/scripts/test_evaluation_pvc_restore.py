@@ -183,6 +183,88 @@ class FileTests(unittest.TestCase):
                     report.write_bytes(raw)
                     report.chmod(0o640)
 
+    def test_retained_recheck_reads_sqlite_only_from_temporary_copies_and_preserves_data(
+        self,
+    ):
+        probe.restore(self.stores, self.expected, self.target)
+        before = {kind: probe.probe.tree(self.target / kind) for kind in self.stores}
+        connect = sqlite3.connect
+
+        def temporary_only(path, *args, **kwargs):
+            self.assertNotIn(str(self.target), str(path))
+            return connect(path, *args, **kwargs)
+
+        with patch.object(sqlite3, "connect", side_effect=temporary_only):
+            result = probe.recheck(self.stores, self.target)
+        self.assertTrue(result["archive_content_matched"])
+        self.assertTrue(result["prefect_logical_data_matched"])
+        self.assertEqual(result["model_api_calls"], 0)
+        self.assertEqual(
+            before, {kind: probe.probe.tree(self.target / kind) for kind in self.stores}
+        )
+        self.assertNotIn(next(iter(self.expected)), json.dumps(result))
+
+    def test_retained_recheck_rejects_report_changes_and_unexpected_files(self):
+        probe.restore(self.stores, self.expected, self.target)
+        report = next((self.target / "results").rglob("report.html"))
+        report.write_text("changed report")
+        with self.assertRaisesRegex(ValueError, "content differs"):
+            probe.recheck(self.stores, self.target)
+        report.write_bytes(
+            base64.b64decode(
+                self.stores["results"][
+                    report.relative_to(self.target / "results").as_posix()
+                ]["data"]
+            )
+        )
+        extra = self.target / "prefect" / "profiles.toml"
+        extra.write_text("unexpected profile")
+        extra.chmod(0o640)
+        with self.assertRaisesRegex(ValueError, "content differs"):
+            probe.recheck(self.stores, self.target)
+
+    def test_retained_recheck_detects_changed_committed_sqlite_content(self):
+        probe.restore(self.stores, self.expected, self.target)
+        database = sqlite3.connect(self.target / "prefect" / "prefect.db")
+        try:
+            database.execute("UPDATE alembic_version SET version_num='changed'")
+            database.commit()
+        finally:
+            database.close()
+        with self.assertRaisesRegex(ValueError, "logical data differs"):
+            probe.recheck(self.stores, self.target)
+
+    def test_retained_recheck_rejects_runtime_permissions_and_inflight_file_change(
+        self,
+    ):
+        probe.restore(self.stores, self.expected, self.target)
+        report = next((self.target / "results").rglob("report.html"))
+        report.chmod(0o600)
+        with self.assertRaisesRegex(ValueError, "owned"):
+            probe.recheck(self.stores, self.target)
+        report.chmod(0o640)
+        digest = probe.probe.sqlite_digest
+
+        def mutate(path):
+            result = digest(path)
+            report.write_text("changed during comparison")
+            return result
+
+        with (
+            patch.object(probe.probe, "sqlite_digest", side_effect=mutate),
+            self.assertRaisesRegex(ValueError, "changed during"),
+        ):
+            probe.recheck(self.stores, self.target)
+
+    def test_retained_recheck_rejects_symlinks_and_missing_archive_store(self):
+        probe.restore(self.stores, self.expected, self.target)
+        with self.assertRaisesRegex(ValueError, "Both"):
+            probe.recheck({"prefect": self.stores["prefect"]}, self.target)
+        link = self.target / "results" / "link"
+        link.symlink_to(self.source)
+        with self.assertRaises(ValueError):
+            probe.recheck(self.stores, self.target)
+
 
 class KubernetesTests(unittest.TestCase):
     def setUp(self):
