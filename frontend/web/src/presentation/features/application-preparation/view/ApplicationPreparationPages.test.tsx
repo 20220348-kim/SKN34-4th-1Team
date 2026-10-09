@@ -17,7 +17,7 @@ import { PreparationJobsSync } from '../../../shared/preparation-jobs/Preparatio
 
 // 목록 화면은 작업 화면 틀이 읽어 둔 작업 목록을 씁니다. 여기서는 실제 읽기를 검증하므로 전역 mock을 해제합니다.
 vi.unmock('../../../shared/preparation-jobs/PreparationJobsSync')
-import { supportProgramDetailPath } from '../../../shared/routes/appPaths'
+import { appPaths, supportProgramDetailPath } from '../../../shared/routes/appPaths'
 import { ApplicationPreparationNewPage } from './ApplicationPreparationNewPage'
 import { ApplicationDocumentPage } from './ApplicationDocumentPage'
 import { chooseOption, optionValues, selectedValue } from '../../../../test/selectField'
@@ -968,6 +968,10 @@ describe('application preparation list', () => {
     await act(async () => request.resolve({ items: [], nextBeforeId: null }))
 
     expect(screen.getByRole('heading', { name: '아직 시작한 신청 문서가 없습니다.' })).toBeTruthy()
+    // 중복 검토 목록처럼 머리글과 가운데 빈 화면 모두 [새 문서]로 새 문서 화면을 엽니다.
+    const newDocumentLinks = screen.getAllByRole('link', { name: '새 문서' })
+    expect(newDocumentLinks).toHaveLength(2)
+    expect(newDocumentLinks.map((link) => link.getAttribute('href'))).toEqual([appPaths.applicationPreparationNew, appPaths.applicationPreparationNew])
     expect(repository.create).not.toHaveBeenCalled()
   })
 

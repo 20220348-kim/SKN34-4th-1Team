@@ -5,9 +5,10 @@ function classes(...groups: string[]) {
 const focus = 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary'
 
 // 색상이나 CSS 속성이 아니라 리포트 화면에서 맡는 UI 역할을 이름으로 사용합니다.
-// 화면 통일안 22: 기준 줄 → 리포트 머리 카드 → 추천 카드 → 접힌 수신 설정 → 면책 문구. 본문은 읽기 폭(920px)으로 둡니다.
+// 화면 통일안 22: 기준 줄 → 리포트 머리 카드 → 추천 카드 → 면책 문구, 그리고 접힌 수신 설정.
+// 다른 작업 화면처럼 머리글 왼쪽 끝에 맞춰 작업 공간 폭을 쓰고, 넓은 화면에서는 모집글 상세처럼 본문 · 오른쪽 340px(수신 설정) 두 열로 둡니다.
 export const dailyReportStyles = {
-  column: 'flex w-full max-w-[57.5rem] flex-col gap-4',
+  column: 'flex min-w-0 flex-col gap-4',
   basis: 'm-0 -mt-2 text-[0.8125rem] leading-[1.6] text-ink-muted',
   note: 'm-0 text-[0.78rem] leading-[1.6] text-ink-muted',
   smallButton: classes(
