@@ -7,6 +7,12 @@ on:
 permissions:
   contents: read
 
+# Superseded runs cannot authorize publication of the current branch head.
+# Keep other workflows and pull-request refs in independent groups.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   frontend:
     name: Web and shared
