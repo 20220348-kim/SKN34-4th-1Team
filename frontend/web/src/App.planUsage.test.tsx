@@ -3,7 +3,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { Provider } from 'react-redux'
 import { MemoryRouter } from 'react-router'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { planQuotaExceededMessage, type PlanUsage, type PlanUsageItem } from '@govbiz/shared/domain/entities/PlanUsage'
 
 import App from './App'
@@ -13,6 +13,10 @@ import { readyConversationProposal, seoulConversationContext } from './data/fixt
 import { completeSearchResult } from './data/fixtures/supportProgramSearchResult'
 import type { Account } from './domain/entities/Account'
 import { sessionRestored } from './presentation/shared/auth/state/authSlice'
+
+// 하루 한도 안내는 다시 채워질 때까지 남은 시간을 적으므로 시계를 서울 저녁 9시(자정 3시간 전)로 고정합니다. 타이머는 실제로 둡니다.
+beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-10-08T21:00:00+09:00')) })
+afterEach(() => { vi.useRealTimers() })
 
 vi.mock('./presentation/shared/core-api-status/CoreApiConnectionStatus', () => ({ CoreApiConnectionStatus: () => null }))
 vi.mock('./presentation/features/chat/hooks/useSupportProgramSearchReadiness', () => ({
@@ -35,7 +39,8 @@ function aiSearch(used: number, limit: number | null): PlanUsageItem {
 }
 const memberUsage = (used: number): PlanUsage => ({ plan: 'FREE', items: [aiSearch(used, 10)] })
 const guestUsage = (used: number): PlanUsage => ({ plan: null, items: [aiSearch(used, 2)] })
-const memberLimitMessage = planQuotaExceededMessage({ feature: 'AI_SEARCH', period: 'DAY', limit: 10, resetsAt, plan: 'FREE' })
+// 화면은 고정한 시계(저녁 9시)로 문구를 만들므로 기대 문구도 같은 시각으로 만듭니다.
+const memberLimitMessage = planQuotaExceededMessage({ feature: 'AI_SEARCH', period: 'DAY', limit: 10, resetsAt, plan: 'FREE' }, Date.parse('2026-10-08T21:00:00+09:00'))
 
 function json(value: unknown, init?: ResponseInit) {
   return new Response(JSON.stringify(value), { ...init, headers: { 'Content-Type': 'application/json', ...init?.headers } })
@@ -89,8 +94,8 @@ describe('AI 대화 검색 이용량', () => {
     mockNetwork()
     const usage = vi.spyOn(appContainer.resolve('planUsageUseCase'), 'usage').mockResolvedValue(guestUsage(0))
     renderApp('/', null)
-    const line = (await screen.findByText('로그인 전 체험 0/2회')).closest('p')!
-    expect(line.textContent).toBe('AI 대화 검색·로그인 전 체험 0/2회')
+    const line = (await screen.findByText('로그인 전 체험 2회 남음')).closest('p')!
+    expect(line.textContent).toBe('AI 대화 검색·로그인 전 체험 2회 남음')
     // 80% 전에는 경고와 다시 채워지는 때를 붙이지 않습니다.
     expect(line.className).not.toContain('text-warning')
     expect(usage).toHaveBeenCalledOnce()
@@ -109,9 +114,9 @@ describe('AI 대화 검색 이용량', () => {
     const usage = vi.spyOn(appContainer.resolve('planUsageUseCase'), 'usage')
       .mockResolvedValueOnce(memberUsage(8)).mockResolvedValue(memberUsage(9))
     renderApp('/app/chat', member)
-    const line = (await screen.findByText('오늘 8/10회')).closest('p')!
+    const line = (await screen.findByText('오늘 2회 남음')).closest('p')!
     expect(line.className).toContain('text-warning')
-    expect(line.textContent).toContain('자정(서울 시간)에 다시 채워져요.')
+    expect(line.textContent).toContain('약 3시간 뒤에 다시 채워져요.')
     // 요금제 화면에는 아직 한도가 없으므로 그 화면으로 잇지 않습니다.
     expect(within(line).queryByRole('link')).toBeNull()
 
@@ -120,7 +125,7 @@ describe('AI 대화 검색 이용량', () => {
     expect(usage).toHaveBeenCalledOnce()
     await act(async () => fireEvent.click(screen.getByRole('button', { name: '이 조건으로 검색' })))
     expect(network.searchRequests).toHaveLength(1)
-    expect(await screen.findByText('오늘 9/10회')).toBeTruthy()
+    expect(await screen.findByText('오늘 1회 남음')).toBeTruthy()
     expect(usage).toHaveBeenCalledTimes(2)
   })
 
@@ -152,7 +157,7 @@ describe('AI 대화 검색 이용량', () => {
     const usage = vi.spyOn(appContainer.resolve('planUsageUseCase'), 'usage')
       .mockResolvedValueOnce(memberUsage(9)).mockResolvedValue(memberUsage(10))
     renderApp('/app/chat', member)
-    await screen.findByText('오늘 9/10회')
+    await screen.findByText('오늘 1회 남음')
     await submitMessage('서울 SW 사업화 지원 찾아줘')
     await act(async () => fireEvent.click(screen.getByRole('button', { name: '이 조건으로 검색' })))
 

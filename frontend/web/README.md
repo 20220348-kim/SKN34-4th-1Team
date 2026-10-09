@@ -383,7 +383,7 @@ Core의 도구 에이전트(`ASSISTANT_AGENT_ENABLED`)가 켜져 있으면 같�
 사업자 조회·등록 문구·상태별 안내는 모바일과 함께 쓰려고 shared `domain/entities/CompanyRegistration`에 둡니다. 협업·파트너
 설정은 `/api/v1/me/company/partner-profile`에 저장되고, 계정과 알림 카드의 비밀번호 변경·계정 삭제는 확인 모달로 처리합니다. 소셜 로그인으로만 가입한 계정(`hasPassword=false`)은
 비밀번호 항목을 숨기고 계정 삭제에 비밀번호를 묻지 않습니다.
-요금제와 이용량은 `GET /api/v1/plan-usage`(`PlanUsageUseCase`)로 읽어 프로필의 "요금제와 이용량" 절에 기능별 횟수·진행 막대·다시 채워지는 때를 보여 주고(한도를 아직 정하지 않은 요금제는 막대 없이 "제한 없음"), AI 대화 검색 입력줄·원문 질문·중복 검토 실행·신청 문서 분석/초안 근처에는 한 줄로 보여 줍니다(80%부터 주의, 한도에 닿으면 그 기능만 막고 shared 안내, `limit`이 없으면 그리지 않음. 이미 센 공고의 신청 문서는 다시 만들어도 늘지 않아 막지 않음). 요금제 화면에는 아직 한도가 없어 요금제 화면 링크는 두지 않습니다. 한도 응답(429 `PLAN_QUOTA_EXCEEDED`, 503 `QUOTA_UNAVAILABLE`)은 각 API 경계에서 shared 오류로 바꿉니다. 도우미 자유 질문과 원문 질문은 로그인한 회원만 씁니다.
+요금제와 이용량은 `GET /api/v1/plan-usage`(`PlanUsageUseCase`)로 읽어 프로필의 "요금제와 이용량" 절에 오늘·이번 달로 묶어 다시 채워지는 때를 한 번 적고 기능별 남은 양·진행 막대·쓴 양을 보여 주며(세는 기준은 제목 옆 ? 도움말, 한도를 아직 정하지 않은 요금제는 막대 없이 "제한 없음"), AI 대화 검색 입력줄·원문 질문·중복 검토 실행·신청 문서 분석/초안 근처에는 "오늘 2회 남음"처럼 한 줄로 보여 줍니다(남은 양이 한도의 20%·최소 1회 이하면 주의, 한도에 닿으면 그 기능만 막고 shared 안내, `limit`이 없으면 그리지 않음. 이미 센 공고의 신청 문서는 다시 만들어도 늘지 않아 막지 않음). 요금제 화면에는 아직 한도가 없어 요금제 화면 링크는 두지 않습니다. 한도 응답(429 `PLAN_QUOTA_EXCEEDED`, 503 `QUOTA_UNAVAILABLE`)은 각 API 경계에서 shared 오류로 바꿉니다. 도우미 자유 질문과 원문 질문은 로그인한 회원만 씁니다.
 알림은 관심 공고 마감 알림만 `/api/v1/me/notification-settings`에 저장합니다(`useNotificationSettingsViewModel`). 바꾸면 바로 저장하고,
 저장하는 동안 조작을 막으며 실패하면 이전 값으로 되돌려 이유를 알립니다. 파트너 제안·새 공고 알림은 스위치 없이 `준비 중`으로 표시합니다.
 파트너 모집 목록·상세는 `PartnerRecruitmentRepository`(`data/api/partnerRecruitmentApi`)로 Core API를 읽습니다. 공개·내부 화면이

@@ -7,6 +7,7 @@ import {
   planUsageCountText,
   planUsageFeatureLabels,
   planUsageResetText,
+  remainingPlanUses,
   type LimitedPlanUsageItem,
   type PlanUsage,
   type PlanUsageFeature,
@@ -17,7 +18,7 @@ import { PlanQuotaExceededError, QuotaUnavailableError } from '@govbiz/shared/do
 export type PlanUsageView = {
   item: LimitedPlanUsageItem
   label: string
-  /** "오늘 2/10회", 로그인 전 AI 대화 검색은 "로그인 전 체험 1/2회"입니다. */
+  /** "오늘 8회 남음", 로그인 전 AI 대화 검색은 "로그인 전 체험 1회 남음"입니다. */
   countText: string
   isNearLimit: boolean
   isLimitReached: boolean
@@ -34,7 +35,7 @@ export function planUsageView(usage: PlanUsage | null, feature: PlanUsageFeature
   if (usage === null || item === null || !hasPlanLimit(item)) return null
   // 로그인 전 체험은 접속 주소 기준이라 "오늘" 대신 체험임을 앞에 둡니다.
   const countText = usage.plan === null && feature === 'AI_SEARCH'
-    ? `로그인 전 체험 ${Math.min(item.used, item.limit)}/${item.limit}회`
+    ? `로그인 전 체험 ${remainingPlanUses(item)}회 남음`
     : planUsageCountText(item)
   return {
     item,

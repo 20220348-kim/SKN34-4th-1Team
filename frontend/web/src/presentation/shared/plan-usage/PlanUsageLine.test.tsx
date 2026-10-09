@@ -1,13 +1,17 @@
 // @vitest-environment jsdom
 
 import { act, cleanup, render, renderHook, screen, waitFor } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { LimitedPlanUsageItem, PlanUsage } from '@govbiz/shared/domain/entities/PlanUsage'
 import { PlanQuotaExceededError, QuotaUnavailableError } from '@govbiz/shared/domain/errors/PlanQuotaError'
 
 import { PlanUsageLine } from './PlanUsageLine'
 import { planQuotaFailureMessage, planUsagePercent, planUsageView } from './planUsageView'
 import { usePlanUsage } from './usePlanUsage'
+
+// 하루 한도 안내는 다시 채워질 때까지 남은 시간을 적으므로 시계를 서울 저녁 9시(자정 3시간 전)로 고정합니다. 타이머는 실제로 둡니다.
+beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-10-08T21:00:00+09:00')) })
+afterEach(() => { vi.useRealTimers() })
 
 afterEach(() => { cleanup(); vi.restoreAllMocks() })
 
@@ -24,20 +28,20 @@ function renderLine(item: LimitedPlanUsageItem) {
 describe('이용량 한 줄', () => {
   it('80% 전에는 기능 이름과 이번 기간 사용량만 차분하게 보여 준다', () => {
     const line = renderLine(question(7))
-    expect(line.textContent).toBe('공고 원문 질문·오늘 7/10회')
+    expect(line.textContent).toBe('공고 원문 질문·오늘 3회 남음')
     expect(line.className).toContain('text-ink-muted')
   })
 
   it('80%부터 경고 색으로 다시 채워지는 때를 붙이고 요금제 화면 링크는 두지 않는다', () => {
     const line = renderLine(question(8))
     expect(line.className).toContain('text-warning')
-    expect(line.textContent).toBe('공고 원문 질문·오늘 8/10회·자정(서울 시간)에 다시 채워져요.')
+    expect(line.textContent).toBe('공고 원문 질문·오늘 2회 남음·약 3시간 뒤에 다시 채워져요.')
     expect(screen.queryByRole('link')).toBeNull()
   })
 
   it('다 쓰면 shared 안내로 다 쓴 사실과 다시 채워지는 때를 알린다', () => {
     const line = renderLine(question(11))
-    expect(line.textContent).toBe('오늘 공고 원문 질문 10회를 모두 썼어요. 자정(서울 시간)에 다시 채워져요.')
+    expect(line.textContent).toBe('오늘 공고 원문 질문 10회를 모두 썼어요. 약 3시간 뒤에 다시 채워져요.')
     expect(line.className).toContain('text-warning')
   })
 
@@ -59,10 +63,10 @@ describe('planUsageView', () => {
 
   it('로그인 전 AI 대화 검색은 체험 횟수로, 회원은 이번 기간 사용량으로 적는다', () => {
     const guest = planUsageView({ plan: null, items: [{ feature: 'AI_SEARCH', period: 'DAY', limit: 2, used: 3, resetsAt }] }, 'AI_SEARCH')!
-    expect(guest).toMatchObject({ label: 'AI 대화 검색', countText: '로그인 전 체험 2/2회', isNearLimit: true, isLimitReached: true })
+    expect(guest).toMatchObject({ label: 'AI 대화 검색', countText: '로그인 전 체험 0회 남음', isNearLimit: true, isLimitReached: true })
     expect(guest.limitMessage).toContain('로그인하면 회원 한도로 이어서 검색할 수 있고, 필터 검색은 계속 쓸 수 있어요.')
     const memberView = planUsageView(usageOf({ feature: 'AI_SEARCH', period: 'DAY', limit: 10, used: 2, resetsAt }), 'AI_SEARCH')!
-    expect(memberView).toMatchObject({ countText: '오늘 2/10회', isNearLimit: false, isLimitReached: false, resetText: '자정(서울 시간)에 다시 채워져요.' })
+    expect(memberView).toMatchObject({ countText: '오늘 8회 남음', isNearLimit: false, isLimitReached: false, resetText: '약 3시간 뒤에 다시 채워져요.' })
   })
 
   it('진행 막대는 한도를 넘겨 세어져도 100%에서 멈춘다', () => {
@@ -72,7 +76,7 @@ describe('planUsageView', () => {
 
   it('요금제 한도와 이용량 확인 실패만 shared 안내로 바꾸고 나머지는 그대로 둔다', () => {
     const exceeded = new PlanQuotaExceededError({ feature: 'EVIDENCE_QUESTION', period: 'DAY', plan: 'FREE', limit: 10, resetsAt })
-    expect(planQuotaFailureMessage(exceeded)).toBe('오늘 공고 원문 질문 10회를 모두 썼어요. 자정(서울 시간)에 다시 채워져요.')
+    expect(planQuotaFailureMessage(exceeded)).toBe('오늘 공고 원문 질문 10회를 모두 썼어요. 약 3시간 뒤에 다시 채워져요.')
     expect(planQuotaFailureMessage(new QuotaUnavailableError())).toBe('지금은 이용량을 확인할 수 없어 실행하지 않았어요. 잠시 후 다시 시도해 주세요.')
     expect(planQuotaFailureMessage(new Error('other'))).toBeNull()
     expect(planQuotaFailureMessage(null)).toBeNull()

@@ -2,7 +2,7 @@
 
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { useLayoutEffect, useRef } from 'react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PlanUsage } from '@govbiz/shared/domain/entities/PlanUsage'
 import { PlanQuotaExceededError, QuotaUnavailableError } from '@govbiz/shared/domain/errors/PlanQuotaError'
 
@@ -19,6 +19,10 @@ import {
   supportProgramEvidenceQuestionTimeoutMilliseconds,
   useSupportProgramEvidenceQuestionViewModel,
 } from './useSupportProgramEvidenceQuestionViewModel'
+
+// 하루 한도 안내는 다시 채워질 때까지 남은 시간을 적으므로 시계를 서울 저녁 9시(자정 3시간 전)로 고정합니다. 타이머는 실제로 둡니다.
+beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-10-08T21:00:00+09:00')) })
+afterEach(() => { vi.useRealTimers() })
 
 afterEach(() => {
   cleanup()
@@ -276,7 +280,7 @@ describe('하루 원문 질문 이용량', () => {
     const execute = vi.fn().mockResolvedValue(answerResult())
     const planUsage = { usage: vi.fn().mockResolvedValueOnce(questionUsage(9)).mockResolvedValue(questionUsage(10)) }
     const { result } = renderHook(() => useSupportProgramEvidenceQuestionViewModel(getIdentity(), createEvidenceQuestionUseCase(execute), planUsage))
-    await waitFor(() => expect(result.current.usage).toMatchObject({ countText: '오늘 9/10회', isNearLimit: true, isLimitReached: false }))
+    await waitFor(() => expect(result.current.usage).toMatchObject({ countText: '오늘 1회 남음', isNearLimit: true, isLimitReached: false }))
 
     act(() => result.current.updateQuestion('신청 대상은 누구인가요?'))
     expect(result.current.canSubmit).toBe(true)
@@ -284,7 +288,7 @@ describe('하루 원문 질문 이용량', () => {
     expect(execute).toHaveBeenCalledOnce()
     await waitFor(() => expect(result.current.isLimitReached).toBe(true))
     expect(planUsage.usage).toHaveBeenCalledTimes(2)
-    expect(result.current.usage?.limitMessage).toBe('오늘 공고 원문 질문 10회를 모두 썼어요. 자정(서울 시간)에 다시 채워져요.')
+    expect(result.current.usage?.limitMessage).toBe('오늘 공고 원문 질문 10회를 모두 썼어요. 약 3시간 뒤에 다시 채워져요.')
 
     act(() => result.current.updateQuestion('하나 더 물어볼게요'))
     expect(result.current.canSubmit).toBe(false)
@@ -301,7 +305,7 @@ describe('하루 원문 질문 이용량', () => {
     act(() => result.current.updateQuestion('신청 대상은 누구인가요?'))
 
     await act(async () => result.current.submitQuestion())
-    expect(result.current.state).toEqual({ status: 'quota', message: '오늘 공고 원문 질문 10회를 모두 썼어요. 자정(서울 시간)에 다시 채워져요.' })
+    expect(result.current.state).toEqual({ status: 'quota', message: '오늘 공고 원문 질문 10회를 모두 썼어요. 약 3시간 뒤에 다시 채워져요.' })
     expect(result.current.question).toBe('신청 대상은 누구인가요?')
 
     await act(async () => result.current.submitQuestion())

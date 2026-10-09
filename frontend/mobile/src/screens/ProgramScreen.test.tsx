@@ -7,6 +7,16 @@ import { colors } from '../ui'
 import { ProgramScreen } from './ProgramScreen'
 import { preparation, preparationDetail, programDetail } from '../test/preparationFixtures'
 
+// 하루 한도 안내는 다시 채워질 때까지 남은 시간을 적으므로 시계를 서울 저녁 9시(자정 3시간 전)로 고정합니다. 타이머는 실제로 둡니다.
+beforeEach(() => {
+  jest.useFakeTimers({
+    now: new Date('2026-10-08T21:00:00+09:00'),
+    doNotFake: ['nextTick', 'setImmediate', 'clearImmediate', 'setInterval', 'clearInterval', 'setTimeout', 'clearTimeout',
+      'queueMicrotask', 'hrtime', 'performance', 'requestAnimationFrame', 'cancelAnimationFrame', 'requestIdleCallback', 'cancelIdleCallback'],
+  })
+})
+afterEach(() => { jest.useRealTimers() })
+
 jest.mock('expo-router', () => ({ useFocusEffect: (effect: () => void) => { const React = jest.requireActual<typeof import('react')>('react'); React.useEffect(effect, [effect]) } }))
 jest.mock('../auth/session', () => ({ useAuth: jest.fn() }))
 jest.mock('../api/client', () => ({ ...jest.requireActual('../api/client'), apiRequest: jest.fn(), programClient: jest.fn() }))
@@ -273,13 +283,13 @@ test('the question sheet reads the daily question count when opened, warns from 
   await screen.findByText('테스트 지원사업')
   expect(jest.mocked(apiRequest).mock.calls.some(([path]) => path === '/api/v1/plan-usage')).toBe(false)
   fireEvent.press(screen.getByLabelText('원문에 질문하기'))
-  await screen.findByText('공고 원문 질문 오늘 7/10회')
+  await screen.findByText('공고 원문 질문 오늘 3회 남음')
   expect(apiRequest).toHaveBeenCalledWith('/api/v1/plan-usage', expect.objectContaining({ accessToken: 'owner' }))
   used = 8
   fireEvent.changeText(screen.getByLabelText('공고에 대해 궁금한 점'), '신청 서류는?')
   await act(async () => { fireEvent.press(screen.getByLabelText('질문 보내기')) })
   await screen.findByText('공고 원문 답변')
-  const warning = '공고 원문 질문 오늘 8/10회 · 자정(서울 시간)에 다시 채워져요.'
+  const warning = '공고 원문 질문 오늘 2회 남음 · 약 3시간 뒤에 다시 채워져요.'
   await screen.findByText(warning)
   expect(StyleSheet.flatten(screen.getByText(warning).props.style).color).toBe(colors.warning)
   expect(screen.getByLabelText('공고에 대해 궁금한 점').props.editable).toBe(true)
@@ -290,7 +300,7 @@ test('a used-up daily question limit disables the input with its message instead
   render(<ProgramScreen identity={identity} onLogin={jest.fn()} />)
   await screen.findByText('테스트 지원사업')
   fireEvent.press(screen.getByLabelText('원문에 질문하기'))
-  await screen.findByText('오늘 공고 원문 질문 10회를 모두 썼어요. 자정(서울 시간)에 다시 채워져요.')
+  await screen.findByText('오늘 공고 원문 질문 10회를 모두 썼어요. 약 3시간 뒤에 다시 채워져요.')
   expect(screen.getByLabelText('공고에 대해 궁금한 점').props.editable).toBe(false)
   expect(screen.queryByText('예시 질문')).toBeNull()
   expect(screen.getByLabelText('질문 보내기')).toBeDisabled()
@@ -309,14 +319,14 @@ test('a quota rejection after a stale count leaves a single limit message and ke
   render(<ProgramScreen identity={identity} onLogin={jest.fn()} />)
   await screen.findByText('테스트 지원사업')
   fireEvent.press(screen.getByLabelText('원문에 질문하기'))
-  const stale = '공고 원문 질문 오늘 9/10회 · 자정(서울 시간)에 다시 채워져요.'
+  const stale = '공고 원문 질문 오늘 1회 남음 · 약 3시간 뒤에 다시 채워져요.'
   await screen.findByText(stale)
   fireEvent.changeText(screen.getByLabelText('공고에 대해 궁금한 점'), '마지막 질문')
   // 거절 뒤 이용량을 다시 읽는 비동기 흐름까지 끝낸 뒤 확인합니다.
   await act(async () => { fireEvent.press(screen.getByLabelText('질문 보내기')) })
   await waitFor(() => expect(screen.queryByText(stale)).toBeNull())
   // 거절 안내와 다시 읽은 이용량이 같은 문장이라 한 번만 보입니다.
-  expect(screen.getAllByText('오늘 공고 원문 질문 10회를 모두 썼어요. 자정(서울 시간)에 다시 채워져요.')).toHaveLength(1)
+  expect(screen.getAllByText('오늘 공고 원문 질문 10회를 모두 썼어요. 약 3시간 뒤에 다시 채워져요.')).toHaveLength(1)
   expect(screen.getByLabelText('공고에 대해 궁금한 점').props.editable).toBe(false)
   expect(screen.getByLabelText('질문 보내기')).toBeDisabled()
   expect(screen.getByLabelText('공고에 대해 궁금한 점').props.value).toBe('마지막 질문')

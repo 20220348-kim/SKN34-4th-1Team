@@ -5,6 +5,7 @@ import { reviewProgramKey, supportsAutomaticReview, unknownParticipation, type R
 import type { SupportProgram } from '@govbiz/shared/domain/entities/SupportProgram'
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
 import { useAuth } from '../auth/session'
+import { FeatureUsageLine } from '../components/PlanUsage'
 import { ApiError, errorMessage, programClient } from '../api/client'
 import { listPreparationReviews, type PreparationReview } from '../api/preparation'
 import { useCombinationReview } from '../components/useCombinationReview'
@@ -236,6 +237,7 @@ function OwnedReviewEditor({ id, runId, initialProgram, initialStep, onStepChang
           onPress={() => void saveAndStart(vm.run!.input.additionalFacts)} />} />}
       {!vm.pending && <Button label="입력 수정하기" variant="secondary" disabled={vm.busy} onPress={supplement} />}
     </Page>}
+    {step === 'confirm' && <FeatureUsageLine token={token} feature="COMBINATION_REVIEW" revision={vm.busy} />}
     {step !== 'analysis' && <View style={local.actions}>
       {step === 'selection' && <Button style={local.action} label="다음 · 분석 확인" busy={vm.saving} disabled={locked || vm.loading || !vm.draft.title.trim() || vm.draft.programs.length !== 2} onPress={() => void saveStep('confirm')} />}
       {/* 이전 단계로 갈 때도 바꾼 내 상황을 저장해요. [검토 실행]은 바뀐 입력을 먼저 저장(입력 버전 확인)한 뒤 그 버전으로 분석을 접수해요. */}

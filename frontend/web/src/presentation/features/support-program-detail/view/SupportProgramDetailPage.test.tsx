@@ -3,7 +3,7 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { Provider } from 'react-redux'
 import { MemoryRouter, Route, Routes } from 'react-router'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { appContainer } from '../../../../app/appContainer'
 import { createAppStore } from '../../../../app/store'
 import { supportProgramDetails, supportPrograms } from '../../../../data/fixtures/supportPrograms'
@@ -11,6 +11,10 @@ import type { Account } from '../../../../domain/entities/Account'
 import { SupportProgramDetailPage } from './SupportProgramDetailPage'
 import { SupportProgramEvidenceQuestionPage } from './SupportProgramEvidenceQuestionPage'
 import { sessionRestored } from '../../../shared/auth/state/authSlice'
+
+// 하루 한도 안내는 다시 채워질 때까지 남은 시간을 적으므로 시계를 서울 저녁 9시(자정 3시간 전)로 고정합니다. 타이머는 실제로 둡니다.
+beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-10-08T21:00:00+09:00')) })
+afterEach(() => { vi.useRealTimers() })
 
 afterEach(() => { cleanup(); vi.restoreAllMocks() })
 
@@ -91,7 +95,7 @@ describe('상세 오류 복구와 검색 화면 복귀', () => {
 
     await screen.findByRole('heading', { name: supportPrograms[0].title })
     const panel = screen.getByRole('region', { name: '원문에 질문하기' })
-    const limit = (await within(panel).findByText('오늘 공고 원문 질문 10회를 모두 썼어요. 자정(서울 시간)에 다시 채워져요.')).closest('p')!
+    const limit = (await within(panel).findByText('오늘 공고 원문 질문 10회를 모두 썼어요. 약 3시간 뒤에 다시 채워져요.')).closest('p')!
     expect(within(limit).queryByRole('link')).toBeNull()
     const input = within(panel).getByRole('textbox', { name: '공고 원문에 질문하기' }) as HTMLTextAreaElement
     expect(input.disabled).toBe(true)

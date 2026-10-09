@@ -696,8 +696,8 @@ it('shows this month draft usage on the review step without blocking [초안 만
   repository.get.mockResolvedValue(readyPreparation())
   mount('/app/application-preparations/12?step=review')
   const review = await screen.findByRole('region', { name: '초안을 만들기 전에 확인해 주세요' })
-  const line = (await within(review).findByText('이번 달 0/3건')).closest('p')!
-  expect(line.textContent).toBe('신청 문서 초안·이번 달 0/3건')
+  const line = (await within(review).findByText('이번 달 3건 남음')).closest('p')!
+  expect(line.textContent).toBe('신청 문서 초안·이번 달 3건 남음')
   expect((within(review).getByRole('button', { name: '초안 만들기' }) as HTMLButtonElement).disabled).toBe(false)
   expect(usage).toHaveBeenCalledOnce()
 })

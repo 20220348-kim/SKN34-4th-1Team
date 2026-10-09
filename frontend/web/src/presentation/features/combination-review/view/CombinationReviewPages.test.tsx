@@ -716,7 +716,7 @@ describe('review screens and execution safety', () => {
     repository.start.mockRejectedValue(new PlanQuotaExceededError({ feature: 'COMBINATION_REVIEW', period: 'MONTH', plan: 'FREE', limit: 3, resetsAt: '2026-11-01T00:00:00+09:00' }))
     try {
       mount()
-      await within(await screen.findByRole('region', { name: '분석 실행' })).findByText('이번 달 2/3회')
+      await within(await screen.findByRole('region', { name: '분석 실행' })).findByText('이번 달 1회 남음')
       fireEvent.click(screen.getByRole('button', { name: '검토 실행' }))
       const alert = await screen.findByRole('alert')
       expect(alert.textContent).toBe('이번 달 중복 검토 3회를 모두 썼어요. 진행 중인 검토도 횟수에 들어가요. 11월 1일에 다시 채워져요.')
