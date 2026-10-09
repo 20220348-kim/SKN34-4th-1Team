@@ -6,6 +6,8 @@ import { programStatusLabels } from '@govbiz/shared/domain/labels'
 import type { DailyReport, DailyReportItem } from '../../../../domain/entities/DailyReport'
 import { appPaths, supportProgramDetailPath } from '../../../shared/routes/appPaths'
 import { supportProgramSaveMessages, supportProgramSaveNoticeDurationMs, useSupportProgramSaveViewModel } from '../../../shared/support-program/useSupportProgramSaveViewModel'
+import { EmptyState } from '../../../shared/workspace/EmptyState'
+import { BuildingIcon, ReportTrayIcon } from '../../../shared/workspace/EmptyStateIcons'
 import { HelpTip } from '../../../shared/workspace/HelpTip'
 import { ddayToneClassNames } from '../../../shared/workspace/WorkspaceStates.styles'
 import { workspacePageStyles as styles, workspaceTagClassName } from '../../../shared/workspace/WorkspacePage.styles'
@@ -75,10 +77,11 @@ function ReportArea({ vm }: { vm: ViewModel }) {
     <button className={className} type="button" disabled={vm.busy !== null || vm.dirty} onClick={() => void vm.preview()}>{label}</button>
   )
   return <>
+    {/* 아무것도 없을 때는 다른 작업 화면과 같은 공용 빈 화면(회색 아이콘 · 제목 · 설명 · 초록 버튼)을 씁니다. */}
     {vm.company === null ? (
-      <StateCard title="기업 정보를 등록하면 리포트를 받을 수 있어요" text="등록한 지역과 업종을 기준으로 접수 중인 공고를 골라 드려요.">
-        <Link className={s.smallButton} to={appPaths.profile}>기업 등록</Link>
-      </StateCard>
+      <EmptyState icon={<BuildingIcon />} title="기업 정보를 등록하면 리포트를 받을 수 있어요"
+        description="등록한 지역과 업종을 기준으로 접수 중인 공고를 골라 드려요."
+        action={{ label: '기업 등록하기', to: appPaths.profile }} />
     ) : creating ? (
       <section className={s.stateCard} role="status" aria-label="리포트 만드는 중">
         <span className={s.spinner} aria-hidden="true" />
@@ -96,9 +99,9 @@ function ReportArea({ vm }: { vm: ViewModel }) {
         {createButton('오늘의 리포트 만들기', s.smallButton)}
       </section>
     ) : !isTodays ? (
-      <StateCard title="오늘의 리포트가 아직 없어요" text="만들 때 AI 분석 비용이 들 수 있어요. 하루에 한 번 만들고, 정기 이메일도 같은 리포트를 보내요.">
-        {createButton('오늘의 리포트 만들기', s.smallButton)}
-      </StateCard>
+      <EmptyState icon={<ReportTrayIcon />} title="오늘의 리포트가 아직 없어요"
+        description="만들 때 AI 분석 비용이 들 수 있어요. 하루에 한 번 만들고, 정기 이메일도 같은 리포트를 보내요."
+        action={{ label: '오늘의 리포트 만들기', onClick: () => void vm.preview(), disabled: vm.busy !== null || vm.dirty }} />
     ) : null}
     {vm.company !== null && vm.dirty && !creating && (!isTodays || failedToday) && <p className={s.note}>바꾼 수신 설정을 먼저 저장하거나 취소해 주세요.</p>}
     {vm.error?.at === 'preview' && <p role="alert" className={s.alert}>{vm.error.text}</p>}
@@ -106,6 +109,7 @@ function ReportArea({ vm }: { vm: ViewModel }) {
   </>
 }
 
+/** 리포트를 만들지 못한 날의 알림 카드입니다. 빈 화면과 같은 배치에 빨간 아이콘을 씁니다. */
 function StateCard({ tone = 'neutral', title, text, children }: { tone?: 'neutral' | 'danger'; title: string; text: string; children?: ReactNode }) {
   return <section className={s.stateCard} aria-label={title} role={tone === 'danger' ? 'alert' : undefined}>
     <span className={tone === 'danger' ? s.stateGlyphDanger : s.stateGlyph} aria-hidden="true">

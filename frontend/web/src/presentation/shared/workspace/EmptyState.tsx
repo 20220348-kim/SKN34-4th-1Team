@@ -3,8 +3,8 @@ import { Link } from 'react-router'
 
 import { workspaceStateStyles as s } from './WorkspaceStates.styles'
 
-/** 빈 화면의 다음 행동 하나입니다. 다른 화면으로 가면 `to`, 이 화면에서 무언가를 하면 `onClick`을 씁니다. */
-export type EmptyStateAction = { label: string; to: string } | { label: string; onClick: () => void }
+/** 빈 화면의 다음 행동 하나입니다. 다른 화면으로 가면 `to`, 이 화면에서 무언가를 하면 `onClick`(지금 누를 수 없으면 `disabled`)을 씁니다. */
+export type EmptyStateAction = { label: string; to: string } | { label: string; onClick: () => void; disabled?: boolean }
 
 /**
  * 목록이나 화면이 비었을 때의 안내입니다.
@@ -26,7 +26,7 @@ export function EmptyState({ icon, title, description, action, headingLevel = 2 
     {description ? <p className={s.emptyDescription}>{description}</p> : null}
     {action ? 'to' in action
       ? <Link className={s.emptyAction} to={action.to}>{action.label}</Link>
-      : <button type="button" className={s.emptyAction} onClick={action.onClick}>{action.label}</button>
+      : <button type="button" className={s.emptyAction} disabled={action.disabled} onClick={action.onClick}>{action.label}</button>
       : null}
   </section>
 }

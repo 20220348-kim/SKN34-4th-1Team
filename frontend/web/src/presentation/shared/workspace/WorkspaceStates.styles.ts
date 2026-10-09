@@ -12,14 +12,16 @@ const focus = 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visi
  */
 export const workspaceStateStyles = {
   // 빈 화면: 점선 테두리 카드 가운데에 둥근 아이콘 · 제목 · 한 줄 설명 · 다음 행동 버튼 하나. 점선은 빈 화면에만 씁니다.
+  // 아이콘은 맞춤 리포트 빈 화면처럼 회색 원에 선 아이콘으로 두고, 색은 다음 행동 버튼(초록)에만 씁니다.
   empty: 'flex flex-col items-center gap-3 rounded-2xl border border-dashed border-line-strong bg-surface px-5 py-8 text-center',
-  emptyIcon: 'grid size-11 place-items-center rounded-full bg-brand-soft text-brand-primary',
+  emptyIcon: 'grid size-11 place-items-center rounded-full bg-surface-muted text-ink-muted',
   emptyTitle: 'm-0 text-[0.9375rem] font-bold text-ink',
   emptyDescription: 'm-0 max-w-[36rem] text-[0.8125rem] leading-[1.6] text-ink-muted',
   // 누를 수 있는 요소는 44px 이상입니다.
   emptyAction: classes(
     'inline-flex min-h-11 cursor-pointer items-center justify-center gap-1.5 rounded-full border-0 bg-brand-primary px-5',
     'text-[0.8125rem] font-bold text-white no-underline hover:bg-brand-hover',
+    'disabled:cursor-not-allowed disabled:opacity-60',
     focus,
   ),
   // 오류: 연한 danger 바탕에 한 문장과 [다시 시도] 하나.
