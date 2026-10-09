@@ -13,8 +13,8 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import (
-    HTTPHandler,
     HTTPCookieProcessor,
+    HTTPHandler,
     HTTPRedirectHandler,
     ProxyHandler,
     Request,
@@ -536,6 +536,9 @@ def main():
     replay = json.loads(body)
     assert status == 200 and replay["prefect_flow_run_id"] == first["prefect_flow_run_id"]
     run = wait_for_list_state(request, payload["request_id"])
+    model_api_calls = run.get("model_api_calls")
+    if type(model_api_calls) is not int or model_api_calls != 0:
+        raise ValueError("Free evaluation requires confirmed zero model API calls")
     assert run["execution_spec_sha256"] == first["execution_spec_sha256"] == replay["execution_spec_sha256"]
     assert run["execution_spec"] and run["execution_spec"]["generation"] is None
     assert run["execution_spec"]["dataset"]["case_ids"] == run["comparison"]["case_ids"]
@@ -596,7 +599,7 @@ def main():
         "core_admin_login": True, "core_logout_revokes_ops": True,
         "deployment_runtime_checks": runtime,
         "background_sync_without_detail": True, "source_run_id": run.get("source_run_id"),
-        "report_http_status": status, "model_api_calls": 0,
+        "report_http_status": status, "model_api_calls": model_api_calls,
         "detail_url": base + run["detail_url"],
     }
     if is_rag:
