@@ -4,10 +4,13 @@ import argparse
 import copy
 import ipaddress
 import json
+import os
 import tempfile
+from contextlib import nullcontext
 from pathlib import Path
 
 import evaluation_release as release
+import evaluation_secrets
 from gitops_runtime import probe_settings, resource_settings
 from gitops_service import service_settings
 
@@ -280,7 +283,11 @@ def observe(kube, ak, plan, report, rendered):
     }
 
 
-def verify(root, fork, *, state, restore_report, **options):
+def verify(
+    root, fork, *, state, restore_report, archive=None, key_file=None, **options
+):
+    if (archive is None) != (key_file is None):
+        raise ValueError("Both the retained archive and its key file are required")
     report, report_sha = release.read_restore_report(restore_report)
     settings = release.fork_cluster.load_settings(state)
     if (
@@ -328,6 +335,11 @@ def verify(root, fork, *, state, restore_report, **options):
     before = observe(kube, ak, bound, report, rendered)
     if before["storage"] != storage:
         raise ValueError("Evaluation dormant storage changed")
+    handoff = None
+    if archive is not None:
+        handoff = evaluation_secrets.verify_handoff(
+            state, archive, key_file, report, storage
+        )
     if (
         release.plan(
             root,
@@ -340,6 +352,14 @@ def verify(root, fork, *, state, restore_report, **options):
         != plan
     ):
         raise ValueError("Evaluation dormant publication changed")
+    if (
+        archive is not None
+        and evaluation_secrets.verify_handoff(state, archive, key_file, report, storage)
+        != handoff
+    ):
+        raise ValueError(
+            "Evaluation handoff source or credentials changed between checks"
+        )
     if (
         release.read_restore_report(restore_report) != (report, report_sha)
         or release.fork_cluster.load_settings(state) != settings
@@ -363,7 +383,13 @@ def verify(root, fork, *, state, restore_report, **options):
         "networkPolicyEnforcementVerified": False,
         "clusterChanged": False,
         "storageDataReverified": False,
-        "sourceQuiescenceVerified": False,
+        "sourceQuiescenceVerified": handoff is not None,
+        "archiveFreshnessVerified": handoff is not None,
+        "preparedSecretsVerified": handoff is not None,
+        "sourceVerificationScope": "before_and_after_dormant_verification"
+        if handoff is not None
+        else "not_checked",
+        "sourceHandoff": handoff,
     }
 
 
@@ -371,6 +397,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--state-dir", type=Path, required=True)
     parser.add_argument("--restore-report", type=Path, required=True)
+    parser.add_argument("--archive", type=Path)
+    parser.add_argument("--key-file", type=Path)
     parser.add_argument("--langfuse-url", required=True)
     parser.add_argument(
         "--ops-api-url", default="http://ops-service.govbiz-msa.svc.cluster.local:8000"
@@ -378,18 +406,29 @@ def main():
     parser.add_argument("--helm", default="helm")
     parser.add_argument("--branch")
     args = parser.parse_args()
+    if (args.archive is None) != (args.key_file is None):
+        parser.error("--archive and --key-file must be provided together")
+    if args.archive is not None and os.name != "posix":
+        parser.error("Run archive and frozen source verification inside WSL/Linux")
     try:
         root = Path(__file__).resolve().parents[3]
         fork = release.from_origin(root, branch=args.branch).require_personal_publish()
-        result = verify(
-            root,
-            fork,
-            state=args.state_dir,
-            restore_report=args.restore_report,
-            langfuse_url=args.langfuse_url,
-            ops_api_url=args.ops_api_url,
-            helm=args.helm,
-        )
+        with (
+            release.fork_cluster.locked(args.state_dir)
+            if args.archive is not None
+            else nullcontext()
+        ):
+            result = verify(
+                root,
+                fork,
+                state=args.state_dir,
+                restore_report=args.restore_report,
+                archive=args.archive,
+                key_file=args.key_file,
+                langfuse_url=args.langfuse_url,
+                ops_api_url=args.ops_api_url,
+                helm=args.helm,
+            )
     except Exception as error:  # noqa: BLE001 - live resource and endpoint text stays private
         print(
             json.dumps(
@@ -401,6 +440,9 @@ def main():
                     "syncCompleted": None,
                     "runtimeVerified": False,
                     "activationAuthorized": False,
+                    "sourceQuiescenceVerified": False,
+                    "archiveFreshnessVerified": False,
+                    "preparedSecretsVerified": False,
                 }
             )
         )
