@@ -136,15 +136,43 @@ HTTP API와 비동기 메시지로 연결합니다.
 
 ```mermaid
 flowchart LR
-    Web["React Web<br/>사용자 화면"] --> Core["Core API<br/>인증 · 업무 · 검색 조합"]
+    Web["React Web<br/>사용자 화면"] --> Core["Core API<br/>사용자 업무 · 검색"]
     Mobile["React Native App<br/>사용자 화면"] --> Core
-    Core -->|공고 snapshot 조회| Catalog["Catalog<br/>공고 수집 · 원본 관리"]
-    Core -->|검색 · 생성 요청| AI["AI Service<br/>추천 · 답변 · 문서 · 도우미"]
+    Core -->|snapshot 조회| Catalog["Catalog<br/>공고 수집 · 원본 관리"]
+    Core -->|검색 · 생성| AI["AI Service<br/>검색 · 답변 · 문서"]
+    Core -.-> CoreDB[("Core MySQL<br/>계정 · 업무 기록")]
+    Catalog -.-> CatalogDB[("Catalog MySQL<br/>원본 · 수집 상태")]
+    AI -.-> Qdrant[("Qdrant<br/>벡터 · 근거 청크")]
+    Core -. 검색 .-> Elastic[("Elasticsearch<br/>키워드 색인")]
+    Catalog -. 색인 .-> Elastic
+    Core -.-> Redis[("Redis<br/>캐시 · 임시 상태")]
     classDef client fill:#e8f3fa,stroke:#91b9cd,color:#183d32
     classDef service fill:#e7f5eb,stroke:#92bda6,color:#183d32
+    classDef storage fill:#fff4df,stroke:#c8ad72,color:#183d32
     class Web,Mobile client
     class Core,Catalog,AI service
+    class CoreDB,CatalogDB,Qdrant,Elastic,Redis storage
 ```
+
+**비동기 작업:** 큐가 활성화된 업무는 Core가 작업과 발행 대기 기록(Outbox)을 MySQL에 저장한 뒤
+RabbitMQ로 전달합니다. 발행기와 소비자는 모두 Core 내부에서 실행됩니다.
+
+```mermaid
+flowchart LR
+    Producer["Core<br/>작업 예약 · 발행"] ==>|작업 ID| Queue["RabbitMQ<br/>업무별 큐"]
+    Queue ==>|소비| Consumer["Core 내부 소비자<br/>업무 실행"]
+    Producer -.-> CoreDB[("Core MySQL<br/>작업 · 상태 · 결과")]
+    Consumer -.-> CoreDB
+    classDef service fill:#e7f5eb,stroke:#92bda6,color:#183d32
+    classDef queue fill:#e8f3fa,stroke:#91b9cd,color:#183d32
+    classDef storage fill:#fff4df,stroke:#c8ad72,color:#183d32
+    class Producer,Consumer service
+    class Queue queue
+    class CoreDB storage
+```
+
+적용 업무는 **리포트 생성·메일 발송, 중복 지원 검토, 신청 양식·문항 분석, 카카오 연결 해제,
+관심 공고 원문 수집·색인**입니다. 소비자는 업무에 따라 AI Service·공식 원문·메일 서버·카카오 API를 호출합니다.
 
 **평가 운영:** 같은 React 웹의 관리자 화면이 Ops를 호출하고, 평가 작업은 HTTP 요청 밖에서 실행됩니다.
 
@@ -152,16 +180,21 @@ flowchart LR
 flowchart LR
     Admin["React Web<br/>LLMOps 관리자 화면"] --> Ops["Django Ops<br/>예산 · 실행 관리 · 검토"]
     Ops -->|평가 접수| Evaluation["Prefect + 평가 실행기<br/>평가 · 보고서 · 추적"]
-    Ops -.->|관리자 세션 확인| Core["Core API<br/>계정 · 권한"]
+    Ops -->|관리자 세션 확인| Core["Core API<br/>계정 · 권한"]
+    Ops -.-> OpsDB[("Ops MySQL<br/>실행 · 검토 · 예산")]
+    Core -.-> CoreDB[("Core MySQL<br/>계정 · 권한")]
     classDef client fill:#e8f3fa,stroke:#91b9cd,color:#183d32
     classDef service fill:#e7f5eb,stroke:#92bda6,color:#183d32
     classDef execution fill:#f3f5f4,stroke:#a8b5af,color:#183d32
+    classDef storage fill:#fff4df,stroke:#c8ad72,color:#183d32
     class Admin client
     class Ops,Core service
     class Evaluation execution
+    class OpsDB,CoreDB storage
 ```
 
-화살표는 대표적인 호출 방향이며 응답은 생략했습니다.
+가는 실선은 서비스 호출, 굵은 실선은 큐 메시지 전달, 점선은 DB·검색 저장소·캐시 접근을 나타냅니다.
+대표적인 연결만 표시하고 응답은 생략했습니다.
 웹·앱은 [Shared 패키지](docs/mobile-monorepo.md)의 업무 모델·API 계약·응답 검증을 공유합니다.
 
 ### 서비스 경계와 데이터 소유권
@@ -177,7 +210,8 @@ flowchart LR
   자기 DB에 반영하고, Ops는 Core API로 관리자 권한을 확인합니다. 다른 서비스의 DB를 직접 읽지 않습니다.
 - **검색·임시 상태:** Catalog가 검색 색인 준비를 소유하며, 벡터 처리는 AI Service에 요청합니다.
   Core는 Elasticsearch의 키워드 후보와 AI Service의 의미 검색 후보를 결합하고 Redis에 검색 결과·임시 상태를 보관합니다.
-- **비동기 작업:** Core의 작업 생산자·소비자는 RabbitMQ로 연결됩니다. 작업 상태와 Outbox는 Core MySQL에 저장합니다.
+- **비동기 작업:** RabbitMQ 메시지에는 작업 식별자만 담고, 작업 데이터·Outbox·결과는 Core MySQL에 유지합니다.
+  소비자는 DB 상태로 중복 실행을 제어하고 처리 결과를 저장한 뒤 수신 확인(ACK)을 보냅니다.
 - **평가 결과:** 별도 실행기가 결과 볼륨에 보고서·캡처를 기록하고 Langfuse에 추적·점수를 전송합니다.
   Ops는 결과를 조회해 실행·검토 이력과 연결합니다.
 
