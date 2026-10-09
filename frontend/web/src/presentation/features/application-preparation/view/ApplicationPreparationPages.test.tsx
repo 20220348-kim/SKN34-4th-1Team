@@ -967,11 +967,10 @@ describe('application preparation list', () => {
     expect(screen.getByRole('status').textContent).toContain('목록을 불러오는 중')
     await act(async () => request.resolve({ items: [], nextBeforeId: null }))
 
-    expect(screen.getByRole('heading', { name: '아직 시작한 신청 문서가 없습니다.' })).toBeTruthy()
-    // 중복 검토 목록처럼 머리글과 가운데 빈 화면 모두 [새 문서]로 새 문서 화면을 엽니다.
-    const newDocumentLinks = screen.getAllByRole('link', { name: '새 문서' })
-    expect(newDocumentLinks).toHaveLength(2)
-    expect(newDocumentLinks.map((link) => link.getAttribute('href'))).toEqual([appPaths.applicationPreparationNew, appPaths.applicationPreparationNew])
+    expect(screen.getByRole('heading', { name: '아직 시작한 신청 문서가 없어요' })).toBeTruthy()
+    // 중복 검토 목록처럼 머리글 [새 문서]와 가운데 빈 화면 [신청 문서 시작하기]가 모두 새 문서 화면을 엽니다.
+    expect(screen.getByRole('link', { name: '새 문서' }).getAttribute('href')).toBe(appPaths.applicationPreparationNew)
+    expect(screen.getByRole('link', { name: '신청 문서 시작하기' }).getAttribute('href')).toBe(appPaths.applicationPreparationNew)
     expect(repository.create).not.toHaveBeenCalled()
   })
 
@@ -1095,7 +1094,7 @@ describe('application preparation list', () => {
     mount('/app/application-preparations')
     const card = within(await screen.findByRole('list', { name: '신청 준비 목록' })).getByRole('listitem')
     expect(within(card).getByText('분석 중')).toBeTruthy()
-    expect(screen.queryByRole('heading', { name: '아직 시작한 신청 문서가 없습니다.' })).toBeNull()
+    expect(screen.queryByRole('heading', { name: '아직 시작한 신청 문서가 없어요' })).toBeNull()
 
     await act(async () => { await vi.advanceTimersByTimeAsync(formAnalysisPollMs) })
     expect((await screen.findAllByRole('status')).some((node) => node.textContent?.includes(`양식 분석이 끝났어요 · ${firstForm.programTitle}`))).toBe(true)
@@ -1343,7 +1342,7 @@ describe('application preparation list', () => {
     expect(document.activeElement).toBe(alert)
     fireEvent.click(within(alert).getByRole('button', { name: '목록 다시 불러오기' }))
 
-    await screen.findByRole('heading', { name: '아직 시작한 신청 문서가 없습니다.' })
+    await screen.findByRole('heading', { name: '아직 시작한 신청 문서가 없어요' })
     expect(repository.list).toHaveBeenCalledTimes(2)
   })
 
@@ -1353,7 +1352,7 @@ describe('application preparation list', () => {
 
     const alert = await screen.findByRole('alert')
     expect(alert.textContent).toContain('Core·AI Service 이미지를 갱신')
-    expect(screen.queryByRole('heading', { name: '아직 시작한 신청 문서가 없습니다.' })).toBeNull()
+    expect(screen.queryByRole('heading', { name: '아직 시작한 신청 문서가 없어요' })).toBeNull()
   })
 
   it('appends a cursor page and announces the more-loading state', async () => {
@@ -1439,7 +1438,7 @@ describe('application preparation list', () => {
     fireEvent.click(within(confirmation).getByRole('button', { name: '삭제' }))
 
     expect(repository.delete).toHaveBeenCalledWith(12, expect.any(AbortSignal))
-    expect(await screen.findByRole('heading', { name: '아직 시작한 신청 문서가 없습니다.' })).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: '아직 시작한 신청 문서가 없어요' })).toBeTruthy()
     expect(screen.queryByText(firstForm.programTitle)).toBeNull()
     expect(screen.getByText('삭제했어요.')).toBeTruthy()
   })
