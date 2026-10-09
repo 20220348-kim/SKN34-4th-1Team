@@ -99,7 +99,7 @@ class EvaluationRegistrationTests(unittest.TestCase):
             state="state",
             restore_report="restore.json",
             progress=self.progress,
-            langfuse_url="http://langfuse:3000",
+            langfuse_url="http://172.20.0.2:3000",
         )
 
     def writes(self):
@@ -262,7 +262,7 @@ class EvaluationRegistrationTests(unittest.TestCase):
             "evaluation_release.py",
             "--register-argo",
             "--langfuse-url",
-            "http://langfuse:3000",
+            "http://172.20.0.2:3000",
         ]
         with (
             patch.object(sys, "argv", args),

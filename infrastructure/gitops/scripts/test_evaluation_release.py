@@ -181,7 +181,7 @@ class EvaluationReleaseTests(SourceFixture):
                     "node": "fixture-control-plane",
                     "prefect_claim": "restored-prefect",
                     "results_claim": "restored-results",
-                    "langfuse_url": "http://langfuse-web:3000",
+                    "langfuse_url": "http://172.20.0.2:3000",
                 }
                 | kwargs
             ),
@@ -399,7 +399,7 @@ class EvaluationReleaseTests(SourceFixture):
             FORK,
             state=self.root,
             restore_report=path,
-            langfuse_url="http://langfuse-web:3000",
+            langfuse_url="http://172.20.0.2:3000",
             get=self.get,
         )
 
@@ -476,7 +476,7 @@ class EvaluationReleaseTests(SourceFixture):
             inspection.assert_not_called()
 
     def test_cli_accepts_only_one_complete_storage_input_mode(self):
-        base = ["evaluation_release.py", "--langfuse-url", "http://langfuse-web:3000"]
+        base = ["evaluation_release.py", "--langfuse-url", "http://172.20.0.2:3000"]
         for flags in (
             [],
             ["--node", "node"],
@@ -645,6 +645,51 @@ class EvaluationReleaseTests(SourceFixture):
                     policy["metadata"]["annotations"][
                         "argocd.argoproj.io/sync-wave"
                     ] = "1"
+                return rows
+
+            with (
+                self.subTest(mutation=mutation),
+                patch.object(fork_cluster, "verify_pull_rights"),
+                patch.object(release, "verify_pull_rights"),
+                self.mocked_renderer(),
+                patch.object(release, "render_bundle", side_effect=render),
+                self.assertRaises(ValueError),
+            ):
+                self.plan()
+
+    def test_missing_or_broadened_egress_blocks_release_plan(self):
+        actual_render = release.render_bundle
+        for mutation in (
+            "missing",
+            "all_destinations",
+            "all_ports",
+            "subnet",
+            "dns_namespace",
+            "ops_pods",
+            "server_egress",
+        ):
+
+            def render(*args, mutation=mutation, **kwargs):
+                rows = actual_render(*args, **kwargs)
+                name = "prefect" if mutation == "server_egress" else release.RUNNER
+                policy = next(r for r in rows[name] if r["kind"] == "NetworkPolicy")[
+                    "spec"
+                ]
+                if mutation == "missing":
+                    policy["policyTypes"] = ["Ingress"]
+                    del policy["egress"]
+                elif mutation in ("all_destinations", "server_egress"):
+                    policy["egress"] = [{}]
+                elif mutation == "all_ports":
+                    del policy["egress"][2]["ports"]
+                elif mutation == "subnet":
+                    policy["egress"][-1]["to"] = [
+                        {"ipBlock": {"cidr": "172.16.0.0/12"}}
+                    ]
+                elif mutation == "dns_namespace":
+                    del policy["egress"][0]["to"][0]["namespaceSelector"]
+                else:
+                    del policy["egress"][2]["to"][0]["podSelector"]
                 return rows
 
             with (

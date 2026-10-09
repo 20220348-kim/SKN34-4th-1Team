@@ -549,6 +549,7 @@ def verify(
         network.get("status") != "ENFORCED"
         or network.get("policyProfile") != "evaluation_chart"
         or network.get("networkPolicyEnforcementVerified") is not True
+        or network.get("runnerClusterEgressVerified") is not True
         or network.get("serviceClusterIPVerified") is not True
         or network.get("serviceDnsVerified") is not True
         or network.get("cleanupComplete") is not True
@@ -578,9 +579,8 @@ def verify(
         ):
             evidence["restored_pvc"] = proof
             ek = kube + ["-n", namespace]
-            # Remove the restore-only deny-all policy in the owned CI fixture;
-            # the runtime uses the chart ingress policies verified above.
-            execute(ek + ["delete", "networkpolicy", "deny-all"])
+            # Keep the restore's deny-all policy: only the chart's explicit
+            # ingress/egress permissions may enable runtime traffic.
             for name, data in (
                 ("llmops-artifacts", {"LLMOPS_ARTIFACT_TOKEN": token}),
                 (
@@ -741,7 +741,7 @@ def verify(
             source_stores_unchanged=True,
             model_api_calls=0,
             network_policy_enforcement_verified=True,
-            network_policy_scope="single_node_synthetic_chart_ingress_pod_service_dns",
+            network_policy_scope="single_node_synthetic_chart_ingress_runner_cluster_egress_pod_service_dns",
         )
     finally:
         for image in reversed(tagged):

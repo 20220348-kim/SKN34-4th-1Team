@@ -138,7 +138,7 @@ class EvaluationSyncTests(unittest.TestCase):
             state="state",
             restore_report="restore.json",
             progress=self.progress,
-            langfuse_url="http://langfuse:3000",
+            langfuse_url="http://172.20.0.2:3000",
         )
 
     def writes(self):
@@ -315,7 +315,7 @@ class EvaluationSyncTests(unittest.TestCase):
             "evaluation_release.py",
             "--request-dormant-sync",
             "--langfuse-url",
-            "http://langfuse:3000",
+            "http://172.20.0.2:3000",
         ]
         for extra in ([], ["--register-argo"]):
             with (

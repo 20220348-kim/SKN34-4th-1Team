@@ -491,6 +491,9 @@ class RuntimeTests(unittest.TestCase):
                 events.append("pvc-deleted")
 
         def command(args, *, data=None, **kwargs):
+            self.assertFalse(
+                "delete" in args and "networkpolicy" in args and "deny-all" in args
+            )
             if "get" in args:
                 if "deployment" in args:
                     return json.dumps({"spec": {"replicas": 0}})
@@ -556,6 +559,7 @@ class RuntimeTests(unittest.TestCase):
                     "networkPolicyEnforcementVerified": True,
                     "serviceClusterIPVerified": True,
                     "serviceDnsVerified": True,
+                    "runnerClusterEgressVerified": True,
                     "cleanupComplete": True,
                 },
             ) as network_probe,
@@ -665,6 +669,8 @@ class RuntimeTests(unittest.TestCase):
             {"serviceClusterIPVerified": False},
             {"serviceDnsVerified": False},
             {"serviceDnsVerified": None},
+            {"runnerClusterEgressVerified": False},
+            {"runnerClusterEgressVerified": None},
             {"cleanupComplete": False},
         ):
             with self.subTest(change=change):
@@ -675,6 +681,7 @@ class RuntimeTests(unittest.TestCase):
                         "networkPolicyEnforcementVerified": True,
                         "serviceClusterIPVerified": True,
                         "serviceDnsVerified": True,
+                        "runnerClusterEgressVerified": True,
                         "cleanupComplete": True,
                         **change,
                     }

@@ -13,7 +13,7 @@ from urllib.parse import quote
 import evaluation_pvc_restore as pvc_restore
 import fork_cluster
 import yaml
-from check_evaluation import COMPONENTS, render_bundle
+from check_evaluation import COMPONENTS, render_bundle, runner_egress
 from deployment import source_checks, verified_release
 from deployment_candidate import (
     KUBE_VERSION,
@@ -322,7 +322,10 @@ def plan(
                     )
                 expected_policy = {
                     "podSelector": {"matchLabels": {"app.kubernetes.io/name": name}},
-                    "policyTypes": ["Ingress"],
+                    "policyTypes": ["Ingress", "Egress"],
+                    "egress": runner_egress(values[RUNNER]["runner"])
+                    if name == RUNNER
+                    else [],
                     "ingress": []
                     if name == RUNNER
                     else [
@@ -345,7 +348,7 @@ def plan(
                     != "-1"
                 ):
                     raise ValueError(
-                        "Evaluation ingress must only allow the expected Ops and runner peers"
+                        "Evaluation network policy must only allow the expected peers and ports"
                     )
             if row["kind"] == "Deployment":
                 pod = row["spec"]["template"]["spec"]

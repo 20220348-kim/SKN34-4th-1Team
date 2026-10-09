@@ -84,7 +84,7 @@ class EvaluationChartTests(unittest.TestCase):
                     service = next(row for row in rows if row["kind"] == "Service")
                     self.assertEqual(service["spec"]["type"], "ClusterIP")
 
-    def test_ingress_requires_exact_namespace_pod_and_port_without_egress_changes(self):
+    def test_ingress_requires_exact_namespace_pod_and_port(self):
         for component, rows in self.resources.items():
             policy = next(row for row in rows if row["kind"] == "NetworkPolicy")
             self.assertEqual(
@@ -92,8 +92,7 @@ class EvaluationChartTests(unittest.TestCase):
             )
             spec = policy["spec"]
             self.assertEqual(spec["podSelector"], workload(rows)["spec"]["selector"])
-            self.assertEqual(spec["policyTypes"], ["Ingress"])
-            self.assertNotIn("egress", spec)
+            self.assertEqual(spec["policyTypes"], ["Ingress", "Egress"])
             if component == "evaluation-runner":
                 self.assertEqual(spec["ingress"], [])
                 continue
@@ -124,6 +123,107 @@ class EvaluationChartTests(unittest.TestCase):
                     }
                 )
             self.assertEqual(rule["from"], peers)
+
+    def test_egress_denies_server_connections_and_limits_runner_peers(self):
+        for component, rows in self.resources.items():
+            policy = next(row for row in rows if row["kind"] == "NetworkPolicy")["spec"]
+            expected = (
+                check.runner_egress(bundle()[component]["runner"])
+                if component == "evaluation-runner"
+                else []
+            )
+            self.assertEqual(policy["egress"], expected)
+        rules = check.runner_egress(bundle()["evaluation-runner"]["runner"])
+        self.assertEqual(
+            [r["ports"] for r in rules],
+            [
+                [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}],
+                [{"protocol": "TCP", "port": 4200}],
+                [{"protocol": "TCP", "port": 8000}],
+                [{"protocol": "TCP", "port": 3000}],
+            ],
+        )
+        self.assertEqual(
+            rules[-1]["to"],
+            [
+                {
+                    "namespaceSelector": {
+                        "matchLabels": {
+                            "kubernetes.io/metadata.name": "govbiz-observability"
+                        }
+                    },
+                    "podSelector": {
+                        "matchLabels": {"app.kubernetes.io/name": "langfuse-web"}
+                    },
+                }
+            ],
+        )
+
+    def test_compose_langfuse_egress_is_exactly_one_private_ipv4_and_port(self):
+        for address in ("10.1.2.3", "172.16.0.1", "172.31.255.254", "192.168.5.10"):
+            values = bundle()
+            runner = values["evaluation-runner"]["runner"]
+            runner["langfuseUrl"] = "http://" + address + ":3000"
+            rendered = check.render_bundle(values)
+            policy = next(
+                row
+                for row in rendered["evaluation-runner"]
+                if row["kind"] == "NetworkPolicy"
+            )
+            self.assertEqual(policy["spec"]["egress"], check.runner_egress(runner))
+            self.assertEqual(
+                policy["spec"]["egress"][-1],
+                {
+                    "to": [{"ipBlock": {"cidr": address + "/32"}}],
+                    "ports": [{"protocol": "TCP", "port": 3000}],
+                },
+            )
+
+    def test_unknown_langfuse_routes_fail_in_python_and_direct_helm(self):
+        for origin in (
+            "http://langfuse:3000",
+            "http://example.com:3000",
+            "https://172.20.0.2:443",
+            "http://8.8.8.8:3000",
+            "http://127.0.0.1:3000",
+            "http://169.254.169.254:3000",
+            "http://0.0.0.0:3000",
+            "http://172.15.0.1:3000",
+            "http://172.32.0.1:3000",
+            "http://100.64.0.1:3000",
+            "http://10.0.0.999:3000",
+            "http://10.01.0.1:3000",
+            "http://10.0.0.1:8000",
+            "http://10.0.0.1:3000/path",
+            "http://u:p@10.0.0.1:3000",
+            "http://[fd00::1]:3000",
+            "http://10.0.0.1:3000?x=1",
+            "http://10.0.0.1:3000\n",
+        ):
+            with self.subTest(origin=origin):
+                values = bundle()["evaluation-runner"]
+                values["runner"]["langfuseUrl"] = origin
+                with self.assertRaises(ValueError):
+                    check.runner_egress(values["runner"])
+                self.assertNotEqual(
+                    self.render_one("evaluation-runner", values).returncode, 0
+                )
+
+    def test_ops_url_cannot_escape_its_namespace_pod_and_port(self):
+        for origin in (
+            "http://ops-service:8000",
+            "http://ops-service.other.svc.cluster.local:8000",
+            "http://ops-service.govbiz-msa.svc.cluster.local:8001",
+            "http://172.20.0.2:8000",
+        ):
+            with self.subTest(origin=origin):
+                values = bundle()["evaluation-runner"]
+                values["runner"]["opsApiUrl"] = origin
+                with self.assertRaises(ValueError):
+                    check.runner_egress(values["runner"])
+                self.assertNotEqual(
+                    self.render_one("evaluation-runner", values).returncode, 0
+                )
 
     def test_shared_results_have_one_writer_and_matching_immutable_fixtures(self):
         pods = {

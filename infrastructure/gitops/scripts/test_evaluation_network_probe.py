@@ -26,6 +26,7 @@ class ProbeTests(unittest.TestCase):
         self.node_changed = False
         self.cleanup_failure = False
         self.service_bypass = None
+        self.egress_bypass = False
         self.dns_failure_during_policy = False
         self.service_create_timeout = False
         self.node_reads = 0
@@ -135,7 +136,13 @@ class ProbeTests(unittest.TestCase):
                 ("ops", "prefect"),
                 ("ops", "ops-artifacts"),
                 ("evaluation-runner", "prefect"),
+                ("evaluation-runner", "ops"),
             }
+            if self.egress_bypass and (source, destination) == (
+                "evaluation-runner",
+                "foreign-runner",
+            ):
+                allow = True
             blocked = (not policies and self.baseline_broken) or (
                 policies
                 and self.enforced
@@ -265,10 +272,12 @@ class ProbeTests(unittest.TestCase):
         result = probe.exercise(self.kube, "fixture-control-plane", helm="helm")
         self.assertEqual(result["status"], "ENFORCED")
         self.assertEqual(result["policyProfile"], "evaluation_chart")
-        self.assertEqual(sum(result["expectedReachability"].values()), 9)
-        self.assertEqual(len(result["policyChecks"]), 22)
+        self.assertEqual(sum(result["expectedReachability"].values()), 10)
+        self.assertEqual(len(result["policyChecks"]), 27)
         self.assertTrue(result["serviceClusterIPVerified"])
         self.assertTrue(result["serviceDnsVerified"])
+        self.assertTrue(result["runnerClusterEgressVerified"])
+        self.assertFalse(result["langfuseEgressVerified"])
         self.assertEqual(result["addressModes"], ["pod_ip", "cluster_ip", "service_dns"])
         self.assertEqual(len(result["chartPolicySpecSha256"]), 3)
         self.assertFalse(result["evaluationRuntimeVerified"])
@@ -315,8 +324,31 @@ class ProbeTests(unittest.TestCase):
                             {"app.kubernetes.io/name": "ops-service"},
                         )
         self.assertEqual(
-            {p["spec"]["containers"][0]["command"][-1] for p in pods}, {"4200", "8010", "8090"}
+            {p["spec"]["containers"][0]["command"][-1] for p in pods},
+            {"4200", "8000", "8010", "8090"},
         )
+        runner_policy = next(
+            p for p in policies if p["metadata"]["name"] == "evaluation-runner"
+        )
+        dns, prefect, ops, langfuse = runner_policy["spec"]["egress"]
+        self.assertEqual(
+            dns["to"][0]["namespaceSelector"]["matchLabels"],
+            {"kubernetes.io/metadata.name": "kube-system"},
+        )
+        self.assertEqual(
+            ops["to"][0]["namespaceSelector"]["matchLabels"],
+            {"kubernetes.io/metadata.name": result["namespaceRebinding"]["govbiz-msa"]},
+        )
+        self.assertEqual(prefect["ports"], [{"protocol": "TCP", "port": 4200}])
+        self.assertEqual(langfuse["to"], [{"ipBlock": {"cidr": "192.168.240.1/32"}}])
+
+    def test_ingress_success_cannot_hide_runner_egress_bypass(self):
+        self.egress_bypass = True
+        result = probe.exercise(self.kube, "fixture-control-plane", helm="helm")
+        self.assertEqual(result["status"], "NOT_ENFORCED")
+        self.assertFalse(result["runnerClusterEgressVerified"])
+        self.assertFalse(result["networkPolicyEnforcementVerified"])
+        self.assertTrue(result["cleanupComplete"])
 
     def test_chart_policy_scope_and_render_failure_prevent_all_writes(self):
         render = probe.render_bundle
