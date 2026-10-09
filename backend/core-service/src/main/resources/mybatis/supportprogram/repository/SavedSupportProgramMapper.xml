@@ -101,7 +101,7 @@
         UPDATE saved_support_program
         SET source_prefetch_status = 'PENDING', source_prefetch_next_publish_at = NULL
         WHERE source_prefetch_status = 'DONE' AND source_prefetch_updated_at &lt; #{before}
-        ORDER BY source_prefetch_updated_at LIMIT ${limit}
+        ORDER BY source_prefetch_updated_at LIMIT #{limit}
     </update>
 
     <select id="findPublishedProgram" resultMap="savedSupportProgramDbRow">

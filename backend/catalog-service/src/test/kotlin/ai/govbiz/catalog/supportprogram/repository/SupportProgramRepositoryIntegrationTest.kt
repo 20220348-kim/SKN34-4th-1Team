@@ -210,6 +210,22 @@ class SupportProgramRepositoryIntegrationTest {
     }
 
     @Test
+    fun remarkingUnchangedIndexStateDoesNotAdvanceRevision() {
+        publish("BIZINFO", listOf(program("one", "BIZINFO")))
+        val ready = requireNotNull(repository.findSnapshot("BIZINFO"))
+        val generation = ready.status.publishedGeneration!!
+        val fingerprint = ready.status.publishedCatalogFingerprint!!
+        assertTrue(ready.status.indexReady)
+        // 색인 복구가 이미 준비된 상태를 다시 기록해도 Core가 다시 가져갈 변경은 없습니다.
+        assertFalse(repository.markIndexReadyIfPublishedSnapshotMatches("BIZINFO", generation, fingerprint, 1))
+        assertEquals(ready, repository.findSnapshot("BIZINFO"))
+        assertTrue(repository.markIndexNotReadyIfPublishedSnapshotMatches("BIZINFO", generation, fingerprint, 1))
+        val notReady = requireNotNull(repository.findSnapshot("BIZINFO"))
+        assertFalse(repository.markIndexNotReadyIfPublishedSnapshotMatches("BIZINFO", generation, fingerprint, 1))
+        assertEquals(notReady, repository.findSnapshot("BIZINFO"))
+    }
+
+    @Test
     fun repeatableReadKeepsProgramsStatusAndRevisionAtOneCommittedSnapshot() {
         publish("BIZINFO", listOf(program("old", "BIZINFO")))
         val transaction = TransactionTemplate(transactionManager).apply {

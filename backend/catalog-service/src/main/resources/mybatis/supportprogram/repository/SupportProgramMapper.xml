@@ -415,6 +415,7 @@
           AND published_generation = #{publishedGeneration}
           AND published_catalog_fingerprint = #{catalogFingerprint}
           AND published_program_count = #{programCount}
+          AND index_ready = FALSE
     </update>
 
     <update id="markSyncIndexNotReady">
@@ -424,6 +425,7 @@
           AND published_generation = #{publishedGeneration}
           AND published_catalog_fingerprint = #{catalogFingerprint}
           AND published_program_count = #{programCount}
+          AND index_ready = TRUE
     </update>
 
     <insert id="insertSyncStatusIfAbsent">
