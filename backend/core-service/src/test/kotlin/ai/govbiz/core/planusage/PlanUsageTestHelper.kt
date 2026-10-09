@@ -1,7 +1,7 @@
 package ai.govbiz.core.planusage
 
 import ai.govbiz.core.account.repository.AccountRepository
-import ai.govbiz.core.planusage.domain.PlanCode
+import ai.govbiz.core.planusage.domain.AccountPlan
 import ai.govbiz.core.planusage.domain.PlanUsageFeature
 import ai.govbiz.core.planusage.domain.PlanUsagePeriod
 import ai.govbiz.core.planusage.domain.PlanUsageWindow
@@ -24,12 +24,12 @@ object PlanUsageTestHelper {
     /** 모든 요청을 FREE 한도 안으로 받아들이고 사용량 저장소는 부르지 않는 [PlanUsageService]입니다. */
     fun allowAll(clock: Clock = Clock.system(ZoneId.of("Asia/Seoul"))): PlanUsageService {
         val repository = Mockito.mock(PlanUsageRepository::class.java, LENIENT)
-        Mockito.doReturn(PlanCode.FREE).`when`(repository).findPlan(Mockito.anyLong())
+        Mockito.doReturn(AccountPlan.FREE).`when`(repository).findPlan(Mockito.anyLong())
         Mockito.doReturn(true).`when`(repository).reserve(
             Mockito.anyLong(),
             Mockito.any(PlanUsageFeature::class.java) ?: PlanUsageFeature.AI_SEARCH,
             Mockito.anyString(),
-            Mockito.any(),
+            Mockito.anyInt(),
         )
         val guests = Mockito.mock(GuestPlanUsageRepository::class.java, LENIENT)
         val window = PlanUsageWindow.current(PlanUsagePeriod.DAY, ZonedDateTime.now(clock))

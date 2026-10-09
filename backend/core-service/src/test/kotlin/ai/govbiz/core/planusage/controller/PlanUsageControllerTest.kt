@@ -8,6 +8,7 @@ import ai.govbiz.core.account.helper.AccountTestHelper
 import ai.govbiz.core.account.repository.AccountRepository
 import ai.govbiz.core.account.service.AccountSessionService
 import ai.govbiz.core.account.web.AuthenticatedAccountArgumentResolver
+import ai.govbiz.core.planusage.domain.AccountPlan
 import ai.govbiz.core.planusage.domain.PlanCode
 import ai.govbiz.core.planusage.domain.PlanUsageFeature
 import ai.govbiz.core.planusage.domain.PlanUsagePeriod
@@ -69,7 +70,7 @@ class PlanUsageControllerTest {
     @Test
     fun membersSeeEveryFeatureOfTheirPlan() {
         Mockito.doReturn(member).`when`(sessions).requireAccount("member-token")
-        Mockito.doReturn(PlanCode.FREE).`when`(repository).findPlan(7)
+        Mockito.doReturn(AccountPlan.FREE).`when`(repository).findPlan(7)
         Mockito.doReturn(mapOf((PlanUsageFeature.EVIDENCE_QUESTION to "2026-10-08") to 3, (PlanUsageFeature.COMBINATION_REVIEW to "2026-10") to 1))
             .`when`(repository).findCounts(7, listOf("2026-10-08", "2026-10-08", "2026-10", "2026-10"))
         Mockito.doReturn(0).`when`(repository).countJobs(7, PlanUsageFeature.APPLICATION_DRAFT, thisMonth, null, null)
@@ -78,6 +79,7 @@ class PlanUsageControllerTest {
         mvc().perform(get("/api/v1/plan-usage").header(HttpHeaders.AUTHORIZATION, "Bearer member-token"))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.plan").value("FREE"))
+            .andExpect(jsonPath("$.planEndsAt").value(nullValue()))
             .andExpect(jsonPath("$.items.length()").value(4))
             .andExpect(jsonPath("$.items[0].feature").value("AI_SEARCH"))
             .andExpect(jsonPath("$.items[0].limit").value(10))
@@ -97,20 +99,27 @@ class PlanUsageControllerTest {
     }
 
     @Test
-    fun plansWithoutAnAgreedLimitSendANullLimitWithTheirUsage() {
+    fun aPassSendsItsThirtyDayPeriodUsageAndWhenThePassEnds() {
         Mockito.doReturn(member).`when`(sessions).requireAccount("member-token")
-        Mockito.doReturn(PlanCode.PREMIUM).`when`(repository).findPlan(7)
-        Mockito.doReturn(mapOf((PlanUsageFeature.AI_SEARCH to "2026-10-08") to 42))
-            .`when`(repository).findCounts(7, listOf("2026-10-08", "2026-10-08", "2026-10", "2026-10"))
-        Mockito.doReturn(5).`when`(repository).countJobs(7, PlanUsageFeature.COMBINATION_REVIEW, thisMonth, null, null)
+        // 10월 1일 15:30에 시작한 프리미엄 30일 이용권입니다.
+        val starts = ZonedDateTime.of(2026, 10, 1, 15, 30, 0, 0, seoul)
+        Mockito.doReturn(AccountPlan(PlanCode.PREMIUM, starts, starts.plusDays(30))).`when`(repository).findPlan(7)
+        val period = PlanUsageWindow.plan(starts, starts.plusDays(30), ZonedDateTime.now(clock))
+        Mockito.doReturn(mapOf((PlanUsageFeature.AI_SEARCH to "P20261001T153000") to 42))
+            .`when`(repository).findCounts(7, listOf("P20261001T153000", "P20261001T153000", "P20261001T153000", "P20261001T153000"))
+        Mockito.doReturn(5).`when`(repository).countJobs(7, PlanUsageFeature.COMBINATION_REVIEW, period, null, null)
 
         mvc().perform(get("/api/v1/plan-usage").header(HttpHeaders.AUTHORIZATION, "Bearer member-token"))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.plan").value("PREMIUM"))
-            .andExpect(jsonPath("$.items[0].limit").value(nullValue()))
+            .andExpect(jsonPath("$.planEndsAt").value("2026-10-31T15:30:00+09:00"))
+            .andExpect(jsonPath("$.items[0].period").value("PLAN"))
+            .andExpect(jsonPath("$.items[0].limit").value(1500))
             .andExpect(jsonPath("$.items[0].used").value(42))
-            .andExpect(jsonPath("$.items[1].limit").value(nullValue()))
-            .andExpect(jsonPath("$.items[3].limit").value(nullValue()))
+            .andExpect(jsonPath("$.items[0].resetsAt").value("2026-10-31T15:30:00+09:00"))
+            .andExpect(jsonPath("$.items[2].limit").value(20))
+            .andExpect(jsonPath("$.items[3].period").value("PLAN"))
+            .andExpect(jsonPath("$.items[3].limit").value(40))
             .andExpect(jsonPath("$.items[3].used").value(5))
     }
 
@@ -119,7 +128,7 @@ class PlanUsageControllerTest {
         val request = MockHttpServletRequest("GET", "/api/v1/support-programs/search")
         val response = ApiExceptionHandler().handlePlanQuotaExceeded(
             PlanQuotaExceededException(
-                PlanUsageFeature.AI_SEARCH, PlanCode.FREE, 10, 10, ZonedDateTime.of(2026, 10, 9, 0, 0, 0, 0, seoul), 10_800,
+                PlanUsageFeature.AI_SEARCH, PlanUsagePeriod.DAY, PlanCode.FREE, 10, 10, ZonedDateTime.of(2026, 10, 9, 0, 0, 0, 0, seoul), 10_800,
             ),
             request,
         )

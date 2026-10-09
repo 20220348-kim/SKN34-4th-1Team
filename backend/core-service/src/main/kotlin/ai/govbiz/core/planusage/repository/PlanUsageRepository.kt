@@ -1,5 +1,6 @@
 package ai.govbiz.core.planusage.repository
 
+import ai.govbiz.core.planusage.domain.AccountPlan
 import ai.govbiz.core.planusage.domain.PlanCode
 import ai.govbiz.core.planusage.domain.PlanUsageFeature
 import ai.govbiz.core.planusage.domain.PlanUsageJob
@@ -21,8 +22,11 @@ class PlanUsageRepository(
     private val mapper: PlanUsageMapper,
     @param:Qualifier("seoulClock") private val clock: Clock,
 ) {
-    fun findPlan(accountId: Long): PlanCode = store {
-        mapper.findPlanCode(accountId)?.let(PlanCode::valueOf) ?: PlanCode.FREE
+    /** 계정에 배정한 요금제입니다. 배정이 없으면 무료입니다. 끝났는지는 [AccountPlan.effectiveAt]이 가립니다. */
+    fun findPlan(accountId: Long): AccountPlan = store {
+        mapper.findPlan(accountId)?.let { row ->
+            AccountPlan(PlanCode.valueOf(row.planCode), requireNotNull(row.assignedAt).atZone(clock.zone), row.endsAt?.atZone(clock.zone))
+        } ?: AccountPlan.FREE
     }
 
     /** 호출한 transaction이 끝날 때까지 계정 행을 잠급니다. 월 한도 작업 접수와 같은 행이라 같은 계정의 확인이 한 줄로 섭니다. */
@@ -44,7 +48,7 @@ class PlanUsageRepository(
 
     /**
      * 한도 안일 때만 1을 더하고 더했는지 돌려줍니다. 먼저 그 기간의 행을 만들거나 잠그고 조건부 UPDATE 한 문장으로 더하므로,
-     * 같은 계정의 요청이 동시에 와도 한도를 넘겨 더하지 않습니다. [limit]이 null(제한 없음)이면 사용량만 남기도록 항상 더합니다.
+     * 같은 계정의 요청이 동시에 와도 한도를 넘겨 더하지 않습니다. [limit]이 null(개발용 무제한 계정)이면 사용량만 남기도록 항상 더합니다.
      */
     @Transactional
     fun reserve(accountId: Long, feature: PlanUsageFeature, periodKey: String, limit: Int?): Boolean = store {

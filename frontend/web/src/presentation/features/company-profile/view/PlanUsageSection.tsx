@@ -2,6 +2,7 @@ import {
   hasPlanLimit,
   isNearPlanLimit,
   isPlanLimitReached,
+  planEndsText,
   planLabels,
   planUsageCountingRules,
   planUsageCountText,
@@ -21,15 +22,18 @@ import { companyProfileStyles } from './CompanyProfilePage.styles'
 const periodGroups: readonly { period: PlanUsagePeriod; title: string }[] = [
   { period: 'DAY', title: '오늘' },
   { period: 'MONTH', title: '이번 달' },
+  { period: 'PLAN', title: '이번 기간' },
 ]
 
 /**
  * 프로필의 요금제와 이용량 카드입니다. 지금 요금제와 기능별로 이번 기간에 남은 양을 보여 줍니다.
- * 같은 때 다시 채워지는 기능끼리(오늘 · 이번 달) 묶어 다시 채워지는 때를 한 번만 적고, 무엇을 한 번으로 세는지는 제목 옆 ? 도움말에 둡니다.
+ * 같은 때 다시 채워지는 기능끼리(오늘 · 이번 달 · 유료 이용권의 이번 기간) 묶어 그때를 한 번만 적고, 무엇을 한 번으로 세는지는 제목 옆 ? 도움말에 둡니다.
+ * 유료 이용권이면 언제까지 쓸 수 있는지 함께 적습니다.
  * 아직 한도를 정하지 않은 기능은 막대 없이 "제한 없음"으로 적습니다. 결제는 아직 없으므로 요금제를 바꾸는 동작은 두지 않습니다.
  */
 export function PlanUsageSection({ load, onRetry }: { load: PlanUsageLoad; onRetry: () => void }) {
   const plan = load.status === 'ready' ? load.usage.plan : null
+  const endsText = load.status === 'ready' ? planEndsText(load.usage) : null
   return (
     <section className={workspacePageStyles.card} aria-label="요금제와 이용량">
       <div className={workspacePageStyles.cardHeader}>
@@ -39,6 +43,7 @@ export function PlanUsageSection({ load, onRetry }: { load: PlanUsageLoad; onRet
         </span>
         {plan !== null ? <span className={workspaceTagClassName('ok')}>{planLabels[plan]}</span> : null}
       </div>
+      {endsText ? <p className={companyProfileStyles.planNote}>{endsText}</p> : null}
       {load.status === 'loading' ? (
         <p className={workspacePageStyles.emptyNote} aria-live="polite">이용량을 불러오는 중이에요.</p>
       ) : null}

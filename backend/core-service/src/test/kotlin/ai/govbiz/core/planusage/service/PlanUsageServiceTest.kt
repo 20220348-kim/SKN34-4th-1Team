@@ -4,6 +4,7 @@ import ai.govbiz.core.account.domain.Account
 import ai.govbiz.core.account.domain.AccountRole
 import ai.govbiz.core.account.repository.AccountRepository
 import ai.govbiz.core.planusage.PlanUsageTestHelper
+import ai.govbiz.core.planusage.domain.AccountPlan
 import ai.govbiz.core.planusage.domain.PlanCode
 import ai.govbiz.core.planusage.domain.PlanUsageFeature
 import ai.govbiz.core.planusage.domain.PlanUsageJob
@@ -38,7 +39,7 @@ class PlanUsageServiceTest {
 
     @Test
     fun keepsTheUseWhenTheActionSucceedsAndGivesItBackWhenItFails() {
-        Mockito.doReturn(PlanCode.FREE).`when`(repository).findPlan(7)
+        Mockito.doReturn(AccountPlan.FREE).`when`(repository).findPlan(7)
         Mockito.doReturn(true).`when`(repository).reserve(7, PlanUsageFeature.AI_SEARCH, "2026-10-08", 10)
 
         assertEquals("ranked", service.consume(member, "192.0.2.1", PlanUsageFeature.AI_SEARCH) { "ranked" })
@@ -53,7 +54,7 @@ class PlanUsageServiceTest {
 
     @Test
     fun rejectsAtTheDailyLimitWithTheResetTimeAndNeverRunsTheAction() {
-        Mockito.doReturn(PlanCode.FREE).`when`(repository).findPlan(7)
+        Mockito.doReturn(AccountPlan.FREE).`when`(repository).findPlan(7)
         Mockito.doReturn(false).`when`(repository).reserve(7, PlanUsageFeature.EVIDENCE_QUESTION, "2026-10-08", 10)
         var called = false
 
@@ -87,46 +88,60 @@ class PlanUsageServiceTest {
     }
 
     @Test
+    fun aPassCountsEachRequestAgainstItsThirtyDayPeriodAndEndsWhenThePassEnds() {
+        // 10월 1일 15:30에 시작한 플러스 30일 이용권은 10월 31일 15:30까지 한 이용 기간입니다.
+        val starts = ZonedDateTime.of(2026, 10, 1, 15, 30, 0, 0, seoul)
+        Mockito.doReturn(AccountPlan(PlanCode.PLUS, starts, starts.plusDays(30))).`when`(repository).findPlan(7)
+        Mockito.doReturn(true).`when`(repository).reserve(7, PlanUsageFeature.AI_SEARCH, "P20261001T153000", 500)
+
+        assertEquals("ranked", service.consume(member, "192.0.2.1", PlanUsageFeature.AI_SEARCH) { "ranked" })
+
+        Mockito.doReturn(false).`when`(repository).reserve(7, PlanUsageFeature.EVIDENCE_QUESTION, "P20261001T153000", 500)
+        val error = assertThrows(PlanQuotaExceededException::class.java) {
+            service.consume(member, "192.0.2.1", PlanUsageFeature.EVIDENCE_QUESTION) { "never" }
+        }
+        assertEquals(PlanUsagePeriod.PLAN, error.period)
+        assertEquals(PlanCode.PLUS, error.plan)
+        assertEquals(500, error.limit)
+        assertEquals(ZonedDateTime.of(2026, 10, 31, 15, 30, 0, 0, seoul), error.resetsAt)
+    }
+
+    @Test
     fun localDevelopmentAccountsAreCountedButNeverBlocked() {
         // 로컬 데모 시드 계정만 개발용 무제한으로 지정합니다. 대소문자와 앞뒤 공백은 가리지 않습니다.
         val dev = PlanUsageService(repository, guests, clock, PlanUsageTestHelper.noTransactions(), accounts, " Member@Example.test , other@example.test")
-        Mockito.doReturn(PlanCode.FREE).`when`(repository).findPlan(7)
+        Mockito.doReturn(AccountPlan.FREE).`when`(repository).findPlan(7)
         Mockito.doReturn(member).`when`(accounts).findById(7)
         Mockito.doReturn(false).`when`(repository).reserve(7, PlanUsageFeature.AI_SEARCH, "2026-10-08", null)
 
         // 하루 10회를 넘겼어도 막지 않고, 사용량은 그대로 셉니다.
         assertEquals("ranked", dev.consume(member, "192.0.2.1", PlanUsageFeature.AI_SEARCH) { "ranked" })
         Mockito.verify(repository).reserve(7, PlanUsageFeature.AI_SEARCH, "2026-10-08", null)
-        // 월 한도 기능도 한도를 확인하지 않고, 새 공고 기록은 남깁니다.
+        // 작업으로 세는 기능도 한도를 확인하지 않습니다.
         dev.requireMonthlyCapacity(7, PlanUsageJob.ReviewRun(31))
         Mockito.verify(repository, Mockito.never()).findCounts(Mockito.anyLong(), Mockito.anyList())
-        val program = PlanUsageJob.DraftProgram("BIZINFO", "PBLN_NEW")
-        Mockito.doReturn(30).`when`(repository).countJobs(7, PlanUsageFeature.APPLICATION_DRAFT, thisMonth, null, null)
-        Mockito.doReturn(31).`when`(repository).countJobs(7, PlanUsageFeature.APPLICATION_DRAFT, thisMonth, null, program)
-        assertEquals("drafted", dev.consumeDraftProgram(7, "BIZINFO", "PBLN_NEW") { "drafted" })
-        Mockito.verify(repository).addDraftProgram(7, "BIZINFO", "PBLN_NEW")
         assertEquals(listOf(null, null, null, null), dev.usage(member, "192.0.2.1").items.map { it.limit })
 
-        // 지정이 없는 운영 설정은 계정을 읽지 않고 FREE 한도를 적용합니다.
-        assertEquals(listOf(10, 10, 3, 3), service.usage(member, "192.0.2.1").items.map { it.limit })
-        Mockito.verify(accounts, Mockito.times(4)).findById(7)
+        // 지정하지 않은 계정과 지정이 없는 운영 설정은 계정을 읽지 않고 한도를 적용합니다.
+        Mockito.doReturn(true).`when`(repository).reserve(7, PlanUsageFeature.EVIDENCE_QUESTION, "2026-10-08", 10)
+        assertEquals("answered", service.consume(member, "192.0.2.1", PlanUsageFeature.EVIDENCE_QUESTION) { "answered" })
+        Mockito.verify(accounts, Mockito.times(3)).findById(7)
     }
 
     @Test
-    fun plansWithoutALimitAreCountedButNeverBlocked() {
-        Mockito.doReturn(PlanCode.PREMIUM).`when`(repository).findPlan(7)
-        Mockito.doReturn(true).`when`(repository).reserve(7, PlanUsageFeature.AI_SEARCH, "2026-10-08", null)
+    fun anEndedPassFallsBackToTheFreeDailyLimit() {
+        // 오늘 정오에 끝난 이용권이라 저녁 9시에는 무료 하루 한도로 셉니다.
+        val starts = ZonedDateTime.of(2026, 9, 8, 12, 0, 0, 0, seoul)
+        Mockito.doReturn(AccountPlan(PlanCode.PLUS, starts, starts.plusDays(30))).`when`(repository).findPlan(7)
+        Mockito.doReturn(true).`when`(repository).reserve(7, PlanUsageFeature.AI_SEARCH, "2026-10-08", 10)
 
         assertEquals("ranked", service.consume(member, "192.0.2.1", PlanUsageFeature.AI_SEARCH) { "ranked" })
-
-        // 한도가 없으면 저장소가 더하지 못했다고 답해도 막지 않습니다.
-        Mockito.doReturn(false).`when`(repository).reserve(7, PlanUsageFeature.EVIDENCE_QUESTION, "2026-10-08", null)
-        assertEquals("answered", service.consume(member, "192.0.2.1", PlanUsageFeature.EVIDENCE_QUESTION) { "answered" })
+        Mockito.verify(repository).reserve(7, PlanUsageFeature.AI_SEARCH, "2026-10-08", 10)
     }
 
     @Test
     fun monthlyCapacityBlocksOnlyANewItemThatGoesOverTheLimit() {
-        Mockito.doReturn(PlanCode.FREE).`when`(repository).findPlan(7)
+        Mockito.doReturn(AccountPlan.FREE).`when`(repository).findPlan(7)
         Mockito.doReturn(mapOf((PlanUsageFeature.COMBINATION_REVIEW to "2026-10") to 1))
             .`when`(repository).findCounts(7, listOf("2026-10"))
         val run = PlanUsageJob.ReviewRun(31)
@@ -142,7 +157,7 @@ class PlanUsageServiceTest {
 
     @Test
     fun repeatingTheSameProgramDoesNotUseAnotherDraft() {
-        Mockito.doReturn(PlanCode.FREE).`when`(repository).findPlan(7)
+        Mockito.doReturn(AccountPlan.FREE).`when`(repository).findPlan(7)
         Mockito.doReturn(emptyMap<Pair<PlanUsageFeature, String>, Int>()).`when`(repository).findCounts(7, listOf("2026-10"))
         val generation = PlanUsageJob.DocumentGeneration(12)
         Mockito.doReturn(3).`when`(repository).countJobs(7, PlanUsageFeature.APPLICATION_DRAFT, thisMonth, generation, null)
@@ -154,7 +169,7 @@ class PlanUsageServiceTest {
 
     @Test
     fun aProgramWithoutAJobIsRecordedBeforeTheActionAndRemovedWhenTheActionFails() {
-        Mockito.doReturn(PlanCode.FREE).`when`(repository).findPlan(7)
+        Mockito.doReturn(AccountPlan.FREE).`when`(repository).findPlan(7)
         Mockito.doReturn(emptyMap<Pair<PlanUsageFeature, String>, Int>()).`when`(repository).findCounts(7, listOf("2026-10"))
         val program = PlanUsageJob.DraftProgram("BIZINFO", "PBLN_NEW")
         Mockito.doReturn(1).`when`(repository).countJobs(7, PlanUsageFeature.APPLICATION_DRAFT, thisMonth, null, null)
@@ -177,7 +192,7 @@ class PlanUsageServiceTest {
 
     @Test
     fun aNewProgramOverTheMonthlyLimitIsRejectedBeforeTheActionRuns() {
-        Mockito.doReturn(PlanCode.FREE).`when`(repository).findPlan(7)
+        Mockito.doReturn(AccountPlan.FREE).`when`(repository).findPlan(7)
         Mockito.doReturn(emptyMap<Pair<PlanUsageFeature, String>, Int>()).`when`(repository).findCounts(7, listOf("2026-10"))
         val program = PlanUsageJob.DraftProgram("BIZINFO", "PBLN_NEW")
         Mockito.doReturn(3).`when`(repository).countJobs(7, PlanUsageFeature.APPLICATION_DRAFT, thisMonth, null, null)
@@ -194,6 +209,7 @@ class PlanUsageServiceTest {
 
     @Test
     fun aProgramAlreadyCountedThisMonthIsNeitherBlockedNorRecordedAgain() {
+        Mockito.doReturn(AccountPlan.FREE).`when`(repository).findPlan(7)
         val program = PlanUsageJob.DraftProgram("BIZINFO", "PBLN_DISCOVERED")
         Mockito.doReturn(3).`when`(repository).countJobs(7, PlanUsageFeature.APPLICATION_DRAFT, thisMonth, null, null)
         Mockito.doReturn(3).`when`(repository).countJobs(7, PlanUsageFeature.APPLICATION_DRAFT, thisMonth, null, program)
@@ -207,14 +223,28 @@ class PlanUsageServiceTest {
     }
 
     @Test
-    fun plansWithoutAMonthlyLimitStillRecordANewProgram() {
-        Mockito.doReturn(PlanCode.PREMIUM).`when`(repository).findPlan(7)
+    fun anOpenEndedPaidPlanCountsDraftsInTheCurrentThirtyDayPeriod() {
+        // 끝나는 때가 없는 프리미엄 배정은 9월 1일 9시부터 30일마다 새 기간입니다. 지금은 10월 1일 9시에 시작한 두 번째 기간입니다.
+        val starts = ZonedDateTime.of(2026, 9, 1, 9, 0, 0, 0, seoul)
+        Mockito.doReturn(AccountPlan(PlanCode.PREMIUM, starts)).`when`(repository).findPlan(7)
+        val period = PlanUsageWindow.plan(starts, null, ZonedDateTime.now(clock))
+        assertEquals("P20261001T090000", period.key)
         val program = PlanUsageJob.DraftProgram("BIZINFO", "PBLN_NEW")
-        Mockito.doReturn(30).`when`(repository).countJobs(7, PlanUsageFeature.APPLICATION_DRAFT, thisMonth, null, null)
-        Mockito.doReturn(31).`when`(repository).countJobs(7, PlanUsageFeature.APPLICATION_DRAFT, thisMonth, null, program)
+        Mockito.doReturn(19).`when`(repository).countJobs(7, PlanUsageFeature.APPLICATION_DRAFT, period, null, null)
+        Mockito.doReturn(20).`when`(repository).countJobs(7, PlanUsageFeature.APPLICATION_DRAFT, period, null, program)
 
         assertEquals("drafted", service.consumeDraftProgram(7, "BIZINFO", "PBLN_NEW") { "drafted" })
         Mockito.verify(repository).addDraftProgram(7, "BIZINFO", "PBLN_NEW")
+
+        // 이번 기간 20건을 넘는 새 공고는 AI 전에 막고, 다음 기간이 시작하는 10월 31일 9시를 알려 줍니다.
+        val another = PlanUsageJob.DraftProgram("BIZINFO", "PBLN_ANOTHER")
+        Mockito.doReturn(20).`when`(repository).countJobs(7, PlanUsageFeature.APPLICATION_DRAFT, period, null, null)
+        Mockito.doReturn(21).`when`(repository).countJobs(7, PlanUsageFeature.APPLICATION_DRAFT, period, null, another)
+        val error = assertThrows(PlanQuotaExceededException::class.java) {
+            service.consumeDraftProgram(7, "BIZINFO", "PBLN_ANOTHER") { "never" }
+        }
+        assertEquals(PlanUsagePeriod.PLAN, error.period)
+        assertEquals(ZonedDateTime.of(2026, 10, 31, 9, 0, 0, 0, seoul), error.resetsAt)
     }
 
     @Test
@@ -225,17 +255,8 @@ class PlanUsageServiceTest {
     }
 
     @Test
-    fun plansWithoutAMonthlyLimitAreNeverBlockedOrCounted() {
-        Mockito.doReturn(PlanCode.PREMIUM).`when`(repository).findPlan(7)
-
-        service.requireMonthlyCapacity(7, PlanUsageJob.ReviewRun(31))
-
-        Mockito.verify(repository).findPlan(7)
-        Mockito.verifyNoMoreInteractions(repository)
-    }
-
-    @Test
     fun deletingKeepsTheUsageThatTheDeletedWorkAlreadySpentThisMonth() {
+        Mockito.doReturn(AccountPlan.FREE).`when`(repository).findPlan(7)
         Mockito.doReturn(3, 1).`when`(repository).countJobs(7, PlanUsageFeature.COMBINATION_REVIEW, thisMonth, null, null)
 
         assertEquals(true, service.keepMonthlyUsage(7, PlanUsageFeature.COMBINATION_REVIEW) { true })
@@ -244,14 +265,14 @@ class PlanUsageServiceTest {
     }
 
     @Test
-    fun reportsGuestTrialAndMemberUsageWithNullLimitsForUndecidedPlans() {
+    fun reportsTheGuestTrialFreeUsageAndAPassWithItsPeriodAndEnd() {
         Mockito.doReturn(2).`when`(guests).used("192.0.2.9", today)
         val guest = service.usage(null, "192.0.2.9")
         assertNull(guest.plan)
         assertEquals(listOf(PlanUsageFeature.AI_SEARCH to 2), guest.items.map { it.feature to it.used })
         assertEquals(2, guest.items.single().limit)
 
-        Mockito.doReturn(PlanCode.FREE).`when`(repository).findPlan(7)
+        Mockito.doReturn(AccountPlan.FREE).`when`(repository).findPlan(7)
         Mockito.doReturn(
             mapOf((PlanUsageFeature.AI_SEARCH to "2026-10-08") to 4, (PlanUsageFeature.COMBINATION_REVIEW to "2026-10") to 1),
         ).`when`(repository).findCounts(7, listOf("2026-10-08", "2026-10-08", "2026-10", "2026-10"))
@@ -261,6 +282,7 @@ class PlanUsageServiceTest {
         val usage = service.usage(member, "192.0.2.1")
 
         assertEquals(PlanCode.FREE, usage.plan)
+        assertNull(usage.planEndsAt)
         assertEquals(
             listOf(
                 Triple(PlanUsageFeature.AI_SEARCH, 10, 4),
@@ -271,7 +293,14 @@ class PlanUsageServiceTest {
             usage.items.map { Triple(it.feature, it.limit, it.used) },
         )
 
-        Mockito.doReturn(PlanCode.PLUS).`when`(repository).findPlan(7)
-        assertEquals(listOf(null, null, null, null), service.usage(member, "192.0.2.1").items.map { it.limit })
+        // 플러스 이용권은 네 기능 모두 이용 기간 총량으로 세고, 이용권이 끝나는 때를 함께 돌려줍니다.
+        val starts = ZonedDateTime.of(2026, 10, 1, 15, 30, 0, 0, seoul)
+        Mockito.doReturn(AccountPlan(PlanCode.PLUS, starts, starts.plusDays(30))).`when`(repository).findPlan(7)
+        val pass = service.usage(member, "192.0.2.1")
+        assertEquals(PlanCode.PLUS, pass.plan)
+        assertEquals(starts.plusDays(30), pass.planEndsAt)
+        assertEquals(listOf(500, 500, 5, 10), pass.items.map { it.limit })
+        assertEquals(setOf(PlanUsagePeriod.PLAN), pass.items.map { it.period }.toSet())
+        assertEquals(setOf(starts.plusDays(30)), pass.items.map { it.resetsAt }.toSet())
     }
 }

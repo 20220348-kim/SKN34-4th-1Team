@@ -420,11 +420,12 @@ Core 내부 전용 소비자가 기존 검색·근거 답변을 재사용하며 
 하루 한도(AI 검색·원문 질문)는 아래 검색 경로에서 V56 `plan_usage_counter`로, 월 한도(신청 문서 초안·중복 검토)는 각 기능의 접수
 transaction에서 셉니다. 월 한도는 `기능 Service(TransactionTemplate) → 기능 Repository.reserve(계정 행 잠금·작업 생성) →
 PlanUsageService.requireMonthlyCapacity → PlanUsageRepository → MyBatis → MySQL` 순서로 새 작업까지 센 사용량을 확인하고, 넘으면 작업을
-남기지 않고 되돌립니다. 사용량은 각 기능의 작업 표에서 실패하지 않은 작업으로 세므로 실패·만료는 별도 처리 없이 빠지고, 신청 문서·중복
+남기지 않고 되돌립니다. 유료 PLUS·PREMIUM은 30일 이용권이라 네 기능 모두 이용권 시작 시각부터 30일인 이용 기간 총량으로 세고,
+V59 `account_plan.ends_at`이 지나면 FREE 기준으로 돌아갑니다. 사용량은 각 기능의 작업 표에서 실패하지 않은 작업으로 세므로 실패·만료는 별도 처리 없이 빠지고, 신청 문서·중복
 검토 삭제는 같은 transaction에서 그 달 사용분을 `plan_usage_counter`에 남깁니다(V57). 작업 표를 남기지 않는 신청 문서 경로(이전 동기
 양식 분석·문서 생성, 문항별 해석·초안)는 `PlanUsageService.consumeDraftProgram`이 AI 전에 같은 계정 행을 잠근 짧은 transaction에서 그
-공고를 V58 `plan_usage_draft_program`에 기록하고, 실패하면 그 기록만 지웁니다. PLUS·PREMIUM은 아직 숫자를 정하지 않아
-막지 않습니다. 화면은 `GET /api/v1/plan-usage`로 남은 횟수를 읽습니다.
+공고를 V58 `plan_usage_draft_program`에 기록하고, 실패하면 그 기록만 지웁니다. 화면은 `GET /api/v1/plan-usage`로 남은 횟수와
+이용권이 끝나는 때를 읽습니다.
 [한도·세는 규칙·판단 근거](plan-usage-limits.md)를 참고하세요.
 
 ## 검색·상세 조회·원문 근거 질문
