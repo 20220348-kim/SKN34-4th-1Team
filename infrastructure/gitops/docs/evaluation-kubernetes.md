@@ -6,6 +6,31 @@ Compose는 로컬 개발에 유지하고, 이전 중에는 기존 인스턴스�
 상태다. 평가 세 구성요소만 옮겨도 전체 이전 완료는 아니며, Langfuse와 관련 저장소까지 포함한
 [전체 Kubernetes 배포 기준](../README.md#최종-배포-목표와-완료-기준)을 적용한다.
 
+## 개인 환경의 실제 이전 상태 — 2026-10-09
+
+아래는 `skn-353`의 `d778506`으로 개인 환경을 확인한 결과다. 코드 구현과 실제 이전 완료를
+구분하며, 이 관찰 이후의 클러스터 상태나 다른 SHA의 CI 성공을 보장하지 않는다.
+
+| 확인 대상 | 결과 | 남은 조건 |
+| --- | --- | --- |
+| 기존 개인 kind 클러스터 | 중지됐던 기존 control-plane을 재시작한 뒤 노드 Ready 확인 | 종료 코드 137만으로 이전 중지 원인을 확정하지 않음 |
+| 기존 업무 Argo Application 4개 | AI·Catalog·Core·Ops 모두 `Synced/Healthy` 확인 | 중지된 Compose 평가·관측 서비스까지 정상이라는 뜻은 아님 |
+| 평가 Chart의 실제 통신 정책 | Pod IP·Service ClusterIP·DNS 총 22개 경로 검증 통과, 임시 자원 정리 완료 | 단일 노드 합성 ingress 검사이며 실제 평가 인증·외부 egress는 별도 |
+| 개인 평가 namespace와 PVC 인계 | `govbiz-evaluation` namespace가 아직 없음 | 최신 백업·보존 복원·Secret 준비·Argo 등록·동기화·활성화 필요 |
+| 공개 평가 실행기 이미지 | 패키지 사전 검사 실패로 발행 작업 건너뜀 | PAT 없이 Actions의 빈 패키지 준비 후 Public 설정·실제 이미지 발행 필요 |
+
+작업 중 원격 main이 `0c87933`에서 `24a78ec`으로 바뀌었다. `24a78ec`은 확인 시점에
+Infra·Catalog·Ops CI가 통과했고 GovBiz·LLMOps CI는 진행 중이었다. 이전 SHA의 성공이나
+이미지 workflow의 `gate` 작업 성공을 현재 SHA의 발행 허용으로 해석하지 않는다.
+최신 평가 이미지 실행에서는 `package-preflight`가 실패했고 `publish`는 실행되지 않았다.
+
+다음 실제 작업은 **현재 main의 필수 CI 전체 성공 확인 → Actions 패키지 준비 → Public 설정 및
+접근 확인 → 같은 SHA의 실행기 이미지·v3 receipt 발행 확인** 순서다.
+[평가 실행기 발행 절차](../../release/README.md#kubernetes-평가-실행기-이미지)를 따른다.
+패키지 준비 workflow는 아직 실행하지 않았고 로컬 PAT도 사용하지 않았다. 실제 백업·PVC 이전은
+이미지 준비 후 진행하며, 기존 Compose 데이터는 보존한다. 이번 클러스터 복구에서는 기존에
+중지돼 있던 Compose 서비스를 시작하지 않았으므로 전체 관리 화면·평가 기능의 복구 완료로 보고하지 않는다.
+
 ## 이번 구현: 독립 배포와 저장소 계약
 
 [`govbiz-evaluation` Chart](../charts/govbiz-evaluation/Chart.yaml)는 한 릴리스에 한 프로세스만
@@ -511,6 +536,13 @@ LLMOps CI의 기존 `--evaluation-runtime` 단계에서도 이 모드를 필수 
 `serviceClusterIPVerified`, `serviceDnsVerified`, `cleanupComplete`는 모두 true였으며 임시
 namespace 두 개와 하위 Pod·Service·NetworkPolicy 정리를 확인했다. 이는 실제 평가 서비스의
 인증·실행이나 원격 필수 CI 통과를 대신하지 않는다.
+
+2026-10-09에는 `d778506`의 같은 명령으로 기존 개인 클러스터 재시작 후 다시 검증했다.
+정책 적용 전 22개 연결, 적용 후 허용 9개·차단 13개의 세 번 연속 일치, 제거 후 22개 연결 복구를
+확인했다. `ENFORCED`, `serviceClusterIPVerified=true`, `serviceDnsVerified=true`,
+`cleanupComplete=true`였고, 별도 namespace 조회에서도 검사 자원이 남지 않았음을 확인했다.
+로컬 결과는 Git에서 제외되는 `work/evaluation-chart-network-20261009.json`에 보관한다.
+`evaluationRuntimeVerified=false`, `productionCutover=false`는 유지한다.
 
 ## 평가 Argo 선언 등록
 
