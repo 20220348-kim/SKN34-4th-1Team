@@ -36,6 +36,24 @@ class SupportProgramStatusResolverTest {
     }
 
     @Test
+    fun treatsRollingExpressionsWrittenWithASpaceBeforeSiAsRollingPeriods() {
+        // 기업마당 실제 기간 원문("모집완료 시", "모집 완료 시")처럼 '시' 앞만 띄어 쓴 표현도 수시 접수로 봅니다.
+        listOf(
+            "모집완료 시",
+            "모집 완료 시",
+            "모집 마감 시까지",
+            "예산 소진 시까지",
+        ).forEach { applicationPeriod ->
+            assertEquals(
+                SupportProgramStatus.OPEN,
+                resolve(applicationPeriod),
+                applicationPeriod,
+            )
+        }
+        assertEquals(SupportProgramStatus.UNKNOWN, resolve("접수 마감 시 별도 안내"))
+    }
+
+    @Test
     fun keepsParsedDatesAheadOfApplicationPeriodText() {
         assertEquals(
             SupportProgramStatus.UPCOMING,
