@@ -79,7 +79,7 @@ class DailyReportServiceTest {
         val programs = listOf(program("BIZINFO", "1"), program("KSTARTUP", "1"), program("BIZINFO", "2"), program("BIZINFO", "ignored"))
         doReturn(SupportProgramSearchResult("q", programs)).`when`(search).search(anyString(), eq(true), anyValue())
         doReturn(SupportProgramEvidenceAnswerResult("사업계획서를 제출합니다.", SupportProgramEvidenceAnswerStatus.ANSWERED,
-            listOf(SupportProgramEvidenceCitationResult("사업계획서", "https://www.bizinfo.go.kr/detail?id=1", 0))))
+            listOf(SupportProgramEvidenceCitationResult("사업계획서", "https://www.bizinfo.go.kr/detail?id=1", "기업마당 상세 본문", 0))))
             .`when`(evidence).answer(equalValue("BIZINFO"), equalValue("1"), anyString())
         doThrow(IllegalStateException("private upstream failure")).`when`(evidence).answer(equalValue("BIZINFO"), equalValue("2"), anyString())
         var content: DailyReportContent? = null

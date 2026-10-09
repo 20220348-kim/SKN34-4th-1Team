@@ -263,6 +263,7 @@ def test_real_ai_capture_separates_retrieval_citations_failures_and_new_source_i
                                     {
                                         "excerpt": by_id[cid]["text"],
                                         "sourceUrl": "https://example.invalid/fixture",
+                                        "sourceLabel": "기업마당 상세 본문",
                                         "chunkOrder": by_id[cid]["order"],
                                     }
                                     for cid in result["citationChunkIds"]

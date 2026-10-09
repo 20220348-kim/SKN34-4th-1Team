@@ -29,7 +29,7 @@ private RDS TLS 검증, Secure 쿠키, 개발 로그인 비활성화, Nginx 고�
 로컬 기본 `server.forward-headers-strategy=none`과 개발 실행 방식은 유지합니다. 실제 RDS/CloudFront 연결 검증은 배포 시 필요합니다.
 
 브라우저에 공개하는 Spring Boot API입니다. 기업마당·K-Startup·과기정통부·충청남도 수출입공지 수집기를 제공하며, Elasticsearch 키워드·Qdrant 벡터 색인을 준비한 뒤 MySQL에
-공개하고, 저장된 공고의 검색·상세 조회와 기업마당 공식 원문 근거 질문을 담당합니다.
+공개하고, 저장된 공고의 검색·상세 조회와 기업마당·K-Startup 공식 원문 근거 질문을 담당합니다.
 
 프로젝트 전체 설명은 [메인 README](../../README.md), 계층·Facade·DI 설계는
 [아키텍처 README](../../docs/architecture/README.md#core-api-업무-흐름과-외부-경계), 기술 선택과 구현 범위는
@@ -691,21 +691,26 @@ v1을 사용하던 환경은 **새 v2 인덱스 이름으로 전환하고 재색
   않습니다. 현재 노출된 행만 반환하며, 없는·미노출 공고는 404입니다. 검색 문맥이 없으므로 추천 이유는
   빈 배열, 추천 점수는 `null`입니다.
 - 원문 근거 질문: `sourceCode`, `sourceProgramId`, 최대 500자의 `question`을 JSON body로 보냅니다. 현재 공개된
-  `BIZINFO` 공고에만 제공하며, 사용자가 이 endpoint를 호출했을 때만 공식 HTTPS 상세 HTML을 수집합니다.
+  `BIZINFO`·`KSTARTUP` 공고에만 제공하며(`SupportProgramEvidenceService.EVIDENCE_SOURCE_LABELS`가 지원 여부·
+  인용 원문 이름의 단일 기준), 사용자가 이 endpoint를 호출했을 때만 공식 HTTPS 상세 HTML을 수집합니다.
   MySQL 원문 캐시가 같은 URL로 6시간 이내면 재사용하고, 아니면 읽기 가능한 텍스트를 검증·저장한 뒤 최대 50개
   결정적 청크를 별도 Qdrant evidence 컬렉션에서 검색합니다. 같은 공고 ID·검증된 내용 해시의 불변 청크는
   Core 인스턴스에서 최근 사용한 최대 32개 공고까지 재사용합니다. 원문 최신성·공개 상태와 AI 색인·검색 검증은
   계속 수행하며, 갱신 실패 시 이전 청크로 답하지 않습니다. 답변은 `ANSWERED`(공식 원문 인용 1개 이상) 또는
-  `INSUFFICIENT_EVIDENCE`(인용 없음)와 최대 5개 인용 발췌·공식 URL·청크 순서를 반환합니다. 첨부파일·PDF·OCR·다른
-  제공처 원문은 지원하지 않습니다. 공식 원문 수집 실패는 503, 지원하지 않는 현재 제공처는 422입니다.
-  상세 URL의 리디렉션은 매번 공식 HTTPS 호스트와 같은 `pblancId`인지 검증하며 최대 3회 따릅니다.
-  HTML은 jsoup `1.23.2`로 파싱하고 `.support_project_detail`의 제목이 요청한 공고와 일치할 때
-  `.view_cont` 본문만 추출합니다. 인용에는 검색된 청크 전체를 반환하며 청크당 최대 1,500 UTF-16 코드 단위입니다.
+  `INSUFFICIENT_EVIDENCE`(인용 없음)와 최대 5개 인용 발췌·공식 URL·원문 이름(`sourceLabel`)·청크 순서를 반환합니다.
+  첨부파일·PDF·OCR·과기정통부·충남 수출입공지 원문은 지원하지 않습니다. 공식 원문 수집 실패는 503(API 요약으로
+  대신 답하지 않음), 지원하지 않는 현재 제공처는 422입니다.
+  기업마당 상세 URL의 리디렉션은 매번 공식 HTTPS 호스트와 같은 `pblancId`인지 검증하며 최대 3회 따르고,
+  `.support_project_detail`의 제목이 요청한 공고와 일치할 때 `.view_cont` 본문만 추출합니다.
+  K-Startup은 `bizpbanc-ongoing.do`·`bizpbanc-deadline.do` 상세 URL과 같은 `pbancSn`만 허용하고, 마감 공고의
+  진행 중 페이지가 `fullUrl`로 알려 주는 마감 페이지만 한 번 따라갑니다. `.app_notice_details-wrap`의 `#scrTitle h3`가
+  공백·따옴표·문장부호를 무시하고 공고명과 일치할 때 공통 안내·첨부 목록·저작권·버튼을 뺀 상세 본문을 추출합니다.
+  HTML은 jsoup `1.23.2`로 파싱합니다. 인용에는 검색된 청크 전체를 반환하며 청크당 최대 1,500 UTF-16 코드 단위입니다.
 - 수집기는 `BIZINFO`·`KSTARTUP`·`MSIT`·`CNTRADE_NOTICE`이며 기업마당 외 수집기는 명시적으로 켜야 합니다. 자연어 검색·평가 fixture/capture는
   `findSearchablePresent`의 제공처 상태 JOIN으로 `index_ready=true`인 공고만 읽고, 색인 복구는
   미준비 공고도 제공처별로 처리합니다. 최신 목록은 `findPublishedPresent`로 공개된 스냅샷만 읽되
   이후 색인 장애와 분리합니다. 내부 식별자 `sourceCode:sourceProgramId`로 같은 원본 ID를 구분합니다.
-  K-Startup도 같은 벡터 색인과 자연어 추천·필터·상세 조회를 사용합니다. 별도 공식 HTML 원문 질문은 기업마당만 지원합니다.
+  K-Startup도 같은 벡터 색인과 자연어 추천·필터·상세 조회를 사용합니다. 공식 상세 HTML 원문 질문은 기업마당·K-Startup만 지원합니다.
 
 제공처별 복구 실패 격리와 구현/미구현 범위는 [6단계 다중 제공처 준비](../../docs/support-program-multi-source-preparation.md)에 정리합니다.
 
@@ -731,7 +736,7 @@ SampleItem 예제는 [별도 계약](../../docs/sample-item-contract.md)에 있�
   일반 수출입 공지도 포함합니다. API에 개별 상세 URL이 없어 확인된 **공식 공지 목록**을 제공하며 제목으로 찾습니다.
 - 두 출처 모두 게시일을 접수일로 간주하거나 기관명으로 지역을 추정하지 않습니다. 접수 상태는 `UNKNOWN`,
   지역·분야는 빈 배열입니다. 필터 검색은 `ALL`/`UNKNOWN`에서, AI 검색은 접수 중 제한을 해제한 경우에 조회할 수 있습니다.
-  K-Startup 전용 필터와 기업마당 전용 원문 추가 질문은 확장하지 않습니다.
+  K-Startup 전용 필터와 기업마당·K-Startup 전용 원문 추가 질문은 확장하지 않습니다.
 - 2026-09-09 실호출 확인: MSIT 1·2페이지 성공(전체 4,248건 메타데이터). CNTRADE_NOTICE는 HTTP 200의
   `04 HTTP_ERROR`를 반환해 실제 수집은 미확인입니다. 문서 기반 스텁 통과를 실제 제공처 정상 동작으로 간주하지 않습니다.
 
@@ -887,10 +892,10 @@ supportprogram/
 │   ├── sync               # 수집·두 색인 준비·DB 공개와 별도 키워드/벡터 복구
 │   ├── evaluation         # 비웹 fixture 내보내기·검색 품질 평가 캡처 프로필
 │   └── dto                # 검증된 내부 실행 결과
-├── facade                 # 기업마당 수집·공식 원문·AI 응답 검증·도메인 변환
+├── facade                 # 기업마당 수집·제공처별 공식 원문·AI 응답 검증·도메인 변환
 ├── client/
 │   ├── bizinfo            # 기업마당 HTTP·목록/공식 HTML 검증·외부 DTO 정규화
-│   ├── kstartup           # K-Startup 페이지 검증·공식 상세 URL·원문 대상·전용 분류 정규화
+│   ├── kstartup           # K-Startup 페이지 검증·공식 상세 URL/HTML 검증·원문 대상·전용 분류 정규화
 │   ├── elasticsearch      # Nori·BM25 색인/검색 HTTP, DTO·Mapper·설정·예외
 │   └── ai                 # AI 내부 HTTP 계약·조건 해석·공고/원문 청크 색인과 답변
 ├── repository            # 도메인↔DB 행 변환·트랜잭션·저장·조회

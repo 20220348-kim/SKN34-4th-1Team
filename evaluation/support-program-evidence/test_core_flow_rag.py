@@ -121,6 +121,30 @@ def test_http_fixture_cannot_claim_a_model_or_usage(records):
         importer.convert(records[0])
 
 
+def _http_fixture_core(records, source_label):
+    core = json.loads(records[0])
+    core["aiTransport"] = "http-fixture"
+    references = [
+        case for document in core["fixture"]["documents"] for case in document["cases"]
+    ]
+    for observed, case in zip(core["cases"], references, strict=True):
+        observed["publicResponse"]["answer"] = case["stubAnswer"]
+        observed["aiCalls"][2]["response"]["answer"] = case["stubAnswer"]
+        for citation in observed["publicResponse"]["citations"]:
+            citation["sourceLabel"] = source_label
+    return core
+
+
+def test_http_fixture_accepts_core_citations_with_the_bizinfo_source_label(records):
+    _, capture, _ = importer.convert(importer.encode(_http_fixture_core(records, "기업마당 상세 본문")))
+    assert capture["execution"]["kind"] == "synthetic"
+
+
+def test_http_fixture_rejects_core_citations_with_another_source_label(records):
+    with pytest.raises(ValueError):
+        importer.convert(importer.encode(_http_fixture_core(records, "K-Startup 상세 본문")))
+
+
 @pytest.mark.parametrize(
     "change",
     [

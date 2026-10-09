@@ -70,6 +70,7 @@ def completed_capture(tmp_path):
                             "excerpt": chunks[c]["text"],
                             "chunkOrder": chunks[c]["order"],
                             "sourceUrl": doc["sourceUrl"],
+                            "sourceLabel": "기업마당 상세 본문",
                         }
                         for c in answer["citationChunkIds"]
                     ],

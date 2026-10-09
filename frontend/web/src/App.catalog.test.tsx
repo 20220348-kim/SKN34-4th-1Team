@@ -284,14 +284,16 @@ describe('지원사업 직접 필터 검색', () => {
     expect(fetchMock.mock.calls[1][0]).toBe(fetchMock.mock.calls[0][0])
   })
 
-  it.each(['/', '/app/chat'])('%s의 K-Startup 상세 복귀에 추가 조건을 보존하고 미지원 질문을 열지 않는다', async (path) => {
+  it.each(['/', '/app/chat'])('%s의 K-Startup 상세 복귀에 추가 조건을 보존하고 원문 질문을 제공한다', async (path) => {
     const fetchMock = vi.fn().mockImplementation(async (url: string) => Response.json(url.includes('/catalog?') ? startupCatalog : toSupportProgramDetailFixture(startupProgram)))
     vi.stubGlobal('fetch', fetchMock)
     start(path + '?mode=filter&' + new URLSearchParams(startupParams))
     fireEvent.click(await screen.findByRole('link', { name: startupProgram.title }))
     await screen.findByRole('heading', { name: startupProgram.title })
-    expect(screen.queryByRole('link', { name: '원문에 질문하기' })).toBeNull()
-    expect(screen.getByText(/이 제공처 공고는 아직 원문 근거 답변을 지원하지 않습니다/)).toBeTruthy()
+    // K-Startup은 공식 상세 본문을 근거로 원문 질문을 지원합니다. 비로그인 화면(/)은 로그인 뒤 질문으로 안내합니다.
+    if (path === '/') expect(screen.getByRole('link', { name: '로그인하고 원문에 질문하기' })).toBeTruthy()
+    else expect(screen.getByRole('button', { name: '원문에 질문하기' })).toBeTruthy()
+    expect(screen.queryByText(/이 제공처 공고는 아직 원문 근거 답변을 지원하지 않습니다/)).toBeNull()
     fireEvent.click(screen.getByRole('link', { name: '검색 결과로 돌아가기' }))
     await screen.findByRole('link', { name: startupProgram.title })
     expect(selectedValue(screen.getByRole('combobox', { name: '출처' }))).toBe('KSTARTUP')

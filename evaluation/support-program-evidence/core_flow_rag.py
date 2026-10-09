@@ -21,6 +21,18 @@ def encode(value):
     ).encode()
 
 
+# Core가 기업마당 공고 인용에 붙이는 원문 이름입니다(SupportProgramEvidenceService.EVIDENCE_SOURCE_LABELS).
+BIZINFO_SOURCE_LABEL = "기업마당 상세 본문"
+
+
+def _expected_public_citations(public_response, citations):
+    """Core가 인용에 sourceLabel을 붙이기 전 캡처는 그 키 없이, 붙인 뒤 캡처는 기업마당 원문 이름까지 정확히 비교합니다."""
+    observed = public_response.get("citations") if isinstance(public_response, dict) else None
+    if observed and all(isinstance(value, dict) and "sourceLabel" in value for value in observed):
+        return [{**value, "sourceLabel": BIZINFO_SOURCE_LABEL} for value in citations]
+    return citations
+
+
 def convert(core_raw, api_raw=None, *, fixture_path=verify_flow.DEFAULT_FIXTURE):
     """실제 wire와 공개 응답을 대조한다. 기록에 없는 trace·사용량·사람 승인을 만들지 않는다."""
     core = verify_flow._json(core_raw)
@@ -136,14 +148,17 @@ def convert(core_raw, api_raw=None, *, fixture_path=verify_flow.DEFAULT_FIXTURE)
             == {
                 "answer": response["answer"],
                 "answerStatus": response["answerStatus"],
-                "citations": [
-                    {
-                        "excerpt": chunk["text"],
-                        "sourceUrl": metadata["sourceUrl"],
-                        "chunkOrder": 0,
-                    }
-                    for _ in response["citationChunkIds"]
-                ],
+                "citations": _expected_public_citations(
+                    observed["publicResponse"],
+                    [
+                        {
+                            "excerpt": chunk["text"],
+                            "sourceUrl": metadata["sourceUrl"],
+                            "chunkOrder": 0,
+                        }
+                        for _ in response["citationChunkIds"]
+                    ],
+                ),
             },
             "Core public citations or answer differ from the internal response",
         )

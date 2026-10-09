@@ -52,12 +52,13 @@ class AiSupportProgramEvidenceFacadeTest {
             ),
         ).`when`(client).answer(answerRequest(QUESTION, listOf(chunks[1], chunks[0])))
 
-        val result = AiSupportProgramEvidenceFacade(client).answer(QUESTION, chunks, SOURCE_URL)
+        val result = AiSupportProgramEvidenceFacade(client).answer(QUESTION, chunks, SOURCE_URL, SOURCE_LABEL)
 
         assertEquals(SupportProgramEvidenceAnswerStatus.ANSWERED, result.answerStatus)
         assertEquals("신청 방법은 온라인 접수입니다.", result.answer)
         assertEquals(listOf(chunks[1].order), result.citations.map { it.chunkOrder })
         assertEquals(SOURCE_URL, result.citations.single().sourceUrl)
+        assertEquals(SOURCE_LABEL, result.citations.single().sourceLabel)
         assertEquals(citedText, result.citations.single().excerpt)
     }
 
@@ -104,7 +105,7 @@ class AiSupportProgramEvidenceFacadeTest {
             AiSupportProgramEvidenceAnswerPayload(answer, "ANSWERED", listOf(chunks[0].id)),
         ).`when`(client).answer(answerRequest(QUESTION, chunks))
 
-        val result = AiSupportProgramEvidenceFacade(client).answer(QUESTION, chunks, SOURCE_URL)
+        val result = AiSupportProgramEvidenceFacade(client).answer(QUESTION, chunks, SOURCE_URL, SOURCE_LABEL)
 
         assertEquals(answer, result.answer)
     }
@@ -169,11 +170,12 @@ class AiSupportProgramEvidenceFacadeTest {
             ),
         ).`when`(client).answer(answerRequest(QUESTION, retrieved))
 
-        val result = AiSupportProgramEvidenceFacade(client).answer(QUESTION, chunks, SOURCE_URL)
+        val result = AiSupportProgramEvidenceFacade(client).answer(QUESTION, chunks, SOURCE_URL, SOURCE_LABEL)
 
         assertEquals(listOf(retrieved.last().text, retrieved.first().text), result.citations.map { it.excerpt })
         assertEquals(listOf(retrieved.last().order, retrieved.first().order), result.citations.map { it.chunkOrder })
         assertEquals(listOf(SOURCE_URL, SOURCE_URL), result.citations.map { it.sourceUrl })
+        assertEquals(listOf(SOURCE_LABEL, SOURCE_LABEL), result.citations.map { it.sourceLabel })
         verify(client).indexChunks(indexRequest(chunks))
         verify(client).searchChunks(searchRequest(indexRequest(chunks)))
         verify(client).answer(answerRequest(QUESTION, retrieved))
@@ -201,7 +203,7 @@ class AiSupportProgramEvidenceFacadeTest {
             AiSupportProgramEvidenceAnswerPayload(answer, "INSUFFICIENT_EVIDENCE", emptyList()),
         ).`when`(client).answer(answerRequest(QUESTION, chunks))
 
-        val result = AiSupportProgramEvidenceFacade(client).answer(QUESTION, chunks, SOURCE_URL)
+        val result = AiSupportProgramEvidenceFacade(client).answer(QUESTION, chunks, SOURCE_URL, SOURCE_LABEL)
 
         assertEquals(SupportProgramEvidenceAnswerStatus.INSUFFICIENT_EVIDENCE, result.answerStatus)
         assertEquals(answer, result.answer)
@@ -282,7 +284,7 @@ class AiSupportProgramEvidenceFacadeTest {
 
     private fun assertInvalid(chunks: List<SupportProgramEvidenceChunk>) {
         val exception = assertThrows(AiServiceCallException::class.java) {
-            AiSupportProgramEvidenceFacade(client).answer(QUESTION, chunks, SOURCE_URL)
+            AiSupportProgramEvidenceFacade(client).answer(QUESTION, chunks, SOURCE_URL, SOURCE_LABEL)
         }
         assertEquals(AiServiceFailure.INVALID_RESPONSE, exception.failure)
     }
@@ -336,5 +338,6 @@ class AiSupportProgramEvidenceFacadeTest {
     private companion object {
         const val QUESTION = "신청 방법이 무엇인가요?"
         const val SOURCE_URL = "https://www.bizinfo.go.kr/detail?id=PBLN_TEST"
+        const val SOURCE_LABEL = "기업마당 상세 본문"
     }
 }

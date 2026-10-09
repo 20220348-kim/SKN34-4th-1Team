@@ -195,7 +195,7 @@ export function ProgramScreen({ identity, onLogin, resumeAction, onResumed }: {
           <Text selectable style={styles.body}>{turn.answer.answer}</Text>
           {turn.answer.citations.map((citation, index) => <Card key={`${turnIndex}-${citation.chunkOrder}-${index}`}>
             <Text selectable style={styles.body}>“{citation.excerpt}”</Text>
-            <Button variant="ghost" label={`근거 ${index + 1} 원문 열기`} onPress={() => void openSource(citation.sourceUrl)} />
+            <Button variant="ghost" label={`근거 ${index + 1} · ${citation.sourceLabel} ↗`} onPress={() => void openSource(citation.sourceUrl)} />
           </Card>)}
         </View>)}
         {answering && <><View style={local.question}><Text style={styles.body}>{question.trim()}</Text></View><ActivityIndicator accessibilityLabel="원문에서 답변을 찾는 중" color={colors.primary} /></>}

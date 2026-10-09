@@ -4,7 +4,7 @@ import ai.govbiz.core._common.exception.AiServiceCallException
 import ai.govbiz.core.supportprogram.client.ai.AiSupportProgramEvidenceClient
 import ai.govbiz.core.supportprogram.domain.SupportProgramSourceDocument
 import ai.govbiz.core.supportprogram.facade.AiSupportProgramEvidenceFacade
-import ai.govbiz.core.supportprogram.facade.BizInfoSupportProgramSourceDocumentFacade
+import ai.govbiz.core.supportprogram.facade.SupportProgramSourceDocumentFacade
 import ai.govbiz.core.supportprogram.helper.SupportProgramContentHashHelper
 import ai.govbiz.core.supportprogram.helper.SupportProgramEvidenceTracingHelper
 import ai.govbiz.core.supportprogram.helper.SupportProgramTestHelper
@@ -45,7 +45,7 @@ class SupportProgramEvidenceTracingTest {
     private val facade = AiSupportProgramEvidenceFacade(AiSupportProgramEvidenceClient(client, client), tracing)
     private val detail = Mockito.mock(SupportProgramDetailService::class.java)
     private val repository = Mockito.mock(SupportProgramRepository::class.java)
-    private val source = Mockito.mock(BizInfoSupportProgramSourceDocumentFacade::class.java)
+    private val source = Mockito.mock(SupportProgramSourceDocumentFacade::class.java)
     private val clock = Clock.fixed(Instant.parse("2026-09-30T03:00:00Z"), ZoneId.of("Asia/Seoul"))
     private val service = SupportProgramEvidenceService(detail, repository, source, facade, clock, tracing)
     private val program = SupportProgramTestHelper.catalogProgram("PBLN_PRIVATE").program

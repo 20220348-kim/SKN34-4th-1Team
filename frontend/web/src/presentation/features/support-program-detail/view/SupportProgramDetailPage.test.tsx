@@ -53,7 +53,7 @@ describe('상세 오류 복구와 검색 화면 복귀', () => {
     vi.spyOn(appContainer.resolve('getSupportProgramDetailUseCase'), 'execute').mockResolvedValue(supportProgramDetails[0])
     vi.spyOn(appContainer.resolve('checkSavedSupportProgramUseCase'), 'execute').mockResolvedValue(false)
     const ask = vi.spyOn(appContainer.resolve('askSupportProgramEvidenceQuestionUseCase'), 'execute')
-      .mockResolvedValueOnce({ outcome: 'answer', answer: { answer: '중소기업이 대상입니다.', answerStatus: 'ANSWERED', citations: [{ excerpt: '지원 대상: 중소기업', sourceUrl: 'https://example.com/1', chunkOrder: 1 }] } })
+      .mockResolvedValueOnce({ outcome: 'answer', answer: { answer: '중소기업이 대상입니다.', answerStatus: 'ANSWERED', citations: [{ excerpt: '지원 대상: 중소기업', sourceUrl: 'https://example.com/1', sourceLabel: 'K-Startup 상세 본문', chunkOrder: 1 }] } })
       .mockResolvedValueOnce({ outcome: 'answer', answer: { answer: '', answerStatus: 'INSUFFICIENT_EVIDENCE', citations: [] } })
     renderDetail({ searchReturnTo: '/app/chat' }, `?${new URLSearchParams({ sourceCode: supportPrograms[0].sourceCode, sourceProgramId: supportPrograms[0].id, ask: '1' })}`, memberAccount)
 
@@ -64,7 +64,8 @@ describe('상세 오류 복구와 검색 화면 복귀', () => {
     expect((within(panel).getByRole('textbox', { name: '공고 원문에 질문하기' }) as HTMLTextAreaElement).value).toBe('지원 대상이 어떻게 되나요?')
     fireEvent.click(within(panel).getByRole('button', { name: '질문 보내기' }))
     expect(await within(panel).findByText('중소기업이 대상입니다.')).toBeTruthy()
-    expect(within(panel).getByRole('link', { name: '근거 1 원문 보기 ↗' }).getAttribute('href')).toBe('https://example.com/1')
+    // 근거 링크는 서버가 준 원문 이름으로 어느 제공처 본문인지 밝힙니다.
+    expect(within(panel).getByRole('link', { name: '근거 1 · K-Startup 상세 본문 ↗' }).getAttribute('href')).toBe('https://example.com/1')
     expect(ask).toHaveBeenCalledWith({ sourceCode: supportPrograms[0].sourceCode, sourceProgramId: supportPrograms[0].id, question: '지원 대상이 어떻게 되나요?' }, expect.any(AbortSignal))
     // 답이 오면 입력이 비고 자주 묻는 질문은 사라집니다. 두 번째 질문은 첫 답 아래에 쌓입니다.
     expect((within(panel).getByRole('textbox', { name: '공고 원문에 질문하기' }) as HTMLTextAreaElement).value).toBe('')

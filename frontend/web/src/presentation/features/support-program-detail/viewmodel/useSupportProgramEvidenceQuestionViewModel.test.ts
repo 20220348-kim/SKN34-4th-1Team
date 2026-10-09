@@ -284,6 +284,7 @@ function evidenceAnswer(): SupportProgramEvidenceAnswer {
     citations: [{
       excerpt: '지원 대상은 서울 소재 창업 7년 이내 중소기업입니다.',
       sourceUrl: supportPrograms[0].sourceUrl,
+      sourceLabel: '기업마당 상세 본문',
       chunkOrder: 0,
     }],
   }

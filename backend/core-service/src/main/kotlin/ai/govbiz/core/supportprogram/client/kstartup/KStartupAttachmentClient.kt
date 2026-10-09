@@ -8,9 +8,9 @@ import ai.govbiz.core.supportprogram.client.document.SupportProgramAttachments
 import ai.govbiz.core.supportprogram.client.document.SupportProgramDocumentException
 import ai.govbiz.core.supportprogram.client.document.SupportProgramDocumentException.Reason
 import ai.govbiz.core.supportprogram.client.document.helper.SupportProgramAttachmentLinkHelper
+import ai.govbiz.core.supportprogram.client.kstartup.helper.KStartupDetailPageHelper
 import java.io.InputStream
 import java.net.URI
-import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
@@ -84,7 +84,9 @@ class KStartupAttachmentClient(
     /** [links]가 돌려준 첨부 하나를 공고 상세를 Referer로 받아 길이(모르면 -1)와 본문을 [receive]로 넘깁니다. */
     fun open(link: SupportProgramAttachmentLink, receive: (Long, InputStream) -> Unit) {
         val uri = requireDownloadUri(URI(link.url))
-        val referer = link.referer?.let(::URI)?.takeIf { it.scheme == "https" && it.host in HOSTS && it.path in DETAIL_PATHS }
+        val referer = link.referer?.let(::URI)?.takeIf {
+            it.scheme == "https" && it.host in KStartupDetailPageHelper.HOSTS && it.path in KStartupDetailPageHelper.DETAIL_PATHS
+        }
             ?: fail(Reason.INVALID)
         restClient.get().uri(uri).header(HttpHeaders.REFERER, referer.toString()).accept(MediaType.ALL).exchange { _, response ->
             SupportProgramAttachmentLinkHelper.receive(response, receive)
@@ -96,13 +98,13 @@ class KStartupAttachmentClient(
         val requested = requireDetailUri(URI(sourceUrl), sourceProgramId)
         var html = fetchPage(requested)
         var detailUri = requested
-        REDIRECT.find(html)?.groupValues?.get(1)?.let { path ->
-            val redirected = requireDetailUri(requested.resolve(path.replace("&amp;", "&")), sourceProgramId)
+        KStartupDetailPageHelper.fullUrl(html)?.let { path ->
+            val redirected = requireDetailUri(requested.resolve(path), sourceProgramId)
             if (redirected == requested) fail(Reason.INVALID)
             detailUri = redirected
             html = fetchPage(redirected)
         }
-        if (REDIRECT.containsMatchIn(html)) fail(Reason.INVALID)
+        if (KStartupDetailPageHelper.fullUrl(html) != null) fail(Reason.INVALID)
         val page = Jsoup.parse(html, detailUri.toString())
         if (page.selectFirst("#scrTitle h3")?.text()?.trim().isNullOrBlank()) fail(Reason.NOT_FOUND)
         return detailUri to page
@@ -158,26 +160,16 @@ class KStartupAttachmentClient(
             }
         }
 
-    internal fun requireDetailUri(uri: URI, sourceProgramId: String): URI {
-        if (uri.scheme != "https" || uri.host !in HOSTS || uri.userInfo != null || uri.fragment != null ||
-            uri.port !in listOf(-1, 443) || uri.path !in DETAIL_PATHS) fail(Reason.INVALID)
-        val parameters = parameters(uri)
-        if (parameters.keys.any { it !in setOf("pbancSn", "schM") } || parameters["pbancSn"] != listOf(sourceProgramId) ||
-            parameters["schM"]?.let { it != listOf("view") } == true) fail(Reason.INVALID)
+    private fun requireDetailUri(uri: URI, sourceProgramId: String): URI {
+        if (!KStartupDetailPageHelper.isDetailUri(uri, sourceProgramId)) fail(Reason.INVALID)
         return uri
     }
 
     internal fun requireDownloadUri(uri: URI): URI {
-        if (uri.scheme != "https" || uri.host !in HOSTS || uri.userInfo != null || uri.fragment != null ||
+        if (uri.scheme != "https" || uri.host !in KStartupDetailPageHelper.HOSTS || uri.userInfo != null || uri.fragment != null ||
             uri.port !in listOf(-1, 443) || uri.rawQuery != null || !DOWNLOAD_PATH.matches(uri.path)) fail(Reason.INVALID)
         return uri
     }
-
-    private fun parameters(uri: URI): Map<String, List<String>> = uri.rawQuery.orEmpty().split('&')
-        .filter(String::isNotBlank).groupBy(
-            { URLDecoder.decode(it.substringBefore('='), StandardCharsets.UTF_8) },
-            { URLDecoder.decode(it.substringAfter('=', ""), StandardCharsets.UTF_8) },
-        )
 
     private fun format(fileName: String): String? = when {
         Regex("(?i)\\.docx(?:\\s|$)").containsMatchIn(fileName) -> "DOCX"
@@ -196,10 +188,7 @@ class KStartupAttachmentClient(
         const val MAX_PAGE_BYTES = 1_000_000
         const val MAX_FILES = 8
         const val MAX_WARNINGS = 16
-        val HOSTS = setOf("k-startup.go.kr", "www.k-startup.go.kr")
-        val DETAIL_PATHS = setOf("/web/contents/bizpbanc-ongoing.do", "/web/contents/bizpbanc-deadline.do")
         val PROGRAM_ID = Regex("[1-9][0-9]{0,254}")
-        val REDIRECT = Regex("var\\s+fullUrl\\s*=\\s*['\"]([^'\"]+)['\"]\\s*;")
         val DOWNLOAD_PATH = Regex("/afile/fileDownload/[A-Za-z0-9_-]{1,200}")
     }
 }

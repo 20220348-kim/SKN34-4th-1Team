@@ -357,7 +357,7 @@ Accept: application/json
 `title`, `organization`, `summary`, `categories`, `regions`, `targetDescription`, `applicationPeriod`,
 `applicationStartDate`, `applicationEndDate`, `status`, `sourceName`, `sourceUrl`)에 `evidenceQuestionSupported`를
 더한 형태입니다. 상세 조회에는 검색 질의가 없으므로 검색 전용 `matchedReasons`·`recommendationScore`·`eligibilityReview`는
-포함하지 않습니다. `evidenceQuestionSupported`는 공식 원문 근거 질문을 지원하는 제공처(현재 `BIZINFO`)인지 서버가 정한 값이며,
+포함하지 않습니다. `evidenceQuestionSupported`는 공식 원문 근거 질문을 지원하는 제공처(현재 `BIZINFO`·`KSTARTUP`)인지 서버가 정한 값이며,
 화면은 제공처 코드를 직접 비교하지 않고 이 값으로 질문 입력을 보여 줍니다. `is_source_present = FALSE`인
 과거 공고와 존재하지 않는 복합 식별자는 모두 다음의 안정적인 404 오류로 처리합니다.
 
@@ -405,11 +405,12 @@ Core가 원본에서 받아 `application/octet-stream`과 UTF-8 `filename*`로 �
 
 ## 공개 공식 원문 근거 질문
 
-목록 검색이나 상세 GET은 기업마당 상세 페이지를 수집하지 않습니다. 사용자가 특정 공고에 질문을 제출할 때만
-다음 endpoint가 기업마당 공식 HTML 원문을 사용합니다. 현재 지원 제공처는 `BIZINFO`뿐이며, 현재 공개된
+목록 검색이나 상세 GET은 제공처 상세 페이지를 수집하지 않습니다. 사용자가 특정 공고에 질문을 제출할 때만
+다음 endpoint가 기업마당·K-Startup 공식 상세 HTML 원문을 사용합니다. 현재 지원 제공처는 `BIZINFO`·`KSTARTUP`이며,
+`MSIT`(상세 본문이 첨부 안내뿐)와 `CNTRADE_NOTICE`(개별 상세 URL 없음)는 지원하지 않습니다. 현재 공개된
 공고가 아닌 경우에는 원문 수집 전에 상세 조회와 같은 404를 반환합니다.
-Frontend는 기업마당 상세에서 별도 `/support-programs/detail/question` 페이지로 이동해 명시적으로 질문을 제출합니다.
-`KSTARTUP`을 포함한 비 `BIZINFO` 상세에서는 질문 링크 대신 미지원 설명과 기존 원문 링크를 표시하며,
+Frontend는 지원 제공처 상세에서 별도 `/support-programs/detail/question` 페이지로 이동해 명시적으로 질문을 제출합니다.
+`evidenceQuestionSupported=false`인 상세에서는 질문 링크 대신 미지원 설명과 기존 원문 링크를 표시하며,
 질문 페이지에 직접 접속해도 근거 질문 HTTP 요청을 보내지 않습니다. 서버의 미지원 제공처 422 계약도 유지합니다.
 
 ```http
@@ -426,7 +427,7 @@ Accept: application/json
 
 | Body field | 필수 | 설명 |
 |---|---|---|
-| `sourceCode` | 예 | 상세 조회와 같은 제공처 코드. 현재 공식 원문 질문은 `BIZINFO`만 지원 |
+| `sourceCode` | 예 | 상세 조회와 같은 제공처 코드. 현재 공식 원문 질문은 `BIZINFO`·`KSTARTUP`만 지원 |
 | `sourceProgramId` | 예 | 상세 조회와 같은 최대 255자 원본 공고 ID |
 | `question` | 예 | 요청값 최대 500 UTF-16 코드 단위. 앞뒤 공백을 제거해 처리하며 비어 있을 수 없음 |
 
@@ -441,6 +442,7 @@ Accept: application/json
     {
       "excerpt": "공고 원문에서 답변 근거가 된 발췌문",
       "sourceUrl": "https://www.bizinfo.go.kr/web/lay1/bbs/S1T122C128/AS/74/view.do?pblancId=PBLN_001",
+      "sourceLabel": "기업마당 상세 본문",
       "chunkOrder": 0
     }
   ]
@@ -451,20 +453,30 @@ Accept: application/json
 |---|---|
 | `answer` | 한국어 근거 답변 또는 근거 부족 안내. 최대 1,200자 |
 | `answerStatus` | `ANSWERED` 또는 `INSUFFICIENT_EVIDENCE` |
-| `citations` | 최대 5개. `excerpt`는 선택한 원문 청크 전체(최대 1,500 UTF-16 코드 단위), `sourceUrl`은 기업마당 공식 원문 URL, `chunkOrder`는 0부터 시작하는 원문 청크 순서 |
+| `citations` | 최대 5개. `excerpt`는 선택한 원문 청크 전체(최대 1,500 UTF-16 코드 단위), `sourceUrl`은 해당 공고의 공식 원문 URL(공고의 `sourceUrl`), `sourceLabel`은 근거 링크에 보일 원문 이름(`기업마당 상세 본문`·`K-Startup 상세 본문`), `chunkOrder`는 0부터 시작하는 원문 청크 순서 |
 
 `ANSWERED`에는 하나 이상의 `citations`가 반드시 있고, `INSUFFICIENT_EVIDENCE`에는 인용이 없습니다.
 Core는 인용 청크가 이 질문에서 실제로 검색된 최대 5개 청크 중 하나인지 확인합니다. 따라서 답변은
 전달되지 않은 원문 구간이나 다른 공고의 원문을 인용할 수 없습니다.
 
-원문 캐시가 없거나 같은 URL의 수집 시각이 6시간보다 오래된 경우에만 Core가 공식 HTTPS 기업마당 상세 HTML을
-다시 읽습니다. 리디렉션은 각 이동 URL의 공식 HTTPS 호스트와 동일한 `pblancId`를 검증해 최대 3회 따르며,
-순환 이동·HTML 이외 응답·공식 호스트가 아닌 URL·비 HTTPS URL·크기 제한 초과 원문은 거부합니다.
-HTML은 최대 500KB로 읽고 jsoup `1.23.2`로 파싱합니다. `.support_project_detail`의 `.title_area .title`이
-요청 공고 제목과 일치할 때 `.view_cont` 본문만 추출하며, 정규화 본문은 최대 30,000자입니다.
+원문 캐시가 없거나 같은 URL의 수집 시각이 6시간보다 오래된 경우에만 Core가 공식 HTTPS 상세 HTML을
+다시 읽습니다. 두 제공처 모두 순환 이동·HTML 이외 응답·공식 호스트가 아닌 URL·비 HTTPS URL·크기 제한 초과 원문은
+거부하고, jsoup `1.23.2`로 파싱한 정규화 본문은 80~30,000자여야 합니다.
+
+- 기업마당: 리디렉션은 각 이동 URL의 공식 HTTPS 호스트와 동일한 `pblancId`를 검증해 최대 3회 따릅니다.
+  HTML은 최대 500KB로 읽고 `.support_project_detail`의 `.title_area .title`이 요청 공고 제목과 일치할 때
+  `.view_cont` 본문만 추출합니다.
+- K-Startup: `k-startup.go.kr`의 `bizpbanc-ongoing.do`·`bizpbanc-deadline.do` 상세 URL과 단일 `pbancSn`을 검증하며
+  HTTP 리디렉션은 따르지 않습니다. 마감 공고의 진행 중 페이지가 스크립트 변수 `fullUrl`로 알려 주는 같은 `pbancSn`의
+  마감 페이지만 한 번 따라갑니다. HTML은 최대 1,000,000바이트로 읽고 `.app_notice_details-wrap`의 `#scrTitle h3`가
+  공백·따옴표·문장부호를 무시하고 요청 공고 제목과 일치할 때, 공통 안내(`.guide_wrap`)·첨부 목록(`.board_file`)·
+  저작권 표시(`.copy_right_wrap`)·목록 버튼(`.lower_btn-wrap`)과 숨김 요소를 뺀 상세 본문(신청방법·제출서류·
+  선정절차·지원내용·문의처 등)을 추출합니다. 마감 페이지에서 읽어도 저장 URL은 공고의 `sourceUrl`입니다.
+
+상세 페이지를 읽지 못하면 API 요약으로 대신 답하지 않고 503을 반환합니다.
 성공적으로 정규화한 텍스트만 MySQL에 저장하고, 최대 50개 결정적 청크를 일반 공고 검색과 분리된 Qdrant evidence
-컬렉션에 색인합니다. 이 작업은 공고 동기화와 목록 검색에 포함되지 않습니다. 첨부파일·PDF·OCR·다른 제공처
-원문은 현재 지원하지 않습니다.
+컬렉션에 색인합니다. 이 작업은 공고 동기화와 목록 검색에 포함되지 않습니다. 첨부파일·PDF·OCR·과기정통부·
+충남 수출입공지 원문은 현재 지원하지 않습니다.
 
 ### 내부 원문 근거 API
 
@@ -572,7 +584,7 @@ Service가 만든 후보 최대 20개와 최종 추천 최대 5개의 ID를 기�
 | 원문 근거 질문의 `sourceCode`·`sourceProgramId`·`question`이 누락·형식·공백·길이 제한을 위반함 | 400 | `REQUEST_VALIDATION_FAILED` |
 | 상세 조회 대상이 없거나 현재 제공처 목록에서 사라짐 | 404 | `SUPPORT_PROGRAM_NOT_FOUND` |
 | 현재 공고의 제공처가 원문 근거 질문을 지원하지 않음 | 422 | `SUPPORT_PROGRAM_EVIDENCE_NOT_SUPPORTED` |
-| 기업마당 공식 원문 수집·검증 실패 | 503 | `SUPPORT_PROGRAM_EVIDENCE_UNAVAILABLE` |
+| 기업마당·K-Startup 공식 원문 수집·검증 실패 | 503 | `SUPPORT_PROGRAM_EVIDENCE_UNAVAILABLE` |
 | AI Service의 예상하지 못한 HTTP 응답·응답 계약 위반 | 502 | `AI_SERVICE_UPSTREAM_ERROR` / `AI_SERVICE_INVALID_RESPONSE` |
 | AI Service 연결 불가·내부 503 응답 | 503 | `AI_SERVICE_UNAVAILABLE` |
 | Elasticsearch 연결 실패·색인 버전 누락·잘못된 키워드 응답 | 503 | `SUPPORT_PROGRAM_SEARCH_INDEX_UNAVAILABLE` |

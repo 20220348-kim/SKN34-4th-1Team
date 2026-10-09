@@ -9,6 +9,7 @@ import { isOfficialSupportProgramSourceUrl } from './SupportProgramDto'
 const citationDtoSchema = z.object({
   excerpt: z.string().trim().min(1).max(1_500),
   sourceUrl: z.string().url(),
+  sourceLabel: z.string().trim().min(1).max(80),
   chunkOrder: z.number().int().min(0),
 })
 
@@ -71,6 +72,7 @@ function toSupportProgramEvidenceCitation(
   return {
     excerpt: dto.excerpt,
     sourceUrl: dto.sourceUrl,
+    sourceLabel: dto.sourceLabel,
     chunkOrder: dto.chunkOrder,
   }
 }

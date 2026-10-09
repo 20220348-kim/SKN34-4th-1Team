@@ -162,7 +162,7 @@ export const relocationReviewRequiredProgram: SupportProgram = {
   },
 }
 
-/** 검색 결과 픽스처를 상세 조회 응답 모양으로 바꿉니다. 원문 근거 질문은 기업마당 공고만 지원합니다. */
+/** 검색 결과 픽스처를 상세 조회 응답 모양으로 바꿉니다. 원문 근거 질문은 기업마당·K-Startup 공고만 지원합니다. */
 export function toSupportProgramDetailFixture(program: SupportProgram): SupportProgramDetail {
   return {
     sourceCode: program.sourceCode,
@@ -179,7 +179,7 @@ export function toSupportProgramDetailFixture(program: SupportProgram): SupportP
     status: program.status,
     sourceName: program.sourceName,
     sourceUrl: program.sourceUrl,
-    evidenceQuestionSupported: program.sourceCode === 'BIZINFO',
+    evidenceQuestionSupported: program.sourceCode === 'BIZINFO' || program.sourceCode === 'KSTARTUP',
     applicationRoute: { method: null, url: null, type: 'UNKNOWN' },
     contact: null,
     preferenceDescription: null,

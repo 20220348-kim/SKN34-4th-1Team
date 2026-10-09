@@ -51,7 +51,7 @@ flowchart LR
     Sync --> Lexical
     Sync --> DB
     EvidenceQuestion[공고 질문 페이지의 명시적 질문] --> Core
-    Core --> DetailSource[기업마당 공식 HTTPS 상세 HTML]
+    Core --> DetailSource[기업마당·K-Startup 공식 HTTPS 상세 HTML]
 ```
 
 사용자 요청의 진입점은 Core API입니다. 브라우저가 외부 공고 API나 AI Service를 직접 호출하지 않으며,
@@ -261,7 +261,7 @@ Facade는 하위 시스템의 여러 처리 단계를 하나의 진입점으로 
 | Facade | 감추는 처리 | 상위 코드가 사용하는 결과 |
 |---|---|---|
 | `BizInfoSupportProgramCatalogFacade` | Client 전체 조회 → Mapper 정규화·검증 → 외부 예외 변환 | 검증된 카탈로그 목록 또는 카탈로그 예외 |
-| `BizInfoSupportProgramSourceDocumentFacade` | 공식 상세 HTML 수집 → 읽기 가능한 원문 정규화 → 원문 수집 예외 변환 | 특정 기업마당 공고의 검증된 원문 |
+| `SupportProgramSourceDocumentFacade` | 제공처별(기업마당·K-Startup) 공식 상세 HTML 수집 → 읽기 가능한 원문 정규화 → 원문 수집 예외 변환 | 특정 기업마당·K-Startup 공고의 검증된 원문 |
 | `AiSupportProgramRetrievalFacade` | 현재 공고의 두 색인 버전 참조 구성 → Elasticsearch 키워드·AI 의미 검색 응답 검증 → RRF 결합 | 현재 DB에 대응하는 최대 20개 공고 후보 |
 | `AiSupportProgramRankingFacade` | AI DTO 생성 → Client 호출 → 버전·점수·자격·추천 이유 검증 | 추천 이유와 점수가 반영된 `SupportProgram` |
 | `AiSupportProgramEvidenceFacade` | 원문 청크 색인·검색·답변 호출 → 청크·점수·인용 범위 검증 | 답변 상태와 공식 원문 인용 |

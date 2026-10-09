@@ -24,6 +24,7 @@ class AiSupportProgramEvidenceFacade(
         question: String,
         chunks: List<SupportProgramEvidenceChunk>,
         sourceUrl: String,
+        sourceLabel: String,
     ): SupportProgramEvidenceAnswerResult {
         require(question.isNotBlank()) { "evidence question must not be blank" }
         require(chunks.isNotEmpty() && chunks.size <= MAX_CHUNKS) { "invalid evidence chunk count" }
@@ -59,7 +60,7 @@ class AiSupportProgramEvidenceFacade(
             ))
         }
         return tracing.observe("core.validate") {
-            validateAnswer(answered.answer, answered.answerStatus, answered.citationChunkIds, retrieved, sourceUrl)
+            validateAnswer(answered.answer, answered.answerStatus, answered.citationChunkIds, retrieved, sourceUrl, sourceLabel)
         }
     }
 
@@ -119,6 +120,7 @@ class AiSupportProgramEvidenceFacade(
         rawCitationIds: List<String?>?,
         retrieved: List<SupportProgramEvidenceChunk>,
         sourceUrl: String,
+        sourceLabel: String,
     ): SupportProgramEvidenceAnswerResult {
         val answer = rawAnswer?.trim()
         if (answer.isNullOrEmpty() || answer.codePointCount(0, answer.length) > MAX_ANSWER_CODE_POINTS) {
@@ -159,6 +161,7 @@ class AiSupportProgramEvidenceFacade(
                     SupportProgramEvidenceCitationResult(
                         excerpt = chunk.text,
                         sourceUrl = sourceUrl,
+                        sourceLabel = sourceLabel,
                         chunkOrder = chunk.order,
                     )
                 },

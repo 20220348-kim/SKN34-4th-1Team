@@ -142,7 +142,7 @@ async function main() {
       else if (url.pathname.endsWith('/answers')) {
         calls.answers++
         json = { answerStatus: 'ANSWERED', answer: 'D'.repeat(1000),
-          citations: [{ excerpt: 'E'.repeat(1200), sourceUrl: longProgram.sourceUrl, chunkOrder: 0 }] }
+          citations: [{ excerpt: 'E'.repeat(1200), sourceUrl: longProgram.sourceUrl, sourceLabel: '기업마당 상세 본문', chunkOrder: 0 }] }
       } else return route.fulfill({ status: 503, contentType: 'application/json', body: '{}' })
       return route.fulfill({ json })
     })

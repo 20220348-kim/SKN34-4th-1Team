@@ -384,6 +384,24 @@ describe('answerSupportProgramEvidenceQuestionApi', () => {
     await expect(answerSupportProgramEvidenceQuestionApi(command)).rejects.toThrow()
   })
 
+  it('accepts K-Startup official citations with the server source label and rejects a missing or blank label', async () => {
+    const kStartupCommand = { sourceCode: 'KSTARTUP', sourceProgramId: '178927', question: '제출 서류는 무엇인가요?' }
+    const citation = {
+      excerpt: '제출서류: 참가신청서 1부, 발표자료 1부',
+      sourceUrl: 'https://www.k-startup.go.kr/web/contents/bizpbanc-ongoing.do?schM=view&pbancSn=178927',
+      chunkOrder: 2,
+    }
+    const answer = { ...answeredEvidenceResponse(), citations: [{ ...citation, sourceLabel: 'K-Startup 상세 본문' }] }
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(jsonResponse(answer))
+      .mockResolvedValueOnce(jsonResponse({ ...answer, citations: [citation] }))
+      .mockResolvedValueOnce(jsonResponse({ ...answer, citations: [{ ...citation, sourceLabel: '  ' }] })))
+
+    await expect(answerSupportProgramEvidenceQuestionApi(kStartupCommand)).resolves.toEqual(answer)
+    await expect(answerSupportProgramEvidenceQuestionApi(kStartupCommand)).rejects.toThrow()
+    await expect(answerSupportProgramEvidenceQuestionApi(kStartupCommand)).rejects.toThrow()
+  })
+
   it('keeps the full cited chunk when the answer evidence appears after the first 500 characters', async () => {
     const excerpt = `${'가'.repeat(1_450)}\n신청 마감일은 2026년 9월 30일입니다.`
     const answer = {
@@ -454,6 +472,7 @@ function answeredEvidenceResponse() {
     citations: [{
       excerpt: '지원 대상은 서울 소재 창업 7년 이내 중소기업입니다.',
       sourceUrl: supportPrograms[0].sourceUrl,
+      sourceLabel: '기업마당 상세 본문',
       chunkOrder: 0,
     }],
   }
