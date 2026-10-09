@@ -19,6 +19,7 @@ from uuid import UUID, uuid4
 import ops_bridge
 import yaml
 from connected_runtime import quiet
+from deployment_candidate import digest, encoded
 from fork_cluster import (
     REPOSITORY_ROOT,
     STATE,
@@ -319,9 +320,50 @@ def verify_release(image, project):
     return {"imageId": identity, "runnerId": runner["Id"], "releaseSha256": image_hash}
 
 
+def gitops_image(state, settings):
+    """Read the active Argo image without changing controller ownership."""
+    # gitops_runtime imports this module for shared connection inspection.
+    from gitops_runtime import argo_observation
+
+    observation = argo_observation(state, settings)
+    _, _, ak = commands(state, settings)
+    application = json.loads(
+        quiet(ak + ["get", "application", "govbiz-fork-ops-service", "-o", "json"])
+    )
+    expected = observation["applications"]["ops-service"]
+    spec = application["spec"]
+    if (
+        application["metadata"]["uid"] != expected["uid"]
+        or digest(encoded(spec)) != expected["specSha256"]
+    ):
+        raise ValueError("Argo Ops declaration changed during runtime inspection")
+    values = spec["source"]["helm"]["valuesObject"]
+    image = values["image"]
+    repository = "ghcr.io/" + settings["repository"].lower() + "-ops-service"
+    if (
+        values.get("serviceName") != "ops-service"
+        or values.get("localMode", False) is not False
+        or values.get("opsSync", {}).get("enabled") is not True
+        or image.get("repository") != repository
+        or not re.fullmatch(r"sha256:[a-f0-9]{64}", image.get("digest", ""))
+        or image.get("tag", "")
+        or image.get("pullPolicy", "IfNotPresent") not in {"IfNotPresent", "Always"}
+    ):
+        raise ValueError("Expected the pinned fork Ops image and enabled sync in Argo")
+    return (
+        repository + "@" + image["digest"],
+        image.get("pullPolicy", "IfNotPresent"),
+        observation,
+    )
+
+
 def check_runtime(state, settings, run_id=None, *, expected_image=None):
     """Read source/runtime releases and readiness without applying or executing work."""
-    require_dev(state, settings)
+    gitops = settings["mode"] == "gitops"
+    if gitops and expected_image is not None:
+        raise ValueError("GitOps runtime checks cannot override the controller image")
+    if not gitops:
+        require_dev(state, settings)
     state = Path(state)
     record = read_connection(state / PROFILE, settings)
     if read_connection(state / BRIDGE, settings) != record:
@@ -333,15 +375,24 @@ def check_runtime(state, settings, run_id=None, *, expected_image=None):
         raise ValueError(
             "Inspect local baseline or restore development overrides first"
         )
-    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
-    if baseline.get("source") != "local":
-        raise ValueError("This runtime check requires a local-image baseline")
-    # A paused first rollout verifies its image before updating the saved baseline.
-    image = baseline["images"]["ops-service"] if expected_image is None else expected_image
-    if not re.fullmatch(
-        r"govbiz-ops-service:[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}", image
-    ) or image.endswith(":latest"):
-        raise ValueError("Expected a tagged local govbiz-ops-service image")
+    baseline, argo = None, None
+    if gitops:
+        image, pull_policy, argo = gitops_image(state, settings)
+    else:
+        baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+        if baseline.get("source") != "local":
+            raise ValueError("This runtime check requires a local-image baseline")
+        # A paused first rollout verifies its image before updating the saved baseline.
+        image = (
+            baseline["images"]["ops-service"]
+            if expected_image is None
+            else expected_image
+        )
+        if not re.fullmatch(
+            r"govbiz-ops-service:[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}", image
+        ) or image.endswith(":latest"):
+            raise ValueError("Expected a tagged local govbiz-ops-service image")
+        pull_policy = "Never"
     source = (
         REPOSITORY_ROOT / "backend/ops-service/apps/evaluations/execution_release.json"
     )
@@ -363,19 +414,35 @@ def check_runtime(state, settings, run_id=None, *, expected_image=None):
         quiet(nk + ["get", "deployment", "ops-service", "-o", "json"])
     )
     containers = deployment["spec"]["template"]["spec"]["containers"]
+    tracking = {
+        (field, key): value
+        for field in ("labels", "annotations")
+        for key, value in deployment["metadata"].get(field, {}).items()
+        if key.startswith("argocd.argoproj.io/")
+    }
+    wanted_tracking = (
+        {
+            (
+                "annotations",
+                "argocd.argoproj.io/tracking-id",
+            ): "govbiz-fork-ops-service:apps/Deployment:"
+            + settings["namespace"]
+            + "/ops-service"
+        }
+        if gitops
+        else {}
+    )
     if (
         [item["name"] for item in containers] != ["ops-service", "ops-sync"]
         or any(
-            item["image"] != image or item.get("imagePullPolicy") != "Never"
+            item["image"] != image or item.get("imagePullPolicy") != pull_policy
             for item in containers
         )
-        or any(
-            key.startswith("argocd.argoproj.io/")
-            for field in ("labels", "annotations")
-            for key in deployment["metadata"].get(field, {})
-        )
+        or tracking != wanted_tracking
     ):
-        raise ValueError("Ops API/sync do not match the activated local baseline")
+        raise ValueError(
+            "Ops API/sync do not match the activated baseline or Argo declaration"
+        )
     selector = ",".join(
         key + "=" + value
         for key, value in sorted(deployment["spec"]["selector"]["matchLabels"].items())
@@ -510,22 +577,38 @@ def check_runtime(state, settings, run_id=None, *, expected_image=None):
         or latest.get("status", {}).get("containerStatuses") != statuses
         or latest_deployment["metadata"]["uid"] != deployment["metadata"]["uid"]
         or latest_deployment["spec"] != deployment["spec"]
+        or any(
+            latest_deployment["metadata"].get(field, {})
+            != deployment["metadata"].get(field, {})
+            for field in ("labels", "annotations")
+        )
         or ops_bridge.topology(settings, project) != snapshot
         or evaluation_runner(project)["Id"] != runner["Id"]
         or hashlib.sha256(source.read_bytes()).hexdigest() != expected
-        or json.loads(baseline_path.read_text(encoding="utf-8")) != baseline
+        or (
+            not gitops
+            and json.loads(baseline_path.read_text(encoding="utf-8")) != baseline
+        )
     ):
         raise ValueError("Runtime or source changed during the read-only check; retry")
     ops_bridge.connect(state, settings, project, check=True)
+    if gitops and (
+        load_settings(state) != settings
+        or gitops_image(state, settings) != (image, pull_policy, argo)
+    ):
+        raise ValueError("Argo or cluster settings changed during runtime inspection")
     return {
         "status": "PASS",
-        "scope": "local_ops_release_and_configuration",
+        "scope": "gitops_ops_release_and_configuration"
+        if gitops
+        else "local_ops_release_and_configuration",
         "release_sha256": expected,
         "checked_components": [item[0] for item in targets],
         "pod_uid": pod["metadata"]["uid"],
         **diagnostics,
         "evaluation_executed": False,
         "core_admin_auth_verified": False,
+        **({"argo_observation": argo, "publication_verified": False} if gitops else {}),
     }
 
 
@@ -768,7 +851,7 @@ def main():
     mode.add_argument(
         "--check",
         action="store_true",
-        help="Read source/runtime releases, schema and connection without activation",
+        help="Read source/runtime releases, schema and connection in dev or GitOps mode; no activation",
     )
     mode.add_argument(
         "--preflight",
