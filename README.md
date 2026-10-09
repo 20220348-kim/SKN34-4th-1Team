@@ -230,13 +230,15 @@ Kubernetes 혼합 구성에서는 **`ops-service`와 `ops-sync`가 같은 Pod**�
 
 | 서비스 | 소유 저장소·데이터 |
 |---|---|
-| [core-service](backend/core-service/README.md) | MySQL — 계정·업무 기록·공고 복제본 |
-| [catalog-service](backend/catalog-service/README.md) | MySQL — 공고 원본·수집·공개 상태 |
+| [core-service](backend/core-service/README.md) | MySQL — 계정·업무 기록·공고 복제본<br/>Redis — 검색 결과·첨부 목록 캐시·문서 작업 임시 상태 |
+| [catalog-service](backend/catalog-service/README.md) | MySQL — 공고 원본·수집·공개 상태<br/>Elasticsearch — 키워드 검색용 공고 문서·버전 |
 | [ai-service](backend/ai-service/README.md) | Qdrant — 검색 벡터·근거 청크 |
 | [ops-service](backend/ops-service/README.md) | MySQL — 평가·검토·예산·일정 |
 
-각 서비스는 다른 서비스의 DB에 직접 접근하지 않고 API로 연동합니다.
-Core는 Catalog의 공고 원본을 받아 조회용 복제본을 유지합니다.
+각 서비스는 다른 서비스의 MySQL에 직접 접근하지 않고 API로 연동합니다.
+`core-service`는 `catalog-service`의 공고 원본을 받아 조회용 복제본을 유지합니다.
+Elasticsearch 색인은 `catalog-service`가 생성·갱신하고, `core-service`가 직접 조회해 키워드 검색 후보를 구합니다.
+Redis는 `core-service`가 검색 결과 복원, 첨부 목록 캐시, 문서 생성 잠금·임시 다운로드 권한·양식 변경 승인안 보관에 사용합니다.
 
 아래 ERD는 현재 스키마의 **주요 엔터티와 키**를 서비스별로 요약한 것입니다.
 관계선은 같은 DB 안의 외래 키(FK)를 나타내며, 서비스 사이에는 FK가 없습니다.
