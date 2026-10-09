@@ -10,6 +10,7 @@ from pathlib import Path
 
 import evaluation_dormant_status as dormant
 import evaluation_network_probe as network
+import evaluation_storage_http as storage_http
 
 release = dormant.release
 COMPONENTS = ("prefect", "ops-artifacts")
@@ -525,6 +526,71 @@ def verify_started(
     }
 
 
+def verify_http(
+    root, fork, *, state, restore_report, archive, key_file, langfuse_url, helm="helm"
+):
+    """Bind GET results to frozen source evidence and unchanged verified rollout."""
+    options = {
+        "state": state,
+        "restore_report": restore_report,
+        "archive": archive,
+        "key_file": key_file,
+        "langfuse_url": langfuse_url,
+        "helm": helm,
+    }
+    before = verify_started(root, fork, **options)
+    settings = release.fork_cluster.load_settings(state)
+    report, report_sha = release.read_restore_report(restore_report)
+    if report_sha != before["restoreReportSha256"]:
+        raise ValueError("Storage HTTP restore report changed")
+    secrets = dormant.evaluation_secrets
+    connection = secrets.ops_runtime.read_connection(
+        Path(state) / secrets.ops_runtime.BRIDGE, settings
+    )
+    payload, archive_hash, keys, source = secrets.bound_archive(
+        settings, connection, archive, key_file, report
+    )
+    if archive_hash != before["sourceHandoff"]["archiveSha256"]:
+        raise ValueError("Storage HTTP archive changed")
+    snapshot = secrets.snapshot
+    namespaced, frozen = snapshot.database.frozen_source(state, settings)
+    if frozen != source:
+        raise ValueError("Storage HTTP source is no longer the frozen archive source")
+    command = [
+        *namespaced,
+        "exec",
+        "-i",
+        "ops-mysql-0",
+        "-c",
+        "mysql",
+        "--",
+        *snapshot.storage.AUTH,
+    ]
+    entries = payload["stores"]["results"]["entries"]
+    # verify_started already compared the frozen DB dump with this archive. Read
+    # only its completed records; do not restore another DB or accept caller IDs.
+    expected = snapshot.completed_evidence(command, entries)
+    kube, _, _ = release.fork_cluster.commands(state, settings)
+    release.fork_cluster.verify_context(kube, settings, timeout=15)
+    proof = storage_http.verify(
+        kube,
+        before["observation"]["storageWorkloads"]["pods"],
+        expected,
+        entries,
+        keys["keys"]["artifact"],
+    )
+    after = verify_started(root, fork, **options)
+    if before != after:
+        raise ValueError("Storage HTTP rollout or source changed during verification")
+    return {
+        **after,
+        "status": "STORAGE_HTTP_VERIFIED",
+        "httpTrafficVerified": True,
+        "httpVerification": proof,
+        "clusterServiceTrafficVerified": False,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("state-dir", "restore-report", "archive", "key-file"):
@@ -539,6 +605,11 @@ def main():
         action="store_true",
         help="Read Argo rollout, storage Pods and Service endpoints without changing resources",
     )
+    mode.add_argument(
+        "--verify-http",
+        action="store_true",
+        help="GET completed Prefect history and authenticated reports through temporary Pod loopback forwards",
+    )
     args = parser.parse_args()
     if os.name != "posix":
         parser.error("Run inside WSL/Linux")
@@ -552,10 +623,16 @@ def main():
         root = Path(__file__).resolve().parents[3]
         fork = release.from_origin(root, branch=args.branch).require_personal_publish()
         with release.fork_cluster.locked(args.state_dir):
-            action = verify_started if args.verify_started else request
+            action = (
+                verify_http
+                if args.verify_http
+                else verify_started
+                if args.verify_started
+                else request
+            )
             extra = (
                 {}
-                if args.verify_started
+                if args.verify_started or args.verify_http
                 else {"start": args.request_start, "progress": progress}
             )
             result = action(
@@ -580,6 +657,7 @@ def main():
             else (None if progress["attempted"] else False),
             "syncCompleted": None,
             "runtimeVerified": False,
+            "httpTrafficVerified": False,
             "runnerActivationRequested": False,
             "opsRoutingChanged": False,
             "clusterChanged": True

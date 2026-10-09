@@ -438,6 +438,7 @@ def storage_workloads(kube, live, active_sets, node):
                     key: row[key] for key in ("imageID", "containerID", "restartCount")
                 }
         observed[name] = {
+            "name": meta["name"],
             "uid": meta["uid"],
             "replicaSetUid": owner["uid"],
             "specSha256": release.digest(release.encoded(spec)),

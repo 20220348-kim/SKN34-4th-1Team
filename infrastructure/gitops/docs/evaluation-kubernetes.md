@@ -1081,6 +1081,57 @@ python3 -B infrastructure/gitops/scripts/evaluation_storage_start.py \
 기존 업무 namespace에서 Pod 수용 여부만 검사했으며 Pod 생성·스케줄링·실제 rollout은 수행하지 않았다.
 새 조회 명령으로 개인 평가 환경의 실제 rollout을 검증하는 작업은 보존 인계와 기동 이후에 남아 있다.
 
+## 기동한 저장 서비스의 HTTP 인증·완료 결과 검증
+
+`evaluation_storage_start.py --verify-http`는 위 rollout 검증을 통과한 두 저장 Pod에
+임시 loopback 포트 포워딩을 열어 **GET 요청으로** 인증과 완료 결과를 확인한다.
+`--request-start`, `--verify-started`와 함께 사용할 수 없으며, 실행기는 replica 0이고
+Ops 접수·원본 writer는 중지된 전환 전 단계에서만 사용한다.
+
+```bash
+python3 -B infrastructure/gitops/scripts/evaluation_storage_start.py \
+  --state-dir infrastructure/gitops/.local/fork \
+  --restore-report /private-backups/evaluation-retained.json \
+  --langfuse-url "$LANGFUSE_URL" \
+  --archive /private-backups/ops-state.enc \
+  --key-file /private-backups/ops-state.key \
+  --verify-http > /private-backups/evaluation-storage-http.json
+```
+
+검사 흐름은 `발행·원본·백업·Secret·rollout 재검증 → 중지된 원본 Ops DB 완료 기록과
+인증된 백업 대조 → 대상 Pod의 HTTP GET 대조 → 같은 rollout·원본·발행 재검증`이다.
+DB 조회에는 기존 고정 SELECT만 사용하며 별도 DB 복원이나 migration을 수행하지 않는다.
+
+- 포워딩은 관측한 정확한 Pod 이름을 지정하고 `--address=127.0.0.1`과 임의 할당 포트를 사용한다.
+  기존 로컬 리스너나 Service 선택자를 재사용하지 않는다. 시작 전·준비 직후·검사 후 Pod UID,
+  spec, 컨테이너 ID·image ID·재시작 횟수와 Ready 상태가 같아야 한다.
+- 결과 서버의 `/v1/status` 및 완료 평가별 `request.json`, `evaluation/manifest.json`,
+  `evaluation/comparison.json`, `evaluation/report.html`에 대해 익명·잘못된 토큰의 401 거절과
+  올바른 토큰의 200 응답을 확인한다. 보호 응답 헤더와 파일 크기·SHA-256은 인증된 백업과 대조한다.
+- Prefect의 health, 완료 실행의 ID·상태·실행 명세·데이터셋, deployment 연결과 현재 완료 상태
+  이력을 조회한다. 출처가 검증된 공유 검토 복제본도 결과 파일은 검사하지만, 다른 환경의 Prefect
+  이력을 현재 서버에 요구하거나 로컬 실행으로 집계하지 않는다.
+- 토큰은 메모리에서 읽어 loopback 인증 헤더에만 전달하며 명령 인자·보고서에 남기지 않는다.
+  프록시와 리다이렉트를 사용하지 않고 응답 크기·시간을 제한한다. 검사 실패 시에도 자신이 만든
+  포워딩 프로세스만 종료하며, 정리 실패는 성공으로 처리하지 않는다.
+- 새 Pod·namespace 생성, Argo 동기화, scale, 평가 접수·재실행, Ops URL 변경을 수행하지 않는다.
+  기존 원본 검증의 읽기 전용 Docker helper와 Langfuse 인증 조회는 유지한다. 유료 모델 호출은 없다.
+
+성공은 `STORAGE_HTTP_VERIFIED`, `httpTrafficVerified=true`이며 `httpVerification.scope`는
+`pod_loopback_port_forward`다. 결과에는 대조한 보고서·파일·로컬 Prefect 실행·공유 복제본 수와
+포워딩 정리 여부만 추가한다. 원문 보고서·실행 매개변수·Secret·오류 원문은 출력하지 않는다.
+
+이는 Kubernetes API 포워딩을 통한 **해당 Pod의 HTTP 응답** 검증이다. Service DNS·ClusterIP 및
+업무 Pod 간 실제 통신을 검증한 결과가 아니므로 `clusterServiceTrafficVerified=false`,
+`networkPolicyEnforcementVerified=false`를 유지한다. 네 파일 이외 결과·전체 PVC·대상 SQLite의
+재검증이나 새 평가 실행도 아니므로 `storageDataReverified=false`, `runtimeVerified=false`다.
+실제 전환에는 이후 통신 검증·실행기 활성화·Ops URL 전환이 필요하다.
+
+Infra CI의 기존 `test_*.py` 검색에 새 테스트가 포함된다. 로컬 테스트는 실제 결과 WSGI 앱의
+임시 HTTP 서버, 합성 Prefect 응답과 Kubernetes 명령 대역으로 인증·변조·재시작·정리 실패를
+검증한다. **개인 Kubernetes의 이 HTTP 검사는 아직 실행하지 않았으며**, 보존 PVC 인계·저장
+서비스 기동과 해당 SHA의 필수 CI·발행 검증 이후 실제 환경에서 수행해야 한다.
+
 ## 격리 Kubernetes에서 실제 평가 실행 검증
 
 LLMOps CI의 기존 격리 통합 검증에 `--evaluation-runtime` 단계를 연결했다.
@@ -1187,7 +1238,8 @@ Kubernetes 1.36의 이미지 자격 증명 검증은 이미지 ID 외에 저장�
    기존 네 서비스의 필수 CI·발행 가드를 우회하지 않는다. 배포 방식은 서비스별 Argo Application과 수동 동기화를 유지한다.
    평가용 계획은 별도 프로젝트로 범위를 제한한다. 복원 보고서와 현재 보존 PVC를 대조해 수동 계획에
    연결하는 읽기 전용 경로, Argo 선언 등록과 replica 0 최초 수동 동기화 요청·적용 완료 확인,
-   저장 서비스 두 개의 첫 기동 요청 및 기동 후 Argo·Pod·Service 조회 명령은 구현했다. 실제 등록·동기화 실행과
+   저장 서비스 두 개의 첫 기동 요청, 기동 후 Argo·Pod·Service 조회와 Pod loopback HTTP 인증·완료 결과
+   대조 명령은 구현했다. 실제 등록·동기화 실행과
    namespace·PVC 확인 및 서비스 인계는 남아 있다. 암호화 백업과 기존 runner에서 평가 Secret만
    준비하는 명령도 구현했으며 실제 개인 백업을 이용한 생성·인증 검증은 별도다.
    운영 진단은 위의 평가 Application 조회를 포함하지만 런타임·저장소 검증은 별도다.
