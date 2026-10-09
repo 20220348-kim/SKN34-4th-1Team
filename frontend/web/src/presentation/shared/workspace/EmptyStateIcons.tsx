@@ -17,6 +17,16 @@ export function ReportTrayIcon() {
   return <EmptyStateIcon><path d="M4 13V6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v7" /><path d="M4 13h4l1.5 3h5L16 13h4v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" /></EmptyStateIcon>
 }
 
+/** 신청 문서입니다. */
+export function DocumentIcon() {
+  return <EmptyStateIcon><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /><path d="M9 13h6M9 17h4" /></EmptyStateIcon>
+}
+
+/** 공고 두 개를 나란히 놓고 보는 중복 지원·수혜 검토입니다. */
+export function CompareIcon() {
+  return <EmptyStateIcon><rect x="3" y="5" width="8" height="14" rx="1.5" /><rect x="13" y="5" width="8" height="14" rx="1.5" /><path d="M6 9h2M6 12h2M16 9h2M16 12h2" /></EmptyStateIcon>
+}
+
 /** 관심 공고(빈 책갈피)입니다. 담긴 공고 표시는 칠한 책갈피를 따로 씁니다. */
 export function BookmarkOutlineIcon() {
   return <EmptyStateIcon><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" /></EmptyStateIcon>

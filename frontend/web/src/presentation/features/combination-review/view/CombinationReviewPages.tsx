@@ -16,6 +16,8 @@ import { ProgramBadges, ProgramPickerPanel } from '../../../shared/support-progr
 import type { SelectableSupportProgram } from '../../../shared/support-program/useProgramPickerViewModel'
 import { elapsedLabel, formatReviewClock, formatReviewDateTime, runLabels } from './reviewLabels'
 import { reviewStyles as s } from './CombinationReview.styles'
+import { EmptyState } from '../../../shared/workspace/EmptyState'
+import { CompareIcon } from '../../../shared/workspace/EmptyStateIcons'
 import { workspacePageStyles } from '../../../shared/workspace/WorkspacePage.styles'
 import { SelectField } from '../../../shared/workspace/SelectField'
 import { WorkspacePageHeader } from '../../../shared/workspace/WorkspacePageHeader'
@@ -158,11 +160,10 @@ function ReviewList({ account }: { account: string }) {
     {vm.pollingPaused && <p className={s.warning}>진행 상태 자동 확인이 멈췄어요. [다시 시도]로 목록을 다시 불러와 주세요. 서버 작업은 취소되지 않아요.</p>}
     {loading && <p className="sr-only" role="status">검토 목록을 불러오는 중입니다.</p>}
     {showSkeleton && <ReviewListSkeleton />}
-    {vm.page?.items.length === 0 && <div className={`${s.card} flex flex-col items-center gap-2 text-center`}>
-      <h2 className="font-semibold">아직 저장한 검토가 없어요</h2>
-      <p className={s.muted}>새 검토에서 공고 2개를 고르면 바로 분석할 수 있어요.</p>
-      <Link className={s.secondarySm} to={appPaths.combinationReviewNew}>새 검토</Link>
-    </div>}
+    {/* 다른 작업 화면과 같은 공용 빈 화면(회색 아이콘 · 제목 · 설명 · 초록 버튼)을 씁니다. */}
+    {vm.page?.items.length === 0 && <EmptyState icon={<CompareIcon />} title="아직 저장한 검토가 없어요"
+      description="공고 2개를 고르면 함께 지원하거나 받을 수 있는지 바로 분석해요."
+      action={{ label: '검토 시작하기', to: appPaths.combinationReviewNew }} />}
     {items.length > 0 && <ul className="grid gap-3" aria-label="저장한 검토">{items.map((item) =>
       <ReviewListCard key={item.id} item={item} now={now} deleteDisabled={deleting} onDelete={() => setConfirming(item)} />)}</ul>}
     {vm.error && <div className="flex justify-center"><button className={s.secondarySm} disabled={loading} onClick={() => void vm.load()}>다시 시도</button></div>}
