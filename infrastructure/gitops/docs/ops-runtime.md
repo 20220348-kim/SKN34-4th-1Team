@@ -268,6 +268,8 @@ migration → API+sync 적용 → rollout → 읽기 전용 런타임 진단 순
 Prefect 직접 접수 통제·일관된 백업은 별도이며 [갱신 절차와 검사 범위](../../../docs/ops-upgrade-runbook.md)를 따른다.
 실제 중지 전 `scripts/ops_maintenance_plan.py --state-dir ...`로 중지할 현재 실행 대상과 원래 상태로
 돌릴 순서, MySQL 복원 이미지 준비 여부를 읽기 전용 확인할 수 있다.
+실행 키도 백업할 때는 `--runtime-keys`를 추가해 API/sync 이미지의 호스트 Docker 존재 여부와
+결과 서버 image ID 일치까지 중지 전에 검사한다. 키·Secret 자체를 조회하거나 백업하지는 않는다.
 [중지 대상과 복구 순서 확인](../../../docs/ops-upgrade-runbook.md#실제-중지-전에-대상과-복구-순서-확인하기)을 따른다.
 `PLANNED`는 조회 결과이며 백업 완료·서비스 중지·갱신 승인을 뜻하지 않는다.
 정지한 개인 Kubernetes Ops DB는 `scripts/ops_db_snapshot.py backup`으로 암호화하고
