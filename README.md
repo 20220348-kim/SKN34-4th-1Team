@@ -205,25 +205,6 @@ Core·Catalog·Ops의 MySQL은 같은 색을 사용하고, 서비스별 소유�
 대표적인 연결만 표시하고 응답은 생략했습니다.
 웹·앱은 [Shared 패키지](docs/mobile-monorepo.md)의 업무 모델·API 계약·응답 검증을 공유합니다.
 
-### 서비스 경계와 데이터 소유권
-
-| 서비스 | 책임 | 관리하는 데이터 |
-|---|---|---|
-| [core-service](backend/core-service/README.md) | 인증·사용자 업무, 검색 조합·원문 검증 | Core MySQL: 업무 기록·조회용 공고 복제본·원문 캐시 |
-| [catalog-service](backend/catalog-service/README.md) | 공식 공고 수집·정규화·색인 준비·공개 | Catalog MySQL: 공고 원본·수집 상태·공개 버전 |
-| [ai-service](backend/ai-service/README.md) | OpenAI 기반 임베딩·검색·생성·도구 실행 | Qdrant: 공고 검색 벡터·근거 청크 |
-| [ops-service](backend/ops-service/README.md) | 평가 접수·예산·검토·품질 판정·비교 기준 | Ops MySQL: 평가 실행·검토 이력·판정·예산·일정 |
-
-- **DB 경계:** `core-service`·`catalog-service`·`ops-service`는 각자의 MySQL DB를 소유합니다.
-  `core-service`는 `catalog-service`의 인증된 snapshot을 자기 DB에 반영하고,
-  `ops-service`는 `core-service`로 관리자 권한을 확인합니다. 다른 서비스의 DB를 직접 읽지 않습니다.
-- **검색·임시 상태:** `catalog-service`가 검색 색인 준비를 소유하며, 벡터 처리는 `ai-service`에 요청합니다.
-  `core-service`는 Elasticsearch의 키워드 후보와 `ai-service`의 의미 검색 후보를 결합하고 Redis에 검색 결과·임시 상태를 보관합니다.
-- **비동기 작업:** RabbitMQ 메시지에는 작업 식별자만 담고, 작업 데이터·Outbox·결과는 Core MySQL에 유지합니다.
-  소비자는 DB 상태로 중복 실행을 제어하고 처리 결과를 저장한 뒤 수신 확인(ACK)을 보냅니다.
-- **평가 결과:** 별도 실행기가 결과 볼륨에 보고서·캡처를 기록하고 Langfuse에 추적·점수를 전송합니다.
-  `ops-service`는 결과를 조회해 실행·검토 이력과 연결합니다.
-
 <a id="로컬-시작"></a>
 
 ### 배치 구조
@@ -243,9 +224,169 @@ Kubernetes 혼합 구성에서는 **`ops-service`와 `ops-sync`가 같은 Pod**�
 [서비스 호출 상세](docs/architecture.md) · [배치 구성도](docs/assets/architecture/README-local.md) ·
 [Ops 연결 계약](infrastructure/gitops/docs/ops-runtime.md)
 
+<a id="erd"></a>
+
+## 6. ERD와 데이터 소유권
+
+### 서비스 경계와 데이터 소유권
+
+| 서비스 | 책임 | 관리하는 데이터 |
+|---|---|---|
+| [core-service](backend/core-service/README.md) | 인증·사용자 업무, 검색 조합·원문 검증 | Core MySQL: 업무 기록·조회용 공고 복제본·원문 캐시 |
+| [catalog-service](backend/catalog-service/README.md) | 공식 공고 수집·정규화·색인 준비·공개 | Catalog MySQL: 공고 원본·수집 상태·공개 버전 |
+| [ai-service](backend/ai-service/README.md) | OpenAI 기반 임베딩·검색·생성·도구 실행 | Qdrant: 공고 검색 벡터·근거 청크 |
+| [ops-service](backend/ops-service/README.md) | 평가 접수·예산·검토·품질 판정·비교 기준 | Ops MySQL: 평가 실행·검토 이력·판정·예산·일정 |
+
+- **DB 경계:** `core-service`·`catalog-service`·`ops-service`는 각자의 MySQL DB를 소유합니다.
+  `core-service`는 `catalog-service`의 인증된 snapshot을 자기 DB에 반영하고,
+  `ops-service`는 `core-service`로 관리자 권한을 확인합니다. 다른 서비스의 DB를 직접 읽지 않습니다.
+- **검색·임시 상태:** `catalog-service`가 검색 색인 준비를 소유하며, 벡터 처리는 `ai-service`에 요청합니다.
+  `core-service`는 Elasticsearch의 키워드 후보와 `ai-service`의 의미 검색 후보를 결합하고 Redis에 검색 결과·임시 상태를 보관합니다.
+- **비동기 작업:** RabbitMQ 메시지에는 작업 식별자만 담고, 작업 데이터·Outbox·결과는 Core MySQL에 유지합니다.
+  소비자는 DB 상태로 중복 실행을 제어하고 처리 결과를 저장한 뒤 수신 확인(ACK)을 보냅니다.
+- **평가 결과:** 별도 실행기가 결과 볼륨에 보고서·캡처를 기록하고 Langfuse에 추적·점수를 전송합니다.
+  `ops-service`는 결과를 조회해 실행·검토 이력과 연결합니다.
+
+아래 ERD는 현재 스키마의 **주요 엔터티와 키**를 서비스별로 요약한 것입니다.
+관계선은 같은 DB 안의 외래 키(FK)를 나타내며, 서비스 사이에는 FK가 없습니다.
+`PK`는 기본 키, `UK`는 유일 키이며, `||`는 1개, `o|`는 0~1개, `o{`는 0개 이상을 뜻합니다.
+실선은 부모 키가 자식의 기본 키에 포함되는 관계, 점선은 포함되지 않는 관계입니다.
+
+### Core MySQL: 계정·관심 공고·신청 문서
+
+```mermaid
+erDiagram
+    account ||..o| company : "기업 등록"
+    account ||..o{ saved_support_program : "관심 공고 저장"
+    support_program ||..o{ saved_support_program : "저장 대상"
+    account ||..o{ application_preparation : "신청 준비"
+    application_preparation ||..o{ application_document_file : "문서 생성"
+
+    account {
+        bigint id PK
+        varchar email UK
+    }
+    company {
+        bigint id PK
+        bigint account_id FK,UK
+    }
+    support_program {
+        bigint id PK
+        varchar source_code "공고 복합 식별자 1"
+        varchar source_program_id "공고 복합 식별자 2"
+    }
+    saved_support_program {
+        bigint id PK
+        bigint account_id FK
+        bigint support_program_id FK
+    }
+    application_preparation {
+        bigint id PK
+        bigint owner_account_id FK
+        varchar source_code
+        varchar source_program_id
+    }
+    application_document_file {
+        bigint id PK
+        bigint preparation_id FK
+        bigint input_revision
+    }
+```
+
+Core의 `support_program`은 Catalog에서 받은 **조회용 복제본**입니다.
+`(source_code, source_program_id)`와 관심 공고의 `(account_id, support_program_id)`에는 각각 복합 UNIQUE 제약이 있습니다.
+신청 준비는 공고의 복합 식별자를 저장하지만 `support_program`에 대한 FK는 두지 않습니다.
+세션·협업·리포트·작업 큐 등 나머지 테이블과 전체 컬럼은 [Core Flyway migration](backend/core-service/src/main/resources/db/migration)에서 관리합니다.
+
+### Catalog MySQL: 공고 원본·수집·공개 상태
+
+```mermaid
+erDiagram
+    catalog_source_revision ||..o{ support_program : "제공처별 공고"
+    catalog_source_revision ||--o| support_program_sync_generation : "수집 세대"
+    catalog_source_revision ||--o| support_program_sync_status : "공개 상태"
+
+    catalog_source_revision {
+        varchar source_code PK
+        bigint revision
+    }
+    support_program {
+        bigint id PK
+        varchar source_code FK
+        varchar source_program_id
+    }
+    support_program_sync_generation {
+        varchar source_code PK,FK
+        bigint latest_started_generation
+    }
+    support_program_sync_status {
+        varchar source_code PK,FK
+        bigint published_generation
+        boolean index_ready
+    }
+```
+
+Catalog가 공고 원본과 제공처별 수집·공개 버전을 소유합니다.
+공고의 `(source_code, source_program_id)`는 복합 UNIQUE이며, Core와 Catalog의 숫자 `id`가 같다고 가정하지 않습니다.
+독립 카탈로그 식별용 `catalog_instance`와 전체 컬럼은 [Catalog Flyway migration](backend/catalog-service/src/main/resources/db/migration)에 정의되어 있습니다.
+
+### Ops MySQL: 평가·검토·비교 기준·예산
+
+Ops는 읽기 쉽도록 **Django 모델 이름**으로 표시했습니다. FK 컬럼은 실제 저장되는 `_id` 이름입니다.
+
+```mermaid
+erDiagram
+    EvaluationRun ||..o{ EvaluationReview : "실행 검토"
+    EvaluationRun ||..o{ QualityAssessment : "품질 판정"
+    EvaluationReview o|..o{ EvaluationBaseline : "검토 기준 선택"
+    QualityAssessment o|..o{ EvaluationBaseline : "RAG 기준 선택"
+    EvaluationRun ||--o| EvaluationBudgetReservation : "실행 예산 예약"
+    EvaluationBudget ||..o{ EvaluationBudgetReservation : "누적 예산 배정"
+    EvaluationBudgetReservation ||..o{ EvaluationBudgetCall : "호출별 사용량"
+
+    EvaluationRun {
+        uuid id PK
+        varchar dataset_id
+        varchar status
+    }
+    EvaluationReview {
+        bigint id PK
+        uuid run_id FK
+        varchar decision
+    }
+    QualityAssessment {
+        bigint id PK
+        uuid run_id FK
+        varchar status
+    }
+    EvaluationBaseline {
+        varchar dataset_id PK
+        bigint review_id FK "nullable"
+        bigint rag_assessment_id FK "nullable"
+    }
+    EvaluationBudget {
+        smallint id PK
+        bigint call_limit
+    }
+    EvaluationBudgetReservation {
+        uuid run_id PK,FK
+        smallint budget_id FK
+    }
+    EvaluationBudgetCall {
+        bigint id PK
+        uuid reservation_id FK
+        int sequence
+    }
+```
+
+비교 기준은 자료별로 검토 또는 RAG 품질 판정 중 하나를 선택하며, 해제하면 두 참조를 비워 이력·버전을 유지합니다.
+사례별 검토·정기 일정·변경 이력과 전체 제약은 [Ops 모델](backend/ops-service/apps/evaluations/models.py)과
+[Django migration](backend/ops-service/apps/evaluations/migrations)에 정의되어 있습니다.
+Qdrant·Elasticsearch·Redis와 평가 결과 파일의 연결은 [서비스 연결도](#서비스-연결)에서 확인할 수 있습니다.
+
 <a id="데이터-준비"></a>
 
-## 6. 데이터 준비와 검색 구성
+## 7. 데이터 준비와 검색 구성
 
 ### 공식 공고 데이터
 
@@ -289,7 +430,7 @@ flowchart TB
 
 <a id="ai-처리-흐름"></a>
 
-## 7. 주요 AI 기능의 처리 흐름
+## 8. 주요 AI 기능의 처리 흐름
 
 ### AI 대화 검색
 
@@ -340,7 +481,7 @@ flowchart TB
 
 <a id="llmops-평가운영"></a>
 
-## 8. LLMOps 평가·운영
+## 9. LLMOps 평가·운영
 
 **모델이나 프롬프트를 바꿨을 때, 같은 질문에 대한 답변 품질이 좋아졌는지 확인하는 관리자 기능**입니다.
 평가 자료와 비교 대상을 고정한 뒤 결과·사용량·실패·사람의 판단을 함께 기록합니다.
@@ -437,7 +578,7 @@ PDF의 화면·수치는 문서에 표시한 작성 시점의 예시입니다.
 
 <a id="검증배포-범위"></a>
 
-## 9. 평가·검증·배포 범위
+## 10. 평가·검증·배포 범위
 
 ### 기능 검증과 모델 품질 평가
 
@@ -505,7 +646,7 @@ PDF의 화면·수치는 문서에 표시한 작성 시점의 예시입니다.
 
 <a id="저장소-구성"></a>
 
-## 10. 저장소 구성
+## 11. 저장소 구성
 
 애플리케이션·평가 도구·Kubernetes 설정을 함께 관리하는 모노레포입니다.
 기준 저장소는 [`SKNETWORKS-FAMILY-AICAMP/SKN34-4th-1Team`](https://github.com/SKNETWORKS-FAMILY-AICAMP/SKN34-4th-1Team), 기본 브랜치는 `main`입니다.
@@ -536,7 +677,7 @@ SKN34-4th-1Team/
 
 <a id="문서-안내"></a>
 
-## 11. 문서 안내
+## 12. 문서 안내
 
 | 보고 싶은 내용 | 문서 |
 |---|---|
