@@ -8,28 +8,45 @@ Compose는 로컬 개발에 유지하고, 이전 중에는 기존 인스턴스�
 
 ## 개인 환경의 실제 이전 상태 — 2026-10-09
 
-아래는 `skn-353`의 `d778506`으로 개인 환경을 확인한 결과다. 코드 구현과 실제 이전 완료를
-구분하며, 이 관찰 이후의 클러스터 상태나 다른 SHA의 CI 성공을 보장하지 않는다.
+공개 이미지 준비는 `2cab4881fa8b128687a35d0da409ac2c4ee08002` 기준으로 완료했다.
+원격 발행 결과와 개인 클러스터 이전 상태를 구분한다. 이번 작업에서는 개인 클러스터를 변경하지
+않았으며, 이미지 발행 성공을 실제 PVC 인계·서비스 활성화 완료로 해석하지 않는다.
 
 | 확인 대상 | 결과 | 남은 조건 |
 | --- | --- | --- |
-| 기존 개인 kind 클러스터 | 중지됐던 기존 control-plane을 재시작한 뒤 노드 Ready 확인 | 종료 코드 137만으로 이전 중지 원인을 확정하지 않음 |
-| 기존 업무 Argo Application 4개 | AI·Catalog·Core·Ops 모두 `Synced/Healthy` 확인 | 중지된 Compose 평가·관측 서비스까지 정상이라는 뜻은 아님 |
-| 평가 Chart의 실제 통신 정책 | Pod IP·Service ClusterIP·DNS 총 22개 경로 검증 통과, 임시 자원 정리 완료 | 단일 노드 합성 ingress 검사이며 실제 평가 인증·외부 egress는 별도 |
-| 개인 평가 namespace와 PVC 인계 | `govbiz-evaluation` namespace가 아직 없음 | 최신 백업·보존 복원·Secret 준비·Argo 등록·동기화·활성화 필요 |
-| 공개 평가 실행기 이미지 | 패키지 사전 검사 실패로 발행 작업 건너뜀 | PAT 없이 Actions의 빈 패키지 준비 후 Public 설정·실제 이미지 발행 필요 |
+| 동일 SHA 필수 CI | GovBiz·Catalog·Ops·Infra·LLMOps 5개 workflow와 필수 작업 모두 성공 | 다른 SHA나 재실행 결과로 자동 승계하지 않음 |
+| 기존 업무 이미지 4개 | 같은 SHA의 v2 receipt·Git 입력·공개 GHCR manifest 대조 완료 | 이번 발행 이미지를 개인 클러스터에 적용하지 않음 |
+| 공개 평가 실행기 이미지 | 새 업로드·v3 receipt 생성과 공개 GHCR manifest 검증 완료 | 레이어 다운로드·실제 서비스 활성화는 별도 |
+| 실행기 패키지 권한 | Public·정확한 개인 포크 연결·권한 상속 해제·해당 포크 Actions Write 확인 | PAT 발급·입력·Secret 등록 없음 |
+| 개인 평가 namespace와 PVC 인계 | 직전 개인 환경 확인에서 `govbiz-evaluation`은 미설치, 기존 암호화 백업의 임시 PVC 복원 연습은 성공 | 최신 백업·보존 복원·Secret 준비·Argo 등록·동기화·활성화 필요 |
 
-작업 중 원격 main이 `0c87933`에서 `24a78ec`으로 바뀌었다. `24a78ec`은 확인 시점에
-Infra·Catalog·Ops CI가 통과했고 GovBiz·LLMOps CI는 진행 중이었다. 이전 SHA의 성공이나
-이미지 workflow의 `gate` 작업 성공을 현재 SHA의 발행 허용으로 해석하지 않는다.
-최신 평가 이미지 실행에서는 `package-preflight`가 실패했고 `publish`는 실행되지 않았다.
+발행 증거는 다음 실행에서 확인했다. 모든 실행의 대상은 위 전체 SHA이며, 최종 대조 시에도
+현재 main·필수 CI·발행 run/attempt·artifact가 유지되는지 확인했다.
 
-다음 실제 작업은 **현재 main의 필수 CI 전체 성공 확인 → Actions 패키지 준비 → Public 설정 및
-접근 확인 → 같은 SHA의 실행기 이미지·v3 receipt 발행 확인** 순서다.
-[평가 실행기 발행 절차](../../release/README.md#kubernetes-평가-실행기-이미지)를 따른다.
-패키지 준비 workflow는 아직 실행하지 않았고 로컬 PAT도 사용하지 않았다. 실제 백업·PVC 이전은
-이미지 준비 후 진행하며, 기존 Compose 데이터는 보존한다. 이번 클러스터 복구에서는 기존에
-중지돼 있던 Compose 서비스를 시작하지 않았으므로 전체 관리 화면·평가 기능의 복구 완료로 보고하지 않는다.
+- 필수 CI: [GovBiz](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/37917810855),
+  [Catalog](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/37917810859),
+  [Ops](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/37917810857),
+  [Infra](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/37917810906),
+  [LLMOps](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/37917810965).
+- [PAT 없는 빈 패키지 준비](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/37939540259):
+  `PUBLIC_METADATA_VERIFIED`, `upload=completed`. 생성 직후 실제 공개 범위가 Public이었으며,
+  사용자 승인 후 권한 상속을 끄고 Actions Admin을 Write로 낮췄다.
+- [실제 실행기 발행](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/37939919551):
+  `state=published`, `upload=confirmed`, `receiptWritten=true`, `imagesVerified=true`.
+- [같은 SHA의 업무 이미지 발행](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/37924582504):
+  네 receipt와 `imagesVerified=true` 확인.
+
+실행기 이미지는
+`ghcr.io/ilil1/skn34-4th-1team-evaluation-runner@sha256:a6d69225b1bb8dfa203b78e922386b7194b68d5d1fb5305bc309ad33a08490c1`이다.
+v3 receipt의 13개 Git 입력·publisher tree·input key를 실제 커밋과 대조했으며, 실행 명세 SHA-256은
+`3a194a7e2a34e0530ebe08fe3da1686f552065b07cd6c4886f4a781b8e6fd7ff`다.
+artifact ZIP의 출처·크기·SHA-256과 익명 GHCR manifest의 digest도 검증했다.
+초기화·발행 보고서와 별개로 `clusterChanged=false`, `layersDownloaded=false` 범위는 유지한다.
+
+다음 실제 작업은 **최신 소스·CI·발행 증거 재확인 → 기존 writer 중지와 최신 암호화 백업 →
+보존 PVC 복원·Secret 준비 → 같은 SHA의 수동 Argo 계획·등록·동기화 → 활성화·무료 평가 검증**이다.
+현재 main이 바뀌면 위 발행 기록만으로 새 SHA의 배포를 허용하지 않는다. 기존 Compose 데이터는
+보존하며, Langfuse와 관련 DB·저장소의 Kubernetes 이전도 별도로 완료해야 한다.
 
 ## 이번 구현: 독립 배포와 저장소 계약
 
@@ -846,7 +863,8 @@ Kubernetes 1.36의 이미지 자격 증명 검증은 이미지 ID 외에 저장�
 2. runner 이미지의 같은 SHA CI·공개 발행·실행 명세 검증 경로는
    [별도 실행기 발행 workflow](../../release/README.md#kubernetes-평가-실행기-이미지)에 추가했다.
    v3 receipt 소비·같은 SHA의 Ops 이미지 대조·독립 수동 Argo 계획도 구현했다.
-   실제 패키지 준비·최신 SHA CI·발행 성공과 운영 환경에서의 계획 검증은 별도로 확인해야 한다.
+   `2cab488`의 실제 패키지 준비·필수 CI·공개 발행 검증은 위 기록대로 완료했다.
+   운영 전환 시점의 소스·발행 증거 재검증과 개인 환경에서의 계획 검증은 남아 있다.
    기존 네 서비스의 필수 CI·발행 가드를 우회하지 않는다. 배포 방식은 서비스별 Argo Application과 수동 동기화를 유지한다.
    평가용 계획은 별도 프로젝트로 범위를 제한한다. 복원 보고서와 현재 보존 PVC를 대조해 수동 계획에
    연결하는 읽기 전용 경로, Argo 선언 등록과 replica 0 최초 수동 동기화 요청·적용 완료 확인 명령은 구현했다. 실제 등록·동기화 실행과
