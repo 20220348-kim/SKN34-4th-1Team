@@ -596,8 +596,8 @@ def retain_for_migration(kube, node, stores, expected, *, image=None):
     }
 
 
-def inspect_retained(kube, node, report):
-    """Read live storage identities before initial handoff; never certify its data."""
+def inspect_retained_storage(kube, node, report):
+    """Read live retained storage identities; never certify its data or consumers."""
     if (
         report.get("status") != "RESTORED_NOT_ACTIVATED"
         or report.get("scope") != "retained_kubernetes_evaluation_pvc"
@@ -689,6 +689,25 @@ def inspect_retained(kube, node, report):
         )
     ):
         raise ValueError("Retained storage node is not ready")
+    return {
+        "namespace": namespace,
+        "namespace_uid": report["namespace_uid"],
+        "storage_class": storage_name,
+        "storage_class_uid": report["storage_class_uid"],
+        "node": node,
+        "claims": report["claims"],
+        "reclaim_policy": "Retain",
+        "identity_verified": True,
+        "data_reverified": False,
+        "archive_freshness_verified": False,
+        "source_quiescence_verified": False,
+    }
+
+
+def inspect_retained(kube, node, report):
+    """Require an empty retained namespace before initial handoff."""
+    storage = inspect_retained_storage(kube, node, report)
+    nk = kube + ["--namespace", MIGRATION_NAMESPACE]
     # An initial handoff must not overlap helpers, writers or controllers which
     # could create them later. This is an observation, not a Kubernetes lock.
     workloads = run(
@@ -702,20 +721,7 @@ def inspect_retained(kube, node, report):
     )
     if workloads["items"]:
         raise ValueError("Retained namespace already contains workloads")
-    return {
-        "namespace": namespace,
-        "namespace_uid": report["namespace_uid"],
-        "storage_class": storage_name,
-        "storage_class_uid": report["storage_class_uid"],
-        "node": node,
-        "claims": report["claims"],
-        "reclaim_policy": "Retain",
-        "identity_verified": True,
-        "workloads_absent": True,
-        "data_reverified": False,
-        "archive_freshness_verified": False,
-        "source_quiescence_verified": False,
-    }
+    return {**storage, "workloads_absent": True}
 
 
 def verify_archive(state, archive, key_file, *, retain=False):

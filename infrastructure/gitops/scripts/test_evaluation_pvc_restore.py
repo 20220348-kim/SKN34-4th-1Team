@@ -548,6 +548,22 @@ class KubernetesTests(unittest.TestCase):
             all("get" in args and value is None for args, value in self.events)
         )
 
+    def test_storage_identity_read_does_not_relax_initial_empty_namespace_guard(self):
+        report = self.retained()
+        self.events.clear()
+        self.pods = {"unexpected": {"kind": "Pod", "metadata": {"name": "unexpected"}}}
+        observed = restore.inspect_retained_storage(
+            ["kubectl"], "fixture-control-plane", report
+        )
+        self.assertTrue(observed["identity_verified"])
+        self.assertNotIn("workloads_absent", observed)
+        self.assertFalse(observed["data_reverified"])
+        with self.assertRaisesRegex(ValueError, "already contains workloads"):
+            restore.inspect_retained(["kubectl"], "fixture-control-plane", report)
+        self.assertTrue(
+            all("get" in args and value is None for args, value in self.events)
+        )
+
     def test_retained_inspection_rejects_stale_report_and_live_storage_changes(self):
         report = self.retained()
         for change in (

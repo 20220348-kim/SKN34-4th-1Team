@@ -589,6 +589,46 @@ python3 -B infrastructure/gitops/scripts/evaluation_release.py \
 `test_*.py` 검색에 포함된다. 실제 개인 환경의 최초 동기화·완료 확인은 검증된 공개 실행기 발행과
 보존 PVC·Argo 등록이 끝난 뒤 수행한다. 이 단계에서 PVC·Secret 생성이나 실행기 기동을 대신하지 않는다.
 
+## replica 0 동기화 완료 확인
+
+요청 접수 이후에는 아래 읽기 전용 명령으로 Argo 적용 완료와 현재 리소스를 확인한다.
+클러스터 상태를 바꾸거나 refresh·sync·scale을 요청하지 않으며 Secret 값을 읽지 않는다.
+
+```bash
+python3 -B infrastructure/gitops/scripts/evaluation_dormant_status.py \
+  --state-dir infrastructure/gitops/.local/fork \
+  --restore-report /private-backups/evaluation-retained.json \
+  --langfuse-url "$LANGFUSE_URL" \
+  > /private-backups/evaluation-dormant-status.json
+```
+
+검사 흐름은 `현재 발행·필수 CI 재검증 → 발행 SHA의 Chart 재렌더링 → 보존 PVC·Argo·실제 리소스 조회
+→ 발행 증거 재확인 → 입력·클러스터·리소스 재조회`다.
+
+- AppProject와 세 Application의 전체 선언·복원 결합 annotation·소유권을 대조한다.
+  `Synced/Healthy`, 최신 작업 `Succeeded`, 비교 대상과 마지막 sync 결과의 같은 소스 SHA를 모두 요구한다.
+  진행 중 operation, 오류·경고 condition, 누락·중복·정리 대상 리소스와 다른 Argo 소유권은 거부한다.
+- 발행 SHA의 Chart·values로 Deployment·Service·NetworkPolicy를 재현한다. Deployment 전체 spec을
+  비교하되 [Kubernetes 1.36.4 기본값](https://github.com/kubernetes/kubernetes/blob/v1.36.4/pkg/apis/core/v1/defaults.go)과
+  수량의 동등한 표현만 정규화한다. 알 수 없는 필드는 제거하지 않으므로 추가 컨테이너·환경변수·볼륨도 차단한다.
+  Argo 상태 계약은 [3.5.3 타입 정의](https://github.com/argoproj/argo-cd/blob/v3.5.3/pkg/apis/application/v1alpha1/types.go)를 따른다.
+- 실제 Deployment의 관측 generation과 모든 replica 수 0, Pod 부재를 확인한다.
+  Deployment가 만든 ReplicaSet은 정확한 owner UID·관측 generation·replica 0일 때만 허용한다.
+  추가 Job·CronJob·DaemonSet·StatefulSet·HPA 등은 거부한다.
+- Service 설정과 할당 주소, 평가 NetworkPolicy, 복원 때 만든 `deny-all` 정책을 확인한다.
+  이 검사는 정책 선언 비교이며 CNI 집행·DNS·실제 통신 검증을 대신하지 않는다.
+- namespace·StorageClass·PVC·PV의 소유권과 UID·Retain 정책을 다시 확인한다.
+  초기 복원·등록·동기화 요청 경로의 **빈 namespace 조건은 그대로 유지**한다.
+- 두 관측 사이에 발행·설정·복원 보고서·리소스 UID 또는 spec이 바뀌면 실패한다.
+  이는 두 시점의 확인이며 이후 변경을 막는 잠금이 아니다. 보고서에는 고정 상태, 식별 정보와 해시만 기록하고
+  live spec·환경변수·오류 원문은 출력하지 않는다.
+
+성공은 `DORMANT_SYNC_VERIFIED`, `syncCompleted=true`, `podsAbsent=true`다.
+`runtimeVerified`, `activationAuthorized`, `storageDataReverified`, `sourceQuiescenceVerified`,
+`networkPolicyEnforcementVerified`는 계속 false다. 서비스 기동 전에는 원본 writer 중지·백업 최신성,
+Secret 인증, egress를 포함한 접근 통제와 Ops 전환을 별도로 검증해야 한다.
+오류는 종료 코드 1과 `BLOCKED`로 반환하며 동기화를 재요청하거나 기존 자원을 정리하지 않는다.
+
 ## 격리 Kubernetes에서 실제 평가 실행 검증
 
 LLMOps CI의 기존 격리 통합 검증에 `--evaluation-runtime` 단계를 연결했다.
@@ -668,6 +708,10 @@ Service·DNS를 포함한 접근 통제, PVC 복원, 무료 평가와 Pod 교체
 위의 정리 진단을 추가했다. 삭제 지연·finalizer 등을 원인으로 확정하거나 해결됐다고 판단하지 않으며,
 새 진단이 포함된 최신 SHA의 전체 실행 결과를 확인해야 한다.
 
+`81c34d5`의 [LLMOps CI](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/37739740166)는 통과했다.
+artifact에서 평가 런타임 `PASS`, 네트워크 정책 집행 확인, 모델 호출 0회와 `cleanup_complete=true`를
+확인했다. 해당 실행에서는 정리 실패가 재현되지 않았으며, 과거 간헐 실패의 원인이 해결됐다는 뜻은 아니다.
+
 Kubernetes 1.36의 이미지 자격 증명 검증은 이미지 ID 외에 저장소 이름별 pull 기록도 확인한다.
 복원 helper가 받은 Prefect 이미지를 `govbiz/prefect:...`로 바꾸면 CRI에 이미지가 있어도 새 저장소의
 기록이 없어 `Never` 정책에서 `ErrImageNeverPull`이 발생할 수 있다
@@ -688,7 +732,7 @@ Kubernetes 1.36의 이미지 자격 증명 검증은 이미지 ID 외에 저장�
    실제 패키지 준비·최신 SHA CI·발행 성공과 운영 환경에서의 계획 검증은 별도로 확인해야 한다.
    기존 네 서비스의 필수 CI·발행 가드를 우회하지 않는다. 배포 방식은 서비스별 Argo Application과 수동 동기화를 유지한다.
    평가용 계획은 별도 프로젝트로 범위를 제한한다. 복원 보고서와 현재 보존 PVC를 대조해 수동 계획에
-   연결하는 읽기 전용 경로, Argo 선언 등록과 replica 0 최초 수동 동기화 요청 명령은 구현했다. 실제 등록·동기화 실행과
+   연결하는 읽기 전용 경로, Argo 선언 등록과 replica 0 최초 수동 동기화 요청·적용 완료 확인 명령은 구현했다. 실제 등록·동기화 실행과
    namespace·PVC 확인 및 서비스 인계는 남아 있다. 암호화 백업과 기존 runner에서 평가 Secret만
    준비하는 명령도 구현했으며 실제 개인 백업을 이용한 생성·인증 검증은 별도다.
    운영 진단은 위의 평가 Application 조회를 포함하지만 런타임·저장소 검증은 별도다.
