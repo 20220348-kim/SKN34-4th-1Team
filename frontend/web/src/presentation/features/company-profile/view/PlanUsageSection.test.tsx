@@ -80,21 +80,24 @@ describe('프로필 요금제와 이용량', () => {
     expect(within(todayRows[0]!).getByText('오늘 7회 남음').className).not.toContain('text-warning')
     expect((meters[1]!.firstElementChild as HTMLElement).className).toContain('bg-warning')
 
-    // 요금제 화면에는 아직 한도가 없으므로 그 화면으로 잇지 않습니다. 누를 수 있는 것은 세는 기준 도움말뿐입니다.
+    // 요금제는 요금제 화면에서 바꿉니다. 무엇을 한 번으로 세는지도 그 화면의 한도 아래에 둡니다.
     expect(within(section).getByText('결제는 아직 받지 않아요.')).toBeTruthy()
-    expect(within(section).queryByRole('link')).toBeNull()
-    expect(within(section).getAllByRole('button').map((button) => button.getAttribute('aria-label'))).toEqual(['이용량을 세는 기준 도움말'])
+    expect(within(section).getByRole('link', { name: '요금제 바꾸기' }).getAttribute('href')).toBe('/app/pricing')
+    expect(within(section).queryByRole('button')).toBeNull()
+    expect(within(section).queryByText(/조건을 정리하는 대화와 필터 검색은 세지 않고/)).toBeNull()
   })
 
-  it('제목 옆 도움말에서 기능마다 무엇을 한 번으로 세는지와 지워도 돌아오지 않는다는 것을 알린다', async () => {
-    vi.spyOn(appContainer.resolve('planUsageUseCase'), 'usage').mockResolvedValue(usage)
+  it('출시 전 무료 체험 중이면 체험 요금제와 끝나는 때, 끝나면 무료로 돌아간다는 것을 적는다', async () => {
+    const endsAt = '2026-10-22T21:00:00+09:00'
+    vi.spyOn(appContainer.resolve('planUsageUseCase'), 'usage').mockResolvedValue({
+      plan: 'PLUS', planEndsAt: endsAt, planSource: 'TRIAL', trialsAvailable: ['PREMIUM'],
+      items: [{ feature: 'AI_SEARCH', period: 'PLAN', limit: 500, used: 2, resetsAt: endsAt }],
+    })
     renderPage()
     const section = await screen.findByRole('region', { name: '요금제와 이용량' })
-    fireEvent.focus(within(section).getByRole('button', { name: '이용량을 세는 기준 도움말' }))
-    const tooltip = await screen.findByRole('tooltip')
-    expect(tooltip.textContent).toContain('AI 대화 검색 검색어로 공고를 찾을 때 1회예요. 조건을 정리하는 대화와 필터 검색은 세지 않고')
-    expect(tooltip.textContent).toContain('신청 문서 초안 새 공고의 양식 분석이나 초안 만들기를 처음 시작할 때 1건이에요.')
-    expect(tooltip.textContent).toContain('신청 문서와 중복 검토는 지워도 이미 쓴 횟수가 돌아오지 않아요.')
+    expect(await within(section).findByText('플러스 체험')).toBeTruthy()
+    expect(within(section).getByText('10월 22일 21:00까지 체험할 수 있어요. 끝나면 자동 결제 없이 무료로 돌아가요.')).toBeTruthy()
+    expect(within(section).getByRole('link', { name: '요금제 바꾸기' })).toBeTruthy()
   })
 
   it('30일 이용권은 네 기능을 이번 기간으로 묶어 남은 양과 기간이 끝나는 때, 이용권이 끝나는 때를 적는다', async () => {

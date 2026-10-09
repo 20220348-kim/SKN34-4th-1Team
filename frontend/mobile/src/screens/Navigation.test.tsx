@@ -291,7 +291,7 @@ test.each([false, true])('pricing opens without a new request and its free actio
   const requests = jest.mocked(programClient).mock.calls.length
   if (signedIn) fireEvent.press(screen.getByLabelText('메뉴'))
   fireEvent.press(screen.getByLabelText('요금제'))
-  await screen.findByText('월 9,900원')
+  await screen.findByText('9,900원')
   expect(view.getPathname()).toBe(signedIn ? '/all/pricing' : '/pricing')
   expect(screen.getByLabelText(signedIn ? '메뉴' : '요금제').props.accessibilityState.selected).toBe(true)
   expect(screen.queryByText('로그인이 필요해요')).toBeNull()
@@ -309,44 +309,19 @@ test('guest menu pricing opens the public pricing tab without requesting login',
   const entry = screen.getAllByLabelText('요금제').find(item => item.props.accessibilityState?.selected === undefined)!
   expect(entry.props.accessibilityHint).toBe('기능 · 이용 안내')
   fireEvent.press(entry)
-  await screen.findByText('월 9,900원')
+  await screen.findByText('9,900원')
   expect(view.getPathname()).toBe('/pricing')
   expect(screen.queryByText('로그인이 필요해요')).toBeNull()
 })
 
-test('plus from guest pricing keeps the plan when login is cancelled and resumes saved programs after verified login', async () => {
-  let verifyLogin!: () => void
-  function ReactiveAuthLayout() {
-    const [verified, setVerified] = useState(false)
-    verifyLogin = () => setVerified(true)
-    jest.mocked(useAuth).mockReturnValue(verified ? memberAuth : { status: 'signedOut', session: null, restoreError: null } as ReturnType<typeof useAuth>)
-    const Layout = routes._layout
-    return <Layout />
-  }
-  const view = renderRouter({ ...routes, _layout: ReactiveAuthLayout, '(tabs)/saved': () => <Text>회원 관심 공고함</Text> }, { initialUrl: '/pricing' })
-  fireEvent.press(await screen.findByRole('button', { name: '지금 무료로 이용하기' }))
-  await screen.findByText('로그인이 필요해요')
-  expect(view.getPathname()).toBe('/pricing')
-  fireEvent.press(screen.getByLabelText('계속 둘러보기'))
-  expect(view.getPathname()).toBe('/pricing')
-  expect(screen.getByRole('tab', { name: '플러스' }).props.accessibilityState.selected).toBe(true)
-  fireEvent.press(screen.getByRole('button', { name: '지금 무료로 이용하기' }))
-  await act(async () => verifyLogin())
-  await screen.findByText('회원 관심 공고함')
-  expect(view.getPathname()).toBe('/saved')
-  expect(tabLabels()).toEqual(['검색', '관심함', '리포트', '메뉴'])
-})
-
-test('a signed-in public pricing link continues in the member menu and plus opens saved programs', async () => {
+test('a signed-in public pricing link continues in the member menu without a plan change action', async () => {
   jest.mocked(useAuth).mockReturnValue(memberAuth)
-  const view = renderRouter({ ...routes, '(tabs)/saved': () => <Text>회원 관심 공고함</Text> }, { initialUrl: '/pricing' })
-  await screen.findByText('월 9,900원')
+  const view = renderRouter(routes, { initialUrl: '/pricing' })
+  await screen.findByText('9,900원')
   await waitFor(() => expect(view.getPathname()).toBe('/all/pricing'))
   expect(tabLabels()).toEqual(['검색', '관심함', '리포트', '메뉴'])
   expect(screen.getByLabelText('메뉴').props.accessibilityState.selected).toBe(true)
-  fireEvent.press(screen.getByRole('button', { name: '지금 무료로 이용하기' }))
-  await screen.findByText('회원 관심 공고함')
-  expect(view.getPathname()).toBe('/saved')
+  expect(screen.queryByRole('button', { name: /체험|이용하기/ })).toBeNull()
 })
 
 test('signing in from the guest collaboration tab retains its destination inside the member All stack', async () => {

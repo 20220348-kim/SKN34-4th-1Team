@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PlanQuotaExceededError, QuotaUnavailableError } from '../../domain/errors/PlanQuotaError'
-import { planUsageSchema, readPlanQuotaProblem } from './PlanUsageDto'
+import { PlanTrialError, planTrialErrorMessage } from '../../domain/errors/PlanTrialError'
+import { planUsageSchema, readPlanQuotaProblem, readPlanTrialProblem } from './PlanUsageDto'
 
 afterEach(() => { vi.useRealTimers() })
 
@@ -56,5 +57,30 @@ describe('PlanUsageDto', () => {
     expect(readPlanQuotaProblem(429, { status: 429, code: 'SUPPORT_PROGRAM_RATE_LIMITED', retryAfterSeconds: 5 })).toBeNull()
     expect(readPlanQuotaProblem(503, { status: 503, code: 'SUPPORT_PROGRAM_BUSY' })).toBeNull()
     expect(readPlanQuotaProblem(500, null)).toBeNull()
+  })
+
+  it('reads who assigned the plan and the trials still available, ignoring values this client does not know', () => {
+    const parsed = planUsageSchema.parse({
+      plan: 'PLUS', planEndsAt: '2026-10-22T21:00:00+09:00', planSource: 'TRIAL', trialsAvailable: ['PREMIUM', 'GOLD', 'FREE'], items: [],
+    })
+    expect(parsed.planSource).toBe('TRIAL')
+    expect(parsed.trialsAvailable).toEqual(['PREMIUM'])
+    // 체험 기능이 없던 Core의 응답은 출처 없음·시작할 체험 없음으로 읽습니다.
+    const older = planUsageSchema.parse({ plan: 'FREE', items: [] })
+    expect(older.planSource).toBeNull()
+    expect(older.trialsAvailable).toEqual([])
+    expect(planUsageSchema.parse({ plan: 'PLUS', planSource: 'PARTNER', trialsAvailable: 'PLUS', items: [] }))
+      .toMatchObject({ planSource: null, trialsAvailable: [] })
+  })
+
+  it('turns a refused trial into a stable code and a message without the server text', () => {
+    const used = readPlanTrialProblem(409, { status: 409, code: 'PLAN_TRIAL_USED', detail: 'server text' })
+    expect(used).toBeInstanceOf(PlanTrialError)
+    expect([used.status, used.code]).toEqual([409, 'PLAN_TRIAL_USED'])
+    expect(readPlanTrialProblem(403, { code: 'PLAN_TRIAL_EMAIL_UNVERIFIED' }).code).toBe('PLAN_TRIAL_EMAIL_UNVERIFIED')
+    expect(readPlanTrialProblem(401, null).code).toBe('AUTHENTICATION_REQUIRED')
+    expect(readPlanTrialProblem(500, { code: 'INTERNAL' }).code).toBe('REQUEST_FAILED')
+    expect(planTrialErrorMessage(used)).toBe('이 요금제는 이미 체험했어요. 요금제마다 한 번만 체험할 수 있어요.')
+    expect(planTrialErrorMessage(new Error('network'))).toBe('체험을 시작하지 못했어요. 잠시 후 다시 시도해 주세요.')
   })
 })

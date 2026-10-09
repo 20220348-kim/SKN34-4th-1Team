@@ -19,8 +19,9 @@ describe('요금제 이용량 API 경계', () => {
     }))
     vi.stubGlobal('fetch', fetcher)
 
-    // 끝나는 때를 보내지 않으면 무료처럼 끝나는 때 없이 읽습니다.
-    expect(await new PlanUsageRepositoryImpl().usage()).toEqual({ plan: 'FREE', planEndsAt: null, items: [aiSearch, questions, drafts] })
+    // 끝나는 때·배정 출처·체험 목록을 보내지 않으면 끝나는 때 없이, 시작할 체험 없이 읽습니다.
+    expect(await new PlanUsageRepositoryImpl().usage())
+      .toEqual({ plan: 'FREE', planEndsAt: null, planSource: null, trialsAvailable: [], items: [aiSearch, questions, drafts] })
     const [url, init] = fetcher.mock.calls[0]!
     expect(new URL(String(url)).pathname).toBe('/api/v1/plan-usage')
     expect(init).toMatchObject({ method: 'GET', credentials: 'include', cache: 'no-store', headers: { Accept: 'application/json' } })
@@ -28,14 +29,15 @@ describe('요금제 이용량 API 경계', () => {
 
   it('로그인 전 응답은 요금제 없이 AI 대화 검색 체험만 읽는다', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ plan: null, items: [{ ...aiSearch, limit: 2, used: 1 }] })))
-    expect(await new PlanUsageRepositoryImpl().usage()).toEqual({ plan: null, planEndsAt: null, items: [{ ...aiSearch, limit: 2, used: 1 }] })
+    expect(await new PlanUsageRepositoryImpl().usage())
+      .toEqual({ plan: null, planEndsAt: null, planSource: null, trialsAvailable: [], items: [{ ...aiSearch, limit: 2, used: 1 }] })
   })
 
   it('30일 이용권은 이번 기간 사용량과 이용권이 끝나는 때를 읽는다', async () => {
     const endsAt = '2026-10-31T15:30:00+09:00'
     const pass = { plan: 'PLUS', planEndsAt: endsAt, items: [{ ...aiSearch, period: 'PLAN', limit: 500, used: 20, resetsAt: endsAt }] }
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(pass)))
-    expect(await new PlanUsageRepositoryImpl().usage()).toEqual(pass)
+    expect(await new PlanUsageRepositoryImpl().usage()).toEqual({ ...pass, planSource: null, trialsAvailable: [] })
   })
 
   it('HTTP 오류와 계약과 다른 응답을 정상 이용량으로 숨기지 않는다', async () => {

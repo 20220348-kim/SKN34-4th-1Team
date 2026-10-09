@@ -1,12 +1,11 @@
+import { Link } from 'react-router'
 import {
   hasPlanLimit,
   isNearPlanLimit,
   isPlanLimitReached,
   planEndsText,
-  planLabels,
-  planUsageCountingRules,
+  planNameText,
   planUsageCountText,
-  planUsageDeletionNote,
   planUsageFeatureLabels,
   planUsageResetText,
   planUsageUsedText,
@@ -15,7 +14,7 @@ import {
 } from '@govbiz/shared/domain/entities/PlanUsage'
 import { planUsagePercent } from '../../../shared/plan-usage/planUsageView'
 import type { PlanUsageLoad } from '../../../shared/plan-usage/usePlanUsage'
-import { HelpTip } from '../../../shared/workspace/HelpTip'
+import { appPaths } from '../../../shared/routes/appPaths'
 import { workspacePageStyles, workspaceTagClassName } from '../../../shared/workspace/WorkspacePage.styles'
 import { companyProfileStyles } from './CompanyProfilePage.styles'
 
@@ -26,22 +25,22 @@ const periodGroups: readonly { period: PlanUsagePeriod; title: string }[] = [
 ]
 
 /**
- * 프로필의 요금제와 이용량 카드입니다. 지금 요금제와 기능별로 이번 기간에 남은 양을 보여 줍니다.
- * 같은 때 다시 채워지는 기능끼리(오늘 · 이번 달 · 유료 이용권의 이번 기간) 묶어 그때를 한 번만 적고, 무엇을 한 번으로 세는지는 제목 옆 ? 도움말에 둡니다.
- * 유료 이용권이면 언제까지 쓸 수 있는지 함께 적습니다.
- * 아직 한도를 정하지 않은 기능은 막대 없이 "제한 없음"으로 적습니다. 결제는 아직 없으므로 요금제를 바꾸는 동작은 두지 않습니다.
+ * 프로필의 요금제와 이용량 카드입니다. 지금 요금제와 기능별로 이번 기간에 남은 양을 보여 주고, [요금제 바꾸기]로 요금제 화면에 잇습니다.
+ * 같은 때 다시 채워지는 기능끼리(오늘 · 이번 달 · 유료 이용권의 이번 기간) 묶어 그때를 한 번만 적습니다. 무엇을 한 번으로 세는지는 요금제 화면에 둡니다.
+ * 유료 이용권이면 언제까지 쓸 수 있는지, 출시 전 무료 체험이면 언제 끝나고 무료로 돌아가는지 함께 적습니다.
+ * 아직 한도를 정하지 않은 기능은 막대 없이 "제한 없음"으로 적습니다.
  */
 export function PlanUsageSection({ load, onRetry }: { load: PlanUsageLoad; onRetry: () => void }) {
-  const plan = load.status === 'ready' ? load.usage.plan : null
+  const planName = load.status === 'ready' ? planNameText(load.usage) : null
   const endsText = load.status === 'ready' ? planEndsText(load.usage) : null
   return (
     <section className={workspacePageStyles.card} aria-label="요금제와 이용량">
       <div className={workspacePageStyles.cardHeader}>
-        <span className={companyProfileStyles.planTitleRow}>
-          <h2 className={workspacePageStyles.cardTitle}>요금제와 이용량</h2>
-          <CountingHelp />
+        <h2 className={workspacePageStyles.cardTitle}>요금제와 이용량</h2>
+        <span className={companyProfileStyles.planHeaderSide}>
+          {planName !== null ? <span className={workspaceTagClassName('ok')}>{planName}</span> : null}
+          <Link className={workspacePageStyles.quietLink} to={appPaths.pricing}>요금제 바꾸기</Link>
         </span>
-        {plan !== null ? <span className={workspaceTagClassName('ok')}>{planLabels[plan]}</span> : null}
       </div>
       {endsText ? <p className={companyProfileStyles.planNote}>{endsText}</p> : null}
       {load.status === 'loading' ? (
@@ -70,20 +69,6 @@ export function PlanUsageSection({ load, onRetry }: { load: PlanUsageLoad; onRet
       }) : null}
       <p className={companyProfileStyles.planNote}>결제는 아직 받지 않아요.</p>
     </section>
-  )
-}
-
-/** 기능마다 무엇을 한 번으로 세는지 알려 줍니다. 대화만 해도 줄어드는지, 지우면 돌아오는지를 미리 알 수 있게 합니다. */
-function CountingHelp() {
-  return (
-    <HelpTip label="이용량을 세는 기준 도움말" title="이용량을 세는 기준">
-      <ul className={companyProfileStyles.planHelpList}>
-        {(Object.keys(planUsageCountingRules) as (keyof typeof planUsageCountingRules)[]).map((feature) => (
-          <li key={feature}><strong>{planUsageFeatureLabels[feature]}</strong> {planUsageCountingRules[feature]}</li>
-        ))}
-      </ul>
-      <p className="m-0">{planUsageDeletionNote}</p>
-    </HelpTip>
   )
 }
 

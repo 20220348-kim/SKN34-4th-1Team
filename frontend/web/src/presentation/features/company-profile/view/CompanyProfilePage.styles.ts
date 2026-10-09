@@ -42,8 +42,7 @@ export const companyProfileStyles = {
   reminderNote: 'm-0 text-[0.74rem] leading-[1.5] text-ink-muted',
   // 요금제와 이용량 카드입니다. 오늘 · 이번 달로 묶어 다시 채워지는 때를 묶음 머리에 한 번 적고,
   // 기능마다 이름 · 남은 양, 진행 막대, 한도 중 쓴 양을 한 상자에 둡니다. 남은 양이 한도의 20% 이하면 글자와 막대를 경고 색으로 바꿉니다.
-  planTitleRow: 'inline-flex items-center gap-1.5',
-  planHelpList: 'm-0 flex list-none flex-col gap-1.5 p-0',
+  planHeaderSide: 'inline-flex shrink-0 items-center gap-2.5',
   planUsageGroup: 'flex flex-col gap-2',
   planUsageGroupHead: 'flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5',
   planUsageGroupTitle: 'text-[0.78rem] font-bold text-ink-muted',

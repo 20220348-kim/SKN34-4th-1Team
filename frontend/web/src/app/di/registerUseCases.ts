@@ -4,6 +4,7 @@ import { ApplicationPreparationUseCase } from '../../domain/usecases/Application
 import { DailyReportUseCase } from '../../domain/usecases/DailyReportUseCase'
 import { NotificationSettingsUseCase } from '@govbiz/shared/domain/usecases/NotificationSettingsUseCase'
 import { PlanUsageUseCase } from '@govbiz/shared/domain/usecases/PlanUsageUseCase'
+import { PlanTrialUseCase } from '@govbiz/shared/domain/usecases/PlanTrialUseCase'
 import { reviewRequestJournal } from '../../data/storage/reviewRequestJournal'
 import { asValue } from 'awilix/browser'
 import { asFunction } from 'awilix/browser'
@@ -87,6 +88,7 @@ export function registerUseCases(container: AppContainer) {
       ({ notificationSettingsRepository }: Pick<AppCradle, 'notificationSettingsRepository'>) => new NotificationSettingsUseCase(notificationSettingsRepository),
     ).singleton(),
     planUsageUseCase: asFunction(({ planUsageRepository }: Pick<AppCradle, 'planUsageRepository'>) => new PlanUsageUseCase(planUsageRepository)).singleton(),
+    planTrialUseCase: asFunction(({ planTrialRepository }: Pick<AppCradle, 'planTrialRepository'>) => new PlanTrialUseCase(planTrialRepository)).singleton(),
     reviewRequestJournal: asValue(reviewRequestJournal),
     combinationReviewUseCase: asFunction(({ combinationReviewRepository }: Pick<AppCradle, 'combinationReviewRepository'>) => new CombinationReviewUseCase(combinationReviewRepository)).singleton(),
     browseSupportProgramsUseCase: asFunction(

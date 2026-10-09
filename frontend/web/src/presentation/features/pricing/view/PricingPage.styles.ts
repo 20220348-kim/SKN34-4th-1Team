@@ -15,11 +15,13 @@ export const pricingPageStyles = {
   planCard: 'relative flex min-w-0 flex-col rounded-[1.75rem] border p-[clamp(1.4rem,3vw,2rem)]',
   regularCard: 'border-line bg-white shadow-[0_8px_30px_rgb(32_33_36_/_4%)]',
   featuredCard: 'border-brand-primary bg-white text-ink shadow-[0_8px_30px_rgb(32_33_36_/_4%)]',
-  planTop: 'flex flex-wrap items-center justify-between gap-3',
+  // 로그인한 회원의 지금 요금제입니다. 추천 강조보다 굵은 테두리와 옅은 녹색 바탕으로 한눈에 구분합니다.
+  currentCard: 'border-2 border-brand-primary bg-brand-soft/40 text-ink shadow-[0_10px_34px_rgb(22_101_52_/_12%)]',
+  // 배지가 없는 카드도 "이용 중" 배지 높이를 비워 두어 세 카드의 제목 줄을 맞춥니다.
+  planTop: 'flex min-h-[1.6rem] flex-wrap items-center justify-between gap-3',
   planEyebrow: 'm-0 text-[0.72rem] font-extrabold tracking-[0.12em]',
   planStatus: 'rounded-full px-3 py-1 text-[0.68rem] font-bold',
-  regularStatus: 'bg-[#f6f7f8] text-ink-muted',
-  featuredStatus: 'bg-brand-soft text-brand-primary',
+  currentStatus: 'bg-brand-primary text-white',
   planTitle: 'mt-5 mb-0 text-[1.65rem] font-extrabold tracking-[-0.045em]',
   planDescription: 'mt-3 mb-0 break-keep text-[0.88rem] leading-[1.8] min-[1024px]:min-h-[4.8rem]',
   regularMuted: 'text-ink-muted',
@@ -27,12 +29,13 @@ export const pricingPageStyles = {
   priceBlock: 'mt-7 mb-6 flex flex-col justify-end gap-2 min-[1024px]:min-h-[5.5rem]',
   // 세 카드의 가격 글자 크기를 같게 맞춥니다(예정가 카드 기준 1.7rem).
   price: 'm-0 break-keep text-[1.7rem] font-extrabold leading-tight tracking-[-0.045em]',
+  // 금액 뒤에 붙는 이용 기간("/ 30일")은 작고 옅게 둡니다.
+  pricePeriod: 'text-[0.9rem] font-semibold tracking-normal text-ink-muted',
   priceNote: 'm-0 text-[0.75rem] leading-relaxed',
   divider: 'h-px w-full border-0',
   regularDivider: 'bg-line',
   featuredDivider: 'bg-line',
-  featureHeading: 'mt-6 mb-4 text-[0.8rem] font-bold',
-  featureList: 'm-0 flex list-none flex-col gap-3 p-0',
+  limitList: 'mt-6 mb-0 flex list-none flex-col gap-3 p-0',
   featureItem: 'flex items-start gap-2.5 text-[0.85rem] leading-[1.7]',
   featureIcon: 'mt-[0.2rem] size-4 shrink-0',
   regularIcon: 'text-brand-primary',
@@ -42,6 +45,11 @@ export const pricingPageStyles = {
   availableButton: 'cursor-pointer bg-brand-primary text-white hover:bg-brand-hover focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-brand-primary',
   regularPendingButton: 'cursor-not-allowed bg-[#f1f2f4] text-ink-muted',
   featuredPendingButton: 'cursor-not-allowed bg-[#f1f2f4] text-ink-muted',
+  currentButton: 'cursor-default border border-brand-primary bg-white text-brand-primary',
+  // 체험 확인 다이얼로그의 안내 목록입니다.
+  trialPoints: 'm-0 flex list-disc flex-col gap-1.5 pl-5 text-[0.82rem] leading-[1.6] text-ink',
+  statusMessage: 'm-0 break-keep rounded-[1.25rem] border border-line bg-white px-5 py-4 text-center text-[0.86rem] leading-[1.75] text-ink',
+  inlineButton: 'cursor-pointer border-0 bg-transparent p-0 font-bold text-brand-primary underline underline-offset-2',
   // 두 줄까지의 높이를 미리 확보해, 안내 문구 길이가 달라도 세 카드의 버튼 높이가 같은 선에 놓입니다.
   footerNote: 'm-0 min-h-[2.4rem] text-center text-[0.7rem] leading-[1.65]',
   releaseNote: 'm-0 break-keep text-center text-[0.78rem] leading-[1.75] text-ink-muted [text-wrap:pretty]',
