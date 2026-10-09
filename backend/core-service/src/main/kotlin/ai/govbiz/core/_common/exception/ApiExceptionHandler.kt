@@ -77,6 +77,7 @@ import ai.govbiz.core.assistant.service.exception.AssistantToolsDisabledExceptio
 import ai.govbiz.core.supportprogram.service.admission.exception.SupportProgramRequestRejectedException
 import ai.govbiz.core.planusage.repository.exception.PlanUsageStoreException
 import ai.govbiz.core.planusage.service.exception.PlanQuotaExceededException
+import ai.govbiz.core.planusage.service.exception.PlanTrialException
 import jakarta.servlet.http.HttpServletRequest
 import java.time.format.DateTimeFormatter
 import java.net.URI
@@ -386,6 +387,27 @@ class ApiExceptionHandler {
             .header(HttpHeaders.CACHE_CONTROL, "no-store")
             .body(problem)
     }
+
+    /** 출시 전 무료 체험을 시작할 수 없는 이유를 코드로 알립니다. 이미 체험했거나 지금 요금제로는 체험할 수 없으면 409입니다. */
+    @ExceptionHandler(PlanTrialException::class)
+    fun handlePlanTrial(exception: PlanTrialException, request: HttpServletRequest): ResponseEntity<ProblemDetail> =
+        problemResponse(
+            when (exception.reason) {
+                PlanTrialException.Reason.USED -> ProblemDefinition(
+                    HttpStatus.CONFLICT, URI.create("urn:govbiz:problem:plan-trial-used"), "Plan Trial Used",
+                    "This plan has already been tried with this account.", "PLAN_TRIAL_USED",
+                )
+                PlanTrialException.Reason.UNAVAILABLE -> ProblemDefinition(
+                    HttpStatus.CONFLICT, URI.create("urn:govbiz:problem:plan-trial-unavailable"), "Plan Trial Unavailable",
+                    "The current plan cannot start this trial.", "PLAN_TRIAL_UNAVAILABLE",
+                )
+                PlanTrialException.Reason.EMAIL_UNVERIFIED -> ProblemDefinition(
+                    HttpStatus.FORBIDDEN, URI.create("urn:govbiz:problem:plan-trial-email-unverified"), "Plan Trial Email Unverified",
+                    "Verify the account email before starting a trial.", "PLAN_TRIAL_EMAIL_UNVERIFIED",
+                )
+            },
+            request,
+        )
 
     /** 사용량을 확인할 수 없으면 유료 기능을 실행하지 않고 정상 응답으로 숨기지 않습니다. */
     @ExceptionHandler(PlanUsageStoreException::class)

@@ -9,13 +9,30 @@
 
     <resultMap id="accountPlan" type="ai.govbiz.core.planusage.repository.mapper.AccountPlanDbRow">
         <result property="planCode" column="plan_code" />
+        <result property="source" column="source" />
         <result property="assignedAt" column="assigned_at" />
         <result property="endsAt" column="ends_at" />
     </resultMap>
 
     <select id="findPlan" resultMap="accountPlan">
-        SELECT plan_code, assigned_at, ends_at FROM account_plan WHERE account_id = #{accountId}
+        SELECT plan_code, source, assigned_at, ends_at FROM account_plan WHERE account_id = #{accountId}
     </select>
+
+    <select id="findTrialPlanCodes" resultType="string">
+        SELECT plan_code FROM plan_trial WHERE account_id = #{accountId} ORDER BY started_at
+    </select>
+
+    <insert id="insertTrial">
+        INSERT INTO plan_trial (account_id, plan_code, started_at, ends_at)
+        VALUES (#{accountId}, #{planCode}, #{startedAt}, #{endsAt})
+    </insert>
+
+    <insert id="assignTrialPlan">
+        INSERT INTO account_plan (account_id, plan_code, source, assigned_at, ends_at)
+        VALUES (#{accountId}, #{planCode}, 'TRIAL', #{startsAt}, #{endsAt}) AS assigned
+        ON DUPLICATE KEY UPDATE plan_code = assigned.plan_code, source = assigned.source,
+            assigned_at = assigned.assigned_at, ends_at = assigned.ends_at
+    </insert>
 
     <!-- 월 한도 작업 접수와 같은 계정 행을 잠가 같은 계정의 신청 문서 사용량 확인이 한 줄로 서게 합니다. -->
     <select id="lockAccount" resultType="long">

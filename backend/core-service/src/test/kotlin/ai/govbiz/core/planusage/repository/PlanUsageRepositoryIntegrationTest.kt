@@ -9,12 +9,15 @@ import ai.govbiz.core.applicationpreparation.repository.ApplicationDocumentGener
 import ai.govbiz.core.applicationpreparation.repository.ApplicationPreparationRepository
 import ai.govbiz.core.planusage.domain.AccountPlan
 import ai.govbiz.core.planusage.domain.PlanCode
+import ai.govbiz.core.planusage.domain.PlanSource
+import ai.govbiz.core.planusage.domain.PlanTrial
 import ai.govbiz.core.planusage.domain.PlanUsageFeature
 import ai.govbiz.core.planusage.domain.PlanUsageJob
 import ai.govbiz.core.planusage.domain.PlanUsagePeriod
 import ai.govbiz.core.planusage.domain.PlanUsageWindow
 import ai.govbiz.core.planusage.service.PlanUsageService
 import ai.govbiz.core.planusage.service.exception.PlanQuotaExceededException
+import ai.govbiz.core.planusage.service.exception.PlanTrialException
 import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.ZonedDateTime
@@ -73,7 +76,10 @@ class PlanUsageRepositoryIntegrationTest {
         jdbc.update("""INSERT INTO account_plan (account_id, plan_code, assigned_at, ends_at) VALUES (?, 'PLUS', ?, ?) AS assigned
             ON DUPLICATE KEY UPDATE plan_code = assigned.plan_code, assigned_at = assigned.assigned_at, ends_at = assigned.ends_at""",
             ownerId, starts, starts.plusDays(30))
-        assertEquals(AccountPlan(PlanCode.PLUS, starts.atZone(seoul), starts.plusDays(30).atZone(seoul)), repository.findPlan(ownerId))
+        assertEquals(
+            AccountPlan(PlanCode.PLUS, starts.atZone(seoul), starts.plusDays(30).atZone(seoul), source = PlanSource.OPERATOR),
+            repository.findPlan(ownerId),
+        )
 
         // 행을 지우면 FREE로 돌아갑니다.
         jdbc.update("DELETE FROM account_plan WHERE account_id = ?", ownerId)
@@ -154,6 +160,56 @@ class PlanUsageRepositoryIntegrationTest {
         // V57부터 월 한도 기능과 달 키(YYYY-MM)를 받습니다.
         jdbc.update("INSERT INTO plan_usage_counter VALUES (?, 'APPLICATION_DRAFT', '2026-10', 0, NOW(6))", ownerId)
         jdbc.update("INSERT INTO plan_usage_counter VALUES (?, 'COMBINATION_REVIEW', '2026-10', 0, NOW(6))", ownerId)
+    }
+
+    @Test
+    fun aTrialIsRecordedOncePerPlanAndAssignsATrialPassThatCanMoveUp() {
+        val member = requireNotNull(accounts.findById(ownerId)).copy(emailVerifiedAt = LocalDateTime.of(2026, 10, 1, 0, 0))
+        val plus = planUsage.startTrial(member, PlanCode.PLUS)
+        assertEquals(PlanCode.PLUS, plus.plan)
+        assertEquals(PlanSource.TRIAL, plus.planSource)
+        assertEquals(listOf(PlanCode.PREMIUM), plus.trialsAvailable)
+        val stored = repository.findPlan(ownerId)
+        assertEquals(PlanSource.TRIAL, stored.source)
+        assertEquals(requireNotNull(stored.startsAt).plusDays(PlanTrial.DAYS), stored.endsAt)
+        assertEquals(PlanTrialException.Reason.USED, assertThrows(PlanTrialException::class.java) {
+            planUsage.startTrial(member, PlanCode.PLUS)
+        }.reason)
+
+        // 플러스 체험 중 프리미엄 체험은 바로 바꾸고 새 이용 기간을 시작합니다.
+        val premium = planUsage.startTrial(member, PlanCode.PREMIUM)
+        assertEquals(PlanCode.PREMIUM, premium.plan)
+        assertEquals(emptyList<PlanCode>(), premium.trialsAvailable)
+        assertEquals(setOf(PlanCode.PLUS, PlanCode.PREMIUM), repository.findTrialPlans(ownerId))
+
+        // 운영 문서의 배정 SQL은 체험 배정을 운영자 배정으로 바꿉니다.
+        jdbc.update("""INSERT INTO account_plan (account_id, plan_code, source, assigned_at, ends_at) VALUES (?, 'PLUS', 'OPERATOR', NOW(6), NULL) AS assigned
+            ON DUPLICATE KEY UPDATE plan_code = assigned.plan_code, source = assigned.source, assigned_at = assigned.assigned_at, ends_at = assigned.ends_at""",
+            ownerId)
+        assertEquals(PlanSource.OPERATOR, repository.findPlan(ownerId).source)
+    }
+
+    @Test
+    fun theDatabaseKeepsOneTrialPerPlanOnlyForPaidPlansAndKnownSources() {
+        jdbc.update("INSERT INTO plan_trial VALUES (?, 'PLUS', NOW(6), NOW(6) + INTERVAL 14 DAY)", ownerId)
+        assertThrows(DataAccessException::class.java) {
+            jdbc.update("INSERT INTO plan_trial VALUES (?, 'PLUS', NOW(6), NOW(6) + INTERVAL 14 DAY)", ownerId)
+        }
+        assertThrows(DataAccessException::class.java) {
+            jdbc.update("INSERT INTO plan_trial VALUES (?, 'FREE', NOW(6), NOW(6) + INTERVAL 14 DAY)", ownerId)
+        }
+        assertThrows(DataAccessException::class.java) {
+            jdbc.update("INSERT INTO plan_trial VALUES (?, 'PREMIUM', NOW(6), NOW(6))", ownerId)
+        }
+        assertThrows(DataAccessException::class.java) {
+            jdbc.update("INSERT INTO account_plan (account_id, plan_code, source, assigned_at) VALUES (?, 'PLUS', 'PAID', NOW(6))", ownerId)
+        }
+        // 기존 배정 SQL처럼 source를 적지 않으면 운영자 배정입니다.
+        jdbc.update("INSERT INTO account_plan (account_id, plan_code, assigned_at) VALUES (?, 'PLUS', NOW(6))", ownerId)
+        assertEquals(PlanSource.OPERATOR, repository.findPlan(ownerId).source)
+
+        jdbc.update("DELETE FROM account WHERE id = ?", ownerId)
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM plan_trial WHERE account_id = ?", Int::class.java, ownerId))
     }
 
     @Test

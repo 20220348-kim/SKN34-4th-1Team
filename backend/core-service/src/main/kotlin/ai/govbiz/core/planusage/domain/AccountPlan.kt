@@ -2,9 +2,16 @@ package ai.govbiz.core.planusage.domain
 
 import java.time.ZonedDateTime
 
+/** 유료 요금제를 누가 배정했는지입니다. 운영자 배정(검증·제휴 계정, 결제 전 이용권)과 출시 전 무료 체험을 구분합니다. */
+enum class PlanSource {
+    OPERATOR,
+    TRIAL,
+}
+
 /**
  * 계정에 배정한 요금제입니다. 유료 요금제는 [startsAt]부터 30일씩을 한 이용 기간으로 세고, [endsAt]이 지나면 무료로 돌아갑니다.
  * 30일 이용권은 [endsAt]이 시작 30일 뒤인 배정이고, [endsAt]이 없는 배정(운영자·검증 계정)은 30일마다 새 이용 기간이 시작됩니다.
+ * [source]는 유료 배정을 누가 했는지이며 무료면 null입니다.
  * [unlimited]는 로컬 개발용으로 지정한 계정이며, 사용량은 그 요금제의 기간으로 세지만 한도로 막지 않습니다.
  */
 data class AccountPlan(
@@ -12,6 +19,7 @@ data class AccountPlan(
     val startsAt: ZonedDateTime? = null,
     val endsAt: ZonedDateTime? = null,
     val unlimited: Boolean = false,
+    val source: PlanSource? = null,
 ) {
     init {
         require(code == PlanCode.FREE || startsAt != null) { "A paid plan needs its start" }

@@ -4,6 +4,7 @@ import ai.govbiz.core.account.domain.Account
 import ai.govbiz.core.account.repository.AccountRepository
 import ai.govbiz.core.planusage.domain.AccountPlan
 import ai.govbiz.core.planusage.domain.PlanCode
+import ai.govbiz.core.planusage.domain.PlanTrial
 import ai.govbiz.core.planusage.domain.PlanUsageFeature
 import ai.govbiz.core.planusage.domain.PlanUsageJob
 import ai.govbiz.core.planusage.domain.PlanUsagePeriod
@@ -13,6 +14,7 @@ import ai.govbiz.core.planusage.repository.PlanUsageRepository
 import ai.govbiz.core.planusage.service.dto.PlanUsageItem
 import ai.govbiz.core.planusage.service.dto.PlanUsageResult
 import ai.govbiz.core.planusage.service.exception.PlanQuotaExceededException
+import ai.govbiz.core.planusage.service.exception.PlanTrialException
 import java.time.Clock
 import java.time.Duration
 import java.time.ZonedDateTime
@@ -178,7 +180,26 @@ class PlanUsageService(
             val used = if (feature.perRequest) counted else counted + repository.countJobs(account.id, feature, window)
             PlanUsageItem(feature, window.period, plan.limitOf(feature), used, window.resetsAt)
         }
-        return PlanUsageResult(plan.code, plan.endsAt, items)
+        return PlanUsageResult(plan.code, plan.endsAt, items, plan.source, PlanTrial.available(plan, repository.findTrialPlans(account.id)))
+    }
+
+    /**
+     * 출시 전 무료 체험을 시작합니다. 계정 행을 잠근 짧은 transaction에서 자격을 확인하고 체험 기록과 이용권을 함께 씁니다.
+     * 이메일 인증을 마친 회원만, 요금제마다 한 번, 지금보다 높은 요금제만 시작할 수 있습니다(운영자 배정 유료 요금제를 쓰는 동안은 안 됨).
+     */
+    fun startTrial(account: Account, plan: PlanCode): PlanUsageResult {
+        if (!account.isEmailVerified) throw PlanTrialException(PlanTrialException.Reason.EMAIL_UNVERIFIED)
+        transactions.executeWithoutResult { _ ->
+            repository.lockAccount(account.id)
+            val now = now()
+            val used = repository.findTrialPlans(account.id)
+            if (plan in used) throw PlanTrialException(PlanTrialException.Reason.USED)
+            if (plan !in PlanTrial.available(repository.findPlan(account.id).effectiveAt(now), used)) {
+                throw PlanTrialException(PlanTrialException.Reason.UNAVAILABLE)
+            }
+            repository.startTrial(account.id, plan, now, now.plusDays(PlanTrial.DAYS))
+        }
+        return usage(account, "")
     }
 
     private fun reserveGuest(clientAddress: String, feature: PlanUsageFeature, now: ZonedDateTime): () -> Unit {

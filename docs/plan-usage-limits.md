@@ -4,18 +4,40 @@
 (요금제 종류·배정·현재 요금제 조회), 하루 한도(AI 대화 검색·공고 원문 질문), 월 한도(신청 문서 초안·중복 검토), 유료 요금제의
 30일 이용권 기간과 기간 총량 한도를 다룬다. 기준 설계는 2026-10-07 「요금제별 사용량 한도 설계」와 2026-10-09 「요금제 설계」이고,
 결정마다 웹 조사 결과와 기존 설계 중 하나를 골랐다(섞지 않음). 모든 회원은 FREE에서 시작하며 결제·구독은 아직 받지 않는다.
-결제 1단계는 자동갱신 없는 30일 이용권, 그다음은 월 자동결제다. 지금은 운영자가 이용권을 SQL로 배정한다.
+결제 1단계는 자동갱신 없는 30일 이용권, 그다음은 월 자동결제다. 지금은 운영자가 이용권을 SQL로 배정하고,
+회원은 출시 전 무료 체험(플러스·프리미엄 각 14일)으로 유료 한도를 직접 써 볼 수 있다.
 
 ## 요금제
 
 | 요금제 | 코드 | 배정 |
 |---|---|---|
 | 무료 | `FREE` | 모든 회원의 기본값. `account_plan`에 행이 없으면 FREE다 |
-| 플러스 | `PLUS` | 30일 이용권. 결제 전이라 운영자가 `account_plan`에 배정한 계정만 |
-| 프리미엄 | `PREMIUM` | 30일 이용권. 결제 전이라 운영자가 `account_plan`에 배정한 계정만 |
+| 플러스 | `PLUS` | 30일 이용권. 결제 전이라 운영자가 `account_plan`에 배정한 계정과 14일 무료 체험 중인 계정만 |
+| 프리미엄 | `PREMIUM` | 30일 이용권. 결제 전이라 운영자가 `account_plan`에 배정한 계정과 14일 무료 체험 중인 계정만 |
 
 유료 배정은 `assigned_at`(이용권이 시작한 서울 시각)부터 `ends_at`까지 쓰고, `ends_at`이 지나면 행이 남아 있어도 FREE로 센다(V59).
 `ends_at`이 없는 배정(운영자·검증 계정)은 `assigned_at`부터 30일마다 새 이용 기간이 시작된다. 시작 전인 배정도 FREE다.
+`account_plan.source`(V60)는 누가 배정했는지이며 `OPERATOR`(운영자 배정, 기본값)와 `TRIAL`(출시 전 무료 체험)이다.
+
+## 출시 전 무료 체험
+
+결제를 받기 전이라 플러스·프리미엄 카드의 버튼으로 그 요금제를 14일 동안 무료로 써 보게 한다(리버스 트라이얼). 결제 수단을 받지 않아
+체험이 끝나면 자동 결제 없이 무료로 돌아간다.
+
+- **시작:** `POST /api/v1/plan-trials` `{plan: "PLUS" | "PREMIUM"}`. 로그인과 이메일 인증을 마친 회원만 쓴다. 계정 행을 잠근
+  짧은 transaction에서 자격을 확인하고, `plan_trial`(V60)에 체험 기록을 남긴 뒤 `account_plan`에 `source = TRIAL`, `assigned_at` = 지금,
+  `ends_at` = 지금 + 14일로 배정한다. 응답은 `201`과 새 `GET /api/v1/plan-usage` 본문이다.
+- **횟수:** 요금제마다 계정당 한 번이다. `plan_trial`의 기본 키 (계정, 요금제)가 같은 요금제를 두 번 기록하지 않는다.
+  프리미엄 체험이 끝난 뒤에도 아직 쓰지 않은 플러스 체험은 남는다.
+- **바꾸기:** 지금보다 높은 요금제로만 시작한다. 플러스 체험 중 프리미엄 체험은 바로 바꾸고 새 이용 기간(14일)을 시작하며,
+  플러스 체험 때 쓴 양은 넘기지 않는다. 체험 중 [무료로 돌아가기]는 두지 않고 기간이 끝나면 무료로 돌아간다.
+  운영자가 배정한 유료 요금제를 쓰는 동안은 체험을 시작하지 않는다(끝난 배정은 무료라 체험할 수 있다).
+- **한도:** 체험도 그 요금제의 이용 기간 한도(플러스 500·500·5·10, 프리미엄 1,500·1,500·20·40)를 그대로 쓴다.
+- **거절:** 이미 체험한 요금제 `409 PLAN_TRIAL_USED`, 운영자 배정 중이거나 지금보다 높지 않은 요금제 `409 PLAN_TRIAL_UNAVAILABLE`,
+  이메일 미인증 `403 PLAN_TRIAL_EMAIL_UNVERIFIED`, 그 밖의 요금제 값 400.
+- **조회:** `GET /api/v1/plan-usage`가 `planSource`(`OPERATOR`·`TRIAL`, 무료면 null)와 `trialsAvailable`(지금 시작할 수 있는 체험)을 함께 준다.
+- **보류:** 프리미엄 체험을 기업 등록(사업자번호 확인) 회원으로 좁히는 조건은 사용자 결정으로 보류했다. 지금은 이메일 인증 회원 모두가
+  두 요금제를 한 번씩 체험한다. 탈퇴 후 재가입으로 체험을 반복하는 남용은 재가입 남용과 함께 다음 단계에서 다룬다.
 
 요금제 종류는 Core `planusage/domain/PlanCode.kt`가 원본이고, DB는 `account_plan.plan_code`의 CHECK 제약으로 같은 세 값만 받는다.
 계정 행이 지워지면 배정·사용량 행도 함께 지워진다. 탈퇴는 계정 행을 남기는 soft delete라 사용량 행도 남지만,
@@ -100,6 +122,11 @@
 | E3 | 초기화 | 서울 자정·월초 | 달력 기준은 계획하기 쉽고 롤링 창은 초기화 시점을 예측하기 어렵다 | 기존 설계 | 방향이 같다 |
 | E4 | 세는 방식 | AI 전 조건부 UPDATE 예약 → 성공 확정 / 실패 해제, 요청 키 | 원자적 조건부 증가와 예약·확정·해제, 멱등 키로 이중 집계 방지 | 기존 설계 | 하루 한도는 AI 호출 전 조건부 증가로 예약하고 실패하면 되돌린다. 월 한도는 기존 요청 키 접수 transaction과 작업 표를 원장으로 써서 재시도·실패·만료를 별도 해제 없이 맞춘다 |
 | E5 | 화면 | "오늘 8/10회"·초기화 안내·업그레이드 버튼 | 사용량을 계속 보이고 80%부터 경고·선택지·초기화 날짜를 닫을 수 있게 보인다 | 웹 조사 | 경고 기준(80%)이 설계 시안에 없다. 결제가 없고 요금제 화면에 한도가 없어 웹·앱 모두 링크 없이 표시만 한다 |
+| T4 | 체험 기간 | — | 체험 기간은 14일이 가장 흔하고(62%), 길이는 핵심 가치를 한 번 겪는 시간에 맞춘다 | 웹 조사(사용자 확정) | 지원사업 하나를 찾고 원문 질문·신청 문서 초안까지 해 보기에 충분하고, 같은 한도를 짧은 기간에 줘 평균 원가가 30일보다 낮다 |
+| T5 | 체험 횟수 | — | 요금제별 1회 체험을 두고, 서버에서 (계정, 요금제) 고유 제약으로 먼저 기록해 동시에 눌러도 한 번만 시작한다 | 웹 조사(사용자 확정) | 플러스를 써 본 뒤 프리미엄도 비교할 수 있게 요금제마다 한 번이다. 기록 표의 기본 키가 중복을 막는다 |
+| T6 | 프리미엄 체험 대상 | — | 값이 큰 무료 혜택일수록 확인 단계를 더한다(사업자번호처럼 반복하기 어려운 식별자) | 보류(사용자 결정) | 기업 등록 회원만으로 좁히는 조건은 보류하고 이메일 인증 회원 모두에게 연다. 남용이 보이면 다시 정한다 |
+| T7 | 체험 중 바꾸기 | — | 상향은 즉시 적용한다. 리버스 트라이얼은 기간이 끝나면 무료로 내린다 | 웹 조사(사용자 확정) | 플러스 체험 중 프리미엄 체험은 바로 바꾼다. [무료로 돌아가기]는 두지 않는다 |
+| T8 | 앱의 체험 | 앱에는 결제·업그레이드·요금제 안내 링크를 두지 않는다(App Store 3.1.3) | — | 기존 설계 | 체험 시작은 웹 요금제 화면에서만 하고 앱은 지금 요금제와 체험 종료일만 보여 준다 |
 | E6 | 하루 한도 초기화 문구 | "자정(서울 시간)에 다시 채워져요." | 24시간 안의 초기화는 남은 시간(몇 시간 뒤)이 가장 덜 헷갈리고, 시계 시각만 적으면 오늘·내일과 시간대를 사용자가 따져야 한다. 하루를 넘으면 날짜를 함께 적는다 | 웹 조사 | 하루 한도는 남은 시간(분은 빼고 시간 단위로 반올림해 "약"을 붙임, 사용자 결정), 달 한도는 날짜로 적는다. 저장·응답은 절대 시각(`resetsAt`)으로 두고 화면을 그릴 때 계산한다 |
 
 구현 세부: 한도 숫자는 설계의 "플랜별 한도 테이블" 대신 코드 상수로 둔다. 관리 화면이 없어 DB 표는 바꾸는 방법(SQL·배포)이 같고
@@ -123,22 +150,30 @@
 [AI 사업계획서 서비스 비교](https://www.k-startup.ai/guides/ai-business-plan-services),
 [숨은 갱신·13조 6항](https://www.daeryunlaw.com/newsletter/news/243),
 [초기화 시각 표시](https://claudeissues.com/issue/28798-ux-usage-reset-times-should-include-the-date-not-just-the-time),
-[상대·절대 시각](https://cloudscape.design/patterns/general/timestamps/).
+[상대·절대 시각](https://cloudscape.design/patterns/general/timestamps/),
+[체험 기간(14일 62%)](https://userpilot.com/blog/free-trial-length-saas/),
+[리버스 트라이얼](https://www.growthunhinged.com/p/your-guide-to-reverse-trials),
+[요금제별 1회 체험](https://docs.diviengine.com/divi-membership/feature-overview/free-trials),
+[체험 남용·고유 제약](https://axonbuild.com/blog/free-trial-abuse/),
+[체험 남용 방지](https://payproglobal.com/how-to/prevent-free-trial-abuse/),
+[기간 중 변경](https://www.chargebee.com/docs/billing/2.0/usage-based-billing/mid-term-subscription-changes-ubb).
 
 ## 운영
 
 - 30일 이용권 배정(서울 시각, MySQL 세션은 UTC라 +09:00으로 바꿈):
-  `INSERT INTO account_plan (account_id, plan_code, assigned_at, ends_at) VALUES (?, 'PLUS', CONVERT_TZ(UTC_TIMESTAMP(6), '+00:00', '+09:00'),
+  `INSERT INTO account_plan (account_id, plan_code, source, assigned_at, ends_at) VALUES (?, 'PLUS', 'OPERATOR', CONVERT_TZ(UTC_TIMESTAMP(6), '+00:00', '+09:00'),
   CONVERT_TZ(UTC_TIMESTAMP(6), '+00:00', '+09:00') + INTERVAL 30 DAY) AS assigned ON DUPLICATE KEY UPDATE plan_code = assigned.plan_code,
-  assigned_at = assigned.assigned_at, ends_at = assigned.ends_at`. 다시 실행하면 그때부터 새 이용권이 시작된다. 행을 지우면 FREE로 돌아간다.
+  source = assigned.source, assigned_at = assigned.assigned_at, ends_at = assigned.ends_at`. 다시 실행하면 그때부터 새 이용권이 시작되고,
+  체험 중인 계정이면 체험 대신 운영자 배정이 된다(체험 기록은 남아 같은 요금제를 다시 체험하지 않는다). 행을 지우면 FREE로 돌아간다.
 - 테스트·제휴 계정 상향: 같은 SQL에서 `ends_at`을 NULL로 두면 30일마다 새 이용 기간이 시작되는 배정이다. 검증 스크립트(Compose·카탈로그
   분리·LLMOps)는 검증 DB의 테스트 회원만 PREMIUM(이용 기간 1,500회)으로 올려 호출한다.
+- 체험 기록 확인: `SELECT plan_code, started_at, ends_at FROM plan_trial WHERE account_id = ?`. 기록을 지우면 그 요금제를 다시 체험할 수 있다.
 - 오늘 사용량 확인: `SELECT feature, period_key, used_count FROM plan_usage_counter WHERE account_id = ? ORDER BY period_key DESC`.
   월 한도의 실제 사용량은 이 값(지운 작업분)과 작업 표 집계를 더한 `GET /api/v1/plan-usage` 값이다.
 
 ## 다음 단계(이번 범위 밖)
 
-결제 1단계(PG 연동·이용권 구매·만료 알림·청약철회 환불)와 2단계(월 자동결제·연간 결제), 이용권 연장·업그레이드 차액,
+체험 종료 전 알림, 프리미엄 체험의 기업 등록 조건, 결제 1단계(PG 연동·이용권 구매·만료 알림·청약철회 환불)와 2단계(월 자동결제·연간 결제), 이용권 연장·업그레이드 차액,
 정식 출시 때 무료 숫자, 관심 공고·파트너 모집글 개수와 파트너 제안 횟수, 요금제별 동시 분석·초안 수, 요금제 화면 한도표와 부가세 포함
 가격 표시, 같은 기업 좌석, 기업 맞춤 리포트 빈도, 기능별 토큰 원가 기록과 한도 실측 조정, 로그인 전 조건 정리 대화·도우미 상한,
 로그인 전 접속 주소 해시의 서버 비밀 적용, 탈퇴 후 재가입 남용은 그 뒤 작업에서 다룬다. 초안 동시 한도 초과 응답(422)과

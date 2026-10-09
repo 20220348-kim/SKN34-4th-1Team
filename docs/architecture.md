@@ -425,7 +425,9 @@ V59 `account_plan.ends_at`이 지나면 FREE 기준으로 돌아갑니다. 사�
 검토 삭제는 같은 transaction에서 그 달 사용분을 `plan_usage_counter`에 남깁니다(V57). 작업 표를 남기지 않는 신청 문서 경로(이전 동기
 양식 분석·문서 생성, 문항별 해석·초안)는 `PlanUsageService.consumeDraftProgram`이 AI 전에 같은 계정 행을 잠근 짧은 transaction에서 그
 공고를 V58 `plan_usage_draft_program`에 기록하고, 실패하면 그 기록만 지웁니다. 화면은 `GET /api/v1/plan-usage`로 남은 횟수와
-이용권이 끝나는 때를 읽습니다.
+이용권이 끝나는 때를 읽습니다. 출시 전 무료 체험은 `PlanTrialController → PlanUsageService.startTrial → PlanUsageRepository → MyBatis → MySQL`
+순서로 계정 행을 잠근 짧은 transaction에서 V60 `plan_trial`에 (계정, 요금제)마다 한 번 기록하고 `account_plan`에 `source = TRIAL`인
+14일 이용권을 배정합니다. 결제 수단을 받지 않아 끝나면 무료로 돌아갑니다.
 [한도·세는 규칙·판단 근거](plan-usage-limits.md)를 참고하세요.
 
 ## 검색·상세 조회·원문 근거 질문

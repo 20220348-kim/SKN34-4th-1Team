@@ -2,6 +2,7 @@ package ai.govbiz.core.planusage.repository
 
 import ai.govbiz.core.planusage.domain.AccountPlan
 import ai.govbiz.core.planusage.domain.PlanCode
+import ai.govbiz.core.planusage.domain.PlanSource
 import ai.govbiz.core.planusage.domain.PlanUsageFeature
 import ai.govbiz.core.planusage.domain.PlanUsageJob
 import ai.govbiz.core.planusage.domain.PlanUsageWindow
@@ -10,6 +11,7 @@ import ai.govbiz.core.planusage.repository.mapper.PlanUsageDraftProgramDbRow
 import ai.govbiz.core.planusage.repository.mapper.PlanUsageMapper
 import java.time.Clock
 import java.time.LocalDateTime
+import java.time.ZonedDateTime
 import java.time.temporal.ChronoUnit
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.dao.DataAccessException
@@ -25,8 +27,29 @@ class PlanUsageRepository(
     /** 계정에 배정한 요금제입니다. 배정이 없으면 무료입니다. 끝났는지는 [AccountPlan.effectiveAt]이 가립니다. */
     fun findPlan(accountId: Long): AccountPlan = store {
         mapper.findPlan(accountId)?.let { row ->
-            AccountPlan(PlanCode.valueOf(row.planCode), requireNotNull(row.assignedAt).atZone(clock.zone), row.endsAt?.atZone(clock.zone))
+            AccountPlan(
+                PlanCode.valueOf(row.planCode), requireNotNull(row.assignedAt).atZone(clock.zone), row.endsAt?.atZone(clock.zone),
+                source = PlanSource.valueOf(row.source),
+            )
         } ?: AccountPlan.FREE
+    }
+
+    /** 이 계정이 체험을 시작한 적 있는 요금제입니다. */
+    fun findTrialPlans(accountId: Long): Set<PlanCode> = store {
+        mapper.findTrialPlanCodes(accountId).map(PlanCode::valueOf).toSet()
+    }
+
+    /**
+     * 체험 기록을 남기고 그 요금제의 체험 이용권을 배정합니다. 호출한 Service의 transaction 안에서 계정 행을 잠근 뒤 부릅니다.
+     * 기록의 기본 키가 (계정, 요금제)라 같은 요금제를 두 번 기록하지 않습니다.
+     */
+    fun startTrial(accountId: Long, plan: PlanCode, startsAt: ZonedDateTime, endsAt: ZonedDateTime) {
+        store {
+            val from = startsAt.toLocalDateTime().truncatedTo(ChronoUnit.MICROS)
+            val to = endsAt.toLocalDateTime().truncatedTo(ChronoUnit.MICROS)
+            check(mapper.insertTrial(accountId, plan.name, from, to) == 1) { "plan trial was not recorded" }
+            mapper.assignTrialPlan(accountId, plan.name, from, to)
+        }
     }
 
     /** 호출한 transaction이 끝날 때까지 계정 행을 잠급니다. 월 한도 작업 접수와 같은 행이라 같은 계정의 확인이 한 줄로 섭니다. */

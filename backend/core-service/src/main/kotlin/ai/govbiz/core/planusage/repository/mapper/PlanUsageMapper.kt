@@ -14,6 +14,7 @@ data class PlanUsageCounterDbRow(
 /** 계정에 배정한 요금제 한 행입니다. [endsAt]이 없으면 끝나는 때가 없는 배정입니다. */
 data class AccountPlanDbRow(
     var planCode: String = "",
+    var source: String = "",
     var assignedAt: LocalDateTime? = null,
     var endsAt: LocalDateTime? = null,
 )
@@ -34,6 +35,24 @@ data class PlanUsageDraftProgramDbRow(
 @Mapper
 interface PlanUsageMapper {
     fun findPlan(@Param("accountId") accountId: Long): AccountPlanDbRow?
+
+    /** 이 계정이 체험을 시작한 적 있는 요금제 코드입니다. */
+    fun findTrialPlanCodes(@Param("accountId") accountId: Long): List<String>
+
+    fun insertTrial(
+        @Param("accountId") accountId: Long,
+        @Param("planCode") planCode: String,
+        @Param("startedAt") startedAt: LocalDateTime,
+        @Param("endsAt") endsAt: LocalDateTime,
+    ): Int
+
+    /** 체험 이용권을 배정합니다. 끝난 배정이 남아 있으면 바꿉니다. */
+    fun assignTrialPlan(
+        @Param("accountId") accountId: Long,
+        @Param("planCode") planCode: String,
+        @Param("startsAt") startsAt: LocalDateTime,
+        @Param("endsAt") endsAt: LocalDateTime,
+    ): Int
 
     /** 탈퇴하지 않은 계정 행을 잠그고 ID를 돌려줍니다. 없으면 null입니다. */
     fun lockAccount(@Param("accountId") accountId: Long): Long?
