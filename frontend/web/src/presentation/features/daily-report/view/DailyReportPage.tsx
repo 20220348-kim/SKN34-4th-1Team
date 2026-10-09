@@ -42,18 +42,21 @@ export function DailyReportPage() {
         actions={vm.company ? <Link className={styles.secondaryButton} to={appPaths.profile}>기업 정보 수정</Link> : undefined}
       />
       <main className={styles.content}>
-        <div className={s.column}>
-          {vm.company && <p className={s.basis}>{vm.company.companyName} · {vm.company.region} · {vm.company.industry} 기준</p>}
-          {isLoading && <p role="status" className="sr-only">리포트를 불러오는 중입니다.</p>}
-          {showSkeleton && <ReportSkeleton />}
-          {!vm.loaded && vm.error && <StateCard tone="danger" title="리포트를 불러오지 못했어요" text={vm.error.text}>
-            <button className={s.smallPrimaryButton} type="button" onClick={() => void vm.load()}>다시 시도</button>
-          </StateCard>}
-          {vm.loaded && settings && <>
-            <ReportArea vm={vm} />
-            <ReportSettings vm={vm} />
-            <p className={s.note}>서류 안내는 공식 HTML 본문 근거에 한정돼요. PDF·HWP 첨부파일 전체 검토와 뉴스 브리핑은 하지 않아요. 신청 전 최신 공고와 담당 기관에서 확인해 주세요.</p>
-          </>}
+        <div className={styles.columns}>
+          <div className={s.column}>
+            {vm.company && <p className={s.basis}>{vm.company.companyName} · {vm.company.region} · {vm.company.industry} 기준</p>}
+            {isLoading && <p role="status" className="sr-only">리포트를 불러오는 중입니다.</p>}
+            {showSkeleton && <ReportSkeleton />}
+            {!vm.loaded && vm.error && <StateCard tone="danger" title="리포트를 불러오지 못했어요" text={vm.error.text}>
+              <button className={s.smallPrimaryButton} type="button" onClick={() => void vm.load()}>다시 시도</button>
+            </StateCard>}
+            {vm.loaded && settings && <>
+              <ReportArea vm={vm} />
+              <p className={s.note}>서류 안내는 공식 HTML 본문 근거에 한정돼요. PDF·HWP 첨부파일 전체 검토와 뉴스 브리핑은 하지 않아요. 신청 전 최신 공고와 담당 기관에서 확인해 주세요.</p>
+            </>}
+          </div>
+          {/* 수신 설정은 넓은 화면에서 오른쪽 열, 좁은 화면에서는 리포트 아래에 둡니다. */}
+          {vm.loaded && settings && <div className={s.column}><ReportSettings vm={vm} /></div>}
         </div>
       </main>
       <WorkspaceToast notice={vm.notice} onClose={vm.dismissNotice} />
@@ -278,7 +281,7 @@ function ReportItem({ item, today }: { item: DailyReportItem; today: string }) {
 function ReportSettings({ vm }: { vm: ViewModel }) {
   const open = vm.settingsOpen
   const sectionRef = useRef<HTMLElement>(null)
-  // 설정은 화면 맨 아래에 있으므로, 펼친 채로 열라는 주소로 왔으면 그 자리까지 내려 줍니다.
+  // 좁은 화면에서는 설정이 리포트 아래에 있으므로, 펼친 채로 열라는 주소로 왔으면 그 자리까지 내려 줍니다.
   useEffect(() => {
     if (vm.settingsOpenByLink) sectionRef.current?.scrollIntoView?.({ block: 'start' })
     // 처음 열 때 한 번만 내립니다.

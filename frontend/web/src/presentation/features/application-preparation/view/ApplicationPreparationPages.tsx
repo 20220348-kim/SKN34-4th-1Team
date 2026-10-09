@@ -712,10 +712,11 @@ function ApplicationPreparationList() {
       {showSkeleton && <div className={s.cardGrid} aria-hidden="true">
         {[0, 1, 2, 3, 4, 5].map((index) => <div className={s.listCard} key={index}><ListCardSkeleton /></div>)}
       </div>}
-      {/* 다른 작업 화면과 같은 공용 빈 화면(가운데 정렬)을 씁니다. 새 문서 버튼은 머리글에 있어 여기에는 두지 않습니다. */}
+      {/* 다른 작업 화면과 같은 공용 빈 화면(가운데 정렬)을 씁니다. 중복 검토 목록처럼 머리글 버튼과 같은 [새 문서]를 빈 화면에도 둡니다. */}
       {vm.page && items.length === 0 && vm.analyses.length === 0 && !vm.isInitialLoading && <EmptyState
         title={vm.status === undefined ? '아직 시작한 신청 문서가 없습니다.' : vm.status === 'done' ? '완료한 신청 문서가 없습니다.' : '진행 중인 신청 문서가 없습니다.'}
-        description="새 문서에서 공식 양식과 지원 분야를 확인한 뒤 시작해 주세요." />}
+        description="새 문서에서 공식 양식과 지원 분야를 확인한 뒤 시작해 주세요."
+        action={{ label: '새 문서', to: appPaths.applicationPreparationNew }} />}
       {items.length + vm.analyses.length > 0 && <ul className={`${s.cardGrid} ${refreshing ? k.stale : ''}`} aria-label="신청 준비 목록" aria-busy={refreshing || vm.isLoadingMore}>
         {/* 양식만 분석해 둔 공고는 신청 문서 카드 앞에 "양식 분석" 카드로 둡니다. */}
         {vm.analyses.map((row) => <FormAnalysisCard key={`analysis-${row.job.id}`} row={row} readAt={vm.analysesReadAt} unseen={vm.isAnalysisUnseen(row.job)} />)}
