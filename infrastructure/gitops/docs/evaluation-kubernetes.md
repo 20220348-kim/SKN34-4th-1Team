@@ -95,7 +95,7 @@ digest 문법 검사만으로 이미지를 신뢰하지 않는다. 실행기는 
 이전은 별도 단계다. namespace나 ClusterIP만으로 네트워크 접근이 격리됐다고 간주하지 않는다.
 실제 배포 전 CNI의 NetworkPolicy 집행·Prefect API 접근 제한을 검증한다.
 
-세 릴리스는 component별 ingress NetworkPolicy를 함께 렌더링한다. Prefect의 TCP 4200은 같은
+세 릴리스는 component별 ingress·egress NetworkPolicy를 함께 렌더링한다. Prefect의 TCP 4200은 같은
 평가 namespace의 `evaluation-runner`와 `govbiz-msa`의 `ops-service` Pod만 허용한다. 결과 서버의
 TCP 8010은 `govbiz-msa/ops-service`만 허용하고, 실행기로 들어오는 Pod 트래픽은 모두 차단한다.
 Ops API와 sync는 같은 Pod이므로 같은 허용 규칙을 사용한다. namespaceSelector와 podSelector는
@@ -103,9 +103,30 @@ Ops API와 sync는 같은 Pod이므로 같은 허용 규칙을 사용한다. nam
 정책은 Argo sync wave -1로 Deployment보다 먼저 생성한다. 이미지·소스 계획 검증에서도 정책 누락,
 포트·peer 확대, 잘못된 selector와 적용 순서를 거부한다.
 
-이번 정책은 ingress만 제한한다. 실행기의 Ops·Langfuse·DNS 등 egress는 기존 연결을 유지하며,
-외부 통신 통제·다른 NetworkPolicy가 합산하는 허용·hostNetwork 및 노드 접근까지 차단했다고
-보고하지 않는다. 기존 데이터나 클러스터에 직접 적용하지 않고 검증된 SHA의 수동 Argo 동기화에 포함한다.
+Prefect·결과 서버는 새 outbound 연결을 허용하지 않는다. 실행기는 아래 목적지와 포트만 허용한다.
+허용된 inbound 연결에 대한 응답은 별도의 outbound 허용 규칙을 추가하지 않는다.
+
+| 실행기 egress 목적지 | 허용 포트 | 대상 제한 |
+| --- | --- | --- |
+| CoreDNS | UDP·TCP 53 | `kube-system` namespace의 `k8s-app=kube-dns` Pod |
+| Prefect | TCP 4200 | 같은 평가 namespace의 `app.kubernetes.io/name=prefect` Pod |
+| Ops API | TCP 8000 | `govbiz-msa` namespace의 `app.kubernetes.io/name=ops-service` Pod |
+| Langfuse | TCP 3000 | 아래 URL에서 결정한 단일 목적지 |
+
+Ops URL은 `http://ops-service.govbiz-msa.svc.cluster.local:8000`으로 고정한다. Langfuse URL은
+`http://<RFC1918 사설 IPv4>:3000` 또는
+`http://langfuse-web.govbiz-observability.svc.cluster.local:3000`만 허용한다. Compose 주소는 정확한
+`/32` 한 개만 허용하고, Kubernetes 주소는 `govbiz-observability` namespace와
+`app.kubernetes.io/name=langfuse-web` Pod selector를 함께 사용한다. 공개 IP·loopback·link-local·
+임의 DNS 이름·다른 포트·인증정보·경로·IPv6는 Python 검사와 직접 Helm 렌더링 모두에서 거절한다.
+Kubernetes URL 허용은 Langfuse의 실제 이전 완료를 의미하지 않는다. Compose 컨테이너 주소가
+바뀌면 현재 주소·인증을 다시 검증해 계획을 갱신하며, 이를 피하려고 서브넷 전체를 허용하지 않는다.
+
+복원 때 만든 namespace 전체의 `deny-all`은 유지한다. NetworkPolicy의 허용은 합산되므로
+Chart의 명시적인 ingress·egress 규칙만 추가하면 필요한 통신을 열 수 있다
+([NetworkPolicy의 격리와 허용 규칙](https://kubernetes.io/docs/concepts/services-networking/network-policies/#the-two-sorts-of-pod-isolation)).
+다른 정책이 추가한 허용·hostNetwork·노드 접근까지 통제했다고 보고하지 않는다. DNS 이름별 필터나
+HTTP 경로별 제한도 아니다. 기존 개인 환경에 바로 적용하지 않고 검증된 SHA의 수동 Argo 동기화에 포함한다.
 
 전환 후 경로는 `Ops API → Prefect Service → 실행기 → 결과 PVC → 결과 서버 → Ops API/sync`다.
 실행기에서 Ops로의 예산·사용량 요청과 Langfuse 점수 기록도 유지한다.
@@ -156,7 +177,7 @@ python3 -B infrastructure/gitops/scripts/evaluation_release.py \
   --node <대상-노드> \
   --prefect-claim <복원된-Prefect-PVC> \
   --results-claim <복원된-결과-PVC> \
-  --langfuse-url http://<접근-가능한-Langfuse-호스트>:3000
+  --langfuse-url http://<검증한-Langfuse-사설-IPv4>:3000
 ```
 
 `--ops-api-url`의 기본값은 `http://ops-service.govbiz-msa.svc.cluster.local:8000`이다.
@@ -328,7 +349,7 @@ python3 -B infrastructure/gitops/scripts/evaluation_release.py \
   --langfuse-url "$LANGFUSE_URL"
 ```
 
-Langfuse 주소는 실제 사용 중인 접근 가능한 주소로 지정한다. 기존 수동 입력 방식의 계획 생성도
+Langfuse 주소는 위 egress 계약에 맞는 실제 사용 중인 주소로 지정한다. 기존 수동 입력 방식의 계획 생성도
 유지하지만 그 모드에서는 `retainedStorageIdentityVerified=false`다.
 
 연결 모드는 **읽기 전용**이며 다음 순서로 동작한다.
@@ -481,8 +502,10 @@ python3 -B infrastructure/gitops/scripts/evaluation_network_probe.py \
 
 이 모드는 임시 namespace 두 개, 합성 HTTP Pod 여섯 개와 Chart의 ClusterIP Service 두 개를 사용한다.
 실제 Prefect·실행기·결과 서버 프로세스, Secret, PVC는 생성하지 않는다. 평가 namespace와 `govbiz-msa`의 관계만 임시
-namespace로 바꾸며 Pod selector·허용 포트·ingress 규칙은 렌더링 결과를 사용한다. 렌더링 결과가
-임시 namespace 밖을 지정하면 생성 전에 차단한다. 원본 정책 spec 해시와 namespace 치환 내역을
+namespace로 바꾸며 Pod selector·허용 포트·ingress·egress 규칙은 렌더링 결과를 사용한다.
+DNS egress의 `kube-system/kube-dns` selector는 유지한다. Langfuse에는 합성 주소의 `/32`를 렌더링하지만
+실제 요청을 보내지 않으며 이 경로는 검증 범위에 포함하지 않는다. 알 수 없는 namespace selector는
+생성 전에 차단한다. 원본 정책 spec 해시와 namespace 치환 내역을
 보고서의 `chartPolicySpecSha256`·`namespaceRebinding`에 기록한다.
 
 | 출발 Pod | 대상 | 정책 적용 중 기대 결과 |
@@ -495,14 +518,19 @@ namespace로 바꾸며 Pod selector·허용 포트·ingress 규칙은 렌더링 
 | 평가 namespace의 가짜 `ops-service` | 결과 서버 / TCP 8010 | 차단 |
 | 다른 namespace의 `evaluation-runner` | Prefect / TCP 4200 | 차단 |
 | Ops namespace의 `ops-service` | 실행기 대역 / TCP 8090 | 차단 |
+| 평가 namespace의 `evaluation-runner` | Ops 대역 / TCP 8000 | 허용 |
+| 평가 namespace의 `evaluation-runner` | 같은 namespace의 가짜 Ops / TCP 8000 | 차단 |
+| 평가 namespace의 `evaluation-runner` | Ops namespace의 다른 label Pod / TCP 8000 | 차단 |
+| Prefect 대역 | Ops 대역 / TCP 8000 | 차단 |
+| 결과 서버 대역 | Ops 대역 / TCP 8000 | 차단 |
 
 실행기 대역은 TCP 8090에서 의도적으로 응답하므로 차단 결과를 실제 실행기의 열린 포트 부재로
-혼동하지 않는다. 모든 경로는 정책 적용 전·제거 후에 연결되어야 하며, 세 대상 서버의 loopback
+혼동하지 않는다. 모든 경로는 정책 적용 전·제거 후에 연결되어야 하며, 여섯 대상 서버의 loopback
 응답도 확인한다.
 
 Prefect·결과 서버를 향하는 일곱 경로는 **Pod IP·Service ClusterIP·Service DNS**를 각각 확인한다.
-실행기는 Chart에 Service가 없으므로 기존 Pod IP 경로만 검사한다. 총 22개 검사에서 허용 9개·차단
-13개가 기대 결과이며, 기존 Pod IP 키에 `__cluster_ip`·`__service_dns` 접미사로 결과를 구분한다.
+실행기 ingress와 추가 egress 다섯 경로는 Pod IP로 검사한다. 총 27개 검사에서 허용 10개·차단
+17개가 기대 결과이며, 기존 Pod IP 키에 `__cluster_ip`·`__service_dns` 접미사로 결과를 구분한다.
 Service는 같은 Chart의 selector·포트·이름 있는 `targetPort: http`를 그대로 사용한다. 잘못된 selector,
 외부 IP, 추가 Service, 예상하지 않은 포트·namespace는 리소스 생성 전에 거부한다.
 
@@ -512,19 +540,21 @@ DNS 조회 실패·다른 IP 응답은 접근 차단 성공이 아니라 오류�
 계약이며 사용자 정의 클러스터 도메인·IPv6 검증으로 일반화하지 않는다.
 [Kubernetes Service DNS 형식](https://kubernetes.io/docs/concepts/services-networking/dns-pod-service/#services)을 따른다.
 
-정책 전파는 최대 240초의 관찰 구간에서 전체 22개 결과가 세 번 연속 일치해야 통과한다.
+정책 전파는 최대 240초의 관찰 구간에서 전체 27개 결과가 세 번 연속 일치해야 통과한다.
 진행 중인 요청에는 별도의 제한 시간이 있다. 기존 기본 검사의 45초 관찰 구간은 유지한다.
 
 LLMOps CI의 기존 `--evaluation-runtime` 단계에서도 이 모드를 필수 실행한다. Chart 프로파일의
-집행 검증, Service ClusterIP·DNS 확인과 임시 자원 정리가 모두 성공해야 평가 PVC 복원·런타임 기동 단계로 진행한다. 실패·
+집행 검증, Service ClusterIP·DNS·실행기의 클러스터 egress 확인과 임시 자원 정리가 모두 성공해야 평가 PVC 복원·런타임 기동 단계로 진행한다. 실패·
 불명확·다른 프로파일 결과는 통과시키지 않는다. 보고서는
 `evaluation_kubernetes_runtime.network_policy_probe`에 남긴다. 추가 클러스터를 만들거나 기존
 실행 환경을 중지하지 않고, CI가 소유한 kind 클러스터를 사용한다.
 
-성공 시 `serviceClusterIPVerified=true`, `serviceDnsVerified=true`와
+성공 시 `serviceClusterIPVerified=true`, `serviceDnsVerified=true`, `runnerClusterEgressVerified=true`와
 `addressModes=[pod_ip, cluster_ip, service_dns]`를 기록한다. Pod IP 검사만 통과한 이전 보고서는 새 CI
-단계의 통과 근거가 아니다. 이 결과는 단일 노드 IPv4 합성 Pod·Service·DNS에 대한 검사다.
-다중 노드·IPv6·애플리케이션 인증·외부 egress 검증과 구분하며 `evaluationRuntimeVerified=false`를 유지한다.
+단계의 통과 근거가 아니다. ingress만 검사한 이전 결과도 새 egress 확인을 대신하지 않는다.
+이 결과는 단일 노드 IPv4 합성 Pod·Service·DNS와 위 다섯 egress 경로에 대한 검사다.
+다중 노드·IPv6·애플리케이션 인증·Langfuse 연결 검증과 구분하며
+`evaluationRuntimeVerified=false`, `langfuseEgressVerified=false`를 유지한다.
 
 2026-10-08 기존 Pod IP 전용 Chart 모드 실행은 `ENFORCED`였다. 허용 3개·차단 5개 경로가 세 번
 연속 기대 결과와 일치했고, 정책 제거 후 8개 경로의 연결 복구와 임시 namespace 정리를 확인했다.
@@ -543,6 +573,14 @@ namespace 두 개와 하위 Pod·Service·NetworkPolicy 정리를 확인했다. 
 `cleanupComplete=true`였고, 별도 namespace 조회에서도 검사 자원이 남지 않았음을 확인했다.
 로컬 결과는 Git에서 제외되는 `work/evaluation-chart-network-20261009.json`에 보관한다.
 `evaluationRuntimeVerified=false`, `productionCutover=false`는 유지한다.
+
+같은 날 egress를 추가한 작업본으로 27개 경로를 실제 개인 클러스터에서 검사했다. 정책 적용 전·
+제거 후 27개 모두 연결됐고, 적용 중 허용 10개·차단 17개가 세 번 연속 일치했다.
+`runnerClusterEgressVerified=true`, `serviceClusterIPVerified=true`, `serviceDnsVerified=true`,
+`cleanupComplete=true`와 임시 namespace 부재를 확인했다. 로컬 결과는
+`work/evaluation-egress-network-20261009.json`에 보관한다. 관련 오프라인 테스트 105개도 통과했다.
+Langfuse에 실제 요청을 보낸 검사는 아니므로 `langfuseEgressVerified=false`를 유지하며,
+이 변경을 포함한 SHA의 전체 CI·실제 평가 실행은 아직 검증 대기다.
 
 ## 평가 Argo 선언 등록
 
@@ -681,6 +719,7 @@ LLMOps CI의 기존 격리 통합 검증에 `--evaluation-runtime` 단계를 연
 3. `environments/evaluation`의 배포용 values를 읽고 검증 전용 이미지·PVC·노드·연결 주소와 replica만
    바꾸어 렌더링한다. 실행기의 2Gi, 결과 서버의 256Mi 등 구성요소별 CPU·메모리 요청/한도를 유지한다.
    결과 서버의 자료 복사 init container도 같은 제한을 사용한다. 공통 Chart 기본값만으로 검증하지 않는다.
+   복원 namespace의 `deny-all`을 제거하지 않고 Chart ingress·egress 허용만 추가한다.
    실행기·결과 서버만 로컬 태그로 kind에 적재한다. Prefect는 원본 Compose 이미지 ID와 고정 digest의
    이미지 ID가 같은지 검사하고, 복원 helper가 확보한 원본 참조를 그대로 사용한다.
    같은 이미지로 렌더링한 Prefect·결과 서버를 먼저 기동하고 실행기 1개를 시작한다. 자동 migration은
@@ -699,7 +738,7 @@ LLMOps CI의 기존 격리 통합 검증에 `--evaluation-runtime` 단계를 연
 `scope=disposable_kubernetes_evaluation_runtime`, `observability_runtime=isolated_compose`,
 `production_cutover=false`, `personal_environment_verified=false`를 명시한다. NetworkPolicy 성공은
 별도 합성 검사를 통과한 경우에만 `network_policy_enforcement_verified=true`로 기록하며 범위는
-`network_policy_scope=single_node_synthetic_chart_ingress_pod_service_dns`다. 이 결과는 Argo CD 배포·공개 이미지
+`network_policy_scope=single_node_synthetic_chart_ingress_runner_cluster_egress_pod_service_dns`다. 이 결과는 Argo CD 배포·공개 이미지
 발행·운영 PVC 인계의 증거가 아니다. 로컬 단위·렌더링 검사만 통과한 상태에서는
 **실제 런타임 검증은 최신 SHA CI 대기**다.
 

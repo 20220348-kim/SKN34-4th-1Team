@@ -201,7 +201,7 @@ class DormantStatusTests(unittest.TestCase):
             self.fork,
             state="state",
             restore_report=self.report_path,
-            langfuse_url="http://langfuse:3000",
+            langfuse_url="http://172.20.0.2:3000",
         )
 
     def observe(self):
@@ -464,7 +464,7 @@ class DormantStatusTests(unittest.TestCase):
                     "--restore-report",
                     "restore.json",
                     "--langfuse-url",
-                    "http://langfuse:3000",
+                    "http://172.20.0.2:3000",
                 ],
             ),
             patch.object(release, "from_origin", return_value=self.fork),

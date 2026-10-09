@@ -148,7 +148,9 @@ def chart_fixture(namespace, ops_namespace, token, node, image, helm):
     values["ops-artifacts"]["evidenceImage"] = image
     values["evaluation-runner"]["runner"] = {
         "opsApiUrl": "http://ops-service.govbiz-msa.svc.cluster.local:8000",
-        "langfuseUrl": "http://langfuse.govbiz-observability.svc.cluster.local:3000",
+        # Only the declared cluster egress is exercised here. Real Compose
+        # Langfuse authentication/traffic is covered by the runtime CI stage.
+        "langfuseUrl": "http://192.168.240.1:3000",
     }
     rendered = render_bundle(values, namespace, helm)
     if set(rendered) != set(COMPONENTS):
@@ -203,14 +205,29 @@ def chart_fixture(namespace, ops_namespace, token, node, image, helm):
             json.dumps(policy["spec"], sort_keys=True).encode()
         ).hexdigest()
         policy["metadata"]["labels"] = {LABEL: token}
-        for rule in policy["spec"].get("ingress", []):
-            for peer in rule.get("from", []):
-                if "namespaceSelector" in peer:
-                    if peer["namespaceSelector"] != {
+        for direction, key in (("ingress", "from"), ("egress", "to")):
+            for rule in policy["spec"].get(direction, []):
+                for peer in rule.get(key, []):
+                    if "namespaceSelector" not in peer:
+                        continue
+                    selector = peer["namespaceSelector"]
+                    if (
+                        direction == "egress"
+                        and selector
+                        == {
+                            "matchLabels": {
+                                "kubernetes.io/metadata.name": "kube-system"
+                            }
+                        }
+                        and peer.get("podSelector")
+                        == {"matchLabels": {"k8s-app": "kube-dns"}}
+                    ):
+                        continue
+                    if selector != {
                         "matchLabels": {"kubernetes.io/metadata.name": "govbiz-msa"}
                     }:
-                        raise ValueError("Unexpected chart source namespace selector")
-                    peer["namespaceSelector"]["matchLabels"]["kubernetes.io/metadata.name"] = (
+                        raise ValueError("Unexpected chart peer namespace selector")
+                    selector["matchLabels"]["kubernetes.io/metadata.name"] = (
                         ops_namespace
                     )
         resources.append(policy)
@@ -219,9 +236,9 @@ def chart_fixture(namespace, ops_namespace, token, node, image, helm):
         (namespace, "prefect", "prefect", 4200),
         (namespace, "ops-artifacts", "ops-artifacts", 8010),
         (namespace, "evaluation-runner", "evaluation-runner", PORT),
-        (namespace, "impostor-ops", "ops-service", PORT),
-        (ops_namespace, "ops", "ops-service", PORT),
-        (ops_namespace, "foreign-runner", "evaluation-runner", PORT),
+        (namespace, "impostor-ops", "ops-service", 8000),
+        (ops_namespace, "ops", "ops-service", 8000),
+        (ops_namespace, "foreign-runner", "evaluation-runner", 8000),
     ):
         resource = pod(ns, token, name, component, node, image, port=port)
         resource["metadata"]["labels"]["app.kubernetes.io/name"] = component
@@ -232,16 +249,58 @@ def chart_fixture(namespace, ops_namespace, token, node, image, helm):
         "ops_to_prefect": (ops_namespace, "ops", "prefect", 4200, True),
         "ops_to_artifacts": (ops_namespace, "ops", "ops-artifacts", 8010, True),
         "runner_to_prefect": (namespace, "evaluation-runner", "prefect", 4200, True),
-        "runner_to_artifacts": (namespace, "evaluation-runner", "ops-artifacts", 8010, False),
+        "runner_to_artifacts": (
+            namespace,
+            "evaluation-runner",
+            "ops-artifacts",
+            8010,
+            False,
+        ),
         "impostor_ops_to_prefect": (namespace, "impostor-ops", "prefect", 4200, False),
-        "impostor_ops_to_artifacts": (namespace, "impostor-ops", "ops-artifacts", 8010, False),
-        "foreign_runner_to_prefect": (ops_namespace, "foreign-runner", "prefect", 4200, False),
+        "impostor_ops_to_artifacts": (
+            namespace,
+            "impostor-ops",
+            "ops-artifacts",
+            8010,
+            False,
+        ),
+        "foreign_runner_to_prefect": (
+            ops_namespace,
+            "foreign-runner",
+            "prefect",
+            4200,
+            False,
+        ),
         "ops_to_runner": (ops_namespace, "ops", "evaluation-runner", PORT, False),
+        "runner_to_ops": (namespace, "evaluation-runner", "ops", 8000, True),
+        "runner_to_impostor_ops": (
+            namespace,
+            "evaluation-runner",
+            "impostor-ops",
+            8000,
+            False,
+        ),
+        "runner_to_foreign_runner": (
+            namespace,
+            "evaluation-runner",
+            "foreign-runner",
+            8000,
+            False,
+        ),
+        "prefect_to_ops": (namespace, "prefect", "ops", 8000, False),
+        "artifacts_to_ops": (namespace, "ops-artifacts", "ops", 8000, False),
     }
     servers = [
         (namespace, name, port)
         for name, port in (("prefect", 4200), ("ops-artifacts", 8010), ("evaluation-runner", PORT))
     ]
+    servers.extend(
+        [
+            (namespace, "impostor-ops", 8000),
+            (ops_namespace, "ops", 8000),
+            (ops_namespace, "foreign-runner", 8000),
+        ]
+    )
     return pods, resources, routes, servers, hashes, services
 
 
@@ -473,7 +532,7 @@ def exercise(kube, node, *, helm=None):
             name = policy["metadata"]["name"]
             policy_uids[name] = identity(created, name, token)
         # Policy distribution is asynchronous. New HTTP/TCP connections are used on
-        # every attempt; 22 chart routes include separate DNS resolution and
+        # every attempt; 27 chart routes include separate DNS resolution and
         # Service translation. Allow 240s for three complete matching rounds.
         deadline = time.monotonic() + (240 if chart_mode else 45)
         consecutive = 0
@@ -536,6 +595,10 @@ def exercise(kube, node, *, helm=None):
     result["networkPolicyEnforcementVerified"] = result["status"] == "ENFORCED"
     result["serviceClusterIPVerified"] = chart_mode and result["status"] == "ENFORCED"
     result["serviceDnsVerified"] = chart_mode and result["status"] == "ENFORCED"
+    result["runnerClusterEgressVerified"] = (
+        chart_mode and result["status"] == "ENFORCED"
+    )
+    result["langfuseEgressVerified"] = False
     return result
 
 
@@ -545,7 +608,7 @@ def main():
     parser.add_argument(
         "--evaluation-chart",
         action="store_true",
-        help="Test the rendered evaluation ingress policies with synthetic HTTP Pods",
+        help="Test evaluation ingress and runner cluster egress with synthetic HTTP Pods",
     )
     parser.add_argument("--helm", default="helm")
     args = parser.parse_args()

@@ -1,7 +1,9 @@
 """Render independent Kubernetes evaluation releases; never read or alter a cluster."""
 
 import argparse
+import ipaddress
 import json
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -11,6 +13,68 @@ from deployment_candidate import HELM_VERSION, KUBE_VERSION
 
 CHART = Path(__file__).resolve().parents[1] / "charts/govbiz-evaluation"
 COMPONENTS = ("prefect", "evaluation-runner", "ops-artifacts")
+OPS_ORIGIN = "http://ops-service.govbiz-msa.svc.cluster.local:8000"
+LANGFUSE_ORIGIN = "http://langfuse-web.govbiz-observability.svc.cluster.local:3000"
+
+
+def runner_egress(runner):
+    """Allow the current Kubernetes peers and one exact Compose Langfuse address."""
+    if runner.get("opsApiUrl") != OPS_ORIGIN:
+        raise ValueError("Runner Ops URL must match its Kubernetes egress peer")
+    origin = runner.get("langfuseUrl", "")
+    if origin == LANGFUSE_ORIGIN:
+        langfuse = {
+            "namespaceSelector": {
+                "matchLabels": {"kubernetes.io/metadata.name": "govbiz-observability"}
+            },
+            "podSelector": {"matchLabels": {"app.kubernetes.io/name": "langfuse-web"}},
+        }
+    else:
+        match = re.fullmatch(r"http://([0-9.]+):3000", origin)
+        if not match:
+            raise ValueError(
+                "Use the Langfuse Kubernetes origin or an RFC1918 IPv4 origin on port 3000"
+            )
+        address = ipaddress.IPv4Address(match[1])
+        if not any(
+            address in ipaddress.IPv4Network(cidr)
+            for cidr in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+        ):
+            raise ValueError("Compose Langfuse requires an RFC1918 IPv4 address")
+        langfuse = {"ipBlock": {"cidr": str(address) + "/32"}}
+    return [
+        {
+            "to": [
+                {
+                    "namespaceSelector": {
+                        "matchLabels": {"kubernetes.io/metadata.name": "kube-system"}
+                    },
+                    "podSelector": {"matchLabels": {"k8s-app": "kube-dns"}},
+                }
+            ],
+            "ports": [{"protocol": "UDP", "port": 53}, {"protocol": "TCP", "port": 53}],
+        },
+        {
+            "to": [
+                {"podSelector": {"matchLabels": {"app.kubernetes.io/name": "prefect"}}}
+            ],
+            "ports": [{"protocol": "TCP", "port": 4200}],
+        },
+        {
+            "to": [
+                {
+                    "namespaceSelector": {
+                        "matchLabels": {"kubernetes.io/metadata.name": "govbiz-msa"}
+                    },
+                    "podSelector": {
+                        "matchLabels": {"app.kubernetes.io/name": "ops-service"}
+                    },
+                }
+            ],
+            "ports": [{"protocol": "TCP", "port": 8000}],
+        },
+        {"to": [langfuse], "ports": [{"protocol": "TCP", "port": 3000}]},
+    ]
 
 
 def validate_bundle(values):
@@ -21,6 +85,7 @@ def validate_bundle(values):
         if value.get("component") != component:
             raise ValueError("Evaluation component differs from its release")
     prefect, runner, artifacts = (values[name] for name in COMPONENTS)
+    runner_egress(runner["runner"])
     if runner["storage"] != artifacts["storage"]:
         raise ValueError("Runner and artifacts must share the same claim and node")
     if prefect["storage"]["existingClaim"] == runner["storage"]["existingClaim"]:
