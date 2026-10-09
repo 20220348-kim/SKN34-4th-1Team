@@ -422,8 +422,8 @@ def plan(
     }
 
 
-def plan_from_restore(root, fork, *, state, restore_report, **options):
-    """Bind a dormant plan to observed storage, without trusting report contents as proof."""
+def read_restore_report(restore_report):
+    """Bound and identify report input; the caller must still inspect live storage."""
     with Path(restore_report).open("rb") as stream:
         raw = stream.read(65537)
     if len(raw) > 65536:
@@ -435,6 +435,12 @@ def plan_from_restore(root, fork, *, state, restore_report, **options):
         r"[a-f0-9]{64}", report.get("archive_sha256", "")
     ):
         raise ValueError("Retained archive restore report is required")
+    return report, digest(raw)
+
+
+def plan_from_restore(root, fork, *, state, restore_report, **options):
+    """Bind a dormant plan to observed storage, without trusting report contents as proof."""
+    report, report_sha = read_restore_report(restore_report)
     settings = fork_cluster.load_settings(state)
     if (
         settings["repository"].lower() != fork.repository.lower()
@@ -462,7 +468,7 @@ def plan_from_restore(root, fork, *, state, restore_report, **options):
         **result,
         "retainedStorageIdentityVerified": True,
         "retainedStorage": storage,
-        "restoreReportSha256": digest(raw),
+        "restoreReportSha256": report_sha,
         "reportedArchiveSha256": report["archive_sha256"],
         "restoreReportAuthenticated": False,
     }
