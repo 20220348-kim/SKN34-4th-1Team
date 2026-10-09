@@ -365,7 +365,7 @@ class UpgradePreflightTests(unittest.TestCase):
             bridge.assert_not_called()
             execute.assert_not_called()
 
-    def test_gitops_activation_and_local_image_check_remain_blocked(self):
+    def test_gitops_activation_and_local_image_override_remain_blocked(self):
         settings = {**SETTINGS, "mode": "gitops"}
         for image in (None, IMAGE):
             with (
@@ -379,8 +379,9 @@ class UpgradePreflightTests(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(ValueError, "GitOps owns"):
                     runtime.activate(self.state, settings, self.state / "absent.env", ops_image=image)
-                with self.assertRaisesRegex(ValueError, "GitOps owns"):
-                    runtime.check_runtime(self.state, settings, expected_image=image)
+                if image is not None:
+                    with self.assertRaisesRegex(ValueError, "cannot override"):
+                        runtime.check_runtime(self.state, settings, expected_image=image)
             for command in (quiet, run, load, migrate, token, preflight):
                 command.assert_not_called()
 
@@ -1107,6 +1108,83 @@ class ReleasePreflightTests(unittest.TestCase):
                 runtime.verify_release(IMAGE, "fixture")
 
 
+class GitOpsImageTests(unittest.TestCase):
+    def setUp(self):
+        import gitops_runtime
+
+        self.settings = SETTINGS | {"mode": "gitops", "branch": "main"}
+        self.image = {
+            "repository": "ghcr.io/alice/project-ops-service",
+            "digest": "sha256:" + "a" * 64,
+            "pullPolicy": "IfNotPresent",
+        }
+        self.values = {
+            "serviceName": "ops-service",
+            "image": self.image,
+            "opsSync": {"enabled": True},
+        }
+        self.app = {
+            "metadata": {"uid": "app-uid"},
+            "spec": {"source": {"helm": {"valuesObject": self.values}}},
+        }
+        self.observation = {
+            "applications": {"ops-service": {
+                "uid": "app-uid",
+                "specSha256": runtime.digest(runtime.encoded(self.app["spec"])),
+            }}
+        }
+        self.argo = self.enterContext(
+            patch.object(gitops_runtime, "argo_observation", return_value=self.observation)
+        )
+        self.enterContext(patch.object(runtime, "commands", return_value=([], [], ["kubectl", "-n", "argocd"])))
+        self.read = self.enterContext(patch.object(runtime, "quiet", side_effect=lambda *a: json.dumps(self.app)))
+
+    def check(self):
+        return runtime.gitops_image("state", self.settings)
+
+    def test_pinned_image_uses_stable_manual_argo_without_secret_or_workload_writes(self):
+        image, policy, observed = self.check()
+        self.assertEqual(image, "ghcr.io/alice/project-ops-service@sha256:" + "a" * 64)
+        self.assertEqual(policy, "IfNotPresent")
+        self.assertEqual(observed, self.observation)
+        self.argo.assert_called_once_with("state", self.settings)
+        self.assertEqual(self.read.call_args.args[0], ["kubectl", "-n", "argocd", "get", "application", "govbiz-fork-ops-service", "-o", "json"])
+
+    def test_argo_failure_or_replaced_application_is_not_a_local_baseline_fallback(self):
+        self.argo.side_effect = ValueError("Unstable Argo")
+        with self.assertRaisesRegex(ValueError, "Unstable Argo"):
+            self.check()
+        self.read.assert_not_called()
+        self.argo.side_effect = None
+        self.app["metadata"]["uid"] = "replacement"
+        with self.assertRaisesRegex(ValueError, "declaration changed"):
+            self.check()
+
+    def test_edited_values_between_observation_and_read_are_rejected(self):
+        self.values["env"] = {"PRIVATE": "do-not-disclose"}
+        with self.assertRaisesRegex(ValueError, "declaration changed") as error:
+            self.check()
+        self.assertNotIn("do-not-disclose", str(error.exception))
+
+    def test_foreign_tagged_or_local_images_and_disabled_sync_are_rejected(self):
+        original = copy.deepcopy(self.values)
+        for change in ("repository", "digest", "tag", "pullPolicy", "local", "sync", "service"):
+            self.values.clear()
+            self.values.update(copy.deepcopy(original))
+            if change in {"repository", "digest", "tag", "pullPolicy"}:
+                self.values["image"][change] = "do-not-disclose"
+            elif change == "local":
+                self.values["localMode"] = True
+            elif change == "sync":
+                self.values["opsSync"]["enabled"] = False
+            else:
+                self.values["serviceName"] = "other"
+            self.observation["applications"]["ops-service"]["specSha256"] = runtime.digest(runtime.encoded(self.app["spec"]))
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, "pinned fork Ops") as error:
+                self.check()
+            self.assertNotIn("do-not-disclose", str(error.exception))
+
+
 class ReadOnlyRuntimeTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -1255,6 +1333,88 @@ class ReadOnlyRuntimeTests(unittest.TestCase):
 
     def check(self, run_id=None):
         return runtime.check_runtime(self.state, SETTINGS, run_id)
+
+    def enable_gitops(self):
+        self.gitops_settings = SETTINGS | {"mode": "gitops", "branch": "main"}
+        image = "ghcr.io/alice/project-ops-service@sha256:" + "a" * 64
+        self.gitops_source = (image, "IfNotPresent", {"applications": {"ops-service": {"uid": "app"}}})
+        self.gitops_image = self.enterContext(patch.object(runtime, "gitops_image", return_value=self.gitops_source))
+        self.settings_read = self.enterContext(patch.object(runtime, "load_settings", return_value=self.gitops_settings))
+        self.deployment["metadata"]["annotations"] = {
+            "argocd.argoproj.io/tracking-id": "govbiz-fork-ops-service:apps/Deployment:govbiz-msa/ops-service"
+        }
+        for container in self.deployment["spec"]["template"]["spec"]["containers"]:
+            container.update(image=image, imagePullPolicy="IfNotPresent")
+        self.pod["spec"] = copy.deepcopy(self.deployment["spec"]["template"]["spec"])
+        (self.state / "baseline.json").write_text("Old local baseline is not the active Argo source")
+
+    def test_gitops_check_preserves_controller_ownership_and_does_not_claim_publication(self):
+        self.enable_gitops()
+        before = (self.state / "baseline.json").read_bytes()
+        result = runtime.check_runtime(self.state, self.gitops_settings)
+        self.assertEqual(result["scope"], "gitops_ops_release_and_configuration")
+        self.assertEqual(result["status"], "PASS")
+        self.assertEqual(result["argo_observation"], self.gitops_source[2])
+        self.assertFalse(result["publication_verified"])
+        self.assertFalse(result["evaluation_executed"])
+        self.assertEqual(self.gitops_image.call_count, 2)
+        self.mocks["require_dev"].assert_not_called()
+        self.assertEqual((self.state / "baseline.json").read_bytes(), before)
+
+    def test_gitops_check_rejects_image_override_before_reading_resources(self):
+        with self.assertRaisesRegex(ValueError, "cannot override"):
+            runtime.check_runtime(self.state, SETTINGS | {"mode": "gitops"}, expected_image=IMAGE)
+        self.assertEqual(self.commands, [])
+        self.connect.assert_not_called()
+
+    def test_gitops_tracking_and_container_image_must_match_controller(self):
+        self.enable_gitops()
+        original = copy.deepcopy(self.deployment)
+        for change in ("missing", "foreign", "label", "image", "pull"):
+            self.deployment = copy.deepcopy(original)
+            if change == "missing":
+                self.deployment["metadata"]["annotations"] = {}
+            elif change == "foreign":
+                self.deployment["metadata"]["annotations"]["argocd.argoproj.io/tracking-id"] = "foreign"
+            elif change == "label":
+                self.deployment["metadata"]["labels"] = {"argocd.argoproj.io/instance": "foreign"}
+            else:
+                container = self.deployment["spec"]["template"]["spec"]["containers"][0]
+                container["image" if change == "image" else "imagePullPolicy"] = "other"
+            self.latest_deployment = self.deployment
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, "Argo declaration"):
+                runtime.check_runtime(self.state, self.gitops_settings)
+
+    def test_gitops_changes_during_check_are_rejected(self):
+        self.enable_gitops()
+        for changed in (
+            ("other-image", *self.gitops_source[1:]),
+            (*self.gitops_source[:2], {"applications": {"ops-service": {"uid": "replacement"}}}),
+        ):
+            self.gitops_image.side_effect = [self.gitops_source, changed]
+            with self.assertRaisesRegex(ValueError, "Argo or cluster settings changed"):
+                runtime.check_runtime(self.state, self.gitops_settings)
+        self.gitops_image.side_effect = None
+        self.settings_read.return_value = self.gitops_settings | {"stateId": "other"}
+        with self.assertRaisesRegex(ValueError, "Argo or cluster settings changed"):
+            runtime.check_runtime(self.state, self.gitops_settings)
+
+    def test_gitops_tracking_change_during_check_is_rejected(self):
+        self.enable_gitops()
+        self.latest_deployment = copy.deepcopy(self.deployment)
+        self.latest_deployment["metadata"]["annotations"] = {}
+        with self.assertRaisesRegex(ValueError, "Runtime or source changed"):
+            runtime.check_runtime(self.state, self.gitops_settings)
+
+    def test_gitops_stopped_runner_or_mixed_release_is_not_ready(self):
+        self.enable_gitops()
+        self.mocks["evaluation_runner"].side_effect = ValueError("Expected exactly one running Compose evaluation-runner")
+        with self.assertRaisesRegex(ValueError, "running Compose"):
+            runtime.check_runtime(self.state, self.gitops_settings)
+        self.mocks["evaluation_runner"].side_effect = None
+        self.target_results["ops-sync"]["release"] = "0" * 64
+        with self.assertRaisesRegex(ValueError, "release differs"):
+            runtime.check_runtime(self.state, self.gitops_settings)
 
     def test_first_rollout_checks_target_without_rewriting_previous_baseline(self):
         previous = {"source": "local", "images": {"ops-service": "govbiz-ops-service:old"}}

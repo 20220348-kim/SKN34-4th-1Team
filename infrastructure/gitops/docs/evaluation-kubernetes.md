@@ -109,6 +109,36 @@ image ID를 대조하고, 누락·불일치·조회 중 교체를 차단한다. 
 실패 시 원상 복귀까지 한 작업 창에서 이어가야 한다. 중간에 기존 writer를 재개한 백업으로
 보존 인계를 완료했다고 표시하지 않는다.
 
+## 기존 평가 실행기 복구와 GitOps 연결 진단 — 2026-10-10
+
+이전 준비를 계속하면서 기존 Compose 평가 실행기가 중지된 상태임을 확인했다. Ops의 자료·결과
+저장소·Prefect 등록 진단은 통과해도 실행기 생존까지 확인하지 않는다는 차이가 실제로 드러났다.
+`ops_runtime.py --check`가 GitOps 모드도 지원하도록 보완해, Argo 선언·실제 Ops Pod와 실행 중인
+Compose 실행기를 함께 확인한다. [진단 범위와 실행 명령](ops-runtime.md#기존-실행-환경의-읽기-전용-점검)에
+세부 조건을 설명한다. 활성화 도구의 `dev` 제한은 유지한다.
+
+- 기존 실행기의 프로젝트·컨테이너·이미지·실행 명세, 유료 호출·스케줄 비활성화와 모델 키 부재를
+  확인했다. 새 평가 namespace가 없고 미완료 평가·예약·스케줄도 0인 상태에서 원래 실행기만 재개했다.
+  이미지·볼륨·인증값과 배포 설정은 변경하지 않았다.
+- 재개 후 GitOps 연결 진단이 `PASS`다. Ops API·sync·실행기·결과 서버의 실행 명세는
+  `3a194a7e2a34e0530ebe08fe3da1686f552065b07cd6c4886f4a781b8e6fd7ff`로 일치한다.
+  실제 Ops DB 스키마, 평가 자료·결과 HTTP·Prefect 등록 검사를 통과했다. 새 평가 실행과
+  Core 관리자 인증은 이번 읽기 전용 진단에 포함하지 않았다.
+- Ops의 적용 migration은 `0028_daily_evaluation_schedules`까지 28개이며 현재 소스와 일치한다.
+  추가 migration을 적용하거나 유료 평가·예산 설정을 활성화하지 않았다.
+- 앞서 발행 증거를 검증한 `2cab488`의 공개 runner·Ops 이미지를 실제 다운로드했다.
+  네트워크 차단·읽기 전용·UID/GID 10001의 임시 컨테이너에서 실행 명세를 확인하고,
+  runner 실행 입력과 Ops 소스의 현재 checkout 일치를 검증했다. `layersDownloaded=true`는
+  이 추가 검사 결과다. 이미지를 개인 Kubernetes 서비스에 적용한 결과는 아니다.
+- 관련 무료 테스트 86개와 production 스크립트 Ruff 검사를 통과했다. Infra CI의 기존
+  `test_ops_runtime` 실행 경로가 새 테스트도 포함하며 이번 변경의 전체 CI는 검증 대기다.
+
+점검한 main은 `c506177b2fcfb22dae4d591021291ed5f2131607`이다. Catalog·Ops·Infra와
+[GovBiz CI](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/37951271961)는 성공했고,
+[LLMOps CI](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/37951272001)는 점검 당시 진행 중이었다.
+기존 이미지의 실행 명세 일치를 새 main의 공개 발행 검증으로 간주하지 않는다.
+보존 PVC·Secret·Argo 등록과 실제 평가 환경 전환은 여전히 위의 완료 조건을 충족한 뒤 수행해야 한다.
+
 ## 이번 구현: 독립 배포와 저장소 계약
 
 [`govbiz-evaluation` Chart](../charts/govbiz-evaluation/Chart.yaml)는 한 릴리스에 한 프로세스만
