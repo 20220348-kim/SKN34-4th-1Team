@@ -1,9 +1,11 @@
 # LLMOps README 구조도
 
-[메인 README](../../../README.md#llmops-평가운영)에 사용하는 **평가·운영의 기능 흐름도**입니다.
+[메인 README](../../../README.md#llmops-평가운영)의 **평가·운영 기능을 설명하던 이미지 원본**입니다.
+현재 메인 README는 시스템 아키텍처와 스타일을 통일한 Mermaid 흐름도를 사용하며, 해당 Markdown에서 직접 수정합니다.
+아래 PNG·SVG는 기존 그림을 참고할 수 있도록 보존합니다.
 배포 네트워크나 모든 서비스의 HTTP 호출 관계를 나타내는 그림은 아닙니다.
 
-- [PNG](llmops-evaluation-flow.png): README 표시용, 2880 × 2864px.
+- [PNG](llmops-evaluation-flow.png): 기존 이미지, 2880 × 2864px.
 - [SVG](llmops-evaluation-flow.svg): 문구·색상·배치를 편집할 수 있는 원본, 1440 × 1432 viewBox.
 - 구성 근거: [Ops 기능·API](../../../backend/ops-service/README.md),
   [실행 환경](../../../infrastructure/llmops/README.md),
@@ -29,7 +31,7 @@ SVG는 외부 이미지·스크립트·네트워크 참조 없이 텍스트와 �
 PNG의 한글은 저장소의 [NanumGothic](../../../backend/core-service/src/main/resources/fonts/NanumGothic-Regular.ttf)으로
 렌더링했습니다. 글꼴 라이선스는 [SIL OFL](../../../backend/core-service/src/main/resources/fonts/OFL-NanumGothic.txt)입니다.
 SVG 자체에는 글꼴을 포함하지 않으므로 보는 환경에 따라 대체 글꼴이 사용될 수 있습니다.
-README는 고정된 PNG를 사용합니다.
+이 PNG·SVG를 수정해도 현재 메인 README의 Mermaid 흐름도에는 반영되지 않습니다.
 
 SVG를 수정한 뒤 NanumGothic을 사용할 수 있는 문서 도구 환경에서 Sharp로 PNG를 다시 렌더링합니다.
 아래는 저장소 루트를 기준으로 한 예시입니다. Sharp는 그림 제작 도구이며 애플리케이션 의존성을
