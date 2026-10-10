@@ -144,7 +144,7 @@ async function fixture(defect, verify, count = 1, rag = null) {
   }
 }
 
-test('browser uses the real login form, server-issued cookie, Ops detail, refresh and logout with HTTP fixtures', { timeout: 120000 }, async () => {
+test('browser uses the real login form, Ops report explanation link, original report, refresh and logout with HTTP fixtures', { timeout: 120000 }, async () => {
   await fixture(null, async (input) => {
     const stages = []
     const proof = await checkBrowserLogin(input, (stage) => stages.push(stage))
