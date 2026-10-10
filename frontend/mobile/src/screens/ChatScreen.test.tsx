@@ -1,17 +1,25 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react-native'
-import { Alert, ScrollView } from 'react-native'
+import { Alert, ScrollView, StyleSheet } from 'react-native'
 import { ChatScreen } from './ChatScreen'
 import { programClient } from '../api/client'
+import { planUsageUseCase } from '../api/planUsage'
 import { useAuth } from '../auth/session'
+import { colors } from '../ui'
 import { programDetail } from '../test/preparationFixtures'
 import { SupportProgramRequestApiError, SupportProgramSearchRestoreApiError, SupportProgramSearchTimeoutApiError } from '@govbiz/shared/data/api/supportProgramApi'
+import type { PlanUsage } from '@govbiz/shared/domain/entities/PlanUsage'
 import type { LoginRequest } from '../auth/loginFlow'
 import { deleteChatConversation, getChatConversation, listChatConversations, saveChatConversation } from '../api/chatConversations'
 let mockMessageNumber = 0
 jest.mock('expo-crypto', () => ({ randomUUID: () => `message-${++mockMessageNumber}` }))
 
 jest.mock('../auth/session', () => ({ useAuth: jest.fn() }))
-beforeEach(() => { jest.mocked(useAuth).mockReturnValue({ status: 'signedOut', session: null, invalidateSession: jest.fn() } as unknown as ReturnType<typeof useAuth>) })
+jest.mock('../api/planUsage', () => ({ planUsageUseCase: jest.fn() }))
+beforeEach(() => {
+  jest.mocked(useAuth).mockReturnValue({ status: 'signedOut', session: null, invalidateSession: jest.fn() } as unknown as ReturnType<typeof useAuth>)
+  // 이용량 줄을 확인하는 테스트만 응답을 정합니다. 나머지 흐름에서는 응답이 오지 않아 아무것도 보이지 않습니다.
+  usageResponses()
+})
 jest.mock('../api/chatConversations', () => ({ deleteChatConversation: jest.fn(), getChatConversation: jest.fn(), listChatConversations: jest.fn(), saveChatConversation: jest.fn() }))
 beforeEach(() => {
   mockMessageNumber = 0
@@ -200,6 +208,20 @@ test('a previous account history response is discarded on account change', async
 })
 jest.mock('../api/client', () => ({ ...jest.requireActual('../api/client'), programClient: jest.fn(), errorMessage: () => '요청 실패' }))
 
+function usageResponses(...responses: (PlanUsage | Error)[]) {
+  const usage = jest.fn<Promise<PlanUsage>, [AbortSignal?]>()
+  for (const response of responses) {
+    usage.mockImplementationOnce(() => response instanceof Error ? Promise.reject(response) : Promise.resolve(response))
+  }
+  usage.mockImplementation(() => new Promise<PlanUsage>(() => undefined))
+  jest.mocked(planUsageUseCase).mockReturnValue({ usage } as unknown as ReturnType<typeof planUsageUseCase>)
+  return usage
+}
+const searchUsage = (used: number, plan: PlanUsage['plan'] = 'FREE'): PlanUsage => ({ plan, items: [
+  { feature: 'AI_SEARCH', period: 'DAY', limit: plan === null ? 2 : plan === 'FREE' ? 10 : null, used, resetsAt: '2026-10-09T00:00:00+09:00' },
+  { feature: 'EVIDENCE_QUESTION', period: 'DAY', limit: 10, used: 0, resetsAt: '2026-10-09T00:00:00+09:00' },
+] })
+
 const context = { query: '사업화 지원', acceptingOnly: true,
   companyConditions: { region: '서울특별시', industry: null, establishedOn: null, foundedYear: null, supportPurpose: null } }
 
@@ -361,6 +383,90 @@ test.each(['signedOut', 'signedIn'] as const)('G01 uses the same introduction an
   fireEvent.changeText(screen.getByLabelText('회사 상황이나 궁금한 점'), '입력 중')
   expect(client.interpretConversation).not.toHaveBeenCalled()
   expect(client.search).not.toHaveBeenCalled()
+})
+
+describe('AI search plan usage', () => {
+  function readyClient() {
+    const client = { interpretConversation: jest.fn().mockResolvedValue({ status: 'READY', proposedContext: context, clarificationQuestion: null, changedFields: [] }),
+      getSearchReadiness: jest.fn().mockResolvedValue({ indexReady: true, searchState: 'SEARCHABLE' }),
+      search: jest.fn().mockResolvedValue({ query: context.query, totalCount: 0, programs: [], resultToken: null, expiresAt: null }) }
+    jest.mocked(programClient).mockReturnValue(client as unknown as ReturnType<typeof programClient>)
+    return client
+  }
+  async function propose() {
+    fireEvent.changeText(screen.getByLabelText('회사 상황이나 궁금한 점'), '사업화 지원')
+    fireEvent.press(screen.getByLabelText('AI에게 보내기'))
+    await screen.findByText('이 조건으로 검색할까요?')
+  }
+  const color = (text: string) => StyleSheet.flatten(screen.getByText(text).props.style).color
+
+  test('guests see their trial count and nothing is shown when usage cannot be read', async () => {
+    readyClient()
+    usageResponses(searchUsage(1, null))
+    const view = render(<ChatScreen onOpenProgram={jest.fn()} onLogin={jest.fn()} />)
+    await screen.findByText('로그인 전 체험 오늘 1/2회')
+    expect(color('로그인 전 체험 오늘 1/2회')).toBe(colors.muted)
+    expect(planUsageUseCase).toHaveBeenCalledWith(undefined)
+    view.unmount()
+
+    const usage = usageResponses(new Error('offline'))
+    render(<ChatScreen onOpenProgram={jest.fn()} onLogin={jest.fn()} />)
+    await waitFor(() => expect(usage).toHaveBeenCalledTimes(1))
+    await propose()
+    expect(screen.queryByTestId('ai-search-usage')).toBeNull()
+    expect(screen.getByLabelText('이 조건으로 검색')).toBeEnabled()
+  })
+
+  test('the count turns into a warning with the reset time from 80% and reloads after each search', async () => {
+    signIn()
+    const client = readyClient()
+    const usage = usageResponses(searchUsage(7), searchUsage(8))
+    render(<ChatScreen onOpenProgram={jest.fn()} onLogin={jest.fn()} />)
+    await screen.findByText('AI 대화 검색 오늘 7/10회')
+    expect(color('AI 대화 검색 오늘 7/10회')).toBe(colors.muted)
+    expect(planUsageUseCase).toHaveBeenCalledWith('verified')
+    await propose()
+    expect(usage).toHaveBeenCalledTimes(1)
+    // 검색 뒤 이용량을 다시 읽는 비동기 흐름까지 끝낸 뒤 확인합니다.
+    await act(async () => { fireEvent.press(screen.getByLabelText('이 조건으로 검색')) })
+    await screen.findByText('AI 대화 검색 오늘 8/10회 · 자정(서울 시간)에 다시 채워져요.')
+    expect(color('AI 대화 검색 오늘 8/10회 · 자정(서울 시간)에 다시 채워져요.')).toBe(colors.warning)
+    expect(client.search).toHaveBeenCalledTimes(1)
+    expect(usage).toHaveBeenCalledTimes(2)
+  })
+
+  test.each([
+    ['FREE', 10, '오늘 AI 대화 검색 10회를 모두 썼어요. 자정(서울 시간)에 다시 채워져요. 필터 검색은 계속 쓸 수 있어요.'],
+    [null, 2, '로그인 전 체험 2회를 모두 썼어요. 로그인하면 회원 한도로 이어서 검색할 수 있고, 필터 검색은 계속 쓸 수 있어요.'],
+  ] as const)('a used-up %s limit explains itself and blocks only the paid search', async (plan, used, message) => {
+    if (plan) signIn()
+    const client = readyClient()
+    usageResponses(searchUsage(used, plan))
+    render(<ChatScreen onOpenProgram={jest.fn()} onLogin={jest.fn()} />)
+    await screen.findByText(message)
+    expect(color(message)).toBe(colors.warning)
+    await propose()
+    expect(client.interpretConversation).toHaveBeenCalledTimes(1)
+    expect(screen.getByLabelText('조건 바꾸기')).toBeEnabled()
+    expect(screen.getByLabelText('이 조건으로 검색')).toBeDisabled()
+    fireEvent.press(screen.getByLabelText('이 조건으로 검색'))
+    expect(client.getSearchReadiness).not.toHaveBeenCalled()
+    expect(client.search).not.toHaveBeenCalled()
+    expect(screen.queryByText(/업그레이드|요금제 보기|결제/)).toBeNull()
+  })
+
+  test('a plan without a limit yet shows no usage line and never blocks the search', async () => {
+    signIn()
+    const client = readyClient()
+    const usage = usageResponses(searchUsage(500, 'PREMIUM'))
+    render(<ChatScreen onOpenProgram={jest.fn()} onLogin={jest.fn()} />)
+    await waitFor(() => expect(usage).toHaveBeenCalledTimes(1))
+    await propose()
+    expect(screen.queryByTestId('ai-search-usage')).toBeNull()
+    expect(screen.queryByText(/오늘 \d+/)).toBeNull()
+    await act(async () => { fireEvent.press(screen.getByLabelText('이 조건으로 검색')) })
+    expect(client.search).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('mobile AI timeline scrolling', () => {

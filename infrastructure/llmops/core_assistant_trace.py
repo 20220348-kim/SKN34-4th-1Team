@@ -65,7 +65,7 @@ def verify_observations(observations, trace_id, scenario, private_values):
     ]
 
 
-def post_question(core_url, message):
+def post_question(core_url, message, *, session_token):
     payload = {
         "message": message,
         "history": [],
@@ -87,7 +87,12 @@ def post_question(core_url, message):
     request = urllib.request.Request(
         core_url + "/api/v1/assistant/messages",
         data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json", "traceparent": "00-" + "a" * 32 + "-" + "b" * 16 + "-01"},
+        # 도우미 질문은 회원 전용입니다. 쿠키 없는 Bearer 세션이라 Origin 검사 대상이 아닙니다.
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + session_token,
+            "traceparent": "00-" + "a" * 32 + "-" + "b" * 16 + "-01",
+        },
     )
     try:
         response = LOCAL_HTTP.open(request, timeout=30)
@@ -97,7 +102,7 @@ def post_question(core_url, message):
         return response.code, json.load(response)
 
 
-def verify_assistant_traces(*, core_url, stub_url, environment, core_logs, call_json, output):
+def verify_assistant_traces(*, core_url, session_token, stub_url, environment, core_logs, call_json, output):
     tracing_env(environment)
     require(not output.exists(), "Use a new assistant trace evidence output path")
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -117,7 +122,7 @@ def verify_assistant_traces(*, core_url, stub_url, environment, core_logs, call_
             save()
             message = f"이 공고 PRIVATE-ASSISTANT-TRACE-{nonce}-{scenario}"
             before = set(TRACE_PATTERN.findall(core_logs()))
-            code, response = post_question(core_url, message)
+            code, response = post_question(core_url, message, session_token=session_token)
             record["http_status"] = code
             require(code == expected_status, "Unexpected Core assistant HTTP status: " + scenario)
             if scenario == "ok":

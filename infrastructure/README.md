@@ -189,6 +189,7 @@ OPENAI_API_KEY=발급받은_OpenAI_API_키
 | `DEMO_SEED_FORCE` | `false` | `true`면 기존 공용 데모 reset 정책을 실행하고, 선택된 계정의 고정 키 개인 목업도 다시 만듦. 보통 `DEMO_SEED_FORCE=true docker compose run --rm demo-seed`로 한 번만 씀 |
 | `DEMO_SEED_TARGET_EMAILS` | 빈 값 | 신청 준비·중복 검토 목업 대상 이메일. 비어 있으면 `admin@govbiz.local`, `member@govbiz.local`을 자동 선택하며, 쉼표로 지정하면 해당 활성 계정만 보충 |
 | `DEMO_SEED_WAIT_SECONDS` | `600` | 데모 모집글을 붙일 기업마당 공고(접수 마감 3주 이상 남은 것 5건)가 동기화될 때까지 기다리는 최대 시간 |
+| `PLAN_USAGE_UNLIMITED_ACCOUNT_EMAILS` | 데모 시드 계정 6개 | 요금제 한도 없이 쓸 개발용 계정(쉼표 구분). 사용량은 세지만 막지 않음. 빈 값이면 모든 계정에 한도 적용. 운영 Compose는 넘기지 않고 `check-production.py`가 값이 있으면 막음 |
 | `ACCOUNT_DEV_LOGIN_ENABLED` | `true` | Compose 개발 환경에서는 `POST /api/v1/auth/dev-login`으로 관리자(`admin@govbiz.local`) 또는 회원(`member@govbiz.local`) 시드 세션을 바로 발급. 운영에서는 `false` |
 | `ACCOUNT_DEV_LOGIN_EMAIL` | `admin@govbiz.local` | 개발용 관리자 시드 계정 이메일 |
 | `ACCOUNT_DEV_LOGIN_MEMBER_EMAIL` | `member@govbiz.local` | 개발용 회원 시드 계정 이메일 |
@@ -420,7 +421,8 @@ docker compose --env-file .env --file infrastructure/compose.yaml down --volumes
 
 seed 파일의 책임은 다음처럼 나뉩니다.
 
-- [`demo-data.sql`](seed/demo-data.sql): 팀이 확정한 계정 6개, 기업 6개, 모집글 5개, 제안 4개, 관심 공고 20개와 관리자 조치 기록 2개의 공용 데모
+- [`demo-data.sql`](seed/demo-data.sql): 팀이 확정한 계정 6개, 기업 6개, 모집글 5개, 제안 4개, 관심 공고 20개와 관리자 조치 기록 2개의 공용 데모.
+  이 계정 6개는 로컬 Compose의 `PLAN_USAGE_UNLIMITED_ACCOUNT_EMAILS` 기본값이라 요금제 한도 없이 씁니다
 - [`application-preparations.sql`](seed/application-preparations.sql): 선택된 계정별 신청 준비 2건(확인 입력·작성본 포함)
 - [`combination-reviews.sql`](seed/combination-reviews.sql): 선택된 계정별 중복 지원 검토 2건(저장된 6단계 자동 분석·원문 1건 포함)
 
@@ -583,6 +585,9 @@ Windows에서는 WSL 등 Bash 환경에서 실행합니다. 루트 `.gitattribut
 
 전체 추천·제공처 포함 여부는 테스트 회원 세션으로 확인합니다. 비회원의 공개 2건 제한과 Redis 토큰 발급·복원은
 별도의 익명 요청으로 확인하므로, 숨겨진 공고가 비회원 응답에 나타나야 통과하는 검증을 하지 않습니다.
+AI 검색은 요금제 하루 한도를 세므로 준비 대기 중 재시도가 FREE 한도에 막히지 않게, 격리된 검증 DB의 테스트 회원만
+`account_plan`으로 PREMIUM을 배정합니다. 카탈로그 분리·LLMOps 추적 검증도 같은 방식의 회원 Bearer 세션으로
+AI 검색·도우미·공고 원문 질문을 호출합니다. 비회원 검색은 빈 검색어와 장애(503) 확인에만 씁니다.
 
 Web/Core는 검증 전용 `15173`/`18080` 포트를 사용해 기존 개발 서비스를 중지하지 않고 실행할 수 있습니다.
 `VERIFY_COMPOSE_WEB_HOST_PORT`/`VERIFY_COMPOSE_CORE_API_HOST_PORT`로 바꿀 수 있으며 CORS·요청 Origin도 같은 Web 주소를 사용합니다.

@@ -65,7 +65,7 @@ describe('비로그인 검색 흐름의 공고 상세', () => {
     expect(screen.getByRole('tab', { name: 'AI 대화 검색' }).getAttribute('aria-selected')).toBe('true')
   })
 
-  it('비로그인 상세의 질문하기는 로그인 뒤 작업 화면의 질문으로 이어지고, 직접 연 원문 질문 화면도 같은 헤더·검색 탭 아래에 뜬다', async () => {
+  it('비로그인 상세의 질문하기는 로그인 뒤 작업 화면의 질문으로 이어지고, 직접 연 원문 질문 주소도 같은 헤더·검색 탭 아래에서 로그인을 안내한다', async () => {
     start('/?mode=filter')
     fireEvent.click(await screen.findByRole('link', { name: program.title }))
     await screen.findByRole('heading', { name: program.title })
@@ -76,7 +76,8 @@ describe('비로그인 검색 흐름의 공고 상세', () => {
     cleanup()
 
     start(`/support-programs/detail/question?${identity}`)
-    expect(screen.getByRole('heading', { name: '이 공고에 질문하기', level: 1 })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: '로그인하고 원문에 질문하기', level: 1 })).toBeTruthy()
+    expect(screen.queryByRole('textbox', { name: '공고 원문에 질문하기' })).toBeNull()
     expect(within(screen.getByRole('tablist', { name: '지원사업 검색 방식' })).getByRole('tab', { name: 'AI 대화 검색' }).getAttribute('aria-selected')).toBe('true')
     expect(within(screen.getByRole('banner', { name: '앱 헤더' })).queryByText('원문 질문')).toBeNull()
 

@@ -2,6 +2,7 @@ import { type FormEvent, useEffect, useRef } from 'react'
 
 import type { SupportProgramIdentity } from '../../../../domain/repositories/SupportProgramRepository'
 import { assistantCover } from '../../../shared/assistant/assistantPlacement'
+import { PlanUsageLine } from '../../../shared/plan-usage/PlanUsageLine'
 import { useEvidenceQuestionThread } from '../viewmodel/useEvidenceQuestionThread'
 import { maximumSupportProgramEvidenceQuestionLength } from '../viewmodel/useSupportProgramEvidenceQuestionViewModel'
 import { EvidenceQuestionFeedback } from './EvidenceQuestionFeedback'
@@ -91,9 +92,9 @@ export function EvidenceQuestionPanel({ identity, programTitle, onClose }: {
             id="support-program-ask-question"
             className={q.panelInput}
             aria-label="공고 원문에 질문하기"
-            aria-describedby={`support-program-ask-count${isTooLong ? ' support-program-ask-length-error' : ''}`}
+            aria-describedby={`support-program-ask-count${thread.usage ? ' support-program-ask-usage' : ''}${isTooLong ? ' support-program-ask-length-error' : ''}`}
             aria-invalid={isValidationFailed || isTooLong}
-            disabled={thread.isAnswering}
+            disabled={thread.isAnswering || thread.isLimitReached}
             value={thread.question}
             onChange={(event) => thread.updateQuestion(event.target.value)}
             onKeyDown={(event) => {
@@ -109,6 +110,8 @@ export function EvidenceQuestionPanel({ identity, programTitle, onClose }: {
           <span id="support-program-ask-count" className={q.evidenceCount}>
             {thread.questionLength} / {maximumSupportProgramEvidenceQuestionLength}자 · Shift+Enter로 줄바꿈
           </span>
+          {/* 오늘 질문 이용량입니다. 다 쓰면 입력을 막고 다시 채워지는 때를 알립니다. */}
+          {thread.usage ? <PlanUsageLine id="support-program-ask-usage" view={thread.usage} className={q.evidenceUsage} /> : null}
           {isTooLong ? (
             <p id="support-program-ask-length-error" className={q.evidenceErrorCompact} role="alert">
               질문은 {maximumSupportProgramEvidenceQuestionLength}자 이하로 입력해 주세요.

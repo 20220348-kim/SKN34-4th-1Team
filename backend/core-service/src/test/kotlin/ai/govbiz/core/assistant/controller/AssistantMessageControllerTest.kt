@@ -1,6 +1,7 @@
 package ai.govbiz.core.assistant.controller
 
 import ai.govbiz.core.account.helper.AccountTestHelper
+import ai.govbiz.core.account.service.exception.AuthenticationRequiredException
 import ai.govbiz.core._common.config.JsonDeserializationConfig
 import ai.govbiz.core._common.exception.AiServiceCallException
 import ai.govbiz.core._common.exception.ApiExceptionHandler
@@ -28,7 +29,6 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
 import org.mockito.ArgumentMatchers.any
-import org.mockito.ArgumentMatchers.isNull
 import org.mockito.Mockito
 import org.mockito.Mockito.`when`
 import org.springframework.http.MediaType
@@ -59,6 +59,8 @@ class AssistantMessageControllerTest {
     private fun mvc(perClient: Int = 100, agent: AssistantAgentProperties = AssistantAgentProperties(), agentPerClient: Int = 100): MockMvc {
         val admission = SupportProgramRequestAdmissionService(SupportProgramRequestAdmissionProperties(perClient, 100, 4)) { 0L }
         val agentAdmission = SupportProgramRequestAdmissionService(SupportProgramRequestAdmissionProperties(agentPerClient, 100, 4)) { 0L }
+        `when`(sessionService.requireAccount(MEMBER_SESSION)).thenReturn(member)
+        Mockito.doThrow(AuthenticationRequiredException()).`when`(sessionService).requireAccount(null)
         return MockMvcBuilders.standaloneSetup(AssistantMessageController(service, admission, agentAdmission, agent))
             .setCustomArgumentResolvers(AuthenticatedAccountArgumentResolver({ sessionService }, { AccountTestHelper.cookieHelper() }))
             .setControllerAdvice(ApiExceptionHandler()).setValidator(validator)
@@ -82,7 +84,7 @@ class AssistantMessageControllerTest {
         return mapper.writeValueAsString(json)
     }
 
-    private fun request(json: String = body(), cookie: String? = null) =
+    private fun request(json: String = body(), cookie: String? = MEMBER_SESSION) =
         post("/api/v1/assistant/messages").contentType(MediaType.APPLICATION_JSON).content(json)
             .with { it.remoteAddr = "192.0.2.1"; if (cookie != null) it.setCookies(Cookie(SessionCookieHelper.COOKIE_NAME, cookie)); it }
 
@@ -97,9 +99,16 @@ class AssistantMessageControllerTest {
     )
 
     @Test
-    fun answersGuestsWithoutASessionAndReturnsTheServiceAnswerAsJson() {
+    fun rejectsGuestsBeforeCallingTheModel() {
+        mvc().perform(request(cookie = null)).andExpect(status().isUnauthorized)
+            .andExpect(jsonPath("$.code").value("AUTHENTICATION_REQUIRED"))
+        Mockito.verifyNoInteractions(service)
+    }
+
+    @Test
+    fun returnsTheServiceAnswerAsJsonForASignedInMember() {
         val asked = mutableListOf<AssistantQuestion>()
-        `when`(service.answer(isNull(), anyQuestion())).thenAnswer { asked += it.getArgument<AssistantQuestion>(1); answer() }
+        `when`(service.answer(Mockito.eq(member), anyQuestion())).thenAnswer { asked += it.getArgument<AssistantQuestion>(1); answer() }
         mvc().perform(request()).andExpect(status().isOk)
             .andExpect(header().string("Cache-Control", "no-store"))
             .andExpect(jsonPath("$.intent").value("PRODUCT_HELP"))
@@ -115,14 +124,12 @@ class AssistantMessageControllerTest {
         assertEquals("ASSISTANT", question.history.single().role.name)
         assertEquals("/app/chat", question.context.route)
         assertEquals("/app/chat", question.helpEntries.single().action!!.to)
-        Mockito.verifyNoInteractions(sessionService)
     }
 
     @Test
     fun passesTheSessionAccountWhenACookieIsPresent() {
-        `when`(sessionService.requireAccount("session-token")).thenReturn(member)
         `when`(service.answer(any(Account::class.java), anyQuestion())).thenReturn(answer())
-        mvc().perform(request(cookie = "session-token")).andExpect(status().isOk)
+        mvc().perform(request()).andExpect(status().isOk)
         Mockito.verify(service).answer(Mockito.eq(member), anyQuestion())
     }
 
@@ -152,7 +159,7 @@ class AssistantMessageControllerTest {
 
     @Test
     fun rendersAgentCardsWithTheirRoutes() {
-        `when`(service.answer(isNull(), anyQuestion())).thenReturn(
+        `when`(service.answer(Mockito.eq(member), anyQuestion())).thenReturn(
             AssistantAnswer(
                 AssistantIntent.PARTNER_MATCH, "맞는 모집글 한 건이에요.", emptyList(), null, null, null,
                 AssistantNavigation("파트너 모집 열기", "/app/partners"),
@@ -172,7 +179,7 @@ class AssistantMessageControllerTest {
 
     @Test
     fun agentPathHasItsOwnPerClientLimitOnlyWhenEnabled() {
-        `when`(service.answer(isNull(), anyQuestion())).thenReturn(answer())
+        `when`(service.answer(Mockito.eq(member), anyQuestion())).thenReturn(answer())
         val enabled = mvc(agent = AssistantAgentProperties(agentEnabled = true, toolsSecret = "assistant-tools-secret-for-tests-0123456789"), agentPerClient = 1)
         enabled.perform(request()).andExpect(status().isOk).andExpect(jsonPath("$.cards").isArray)
         enabled.perform(request()).andExpect(status().isTooManyRequests).andExpect(jsonPath("$.code").value("SUPPORT_PROGRAM_RATE_LIMITED"))
@@ -184,7 +191,7 @@ class AssistantMessageControllerTest {
 
     @Test
     fun rateLimitsByClientAddressWithTheSharedAdmissionRules() {
-        `when`(service.answer(isNull(), anyQuestion())).thenReturn(answer())
+        `when`(service.answer(Mockito.eq(member), anyQuestion())).thenReturn(answer())
         val mvc = mvc(perClient = 1)
         mvc.perform(request()).andExpect(status().isOk)
         mvc.perform(request()).andExpect(status().isTooManyRequests)
@@ -200,9 +207,13 @@ class AssistantMessageControllerTest {
             "timeout" -> AiServiceCallException.timeout(null)
             else -> AiServiceCallException.invalidResponse("bad", null)
         }
-        `when`(service.answer(isNull(), anyQuestion())).thenThrow(error)
+        `when`(service.answer(Mockito.eq(member), anyQuestion())).thenThrow(error)
         val expectedStatus = when (kind) { "unavailable" -> 503; "timeout" -> 504; else -> 502 }
         val expectedCode = when (kind) { "unavailable" -> "AI_SERVICE_UNAVAILABLE"; "timeout" -> "AI_SERVICE_TIMEOUT"; else -> "AI_SERVICE_INVALID_RESPONSE" }
         mvc().perform(request()).andExpect(status().`is`(expectedStatus)).andExpect(jsonPath("$.code").value(expectedCode))
+    }
+
+    private companion object {
+        const val MEMBER_SESSION = "session-token"
     }
 }

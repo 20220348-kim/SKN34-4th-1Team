@@ -75,7 +75,10 @@ import ai.govbiz.core.supportprogram.service.evidence.exception.SupportProgramEv
 import ai.govbiz.core.assistant.service.exception.AssistantToolUnauthorizedException
 import ai.govbiz.core.assistant.service.exception.AssistantToolsDisabledException
 import ai.govbiz.core.supportprogram.service.admission.exception.SupportProgramRequestRejectedException
+import ai.govbiz.core.planusage.repository.exception.PlanUsageStoreException
+import ai.govbiz.core.planusage.service.exception.PlanQuotaExceededException
 import jakarta.servlet.http.HttpServletRequest
+import java.time.format.DateTimeFormatter
 import java.net.URI
 import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpStatus
@@ -352,6 +355,51 @@ class ApiExceptionHandler {
         return ResponseEntity.status(status)
             .contentType(MediaType.APPLICATION_PROBLEM_JSON)
             .header(HttpHeaders.RETRY_AFTER, exception.retryAfterSeconds.toString())
+            .header(HttpHeaders.CACHE_CONTROL, "no-store")
+            .body(problem)
+    }
+
+    /** 요금제 한도 초과는 분당 요청 제한과 다른 코드로 알리고, 다음 초기화 시각과 남은 초를 함께 보냅니다. */
+    @ExceptionHandler(PlanQuotaExceededException::class)
+    fun handlePlanQuotaExceeded(
+        exception: PlanQuotaExceededException,
+        request: HttpServletRequest,
+    ): ResponseEntity<ProblemDetail> {
+        val problem = ProblemDetail.forStatusAndDetail(
+            HttpStatus.TOO_MANY_REQUESTS,
+            "The plan usage limit for this feature has been reached until the next reset.",
+        )
+        problem.type = URI.create("urn:govbiz:problem:plan-quota-exceeded")
+        problem.title = "Plan Quota Exceeded"
+        problem.instance = URI.create(request.requestURI)
+        problem.setProperty("code", "PLAN_QUOTA_EXCEEDED")
+        problem.setProperty("feature", exception.feature.name)
+        problem.setProperty("period", exception.feature.period.name)
+        problem.setProperty("plan", exception.plan?.name)
+        problem.setProperty("limit", exception.limit)
+        problem.setProperty("used", exception.used)
+        problem.setProperty("resetsAt", exception.resetsAt.format(DateTimeFormatter.ISO_OFFSET_DATE_TIME))
+        problem.setProperty("retryAfterSeconds", exception.retryAfterSeconds)
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+            .contentType(MediaType.APPLICATION_PROBLEM_JSON)
+            .header(HttpHeaders.RETRY_AFTER, exception.retryAfterSeconds.toString())
+            .header(HttpHeaders.CACHE_CONTROL, "no-store")
+            .body(problem)
+    }
+
+    /** 사용량을 확인할 수 없으면 유료 기능을 실행하지 않고 정상 응답으로 숨기지 않습니다. */
+    @ExceptionHandler(PlanUsageStoreException::class)
+    fun handlePlanUsageStoreUnavailable(request: HttpServletRequest): ResponseEntity<ProblemDetail> {
+        val problem = ProblemDetail.forStatusAndDetail(
+            HttpStatus.SERVICE_UNAVAILABLE,
+            "Plan usage cannot be checked right now. Please try again later.",
+        )
+        problem.type = URI.create("urn:govbiz:problem:quota-unavailable")
+        problem.title = "Quota Unavailable"
+        problem.instance = URI.create(request.requestURI)
+        problem.setProperty("code", "QUOTA_UNAVAILABLE")
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+            .contentType(MediaType.APPLICATION_PROBLEM_JSON)
             .header(HttpHeaders.CACHE_CONTROL, "no-store")
             .body(problem)
     }

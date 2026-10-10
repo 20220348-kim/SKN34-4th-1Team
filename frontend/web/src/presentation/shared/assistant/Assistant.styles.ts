@@ -102,6 +102,13 @@ export const assistantStyles = {
     'hover:bg-brand-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary',
     'disabled:cursor-default disabled:bg-[#d3d7db]',
   ),
+  // 로그인 전에는 입력창 자리에 안내 한 줄과 로그인 링크를 둡니다. 주제 알약은 그대로 씁니다.
+  composerLogin: 'flex shrink-0 items-center justify-between gap-3 border-t border-line bg-white px-4 pt-3 pb-3.5 max-[639px]:pb-[max(0.875rem,env(safe-area-inset-bottom))]',
+  composerLoginText: 'm-0 text-[12.5px] leading-[1.5] text-ink-muted',
+  composerLoginLink: classes(
+    'inline-flex min-h-9 shrink-0 items-center rounded-full border border-brand-primary bg-white px-3.5 text-[12.5px] font-bold text-brand-hover no-underline',
+    'hover:bg-brand-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-primary',
+  ),
 } as const
 
 export type AssistantCardTagTone = 'hot' | 'soon' | 'ok' | 'muted'

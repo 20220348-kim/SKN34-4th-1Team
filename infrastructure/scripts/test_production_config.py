@@ -181,7 +181,8 @@ class ProductionConfigTest(unittest.TestCase):
         for key, value in [("ACCOUNT_DEV_LOGIN_ENABLED", "true"), ("ACCOUNT_COOKIE_SECURE", "false"),
                            ("APP_CORS_ALLOWED_ORIGIN", "*"), ("SERVER_TOMCAT_REMOTEIP_INTERNAL_PROXIES", ""),
                            ("ACCOUNT_JWT_SECRET", "govbiz-local"), ("ACCOUNT_OAUTH_UNLINK_ENABLED", "true"),
-                           ("SPRING_DATASOURCE_URL", "jdbc:mysql://mysql:3306/govbiz")]:
+                           ("SPRING_DATASOURCE_URL", "jdbc:mysql://mysql:3306/govbiz"),
+                           ("PLAN_USAGE_UNLIMITED_ACCOUNT_EMAILS", "admin@govbiz.local")]:
             with self.subTest(key=key):
                 config = copy.deepcopy(self.config)
                 config["services"]["core-service"]["environment"][key] = value

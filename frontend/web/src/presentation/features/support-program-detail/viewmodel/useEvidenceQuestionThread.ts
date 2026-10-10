@@ -67,8 +67,8 @@ export function useEvidenceQuestionThread(identity: SupportProgramIdentity) {
     submitQuestion,
     /** 답을 받은 질문·답 목록입니다. 먼저 물은 것이 앞에 옵니다. */
     turns,
-    /** 아직 질문한 적이 없고 입력도 비어 있을 때만 자주 묻는 질문을 보여 줍니다. */
-    showSuggestions: turns.length === 0 && single.question.length === 0 && state.status === 'idle',
+    /** 아직 질문한 적이 없고 입력도 비어 있을 때만 자주 묻는 질문을 보여 줍니다. 오늘 질문을 다 썼으면 두지 않습니다. */
+    showSuggestions: turns.length === 0 && single.question.length === 0 && state.status === 'idle' && !single.isLimitReached,
     suggestions: evidenceQuestionSuggestions,
     /** 목록에 올라간 답은 아래 안내에서 뺍니다. 오류·취소·검증 실패만 입력 아래에 남깁니다. */
     inlineState: state.status === 'answered' || state.status === 'insufficient-evidence' ? ({ status: 'idle' } as const) : state,

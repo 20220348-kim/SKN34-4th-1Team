@@ -45,6 +45,8 @@ jest.mock('../auth/introductionStorage', () => ({ completeIntroduction: jest.fn(
 jest.mock('../api/partners', () => ({ ...jest.requireActual('../api/partners'), browseRecruitments: jest.fn(), browseProposals: jest.fn() }))
 jest.mock('../notifications/DailyReportPushProvider', () => ({ useDailyReportPush: () => ({ settings: null, busy: false, error: null, permissionDenied: false, openSystemSettings: jest.fn() }) }))
 jest.mock('../api/applicationPreparation', () => ({ ...jest.requireActual('../api/applicationPreparation'), applicationPreparationUseCase: jest.fn() }))
+// 이용량 표시는 ChatScreen·AccountScreen 테스트가 확인합니다. 여기서는 응답을 보내지 않아 네트워크에 닿지 않습니다.
+jest.mock('../api/planUsage', () => ({ planUsageUseCase: () => ({ usage: () => new Promise(() => undefined) }) }))
 
 const preparationApi = { get: jest.fn(), replaceInputs: jest.fn() }
 const originalApiBaseUrl = process.env.EXPO_PUBLIC_API_BASE_URL

@@ -1,7 +1,9 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native'
-import { Alert, Linking, Modal } from 'react-native'
+import { Alert, Linking, Modal, StyleSheet } from 'react-native'
+import { PlanQuotaExceededError } from '@govbiz/shared/domain/errors/PlanQuotaError'
 import { ApiError, apiRequest, programClient } from '../api/client'
 import { useAuth } from '../auth/session'
+import { colors } from '../ui'
 import { ProgramScreen } from './ProgramScreen'
 import { preparation, preparationDetail, programDetail } from '../test/preparationFixtures'
 
@@ -13,7 +15,13 @@ jest.mock('../components/ProgramAttachments', () => ({ ProgramAttachments: () =>
 const answer = jest.fn()
 const identity = { sourceCode: 'BIZINFO', sourceProgramId: 'P/123' }
 const invalidateSession = jest.fn()
+const resetsAt = '2026-10-09T00:00:00+09:00'
+const questionUsage = (used: number) => ({ plan: 'FREE', items: [
+  { feature: 'AI_SEARCH', period: 'DAY', limit: 10, used: 0, resetsAt },
+  { feature: 'EVIDENCE_QUESTION', period: 'DAY', limit: 10, used, resetsAt },
+] })
 function respond(path: string) {
+  if (path === '/api/v1/plan-usage') return Promise.resolve(questionUsage(0))
   if (path.includes('/saved-programs/status?')) return Promise.resolve({ saved: true })
   if (path.startsWith('/api/v1/application-preparations?')) return Promise.resolve({ items: [preparation], nextBeforeId: null })
   if (path.startsWith('/api/v1/combination-reviews?')) return Promise.resolve({ items: [], nextBeforeId: null })
@@ -256,6 +264,63 @@ test('K-Startup evidence citations show the server source label and open the off
   expect(answer).toHaveBeenCalledWith({ ...kStartup, question: '제출 서류는?' }, expect.anything())
   fireEvent.press(screen.getByLabelText('근거 1 · K-Startup 상세 본문 ↗'))
   expect(open).toHaveBeenCalledWith(kStartupUrl)
+})
+
+test('the question sheet reads the daily question count when opened, warns from 80% and rereads it after each question', async () => {
+  let used = 7
+  jest.mocked(apiRequest).mockImplementation(path => path === '/api/v1/plan-usage' ? Promise.resolve(questionUsage(used)) : respond(path))
+  render(<ProgramScreen identity={identity} onLogin={jest.fn()} />)
+  await screen.findByText('테스트 지원사업')
+  expect(jest.mocked(apiRequest).mock.calls.some(([path]) => path === '/api/v1/plan-usage')).toBe(false)
+  fireEvent.press(screen.getByLabelText('원문에 질문하기'))
+  await screen.findByText('공고 원문 질문 오늘 7/10회')
+  expect(apiRequest).toHaveBeenCalledWith('/api/v1/plan-usage', expect.objectContaining({ accessToken: 'owner' }))
+  used = 8
+  fireEvent.changeText(screen.getByLabelText('공고에 대해 궁금한 점'), '신청 서류는?')
+  await act(async () => { fireEvent.press(screen.getByLabelText('질문 보내기')) })
+  await screen.findByText('공고 원문 답변')
+  const warning = '공고 원문 질문 오늘 8/10회 · 자정(서울 시간)에 다시 채워져요.'
+  await screen.findByText(warning)
+  expect(StyleSheet.flatten(screen.getByText(warning).props.style).color).toBe(colors.warning)
+  expect(screen.getByLabelText('공고에 대해 궁금한 점').props.editable).toBe(true)
+})
+
+test('a used-up daily question limit disables the input with its message instead of requesting AI', async () => {
+  jest.mocked(apiRequest).mockImplementation(path => path === '/api/v1/plan-usage' ? Promise.resolve(questionUsage(10)) : respond(path))
+  render(<ProgramScreen identity={identity} onLogin={jest.fn()} />)
+  await screen.findByText('테스트 지원사업')
+  fireEvent.press(screen.getByLabelText('원문에 질문하기'))
+  await screen.findByText('오늘 공고 원문 질문 10회를 모두 썼어요. 자정(서울 시간)에 다시 채워져요.')
+  expect(screen.getByLabelText('공고에 대해 궁금한 점').props.editable).toBe(false)
+  expect(screen.queryByText('예시 질문')).toBeNull()
+  expect(screen.getByLabelText('질문 보내기')).toBeDisabled()
+  fireEvent.press(screen.getByLabelText('질문 보내기'))
+  expect(answer).not.toHaveBeenCalled()
+  expect(screen.queryByText(/업그레이드|요금제 보기|결제/)).toBeNull()
+})
+
+test('a quota rejection after a stale count leaves a single limit message and keeps the draft', async () => {
+  let used = 9
+  jest.mocked(apiRequest).mockImplementation(path => path === '/api/v1/plan-usage' ? Promise.resolve(questionUsage(used)) : respond(path))
+  answer.mockImplementationOnce(async () => {
+    used = 10
+    throw new PlanQuotaExceededError({ feature: 'EVIDENCE_QUESTION', period: 'DAY', plan: 'FREE', limit: 10, resetsAt })
+  })
+  render(<ProgramScreen identity={identity} onLogin={jest.fn()} />)
+  await screen.findByText('테스트 지원사업')
+  fireEvent.press(screen.getByLabelText('원문에 질문하기'))
+  const stale = '공고 원문 질문 오늘 9/10회 · 자정(서울 시간)에 다시 채워져요.'
+  await screen.findByText(stale)
+  fireEvent.changeText(screen.getByLabelText('공고에 대해 궁금한 점'), '마지막 질문')
+  // 거절 뒤 이용량을 다시 읽는 비동기 흐름까지 끝낸 뒤 확인합니다.
+  await act(async () => { fireEvent.press(screen.getByLabelText('질문 보내기')) })
+  await waitFor(() => expect(screen.queryByText(stale)).toBeNull())
+  // 거절 안내와 다시 읽은 이용량이 같은 문장이라 한 번만 보입니다.
+  expect(screen.getAllByText('오늘 공고 원문 질문 10회를 모두 썼어요. 자정(서울 시간)에 다시 채워져요.')).toHaveLength(1)
+  expect(screen.getByLabelText('공고에 대해 궁금한 점').props.editable).toBe(false)
+  expect(screen.getByLabelText('질문 보내기')).toBeDisabled()
+  expect(screen.getByLabelText('공고에 대해 궁금한 점').props.value).toBe('마지막 질문')
+  expect(answer).toHaveBeenCalledTimes(1)
 })
 
 test('cancelling an evidence request preserves the draft and never displays its late answer', async () => {

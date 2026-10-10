@@ -123,16 +123,34 @@ V20에 맞추고 미적용 대화용 V19를 한 번만 out-of-order로 적용하
 
 ## 요금제 사용량 한도
 
-`ai.govbiz.core.planusage`는 계정의 현재 요금제(FREE·PLUS·PREMIUM)를 알려 줍니다. 결제 연동 전이라 모든 회원은 FREE에서 시작하고,
+`ai.govbiz.core.planusage`는 요금제별 AI 기능 사용 횟수를 세고 막습니다. 결제 연동 전이라 모든 회원은 FREE에서 시작하고,
 V54 `account_plan`에 운영자가 배정한 계정만 PLUS·PREMIUM입니다(테스트 계정 예:
-`INSERT INTO account_plan (account_id, plan_code, assigned_at) VALUES (?, 'PREMIUM', NOW(6))`). 행을 지우면 FREE로 돌아갑니다.
-기능별 사용량 한도는 아직 적용하지 않습니다. 판단 근거와 다음 단계는 [요금제 사용량 한도](../../docs/plan-usage-limits.md)를 참고하세요.
+`INSERT INTO account_plan (account_id, plan_code, assigned_at) VALUES (?, 'PREMIUM', NOW(6))`). 한도 숫자는 domain `PlanCode`에 있고
+`null`이면 아직 정하지 않아 제한하지 않습니다. 로컬 개발용으로 `app.plan-usage.unlimited-account-emails`(`PLAN_USAGE_UNLIMITED_ACCOUNT_EMAILS`,
+쉼표 구분, 기본 빈 값)에 적은 계정은 사용량만 세고 막지 않으며(`limit: null`), 로컬 Compose는 데모 시드 계정 6개를 넣고 운영은 비웁니다.
+판단 근거와 세는 규칙은 [요금제 사용량 한도](../../docs/plan-usage-limits.md)를 참고하세요.
 
-| 요금제 API | 동작 |
+| 기능 | 로그인 전 | FREE | PLUS | PREMIUM | 세는 방법 |
+|---|---|---|---|---|---|
+| AI 대화 검색(`AI_SEARCH`) | 하루 2회 | 하루 10회 | 제한 없음(미정) | 제한 없음(미정) | 검색어가 있는 검색 요청마다 AI 호출 전에 1을 더하고 실패하면 되돌림 |
+| 공고 원문 질문(`EVIDENCE_QUESTION`) | 로그인 필요 | 하루 10회 | 제한 없음(미정) | 제한 없음(미정) | 같음 |
+
+- **기간:** 하루는 서울 날짜입니다. 기간 키가 바뀌면 새 행을 쓰므로 초기화 작업이 없습니다.
+- **하루 한도:** V56 `plan_usage_counter`의 행을 만들거나 잠근 뒤 조건부 UPDATE 한 문장으로 한도 안에서만 더합니다. 한도가 없는
+  요금제는 조건 없이 더해 사용량만 남깁니다. 로그인 전 체험은 접속 주소를 SHA-256으로만 넣은 Redis 키에 다음 서울 자정까지 둡니다.
+  컨트롤러가 분당 요청 제한을 통과한 요청만 셉니다.
+- **응답:** 한도 초과는 `429 PLAN_QUOTA_EXCEEDED`(`feature`·`period`·`plan`·`limit`·`used`·`resetsAt`·`retryAfterSeconds`,
+  `Retry-After`=다음 초기화까지 초)이고 분당 제한 `SUPPORT_PROGRAM_RATE_LIMITED`와 구분합니다. 사용량 저장소(MySQL·Redis)를
+  읽거나 쓰지 못하면 유료 기능을 실행하지 않고 `503 QUOTA_UNAVAILABLE`입니다.
+- **로그인:** 공고 원문 질문(`POST /api/v1/support-programs/detail/answers`)과 도우미 자유 질문(`POST /api/v1/assistant/messages`)은
+  로그인한 회원만 씁니다(없으면 401 `AUTHENTICATION_REQUIRED`). 기업 맞춤 리포트의 내부 검색·원문 답변은 리포트 예산으로만 셉니다.
+
+| 사용량 API | 동작 |
 |---|---|
-| `GET /api/v1/plan-usage` | 현재 요금제 `{ "plan": "FREE" \| "PLUS" \| "PREMIUM" }`. 로그인 전에는 `plan: null`. no-store |
+| `GET /api/v1/plan-usage` | 현재 요금제와 기능별 `feature`·`period`·`limit`·`used`·`resetsAt`(+09:00). 한도가 없으면 `limit: null`. 로그인 전에는 `plan: null`과 접속 주소의 AI 대화 검색 체험만. no-store |
 
-호출 흐름: `PlanUsageController → PlanUsageService → PlanUsageRepository → MyBatis Mapper → XML → MySQL`입니다.
+호출 흐름: `Controller → PlanUsageService.consume → PlanUsageRepository → MyBatis → MySQL`(회원) 또는
+`GuestPlanUsageRepository → Redis`(로그인 전) 뒤 기존 검색·원문 답변 Service입니다.
 
 ## 실행
 
@@ -438,14 +456,14 @@ Controller의 `SupportProgramRequestAdmissionService.execute`가 공개 요청 �
 | `GET /api/v1/health/ai-service` | AI Service의 내부 Health 응답 확인 |
 | `GET /api/v1/support-programs/readiness` | 공개 공고 스냅샷·검색 색인·최근 동기화 결과 상태 |
 | `GET /api/v1/support-programs/catalog` | AI 없이 키워드·지역·분야·접수 상태로 공고 목록을 필터링·정렬·페이지 조회 |
-| `GET /api/v1/support-programs/search` | 현재 MySQL 공고 카탈로그 검색 또는 최신 목록(비로그인 2개·로그인 최대 5개) |
-| `POST /api/v1/support-programs/search` | 이번 검색에만 기업 조건을 반영한 자연어 검색(비로그인 2개·로그인 최대 5개) |
+| `GET /api/v1/support-programs/search` | 현재 MySQL 공고 카탈로그 검색 또는 최신 목록(비로그인 2개·로그인 최대 5개). 검색어가 있으면 AI 대화 검색 횟수를 씀 |
+| `POST /api/v1/support-programs/search` | 이번 검색에만 기업 조건을 반영한 자연어 검색(비로그인 2개·로그인 최대 5개). 검색어가 있으면 AI 대화 검색 횟수를 씀(로그인 전 하루 2회) |
 | `POST /api/v1/support-programs/search/results` | 로그인 후 기존 검색 결과와 조건 복원(검색·모델 재호출 없음) |
 | `POST /api/v1/support-programs/conversation/interpret` | 현재 발화로 조건 변경 초안을 만들며 사용자 확인 전에는 검색하지 않음 |
-| `POST /api/v1/assistant/messages` | 도우미 자유 질문 한 건의 의도 분류·답변. 비로그인 허용, 세션이 있으면 관심 공고함·받은 제안함·기업 상태로 답함. 프런트 `VITE_ASSISTANT_AI_ENABLED=true`일 때만 호출됨 |
+| `POST /api/v1/assistant/messages` | 도우미 자유 질문 한 건의 의도 분류·답변. 로그인 필요(401), 세션 계정의 관심 공고함·받은 제안함·기업 상태로 답함. 프런트 `VITE_ASSISTANT_AI_ENABLED=true`일 때만 호출됨 |
 | `GET /api/v1/support-programs/detail` | 제공처 코드와 원본 ID로 현재 공고 상세 조회. `sourceUrl`은 공고 상세, `applicationRoute`는 공식 신청방법·URL·경로 분류, `contact`(담당 부서·제공처 원문 전화번호·문의처 원문, 없으면 null)·`preferenceDescription`·`supervisingInstitutionType`은 공식 API 값을 반환 |
-| `POST /api/v1/support-programs/detail/answers` | 특정 공고의 공식 원문 근거 질문·답변 |
-| `GET /api/v1/plan-usage` | 현재 요금제. 로그인 전에는 `plan: null` |
+| `POST /api/v1/support-programs/detail/answers` | 특정 공고의 공식 원문 근거 질문·답변. 로그인 필요(401), 요금제 하루 질문 횟수를 씀(429 `PLAN_QUOTA_EXCEEDED`) |
+| `GET /api/v1/plan-usage` | 현재 요금제와 기능별 남은 사용량. 로그인 전에는 AI 대화 검색 체험만 |
 | `GET /api/v1/support-programs/detail/attachments` | 공고 원문이 직접 연결한 첨부 목록(이미지 제외, 최대 30개). 원본 주소 없이 `index`·`fileName`·`extension`만 반환하고, 원문에서 읽은 목록은 Redis에 6시간 보관. 원문을 읽지 못하면 503 `SUPPORT_PROGRAM_ATTACHMENTS_UNAVAILABLE` |
 | `GET /api/v1/support-programs/detail/attachments/download` | 목록의 `index` 첨부를 Core가 원본에서 받아 그대로 흘려보냄. 화면에서 읽은 이름을 UTF-8 `filename*`로 다시 붙이고 항상 `application/octet-stream`. 100MB 초과는 413 `SUPPORT_PROGRAM_ATTACHMENT_TOO_LARGE`, 목록에 없는 순번은 404 `SUPPORT_PROGRAM_ATTACHMENT_NOT_FOUND` |
 | `POST /api/v1/sample-items/prepare` | 계층 연결 학습용 예제 |
@@ -550,7 +568,7 @@ V40에는 평문 코드·JWT가 저장되지 않으며 하루 이상 지난 tran
 `AssistantMessageController → AssistantMessageService → AiAssistantClient` 흐름으로 내부
 `/internal/v1/assistant/answers`를 한 번 호출합니다. 요청은 질문(최대 500자), 최근 대화 6개, 현재 화면 경로와 공고 선택 여부,
 프런트 도움말 항목 전량(1~40개)입니다. 도움말의 원본은 프런트 `helpContent.ts`이므로 Core는 사본을 두지 않고 요청에 실린 항목만 인용으로 인정합니다.
-Core는 보내기 전에 사업자등록번호·전화·이메일·주민등록번호를 가리고, 요청량·동시 실행 한도는 검색·원문 질문과 같은 Bean을 공유합니다.
+로그인한 회원만 물을 수 있고(비로그인 401), Core는 보내기 전에 사업자등록번호·전화·이메일·주민등록번호를 가리며, 요청량·동시 실행 한도는 검색·원문 질문과 같은 Bean을 공유합니다.
 응답 의도는 `PRODUCT_HELP`(답+인용 1~3개, 첫 인용 항목의 이동 버튼)·`ACCOUNT_STATE`(`accountTopic`별로 Core가 관심 공고함·받은 제안함·기업을 읽어 답)·
 `SEARCH`(`searchQuery`와 검색 화면 이동)·`PROGRAM_QUESTION`(원문 질문 화면 안내)·`OUT_OF_SCOPE`(기권 답)·`UNCLEAR`(확인 질문)입니다.
 의도별 필드 조합·인용 id·스키마 버전이 어긋나면 답을 고치지 않고 502 `AI_SERVICE_INVALID_RESPONSE`로 끝냅니다.
@@ -937,13 +955,15 @@ partner/
 │   └── mapper            # MyBatis Mapper, DbRow
 └── domain                # 모집글·제안·역할 업무 모델, 조회 시점 모집·제안 상태 계산
 planusage/
-├── controller            # 현재 요금제 조회 HTTP 진입점
+├── controller            # 남은 사용량 조회 HTTP 진입점
 │   └── dto               # 공개 응답 계약
-├── service               # 계정의 현재 요금제 조회
-│   └── dto               # 요금제 결과
-├── repository            # 요금제 배정 행(MySQL) 조회, 없으면 FREE
-│   └── mapper            # MyBatis Mapper
-└── domain                # 요금제 종류
+├── service               # 하루 한도 예약·되돌리기, 기능별 사용량 조회
+│   ├── dto               # 요금제·기능별 사용량 결과
+│   └── exception         # 한도 초과 예외
+├── repository            # 요금제·사용량 행(MySQL)과 로그인 전 체험 횟수(Redis)
+│   ├── mapper            # MyBatis Mapper, DbRow
+│   └── exception         # 사용량 저장소 장애
+└── domain                # 요금제별 한도(없으면 null), 기능·기간, 서울 기준 집계 기간
 _health                    # Core API Health
 _health_ai_service         # AI Service Health의 Controller → Service → Client
 _sampleitem                # 학습 예제

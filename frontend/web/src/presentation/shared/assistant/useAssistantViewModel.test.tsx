@@ -7,6 +7,7 @@ import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createAppStore } from '../../../app/store'
+import { AssistantApiError } from '../../../data/api/assistantApi'
 import { supportPrograms } from '../../../data/fixtures/supportPrograms'
 import type { Account } from '../../../domain/entities/Account'
 import type { AssistantAnswer } from '../../../domain/entities/AssistantAnswer'
@@ -77,11 +78,12 @@ afterEach(() => {
 })
 
 describe('도우미 인증 세션 분리', () => {
-  it('로그아웃하면 대화·알약·패널·저장소를 비우고 비로그인 질문에도 이전 history를 보내지 않는다', async () => {
+  it('로그아웃하면 대화·알약·패널·저장소를 비우고 비로그인 자유 질문은 서버에 보내지 않고 로그인을 안내한다', async () => {
     seedConversation(accountA.email)
     const view = renderAssistant()
     act(() => view.result.current.open())
     expect(serialized(view.result.current.messages)).toContain('A 계정의 비공개 대화')
+    expect(view.result.current.canAskFreeText).toBe(true)
 
     act(() => view.store.dispatch(signedOut()))
     expect(view.result.current.messages).toEqual([])
@@ -89,10 +91,32 @@ describe('도우미 인증 세션 분리', () => {
     expect(view.result.current.isOpen).toBe(false)
     expect(view.result.current.hasUnread).toBe(false)
     expect(window.sessionStorage.getItem(assistantConversationStorageKey)).toBeNull()
+    // 자유 질문은 회원만 쓰므로 입력창 대신 로그인 안내를 둡니다. 로그인 뒤에는 지금 화면으로 돌아옵니다.
+    expect(view.result.current.canAskFreeText).toBe(false)
+    expect(view.result.current.loginPath).toBe(`/login?next=${encodeURIComponent('/app/proposals')}`)
 
+    // 이전 대화의 다시 시도 알약처럼 입력창 없이 들어온 질문도 보내지 않아 이전 history가 나가지 않습니다.
     act(() => view.result.current.submitText('로그아웃 뒤 질문'))
     await waitFor(() => expect(view.result.current.isTyping).toBe(false))
-    expect(view.ask.execute.mock.calls[0]![0].history).toEqual([])
+    expect(view.ask.execute).not.toHaveBeenCalled()
+    expect(serialized(view.result.current.messages)).toContain(assistantMessages.freeTextLoginRequired)
+    expect(serialized(view.result.current.messages)).not.toContain('A 계정의 비공개 대화')
+  })
+
+  it('세션이 끝나 서버가 로그인을 요구하면 일반 실패 대신 다시 로그인을 안내하고 다시 시도 알약을 두지 않는다', async () => {
+    const view = renderAssistant()
+    view.ask.execute.mockRejectedValueOnce(new AssistantApiError(401, 'AUTHENTICATION_REQUIRED'))
+    act(() => view.result.current.open())
+    act(() => view.result.current.submitText('관심 공고 마감 알려줘'))
+    await waitFor(() => expect(serialized(view.result.current.messages)).toContain(assistantMessages.sessionLoginRequired))
+    expect(serialized(view.result.current.messages)).not.toContain(assistantMessages.loadFailed)
+    expect(view.result.current.quickReplies.map((reply) => reply.kind)).not.toContain('retry')
+
+    // 다른 실패는 지금처럼 다시 시도 알약을 둡니다.
+    view.ask.execute.mockRejectedValueOnce(new AssistantApiError(500, null))
+    act(() => view.result.current.submitText('한 번 더'))
+    await waitFor(() => expect(serialized(view.result.current.messages)).toContain(assistantMessages.loadFailed))
+    expect(view.result.current.quickReplies.map((reply) => reply.kind)).toContain('retry')
   })
 
   it('로그아웃 없이 A에서 B로 signedIn해도 이전 대화를 표시하거나 history로 보내지 않는다', async () => {

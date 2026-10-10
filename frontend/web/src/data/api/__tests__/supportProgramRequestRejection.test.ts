@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { PlanQuotaExceededError, QuotaUnavailableError } from '@govbiz/shared/domain/errors/PlanQuotaError'
 
 import { SupportProgramRequestError } from '../../../domain/errors/SupportProgramRequestError'
 import { SupportProgramRepositoryImpl } from '../../repositories/SupportProgramRepositoryImpl'
@@ -81,6 +82,25 @@ describe('support program request admission HTTP boundary', () => {
     response.headers.set('Content-Type', contentType)
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response))
     await expect(new SupportProgramRepositoryImpl().search(command)).rejects.not.toBeInstanceOf(SupportProgramRequestError)
+  })
+
+  it('passes plan quota rejections through the repository unchanged so the screens show the shared message', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(problemResponse(429, { code: 'PLAN_QUOTA_EXCEEDED', feature: 'AI_SEARCH', period: 'DAY', plan: 'FREE',
+        limit: 10, used: 10, resetsAt: '2026-10-09T00:00:00+09:00' }))
+      .mockResolvedValueOnce(problemResponse(429, { code: 'PLAN_QUOTA_EXCEEDED', feature: 'EVIDENCE_QUESTION', period: 'DAY', plan: 'FREE',
+        limit: 10, used: 10, resetsAt: '2026-10-09T00:00:00+09:00', instance: '/api/v1/support-programs/detail/answers' }))
+      .mockResolvedValueOnce(problemResponse(503, { code: 'QUOTA_UNAVAILABLE' })))
+    const repository = new SupportProgramRepositoryImpl()
+
+    const search = await repository.search(command).catch((error: unknown) => error)
+    expect(search).toBeInstanceOf(PlanQuotaExceededError)
+    expect((search as Error).message).toBe('오늘 AI 대화 검색 10회를 모두 썼어요. 자정(서울 시간)에 다시 채워져요. 필터 검색은 계속 쓸 수 있어요.')
+    const question = await repository.answerEvidenceQuestion(command).catch((error: unknown) => error)
+    expect(question).toBeInstanceOf(PlanQuotaExceededError)
+    expect((question as Error).message).toBe('오늘 공고 원문 질문 10회를 모두 썼어요. 자정(서울 시간)에 다시 채워져요.')
+    // 이용량 확인 실패(503)는 원문 답변 장애('unavailable')로 바꾸지 않고 그대로 올립니다.
+    expect(await repository.answerEvidenceQuestion(command).catch((error: unknown) => error)).toBeInstanceOf(QuotaUnavailableError)
   })
 
   it('does not expose invalid JSON errors or start a retry', async () => {

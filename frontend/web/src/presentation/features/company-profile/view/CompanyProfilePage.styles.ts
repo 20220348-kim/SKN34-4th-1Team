@@ -40,7 +40,17 @@ export const companyProfileStyles = {
   reminderOptions: 'flex flex-col gap-[0.65rem] border-t border-line pt-3',
   reminderChannel: 'flex items-start gap-2 text-[0.8rem] [&>input]:mt-[0.2rem]',
   reminderNote: 'm-0 text-[0.74rem] leading-[1.5] text-ink-muted',
-  // 요금제 카드의 결제·요금제 안내 한 줄입니다.
+  // 요금제와 이용량 카드입니다. 기능마다 이름 · 사용량, 진행 막대, 다시 채워지는 때를 한 상자에 둡니다.
+  // 한도의 80%부터는 사용량 글자와 막대를 경고 색으로 바꿉니다.
+  planUsageRows: 'm-0 flex list-none flex-col gap-2 p-0',
+  planUsageRow: 'flex flex-col gap-1.5 rounded-[0.85rem] bg-[#f6f7f8] px-4 py-[0.85rem]',
+  planUsageRowHead: 'flex items-center justify-between gap-4',
+  planUsageCount: 'shrink-0 text-[0.8rem] font-bold text-ink tabular-nums',
+  planUsageCountWarning: 'shrink-0 text-[0.8rem] font-bold text-warning tabular-nums',
+  planUsageTrack: 'h-2 overflow-hidden rounded-full bg-track',
+  planUsageBar: 'h-full rounded-full bg-brand-primary',
+  planUsageBarWarning: 'h-full rounded-full bg-warning',
+  planUsageReset: 'text-[0.74rem] leading-[1.5] text-ink-muted',
   planNote: 'm-0 text-[0.74rem] leading-[1.5] text-ink-muted',
   choiceColumns: 'grid grid-cols-1 gap-4 @min-[32rem]/column:grid-cols-2',
   choiceGroup: 'flex flex-col gap-2',

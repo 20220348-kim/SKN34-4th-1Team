@@ -21,6 +21,8 @@ export type ChatConversationProposal = {
   appliedConditions: { label: string; value: string }[]
   canConfirm: boolean
   hasUnsentMessage: boolean
+  /** AI 대화 검색 한도를 다 써서 이 조건으로 검색할 수 없을 때의 안내입니다. 한도가 남아 있으면 없습니다. */
+  searchLimitMessage?: string
 } | {
   kind: 'clarification'
   question: string | null
@@ -36,11 +38,13 @@ type ProposalSource = {
   pendingClarification: SupportProgramPendingClarification | null
   canSearch: boolean
   hasUnsentMessage: boolean
+  /** AI 대화 검색 한도를 다 썼으면 그 안내입니다. 확인 검색만 막고 메시지 해석과 필터 검색은 그대로 둡니다. */
+  searchLimitMessage?: string | null
 }
 
 /** 확정 상태는 바꾸지 않고, 현재 표시할 제안과 조건 차이만 계산합니다. */
 export function createChatConversationProposal({
-  isBusy, confirmedContext, interpretation, pendingClarification, canSearch, hasUnsentMessage,
+  isBusy, confirmedContext, interpretation, pendingClarification, canSearch, hasUnsentMessage, searchLimitMessage = null,
 }: ProposalSource): ChatConversationProposal | null {
   if (isBusy) return null
 
@@ -72,5 +76,6 @@ export function createChatConversationProposal({
   })
 
   return { kind: 'ready', query: proposed.query, acceptingOnly: proposed.acceptingOnly,
-    changes, hasRetainedConditions, appliedConditions, canConfirm: canSearch && !hasUnsentMessage, hasUnsentMessage }
+    changes, hasRetainedConditions, appliedConditions, canConfirm: canSearch && !hasUnsentMessage && !searchLimitMessage, hasUnsentMessage,
+    ...(searchLimitMessage ? { searchLimitMessage } : {}) }
 }

@@ -3,6 +3,8 @@
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { useLayoutEffect, useRef } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { PlanUsage } from '@govbiz/shared/domain/entities/PlanUsage'
+import { PlanQuotaExceededError, QuotaUnavailableError } from '@govbiz/shared/domain/errors/PlanQuotaError'
 
 import { supportPrograms } from '../../../../data/fixtures/supportPrograms'
 import { SupportProgramRequestError } from '../../../../domain/errors/SupportProgramRequestError'
@@ -261,6 +263,59 @@ describe('useSupportProgramEvidenceQuestionViewModel', () => {
     await act(async () => request)
     expect(result.current.question).toBe('')
     expect(result.current.state).toEqual({ status: 'idle' })
+  })
+})
+
+describe('하루 원문 질문 이용량', () => {
+  const resetsAt = '2026-10-09T00:00:00+09:00'
+  const questionUsage = (used: number): PlanUsage => ({
+    plan: 'FREE', items: [{ feature: 'EVIDENCE_QUESTION', period: 'DAY', limit: 10, used, resetsAt }],
+  })
+
+  it('질문할 때마다 이용량을 다시 읽고, 다 쓰면 더 보내지 않는다', async () => {
+    const execute = vi.fn().mockResolvedValue(answerResult())
+    const planUsage = { usage: vi.fn().mockResolvedValueOnce(questionUsage(9)).mockResolvedValue(questionUsage(10)) }
+    const { result } = renderHook(() => useSupportProgramEvidenceQuestionViewModel(getIdentity(), createEvidenceQuestionUseCase(execute), planUsage))
+    await waitFor(() => expect(result.current.usage).toMatchObject({ countText: '오늘 9/10회', isNearLimit: true, isLimitReached: false }))
+
+    act(() => result.current.updateQuestion('신청 대상은 누구인가요?'))
+    expect(result.current.canSubmit).toBe(true)
+    await act(async () => result.current.submitQuestion())
+    expect(execute).toHaveBeenCalledOnce()
+    await waitFor(() => expect(result.current.isLimitReached).toBe(true))
+    expect(planUsage.usage).toHaveBeenCalledTimes(2)
+    expect(result.current.usage?.limitMessage).toBe('오늘 공고 원문 질문 10회를 모두 썼어요. 자정(서울 시간)에 다시 채워져요.')
+
+    act(() => result.current.updateQuestion('하나 더 물어볼게요'))
+    expect(result.current.canSubmit).toBe(false)
+    await act(async () => result.current.submitQuestion())
+    expect(execute).toHaveBeenCalledOnce()
+  })
+
+  it('서버가 한도나 이용량 확인 실패로 답하지 않으면 shared 안내를 보이고 입력은 남긴다', async () => {
+    const execute = vi.fn()
+      .mockRejectedValueOnce(new PlanQuotaExceededError({ feature: 'EVIDENCE_QUESTION', period: 'DAY', plan: 'FREE', limit: 10, resetsAt }))
+      .mockRejectedValueOnce(new QuotaUnavailableError())
+    const planUsage = { usage: vi.fn(() => new Promise<PlanUsage>(() => {})) }
+    const { result } = renderHook(() => useSupportProgramEvidenceQuestionViewModel(getIdentity(), createEvidenceQuestionUseCase(execute), planUsage))
+    act(() => result.current.updateQuestion('신청 대상은 누구인가요?'))
+
+    await act(async () => result.current.submitQuestion())
+    expect(result.current.state).toEqual({ status: 'quota', message: '오늘 공고 원문 질문 10회를 모두 썼어요. 자정(서울 시간)에 다시 채워져요.' })
+    expect(result.current.question).toBe('신청 대상은 누구인가요?')
+
+    await act(async () => result.current.submitQuestion())
+    expect(result.current.state).toEqual({ status: 'quota', message: '지금은 이용량을 확인할 수 없어 실행하지 않았어요. 잠시 후 다시 시도해 주세요.' })
+    // 이용량을 읽지 못한 동안에는 막지 않고 서버 판단을 그대로 보여 줍니다.
+    expect(result.current.usage).toBeNull()
+    expect(result.current.canSubmit).toBe(true)
+  })
+
+  it('원문 질문을 지원하지 않는 공고는 이용량을 읽지 않는다', () => {
+    const planUsage = { usage: vi.fn(() => new Promise<PlanUsage>(() => {})) }
+    renderHook(() => useSupportProgramEvidenceQuestionViewModel({ sourceCode: 'KSTARTUP', sourceProgramId: 'K-1' },
+      createEvidenceQuestionUseCase(vi.fn()), planUsage))
+    expect(planUsage.usage).not.toHaveBeenCalled()
   })
 })
 

@@ -9,6 +9,7 @@ import App from '../../../App'
 import { appContainer } from '../../../app/appContainer'
 import indexCss from '../../../index.css?raw'
 import { createAppStore } from '../../../app/store'
+import { AssistantApiError } from '../../../data/api/assistantApi'
 import { receivedPendingProposal, receivedProposalBox } from '../../../data/fixtures/partnerProposals'
 import { supportPrograms } from '../../../data/fixtures/supportPrograms'
 import type { Account } from '../../../domain/entities/Account'
@@ -293,12 +294,32 @@ describe('도우미 자유 질문', () => {
     ])
   })
 
-  it('사용법 답은 도움말 출처와 공개 경로 버튼을, 불명확한 질문은 확인 질문과 주제 알약을 다시 보여 준다', async () => {
+  it('비로그인은 자유 질문 입력창 대신 로그인 안내와 복귀 링크를 보고, 주제 알약은 그대로 쓴다', () => {
+    const ask = vi.spyOn(appContainer.resolve('askAssistantUseCase'), 'execute')
+    renderApp('/pricing', null)
+    fireEvent.click(screen.getByRole('button', { name: assistantMessages.openLauncher }))
+    const panel = screen.getByRole('dialog', { name: assistantMessages.name })
+
+    expect(within(panel).queryByRole('textbox', { name: assistantMessages.placeholder })).toBeNull()
+    expect(within(panel).queryByRole('button', { name: assistantMessages.send })).toBeNull()
+    expect(within(panel).getByText(assistantMessages.freeTextLoginRequired)).toBeTruthy()
+    const login = within(panel).getByRole('link', { name: assistantMessages.login })
+    expect(login.getAttribute('href')).toBe(`/login?next=${encodeURIComponent('/pricing')}`)
+    // 입력창 자리의 로그인 링크로 초점이 갑니다.
+    expect(document.activeElement).toBe(login)
+
+    const topic = assistantHelpTopics[0]!
+    fireEvent.click(within(within(panel).getByRole('group', { name: '빠른 답변' })).getByRole('button', { name: topic.label }))
+    expect(within(within(panel).getByRole('log', { name: '대화' })).getByText(assistantMessages.topicAsk(topic.label))).toBeTruthy()
+    expect(ask).not.toHaveBeenCalled()
+  })
+
+  it('사용법 답은 도움말 출처와 화면 경로 버튼을, 불명확한 질문은 확인 질문과 주제 알약을 다시 보여 준다', async () => {
     const first = findHelpEntry('search-score-meaning')!
     const ask = vi.spyOn(appContainer.resolve('askAssistantUseCase'), 'execute')
       .mockResolvedValueOnce({ outcome: 'answered', answer: freeAnswer({ intent: 'PRODUCT_HELP', answer: '점수는 관련도예요.', citations: [first.id], navigation: first.action }) })
       .mockResolvedValueOnce({ outcome: 'answered', answer: freeAnswer({ intent: 'UNCLEAR', clarificationQuestion: '어떤 화면이 궁금하세요?' }) })
-    renderApp('/pricing', null)
+    renderApp('/app/pricing', memberAccount)
     fireEvent.click(screen.getByRole('button', { name: assistantMessages.openLauncher }))
     const panel = screen.getByRole('dialog', { name: assistantMessages.name })
     const log = within(panel).getByRole('log', { name: '대화' })
@@ -308,15 +329,15 @@ describe('도우미 자유 질문', () => {
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(await within(log).findByText('점수는 관련도예요.')).toBeTruthy()
     expect(within(log).getByText(assistantMessages.helpSource(first.title))).toBeTruthy()
-    expect(within(log).getByRole('link', { name: first.action!.label }).getAttribute('href')).toBe('/')
-    expect(ask.mock.calls[0]![0].context).toEqual({ route: '/pricing', programSelected: false })
+    expect(within(log).getByRole('link', { name: first.action!.label }).getAttribute('href')).toBe('/app/chat')
+    expect(ask.mock.calls[0]![0].context).toEqual({ route: '/app/pricing', programSelected: false })
 
     fireEvent.change(input, { target: { value: '그거' } })
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(await within(log).findByText('어떤 화면이 궁금하세요?')).toBeTruthy()
     const replies = within(panel).getByRole('group', { name: '빠른 답변' })
     expect(within(replies).getAllByRole('button').map((button) => button.textContent)).toEqual([
-      ...assistantHelpTopics.map((topic) => topic.label), assistantMessages.quickLoginBenefits, assistantMessages.quickContact,
+      ...assistantHelpTopics.map((topic) => topic.label), assistantMessages.quickSavedPrograms, assistantMessages.quickContact,
     ])
   })
 
@@ -371,32 +392,34 @@ describe('도우미 자유 질문', () => {
     expect(within(log).getByText(assistantMessages.aiToolSource(assistantMessages.savedSource))).toBeTruthy()
   })
 
-  it('비로그인 상태 질문은 로그인 링크를, 한도 초과는 다시 시도 알약을, 검색 의도는 검색어를 채우는 버튼을 준다', async () => {
+  it('한도 초과는 다시 시도 알약을, 로그인이 끝난 세션은 다시 로그인 안내를, 검색 의도는 검색어를 채우는 버튼을 준다', async () => {
     vi.spyOn(appContainer.resolve('askAssistantUseCase'), 'execute')
-      .mockResolvedValueOnce({ outcome: 'answered', answer: freeAnswer({ intent: 'ACCOUNT_STATE', answer: '로그인하면 알려 드려요.', accountTopic: 'SAVED_PROGRAMS' }) })
       .mockResolvedValueOnce({ outcome: 'rate-limited', retryAfterSeconds: 12 })
+      .mockRejectedValueOnce(new AssistantApiError(401, 'AUTHENTICATION_REQUIRED'))
       .mockResolvedValueOnce({ outcome: 'answered', answer: freeAnswer({ intent: 'SEARCH', answer: '검색해 볼까요?', searchQuery: '부산 수출 지원', navigation: { label: '검색 화면에서 찾기', to: '/app/chat' } }) })
-    renderApp('/partners', null)
+    renderApp('/app/partners', memberAccount)
     fireEvent.click(screen.getByRole('button', { name: assistantMessages.openLauncher }))
     const panel = screen.getByRole('dialog', { name: assistantMessages.name })
     const log = within(panel).getByRole('log', { name: '대화' })
     const input = within(panel).getByRole('textbox', { name: assistantMessages.placeholder })
-
-    fireEvent.change(input, { target: { value: '관심 공고 마감 있어?' } })
-    fireEvent.keyDown(input, { key: 'Enter' })
-    expect(await within(log).findByText('로그인하면 알려 드려요.')).toBeTruthy()
-    expect(within(log).getByRole('link', { name: assistantMessages.login }).getAttribute('href')).toBe(`/login?next=${encodeURIComponent('/partners')}`)
 
     fireEvent.change(input, { target: { value: '한 번 더' } })
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(await within(log).findByText(assistantMessages.rateLimited(12))).toBeTruthy()
     expect(within(panel).getByRole('button', { name: assistantMessages.retry })).toBeTruthy()
 
+    // 세션이 끝나 서버가 로그인을 요구하면 일반 실패 문구 대신 다시 로그인을 안내합니다. 다시 보내도 같으므로 다시 시도는 두지 않습니다.
+    fireEvent.change(input, { target: { value: '관심 공고 마감 있어?' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(await within(log).findByText(assistantMessages.sessionLoginRequired)).toBeTruthy()
+    expect(within(log).queryByText(assistantMessages.loadFailed)).toBeNull()
+    expect(within(panel).queryByRole('button', { name: assistantMessages.retry })).toBeNull()
+
     fireEvent.change(input, { target: { value: '부산 수출 지원 찾아줘' } })
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(await within(log).findByText('검색해 볼까요?')).toBeTruthy()
     const searchLink = within(log).getByRole('link', { name: '검색 화면에서 찾기' })
-    expect(searchLink.getAttribute('href')).toBe('/')
+    expect(searchLink.getAttribute('href')).toBe('/app/chat')
     fireEvent.click(searchLink)
     // 검색 화면의 입력창에 도우미가 고른 검색어가 미리 채워집니다. 검색은 사용자가 보낼 때 시작합니다.
     expect((await screen.findByRole('textbox', { name: '지원사업 검색어' }) as HTMLTextAreaElement).value).toBe('부산 수출 지원')

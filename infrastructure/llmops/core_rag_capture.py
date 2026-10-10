@@ -204,7 +204,7 @@ def fixture_for(content, chunks, cases, source_url, version):
 
 
 def verify_rag_capture(
-    *, core_url, environment, core_logs, read_wire, sql, program, output
+    *, core_url, session_token, environment, core_logs, read_wire, sql, program, output
 ):
     require(not output.exists(), "Use a fresh RAG integration output directory")
     require(
@@ -255,7 +255,9 @@ def verify_rag_capture(
             observations, chunks = [], None
             for case in cases:
                 before = set(trace.TRACE_PATTERN.findall(core_logs()))
-                code, body = trace.post_question(core_url, case["question"])
+                code, body = trace.post_question(
+                    core_url, case["question"], session_token=session_token
+                )
                 deadline = time.monotonic() + 10
                 while True:
                     current = set(trace.TRACE_PATTERN.findall(core_logs())) - before

@@ -7,6 +7,7 @@ import type { SupportProgramSearchResult } from '@govbiz/shared/domain/entities/
 import { RestoreSupportProgramSearchUseCase } from '@govbiz/shared/domain/usecases/RestoreSupportProgramSearchUseCase'
 import { SearchSupportProgramsUseCase } from '@govbiz/shared/domain/usecases/SearchSupportProgramsUseCase'
 import { SupportProgramSearchRestoreError } from '@govbiz/shared/domain/errors/SupportProgramSearchRestoreError'
+import { findPlanUsageItem, hasPlanLimit, isPlanLimitReached } from '@govbiz/shared/domain/entities/PlanUsage'
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
 import { ApiError, errorMessage, programClient, requestResultUnconfirmed, requestRetryAfterSeconds } from '../api/client'
 import { restoreSearchResults, searchPrograms } from '../api/searchResults'
@@ -18,6 +19,7 @@ import { SearchConditionCard } from '../components/SearchConditionCard'
 import { AppIcon } from '../components/AppIcon'
 import { PartnerSheet } from '../components/PartnerSheet'
 import type { SearchProgramInterests } from '../components/SearchProgramInterests'
+import { PlanUsageLine, usePlanUsage } from '../components/PlanUsage'
 import { Button, Notice, colors, styles } from '../ui'
 
 import { chatSearchOptions, chatSnapshot, contextFromSearch, emptyChatContext as emptyContext } from './chatConversationState'
@@ -84,6 +86,10 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active 
   const deletionId = useRef<string | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [historyRestored, setHistoryRestored] = useState(false)
+  // 검색어가 있는 검색만 AI 대화 검색 횟수로 셉니다. 조건 정리 대화와 필터 검색은 한도와 무관하게 둡니다.
+  const { usage, reload: reloadUsage } = usePlanUsage(token, active && (status === 'signedIn' || status === 'signedOut'))
+  const searchUsage = findPlanUsageItem(usage, 'AI_SEARCH')
+  const searchLimitReached = searchUsage !== null && isPlanLimitReached(searchUsage)
 
   function cancelScrollFrame() {
     if (scrollFrame.current !== null) cancelAnimationFrame(scrollFrame.current)
@@ -337,7 +343,7 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active 
   }
 
   async function search() {
-    if (busy || savingHistory || loadingRecords || deletionId.current || proposal?.status !== 'READY' || !proposal.proposedContext.query || message.trim() || retryUntil > Date.now()) return
+    if (busy || savingHistory || loadingRecords || deletionId.current || searchLimitReached || proposal?.status !== 'READY' || !proposal.proposedContext.query || message.trim() || retryUntil > Date.now()) return
     const controller = new AbortController(); request.current = controller
     const revision = ++generation.current
     const nextContext = proposal.proposedContext
@@ -391,7 +397,11 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active 
         } else { setError(errorMessage(cause)); markRetry(cause, 'search') }
         requestTimelineScroll('notice')
       }
-    } finally { if (generation.current === revision) setBusy(null) }
+    } finally {
+      if (generation.current === revision) setBusy(null)
+      // 성공·실패·취소와 관계없이 서버가 센 횟수를 다시 읽습니다.
+      reloadUsage()
+    }
   }
 
   const introductory = history.length === 0 && !proposal && !result && !busy
@@ -478,7 +488,7 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active 
       {proposal?.status === 'READY' && <View key={`proposal-${timelineVersions.proposal}`} testID="ai-search-proposal" style={local.contentGroup}
         onLayout={event => recordTimelineTarget('proposal', timelineVersions.proposal, event)}>
         {message.trim() && <Notice>입력한 내용을 먼저 AI에게 보내 조건을 갱신해 주세요.</Notice>}
-        <SearchConditionCard context={proposal.proposedContext} busy={Boolean(busy)} disabled={blocked || Boolean(message.trim()) || retryRemaining > 0 || retryUnconfirmed && retryAction === 'search'}
+        <SearchConditionCard context={proposal.proposedContext} busy={Boolean(busy)} disabled={blocked || Boolean(message.trim()) || searchLimitReached || retryRemaining > 0 || retryUnconfirmed && retryAction === 'search'}
           onConfirm={() => void search()} onEdit={() => { setMessage(proposal.proposedContext.query ?? ''); setRetryAction(null); setRetryUnconfirmed(false); composerInput.current?.focus() }} />
       </View>}
       {(error || sessionNotice || restoreFailure) && <View key={`notice-${timelineVersions.notice}`} testID="ai-search-notice" style={local.contentGroup}
@@ -511,6 +521,8 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active 
         로그인 없이 검색과 협업 모집글을 둘러볼 수 있어요.{'\n'}공고 저장과 맞춤 리포트는 로그인 후 이용해요.</Text></View>}
     </ScrollView>
     <View testID="ai-search-composer" style={local.composerDock}>
+      {/* 아직 한도를 정하지 않은 요금제는 이용량 줄을 두지 않습니다. */}
+      {usage && searchUsage && hasPlanLimit(searchUsage) && <View testID="ai-search-usage" style={local.usage}><PlanUsageLine item={searchUsage} plan={usage.plan} /></View>}
       <View style={local.composer}>
         <TextInput ref={composerInput} accessibilityLabel="회사 상황이나 궁금한 점" placeholder={introductory
           ? '예: 서울에서 AI 서비스를 만드는 창업기업입니다. 사업화 지원을 받을 수 있을까요?'
@@ -573,6 +585,7 @@ const local = StyleSheet.create({
   lockPreview: { backgroundColor: colors.track, borderRadius: 12, padding: 14, gap: 12 },
   lockLine: { width: '70%', height: 14, borderRadius: 4, backgroundColor: colors.fieldBorder },
   composerDock: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border, paddingHorizontal: 16, paddingTop: 12, paddingBottom: 10, backgroundColor: colors.surface },
+  usage: { maxWidth: 720, alignSelf: 'center', width: '100%', paddingHorizontal: 4, marginBottom: 8 },
   composer: { flexDirection: 'row', alignItems: 'flex-end', gap: 10, maxWidth: 720, alignSelf: 'center', width: '100%' },
   input: { flex: 1, minWidth: 0, minHeight: 64, maxHeight: 140, borderWidth: 1, borderColor: colors.fieldBorder,
     borderRadius: 24, paddingHorizontal: 16, paddingVertical: 14, fontSize: 16, lineHeight: 25, color: colors.text, backgroundColor: colors.surface },

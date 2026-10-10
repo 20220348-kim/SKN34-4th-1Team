@@ -562,14 +562,14 @@ describe('App navigation', () => {
     expect(fetchMock).toHaveBeenCalledOnce()
     expect(screen.queryByRole('textbox', { name: '공고 원문에 질문하기' })).toBeNull()
 
-    // 원문 질문은 회원 기능이라 비로그인 상세는 로그인 뒤 작업 화면의 질문으로 잇고, 공개 질문 화면은 주소로 엽니다.
+    // 원문 질문은 회원 기능이라 비로그인 상세는 로그인 뒤 작업 화면의 질문으로 잇고, 질문과 답은 작업 화면에서 확인합니다.
     const loginLink = screen.getByRole('link', { name: '로그인하고 원문에 질문하기' })
     const nextUrl = new URL(new URLSearchParams(loginLink.getAttribute('href')!.split('?')[1]).get('next')!, 'http://localhost')
     expect(nextUrl.pathname).toBe('/app/support-programs/detail/question')
     expect(nextUrl.searchParams.get('sourceCode')).toBe(detail.sourceCode)
     expect(nextUrl.searchParams.get('sourceProgramId')).toBe(detail.id)
     cleanup()
-    renderApp(createAppStore(), `/support-programs/detail/question?sourceCode=${detail.sourceCode}&sourceProgramId=${detail.id}`)
+    renderApp(createAppStore(), nextUrl.pathname + nextUrl.search)
 
     expect(screen.getByRole('heading', { name: '이 공고에 질문하기', level: 1 })).toBeTruthy()
     expect(screen.getByRole('link', { name: '← 공고 상세로 돌아가기' })).toBeTruthy()
@@ -639,11 +639,12 @@ describe('App navigation', () => {
       .mockResolvedValueOnce(jsonResponse(answer))
       .mockResolvedValueOnce(jsonResponse(detail))
     vi.stubGlobal('fetch', fetchMock)
+    vi.spyOn(appContainer.resolve('checkSavedSupportProgramUseCase'), 'execute').mockResolvedValue(false)
 
     await act(async () => {
       renderApp(
         createAppStore(),
-        `/support-programs/detail/question?sourceCode=${encodeURIComponent(detail.sourceCode)}&sourceProgramId=${encodeURIComponent(detail.id)}`,
+        `/app/support-programs/detail/question?sourceCode=${encodeURIComponent(detail.sourceCode)}&sourceProgramId=${encodeURIComponent(detail.id)}`,
       )
     })
 
@@ -651,7 +652,7 @@ describe('App navigation', () => {
     expect(fetchMock).not.toHaveBeenCalled()
     const backLink = screen.getByRole('link', { name: '← 공고 상세로 돌아가기' })
     const backUrl = new URL(backLink.getAttribute('href')!, 'http://localhost')
-    expect(backUrl.pathname).toBe('/support-programs/detail')
+    expect(backUrl.pathname).toBe('/app/support-programs/detail')
     expect(backUrl.searchParams.get('sourceCode')).toBe(detail.sourceCode)
     expect(backUrl.searchParams.get('sourceProgramId')).toBe(detail.id)
 
@@ -768,7 +769,7 @@ describe('App navigation', () => {
     vi.stubGlobal('fetch', fetchMock)
     renderApp(
       createAppStore(),
-      `/support-programs/detail/question?sourceCode=${detail.sourceCode}&sourceProgramId=${detail.id}`,
+      `/app/support-programs/detail/question?sourceCode=${detail.sourceCode}&sourceProgramId=${detail.id}`,
     )
     const question = screen.getByRole('textbox', { name: '공고 원문에 질문하기' }) as HTMLTextAreaElement
     fireEvent.change(question, { target: { value: '신청 대상은 누구인가요?' } })
@@ -807,7 +808,7 @@ describe('App navigation', () => {
     await act(async () => {
       renderApp(
         createAppStore(),
-        `/support-programs/detail/question?sourceCode=${detail.sourceCode}&sourceProgramId=${detail.id}`,
+        `/app/support-programs/detail/question?sourceCode=${detail.sourceCode}&sourceProgramId=${detail.id}`,
       )
     })
 

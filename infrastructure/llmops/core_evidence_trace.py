@@ -188,11 +188,16 @@ def seed_source_document(sql, program):
     return source_url
 
 
-def post_question(core_url, question):
+def post_question(core_url, question, *, session_token):
     request = urllib.request.Request(
         core_url + "/api/v1/support-programs/detail/answers",
         data=json.dumps({"sourceCode": "BIZINFO", "sourceProgramId": PROGRAM_ID, "question": question}).encode(),
-        headers={"Content-Type": "application/json", "traceparent": "00-" + "a" * 32 + "-" + "b" * 16 + "-01"},
+        # 공고 원문 질문은 회원 전용입니다. 쿠키 없는 Bearer 세션이라 Origin 검사 대상이 아닙니다.
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + session_token,
+            "traceparent": "00-" + "a" * 32 + "-" + "b" * 16 + "-01",
+        },
     )
     try:
         response = LOCAL_HTTP.open(request, timeout=45)
@@ -202,7 +207,7 @@ def post_question(core_url, question):
         return response.code, json.load(response)
 
 
-def verify_evidence_traces(*, core_url, stub_url, environment, core_logs, call_json, sql, program, output):
+def verify_evidence_traces(*, core_url, session_token, stub_url, environment, core_logs, call_json, sql, program, output):
     tracing_env(environment)
     for url in (core_url, stub_url):
         parsed = urllib.parse.urlsplit(url)
@@ -238,7 +243,7 @@ def verify_evidence_traces(*, core_url, stub_url, environment, core_logs, call_j
             save()
             question = f"접수 PRIVATE-EVIDENCE-TRACE-{nonce}-{'ok' if scenario == 'hit' else scenario}"
             before = set(TRACE_PATTERN.findall(core_logs()))
-            code, response = post_question(core_url, question)
+            code, response = post_question(core_url, question, session_token=session_token)
             record["http_status"] = code
             require(code == (200 if scenario in {"ok", "hit"} else 503), "Unexpected Core evidence HTTP status")
             if code == 200:

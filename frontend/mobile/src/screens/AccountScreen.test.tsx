@@ -1,7 +1,9 @@
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native'
+import { StyleSheet } from 'react-native'
 import { apiRequest } from '../api/client'
 import { useAuth } from '../auth/session'
 import { supportsNativeOAuth } from '../auth/oauth'
+import { colors } from '../ui'
 import { AccountScreen } from './AccountScreen'
 
 jest.mock('../auth/session', () => ({ useAuth: jest.fn() }))
@@ -101,34 +103,66 @@ test('changing the email discards its verification pass and blocks signup', asyn
   expect(view.getByText('인증번호 받기')).toBeTruthy()
 })
 
+
+const usage = { plan: 'FREE', items: [
+  { feature: 'AI_SEARCH', period: 'DAY', limit: 10, used: 3, resetsAt: '2026-10-09T00:00:00+09:00' },
+  // 진행 중인 요청 때문에 한도를 넘겨 세어져도 막대와 숫자는 한도에서 멈춥니다.
+  { feature: 'EVIDENCE_QUESTION', period: 'DAY', limit: 10, used: 11, resetsAt: '2026-10-09T00:00:00+09:00' },
+] }
 function signIn() {
   jest.mocked(useAuth).mockReturnValue({ status: 'signedIn', session: { accessToken: 'owner', account: { email: 'owner@example.com', company: null } },
     restoreError: null, signUp, signIn: jest.fn(), signOut: jest.fn(), refreshSession: jest.fn() } as unknown as ReturnType<typeof useAuth>)
 }
 
-test('a signed-in account shows its current plan in one line without a purchase path', async () => {
+test('a signed-in account shows its plan and every usage limit as progress without a purchase path', async () => {
   signIn()
-  jest.mocked(apiRequest).mockResolvedValue({ plan: 'FREE' })
+  jest.mocked(apiRequest).mockResolvedValue(usage)
   const view = render(<AccountScreen onCompany={jest.fn()} onSettings={jest.fn()} />)
-  await view.findByText('무료')
+  await view.findByText('요금제와 이용량')
   expect(apiRequest).toHaveBeenCalledWith('/api/v1/plan-usage', expect.objectContaining({ accessToken: 'owner' }))
   expect(view.getByText('현재 요금제')).toBeTruthy()
-  // 앱에서는 현재 요금제만 보여 주고 결제·요금제 변경으로 이어지는 안내나 링크를 두지 않습니다.
-  expect(view.queryByText(/업그레이드|요금제 보기|요금제 변경|가격|구매|결제/)).toBeNull()
+  expect(view.getByText('무료')).toBeTruthy()
+  for (const [label, count] of [['AI 대화 검색', '오늘 3/10회'], ['공고 원문 질문', '오늘 10/10회']]) {
+    expect(view.getByText(label)).toBeTruthy()
+    expect(view.getByText(count)).toBeTruthy()
+  }
+  expect(view.getAllByRole('progressbar')).toHaveLength(2)
+  expect(view.getByRole('progressbar', { name: 'AI 대화 검색 이용량' }).props.accessibilityValue).toEqual({ min: 0, max: 10, now: 3 })
+  expect(view.getByRole('progressbar', { name: '공고 원문 질문 이용량' }).props.accessibilityValue).toEqual({ min: 0, max: 10, now: 10 })
+  expect(view.getAllByText('자정(서울 시간)에 다시 채워져요.')).toHaveLength(2)
+  expect(StyleSheet.flatten(view.getByText('오늘 10/10회').props.style).color).toBe(colors.warning)
+  expect(StyleSheet.flatten(view.getByText('오늘 3/10회').props.style).color).not.toBe(colors.warning)
+  expect(view.getByText('결제는 아직 받지 않아요.')).toBeTruthy()
+  // 앱에서는 이용 현황만 보여 주고 결제·요금제 변경으로 이어지는 안내나 링크를 두지 않습니다.
+  expect(view.queryByText(/업그레이드|요금제 보기|요금제 변경|가격|구매|결제하기/)).toBeNull()
   expect(view.queryAllByRole('link')).toHaveLength(0)
   expect(view.getAllByRole('button').map(button => button.props.accessibilityLabel)).toEqual(['기업 프로필 등록', '알림 설정', '비밀번호 변경', '로그아웃', '계정 삭제', '개인정보 처리방침', '이용약관', '도움말·문의'])
 })
 
-test('a plan that cannot be read is left out instead of guessed', async () => {
+test('a plan without a limit yet shows its usage as unlimited without progress bars', async () => {
   signIn()
-  jest.mocked(apiRequest).mockRejectedValueOnce(new Error('offline'))
-  const view = render(<AccountScreen onCompany={jest.fn()} />)
-  await act(async () => {})
-  expect(apiRequest).toHaveBeenCalledTimes(1)
-  expect(view.queryByText('현재 요금제')).toBeNull()
-  expect(view.getByText('owner@example.com')).toBeTruthy()
+  jest.mocked(apiRequest).mockResolvedValue({ plan: 'PREMIUM', items: [
+    { feature: 'AI_SEARCH', period: 'DAY', limit: null, used: 42, resetsAt: '2026-10-09T00:00:00+09:00' },
+    { feature: 'EVIDENCE_QUESTION', period: 'DAY', limit: null, used: 0, resetsAt: '2026-10-09T00:00:00+09:00' },
+  ] })
+  const view = render(<AccountScreen onCompany={jest.fn()} onSettings={jest.fn()} />)
+  await view.findByText('프리미엄')
+  expect(view.getByText('오늘 42회 · 제한 없음')).toBeTruthy()
+  expect(view.getByText('오늘 0회 · 제한 없음')).toBeTruthy()
+  expect(view.queryByRole('progressbar')).toBeNull()
 })
 
+test('account usage that cannot be read offers a retry instead of a guessed count', async () => {
+  signIn()
+  jest.mocked(apiRequest).mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce(usage)
+  const view = render(<AccountScreen onCompany={jest.fn()} />)
+  await view.findByText('이용량을 불러오지 못했어요.')
+  expect(view.queryByRole('progressbar')).toBeNull()
+  await act(async () => { fireEvent.press(view.getByLabelText('이용량 다시 불러오기')) })
+  await view.findByText('결제는 아직 받지 않아요.')
+  expect(view.queryByText('이용량을 불러오지 못했어요.')).toBeNull()
+  expect(apiRequest).toHaveBeenCalledTimes(2)
+})
 
 test('signup rejects a password with Korean characters before sending it', async () => {
   const view = await verifyEmail()
@@ -158,7 +192,7 @@ test('signup opens draft policy documents without sending authentication request
 
 test('a signed-in account can open support while keeping its session', async () => {
   signIn()
-  jest.mocked(apiRequest).mockResolvedValue({ plan: 'FREE' })
+  jest.mocked(apiRequest).mockResolvedValue({ plan: 'FREE', items: [] })
   const view = render(<AccountScreen onCompany={jest.fn()} />)
   await view.findByText('무료')
   fireEvent.press(view.getByLabelText('도움말·문의'))

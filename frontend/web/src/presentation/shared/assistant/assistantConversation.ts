@@ -285,6 +285,19 @@ export function freeTextFailure(text: string, message: string): AssistantMessage
   })
 }
 
+/** 비로그인이 자유 질문을 보냈을 때입니다. 자유 질문은 회원만 쓸 수 있어 서버에 보내지 않고, 로그인 뒤 같은 화면으로 돌아오게 합니다. */
+export function freeTextLoginAnswer(returnTo: string): AssistantMessage {
+  return botMessage([assistantMessages.freeTextLoginRequired], {
+    card: { rows: [], buttons: [{ label: assistantMessages.login, to: loginPathFor(returnTo) }, { label: assistantMessages.signup, to: signupPathFor(returnTo) }] },
+    followUps: [otherQuestionReply],
+  })
+}
+
+/** 로그인이 끝난 세션으로 자유 질문을 보내 서버가 로그인을 요구했을 때입니다. 다시 보내도 같으므로 다시 시도 알약은 두지 않습니다. */
+export function freeTextSessionExpired(): AssistantMessage {
+  return botMessage([assistantMessages.sessionLoginRequired], { tone: 'warn', followUps: [otherQuestionReply] })
+}
+
 /** 비로그인이 상태 질문을 눌렀을 때입니다. 로그인 뒤 같은 화면으로 돌아옵니다. */
 export function loginPromptAnswer(returnTo: string): AssistantMessage {
   return botMessage([assistantMessages.loginPrompt], {

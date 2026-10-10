@@ -1,11 +1,14 @@
 import type { FormEvent } from 'react'
 import { Link, useLocation, useSearchParams } from 'react-router'
 
-import { isAppPath, supportProgramDetailPath } from '../../../shared/routes/appPaths'
+import { isAppPath, supportProgramDetailPath, supportProgramQuestionPath } from '../../../shared/routes/appPaths'
+import { loginPathFor } from '../../../shared/auth/returnPath'
+import { PlanUsageLine } from '../../../shared/plan-usage/PlanUsageLine'
 
 import type { SupportProgramIdentity } from '../../../../domain/repositories/SupportProgramRepository'
 import {
   maximumSupportProgramEvidenceQuestionLength,
+  supportsEvidenceQuestion,
   useSupportProgramEvidenceQuestionViewModel,
 } from '../viewmodel/useSupportProgramEvidenceQuestionViewModel'
 import { EvidenceQuestionFeedback } from './EvidenceQuestionFeedback'
@@ -39,6 +42,30 @@ export function SupportProgramEvidenceQuestionPage() {
   const identity = { sourceCode, sourceProgramId }
   const detailUrl = supportProgramDetailPath(identity, isAppPath(location.pathname), searchReturnTo)
 
+  // 로그인한 사용자는 작업 화면 주소로 옮겨지므로 공개 주소에는 로그인 전 방문만 남습니다. 원문 질문은 로그인한 회원만 씁니다.
+  // 원문 질문을 지원하지 않는 제공처는 로그인을 권하지 않고 아래에서 미지원 안내만 보여 줍니다.
+  if (!isAppPath(location.pathname) && supportsEvidenceQuestion(sourceCode)) {
+    return (
+      <main className={supportProgramEvidenceQuestionStyles.page}>
+        <Link className={supportProgramEvidenceQuestionStyles.backLink} to={detailUrl} state={{ searchReturnTo }}>
+          ← 공고 상세로 돌아가기
+        </Link>
+        <section className={supportProgramEvidenceQuestionStyles.evidenceSection}>
+          <h1 className={supportProgramEvidenceQuestionStyles.title}>로그인하고 원문에 질문하기</h1>
+          <p className={supportProgramEvidenceQuestionStyles.evidenceDescription}>
+            공고 원문 질문은 로그인한 뒤 이용할 수 있습니다. 로그인하면 이 공고의 질문 화면으로 돌아옵니다.
+          </p>
+          <Link
+            className={supportProgramEvidenceQuestionStyles.loginLink}
+            to={loginPathFor(supportProgramQuestionPath(identity, true, searchReturnTo))}
+          >
+            로그인하고 질문하기
+          </Link>
+        </section>
+      </main>
+    )
+  }
+
   return (
     <main className={supportProgramEvidenceQuestionStyles.page}>
       <Link className={supportProgramEvidenceQuestionStyles.backLink} to={detailUrl} state={{ searchReturnTo }}>
@@ -62,6 +89,8 @@ function SupportProgramEvidenceQuestionContent({
     cancelQuestion,
     isAnswering,
     isSupported,
+    usage,
+    isLimitReached,
     question,
     questionLength,
     state,
@@ -111,9 +140,9 @@ function SupportProgramEvidenceQuestionContent({
         <textarea
           id="support-program-evidence-question"
           className={supportProgramEvidenceQuestionStyles.evidenceInput}
-          aria-describedby={`support-program-evidence-question-hint support-program-evidence-question-count${isTooLong ? ' support-program-evidence-question-length-error' : ''}`}
+          aria-describedby={`support-program-evidence-question-hint support-program-evidence-question-count${usage ? ' support-program-evidence-question-usage' : ''}${isTooLong ? ' support-program-evidence-question-length-error' : ''}`}
           aria-invalid={isValidationFailed || isTooLong}
-          disabled={isAnswering}
+          disabled={isAnswering || isLimitReached}
           value={question}
           onChange={(event) => updateQuestion(event.target.value)}
           placeholder="예: 신청 대상과 제출해야 하는 서류를 알려줘"
@@ -144,6 +173,8 @@ function SupportProgramEvidenceQuestionContent({
         <small id="support-program-evidence-question-hint" className={supportProgramEvidenceQuestionStyles.evidenceHint}>
           질문은 최대 {maximumSupportProgramEvidenceQuestionLength}자이며, 자동으로 전송되지 않습니다.
         </small>
+        {usage ? <PlanUsageLine id="support-program-evidence-question-usage" view={usage}
+          className={supportProgramEvidenceQuestionStyles.evidenceUsage} /> : null}
         {isTooLong ? (
           <p id="support-program-evidence-question-length-error" className={supportProgramEvidenceQuestionStyles.evidenceError} role="alert">
             질문은 {maximumSupportProgramEvidenceQuestionLength}자 이하로 입력해 주세요.

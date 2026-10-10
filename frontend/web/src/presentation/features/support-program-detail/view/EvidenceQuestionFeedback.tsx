@@ -36,7 +36,7 @@ export function EvidenceQuestionFeedback({ state, compact = false }: { state: Su
     )
   }
 
-  if (state.status === 'validation-failed' || state.status === 'rate-limited' || state.status === 'busy') {
+  if (state.status === 'validation-failed' || state.status === 'rate-limited' || state.status === 'busy' || state.status === 'quota') {
     return <p className={compact ? s.evidenceErrorCompact : s.evidenceError} role="alert">{state.message}</p>
   }
 
@@ -53,7 +53,7 @@ export function EvidenceQuestionFeedback({ state, compact = false }: { state: Su
 }
 
 function evidenceFeedbackMessage(
-  status: Exclude<SupportProgramEvidenceQuestionState['status'], 'idle' | 'loading' | 'answered' | 'validation-failed' | 'rate-limited' | 'busy'>,
+  status: Exclude<SupportProgramEvidenceQuestionState['status'], 'idle' | 'loading' | 'answered' | 'validation-failed' | 'rate-limited' | 'busy' | 'quota'>,
 ) {
   const messages = {
     cancelled: '질문 요청을 취소했습니다.',

@@ -135,6 +135,18 @@ class SeedDemoDataTest(unittest.TestCase):
         self.assertIn("DEMO_SEED_FORCE: ${DEMO_SEED_FORCE:-false}", compose)
         self.assertIn('DEMO_SEED_TARGET_EMAILS: "${DEMO_SEED_TARGET_EMAILS:-}"', compose)
 
+    def test_seeded_accounts_use_plan_usage_without_limits_only_in_local_compose(self):
+        # 데모 시드가 만드는 계정 6개가 로컬 Compose의 개발용 무제한 계정 목록과 같아야 합니다.
+        seed = SEED_FILE.read_text(encoding="utf-8")
+        seeded = {"admin@govbiz.local", "member@govbiz.local"} | set(re.findall(r"'([a-z.]+@demo\.govbiz\.local)'", seed))
+        self.assertEqual(6, len(seeded))
+        compose = (SCRIPT.parents[1] / "compose.yaml").read_text(encoding="utf-8")
+        line = next(line for line in compose.splitlines() if "PLAN_USAGE_UNLIMITED_ACCOUNT_EMAILS:" in line)
+        listed = set(line.split("PLAN_USAGE_UNLIMITED_ACCOUNT_EMAILS-", 1)[1].rstrip("}").split(","))
+        self.assertEqual(seeded, listed)
+        # 운영 Compose는 이 값을 넘기지 않아 Core 기본값(빈 값)으로 모든 계정에 한도를 적용합니다.
+        self.assertNotIn("PLAN_USAGE_UNLIMITED_ACCOUNT_EMAILS", (SCRIPT.parents[1] / "compose.prod.yaml").read_text(encoding="utf-8"))
+
 
 class SeedEntrypointTest(unittest.TestCase):
     @staticmethod

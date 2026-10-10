@@ -187,7 +187,8 @@ def test_runner_persists_sanitized_pass_or_failure_evidence(tmp_path, monkeypatc
         calls.append(statement)
         return "1" if failure == "source" else "0"
 
-    def post(url, question):
+    def post(url, question, *, session_token):
+        assert session_token == "member-session"
         scenario = trace.SCENARIOS[len(logs)]
         tid = f"{len(logs) + 1:032x}"
         logs.append("support_program_evidence trace_id=" + tid)
@@ -227,6 +228,7 @@ def test_runner_persists_sanitized_pass_or_failure_evidence(tmp_path, monkeypatc
     output = tmp_path / "evidence.json"
     arguments = dict(
         core_url="http://localhost:8080",
+        session_token="member-session",
         stub_url="http://localhost:8002",
         environment=ENV,
         core_logs=lambda: "\n".join(logs),
