@@ -717,8 +717,7 @@ flowchart LR
     class Qdrant vectorDb
 ```
 
-**결과 확인·사람 검토:** 보고서와 추적을 확인하고, 검토·품질 판정을 거쳐 관리자가 비교 기준을 지정합니다.
-Langfuse의 실제 모델 호출 추적은 실행 중에도 수집합니다.
+<img src="docs/assets/readme/evaluation-review-caption.svg" alt="결과 확인·사람 검토 — 보고서와 추적을 확인하고, 검토·품질 판정을 거쳐 관리자가 비교 기준을 지정합니다. Langfuse의 실제 모델 호출 추적은 실행 중에도 수집합니다." width="820">
 
 ```mermaid
 flowchart LR
