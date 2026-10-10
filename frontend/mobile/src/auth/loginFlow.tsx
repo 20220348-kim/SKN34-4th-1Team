@@ -20,7 +20,6 @@ export function LoginFlowProvider({ children }: { children: ReactNode }) {
   const { status, session } = useAuth()
   const [pending, setPending] = useState<LoginRequest | null>(null)
   const [stage, setStage] = useState<'prompt' | 'methods' | 'login' | 'signup'>('prompt')
-  const [methodNotice, setMethodNotice] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const pendingRef = useRef<LoginRequest | null>(null)
   const insets = useSafeAreaInsets()
@@ -29,7 +28,7 @@ export function LoginFlowProvider({ children }: { children: ReactNode }) {
     if (status !== 'signedOut') return
     pendingRef.current?.onCancel?.()
     pendingRef.current = request
-    setPending(request); setBusy(false); setMethodNotice(null)
+    setPending(request); setBusy(false)
     setStage(request.methods ? 'methods' : request.direct ? request.mode ?? 'login' : 'prompt')
   }, [status, session])
   function cancel() {
@@ -57,12 +56,7 @@ export function LoginFlowProvider({ children }: { children: ReactNode }) {
         </View>
         <ScrollView bounces={false} overScrollMode="never" style={{ flexShrink: 1 }} contentContainerStyle={local.methodsContent} keyboardShouldPersistTaps="handled">
         <Text style={local.methodsDescription}>로그인하면 보던 화면에서 이어서 이용할 수 있어요.</Text>
-        <Button label="카카오로 계속하기" variant="secondary" style={{ backgroundColor: '#FEE500', borderWidth: 0 }}
-          onPress={() => setMethodNotice('카카오 로그인은 모바일 연결을 준비 중이에요. 이메일 로그인을 이용해 주세요.')} />
-        <Button label="Google 계정으로 계속하기" variant="secondary"
-          onPress={() => setMethodNotice('Google 로그인은 모바일 연결을 준비 중이에요. 이메일 로그인을 이용해 주세요.')} />
-        <Button label="이메일로 로그인" variant="secondary" onPress={() => { setMethodNotice(null); setStage('login') }} />
-        {methodNotice && <Text accessibilityLiveRegion="polite" style={local.description}>{methodNotice}</Text>}
+        <Button label="이메일로 로그인" variant="secondary" onPress={() => setStage('login')} />
         <View style={local.signupRow}><Text style={local.methodsDescription}>처음이신가요?</Text>
           <Pressable accessibilityRole="button" accessibilityLabel="회원가입하러가기" onPress={() => setStage('signup')} style={local.signupLink}>
             <Text style={local.signupText}>회원가입하러가기</Text></Pressable></View>
@@ -77,7 +71,7 @@ export function LoginFlowProvider({ children }: { children: ReactNode }) {
         <View style={local.header}><Text accessibilityRole="header" style={local.title}>{stage === 'signup' ? '회원가입' : '로그인'}</Text>
           <Button label="취소" accessibilityLabel="로그인 취소" variant="ghost" disabled={busy} onPress={cancel} /></View>
         <AccountScreen key={stage} initialMode={stage === 'signup' ? 'signup' : 'login'} authOnly onBusyChange={setBusy}
-          showSocialOptions={false}
+          showSocialOptions
           onCompany={() => undefined} />
       </View>}
     </Modal>

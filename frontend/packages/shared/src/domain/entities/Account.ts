@@ -3,6 +3,9 @@ import type { BusinessStatusCode } from './Company'
 /** 가입 전에 확인한 이메일의 일회용 인증 결과입니다. 로그인 세션과는 별개입니다. */
 export type SignupEmailVerification = { passToken: string; expiresAt: string }
 
+/** 비밀번호 재설정에만 사용하는 일회용 인증 결과입니다. 가입 인증과 교환해 사용할 수 없습니다. */
+export type PasswordResetVerification = { passToken: string; expiresAt: string }
+
 /** 관리자는 서버에서 SQL이나 개발용 로그인으로만 지정됩니다. */
 export type AccountRole = 'USER' | 'ADMIN'
 
