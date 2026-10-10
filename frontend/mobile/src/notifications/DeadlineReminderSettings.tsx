@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native'
+import { ActivityIndicator, Switch, StyleSheet, Text, View } from 'react-native'
 import {
   type DeadlineReminderSetting,
   type NotificationSettings,
@@ -99,23 +99,25 @@ export function DeadlineReminderSettings() {
   }
 
   return <Card>
-    <Pressable accessibilityRole="switch" accessibilityLabel="관심 공고 마감 알림"
-      accessibilityState={{ checked: setting.enabled, disabled: saving || blocked, busy: saving }} disabled={saving || blocked}
-      onPress={toggleEnabled} style={local.option}>
+    <View style={local.option}>
       <View style={{ flex: 1 }}>
         <Text style={styles.heading}>관심 공고 마감 알림</Text>
         <Text style={styles.muted}>{deadlineReminderScheduleText(settings)}</Text>
       </View>
-      <Text style={local.check}>{setting.enabled ? '●' : '○'}</Text>
-    </Pressable>
+      <Switch accessibilityLabel="관심 공고 마감 알림" value={setting.enabled}
+        style={{ minWidth: 48, minHeight: 48 }}
+        accessibilityState={{ checked: setting.enabled, disabled: saving || blocked, busy: saving }} disabled={saving || blocked}
+        trackColor={{ false: colors.fieldBorder, true: colors.primary }} thumbColor={colors.surface} onValueChange={toggleEnabled} />
+    </View>
     {setting.enabled && <>
-      {channels.map((channel) => <Pressable key={channel.key} accessibilityRole="checkbox" accessibilityLabel={`${channel.label}로 받기`}
-        accessibilityState={{ checked: channel.isOn, disabled: saving || (!channel.isOn && !channel.canTurnOn) }}
-        disabled={saving || (!channel.isOn && !channel.canTurnOn)}
-        onPress={() => void save({ ...setting, [channel.key]: !channel.isOn })} style={local.option}>
-        <Text style={local.check}>{channel.isOn ? '☑' : '□'}</Text>
+      {channels.map((channel) => <View key={channel.key} style={local.option}>
         <View style={{ flex: 1 }}><Text style={styles.body}>{channel.label}</Text><Text style={styles.muted}>{channel.note}</Text></View>
-      </Pressable>)}
+        <Switch accessibilityLabel={`${channel.label}로 받기`} value={channel.isOn}
+          style={{ minWidth: 48, minHeight: 48 }}
+          accessibilityState={{ checked: channel.isOn, disabled: saving || (!channel.isOn && !channel.canTurnOn) }} disabled={saving || (!channel.isOn && !channel.canTurnOn)}
+          trackColor={{ false: colors.fieldBorder, true: colors.primary }} thumbColor={colors.surface}
+          onValueChange={value => void save({ ...setting, [channel.key]: value })} />
+      </View>)}
     </>}
     {blocked && <Notice>받을 방법이 아직 없어요. 아래에서 리포트 수신 주소를 확인하거나 이 기기 앱 알림을 켜 주세요.</Notice>}
     {!settings.schedulerEnabled && <Notice>서버의 마감 알림 발송이 아직 꺼져 있어요. 설정은 미리 저장해 둘 수 있어요.</Notice>}
@@ -125,5 +127,4 @@ export function DeadlineReminderSettings() {
 
 const local = StyleSheet.create({
   option: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 48, gap: 8 },
-  check: { color: colors.primary, fontSize: 22, fontWeight: '600' },
 })

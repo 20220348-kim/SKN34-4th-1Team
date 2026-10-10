@@ -384,6 +384,9 @@ Frontend는 확인 후 삭제 요청을 보내고 성공 시에만 목록·메�
 `DailyReportPushScheduler → DailyReportPushService → DailyReportPushClient → Expo Push Service → FCM/APNs`
 경로로 READY 리포트만 알립니다. 모바일 세션·기기별 수신 설정과 receipt는 MySQL에 보존합니다.
 Firebase DB/Auth를 추가하지 않습니다. [앱 푸시 경계·설정·검증](mobile-report-push.md)을 참고하세요.
+모바일 OS 권한과 서버 수신 설정은 `DailyReportPushProvider`가 구분합니다. 초기 조회와 앱 복귀에서는 네이티브 권한을 읽기만 하고,
+사용자의 수신 켜기에만 기존 기기 등록 경로를 실행합니다. 권한 거부의 `Linking.openSettings`는 설정 이동이며 허용·수신 활성화로 취급하지 않습니다.
+기기 수신과 마감 알림 채널의 네이티브 스위치는 기존 Bearer 설정 API·shared 검증을 유지하고 계정 전환 뒤 이전 응답을 버립니다.
 
 `DailyReportController → DailyReportService`는 저장된 기업 조건·지원 목적을 기존 검색에 전달하고,
 추천 최대 3건 중 기업마당 공고에 기존 근거 답변을 연결합니다. 수집·검색·근거 답변 Agent를 새로 복제하지 않습니다.
