@@ -31,3 +31,18 @@ test('the compact source link opens the official page while CNTRADE still identi
   expect(link).toHaveBeenLastCalledWith('https://cntrade.chungnam.go.kr/notices')
   link.mockRestore()
 })
+
+test('a different known classification region is a caution, never an ineligibility verdict', () => {
+  const props = { onOpen: jest.fn(), searchRegion: '경기도 화성시' }
+  const view = render(<SearchProgramCard program={{ ...program, regions: ['부산'] }} {...props} />)
+  expect(screen.getByText(/검색 지역\(경기\)과 공고 분류 지역\(부산\)이 달라요/)).toBeTruthy()
+  expect(screen.queryByText('신청 불가')).toBeNull()
+  view.rerender(<SearchProgramCard program={{ ...program, regions: ['부산', '전국'] }} {...props} />)
+  expect(screen.queryByText(/다른 지역 조건 확인 필요/)).toBeNull()
+  view.rerender(<SearchProgramCard program={{ ...program, regions: ['부산'] }} {...props} searchRegion="알 수 없는 지역" />)
+  expect(screen.queryByText(/다른 지역 조건 확인 필요/)).toBeNull()
+  view.rerender(<SearchProgramCard program={{ ...program, regions: ['경기'] }} {...props} />)
+  expect(screen.queryByText(/다른 지역 조건 확인 필요/)).toBeNull()
+  view.rerender(<SearchProgramCard program={{ ...program, regions: ['부산', '미확정'] }} {...props} />)
+  expect(screen.queryByText(/다른 지역 조건 확인 필요/)).toBeNull()
+})

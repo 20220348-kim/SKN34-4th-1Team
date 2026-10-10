@@ -63,6 +63,12 @@ API 경계에서 shared DTO 검증·Mapper를 사용하고, 등록 결과의 공
 Core HTTP·DB 계약과 shared 계약은 변경하지 않으며 로그인·화면 복귀만으로 검색이나 원문 질문을 다시 실행하지 않습니다.
 [공동 관리와 검증 명령](mobile-monorepo.md)을 참고하세요.
 
+모바일 검색의 재시도 대기와 오류 구분은 `shared supportProgramApi의 검증된 오류 → mobile api/client → ChatScreen`으로 전달합니다.
+시간 초과·연결 종료로 결과가 미확인된 재전송은 사용자 확인을 거치며 자동 재호출하지 않습니다.
+검색 성공 후 전체 결과 복원이 실패하면 기존 결과 토큰을 저장하고 `restoreSearchResults`만 재호출합니다.
+게스트의 로그인·가입 뒤 결과 확인도 같은 복원 경로를 사용하며 새 검색·사용량 정책이나 공개 HTTP 계약을 추가하지 않습니다.
+카드의 지역 안내는 shared 지역 정규화를 이용한 분류 비교이며 공고 제외나 신청 불가 판정에 사용하지 않습니다.
+
 모바일 계정 관리는 `AccountScreen → mobile api/account의 DTO 검증·내부 모델 변환 → 기존 Core AccountProfileController → Service → Repository`로 연결합니다.
 삭제 미리보기와 명시적인 삭제 확인을 구분하고 서버 삭제 성공 뒤 기존 `AuthProvider.invalidateSession`으로 기기 세션을 정리합니다.
 비밀번호 찾기는 기존 공개 인증번호 발송·확인·재설정 API를 호출하며 재설정 통행 토큰은 가입 인증 타입과 구분합니다.
