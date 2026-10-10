@@ -6,6 +6,8 @@ import ai.govbiz.core.account.repository.AccountRepository
 import ai.govbiz.core.planusage.PlanUsageTestHelper
 import ai.govbiz.core.planusage.domain.AccountPlan
 import ai.govbiz.core.planusage.domain.PlanCode
+import ai.govbiz.core.planusage.domain.PlanSource
+import ai.govbiz.core.planusage.domain.PlanTrial
 import ai.govbiz.core.planusage.domain.PlanUsageFeature
 import ai.govbiz.core.planusage.domain.PlanUsageJob
 import ai.govbiz.core.planusage.domain.PlanUsagePeriod
@@ -13,6 +15,7 @@ import ai.govbiz.core.planusage.domain.PlanUsageWindow
 import ai.govbiz.core.planusage.repository.GuestPlanUsageRepository
 import ai.govbiz.core.planusage.repository.PlanUsageRepository
 import ai.govbiz.core.planusage.service.exception.PlanQuotaExceededException
+import ai.govbiz.core.planusage.service.exception.PlanTrialException
 import java.time.Clock
 import java.time.Instant
 import java.time.LocalDateTime
@@ -34,6 +37,7 @@ class PlanUsageServiceTest {
     private val accounts = Mockito.mock(AccountRepository::class.java)
     private val service = PlanUsageService(repository, guests, clock, PlanUsageTestHelper.noTransactions(), accounts, "")
     private val member = Account(7, "member@example.test", AccountRole.USER, null, null, LocalDateTime.of(2026, 9, 1, 9, 0))
+    private val verified = member.copy(emailVerifiedAt = LocalDateTime.of(2026, 9, 1, 9, 0))
     private val today = PlanUsageWindow.current(PlanUsagePeriod.DAY, ZonedDateTime.now(clock))
     private val thisMonth = PlanUsageWindow.current(PlanUsagePeriod.MONTH, ZonedDateTime.now(clock))
 
@@ -302,5 +306,63 @@ class PlanUsageServiceTest {
         assertEquals(listOf(500, 500, 5, 10), pass.items.map { it.limit })
         assertEquals(setOf(PlanUsagePeriod.PLAN), pass.items.map { it.period }.toSet())
         assertEquals(setOf(starts.plusDays(30)), pass.items.map { it.resetsAt }.toSet())
+    }
+
+    @Test
+    fun aTrialStartsNowForFourteenDaysAndReportsWhatIsLeftToTry() {
+        val now = ZonedDateTime.now(clock)
+        val trial = AccountPlan(PlanCode.PLUS, now, now.plusDays(PlanTrial.DAYS), source = PlanSource.TRIAL)
+        Mockito.doReturn(AccountPlan.FREE, trial).`when`(repository).findPlan(7)
+        Mockito.doReturn(emptySet<PlanCode>(), setOf(PlanCode.PLUS)).`when`(repository).findTrialPlans(7)
+
+        val usage = service.startTrial(verified, PlanCode.PLUS)
+
+        val order = Mockito.inOrder(repository)
+        order.verify(repository).lockAccount(7)
+        order.verify(repository).startTrial(7, PlanCode.PLUS, now, now.plusDays(14))
+        assertEquals(PlanCode.PLUS, usage.plan)
+        assertEquals(PlanSource.TRIAL, usage.planSource)
+        assertEquals(now.plusDays(14), usage.planEndsAt)
+        assertEquals(listOf(PlanCode.PREMIUM), usage.trialsAvailable)
+        assertEquals(listOf(500, 500, 5, 10), usage.items.map { it.limit })
+    }
+
+    @Test
+    fun aTrialIsRefusedOnceUsedWhenNotAnUpgradeAndBeforeTheEmailIsVerified() {
+        val now = ZonedDateTime.now(clock)
+        Mockito.doReturn(setOf(PlanCode.PLUS)).`when`(repository).findTrialPlans(7)
+        Mockito.doReturn(AccountPlan.FREE).`when`(repository).findPlan(7)
+        assertEquals(PlanTrialException.Reason.USED, assertThrows(PlanTrialException::class.java) {
+            service.startTrial(verified, PlanCode.PLUS)
+        }.reason)
+
+        // 운영자가 배정한 플러스를 쓰는 동안에는 프리미엄 체험도 시작하지 않습니다.
+        Mockito.doReturn(emptySet<PlanCode>()).`when`(repository).findTrialPlans(7)
+        Mockito.doReturn(AccountPlan(PlanCode.PLUS, now.minusDays(3), source = PlanSource.OPERATOR)).`when`(repository).findPlan(7)
+        assertEquals(PlanTrialException.Reason.UNAVAILABLE, assertThrows(PlanTrialException::class.java) {
+            service.startTrial(verified, PlanCode.PREMIUM)
+        }.reason)
+        // 프리미엄 체험 중에는 플러스 체험으로 내려가지 않습니다.
+        Mockito.doReturn(setOf(PlanCode.PREMIUM)).`when`(repository).findTrialPlans(7)
+        Mockito.doReturn(AccountPlan(PlanCode.PREMIUM, now.minusDays(3), now.plusDays(11), source = PlanSource.TRIAL)).`when`(repository).findPlan(7)
+        assertEquals(PlanTrialException.Reason.UNAVAILABLE, assertThrows(PlanTrialException::class.java) {
+            service.startTrial(verified, PlanCode.PLUS)
+        }.reason)
+
+        assertEquals(PlanTrialException.Reason.EMAIL_UNVERIFIED, assertThrows(PlanTrialException::class.java) {
+            service.startTrial(member, PlanCode.PLUS)
+        }.reason)
+        assertFalse(Mockito.mockingDetails(repository).invocations.any { it.method.name == "startTrial" })
+    }
+
+    @Test
+    fun aPlusTrialMovesUpToAPremiumTrialRightAway() {
+        val now = ZonedDateTime.now(clock)
+        Mockito.doReturn(setOf(PlanCode.PLUS)).`when`(repository).findTrialPlans(7)
+        Mockito.doReturn(AccountPlan(PlanCode.PLUS, now.minusDays(5), now.plusDays(9), source = PlanSource.TRIAL)).`when`(repository).findPlan(7)
+
+        service.startTrial(verified, PlanCode.PREMIUM)
+
+        Mockito.verify(repository).startTrial(7, PlanCode.PREMIUM, now, now.plusDays(14))
     }
 }

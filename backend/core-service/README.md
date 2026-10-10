@@ -128,6 +128,8 @@ V54 `account_plan`에 운영자가 배정한 계정만 PLUS·PREMIUM입니다. �
 `ends_at`이 없는 배정(운영자·검증 계정)은 30일마다 새 이용 기간이 시작됩니다(domain `AccountPlan`). 한도 숫자는 domain `PlanCode`에 있고
 모든 요금제에 숫자가 있습니다. 로컬 개발용으로 `app.plan-usage.unlimited-account-emails`(`PLAN_USAGE_UNLIMITED_ACCOUNT_EMAILS`, 쉼표 구분,
 기본 빈 값)에 적은 계정은 사용량만 세고 막지 않으며(`limit: null`), 로컬 Compose는 데모 시드 계정 6개를 넣고 운영은 비웁니다.
+출시 전 무료 체험은 `PlanTrialController → PlanUsageService.startTrial(TransactionTemplate, 계정 행 잠금) → PlanUsageRepository → MyBatis → MySQL`
+순서로 V60 `plan_trial`에 (계정, 요금제)마다 한 번 기록하고 `account_plan`에 `source = TRIAL`, 14일 이용권을 배정합니다.
 배정 SQL과 판단 근거는 [요금제 사용량 한도](../../docs/plan-usage-limits.md)를 참고하세요.
 
 | 기능 | 로그인 전 | FREE | PLUS | PREMIUM | 세는 방법 |
@@ -157,7 +159,8 @@ V54 `account_plan`에 운영자가 배정한 계정만 PLUS·PREMIUM입니다. �
 
 | 사용량 API | 동작 |
 |---|---|
-| `GET /api/v1/plan-usage` | 현재 요금제, 이용권이 끝나는 때 `planEndsAt`(무료·끝나는 때가 없는 배정은 null)과 기능별 `feature`·`period`(`DAY`·`MONTH`·`PLAN`)·`limit`·`used`·`resetsAt`(이번 기간이 끝나는 때, +09:00). 로그인 전에는 `plan: null`과 접속 주소의 AI 대화 검색 체험만. 작업으로 세는 기능의 `used`에는 진행 중인 작업이 포함돼 한도를 넘을 수 있음. no-store |
+| `POST /api/v1/plan-trials` | 로그인·이메일 인증 회원의 출시 전 무료 체험 시작 `{plan: PLUS\|PREMIUM}`. 지금부터 14일 이용권을 배정하고 201과 `plan-usage` 본문. 이미 체험한 요금제 409 `PLAN_TRIAL_USED`, 운영자 배정 중이거나 더 높지 않은 요금제 409 `PLAN_TRIAL_UNAVAILABLE`, 이메일 미인증 403 `PLAN_TRIAL_EMAIL_UNVERIFIED`. no-store |
+| `GET /api/v1/plan-usage` | 현재 요금제, 배정 출처 `planSource`(`OPERATOR`·`TRIAL`, 무료는 null), 지금 시작할 수 있는 체험 `trialsAvailable`, 이용권이 끝나는 때 `planEndsAt`(무료·끝나는 때가 없는 배정은 null)과 기능별 `feature`·`period`(`DAY`·`MONTH`·`PLAN`)·`limit`·`used`·`resetsAt`(이번 기간이 끝나는 때, +09:00). 로그인 전에는 `plan: null`과 접속 주소의 AI 대화 검색 체험만. 작업으로 세는 기능의 `used`에는 진행 중인 작업이 포함돼 한도를 넘을 수 있음. no-store |
 
 호출 흐름: 요청마다 세는 기능은 `Controller → PlanUsageService.consume → PlanUsageRepository → MyBatis → MySQL`(회원) 또는
 `GuestPlanUsageRepository → Redis`(로그인 전) 뒤 기존 검색·원문 답변 Service, 작업으로 세는 기능은
@@ -477,6 +480,7 @@ Controller의 `SupportProgramRequestAdmissionService.execute`가 공개 요청 �
 | `GET /api/v1/support-programs/detail` | 제공처 코드와 원본 ID로 현재 공고 상세 조회. `sourceUrl`은 공고 상세, `applicationRoute`는 공식 신청방법·URL·경로 분류, `contact`(담당 부서·제공처 원문 전화번호·문의처 원문, 없으면 null)·`preferenceDescription`·`supervisingInstitutionType`은 공식 API 값을 반환 |
 | `POST /api/v1/support-programs/detail/answers` | 특정 공고의 공식 원문 근거 질문·답변. 로그인 필요(401), 요금제 하루 질문 횟수를 씀(429 `PLAN_QUOTA_EXCEEDED`) |
 | `GET /api/v1/plan-usage` | 현재 요금제와 기능별 남은 사용량. 로그인 전에는 AI 대화 검색 체험만 |
+| `POST /api/v1/plan-trials` | 출시 전 플러스·프리미엄 14일 무료 체험 시작(요금제마다 한 번) |
 | `GET /api/v1/support-programs/detail/attachments` | 공고 원문이 직접 연결한 첨부 목록(이미지 제외, 최대 30개). 원본 주소 없이 `index`·`fileName`·`extension`만 반환하고, 원문에서 읽은 목록은 Redis에 6시간 보관. 원문을 읽지 못하면 503 `SUPPORT_PROGRAM_ATTACHMENTS_UNAVAILABLE` |
 | `GET /api/v1/support-programs/detail/attachments/download` | 목록의 `index` 첨부를 Core가 원본에서 받아 그대로 흘려보냄. 화면에서 읽은 이름을 UTF-8 `filename*`로 다시 붙이고 항상 `application/octet-stream`. 100MB 초과는 413 `SUPPORT_PROGRAM_ATTACHMENT_TOO_LARGE`, 목록에 없는 순번은 404 `SUPPORT_PROGRAM_ATTACHMENT_NOT_FOUND` |
 | `POST /api/v1/sample-items/prepare` | 계층 연결 학습용 예제 |
