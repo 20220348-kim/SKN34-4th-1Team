@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native'
-import { Linking } from 'react-native'
+import { Alert, Linking, Modal } from 'react-native'
 import { ApiError, apiRequest, programClient } from '../api/client'
 import { useAuth } from '../auth/session'
 import { ProgramScreen } from './ProgramScreen'
@@ -267,10 +267,89 @@ test('cancelling an evidence request preserves the draft and never displays its 
   fireEvent.changeText(screen.getByLabelText('공고에 대해 궁금한 점'), '취소할 질문')
   fireEvent.press(screen.getByLabelText('질문 보내기'))
   await screen.findByLabelText('원문에서 답변을 찾는 중')
-  fireEvent.press(screen.getByLabelText('취소'))
+  fireEvent.press(screen.getByLabelText('요청 중지'))
   expect(screen.getByLabelText('공고에 대해 궁금한 점').props.value).toBe('취소할 질문')
   await act(async () => finish({ answerStatus: 'ANSWERED', answer: '늦은 답변', citations: [] }))
   expect(screen.queryByText('늦은 답변')).toBeNull()
+})
+
+test.each(['닫기', '시트 닫기', '기기 뒤로가기'])('closing via %s requires an explicit stop and preserves the draft on reopening', async closeLabel => {
+  const alert = jest.spyOn(Alert, 'alert')
+  let finish!: (value: unknown) => void
+  answer.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+  render(<ProgramScreen identity={identity} onLogin={jest.fn()} />)
+  await screen.findByText('테스트 지원사업')
+  fireEvent.press(screen.getByLabelText('원문에 질문하기'))
+  fireEvent.changeText(screen.getByLabelText('공고에 대해 궁금한 점'), '유지할 질문')
+  fireEvent.press(screen.getByLabelText('질문 보내기'))
+  await screen.findByLabelText('원문에서 답변을 찾는 중')
+  const signal = answer.mock.calls[0][1] as AbortSignal
+  if (closeLabel === '기기 뒤로가기') act(() => screen.UNSAFE_getAllByType(Modal).find(item => item.props.visible)?.props.onRequestClose())
+  else fireEvent.press(screen.getByLabelText(closeLabel, { includeHiddenElements: closeLabel === '시트 닫기' }))
+  expect(signal.aborted).toBe(false)
+  expect(alert).toHaveBeenCalledWith('답변 요청을 중지할까요?', expect.any(String), expect.any(Array))
+  const stop = alert.mock.calls.at(-1)![2]!.find(button => button.text === '중지하고 닫기')!.onPress!
+  act(() => stop())
+  expect(signal.aborted).toBe(true)
+  await act(async () => finish({ answerStatus: 'ANSWERED', answer: '늦은 답변', citations: [] }))
+  fireEvent.press(screen.getByLabelText('원문에 질문하기'))
+  expect(screen.getByLabelText('공고에 대해 궁금한 점').props.value).toBe('유지할 질문')
+  expect(screen.queryByText('늦은 답변')).toBeNull()
+})
+
+test('continuing to wait keeps the request active and shows its eventual answer', async () => {
+  const alert = jest.spyOn(Alert, 'alert')
+  let finish!: (value: unknown) => void
+  answer.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+  render(<ProgramScreen identity={identity} onLogin={jest.fn()} />)
+  await screen.findByText('테스트 지원사업')
+  fireEvent.press(screen.getByLabelText('원문에 질문하기'))
+  fireEvent.changeText(screen.getByLabelText('공고에 대해 궁금한 점'), '기다릴 질문')
+  fireEvent.press(screen.getByLabelText('질문 보내기'))
+  await screen.findByLabelText('원문에서 답변을 찾는 중')
+  fireEvent.press(screen.getByLabelText('닫기'))
+  const keepWaiting = alert.mock.calls.at(-1)![2]!.find(button => button.text === '계속 기다리기')!
+  act(() => keepWaiting.onPress?.())
+  expect((answer.mock.calls[0][1] as AbortSignal).aborted).toBe(false)
+  await act(async () => finish({ answerStatus: 'ANSWERED', answer: '기다린 답변', citations: [] }))
+  expect(screen.getByText('기다린 답변')).toBeTruthy()
+  expect(screen.getByLabelText('공고에 대해 궁금한 점').props.value).toBe('')
+})
+
+test.each(['account', 'program'] as const)('a stale close confirmation cannot stop a new request after the %s changes', async destination => {
+  const alert = jest.spyOn(Alert, 'alert')
+  const pending: ((value: unknown) => void)[] = []
+  answer.mockImplementation(() => new Promise(resolve => { pending.push(resolve) }))
+  const client = { getDetail: jest.fn().mockResolvedValue(programDetail), answerEvidenceQuestion: answer }
+  jest.mocked(programClient).mockReturnValue(client as unknown as ReturnType<typeof programClient>)
+  const props = { identity, onLogin: jest.fn() }
+  const view = render(<ProgramScreen {...props} />)
+  await screen.findByText('테스트 지원사업')
+  fireEvent.press(screen.getByLabelText('원문에 질문하기'))
+  fireEvent.changeText(screen.getByLabelText('공고에 대해 궁금한 점'), '이전 질문')
+  fireEvent.press(screen.getByLabelText('질문 보내기'))
+  await screen.findByLabelText('원문에서 답변을 찾는 중')
+  fireEvent.press(screen.getByLabelText('닫기'))
+  const stop = alert.mock.calls.at(-1)![2]!.find(button => button.text === '중지하고 닫기')!.onPress!
+  const nextIdentity = destination === 'program' ? { ...identity, sourceProgramId: 'P/999' } : identity
+  if (destination === 'account') jest.mocked(useAuth).mockReturnValue({ status: 'signedIn', session: { accessToken: 'next-owner' }, invalidateSession } as unknown as ReturnType<typeof useAuth>)
+  else client.getDetail.mockResolvedValue({ ...programDetail, id: 'P/999', title: '다음 공고' })
+  view.rerender(<ProgramScreen {...props} identity={nextIdentity} />)
+  await screen.findAllByText(destination === 'program' ? '다음 공고' : '테스트 지원사업')
+  await waitFor(() => expect((answer.mock.calls[0][1] as AbortSignal).aborted).toBe(true))
+  fireEvent.changeText(screen.getByLabelText('공고에 대해 궁금한 점'), '새 대상의 질문')
+  fireEvent.press(screen.getByLabelText('질문 보내기'))
+  await waitFor(() => expect(answer).toHaveBeenCalledTimes(2))
+  const nextSignal = answer.mock.calls[1][1] as AbortSignal
+  act(() => stop())
+  expect(nextSignal.aborted).toBe(false)
+  expect(screen.getByLabelText('공고에 대해 궁금한 점').props.value).toBe('새 대상의 질문')
+  await act(async () => {
+    pending[0]({ answerStatus: 'ANSWERED', answer: '이전 답변', citations: [] })
+    pending[1]({ answerStatus: 'ANSWERED', answer: '새 대상의 답변', citations: [] })
+  })
+  expect(screen.queryByText('이전 답변')).toBeNull()
+  expect(screen.getByText('새 대상의 답변')).toBeTruthy()
 })
 
 

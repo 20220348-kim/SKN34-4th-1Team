@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, View } from 'react-native'
+import { ActivityIndicator, Alert, Linking, Pressable, StyleSheet, Text, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import type { SupportProgramDetail } from '@govbiz/shared/domain/entities/SupportProgram'
 import { splitSupportProgramTarget, supportProgramApplicationRouteLabel, supportProgramContactParts } from '@govbiz/shared/domain/entities/SupportProgramSections'
@@ -36,6 +36,7 @@ export function ProgramScreen({ identity, onLogin, resumeAction, onResumed }: {
   const [questionOpen, setQuestionOpen] = useState(false)
   const insets = useSafeAreaInsets()
   const work = useRef<AbortController | null>(null)
+  const questionRevision = useRef(0)
   const saveWork = useRef<AbortController | null>(null)
   const resumed = useRef(false)
   const [saveNotice, setSaveNotice] = useState<string | null>(null)
@@ -56,6 +57,7 @@ export function ProgramScreen({ identity, onLogin, resumeAction, onResumed }: {
   useEffect(() => {
     let active = true
     const controller = new AbortController()
+    questionRevision.current += 1
     work.current?.abort(); saveWork.current?.abort()
     setTurns([]); setAnswerError(null); setQuestion(''); setAnswering(false)
     setSaved(null); setSaveError(null); setSaving(false)
@@ -66,7 +68,7 @@ export function ProgramScreen({ identity, onLogin, resumeAction, onResumed }: {
         if (cause instanceof ApiError && cause.status === 401) void invalidateSession().catch(() => undefined)
         setSaveError(errorMessage(cause))
       })
-    return () => { active = false; controller.abort(); work.current?.abort(); saveWork.current?.abort() }
+    return () => { questionRevision.current += 1; active = false; controller.abort(); work.current?.abort(); saveWork.current?.abort() }
   }, [token, sourceCode, sourceProgramId, retry, invalidateSession])
 
   async function toggleSave() {
@@ -101,6 +103,7 @@ export function ProgramScreen({ identity, onLogin, resumeAction, onResumed }: {
     if (!question.trim() || answering || work.current && !work.current.signal.aborted) return
     const asked = question.trim()
     const controller = new AbortController(); work.current = controller
+    questionRevision.current += 1
     setAnswering(true); setAnswerError(null)
     try {
       const result = await client.answerEvidenceQuestion({ sourceCode, sourceProgramId, question: asked }, controller.signal)
@@ -128,7 +131,22 @@ export function ProgramScreen({ identity, onLogin, resumeAction, onResumed }: {
   const routeLabel = program ? supportProgramApplicationRouteLabel(program.applicationRoute) : null
   const applicationUrl = program?.applicationRoute.url ?? null
   const contactParts = program?.contact ? supportProgramContactParts(program.contact) : []
-  function closeQuestion() { work.current?.abort(); setAnswering(false); setQuestionOpen(false) }
+  function stopQuestion() {
+    questionRevision.current += 1
+    work.current?.abort(); work.current = null
+    setAnswering(false)
+  }
+  function closeQuestion() {
+    if (!answering) { setQuestionOpen(false); return }
+    const revision = questionRevision.current
+    Alert.alert('답변 요청을 중지할까요?', '입력한 질문은 유지돼요. 화면 대기를 중지해도 서버에서 이미 시작한 처리가 중단되는 것은 아니에요.', [
+      { text: '계속 기다리기', style: 'cancel' },
+      { text: '중지하고 닫기', onPress: () => {
+        if (questionRevision.current !== revision) return
+        stopQuestion(); setQuestionOpen(false)
+      } },
+    ])
+  }
   return <View style={local.page}><Page bottomSafeArea={!program} backgroundColor={colors.surface}>
     {status === 'unavailable' && <><Notice error>로그인 상태를 확인한 뒤 저장과 원문 질문을 이용할 수 있어요.</Notice>
       <Button label="로그인 상태 다시 확인" onPress={() => void refreshSession()} /></>}
@@ -181,9 +199,9 @@ export function ProgramScreen({ identity, onLogin, resumeAction, onResumed }: {
         else setQuestionOpen(true)
       }} /> : <Button label={program.sourceCode === 'CNTRADE_NOTICE' ? '공식 공지 목록 확인' : '공식 원문 확인'} onPress={() => void openSource(program.sourceUrl)} />}</View>
     </View>}
-    <PartnerSheet visible={questionOpen && Boolean(program?.evidenceQuestionSupported)} title="원문에 질문하기" dimBackdrop={false} onClose={closeQuestion}
-      actions={token ? <><Button label="취소" variant="secondary" style={{ flex: 1 }} onPress={() => {
-        if (answering) { work.current?.abort(); work.current = null; setAnswering(false) } else closeQuestion()
+    <PartnerSheet visible={questionOpen && Boolean(program?.evidenceQuestionSupported)} title="원문에 질문하기" onClose={closeQuestion}
+      actions={token ? <><Button label={answering ? '요청 중지' : '닫기'} variant="secondary" style={{ flex: 1 }} onPress={() => {
+        if (answering) stopQuestion(); else closeQuestion()
       }} /><Button label={answering ? '답변 찾는 중…' : '질문 보내기'} style={{ flex: 2 }} busy={answering} disabled={!question.trim() || answering}
         onPress={() => void ask()} /></> : <Button label="로그인하고 질문하기" onPress={() => { closeQuestion(); onLogin('question') }} />}>
       {program && <>
