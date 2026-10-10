@@ -119,7 +119,7 @@ flowchart LR
 
 버전 기준은 [루트 설정](package.json), [웹](frontend/web/package.json), [모바일](frontend/mobile/package.json),
 [AI](backend/ai-service/pyproject.toml), [Ops](backend/ops-service/pyproject.toml)과 각 잠금 파일입니다.
-서비스별 역할은 아래 [시스템 아키텍처](#서비스-구성), 실제 배포 범위는 [평가·검증·배포](#검증배포-범위)에 정리했습니다.
+서비스별 역할은 아래 [시스템 아키텍처](#서비스-구성)에 정리했습니다.
 
 <a id="서비스-구성"></a>
 
@@ -717,6 +717,37 @@ flowchart LR
     class Qdrant vectorDb
 ```
 
+<img src="docs/assets/readme/evaluation-review-caption.svg" alt="결과 확인·사람 검토 — 보고서와 추적을 확인하고, 검토·품질 판정을 거쳐 관리자가 비교 기준을 지정합니다. Langfuse의 실제 모델 호출 추적은 실행 중에도 수집합니다." width="820">
+
+```mermaid
+flowchart LR
+    Results["Evidently · Langfuse<br/>보고서·추적·점수"] --> Review["React Web<br/>사람 검토·기준 선택"]
+    Review -->|판정·지정 요청| Ops["ops-service<br/>정책·승인 확인"]
+    Ops -. 보존 .-> OpsDB[("Ops MySQL<br/>검토·판정·비교 기준")]
+    classDef client fill:#e8f3fa,stroke:#91b9cd,color:#183d32
+    classDef service fill:#e7f5eb,stroke:#92bda6,color:#183d32
+    classDef execution fill:#f3f5f4,stroke:#a8b5af,color:#183d32
+    classDef mysql fill:#fff4df,stroke:#c8ad72,color:#183d32
+    class Results execution
+    class Review client
+    class Ops service
+    class OpsDB mysql
+```
+
+1. **관리자 실행 요청:** 기존 Core 관리자 계정으로 로그인하고 React의 `/ops/evaluations`에서
+   자료·실행 방식·비교 대상을 선택합니다. Django Ops가 관리자 권한과 실행 명세를 확인하고,
+   새 모델 호출이 있으면 승인된 호출·토큰 한도를 검사해 예산을 예약합니다.
+2. **평가 실행:** Prefect가 별도 평가 실행기에 작업을 전달하고, 실행기는 9.3에서 선택한 방식으로 평가합니다.
+   Django의 HTTP 요청 안에서 모델 평가를 수행하지 않습니다.
+3. **결과 분석:** 실행기는 **pandas**로 데이터를 정리하고 **Pandera**로 형식을 검증해 지표를 계산합니다.
+   **Evidently**는 비교 보고서, **Langfuse**는 모델 호출 추적·사용량 관측·평가 점수를 제공합니다.
+   호출 추적은 실행 중에도 수집하며, 과거 저장 응답에 없던 trace를 새로 만들지는 않습니다.
+4. **사람 검토와 기준 지정:** 관리자가 자료와 사례별 답변을 검토하고 실행 검토를 승인합니다.
+   검토 기록과 품질 정책으로 판정한 뒤, 합격한 결과를 관리자가 비교 기준으로 지정합니다.
+   다음 평가에서는 같은 자료의 이 기준과 새 결과를 비교합니다.
+
+### 9.3 세 가지 평가 방식
+
 **화면에서 세 가지 실행 경로 선택하기**
 
 관리자 메뉴의 **새 평가**(`/ops/evaluations/new`)에서 **실행 방식**과 **평가 자료**를 함께 선택합니다.
@@ -744,7 +775,7 @@ flowchart LR
     </td>
     <td valign="top">
       <strong>선택:</strong> 저장 응답 재평가 · API 호출 없음<br><br>
-      자료에 저장된 기준·후보 실행을 비교하고, 기존 응답으로 지표를 다시 계산합니다. 새 모델 호출은 없습니다.
+      저장된 기준·후보의 답변·검색 결과로 지표와 비교 보고서를 다시 생성합니다. 새 모델 호출은 없으며, 과거 응답은 당시 모델의 기록으로 표시합니다.
     </td>
   </tr>
   <tr>
@@ -762,7 +793,7 @@ flowchart LR
   <tr>
     <td valign="top">
       <strong>선택:</strong> 새 응답 생성 + 고정 근거 답변 자료<br><br>
-      사진의 <strong>실제 공고 고정 근거 · 참조 보완 v3</strong>처럼 저장된 근거를 사용해 OpenAI로 답변만 새로 생성합니다. 검색·임베딩은 실행하지 않습니다.
+      사진의 <strong>실제 공고 고정 근거 · 참조 보완 v3</strong>처럼 같은 질문·근거에서 모델이나 프롬프트 변경의 영향을 비교합니다. OpenAI로 답변만 새로 생성하며 검색·임베딩은 실행하지 않습니다.
     </td>
     <td valign="top">
       <strong>선택:</strong> 새 응답 생성 + RAG 평가 자료<br><br>
@@ -771,7 +802,9 @@ flowchart LR
   </tr>
 </table>
 
-저장 응답 재평가는 현재 모델의 품질을 새로 측정하는 작업이 아닙니다.
+사진은 실행 전 선택 화면입니다. 새 응답 생성은 서버의 실행 설정·예산 점검과 자료 전송·호출 예산 확인 후 요청합니다.
+세 경로의 결과는 9.2의 공통 지표 계산으로 이어집니다. 저장 응답 재평가는 현재 모델의 품질을 새로 측정하지 않습니다.
+
 **새 RAG 실행의 벡터 재사용**
 
 청크 벡터는 기존 평가 결과 저장소에 보존하고, 실행할 때 메모리 Qdrant에 복원합니다.
@@ -789,52 +822,9 @@ flowchart LR
 같은 벡터를 재사용하면 최대 **12회**(질문 6 + 답변 6)를 예약합니다. 답변 전 입력 토큰 계산 요청은 별도로 기록합니다.
 접수한 재사용 파일이 없어지거나 변경되면 추가 임베딩으로 대체하지 않고 중단합니다.
 
-새 RAG 실행의 측정 범위는 등록된 고정 원문·청크의 검색·답변입니다. 공식 원문 재수집·재청킹과
-운영 검색 색인의 성능은 포함하지 않으며, 벡터 최초 생성 비용과 재사용 시 비용은 구분해 해석합니다.
-
-사진은 실행 전 선택 화면입니다. 새 응답 생성은 서버의 실행 설정·예산 점검과 자료 전송·호출 예산 확인 후 요청합니다.
-세 경로의 결과는 위 순서도의 공통 지표 계산으로 이어집니다.
-
-<img src="docs/assets/readme/evaluation-review-caption.svg" alt="결과 확인·사람 검토 — 보고서와 추적을 확인하고, 검토·품질 판정을 거쳐 관리자가 비교 기준을 지정합니다. Langfuse의 실제 모델 호출 추적은 실행 중에도 수집합니다." width="820">
-
-```mermaid
-flowchart LR
-    Results["Evidently · Langfuse<br/>보고서·추적·점수"] --> Review["React Web<br/>사람 검토·기준 선택"]
-    Review -->|판정·지정 요청| Ops["ops-service<br/>정책·승인 확인"]
-    Ops -. 보존 .-> OpsDB[("Ops MySQL<br/>검토·판정·비교 기준")]
-    classDef client fill:#e8f3fa,stroke:#91b9cd,color:#183d32
-    classDef service fill:#e7f5eb,stroke:#92bda6,color:#183d32
-    classDef execution fill:#f3f5f4,stroke:#a8b5af,color:#183d32
-    classDef mysql fill:#fff4df,stroke:#c8ad72,color:#183d32
-    class Results execution
-    class Review client
-    class Ops service
-    class OpsDB mysql
-```
-
-1. **관리자 실행 요청:** 기존 Core 관리자 계정으로 로그인하고 React의 `/ops/evaluations`에서
-   자료·실행 방식·비교 대상을 선택합니다. Django Ops가 관리자 권한과 실행 명세를 확인하고,
-   새 모델 호출이 있으면 승인된 호출·토큰 한도를 검사해 예산을 예약합니다.
-2. **평가 실행:** Prefect가 별도 평가 실행기에 작업을 전달합니다. 저장된 응답을 다시 평가하거나,
-   고정 근거로 새 답변을 만들거나, 고정 원문·청크로 검색부터 답변까지 새로 실행합니다.
-   Django의 HTTP 요청 안에서 모델 평가를 수행하지 않습니다.
-3. **결과 분석:** 실행기는 **pandas**로 데이터를 정리하고 **Pandera**로 형식을 검증해 지표를 계산합니다.
-   **Evidently**는 비교 보고서, **Langfuse**는 모델 호출 추적·사용량 관측·평가 점수를 제공합니다.
-   호출 추적은 실행 중에도 수집하며, 과거 저장 응답에 없던 trace를 새로 만들지는 않습니다.
-4. **사람 검토와 기준 지정:** 관리자가 자료와 사례별 답변을 검토하고 실행 검토를 승인합니다.
-   검토 기록과 품질 정책으로 판정한 뒤, 합격한 결과를 관리자가 비교 기준으로 지정합니다.
-   다음 평가에서는 같은 자료의 이 기준과 새 결과를 비교합니다.
-
-### 9.3 세 가지 평가 방식
-
-| 방식 | 무엇을 확인하나요? | 새 모델 호출 |
-|---|---|---|
-| **저장 응답 재평가** | 이미 저장된 답변·검색 결과로 지표와 비교 보고서를 다시 생성합니다. 과거 응답은 당시 모델의 기록으로 표시합니다. | 없음 |
-| **고정 근거 새 답변** | 같은 질문·근거에서 모델이나 프롬프트 변경이 답변에 미치는 영향을 확인합니다. 새 검색·임베딩은 수행하지 않습니다. | 답변 생성 |
-| **새 RAG 실행** | 등록된 원문·청크를 새로 임베딩하고 격리된 메모리 Qdrant에서 검색한 뒤 답변을 생성합니다. 검색·인용·답변 지표를 구분합니다. | 임베딩·답변 생성 |
-
-새 RAG 평가는 **등록 자료 범위의 검색·답변 평가**입니다. 운영 공고 재수집·Core 재청킹·운영 색인 전체의
-성능 측정을 포함하지 않습니다. 자동 지표와 사람의 답변 검토는 별도로 기록합니다.
+새 RAG 실행은 **등록된 고정 원문·청크의 검색·답변**을 평가하며, 검색·인용·답변 지표를 구분합니다.
+공식 원문 재수집·Core 재청킹·운영 검색 색인의 성능은 포함하지 않습니다.
+벡터 최초 생성 비용과 재사용 시 비용, 자동 지표와 사람의 답변 검토는 각각 구분해 기록·해석합니다.
 
 Core HTTP의 저장 실행 기록도 요청·원문·검색·인용을 대조한 뒤 재평가 목록에 등록할 수 있습니다.
 무료 AI 대역과 당시 실제 모델의 저장 응답을 구분하며, 이 등록·재평가로 새 모델을 호출하지 않습니다.
@@ -854,100 +844,9 @@ Core HTTP의 저장 실행 기록도 요청·원문·검색·인용을 대조한
 **`COMPLETED`는 평가 작업 완료이며 품질 합격을 뜻하지 않습니다.**
 품질 합격과 비교 기준 지정은 별도 단계이고, 기준은 사람이 검토한 자료 범위에서만 유효합니다.
 
-### 9.5 처음 확인하는 방법과 기록 보존
-
-1. [로컬 통합 개발 안내](docs/ops-monorepo-migration.md)에 따라 루트 Compose 환경을 준비합니다.
-   빈 Ops DB에는 공유된 실행·검토·보고서가 자동 적재되므로, 저장 기록을 보는 데 새 모델 호출은 필요 없습니다.
-2. 기존 프로젝트의 **관리자 계정**으로 로그인하고
-   [평가 목록](http://localhost:5173/ops/evaluations)을 엽니다. 일반 회원은 접근할 수 없습니다.
-3. 실행을 선택해 **후보·기준 답변 → 사례별 검토 → 품질 판정 → 현재 비교 기준** 순서로 확인합니다.
-   새 평가를 실행하려면 [LLMOps 실행 환경](infrastructure/llmops/README.md)의 Prefect·실행기·Langfuse 연결을 준비합니다.
-
-실행·예산·검토 이력은 **Ops MySQL**, 답변 캡처와 보고서는 **결과 저장소**에 보존합니다.
-팀원은 [공유 검토 기록 자동 초기화](docs/ops-local-review-copy.md)로 이미 승인된 기준을 재사용할 수 있습니다.
-공유 자료에는 실제 공고 2개·고정 근거 질문 6건에 대한 사람 검토와 새 모델의 비교 기준이 포함됩니다.
-각 환경에서 추가한 검토는 해당 DB에 저장되며 Git으로 실시간 동기화되지 않습니다.
-기존 DB는 자동 초기화로 덮어쓰지 않으며, 로컬 추가 기록은 [암호화 백업·복원](docs/ops-upgrade-runbook.md)으로 보존합니다.
-
-[Ops 기능·API 상세](backend/ops-service/README.md) ·
-[평가 자료·지표 설명](evaluation/support-program-evidence/README.md) ·
-[구현·실제 평가 기록](docs/llmops-next-development-plan.md)
-
-처음 이용한다면 [LLMOps 상세 사용 가이드 PDF · 23쪽](output/pdf/govbiz-llmops-user-guide-ko.pdf)를 참고하세요.
-화면별 기능, 평가 방식, 결과 해석, 사람 검토, 예산·복구와 환경 이전을 설명합니다.
-PDF의 화면·수치는 문서에 표시한 작성 시점의 예시입니다.
-
-<a id="검증배포-범위"></a>
-
-## 10. 평가·검증·배포 범위
-
-### 10.1 기능 검증과 모델 품질 평가
-
-| 구분 | 확인하는 것 | 현재 기록과 해석 |
-|---|---|---|
-| 자동 테스트·CI | API 계약·권한·DB·장애 처리·빌드·컨테이너 연결 | 아래 5개 워크플로로 검증합니다. 실제 성공 여부는 대상 커밋의 실행 결과로 확인합니다. |
-| 사람 검토 기준 | 원문과 답변의 조건·인용을 사람이 검토했는가 | 2026-10-05 기록 기준 실제 공고 2개·고정 근거 질문 6건의 `gpt-6-luna` 결과가 승인된 비교 기준입니다. |
-| RAG 실평가 | 검색한 근거와 생성 답변이 참조 조건을 보존하는가 | 등록 원문·청크로 실평가한 기록이 있으며, 2026-10-06 v2 결과의 H01 조건 누락과 미승인 상태를 별도로 기록했습니다. |
-
-[사람 검토·실평가 기록](docs/llmops-next-development-plan.md) ·
-[검색 평가 도구·저장 결과](evaluation/support-program-search/README.md) ·
-[근거 답변·RAG 평가 도구](evaluation/support-program-evidence/README.md)
-
-과거 검색 지표나 무료 대역 테스트 결과를 현재 모델의 정확도로 환산하지 않습니다.
-승인된 6건의 기준도 해당 공고·질문·근거 범위에서 사용합니다.
-
-### 10.2 실행·배포 범위
-
-| 구분 | 현재 범위 |
-|---|---|
-| 로컬 통합 실행 | 루트 Compose의 Catalog 분리·Core 조회 복제·Ops 독립 DB·공유 검토 최초 적재 경로를 제공합니다. 기존 환경의 데이터 이전은 [이전 안내](docs/ops-monorepo-migration.md)에 따라 진행합니다. |
-| LLMOps | 평가·검토·비교 기준·예산·복구·정기 실행 기능을 제공합니다. 고정 근거의 사람 승인 기준과 RAG 결과는 별도로 관리하며 [실제 평가 기록](docs/llmops-next-development-plan.md)에 검증 범위를 남깁니다. |
-| 모바일 | 사용자 기능과 네이티브 연결을 구현했습니다. CI의 iOS·Android JS export는 실기기 실행·스토어 배포·푸시 실수신 검증과 구분합니다. |
-| Kubernetes | Helm·kind 실행과 로컬 이미지 반영 도구를 제공합니다. Intel Mac·Linux amd64 및 Windows x64 WSL2가 안내 대상입니다. [Windows 소스 빌드·웹 연결 확인](docs/windows-kubernetes-setup.md)과 [기존 MSA 검증](infrastructure/gitops/docs/msa-validation-20260920.md)의 환경·범위를 참고하세요. |
-| 이미지 발행 | 개인 포크에서 명시적으로 활성화합니다. 같은 소스 SHA의 필수 CI, 패키지 소유·공개 범위·포크 연결, 이미지 결과를 검증한 뒤 GHCR에 발행합니다. |
-| GitOps | **별도 `deploy/fork` 브랜치·배포 PR은 제거했습니다.** 로컬 소스 이미지의 `up --local-images`와 검증된 GHCR의 `up`을 지원합니다. 새 Argo 자동 배포 연결은 제공하지 않으며 기존 설정·검증 기록은 보존합니다. |
-| 운영 배포 | 현재 운영 환경은 없습니다. 기존 AWS EC2 Compose·CodeBuild·Vercel 설정은 재배포용으로 보존하며, 실제 클라우드 배포·운영 검증은 별도입니다. |
-
-자동 리포트·푸시·마감 알림·LLMOps live·정기 평가는 해당 기능의 설정과 승인 조건을 충족해야 실행됩니다.
-기능 코드가 있다는 이유로 모든 외부 연동이 켜져 있는 것은 아닙니다.
-요금제 화면은 안내 단계이며, 파트너 제안·새 공고 알림은 현재 발송 기능이 없습니다.
-
-### 10.3 공동 개발과 이미지 사용
-
-1. **기능 개발:** 개인 `skn-*` 브랜치 → 교육기관 원본 `main`에 PR → 병합 후 자기 포크의 `main` 동기화.
-2. **로컬 개발:** [개인 개발 안내](docs/local-fork-development.md)에 따라 소스 이미지를 빌드하거나
-   검증된 GHCR 이미지로 초기화합니다. 개발 모드에서는 변경한 서비스만 다시 빌드해 자기 kind에 반영합니다.
-3. **선택적 이미지 발행:** [패키지 준비](docs/private-ghcr-setup.md) 후 자기 포크에서
-   `MSA_RELEASE_ENABLED=true`를 설정합니다. **`MSA_PROMOTION_ENABLED=false`는 유지**합니다.
-   이미지 발행 뒤 별도 배포 PR이나 Argo 자동 배포는 실행하지 않습니다.
-
-로컬 `git pull`만으로 원격 Actions가 시작되지는 않습니다. 이미지 사용에 필요한 같은 SHA의 CI·발행 결과는
-[이미지 발행 안내](docs/msa-image-release.md)에서 확인합니다. 소스 빌드 경로에는 GHCR·PAT가 필요 없습니다.
-[WSL2·kind 수동 설치](docs/windows-kubernetes-setup.md) ·
-[배포 브랜치 제거·현재 경로](infrastructure/gitops/docs/deployment-candidates.md) ·
-[Kubernetes 도구 안내](infrastructure/gitops/README.md)
-
-### 10.4 CI 구성
-
-| 워크플로 | 검증 영역 |
-|---|---|
-| [GovBiz CI](.github/workflows/ci.yml) | Web·Shared·Mobile, Core 전체 빌드·MySQL 통합 테스트, AI 테스트·패키지·검색 저장소, 컨테이너 연동 |
-| [Catalog separation CI](.github/workflows/catalog-ci.yml) | Catalog 전체 빌드·MySQL, Catalog → Core 연동과 장애 시 데이터 보존 |
-| [GovBiz Ops CI](.github/workflows/ops-ci.yml) | Ruff, Django 설정·migration, 실제 MySQL 테스트와 Ops 컨테이너 |
-| [LLMOps CI](.github/workflows/llmops-ci.yml) | 무료 평가·추적·실행 계약, 평가 환경·예산·취소·복구 관련 검증 |
-| [Infra CI](.github/workflows/infra-ci.yml) | 저장소 경계, Kubernetes·Helm 렌더링·정책·도구 검증 |
-
-위 표는 저장소의 검증 구성입니다. 특정 변경의 완료 여부는 **최신 커밋 SHA의 실제 CI 결과**로 확인합니다.
-로컬에서는 [변경 범위별 검증](AGENTS.md#변경-범위별-검증)에 따라 관련 테스트를 선택하고,
-전체 빌드·실제 DB·컨테이너 검증은 해당 CI에서 수행합니다.
-
-이전 환경의 기록은 [2026-09-21 GitOps 검증](docs/fork-gitops-validation-20260921.md),
-[통합 전 Kubernetes](docs/assets/architecture/README-kubernetes.md),
-[기존 Compose·AWS 구성](docs/assets/architecture/README.md)에서 확인할 수 있습니다.
-
 <a id="저장소-구성"></a>
 
-## 11. 저장소 구성
+## 10. 저장소 구성
 
 애플리케이션·평가 도구·Kubernetes 설정을 함께 관리하는 모노레포입니다.
 기준 저장소는 [`SKNETWORKS-FAMILY-AICAMP/SKN34-4th-1Team`](https://github.com/SKNETWORKS-FAMILY-AICAMP/SKN34-4th-1Team), 기본 브랜치는 `main`입니다.
@@ -978,7 +877,7 @@ SKN34-4th-1Team/
 
 <a id="문서-안내"></a>
 
-## 12. 문서 안내
+## 11. 문서 안내
 
 | 보고 싶은 내용 | 문서 |
 |---|---|
