@@ -1,65 +1,66 @@
-// 무료(지금 누구나)·플러스(우리 회사 하나를 관리, 정식 출시 전까지 회원 무료)·프리미엄(출시 준비 중) 세 단계입니다.
-// 가격은 출시 시 확정하며, 현재 결제·구독은 받지 않습니다.
+// 무료(모든 회원)·플러스·프리미엄(30일 이용권) 세 단계입니다. 요금제의 차이는 기능이 아니라 횟수라 카드마다 한도를
+// 적습니다. 무료는 "하루 10회·월 3건"처럼 기간과 함께, 유료는 가격 뒤의 이용 기간(`pricePeriod`, "/ 30일")에 쓰는 총량만 적습니다.
+// 한도 숫자는 Core `planusage/domain/PlanCode.kt`가 원본이며 바꾸면 함께 고칩니다. 지금은 결제·구독을 받지 않습니다.
+// 카드의 상태 배지는 고정 문구를 두지 않고, 로그인한 회원의 지금 요금제에만 "이용 중"을 붙입니다.
 export const pricingPlans = [
   {
     id: 'free',
+    code: 'FREE',
     label: 'FREE',
     name: '무료',
-    status: '지금 이용 가능',
-    description: '우리 기업에 맞는 지원사업을 찾고, 공고의 조건부터 확인하고 싶다면.',
+    description: '우리 기업에 맞는 지원사업을 찾고, 공고 조건 확인과 신청 준비를 직접 해 보고 싶다면.',
     price: '0원',
-    priceNote: '기본 기능 · 회원가입 없이 시작',
-    featureHeading: '지금 제공하는 기능',
-    features: [
-      'AI 대화 검색과 필터 검색',
-      '입력한 기업 조건으로 자격 조건 확인',
-      '공고 원문 근거 질문과 답변',
-      '도우미 안내와 공개 파트너 모집글 열람',
+    pricePeriod: null,
+    priceNote: '회원가입 후 바로 이용',
+    limits: [
+      'AI 대화 검색 하루 10회',
+      '공고 원문 질문 하루 10회',
+      '신청 문서 초안 월 3건',
+      '중복 지원·수혜 검토 월 3회',
     ],
-    footerNote: '로그인 후 이용할 수 있습니다.',
-    action: 'search',
-    isAvailable: true,
+    footerNote: '로그인하지 않아도 AI 대화 검색을 하루 2회 써 볼 수 있어요.',
     isFeatured: false,
   },
   {
     id: 'plus',
+    code: 'PLUS',
     label: 'PLUS',
     name: '플러스',
-    status: '지금 이용 가능',
-    description: '공고를 모아 진행을 관리하고, 맞춤 리포트·중복 검토·신청 문서까지 이어가고 싶다면.',
-    price: '월 9,900원',
-    priceNote: '정식 출시 전까지 회원 무료',
-    featureHeading: '제공 기능',
-    features: [
-      '기업 맞춤 리포트',
-      '신청 문서 작성',
-      '관심 공고 진행 관리',
-      '중복 지원·수혜 검토',
+    description: '신청 시즌에 여러 공고를 비교하고 신청 문서까지 꾸준히 준비한다면.',
+    price: '9,900원',
+    pricePeriod: '/ 30일',
+    priceNote: '부가세 포함',
+    limits: [
+      'AI 대화 검색 500회',
+      '공고 원문 질문 500회',
+      '신청 문서 초안 5건',
+      '중복 지원·수혜 검토 10회',
     ],
-    footerNote: '정식 출시 전까지 회원에게 무료로 제공하며, 가격은 출시 시 확정합니다.',
-    action: 'pro',
-    isAvailable: true,
+    footerNote: '30일 동안 쓰는 이용권이에요. 자동으로 갱신되지 않아요.',
     isFeatured: true,
   },
   {
     id: 'premium',
+    code: 'PREMIUM',
     label: 'PREMIUM',
     name: '프리미엄',
-    status: '출시 예정',
-    description: '신청서 초안까지 AI가 먼저 채우고, 검색과 해석을 더 빠르게 받고 싶다면.',
-    price: '월 29,000원',
-    priceNote: '출시 준비 중',
-    featureHeading: '출시 준비 방향',
-    features: [
-      '신청서 항목별 AI 초안 자동 채움과 원문 대조',
-      '검색·조건 해석 우선 처리와 넉넉한 요청 한도',
+    description: '여러 사업을 함께 준비하거나 신청 문서를 많이 만든다면.',
+    price: '29,000원',
+    pricePeriod: '/ 30일',
+    priceNote: '부가세 포함',
+    limits: [
+      'AI 대화 검색 1,500회',
+      '공고 원문 질문 1,500회',
+      '신청 문서 초안 20건',
+      '중복 지원·수혜 검토 40회',
     ],
-    footerNote: '가격과 제공 범위는 출시 시 안내합니다.',
-    action: 'pending',
-    isAvailable: false,
+    footerNote: '30일 동안 쓰는 이용권이에요. 자동으로 갱신되지 않아요.',
     isFeatured: false,
   },
 ] as const
+
+/** 모든 요금제에서 횟수를 세지 않는 기능입니다. */
+export const pricingUnlimitedNote = '필터 검색, 공고 상세와 첨부 받기, 관심 공고 관리, 도우미 질문은 요금제와 관계없이 횟수를 세지 않아요.'
 
 export const pricingSearchSteps = [
   {
@@ -82,11 +83,11 @@ export const pricingSearchSteps = [
 export const pricingFrequentlyAskedQuestions = [
   {
     question: '무료 요금제에서는 무엇을 할 수 있나요?',
-    answer: 'AI 대화 검색과 필터 검색, 입력한 기업 조건을 바탕으로 한 자격 조건 확인, 공고 원문 근거 질문, 도우미 안내, 공개 파트너 모집글 열람을 로그인 후 이용할 수 있습니다.',
+    answer: '회원가입 후 AI 대화 검색과 공고 원문 질문을 하루 10회씩, 신청 문서 초안과 중복 지원·수혜 검토를 월 3건·3회씩 쓸 수 있습니다. 필터 검색, 공고 상세, 관심 공고 관리는 횟수를 세지 않고, 로그인하지 않아도 AI 대화 검색을 하루 2회 써 볼 수 있습니다.',
   },
   {
-    question: '플러스와 프리미엄은 지금 신청할 수 있나요?',
-    answer: '플러스의 기업 맞춤 리포트, 신청 문서 작성, 관심 공고 진행 관리, 중복 지원·수혜 검토는 정식 출시 전까지 회원에게 무료로 열려 있어 별도 신청 없이 바로 이용할 수 있습니다. 프리미엄은 출시 준비 중이며, 표시한 가격은 예정가로 제공 범위와 이용 정책은 출시 시 확정합니다. 현재는 결제나 구독 신청을 받지 않습니다.',
+    question: '플러스와 프리미엄은 무엇이 다르고, 지금 쓸 수 있나요?',
+    answer: '기능은 같고 쓸 수 있는 횟수가 다릅니다. 플러스와 프리미엄은 30일 동안 카드에 적은 횟수까지 씁니다. 아직 결제는 받지 않으며, 지금은 회원이 요금제마다 한 번 14일 동안 무료로 체험할 수 있습니다. 결제 수단을 받지 않으므로 체험이 끝나면 자동 결제 없이 무료로 돌아갑니다. 결제는 정식 출시 때 열고 가격도 그때 확정합니다.',
   },
   {
     question: 'AI가 지원 자격이나 선정을 보장하나요?',
@@ -107,7 +108,6 @@ export const pricingFrequentlyAskedQuestions = [
 ] as const
 
 export type PricingPlanId = typeof pricingPlans[number]['id']
+export type PricingPlan = typeof pricingPlans[number]
 
 export const pricingTitle = '기업의 다음 단계에 맞는 요금제'
-
-export const pricingReleaseNote = '표시한 가격은 예정가이며 출시 시 확정합니다. 플러스는 정식 출시 전까지 회원에게 무료로 제공하고, 프리미엄은 출시 예정이며, 현재 결제·구독은 제공하지 않습니다.'

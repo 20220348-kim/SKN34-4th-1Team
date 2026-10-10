@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { StyleSheet, Text, View } from 'react-native'
 import {
-  findPlanUsageItem, hasPlanLimit, planEndsText, isNearPlanLimit, isPlanLimitReached, planLabels, planQuotaExceededMessage, planUsageCountingRules,
-  planUsageCountText, planUsageDeletionNote, planUsageFeatureLabels, planUsageResetText, planUsageUsedText,
+  findPlanUsageItem, hasPlanLimit, planEndsText, isNearPlanLimit, isPlanLimitReached, planNameText, planQuotaExceededMessage,
+  planUsageCountText, planUsageFeatureLabels, planUsageResetText, planUsageUsedText,
   type PlanCode, type PlanUsage, type PlanUsageFeature, type PlanUsageItem, type PlanUsagePeriod,
 } from '@govbiz/shared/domain/entities/PlanUsage'
 import { planUsageUseCase } from '../api/planUsage'
 import { Button, Card, colors, styles } from '../ui'
-import { TextToggle } from './ReviewEvidenceQuote'
 import { useAppForeground } from './useAppForeground'
 
 /**
@@ -69,19 +68,19 @@ const periodGroups: readonly { period: PlanUsagePeriod; title: string }[] = [
 ]
 
 /**
- * 내 계정의 요금제와 기능별 이용량입니다. 앱에서는 현재 상태만 보여 주고 결제나 요금제 변경 안내는 두지 않습니다.
- * 같은 때 다시 채워지는 기능끼리(오늘 · 이번 달 · 유료 이용권의 이번 기간) 묶어 그때를 한 번만 적고, 무엇을 한 번으로 세는지는 펼쳐서 봅니다.
- * 유료 이용권이면 언제까지 쓸 수 있는지 함께 적습니다.
+ * 내 계정의 요금제와 기능별 이용량입니다. 앱에서는 지금 요금제와 체험·이용권이 끝나는 날만 보여 주고
+ * 결제·요금제 바꾸기·체험 시작 동작은 두지 않습니다(App Store 3.1.3). 무엇을 한 번으로 세는지는 요금제 탭에 둡니다.
+ * 같은 때 다시 채워지는 기능끼리(오늘 · 이번 달 · 유료 이용권의 이번 기간) 묶어 그때를 한 번만 적습니다.
  */
 export function PlanUsageSection({ token }: { token: string }) {
   const { usage, failed, reload } = usePlanUsage(token, true)
-  const [rulesOpen, setRulesOpen] = useState(false)
   if (!usage && !failed) return null
   const endsText = planEndsText(usage)
+  const planName = usage ? planNameText(usage) : null
   return <Card>
     <Text accessibilityRole="header" style={styles.heading}>요금제와 이용량</Text>
     {usage ? <>
-      {usage.plan && <View style={local.plan}><Text style={styles.muted}>현재 요금제</Text><Text style={styles.label}>{planLabels[usage.plan]}</Text></View>}
+      {planName && <View style={local.plan}><Text style={styles.muted}>현재 요금제</Text><Text style={styles.label}>{planName}</Text></View>}
       {endsText && <Text style={styles.muted}>{endsText}</Text>}
       {periodGroups.map(({ period, title }) => {
         const items = usage.items.filter(item => item.period === period)
@@ -94,12 +93,6 @@ export function PlanUsageSection({ token }: { token: string }) {
           {items.map(item => <PlanUsageRow key={item.feature} item={item} />)}
         </View>
       })}
-      <TextToggle label={rulesOpen ? '이용량을 세는 기준 접기 ▴' : '이용량을 세는 기준 보기 ▾'} expanded={rulesOpen} onPress={() => setRulesOpen(open => !open)} />
-      {rulesOpen && <View style={local.rules}>
-        {(Object.keys(planUsageCountingRules) as PlanUsageFeature[]).map(feature =>
-          <Text key={feature} style={styles.muted}><Text style={styles.label}>{planUsageFeatureLabels[feature]}</Text> {planUsageCountingRules[feature]}</Text>)}
-        <Text style={styles.muted}>{planUsageDeletionNote}</Text>
-      </View>}
       <Text style={styles.muted}>결제는 아직 받지 않아요.</Text>
     </> : <>
       <Text style={styles.muted}>이용량을 불러오지 못했어요.</Text>
@@ -134,7 +127,6 @@ const local = StyleSheet.create({
   group: { gap: 6 },
   groupHeader: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline', justifyContent: 'space-between', gap: 8, paddingTop: 6 },
   groupTitle: { color: colors.muted },
-  rules: { gap: 6 },
   row: { gap: 6, paddingTop: 10, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
   rowHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   rowLabel: { flex: 1 },

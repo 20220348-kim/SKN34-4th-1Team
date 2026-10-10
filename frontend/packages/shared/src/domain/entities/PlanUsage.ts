@@ -1,4 +1,8 @@
 export type PlanCode = 'FREE' | 'PLUS' | 'PREMIUM'
+/** 출시 전 무료 체험으로 시작할 수 있는 요금제입니다. */
+export type TrialPlanCode = Exclude<PlanCode, 'FREE'>
+/** 유료 배정을 누가 했는지입니다. OPERATOR는 운영자 배정, TRIAL은 출시 전 무료 체험입니다. */
+export type PlanSource = 'OPERATOR' | 'TRIAL'
 export type PlanUsageFeature = 'AI_SEARCH' | 'EVIDENCE_QUESTION' | 'APPLICATION_DRAFT' | 'COMBINATION_REVIEW'
 /** 하루·달은 무료 요금제와 로그인 전 체험의 서울 기간이고, PLAN은 유료 30일 이용권의 이용 기간입니다. */
 export type PlanUsagePeriod = 'DAY' | 'MONTH' | 'PLAN'
@@ -22,10 +26,32 @@ export type LimitedPlanUsageItem = PlanUsageItem & { limit: number }
 /**
  * 현재 요금제와 기능별 사용량입니다. 로그인하지 않았으면 plan이 null이고 AI 대화 검색 체험만 있습니다.
  * planEndsAt은 유료 이용권이 끝나는 서울 시각이며, 무료이거나 끝나는 때가 없는 배정이면 없습니다.
+ * planSource는 유료 배정을 누가 했는지(무료면 없음), trialsAvailable은 지금 시작할 수 있는 출시 전 무료 체험입니다.
  */
-export type PlanUsage = { plan: PlanCode | null; planEndsAt?: string | null; items: PlanUsageItem[] }
+export type PlanUsage = {
+  plan: PlanCode | null
+  planEndsAt?: string | null
+  planSource?: PlanSource | null
+  trialsAvailable?: TrialPlanCode[]
+  items: PlanUsageItem[]
+}
 
 export const planLabels: Record<PlanCode, string> = { FREE: '무료', PLUS: '플러스', PREMIUM: '프리미엄' }
+
+/** 출시 전 무료 체험 기간입니다. Core `PlanTrial.DAYS`와 같습니다. */
+export const PLAN_TRIAL_DAYS = 14
+
+/** 지금 요금제 이름입니다. 체험 중이면 "플러스 체험"처럼 적습니다. 로그인 전이면 null입니다. */
+export function planNameText(usage: Pick<PlanUsage, 'plan' | 'planSource'>): string | null {
+  if (usage.plan === null) return null
+  return usage.planSource === 'TRIAL' ? `${planLabels[usage.plan]} 체험` : planLabels[usage.plan]
+}
+
+/** 지금 [now] 체험을 시작하면 끝나는 서울 날짜입니다. 예: "10월 22일" */
+export function planTrialEndDateText(now: number = Date.now()): string {
+  const seoul = new Date(now + PLAN_TRIAL_DAYS * 86_400_000 + 9 * 3_600_000)
+  return `${seoul.getUTCMonth() + 1}월 ${seoul.getUTCDate()}일`
+}
 
 export const planUsageFeatureLabels: Record<PlanUsageFeature, string> = {
   AI_SEARCH: 'AI 대화 검색',
@@ -86,17 +112,6 @@ export function planUsageUsedText(item: PlanUsageItem): string | null {
   return `${item.limit}${unit} 중 ${Math.min(item.used, item.limit)}${unit} 썼어요`
 }
 
-/** 기능마다 무엇을 한 번으로 세는지입니다. 프로필 도움말과 앱 내 계정 안내가 함께 씁니다. */
-export const planUsageCountingRules: Record<PlanUsageFeature, string> = {
-  AI_SEARCH: '검색어로 공고를 찾을 때 1회예요. 조건을 정리하는 대화와 필터 검색은 세지 않고, 검색이 실패하면 돌려줘요.',
-  EVIDENCE_QUESTION: '질문을 보낼 때 1회예요. 답을 받지 못하고 실패하면 돌려줘요.',
-  APPLICATION_DRAFT: '새 공고의 양식 분석이나 초안 만들기를 처음 시작할 때 1건이에요. 같은 공고는 다시 분석·생성해도 늘지 않아요.',
-  COMBINATION_REVIEW: '[검토 실행]을 누를 때 1회예요. 진행 중인 검토도 세고, 실패한 실행은 빠져요.',
-}
-
-/** 신청 문서와 중복 검토는 지워도 그 기간에 쓴 양이 돌아오지 않습니다. */
-export const planUsageDeletionNote = '신청 문서와 중복 검토는 지워도 이미 쓴 횟수가 돌아오지 않아요.'
-
 /** 서울 날짜 그대로 읽습니다. 기기 시간대로 바꾸면 월초 0시가 전날로 보일 수 있습니다. */
 function seoulMonthDay(value: string): string | null {
   const match = /^\d{4}-(\d{2})-(\d{2})T/.exec(value)
@@ -140,10 +155,14 @@ export function planUsageResetText(item: Pick<PlanUsageItem, 'period' | 'resetsA
   return date ? `${date}에 다시 채워져요.` : '다음 달 1일에 다시 채워져요.'
 }
 
-/** 유료 이용권이 끝나는 때입니다. 예: "11월 19일 15:30까지 이용할 수 있어요." 끝나는 때가 없으면 null입니다. */
-export function planEndsText(usage: Pick<PlanUsage, 'planEndsAt'> | null): string | null {
+/**
+ * 유료 이용권이 끝나는 때입니다. 예: "11월 19일 15:30까지 이용할 수 있어요." 끝나는 때가 없으면 null입니다.
+ * 출시 전 무료 체험이면 "10월 22일 21:00까지 체험할 수 있어요. 끝나면 자동 결제 없이 무료로 돌아가요."처럼 끝난 뒤를 함께 적습니다.
+ */
+export function planEndsText(usage: Pick<PlanUsage, 'planEndsAt' | 'planSource'> | null): string | null {
   const end = usage?.planEndsAt ? seoulMonthDayTime(usage.planEndsAt) : null
-  return end ? `${end}까지 이용할 수 있어요.` : null
+  if (!end) return null
+  return usage?.planSource === 'TRIAL' ? `${end}까지 체험할 수 있어요. 끝나면 자동 결제 없이 무료로 돌아가요.` : `${end}까지 이용할 수 있어요.`
 }
 
 export type PlanQuotaExceeded = Pick<PlanUsageItem, 'feature' | 'period' | 'resetsAt'> & { limit: number; plan: PlanCode | null }

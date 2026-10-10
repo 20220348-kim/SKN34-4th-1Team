@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
-  findPlanUsageItem, hasPlanLimit, isNearPlanLimit, isPlanLimitReached, planEndsText, planLabels, planQuotaExceededMessage,
-  planUsageCountText, planUsageCountingRules, planUsageDeletionNote, planUsageResetText, planUsageUsedText, remainingPlanUses,
+  PLAN_TRIAL_DAYS, findPlanUsageItem, hasPlanLimit, isNearPlanLimit, isPlanLimitReached, planEndsText, planLabels, planNameText,
+  planQuotaExceededMessage, planTrialEndDateText,
+  planUsageCountText, planUsageResetText, planUsageUsedText, remainingPlanUses,
   type LimitedPlanUsageItem, type PlanUsageItem,
 } from './PlanUsage'
 
@@ -38,11 +39,6 @@ describe('PlanUsage', () => {
     expect(planUsageCountText(drafts)).toBe('이번 달 0건 남음')
     expect(planUsageUsedText(drafts)).toBe('3건 중 3건 썼어요')
     expect(remainingPlanUses(drafts)).toBe(0)
-  })
-
-  it('explains what counts as one use for every feature', () => {
-    expect(Object.keys(planUsageCountingRules).sort()).toEqual(['AI_SEARCH', 'APPLICATION_DRAFT', 'COMBINATION_REVIEW', 'EVIDENCE_QUESTION'])
-    expect(planUsageCountingRules.AI_SEARCH).toContain('조건을 정리하는 대화와 필터 검색은 세지 않고')
   })
 
   it('never warns or blocks a plan without a limit and says so instead of a count against a limit', () => {
@@ -93,12 +89,28 @@ describe('PlanUsage', () => {
     expect(planEndsText({ planEndsAt: '2026-10-31T15:30:00+09:00' })).toBe('10월 31일 15:30까지 이용할 수 있어요.')
     expect(planEndsText({ planEndsAt: null })).toBeNull()
     expect(planEndsText(null)).toBeNull()
-    expect(planUsageDeletionNote).toBe('신청 문서와 중복 검토는 지워도 이미 쓴 횟수가 돌아오지 않아요.')
   })
 
   it('finds a feature only when the usage was loaded', () => {
     expect(findPlanUsageItem(null, 'AI_SEARCH')).toBeNull()
     expect(findPlanUsageItem({ plan: 'FREE', items: [daily] }, 'AI_SEARCH')).toBe(daily)
     expect(findPlanUsageItem({ plan: 'FREE', items: [daily] }, 'EVIDENCE_QUESTION')).toBeNull()
+  })
+
+  it('names a trial plan and says when it ends and that it returns to free without a payment', () => {
+    expect(planNameText({ plan: 'PLUS', planSource: 'TRIAL' })).toBe('플러스 체험')
+    expect(planNameText({ plan: 'PREMIUM', planSource: 'OPERATOR' })).toBe('프리미엄')
+    expect(planNameText({ plan: 'FREE' })).toBe('무료')
+    expect(planNameText({ plan: null })).toBeNull()
+    expect(planEndsText({ planEndsAt: '2026-10-22T21:00:00+09:00', planSource: 'TRIAL' }))
+      .toBe('10월 22일 21:00까지 체험할 수 있어요. 끝나면 자동 결제 없이 무료로 돌아가요.')
+    expect(planEndsText({ planEndsAt: '2026-10-31T15:30:00+09:00', planSource: 'OPERATOR' })).toBe('10월 31일 15:30까지 이용할 수 있어요.')
+  })
+
+  it('previews the Seoul date a trial started now would end on', () => {
+    expect(PLAN_TRIAL_DAYS).toBe(14)
+    expect(planTrialEndDateText(evening)).toBe('10월 22일')
+    // 서울 날짜로 셉니다. UTC로는 아직 전날인 서울 새벽 1시에 시작해도 서울 날짜 기준 14일 뒤입니다.
+    expect(planTrialEndDateText(Date.parse('2026-10-31T01:00:00+09:00'))).toBe('11월 14일')
   })
 })

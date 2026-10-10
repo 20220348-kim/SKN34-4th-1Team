@@ -156,12 +156,23 @@ test('a signed-in account shows its plan and every usage limit as progress witho
   // 앱에서는 이용 현황만 보여 주고 결제·요금제 변경으로 이어지는 안내나 링크를 두지 않습니다.
   expect(view.queryByText(/업그레이드|요금제 보기|요금제 변경|가격|구매|결제하기/)).toBeNull()
   expect(view.queryAllByRole('link')).toHaveLength(0)
-  // 이름 붙은 버튼은 그대로이고, 세는 기준은 글자 버튼으로 펼쳐 봅니다.
+  // 이름 붙은 버튼은 그대로입니다. 무엇을 한 번으로 세는지는 요금제 탭에 있어 내 계정에는 두지 않습니다.
   expect(view.getAllByRole('button').map(button => button.props.accessibilityLabel).filter(Boolean)).toEqual(['기업 프로필 등록', '알림 설정', '비밀번호 변경', '로그아웃', '계정 삭제', '개인정보 처리방침', '이용약관', '도움말·문의'])
-  expect(view.queryByText(/조건을 정리하는 대화와 필터 검색은 세지 않고/)).toBeNull()
-  fireEvent.press(view.getByText('이용량을 세는 기준 보기 ▾'))
-  expect(view.getByText(/조건을 정리하는 대화와 필터 검색은 세지 않고/)).toBeTruthy()
-  expect(view.getByText('신청 문서와 중복 검토는 지워도 이미 쓴 횟수가 돌아오지 않아요.')).toBeTruthy()
+  expect(view.queryByText(/세는 기준|조건을 정리하는 대화와 필터 검색은 세지 않고/)).toBeNull()
+})
+
+test('a trial shows only the trial plan and when it ends, without any button to change the plan', async () => {
+  signIn()
+  const endsAt = '2026-10-22T21:00:00+09:00'
+  jest.mocked(apiRequest).mockResolvedValue({ plan: 'PLUS', planEndsAt: endsAt, planSource: 'TRIAL', trialsAvailable: ['PREMIUM'], items: [
+    { feature: 'AI_SEARCH', period: 'PLAN', limit: 500, used: 2, resetsAt: endsAt },
+  ] })
+  const view = render(<AccountScreen onCompany={jest.fn()} onSettings={jest.fn()} />)
+  await view.findByText('플러스 체험')
+  expect(view.getByText('10월 22일 21:00까지 체험할 수 있어요. 끝나면 자동 결제 없이 무료로 돌아가요.')).toBeTruthy()
+  expect(view.queryByText(/체험 시작|요금제 바꾸기|업그레이드/)).toBeNull()
+  expect(view.queryAllByRole('link')).toHaveLength(0)
+  expect(view.getAllByRole('button').map(button => button.props.accessibilityLabel).filter(Boolean)).toEqual(['기업 프로필 등록', '알림 설정', '비밀번호 변경', '로그아웃', '계정 삭제', '개인정보 처리방침', '이용약관', '도움말·문의'])
 })
 
 test('a thirty-day pass groups every feature into this period and says when the period and the pass end', async () => {

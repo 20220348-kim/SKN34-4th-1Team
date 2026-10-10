@@ -1,20 +1,24 @@
 import { useState } from 'react'
 import { Pressable, StyleSheet, Text, View } from 'react-native'
-import { pricingFrequentlyAskedQuestions, pricingPlans, pricingReleaseNote, pricingSearchSteps, pricingTitle,
+import { pricingFrequentlyAskedQuestions, pricingPlans, pricingSearchSteps, pricingTitle, pricingUnlimitedNote,
   type PricingPlanId } from '@govbiz/shared/design/pricingContent'
+import type { PlanCode } from '@govbiz/shared/domain/entities/PlanUsage'
 import { SegmentedControl } from '../components/SegmentedControl'
 import { Button, Page, StatusBadge, colors } from '../ui'
 
 const planOptions = pricingPlans.map(plan => ({ value: plan.id, label: plan.name }))
 
-/** 웹과 같은 이용 정책을 안내하며 결제·구독 요청은 보내지 않습니다. */
-export function PricingScreen({ onSearch, onPlus, plusDisabled = false }: {
-  onSearch(): void; onPlus(): void; plusDisabled?: boolean
-}) {
+/**
+ * 웹과 같은 요금제별 한도와 가격을 안내합니다. 앱에는 결제·요금제 바꾸기·체험 시작 동작을 두지 않고(App Store 3.1.3)
+ * 무료 요금제의 검색 진입만 둡니다. 로그인해 [currentPlan]을 알면 그 요금제를 "이용 중"으로 강조하고, 모르면 추천 요금제(플러스)를 강조합니다.
+ */
+export function PricingScreen({ onSearch, currentPlan = null }: { onSearch(): void; currentPlan?: PlanCode | null }) {
   const [selected, setSelected] = useState<PricingPlanId>('plus')
   const [compareOpen, setCompareOpen] = useState(false)
   const [openQuestions, setOpenQuestions] = useState<number[]>([])
   const plan = pricingPlans.find(item => item.id === selected)!
+  const isCurrent = plan.code === currentPlan
+  const emphasized = currentPlan ? isCurrent : plan.isFeatured
   function choose(id: PricingPlanId) { setSelected(id); setCompareOpen(false) }
   function toggleQuestion(index: number) {
     setOpenQuestions(previous => previous.includes(index) ? previous.filter(item => item !== index) : [...previous, index])
@@ -28,38 +32,35 @@ export function PricingScreen({ onSearch, onPlus, plusDisabled = false }: {
     <View style={local.policy}>
       <Text accessible={false} style={local.policyCheck}>✓</Text>
       <View style={local.flex}>
-        <Text style={local.policyTitle}>플러스도 지금은 회원 무료</Text>
-        <Text style={local.policyText}>정식 출시 전까지 무료로 이용하세요.{ '\n' }현재 결제·구독은 제공하지 않습니다.</Text>
+        <Text style={local.policyTitle}>지금은 결제를 받지 않아요</Text>
+        <Text style={local.policyText}>회원가입 후 무료 요금제로 바로 이용할 수 있어요.</Text>
       </View>
     </View>
     <SegmentedControl label="요금제 선택" options={planOptions} value={selected} onChange={choose} />
-    <View accessibilityLiveRegion="polite" style={[local.plan, plan.isFeatured && local.featured]}>
+    <View accessibilityLiveRegion="polite" style={[local.plan, emphasized && local.featured, isCurrent && local.current]}>
       <View style={local.planTop}>
         <Text style={local.planLabel}>{plan.label}</Text>
-        <StatusBadge label={plan.status} tone={plan.isFeatured ? 'success' : 'neutral'} />
+        {isCurrent && <StatusBadge label="이용 중" tone="success" />}
       </View>
       <Text accessibilityRole="header" style={local.planTitle}>{plan.name}</Text>
       <Text style={local.description}>{plan.description}</Text>
       <View style={local.priceBlock}>
         <View style={local.priceRow}>
           <Text style={local.price}>{plan.price}</Text>
-          {plan.id !== 'free' && <Text style={local.priceCaption}>예정가</Text>}
+          {plan.pricePeriod && <Text style={local.pricePeriod}>{plan.pricePeriod}</Text>}
         </View>
-        <Text style={[local.priceNote, plan.isFeatured && local.freeNote]}>{plan.priceNote}</Text>
+        <Text style={local.priceNote}>{plan.priceNote}</Text>
       </View>
       <View style={local.features}>
-        <Text style={local.featureHeading}>{plan.featureHeading}</Text>
-        {plan.features.map(feature => <View key={feature} style={local.feature}>
-          <Text accessible={false} style={local.featureCheck}>{plan.isAvailable ? '✓' : '+'}</Text>
-          <Text style={local.featureText}>{feature}</Text>
+        {plan.limits.map(limit => <View key={limit} style={local.feature}>
+          <Text accessible={false} style={local.featureCheck}>✓</Text>
+          <Text style={local.featureText}>{limit}</Text>
         </View>)}
       </View>
-      {plan.action === 'search' ? <Button label="무료로 지원사업 찾기" onPress={onSearch} style={local.planButton} />
-        : plan.action === 'pro' ? <Button label="지금 무료로 이용하기" disabled={plusDisabled} onPress={onPlus} style={local.planButton} />
-          : <Button label="출시 준비 중" disabled onPress={() => {}} variant="secondary" style={local.planButton} />}
+      {plan.code === 'FREE' && <Button label="무료로 지원사업 찾기" onPress={onSearch} style={local.planButton} />}
       <Text style={local.footerNote}>{plan.footerNote}</Text>
     </View>
-    <Text style={local.releaseNote}>{pricingReleaseNote}</Text>
+    <Text style={local.releaseNote}>{pricingUnlimitedNote}</Text>
     <View style={local.compare}>
       <Pressable accessibilityRole="button" accessibilityLabel="다른 요금제 한눈에 보기"
         accessibilityState={{ expanded: compareOpen }} onPress={() => setCompareOpen(previous => !previous)} style={local.accordion}>
@@ -67,8 +68,10 @@ export function PricingScreen({ onSearch, onPlus, plusDisabled = false }: {
         <Text accessible={false} style={local.accordionMark}>{compareOpen ? '−' : '+'}</Text>
       </Pressable>
       {compareOpen && pricingPlans.map(item => <View key={item.id} style={local.compareRow}>
-        <View style={local.flex}><Text style={local.compareName}>{item.name} · {item.price}</Text>
-          <Text style={local.footerNote}>{item.priceNote}{item.id !== 'free' ? ' · 예정가' : ''}</Text></View>
+        <View style={local.flex}><Text style={local.compareName}>
+          {item.name} · {item.price}{item.pricePeriod ? ` ${item.pricePeriod}` : ''}{item.code === currentPlan ? ' · 이용 중' : ''}
+        </Text>
+          <Text style={local.footerNote}>{item.priceNote}</Text></View>
         <Pressable accessibilityRole="button" accessibilityLabel={`${item.name} 상세 보기`} onPress={() => choose(item.id)} style={local.detailButton}>
           <Text style={local.detailLabel}>상세 보기</Text>
         </Pressable>
@@ -114,17 +117,17 @@ const local = StyleSheet.create({
   policyText: { color: colors.primaryText, fontSize: 12, lineHeight: 20 },
   plan: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border, borderRadius: 20, padding: 20, gap: 10 },
   featured: { borderColor: colors.primary },
-  planTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' },
+  current: { borderWidth: 2, backgroundColor: colors.soft },
+  planTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', minHeight: 24 },
   planLabel: { color: colors.muted, fontSize: 11, fontWeight: '700', letterSpacing: 1.5 },
   planTitle: { color: colors.text, fontSize: 22, lineHeight: 31, fontWeight: '700', marginTop: 2 },
   priceBlock: { marginTop: 6, gap: 6 },
-  priceRow: { flexDirection: 'row', alignItems: 'baseline', gap: 8, flexWrap: 'wrap' },
+  priceRow: { flexDirection: 'row', alignItems: 'baseline', gap: 6, flexWrap: 'wrap' },
   price: { color: colors.text, fontSize: 28, lineHeight: 37, fontWeight: '700', letterSpacing: -0.8 },
-  priceCaption: { color: colors.muted, fontSize: 11 },
+  pricePeriod: { color: colors.muted, fontSize: 14, fontWeight: '600' },
   priceNote: { color: colors.muted, fontSize: 12, lineHeight: 20 },
   freeNote: { color: colors.primaryText, fontWeight: '600' },
   features: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border, marginTop: 10, paddingTop: 16, gap: 10 },
-  featureHeading: { color: colors.text, fontSize: 12, lineHeight: 19, fontWeight: '700', marginBottom: 2 },
   feature: { flexDirection: 'row', gap: 9, alignItems: 'flex-start' },
   featureCheck: { color: colors.primary, fontSize: 17, lineHeight: 23 },
   featureText: { flex: 1, color: colors.text, fontSize: 13, lineHeight: 23 },

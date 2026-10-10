@@ -1,19 +1,14 @@
-import { useNavigation, useRouter } from 'expo-router'
+import { useNavigation } from 'expo-router'
 import { CommonActions } from 'expo-router/react-navigation'
 import { useAuth } from '../../src/auth/session'
-import { useLoginFlow } from '../../src/auth/loginFlow'
+import { usePlanUsage } from '../../src/components/PlanUsage'
 import { PricingScreen } from '../../src/screens/PricingScreen'
 
 export default function PricingRoute() {
-  const router = useRouter()
   const tabs = useNavigation('/(tabs)')
-  const { status } = useAuth()
-  const requestLogin = useLoginFlow()
-  function openPlus() {
-    if (status === 'signedIn') router.navigate('/(tabs)/saved')
-    else requestLogin({ message: '플러스 기능은 정식 출시 전까지 회원에게 무료로 제공해요.',
-      onAuthenticated: () => router.navigate('/(tabs)/saved') })
-  }
-  return <PricingScreen onSearch={() => tabs.dispatch(CommonActions.navigate({ name: 'index', merge: true }))} onPlus={openPlus}
-    plusDisabled={status !== 'signedIn' && status !== 'signedOut'} />
+  const { status, session } = useAuth()
+  // 로그인했으면 지금 요금제만 읽어 그 요금제를 강조합니다. 로그인 전에는 읽지 않습니다.
+  const { usage } = usePlanUsage(session?.accessToken, status === 'signedIn')
+  return <PricingScreen onSearch={() => tabs.dispatch(CommonActions.navigate({ name: 'index', merge: true }))}
+    currentPlan={status === 'signedIn' ? usage?.plan ?? null : null} />
 }
