@@ -212,9 +212,9 @@ Core·Catalog·Ops의 MySQL은 같은 색을 사용하고, 서비스별 소유�
 업무 서비스와 LLMOps 평가·관측을 **하나의 Kubernetes(kind) 클러스터**에 배치하고,
 역할에 따라 세 namespace로 구분합니다.
 
-![GovBiz 업무·평가·관측을 Kubernetes로 통합한 배치 구조](docs/assets/architecture/govbiz-local-architecture.png)
+![GovBiz 업무·평가·관측을 Kubernetes로 통합한 배치 구조](docs/assets/architecture/govbiz-local-architecture.png?v=3d70cc68175d)
 
-[이미지 크게 보기](docs/assets/architecture/govbiz-local-architecture.png) · [SVG 원본](docs/assets/architecture/govbiz-local-architecture.svg)
+[이미지 크게 보기](docs/assets/architecture/govbiz-local-architecture.png?v=3d70cc68175d) · [SVG 원본](docs/assets/architecture/govbiz-local-architecture.svg?v=1c2b6da116ea)
 
 | namespace | 배치 구성 |
 |---|---|

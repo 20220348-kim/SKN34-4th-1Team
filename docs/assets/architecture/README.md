@@ -18,9 +18,9 @@
 
 ## LLMOps Kubernetes 통합 구성 — 2026-10-11
 
-![GovBiz 업무·평가·관측을 Kubernetes로 통합한 로컬 구성](govbiz-local-architecture.png)
+![GovBiz 업무·평가·관측을 Kubernetes로 통합한 로컬 구성](govbiz-local-architecture.png?v=3d70cc68175d)
 
-- [전환 후 구성 PNG](govbiz-local-architecture.png) · [SVG 원본](govbiz-local-architecture.svg)
+- [전환 후 구성 PNG](govbiz-local-architecture.png?v=3d70cc68175d) · [SVG 원본](govbiz-local-architecture.svg?v=1c2b6da116ea)
 - [namespace·데이터·내부 통신·접근 방식](README-local.md)
 - [생성 스크립트](build-local.mjs) · [Kubernetes 로고 출처·해시](kubernetes-logo-sources.json) · [RabbitMQ·MyBatis 로고 출처·해시](logo-sources.json)
 
