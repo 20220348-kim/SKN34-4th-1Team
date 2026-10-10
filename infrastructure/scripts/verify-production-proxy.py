@@ -99,8 +99,8 @@ def main(web_image=None):
             raise RuntimeError("Nginx host port was not assigned")
         port = int(bindings[0]["HostPort"])
 
-        def call(method="GET", path="/api/test", secret=SECRET, body=None, client_ip="203.0.113.20"):
-            connection = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+        def call(method="GET", path="/api/test", secret=SECRET, body=None, client_ip="203.0.113.20", timeout=3):
+            connection = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
             headers = {"X-Govbiz-Proxy-Secret": secret, "X-Govbiz-Client-IP": client_ip,
                        "X-Forwarded-For": "1.2.3.4", "Forwarded": "for=1.2.3.4",
                        "Origin": "https://govbiz-test.vercel.app", "Cookie": "session=test",
@@ -109,11 +109,12 @@ def main(web_image=None):
                 headers.update({"Host": "localhost:18173", "Origin": "http://localhost:18173",
                                 "X-CSRFToken": "csrf-test", "X-Forwarded-Host": "forged.invalid",
                                 "X-Forwarded-Proto": "https", "X-Forwarded-Port": "443", "X-Real-IP": "1.2.3.4"})
-            connection.request(method, path, body=body, headers=headers)
-            response = connection.getresponse()
-            result = response.status, response.getheaders(), response.read()
-            connection.close()
-            return result
+            try:
+                connection.request(method, path, body=body, headers=headers)
+                response = connection.getresponse()
+                return response.status, response.getheaders(), response.read()
+            finally:
+                connection.close()
 
         for attempt in range(45):
             try:
@@ -127,7 +128,9 @@ def main(web_image=None):
         if web_image:
             verify_web(call)
             docker("stop", "--time", "1", containers[1])
-            status, headers, data = call(path="/api/v1/ops/session")
+            # A stopped Docker endpoint can time out instead of refusing the
+            # connection. Outlast Nginx's 3s connect timeout to inspect its error.
+            status, headers, data = call(path="/api/v1/ops/session", timeout=10)
             assert status in (502, 504) and b'<div id="root">' not in data
             assert dict(headers)["Cache-Control"] == "private, no-store"
             assert call(path="/")[0] == 200
