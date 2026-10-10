@@ -63,6 +63,18 @@ Core의 허용 Origin, Ops의 `DJANGO_ALLOWED_HOSTS`·CSRF 설정과 NetworkPoli
 한다. 허용된 기존 관리자 계정의 로그인·Ops 조회를 별도로 확인한다. 서비스 상태 확인만으로
 인증·평가의 실제 연결 성공을 주장하지 않는다.
 
+개인 환경에서 기존 `http://localhost:5173`을 유지하며 새 웹을 사용할 때는 Core를 관리하는
+Argo Application의 `spec.source.helm.valuesObject.env.APP_CORS_ALLOWED_ORIGIN`에
+`http://localhost:5173,http://localhost:18173`을 설정하고 Core만 수동 동기화한다. 기존 값이
+따로 있으면 덮어 버리지 말고 허용할 새 origin을 추가한다. 이는 Core의 세션 쿠키 쓰기 요청에
+필요한 설정이다. 로그인·조회가 성공해도 이 값이 없으면 저장·로그아웃은 거절될 수 있다.
+`127.0.0.1`로 접속한다면 해당 origin도 정확히 추가하고, 쿠키를 공유하지 않는 두 호스트를
+로그인 도중에 혼용하지 않는다. 외부 origin을 광범위하게 허용하거나 CSRF 검사를 끄지 않는다.
+
+Ops는 Host·Origin을 함께 보존하는 같은 origin 프록시를 사용한다. 현재 개인 환경의
+`DJANGO_ALLOWED_HOSTS`에 `localhost,127.0.0.1`이 포함되어 있으므로 이 두 호스트의 직접 HTTP
+접속을 위해 `DJANGO_CSRF_TRUSTED_ORIGINS`를 추가할 필요는 없다. 외부 ingress는 별도 설정이다.
+
 ## CI와 운영 인계
 
 GovBiz CI의 기존 `Web and shared` 작업에서 정적 이미지 빌드와 기존
@@ -121,3 +133,20 @@ Infra CI는 기존 서비스 Chart 렌더링 테스트와 lint에 웹을 포함�
 통과했다. 설치된 의존성을 사용한 Windows 확인이며 Linux 이미지 빌드 성공을 대신하지 않는다.
 수정 후 로컬 전체 이미지 빌드도 npm의 `UND_ERR_SOCKET`·`ECONNRESET`이 반복되어 중지했다.
 새 커밋의 필수 CI에서 전체 이미지 빌드·프록시를 확인해야 한다.
+
+## 2026-10-10 병합본 CI 확인과 후속 수정
+
+`skn-424`가 병합된 `c391f55b9b9b344ce56c115de6e1b348c814bb0c`의
+[GovBiz CI 실행](https://github.com/ilil1/SKN34-4th-1Team/actions/runs/38045961584)에서
+Linux 웹 Docker 이미지 빌드가 성공했다. 합성 JSON 누락 문제는 해결됐으며, 정적 파일·SPA·
+Core/Ops 라우팅·본문·쿠키·CSRF 헤더 전달 검사도 통과했다.
+
+마지막 Ops 장애 검사에서는 검사 클라이언트의 3초 제한이 Nginx의 3초 연결 제한과 겹쳐
+HTTP 오류 응답을 읽기 전에 `TimeoutError`가 발생했다. 기존 검사 도구에서 이 요청만 10초까지
+기다리도록 수정했다. Nginx의 운영 제한은 유지하고, 실제 `502` 또는 `504`·캐시 금지·SPA로
+대체하지 않는 응답·정적 웹 지속 제공을 계속 확인한다. 요청 실패 시에도 검사 소켓을 닫는다.
+
+수정 후 기존 로컬 Nginx 검사 이미지로 전체 웹 프록시·Ops 중단 경로를 통과했고 Ruff 검사도
+통과했다. 이 실행은 기존 런타임 단계 검사 이미지를 사용했으며 공개 이미지 발행은 아니다.
+별도 검사 도구나 워크플로는 추가하지 않았다. 실패한 병합본 CI를 성공으로 간주하지 않으며,
+수정 커밋의 필수 CI가 통과한 뒤 공개 패키지 준비·웹 이미지 발행·Argo 인계를 진행해야 한다.
