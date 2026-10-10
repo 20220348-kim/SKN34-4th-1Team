@@ -27,8 +27,8 @@ OpenAI·공공 데이터 등 외부 API는 기존 서비스 계약을 유지합�
 
 현재 `govbiz-local-data`는 로컬 검증용이므로 운영 데이터 구성의 완료 증거로 사용하지 않습니다.
 개인 환경의 평가 저장소·실행기·Ops 연결은 2026-10-10에 실제 전환했습니다.
-다음 작업은 새 Kubernetes 데이터의 백업·복구 연결, Langfuse와 관련 저장소 이전,
-남은 웹·데이터·외부 접근 구성입니다.
+새 Kubernetes 평가 데이터의 암호화 백업·격리 복원까지 완료했습니다. 다음 실제 이전 대상은
+Langfuse와 관련 저장소입니다. 이후 웹·데이터·외부 접근 구성을 마무리해야 합니다.
 [평가 환경 이전의 상세 기준](docs/evaluation-kubernetes.md)을 함께 따릅니다.
 
 ## 현재 상태
@@ -50,6 +50,7 @@ OpenAI·공공 데이터 등 외부 API는 기존 서비스 계약을 유지합�
 | 저장된 전환 파일 재검증 | `gitops_transition.py --verify`: 현재 발행본·환경으로 계획을 다시 생성해 파일 전체와 비교. 파일 갱신·적용 없음 |
 | Ops 백업 전 중지·복구 계획 | `ops_maintenance_plan.py`: dev 또는 안정된 수동 Argo 환경에서 대상·원래 실행 상태를 조회. `--runtime-keys`는 로컬 Ops·결과 서버 이미지 일치도 확인. 접수 중지·백업·서비스 변경 없음 |
 | 개인 환경 Argo 인계 | 2026-10-07 공개 이미지 4개를 수동 동기화해 `Synced/Healthy` 확인. 아래 실행 기록 참고 |
+| 전환 후 평가 데이터 백업 | `ops_db_snapshot.py backup --kubernetes-evaluation` → 기존 통합 백업. 새 PVC 데이터의 실제 MySQL·임시 Kubernetes PVC 복원 완료 |
 | 개인 환경 평가 서비스 이전 | 2026-10-10 Prefect·실행기·결과 서버와 Ops 연결을 실제 전환. 무료 평가 6사례·보고서 조회 성공, 원본 Compose 평가 서비스 3개 중지·볼륨 보존 |
 | Argo 자동 배포 | 자동 인계·새 발행본 자동 적용 미구현. 자동 동기화·prune·selfHeal 비활성 |
 | 과거 snapshot | 읽기·검증 및 오프라인 정책 테스트 보존 |

@@ -38,7 +38,20 @@ HELPER = (
 
 
 def volume_sources(source):
-    """Accept only owned named volumes with known, stopped writable consumers."""
+    """Describe frozen PVCs or owned Compose volumes and their local restore image."""
+    if "evaluation" in source:
+        image = database.read_json(
+            [
+                "docker",
+                "image",
+                "inspect",
+                source["evaluation"]["deployments"]["prefect"]["image"],
+            ]
+        )[0]["Id"]
+        return {
+            kind: {**store, "image": image}
+            for kind, store in source["evaluation"]["stores"].items()
+        }
     project = source["compose_project"]
     result = {}
     for kind, (service, destination, suffix) in STORES.items():
@@ -131,6 +144,15 @@ def volume_sources(source):
             "consumers": consumers,
         }
     return result
+
+
+def collect_source(state, settings, before, kind, source):
+    if "evaluation" in before:
+        import evaluation_snapshot
+
+        kube, _, _ = database.commands(state, settings)
+        return evaluation_snapshot.collect(kube, before["evaluation"], kind, HELPER)
+    return volume_helper(source["image"], kind, source=source["volume"])
 
 
 def volume_helper(image, kind, *, source=None, entries=None, expected=None):
@@ -268,10 +290,20 @@ def backup(state, db_archive, key_file, output, *, include_runtime_keys=False):
     raw = database.read_archive(db_archive)
     db = database.validate(storage.open_payload(raw, key))
     settings = database.load_settings(state)
-    namespaced, before = database.frozen_source(state, settings)
+    options = {"kubernetes_evaluation": True} if "evaluation" in db.get("source", {}) else {}
+    namespaced, before = database.frozen_source(state, settings, **options)
     if db.get("source") != before:
         raise ValueError("DB archive belongs to a different maintenance state")
-    command = [*namespaced, "exec", "-i", "ops-mysql-0", "-c", "mysql", "--", *storage.AUTH]
+    command = [
+        *namespaced,
+        "exec",
+        "-i",
+        "ops-mysql-0",
+        "-c",
+        "mysql",
+        "--",
+        *storage.AUTH,
+    ]
     if database.dump(command) != db["sql"]:
         raise ValueError("Source DB has changed since its archive")
     sources = volume_sources(before)
@@ -280,23 +312,23 @@ def backup(state, db_archive, key_file, output, *, include_runtime_keys=False):
     stores = {
         kind: {
             "image": source["image"],
-            "entries": volume_helper(source["image"], kind, source=source["volume"]),
+            "entries": collect_source(state, settings, before, kind, source),
         }
         for kind, source in sources.items()
     }
     for kind, source in sources.items():
-        if volume_helper(source["image"], kind, source=source["volume"]) != stores[kind]["entries"]:
+        if collect_source(state, settings, before, kind, source) != stores[kind]["entries"]:
             raise ValueError("Volume changed during capture")
     if (
         database.dump(command) != db["sql"]
         or volume_sources(before) != sources
-        or database.frozen_source(state, settings)[1] != before
+        or database.frozen_source(state, settings, **options)[1] != before
     ):
         raise ValueError("Source stores or writers changed during capture")
     if key_data is not None:
         if runtime_keys.capture(namespaced, before, sources) != key_data:
             raise ValueError("Runtime keys changed during capture")
-        if database.frozen_source(state, settings)[1] != before:
+        if database.frozen_source(state, settings, **options)[1] != before:
             raise ValueError("Source writers changed after the final key read")
     payload = validate(
         {
@@ -329,14 +361,24 @@ def verify_current_source(state, payload):
     """Compare an authenticated archive with its still-frozen source; never stop writers."""
     validate(payload)
     settings = database.load_settings(state)
-    namespaced, before = database.frozen_source(state, settings)
     db = payload["database"]
+    options = {"kubernetes_evaluation": True} if "evaluation" in db.get("source", {}) else {}
+    namespaced, before = database.frozen_source(state, settings, **options)
     if before != db.get("source"):
         raise ValueError("Archive belongs to a different maintenance state")
     sources = volume_sources(before)
     if sources != payload.get("sources"):
         raise ValueError("Archived source volumes or consumers changed")
-    command = [*namespaced, "exec", "-i", "ops-mysql-0", "-c", "mysql", "--", *storage.AUTH]
+    command = [
+        *namespaced,
+        "exec",
+        "-i",
+        "ops-mysql-0",
+        "-c",
+        "mysql",
+        "--",
+        *storage.AUTH,
+    ]
 
     def check_database():
         counts = database.inventory(command)
@@ -356,7 +398,7 @@ def verify_current_source(state, payload):
         store = payload["stores"][kind]
         if (
             source["image"] != store["image"]
-            or volume_helper(source["image"], kind, source=source["volume"]) != store["entries"]
+            or collect_source(state, settings, before, kind, source) != store["entries"]
         ):
             raise ValueError("Source volume differs from the archived inventory")
     check_database()
@@ -364,7 +406,7 @@ def verify_current_source(state, payload):
     if (
         database.load_settings(state) != settings
         or volume_sources(before) != sources
-        or database.frozen_source(state, settings) != (namespaced, before)
+        or database.frozen_source(state, settings, **options) != (namespaced, before)
     ):
         raise ValueError("Source ownership or writer state changed during comparison")
 

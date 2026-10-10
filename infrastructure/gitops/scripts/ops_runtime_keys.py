@@ -121,6 +121,45 @@ def capture(namespaced, source, volumes):
             "valueFrom": {"secretKeyRef": {"name": "ops-mysql-runtime", "key": key}},
         } not in mysql_env:
             raise ValueError("MySQL does not reference the captured key")
+    if "evaluation" in source:
+        values, evaluation_versions = evaluation_tokens(namespaced, source, images)
+        versions.update(evaluation_versions)
+    else:
+        values = compose_tokens(source, volumes, images)
+    if not hmac.compare_digest(ops["LLMOPS_ARTIFACT_TOKEN"], values["artifact"]) or (
+        ops.get("LLMOPS_BUDGET_TOKEN")
+        and not hmac.compare_digest(ops["LLMOPS_BUDGET_TOKEN"], values["budget"])
+    ):
+        raise ValueError("Ops and evaluation runtime tokens differ")
+    return validate(
+        {
+            "schema_version": 1,
+            "image": images.pop(),
+            "sources": versions,
+            "database_accounts": database.read_accounts(
+                [
+                    *namespaced,
+                    "exec",
+                    "-i",
+                    "ops-mysql-0",
+                    "-c",
+                    "mysql",
+                    "--",
+                    *storage.AUTH,
+                ]
+            ),
+            "ops_budget_configured": bool(ops.get("LLMOPS_BUDGET_TOKEN")),
+            "keys": {
+                "django": ops["DJANGO_SECRET_KEY"],
+                "database": ops["DB_PASSWORD"],
+                "mysql_root": mysql["MYSQL_ROOT_PASSWORD"],
+                **values,
+            },
+        }
+    )
+
+
+def compose_tokens(source, volumes, images):
     artifacts = [
         (identity, row)
         for identity, row in volumes["results"]["consumers"].items()
@@ -150,28 +189,60 @@ def capture(namespaced, source, volumes):
         ):
             raise ValueError("Runtime token consumer changed")
         values[name] = storage.environment(item).get(token_name, "")
-    if not hmac.compare_digest(ops["LLMOPS_ARTIFACT_TOKEN"], values["artifact"]) or (
-        ops.get("LLMOPS_BUDGET_TOKEN")
-        and not hmac.compare_digest(ops["LLMOPS_BUDGET_TOKEN"], values["budget"])
+    return values
+
+
+def evaluation_tokens(namespaced, source, images):
+    import evaluation_snapshot
+
+    nk = list(namespaced)
+    index = nk.index(source["namespace"])
+    nk[index] = evaluation_snapshot.NAMESPACE
+    values, versions = {}, {}
+    for key, component, secret_name, token_name in (
+        ("artifact", "ops-artifacts", "llmops-artifacts", "LLMOPS_ARTIFACT_TOKEN"),
+        ("budget", "evaluation-runner", "llmops-runner", "LLMOPS_BUDGET_TOKEN"),
     ):
-        raise ValueError("Kubernetes and Compose tokens differ")
-    return validate(
-        {
-            "schema_version": 1,
-            "image": images.pop(),
-            "sources": versions,
-            "database_accounts": database.read_accounts(
-                [*namespaced, "exec", "-i", "ops-mysql-0", "-c", "mysql", "--", *storage.AUTH]
-            ),
-            "ops_budget_configured": bool(ops.get("LLMOPS_BUDGET_TOKEN")),
-            "keys": {
-                "django": ops["DJANGO_SECRET_KEY"],
-                "database": ops["DB_PASSWORD"],
-                "mysql_root": mysql["MYSQL_ROOT_PASSWORD"],
-                **values,
-            },
-        }
-    )
+        deployment = database.read_json(nk + ["get", "deployment", component, "-o", "json"])
+        expected = source["evaluation"]["deployments"][component]
+        if (
+            deployment["metadata"]["uid"] != expected["uid"]
+            or evaluation_snapshot.fingerprint(deployment["spec"]) != expected["spec_sha256"]
+        ):
+            raise ValueError("Kubernetes token consumer changed")
+        container = deployment["spec"]["template"]["spec"]["containers"][0]
+        env = container.get("env", [])
+        mapping = {row["name"]: row for row in env}
+        if (
+            container.get("envFrom")
+            or len(mapping) != len(env)
+            or mapping.get(token_name)
+            != {
+                "name": token_name,
+                "valueFrom": {"secretKeyRef": {"name": secret_name, "key": token_name}},
+            }
+        ):
+            raise ValueError("Evaluation consumer does not reference the captured token")
+        if (
+            key == "artifact"
+            and database.read_json(["docker", "image", "inspect", container["image"]])[0]["Id"]
+            not in images
+        ):
+            raise ValueError("Ops and artifact server images differ")
+        item = database.read_json(nk + ["get", "secret", secret_name, "-o", "json"])
+        meta = item["metadata"]
+        if (
+            meta["name"] != secret_name
+            or meta["namespace"] != evaluation_snapshot.NAMESPACE
+            or not meta.get("uid")
+            or not meta.get("resourceVersion")
+            or meta.get("deletionTimestamp")
+            or item.get("type") != "Opaque"
+        ):
+            raise ValueError("Unexpected evaluation Secret identity")
+        values[key] = base64.b64decode(item["data"][token_name], validate=True).decode("utf-8")
+        versions[secret_name] = {"uid": meta["uid"], "version": meta["resourceVersion"]}
+    return values, versions
 
 
 def run_probe(value, action):

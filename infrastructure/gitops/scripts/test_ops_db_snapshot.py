@@ -273,6 +273,33 @@ class GitOpsSourceTests(SourceTests):
     def source(self):
         return snapshot.frozen_source(Path("fixture"), self.settings)[1]
 
+    def test_kubernetes_cutover_requires_explicit_mode_and_skips_stale_compose(self):
+        for container in self.deployment["spec"]["template"]["spec"]["containers"]:
+            container["env"] += [
+                {
+                    "name": "PREFECT_API_URL",
+                    "value": "http://prefect.govbiz-evaluation.svc.cluster.local:4200/api",
+                },
+                {
+                    "name": "LLMOPS_ARTIFACT_URL",
+                    "value": "http://ops-artifacts.govbiz-evaluation.svc.cluster.local:8010",
+                },
+            ]
+        with self.assertRaisesRegex(ValueError, "kubernetes-evaluation"):
+            self.source()
+        self.connection.reset_mock()
+        with (
+            patch("evaluation_snapshot.observe", return_value={"namespace_uid": "evaluation"}),
+            patch.object(snapshot, "compose_writers") as compose,
+        ):
+            result = snapshot.frozen_source(
+                Path("fixture"), self.settings, kubernetes_evaluation=True
+            )[1]
+        self.assertEqual(result["evaluation"], {"namespace_uid": "evaluation"})
+        self.assertNotIn("compose_project", result)
+        compose.assert_not_called()
+        self.connection.assert_not_called()
+
     def test_stopped_gitops_binds_argo_deployment_and_paused_admission_without_writes(self):
         original = copy.deepcopy((self.settings, self.resources, self.writers))
         result = self.source()
