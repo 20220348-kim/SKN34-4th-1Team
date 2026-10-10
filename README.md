@@ -470,8 +470,6 @@ AI가 제안한 조건을 사용자가 확인하면, 키워드·의미 검색으
   </tr>
 </table>
 
-사진을 누르면 원본 크기로 볼 수 있습니다.
-
 <img src="docs/assets/readme/search-candidates-caption.svg" alt="검색 대상 준비·후보 검색 — 번호는 사용자가 조건을 확정한 뒤 core-service가 조회·검색을 요청하는 순서입니다." width="820">
 
 ```mermaid
@@ -532,7 +530,7 @@ flowchart LR
 RAG는 **검색한 공식 원문을 모델에게 함께 전달해 답변의 근거로 사용하는 방식**입니다.
 현재 상세 공고 질문은 기업마당·K-Startup 공식 HTML 본문을 사용합니다.
 
-**원문 준비·근거 검색:** 저장한 원문이 없거나 갱신이 필요하면 공식 HTML을 읽어 MySQL에 저장하고 청크로 나눕니다.
+<img src="docs/assets/readme/rag-source-caption.svg" alt="원문 준비·근거 검색 — 저장한 원문이 없거나 갱신이 필요하면 공식 HTML을 읽어 MySQL에 저장하고 청크로 나눕니다." width="820">
 
 ```mermaid
 flowchart LR
@@ -551,7 +549,7 @@ flowchart LR
     class Qdrant vectorDb
 ```
 
-**검증·답변·출처 표시:** 검색된 청크의 ID·해시를 원문과 대조한 뒤 답변을 생성하고 인용을 확인합니다.
+<img src="docs/assets/readme/rag-response-caption.svg" alt="검증·답변·출처 표시 — 검색된 청크의 ID·해시를 원문과 대조한 뒤 답변을 생성하고 인용을 확인합니다." width="820">
 
 ```mermaid
 flowchart LR
