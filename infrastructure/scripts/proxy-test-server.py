@@ -1,14 +1,16 @@
 """Nginx 전달 계약 검증 전용. 외부 연결 없이 받은 가상 요청을 그대로 반환한다."""
-from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
+import os
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 
 class Handler(BaseHTTPRequestHandler):
     def handle_request(self):
         body = self.rfile.read(int(self.headers.get("Content-Length", 0))).decode()
         response = json.dumps({"method": self.command, "path": self.path,
-                               "headers": dict(self.headers), "body": body}).encode()
-        self.send_response(302 if self.path == "/api/redirect" else 200)
+                               "headers": dict(self.headers), "body": body,
+                               "upstream": os.environ.get("STUB_UPSTREAM", "core")}).encode()
+        self.send_response(404 if self.path.endswith("/not-found") else 302 if self.path == "/api/redirect" else 200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(response)))
         self.send_header("Cache-Control", "public, max-age=3600")
@@ -26,4 +28,4 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    HTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
+    HTTPServer(("0.0.0.0", int(os.environ.get("STUB_PORT", "8080"))), Handler).serve_forever()

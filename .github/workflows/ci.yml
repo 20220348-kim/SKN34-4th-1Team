@@ -51,6 +51,12 @@ jobs:
       - name: Build web
         run: pnpm --filter govbiz-web build
 
+      - name: Build Kubernetes static web image
+        run: docker build --file frontend/web/Dockerfile --tag govbiz-web:ci .
+
+      - name: Verify web image and same-origin Core/Ops proxy
+        run: python3 -B infrastructure/scripts/verify-production-proxy.py --web-image govbiz-web:ci
+
   mobile:
     name: Mobile
     runs-on: ubuntu-24.04
