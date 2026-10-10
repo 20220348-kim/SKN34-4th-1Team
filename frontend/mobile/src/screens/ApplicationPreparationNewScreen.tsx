@@ -8,6 +8,7 @@ import type { SupportProgram, SupportProgramDetail } from '@govbiz/shared/domain
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
 import { ApplicationPreparationError } from '@govbiz/shared/domain/errors/ApplicationPreparationError'
 import { useAuth } from '../auth/session'
+import { FeatureUsageLine } from '../components/PlanUsage'
 import { readPendingPreparation, savePendingPreparation, clearPendingPreparation, type PendingPreparationRequest } from '../auth/preparationPending'
 import { applicationPreparationUseCase } from '../api/applicationPreparation'
 import { getApiBaseUrl, programClient } from '../api/client'
@@ -167,6 +168,7 @@ function OwnedNew({ token, email, initialProgram, onOpenProgram, onCreated, onPe
         <Text style={styles.muted}>{candidate.attachmentFileName}</Text><Button label={candidate.formVersionId === formId ? '선택한 양식' : '이 양식 선택'} variant="secondary" disabled={busy} onPress={() => { setFormId(candidate.formVersionId); setField(candidate.supportedServiceFields[0]) }} /></Card>)}
       {form && form.supportedServiceFields.length > 1 && <ChoiceField label="신청 분야" value={field} options={form.supportedServiceFields.map(value => ({ value, label: applicationServiceFieldLabels[value] }))} onChange={value => setField(value as ApplicationServiceField)} disabled={busy} />}
       <Text style={styles.muted}>양식 분석은 유료 AI를 사용해요. 저장된 양식으로 작성 시작만 하면 AI를 호출하지 않아요.</Text>
+      <FeatureUsageLine token={token} feature="APPLICATION_DRAFT" revision={job?.status} />
       <Button label={pending?.kind === 'discovery' ? '같은 분석 요청으로 확인' : forms.length ? '입력칸별 양식 다시 분석' : '입력칸별 양식 분석하기'} variant="secondary" disabled={!pendingReady || loading || busy || Boolean(job && (!terminal(job) || job.status === 'UNKNOWN'))} onPress={() => void analyze()} />
       {jobs.filter(candidate => candidate.status === 'QUEUED' || candidate.status === 'RUNNING' || candidate.status === 'UNKNOWN').length >= 3 && <Notice>진행 중이거나 확인이 필요한 분석이 3건이에요. 기존 작업을 먼저 확인해 주세요.</Notice>}
     </Page>}

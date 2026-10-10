@@ -10,6 +10,10 @@ import type { Account } from '../../../../domain/entities/Account'
 import { sessionRestored } from '../../../shared/auth/state/authSlice'
 import { CompanyProfilePage } from './CompanyProfilePage'
 
+// 하루 한도 안내는 다시 채워질 때까지 남은 시간을 적으므로 시계를 서울 저녁 9시(자정 3시간 전)로 고정합니다. 타이머는 실제로 둡니다.
+beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-10-08T21:00:00+09:00')) })
+afterEach(() => { vi.useRealTimers() })
+
 const account: Account = {
   email: 'member@example.test', role: 'USER', tier: 'MEMBER', emailVerified: true, company: null,
   hasPassword: true, accountType: null, onboarded: true,
@@ -40,41 +44,60 @@ function renderPage() {
 }
 
 describe('프로필 요금제와 이용량', () => {
-  it('지금 요금제와 기능별 사용량 · 진행 막대 · 다시 채워지는 때를 보여 주고 결제 없이 요금제 화면으로 잇지 않는다', async () => {
+  it('오늘 · 이번 달로 묶어 남은 양과 쓴 양 · 진행 막대를 보이고, 다시 채워지는 때는 묶음마다 한 번만 적는다', async () => {
     vi.spyOn(appContainer.resolve('planUsageUseCase'), 'usage').mockResolvedValue(usage)
     renderPage()
     const section = await screen.findByRole('region', { name: '요금제와 이용량' })
     expect(await within(section).findByText('무료')).toBeTruthy()
 
-    const rows = within(within(section).getByRole('list', { name: '기능별 이용량' })).getAllByRole('listitem')
-    expect(rows.map((row) => row.textContent)).toEqual([
-      'AI 대화 검색오늘 3/10회자정(서울 시간)에 다시 채워져요.',
-      '공고 원문 질문오늘 10/10회자정(서울 시간)에 다시 채워져요.',
-      '신청 문서 초안이번 달 1/3건11월 1일에 다시 채워져요.',
-      '중복 지원·수혜 검토이번 달 0/3회11월 1일에 다시 채워져요.',
+    const today = within(section).getByRole('region', { name: '오늘 이용량' })
+    const month = within(section).getByRole('region', { name: '이번 달 이용량' })
+    expect(within(today).getAllByText('약 3시간 뒤에 다시 채워져요.')).toHaveLength(1)
+    expect(within(month).getAllByText('11월 1일에 다시 채워져요.')).toHaveLength(1)
+    const rows = (group: HTMLElement, name: string) => within(within(group).getByRole('list', { name })).getAllByRole('listitem')
+    const todayRows = rows(today, '오늘 기능별 이용량')
+    expect(todayRows.map((row) => row.textContent)).toEqual([
+      'AI 대화 검색오늘 7회 남음10회 중 3회 썼어요',
+      // 진행 중인 요청 때문에 한도를 넘겨 세어진 사용량도 화면은 한도에서 멈춥니다.
+      '공고 원문 질문오늘 0회 남음10회 중 10회 썼어요',
+    ])
+    expect(rows(month, '이번 달 기능별 이용량').map((row) => row.textContent)).toEqual([
+      '신청 문서 초안이번 달 2건 남음3건 중 1건 썼어요',
+      '중복 지원·수혜 검토이번 달 3회 남음3회 중 0회 썼어요',
     ])
     const meters = within(section).getAllByRole('progressbar')
     expect(meters.map((meter) => [meter.getAttribute('aria-label'), meter.getAttribute('aria-valuenow'), meter.getAttribute('aria-valuemin'),
       meter.getAttribute('aria-valuemax'), meter.getAttribute('aria-valuetext')])).toEqual([
-      ['AI 대화 검색 이용량', '3', '0', '10', '오늘 3/10회'],
-      ['공고 원문 질문 이용량', '10', '0', '10', '오늘 10/10회'],
-      ['신청 문서 초안 이용량', '1', '0', '3', '이번 달 1/3건'],
-      ['중복 지원·수혜 검토 이용량', '0', '0', '3', '이번 달 0/3회'],
+      ['AI 대화 검색 이용량', '3', '0', '10', '10회 중 3회 썼어요'],
+      ['공고 원문 질문 이용량', '10', '0', '10', '10회 중 10회 썼어요'],
+      ['신청 문서 초안 이용량', '1', '0', '3', '3건 중 1건 썼어요'],
+      ['중복 지원·수혜 검토 이용량', '0', '0', '3', '3회 중 0회 썼어요'],
     ])
     expect((meters[0]!.firstElementChild as HTMLElement).style.width).toBe('30%')
     expect((meters[1]!.firstElementChild as HTMLElement).style.width).toBe('100%')
-    // 80%부터는 사용량 글자와 막대를 경고 색으로 바꿉니다.
-    expect(within(rows[1]!).getByText('오늘 10/10회').className).toContain('text-warning')
-    expect(within(rows[0]!).getByText('오늘 3/10회').className).not.toContain('text-warning')
+    // 남은 양이 한도의 20% 이하(최소 1회)면 남은 양 글자와 막대를 경고 색으로 바꿉니다.
+    expect(within(todayRows[1]!).getByText('오늘 0회 남음').className).toContain('text-warning')
+    expect(within(todayRows[0]!).getByText('오늘 7회 남음').className).not.toContain('text-warning')
     expect((meters[1]!.firstElementChild as HTMLElement).className).toContain('bg-warning')
 
-    // 요금제 화면에는 아직 한도가 없으므로 그 화면으로 잇지 않습니다.
+    // 요금제 화면에는 아직 한도가 없으므로 그 화면으로 잇지 않습니다. 누를 수 있는 것은 세는 기준 도움말뿐입니다.
     expect(within(section).getByText('결제는 아직 받지 않아요.')).toBeTruthy()
     expect(within(section).queryByRole('link')).toBeNull()
-    expect(within(section).queryByRole('button')).toBeNull()
+    expect(within(section).getAllByRole('button').map((button) => button.getAttribute('aria-label'))).toEqual(['이용량을 세는 기준 도움말'])
   })
 
-  it('아직 한도를 정하지 않은 요금제는 막대 없이 제한 없음으로 적는다', async () => {
+  it('제목 옆 도움말에서 기능마다 무엇을 한 번으로 세는지와 지워도 돌아오지 않는다는 것을 알린다', async () => {
+    vi.spyOn(appContainer.resolve('planUsageUseCase'), 'usage').mockResolvedValue(usage)
+    renderPage()
+    const section = await screen.findByRole('region', { name: '요금제와 이용량' })
+    fireEvent.focus(within(section).getByRole('button', { name: '이용량을 세는 기준 도움말' }))
+    const tooltip = await screen.findByRole('tooltip')
+    expect(tooltip.textContent).toContain('AI 대화 검색 검색어로 공고를 찾을 때 1회예요. 조건을 정리하는 대화와 필터 검색은 세지 않고')
+    expect(tooltip.textContent).toContain('신청 문서 초안 새 공고의 양식 분석이나 초안 만들기를 처음 시작할 때 1건이에요.')
+    expect(tooltip.textContent).toContain('신청 문서와 중복 검토는 지워도 그 달에 쓴 횟수가 돌아오지 않아요.')
+  })
+
+  it('아직 한도를 정하지 않은 요금제는 막대와 쓴 양 문장 없이 제한 없음으로 적는다', async () => {
     vi.spyOn(appContainer.resolve('planUsageUseCase'), 'usage').mockResolvedValue({
       plan: 'PREMIUM',
       items: [
@@ -86,12 +109,9 @@ describe('프로필 요금제와 이용량', () => {
     renderPage()
     const section = await screen.findByRole('region', { name: '요금제와 이용량' })
     expect(await within(section).findByText('프리미엄')).toBeTruthy()
-    const rows = within(within(section).getByRole('list', { name: '기능별 이용량' })).getAllByRole('listitem')
-    expect(rows.map((row) => row.textContent)).toEqual([
-      'AI 대화 검색오늘 42회 · 제한 없음자정(서울 시간)에 다시 채워져요.',
-      '공고 원문 질문오늘 0회 · 제한 없음자정(서울 시간)에 다시 채워져요.',
-      '신청 문서 초안이번 달 2건 · 제한 없음11월 1일에 다시 채워져요.',
-    ])
+    const rows = (name: string) => within(within(section).getByRole('list', { name })).getAllByRole('listitem').map((row) => row.textContent)
+    expect(rows('오늘 기능별 이용량')).toEqual(['AI 대화 검색오늘 42회 · 제한 없음', '공고 원문 질문오늘 0회 · 제한 없음'])
+    expect(rows('이번 달 기능별 이용량')).toEqual(['신청 문서 초안이번 달 2건 · 제한 없음'])
     expect(within(section).queryByRole('progressbar')).toBeNull()
   })
 

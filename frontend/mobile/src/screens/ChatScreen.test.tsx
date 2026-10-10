@@ -10,6 +10,16 @@ import { SupportProgramRequestApiError, SupportProgramSearchRestoreApiError, Sup
 import type { PlanUsage } from '@govbiz/shared/domain/entities/PlanUsage'
 import type { LoginRequest } from '../auth/loginFlow'
 import { deleteChatConversation, getChatConversation, listChatConversations, saveChatConversation } from '../api/chatConversations'
+
+// 하루 한도 안내는 다시 채워질 때까지 남은 시간을 적으므로 시계를 서울 저녁 9시(자정 3시간 전)로 고정합니다. 타이머는 실제로 둡니다.
+beforeEach(() => {
+  jest.useFakeTimers({
+    now: new Date('2026-10-08T21:00:00+09:00'),
+    doNotFake: ['nextTick', 'setImmediate', 'clearImmediate', 'setInterval', 'clearInterval', 'setTimeout', 'clearTimeout',
+      'queueMicrotask', 'hrtime', 'performance', 'requestAnimationFrame', 'cancelAnimationFrame', 'requestIdleCallback', 'cancelIdleCallback'],
+  })
+})
+afterEach(() => { jest.useRealTimers() })
 let mockMessageNumber = 0
 jest.mock('expo-crypto', () => ({ randomUUID: () => `message-${++mockMessageNumber}` }))
 
@@ -402,10 +412,10 @@ describe('AI search plan usage', () => {
 
   test('guests see their trial count and nothing is shown when usage cannot be read', async () => {
     readyClient()
-    usageResponses(searchUsage(1, null))
+    usageResponses(searchUsage(0, null))
     const view = render(<ChatScreen onOpenProgram={jest.fn()} onLogin={jest.fn()} />)
-    await screen.findByText('로그인 전 체험 오늘 1/2회')
-    expect(color('로그인 전 체험 오늘 1/2회')).toBe(colors.muted)
+    await screen.findByText('로그인 전 체험 오늘 2회 남음')
+    expect(color('로그인 전 체험 오늘 2회 남음')).toBe(colors.muted)
     expect(planUsageUseCase).toHaveBeenCalledWith(undefined)
     view.unmount()
 
@@ -422,21 +432,21 @@ describe('AI search plan usage', () => {
     const client = readyClient()
     const usage = usageResponses(searchUsage(7), searchUsage(8))
     render(<ChatScreen onOpenProgram={jest.fn()} onLogin={jest.fn()} />)
-    await screen.findByText('AI 대화 검색 오늘 7/10회')
-    expect(color('AI 대화 검색 오늘 7/10회')).toBe(colors.muted)
+    await screen.findByText('AI 대화 검색 오늘 3회 남음')
+    expect(color('AI 대화 검색 오늘 3회 남음')).toBe(colors.muted)
     expect(planUsageUseCase).toHaveBeenCalledWith('verified')
     await propose()
     expect(usage).toHaveBeenCalledTimes(1)
     // 검색 뒤 이용량을 다시 읽는 비동기 흐름까지 끝낸 뒤 확인합니다.
     await act(async () => { fireEvent.press(screen.getByLabelText('이 조건으로 검색')) })
-    await screen.findByText('AI 대화 검색 오늘 8/10회 · 자정(서울 시간)에 다시 채워져요.')
-    expect(color('AI 대화 검색 오늘 8/10회 · 자정(서울 시간)에 다시 채워져요.')).toBe(colors.warning)
+    await screen.findByText('AI 대화 검색 오늘 2회 남음 · 약 3시간 뒤에 다시 채워져요.')
+    expect(color('AI 대화 검색 오늘 2회 남음 · 약 3시간 뒤에 다시 채워져요.')).toBe(colors.warning)
     expect(client.search).toHaveBeenCalledTimes(1)
     expect(usage).toHaveBeenCalledTimes(2)
   })
 
   test.each([
-    ['FREE', 10, '오늘 AI 대화 검색 10회를 모두 썼어요. 자정(서울 시간)에 다시 채워져요. 필터 검색은 계속 쓸 수 있어요.'],
+    ['FREE', 10, '오늘 AI 대화 검색 10회를 모두 썼어요. 약 3시간 뒤에 다시 채워져요. 필터 검색은 계속 쓸 수 있어요.'],
     [null, 2, '로그인 전 체험 2회를 모두 썼어요. 로그인하면 회원 한도로 이어서 검색할 수 있고, 필터 검색은 계속 쓸 수 있어요.'],
   ] as const)('a used-up %s limit explains itself and blocks only the paid search', async (plan, used, message) => {
     if (plan) signIn()

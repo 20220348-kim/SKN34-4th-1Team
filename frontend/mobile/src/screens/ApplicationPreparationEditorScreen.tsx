@@ -6,6 +6,7 @@ import * as Crypto from 'expo-crypto'
 import { ApplicationPreparationError } from '@govbiz/shared/domain/errors/ApplicationPreparationError'
 import { applicationDraftMode } from '@govbiz/shared/domain/entities/ApplicationDocumentGeneration'
 import { useAuth } from '../auth/session'
+import { FeatureUsageLine } from '../components/PlanUsage'
 import { readPendingPreparation, savePendingPreparation, clearPendingPreparation } from '../auth/preparationPending'
 import { applicationPreparationUseCase } from '../api/applicationPreparation'
 import { getApiBaseUrl } from '../api/client'
@@ -133,7 +134,8 @@ function OwnedEditor({ token, email, id, reviewing, initialQuestion, onReview, o
       </> : <Notice>작성할 문항이 없어요. 공식 원문에서 양식을 확인해 주세요.</Notice>}
     </ScrollView>
     <View style={[preparationUi.footer, local.footer]}>{reviewing
-      ? <><Button label={hasPending ? '같은 생성 요청으로 확인' : '공식 양식으로 초안 만들기'} busy={generating} disabled={blocked} onPress={() => void generate()} />
+      ? <><FeatureUsageLine token={token} feature="APPLICATION_DRAFT" revision={generating} />
+        <Button label={hasPending ? '같은 생성 요청으로 확인' : '공식 양식으로 초안 만들기'} busy={generating} disabled={blocked} onPress={() => void generate()} />
         <Button label="생성 결과 보기" variant="ghost" disabled={generating} onPress={() => onDocuments()} /></>
       : <View style={local.navigation}><Button label="이전" variant="secondary" style={local.navigationButton} disabled={index === 0 || blocked} onPress={() => void move(index - 1)} />
         <Button label={index === questions.length - 1 ? '답변 검토하기' : '다음'} style={local.navigationButton} disabled={blocked || !questions.length} onPress={() => void move(index === questions.length - 1 ? 'review' : index + 1)} /></View>}

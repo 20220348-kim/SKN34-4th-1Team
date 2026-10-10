@@ -6,6 +6,16 @@ import { supportsNativeOAuth } from '../auth/oauth'
 import { colors } from '../ui'
 import { AccountScreen } from './AccountScreen'
 
+// 하루 한도 안내는 다시 채워질 때까지 남은 시간을 적으므로 시계를 서울 저녁 9시(자정 3시간 전)로 고정합니다. 타이머는 실제로 둡니다.
+beforeEach(() => {
+  jest.useFakeTimers({
+    now: new Date('2026-10-08T21:00:00+09:00'),
+    doNotFake: ['nextTick', 'setImmediate', 'clearImmediate', 'setInterval', 'clearInterval', 'setTimeout', 'clearTimeout',
+      'queueMicrotask', 'hrtime', 'performance', 'requestAnimationFrame', 'cancelAnimationFrame', 'requestIdleCallback', 'cancelIdleCallback'],
+  })
+})
+afterEach(() => { jest.useRealTimers() })
+
 jest.mock('../auth/session', () => ({ useAuth: jest.fn() }))
 jest.mock('../auth/oauth', () => ({ supportsNativeOAuth: jest.fn() }))
 jest.mock('../api/client', () => ({ ...jest.requireActual('../api/client'), apiRequest: jest.fn() }))
@@ -124,24 +134,34 @@ test('a signed-in account shows its plan and every usage limit as progress witho
   expect(apiRequest).toHaveBeenCalledWith('/api/v1/plan-usage', expect.objectContaining({ accessToken: 'owner' }))
   expect(view.getByText('현재 요금제')).toBeTruthy()
   expect(view.getByText('무료')).toBeTruthy()
-  for (const [label, count] of [['AI 대화 검색', '오늘 3/10회'], ['공고 원문 질문', '오늘 10/10회'],
-    ['신청 문서 초안', '이번 달 3/3건'], ['중복 지원·수혜 검토', '이번 달 0/3회']]) {
+  // 남은 양을 줄 오른쪽에, 한도 중 쓴 양을 막대 아래에 적습니다.
+  for (const [label, count, used] of [['AI 대화 검색', '오늘 7회 남음', '10회 중 3회 썼어요'], ['공고 원문 질문', '오늘 0회 남음', '10회 중 10회 썼어요'],
+    ['신청 문서 초안', '이번 달 0건 남음', '3건 중 3건 썼어요'], ['중복 지원·수혜 검토', '이번 달 3회 남음', '3회 중 0회 썼어요']]) {
     expect(view.getByText(label)).toBeTruthy()
     expect(view.getByText(count)).toBeTruthy()
+    expect(view.getByText(used)).toBeTruthy()
   }
   expect(view.getAllByRole('progressbar')).toHaveLength(4)
-  expect(view.getByRole('progressbar', { name: 'AI 대화 검색 이용량' }).props.accessibilityValue).toEqual({ min: 0, max: 10, now: 3 })
-  expect(view.getByRole('progressbar', { name: '공고 원문 질문 이용량' }).props.accessibilityValue).toEqual({ min: 0, max: 10, now: 10 })
-  expect(view.getByRole('progressbar', { name: '신청 문서 초안 이용량' }).props.accessibilityValue).toEqual({ min: 0, max: 3, now: 3 })
-  expect(view.getAllByText('자정(서울 시간)에 다시 채워져요.')).toHaveLength(2)
-  expect(view.getAllByText('11월 1일에 다시 채워져요.')).toHaveLength(2)
-  expect(StyleSheet.flatten(view.getByText('오늘 10/10회').props.style).color).toBe(colors.warning)
-  expect(StyleSheet.flatten(view.getByText('오늘 3/10회').props.style).color).not.toBe(colors.warning)
+  expect(view.getByRole('progressbar', { name: 'AI 대화 검색 이용량' }).props.accessibilityValue).toEqual({ min: 0, max: 10, now: 3, text: '10회 중 3회 썼어요' })
+  expect(view.getByRole('progressbar', { name: '공고 원문 질문 이용량' }).props.accessibilityValue).toEqual({ min: 0, max: 10, now: 10, text: '10회 중 10회 썼어요' })
+  expect(view.getByRole('progressbar', { name: '신청 문서 초안 이용량' }).props.accessibilityValue).toEqual({ min: 0, max: 3, now: 3, text: '3건 중 3건 썼어요' })
+  // 같은 때 다시 채워지는 기능끼리(오늘 · 이번 달) 묶어 다시 채워지는 때를 한 번만 적습니다.
+  expect(view.getByText('오늘')).toBeTruthy()
+  expect(view.getByText('이번 달')).toBeTruthy()
+  expect(view.getAllByText('약 3시간 뒤에 다시 채워져요.')).toHaveLength(1)
+  expect(view.getAllByText('11월 1일에 다시 채워져요.')).toHaveLength(1)
+  expect(StyleSheet.flatten(view.getByText('오늘 0회 남음').props.style).color).toBe(colors.warning)
+  expect(StyleSheet.flatten(view.getByText('오늘 7회 남음').props.style).color).not.toBe(colors.warning)
   expect(view.getByText('결제는 아직 받지 않아요.')).toBeTruthy()
   // 앱에서는 이용 현황만 보여 주고 결제·요금제 변경으로 이어지는 안내나 링크를 두지 않습니다.
   expect(view.queryByText(/업그레이드|요금제 보기|요금제 변경|가격|구매|결제하기/)).toBeNull()
   expect(view.queryAllByRole('link')).toHaveLength(0)
-  expect(view.getAllByRole('button').map(button => button.props.accessibilityLabel)).toEqual(['기업 프로필 등록', '알림 설정', '비밀번호 변경', '로그아웃', '계정 삭제', '개인정보 처리방침', '이용약관', '도움말·문의'])
+  // 이름 붙은 버튼은 그대로이고, 세는 기준은 글자 버튼으로 펼쳐 봅니다.
+  expect(view.getAllByRole('button').map(button => button.props.accessibilityLabel).filter(Boolean)).toEqual(['기업 프로필 등록', '알림 설정', '비밀번호 변경', '로그아웃', '계정 삭제', '개인정보 처리방침', '이용약관', '도움말·문의'])
+  expect(view.queryByText(/조건을 정리하는 대화와 필터 검색은 세지 않고/)).toBeNull()
+  fireEvent.press(view.getByText('이용량을 세는 기준 보기 ▾'))
+  expect(view.getByText(/조건을 정리하는 대화와 필터 검색은 세지 않고/)).toBeTruthy()
+  expect(view.getByText('신청 문서와 중복 검토는 지워도 그 달에 쓴 횟수가 돌아오지 않아요.')).toBeTruthy()
 })
 
 test('a plan without a limit yet shows its usage as unlimited without progress bars', async () => {

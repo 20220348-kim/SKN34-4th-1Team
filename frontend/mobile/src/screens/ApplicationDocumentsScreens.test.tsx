@@ -149,7 +149,7 @@ test.each([
 
 test('a background transition aborts the pending link and returning cannot launch its late response', async () => {
   let change!: (state: AppStateStatus) => void
-  jest.spyOn(AppState, 'addEventListener').mockImplementation((_event, listener) => { change = listener; return { remove: jest.fn() } })
+  change = broadcastAppState()
   let finish!: (value: string) => void
   jest.mocked(prepareApplicationDocumentDownload).mockReturnValueOnce(new Promise<string>(resolve => { finish = resolve }))
   render(<ApplicationDocumentScreen {...docProps} />)
@@ -519,10 +519,23 @@ test('list recovery preserves a failed check and clears only after confirmed suc
   expect(api.submitDocumentJob).not.toHaveBeenCalled(); expect(api.discover).not.toHaveBeenCalled()
 })
 
+/**
+ * 앱 전경·배경 전환을 흉내 냅니다. 실제 AppState처럼 등록된 모든 구독에 알립니다(화면과 이용량 줄이 각자 구독합니다).
+ */
+function broadcastAppState(): (state: AppStateStatus) => void {
+  const listeners: ((state: AppStateStatus) => void)[] = []
+  jest.spyOn(AppState, 'addEventListener').mockImplementation((_event, listener) => {
+    listeners.push(listener)
+    return { remove: () => { listeners.splice(listeners.indexOf(listener), 1) } }
+  })
+  // 알리는 도중 구독을 해제해도 이번 알림은 끝까지 돌도록 사본을 씁니다.
+  return state => { listeners.slice().forEach(listener => listener(state)) }
+}
+
 test.each(['documents', 'list', 'discovery'] as const)('%s polling waits for foreground, aborts on background and resumes with reads', async mode => {
   const previous = AppState.currentState; AppState.currentState = 'background'
   let change!: (state: AppStateStatus) => void
-  jest.spyOn(AppState, 'addEventListener').mockImplementation((_event, listener) => { change = listener; return { remove: jest.fn() } })
+  change = broadcastAppState()
   const timers = captureTimeouts()
   const cancel = jest.spyOn(globalThis, 'clearTimeout')
   const runningJob = { ...documentJob, status: 'RUNNING', fileIds: [], finishedAt: null }
@@ -557,7 +570,7 @@ test.each(['documents', 'list', 'discovery'] as const)('%s polling waits for for
 
 test('foreground refresh preserves the selected form for the same program', async () => {
   let change!: (state: AppStateStatus) => void
-  jest.spyOn(AppState, 'addEventListener').mockImplementation((_event, listener) => { change = listener; return { remove: jest.fn() } })
+  change = broadcastAppState()
   api.availability.mockResolvedValue({ state: { status: 'AVAILABLE' }, forms: { items: [documentForm, { ...documentForm, formVersionId: 'second-form', formTitle: '다른 양식', attachmentFileName: '다른양식.hwpx' }] } })
   jest.mocked(programClient).mockReturnValue({ getDetail: jest.fn().mockResolvedValue(documentProgram), browseCatalog: jest.fn().mockResolvedValue({ programs: [], total: 0, totalPages: 0 }) } as unknown as ReturnType<typeof programClient>)
   render(<ApplicationPreparationNewScreen {...newProps} initialProgram={{ sourceCode: 'BIZINFO', sourceProgramId: 'PBLN_123' }} />)

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PlanQuotaExceededError, QuotaUnavailableError } from '@govbiz/shared/domain/errors/PlanQuotaError'
 
 import { SupportProgramRequestError } from '../../../domain/errors/SupportProgramRequestError'
@@ -9,6 +9,10 @@ import {
   SupportProgramApiError,
   SupportProgramRequestApiError,
 } from '../supportProgramApi'
+
+// 하루 한도 안내는 다시 채워질 때까지 남은 시간을 적으므로 시계를 서울 저녁 9시(자정 3시간 전)로 고정합니다. 타이머는 실제로 둡니다.
+beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-10-08T21:00:00+09:00')) })
+afterEach(() => { vi.useRealTimers() })
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -95,10 +99,10 @@ describe('support program request admission HTTP boundary', () => {
 
     const search = await repository.search(command).catch((error: unknown) => error)
     expect(search).toBeInstanceOf(PlanQuotaExceededError)
-    expect((search as Error).message).toBe('오늘 AI 대화 검색 10회를 모두 썼어요. 자정(서울 시간)에 다시 채워져요. 필터 검색은 계속 쓸 수 있어요.')
+    expect((search as Error).message).toBe('오늘 AI 대화 검색 10회를 모두 썼어요. 약 3시간 뒤에 다시 채워져요. 필터 검색은 계속 쓸 수 있어요.')
     const question = await repository.answerEvidenceQuestion(command).catch((error: unknown) => error)
     expect(question).toBeInstanceOf(PlanQuotaExceededError)
-    expect((question as Error).message).toBe('오늘 공고 원문 질문 10회를 모두 썼어요. 자정(서울 시간)에 다시 채워져요.')
+    expect((question as Error).message).toBe('오늘 공고 원문 질문 10회를 모두 썼어요. 약 3시간 뒤에 다시 채워져요.')
     // 이용량 확인 실패(503)는 원문 답변 장애('unavailable')로 바꾸지 않고 그대로 올립니다.
     expect(await repository.answerEvidenceQuestion(command).catch((error: unknown) => error)).toBeInstanceOf(QuotaUnavailableError)
   })

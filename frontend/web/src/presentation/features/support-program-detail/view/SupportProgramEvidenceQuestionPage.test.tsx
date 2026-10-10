@@ -2,10 +2,14 @@
 
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PlanQuotaExceededError } from '@govbiz/shared/domain/errors/PlanQuotaError'
 import { appContainer } from '../../../../app/appContainer'
 import { SupportProgramEvidenceQuestionPage } from './SupportProgramEvidenceQuestionPage'
+
+// 하루 한도 안내는 다시 채워질 때까지 남은 시간을 적으므로 시계를 서울 저녁 9시(자정 3시간 전)로 고정합니다. 타이머는 실제로 둡니다.
+beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-10-08T21:00:00+09:00')) })
+afterEach(() => { vi.useRealTimers() })
 
 afterEach(() => { cleanup(); vi.restoreAllMocks() })
 
@@ -72,8 +76,8 @@ describe('하루 원문 질문 이용량', () => {
     const execute = vi.spyOn(appContainer.resolve('askSupportProgramEvidenceQuestionUseCase'), 'execute')
     const planUsage = vi.spyOn(appContainer.resolve('planUsageUseCase'), 'usage').mockResolvedValueOnce(usage(3))
     renderQuestion('/app/support-programs/detail/question?sourceCode=BIZINFO&sourceProgramId=test-program')
-    const line = (await screen.findByText('오늘 3/10회')).closest('p')!
-    expect(line.textContent).toBe('공고 원문 질문·오늘 3/10회')
+    const line = (await screen.findByText('오늘 7회 남음')).closest('p')!
+    expect(line.textContent).toBe('공고 원문 질문·오늘 7회 남음')
     const input = screen.getByRole('textbox', { name: '공고 원문에 질문하기' }) as HTMLTextAreaElement
     expect(input.getAttribute('aria-describedby')?.split(' ')).toContain(line.id)
     expect(input.disabled).toBe(false)
@@ -81,7 +85,7 @@ describe('하루 원문 질문 이용량', () => {
     cleanup()
     planUsage.mockResolvedValue(usage(10))
     renderQuestion('/app/support-programs/detail/question?sourceCode=BIZINFO&sourceProgramId=test-program')
-    const limit = (await screen.findByText('오늘 공고 원문 질문 10회를 모두 썼어요. 자정(서울 시간)에 다시 채워져요.')).closest('p')!
+    const limit = (await screen.findByText('오늘 공고 원문 질문 10회를 모두 썼어요. 약 3시간 뒤에 다시 채워져요.')).closest('p')!
     expect(limit.querySelector('a')).toBeNull()
     const blocked = screen.getByRole('textbox', { name: '공고 원문에 질문하기' }) as HTMLTextAreaElement
     expect(blocked.disabled).toBe(true)
@@ -98,7 +102,7 @@ describe('하루 원문 질문 이용량', () => {
     const input = screen.getByRole('textbox', { name: '공고 원문에 질문하기' })
     fireEvent.change(input, { target: { value: '신청 대상은 누구인가요?' } })
     await act(async () => fireEvent.submit(input.closest('form')!))
-    expect(screen.getByRole('alert').textContent).toBe('오늘 공고 원문 질문 10회를 모두 썼어요. 자정(서울 시간)에 다시 채워져요.')
+    expect(screen.getByRole('alert').textContent).toBe('오늘 공고 원문 질문 10회를 모두 썼어요. 약 3시간 뒤에 다시 채워져요.')
     expect((input as HTMLTextAreaElement).value).toBe('신청 대상은 누구인가요?')
   })
 })

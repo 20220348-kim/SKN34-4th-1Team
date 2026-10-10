@@ -8,6 +8,7 @@ import { generationStages, generationFailureTitle, failureGroupOf, applicationDr
 import { applicationDocumentFileFormat, applicationDocumentFileGroups } from '@govbiz/shared/domain/entities/ApplicationDocumentFiles'
 import { ApplicationPreparationError } from '@govbiz/shared/domain/errors/ApplicationPreparationError'
 import { useAuth } from '../auth/session'
+import { FeatureUsageLine } from '../components/PlanUsage'
 import { applicationPreparationUseCase, discardDeletedPendingPreparation, prepareApplicationDocumentDownload } from '../api/applicationPreparation'
 import { getApiBaseUrl, programClient, readProgramDetail } from '../api/client'
 import { clearPendingPreparation, readPendingPreparation, savePendingPreparation, type PendingPreparationRequest } from '../auth/preparationPending'
@@ -228,6 +229,7 @@ function OwnedDocuments({ id, jobId, token, email, onEditor, onReanalyze, onOnli
       : draftMode === 'manualOnly' ? '저장된 답변 중 양식에 자동으로 기입할 수 있는 것이 없어 초안을 만들지 못할 수 있어요. 원문 양식에 직접 옮겨 적어 주세요.'
         : '저장된 답변만 공식 양식에 기입해요. 비운 질문과 미정은 빈칸으로 남아요.'}</Notice>
       {!recoveringRequest && draftMode !== 'original' && <Text style={styles.muted}>답변 기입에는 유료 AI 호출이 발생할 수 있어요.</Text>}
+      <FeatureUsageLine token={token} feature="APPLICATION_DRAFT" revision={busy} />
       <Button label={busy === 'generate' ? '생성 요청 처리 중…' : pending ? '같은 생성 요청으로 확인' : files.length ? '수정 답변으로 다시 만들기' : job?.status === 'FAILED' ? '초안 생성 다시 시도' : '초안 만들기'} busy={busy === 'generate'} disabled={busy !== null} onPress={() => void generate()} /></>}
     <Button label="답변 수정하기" variant="secondary" disabled={busy !== null} onPress={onEditor} />
     {googleFormAvailable && <Button label="구글폼 입력 도우미" variant="secondary" onPress={onOnline} />}

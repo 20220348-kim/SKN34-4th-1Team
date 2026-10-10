@@ -3,6 +3,16 @@ import { ApiError, apiRequest, createApiFetch, errorMessage, getApiBaseUrl, prog
 import { SupportProgramInterpretationApiError, SupportProgramRequestApiError, SupportProgramSearchTimeoutApiError } from '@govbiz/shared/data/api/supportProgramApi'
 import { programDetail } from '../test/preparationFixtures'
 
+// 하루 한도 안내는 다시 채워질 때까지 남은 시간을 적으므로 시계를 서울 저녁 9시(자정 3시간 전)로 고정합니다. 타이머는 실제로 둡니다.
+beforeEach(() => {
+  jest.useFakeTimers({
+    now: new Date('2026-10-08T21:00:00+09:00'),
+    doNotFake: ['nextTick', 'setImmediate', 'clearImmediate', 'setInterval', 'clearInterval', 'setTimeout', 'clearTimeout',
+      'queueMicrotask', 'hrtime', 'performance', 'requestAnimationFrame', 'cancelAnimationFrame', 'requestIdleCallback', 'cancelIdleCallback'],
+  })
+})
+afterEach(() => { jest.useRealTimers() })
+
 test('validated request failures distinguish interpretation, admission and unconfirmed search results', () => {
   const limited = new SupportProgramRequestApiError('SUPPORT_PROGRAM_RATE_LIMITED', 20)
   expect(requestRetryAfterSeconds(limited)).toBe(20)
@@ -70,7 +80,7 @@ describe('native API boundary', () => {
 
 describe('plan quota problems', () => {
   const originalFetch = globalThis.fetch
-  const usedUp = '오늘 AI 대화 검색 10회를 모두 썼어요. 자정(서울 시간)에 다시 채워져요. 필터 검색은 계속 쓸 수 있어요.'
+  const usedUp = '오늘 AI 대화 검색 10회를 모두 썼어요. 약 3시간 뒤에 다시 채워져요. 필터 검색은 계속 쓸 수 있어요.'
   const unavailable = '지금은 이용량을 확인할 수 없어 실행하지 않았어요. 잠시 후 다시 시도해 주세요.'
   const exceeded = { code: 'PLAN_QUOTA_EXCEEDED', feature: 'AI_SEARCH', period: 'DAY', plan: 'FREE', limit: 10, used: 10,
     resetsAt: '2026-10-09T00:00:00+09:00', retryAfterSeconds: 3600, detail: 'private server text' }
