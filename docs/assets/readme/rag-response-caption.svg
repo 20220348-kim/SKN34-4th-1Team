@@ -10,7 +10,7 @@
     }
   </style>
   <rect class="accent" x="0" y="4" width="4" height="64" rx="2" />
-  <text x="20" y="20" font-size="16" font-weight="600">검증·답변·출처 표시</text>
-  <text x="20" y="42" font-size="14">검색된 청크의 ID·해시를 원문과 대조한 뒤</text>
-  <text x="20" y="62" font-size="14">답변을 생성하고 인용을 확인합니다.</text>
+  <text x="20" y="20" font-size="15" font-weight="600">검증·답변·출처 표시</text>
+  <text x="20" y="42" font-size="13">검색된 청크의 ID·해시를 원문과 대조한 뒤</text>
+  <text x="20" y="62" font-size="13">답변을 생성하고 인용을 확인합니다.</text>
 </svg>
