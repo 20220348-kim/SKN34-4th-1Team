@@ -78,7 +78,7 @@ const local = StyleSheet.create({
     color: colors.primaryText, backgroundColor: colors.soft, fontSize: 12, lineHeight: 18, fontWeight: '600' },
   evidence: { color: colors.secondaryText, fontSize: 13, lineHeight: 21 },
   actions: { flexDirection: 'row', gap: 8, alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap' },
-  sourceLink: { flexDirection: 'row', alignItems: 'center', gap: 5, minHeight: 44, flexShrink: 1 },
+  sourceLink: { flexDirection: 'row', alignItems: 'center', gap: 5, minHeight: 48, flexShrink: 1 },
   sourceLabel: { color: colors.primaryText, fontSize: 14, fontWeight: '600', flexShrink: 1 },
   disclaimer: { color: colors.muted, fontSize: 12, lineHeight: 19 },
 })

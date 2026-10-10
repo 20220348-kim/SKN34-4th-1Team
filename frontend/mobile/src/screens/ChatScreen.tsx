@@ -552,7 +552,7 @@ const local = StyleSheet.create({
   historyToolbar: { flexDirection: 'row', justifyContent: 'flex-end', paddingHorizontal: 16, gap: 8 },
   historyRow: { flex: 1, minHeight: 56, paddingVertical: 12, paddingHorizontal: 8, borderRadius: 12, gap: 4 },
   recordRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  deleteRecord: { width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  deleteRecord: { width: 48, height: 48, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   timeline: { paddingHorizontal: 16, paddingTop: 16, gap: 16, width: '100%', maxWidth: 720, alignSelf: 'center' },
   contentGroup: { gap: 16 },
   intro: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingVertical: 32 },
@@ -576,7 +576,7 @@ const local = StyleSheet.create({
   composer: { flexDirection: 'row', alignItems: 'flex-end', gap: 10, maxWidth: 720, alignSelf: 'center', width: '100%' },
   input: { flex: 1, minWidth: 0, minHeight: 64, maxHeight: 140, borderWidth: 1, borderColor: colors.fieldBorder,
     borderRadius: 24, paddingHorizontal: 16, paddingVertical: 14, fontSize: 16, lineHeight: 25, color: colors.text, backgroundColor: colors.surface },
-  send: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.text, alignItems: 'center', justifyContent: 'center', marginBottom: 10 },
+  send: { width: 48, height: 48, borderRadius: 24, backgroundColor: colors.text, alignItems: 'center', justifyContent: 'center', marginBottom: 10 },
   stop: { width: 14, height: 14, backgroundColor: colors.surface, borderRadius: 3 },
   disclaimer: { color: colors.muted, fontSize: 12, lineHeight: 19, textAlign: 'center', marginTop: 8 },
 })

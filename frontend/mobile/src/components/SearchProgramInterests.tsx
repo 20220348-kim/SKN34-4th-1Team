@@ -74,7 +74,7 @@ export function ProgramInterestButton({ identity, title, interests, onLogin, sho
       accessibilityState={{ selected: saved, busy, disabled: !interests.available || busy || interests.authenticated && !interests.ready }}
       disabled={!interests.available || busy || interests.authenticated && !interests.ready}
       onPress={() => interests.authenticated ? void interests.toggle(identity) : onLogin()}
-      style={({ pressed }) => ({ width: 44, height: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 12,
+      style={({ pressed }) => ({ width: 48, height: 48, alignItems: 'center', justifyContent: 'center', borderRadius: 12,
         backgroundColor: pressed ? colors.divider : 'transparent' })}>
       {busy ? <ActivityIndicator color={colors.primary} /> : <AppIcon name="bookmark" color={colors.primary} selected={saved} size={22} />}
     </Pressable>

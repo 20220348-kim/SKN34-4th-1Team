@@ -192,7 +192,8 @@ export function CollaborationScreen({ view, onViewChange, onPendingCount, onOpen
             ['accepted', `수락 ${proposals.filter((item) => item.status === 'ACCEPTED').length}`],
             ['ended', `종료 ${proposals.filter((item) => ['DECLINED', 'WITHDRAWN', 'EXPIRED'].includes(item.status)).length}`],
           ] as const).map(([value, label]) => <Pressable key={value} accessibilityRole="button"
-            accessibilityState={{ selected: filter === value }} onPress={() => setFilter(value)}>
+            accessibilityState={{ selected: filter === value }} onPress={() => setFilter(value)}
+            style={[local.chip, filter === value && local.selectedChip]}>
             <Text style={[styles.muted, filter === value && local.activeFilter]}>{label}</Text></Pressable>)}</View>}
           {visibleBox.error && <Notice error>{visibleBox.error}</Notice>}
         </View>}
@@ -298,10 +299,10 @@ const local = StyleSheet.create({
   searchInput: { flex: 1, minHeight: 44, minWidth: 0, backgroundColor: colors.surface, borderRadius: 999,
     paddingHorizontal: 14, fontSize: 16, color: colors.text, borderWidth: 1, borderColor: colors.border },
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, alignItems: 'center' },
-  chip: { minHeight: 36, borderRadius: 999, borderWidth: 1, borderColor: colors.border,
+  chip: { minHeight: 48, borderRadius: 999, borderWidth: 1, borderColor: colors.border,
     paddingHorizontal: 11, justifyContent: 'center', backgroundColor: colors.surface },
   selectedChip: { backgroundColor: colors.soft, borderColor: colors.primary },
-  sort: { marginLeft: 'auto', minHeight: 44, justifyContent: 'center' },
+  sort: { marginLeft: 'auto', minHeight: 48, paddingHorizontal: 8, justifyContent: 'center' },
   activeFilter: { color: colors.info, fontWeight: '700' },
   cardTop: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 7 },
   author: { backgroundColor: colors.background, borderRadius: 10, padding: 8, flexDirection: 'row', alignItems: 'center', gap: 8 },

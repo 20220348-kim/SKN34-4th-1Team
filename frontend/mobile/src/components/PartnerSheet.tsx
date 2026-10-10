@@ -31,7 +31,7 @@ const local = StyleSheet.create({
   grab: { width: 40, height: 5, borderRadius: 99, backgroundColor: colors.fieldBorder, alignSelf: 'center', marginTop: 10 },
   header: { minHeight: 56, paddingLeft: 20, paddingRight: 8, flexDirection: 'row', alignItems: 'center' },
   title: { flex: 1, color: colors.text, fontSize: 18, fontWeight: '700' },
-  close: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  close: { width: 48, height: 48, alignItems: 'center', justifyContent: 'center' },
   closeText: { fontSize: 28, color: colors.secondaryText },
   content: { paddingHorizontal: 20, paddingBottom: 16, gap: 12 },
   actions: { paddingHorizontal: 20, paddingTop: 10, flexDirection: 'row', gap: 8,
