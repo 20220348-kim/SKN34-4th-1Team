@@ -832,6 +832,42 @@ Core HTTP의 저장 실행 기록도 요청·원문·검색·인용을 대조한
 
 ### 9.4 운영 화면에서 할 수 있는 일
 
+**실행·진행 관리:** 수동 평가와 활성화된 정기 평가는 같은 실행 조건·예산 검사를 거칩니다.
+
+```mermaid
+flowchart LR
+    Manual["수동 평가<br/>자료 · 방식 선택"] --> Check["실행 설정·예산 확인<br/>유료 호출 시 승인 · 예약"]
+    Schedule["정기 평가<br/>일정 등록 · 중지"] -->|활성 일정| Check
+    Check -->|조건 충족| Run["평가 실행<br/>진행 상태 조회"]
+    Run -->|완료·실패| History["실행 이력<br/>결과 · 사용량 보존"]
+    Run -->|취소 요청| Cancel["후속 호출 중단<br/>발생 사용량 유지"]
+    Cancel --> History
+    classDef client fill:#e8f3fa,stroke:#91b9cd,color:#183d32
+    classDef service fill:#e7f5eb,stroke:#92bda6,color:#183d32
+    classDef execution fill:#f3f5f4,stroke:#a8b5af,color:#183d32
+    class Manual,Schedule,History client
+    class Check service
+    class Run,Cancel execution
+```
+
+**결과 확인·검토·복구:** 완료된 결과를 검토하고 합격한 실행을 비교 기준으로 지정합니다.
+응답이 저장된 후 보고서·점수 등록만 실패했다면, 캡처를 검증해 후처리를 복구할 수 있습니다.
+
+```mermaid
+flowchart LR
+    History["실행 이력 선택<br/>결과 · 실패 단계 확인"] -->|완료| Review["보고서·근거·답변 확인<br/>자료 · 사례별 검토"]
+    History -->|응답 저장·후처리 실패| Recovery["캡처 검증·후처리 복구<br/>새 모델 호출 없음"]
+    Recovery -->|복구 완료| Review
+    Review --> Quality["실행 검토 승인<br/>품질 판정"]
+    Quality -->|합격 후 관리자 지정| Baseline["비교 기준 지정<br/>다음 평가에 사용"]
+    classDef client fill:#e8f3fa,stroke:#91b9cd,color:#183d32
+    classDef service fill:#e7f5eb,stroke:#92bda6,color:#183d32
+    classDef execution fill:#f3f5f4,stroke:#a8b5af,color:#183d32
+    class History,Review,Baseline client
+    class Quality service
+    class Recovery execution
+```
+
 | 기능 | 동작 |
 |---|---|
 | 평가 실행·이력 조회 | 실행 전 설정과 예산을 확인하고 요청합니다. 진행 상태·실패 단계·결과·사용량·비교 보고서를 조회하며, 같은 요청 재전송으로 실행을 중복 생성하지 않습니다. |
