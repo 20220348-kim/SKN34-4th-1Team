@@ -10,6 +10,18 @@ export const signupEmailPassDtoSchema = z.object({
 })
 export type SignupEmailPassDto = z.infer<typeof signupEmailPassDtoSchema>
 
+export const passwordResetPassDtoSchema = z.object({
+  passToken: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+  expiresAt: z.string().datetime({ offset: true }),
+})
+
+export const oauthProvidersDtoSchema = z.object({
+  providers: z.array(z.object({ provider: z.enum(['kakao', 'google']) })).max(2),
+}).superRefine((value, context) => {
+  if (new Set(value.providers.map(item => item.provider)).size !== value.providers.length)
+    context.addIssue({ code: 'custom', path: ['providers'], message: 'OAuth providers must not repeat.' })
+})
+
 export const accountRoleSchema = z.enum(['USER', 'ADMIN'])
 export const accountTierSchema = z.enum(['MEMBER', 'COMPANY', 'ADMIN'])
 export const accountTypeSchema = z.enum(['INDIVIDUAL', 'BUSINESS'])

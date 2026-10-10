@@ -51,8 +51,9 @@ API 경계에서 shared DTO 검증·Mapper를 사용하고, 등록 결과의 공
 모바일의 `auth/AppEntryGate`는 세션 복원과 기기 소개 기록을 확인하고 첫 실행 소개 또는 기존 화면으로 연결합니다.
 기기 저장은 `auth/introductionStorage.ts`, 로그인 안내·폼·선택한 작업의 재개는 `auth/loginFlow.tsx`의 `LoginFlowProvider`가 소유합니다.
 로그인은 기존 화면 위의 네이티브 모달이며 라우트 이동 없이 취소·복귀합니다. 소개 화면과 가입 후 회원 유형 온보딩은 별개입니다.
-소개의 가입 버튼은 기존 가입 폼, 기존 계정 링크는 로그인 방법 시트를 엽니다. 해당 시트의 카카오·Google은 버튼과
-준비 안내만 제공하고, 이메일은 기존 인증 API에 연결합니다. 소개 예시와 실제 AI 검색은 `components`의 조건·결과 카드 모양을 재사용하며
+소개의 가입 버튼은 기존 가입 폼, 기존 계정 링크는 로그인 방법 시트를 엽니다. 준비 안내만 제공하던 소셜 버튼은 제거하고,
+이메일은 기존 인증 API에 연결합니다. 인증 폼의 실제 소셜 공급자는 기존 설정·네이티브 빌드 조건과 공개 providers 응답을 모바일 API 경계에서 검증한 뒤 표시합니다.
+소개 예시와 실제 AI 검색은 `components`의 조건·결과 카드 모양을 재사용하며
 실제 검색의 상태·요청 수명은 `screens/ChatScreen`이 소유합니다. 로그인 전후 같은 UI를 사용하고 유료 요청 조건은 유지합니다.
 대화 스크롤도 `ChatScreen`의 화면 상태로 관리하며 새 내용의 배치와 스크롤 영역 크기를 확인한 뒤 해당 영역의 시작으로 한 번 이동합니다.
 `SearchScreen`은 AI 패널의 표시 여부를 전달해 숨겨진 패널의 이동을 보류하며 입력 수정·단순 복귀에서는 위치를 유지합니다.
@@ -61,6 +62,10 @@ API 경계에서 shared DTO 검증·Mapper를 사용하고, 등록 결과의 공
 화면은 복원 결과·만료·조회 실패를 구분합니다. 취소·계정 변경은 이전 요청과 작업 재개를 폐기합니다.
 Core HTTP·DB 계약과 shared 계약은 변경하지 않으며 로그인·화면 복귀만으로 검색이나 원문 질문을 다시 실행하지 않습니다.
 [공동 관리와 검증 명령](mobile-monorepo.md)을 참고하세요.
+
+모바일 계정 관리는 `AccountScreen → mobile api/account의 DTO 검증·내부 모델 변환 → 기존 Core AccountProfileController → Service → Repository`로 연결합니다.
+삭제 미리보기와 명시적인 삭제 확인을 구분하고 서버 삭제 성공 뒤 기존 `AuthProvider.invalidateSession`으로 기기 세션을 정리합니다.
+비밀번호 찾기는 기존 공개 인증번호 발송·확인·재설정 API를 호출하며 재설정 통행 토큰은 가입 인증 타입과 구분합니다.
 
 앱 이메일 인증은 `AccountMobileAuthController → 기존 로그인/가입 Service → AccountRepository → MyBatis → MySQL`이며,
 네이티브에서 받은 Bearer JWT도 웹과 같은 DB 세션 만료·폐기 규칙을 사용합니다. 웹은 HttpOnly 쿠키를 유지하며,

@@ -49,15 +49,13 @@ test('successful email authentication closes the modal and resumes only once wit
   expect(screen.getByText('보던 공고')).toBeTruthy()
 })
 
-test('R05 always displays three methods and only email opens the implemented login form', async () => {
+test('R05 hides unconnected social placeholders and opens the implemented email form', async () => {
   mount()
   fireEvent.press(screen.getByLabelText('로그인 방법 선택'))
-  expect(screen.getByLabelText('카카오로 계속하기')).toBeTruthy()
-  expect(screen.getByLabelText('Google 계정으로 계속하기')).toBeTruthy()
+  expect(screen.queryByLabelText('카카오로 계속하기')).toBeNull()
+  expect(screen.queryByLabelText('Google 계정으로 계속하기')).toBeNull()
   expect(screen.queryByLabelText('이메일')).toBeNull()
-  fireEvent.press(screen.getByLabelText('카카오로 계속하기'))
   expect(signIn).not.toHaveBeenCalled()
-  expect(screen.getByText(/카카오 로그인은 모바일 연결을 준비/)).toBeTruthy()
   fireEvent.press(screen.getByLabelText('이메일로 로그인'))
   expect(screen.getByLabelText('이메일')).toBeTruthy()
   expect(screen.queryByLabelText('카카오로 계속하기')).toBeNull()

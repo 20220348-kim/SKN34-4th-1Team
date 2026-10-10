@@ -1,18 +1,71 @@
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native'
 import { apiRequest } from '../api/client'
 import { useAuth } from '../auth/session'
+import { supportsNativeOAuth } from '../auth/oauth'
 import { AccountScreen } from './AccountScreen'
 
 jest.mock('../auth/session', () => ({ useAuth: jest.fn() }))
-jest.mock('../auth/oauth', () => ({ supportsNativeOAuth: () => true }))
-jest.mock('../api/client', () => ({ apiRequest: jest.fn(), ApiError: class extends Error {} }))
+jest.mock('../auth/oauth', () => ({ supportsNativeOAuth: jest.fn() }))
+jest.mock('../api/client', () => ({ ...jest.requireActual('../api/client'), apiRequest: jest.fn() }))
 const signUp = jest.fn().mockResolvedValue(undefined)
 const passToken = 'p'.repeat(43)
 
 beforeEach(() => {
   signUp.mockClear()
   jest.mocked(apiRequest).mockReset()
+  jest.mocked(supportsNativeOAuth).mockReturnValue(true)
   jest.mocked(useAuth).mockReturnValue({ status: 'signedOut', session: null, restoreError: null, signUp, signIn: jest.fn(), signOut: jest.fn(), refreshSession: jest.fn() } as unknown as ReturnType<typeof useAuth>)
+})
+
+test('social login exposes only providers confirmed by the server and invokes the native flow', async () => {
+  const previous = process.env.EXPO_PUBLIC_ENABLE_SOCIAL_LOGIN
+  process.env.EXPO_PUBLIC_ENABLE_SOCIAL_LOGIN = 'true'
+  try {
+    const social = jest.fn().mockResolvedValue(undefined)
+    jest.mocked(useAuth).mockReturnValue({ ...jest.mocked(useAuth)(), signInWithOAuth: social })
+    jest.mocked(apiRequest).mockResolvedValue({ providers: [{ provider: 'kakao', startUrl: '/api/v1/auth/oauth/kakao/authorize' }] })
+    const view = render(<AccountScreen onCompany={jest.fn()} />)
+    fireEvent.press(await view.findByLabelText('카카오로 계속하기'))
+    await waitFor(() => expect(social).toHaveBeenCalledWith('kakao'))
+    expect(view.queryByLabelText('Google로 계속하기')).toBeNull()
+  } finally {
+    if (previous === undefined) delete process.env.EXPO_PUBLIC_ENABLE_SOCIAL_LOGIN
+    else process.env.EXPO_PUBLIC_ENABLE_SOCIAL_LOGIN = previous
+  }
+})
+
+test('provider lookup failure is explicit and leaves email login usable', async () => {
+  const previous = process.env.EXPO_PUBLIC_ENABLE_SOCIAL_LOGIN
+  process.env.EXPO_PUBLIC_ENABLE_SOCIAL_LOGIN = 'true'
+  try {
+    jest.mocked(apiRequest).mockRejectedValue(new Error('offline'))
+    const view = render(<AccountScreen onCompany={jest.fn()} />)
+    await view.findByText('소셜 로그인 방법을 확인하지 못했어요. 이메일 로그인은 이용할 수 있어요.')
+    expect(view.queryByLabelText('카카오로 계속하기')).toBeNull()
+    expect(view.getByLabelText('이메일').props.editable).toBe(true)
+    expect(view.getByLabelText('로그인').props.accessibilityState.disabled).toBe(false)
+    jest.mocked(apiRequest).mockResolvedValue({ providers: [{ provider: 'google' }] })
+    fireEvent.press(view.getByLabelText('소셜 로그인 방법 다시 확인'))
+    await view.findByLabelText('Google로 계속하기')
+  } finally {
+    if (previous === undefined) delete process.env.EXPO_PUBLIC_ENABLE_SOCIAL_LOGIN
+    else process.env.EXPO_PUBLIC_ENABLE_SOCIAL_LOGIN = previous
+  }
+})
+
+test('a runtime without native OAuth never fetches or exposes providers', () => {
+  const previous = process.env.EXPO_PUBLIC_ENABLE_SOCIAL_LOGIN
+  process.env.EXPO_PUBLIC_ENABLE_SOCIAL_LOGIN = 'true'
+  try {
+    jest.mocked(supportsNativeOAuth).mockReturnValue(false)
+    const view = render(<AccountScreen onCompany={jest.fn()} />)
+    expect(apiRequest).not.toHaveBeenCalled()
+    expect(view.queryByLabelText('카카오로 계속하기')).toBeNull()
+    expect(view.queryByLabelText('Google로 계속하기')).toBeNull()
+  } finally {
+    if (previous === undefined) delete process.env.EXPO_PUBLIC_ENABLE_SOCIAL_LOGIN
+    else process.env.EXPO_PUBLIC_ENABLE_SOCIAL_LOGIN = previous
+  }
 })
 
 async function verifyEmail() {
@@ -63,7 +116,7 @@ test('a signed-in account shows its current plan in one line without a purchase 
   // 앱에서는 현재 요금제만 보여 주고 결제·요금제 변경으로 이어지는 안내나 링크를 두지 않습니다.
   expect(view.queryByText(/업그레이드|요금제 보기|요금제 변경|가격|구매|결제/)).toBeNull()
   expect(view.queryAllByRole('link')).toHaveLength(0)
-  expect(view.getAllByRole('button').map(button => button.props.accessibilityLabel)).toEqual(['기업 프로필 등록', '알림 설정', '로그아웃'])
+  expect(view.getAllByRole('button').map(button => button.props.accessibilityLabel)).toEqual(['기업 프로필 등록', '알림 설정', '비밀번호 변경', '로그아웃', '계정 삭제'])
 })
 
 test('a plan that cannot be read is left out instead of guessed', async () => {
