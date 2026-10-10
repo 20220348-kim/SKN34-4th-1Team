@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="820" height="100" viewBox="0 0 820 100" role="img" aria-labelledby="title description">
+<svg xmlns="http://www.w3.org/2000/svg" width="820" height="88" viewBox="0 0 820 88" role="img" aria-labelledby="title description">
   <title id="title">후보 결합·최종 응답</title>
   <desc id="description">공고 ID·순위로 후보를 합친 뒤, 읽어 둔 공고 내용에 AI 평가 결과를 더합니다.</desc>
   <style>
@@ -9,8 +9,8 @@
       .accent { fill: #4493f8; }
     }
   </style>
-  <rect class="accent" x="0" y="4" width="4" height="88" rx="2" />
-  <text x="20" y="25" font-size="20" font-weight="600">후보 결합·최종 응답</text>
-  <text x="20" y="56" font-size="18">공고 ID·순위로 후보를 합친 뒤, 읽어 둔 공고 내용에</text>
-  <text x="20" y="82" font-size="18">AI 평가 결과를 더합니다.</text>
+  <rect class="accent" x="0" y="4" width="4" height="76" rx="2" />
+  <text x="20" y="23" font-size="18" font-weight="600">후보 결합·최종 응답</text>
+  <text x="20" y="48" font-size="16">공고 ID·순위로 후보를 합친 뒤, 읽어 둔 공고 내용에</text>
+  <text x="20" y="72" font-size="16">AI 평가 결과를 더합니다.</text>
 </svg>
