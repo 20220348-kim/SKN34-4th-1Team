@@ -41,6 +41,7 @@ RUNNER_PATHS = (
     *("backend/ops-service/apps/evaluations/" + name for name in (
         "catalog.py", "capture_catalog.json", "rag_live_plans.json", "recovery_inputs.py",
         "execution_spec.py", "execution_release.json", "quality_policy.py", "rag_replay.py",
+        "vector_cache.py", "artifact_files.py",
     )),
 )
 
