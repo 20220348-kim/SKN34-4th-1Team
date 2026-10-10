@@ -116,30 +116,47 @@ export async function checkRestoreBrowser(origin, responses, expected, reports, 
       assert.equal(await page.getByRole('alert').count(), 0, 'Detail view contains an error')
       const link = page.getByRole('link', { name: 'Evidently 보고서', exact: true })
       onStage('REPORT')
-      assert.equal(await link.getAttribute('href'), route + '/report')
+      const viewPath = `/ops/evaluations/${id}/report`
+      assert.equal(await link.getAttribute('href'), viewPath)
       assert.equal(await link.getAttribute('target'), '_blank')
       assert.deepEqual((await link.getAttribute('rel')).split(' ').sort(), ['noopener', 'noreferrer'])
-      // Register both events before clicking; the new tab may respond immediately.
-      const [report, reply] = await Promise.all([
-        context.waitForEvent('page'),
-        context.waitForEvent('response', { predicate: (reply) => reply.url() === origin + route + '/report' }),
-        link.click(),
-      ])
+      const [view] = await Promise.all([context.waitForEvent('page'), link.click()])
       try {
-        assert.equal(reply.status(), 200)
-        for (const [name, value] of Object.entries(reports[route + '/report'].headers)) assert.equal(await reply.headerValue(name), value)
-        assert.equal(createHash('sha256').update(await reply.body()).digest('hex'), expected[id].report_sha256, 'Browser received different report bytes')
-        await report.waitForLoadState('load')
-        assert.equal(report.url(), origin + route + '/report')
-        await report.waitForFunction(() => Boolean(document.body?.innerText.trim()), null, { timeout: 30000 })
-        const isolation = await report.evaluate(() => {
-          const blocked = (read) => { try { read(); return false } catch (error) { return error.name === 'SecurityError' } }
-          return { opener: window.opener === null, cookie: blocked(() => document.cookie), storage: blocked(() => localStorage.length) }
-        })
-        assert.deepEqual(isolation, { opener: true, cookie: true, storage: true }, 'Report sandbox did not isolate the document')
+        await view.getByRole('heading', { name: 'Evidently 평가 보고서', exact: true }).waitFor()
+        await view.getByRole('region', { name: '평가 대상' }).getByText(`실행 ID: ${id}`, { exact: true }).waitFor()
+        assert.equal(view.url(), origin + viewPath)
+        assert.equal(await view.evaluate(() => window.opener === null), true)
+        const rawLink = view.getByRole('link', { name: '원본 차트 새 탭에서 보기 ↗', exact: true })
+        assert.equal(await rawLink.getAttribute('href'), route + '/report')
+        assert.equal(await rawLink.getAttribute('target'), '_blank')
+        assert.deepEqual((await rawLink.getAttribute('rel')).split(' ').sort(), ['noopener', 'noreferrer'])
+        // Follow the real explanation -> raw document path. The app page is
+        // authenticated; only the original HTML document has an opaque origin.
+        const [report, reply] = await Promise.all([
+          context.waitForEvent('page'),
+          context.waitForEvent('response', { predicate: (reply) => reply.url() === origin + route + '/report' }),
+          rawLink.click(),
+        ])
+        try {
+          assert.equal(reply.status(), 200)
+          for (const [name, value] of Object.entries(reports[route + '/report'].headers)) assert.equal(await reply.headerValue(name), value)
+          assert.equal(createHash('sha256').update(await reply.body()).digest('hex'), expected[id].report_sha256, 'Browser received different report bytes')
+          await report.waitForLoadState('load')
+          assert.equal(report.url(), origin + route + '/report')
+          await report.waitForFunction(() => Boolean(document.body?.innerText.trim()), null, { timeout: 30000 })
+          const isolation = await report.evaluate(() => {
+            const blocked = (read) => { try { read(); return false } catch (error) { return error.name === 'SecurityError' } }
+            return { opener: window.opener === null, cookie: blocked(() => document.cookie), storage: blocked(() => localStorage.length) }
+          })
+          assert.deepEqual(isolation, { opener: true, cookie: true, storage: true }, 'Report sandbox did not isolate the document')
+          assert.deepEqual(failures, [])
+        } finally {
+          await report.close()
+        }
+        assert.equal(await view.getByRole('alert').count(), 0, 'Report explanation view contains an error')
         assert.deepEqual(failures, [])
       } finally {
-        await report.close()
+        await view.close()
       }
     }
     // Reuse only this isolated context with a fixture member cookie. This checks
@@ -153,6 +170,10 @@ export async function checkRestoreBrowser(origin, responses, expected, reports, 
     assert.equal(await page.getByRole('region', { name: '평가 실행 이력' }).count(), 0)
     assert.equal(await page.getByRole('link', { name: 'Evidently 보고서', exact: true }).count(), 0)
     for (const id of ids) {
+      await page.goto(origin + `/ops/evaluations/${id}/report`, { waitUntil: 'domcontentloaded' })
+      await page.getByRole('alert').getByText('관리자 계정만 운영 화면을 이용할 수 있습니다.', { exact: false }).waitFor()
+      assert.equal(await page.getByRole('region', { name: '평가 대상' }).count(), 0)
+      assert.equal(await page.getByRole('link', { name: '원본 차트 새 탭에서 보기 ↗', exact: true }).count(), 0)
       const denied = await page.evaluate(async (route) => {
         const reply = await fetch(route, { credentials: 'same-origin' })
         return { status: reply.status, cache: reply.headers.get('cache-control'), body: await reply.text() }
