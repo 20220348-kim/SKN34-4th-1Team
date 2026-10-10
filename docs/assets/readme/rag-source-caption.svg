@@ -10,7 +10,7 @@
     }
   </style>
   <rect class="accent" x="0" y="4" width="4" height="64" rx="2" />
-  <text x="20" y="20" font-size="16" font-weight="600">원문 준비·근거 검색</text>
-  <text x="20" y="42" font-size="14">저장한 원문이 없거나 갱신이 필요하면 공식 HTML을 읽어</text>
-  <text x="20" y="62" font-size="14">MySQL에 저장하고 청크로 나눕니다.</text>
+  <text x="20" y="20" font-size="15" font-weight="600">원문 준비·근거 검색</text>
+  <text x="20" y="42" font-size="13">저장한 원문이 없거나 갱신이 필요하면 공식 HTML을 읽어</text>
+  <text x="20" y="62" font-size="13">MySQL에 저장하고 청크로 나눕니다.</text>
 </svg>
