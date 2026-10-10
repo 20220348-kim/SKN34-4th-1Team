@@ -26,7 +26,8 @@
 
 LLMOps까지 Kubernetes로 전환한 구조입니다. 하나의 kind 클러스터 안에서 업무(`govbiz-msa`),
 평가(`govbiz-evaluation`), 관측(`govbiz-observability`) namespace를 구분합니다.
-Prefect·실행기·결과 서버·Langfuse와 저장소를 내부 Service·PVC로 연결하고, UI는 port-forward로 접근합니다.
+React/Vite 웹과 React Native·Expo 모바일 앱은 같은 Core API·공통 계약을 사용하고, 관리자 Ops는 웹에서 접근합니다.
+Prefect·실행기·결과 서버·Langfuse와 저장소를 내부 Service·PVC로 연결하고, 도구 UI는 port-forward로 접근합니다.
 실제 이전 기록과 그림의 범위는 [그림 설명](README-local.md#그림의-기준)을 따릅니다.
 
 ## 통합 전 Mac Kubernetes · 비공개 GHCR · Argo CD 기록

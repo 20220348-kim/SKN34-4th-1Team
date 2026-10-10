@@ -8,8 +8,8 @@
 
 ## 파일
 
-- [PNG](govbiz-local-architecture.png): 5,600 × 5,600, GitHub·발표 첨부용.
-- [SVG](govbiz-local-architecture.svg): 2,800 × 2,800, 로고가 내장된 편집 가능한 원본.
+- [PNG](govbiz-local-architecture.png): 5,600 × 5,960, GitHub·발표 첨부용.
+- [SVG](govbiz-local-architecture.svg): 2,800 × 2,980, 로고가 내장된 편집 가능한 원본.
 - [생성 스크립트](build-local.mjs): 기존 로컬 로고를 사용하며 클러스터·GHCR에 접근하지 않습니다.
 - 로고 출처·해시는 [Kubernetes 로고 목록](kubernetes-logo-sources.json), [RabbitMQ·MyBatis 로고 목록](logo-sources.json), [Devicon 라이선스](DEVICON-LICENSE)를 따릅니다.
 
@@ -63,23 +63,36 @@ Kubernetes로 옮겼다는 이유로 유료 모델 호출을 켜지 않습니다
 ## 3. 로컬 화면 접근
 
 웹은 PC의 React/Vite에서 실행하며, API와 도구 UI는 Kubernetes Service의 loopback port-forward로 연결합니다.
+모바일은 iOS·Android의 React Native·Expo 앱이며, `EXPO_PUBLIC_API_BASE_URL`에 지정한 API origin으로
+같은 Core API를 호출합니다. 웹·앱은 `@govbiz/shared`의 업무 모델·API 계약·응답 검증을 공유합니다.
 
 | 로컬 진입 | Kubernetes 대상 |
 |---|---|
 | `localhost:5173`의 `/api/*` | Vite → `127.0.0.1:18080` → Core `:8080` |
 | 같은 웹의 `/api/v1/ops/*` | Vite → `127.0.0.1:18001` → Ops `:8000` |
+| 모바일 앱의 `/api/*` | 기기에서 접근 가능한 Core API origin → Core `:8080` (Bearer 인증) |
 | Prefect `localhost:14200` | `govbiz-evaluation`의 Prefect `:4200` |
 | Langfuse `localhost:13000` | `govbiz-observability`의 Langfuse web `:3000` |
 
 관리 화면은 `/ops/evaluations`이며, 기존 Core 관리자 계정을 사용합니다.
-Ops 프록시는 Host·Origin을 보존해 CSRF를 검증합니다. 외부 ingress·TLS와 모바일 실기기 접근은 이 로컬 그림의 범위 밖입니다.
+Ops 프록시는 Host·Origin을 보존해 CSRF를 검증합니다. 모바일은 Core에서 발급한 Bearer 세션을 사용합니다.
+
+Kubernetes의 Core 포워딩 포트는 `18080`입니다. iOS 시뮬레이터는 `http://localhost:18080`,
+Android 에뮬레이터는 `http://10.0.2.2:18080`을 앱의 API origin으로 지정합니다.
+실기기는 PC의 loopback 주소에 직접 접근할 수 없으므로 USB `adb reverse`나 기기에서 접근 가능한
+별도 개발 API 주소가 필요합니다. USB Android에서는 `adb reverse tcp:18080 tcp:18080` 후
+`http://localhost:18080`을 사용합니다. 외부 ingress·TLS 및 실제 기기 연결 검증은 별도입니다.
+
+근거: [모바일 실행·인증](../../../frontend/mobile/README.md#로컬-실행) ·
+[모바일 API 주소·인증 구현](../../../frontend/mobile/src/api/client.ts) · [웹·앱 공통 계약](../../mobile-monorepo.md).
 
 ## 4. 이미지·배포·보존
 
 동일 소스 SHA의 GovBiz·Catalog·Ops·LLMOps·Infra CI와 이미지 검증을 통과한 digest를 사용합니다.
 Helm Chart와 소스 SHA를 고정하고 Argo CD는 **수동 동기화**합니다. 자동 sync·prune는 활성화하지 않습니다.
 Secret·PVC는 별도 절차로 준비·보존하며, 앱 갱신과 데이터 삭제를 연결하지 않습니다.
-웹 개발은 Vite HMR, 선택 업무 서비스 갱신은 기존 `dev.py`의 Docker 빌드·kind 적재·rollout 경로를 사용합니다.
+웹 개발은 Vite HMR, 모바일 개발은 Expo Fast Refresh를 사용합니다.
+선택 업무 서비스 갱신은 기존 `dev.py`의 Docker 빌드·kind 적재·rollout 경로를 사용합니다.
 
 - [이미지 발행](../../msa-image-release.md) · [개인 Kubernetes 개발](../../local-fork-development.md)
 - [평가 환경 이전·PVC 복원 기록](../../../infrastructure/gitops/docs/evaluation-kubernetes.md)
