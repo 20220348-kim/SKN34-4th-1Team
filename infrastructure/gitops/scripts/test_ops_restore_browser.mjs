@@ -51,6 +51,24 @@ for (const index of [0, 24, 25]) {
     const rag = ragFixture()
     row.execution_spec = rag.spec
     responses[path + '/rag-reviews'] = rag.state
+    responses[path + '/rag-material'] = rag.state.material
+    const metric = { value: 1, measuredCaseCount: 2, eligibleCaseCount: 2 }
+    const summary = {
+      scope: row.evaluation_scope, measurementKind: 'integration-stub-replay', baselineEligible: false,
+      liveExecutionPerformed: false, completed: true, caseCount: 2,
+      fixtureSha256: rag.state.material.fixture_sha256, captureSha256: rag.state.material.candidate_capture_sha256,
+      execution: { model: null, embeddingModel: null, promptSha256: null },
+      coverage: { retrievalCaseCount: 2, answerCaseCount: 2, failedCaseCount: 0, traceCaseCount: 0 },
+      metrics: { retrievalRecallAtK: metric, answerCitationRecall: metric, answerStatusAccuracy: metric },
+      cases: rag.state.material.cases.map((item) => ({
+        caseId: item.case_id, traceId: null, retrievalRecallAtK: 1, answerCitationRecall: 1, answerStatusMatches: true,
+        failure: null, retrievedChunkIds: ['chunk-a'], citedChunkIds: ['chunk-a'],
+      })),
+    }
+    row.comparison = {
+      schema_version: 3, scope: row.evaluation_scope, retrieval_evaluated: true, baseline_eligible: false,
+      comparison: 'self-replay', case_ids: rag.spec.dataset.case_ids, current: summary, reference: summary,
+    }
   }
   responses[path] = { ...row }
   responses[path + '/budget'] = { as_of: at, state: 'not_applicable', reservation: null, calls: [] }

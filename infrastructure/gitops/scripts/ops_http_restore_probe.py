@@ -379,6 +379,10 @@ def check_management(expected, principal, token, member_token, total_runs):
                 != digest({k: v for k, v in material.items() if k != "material_sha256"})
             ):
                 raise ValueError("Restored RAG review material differs from its inputs")
+            # The report explanation reads this endpoint independently of the
+            # detail page's review state. Capture its real authenticated response.
+            if get(route + "/rag-material") != material:
+                raise ValueError("Restored RAG report material differs from its review")
     return {
         "evidence": {
             "status": "PASS",

@@ -167,6 +167,7 @@ class ManagementTests(unittest.TestCase):
             "material": material,
             "quality": {"status": "NOT_EVALUATED"},
         }
+        self.routes[route + "/rag-material"] = copy.deepcopy(material)
         return review_route
 
     def test_rag_reads_pinned_material_and_rejects_unauthorized_access_without_approval(
@@ -177,9 +178,20 @@ class ManagementTests(unittest.TestCase):
         self.assertNotIn(
             route.removesuffix("/rag-reviews") + "/review", result["responses"]
         )
-        self.assertIn(route, result["responses"])
-        for token in (None, "member-token", "invalid-fixture", "admin-token"):
-            self.assertIn((route, token), self.calls)
+        material_route = route.removesuffix("/rag-reviews") + "/rag-material"
+        for path in (route, material_route):
+            self.assertIn(path, result["responses"])
+            for token in (None, "member-token", "invalid-fixture", "admin-token"):
+                self.assertIn((path, token), self.calls)
+        self.assertEqual(
+            result["responses"][material_route], self.routes[route]["material"]
+        )
+
+    def test_report_material_cannot_differ_from_review_material(self):
+        route = self.rag_review().removesuffix("/rag-reviews") + "/rag-material"
+        self.routes[route]["cases"][0]["content"] = "다른 원문"
+        with self.assertRaisesRegex(ValueError, "RAG report material"):
+            self.verify()
 
     def test_rag_http_200_cannot_hide_missing_changed_or_wrong_material(self):
         route = self.rag_review()
@@ -209,10 +221,17 @@ class ManagementTests(unittest.TestCase):
                 self.verify()
 
     def test_rag_material_http_failure_or_member_bypass_cannot_pass(self):
-        route = self.rag_review()
-        for defect in ("unavailable", "member"):
+        review_route = self.rag_review()
+        for route, defect in (
+            (path, defect)
+            for path in (
+                review_route,
+                review_route.removesuffix("/rag-reviews") + "/rag-material",
+            )
+            for defect in ("unavailable", "member")
+        ):
 
-            def broken(path, token=None, defect=defect):
+            def broken(path, token=None, defect=defect, route=route):
                 if path == route:
                     if defect == "unavailable" and token == "admin-token":
                         return 503, {}, b"{}"
