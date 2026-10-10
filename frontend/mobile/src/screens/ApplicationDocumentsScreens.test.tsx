@@ -6,7 +6,7 @@ import { ApplicationPreparationError } from '@govbiz/shared/domain/errors/Applic
 import { programClient } from '../api/client'
 import { listReviewSavedPrograms } from '../api/combinationReviews'
 import { shareApplicationFile } from '../api/applicationDocumentFiles'
-import { readPendingPreparation } from '../auth/preparationPending'
+import { readPendingPreparation, savePendingPreparation, clearPendingPreparation } from '../auth/preparationPending'
 import { ApplicationDocumentsListScreen } from './ApplicationDocumentsListScreen'
 import { ApplicationPreparationNewScreen } from './ApplicationPreparationNewScreen'
 import { ApplicationDocumentScreen } from './ApplicationDocumentScreen'
@@ -365,6 +365,60 @@ test('unknown generation offers a read-only recovery and never automatic paid re
   await screen.findByText('초안 결과를 확인하고 있어요')
   expect(api.submitDocumentJob).not.toHaveBeenCalled()
   expect(screen.queryByLabelText('초안 만들기')).toBeNull()
+  expect(screen.getByText(/새 생성을 반복하지 말고 기존 요청의 상태를 확인/)).toBeTruthy()
+  api.documents.mockResolvedValue([documentFile]); api.documentJob.mockResolvedValue(documentJob)
+  fireEvent.press(screen.getByLabelText('기존 생성 요청 상태 확인'))
+  await screen.findByText('초안 완료')
+  expect(api.documentJob).toHaveBeenNthCalledWith(2, 9, documentJob.id, expect.any(AbortSignal))
+  expect(api.submitDocumentJob).not.toHaveBeenCalled()
+})
+
+test.each(['initial', 'refresh'] as const)('a failed %s status read retains known UNKNOWN state and cannot offer new generation', async phase => {
+  const unknown = { ...documentJob, status: 'UNKNOWN', fileIds: [], failureCode: 'APPLICATION_DOCUMENT_OUTCOME_UNKNOWN' }
+  api.documents.mockResolvedValue([]); api.documentJobs.mockResolvedValue([unknown])
+  if (phase === 'initial') api.documentJob.mockRejectedValue(new Error('작업 상태 조회 실패'))
+  else api.documentJob.mockResolvedValueOnce(unknown).mockRejectedValue(new Error('작업 상태 조회 실패'))
+  render(<ApplicationDocumentScreen {...docProps} />)
+  if (phase === 'refresh') fireEvent.press(await screen.findByLabelText('기존 생성 요청 상태 확인'))
+  await screen.findByText('작업 상태 조회 실패')
+  expect(screen.getByText('초안 결과를 확인하고 있어요')).toBeTruthy()
+  expect(screen.getByLabelText('기존 생성 요청 상태 확인')).toBeTruthy()
+  expect(screen.queryByLabelText('초안 만들기')).toBeNull()
+  expect(api.submitDocumentJob).not.toHaveBeenCalled()
+})
+
+test('a pending generation request remains visible and disabled until its response arrives', async () => {
+  api.documents.mockResolvedValue([]); api.documentJobs.mockResolvedValue([])
+  let finish!: (value: typeof documentJob) => void
+  api.submitDocumentJob.mockReturnValue(new Promise(resolve => { finish = resolve }))
+  render(<ApplicationDocumentScreen {...docProps} />)
+  fireEvent.press(await screen.findByLabelText('초안 만들기'))
+  await waitFor(() => expect(api.submitDocumentJob).toHaveBeenCalledTimes(1))
+  const processing = screen.getByLabelText('생성 요청 처리 중…')
+  expect(processing.props.accessibilityState).toEqual({ busy: true, disabled: true })
+  fireEvent.press(processing)
+  expect(api.submitDocumentJob).toHaveBeenCalledTimes(1)
+  api.documents.mockResolvedValue([documentFile]); api.documentJobs.mockResolvedValue([documentJob])
+  await act(async () => finish(documentJob))
+  await screen.findByText('초안 완료')
+})
+
+test('an unconfirmed generation preserves the saved key and reuses it only after manual confirmation', async () => {
+  const requestKey = '11111111-1111-4111-8111-111111111111'
+  const pending = { kind: 'document' as const, preparationId: 9, expectedRevision: 1, requestKey }
+  const clearsBefore = jest.mocked(clearPendingPreparation).mock.calls.length
+  api.documents.mockResolvedValue([]); api.documentJobs.mockResolvedValue([])
+  api.submitDocumentJob.mockRejectedValueOnce(new ApplicationPreparationError(0, 'REQUEST_FAILED')).mockResolvedValue(documentJob)
+  render(<ApplicationDocumentScreen {...docProps} />)
+  fireEvent.press(await screen.findByLabelText('초안 만들기'))
+  await screen.findByLabelText('같은 생성 요청으로 확인')
+  expect(screen.getByText('접수 결과를 아직 확인하지 못한 요청이 있어요. 새 요청을 만들지 않고 같은 요청으로 확인해요.')).toBeTruthy()
+  expect(savePendingPreparation).toHaveBeenCalledWith('https://api.example.test', 'first@test.com', pending)
+  expect(jest.mocked(clearPendingPreparation).mock.calls.length).toBe(clearsBefore)
+  expect(api.submitDocumentJob).toHaveBeenCalledTimes(1)
+  fireEvent.press(screen.getByLabelText('같은 생성 요청으로 확인'))
+  await waitFor(() => expect(api.submitDocumentJob).toHaveBeenCalledTimes(2))
+  expect(api.submitDocumentJob.mock.calls.map(call => call.slice(0, 2).concat(call[3]))).toEqual([[9, 1, requestKey], [9, 1, requestKey]])
 })
 
 test.each(['empty', 'undecided', 'partial'] as const)('the document page allows explicit generation for %s answers', async kind => {

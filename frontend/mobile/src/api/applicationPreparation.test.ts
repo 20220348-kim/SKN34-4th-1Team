@@ -113,6 +113,19 @@ test('current producer document metadata reaches the mobile consumer without los
 })
 
 const pending = { kind: 'document' as const, preparationId: 9, expectedRevision: 1, requestKey: '11111111-1111-4111-8111-111111111111' }
+test('document status recovery uses the existing owned GET and rejects mismatched job identities', async () => {
+  const unknown = { ...documentJob, status: 'UNKNOWN', fileIds: [], failureCode: 'APPLICATION_DOCUMENT_OUTCOME_UNKNOWN' }
+  fetchApi.mockResolvedValue(response(unknown))
+  await expect(applicationPreparationUseCase('owned-session').documentJob(9, documentJob.id)).resolves.toMatchObject({ id: documentJob.id, preparationId: 9, status: 'UNKNOWN' })
+  expect(createApiFetch).toHaveBeenCalledWith('owned-session')
+  expect(fetchApi).toHaveBeenCalledWith(`https://api.example.test/api/v1/application-preparations/9/documents/jobs/${documentJob.id}`, expect.objectContaining({ method: 'GET', cache: 'no-store' }))
+  expect(fetchApi).toHaveBeenCalledTimes(1)
+  for (const payload of [{ ...unknown, id: documentJob.id + 1 }, { ...unknown, preparationId: 10 }]) {
+    fetchApi.mockResolvedValue(response(payload))
+    await expect(applicationPreparationUseCase('owned-session').documentJob(9, documentJob.id)).rejects.toMatchObject({ status: 502, code: 'INVALID_RESPONSE' })
+  }
+})
+
 test('pending recovery reads the owned target and only clears a coded missing document', async () => {
   fetchApi.mockResolvedValue(response({ code: 'APPLICATION_PREPARATION_NOT_FOUND' }, 404))
   await discardDeletedPendingPreparation('owned-session', 'owner@test.com', pending)

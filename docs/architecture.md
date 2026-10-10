@@ -40,6 +40,8 @@ API 경계에서 shared DTO 검증·Mapper를 사용하고, 등록 결과의 공
 기존 웹의 domain/model 파일은 공통 구현을 재수출하므로 두 구현이 따로 변경되지 않습니다.
 신청 문서 결과의 최신 생성 답변 버전 분류와 파일 형식 표시는 shared `ApplicationDocumentFiles`가 담당합니다. 웹·앱 모두 각 파일 카드의 `초안 다운로드` 하나로 선택한 파일을 원래 형식·파일명 그대로 받고 이전 버전은 접어 둡니다. 화면에 상단·하단 통합 다운로드나 ZIP 묶음 동작을 중복 제공하지 않습니다. 웹은 기존 인증 binary API와 브라우저 다운로드를 사용합니다. 모바일은 `화면 → mobile api/applicationPreparation의 링크 발급·DTO 검증 → Bearer POST → ApplicationDocumentController → ApplicationDocumentDownloadLinkService → 파일 Repository·Redis`로 2분 파일 전용 링크를 받고, 시스템 브라우저 GET에서 계정 Repository·파일 Repository로 현재 소유권을 다시 확인한 attachment를 내려받습니다. 상대 경로·식별자 검증과 URL 변환은 모바일 HTTP 경계, 공개 응답 경로 구성은 Core controller/dto가 소유합니다. TXT 공유의 기기 임시 파일·공유 화면은 모바일에 남깁니다.
 모바일 기업·관심 공고·가입 이메일 인증의 HTTP 호출·응답 검증·DTO 변환은 `src/api` 경계가 담당하며 화면은 내부 모델을 받습니다. 문서의 실제 기입 가능 답변 판단은 shared `isWritableApplicationAnswer`를, 원본 저장·답변 기입·수동 작성 안내는 `applicationDraftMode`를 웹·앱에서 재사용합니다. 필수 답변 일부가 비어 있어도 저장된 답변으로 초안을 만들고, 전부 비어 있거나 미정이면 기존 Core 생성 규칙에 따라 AI 호출 없이 공식 원본을 저장합니다. 실제 수동 작성 답변만 있는 경우는 원본 반환으로 숨기지 않고 기존 서버 오류를 표시합니다.
+모바일 생성 결과의 수동 상태 확인은 `ApplicationDocumentScreen → ApplicationPreparationUseCase.documentJob → mobile api/applicationPreparation → 기존 Core 작업 GET`으로 연결합니다.
+조회 실패에는 목록·기존 화면에서 확인한 UNKNOWN 상태를 유지하고 새 생성을 막습니다. 접수 미확인은 기존 보관 요청 키·답변 revision을 재사용하며 새 사용량·차감 정책은 추가하지 않습니다.
 모바일 공고 상세는 `ProgramScreen → readProgramDetail → shared 공고 HTTP Client → Core`로 읽고 모바일 API 경계에서 shared Mapper로 내부 모델을 만듭니다.
 원문 질문 예시는 입력만 채우고 명시적인 질문 전송에만 기존 answers API를 호출합니다. 답변 이력은 공고·계정별 화면 상태이며 서버에 새 대화 저장 계약을 추가하지 않습니다.
 원문 질문의 닫기 확인·명시적 중지·입력 보존은 `ProgramScreen`이 소유합니다. `PartnerSheet`의 닫기·배경·기기 뒤로가기는

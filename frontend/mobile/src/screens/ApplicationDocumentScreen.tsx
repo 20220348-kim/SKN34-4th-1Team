@@ -88,14 +88,18 @@ function OwnedDocuments({ id, jobId, token, email, onEditor, onReanalyze, onOnli
       setPending(record)
       const [detail, stored, recent] = await Promise.all([useCase.get(id, controller.signal), useCase.documents(id, controller.signal), useCase.documentJobs(id, controller.signal)])
       if (controller.signal.aborted) return
-      setPreparation(detail); setFiles(stored); setPending(record); setJob(null)
+      setPreparation(detail); setFiles(stored); setPending(record)
       // 문서 결과 조회로 외부 폼을 분석하지 않고, 카탈로그의 공식 신청 경로만 확인합니다.
       void readProgramDetail(programClient(token), { sourceCode: detail.form.sourceCode, sourceProgramId: detail.form.sourceProgramId }, controller.signal)
         .then(program => { if (!controller.signal.aborted) setGoogleFormAvailable(program?.applicationRoute.type === 'GOOGLE_FORMS') })
         .catch(() => { if (!controller.signal.aborted) setError('구글폼 신청 여부를 확인하지 못했어요. 다시 확인해 주세요.') })
       const latest = recent.find(candidate => running(candidate)) ?? recent.slice().sort((a, b) => b.id - a.id)[0]
       const selected = jobId ?? latest?.id
-      if (selected) await follow(await useCase.documentJob(id, selected, controller.signal))
+      if (selected) {
+        const known = recent.find(candidate => candidate.id === selected)
+        if (known) setJob(known)
+        await follow(await useCase.documentJob(id, selected, controller.signal))
+      } else setJob(null)
     })().catch(cause => { if (!controller.signal.aborted) reportError(cause) }).finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => { controller.abort(); clearTimeout(timer) }
   }, [foreground, id, jobId, revision, useCase, base, email, token, reportError]))
@@ -174,7 +178,7 @@ function OwnedDocuments({ id, jobId, token, email, onEditor, onReanalyze, onOnli
     field, value: section.facts.find(fact => fact.fieldKey === field.key && fact.status === 'PROVIDED')?.value,
   }))))
   const recoveringRequest = pending?.kind === 'document' && pending.preparationId === id
-  const canGenerate = !loading && !busy && !isRunning && !unknown && (recoveringRequest ||
+  const canGenerate = !loading && !isRunning && !unknown && (recoveringRequest ||
     !currentFiles.length &&
     (!job || job.expectedRevision !== preparation.inputRevision || approved || job.status === 'FAILED' && group === 'temporary'))
   const renderFile = (file: ApplicationDocument) => <Card key={file.id}><Text style={styles.heading}>{file.fileName}</Text><Text style={styles.muted}>{applicationDocumentFileFormat(file)} · {Math.ceil(file.size / 1024)} KB · 답변 버전 {file.inputRevision}</Text>
@@ -194,7 +198,7 @@ function OwnedDocuments({ id, jobId, token, email, onEditor, onReanalyze, onOnli
     </Card>
     {error && <><Notice error>{error}</Notice><Button label="생성 결과 다시 확인" variant="secondary" onPress={() => setRevision(value => value + 1)} /></>}
     {notice && <Notice>{notice}</Notice>}
-    {pending && <Notice>결과를 확인하지 못한 보관 요청이 있어요. 같은 요청으로 확인하면 중복 유료 생성을 방지할 수 있어요.</Notice>}
+    {pending && <Notice>접수 결과를 아직 확인하지 못한 요청이 있어요. 새 요청을 만들지 않고 같은 요청으로 확인해요.</Notice>}
     {pending?.kind === 'document' && <Button label="보관 요청 대상 확인" variant="ghost" busy={busy === 'pending'} disabled={busy !== null} onPress={() => void checkPending()} />}
     {pending?.kind === 'document' && pending.preparationId !== id && <Button label="보관 요청의 문서 열기" variant="secondary" onPress={() => onOpenPending(pending.preparationId)} />}
     {isRunning && <Card><View style={styles.row}><StatusBadge label={job!.status === 'QUEUED' ? '초안 생성 대기' : '초안 만드는 중'} tone="info" /></View><Text style={styles.heading}>신청문서 초안을 만들고 있어요</Text>
@@ -202,6 +206,8 @@ function OwnedDocuments({ id, jobId, token, email, onEditor, onReanalyze, onOnli
       {generationStages.map(([stage, label], index) => <Text key={stage} style={[styles.body, job?.stage === stage && { color: colors.primary, fontWeight: '600' }]}>{job?.stage && index < generationStages.findIndex(([code]) => code === job.stage) ? '✓ ' : job?.stage === stage ? '● ' : '○ '}{label}</Text>)}
     </Card>}
     {job && !isRunning && (job.status === 'FAILED' || unknown) && !approved && <Card><Text style={styles.heading}>{generationFailureTitle(job)}</Text><Notice error={!unknown}>{new ApplicationPreparationError(422, job.failureCode ?? 'REQUEST_FAILED', job.mappingMigration).message}</Notice>
+      {unknown && <><Notice>기존 생성 요청의 처리 결과를 아직 확인하지 못했어요. 새 생성을 반복하지 말고 기존 요청의 상태를 확인해 주세요.</Notice>
+        <Button label="기존 생성 요청 상태 확인" variant="secondary" busy={loading} disabled={busy !== null || loading} onPress={() => setRevision(value => value + 1)} /></>}
       {job.mappingMigration && <Button label="입력 위치 변경 확인" variant="secondary" disabled={busy !== null} onPress={() => setMigrationOpen(true)} />}
       {(group === 'reanalysis' || group === 'formLimit') && <Button label="원문·양식 다시 확인" variant="secondary" onPress={() => onReanalyze({ sourceCode: preparation.form.sourceCode, sourceProgramId: preparation.form.sourceProgramId })} />}
       {group === 'userFix' && <Button label="답변 수정하기" variant="secondary" onPress={onEditor} />}
@@ -222,7 +228,7 @@ function OwnedDocuments({ id, jobId, token, email, onEditor, onReanalyze, onOnli
       : draftMode === 'manualOnly' ? '저장된 답변 중 양식에 자동으로 기입할 수 있는 것이 없어 초안을 만들지 못할 수 있어요. 원문 양식에 직접 옮겨 적어 주세요.'
         : '저장된 답변만 공식 양식에 기입해요. 비운 질문과 미정은 빈칸으로 남아요.'}</Notice>
       {!recoveringRequest && draftMode !== 'original' && <Text style={styles.muted}>답변 기입에는 유료 AI 호출이 발생할 수 있어요.</Text>}
-      <Button label={pending ? '같은 생성 요청으로 확인' : files.length ? '수정 답변으로 다시 만들기' : job?.status === 'FAILED' ? '초안 생성 다시 시도' : '초안 만들기'} busy={busy === 'generate'} onPress={() => void generate()} /></>}
+      <Button label={busy === 'generate' ? '생성 요청 처리 중…' : pending ? '같은 생성 요청으로 확인' : files.length ? '수정 답변으로 다시 만들기' : job?.status === 'FAILED' ? '초안 생성 다시 시도' : '초안 만들기'} busy={busy === 'generate'} disabled={busy !== null} onPress={() => void generate()} /></>}
     <Button label="답변 수정하기" variant="secondary" disabled={busy !== null} onPress={onEditor} />
     {googleFormAvailable && <Button label="구글폼 입력 도우미" variant="secondary" onPress={onOnline} />}
     <Text style={styles.muted}>생성한 초안은 기관 제출이나 검수 완료를 뜻하지 않아요. 내려받아 원본 양식에서 최종 확인해 주세요.</Text>
