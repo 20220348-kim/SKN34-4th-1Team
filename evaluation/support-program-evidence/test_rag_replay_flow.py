@@ -178,9 +178,10 @@ def test_scores_target_either_original_trace_or_replay_session():
     assert scores == rag_replay_flow.score_payloads(value, spec, SimpleNamespace(environment="test"))
 
 
-def test_catalog_and_runner_reject_live_and_unpinned_rag_before_spending(runner):
+def test_catalog_and_runner_reject_live_and_unpinned_rag_before_spending(runner, monkeypatch):
+    monkeypatch.setattr("apps.evaluations.vector_cache.discover", lambda _: None)
     item = next(item for item in public_datasets() if item["id"] == DATASET)
-    assert item["live_config"]["max_model_calls"] == 9 and item["execution_profiles"]["live"]
+    assert item["live_config"]["max_model_calls"] == 8 and item["execution_profiles"]["live"]
     with pytest.raises(ValueError):
         validate_execution(DATASET, "new-model-response", CAPTURE, "live", {})
     with pytest.raises(ValueError):

@@ -100,10 +100,12 @@ def test_recorded_search_with_missing_evidence_is_not_full_recall(tmp_path):
     assert not report["completed"]
 
 
-def test_catalog_prepares_separate_embedding_and_answer_budget():
+def test_catalog_prepares_separate_embedding_and_answer_budget(monkeypatch):
+    monkeypatch.setattr("apps.evaluations.vector_cache.discover", lambda _: None)
     config = live_config(official_rag.DATASET)
     plan = read_release()["datasets"][official_rag.DATASET]["live_plan"]
-    assert config["max_model_calls"] == 18
+    # Six questions share two documents: 2 document + 6 query + 6 answer calls.
+    assert config["max_model_calls"] == 14
     assert config["max_total_output_tokens"] == 12000
     assert [op["kind"] for op in plan["model_operations"]] == [
         "document_embedding", "query_embedding", "answer"
@@ -167,7 +169,8 @@ def test_oversized_list_fails_instead_of_silently_losing_a_condition(monkeypatch
         official_rag.build(grouped_lists=True)
 
 
-def test_grouped_catalog_requires_its_own_unmeasured_inputs_and_budget():
+def test_grouped_catalog_requires_its_own_unmeasured_inputs_and_budget(monkeypatch):
+    monkeypatch.setattr("apps.evaluations.vector_cache.discover", lambda _: None)
     fixture, pending = official_rag.build(grouped_lists=True)
     result = rag.evaluate(official_rag.GROUPED_OUTPUT / "fixture.json", official_rag.GROUPED_OUTPUT / "not-started.json")
     assert not result["completed"] and not result["baselineEligible"]
@@ -179,7 +182,7 @@ def test_grouped_catalog_requires_its_own_unmeasured_inputs_and_budget():
     assert material["reference_source"] == "ai-authored-not-human-reviewed"
     config = live_config(official_rag.GROUPED_DATASET)
     assert config["fixture_sha256"] != live_config(official_rag.DATASET)["fixture_sha256"]
-    assert config["max_model_calls"] == 18 and config["max_total_output_tokens"] == 12000
+    assert config["max_model_calls"] == 14 and config["max_total_output_tokens"] == 12000
     assert config["max_total_input_tokens"] > 196608
     selected = next(d for d in public_datasets() if d["id"] == official_rag.GROUPED_DATASET)
     assert selected["captures"][0]["id"] == "official-rag-not-started-v2"

@@ -36,6 +36,9 @@ class LiveReadinessPermissionTests(SimpleTestCase):
 )
 class LiveReadinessTests(TestCase):
     def setUp(self):
+        cache = patch("apps.evaluations.vector_cache.discover", return_value=None)
+        cache.start()
+        self.addCleanup(cache.stop)
         self.user = get_user_model().objects.create_user("readiness-operator")
         self.client = APIClient()
         self.client.force_authenticate(self.user)
@@ -90,9 +93,11 @@ class LiveReadinessTests(TestCase):
         )
         data = self.read(RAG)
         self.assertEqual(data["state"], "checked")
-        self.assertEqual(data["required"]["calls"], 9)
+        # R01/R02 share document vectors: 2 document + 3 query + 3 answer calls.
+        self.assertEqual(data["required"]["calls"], 8)
         self.assertEqual(data["required"]["output_tokens"], 6000)
         dataset = self.datasets[RAG]
+        self.assertEqual(dataset["live_config"]["document_vectors"]["R02"]["source_case_id"], "R01")
         self.assertEqual(
             data["required"]["input_tokens"], dataset["live_config"]["max_total_input_tokens"]
         )
