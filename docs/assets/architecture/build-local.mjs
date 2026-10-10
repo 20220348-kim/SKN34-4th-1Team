@@ -25,7 +25,7 @@ for (const source of manifest) {
   icons.set(source.name, `data:${isSvg ? 'image/svg+xml' : 'image/png'};base64,${bytes.toString('base64')}`);
 }
 
-const W = 2800, H = 2800;
+const W = 2800, H = 2980;
 const usedIcons = new Set();
 const ink = '#172B3A', muted = '#526675';
 const colors = {runtime:'#7A8E9C', deploy:'#AD6C1C', config:'#97A6B3', dev:'#2D8570'};
@@ -51,14 +51,14 @@ function label(x, y, value, max=360, fill=muted) {
 
 parts.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-labelledby="title desc">
 <title id="title">GovBiz 로컬 아키텍처 — LLMOps Kubernetes 통합</title>
-<desc id="desc">2026-10-11 LLMOps까지 Kubernetes로 전환한 로컬 구성. 같은 kind 클러스터 안에서 govbiz-msa는 Core·Catalog·AI·Django Ops와 업무 저장소를, govbiz-evaluation은 Prefect·평가 실행기·결과 서버와 PVC를, govbiz-observability는 Langfuse web/worker와 PostgreSQL·ClickHouse·Redis·MinIO 전용 PVC를 소유한다. 서비스는 ClusterIP와 내부 DNS로 연결하고 도구 UI는 loopback port-forward로 접근한다. 전환 후 배치 구조이며 실시간 가동 상태나 유료 평가 완료를 뜻하지 않는다.</desc>
+<desc id="desc">2026-10-11 LLMOps까지 Kubernetes로 전환한 로컬 구성. React/Vite 웹과 React Native/Expo 모바일 앱은 같은 Core API와 shared 계약을 사용하며 관리자 Ops는 웹에서 접근한다. 모바일은 기기에서 접근 가능한 API origin과 Bearer 인증으로 연결한다. 같은 kind 클러스터 안에서 govbiz-msa는 Core·Catalog·AI·Django Ops와 업무 저장소를, govbiz-evaluation은 Prefect·평가 실행기·결과 서버와 PVC를, govbiz-observability는 Langfuse web/worker와 PostgreSQL·ClickHouse·Redis·MinIO 전용 PVC를 소유한다. 서비스는 ClusterIP와 내부 DNS로 연결하고 도구 UI는 loopback port-forward로 접근한다. 전환 후 배치 구조이며 실시간 가동 상태나 유료 평가 완료를 뜻하지 않는다.</desc>
 <defs>${Object.entries(colors).map(([name,color])=>`<marker id="${name}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M1 1L9 5L1 9Z" fill="${color}"/></marker>`).join('')}</defs>
 <style>text{font-family:Arial,"Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",sans-serif}</style>
 <rect width="${W}" height="${H}" rx="36" fill="#FFFFFF"/>`);
 
 text(70,91,'GovBiz',{size:56,weight:700});
 text(300,91,'로컬 시스템 아키텍처',{size:38,weight:600});
-text(70,140,'업무 · 평가 실행 · 관측을 Kubernetes로 통합 · 사람 검토는 React Ops',{size:25,fill:muted,max:1900});
+text(70,140,'웹·모바일 → 같은 Core API · 업무·평가·관측은 Kubernetes · 사람 검토는 React Ops',{size:25,fill:muted,max:1900});
 card(2170,51,560,62,'#EDF8F1','#BDDAC8',16);
 text(2450,91,'KUBERNETES + LLMOPS',{size:26,weight:700,anchor:'middle',fill:'#256B49',max:520});
 text(2730,140,'2026.10.11 · LLMOps 전환 후 구성',{size:21,fill:muted,anchor:'end',max:650});
@@ -81,7 +81,7 @@ for(const [x,w,brand,title,lines] of delivery){
 for(const [a,b] of [[650,740],[1310,1400],[1965,2055]]) edge(`M${a} 344H${b}`,'deploy');
 
 // User-facing entry points are numbered to avoid a long proxy line crossing service lanes.
-card(60,510,2680,229,'#F8FBFD','#D2DFEB',26);
+card(60,510,2680,409,'#F8FBFD','#D2DFEB',26);
 text(90,551,'02   사용자 · 관리자 진입',{size:25,weight:700,fill:muted});
 card(90,577,370,130);
 icon('chrome',114,598,45);
@@ -102,6 +102,26 @@ text(1980,617,'Kubernetes 도구 UI · port-forward',{size:27,weight:600,max:700
 text(1980,654,'Prefect  localhost:14200 → :4200',{size:23,max:700});
 text(1980,690,'Langfuse  localhost:13000 → :3000',{size:23,max:700});
 
+card(90,757,370,130);
+parts.push('<rect x="119" y="777" width="33" height="49" rx="6" fill="#EEF3FC" stroke="#526675" stroke-width="3"/><path d="M129 783H142M132 819H139" fill="none" stroke="#526675" stroke-width="3" stroke-linecap="round"/>');
+text(180,812,'iOS · Android',{size:29,weight:600,max:250});
+text(113,858,'모바일 사용자 앱',{size:23,max:325});
+card(540,757,530,130);
+icon('react',561,779,45);
+text(624,812,'React Native / Expo',{size:28,weight:600,max:424});
+text(562,857,'웹과 @govbiz/shared 업무·API 계약 공유',{size:22,max:486});
+edge('M460 822H540');
+card(1150,757,725,130,'#F1F8FC','#C3DAE8');
+text(1175,797,'모바일 API → ① Core :8080',{size:26,weight:600,max:675});
+text(1175,834,'EXPO_PUBLIC_API_BASE_URL로 API origin 설정',{size:23,max:675});
+text(1175,870,'Bearer 인증 · 같은 계정·업무 데이터 사용',{size:23,max:675});
+edge('M1070 822H1150');
+card(1955,757,750,130,'#F1F8FC','#C3DAE8');
+text(1980,797,'Kubernetes 로컬 앱 연결',{size:27,weight:600,max:700});
+text(1980,834,'시뮬레이터·기기에서 접근 가능한 API 주소',{size:23,max:700});
+text(1980,870,'Core 포워딩 :18080 · 실기기 접근 경로 별도 설정',{size:23,max:700});
+
+parts.push('<g transform="translate(0 180)">');
 // All runtime services live inside one cluster; namespaces retain data ownership.
 card(60,790,2680,1380,'#F6FAFE','#BCD1E5',30);
 icon('kubernetes',94,819,57);
@@ -248,7 +268,7 @@ text(90,2128,'Kubernetes 내부에서 실행·보고서·점수·검토 연결  
 card(60,2200,2680,137,'#FAFBFD','#D2DFEB',23);
 text(90,2241,'로컬 코드 반영',{size:26,weight:700,max:360});
 text(450,2241,'코드 저장 → dev.py → 변경 서비스 Docker 빌드 → kind load → rollout',{size:27,weight:600,max:2230});
-text(90,2298,'웹은 Vite HMR · Ops·평가·관측은 검증된 SHA로 수동 동기화 · 자동 sync·prune 비활성 · Secret / PVC는 별도 보존',{size:23,fill:muted,max:2600});
+text(90,2298,'웹 Vite HMR · 앱 Expo Fast Refresh · Ops·평가·관측은 검증된 SHA로 수동 동기화 · 자동 sync·prune 비활성 · Secret / PVC 보존',{size:23,fill:muted,max:2600});
 
 parts.push('<path d="M70 2380H2730" stroke="#E4EBF0" stroke-width="2"/>');
 for(const [x,kind,name] of [[75,'runtime','내부 요청 · 데이터'],[625,'deploy','검증 · 이미지 공급'],[1210,'config','설정된 내부 연동'],[1800,'dev','평가 · 사람 검토']]){
@@ -256,7 +276,7 @@ for(const [x,kind,name] of [[75,'runtime','내부 요청 · 데이터'],[625,'de
 }
 text(2725,2428,'실행 완료 ≠ 품질 합격',{size:24,weight:600,anchor:'end',max:800});
 text(75,2477,'2026.10.11 · LLMOps Kubernetes 전환 후 배치 구조 · 실시간 가동 상태·고가용성·유료 모델 품질의 검증 결과는 별도',{size:21,fill:muted,max:2650});
-parts.push('</g></svg>');
+parts.push('</g></g></svg>');
 const svg = parts.join('\n');
 await fs.writeFile(path.join(root,`${basename}.svg`),svg);
 console.log(`Created ${basename}.svg`);

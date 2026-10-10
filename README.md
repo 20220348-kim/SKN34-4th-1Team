@@ -225,7 +225,10 @@ Core·Catalog·Ops의 MySQL은 같은 색을 사용하고, 서비스별 소유�
 서비스는 **ClusterIP·내부 DNS**로 통신하고, DB·평가 결과·관측 데이터는 **PVC**에 보존합니다.
 Ops가 평가를 접수하면 Prefect와 실행기가 처리하고, `ops-sync`가 상태·결과를 반영해 관리자가 검토합니다.
 
-로컬 React/Vite 웹은 port-forward를 통해 Core·Ops API에 연결하며, Prefect·Langfuse UI도 각각 포워딩해 접근합니다.
+로컬 React/Vite 웹은 port-forward를 통해 Core·Ops API에 연결하며, React Native·Expo 모바일 앱은
+기기에서 접근 가능한 API 주소를 설정해 같은 Core API를 Bearer 인증으로 호출합니다.
+웹·앱은 `@govbiz/shared`의 업무 모델·API 계약을 공유하고, 관리자 Ops 화면은 웹에서 제공합니다.
+Prefect·Langfuse UI도 각각 포워딩해 접근합니다.
 배포는 검증된 이미지와 소스 SHA를 고정한 Helm Chart를 사용하고 **Argo CD로 수동 동기화**합니다.
 
 [배치·저장소·접근 방식 상세](docs/assets/architecture/README-local.md) · [서비스 호출 상세](docs/architecture.md)
