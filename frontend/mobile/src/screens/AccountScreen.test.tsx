@@ -116,7 +116,7 @@ test('a signed-in account shows its current plan in one line without a purchase 
   // 앱에서는 현재 요금제만 보여 주고 결제·요금제 변경으로 이어지는 안내나 링크를 두지 않습니다.
   expect(view.queryByText(/업그레이드|요금제 보기|요금제 변경|가격|구매|결제/)).toBeNull()
   expect(view.queryAllByRole('link')).toHaveLength(0)
-  expect(view.getAllByRole('button').map(button => button.props.accessibilityLabel)).toEqual(['기업 프로필 등록', '알림 설정', '비밀번호 변경', '로그아웃', '계정 삭제'])
+  expect(view.getAllByRole('button').map(button => button.props.accessibilityLabel)).toEqual(['기업 프로필 등록', '알림 설정', '비밀번호 변경', '로그아웃', '계정 삭제', '개인정보 처리방침', '이용약관', '도움말·문의'])
 })
 
 test('a plan that cannot be read is left out instead of guessed', async () => {
@@ -138,4 +138,31 @@ test('signup rejects a password with Korean characters before sending it', async
   fireEvent.press(view.getByText('회원가입'))
   await waitFor(() => expect(view.getByText('비밀번호는 영문·숫자·특수문자만 쓸 수 있습니다.')).toBeTruthy())
   expect(signUp).not.toHaveBeenCalled()
+})
+
+test('signup opens draft policy documents without sending authentication requests or clearing its input', () => {
+  const view = render(<AccountScreen onCompany={jest.fn()} initialMode="signup" />)
+  fireEvent.changeText(view.getByLabelText('이메일'), 'owner@example.test')
+  fireEvent.changeText(view.getByLabelText('비밀번호'), 'password123')
+  expect(view.getByText(/이용약관과 개인정보 처리방침은 운영 문서 확정 전의 초안/)).toBeTruthy()
+  fireEvent.press(view.getByLabelText('이용약관 읽기'))
+  expect(view.getByText('문서 초안 · 운영 문서 확정 전')).toBeTruthy()
+  fireEvent.press(view.getAllByLabelText('닫기')[0])
+  expect(view.getByLabelText('이메일').props.value).toBe('owner@example.test')
+  expect(view.getByLabelText('비밀번호').props.value).toBe('password123')
+  fireEvent.press(view.getByLabelText('개인정보 처리방침 읽기'))
+  expect(view.getByText(/실제 운영 정책으로 확정된 내용이 아니에요/)).toBeTruthy()
+  expect(apiRequest).not.toHaveBeenCalled()
+  expect(signUp).not.toHaveBeenCalled()
+})
+
+test('a signed-in account can open support while keeping its session', async () => {
+  signIn()
+  jest.mocked(apiRequest).mockResolvedValue({ plan: 'FREE' })
+  const view = render(<AccountScreen onCompany={jest.fn()} />)
+  await view.findByText('무료')
+  fireEvent.press(view.getByLabelText('도움말·문의'))
+  expect(view.getByText(/실제 문의처는 아직 정해지지 않았어요/)).toBeTruthy()
+  expect(view.queryByLabelText('문의처 열기')).toBeNull()
+  expect(jest.mocked(useAuth)().session?.accessToken).toBe('owner')
 })

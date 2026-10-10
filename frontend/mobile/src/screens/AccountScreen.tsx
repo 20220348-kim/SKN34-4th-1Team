@@ -14,6 +14,8 @@ import { PlanUsageSection } from '../components/PlanUsage'
 import { Page, Button, Field, Notice, Card, colors } from '../ui'
 import { PartnerSheet } from '../components/PartnerSheet'
 import { PasswordResetSheet } from '../components/PasswordResetSheet'
+import { ServiceInformationSheet } from '../components/ServiceInformationSheet'
+import { serviceInformation, type ServiceInformationSection } from '../content/serviceInformation'
 
 export function AccountScreen({ onCompany, onSettings, initialMode = 'login', authOnly = false, onBusyChange, showSocialOptions = true }: {
   onCompany(): void; onSettings?(): void; initialMode?: 'login' | 'signup'; authOnly?: boolean; onBusyChange?(busy: boolean): void
@@ -35,6 +37,7 @@ export function AccountScreen({ onCompany, onSettings, initialMode = 'login', au
   const [providerError, setProviderError] = useState<string | null>(null)
   const [providerRevision, setProviderRevision] = useState(0)
   const [resetOpen, setResetOpen] = useState(false)
+  const [information, setInformation] = useState<ServiceInformationSection | null>(null)
   const [profileMode, setProfileMode] = useState<'password' | 'deletion' | null>(null)
   const [preview, setPreview] = useState<AccountDeletionPreview | null>(null)
   const [confirmDeletion, setConfirmDeletion] = useState(false)
@@ -59,7 +62,7 @@ export function AccountScreen({ onCompany, onSettings, initialMode = 'login', au
     request.current?.abort(); profileRunning.current = false
     setPassword(''); setConfirmation(''); setEmailPass(null); setCode(''); setCodeSent(false)
     setProfileMode(null); setPreview(null); setConfirmDeletion(false); setCurrentPassword(''); setBusy(false); setResetOpen(false)
-    setError(null); setNotice(null)
+    setError(null); setNotice(null); setInformation(null)
   }, [auth.session?.accessToken])
 
   function updateEmail(value: string) {
@@ -171,6 +174,10 @@ export function AccountScreen({ onCompany, onSettings, initialMode = 'login', au
     <Button label="계정 삭제" variant="ghost" disabled={busy} onPress={openDeletion} />
     {notice && <Notice>{notice}</Notice>}
     {error && <Notice error>{error}</Notice>}
+    <Button label="개인정보 처리방침" variant="ghost" onPress={() => setInformation('privacy')} />
+    <Button label="이용약관" variant="ghost" onPress={() => setInformation('terms')} />
+    <Button label="도움말·문의" variant="ghost" onPress={() => setInformation('support')} />
+    <ServiceInformationSheet section={information} onClose={() => setInformation(null)} />
     <PartnerSheet visible={profileMode !== null} title={profileMode === 'password' ? '비밀번호 변경' : '계정 삭제'} onClose={closeProfile}
       actions={<><Button label="취소" variant="secondary" disabled={busy} style={{ flex: 1 }} onPress={closeProfile} />
         {profileMode === 'password' ? <Button label="새 비밀번호 저장" busy={busy} disabled={busy} style={{ flex: 2 }} onPress={() => void savePassword()} />
@@ -206,7 +213,10 @@ export function AccountScreen({ onCompany, onSettings, initialMode = 'login', au
       {codeSent && !emailPass && <><Field label="인증번호" value={code} onChangeText={(value) => setCode(value.replace(/\D/g, '').slice(0, 6))} keyboardType="number-pad" autoComplete="one-time-code" maxLength={6} editable={!busy} /><Button label="인증번호 확인" onPress={() => void verifyCode()} disabled={busy} /></>}
     </>}
     <Field label="비밀번호" value={password} onChangeText={setPassword} secureTextEntry autoCapitalize="none" autoCorrect={false} autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} maxLength={72} editable={!busy} />
-    {mode === 'signup' && <><Field label="비밀번호 확인" value={confirmation} onChangeText={setConfirmation} secureTextEntry autoCapitalize="none" autoCorrect={false} autoComplete="new-password" maxLength={72} editable={!busy} /><Text style={{ color: colors.muted }}>비밀번호는 영문·숫자·특수문자만 사용할 수 있으며, 8~72자로 입력해 주세요. 가입하면 이용약관과 개인정보 처리방침에 동의한 것으로 봅니다.</Text></>}
+    {mode === 'signup' && <><Field label="비밀번호 확인" value={confirmation} onChangeText={setConfirmation} secureTextEntry autoCapitalize="none" autoCorrect={false} autoComplete="new-password" maxLength={72} editable={!busy} /><Text style={{ color: colors.muted }}>비밀번호는 영문·숫자·특수문자만 사용할 수 있으며, 8~72자로 입력해 주세요. {serviceInformation.terms.preparing || serviceInformation.privacy.preparing
+      ? '이용약관과 개인정보 처리방침은 운영 문서 확정 전의 초안입니다.' : '가입 전에 이용약관과 개인정보 처리방침을 확인해 주세요.'}</Text>
+      <Button label="이용약관 읽기" variant="ghost" disabled={busy} onPress={() => setInformation('terms')} />
+      <Button label="개인정보 처리방침 읽기" variant="ghost" disabled={busy} onPress={() => setInformation('privacy')} /></>}
     {notice && <Notice>{notice}</Notice>}
     {error && <Notice error>{error}</Notice>}
     {auth.restoreError && <Notice error>{auth.restoreError}</Notice>}
@@ -214,6 +224,7 @@ export function AccountScreen({ onCompany, onSettings, initialMode = 'login', au
     <Button label={mode === 'login' ? '이메일로 회원가입' : '기존 계정으로 로그인'} variant="ghost" disabled={busy} onPress={() => { setMode(mode === 'login' ? 'signup' : 'login'); setError(null); setNotice(null); setPassword(''); setConfirmation(''); setEmailPass(null); setCodeSent(false); setCode('') }} />
     {mode === 'login' && <Button label="비밀번호 찾기" variant="ghost" disabled={busy} onPress={() => setResetOpen(true)} />}
     <PasswordResetSheet visible={resetOpen} onClose={() => setResetOpen(false)} />
+    <ServiceInformationSheet section={information} onClose={() => setInformation(null)} />
     {auth.restoreError && <Button label="기기 로그인 정보 다시 지우기" variant="ghost" onPress={() => void run(() => auth.signOut())} disabled={busy} />}
   </Page>
 }
