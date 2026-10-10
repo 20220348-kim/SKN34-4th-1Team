@@ -3,16 +3,18 @@
 2026-10-08부터 배포 대상의 실행 환경은 Kubernetes로 통일하고 서비스·데이터 경계는 유지한다.
 Compose는 로컬 개발에 유지하고, 이전 중에는 기존 인스턴스와 원본 데이터를 보존한다.
 개인 환경의 Prefect·실행기·결과 서버는 2026-10-10에 Kubernetes로 실제 이전했다.
-평가 세 구성요소만 옮겨도 전체 이전 완료는 아니며, Langfuse와 관련 저장소까지 포함한
+같은 날 [Langfuse와 전용 저장소도 실제 이전](langfuse-kubernetes.md)했고, 실행기는 내부 Langfuse
+Service를 사용한다. 전체 Argo Application은 8개, 원본 Compose 중지 대상은 9개다.
+개인 환경의 이 전환과 웹·운영 데이터·외부 접근을 포함한 전체 이전 완료는 구분하며,
 [전체 Kubernetes 배포 기준](../README.md#최종-배포-목표와-완료-기준)을 적용한다.
 
 ## 개인 환경의 실제 이전 완료 범위 — 2026-10-10
 
 `govbiz-evaluation`에서 Prefect·evaluation-runner·ops-artifacts가 각각 `1/1 Ready`로 실행된다.
-Ops API·sync도 새 내부 주소로 전환했고, 업무·평가 Argo Application 7개가 모두
+Ops API·sync도 새 내부 주소로 전환했고, 업무·평가 7개와 관측 1개의 Argo Application이 모두
 `Synced/Healthy`이며 마지막 수동 동기화가 성공했다. 자동 동기화·prune는 활성화하지 않았다.
 
-배포 소스는 필수 CI 5개와 이미지 발행이 성공한
+Ops·평가 서비스의 배포 소스는 필수 CI 5개와 이미지 발행이 성공한
 `2cab4881fa8b128687a35d0da409ac2c4ee08002`로 고정했다. main의 후속 문서 병합이 기존 CI를
 취소해 이전을 계속 지연시키던 문제를 피하면서, 아래 기록의 동일 SHA·receipt·공개 digest를
 다시 확인했다. 실제 사용한 발행은 MSA `37924582504`, 실행기 `37939919551`이다.
@@ -30,7 +32,8 @@ Core·Catalog·AI는 기존 `e7898ec` 배포를 유지했고, Ops와 평가 실�
   통신을 확인했다. `ops-service.govbiz-msa.svc.cluster.local`을 개인 Ops의 허용 Host에 추가했다.
 - 접수는 버전 12로 재개했다. 기존 웹 `http://localhost:5173/`의 Core·Ops 포워딩도 새 Pod로
   연결했다. 새 실행 경로는 `관리 화면 → Kubernetes Ops → Prefect → 실행기 → 결과 PVC →
-  ops-artifacts → Ops sync/보고서 조회`다. Langfuse 점수 기록은 아직 Compose 서비스를 이용한다.
+  ops-artifacts → Ops sync/보고서 조회`다. 이 단계의 Langfuse 점수 기록은 Compose를 이용했고,
+  이후 위 Langfuse 이전에서 Kubernetes 내부 Service로 전환하고 접수를 버전 20으로 재개했다.
 - 무료 평가 `cfa53e06-c659-4b69-bd89-466eb774133a`가 사례 6개·모델 호출 0회로 완료됐다.
   Prefect flow는 `c275984e-9140-4ba4-8db3-71c491064731`이며, 관리자 로그인·CSRF·동일 요청의
   동일 flow 반환·상세 조회 없는 자동 상태 반영·보고서 HTTP 200·로그아웃 후 접근 차단을 확인했다.
@@ -39,7 +42,8 @@ Core·Catalog·AI는 기존 `e7898ec` 배포를 유지했고, Ops와 평가 실�
   **완료된 동일 요청 ID를 재사용해** 기존 smoke의 나머지 검증을 통과했다. 시간 제한을 늘리거나
   실패 기록을 삭제하지 않았다. 평가 부하 중 응답 지연의 근본 원인과 재발 여부는 후속 확인 대상이다.
 - 원본 Compose의 `prefect`, `evaluation-runner`, `ops-artifacts`는 모두 중지했고 볼륨은 유지했다.
-  Langfuse 웹·worker·PostgreSQL·ClickHouse·Redis·MinIO는 원래 실행 상태를 유지한다.
+  당시 Langfuse 웹·worker·PostgreSQL·ClickHouse·Redis·MinIO는 유지했으며,
+  후속 Langfuse 전환을 마친 현재는 이 원본 여섯 서비스도 중지 상태다.
 
 새 평가 데이터의 원본은 이제 Kubernetes PVC다. 전환 전 Compose 데이터로 단순 재기동하거나
 URL만 되돌리면 이후 데이터가 빠진다. 기존 `ops-bridge.json`과 Compose를 전제로 하는
@@ -157,7 +161,8 @@ artifact ZIP의 출처·크기·SHA-256과 익명 GHCR manifest의 digest도 검
 다음 실제 작업은 **최신 소스·CI·발행 증거 재확인 → 기존 writer 중지와 최신 암호화 백업 →
 보존 PVC 복원·Secret 준비 → 같은 SHA의 수동 Argo 계획·등록·동기화 → 활성화·무료 평가 검증**이다.
 현재 main이 바뀌면 위 발행 기록만으로 새 SHA의 배포를 허용하지 않는다. 기존 Compose 데이터는
-보존하며, Langfuse와 관련 DB·저장소의 Kubernetes 이전도 별도로 완료해야 한다.
+보존한다. 별도 범위인 Langfuse와 관련 DB·저장소의 실제 전환 결과는
+[Langfuse 이전 기록](langfuse-kubernetes.md)에서 관리한다.
 
 ## 병합을 계속하면서 검증된 배포 대상을 고정하기
 
