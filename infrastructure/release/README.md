@@ -33,6 +33,30 @@ GitHub의 공개 범위를 자동으로 변경하거나 원본 병합·CI 검증
 패키지가 없거나 접근할 수 없는 경우에도 자동 생성하지 않고 업로드 전에 중단합니다.
 기대 공개 범위와 다르거나 다른 저장소에 연결된 패키지는 거부하며, 공개 범위를 자동 변경하지 않습니다.
 
+## Kubernetes 웹 이미지
+
+별도 발행기를 복제하지 않고 `MSA image candidates` (`msa-images.yml`)의 수동 실행에서
+`component=web`을 선택합니다. 자동 CI 완료 trigger와 기본 `component=services`는 기존 네
+백엔드를 유지합니다. 웹 패키지 준비가 기존 백엔드 발행의 새 선행 조건이 되지는 않습니다.
+
+- 최초 준비: 아래 공용 `Kubernetes package setup`에서 `component=web`과 정확한
+  `ghcr.io/<개인 계정>/<저장소 소문자>-web`을 확인합니다. PAT 없이 Actions 임시 토큰을 사용합니다.
+- 공개 설정: 패키지 Public·본인 포크 연결·Actions Write를 확인한 뒤 발행합니다.
+  준비 도구나 발행기가 공개 범위·권한을 자동 변경하지 않습니다.
+- 발행: 기본 브랜치에서 `component=web`으로 실행합니다. 기존 동일 SHA 필수 CI·원본 병합
+  검증·`msa-release` environment·업로드 직전/직후 확인을 그대로 사용합니다.
+- 입력: 루트 package/lock/workspace 파일, 웹·shared 소스, mobile의 package.json,
+  타입 검사에 필요한 합성 온라인 입력 가이드 JSON만 선택한 SHA에서 archive합니다.
+  로컬 수정 파일·비밀값·node_modules는 발행 입력이 아닙니다.
+- 모드: 현재 필수 이미지 CI가 검사하는 `portfolio`만 발행합니다. `connected` 이미지 발행은
+  해당 모드의 이미지 CI를 연결한 뒤 지원합니다.
+- 결과: `msa-image-web` artifact의 `web.json`에 공개 범위, digest, 소스 입력·발행기 Git 식별자,
+  `webMode=portfolio`를 v4 receipt로 기록합니다. 실행기의 v3·백엔드 v2와 구분합니다.
+
+`sync_images.py`는 웹 발행을 백엔드 네 개 배포 기록으로 사용하지 않습니다. 웹 digest를
+수동 Argo 배포에 연결하는 단계는 [웹 전환 안내](../gitops/docs/web-kubernetes.md)를 따릅니다.
+코드 구현만으로 원격 패키지·이미지 발행이나 클러스터 전환이 끝난 것은 아닙니다.
+
 ## Kubernetes 평가 실행기 이미지
 
 `Evaluation runner image candidate` (`evaluation-images.yml`)는 `evaluation-runner`만 별도로 발행합니다.
@@ -44,11 +68,16 @@ GitHub의 공개 범위를 자동으로 변경하거나 원본 병합·CI 검증
 LLMOps CI의 격리 Kubernetes 평가 실행 검증도 포함하며, 실행 중·실패·취소·건너뛰기는 통과로
 취급하지 않습니다. 작업 브랜치 push, 수동 workflow 실행, 패키지 점검 성공으로 이 조건을 우회할 수 없습니다.
 
-패키지는 먼저 준비해야 합니다. 공개 실행기는 **PAT 없이** `Evaluation runner package setup`
+패키지는 먼저 준비해야 합니다. 공개 실행기는 **PAT 없이** `Kubernetes package setup`
 (`evaluation-package-setup.yml`)을 기본 브랜치에서 수동 실행해 빈 패키지 한 개를 준비할 수 있습니다.
 자동 trigger는 없으며 `confirm_package`에 정확한 `ghcr.io/<계정>/<저장소 소문자>-evaluation-runner`를
 입력해야 합니다. 개인 포크·공개 정책·발행 활성화·동일 소스의 필수 CI 검증 후에만 단기
 `GITHUB_TOKEN`으로 동작하고, 기존 `msa-release` environment 정책을 그대로 적용합니다.
+
+`component`의 기본값은 `evaluation-runner`입니다. 같은 도구에서 `web`을 선택하면 빈 웹
+패키지 한 개만 준비합니다. 기존 workflow 파일명·artifact 이름은 호환성을 위해 유지하며,
+결과의 `service`·`package`로 실제 대상을 구분합니다. 웹 선택 시 MSA 발행기와, 실행기 선택 시
+평가 발행기와 concurrency 그룹을 공유합니다.
 
 앱 코드 없는 `FROM scratch` Dockerfile만 stdin으로 빌드하며 소스 저장소 연결 label을 포함합니다.
 checkout·앱 코드·비밀 파일은 build context로 전달하지 않습니다. 기존 패키지는 소유자·연결 저장소를

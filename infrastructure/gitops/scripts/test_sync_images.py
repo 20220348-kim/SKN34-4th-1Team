@@ -9,6 +9,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 import sync_images as sync  # Initializes the shared release-module import path.
+
+# isort: split
 import gate
 import yaml
 from test_promote_image import FORK, receipt, values
@@ -71,6 +73,20 @@ def ci_results(llmops_state):
 
 
 class SyncTests(unittest.TestCase):
+    def test_web_receipt_does_not_become_a_backend_release(self):
+        web = artifact("web")
+        rows = [web, {"name": "msa-publication-web"}]
+        def get(path):
+            if "/artifacts?" in path:
+                return {"artifacts": rows}
+            return {"workflow_runs": [run()]} if "/workflows/" in path else run()
+        self.assertIsNone(sync.select_release(FORK, get))
+        with self.assertRaisesRegex(ValueError, "web image"):
+            sync.select_release(FORK, get, run_id=123)
+        web["workflow_run"]["repository_id"] = 999
+        with self.assertRaisesRegex(ValueError, "cross-repository"):
+            sync.select_release(FORK, get)
+
     def test_real_gate_blocks_promotion_without_successful_llmops(self):
         for state in ("failure", "missing", "skipped"):
             with self.subTest(state=state), tempfile.TemporaryDirectory() as directory, \
@@ -398,7 +414,8 @@ class WorkflowContractTests(unittest.TestCase):
             self.assertEqual(job["steps"][0]["with"]["ref"], "${{ github.event.repository.default_branch }}")
             self.assertEqual(job["steps"][0]["with"]["persist-credentials"], "false")
         publication = self.workflow("msa-images.yml")["jobs"]["publish"]
-        self.assertCountEqual(publication["strategy"]["matrix"]["service"], sync.SERVICES)
+        self.assertIn("inputs.component == 'web'", publication["strategy"]["matrix"]["service"])
+        self.assertIn(json.dumps(list(sync.SERVICES), separators=(",", ":")), publication["strategy"]["matrix"]["service"])
 
     def test_deployment_pr_workflows_are_removed(self):
         workflows = sync.ROOT.parents[1] / ".github/workflows"

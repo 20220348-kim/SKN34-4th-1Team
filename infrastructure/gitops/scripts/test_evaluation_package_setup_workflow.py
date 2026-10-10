@@ -30,7 +30,13 @@ class SetupWorkflowTests(unittest.TestCase):
         self.assertEqual(step["env"]["GH_TOKEN"], "${{ github.token }}")
         self.assertIn("bootstrap_runner_actions.py", step["run"])
         self.assertNotIn("inputs.", step["run"])
-        self.assertEqual(workflow["concurrency"]["group"], "evaluation-image-candidate")
+        self.assertEqual(
+            workflow["concurrency"]["group"],
+            "${{ inputs.component == 'web' && 'msa-image-candidates' || 'evaluation-image-candidate' }}",
+        )
+        inputs = workflow.get("on", workflow.get(True))["workflow_dispatch"]["inputs"]
+        self.assertEqual(inputs["component"]["options"], ["evaluation-runner", "web"])
+        self.assertEqual(inputs["component"]["default"], "evaluation-runner")
         self.assertEqual(job["steps"][2]["with"]["name"], "evaluation-package-setup")
         for condition in (
             "github.event.repository.fork",

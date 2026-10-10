@@ -73,11 +73,21 @@ Infra CI는 기존 서비스 Chart 렌더링 테스트와 lint에 웹을 포함�
 운영 인계는 다음 순서가 남아 있다.
 
 1. 변경 커밋의 필수 CI 성공을 확인한다.
-2. 검증된 SHA로 웹 이미지 발행을 기존 발행 경로에 연결하고 공개 digest를 확보한다.
-3. `localMode=false`, 공개 repository/digest, `pullPolicy=IfNotPresent`를 지정한다.
+2. 기본 브랜치의 `Kubernetes package setup`에서 `component=web`과 정확한 패키지 주소를
+   입력해 빈 패키지를 준비한다. Actions 임시 토큰을 사용하므로 PAT 발급은 필요 없다.
+   Public·연결 포크·Actions Write를 확인한다. 기존 패키지가 있으면 설정을 조회한다.
+3. 기존 `MSA image candidates`를 기본 브랜치에서 `component=web`으로 수동 실행한다.
+   동일 SHA 필수 CI를 다시 확인하고 `portfolio` 이미지 한 개를 발행한다.
+   `msa-image-web`의 `web.json`에 기록된 공개 digest를 확보한다.
+4. `localMode=false`, 공개 repository/digest, `pullPolicy=IfNotPresent`를 지정한다.
    local values의 `Never`를 원격 배포에 그대로 사용하지 않는다.
-4. 같은 SHA의 Chart·웹 values를 선택하는 수동 Argo Application을 등록·동기화한다.
-5. 기존 화면을 유지한 채 새 주소에서 로그인·Core·Ops 연결을 확인한 뒤 웹 접속을 전환한다.
+5. 같은 SHA의 Chart·웹 values를 선택하는 수동 Argo Application을 등록·동기화한다.
+6. 기존 화면을 유지한 채 새 주소에서 로그인·Core·Ops 연결을 확인한 뒤 웹 접속을 전환한다.
+
+발행·패키지 준비는 기존 도구를 재사용한다. 네 백엔드의 자동 발행과 평가 실행기의 별도 발행은
+유지하며, 웹 패키지가 없다는 이유로 백엔드 자동 발행을 차단하지 않는다.
+웹은 여러 workspace 입력과 `portfolio` 모드를 묶은 v4 receipt를 사용하므로 기존 네 백엔드
+배포 묶음에 포함하지 않는다. [발행 안내](../../release/README.md#kubernetes-웹-이미지)
 
 이번 소스 변경만으로 공개 이미지가 발행되거나 기존 8개 Argo Application에 웹이 추가되지는
 않는다. Kubernetes 웹 전환 완료와 외부 ingress/TLS 완료도 별개다.
@@ -99,3 +109,15 @@ Infra CI는 기존 서비스 Chart 렌더링 테스트와 lint에 웹을 포함�
 
 검사 전용 이미지나 로컬 정적 빌드를 공개 발행본으로 취급하지 않으며, 기존 개인 웹·Kubernetes
 서비스를 이 이미지로 교체하지 않았다. 임시 검사 컨테이너·네트워크는 제거하고 빌더는 중지했다.
+
+후속 `skn-422` CI에서는 npm 설치가 성공한 뒤 `tsc -b`가 실패했다. 웹 테스트가 참조하는
+`evaluation/application-map/fixtures/synthetic-online-input-guide-v1.json`이 Docker context에
+없던 것이 원인이다. 해당 합성 파일 하나를 빌드 단계·dockerignore 허용 목록·발행 archive 입력에
+포함하도록 수정했다. 타입 검사를 제외하거나 전체 evaluation 디렉터리를 이미지에 넣지 않는다.
+최종 Nginx 단계에는 계속 정적 번들과 Nginx 설정만 복사한다.
+
+수정 확인은 Docker와 같은 소스 경로만 복사한 격리 디렉터리에서 수행했다. 합성 JSON을 뺀
+`tsc -b --force`에서 동일한 `TS2307`을 재현했고, 추가한 뒤 타입 검사와 `portfolio` 정적 빌드가
+통과했다. 설치된 의존성을 사용한 Windows 확인이며 Linux 이미지 빌드 성공을 대신하지 않는다.
+수정 후 로컬 전체 이미지 빌드도 npm의 `UND_ERR_SOCKET`·`ECONNRESET`이 반복되어 중지했다.
+새 커밋의 필수 CI에서 전체 이미지 빌드·프록시를 확인해야 한다.

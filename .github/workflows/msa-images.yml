@@ -5,6 +5,13 @@ on:
     workflows: [GovBiz CI, Catalog separation CI, GovBiz Ops CI, Infra CI, LLMOps CI]
     types: [completed]
   workflow_dispatch:
+    inputs:
+      component:
+        description: 'Publish the four backend services or only the Kubernetes web image'
+        type: choice
+        options: [services, web]
+        default: services
+        required: true
 
 env:
   GOVBIZ_RELEASE_BRANCH: ${{ github.event.repository.default_branch }}
@@ -34,10 +41,14 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
-      - name: Check all four package policies without building or uploading
+      - name: Check selected package policies without building or uploading
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 -B infrastructure/release/publish.py --check-packages --report "${RUNNER_TEMP}/package-preflight.json"
+          COMPONENT: ${{ github.event_name == 'workflow_dispatch' && inputs.component || 'services' }}
+        run: |
+          args=()
+          if [[ "$COMPONENT" == "web" ]]; then args+=(--service web); fi
+          python3 -B infrastructure/release/publish.py --check-packages "${args[@]}" --report "${RUNNER_TEMP}/package-preflight.json"
       - name: Save package diagnostics even when checks fail
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -82,7 +93,7 @@ jobs:
       fail-fast: false
       max-parallel: 2
       matrix:
-        service: [core-service, catalog-service, ai-service, ops-service]
+        service: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.component == 'web' && '["web"]' || '["core-service","catalog-service","ai-service","ops-service"]') }}
     env:
       GH_TOKEN: ${{ github.token }}
       MSA_RELEASE_ENABLED: ${{ vars.MSA_RELEASE_ENABLED }}

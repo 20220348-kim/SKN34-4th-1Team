@@ -58,7 +58,8 @@ def select_release(fork, get=api, run_id=None):
         artifacts = [item for item in artifacts if item.get("name") not in PUBLICATION_REPORTS]
         if not artifacts:  # successful gate-only run; reports are not receipts
             continue
-        if len(artifacts) != 4 or {a["name"] for a in artifacts} != {"msa-image-" + s for s in SERVICES}:
+        web_only = len(artifacts) == 1 and artifacts[0].get("name") == "msa-image-web"
+        if not web_only and (len(artifacts) != 4 or {a["name"] for a in artifacts} != {"msa-image-" + s for s in SERVICES}):
             raise ValueError("Publisher must provide exactly four image receipts")
         for artifact in artifacts:
             origin = artifact.get("workflow_run", {})
@@ -68,6 +69,14 @@ def select_release(fork, get=api, run_id=None):
                     or origin.get("head_repository_id") != run["repository"]["id"]
                     or not 0 < artifact.get("size_in_bytes", 0) < 16384):
                 raise ValueError("Invalid/expired/cross-repository artifact")
+        if web_only:
+            # The same workflow can manually publish the separate web image.
+            # Never promote its v4 receipt as a four-backend deployment bundle.
+            if run.get("event") != "workflow_dispatch":
+                raise ValueError("Web publication must be explicitly dispatched")
+            if run_id is not None:
+                raise ValueError("Selected publisher contains a web image, not a backend release")
+            continue
         return run, artifacts
     return None
 

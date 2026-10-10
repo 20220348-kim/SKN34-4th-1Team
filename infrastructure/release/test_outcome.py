@@ -580,14 +580,18 @@ class OutcomeTests(unittest.TestCase):
             self.assertNotIn("sensitive", stdout.getvalue())
 
     def test_read_only_preflight_success_is_not_image_or_source_verification(self):
-        for visibility in ("private", "public"):
+        for visibility, service in (
+            (visibility, service)
+            for visibility in ("private", "public")
+            for service in (None, "evaluation-runner", "web")
+        ):
             metadata = {
                 "repository": {"full_name": "alice/Example"},
                 "owner": {"login": "alice"},
                 "visibility": visibility,
             }
             with (
-                self.subTest(visibility=visibility),
+                self.subTest(visibility=visibility, service=service),
                 tempfile.TemporaryDirectory() as directory,
             ):
                 report = Path(directory) / "report.json"
@@ -603,7 +607,8 @@ class OutcomeTests(unittest.TestCase):
                     ),
                     patch(
                         "sys.argv",
-                        ["publish.py", "--check-packages", "--report", str(report)],
+                        ["publish.py", "--check-packages", "--report", str(report)]
+                        + (["--service", service] if service else []),
                     ),
                     patch.object(
                         publish,
@@ -622,7 +627,10 @@ class OutcomeTests(unittest.TestCase):
                 saved = json.loads(report.read_text(encoding="utf-8"))
                 self.assertEqual(saved["state"], "verified")
                 self.assertTrue(saved["packagePolicyVerified"])
-                self.assertEqual(len(saved["packages"]), 4)
+                self.assertEqual(
+                    set(saved["packages"]),
+                    {service} if service else set(publish.SERVICES),
+                )
                 self.assertIsNone(saved["sourceSha"])
                 self.assertEqual(saved["upload"], "not_attempted")
                 self.assertFalse(saved["receiptWritten"])

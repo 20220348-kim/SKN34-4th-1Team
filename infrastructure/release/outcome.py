@@ -10,7 +10,7 @@ from repository import SERVICES, from_ci
 
 # Informational artifacts are never receipts or authorization evidence.
 PUBLICATION_REPORTS = {"msa-publication-result", "msa-package-preflight"} | {
-    "msa-publication-" + s for s in SERVICES
+    "msa-publication-" + s for s in (*SERVICES, "web")
 }
 
 

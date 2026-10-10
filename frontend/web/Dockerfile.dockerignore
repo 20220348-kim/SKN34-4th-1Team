@@ -11,6 +11,10 @@
 !frontend/packages/
 !frontend/packages/shared/
 !frontend/packages/shared/**
+!evaluation/
+!evaluation/application-map/
+!evaluation/application-map/fixtures/
+!evaluation/application-map/fixtures/synthetic-online-input-guide-v1.json
 **/node_modules/
 **/.pnpm-store/
 **/dist/
