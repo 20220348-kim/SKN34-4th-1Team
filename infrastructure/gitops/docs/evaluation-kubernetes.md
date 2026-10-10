@@ -43,9 +43,8 @@ Core·Catalog·AI는 기존 `e7898ec` 배포를 유지했고, Ops와 평가 실�
 
 새 평가 데이터의 원본은 이제 Kubernetes PVC다. 전환 전 Compose 데이터로 단순 재기동하거나
 URL만 되돌리면 이후 데이터가 빠진다. 기존 `ops-bridge.json`과 Compose를 전제로 하는
-`ops_runtime.py --check`·백업 절차는 이 새 구성을 아직 지원하지 않으므로, 과거 연결 파일을
-현재 배포 상태로 간주하지 않는다. Kubernetes PVC·Ops DB를 함께 다루는 백업·복구 경로의
-실제 전환이 다음 운영 작업이다. 이번 이전은 개인 kind 환경의 결과이며 외부 배포·고가용성의
+`ops_runtime.py --check`는 이 새 구성을 아직 지원하지 않으므로, 과거 연결 파일을 현재 배포
+상태로 간주하지 않는다. 백업은 아래의 Kubernetes PVC 경로를 사용한다. 이번 이전은 개인 kind 환경의 결과이며 외부 배포·고가용성의
 완료 증거가 아니다.
 
 전환을 막던 코드도 기존 도구 안에서 수정했다. Ops 원본 관측이 별도 평가 AppProject의 세
@@ -58,6 +57,43 @@ Ruff와 `git diff --check`도 통과했다. 테스트 파일의 기존 B023 경�
 이 도구 변경의 전체 CI는 커밋·푸시 후 확인할 범위다. 배포 이미지 SHA의 기존 CI 성공과 구분한다.
 
 아래 전환 전 기록은 각 시점의 상태이며, 현재 완료 범위는 이 절을 기준으로 한다.
+
+## 전환 후 Kubernetes 데이터 백업·복원 — 2026-10-10
+
+기존 `ops_db_snapshot.py backup`에 `--kubernetes-evaluation`을 연결했다.
+Ops의 Kubernetes 내부 연결을 확인하고, 중지된 `govbiz-evaluation`의 세 Deployment와
+Prefect·results PVC를 원본으로 사용한다. 후속 `ops_state_snapshot.py backup`은 DB 백업의
+원본 종류를 따라가며 암호화·파일 수집·DB 복원·평가 연결 검사는 기존 구현을 공유한다.
+전환된 Ops에 옵션 없이 Compose 백업을 시도하면 과거 볼륨을 읽기 전에 거절한다.
+[실행 순서와 백업 범위](../../../docs/ops-upgrade-runbook.md#kubernetes로-이전한-평가-pvc-백업)를 참고한다.
+
+개인 환경에서 접수를 버전 13으로 닫고 Ops API·sync와 Kubernetes 평가 서비스 세 개를
+잠시 중지해 **새 PVC의 실제 데이터**를 백업했다. 백업 뒤 원래 replica·명세로 모두 재개했고
+접수는 버전 14로 열었다. 복원은 재개 후 별도 임시 DB·PVC에서 수행했다.
+
+| 실제 수행 범위 | 결과 |
+| --- | --- |
+| Ops MySQL | 32개 테이블·240개 행, 덤프·행 수 일치, 원래 인증 해시의 로그인 및 잘못된 비밀번호 거절 |
+| 결과 PVC | 74개 파일·44,623,271바이트, 권한·내용 복원 |
+| Prefect PVC | 2개 파일·2,400,349바이트, SQLite 무결성과 완료 실행 7건 보존 |
+| 평가 연결 | 완료 평가 9건: 로컬 실행 7건 + 공유 검토 사본 2건 |
+| Ops 실행 키 | 기존 5개 키의 암호화 보관·서명·artifact 인증 검사. Core 인증·Langfuse 키는 별도 |
+| 임시 Kubernetes 복원 | 새 PVC 두 개에 복원, UID/GID 10001 읽기·쓰기, Pod 교체 후 보존, 임시 자원 정리 완료 |
+| 운영 복구 | 원본 PVC UID·Deployment 명세 유지, Argo 7개 Synced/Healthy, Ops·평가 Deployment 4개 Ready, 접수 재개 |
+| HTTP 확인 | 웹·Ops health 200, Ops → Prefect 200, 전환 후 완료 보고서 200 및 백업 해시 일치 |
+
+백업 SHA-256은 `f3f63215f50fed982a2a405b29c51085dc8ddc10b49be3a744dd8165f63ae803`다.
+파일·키·상세 보고서는 저장소 밖 비공개 디렉터리에 보관한다. 원본 Compose 평가 서비스 세 개는
+중지 상태를 유지하고 기존 볼륨·Langfuse 실행 상태는 변경하지 않았다. 모델 호출은 0회다.
+
+이 결과는 **전환 후 평가 데이터의 백업과 격리 복원**이다. 전체 장애 복구나 Langfuse 이전,
+Core 인증 복구, 원격 백업 보관·주기 실행까지 완료했다는 뜻은 아니다. `full_backup_verified=false`,
+`production_storage_restored=false`, `application_started=false`를 유지한다.
+
+관련 선택 테스트 106개는 실패 없이 끝났고 Docker opt-in 테스트 3개는 건너뛰었다.
+그와 별도로 위 실제 백업·MySQL/파일 복원·임시 Kubernetes PVC 복원을 수행했다.
+새 테스트는 Infra CI의 기존 `test_*.py` 탐색에 포함된다. 이번 미커밋 변경의 전체 CI는
+커밋·푸시 후 확인해야 하며 기존 배포 이미지의 CI 성공으로 대체하지 않는다.
 
 ## 전환 전 준비 기록 — 2026-10-09
 
@@ -1297,9 +1333,9 @@ Kubernetes 1.36의 이미지 자격 증명 검증은 이미지 ID 외에 저장�
 
 ## 후속 완료 기준
 
-1. **Kubernetes 데이터의 운영 백업·복구:** 기존 암호화 백업 경로를 새 Prefect·결과 PVC와 Ops DB에
-   연결하고, 전환 후 데이터를 포함한 백업을 격리 대상에 실제 복원한다. Compose 전용 진단·복구
-   경로를 현재 실행 환경에 맞게 바꾸고, 개인 Argo 설정과 Secret 복구 방법도 함께 유지한다.
+1. **다음 실제 이전은 Langfuse:** 평가 PVC·Ops DB의 새 백업과 격리 복원은 위 기록대로 완료했다.
+   남은 운영 복구 범위는 주기 실행·별도 보관 위치, 전체 Argo 설정·Secret 복구와
+   Compose 전용 진단·중지 계획의 전환이다. 이 과제를 이유로 Langfuse 이전을 계속 미루지 않는다.
 2. **Langfuse 실제 이전:** 웹·worker·PostgreSQL·ClickHouse·Redis·객체 저장소의 데이터를 보존해
    Kubernetes로 옮긴다. 실행기의 Langfuse 주소·정책을 내부 Service로 전환하고, 점수 저장과
    재조회를 확인한 후 기존 Compose 관측 서비스를 중지한다.

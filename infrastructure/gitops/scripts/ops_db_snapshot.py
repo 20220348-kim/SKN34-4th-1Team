@@ -122,16 +122,18 @@ def database_identity(namespaced, pod):
     }
 
 
-def frozen_source(state, settings):
+def frozen_source(state, settings, *, kubernetes_evaluation=False):
     argo = None
     if settings.get("mode") == "gitops":
         argo = argo_observation(state, settings, stopped_ops=True)
     else:
         require_dev(state, settings)
-    record = read_connection(Path(state) / PROFILE, settings)
-    if read_connection(Path(state) / BRIDGE, settings) != record:
-        raise ValueError("Ops connection records differ")
-    _, namespaced, _ = commands(state, settings)
+    record = None
+    if not kubernetes_evaluation:
+        record = read_connection(Path(state) / PROFILE, settings)
+        if read_connection(Path(state) / BRIDGE, settings) != record:
+            raise ValueError("Ops connection records differ")
+    kube, namespaced, _ = commands(state, settings)
     namespaced = [*namespaced, "--request-timeout=15s"]
     deployment = read_json(namespaced + ["get", "deployment", "ops-service", "-o", "json"])
     containers = deployment["spec"]["template"]["spec"]["containers"]
@@ -141,7 +143,12 @@ def frozen_source(state, settings):
         or any(
             type(deployment.get("status", {}).get(key, 0)) is not int
             or deployment.get("status", {}).get(key, 0) != 0
-            for key in ("replicas", "readyReplicas", "updatedReplicas", "availableReplicas")
+            for key in (
+                "replicas",
+                "readyReplicas",
+                "updatedReplicas",
+                "availableReplicas",
+            )
         )
         or len(containers) != 2
         or {item["name"] for item in containers} != {"ops-service", "ops-sync"}
@@ -189,6 +196,17 @@ def frozen_source(state, settings):
             )
         ):
             raise ValueError("Ops deployment does not use the supported database")
+        endpoints = {
+            "PREFECT_API_URL": "http://prefect.govbiz-evaluation.svc.cluster.local:4200/api",
+            "LLMOPS_ARTIFACT_URL": "http://ops-artifacts.govbiz-evaluation.svc.cluster.local:8010",
+        }
+        if kubernetes_evaluation:
+            if any(
+                env.get(key) != {"name": key, "value": value} for key, value in endpoints.items()
+            ):
+                raise ValueError("Ops must use the Kubernetes evaluation services")
+        elif any("govbiz-evaluation" in env.get(key, {}).get("value", "") for key in endpoints):
+            raise ValueError("Use --kubernetes-evaluation after evaluation cutover")
     if read_json(
         namespaced + ["get", "pods", "-l", "app.kubernetes.io/name=ops-service", "-o", "json"]
     )["items"]:
@@ -196,7 +214,76 @@ def frozen_source(state, settings):
     autoscalers = read_json(namespaced + ["get", "hpa", "-o", "json"])["items"]
     if any(item["spec"]["scaleTargetRef"].get("name") == "ops-service" for item in autoscalers):
         raise ValueError("Disable the Ops autoscaler before DB backup")
-    project = record["composeProject"]
+    if kubernetes_evaluation:
+        import evaluation_snapshot
+
+        evaluation_source = {"evaluation": evaluation_snapshot.observe(kube, settings)}
+    else:
+        evaluation_source = compose_writers(record["composeProject"])
+    pod = read_json(namespaced + ["get", "pod", "ops-mysql-0", "-o", "json"])
+    statuses = pod["status"]["containerStatuses"]
+    if (
+        len(statuses) != 1
+        or statuses[0]["name"] != "mysql"
+        or not statuses[0]["ready"]
+        or "running" not in statuses[0]["state"]
+        or pod["metadata"].get("deletionTimestamp")
+    ):
+        raise ValueError("Expected a ready dedicated Ops MySQL Pod")
+    image = statuses[0]["imageID"].removeprefix("docker-pullable://")
+    if not re.fullmatch(r"(?:docker\.io/library/)?mysql@sha256:[a-f0-9]{64}", image):
+        raise ValueError("Expected a pinned official MySQL image")
+    image = "mysql@" + image.split("@", 1)[1]
+    storage.run(["docker", "image", "inspect", image])
+    identity = database_identity(namespaced, pod)
+    gitops_source = {}
+    if argo is not None:
+        command = [
+            *namespaced,
+            "exec",
+            "-i",
+            "ops-mysql-0",
+            "-c",
+            "mysql",
+            "--",
+            *storage.AUTH,
+        ]
+        gitops_source = {
+            "argo_observation": argo,
+            "admission_version": paused_admission_version(command),
+            "deployment_spec_sha256": hashlib.sha256(
+                json.dumps(deployment["spec"], sort_keys=True).encode()
+            ).hexdigest(),
+        }
+        if (
+            load_settings(state) != settings
+            or (
+                record is not None
+                and (
+                    read_connection(Path(state) / PROFILE, settings) != record
+                    or read_connection(Path(state) / BRIDGE, settings) != record
+                )
+            )
+            or argo_observation(state, settings, stopped_ops=True) != argo
+        ):
+            raise ValueError("GitOps ownership or connection changed during backup inspection")
+    return namespaced, {
+        **identity,
+        **gitops_source,
+        **evaluation_source,
+        "repository": settings["repository"],
+        "state_id": settings["stateId"],
+        "namespace": settings["namespace"],
+        "deployment_uid": deployment["metadata"]["uid"],
+        "deployment_version": deployment["metadata"]["resourceVersion"],
+        "pod_uid": pod["metadata"]["uid"],
+        "mysql_image": image,
+        "mysql_started_at": statuses[0]["state"]["running"]["startedAt"],
+        "mysql_restart_count": statuses[0]["restartCount"],
+    }
+
+
+def compose_writers(project):
     identities = (
         storage.run(
             [
@@ -242,55 +329,7 @@ def frozen_source(state, settings):
         }
     if services.count("prefect") != 1 or services.count("evaluation-runner") != 1:
         raise ValueError("Expected one stopped Prefect and evaluation-runner")
-    pod = read_json(namespaced + ["get", "pod", "ops-mysql-0", "-o", "json"])
-    statuses = pod["status"]["containerStatuses"]
-    if (
-        len(statuses) != 1
-        or statuses[0]["name"] != "mysql"
-        or not statuses[0]["ready"]
-        or "running" not in statuses[0]["state"]
-        or pod["metadata"].get("deletionTimestamp")
-    ):
-        raise ValueError("Expected a ready dedicated Ops MySQL Pod")
-    image = statuses[0]["imageID"].removeprefix("docker-pullable://")
-    if not re.fullmatch(r"(?:docker\.io/library/)?mysql@sha256:[a-f0-9]{64}", image):
-        raise ValueError("Expected a pinned official MySQL image")
-    image = "mysql@" + image.split("@", 1)[1]
-    # It must already be available locally; never silently pull a replacement image.
-    storage.run(["docker", "image", "inspect", image])
-    identity = database_identity(namespaced, pod)
-    gitops_source = {}
-    if argo is not None:
-        command = [*namespaced, "exec", "-i", "ops-mysql-0", "-c", "mysql", "--", *storage.AUTH]
-        gitops_source = {
-            "argo_observation": argo,
-            "admission_version": paused_admission_version(command),
-            "deployment_spec_sha256": hashlib.sha256(
-                json.dumps(deployment["spec"], sort_keys=True).encode()
-            ).hexdigest(),
-        }
-        if (
-            load_settings(state) != settings
-            or read_connection(Path(state) / PROFILE, settings) != record
-            or read_connection(Path(state) / BRIDGE, settings) != record
-            or argo_observation(state, settings, stopped_ops=True) != argo
-        ):
-            raise ValueError("GitOps ownership or connection changed during backup inspection")
-    return namespaced, {
-        **identity,
-        **gitops_source,
-        "repository": settings["repository"],
-        "state_id": settings["stateId"],
-        "namespace": settings["namespace"],
-        "compose_project": project,
-        "deployment_uid": deployment["metadata"]["uid"],
-        "deployment_version": deployment["metadata"]["resourceVersion"],
-        "pod_uid": pod["metadata"]["uid"],
-        "mysql_image": image,
-        "mysql_started_at": statuses[0]["state"]["running"]["startedAt"],
-        "mysql_restart_count": statuses[0]["restartCount"],
-        "writers": writers,
-    }
+    return {"compose_project": project, "writers": writers}
 
 
 def query(command, text):
@@ -585,26 +624,36 @@ def validate(payload):
     return payload
 
 
-def backup(state, key_file, output):
+def backup(state, key_file, output, *, kubernetes_evaluation=False):
     key = storage.key_bytes(key_file)
     output = private_parent(output)
     if output.exists() or output.is_symlink():
         raise ValueError("Choose a new backup file; existing output is never overwritten")
+    options = {"kubernetes_evaluation": True} if kubernetes_evaluation else {}
     settings = load_settings(state)
-    namespaced, before = frozen_source(state, settings)
-    command = [*namespaced, "exec", "-i", "ops-mysql-0", "-c", "mysql", "--", *storage.AUTH]
+    namespaced, before = frozen_source(state, settings, **options)
+    command = [
+        *namespaced,
+        "exec",
+        "-i",
+        "ops-mysql-0",
+        "-c",
+        "mysql",
+        "--",
+        *storage.AUTH,
+    ]
     version = query(command, "SELECT VERSION();")
     counts = inventory(command)
     quiet_database(command, counts)
     sql = dump(command)
     if (
-        frozen_source(state, settings)[1] != before
+        frozen_source(state, settings, **options)[1] != before
         or inventory(command) != counts
         or dump(command) != sql
     ):
         raise ValueError("Source changed during DB backup; no archive was published")
     # Recheck writer state after the final DB read as well.
-    if frozen_source(state, settings)[1] != before:
+    if frozen_source(state, settings, **options)[1] != before:
         raise ValueError("Source writers changed during DB backup")
     payload = validate(
         {
@@ -748,6 +797,11 @@ def main():
     create.add_argument("--state-dir", type=Path, default=STATE)
     create.add_argument("--output", type=Path, required=True)
     create.add_argument("--key-file", type=Path, required=True)
+    create.add_argument(
+        "--kubernetes-evaluation",
+        action="store_true",
+        help="Back up the stopped Kubernetes evaluation runtime after cutover",
+    )
     check = actions.add_parser("verify")
     check.add_argument("--archive", type=Path, required=True)
     check.add_argument("--key-file", type=Path, required=True)
@@ -757,7 +811,12 @@ def main():
     os.umask(0o077)
     try:
         result = (
-            backup(args.state_dir, args.key_file, args.output)
+            backup(
+                args.state_dir,
+                args.key_file,
+                args.output,
+                kubernetes_evaluation=args.kubernetes_evaluation,
+            )
             if args.action == "backup"
             else verify(args.archive, args.key_file)
         )
@@ -765,7 +824,8 @@ def main():
     except (ValueError, KeyError, TypeError, OSError, subprocess.SubprocessError):
         # Never print raw SQL, credentials, remote output or archive contents.
         parser.exit(
-            1, "Ops DB snapshot failed; no source writes, overwrite or automatic restart.\n"
+            1,
+            "Ops DB snapshot failed; no source writes, overwrite or automatic restart.\n",
         )
 
 

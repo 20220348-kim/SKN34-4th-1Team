@@ -532,10 +532,61 @@ OPS_DB_SNAPSHOT_MYSQL_IMAGE='mysql@sha256:<로컬 이미지 digest>' \
   python3 -B -m unittest discover -s infrastructure/gitops/scripts -p 'test_ops_db_snapshot.py'
 ```
 
+### Kubernetes로 이전한 평가 PVC 백업
+
+평가 서비스 전환 후에는 **아래 명령으로 원본 종류를 명시**한다. Compose 볼륨은 전환 전
+사본이므로 최신 데이터 복구에 사용할 수 없다. Ops가 Kubernetes 평가 주소를 쓰는데 옵션을
+생략하면 백업이 실패한다. `ops_maintenance_plan.py`의 Compose 중지 계획도 전환 후에는 사용하지 않는다.
+
+1. 동일한 개인 GitOps 클러스터에서 Argo 수동 동기화·고정 revision을 확인하고 원래 Deployment
+   명세와 replica를 기록한다. 미완료 평가·열린 예산 예약·활성 일정을 비운 뒤 접수를 닫는다.
+2. `govbiz-msa/ops-service`와 `govbiz-evaluation`의 `evaluation-runner`, `prefect`,
+   `ops-artifacts`를 replica 0으로 만들고 Pod 종료를 기다린다. MySQL·원본 PVC는 유지한다.
+   백업 중 다른 sync·수동 쓰기를 실행하지 않는다. CLI가 서비스나 접수를 대신 중지하지 않는다.
+3. 기존 `init-key` 절차로 준비한 키와 **새 출력 파일**을 사용한다. 원본 MySQL·Ops·Prefect의
+   고정 digest 이미지는 호스트 Docker에 미리 준비되어 있어야 한다.
+
+```bash
+python3 -B infrastructure/gitops/scripts/ops_db_snapshot.py backup \
+  --state-dir "$OPS_STATE_DIR" --kubernetes-evaluation \
+  --key-file "$OPS_DB_BACKUP_KEY" --output "$OPS_DB_BACKUP_FILE"
+python3 -B infrastructure/gitops/scripts/ops_state_snapshot.py backup \
+  --state-dir "$OPS_STATE_DIR" --db-archive "$OPS_DB_BACKUP_FILE" \
+  --key-file "$OPS_DB_BACKUP_KEY" --output "$OPS_STATE_BACKUP_FILE" --runtime-keys
+```
+
+4. 성공·실패 모두 원래 명세·소유 UID를 확인해 중지했던 Deployment를 원래 replica로 재개하고
+   readiness·내부 연결을 확인한다. 접수를 원래 상태로 되돌리고 로컬 웹 포워딩을 새 Pod에 연결한다.
+   전환 전 Compose 실행기를 다시 시작하지 않는다. 복원 검사는 재개 뒤 수행할 수 있다.
+
+```bash
+python3 -B infrastructure/gitops/scripts/ops_state_snapshot.py verify \
+  --key-file "$OPS_DB_BACKUP_KEY" --archive "$OPS_STATE_BACKUP_FILE" \
+  --completed-links --runtime-keys --database-login
+python3 -B infrastructure/gitops/scripts/evaluation_pvc_restore.py \
+  --state-dir "$OPS_STATE_DIR" --key-file "$OPS_DB_BACKUP_KEY" --archive "$OPS_STATE_BACKUP_FILE"
+```
+
+두 번째 복원 명령에는 `--retain-for-migration`을 사용하지 않는다. 기존 PVC를 덮어쓰지 않고
+새 임시 namespace·PVC에 복원하며 Pod 교체·파일·SQLite·평가 연결을 확인한 뒤 정리한다.
+
+백업은 `govbiz-evaluation`의 **Bound/Retain PVC `prefect`·`results`**를 읽기 전용 임시 Pod로
+수집한다. 이 Pod는 서비스 계정 토큰을 받지 않으며, `fsGroup`으로 원본 권한을 변경하지 않는다.
+개별 deny-all NetworkPolicy를 만들고 Pod·정책은 UID 조건으로 정리한다. 정리 실패는 성공으로
+처리하지 않는다. 정책 생성 자체를 네트워크 집행 검증으로 보고하지 않는다.
+Prefect는 현재 Chart의 `/data/prefect.db` SQLite와 `/tmp/prefect` 홈 구성을 지원한다.
+
+DB·파일·원본 식별자·Argo/Deployment 명세·키를 캡처 전후 대조하고, 암호화·복원 형식은 기존
+Compose 백업과 공유한다. `--runtime-keys`는 Ops/MySQL Secret과 Kubernetes 결과 서버·실행기의
+참조 토큰을 대조한다. **전체 Secret이나 Langfuse 키·Core 인증은 포함하지 않는다.**
+다른 수동 작성자까지 잠그는 도구가 아니며 원격 복사·주기 백업·전체 서비스 재구축은 별도다.
+[2026-10-10 실제 백업·복원 결과](../infrastructure/gitops/docs/evaluation-kubernetes.md#전환-후-kubernetes-데이터-백업복원--2026-10-10)를 참고한다.
+
 ### DB·결과 파일·Prefect를 같은 중지 상태에서 묶기
 
 [`ops_state_snapshot.py`](../infrastructure/gitops/scripts/ops_state_snapshot.py)는 위 DB 백업에
-동일 프로젝트의 `ops-results`와 `prefect-data`를 추가한 암호화 파일을 만든다.
+원본이 Compose이면 동일 프로젝트의 `ops-results`·`prefect-data`, Kubernetes이면 위 PVC의
+내용을 추가한 암호화 파일을 만든다. 다음 설명의 Docker volume 조건은 Compose 경로에 적용한다.
 **DB 백업 이후 API·sync·실행기·Prefect를 재개하지 않은 상태**에서 실행한다.
 DB 백업에 기록한 쓰기 중지 상태·클러스터 식별자와 현재 상태가 다르거나 현재 SQL 덤프가
 달라졌다면 묶지 않는다. 같은 중지 상태에서 DB 백업부터 새로 수행해야 한다.
