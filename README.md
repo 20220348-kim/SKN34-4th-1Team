@@ -472,9 +472,7 @@ AI가 제안한 조건을 사용자가 확인하면, 키워드·의미 검색으
 
 사진을 누르면 원본 크기로 볼 수 있습니다.
 
-> **검색 대상 준비·후보 검색**
->
-> 번호는 사용자가 조건을 확정한 뒤 `core-service`가 조회·검색을 요청하는 순서입니다.
+<img src="docs/assets/readme/search-candidates-caption.svg" alt="검색 대상 준비·후보 검색 — 번호는 사용자가 조건을 확정한 뒤 core-service가 조회·검색을 요청하는 순서입니다." width="820">
 
 ```mermaid
 flowchart LR
@@ -499,9 +497,7 @@ flowchart LR
 공고 목록과 내용을 읽어 메모리에 보관하고, ‘접수 중만’ 조건을 적용합니다. 2·3번에서는 이 공고들을
 대상으로 키워드·의미 검색을 수행해 관련 공고 ID를 찾습니다. 찾은 ID는 처음 읽어 둔 공고 내용과 연결합니다.
 
-> **후보 결합·최종 응답**
->
-> 공고 ID·순위로 후보를 합친 뒤, 읽어 둔 공고 내용에 AI 평가 결과를 더합니다.
+<img src="docs/assets/readme/search-response-caption.svg" alt="후보 결합·최종 응답 — 공고 ID·순위로 후보를 합친 뒤, 읽어 둔 공고 내용에 AI 평가 결과를 더합니다." width="820">
 
 ```mermaid
 flowchart LR
