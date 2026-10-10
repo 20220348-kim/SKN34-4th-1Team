@@ -130,6 +130,34 @@ class RunnerSetupTests(unittest.TestCase):
         self.prepare()
         self.assertEqual(self.report["status"], "PUBLIC_METADATA_VERIFIED")
 
+    def test_web_selection_creates_only_the_confirmed_web_package(self):
+        self.event["inputs"] = {
+            "component": "web",
+            "confirm_package": FORK.image("web"),
+        }
+        self.prepare()
+        self.assertEqual(self.report["service"], "web")
+        self.assertEqual(self.report["package"], FORK.image("web"))
+        self.assertTrue(
+            all(call.args[1] == "web" for call in self.mock_metadata.call_args_list)
+        )
+        self.assertTrue(
+            all(
+                args[1].startswith(FORK.image("web") + ":bootstrap-")
+                for args, _, _ in self.commands
+                if args[0] == "push"
+            )
+        )
+        self.mock_docker.reset_mock()
+        for inputs in (
+            {"component": "web", "confirm_package": FORK.image(setup.SERVICE)},
+            {"component": "ops-service", "confirm_package": FORK.image("ops-service")},
+        ):
+            self.event["inputs"] = inputs
+            with self.subTest(inputs=inputs), self.assertRaises(ValueError):
+                self.prepare()
+        self.mock_docker.assert_not_called()
+
     def test_wrong_event_ref_target_policy_repository_and_local_run_are_rejected(self):
         for change in (
             {"GITHUB_ACTIONS": "false"},

@@ -10,6 +10,7 @@ USER node
 RUN pnpm --filter govbiz-web... install --frozen-lockfile --network-concurrency=8
 COPY --chown=node:node frontend/web ./frontend/web
 COPY --chown=node:node frontend/packages/shared ./frontend/packages/shared
+COPY --chown=node:node evaluation/application-map/fixtures/synthetic-online-input-guide-v1.json ./evaluation/application-map/fixtures/synthetic-online-input-guide-v1.json
 
 # Both modes ignore .env files and inherited VITE_*; development login stays off.
 # connected enables the AI UI, not automatic evaluation/model calls.

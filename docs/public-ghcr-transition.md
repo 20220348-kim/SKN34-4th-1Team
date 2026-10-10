@@ -34,10 +34,12 @@
 
 1. `evaluation-package-setup.yml`과 관련 코드를 기본 브랜치에 반영하고 같은 SHA의 필수 CI를
    통과시킵니다. 작업 브랜치에서 실행하거나 실패·진행 중 CI를 초기화 예외로 우회하지 않습니다.
-2. 개인 포크 Actions에서 **Evaluation runner package setup → Run workflow**를 선택합니다.
+2. 개인 포크 Actions에서 **Kubernetes package setup → Run workflow**를 선택합니다.
+   `component=evaluation-runner`가 기본입니다. 웹 최초 준비는 `component=web`을 선택하고
+   아래 확인 대상도 `ghcr.io/<계정>/<저장소 소문자>-web`으로 지정합니다.
    기본 브랜치와 정확한 `confirm_package=ghcr.io/<계정>/<저장소 소문자>-evaluation-runner`를 지정합니다.
    `MSA_RELEASE_ENABLED=true`, `MSA_PACKAGE_VISIBILITY=public` 및 기존 `msa-release` 정책을 적용합니다.
-3. 작업은 같은 소스의 CI를 확인하고 빈 실행기 패키지 하나만 만듭니다. 기존 네 서비스 패키지와
+3. 작업은 같은 소스의 CI를 확인하고 선택한 빈 패키지 하나만 만듭니다. 기존 네 서비스 패키지와
    실제 앱 이미지·배포는 변경하지 않습니다. 이미 존재하면 올바른 소유·연결 정보를 검증하고 생성하지 않습니다.
 4. 작업 요약과 `evaluation-package-setup` artifact의 `actualVisibility`를 확인합니다.
    `AWAITING_PUBLIC_CONFIGURATION`이면 표시된 Package settings에서 Public으로 전환하고
@@ -45,6 +47,7 @@
    기존 패키지는 과거 버전도 공개 대상이므로 공개 범위를 확인하며 자동 삭제하지 않습니다.
 5. `Evaluation runner image candidate`를 기본 브랜치에서 실행합니다. 이 작업의 패키지 사전 검사와
    같은 SHA의 필수 CI가 모두 통과해야 실제 실행기 이미지와 v3 receipt가 발행됩니다.
+   웹을 준비했다면 `MSA image candidates`의 `component=web`을 실행해 웹 v4 receipt를 받습니다.
 
 초기화 보고서의 `PUBLIC_METADATA_VERIFIED`는 조회한 공개 메타데이터만 확인합니다.
 `applicationImagePublished=false`, `receiptWritten=false`, `clusterChanged=false`이며 실제 발행

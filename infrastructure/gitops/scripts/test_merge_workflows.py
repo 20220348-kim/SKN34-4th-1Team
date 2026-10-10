@@ -48,7 +48,7 @@ class WorkflowPolicyTests(unittest.TestCase):
         expected = {
             "msa-images.yml": "msa-image-candidates",
             "evaluation-images.yml": "evaluation-image-candidate",
-            "evaluation-package-setup.yml": "evaluation-image-candidate",
+            "evaluation-package-setup.yml": "${{ inputs.component == 'web' && 'msa-image-candidates' || 'evaluation-image-candidate' }}",
         }
         for filename, group in expected.items():
             workflow = yaml.load(
@@ -71,13 +71,18 @@ class WorkflowPolicyTests(unittest.TestCase):
             for name in ("msa-images.yml", "evaluation-images.yml")
         }
         business, runner = workflows.values()
-        self.assertEqual(runner["on"], business["on"])
+        self.assertEqual(runner["on"]["workflow_run"], business["on"]["workflow_run"])
+        self.assertEqual(
+            business["on"]["workflow_dispatch"]["inputs"]["component"]["default"],
+            "services",
+        )
         self.assertEqual(runner["jobs"]["gate"], business["jobs"]["gate"])
         self.assertNotEqual(
             runner["concurrency"]["group"], business["concurrency"]["group"]
         )
         self.assertEqual(
-            len(business["jobs"]["publish"]["strategy"]["matrix"]["service"]), 4
+            business["jobs"]["publish"]["strategy"]["matrix"]["service"],
+            '${{ fromJSON(github.event_name == \'workflow_dispatch\' && inputs.component == \'web\' && \'["web"]\' || \'["core-service","catalog-service","ai-service","ops-service"]\') }}',
         )
         publication = runner["jobs"]["publish"]
         self.assertNotIn("strategy", publication)
@@ -141,11 +146,16 @@ class WorkflowPolicyTests(unittest.TestCase):
             checkout["with"]["ref"], "${{ github.event.repository.default_branch }}"
         )
         self.assertEqual(checkout["with"]["persist-credentials"], "false")
-        self.assertEqual(check["env"], {"GH_TOKEN": "${{ github.token }}"})
+        self.assertEqual(check["env"]["GH_TOKEN"], "${{ github.token }}")
         self.assertEqual(
-            check["run"],
-            'python3 -B infrastructure/release/publish.py --check-packages --report "${RUNNER_TEMP}/package-preflight.json"',
+            check["env"]["COMPONENT"],
+            "${{ github.event_name == 'workflow_dispatch' && inputs.component || 'services' }}",
         )
+        self.assertIn(
+            'if [[ "$COMPONENT" == "web" ]]; then args+=(--service web); fi',
+            check["run"],
+        )
+        self.assertIn('publish.py --check-packages "${args[@]}" --report', check["run"])
         self.assertNotIn("continue-on-error", check)
         self.assertEqual(upload["if"], "${{ always() }}")
         self.assertEqual(upload["with"]["name"], "msa-package-preflight")

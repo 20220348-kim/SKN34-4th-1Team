@@ -12,7 +12,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 SERVICES = ("core-service", "catalog-service", "ai-service", "ops-service")
-IMAGE_COMPONENTS = (*SERVICES, "evaluation-runner")
+IMAGE_COMPONENTS = (*SERVICES, "evaluation-runner", "web")
 EDUCATION_OWNER = "sknetworks-family-aicamp"
 
 

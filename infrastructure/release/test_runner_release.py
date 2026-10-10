@@ -21,6 +21,41 @@ REAL_RUN = subprocess.run
 
 
 class RunnerSourceTests(unittest.TestCase):
+    def test_web_copy_inputs_and_build_mode_are_bound_to_publication(self):
+        source = (publish.ROOT / publish.WEB_DOCKERFILE).read_text(encoding="utf-8")
+        for line in source.splitlines():
+            if not line.startswith("COPY ") or "--from=" in line:
+                continue
+            words = [
+                word for word in shlex.split(line)[1:] if not word.startswith("--")
+            ]
+            for path in words[:-1]:
+                self.assertTrue(
+                    any(
+                        path == root or path.startswith(root + "/")
+                        for root in publish.WEB_PATHS
+                    ),
+                    path,
+                )
+        inputs = dict.fromkeys(publish.WEB_PATHS, "a" * 40)
+        original = publish.workspace_input_key(publish.WEB, inputs, "b" * 40)
+        for path in publish.WEB_PATHS:
+            self.assertNotEqual(
+                original,
+                publish.workspace_input_key(
+                    publish.WEB, inputs | {path: "c" * 40}, "b" * 40
+                ),
+            )
+        self.assertNotEqual(
+            original, publish.workspace_input_key(publish.WEB, inputs, "c" * 40)
+        )
+        with patch.object(publish, "WEB_MODE", "connected"):
+            self.assertNotEqual(
+                original, publish.workspace_input_key(publish.WEB, inputs, "b" * 40)
+            )
+        with self.assertRaises(ValueError):
+            publish.workspace_input_key(publish.WEB, {}, "b" * 40)
+
     def test_every_copy_input_is_archived_and_runtime_manifest_is_verified(self):
         source = (publish.ROOT / publish.RUNNER_DOCKERFILE).read_text(encoding="utf-8")
         inputs = {publish.RUNNER_DOCKERFILE}
@@ -156,12 +191,16 @@ class RunnerSourceTests(unittest.TestCase):
 
 
 class RunnerPublishTests(unittest.TestCase):
+    service = publish.RUNNER
+    paths = publish.RUNNER_PATHS
+    dockerfile = publish.RUNNER_DOCKERFILE
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.files = {}
-        for name in publish.RUNNER_PATHS:
+        for name in self.paths:
             # These two source inputs are trees; all others are blobs.
             target = (
                 name + "/fixture.py"
@@ -169,6 +208,8 @@ class RunnerPublishTests(unittest.TestCase):
                 in (
                     "backend/ai-service/app",
                     "evaluation/support-program-evidence",
+                    "frontend/web",
+                    "frontend/packages/shared",
                 )
                 else name
             )
@@ -178,6 +219,8 @@ class RunnerPublishTests(unittest.TestCase):
                 else "tracked input\n"
             )
             self.files[target] = raw
+        if self.service == publish.WEB:
+            self.files[publish.WEB_DOCKERFILE] = "tracked Dockerfile\n"
         self.files["infrastructure/release/policy.py"] = "tracked policy\n"
         # Even a tracked unrelated file must not enter the runner build context.
         self.files["work/unrelated.txt"] = "not a build input\n"
@@ -200,20 +243,31 @@ class RunnerPublishTests(unittest.TestCase):
         )
         self.sha = self.git("rev-parse", "HEAD")
         (self.root / ".env").write_text("PRIVATE=not-for-build\n")
-        (self.root / "backend/ai-service/app/untracked.py").write_text(
-            "not-for-build\n"
+        source_dir = (
+            "backend/ai-service/app"
+            if self.service == publish.RUNNER
+            else "frontend/web"
         )
-        (self.root / publish.RUNNER_RELEASE).write_text(
-            "dirty manifest must not be used\n"
+        (self.root / source_dir / "untracked.py").write_text("not-for-build\n")
+        dirty = (
+            publish.RUNNER_RELEASE
+            if self.service == publish.RUNNER
+            else publish.WEB_DOCKERFILE
         )
+        (self.root / dirty).write_text("dirty manifest must not be used\n")
         self.output = self.root / "receipt.json"
         self.commands = []
         self.outcome = {}
         self.fail_build = False
         self.fail_push = False
         self.expected_release = hashlib.sha256(
-            self.files[publish.RUNNER_RELEASE].encode()
+            self.files.get(publish.RUNNER_RELEASE, "").encode()
         ).hexdigest()
+        self.labels = (
+            {"ai.govbiz.execution-release-sha256": self.expected_release}
+            if self.service == publish.RUNNER
+            else {"ai.govbiz.web-mode": "portfolio"}
+        )
 
     def git(self, *args):
         return REAL_RUN(
@@ -244,11 +298,14 @@ class RunnerPublishTests(unittest.TestCase):
                 )
             self.assertEqual(
                 Path(args[args.index("--file") + 1]),
-                context / publish.RUNNER_DOCKERFILE,
+                context / self.dockerfile,
             )
-            self.assertIn(
-                "ai.govbiz.execution-release-sha256=" + self.expected_release, args
-            )
+            for name, value in self.labels.items():
+                self.assertIn(name + "=" + value, args)
+            if self.service == publish.WEB:
+                self.assertEqual(
+                    args[args.index("--build-arg") + 1], "WEB_MODE=portfolio"
+                )
             if self.fail_build:
                 raise subprocess.CalledProcessError(1, args)
         if args[:2] == ("docker", "push") and self.fail_push:
@@ -307,7 +364,7 @@ class RunnerPublishTests(unittest.TestCase):
             )
             stack.enter_context(redirect_stdout(io.StringIO()))
             publish.publish(
-                publish.RUNNER,
+                self.service,
                 self.sha,
                 self.output,
                 "fixture",
@@ -318,10 +375,7 @@ class RunnerPublishTests(unittest.TestCase):
             )
             self.assertTrue(
                 all(
-                    call.kwargs["expected_labels"]
-                    == {
-                        "ai.govbiz.execution-release-sha256": self.expected_release,
-                    }
+                    call.kwargs["expected_labels"] == self.labels
                     for call in lookup.call_args_list
                 )
             )
@@ -329,22 +383,27 @@ class RunnerPublishTests(unittest.TestCase):
 
     def test_real_archive_excludes_dirty_untracked_and_unrelated_files(self):
         receipt = self.publish()
-        self.assertEqual(receipt["schemaVersion"], 3)
+        self.assertEqual(
+            receipt["schemaVersion"], 3 if self.service == publish.RUNNER else 4
+        )
         self.assertNotIn("sourceTree", receipt)
-        self.assertEqual(receipt["executionReleaseSha256"], self.expected_release)
+        if self.service == publish.RUNNER:
+            self.assertEqual(receipt["executionReleaseSha256"], self.expected_release)
+        else:
+            self.assertEqual(receipt["webMode"], "portfolio")
+            self.assertNotIn("executionReleaseSha256", receipt)
         self.assertEqual(
             receipt["sourceInputs"],
-            {
-                path: self.git("rev-parse", f"{self.sha}:{path}")
-                for path in publish.RUNNER_PATHS
-            },
+            {path: self.git("rev-parse", f"{self.sha}:{path}") for path in self.paths},
         )
         self.assertEqual(
             receipt["inputKey"],
-            publish.runner_input_key(receipt["sourceInputs"], receipt["publisherTree"]),
+            publish.workspace_input_key(
+                self.service, receipt["sourceInputs"], receipt["publisherTree"]
+            ),
         )
         self.assertEqual(receipt["verifiedRevision"], self.sha)
-        self.assertEqual(receipt["repository"], FORK.image(publish.RUNNER))
+        self.assertEqual(receipt["repository"], FORK.image(self.service))
         self.assertEqual(receipt["visibility"], "public")
         self.assertEqual(self.outcome["upload"], "confirmed")
         self.assertTrue(self.outcome["receiptWritten"])
@@ -395,6 +454,14 @@ class RunnerPublishTests(unittest.TestCase):
                 self.assertNotIn(
                     ("docker", "push"), [args[:2] for args in self.commands]
                 )
+
+
+class WebPublishTests(RunnerPublishTests):
+    """Exercise the same archive, reuse and failure contracts for the web context."""
+
+    service = publish.WEB
+    paths = publish.WEB_PATHS
+    dockerfile = publish.WEB_DOCKERFILE
 
 
 if __name__ == "__main__":

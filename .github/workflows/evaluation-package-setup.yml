@@ -1,19 +1,25 @@
-name: Evaluation runner package setup
+name: Kubernetes package setup
 
 on:
   workflow_dispatch:
     inputs:
+      component:
+        description: 'Prepare one empty package using the temporary Actions token'
+        required: true
+        type: choice
+        options: [evaluation-runner, web]
+        default: evaluation-runner
       confirm_package:
-        description: 'Exact destination: ghcr.io/<owner>/<repository-lowercase>-evaluation-runner'
+        description: 'Exact destination: ghcr.io/<owner>/<repository-lowercase>-<component>'
         required: true
         type: string
 
 permissions:
   contents: read
 
-# Do not race the normal runner publisher. This workflow has no automatic trigger.
+# Share the selected publisher's lock. This workflow has no automatic trigger.
 concurrency:
-  group: evaluation-image-candidate
+  group: ${{ inputs.component == 'web' && 'msa-image-candidates' || 'evaluation-image-candidate' }}
   cancel-in-progress: false
 
 jobs:
@@ -35,7 +41,7 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - name: Prepare only the empty evaluation runner package after exact-source CI
+      - name: Prepare only the selected empty package after exact-source CI
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 -B infrastructure/release/bootstrap_runner_actions.py --report "${RUNNER_TEMP}/evaluation-package-setup.json"

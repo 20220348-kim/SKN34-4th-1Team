@@ -21,6 +21,15 @@ PLATFORM = "linux/amd64"
 RUNNER = "evaluation-runner"
 RUNNER_DOCKERFILE = "infrastructure/llmops/Dockerfile.runner"
 RUNNER_RELEASE = "backend/ops-service/apps/evaluations/execution_release.json"
+WEB = "web"
+WEB_DOCKERFILE = "frontend/web/Dockerfile"
+WEB_PATHS = (
+    "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml",
+    "frontend/web", "frontend/packages/shared", "frontend/mobile/package.json",
+    "evaluation/application-map/fixtures/synthetic-online-input-guide-v1.json",
+)
+# Only the portfolio build is currently exercised by the required image CI.
+WEB_MODE = "portfolio"
 # This image has a repository-root context. Archive only its actual COPY inputs;
 # never send local .env files, work/, caches or an entire checkout to Docker.
 RUNNER_PATHS = (
@@ -60,12 +69,21 @@ def input_key(tree, publisher_tree):
 
 def runner_input_key(inputs, publisher_tree):
     """Bind every cross-service runner input and publication policy to reuse."""
-    if (set(inputs) != set(RUNNER_PATHS) or not valid_sha(publisher_tree)
+    return workspace_input_key(RUNNER, inputs, publisher_tree)
+
+
+def workspace_input_key(service, inputs, publisher_tree):
+    """Hash the actual workspace inputs and the tested build mode."""
+    if service not in (RUNNER, WEB):
+        raise ValueError("Unknown workspace image")
+    paths = RUNNER_PATHS if service == RUNNER else WEB_PATHS
+    if (set(inputs) != set(paths) or not valid_sha(publisher_tree)
             or any(not valid_sha(value) for value in inputs.values())):
-        raise ValueError("Incomplete evaluation runner source identities")
+        raise ValueError("Incomplete workspace source identities")
     payload = json.dumps(inputs, sort_keys=True, separators=(",", ":"))
+    version = "evaluation-runner-v1" if service == RUNNER else f"web-{WEB_MODE}-v1"
     return hashlib.sha256(
-        f"evaluation-runner-v1\n{PLATFORM}\n{payload}\n{publisher_tree}\n".encode()
+        f"{version}\n{PLATFORM}\n{payload}\n{publisher_tree}\n".encode()
     ).hexdigest()
 
 
@@ -208,6 +226,14 @@ def publish(service, sha, output, actor, token, fork, visibility="private", *, r
         receipt_source = {"schemaVersion": 3, "sourceInputs": inputs,
                           "publisherTree": publisher_tree, "executionReleaseSha256": release_hash}
         archive_paths = RUNNER_PATHS
+    elif service == WEB:
+        inputs = {path: git("rev-parse", f"{sha}:{path}") for path in WEB_PATHS}
+        publisher_tree = git("rev-parse", f"{sha}:infrastructure/release")
+        key = workspace_input_key(WEB, inputs, publisher_tree)
+        extra_labels["ai.govbiz.web-mode"] = WEB_MODE
+        receipt_source = {"schemaVersion": 4, "sourceInputs": inputs,
+                          "publisherTree": publisher_tree, "webMode": WEB_MODE}
+        archive_paths = WEB_PATHS
     else:
         tree = git("rev-parse", f"{sha}:backend/{service}")
         key = input_key(tree, git("rev-parse", f"{sha}:infrastructure/release"))
@@ -233,10 +259,13 @@ def publish(service, sha, output, actor, token, fork, visibility="private", *, r
                 reference = uri + ":" + tag
                 context = temporary / "source"
                 build_options = []
-                if service == RUNNER:
-                    build_options += ["--file", str(context / RUNNER_DOCKERFILE)]
+                if service in (RUNNER, WEB):
+                    dockerfile = RUNNER_DOCKERFILE if service == RUNNER else WEB_DOCKERFILE
+                    build_options += ["--file", str(context / dockerfile)]
                     for name, value in extra_labels.items():
                         build_options += ["--label", name + "=" + value]
+                    if service == WEB:
+                        build_options += ["--build-arg", "WEB_MODE=" + WEB_MODE]
                 else:
                     context = context / "backend" / service
                 run("docker", "build", "--platform", PLATFORM, "--label",
@@ -283,8 +312,8 @@ def main():
     parser.add_argument("--report", type=Path)
     args = parser.parse_args()
     if args.check_packages:
-        if args.service not in (None, RUNNER) or args.sha or args.output or not args.report:
-            parser.error("--check-packages requires --report; only --service evaluation-runner may select a separate package")
+        if args.service not in (None, RUNNER, WEB) or args.sha or args.output or not args.report:
+            parser.error("--check-packages requires --report; --service may select evaluation-runner or web")
     elif not all((args.service, args.sha, args.output)):
         parser.error("Publication requires --service, --sha and --output")
     if args.report and args.output and args.report.resolve() == args.output.resolve():
@@ -301,7 +330,7 @@ def main():
         visibility = os.environ.get("MSA_PACKAGE_VISIBILITY", "private")
         if args.check_packages:
             check_packages(os.environ["GH_TOKEN"], fork, visibility, result=result,
-                           services=(RUNNER,) if args.service == RUNNER else SERVICES)
+                           services=(args.service,) if args.service else SERVICES)
         else:
             publish(args.service, args.sha, args.output, os.environ["GITHUB_ACTOR"], os.environ["GH_TOKEN"], fork,
                     visibility, result=result)
