@@ -568,7 +568,7 @@ flowchart LR
 
 공식 첨부 양식에 **사용자가 입력한 답변을 기입하고 초안을 내려받는 기능**입니다.
 
-**양식 분석·답변 준비:** 공식 첨부에서 문항과 입력 위치를 분석해 저장합니다. 사용자는 준비된 양식을 선택하고 문항별 답변을 입력합니다.
+<img src="docs/assets/readme/application-form-caption.svg" alt="양식 분석·답변 준비 — 공식 첨부에서 문항과 입력 위치를 분석해 저장합니다. 사용자는 준비된 양식을 선택하고 문항별 답변을 입력합니다." width="820">
 
 ```mermaid
 flowchart LR
@@ -584,7 +584,7 @@ flowchart LR
     class CoreDB mysql
 ```
 
-**문서 생성·검증·다운로드:** 저장된 답변과 원본 양식을 확인한 뒤, AI의 기입 계획에 따라 형식별 편집 도구가 답변을 넣습니다.
+<img src="docs/assets/readme/application-document-caption.svg" alt="문서 생성·검증·다운로드 — 저장된 답변과 원본 양식을 확인한 뒤, AI의 기입 계획에 따라 형식별 편집 도구가 답변을 넣습니다." width="820">
 
 ```mermaid
 flowchart LR
@@ -607,7 +607,7 @@ flowchart LR
 
 웹 도우미가 질문을 분류해 **서비스 이용 안내, 권한 범위의 자료 조회, 관심 공고에 대한 근거 답변**을 제공합니다.
 
-**질문 분류·처리 경로 선택:** 현재 화면과 대화 문맥을 함께 전달하고, Agents SDK로 질문 의도를 분류합니다. 도구 에이전트 분기는 해당 기능을 켠 회원 요청에 적용됩니다.
+<img src="docs/assets/readme/assistant-routing-caption.svg" alt="질문 분류·처리 경로 선택 — 현재 화면과 대화 문맥을 함께 전달하고, Agents SDK로 질문 의도를 분류합니다. 도구 에이전트 분기는 해당 기능을 켠 회원 요청에 적용됩니다." width="820">
 
 ```mermaid
 flowchart LR
@@ -623,7 +623,7 @@ flowchart LR
     class Help,Agent execution
 ```
 
-**자료 조회·근거 검색·응답 검증:** 도구 에이전트가 활성화된 회원 요청은 core-service의 읽기 전용 API로 자료를 조회합니다. 관심 공고 질문에는 허용된 공고의 근거만 검색합니다.
+<img src="docs/assets/readme/assistant-response-caption.svg" alt="자료 조회·근거 검색·응답 검증 — 도구 에이전트가 활성화된 회원 요청은 core-service의 읽기 전용 API로 자료를 조회합니다. 관심 공고 질문에는 허용된 공고의 근거만 검색합니다." width="820">
 
 ```mermaid
 flowchart LR
