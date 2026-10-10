@@ -472,7 +472,6 @@ AI가 제안한 조건을 사용자가 확인하면, 키워드·의미 검색으
 
 사진을 누르면 원본 크기로 볼 수 있습니다.
 
-> [!NOTE]
 > **검색 대상 준비·후보 검색**
 >
 > 번호는 사용자가 조건을 확정한 뒤 `core-service`가 조회·검색을 요청하는 순서입니다.
@@ -500,7 +499,6 @@ flowchart LR
 공고 목록과 내용을 읽어 메모리에 보관하고, ‘접수 중만’ 조건을 적용합니다. 2·3번에서는 이 공고들을
 대상으로 키워드·의미 검색을 수행해 관련 공고 ID를 찾습니다. 찾은 ID는 처음 읽어 둔 공고 내용과 연결합니다.
 
-> [!NOTE]
 > **후보 결합·최종 응답**
 >
 > 공고 ID·순위로 후보를 합친 뒤, 읽어 둔 공고 내용에 AI 평가 결과를 더합니다.
@@ -572,15 +570,86 @@ flowchart LR
 근거가 부족한 질문은 확인할 수 없다고 안내하고, 외부 서비스 장애는 오류로 반환합니다.
 상세 공고의 HTML 질문과 신청 문서의 첨부파일 분석은 입력·처리 경로가 다릅니다.
 
-### 8.3 신청 문서 작성과 GovBiz 도우미
+### 8.3 신청 문서 작성
 
-| 기능 | 처리 흐름 | 사용자 확인 지점 |
-|---|---|---|
-| 신청 문서 | 공식 양식·문항 분석 → 답변 입력·초안 생성 → 원본 입력 위치 연결 → 형식별 기입·검증 → 다운로드 | 문항별 답변과 생성 결과를 확인합니다. 공식 사이트의 최종 제출은 사용자가 수행합니다. |
-| GovBiz 도우미 | 의도 분류 → 도움말 또는 권한 범위의 Core 자료 조회·관심 공고 RAG → 응답 검증 | 안내·자료 조회와 실제 검색·신청 동작을 구분합니다. |
+공식 첨부 양식에 **사용자가 입력한 답변을 기입하고 초안을 내려받는 기능**입니다.
 
-문서 작성은 지원 형식과 구조에 맞춰 Core 편집기·MCP 도구를 사용합니다.
-도우미의 의도 분류는 Agents SDK, 도구 실행 흐름은 LangGraph로 구성합니다.
+**양식 분석·답변 준비:** 공식 첨부에서 문항과 입력 위치를 분석해 저장합니다. 사용자는 준비된 양식을 선택하고 문항별 답변을 입력합니다.
+
+```mermaid
+flowchart LR
+    Source["공식 첨부 양식"] --> Core["core-service<br/>첨부 수집 · 분석 요청"]
+    Core --> AI["ai-service<br/>문항 추출 · 위치 연결"]
+    AI -->|분석 결과| Core
+    Core -. 조회·저장 .-> CoreDB[("Core MySQL<br/>양식 · 문항 · 답변")]
+    classDef client fill:#e8f3fa,stroke:#91b9cd,color:#183d32
+    classDef service fill:#e7f5eb,stroke:#92bda6,color:#183d32
+    classDef mysql fill:#fff4df,stroke:#c8ad72,color:#183d32
+    class Source client
+    class Core,AI service
+    class CoreDB mysql
+```
+
+**문서 생성·검증·다운로드:** 저장된 답변과 원본 양식을 확인한 뒤, AI의 기입 계획에 따라 형식별 편집 도구가 답변을 넣습니다.
+
+```mermaid
+flowchart LR
+    Core["core-service<br/>생성 작업 실행"] --> Plan["ai-service<br/>OpenAI 기입 계획"]
+    Plan --> Edit["형식별 기입<br/>Core 편집기 · MCP"]
+    Edit -->|Core 검증·저장| Response["웹 · 앱<br/>초안 다운로드"]
+    classDef client fill:#e8f3fa,stroke:#91b9cd,color:#183d32
+    classDef service fill:#e7f5eb,stroke:#92bda6,color:#183d32
+    classDef execution fill:#f3f5f4,stroke:#a8b5af,color:#183d32
+    class Core,Plan service
+    class Edit execution
+    class Response client
+```
+
+양식 조회는 저장된 분석 결과를 사용하며, 문서 생성 작업은 core-service의 워커가 실행합니다.
+원본·입력 버전과 생성 결과를 검증해 파일을 Core MySQL에 저장합니다.
+사용자는 초안과 자동 기입되지 않은 항목을 확인한 뒤 공식 사이트에서 최종 제출합니다.
+
+### 8.4 GovBiz 도우미
+
+웹 도우미가 질문을 분류해 **서비스 이용 안내, 권한 범위의 자료 조회, 관심 공고에 대한 근거 답변**을 제공합니다.
+
+**질문 분류·처리 경로 선택:** 현재 화면과 대화 문맥을 함께 전달하고, Agents SDK로 질문 의도를 분류합니다. 도구 에이전트 분기는 해당 기능을 켠 회원 요청에 적용됩니다.
+
+```mermaid
+flowchart LR
+    Question["웹<br/>도우미 질문"] --> Core["core-service<br/>문맥 구성<br/>개인정보 마스킹"]
+    Core --> Classify["ai-service<br/>Agents SDK<br/>의도 분류"]
+    Classify --> Help["도움말<br/>화면 이동 안내"]
+    Classify -->|회원 자료 필요| Agent["도구 에이전트<br/>LangGraph"]
+    classDef client fill:#e8f3fa,stroke:#91b9cd,color:#183d32
+    classDef service fill:#e7f5eb,stroke:#92bda6,color:#183d32
+    classDef execution fill:#f3f5f4,stroke:#a8b5af,color:#183d32
+    class Question client
+    class Core,Classify service
+    class Help,Agent execution
+```
+
+**자료 조회·근거 검색·응답 검증:** 도구 에이전트가 활성화된 회원 요청은 core-service의 읽기 전용 API로 자료를 조회합니다. 관심 공고 질문에는 허용된 공고의 근거만 검색합니다.
+
+```mermaid
+flowchart LR
+    Agent["ai-service<br/>LangGraph + OpenAI"] -->|읽기 전용 API| Tools["core-service<br/>권한 확인 · 자료 조회"]
+    Tools -. 조회 .-> CoreDB[("Core MySQL<br/>회원 · 기업 · 관심 공고")]
+    Agent -. 근거 검색 .-> Qdrant[("Qdrant<br/>허용된 공고의 청크")]
+    Agent --> Verify["core-service<br/>응답 · 인용 · 이동 경로 검증"]
+    Verify --> Response["웹<br/>답변 · 카드 · 이동 안내"]
+    classDef client fill:#e8f3fa,stroke:#91b9cd,color:#183d32
+    classDef service fill:#e7f5eb,stroke:#92bda6,color:#183d32
+    classDef mysql fill:#fff4df,stroke:#c8ad72,color:#183d32
+    classDef vectorDb fill:#fce2ef,stroke:#c26493,color:#6b2f50
+    class Agent,Tools,Verify service
+    class CoreDB mysql
+    class Qdrant vectorDb
+    class Response client
+```
+
+관심 공고 RAG는 core-service가 본인 관심 공고의 원문을 준비한 뒤 ai-service에 허용 청크를 전달합니다.
+도움말 응답도 core-service의 검증을 거치며, 실제 검색 실행과 신청·제출은 사용자가 해당 화면에서 진행합니다.
 
 [실제 호출 경로](docs/architecture.md) · [AI Service](backend/ai-service/README.md) ·
 [문서 작성·형식별 지원 범위](docs/application-document-mcp-architecture.md)
