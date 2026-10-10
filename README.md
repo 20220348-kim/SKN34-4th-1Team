@@ -675,7 +675,7 @@ flowchart LR
 
 ### 9.2 전체 처리 흐름
 
-**실행 요청·권한·예산 확인:** 관리자의 요청을 검증하고 HTTP 요청 밖의 평가 실행으로 연결합니다.
+<img src="docs/assets/readme/evaluation-request-caption.svg" alt="실행 요청·권한·예산 확인 — 관리자의 요청을 검증하고 HTTP 요청 밖의 평가 실행으로 연결합니다." width="820">
 
 ```mermaid
 flowchart LR
@@ -699,7 +699,7 @@ flowchart LR
 새 모델 호출이 필요한 평가에는 승인된 호출·토큰 예산도 확인하고 예약합니다.
 이후 Prefect가 관리하는 별도 평가 실행기가 실제 평가와 점수·보고서 생성을 수행합니다.
 
-**평가 실행·분석:** 세 가지 방식 중 하나를 실행하고 공통 지표 계산으로 연결합니다.
+<img src="docs/assets/readme/evaluation-analysis-caption.svg" alt="평가 실행·분석 — 세 가지 방식 중 하나를 실행하고 공통 지표 계산으로 연결합니다." width="820">
 
 ```mermaid
 flowchart LR
