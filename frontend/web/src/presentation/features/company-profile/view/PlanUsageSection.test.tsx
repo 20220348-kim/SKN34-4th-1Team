@@ -94,10 +94,40 @@ describe('프로필 요금제와 이용량', () => {
     const tooltip = await screen.findByRole('tooltip')
     expect(tooltip.textContent).toContain('AI 대화 검색 검색어로 공고를 찾을 때 1회예요. 조건을 정리하는 대화와 필터 검색은 세지 않고')
     expect(tooltip.textContent).toContain('신청 문서 초안 새 공고의 양식 분석이나 초안 만들기를 처음 시작할 때 1건이에요.')
-    expect(tooltip.textContent).toContain('신청 문서와 중복 검토는 지워도 그 달에 쓴 횟수가 돌아오지 않아요.')
+    expect(tooltip.textContent).toContain('신청 문서와 중복 검토는 지워도 이미 쓴 횟수가 돌아오지 않아요.')
   })
 
-  it('아직 한도를 정하지 않은 요금제는 막대와 쓴 양 문장 없이 제한 없음으로 적는다', async () => {
+  it('30일 이용권은 네 기능을 이번 기간으로 묶어 남은 양과 기간이 끝나는 때, 이용권이 끝나는 때를 적는다', async () => {
+    const endsAt = '2026-10-31T15:30:00+09:00'
+    vi.spyOn(appContainer.resolve('planUsageUseCase'), 'usage').mockResolvedValue({
+      plan: 'PLUS',
+      planEndsAt: endsAt,
+      items: [
+        { feature: 'AI_SEARCH', period: 'PLAN', limit: 500, used: 20, resetsAt: endsAt },
+        { feature: 'EVIDENCE_QUESTION', period: 'PLAN', limit: 500, used: 0, resetsAt: endsAt },
+        { feature: 'APPLICATION_DRAFT', period: 'PLAN', limit: 5, used: 4, resetsAt: endsAt },
+        { feature: 'COMBINATION_REVIEW', period: 'PLAN', limit: 10, used: 0, resetsAt: endsAt },
+      ],
+    })
+    renderPage()
+    const section = await screen.findByRole('region', { name: '요금제와 이용량' })
+    expect(await within(section).findByText('플러스')).toBeTruthy()
+    expect(within(section).getByText('10월 31일 15:30까지 이용할 수 있어요.')).toBeTruthy()
+    expect(within(section).queryByRole('region', { name: '오늘 이용량' })).toBeNull()
+    const period = within(section).getByRole('region', { name: '이번 기간 이용량' })
+    expect(within(period).getAllByText('10월 31일 15:30에 이번 기간이 끝나요.')).toHaveLength(1)
+    const rows = within(within(period).getByRole('list', { name: '이번 기간 기능별 이용량' })).getAllByRole('listitem')
+    expect(rows.map((row) => row.textContent)).toEqual([
+      'AI 대화 검색이번 기간 480회 남음500회 중 20회 썼어요',
+      '공고 원문 질문이번 기간 500회 남음500회 중 0회 썼어요',
+      // 5건 중 1건 남으면 미리 알립니다.
+      '신청 문서 초안이번 기간 1건 남음5건 중 4건 썼어요',
+      '중복 지원·수혜 검토이번 기간 10회 남음10회 중 0회 썼어요',
+    ])
+    expect(within(rows[2]!).getByText('이번 기간 1건 남음').className).toContain('text-warning')
+  })
+
+  it('한도가 없다고 받은 기능은 막대와 쓴 양 문장 없이 제한 없음으로 적는다', async () => {
     vi.spyOn(appContainer.resolve('planUsageUseCase'), 'usage').mockResolvedValue({
       plan: 'PREMIUM',
       items: [

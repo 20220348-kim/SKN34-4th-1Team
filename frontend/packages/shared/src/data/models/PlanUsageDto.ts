@@ -3,11 +3,11 @@ import { PlanQuotaExceededError, QuotaUnavailableError } from '../../domain/erro
 
 export const planCodeSchema = z.enum(['FREE', 'PLUS', 'PREMIUM'])
 export const planUsageFeatureSchema = z.enum(['AI_SEARCH', 'EVIDENCE_QUESTION', 'APPLICATION_DRAFT', 'COMBINATION_REVIEW'])
-export const planUsagePeriodSchema = z.enum(['DAY', 'MONTH'])
-/** Core는 서울 시각(+09:00)의 다음 초기화 시각을 보냅니다. */
+export const planUsagePeriodSchema = z.enum(['DAY', 'MONTH', 'PLAN'])
+/** Core는 서울 시각(+09:00)으로 이번 기간이 끝나는 때를 보냅니다. */
 const resetsAtSchema = z.iso.datetime({ offset: true })
 
-/** limit이 null이면 그 요금제는 아직 한도를 정하지 않아 제한하지 않습니다. */
+/** limit이 null이면 한도를 두지 않은 것이라 제한하지 않습니다. */
 export const planUsageItemSchema = z.object({
   feature: planUsageFeatureSchema,
   period: planUsagePeriodSchema,
@@ -19,6 +19,8 @@ export const planUsageItemSchema = z.object({
 /** 현재 요금제와 기능별 사용량입니다. 앱이 서버보다 늦게 갱신돼도 모르는 기능 한 줄 때문에 전체를 버리지 않습니다. */
 export const planUsageSchema = z.object({
   plan: planCodeSchema.nullable(),
+  /** 유료 이용권이 끝나는 때입니다. 이 값을 보내지 않던 Core와도 맞도록 없으면 null로 읽습니다. */
+  planEndsAt: resetsAtSchema.nullish().transform((value) => value ?? null),
   items: z.array(z.unknown()).max(16).transform((items) => items.flatMap((item) => {
     const parsed = planUsageItemSchema.safeParse(item)
     return parsed.success ? [parsed.data] : []

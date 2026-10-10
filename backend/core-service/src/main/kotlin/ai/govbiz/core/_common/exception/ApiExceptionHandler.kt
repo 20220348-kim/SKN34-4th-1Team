@@ -374,7 +374,7 @@ class ApiExceptionHandler {
         problem.instance = URI.create(request.requestURI)
         problem.setProperty("code", "PLAN_QUOTA_EXCEEDED")
         problem.setProperty("feature", exception.feature.name)
-        problem.setProperty("period", exception.feature.period.name)
+        problem.setProperty("period", exception.period.name)
         problem.setProperty("plan", exception.plan?.name)
         problem.setProperty("limit", exception.limit)
         problem.setProperty("used", exception.used)

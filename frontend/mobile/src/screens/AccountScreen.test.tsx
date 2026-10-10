@@ -161,10 +161,31 @@ test('a signed-in account shows its plan and every usage limit as progress witho
   expect(view.queryByText(/조건을 정리하는 대화와 필터 검색은 세지 않고/)).toBeNull()
   fireEvent.press(view.getByText('이용량을 세는 기준 보기 ▾'))
   expect(view.getByText(/조건을 정리하는 대화와 필터 검색은 세지 않고/)).toBeTruthy()
-  expect(view.getByText('신청 문서와 중복 검토는 지워도 그 달에 쓴 횟수가 돌아오지 않아요.')).toBeTruthy()
+  expect(view.getByText('신청 문서와 중복 검토는 지워도 이미 쓴 횟수가 돌아오지 않아요.')).toBeTruthy()
 })
 
-test('a plan without a limit yet shows its usage as unlimited without progress bars', async () => {
+test('a thirty-day pass groups every feature into this period and says when the period and the pass end', async () => {
+  signIn()
+  const endsAt = '2026-10-31T15:30:00+09:00'
+  jest.mocked(apiRequest).mockResolvedValue({ plan: 'PLUS', planEndsAt: endsAt, items: [
+    { feature: 'AI_SEARCH', period: 'PLAN', limit: 500, used: 20, resetsAt: endsAt },
+    { feature: 'EVIDENCE_QUESTION', period: 'PLAN', limit: 500, used: 0, resetsAt: endsAt },
+    { feature: 'APPLICATION_DRAFT', period: 'PLAN', limit: 5, used: 4, resetsAt: endsAt },
+    { feature: 'COMBINATION_REVIEW', period: 'PLAN', limit: 10, used: 0, resetsAt: endsAt },
+  ] })
+  const view = render(<AccountScreen onCompany={jest.fn()} onSettings={jest.fn()} />)
+  await view.findByText('플러스')
+  expect(view.getByText('10월 31일 15:30까지 이용할 수 있어요.')).toBeTruthy()
+  expect(view.getByText('이번 기간')).toBeTruthy()
+  expect(view.queryByText('오늘')).toBeNull()
+  expect(view.getAllByText('10월 31일 15:30에 이번 기간이 끝나요.')).toHaveLength(1)
+  expect(view.getByText('이번 기간 480회 남음')).toBeTruthy()
+  expect(view.getByText('5건 중 4건 썼어요')).toBeTruthy()
+  // 5건 중 1건 남으면 미리 알립니다.
+  expect(StyleSheet.flatten(view.getByText('이번 기간 1건 남음').props.style).color).toBe(colors.warning)
+})
+
+test('a usage sent without a limit shows it as unlimited without progress bars', async () => {
   signIn()
   jest.mocked(apiRequest).mockResolvedValue({ plan: 'PREMIUM', items: [
     { feature: 'AI_SEARCH', period: 'DAY', limit: null, used: 42, resetsAt: '2026-10-09T00:00:00+09:00' },

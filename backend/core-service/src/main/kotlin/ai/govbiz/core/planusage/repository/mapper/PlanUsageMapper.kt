@@ -11,6 +11,13 @@ data class PlanUsageCounterDbRow(
     var usedCount: Int = 0,
 )
 
+/** 계정에 배정한 요금제 한 행입니다. [endsAt]이 없으면 끝나는 때가 없는 배정입니다. */
+data class AccountPlanDbRow(
+    var planCode: String = "",
+    var assignedAt: LocalDateTime? = null,
+    var endsAt: LocalDateTime? = null,
+)
+
 /** 작업 표를 남기지 않는 신청 문서 경로가 AI 전에 남기는 공고 기록 한 행입니다. */
 data class PlanUsageDraftProgramDbRow(
     var id: Long = 0,
@@ -26,7 +33,7 @@ data class PlanUsageDraftProgramDbRow(
  */
 @Mapper
 interface PlanUsageMapper {
-    fun findPlanCode(@Param("accountId") accountId: Long): String?
+    fun findPlan(@Param("accountId") accountId: Long): AccountPlanDbRow?
 
     /** 탈퇴하지 않은 계정 행을 잠그고 ID를 돌려줍니다. 없으면 null입니다. */
     fun lockAccount(@Param("accountId") accountId: Long): Long?

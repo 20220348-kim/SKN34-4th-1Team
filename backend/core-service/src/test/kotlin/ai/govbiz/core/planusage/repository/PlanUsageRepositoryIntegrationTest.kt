@@ -7,6 +7,7 @@ import ai.govbiz.core.applicationpreparation.domain.ApplicationServiceField
 import ai.govbiz.core.applicationpreparation.domain.NewApplicationPreparation
 import ai.govbiz.core.applicationpreparation.repository.ApplicationDocumentGenerationJobRepository
 import ai.govbiz.core.applicationpreparation.repository.ApplicationPreparationRepository
+import ai.govbiz.core.planusage.domain.AccountPlan
 import ai.govbiz.core.planusage.domain.PlanCode
 import ai.govbiz.core.planusage.domain.PlanUsageFeature
 import ai.govbiz.core.planusage.domain.PlanUsageJob
@@ -22,6 +23,7 @@ import java.util.concurrent.Callable
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -60,19 +62,22 @@ class PlanUsageRepositoryIntegrationTest {
     }
 
     @Test
-    fun readsFreeWithoutAnAssignmentAndTheAssignedPlanOtherwise() {
-        assertEquals(PlanCode.FREE, repository.findPlan(ownerId))
+    fun readsFreeWithoutAnAssignmentAndTheAssignedPlanWithItsPassPeriodOtherwise() {
+        assertEquals(AccountPlan.FREE, repository.findPlan(ownerId))
         jdbc.update("INSERT INTO account_plan (account_id, plan_code, assigned_at) VALUES (?, 'PREMIUM', NOW(6))", ownerId)
-        assertEquals(PlanCode.PREMIUM, repository.findPlan(ownerId))
+        assertEquals(PlanCode.PREMIUM, repository.findPlan(ownerId).code)
+        assertNull(repository.findPlan(ownerId).endsAt)
 
-        // 운영 문서의 배정 SQL은 다시 실행하면 요금제를 바꿉니다.
-        jdbc.update("""INSERT INTO account_plan (account_id, plan_code, assigned_at) VALUES (?, 'PLUS', NOW(6)) AS assigned
-            ON DUPLICATE KEY UPDATE plan_code = assigned.plan_code, assigned_at = assigned.assigned_at""", ownerId)
-        assertEquals(PlanCode.PLUS, repository.findPlan(ownerId))
+        // 운영 문서의 30일 이용권 배정 SQL은 다시 실행하면 요금제와 기간을 바꿉니다. 시각은 서울 기준으로 읽습니다.
+        val starts = LocalDateTime.of(2026, 10, 1, 15, 30)
+        jdbc.update("""INSERT INTO account_plan (account_id, plan_code, assigned_at, ends_at) VALUES (?, 'PLUS', ?, ?) AS assigned
+            ON DUPLICATE KEY UPDATE plan_code = assigned.plan_code, assigned_at = assigned.assigned_at, ends_at = assigned.ends_at""",
+            ownerId, starts, starts.plusDays(30))
+        assertEquals(AccountPlan(PlanCode.PLUS, starts.atZone(seoul), starts.plusDays(30).atZone(seoul)), repository.findPlan(ownerId))
 
         // 행을 지우면 FREE로 돌아갑니다.
         jdbc.update("DELETE FROM account_plan WHERE account_id = ?", ownerId)
-        assertEquals(PlanCode.FREE, repository.findPlan(ownerId))
+        assertEquals(AccountPlan.FREE, repository.findPlan(ownerId))
     }
 
     @Test
@@ -99,11 +104,21 @@ class PlanUsageRepositoryIntegrationTest {
     }
 
     @Test
-    fun plansWithoutALimitAreCountedWithoutAnUpperBound() {
+    fun developmentAccountsAreCountedWithoutAnUpperBound() {
         repeat(3) { assertEquals(true, repository.reserve(ownerId, PlanUsageFeature.EVIDENCE_QUESTION, "2026-10-08", null)) }
         assertEquals(3, used(PlanUsageFeature.EVIDENCE_QUESTION, "2026-10-08"))
-        // 나중에 한도를 정하면 이미 센 사용량부터 적용됩니다.
+        // 한도가 있으면 이미 센 사용량부터 적용됩니다.
         assertEquals(false, repository.reserve(ownerId, PlanUsageFeature.EVIDENCE_QUESTION, "2026-10-08", 3))
+    }
+
+    @Test
+    fun aPassPeriodKeyCountsSeparatelyFromTheFreeDailyKey() {
+        assertEquals(true, repository.reserve(ownerId, PlanUsageFeature.EVIDENCE_QUESTION, "P20261001T153000", 500))
+        assertEquals(true, repository.reserve(ownerId, PlanUsageFeature.EVIDENCE_QUESTION, "2026-10-08", 10))
+        assertEquals(1, used(PlanUsageFeature.EVIDENCE_QUESTION, "P20261001T153000"))
+        assertEquals(1, used(PlanUsageFeature.EVIDENCE_QUESTION, "2026-10-08"))
+        repository.addCount(ownerId, PlanUsageFeature.APPLICATION_DRAFT, "P20261001T153000", 2)
+        assertEquals(2, used(PlanUsageFeature.APPLICATION_DRAFT, "P20261001T153000"))
     }
 
     @Test
@@ -124,8 +139,17 @@ class PlanUsageRepositoryIntegrationTest {
         assertThrows(DataAccessException::class.java) {
             jdbc.update("INSERT INTO account_plan (account_id, plan_code, assigned_at) VALUES (?, 'premium', NOW(6))", ownerId)
         }
-        assertEquals(PlanCode.FREE, repository.findPlan(ownerId))
+        assertEquals(AccountPlan.FREE, repository.findPlan(ownerId))
+        // 이용권은 시작보다 늦게 끝나야 합니다.
+        assertThrows(DataAccessException::class.java) {
+            jdbc.update("INSERT INTO account_plan (account_id, plan_code, assigned_at, ends_at) VALUES (?, 'PLUS', NOW(6), NOW(6))", ownerId)
+        }
+        assertThrows(DataAccessException::class.java) {
+            jdbc.update("INSERT INTO plan_usage_counter VALUES (?, 'AI_SEARCH', 'P20261001', 0, NOW(6))", ownerId)
+        }
         jdbc.update("INSERT INTO plan_usage_counter VALUES (?, 'AI_SEARCH', '2026-10-31', 0, NOW(6))", ownerId)
+        // V59부터 유료 이용 기간 키(P+서울 시각)를 받습니다.
+        jdbc.update("INSERT INTO plan_usage_counter VALUES (?, 'AI_SEARCH', 'P20261001T153000', 0, NOW(6))", ownerId)
         jdbc.update("INSERT INTO plan_usage_counter VALUES (?, 'EVIDENCE_QUESTION', '2026-10-31', 0, NOW(6))", ownerId)
         // V57부터 월 한도 기능과 달 키(YYYY-MM)를 받습니다.
         jdbc.update("INSERT INTO plan_usage_counter VALUES (?, 'APPLICATION_DRAFT', '2026-10', 0, NOW(6))", ownerId)

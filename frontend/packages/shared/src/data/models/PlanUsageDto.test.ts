@@ -27,6 +27,19 @@ describe('PlanUsageDto', () => {
     expect(parsed.items).toEqual([{ feature: 'EVIDENCE_QUESTION', period: 'DAY', limit: null, used: 42, resetsAt: '2026-10-09T00:00:00+09:00' }])
   })
 
+  it('reads a pass period and when the pass ends, and treats a missing end as none', () => {
+    const parsed = planUsageSchema.parse({
+      plan: 'PLUS',
+      planEndsAt: '2026-10-31T15:30:00+09:00',
+      items: [{ feature: 'AI_SEARCH', period: 'PLAN', limit: 500, used: 20, resetsAt: '2026-10-31T15:30:00+09:00' }],
+    })
+    expect(parsed.planEndsAt).toBe('2026-10-31T15:30:00+09:00')
+    expect(parsed.items.map((item) => item.period)).toEqual(['PLAN'])
+    // 끝나는 때를 보내지 않던 Core의 응답도 끝나는 때 없이 읽습니다.
+    expect(planUsageSchema.parse({ plan: 'FREE', items: [] }).planEndsAt).toBeNull()
+    expect(planUsageSchema.safeParse({ plan: 'PLUS', planEndsAt: 'next month', items: [] }).success).toBe(false)
+  })
+
   it('turns only the plan quota problem contracts into errors', () => {
     // 안내 문구는 받은 때부터 하루 한도가 다시 채워질 때까지 남은 시간을 적습니다(서울 저녁 9시 → 3시간 뒤).
     vi.useFakeTimers({ toFake: ['Date'] })

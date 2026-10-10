@@ -250,7 +250,7 @@ verify_application_preparation_flow() {
   fi
 
   # The same member session runs every AI search below. Raise only this isolated fixture member to
-  # PREMIUM (no plan limit yet) so readiness retries never hit the FREE daily search or monthly draft limits.
+  # PREMIUM (1,500 searches per 30-day period) so readiness retries never hit the FREE daily search or monthly draft limits.
   local member_email member_plan
   member_email="$(sed -n 's/.*"email"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${LAST_RESPONSE_FILE}")"
   if [[ ! "${member_email}" =~ ^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+$ ]]; then

@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
-  findPlanUsageItem, hasPlanLimit, isNearPlanLimit, isPlanLimitReached, planLabels, planQuotaExceededMessage, planUsageCountText,
-  planUsageCountingRules, planUsageResetText, planUsageUsedText, remainingPlanUses, type LimitedPlanUsageItem, type PlanUsageItem,
+  findPlanUsageItem, hasPlanLimit, isNearPlanLimit, isPlanLimitReached, planEndsText, planLabels, planQuotaExceededMessage,
+  planUsageCountText, planUsageCountingRules, planUsageDeletionNote, planUsageResetText, planUsageUsedText, remainingPlanUses,
+  type LimitedPlanUsageItem, type PlanUsageItem,
 } from './PlanUsage'
 
 const daily: LimitedPlanUsageItem = { feature: 'AI_SEARCH', period: 'DAY', limit: 10, used: 8, resetsAt: '2026-10-09T00:00:00+09:00' }
@@ -77,6 +78,22 @@ describe('PlanUsage', () => {
       .toBe('이번 달 신청 문서 초안 3건을 모두 썼어요. 이미 시작한 공고의 문서는 계속 만들 수 있어요. 11월 1일에 다시 채워져요.')
     expect(planQuotaExceededMessage({ feature: 'COMBINATION_REVIEW', period: 'MONTH', limit: 3, plan: 'FREE', resetsAt: drafts.resetsAt }))
       .toBe('이번 달 중복 검토 3회를 모두 썼어요. 진행 중인 검토도 횟수에 들어가요. 11월 1일에 다시 채워져요.')
+  })
+
+  it('counts a pass against its thirty-day period and says when the period and the pass end', () => {
+    const pass: LimitedPlanUsageItem = { feature: 'AI_SEARCH', period: 'PLAN', limit: 500, used: 20, resetsAt: '2026-10-31T15:30:00+09:00' }
+    expect(planUsageCountText(pass)).toBe('이번 기간 480회 남음')
+    expect(planUsageUsedText(pass)).toBe('500회 중 20회 썼어요')
+    // 이용권은 산 시각부터 30일이라 날짜와 서울 시각을 함께 적습니다.
+    expect(planUsageResetText(pass)).toBe('10월 31일 15:30에 이번 기간이 끝나요.')
+    expect(planQuotaExceededMessage({ ...pass, plan: 'PLUS' }))
+      .toBe('이번 기간 AI 대화 검색 500회를 모두 썼어요. 10월 31일 15:30에 이번 기간이 끝나요. 필터 검색은 계속 쓸 수 있어요.')
+    expect(planQuotaExceededMessage({ feature: 'APPLICATION_DRAFT', period: 'PLAN', limit: 5, plan: 'PLUS', resetsAt: pass.resetsAt }))
+      .toBe('이번 기간 신청 문서 초안 5건을 모두 썼어요. 이미 시작한 공고의 문서는 계속 만들 수 있어요. 10월 31일 15:30에 이번 기간이 끝나요.')
+    expect(planEndsText({ planEndsAt: '2026-10-31T15:30:00+09:00' })).toBe('10월 31일 15:30까지 이용할 수 있어요.')
+    expect(planEndsText({ planEndsAt: null })).toBeNull()
+    expect(planEndsText(null)).toBeNull()
+    expect(planUsageDeletionNote).toBe('신청 문서와 중복 검토는 지워도 이미 쓴 횟수가 돌아오지 않아요.')
   })
 
   it('finds a feature only when the usage was loaded', () => {

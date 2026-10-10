@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { StyleSheet, Text, View } from 'react-native'
 import {
-  findPlanUsageItem, hasPlanLimit, isNearPlanLimit, isPlanLimitReached, planLabels, planQuotaExceededMessage, planUsageCountingRules,
+  findPlanUsageItem, hasPlanLimit, planEndsText, isNearPlanLimit, isPlanLimitReached, planLabels, planQuotaExceededMessage, planUsageCountingRules,
   planUsageCountText, planUsageDeletionNote, planUsageFeatureLabels, planUsageResetText, planUsageUsedText,
   type PlanCode, type PlanUsage, type PlanUsageFeature, type PlanUsageItem, type PlanUsagePeriod,
 } from '@govbiz/shared/domain/entities/PlanUsage'
@@ -65,20 +65,24 @@ export function FeatureUsageLine({ token, feature, revision }: { token: string; 
 const periodGroups: readonly { period: PlanUsagePeriod; title: string }[] = [
   { period: 'DAY', title: '오늘' },
   { period: 'MONTH', title: '이번 달' },
+  { period: 'PLAN', title: '이번 기간' },
 ]
 
 /**
  * 내 계정의 요금제와 기능별 이용량입니다. 앱에서는 현재 상태만 보여 주고 결제나 요금제 변경 안내는 두지 않습니다.
- * 같은 때 다시 채워지는 기능끼리(오늘 · 이번 달) 묶어 다시 채워지는 때를 한 번만 적고, 무엇을 한 번으로 세는지는 펼쳐서 봅니다.
+ * 같은 때 다시 채워지는 기능끼리(오늘 · 이번 달 · 유료 이용권의 이번 기간) 묶어 그때를 한 번만 적고, 무엇을 한 번으로 세는지는 펼쳐서 봅니다.
+ * 유료 이용권이면 언제까지 쓸 수 있는지 함께 적습니다.
  */
 export function PlanUsageSection({ token }: { token: string }) {
   const { usage, failed, reload } = usePlanUsage(token, true)
   const [rulesOpen, setRulesOpen] = useState(false)
   if (!usage && !failed) return null
+  const endsText = planEndsText(usage)
   return <Card>
     <Text accessibilityRole="header" style={styles.heading}>요금제와 이용량</Text>
     {usage ? <>
       {usage.plan && <View style={local.plan}><Text style={styles.muted}>현재 요금제</Text><Text style={styles.label}>{planLabels[usage.plan]}</Text></View>}
+      {endsText && <Text style={styles.muted}>{endsText}</Text>}
       {periodGroups.map(({ period, title }) => {
         const items = usage.items.filter(item => item.period === period)
         if (!items.length) return null

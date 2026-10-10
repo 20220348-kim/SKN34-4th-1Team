@@ -124,43 +124,43 @@ V20에 맞추고 미적용 대화용 V19를 한 번만 out-of-order로 적용하
 ## 요금제 사용량 한도
 
 `ai.govbiz.core.planusage`는 요금제별 AI 기능 사용 횟수를 세고 막습니다. 결제 연동 전이라 모든 회원은 FREE에서 시작하고,
-V54 `account_plan`에 운영자가 배정한 계정만 PLUS·PREMIUM입니다(테스트 계정 예:
-`INSERT INTO account_plan (account_id, plan_code, assigned_at) VALUES (?, 'PREMIUM', NOW(6))`). 한도 숫자는 domain `PlanCode`에 있고
-`null`이면 아직 정하지 않아 제한하지 않습니다. 로컬 개발용으로 `app.plan-usage.unlimited-account-emails`(`PLAN_USAGE_UNLIMITED_ACCOUNT_EMAILS`,
-쉼표 구분, 기본 빈 값)에 적은 계정은 사용량만 세고 막지 않으며(`limit: null`), 로컬 Compose는 데모 시드 계정 6개를 넣고 운영은 비웁니다.
-판단 근거와 세는 규칙은 [요금제 사용량 한도](../../docs/plan-usage-limits.md)를 참고하세요.
+V54 `account_plan`에 운영자가 배정한 계정만 PLUS·PREMIUM입니다. 유료는 30일 이용권이라 `assigned_at`부터 V59 `ends_at`까지 쓰고,
+`ends_at`이 없는 배정(운영자·검증 계정)은 30일마다 새 이용 기간이 시작됩니다(domain `AccountPlan`). 한도 숫자는 domain `PlanCode`에 있고
+모든 요금제에 숫자가 있습니다. 로컬 개발용으로 `app.plan-usage.unlimited-account-emails`(`PLAN_USAGE_UNLIMITED_ACCOUNT_EMAILS`, 쉼표 구분,
+기본 빈 값)에 적은 계정은 사용량만 세고 막지 않으며(`limit: null`), 로컬 Compose는 데모 시드 계정 6개를 넣고 운영은 비웁니다.
+배정 SQL과 판단 근거는 [요금제 사용량 한도](../../docs/plan-usage-limits.md)를 참고하세요.
 
 | 기능 | 로그인 전 | FREE | PLUS | PREMIUM | 세는 방법 |
 |---|---|---|---|---|---|
-| AI 대화 검색(`AI_SEARCH`) | 하루 2회 | 하루 10회 | 제한 없음(미정) | 제한 없음(미정) | 검색어가 있는 검색 요청마다 AI 호출 전에 1을 더하고 실패하면 되돌림 |
-| 공고 원문 질문(`EVIDENCE_QUESTION`) | 로그인 필요 | 하루 10회 | 제한 없음(미정) | 제한 없음(미정) | 같음 |
-| 신청 문서 초안(`APPLICATION_DRAFT`) | 로그인 필요 | 월 3건 | 제한 없음(미정) | 제한 없음(미정) | 이번 달 양식 분석·문서 생성·문항별 AI 실행 중 실패하지 않은 것과 만든 문서 파일의 공고 수(같은 공고는 한 건) |
-| 중복 검토(`COMBINATION_REVIEW`) | 로그인 필요 | 월 3회 | 제한 없음(미정) | 제한 없음(미정) | 이번 달 시작한 실행 중 실패하지 않은 것(대기·실행·결과 불명 포함) |
+| AI 대화 검색(`AI_SEARCH`) | 하루 2회 | 하루 10회 | 이용 기간 500회 | 이용 기간 1,500회 | 검색어가 있는 검색 요청마다 AI 호출 전에 1을 더하고 실패하면 되돌림 |
+| 공고 원문 질문(`EVIDENCE_QUESTION`) | 로그인 필요 | 하루 10회 | 이용 기간 500회 | 이용 기간 1,500회 | 같음 |
+| 신청 문서 초안(`APPLICATION_DRAFT`) | 로그인 필요 | 월 3건 | 이용 기간 5건 | 이용 기간 20건 | 이번 기간 양식 분석·문서 생성·문항별 AI 실행 중 실패하지 않은 것과 만든 문서 파일·공고 기록의 공고 수(같은 공고는 한 건) |
+| 중복 검토(`COMBINATION_REVIEW`) | 로그인 필요 | 월 3회 | 이용 기간 10회 | 이용 기간 40회 | 이번 기간 시작한 실행 중 실패하지 않은 것(대기·실행·결과 불명 포함) |
 
-- **기간:** 하루는 서울 날짜, 한 달은 서울 달력의 달입니다. 기간 키가 바뀌면 새 행을 쓰므로 초기화 작업이 없습니다.
-- **하루 한도:** V56 `plan_usage_counter`의 행을 만들거나 잠근 뒤 조건부 UPDATE 한 문장으로 한도 안에서만 더합니다. 한도가 없는
-  요금제는 조건 없이 더해 사용량만 남깁니다. 로그인 전 체험은 접속 주소를 SHA-256으로만 넣은 Redis 키에 다음 서울 자정까지 둡니다.
-  컨트롤러가 분당 요청 제한을 통과한 요청만 셉니다.
-- **월 한도:** 각 기능이 새 작업을 만든 같은 transaction(계정 행 잠금)에서 그 작업까지 센 사용량을 확인하고, 넘으면 작업을
-  남기지 않습니다. 한도가 없는 요금제는 확인하지 않습니다. 실패·만료로 끝난 작업은 별도 처리 없이 빠지고, 신청 문서·중복 검토를
-  지우면 그 달에 쓴 횟수를 `plan_usage_counter`(V57부터 달 키 허용)에 남겨 삭제로 한도가 다시 늘지 않게 합니다.
-  로컬 목업(`demo_seed_key`)은 세지 않습니다.
+- **기간:** FREE는 서울 날짜(AI 검색·원문 질문)와 서울 달력의 달(신청 문서·중복 검토), 유료는 네 기능 모두 이용 기간(30일)입니다.
+  이용 기간 키는 기간이 시작한 서울 시각(`P20261020T153000`, V59부터 허용)입니다. 기간 키가 바뀌면 새 행을 쓰므로 초기화 작업이 없고,
+  이용권이 끝나면 그때부터 FREE 기준으로 셉니다.
+- **요청마다 세는 기능:** V56 `plan_usage_counter`의 행을 만들거나 잠근 뒤 조건부 UPDATE 한 문장으로 한도 안에서만 더합니다.
+  로그인 전 체험은 접속 주소를 SHA-256으로만 넣은 Redis 키에 다음 서울 자정까지 둡니다. 컨트롤러가 분당 요청 제한을 통과한 요청만 셉니다.
+- **작업으로 세는 기능:** 각 기능이 새 작업을 만든 같은 transaction(계정 행 잠금)에서 그 작업까지 센 이번 기간 사용량을 확인하고,
+  넘으면 작업을 남기지 않습니다. 실패·만료로 끝난 작업은 별도 처리 없이 빠지고, 신청 문서·중복 검토를 지우면 그 기간에 쓴 횟수를
+  `plan_usage_counter`(V57부터 달 키 허용)에 남겨 삭제로 한도가 다시 늘지 않게 합니다. 로컬 목업(`demo_seed_key`)은 세지 않습니다.
 - **작업 표가 없는 신청 문서 경로:** 이전 동기 양식 분석(`POST .../forms/discover`)·문서 생성과 문항별 해석·초안은 AI 전에 계정 행을
-  잠근 짧은 transaction에서 그 공고가 이번 달 처음이면 한도를 확인하고 V58 `plan_usage_draft_program`에 기록합니다. AI는
+  잠근 짧은 transaction에서 그 공고가 이번 기간 처음이면 한도를 확인하고 V58 `plan_usage_draft_program`에 기록합니다. AI는
   transaction 밖에서 부르고, 실패하면 그 기록만 지웁니다.
 - **응답:** 한도 초과는 `429 PLAN_QUOTA_EXCEEDED`(`feature`·`period`·`plan`·`limit`·`used`·`resetsAt`·`retryAfterSeconds`,
-  `Retry-After`=다음 초기화까지 초)이고 분당 제한 `SUPPORT_PROGRAM_RATE_LIMITED`와 구분합니다. 사용량 저장소(MySQL·Redis)를
+  `period`=`DAY`·`MONTH`·`PLAN`, `Retry-After`=이번 기간이 끝날 때까지 초)이고 분당 제한 `SUPPORT_PROGRAM_RATE_LIMITED`와 구분합니다. 사용량 저장소(MySQL·Redis)를
   읽거나 쓰지 못하면 유료 기능을 실행하지 않고 `503 QUOTA_UNAVAILABLE`입니다.
 - **로그인:** 공고 원문 질문(`POST /api/v1/support-programs/detail/answers`)과 도우미 자유 질문(`POST /api/v1/assistant/messages`)은
   로그인한 회원만 씁니다(없으면 401 `AUTHENTICATION_REQUIRED`). 기업 맞춤 리포트의 내부 검색·원문 답변은 리포트 예산으로만 셉니다.
-- **문항별 AI:** 화면에서 쓰지 않는 문항별 해석·초안 API도 위 기록으로 신청 문서 월 한도를 지키고 계정별 분당 요청 제한을 받습니다.
+- **문항별 AI:** 화면에서 쓰지 않는 문항별 해석·초안 API도 위 기록으로 신청 문서 한도를 지키고 계정별 분당 요청 제한을 받습니다.
 
 | 사용량 API | 동작 |
 |---|---|
-| `GET /api/v1/plan-usage` | 현재 요금제와 기능별 `feature`·`period`·`limit`·`used`·`resetsAt`(+09:00). 한도가 없으면 `limit: null`. 로그인 전에는 `plan: null`과 접속 주소의 AI 대화 검색 체험만. 월 한도의 `used`에는 진행 중인 작업이 포함돼 한도를 넘을 수 있음. no-store |
+| `GET /api/v1/plan-usage` | 현재 요금제, 이용권이 끝나는 때 `planEndsAt`(무료·끝나는 때가 없는 배정은 null)과 기능별 `feature`·`period`(`DAY`·`MONTH`·`PLAN`)·`limit`·`used`·`resetsAt`(이번 기간이 끝나는 때, +09:00). 로그인 전에는 `plan: null`과 접속 주소의 AI 대화 검색 체험만. 작업으로 세는 기능의 `used`에는 진행 중인 작업이 포함돼 한도를 넘을 수 있음. no-store |
 
-호출 흐름: 하루 한도는 `Controller → PlanUsageService.consume → PlanUsageRepository → MyBatis → MySQL`(회원) 또는
-`GuestPlanUsageRepository → Redis`(로그인 전) 뒤 기존 검색·원문 답변 Service, 월 한도는
+호출 흐름: 요청마다 세는 기능은 `Controller → PlanUsageService.consume → PlanUsageRepository → MyBatis → MySQL`(회원) 또는
+`GuestPlanUsageRepository → Redis`(로그인 전) 뒤 기존 검색·원문 답변 Service, 작업으로 세는 기능은
 `기능 Service(TransactionTemplate) → 기능 Repository.reserve → PlanUsageService.requireMonthlyCapacity → PlanUsageRepository → MyBatis → MySQL`,
 작업 표가 없는 신청 문서 경로는 `기능 Service → PlanUsageService.consumeDraftProgram(TransactionTemplate) → PlanUsageRepository → MyBatis → MySQL`
 뒤 기존 AI 호출입니다.

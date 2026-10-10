@@ -2,10 +2,23 @@ package ai.govbiz.core.planusage.service.dto
 
 import ai.govbiz.core.planusage.domain.PlanCode
 import ai.govbiz.core.planusage.domain.PlanUsageFeature
+import ai.govbiz.core.planusage.domain.PlanUsagePeriod
 import java.time.ZonedDateTime
 
-/** 현재 요금제와 기능별 사용량입니다. 로그인하지 않았으면 [plan]이 null이고 체험 기능만 담습니다. */
-data class PlanUsageResult(val plan: PlanCode?, val items: List<PlanUsageItem>)
+/**
+ * 현재 요금제와 기능별 사용량입니다. 로그인하지 않았으면 [plan]이 null이고 체험 기능만 담습니다.
+ * [planEndsAt]은 유료 이용권이 끝나는 때이며, 무료이거나 끝나는 때가 없는 배정이면 null입니다.
+ */
+data class PlanUsageResult(val plan: PlanCode?, val planEndsAt: ZonedDateTime?, val items: List<PlanUsageItem>)
 
-/** 한 기능의 이번 기간 사용량입니다. [limit]이 null이면 그 요금제는 아직 한도가 없어 제한하지 않고, 월 한도 기능의 [used]에는 진행 중인 작업도 들어갑니다. */
-data class PlanUsageItem(val feature: PlanUsageFeature, val limit: Int?, val used: Int, val resetsAt: ZonedDateTime)
+/**
+ * 한 기능의 이번 기간 사용량입니다. [limit]이 null이면 개발용 무제한 계정이라 막지 않습니다.
+ * 작업으로 세는 기능의 [used]에는 진행 중인 작업도 들어갑니다.
+ */
+data class PlanUsageItem(
+    val feature: PlanUsageFeature,
+    val period: PlanUsagePeriod,
+    val limit: Int?,
+    val used: Int,
+    val resetsAt: ZonedDateTime,
+)
