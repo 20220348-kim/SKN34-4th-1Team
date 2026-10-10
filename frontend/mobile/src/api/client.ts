@@ -1,6 +1,7 @@
 import { toSupportProgramDetail } from '@govbiz/shared/data/models/SupportProgramDto'
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
 import { createSupportProgramClient } from '@govbiz/shared/data/api/supportProgramClient'
+import { SupportProgramInterpretationApiError, SupportProgramRequestApiError, SupportProgramSearchTimeoutApiError, SupportProgramEvidenceApiError } from '@govbiz/shared/data/api/supportProgramApi'
 
 export class ApiError extends Error {
   constructor(
@@ -98,7 +99,26 @@ export async function readProgramDetail(client: ReturnType<typeof programClient>
 }
 
 export function errorMessage(error: unknown): string {
+  if (error instanceof SupportProgramRequestApiError) return error.code === 'SUPPORT_PROGRAM_RATE_LIMITED'
+    ? '요청이 많아요. 안내된 대기 시간 뒤 다시 시도해 주세요.' : '현재 처리 중인 요청이 많아요. 잠시 후 다시 시도해 주세요.'
+  if (error instanceof SupportProgramInterpretationApiError) return error.reason === 'timeout'
+    ? '검색 조건을 정리하는 시간이 초과됐어요. 입력한 내용은 유지돼요.' : '검색 조건 해석 서비스를 이용할 수 없어요. 입력한 내용은 유지돼요.'
+  if (error instanceof SupportProgramSearchTimeoutApiError) return '검색 결과를 확인하지 못했어요. 다시 검색하면 새 요청이므로 먼저 입력한 조건을 확인해 주세요.'
+  if (error instanceof SupportProgramEvidenceApiError) return error.status === 504
+    ? '원문 답변을 확인하는 시간이 초과됐어요. 입력한 질문은 유지돼요.' : '원문 답변을 불러오지 못했어요. 입력한 질문을 확인하고 다시 시도해 주세요.'
   if (error instanceof ApiError) return error.message
   if (error instanceof Error && error.name === 'AbortError') return '요청이 취소되었거나 시간이 초과되었습니다. 다시 시도해 주세요.'
   return '연결하지 못했거나 응답을 확인할 수 없습니다. 잠시 후 다시 시도해 주세요.'
+}
+
+/** 검증된 요청 제한 응답의 대기 시간만 화면에 전달합니다. */
+export function requestRetryAfterSeconds(error: unknown): number | null {
+  const value = error instanceof SupportProgramRequestApiError || error instanceof ApiError ? error.retryAfterSeconds : null
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : null
+}
+
+export function requestResultUnconfirmed(error: unknown): boolean {
+  return error instanceof SupportProgramSearchTimeoutApiError
+    || error instanceof SupportProgramInterpretationApiError && error.reason === 'timeout'
+    || error instanceof Error && ['AbortError', 'TimeoutError', 'TypeError'].includes(error.name)
 }

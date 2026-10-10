@@ -3,17 +3,24 @@ import { Linking, Pressable, StyleSheet, Text, View } from 'react-native'
 import type { SupportProgram } from '@govbiz/shared/domain/entities/SupportProgram'
 import { daysUntil, formatDday, programStatusLabels } from '@govbiz/shared/domain/labels'
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
+import { nationwideRegion, regionNames, toRegionName } from '@govbiz/shared/domain/entities/Region'
 import { Button, Notice, badgeColors, colors, ddayBadgeTone } from '../ui'
 import { ProgramInterestButton, type SearchProgramInterests } from './SearchProgramInterests'
 import { AppIcon } from './AppIcon'
 
-export function SearchProgramCard({ program, onOpen, interests, onLogin }: { program: SupportProgram; onOpen?(identity: SupportProgramIdentity): void
+export function SearchProgramCard({ program, onOpen, interests, onLogin, searchRegion }: { program: SupportProgram; onOpen?(identity: SupportProgramIdentity): void
+  searchRegion?: string | null
   interests?: SearchProgramInterests; onLogin?(): void }) {
   const [linkError, setLinkError] = useState<string | null>(null)
   const review = program.eligibilityReview
   const deadline = daysUntil(program.applicationEndDate)
   const statusColor = program.status === 'OPEN' ? colors.primaryText : program.status === 'UPCOMING' ? colors.info : colors.muted
   const quotes = [...new Set([...(review?.target.evidence ?? []), ...(review?.region.evidence ?? [])].map(item => item.quote))]
+  const requestedRegion = searchRegion ? toRegionName(searchRegion.trim().split(/\s+/)[0]!) : null
+  const regions = program.regions.map(toRegionName)
+  const otherRegion = requestedRegion !== null && requestedRegion !== nationwideRegion
+    && regionNames.some(value => value === requestedRegion) && regions.length > 0
+    && regions.every(value => regionNames.some(known => known === value) && value !== nationwideRegion && value !== requestedRegion)
   async function openSource() {
     setLinkError(null)
     try { await Linking.openURL(program.sourceUrl) }
@@ -31,6 +38,8 @@ export function SearchProgramCard({ program, onOpen, interests, onLogin }: { pro
     {interests?.errors[JSON.stringify([program.sourceCode, program.id])] && <Notice error>{interests.errors[JSON.stringify([program.sourceCode, program.id])]}</Notice>}
     {onOpen && <Text style={local.description}>{[program.organization, ...program.regions].filter(Boolean).join(' · ')}</Text>}
     {onOpen && <Text style={local.description}>{program.applicationPeriod}</Text>}
+    {onOpen && otherRegion && <Notice>다른 지역 조건 확인 필요{'\n'}검색 지역({requestedRegion})과 공고 분류 지역({program.regions.join(' · ')})이 달라요. 분류만으로 신청 가능 여부를 판단하지 말고 원문의 지역 조건을 확인해 주세요.</Notice>}
+    {onOpen && review?.region.status === 'UNKNOWN' && <Text style={local.evidence}>지역 조건 확인 · {review.region.explanation}</Text>}
     <View style={[local.quote, !onOpen && { padding: 8, gap: 6 }]}>
       <Text style={[local.badge, review && review.status !== 'MATCH' ? { backgroundColor: colors.warningSoft, color: colors.warning }
         : !review && { backgroundColor: colors.divider, color: colors.secondaryText }]}>

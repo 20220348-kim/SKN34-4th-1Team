@@ -4,7 +4,7 @@ import { ChatScreen } from './ChatScreen'
 import { programClient } from '../api/client'
 import { useAuth } from '../auth/session'
 import { programDetail } from '../test/preparationFixtures'
-import { SupportProgramSearchRestoreApiError } from '@govbiz/shared/data/api/supportProgramApi'
+import { SupportProgramRequestApiError, SupportProgramSearchRestoreApiError, SupportProgramSearchTimeoutApiError } from '@govbiz/shared/data/api/supportProgramApi'
 import type { LoginRequest } from '../auth/loginFlow'
 import { deleteChatConversation, getChatConversation, listChatConversations, saveChatConversation } from '../api/chatConversations'
 let mockMessageNumber = 0
@@ -237,7 +237,7 @@ const resultToken = '00000000-0000-4000-8000-000000000001'
 const programs = Array.from({ length: 5 }, (_, index) => ({ ...programDetail, id: `P${index}`, title: `추천 사업 ${index}`,
   matchedReasons: [], recommendationScore: null, eligibilityReview: null }))
 const full = { query: context.query, programs, totalCount: 5, resultToken: null, expiresAt: null, context }
-async function guestSearch(restoreSearch = jest.fn().mockResolvedValue(full)) {
+async function guestSearch(restoreSearch = jest.fn().mockResolvedValue(full), action: 'login' | 'signup' = 'login') {
   const client = { interpretConversation: jest.fn().mockResolvedValue({ status: 'READY', proposedContext: context, clarificationQuestion: null, changedFields: [] }),
     getSearchReadiness: jest.fn().mockResolvedValue({ indexReady: true, searchState: 'SEARCHABLE' }),
     search: jest.fn().mockResolvedValue({ ...full, programs: programs.slice(0, 2), resultToken, expiresAt: new Date(Date.now() + 60_000).toISOString() }), restoreSearch }
@@ -249,9 +249,9 @@ async function guestSearch(restoreSearch = jest.fn().mockResolvedValue(full)) {
   fireEvent.press(screen.getByLabelText('AI에게 보내기'))
   await screen.findByText('이 조건으로 검색할까요?')
   fireEvent.press(screen.getByLabelText('이 조건으로 검색'))
-  await screen.findByLabelText('로그인하고 모두 보기')
+  await screen.findByLabelText('로그인하고 이번 추천 보기')
   expect(screen.queryByText('추천 사업 2')).toBeNull()
-  fireEvent.press(screen.getByLabelText('로그인하고 모두 보기'))
+  fireEvent.press(screen.getByLabelText(action === 'signup' ? '회원가입하고 이번 추천 보기' : '로그인하고 이번 추천 보기'))
   return { client, login, view, props }
 }
 function signIn() {
@@ -295,7 +295,19 @@ test('selected guest results restore with the new token without repeating interp
   expect(programClient).toHaveBeenCalledWith('verified')
   expect(client.search).toHaveBeenCalledTimes(1)
   expect(client.interpretConversation).toHaveBeenCalledTimes(1)
-  expect(screen.queryByText('추가 지원사업 3건이 있어요')).toBeNull()
+  expect(screen.queryByText('이번 추천에 3건이 더 있어요')).toBeNull()
+})
+
+test('guest signup reports the actual recommendation count and restores the same result after authentication', async () => {
+  const { client, view, props, login } = await guestSearch(undefined, 'signup')
+  expect(screen.getByText('이번 추천에 3건이 더 있어요')).toBeTruthy()
+  expect(screen.getByText('로그인하면 이번 추천 5건을 같은 검색에서 확인할 수 있어요.')).toBeTruthy()
+  expect(login).toHaveBeenCalledWith(expect.objectContaining({ direct: true, mode: 'signup' }))
+  signIn(); view.rerender(<ChatScreen {...props} />)
+  await screen.findByText('추천 사업 4')
+  expect(client.restoreSearch).toHaveBeenCalledWith(resultToken, expect.any(AbortSignal))
+  expect(client.search).toHaveBeenCalledTimes(1)
+  expect(client.interpretConversation).toHaveBeenCalledTimes(1)
 })
 test('cancelled login retains public results and does not restore them during a later unrelated login', async () => {
   const { client, view, props, login } = await guestSearch()
@@ -539,4 +551,120 @@ describe('mobile AI timeline scrolling', () => {
     expect(scrollTo).not.toHaveBeenCalled()
     if (action !== 'unmount') { timelineSize(); flushFrame(); expect(scrollTo).not.toHaveBeenCalled() }
   })
+})
+
+test('a server retry delay disables AI requests until the delay ends without automatic retry', async () => {
+  jest.useFakeTimers()
+  try {
+    const client = { interpretConversation: jest.fn().mockRejectedValueOnce(new SupportProgramRequestApiError('SUPPORT_PROGRAM_RATE_LIMITED', 20))
+      .mockResolvedValue({ status: 'READY', proposedContext: context, clarificationQuestion: null, changedFields: [] }) }
+    jest.mocked(programClient).mockReturnValue(client as unknown as ReturnType<typeof programClient>)
+    render(<ChatScreen onOpenProgram={jest.fn()} onLogin={jest.fn()} />)
+    fireEvent.changeText(screen.getByLabelText('회사 상황이나 궁금한 점'), '유지할 조건')
+    fireEvent.press(screen.getByLabelText('AI에게 보내기'))
+    await screen.findByLabelText('20초 후 다시 시도')
+    expect(screen.getByLabelText('회사 상황이나 궁금한 점').props.value).toBe('유지할 조건')
+    expect(screen.getByLabelText('20초 후 다시 시도').props.accessibilityState.disabled).toBe(true)
+    await act(async () => jest.advanceTimersByTime(20_000))
+    expect(client.interpretConversation).toHaveBeenCalledTimes(1)
+    fireEvent.press(screen.getByLabelText('다시 시도'))
+    await screen.findByLabelText('이 조건으로 검색')
+    expect(client.interpretConversation).toHaveBeenCalledTimes(2)
+  } finally { jest.useRealTimers() }
+})
+
+test('an unconfirmed search timeout needs explicit consent before a new request', async () => {
+  const alert = jest.spyOn(Alert, 'alert')
+  try {
+    const client = { interpretConversation: jest.fn().mockResolvedValue({ status: 'READY', proposedContext: context, clarificationQuestion: null, changedFields: [] }),
+      getSearchReadiness: jest.fn().mockResolvedValue({ indexReady: true, searchState: 'SEARCHABLE' }),
+      search: jest.fn().mockRejectedValueOnce(new SupportProgramSearchTimeoutApiError()).mockResolvedValue({ query: context.query, totalCount: 0, programs: [], resultToken: null, expiresAt: null }) }
+    jest.mocked(programClient).mockReturnValue(client as unknown as ReturnType<typeof programClient>)
+    render(<ChatScreen onOpenProgram={jest.fn()} onLogin={jest.fn()} />)
+    await sendQuestion('시간 초과 조건')
+    fireEvent.press(screen.getByLabelText('이 조건으로 검색'))
+    await screen.findByLabelText('다시 시도')
+    fireEvent.press(screen.getByLabelText('다시 시도'))
+    expect(client.search).toHaveBeenCalledTimes(1)
+    expect(alert).toHaveBeenCalledWith('같은 요청을 다시 보낼까요?', expect.any(String), expect.any(Array))
+    const confirm = alert.mock.calls.at(-1)![2]!.find(button => button.text === '새 요청으로 다시 시도')!.onPress!
+    act(() => confirm())
+    await waitFor(() => expect(client.search).toHaveBeenCalledTimes(2))
+  } finally { alert.mockRestore() }
+})
+
+test('a search accepted before restore failure retries the stored result without another search', async () => {
+  signIn()
+  const client = { interpretConversation: jest.fn().mockResolvedValue({ status: 'READY', proposedContext: context, clarificationQuestion: null, changedFields: [] }),
+    getSearchReadiness: jest.fn().mockResolvedValue({ indexReady: true, searchState: 'SEARCHABLE' }),
+    search: jest.fn().mockResolvedValue({ ...full, programs: programs.slice(0, 2), resultToken, expiresAt: new Date(Date.now() + 60_000).toISOString() }),
+    restoreSearch: jest.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue(full) }
+  jest.mocked(programClient).mockReturnValue(client as unknown as ReturnType<typeof programClient>)
+  render(<ChatScreen onOpenProgram={jest.fn()} onLogin={jest.fn()} />)
+  await sendQuestion('저장된 결과 확인')
+  fireEvent.press(screen.getByLabelText('이 조건으로 검색'))
+  await screen.findByLabelText('검색 결과 다시 불러오기')
+  expect(screen.queryByLabelText('다시 시도')).toBeNull()
+  fireEvent.press(screen.getByLabelText('검색 결과 다시 불러오기'))
+  await waitFor(() => expect(client.restoreSearch).toHaveBeenCalledTimes(2))
+  expect(client.search).toHaveBeenCalledTimes(1)
+})
+
+test('search readiness failures keep the proposal and retry only after a manual request', async () => {
+  const client = historyClient()
+  client.getSearchReadiness.mockResolvedValueOnce({ indexReady: false, searchState: 'BUILDING' })
+  render(<ChatScreen onOpenProgram={jest.fn()} onLogin={jest.fn()} />)
+  await sendQuestion('준비 상태 확인')
+  fireEvent.press(screen.getByLabelText('이 조건으로 검색'))
+  await screen.findByText('검색 데이터를 준비 중입니다. 잠시 후 다시 검색해 주세요.')
+  expect(client.search).not.toHaveBeenCalled()
+  expect(client.getSearchReadiness).toHaveBeenCalledTimes(1)
+  expect(screen.getByLabelText('이 조건으로 검색')).toBeTruthy()
+  fireEvent.press(screen.getByLabelText('다시 시도'))
+  await screen.findByText('추천 사업 4')
+  expect(client.getSearchReadiness).toHaveBeenCalledTimes(2)
+  expect(client.search).toHaveBeenCalledTimes(1)
+})
+
+test('an account change discards a pending unconfirmed retry confirmation', async () => {
+  const alert = jest.spyOn(Alert, 'alert')
+  try {
+    signIn()
+    const client = historyClient()
+    client.search.mockRejectedValue(new TypeError('Network request failed'))
+    const props = { onOpenProgram: jest.fn(), onLogin: jest.fn() }
+    const view = render(<ChatScreen {...props} />)
+    await sendQuestion('연결 종료 조건')
+    fireEvent.press(screen.getByLabelText('이 조건으로 검색'))
+    await screen.findByLabelText('다시 시도')
+    fireEvent.press(screen.getByLabelText('다시 시도'))
+    const confirm = alert.mock.calls.at(-1)![2]!.find(button => button.text === '새 요청으로 다시 시도')!.onPress!
+    jest.mocked(useAuth).mockReturnValue({ status: 'signedIn', session: { accessToken: 'another', account: { email: 'another@example.com' } } } as ReturnType<typeof useAuth>)
+    view.rerender(<ChatScreen {...props} />)
+    act(() => confirm())
+    expect(client.search).toHaveBeenCalledTimes(1)
+    expect(screen.queryByLabelText('다시 시도')).toBeNull()
+  } finally { alert.mockRestore() }
+})
+
+test('opening another saved proposal clears the previous unconfirmed retry without rerunning AI', async () => {
+  signIn()
+  const client = historyClient()
+  client.search.mockRejectedValue(new SupportProgramSearchTimeoutApiError())
+  render(<ChatScreen onOpenProgram={jest.fn()} onLogin={jest.fn()} />)
+  await sendQuestion('저장할 조건')
+  const saved = jest.mocked(saveChatConversation).mock.calls[0]
+  const record = { id: saved[2], title: '저장할 조건', version: 1, updatedAt: '2026-10-08T09:00:00' }
+  jest.mocked(listChatConversations).mockResolvedValue({ items: [record], nextCursor: null })
+  jest.mocked(getChatConversation).mockResolvedValue({ conversation: record, snapshot: saved[4] })
+  fireEvent.press(screen.getByLabelText('이 조건으로 검색'))
+  await screen.findByLabelText('다시 시도')
+  expect(screen.getByLabelText('이 조건으로 검색').props.accessibilityState.disabled).toBe(true)
+  fireEvent.press(screen.getByLabelText('대화 기록'))
+  fireEvent.press(await screen.findByLabelText('대화 열기: 저장할 조건'))
+  await screen.findByText(/이전 대화의 추천 공고는 저장 당시 정보예요/)
+  expect(screen.getByLabelText('이 조건으로 검색').props.accessibilityState.disabled).toBe(false)
+  expect(screen.queryByLabelText('다시 시도')).toBeNull()
+  expect(client.search).toHaveBeenCalledTimes(1)
+  expect(client.interpretConversation).toHaveBeenCalledTimes(1)
 })

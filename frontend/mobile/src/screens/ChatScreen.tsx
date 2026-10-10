@@ -8,7 +8,7 @@ import { RestoreSupportProgramSearchUseCase } from '@govbiz/shared/domain/usecas
 import { SearchSupportProgramsUseCase } from '@govbiz/shared/domain/usecases/SearchSupportProgramsUseCase'
 import { SupportProgramSearchRestoreError } from '@govbiz/shared/domain/errors/SupportProgramSearchRestoreError'
 import type { SupportProgramIdentity } from '@govbiz/shared/domain/repositories/SupportProgramRepository'
-import { ApiError, errorMessage, programClient } from '../api/client'
+import { ApiError, errorMessage, programClient, requestResultUnconfirmed, requestRetryAfterSeconds } from '../api/client'
 import { restoreSearchResults, searchPrograms } from '../api/searchResults'
 import { deleteChatConversation, getChatConversation, listChatConversations, saveChatConversation } from '../api/chatConversations'
 import type { LoginRequest } from '../auth/loginFlow'
@@ -47,6 +47,21 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active 
   const [history, setHistory] = useState<ChatMessage[]>([])
   const [busy, setBusy] = useState<'interpret' | 'search' | 'restore' | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [retryAction, setRetryAction] = useState<'interpret' | 'search' | null>(null)
+  const [retryUnconfirmed, setRetryUnconfirmed] = useState(false)
+  const [retryUntil, setRetryUntil] = useState(0)
+  const [retryClock, setRetryClock] = useState(Date.now())
+  const retryRemaining = Math.max(0, Math.ceil((retryUntil - retryClock) / 1000))
+  useEffect(() => {
+    if (retryUntil <= Date.now()) return
+    const timer = setInterval(() => { const now = Date.now(); setRetryClock(now); if (now >= retryUntil) clearInterval(timer) }, 1000)
+    return () => clearInterval(timer)
+  }, [retryUntil])
+  function markRetry(cause: unknown, action: 'interpret' | 'search') {
+    setRetryAction(action); setRetryUnconfirmed(requestResultUnconfirmed(cause))
+    const wait = requestRetryAfterSeconds(cause)
+    const now = Date.now(); setRetryClock(now); setRetryUntil(wait ? now + wait * 1000 : 0)
+  }
   const [sessionNotice, setSessionNotice] = useState<string | null>(null)
   const request = useRef<AbortController | null>(null)
   const generation = useRef(0)
@@ -124,7 +139,7 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active 
     deletionId.current = null; setDeletingRecord(null); setDeleteError(null)
     setSavingHistory(false); setHistoryError(null); setRecordsOpen(false); setRecords([]); setRecordsCursor(null); setLoadingRecords(false); setRecordsError(null); setHistoryRestored(false)
     setMessage(''); setContext(emptyContext); setProposal(null); setClarification(null); setResult(null)
-    setHistory([]); setBusy(null); setError(null)
+    setHistory([]); setBusy(null); setError(null); setRetryAction(null); setRetryUntil(0)
     setRestoreFailure(null)
     if (token) setSessionNotice(null)
     if (selected && token) void restore(selected, token)
@@ -161,7 +176,7 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active 
     generation.current += 1; request.current?.abort(); historyWork.current?.abort(); clearTimelineScroll()
     pendingRestore.current = null; retryRestore.current = null; conversationVersion.current = 0; unsavedSnapshot.current = null
     setHistory([]); setContext(emptyContext); setResult(null); setProposal(null); setClarification(null); setMessage('')
-    setError(null); setHistoryError(null); setRestoreFailure(null); setSessionNotice(null)
+    setError(null); setRetryAction(null); setRetryUntil(0); setHistoryError(null); setRestoreFailure(null); setSessionNotice(null)
     setHistoryRestored(false)
     timeline.current?.scrollTo({ y: 0, animated: false })
   }
@@ -203,6 +218,7 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active 
       setResult(latestResult ? { query: latestResult.searchQuery ?? '', programs: latestResult.programs!, totalCount: latestResult.totalCount ?? latestResult.programs!.length,
         resultToken: latestResult.resultToken ?? null, expiresAt: latestResult.expiresAt ?? null } : null)
       pendingRestore.current = null; retryRestore.current = null
+      setRetryAction(null); setRetryUnconfirmed(false)
       setHistoryError(null); setError(snapshot.searchError ?? snapshot.interpretation.error ?? null); setRestoreFailure(null); setSessionNotice(null); setRecordsOpen(false)
       setHistoryRestored(true)
       requestTimelineScroll(restoredProposal?.status === 'READY' ? 'proposal' : latestResult ? 'results' : 'answer')
@@ -286,11 +302,11 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active 
   function cancel() { generation.current += 1; request.current?.abort(); setBusy(null); clearTimelineScroll() }
 
   async function interpret() {
-    if (!message.trim() || busy || savingHistory || loadingRecords || deletionId.current || history.length >= 197) return
+    if (!message.trim() || busy || savingHistory || loadingRecords || deletionId.current || history.length >= 197 || retryUntil > Date.now()) return
     const controller = new AbortController(); request.current = controller
     const revision = ++generation.current
     const text = message.trim()
-    setBusy('interpret'); setError(null)
+    setBusy('interpret'); setError(null); setRetryAction(null)
     requestTimelineScroll('message')
     pendingRestore.current = null; retryRestore.current = null; setRestoreFailure(null)
     setSessionNotice(null)
@@ -314,23 +330,26 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active 
       if (!controller.signal.aborted && generation.current === revision) {
         if (cause instanceof ApiError && cause.status === 401) void invalidateSession().catch(() => undefined)
         setError(errorMessage(cause))
+        markRetry(cause, 'interpret')
         requestTimelineScroll('notice')
       }
     } finally { if (generation.current === revision) setBusy(null) }
   }
 
   async function search() {
-    if (busy || savingHistory || loadingRecords || deletionId.current || proposal?.status !== 'READY' || !proposal.proposedContext.query || message.trim()) return
+    if (busy || savingHistory || loadingRecords || deletionId.current || proposal?.status !== 'READY' || !proposal.proposedContext.query || message.trim() || retryUntil > Date.now()) return
     const controller = new AbortController(); request.current = controller
     const revision = ++generation.current
     const nextContext = proposal.proposedContext
-    setBusy('search'); setError(null)
+    setBusy('search'); setError(null); setRetryAction(null)
+    let completed: SupportProgramSearchResult | null = null
     requestTimelineScroll('waiting')
     try {
       const readiness = await client.getSearchReadiness(controller.signal)
       if (controller.signal.aborted || generation.current !== revision) return
       if (!readiness.indexReady || !['SEARCHABLE', 'SEARCHABLE_WITH_SYNC_FAILURE', 'SEARCHABLE_WITH_PARTIAL_SOURCES'].includes(readiness.searchState)) {
         setError('검색 데이터를 준비 중입니다. 잠시 후 다시 검색해 주세요.')
+        setRetryAction('search'); setRetryUnconfirmed(false)
         requestTimelineScroll('notice')
         return
       }
@@ -338,6 +357,7 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active 
       let next = await new SearchSupportProgramsUseCase({ search: (command, signal) => searchPrograms(token, command, signal) })
         .execute({ query: nextContext.query!, acceptingOnly: nextContext.acceptingOnly, companyConditions: conditions }, controller.signal)
       if (controller.signal.aborted || generation.current !== revision) return
+      completed = next
       if (token && next.resultToken) next = await new RestoreSupportProgramSearchUseCase({
         restoreSearch: (resultToken, signal) => restoreSearchResults(token, resultToken, signal),
       }).execute(next.resultToken, controller.signal)
@@ -353,7 +373,22 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active 
     } catch (cause) {
       if (!controller.signal.aborted && generation.current === revision) {
         if (cause instanceof ApiError && cause.status === 401) void invalidateSession().catch(() => undefined)
-        setError(errorMessage(cause))
+        if (token && completed?.resultToken && cause instanceof SupportProgramSearchRestoreError) {
+          const known = completed
+          const nextHistory: ChatMessage[] = [...history, { id: randomUUID(), role: 'assistant', text: '검색은 완료됐지만 전체 결과를 아직 불러오지 못했어요.',
+            programs: known.programs, totalCount: known.totalCount, resultToken: known.resultToken, expiresAt: known.expiresAt,
+            searchQuery: nextContext.query!, searchOptions: chatSearchOptions(nextContext) }]
+          retryRestore.current = { resultToken: known.resultToken!, context: nextContext, history: nextHistory }
+          setHistory(nextHistory); setContext(nextContext); setResult(known); setProposal(null)
+          setRetryAction(null)
+          if (cause.reason === 'unauthorized') {
+            retryRestore.current = null; setSessionNotice('로그인이 만료됐어요. 다시 로그인해 주세요.')
+            void invalidateSession().catch(() => undefined)
+          } else {
+            setRestoreFailure(cause.reason === 'expired' ? 'expired' : 'unavailable')
+            setError('검색은 완료됐지만 전체 결과를 불러오지 못했어요. 같은 결과를 다시 확인해 주세요.')
+          }
+        } else { setError(errorMessage(cause)); markRetry(cause, 'search') }
         requestTimelineScroll('notice')
       }
     } finally { if (generation.current === revision) setBusy(null) }
@@ -362,6 +397,19 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active 
   const introductory = history.length === 0 && !proposal && !result && !busy
   const latestResultId = [...history].reverse().find(item => item.programs !== undefined)?.id
   const blocked = Boolean(busy) || savingHistory || loadingRecords || deletingRecord !== null
+  function retryRequest() {
+    if (blocked || retryRemaining > 0) return
+    const revision = generation.current
+    const action = () => {
+      if (generation.current !== revision) return
+      if (retryAction === 'search') void search()
+      else void interpret()
+    }
+    if (retryUnconfirmed) Alert.alert('같은 요청을 다시 보낼까요?', '이전 요청의 결과를 확인하지 못했어요. 다시 보내면 새 요청이 실행돼요.', [
+      { text: '입력 계속 확인', style: 'cancel' }, { text: '새 요청으로 다시 시도', onPress: action },
+    ])
+    else action()
+  }
   function renderResults(item: ChatMessage) {
     const latest = item.id === latestResultId
     const programs = item.programs ?? []
@@ -372,13 +420,17 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active 
       <View style={styles.row}><Text style={styles.heading}>추천 공고</Text><Text style={styles.muted}>{totalCount}건</Text></View>
       {totalCount === 0 && <Notice>조건에 맞는 공고가 없습니다. 필요한 지원이나 회사 조건을 바꿔 보세요.</Notice>}
       {programs.map(program => <SearchProgramCard key={JSON.stringify([program.sourceCode, program.id])} program={program} onOpen={onOpenProgram}
-        interests={interests} onLogin={() => onLogin()} />)}
+        interests={interests} onLogin={() => onLogin()} searchRegion={item.searchOptions?.companyConditions?.region ?? null} />)}
       {!token && item.resultToken && totalCount > programs.length && <View style={local.locked}>
-        <Text style={styles.heading}>추가 지원사업 {totalCount - programs.length}건이 있어요</Text>
-        <Text style={styles.body}>로그인하면 이번 추천 결과를 최대 5건까지 확인할 수 있어요.</Text>
-        <Button label="로그인하고 모두 보기" disabled={status !== 'signedOut' || blocked} onPress={() => {
+        <Text style={styles.heading}>이번 추천에 {totalCount - programs.length}건이 더 있어요</Text>
+        <Text style={styles.body}>로그인하면 이번 추천 {totalCount}건을 같은 검색에서 확인할 수 있어요.</Text>
+        <Button label="로그인하고 이번 추천 보기" disabled={status !== 'signedOut' || blocked} onPress={() => {
           pendingRestore.current = { resultToken: item.resultToken!, context: contextFromSearch(item.searchQuery ?? null, item.searchOptions ?? chatSearchOptions(context)), history }
           onLogin({ direct: true, message: '이번 검색 결과를 그대로 이어서 확인할 수 있어요.', onCancel: () => { pendingRestore.current = null } })
+        }} />
+        <Button label="회원가입하고 이번 추천 보기" variant="secondary" disabled={status !== 'signedOut' || blocked} onPress={() => {
+          pendingRestore.current = { resultToken: item.resultToken!, context: contextFromSearch(item.searchQuery ?? null, item.searchOptions ?? chatSearchOptions(context)), history }
+          onLogin({ direct: true, mode: 'signup', message: '가입한 뒤 이번 추천 결과를 그대로 확인할 수 있어요.', onCancel: () => { pendingRestore.current = null } })
         }} />
         <View accessibilityLabel="로그인 후 확인할 지원사업" style={local.lockPreview}>
           <View style={local.lockLine} /><Text style={styles.muted}>로그인 후 확인할 수 있는 지원사업</Text>
@@ -426,12 +478,14 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active 
       {proposal?.status === 'READY' && <View key={`proposal-${timelineVersions.proposal}`} testID="ai-search-proposal" style={local.contentGroup}
         onLayout={event => recordTimelineTarget('proposal', timelineVersions.proposal, event)}>
         {message.trim() && <Notice>입력한 내용을 먼저 AI에게 보내 조건을 갱신해 주세요.</Notice>}
-        <SearchConditionCard context={proposal.proposedContext} busy={Boolean(busy)} disabled={blocked || Boolean(message.trim())}
-          onConfirm={() => void search()} onEdit={() => { setMessage(proposal.proposedContext.query ?? ''); composerInput.current?.focus() }} />
+        <SearchConditionCard context={proposal.proposedContext} busy={Boolean(busy)} disabled={blocked || Boolean(message.trim()) || retryRemaining > 0 || retryUnconfirmed && retryAction === 'search'}
+          onConfirm={() => void search()} onEdit={() => { setMessage(proposal.proposedContext.query ?? ''); setRetryAction(null); setRetryUnconfirmed(false); composerInput.current?.focus() }} />
       </View>}
       {(error || sessionNotice || restoreFailure) && <View key={`notice-${timelineVersions.notice}`} testID="ai-search-notice" style={local.contentGroup}
         onLayout={event => recordTimelineTarget('notice', timelineVersions.notice, event)}>
         {error && <Notice error>{error}</Notice>}
+        {retryAction && <Button label={retryRemaining > 0 ? `${retryRemaining}초 후 다시 시도` : '다시 시도'} variant="secondary"
+          disabled={blocked || retryRemaining > 0} onPress={retryRequest} />}
         {sessionNotice && <><Notice error>{sessionNotice}</Notice><Button label="다시 로그인" onPress={() => onLogin({ direct: true })} /></>}
         {restoreFailure === 'unavailable' && token && <Button label="검색 결과 다시 불러오기" disabled={Boolean(busy)}
           onPress={() => { if (retryRestore.current) void restore(retryRestore.current, token) }} />}
@@ -461,10 +515,10 @@ export function ChatScreen({ onOpenProgram, onLogin, keyboardOffset = 0, active 
         <TextInput ref={composerInput} accessibilityLabel="회사 상황이나 궁금한 점" placeholder={introductory
           ? '예: 서울에서 AI 서비스를 만드는 창업기업입니다. 사업화 지원을 받을 수 있을까요?'
           : '지원사업·조건을 입력해 주세요.'}
-          placeholderTextColor={colors.placeholder} value={message} onChangeText={setMessage} multiline maxLength={500}
+          placeholderTextColor={colors.placeholder} value={message} onChangeText={value => { setMessage(value); if (!busy) { setRetryAction(null); setRetryUnconfirmed(false) } }} multiline maxLength={500}
           editable={!blocked} style={local.input} />
         <Pressable accessibilityRole="button" accessibilityLabel={busy ? '요청 취소' : 'AI에게 보내기'}
-          accessibilityState={{ disabled: !busy && (!message.trim() || blocked || history.length >= 197), busy: Boolean(busy) }} disabled={!busy && (!message.trim() || blocked || history.length >= 197)}
+          accessibilityState={{ disabled: !busy && (!message.trim() || blocked || history.length >= 197 || retryRemaining > 0), busy: Boolean(busy) }} disabled={!busy && (!message.trim() || blocked || history.length >= 197 || retryRemaining > 0)}
           onPress={busy ? cancel : () => void interpret()} style={[local.send, !busy && !message.trim() && { backgroundColor: colors.track }]}>
           {busy ? <View style={local.stop} /> : <AppIcon name="arrowUp" color={message.trim() ? colors.surface : colors.placeholder} size={22} />}
         </Pressable>

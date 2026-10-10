@@ -1,5 +1,20 @@
-import { ApiError, apiRequest, createApiFetch, getApiBaseUrl, programClient, readProgramDetail } from './client'
+import { ApiError, apiRequest, createApiFetch, errorMessage, getApiBaseUrl, programClient, readProgramDetail, requestResultUnconfirmed, requestRetryAfterSeconds } from './client'
+import { SupportProgramInterpretationApiError, SupportProgramRequestApiError, SupportProgramSearchTimeoutApiError } from '@govbiz/shared/data/api/supportProgramApi'
 import { programDetail } from '../test/preparationFixtures'
+
+test('validated request failures distinguish interpretation, admission and unconfirmed search results', () => {
+  const limited = new SupportProgramRequestApiError('SUPPORT_PROGRAM_RATE_LIMITED', 20)
+  expect(requestRetryAfterSeconds(limited)).toBe(20)
+  expect(requestResultUnconfirmed(limited)).toBe(false)
+  expect(errorMessage(limited)).toContain('요청이 많아요')
+  const timeout = new SupportProgramSearchTimeoutApiError()
+  expect(requestResultUnconfirmed(timeout)).toBe(true)
+  expect(requestResultUnconfirmed(new TypeError('Network request failed'))).toBe(true)
+  expect(requestRetryAfterSeconds(timeout)).toBeNull()
+  expect(errorMessage(timeout)).toContain('새 요청')
+  expect(errorMessage(new SupportProgramInterpretationApiError('unavailable'))).toContain('조건 해석')
+  expect(requestRetryAfterSeconds(new ApiError(429, 'invalid wait', null, Number.MAX_VALUE))).toBeNull()
+})
 
 describe('native API boundary', () => {
   const originalFetch = globalThis.fetch
