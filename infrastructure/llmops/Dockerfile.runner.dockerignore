@@ -58,6 +58,8 @@ evaluation/support-program-evidence/runs/core-official-*/**
 !backend/ops-service/apps/evaluations/rag_live_plans.json
 !backend/ops-service/apps/evaluations/recovery_inputs.py
 !backend/ops-service/apps/evaluations/execution_spec.py
+!backend/ops-service/apps/evaluations/vector_cache.py
+!backend/ops-service/apps/evaluations/artifact_files.py
 !backend/ops-service/apps/evaluations/quality_policy.py
 !backend/ops-service/apps/evaluations/execution_release.json
 !evaluation/support-program-evidence/fixture.json

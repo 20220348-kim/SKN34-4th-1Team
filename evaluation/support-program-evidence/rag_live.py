@@ -14,7 +14,39 @@ ROOT = Path(__file__).resolve().parents[2]
 PLANS = ROOT / "backend/ops-service/apps/evaluations/rag_live_plans.json"
 
 
-def prepare(fixture_path, *, model):
+def checked_vectors(value, chunks, dimensions):
+    """저장 벡터가 승인한 청크의 ID·본문·순서와 정확히 일치하는지 확인한다."""
+    from app.support_program_evidence.service import _point_id_of
+
+    rag.require(value["dimensions"] == dimensions, "Cached embedding dimensions differ")
+    rag.require(
+        sorted((point["payload"] for point in value["points"]), key=lambda item: item["id"])
+        == sorted(chunks, key=lambda item: item["id"]),
+        "Cached chunks differ from the approved source",
+    )
+    rag.require(all(
+        point["id"] == _point_id_of(point["payload"]["id"], point["payload"]["contentHash"])
+        for point in value["points"]
+    ), "Cached point identities differ")
+    return value
+
+
+async def restore_vectors(service, value):
+    from qdrant_client import models
+
+    if not await service.qdrant_client.collection_exists(service.collection_name):
+        await service.qdrant_client.create_collection(
+            collection_name=service.collection_name,
+            vectors_config=models.VectorParams(size=service.embedding_dimensions, distance=models.Distance.COSINE),
+        )
+    result = await service.qdrant_client.upsert(
+        collection_name=service.collection_name,
+        points=[models.PointStruct(**point) for point in value["points"]], wait=True,
+    )
+    rag.require(result.status == models.UpdateStatus.COMPLETED, "Cached vector restore failed")
+
+
+def prepare(fixture_path, *, model, document_vectors=None):
     fixture, fingerprint = rag.read_json(fixture_path)
     documents, cases = rag.validate_fixture(fixture)
     plan = make_rag_spec(
@@ -30,6 +62,8 @@ def prepare(fixture_path, *, model):
             for case in cases.values()
         ],
         model=model,
+        document_sources={case["id"]: documents[case["documentId"]]["contentHash"] for case in cases.values()},
+        document_vectors=document_vectors,
     )
     return fixture, fingerprint, plan
 
@@ -53,6 +87,7 @@ def catalog_plans():
             "case_ids": [case["case_id"] for case in plan["rag_cases"]],
             "live_config": plan["live_config"],
             "model_operations": plan["model_operations"],
+            "document_vector_keys": plan["document_vector_keys"],
         }
     return result
 
@@ -81,9 +116,12 @@ async def execute(fixture_path, output_dir, *, budget, execution_spec):
     from llmops import write_json
     from openai import AsyncOpenAI
     from qdrant_client import AsyncQdrantClient
+    from apps.evaluations import vector_cache
 
     config = execution_spec["live_config"]
-    fixture, fingerprint, plan = prepare(fixture_path, model=config["model"])
+    fixture, fingerprint, plan = prepare(
+        fixture_path, model=config["model"], document_vectors=config.get("document_vectors")
+    )
     rag.require(fingerprint == config["fixture_sha256"], "Approved fixture changed")
     rag.require(
         plan["model_operations"] == execution_spec["model_operations"],
@@ -101,6 +139,16 @@ async def execute(fixture_path, output_dir, *, budget, execution_spec):
         budget, plan, receipt_directory=output_dir, execution_spec=execution_spec
     )
     documents = {doc["documentId"]: doc for doc in fixture["documents"]}
+    cache_root = vector_cache.results_root()
+    chosen = config["document_vectors"]
+    cached = {}
+    # 고정한 파일이 없거나 바뀌면 첫 모델 호출 전에 실패한다. 임의 재생성하지 않는다.
+    for case in fixture["cases"]:
+        item = chosen[case["id"]]
+        if item["sha256"] is not None:
+            value, vector_hash = vector_cache.read(cache_root, item["key"], item["sha256"])
+            checked_vectors(value, documents[case["documentId"]]["chunks"], config["embedding_dimensions"])
+            cached[item["key"]] = (value, vector_hash)
     capture = {
         "schemaVersion": "support-program-rag-capture-v1",
         "scope": rag.SCOPE,
@@ -205,6 +253,11 @@ async def execute(fixture_path, output_dir, *, budget, execution_spec):
                     embedding_timeout_seconds=DEFAULT_LLM_MODEL_TIMEOUT_SECONDS,
                 )
                 async with asyncio.timeout(DEFAULT_LLM_RUN_TIMEOUT_SECONDS + 60):
+                    vector_plan = chosen[case["id"]]
+                    prior = cached.get(vector_plan["key"])
+                    if prior is not None:
+                        checked_vectors(prior[0], document["chunks"], config["embedding_dimensions"])
+                        await restore_vectors(service, prior[0])
                     payload = {"chunks": document["chunks"]}
                     guard.begin_api(
                         "PUT", "/internal/v1/support-program-evidence/chunks", payload
@@ -217,6 +270,26 @@ async def execute(fixture_path, output_dir, *, budget, execution_spec):
                         200, indexed.model_dump(mode="json", by_alias=True)
                     )
                     record["indexedCount"] = indexed.indexed_count
+                    if prior is None:
+                        points, next_page = await qdrant.scroll(
+                            collection_name=service.collection_name,
+                            limit=len(document["chunks"]), with_payload=True, with_vectors=True,
+                        )
+                        rag.require(next_page is None, "Unexpected evaluation index contents")
+                        value, fingerprint = vector_cache.publish(
+                            cache_root, vector_plan["key"], config["embedding_dimensions"],
+                            [{"id": str(point.id), "vector": point.vector, "payload": point.payload} for point in points],
+                        )
+                        checked_vectors(value, document["chunks"], config["embedding_dimensions"])
+                        cached[vector_plan["key"]] = (value, fingerprint)
+                        # 동시 생성 시 먼저 공개된 벡터로 검색 조건을 통일한다.
+                        await restore_vectors(service, value)
+                    else:
+                        value, fingerprint = prior
+                    record["documentVectors"] = {
+                        "key": vector_plan["key"], "sha256": fingerprint,
+                        "status": "reused" if prior is not None else "created",
+                    }
                     stage = "search"
                     request = rag.search_request(case, document)
                     record["search"] = {"request": request, "response": None}

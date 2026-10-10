@@ -285,16 +285,17 @@ function EvaluationCreate({ owner, datasets, liveEnabled: allLiveEnabled, ragLiv
       <p className="text-sm text-ink-muted">평가 자료와 비교 대상을 선택한 뒤 실행하세요. 메뉴를 오가도 선택값은 유지되며, 유료 실행 확인과 예산 점검은 다시 해야 합니다.</p>
       <section id="new-evaluation" className={`${styles.card} scroll-mt-28`} aria-label="평가 실행">
         <h2 className={styles.cardTitle}>평가 자료와 실행 방식</h2>
-        <p className="text-sm leading-6 text-ink-muted">{ragLive ? ragLiveNotice : mode === 'live' ? liveNotice : notice}</p>
-        {selected && <p className="text-sm" role="status">평가 범위: {scopeLabel(selected.evaluation_scope)}. {ragLive ? ragLiveNotice : scopeNotice(selected.evaluation_scope)}</p>}
+        <p className="text-sm leading-6 text-ink-muted">{ragLive ? ragLiveNotice(selected?.live_config) : mode === 'live' ? liveNotice : notice}</p>
+        {selected && <p className="text-sm" role="status">평가 범위: {ragLive ? '등록 원문·청크의 검색·새 답변' : `${scopeLabel(selected.evaluation_scope)}. ${scopeNotice(selected.evaluation_scope)}`}</p>}
         <form className="grid gap-4 md:grid-cols-2" onSubmit={(event) => { event.preventDefault(); void submit() }}>
           <label className="grid min-w-0 gap-2 text-sm font-semibold md:col-span-2">실행 방식<select className={field} value={mode} disabled={busy || requestId.current !== null} onChange={(event) => { setMode(event.target.value as 'replay' | 'live'); setApproved(false) }}><option value="replay">저장 응답 재평가 · API 호출 없음</option><option value="live" disabled={!canGenerate}>새 응답 생성 · 유료 모델 호출</option></select></label>
           <label className="grid min-w-0 gap-2 text-sm font-semibold md:col-span-2">평가 자료<select className={field} value={dataset} disabled={busy || requestId.current !== null} onChange={(event) => changeDataset(event.target.value)}>{datasets.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
+          {ragLive && <div className="md:col-span-2"><VectorPlan config={selected?.live_config} /></div>}
           <label className="grid min-w-0 gap-2 text-sm font-semibold">기준 실행<select className={field} value={reference} disabled={busy || requestId.current !== null} onChange={(event) => setReference(event.target.value)}>{selected?.baseline && <option value={selected.baseline.id}>{selected.baseline.label}</option>}{selected?.captures.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
           {mode === 'replay' && <label className="grid min-w-0 gap-2 text-sm font-semibold">후보 실행<select className={field} value={candidate} disabled={busy || requestId.current !== null} onChange={(event) => setCandidate(event.target.value)}>{selected?.captures.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>}
           {mode === 'live' && selected?.live_config && <div className="min-w-0 rounded-xl border border-amber-200 md:col-span-2 bg-amber-50 p-4 text-sm leading-6">
             <p>모델: <strong>{selected.live_config.model}</strong> · 최대 {selected.live_config.max_model_calls}회 · 호출당 출력 최대 {selected.live_config.max_output_tokens.toLocaleString()}토큰 · 호출당 입력 최대 {selected.live_config.max_input_tokens?.toLocaleString() ?? '기록 없음'}토큰 · 자동 재호출 없음</p>
-            {ragLive && <p>임베딩: {selected.live_config.embedding_model} · {selected.live_config.embedding_dimensions}차원. 최대 호출 수에는 문서·질문 임베딩과 답변이 포함됩니다. 전체 입력 예약 {selected.live_config.max_total_input_tokens?.toLocaleString()}토큰 · 전체 출력 예약 {selected.live_config.max_total_output_tokens?.toLocaleString()}토큰.</p>}
+            {ragLive && <p>임베딩: {selected.live_config.embedding_model} · {selected.live_config.embedding_dimensions}차원. 최대 호출 수에는 새로 만드는 청크·질문 임베딩과 답변만 포함됩니다. 재사용하는 청크 벡터에는 임베딩 호출을 예약하지 않습니다. 전체 입력 예약 {selected.live_config.max_total_input_tokens?.toLocaleString()}토큰 · 전체 출력 예약 {selected.live_config.max_total_output_tokens?.toLocaleString()}토큰.</p>}
             <p>각 답변 생성 전에 같은 입력과 응답 형식을 OpenAI 입력 토큰 계산 API로 전송합니다. 계산 실패 또는 입력 상한 초과 시 생성을 중단합니다.</p>
             <p>전송 자료: {selected.fixture}의 {selected.case_ids.join(', ')} 질문과 고정 근거 청크. 시스템 답변 지침을 함께 전송합니다. 자료에 따라 실제 공고의 저장 본문 또는 가상 근거를 사용하며, 실제 회원 대화는 사용하지 않습니다.</p>
             {!liveEnabled && <p role="status" className="font-semibold">새 모델 평가가 비활성화되어 있습니다. 실행기의 API 키와 서버 설정을 준비해야 합니다.</p>}
@@ -399,7 +400,8 @@ function EvaluationDetail({ onExpired, onReviewChanged }: { onExpired: () => voi
         </section>}
         {run.cancel_requested_at && <p role="status" className="text-sm text-ink-muted">취소 요청: {run.cancel_requested_by} · {date(run.cancel_requested_at)}{run.status === 'CANCELLING' ? ' · 실행 종료를 확인하고 있습니다.' : ''}</p>}
         {run.can_retry && <button className={`${styles.primaryButton} self-start`} disabled={busy} onClick={() => void retry()}>{busy ? '접수 확인 중…' : '같은 요청으로 접수 재확인'}</button>}
-        <section className={styles.card}><h2 className={styles.cardTitle}>{run.dataset_label}</h2><p className="text-sm leading-6 text-ink-muted">{run.execution_mode === 'recovery' ? recoveryNotice : run.execution_mode === 'live' ? (run.evaluation_scope === 'source-chunks-retrieval-answer' ? ragLiveNotice : liveNotice) : notice}</p>
+        <section className={styles.card}><h2 className={styles.cardTitle}>{run.dataset_label}</h2><p className="text-sm leading-6 text-ink-muted">{run.execution_mode === 'recovery' ? recoveryNotice : run.execution_mode === 'live' ? (run.evaluation_scope === 'source-chunks-retrieval-answer' ? ragLiveNotice(run.live_config) : liveNotice) : notice}</p>
+          <VectorPlan config={run.live_config} />
           <p className="text-sm">{modeLabel(run)} · {scopeLabel(run.evaluation_scope)}</p>
           {run.status === 'COMPLETED' && <p className="text-sm font-semibold text-brand-primary">평가 실행이 끝났습니다. 아래에서 답변과 근거를 검토하세요.</p>}
           <details><summary className="cursor-pointer text-sm font-semibold">실행 정보·버전 자세히 보기</summary>
@@ -452,7 +454,20 @@ const metricLabels = {
   meanLatencyMs: '평균 지연 (ms)', meanInputTokens: '평균 입력 토큰', meanOutputTokens: '평균 출력 토큰', semanticFaithfulness: '의미 충실도',
 }
 const scopeLabel = (scope: string | null) => scope === 'fixed-answer-context-only' ? '고정 근거 답변' : scope === 'source-chunks-retrieval-answer' ? '전체 RAG 저장 캡처' : '미확인 또는 지원하지 않는 범위'
-const ragLiveNotice = '고정 원문·청크로 새 임베딩·검색·답변을 실행합니다. 사례마다 격리된 메모리 색인을 사용하며 Core 원문 재수집·재청킹 및 운영 색인 성능은 측정하지 않습니다.'
+const ragLiveNotice = (config: EvaluationRun['live_config'] | undefined) => `${config?.document_vectors ? '동일한 원문·청크와 임베딩 설정의 평가용 벡터를 재사용합니다. 없는 벡터만 새로 만들고 질문 임베딩·검색·답변을 실행합니다.' : '고정 원문·청크로 새 임베딩·검색·답변을 실행합니다.'} 사례마다 격리된 메모리 색인을 사용하며 Core 원문 재수집·재청킹 및 운영 색인 성능은 측정하지 않습니다.`
+
+function VectorPlan({ config }: { config: EvaluationRun['live_config'] | undefined }) {
+  if (!config?.document_vectors) return null
+  const entries = Object.entries(config.document_vectors)
+  const reused = entries.filter(([, value]) => value.sha256 !== null).length
+  const generated = entries.filter(([id, value]) => value.sha256 === null && value.source_case_id === id).length
+  return <section aria-label="청크 벡터 준비 계획" className="rounded-xl border border-line bg-slate-50 p-4 text-sm">
+    <h3 className="font-semibold">청크 벡터 준비 계획</h3>
+    <p className="mt-2">저장 벡터 재사용 {reused}사례 · 새 임베딩 {generated}묶음 · 실행 내 공유 {entries.length - reused - generated}사례</p>
+    <ul className="mt-2 space-y-1">{entries.map(([id, value]) => <li key={id}>{id}: {value.sha256 !== null ? '저장 벡터 재사용' : value.source_case_id === id ? '새 임베딩' : `이번 실행의 ${value.source_case_id} 벡터 재사용`}</li>)}</ul>
+    <p className="mt-2 text-xs text-ink-muted">접수 시 고정하는 계획입니다. 저장 벡터가 사라지거나 바뀌면 추가 호출 없이 중단합니다. 완료된 사용량은 실행 예산 장부에서 확인하세요.</p>
+  </section>
+}
 const scopeNotice = (scope: string | null) => scope === 'fixed-answer-context-only'
   ? '원문 수집·청킹·색인·검색을 실행하지 않습니다. 검색 품질은 미측정이며 인용 재현율은 답변이 선택한 인용만 평가합니다.'
   : scope === 'source-chunks-retrieval-answer' ? '저장된 검색·답변 기록의 지표를 재계산합니다. 새 검색·임베딩·답변 생성은 없으며 합성 자료는 실제 모델 품질 측정이 아닙니다.' : '기록된 범위를 확인할 수 없어 전체 RAG 평가로 해석할 수 없습니다.'

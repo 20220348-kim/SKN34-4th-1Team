@@ -123,6 +123,7 @@ def evaluate_saved_capture(
             evaluate.require(not recovery_config, "Unexpected recovery configuration")
             dataset, candidate, reference = validate_execution(
                 dataset_id, candidate_capture_id, reference_capture_id, execution_mode, config,
+                pinned_vectors=True,
             )
             validate_reference_config(dataset_id, reference_capture_id, reference_config)
             fixture_path = here / dataset["fixture"]
@@ -148,7 +149,9 @@ def evaluate_saved_capture(
                 import rag_evaluate
                 evaluate.require(os.environ.get("LLMOPS_RAG_LIVE_ENABLED", "false").lower() == "true",
                                  "RAG live evaluations are disabled")
-                _, fixture_hash, prepared = rag_live.prepare(fixture_path, model=config["model"])
+                _, fixture_hash, prepared = rag_live.prepare(
+                    fixture_path, model=config["model"], document_vectors=config.get("document_vectors")
+                )
                 evaluate.require(fixture_hash == config["fixture_sha256"] and
                                  prepared["model_operations"] == execution_spec["model_operations"],
                                  "Approved RAG inputs differ")

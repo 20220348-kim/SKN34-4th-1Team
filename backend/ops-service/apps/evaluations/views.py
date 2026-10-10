@@ -77,6 +77,16 @@ ERROR_MESSAGES = {
 def api_session(request):
     operator = request.user.is_authenticated
     baselines = baseline_choices() if operator else {}
+    try:
+        datasets = public_datasets() if operator else []
+    except (ResultsUnavailable, OSError, ValueError):
+        return Response(
+            {
+                "code": "VECTOR_CACHE_UNAVAILABLE",
+                "detail": "평가 벡터 저장소를 확인하지 못했습니다. 잠시 후 다시 조회하세요.",
+            },
+            status=503,
+        )
     return Response(
         {
             "user": {
@@ -86,9 +96,7 @@ def api_session(request):
             if operator
             else None,
             "csrf_token": get_token(request),
-            "datasets": [
-                {**item, "baseline": baselines.get(item["id"])} for item in public_datasets()
-            ]
+            "datasets": [{**item, "baseline": baselines.get(item["id"])} for item in datasets]
             if operator
             else [],
             "live_enabled": settings.LLMOPS_LIVE_ENABLED if operator else False,

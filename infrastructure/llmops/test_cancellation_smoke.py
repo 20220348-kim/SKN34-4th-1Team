@@ -490,7 +490,7 @@ def test_real_sdk_and_evaluator_accept_http_double(monkeypatch, tmp_path, server
 
 
 @pytest.mark.parametrize(
-    "fault,sent,unknown", [(None, 9, 0), ("embedding_lost", 1, 1), ("model_lost", 3, 1)]
+    "fault,sent,unknown", [(None, 8, 0), ("embedding_lost", 1, 1), ("model_lost", 3, 1)]
 )
 def test_rag_service_and_sdk_use_http_double_and_preserve_mixed_budget(
     monkeypatch, tmp_path, server, fault, sent, unknown
@@ -518,6 +518,7 @@ def test_rag_service_and_sdk_use_http_double_and_preserve_mixed_budget(
     monkeypatch.setenv("LANGFUSE_ENABLED", "false")
     monkeypatch.setenv("LLMOPS_OPS_API_URL", base)
     monkeypatch.setenv("LLMOPS_BUDGET_TOKEN", probe.TOKEN)
+    monkeypatch.setenv("LLMOPS_RESULTS_DIR", str(tmp_path))
     dataset = "rag-synthetic-multichunk-v1"
     spec = make_spec(
         read_release(),
@@ -586,7 +587,7 @@ def test_rag_service_and_sdk_use_http_double_and_preserve_mixed_budget(
     assert actions[0][0] == "claim" and actions[-1][0] == "close"
     events = state.snapshot(run_id)["events"]
     assert sum(event["stage"] == "embedding_sent" for event in events) == (
-        6 if fault is None else 1 if fault == "embedding_lost" else 2
+        5 if fault is None else 1 if fault == "embedding_lost" else 2
     )
     assert sum(event["stage"] == "model_sent" for event in events) == (
         3 if fault is None else 0 if fault == "embedding_lost" else 1

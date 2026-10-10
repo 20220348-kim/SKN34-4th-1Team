@@ -2,6 +2,7 @@
 
 import json
 import re
+import sys
 from copy import deepcopy
 from hashlib import sha256
 from pathlib import Path
@@ -24,6 +25,7 @@ from evaluate import (
 from openai import pydantic_function_tool
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "backend/ops-service"))
 RUNTIME_FILES = (
     *(
         f"evaluation/support-program-evidence/{name}.py"
@@ -56,6 +58,7 @@ RUNTIME_FILES = (
     ),
     "backend/ai-service/pyproject.toml",
     "backend/ai-service/uv.lock",
+    "backend/ops-service/apps/evaluations/vector_cache.py",
 )
 
 
@@ -70,7 +73,7 @@ def require(condition):
         raise BudgetUnavailable("RAG request differs from the approved session")
 
 
-def make_rag_spec(cases, *, model=DEFAULT_OPENAI_MODEL):
+def make_rag_spec(cases, *, model=DEFAULT_OPENAI_MODEL, document_sources=None, document_vectors=None):
     """전송할 청크·질문과 순서, 현행 소스·모델·토큰 상한을 고정한다. 예약 생성은 하지 않는다."""
     require(
         isinstance(model, str) and bool(re.fullmatch(r"[A-Za-z0-9_.:-]{1,100}", model))
@@ -136,7 +139,7 @@ def make_rag_spec(cases, *, model=DEFAULT_OPENAI_MODEL):
             }
         )
     require(len(operations) <= 512)
-    return {
+    plan = {
         "evaluation_scope": "source-chunks-retrieval-answer",
         "execution_mode": "live",
         "rag_cases": prepared,
@@ -154,6 +157,29 @@ def make_rag_spec(cases, *, model=DEFAULT_OPENAI_MODEL):
         },
         "model_operations": operations,
     }
+    if document_sources is not None:
+        from apps.evaluations.vector_cache import apply_plan
+
+        require(set(document_sources) == seen and all(
+            isinstance(value, str) and re.fullmatch(r"[a-f0-9]{64}", value)
+            for value in document_sources.values()
+        ))
+        plan["document_sources"] = document_sources
+        plan["document_vector_keys"] = {
+            case["case_id"]: digest({
+                "schema_version": 1,
+                "source_sha256": document_sources[case["case_id"]],
+                "chunks": case["chunks"],
+                "model": plan["live_config"]["embedding_model"],
+                "dimensions": plan["live_config"]["embedding_dimensions"],
+                "embedding_code_sha256": plan["runtime_sha256"]["backend/ai-service/app/support_program_embedding.py"],
+            }) for case in prepared
+        }
+        if document_vectors is not None:
+            plan = apply_plan(plan, document_vectors)
+    else:
+        require(document_vectors is None)
+    return plan
 
 
 class RagBudget:
@@ -161,7 +187,11 @@ class RagBudget:
 
     def __init__(self, client, spec, *, receipt_directory, execution_spec=None):
         require(
-            spec == make_rag_spec(spec["rag_cases"], model=spec["live_config"]["model"])
+            spec == make_rag_spec(
+                spec["rag_cases"], model=spec["live_config"]["model"],
+                document_sources=spec.get("document_sources"),
+                document_vectors=spec["live_config"].get("document_vectors"),
+            )
             and digest(execution_spec or spec) == client.identity["spec_hash"]
             and (
                 execution_spec is None

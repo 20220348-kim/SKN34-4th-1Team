@@ -242,6 +242,16 @@ def search_request(case, document):
 
 
 def validate_observation(observation, case, document, kind):
+    if isinstance(observation, dict) and "documentVectors" in observation:
+        vectors = observation["documentVectors"]
+        fields(vectors, "key sha256 status")
+        require(
+            kind == "recorded"
+            and all(isinstance(vectors[name], str) and re.fullmatch(r"[a-f0-9]{64}", vectors[name]) for name in ("key", "sha256"))
+            and vectors["status"] in {"created", "reused"},
+            "invalid document vector provenance",
+        )
+        observation = {key: value for key, value in observation.items() if key != "documentVectors"}
     fields(
         observation,
         "caseId traceId sourceContentHash chunksSha256 indexedCount search answer failure",
