@@ -675,13 +675,13 @@ flowchart LR
 
 ### 9.2 전체 처리 흐름
 
-**접수·권한·예산 확인:** 관리자의 요청을 검증하고 HTTP 요청 밖의 평가 실행으로 연결합니다.
+**실행 요청·권한·예산 확인:** 관리자의 요청을 검증하고 HTTP 요청 밖의 평가 실행으로 연결합니다.
 
 ```mermaid
 flowchart LR
     Admin["React Web<br/>자료 · 실행 방식 선택"] --> Ops["ops-service<br/>명세 고정 · 예산 예약"]
     Ops -->|관리자 세션 확인| Core["core-service<br/>계정 · 권한"]
-    Ops -->|평가 접수| Runner["Prefect + 평가 실행기<br/>별도 작업 실행"]
+    Ops -->|평가 실행 요청| Runner["Prefect + 평가 실행기<br/>별도 작업 실행"]
     Ops -. 기록 .-> OpsDB[("Ops MySQL<br/>실행 명세 · 예산")]
     classDef client fill:#e8f3fa,stroke:#91b9cd,color:#183d32
     classDef service fill:#e7f5eb,stroke:#92bda6,color:#183d32
@@ -692,6 +692,12 @@ flowchart LR
     class Runner execution
     class OpsDB mysql
 ```
+
+**평가 실행 요청은 관리자가 선택한 조건을 하나의 작업으로 등록해 Prefect에 전달하는 단계입니다.**
+예를 들어 관리자가 저장된 답변 6건의 재평가를 요청하면, `ops-service`는 관리자 권한과
+평가 자료·실행 방식·비교 대상을 확인하고 Ops MySQL에 실행 기록을 저장한 뒤 Prefect에 작업 생성을 요청합니다.
+새 모델 호출이 필요한 평가에는 승인된 호출·토큰 예산도 확인하고 예약합니다.
+이후 Prefect가 관리하는 별도 평가 실행기가 실제 평가와 점수·보고서 생성을 수행합니다.
 
 **평가 실행·분석:** 세 가지 방식 중 하나를 실행하고 공통 지표 계산으로 연결합니다.
 
@@ -729,7 +735,7 @@ flowchart LR
     class OpsDB mysql
 ```
 
-1. **관리자 접수:** 기존 Core 관리자 계정으로 로그인하고 React의 `/ops/evaluations`에서
+1. **관리자 실행 요청:** 기존 Core 관리자 계정으로 로그인하고 React의 `/ops/evaluations`에서
    자료·실행 방식·비교 대상을 선택합니다. Django Ops가 관리자 권한과 실행 명세를 확인하고,
    새 모델 호출이 있으면 승인된 호출·토큰 한도를 검사해 예산을 예약합니다.
 2. **평가 실행:** Prefect가 별도 평가 실행기에 작업을 전달합니다. 저장된 응답을 다시 평가하거나,
