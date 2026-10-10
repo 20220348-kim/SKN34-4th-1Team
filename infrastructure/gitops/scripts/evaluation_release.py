@@ -42,13 +42,20 @@ NAMESPACE = "govbiz-evaluation"
 PROJECT = "govbiz-evaluation"
 
 
-def select_runner_release(fork, get=api):
+def select_runner_release(fork, get=api, run_id=None):
     """Do not fall back past a failed, pending or malformed newer publisher."""
-    runs = get(
-        f"repos/{fork.repository}/actions/workflows/evaluation-images.yml/runs"
-        f"?branch={quote(fork.branch, safe='')}&per_page=100"
-    )["workflow_runs"]
+    if run_id is not None:
+        if type(run_id) is not int or run_id <= 0:
+            raise ValueError("Invalid evaluation publisher run id")
+        runs = [get(f"repos/{fork.repository}/actions/runs/{run_id}")]
+    else:
+        runs = get(
+            f"repos/{fork.repository}/actions/workflows/evaluation-images.yml/runs"
+            f"?branch={quote(fork.branch, safe='')}&per_page=100"
+        )["workflow_runs"]
     for run in sorted(runs, key=lambda row: row["id"], reverse=True):
+        if run_id is not None and run.get("id") != run_id:
+            raise ValueError("Evaluation publisher differs from the selected run")
         if run.get("status") != "completed" or run.get("conclusion") not in {
             "success",
             "skipped",
@@ -238,14 +245,25 @@ def plan(
     ops_api_url="http://ops-service.govbiz-msa.svc.cluster.local:8000",
     helm="helm",
     get=api,
+    publication=None,
 ):
     """Read-only preparation. Existing storage, Secrets and runtime are unverified."""
-    msa_release = select_release(fork, get)
+    if publication is not None and (
+        not isinstance(publication, (tuple, list))
+        or len(publication) != 2
+        or any(type(value) is not int or value <= 0 for value in publication)
+    ):
+        raise ValueError("Select both MSA and runner publisher run IDs")
+    msa_selection = (publication[0],) if publication is not None else ()
+    runner_selection = (publication[1],) if publication is not None else ()
+    source_options = {"pinned": True} if publication is not None else {}
+    publish_options = {"run_id": publication[0]} if publication is not None else {}
+    msa_release = select_release(fork, get, *msa_selection)
     record, _, sha = verified_release(
-        root, fork, helm, get, verify_public_manifests=True
+        root, fork, helm, get, verify_public_manifests=True, **publish_options
     )
-    checks = source_checks(fork, sha, get)
-    release = select_runner_release(fork, get)
+    checks = source_checks(fork, sha, get, **source_options)
+    release = select_runner_release(fork, get, *runner_selection)
     if release is None:
         raise ValueError("No complete evaluation runner publication")
     receipt = checked_runner_receipt(root, fork, sha, release, get)
@@ -387,11 +405,11 @@ def plan(
                         )
     resources = argo_plan(fork, sha, values)
     # Recheck both independently published bundles and CI after rendering/registry I/O.
-    if select_runner_release(fork, get) != release:
+    if select_runner_release(fork, get, *runner_selection) != release:
         raise ValueError("Evaluation publication changed during validation")
-    if select_release(fork, get) != msa_release:
+    if select_release(fork, get, *msa_selection) != msa_release:
         raise ValueError("Ops publication changed during validation")
-    if source_checks(fork, sha, get) != checks:
+    if source_checks(fork, sha, get, **source_options) != checks:
         raise ValueError("Required source checks changed during validation")
     return {
         "schema": "evaluation-gitops-plan-v1",
@@ -782,6 +800,13 @@ def main():
     parser.add_argument("--results-claim")
     parser.add_argument("--restore-report", type=Path)
     parser.add_argument("--state-dir", type=Path)
+    parser.add_argument(
+        "--publication",
+        type=int,
+        nargs=2,
+        metavar=("MSA_RUN", "RUNNER_RUN"),
+        help="Pin two successful publishers of the same tested main ancestor",
+    )
     actions = parser.add_mutually_exclusive_group()
     actions.add_argument(
         "--register-argo",
@@ -822,6 +847,8 @@ def main():
             "langfuse_url": args.langfuse_url,
             "ops_api_url": args.ops_api_url,
         }
+        if args.publication is not None:
+            options["publication"] = args.publication
         if args.request_dormant_sync:
             report = request_dormant_sync(
                 root,

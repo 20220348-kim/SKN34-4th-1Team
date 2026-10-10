@@ -26,8 +26,9 @@ Kubernetes와 Compose를 함께 쓰는 구조는 로컬 개발용이며, 현재 
 OpenAI·공공 데이터 등 외부 API는 기존 서비스 계약을 유지합니다.
 
 현재 `govbiz-local-data`는 로컬 검증용이므로 운영 데이터 구성의 완료 증거로 사용하지 않습니다.
-다음 구현 순서는 평가 저장소 복원과 이미지 발행·Argo 연결, 평가 환경 실제 전환,
-Langfuse와 관련 저장소 이전, 남은 웹·데이터·외부 접근 및 운영 복구 검증입니다.
+개인 환경의 평가 저장소·실행기·Ops 연결은 2026-10-10에 실제 전환했습니다.
+다음 작업은 새 Kubernetes 데이터의 백업·복구 연결, Langfuse와 관련 저장소 이전,
+남은 웹·데이터·외부 접근 구성입니다.
 [평가 환경 이전의 상세 기준](docs/evaluation-kubernetes.md)을 함께 따릅니다.
 
 ## 현재 상태
@@ -49,12 +50,14 @@ Langfuse와 관련 저장소 이전, 남은 웹·데이터·외부 접근 및 �
 | 저장된 전환 파일 재검증 | `gitops_transition.py --verify`: 현재 발행본·환경으로 계획을 다시 생성해 파일 전체와 비교. 파일 갱신·적용 없음 |
 | Ops 백업 전 중지·복구 계획 | `ops_maintenance_plan.py`: dev 또는 안정된 수동 Argo 환경에서 대상·원래 실행 상태를 조회. `--runtime-keys`는 로컬 Ops·결과 서버 이미지 일치도 확인. 접수 중지·백업·서비스 변경 없음 |
 | 개인 환경 Argo 인계 | 2026-10-07 공개 이미지 4개를 수동 동기화해 `Synced/Healthy` 확인. 아래 실행 기록 참고 |
+| 개인 환경 평가 서비스 이전 | 2026-10-10 Prefect·실행기·결과 서버와 Ops 연결을 실제 전환. 무료 평가 6사례·보고서 조회 성공, 원본 Compose 평가 서비스 3개 중지·볼륨 보존 |
 | Argo 자동 배포 | 자동 인계·새 발행본 자동 적용 미구현. 자동 동기화·prune·selfHeal 비활성 |
 | 과거 snapshot | 읽기·검증 및 오프라인 정책 테스트 보존 |
 
 `MSA_PROMOTION_ENABLED=false`를 유지합니다. GHCR `up`은 별도 배포 브랜치 없이
 [현재 발행 검증 경로](docs/image-promotion.md)로 초기화합니다.
-개인 환경 1곳은 검증된 `e7898ec` 공개 발행본으로 수동 인계를 마쳤습니다.
+개인 환경 1곳은 검증된 `e7898ec` 공개 발행본으로 최초 수동 인계를 마쳤습니다.
+이후 Ops와 평가 서비스는 검증된 `2cab488` 발행본으로 전환했으며 Core·Catalog·AI는 기존 배포를 유지합니다.
 [실제 백업·migration·Argo 인계 기록](../../docs/ops-upgrade-runbook.md#개인-환경-공개-이미지의-argo-인계--2026-10-07)을 참고하세요.
 이는 운영자가 수행한 전환이며, 아래 준비 도구에 적용·자동 배포 기능이 추가된 것은 아닙니다.
 `plan-gitops`는 자동 동기화를 끈 검토용 구성을 출력하며, 개인 환경 호환성 확인이나 실제 배포를 수행하지 않습니다.
@@ -90,11 +93,11 @@ EndpointSlice와 준비된 Pod의 UID·IP·포트를 대조하며 HTTP 통신 �
 개발 감시·웹 연결은 유지합니다. 소스 이미지 경로에는 GHCR 계정이나 PAT가 필요하지 않습니다.
 검증된 GHCR 이미지를 사용할 때는 `gh` 로그인과 해당 이미지의 pull 권한을 준비하고 일반 `up`을 실행합니다.
 
-현재 Prefect·평가 실행기·결과 저장소는 Compose에서 실행됩니다. 배포 대상의 최종 방향은
-서비스 경계를 유지한 Kubernetes 통합입니다. [단계적 이전 구성과 완료 기준](docs/evaluation-kubernetes.md)을
-따르며, 독립 Helm 구성의 추가만으로 기존 환경이 이전된 것은 아닙니다.
+로컬 개발용 Compose는 유지합니다. 개인 배포 환경의 Prefect·평가 실행기·결과 저장소는 Kubernetes로
+이전했고, Langfuse와 관련 저장소는 아직 Compose에서 실행됩니다.
+[실제 이전 기록과 남은 완료 기준](docs/evaluation-kubernetes.md)을 참고하세요.
 [Ops 연결 계약](docs/ops-runtime.md)과 [스키마·migration 계약](docs/ops-migration.md)을 따릅니다.
-기존 개발 클러스터·서비스·DB·볼륨을 이번 제거 작업에서 삭제하거나 변경하지 않았습니다.
+전환 전 원본 볼륨은 보존하지만, 전환 후 생성된 데이터는 새 Kubernetes PVC에 있습니다.
 
 ## 구조
 

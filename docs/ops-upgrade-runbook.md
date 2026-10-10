@@ -5,8 +5,12 @@
 클라우드의 빈 Docker 환경이나 임시 테스트 통과를 개인 PC 갱신 완료로 기록하지 않는다.
 백업·접수 중지·업무 검증은 운영자가 수행하는 필수 단계이며 자동화됐다는 뜻이 아니다.
 
-개인 환경의 최신 실행 결과는 [공개 이미지의 Argo 인계](#개인-환경-공개-이미지의-argo-인계--2026-10-07)에
-기록한다. 아래 과거 리허설·전환 준비 기록의 미완료 상태와 구분한다.
+2026-10-10 개인 환경의 Prefect·실행기·결과 서버는 Kubernetes로 이전했다.
+[현재 이전 상태와 데이터 보존 범위](../infrastructure/gitops/docs/evaluation-kubernetes.md#개인-환경의-실제-이전-완료-범위--2026-10-10)를
+먼저 확인한다. 이 문서의 Compose 볼륨 백업·writer 재개 명령은 **전환 전 구성용**이며 새 평가
+PVC의 최신 데이터를 포함하지 않는다. 새 대상에 쓰기가 생긴 뒤 원본 Compose를 단순 재개하지 않는다.
+Kubernetes PVC·Ops DB를 함께 백업·복원하는 운영 절차는 후속 전환 대상이다.
+[2026-10-07 Argo 인계](#개인-환경-공개-이미지의-argo-인계--2026-10-07)와 아래 리허설 기록은 당시 결과다.
 
 ## 1. 대상과 사전 상태 고정
 
@@ -131,6 +135,10 @@ python3 -B infrastructure/gitops/scripts/ops_maintenance_plan.py \
   고정 SHA의 `Synced/Healthy`, 마지막 operation의 `Succeeded`, 자동 동기화·prune·self-heal
   비활성화와 재시도 0이 필요하다. 대기 중 operation이나 프로젝트·Application UID·명세 변경은
   거절한다. `argo_observation`에는 UID·소스 SHA·명세 지문만 기록한다.
+  평가 이전용 `govbiz-evaluation-{prefect,ops-artifacts,evaluation-runner}` Application은
+  `argocd`에 있고 프로젝트와 대상 namespace가 모두 `govbiz-evaluation`인 경우에만 이 업무
+  서비스 목록에서 제외한다. 평가 Application 등록 후에도 중지한 Ops 원본을 확인하기 위한
+  구분이며, 평가 영역의 소유권·상태 확인은 기존 평가 인계 도구가 담당한다.
 - Deployment UID·resourceVersion·spec 해시·원래 replicas, MySQL Pod·StatefulSet·PVC·Service
   식별자와 이미지 digest, Compose 쓰기 컨테이너의 ID·이미지·실행 상태를 기록한다.
   안정된 Ops API/sync 1개 replica만 지원한다. dev에서는 Argo 관리를 거절하고, GitOps에서는

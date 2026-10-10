@@ -106,6 +106,7 @@ class EvaluationReleaseTests(SourceFixture):
         self.ci_attempt = 1
         self.current_sha = self.sha
         self.calls = []
+        self.ancestor = True
 
     def pack(self, receipt, identity, run_id, name, *, filename=None, extra=False):
         buffer = io.BytesIO()
@@ -134,6 +135,21 @@ class EvaluationReleaseTests(SourceFixture):
 
     def get(self, path, binary=False):
         self.calls.append(path)
+        if path.endswith("/actions/runs/900"):
+            return copy.deepcopy(self.publisher)
+        if path.endswith("/actions/runs/901"):
+            return copy.deepcopy(self.runner)
+        if path == f"repos/{FORK.repository}/compare/{self.current_sha}...{self.sha}":
+            return {
+                "status": "behind" if self.ancestor else "diverged",
+                "base_commit": {"sha": self.current_sha},
+                "merge_base_commit": {"sha": self.sha},
+                "ahead_by": 0,
+                "behind_by": 1,
+                "total_commits": 0,
+                "commits": [],
+                "files": [],
+            }
         if "/workflows/evaluation-images.yml/runs?" in path:
             return {"workflow_runs": copy.deepcopy([self.runner, *self.extra_runs])}
         if "/workflows/msa-images.yml/runs?" in path:
@@ -276,6 +292,61 @@ class EvaluationReleaseTests(SourceFixture):
         self.runner_artifacts = [{"name": name} for name in release.REPORTS]
         self.total_count = len(self.runner_artifacts)
         self.assertIsNone(release.select_runner_release(FORK, self.get))
+
+    def test_explicit_publications_keep_the_tested_ancestor_when_main_advances(self):
+        self.current_sha = "b" * 40
+        with (
+            patch.object(fork_cluster, "verify_pull_rights"),
+            patch.object(release, "verify_pull_rights"),
+        ):
+            with self.assertRaisesRegex(ValueError, "Source advanced"):
+                self.plan()
+            result = self.plan(publication=(900, 901))
+        self.assertEqual(result["sourceSha"], self.sha)
+        self.assertEqual(result["msaPublisherRunId"], 900)
+        self.assertEqual(result["runnerPublisherRunId"], 901)
+        self.assertTrue(
+            all(
+                app["spec"]["source"]["targetRevision"] == self.sha
+                for app in result["resources"][1:]
+            )
+        )
+
+    def test_pinning_does_not_accept_failed_ci_unmerged_sources_or_wrong_receipts(self):
+        self.current_sha = "b" * 40
+        for scenario in ("ancestry", "ci", "publisher", "runner-sha", "upstream"):
+            self.ancestor, self.ci_state, self.publisher["conclusion"] = (
+                True,
+                ["success"],
+                "success",
+            )
+            self.runner["head_sha"] = self.sha
+            if scenario == "ancestry":
+                self.ancestor = False
+            elif scenario == "ci":
+                self.ci_state = ["failure"]
+            elif scenario == "publisher":
+                self.publisher["conclusion"] = "cancelled"
+            elif scenario == "runner-sha":
+                self.runner["head_sha"] = "c" * 40
+            with (
+                self.subTest(scenario=scenario),
+                patch.object(fork_cluster, "verify_pull_rights"),
+                patch.object(release, "verify_pull_rights"),
+                patch.object(
+                    deploy, "upstream_merged", return_value=scenario != "upstream"
+                ),
+                self.assertRaises(ValueError),
+            ):
+                self.plan(publication=(900, 901))
+
+    def test_partial_or_invalid_publication_selection_is_rejected_before_api_calls(
+        self,
+    ):
+        for selection in ((900,), (0, 901), (900, True), "900,901"):
+            with self.subTest(selection=selection), self.assertRaises(ValueError):
+                self.plan(publication=selection)
+        self.assertEqual(self.calls, [])
 
     def test_real_source_ci_and_helm_plan_is_manual_dormant_and_separate(self):
         dirty = self.root / release.CHART / "templates/dirty.yaml"

@@ -44,6 +44,26 @@ def argo_observation(state, settings, *, stopped_ops=False):
     ):
         raise ValueError("Argo project differs from the dedicated fork policy")
     applications = cluster.applications(kube, argo)
+    # Evaluation migration owns a separate, namespace-restricted Argo project.
+    # Its three Applications must not invalidate the existing Ops backup source.
+    evaluation_names = {
+        "govbiz-evaluation-" + name
+        for name in ("prefect", "ops-artifacts", "evaluation-runner")
+    }
+    applications = [
+        app
+        for app in applications
+        if not (
+            app.get("metadata", {}).get("name") in evaluation_names
+            and app.get("metadata", {}).get("namespace") == "argocd"
+            and app.get("spec", {}).get("project") == "govbiz-evaluation"
+            and app.get("spec", {}).get("destination")
+            == {
+                "server": "https://kubernetes.default.svc",
+                "namespace": "govbiz-evaluation",
+            }
+        )
+    ]
     expected = {"govbiz-fork-" + service for service in cluster.SERVICES}
     if (
         len(applications) != len(expected)

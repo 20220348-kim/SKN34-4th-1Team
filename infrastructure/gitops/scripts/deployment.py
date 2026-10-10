@@ -28,7 +28,14 @@ from deployment_candidate import (
     verify,
     write_files,
 )
-from gate import WORKFLOWS, api, blocked_reason, valid_sha
+from gate import (
+    WORKFLOWS,
+    api,
+    blocked_reason,
+    ci_blocked_reason,
+    upstream_merged,
+    valid_sha,
+)
 from repository import from_origin
 from sync_images import api as release_api
 from sync_images import checked_receipts, select_release
@@ -124,11 +131,37 @@ def require_rules(fork, get=api):
             raise ValueError(branch + ": " + "; ".join(errors))
 
 
-def source_checks(fork, sha, get=api):
-    if head(fork, fork.branch, get) != sha:
-        raise ValueError("Source advanced: generate a new candidate")
+def source_checks(fork, sha, get=api, *, pinned=False):
+    current = head(fork, fork.branch, get)
+    if current != sha:
+        if not pinned:
+            raise ValueError("Source advanced: generate a new candidate")
+        # An explicitly selected publication may remain on a tested main ancestor.
+        # Do not infer ancestry from an empty or truncated file comparison.
+        comparison = get(f"repos/{fork.repository}/compare/{current}...{sha}")
+        if not (
+            valid_sha(sha)
+            and comparison.get("status") == "behind"
+            and comparison.get("base_commit", {}).get("sha") == current
+            and comparison.get("merge_base_commit", {}).get("sha") == sha
+            and type(comparison.get("ahead_by")) is int
+            and comparison["ahead_by"] == 0
+            and type(comparison.get("behind_by")) is int
+            and comparison["behind_by"] > 0
+            and comparison.get("total_commits") == 0
+            and comparison.get("commits") == []
+            and comparison.get("files") == []
+        ):
+            raise ValueError("Pinned publication is not an ancestor of the fork branch")
     checks = []
-    reason = blocked_reason(sha, fork, get, evidence=checks)
+    if pinned:
+        reason = (
+            ci_blocked_reason(sha, fork, get, evidence=checks)
+            if upstream_merged(sha, fork, get, ancestor_only=True)
+            else "upstream_not_merged"
+        )
+    else:
+        reason = blocked_reason(sha, fork, get, evidence=checks)
     if reason:
         raise ValueError("Deployment source blocked: " + reason)
     return checks
@@ -293,11 +326,19 @@ def publication_blocker(fork, get=release_api):
 
 
 def verified_release(
-    root, fork, helm="helm", get=release_api, *, verify_public_manifests=False
+    root,
+    fork,
+    helm="helm",
+    get=release_api,
+    *,
+    verify_public_manifests=False,
+    run_id=None,
 ):
-    """Resolve a current tested publication without branches, PRs or checkout writes."""
+    """Resolve a tested publication without branches, PRs or checkout writes."""
     fork.require_personal_publish()
-    release = select_release(fork, get)
+    selection = (run_id,) if run_id is not None else ()
+    source_options = {"pinned": True} if selection else {}
+    release = select_release(fork, get, *selection)
     if release is None:
         raise ValueError(
             "No complete verified publication; wait for source CI and image publication"
@@ -306,7 +347,7 @@ def verified_release(
     if type(run.get("run_attempt")) is not int or run["run_attempt"] <= 0:
         raise ValueError("Publisher attempt is missing or invalid")
     sha = run["head_sha"]
-    checks = source_checks(fork, sha, get)
+    checks = source_checks(fork, sha, get, **source_options)
     receipts = checked_receipts(sha, release, fork, get)
     ensure_revision(root, sha)
     files = release_files(root, fork, sha, run["id"], receipts, helm)
@@ -321,7 +362,7 @@ def verified_release(
         verify_pull_rights(None, None, record)
     # Recheck after registry access as well: new runs/receipts/CI must not inherit
     # the earlier verification even when the old registry digests still exist.
-    confirmed = select_release(fork, get)
+    confirmed = select_release(fork, get, *selection)
     if (
         confirmed is None
         or any(
@@ -341,7 +382,7 @@ def verified_release(
         != sorted((a["name"], a["id"], a["digest"]) for a in artifacts)
     ):
         raise ValueError("Publisher or image receipts changed during validation; retry")
-    if source_checks(fork, sha, get) != checks:
+    if source_checks(fork, sha, get, **source_options) != checks:
         raise ValueError("Required CI evidence changed during validation; retry")
     return record, files, sha
 
