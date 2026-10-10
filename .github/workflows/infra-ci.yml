@@ -141,7 +141,7 @@ jobs:
         run: |
           python -B scripts/check_msa.py
           python -B scripts/check_portfolio.py
-      - name: Lint each service and disposable local storage
+      - name: Lint services, disposable local storage and observability
         run: |
           set -euo pipefail
           for service in core-service catalog-service ai-service ops-service; do
@@ -149,6 +149,7 @@ jobs:
           done
           helm lint charts/govbiz-local-data --set allowDisposableData=true --strict
           helm lint charts/govbiz-local-data --set allowDisposableData=true --set rabbitmq.enabled=true --strict
+          helm lint charts/govbiz-observability --namespace govbiz-observability --set node=fixture-control-plane --strict
 
   merge-readiness:
     name: Required CI / Infra
