@@ -7,6 +7,7 @@ import ai.govbiz.core.account.service.AccountSessionService
 import ai.govbiz.core.account.web.AuthenticatedAccountArgumentResolver
 import ai.govbiz.core.applicationpreparation.domain.exception.ApplicationPreparationRunConflictException
 import ai.govbiz.core.applicationpreparation.service.ApplicationFormDiscoveryService
+import ai.govbiz.core.supportprogram.service.admission.SupportProgramRequestAdmissionService
 import ai.govbiz.core.applicationpreparation.service.ApplicationPreparationService
 import jakarta.servlet.http.Cookie
 import org.junit.jupiter.api.Test
@@ -26,7 +27,8 @@ class ApplicationPreparationDeletionControllerTest {
         val account = AccountTestHelper.account()
         doReturn(account).`when`(sessions).requireAccount("session-token")
         doThrow(ApplicationPreparationRunConflictException()).`when`(service).deleteOwned(account, 7)
-        val mvc = MockMvcBuilders.standaloneSetup(ApplicationPreparationController(service, mock(ApplicationFormDiscoveryService::class.java), false))
+        val mvc = MockMvcBuilders.standaloneSetup(ApplicationPreparationController(service, mock(ApplicationFormDiscoveryService::class.java), false,
+            mock(SupportProgramRequestAdmissionService::class.java)))
             .setCustomArgumentResolvers(AuthenticatedAccountArgumentResolver(sessions, AccountTestHelper.cookieHelper()))
             .setControllerAdvice(ApiExceptionHandler())
             .build()

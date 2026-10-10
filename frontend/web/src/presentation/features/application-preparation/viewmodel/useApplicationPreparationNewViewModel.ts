@@ -8,6 +8,8 @@ import type {
   ApplicationServiceField,
 } from '../../../../domain/entities/ApplicationPreparation'
 import { ApplicationPreparationError } from '../../../../domain/errors/ApplicationPreparationError'
+import { planUsageView } from '../../../shared/plan-usage/planUsageView'
+import { usePlanUsage } from '../../../shared/plan-usage/usePlanUsage'
 import { appPaths } from '../../../shared/routes/appPaths'
 import { usePreparationJobActions } from '../../../shared/preparation-jobs/usePreparationJobs'
 import { programKey, type PickLookup, type SelectableSupportProgram } from '../../../shared/support-program/useProgramPickerViewModel'
@@ -135,6 +137,9 @@ export function useApplicationPreparationNewViewModel(addressSourceCode: string,
   const navigate = useNavigate()
   // 분석을 시작하면 사이드바·목록이 따라가게 작업 목록을 다시 읽게 하고, 끝난 결과를 이 화면에서 봤으면 확인한 것으로 표시합니다.
   const { refresh: refreshJobs, markAnalysisSeen } = usePreparationJobActions()
+  // 이번 달 신청 문서 이용량입니다. 공고 하나를 한 건으로 세므로, 이미 센 공고를 다시 분석해도 늘지 않아 버튼은 막지 않습니다.
+  const planUsage = usePlanUsage()
+  const reloadPlanUsage = planUsage.reload
   const hasAddressProgram = Boolean(addressSourceCode && addressProgramId)
   const [program, setProgram] = useState<SelectableSupportProgram | null>(null)
   const [programLoad, setProgramLoad] = useState<{ status: 'idle' | 'loading' } | { status: 'failed'; error: Error }>(
@@ -350,9 +355,10 @@ export function useApplicationPreparationNewViewModel(addressSourceCode: string,
   const discoverForms = useCallback(() => {
     if (!program || googleFormUrl || submittingGuard.current || analysisBlocked) return
     const target = program
-    void track((signal) => useCase.discover(target.sourceCode, target.id, signal, crypto.randomUUID()),
+    // 접수됐든 한도로 거절됐든 분석을 요청했으니 이번 달 이용량을 다시 읽습니다.
+    void track((signal) => useCase.discover(target.sourceCode, target.id, signal, crypto.randomUUID()).finally(reloadPlanUsage),
       { reanalysis: forms.length > 0, resumed: false, startedAt: Date.now() })
-  }, [analysisBlocked, forms.length, googleFormUrl, program, track, useCase])
+  }, [analysisBlocked, forms.length, googleFormUrl, program, track, useCase, reloadPlanUsage])
 
   const selectForm = useCallback((formVersionId: string) => {
     const form = forms.find((candidate) => candidate.formVersionId === formVersionId)
@@ -414,6 +420,8 @@ export function useApplicationPreparationNewViewModel(addressSourceCode: string,
     discoveryError,
     capacityJobs,
     discoveryWarnings,
+    /** 이번 달 신청 문서 이용량 한 줄입니다. 읽지 못했으면 null입니다. */
+    draftUsage: planUsageView(planUsage.usage, 'APPLICATION_DRAFT'),
     toast,
     submitting,
     createError,

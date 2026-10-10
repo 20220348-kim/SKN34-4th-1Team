@@ -1,4 +1,6 @@
 import type { z } from 'zod'
+import { readPlanQuotaProblem } from '@govbiz/shared/data/models/PlanUsageDto'
+import { PlanQuotaExceededError, QuotaUnavailableError } from '@govbiz/shared/domain/errors/PlanQuotaError'
 import { ApplicationPreparationError } from '../../domain/errors/ApplicationPreparationError'
 import { applicationPreparationProblemSchema } from '../models/ApplicationPreparationDto'
 import { getCoreApiBaseUrl } from './coreApiConfig'
@@ -35,7 +37,11 @@ export async function applicationPreparationRequest<T>(
       ...(body === undefined ? {} : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
     })
     if (!response.ok) {
-      const problem = applicationPreparationProblemSchema.safeParse(await response.json().catch(() => null))
+      const body: unknown = await response.json().catch(() => null)
+      // 요금제 한도(429 PLAN_QUOTA_EXCEEDED)와 이용량 확인 실패(503 QUOTA_UNAVAILABLE)는 shared 오류로 먼저 바꿉니다.
+      const quota = readPlanQuotaProblem(response.status, body)
+      if (quota) throw quota
+      const problem = applicationPreparationProblemSchema.safeParse(body)
       const serverCode = problem.success ? problem.data.code : null
       let code = serverCode ?? 'REQUEST_FAILED'
       if (path.includes('/forms/discovery-jobs') && serverCode === 'AI_SERVICE_INVALID_RESPONSE') {
@@ -57,7 +63,7 @@ export async function applicationPreparationRequest<T>(
     if (!parsed.success) throw new ApplicationPreparationError(502, 'INVALID_RESPONSE')
     return parsed.data
   } catch (error) {
-    if (error instanceof ApplicationPreparationError) throw error
+    if (error instanceof ApplicationPreparationError || error instanceof PlanQuotaExceededError || error instanceof QuotaUnavailableError) throw error
     if (signal?.aborted) throw error
     if (timedOut) throw new ApplicationPreparationError(504, 'REQUEST_TIMEOUT')
     throw new ApplicationPreparationError(0, 'REQUEST_FAILED')

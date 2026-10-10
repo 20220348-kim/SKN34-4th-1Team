@@ -52,7 +52,7 @@ export function planQuotaFailureMessage(error: unknown): string | null {
   return error instanceof PlanQuotaExceededError || error instanceof QuotaUnavailableError ? error.message : null
 }
 
-/** 진행 막대의 채운 비율(0~100)입니다. 진행 중인 요청 때문에 한도를 넘겨 세어져도 100에서 멈춥니다. */
+/** 진행 막대의 채운 비율(0~100)입니다. 진행 중인 작업 때문에 한도를 넘겨 세어져도 100에서 멈춥니다. */
 export function planUsagePercent(item: LimitedPlanUsageItem): number {
   return item.limit > 0 ? Math.round((Math.min(item.used, item.limit) / item.limit) * 100) : 100
 }

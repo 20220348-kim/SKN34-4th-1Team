@@ -21,6 +21,8 @@ const usage: PlanUsage = {
     { feature: 'AI_SEARCH', period: 'DAY', limit: 10, used: 3, resetsAt },
     // 진행 중인 요청 때문에 한도를 넘겨 세어진 사용량입니다. 화면은 한도에서 멈춥니다.
     { feature: 'EVIDENCE_QUESTION', period: 'DAY', limit: 10, used: 11, resetsAt },
+    { feature: 'APPLICATION_DRAFT', period: 'MONTH', limit: 3, used: 1, resetsAt: '2026-11-01T00:00:00+09:00' },
+    { feature: 'COMBINATION_REVIEW', period: 'MONTH', limit: 3, used: 0, resetsAt: '2026-11-01T00:00:00+09:00' },
   ],
 }
 
@@ -48,12 +50,16 @@ describe('프로필 요금제와 이용량', () => {
     expect(rows.map((row) => row.textContent)).toEqual([
       'AI 대화 검색오늘 3/10회자정(서울 시간)에 다시 채워져요.',
       '공고 원문 질문오늘 10/10회자정(서울 시간)에 다시 채워져요.',
+      '신청 문서 초안이번 달 1/3건11월 1일에 다시 채워져요.',
+      '중복 지원·수혜 검토이번 달 0/3회11월 1일에 다시 채워져요.',
     ])
     const meters = within(section).getAllByRole('progressbar')
     expect(meters.map((meter) => [meter.getAttribute('aria-label'), meter.getAttribute('aria-valuenow'), meter.getAttribute('aria-valuemin'),
       meter.getAttribute('aria-valuemax'), meter.getAttribute('aria-valuetext')])).toEqual([
       ['AI 대화 검색 이용량', '3', '0', '10', '오늘 3/10회'],
       ['공고 원문 질문 이용량', '10', '0', '10', '오늘 10/10회'],
+      ['신청 문서 초안 이용량', '1', '0', '3', '이번 달 1/3건'],
+      ['중복 지원·수혜 검토 이용량', '0', '0', '3', '이번 달 0/3회'],
     ])
     expect((meters[0]!.firstElementChild as HTMLElement).style.width).toBe('30%')
     expect((meters[1]!.firstElementChild as HTMLElement).style.width).toBe('100%')
@@ -74,6 +80,7 @@ describe('프로필 요금제와 이용량', () => {
       items: [
         { feature: 'AI_SEARCH', period: 'DAY', limit: null, used: 42, resetsAt },
         { feature: 'EVIDENCE_QUESTION', period: 'DAY', limit: null, used: 0, resetsAt },
+        { feature: 'APPLICATION_DRAFT', period: 'MONTH', limit: null, used: 2, resetsAt: '2026-11-01T00:00:00+09:00' },
       ],
     })
     renderPage()
@@ -83,6 +90,7 @@ describe('프로필 요금제와 이용량', () => {
     expect(rows.map((row) => row.textContent)).toEqual([
       'AI 대화 검색오늘 42회 · 제한 없음자정(서울 시간)에 다시 채워져요.',
       '공고 원문 질문오늘 0회 · 제한 없음자정(서울 시간)에 다시 채워져요.',
+      '신청 문서 초안이번 달 2건 · 제한 없음11월 1일에 다시 채워져요.',
     ])
     expect(within(section).queryByRole('progressbar')).toBeNull()
   })
@@ -101,7 +109,7 @@ describe('프로필 요금제와 이용량', () => {
     fireEvent.click(within(section).getByRole('button', { name: '다시 시도' }))
     expect(within(section).getByText('이용량을 불러오는 중이에요.')).toBeTruthy()
     await act(async () => finish(usage))
-    expect(within(section).getAllByRole('progressbar')).toHaveLength(2)
+    expect(within(section).getAllByRole('progressbar')).toHaveLength(4)
     expect(within(section).queryByRole('alert')).toBeNull()
     expect(read).toHaveBeenCalledTimes(2)
   })

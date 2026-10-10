@@ -10,15 +10,16 @@ afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers() })
 const aiSearch: PlanUsageItem = { feature: 'AI_SEARCH', period: 'DAY', limit: 10, used: 3, resetsAt: '2026-10-09T00:00:00+09:00' }
 // 진행 중인 요청 때문에 한도를 넘겨 세어진 사용량도 그대로 받습니다. 화면 문구가 한도에서 멈춥니다.
 const questions: PlanUsageItem = { feature: 'EVIDENCE_QUESTION', period: 'DAY', limit: 10, used: 11, resetsAt: '2026-10-09T00:00:00+09:00' }
+const drafts: PlanUsageItem = { feature: 'APPLICATION_DRAFT', period: 'MONTH', limit: 3, used: 4, resetsAt: '2026-11-01T00:00:00+09:00' }
 
 describe('요금제 이용량 API 경계', () => {
   it('세션 쿠키와 no-store로 GET하고, 앱이 모르는 기능은 빼고 읽는다', async () => {
     const fetcher = vi.fn().mockResolvedValue(Response.json({
-      plan: 'FREE', items: [aiSearch, questions, { ...aiSearch, feature: 'FUTURE_FEATURE' }],
+      plan: 'FREE', items: [aiSearch, questions, drafts, { ...aiSearch, feature: 'FUTURE_FEATURE' }],
     }))
     vi.stubGlobal('fetch', fetcher)
 
-    expect(await new PlanUsageRepositoryImpl().usage()).toEqual({ plan: 'FREE', items: [aiSearch, questions] })
+    expect(await new PlanUsageRepositoryImpl().usage()).toEqual({ plan: 'FREE', items: [aiSearch, questions, drafts] })
     const [url, init] = fetcher.mock.calls[0]!
     expect(new URL(String(url)).pathname).toBe('/api/v1/plan-usage')
     expect(init).toMatchObject({ method: 'GET', credentials: 'include', cache: 'no-store', headers: { Accept: 'application/json' } })

@@ -1,5 +1,6 @@
 package ai.govbiz.core.planusage
 
+import ai.govbiz.core.account.repository.AccountRepository
 import ai.govbiz.core.planusage.domain.PlanCode
 import ai.govbiz.core.planusage.domain.PlanUsageFeature
 import ai.govbiz.core.planusage.domain.PlanUsagePeriod
@@ -12,6 +13,8 @@ import java.time.ZoneId
 import java.time.ZonedDateTime
 import org.mockito.Mockito
 import org.mockito.quality.Strictness
+import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.TransactionStatus
 
 /** 요금제 한도와 무관한 흐름을 검증하는 단위 테스트가 쓰는 대역입니다. */
 object PlanUsageTestHelper {
@@ -35,6 +38,11 @@ object PlanUsageTestHelper {
             Mockito.any(PlanUsageWindow::class.java) ?: window,
             Mockito.anyInt(),
         )
-        return PlanUsageService(repository, guests, clock, "")
+        return PlanUsageService(repository, guests, clock, noTransactions(), Mockito.mock(AccountRepository::class.java), "")
+    }
+
+    /** TransactionTemplate가 부를 때 아무 일도 하지 않는 transaction 관리자입니다. 콜백에는 빈 transaction 상태를 넘깁니다. */
+    fun noTransactions(): PlatformTransactionManager = Mockito.mock(PlatformTransactionManager::class.java, LENIENT).also {
+        Mockito.doReturn(Mockito.mock(TransactionStatus::class.java)).`when`(it).getTransaction(Mockito.any())
     }
 }

@@ -1,6 +1,10 @@
 import { CombinationReviewError } from '../../../../domain/errors/CombinationReviewError'
+import { planQuotaFailureMessage } from '../../../shared/plan-usage/planUsageView'
 
 export function reviewFailureMessage(error: unknown): string {
+  // 요금제 한도와 이용량 확인 실패는 서버가 실행을 만들지 않은 것이므로 shared 안내를 그대로 씁니다.
+  const quotaMessage = planQuotaFailureMessage(error)
+  if (quotaMessage !== null) return quotaMessage
   if (!(error instanceof CombinationReviewError)) return '요청 결과를 확인하지 못했습니다. 조회는 다시 시도할 수 있습니다. 분석 응답이 유실됐다면 공고 분석 단계의 [다시 시도]로 같은 요청을 확인하세요.'
   if (error.code === 'COMBINATION_REVIEW_API_UNAVAILABLE') return '현재 연결된 서버에서 검토 API를 찾을 수 없습니다. Core API 실행 버전과 연결 주소를 확인해야 합니다. 입력은 유지됩니다.'
   if (error.code === 'RUN_QUEUE_UNAVAILABLE') return '분석 작업 접수가 비활성화되어 있습니다. 운영자가 RabbitMQ와 분석 큐 설정을 확인해야 합니다. 새 작업은 접수되지 않았습니다.'

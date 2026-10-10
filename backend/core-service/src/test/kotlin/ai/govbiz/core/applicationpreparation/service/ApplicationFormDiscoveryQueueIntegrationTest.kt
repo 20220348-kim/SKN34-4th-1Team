@@ -116,6 +116,36 @@ class ApplicationFormDiscoveryQueueIntegrationTest {
     }
 
     @Test
+    fun freePlanAnalysesThreeProgramsAMonthAndStillReplaysThatProgram() {
+        val free = newAccount(plan = null)
+        val cookie = cookie(free)
+        val key = UUID.randomUUID().toString()
+        // 이번 달에 이미 끝난 다른 공고 분석 두 건입니다. 활성 작업 3건 제한과 겹치지 않게 완료 상태로 둡니다.
+        val now = LocalDateTime.now(ZoneId.of("Asia/Seoul"))
+        repeat(2) {
+            jdbc.update("""INSERT INTO application_form_discovery_job
+                (owner_account_id, request_key, source_code, source_program_id, status, result_json, created_at, started_at, finished_at, next_publish_at)
+                VALUES (?, ?, ?, ?, 'SUCCEEDED', '{}', ?, ?, ?, ?)""",
+                free.id, UUID.randomUUID().toString(), form.sourceCode, "PBLN_${(100_000_000L..999_999_999L).random()}", now, now, now, now)
+        }
+        fun submit(requestKey: String, programId: String) = mvc.perform(post(BASE).cookie(cookie).header("Origin", "http://localhost:5173")
+            .contentType(MediaType.APPLICATION_JSON)
+            .content("""{"requestKey":"$requestKey","sourceCode":"${form.sourceCode}","sourceProgramId":"$programId"}"""))
+        submit(key, form.sourceProgramId).andExpect(status().isAccepted)
+        submit(key, form.sourceProgramId).andExpect(status().isAccepted)
+        submit(UUID.randomUUID().toString(), "PBLN_000000000999999").andExpect(status().isTooManyRequests)
+            .andExpect(jsonPath("$.code").value("PLAN_QUOTA_EXCEEDED"))
+            .andExpect(jsonPath("$.feature").value("APPLICATION_DRAFT"))
+            .andExpect(jsonPath("$.limit").value(3))
+            .andExpect(jsonPath("$.used").value(3))
+        // 한도를 넘은 공고의 분석 작업은 남기지 않습니다.
+        assertEquals(3, jdbc.queryForObject("SELECT COUNT(*) FROM application_form_discovery_job WHERE owner_account_id = ?", Int::class.java, free.id))
+        assertEquals(0, jdbc.queryForObject("SELECT COUNT(*) FROM application_form_discovery_job WHERE owner_account_id = ? AND source_program_id = ?",
+            Int::class.java, free.id, "PBLN_000000000999999"))
+        verify(discovery, never()).discoverQueued(anyString(), anyString(), any<() -> Unit>() ?: {})
+    }
+
+    @Test
     fun submits202WithoutExternalWorkAndEnforcesOwnershipOriginAndIdempotency() {
         val cookie = cookie(account)
         val key = UUID.randomUUID().toString()
@@ -364,7 +394,9 @@ class ApplicationFormDiscoveryQueueIntegrationTest {
     }
 
     private fun enqueue() = jobs.reserve(account.id, UUID.randomUUID().toString(), form.sourceCode, form.sourceProgramId)
-    private fun newAccount() = accounts.createAccount(NewAccount("${UUID.randomUUID()}@form-queue.test", "hash", LocalDateTime.now()))
+    /** 한도와 무관한 흐름 테스트는 PREMIUM 계정으로 만들고, 요금제 한도 테스트만 FREE(plan = null)를 쓴다. */
+    private fun newAccount(plan: String? = "PREMIUM") = accounts.createAccount(NewAccount("${UUID.randomUUID()}@form-queue.test", "hash", LocalDateTime.now()))
+        .also { if (plan != null) jdbc.update("INSERT INTO account_plan (account_id, plan_code, assigned_at) VALUES (?, ?, NOW(6))", it.id, plan) }
     private fun cookie(account: Account): Cookie {
         val issued = sessions.issue(account.id, false)
         accounts.createSession(account.id, issued.session)

@@ -11,6 +11,7 @@ import { applicationPreparationSchema, applicationPreparationPageSchema, applica
 import { applicationDocumentsSchema, applicationDocumentMigrationConfirmationSchema } from '@govbiz/shared/data/models/ApplicationDocumentDto'
 import { applicationOnlineInputGuideSchema } from '@govbiz/shared/data/models/ApplicationOnlineInputGuideDto'
 import { applicationGoogleFormSchema } from '@govbiz/shared/data/models/ApplicationGoogleFormDto'
+import { readPlanQuotaProblem } from '@govbiz/shared/data/models/PlanUsageDto'
 import { ApiError, createApiFetch, getApiBaseUrl } from './client'
 import { clearPendingPreparationIfUnchanged, type PendingPreparationRequest } from '../auth/preparationPending'
 
@@ -47,9 +48,14 @@ export async function applicationRequest<T>(token: string, path: string, schema:
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     })
     if (!response.ok) {
-      const problem = applicationPreparationProblemSchema.safeParse(await response.json().catch(() => null))
+      const problemBody: unknown = await response.json().catch(() => null)
+      const problem = applicationPreparationProblemSchema.safeParse(problemBody)
       const code = problem.success ? problem.data.code : response.status === 404 ? 'APPLICATION_PREPARATION_API_UNAVAILABLE' : 'REQUEST_FAILED'
-      throw new ApplicationPreparationError(response.status, code, problem.success ? problem.data.mappingMigration ?? null : null)
+      const failure = new ApplicationPreparationError(response.status, code, problem.success ? problem.data.mappingMigration ?? null : null)
+      // 요금제 한도 문제 응답은 shared 안내 문구를 보여 줍니다. 상태 코드는 그대로 두어 미확인 요청 정리 규칙이 같게 동작합니다.
+      const quota = readPlanQuotaProblem(response.status, problemBody)
+      if (quota) failure.message = quota.message
+      throw failure
     }
     const parsed = schema.safeParse(response.status === 204 ? undefined : await response.json().catch(() => null))
     if (!parsed.success) throw new ApplicationPreparationError(502, 'INVALID_RESPONSE')

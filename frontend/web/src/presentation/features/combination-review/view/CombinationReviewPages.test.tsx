@@ -11,6 +11,7 @@ import { signedIn, signedOut } from '../../../shared/auth/state/authSlice'
 import { reviewProgramKey, unknownParticipation, type ReviewProgram } from '../../../../domain/entities/CombinationReview'
 import type { SupportProgram } from '../../../../domain/entities/SupportProgram'
 import { CombinationReviewError } from '../../../../domain/errors/CombinationReviewError'
+import { PlanQuotaExceededError } from '@govbiz/shared/domain/errors/PlanQuotaError'
 import { CombinationReviewUseCase } from '../../../../domain/usecases/CombinationReviewUseCase'
 import { CombinationReviewRepositoryImpl } from '../../../../data/repositories/CombinationReviewRepositoryImpl'
 import { supportPrograms } from '../../../../data/fixtures/supportPrograms'
@@ -691,6 +692,41 @@ describe('review screens and execution safety', () => {
     expect(screen.queryByText(/응답을 확인하지 못한 분석 요청/)).toBeNull()
     expect(Object.keys(sessionStorage)).toHaveLength(0)
     expect(repository.start).toHaveBeenCalledTimes(1)
+  })
+  it('shows this month review usage beside the run step and blocks only a new run at the limit', async () => {
+    const usage = vi.spyOn(appContainer.resolve('planUsageUseCase'), 'usage').mockResolvedValue({
+      plan: 'FREE', items: [{ feature: 'COMBINATION_REVIEW', period: 'MONTH', limit: 3, used: 3, resetsAt: '2026-11-01T00:00:00+09:00' }],
+    })
+    try {
+      mount()
+      const card = await screen.findByRole('region', { name: '분석 실행' })
+      const line = (await within(card).findByText('이번 달 중복 검토 3회를 모두 썼어요. 진행 중인 검토도 횟수에 들어가요. 11월 1일에 다시 채워져요.')).closest('p')!
+      expect(within(line).queryByRole('link')).toBeNull()
+      const run = screen.getByRole('button', { name: '검토 실행' }) as HTMLButtonElement
+      expect(run.disabled).toBe(true)
+      expect(document.getElementById(run.getAttribute('aria-describedby')!)?.textContent).toBe('이번 달 검토 횟수를 모두 썼어요')
+      fireEvent.click(run)
+      expect(repository.start).not.toHaveBeenCalled()
+    } finally { usage.mockRestore() }
+  })
+  it('shows the shared quota message for a rejected run, keeps no unknown request and rereads the usage', async () => {
+    const usage = vi.spyOn(appContainer.resolve('planUsageUseCase'), 'usage')
+      .mockResolvedValueOnce({ plan: 'FREE', items: [{ feature: 'COMBINATION_REVIEW', period: 'MONTH', limit: 3, used: 2, resetsAt: '2026-11-01T00:00:00+09:00' }] })
+      .mockResolvedValue({ plan: 'FREE', items: [{ feature: 'COMBINATION_REVIEW', period: 'MONTH', limit: 3, used: 3, resetsAt: '2026-11-01T00:00:00+09:00' }] })
+    repository.start.mockRejectedValue(new PlanQuotaExceededError({ feature: 'COMBINATION_REVIEW', period: 'MONTH', plan: 'FREE', limit: 3, resetsAt: '2026-11-01T00:00:00+09:00' }))
+    try {
+      mount()
+      await within(await screen.findByRole('region', { name: '분석 실행' })).findByText('이번 달 2/3회')
+      fireEvent.click(screen.getByRole('button', { name: '검토 실행' }))
+      const alert = await screen.findByRole('alert')
+      expect(alert.textContent).toBe('이번 달 중복 검토 3회를 모두 썼어요. 진행 중인 검토도 횟수에 들어가요. 11월 1일에 다시 채워져요.')
+      // 서버가 실행을 만들지 않았다고 확정했으므로 결과를 모르는 요청으로 남기지 않습니다.
+      expect(screen.queryByText(/응답을 확인하지 못한 분석 요청/)).toBeNull()
+      expect(Object.keys(sessionStorage)).toHaveLength(0)
+      await waitFor(() => expect((screen.getByRole('button', { name: '검토 실행' }) as HTMLButtonElement).disabled).toBe(true))
+      expect(usage).toHaveBeenCalledTimes(2)
+      expect(repository.start).toHaveBeenCalledTimes(1)
+    } finally { usage.mockRestore() }
   })
   it('drops late analysis on account switch and clears request journal', async () => {
     let finish!: (value: typeof runFixture) => void

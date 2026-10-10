@@ -34,7 +34,11 @@ import ai.govbiz.core.applicationpreparation.service.dto.ApplicationInterpretati
 import ai.govbiz.core.supportprogram.repository.SavedSupportProgramRepository
 import ai.govbiz.core.supportprogram.repository.SupportProgramRepository
 import ai.govbiz.core.supportprogram.domain.SupportProgramApplicationRouteType
+import ai.govbiz.core.planusage.domain.PlanUsageFeature
+import ai.govbiz.core.planusage.service.PlanUsageService
 import org.springframework.stereotype.Service
+import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.support.TransactionTemplate
 import ai.govbiz.core.applicationpreparation.domain.ApplicationDraftInput
 import ai.govbiz.core.applicationpreparation.domain.ApplicationContentVersion
 import ai.govbiz.core.applicationpreparation.repository.ApplicationPreparationContentRepository
@@ -50,7 +54,11 @@ class ApplicationPreparationService(
     private val savedSupportPrograms: SavedSupportProgramRepository,
     private val onlineFormMcp: ApplicationOnlineFormMcpClient,
     private val supportPrograms: SupportProgramRepository,
+    private val planUsage: PlanUsageService,
+    transactionManager: PlatformTransactionManager,
 ) {
+    private val transactions = TransactionTemplate(transactionManager)
+
     /** 소유권 확인 후 고정 Manifest를 계산에만 사용한다. Fact·revision·snapshot은 변경하지 않는다. */
     fun reviewOnlineFormMapping(account: Account, preparationId: Long, source: ApplicationOnlineFormSource): ApplicationOnlineFormMappingReviewResult {
         val preparation = repository.findOwned(account.id, preparationId) ?: throw ApplicationPreparationNotFoundException()
@@ -164,8 +172,12 @@ class ApplicationPreparationService(
         return ApplicationPreparationPageResult(items, items.lastOrNull()?.preparation?.id?.takeIf { rows.size > size })
     }
 
+    /** 지운 신청 문서가 이번 달 초안 한도에서 쓴 공고는 같은 transaction에서 요금제 사용량에 남겨 삭제로 한도가 늘지 않게 한다. */
     fun deleteOwned(account: Account, preparationId: Long) {
-        if (!repository.deleteOwned(account.id, preparationId)) throw ApplicationPreparationNotFoundException()
+        val deleted = transactions.execute { _ ->
+            planUsage.keepMonthlyUsage(account.id, PlanUsageFeature.APPLICATION_DRAFT) { repository.deleteOwned(account.id, preparationId) }
+        }
+        if (deleted != true) throw ApplicationPreparationNotFoundException()
     }
 
     fun updateProgress(
@@ -210,15 +222,19 @@ class ApplicationPreparationService(
             userMessage = userMessage,
             currentFacts = currentFacts,
         )
-        val reservation = inputs.reserveInterpretation(account.id, preparationId, expectedRevision, requestKey, snapshot)
-        reservation.run.output?.let { return ApplicationInterpretationResult(reservation.run.id, it) }
-        return try {
-            val output = ai.interpret(preparationId, form, snapshot)
-            inputs.succeed(reservation.run.id, output)
-            ApplicationInterpretationResult(reservation.run.id, output)
-        } catch (error: RuntimeException) {
-            inputs.fail(reservation.run.id, "AI_EXECUTION_FAILED")
-            throw error
+        // 문항별 AI 해석도 신청 문서 월 한도에 든다. 이 공고가 이번 달 처음이면 AI 전에 한도를 확인하고 기록한다.
+        val draft = preparation.draft
+        return planUsage.consumeDraftProgram(account.id, draft.sourceCode, draft.sourceProgramId) {
+            val reservation = inputs.reserveInterpretation(account.id, preparationId, expectedRevision, requestKey, snapshot)
+            reservation.run.output?.let { return@consumeDraftProgram ApplicationInterpretationResult(reservation.run.id, it) }
+            try {
+                val output = ai.interpret(preparationId, form, snapshot)
+                inputs.succeed(reservation.run.id, output)
+                ApplicationInterpretationResult(reservation.run.id, output)
+            } catch (error: RuntimeException) {
+                inputs.fail(reservation.run.id, "AI_EXECUTION_FAILED")
+                throw error
+            }
         }
     }
 
@@ -261,16 +277,20 @@ class ApplicationPreparationService(
         if (detail.preparation.inputRevision == expectedRevision && section.fields.any { field -> field.required && facts.none { it.fieldKey == field.key } }) {
             throw InvalidApplicationPreparationInputException()
         }
-        val reservation = contents.reserve(account.id, input, expectedVersionId, requestKey)
-        if (reservation.completed) {
-            if (!reservation.applied) throw ApplicationPreparationRevisionConflictException()
-            return findOwned(account, preparationId)
-        }
-        val applied = try {
-            contents.complete(account.id, reservation.id, input, expectedVersionId, ai.draft(input))
-        } catch (error: RuntimeException) {
-            contents.fail(reservation.id)
-            throw error
+        // 문항별 AI 초안도 신청 문서 월 한도에 든다. 이 공고가 이번 달 처음이면 AI 전에 한도를 확인하고 기록한다.
+        val draft = detail.preparation.draft
+        val applied = planUsage.consumeDraftProgram(account.id, draft.sourceCode, draft.sourceProgramId) {
+            val reservation = contents.reserve(account.id, input, expectedVersionId, requestKey)
+            if (reservation.completed) {
+                if (!reservation.applied) throw ApplicationPreparationRevisionConflictException()
+                return@consumeDraftProgram true
+            }
+            try {
+                contents.complete(account.id, reservation.id, input, expectedVersionId, ai.draft(input))
+            } catch (error: RuntimeException) {
+                contents.fail(reservation.id)
+                throw error
+            }
         }
         if (!applied) throw ApplicationPreparationRevisionConflictException()
         return findOwned(account, preparationId)

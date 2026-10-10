@@ -161,6 +161,8 @@ class CombinationReviewQueueIntegrationTest {
 
     private fun enqueue(): StoredCombinationReviewRun {
         val account = accounts.createAccount(NewAccount("${UUID.randomUUID()}@review-queue.test", "hash", LocalDateTime.now()))
+        // 요금제 월 한도와 무관한 흐름 테스트라 PREMIUM 계정으로 만든다(한도 검증은 planusage 테스트).
+        jdbc.update("INSERT INTO account_plan (account_id, plan_code, assigned_at) VALUES (?, 'PREMIUM', NOW(6))", account.id)
         val draft = CombinationReviewDraft("한글 🧪 검토", CombinationReviewInput(listOf(
             SelectedReviewProgram(ReviewProgramIdentity("BIZINFO", "PBLN_000000000117820")),
             SelectedReviewProgram(ReviewProgramIdentity("BIZINFO", "PBLN_000000000117172")),

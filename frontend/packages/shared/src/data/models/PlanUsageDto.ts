@@ -2,8 +2,8 @@ import { z } from 'zod'
 import { PlanQuotaExceededError, QuotaUnavailableError } from '../../domain/errors/PlanQuotaError'
 
 export const planCodeSchema = z.enum(['FREE', 'PLUS', 'PREMIUM'])
-export const planUsageFeatureSchema = z.enum(['AI_SEARCH', 'EVIDENCE_QUESTION'])
-export const planUsagePeriodSchema = z.enum(['DAY'])
+export const planUsageFeatureSchema = z.enum(['AI_SEARCH', 'EVIDENCE_QUESTION', 'APPLICATION_DRAFT', 'COMBINATION_REVIEW'])
+export const planUsagePeriodSchema = z.enum(['DAY', 'MONTH'])
 /** Core는 서울 시각(+09:00)의 다음 초기화 시각을 보냅니다. */
 const resetsAtSchema = z.iso.datetime({ offset: true })
 

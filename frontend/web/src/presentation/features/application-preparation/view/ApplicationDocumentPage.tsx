@@ -2,12 +2,16 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router'
 import { applicationDraftMode, isWritableApplicationAnswer } from '@govbiz/shared/domain/entities/ApplicationDocumentGeneration'
 import { applicationDocumentFileFormat, applicationDocumentFileGroups } from '@govbiz/shared/domain/entities/ApplicationDocumentFiles'
+import { PlanQuotaExceededError } from '@govbiz/shared/domain/errors/PlanQuotaError'
 import { appContainer } from '../../../../app/appContainer'
 import { useAppSelector } from '../../../../app/hooks'
 import type { ApplicationDocument, ApplicationDocumentGenerationJob, ApplicationDocumentMigrationNotice, ApplicationPreparation } from '../../../../domain/entities/ApplicationPreparation'
 import { ApplicationPreparationError } from '../../../../domain/errors/ApplicationPreparationError'
 import { selectCurrentAccount } from '../../../shared/auth/state/authSlice'
 import { usePreparationJobActions } from '../../../shared/preparation-jobs/usePreparationJobs'
+import { PlanUsageLine } from '../../../shared/plan-usage/PlanUsageLine'
+import { planUsageView } from '../../../shared/plan-usage/planUsageView'
+import { usePlanUsage } from '../../../shared/plan-usage/usePlanUsage'
 import { appPaths } from '../../../shared/routes/appPaths'
 import { WorkspacePageHeader } from '../../../shared/workspace/WorkspacePageHeader'
 import { WorkspaceToast, type WorkspaceToastNotice } from '../../../shared/workspace/WorkspaceToast'
@@ -75,6 +79,12 @@ function DocumentResults({ id }: { id: number }) {
   const [failedJob, setFailedJob] = useState<ApplicationDocumentGenerationJob | null>(null)
   /** 제출 때 계정의 진행 작업 3건이 차 있었는지. 전용 안내와 [다시 시도]를 보여 줍니다. */
   const [capacityFull, setCapacityFull] = useState(false)
+  /** 이번 달 신청 문서 한도로 거절된 제출의 안내입니다. 다시 시도해도 같으므로 [다시 시도]를 두지 않습니다. */
+  const [planLimitMessage, setPlanLimitMessage] = useState<string | null>(null)
+  // 이번 달 신청 문서 이용량입니다. 이미 센 공고는 다시 만들어도 늘지 않으므로 한도에 닿아도 버튼은 막지 않습니다.
+  const planUsage = usePlanUsage()
+  const draftUsage = planUsageView(planUsage.usage, 'APPLICATION_DRAFT')
+  const reloadPlanUsage = planUsage.reload
   const [attempt, setAttempt] = useState(0)
   const [downloading, setDownloading] = useState<number | null>(null)
   const [migration, setMigration] = useState<ApplicationDocumentMigrationNotice | null>(null)
@@ -152,7 +162,7 @@ function DocumentResults({ id }: { id: number }) {
       return current
     }
     async function load() {
-      setBusy(true); setBusySince(Date.now()); setError(null); setFailedJob(null); setCapacityFull(false); setMigration(null); setJob(null)
+      setBusy(true); setBusySince(Date.now()); setError(null); setFailedJob(null); setCapacityFull(false); setPlanLimitMessage(null); setMigration(null); setJob(null)
       try {
         const [detail, stored, recent] = await Promise.all([
           useCase.get(id, controller.signal),
@@ -175,7 +185,8 @@ function DocumentResults({ id }: { id: number }) {
           if (!Number.isSafeInteger(revision) || revision !== detail.inputRevision) throw new Error('답변이 변경되었습니다. 답변 입력으로 돌아가 최신 내용을 확인한 뒤 다시 생성해 주세요.')
           if (!stored.some((file) => file.inputRevision === revision)) {
             try {
-              const submitted = await useCase.submitDocumentJob(id, revision, controller.signal)
+              // 접수됐든 한도로 거절됐든 제출했으니 이번 달 이용량을 다시 읽습니다.
+              const submitted = await useCase.submitDocumentJob(id, revision, controller.signal).finally(reloadPlanUsage)
               refreshJobs()
               finished = await follow(submitted)
             } catch (caught) {
@@ -217,12 +228,14 @@ function DocumentResults({ id }: { id: number }) {
         if (controller.signal.aborted) return
         // 한도 초과는 작업을 만들지 않았으므로 요청한 버전을 남겨 두고 [다시 시도]로 같은 버전을 제출합니다.
         if (caught instanceof ApplicationPreparationError && caught.code === 'APPLICATION_DOCUMENT_JOB_CAPACITY') setCapacityFull(true)
+        // 이번 달 신청 문서 한도는 서버가 만든 안내를 그대로 보여 줍니다. 이용량 확인 실패는 아래 일반 오류로 다시 시도를 둡니다.
+        else if (caught instanceof PlanQuotaExceededError) setPlanLimitMessage(caught.message)
         else setError(caught instanceof Error ? caught.message : '문서를 생성하지 못했습니다.')
       } finally { if (!controller.signal.aborted) { setBusy(false); setBusySince(null); setJob(null) } }
     }
     void load()
     return () => { controller.abort(); downloadController.current?.abort(); migrationController.current?.abort() }
-  }, [id, useCase, attempt, markDocumentJobsSeen, refreshJobs])
+  }, [id, useCase, attempt, markDocumentJobsSeen, refreshJobs, reloadPlanUsage])
 
   useEffect(() => {
     if (busySince === null) { setElapsedSeconds(0); return }
@@ -375,6 +388,9 @@ function DocumentResults({ id }: { id: number }) {
             <Link className={n.secondarySm} to={appPaths.applicationPreparations}>목록으로</Link>
           </div>
         </div>}
+        {planLimitMessage && <div className={`${n.alert} ${n.alertWarning}`} role="alert">
+          <div className={n.alertText}><p>{planLimitMessage}</p></div>
+        </div>}
         {error && <div className={`${n.alert} ${n.alertDanger}`} role="alert">
           <div className={n.alertText}><p>{error}</p></div>
           {!busy && <button type="button" className={n.secondarySm} onClick={() => setAttempt((count) => count + 1)}>다시 시도</button>}
@@ -405,7 +421,10 @@ function DocumentResults({ id }: { id: number }) {
           }}>새 초안 생성</button>}
         </div>}
 
-        {!busy && preparation && files.length === 0 && !error && !failedJob && !capacityFull && !migration && !migrationMessage && <section className={n.card} aria-labelledby="documents-empty-title">
+        {/* 이번 달 신청 문서 이용량입니다. 만드는 동안에는 진행 카드가, 한도로 거절됐으면 위 안내가 알리므로 두지 않습니다. */}
+        {!busy && preparation && draftUsage && !planLimitMessage && <PlanUsageLine view={draftUsage} className={d.usage} />}
+
+        {!busy && preparation && files.length === 0 && !error && !failedJob && !capacityFull && !planLimitMessage && !migration && !migrationMessage && <section className={n.card} aria-labelledby="documents-empty-title">
           <div className={n.empty}>
             <h2 className={n.cardTitle} id="documents-empty-title">아직 만든 초안이 없어요</h2>
             <p className={n.muted}>{draftMode === 'original' ? '입력한 답변이 없거나 모두 미정이에요. AI 호출 없이 공식 양식 그대로 저장돼요.'

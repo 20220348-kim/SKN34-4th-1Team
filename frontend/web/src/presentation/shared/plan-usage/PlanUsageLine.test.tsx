@@ -40,6 +40,12 @@ describe('이용량 한 줄', () => {
     expect(line.textContent).toBe('오늘 공고 원문 질문 10회를 모두 썼어요. 자정(서울 시간)에 다시 채워져요.')
     expect(line.className).toContain('text-warning')
   })
+
+  it('월 한도는 다시 채워지는 날짜까지 알린다', () => {
+    const line = renderLine({ feature: 'COMBINATION_REVIEW', period: 'MONTH', limit: 3, used: 4, resetsAt: '2026-11-01T00:00:00+09:00' })
+    expect(line.textContent).toBe('이번 달 중복 검토 3회를 모두 썼어요. 진행 중인 검토도 횟수에 들어가요. 11월 1일에 다시 채워져요.')
+    expect(screen.queryByRole('link')).toBeNull()
+  })
 })
 
 describe('planUsageView', () => {

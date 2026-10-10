@@ -10,6 +10,8 @@ import ai.govbiz.core.combinationreview.domain.exception.CombinationReviewNotFou
 import ai.govbiz.core.combinationreview.domain.exception.CombinationReviewCapacityException
 import ai.govbiz.core.combinationreview.repository.CombinationReviewRunRepository
 import ai.govbiz.core.combinationreview.service.exception.*
+import ai.govbiz.core.planusage.domain.PlanUsageJob
+import ai.govbiz.core.planusage.service.PlanUsageService
 import ai.govbiz.core.supportprogram.service.admission.SupportProgramRequestAdmissionService
 import ai.govbiz.core.supportprogram.service.admission.exception.SupportProgramRequestRejectedException
 import ai.govbiz.core.supportprogram.client.bizinfo.BizInfoAttachmentClient
@@ -28,6 +30,8 @@ import java.util.UUID
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
+import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.support.TransactionTemplate
 
 /** HTTP는 입력 스냅샷만 접수한다. 큐 소비자가 DB transaction 밖에서 수집·파싱·AI를 실행한다. */
 @Service
@@ -38,11 +42,13 @@ class CombinationReviewRunService(
     private val cnTradeNoticeAttachments: CnTradeNoticeAttachmentClient,
     private val programDetails: SupportProgramDetailService, private val documentParser: SupportProgramDocumentParser,
     private val ai: AiCombinationReviewFacade, private val admission: SupportProgramRequestAdmissionService,
+    private val planUsage: PlanUsageService, transactionManager: PlatformTransactionManager,
     @param:Qualifier("seoulClock") private val clock: Clock,
     @param:Value("\${app.combination-review.queue.enabled:false}") private val queueEnabled: Boolean,
     private val properties: CombinationReviewProperties,
 ) {
     private val runnerInstanceId = UUID.randomUUID().toString()
+    private val transactions = TransactionTemplate(transactionManager)
 
     fun start(account: Account, reviewId: Long, expectedRevision: Long, requestKey: String, additionalFacts: String): ReviewRunReservation {
         runs.replay(account.id, reviewId, expectedRevision, requestKey, additionalFacts)?.let { return it }
@@ -52,7 +58,12 @@ class CombinationReviewRunService(
         if (!queueEnabled) throw CombinationReviewRunException(ReviewRunFailureCode.RUN_QUEUE_UNAVAILABLE)
         try {
             return admission.execute("combination-review-account:${account.id}") {
-                runs.reserve(account.id, reviewId, expectedRevision, requestKey, additionalFacts, runnerInstanceId)
+                // 새 실행 접수와 월 한도 확인을 한 transaction으로 묶어 한도를 넘는 실행은 남기지 않는다.
+                requireNotNull(transactions.execute { _ ->
+                    runs.reserve(account.id, reviewId, expectedRevision, requestKey, additionalFacts, runnerInstanceId).also { reservation ->
+                        if (reservation.created) planUsage.requireMonthlyCapacity(account.id, PlanUsageJob.ReviewRun(reservation.run.id))
+                    }
+                })
             }
         } catch (_: CombinationReviewCapacityException) {
             throw CombinationReviewRunException(ReviewRunFailureCode.RUN_CAPACITY_EXCEEDED, retryAfterSeconds = 60)

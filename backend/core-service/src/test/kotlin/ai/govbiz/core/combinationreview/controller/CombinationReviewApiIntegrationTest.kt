@@ -371,6 +371,8 @@ class CombinationReviewApiIntegrationTest {
 
     private fun newSession(): Pair<Long, Cookie> {
         val account = accounts.createAccount(NewAccount("${UUID.randomUUID()}@example.com", "test-hash", LocalDateTime.now()))
+        // 요금제 월 한도와 무관한 흐름 테스트라 PREMIUM 계정으로 만든다(한도 검증은 planusage 테스트).
+        jdbc.update("INSERT INTO account_plan (account_id, plan_code, assigned_at) VALUES (?, 'PREMIUM', NOW(6))", account.id)
         val issued = sessions.issue(account.id, false)
         accounts.createSession(account.id, issued.session)
         return account.id to Cookie(SessionCookieHelper.COOKIE_NAME, issued.sessionToken)

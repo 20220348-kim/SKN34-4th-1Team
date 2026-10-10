@@ -1,9 +1,11 @@
 package ai.govbiz.core.planusage.controller
 
+import ai.govbiz.core.planusage.PlanUsageTestHelper
 import ai.govbiz.core._common.exception.ApiExceptionHandler
 import ai.govbiz.core.account.domain.Account
 import ai.govbiz.core.account.domain.AccountRole
 import ai.govbiz.core.account.helper.AccountTestHelper
+import ai.govbiz.core.account.repository.AccountRepository
 import ai.govbiz.core.account.service.AccountSessionService
 import ai.govbiz.core.account.web.AuthenticatedAccountArgumentResolver
 import ai.govbiz.core.planusage.domain.PlanCode
@@ -42,8 +44,9 @@ class PlanUsageControllerTest {
     private val sessions = Mockito.mock(AccountSessionService::class.java)
     private val member = Account(7, "member@example.test", AccountRole.USER, null, null, LocalDateTime.of(2026, 9, 1, 9, 0))
     private val today = PlanUsageWindow.current(PlanUsagePeriod.DAY, ZonedDateTime.now(clock))
+    private val thisMonth = PlanUsageWindow.current(PlanUsagePeriod.MONTH, ZonedDateTime.now(clock))
 
-    private fun mvc(): MockMvc = MockMvcBuilders.standaloneSetup(PlanUsageController(PlanUsageService(repository, guests, clock, "")))
+    private fun mvc(): MockMvc = MockMvcBuilders.standaloneSetup(PlanUsageController(PlanUsageService(repository, guests, clock, PlanUsageTestHelper.noTransactions(), Mockito.mock(AccountRepository::class.java), "")))
         .setCustomArgumentResolvers(AuthenticatedAccountArgumentResolver({ sessions }, { AccountTestHelper.cookieHelper() }))
         .setControllerAdvice(ApiExceptionHandler()).build()
 
@@ -67,13 +70,15 @@ class PlanUsageControllerTest {
     fun membersSeeEveryFeatureOfTheirPlan() {
         Mockito.doReturn(member).`when`(sessions).requireAccount("member-token")
         Mockito.doReturn(PlanCode.FREE).`when`(repository).findPlan(7)
-        Mockito.doReturn(mapOf((PlanUsageFeature.EVIDENCE_QUESTION to "2026-10-08") to 3))
-            .`when`(repository).findCounts(7, listOf("2026-10-08", "2026-10-08"))
+        Mockito.doReturn(mapOf((PlanUsageFeature.EVIDENCE_QUESTION to "2026-10-08") to 3, (PlanUsageFeature.COMBINATION_REVIEW to "2026-10") to 1))
+            .`when`(repository).findCounts(7, listOf("2026-10-08", "2026-10-08", "2026-10", "2026-10"))
+        Mockito.doReturn(0).`when`(repository).countJobs(7, PlanUsageFeature.APPLICATION_DRAFT, thisMonth, null, null)
+        Mockito.doReturn(1).`when`(repository).countJobs(7, PlanUsageFeature.COMBINATION_REVIEW, thisMonth, null, null)
 
         mvc().perform(get("/api/v1/plan-usage").header(HttpHeaders.AUTHORIZATION, "Bearer member-token"))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.plan").value("FREE"))
-            .andExpect(jsonPath("$.items.length()").value(2))
+            .andExpect(jsonPath("$.items.length()").value(4))
             .andExpect(jsonPath("$.items[0].feature").value("AI_SEARCH"))
             .andExpect(jsonPath("$.items[0].limit").value(10))
             .andExpect(jsonPath("$.items[0].used").value(0))
@@ -82,6 +87,13 @@ class PlanUsageControllerTest {
             .andExpect(jsonPath("$.items[1].used").value(3))
             .andExpect(jsonPath("$.items[1].period").value("DAY"))
             .andExpect(jsonPath("$.items[1].resetsAt").value("2026-10-09T00:00:00+09:00"))
+            .andExpect(jsonPath("$.items[2].feature").value("APPLICATION_DRAFT"))
+            .andExpect(jsonPath("$.items[2].limit").value(3))
+            .andExpect(jsonPath("$.items[3].feature").value("COMBINATION_REVIEW"))
+            .andExpect(jsonPath("$.items[3].limit").value(3))
+            .andExpect(jsonPath("$.items[3].used").value(2))
+            .andExpect(jsonPath("$.items[3].period").value("MONTH"))
+            .andExpect(jsonPath("$.items[3].resetsAt").value("2026-11-01T00:00:00+09:00"))
     }
 
     @Test
@@ -89,7 +101,8 @@ class PlanUsageControllerTest {
         Mockito.doReturn(member).`when`(sessions).requireAccount("member-token")
         Mockito.doReturn(PlanCode.PREMIUM).`when`(repository).findPlan(7)
         Mockito.doReturn(mapOf((PlanUsageFeature.AI_SEARCH to "2026-10-08") to 42))
-            .`when`(repository).findCounts(7, listOf("2026-10-08", "2026-10-08"))
+            .`when`(repository).findCounts(7, listOf("2026-10-08", "2026-10-08", "2026-10", "2026-10"))
+        Mockito.doReturn(5).`when`(repository).countJobs(7, PlanUsageFeature.COMBINATION_REVIEW, thisMonth, null, null)
 
         mvc().perform(get("/api/v1/plan-usage").header(HttpHeaders.AUTHORIZATION, "Bearer member-token"))
             .andExpect(status().isOk)
@@ -97,6 +110,8 @@ class PlanUsageControllerTest {
             .andExpect(jsonPath("$.items[0].limit").value(nullValue()))
             .andExpect(jsonPath("$.items[0].used").value(42))
             .andExpect(jsonPath("$.items[1].limit").value(nullValue()))
+            .andExpect(jsonPath("$.items[3].limit").value(nullValue()))
+            .andExpect(jsonPath("$.items[3].used").value(5))
     }
 
     @Test

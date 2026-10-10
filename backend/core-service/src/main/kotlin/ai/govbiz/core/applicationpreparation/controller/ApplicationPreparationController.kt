@@ -35,6 +35,7 @@ import ai.govbiz.core.applicationpreparation.service.exception.ApplicationFormDi
 import ai.govbiz.core.applicationpreparation.controller.dto.GenerateApplicationDraftRequest
 import ai.govbiz.core.applicationpreparation.controller.dto.SaveApplicationContentRequest
 import ai.govbiz.core.applicationpreparation.controller.dto.ConfirmApplicationContentRequest
+import ai.govbiz.core.supportprogram.service.admission.SupportProgramRequestAdmissionService
 
 @RestController
 @RequestMapping("/api/v1/application-preparations")
@@ -42,6 +43,7 @@ class ApplicationPreparationController(
     private val service: ApplicationPreparationService,
     private val discovery: ApplicationFormDiscoveryService,
     @param:Value("\${app.application-form-discovery.queue.enabled:false}") private val discoveryQueueEnabled: Boolean,
+    private val admission: SupportProgramRequestAdmissionService,
 ) {
     @GetMapping("/forms")
     fun forms(account: Account): ResponseEntity<SupportedApplicationFormsResponse> =
@@ -130,12 +132,13 @@ class ApplicationPreparationController(
         @PathVariable @Min(1) id: Long,
         @PathVariable sectionKey: String,
         @RequestBody @Valid request: InterpretApplicationPreparationRequest,
-    ): ResponseEntity<ApplicationInterpretationResponse> =
+    ): ResponseEntity<ApplicationInterpretationResponse> = sectionAi(account) {
         ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(
             ApplicationInterpretationResponse.from(
                 service.interpret(account, id, sectionKey, request.expectedRevision, request.requestKey, request.message.trim()),
             ),
         )
+    }
 
     @PutMapping("/{id}/sections/{sectionKey}/inputs")
     fun replaceInputs(
@@ -151,9 +154,11 @@ class ApplicationPreparationController(
     @PostMapping("/{id}/sections/{sectionKey}/drafts")
     fun draft(account: Account, @PathVariable @Min(1) id: Long, @PathVariable sectionKey: String,
               @RequestBody @Valid request: GenerateApplicationDraftRequest): ResponseEntity<ApplicationPreparationResponse> =
-        ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(ApplicationPreparationResponse.from(
-            service.generateDraft(account, id, sectionKey, request.expectedRevision, request.expectedVersionId, request.requestKey),
-        ))
+        sectionAi(account) {
+            ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(ApplicationPreparationResponse.from(
+                service.generateDraft(account, id, sectionKey, request.expectedRevision, request.expectedVersionId, request.requestKey),
+            ))
+        }
 
     @PutMapping("/{id}/sections/{sectionKey}/content")
     fun saveContent(account: Account, @PathVariable @Min(1) id: Long, @PathVariable sectionKey: String,
@@ -168,4 +173,8 @@ class ApplicationPreparationController(
         ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(ApplicationPreparationResponse.from(
             service.confirmContent(account, id, sectionKey, request.expectedRevision, request.expectedVersionId),
         ))
+
+    /** 문항별 AI 해석·초안은 다른 AI 경로처럼 계정별 분당 요청량과 공유 동시 실행 한도를 지킨다. */
+    private fun <T> sectionAi(account: Account, action: () -> T): T =
+        admission.execute("application-section-ai:${account.id}", action)
 }

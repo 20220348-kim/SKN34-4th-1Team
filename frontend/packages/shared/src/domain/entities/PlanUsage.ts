@@ -1,8 +1,11 @@
 export type PlanCode = 'FREE' | 'PLUS' | 'PREMIUM'
-export type PlanUsageFeature = 'AI_SEARCH' | 'EVIDENCE_QUESTION'
-export type PlanUsagePeriod = 'DAY'
+export type PlanUsageFeature = 'AI_SEARCH' | 'EVIDENCE_QUESTION' | 'APPLICATION_DRAFT' | 'COMBINATION_REVIEW'
+export type PlanUsagePeriod = 'DAY' | 'MONTH'
 
-/** 한 기능의 이번 기간 사용량입니다. limit이 null이면 그 요금제는 아직 한도를 정하지 않아 제한하지 않습니다. */
+/**
+ * 한 기능의 이번 기간 사용량입니다. limit이 null이면 그 요금제는 아직 한도를 정하지 않아 제한하지 않습니다.
+ * 월 한도 기능의 used에는 진행 중인 작업도 들어갑니다.
+ */
 export type PlanUsageItem = {
   feature: PlanUsageFeature
   period: PlanUsagePeriod
@@ -23,7 +26,12 @@ export const planLabels: Record<PlanCode, string> = { FREE: '무료', PLUS: '플
 export const planUsageFeatureLabels: Record<PlanUsageFeature, string> = {
   AI_SEARCH: 'AI 대화 검색',
   EVIDENCE_QUESTION: '공고 원문 질문',
+  APPLICATION_DRAFT: '신청 문서 초안',
+  COMBINATION_REVIEW: '중복 지원·수혜 검토',
 }
+
+/** 신청 문서 초안은 공고 하나를 한 건으로 세고, 나머지는 실행 횟수로 셉니다. */
+const unitOf = (feature: PlanUsageFeature) => (feature === 'APPLICATION_DRAFT' ? '건' : '회')
 
 export function findPlanUsageItem(usage: PlanUsage | null, feature: PlanUsageFeature): PlanUsageItem | null {
   return usage?.items.find((item) => item.feature === feature) ?? null
@@ -46,15 +54,28 @@ export function isPlanLimitReached(item: PlanUsageItem): boolean {
   return item.limit !== null && item.used >= item.limit
 }
 
-/** 예: "오늘 8/10회". 한도가 없으면 "오늘 8회 · 제한 없음"입니다. 진행 중인 요청 때문에 한도를 넘겨 보이지 않게 한도에서 멈춥니다. */
+/**
+ * 예: "오늘 8/10회", "이번 달 1/3건". 한도가 없으면 "오늘 8회 · 제한 없음"입니다.
+ * 진행 중인 작업 때문에 한도를 넘겨 보이지 않게 한도에서 멈춥니다.
+ */
 export function planUsageCountText(item: PlanUsageItem): string {
-  if (item.limit === null) return `오늘 ${item.used}회 · 제한 없음`
-  return `오늘 ${Math.min(item.used, item.limit)}/${item.limit}회`
+  const period = item.period === 'DAY' ? '오늘' : '이번 달'
+  const unit = unitOf(item.feature)
+  if (item.limit === null) return `${period} ${item.used}${unit} · 제한 없음`
+  return `${period} ${Math.min(item.used, item.limit)}/${item.limit}${unit}`
 }
 
-/** 예: "자정(서울 시간)에 다시 채워져요." */
-export function planUsageResetText(_item: Pick<PlanUsageItem, 'period' | 'resetsAt'>): string {
-  return '자정(서울 시간)에 다시 채워져요.'
+/** 서울 날짜 그대로 읽습니다. 기기 시간대로 바꾸면 월초 0시가 전날로 보일 수 있습니다. */
+function seoulMonthDay(resetsAt: string): string | null {
+  const match = /^\d{4}-(\d{2})-(\d{2})T/.exec(resetsAt)
+  return match ? `${Number(match[1])}월 ${Number(match[2])}일` : null
+}
+
+/** 예: "자정(서울 시간)에 다시 채워져요.", "11월 1일에 다시 채워져요." */
+export function planUsageResetText(item: Pick<PlanUsageItem, 'period' | 'resetsAt'>): string {
+  if (item.period === 'DAY') return '자정(서울 시간)에 다시 채워져요.'
+  const date = seoulMonthDay(item.resetsAt)
+  return date ? `${date}에 다시 채워져요.` : '다음 달 1일에 다시 채워져요.'
 }
 
 export type PlanQuotaExceeded = Pick<PlanUsageItem, 'feature' | 'period' | 'resetsAt'> & { limit: number; plan: PlanCode | null }
@@ -69,6 +90,10 @@ export function planQuotaExceededMessage(quota: PlanQuotaExceeded): string {
         : `오늘 AI 대화 검색 ${quota.limit}회를 모두 썼어요. ${reset} 필터 검색은 계속 쓸 수 있어요.`
     case 'EVIDENCE_QUESTION':
       return `오늘 공고 원문 질문 ${quota.limit}회를 모두 썼어요. ${reset}`
+    case 'APPLICATION_DRAFT':
+      return `이번 달 신청 문서 초안 ${quota.limit}건을 모두 썼어요. 이미 시작한 공고의 문서는 계속 만들 수 있어요. ${reset}`
+    case 'COMBINATION_REVIEW':
+      return `이번 달 중복 검토 ${quota.limit}회를 모두 썼어요. 진행 중인 검토도 횟수에 들어가요. ${reset}`
   }
 }
 

@@ -12,6 +12,9 @@ import {
   type ApplicationPreparationSummary,
 } from '../../../../domain/entities/ApplicationPreparation'
 import { selectCurrentAccount } from '../../../shared/auth/state/authSlice'
+import { PlanUsageLine } from '../../../shared/plan-usage/PlanUsageLine'
+import { planUsageView } from '../../../shared/plan-usage/planUsageView'
+import { usePlanUsage } from '../../../shared/plan-usage/usePlanUsage'
 import { appPaths, supportProgramDetailPath } from '../../../shared/routes/appPaths'
 import { EmptyState } from '../../../shared/workspace/EmptyState'
 import { DocumentIcon } from '../../../shared/workspace/EmptyStateIcons'
@@ -172,6 +175,8 @@ function AnswerEditor({ vm }: { vm: EditorViewModel }) {
   const narrow = useMediaQuery(narrowEditorQuery)
   // 마지막 "검토" 단계는 질문 카드 자리에 그리고 주소(`?step=review`)로 남겨 새로고침 · 뒤로 가기에도 유지합니다.
   const reviewing = search.get('step') === 'review'
+  // 검토 단계에서만 이번 달 신청 문서 이용량을 읽습니다. 이미 센 공고는 다시 만들어도 늘지 않으므로 [초안 만들기]는 막지 않습니다.
+  const draftUsage = planUsageView(usePlanUsage(reviewing).usage, 'APPLICATION_DRAFT')
   const preparation = vm.preparation!
   const form = preparation.form
   const sections = form.sections
@@ -437,6 +442,7 @@ function AnswerEditor({ vm }: { vm: EditorViewModel }) {
       : draftMode === 'manualOnly'
         ? '저장된 답변 중 양식에 자동으로 기입할 수 있는 것이 없어 초안을 만들지 못할 수 있어요. 원문 양식에 직접 옮겨 적어 주세요.'
         : '입력한 답변이 없어요. 지금 초안을 만들면 답변을 기입하지 않은 공식 양식 그대로 저장돼요.'}</p>
+    {draftUsage && <PlanUsageLine view={draftUsage} className={e.reviewUsage} />}
     {!narrow && moveButtons}
   </section>
 

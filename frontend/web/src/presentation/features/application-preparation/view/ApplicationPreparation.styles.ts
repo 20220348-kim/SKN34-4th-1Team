@@ -182,6 +182,8 @@ export const answerEditorStyles = {
   successNote: 'm-0 rounded-xl border border-brand-line bg-brand-soft px-4 py-3 text-[0.8125rem] font-bold text-brand-primary',
   reviewRows: 'm-0 flex list-none flex-col gap-1 rounded-2xl border border-line p-1.5',
   reviewNote: 'm-0 text-[0.78rem] leading-[1.6] text-ink-muted',
+  // 검토의 [초안 만들기] 위 이번 달 신청 문서 이용량입니다. 색은 이용량 줄이 정하고 글자 크기만 안내에 맞춥니다.
+  reviewUsage: 'text-[0.78rem]',
   prevButton: `inline-flex h-10 shrink-0 cursor-pointer items-center justify-center gap-1 rounded-full border border-line-strong bg-white px-4 text-[0.8125rem] font-bold text-ink hover:border-brand-primary hover:text-brand-primary disabled:cursor-not-allowed disabled:opacity-40 ${focus} max-[599px]:h-11 max-[599px]:flex-1`,
   nextButton: `ml-auto inline-flex h-10 shrink-0 cursor-pointer items-center justify-center gap-1 rounded-full border-0 bg-brand-primary px-5 text-[0.8125rem] font-bold text-white hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-50 ${focus} max-[599px]:h-11 max-[599px]:flex-[2]`,
   // 머리글 오른쪽: [문서 보기](공용 secondaryButton, 600px 미만 숨김) · [⋯ 문서 메뉴] · 600px 미만 [항목 목록].
@@ -252,6 +254,9 @@ export const newPreparationStyles = {
   // 요약 상자 안 "양식이 원문과 달라 보이면 [입력칸별로 다시 분석] 유료 AI · 계정당 동시에 3건" 줄입니다.
   reanalysis: 'm-0 flex flex-wrap items-center gap-x-2.5 gap-y-1.5 text-[0.8125rem] text-ink-muted',
   cost: 'text-[0.75rem] text-ink-subtle',
+  // 분석 버튼 곁의 이번 달 신청 문서 이용량입니다. 양식 없음 카드에서는 가운데 정렬 묶음에 맞춥니다.
+  usage: 'text-[0.78rem]',
+  usageCentered: 'justify-center text-[0.78rem]',
   // 10초 넘는 작업의 진행 카드: 스피너 + 제목 + 경과, 아래 줄 "화면을 나가도 계속돼요".
   progress: 'flex flex-col gap-3 rounded-2xl border border-brand-line bg-white p-5 shadow-[0_8px_24px_rgb(32_33_36_/_6%)] max-[599px]:p-4',
   progressHead: 'flex items-start gap-2.5',
@@ -306,6 +311,8 @@ export const documentResultStyles = {
   stageMarkDone: 'grid size-5 shrink-0 place-items-center rounded-full border-2 border-brand-primary bg-brand-primary text-white',
   stageMarkActive: 'grid size-5 shrink-0 place-items-center rounded-full border-2 border-brand-primary bg-white text-brand-primary',
   alertActions: 'flex flex-wrap items-center gap-2',
+  // 본문 위 이번 달 신청 문서 이용량 한 줄입니다. 색은 이용량 줄이 정하고 글자 크기만 안내에 맞춥니다.
+  usage: 'text-[0.78rem]',
   // 실패 카드 아래의 서버 문장입니다. 제목 · 본문은 화면이 실패 코드로 고르고, 서버 문장은 참고로만 작게 둡니다.
   failureDetail: 'text-[0.75rem] leading-[1.6] text-ink-muted',
   // 답변 버전별 문서 묶음과 파일 카드.

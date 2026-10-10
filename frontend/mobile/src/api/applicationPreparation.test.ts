@@ -90,6 +90,24 @@ test('file metadata does not expose arbitrary filename formats', async () => {
   await expect(applicationPreparationUseCase('owned').documents(9)).rejects.toMatchObject({ code: 'INVALID_RESPONSE' })
   for (const value of ['0', '-1', '1e2', '9007199254740992', ['1']]) expect(parsePreparationId(value)).toBeNull()
 })
+test('plan limit rejections keep their preparation status for pending-request rules and show the shared message', async () => {
+  const api = applicationPreparationUseCase('owned')
+  const requestKey = '11111111-1111-4111-8111-111111111111'
+  fetchApi.mockResolvedValue(response({ status: 429, code: 'PLAN_QUOTA_EXCEEDED', feature: 'APPLICATION_DRAFT', period: 'MONTH', plan: 'FREE',
+    limit: 3, used: 3, resetsAt: '2026-11-01T00:00:00+09:00', retryAfterSeconds: 2_000_000 }, 429))
+  const exceeded = await api.discover('BIZINFO', 'PBLN_123', undefined, requestKey).catch((error: unknown) => error)
+  expect(exceeded).toBeInstanceOf(ApplicationPreparationError)
+  expect(exceeded).toMatchObject({ status: 429, code: 'PLAN_QUOTA_EXCEEDED',
+    message: '이번 달 신청 문서 초안 3건을 모두 썼어요. 이미 시작한 공고의 문서는 계속 만들 수 있어요. 11월 1일에 다시 채워져요.' })
+  fetchApi.mockResolvedValue(response({ status: 503, code: 'QUOTA_UNAVAILABLE' }, 503))
+  await expect(api.submitDocumentJob(9, 1, undefined, requestKey)).rejects.toMatchObject({ status: 503, code: 'QUOTA_UNAVAILABLE',
+    message: '지금은 이용량을 확인할 수 없어 실행하지 않았어요. 잠시 후 다시 시도해 주세요.' })
+  // 동시에 진행 중인 작업 수 제한은 요금제 안내로 바꾸지 않습니다.
+  fetchApi.mockResolvedValue(response({ code: 'APPLICATION_DOCUMENT_JOB_CAPACITY' }, 429))
+  await expect(api.submitDocumentJob(9, 1, undefined, requestKey)).rejects.toMatchObject({ status: 429,
+    message: '진행 중인 초안 만들기가 3건이에요. 끝난 뒤 다시 시도해 주세요.' })
+})
+
 test('binary download authentication failure retains the domain error used to clear expired sessions', async () => {
   fetchApi.mockRejectedValue(new ApiError(401, '로그인이 만료되었습니다.'))
   await expect(applicationPreparationUseCase('expired').downloadDocument(9, 11)).rejects.toMatchObject({ status: 401 })

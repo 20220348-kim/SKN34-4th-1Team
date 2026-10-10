@@ -9,11 +9,15 @@ import ai.govbiz.core.applicationpreparation.domain.exception.ApplicationPrepara
 import ai.govbiz.core.applicationpreparation.repository.ApplicationDocumentGenerationJobRepository
 import ai.govbiz.core.applicationpreparation.service.dto.ApplicationDocumentMigrationNoticeResult
 import ai.govbiz.core.applicationpreparation.service.exception.ApplicationDocumentException
+import ai.govbiz.core.planusage.domain.PlanUsageJob
+import ai.govbiz.core.planusage.service.PlanUsageService
 import ai.govbiz.core.supportprogram.service.admission.SupportProgramRequestAdmissionService
 import ai.govbiz.core.supportprogram.service.admission.exception.SupportProgramRequestRejectedException
 import org.slf4j.LoggerFactory
 import org.springframework.dao.DuplicateKeyException
 import org.springframework.stereotype.Service
+import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.support.TransactionTemplate
 
 /**
  * 문서 생성을 계정별 작업으로 접수하고 실행한다. 접수는 HTTP 요청에서, 실행은 [ApplicationDocumentGenerationJobWorker]가
@@ -26,14 +30,22 @@ class ApplicationDocumentGenerationJobService(
     private val preparations: ApplicationPreparationService,
     private val accounts: AccountRepository,
     private val admission: SupportProgramRequestAdmissionService,
+    private val planUsage: PlanUsageService,
+    transactionManager: PlatformTransactionManager,
 ) {
     private val logger = LoggerFactory.getLogger(javaClass)
+    private val transactions = TransactionTemplate(transactionManager)
 
     fun submit(account: Account, preparationId: Long, requestKey: String, expectedRevision: Long): ApplicationDocumentGenerationJob {
         val detail = preparations.findOwned(account, preparationId)
         if (detail.preparation.inputRevision != expectedRevision) throw ApplicationPreparationRevisionConflictException()
         val reservation = try {
-            repository.reserve(account.id, requestKey.lowercase(), preparationId, expectedRevision)
+            // 접수와 신청 문서 월 한도 확인을 한 transaction으로 묶는다. 같은 공고를 다시 만들면 사용량이 늘지 않는다.
+            requireNotNull(transactions.execute { _ ->
+                repository.reserve(account.id, requestKey.lowercase(), preparationId, expectedRevision).also { reserved ->
+                    reserved.job?.let { planUsage.requireMonthlyCapacity(account.id, PlanUsageJob.DocumentGeneration(it.id)) }
+                }
+            })
         } catch (error: DuplicateKeyException) {
             throw ApplicationPreparationRunConflictException()
         }

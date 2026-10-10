@@ -22,6 +22,7 @@ import ai.govbiz.core.applicationpreparation.repository.RequestedAnalysisClaimRe
 import ai.govbiz.core.applicationpreparation.repository.ApplicationFormSnapshotRepository
 import ai.govbiz.core.applicationpreparation.service.exception.ApplicationFormDiscoveryException
 import ai.govbiz.core.applicationpreparation.service.exception.ApplicationFormDiscoveryException.Reason
+import ai.govbiz.core.planusage.service.PlanUsageService
 import ai.govbiz.core.supportprogram.client.bizinfo.BizInfoAttachmentClient
 import ai.govbiz.core.supportprogram.client.cntradenotice.CnTradeNoticeAttachmentClient
 import ai.govbiz.core.supportprogram.client.document.SupportProgramDocumentParser
@@ -49,6 +50,7 @@ class ApplicationFormDiscoveryService(
     private val documentMapping: ApplicationDocumentMappingService,
     private val admission: SupportProgramRequestAdmissionService,
     private val availability: ai.govbiz.core.applicationpreparation.repository.ApplicationFormAvailabilityRepository,
+    private val planUsage: PlanUsageService,
     transactionManager: org.springframework.transaction.PlatformTransactionManager,
 ) {
     private val logger = LoggerFactory.getLogger(javaClass)
@@ -88,11 +90,15 @@ class ApplicationFormDiscoveryService(
             }
         }
     }
+    /**
+     * 큐를 쓰지 않는 환경의 이전 동기 양식 분석이다. 분석 작업 표를 남기지 않으므로 AI 전에 그 공고를 신청 문서 월 한도에 기록하고,
+     * 분석이 실패하면 돌려준다.
+     */
     fun discover(account: Account, sourceCode: String, sourceProgramId: String): ApplicationFormDiscoveryResult {
         require(account.id > 0)
         validateIdentity(sourceCode, sourceProgramId)
         return admission.execute("application-form-discovery-account:${account.id}") {
-            discoverQueued(sourceCode, sourceProgramId) {}
+            planUsage.consumeDraftProgram(account.id, sourceCode, sourceProgramId) { discoverQueued(sourceCode, sourceProgramId) {} }
         }
     }
 
