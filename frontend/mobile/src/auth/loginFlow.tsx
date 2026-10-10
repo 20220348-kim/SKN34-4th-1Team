@@ -90,10 +90,10 @@ const local = StyleSheet.create({
   methodsHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', minHeight: 44 },
   methodsTitle: { color: colors.text, fontSize: 18, fontWeight: '700', lineHeight: 26 },
   methodsDescription: { color: colors.secondaryText, fontSize: 13, lineHeight: 21 },
-  methodsContent: { gap: 10 }, close: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  methodsContent: { gap: 10 }, close: { width: 48, height: 48, alignItems: 'center', justifyContent: 'center' },
   closeIcon: { color: colors.muted, fontSize: 26, lineHeight: 32 },
   signupRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center', gap: 6 },
-  signupLink: { minHeight: 44, justifyContent: 'center' }, signupText: { color: colors.primaryText, fontSize: 14, fontWeight: '600' },
+  signupLink: { minHeight: 48, justifyContent: 'center' }, signupText: { color: colors.primaryText, fontSize: 14, fontWeight: '600' },
   grab: { alignSelf: 'center', width: 40, height: 4, borderRadius: 99, backgroundColor: colors.fieldBorder },
   // 본문 글자색(colors.text)을 45% 불투명도(#…73)로 덮습니다.
   overlay: { flex: 1, backgroundColor: `${colors.text}73`, justifyContent: 'flex-end' },

@@ -250,5 +250,5 @@ const local = StyleSheet.create({
   phone: { color: colors.primary, fontWeight: '600', textDecorationLine: 'underline' },
   footer: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 12, backgroundColor: colors.surface,
     borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border },
-  bookmark: { width: 44, height: 44, borderRadius: 22, backgroundColor: colors.soft, alignItems: 'center', justifyContent: 'center' },
+  bookmark: { width: 48, height: 48, borderRadius: 24, backgroundColor: colors.soft, alignItems: 'center', justifyContent: 'center' },
 })

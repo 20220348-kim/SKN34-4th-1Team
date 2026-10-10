@@ -15,7 +15,7 @@ export function SegmentedControl<T extends string>({ label, value, options, onCh
 
 const local = StyleSheet.create({
   track: { flexDirection: 'row', padding: 4, backgroundColor: colors.track, borderRadius: 999 },
-  segment: { flex: 1, minHeight: 36, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999 },
+  segment: { flex: 1, minHeight: 48, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999 },
   selected: { backgroundColor: colors.surface },
   label: { color: colors.secondaryText, fontSize: 15, lineHeight: 20, fontWeight: '500', textAlign: 'center' },
   selectedLabel: { color: colors.text, fontWeight: '600' },

@@ -68,11 +68,11 @@ export function WelcomeScreen({ busy, error, onBrowse, onLogin, onSignup }: {
 }
 const local = StyleSheet.create({
   page: { flex: 1, backgroundColor: colors.surface }, navigation: { paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  progress: { paddingHorizontal: 20, flexDirection: 'row', gap: 6 }, progressTarget: { flex: 1, minHeight: 30, justifyContent: 'center' },
+  progress: { paddingHorizontal: 20, flexDirection: 'row', gap: 6 }, progressTarget: { flex: 1, minHeight: 48, justifyContent: 'center' },
   bar: { height: 3, borderRadius: 3, backgroundColor: colors.track }, slide: { paddingHorizontal: 20 },
   heading: { paddingTop: 15, paddingBottom: 18 }, title: { fontSize: 26, lineHeight: 37, fontWeight: '700', color: colors.text, textAlign: 'center' },
   swipeHint: { fontSize: 12, lineHeight: 20, color: colors.muted, textAlign: 'center', paddingTop: 5 },
   footerLinks: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingTop: 6 },
-  link: { flex: 1, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
+  link: { flex: 1, minHeight: 48, alignItems: 'center', justifyContent: 'center' },
   linkText: { fontSize: 14, lineHeight: 22, color: colors.secondaryText, textAlign: 'center' }, separator: { width: 1, height: 16, backgroundColor: colors.fieldBorder },
 })
