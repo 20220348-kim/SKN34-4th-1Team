@@ -164,6 +164,34 @@ class ReleaseGateTests(unittest.TestCase):
     def test_merged_candidate_survives_later_upstream_merges(self):
         self.assertTrue(gate.eligible(SHA, FORK, self.upstream_ahead_responses()))
 
+    def test_exact_ancestor_uses_upstream_when_its_head_is_absent_from_fork(self):
+        fixture = self.upstream_ahead_responses()
+        comparison = {"status": "behind", "base_commit": {"sha": TREE},
+                      "merge_base_commit": {"sha": SHA}, "ahead_by": 0, "behind_by": 6,
+                      "total_commits": 0, "commits": [], "files": []}
+        def get(path):
+            if path == f"repos/{FORK.repository}/compare/{TREE}...{SHA}":
+                raise HTTPError(path, 404, "Unknown upstream head in independent fork", {}, None)
+            if path == f"repos/{gate.UPSTREAM}/compare/{TREE}...{SHA}":
+                return comparison
+            return fixture(path)
+        with self.assertRaises(HTTPError) as rejected:
+            gate.upstream_merged(SHA, FORK, get)
+        rejected.exception.close()
+        self.assertTrue(gate.upstream_merged(SHA, FORK, get, ancestor_only=True))
+        for changed in ({"merge_base_commit": {"sha": POLICY}}, {"ahead_by": 1},
+                        {"status": "diverged"}, {"total_commits": True}):
+            with self.subTest(changed=changed):
+                baseline = comparison.copy()
+                comparison.update(changed)
+                self.assertFalse(gate.upstream_merged(SHA, FORK, get, ancestor_only=True))
+                comparison.clear()
+                comparison.update(baseline)
+        comparison.update(status="ahead", merge_base_commit={"sha": TREE},
+                          total_commits=1, commits=[{"sha": SHA}],
+                          files=[{"filename": next(iter(gate.PROMOTION_PATHS)), "status": "modified"}])
+        self.assertFalse(gate.upstream_merged(SHA, FORK, get, ancestor_only=True))
+
     def test_upstream_advance_still_requires_every_exact_ci_run_and_job(self):
         for filename in gate.WORKFLOWS:
             with self.subTest(workflow=filename):

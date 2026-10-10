@@ -657,6 +657,9 @@ def main():
     )
     parser.add_argument("--helm", default="helm")
     parser.add_argument("--branch")
+    parser.add_argument(
+        "--publication", type=int, nargs=2, metavar=("MSA_RUN", "RUNNER_RUN")
+    )
     args = parser.parse_args()
     if (args.archive is None) != (args.key_file is None):
         parser.error("--archive and --key-file must be provided together")
@@ -685,6 +688,11 @@ def main():
                 langfuse_url=args.langfuse_url,
                 ops_api_url=args.ops_api_url,
                 helm=args.helm,
+                **(
+                    {"publication": args.publication}
+                    if args.publication is not None
+                    else {}
+                ),
             )
     except Exception as error:  # noqa: BLE001 - live resource and endpoint text stays private
         print(

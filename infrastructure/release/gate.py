@@ -64,12 +64,14 @@ def current_source(sha, fork, get=api):
                     and item.get("status") in {"added", "modified"} for item in files))
 
 
-def upstream_merged(sha, fork, get=api):
+def upstream_merged(sha, fork, get=api, *, ancestor_only=False):
     """Keep a merged candidate usable while upstream receives later commits.
 
-    The candidate must still be current on the fork and pass its own push CI.
+    Publication separately requires a current fork candidate and its own push CI.
     A fork-only commit may differ from the latest upstream only in private digest
     selections; unmerged application or publication policy changes stay blocked.
+    Explicit older deployments use ancestor_only to require the exact SHA in
+    upstream, even when its newer commits are absent from the personal repository.
     """
     if not valid_sha(sha):
         raise ValueError("Invalid candidate SHA")
@@ -82,9 +84,10 @@ def upstream_merged(sha, fork, get=api):
         raise ValueError("Invalid upstream SHA")
     if head == sha:
         return True
-    # Both commits belong to the same GitHub fork network. A missing base,
-    # failed comparison or API permission error propagates; never assume merged.
-    comparison = get(f"repos/{fork.repository}/compare/{head}...{sha}")
+    # Compare exact merged ancestors in their authoritative repository. The fork
+    # may be an independent copy and not contain upstream's newly merged HEAD.
+    repository = UPSTREAM if ancestor_only else fork.repository
+    comparison = get(f"repos/{repository}/compare/{head}...{sha}")
     if comparison.get("status") == "behind":
         # Comparing upstream HEAD ... candidate has no candidate-only commits or
         # files when this exact candidate is already in upstream's history.
@@ -99,6 +102,8 @@ def upstream_merged(sha, fork, get=api):
                 and comparison["total_commits"] == 0
                 and comparison.get("commits") == []
                 and comparison.get("files") == [])
+    if ancestor_only:
+        return False
     files = comparison.get("files")
     count = comparison.get("total_commits")
     return (comparison.get("status") == "ahead"

@@ -91,8 +91,11 @@ def request(
     helm="helm",
     start=False,
     progress,
+    publication=None,
 ):
     options = {"langfuse_url": langfuse_url, "helm": helm}
+    if publication is not None:
+        options["publication"] = publication
     verified = dormant.verify(
         root,
         fork,
@@ -453,6 +456,7 @@ def verify_started(
     langfuse_url,
     helm="helm",
     verify_http=False,
+    publication=None,
 ):
     """Observe rollout before/after optional HTTP reads; never activate the runner."""
     report, report_sha = release.read_restore_report(restore_report)
@@ -478,6 +482,8 @@ def verify_started(
         "langfuse_url": langfuse_url,
         "helm": helm,
     }
+    if publication is not None:
+        options["publication"] = publication
     plan = release.plan(root, fork, **options)
     bound = {**plan, "retainedStorage": storage, "restoreReportSha256": report_sha}
     _, started, fingerprint, _, rendered = transition(root, bound, helm)
@@ -589,6 +595,9 @@ def main():
     parser.add_argument("--langfuse-url", required=True)
     parser.add_argument("--helm", default="helm")
     parser.add_argument("--branch")
+    parser.add_argument(
+        "--publication", type=int, nargs=2, metavar=("MSA_RUN", "RUNNER_RUN")
+    )
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--request-start", action="store_true")
     mode.add_argument(
@@ -622,6 +631,8 @@ def main():
                 if args.verify_started or args.verify_http
                 else {"start": args.request_start, "progress": progress}
             )
+            if args.publication is not None:
+                extra["publication"] = args.publication
             result = action(
                 root,
                 fork,

@@ -2,11 +2,64 @@
 
 2026-10-08부터 배포 대상의 실행 환경은 Kubernetes로 통일하고 서비스·데이터 경계는 유지한다.
 Compose는 로컬 개발에 유지하고, 이전 중에는 기존 인스턴스와 원본 데이터를 보존한다.
-기존 개인 환경의 Kubernetes Ops + Compose Prefect·실행기·결과 서버·Langfuse 구성은 이전 중
-상태다. 평가 세 구성요소만 옮겨도 전체 이전 완료는 아니며, Langfuse와 관련 저장소까지 포함한
+개인 환경의 Prefect·실행기·결과 서버는 2026-10-10에 Kubernetes로 실제 이전했다.
+평가 세 구성요소만 옮겨도 전체 이전 완료는 아니며, Langfuse와 관련 저장소까지 포함한
 [전체 Kubernetes 배포 기준](../README.md#최종-배포-목표와-완료-기준)을 적용한다.
 
-## 개인 환경의 실제 이전 상태 — 2026-10-09
+## 개인 환경의 실제 이전 완료 범위 — 2026-10-10
+
+`govbiz-evaluation`에서 Prefect·evaluation-runner·ops-artifacts가 각각 `1/1 Ready`로 실행된다.
+Ops API·sync도 새 내부 주소로 전환했고, 업무·평가 Argo Application 7개가 모두
+`Synced/Healthy`이며 마지막 수동 동기화가 성공했다. 자동 동기화·prune는 활성화하지 않았다.
+
+배포 소스는 필수 CI 5개와 이미지 발행이 성공한
+`2cab4881fa8b128687a35d0da409ac2c4ee08002`로 고정했다. main의 후속 문서 병합이 기존 CI를
+취소해 이전을 계속 지연시키던 문제를 피하면서, 아래 기록의 동일 SHA·receipt·공개 digest를
+다시 확인했다. 실제 사용한 발행은 MSA `37924582504`, 실행기 `37939919551`이다.
+Core·Catalog·AI는 기존 `e7898ec` 배포를 유지했고, Ops와 평가 실행 소스의 migration·실행 명세
+변경이 없음을 확인했다.
+
+- 접수를 버전 11로 닫고 Ops API·sync와 원본 Compose writer를 중지한 뒤 암호화 백업을 생성했다.
+  백업 SHA-256은 `c4f09af8dd296511b13104332e18299a30fbfad31ef887e7842b4c9f2d742250`이며
+  암호화 파일·키·상세 실행 기록은 저장소 밖에 보관한다.
+- Prefect와 결과를 각각 1Gi RWO PVC로 복원했다. 두 PV의 회수 정책은 `Retain`이고,
+  SQLite 무결성·UID/GID 10001 쓰기·Pod 교체 후 보존을 확인했다.
+- 기동 후 인증된 HTTP로 보고서 8건·등록 결과 파일 32개·Prefect 완료 이력 6건·공유 검토 사본
+  2건을 백업과 대조했다. 실제 클러스터에서 저장 서비스 NetworkPolicy의 허용·차단도 확인했다.
+- 실제 Ops Pod에서 Prefect·결과 저장소, 실행기 Pod에서 Prefect·Ops FQDN·기존 Langfuse 인증
+  통신을 확인했다. `ops-service.govbiz-msa.svc.cluster.local`을 개인 Ops의 허용 Host에 추가했다.
+- 접수는 버전 12로 재개했다. 기존 웹 `http://localhost:5173/`의 Core·Ops 포워딩도 새 Pod로
+  연결했다. 새 실행 경로는 `관리 화면 → Kubernetes Ops → Prefect → 실행기 → 결과 PVC →
+  ops-artifacts → Ops sync/보고서 조회`다. Langfuse 점수 기록은 아직 Compose 서비스를 이용한다.
+- 무료 평가 `cfa53e06-c659-4b69-bd89-466eb774133a`가 사례 6개·모델 호출 0회로 완료됐다.
+  Prefect flow는 `c275984e-9140-4ba4-8db3-71c491064731`이며, 관리자 로그인·CSRF·동일 요청의
+  동일 flow 반환·상세 조회 없는 자동 상태 반영·보고서 HTTP 200·로그아웃 후 접근 차단을 확인했다.
+- 첫 평가 `840b94db-9884-4adb-9d50-9a9880893b58`는 Langfuse 점수 조회 시간 초과로 실패했다.
+  두 번째 평가는 완료됐지만 확인 클라이언트의 목록 조회가 15초 제한에 걸렸다. 응답 회복 후
+  **완료된 동일 요청 ID를 재사용해** 기존 smoke의 나머지 검증을 통과했다. 시간 제한을 늘리거나
+  실패 기록을 삭제하지 않았다. 평가 부하 중 응답 지연의 근본 원인과 재발 여부는 후속 확인 대상이다.
+- 원본 Compose의 `prefect`, `evaluation-runner`, `ops-artifacts`는 모두 중지했고 볼륨은 유지했다.
+  Langfuse 웹·worker·PostgreSQL·ClickHouse·Redis·MinIO는 원래 실행 상태를 유지한다.
+
+새 평가 데이터의 원본은 이제 Kubernetes PVC다. 전환 전 Compose 데이터로 단순 재기동하거나
+URL만 되돌리면 이후 데이터가 빠진다. 기존 `ops-bridge.json`과 Compose를 전제로 하는
+`ops_runtime.py --check`·백업 절차는 이 새 구성을 아직 지원하지 않으므로, 과거 연결 파일을
+현재 배포 상태로 간주하지 않는다. Kubernetes PVC·Ops DB를 함께 다루는 백업·복구 경로의
+실제 전환이 다음 운영 작업이다. 이번 이전은 개인 kind 환경의 결과이며 외부 배포·고가용성의
+완료 증거가 아니다.
+
+전환을 막던 코드도 기존 도구 안에서 수정했다. Ops 원본 관측이 별도 평가 AppProject의 세
+Application을 정확한 namespace·소유 경계로 구분하도록 했고, 발행 run 두 개를 명시해 검증된
+main 조상 SHA를 선택할 수 있게 했다. upstream 조상 확인은 upstream 저장소에서 직접 수행한다.
+로컬에서는 원본 관측·중지 계획 31개, 발행·저장 기동 관련 123개, 마지막 upstream 수정 후
+release gate·평가 발행 43개 테스트가 통과했다(일부 중복 실행 포함). 변경 production 코드의
+Ruff와 `git diff --check`도 통과했다. 테스트 파일의 기존 B023 경고와
+`sync_images.py`의 기존 포맷 불일치는 원래 커밋과 비교해 확인했고 이번 범위에서 일괄 수정하지 않았다.
+이 도구 변경의 전체 CI는 커밋·푸시 후 확인할 범위다. 배포 이미지 SHA의 기존 CI 성공과 구분한다.
+
+아래 전환 전 기록은 각 시점의 상태이며, 현재 완료 범위는 이 절을 기준으로 한다.
+
+## 전환 전 준비 기록 — 2026-10-09
 
 공개 이미지 준비는 `2cab4881fa8b128687a35d0da409ac2c4ee08002` 기준으로 완료했다.
 이후 개인 환경의 최신 암호화 백업과 **임시 Kubernetes PVC 복원·Pod 교체 검증**을 진행했다.
@@ -69,6 +122,21 @@ artifact ZIP의 출처·크기·SHA-256과 익명 GHCR manifest의 digest도 검
 보존 PVC 복원·Secret 준비 → 같은 SHA의 수동 Argo 계획·등록·동기화 → 활성화·무료 평가 검증**이다.
 현재 main이 바뀌면 위 발행 기록만으로 새 SHA의 배포를 허용하지 않는다. 기존 Compose 데이터는
 보존하며, Langfuse와 관련 DB·저장소의 Kubernetes 이전도 별도로 완료해야 한다.
+
+## 병합을 계속하면서 검증된 배포 대상을 고정하기
+
+평가 이전 중 main의 문서 변경이 새 CI를 시작하고 이전 CI를 취소하면, 최신 main만 추적하는
+계획은 실제 이전을 계속 미루게 된다. 이미 검증·발행된 동일 SHA를 선택하려면
+`evaluation_release.py`, `evaluation_dormant_status.py`, `evaluation_storage_start.py`에
+같은 `--publication <MSA 발행 run ID> <실행기 발행 run ID>`를 전달한다.
+
+두 발행의 SHA가 같고 현재 개인 main의 조상이며 upstream에 병합됐는지 확인한다. upstream
+조상 관계는 upstream 저장소에서 직접 조회하므로, 새 upstream HEAD가 개인 저장소에 아직
+없는 경우에도 이미 병합된 배포 SHA를 확인할 수 있다. 선택한
+SHA의 최신 필수 CI 실행·작업이 모두 성공해야 하고, 발행 run/attempt·receipt 출처·Git 입력·
+공개 이미지 digest 검사도 유지한다. 실패한 최신 발행에서 자동으로 과거 성공으로 돌아가지
+않으며, 두 run ID를 명시한 경우에만 과거 발행을 선택한다. 옵션을 생략하면 기존 최신 main
+검사가 적용된다. 새 옵션은 이미지 발행 정책이나 원격 브랜치를 변경하지 않는다.
 
 ## Langfuse 복구와 이전 준비 점검 — 2026-10-10
 
@@ -1229,28 +1297,15 @@ Kubernetes 1.36의 이미지 자격 증명 검증은 이미지 ID 외에 저장�
 
 ## 후속 완료 기준
 
-1. 기존 [암호화 백업·복원](../../../docs/ops-upgrade-runbook.md)을 이용해 **새 Kubernetes PVC**로
-   Prefect·결과를 복원하고 실행 ID·보고서 해시·SQLite WAL·파일 권한을 대조한다. 현재 복원 도구의
-   격리 Docker 검증과 새 PVC 검증을 구분한다. 임시 PVC 복원 도구·필수 CI 경로는 추가했으며,
-   이전용 PVC 보존 옵션과 복원 전후 원본 최신성·중지 상태 대조도 구현했다. 실제 개인 백업 적용·최신성 확인과 서비스 인계는
-   남아 있다. 원본 볼륨은 유지한다.
-2. runner 이미지의 같은 SHA CI·공개 발행·실행 명세 검증 경로는
-   [별도 실행기 발행 workflow](../../release/README.md#kubernetes-평가-실행기-이미지)에 추가했다.
-   v3 receipt 소비·같은 SHA의 Ops 이미지 대조·독립 수동 Argo 계획도 구현했다.
-   `2cab488`의 실제 패키지 준비·필수 CI·공개 발행 검증은 위 기록대로 완료했다.
-   운영 전환 시점의 소스·발행 증거 재검증과 개인 환경에서의 계획 검증은 남아 있다.
-   기존 네 서비스의 필수 CI·발행 가드를 우회하지 않는다. 배포 방식은 서비스별 Argo Application과 수동 동기화를 유지한다.
-   평가용 계획은 별도 프로젝트로 범위를 제한한다. 복원 보고서와 현재 보존 PVC를 대조해 수동 계획에
-   연결하는 읽기 전용 경로, Argo 선언 등록과 replica 0 최초 수동 동기화 요청·적용 완료 확인,
-   저장 서비스 두 개의 첫 기동 요청, 기동 후 Argo·Pod·Service 조회와 Pod loopback HTTP 인증·완료 결과
-   대조 명령은 구현했다. 실제 등록·동기화 실행과
-   namespace·PVC 확인 및 서비스 인계는 남아 있다. 암호화 백업과 기존 runner에서 평가 Secret만
-   준비하는 명령도 구현했으며 실제 개인 백업을 이용한 생성·인증 검증은 별도다.
-   운영 진단은 위의 평가 Application 조회를 포함하지만 런타임·저장소 검증은 별도다.
-3. 위 격리 Kubernetes 런타임 검증의 최신 SHA 필수 CI 성공을 확인한다. 검증 경로는 구현했으며,
-   실행 실패·취소·건너뛰기를 완료로 처리하지 않는다. 이후 개인 환경의 같은 이미지·백업으로 별도 검증한다.
-4. 실제 전환 시 Ops 접수·스케줄과 Compose writer를 중지하고 최신 백업을 만든다. 복원 검증 후
-   Ops의 URL을 전환한다. 그 전에 위 합성 통신 검사로 CNI 집행을 확인하고 실제 평가용 정책의
-   허용·차단 경로도 검증해야 한다. 새 대상에 쓰기가 생긴 뒤에는 과거 Compose DB로 단순 URL 롤백하지 않는다.
-5. Langfuse와 관련 DB·저장소는 별도 이전 단위로 검증한다. 마지막에 임시 브리지를 제거하며,
-   기존 Compose 데이터 삭제는 별도의 보존·복구 확인 이후 수행한다.
+1. **Kubernetes 데이터의 운영 백업·복구:** 기존 암호화 백업 경로를 새 Prefect·결과 PVC와 Ops DB에
+   연결하고, 전환 후 데이터를 포함한 백업을 격리 대상에 실제 복원한다. Compose 전용 진단·복구
+   경로를 현재 실행 환경에 맞게 바꾸고, 개인 Argo 설정과 Secret 복구 방법도 함께 유지한다.
+2. **Langfuse 실제 이전:** 웹·worker·PostgreSQL·ClickHouse·Redis·객체 저장소의 데이터를 보존해
+   Kubernetes로 옮긴다. 실행기의 Langfuse 주소·정책을 내부 Service로 전환하고, 점수 저장과
+   재조회를 확인한 후 기존 Compose 관측 서비스를 중지한다.
+3. **남은 배포 구성:** 배포용 웹, 외부 접근·TLS, 운영용 데이터·검색·캐시 구성과 재시작 후 복구를
+   완성한다. 로컬 Vite·Windows/WSL 포워딩·단일 kind 노드에 의존한 결과를 최종 배포로 계산하지 않는다.
+4. **실행 중 응답 지연:** 이번 무료 평가 중 발생한 Langfuse 점수 조회와 관리 목록의 시간 초과를
+   실제 자원 사용·응답 시간으로 조사한다. 실패를 숨기거나 시간 제한만 늘려 정상으로 처리하지 않는다.
+5. 새 코드의 필수 CI를 최신 커밋에서 확인하고, 기존 Compose 볼륨은 별도의 보존·복구 판단 전까지
+   유지한다. 이전 단계의 이미지·테스트 성공을 새 코드의 전체 CI 성공으로 표시하지 않는다.

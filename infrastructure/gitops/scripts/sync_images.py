@@ -44,6 +44,8 @@ def select_release(fork, get=api, run_id=None):
         runs = get(f"repos/{fork.repository}/actions/workflows/msa-images.yml/runs"
                    f"?branch={quote(fork.branch, safe='')}&per_page=100")["workflow_runs"]
     for run in sorted(runs, key=lambda item: (item["id"], item.get("run_attempt", 1)), reverse=True):
+        if run_id is not None and run.get("id") != run_id:
+            raise ValueError("Publisher response differs from the selected run")
         if run.get("status") != "completed" or run.get("conclusion") not in {"success", "skipped"}:
             return None
         if run.get("conclusion") == "skipped":

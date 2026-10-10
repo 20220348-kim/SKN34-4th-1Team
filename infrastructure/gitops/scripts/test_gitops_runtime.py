@@ -194,6 +194,37 @@ class RuntimePreflightTests(unittest.TestCase):
         )
         self.assertEqual(list(self.state.iterdir()), [])
 
+    def test_evaluation_handoff_apps_do_not_break_ops_source_observation(self):
+        self.enable_gitops()
+        before = runtime.argo_observation(self.state, self.settings)
+        evaluation = {
+            "metadata": {"name": "govbiz-evaluation-prefect", "namespace": "argocd"},
+            "spec": {
+                "project": "govbiz-evaluation",
+                "destination": {
+                    "server": "https://kubernetes.default.svc",
+                    "namespace": "govbiz-evaluation",
+                },
+            },
+        }
+        for name in ("prefect", "ops-artifacts", "evaluation-runner"):
+            app = copy.deepcopy(evaluation)
+            app["metadata"]["name"] = "govbiz-evaluation-" + name
+            self.apps.append(app)
+        self.assertEqual(runtime.argo_observation(self.state, self.settings), before)
+        for field in ("project", "namespace", "name"):
+            bad = copy.deepcopy(evaluation)
+            if field == "project":
+                bad["spec"][field] = "govbiz-fork"
+            elif field == "namespace":
+                bad["spec"]["destination"][field] = "govbiz-msa"
+            else:
+                bad["metadata"][field] = "unexpected"
+            self.apps.append(bad)
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                runtime.argo_observation(self.state, self.settings)
+            self.apps.pop()
+
     def test_gitops_active_unpinned_or_foreign_applications_are_rejected(self):
         self.enable_gitops()
         original = copy.deepcopy(self.apps)
