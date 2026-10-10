@@ -717,6 +717,51 @@ flowchart LR
     class Qdrant vectorDb
 ```
 
+**화면에서 세 가지 실행 경로 선택하기**
+
+관리자 메뉴의 **새 평가**(`/ops/evaluations/new`)에서 **실행 방식**과 **평가 자료**를 함께 선택합니다.
+실행 방식 메뉴에는 `저장 응답 재평가`와 `새 응답 생성` 두 옵션이 있으며,
+새 응답 생성은 선택한 자료가 **고정 근거 답변 자료인지 RAG 자료인지**에 따라 두 경로로 나뉩니다.
+
+<table width="100%">
+  <tr>
+    <th width="33%">① 저장 응답 재평가</th>
+    <th width="33%">② 고정 근거로 새 답변 생성</th>
+    <th width="33%">③ 고정 원문으로 새 RAG 실행</th>
+  </tr>
+  <tr>
+    <td align="center" valign="top">
+      <a href="docs/assets/screenshots/evaluation-modes/01-replay.jpg"><img src="docs/assets/screenshots/evaluation-modes/01-replay.jpg" alt="실행 방식에서 저장 응답 재평가를 선택하고 실제 공고 고정 근거 자료를 고른 화면" width="260"></a>
+    </td>
+    <td align="center" valign="top">
+      <a href="docs/assets/screenshots/evaluation-modes/02-fixed-context-live.jpg"><img src="docs/assets/screenshots/evaluation-modes/02-fixed-context-live.jpg" alt="새 응답 생성과 실제 공고 고정 근거 자료를 함께 선택한 화면" width="260"></a>
+    </td>
+    <td align="center" valign="top">
+      <a href="docs/assets/screenshots/evaluation-modes/03-rag-live.jpg"><img src="docs/assets/screenshots/evaluation-modes/03-rag-live.jpg" alt="새 응답 생성과 실제 공고 RAG 연속 목록 보존 v2 자료를 함께 선택한 화면" width="260"></a>
+    </td>
+  </tr>
+  <tr>
+    <td valign="top">
+      <strong>선택:</strong> 저장 응답 재평가 · API 호출 없음<br><br>
+      자료에 저장된 기준·후보 실행을 비교하고, 기존 응답으로 지표를 다시 계산합니다. 새 모델 호출은 없습니다.
+    </td>
+    <td valign="top">
+      <strong>선택:</strong> 새 응답 생성 + 고정 근거 답변 자료<br><br>
+      사진의 <strong>실제 공고 고정 근거 · 참조 보완 v3</strong>처럼 저장된 근거를 사용해 OpenAI로 답변만 새로 생성합니다. 검색·임베딩은 실행하지 않습니다.
+    </td>
+    <td valign="top">
+      <strong>선택:</strong> 새 응답 생성 + RAG 평가 자료<br><br>
+      사진의 <strong>실제 공고 RAG · 연속 목록 보존 v2</strong>처럼 등록된 원문·청크로 임베딩 → 격리된 Qdrant 색인 → 검색 → 새 답변 생성을 수행합니다.
+    </td>
+  </tr>
+</table>
+
+저장 응답 재평가는 현재 모델의 품질을 새로 측정하는 작업이 아닙니다.
+새 RAG 실행도 공식 원문 재수집·재청킹이나 운영 검색 색인의 성능까지 평가하는 경로는 아닙니다.
+
+사진은 실행 전 선택 화면입니다. 새 응답 생성은 서버의 실행 설정·예산 점검과 자료 전송·호출 예산 확인 후 요청합니다.
+세 경로의 결과는 위 순서도의 공통 지표 계산으로 이어집니다.
+
 <img src="docs/assets/readme/evaluation-review-caption.svg" alt="결과 확인·사람 검토 — 보고서와 추적을 확인하고, 검토·품질 판정을 거쳐 관리자가 비교 기준을 지정합니다. Langfuse의 실제 모델 호출 추적은 실행 중에도 수집합니다." width="820">
 
 ```mermaid
