@@ -453,11 +453,19 @@ describe('React LLMOps 운영 화면', () => {
 
   it('완료 결과와 인증 보고서·외부 기록 링크를 표시한다', async () => {
     open(`/ops/evaluations/${id}`)
-    expect(await screen.findByRole('link', { name: 'Evidently 보고서' })).toHaveProperty('pathname', completed.report_url)
+    expect(await screen.findByRole('link', { name: 'Evidently 보고서' })).toHaveProperty('pathname', `/ops/evaluations/${id}/report`)
     expect(screen.getByRole('link', { name: 'Langfuse 평가 점수' }).getAttribute('href')).toBe(completed.langfuse_url)
     expect(screen.getByText('6 / 6')).toBeTruthy()
     expect(screen.getAllByText('0회')).toHaveLength(2)
     expect(screen.getByText(/의미 충실도는 미측정/)).toBeTruthy()
+  })
+
+  it('보고서 경로는 관리자 세션으로 열고 과거 비교 기록이 없으면 원본을 안내한다', async () => {
+    open(`/ops/evaluations/${id}/report`)
+    expect(await screen.findByRole('heading', { name: 'Evidently 평가 보고서' })).toBeTruthy()
+    expect(await screen.findByRole('link', { name: '원본 차트 새 탭에서 보기 ↗' })).toHaveProperty('pathname', completed.report_url)
+    expect(screen.getByText(/비교 기록이 없습니다/)).toBeTruthy()
+    expect(fetchMock.mock.calls.every(([, options]) => !options?.method || options.method === 'GET')).toBe(true)
   })
 
   it('접수 응답 유실 뒤 같은 UUID로 재시도하며 503의 저장 요청 상세를 연다', async () => {
