@@ -4,12 +4,12 @@
 업무 서비스·평가 실행·관측 저장소를 같은 kind 클러스터 안에 배치하고 namespace로 구분했습니다.
 기존 그림의 Compose 평가 영역과 외부 HTTP 브리지를 Kubernetes Service·PVC로 교체했습니다.
 
-![GovBiz 업무·평가·관측을 Kubernetes로 통합한 로컬 구성](govbiz-local-architecture.png)
+![GovBiz 업무·평가·관측을 Kubernetes로 통합한 로컬 구성](govbiz-local-architecture.png?v=3d70cc68175d)
 
 ## 파일
 
-- [PNG](govbiz-local-architecture.png): 5,600 × 5,960, GitHub·발표 첨부용.
-- [SVG](govbiz-local-architecture.svg): 2,800 × 2,980, 로고가 내장된 편집 가능한 원본.
+- [PNG](govbiz-local-architecture.png?v=3d70cc68175d): 5,600 × 5,960, GitHub·발표 첨부용.
+- [SVG](govbiz-local-architecture.svg?v=1c2b6da116ea): 2,800 × 2,980, 로고가 내장된 편집 가능한 원본.
 - [생성 스크립트](build-local.mjs): 기존 로컬 로고를 사용하며 클러스터·GHCR에 접근하지 않습니다.
 - 로고 출처·해시는 [Kubernetes 로고 목록](kubernetes-logo-sources.json), [RabbitMQ·MyBatis 로고 목록](logo-sources.json), [Devicon 라이선스](DEVICON-LICENSE)를 따릅니다.
 
